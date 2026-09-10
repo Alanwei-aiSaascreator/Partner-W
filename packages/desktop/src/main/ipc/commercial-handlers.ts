@@ -11,6 +11,7 @@ import {
 } from '../commercial/auth.js';
 import { activateLicense, clearLicense, deviceFingerprint, readLicenseStatus } from '../commercial/license.js';
 import { runUsageReport } from '../commercial/usage-reporter.js';
+import { createRechargeOrder, readRechargeOrder, readRechargeSkus } from '../commercial/payment.js';
 
 export function registerCommercialHandlers(): void {
   ipcMain.handle('commercial:get-config', () => {
@@ -63,4 +64,12 @@ export function registerCommercialHandlers(): void {
   // 手动触发一次上报，返回本次是否产生了可用结果（0 表示无可报内容/失败）。
   // 定时器那套是兜底，这个入口给「刚花完额度、要立刻刷新顶栏」之类的场景用。
   ipcMain.handle('commercial:usage-report', () => runUsageReport());
+
+  ipcMain.handle('commercial:recharge-skus', () => readRechargeSkus());
+  ipcMain.handle('commercial:recharge-create', (_event, sku: string) =>
+    createRechargeOrder(String(sku ?? '')),
+  );
+  ipcMain.handle('commercial:recharge-order', (_event, orderNo: string) =>
+    readRechargeOrder(String(orderNo ?? '')),
+  );
 }

@@ -38,6 +38,8 @@ export interface CommercialConfig {
   supabaseUrl: string;
   supabaseAnonKey: string;
   licenseKey?: string;
+  /** Origin of the Alipay payment service; defaults to the production domain. */
+  paymentBaseUrl?: string;
 }
 
 export interface AppConfig {

@@ -609,6 +609,30 @@ export interface ClawWorkAPI {
   commercialLicenseClear: () => Promise<IpcResult>;
   commercialDeviceFingerprint: () => Promise<string>;
   commercialUsageReport: () => Promise<number>;
+  commercialRechargeSkus: () => Promise<IpcResult<RechargeSku[]>>;
+  commercialRechargeCreate: (sku: string) => Promise<IpcResult<RechargeOrderHandle>>;
+  commercialRechargeOrder: (orderNo: string) => Promise<IpcResult<RechargeOrderStatus>>;
+}
+
+export interface RechargeSku {
+  sku: string;
+  label: string;
+  amountCents: number;
+  bonusCents: number;
+}
+
+export interface RechargeOrderHandle {
+  orderNo: string;
+  amountCents: number;
+  payUrl: string;
+  expiresAt: string | null;
+}
+
+export interface RechargeOrderStatus {
+  orderNo: string;
+  status: string;
+  amountCents: number;
+  paidAt: string | null;
 }
 
 declare global {

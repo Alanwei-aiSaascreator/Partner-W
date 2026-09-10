@@ -449,6 +449,9 @@ function buildApi(): ClawWorkAPI {
     commercialLicenseClear: () => ipcRenderer.invoke('commercial:license-clear'),
     commercialDeviceFingerprint: () => ipcRenderer.invoke('commercial:device-fingerprint'),
     commercialUsageReport: () => ipcRenderer.invoke('commercial:usage-report'),
+    commercialRechargeSkus: () => ipcRenderer.invoke('commercial:recharge-skus'),
+    commercialRechargeCreate: (sku: string) => ipcRenderer.invoke('commercial:recharge-create', sku),
+    commercialRechargeOrder: (orderNo: string) => ipcRenderer.invoke('commercial:recharge-order', orderNo),
   };
 }
 
