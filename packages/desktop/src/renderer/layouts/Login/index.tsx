@@ -77,6 +77,7 @@ export default function Login({ onSignedIn }: LoginProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [countdown, setCountdown] = useState(0);
+  const [agreed, setAgreed] = useState(false);
   const codeInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -175,7 +176,11 @@ export default function Login({ onSignedIn }: LoginProps) {
           <div className="flex flex-col items-center text-center space-y-3">
             <div className="relative">
               <div className="absolute inset-0 scale-[2.5] rounded-full bg-[var(--accent)] opacity-[0.06] blur-2xl" />
-              <img src={logo} alt="Mofang Compass" className="relative w-16 h-16 rounded-2xl shadow-[var(--glow-accent)]" />
+              <img
+                src={logo}
+                alt="Mofang Compass"
+                className="relative w-16 h-16 rounded-2xl shadow-[var(--glow-accent)]"
+              />
             </div>
             <h1 className="type-section-title text-[var(--text-primary)]">
               {phase === 'phone' ? t('login.title') : t('login.codeTitle')}
@@ -188,13 +193,8 @@ export default function Login({ onSignedIn }: LoginProps) {
           <form onSubmit={onSubmitForm} className="space-y-4">
             {phase === 'phone' ? (
               <div className="relative">
-                <Phone
-                  size={15}
-                  className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[var(--text-muted)]"
-                />
-                <span className="absolute left-9 top-1/2 -translate-y-1/2 type-body text-[var(--text-muted)]">
-                  +86
-                </span>
+                <Phone size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" />
+                <span className="absolute left-9 top-1/2 -translate-y-1/2 type-body text-[var(--text-muted)]">+86</span>
                 <input
                   type="tel"
                   inputMode="numeric"
@@ -231,7 +231,11 @@ export default function Login({ onSignedIn }: LoginProps) {
               </p>
             )}
 
-            <Button type="submit" disabled={busy || (phase === 'phone' ? !phoneValid : !codeValid)} className="w-full">
+            <Button
+              type="submit"
+              disabled={busy || !agreed || (phase === 'phone' ? !phoneValid : !codeValid)}
+              className="w-full"
+            >
               {busy ? (
                 <Loader2 size={15} className="animate-spin" />
               ) : (
@@ -243,8 +247,14 @@ export default function Login({ onSignedIn }: LoginProps) {
             </Button>
           </form>
 
-          <div className="flex items-center justify-center gap-1 type-support text-[var(--text-muted)]">
-            {phase === 'phone' ? (
+          <div className="flex flex-col items-center gap-2">
+            <label className="flex items-start gap-2 type-support text-[var(--text-muted)] cursor-pointer">
+              <input
+                type="checkbox"
+                checked={agreed}
+                onChange={(e) => setAgreed(e.target.checked)}
+                className="mt-0.5 h-4 w-4 accent-[var(--accent)]"
+              />
               <AgreementLinks
                 template={t('login.agreement')}
                 termsLabel={t('login.termsOfService')}
@@ -252,8 +262,9 @@ export default function Login({ onSignedIn }: LoginProps) {
                 termsUrl={t('login.termsUrl')}
                 privacyUrl={t('login.privacyUrl')}
               />
-            ) : (
-              <>
+            </label>
+            {phase === 'code' && (
+              <div className="flex items-center justify-center gap-1 type-support text-[var(--text-muted)]">
                 <button
                   type="button"
                   disabled={busy}
@@ -278,7 +289,7 @@ export default function Login({ onSignedIn }: LoginProps) {
                 >
                   {countdown > 0 ? t('login.resendIn', { seconds: countdown }) : t('login.resend')}
                 </button>
-              </>
+              </div>
             )}
           </div>
         </motion.div>
