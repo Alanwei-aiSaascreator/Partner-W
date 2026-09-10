@@ -7,7 +7,11 @@
     "plan": "目前方案",
     "quotaPending": "額度待開通",
     "recharge": "儲值",
+    "rechargeConfirm": "繼續儲值",
     "rechargeHint": "請聯繫客服開通儲值",
+    "refundAgree": "我已閱讀並同意退款說明",
+    "refundNotice": "Token 額度屬數位化商品。已消耗部分不支援退款；未消耗部分可在購買後 7 日內申請退款。",
+    "refundTitle": "退款說明",
     "signOut": "登出",
     "tokenQuota": "Token 額度",
     "updatedAt": "更新於 {{time}}"
@@ -868,11 +872,18 @@
   },
   "usage": {
     "balance": "餘額",
+    "blockedDesc": "Token 額度已用盡，儲值或兌換卡密後可繼續使用。",
+    "blockedTitle": "額度已用盡",
+    "degradeConfirm": "切換模型",
+    "degradeDesc": "切換到輕量模型繼續使用？",
+    "degradeDone": "已切換到輕量模型",
+    "degradeTitle": "額度即將用盡",
     "period": "最近 {{days}} 天",
     "quotaTotal": "總額度",
     "quotaUsed": "已用",
     "rateLimits": "速率限制",
-    "resetsAt": "{{time}} 重設"
+    "resetsAt": "{{time}} 重設",
+    "warnToast": "額度已用 {{percent}}%，請及時儲值"
   },
   "voiceInput": {
     "introConfirm": "了解",

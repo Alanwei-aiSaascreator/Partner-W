@@ -10,6 +10,8 @@ import {
 } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from '@/lib/toast';
+import { evaluateQuota } from '@/lib/quota';
+import { useCommercialStore } from '@/stores/commercialStore';
 import type {
   Task,
   AgentInfo,
@@ -125,6 +127,11 @@ export function useChatSend(opts: UseChatSendOpts) {
   const responseTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const abortResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const [quotaBlocked, setQuotaBlocked] = useState(false);
+  const [quotaDegrade, setQuotaDegrade] = useState(false);
+  const warnedThisWindowRef = useRef(false);
+  const degradePromptedRef = useRef(false);
+
   useEffect(() => {
     if (!activeTask) return;
     if (activity === 'responding' || activity === 'tooling') {
@@ -149,6 +156,26 @@ export function useChatSend(opts: UseChatSendOpts) {
   }, []);
 
   const handleSend = useCallback(async () => {
+    const commercial = useCommercialStore.getState().overview;
+    const licence = commercial?.license ?? null;
+    const verdict = evaluateQuota(licence?.tokenQuotaCents ?? 0, licence?.tokenUsedCents ?? null);
+
+    if (verdict.level === 'exhausted' || verdict.level === 'unknown-exhausted') {
+      setQuotaBlocked(true);
+      return;
+    }
+
+    if (verdict.level === 'warn' && !warnedThisWindowRef.current) {
+      warnedThisWindowRef.current = true;
+      toast.warning(t('usage.warnToast', { percent: Math.round(verdict.usedPercent) }));
+    }
+
+    if (verdict.level === 'degrade' && !degradePromptedRef.current) {
+      degradePromptedRef.current = true;
+      setQuotaDegrade(true);
+      return;
+    }
+
     const textarea = textareaRef.current;
     if (!textarea || isOffline) return;
     stopVoiceInput();
@@ -507,6 +534,20 @@ export function useChatSend(opts: UseChatSendOpts) {
     }
   }, [activeTask, aborting, t]);
 
+  const switchToFallbackModel = useCallback(async () => {
+    const store = useTaskStore.getState();
+    const task = store.tasks.find((item) => item.id === store.activeTaskId);
+    if (!task) return;
+    const res = await window.clawwork.patchSession(task.gatewayId, task.sessionKey, {
+      model: 'bailian/qwen3.5-flash',
+    });
+    if (res.ok) {
+      toast.success(t('usage.degradeDone'));
+    } else {
+      toast.error(t('errors.requestFailed'));
+    }
+  }, [t]);
+
   const handleToolSelect = useCallback(
     (tool: ToolEntry) => {
       const ta = textareaRef.current;
@@ -541,6 +582,11 @@ export function useChatSend(opts: UseChatSendOpts) {
     modelsByProvider,
     pendingNewTask: pendingNewTask as PendingNewTask | null,
     taskGwId,
+    quotaBlocked,
+    setQuotaBlocked,
+    quotaDegrade,
+    setQuotaDegrade,
+    switchToFallbackModel,
     handleSend,
     handleModelQuickSend,
     handleThinkingQuickSend,

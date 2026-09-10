@@ -7,7 +7,11 @@
     "plan": "当前套餐",
     "quotaPending": "额度待开通",
     "recharge": "充值",
+    "rechargeConfirm": "继续充值",
     "rechargeHint": "请联系客服开通充值",
+    "refundAgree": "我已阅读并同意退款说明",
+    "refundNotice": "Token 额度属数字化商品。已消耗部分不支持退款；未消耗部分可在购买后 7 日内申请退款。",
+    "refundTitle": "退款说明",
     "signOut": "退出登录",
     "tokenQuota": "Token 额度",
     "updatedAt": "更新于 {{time}}"
@@ -868,11 +872,18 @@
   },
   "usage": {
     "balance": "余额",
+    "blockedDesc": "Token 额度已用尽，充值或兑换卡密后可继续使用。",
+    "blockedTitle": "额度已用尽",
+    "degradeConfirm": "切换模型",
+    "degradeDesc": "切换到轻量模型继续使用？",
+    "degradeDone": "已切换到轻量模型",
+    "degradeTitle": "额度即将用尽",
     "period": "最近 {{days}} 天",
     "quotaTotal": "总额度",
     "quotaUsed": "已用",
     "rateLimits": "速率限制",
-    "resetsAt": "{{time}} 重置"
+    "resetsAt": "{{time}} 重置",
+    "warnToast": "额度已用 {{percent}}%，请及时充值"
   },
   "voiceInput": {
     "introConfirm": "知道了",

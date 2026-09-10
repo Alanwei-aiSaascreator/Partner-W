@@ -455,6 +455,7 @@ function ChatContent() {
   const activeTask = useTaskStore((s) => s.tasks.find((task) => task.id === s.activeTaskId));
   const activeRoom = useRoomStore((s) => (activeTaskId ? s.rooms[activeTaskId] : undefined));
   const messageLayout = useUiStore((s) => s.messageLayout);
+  const setSettingsOpen = useUiStore((s) => s.setSettingsOpen);
   const messages = useMessageStore((s) =>
     activeTaskId ? (s.messagesByTask[activeTaskId] ?? EMPTY_MESSAGES) : EMPTY_MESSAGES,
   );
@@ -469,6 +470,7 @@ function ChatContent() {
   const [showScrollButton, setShowScrollButton] = useState(false);
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
   const closeLightbox = useCallback(() => setLightboxSrc(null), []);
+  const handleNavigateToAccount = useCallback(() => setSettingsOpen(true), [setSettingsOpen]);
   const [previewFile, setPreviewFile] = useState<{ path: string; content: string } | null>(null);
   const closeFilePreview = useCallback(() => setPreviewFile(null), []);
   const handleHighlightDone = useCallback(() => setHighlightedMessage(null), [setHighlightedMessage]);
@@ -584,7 +586,7 @@ function ChatContent() {
             <WelcomeScreen key={activeTaskId ?? '__new'} />
           </div>
         </div>
-        <ChatInput />
+        <ChatInput onNavigateToAccount={handleNavigateToAccount} />
         <ImageLightbox src={lightboxSrc} onClose={closeLightbox} />
         <FilePreviewModal file={previewFile} onClose={closeFilePreview} />
       </>
@@ -712,7 +714,7 @@ function ChatContent() {
           </button>
         )}
       </div>
-      <ChatInput />
+      <ChatInput onNavigateToAccount={handleNavigateToAccount} />
       <ImageLightbox src={lightboxSrc} onClose={closeLightbox} />
       <FilePreviewModal file={previewFile} onClose={closeFilePreview} />
     </>

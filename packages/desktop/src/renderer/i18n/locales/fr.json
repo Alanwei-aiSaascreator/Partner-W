@@ -7,7 +7,11 @@
     "plan": "Forfait actuel",
     "quotaPending": "Aucun solde",
     "recharge": "Recharger",
+    "rechargeConfirm": "Continuer la recharge",
     "rechargeHint": "Contactez le support pour recharger",
+    "refundAgree": "J'ai lu et j'accepte la politique de remboursement",
+    "refundNotice": "Les soldes de tokens sont des biens numériques. Un solde déjà utilisé ne peut pas être remboursé. Un solde non utilisé peut être remboursé dans les 7 jours suivant l'achat.",
+    "refundTitle": "Politique de remboursement",
     "signOut": "Se déconnecter",
     "tokenQuota": "Solde de tokens",
     "updatedAt": "Mis à jour {{time}}"
@@ -868,11 +872,18 @@
   },
   "usage": {
     "balance": "Solde",
+    "blockedDesc": "Votre solde de tokens est épuisé. Rechargez ou utilisez un code pour continuer.",
+    "blockedTitle": "Solde épuisé",
+    "degradeConfirm": "Changer de modèle",
+    "degradeDesc": "Passer au modèle léger pour continuer ?",
+    "degradeDone": "Passé au modèle léger",
+    "degradeTitle": "Solde presque épuisé",
     "period": "{{days}} derniers jours",
     "quotaTotal": "Quota total",
     "quotaUsed": "Utilisé",
     "rateLimits": "Limites de débit",
-    "resetsAt": "Réinitialisation à {{time}}"
+    "resetsAt": "Réinitialisation à {{time}}",
+    "warnToast": "Solde utilisé à {{percent}} % — rechargez bientôt"
   },
   "voiceInput": {
     "introConfirm": "Compris",

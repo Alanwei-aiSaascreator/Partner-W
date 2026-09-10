@@ -7,7 +7,11 @@
     "plan": "Aktueller Tarif",
     "quotaPending": "Kein Guthaben",
     "recharge": "Aufladen",
+    "rechargeConfirm": "Mit dem Aufladen fortfahren",
     "rechargeHint": "Bitte den Support für eine Aufladung kontaktieren",
+    "refundAgree": "Ich habe die Rückerstattungsrichtlinie gelesen und stimme ihr zu",
+    "refundNotice": "Token-Guthaben sind digitale Güter. Ein bereits verbrauchtes Guthaben kann nicht erstattet werden; ein nicht verbrauchtes Guthaben kann innerhalb von 7 Tagen nach dem Kauf erstattet werden.",
+    "refundTitle": "Rückerstattungsrichtlinie",
     "signOut": "Abmelden",
     "tokenQuota": "Token-Guthaben",
     "updatedAt": "Aktualisiert {{time}}"
@@ -868,11 +872,18 @@
   },
   "usage": {
     "balance": "Guthaben",
+    "blockedDesc": "Ihr Token-Guthaben ist aufgebraucht. Laden Sie auf oder lösen Sie einen Code ein, um fortzufahren.",
+    "blockedTitle": "Guthaben aufgebraucht",
+    "degradeConfirm": "Modell wechseln",
+    "degradeDesc": "Zum leichten Modell wechseln, um weiterzuarbeiten?",
+    "degradeDone": "Zum leichten Modell gewechselt",
+    "degradeTitle": "Guthaben fast aufgebraucht",
     "period": "Letzte {{days}} Tage",
     "quotaTotal": "Gesamtkontingent",
     "quotaUsed": "Verwendet",
     "rateLimits": "Ratenlimits",
-    "resetsAt": "Zuruecksetzung um {{time}}"
+    "resetsAt": "Zuruecksetzung um {{time}}",
+    "warnToast": "Guthaben zu {{percent}}% verbraucht — bitte bald aufladen"
   },
   "voiceInput": {
     "introConfirm": "Verstanden",

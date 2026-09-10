@@ -7,7 +7,11 @@
     "plan": "Plan actual",
     "quotaPending": "Sin saldo",
     "recharge": "Recargar",
+    "rechargeConfirm": "Continuar con la recarga",
     "rechargeHint": "Contacta con soporte para recargar",
+    "refundAgree": "He leído y acepto la política de reembolso",
+    "refundNotice": "Los saldos de tokens son bienes digitales. Un saldo ya utilizado no se puede reembolsar; un saldo sin utilizar se puede reembolsar en los 7 días posteriores a la compra.",
+    "refundTitle": "Política de reembolso",
     "signOut": "Cerrar sesión",
     "tokenQuota": "Saldo de tokens",
     "updatedAt": "Actualizado {{time}}"
@@ -868,11 +872,18 @@
   },
   "usage": {
     "balance": "Saldo",
+    "blockedDesc": "Tu saldo de tokens se ha agotado. Recarga o canjea un código para continuar.",
+    "blockedTitle": "Saldo agotado",
+    "degradeConfirm": "Cambiar modelo",
+    "degradeDesc": "¿Cambiar al modelo ligero para seguir trabajando?",
+    "degradeDone": "Se cambió al modelo ligero",
+    "degradeTitle": "Saldo casi agotado",
     "period": "Últimos {{days}} días",
     "quotaTotal": "Cuota total",
     "quotaUsed": "Usado",
     "rateLimits": "Límites de uso",
-    "resetsAt": "Se reinicia a las {{time}}"
+    "resetsAt": "Se reinicia a las {{time}}",
+    "warnToast": "Saldo usado al {{percent}}% — recarga pronto"
   },
   "voiceInput": {
     "introConfirm": "Entendido",

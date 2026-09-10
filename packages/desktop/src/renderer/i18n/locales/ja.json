@@ -7,7 +7,11 @@
     "plan": "現在のプラン",
     "quotaPending": "残高未設定",
     "recharge": "チャージ",
+    "rechargeConfirm": "チャージを続ける",
     "rechargeHint": "チャージはサポートにお問い合わせください",
+    "refundAgree": "返金についての説明を読み、同意します",
+    "refundNotice": "Token 残高はデジタル商品です。使用済みの分は返金できません。未使用の分は購入後 7 日以内に返金を申請できます。",
+    "refundTitle": "返金について",
     "signOut": "サインアウト",
     "tokenQuota": "Token 残高",
     "updatedAt": "{{time}} 更新"
@@ -868,11 +872,18 @@
   },
   "usage": {
     "balance": "残高",
+    "blockedDesc": "トークン残高を使い切りました。チャージまたはコードを登録すると続行できます。",
+    "blockedTitle": "残高を使い切りました",
+    "degradeConfirm": "モデルを切り替える",
+    "degradeDesc": "軽量モデルに切り替えて続行しますか？",
+    "degradeDone": "軽量モデルに切り替えました",
+    "degradeTitle": "残高がまもなくなくなります",
     "period": "直近 {{days}} 日間",
     "quotaTotal": "総額度",
     "quotaUsed": "使用済み",
     "rateLimits": "レート制限",
-    "resetsAt": "{{time}} にリセット"
+    "resetsAt": "{{time}} にリセット",
+    "warnToast": "残高の {{percent}}% を使用しました。まもなくチャージしてください"
   },
   "voiceInput": {
     "introConfirm": "了解",

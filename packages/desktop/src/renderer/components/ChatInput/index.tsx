@@ -18,6 +18,7 @@ import { type KeyboardEvent, type ReactNode, useCallback, useEffect, useMemo, us
 import { useTranslation } from 'react-i18next';
 import { toast } from '@/lib/toast';
 import AgentIcon from '@/components/AgentIcon';
+import ConfirmDialog from '@/components/semantic/ConfirmDialog';
 import ToolbarButton from '@/components/semantic/ToolbarButton';
 import { Button } from '@/components/ui/button';
 import {
@@ -83,7 +84,11 @@ function SelectionTag({
   );
 }
 
-export default function ChatInput() {
+interface ChatInputProps {
+  onNavigateToAccount?: () => void;
+}
+
+export default function ChatInput({ onNavigateToAccount }: ChatInputProps) {
   const { t } = useTranslation();
   const reduced = useReducedMotion();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -222,6 +227,11 @@ export default function ChatInput() {
     currentModelEntry,
     modelsByProvider,
     taskGwId: _taskGwId,
+    quotaBlocked,
+    setQuotaBlocked,
+    quotaDegrade,
+    setQuotaDegrade,
+    switchToFallbackModel,
     handleSend,
     handleModelQuickSend,
     handleThinkingQuickSend,
@@ -943,6 +953,30 @@ export default function ChatInput() {
           </div>
         )}
       </div>
+      <ConfirmDialog
+        open={quotaBlocked}
+        title={t('usage.blockedTitle')}
+        description={t('usage.blockedDesc')}
+        confirmLabel={t('account.recharge')}
+        cancelLabel={t('common.cancel')}
+        onConfirm={() => {
+          setQuotaBlocked(false);
+          onNavigateToAccount?.();
+        }}
+        onCancel={() => setQuotaBlocked(false)}
+      />
+      <ConfirmDialog
+        open={quotaDegrade}
+        title={t('usage.degradeTitle')}
+        description={t('usage.degradeDesc')}
+        confirmLabel={t('usage.degradeConfirm')}
+        cancelLabel={t('common.cancel')}
+        onConfirm={() => {
+          setQuotaDegrade(false);
+          void switchToFallbackModel();
+        }}
+        onCancel={() => setQuotaDegrade(false)}
+      />
       <VoiceIntroDialog open={isVoiceIntroOpen} onConfirm={confirmVoiceIntro} onCancel={dismissVoiceIntro} />
       <SlashCommandDashboard
         open={dashboardOpen}

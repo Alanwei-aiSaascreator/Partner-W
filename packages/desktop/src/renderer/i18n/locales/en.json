@@ -7,7 +7,11 @@
     "plan": "Current plan",
     "quotaPending": "No balance yet",
     "recharge": "Top up",
+    "rechargeConfirm": "Continue to top up",
     "rechargeHint": "Please contact support to top up",
+    "refundAgree": "I have read and agree to the refund policy",
+    "refundNotice": "Token balances are digital goods. Once a balance has been used it cannot be refunded; an unused balance can be refunded within 7 days of purchase.",
+    "refundTitle": "Refund policy",
     "signOut": "Sign out",
     "tokenQuota": "Token balance",
     "updatedAt": "Updated {{time}}"
@@ -868,11 +872,18 @@
   },
   "usage": {
     "balance": "Balance",
+    "blockedDesc": "Your token balance is used up. Top up or redeem a code to keep going.",
+    "blockedTitle": "Balance exhausted",
+    "degradeConfirm": "Switch model",
+    "degradeDesc": "Switch to the lightweight model to keep working?",
+    "degradeDone": "Switched to the lightweight model",
+    "degradeTitle": "Balance almost used up",
     "period": "Last {{days}} days",
     "quotaTotal": "Total quota",
     "quotaUsed": "Used",
     "rateLimits": "Rate Limits",
-    "resetsAt": "Resets at {{time}}"
+    "resetsAt": "Resets at {{time}}",
+    "warnToast": "Balance is {{percent}}% used — top up soon"
   },
   "voiceInput": {
     "introConfirm": "Got it",

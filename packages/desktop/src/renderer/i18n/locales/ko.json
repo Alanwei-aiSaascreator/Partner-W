@@ -7,7 +7,11 @@
     "plan": "현재 요금제",
     "quotaPending": "잔액 미설정",
     "recharge": "충전",
+    "rechargeConfirm": "충전 계속하기",
     "rechargeHint": "충전은 고객센터에 문의하세요",
+    "refundAgree": "환불 안내를 읽었으며 이에 동의합니다",
+    "refundNotice": "Token 잔액은 디지털 상품입니다. 사용한 부분은 환불되지 않으며, 사용하지 않은 부분은 구매 후 7일 이내에 환불을 신청할 수 있습니다.",
+    "refundTitle": "환불 안내",
     "signOut": "로그아웃",
     "tokenQuota": "Token 잔액",
     "updatedAt": "{{time}} 업데이트"
@@ -868,11 +872,18 @@
   },
   "usage": {
     "balance": "잔액",
+    "blockedDesc": "토큰 잔액이 모두 소진되었습니다. 충전하거나 코드를 등록하면 계속 사용할 수 있습니다.",
+    "blockedTitle": "잔액이 소진되었습니다",
+    "degradeConfirm": "모델 전환",
+    "degradeDesc": "경량 모델로 전환하여 계속하시겠습니까?",
+    "degradeDone": "경량 모델로 전환했습니다",
+    "degradeTitle": "잔액이 거의 소진되었습니다",
     "period": "최근 {{days}}일",
     "quotaTotal": "총 할당량",
     "quotaUsed": "사용됨",
     "rateLimits": "요청 제한",
-    "resetsAt": "{{time}}에 초기화"
+    "resetsAt": "{{time}}에 초기화",
+    "warnToast": "잔액의 {{percent}}%를 사용했습니다. 곧 충전하세요"
   },
   "voiceInput": {
     "introConfirm": "확인",
