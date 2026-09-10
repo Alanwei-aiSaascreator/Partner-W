@@ -34,6 +34,12 @@ export interface NotificationConfig {
   gatewayDisconnect?: boolean;
 }
 
+export interface CommercialConfig {
+  supabaseUrl: string;
+  supabaseAnonKey: string;
+  licenseKey?: string;
+}
+
 export interface AppConfig {
   workspacePath: string;
   theme?: 'dark' | 'light' | 'auto';
@@ -57,6 +63,7 @@ export interface AppConfig {
   devMode?: boolean;
   teamHubRegistries?: TeamHubRegistryConfig[];
   updateChannel?: 'stable' | 'beta';
+  commercial?: CommercialConfig;
 }
 
 function configFilePath(): string {

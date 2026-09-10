@@ -101,6 +101,41 @@ interface QuickLaunchSettings {
   shortcut: string;
 }
 
+interface CommercialProfile {
+  userId: string;
+  email: string | null;
+  phone: string | null;
+  nickname: string | null;
+  avatar: string | null;
+}
+
+interface CommercialOrg {
+  id: string;
+  name: string;
+  slug: string;
+  plan: string;
+  role: string;
+}
+
+interface CommercialSessionState {
+  signedIn: boolean;
+  profile: CommercialProfile | null;
+  orgs: CommercialOrg[];
+}
+
+interface CommercialLicenseStatus {
+  configured: boolean;
+  licenseKey: string | null;
+  sku: string | null;
+  status: string | null;
+  expiresAt: string | null;
+  maxActivations: number;
+  tokenQuotaCents: number;
+  tokenUsedCents: number;
+  activated: boolean;
+  deviceFingerprint: string;
+}
+
 interface QuickLaunchConfigResult {
   enabled: boolean;
   shortcut: string;
@@ -551,6 +586,26 @@ export interface ClawWorkAPI {
     registryId: string,
     slug: string,
   ) => Promise<IpcResult<{ parsed: ParsedTeam; agentFiles: Record<string, AgentFileSet> }>>;
+
+  commercialGetConfig: () => Promise<
+    IpcResult<{ supabaseUrl: string; hasAnonKey: boolean; licenseKey: string }>
+  >;
+  commercialSetConfig: (payload: {
+    supabaseUrl?: string;
+    supabaseAnonKey?: string;
+  }) => Promise<IpcResult>;
+  commercialSendOtp: (target: string) => Promise<IpcResult<{ target: string; channel: string }>>;
+  commercialVerifyOtp: (target: string, token: string) => Promise<IpcResult<{ userId: string | null }>>;
+  commercialSignInPassword: (
+    email: string,
+    password: string,
+  ) => Promise<IpcResult<{ userId: string | null }>>;
+  commercialSignOut: () => Promise<IpcResult>;
+  commercialSession: () => Promise<IpcResult<CommercialSessionState>>;
+  commercialLicenseStatus: () => Promise<IpcResult<CommercialLicenseStatus>>;
+  commercialLicenseActivate: (licenseKey: string) => Promise<IpcResult<CommercialLicenseStatus>>;
+  commercialLicenseClear: () => Promise<IpcResult>;
+  commercialDeviceFingerprint: () => Promise<string>;
 }
 
 declare global {

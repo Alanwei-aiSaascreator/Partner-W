@@ -431,6 +431,22 @@ function buildApi(): ClawWorkAPI {
     hubRemoveRegistry: (id: string) => ipcRenderer.invoke('hub:registry-remove', { id }),
     hubDownloadTeam: (registryId: string, slug: string) =>
       ipcRenderer.invoke('hub:team-download', { registryId, slug }),
+
+    commercialGetConfig: () => ipcRenderer.invoke('commercial:get-config'),
+    commercialSetConfig: (payload: { supabaseUrl?: string; supabaseAnonKey?: string }) =>
+      ipcRenderer.invoke('commercial:set-config', payload),
+    commercialSendOtp: (target: string) => ipcRenderer.invoke('commercial:send-otp', target),
+    commercialVerifyOtp: (target: string, token: string) =>
+      ipcRenderer.invoke('commercial:verify-otp', target, token),
+    commercialSignInPassword: (email: string, password: string) =>
+      ipcRenderer.invoke('commercial:sign-in-password', email, password),
+    commercialSignOut: () => ipcRenderer.invoke('commercial:sign-out'),
+    commercialSession: () => ipcRenderer.invoke('commercial:session'),
+    commercialLicenseStatus: () => ipcRenderer.invoke('commercial:license-status'),
+    commercialLicenseActivate: (licenseKey: string) =>
+      ipcRenderer.invoke('commercial:license-activate', licenseKey),
+    commercialLicenseClear: () => ipcRenderer.invoke('commercial:license-clear'),
+    commercialDeviceFingerprint: () => ipcRenderer.invoke('commercial:device-fingerprint'),
   };
 }
 
