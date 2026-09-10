@@ -89,6 +89,37 @@ export async function readLicenseStatus(): Promise<IpcResult<LicenseStatus>> {
   }
 }
 
+/**
+ * Translates what activate_license() raised into a code the UI can localise.
+ *
+ * check_activation_limit() runs as a BEFORE INSERT trigger and raises
+ * check_violation, so the activation limit is the one branch carrying a
+ * SQLSTATE of its own (23514). Everything else shares P0001, which says nothing
+ * about which check failed, so those still have to be told apart by the message
+ * text the function emits.
+ */
+function mapActivationError(error: { code?: string; message?: string }): string {
+  const sqlState = typeof error.code === 'string' ? error.code : '';
+  const message = String(error.message ?? '');
+
+  // The Chinese wording stays as a fallback: it is the only signal present when
+  // an error reaches us without a code.
+  if (sqlState === '23514' || message.includes('激活数已达上限')) return 'activation_limit_reached';
+
+  if (sqlState === 'P0002') {
+    // P0002 also covers "no organization for user", which is a broken account
+    // rather than a bad key — don't tell the user their card number is wrong.
+    return message.includes('organization') ? 'activation_failed' : 'license_not_found';
+  }
+
+  if (message.includes('not found')) return 'license_not_found';
+  if (message.includes('expired')) return 'license_expired';
+  if (message.includes('another organization')) return 'license_bound_elsewhere';
+  // Suspended / revoked cards come back as "license is <status>".
+  if (message.includes('license is ')) return 'license_inactive';
+  return 'activation_failed';
+}
+
 export async function activateLicense(licenseKey: string): Promise<IpcResult<LicenseStatus>> {
   const supabase = getCommercialClient();
   if (!supabase) {
@@ -100,40 +131,18 @@ export async function activateLicense(licenseKey: string): Promise<IpcResult<Lic
     return { ok: false, error: 'License key is empty', errorCode: 'empty_key' };
   }
 
-  const fingerprint = deviceFingerprint();
-
   try {
-    const { data: license, error: readError } = await supabase
-      .from('licenses')
-      .select('id, status, expires_at')
-      .eq('license_key', trimmed)
-      .maybeSingle();
+    // Direct table access cannot work here: a freshly minted licence has a null
+    // org_id, and the RLS policy is `org_id in (auth_org_ids())` — null matches
+    // nothing, so the row is invisible to every user. The definer function does
+    // the claim, the limit check and the activation row in one transaction.
+    const { error } = await supabase.rpc('activate_license', {
+      p_license_key: trimmed,
+      p_device_fingerprint: deviceFingerprint(),
+    });
 
-    if (readError) return fail(readError, 'license_read_failed');
-    if (!license) {
-      return { ok: false, error: 'License key not found', errorCode: 'license_not_found' };
-    }
-    if (license.status !== 'active') {
-      return { ok: false, error: `License is ${license.status}`, errorCode: 'license_inactive' };
-    }
-    if (license.expires_at && new Date(license.expires_at as string) < new Date()) {
-      return { ok: false, error: 'License expired', errorCode: 'license_expired' };
-    }
-
-    const { error: insertError } = await supabase
-      .from('license_activations')
-      .upsert(
-        { license_id: license.id, device_fingerprint: fingerprint, activated_at: new Date().toISOString() },
-        { onConflict: 'license_id,device_fingerprint', ignoreDuplicates: true },
-      );
-
-    if (insertError) {
-      const limitReached = String(insertError.message ?? '').includes('激活数已达上限');
-      return {
-        ok: false,
-        error: insertError.message,
-        errorCode: limitReached ? 'activation_limit_reached' : 'activation_failed',
-      };
+    if (error) {
+      return { ok: false, error: String(error.message ?? ''), errorCode: mapActivationError(error) };
     }
 
     updateConfig({ commercial: { ...readConfig()?.commercial, licenseKey: trimmed } as never });
