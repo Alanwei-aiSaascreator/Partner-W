@@ -234,7 +234,7 @@ function ChatHeader({
             )}
           </>
         ) : (
-          <h2 className="type-label text-[var(--text-muted)]">ClawWork</h2>
+          <h2 className="type-label text-[var(--text-muted)]">{t('common.appName')}</h2>
         )}
       </div>
       <div className="titlebar-no-drag flex items-center gap-1">

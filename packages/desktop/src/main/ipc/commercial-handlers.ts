@@ -2,6 +2,7 @@ import { ipcMain } from 'electron';
 import { readConfig, updateConfig } from '../workspace/config.js';
 import { clearCommercialSession, resetCommercialClient } from '../commercial/client.js';
 import {
+  readAccountOverview,
   readSessionState,
   sendLoginOtp,
   signOutCommercial,
@@ -14,9 +15,12 @@ export function registerCommercialHandlers(): void {
   ipcMain.handle('commercial:get-config', () => {
     const config = readConfig()?.commercial;
     return {
-      supabaseUrl: config?.supabaseUrl ?? '',
-      hasAnonKey: Boolean(config?.supabaseAnonKey),
-      licenseKey: config?.licenseKey ?? '',
+      ok: true,
+      result: {
+        supabaseUrl: config?.supabaseUrl ?? '',
+        hasAnonKey: Boolean(config?.supabaseAnonKey),
+        licenseKey: config?.licenseKey ?? '',
+      },
     };
   });
 
@@ -46,6 +50,7 @@ export function registerCommercialHandlers(): void {
     return result;
   });
   ipcMain.handle('commercial:session', () => readSessionState());
+  ipcMain.handle('commercial:account-overview', () => readAccountOverview());
 
   ipcMain.handle('commercial:license-status', () => readLicenseStatus());
   ipcMain.handle('commercial:license-activate', (_event, licenseKey: string) =>

@@ -442,6 +442,7 @@ function buildApi(): ClawWorkAPI {
       ipcRenderer.invoke('commercial:sign-in-password', email, password),
     commercialSignOut: () => ipcRenderer.invoke('commercial:sign-out'),
     commercialSession: () => ipcRenderer.invoke('commercial:session'),
+    commercialAccountOverview: () => ipcRenderer.invoke('commercial:account-overview'),
     commercialLicenseStatus: () => ipcRenderer.invoke('commercial:license-status'),
     commercialLicenseActivate: (licenseKey: string) =>
       ipcRenderer.invoke('commercial:license-activate', licenseKey),

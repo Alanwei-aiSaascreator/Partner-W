@@ -103,7 +103,10 @@
     "settings": "Settings",
     "switch": "switch",
     "task": "Task",
-    "time": "Time"
+    "time": "Time",
+    "appName": "Mofang Compass",
+    "loading": "Loading…",
+    "retry": "Retry"
   },
   "connection": {
     "addGateway": "Add Gateway",
@@ -657,7 +660,8 @@
     "workspaceChangeFailed": "Failed to migrate workspace: {{error}}",
     "workspaceHint": "AI artifact save location",
     "workspaceOldPathHint": "Old workspace at {{path}} was kept — you can delete it manually.",
-    "workspaceOpenFolder": "Open in Finder"
+    "workspaceOpenFolder": "Open in Finder",
+    "account": "Account"
   },
   "setup": {
     "back": "Back",
@@ -829,5 +833,43 @@
     "transcribing": "Transcribing...",
     "unsupported": "whisper-cpp not found. Run: brew install whisper-cpp, then download a model to ~/models/whisper/",
     "unsupportedTooltip": "Voice input requires whisper-cpp. Run: brew install whisper-cpp"
+  },
+  "login": {
+    "title": "Sign in to Mofang Compass",
+    "subtitle": "Enter your phone number and we will send a code",
+    "codeTitle": "Enter the code",
+    "codeSubtitle": "Code sent to +86{{phone}}",
+    "phonePlaceholder": "Phone number",
+    "codePlaceholder": "Code",
+    "sendCode": "Send code",
+    "signIn": "Sign in",
+    "agreement": "By signing in you agree to the {0} and {1}",
+    "resend": "Resend",
+    "resendIn": "Resend in {{seconds}}s",
+    "sendFailed": "Could not send the code, please try again",
+    "verifyFailed": "Code is incorrect or expired",
+    "codeSent": "Code sent to +86{{phone}}, please check",
+    "rateLimited": "Too many requests, try again in {{seconds}}s",
+    "serviceUnavailable": "SMS service is temporarily unavailable, please try later",
+    "changePhone": "Change number",
+    "termsOfService": "Terms of Service",
+    "privacyPolicy": "Privacy Policy",
+    "termsUrl": "https://example.com/terms",
+    "privacyUrl": "https://example.com/privacy"
+  },
+  "account": {
+    "tokenQuota": "Token balance",
+    "quotaPending": "No balance yet",
+    "device": "This device",
+    "activated": "Activated",
+    "notActivated": "Not activated",
+    "activate": "Activate",
+    "recharge": "Top up",
+    "signOut": "Sign out",
+    "offline": "Offline, data may be out of date",
+    "updatedAt": "Updated {{time}}",
+    "plan": "Current plan",
+    "activateHint": "Use license activation to bind a license key",
+    "rechargeHint": "Please contact support to top up"
   }
 }

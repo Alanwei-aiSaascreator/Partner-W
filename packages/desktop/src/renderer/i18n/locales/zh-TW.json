@@ -103,7 +103,10 @@
     "settings": "設定",
     "switch": "切換",
     "task": "任務",
-    "time": "時間"
+    "time": "時間",
+    "appName": "魔方羅盤",
+    "loading": "載入中…",
+    "retry": "重試"
   },
   "connection": {
     "addGateway": "新增 Gateway",
@@ -657,7 +660,8 @@
     "workspaceChangeFailed": "工作區遷移失敗：{{error}}",
     "workspaceHint": "AI 產出檔案的儲存位置",
     "workspaceOldPathHint": "舊工作區 {{path}} 已保留，你可以手動刪除。",
-    "workspaceOpenFolder": "在 Finder 中開啟"
+    "workspaceOpenFolder": "在 Finder 中開啟",
+    "account": "帳戶"
   },
   "setup": {
     "back": "上一步",
@@ -829,5 +833,43 @@
     "transcribing": "轉錄中…",
     "unsupported": "找不到 whisper-cpp。請執行：brew install whisper-cpp，然後下載模型至 ~/models/whisper/",
     "unsupportedTooltip": "語音輸入需要 whisper-cpp。請執行：brew install whisper-cpp"
+  },
+  "login": {
+    "title": "登入魔方羅盤",
+    "subtitle": "輸入手機號，我們會發送驗證碼",
+    "codeTitle": "輸入驗證碼",
+    "codeSubtitle": "驗證碼已發送至 +86{{phone}}",
+    "phonePlaceholder": "手機號",
+    "codePlaceholder": "驗證碼",
+    "sendCode": "取得驗證碼",
+    "signIn": "登入",
+    "agreement": "登入即表示同意{0}與{1}",
+    "resend": "重新發送",
+    "resendIn": "{{seconds}} 秒後可重新發送",
+    "sendFailed": "驗證碼發送失敗，請稍後重試",
+    "verifyFailed": "驗證碼不正確或已過期",
+    "codeSent": "驗證碼已傳送至 +86{{phone}}，請注意查收",
+    "rateLimited": "傳送過於頻繁，請 {{seconds}} 秒後再試",
+    "serviceUnavailable": "簡訊服務暫時無法使用，請稍後重試",
+    "changePhone": "更換手機號",
+    "termsOfService": "服務條款",
+    "privacyPolicy": "隱私政策",
+    "termsUrl": "https://example.com/terms",
+    "privacyUrl": "https://example.com/privacy"
+  },
+  "account": {
+    "tokenQuota": "Token 額度",
+    "quotaPending": "額度待開通",
+    "device": "本機裝置",
+    "activated": "已授權",
+    "notActivated": "未啟用",
+    "activate": "啟用授權",
+    "recharge": "儲值",
+    "signOut": "登出",
+    "offline": "離線，資料可能不是最新",
+    "updatedAt": "更新於 {{time}}",
+    "plan": "目前方案",
+    "activateHint": "請使用授權啟用功能綁定授權碼",
+    "rechargeHint": "請聯繫客服開通儲值"
   }
 }

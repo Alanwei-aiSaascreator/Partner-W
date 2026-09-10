@@ -103,7 +103,10 @@
     "settings": "Réglages",
     "switch": "changer",
     "task": "Tâche",
-    "time": "Heure"
+    "time": "Heure",
+    "appName": "Mofang Compass",
+    "loading": "Chargement…",
+    "retry": "Réessayer"
   },
   "connection": {
     "addGateway": "Ajouter une passerelle",
@@ -657,7 +660,8 @@
     "workspaceChangeFailed": "Échec de la migration de l'espace de travail : {{error}}",
     "workspaceHint": "Emplacement d'enregistrement des artefacts IA",
     "workspaceOldPathHint": "L'ancien espace de travail à {{path}} a été conservé — vous pouvez le supprimer manuellement.",
-    "workspaceOpenFolder": "Ouvrir dans le Finder"
+    "workspaceOpenFolder": "Ouvrir dans le Finder",
+    "account": "Compte"
   },
   "setup": {
     "back": "Retour",
@@ -829,5 +833,43 @@
     "transcribing": "Transcription…",
     "unsupported": "whisper-cpp introuvable. Exécutez : brew install whisper-cpp, puis téléchargez un modèle dans ~/models/whisper/",
     "unsupportedTooltip": "La saisie vocale nécessite whisper-cpp. Exécutez : brew install whisper-cpp"
+  },
+  "login": {
+    "title": "Se connecter à Mofang Compass",
+    "subtitle": "Saisissez votre numéro, nous enverrons un code",
+    "codeTitle": "Saisir le code",
+    "codeSubtitle": "Code envoyé au +86{{phone}}",
+    "phonePlaceholder": "Numéro de téléphone",
+    "codePlaceholder": "Code",
+    "sendCode": "Envoyer le code",
+    "signIn": "Se connecter",
+    "agreement": "En vous connectant, vous acceptez les {0} et la {1}",
+    "resend": "Renvoyer",
+    "resendIn": "Renvoyer dans {{seconds}}s",
+    "sendFailed": "Impossible d'envoyer le code, réessayez plus tard",
+    "verifyFailed": "Le code est incorrect ou expiré",
+    "codeSent": "Code envoyé au +86{{phone}}, veuillez vérifier",
+    "rateLimited": "Trop de demandes, réessayez dans {{seconds}} s",
+    "serviceUnavailable": "Service SMS temporairement indisponible, réessayez plus tard",
+    "changePhone": "Changer de numéro",
+    "termsOfService": "Conditions d'utilisation",
+    "privacyPolicy": "Politique de confidentialité",
+    "termsUrl": "https://example.com/terms",
+    "privacyUrl": "https://example.com/privacy"
+  },
+  "account": {
+    "tokenQuota": "Solde de tokens",
+    "quotaPending": "Aucun solde",
+    "device": "Cet appareil",
+    "activated": "Activé",
+    "notActivated": "Non activé",
+    "activate": "Activer",
+    "recharge": "Recharger",
+    "signOut": "Se déconnecter",
+    "offline": "Hors ligne, données possiblement obsolètes",
+    "updatedAt": "Mis à jour {{time}}",
+    "plan": "Forfait actuel",
+    "activateHint": "Utilisez l'activation de licence pour associer une clé",
+    "rechargeHint": "Contactez le support pour recharger"
   }
 }

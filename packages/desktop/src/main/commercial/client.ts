@@ -2,7 +2,16 @@ import { readFileSync, writeFileSync, existsSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { app, safeStorage } from 'electron';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import WebSocketImpl from 'ws';
 import { readConfig } from '../workspace/config.js';
+
+// @supabase/supabase-js builds its Realtime client eagerly and requires a global
+// WebSocket constructor. Electron 34 runs Node 20, which has none, so every
+// networking call — including plain auth — throws "native WebSocket not found".
+// Provide the `ws` implementation before createClient() is called.
+if (typeof globalThis.WebSocket === 'undefined') {
+  (globalThis as unknown as { WebSocket: unknown }).WebSocket = WebSocketImpl;
+}
 
 const SESSION_FILE = 'commercial-session.json';
 const ENCRYPTED_PREFIX = 'enc:';

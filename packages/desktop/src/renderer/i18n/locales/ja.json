@@ -103,7 +103,10 @@
     "settings": "設定",
     "switch": "切替",
     "task": "タスク",
-    "time": "時刻"
+    "time": "時刻",
+    "appName": "Mofang Compass",
+    "loading": "読み込み中…",
+    "retry": "再試行"
   },
   "connection": {
     "addGateway": "ゲートウェイを追加",
@@ -657,7 +660,8 @@
     "workspaceChangeFailed": "ワークスペースの移行に失敗しました: {{error}}",
     "workspaceHint": "AI 成果物の保存先",
     "workspaceOldPathHint": "旧ワークスペース {{path}} はそのまま残っています。手動で削除できます。",
-    "workspaceOpenFolder": "Finder で開く"
+    "workspaceOpenFolder": "Finder で開く",
+    "account": "アカウント"
   },
   "setup": {
     "back": "戻る",
@@ -829,5 +833,43 @@
     "transcribing": "文字起こし中...",
     "unsupported": "whisper-cpp が見つかりません。実行: brew install whisper-cpp 後、モデルを ~/models/whisper/ にダウンロードしてください",
     "unsupportedTooltip": "音声入力には whisper-cpp が必要です。実行: brew install whisper-cpp"
+  },
+  "login": {
+    "title": "Mofang Compass にログイン",
+    "subtitle": "電話番号を入力してください。確認コードをお送りします",
+    "codeTitle": "確認コードを入力",
+    "codeSubtitle": "+86{{phone}} に送信しました",
+    "phonePlaceholder": "電話番号",
+    "codePlaceholder": "確認コード",
+    "sendCode": "コードを送信",
+    "signIn": "ログイン",
+    "agreement": "サインインすると{0}および{1}に同意したものとみなされます",
+    "resend": "再送信",
+    "resendIn": "{{seconds}} 秒後に再送信できます",
+    "sendFailed": "コードを送信できませんでした。後でもう一度お試しください",
+    "verifyFailed": "コードが正しくないか期限切れです",
+    "codeSent": "認証コードを +86{{phone}} に送信しました。ご確認ください",
+    "rateLimited": "送信が多すぎます。{{seconds}} 秒后再試してください",
+    "serviceUnavailable": "SMS サービスが一時的に利用できません。後でもう一度お試しください",
+    "changePhone": "番号を変更",
+    "termsOfService": "利用規約",
+    "privacyPolicy": "プライバシーポリシー",
+    "termsUrl": "https://example.com/terms",
+    "privacyUrl": "https://example.com/privacy"
+  },
+  "account": {
+    "tokenQuota": "Token 残高",
+    "quotaPending": "残高未設定",
+    "device": "このデバイス",
+    "activated": "認証済み",
+    "notActivated": "未認証",
+    "activate": "ライセンス認証",
+    "recharge": "チャージ",
+    "signOut": "サインアウト",
+    "offline": "オフラインのため、最新でない可能性があります",
+    "updatedAt": "{{time}} 更新",
+    "plan": "現在のプラン",
+    "activateHint": "ライセンス認証でライセンスキーを登録してください",
+    "rechargeHint": "チャージはサポートにお問い合わせください"
   }
 }

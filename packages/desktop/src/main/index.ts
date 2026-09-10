@@ -41,6 +41,12 @@ let devModeEnabled = false;
 process.stdout?.on?.('error', () => {});
 process.stderr?.on?.('error', () => {});
 
+// Opt-in CDP endpoint for local debugging (CLAUDEW_DEBUG_PORT=9222).
+// Off unless the env var is set, so packaged builds are unaffected.
+if (process.env.CLAUDEW_DEBUG_PORT) {
+  app.commandLine.appendSwitch('remote-debugging-port', process.env.CLAUDEW_DEBUG_PORT);
+}
+
 function buildAppMenu(devMode = false): Menu {
   const isMac = process.platform === 'darwin';
   const viewSubmenu: Electron.MenuItemConstructorOptions[] = [

@@ -5,6 +5,7 @@ import LeftNav from './layouts/LeftNav';
 import MainArea from './layouts/MainArea';
 import RightPanel from './layouts/RightPanel';
 import Setup from './layouts/Setup';
+import Login from './layouts/Login';
 import Settings from './layouts/Settings';
 import ApprovalDialog from './components/ApprovalDialog';
 import CommandPalette from './components/CommandPalette';
@@ -38,6 +39,7 @@ function AppToaster({ themeMode }: { themeMode: Theme }) {
 export default function App() {
   const [ready, setReady] = useState(false);
   const [needsSetup, setNeedsSetup] = useState(false);
+  const [authState, setAuthState] = useState<'checking' | 'required' | 'ok'>('checking');
 
   const rightPanelOpen = useUiStore((s) => s.rightPanelOpen);
   const toggleRightPanel = useUiStore((s) => s.toggleRightPanel);
@@ -119,6 +121,42 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+    const timeout = setTimeout(() => {
+      if (!cancelled) setAuthState((prev) => (prev === 'checking' ? 'required' : prev));
+    }, 5000);
+
+    (async () => {
+      try {
+        const config = await window.clawwork.commercialGetConfig();
+        const configured = Boolean(
+          config.ok && config.result?.supabaseUrl && config.result?.hasAnonKey,
+        );
+        if (cancelled) return;
+        if (!configured) {
+          setAuthState('ok');
+          return;
+        }
+        const session = await window.clawwork.commercialSession();
+        if (cancelled) return;
+        const signedIn = Boolean(session.ok && session.result?.signedIn);
+        setAuthState(signedIn ? 'ok' : 'required');
+      } catch (err) {
+        // Fail closed — a thrown session check must not bypass the login gate.
+        console.error('[App] commercial auth check failed:', err);
+        if (!cancelled) setAuthState('required');
+      } finally {
+        clearTimeout(timeout);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timeout);
+    };
+  }, []);
+
+  useEffect(() => {
     window.clawwork.setWindowButtonVisibility(!leftNavCollapsed);
   }, [leftNavCollapsed]);
 
@@ -146,6 +184,17 @@ export default function App() {
       cleanupSettings();
     };
   }, [setActiveTask, setSettingsOpen, setMainView]);
+
+  if (authState === 'checking') return null;
+
+  if (authState === 'required') {
+    return (
+      <TooltipProvider>
+        <Login onSignedIn={() => setAuthState('ok')} />
+        <AppToaster themeMode={themeMode} />
+      </TooltipProvider>
+    );
+  }
 
   if (needsSetup) {
     return (

@@ -229,6 +229,40 @@ export interface IpcResult<T = unknown> {
   pairingRequired?: boolean;
 }
 
+/**
+ * Atomic snapshot of everything the Account settings panel needs.
+ *
+ * Deliberately a single payload: the panel shows identity, plan and token
+ * balance together, and reading them from separate round-trips would let the
+ * UI render a mix of two different points in time.
+ */
+export interface CommercialAccountOverview {
+  account: {
+    userId: string;
+    phone: string | null;
+    email: string | null;
+    nickname: string | null;
+    avatar: string | null;
+  };
+  org: { id: string; name: string; plan: string; role: string } | null;
+  /** null when the org has no license yet — a normal state, not an error. */
+  license: CommercialLicenseSummary | null;
+  device: { fingerprint: string; shortFingerprint: string };
+  /** ISO timestamp of when this snapshot was read. */
+  fetchedAt: string;
+}
+
+export interface CommercialLicenseSummary {
+  /** Whether *this device* holds a non-revoked activation. */
+  activated: boolean;
+  licenseKey: string | null;
+  sku: string | null;
+  status: string | null;
+  expiresAt: string | null;
+  tokenQuotaCents: number;
+  tokenUsedCents: number;
+}
+
 export interface ChatAttachment {
   mimeType: string;
   fileName: string;

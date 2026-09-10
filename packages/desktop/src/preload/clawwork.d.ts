@@ -32,6 +32,7 @@ import type {
   ParsedTeam,
   AgentFileSet,
   SessionsPreviewResult,
+  CommercialAccountOverview,
 } from '@clawwork/shared';
 
 type IpcResult<T = Record<string, unknown>> = SharedIpcResult<T>;
@@ -602,6 +603,7 @@ export interface ClawWorkAPI {
   ) => Promise<IpcResult<{ userId: string | null }>>;
   commercialSignOut: () => Promise<IpcResult>;
   commercialSession: () => Promise<IpcResult<CommercialSessionState>>;
+  commercialAccountOverview: () => Promise<IpcResult<CommercialAccountOverview>>;
   commercialLicenseStatus: () => Promise<IpcResult<CommercialLicenseStatus>>;
   commercialLicenseActivate: (licenseKey: string) => Promise<IpcResult<CommercialLicenseStatus>>;
   commercialLicenseClear: () => Promise<IpcResult>;

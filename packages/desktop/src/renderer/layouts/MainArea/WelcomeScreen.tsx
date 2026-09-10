@@ -212,7 +212,7 @@ export default function WelcomeScreen() {
         <div className="absolute inset-0 scale-[2.5] rounded-full bg-[var(--accent)] opacity-[0.06] blur-2xl" />
         <img src={logo} alt="Mofang Compass" className="relative w-16 h-16 rounded-2xl shadow-[var(--glow-accent)]" />
       </div>
-      <h3 className="type-page-title mb-6 text-[var(--text-primary)]">ClawWork</h3>
+      <h3 className="type-page-title mb-6 text-[var(--text-primary)]">{t('common.appName')}</h3>
 
       <div className="flex flex-col items-center w-full max-w-lg">
         <div className="flex items-center gap-1 rounded-full bg-[var(--bg-secondary)] p-1.5">

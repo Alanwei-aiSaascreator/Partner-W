@@ -103,7 +103,10 @@
     "settings": "设置",
     "switch": "切换",
     "task": "任务",
-    "time": "时间"
+    "time": "时间",
+    "appName": "魔方罗盘",
+    "loading": "加载中…",
+    "retry": "重试"
   },
   "connection": {
     "addGateway": "添加网关",
@@ -657,7 +660,8 @@
     "workspaceChangeFailed": "工作空间迁移失败：{{error}}",
     "workspaceHint": "AI 产物保存位置",
     "workspaceOldPathHint": "旧工作空间（{{path}}）已保留，可手动删除。",
-    "workspaceOpenFolder": "打开目录"
+    "workspaceOpenFolder": "打开目录",
+    "account": "账户"
   },
   "setup": {
     "back": "返回",
@@ -829,5 +833,43 @@
     "transcribing": "正在识别…",
     "unsupported": "未找到 whisper-cpp，请运行 brew install whisper-cpp 并下载模型到 ~/models/whisper/",
     "unsupportedTooltip": "语音输入需要 whisper-cpp，请运行: brew install whisper-cpp"
+  },
+  "login": {
+    "title": "登录魔方罗盘",
+    "subtitle": "输入手机号，我们会发送验证码",
+    "codeTitle": "输入验证码",
+    "codeSubtitle": "验证码已发送至 +86{{phone}}",
+    "phonePlaceholder": "手机号",
+    "codePlaceholder": "验证码",
+    "sendCode": "获取验证码",
+    "signIn": "登录",
+    "agreement": "登录即表示同意{0}与{1}",
+    "resend": "重新发送",
+    "resendIn": "{{seconds}} 秒后可重新发送",
+    "sendFailed": "验证码发送失败，请稍后重试",
+    "verifyFailed": "验证码不正确或已过期",
+    "codeSent": "验证码已发送至 +86{{phone}}，请注意查收",
+    "rateLimited": "发送太频繁，请 {{seconds}} 秒后再试",
+    "serviceUnavailable": "短信服务暂时不可用，请稍后重试",
+    "changePhone": "更换手机号",
+    "termsOfService": "服务条款",
+    "privacyPolicy": "隐私政策",
+    "termsUrl": "https://example.com/terms",
+    "privacyUrl": "https://example.com/privacy"
+  },
+  "account": {
+    "tokenQuota": "Token 额度",
+    "quotaPending": "额度待开通",
+    "device": "本机设备",
+    "activated": "已授权",
+    "notActivated": "未激活",
+    "activate": "激活授权",
+    "recharge": "充值",
+    "signOut": "退出登录",
+    "offline": "离线，数据可能不是最新",
+    "updatedAt": "更新于 {{time}}",
+    "plan": "当前套餐",
+    "activateHint": "请使用授权激活功能绑定授权码",
+    "rechargeHint": "请联系客服开通充值"
   }
 }

@@ -103,7 +103,10 @@
     "settings": "Configurações",
     "switch": "alternar",
     "task": "Tarefa",
-    "time": "Hora"
+    "time": "Hora",
+    "appName": "Mofang Compass",
+    "loading": "Carregando…",
+    "retry": "Tentar novamente"
   },
   "connection": {
     "addGateway": "Adicionar Gateway",
@@ -657,7 +660,8 @@
     "workspaceChangeFailed": "Falha ao migrar workspace: {{error}}",
     "workspaceHint": "Local de salvamento dos artefatos de IA",
     "workspaceOldPathHint": "O workspace antigo em {{path}} foi mantido — você pode excluí-lo manualmente.",
-    "workspaceOpenFolder": "Abrir no Finder"
+    "workspaceOpenFolder": "Abrir no Finder",
+    "account": "Conta"
   },
   "setup": {
     "back": "Voltar",
@@ -829,5 +833,43 @@
     "transcribing": "Transcrevendo...",
     "unsupported": "whisper-cpp não encontrado. Execute: brew install whisper-cpp, depois baixe um modelo em ~/models/whisper/",
     "unsupportedTooltip": "A entrada de voz requer whisper-cpp. Execute: brew install whisper-cpp"
+  },
+  "login": {
+    "title": "Entrar no Mofang Compass",
+    "subtitle": "Informe seu telefone e enviaremos um código",
+    "codeTitle": "Digite o código",
+    "codeSubtitle": "Código enviado para +86{{phone}}",
+    "phonePlaceholder": "Telefone",
+    "codePlaceholder": "Código",
+    "sendCode": "Enviar código",
+    "signIn": "Entrar",
+    "agreement": "Ao entrar, você concorda com os {0} e a {1}",
+    "resend": "Reenviar",
+    "resendIn": "Reenviar em {{seconds}}s",
+    "sendFailed": "Não foi possível enviar o código, tente mais tarde",
+    "verifyFailed": "O código está incorreto ou expirado",
+    "codeSent": "Código enviado para +86{{phone}}, por favor verifique",
+    "rateLimited": "Muitas solicitações, tente novamente em {{seconds}}s",
+    "serviceUnavailable": "Serviço de SMS temporariamente indisponível, tente mais tarde",
+    "changePhone": "Alterar número",
+    "termsOfService": "Termos de Serviço",
+    "privacyPolicy": "Política de Privacidade",
+    "termsUrl": "https://example.com/terms",
+    "privacyUrl": "https://example.com/privacy"
+  },
+  "account": {
+    "tokenQuota": "Saldo de tokens",
+    "quotaPending": "Sem saldo",
+    "device": "Este dispositivo",
+    "activated": "Ativado",
+    "notActivated": "Não ativado",
+    "activate": "Ativar",
+    "recharge": "Recarregar",
+    "signOut": "Sair",
+    "offline": "Offline, os dados podem estar desatualizados",
+    "updatedAt": "Atualizado {{time}}",
+    "plan": "Plano atual",
+    "activateHint": "Use a ativação de licença para vincular uma chave",
+    "rechargeHint": "Contate o suporte para recarregar"
   }
 }
