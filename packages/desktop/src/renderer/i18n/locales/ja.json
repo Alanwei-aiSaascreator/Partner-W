@@ -854,8 +854,8 @@
     "changePhone": "番号を変更",
     "termsOfService": "利用規約",
     "privacyPolicy": "プライバシーポリシー",
-    "termsUrl": "https://example.com/terms",
-    "privacyUrl": "https://example.com/privacy"
+    "termsUrl": "https://www.rongyinghudong.com/privacy.html",
+    "privacyUrl": "https://www.rongyinghudong.com/privacy.html"
   },
   "account": {
     "tokenQuota": "Token 残高",

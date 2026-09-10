@@ -854,8 +854,8 @@
     "changePhone": "Cambiar número",
     "termsOfService": "Términos de servicio",
     "privacyPolicy": "Política de privacidad",
-    "termsUrl": "https://example.com/terms",
-    "privacyUrl": "https://example.com/privacy"
+    "termsUrl": "https://www.rongyinghudong.com/privacy.html",
+    "privacyUrl": "https://www.rongyinghudong.com/privacy.html"
   },
   "account": {
     "tokenQuota": "Saldo de tokens",

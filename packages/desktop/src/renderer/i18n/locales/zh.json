@@ -854,8 +854,8 @@
     "changePhone": "更换手机号",
     "termsOfService": "服务条款",
     "privacyPolicy": "隐私政策",
-    "termsUrl": "https://example.com/terms",
-    "privacyUrl": "https://example.com/privacy"
+    "termsUrl": "https://www.rongyinghudong.com/privacy.html",
+    "privacyUrl": "https://www.rongyinghudong.com/privacy.html"
   },
   "account": {
     "tokenQuota": "Token 额度",
