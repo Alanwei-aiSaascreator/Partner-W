@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { motion as motionPresets, motionDuration } from '@/styles/design-tokens';
 import WindowTitlebar from '@/components/semantic/WindowTitlebar';
 import SettingsNav, { type SettingsSection } from './SettingsNav';
+import ActivationSection from './sections/ActivationSection';
 import AccountSection from './sections/AccountSection';
 import GeneralSection from './sections/GeneralSection';
 import SystemSection from './sections/SystemSection';
@@ -13,6 +14,7 @@ import SkillsSection from './sections/SkillsSection';
 import AboutSection from './sections/AboutSection';
 
 const SECTION_COMPONENTS: Record<SettingsSection, ComponentType> = {
+  activation: ActivationSection,
   account: AccountSection,
   general: GeneralSection,
   system: SystemSection,

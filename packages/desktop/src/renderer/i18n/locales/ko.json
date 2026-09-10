@@ -1,4 +1,34 @@
 {
+  "account": {
+    "activated": "인증됨",
+    "device": "이 기기",
+    "notActivated": "미인증",
+    "offline": "오프라인, 최신 데이터가 아닐 수 있습니다",
+    "plan": "현재 요금제",
+    "quotaPending": "잔액 미설정",
+    "recharge": "충전",
+    "rechargeHint": "충전은 고객센터에 문의하세요",
+    "signOut": "로그아웃",
+    "tokenQuota": "Token 잔액",
+    "updatedAt": "{{time}} 업데이트"
+  },
+  "activation": {
+    "bound": "Bound license",
+    "boundDesc": "This account is bound to {{sku}}",
+    "errorBoundElsewhere": "This license is already bound to another account",
+    "errorEmpty": "Please enter a license key",
+    "errorExpired": "This license has expired",
+    "errorGeneric": "Activation failed, please try again",
+    "errorInactive": "This license is not active",
+    "errorLimit": "The device limit for this license has been reached",
+    "errorNotConfigured": "Commercial backend is not configured",
+    "errorNotFound": "That license key was not found, please check for typos",
+    "placeholder": "License key",
+    "submit": "Activate",
+    "subtitle": "Enter the license key from your USB drive to bind it to this account",
+    "success": "Activation succeeded",
+    "title": "License activation"
+  },
   "agent": {
     "modelFallback": "모델이 변경되었습니다: {{model}}"
   },
@@ -76,6 +106,7 @@
     "toggleTheme": "테마 전환"
   },
   "common": {
+    "appName": "Mofang Compass",
     "back": "뒤로",
     "cancel": "취소",
     "close": "닫기",
@@ -90,6 +121,7 @@
     "gateway": "게이트웨이",
     "justNow": "방금",
     "light": "라이트",
+    "loading": "불러오는 중…",
     "minAgo": "{{count}}분 전",
     "missing": "누락",
     "moreActions": "추가 작업",
@@ -98,15 +130,13 @@
     "noFiles": "파일이 없습니다",
     "notConfigured": "구성되지 않음",
     "noTitle": "(제목 없음)",
+    "retry": "다시 시도",
     "save": "저장",
     "select": "선택",
     "settings": "설정",
     "switch": "전환",
     "task": "작업",
-    "time": "시간",
-    "appName": "Mofang Compass",
-    "loading": "불러오는 중…",
-    "retry": "다시 시도"
+    "time": "시간"
   },
   "connection": {
     "addGateway": "게이트웨이 추가",
@@ -332,6 +362,7 @@
     "revealInFolder": "Finder에서 표시"
   },
   "leftNav": {
+    "allAgents": "모든 에이전트",
     "appSettings": "앱 설정",
     "archivedChats": "보관된 대화",
     "collapseNav": "사이드바 접기",
@@ -342,13 +373,35 @@
     "groupOlder": "이전",
     "groupToday": "오늘",
     "groupYesterday": "어제",
+    "noAgents": "에이전트 없음",
     "noPreview": "아직 메시지 없음",
     "scheduledTasks": "예약 작업",
     "searchTasks": "작업 검색…",
-    "updateAvailable": "업데이트 가능",
-    "allAgents": "모든 에이전트",
     "switchAgent": "에이전트 전환",
-    "noAgents": "에이전트 없음"
+    "updateAvailable": "업데이트 가능"
+  },
+  "login": {
+    "agreement": "로그인하면 {0} 및 {1}에 동의하는 것으로 간주됩니다",
+    "changePhone": "번호 변경",
+    "codePlaceholder": "인증 코드",
+    "codeSent": "인증 코드를 +86{{phone}}로 보냈습니다. 확인해 주세요",
+    "codeSubtitle": "+86{{phone}} 으로 전송되었습니다",
+    "codeTitle": "인증 코드 입력",
+    "phonePlaceholder": "전화번호",
+    "privacyPolicy": "개인정보 처리방침",
+    "privacyUrl": "https://www.rongyinghudong.com/privacy.html",
+    "rateLimited": "너무 자주 요청했습니다. {{seconds}}초 후 다시 시도하세요",
+    "resend": "재전송",
+    "resendIn": "{{seconds}}초 후 재전송 가능",
+    "sendCode": "코드 전송",
+    "sendFailed": "코드를 보내지 못했습니다. 나중에 다시 시도해 주세요",
+    "serviceUnavailable": "SMS 서비스를 일시적으로 사용할 수 없습니다. 나중에 다시 시도하세요",
+    "signIn": "로그인",
+    "subtitle": "전화번호를 입력하시면 인증 코드를 보내드립니다",
+    "termsOfService": "서비스 약관",
+    "termsUrl": "https://www.rongyinghudong.com/privacy.html",
+    "title": "Mofang Compass 로그인",
+    "verifyFailed": "코드가 올바르지 않거나 만료되었습니다"
   },
   "mainArea": {
     "browseHub": "팀 허브 둘러보기",
@@ -410,6 +463,8 @@
   "settings": {
     "about": "정보",
     "aboutDesc": "버전, 업데이트, 링크",
+    "account": "계정",
+    "activation": "Activation",
     "addAgent": "에이전트 추가",
     "addFirstGateway": "첫 번째 게이트웨이를 추가하세요",
     "addGateway": "게이트웨이 추가",
@@ -478,10 +533,12 @@
     "channelBeta": "베타",
     "channelStable": "안정",
     "checkForUpdates": "업데이트 확인",
+    "companySite": "웹사이트 방문",
     "confirmDeleteAgentDesc": "에이전트 \"{{name}}\"을(를) 삭제하시겠습니까? 이 에이전트를 사용하는 기존 작업의 세션은 유지되지만, 새 작업에서는 이 에이전트를 사용할 수 없습니다.",
     "confirmDeleteAgentTitle": "에이전트 삭제",
     "confirmDeleteDesc": "\"{{name}}\"을(를) 제거하시겠습니까? 이 게이트웨이에 대한 활성 연결이 종료됩니다.",
     "confirmDeleteTitle": "게이트웨이 제거",
+    "contactSupport": "고객센터 문의",
     "default": "기본값",
     "defaultUpdated": "기본 게이트웨이가 변경되었습니다",
     "deleteFiles": "서버의 워크스페이스 파일도 함께 삭제",
@@ -657,10 +714,7 @@
     "workspaceChangeFailed": "워크스페이스 마이그레이션 실패: {{error}}",
     "workspaceHint": "AI 산출물 저장 위치",
     "workspaceOldPathHint": "이전 워크스페이스({{path}})는 유지됩니다 — 수동으로 삭제할 수 있습니다.",
-    "workspaceOpenFolder": "Finder에서 열기",
-    "account": "계정",
-    "companySite": "웹사이트 방문",
-    "contactSupport": "고객센터 문의"
+    "workspaceOpenFolder": "Finder에서 열기"
   },
   "setup": {
     "back": "뒤로",
@@ -832,43 +886,5 @@
     "transcribing": "변환 중...",
     "unsupported": "whisper-cpp를 찾을 수 없습니다. 실행: brew install whisper-cpp, 그 후 ~/models/whisper/에 모델을 다운로드하세요",
     "unsupportedTooltip": "음성 입력에는 whisper-cpp가 필요합니다. 실행: brew install whisper-cpp"
-  },
-  "login": {
-    "title": "Mofang Compass 로그인",
-    "subtitle": "전화번호를 입력하시면 인증 코드를 보내드립니다",
-    "codeTitle": "인증 코드 입력",
-    "codeSubtitle": "+86{{phone}} 으로 전송되었습니다",
-    "phonePlaceholder": "전화번호",
-    "codePlaceholder": "인증 코드",
-    "sendCode": "코드 전송",
-    "signIn": "로그인",
-    "agreement": "로그인하면 {0} 및 {1}에 동의하는 것으로 간주됩니다",
-    "resend": "재전송",
-    "resendIn": "{{seconds}}초 후 재전송 가능",
-    "sendFailed": "코드를 보내지 못했습니다. 나중에 다시 시도해 주세요",
-    "verifyFailed": "코드가 올바르지 않거나 만료되었습니다",
-    "codeSent": "인증 코드를 +86{{phone}}로 보냈습니다. 확인해 주세요",
-    "rateLimited": "너무 자주 요청했습니다. {{seconds}}초 후 다시 시도하세요",
-    "serviceUnavailable": "SMS 서비스를 일시적으로 사용할 수 없습니다. 나중에 다시 시도하세요",
-    "changePhone": "번호 변경",
-    "termsOfService": "서비스 약관",
-    "privacyPolicy": "개인정보 처리방침",
-    "termsUrl": "https://www.rongyinghudong.com/privacy.html",
-    "privacyUrl": "https://www.rongyinghudong.com/privacy.html"
-  },
-  "account": {
-    "tokenQuota": "Token 잔액",
-    "quotaPending": "잔액 미설정",
-    "device": "이 기기",
-    "activated": "인증됨",
-    "notActivated": "미인증",
-    "activate": "라이선스 활성화",
-    "recharge": "충전",
-    "signOut": "로그아웃",
-    "offline": "오프라인, 최신 데이터가 아닐 수 있습니다",
-    "updatedAt": "{{time}} 업데이트",
-    "plan": "현재 요금제",
-    "activateHint": "라이선스 활성화로 라이선스 키를 등록하세요",
-    "rechargeHint": "충전은 고객센터에 문의하세요"
   }
 }

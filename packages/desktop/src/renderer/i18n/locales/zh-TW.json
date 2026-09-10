@@ -1,4 +1,34 @@
 {
+  "account": {
+    "activated": "已授權",
+    "device": "本機裝置",
+    "notActivated": "未啟用",
+    "offline": "離線，資料可能不是最新",
+    "plan": "目前方案",
+    "quotaPending": "額度待開通",
+    "recharge": "儲值",
+    "rechargeHint": "請聯繫客服開通儲值",
+    "signOut": "登出",
+    "tokenQuota": "Token 額度",
+    "updatedAt": "更新於 {{time}}"
+  },
+  "activation": {
+    "bound": "已綁定授權",
+    "boundDesc": "目前帳戶已綁定 {{sku}}",
+    "errorBoundElsewhere": "該授權已綁定到其他帳戶",
+    "errorEmpty": "請輸入授權碼",
+    "errorExpired": "該授權已過期",
+    "errorGeneric": "啟用失敗，請重試",
+    "errorInactive": "該授權未處於有效狀態",
+    "errorLimit": "該授權的裝置數已達上限",
+    "errorNotConfigured": "商業後端未設定",
+    "errorNotFound": "找不到該授權碼，請檢查是否輸入有誤",
+    "placeholder": "授權碼",
+    "submit": "啟用",
+    "subtitle": "輸入 U 盤隨附的授權碼以綁定到目前帳戶",
+    "success": "啟用成功",
+    "title": "啟用授權"
+  },
   "agent": {
     "modelFallback": "已切換至模型：{{model}}"
   },
@@ -76,6 +106,7 @@
     "toggleTheme": "切換主題"
   },
   "common": {
+    "appName": "魔方羅盤",
     "back": "返回",
     "cancel": "取消",
     "close": "關閉",
@@ -90,6 +121,7 @@
     "gateway": "Gateway",
     "justNow": "剛剛",
     "light": "淺色",
+    "loading": "載入中…",
     "minAgo": "{{count}} 分鐘前",
     "missing": "缺少",
     "moreActions": "更多操作",
@@ -98,15 +130,13 @@
     "noFiles": "尚無檔案",
     "notConfigured": "尚未設定",
     "noTitle": "（無標題）",
+    "retry": "重試",
     "save": "儲存",
     "select": "選取",
     "settings": "設定",
     "switch": "切換",
     "task": "任務",
-    "time": "時間",
-    "appName": "魔方羅盤",
-    "loading": "載入中…",
-    "retry": "重試"
+    "time": "時間"
   },
   "connection": {
     "addGateway": "新增 Gateway",
@@ -332,6 +362,7 @@
     "revealInFolder": "在 Finder 中顯示"
   },
   "leftNav": {
+    "allAgents": "全部智能體",
     "appSettings": "應用程式設定",
     "archivedChats": "已封存對話",
     "collapseNav": "收合側邊欄",
@@ -342,13 +373,35 @@
     "groupOlder": "更早",
     "groupToday": "今天",
     "groupYesterday": "昨天",
+    "noAgents": "暫無智能體",
     "noPreview": "尚無訊息",
     "scheduledTasks": "排程任務",
     "searchTasks": "搜尋任務…",
-    "updateAvailable": "有可用更新",
-    "allAgents": "全部智能體",
     "switchAgent": "切換智能體",
-    "noAgents": "暫無智能體"
+    "updateAvailable": "有可用更新"
+  },
+  "login": {
+    "agreement": "登入即表示同意{0}與{1}",
+    "changePhone": "更換手機號",
+    "codePlaceholder": "驗證碼",
+    "codeSent": "驗證碼已傳送至 +86{{phone}}，請注意查收",
+    "codeSubtitle": "驗證碼已發送至 +86{{phone}}",
+    "codeTitle": "輸入驗證碼",
+    "phonePlaceholder": "手機號",
+    "privacyPolicy": "隱私政策",
+    "privacyUrl": "https://www.rongyinghudong.com/privacy.html",
+    "rateLimited": "傳送過於頻繁，請 {{seconds}} 秒後再試",
+    "resend": "重新發送",
+    "resendIn": "{{seconds}} 秒後可重新發送",
+    "sendCode": "取得驗證碼",
+    "sendFailed": "驗證碼發送失敗，請稍後重試",
+    "serviceUnavailable": "簡訊服務暫時無法使用，請稍後重試",
+    "signIn": "登入",
+    "subtitle": "輸入手機號，我們會發送驗證碼",
+    "termsOfService": "服務條款",
+    "termsUrl": "https://www.rongyinghudong.com/privacy.html",
+    "title": "登入魔方羅盤",
+    "verifyFailed": "驗證碼不正確或已過期"
   },
   "mainArea": {
     "browseHub": "瀏覽團隊市場",
@@ -410,6 +463,8 @@
   "settings": {
     "about": "關於",
     "aboutDesc": "版本、更新與連結",
+    "account": "帳戶",
+    "activation": "啟用授權",
     "addAgent": "新增代理",
     "addFirstGateway": "新增你的第一個 Gateway",
     "addGateway": "新增 Gateway",
@@ -478,10 +533,12 @@
     "channelBeta": "測試版",
     "channelStable": "穩定版",
     "checkForUpdates": "檢查更新",
+    "companySite": "造訪官網",
     "confirmDeleteAgentDesc": "確定刪除代理「{{name}}」？使用此代理的現有任務會保留工作階段，但新任務將無法指定此代理。",
     "confirmDeleteAgentTitle": "刪除代理",
     "confirmDeleteDesc": "確定移除「{{name}}」？與此 Gateway 的活動連線將被中斷。",
     "confirmDeleteTitle": "移除 Gateway",
+    "contactSupport": "聯繫客服",
     "default": "預設",
     "defaultUpdated": "預設 Gateway 已更新",
     "deleteFiles": "同時刪除伺服器上的工作區檔案",
@@ -657,10 +714,7 @@
     "workspaceChangeFailed": "工作區遷移失敗：{{error}}",
     "workspaceHint": "AI 產出檔案的儲存位置",
     "workspaceOldPathHint": "舊工作區 {{path}} 已保留，你可以手動刪除。",
-    "workspaceOpenFolder": "在 Finder 中開啟",
-    "account": "帳戶",
-    "companySite": "造訪官網",
-    "contactSupport": "聯繫客服"
+    "workspaceOpenFolder": "在 Finder 中開啟"
   },
   "setup": {
     "back": "上一步",
@@ -832,43 +886,5 @@
     "transcribing": "轉錄中…",
     "unsupported": "找不到 whisper-cpp。請執行：brew install whisper-cpp，然後下載模型至 ~/models/whisper/",
     "unsupportedTooltip": "語音輸入需要 whisper-cpp。請執行：brew install whisper-cpp"
-  },
-  "login": {
-    "title": "登入魔方羅盤",
-    "subtitle": "輸入手機號，我們會發送驗證碼",
-    "codeTitle": "輸入驗證碼",
-    "codeSubtitle": "驗證碼已發送至 +86{{phone}}",
-    "phonePlaceholder": "手機號",
-    "codePlaceholder": "驗證碼",
-    "sendCode": "取得驗證碼",
-    "signIn": "登入",
-    "agreement": "登入即表示同意{0}與{1}",
-    "resend": "重新發送",
-    "resendIn": "{{seconds}} 秒後可重新發送",
-    "sendFailed": "驗證碼發送失敗，請稍後重試",
-    "verifyFailed": "驗證碼不正確或已過期",
-    "codeSent": "驗證碼已傳送至 +86{{phone}}，請注意查收",
-    "rateLimited": "傳送過於頻繁，請 {{seconds}} 秒後再試",
-    "serviceUnavailable": "簡訊服務暫時無法使用，請稍後重試",
-    "changePhone": "更換手機號",
-    "termsOfService": "服務條款",
-    "privacyPolicy": "隱私政策",
-    "termsUrl": "https://www.rongyinghudong.com/privacy.html",
-    "privacyUrl": "https://www.rongyinghudong.com/privacy.html"
-  },
-  "account": {
-    "tokenQuota": "Token 額度",
-    "quotaPending": "額度待開通",
-    "device": "本機裝置",
-    "activated": "已授權",
-    "notActivated": "未啟用",
-    "activate": "啟用授權",
-    "recharge": "儲值",
-    "signOut": "登出",
-    "offline": "離線，資料可能不是最新",
-    "updatedAt": "更新於 {{time}}",
-    "plan": "目前方案",
-    "activateHint": "請使用授權啟用功能綁定授權碼",
-    "rechargeHint": "請聯繫客服開通儲值"
   }
 }

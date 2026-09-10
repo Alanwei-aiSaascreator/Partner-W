@@ -1,12 +1,13 @@
 import { motion } from 'framer-motion';
-import { Settings2, MonitorDot, Server, Bot, Blocks, Info, UserRound } from 'lucide-react';
+import { Settings2, MonitorDot, Server, Bot, Blocks, Info, UserRound, KeyRound } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { cn } from '@/lib/utils';
 import { motionSpring } from '@/styles/design-tokens';
 
-export type SettingsSection = 'account' | 'general' | 'system' | 'gateways' | 'agents' | 'skills' | 'about';
+export type SettingsSection = 'activation' | 'account' | 'general' | 'system' | 'gateways' | 'agents' | 'skills' | 'about';
 
 const NAV_ITEMS: { key: SettingsSection; icon: typeof Settings2; labelKey: string }[] = [
+  { key: 'activation', icon: KeyRound, labelKey: 'settings.activation' },
   { key: 'account', icon: UserRound, labelKey: 'settings.account' },
   { key: 'general', icon: Settings2, labelKey: 'settings.general' },
   { key: 'system', icon: MonitorDot, labelKey: 'settings.system' },

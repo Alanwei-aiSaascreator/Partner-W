@@ -2,10 +2,8 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   CreditCard,
   LogOut,
-  Laptop,
   Loader2,
   RefreshCw,
-  KeyRound,
   User as UserIcon,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -240,18 +238,7 @@ export default function AccountSection() {
           {hasQuota ? (
             <QuotaBar used={quotaUsed} total={quotaTotal} />
           ) : (
-            <div className="flex items-center justify-between gap-3">
-              <span className="type-body text-[var(--text-muted)]">{t('account.quotaPending')}</span>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => toast(t('account.activateHint'))}
-                className="gap-1.5"
-              >
-                <KeyRound size={14} />
-                {t('account.activate')}
-              </Button>
-            </div>
+            <span className="type-body text-[var(--text-muted)]">{t('account.quotaPending')}</span>
           )}
         </div>
 

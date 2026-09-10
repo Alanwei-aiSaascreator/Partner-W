@@ -1,4 +1,34 @@
 {
+  "account": {
+    "activated": "Ativado",
+    "device": "Este dispositivo",
+    "notActivated": "Não ativado",
+    "offline": "Offline, os dados podem estar desatualizados",
+    "plan": "Plano atual",
+    "quotaPending": "Sem saldo",
+    "recharge": "Recarregar",
+    "rechargeHint": "Contate o suporte para recarregar",
+    "signOut": "Sair",
+    "tokenQuota": "Saldo de tokens",
+    "updatedAt": "Atualizado {{time}}"
+  },
+  "activation": {
+    "bound": "Bound license",
+    "boundDesc": "This account is bound to {{sku}}",
+    "errorBoundElsewhere": "This license is already bound to another account",
+    "errorEmpty": "Please enter a license key",
+    "errorExpired": "This license has expired",
+    "errorGeneric": "Activation failed, please try again",
+    "errorInactive": "This license is not active",
+    "errorLimit": "The device limit for this license has been reached",
+    "errorNotConfigured": "Commercial backend is not configured",
+    "errorNotFound": "That license key was not found, please check for typos",
+    "placeholder": "License key",
+    "submit": "Activate",
+    "subtitle": "Enter the license key from your USB drive to bind it to this account",
+    "success": "Activation succeeded",
+    "title": "License activation"
+  },
   "agent": {
     "modelFallback": "Modelo alterado para: {{model}}"
   },
@@ -76,6 +106,7 @@
     "toggleTheme": "Alternar tema"
   },
   "common": {
+    "appName": "Mofang Compass",
     "back": "Voltar",
     "cancel": "Cancelar",
     "close": "Fechar",
@@ -90,6 +121,7 @@
     "gateway": "Gateway",
     "justNow": "agora mesmo",
     "light": "Claro",
+    "loading": "Carregando…",
     "minAgo": "{{count}} min atrás",
     "missing": "Ausente",
     "moreActions": "Mais ações",
@@ -98,15 +130,13 @@
     "noFiles": "Nenhum arquivo ainda",
     "notConfigured": "Não configurado",
     "noTitle": "(Sem título)",
+    "retry": "Tentar novamente",
     "save": "Salvar",
     "select": "selecionar",
     "settings": "Configurações",
     "switch": "alternar",
     "task": "Tarefa",
-    "time": "Hora",
-    "appName": "Mofang Compass",
-    "loading": "Carregando…",
-    "retry": "Tentar novamente"
+    "time": "Hora"
   },
   "connection": {
     "addGateway": "Adicionar Gateway",
@@ -332,6 +362,7 @@
     "revealInFolder": "Mostrar no Finder"
   },
   "leftNav": {
+    "allAgents": "Todos os agentes",
     "appSettings": "Configurações do App",
     "archivedChats": "Conversas Arquivadas",
     "collapseNav": "Recolher barra lateral",
@@ -342,13 +373,35 @@
     "groupOlder": "Anterior",
     "groupToday": "Hoje",
     "groupYesterday": "Ontem",
+    "noAgents": "Sem agentes",
     "noPreview": "Ainda sem mensagens",
     "scheduledTasks": "Agendadas",
     "searchTasks": "Buscar tarefas…",
-    "updateAvailable": "Atualização disponível",
-    "allAgents": "Todos os agentes",
     "switchAgent": "Trocar de agente",
-    "noAgents": "Sem agentes"
+    "updateAvailable": "Atualização disponível"
+  },
+  "login": {
+    "agreement": "Ao entrar, você concorda com os {0} e a {1}",
+    "changePhone": "Alterar número",
+    "codePlaceholder": "Código",
+    "codeSent": "Código enviado para +86{{phone}}, por favor verifique",
+    "codeSubtitle": "Código enviado para +86{{phone}}",
+    "codeTitle": "Digite o código",
+    "phonePlaceholder": "Telefone",
+    "privacyPolicy": "Política de Privacidade",
+    "privacyUrl": "https://www.rongyinghudong.com/privacy.html",
+    "rateLimited": "Muitas solicitações, tente novamente em {{seconds}}s",
+    "resend": "Reenviar",
+    "resendIn": "Reenviar em {{seconds}}s",
+    "sendCode": "Enviar código",
+    "sendFailed": "Não foi possível enviar o código, tente mais tarde",
+    "serviceUnavailable": "Serviço de SMS temporariamente indisponível, tente mais tarde",
+    "signIn": "Entrar",
+    "subtitle": "Informe seu telefone e enviaremos um código",
+    "termsOfService": "Termos de Serviço",
+    "termsUrl": "https://www.rongyinghudong.com/privacy.html",
+    "title": "Entrar no Mofang Compass",
+    "verifyFailed": "O código está incorreto ou expirado"
   },
   "mainArea": {
     "browseHub": "Explorar hub de equipes",
@@ -410,6 +463,8 @@
   "settings": {
     "about": "Sobre",
     "aboutDesc": "Versão, atualizações e links",
+    "account": "Conta",
+    "activation": "Activation",
     "addAgent": "Adicionar Agente",
     "addFirstGateway": "Adicione seu primeiro gateway",
     "addGateway": "Adicionar Gateway",
@@ -478,10 +533,12 @@
     "channelBeta": "Beta",
     "channelStable": "Estável",
     "checkForUpdates": "Verificar Atualizações",
+    "companySite": "Visitar o site",
     "confirmDeleteAgentDesc": "Excluir o agente \"{{name}}\"? Tarefas existentes que usam este agente manterão sua sessão, mas novas tarefas não poderão usar este agente.",
     "confirmDeleteAgentTitle": "Excluir Agente",
     "confirmDeleteDesc": "Remover \"{{name}}\"? Conexões ativas com este gateway serão encerradas.",
     "confirmDeleteTitle": "Remover Gateway",
+    "contactSupport": "Falar com o suporte",
     "default": "Padrão",
     "defaultUpdated": "Gateway padrão atualizado",
     "deleteFiles": "Também excluir arquivos do workspace no servidor",
@@ -657,10 +714,7 @@
     "workspaceChangeFailed": "Falha ao migrar workspace: {{error}}",
     "workspaceHint": "Local de salvamento dos artefatos de IA",
     "workspaceOldPathHint": "O workspace antigo em {{path}} foi mantido — você pode excluí-lo manualmente.",
-    "workspaceOpenFolder": "Abrir no Finder",
-    "account": "Conta",
-    "companySite": "Visitar o site",
-    "contactSupport": "Falar com o suporte"
+    "workspaceOpenFolder": "Abrir no Finder"
   },
   "setup": {
     "back": "Voltar",
@@ -832,43 +886,5 @@
     "transcribing": "Transcrevendo...",
     "unsupported": "whisper-cpp não encontrado. Execute: brew install whisper-cpp, depois baixe um modelo em ~/models/whisper/",
     "unsupportedTooltip": "A entrada de voz requer whisper-cpp. Execute: brew install whisper-cpp"
-  },
-  "login": {
-    "title": "Entrar no Mofang Compass",
-    "subtitle": "Informe seu telefone e enviaremos um código",
-    "codeTitle": "Digite o código",
-    "codeSubtitle": "Código enviado para +86{{phone}}",
-    "phonePlaceholder": "Telefone",
-    "codePlaceholder": "Código",
-    "sendCode": "Enviar código",
-    "signIn": "Entrar",
-    "agreement": "Ao entrar, você concorda com os {0} e a {1}",
-    "resend": "Reenviar",
-    "resendIn": "Reenviar em {{seconds}}s",
-    "sendFailed": "Não foi possível enviar o código, tente mais tarde",
-    "verifyFailed": "O código está incorreto ou expirado",
-    "codeSent": "Código enviado para +86{{phone}}, por favor verifique",
-    "rateLimited": "Muitas solicitações, tente novamente em {{seconds}}s",
-    "serviceUnavailable": "Serviço de SMS temporariamente indisponível, tente mais tarde",
-    "changePhone": "Alterar número",
-    "termsOfService": "Termos de Serviço",
-    "privacyPolicy": "Política de Privacidade",
-    "termsUrl": "https://www.rongyinghudong.com/privacy.html",
-    "privacyUrl": "https://www.rongyinghudong.com/privacy.html"
-  },
-  "account": {
-    "tokenQuota": "Saldo de tokens",
-    "quotaPending": "Sem saldo",
-    "device": "Este dispositivo",
-    "activated": "Ativado",
-    "notActivated": "Não ativado",
-    "activate": "Ativar",
-    "recharge": "Recarregar",
-    "signOut": "Sair",
-    "offline": "Offline, os dados podem estar desatualizados",
-    "updatedAt": "Atualizado {{time}}",
-    "plan": "Plano atual",
-    "activateHint": "Use a ativação de licença para vincular uma chave",
-    "rechargeHint": "Contate o suporte para recarregar"
   }
 }

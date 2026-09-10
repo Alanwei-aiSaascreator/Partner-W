@@ -1,4 +1,34 @@
 {
+  "account": {
+    "activated": "Activated",
+    "device": "This device",
+    "notActivated": "Not activated",
+    "offline": "Offline, data may be out of date",
+    "plan": "Current plan",
+    "quotaPending": "No balance yet",
+    "recharge": "Top up",
+    "rechargeHint": "Please contact support to top up",
+    "signOut": "Sign out",
+    "tokenQuota": "Token balance",
+    "updatedAt": "Updated {{time}}"
+  },
+  "activation": {
+    "bound": "Bound license",
+    "boundDesc": "This account is bound to {{sku}}",
+    "errorBoundElsewhere": "This license is already bound to another account",
+    "errorEmpty": "Please enter a license key",
+    "errorExpired": "This license has expired",
+    "errorGeneric": "Activation failed, please try again",
+    "errorInactive": "This license is not active",
+    "errorLimit": "The device limit for this license has been reached",
+    "errorNotConfigured": "Commercial backend is not configured",
+    "errorNotFound": "That license key was not found, please check for typos",
+    "placeholder": "License key",
+    "submit": "Activate",
+    "subtitle": "Enter the license key from your USB drive to bind it to this account",
+    "success": "Activation succeeded",
+    "title": "License activation"
+  },
   "agent": {
     "modelFallback": "Switched to model: {{model}}"
   },
@@ -76,6 +106,7 @@
     "toggleTheme": "Toggle Theme"
   },
   "common": {
+    "appName": "Mofang Compass",
     "back": "Back",
     "cancel": "Cancel",
     "close": "Close",
@@ -90,6 +121,7 @@
     "gateway": "Gateway",
     "justNow": "just now",
     "light": "Light",
+    "loading": "Loading…",
     "minAgo": "{{count}} min ago",
     "missing": "Missing",
     "moreActions": "More actions",
@@ -98,15 +130,13 @@
     "noFiles": "No files yet",
     "notConfigured": "Not configured",
     "noTitle": "(Untitled)",
+    "retry": "Retry",
     "save": "Save",
     "select": "select",
     "settings": "Settings",
     "switch": "switch",
     "task": "Task",
-    "time": "Time",
-    "appName": "Mofang Compass",
-    "loading": "Loading…",
-    "retry": "Retry"
+    "time": "Time"
   },
   "connection": {
     "addGateway": "Add Gateway",
@@ -332,6 +362,7 @@
     "revealInFolder": "Reveal in Finder"
   },
   "leftNav": {
+    "allAgents": "All agents",
     "appSettings": "App Settings",
     "archivedChats": "Archived Chats",
     "collapseNav": "Collapse sidebar",
@@ -342,13 +373,35 @@
     "groupOlder": "Older",
     "groupToday": "Today",
     "groupYesterday": "Yesterday",
+    "noAgents": "No agents",
     "noPreview": "No messages yet",
     "scheduledTasks": "Scheduled",
     "searchTasks": "Search tasks…",
-    "updateAvailable": "Update available",
-    "allAgents": "All agents",
     "switchAgent": "Switch agent",
-    "noAgents": "No agents"
+    "updateAvailable": "Update available"
+  },
+  "login": {
+    "agreement": "By signing in you agree to the {0} and {1}",
+    "changePhone": "Change number",
+    "codePlaceholder": "Code",
+    "codeSent": "Code sent to +86{{phone}}, please check",
+    "codeSubtitle": "Code sent to +86{{phone}}",
+    "codeTitle": "Enter the code",
+    "phonePlaceholder": "Phone number",
+    "privacyPolicy": "Privacy Policy",
+    "privacyUrl": "https://www.rongyinghudong.com/privacy.html",
+    "rateLimited": "Too many requests, try again in {{seconds}}s",
+    "resend": "Resend",
+    "resendIn": "Resend in {{seconds}}s",
+    "sendCode": "Send code",
+    "sendFailed": "Could not send the code, please try again",
+    "serviceUnavailable": "SMS service is temporarily unavailable, please try later",
+    "signIn": "Sign in",
+    "subtitle": "Enter your phone number and we will send a code",
+    "termsOfService": "Terms of Service",
+    "termsUrl": "https://www.rongyinghudong.com/privacy.html",
+    "title": "Sign in to Mofang Compass",
+    "verifyFailed": "Code is incorrect or expired"
   },
   "mainArea": {
     "browseHub": "Browse Team Hub",
@@ -410,6 +463,8 @@
   "settings": {
     "about": "About",
     "aboutDesc": "Version, updates, and links",
+    "account": "Account",
+    "activation": "Activation",
     "addAgent": "Add Agent",
     "addFirstGateway": "Add your first gateway",
     "addGateway": "Add Gateway",
@@ -478,10 +533,12 @@
     "channelBeta": "Beta",
     "channelStable": "Stable",
     "checkForUpdates": "Check for Updates",
+    "companySite": "Visit website",
     "confirmDeleteAgentDesc": "Delete agent \"{{name}}\"? Existing tasks using this agent will keep their session, but new tasks cannot target this agent.",
     "confirmDeleteAgentTitle": "Delete Agent",
     "confirmDeleteDesc": "Remove \"{{name}}\"? Active connections to this gateway will be terminated.",
     "confirmDeleteTitle": "Remove Gateway",
+    "contactSupport": "Contact support",
     "default": "Default",
     "defaultUpdated": "Default gateway updated",
     "deleteFiles": "Also delete workspace files on the server",
@@ -657,10 +714,7 @@
     "workspaceChangeFailed": "Failed to migrate workspace: {{error}}",
     "workspaceHint": "AI artifact save location",
     "workspaceOldPathHint": "Old workspace at {{path}} was kept — you can delete it manually.",
-    "workspaceOpenFolder": "Open in Finder",
-    "account": "Account",
-    "companySite": "Visit website",
-    "contactSupport": "Contact support"
+    "workspaceOpenFolder": "Open in Finder"
   },
   "setup": {
     "back": "Back",
@@ -832,43 +886,5 @@
     "transcribing": "Transcribing...",
     "unsupported": "whisper-cpp not found. Run: brew install whisper-cpp, then download a model to ~/models/whisper/",
     "unsupportedTooltip": "Voice input requires whisper-cpp. Run: brew install whisper-cpp"
-  },
-  "login": {
-    "title": "Sign in to Mofang Compass",
-    "subtitle": "Enter your phone number and we will send a code",
-    "codeTitle": "Enter the code",
-    "codeSubtitle": "Code sent to +86{{phone}}",
-    "phonePlaceholder": "Phone number",
-    "codePlaceholder": "Code",
-    "sendCode": "Send code",
-    "signIn": "Sign in",
-    "agreement": "By signing in you agree to the {0} and {1}",
-    "resend": "Resend",
-    "resendIn": "Resend in {{seconds}}s",
-    "sendFailed": "Could not send the code, please try again",
-    "verifyFailed": "Code is incorrect or expired",
-    "codeSent": "Code sent to +86{{phone}}, please check",
-    "rateLimited": "Too many requests, try again in {{seconds}}s",
-    "serviceUnavailable": "SMS service is temporarily unavailable, please try later",
-    "changePhone": "Change number",
-    "termsOfService": "Terms of Service",
-    "privacyPolicy": "Privacy Policy",
-    "termsUrl": "https://www.rongyinghudong.com/privacy.html",
-    "privacyUrl": "https://www.rongyinghudong.com/privacy.html"
-  },
-  "account": {
-    "tokenQuota": "Token balance",
-    "quotaPending": "No balance yet",
-    "device": "This device",
-    "activated": "Activated",
-    "notActivated": "Not activated",
-    "activate": "Activate",
-    "recharge": "Top up",
-    "signOut": "Sign out",
-    "offline": "Offline, data may be out of date",
-    "updatedAt": "Updated {{time}}",
-    "plan": "Current plan",
-    "activateHint": "Use license activation to bind a license key",
-    "rechargeHint": "Please contact support to top up"
   }
 }

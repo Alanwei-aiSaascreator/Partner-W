@@ -1,4 +1,34 @@
 {
+  "account": {
+    "activated": "已授权",
+    "device": "本机设备",
+    "notActivated": "未激活",
+    "offline": "离线，数据可能不是最新",
+    "plan": "当前套餐",
+    "quotaPending": "额度待开通",
+    "recharge": "充值",
+    "rechargeHint": "请联系客服开通充值",
+    "signOut": "退出登录",
+    "tokenQuota": "Token 额度",
+    "updatedAt": "更新于 {{time}}"
+  },
+  "activation": {
+    "bound": "已绑定授权",
+    "boundDesc": "当前账户已绑定 {{sku}}",
+    "errorBoundElsewhere": "该授权已绑定到其他账户",
+    "errorEmpty": "请输入授权码",
+    "errorExpired": "该授权已过期",
+    "errorGeneric": "激活失败，请重试",
+    "errorInactive": "该授权未处于有效状态",
+    "errorLimit": "该授权的设备数已达上限",
+    "errorNotConfigured": "商业后端未配置",
+    "errorNotFound": "未找到该授权码，请检查是否输入有误",
+    "placeholder": "授权码",
+    "submit": "激活",
+    "subtitle": "输入 U 盘随附的授权码以绑定到当前账户",
+    "success": "激活成功",
+    "title": "激活授权"
+  },
   "agent": {
     "modelFallback": "已切换至模型: {{model}}"
   },
@@ -76,6 +106,7 @@
     "toggleTheme": "切换主题"
   },
   "common": {
+    "appName": "魔方罗盘",
     "back": "返回",
     "cancel": "取消",
     "close": "关闭",
@@ -90,6 +121,7 @@
     "gateway": "网关",
     "justNow": "刚刚",
     "light": "浅色",
+    "loading": "加载中…",
     "minAgo": "{{count}} 分钟前",
     "missing": "缺失",
     "moreActions": "更多操作",
@@ -98,15 +130,13 @@
     "noFiles": "暂无文件",
     "notConfigured": "未配置",
     "noTitle": "(无标题)",
+    "retry": "重试",
     "save": "保存",
     "select": "选择",
     "settings": "设置",
     "switch": "切换",
     "task": "任务",
-    "time": "时间",
-    "appName": "魔方罗盘",
-    "loading": "加载中…",
-    "retry": "重试"
+    "time": "时间"
   },
   "connection": {
     "addGateway": "添加网关",
@@ -332,6 +362,7 @@
     "revealInFolder": "在访达中显示"
   },
   "leftNav": {
+    "allAgents": "全部智能体",
     "appSettings": "应用设置",
     "archivedChats": "归档对话",
     "collapseNav": "收起侧栏",
@@ -342,13 +373,35 @@
     "groupOlder": "更早",
     "groupToday": "今天",
     "groupYesterday": "昨天",
+    "noAgents": "暂无智能体",
     "noPreview": "暂无消息",
     "scheduledTasks": "定时任务",
     "searchTasks": "搜索任务…",
-    "updateAvailable": "有新版本可用",
-    "allAgents": "全部智能体",
     "switchAgent": "切换智能体",
-    "noAgents": "暂无智能体"
+    "updateAvailable": "有新版本可用"
+  },
+  "login": {
+    "agreement": "登录即表示同意{0}与{1}",
+    "changePhone": "更换手机号",
+    "codePlaceholder": "验证码",
+    "codeSent": "验证码已发送至 +86{{phone}}，请注意查收",
+    "codeSubtitle": "验证码已发送至 +86{{phone}}",
+    "codeTitle": "输入验证码",
+    "phonePlaceholder": "手机号",
+    "privacyPolicy": "隐私政策",
+    "privacyUrl": "https://www.rongyinghudong.com/privacy.html",
+    "rateLimited": "发送太频繁，请 {{seconds}} 秒后再试",
+    "resend": "重新发送",
+    "resendIn": "{{seconds}} 秒后可重新发送",
+    "sendCode": "获取验证码",
+    "sendFailed": "验证码发送失败，请稍后重试",
+    "serviceUnavailable": "短信服务暂时不可用，请稍后重试",
+    "signIn": "登录",
+    "subtitle": "输入手机号，我们会发送验证码",
+    "termsOfService": "服务条款",
+    "termsUrl": "https://www.rongyinghudong.com/privacy.html",
+    "title": "登录魔方罗盘",
+    "verifyFailed": "验证码不正确或已过期"
   },
   "mainArea": {
     "browseHub": "浏览团队市场",
@@ -410,6 +463,8 @@
   "settings": {
     "about": "关于",
     "aboutDesc": "版本、更新和链接",
+    "account": "账户",
+    "activation": "激活授权",
     "addAgent": "添加智能体",
     "addFirstGateway": "添加第一个网关",
     "addGateway": "添加网关",
@@ -478,10 +533,12 @@
     "channelBeta": "测试版",
     "channelStable": "稳定版",
     "checkForUpdates": "检查更新",
+    "companySite": "访问官网",
     "confirmDeleteAgentDesc": "删除智能体「{{name}}」？使用该智能体的现有任务将保留会话，但无法再创建指向该智能体的新任务。",
     "confirmDeleteAgentTitle": "删除智能体",
     "confirmDeleteDesc": "移除「{{name}}」？与该网关的活跃连接将被终止。",
     "confirmDeleteTitle": "移除网关",
+    "contactSupport": "联系客服",
     "default": "默认",
     "defaultUpdated": "默认网关已更新",
     "deleteFiles": "同时删除服务器上的工作空间文件",
@@ -657,10 +714,7 @@
     "workspaceChangeFailed": "工作空间迁移失败：{{error}}",
     "workspaceHint": "AI 产物保存位置",
     "workspaceOldPathHint": "旧工作空间（{{path}}）已保留，可手动删除。",
-    "workspaceOpenFolder": "打开目录",
-    "account": "账户",
-    "companySite": "访问官网",
-    "contactSupport": "联系客服"
+    "workspaceOpenFolder": "打开目录"
   },
   "setup": {
     "back": "返回",
@@ -832,43 +886,5 @@
     "transcribing": "正在识别…",
     "unsupported": "未找到 whisper-cpp，请运行 brew install whisper-cpp 并下载模型到 ~/models/whisper/",
     "unsupportedTooltip": "语音输入需要 whisper-cpp，请运行: brew install whisper-cpp"
-  },
-  "login": {
-    "title": "登录魔方罗盘",
-    "subtitle": "输入手机号，我们会发送验证码",
-    "codeTitle": "输入验证码",
-    "codeSubtitle": "验证码已发送至 +86{{phone}}",
-    "phonePlaceholder": "手机号",
-    "codePlaceholder": "验证码",
-    "sendCode": "获取验证码",
-    "signIn": "登录",
-    "agreement": "登录即表示同意{0}与{1}",
-    "resend": "重新发送",
-    "resendIn": "{{seconds}} 秒后可重新发送",
-    "sendFailed": "验证码发送失败，请稍后重试",
-    "verifyFailed": "验证码不正确或已过期",
-    "codeSent": "验证码已发送至 +86{{phone}}，请注意查收",
-    "rateLimited": "发送太频繁，请 {{seconds}} 秒后再试",
-    "serviceUnavailable": "短信服务暂时不可用，请稍后重试",
-    "changePhone": "更换手机号",
-    "termsOfService": "服务条款",
-    "privacyPolicy": "隐私政策",
-    "termsUrl": "https://www.rongyinghudong.com/privacy.html",
-    "privacyUrl": "https://www.rongyinghudong.com/privacy.html"
-  },
-  "account": {
-    "tokenQuota": "Token 额度",
-    "quotaPending": "额度待开通",
-    "device": "本机设备",
-    "activated": "已授权",
-    "notActivated": "未激活",
-    "activate": "激活授权",
-    "recharge": "充值",
-    "signOut": "退出登录",
-    "offline": "离线，数据可能不是最新",
-    "updatedAt": "更新于 {{time}}",
-    "plan": "当前套餐",
-    "activateHint": "请使用授权激活功能绑定授权码",
-    "rechargeHint": "请联系客服开通充值"
   }
 }

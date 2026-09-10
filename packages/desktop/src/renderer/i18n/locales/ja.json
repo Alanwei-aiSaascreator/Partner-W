@@ -1,4 +1,34 @@
 {
+  "account": {
+    "activated": "認証済み",
+    "device": "このデバイス",
+    "notActivated": "未認証",
+    "offline": "オフラインのため、最新でない可能性があります",
+    "plan": "現在のプラン",
+    "quotaPending": "残高未設定",
+    "recharge": "チャージ",
+    "rechargeHint": "チャージはサポートにお問い合わせください",
+    "signOut": "サインアウト",
+    "tokenQuota": "Token 残高",
+    "updatedAt": "{{time}} 更新"
+  },
+  "activation": {
+    "bound": "Bound license",
+    "boundDesc": "This account is bound to {{sku}}",
+    "errorBoundElsewhere": "This license is already bound to another account",
+    "errorEmpty": "Please enter a license key",
+    "errorExpired": "This license has expired",
+    "errorGeneric": "Activation failed, please try again",
+    "errorInactive": "This license is not active",
+    "errorLimit": "The device limit for this license has been reached",
+    "errorNotConfigured": "Commercial backend is not configured",
+    "errorNotFound": "That license key was not found, please check for typos",
+    "placeholder": "License key",
+    "submit": "Activate",
+    "subtitle": "Enter the license key from your USB drive to bind it to this account",
+    "success": "Activation succeeded",
+    "title": "License activation"
+  },
   "agent": {
     "modelFallback": "モデルを切り替えました: {{model}}"
   },
@@ -76,6 +106,7 @@
     "toggleTheme": "テーマを切替"
   },
   "common": {
+    "appName": "Mofang Compass",
     "back": "戻る",
     "cancel": "キャンセル",
     "close": "閉じる",
@@ -90,6 +121,7 @@
     "gateway": "ゲートウェイ",
     "justNow": "たった今",
     "light": "ライト",
+    "loading": "読み込み中…",
     "minAgo": "{{count}} 分前",
     "missing": "不明",
     "moreActions": "その他の操作",
@@ -98,15 +130,13 @@
     "noFiles": "ファイルがありません",
     "notConfigured": "未設定",
     "noTitle": "(無題)",
+    "retry": "再試行",
     "save": "保存",
     "select": "選択",
     "settings": "設定",
     "switch": "切替",
     "task": "タスク",
-    "time": "時刻",
-    "appName": "Mofang Compass",
-    "loading": "読み込み中…",
-    "retry": "再試行"
+    "time": "時刻"
   },
   "connection": {
     "addGateway": "ゲートウェイを追加",
@@ -332,6 +362,7 @@
     "revealInFolder": "Finder で表示"
   },
   "leftNav": {
+    "allAgents": "すべてのエージェント",
     "appSettings": "アプリ設定",
     "archivedChats": "アーカイブ済みチャット",
     "collapseNav": "サイドバーを折りたたむ",
@@ -342,13 +373,35 @@
     "groupOlder": "以前",
     "groupToday": "今日",
     "groupYesterday": "昨日",
+    "noAgents": "エージェントなし",
     "noPreview": "メッセージはまだありません",
     "scheduledTasks": "スケジュール",
     "searchTasks": "タスクを検索…",
-    "updateAvailable": "アップデートがあります",
-    "allAgents": "すべてのエージェント",
     "switchAgent": "エージェントを切り替え",
-    "noAgents": "エージェントなし"
+    "updateAvailable": "アップデートがあります"
+  },
+  "login": {
+    "agreement": "サインインすると{0}および{1}に同意したものとみなされます",
+    "changePhone": "番号を変更",
+    "codePlaceholder": "確認コード",
+    "codeSent": "認証コードを +86{{phone}} に送信しました。ご確認ください",
+    "codeSubtitle": "+86{{phone}} に送信しました",
+    "codeTitle": "確認コードを入力",
+    "phonePlaceholder": "電話番号",
+    "privacyPolicy": "プライバシーポリシー",
+    "privacyUrl": "https://www.rongyinghudong.com/privacy.html",
+    "rateLimited": "送信が多すぎます。{{seconds}} 秒后再試してください",
+    "resend": "再送信",
+    "resendIn": "{{seconds}} 秒後に再送信できます",
+    "sendCode": "コードを送信",
+    "sendFailed": "コードを送信できませんでした。後でもう一度お試しください",
+    "serviceUnavailable": "SMS サービスが一時的に利用できません。後でもう一度お試しください",
+    "signIn": "ログイン",
+    "subtitle": "電話番号を入力してください。確認コードをお送りします",
+    "termsOfService": "利用規約",
+    "termsUrl": "https://www.rongyinghudong.com/privacy.html",
+    "title": "Mofang Compass にログイン",
+    "verifyFailed": "コードが正しくないか期限切れです"
   },
   "mainArea": {
     "browseHub": "チームハブを見る",
@@ -410,6 +463,8 @@
   "settings": {
     "about": "Mofang Compass について",
     "aboutDesc": "バージョン、アップデート、リンク",
+    "account": "アカウント",
+    "activation": "Activation",
     "addAgent": "エージェントを追加",
     "addFirstGateway": "最初のゲートウェイを追加してください",
     "addGateway": "ゲートウェイを追加",
@@ -478,10 +533,12 @@
     "channelBeta": "ベータ版",
     "channelStable": "安定版",
     "checkForUpdates": "アップデートを確認",
+    "companySite": "公式サイト",
     "confirmDeleteAgentDesc": "エージェント「{{name}}」を削除しますか？このエージェントを使用中のタスクはセッションを維持しますが、新しいタスクではこのエージェントを選択できなくなります。",
     "confirmDeleteAgentTitle": "エージェントを削除",
     "confirmDeleteDesc": "「{{name}}」を削除しますか？このゲートウェイへのアクティブな接続は切断されます。",
     "confirmDeleteTitle": "ゲートウェイを削除",
+    "contactSupport": "サポートに問い合わせ",
     "default": "デフォルト",
     "defaultUpdated": "デフォルトゲートウェイを更新しました",
     "deleteFiles": "サーバー上のワークスペースファイルも削除する",
@@ -657,10 +714,7 @@
     "workspaceChangeFailed": "ワークスペースの移行に失敗しました: {{error}}",
     "workspaceHint": "AI 成果物の保存先",
     "workspaceOldPathHint": "旧ワークスペース {{path}} はそのまま残っています。手動で削除できます。",
-    "workspaceOpenFolder": "Finder で開く",
-    "account": "アカウント",
-    "companySite": "公式サイト",
-    "contactSupport": "サポートに問い合わせ"
+    "workspaceOpenFolder": "Finder で開く"
   },
   "setup": {
     "back": "戻る",
@@ -832,43 +886,5 @@
     "transcribing": "文字起こし中...",
     "unsupported": "whisper-cpp が見つかりません。実行: brew install whisper-cpp 後、モデルを ~/models/whisper/ にダウンロードしてください",
     "unsupportedTooltip": "音声入力には whisper-cpp が必要です。実行: brew install whisper-cpp"
-  },
-  "login": {
-    "title": "Mofang Compass にログイン",
-    "subtitle": "電話番号を入力してください。確認コードをお送りします",
-    "codeTitle": "確認コードを入力",
-    "codeSubtitle": "+86{{phone}} に送信しました",
-    "phonePlaceholder": "電話番号",
-    "codePlaceholder": "確認コード",
-    "sendCode": "コードを送信",
-    "signIn": "ログイン",
-    "agreement": "サインインすると{0}および{1}に同意したものとみなされます",
-    "resend": "再送信",
-    "resendIn": "{{seconds}} 秒後に再送信できます",
-    "sendFailed": "コードを送信できませんでした。後でもう一度お試しください",
-    "verifyFailed": "コードが正しくないか期限切れです",
-    "codeSent": "認証コードを +86{{phone}} に送信しました。ご確認ください",
-    "rateLimited": "送信が多すぎます。{{seconds}} 秒后再試してください",
-    "serviceUnavailable": "SMS サービスが一時的に利用できません。後でもう一度お試しください",
-    "changePhone": "番号を変更",
-    "termsOfService": "利用規約",
-    "privacyPolicy": "プライバシーポリシー",
-    "termsUrl": "https://www.rongyinghudong.com/privacy.html",
-    "privacyUrl": "https://www.rongyinghudong.com/privacy.html"
-  },
-  "account": {
-    "tokenQuota": "Token 残高",
-    "quotaPending": "残高未設定",
-    "device": "このデバイス",
-    "activated": "認証済み",
-    "notActivated": "未認証",
-    "activate": "ライセンス認証",
-    "recharge": "チャージ",
-    "signOut": "サインアウト",
-    "offline": "オフラインのため、最新でない可能性があります",
-    "updatedAt": "{{time}} 更新",
-    "plan": "現在のプラン",
-    "activateHint": "ライセンス認証でライセンスキーを登録してください",
-    "rechargeHint": "チャージはサポートにお問い合わせください"
   }
 }
