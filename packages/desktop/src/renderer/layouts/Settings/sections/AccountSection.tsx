@@ -1,15 +1,17 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import {
-  CreditCard,
-  LogOut,
-  Loader2,
-  RefreshCw,
-  User as UserIcon,
-} from 'lucide-react';
+import { CreditCard, LogOut, Loader2, RefreshCw, User as UserIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { CommercialAccountOverview } from '@clawwork/shared';
 import { toast } from '@/lib/toast';
 import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogFooter,
+  DialogTitle,
+  DialogDescription,
+} from '@/components/ui/dialog';
 import SettingGroup from '@/components/semantic/SettingGroup';
 import SettingRow from '@/components/semantic/SettingRow';
 import StatusTag from '@/components/semantic/StatusTag';
@@ -85,6 +87,8 @@ export default function AccountSection() {
   const [status, setStatus] = useState<PanelStatus>('loading');
   const [errorMessage, setErrorMessage] = useState('');
   const [signingOut, setSigningOut] = useState(false);
+  const [refundOpen, setRefundOpen] = useState(false);
+  const [refundAgreed, setRefundAgreed] = useState(false);
   const mountedRef = useRef(true);
 
   useEffect(() => {
@@ -148,6 +152,11 @@ export default function AccountSection() {
     window.location.reload();
   }, []);
 
+  const closeRefund = useCallback(() => {
+    setRefundOpen(false);
+    setRefundAgreed(false);
+  }, []);
+
   if (status === 'loading' && !overview) {
     return (
       <div>
@@ -209,11 +218,7 @@ export default function AccountSection() {
       <SettingGroup>
         <div className="flex items-center gap-4 px-5 py-4">
           {account.avatar ? (
-            <img
-              src={account.avatar}
-              alt=""
-              className="h-12 w-12 flex-shrink-0 rounded-full object-cover"
-            />
+            <img src={account.avatar} alt="" className="h-12 w-12 flex-shrink-0 rounded-full object-cover" />
           ) : (
             <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full bg-[var(--bg-tertiary)] text-[var(--text-muted)]">
               <UserIcon size={22} />
@@ -252,9 +257,7 @@ export default function AccountSection() {
       <SettingGroup title={t('account.device')}>
         <SettingRow
           label={
-            <span className="type-mono-data select-all text-[var(--text-secondary)]">
-              {device.shortFingerprint}
-            </span>
+            <span className="type-mono-data select-all text-[var(--text-secondary)]">{device.shortFingerprint}</span>
           }
         >
           <StatusTag tone={license?.activated ? 'success' : 'neutral'}>
@@ -264,12 +267,7 @@ export default function AccountSection() {
       </SettingGroup>
 
       <div className="flex items-center gap-3">
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => toast(t('account.rechargeHint'))}
-          className="gap-1.5"
-        >
+        <Button variant="outline" size="sm" onClick={() => setRefundOpen(true)} className="gap-1.5">
           <CreditCard size={14} />
           {t('account.recharge')}
         </Button>
@@ -290,6 +288,38 @@ export default function AccountSection() {
           {t('account.updatedAt', { time: new Date(overview.fetchedAt).toLocaleTimeString() })}
         </p>
       )}
+
+      <Dialog open={refundOpen} onOpenChange={(next) => !next && closeRefund()}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t('account.refundTitle')}</DialogTitle>
+            <DialogDescription>{t('account.refundNotice')}</DialogDescription>
+          </DialogHeader>
+          <label className="mt-4 flex items-start gap-2 type-support text-[var(--text-secondary)] cursor-pointer">
+            <input
+              type="checkbox"
+              checked={refundAgreed}
+              onChange={(e) => setRefundAgreed(e.target.checked)}
+              className="mt-0.5 h-4 w-4 accent-[var(--accent)]"
+            />
+            {t('account.refundAgree')}
+          </label>
+          <DialogFooter className="mt-6">
+            <Button variant="outline" onClick={closeRefund}>
+              {t('common.cancel')}
+            </Button>
+            <Button
+              disabled={!refundAgreed}
+              onClick={() => {
+                closeRefund();
+                toast(t('account.rechargeHint'));
+              }}
+            >
+              {t('account.rechargeConfirm')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
