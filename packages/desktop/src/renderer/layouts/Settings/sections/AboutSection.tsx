@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Star, Bug, RefreshCw, Loader2, Download, RotateCcw, X } from 'lucide-react';
+import { Globe, Headset, RefreshCw, Loader2, Download, RotateCcw, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
@@ -339,18 +339,18 @@ export default function AboutSection() {
               {t('settings.checkForUpdates')}
             </Button>
           )}
-          <a href="https://github.com/clawwork-ai/clawwork" target="_blank" rel="noreferrer" className={linkClass}>
-            <Star size={14} />
-            {t('settings.githubStar')}
+          <a href="https://www.rongyinghudong.com" target="_blank" rel="noreferrer" className={linkClass}>
+            <Globe size={14} />
+            {t('settings.companySite')}
           </a>
           <a
-            href="https://github.com/clawwork-ai/clawwork/issues/new"
+            href="https://www.rongyinghudong.com/cooperation.html#contact"
             target="_blank"
             rel="noreferrer"
             className={linkClass}
           >
-            <Bug size={14} />
-            {t('settings.submitIssue')}
+            <Headset size={14} />
+            {t('settings.contactSupport')}
           </a>
         </div>
       </SettingGroup>

@@ -358,7 +358,6 @@
     "orchestrateDesc": "AI がタスクに応じて適切な Agent を自動選択し、分担・統合します。",
     "refreshUsage": "使用量を更新",
     "scrollToBottom": "最下部へスクロール",
-    "starOnGithub": "Mofang Compass を気に入っていただけましたか？GitHub でスターをお願いします",
     "tabAgent": "Agent",
     "tabOrchestrate": "スマート編成",
     "tabTeam": "チーム",
@@ -514,7 +513,6 @@
     "gatewayUrl": "ゲートウェイ URL",
     "general": "一般",
     "generalDesc": "テーマ、言語、キーボードショートカット",
-    "githubStar": "GitHub でスター ⭐",
     "hideSecret": "シークレットを隠す",
     "invalidUrl": "無効な URL です",
     "language": "言語",
@@ -631,7 +629,6 @@
     "skillUpdateFailed": "スキルの更新に失敗しました",
     "startPairing": "ペアリングゲートウェイを追加",
     "storage": "ストレージ",
-    "submitIssue": "問題の報告 / フィードバック",
     "system": "システム",
     "systemDesc": "システム動作、ショートカット、ワークスペース",
     "testConnection": "接続テスト",
@@ -661,7 +658,9 @@
     "workspaceHint": "AI 成果物の保存先",
     "workspaceOldPathHint": "旧ワークスペース {{path}} はそのまま残っています。手動で削除できます。",
     "workspaceOpenFolder": "Finder で開く",
-    "account": "アカウント"
+    "account": "アカウント",
+    "companySite": "公式サイト",
+    "contactSupport": "サポートに問い合わせ"
   },
   "setup": {
     "back": "戻る",

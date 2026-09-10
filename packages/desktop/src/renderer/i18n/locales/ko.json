@@ -358,7 +358,6 @@
     "orchestrateDesc": "AI가 작업에 맞는 Agent를 자동으로 선택하고, 분업 및 결과를 종합합니다.",
     "refreshUsage": "사용량 새로고침",
     "scrollToBottom": "맨 아래로 스크롤",
-    "starOnGithub": "Mofang Compass가 마음에 드셨나요? GitHub에서 별을 눌러주세요",
     "tabAgent": "Agent",
     "tabOrchestrate": "스마트 편성",
     "tabTeam": "팀",
@@ -514,7 +513,6 @@
     "gatewayUrl": "게이트웨이 URL",
     "general": "일반",
     "generalDesc": "테마, 언어, 키보드 단축키",
-    "githubStar": "GitHub에서 별을 눌러주세요 ⭐",
     "hideSecret": "비밀 숨기기",
     "invalidUrl": "잘못된 URL",
     "language": "언어",
@@ -631,7 +629,6 @@
     "skillUpdateFailed": "스킬 업데이트에 실패했습니다",
     "startPairing": "페어링 게이트웨이 추가",
     "storage": "저장소",
-    "submitIssue": "이슈 / 피드백 제출",
     "system": "시스템",
     "systemDesc": "시스템 동작, 단축키, 워크스페이스",
     "testConnection": "연결 테스트",
@@ -661,7 +658,9 @@
     "workspaceHint": "AI 산출물 저장 위치",
     "workspaceOldPathHint": "이전 워크스페이스({{path}})는 유지됩니다 — 수동으로 삭제할 수 있습니다.",
     "workspaceOpenFolder": "Finder에서 열기",
-    "account": "계정"
+    "account": "계정",
+    "companySite": "웹사이트 방문",
+    "contactSupport": "고객센터 문의"
   },
   "setup": {
     "back": "뒤로",

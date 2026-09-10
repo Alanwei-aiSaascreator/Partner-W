@@ -358,7 +358,6 @@
     "orchestrateDesc": "AI will automatically select the right agents, coordinate their work, and synthesize results.",
     "refreshUsage": "Refresh usage",
     "scrollToBottom": "Scroll to bottom",
-    "starOnGithub": "Enjoying Mofang Compass? Give us a star on GitHub",
     "tabAgent": "Agent",
     "tabOrchestrate": "Orchestrate",
     "tabTeam": "Team",
@@ -514,7 +513,6 @@
     "gatewayUrl": "Gateway URL",
     "general": "General",
     "generalDesc": "Theme, language, and keyboard shortcuts",
-    "githubStar": "Star us on GitHub ⭐",
     "hideSecret": "Hide secret",
     "invalidUrl": "Invalid URL",
     "language": "Language",
@@ -631,7 +629,6 @@
     "skillUpdateFailed": "Failed to update skill",
     "startPairing": "Add Pairing Gateway",
     "storage": "Storage",
-    "submitIssue": "Submit Issue / Feedback",
     "system": "System",
     "systemDesc": "System behavior, shortcuts, and workspace",
     "testConnection": "Test Connection",
@@ -661,7 +658,9 @@
     "workspaceHint": "AI artifact save location",
     "workspaceOldPathHint": "Old workspace at {{path}} was kept — you can delete it manually.",
     "workspaceOpenFolder": "Open in Finder",
-    "account": "Account"
+    "account": "Account",
+    "companySite": "Visit website",
+    "contactSupport": "Contact support"
   },
   "setup": {
     "back": "Back",

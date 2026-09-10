@@ -358,7 +358,6 @@
     "orchestrateDesc": "AI 将根据你的任务自动选择合适的 Agent，协调分工并汇总结果。",
     "refreshUsage": "刷新用量",
     "scrollToBottom": "滚动到底部",
-    "starOnGithub": "觉得好用？在 GitHub 上给我们一颗 Star",
     "tabAgent": "Agent",
     "tabOrchestrate": "智能编排",
     "tabTeam": "团队",
@@ -514,7 +513,6 @@
     "gatewayUrl": "Gateway 地址",
     "general": "通用",
     "generalDesc": "主题、语言和键盘快捷键",
-    "githubStar": "在 GitHub 上给我们 Star ⭐",
     "hideSecret": "隐藏凭据",
     "invalidUrl": "无效的 URL",
     "language": "语言",
@@ -631,7 +629,6 @@
     "skillUpdateFailed": "更新技能失败",
     "startPairing": "添加配对网关",
     "storage": "存储",
-    "submitIssue": "提交 Issue / 反馈问题",
     "system": "系统",
     "systemDesc": "系统行为、快捷键和工作空间",
     "testConnection": "测试连接",
@@ -661,7 +658,9 @@
     "workspaceHint": "AI 产物保存位置",
     "workspaceOldPathHint": "旧工作空间（{{path}}）已保留，可手动删除。",
     "workspaceOpenFolder": "打开目录",
-    "account": "账户"
+    "account": "账户",
+    "companySite": "访问官网",
+    "contactSupport": "联系客服"
   },
   "setup": {
     "back": "返回",

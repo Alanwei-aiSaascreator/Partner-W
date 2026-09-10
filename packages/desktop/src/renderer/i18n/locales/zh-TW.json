@@ -358,7 +358,6 @@
     "orchestrateDesc": "AI 將根據你的任務自動選擇合適的 Agent，協調分工並彙總結果。",
     "refreshUsage": "重新整理用量",
     "scrollToBottom": "捲動至底部",
-    "starOnGithub": "喜歡 魔方羅盤 嗎？在 GitHub 上給我們一顆星",
     "tabAgent": "Agent",
     "tabOrchestrate": "智能編排",
     "tabTeam": "團隊",
@@ -514,7 +513,6 @@
     "gatewayUrl": "Gateway URL",
     "general": "一般",
     "generalDesc": "主題、語言與快捷鍵",
-    "githubStar": "在 GitHub 上給我們一顆星 ⭐",
     "hideSecret": "隱藏憑證",
     "invalidUrl": "無效的 URL",
     "language": "語言",
@@ -631,7 +629,6 @@
     "skillUpdateFailed": "更新技能失敗",
     "startPairing": "新增配對 Gateway",
     "storage": "儲存空間",
-    "submitIssue": "回報問題 / 意見回饋",
     "system": "系統",
     "systemDesc": "系統行為、快捷鍵與工作區",
     "testConnection": "測試連線",
@@ -661,7 +658,9 @@
     "workspaceHint": "AI 產出檔案的儲存位置",
     "workspaceOldPathHint": "舊工作區 {{path}} 已保留，你可以手動刪除。",
     "workspaceOpenFolder": "在 Finder 中開啟",
-    "account": "帳戶"
+    "account": "帳戶",
+    "companySite": "造訪官網",
+    "contactSupport": "聯繫客服"
   },
   "setup": {
     "back": "上一步",

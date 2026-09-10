@@ -358,7 +358,6 @@
     "orchestrateDesc": "La IA seleccionará automáticamente los agentes adecuados, coordinará el trabajo y sintetizará los resultados.",
     "refreshUsage": "Actualizar uso",
     "scrollToBottom": "Desplazar al final",
-    "starOnGithub": "¿Te gusta Mofang Compass? Déjanos una estrella en GitHub",
     "tabAgent": "Agent",
     "tabOrchestrate": "Orquestación",
     "tabTeam": "Equipo",
@@ -514,7 +513,6 @@
     "gatewayUrl": "URL del Gateway",
     "general": "General",
     "generalDesc": "Tema, idioma y atajos de teclado",
-    "githubStar": "Déjanos una estrella en GitHub ⭐",
     "hideSecret": "Ocultar secreto",
     "invalidUrl": "URL inválida",
     "language": "Idioma",
@@ -631,7 +629,6 @@
     "skillUpdateFailed": "Error al actualizar la habilidad",
     "startPairing": "Agregar Gateway por vinculación",
     "storage": "Almacenamiento",
-    "submitIssue": "Reportar problema / Enviar comentario",
     "system": "Sistema",
     "systemDesc": "Comportamiento del sistema, atajos y espacio de trabajo",
     "testConnection": "Probar conexión",
@@ -661,7 +658,9 @@
     "workspaceHint": "Ubicación de guardado de artefactos de IA",
     "workspaceOldPathHint": "El espacio de trabajo anterior en {{path}} se conservó; puedes eliminarlo manualmente.",
     "workspaceOpenFolder": "Abrir en Finder",
-    "account": "Cuenta"
+    "account": "Cuenta",
+    "companySite": "Visitar el sitio web",
+    "contactSupport": "Contactar con soporte"
   },
   "setup": {
     "back": "Atrás",

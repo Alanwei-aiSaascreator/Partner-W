@@ -264,14 +264,6 @@ export default function WelcomeScreen() {
         </div>
       </div>
 
-      <a
-        href="https://github.com/clawwork-ai/clawwork"
-        target="_blank"
-        rel="noreferrer"
-        className="type-support mt-10 text-[var(--text-muted)] hover:text-[var(--accent)] transition-colors"
-      >
-        {t('mainArea.starOnGithub')} ⭐
-      </a>
     </motion.div>
   );
 }

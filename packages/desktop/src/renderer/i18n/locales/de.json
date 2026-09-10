@@ -358,7 +358,6 @@
     "orchestrateDesc": "Die KI wählt automatisch die passenden Agents aus, koordiniert die Arbeit und fasst die Ergebnisse zusammen.",
     "refreshUsage": "Nutzung aktualisieren",
     "scrollToBottom": "Nach unten scrollen",
-    "starOnGithub": "Mofang Compass gefaellt Ihnen? Geben Sie uns einen Stern auf GitHub",
     "tabAgent": "Agent",
     "tabOrchestrate": "Orchestrierung",
     "tabTeam": "Team",
@@ -514,7 +513,6 @@
     "gatewayUrl": "Gateway-URL",
     "general": "Allgemein",
     "generalDesc": "Design, Sprache und Tastenkuerzel",
-    "githubStar": "Bewerten Sie uns auf GitHub ⭐",
     "hideSecret": "Zugangsdaten ausblenden",
     "invalidUrl": "Ungueltige URL",
     "language": "Sprache",
@@ -631,7 +629,6 @@
     "skillUpdateFailed": "Skill-Aktualisierung fehlgeschlagen",
     "startPairing": "Kopplungs-Gateway hinzufuegen",
     "storage": "Speicher",
-    "submitIssue": "Problem melden / Feedback",
     "system": "System",
     "systemDesc": "Systemverhalten, Tastenkuerzel und Arbeitsbereich",
     "testConnection": "Verbindung testen",
@@ -661,7 +658,9 @@
     "workspaceHint": "Speicherort fuer KI-Artefakte",
     "workspaceOldPathHint": "Der alte Arbeitsbereich unter {{path}} wurde beibehalten — Sie koennen ihn manuell loeschen.",
     "workspaceOpenFolder": "Im Finder oeffnen",
-    "account": "Konto"
+    "account": "Konto",
+    "companySite": "Website besuchen",
+    "contactSupport": "Support kontaktieren"
   },
   "setup": {
     "back": "Zurueck",
