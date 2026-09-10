@@ -867,7 +867,10 @@
     "result": "結果"
   },
   "usage": {
+    "balance": "残高",
     "period": "直近 {{days}} 日間",
+    "quotaTotal": "総額度",
+    "quotaUsed": "使用済み",
     "rateLimits": "レート制限",
     "resetsAt": "{{time}} にリセット"
   },

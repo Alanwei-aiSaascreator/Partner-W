@@ -867,7 +867,10 @@
     "result": "Résultat"
   },
   "usage": {
+    "balance": "Solde",
     "period": "{{days}} derniers jours",
+    "quotaTotal": "Quota total",
+    "quotaUsed": "Utilisé",
     "rateLimits": "Limites de débit",
     "resetsAt": "Réinitialisation à {{time}}"
   },

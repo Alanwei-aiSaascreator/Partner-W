@@ -867,7 +867,10 @@
     "result": "Resultado"
   },
   "usage": {
+    "balance": "Saldo",
     "period": "Últimos {{days}} dias",
+    "quotaTotal": "Cota total",
+    "quotaUsed": "Usado",
     "rateLimits": "Limites de Taxa",
     "resetsAt": "Reinicia às {{time}}"
   },

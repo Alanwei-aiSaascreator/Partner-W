@@ -867,7 +867,10 @@
     "result": "Result"
   },
   "usage": {
+    "balance": "Balance",
     "period": "Last {{days}} days",
+    "quotaTotal": "Total quota",
+    "quotaUsed": "Used",
     "rateLimits": "Rate Limits",
     "resetsAt": "Resets at {{time}}"
   },

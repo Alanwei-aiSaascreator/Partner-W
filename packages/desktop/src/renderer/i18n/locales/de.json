@@ -867,7 +867,10 @@
     "result": "Ergebnis"
   },
   "usage": {
+    "balance": "Guthaben",
     "period": "Letzte {{days}} Tage",
+    "quotaTotal": "Gesamtkontingent",
+    "quotaUsed": "Verwendet",
     "rateLimits": "Ratenlimits",
     "resetsAt": "Zuruecksetzung um {{time}}"
   },

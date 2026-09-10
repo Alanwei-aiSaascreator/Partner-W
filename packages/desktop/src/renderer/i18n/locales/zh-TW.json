@@ -867,7 +867,10 @@
     "result": "結果"
   },
   "usage": {
+    "balance": "餘額",
     "period": "最近 {{days}} 天",
+    "quotaTotal": "總額度",
+    "quotaUsed": "已用",
     "rateLimits": "速率限制",
     "resetsAt": "{{time}} 重設"
   },

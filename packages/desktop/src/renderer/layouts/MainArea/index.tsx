@@ -14,6 +14,7 @@ import {
   RefreshCw,
   AlertTriangle,
   ArrowLeftRight,
+  Wallet,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { parseAgentIdFromSessionKey } from '@clawwork/shared';
@@ -22,6 +23,7 @@ import { useTaskStore } from '@/stores/taskStore';
 import { useMessageStore, EMPTY_MESSAGES, activeTurnToMessage } from '@/stores/messageStore';
 import { useUiStore } from '@/stores/uiStore';
 import { useRoomStore } from '@/stores/roomStore';
+import { useCommercialStore } from '@/stores/commercialStore';
 import { cn, formatRelativeTime, formatTokenCount, formatCost } from '@/lib/utils';
 import WindowTitlebar from '@/components/semantic/WindowTitlebar';
 import { Button } from '@/components/ui/button';
@@ -137,6 +139,16 @@ function ChatHeader({
   const { t } = useTranslation();
   const activeTask = useTaskStore((s) => s.tasks.find((task) => task.id === s.activeTaskId));
   const updateTaskTitle = useTaskStore((s) => s.updateTaskTitle);
+  const commercialOverview = useCommercialStore((s) => s.overview);
+  const loadCommercial = useCommercialStore((s) => s.load);
+
+  useEffect(() => {
+    void loadCommercial();
+  }, [loadCommercial]);
+
+  const quotaCents = commercialOverview?.license?.tokenQuotaCents ?? 0;
+  const usedCents = commercialOverview?.license?.tokenUsedCents ?? 0;
+  const remainingYuan = ((quotaCents - usedCents) / 100).toFixed(2);
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState('');
   const titleInputRef = useRef<HTMLInputElement>(null);
@@ -238,6 +250,38 @@ function ChatHeader({
         )}
       </div>
       <div className="titlebar-no-drag flex items-center gap-1">
+        {quotaCents > 0 && (
+          <Popover>
+            <PopoverTrigger asChild>
+              <button
+                className="type-meta inline-flex h-8 items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] px-2 text-[var(--text-secondary)] hover:border-[var(--border)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+                aria-label={t('usage.balance')}
+              >
+                <Wallet size={14} />
+                <span className={usedCents >= quotaCents ? 'text-[var(--danger)]' : undefined}>¥{remainingYuan}</span>
+              </button>
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-72">
+              <div className="space-y-2">
+                <p className="type-label text-[var(--text-primary)]">{t('usage.balance')}</p>
+                <div className="flex items-center justify-between type-support text-[var(--text-secondary)]">
+                  <span>{t('usage.quotaTotal')}</span>
+                  <span>¥{(quotaCents / 100).toFixed(2)}</span>
+                </div>
+                <div className="flex items-center justify-between type-support text-[var(--text-secondary)]">
+                  <span>{t('usage.quotaUsed')}</span>
+                  <span>¥{(usedCents / 100).toFixed(2)}</span>
+                </div>
+                <div className="h-1.5 w-full rounded-full bg-[var(--bg-tertiary)]">
+                  <div
+                    className="h-1.5 rounded-full bg-[var(--accent)] transition-all"
+                    style={{ width: `${quotaCents > 0 ? Math.min(100, (usedCents / quotaCents) * 100) : 0}%` }}
+                  />
+                </div>
+              </div>
+            </PopoverContent>
+          </Popover>
+        )}
         {hasUsageData && (
           <Popover>
             <PopoverTrigger asChild>

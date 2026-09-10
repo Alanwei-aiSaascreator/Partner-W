@@ -867,7 +867,10 @@
     "result": "결과"
   },
   "usage": {
+    "balance": "잔액",
     "period": "최근 {{days}}일",
+    "quotaTotal": "총 할당량",
+    "quotaUsed": "사용됨",
     "rateLimits": "요청 제한",
     "resetsAt": "{{time}}에 초기화"
   },
