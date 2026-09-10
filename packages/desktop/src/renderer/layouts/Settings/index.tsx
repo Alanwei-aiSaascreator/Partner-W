@@ -1,5 +1,5 @@
 import { useState, type ComponentType } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
 import { motion as motionPresets, motionDuration } from '@/styles/design-tokens';
 import WindowTitlebar from '@/components/semantic/WindowTitlebar';
@@ -38,17 +38,18 @@ export default function Settings() {
         <SettingsNav active={activeSection} onChange={setActiveSection} />
 
         <div className="flex-1 overflow-y-auto px-8 py-6">
-          <AnimatePresence mode="wait">
-            <motion.div
-              key={activeSection}
-              initial={{ opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -6 }}
-              transition={{ duration: motionDuration.normal }}
-            >
-              <SectionComponent />
-            </motion.div>
-          </AnimatePresence>
+          {/* Do NOT re-wrap this in <AnimatePresence>: with mode="wait" the new
+              section never mounts (switching silently stops working), and with
+              mode="popLayout" it deadlocks after a few switches. The key alone
+              remounts the section and replays the fade-in. */}
+          <motion.div
+            key={activeSection}
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: motionDuration.normal }}
+          >
+            <SectionComponent />
+          </motion.div>
         </div>
       </div>
     </motion.div>
