@@ -385,7 +385,7 @@
     "updateAvailable": "有可用更新"
   },
   "login": {
-    "agreement": "登入即表示同意{0}與{1}",
+    "agreement": "我已閱讀並同意{0}與{1}",
     "changePhone": "更換手機號",
     "codePlaceholder": "驗證碼",
     "codeSent": "驗證碼已傳送至 +86{{phone}}，請注意查收",

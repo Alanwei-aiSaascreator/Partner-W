@@ -385,7 +385,7 @@
     "updateAvailable": "업데이트 가능"
   },
   "login": {
-    "agreement": "로그인하면 {0} 및 {1}에 동의하는 것으로 간주됩니다",
+    "agreement": "{0} 및 {1}을(를) 읽고 동의합니다",
     "changePhone": "번호 변경",
     "codePlaceholder": "인증 코드",
     "codeSent": "인증 코드를 +86{{phone}}로 보냈습니다. 확인해 주세요",

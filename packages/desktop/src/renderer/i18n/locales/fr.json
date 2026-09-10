@@ -385,7 +385,7 @@
     "updateAvailable": "Mise à jour disponible"
   },
   "login": {
-    "agreement": "En vous connectant, vous acceptez les {0} et la {1}",
+    "agreement": "J'ai lu et j'accepte les {0} et la {1}",
     "changePhone": "Changer de numéro",
     "codePlaceholder": "Code",
     "codeSent": "Code envoyé au +86{{phone}}, veuillez vérifier",

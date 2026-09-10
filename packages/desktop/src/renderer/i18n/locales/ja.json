@@ -385,7 +385,7 @@
     "updateAvailable": "アップデートがあります"
   },
   "login": {
-    "agreement": "サインインすると{0}および{1}に同意したものとみなされます",
+    "agreement": "{0}と{1}を読み、同意します",
     "changePhone": "番号を変更",
     "codePlaceholder": "確認コード",
     "codeSent": "認証コードを +86{{phone}} に送信しました。ご確認ください",

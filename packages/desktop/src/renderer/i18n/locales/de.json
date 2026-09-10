@@ -385,7 +385,7 @@
     "updateAvailable": "Update verfuegbar"
   },
   "login": {
-    "agreement": "Mit der Anmeldung stimmen Sie den {0} und der {1} zu",
+    "agreement": "Ich habe die {0} und die {1} gelesen und stimme ihnen zu",
     "changePhone": "Nummer ändern",
     "codePlaceholder": "Code",
     "codeSent": "Code an +86{{phone}} gesendet, bitte prüfen",
