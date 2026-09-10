@@ -1,7 +1,7 @@
 ---
 version: alpha
-name: ClawWork Operator Console
-description: A dense local-first desktop workspace for OpenClaw tasks, sessions, messages, artifacts, and teams.
+name: Mofang Compass Operator Console
+description: A dense local-first desktop workspace for OpenClaw agents, tasks, sessions, messages, artifacts, and teams.
 colors:
   primary: '#13131C'
   secondary: '#1A1A25'
@@ -214,11 +214,23 @@ components:
 
 ## Overview
 
-ClawWork is an operator console, not a marketing surface. It should feel like a quiet desktop control room for parallel OpenClaw work: persistent Tasks in the left rail, the active Message stream in the center, and Task-scoped operational context around it.
+Mofang Compass is an operator console, not a marketing surface. It should feel like a quiet desktop control room for parallel OpenClaw work: persistent Tasks in the left rail, the active Message stream in the center, and Task-scoped operational context around it.
 
 The visual reference is a local-first agent workspace with terminal-adjacent density and macOS desktop restraint. The product can show Teams, usage, tool calls, artifacts, scheduled Tasks, and search without turning into a dashboard collage. Hierarchy comes from panels, muted text, exact spacing, and sparse accent, not from decorative illustration.
 
 Dark mode is the primary expression. Light mode keeps the same geometry and contrast relationships but swaps to warm paper surfaces. Both modes should preserve the same calm, work-focused rhythm.
+
+## Agents
+
+Agents are first-class navigation, not a settings detail. Every Task belongs to exactly one Agent, and the left rail exposes an Agent switcher above the task list, so the workspace reads as "what is this specialist working on" rather than "what ran recently".
+
+- The switcher sits at the top of the left rail, above search.
+- Selecting an Agent filters the task list to that Agent's Tasks.
+- Selecting "All agents" clears the filter and shows every Task.
+- The selection persists per gateway, so reopening the app restores the last Agent.
+- Agent identity renders through emoji or avatar when present, falling back to a neutral bot glyph.
+
+Agent switching changes what you see, never what exists. It narrows the list; it must never hide, move, or mutate Tasks.
 
 ## Colors
 
@@ -237,7 +249,7 @@ In application code, all UI colors should come through CSS variables. Do not int
 
 ## Typography
 
-ClawWork uses Inter Variable for interface text and JetBrains Mono Variable for inline code, command data, token counts, paths, IDs, and compact technical metadata.
+Mofang Compass uses Inter Variable for interface text and JetBrains Mono Variable for inline code, command data, token counts, paths, IDs, and compact technical metadata.
 
 Type is intentionally modest. Page titles are only 24px; section titles are 16px; most working UI text sits at 14px or 13px. The product should read like a desktop tool that expects repeated use, not a landing page trying to impress a first-time visitor.
 
@@ -272,7 +284,7 @@ Motion is fast: 100ms for immediate feedback, 150ms for normal control transitio
 
 ## Shapes
 
-ClawWork uses slightly rounded desktop geometry. Small badges and status tags use 3-4px radius. Buttons and compact controls use 8px. Cards and framed sections use 12px. The command composer can use a large 24px radius because it is a primary input surface, not a generic card.
+Mofang Compass uses slightly rounded desktop geometry. Small badges and status tags use 3-4px radius. Buttons and compact controls use 8px. Cards and framed sections use 12px. The command composer can use a large 24px radius because it is a primary input surface, not a generic card.
 
 Do not increase rounding globally to make the UI feel friendlier. The product should remain precise, dense, and operator-grade.
 

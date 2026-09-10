@@ -210,7 +210,7 @@ export default function WelcomeScreen() {
     >
       <div className="relative mb-6">
         <div className="absolute inset-0 scale-[2.5] rounded-full bg-[var(--accent)] opacity-[0.06] blur-2xl" />
-        <img src={logo} alt="ClawWork" className="relative w-16 h-16 rounded-2xl shadow-[var(--glow-accent)]" />
+        <img src={logo} alt="Mofang Compass" className="relative w-16 h-16 rounded-2xl shadow-[var(--glow-accent)]" />
       </div>
       <h3 className="type-page-title mb-6 text-[var(--text-primary)]">ClawWork</h3>
 
