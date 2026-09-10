@@ -756,7 +756,9 @@ export class GatewayClient {
   }
 
   async getSessionUsage(params: {
-    key: string;
+    // Optional per the gateway protocol: omitting it returns every session's
+    // usage in one call, which is what the usage reporter needs.
+    key?: string;
     startDate?: string;
     endDate?: string;
   }): Promise<Record<string, unknown>> {

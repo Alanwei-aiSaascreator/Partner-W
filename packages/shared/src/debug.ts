@@ -15,6 +15,7 @@ export type DebugDomain =
   | 'tray'
   | 'quick-launch'
   | 'updater'
+  | 'commercial'
   | 'avatar';
 
 export interface DebugError {
