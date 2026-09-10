@@ -32,6 +32,22 @@ describe('evaluateQuota', () => {
     expect(evaluateQuota(1000, null).level).toBe('unknown-exhausted');
   });
 
+  it('reports exhausted when the balance reads as NaN', () => {
+    expect(evaluateQuota(1000, Number.NaN).level).toBe('unknown-exhausted');
+  });
+
+  it('blocks when the balance reads as Infinity', () => {
+    expect(evaluateQuota(1000, Number.POSITIVE_INFINITY).level).toBe('unknown-exhausted');
+  });
+
+  it('reports exhausted when the balance reads as negative Infinity', () => {
+    expect(evaluateQuota(1000, Number.NEGATIVE_INFINITY).level).toBe('unknown-exhausted');
+  });
+
+  it('treats an unreadable quota as unlimited rather than blocking every send', () => {
+    expect(evaluateQuota(Number.NaN, 0).level).toBe('unlimited');
+  });
+
   it('computes the remaining percentage', () => {
     expect(evaluateQuota(1000, 250).remainingPercent).toBe(75);
   });

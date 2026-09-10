@@ -10,11 +10,11 @@ export interface QuotaVerdict {
 }
 
 export function evaluateQuota(quotaCents: number, usedCents: number | null): QuotaVerdict {
-  if (quotaCents <= 0) {
+  if (!Number.isFinite(quotaCents) || quotaCents <= 0) {
     return { level: 'unlimited', usedPercent: 0, remainingPercent: 100 };
   }
 
-  if (usedCents === null) {
+  if (usedCents === null || !Number.isFinite(usedCents)) {
     return { level: 'unknown-exhausted', usedPercent: 100, remainingPercent: 0 };
   }
 
