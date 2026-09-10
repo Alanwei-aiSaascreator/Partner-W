@@ -43,6 +43,8 @@ import {
 } from '@/components/ui/dialog';
 import { exportToFiles, exportToLocal } from '@/lib/export-session';
 import TaskItem from './TaskItem';
+import AgentSwitcher from './AgentSwitcher';
+import { useGatewaySelector } from '@/hooks/useGatewaySelector';
 import type { Task, TaskStatus } from '@clawwork/shared';
 import EmptyState from '@/components/semantic/EmptyState';
 import { useSessionPreviews } from '@/hooks/useSessionPreviews';
@@ -290,7 +292,17 @@ export default function LeftNav() {
     openMenu(e, taskId, status);
   };
 
-  const visibleTasks = useMemo(() => tasks.filter((t) => t.status !== 'archived'), [tasks]);
+  const { selectedGwId, agentCatalog } = useGatewaySelector();
+  const selectedAgentId = useUiStore((s) => s.selectedAgentByGateway[selectedGwId] ?? '');
+  const setSelectedAgent = useUiStore((s) => s.setSelectedAgent);
+
+  const visibleTasks = useMemo(
+    () =>
+      tasks.filter(
+        (t) => t.status !== 'archived' && (!selectedAgentId || t.agentId === selectedAgentId),
+      ),
+    [tasks, selectedAgentId],
+  );
   const activeTasks = useMemo(() => visibleTasks.filter((t) => t.status === 'active'), [visibleTasks]);
   const completedTasks = useMemo(() => visibleTasks.filter((t) => t.status === 'completed'), [visibleTasks]);
   const activeGroups = useMemo(() => groupTasksByTime(activeTasks), [activeTasks]);
@@ -499,6 +511,12 @@ export default function LeftNav() {
           </Tooltip>
         </div>
       </div>
+      <AgentSwitcher
+        agents={agentCatalog}
+        selectedAgentId={selectedAgentId}
+        onSelect={(agentId) => setSelectedAgent(selectedGwId, agentId)}
+      />
+
       <div className="px-3 pb-2 flex-shrink-0">
         <div className="titlebar-no-drag relative">
           <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" />

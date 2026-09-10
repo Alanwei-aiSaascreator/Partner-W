@@ -101,6 +101,11 @@ export interface UiState {
 
   getAgentsForGateway: (gatewayId: string) => { agents: AgentInfo[]; defaultId: string };
 
+  selectedAgentByGateway: Record<string, string>;
+  setSelectedAgent: (gatewayId: string, agentId: string) => void;
+  getSelectedAgent: (gatewayId: string) => string | null;
+  getSelectedAgentOrDefault: (gatewayId: string) => string;
+
   leftNavCollapsed: boolean;
   toggleLeftNavCollapsed: () => void;
 
@@ -137,6 +142,23 @@ export interface UiStoreDeps {
 }
 
 const EMPTY_AGENT_CATALOG = { agents: [] as AgentInfo[], defaultId: '' };
+const AGENT_SELECTION_KEY = 'cw:selectedAgentByGateway';
+
+function parseStoredAgentSelection(storage: UiStoreDeps['storage']): Record<string, string> {
+  const raw = storage.get(AGENT_SELECTION_KEY);
+  if (!raw) return {};
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    const out: Record<string, string> = {};
+    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof value === 'string' && value) out[key] = value;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
 
 function lsWidth(
   storage: UiStoreDeps['storage'],
@@ -311,6 +333,20 @@ export function createUiStore(deps: UiStoreDeps) {
     getAgentsForGateway: (gatewayId: string) => {
       const entry = get().agentCatalogByGateway[gatewayId];
       return entry ?? EMPTY_AGENT_CATALOG;
+    },
+
+    selectedAgentByGateway: parseStoredAgentSelection(deps.storage),
+    setSelectedAgent: (gatewayId, agentId) =>
+      set((s) => {
+        const next = { ...s.selectedAgentByGateway, [gatewayId]: agentId };
+        deps.storage.set(AGENT_SELECTION_KEY, JSON.stringify(next));
+        return { selectedAgentByGateway: next };
+      }),
+    getSelectedAgent: (gatewayId: string) => get().selectedAgentByGateway[gatewayId] || null,
+    getSelectedAgentOrDefault: (gatewayId: string) => {
+      const selected = get().selectedAgentByGateway[gatewayId];
+      if (selected) return selected;
+      return get().agentCatalogByGateway[gatewayId]?.defaultId ?? '';
     },
 
     leftNavCollapsed: deps.storage.get('cw:leftNavCollapsed') === 'true',
