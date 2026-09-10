@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { CreditCard, LogOut, Loader2, RefreshCw, User as UserIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { CommercialAccountOverview } from '@clawwork/shared';
+import type { RechargeOrderHandle, RechargeSku } from '../../../../preload/clawwork';
 import { toast } from '@/lib/toast';
 import { Button } from '@/components/ui/button';
 import {
@@ -89,6 +90,13 @@ export default function AccountSection() {
   const [signingOut, setSigningOut] = useState(false);
   const [refundOpen, setRefundOpen] = useState(false);
   const [refundAgreed, setRefundAgreed] = useState(false);
+  const [skus, setSkus] = useState<RechargeSku[]>([]);
+  const [selectedSku, setSelectedSku] = useState('');
+  const [placing, setPlacing] = useState(false);
+  const [pending, setPending] = useState<RechargeOrderHandle | null>(null);
+  const [placeError, setPlaceError] = useState('');
+  const watchRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollCountRef = useRef(0);
   const mountedRef = useRef(true);
 
   useEffect(() => {
@@ -131,9 +139,42 @@ export default function AccountSection() {
     }
   }, []);
 
+  const stopWatch = useCallback(() => {
+    if (watchRef.current) {
+      clearInterval(watchRef.current);
+      watchRef.current = null;
+    }
+  }, []);
+
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    void window.clawwork.commercialRechargeSkus().then((res) => {
+      if (!mountedRef.current || !res.ok || !res.result?.length) return;
+      setSkus(res.result);
+      setSelectedSku((current) => current || res.result![0].sku);
+    });
+  }, []);
+
+  useEffect(() => () => stopWatch(), [stopWatch]);
+
+  useEffect(() => {
+    if (!pending) return;
+    const onFocus = () => {
+      void window.clawwork.commercialRechargeOrder(pending.orderNo).then((res) => {
+        if (mountedRef.current && res.result?.status === 'paid') {
+          stopWatch();
+          setPending(null);
+          toast.success(t('account.rechargePaid'));
+          void load();
+        }
+      });
+    };
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [load, pending, stopWatch, t]);
 
   const handleSignOut = useCallback(async () => {
     setSigningOut(true);
@@ -155,7 +196,65 @@ export default function AccountSection() {
   const closeRefund = useCallback(() => {
     setRefundOpen(false);
     setRefundAgreed(false);
+    setPlaceError('');
   }, []);
+
+  const startWatch = useCallback(
+    (orderNo: string) => {
+      stopWatch();
+      pollCountRef.current = 0;
+
+      const poll = async () => {
+        pollCountRef.current += 1;
+        const res = await window.clawwork.commercialRechargeOrder(orderNo);
+        if (!mountedRef.current) {
+          stopWatch();
+          return;
+        }
+        const state = res.result?.status;
+        if (state === 'paid') {
+          stopWatch();
+          setPending(null);
+          toast.success(t('account.rechargePaid'));
+          void load();
+          return;
+        }
+        if (state === 'cancelled' || state === 'failed') {
+          stopWatch();
+          setPending(null);
+          toast.warning(t('account.rechargeClosed'));
+          return;
+        }
+        if (pollCountRef.current >= 40) stopWatch();
+      };
+
+      void poll();
+      watchRef.current = setInterval(() => void poll(), 3000);
+    },
+    [load, stopWatch, t],
+  );
+
+  const confirmRecharge = useCallback(async () => {
+    if (!selectedSku || placing) return;
+    setPlacing(true);
+    setPlaceError('');
+    try {
+      const res = await window.clawwork.commercialRechargeCreate(selectedSku);
+      if (!res.ok || !res.result) {
+        setPlaceError(t('account.rechargeFailed'));
+        return;
+      }
+      setRefundOpen(false);
+      setRefundAgreed(false);
+      setPending(res.result);
+      window.open(res.result.payUrl, '_blank');
+      startWatch(res.result.orderNo);
+    } catch {
+      setPlaceError(t('account.rechargeFailed'));
+    } finally {
+      setPlacing(false);
+    }
+  }, [placing, selectedSku, startWatch, t]);
 
   if (status === 'loading' && !overview) {
     return (
@@ -267,9 +366,15 @@ export default function AccountSection() {
       </SettingGroup>
 
       <div className="flex items-center gap-3">
-        <Button variant="outline" size="sm" onClick={() => setRefundOpen(true)} className="gap-1.5">
-          <CreditCard size={14} />
-          {t('account.recharge')}
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setRefundOpen(true)}
+          disabled={Boolean(pending)}
+          className="gap-1.5"
+        >
+          {pending ? <Loader2 size={14} className="animate-spin" /> : <CreditCard size={14} />}
+          {pending ? t('account.rechargeWaiting') : t('account.recharge')}
         </Button>
         <Button
           variant="ghost"
@@ -295,6 +400,40 @@ export default function AccountSection() {
             <DialogTitle>{t('account.refundTitle')}</DialogTitle>
             <DialogDescription>{t('account.refundNotice')}</DialogDescription>
           </DialogHeader>
+
+          <div className="mt-4 space-y-2">
+            <p className="type-label text-[var(--text-primary)]">{t('account.rechargePickAmount')}</p>
+            {skus.length === 0 ? (
+              <LoadingBlock label={t('common.loading')} />
+            ) : (
+              <div className="grid grid-cols-2 gap-2">
+                {skus.map((item) => {
+                  const active = item.sku === selectedSku;
+                  return (
+                    <button
+                      key={item.sku}
+                      type="button"
+                      onClick={() => setSelectedSku(item.sku)}
+                      className={
+                        'rounded-lg border px-3 py-2.5 text-left transition-colors ' +
+                        (active
+                          ? 'border-[var(--accent)] bg-[var(--accent-soft)]'
+                          : 'border-[var(--border)] hover:border-[var(--border-accent)]')
+                      }
+                    >
+                      <span className="type-label block text-[var(--text-primary)]">{item.label}</span>
+                      {item.bonusCents > 0 && (
+                        <span className="type-support block text-[var(--accent)]">
+                          {t('account.rechargeBonus', { amount: formatCents(item.bonusCents) })}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
           <label className="mt-4 flex items-start gap-2 type-support text-[var(--text-secondary)] cursor-pointer">
             <input
               type="checkbox"
@@ -304,17 +443,19 @@ export default function AccountSection() {
             />
             {t('account.refundAgree')}
           </label>
+
+          {placeError && (
+            <p className="mt-2 type-support text-[var(--danger)]" role="alert">
+              {placeError}
+            </p>
+          )}
+
           <DialogFooter className="mt-6">
-            <Button variant="outline" onClick={closeRefund}>
+            <Button variant="outline" onClick={closeRefund} disabled={placing}>
               {t('common.cancel')}
             </Button>
-            <Button
-              disabled={!refundAgreed}
-              onClick={() => {
-                closeRefund();
-                toast(t('account.rechargeHint'));
-              }}
-            >
+            <Button disabled={!refundAgreed || !selectedSku || placing} onClick={() => void confirmRecharge()}>
+              {placing ? <Loader2 size={14} className="animate-spin" /> : <CreditCard size={14} />}
               {t('account.rechargeConfirm')}
             </Button>
           </DialogFooter>
