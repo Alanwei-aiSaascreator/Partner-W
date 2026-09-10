@@ -448,6 +448,7 @@ function buildApi(): ClawWorkAPI {
       ipcRenderer.invoke('commercial:license-activate', licenseKey),
     commercialLicenseClear: () => ipcRenderer.invoke('commercial:license-clear'),
     commercialDeviceFingerprint: () => ipcRenderer.invoke('commercial:device-fingerprint'),
+    commercialUsageReport: () => ipcRenderer.invoke('commercial:usage-report'),
   };
 }
 

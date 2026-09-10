@@ -24,6 +24,7 @@ import { registerNotificationHandlers } from './ipc/notification-handlers.js';
 import { registerAvatarHandlers, registerAvatarProtocol } from './ipc/avatar-handlers.js';
 import { registerHubHandlers } from './ipc/hub-handlers.js';
 import { registerCommercialHandlers } from './ipc/commercial-handlers.js';
+import { initUsageReporter, destroyUsageReporter } from './commercial/usage-reporter.js';
 import { unwatchAll } from './context/file-watcher.js';
 import { isInstallingUpdate } from './auto-updater.js';
 import { initTray, destroyTray } from './tray.js';
@@ -264,6 +265,8 @@ if (!gotLock) {
 
     createWindow();
     initAllGateways();
+    // 放在网关之后：首跑要立刻读一次额度，此时会话/配置已就绪，否则首报必然是空
+    initUsageReporter();
     initTray();
     initQuickLaunch();
 
@@ -300,6 +303,8 @@ app.on('before-quit', (event) => {
     .finally(() => {
       globalShortcut.unregisterAll();
       unwatchAll();
+      // 先掐定时器，否则拆网关的过程中还会触发一次上报，撞上半死会话
+      destroyUsageReporter();
       destroyAllGateways();
       destroyTray();
       destroyQuickLaunch();

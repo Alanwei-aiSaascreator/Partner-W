@@ -10,6 +10,7 @@ import {
   verifyLoginOtp,
 } from '../commercial/auth.js';
 import { activateLicense, clearLicense, deviceFingerprint, readLicenseStatus } from '../commercial/license.js';
+import { runUsageReport } from '../commercial/usage-reporter.js';
 
 export function registerCommercialHandlers(): void {
   ipcMain.handle('commercial:get-config', () => {
@@ -58,4 +59,8 @@ export function registerCommercialHandlers(): void {
   );
   ipcMain.handle('commercial:license-clear', () => clearLicense());
   ipcMain.handle('commercial:device-fingerprint', () => deviceFingerprint());
+
+  // 手动触发一次上报，返回本次是否产生了可用结果（0 表示无可报内容/失败）。
+  // 定时器那套是兜底，这个入口给「刚花完额度、要立刻刷新顶栏」之类的场景用。
+  ipcMain.handle('commercial:usage-report', () => runUsageReport());
 }

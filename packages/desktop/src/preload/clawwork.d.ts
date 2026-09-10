@@ -608,6 +608,7 @@ export interface ClawWorkAPI {
   commercialLicenseActivate: (licenseKey: string) => Promise<IpcResult<CommercialLicenseStatus>>;
   commercialLicenseClear: () => Promise<IpcResult>;
   commercialDeviceFingerprint: () => Promise<string>;
+  commercialUsageReport: () => Promise<number>;
 }
 
 declare global {
