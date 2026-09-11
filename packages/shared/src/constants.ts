@@ -1,5 +1,35 @@
 export const GATEWAY_WS_PORT = 18789;
 
+/**
+ * Bounds for free-form recharge, in cents.
+ *
+ * The database RPC `create_recharge_order_custom` is the authority and rejects
+ * anything outside this range on its own. These exist so the renderer and the
+ * main process agree without a round trip — changing them means changing the
+ * RPC too.
+ */
+export const CUSTOM_RECHARGE_MIN_CENTS = 100; // ¥1
+export const CUSTOM_RECHARGE_MAX_CENTS = 50000; // ¥500
+
+/**
+ * Parses a user-typed yuan amount ("1", "10.5", "500") into cents.
+ *
+ * Returns null for anything that is not a usable amount, including values
+ * outside the recharge bounds — callers show one error either way, and the RPC
+ * re-checks. Deliberately integer arithmetic: `Number('1.15') * 100` is
+ * 114.99999999999999, which rounds fine here but is not something to rely on
+ * when the result is money.
+ */
+export function parseRechargeYuanToCents(raw: string): number | null {
+  const trimmed = raw.trim();
+  if (!/^\d{1,4}(\.\d{1,2})?$/.test(trimmed)) return null;
+  const [whole, frac = ''] = trimmed.split('.');
+  const cents = Number(whole) * 100 + Number(frac.padEnd(2, '0'));
+  if (!Number.isInteger(cents)) return null;
+  if (cents < CUSTOM_RECHARGE_MIN_CENTS || cents > CUSTOM_RECHARGE_MAX_CENTS) return null;
+  return cents;
+}
+
 export const SESSION_KEY_PREFIX = 'agent:main:clawwork:task:';
 const CLAWWORK_DEVICE_SESSION_RE = /^agent:([^:]+):clawwork:([^:]+):task:(.+)$/;
 const CLAWWORK_SESSION_RE = /^agent:([^:]+):clawwork:task:(.+)$/;

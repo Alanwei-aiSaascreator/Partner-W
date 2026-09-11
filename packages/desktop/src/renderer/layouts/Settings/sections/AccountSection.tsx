@@ -1,7 +1,12 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { CreditCard, LogOut, Loader2, RefreshCw, User as UserIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import type { CommercialAccountOverview } from '@clawwork/shared';
+import {
+  CUSTOM_RECHARGE_MAX_CENTS,
+  CUSTOM_RECHARGE_MIN_CENTS,
+  parseRechargeYuanToCents,
+  type CommercialAccountOverview,
+} from '@clawwork/shared';
 import type { RechargeOrderHandle, RechargeSku } from '../../../../preload/clawwork';
 import { toast } from '@/lib/toast';
 import { Button } from '@/components/ui/button';
@@ -92,6 +97,10 @@ export default function AccountSection() {
   const [refundAgreed, setRefundAgreed] = useState(false);
   const [skus, setSkus] = useState<RechargeSku[]>([]);
   const [selectedSku, setSelectedSku] = useState('');
+  // 自定义金额与档位互斥：选中一个就清掉另一个，避免「选了 ¥100 档又填了 ¥5」
+  // 这种说不清以哪个为准的状态。
+  const [useCustomAmount, setUseCustomAmount] = useState(false);
+  const [customAmount, setCustomAmount] = useState('');
   const [placing, setPlacing] = useState(false);
   const [pending, setPending] = useState<RechargeOrderHandle | null>(null);
   const [placeError, setPlaceError] = useState('');
@@ -197,6 +206,8 @@ export default function AccountSection() {
     setRefundOpen(false);
     setRefundAgreed(false);
     setPlaceError('');
+    setUseCustomAmount(false);
+    setCustomAmount('');
   }, []);
 
   const startWatch = useCallback(
@@ -235,17 +246,28 @@ export default function AccountSection() {
   );
 
   const confirmRecharge = useCallback(async () => {
-    if (!selectedSku || placing) return;
+    if (placing) return;
+
+    // null 表示「填的东西不能当金额用」——空、非数字、超范围都算。
+    // 服务端还会再校验一次，这里只是省掉一次无谓的往返。
+    const customCents = useCustomAmount ? parseRechargeYuanToCents(customAmount) : null;
+    if (useCustomAmount ? customCents === null : !selectedSku) return;
+
     setPlacing(true);
     setPlaceError('');
     try {
-      const res = await window.clawwork.commercialRechargeCreate(selectedSku);
+      const res =
+        customCents !== null
+          ? await window.clawwork.commercialRechargeCreateCustom(customCents)
+          : await window.clawwork.commercialRechargeCreate(selectedSku);
       if (!res.ok || !res.result) {
         setPlaceError(t('account.rechargeFailed'));
         return;
       }
       setRefundOpen(false);
       setRefundAgreed(false);
+      setUseCustomAmount(false);
+      setCustomAmount('');
       setPending(res.result);
       window.open(res.result.payUrl, '_blank');
       startWatch(res.result.orderNo);
@@ -254,7 +276,7 @@ export default function AccountSection() {
     } finally {
       setPlacing(false);
     }
-  }, [placing, selectedSku, startWatch, t]);
+  }, [customAmount, placing, selectedSku, startWatch, t, useCustomAmount]);
 
   if (status === 'loading' && !overview) {
     return (
@@ -413,7 +435,10 @@ export default function AccountSection() {
                     <button
                       key={item.sku}
                       type="button"
-                      onClick={() => setSelectedSku(item.sku)}
+                      onClick={() => {
+                        setSelectedSku(item.sku);
+                        setUseCustomAmount(false);
+                      }}
                       className={
                         'rounded-lg border px-3 py-2.5 text-left transition-colors ' +
                         (active
@@ -430,6 +455,57 @@ export default function AccountSection() {
                     </button>
                   );
                 })}
+              </div>
+            )}
+
+            {/* 自定义金额。与档位互斥：选了它，档位选择就失效。 */}
+            <button
+              type="button"
+              onClick={() => {
+                setUseCustomAmount(true);
+                setSelectedSku('');
+              }}
+              className={
+                'w-full rounded-lg border px-3 py-2.5 text-left transition-colors ' +
+                (useCustomAmount
+                  ? 'border-[var(--accent)] bg-[var(--accent-soft)]'
+                  : 'border-[var(--border)] hover:border-[var(--border-accent)]')
+              }
+            >
+              <span className="type-label block text-[var(--text-primary)]">
+                {t('account.rechargeCustom')}
+              </span>
+            </button>
+
+            {useCustomAmount && (
+              <div className="space-y-1">
+                <div className="relative">
+                  <span className="absolute left-3.5 top-1/2 -translate-y-1/2 type-body text-[var(--text-muted)]">
+                    ¥
+                  </span>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    autoFocus
+                    value={customAmount}
+                    disabled={placing}
+                    onChange={(e) => setCustomAmount(e.target.value.replace(/[^\d.]/g, '').slice(0, 7))}
+                    placeholder={t('account.rechargeCustomPlaceholder', {
+                      min: CUSTOM_RECHARGE_MIN_CENTS / 100,
+                      max: CUSTOM_RECHARGE_MAX_CENTS / 100,
+                    })}
+                    aria-label={t('account.rechargeCustom')}
+                    className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg-input)] py-2.5 pl-8 pr-4 type-body text-[var(--text-primary)] placeholder:text-[var(--text-muted)] outline-none transition-colors focus:border-[var(--accent)] disabled:opacity-60"
+                  />
+                </div>
+                {customAmount.trim() !== '' && parseRechargeYuanToCents(customAmount) === null && (
+                  <p className="type-support text-[var(--danger)]" role="alert">
+                    {t('account.rechargeCustomInvalid', {
+                      min: CUSTOM_RECHARGE_MIN_CENTS / 100,
+                      max: CUSTOM_RECHARGE_MAX_CENTS / 100,
+                    })}
+                  </p>
+                )}
               </div>
             )}
           </div>
@@ -454,7 +530,14 @@ export default function AccountSection() {
             <Button variant="outline" onClick={closeRefund} disabled={placing}>
               {t('common.cancel')}
             </Button>
-            <Button disabled={!refundAgreed || !selectedSku || placing} onClick={() => void confirmRecharge()}>
+            <Button
+              disabled={
+                !refundAgreed ||
+                placing ||
+                (useCustomAmount ? parseRechargeYuanToCents(customAmount) === null : !selectedSku)
+              }
+              onClick={() => void confirmRecharge()}
+            >
               {placing ? <Loader2 size={14} className="animate-spin" /> : <CreditCard size={14} />}
               {t('account.rechargeConfirm')}
             </Button>

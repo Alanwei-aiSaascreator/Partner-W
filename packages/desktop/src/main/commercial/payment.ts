@@ -1,4 +1,8 @@
-import type { IpcResult } from '@clawwork/shared';
+import {
+  CUSTOM_RECHARGE_MAX_CENTS,
+  CUSTOM_RECHARGE_MIN_CENTS,
+  type IpcResult,
+} from '@clawwork/shared';
 import { getCommercialClient } from './client.js';
 import { readConfig } from '../workspace/config.js';
 
@@ -73,6 +77,73 @@ export async function readRechargeSkus(): Promise<IpcResult<RechargeSku[]>> {
   }
 }
 
+type CommercialClient = NonNullable<ReturnType<typeof getCommercialClient>>;
+
+/** Maps an RPC failure message to a code the renderer can localise. */
+function classifyCreateError(message: string): string {
+  if (message.includes('not signed in')) return 'not_signed_in';
+  if (message.includes('no organization')) return 'no_organization';
+  if (message.includes('out of range')) return 'recharge_amount_out_of_range';
+  if (message.includes('unknown or inactive sku')) return 'recharge_sku_unknown';
+  return 'recharge_create_failed';
+}
+
+/**
+ * Turns an already-created order into a checkout URL.
+ *
+ * Shared by both order paths. Note what is *not* here: the amount. The payment
+ * service reads it from the order row with service_role, so neither the
+ * renderer nor this process can influence what the user is charged.
+ */
+async function openCheckout(
+  supabase: CommercialClient,
+  orderNo: string,
+): Promise<IpcResult<RechargeOrderHandle>> {
+  const { data: session } = await supabase.auth.getSession();
+  const token = session?.session?.access_token;
+  if (!token) {
+    return { ok: false, error: 'Not signed in', errorCode: 'not_signed_in' };
+  }
+
+  const boundary = paymentBaseUrl();
+  const response = await withTimeout(
+    fetch(`${boundary}/payment-order/alipay/create`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ orderNo }),
+    }),
+    CREATE_TIMEOUT_MS,
+  );
+
+  if (!response) return fail(new Error('timed out'), 'payment_service_down');
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as { error?: { message?: string } } | null;
+    return fail(
+      new Error(body?.error?.message ?? `payment service responded ${response.status}`),
+      'payment_service_down',
+    );
+  }
+
+  const payload = (await response.json()) as RechargeOrderHandle;
+  if (!payload?.payUrl) {
+    return fail(new Error('payment service returned no pay URL'), 'payment_service_down');
+  }
+
+  return {
+    ok: true,
+    result: {
+      orderNo: payload.orderNo ?? orderNo,
+      amountCents: Number(payload.amountCents ?? 0),
+      payUrl: payload.payUrl,
+      expiresAt: payload.expiresAt ?? null,
+    },
+  };
+}
+
+function readOrderNo(order: unknown): string {
+  return String((order as { orderNo?: unknown })?.orderNo ?? '');
+}
+
 export async function createRechargeOrder(sku: string): Promise<IpcResult<RechargeOrderHandle>> {
   const supabase = getCommercialClient();
   if (!supabase) {
@@ -87,66 +158,63 @@ export async function createRechargeOrder(sku: string): Promise<IpcResult<Rechar
   try {
     // Amount comes from the pricing table inside the RPC. The renderer only
     // picks which tier, never how much.
-    const { data: order, error: createError } = await supabase.rpc('create_recharge_order', {
-      p_sku: trimmed,
-    });
+    const { data: order, error } = await supabase.rpc('create_recharge_order', { p_sku: trimmed });
+    if (error) return fail(error, classifyCreateError(String(error.message ?? '')));
 
-    if (createError) {
-      const message = String(createError.message ?? '');
-      const code = message.includes('not signed in')
-        ? 'not_signed_in'
-        : message.includes('no organization')
-          ? 'no_organization'
-          : message.includes('unknown or inactive sku')
-            ? 'recharge_sku_unknown'
-            : 'recharge_create_failed';
-      return { ok: false, error: message, errorCode: code };
-    }
-
-    const orderNo = String((order as { orderNo?: unknown })?.orderNo ?? '');
+    const orderNo = readOrderNo(order);
     if (!orderNo) {
       return { ok: false, error: 'Order was created without an order number', errorCode: 'recharge_create_failed' };
     }
+    return openCheckout(supabase, orderNo);
+  } catch (error) {
+    return fail(error, 'recharge_create_failed');
+  }
+}
 
-    const { data: session } = await supabase.auth.getSession();
-    const token = session?.session?.access_token;
-    if (!token) {
-      return { ok: false, error: 'Not signed in', errorCode: 'not_signed_in' };
-    }
+/**
+ * Free-form recharge, ¥1–¥500.
+ *
+ * The renderer picks the amount here, which the tier path deliberately forbids.
+ * That is safe because the amount is not what the balance is computed from:
+ * fulfillment grants `order.amount_cents`, and the notification is rejected
+ * unless the money actually paid equals it. Nobody can pay ¥1 and receive ¥500.
+ * The part that must stay server-side is the *bonus*, and the RPC pins that to
+ * zero by using a SKU that is absent from `recharge_skus`.
+ *
+ * The range check below is for the user's benefit only — the RPC is the
+ * authority and rejects anything out of bounds regardless.
+ */
+export async function createCustomRechargeOrder(
+  amountCents: number,
+): Promise<IpcResult<RechargeOrderHandle>> {
+  const supabase = getCommercialClient();
+  if (!supabase) {
+    return { ok: false, error: 'Commercial backend is not configured', errorCode: 'not_configured' };
+  }
 
-    const boundary = paymentBaseUrl();
-    const response = await withTimeout(
-      fetch(`${boundary}/payment-order/alipay/create`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ orderNo }),
-      }),
-      CREATE_TIMEOUT_MS,
-    );
-
-    if (!response) return fail(new Error('timed out'), 'payment_service_down');
-    if (!response.ok) {
-      const body = (await response.json().catch(() => null)) as { error?: { message?: string } } | null;
-      return fail(
-        new Error(body?.error?.message ?? `payment service responded ${response.status}`),
-        'payment_service_down',
-      );
-    }
-
-    const payload = (await response.json()) as RechargeOrderHandle;
-    if (!payload?.payUrl) {
-      return fail(new Error('payment service returned no pay URL'), 'payment_service_down');
-    }
-
+  if (
+    !Number.isInteger(amountCents) ||
+    amountCents < CUSTOM_RECHARGE_MIN_CENTS ||
+    amountCents > CUSTOM_RECHARGE_MAX_CENTS
+  ) {
     return {
-      ok: true,
-      result: {
-        orderNo: payload.orderNo ?? orderNo,
-        amountCents: Number(payload.amountCents ?? 0),
-        payUrl: payload.payUrl,
-        expiresAt: payload.expiresAt ?? null,
-      },
+      ok: false,
+      error: 'Custom amount is out of range',
+      errorCode: 'recharge_amount_out_of_range',
     };
+  }
+
+  try {
+    const { data: order, error } = await supabase.rpc('create_recharge_order_custom', {
+      p_amount_cents: amountCents,
+    });
+    if (error) return fail(error, classifyCreateError(String(error.message ?? '')));
+
+    const orderNo = readOrderNo(order);
+    if (!orderNo) {
+      return { ok: false, error: 'Order was created without an order number', errorCode: 'recharge_create_failed' };
+    }
+    return openCheckout(supabase, orderNo);
   } catch (error) {
     return fail(error, 'recharge_create_failed');
   }

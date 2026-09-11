@@ -11,7 +11,12 @@ import {
 } from '../commercial/auth.js';
 import { activateLicense, clearLicense, deviceFingerprint, readLicenseStatus } from '../commercial/license.js';
 import { runUsageReport } from '../commercial/usage-reporter.js';
-import { createRechargeOrder, readRechargeOrder, readRechargeSkus } from '../commercial/payment.js';
+import {
+  createCustomRechargeOrder,
+  createRechargeOrder,
+  readRechargeOrder,
+  readRechargeSkus,
+} from '../commercial/payment.js';
 
 export function registerCommercialHandlers(): void {
   ipcMain.handle('commercial:get-config', () => {
@@ -68,6 +73,11 @@ export function registerCommercialHandlers(): void {
   ipcMain.handle('commercial:recharge-skus', () => readRechargeSkus());
   ipcMain.handle('commercial:recharge-create', (_event, sku: string) =>
     createRechargeOrder(String(sku ?? '')),
+  );
+  // 自定义金额，单位分。范围在 RPC 里还会再校验一次；这里先挡掉非数字，
+  // 避免 NaN 一路传到数据库。
+  ipcMain.handle('commercial:recharge-create-custom', (_event, amountCents: number) =>
+    createCustomRechargeOrder(Number(amountCents)),
   );
   ipcMain.handle('commercial:recharge-order', (_event, orderNo: string) =>
     readRechargeOrder(String(orderNo ?? '')),

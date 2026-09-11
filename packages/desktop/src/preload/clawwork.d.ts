@@ -611,6 +611,8 @@ export interface ClawWorkAPI {
   commercialUsageReport: () => Promise<number>;
   commercialRechargeSkus: () => Promise<IpcResult<RechargeSku[]>>;
   commercialRechargeCreate: (sku: string) => Promise<IpcResult<RechargeOrderHandle>>;
+  /** Free-form recharge, in cents. Range is enforced by the RPC (¥1–¥500). */
+  commercialRechargeCreateCustom: (amountCents: number) => Promise<IpcResult<RechargeOrderHandle>>;
   commercialRechargeOrder: (orderNo: string) => Promise<IpcResult<RechargeOrderStatus>>;
 }
 

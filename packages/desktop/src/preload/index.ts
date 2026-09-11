@@ -451,6 +451,8 @@ function buildApi(): ClawWorkAPI {
     commercialUsageReport: () => ipcRenderer.invoke('commercial:usage-report'),
     commercialRechargeSkus: () => ipcRenderer.invoke('commercial:recharge-skus'),
     commercialRechargeCreate: (sku: string) => ipcRenderer.invoke('commercial:recharge-create', sku),
+    commercialRechargeCreateCustom: (amountCents: number) =>
+      ipcRenderer.invoke('commercial:recharge-create-custom', amountCents),
     commercialRechargeOrder: (orderNo: string) => ipcRenderer.invoke('commercial:recharge-order', orderNo),
   };
 }
