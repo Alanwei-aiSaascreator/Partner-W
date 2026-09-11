@@ -26,7 +26,17 @@ interface UpdateCheckResult {
 
 type UpdateErrorCode = 'dev-not-supported' | 'network' | 'no-release-metadata' | 'signature' | 'unknown';
 
-const GITHUB_RELEASE_BASE = 'https://github.com/clawwork-ai/clawwork/releases/tag/v';
+/**
+ * 更新源地址（generic provider，与 electron-builder.yml 的 `publish` 必须一致）。
+ *
+ * 绝不要指回上游 `clawwork-ai/clawwork`：那样用户点「检查更新」会把 ClawWork
+ * 官方包当成新版本下载并安装（`autoInstallOnAppQuit` 还会在退出时静默装上），
+ * 整个商业层会被覆盖掉。
+ *
+ * 该目录同时充当「手动下载」链接的落点。现在目录里没有文件 —— 查不到更新
+ * 即是「已是最新」；将来把 latest.yml 与安装包放上去就能启用，不用再改代码。
+ */
+const UPDATE_FEED_BASE = 'https://api.rongyinghudong.com/updates/';
 
 let initialized = false;
 let state: UpdaterState = 'idle';
@@ -133,7 +143,7 @@ export async function checkForUpdatesViaUpdater(): Promise<UpdateCheckResult> {
         currentVersion,
         latestVersion,
         hasUpdate,
-        releaseUrl: `${GITHUB_RELEASE_BASE}${latestVersion}`,
+        releaseUrl: UPDATE_FEED_BASE,
         releaseNotes: normalizeReleaseNotes(info),
       };
     } catch (err) {

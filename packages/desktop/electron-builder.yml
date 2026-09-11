@@ -4,9 +4,13 @@ directories:
   buildResources: build
   output: dist
 publish:
-  provider: github
-  owner: clawwork-ai
-  repo: clawwork
+  # 更新源必须指向自己的 feed，不能指向上游 clawwork-ai/clawwork ——
+  # 否则「检查更新」会把 ClawWork 官方包装进来，覆盖整个商业层。
+  # electron-updater 不认 Gitee，所以用 generic + 自托管静态目录。
+  # 该目录现在可以还没有文件：查不到更新即「已是最新」；
+  # 将来把 latest.yml 与安装包放上去即可启用，不用再改代码。
+  provider: generic
+  url: https://api.rongyinghudong.com/updates/
 extraResources:
   - from: build/icon.png
     to: icon.png
