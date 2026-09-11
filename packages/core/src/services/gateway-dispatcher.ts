@@ -100,6 +100,7 @@ export interface GatewayDispatcherDeps {
     | 'finalizeStream'
     | 'clearActiveTurn'
     | 'setProcessing'
+    | 'setRunPhase'
   >;
 
   getActiveTaskId: () => string | null;
@@ -145,6 +146,43 @@ export interface GatewayDispatcherDeps {
 const DEDUP_FALLBACK_WINDOW_MS = 2000;
 const SESSION_DELETE_REASONS = new Set(['delete', 'deleted', 'session-delete']);
 
+/**
+ * 空目录的退避重试间隔（ms）。
+ *
+ * 网关的 `models.list` 对目录加载有 **750ms 超时**，超时后直接返回空目录
+ * （openclaw `dist/model-catalog-browse-*.mjs`：`return { entries: [], routeVariants: [] }`；
+ * 它打的日志 "using the prepared catalog when available" 会让人以为退了缓存，其实没有）。
+ * 而中转目录要联网拉，网关刚 ready 时往往还没热 —— 客户端一重连就撞上，
+ * 拿到空目录**当最终结果缓存下来**，模型下拉就会一直显示「暂无可用模型」。
+ * 所以空目录不算数，退避再问几次；问完还是空才认。
+ *
+ * ⚠️ 预算按实测定：2026-09-11 实测，冷启动的网关目录要 **30~45 秒**才热；
+ * 在那之前每次 `models.list` 都恰好等满 750ms 再超时，所以退避得太密是白搭
+ *（试过 1s/2s/4s 的版本，三次重试全撞在 757ms 上，最后还是空）。
+ * 下面这串累计约 60 秒，覆盖整个冷启动窗口。
+ */
+const CATALOG_RETRY_DELAYS_MS = [1000, 2000, 4000, 8000, 15000, 30000];
+
+/**
+ * `run_status` 的 phase 是**闭集** —— openclaw `resolveRunStartupPhase` 把内部更细的
+ * 阶段归并成对外这 3 个（`tool_execution_started` / `assistant_output_started` 不产出）。
+ * 所以映射表可以写死；认不出的 phase 也要显示，不能丢。
+ */
+const RUN_STARTUP_PHASES = new Set(['preparing_workspace', 'preparing_context', 'starting_model']);
+
+/** 供界面判断「这个 phase 有没有对应的文案」，没有就显示泛化的「正在准备…」。 */
+export const RUN_PHASE_IDS: readonly string[] = [...RUN_STARTUP_PHASES];
+
+/**
+ * 未知事件种类的告警阈值。
+ *
+ * 这类问题**会反复出现**：网关的事件种类比我们的 `switch` 多 ——
+ * `run_status`（首条消息 9 秒空白）和定时任务的 `heartbeat`（整页白屏）都是这么漏掉的。
+ * 静默丢弃一次就够查半天，所以一分钟内累计超阈值就单独上报一条，好在遥测里被发现。
+ */
+const UNKNOWN_STREAM_ALERT_THRESHOLD = 10;
+const UNKNOWN_STREAM_WINDOW_MS = 60_000;
+
 export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
   const perTaskLastError = new Map<string, ErrorCorrelation>();
   const lifecycleErrorBuffer = new Map<
@@ -153,7 +191,29 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
   >();
   const abortedByUser = new Set<string>();
   const connectedGateways = new Set<string>();
+  /** 每个网关最多一个待执行的目录重试定时器（重连/成功后旧的作废）。 */
+  const catalogRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   let synced = false;
+
+  let unknownStreamWindowStart = 0;
+  let unknownStreamCount = 0;
+
+  /** 未知事件种类计数；超阈值时额外上报一条，避免它们永远只躺在 debug 日志里。 */
+  function noteUnknownStream(stream: string | undefined, taskId: string, sessionKey: string): void {
+    const now = Date.now();
+    if (now - unknownStreamWindowStart > UNKNOWN_STREAM_WINDOW_MS) {
+      unknownStreamWindowStart = now;
+      unknownStreamCount = 0;
+    }
+    unknownStreamCount += 1;
+    if (unknownStreamCount === UNKNOWN_STREAM_ALERT_THRESHOLD) {
+      deps.reportDebugEvent({
+        domain: 'renderer',
+        event: 'renderer.agent.unknown_stream.threshold',
+        data: { stream, count: unknownStreamCount, windowMs: UNKNOWN_STREAM_WINDOW_MS, taskId, sessionKey },
+      });
+    }
+  }
 
   function debugEvent(
     event: string,
@@ -432,6 +492,21 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
           completed: (data as AgentCompactionData).completed,
         });
         break;
+      case 'run_status': {
+        // 网关在报「这一轮走到哪一步了」。从前没有这个分支，事件被当未知的丢掉，
+        // 于是首条消息有 9 秒界面毫无反应（用户报的「响应太慢」就是这么来的）。
+        const phase = (data as Record<string, unknown>)?.phase;
+        if (typeof phase === 'string' && phase) {
+          deps.getMessageStore().setRunPhase(sessionKey, phase);
+          debugEvent('renderer.agent.run_status', {
+            taskId,
+            sessionKey,
+            phase,
+            known: RUN_STARTUP_PHASES.has(phase),
+          });
+        }
+        break;
+      }
       default:
         debugEvent('renderer.agent.unknown_stream', {
           taskId,
@@ -441,6 +516,7 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
           phase: (data as Record<string, unknown>)?.phase,
           reason: (data as Record<string, unknown>)?.reason,
         });
+        noteUnknownStream(stream, taskId, sessionKey);
         break;
     }
   }
@@ -529,14 +605,19 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
       case 'start':
         deps.notifyAgentResponse?.(sessionKey);
         store.setProcessing(sessionKey, true);
+        // ⚠️ 这里**不**清 run phase：实测 `starting_model` 会在 lifecycle.start **之后**才到
+        //（2026-09-11 实测：start 7.5s、starting_model 7.6s），清了会被立刻覆盖回去。
+        // 相位统一在 end / error 清，既没有竞态，也如实反映「这一轮在干什么」。
         debugEvent('renderer.agent.lifecycle.start', { taskId, sessionKey });
         break;
       case 'end':
         store.setProcessing(sessionKey, false);
+        store.setRunPhase(sessionKey, null);
         debugEvent('renderer.agent.lifecycle.end', { taskId, sessionKey });
         break;
       case 'error': {
         store.setProcessing(sessionKey, false);
+        store.setRunPhase(sessionKey, null);
         debugEvent('renderer.agent.lifecycle.error', { taskId, sessionKey, error: data.error });
         if (!data.error) break;
 
@@ -595,6 +676,50 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
     });
   }
 
+  function cancelCatalogRetry(gatewayId: string): void {
+    const timer = catalogRetryTimers.get(gatewayId);
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      catalogRetryTimers.delete(gatewayId);
+    }
+  }
+
+  function scheduleCatalogRetry(gatewayId: string, attempt: number): void {
+    cancelCatalogRetry(gatewayId);
+    const timer = setTimeout(() => {
+      catalogRetryTimers.delete(gatewayId);
+      void refetchModelsCatalog(gatewayId, attempt + 1);
+    }, CATALOG_RETRY_DELAYS_MS[attempt]);
+    catalogRetryTimers.set(gatewayId, timer);
+  }
+
+  /** 落目录。空目录先不当真 —— 理由见 CATALOG_RETRY_DELAYS_MS。 */
+  function applyModelsCatalog(gatewayId: string, models: unknown[], attempt: number): void {
+    if (models.length > 0) {
+      cancelCatalogRetry(gatewayId);
+      deps.setModelCatalogForGateway(gatewayId, models);
+      return;
+    }
+    if (attempt >= CATALOG_RETRY_DELAYS_MS.length) {
+      // 退避用完还是空：当作真的没有模型，让界面如实显示「暂无可用模型」。
+      deps.setModelCatalogForGateway(gatewayId, models);
+      return;
+    }
+    scheduleCatalogRetry(gatewayId, attempt);
+  }
+
+  async function refetchModelsCatalog(gatewayId: string, attempt: number): Promise<void> {
+    try {
+      const res = await deps.gateway.listModels(gatewayId);
+      if (res.ok && res.result) {
+        const data = res.result as unknown as ModelListResponse;
+        if (data.models) applyModelsCatalog(gatewayId, data.models, attempt);
+      }
+    } catch {
+      console.warn('[catalogs] Failed to refetch models for gateway', gatewayId);
+    }
+  }
+
   async function fetchCatalogs(gatewayId: string): Promise<void> {
     try {
       const [modelsRes, agentsRes, toolsRes, skillsRes, commandsRes] = await Promise.all([
@@ -606,7 +731,7 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
       ]);
       if (modelsRes.ok && modelsRes.result) {
         const data = modelsRes.result as unknown as ModelListResponse;
-        if (data.models) deps.setModelCatalogForGateway(gatewayId, data.models);
+        if (data.models) applyModelsCatalog(gatewayId, data.models, 0);
       }
       if (agentsRes.ok && agentsRes.result) {
         const data = agentsRes.result as unknown as AgentListResponse;
@@ -756,6 +881,8 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
     lifecycleErrorBuffer.clear();
     abortedByUser.clear();
     connectedGateways.clear();
+    for (const timer of catalogRetryTimers.values()) clearTimeout(timer);
+    catalogRetryTimers.clear();
     synced = false;
   }
 

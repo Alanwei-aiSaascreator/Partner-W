@@ -12,6 +12,8 @@ import { useTranslation } from 'react-i18next';
 import { toast } from '@/lib/toast';
 import { evaluateQuota } from '@/lib/quota';
 import { useCommercialStore } from '@/stores/commercialStore';
+import { RELAY_PROVIDER_ID, modelFamilyLabel } from './model-families.js';
+import { isThinkingSupported, thinkingDefaultFor } from './thinking-levels.js';
 import type {
   Task,
   AgentInfo,
@@ -23,7 +25,7 @@ import type {
   FileReadResult,
 } from '@clawwork/shared';
 import type { PendingNewTask } from '@clawwork/core';
-import { deriveSessionActivity, extractDescription, getTaskSessionKeys } from '@clawwork/core';
+import { deriveSessionActivity, describeGatewayError, extractDescription, getTaskSessionKeys } from '@clawwork/core';
 import { useTaskStore } from '../../stores/taskStore';
 import { useMessageStore } from '../../stores/messageStore';
 import { useUiStore } from '../../stores/uiStore';
@@ -114,12 +116,32 @@ export function useChatSend(opts: UseChatSendOpts) {
   const currentModelEntry = currentModel ? modelCatalog.find((m) => m.id === currentModel) : undefined;
   const modelLabel = currentModelEntry?.name ?? getModelLabel(currentModel, modelCatalog[0]?.name);
 
+  // 切模型后当前档位可能不再被支持（实测：deepseek-v4-flash 支持 5 档，deepseek-r1 只支持 off）。
+  // 自动回落到新模型的默认档位。**只改状态、不插系统消息** —— 用户可能正在打字，插消息会打断。
+  useEffect(() => {
+    if (!currentModelEntry) return; // 目录没加载完时不动（isThinkingSupported 也会一律放行）
+    if (isThinkingSupported(currentModelEntry, currentThinking)) return;
+    const fallback = thinkingDefaultFor(currentModelEntry);
+    if (activeTask) updateTaskMetadata(activeTask.id, { thinkingLevel: fallback });
+    else useTaskStore.getState().updatePending({ thinkingLevel: fallback });
+    toast.info(t('chatInput.thinkingResetByModel', { model: currentModelEntry.name ?? currentModelEntry.id }));
+  }, [currentModelEntry, currentThinking, activeTask, updateTaskMetadata, t]);
+
   const modelsByProvider = useMemo(() => {
     const groups: Record<string, ModelCatalogEntry[]> = {};
     for (const m of modelCatalog) {
-      const provider = m.provider ?? 'Other';
-      if (!groups[provider]) groups[provider] = [];
-      groups[provider].push(m);
+      // 只列中转服务提供的模型。
+      // ⚠️ 网关目录里还有 claude-cli / deepseek / openai… 一堆我们**没配置**的 provider
+      //（实测下拉里就有这些分组），选它们必然失败，而且请求根本发不出去
+      //（2026-09-11 实测报：`The selected model was not found by the provider`）。
+      // 详见 ./model-families.ts 的注释。
+      if (m.provider !== RELAY_PROVIDER_ID) continue;
+
+      // 分组从 provider 换成**模型家族**：deepseek / qwen / glm 各一类，
+      // 而不是全部堆在「clawrouter」一个组里。
+      const family = modelFamilyLabel(m.id);
+      if (!groups[family]) groups[family] = [];
+      groups[family].push(m);
     }
     return groups;
   }, [modelCatalog]);
@@ -430,7 +452,10 @@ export function useChatSend(opts: UseChatSendOpts) {
       if (slashMatch && allAttachments.length === 0 && !msgAttachments?.length) {
         const command = slashMatch[1] as 'model' | 'think';
         const result = await composer.applySlashCommand(task.id, command, slashMatch[2].trim());
-        if (!result.ok) toast.error(t('errors.sendFailed'));
+        if (!result.ok) {
+          // 已知错误给中文，未知错误给网关原文 —— 只报「发送失败」等于没报。
+          toast.error(describeGatewayError(result.error, t('errors.sendFailed')));
+        }
         return;
       }
 
@@ -502,7 +527,9 @@ export function useChatSend(opts: UseChatSendOpts) {
   );
 
   const handleThinkingQuickSend = useCallback(
-    (level: ThinkingLevel) => {
+    // 档位 id 来自目录（可能是我们没见过的 `xhigh`/`max`），不写成联合类型；
+    // 不支持的值由网关拒绝，而 P0-2 之后拒绝原因会如实显示给用户。
+    (level: string) => {
       if (!activeTask) {
         useTaskStore.getState().updatePending({ thinkingLevel: level });
         return;

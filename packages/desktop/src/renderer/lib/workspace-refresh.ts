@@ -28,6 +28,7 @@ export async function refreshRendererAfterWorkspaceChange(): Promise<void> {
     messagesByTask: {},
     activeTurnBySession: {},
     processingBySession: new Set(),
+    runPhaseBySession: {},
     highlightedMessageId: null,
   });
 

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createGatewayDispatcher, type GatewayDispatcherDeps } from '../src/services/gateway-dispatcher.js';
-import type { GatewayEvent } from '../src/ports/gateway-transport.js';
+import type { GatewayEvent, GatewayStatusEvent } from '../src/ports/gateway-transport.js';
 
 type EventListener = (data: GatewayEvent) => void;
 
@@ -15,6 +15,7 @@ const DEDUP_FALLBACK_WINDOW_MS = 2000;
 
 function createHarness() {
   let listener: EventListener | null = null;
+  let statusListener: ((status: GatewayStatusEvent) => void) | null = null;
 
   const systemMessages: Array<{ taskId: string; content: string; sessionKey?: string }> = [];
   const toasts: Array<{ type: string; title: string; description?: string }> = [];
@@ -34,6 +35,7 @@ function createHarness() {
     finalizeStream: vi.fn(),
     clearActiveTurn: vi.fn(),
     setProcessing: vi.fn(),
+    setRunPhase: vi.fn(),
   };
 
   const deps: GatewayDispatcherDeps = {
@@ -44,13 +46,19 @@ function createHarness() {
           listener = null;
         };
       },
-      onGatewayStatus: () => () => {},
+      onGatewayStatus: (cb: (status: GatewayStatusEvent) => void) => {
+        statusListener = cb;
+        return () => {
+          statusListener = null;
+        };
+      },
       gatewayStatus: async () => ({}),
       listGateways: async () => [],
       listModels: async () => ({ ok: true, result: {} }),
       listAgents: async () => ({ ok: true, result: {} }),
       getToolsCatalog: async () => ({ ok: true, result: {} }),
       getSkillsStatus: async () => ({ ok: true, result: {} }),
+      listCommands: async () => ({ ok: true, result: {} }),
       chatHistory: async () => ({ ok: true, result: {} }),
       abortChat: async () => ({ ok: true }),
       patchSession: async () => ({ ok: true }),
@@ -99,7 +107,11 @@ function createHarness() {
     listener?.({ event, payload, gatewayId });
   }
 
-  return { emit, deps, systemMessages, toasts, messageStore };
+  function emitStatus(status: GatewayStatusEvent) {
+    statusListener?.(status);
+  }
+
+  return { emit, emitStatus, dispatcher, deps, systemMessages, toasts, messageStore };
 }
 
 function emitChatError(
@@ -244,5 +256,115 @@ describe('agent lifecycle error buffer', () => {
     expect(h.systemMessages).toHaveLength(1);
     expect(h.systemMessages.some((m) => m.content.includes('provider unavailable'))).toBe(false);
     expect(h.toasts).toHaveLength(1);
+  });
+});
+
+describe('fetchCatalogs — 网关冷目录返回空时要退避重试', () => {
+  // 背景（2026-09-11 实测）：openclaw 的 models.list 对目录加载有 750ms 超时，
+  // 超时后**直接返回空目录**（dist/model-catalog-browse-*.mjs: `return { entries: [], routeVariants: [] }`），
+  // 日志里那句 "using the prepared catalog when available" 会误导人以为它退了缓存。
+  // 客户端在网关刚 ready 时重连必然撞上这个窗口；若把空目录当成最终结果缓存下来，
+  // 模型下拉会**永久**显示「暂无可用模型」，直到下次重连。
+  function connectWith(listModels: () => Promise<{ ok: boolean; result?: unknown }>) {
+    const h = createHarness();
+    h.deps.gateway.listModels = listModels as unknown as typeof h.deps.gateway.listModels;
+    h.dispatcher.startGatewayStatus();
+    h.emitStatus({ gatewayId: 'gw-1', connected: true });
+    return h;
+  }
+
+  it('首次为空时退避重试，最终把非空目录写进 store', async () => {
+    vi.useFakeTimers();
+    const models = [{ id: 'deepseek-v4-flash', provider: 'clawrouter' }];
+    let calls = 0;
+    const h = connectWith(async () => {
+      calls += 1;
+      return calls === 1 ? { ok: true, result: { models: [] } } : { ok: true, result: { models } };
+    });
+
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(calls).toBeGreaterThan(1);
+    expect(h.deps.setModelCatalogForGateway).toHaveBeenLastCalledWith('gw-1', models);
+  });
+
+  it('一直为空时重试有上限，不会无限打网关', async () => {
+    vi.useFakeTimers();
+    let calls = 0;
+    const h = connectWith(async () => {
+      calls += 1;
+      return { ok: true, result: { models: [] } };
+    });
+
+    await vi.advanceTimersByTimeAsync(120_000);
+
+    // 退避预算约 60 秒（覆盖网关冷启动窗口），上限 = 1 次首取 + 6 次重试。
+    expect(calls).toBeGreaterThan(1);
+    expect(calls).toBeLessThanOrEqual(7);
+    expect(h.deps.setModelCatalogForGateway).toHaveBeenLastCalledWith('gw-1', []);
+  });
+});
+
+describe('run_status —— 网关的准备进度要显示出来，不能静默丢', () => {
+  // 背景（2026-09-11 实测）：一条 2 字消息发出后有 9 秒界面毫无反应，
+  // 网关这 9 秒一直在报 preparing_workspace，被 switch 的 default 分支丢掉了。
+  function emitRunStatus(h: ReturnType<typeof createHarness>, phase: unknown) {
+    h.emit('agent', { sessionKey: TASK.sessionKey, stream: 'run_status', data: { phase } });
+  }
+
+  it('preparing_workspace 落到 store', () => {
+    const h = createHarness();
+    emitRunStatus(h, 'preparing_workspace');
+    expect(h.messageStore.setRunPhase).toHaveBeenCalledWith(TASK.sessionKey, 'preparing_workspace');
+  });
+
+  it('认不出的 phase 也照样透传（界面自己退化成泛化文案），不丢', () => {
+    const h = createHarness();
+    emitRunStatus(h, 'some_brand_new_phase');
+    expect(h.messageStore.setRunPhase).toHaveBeenCalledWith(TASK.sessionKey, 'some_brand_new_phase');
+  });
+
+  it('phase 缺失/非字符串时不写 store（免得把状态写成 undefined）', () => {
+    const h = createHarness();
+    emitRunStatus(h, undefined);
+    emitRunStatus(h, 42);
+    expect(h.messageStore.setRunPhase).not.toHaveBeenCalled();
+  });
+
+  it('lifecycle.start **不**清 —— 实测 starting_model 会比 start 晚到，清了会被覆盖回去', () => {
+    const h = createHarness();
+    h.emit('agent', { sessionKey: TASK.sessionKey, stream: 'lifecycle', data: { phase: 'start' } });
+    expect(h.messageStore.setRunPhase).not.toHaveBeenCalled();
+  });
+
+  it('lifecycle.end 时清掉', () => {
+    const h = createHarness();
+    h.emit('agent', { sessionKey: TASK.sessionKey, stream: 'lifecycle', data: { phase: 'end' } });
+    expect(h.messageStore.setRunPhase).toHaveBeenCalledWith(TASK.sessionKey, null);
+  });
+});
+
+describe('未知事件种类的告警阈值', () => {
+  // 这类问题会反复出现：run_status（9 秒空白）、cron 的 heartbeat（整页白屏）都是这么漏的。
+  it('一分钟内超过阈值就额外上报一条，好让它在遥测里被发现', () => {
+    vi.useFakeTimers();
+    const h = createHarness();
+    for (let i = 0; i < 10; i++) {
+      h.emit('agent', { sessionKey: TASK.sessionKey, stream: 'some_new_stream', data: {} });
+    }
+    expect(h.deps.reportDebugEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'renderer.agent.unknown_stream.threshold' }),
+    );
+  });
+
+  it('没到阈值就不报（避免噪音）', () => {
+    vi.useFakeTimers();
+    const h = createHarness();
+    for (let i = 0; i < 3; i++) {
+      h.emit('agent', { sessionKey: TASK.sessionKey, stream: 'some_new_stream', data: {} });
+    }
+    expect(h.deps.reportDebugEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'renderer.agent.unknown_stream.threshold' }),
+    );
   });
 });

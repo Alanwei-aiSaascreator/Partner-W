@@ -11,8 +11,8 @@
     "rechargeClosed": "This order was closed",
     "rechargeConfirm": "Mit dem Aufladen fortfahren",
     "rechargeCustom": "Eigener Betrag",
-    "rechargeCustomPlaceholder": "¥{{min}} – ¥{{max}}",
     "rechargeCustomInvalid": "Bitte einen Betrag zwischen ¥{{min}} und ¥{{max}} eingeben",
+    "rechargeCustomPlaceholder": "¥{{min}} – ¥{{max}}",
     "rechargeFailed": "Could not start the payment, please try again",
     "rechargePaid": "Payment received, balance updated",
     "rechargePickAmount": "Choose an amount",
@@ -83,6 +83,12 @@
     "noModelsAvailable": "Keine Modelle verfuegbar",
     "offlineReadOnly": "Offline — Nur-Lese-Modus",
     "openFailed": "{{fileName}} konnte nicht geoeffnet werden",
+    "runPhase": {
+      "preparing_context": "Kontext wird vorbereitet…",
+      "preparing_workspace": "Arbeitsbereich wird vorbereitet…",
+      "starting_model": "Modell wird aufgerufen…",
+      "unknown": "Wird vorbereitet…"
+    },
     "send": "Senden",
     "slashCommands": "Slash-Befehle",
     "stopGenerating": "Generierung stoppen (Esc)",
@@ -90,10 +96,12 @@
     "thinking": "Denkmodus",
     "thinkingAdaptive": "Adaptiv",
     "thinkingHigh": "Hoch",
+    "thinkingLockedByModel": "Dieses Modell unterstützt nur „Aus“ beim Denken",
     "thinkingLow": "Niedrig",
     "thinkingMedium": "Mittel",
     "thinkingMinimal": "Minimal",
-    "thinkingOff": "Aus"
+    "thinkingOff": "Aus",
+    "thinkingResetByModel": "Zu {{model}} gewechselt – Denkstufe auf Standard zurückgesetzt"
   },
   "chatMessage": {
     "conductor": "Koordinator",

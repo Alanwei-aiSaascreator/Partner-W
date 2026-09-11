@@ -347,7 +347,7 @@ export function createChatComposer(deps: ChatComposerDeps) {
     taskId: string,
     command: 'compact' | 'reset' | 'model' | 'think',
     arg?: string,
-  ): Promise<{ ok: boolean; message?: string }> {
+  ): Promise<{ ok: boolean; message?: string; error?: string }> {
     const task = deps.getTaskStore().tasks.find((t) => t.id === taskId);
     if (!task) return { ok: false };
 
@@ -376,7 +376,9 @@ export function createChatComposer(deps: ChatComposerDeps) {
       case 'model': {
         if (!arg) return { ok: false };
         const res = await deps.gateway.patchSession(task.gatewayId, task.sessionKey, { model: arg });
-        if (!res.ok) return { ok: false };
+        // 带上网关原文：调用方只看到 ok=false 的话，用户就只有一句「发送失败」，
+        // 分不清是模型不存在、档位不支持还是网络问题。见 gateway-error-message.ts。
+        if (!res.ok) return { ok: false, error: res.error };
         deps.getTaskStore().updateTaskMetadata(taskId, {
           model: arg,
           modelProvider: deps.getModelProvider?.(task.gatewayId, arg),
@@ -386,7 +388,7 @@ export function createChatComposer(deps: ChatComposerDeps) {
       case 'think': {
         if (!arg) return { ok: false };
         const res = await deps.gateway.patchSession(task.gatewayId, task.sessionKey, { thinkingLevel: arg });
-        if (!res.ok) return { ok: false };
+        if (!res.ok) return { ok: false, error: res.error };
         deps.getTaskStore().updateTaskMetadata(taskId, { thinkingLevel: arg });
         return { ok: true };
       }

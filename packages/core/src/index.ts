@@ -89,12 +89,14 @@ export type { SessionSyncDeps } from './services/session-sync.js';
 export { buildAppError, formatErrorForUser, formatErrorForToast } from './services/error-classify.js';
 export type { TranslateFn } from './services/error-classify.js';
 
+export { describeGatewayError, translateGatewayError } from './services/gateway-error-message.js';
+
 export { autoTitleIfNeeded } from './services/auto-title.js';
 
 export { deriveSessionActivity, getTaskSessionKeys } from './services/session-activity.js';
 export type { SessionActivity } from './services/session-activity.js';
 
-export { createGatewayDispatcher } from './services/gateway-dispatcher.js';
+export { createGatewayDispatcher, RUN_PHASE_IDS } from './services/gateway-dispatcher.js';
 export type { GatewayDispatcherDeps } from './services/gateway-dispatcher.js';
 
 export { createChatComposer } from './services/chat-composer.js';

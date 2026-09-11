@@ -20,6 +20,14 @@ export interface MessageState {
   messagesByTask: Record<string, Message[]>;
   activeTurnBySession: Record<string, ActiveTurn>;
   processingBySession: Set<string>;
+  /**
+   * 网关正在做什么（`run_status` 事件的 phase）。
+   *
+   * 为什么要它：2026-09-11 实测，一条 2 字的消息发出去后有 **9 秒界面毫无反应** ——
+   * 网关这 9 秒一直在报 `preparing_workspace`，是我们的 `switch(stream)` 没有这个分支、
+   * 把它们当未知事件静默丢了。用户由此判定「响应太慢」。
+   */
+  runPhaseBySession: Record<string, string | null>;
   highlightedMessageId: string | null;
 
   addMessage: (
@@ -39,6 +47,8 @@ export interface MessageState {
   clearMessages: (taskId: string) => void;
   setHighlightedMessage: (id: string | null) => void;
   setProcessing: (sessionKey: string, processing: boolean) => void;
+  /** 传 `null` 表示这一轮结束，清掉进行中提示。 */
+  setRunPhase: (sessionKey: string, phase: string | null) => void;
 }
 
 export interface MessageStoreDeps {
@@ -160,6 +170,7 @@ export function createMessageStore(deps: MessageStoreDeps) {
     messagesByTask: {},
     activeTurnBySession: {},
     processingBySession: new Set(),
+    runPhaseBySession: {},
     highlightedMessageId: null,
 
     addMessage: (taskId, role, content, attachments?, options?) => {
@@ -364,5 +375,10 @@ export function createMessageStore(deps: MessageStoreDeps) {
         else next.delete(sessionKey);
         return { processingBySession: next };
       }),
+
+    setRunPhase: (sessionKey, phase) =>
+      set((s) => ({
+        runPhaseBySession: { ...s.runPhaseBySession, [sessionKey]: phase },
+      })),
   }));
 }

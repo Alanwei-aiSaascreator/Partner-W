@@ -11,8 +11,8 @@
     "rechargeClosed": "This order was closed",
     "rechargeConfirm": "충전 계속하기",
     "rechargeCustom": "직접 입력",
-    "rechargeCustomPlaceholder": "¥{{min}} ~ ¥{{max}}",
     "rechargeCustomInvalid": "¥{{min}} ~ ¥{{max}} 사이의 금액을 입력하세요",
+    "rechargeCustomPlaceholder": "¥{{min}} ~ ¥{{max}}",
     "rechargeFailed": "Could not start the payment, please try again",
     "rechargePaid": "Payment received, balance updated",
     "rechargePickAmount": "Choose an amount",
@@ -83,6 +83,12 @@
     "noModelsAvailable": "사용 가능한 모델이 없습니다",
     "offlineReadOnly": "오프라인 — 읽기 전용",
     "openFailed": "{{fileName}} 열기 실패",
+    "runPhase": {
+      "preparing_context": "컨텍스트를 준비하는 중…",
+      "preparing_workspace": "작업 공간을 준비하는 중…",
+      "starting_model": "모델을 호출하는 중…",
+      "unknown": "준비하는 중…"
+    },
     "send": "보내기",
     "slashCommands": "슬래시 명령어",
     "stopGenerating": "생성 중지 (Esc)",
@@ -90,10 +96,12 @@
     "thinking": "사고",
     "thinkingAdaptive": "자동 조절",
     "thinkingHigh": "높음",
+    "thinkingLockedByModel": "이 모델은 사고 '끔'만 지원합니다",
     "thinkingLow": "낮음",
     "thinkingMedium": "보통",
     "thinkingMinimal": "최소",
-    "thinkingOff": "끄기"
+    "thinkingOff": "끄기",
+    "thinkingResetByModel": "{{model}}(으)로 전환했습니다. 사고 수준을 기본값으로 재설정했습니다"
   },
   "chatMessage": {
     "conductor": "코디네이터",

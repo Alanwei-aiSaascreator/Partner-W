@@ -35,6 +35,8 @@ import { useVoiceInput } from '@/hooks/useVoiceInput';
 import { cn } from '@/lib/utils';
 import { getArtifactLabel } from '@/lib/artifact-labels';
 import { createWhisperSttSession } from '@/lib/voice/whisper-stt';
+import { RUN_PHASE_IDS } from '@clawwork/core';
+import { useMessageStore } from '@/stores/messageStore';
 import { useRoomStore } from '@/stores/roomStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { motionDuration, motion as motionPresets } from '@/styles/design-tokens';
@@ -46,7 +48,8 @@ import SlashCommandDashboard from '../SlashCommandDashboard';
 import SlashCommandMenu from '../SlashCommandMenu';
 import ToolsCatalog from '../ToolsCatalog';
 import VoiceIntroDialog from '../VoiceIntroDialog';
-import { ACCEPTED_TYPES, MENTION_ALL_AGENT_ID, THINKING_LABEL_KEYS, THINKING_LEVELS } from './constants';
+import { ACCEPTED_TYPES, MENTION_ALL_AGENT_ID } from './constants';
+import { thinkingLabelKey, thinkingMenuFor } from './thinking-levels.js';
 import { useChatSend } from './useChatSend';
 import { useContextFolders } from './useContextFolders';
 import { useAttachments } from './useAttachments';
@@ -443,6 +446,23 @@ export default function ChatInput({ onNavigateToAccount }: ChatInputProps) {
   const voiceTooltip = !isVoiceSupported ? t('voiceInput.unsupportedTooltip') : t('voiceInput.tooltip');
   const composerModelLabel = (currentModelEntry?.name ?? modelLabel).replace(/^[^/]+\//, '');
 
+  // 网关侧准备进度（run_status）。**不能在 `isGenerating` 里才显示** ——
+  // 实测那 9 秒发生在 lifecycle.start **之前**，正是最需要提示的时候。
+  const runPhase = useMessageStore((s) => (activeTask ? s.runPhaseBySession[activeTask.sessionKey] : null));
+  const runPhaseLabel = runPhase
+    ? t(`chatInput.runPhase.${RUN_PHASE_IDS.includes(runPhase) ? runPhase : 'unknown'}`)
+    : null;
+
+  // 档位逐模型（见 thinking-levels.ts）：只列当前模型真支持的，只支持一档就置灰。
+  const thinkingMenu = useMemo(() => thinkingMenuFor(currentModelEntry), [currentModelEntry]);
+  const thinkingLabel = useCallback(
+    (level: string) => {
+      const key = thinkingLabelKey(level);
+      return key ? t(key) : level; // 没见过的档位 id 直接显示，不猜也不留空
+    },
+    [t],
+  );
+
   const prevTranscribingRef = useRef(false);
   useEffect(() => {
     if (prevTranscribingRef.current && !isVoiceTranscribing) {
@@ -767,33 +787,53 @@ export default function ChatInput({ onNavigateToAccount }: ChatInputProps) {
                     </div>
 
                     <div className="flex items-center">
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <ToolbarButton
-                            variant="ghost"
-                            size="sm"
-                            className={cn(
-                              'rounded-lg border-none px-2 text-[var(--text-secondary)] shadow-none',
-                              currentThinking !== 'off' && 'text-[var(--accent)]',
-                            )}
-                            title={t(THINKING_LABEL_KEYS[currentThinking])}
-                          >
-                            <span>{t(THINKING_LABEL_KEYS[currentThinking])}</span>
-                            <ChevronDown size={14} className="opacity-50" />
-                          </ToolbarButton>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="start">
-                          {THINKING_LEVELS.map((level) => (
-                            <DropdownMenuItem
-                              key={level}
-                              onClick={() => handleThinkingQuickSend(level)}
-                              className={cn(level === currentThinking && 'font-medium text-[var(--accent)]')}
+                      {/* 只支持一档的模型（实测 11 个里有 8 个）不弹菜单，置灰并说明原因 ——
+                          隐藏会让用户以为界面坏了，所以是置灰不是隐藏。 */}
+                      {thinkingMenu.locked ? (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <ToolbarButton
+                              variant="ghost"
+                              size="sm"
+                              disabled
+                              className="rounded-lg border-none px-2 text-[var(--text-secondary)] shadow-none"
                             >
-                              {t(THINKING_LABEL_KEYS[level])}
-                            </DropdownMenuItem>
-                          ))}
-                        </DropdownMenuContent>
-                      </DropdownMenu>
+                              <span>{thinkingLabel(currentThinking)}</span>
+                              <ChevronDown size={14} className="opacity-50" />
+                            </ToolbarButton>
+                          </TooltipTrigger>
+                          <TooltipContent>{t('chatInput.thinkingLockedByModel')}</TooltipContent>
+                        </Tooltip>
+                      ) : (
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <ToolbarButton
+                              variant="ghost"
+                              size="sm"
+                              className={cn(
+                                'rounded-lg border-none px-2 text-[var(--text-secondary)] shadow-none',
+                                currentThinking !== 'off' && 'text-[var(--accent)]',
+                              )}
+                              title={thinkingLabel(currentThinking)}
+                            >
+                              <span>{thinkingLabel(currentThinking)}</span>
+                              <ChevronDown size={14} className="opacity-50" />
+                            </ToolbarButton>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="start">
+                            {/* 档位逐模型 —— 只列这个模型真支持的，别给必然失败的选项 */}
+                            {thinkingMenu.levels.map((level) => (
+                              <DropdownMenuItem
+                                key={level}
+                                onClick={() => handleThinkingQuickSend(level)}
+                                className={cn(level === currentThinking && 'font-medium text-[var(--accent)]')}
+                              >
+                                {thinkingLabel(level)}
+                              </DropdownMenuItem>
+                            ))}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      )}
                     </div>
                   </div>
 
@@ -825,6 +865,11 @@ export default function ChatInput({ onNavigateToAccount }: ChatInputProps) {
                       </TooltipTrigger>
                       <TooltipContent>{voiceTooltip}</TooltipContent>
                     </Tooltip>
+                    {runPhaseLabel && (
+                      <span className="type-meta pr-1 text-[var(--text-muted)]" aria-live="polite">
+                        {runPhaseLabel}
+                      </span>
+                    )}
                     <AnimatePresence mode="wait">
                       {isGenerating ? (
                         <motion.div

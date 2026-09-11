@@ -11,8 +11,8 @@
     "rechargeClosed": "This order was closed",
     "rechargeConfirm": "Continuer la recharge",
     "rechargeCustom": "Montant personnalisé",
-    "rechargeCustomPlaceholder": "¥{{min}} – ¥{{max}}",
     "rechargeCustomInvalid": "Saisissez un montant entre ¥{{min}} et ¥{{max}}",
+    "rechargeCustomPlaceholder": "¥{{min}} – ¥{{max}}",
     "rechargeFailed": "Could not start the payment, please try again",
     "rechargePaid": "Payment received, balance updated",
     "rechargePickAmount": "Choose an amount",
@@ -83,6 +83,12 @@
     "noModelsAvailable": "Aucun modèle disponible",
     "offlineReadOnly": "Hors ligne — lecture seule",
     "openFailed": "Échec de l'ouverture de {{fileName}}",
+    "runPhase": {
+      "preparing_context": "Préparation du contexte…",
+      "preparing_workspace": "Préparation de l'espace de travail…",
+      "starting_model": "Appel du modèle…",
+      "unknown": "Préparation…"
+    },
     "send": "Envoyer",
     "slashCommands": "Commandes slash",
     "stopGenerating": "Arrêter la génération (Échap)",
@@ -90,10 +96,12 @@
     "thinking": "Réflexion",
     "thinkingAdaptive": "Adaptatif",
     "thinkingHigh": "Élevé",
+    "thinkingLockedByModel": "Ce modèle ne prend en charge que la désactivation de la réflexion",
     "thinkingLow": "Faible",
     "thinkingMedium": "Moyen",
     "thinkingMinimal": "Minimal",
-    "thinkingOff": "Désactivé"
+    "thinkingOff": "Désactivé",
+    "thinkingResetByModel": "Passé à {{model}} ; niveau de réflexion réinitialisé"
   },
   "chatMessage": {
     "conductor": "Coordinateur",

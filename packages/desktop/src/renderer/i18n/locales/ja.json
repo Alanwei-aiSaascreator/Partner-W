@@ -11,8 +11,8 @@
     "rechargeClosed": "This order was closed",
     "rechargeConfirm": "チャージを続ける",
     "rechargeCustom": "金額を指定",
-    "rechargeCustomPlaceholder": "¥{{min}} ～ ¥{{max}}",
     "rechargeCustomInvalid": "¥{{min}} ～ ¥{{max}} の範囲で入力してください",
+    "rechargeCustomPlaceholder": "¥{{min}} ～ ¥{{max}}",
     "rechargeFailed": "Could not start the payment, please try again",
     "rechargePaid": "Payment received, balance updated",
     "rechargePickAmount": "Choose an amount",
@@ -83,6 +83,12 @@
     "noModelsAvailable": "利用可能なモデルがありません",
     "offlineReadOnly": "オフライン — 読み取り専用",
     "openFailed": "{{fileName}} を開けませんでした",
+    "runPhase": {
+      "preparing_context": "コンテキストを準備しています…",
+      "preparing_workspace": "ワークスペースを準備しています…",
+      "starting_model": "モデルを呼び出しています…",
+      "unknown": "準備しています…"
+    },
     "send": "送信",
     "slashCommands": "スラッシュコマンド",
     "stopGenerating": "生成を停止 (Esc)",
@@ -90,10 +96,12 @@
     "thinking": "思考",
     "thinkingAdaptive": "自動調整",
     "thinkingHigh": "高",
+    "thinkingLockedByModel": "このモデルは思考「オフ」のみ対応しています",
     "thinkingLow": "低",
     "thinkingMedium": "中",
     "thinkingMinimal": "最小",
-    "thinkingOff": "オフ"
+    "thinkingOff": "オフ",
+    "thinkingResetByModel": "{{model}} に切り替えました。思考レベルを既定値に戻しました"
   },
   "chatMessage": {
     "conductor": "コーディネーター",

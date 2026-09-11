@@ -33,6 +33,7 @@ function createHarness(
     finalizeStream: vi.fn(),
     clearActiveTurn: vi.fn(),
     setProcessing: vi.fn(),
+    setRunPhase: vi.fn(),
   };
 
   const deps: GatewayDispatcherDeps = {
