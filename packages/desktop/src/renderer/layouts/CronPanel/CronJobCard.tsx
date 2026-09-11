@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import type { CronJob } from '@clawwork/shared';
+import { cronPayloadPreview } from './payload.js';
 
 interface CronJobCardProps {
   job: CronJob;
@@ -54,7 +55,9 @@ function scheduleLabel(schedule: CronJob['schedule']): { text: string; badge: st
 }
 
 function payloadPreview(payload: CronJob['payload']): string {
-  const raw = payload.kind === 'systemEvent' ? payload.text : payload.message;
+  // 取文本的逻辑在 ./payload.ts —— 那里的注释记着它为什么要容错
+  //（网关会发我们的类型里没有的 kind，旧实现直接 undefined.length 把面板打白屏）。
+  const raw = cronPayloadPreview(payload);
   return raw.length > 60 ? `${raw.slice(0, 57)}...` : raw;
 }
 
