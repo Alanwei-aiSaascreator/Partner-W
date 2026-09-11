@@ -243,9 +243,21 @@ export async function readAccountOverview(): Promise<IpcResult<CommercialAccount
 
     let license: CommercialLicenseSummary | null = null;
     if (org) {
+      // Reads the org's *active* licence through the view, not the table.
+      //
+      // Two reasons, both of which used to bite:
+      //   1. An org can hold more than one licence (two U-disks bound to the
+      //      same account). Selecting from the table by org_id then returned
+      //      several rows, and `.maybeSingle()` turned that into PGRST116 —
+      //      the whole panel failed to load, and because the quota gate reads
+      //      the same snapshot it silently fell back to "unlimited".
+      //   2. Which licence to show is not an arbitrary choice: the server
+      //      charges the one with the most remaining balance (see
+      //      org_active_license). Showing a different card's balance would
+      //      mean the number on screen is not the number being spent.
       const licenseResponse = await withTimeoutOrNull(
         supabase
-          .from('licenses')
+          .from('org_active_license')
           .select('id, license_key, sku, status, expires_at, token_quota_cents, token_used_cents')
           .eq('org_id', org.id)
           .maybeSingle(),
