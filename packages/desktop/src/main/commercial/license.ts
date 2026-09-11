@@ -17,6 +17,8 @@ export interface LicenseStatus {
   deviceFingerprint: string;
 }
 
+type CommercialClient = NonNullable<ReturnType<typeof getCommercialClient>>;
+
 function fail<T = unknown>(error: unknown, errorCode: string): IpcResult<T> {
   const message = error instanceof Error ? error.message : String(error);
   return { ok: false, error: message, errorCode };
@@ -31,6 +33,26 @@ export function deviceFingerprint(): string {
 function readStoredLicenseKey(): string | null {
   const key = readConfig()?.commercial?.licenseKey ?? '';
   return key || null;
+}
+
+// Both sources expose exactly these: the `licenses` table directly, and the
+// `org_active_license` view (migration 20260911000008 added max_activations to it).
+const LICENSE_FIELDS = 'license_key, sku, status, expires_at, max_activations, token_quota_cents, token_used_cents';
+
+/**
+ * The caller's owner org, chosen the same way the server chooses it
+ * (`order by joined_at asc, org_id asc`) so both sides agree on which org a
+ * user "is" when they happen to own several.
+ */
+async function firstOwnerOrg(supabase: CommercialClient): Promise<string | null> {
+  const { data } = await supabase
+    .from('org_members')
+    .select('org_id, joined_at')
+    .eq('role', 'owner')
+    .order('joined_at', { ascending: true })
+    .order('org_id', { ascending: true })
+    .limit(1);
+  return (data?.[0]?.org_id as string) ?? null;
 }
 
 export async function readLicenseStatus(): Promise<IpcResult<LicenseStatus>> {
@@ -50,37 +72,60 @@ export async function readLicenseStatus(): Promise<IpcResult<LicenseStatus>> {
   };
 
   const supabase = getCommercialClient();
-  if (!supabase || !storedKey) return { ok: true, result: base };
+  if (!supabase) return { ok: true, result: base };
 
   try {
-    const { data: license, error } = await supabase
-      .from('licenses')
-      .select('id, license_key, sku, status, expires_at, max_activations, token_quota_cents, token_used_cents')
-      .eq('license_key', storedKey)
-      .maybeSingle();
+    // Look the licence up by this machine's stored key first, then by account.
+    //
+    // The account lookup is what makes a new machine work. A fresh install has
+    // no stored key, but the card belongs to the account — and *that*, not a
+    // row in license_activations, is what "I own this" means. Gating on the
+    // device row is what used to lock people out after a reinstall while
+    // protecting nothing (see migration 20260911000008).
+    let license = storedKey
+      ? (
+          await supabase
+            .from('licenses')
+            .select(LICENSE_FIELDS)
+            .eq('license_key', storedKey)
+            .maybeSingle()
+        ).data
+      : null;
 
-    if (error) return fail(error, 'license_read_failed');
+    if (!license) {
+      const org = await firstOwnerOrg(supabase);
+      if (!org) return { ok: true, result: base };
+
+      license = (
+        await supabase
+          .from('org_active_license')
+          .select(LICENSE_FIELDS)
+          .eq('org_id', org)
+          .maybeSingle()
+      ).data;
+
+      // Remember it locally so the next launch takes the direct path.
+      if (license?.license_key) {
+        const current = readConfig()?.commercial ?? { supabaseUrl: '', supabaseAnonKey: '' };
+        updateConfig({ commercial: { ...current, licenseKey: String(license.license_key) } });
+      }
+    }
+
     if (!license) return { ok: true, result: base };
-
-    const { data: activation } = await supabase
-      .from('license_activations')
-      .select('id, revoked_at')
-      .eq('license_id', license.id)
-      .eq('device_fingerprint', fingerprint)
-      .maybeSingle();
 
     return {
       ok: true,
       result: {
         configured: true,
-        licenseKey: license.license_key as string,
+        licenseKey: (license.license_key as string) ?? null,
         sku: (license.sku as string) ?? null,
         status: (license.status as string) ?? null,
         expiresAt: (license.expires_at as string) ?? null,
         maxActivations: Number(license.max_activations ?? 0),
         tokenQuotaCents: Number(license.token_quota_cents ?? 0),
         tokenUsedCents: Number(license.token_used_cents ?? 0),
-        activated: Boolean(activation && !activation.revoked_at),
+        // Ownership, not device registration. See the comment above.
+        activated: true,
         deviceFingerprint: fingerprint,
       },
     };

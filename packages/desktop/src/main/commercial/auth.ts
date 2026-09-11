@@ -54,6 +54,30 @@ function classifyOtpError(error: unknown): string {
   return 'otp_send_failed';
 }
 
+type CommercialClient = NonNullable<ReturnType<typeof getCommercialClient>>;
+
+/**
+ * Records this device against the org's licence, so the device list reflects
+ * reality rather than only the machine that first typed the key.
+ *
+ * Deliberately fire-and-forget. Access is decided by ownership (`activated`
+ * below), never by this call — if it fails, is rate-limited, or the server
+ * declines, the user notices nothing. Its only job is to keep the anti-abuse
+ * list current, and because activate_license bumps `last_seen_at`, a machine
+ * that is actually used does not get evicted by one that is not.
+ */
+async function registerDevice(supabase: CommercialClient, licenseKey: string): Promise<void> {
+  if (!licenseKey) return;
+  try {
+    await supabase.rpc('activate_license', {
+      p_license_key: licenseKey,
+      p_device_fingerprint: deviceFingerprint(),
+    });
+  } catch {
+    // Intentionally swallowed — see above.
+  }
+}
+
 const NETWORK_TIMEOUT_MS = 8000;
 
 /** Accepts PromiseLike so Supabase's thenable query builders can be raced directly. */
@@ -271,20 +295,13 @@ export async function readAccountOverview(): Promise<IpcResult<CommercialAccount
 
       const row = licenseResponse.data;
       if (row) {
-        const activationResponse = await withTimeoutOrNull(
-          supabase
-            .from('license_activations')
-            .select('id, revoked_at')
-            .eq('license_id', row.id as string)
-            .eq('device_fingerprint', fingerprint)
-            .maybeSingle(),
-          'license_activations.read',
-        );
-
-        const activation = activationResponse?.data ?? null;
-
         license = {
-          activated: Boolean(activation && !activation.revoked_at),
+          // The licence is visible through RLS, which means it belongs to one of
+          // this user's orgs — that is what ownership means, and it is what the
+          // UI should report. Previously this also required a non-revoked device
+          // row for *this* machine, which locked people out after a reinstall
+          // while gating nothing (see migration 20260911000008).
+          activated: true,
           licenseKey: (row.license_key as string) ?? null,
           sku: (row.sku as string) ?? null,
           status: (row.status as string) ?? null,
@@ -292,6 +309,8 @@ export async function readAccountOverview(): Promise<IpcResult<CommercialAccount
           tokenQuotaCents: Number(row.token_quota_cents ?? 0),
           tokenUsedCents: Number(row.token_used_cents ?? 0),
         };
+
+        void registerDevice(supabase, String(row.license_key ?? ''));
       }
     }
 
