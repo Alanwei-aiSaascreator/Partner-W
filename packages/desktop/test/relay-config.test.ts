@@ -134,23 +134,27 @@ describe('buildRelayPatch', () => {
 });
 
 describe('fetchFirstRelayModel', () => {
-  // ref 是**三段**：clawrouter / <catalog provider id> / <model id>。
-  // 中间那段是上游 provider 名（我们这边是 bailian），不是 clawrouter。
-  // 官方文档的例子：clawrouter/openai/gpt-5.5、clawrouter/anthropic/claude-sonnet-4-6。
+  // ref 是**两段**：clawrouter / <catalog 里的 model id>。
+  // catalog 里的 provider id（bailian）**不进 ref**。
+  //
+  // ⚠️ 这是 dev 端到端实测出来的（2026-09-11 起真网关列模型，
+  // 得到的是 `clawrouter/deepseek-v4-flash`）。我原先照官方文档的三段例子
+  // （clawrouter/openai/gpt-5.5）拼错了 —— 文档那句是「refs retain the
+  // upstream namespace」，它那边的 model id 本身就带命名空间。
   const CATALOG = {
     providers: [
       { id: 'bailian', models: [{ id: 'deepseek-v4-flash' }, { id: 'qwen3.6-plus' }] },
     ],
   };
 
-  it('拼出三段的模型 ref，中间是 catalog 里的上游 provider', async () => {
+  it('拼出两段的模型 ref，不含 catalog 的 provider id', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => ({ ok: true, json: async () => CATALOG })),
     );
     const { fetchFirstRelayModel } = await import('../src/main/commercial/relay-config.js');
 
-    expect(await fetchFirstRelayModel('rly_abc')).toBe('clawrouter/bailian/deepseek-v4-flash');
+    expect(await fetchFirstRelayModel('rly_abc')).toBe('clawrouter/deepseek-v4-flash');
     vi.unstubAllGlobals();
   });
 

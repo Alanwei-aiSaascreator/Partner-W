@@ -132,10 +132,19 @@ const CATALOG_TIMEOUT_MS = 8_000;
 /**
  * 从中转服务的 catalog 里取一个模型，拼成 openclaw 的模型 ref。
  *
- * ref 的格式是 **`<provider>/<catalog provider id>/<model id>`** —— 三段，
- * 不是两段。中间那段是 catalog 里的上游 provider 名（我们这边是 `bailian`），
- * 不是 `clawrouter` 本身。官方文档 `docs/providers/clawrouter.md` 的例子：
- * `clawrouter/openai/gpt-5.5`、`clawrouter/anthropic/claude-sonnet-4-6`。
+ * ref 的格式是 **`clawrouter/<catalog 里的 model id>`** —— **两段**。
+ * catalog 里的 provider id（我们这边是 `bailian`）**不进 ref**。
+ *
+ * ⚠️ 这条是 dev 端到端实测出来的，不是从文档读出来的（2026-09-11）：
+ * 起真网关、写进配置、列模型，得到的是 `clawrouter/deepseek-v4-flash`，
+ * **没有中间那一段**。我原先按官方文档 `docs/providers/clawrouter.md` 的
+ * 例子（`clawrouter/openai/gpt-5.5`）拼了三段 —— 但文档那句原话是
+ * 「refs **retain the upstream namespace**」：它那边的 catalog 里 model id
+ * **本身就带命名空间**（`openai/gpt-5.5`），ref 仍然是 `clawrouter/` + model id。
+ * 我们的 relay 返回的 id 是 `deepseek-v4-flash`（不带命名空间），所以是两段。
+ *
+ * 三段 ref 在网关里**根本不存在** —— 写进 `model.primary` 是个无效值，
+ * 而且不会报错。单测发现不了这个（单测验的是「我以为的格式」）。
  *
  * 拿不到就返回 null —— 默认模型不写而已，不该拖垮配置写入。
  */
@@ -147,13 +156,12 @@ export async function fetchFirstRelayModel(relayKey: string): Promise<string | n
   if (!res.ok) return null;
 
   const body = (await res.json()) as {
-    providers?: Array<{ id?: unknown; models?: Array<{ id?: unknown }> }>;
+    providers?: Array<{ models?: Array<{ id?: unknown }> }>;
   };
-  const provider = body.providers?.find((p) => typeof p.id === 'string' && p.id.length > 0);
-  const model = provider?.models?.find((m) => typeof m.id === 'string' && m.id.length > 0);
-  if (!provider || !model) return null;
+  const model = body.providers?.[0]?.models?.find((m) => typeof m.id === 'string' && m.id.length > 0);
+  if (!model) return null;
 
-  return `${RELAY_PROVIDER_ID}/${String(provider.id)}/${String(model.id)}`;
+  return `${RELAY_PROVIDER_ID}/${String(model.id)}`;
 }
 
 export interface ApplyRelayConfigDeps {
