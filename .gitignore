@@ -13,6 +13,10 @@ out/
 *.dmg
 *.exe
 
+# 出厂运行时打包产物（scripts/pack-runtime.mjs 的输出）。
+# 单个包 100MB+，是发布物不是源码 —— 别让它进仓库。
+runtime-out/
+
 # Python
 __pycache__/
 *.pyc
