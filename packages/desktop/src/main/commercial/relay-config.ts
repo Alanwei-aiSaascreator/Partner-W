@@ -55,3 +55,263 @@ export function relayProviderIds(configSnapshot: unknown): Set<string> {
   }
   return ids;
 }
+
+/** 中转服务在网关配置里的 provider 名。插件声明的 `providers` 也是这个名字。 */
+export const RELAY_PROVIDER_ID = 'clawrouter';
+
+export interface RelayPatchInput {
+  relayKey: string | null | undefined;
+  deviceFingerprint: string;
+  /** 现有网关配置快照（`getConfig()` 的返回，真正的配置在 `.config`）。 */
+  existingConfig?: unknown;
+  /** 解析出来的默认模型 ref；仅当 `agents.defaults.model.primary` 未设置时才用。 */
+  defaultModel?: string | null;
+}
+
+export type RelayConfigPatch = Record<string, unknown>;
+
+function configOf(snapshot: unknown): Record<string, unknown> | undefined {
+  return (snapshot as { config?: Record<string, unknown> } | null)?.config;
+}
+
+/**
+ * 构造写进网关的配置补丁（深合并语义，见 `config.patch`）。
+ *
+ * ⚠️ 规范形状里**没有 `api` 字段** —— 传输协议由 catalog 里每个模型的 capability
+ * 逐条决定（官方文档 `docs/providers/clawrouter.md`）。写死会把「按模型选传输」
+ * 压成「整个 provider 一个传输」。测试里有反向断言盯着这条，别加。
+ */
+export function buildRelayPatch(input: RelayPatchInput): RelayConfigPatch | null {
+  // 没有 key 就不写：写一个空 apiKey 会让网关去调一个必然 401 的地址，
+  // 用户看到的是一堆失败的模型调用，比「没配置」更难排查。
+  if (!input.relayKey) return null;
+
+  const headers: Record<string, string> = {};
+  if (input.deviceFingerprint) {
+    // 只记录不拦截（设计文档 6.2）。缺了也不影响放行，所以允许缺省。
+    headers['X-ClawRouter-Project-Id'] = input.deviceFingerprint;
+  }
+
+  const patch: RelayConfigPatch = {
+    models: {
+      providers: {
+        [RELAY_PROVIDER_ID]: {
+          baseUrl: RELAY_BASE_URL,
+          apiKey: input.relayKey,
+          headers,
+        },
+      },
+    },
+  };
+
+  const config = configOf(input.existingConfig);
+
+  // `plugins.allow`：官方文档说「若配置里设了它，必须把 clawrouter 加进名单」。
+  // ⚠️ **只在它本来就存在时补名** —— 凭空创建一份 allow 名单会把其他插件
+  // 全挡在外面，那是灾难不是配置。
+  const allow = (config?.plugins as { allow?: unknown } | undefined)?.allow;
+  if (Array.isArray(allow)) {
+    const names = allow.filter((x): x is string => typeof x === 'string');
+    patch.plugins = { allow: [...new Set([...names, RELAY_PROVIDER_ID])] };
+  }
+
+  // 默认模型：**只在该字段未设置时写**。
+  // 激活是「新增能力」，不该是「重设用户偏好」——用户已经选过的模型不动。
+  const primary = (config?.agents as { defaults?: { model?: { primary?: unknown } } } | undefined)?.defaults?.model
+    ?.primary;
+  if (!primary && input.defaultModel) {
+    patch.agents = { defaults: { model: { primary: input.defaultModel } } };
+  }
+
+  return patch;
+}
+
+/** 取 catalog 的超时。catalog 是纯内存查询，正常在百毫秒级。 */
+const CATALOG_TIMEOUT_MS = 8_000;
+
+/**
+ * 从中转服务的 catalog 里取一个模型，拼成 openclaw 的模型 ref。
+ *
+ * ref 的格式是 **`<provider>/<catalog provider id>/<model id>`** —— 三段，
+ * 不是两段。中间那段是 catalog 里的上游 provider 名（我们这边是 `bailian`），
+ * 不是 `clawrouter` 本身。官方文档 `docs/providers/clawrouter.md` 的例子：
+ * `clawrouter/openai/gpt-5.5`、`clawrouter/anthropic/claude-sonnet-4-6`。
+ *
+ * 拿不到就返回 null —— 默认模型不写而已，不该拖垮配置写入。
+ */
+export async function fetchFirstRelayModel(relayKey: string): Promise<string | null> {
+  const res = await fetch(`${normalizeBaseUrl(RELAY_BASE_URL)}/v1/catalog`, {
+    headers: { Authorization: `Bearer ${relayKey}` },
+    signal: AbortSignal.timeout(CATALOG_TIMEOUT_MS),
+  });
+  if (!res.ok) return null;
+
+  const body = (await res.json()) as {
+    providers?: Array<{ id?: unknown; models?: Array<{ id?: unknown }> }>;
+  };
+  const provider = body.providers?.find((p) => typeof p.id === 'string' && p.id.length > 0);
+  const model = provider?.models?.find((m) => typeof m.id === 'string' && m.id.length > 0);
+  if (!provider || !model) return null;
+
+  return `${RELAY_PROVIDER_ID}/${String(provider.id)}/${String(model.id)}`;
+}
+
+export interface ApplyRelayConfigDeps {
+  /** 读网关配置快照（`gateway-client.getConfig()`）。**会抛**，不返回 IpcResult。 */
+  getConfig: () => Promise<unknown>;
+  /** 写网关配置（`gateway-client.patchConfig()`）。**会抛**，不返回 IpcResult。 */
+  patchConfig: (params: { baseHash: string; raw: string }) => Promise<unknown>;
+  /** 解析一个可用的中转模型 ref；拿不到返回 null（不阻塞主流程）。 */
+  resolveDefaultModel?: (relayKey: string) => Promise<string | null>;
+  /** 日志。**不要传含 relay key 的数据进来**。 */
+  log?: (event: string, data: Record<string, unknown>) => void;
+}
+
+export type ApplyRelayErrorCode = 'no-key' | 'transport' | 'rejected' | 'hash-conflict' | 'verify-failed';
+
+export interface ApplyRelayResult {
+  ok: boolean;
+  /** 配置是否**真的写进去了**（回读校验通过）。只看 patchConfig 的返回不够。 */
+  configured: boolean;
+  warnings: string[];
+  error?: string;
+  errorCode?: ApplyRelayErrorCode;
+}
+
+const MAX_HASH_RETRIES = 3;
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * 给网关的写入错误分类。
+ *
+ * **区分这两类是有后果的**：都当一种处理时，schema 拒绝（配置本身不合法）
+ * 会被当成网络抖动一直重试 —— 白等，而且永远好不了。
+ */
+function classifyWriteError(error: unknown): 'hash-conflict' | 'transport' | 'rejected' {
+  const text = messageOf(error);
+  // 乐观锁：并发写导致快照过期。**重读快照再来就有用**，所以值得重试。
+  if (/hash/i.test(text)) return 'hash-conflict';
+  if (/ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EPIPE|socket hang up|not connected|timeout/i.test(text)) {
+    return 'transport';
+  }
+  return 'rejected';
+}
+
+function providerApplied(snapshot: unknown, relayKey: string): boolean {
+  const providers = (configOf(snapshot)?.models as { providers?: Record<string, unknown> } | undefined)?.providers;
+  const entry = providers?.[RELAY_PROVIDER_ID];
+  if (!entry || typeof entry !== 'object') return false;
+  const { apiKey, baseUrl } = entry as { apiKey?: unknown; baseUrl?: unknown };
+  return (
+    apiKey === relayKey && normalizeBaseUrl(String(baseUrl ?? '')) === normalizeBaseUrl(RELAY_BASE_URL)
+  );
+}
+
+/**
+ * 把中转配置写进网关，并**回读校验**。
+ *
+ * 为什么不直接写盘上的 `openclaw.json`：客户端本来就不直接改那个文件，
+ * 它走网关的 `config.patch` RPC（深合并语义）。跟着既有模式走才能继承
+ * 既有的并发保护。
+ *
+ * 本函数**不抛异常** —— 配置写失败不该让激活整体失败：授权已经绑定成功了，
+ * 重试配置写入比让用户重新激活代价小。失败时返回 `configured: false`，
+ * 调用方在返回值里带出去。
+ */
+export async function applyRelayConfig(
+  deps: ApplyRelayConfigDeps,
+  input: { relayKey: string | null | undefined; deviceFingerprint: string },
+): Promise<ApplyRelayResult> {
+  const warnings: string[] = [];
+  const log = deps.log ?? ((): void => {});
+
+  if (!input.relayKey) {
+    return { ok: false, configured: false, errorCode: 'no-key', error: 'no relay key', warnings };
+  }
+
+  let defaultModel: string | null = null;
+  if (deps.resolveDefaultModel) {
+    try {
+      defaultModel = await deps.resolveDefaultModel(input.relayKey);
+    } catch (error) {
+      // 拿不到模型只是「默认模型不写」，不该拖垮整个配置写入。
+      warnings.push('resolve-default-model-failed');
+      log('relay.default-model-resolve-failed', { message: messageOf(error) });
+    }
+  }
+
+  for (let attempt = 1; attempt <= MAX_HASH_RETRIES; attempt += 1) {
+    let snapshot: unknown;
+    try {
+      snapshot = await deps.getConfig();
+    } catch (error) {
+      log('relay.config-read-failed', { attempt, message: messageOf(error) });
+      return { ok: false, configured: false, errorCode: 'transport', error: messageOf(error), warnings };
+    }
+
+    const baseHash = (snapshot as { hash?: unknown } | null)?.hash;
+    if (typeof baseHash !== 'string' || !baseHash) {
+      return { ok: false, configured: false, errorCode: 'transport', error: 'config snapshot has no hash', warnings };
+    }
+
+    const patch = buildRelayPatch({ ...input, existingConfig: snapshot, defaultModel });
+    if (!patch) {
+      return { ok: false, configured: false, errorCode: 'no-key', error: 'no relay key', warnings };
+    }
+
+    // 日志只记形状，**绝不记 key 本身** —— 日志会进排查记录、用户可能外发。
+    log('relay.config-write-start', {
+      attempt,
+      provider: RELAY_PROVIDER_ID,
+      hasDeviceHeader: Boolean(input.deviceFingerprint),
+      setsDefaultModel: 'agents' in patch,
+    });
+
+    try {
+      await deps.patchConfig({ baseHash, raw: JSON.stringify(patch) });
+    } catch (error) {
+      const kind = classifyWriteError(error);
+      log('relay.config-write-failed', { attempt, kind, message: messageOf(error) });
+
+      // 只有乐观锁冲突值得重试：它会因为「重读快照」而改变输入。
+      // 网络异常虽然客观上也「可重试」，但在激活这个同步流程里立刻重试没有意义
+      // —— 标成 transport 交给调用方，换个时间再来。
+      // schema 拒绝则重试一万次也一样，直接返回。
+      if (kind === 'hash-conflict' && attempt < MAX_HASH_RETRIES) continue;
+      return { ok: false, configured: false, errorCode: kind, error: messageOf(error), warnings };
+    }
+
+    // 只信 patchConfig 的返回是不够的 —— WS 通道的失败模式比本地文件写复杂，
+    // 「返回成功但网关没生效」是它独有的。所以回读一次。
+    let verified = false;
+    try {
+      verified = providerApplied(await deps.getConfig(), input.relayKey);
+    } catch (error) {
+      log('relay.config-verify-read-failed', { attempt, message: messageOf(error) });
+    }
+
+    log('relay.config-write-done', { attempt, verified });
+
+    if (!verified) {
+      return {
+        ok: true,
+        configured: false,
+        errorCode: 'verify-failed',
+        error: 'gateway did not apply the relay config',
+        warnings,
+      };
+    }
+    return { ok: true, configured: true, warnings };
+  }
+
+  return {
+    ok: false,
+    configured: false,
+    errorCode: 'hash-conflict',
+    error: 'config patch kept conflicting',
+    warnings,
+  };
+}

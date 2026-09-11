@@ -1,0 +1,294 @@
+import { describe, expect, it, vi } from 'vitest';
+import {
+  RELAY_BASE_URL,
+  RELAY_PROVIDER_ID,
+  applyRelayConfig,
+  buildRelayPatch,
+  type ApplyRelayConfigDeps,
+} from '../src/main/commercial/relay-config.js';
+
+/** `getConfig()` 返回的形态：真正的配置在 `.config` 下（ConfigSnapshot）。 */
+function snapshot(config: Record<string, unknown>, hash = 'h1') {
+  return { hash, config, raw: '', path: '' };
+}
+
+describe('buildRelayPatch', () => {
+  it('写入 clawrouter 的 baseUrl / apiKey / 设备指纹头', () => {
+    const patch = buildRelayPatch({ relayKey: 'rly_abc', deviceFingerprint: 'fp123' });
+    const provider = (patch as never as { models: { providers: Record<string, Record<string, unknown>> } }).models
+      .providers[RELAY_PROVIDER_ID];
+
+    expect(provider.baseUrl).toBe(RELAY_BASE_URL);
+    expect(provider.apiKey).toBe('rly_abc');
+    expect(provider.headers).toEqual({ 'X-ClawRouter-Project-Id': 'fp123' });
+  });
+
+  // ⚠️ 反向断言，别删。
+  //
+  // `api: 'openai-completions'` **看着像合理字段**（它确实是 openclaw 的合法 core API 名），
+  // 但规范形状里没有它 —— 传输协议由 catalog 里每个模型的 capability 逐条决定
+  // （llm.chat → openai-completions、llm.messages → anthropic-messages……）。
+  // 在 provider 上写死会把「按模型选传输」压成「整个 provider 一个传输」，
+  // 将来 catalog 里加一个别的路线的模型就会**静默走错**。
+  // 只删正向断言不够：不加这条，将来有人「顺手补上」时会重新引入。
+  it('patch 里不得出现 api 字段（传输由 catalog 的 capability 决定）', () => {
+    const patch = buildRelayPatch({ relayKey: 'rly_abc', deviceFingerprint: 'fp' });
+    const provider = (patch as never as { models: { providers: Record<string, Record<string, unknown>> } }).models
+      .providers[RELAY_PROVIDER_ID];
+
+    expect(provider).not.toHaveProperty('api');
+    expect(Object.keys(provider)).not.toContain('api');
+  });
+
+  it('缺 relayKey 时不构造 patch —— 宁可不写，也不写半个配置', () => {
+    // 写一个空 apiKey 会让网关去调一个必然 401 的地址，
+    // 用户看到的是一堆失败的模型调用，比「没配置」更难排查。
+    expect(buildRelayPatch({ relayKey: '', deviceFingerprint: 'fp' })).toBeNull();
+    expect(buildRelayPatch({ relayKey: null, deviceFingerprint: 'fp' })).toBeNull();
+    expect(buildRelayPatch({ relayKey: undefined, deviceFingerprint: 'fp' })).toBeNull();
+  });
+
+  it('缺设备指纹时仍然写配置，只是不带那个头（它不参与放行）', () => {
+    const patch = buildRelayPatch({ relayKey: 'rly_abc', deviceFingerprint: '' });
+    const provider = (patch as never as { models: { providers: Record<string, Record<string, unknown>> } }).models
+      .providers[RELAY_PROVIDER_ID];
+
+    expect(provider.headers).toEqual({});
+  });
+
+  describe('plugins.allow', () => {
+    it('现有配置有 plugins.allow 时，把 clawrouter 加进去并保留原有项', () => {
+      // 官方文档原话：If your configuration sets plugins.allow,
+      // add clawrouter to that list before enabling it.
+      const patch = buildRelayPatch({
+        relayKey: 'rly_abc',
+        deviceFingerprint: 'fp',
+        existingConfig: snapshot({ plugins: { allow: ['deepseek', 'kimi'] } }),
+      });
+      const plugins = (patch as never as { plugins: { allow: string[] } }).plugins;
+
+      expect(plugins.allow).toContain(RELAY_PROVIDER_ID);
+      expect(plugins.allow).toContain('deepseek');
+      expect(plugins.allow).toContain('kimi');
+    });
+
+    it('现有配置没有 plugins.allow 时**不创建**它', () => {
+      // 凭空加一个 allow 名单会把其他插件挡在外面 —— 那是灾难，不是配置。
+      const patch = buildRelayPatch({
+        relayKey: 'rly_abc',
+        deviceFingerprint: 'fp',
+        existingConfig: snapshot({ plugins: { entries: { kimi: { enabled: true } } } }),
+      });
+
+      expect((patch as never as { plugins?: { allow?: unknown } }).plugins?.allow).toBeUndefined();
+    });
+
+    it('已包含 clawrouter 时不重复添加', () => {
+      const patch = buildRelayPatch({
+        relayKey: 'rly_abc',
+        deviceFingerprint: 'fp',
+        existingConfig: snapshot({ plugins: { allow: [RELAY_PROVIDER_ID] } }),
+      });
+      const plugins = (patch as never as { plugins: { allow: string[] } }).plugins;
+
+      expect(plugins.allow.filter((x) => x === RELAY_PROVIDER_ID)).toHaveLength(1);
+    });
+  });
+
+  describe('agents.defaults.model.primary', () => {
+    it('未设置且解析到了模型时写入', () => {
+      const patch = buildRelayPatch({
+        relayKey: 'rly_abc',
+        deviceFingerprint: 'fp',
+        existingConfig: snapshot({ agents: { defaults: {} } }),
+        defaultModel: 'clawrouter/bailian/deepseek-v4-flash',
+      });
+      const primary = (patch as never as { agents: { defaults: { model: { primary: string } } } }).agents.defaults.model
+        .primary;
+
+      expect(primary).toBe('clawrouter/bailian/deepseek-v4-flash');
+    });
+
+    it('已设置时**不动它** —— 激活是新增能力，不是重设用户偏好', () => {
+      const patch = buildRelayPatch({
+        relayKey: 'rly_abc',
+        deviceFingerprint: 'fp',
+        existingConfig: snapshot({ agents: { defaults: { model: { primary: 'deepseek/deepseek-v4-flash' } } } }),
+        defaultModel: 'clawrouter/bailian/deepseek-v4-flash',
+      });
+
+      expect((patch as never as { agents?: unknown }).agents).toBeUndefined();
+    });
+
+    it('没解析到模型时不写（宁可让用户自己选，也不写一个猜的 ref）', () => {
+      const patch = buildRelayPatch({
+        relayKey: 'rly_abc',
+        deviceFingerprint: 'fp',
+        existingConfig: snapshot({ agents: { defaults: {} } }),
+        defaultModel: null,
+      });
+
+      expect((patch as never as { agents?: unknown }).agents).toBeUndefined();
+    });
+  });
+});
+
+describe('fetchFirstRelayModel', () => {
+  // ref 是**三段**：clawrouter / <catalog provider id> / <model id>。
+  // 中间那段是上游 provider 名（我们这边是 bailian），不是 clawrouter。
+  // 官方文档的例子：clawrouter/openai/gpt-5.5、clawrouter/anthropic/claude-sonnet-4-6。
+  const CATALOG = {
+    providers: [
+      { id: 'bailian', models: [{ id: 'deepseek-v4-flash' }, { id: 'qwen3.6-plus' }] },
+    ],
+  };
+
+  it('拼出三段的模型 ref，中间是 catalog 里的上游 provider', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: true, json: async () => CATALOG })),
+    );
+    const { fetchFirstRelayModel } = await import('../src/main/commercial/relay-config.js');
+
+    expect(await fetchFirstRelayModel('rly_abc')).toBe('clawrouter/bailian/deepseek-v4-flash');
+    vi.unstubAllGlobals();
+  });
+
+  it('拿不到就返回 null，不抛', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: false, json: async () => ({}) })),
+    );
+    const { fetchFirstRelayModel } = await import('../src/main/commercial/relay-config.js');
+
+    expect(await fetchFirstRelayModel('rly_abc')).toBeNull();
+    vi.unstubAllGlobals();
+  });
+
+  it('catalog 结构不对时返回 null，不拼出半个 ref', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: true, json: async () => ({ providers: [{ id: 'bailian', models: [] }] }) })),
+    );
+    const { fetchFirstRelayModel } = await import('../src/main/commercial/relay-config.js');
+
+    expect(await fetchFirstRelayModel('rly_abc')).toBeNull();
+    vi.unstubAllGlobals();
+  });
+});
+
+describe('applyRelayConfig', () => {
+  const INPUT = { relayKey: 'rly_abc', deviceFingerprint: 'fp123' };
+
+  function deps(overrides: Partial<ApplyRelayConfigDeps> = {}): ApplyRelayConfigDeps & {
+    getConfig: ReturnType<typeof vi.fn>;
+    patchConfig: ReturnType<typeof vi.fn>;
+  } {
+    return {
+      // 默认模拟「网关确实把配置写进去了」——回读能看到它。
+      getConfig: vi.fn(async () =>
+        snapshot({
+          models: { providers: { [RELAY_PROVIDER_ID]: { baseUrl: RELAY_BASE_URL, apiKey: 'rly_abc' } } },
+        }),
+      ),
+      patchConfig: vi.fn(async () => ({ ok: true })),
+      ...overrides,
+    } as never;
+  }
+
+  it('写入成功后回读校验，configured 为 true', async () => {
+    const d = deps();
+    const res = await applyRelayConfig(d, INPUT);
+
+    expect(res.ok).toBe(true);
+    expect(res.configured).toBe(true);
+    expect(d.patchConfig).toHaveBeenCalledTimes(1);
+    // 回读：getConfig 至少被调用两次（写前后各一次）
+    expect(d.getConfig.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('回读发现网关没真的写上时，configured 为 false 而不是假装成功', async () => {
+    // 写入「成功」但网关没生效 —— 只信 patchConfig 的返回就会漏掉这种情况。
+    const d = deps({
+      getConfig: vi.fn(async () => snapshot({ models: { providers: {} } })),
+    });
+    const res = await applyRelayConfig(d, INPUT);
+
+    expect(res.configured).toBe(false);
+    expect(res.errorCode).toBe('verify-failed');
+  });
+
+  it('乐观锁冲突时重读快照重试', async () => {
+    let calls = 0;
+    const d = deps({
+      getConfig: vi.fn(async () =>
+        // 第一次给旧 hash，第二次给新 hash；且第二次起回读能看到写入结果
+        calls === 0
+          ? snapshot({}, 'stale')
+          : snapshot(
+              { models: { providers: { [RELAY_PROVIDER_ID]: { baseUrl: RELAY_BASE_URL, apiKey: 'rly_abc' } } } },
+              'fresh',
+            ),
+      ),
+      patchConfig: vi.fn(async () => {
+        calls += 1;
+        if (calls === 1) throw new Error('config hash conflict');
+        return { ok: true };
+      }),
+    });
+    const res = await applyRelayConfig(d, INPUT);
+
+    expect(res.configured).toBe(true);
+    expect(d.patchConfig).toHaveBeenCalledTimes(2);
+  });
+
+  it('schema 拒绝**不重试** —— 重试无用，只会白等', async () => {
+    const d = deps({
+      patchConfig: vi.fn(async () => {
+        throw new Error('invalid config: unknown field "api"');
+      }),
+    });
+    const res = await applyRelayConfig(d, INPUT);
+
+    expect(res.configured).toBe(false);
+    expect(res.errorCode).toBe('rejected');
+    expect(d.patchConfig).toHaveBeenCalledTimes(1);
+  });
+
+  it('缺 relayKey 时不碰网关，直接返回未配置', async () => {
+    const d = deps();
+    const res = await applyRelayConfig(d, { relayKey: null, deviceFingerprint: 'fp' });
+
+    expect(res.configured).toBe(false);
+    expect(res.errorCode).toBe('no-key');
+    expect(d.patchConfig).not.toHaveBeenCalled();
+  });
+
+  it('读配置失败时不抛，返回 transport 错误码', async () => {
+    const d = deps({
+      getConfig: vi.fn(async () => {
+        throw new Error('ECONNREFUSED');
+      }),
+    });
+    const res = await applyRelayConfig(d, INPUT);
+
+    expect(res.ok).toBe(false);
+    expect(res.errorCode).toBe('transport');
+  });
+
+  it('日志里不得出现 relay key', async () => {
+    const events: Array<Record<string, unknown>> = [];
+    const d = deps({
+      getConfig: vi.fn(async () =>
+        snapshot({ models: { providers: { clawrouter: { apiKey: 'rly_abc' } } } }),
+      ),
+      patchConfig: vi.fn(async () => ({ ok: true })),
+      log: (_e, data) => events.push(data),
+    });
+    await applyRelayConfig(d, INPUT);
+
+    // patchConfig 的入参里必然有 key（那是要写进去的东西），但**日志**里不能有。
+    const logged = JSON.stringify(events);
+    expect(logged).not.toContain('rly_abc');
+  });
+});

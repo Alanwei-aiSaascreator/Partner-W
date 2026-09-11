@@ -3,6 +3,9 @@ import { createHash } from 'node:crypto';
 import type { IpcResult } from '@clawwork/shared';
 import { getCommercialClient } from './client.js';
 import { ensureDeviceId, readConfig, updateConfig } from '../workspace/config.js';
+import { getAllGatewayClients } from '../ws/index.js';
+import { getDebugLogger } from '../debug/index.js';
+import { applyRelayConfig, fetchFirstRelayModel } from './relay-config.js';
 
 export interface LicenseStatus {
   configured: boolean;
@@ -15,6 +18,14 @@ export interface LicenseStatus {
   tokenUsedCents: number;
   activated: boolean;
   deviceFingerprint: string;
+  /**
+   * 中转配置是否**真的写进了网关**（写入后回读校验过）。
+   *
+   * 只在激活流程里算得出来 —— 算它要读一次网关配置。`readLicenseStatus()`
+   * 不查网关，所以它返回的 status 里这个字段是 `undefined`（= 未知），
+   * 而不是 `false`（= 确定没配上）。两者含义不同，别混。
+   */
+  relayConfigured?: boolean;
 }
 
 type CommercialClient = NonNullable<ReturnType<typeof getCommercialClient>>;
@@ -181,7 +192,7 @@ export async function activateLicense(licenseKey: string): Promise<IpcResult<Lic
     // org_id, and the RLS policy is `org_id in (auth_org_ids())` — null matches
     // nothing, so the row is invisible to every user. The definer function does
     // the claim, the limit check and the activation row in one transaction.
-    const { error } = await supabase.rpc('activate_license', {
+    const { data, error } = await supabase.rpc('activate_license', {
       p_license_key: trimmed,
       p_device_fingerprint: deviceFingerprint(),
     });
@@ -191,10 +202,62 @@ export async function activateLicense(licenseKey: string): Promise<IpcResult<Lic
     }
 
     updateConfig({ commercial: { ...readConfig()?.commercial, licenseKey: trimmed } as never });
-    return readLicenseStatus();
+
+    // 把中转配置写进网关。**写失败不让激活整体失败** —— 授权已经绑定成功了，
+    // 重试配置写入比让用户重新激活代价小。失败只在状态里带一个 relayConfigured: false。
+    const relayConfigured = await configureRelay(
+      (data as { relayKey?: string | null } | null)?.relayKey ?? null,
+    );
+
+    const status = await readLicenseStatus();
+    return status.ok && status.result ? { ...status, result: { ...status.result, relayConfigured } } : status;
   } catch (error) {
     return fail(error, 'activation_failed');
   }
+}
+
+/**
+ * 激活成功后把中转服务配置写进本地网关。
+ *
+ * 为什么走网关的 `config.patch` 而不是写盘上的 `openclaw.json`：
+ * 客户端本来就不直接改那个文件（见 `team-installer.ts` 的既有用法），
+ * 跟着既有模式走才能继承既有的并发保护。
+ *
+ * ⚠️ 配置写入**不是**激活成功的必要条件 —— 调用方只把它当附加信息。
+ */
+async function configureRelay(relayKey: string | null): Promise<boolean> {
+  if (!relayKey) {
+    // 服务端没下发 key（迁移 11 之前的旧卡，或 RPC 返回形状变了）。
+    // 不静默：这是「中转没配上」的一个具体原因，排查时要知道是哪一个。
+    getDebugLogger().warn({ domain: 'commercial', event: 'relay.config-no-key', data: {} });
+    return false;
+  }
+
+  // 挑一个连上的网关写。多网关时写第一个 —— 与用量上报挑网关的口径一致。
+  const gateway = Array.from(getAllGatewayClients().values()).find((gw) => gw.isConnected);
+  if (!gateway) {
+    getDebugLogger().warn({ domain: 'commercial', event: 'relay.config-no-gateway', data: {} });
+    return false;
+  }
+
+  const result = await applyRelayConfig(
+    {
+      getConfig: () => gateway.getConfig(),
+      patchConfig: (params) => gateway.patchConfig(params),
+      resolveDefaultModel: fetchFirstRelayModel,
+      log: (event, data) => getDebugLogger().info({ domain: 'commercial', event, data }),
+    },
+    { relayKey, deviceFingerprint: deviceFingerprint() },
+  );
+
+  if (!result.configured) {
+    getDebugLogger().warn({
+      domain: 'commercial',
+      event: 'relay.config-not-applied',
+      data: { errorCode: result.errorCode, error: result.error, warnings: result.warnings },
+    });
+  }
+  return result.configured;
 }
 
 export function clearLicense(): IpcResult {
