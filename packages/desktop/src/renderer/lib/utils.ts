@@ -70,6 +70,27 @@ export function formatCredits(microCents: number): string {
   return Math.round(credits).toLocaleString();
 }
 
+/** 1 元 = 100 积分 = 100 分 = 1e8 微积分。 */
+const MICROS_PER_RMB = 100_000_000;
+
+/**
+ * 微积分 → **人民币**的显示串（不带 ¥ 前缀，前缀由调用方给）。
+ *
+ * ⚠️ 与 `formatCredits` 是两个单位：积分是账本单位，元是等值换算。
+ *    1 元 = 100 积分 ⇒ 换算系数是 1e8 微积分/元，不是 1e6。
+ *    混了就是 100 倍量级的错误，而且不会报错。
+ *
+ * 用 4 位小数：一次普通对话常常只有几分钱，2 位会全显示成 ¥0.00。
+ */
+export function formatRmb(micros: number): string {
+  if (!Number.isFinite(micros)) return '0';
+  const yuan = micros / MICROS_PER_RMB;
+  const abs = Math.abs(yuan);
+  if (abs > 0 && abs < 0.0001) return '<0.0001';
+  if (abs < 1000) return yuan.toFixed(4);
+  return yuan.toFixed(2);
+}
+
 const isMac = navigator.platform.toUpperCase().includes('MAC');
 
 export const modKey = isMac ? '⌘' : 'Ctrl';

@@ -841,7 +841,7 @@ export interface DashboardBreakdowns {
 /**
  * 一个模型（provider × model）在窗口内的真实消耗。
  *
- * 数据来自服务端 `usage_daily_by_model` 视图 —— 即**计费表本身**，
+ * 数据来自服务端 `usage_billing_by_model` 视图（迁移 32）—— 即**计费表本身**，
  * 所以它与「额度扣了多少」是同一份数据，能对账。
  *
  * ⚠️ `model` 是每次调用**真正发到上游的名字**（relay 用请求体 body.model 落账），
@@ -858,6 +858,63 @@ export interface DashboardModelUsage {
   totalTokens: number;
   /** 微积分（1e-6 积分）。显示时走 formatCredits。 */
   costMicros: number;
+
+  // ───────────────────────────────────────────────────────────────────────
+  // M4 透明计费：以下字段全部是**落账时的快照**，不是拿今天的价目回算的。
+  // 对「改当前价目表 ⇒ 历史展示必须一字不变」这条，有服务端负对照测试锁着
+  // （scripts/tests/billing_transparency.sql 最后一条断言）。
+  //
+  // ⚠️ 三条不许违反的口径：
+  //   ① `costMicros` 是账本事实；官方参考费用是**测算**，两者不是一个东西。
+  //   ② 官方参考费用 **≠ 供应商 invoice**（我们没做供应商账单对账）。
+  //   ③ 历史 v1 行没有快照 ⇒ 这些字段为 null，**不许当 0 显示**。
+  // ───────────────────────────────────────────────────────────────────────
+
+  /** 落账时**实际命中**的售价（元/百万 token）。null = 未记录 / 窗口内多档。 */
+  saleInputYuanPerMtok: number | null;
+  saleOutputYuanPerMtok: number | null;
+  saleCachedYuanPerMtok: number | null;
+
+  /** 官方挂牌价（元/百万 token）。null = 历史未记录 / 窗口内多档。 */
+  officialInputYuanPerMtok: number | null;
+  officialOutputYuanPerMtok: number | null;
+  officialCachedYuanPerMtok: number | null;
+
+  /** 'implicit_hit' | 'none' | null。null = 未记录 / 窗口内多档。 */
+  officialCachePricingMode: string | null;
+
+  /**
+   * **目标**倍率（1.6 = 1.6×）。null = 未记录 / 窗口内多档。
+   * ⚠️ 是目标不是结果：售价经过 ceil、跨档重定价与 greatest 不退款，
+   * 都会让实际结算倍率偏离它。实际值见 `effectiveMultiplier`。
+   */
+  targetMultiplier: number | null;
+
+  /** 窗口内不同价目档数（0 = 一条 v2 记录都没有）。 */
+  pricingVariants: number;
+  /** 窗口内价目不一致（多档，或某天内部就多档）⇒ 上面那些标量价已置 null。 */
+  pricingMixed: boolean;
+
+  /** 窗口内**已结算**记录总条数。 */
+  settledCalls: number;
+  /** 其中能**严格算出**官方参考费用的条数。 */
+  officialReferenceCoveredCalls: number;
+  /**
+   * 官方参考费用（微积分）—— **只累加算得出的那些**。
+   * `officialReferenceComplete` 为 false 时它是「已覆盖部分」，**不是总额**。
+   * null = 一条都算不出（此时不许显示 0）。
+   */
+  officialReferenceCostMicros: number | null;
+  /** 窗口内每一笔都算得出官方参考费用才为 true。 */
+  officialReferenceComplete: boolean;
+
+  /**
+   * 实际结算倍率 = 实际扣费 ÷ 官方参考费用。
+   * ⚠️ **只在 `officialReferenceComplete` 为 true 时才有值。** 覆盖不全时分子分母
+   *    不是同一批记录，那个比值没有意义 —— 宁可给 null，也不给一个混合口径的数。
+   * ⚠️ 它不是「目标倍率」：售价 ceil、跨档重定价、greatest 不退款都会让它偏离。
+   */
+  effectiveMultiplier: number | null;
 }
 
 export interface DashboardLast30d {
