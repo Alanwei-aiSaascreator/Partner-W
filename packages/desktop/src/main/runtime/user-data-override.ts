@@ -49,7 +49,12 @@ export function resolveUserDataOverride(opts: {
  * ⚠️ 未设环境变量时**一次都不调用 `setPath`** —— 这条是硬要求，已有测试钉住。
  */
 export function applyUserDataOverride(opts: {
-  app: { getPath: (name: string) => string; setPath: (name: string, value: string) => void };
+  // ⚠️ 只声明真正用到的那两个 path 名。写成 `(name: string)` 的话签名比 Electron 的
+  // `setPath` 宽，strictFunctionTypes 下**传不进真实的 app**（逆变）。
+  app: {
+    getPath: (name: 'userData') => string;
+    setPath: (name: 'userData', value: string) => void;
+  };
   env?: NodeJS.ProcessEnv;
   isPackaged: boolean;
 }): string | null {

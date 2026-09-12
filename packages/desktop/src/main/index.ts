@@ -31,6 +31,8 @@ import { initTray, destroyTray } from './tray.js';
 import { initQuickLaunch, destroyQuickLaunch } from './quick-launch.js';
 import { getWorkspacePath, getDefaultWorkspacePath, readConfig, updateConfig } from './workspace/config.js';
 import { initDatabase, closeDatabase } from './db/index.js';
+import { applyUserDataOverride } from './runtime/user-data-override.js';
+import { bootstrapLocalGatewayRuntime, shutdownLocalGatewayRuntime } from './runtime/index.js';
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'clawwork-avatar', privileges: { secure: true, supportFetchAPI: true } },
@@ -192,6 +194,11 @@ function createWindow(): BrowserWindow {
   return win;
 }
 
+// ⚠️ 必须在 `app.ready` **之前**：userData 路径要在建窗口/建数据库之前就定下来。
+// 仅 dev/test 且显式设了 CLAWWORK_USER_DATA_DIR 时生效 —— 这是模拟"新用户"的
+// **唯一**合法手段（绝不靠删真实 %APPDATA%，见 junction 事故）。
+applyUserDataOverride({ app, isPackaged: app.isPackaged });
+
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
@@ -205,7 +212,7 @@ if (!gotLock) {
     }
   });
 
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
     initDebugLogger(app.getPath('logs'));
     getDebugLogger().info({ domain: 'app', event: 'app.start', data: { userData: app.getPath('userData') } });
     electronApp.setAppUserModelId('com.mofangluopan.app');
@@ -263,7 +270,21 @@ if (!gotLock) {
       return;
     }
 
+    // 窗口先出来，别像卡死 —— 首次启动要解压 35k 个文件（1–3 分钟）
     createWindow();
+
+    // ⚠️ 拉起本机运行时（定位 → 部署 → 起网关 → 等就绪）。**这一步永不抛**：
+    // 失败只是"网关没起来"，界面照常出，让 ConnectionBanner 说真话；
+    // 上一轮留下的、或用户自己的网关可能还活着，下面 initAllGateways() 照样要去连它。
+    const runtimeResult = await bootstrapLocalGatewayRuntime({ userDataDir: app.getPath('userData') });
+    if (!runtimeResult.ok) {
+      getDebugLogger().error({
+        domain: 'gateway',
+        event: 'runtime.bootstrap.failed',
+        data: { code: runtimeResult.code, reason: runtimeResult.reason },
+      });
+    }
+
     initAllGateways();
     // 放在网关之后：首跑要立刻读一次额度，此时会话/配置已就绪，否则首报必然是空
     initUsageReporter();
@@ -305,10 +326,19 @@ app.on('before-quit', (event) => {
       unwatchAll();
       // 先掐定时器，否则拆网关的过程中还会触发一次上报，撞上半死会话
       destroyUsageReporter();
-      destroyAllGateways();
-      destroyTray();
-      destroyQuickLaunch();
-      closeDatabase();
-      app.quit();
+      // ⚠️ 只有 ownership==='spawned' 才会真的停 —— 复用的网关是**先于客户端存在**的，
+      // 绝不能因为用户关掉客户端就把它带走（判断在 stopGatewayIfOwned 里，有单测钉住）
+      void shutdownLocalGatewayRuntime()
+        .catch((err) => {
+          // 收尾失败**绝不能**挡住退出 —— 记一笔就继续
+          console.error('[runtime] 退出时收尾失败（忽略，继续退出）:', err);
+        })
+        .finally(() => {
+          destroyAllGateways();
+          destroyTray();
+          destroyQuickLaunch();
+          closeDatabase();
+          app.quit();
+        });
     });
 });
