@@ -1,10 +1,11 @@
 import { app, safeStorage } from 'electron';
-import { dirname, join } from 'path';
-import { closeSync, existsSync, fsyncSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'fs';
+import { join } from 'path';
+import { existsSync, readFileSync, renameSync } from 'fs';
 import { homedir } from 'os';
 import { randomUUID } from 'node:crypto';
 import { CONFIG_FILE_NAME, DEFAULT_WORKSPACE_DIR } from '@clawwork/shared';
 import type { GatewayAuth, LanguageCode, TeamHubRegistryConfig } from '@clawwork/shared';
+import { writeJsonAtomic } from '../util/json-file.js';
 
 export interface GatewayServerConfig {
   id: string;
@@ -196,45 +197,7 @@ export function readConfig(): AppConfig | null {
 }
 
 export function writeConfig(config: AppConfig): void {
-  const cfgPath = configFilePath();
-  const tmpPath = cfgPath + '.tmp';
-  const encrypted = encryptGatewayCredentials(config);
-  let fd: number | null = null;
-  try {
-    fd = openSync(tmpPath, 'w', 0o600);
-    writeFileSync(fd, JSON.stringify(encrypted, null, 2), { encoding: 'utf-8' });
-    fsyncSync(fd);
-    try {
-      closeSync(fd);
-    } finally {
-      fd = null;
-    }
-    renameSync(tmpPath, cfgPath);
-    try {
-      const dirFd = openSync(dirname(cfgPath), 'r');
-      try {
-        fsyncSync(dirFd);
-      } finally {
-        closeSync(dirFd);
-      }
-    } catch (syncErr) {
-      console.error('[config] failed to sync config directory:', syncErr);
-    }
-  } catch (err) {
-    if (fd !== null) {
-      try {
-        closeSync(fd);
-      } catch (closeErr) {
-        console.error('[config] failed to close temp config:', closeErr);
-      }
-    }
-    try {
-      if (existsSync(tmpPath)) unlinkSync(tmpPath);
-    } catch (cleanupErr) {
-      console.error('[config] failed to remove temp config:', cleanupErr);
-    }
-    throw err;
-  }
+  writeJsonAtomic(configFilePath(), encryptGatewayCredentials(config));
 }
 
 export function updateConfig(partial: Partial<AppConfig>): AppConfig {

@@ -1,10 +1,10 @@
-import { deflateRawSync } from 'node:zlib';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { extractArchive } from '../src/main/runtime/unzip.js';
-import { crc32 } from '../src/main/runtime/zip.js';
+import type { SeedEntry } from './helpers/make-zip.js';
+import { makeZip } from './helpers/make-zip.js';
 
 /**
  * 真解压往返（本文件是**唯一**值得做真 fs 的地方 —— 因为要复现"半成品"与"路径穿越"）。
@@ -28,100 +28,6 @@ afterEach(() => {
 });
 
 // ---------- 造一个**真的** zip（能被本解析器解开，不需要 7-Zip） ----------
-
-function u16(n: number): Buffer {
-  const b = Buffer.alloc(2);
-  b.writeUInt16LE(n, 0);
-  return b;
-}
-function u32(n: number): Buffer {
-  const b = Buffer.alloc(4);
-  b.writeUInt32LE(n >>> 0, 0);
-  return b;
-}
-
-interface SeedEntry {
-  name: string;
-  content?: Buffer;
-  /** 故意写错的 CRC，用来测「CRC 不符必须报错」。 */
-  badCrc?: number;
-  /** 故意写错的解压后长度。 */
-  badSize?: number;
-  store?: boolean;
-}
-
-/** 造一个结构完整的小 zip：本地头 + 数据 + 中央目录 + EOCD。 */
-function makeZip(entries: SeedEntry[]): Buffer {
-  const locals: Buffer[] = [];
-  const centrals: Buffer[] = [];
-  let offset = 0;
-
-  for (const e of entries) {
-    const isDir = e.name.endsWith('/');
-    const raw = isDir ? Buffer.alloc(0) : (e.content ?? Buffer.alloc(0));
-    const method = isDir || e.store ? 0 : 8;
-    const data = method === 8 ? deflateRawSync(raw) : raw;
-    const crc = e.badCrc ?? crc32(raw);
-    const uncompressedSize = e.badSize ?? raw.length;
-    const nameBuf = Buffer.from(e.name, 'utf8');
-
-    const local = Buffer.concat([
-      u32(0x04034b50),
-      u16(20),
-      u16(0),
-      u16(method),
-      u16(0),
-      u16(0x5d2b),
-      u32(crc),
-      u32(data.length),
-      u32(uncompressedSize),
-      u16(nameBuf.length),
-      u16(0), // 本地头 extra 长度 = 0（与中央目录的 36 不同，正是要测的那条）
-      nameBuf,
-      data,
-    ]);
-    locals.push(local);
-
-    centrals.push(
-      Buffer.concat([
-        u32(0x02014b50),
-        u16(20),
-        u16(20),
-        u16(0),
-        u16(method),
-        u16(0),
-        u16(0x5d2b),
-        u32(crc),
-        u32(data.length),
-        u32(uncompressedSize),
-        u16(nameBuf.length),
-        u16(36), // ⚠️ 中央目录的 extraLen 故意给 36，本地头给 0 —— 复现真实包的差异
-        u16(0),
-        u16(0),
-        u16(0),
-        u32(isDir ? 0x10 : 0),
-        u32(offset),
-        nameBuf,
-        Buffer.alloc(36),
-      ]),
-    );
-
-    offset += local.length;
-  }
-
-  const cd = Buffer.concat(centrals);
-  const eocd = Buffer.concat([
-    u32(0x06054b50),
-    u16(0),
-    u16(0),
-    u16(entries.length),
-    u16(entries.length),
-    u32(cd.length),
-    u32(offset),
-    u16(0),
-  ]);
-  return Buffer.concat([...locals, cd, eocd]);
-}
 
 function writeArchive(entries: SeedEntry[]): string {
   const p = path.join(tmpRoot, `archive-${Math.random().toString(36).slice(2)}.7z`);
@@ -199,6 +105,26 @@ describe('extractArchive', () => {
     });
     expect(seen.length).toBeGreaterThan(0);
     expect(seen[seen.length - 1]).toBe(12);
+  });
+
+  it('⭐ 目录条目也计入进度 —— 最后一次回调必须到 100%（真实包有 2072 个目录）', async () => {
+    // 回归：曾经用 fileCount === entries.length 判"最后一条"，而 fileCount 只数文件，
+    // 于是任何含目录的归档都**永远发不出最后一次进度** —— 进度条卡住 = 看着像卡死。
+    const entries: SeedEntry[] = [
+      { name: 'a/' },
+      { name: 'a/one.txt', content: Buffer.from('1') },
+      { name: 'b/' },
+      { name: 'b/two.txt', content: Buffer.from('2') },
+    ];
+    const seen: Array<[number, number]> = [];
+    await extractArchive({
+      archivePath: writeArchive(entries),
+      destDir: destDir(),
+      onProgress: (done, total) => seen.push([done, total]),
+    });
+
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen[seen.length - 1]).toEqual([4, 4]);
   });
 
   it('还原 DOS 时间戳（不是「刚刚」）', async () => {

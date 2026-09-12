@@ -80,6 +80,18 @@ export async function extractArchive(opts: ExtractOptions): Promise<ExtractResul
 
     let fileCount = 0;
     let dirCount = 0;
+    // ⚠️ 进度按**条目**计（文件 + 目录），不是只按文件。
+    //    曾经用 `fileCount === entries.length` 判"最后一条"：真实包有 2072 个目录条目，
+    //    fileCount 永远小于 entries.length ⇒ **最后一次回调永远不发**，
+    //    进度条卡在最后一个 500 的倍数上（看着就像卡死）。首次启动本来就 1–3 分钟，
+    //    这个"永远到不了 100%"正是要避免的东西。
+    let processed = 0;
+    const reportProgress = (): void => {
+      processed++;
+      if (onProgress && (processed % progressEvery === 0 || processed === entries.length)) {
+        onProgress(processed, entries.length);
+      }
+    };
 
     for (const entry of entries) {
       // ① 名字安全（穿越、绝对路径、盘符、NUL 都在这里挡掉）
@@ -98,6 +110,7 @@ export async function extractArchive(opts: ExtractOptions): Promise<ExtractResul
       if (entry.isDirectory) {
         await fs.mkdir(target, { recursive: true });
         dirCount++;
+        reportProgress();
         continue;
       }
 
@@ -113,9 +126,7 @@ export async function extractArchive(opts: ExtractOptions): Promise<ExtractResul
       }
 
       fileCount++;
-      if (onProgress && (fileCount % progressEvery === 0 || fileCount === entries.length)) {
-        onProgress(fileCount, entries.length);
-      }
+      reportProgress();
     }
 
     return { fileCount, dirCount, entryCount: entries.length };

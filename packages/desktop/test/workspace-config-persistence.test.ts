@@ -1,7 +1,12 @@
+import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const userDataPath = '/tmp/clawwork-user-data';
-const configPath = `${userDataPath}/clawwork-config.json`;
+// ⚠️ 用 `join` 拼，**不要写字面量 `/tmp/...`**：`config.ts` 那边是 `join(app.getPath('userData'), …)`，
+//    在 Windows 上得到的是反斜杠路径，字面量只在 POSIX 上相等。
+//    这四条断言此前在 Windows 上**全红**，且与它们本该保护的改动无关 ——
+//    红着的安全网等于没有安全网（见 util/json-file.ts 的抽取）。
+const userDataPath = join('/tmp', 'clawwork-user-data');
+const configPath = join(userDataPath, 'clawwork-config.json');
 const tmpPath = `${configPath}.tmp`;
 
 const fsMock = vi.hoisted(() => ({
@@ -72,9 +77,15 @@ describe('workspace config persistence', () => {
     expect(fsMock.fsyncSync).toHaveBeenCalledWith(10);
     expect(fsMock.closeSync).toHaveBeenCalledWith(10);
     expect(fsMock.renameSync).toHaveBeenCalledWith(tmpPath, configPath);
-    expect(fsMock.openSync).toHaveBeenCalledWith(userDataPath, 'r');
-    expect(fsMock.fsyncSync).toHaveBeenCalledWith(11);
-    expect(fsMock.closeSync).toHaveBeenCalledWith(11);
+    if (process.platform === 'win32') {
+      // Windows 上目录 fsync 必定 EPERM（2026-09-13 实测 node 26.3.1），
+      // 所以 `syncDirectory` 刻意**不尝试** —— 见 util/json-file.ts。
+      expect(fsMock.openSync).not.toHaveBeenCalledWith(userDataPath, 'r');
+    } else {
+      expect(fsMock.openSync).toHaveBeenCalledWith(userDataPath, 'r');
+      expect(fsMock.fsyncSync).toHaveBeenCalledWith(11);
+      expect(fsMock.closeSync).toHaveBeenCalledWith(11);
+    }
   });
 
   it('cleans up temp config file when atomic rename fails', async () => {
