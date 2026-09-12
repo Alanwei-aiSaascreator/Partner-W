@@ -63,15 +63,6 @@ function BreakdownTile({
 }
 
 /**
- * 模型消耗。这是全页**唯一**按「实际调用模型」统计的板块 ——
- * 数据来自服务端计费表（每次调用一行，model 是真正发到上游的那个名字）。
- *
- * 它回答的是「钱花在哪了」：用户从 qwen-plus 切到 kimi-k3，这里就分两行；
- * 网关自动回退时，出现的是**实际生效**的模型而不是界面上选的那个。
- *
- * ⚠️ 不要退回读本地 `tasks.model` —— 那是会话选中的模型，看不出切换也看不出回退。
- */
-/**
  * 价格数字的显示格式：**去掉无意义的尾零**，但保留有效精度。
  * `Number(x.toFixed(4))` 之后再 String() —— 1.6 不会变成 "1.6000"，
  * 0.3333333 也不会因为取整变成 0。
@@ -188,6 +179,15 @@ function BillingDetail({ entry }: { entry: DashboardModelUsage }) {
   );
 }
 
+/**
+ * 模型消耗。这是全页**唯一**按「实际调用模型」统计的板块 ——
+ * 数据来自服务端计费表（每次调用一行，model 是真正发到上游的那个名字）。
+ *
+ * 它回答的是「钱花在哪了」：用户从 qwen-plus 切到 kimi-k3，这里就分两行；
+ * 网关自动回退时，出现的是**实际生效**的模型而不是界面上选的那个。
+ *
+ * ⚠️ 不要退回读本地 `tasks.model` —— 那是会话选中的模型，看不出切换也看不出回退。
+ */
 function ModelUsageTile({ entries, emptyText }: { entries: DashboardModelUsage[] | null; emptyText: string }) {
   const { t } = useTranslation();
 
