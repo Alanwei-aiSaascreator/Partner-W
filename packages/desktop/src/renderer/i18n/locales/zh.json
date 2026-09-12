@@ -98,10 +98,13 @@
     "thinkingHigh": "高",
     "thinkingLockedByModel": "该模型只能关闭思考，无法调整档位",
     "thinkingLow": "低",
+    "thinkingMax": "最高",
     "thinkingMedium": "中",
     "thinkingMinimal": "最低",
     "thinkingOff": "关闭",
-    "thinkingResetByModel": "已切换到 {{model}}，思考档位已重置为默认"
+    "thinkingResetByModel": "已切换到 {{model}}，思考档位已重置为默认",
+    "thinkingUltra": "极限",
+    "thinkingXhigh": "超高"
   },
   "chatMessage": {
     "conductor": "协调者",

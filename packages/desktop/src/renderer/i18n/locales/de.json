@@ -98,10 +98,13 @@
     "thinkingHigh": "Hoch",
     "thinkingLockedByModel": "Dieses Modell unterstützt nur „Aus“ beim Denken",
     "thinkingLow": "Niedrig",
+    "thinkingMax": "Maximal",
     "thinkingMedium": "Mittel",
     "thinkingMinimal": "Minimal",
     "thinkingOff": "Aus",
-    "thinkingResetByModel": "Zu {{model}} gewechselt – Denkstufe auf Standard zurückgesetzt"
+    "thinkingResetByModel": "Zu {{model}} gewechselt – Denkstufe auf Standard zurückgesetzt",
+    "thinkingUltra": "Ultra",
+    "thinkingXhigh": "Sehr hoch"
   },
   "chatMessage": {
     "conductor": "Koordinator",

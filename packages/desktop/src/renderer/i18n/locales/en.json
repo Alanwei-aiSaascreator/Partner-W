@@ -98,10 +98,13 @@
     "thinkingHigh": "High",
     "thinkingLockedByModel": "This model only supports thinking off",
     "thinkingLow": "Low",
+    "thinkingMax": "Max",
     "thinkingMedium": "Medium",
     "thinkingMinimal": "Minimal",
     "thinkingOff": "Off",
-    "thinkingResetByModel": "Switched to {{model}}; thinking level reset to default"
+    "thinkingResetByModel": "Switched to {{model}}; thinking level reset to default",
+    "thinkingUltra": "Ultra",
+    "thinkingXhigh": "Extra high"
   },
   "chatMessage": {
     "conductor": "Coordinator",

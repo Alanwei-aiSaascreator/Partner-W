@@ -12,7 +12,7 @@ import { useTranslation } from 'react-i18next';
 import { toast } from '@/lib/toast';
 import { evaluateQuota } from '@/lib/quota';
 import { useCommercialStore } from '@/stores/commercialStore';
-import { RELAY_PROVIDER_ID, modelFamilyLabel } from './model-families.js';
+import { modelFamilyLabel, relayModelsFrom } from './model-families.js';
 import { isThinkingSupported, thinkingDefaultFor } from './thinking-levels.js';
 import type {
   Task,
@@ -103,7 +103,14 @@ export function useChatSend(opts: UseChatSendOpts) {
 
   const taskGwId = activeTask?.gatewayId ?? pendingNewTask?.gatewayId;
   const modelCatalogByGateway = useUiStore((s) => s.modelCatalogByGateway);
-  const modelCatalog = (taskGwId ? modelCatalogByGateway[taskGwId] : undefined) ?? EMPTY_MODELS_CATALOG;
+  // ⚠️ 先过 relayModelsFrom 再往下走 —— 网关返回的是**全量**目录（含 claude-cli / deepseek
+  // 等我们没配的 provider）。下面的「当前模型」标签和下拉列表**必须同源**，
+  // 否则标签会解析到我们服务不了的模型：新任务时显示的 `Claude Opus 5 (Claude CLI)`
+  // 就是全量目录的第一条，用户会以为默认模型是它。
+  const modelCatalog = useMemo(
+    () => relayModelsFrom((taskGwId ? modelCatalogByGateway[taskGwId] : undefined) ?? EMPTY_MODELS_CATALOG),
+    [taskGwId, modelCatalogByGateway],
+  );
   const toolsCatalogByGateway = useUiStore((s) => s.toolsCatalogByGateway);
   const toolsCatalog = taskGwId ? toolsCatalogByGateway[taskGwId] : undefined;
   const currentModel = activeTask
@@ -129,16 +136,10 @@ export function useChatSend(opts: UseChatSendOpts) {
 
   const modelsByProvider = useMemo(() => {
     const groups: Record<string, ModelCatalogEntry[]> = {};
+    // modelCatalog 已经过 relayModelsFrom —— 这里不用再筛一遍 provider，
+    // 只负责按**模型家族**分组（deepseek / qwen / glm 各一类，
+    // 而不是全部堆在「clawrouter」一个组里）。
     for (const m of modelCatalog) {
-      // 只列中转服务提供的模型。
-      // ⚠️ 网关目录里还有 claude-cli / deepseek / openai… 一堆我们**没配置**的 provider
-      //（实测下拉里就有这些分组），选它们必然失败，而且请求根本发不出去
-      //（2026-09-11 实测报：`The selected model was not found by the provider`）。
-      // 详见 ./model-families.ts 的注释。
-      if (m.provider !== RELAY_PROVIDER_ID) continue;
-
-      // 分组从 provider 换成**模型家族**：deepseek / qwen / glm 各一类，
-      // 而不是全部堆在「clawrouter」一个组里。
       const family = modelFamilyLabel(m.id);
       if (!groups[family]) groups[family] = [];
       groups[family].push(m);

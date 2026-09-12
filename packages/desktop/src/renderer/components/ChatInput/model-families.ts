@@ -17,7 +17,25 @@
  *（名字用户可改）。这里做不到 —— 渲染层拿不到网关配置。留作已知局限：
  * 将来若允许用户自定义 provider，这个筛法要跟着改。
  */
+import type { ModelCatalogEntry } from '@clawwork/shared';
+
 export const RELAY_PROVIDER_ID = 'clawrouter';
+
+/**
+ * 只留下中转服务能提供的模型。
+ *
+ * **任何**用模型目录的地方都应该先过这一道 —— 下拉、当前模型标签、模型选择器……
+ * 只在某一处过滤是个已犯过的错：下拉只列 clawrouter，但「当前模型」的标签
+ * 仍从**全量**目录里解析，于是新任务（还没选模型）显示成
+ * `Claude Opus 5 (Claude CLI)` —— 网关返回的第一条，一个我们用不了的模型。
+ * 用户看到的是「默认模型是 Opus」，实际什么都没选。
+ *
+ * ⚠️ 过滤后可能变空（目录没拉到 / 网关只配了别的 provider）。
+ * 调用方要按「空目录」处理，**不要**退回未过滤的全量目录。
+ */
+export function relayModelsFrom(models: ModelCatalogEntry[]): ModelCatalogEntry[] {
+  return models.filter((m) => m.provider === RELAY_PROVIDER_ID);
+}
 
 /** 家族展示名。键是小写前缀。 */
 const FAMILY_LABELS: Record<string, string> = {

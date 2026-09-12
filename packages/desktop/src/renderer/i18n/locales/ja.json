@@ -98,10 +98,13 @@
     "thinkingHigh": "高",
     "thinkingLockedByModel": "このモデルは思考「オフ」のみ対応しています",
     "thinkingLow": "低",
+    "thinkingMax": "最大",
     "thinkingMedium": "中",
     "thinkingMinimal": "最小",
     "thinkingOff": "オフ",
-    "thinkingResetByModel": "{{model}} に切り替えました。思考レベルを既定値に戻しました"
+    "thinkingResetByModel": "{{model}} に切り替えました。思考レベルを既定値に戻しました",
+    "thinkingUltra": "ウルトラ",
+    "thinkingXhigh": "超高"
   },
   "chatMessage": {
     "conductor": "コーディネーター",

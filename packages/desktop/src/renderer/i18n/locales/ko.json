@@ -98,10 +98,13 @@
     "thinkingHigh": "높음",
     "thinkingLockedByModel": "이 모델은 사고 '끔'만 지원합니다",
     "thinkingLow": "낮음",
+    "thinkingMax": "최대",
     "thinkingMedium": "보통",
     "thinkingMinimal": "최소",
     "thinkingOff": "끄기",
-    "thinkingResetByModel": "{{model}}(으)로 전환했습니다. 사고 수준을 기본값으로 재설정했습니다"
+    "thinkingResetByModel": "{{model}}(으)로 전환했습니다. 사고 수준을 기본값으로 재설정했습니다",
+    "thinkingUltra": "울트라",
+    "thinkingXhigh": "매우 높음"
   },
   "chatMessage": {
     "conductor": "코디네이터",

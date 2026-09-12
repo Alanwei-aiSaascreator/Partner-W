@@ -98,10 +98,13 @@
     "thinkingHigh": "Alto",
     "thinkingLockedByModel": "Este modelo solo admite el pensamiento desactivado",
     "thinkingLow": "Bajo",
+    "thinkingMax": "Máximo",
     "thinkingMedium": "Medio",
     "thinkingMinimal": "Mínimo",
     "thinkingOff": "Desactivado",
-    "thinkingResetByModel": "Cambiado a {{model}}; nivel de pensamiento restablecido"
+    "thinkingResetByModel": "Cambiado a {{model}}; nivel de pensamiento restablecido",
+    "thinkingUltra": "Ultra",
+    "thinkingXhigh": "Muy alto"
   },
   "chatMessage": {
     "conductor": "Coordinador",
