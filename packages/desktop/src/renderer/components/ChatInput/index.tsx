@@ -49,7 +49,7 @@ import SlashCommandMenu from '../SlashCommandMenu';
 import ToolsCatalog from '../ToolsCatalog';
 import VoiceIntroDialog from '../VoiceIntroDialog';
 import { ACCEPTED_TYPES, MENTION_ALL_AGENT_ID } from './constants';
-import { thinkingLabelKey, thinkingMenuFor } from './thinking-levels.js';
+import { thinkingAlwaysOnKey, thinkingLabelKey, thinkingMenuFor } from './thinking-levels.js';
 import { useChatSend } from './useChatSend';
 import { useContextFolders } from './useContextFolders';
 import { useAttachments } from './useAttachments';
@@ -455,6 +455,8 @@ export default function ChatInput({ onNavigateToAccount }: ChatInputProps) {
 
   // 档位逐模型（见 thinking-levels.ts）：只列当前模型真支持的，只支持一档就置灰。
   const thinkingMenu = useMemo(() => thinkingMenuFor(currentModelEntry), [currentModelEntry]);
+  // 「关不掉思考」的模型（菜单无 off 档）要挂说明文案 —— 见 thinkingAlwaysOnKey 的注释。
+  const alwaysOnKey = useMemo(() => thinkingAlwaysOnKey(currentModelEntry), [currentModelEntry]);
   const thinkingLabel = useCallback(
     (level: string) => {
       const key = thinkingLabelKey(level);
@@ -806,6 +808,13 @@ export default function ChatInput({ onNavigateToAccount }: ChatInputProps) {
                         </Tooltip>
                       ) : (
                         <DropdownMenu>
+                          {/* 「关不掉思考」的模型（菜单里没有 off 档）额外挂一句说明。
+                              没有它，用户看到旗舰模型的菜单里居然没「关闭」会以为界面坏了 ——
+                              而那是**上游的真实能力**：deepseek-v4-pro / MiniMax-M2.5
+                              都不收 reasoning_effort: none。
+                              ⚠️ 用原生 title 而不是嵌一层 Tooltip：这是 DropdownMenuTrigger 的
+                              子节点，再嵌 Radix Tooltip 是两层 asChild 组合，容易出交互问题；
+                              而这个按钮本来就用 title。 */}
                           <DropdownMenuTrigger asChild>
                             <ToolbarButton
                               variant="ghost"
@@ -814,7 +823,11 @@ export default function ChatInput({ onNavigateToAccount }: ChatInputProps) {
                                 'rounded-lg border-none px-2 text-[var(--text-secondary)] shadow-none',
                                 currentThinking !== 'off' && 'text-[var(--accent)]',
                               )}
-                              title={thinkingLabel(currentThinking)}
+                              title={
+                                alwaysOnKey
+                                  ? `${thinkingLabel(currentThinking)} · ${t(alwaysOnKey)}`
+                                  : thinkingLabel(currentThinking)
+                              }
                             >
                               <span>{thinkingLabel(currentThinking)}</span>
                               <ChevronDown size={14} className="opacity-50" />

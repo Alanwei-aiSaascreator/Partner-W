@@ -37,6 +37,38 @@ export function relayModelsFrom(models: ModelCatalogEntry[]): ModelCatalogEntry[
   return models.filter((m) => m.provider === RELAY_PROVIDER_ID);
 }
 
+/**
+ * 这个模型现在还能不能选来发消息？
+ *
+ * ## 为什么必须在**发送前**校验
+ *
+ * 模型会从目录里消失（下架、改价、上游调整），而**已有的任务还记着老模型名**。
+ * 不在发送前拦，用户的体验是：
+ *   能选中 → 点发送 → 报错
+ * 错误还发生在「会话准备好了、消息发出去了」之后，看起来像网络问题。
+ *
+ * ⚠️ **不能只靠 `patchSession` 兜底** —— 2026-09-11 实测：选非中转模型时
+ * `patchSession` 是**成功**的，失败发生在发送那一刻
+ *（`renderer.agent.lifecycle.error: The selected model was not found by the provider`）。
+ *
+ * ## 三种情形，只有一种该拦
+ *
+ * | 情形 | 行为 | 为什么 |
+ * |---|---|---|
+ * | 目录为空 | **放行** | 多半是冷启动还没拉到（网关 models.list 有 750ms 超时），此时拦会把正常用户挡住 |
+ * | 目录非空、有它 | 放行 | 正常 |
+ * | 目录非空、没它 | **拦** | 目录已经告诉我们它不在了 |
+ *
+ * 目录已经拉到（非空）却没这个模型 —— 这是**确定**不在，不是「还没加载完」。
+ */
+export function isModelSelectable(catalog: ModelCatalogEntry[], modelId: string | undefined): boolean {
+  // 没选模型（undefined）= 用网关默认模型，不经过本地目录 → 放行
+  if (!modelId) return true;
+  // 目录为空：无从判断，放行（宁可让上游报错，也不挡住冷启动的正常发送）
+  if (catalog.length === 0) return true;
+  return catalog.some((m) => m.id === modelId);
+}
+
 /** 家族展示名。键是小写前缀。 */
 const FAMILY_LABELS: Record<string, string> = {
   deepseek: 'DeepSeek',

@@ -4,6 +4,7 @@ import {
   FALLBACK_THINKING_LEVELS,
   isThinkingSupported,
   thinkingDefaultFor,
+  thinkingAlwaysOnKey,
   thinkingLevelsFor,
   thinkingMenuFor,
 } from '../src/renderer/components/ChatInput/thinking-levels.js';
@@ -91,5 +92,32 @@ describe('isThinkingSupported —— 切模型判断当前档位还能不能用'
   it('数据缺失时一律放行，不误伤', () => {
     expect(isThinkingSupported(entry('m'), 'medium')).toBe(true);
     expect(isThinkingSupported(undefined, 'adaptive')).toBe(true);
+  });
+});
+
+describe('thinkingAlwaysOnKey —— 「关不掉思考」的模型要能标出来', () => {
+  // 背景（2026-09-12）：deepseek-v4-pro / MiniMax-M2.5 都不接受 reasoning_effort: none，
+  // 菜单里就没有「关闭」档。那是**上游的真实能力**，但用户会以为界面坏了。
+  it('菜单里没有 off → 要标（旗舰模型没有「关闭」时最常见）', () => {
+    expect(thinkingAlwaysOnKey(entry('m', ['low', 'medium', 'high', 'xhigh', 'max']))).toBe(
+      'chatInput.thinkingAlwaysOn',
+    );
+  });
+
+  it('有 off → 不标', () => {
+    expect(thinkingAlwaysOnKey(entry('m', ['off', 'low', 'high']))).toBeNull();
+  });
+
+  it('⚠️ 只有一档**且是 off** → 不标（那是 locked，另一种状态）', () => {
+    expect(thinkingAlwaysOnKey(entry('m', ['off']))).toBeNull();
+  });
+
+  it('⚠️ 只有一档且不是 off → 标（它确实关不掉）', () => {
+    expect(thinkingAlwaysOnKey(entry('m', ['high']))).toBe('chatInput.thinkingAlwaysOn');
+  });
+
+  it('拿不到目录数据 → 不标 —— 那时我们并不知道它支不支持', () => {
+    expect(thinkingAlwaysOnKey(entry('m'))).toBeNull();
+    expect(thinkingAlwaysOnKey(undefined)).toBeNull();
   });
 });

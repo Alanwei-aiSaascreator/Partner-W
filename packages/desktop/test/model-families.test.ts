@@ -1,5 +1,6 @@
 import { test, expect } from 'vitest';
 import {
+  isModelSelectable,
   modelFamilyKey,
   modelFamilyLabel,
   relayModelsFrom,
@@ -73,4 +74,37 @@ test('保持原顺序 —— 网关返回的顺序就是下拉里的展示顺序
 
 test('空目录进、空目录出（客户端冷启动拿不到目录的情况）', () => {
   expect(relayModelsFrom([])).toEqual([]);
+});
+
+/**
+ * 背景（2026-09-12）：模型会从目录里下架，而**已有任务还记着老模型名**。
+ * 不在发送前拦，体验是「能选中 → 发出去 → 报错」。
+ */
+const cat = [entry('clawrouter', 'deepseek-v4-flash'), entry('clawrouter', 'qwen-plus')];
+
+test('模型在目录里 → 可发', () => {
+  expect(isModelSelectable(cat, 'deepseek-v4-flash')).toBe(true);
+});
+
+test('模型不在目录里 → 拦住（这是「下架了」的确定信号）', () => {
+  expect(isModelSelectable(cat, 'deepseek-r1')).toBe(false);
+});
+
+test('没选模型（用网关默认）→ 放行 —— 它不经过本地目录', () => {
+  expect(isModelSelectable(cat, undefined)).toBe(true);
+});
+
+test('⚠️ 目录为空 → 放行，不能拦', () => {
+  // 冷启动时 models.list 有 750ms 超时、目录可能还没到。
+  // 此时拦会把**正常用户**挡住 —— 远比放过去让上游报错更糟。
+  expect(isModelSelectable([], 'deepseek-r1')).toBe(true);
+});
+
+test('全量目录里非中转的模型不算「在目录里」（传进来之前应已过滤）', () => {
+  // 这个函数假定收到的已经是 relayModelsFrom 的结果。防误用的文档性断言：
+  const raw = [entry('claude-cli', 'claude-opus-5')];
+  expect(isModelSelectable(raw, 'claude-opus-5')).toBe(true); // 未过滤时它会放行
+  expect(isModelSelectable(relayModelsFrom(raw), 'claude-opus-5')).toBe(true); // 空目录 → 放行
+  // ⇒ 所以调用方**必须**传过滤后的目录，否则拦不住。
+  // 真实的调用点（useChatSend）传的就是过滤后的 modelCatalog。
 });

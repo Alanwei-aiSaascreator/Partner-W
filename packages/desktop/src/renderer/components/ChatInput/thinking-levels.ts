@@ -87,3 +87,24 @@ export function thinkingMenuFor(entry?: ModelCatalogEntry): ThinkingMenu {
 export function thinkingLabelKey(level: string): string | null {
   return (THINKING_LABEL_KEYS as Record<string, string>)[level] ?? null;
 }
+
+/**
+ * 这个模型是不是「关不掉思考」？是的话返回该显示的说明文案 key，否则 null。
+ *
+ * ## 为什么要专门标这个
+ *
+ * 有些模型**根本没有「关闭」档** —— 它们只收 `low` 及以上（实测：
+ * `deepseek-v4-pro`、`MiniMax-M2.5` 都不接受 `reasoning_effort: none`）。
+ * 菜单里没有「关闭」是**真实能力**，不是 bug。
+ *
+ * 但用户看到「旗舰模型的菜单里居然没有关闭」时，第一反应是**我们的界面坏了**。
+ * 标一句「深度思考常开」，把「能力如此」和「功能坏了」区分开。
+ *
+ * ⚠️ 判据是「`thinkingLevels` 里没有 `off`」，**不是**「只有一档」——
+ * 只有一档是 `locked`（按钮置灰），那是另一种状态。
+ * ⚠️ 拿不到目录数据时返回 null（不标）：那时候我们并不知道它支不支持。
+ */
+export function thinkingAlwaysOnKey(entry?: ModelCatalogEntry): string | null {
+  if (!Array.isArray(readRawLevels(entry))) return null;
+  return thinkingLevelsFor(entry).includes('off') ? null : 'chatInput.thinkingAlwaysOn';
+}

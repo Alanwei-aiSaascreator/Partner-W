@@ -12,7 +12,7 @@ import { useTranslation } from 'react-i18next';
 import { toast } from '@/lib/toast';
 import { evaluateQuota } from '@/lib/quota';
 import { useCommercialStore } from '@/stores/commercialStore';
-import { modelFamilyLabel, relayModelsFrom } from './model-families.js';
+import { isModelSelectable, modelFamilyLabel, relayModelsFrom } from './model-families.js';
 import { isThinkingSupported, thinkingDefaultFor } from './thinking-levels.js';
 import type {
   Task,
@@ -179,6 +179,14 @@ export function useChatSend(opts: UseChatSendOpts) {
   }, []);
 
   const handleSend = useCallback(async () => {
+    // 发送前校验：任务记着的模型可能已经不在目录里了（下架 / 上游调整）。
+    // 不拦的话体验是「能选中 → 发出去 → 报错」，而且报错发生在会话就绪之后，
+    // 看着像网络问题。详见 isModelSelectable 的注释。
+    if (!isModelSelectable(modelCatalog, currentModel)) {
+      toast.error(t('chatInput.modelGone', { model: currentModel ?? '' }));
+      return;
+    }
+
     const commercial = useCommercialStore.getState().overview;
     const licence = commercial?.license ?? null;
     const verdict = evaluateQuota(licence?.tokenQuotaCents ?? 0, licence?.tokenUsedCents ?? null);
@@ -505,6 +513,8 @@ export function useChatSend(opts: UseChatSendOpts) {
     textareaRef,
     t,
     onComposerCleared,
+    modelCatalog,
+    currentModel,
   ]);
 
   const handleModelQuickSend = useCallback(
