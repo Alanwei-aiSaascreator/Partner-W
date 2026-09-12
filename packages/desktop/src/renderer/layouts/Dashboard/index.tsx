@@ -105,30 +105,35 @@ function BillingDetail({ entry }: { entry: DashboardModelUsage }) {
       ? t('dashboard.ledger.notRecorded')
       : t('dashboard.ledger.historicalNoSnapshot');
 
-  const priceText = entry.pricingMixed
-    ? priceUnavailable
-    : entry.officialInputYuanPerMtok === null && entry.officialOutputYuanPerMtok === null
-      ? priceUnavailable
-      : [
-          `in ${fmtNum(entry.officialInputYuanPerMtok)}`,
-          // mode=none ⇒ 本来就没有缓存价，显示 N/A 而不是 0
-          entry.officialCachePricingMode === 'none'
-            ? `cached ${t('dashboard.ledger.cachedNa')}`
-            : `cached ${fmtNum(entry.officialCachedYuanPerMtok)}`,
-          `out ${fmtNum(entry.officialOutputYuanPerMtok)}`,
-        ].join(' · ');
+  // ⚠️ 单位只跟在**真的有数字**的时候 —— 否则会渲染成「未记录 元/百万 token」，
+  //    读起来像「未记录」是一种单位。
+  const hasOfficialPrice =
+    !entry.pricingMixed && (entry.officialInputYuanPerMtok !== null || entry.officialOutputYuanPerMtok !== null);
+  const hasSaleRate =
+    !entry.pricingMixed && (entry.saleInputYuanPerMtok !== null || entry.saleOutputYuanPerMtok !== null);
 
-  const saleText = entry.pricingMixed
-    ? t('dashboard.ledger.multiTier')
-    : entry.saleInputYuanPerMtok === null && entry.saleOutputYuanPerMtok === null
-      ? t('dashboard.ledger.notRecorded')
-      : [
-          `in ${fmtNum(entry.saleInputYuanPerMtok)}`,
-          entry.saleCachedYuanPerMtok === null
-            ? `cached ${t('dashboard.ledger.cachedNa')}`
-            : `cached ${fmtNum(entry.saleCachedYuanPerMtok)}`,
-          `out ${fmtNum(entry.saleOutputYuanPerMtok)}`,
-        ].join(' · ');
+  const priceText = !hasOfficialPrice
+    ? priceUnavailable
+    : `${[
+        `in ${fmtNum(entry.officialInputYuanPerMtok)}`,
+        // mode=none ⇒ 本来就没有缓存价，显示 N/A 而不是 0
+        entry.officialCachePricingMode === 'none'
+          ? `cached ${t('dashboard.ledger.cachedNa')}`
+          : `cached ${fmtNum(entry.officialCachedYuanPerMtok)}`,
+        `out ${fmtNum(entry.officialOutputYuanPerMtok)}`,
+      ].join(' · ')} ${t('dashboard.ledger.perMtok')}`;
+
+  const saleText = !hasSaleRate
+    ? entry.pricingMixed
+      ? t('dashboard.ledger.multiTier')
+      : t('dashboard.ledger.notRecorded')
+    : `${[
+        `in ${fmtNum(entry.saleInputYuanPerMtok)}`,
+        entry.saleCachedYuanPerMtok === null
+          ? `cached ${t('dashboard.ledger.cachedNa')}`
+          : `cached ${fmtNum(entry.saleCachedYuanPerMtok)}`,
+        `out ${fmtNum(entry.saleOutputYuanPerMtok)}`,
+      ].join(' · ')} ${t('dashboard.ledger.perMtok')}`;
 
   // 官方参考费用：算不出就是算不出（不是 0）；覆盖不全时如实标注覆盖条数
   const officialCostText =
@@ -153,7 +158,7 @@ function BillingDetail({ entry }: { entry: DashboardModelUsage }) {
       />
       <DetailRow
         label={t('dashboard.ledger.officialPrice')}
-        value={`${priceText} ${t('dashboard.ledger.perMtok')}`}
+        value={priceText}
         hint={t('dashboard.ledger.officialPriceHint')}
       />
       <DetailRow
@@ -166,7 +171,7 @@ function BillingDetail({ entry }: { entry: DashboardModelUsage }) {
         value={fmtNum(entry.targetMultiplier) === '—' ? '—' : `${fmtNum(entry.targetMultiplier)}×`}
         hint={t('dashboard.ledger.targetMultiplierHint')}
       />
-      <DetailRow label={t('dashboard.ledger.saleRate')} value={`${saleText} ${t('dashboard.ledger.perMtok')}`} />
+      <DetailRow label={t('dashboard.ledger.saleRate')} value={saleText} />
       {/* 实际结算倍率：只在**覆盖完整**时才有值（分子分母必须是同一批记录） */}
       {entry.effectiveMultiplier !== null ? (
         <DetailRow
