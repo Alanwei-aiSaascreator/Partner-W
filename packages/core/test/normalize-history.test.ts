@@ -48,6 +48,42 @@ describe('normalizeAssistantTurns', () => {
     expect(turns[1]).toMatchObject({ content: 'Providers: openai', timestamp: '1970-01-01T00:00:03.000Z' });
   });
 
+  // 推理块只在 agent 通道上实时流过（见 gateway-dispatcher 的 `case 'thinking'`），
+  // 落库是主路径；这里是**从网关历史重建**那条，供换设备/清库后用。
+  // 形状是实测的（2026-09-12 打网关 chatHistory）：
+  // blocks = [{type:'thinking', thinking}, {type:'text', text}]
+  it('从历史里恢复推理块 —— 取 thinking 块，不混进正文', () => {
+    const rawMsgs: RawHistoryMessage[] = [
+      {
+        role: 'assistant',
+        timestamp: 2000,
+        content: [
+          { type: 'thinking', thinking: '设鸡 x 只、兔 y 只……' },
+          { type: 'text', text: '鸡 23 只、兔 12 只。' },
+        ],
+      },
+    ];
+
+    const turns = normalizeAssistantTurns(rawMsgs);
+
+    expect(turns).toHaveLength(1);
+    expect(turns[0]).toMatchObject({
+      content: '鸡 23 只、兔 12 只。',
+      thinkingContent: '设鸡 x 只、兔 y 只……',
+    });
+  });
+
+  it('正文为空、整条回复都在推理里的，也要留下（生产实测过这种）', () => {
+    const rawMsgs: RawHistoryMessage[] = [
+      { role: 'assistant', timestamp: 2000, content: [{ type: 'thinking', thinking: '整条回复都是推理' }] },
+    ];
+
+    const turns = normalizeAssistantTurns(rawMsgs);
+
+    expect(turns).toHaveLength(1);
+    expect(turns[0]).toMatchObject({ content: '', thinkingContent: '整条回复都是推理' });
+  });
+
   it('merges an assistant tool call with its visible final text', () => {
     const rawMsgs: RawHistoryMessage[] = [
       {

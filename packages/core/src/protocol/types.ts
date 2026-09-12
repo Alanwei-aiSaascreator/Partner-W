@@ -21,6 +21,8 @@ export interface ChatEventPayload {
 export interface RawContentBlock {
   type: string;
   text?: string;
+  /** 推理块（`type:'thinking'`）。实测网关 chatHistory 里带这个块，见 normalizeAssistantTurns。 */
+  thinking?: string;
   url?: string;
   openUrl?: string;
   alt?: string;
@@ -43,6 +45,7 @@ export interface RawHistoryMessage {
 
 export interface NormalizedAssistantTurn {
   content: string;
+  thinkingContent?: string;
   toolCalls: ToolCall[];
   attachments?: MessageAttachment[];
   timestamp: string;

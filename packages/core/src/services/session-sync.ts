@@ -282,6 +282,10 @@ export function createSessionSync(deps: SessionSyncDeps) {
         taskId,
         role: 'assistant',
         content: gm.content,
+        // 网关历史里带推理块（实测），换设备/清库后靠它重建。
+        // 本轮还在内存里的话，下面的 mergeCanonicalMessageWithActiveTurn 会优先用 activeTurn 的
+        //（同一段时间戳、同一段文本，是覆盖不是叠加）。
+        thinkingContent: gm.thinkingContent,
         artifacts: [],
         toolCalls: gm.toolCalls,
         attachments: gm.attachments,

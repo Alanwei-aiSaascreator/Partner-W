@@ -307,6 +307,21 @@ function deduplicateRawHistoryMessages(rawMsgs: RawHistoryMessage[]): RawHistory
   return deduped;
 }
 
+/**
+ * 从历史消息里取推理文本（`{type:'thinking', thinking}` 块）。
+ *
+ * ⚠️ 形状是**实测**的（2026-09-12 打网关 `chatHistory`）：assistant 消息确实带这个块。
+ * 实时那条链走 agent 通道（见 `gateway-dispatcher` 的 `case 'thinking'`），落库是主路径；
+ * 这里是**换设备 / 清库后重建**推理的唯一来源。
+ * 与 `extractThinking`（chat 通道）保持一致：块之间直接相连，不加分隔符。
+ */
+function extractBlockThinking(blocks: RawContentBlock[]): string {
+  return blocks
+    .filter((block) => block.type === 'thinking' && typeof block.thinking === 'string' && block.thinking.trim())
+    .map((block) => block.thinking as string)
+    .join('');
+}
+
 function shouldStartVisibleAssistantTurn(
   turn: NormalizedAssistantTurn | null,
   timestamp: string,
@@ -353,6 +368,7 @@ export function normalizeAssistantTurns(rawMsgs: RawHistoryMessage[], httpBase?:
     const timestamp = toISOTimestamp(msg.timestamp);
     const normalizedContent = normalizeContentBlocks(msg.content ?? [], httpBase);
     const text = normalizedContent.content;
+    const thinkingText = extractBlockThinking(msg.content ?? []);
     const toolCalls = (msg.content ?? [])
       .filter((block: RawContentBlock) => block.type === 'toolCall' && block.id && block.name)
       .map(
@@ -372,7 +388,15 @@ export function normalizeAssistantTurns(rawMsgs: RawHistoryMessage[], httpBase?:
         }),
       );
 
-    if (!text.trim() && toolCalls.length === 0 && !normalizedContent.attachments?.length) continue;
+    // ⚠️ 只有推理、没有正文的**不能丢**：生产实测过 `content` 为空、整条回复都在
+    // `reasoning_content` 里的调用 —— 丢了就是「界面上一个字都没有，而账照扣」。
+    if (!text.trim() && !thinkingText && toolCalls.length === 0 && !normalizedContent.attachments?.length) continue;
+
+    // 推理挂在当前 turn 上，不新起 turn —— 它属于同一次回复。
+    if (thinkingText) {
+      const turn = ensureCurrent(timestamp);
+      turn.thinkingContent = (turn.thinkingContent ?? '') + thinkingText;
+    }
 
     const visibleText = isVisibleAssistantContent(text) ? text.trim() : '';
 
@@ -410,7 +434,9 @@ export function normalizeAssistantTurns(rawMsgs: RawHistoryMessage[], httpBase?:
     canMergeToolFinal = false;
   }
 
-  return turns.filter((turn) => turn.content || turn.toolCalls.length > 0 || (turn.attachments?.length ?? 0) > 0);
+  return turns.filter(
+    (turn) => turn.content || turn.thinkingContent || turn.toolCalls.length > 0 || (turn.attachments?.length ?? 0) > 0,
+  );
 }
 
 export function collapseDiscoveredMessages(messages: DiscoveredMessageShape[], taskId: string): Message[] {
