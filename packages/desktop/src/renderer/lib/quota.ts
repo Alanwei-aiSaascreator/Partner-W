@@ -9,19 +9,19 @@ export interface QuotaVerdict {
   remainingPercent: number;
 }
 
-export function evaluateQuota(quotaCents: number, usedCents: number | null): QuotaVerdict {
-  if (!Number.isFinite(quotaCents) || quotaCents <= 0) {
+export function evaluateQuota(quotaMicros: number, usedMicros: number | null): QuotaVerdict {
+  if (!Number.isFinite(quotaMicros) || quotaMicros <= 0) {
     return { level: 'unlimited', usedPercent: 0, remainingPercent: 100 };
   }
 
-  if (usedCents === null || !Number.isFinite(usedCents)) {
+  if (usedMicros === null || !Number.isFinite(usedMicros)) {
     return { level: 'unknown-exhausted', usedPercent: 100, remainingPercent: 0 };
   }
 
-  const usedPercent = (usedCents / quotaCents) * 100;
+  const usedPercent = (usedMicros / quotaMicros) * 100;
   const remainingPercent = Math.max(0, 100 - usedPercent);
 
-  if (usedCents >= quotaCents) return { level: 'exhausted', usedPercent, remainingPercent: 0 };
+  if (usedMicros >= quotaMicros) return { level: 'exhausted', usedPercent, remainingPercent: 0 };
   if (usedPercent >= QUOTA_DEGRADE_PERCENT) return { level: 'degrade', usedPercent, remainingPercent };
   if (usedPercent >= QUOTA_WARN_PERCENT) return { level: 'warn', usedPercent, remainingPercent };
   return { level: 'ok', usedPercent, remainingPercent };

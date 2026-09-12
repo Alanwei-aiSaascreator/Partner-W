@@ -259,8 +259,8 @@ export interface CommercialLicenseSummary {
   sku: string | null;
   status: string | null;
   expiresAt: string | null;
-  tokenQuotaCents: number;
-  tokenUsedCents: number;
+  tokenQuotaMicros: number;
+  tokenUsedMicros: number;
 }
 
 export interface ChatAttachment {
@@ -821,16 +821,57 @@ export interface DashboardBreakdownEntry {
 }
 
 export interface DashboardBreakdowns {
+  /**
+   * ⚠️ 2026-09-12 起「模型」维度**不再**放这里。
+   *
+   * 这里原来是 `SELECT model, COUNT(*) FROM tasks GROUP BY model` —— 统计的是
+   * **会话选中的模型**（一个会话一行），既不反映用户中途切模型，也不反映
+   * 网关的自动回退（fallback 事件只弹一条不落库的提示，见 gateway-dispatcher）。
+   * 那是彻底的读数错误。
+   *
+   * 正确的模型维度是 `modelUsage`（来自服务端计费表，每次调用一行、记的是
+   * **实际发到上游的模型名**）。这个字段留给「按会话数看模型分布」这类
+   * 与计费无关的用途；空数组表示不展示。
+   */
   models: DashboardBreakdownEntry[];
   gateways: DashboardBreakdownEntry[];
   agents: DashboardBreakdownEntry[];
 }
 
+/**
+ * 一个模型（provider × model）在窗口内的真实消耗。
+ *
+ * 数据来自服务端 `usage_daily_by_model` 视图 —— 即**计费表本身**，
+ * 所以它与「额度扣了多少」是同一份数据，能对账。
+ *
+ * ⚠️ `model` 是每次调用**真正发到上游的名字**（relay 用请求体 body.model 落账），
+ *    不是会话默认模型。用户从 qwen-plus 切到 kimi-k3 会分成两条；
+ *    网关自动回退时出现的是实际生效的那个模型 —— 这正是「不是黑箱」的判据。
+ */
+export interface DashboardModelUsage {
+  provider: string;
+  model: string;
+  calls: number;
+  inputTokens: number;
+  outputTokens: number;
+  cachedTokens: number;
+  totalTokens: number;
+  /** 微积分（1e-6 积分）。显示时走 formatCredits。 */
+  costMicros: number;
+}
+
 export interface DashboardLast30d {
   input: number;
   output: number;
-  cost: number;
-  daily: Array<{ date: string; input: number; output: number; cost: number }>;
+  /**
+   * 成本，单位**微积分**（1e-6 积分 = 1e-6 分）。
+   *
+   * ⚠️ 2026-09-12 之前这里叫 `cost`、单位是**美元**，来自本机网关按内置价目表
+   * 算的 `usage.cost`。那个口径与「额度扣了多少」不是同一批调用（网关那份还
+   * 包含不走中转的调用），所以和账户页余额永远对不上。现在与额度同源。
+   */
+  costMicros: number;
+  daily: Array<{ date: string; input: number; output: number; costMicros: number }>;
 }
 
 export interface ClawDashboardData {
@@ -840,6 +881,14 @@ export interface ClawDashboardData {
   totalArtifacts: number;
   breakdowns: DashboardBreakdowns;
   last30d: DashboardLast30d | null;
+  /**
+   * 按实际调用模型分的消耗。**账号级**数据（服务端按 org 聚合），
+   * 与本机 SQLite 那几项不是一个口径 —— 界面上要标出来。
+   *
+   * `null` = 拿不到（未登录 / 无商业配置 / 请求失败）；
+   * 空数组 = 确实一次中转调用都没有。两者含义不同，别合并。
+   */
+  modelUsage: DashboardModelUsage[] | null;
 }
 
 export type CronSchedule =

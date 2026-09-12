@@ -110,6 +110,21 @@ export const DB_FILE_NAME = '.clawwork.db';
 export const TEAMSHUB_COMMUNITY_URL = 'https://github.com/clawwork-ai/teamshub-community';
 export const TEAMSHUB_COMMUNITY_ID = 'community';
 
+/**
+ * 上游 id（`pricing_rules.provider`）→ 界面上给人看的名字。
+ *
+ * ⚠️ 与服务端 `services/relay/src/catalog.ts` 里那份是**同源**的：
+ *    那边决定客户端在模型下拉里看到什么名字，这边决定统计页显示什么。
+ *    改一处要两边一起改 —— 但**不要**加第三份。
+ *
+ * 查不到 id 时调用方应回退成原样显示 id：新上游接进来时宁可显示
+ * `volc` 这样的生 id，也不要显示空白（空白会被当成「数据没加载出来」）。
+ */
+export const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
+  bailian: '百炼',
+  ark: '火山方舟',
+};
+
 export const MAX_USER_TASK_CHARS = 4000;
 export const MAX_AGENT_CATALOG_CHARS = 8000;
 export const USER_TASK_FENCE_OPEN = '<<<USER_TASK';

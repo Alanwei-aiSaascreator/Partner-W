@@ -282,7 +282,7 @@ export async function readAccountOverview(): Promise<IpcResult<CommercialAccount
       const licenseResponse = await withTimeoutOrNull(
         supabase
           .from('org_active_license')
-          .select('id, license_key, sku, status, expires_at, token_quota_cents, token_used_cents')
+          .select('id, license_key, sku, status, expires_at, token_quota_micros, token_used_micros')
           .eq('org_id', org.id)
           .maybeSingle(),
         'licenses.read',
@@ -306,8 +306,8 @@ export async function readAccountOverview(): Promise<IpcResult<CommercialAccount
           sku: (row.sku as string) ?? null,
           status: (row.status as string) ?? null,
           expiresAt: (row.expires_at as string) ?? null,
-          tokenQuotaCents: Number(row.token_quota_cents ?? 0),
-          tokenUsedCents: Number(row.token_used_cents ?? 0),
+          tokenQuotaMicros: Number(row.token_quota_micros ?? 0),
+          tokenUsedMicros: Number(row.token_used_micros ?? 0),
         };
 
         void registerDevice(supabase, String(row.license_key ?? ''));

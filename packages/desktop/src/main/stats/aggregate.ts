@@ -1,14 +1,26 @@
 import type Database from 'better-sqlite3';
 import type {
   ClawDashboardData,
-  CostUsageSummary,
   DashboardBreakdownEntry,
   DashboardBreakdowns,
   DashboardLast30d,
 } from '@clawwork/shared';
 import { parseAgentIdFromSessionKey } from '@clawwork/shared';
 import { getAllGatewayClients } from '../ws/index.js';
+import { readServerUsage } from './usage-from-server.js';
 
+/**
+ * 统计页数据。
+ *
+ * ⚠️ 这里有**两个口径**，别混：
+ *
+ *   · 任务数 / 活跃天数 / 消息数 / 文件数 / 网关排行 / Agent 排行 —— **本机**
+ *     SQLite，反映这台机器上的活动。
+ *   · `modelUsage` 与 `last30d` —— **账号级**，来自服务端计费表，反映
+ *     「钱花在哪了」。它与账户页的余额同源，能对账。
+ *
+ * 两者数量级和含义都不同，界面上必须标出来（否则用户会以为数字对不上）。
+ */
 export async function collectDashboardData(db: Database.Database): Promise<ClawDashboardData> {
   const totalTasks = (db.prepare('SELECT COUNT(*) as c FROM tasks').get() as { c: number }).c;
 
@@ -20,7 +32,19 @@ export async function collectDashboardData(db: Database.Database): Promise<ClawD
   const totalArtifacts = (db.prepare('SELECT COUNT(*) as c FROM artifacts').get() as { c: number }).c;
 
   const breakdowns = collectBreakdowns(db, totalTasks, buildGatewayNameMap());
-  const last30d = await collectLast30d();
+
+  // 账号级的真实消耗。拿不到就是 null（未登录 / 无商业配置 / 请求失败），
+  // 界面降级成「暂无数据」—— 注意 null 与「空数组」含义不同，别合并。
+  const server = await readServerUsage();
+
+  const last30d: DashboardLast30d | null = server
+    ? {
+        input: server.totals.input,
+        output: server.totals.output,
+        costMicros: server.totals.costMicros,
+        daily: server.daily,
+      }
+    : null;
 
   return {
     totalTasks,
@@ -29,6 +53,7 @@ export async function collectDashboardData(db: Database.Database): Promise<ClawD
     totalArtifacts,
     breakdowns,
     last30d,
+    modelUsage: server ? server.models : null,
   };
 }
 
@@ -62,14 +87,17 @@ function collectBreakdowns(
   totalTasks: number,
   gatewayNames: Map<string, string>,
 ): DashboardBreakdowns {
-  const modelRows = db
-    .prepare(
-      `SELECT model as name, COUNT(*) as count
-       FROM tasks
-       WHERE model IS NOT NULL AND model != ''
-       GROUP BY model`,
-    )
-    .all() as Array<{ name: string; count: number }>;
+  // ⚠️ 这里原来有一条 `SELECT model, COUNT(*) FROM tasks GROUP BY model`，2026-09-12 删掉了。
+  //
+  // 它数的是**任务行**，而 `tasks.model` 是**会话选中的模型**（一个会话一行）——
+  // 既看不出用户中途切模型，也看不出网关的自动回退（fallback 事件只弹一条
+  // persist:false 的提示，从不落库）。用户拿它跟账单对，永远对不上。
+  //
+  // 模型维度改由 `modelUsage` 承担：数据来自服务端**计费表**，
+  // 每次调用一行、记的是实际发到上游的模型名。见 usage-from-server.ts。
+  //
+  // 保留这个空数组而不是删字段：`DashboardBreakdowns` 的形状被 IPC 契约与
+  // preload 类型引用，删字段会波及一串无关文件；空数组在界面上就是不展示。
 
   const gatewayRawRows = db
     .prepare(
@@ -96,66 +124,8 @@ function collectBreakdowns(
   const agentRows = Array.from(agentCounts.entries()).map(([name, count]) => ({ name, count }));
 
   return {
-    models: toEntries(modelRows, totalTasks, 5),
+    models: [],
     gateways: toEntries(gatewayRows, totalTasks, 5),
     agents: toEntries(agentRows, totalTasks, 5),
   };
-}
-
-const GATEWAY_COST_TIMEOUT_MS = 5_000;
-
-async function collectLast30d(): Promise<DashboardLast30d | null> {
-  const clients = getAllGatewayClients();
-  const connected = Array.from(clients.values()).filter((gw) => gw.isConnected);
-  if (connected.length === 0) return null;
-
-  const summaries = await Promise.all(
-    connected.map(async (gw) => {
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      try {
-        const timeoutPromise = new Promise<null>((resolve) => {
-          timer = setTimeout(() => resolve(null), GATEWAY_COST_TIMEOUT_MS);
-        });
-        const costPromise = gw.getUsageCost({ days: 30 }).catch((err) => {
-          console.error('[stats:dashboard] getUsageCost failed:', err);
-          return null;
-        });
-        const result = await Promise.race([costPromise, timeoutPromise]);
-        return result as unknown as CostUsageSummary | null;
-      } finally {
-        if (timer !== undefined) clearTimeout(timer);
-      }
-    }),
-  );
-
-  const valid = summaries.filter(
-    (s): s is CostUsageSummary => s !== null && Array.isArray(s.daily) && s.totals !== undefined,
-  );
-  if (valid.length === 0) return null;
-
-  let input = 0;
-  let output = 0;
-  let cost = 0;
-  for (const s of valid) {
-    input += s.totals.input ?? 0;
-    output += s.totals.output ?? 0;
-    cost += s.totals.totalCost ?? 0;
-  }
-
-  const dailyMap = new Map<string, { input: number; output: number; cost: number }>();
-  for (const s of valid) {
-    for (const entry of s.daily) {
-      const existing = dailyMap.get(entry.date) ?? { input: 0, output: 0, cost: 0 };
-      existing.input += entry.input ?? 0;
-      existing.output += entry.output ?? 0;
-      existing.cost += entry.totalCost ?? 0;
-      dailyMap.set(entry.date, existing);
-    }
-  }
-
-  const daily = Array.from(dailyMap.entries())
-    .map(([date, values]) => ({ date, ...values }))
-    .sort((a, b) => a.date.localeCompare(b.date));
-
-  return { input, output, cost, daily };
 }

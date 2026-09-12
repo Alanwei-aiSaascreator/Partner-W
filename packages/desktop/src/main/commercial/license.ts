@@ -14,8 +14,8 @@ export interface LicenseStatus {
   status: string | null;
   expiresAt: string | null;
   maxActivations: number;
-  tokenQuotaCents: number;
-  tokenUsedCents: number;
+  tokenQuotaMicros: number;
+  tokenUsedMicros: number;
   activated: boolean;
   deviceFingerprint: string;
   /**
@@ -48,7 +48,7 @@ function readStoredLicenseKey(): string | null {
 
 // Both sources expose exactly these: the `licenses` table directly, and the
 // `org_active_license` view (migration 20260911000008 added max_activations to it).
-const LICENSE_FIELDS = 'license_key, sku, status, expires_at, max_activations, token_quota_cents, token_used_cents';
+const LICENSE_FIELDS = 'license_key, sku, status, expires_at, max_activations, token_quota_micros, token_used_micros';
 
 /**
  * The caller's owner org, chosen the same way the server chooses it
@@ -76,8 +76,8 @@ export async function readLicenseStatus(): Promise<IpcResult<LicenseStatus>> {
     status: null,
     expiresAt: null,
     maxActivations: 0,
-    tokenQuotaCents: 0,
-    tokenUsedCents: 0,
+    tokenQuotaMicros: 0,
+    tokenUsedMicros: 0,
     activated: false,
     deviceFingerprint: fingerprint,
   };
@@ -94,26 +94,14 @@ export async function readLicenseStatus(): Promise<IpcResult<LicenseStatus>> {
     // device row is what used to lock people out after a reinstall while
     // protecting nothing (see migration 20260911000008).
     let license = storedKey
-      ? (
-          await supabase
-            .from('licenses')
-            .select(LICENSE_FIELDS)
-            .eq('license_key', storedKey)
-            .maybeSingle()
-        ).data
+      ? (await supabase.from('licenses').select(LICENSE_FIELDS).eq('license_key', storedKey).maybeSingle()).data
       : null;
 
     if (!license) {
       const org = await firstOwnerOrg(supabase);
       if (!org) return { ok: true, result: base };
 
-      license = (
-        await supabase
-          .from('org_active_license')
-          .select(LICENSE_FIELDS)
-          .eq('org_id', org)
-          .maybeSingle()
-      ).data;
+      license = (await supabase.from('org_active_license').select(LICENSE_FIELDS).eq('org_id', org).maybeSingle()).data;
 
       // Remember it locally so the next launch takes the direct path.
       if (license?.license_key) {
@@ -133,8 +121,8 @@ export async function readLicenseStatus(): Promise<IpcResult<LicenseStatus>> {
         status: (license.status as string) ?? null,
         expiresAt: (license.expires_at as string) ?? null,
         maxActivations: Number(license.max_activations ?? 0),
-        tokenQuotaCents: Number(license.token_quota_cents ?? 0),
-        tokenUsedCents: Number(license.token_used_cents ?? 0),
+        tokenQuotaMicros: Number(license.token_quota_micros ?? 0),
+        tokenUsedMicros: Number(license.token_used_micros ?? 0),
         // Ownership, not device registration. See the comment above.
         activated: true,
         deviceFingerprint: fingerprint,
@@ -205,9 +193,7 @@ export async function activateLicense(licenseKey: string): Promise<IpcResult<Lic
 
     // 把中转配置写进网关。**写失败不让激活整体失败** —— 授权已经绑定成功了，
     // 重试配置写入比让用户重新激活代价小。失败只在状态里带一个 relayConfigured: false。
-    const relayConfigured = await configureRelay(
-      (data as { relayKey?: string | null } | null)?.relayKey ?? null,
-    );
+    const relayConfigured = await configureRelay((data as { relayKey?: string | null } | null)?.relayKey ?? null);
 
     const status = await readLicenseStatus();
     return status.ok && status.result ? { ...status, result: { ...status.result, relayConfigured } } : status;

@@ -24,7 +24,7 @@ import { useMessageStore, EMPTY_MESSAGES, activeTurnToMessage } from '@/stores/m
 import { useUiStore } from '@/stores/uiStore';
 import { useRoomStore } from '@/stores/roomStore';
 import { useCommercialStore } from '@/stores/commercialStore';
-import { cn, formatRelativeTime, formatTokenCount, formatCost } from '@/lib/utils';
+import { cn, formatRelativeTime, formatTokenCount, formatCost, formatCredits } from '@/lib/utils';
 import WindowTitlebar from '@/components/semantic/WindowTitlebar';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -42,6 +42,7 @@ import CronPanel from '@/layouts/CronPanel';
 import TeamsPanel from '@/layouts/TeamsPanel';
 import Dashboard from '@/layouts/Dashboard';
 import { useUsageStore } from '@/stores/usageStore';
+import { useQuotaRefreshOnTurnEnd } from '@/hooks/useQuotaRefreshOnTurnEnd';
 import DataTable, { type DataTableColumn } from '@/components/data-display/DataTable';
 import EmptyState from '@/components/semantic/EmptyState';
 import StatusTag from '@/components/semantic/StatusTag';
@@ -146,9 +147,10 @@ function ChatHeader({
     void loadCommercial();
   }, [loadCommercial]);
 
-  const quotaCents = commercialOverview?.license?.tokenQuotaCents ?? 0;
-  const usedCents = commercialOverview?.license?.tokenUsedCents ?? 0;
-  const remainingYuan = ((quotaCents - usedCents) / 100).toFixed(2);
+  const quotaMicros = commercialOverview?.license?.tokenQuotaMicros ?? 0;
+  const usedMicros = commercialOverview?.license?.tokenUsedMicros ?? 0;
+  // 剩余额度，单位微积分 → 显示成积分。
+  const remainingCredits = formatCredits(quotaMicros - usedMicros);
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState('');
   const titleInputRef = useRef<HTMLInputElement>(null);
@@ -250,7 +252,7 @@ function ChatHeader({
         )}
       </div>
       <div className="titlebar-no-drag flex items-center gap-1">
-        {quotaCents > 0 && (
+        {quotaMicros > 0 && (
           <Popover>
             <PopoverTrigger asChild>
               <button
@@ -258,7 +260,9 @@ function ChatHeader({
                 aria-label={t('usage.balance')}
               >
                 <Wallet size={14} />
-                <span className={usedCents >= quotaCents ? 'text-[var(--danger)]' : undefined}>¥{remainingYuan}</span>
+                <span className={usedMicros >= quotaMicros ? 'text-[var(--danger)]' : undefined}>
+                  {remainingCredits} {t('usage.creditsUnit')}
+                </span>
               </button>
             </PopoverTrigger>
             <PopoverContent align="end" className="w-72">
@@ -266,16 +270,20 @@ function ChatHeader({
                 <p className="type-label text-[var(--text-primary)]">{t('usage.balance')}</p>
                 <div className="flex items-center justify-between type-support text-[var(--text-secondary)]">
                   <span>{t('usage.quotaTotal')}</span>
-                  <span>¥{(quotaCents / 100).toFixed(2)}</span>
+                  <span>
+                    {formatCredits(quotaMicros)} {t('usage.creditsUnit')}
+                  </span>
                 </div>
                 <div className="flex items-center justify-between type-support text-[var(--text-secondary)]">
                   <span>{t('usage.quotaUsed')}</span>
-                  <span>¥{(usedCents / 100).toFixed(2)}</span>
+                  <span>
+                    {formatCredits(usedMicros)} {t('usage.creditsUnit')}
+                  </span>
                 </div>
                 <div className="h-1.5 w-full rounded-full bg-[var(--bg-tertiary)]">
                   <div
                     className="h-1.5 rounded-full bg-[var(--accent)] transition-all"
-                    style={{ width: `${quotaCents > 0 ? Math.min(100, (usedCents / quotaCents) * 100) : 0}%` }}
+                    style={{ width: `${quotaMicros > 0 ? Math.min(100, (usedMicros / quotaMicros) * 100) : 0}%` }}
                   />
                 </div>
               </div>
@@ -860,6 +868,10 @@ export default function MainArea({ onTogglePanel }: MainAreaProps) {
   const messageLayout = useUiStore((s) => s.messageLayout);
   const toggleMessageLayout = useUiStore((s) => s.toggleMessageLayout);
   const activeTaskId = useTaskStore((s) => s.activeTaskId);
+
+  // 一轮对话结束后把额度拉新（否则发完消息顶栏数字不动，看着像没扣费）。
+  // 挂在 MainArea 而不是 ChatHeader：后者带 key、切任务会重挂，会多触发。
+  useQuotaRefreshOnTurnEnd();
 
   return (
     <div className="flex flex-col h-full">

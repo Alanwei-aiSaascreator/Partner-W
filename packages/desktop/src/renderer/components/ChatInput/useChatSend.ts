@@ -189,7 +189,7 @@ export function useChatSend(opts: UseChatSendOpts) {
 
     const commercial = useCommercialStore.getState().overview;
     const licence = commercial?.license ?? null;
-    const verdict = evaluateQuota(licence?.tokenQuotaCents ?? 0, licence?.tokenUsedCents ?? null);
+    const verdict = evaluateQuota(licence?.tokenQuotaMicros ?? 0, licence?.tokenUsedMicros ?? null);
 
     if (verdict.level === 'exhausted' || verdict.level === 'unknown-exhausted') {
       setQuotaBlocked(true);

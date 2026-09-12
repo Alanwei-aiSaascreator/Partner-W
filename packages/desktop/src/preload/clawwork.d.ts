@@ -131,8 +131,8 @@ interface CommercialLicenseStatus {
   status: string | null;
   expiresAt: string | null;
   maxActivations: number;
-  tokenQuotaCents: number;
-  tokenUsedCents: number;
+  tokenQuotaMicros: number;
+  tokenUsedMicros: number;
   activated: boolean;
   deviceFingerprint: string;
 }
@@ -588,19 +588,11 @@ export interface ClawWorkAPI {
     slug: string,
   ) => Promise<IpcResult<{ parsed: ParsedTeam; agentFiles: Record<string, AgentFileSet> }>>;
 
-  commercialGetConfig: () => Promise<
-    IpcResult<{ supabaseUrl: string; hasAnonKey: boolean; licenseKey: string }>
-  >;
-  commercialSetConfig: (payload: {
-    supabaseUrl?: string;
-    supabaseAnonKey?: string;
-  }) => Promise<IpcResult>;
+  commercialGetConfig: () => Promise<IpcResult<{ supabaseUrl: string; hasAnonKey: boolean; licenseKey: string }>>;
+  commercialSetConfig: (payload: { supabaseUrl?: string; supabaseAnonKey?: string }) => Promise<IpcResult>;
   commercialSendOtp: (target: string) => Promise<IpcResult<{ target: string; channel: string }>>;
   commercialVerifyOtp: (target: string, token: string) => Promise<IpcResult<{ userId: string | null }>>;
-  commercialSignInPassword: (
-    email: string,
-    password: string,
-  ) => Promise<IpcResult<{ userId: string | null }>>;
+  commercialSignInPassword: (email: string, password: string) => Promise<IpcResult<{ userId: string | null }>>;
   commercialSignOut: () => Promise<IpcResult>;
   commercialSession: () => Promise<IpcResult<CommercialSessionState>>;
   commercialAccountOverview: () => Promise<IpcResult<CommercialAccountOverview>>;

@@ -9,6 +9,7 @@ import {
 } from '@clawwork/shared';
 import type { RechargeOrderHandle, RechargeSku } from '../../../../preload/clawwork';
 import { toast } from '@/lib/toast';
+import { formatCredits } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -62,12 +63,18 @@ function maskPhone(phone: string | null): string {
   return `${local.slice(0, 3)}****${local.slice(-4)}`;
 }
 
+/**
+ * ⚠️ 这个是**真实货币**（充值赠送金额，单位分），不是额度。
+ *    额度用 `formatCredits`（微积分 → 积分）。两者差 1e6 倍，
+ *    混用不会报错、只会静默错账 —— 所以刻意保留两个不同的函数名。
+ */
 function formatCents(cents: number): string {
   return `¥${(cents / 100).toFixed(2)}`;
 }
 
 /** Presents a "used / total" bar; callers must ensure total > 0. */
 function QuotaBar({ used, total }: { used: number; total: number }) {
+  const { t } = useTranslation();
   const percent = Math.min(100, Math.max(0, (used / total) * 100));
   return (
     <div className="space-y-2">
@@ -79,7 +86,7 @@ function QuotaBar({ used, total }: { used: number; total: number }) {
       </div>
       <div className="flex items-center justify-between type-support text-[var(--text-muted)]">
         <span className="type-mono-data text-[var(--text-secondary)]">
-          {formatCents(used)} / {formatCents(total)}
+          {formatCredits(used)} / {formatCredits(total)} {t('usage.creditsUnit')}
         </span>
         <span>{percent.toFixed(1)}%</span>
       </div>
@@ -314,8 +321,8 @@ export default function AccountSection() {
 
   const { account, org, license, device } = overview;
   const displayName = account.nickname || maskPhone(account.phone) || t('settings.account');
-  const quotaTotal = license?.tokenQuotaCents ?? 0;
-  const quotaUsed = license?.tokenUsedCents ?? 0;
+  const quotaTotal = license?.tokenQuotaMicros ?? 0;
+  const quotaUsed = license?.tokenUsedMicros ?? 0;
   const hasQuota = quotaTotal > 0;
 
   return (
@@ -472,9 +479,7 @@ export default function AccountSection() {
                   : 'border-[var(--border)] hover:border-[var(--border-accent)]')
               }
             >
-              <span className="type-label block text-[var(--text-primary)]">
-                {t('account.rechargeCustom')}
-              </span>
+              <span className="type-label block text-[var(--text-primary)]">{t('account.rechargeCustom')}</span>
             </button>
 
             {useCustomAmount && (
