@@ -344,6 +344,65 @@ describe('run_status —— 网关的准备进度要显示出来，不能静默�
   });
 });
 
+describe('thinking —— 模型的推理输出要显示，不能当未知丢掉', () => {
+  // 背景（09-11 遥测阈值抓到、09-12 取证）：网关在 **agent 通道** 发
+  // `{stream:"thinking", data:{text, delta}}`，而 switch 没有这个分支 → 整段推理被丢。
+  //
+  // ⚠️ 而且 chat 通道**补不回来**：网关只在 `evt.stream === "assistant"` 时才 emitChatDelta，
+  // final 的 `message.content` 只可能是 `[{type:"text"}]`，从不含 thinking 块。
+  // 于是客户端那套 `extractThinking` → `appendThinkingDelta` → `ThinkingSection`
+  // 在这条链路上一次都不会触发（死代码），必须由 agent 通道喂。
+  //
+  // 生产实测过最坏情形：`content` 为空、整条回复都在 `reasoning_content` 里，
+  // 已被正常计费，而界面上一个字都看不到。
+  //
+  // 形状证据：客户端日志 91 条 `unknown_stream {stream:"thinking", topLevelKeys:["text","delta"]}`；
+  // 产出方 openclaw `builtin-openclaw-FlPOnMHc.mjs:11863`（text=累计快照、delta=本次增量）。
+  function emitThinking(h: ReturnType<typeof createHarness>, data: unknown) {
+    h.emit('agent', { sessionKey: TASK.sessionKey, stream: 'thinking', data });
+  }
+
+  it('{text,delta} 喂给 appendThinkingDelta', () => {
+    const h = createHarness();
+    emitThinking(h, { text: '先看 A', delta: '先看 A' });
+    expect(h.messageStore.appendThinkingDelta).toHaveBeenCalledWith(TASK.sessionKey, '先看 A');
+  });
+
+  it('喂的是累计的 text 而不是 delta —— 快照对 store 的 merge 是幂等的，重复投递不会把推理拼接两遍', () => {
+    const h = createHarness();
+    emitThinking(h, { text: '先看 A', delta: '先看 A' });
+    emitThinking(h, { text: '先看 A，再看 B', delta: '，再看 B' });
+    expect(h.messageStore.appendThinkingDelta).toHaveBeenLastCalledWith(TASK.sessionKey, '先看 A，再看 B');
+  });
+
+  it('text 缺失时退回 delta（不能整条丢）', () => {
+    const h = createHarness();
+    emitThinking(h, { delta: '只有增量' });
+    expect(h.messageStore.appendThinkingDelta).toHaveBeenCalledWith(TASK.sessionKey, '只有增量');
+  });
+
+  it('只有 progressTokens 的心跳不产出文本（那是进度计数，不是内容）', () => {
+    const h = createHarness();
+    emitThinking(h, { progressTokens: 120 });
+    expect(h.messageStore.appendThinkingDelta).not.toHaveBeenCalled();
+  });
+
+  it('空事件不写 store（免得堆噪音状态）', () => {
+    const h = createHarness();
+    emitThinking(h, { text: '', delta: '' });
+    emitThinking(h, {});
+    expect(h.messageStore.appendThinkingDelta).not.toHaveBeenCalled();
+  });
+
+  it('修好之后不再上报为未知事件', () => {
+    const h = createHarness();
+    for (let i = 0; i < 12; i++) emitThinking(h, { text: `推理片段 ${i}`, delta: '' });
+    expect(h.deps.reportDebugEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'renderer.agent.unknown_stream.threshold' }),
+    );
+  });
+});
+
 describe('未知事件种类的告警阈值', () => {
   // 这类问题会反复出现：run_status（9 秒空白）、cron 的 heartbeat（整页白屏）都是这么漏的。
   it('一分钟内超过阈值就额外上报一条，好让它在遥测里被发现', () => {

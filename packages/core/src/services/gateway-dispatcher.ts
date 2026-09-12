@@ -17,7 +17,7 @@ import { autoTitleIfNeeded } from './auto-title.js';
 import type { MessageState } from '../stores/message-store.js';
 import type { GatewayTransportPort, GatewayStatusEvent } from '../ports/gateway-transport.js';
 
-type AgentEventStream = 'lifecycle' | 'tool' | 'assistant' | 'error' | 'compaction';
+type AgentEventStream = 'lifecycle' | 'tool' | 'assistant' | 'thinking' | 'error' | 'compaction';
 
 interface AgentToolData {
   phase?: string;
@@ -49,6 +49,15 @@ interface AgentCompactionData {
   phase?: 'start' | 'end';
   willRetry?: boolean;
   completed?: boolean;
+}
+
+interface AgentThinkingData {
+  /** **累计快照**（不是本次增量）—— 各产出方都这么发，见下面 `case 'thinking'` 的说明。 */
+  text?: string;
+  /** 本次增量。 */
+  delta?: string;
+  /** 只有进度计数的心跳事件，没有文本。 */
+  progressTokens?: number;
 }
 
 interface AgentEvent {
@@ -484,6 +493,24 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
       case 'assistant':
         debugEvent('renderer.agent.assistant_stream', { taskId, sessionKey });
         break;
+      case 'thinking': {
+        // 模型的推理输出走的是 **agent 通道**，此前被 default 当未知整段丢掉。
+        // ⚠️ chat 通道**补不回来**：网关只在 `evt.stream === "assistant"` 时才 emitChatDelta
+        //（openclaw `server-chat-*.mjs`），final 的 `message.content` 也从不含 thinking 块 ——
+        // 所以 `extractThinking` 那条路在这条链路上一次都不会触发，必须在这里接。
+        // 最坏情形实测过：`content` 为空、整条回复都在 `reasoning_content` 里，
+        // 界面上一个字都看不到，而账照扣。
+        //
+        // 喂 `text`（累计快照）而不是 `delta`：store 的 `mergeGatewayStreamText` 对快照幂等，
+        // 重复投递（重连 / 重订阅）不会把推理拼成两遍，而纯增量会。
+        const reasoning = data as AgentThinkingData;
+        const chunk = reasoning.text || reasoning.delta || '';
+        // `{progressTokens}` 的进度心跳和空事件都不产出文本。
+        if (!chunk) break;
+        deps.getMessageStore().appendThinkingDelta(sessionKey, chunk);
+        debugEvent('renderer.agent.thinking', { taskId, sessionKey, chars: chunk.length });
+        break;
+      }
       case 'compaction':
         debugEvent('renderer.agent.compaction', {
           taskId,
