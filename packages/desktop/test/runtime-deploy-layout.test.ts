@@ -9,7 +9,16 @@ import {
   readCurrentDeployment,
   writeCurrentPointer,
 } from '../src/main/runtime/deploy.js';
-import { buildSource, deployOpts, FIXTURE_NOW, newUserData, sha256File } from './helpers/runtime-fixture.js';
+import { nodeCandidates, pickNode, probeNodeVersion } from '../src/main/runtime/node-runtime.js';
+import {
+  SUPPORTED_NODE_RANGE,
+  buildSource,
+  deployOpts,
+  FIXTURE_NOW,
+  isSupportedNode,
+  newUserData,
+  sha256File,
+} from './helpers/runtime-fixture.js';
 
 /**
  * 部署**布局**的验收 —— 硬缺口 ①（Node 一起进本机缓存）与 ④（确定的指针）。
@@ -141,6 +150,37 @@ describe('部署布局：本机缓存自包含', () => {
     expect(cur.status).toBe('ok');
     expect(cur.deploymentKey).toBe(first.deploymentKey);
     expect(sha256File(cur.nodePath!)).toBe(fx.node.sha256);
+  });
+
+  it('⭐ 拔盘后 pickNode 仍能选到**本机**那份 node（方案 #4 的字面验收）', async () => {
+    const fx = buildSource(tmpRoot);
+    const userDataDir = newUserData(tmpRoot, 'u8');
+    await ensureRuntimeDeployed(deployOpts(fx, userDataDir));
+    const unpluggedRoot = unplugUsb(fx);
+
+    const cur = readCurrentDeployment(userDataDir);
+    expect(cur.status).toBe('ok');
+
+    const res = pickNode({
+      candidates: nodeCandidates({
+        deployedNodePath: cur.nodePath,
+        sourceNodePath: path.join(unpluggedRoot, 'node', 'node.exe'),
+      }),
+      // 本机那份 node.exe 是 fixture 造的假文件（真 100MB 二进制不该进单测），
+      // 所以只对它注入版本号；对"盘上那份"用**真探针** —— 它确实不存在，真返回 null。
+      probe: (exe) => (exe === cur.nodePath ? '26.3.1' : probeNodeVersion(exe)),
+      isSupported: isSupportedNode,
+      supportedRange: SUPPORTED_NODE_RANGE,
+    });
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.node.origin).toBe('deployed');
+    expect(res.node.exe).toBe(cur.nodePath);
+    // 本机那份合格 ⇒ **根本没去探盘上那个**（短路，盘拔了也不影响）
+    expect(res.attempts.some((a) => a.origin === 'source')).toBe(false);
+    // 独立确认"盘上那份确实探不到"：走真 execFileSync，不是模拟
+    expect(probeNodeVersion(path.join(unpluggedRoot, 'node', 'node.exe'))).toBeNull();
   });
 
   it('部署失败不会留下一个"看着像部署好了"的目录', async () => {

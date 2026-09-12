@@ -18,6 +18,27 @@ import { makeZip } from './make-zip.js';
 /** 固定时钟，让 `deployedAt` / `updatedAt` 的断言可精确比对。 */
 export const FIXTURE_NOW = new Date('2026-09-13T10:00:00.000Z');
 
+/**
+ * 真实 openclaw 的 Node 区间串 —— 2026-09-13 从真包里的 `node-version.mjs`
+ * 读出、**逐字**相同（`7z e .../openclaw-runtime-2026.9.3.7z node_modules/openclaw/node-version.mjs`）。
+ *
+ * ⚠️ 生产代码**不硬编码**这个串（它从部署后的包里动态读，见 `node-runtime.ts`）；
+ * 这里写死只为断言错误信息长什么样。
+ */
+export const SUPPORTED_NODE_RANGE = '>=24.16.0 <25, or >=26.1.0 (Node 26 recommended)';
+
+/**
+ * 与真包 `isSupportedOpenClawNodeVersion` **行为一致**的判定，实测对拍过：
+ * `20.19.1→false`、`24.15.9→false`、`24.16.0→true`、`25.0.0→false`、
+ * `26.1.0→true`、`26.3.1→true`、`27.0.0→true`。
+ */
+export function isSupportedNode(version: string): boolean {
+  const [major, minor, patch] = version.split('.').map(Number);
+  if (major === 24) return minor > 16 || (minor === 16 && patch >= 0);
+  if (major === 25) return false;
+  return major >= 26;
+}
+
 export const DEFAULT_ENTRIES: SeedEntry[] = [
   { name: 'node_modules/' },
   { name: 'node_modules/openclaw/' },
