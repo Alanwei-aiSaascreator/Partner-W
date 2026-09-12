@@ -165,14 +165,16 @@ describe('ensureClientGatewayEntry', () => {
     expect(res.changed).toBe(true);
   });
 
-  it('⭐ 落盘的 token 是 `enc:` 密文（走 writeConfig 就自动加密，别绕过它）', () => {
-    const res = ensureClientGatewayEntry({ userDataDir });
-    return res.then(() => {
-      const raw = fs.readFileSync(configPath(), 'utf-8');
-      expect(raw).toContain('enc:');
-      // 明文绝不能落盘
-      expect(raw).not.toContain(res.token);
-    });
+  it('⭐ 落盘的 token 是 `enc:` 密文（走 writeConfig 就自动加密，别绕过它）', async () => {
+    const res = await ensureClientGatewayEntry({ userDataDir });
+    const raw = fs.readFileSync(configPath(), 'utf-8');
+
+    expect(raw).toContain('enc:');
+    // ⚠️ 明文绝不能落盘 —— 这里比的必须是**解析出来的** token。
+    //    （早先写成 `res.token` 而 res 是 Promise ⇒ 实际在断言 `not.toContain(undefined)`，
+    //     永远通过、什么也没验到。tsc 把它抓出来了。）
+    expect(res.token.length).toBeGreaterThan(20);
+    expect(raw).not.toContain(res.token);
   });
 
   it('⭐ 二跑幂等：**不新增第二条**网关，token 也不变', async () => {

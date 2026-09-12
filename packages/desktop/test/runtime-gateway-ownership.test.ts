@@ -38,7 +38,7 @@ const DOWN: StartupzProbe = { reachable: false };
 
 function baseOpts(over: Record<string, unknown> = {}) {
   const child = makeChild();
-  const spawn = vi.fn(() => child);
+  const spawn = vi.fn((_opts: { nodeExe: string; args: string[]; cwd: string; env: NodeJS.ProcessEnv }) => child);
   const opts = {
     nodeExe: 'C:\\cache\\deployed\\k1\\node\\node.exe',
     cliPath: 'C:\\cache\\deployed\\k1\\node_modules\\openclaw\\openclaw.mjs',
@@ -179,9 +179,41 @@ describe('ensureGatewayRunning', () => {
 
   it('spawn 之后要等就绪（waitReady 被调用，且拿到的是刚 spawn 的子进程）', async () => {
     const { opts, child } = baseOpts();
-    const waitReady = vi.fn(async () => {});
+    const waitReady = vi.fn(async (_c: GatewayChildProcess) => {});
     await ensureGatewayRunning({ ...opts, waitReady });
     expect(waitReady).toHaveBeenCalledTimes(1);
     expect(waitReady.mock.calls[0][0]).toBe(child);
+  });
+});
+
+/**
+ * ⭐ **preflight 与 readiness 必须严格分开**（用户复审特别点出的一条）。
+ *
+ * 两者看的是同一件事（`/startupz` 的 status），但**结论完全相反**：
+ *   - **preflight**（还没 spawn 之前）：端口活着但不是 `started + auth OK`
+ *     ⇒ foreign，一个动作都不做。
+ *   - **readiness**（我们**自己刚 spawn 的**）：`starting` = 正常，**继续等**。
+ *
+ * 混淆的后果很具体：把自己刚启动、正在 `starting` 的网关判成 foreign，
+ * 于是**永远起不来**（而且报的是"端口被占"，查错方向完全错）。
+ */
+describe('preflight vs readiness —— 同一件事，两个相反的结论', () => {
+  it('⭐ preflight：端口活着但不是 started ⇒ foreign（不 spawn）', async () => {
+    const { opts, spawn } = baseOpts({ probe: vi.fn(async () => ({ reachable: true, status: 'starting' })) });
+    await expect(ensureGatewayRunning(opts)).rejects.toMatchObject({ code: GATEWAY_PORT_OCCUPIED });
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it('⭐ readiness：我们**自己 spawn 的**报 starting ⇒ 继续等，绝不判 foreign', async () => {
+    // 先 DOWN（于是走 spawn），spawn 之后 /startupz 开始报 starting，
+    // 最后才 started —— 这正是真实网关的冷启动过程（实测 ~38s）
+    const probes = [DOWN, { reachable: true, status: 'starting' }, { reachable: true, status: 'starting' }, READY];
+    let i = 0;
+    const { opts, spawn } = baseOpts({ probe: vi.fn(async () => probes[Math.min(i++, probes.length - 1)]) });
+
+    const res = await ensureGatewayRunning({ ...opts, waitReady: undefined, authenticate: vi.fn(async () => true) });
+
+    expect(res.ownership).toBe('spawned');
+    expect(spawn).toHaveBeenCalledTimes(1);
   });
 });

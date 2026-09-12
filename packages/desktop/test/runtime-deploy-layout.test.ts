@@ -161,13 +161,11 @@ describe('部署布局：本机缓存自包含', () => {
     const cur = readCurrentDeployment(userDataDir);
     expect(cur.status).toBe('ok');
 
+    const candidates = nodeCandidates({ deployedNodePath: cur.nodePath });
     const res = pickNode({
-      candidates: nodeCandidates({
-        deployedNodePath: cur.nodePath,
-        sourceNodePath: path.join(unpluggedRoot, 'node', 'node.exe'),
-      }),
+      candidates,
       // 本机那份 node.exe 是 fixture 造的假文件（真 100MB 二进制不该进单测），
-      // 所以只对它注入版本号；对"盘上那份"用**真探针** —— 它确实不存在，真返回 null。
+      // 所以只对它注入版本号。
       probe: (exe) => (exe === cur.nodePath ? '26.3.1' : probeNodeVersion(exe)),
       isSupported: isSupportedNode,
       supportedRange: SUPPORTED_NODE_RANGE,
@@ -177,8 +175,11 @@ describe('部署布局：本机缓存自包含', () => {
     if (!res.ok) return;
     expect(res.node.origin).toBe('deployed');
     expect(res.node.exe).toBe(cur.nodePath);
-    // 本机那份合格 ⇒ **根本没去探盘上那个**（短路，盘拔了也不影响）
-    expect(res.attempts.some((a) => a.origin === 'source')).toBe(false);
+
+    // ⭐ 盘上那份**根本不是候选**（U 盘只是部署源，不是运行候选）——
+    //    这正是"拔盘不影响启动"的结构性保证：不是"碰巧没探到"，而是压根没这条路。
+    expect(candidates).toHaveLength(1);
+    expect(candidates.some((c) => c.exe.includes(unpluggedRoot))).toBe(false);
     // 独立确认"盘上那份确实探不到"：走真 execFileSync，不是模拟
     expect(probeNodeVersion(path.join(unpluggedRoot, 'node', 'node.exe'))).toBeNull();
   });

@@ -416,20 +416,28 @@ export async function ensureGatewayRunning(opts: EnsureGatewayRunningOptions): P
   };
 
   const child = spawn({ nodeExe: opts.nodeExe, args, cwd: opts.deployedRoot, env });
-  await (opts.waitReady ?? defaultWaitReady(child, port))(child);
+  await (opts.waitReady ?? defaultWaitReady(child, () => probe(port)))(child);
 
   return { ownership: 'spawned', pid: child.pid, child, decision };
 }
 
-/** 真等就绪：500ms 一探、总超时 180s、子进程一退立刻中止。 */
-function defaultWaitReady(child: GatewayChildProcess, port: number): (c: GatewayChildProcess) => Promise<void> {
+/**
+ * 真等就绪：500ms 一探、总超时 180s、子进程一退立刻中止。
+ *
+ * ⚠️ 这里**复用外面那个 `probe`**（而不是另起一个真 fetch）：同一件事用两个
+ * 探测函数会出现"preflight 说 DOWN、readiness 说 started"这种自相矛盾的状态。
+ */
+function defaultWaitReady(
+  child: GatewayChildProcess,
+  probeOnce: () => Promise<StartupzProbe>,
+): (c: GatewayChildProcess) => Promise<void> {
   let exited = false;
   child.onExit(() => {
     exited = true;
   });
   return () =>
     waitForGatewayReady({
-      probe: () => probeStartupz({ port }),
+      probe: probeOnce,
       sleep: (ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
       hasExited: () => exited,
     }).then(() => undefined);

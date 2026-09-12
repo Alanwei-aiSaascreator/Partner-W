@@ -20,8 +20,16 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-/** 候选来源，顺序即优先级。 */
-export type NodeCandidateOrigin = 'env' | 'deployed' | 'source' | 'path';
+/**
+ * 候选来源，顺序即优先级。
+ *
+ * ⚠️ **刻意没有 `source`（U 盘）与 `path`（环境 PATH）**：部署成功即代表
+ * `deployed/<key>/node/node.exe` 已验过 hash 且自包含，运行期就该**只**用它。
+ * 留一个 PATH 兜底会把"这台机器上恰好有个合格 Node"变成一个**静默**的替代品 ——
+ * 用户跑的是哪个 Node 就成了机器相关的，出问题无从解释。
+ * 要临时改用别的 Node，用 `CLAWWORK_NODE` **显式**指定（那不是偷偷的）。
+ */
+export type NodeCandidateOrigin = 'env' | 'deployed';
 
 export interface NodeCandidate {
   /** 可执行文件绝对路径；`path` 来源是命令名，交给 PATH 解析。 */
@@ -61,17 +69,10 @@ export interface NodeVersionContract {
  * 盘上的那份只在**部署时**当来源 —— 否则拔盘就崩（这正是「U 盘带 Node」
  * 必须"随部署一起进本机缓存"的原因）。
  */
-export function nodeCandidates(opts: {
-  envNode?: string;
-  deployedNodePath?: string;
-  sourceNodePath?: string;
-  pathCommand?: string;
-}): NodeCandidate[] {
+export function nodeCandidates(opts: { envNode?: string; deployedNodePath?: string }): NodeCandidate[] {
   const out: NodeCandidate[] = [];
   if (opts.envNode) out.push({ exe: opts.envNode, origin: 'env' });
   if (opts.deployedNodePath) out.push({ exe: opts.deployedNodePath, origin: 'deployed' });
-  if (opts.sourceNodePath) out.push({ exe: opts.sourceNodePath, origin: 'source' });
-  out.push({ exe: opts.pathCommand ?? 'node', origin: 'path' });
   return out;
 }
 

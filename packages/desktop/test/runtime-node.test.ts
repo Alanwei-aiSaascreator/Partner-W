@@ -40,46 +40,38 @@ const RANGE = SUPPORTED_NODE_RANGE;
 const realWorldSupport = isSupportedNode;
 
 describe('nodeCandidates', () => {
-  it('⭐ 顺序：CLAWWORK_NODE → 本机 deployed → 盘上的 → PATH', () => {
+  it('⭐ 顺序：CLAWWORK_NODE → 本机 deployed（**没有别的兜底**）', () => {
     const c = nodeCandidates({
       envNode: 'E:\\my-node\\node.exe',
       deployedNodePath: 'C:\\cache\\deployed\\k1\\node\\node.exe',
-      sourceNodePath: 'Z:\\node\\node.exe',
     });
-    expect(c.map((x) => x.origin)).toEqual(['env', 'deployed', 'source', 'path']);
+    expect(c.map((x) => x.origin)).toEqual(['env', 'deployed']);
   });
 
-  it('⭐ 本机 deployed **排在盘上的前面**（运行期只用本机那份）', () => {
-    const c = nodeCandidates({
-      deployedNodePath: 'C:\\cache\\deployed\\k1\\node\\node.exe',
-      sourceNodePath: 'Z:\\node\\node.exe',
-    });
-    expect(c[0].origin).toBe('deployed');
-    expect(c[1].origin).toBe('source');
-  });
-
-  it('没给的不产生候选；PATH 兜底始终在最后', () => {
-    const c = nodeCandidates({});
-    expect(c).toEqual([{ exe: 'node', origin: 'path' }]);
-  });
-
-  it('拔盘后（没有 source）仍然给出 deployed 候选', () => {
+  it('⭐ 没有 PATH 兜底 —— 部署自包含，不静默换用机器上的 Node', () => {
+    // 留一个 PATH 兜底会把"这台机器恰好有个合格 Node"变成**静默**替代品，
+    // 用户跑的到底是哪个 Node 就成了机器相关的，出问题无从解释。
+    // 要临时换 Node 就用 CLAWWORK_NODE 显式指定（那不是偷偷的）。
     const c = nodeCandidates({ deployedNodePath: 'C:\\cache\\deployed\\k1\\node\\node.exe' });
-    expect(c.map((x) => x.origin)).toEqual(['deployed', 'path']);
+    expect(c.map((x) => x.origin)).toEqual(['deployed']);
+    expect(c.some((x) => x.exe === 'node')).toBe(false);
+  });
+
+  it('⭐ 一个都不给 ⇒ 空列表（据此报错，而不是随便找一个顶替）', () => {
+    expect(nodeCandidates({})).toEqual([]);
   });
 });
 
 describe('pickNode', () => {
   const candidates = nodeCandidates({
+    envNode: 'E:\\my-node\\node.exe',
     deployedNodePath: 'C:\\cache\\deployed\\k1\\node\\node.exe',
-    sourceNodePath: 'Z:\\node\\node.exe',
   });
 
   it('⭐ 跳过不受支持的 20.19.1，选中 26.3.1', () => {
     const versions: Record<string, string | null> = {
-      'C:\\cache\\deployed\\k1\\node\\node.exe': '20.19.1',
-      'Z:\\node\\node.exe': '26.3.1',
-      node: null,
+      'E:\\my-node\\node.exe': '20.19.1',
+      'C:\\cache\\deployed\\k1\\node\\node.exe': '26.3.1',
     };
     const res = pickNode({
       candidates,
@@ -91,23 +83,23 @@ describe('pickNode', () => {
     expect(res.ok).toBe(true);
     if (!res.ok) return;
     expect(res.node.version).toBe('26.3.1');
-    expect(res.node.origin).toBe('source');
-    // 被跳过的那个要留下痕迹（排障时要看得出"为什么没用本机那个"）
+    expect(res.node.origin).toBe('deployed');
+    // 被跳过的那个要留下痕迹（排障时要看得出"为什么没用 env 那个"）
     expect(res.attempts[0]).toEqual({
-      origin: 'deployed',
-      exe: 'C:\\cache\\deployed\\k1\\node\\node.exe',
+      origin: 'env',
+      exe: 'E:\\my-node\\node.exe',
       version: '20.19.1',
       supported: false,
     });
   });
 
-  it('⭐ 本机 deployed 受支持时就用它，**不去碰盘上的**', () => {
+  it('⭐ env 显式指定的那个受支持就用它，短路不再探本机的', () => {
     const probed: string[] = [];
     const res = pickNode({
       candidates,
       probe: (exe) => {
         probed.push(exe);
-        return exe === 'Z:\\node\\node.exe' ? '26.3.1' : '26.3.1';
+        return '26.3.1';
       },
       isSupported: realWorldSupport,
       supportedRange: RANGE,
@@ -115,26 +107,26 @@ describe('pickNode', () => {
 
     expect(res.ok).toBe(true);
     if (!res.ok) return;
-    expect(res.node.origin).toBe('deployed');
-    expect(probed).toEqual(['C:\\cache\\deployed\\k1\\node\\node.exe']); // 短路，没探盘上那个
+    expect(res.node.origin).toBe('env');
+    expect(probed).toEqual(['E:\\my-node\\node.exe']);
   });
 
   it('探不到的候选直接跳过（文件不在 / 不是可执行 / 超时）', () => {
     const res = pickNode({
       candidates,
-      probe: (exe) => (exe.startsWith('C:') ? null : '26.3.1'),
+      probe: (exe) => (exe.startsWith('E:') ? null : '26.3.1'),
       isSupported: realWorldSupport,
       supportedRange: RANGE,
     });
     expect(res.ok).toBe(true);
     if (!res.ok) return;
-    expect(res.node.origin).toBe('source');
+    expect(res.node.origin).toBe('deployed');
   });
 
   it('⭐ 全不可用时：错误**同时**带实际版本与要求区间', () => {
     const res = pickNode({
       candidates,
-      probe: (exe) => (exe.startsWith('C:') ? '20.19.1' : exe === 'Z:\\node\\node.exe' ? '22.4.0' : null),
+      probe: (exe) => (exe.startsWith('E:') ? '20.19.1' : '22.4.0'),
       isSupported: realWorldSupport,
       supportedRange: RANGE,
     });
@@ -182,7 +174,9 @@ describe('pickNode', () => {
       isSupported: realWorldSupport,
       supportedRange: RANGE,
     });
-    expect(res.attempts).toEqual([{ origin: 'source', exe: 'Z:\\node\\node.exe', version: '26.3.1', supported: true }]);
+    expect(res.attempts).toEqual([
+      { origin: 'deployed', exe: 'C:\\cache\\deployed\\k1\\node\\node.exe', version: '26.3.1', supported: true },
+    ]);
   });
 });
 
