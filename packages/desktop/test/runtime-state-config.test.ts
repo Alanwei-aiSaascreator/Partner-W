@@ -1,0 +1,223 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { GATEWAY_WS_PORT } from '@clawwork/shared';
+
+/**
+ * 状态目录配置 + 客户端 gateway 条目。
+ *
+ * ⚠️ **令牌漂移是最隐蔽的故障**：state 文件被清掉而客户端 config 里还留着旧 token
+ * ⇒ WS 连上去 1008 ⇒ 界面上看着就是"网关没起来"，日志里只有一句 1008。
+ * 所以三处（state 文件 / config / 进程 env）以 **state 文件为唯一真相源**。
+ *
+ * ⚠️ 会话安全：只在 mkdtemp 里建删文件，绝不触碰真实 `%APPDATA%`。
+ */
+
+const electronMock = vi.hoisted(() => {
+  const state = { userData: '', encrypted: new Map<string, string>() };
+  return {
+    state,
+    getPath: vi.fn((name: string) => {
+      if (name === 'userData') return state.userData;
+      throw new Error(`unexpected app path: ${name}`);
+    }),
+    isEncryptionAvailable: vi.fn(() => true),
+    encryptString: vi.fn((value: string) => {
+      const enc = Buffer.from(`enc(${value})`);
+      state.encrypted.set(enc.toString('base64'), value);
+      return enc;
+    }),
+    decryptString: vi.fn((buf: Buffer) => {
+      const raw = buf.toString();
+      return raw.startsWith('enc(') ? raw.slice(4, -1) : raw;
+    }),
+  };
+});
+
+vi.mock('electron', () => ({
+  app: { getPath: electronMock.getPath },
+  safeStorage: {
+    isEncryptionAvailable: electronMock.isEncryptionAvailable,
+    encryptString: electronMock.encryptString,
+    decryptString: electronMock.decryptString,
+  },
+}));
+
+import { CONFIG_FILE_NAME } from '@clawwork/shared';
+import {
+  LOCAL_GATEWAY_ID,
+  STATE_CONFIG_FILE,
+  STATE_DIR_NAME,
+  ensureClientGatewayEntry,
+  ensureStateConfig,
+  minimalGatewayConfig,
+  stateConfigPath,
+  stateDirFor,
+} from '../src/main/runtime/state-config.js';
+
+let tmpRoot: string;
+let userDataDir: string;
+
+beforeEach(() => {
+  tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'clawwork-state-'));
+  userDataDir = path.join(tmpRoot, 'userdata');
+  fs.mkdirSync(userDataDir, { recursive: true });
+  electronMock.state.userData = userDataDir;
+  electronMock.state.encrypted.clear();
+});
+
+afterEach(() => {
+  if (tmpRoot && tmpRoot.includes(path.join(os.tmpdir(), 'clawwork-state-'))) {
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
+});
+
+const configPath = (): string => path.join(userDataDir, CONFIG_FILE_NAME);
+const readConfigRaw = (): Record<string, unknown> => JSON.parse(fs.readFileSync(configPath(), 'utf-8'));
+
+describe('minimalGatewayConfig', () => {
+  it('⭐ 只写 gateway.auth，**不写** gateway.mode / gateway.port', () => {
+    const cfg = minimalGatewayConfig('tok-123');
+    expect(cfg).toEqual({ gateway: { auth: { mode: 'token', token: 'tok-123' } } });
+
+    // 不写 mode 正是 `--allow-unconfigured` 必需的原因；port 归 `--port` 参数
+    expect(Object.keys(cfg.gateway)).toEqual(['auth']);
+  });
+});
+
+describe('ensureStateConfig', () => {
+  it('首跑：建 openclaw.json，token 是 32 字节的 base64url', () => {
+    const res = ensureStateConfig(userDataDir);
+
+    expect(res.created).toBe(true);
+    expect(fs.existsSync(stateConfigPath(stateDirFor(userDataDir)))).toBe(true);
+
+    const raw = JSON.parse(fs.readFileSync(res.configPath, 'utf-8'));
+    expect(raw).toEqual({ gateway: { auth: { mode: 'token', token: res.token } } });
+    expect(res.token).toMatch(/^[A-Za-z0-9_-]{43}$/); // 32 字节 → 43 个 base64url 字符
+  });
+
+  it('⭐ 二跑：**沿用同一个 token**，不重新生成（否则线上所有客户端立刻掉线）', () => {
+    const first = ensureStateConfig(userDataDir);
+    const second = ensureStateConfig(userDataDir);
+
+    expect(second.created).toBe(false);
+    expect(second.token).toBe(first.token);
+  });
+
+  it('⭐ 已有配置里的其它字段被尊重（openclaw 自己也会往这个目录写东西）', () => {
+    const stateDir = stateDirFor(userDataDir);
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(
+      stateConfigPath(stateDir),
+      JSON.stringify({ gateway: { auth: { mode: 'token', token: 'existing-token' }, logLevel: 'debug' }, other: 1 }),
+    );
+
+    const res = ensureStateConfig(userDataDir);
+    expect(res.token).toBe('existing-token');
+
+    const raw = JSON.parse(fs.readFileSync(res.configPath, 'utf-8'));
+    expect(raw.other).toBe(1);
+    expect(raw.gateway.logLevel).toBe('debug');
+  });
+
+  it('已有配置但**没有** token ⇒ 补一个，但不覆盖别的字段', () => {
+    const stateDir = stateDirFor(userDataDir);
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(stateConfigPath(stateDir), JSON.stringify({ gateway: { logLevel: 'debug' } }));
+
+    const res = ensureStateConfig(userDataDir);
+    expect(res.token).toMatch(/^[A-Za-z0-9_-]{43}$/);
+
+    const raw = JSON.parse(fs.readFileSync(res.configPath, 'utf-8'));
+    expect(raw.gateway.auth).toEqual({ mode: 'token', token: res.token });
+    expect(raw.gateway.logLevel).toBe('debug');
+  });
+
+  it('配置文件是半截 JSON（掉电）⇒ 当成"没有"，重建而不是崩', () => {
+    const stateDir = stateDirFor(userDataDir);
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(stateConfigPath(stateDir), '{ "gateway": { "auth"');
+
+    const res = ensureStateConfig(userDataDir);
+    expect(res.token).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(() => JSON.parse(fs.readFileSync(res.configPath, 'utf-8'))).not.toThrow();
+  });
+
+  it('state 目录名固定在 <userData>/openclaw-state（不是随手一个临时目录）', () => {
+    expect(stateDirFor(userDataDir)).toBe(path.join(userDataDir, STATE_DIR_NAME));
+    expect(STATE_CONFIG_FILE).toBe('openclaw.json');
+  });
+});
+
+describe('ensureClientGatewayEntry', () => {
+  it('⭐ 首次：config 里恰好一条 gateway，id 稳定、url 指向本机端口', async () => {
+    const res = await ensureClientGatewayEntry({ userDataDir });
+
+    const cfg = readConfigRaw();
+    const gateways = cfg.gateways as Array<Record<string, unknown>>;
+    expect(gateways).toHaveLength(1);
+    expect(gateways[0].id).toBe(LOCAL_GATEWAY_ID);
+    expect(gateways[0].url).toBe(`ws://127.0.0.1:${GATEWAY_WS_PORT}`);
+    expect(gateways[0].authMode).toBe('token');
+    expect(cfg.defaultGatewayId).toBe(LOCAL_GATEWAY_ID);
+    expect(res.changed).toBe(true);
+  });
+
+  it('⭐ 落盘的 token 是 `enc:` 密文（走 writeConfig 就自动加密，别绕过它）', () => {
+    const res = ensureClientGatewayEntry({ userDataDir });
+    return res.then(() => {
+      const raw = fs.readFileSync(configPath(), 'utf-8');
+      expect(raw).toContain('enc:');
+      // 明文绝不能落盘
+      expect(raw).not.toContain(res.token);
+    });
+  });
+
+  it('⭐ 二跑幂等：**不新增第二条**网关，token 也不变', async () => {
+    const first = await ensureClientGatewayEntry({ userDataDir });
+    const second = await ensureClientGatewayEntry({ userDataDir });
+
+    expect(second.token).toBe(first.token);
+    expect(second.changed).toBe(false);
+    expect(readConfigRaw().gateways).toHaveLength(1);
+  });
+
+  it('⭐ 令牌漂移：config 里的 token 与 state 文件不一致 ⇒ 以 state 为准改写 + 报告漂移', async () => {
+    await ensureClientGatewayEntry({ userDataDir });
+
+    // 模拟"state 被清掉、重新生成" ⇒ config 里留着旧 token
+    const stateDir = stateDirFor(userDataDir);
+    const stateCfg = JSON.parse(fs.readFileSync(stateConfigPath(stateDir), 'utf-8'));
+    stateCfg.gateway.auth.token = 'brand-new-token';
+    fs.writeFileSync(stateConfigPath(stateDir), JSON.stringify(stateCfg));
+
+    const res = await ensureClientGatewayEntry({ userDataDir });
+
+    expect(res.drifted).toBe(true);
+    expect(res.changed).toBe(true);
+    expect(res.token).toBe('brand-new-token');
+    expect(readConfigRaw().gateways).toHaveLength(1);
+  });
+
+  it('用户自己配的其它网关**原封不动**（我们只 upsert 自己那一条）', async () => {
+    const { writeConfig } = await import('../src/main/workspace/config.js');
+    writeConfig({
+      workspacePath: '/w',
+      gateways: [{ id: 'user-gateway', name: 'Mine', url: 'ws://192.168.1.9:18789' }],
+    });
+
+    await ensureClientGatewayEntry({ userDataDir });
+
+    const gateways = readConfigRaw().gateways as Array<Record<string, unknown>>;
+    expect(gateways).toHaveLength(2);
+    expect(gateways.map((g) => g.id)).toContain('user-gateway');
+    expect(gateways.map((g) => g.id)).toContain(LOCAL_GATEWAY_ID);
+  });
+
+  it('状态目录写在 <userData>/openclaw-state（media/resolve 读的就是它）', async () => {
+    await ensureClientGatewayEntry({ userDataDir });
+    expect(fs.existsSync(path.join(userDataDir, STATE_DIR_NAME, STATE_CONFIG_FILE))).toBe(true);
+  });
+});
