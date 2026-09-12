@@ -48,6 +48,7 @@ export interface StoredMessage {
   runId?: string;
   attachments?: unknown[];
   toolCalls?: unknown[];
+  thinkingContent?: string;
 }
 
 interface ClawWorkDBSchema extends DBSchema {

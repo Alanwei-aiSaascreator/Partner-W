@@ -95,6 +95,9 @@ function openDatabaseAt(workspacePath: string): void {
 
   migrateAddColumn(sqlite, 'ALTER TABLE messages ADD COLUMN image_attachments TEXT');
   migrateAddColumn(sqlite, 'ALTER TABLE messages ADD COLUMN tool_calls TEXT');
+  // 模型的推理输出（`stream:"thinking"`）。落库是为了重载后还在 ——
+  // 否则它只活在内存的 activeTurn 里，刷新一次就没了。
+  migrateAddColumn(sqlite, 'ALTER TABLE messages ADD COLUMN thinking_content TEXT');
 
   for (const col of ['session_key TEXT', 'agent_id TEXT', 'run_id TEXT']) {
     migrateAddColumn(sqlite, `ALTER TABLE messages ADD COLUMN ${col}`);

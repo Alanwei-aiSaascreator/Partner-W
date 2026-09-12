@@ -34,6 +34,7 @@ export interface SessionSyncDeps {
         runId?: string;
         attachments?: unknown[];
         toolCalls?: unknown[];
+        thinkingContent?: string;
       }[];
     }>;
     persistMessage: (msg: {
@@ -47,6 +48,7 @@ export interface SessionSyncDeps {
       runId?: string;
       attachments?: unknown[];
       toolCalls?: unknown[];
+      thinkingContent?: string;
     }) => Promise<IpcResult>;
   };
   gateway: {
@@ -147,6 +149,7 @@ export function createSessionSync(deps: SessionSyncDeps) {
         runId: message.runId,
         attachments: message.attachments as unknown[] | undefined,
         toolCalls: message.toolCalls,
+        thinkingContent: message.thinkingContent,
       })
       .catch((err) => console.error('[session-sync] persistMessage failed:', err));
   }
@@ -216,6 +219,7 @@ export function createSessionSync(deps: SessionSyncDeps) {
                   agentId: r.agentId,
                   runId: r.runId,
                   attachments: normalized.attachments,
+                  thinkingContent: r.thinkingContent,
                 };
               });
               messageStore.bulkLoad(t.id, msgs);

@@ -6,7 +6,15 @@ function createHarness(params: {
   tasks: Array<{ id: string; gatewayId: string; sessionKey: string }>;
   loadMessagesRows: Record<
     string,
-    Array<{ id: string; taskId: string; role: string; content: string; timestamp: string; attachments?: unknown[] }>
+    Array<{
+      id: string;
+      taskId: string;
+      role: string;
+      content: string;
+      timestamp: string;
+      attachments?: unknown[];
+      thinkingContent?: string;
+    }>
   >;
   discovered: Array<{
     gatewayId: string;
@@ -41,6 +49,7 @@ function createHarness(params: {
     runId?: string;
     attachments?: unknown[];
     toolCalls?: unknown[];
+    thinkingContent?: string;
   }> = [];
 
   const taskStore = {
@@ -259,6 +268,38 @@ describe('core session sync startup flow', () => {
       }),
     ]);
     expect(harness.persisted).toEqual([]);
+  });
+
+  // 背景：推理输出（`stream:"thinking"`）原本只活在内存的 activeTurn 里，
+  // 刷新一次就没了 —— 网关 transcript 里其实存着，是客户端不落库 + 不解析丢的。
+  // 这两条盯住「落库往返」这一半：写进去、读回来。
+  it('重载时把落库的思考读回消息上（否则刷新一次推理就没了）', async () => {
+    const harness = createHarness({
+      tasks: [{ id: 'task-think', gatewayId: 'gw-1', sessionKey: 'agent:main:clawwork:task:task-think' }],
+      loadMessagesRows: {
+        'task-think': [
+          {
+            id: 'a1',
+            taskId: 'task-think',
+            role: 'assistant',
+            content: '鸡 23 只、兔 12 只。',
+            timestamp: '2026-03-16T10:00:01.000Z',
+            thinkingContent: '设鸡 x 只、兔 y 只，则 x+y=35、2x+4y=94……',
+          },
+        ],
+      },
+      discovered: [],
+    });
+
+    await harness.sessionSync.hydrateFromLocal();
+
+    expect(harness.messageStore.messagesByTask['task-think']).toEqual([
+      expect.objectContaining({
+        id: 'a1',
+        content: '鸡 23 只、兔 12 只。',
+        thinkingContent: '设鸡 x 只、兔 y 只，则 x+y=35、2x+4y=94……',
+      }),
+    ]);
   });
 
   it('backfills attachments for existing assistant messages with the same timestamp', async () => {

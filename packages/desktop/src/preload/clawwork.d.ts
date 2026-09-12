@@ -472,6 +472,7 @@ export interface ClawWorkAPI {
     runId?: string;
     attachments?: unknown[];
     toolCalls?: unknown[];
+    thinkingContent?: string;
   }) => Promise<IpcResult>;
 
   deleteTask: (taskId: string) => Promise<IpcResult>;

@@ -34,6 +34,7 @@ export const messages = sqliteTable('messages', {
   runId: text('run_id'),
   attachments: text('image_attachments'),
   toolCalls: text('tool_calls'),
+  thinkingContent: text('thinking_content'),
 });
 
 export const taskRooms = sqliteTable('task_rooms', {

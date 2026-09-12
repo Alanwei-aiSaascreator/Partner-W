@@ -30,6 +30,7 @@ export interface PersistedMessage {
   runId?: string;
   attachments?: unknown[];
   toolCalls?: unknown[];
+  thinkingContent?: string;
 }
 
 export interface ListResult<T> {

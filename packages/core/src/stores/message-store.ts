@@ -63,6 +63,7 @@ export interface MessageStoreDeps {
     runId?: string;
     attachments?: unknown[];
     toolCalls?: unknown[];
+    thinkingContent?: string;
   }) => Promise<IpcResult>;
 }
 
@@ -157,6 +158,7 @@ function persistMessageUpdate(deps: MessageStoreDeps, msg: Message): void {
       runId: msg.runId,
       attachments: msg.attachments as unknown[] | undefined,
       toolCalls: msg.toolCalls,
+      thinkingContent: msg.thinkingContent,
     })
     .catch((err) => {
       console.error('[persist:message]', err);

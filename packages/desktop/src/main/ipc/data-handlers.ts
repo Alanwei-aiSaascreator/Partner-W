@@ -139,6 +139,7 @@ export function registerDataHandlers(): void {
         runId?: string;
         attachments?: unknown[];
         toolCalls?: unknown[];
+        thinkingContent?: string;
       },
     ) => {
       if (!isDbReady()) return ipcError(new Error('database not ready'));
@@ -161,6 +162,7 @@ export function registerDataHandlers(): void {
             runId: msg.runId ?? null,
             attachments: msg.attachments?.length ? JSON.stringify(msg.attachments) : null,
             toolCalls: msg.toolCalls?.length ? JSON.stringify(msg.toolCalls) : null,
+            thinkingContent: msg.thinkingContent ?? null,
           })
           .onConflictDoUpdate({
             target: [messages.taskId, messages.sessionKey, messages.role, messages.timestamp],
@@ -170,6 +172,9 @@ export function registerDataHandlers(): void {
               runId: msg.runId ?? null,
               attachments: msg.attachments?.length ? JSON.stringify(msg.attachments) : null,
               toolCalls: msg.toolCalls?.length ? JSON.stringify(msg.toolCalls) : null,
+              // ⚠️ 故意「有空才覆盖」而不是 `?? null`：工具调用等中途落库若不带思考，
+              // 不该把已经存下来的推理抹掉（其它字段没这个问题 —— 它们是同一个值的更新）。
+              ...(msg.thinkingContent ? { thinkingContent: msg.thinkingContent } : {}),
             },
           })
           .run();

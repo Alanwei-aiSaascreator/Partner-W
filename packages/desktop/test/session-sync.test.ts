@@ -776,6 +776,92 @@ describe('session sync startup flow', () => {
     );
   });
 
+  // 推理输出（`stream:"thinking"`）只在 agent 通道上流过一次，**网关历史里没有它**
+  //（`normalize-history` 不解析，chat 通道的 final 也只带 text 块）。
+  // 所以它必须在 final 之后那次 sync 落库 —— 不落就只活在内存里，刷新即丢。
+  it('落库时带上推理 —— 网关历史里没有它，不落就重载即丢', async () => {
+    const { sessionSync, taskStore, messageStore } = await loadModules();
+    const sessionKey = 'agent:main:clawwork:task:task-think-persist';
+
+    taskStore.useTaskStore.setState({
+      tasks: [
+        {
+          id: 'task-think-persist',
+          sessionKey,
+          sessionId: 'session-think-persist',
+          title: 'Think persist',
+          status: 'active',
+          createdAt: '2026-03-16T00:00:00.000Z',
+          updatedAt: '2026-03-16T00:00:00.000Z',
+          tags: [],
+          artifactDir: 'tasks/task-think-persist',
+          gatewayId: 'gw-1',
+        },
+      ],
+      activeTaskId: 'task-think-persist',
+      hydrated: true,
+    });
+    messageStore.useMessageStore.setState({
+      messagesByTask: {
+        'task-think-persist': [
+          {
+            id: 'u1',
+            taskId: 'task-think-persist',
+            role: 'user',
+            content: '鸡兔同笼',
+            artifacts: [],
+            toolCalls: [],
+            timestamp: '2026-03-16T10:00:00.000Z',
+          },
+        ],
+      },
+      activeTurnBySession: {
+        [sessionKey]: {
+          id: 'turn-think',
+          streamingText: '',
+          streamingThinking: '',
+          toolCalls: [],
+          finalized: true,
+          content: '鸡 23 只、兔 12 只。',
+          thinkingContent: '设鸡 x 只、兔 y 只，则 x+y=35、2x+4y=94……',
+          timestamp: '2026-03-16T10:00:01.000Z',
+        },
+      },
+      processingBySession: new Set(),
+      highlightedMessageId: null,
+    });
+
+    // 网关历史里**只有回复本体**，没有推理
+    mockApi.chatHistory.mockResolvedValue({
+      ok: true,
+      result: {
+        messages: [
+          {
+            role: 'user',
+            timestamp: Date.parse('2026-03-16T10:00:00.000Z'),
+            content: [{ type: 'text', text: '鸡兔同笼' }],
+          },
+          {
+            role: 'assistant',
+            timestamp: Date.parse('2026-03-16T10:00:01.000Z'),
+            content: [{ type: 'text', text: '鸡 23 只、兔 12 只。' }],
+          },
+        ],
+      },
+    });
+
+    await sessionSync.syncSessionMessages('task-think-persist');
+
+    expect(mockApi.persistMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        taskId: 'task-think-persist',
+        role: 'assistant',
+        content: '鸡 23 只、兔 12 只。',
+        thinkingContent: '设鸡 x 只、兔 y 只，则 x+y=35、2x+4y=94……',
+      }),
+    );
+  });
+
   it('reuses resolved hydration state across later gateway sync calls', async () => {
     const { sessionSync, taskStore, messageStore } = await loadModules();
 

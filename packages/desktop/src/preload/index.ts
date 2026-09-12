@@ -271,6 +271,7 @@ function buildApi(): ClawWorkAPI {
       runId?: string;
       attachments?: unknown[];
       toolCalls?: unknown[];
+      thinkingContent?: string;
     }) => ipcRenderer.invoke('data:create-message', msg),
 
     deleteTask: (taskId: string) => ipcRenderer.invoke('data:delete-task', { id: taskId }),
@@ -436,16 +437,14 @@ function buildApi(): ClawWorkAPI {
     commercialSetConfig: (payload: { supabaseUrl?: string; supabaseAnonKey?: string }) =>
       ipcRenderer.invoke('commercial:set-config', payload),
     commercialSendOtp: (target: string) => ipcRenderer.invoke('commercial:send-otp', target),
-    commercialVerifyOtp: (target: string, token: string) =>
-      ipcRenderer.invoke('commercial:verify-otp', target, token),
+    commercialVerifyOtp: (target: string, token: string) => ipcRenderer.invoke('commercial:verify-otp', target, token),
     commercialSignInPassword: (email: string, password: string) =>
       ipcRenderer.invoke('commercial:sign-in-password', email, password),
     commercialSignOut: () => ipcRenderer.invoke('commercial:sign-out'),
     commercialSession: () => ipcRenderer.invoke('commercial:session'),
     commercialAccountOverview: () => ipcRenderer.invoke('commercial:account-overview'),
     commercialLicenseStatus: () => ipcRenderer.invoke('commercial:license-status'),
-    commercialLicenseActivate: (licenseKey: string) =>
-      ipcRenderer.invoke('commercial:license-activate', licenseKey),
+    commercialLicenseActivate: (licenseKey: string) => ipcRenderer.invoke('commercial:license-activate', licenseKey),
     commercialLicenseClear: () => ipcRenderer.invoke('commercial:license-clear'),
     commercialDeviceFingerprint: () => ipcRenderer.invoke('commercial:device-fingerprint'),
     commercialUsageReport: () => ipcRenderer.invoke('commercial:usage-report'),
