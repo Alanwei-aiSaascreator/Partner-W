@@ -1,8 +1,4 @@
-import {
-  CUSTOM_RECHARGE_MAX_CENTS,
-  CUSTOM_RECHARGE_MIN_CENTS,
-  type IpcResult,
-} from '@clawwork/shared';
+import { CUSTOM_RECHARGE_MAX_CENTS, CUSTOM_RECHARGE_MIN_CENTS, type IpcResult } from '@clawwork/shared';
 import { getCommercialClient } from './client.js';
 import { readConfig } from '../workspace/config.js';
 
@@ -95,10 +91,7 @@ function classifyCreateError(message: string): string {
  * service reads it from the order row with service_role, so neither the
  * renderer nor this process can influence what the user is charged.
  */
-async function openCheckout(
-  supabase: CommercialClient,
-  orderNo: string,
-): Promise<IpcResult<RechargeOrderHandle>> {
+async function openCheckout(supabase: CommercialClient, orderNo: string): Promise<IpcResult<RechargeOrderHandle>> {
   const { data: session } = await supabase.auth.getSession();
   const token = session?.session?.access_token;
   if (!token) {
@@ -184,9 +177,7 @@ export async function createRechargeOrder(sku: string): Promise<IpcResult<Rechar
  * The range check below is for the user's benefit only — the RPC is the
  * authority and rejects anything out of bounds regardless.
  */
-export async function createCustomRechargeOrder(
-  amountCents: number,
-): Promise<IpcResult<RechargeOrderHandle>> {
+export async function createCustomRechargeOrder(amountCents: number): Promise<IpcResult<RechargeOrderHandle>> {
   const supabase = getCommercialClient();
   if (!supabase) {
     return { ok: false, error: 'Commercial backend is not configured', errorCode: 'not_configured' };
@@ -239,11 +230,15 @@ export async function readRechargeOrder(orderNo: string): Promise<IpcResult<Rech
         .eq('order_no', trimmed)
         .maybeSingle();
 
-    let { data, error } = await read();
-    if (error) return fail(error, 'recharge_order_read_failed');
-    if (!data) {
+    // 拆开取而不是 `let { data, error } = await read()`：`data` 在下面会被
+    // 重新赋值（查到 stale 订单后会再读一次），`error` 不会 —— 一起用 let
+    // 会让 lint 的 prefer-const 报 error 那一半。
+    const first = await read();
+    if (first.error) return fail(first.error, 'recharge_order_read_failed');
+    if (!first.data) {
       return { ok: false, error: 'Order not found', errorCode: 'recharge_order_not_found' };
     }
+    let data = first.data;
 
     // A pending order that has had time to be paid may have lost its
     // notification. Ask the payment service to query Alipay before answering,
