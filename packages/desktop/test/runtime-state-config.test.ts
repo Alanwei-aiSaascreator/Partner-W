@@ -186,21 +186,57 @@ describe('ensureClientGatewayEntry', () => {
     expect(readConfigRaw().gateways).toHaveLength(1);
   });
 
-  it('⭐ 令牌漂移：config 里的 token 与 state 文件不一致 ⇒ 以 state 为准改写 + 报告漂移', async () => {
-    await ensureClientGatewayEntry({ userDataDir });
+  it('⭐ 令牌漂移：**客户端 config** 与 store 不一致 ⇒ 以 store 为准改写 + 报告漂移', async () => {
+    const first = await ensureClientGatewayEntry({ userDataDir });
 
-    // 模拟"state 被清掉、重新生成" ⇒ config 里留着旧 token
+    // 绕过对齐，直接往 config 里塞一个旧 token
+    const raw = readConfigRaw();
+    (raw.gateways as Array<Record<string, unknown>>)[0].token = 'stale-token';
+    fs.writeFileSync(configPath(), JSON.stringify(raw));
+
+    const res = await ensureClientGatewayEntry({ userDataDir });
+
+    expect(res.drifted).toBe(true);
+    expect(res.changed).toBe(true);
+    expect(res.token).toBe(first.token); // ⭐ store 胜出，不是 stale-token
+    expect(readConfigRaw().gateways).toHaveLength(1);
+  });
+
+  it('⭐ state 文件里的 token 被改掉 ⇒ 以 store 为准**改写回来**，token 不漂移', async () => {
+    const first = await ensureClientGatewayEntry({ userDataDir });
+
     const stateDir = stateDirFor(userDataDir);
     const stateCfg = JSON.parse(fs.readFileSync(stateConfigPath(stateDir), 'utf-8'));
     stateCfg.gateway.auth.token = 'brand-new-token';
     fs.writeFileSync(stateConfigPath(stateDir), JSON.stringify(stateCfg));
 
     const res = await ensureClientGatewayEntry({ userDataDir });
+    const onDisk = JSON.parse(fs.readFileSync(stateConfigPath(stateDir), 'utf-8'));
 
-    expect(res.drifted).toBe(true);
-    expect(res.changed).toBe(true);
-    expect(res.token).toBe('brand-new-token');
-    expect(readConfigRaw().gateways).toHaveLength(1);
+    expect(res.token).toBe(first.token);
+    expect(res.token).not.toBe('brand-new-token');
+    expect(onDisk.gateway.auth.token).toBe(first.token);
+  });
+
+  it('⭐ 配置文件被整个删掉（openclaw 搬走/被别人清掉）⇒ **不重新生成**，照用 store 那个', async () => {
+    const first = await ensureClientGatewayEntry({ userDataDir });
+    fs.rmSync(stateConfigPath(stateDirFor(userDataDir)));
+
+    const res = await ensureClientGatewayEntry({ userDataDir });
+    const rewritten = JSON.parse(fs.readFileSync(stateConfigPath(stateDirFor(userDataDir)), 'utf-8'));
+
+    expect(res.token).toBe(first.token); // 这就是 E2E 启动 2 的精确回归
+    expect(rewritten.gateway.auth.token).toBe(first.token);
+  });
+
+  it('⭐ 整个 state 目录被清空 ⇒ 仍然用同一个 token 重新 bootstrap（不换 token）', async () => {
+    const first = await ensureClientGatewayEntry({ userDataDir });
+    fs.rmSync(stateDirFor(userDataDir), { recursive: true, force: true });
+
+    const res = await ensureClientGatewayEntry({ userDataDir });
+
+    expect(res.token).toBe(first.token);
+    expect(fs.existsSync(stateConfigPath(stateDirFor(userDataDir)))).toBe(true);
   });
 
   it('用户自己配的其它网关**原封不动**（我们只 upsert 自己那一条）', async () => {

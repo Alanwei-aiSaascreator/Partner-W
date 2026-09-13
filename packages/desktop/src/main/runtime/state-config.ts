@@ -1,17 +1,24 @@
 /**
  * 网关状态目录的 `openclaw.json` + 客户端 config 里的 `local-runtime` 条目。
  *
- * ⚠️ **令牌的唯一真相源是 state 文件**。客户端 config 里那份只是副本
- * （给 WS 连接用、经 safeStorage 加密落盘）。两者不一致时的现象极其难查：
- * WS 连上去被 1008 拒绝，界面上看着就是"网关没起来"，日志里只有一句 1008。
- * ⇒ 所以每次启动都以 state 文件为准做一次**对齐**，不一致就改写并报漂移。
+ * ⚠️ **令牌的唯一真相源是 ClawWork 自己的 store**（`runtime/token-store.ts`，
+ * `<userData>/runtime/local-gateway-auth.json`）。这里产出的两份都是**镜像**：
+ *   - `openclaw.json` —— 网关的 bootstrap 输入；按 store 对齐，不一致就改写回来
+ *   - 客户端 config 的 `local-runtime` 条目 —— 给 WS 连接用（safeStorage 加密落盘）
+ *
+ * 镜像不一致的现象极其难查：WS 连上去被 1008 拒绝，界面上看着就是"网关没起来"，
+ * 日志里只有一句 1008。⇒ 所以每次启动都按 store 做一次**对齐**，不一致就改写并报漂移。
+ *
+ * ⚠️ 绝不能让 token 的生命周期由 openclaw 的配置行为决定：那份文件被换掉/删掉时
+ * 若"重新生成一个"，就会拿新 token 去认证还在用旧 token 跑的网关 ⇒ 认证失败 ⇒
+ * 被误判成 foreign。详见 `token-store.ts` 的头注释。
  *
  * ⚠️ `openclaw.json` 里**刻意不写** `gateway.mode`（这正是启动参数必须带
  * `--allow-unconfigured` 的原因）、**不写** `gateway.port`（端口归 `--port`）。
  * 写进去就把网关自己的配置语义接管了，上游改默认值时我们会悄悄掉队。
  *
  * ⚠️ openclaw 自己也会往这个目录写东西（`openclaw.json.last-good` 等），
- * 所以**只在缺失时补**，绝不整文件覆盖。
+ * 所以**只在缺失或认证段不一致时补**，绝不整文件覆盖。
  */
 
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
@@ -20,7 +27,7 @@ import { GATEWAY_WS_PORT } from '@clawwork/shared';
 import { writeJsonAtomic } from '../util/json-file.js';
 import { readConfig, updateConfig } from '../workspace/config.js';
 import type { AppConfig, GatewayServerConfig } from '../workspace/config.js';
-import { generateGatewayToken } from './gateway-process.js';
+import { ensureLocalGatewayToken } from './token-store.js';
 
 export const STATE_DIR_NAME = 'openclaw-state';
 export const STATE_CONFIG_FILE = 'openclaw.json';
@@ -70,10 +77,30 @@ export function readStateToken(raw: unknown): string | null {
 }
 
 /**
- * 确保状态目录里有一份带 token 的配置。
+ * 客户端 config 里 `local-runtime` 那条的 token；没有则 null。
  *
- * 已有 token 就**沿用**（重新生成会让所有已连上的客户端立刻掉线）；
- * 已有配置的其它字段一律保留。
+ * 只用于 store **首次**建立时的一次性接管（见下），不是真相源。
+ */
+function readClientLocalRuntimeToken(): string | null {
+  try {
+    const entry = readConfig()?.gateways.find((g) => g.id === LOCAL_GATEWAY_ID);
+    return typeof entry?.token === 'string' && entry.token.length > 0 ? entry.token : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 确保状态目录里那份 `openclaw.json` 带的是 **store 的** token。
+ *
+ * 语义（2026-09-13 定稿）：
+ *   - 真相源是 ClawWork 自己的 store，**不在**这份文件里
+ *   - 因此"文件不见了/被改掉了"**不等于**"token 没了" —— 绝不因此重新生成
+ *   - 这份文件是**镜像**：缺了、或认证段与 store 不一致 ⇒ 按 store 写回去
+ *   - 已有配置里的其它字段一律保留（openclaw 也会往这里写东西）
+ *
+ * ⚠️ 接管顺序：state 文件 → 客户端 config。**state 文件优先**是因为它才是正在跑的
+ * 那个网关实际在用的 token —— 反过来会让升级后第一次启动就把活着的网关踢掉。
  */
 export function ensureStateConfig(userDataDir: string): {
   token: string;
@@ -95,19 +122,34 @@ export function ensureStateConfig(userDataDir: string): {
   }
 
   const existingToken = readStateToken(existing);
-  if (existingToken && existing) {
-    return { token: existingToken, created: false, configPath };
+
+  // ① 真相源：ClawWork 自己的 store。store 不存在时才问一次"有没有旧 token 可接管"。
+  const store = ensureLocalGatewayToken({
+    userDataDir,
+    adopt: () => existingToken ?? readClientLocalRuntimeToken(),
+  });
+
+  // ② 已经一致 ⇒ 一个字节都不写（不每次启动都重写别人的文件）
+  if (existingToken === store.token && existing) {
+    return { token: store.token, created: false, configPath };
   }
 
-  const token = existingToken ?? generateGatewayToken();
   const gateway = existing && isRecord(existing.gateway) ? existing.gateway : {};
   const merged: Record<string, unknown> = {
     ...(existing ?? {}),
-    gateway: { ...gateway, auth: { mode: 'token', token } },
+    gateway: { ...gateway, auth: { mode: 'token', token: store.token } },
   };
 
   writeJsonAtomic(configPath, merged);
-  return { token, created: existing === null, configPath };
+
+  // ⚠️ 只报"不一致"这件事，绝不把 token 本身写进日志
+  if (existingToken && existingToken !== store.token) {
+    console.warn(
+      '[runtime] runtime.state-token-drift：state 文件里的网关令牌与 ClawWork 持有的不一致，已按 store 改写回来',
+    );
+  }
+
+  return { token: store.token, created: existing === null, configPath };
 }
 
 /**
