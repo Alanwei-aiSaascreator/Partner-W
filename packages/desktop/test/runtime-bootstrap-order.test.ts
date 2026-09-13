@@ -205,4 +205,38 @@ describe('bootstrapLocalGatewayRuntime', () => {
     expect(res.ok).toBe(true);
     expect(res.ownership).toBe('reused');
   });
+
+  it('⭐ 所有权是**单调**的：起过一次之后，后一次 reused 不能把 ownership 覆盖掉', async () => {
+    // 实测形状（E2E 启动 3）：同一进程里 bootstrap 第二次判成 reused，它的 child
+    // 是空的。覆盖掉就丢了"这是我们起的"这条 ⇒ 退出时谁都不去停 ⇒ 下一个场景
+    // 直接 EADDRINUSE。
+    //
+    // ⚠️ pid 刻意留空：真 `stopGateway` 会 `taskkill /PID`，单测里绝不能真跑。
+    const child = { pid: undefined, onExit: vi.fn(), kill: vi.fn() };
+    const { deps: first } = makeDeps({
+      startGateway: vi.fn(async () => ({
+        ownership: 'spawned' as const,
+        pid: 4321,
+        child,
+        decision: { verdict: 'spawn' as const, reason: 'x' },
+      })),
+    });
+    const { bootstrapLocalGatewayRuntime, shutdownLocalGatewayRuntime } = await import('../src/main/runtime/index.js');
+
+    await bootstrapLocalGatewayRuntime({ userDataDir: USER_DATA, deps: first });
+
+    const { deps: second } = makeDeps({
+      startGateway: vi.fn(async () => ({
+        ownership: 'reused' as const,
+        decision: { verdict: 'reuse' as const, reason: 'y' },
+      })),
+    });
+    const res2 = await bootstrapLocalGatewayRuntime({ userDataDir: USER_DATA, deps: second });
+    expect(res2.ownership).toBe('reused');
+
+    // 退出收尾**仍然**要停它 —— 这一条就是回归断言
+    const stopped = await shutdownLocalGatewayRuntime();
+    expect(stopped).toBe(true);
+    expect(child.kill).toHaveBeenCalled();
+  });
 });

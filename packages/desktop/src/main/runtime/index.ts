@@ -246,8 +246,13 @@ export async function bootstrapLocalGatewayRuntime(opts: {
       token,
     });
 
-    // 记下来给退出收尾用（只有 spawned 会被真的停掉）
-    activeGateway = {
+    // 记下来给退出收尾用（只有 spawned 会被真的停掉）。
+    //
+    // ⚠️ **只让 `spawned` 覆盖**（2026-09-13 实测出来的）：同一个进程里 bootstrap
+    // 不止一次时，后一次若判成 `reused`，它的 `child` 是空的 —— 直接覆盖就把
+    // "这个网关是我们起的、退出时要停掉"这条**丢了**，于是退出时谁都不去停它，
+    // 下一轮启动直接 EADDRINUSE。所有权是**单调**的：起过就一直算我们的。
+    const nextActive = {
       ownership: gateway.ownership,
       child: gateway.child,
       nodeExe: nodeRes.node.exe,
@@ -255,6 +260,7 @@ export async function bootstrapLocalGatewayRuntime(opts: {
       deployedRoot: deployed.deployedRoot,
       stateDir,
     };
+    if (gateway.ownership === 'spawned' || !activeGateway) activeGateway = nextActive;
 
     deps.log('runtime.bootstrap.ok', {
       deploymentKey: deployed.deploymentKey,
