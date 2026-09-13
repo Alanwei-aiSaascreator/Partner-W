@@ -67,6 +67,8 @@ interface SessionsListPayload {
 
 interface ChatHistoryMessage {
   role: string;
+  /** 实际生成这条回复的模型。**只有 assistant 记录带**（实测网关 transcript）。 */
+  model?: string;
   content: {
     type: string;
     text?: string;
@@ -310,6 +312,8 @@ export function registerWsHandlers(): void {
         timestamp: string;
         attachments?: unknown[];
         toolCalls: ParsedToolCall[];
+        /** 这条回复实际由哪个模型生成（逐条来自网关）。 */
+        model?: string;
       }[];
     }[] = [];
 
@@ -384,6 +388,8 @@ export function registerWsHandlers(): void {
                 attachments: normalizedContent.attachments,
                 timestamp: m.timestamp ? new Date(m.timestamp).toISOString() : new Date().toISOString(),
                 toolCalls,
+                // 逐条透传：网关每条 assistant 记录都带它（实测），user 记录没有。
+                model: m.model,
               };
             })
             .filter((m) => {

@@ -239,6 +239,9 @@ interface PersistedMessage {
   runId?: string;
   attachments?: unknown[];
   toolCalls?: unknown[];
+  thinkingContent?: string;
+  /** 实际生成这条回复的模型 id（逐条来自网关）。老数据为 null。 */
+  model?: string | null;
 }
 
 interface DiscoveredSession {
@@ -473,6 +476,8 @@ export interface ClawWorkAPI {
     attachments?: unknown[];
     toolCalls?: unknown[];
     thinkingContent?: string;
+    /** 实际生成这条回复的模型 id（逐条来自网关）。 */
+    model?: string;
   }) => Promise<IpcResult>;
 
   deleteTask: (taskId: string) => Promise<IpcResult>;

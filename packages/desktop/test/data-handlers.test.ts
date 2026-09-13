@@ -5,7 +5,10 @@ const getWorkspacePathMock = vi.fn<() => string | null>(() => null);
 const autoExtractArtifactsMock = vi.fn();
 const runMock = vi.fn();
 const conflictRunMock = vi.fn();
-const onConflictDoUpdateMock = vi.fn(() => ({ run: conflictRunMock }));
+// ⚠️ 形参**不能省**：`vi.fn(() => …)` 的参数表是空的 ⇒ `mock.calls` 被推成 `[][]`，
+// 于是 `calls.at(-1)?.[0]` 触发 TS2493（"Tuple type '[]' of length '0' has no element at index '0'"）。
+// 声明成它真实收到的那一个 config 对象，调用记录才有正确的类型。
+const onConflictDoUpdateMock = vi.fn((_values: Record<string, unknown>) => ({ run: conflictRunMock }));
 const valuesMock = vi.fn(() => ({ onConflictDoUpdate: onConflictDoUpdateMock, run: runMock }));
 const insertMock = vi.fn(() => ({ values: valuesMock }));
 const selectGetMock = vi.fn<() => { sk?: string; id?: string }>(() => ({ sk: 'agent:main:clawwork:task:task-1' }));
@@ -190,5 +193,81 @@ describe('registerDataHandlers', () => {
       content: 'done',
       attachments: undefined,
     });
+  });
+
+  // 消息级 model（「这条回复实际是谁生成的」）。白名单式写入，漏一处就静默丢字段。
+  it('persists the per-message model on first write', async () => {
+    const { registerDataHandlers } = await import('../src/main/ipc/data-handlers.js');
+
+    registerDataHandlers();
+
+    const createMessage = handleMap.get('data:create-message');
+    expect(createMessage).toBeTypeOf('function');
+
+    expect(
+      createMessage?.(
+        {},
+        {
+          id: 'msg-model-1',
+          taskId: 'task-1',
+          role: 'assistant',
+          content: '收到',
+          timestamp: '2026-03-16T00:00:01.000Z',
+          model: 'glm-4.7',
+        },
+      ),
+    ).toEqual({ ok: true });
+
+    expect(valuesMock).toHaveBeenCalledWith(expect.objectContaining({ model: 'glm-4.7' }));
+  });
+
+  // ⚠️ 工具调用/推理的中途 upsert **不带** model（那几条写入路径拿不到它）。
+  // 若这里写成 `model: msg.model ?? null`，第二次写就会把已落库的模型抹成 NULL，
+  // 表现是「重载后徽章消失、而库里那条记录其实曾经有过」。
+  it('keeps the stored model when a later upsert omits it', async () => {
+    const { registerDataHandlers } = await import('../src/main/ipc/data-handlers.js');
+
+    registerDataHandlers();
+
+    const createMessage = handleMap.get('data:create-message');
+    expect(createMessage).toBeTypeOf('function');
+
+    const base = {
+      taskId: 'task-1',
+      role: 'assistant',
+      content: '收到',
+      timestamp: '2026-03-16T00:00:01.000Z',
+    };
+
+    expect(createMessage?.({}, { ...base, id: 'msg-model-a', model: 'glm-4.7' })).toEqual({ ok: true });
+    expect(
+      createMessage?.({}, { ...base, id: 'msg-model-b', toolCalls: [{ id: 'exec-1', name: 'exec', status: 'done' }] }),
+    ).toEqual({ ok: true });
+
+    const lastSet = onConflictDoUpdateMock.mock.calls.at(-1)?.[0]?.set as Record<string, unknown>;
+    expect(lastSet).not.toHaveProperty('model');
+    expect(lastSet).toHaveProperty('toolCalls');
+  });
+
+  it('overwrites the stored model when the incoming write carries one', async () => {
+    const { registerDataHandlers } = await import('../src/main/ipc/data-handlers.js');
+
+    registerDataHandlers();
+
+    const createMessage = handleMap.get('data:create-message');
+    const base = {
+      id: 'msg-model-c',
+      taskId: 'task-1',
+      role: 'assistant',
+      content: '收到',
+      timestamp: '2026-03-16T00:00:01.000Z',
+    };
+
+    expect(createMessage?.({}, { ...base, model: 'glm-4.7' })).toEqual({ ok: true });
+    expect(createMessage?.({}, { ...base, model: 'qwen-turbo' })).toEqual({ ok: true });
+
+    expect(onConflictDoUpdateMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ set: expect.objectContaining({ model: 'qwen-turbo' }) }),
+    );
   });
 });

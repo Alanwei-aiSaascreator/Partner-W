@@ -346,14 +346,18 @@ export function normalizeAssistantTurns(rawMsgs: RawHistoryMessage[], httpBase?:
   let current: NormalizedAssistantTurn | null = null;
   let canMergeToolFinal = false;
 
-  function startCurrent(timestamp: string): NormalizedAssistantTurn {
-    current = { content: '', toolCalls: [], timestamp };
+  // 消息级 model：同一次回复可能由多条 assistant 记录拼成（toolCall / 推理 / 最终正文），
+  // 它们各自带 model —— 取**最后一条带它的**（= 产出最终正文的那次调用）。
+  // ⚠️ 缺 model 的记录**不清空**已记下的值：老网关/老记录可能没有这个字段。
+  function startCurrent(timestamp: string, model?: string): NormalizedAssistantTurn {
+    current = { content: '', toolCalls: [], timestamp, ...(model ? { model } : {}) };
     turns.push(current);
     return current;
   }
 
-  function ensureCurrent(timestamp: string): NormalizedAssistantTurn {
-    if (!current) return startCurrent(timestamp);
+  function ensureCurrent(timestamp: string, model?: string): NormalizedAssistantTurn {
+    if (!current) return startCurrent(timestamp, model);
+    if (model) current.model = model;
     return current;
   }
 
@@ -392,16 +396,18 @@ export function normalizeAssistantTurns(rawMsgs: RawHistoryMessage[], httpBase?:
     // `reasoning_content` 里的调用 —— 丢了就是「界面上一个字都没有，而账照扣」。
     if (!text.trim() && !thinkingText && toolCalls.length === 0 && !normalizedContent.attachments?.length) continue;
 
+    const model = sanitizeModel(msg.model);
+
     // 推理挂在当前 turn 上，不新起 turn —— 它属于同一次回复。
     if (thinkingText) {
-      const turn = ensureCurrent(timestamp);
+      const turn = ensureCurrent(timestamp, model);
       turn.thinkingContent = (turn.thinkingContent ?? '') + thinkingText;
     }
 
     const visibleText = isVisibleAssistantContent(text) ? text.trim() : '';
 
     if (toolCalls.length > 0) {
-      const turn = ensureCurrent(timestamp);
+      const turn = ensureCurrent(timestamp, model);
       const existingIds = new Set(turn.toolCalls.map((toolCall) => toolCall.id));
       turn.toolCalls.push(...toolCalls.filter((toolCall) => !existingIds.has(toolCall.id)));
       if (visibleText) {
@@ -414,7 +420,7 @@ export function normalizeAssistantTurns(rawMsgs: RawHistoryMessage[], httpBase?:
     }
 
     if (!visibleText && normalizedContent.attachments?.length) {
-      const turn = ensureCurrent(timestamp);
+      const turn = ensureCurrent(timestamp, model);
       turn.attachments = mergeMessageAttachments(turn.attachments, normalizedContent.attachments);
       turn.timestamp = timestamp;
       canMergeToolFinal = false;
@@ -424,10 +430,10 @@ export function normalizeAssistantTurns(rawMsgs: RawHistoryMessage[], httpBase?:
     if (!visibleText) continue;
 
     if (shouldStartVisibleAssistantTurn(current, timestamp, canMergeToolFinal)) {
-      startCurrent(timestamp);
+      startCurrent(timestamp, model);
     }
 
-    const turn = ensureCurrent(timestamp);
+    const turn = ensureCurrent(timestamp, model);
     turn.content = appendSegment(turn.content, visibleText);
     turn.attachments = mergeMessageAttachments(turn.attachments, normalizedContent.attachments);
     turn.timestamp = timestamp;
@@ -476,6 +482,9 @@ export function collapseDiscoveredMessages(messages: DiscoveredMessageShape[], t
     const toolCalls = message.toolCalls ?? [];
     if (!visibleText && toolCalls.length === 0 && !message.attachments?.length) continue;
 
+    // 同 normalizeAssistantTurns：取最后一条带 model 的，缺的不清空。
+    const model = sanitizeModel(message.model);
+
     if (!currentAssistant) {
       currentAssistant = {
         id: crypto.randomUUID(),
@@ -485,7 +494,10 @@ export function collapseDiscoveredMessages(messages: DiscoveredMessageShape[], t
         artifacts: [],
         toolCalls: [],
         timestamp: message.timestamp,
+        ...(model ? { model } : {}),
       };
+    } else if (model) {
+      currentAssistant.model = model;
     }
 
     if (visibleText) {

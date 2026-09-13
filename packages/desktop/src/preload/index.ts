@@ -272,6 +272,8 @@ function buildApi(): ClawWorkAPI {
       attachments?: unknown[];
       toolCalls?: unknown[];
       thinkingContent?: string;
+      /** 实际生成这条回复的模型 id（逐条来自网关）。 */
+      model?: string;
     }) => ipcRenderer.invoke('data:create-message', msg),
 
     deleteTask: (taskId: string) => ipcRenderer.invoke('data:delete-task', { id: taskId }),

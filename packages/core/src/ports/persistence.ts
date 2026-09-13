@@ -31,6 +31,8 @@ export interface PersistedMessage {
   attachments?: unknown[];
   toolCalls?: unknown[];
   thinkingContent?: string;
+  /** 实际生成这条回复的模型 id（逐条来自网关）。老行为 `null`。 */
+  model?: string | null;
 }
 
 export interface ListResult<T> {
@@ -83,6 +85,8 @@ export interface PersistencePort {
     runId?: string;
     attachments?: unknown[];
     toolCalls?: unknown[];
+    thinkingContent?: string;
+    model?: string;
   }) => Promise<IpcResult>;
   deleteTask: (taskId: string) => Promise<IpcResult>;
 }

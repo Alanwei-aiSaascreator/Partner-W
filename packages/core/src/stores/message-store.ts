@@ -64,6 +64,8 @@ export interface MessageStoreDeps {
     attachments?: unknown[];
     toolCalls?: unknown[];
     thinkingContent?: string;
+    /** 实际生成这条回复的模型 id（逐条来自网关）。 */
+    model?: string;
   }) => Promise<IpcResult>;
 }
 
@@ -159,6 +161,8 @@ function persistMessageUpdate(deps: MessageStoreDeps, msg: Message): void {
       attachments: msg.attachments as unknown[] | undefined,
       toolCalls: msg.toolCalls,
       thinkingContent: msg.thinkingContent,
+      // 中途 upsert（工具调用/推理）拿不到它 ⇒ undefined ⇒ 主进程那边条件覆盖，不会抹掉已有值。
+      model: msg.model,
     })
     .catch((err) => {
       console.error('[persist:message]', err);

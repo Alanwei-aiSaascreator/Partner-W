@@ -140,6 +140,7 @@ export function registerDataHandlers(): void {
         attachments?: unknown[];
         toolCalls?: unknown[];
         thinkingContent?: string;
+        model?: string;
       },
     ) => {
       if (!isDbReady()) return ipcError(new Error('database not ready'));
@@ -163,6 +164,7 @@ export function registerDataHandlers(): void {
             attachments: msg.attachments?.length ? JSON.stringify(msg.attachments) : null,
             toolCalls: msg.toolCalls?.length ? JSON.stringify(msg.toolCalls) : null,
             thinkingContent: msg.thinkingContent ?? null,
+            model: msg.model ?? null,
           })
           .onConflictDoUpdate({
             target: [messages.taskId, messages.sessionKey, messages.role, messages.timestamp],
@@ -175,6 +177,9 @@ export function registerDataHandlers(): void {
               // ⚠️ 故意「有空才覆盖」而不是 `?? null`：工具调用等中途落库若不带思考，
               // 不该把已经存下来的推理抹掉（其它字段没这个问题 —— 它们是同一个值的更新）。
               ...(msg.thinkingContent ? { thinkingContent: msg.thinkingContent } : {}),
+              // 同上：模型只在**这条写入自己带**的时候覆盖。工具调用/推理那些中途
+              // upsert 拿不到它，写成 `?? null` 会把已落库的模型抹掉，重载后徽章消失。
+              ...(msg.model ? { model: msg.model } : {}),
             },
           })
           .run();

@@ -27,6 +27,19 @@ describe('initDatabase', () => {
     expect(Database).toHaveBeenCalled();
   });
 
+  // 消息级 model 列：老库靠这条 ALTER 补列（新库在 CREATE TABLE 里就有）。
+  // 两份 DDL 缺一不可 —— 少了它，老用户升级后这一列永远不存在。
+  it('adds the per-message model column on existing databases', () => {
+    initDatabase('/tmp/workspace-a');
+
+    // ⚠️ 别写成 `ADD COLUMN model` 就完事 —— tasks 表也有一列叫 model。
+    const alterSql = mockDbInstance.exec.mock.calls
+      .map(([sql]) => String(sql))
+      .find((sql) => sql.includes('ALTER TABLE messages ADD COLUMN model'));
+
+    expect(alterSql).toContain('ALTER TABLE messages ADD COLUMN model TEXT');
+  });
+
   it('does not purge media-only assistant messages during startup cleanup', () => {
     initDatabase('/tmp/workspace-a');
 

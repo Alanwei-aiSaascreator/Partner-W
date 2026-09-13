@@ -180,6 +180,13 @@ export interface Message {
   agentId?: string;
   runId?: string;
   thinkingContent?: string;
+  /**
+   * 实际生成这条回复的模型 id —— 逐条来自网关（`chat.history` 的 assistant 记录 / transcript）。
+   *
+   * ⚠️ 不是会话选中的模型、不是 picker 当前值、不是模型自述（模型会照抄历史里上一轮的答案，
+   * 实测过切到 qwen 仍自称 glm）。没有就是没有：老数据留空、不 backfill、不拿会话级模型兜底。
+   */
+  model?: string;
 }
 
 export interface Artifact {

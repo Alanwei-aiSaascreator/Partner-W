@@ -17,6 +17,8 @@ type DiscoveredSyncMessage = {
   timestamp: string;
   attachments?: unknown[];
   toolCalls?: ToolCall[];
+  /** 实际生成这条回复的模型（逐条来自网关）。见 `Message.model`。 */
+  model?: string;
 };
 
 export interface SessionSyncDeps {
@@ -35,6 +37,7 @@ export interface SessionSyncDeps {
         attachments?: unknown[];
         toolCalls?: unknown[];
         thinkingContent?: string;
+        model?: string | null;
       }[];
     }>;
     persistMessage: (msg: {
@@ -49,6 +52,7 @@ export interface SessionSyncDeps {
       attachments?: unknown[];
       toolCalls?: unknown[];
       thinkingContent?: string;
+      model?: string;
     }) => Promise<IpcResult>;
   };
   gateway: {
@@ -150,6 +154,8 @@ export function createSessionSync(deps: SessionSyncDeps) {
         attachments: message.attachments as unknown[] | undefined,
         toolCalls: message.toolCalls,
         thinkingContent: message.thinkingContent,
+        // 消息级模型：落库后重启才还在（重载读回见 hydrateFromLocal）。
+        model: message.model,
       })
       .catch((err) => console.error('[session-sync] persistMessage failed:', err));
   }
@@ -220,6 +226,8 @@ export function createSessionSync(deps: SessionSyncDeps) {
                   runId: r.runId,
                   attachments: normalized.attachments,
                   thinkingContent: r.thinkingContent,
+                  // 老行没有这一列 ⇒ 读出 `null`，规整成 undefined（UI 据此不渲染徽章）。
+                  model: r.model ?? undefined,
                 };
               });
               messageStore.bulkLoad(t.id, msgs);
@@ -286,6 +294,8 @@ export function createSessionSync(deps: SessionSyncDeps) {
         // 本轮还在内存里的话，下面的 mergeCanonicalMessageWithActiveTurn 会优先用 activeTurn 的
         //（同一段时间戳、同一段文本，是覆盖不是叠加）。
         thinkingContent: gm.thinkingContent,
+        // 这条回复实际是谁生成的（逐条来自网关，不是会话选中的模型）。
+        model: gm.model,
         artifacts: [],
         toolCalls: gm.toolCalls,
         attachments: gm.attachments,
@@ -402,6 +412,7 @@ export function createSessionSync(deps: SessionSyncDeps) {
             timestamp: message.timestamp,
             attachments: message.attachments as Message['attachments'],
             toolCalls: message.toolCalls,
+            model: message.model,
           })),
           d.taskId,
         );

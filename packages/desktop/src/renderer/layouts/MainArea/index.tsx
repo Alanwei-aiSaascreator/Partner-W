@@ -25,6 +25,7 @@ import { useUiStore } from '@/stores/uiStore';
 import { useRoomStore } from '@/stores/roomStore';
 import { useCommercialStore } from '@/stores/commercialStore';
 import { cn, formatRelativeTime, formatTokenCount, formatCost, formatCredits } from '@/lib/utils';
+import { resolveModelLabel } from '@/lib/model-display';
 import WindowTitlebar from '@/components/semantic/WindowTitlebar';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -529,6 +530,11 @@ function ChatContent() {
   const agentCatalog = useUiStore((s) =>
     activeTask?.gatewayId ? s.agentCatalogByGateway[activeTask.gatewayId] : undefined,
   );
+  // 消息级模型的展示名要查目录；查不到就退回裸 id（见 `resolveModelLabel`）。
+  // 与 agentCatalog 同款：只在 activeTask 的网关下取，避免跨网关串味。
+  const modelCatalog = useUiStore((s) =>
+    activeTask?.gatewayId ? s.modelCatalogByGateway[activeTask.gatewayId] : undefined,
+  );
   const catalogAgentById = useMemo(
     () => new Map((agentCatalog?.agents ?? []).map((a) => [a.id, a])),
     [agentCatalog?.agents],
@@ -641,6 +647,7 @@ function ChatContent() {
                       localAvatarUrl={identity?.localAvatarUrl}
                       gatewayAvatarUrl={identity?.gatewayAvatarUrl}
                       agentRoleLabel={identity?.agentRoleLabel}
+                      modelLabel={resolveModelLabel(item.message.model, modelCatalog)}
                       highlighted={item.message.id === highlightedId}
                       onHighlightDone={handleHighlightDone}
                       onImageClick={setLightboxSrc}

@@ -21,6 +21,11 @@ interface ChatMessageProps {
   localAvatarUrl?: string;
   gatewayAvatarUrl?: string;
   agentRoleLabel?: string;
+  /**
+   * 这条回复**实际**由哪个模型生成（展示名，由调用方从 `message.model` + 目录解析）。
+   * 没有就不传 —— 组件不会拿会话级模型/picker 补一个。
+   */
+  modelLabel?: string;
   highlighted?: boolean;
   onHighlightDone?: () => void;
   onImageClick?: (src: string) => void;
@@ -188,6 +193,7 @@ const ChatMessage = memo(function ChatMessage({
   localAvatarUrl,
   gatewayAvatarUrl,
   agentRoleLabel,
+  modelLabel,
   highlighted,
   onHighlightDone,
   onImageClick,
@@ -286,12 +292,23 @@ const ChatMessage = memo(function ChatMessage({
       />
 
       <div className={cn('min-w-0 flex-1', isUser && 'text-right')}>
-        {!isUser && (agentName || agentRoleLabel) && (
+        {!isUser && (agentName || agentRoleLabel || modelLabel) && (
           <div className="mb-1.5 flex min-w-0 flex-wrap items-center gap-2 text-[var(--text-muted)]">
             {agentName ? <div className="type-label truncate text-[var(--text-secondary)]">{agentName}</div> : null}
             {agentRoleLabel ? (
               <span className="type-meta inline-flex items-center rounded-full border border-[var(--border-subtle)] bg-[var(--bg-tertiary)] px-2 py-0.5 text-[var(--text-muted)]">
                 {agentRoleLabel}
+              </span>
+            ) : null}
+            {/* 这条回复实际是谁生成的 —— 取自网关逐条消息的 model，不是会话选中的模型。
+                模型自述不可信（会照抄历史里上一轮的答案），所以这枚徽章是用户唯一的可验证来源。 */}
+            {modelLabel ? (
+              <span
+                data-testid="model-badge"
+                title={message.model}
+                className="type-meta inline-flex items-center rounded-full border border-[var(--border-subtle)] bg-[var(--bg-tertiary)] px-2 py-0.5 text-[var(--text-muted)]"
+              >
+                {modelLabel}
               </span>
             ) : null}
           </div>

@@ -271,4 +271,97 @@ describe('normalizeAssistantTurns', () => {
       { fileName: 'out.png', dataUrl: 'file:///Users/x/out.png', mimeType: 'image/png' },
     ]);
   });
+
+  // 消息级 model —— 「这条回复到底是谁生成的」的唯一可信来源。
+  // 形状是**实测**的（2026-09-13 打网关 chat.history + 读 transcript）：
+  // assistant 记录带 role/content/api/provider/model/usage/stopReason/timestamp；
+  // **user 记录没有 model**。模型自述不可信（会照抄历史），所以 UI 只认这个字段。
+  it('每条 assistant 记录各带自己的 model，落到各自的 turn 上', () => {
+    const rawMsgs: RawHistoryMessage[] = [
+      { role: 'user', timestamp: 1000, content: [{ type: 'text', text: '第一个问题' }] },
+      { role: 'assistant', timestamp: 2000, model: 'glm-4.7', content: [{ type: 'text', text: '回答一' }] },
+      { role: 'user', timestamp: 3000, content: [{ type: 'text', text: '第二个问题' }] },
+      { role: 'assistant', timestamp: 4000, model: 'qwen-turbo', content: [{ type: 'text', text: '回答二' }] },
+    ];
+
+    const turns = normalizeAssistantTurns(rawMsgs);
+
+    expect(turns).toHaveLength(2);
+    expect(turns[0]).toMatchObject({ content: '回答一', model: 'glm-4.7' });
+    expect(turns[1]).toMatchObject({ content: '回答二', model: 'qwen-turbo' });
+  });
+
+  it('同一次回复由多条记录拼成时，取最后一条带 model 的（产出最终正文的那次调用）', () => {
+    const rawMsgs: RawHistoryMessage[] = [
+      {
+        role: 'assistant',
+        timestamp: 2000,
+        model: 'glm-4.7',
+        content: [{ type: 'toolCall', id: 't1', name: 'read_file', arguments: {} }],
+      },
+      { role: 'toolResult', timestamp: 2500, content: [{ type: 'toolResult', id: 't1', result: 'ok' }] },
+      { role: 'assistant', timestamp: 3000, model: 'kimi-k2-thinking', content: [{ type: 'text', text: '读完了' }] },
+    ];
+
+    const turns = normalizeAssistantTurns(rawMsgs);
+
+    expect(turns).toHaveLength(1);
+    expect(turns[0]).toMatchObject({ content: '读完了', model: 'kimi-k2-thinking' });
+  });
+
+  it('同一次回复里缺 model 的记录**不清空**已记下的值', () => {
+    const rawMsgs: RawHistoryMessage[] = [
+      {
+        role: 'assistant',
+        timestamp: 2000,
+        model: 'glm-4.7',
+        content: [{ type: 'toolCall', id: 't1', name: 'read_file', arguments: {} }],
+      },
+      { role: 'toolResult', timestamp: 2500, content: [{ type: 'toolResult', id: 't1', result: 'ok' }] },
+      { role: 'assistant', timestamp: 3000, content: [{ type: 'text', text: '读完了' }] },
+    ];
+
+    const turns = normalizeAssistantTurns(rawMsgs);
+
+    expect(turns).toHaveLength(1);
+    expect(turns[0].model).toBe('glm-4.7');
+  });
+
+  it('没有 model 就是 undefined —— 不猜、不用会话级模型兜底', () => {
+    const rawMsgs: RawHistoryMessage[] = [
+      { role: 'assistant', timestamp: 2000, content: [{ type: 'text', text: '老记录' }] },
+    ];
+
+    const turns = normalizeAssistantTurns(rawMsgs);
+
+    expect(turns).toHaveLength(1);
+    expect(turns[0].model).toBeUndefined();
+  });
+
+  it('gateway-injected 不是真模型，清洗掉', () => {
+    const rawMsgs: RawHistoryMessage[] = [
+      { role: 'assistant', timestamp: 2000, model: 'gateway-injected', content: [{ type: 'text', text: '默认注入' }] },
+    ];
+
+    const turns = normalizeAssistantTurns(rawMsgs);
+
+    expect(turns).toHaveLength(1);
+    expect(turns[0].model).toBeUndefined();
+  });
+
+  it('collapse 逐条保留 model（从网关整会话导入的那条路径）', () => {
+    const messages = collapseDiscoveredMessages(
+      [
+        { role: 'user', content: '第一个问题', timestamp: '2026-04-27T17:03:05.000Z' },
+        { role: 'assistant', content: '回答一', timestamp: '2026-04-27T17:03:05.100Z', model: 'glm-4.7' },
+        { role: 'user', content: '第二个问题', timestamp: '2026-04-27T17:03:06.000Z' },
+        { role: 'assistant', content: '回答二', timestamp: '2026-04-27T17:03:06.100Z', model: 'qwen-turbo' },
+        { role: 'user', content: '第三个问题', timestamp: '2026-04-27T17:03:07.000Z' },
+        { role: 'assistant', content: '注入的', timestamp: '2026-04-27T17:03:07.100Z', model: 'gateway-injected' },
+      ],
+      'task-1',
+    );
+
+    expect(messages.map((m) => m.model)).toEqual([undefined, 'glm-4.7', undefined, 'qwen-turbo', undefined, undefined]);
+  });
 });

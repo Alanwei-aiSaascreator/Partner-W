@@ -53,7 +53,8 @@ CREATE TABLE IF NOT EXISTS messages (
   content TEXT NOT NULL,
   timestamp TEXT NOT NULL,
   image_attachments TEXT,
-  tool_calls TEXT
+  tool_calls TEXT,
+  model TEXT
 );
 
 CREATE TABLE IF NOT EXISTS artifacts (
@@ -98,6 +99,9 @@ function openDatabaseAt(workspacePath: string): void {
   // 模型的推理输出（`stream:"thinking"`）。落库是为了重载后还在 ——
   // 否则它只活在内存的 activeTurn 里，刷新一次就没了。
   migrateAddColumn(sqlite, 'ALTER TABLE messages ADD COLUMN thinking_content TEXT');
+  // 这条回复**实际**是哪个模型生成的（逐条来自网关 transcript）。
+  // 老数据留空 —— 不 backfill、也不拿会话级模型兜底（那是"选中的"不是"生成它的"）。
+  migrateAddColumn(sqlite, 'ALTER TABLE messages ADD COLUMN model TEXT');
 
   for (const col of ['session_key TEXT', 'agent_id TEXT', 'run_id TEXT']) {
     migrateAddColumn(sqlite, `ALTER TABLE messages ADD COLUMN ${col}`);

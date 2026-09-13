@@ -41,6 +41,8 @@ export interface RawHistoryMessage {
   role: string;
   content?: RawContentBlock[];
   timestamp?: number;
+  /** 实际生成这条回复的模型 id。**只有 assistant 记录带**（实测网关 transcript）。 */
+  model?: string;
 }
 
 export interface NormalizedAssistantTurn {
@@ -49,6 +51,8 @@ export interface NormalizedAssistantTurn {
   toolCalls: ToolCall[];
   attachments?: MessageAttachment[];
   timestamp: string;
+  /** 见 `RawHistoryMessage.model`。同一次回复由多条记录拼成时取最后一条带它的。 */
+  model?: string;
 }
 
 export interface DiscoveredMessageShape {
@@ -57,4 +61,6 @@ export interface DiscoveredMessageShape {
   timestamp: string;
   toolCalls?: ToolCall[];
   attachments?: MessageAttachment[];
+  /** 见 `RawHistoryMessage.model`。 */
+  model?: string;
 }
