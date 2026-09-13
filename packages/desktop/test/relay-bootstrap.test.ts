@@ -1,7 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import { RELAY_BASE_URL } from '../src/main/commercial/relay-config.js';
-import { ensureRelayConfigured } from '../src/main/commercial/relay-bootstrap.js';
-import type { RelayBootstrapDeps, RelayGatewayHandle } from '../src/main/commercial/relay-bootstrap.js';
+import { bootstrapRelayWithRetry, ensureRelayConfigured } from '../src/main/commercial/relay-bootstrap.js';
+import type {
+  AuthCheck,
+  RelayBootstrapDeps,
+  RelayBootstrapRunOptions,
+  RelayGatewayHandle,
+} from '../src/main/commercial/relay-bootstrap.js';
 
 /**
  * 启动时的商业配置落地。
@@ -50,7 +55,7 @@ function makeDeps(over: Partial<RelayBootstrapDeps> = {}, initialSnapshot: unkno
   const { gateway, patchConfig, getConfig } = makeGateway(initialSnapshot);
   const deps: RelayBootstrapDeps = {
     hasCommercialClient: () => true,
-    isSignedIn: async () => true,
+    checkAuth: async () => 'authenticated',
     readLicenseKey: async () => LICENSE,
     fetchRelayKey: vi.fn(async () => RELAY_KEY),
     getGateway: () => gateway,
@@ -78,7 +83,7 @@ describe('ensureRelayConfigured —— 纯净/未配置', () => {
   });
 
   it('⭐ 没登录 ⇒ unauthenticated（不是 unlicensed —— 两者界面要说的话不同）', async () => {
-    const { deps, patchConfig } = makeDeps({ isSignedIn: async () => false });
+    const { deps, patchConfig } = makeDeps({ checkAuth: async () => 'unauthenticated' });
     const res = await ensureRelayConfigured(deps);
 
     expect(res.status).toBe('unauthenticated');
@@ -221,14 +226,18 @@ describe('ensureRelayConfigured —— 写失败 & 韧性', () => {
     expect(res.detail).toContain('rejected');
   });
 
-  it('⭐ 会话检查自己抛 ⇒ 当成没登录，不让启动挂掉', async () => {
+  it('⭐ 会话检查自己抛 ⇒ auth-transient（**不是**没登录），不让启动挂掉', async () => {
+    // ⚠️ 这条断言在 2B 里**改过**：原先写的是 `unauthenticated` —— 那正是 bug 本身。
+    //    「问不出来」和「服务端说你没登录」是两件事；前者必须可重试，否则一次网络
+    //    抖动就把用户踢成未登录，且整个会话无法自愈。
     const { deps } = makeDeps({
-      isSignedIn: async () => {
+      checkAuth: async () => {
         throw new Error('supabase down');
       },
     });
     const res = await ensureRelayConfigured(deps);
-    expect(res.status).toBe('unauthenticated');
+    expect(res.status).toBe('auth-transient');
+    expect(res.relayReady).toBe(false);
   });
 
   it('⭐ 取 key 自己抛 ⇒ 不当成已就绪', async () => {
@@ -253,5 +262,108 @@ describe('日志卫生', () => {
     const printed = JSON.stringify(log.mock.calls);
     expect(printed).not.toContain(RELAY_KEY);
     expect(printed).not.toContain(LICENSE);
+  });
+});
+
+/**
+ * ⭐ 2B 回归：`auth-transient`（会话**暂时**问不出来）**绝不能**被固化成「未登录」。
+ *
+ * 实测过的真实事故：同一个有效会话，一次启动报 `unauthenticated`、下一次直接
+ * `applied` —— 因为 `auth.getUser()` 有一次超了 8 秒，而那条路径**既不重试、
+ * 也没有第二次机会**（启动只 bootstrap 一次）。用户表现为：模型列表空的，
+ * 必须重启客户端。
+ *
+ * 这里用**注入的 sleep / now** 把时间钉死，所以断言的是真实的退避行为，不是"等一会儿"。
+ */
+describe('bootstrapRelayWithRetry —— 暂时问不出来 ≠ 没登录', () => {
+  /** 按剧本依次返回 auth 结果；用完后一直返回最后一个。 */
+  function makeRetryHarness(script: AuthCheck[]) {
+    let i = 0;
+    const sleeps: number[] = [];
+    const made = makeDeps({
+      checkAuth: async () => script[Math.min(i++, script.length - 1)] ?? 'authenticated',
+    });
+    const sleep = async (ms: number): Promise<void> => {
+      sleeps.push(ms);
+    };
+    return {
+      ...made,
+      sleeps,
+      /** 固定时钟 ⇒ 总 deadline 不会提前兜底，能单独看出**退避表**这一层上界。 */
+      run: (over: Partial<RelayBootstrapRunOptions> = {}) =>
+        bootstrapRelayWithRetry(made.deps, { sleep, now: () => 0, ...over }),
+    };
+  }
+
+  it('⭐ 登录有效 ⇒ 直接 applied，一次都不重试', async () => {
+    const h = makeRetryHarness(['authenticated']);
+    const res = await h.run();
+    expect(res.status).toBe('applied');
+    expect(res.relayReady).toBe(true);
+    expect(h.sleeps).toEqual([]);
+  });
+
+  it('⭐⭐ 第一次超时、第二次成功 ⇒ 最终 applied（**不用重启客户端**）', async () => {
+    const h = makeRetryHarness(['transient', 'authenticated']);
+    const res = await h.run();
+    expect(res.status).toBe('applied');
+    expect(res.relayReady).toBe(true);
+    // 恰好退避一次就该恢复 —— 不许把"先超时后成功"变成永久未登录
+    expect(h.sleeps).toEqual([2_000]);
+  });
+
+  it('⭐⭐ 连续 transient ⇒ auth-transient（暂不可用），**不是** unauthenticated；且重试有界', async () => {
+    const h = makeRetryHarness(['transient']);
+    const res = await h.run();
+    expect(res.status).toBe('auth-transient');
+    expect(res.status, '一次网络问题就把用户说成"已退出登录"是本轮要修的 bug').not.toBe('unauthenticated');
+    expect(res.relayReady).toBe(false);
+    // ⚠️ 退避**必须越过 supabase-js 的刷新失败冷却期（60s）**，否则冷却期内
+    //    每次重试都只拿到缓存的失败，等于没重试。合计 112s。
+    expect(h.sleeps).toEqual([2_000, 5_000, 15_000, 30_000, 60_000, 60_000]);
+    // 冷却期一过还得多给一次机会，别赌"恰好掐准边界"
+    expect(h.sleeps.filter((ms) => ms >= 60_000).length, '至少两次机会越过冷却期').toBeGreaterThanOrEqual(2);
+  });
+
+  it('⭐⭐ 明确未登录（401/403）⇒ unauthenticated，且**一次都不重试**', async () => {
+    const h = makeRetryHarness(['unauthenticated']);
+    const res = await h.run();
+    expect(res.status).toBe('unauthenticated');
+    expect(res.relayReady).toBe(false);
+    // 对**真正无效**的凭证不该反复打服务端
+    expect(h.sleeps).toEqual([]);
+  });
+
+  it('⭐ 重试后成功走的是正常幂等路径，不重复写配置', async () => {
+    const h = makeRetryHarness(['transient', 'authenticated']);
+    expect((await h.run()).status).toBe('applied');
+    expect(h.patchConfig).toHaveBeenCalledTimes(1);
+    // 第二次：网关里已经有指向中转的 provider ⇒ 幂等命中，一个字节都不再写
+    expect((await h.run()).status).toBe('already-applied');
+    expect(h.patchConfig).toHaveBeenCalledTimes(1);
+  });
+
+  it('⭐ 退避再久也不会越过总 deadline（否则等于无限重试）', async () => {
+    let t = 0;
+    const h = makeRetryHarness(['transient']);
+    const res = await bootstrapRelayWithRetry(h.deps, {
+      sleep: async (ms) => {
+        h.sleeps.push(ms);
+        t += ms;
+      },
+      now: () => t,
+      waitForGatewayMs: 10_000,
+    });
+    expect(res.status).toBe('auth-transient');
+    expect(t, '总等待时间超过了 deadline').toBeLessThanOrEqual(10_000);
+  });
+
+  it('⭐ runtime-not-ready 仍然照旧轮询（别把既有行为弄丢）', async () => {
+    let calls = 0;
+    const { gateway, patchConfig } = makeGateway();
+    const made = makeDeps({ getGateway: () => (calls++ < 2 ? null : gateway) });
+    const res = await bootstrapRelayWithRetry(made.deps, { sleep: async () => {}, now: () => 0 });
+    expect(res.status).toBe('applied');
+    expect(patchConfig).toHaveBeenCalledTimes(1);
   });
 });

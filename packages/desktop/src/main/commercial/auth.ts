@@ -1,6 +1,8 @@
 import type { CommercialAccountOverview, CommercialLicenseSummary, IpcResult } from '@clawwork/shared';
 import { getCommercialClient, resetCommercialClient } from './client.js';
 import { deviceFingerprint } from './license.js';
+import { classifyAuthFailure, type AuthCheck } from './auth-classify.js';
+import { getDebugLogger } from '../debug/index.js';
 
 export interface CommercialProfile {
   userId: string;
@@ -170,6 +172,77 @@ export async function signOutCommercial(): Promise<IpcResult> {
   } catch (error) {
     return fail(error, 'sign_out_failed');
   }
+}
+
+/**
+ * 探测结果的诊断日志。
+ *
+ * ⚠️ 只记**分类依据**（错误类名 / status / code / 耗时），**不记任何 token**。
+ * 没有它就只能看到一句 `auth-transient-failure`，完全不知道是"超时"还是
+ * "fetch 直接失败"——2026-09-13 排查时就卡在这一步。
+ */
+function logProbe(verdict: AuthCheck | 'timeout', elapsedMs: number, error?: unknown): void {
+  const e = error as { name?: unknown; status?: unknown; code?: unknown } | undefined;
+  getDebugLogger().info({
+    domain: 'commercial',
+    event: 'commercial.auth.probe',
+    data: {
+      verdict,
+      elapsedMs,
+      ...(e ? { errorName: String(e.name ?? ''), errorStatus: e.status ?? null, errorCode: e.code ?? null } : {}),
+    },
+  });
+}
+
+/**
+ * 只回答一个问题：**这个会话现在有没有效**。三态，不是布尔。
+ *
+ * 为什么不复用 `readSessionState`：那个函数存在的意义是给界面一份**完整快照**
+ * （profile + orgs），失败一律塌缩成 `{signedIn:false}`——它区分不了
+ * 「401」和「8 秒超时」。而启动路径**必须**分清：前者要把用户当未登录，
+ * 后者只是暂时问不出来、应该重试（见 auth-classify.ts 的实测依据）。
+ *
+ * ⚠️ 超时**不取消**底层请求，只是不再等它 —— 每次探测仍然只发一次 `getUser()`，
+ * 重试次数由调用方（bootstrapCommercialRelay）有界控制，不会打爆服务端。
+ */
+export async function probeAuth(): Promise<AuthCheck> {
+  const supabase = getCommercialClient();
+  // 没有商业层客户端不在本函数的语义里（调用方先看 hasCommercialClient）。
+  // 真走到这儿只能保守当成"没登录"，反正 `relay.bootstrap` 会先短路。
+  if (!supabase) return 'unauthenticated';
+
+  const startedAt = Date.now();
+  const timedOut = Symbol('auth-probe-timeout');
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let raced: { user: unknown; error: unknown } | typeof timedOut;
+  try {
+    raced = await Promise.race([
+      supabase.auth
+        .getUser()
+        .then((r) => ({ user: r.data.user as unknown, error: r.error as unknown }))
+        // supabase-js 多数时候把网络失败放进 `error`，但也会直接抛 —— 两条都收。
+        .catch((error: unknown) => ({ user: null as unknown, error })),
+      new Promise<typeof timedOut>((resolve) => {
+        timer = setTimeout(() => resolve(timedOut), NETWORK_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+
+  const elapsedMs = Date.now() - startedAt;
+  if (raced === timedOut) {
+    logProbe('timeout', elapsedMs);
+    return 'transient';
+  }
+  if (raced.error) {
+    const verdict = classifyAuthFailure(raced.error);
+    logProbe(verdict, elapsedMs, raced.error);
+    return verdict;
+  }
+  const verdict: AuthCheck = raced.user ? 'authenticated' : 'unauthenticated';
+  logProbe(verdict, elapsedMs);
+  return verdict;
 }
 
 export async function readSessionState(): Promise<IpcResult<CommercialSessionState>> {

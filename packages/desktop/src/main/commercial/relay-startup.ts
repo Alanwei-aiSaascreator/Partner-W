@@ -8,10 +8,10 @@
  */
 
 import { getCommercialClient } from './client.js';
-import { readSessionState } from './auth.js';
+import { probeAuth } from './auth.js';
 import { deviceFingerprint, readLicenseStatus } from './license.js';
 import { fetchFirstRelayModel } from './relay-config.js';
-import { ensureRelayConfigured } from './relay-bootstrap.js';
+import { bootstrapRelayWithRetry } from './relay-bootstrap.js';
 import type { RelayBootstrapDeps, RelayBootstrapResult, RelayGatewayHandle } from './relay-bootstrap.js';
 import { getAllGatewayClients } from '../ws/index.js';
 import { getDebugLogger } from '../debug/index.js';
@@ -68,10 +68,8 @@ function log(event: string, data: Record<string, unknown> = {}): void {
 export function buildRelayBootstrapDeps(): RelayBootstrapDeps {
   return {
     hasCommercialClient: () => getCommercialClient() !== null,
-    isSignedIn: async () => {
-      const res = await readSessionState();
-      return Boolean(res.ok && res.result?.signedIn);
-    },
+    // 三态，不是布尔 —— 「没登录」和「暂时问不出来」必须分开（见 auth-classify.ts）。
+    checkAuth: () => probeAuth(),
     readLicenseKey: async () => {
       const res = await readLicenseStatus();
       return res.ok && res.result?.licenseKey ? res.result.licenseKey : null;
@@ -84,36 +82,17 @@ export function buildRelayBootstrapDeps(): RelayBootstrapDeps {
   };
 }
 
-/** 等网关连上的窗口。首次启动要等部署 + spawn + WS 握手。 */
-const DEFAULT_WAIT_MS = 120_000;
-const POLL_MS = 1000;
-
 /**
  * 启动时把商业配置落到网关上。**永不抛**。
  *
- * 为什么不能只是"调一次 `ensureRelayConfigured`"：首次启动时 `initAllGateways()`
- * 刚刚发起连接，网关还没握上手，此刻调用只会得到 `runtime-not-ready`。
- * 所以这里**等**（有上界），而不是抢跑 —— 抢跑正是原先
- * `configureRelay` 那条 `relay.config-no-gateway` 一堆 warn 的来源。
+ * 重试策略在 `relay-bootstrap.ts` 的 `bootstrapRelayWithRetry` 里（那边没有 electron
+ * 依赖，可以被单测钉死）；这里只负责**接线**与"启动路径绝不抛"。
  */
 export async function bootstrapCommercialRelay(
   opts: { waitForGatewayMs?: number } = {},
 ): Promise<RelayBootstrapResult> {
-  const waitMs = opts.waitForGatewayMs ?? DEFAULT_WAIT_MS;
-
   try {
-    const deps = buildRelayBootstrapDeps();
-
-    if (!deps.hasCommercialClient()) return { status: 'not-configured', relayReady: false };
-
-    const deadline = Date.now() + waitMs;
-    for (;;) {
-      const res = await ensureRelayConfigured(deps);
-      // 只有「网关没连上」值得等；其余结论（没登录/没卡/写失败）等多久都一样。
-      if (res.status !== 'runtime-not-ready') return res;
-      if (Date.now() >= deadline) return res;
-      await new Promise<void>((resolve) => setTimeout(resolve, POLL_MS));
-    }
+    return await bootstrapRelayWithRetry(buildRelayBootstrapDeps(), opts);
   } catch (error) {
     // 这一层永不抛：启动路径上抛出去就是白屏。
     console.error('[commercial] relay bootstrap 失败（忽略，界面照常）:', error);

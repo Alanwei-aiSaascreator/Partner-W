@@ -8,6 +8,7 @@ import {
   ensureArtifacts,
   freshUserData,
   launchApp,
+  nodeProcesses,
   markFailure,
   portHasGateway,
   readModels,
@@ -18,6 +19,8 @@ import {
 } from './harness.js';
 import { sweepStaleProfiles } from '../helpers/temp-root.js';
 import { readDevProvision, provisionProfile } from './provision.js';
+import { startAuthFaultProxy } from './auth-fault-proxy.js';
+import { watchSessionStore, type SessionStoreWatcher } from './session-store-watch.js';
 
 /**
  * 阶段 2A：商业激活 → **真模型**出现。
@@ -84,11 +87,94 @@ async function shot(page: Page, name: string): Promise<void> {
   }
 }
 
-async function bootConfigured(tag: string, opts: { supabaseUrlOverride?: string; skipSession?: boolean }) {
+/**
+ * 读这个 profile 里应用写下的 `relay.bootstrap.*` 事件。
+ *
+ * 用它而不是看界面：2B 要证的正是**分类**（"暂时问不出来" vs "没登录"），
+ * 而这区分目前只体现在日志与状态里（渲染层还没有第三种表达）。
+ *
+ * ⚠️ 日志里**绝不含任何密钥**（`relay-bootstrap` 那条纪律），所以可以放心读。
+ */
+function bootstrapEvents(userDataDir: string): string[] {
+  const dir = path.join(userDataDir, 'logs');
+  if (!fs.existsSync(dir)) return [];
+  const file = fs.readdirSync(dir).find((f) => f.endsWith('.ndjson'));
+  if (!file) return [];
+  const out: string[] = [];
+  for (const line of fs.readFileSync(path.join(dir, file), 'utf-8').split('\n')) {
+    if (!line.trim()) continue;
+    try {
+      const d = JSON.parse(line) as { event?: string };
+      const ev = String(d.event ?? '');
+      if (ev.startsWith('relay.bootstrap') || ev.startsWith('commercial.relay.bootstrap')) out.push(ev);
+    } catch {
+      /* 半行/坏行跳过 */
+    }
+  }
+  return out;
+}
+
+interface LogEvent {
+  ts: string;
+  event: string;
+  data?: Record<string, unknown>;
+}
+
+/**
+ * 读这个 profile 里**全部**结构化日志事件（按时间升序）。
+ *
+ * 与 `bootstrapEvents` 的区别：那个只回事件名、只看 `relay.bootstrap*`；
+ * 这个要 `ts` 与 `data`，才能把 `commercial.auth.probe` 的耗时/错误
+ * 和**代理侧**的请求次数按时间对齐 —— 6b 的决定性证据就是这么来的。
+ *
+ * ⚠️ 日志里**绝不含任何密钥**（`relay-bootstrap` 那条纪律），所以可以放心读。
+ */
+function readLogEvents(userDataDir: string): LogEvent[] {
+  const dir = path.join(userDataDir, 'logs');
+  if (!fs.existsSync(dir)) return [];
+  const out: LogEvent[] = [];
+  for (const file of fs
+    .readdirSync(dir)
+    .filter((f) => f.endsWith('.ndjson'))
+    .sort()) {
+    for (const line of fs.readFileSync(path.join(dir, file), 'utf-8').split('\n')) {
+      if (!line.trim()) continue;
+      try {
+        const d = JSON.parse(line) as { ts?: string; event?: string; data?: Record<string, unknown> };
+        if (d.ts && d.event) out.push({ ts: d.ts, event: String(d.event), data: d.data });
+      } catch {
+        /* 半行/坏行跳过 */
+      }
+    }
+  }
+  return out.sort((a, b) => a.ts.localeCompare(b.ts));
+}
+
+/** 只取会话探测事件（`commercial.auth.probe`）。 */
+function authProbes(userDataDir: string): LogEvent[] {
+  return readLogEvents(userDataDir).filter((e) => e.event === 'commercial.auth.probe');
+}
+
+async function bootConfigured(
+  tag: string,
+  opts: {
+    supabaseUrlOverride?: string;
+    skipSession?: boolean;
+    /**
+     * provision 铺完、**应用还没启动**的那一刻。
+     *
+     * 只在需要"改动前基线"的场景用（6b 的会话文件观察器）：一旦 app 起来了，
+     * 第一次 `setItem` 就可能已经发生，基线就取不到种子状态了。
+     */
+    afterProvision?: (userDataDir: string) => void;
+  },
+) {
+  const { afterProvision, ...provisionOpts } = opts;
   // `freshUserData` 自己就把目录登记进收摊台账了 —— 别在这里再补 `trackProfile`
   // （登记只有一处，见 harness 里 `freshTrackedProfile` 的说明）。
   const userDataDir = freshUserData(tag);
-  provisionProfile(userDataDir, provision!, { workspacePath: WORKSPACE, ...opts });
+  provisionProfile(userDataDir, provision!, { workspacePath: WORKSPACE, ...provisionOpts });
+  afterProvision?.(userDataDir);
   currentUserData = userDataDir;
   app = launchApp(userDataDir, CDP);
   expect(await waitForGateway(), '网关没起来').toBe(true);
@@ -261,6 +347,16 @@ test('场景 5a：配了商业层但**没登录** ⇒ 不伪造模型，网关�
     const models = await readModels(page);
     expect(models.relay).toHaveLength(0);
     expect(await portHasGateway()).toBe(true);
+
+    // 2B：**明确**没登录必须被认成 `unauthenticated`，既不能含糊成"暂不可用"，
+    //     也不该对一份"根本没有会话"的客户端反复重试。
+    //     （`AuthSessionMissingError` 的 status 是 **400** —— 只看状态码会归错的正是这一条。）
+    const events = bootstrapEvents(currentUserData);
+    expect(events, `没认出"明确未登录"：${events.join(' → ')}`).toContain('relay.bootstrap.unauthenticated');
+    expect(events, `把"没登录"说成了暂时失败：${events.join(' → ')}`).not.toContain(
+      'relay.bootstrap.auth-transient-failure',
+    );
+    expect(events, `对"没登录"做了无谓重试：${events.join(' → ')}`).not.toContain('relay.bootstrap.retry');
     console.log(`\n[2A] 场景5a 未登录：relayModels=${models.relay.length} gateway=up`);
   } finally {
     await browser.close().catch(() => {});
@@ -283,11 +379,438 @@ test('场景 5b：商业后端**不可达** ⇒ 同样不伪造、网关照常�
     const models = await readModels(page);
     expect(models.relay).toHaveLength(0);
     expect(await portHasGateway()).toBe(true);
-    console.log(`\n[2A] 场景5b 商业后端不可达：relayModels=${models.relay.length} gateway=up`);
+
+    // ⭐ 2B 的核心断言：后端**不可达**只是"暂时问不出来"，**绝不是**"用户没登录"。
+    //    旧代码在这里报的正是 `unauthenticated` —— 一次网络问题就把用户的会话否掉，
+    //    而且整个会话都不会再列模型。
+    await expect
+      .poll(() => bootstrapEvents(currentUserData).includes('relay.bootstrap.auth-transient-failure'), {
+        timeout: 60_000,
+      })
+      .toBe(true);
+    const events = bootstrapEvents(currentUserData);
+    expect(events, `后端不可达被说成了"未登录"：${events.join(' → ')}`).not.toContain(
+      'relay.bootstrap.unauthenticated',
+    );
+    // 重试必须**有界**：退避表用完就停（2s / 5s / 15s / 30s 各一次）
+    const retries = events.filter((e) => e === 'relay.bootstrap.retry').length;
+    expect(retries, `重试次数没有上界：${retries}`).toBeLessThanOrEqual(4);
+    console.log(
+      `\n[2A] 场景5b 商业后端不可达：relayModels=${models.relay.length} gateway=up（退避重试 ${retries} 次后有界停止）`,
+    );
   } finally {
     await browser.close().catch(() => {});
     await stopAll();
   }
+});
+
+// ---------------------------------------------------------------- 场景 6（2B 核心）
+
+/**
+ * 2B 的核心验收。**拆成两半**，因为一半能证、一半证不了（见 6b）。
+ *
+ * 故障是**受控**注入的：`supabaseUrl` 指到一个本地反向代理，它在开关打开时
+ * 把 `/auth/v1/*` 拖到 12 秒才回。客户端的会话检查窗口是 8 秒 ⇒ **它自己先超时**，
+ * 而底层请求最终还是会成功 —— 这正是真实事故的形状（措辞很重要：**不是**"网络断了"，
+ * 而是"请求还在路上，我们的窗口先到了"）。
+ */
+test('场景 6a：会话检查**暂时**问不出来 ⇒ 判"暂不可用"，**绝不判"未登录"**，且重试有界', async () => {
+  test.setTimeout(15 * 60_000);
+  test.skip(!provision, '同上');
+  await stopAll();
+
+  const proxy = await startAuthFaultProxy(provision!.supabaseUrl);
+  try {
+    const { userDataDir, browser } = await bootConfigured('authtransient', {
+      supabaseUrlOverride: proxy.url,
+    });
+    try {
+      await expect
+        .poll(() => bootstrapEvents(userDataDir).includes('relay.bootstrap.auth-transient-failure'), {
+          timeout: 150_000,
+        })
+        .toBe(true);
+
+      const events = bootstrapEvents(userDataDir);
+      // ⭐ 2B 的核心：暂时问不出来 ≠ 没登录
+      expect(events, `暂时失败被说成了"未登录"：${events.join(' → ')}`).not.toContain(
+        'relay.bootstrap.unauthenticated',
+      );
+      // 其它请求（org_members / activate_license）没被误伤 ⇒ 代理转发是通的
+      // ⚠️ 这里判"注入点被真的打到过"要用 **totalHits**（到达即计数），
+      //    不是 `failingHits` —— 后者只在 failing 期间增长，是旧版把结论带偏的那个口径。
+      expect(proxy.totalHits(), `注入点没被真的打到过；路径=${JSON.stringify(proxy.requestPaths())}`).toBeGreaterThan(
+        0,
+      );
+      expect(proxy.failingHits(), '失败相期间应当有请求到达').toBeGreaterThan(0);
+      // 网关照常 —— runtime ready ≠ commercial ready，两者互不牵连
+      expect(await portHasGateway()).toBe(true);
+      console.log(
+        `
+[2B] 场景6a 暂时失败：判为 auth-transient（**不是** unauthenticated）` +
+          `；代理 total=${proxy.totalHits()} failing=${proxy.failingHits()} healthy=${proxy.healthyHits()}` +
+          `；网关仍 up\n${proxy.timeline()}`,
+      );
+    } finally {
+      await browser.close().catch(() => {});
+    }
+  } finally {
+    await stopAll();
+    await proxy.close();
+  }
+});
+
+/**
+ * 6b：**后端不可达的 transient outage 恢复后，同一进程能不能自愈**（主验收）。
+ *
+ * ## ⚠️ 两个场景必须分开，别混（2026-09-13 的教训）
+ *
+ * | 场景 | 上游有没有被碰到 | 用在 |
+ * |---|---|---|
+ * | **fail-before-upstream**（请求到代理为止，**不转发**） | 否 —— token 没被消费 | ⭐ **主 6b** |
+ * | `slow`（延迟 12s **后照常转发**，上游 200） | **是** —— 属于 response-loss | 6c（独立诊断，fixme） |
+ *
+ * 早先把 `slow` 当成主 6b，得到的现象（heal 后仍不恢复）**不能**归给"后端不可达" ——
+ * 那里面混着"上游已经成功处理、客户端没收到"这个**另一类**故障。
+ *
+ * ---
+ *
+ * （下面是 2026-09-13 的旧记录，保留作依据）
+ *
+ * ## ⚠️ 2026-09-13 更正：先前那条证据作废
+ *
+ * 上一轮写在这里的"代理命中数恢复后冻住（3 → 3）⇒ SDK 不再访问网络"**是错的**。
+ * 那个数取自 `failingHits`，而它**只在 `failing === true` 时增长** ——
+ * `setFailing(false)` 之后它本来就**必然**冻住，它压根不观察 heal 之后的事。
+ * 用一个必然冻结的计数器去证明"没有请求"，是拿定义当结论。
+ * `auth-fault-proxy.ts` 已补 `totalHits` / `healthyHits`（到达即计数、与 phase 无关）。
+ *
+ * ## 隔离实验（合成 token + 本地代理，不碰真实凭证）反而证伪了"永久中毒"
+ *
+ *   1. 失败期一次 `getUser()` 会连发 **8 个** `/token?grant_type=refresh_token`
+ *      （auth-js 自己的 200/400/800… 退避，`GoTrueClient.js:4025-4041`），
+ *      最终返回 `AuthRetryableFetchError`，并**把失败写进实例缓存**
+ *      （`GoTrueClient.js:4319-4323`）。
+ *   2. heal 之后 **T+2s** 再 `getUser()`：**0ms、0 个请求** —— 缓存命中
+ *      （`GoTrueClient.js:4206-4211`）。**这一条是真的**。
+ *   3. 但 heal 之后 **T+65s**（> `REFRESH_FAILURE_COOLDOWN_MS` = 60s）再 `getUser()`：
+ *      **真的发了 2 个请求**（`/token` + `/user`），刷新**成功**、`lastRefreshFailure`
+ *      被清空（`:4286`），会话恢复。
+ *   ⇒ 那个"0ms 不请求"是 **60 秒串行失败冷却**，**不是永久状态**。
+ *     新 client 天然没有这个字段（`:119` 构造为 `null`），重建确实能绕过 ——
+ *     但**不需要**绕过，等够 60 秒它自己就绕过了。
+ *
+ * 源码事实（`@supabase/auth-js@2.116.0`，`dist/main/GoTrueClient.js`）：
+ *   - 短路条件 = 实例字段 `lastRefreshFailure`，**按 refresh token 字符串**为键
+ *   - 清除条件 = 冷却到期 / 传入**不同**的 refresh token / 刷新**成功**
+ *   - `refreshSession()` 走**同一条** `_callRefreshToken`（`:3229`），**不绕过**冷却
+ *
+ * ## ⇒ 真正还没答的问题（下一轮）
+ *
+ * 原来那个"永久中毒"的结论倒了，**6b 仍然没证成**，但问题变成了：
+ *
+ *   > heal 之后**到底有没有** probe 落在冷却窗口**之外**？
+ *
+ * `AUTH_RETRY_BACKOFF_MS` 的累计时点是 2 / 7 / 22 / 52 / 112 / 172 秒。
+ * 冷却从**每次真实失败**起算 60 秒，而缓存命中**不续期**。所以理论上
+ * T+112s 那次就该发真实请求 —— 除非它之前每次都在**续期**。
+ * 另外本场景注入的是**"慢"**（12s 后照常成功）而不是 503：那种形状下底层刷新
+ * **最终会成功**、缓存根本不会被写入，行为可能与上面的 503 实验不同。
+ * 这条**必须用新 telemetry 在打包态实测**，不能再靠推理。
+ */
+test('场景 6b：会话检查**暂时**失败后网络恢复 ⇒ 不重启客户端也能自愈（端到端）', async () => {
+  test.setTimeout(30 * 60_000);
+  test.skip(!provision, '同上');
+  await stopAll();
+
+  const proxy = await startAuthFaultProxy(provision!.supabaseUrl);
+  // ⭐ 主 6b 用 **fail-before-upstream**：请求到代理为止，**绝不转发上游**。
+  //    这才是"后端不可达/网络瞬断"的忠实模型 —— 上游没被碰到 ⇒ token 不会被消费。
+  //    （默认的 `slow` 会转发并让上游成功，那是 response-loss，属于独立的 6c。）
+  proxy.setMode('fail-before-upstream');
+  // ⭐ 会话落盘的**外部**观察器（不解密、只记"写了几次、什么时候"）。
+  //    它回答的是 2B 最后一个没证成的分支：heal 之后 SDK 到底有没有把新会话写下去。
+  //    必须在 provision 之后、app 启动之前建立基线，所以走 `afterProvision`。
+  let store: SessionStoreWatcher | null = null;
+  // ⚠️ 必须包一层函数再读：`store` 是在 `afterProvision` **回调里**赋值的，
+  //    直接 `if (store)` 会被 TS 的控制流分析判成 `never`（它看不到回调里的赋值）。
+  const printStore = (label: string): void => {
+    if (!store) return;
+    console.log(`[6b] ======== ${label} ========`);
+    console.log(store.report());
+  };
+  const stopStore = (): void => {
+    store?.stop();
+  };
+  /** 观察到的持久化写入次数（只说明"写没写"，不说明写的是哪个 token）。 */
+  const storeChanges = (): number => store?.changes().length ?? 0;
+  try {
+    const { userDataDir, browser, page } = await bootConfigured('selfheal', {
+      supabaseUrlOverride: proxy.url,
+      afterProvision: (dir) => {
+        store = watchSessionStore(dir);
+      },
+    });
+    try {
+      // ---- 身份：恢复前后必须是**同一个 app 进程**（否则"自愈"可能是靠重启蒙的）
+      const appPidBefore = app?.proc.pid ?? null;
+      const procsBefore = nodeProcesses().map((p) => p.pid);
+      console.log(`\n[6b] app PID=${appPidBefore}  userData=${userDataDir}`);
+
+      // ---- 阶段一：确认真的进入了"暂时问不出来"
+      // ⚠️ 用**轮询**而不是 sleep：注入的是"慢"（12s 才回），客户端自己的 8s 窗口
+      //    先到 ⇒ 我们判 transient。这一步只观察，不替产品做任何事。
+      await expect
+        .poll(
+          () => {
+            const probes = authProbes(userDataDir);
+            return probes.some((p) => String(p.data?.verdict ?? '') === 'transient');
+          },
+          { timeout: 240_000, intervals: [2_000] },
+        )
+        .toBe(true);
+
+      // 起点以「最后一次**真实失败**的刷新请求」为准 ——
+      // lastRefreshFailure.expiresAt 就是那一刻写下的，不从进程启动算。
+      const failedEvents = proxy.events().filter((e) => e.phase === 'failing');
+      expect(failedEvents.length, `注入点没被真的打到过；${proxy.timeline()}`).toBeGreaterThan(0);
+
+      // ⭐⭐ failing 相的 **invariant**：请求到了本地代理，但**一次都没转发给上游**。
+      //     这一条钉死了"这是纯后端不可达，不是 ambiguous completion"。
+      expect(proxy.totalHits(), 'failing 相没有任何请求到达代理').toBeGreaterThan(0);
+      expect(proxy.failingHits(), 'failing 相计数为 0').toBeGreaterThan(0);
+      expect(
+        proxy.forwardedHits(),
+        `failing 相竟然转发了 ${proxy.forwardedHits()} 次给上游 ⇒ 注入实现错误（模式=${proxy.mode()}）；${proxy.timeline()}`,
+      ).toBe(0);
+      expect(proxy.upstreamSuccessHits(), 'failing 相上游不该有成功').toBe(0);
+      const lastFailed = failedEvents.at(-1)!;
+      const healAt = Date.now();
+      console.log(
+        `[6b] 最后失败请求: #${lastFailed.seq} t=${lastFailed.tMs}ms ${lastFailed.method} ${lastFailed.pathname}`,
+      );
+
+      // ---- 阶段二：heal。之后**什么都不触发**，只观察产品自己的 bounded retry
+      const atHeal = {
+        total: proxy.totalHits(),
+        failing: proxy.failingHits(),
+        healthy: proxy.healthyHits(),
+        tMs: Date.now(),
+      };
+      expect(atHeal.healthy, 'heal 当下不该已经有 healthy 请求').toBe(0);
+      proxy.setFailing(false);
+      console.log(
+        `[6b] HEAL: total=${atHeal.total} failing=${atHeal.failing} healthy=${atHeal.healthy}（之后测试不主动触发任何 auth 调用）`,
+      );
+
+      // ---- 决定性断言（§8）：heal 之后**真的又有网络请求**
+      //   ⚠️ 只用 totalHits / healthyHits。**永远不要**用 failingHits 推断 heal 后行为
+      //   —— 它只在 failing 期间增长，heal 后必然冻住（旧结论就是被这个口径带偏的）。
+      await expect
+        .poll(() => proxy.totalHits() > atHeal.total && proxy.healthyHits() > 0, {
+          timeout: 420_000,
+          intervals: [2_000],
+        })
+        .toBe(true);
+
+      const firstHealthy = proxy.events().find((e) => e.phase === 'healthy')!;
+      const lastFailureToFirstHealthyMs = firstHealthy.tMs - lastFailed.tMs;
+      console.log(
+        `[6b] 第一个 healthy 请求: #${firstHealthy.seq} ${firstHealthy.method} ${firstHealthy.pathname}` +
+          `（最后一次真实失败之后 ${(lastFailureToFirstHealthyMs / 1000).toFixed(1)}s；heal 之后 ${((Date.now() - atHeal.tMs) / 1000).toFixed(1)}s）`,
+      );
+
+      // ---- §7：双时间线 —— **先打证据再断言**，失败报告里也已经有完整时间线。
+      const logEvents = readLogEvents(userDataDir);
+      const t0 = new Date(logEvents[0] ? logEvents[0].ts : new Date().toISOString()).getTime();
+      console.log('[6b] ======== 双时间线（probe × proxy）========');
+      for (const p of authProbes(userDataDir)) {
+        const t = ((new Date(p.ts).getTime() - t0) / 1000).toFixed(1);
+        const d = p.data ?? {};
+        console.log(
+          '  T+' + t.padStart(7) + 's  probe  ' + String(d.verdict) + '  elapsed=' + String(d.elapsedMs) + 'ms',
+        );
+      }
+      console.log(proxy.timeline());
+      printStore('会话落盘（外部观察，未解密）');
+
+      // ⭐ 光"代理看到了请求"还不够 —— 必须证明**真的转发到了上游、且上游成功了**。
+      //    否则"自愈"可能只是代理自己在回话。等 SDK 内部重试跑完再断言。
+      await expect
+        .poll(() => proxy.forwardedHits() > 0 && proxy.upstreamSuccessHits() > 0, {
+          timeout: 240_000,
+          intervals: [2_000],
+        })
+        .toBe(true);
+      console.log(
+        `[6b] upstream 边界: forwarded=${proxy.forwardedHits()} upstreamSuccess=${proxy.upstreamSuccessHits()}`,
+      );
+
+      // ⭐ 稳定不变量：**只要观察到一次真实的健康刷新成功（upstream 2xx 的 /token），
+      //    持久会话就必须留下写入证据**。
+      //    ⚠️ 只断言"有写入"，**不断言次数、不断言内容、不断言是哪个 token**：
+      //    「恰好写 1 次」「恰好 models=13」「恰好第 177 秒成功」都是环境值，不是产品契约。
+      //    加 `healthyTokenOk` 前置条件是因为：若这次会话压根不需要刷新，就不会有写入。
+      const healthyTokenOk = proxy
+        .events()
+        .some(
+          (e) =>
+            e.phase === 'healthy' &&
+            e.pathname.includes('/auth/v1/token') &&
+            e.upstreamStatus !== null &&
+            e.upstreamStatus >= 200 &&
+            e.upstreamStatus < 300,
+        );
+      if (healthyTokenOk) {
+        await expect.poll(() => storeChanges(), { timeout: 30_000, intervals: [500] }).toBeGreaterThan(0);
+        console.log(`[6b] 会话落盘证据: 观察到 ${storeChanges()} 次写入（只证明"有写入"，不证明是哪个 token）`);
+      } else {
+        console.log('[6b] 本次没有观察到健康刷新成功 ⇒ 不要求落盘证据');
+      }
+
+      // 健康的刷新至少打到过 /token **与** /user —— ⚠️ 必须**轮询等**，不能在第一个
+      // healthy 请求刚出现时就查：`/token` 先到、`/user` 要等刷新回来才发。
+      // 不绑死请求次数（SDK 内部重试次数未来可能变），只认"发生过"。
+      await expect
+        .poll(() => proxy.events().some((e) => e.phase === 'healthy' && e.pathname.includes('/auth/v1/token')), {
+          timeout: 120_000,
+          intervals: [2_000],
+        })
+        .toBe(true);
+      await expect
+        .poll(() => proxy.events().some((e) => e.phase === 'healthy' && e.pathname.includes('/auth/v1/user')), {
+          timeout: 240_000,
+          intervals: [2_000],
+        })
+        .toBe(true);
+
+      // ---- §9：全程**不得**把"暂时问不出来"降级成"未登录"
+      const allEvents = readLogEvents(userDataDir).map((e) => e.event);
+      expect(allEvents, `把暂时失败说成了未登录：${allEvents.join(' → ')}`).not.toContain(
+        'relay.bootstrap.unauthenticated',
+      );
+
+      // ---- §10：产品目标 —— relay 落地 + models 非空（不能只验"SDK 发了请求"）
+      await expect
+        .poll(
+          () => {
+            const evs = readLogEvents(userDataDir).map((e) => e.event);
+            return evs.includes('relay.bootstrap.applied') || evs.includes('relay.bootstrap.already-applied');
+          },
+          { timeout: 240_000, intervals: [2_000] },
+        )
+        .toBe(true);
+
+      const models = await waitForRelayModels(page, 1, 240_000);
+      expect(models.relay.length, '网络恢复后商业模型仍然为空').toBeGreaterThan(0);
+
+      // ---- §4：同一个进程 —— 没有偷偷靠重启恢复
+      expect(app?.proc.pid ?? null, 'app 进程换了 ⇒ 恢复可能是靠重启蒙的').toBe(appPidBefore);
+      const procsAfter = nodeProcesses().map((p) => p.pid);
+      console.log(
+        `[6b] 进程核对: app ${appPidBefore} → ${app?.proc.pid}；node ${procsBefore.length} → ${procsAfter.length}`,
+      );
+
+      console.log(
+        `\n[6b] ✅ 自愈成立：代理总请求 ${atHeal.total} → ${proxy.totalHits()}（healthy ${proxy.healthyHits()}）；` +
+          `models=${models.relay.length}；app 进程未变；全程无 unauthenticated`,
+      );
+      void healAt;
+    } finally {
+      await browser.close().catch(() => {});
+    }
+  } finally {
+    // ⭐ 无论 PASS / FAIL / 超时，**一定**把完整时间线打出来 ——
+    //    上一轮就是只在"看到第一个 healthy"时打印，导致 #18/#19 之后发生了什么没留下证据。
+    try {
+      console.log('[6b] ======== FINAL proxy timeline ========');
+      console.log(proxy.timeline());
+      const ud = currentUserData;
+      if (ud) {
+        const evs = readLogEvents(ud);
+        const t0 = new Date(evs[0] ? evs[0].ts : new Date().toISOString()).getTime();
+        console.log('[6b] ======== FINAL probe/bootstrap timeline ========');
+        for (const e of evs) {
+          const isProbe = e.event === 'commercial.auth.probe';
+          if (!isProbe && !e.event.startsWith('relay.bootstrap')) continue;
+          const t = ((new Date(e.ts).getTime() - t0) / 1000).toFixed(1);
+          let extra = '';
+          if (isProbe && e.data) {
+            const d = e.data;
+            extra =
+              '  ' +
+              String(d.verdict) +
+              ' ' +
+              String(d.elapsedMs) +
+              'ms ' +
+              String(d.errorName) +
+              '(' +
+              String(d.errorStatus) +
+              ')';
+          }
+          console.log('  T+' + t.padStart(7) + 's  ' + e.event + extra);
+        }
+      }
+      console.log(
+        '[6b] 计数: total=' +
+          proxy.totalHits() +
+          ' failing=' +
+          proxy.failingHits() +
+          ' healthy=' +
+          proxy.healthyHits() +
+          ' forwarded=' +
+          proxy.forwardedHits() +
+          ' upstreamSuccess=' +
+          proxy.upstreamSuccessHits(),
+      );
+      printStore('FINAL 会话落盘');
+    } catch (e) {
+      console.warn('[6b] finally 打时间线失败（不影响结果）:', e);
+    }
+    stopStore();
+    await stopAll();
+    await proxy.close();
+  }
+});
+
+// ---------------------------------------------------------------- 场景 6c（独立诊断）
+
+/**
+ * 6c：**ambiguous refresh completion / lost refresh response** —— 独立可靠性场景，
+ * **不是**主 2B 的验收（那个是 6b）。
+ *
+ * 形状：`slow` 模式 —— 请求**到达并成功**了上游（Supabase 真的处理了这次 refresh），
+ * 但客户端 8 秒窗口先到、**没收到成功响应**。之后客户端仍持有本地那份（可能已被
+ * 上游 rotate 掉的）refresh token 继续重试。
+ *
+ * ## 为什么单拎出来
+ *
+ * 早先把它当主 6b 用，得到的"heal 后仍不恢复"被误读成"后端不可达恢复不了"。
+ * 但它多了一层：**上游已经消费/轮换了那个 token**，客户端却不知道 —— 这是
+ * response-loss 语义，与"请求压根没到"是两回事。现实网络里两者**都会**发生，
+ * 所以留着它有意义，只是不能混进 2B 的验收口径。
+ *
+ * ## 已知的实测现象（2026-09-13，两轮）
+ *
+ *   - failing 相代理侧 **6 个请求全部 `→ 200 (12s)`** ⇒ 上游每次都成功。
+ *   - heal 后**确有真实请求**（最后失败后 74.3s / 94.6s，越过 60s 冷却），
+ *     但 `/auth/v1/user` 从未出现、`relay.bootstrap.applied` 从未出现。
+ *
+ * ## ⚠️ 还没证明的事（所以先 fixme，别下结论）
+ *
+ *   - upstream 每次 200 是否真的 rotate 出了**不同**的 refresh token？
+ *   - Supabase 的 reuse window 在这个环境里实际是什么行为？
+ *   - 当前 session 是否**真的**因此不可恢复，还是只是恢复得更慢？
+ *
+ * 回答这三个问题需要 token 的 **SHA-256 指纹**（只记指纹，绝不记原文），
+ * 以及 Supabase 服务端的 rotation/reuse 语义（属 backend semantic，需官方依据）。
+ */
+test.fixme('场景 6c：刷新响应丢失（上游已处理、客户端超时）—— 独立可靠性诊断，非主 2B 验收', async () => {
+  test.setTimeout(30 * 60_000);
+  test.skip(!provision, '同上');
+  // 形状：proxy.setMode('slow')（默认）→ 注入 → 判 transient → heal → **不重启**
+  // 取证：记录每次请求/响应里 refresh token 的 sha256 前 12 位（**不记原文**）
+  // 判据：heal 后是否出现 healthy + forwarded + upstreamSuccess，以及是否最终 applied
 });
 
 // ---------------------------------------------------------------- 场景 3

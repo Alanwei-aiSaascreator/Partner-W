@@ -34,6 +34,7 @@
  */
 
 import { relayProviderIds, applyRelayConfig, RELAY_PROVIDER_ID } from './relay-config.js';
+import type { AuthCheck } from './auth-classify.js';
 
 /**
  * 结果分类。**刻意分得细**：「没登录」「没卡」「网关没连上」「写失败」是四件
@@ -41,12 +42,19 @@ import { relayProviderIds, applyRelayConfig, RELAY_PROVIDER_ID } from './relay-c
  */
 export type RelayBootstrapStatus =
   | 'not-configured' // 没配 Supabase —— 产品没接商业层（纯净开发环境）
-  | 'unauthenticated' // 配了，但没登录
+  | 'unauthenticated' // 配了，**明确**没登录（服务端说 401/403）
+  | 'auth-transient' // 会话**暂时问不出来**（超时/网络不通/5xx）—— **可重试**，别当成没登录
   | 'unlicensed' // 登录了，但名下没有可用 license
   | 'runtime-not-ready' // 商业侧没问题，是网关还没连上（**可重试**）
   | 'already-applied' // 网关已经有指向中转的 provider —— 幂等命中，什么都没做
   | 'applied' // 这次真的写进去了
   | 'failed'; // 写了但没成功
+
+/**
+ * 会话检查的结果。定义在 `auth-classify.ts`（那里是纯函数、可直接钉单测），
+ * 这里 re-export 一份，调用方不用多认一个模块。
+ */
+export type { AuthCheck } from './auth-classify.js';
 
 export interface RelayBootstrapResult {
   status: RelayBootstrapStatus;
@@ -69,8 +77,13 @@ export interface RelayGatewayHandle {
 export interface RelayBootstrapDeps {
   /** 商业层配好了没（Supabase url + anon key 都在）。 */
   hasCommercialClient: () => boolean;
-  /** 本地会话还有效吗（**会真的问服务端**）。 */
-  isSignedIn: () => Promise<boolean>;
+  /**
+   * 本地会话还有效吗（**会真的问服务端**）。
+   *
+   * ⚠️ 返回**三态**而不是 boolean —— 「没登录」和「暂时问不出来」必须分开，
+   * 否则一次网络超时就会被说成"用户已退出登录"。见 `AuthCheck`。
+   */
+  checkAuth: () => Promise<AuthCheck>;
   /** 读名下 license（账号绑定口径，不依赖设备激活行）。 */
   readLicenseKey: () => Promise<string | null>;
   /** 取中转 key（幂等：同一设备重复调用返回同一把）。 */
@@ -99,17 +112,25 @@ export async function ensureRelayConfigured(deps: RelayBootstrapDeps): Promise<R
     return { status: 'not-configured', relayReady: false };
   }
 
-  let signedIn = false;
+  let auth: AuthCheck;
   try {
-    signedIn = await deps.isSignedIn();
+    auth = await deps.checkAuth();
   } catch (error) {
+    // 检查本身抛了 ⇒ **问不出来**，不是"没登录"。归类成暂时失败，交给有界重试。
     log('relay.bootstrap.session-check-failed', { message: messageOf(error) });
-    signedIn = false;
+    auth = 'transient';
   }
-  if (!signedIn) {
+  if (auth === 'transient') {
+    // ⚠️ 这一条**不能**说成 unauthenticated：一次 8s 超时不该等价于用户退出登录。
+    //    调用方（bootstrapCommercialRelay）会对它做**有界退避重试**。
+    log('relay.bootstrap.auth-transient-failure');
+    return { status: 'auth-transient', relayReady: false, detail: 'auth check could not reach the backend' };
+  }
+  if (auth === 'unauthenticated') {
     log('relay.bootstrap.unauthenticated');
     return { status: 'unauthenticated', relayReady: false };
   }
+  log('relay.bootstrap.authenticated');
 
   let licenseKey: string | null = null;
   try {
@@ -184,4 +205,87 @@ export async function ensureRelayConfigured(deps: RelayBootstrapDeps): Promise<R
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * 等网关连上的窗口。
+ *
+ * ⚠️ 要**同时**容得下 `AUTH_RETRY_BACKOFF_MS` 的全部退避（见下），否则
+ * `runtime-not-ready` 的 deadline 会**提前掐掉**退避重试。首次启动要等部署 +
+ * spawn + WS 握手，本来就要几十秒，所以这个窗口放宽到 3 分钟。
+ * 它**不阻塞启动**（`void bootstrapCommercialRelay()`），只是后台慢慢来。
+ */
+const DEFAULT_WAIT_MS = 240_000;
+const POLL_MS = 1_000;
+
+/**
+ * `auth-transient` 的**有界**退避表（用完即止）。合计 172 秒。
+ *
+ * ⚠️ **必须越过 supabase-js 的刷新失败冷却期**，否则重试全是白试：
+ * `@supabase/auth-js` 的 `REFRESH_FAILURE_COOLDOWN_MS = 2 × 30s = **60 秒**`
+ * —— 冷却期内同一个 refresh token 的调用会**直接拿到缓存的失败**
+ * （实测 0ms 返回 `AuthRetryableFetchError`），根本不会发新请求。
+ * 我第一版把退避排在 52 秒内，**整段落在冷却期里**，所以"重试"只是个安慰，
+ * 用户照样得重启客户端（是打包态 E2E 把这条逼出来的）。
+ *
+ * 后两次特意都取 **60 秒**：冷却期一过，第一个探针就应该能真正发出去；
+ * 万一那次正好卡在边界上，下一次还有机会。**不靠"恰好掐准"取胜。**
+ *
+ * 两条仍然满足：**不无限重试**（表用完即止）、**不高频打服务端**（间隔递增，最快也是分钟级）。
+ */
+const AUTH_RETRY_BACKOFF_MS = [2_000, 5_000, 15_000, 30_000, 60_000, 60_000];
+
+export interface RelayBootstrapRunOptions {
+  /** 等网关连上的总窗口。 */
+  waitForGatewayMs?: number;
+  /** 测试注入用：免得真等几十秒。 */
+  sleep?: (ms: number) => Promise<void>;
+  /** 测试注入用：让 deadline 可控。 */
+  now?: () => number;
+}
+
+/**
+ * 带着**重试策略**跑 `ensureRelayConfigured`。**永不抛**。
+ *
+ * 两种「等一等就会好」的结论各自处理：
+ *   - `runtime-not-ready`：纯本地探测、**不打服务端** ⇒ 1 秒一次轮询到 deadline
+ *   - `auth-transient`：会话暂时问不出来 ⇒ **有界退避**（见 `AUTH_RETRY_BACKOFF_MS`）
+ *
+ * ⚠️ 其余结论（**明确**没登录 / 没卡 / 写失败）等多久都一样，**一律不重试**。
+ *     尤其 `auth-transient` **不能**被当成没登录 —— 那正是 2B 修的 bug：
+ *     一次 8 秒网络抖动会让用户整个会话都列不出模型，且无法自愈。
+ */
+export async function bootstrapRelayWithRetry(
+  deps: RelayBootstrapDeps,
+  opts: RelayBootstrapRunOptions = {},
+): Promise<RelayBootstrapResult> {
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const now = opts.now ?? (() => Date.now());
+  const waitMs = opts.waitForGatewayMs ?? DEFAULT_WAIT_MS;
+
+  if (!deps.hasCommercialClient()) return { status: 'not-configured', relayReady: false };
+
+  const deadline = now() + waitMs;
+  let authRetries = 0;
+  for (;;) {
+    const res = await ensureRelayConfigured(deps);
+
+    if (res.status === 'runtime-not-ready') {
+      if (now() >= deadline) return res;
+      await sleep(POLL_MS);
+      continue;
+    }
+
+    if (res.status === 'auth-transient') {
+      const backoff = AUTH_RETRY_BACKOFF_MS[authRetries];
+      authRetries += 1;
+      // 退避表用完 / 下一次等待会越过总 deadline ⇒ 打住，如实报"暂不可用"。
+      if (backoff === undefined || now() + backoff >= deadline) return res;
+      deps.log?.('relay.bootstrap.retry', { attempt: authRetries, reason: 'auth-transient', backoffMs: backoff });
+      await sleep(backoff);
+      continue;
+    }
+
+    return res;
+  }
 }
