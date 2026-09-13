@@ -1,9 +1,7 @@
 import { test, expect } from '@playwright/test';
 import type { ElectronApplication, Page } from '@playwright/test';
-import * as fs from 'fs';
-import * as os from 'os';
-import * as path from 'path';
 import { launchApp } from '../helpers/electron-app';
+import { freshProfile } from '../helpers/temp-root';
 import { waitForGateway } from '../helpers/gateway';
 import { approvePendingPairing, getDeviceIdFromUserData, getDeviceTokenFromUserData } from '../helpers/pairing';
 import { GATEWAY_ID, CONNECTION_TIMEOUT_MS, GATEWAY_WS_URL, buildSessionKey } from '../helpers/constants';
@@ -23,8 +21,9 @@ async function waitForGatewayConnected(targetPage: Page): Promise<void> {
 
 test.beforeAll(async () => {
   await waitForGateway();
-  userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clawwork-e2e-userdata-'));
-  workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clawwork-e2e-ws-'));
+  // ⚠️ 落在统一临时根下（见 helpers/temp-root.ts），不再直接堆 `%TEMP%`。
+  userDataDir = freshProfile('e2e-userdata');
+  workspaceDir = freshProfile('e2e-ws');
   ({ app, page, cleanup } = await launchApp({ gateway: true, userDataDir, workspaceDir }));
 
   expect(getDeviceTokenFromUserData(userDataDir, GATEWAY_ID)).toBeNull();

@@ -1,8 +1,8 @@
 import { chromium, type Browser, type Page } from '@playwright/test';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
+import { freshProfile, safeRemoveTree } from '../helpers/temp-root.js';
 
 /**
  * 打包态 E2E 的公共脚手架：起 app、等网关、连 CDP、读模型目录。
@@ -30,8 +30,15 @@ export async function portHasGateway(port = GATEWAY_PORT): Promise<boolean> {
   }
 }
 
+/**
+ * 开一个全新的隔离 profile。
+ *
+ * ⚠️ 落在**统一临时根**下（见 `e2e/helpers/temp-root.ts`），不再直接堆在 `%TEMP%`：
+ * 每次打包态场景都会在这个目录里重新部署一遍完整运行时（~600MB），
+ * 而 `%TEMP%` 在 C 盘上 —— 实测一天跑出 261 个目录、70GB，把 C 盘撑到只剩 15GB。
+ */
 export function freshUserData(tag: string): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), `clawwork-2a-${tag}-`));
+  return freshTrackedProfile(`2a-${tag}`);
 }
 
 export interface LaunchedApp {
@@ -39,6 +46,82 @@ export interface LaunchedApp {
   cdpPort: number;
   /** 子进程 stdout/stderr 的尾巴（排障用）。 */
   outputTail: () => string;
+}
+
+// ---------------------------------------------------------------- profile 台账
+//
+// 每次打包态场景都开一个**新 profile**，并在里面部署一份完整运行时（~600MB）。
+// 从前这些目录**从不回收** —— 一天就堆出 70GB 把 C 盘撑爆。现在的规矩：
+//
+//   全部通过 → 本 suite 建的 profile 全删
+//   有失败   → **留着**那一次的证据（但下次 suite 启动前按保留策略扫）
+
+const createdProfiles: string[] = [];
+let anyTestFailed = false;
+
+/** 记一笔"这个 profile 是我建的"（**正常路径不用手调**，见 `freshTrackedProfile`）。 */
+export function trackProfile(dir: string): void {
+  if (dir && !createdProfiles.includes(dir)) createdProfiles.push(dir);
+}
+
+/**
+ * 开一个 profile 并**当场登记** —— 打包态 E2E 里创建大型 profile 的唯一入口。
+ *
+ * ⚠️ 收口在这里是**刻意的**，不是洁癖。拆成「先 `freshProfile` 再 `trackProfile`」
+ * 两步时，调用方一定会忘，而且忘了**不会报错** —— 只是那个 profile 悄悄活到天荒地老：
+ *
+ *   2026-09-13 实测：packaged suite 建了 6 个 profile，收摊**只删掉 5 个**，
+ *   漏网的 `clawwork-2a-clean-WRtSp4`（634 MB / 36392 个文件）正是**唯一**
+ *   绕开 `bootConfigured`、自己手写创建流程的场景 1 —— 它少写了一句 `trackProfile`，
+ *   于是压根没进台账，`cleanupProfiles()` 根本不知道有它。
+ *
+ * ⇒ 拿到目录就等于已在台账里，`cleanupProfiles()` 收摊时必然覆盖到。
+ */
+export function freshTrackedProfile(tag: string): string {
+  const dir = freshProfile(tag);
+  trackProfile(dir);
+  return dir;
+}
+
+/** 标记"这次 suite 出过错" ⇒ 收摊时不删，留证据。 */
+export function markFailure(): void {
+  anyTestFailed = true;
+}
+
+/** 测试用：清空台账。 */
+export function resetProfileLedger(): void {
+  createdProfiles.length = 0;
+  anyTestFailed = false;
+}
+
+export interface ProfileCleanupResult {
+  removed: string[];
+  kept: string[];
+  reason: string;
+}
+
+/**
+ * 收摊：把本 suite 建的 profile 按成败处理。
+ *
+ * ⚠️ 删除一律走 `safeRemoveTree`（junction-safe）—— profile 里有目录 junction，
+ * 用 `rm -rf` 会把链接指向的真实目录删掉（项目里真的发生过）。
+ */
+export function cleanupProfiles(): ProfileCleanupResult {
+  if (anyTestFailed) {
+    return { removed: [], kept: [...createdProfiles], reason: '有失败 ⇒ 保留现场（下次启动前由保留策略清理）' };
+  }
+  const removed: string[] = [];
+  for (const dir of createdProfiles) {
+    try {
+      safeRemoveTree(dir);
+      removed.push(dir);
+    } catch (error) {
+      // 删不掉不该让**测试结果**变红：这属于环境问题，如实告警即可。
+      console.warn(`[e2e-clean] 删不掉 ${dir}：${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  const kept = createdProfiles.filter((d) => fs.existsSync(d));
+  return { removed, kept, reason: kept.length === 0 ? '全部通过 ⇒ 已删除' : '全部通过，但有目录没删掉' };
 }
 
 /**

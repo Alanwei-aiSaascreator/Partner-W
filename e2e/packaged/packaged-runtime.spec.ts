@@ -1,8 +1,9 @@
 import { chromium, expect, test, type Page } from '@playwright/test';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
+import { cleanupProfiles, freshTrackedProfile, markFailure } from './harness.js';
+import { sweepStaleProfiles } from '../helpers/temp-root.js';
 
 /**
  * 阶段 1 的**打包态**验收 —— dev E2E 不能代替它。
@@ -104,8 +105,25 @@ test.describe('打包态：客户端自己把运行时拉起来', () => {
     // 端口必须是 DOWN 的 —— 否则"客户端自己拉起来的"这句话就不成立
     expect(await portHasGateway(GATEWAY_PORT), `端口 ${GATEWAY_PORT} 上已经有网关在跑，先停掉`).toBe(false);
 
-    userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clawwork-packaged-'));
+    // 先把**上一次**残留的 profile 扫掉 —— `finally` 兜不住 Ctrl+C / 超时 / 机器重启。
+    const swept = sweepStaleProfiles({ log: (m) => console.log(m) });
+    if (swept.removed.length > 0) {
+      console.log(
+        `[e2e-clean] 启动清扫：删了 ${swept.removed.length} 个旧 profile，` +
+          `释放 ${(swept.freedBytes / 1024 ** 3).toFixed(2)} GB`,
+      );
+    }
+
+    // ⚠️ 落在统一临时根下；这个目录里会部署一整套运行时（~600MB），
+    //    从前**从不回收** ⇒ 是 C 盘被撑爆的主力之一。
+    userDataDir = freshTrackedProfile('packaged');
     fs.mkdirSync(ARTIFACTS, { recursive: true });
+  });
+
+  // eslint-disable-next-line no-empty-pattern -- Playwright 要求第一个参数是解构模式，这里不需要任何 fixture
+  test.afterEach(({}, testInfo) => {
+    // 失败要**留现场**：profile 里有部署日志、sqlite、网关 state，是唯一的证据。
+    if (testInfo.status !== 'passed' && testInfo.status !== 'skipped') markFailure();
   });
 
   test.afterAll(async () => {
@@ -121,6 +139,10 @@ test.describe('打包态：客户端自己把运行时拉起来', () => {
         /* 已经退出了 */
       }
     }
+
+    // 全部通过 ⇒ 把这个 profile 删掉（junction-safe）。
+    const res = cleanupProfiles();
+    console.log(`[e2e-clean] ${res.reason}：删了 ${res.removed.length} 个，留了 ${res.kept.length} 个`);
   });
 
   test('打包 app → 部署 → 从 deployed node 起网关 → 客户端连上 → UI 出现 Agent/会话', async () => {

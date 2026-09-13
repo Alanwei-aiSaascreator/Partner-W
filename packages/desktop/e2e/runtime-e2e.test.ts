@@ -3,9 +3,10 @@ import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
-import { afterAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import { GATEWAY_WS_PORT } from '@clawwork/shared';
 import { fileURLToPath } from 'node:url';
+import { freshProfile, safeRemoveTree } from '../../../e2e/helpers/temp-root.ts';
 
 /**
  * 阶段 1 主验收 —— **四次启动** + 半部署恢复 + Node 缺失 + 指针。
@@ -46,8 +47,20 @@ function log(step: string, data: Record<string, unknown> = {}): void {
   console.log(`\n[E2E] ${step} ${JSON.stringify(data)}`);
 }
 
+/**
+ * 本文件建过的所有隔离 profile。
+ *
+ * ⚠️ 从前它们**从不回收**：每个目录里都部署了一整套运行时（~936MB），
+ * 这个文件被跑了 10 遍 ⇒ 60 个目录 ≈ 56GB —— 实测把 C 盘撑到只剩 15GB。
+ * 现在：全绿就删；有失败就留现场（下次启动前由保留策略兜底）。
+ */
+const createdDirs: string[] = [];
+let anyFailed = false;
+
 function freshDir(name: string): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), `clawwork-e2e-${name}-`));
+  const dir = freshProfile(`e2e-${name}`);
+  createdDirs.push(dir);
+  return dir;
 }
 
 function readStamp(deployedRoot: string): Record<string, unknown> {
@@ -72,8 +85,29 @@ function startForeignGateway(status: string): Promise<{ server: http.Server; hit
   });
 }
 
+afterEach((ctx) => {
+  // ⚠️ `it.skip` 不会走到这里（实测），所以不会把跳过误记成失败。
+  if (ctx.task.result?.state === 'fail') anyFailed = true;
+});
+
 afterAll(async () => {
   console.log('\n[E2E] 汇总\n' + JSON.stringify(results, null, 2));
+
+  if (anyFailed) {
+    console.log(`[e2e-clean] 有失败 ⇒ 保留 ${createdDirs.length} 个 profile 作为证据（下次启动前由保留策略清理）`);
+    return;
+  }
+  let removed = 0;
+  for (const dir of createdDirs) {
+    try {
+      // ⚠️ junction-safe：profile 里有目录 junction，`rm -rf` 会把 target 删掉。
+      safeRemoveTree(dir);
+      removed += 1;
+    } catch (error) {
+      console.warn(`[e2e-clean] 删不掉 ${dir}：${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  console.log(`[e2e-clean] 全绿 ⇒ 删掉本轮的 ${removed}/${createdDirs.length} 个 profile`);
 });
 
 describe('阶段 1 主验收', () => {

@@ -2,8 +2,8 @@ import { _electron as electron } from '@playwright/test';
 import type { ElectronApplication, Page } from '@playwright/test';
 import * as path from 'path';
 import * as fs from 'fs';
-import * as os from 'os';
 import { GATEWAY_ID, GATEWAY_WS_URL, GATEWAY_TOKEN } from './constants';
+import { freshProfile, safeRemoveTree } from './temp-root';
 
 const CONFIG_FILE_NAME = 'clawwork-config.json';
 const DESKTOP_PKG = path.resolve(__dirname, '../../packages/desktop');
@@ -48,8 +48,9 @@ export async function launchApp(options?: {
   const electronBin = resolveElectronBinary();
   dumpDiagnostics(electronBin);
 
-  const userDataDir = options?.userDataDir ?? fs.mkdtempSync(path.join(os.tmpdir(), 'clawwork-e2e-userdata-'));
-  const workspaceDir = options?.workspaceDir ?? fs.mkdtempSync(path.join(os.tmpdir(), 'clawwork-e2e-ws-'));
+  // ⚠️ 落在**统一临时根**下（见 temp-root.ts）：不再直接堆 `%TEMP%`（在 C 盘上）。
+  const userDataDir = options?.userDataDir ?? freshProfile('e2e-userdata');
+  const workspaceDir = options?.workspaceDir ?? freshProfile('e2e-ws');
 
   const config: Record<string, unknown> = {
     workspacePath: workspaceDir,
@@ -102,16 +103,16 @@ export async function launchApp(options?: {
   const page = await app.firstWindow();
   console.log('[e2e-diag] first window obtained, url:', page.url());
 
+  // ⚠️ **不要**用 `fs.rmSync(..., {recursive:true})`：profile 里可能有目录 junction，
+  //    是否跟随不由我们决定。`safeRemoveTree` 只认 lstat，遇到链接只摘链接本身。
+  //    （项目里真的发生过：`rm -rf` 跟进 junction 删掉了真实 `node_modules/openclaw`。）
   const cleanup = (): void => {
-    try {
-      fs.rmSync(userDataDir, { recursive: true, force: true });
-    } catch {
-      // best-effort
-    }
-    try {
-      fs.rmSync(workspaceDir, { recursive: true, force: true });
-    } catch {
-      // best-effort
+    for (const dir of [userDataDir, workspaceDir]) {
+      try {
+        safeRemoveTree(dir);
+      } catch {
+        // best-effort
+      }
     }
   };
 

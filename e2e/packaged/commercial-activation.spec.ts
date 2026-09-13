@@ -3,10 +3,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
   ARTIFACTS,
+  cleanupProfiles,
   connect,
   ensureArtifacts,
   freshUserData,
   launchApp,
+  markFailure,
   portHasGateway,
   readModels,
   stopEverything,
@@ -14,6 +16,7 @@ import {
   waitForRelayModels,
   type LaunchedApp,
 } from './harness.js';
+import { sweepStaleProfiles } from '../helpers/temp-root.js';
 import { readDevProvision, provisionProfile } from './provision.js';
 
 /**
@@ -82,6 +85,8 @@ async function shot(page: Page, name: string): Promise<void> {
 }
 
 async function bootConfigured(tag: string, opts: { supabaseUrlOverride?: string; skipSession?: boolean }) {
+  // `freshUserData` 自己就把目录登记进收摊台账了 —— 别在这里再补 `trackProfile`
+  // （登记只有一处，见 harness 里 `freshTrackedProfile` 的说明）。
   const userDataDir = freshUserData(tag);
   provisionProfile(userDataDir, provision!, { workspacePath: WORKSPACE, ...opts });
   currentUserData = userDataDir;
@@ -95,18 +100,39 @@ test.describe.configure({ mode: 'serial' });
 
 test.beforeAll(() => {
   ensureArtifacts();
+  // 先把**上一次**残留的 profile 扫掉 —— Ctrl+C / 超时 / 关机都会让 finally 跑不到。
+  const swept = sweepStaleProfiles({ log: (m) => console.log(m) });
+  if (swept.removed.length > 0) {
+    console.log(
+      `[e2e-clean] 启动清扫：删了 ${swept.removed.length} 个旧 profile，` +
+        `释放 ${(swept.freedBytes / 1024 ** 3).toFixed(2)} GB`,
+    );
+  }
   // ⚠️ 要**建**，不是断言它存在 —— 它是本用例自己的产物目录，第一次跑时并不存在。
   fs.mkdirSync(WORKSPACE, { recursive: true });
 });
 
+// eslint-disable-next-line no-empty-pattern -- Playwright 要求第一个参数是解构模式，这里不需要任何 fixture
+test.afterEach(({}, testInfo) => {
+  // 失败要**留现场**：profile 里有商业会话密文、日志、网关 state，是唯一的证据。
+  if (testInfo.status !== 'passed' && testInfo.status !== 'skipped') markFailure();
+});
+
 test.afterAll(async () => {
   await stopAll();
+  // 全部通过 ⇒ 把本 suite 建的 profile 都删掉（junction-safe）。
+  const res = cleanupProfiles();
+  console.log(`[e2e-clean] ${res.reason}：删了 ${res.removed.length} 个，留了 ${res.kept.length} 个`);
 });
 
 // ---------------------------------------------------------------- 场景 1
 
 test('场景 1：纯净 profile **未激活** ⇒ 不伪造模型，网关仍正常，UI 不把它说成网关故障', async () => {
   test.setTimeout(15 * 60_000);
+  // ⚠️ 这条**刻意不走 `bootConfigured`**（那个会 `provisionProfile`，把 profile 激活，
+  //    而本场景要证的恰恰是"未激活"）。手写创建流程的代价是容易漏掉 helper 附带的动作 ——
+  //    这里曾经漏过 `trackProfile`，导致这个 634MB 的 profile 收摊时删不掉。
+  //    现在 `freshUserData` 自带登记，手写路径不会再漏。
   const userDataDir = freshUserData('clean');
   // 只给一个 workspace，**不给任何商业配置** —— 这就是用户拿到手的纯净 profile
   fs.writeFileSync(
