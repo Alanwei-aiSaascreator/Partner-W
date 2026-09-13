@@ -142,9 +142,7 @@ describe('fetchFirstRelayModel', () => {
   // （clawrouter/openai/gpt-5.5）拼错了 —— 文档那句是「refs retain the
   // upstream namespace」，它那边的 model id 本身就带命名空间。
   const CATALOG = {
-    providers: [
-      { id: 'bailian', models: [{ id: 'deepseek-v4-flash' }, { id: 'qwen3.6-plus' }] },
-    ],
+    providers: [{ id: 'bailian', models: [{ id: 'deepseek-v4-flash' }, { id: 'qwen3.6-plus' }] }],
   };
 
   it('拼出两段的模型 ref，不含 catalog 的 provider id', async () => {
@@ -222,6 +220,38 @@ describe('applyRelayConfig', () => {
     expect(res.errorCode).toBe('verify-failed');
   });
 
+  // ⭐ 这条钉的是**真实网关的形状**，不是理想形状。
+  //
+  // 打包态 E2E 实测（2026-09-13）：网关 `config.get` 回读到的 raw 里是
+  // `"token": "__OPENCLAW_REDACTED__"` —— **秘密是脱敏的**。原先的校验拿 apiKey
+  // 和真 key 比，于是**永远 verify-failed**：配置明明已经写进网关的
+  // `openclaw.json`（同一轮 E2E 里逐字节确认过），调用方却以为没配上。
+  it('⭐ 回读被**脱敏**（apiKey=__OPENCLAW_REDACTED__）仍算配置成功', async () => {
+    const d = deps({
+      getConfig: vi.fn(async () =>
+        snapshot({
+          models: { providers: { [RELAY_PROVIDER_ID]: { baseUrl: RELAY_BASE_URL, apiKey: '__OPENCLAW_REDACTED__' } } },
+        }),
+      ),
+    });
+    const res = await applyRelayConfig(d, INPUT);
+
+    expect(res.configured).toBe(true);
+    expect(res.errorCode).toBeUndefined();
+  });
+
+  it('⭐ provider 在、但**没带 key** ⇒ 不算成功（空凭证等于没配上）', async () => {
+    const d = deps({
+      getConfig: vi.fn(async () =>
+        snapshot({ models: { providers: { [RELAY_PROVIDER_ID]: { baseUrl: RELAY_BASE_URL, apiKey: '' } } } }),
+      ),
+    });
+    const res = await applyRelayConfig(d, INPUT);
+
+    expect(res.configured).toBe(false);
+    expect(res.errorCode).toBe('verify-failed');
+  });
+
   it('乐观锁冲突时重读快照重试', async () => {
     let calls = 0;
     const d = deps({
@@ -283,9 +313,7 @@ describe('applyRelayConfig', () => {
   it('日志里不得出现 relay key', async () => {
     const events: Array<Record<string, unknown>> = [];
     const d = deps({
-      getConfig: vi.fn(async () =>
-        snapshot({ models: { providers: { clawrouter: { apiKey: 'rly_abc' } } } }),
-      ),
+      getConfig: vi.fn(async () => snapshot({ models: { providers: { clawrouter: { apiKey: 'rly_abc' } } } })),
       patchConfig: vi.fn(async () => ({ ok: true })),
       log: (_e, data) => events.push(data),
     });

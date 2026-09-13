@@ -41,8 +41,8 @@ function normalizeBaseUrl(value: string): string {
 export function relayProviderIds(configSnapshot: unknown): Set<string> {
   const ids = new Set<string>();
 
-  const providers = (configSnapshot as { config?: { models?: { providers?: unknown } } } | null)?.config
-    ?.models?.providers;
+  const providers = (configSnapshot as { config?: { models?: { providers?: unknown } } } | null)?.config?.models
+    ?.providers;
   if (!providers || typeof providers !== 'object') return ids;
 
   const target = normalizeBaseUrl(RELAY_BASE_URL);
@@ -208,14 +208,27 @@ function classifyWriteError(error: unknown): 'hash-conflict' | 'transport' | 're
   return 'rejected';
 }
 
-function providerApplied(snapshot: unknown, relayKey: string): boolean {
+/**
+ * 回读校验：provider 在、**打到中转**、且带一个非空的 apiKey。
+ *
+ * ⚠️ **绝不能拿 apiKey 去和真 key 比** —— 网关的 `config.get` **会脱敏**。
+ * 实测（2026-09-13 打包态 E2E）：回读到的 raw 里 `"token": "__OPENCLAW_REDACTED__"`，
+ * 于是 `apiKey === relayKey` **永远不成立**，配置明明写成功了却每次报
+ * `verify-failed` —— 而调用方只把它当"没配上"，于是悄悄什么都不做。
+ *
+ * 秘密读不回来；能读回来的是「这个 provider 指向哪、有没有 key」。
+ * 这也**正是** `relayProviderIds` 用的判据（同一个理由：比得着的才可靠）。
+ */
+function providerApplied(snapshot: unknown): boolean {
   const providers = (configOf(snapshot)?.models as { providers?: Record<string, unknown> } | undefined)?.providers;
   const entry = providers?.[RELAY_PROVIDER_ID];
   if (!entry || typeof entry !== 'object') return false;
+
   const { apiKey, baseUrl } = entry as { apiKey?: unknown; baseUrl?: unknown };
-  return (
-    apiKey === relayKey && normalizeBaseUrl(String(baseUrl ?? '')) === normalizeBaseUrl(RELAY_BASE_URL)
-  );
+  if (normalizeBaseUrl(String(baseUrl ?? '')) !== normalizeBaseUrl(RELAY_BASE_URL)) return false;
+  // 脱敏后仍然是**非空字符串**（真 key 或 `__OPENCLAW_REDACTED__` 都算有 key）；
+  // 空串/缺失才说明这个 provider 没带上凭证。
+  return typeof apiKey === 'string' && apiKey.length > 0;
 }
 
 /**
@@ -296,7 +309,7 @@ export async function applyRelayConfig(
     // 「返回成功但网关没生效」是它独有的。所以回读一次。
     let verified = false;
     try {
-      verified = providerApplied(await deps.getConfig(), input.relayKey);
+      verified = providerApplied(await deps.getConfig());
     } catch (error) {
       log('relay.config-verify-read-failed', { attempt, message: messageOf(error) });
     }

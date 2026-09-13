@@ -1,4 +1,4 @@
-import { chromium, expect, test } from '@playwright/test';
+import { chromium, expect, test, type Page } from '@playwright/test';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -39,6 +39,24 @@ const CDP_PORT = 9333;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+/**
+ * 截图。**必须给 timeout**，而且**失败不判失败**。
+ *
+ * ⚠️ `page.screenshot()` 会等页面"稳定"，而 `actionTimeout` 默认是 **0（不超时）**
+ * —— 本机实测它会在某些窗口状态下（被遮挡 / 合成器不给帧）**一直等下去**，
+ * 于是整条用例撞满超时、日志里还看不出卡在哪。
+ * 截图是**产物**不是断言：拍不到就告警跳过，别让它把用例带走。
+ */
+async function shot(page: Page, name: string): Promise<void> {
+  try {
+    await page.screenshot({ path: path.join(ARTIFACTS, name), animations: 'disabled', timeout: 20_000 });
+  } catch (error) {
+    console.warn(
+      `[packaged] 截图 ${name} 没拍成（**不影响成败**）：${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
 }
 
 async function portHasGateway(port: number): Promise<boolean> {
@@ -186,14 +204,14 @@ test.describe('打包态：客户端自己把运行时拉起来', () => {
       await expect
         .poll(async () => (await page.locator('body').innerText()).includes('main'), { timeout: 30_000 })
         .toBe(true);
-      await page.screenshot({ path: path.join(ARTIFACTS, 'packaged-01-agents.png') });
+      await shot(page, 'packaged-01-agents.png');
       await page.keyboard.press('Escape');
 
       // 会话：新任务面板打得开，且绑在 main 这个 Agent 上。
       // ⚠️ 「描述你的任务…」是 **placeholder** —— 它不在 innerText 里，得按属性找。
       await page.locator('button[aria-label="新任务"]').click();
       await page.waitForTimeout(2000);
-      await page.screenshot({ path: path.join(ARTIFACTS, 'packaged-02-session.png') });
+      await shot(page, 'packaged-02-session.png');
       await expect(page.locator('[placeholder*="描述你的任务"]').first()).toBeVisible({ timeout: 30_000 });
       await expect
         .poll(async () => (await page.locator('body').innerText()).includes('main'), { timeout: 30_000 })

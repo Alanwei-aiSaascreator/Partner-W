@@ -25,6 +25,7 @@ import { registerAvatarHandlers, registerAvatarProtocol } from './ipc/avatar-han
 import { registerHubHandlers } from './ipc/hub-handlers.js';
 import { registerCommercialHandlers } from './ipc/commercial-handlers.js';
 import { initUsageReporter, destroyUsageReporter } from './commercial/usage-reporter.js';
+import { bootstrapCommercialRelay } from './commercial/relay-startup.js';
 import { unwatchAll } from './context/file-watcher.js';
 import { isInstallingUpdate } from './auto-updater.js';
 import { initTray, destroyTray } from './tray.js';
@@ -286,6 +287,20 @@ if (!gotLock) {
     }
 
     initAllGateways();
+
+    // ⚠️ **runtime ready ≠ commercial ready**：网关活着只说明连得上；模型能不能用
+    // 要看中转配置有没有落到网关（clawrouter provider）。
+    //
+    // 刻意**不 await**：这一步要等网关握手、要问服务端要 key，首次启动可能十几秒 ——
+    // 挡住的话窗口白屏。也不抛（内部永不抛），因为"没登录/没激活"是**正常状态**，
+    // 不是启动失败；界面自己有未激活的表达。
+    //
+    // 目录刷新靠 dispatcher 既有的退避重试（~60s 预算，见 gateway-dispatcher），
+    // 它本来就是为"网关目录还没热"这件事写的。
+    void bootstrapCommercialRelay().then((res) => {
+      getDebugLogger().info({ domain: 'commercial', event: 'commercial.relay.bootstrap', data: { ...res } });
+    });
+
     // 放在网关之后：首跑要立刻读一次额度，此时会话/配置已就绪，否则首报必然是空
     initUsageReporter();
     initTray();
