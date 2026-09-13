@@ -5,9 +5,13 @@ import type { StartupzProbe } from '../src/main/runtime/gateway-process.js';
 /**
  * 探活与等就绪。
  *
- * 就绪判据**只有** `GET /startupz` 返回 `{status:'started'}`——
- * 不用 stdout 的 ready（无契约）、不把 lock 文件当就绪（崩溃残留的 lock 会让装载器
- * 等一个死进程）。这里把这两条边界钉死。
+ * 就绪判据是**两条**：`GET /startupz` 返回 `{status:'started'}` **且**本 token
+ * 认证通过。不用 stdout 的 ready（无契约）、不把 lock 文件当就绪（崩溃残留的 lock
+ * 会让装载器等一个死进程）。
+ *
+ * ⚠️ 第二条是 2026-09-13 实测补上的：网关报 `started` 之后还要几秒才肯完成 WS
+ * 握手，这期间认证探测会**挂住**（不是拒绝）。只认 `started` 会让下一轮启动把
+ * 我们自己刚起的网关判成 foreign（E2E 启动 2 的精确成因）。
  */
 
 const PORT = 18789;
@@ -68,11 +72,13 @@ describe('probeStartupz', () => {
 
 describe('waitForGatewayReady', () => {
   const never = (): boolean => false;
+  const alwaysAuthed = async (): Promise<boolean> => true;
 
-  it('第一次就 started ⇒ 立刻返回，一次都不 sleep', async () => {
+  it('第一次就 started 且认证通过 ⇒ 立刻返回，一次都不 sleep', async () => {
     const sleep = vi.fn(async () => {});
     const res = await waitForGatewayReady({
       probe: async () => ({ reachable: true, status: 'started' }),
+      authenticate: alwaysAuthed,
       sleep,
       hasExited: never,
     });
@@ -88,7 +94,12 @@ describe('waitForGatewayReady', () => {
     ];
     let i = 0;
     const sleep = vi.fn(async () => {});
-    const res = await waitForGatewayReady({ probe: async () => seq[i++], sleep, hasExited: never });
+    const res = await waitForGatewayReady({
+      probe: async () => seq[i++],
+      authenticate: alwaysAuthed,
+      sleep,
+      hasExited: never,
+    });
 
     expect(res.status).toBe('started');
     expect(sleep).toHaveBeenCalledTimes(2);
@@ -99,16 +110,69 @@ describe('waitForGatewayReady', () => {
     const sleep = vi.fn(async () => {});
     const res = await waitForGatewayReady({
       probe: async () => (i++ < 3 ? { reachable: false } : { reachable: true, status: 'started' }),
+      authenticate: alwaysAuthed,
       sleep,
       hasExited: never,
     });
     expect(res.status).toBe('started');
   });
 
+  it('⭐ started 但认证还不上 ⇒ **继续等**，认证通过才返回（E2E 启动 2 的精确回归）', async () => {
+    // 实测形状：/startupz 早就 started，但网关还要几秒才肯完成 WS 握手，
+    // 这期间认证探测挂住 ⇒ false。这段窗口里唯一正确的动作是接着等。
+    let authCalls = 0;
+    const sleep = vi.fn(async () => {});
+    const res = await waitForGatewayReady({
+      probe: async () => ({ reachable: true, status: 'started' }),
+      authenticate: async () => {
+        authCalls++;
+        return authCalls >= 3; // 前两次"还没好"
+      },
+      sleep,
+      hasExited: never,
+    });
+
+    expect(res.status).toBe('started');
+    expect(authCalls).toBe(3);
+    expect(sleep).toHaveBeenCalledTimes(2);
+  });
+
+  it('⭐ 认证探测自己抛 ⇒ 当成"还没好"继续等，**不**当成失败', async () => {
+    let calls = 0;
+    const res = await waitForGatewayReady({
+      probe: async () => ({ reachable: true, status: 'started' }),
+      authenticate: async () => {
+        if (++calls < 3) throw new Error('ECONNRESET');
+        return true;
+      },
+      sleep: async () => {},
+      hasExited: never,
+    });
+    expect(res.status).toBe('started');
+    expect(calls).toBe(3);
+  });
+
+  it('⭐ 始终认证不上 ⇒ 到点抛错，信息里点明是认证没上去（不是"连不上"）', async () => {
+    let t = 0;
+    const p = waitForGatewayReady({
+      probe: async () => ({ reachable: true, status: 'started' }),
+      authenticate: async () => false,
+      sleep: async (ms) => {
+        t += ms;
+      },
+      hasExited: never,
+      now: () => t,
+      timeoutMs: 2000,
+      intervalMs: 500,
+    });
+    await expect(p).rejects.toThrow(/认证/);
+  });
+
   it('⭐ 一直 starting ⇒ 到点抛错，信息里说清是超时', async () => {
     let t = 0;
     const p = waitForGatewayReady({
       probe: async () => ({ reachable: true, status: 'starting' }),
+      authenticate: alwaysAuthed,
       sleep: async (ms) => {
         t += ms;
       },
@@ -128,6 +192,7 @@ describe('waitForGatewayReady', () => {
         probes++;
         return { reachable: false };
       },
+      authenticate: alwaysAuthed,
       sleep: async () => {
         exited = true;
       },
@@ -143,7 +208,9 @@ describe('waitForGatewayReady', () => {
 
   it('一开始就发现子进程已退出 ⇒ 立刻抛（不做无谓探测）', async () => {
     const probe = vi.fn(async () => ({ reachable: true, status: 'started' }));
-    await expect(waitForGatewayReady({ probe, sleep: async () => {}, hasExited: () => true })).rejects.toThrow(/退出/);
+    await expect(
+      waitForGatewayReady({ probe, authenticate: alwaysAuthed, sleep: async () => {}, hasExited: () => true }),
+    ).rejects.toThrow(/退出/);
     expect(probe).not.toHaveBeenCalled();
   });
 
@@ -154,6 +221,7 @@ describe('waitForGatewayReady', () => {
         if (i++ < 2) throw new Error('boom');
         return { reachable: true, status: 'started' };
       },
+      authenticate: alwaysAuthed,
       sleep: async () => {},
       hasExited: never,
     });
@@ -165,6 +233,7 @@ describe('waitForGatewayReady', () => {
     const sleeps: number[] = [];
     const p = waitForGatewayReady({
       probe: async () => ({ reachable: false }),
+      authenticate: alwaysAuthed,
       sleep: async (ms) => {
         sleeps.push(ms);
         t += ms;

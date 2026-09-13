@@ -15,9 +15,15 @@
  * | B. started **且**本 token 认证通过 | 视为我们的、复用，**不 spawn** |
  * | C. started **但**认证失败（或端口活着却不是 started） | **foreign** ⇒ 绝不 force/kill/覆盖配置；报 `runtime.gateway-port-occupied` |
  *
- * ⚠️ 另外两条实测出来的：
+ * ⚠️ 另外三条实测出来的：
  *   - 就绪判据是 `GET /startupz` 返回 `{status:'started'}`。**不用 stdout 的 `ready`**
  *     （没有契约）、**不把 lock 文件当就绪**（崩溃残留的 lock 会让装载器等一个死进程）。
+ *   - ⭐ **`started` 还不够，必须再认证上一次**（2026-09-13 实测，E2E 启动 2 就是被
+ *     这条翻的）：`/startupz` 在上游自己的口径里是"可以放流量进来了"，但实测网关
+ *     报 `started` 之后**还要几秒**才肯完成 WS 握手 —— 这段时间里认证探测是**挂住**
+ *     （不是拒绝），5s 超时后返回 false。于是下一次启动会拿这个 false 去判
+ *     **foreign**，报"端口被占"，而端口上跑的正是我们上一轮自己起的网关。
+ *     ⇒ 对我们**自己刚 spawn 的**网关，`started + 认证通过` 才是就绪。
  *   - **子进程 exit 0 也可能是成功** —— 复用场景下进程本来就会退。所以 exit 只是
  *     "等待中止"的信号，不是"失败"的判据。
  */
@@ -245,23 +251,37 @@ export async function probeGatewayAuth(opts: {
 // ---------------------------------------------------------------- 等就绪
 
 /**
- * 轮询到网关就绪。
+ * 轮询到网关**真的可用**。
+ *
+ * 两步，缺一不可：
+ *   ① `GET /startupz` 返回 `{status:'started'}`
+ *   ② **用本 state 的 token 认证通过**
+ *
+ * ⚠️ 第 ② 步不是锦上添花，是实测出来的**必需**（见文件头）：网关报 `started`
+ * 之后还要几秒才肯完成 WS 握手，这期间认证探测会挂住并超时。少了它，下一轮启动
+ * 会把我们自己的网关判成 foreign。
  *
  * 总超时 **180s** 是给首次启动留的：网关自身冷启动就要 ~38s，第一次还要解压
- * 35k 个文件（1–3 分钟）。窗口先出来、有进度，别让它看着像卡死。
+ * 35k 个文件（1–3 分钟），再加上面那个"started 之后还要几秒"的窗口。
+ * 窗口先出来、有进度，别让它看着像卡死。
  *
  * ⚠️ **子进程退出要立刻中止等待**，否则会一直等满 180s 才发现进程早就没了 ——
  * 用户看到的是"转三分钟然后报一个含糊的超时"。
  */
 export async function waitForGatewayReady(opts: {
   probe: () => Promise<StartupzProbe>;
+  /**
+   * 就绪的第二步。**必填** —— 让它可选就等于允许调用方把"started 就是就绪"
+   * 这个已经证伪的假设再写回来。
+   */
+  authenticate: () => Promise<boolean>;
   sleep: (ms: number) => Promise<void>;
   hasExited: () => boolean;
   intervalMs?: number;
   timeoutMs?: number;
   now?: () => number;
 }): Promise<{ status: string }> {
-  const { probe, sleep, hasExited, intervalMs = 500, timeoutMs = 180_000, now = () => Date.now() } = opts;
+  const { probe, authenticate, sleep, hasExited, intervalMs = 500, timeoutMs = 180_000, now = () => Date.now() } = opts;
   const deadline = now() + timeoutMs;
   let last = '（还没探到）';
 
@@ -277,8 +297,20 @@ export async function waitForGatewayReady(opts: {
       result = { reachable: false };
     }
 
-    if (result.reachable && result.status === 'started') return { status: 'started' };
-    last = result.reachable ? `HTTP 在但 status=${result.status ?? '未知'}` : '连不上';
+    if (result.reachable && result.status === 'started') {
+      // 认证探测自己抛（或超时）都只是"还没好" —— 不是"不是我们的"。
+      // 这里**只有 spawn 之后**这一条路径，端口上的东西就是刚起的那个进程。
+      let authenticated = false;
+      try {
+        authenticated = await authenticate();
+      } catch {
+        authenticated = false;
+      }
+      if (authenticated) return { status: 'started' };
+      last = 'started，但本 token 还没认证上（网关还没肯完成 WS 握手）';
+    } else {
+      last = result.reachable ? `HTTP 在但 status=${result.status ?? '未知'}` : '连不上';
+    }
 
     if (now() >= deadline) {
       throw new Error(`等待网关就绪超时（${Math.round(timeoutMs / 1000)}s，最后一次探测：${last}）`);
@@ -416,7 +448,14 @@ export async function ensureGatewayRunning(opts: EnsureGatewayRunningOptions): P
   };
 
   const child = spawn({ nodeExe: opts.nodeExe, args, cwd: opts.deployedRoot, env });
-  await (opts.waitReady ?? defaultWaitReady(child, () => probe(port)))(child);
+  await (
+    opts.waitReady ??
+    defaultWaitReady(
+      child,
+      () => probe(port),
+      () => authenticate({ port, token }),
+    )
+  )(child);
 
   return { ownership: 'spawned', pid: child.pid, child, decision };
 }
@@ -424,12 +463,14 @@ export async function ensureGatewayRunning(opts: EnsureGatewayRunningOptions): P
 /**
  * 真等就绪：500ms 一探、总超时 180s、子进程一退立刻中止。
  *
- * ⚠️ 这里**复用外面那个 `probe`**（而不是另起一个真 fetch）：同一件事用两个
- * 探测函数会出现"preflight 说 DOWN、readiness 说 started"这种自相矛盾的状态。
+ * ⚠️ 这里**复用外面那个 `probe` 与 `authenticate`**（而不是另起一套真 fetch）：
+ * 同一件事用两套探测函数会出现"preflight 说 DOWN、readiness 说 started"这种
+ * 自相矛盾的状态。
  */
 function defaultWaitReady(
   child: GatewayChildProcess,
   probeOnce: () => Promise<StartupzProbe>,
+  authenticateOnce: () => Promise<boolean>,
 ): (c: GatewayChildProcess) => Promise<void> {
   let exited = false;
   child.onExit(() => {
@@ -438,6 +479,7 @@ function defaultWaitReady(
   return () =>
     waitForGatewayReady({
       probe: probeOnce,
+      authenticate: authenticateOnce,
       sleep: (ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
       hasExited: () => exited,
     }).then(() => undefined);
