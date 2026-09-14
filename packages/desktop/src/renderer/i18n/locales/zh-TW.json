@@ -73,6 +73,8 @@
   "chatInput": {
     "abortFailed": "無法停止生成",
     "addContextFolder": "新增上下文資料夾以使用 @ 檔案參照",
+    "aiServiceStarting": "正在啟動 AI 服務…",
+    "aiServiceStartingDetail": "首次啟動可能需要約 1 分鐘，請稍候。",
     "attachFile": "附加檔案",
     "attachmentSaveFailed": "儲存附件 {{fileName}} 失敗",
     "attachmentTooLarge": "{{fileName}} 超出 100MB 上限",
@@ -81,7 +83,10 @@
     "fileContextLimitExceeded": "檔案上下文總計超過 500KB 限制",
     "linkLocalFolders": "關聯目錄",
     "modelGone": "「{{model}}」已無法使用，請在下方模型選單裡換一個",
-    "noModelsAvailable": "沒有可用的模型",
+    "modelsLoading": "正在準備模型…",
+    "modelsLoadingDetail": "準備完成後會自動顯示，無需重複操作。",
+    "noModelsAvailable": "暫時沒有可用模型",
+    "noModelsAvailableDetail": "請檢查網路，或稍後重新開啟模型列表。",
     "offlineReadOnly": "離線 — 唯讀模式",
     "openFailed": "開啟 {{fileName}} 失敗",
     "runPhase": {

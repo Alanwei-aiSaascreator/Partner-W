@@ -73,6 +73,8 @@
   "chatInput": {
     "abortFailed": "Falha ao parar a geração",
     "addContextFolder": "Adicionar pasta de contexto para referências de arquivo com @",
+    "aiServiceStarting": "Iniciando o serviço de IA…",
+    "aiServiceStartingDetail": "A primeira inicialização pode levar cerca de um minuto. Aguarde.",
     "attachFile": "Anexar arquivo",
     "attachmentSaveFailed": "Falha ao salvar o anexo {{fileName}}",
     "attachmentTooLarge": "{{fileName}} excede o limite de 100MB",
@@ -81,7 +83,10 @@
     "fileContextLimitExceeded": "O contexto total de arquivos excede o limite de 500KB",
     "linkLocalFolders": "Vincular diretórios locais",
     "modelGone": "\"{{model}}\" não está mais disponível — escolha outro modelo abaixo",
-    "noModelsAvailable": "Nenhum modelo disponível",
+    "modelsLoading": "Preparando os modelos…",
+    "modelsLoadingDetail": "Os modelos aparecerão automaticamente quando estiverem prontos.",
+    "noModelsAvailable": "Nenhum modelo disponível no momento",
+    "noModelsAvailableDetail": "Verifique a rede ou abra a lista de modelos novamente mais tarde.",
     "offlineReadOnly": "Offline — somente leitura",
     "openFailed": "Falha ao abrir {{fileName}}",
     "runPhase": {

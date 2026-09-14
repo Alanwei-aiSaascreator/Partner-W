@@ -73,6 +73,8 @@
   "chatInput": {
     "abortFailed": "No se pudo detener la generación",
     "addContextFolder": "Agregar carpeta de contexto para referencias de archivos con @",
+    "aiServiceStarting": "Iniciando el servicio de IA…",
+    "aiServiceStartingDetail": "El primer inicio puede tardar alrededor de un minuto. Espera un momento.",
     "attachFile": "Adjuntar archivo",
     "attachmentSaveFailed": "No se pudo guardar el adjunto {{fileName}}",
     "attachmentTooLarge": "{{fileName}} excede el límite de 100MB",
@@ -81,7 +83,10 @@
     "fileContextLimitExceeded": "El contexto total de archivos excede el límite de 500KB",
     "linkLocalFolders": "Vincular directorios locales",
     "modelGone": "«{{model}}» ya no está disponible: elige otro modelo abajo",
-    "noModelsAvailable": "No hay modelos disponibles",
+    "modelsLoading": "Preparando los modelos…",
+    "modelsLoadingDetail": "Los modelos aparecerán automáticamente cuando estén listos.",
+    "noModelsAvailable": "No hay modelos disponibles por ahora",
+    "noModelsAvailableDetail": "Comprueba la red o vuelve a abrir la lista de modelos más tarde.",
     "offlineReadOnly": "Sin conexión — solo lectura",
     "openFailed": "No se pudo abrir {{fileName}}",
     "runPhase": {

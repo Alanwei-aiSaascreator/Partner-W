@@ -73,6 +73,8 @@
   "chatInput": {
     "abortFailed": "Generierung konnte nicht gestoppt werden",
     "addContextFolder": "Kontextordner fuer @-Dateiverweise hinzufuegen",
+    "aiServiceStarting": "KI-Dienst wird gestartet…",
+    "aiServiceStartingDetail": "Der erste Start kann etwa eine Minute dauern. Bitte warten Sie.",
     "attachFile": "Datei anhaengen",
     "attachmentSaveFailed": "Anhang {{fileName}} konnte nicht gespeichert werden",
     "attachmentTooLarge": "{{fileName}} ueberschreitet das 100-MB-Limit",
@@ -81,7 +83,10 @@
     "fileContextLimitExceeded": "Dateikontext ueberschreitet 500-KB-Limit",
     "linkLocalFolders": "Lokale Ordner verknuepfen",
     "modelGone": "„{{model}}\" ist nicht mehr verfügbar – bitte unten ein anderes Modell wählen",
-    "noModelsAvailable": "Keine Modelle verfuegbar",
+    "modelsLoading": "Modelle werden vorbereitet…",
+    "modelsLoadingDetail": "Die Modelle erscheinen automatisch, sobald sie bereit sind.",
+    "noModelsAvailable": "Zurzeit sind keine Modelle verfügbar",
+    "noModelsAvailableDetail": "Prüfen Sie Ihre Netzwerkverbindung oder öffnen Sie die Modellliste später erneut.",
     "offlineReadOnly": "Offline — Nur-Lese-Modus",
     "openFailed": "{{fileName}} konnte nicht geoeffnet werden",
     "runPhase": {

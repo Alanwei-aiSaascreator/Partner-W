@@ -73,6 +73,8 @@
   "chatInput": {
     "abortFailed": "Failed to stop generation",
     "addContextFolder": "Add context folder for @ file references",
+    "aiServiceStarting": "Starting AI service…",
+    "aiServiceStartingDetail": "The first startup may take about a minute. Please wait.",
     "attachFile": "Attach file",
     "attachmentSaveFailed": "Failed to save attachment {{fileName}}",
     "attachmentTooLarge": "{{fileName}} exceeds 100MB limit",
@@ -81,7 +83,10 @@
     "fileContextLimitExceeded": "Total file context exceeds 500KB limit",
     "linkLocalFolders": "Link local folders",
     "modelGone": "\"{{model}}\" is no longer available — pick another model below",
-    "noModelsAvailable": "No models available",
+    "modelsLoading": "Preparing models…",
+    "modelsLoadingDetail": "Models will appear automatically when they are ready.",
+    "noModelsAvailable": "No models available right now",
+    "noModelsAvailableDetail": "Check your network, or open the model list again later.",
     "offlineReadOnly": "Offline — read-only",
     "openFailed": "Failed to open {{fileName}}",
     "runPhase": {

@@ -73,6 +73,8 @@
   "chatInput": {
     "abortFailed": "停止生成失败",
     "addContextFolder": "为 @ 文件引用添加上下文文件夹",
+    "aiServiceStarting": "正在启动 AI 服务…",
+    "aiServiceStartingDetail": "首次启动可能需要约 1 分钟，请稍候。",
     "attachFile": "附加文件",
     "attachmentSaveFailed": "保存附件 {{fileName}} 失败",
     "attachmentTooLarge": "{{fileName}} 超出 100MB 上限",
@@ -81,7 +83,10 @@
     "fileContextLimitExceeded": "文件上下文总量超过 500KB 限制",
     "linkLocalFolders": "关联目录",
     "modelGone": "「{{model}}」已不可用，请在下方模型菜单里换一个",
-    "noModelsAvailable": "暂无可用模型",
+    "modelsLoading": "正在准备模型…",
+    "modelsLoadingDetail": "准备完成后会自动显示，无需重复操作。",
+    "noModelsAvailable": "暂时没有可用模型",
+    "noModelsAvailableDetail": "请检查网络，或稍后重新打开模型列表。",
     "offlineReadOnly": "离线模式 — 只读",
     "openFailed": "打开 {{fileName}} 失败",
     "runPhase": {

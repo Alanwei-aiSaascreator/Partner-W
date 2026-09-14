@@ -73,6 +73,8 @@
   "chatInput": {
     "abortFailed": "生成の停止に失敗しました",
     "addContextFolder": "@ ファイル参照用のコンテキストフォルダを追加",
+    "aiServiceStarting": "AI サービスを起動しています…",
+    "aiServiceStartingDetail": "初回起動には約 1 分かかる場合があります。しばらくお待ちください。",
     "attachFile": "ファイルを添付",
     "attachmentSaveFailed": "添付ファイル {{fileName}} の保存に失敗しました",
     "attachmentTooLarge": "{{fileName}} が 100MB の上限を超えています",
@@ -81,7 +83,10 @@
     "fileContextLimitExceeded": "ファイルコンテキストの合計が 500KB の上限を超えています",
     "linkLocalFolders": "ローカルフォルダを関連付け",
     "modelGone": "「{{model}}」は利用できなくなりました。下のメニューから別のモデルを選んでください",
-    "noModelsAvailable": "利用可能なモデルがありません",
+    "modelsLoading": "モデルを準備しています…",
+    "modelsLoadingDetail": "準備が完了すると、モデルが自動的に表示されます。",
+    "noModelsAvailable": "現在利用できるモデルはありません",
+    "noModelsAvailableDetail": "ネットワークを確認するか、後でもう一度モデル一覧を開いてください。",
     "offlineReadOnly": "オフライン — 読み取り専用",
     "openFailed": "{{fileName}} を開けませんでした",
     "runPhase": {
