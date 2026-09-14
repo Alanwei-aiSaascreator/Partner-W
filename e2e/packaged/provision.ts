@@ -50,6 +50,18 @@ export interface CommercialProvision {
    */
   testPhone?: string;
   testOtp?: string;
+  /**
+   * Demo 主路径 E2E 专用：一张**专用的、未绑定的**测试卡（`gen-licenses.mjs` 产出）。
+   *
+   * ⚠️ 与 `testPhone` / `testOtp` **同一套纪律** —— 只存在于本机 dev profile，
+   * **绝不进仓库**；缺了就让用例 **skip 并写明原因**，绝不当成 PASS。
+   *
+   * ⚠️ 别填正式客户卡：第一次跑会把这张卡**永久绑到测试手机号账号的个人 org**
+   * （之后每次跑都是幂等的，不会重复占名额）。
+   *
+   * 正式产品代码**不依赖**这个字段（全仓只在 `e2e/packaged/` 里被读）。
+   */
+  testLicenseKey?: string;
 }
 
 /** 开发机 profile 是否具备可搬运的商业身份。不具备就返回 null（E2E 该 skip）。 */
@@ -68,6 +80,7 @@ export function readDevProvision(): CommercialProvision | null {
       licenseKey?: string;
       testPhone?: string;
       testOtp?: string;
+      testLicenseKey?: string;
     };
   };
   try {
@@ -76,7 +89,7 @@ export function readDevProvision(): CommercialProvision | null {
     return null;
   }
 
-  const { supabaseUrl, supabaseAnonKey, licenseKey, testPhone, testOtp } = cfg.commercial ?? {};
+  const { supabaseUrl, supabaseAnonKey, licenseKey, testPhone, testOtp, testLicenseKey } = cfg.commercial ?? {};
   if (!supabaseUrl || !supabaseAnonKey || !licenseKey || !cfg.deviceId) return null;
 
   return {
@@ -88,6 +101,8 @@ export function readDevProvision(): CommercialProvision | null {
     deviceId: cfg.deviceId,
     // 可选：没配就是 undefined ⇒ positive late-login 用例 skip（见 late-login.spec.ts）
     ...(testPhone && testOtp ? { testPhone, testOtp } : {}),
+    // 可选：没配就是 undefined ⇒ 真实激活彩排用例 skip（见 demo-main-path.spec.ts）
+    ...(testLicenseKey ? { testLicenseKey } : {}),
   };
 }
 
@@ -98,6 +113,14 @@ export interface ProvisionOptions {
   supabaseUrlOverride?: string;
   /** 不带会话文件 ⇒ 模拟"配了商业层但没登录"。 */
   skipSession?: boolean;
+  /**
+   * 不写 `commercial.licenseKey` —— 让 App 起来时**名下没有卡**。
+   *
+   * 这是「真实激活」用例的地基：`provisionProfile()` 默认会把 dev profile 里
+   * 那张卡写进去，那样 App 一启动就已经是"已授权"，`ActivationSection` 直接渲染
+   * 已绑定态，**输入框根本不出现** —— 测的就不是激活了。
+   */
+  withoutLicenseKey?: boolean;
 }
 
 /**
@@ -123,7 +146,12 @@ export function provisionProfile(userDataDir: string, p: CommercialProvision, op
     commercial: {
       supabaseUrl: opts.supabaseUrlOverride ?? p.supabaseUrl,
       supabaseAnonKey: p.supabaseAnonKey,
-      licenseKey: p.licenseKey,
+      // ⚠️ `withoutLicenseKey` 只少这一个字段。supabaseUrl / anonKey / deviceId
+      //    仍然照写 —— 客户端**没有内置** Supabase 地址（全仓只有
+      //    `config?.commercial?.supabaseUrl ?? ''` 一处读取，且 `commercial:set-config`
+      //    没有界面调用方），那是产品本身的带外配置，不是"绕过激活"。
+      //    licenseKey 是**唯一**一个能替代激活的东西，所以只收它。
+      ...(opts.withoutLicenseKey ? {} : { licenseKey: p.licenseKey }),
     },
     gateways: [],
   };
@@ -145,6 +173,7 @@ export function describeProvision(p: CommercialProvision): Record<string, unknow
     hasSession: true,
     hasDeviceId: p.deviceId.length > 0,
     lateLoginTestAccount: p.testPhone && p.testOtp ? 'configured' : 'missing',
+    demoLicenceKey: p.testLicenseKey ? 'configured' : 'missing',
   };
 }
 
