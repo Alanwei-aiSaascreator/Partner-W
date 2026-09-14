@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => {
     artifactDir: '',
     gatewayId: 'gw-1',
     agentId: 'main',
+    model: 'deepseek-v4-flash',
   };
 
   return {
@@ -178,5 +179,17 @@ describe('useChatSend abort flow', () => {
 
     expect(mocks.applySlashCommand).toHaveBeenCalledWith('task-1', 'model', 'public/deepseek-v4-pro');
     expect(mocks.send).not.toHaveBeenCalled();
+  });
+
+  it('sends the active task model before the first message', async () => {
+    const { container } = render(<Harness initialValue="hello" />);
+    const buttons = container.querySelectorAll('button');
+
+    await act(async () => {
+      buttons[1].dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(mocks.send).toHaveBeenCalledWith('task-1', expect.objectContaining({ presetModel: 'deepseek-v4-flash' }));
   });
 });

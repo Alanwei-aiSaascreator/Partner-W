@@ -1,0 +1,42 @@
+import { describe, expect, it, vi } from 'vitest';
+import { createTaskStore } from '../src/stores/task-store';
+
+function setup() {
+  const persistTask = vi.fn(async () => ({ ok: true as const }));
+  const store = createTaskStore({
+    persistTask,
+    persistTaskUpdate: vi.fn(async () => ({ ok: true as const })),
+    deleteTask: vi.fn(async () => ({ ok: true as const })),
+    loadTasks: vi.fn(async () => ({ ok: true, rows: [] })),
+    patchSession: vi.fn(async () => ({ ok: true as const })),
+    getDeviceId: vi.fn(async () => 'device-1'),
+    getDefaultGatewayId: () => 'gw-1',
+    getAgentCatalog: () => ({ agents: [{ id: 'main' }], defaultId: 'main' }),
+  });
+  return { store, persistTask };
+}
+
+describe('task store pending task metadata', () => {
+  it('preserves the selected model and thinking level when committing a pending task', () => {
+    const { store, persistTask } = setup();
+
+    store.getState().startNewTask({
+      model: 'deepseek-v4-flash',
+      thinkingLevel: 'high',
+    });
+    const task = store.getState().commitPendingTask();
+
+    expect(task).toEqual(
+      expect.objectContaining({
+        model: 'deepseek-v4-flash',
+        thinkingLevel: 'high',
+      }),
+    );
+    expect(persistTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: 'deepseek-v4-flash',
+        thinkingLevel: 'high',
+      }),
+    );
+  });
+});

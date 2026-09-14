@@ -22,7 +22,14 @@ export interface TaskState {
   clearPending: () => void;
   updatePending: (patch: Partial<PendingNewTask>) => void;
   setPending: (task: PendingNewTask | null) => void;
-  createTask: (opts?: { gatewayId?: string; agentId?: string; ensemble?: boolean; teamId?: string }) => Task;
+  createTask: (opts?: {
+    gatewayId?: string;
+    agentId?: string;
+    model?: string;
+    thinkingLevel?: string;
+    ensemble?: boolean;
+    teamId?: string;
+  }) => Task;
   setActiveTask: (id: string | null) => void;
   updateTaskTitle: (id: string, title: string) => void;
   updateTaskStatus: (id: string, status: TaskStatus) => void;
@@ -136,6 +143,8 @@ export function createTaskStore(deps: TaskStoreDeps) {
       const task = get().createTask({
         gatewayId: gwId,
         agentId: agId,
+        model: pending?.model,
+        thinkingLevel: pending?.thinkingLevel,
         ensemble: pending?.ensemble,
         teamId: pending?.teamId,
       });
@@ -175,6 +184,8 @@ export function createTaskStore(deps: TaskStoreDeps) {
         artifactDir: '',
         gatewayId: resolvedGatewayId,
         agentId: resolvedAgentId,
+        model: opts?.model,
+        thinkingLevel: opts?.thinkingLevel,
         teamId: opts?.teamId,
       };
       set((s) => ({ tasks: [task, ...s.tasks], activeTaskId: id }));

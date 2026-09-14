@@ -214,10 +214,6 @@ export function useChatSend(opts: UseChatSendOpts) {
     const content = textarea.value.trim();
     if (!content && !pendingAttachments.length) return;
 
-    const pendingPreset = !activeTask ? useTaskStore.getState().pendingNewTask : null;
-    const pendingPresetModel = pendingPreset?.model;
-    const pendingPresetThinking = pendingPreset?.thinkingLevel;
-
     let task = activeTask;
     if (!task) {
       try {
@@ -480,8 +476,8 @@ export function useChatSend(opts: UseChatSendOpts) {
         content: finalContent,
         attachments: allAttachments.length > 0 ? allAttachments : undefined,
         messageAttachments: msgAttachments,
-        presetModel: pendingPresetModel,
-        presetThinking: pendingPresetThinking,
+        presetModel: currentModel,
+        presetThinking: currentThinking,
         titleHint: task.title ? undefined : titleHint,
         mentionAll: isMentionAll || undefined,
         mentions: agentMentions.length > 0 && !isMentionAll ? agentMentions.map((a) => a.agentId) : undefined,
@@ -515,6 +511,7 @@ export function useChatSend(opts: UseChatSendOpts) {
     onComposerCleared,
     modelCatalog,
     currentModel,
+    currentThinking,
   ]);
 
   const handleModelQuickSend = useCallback(
