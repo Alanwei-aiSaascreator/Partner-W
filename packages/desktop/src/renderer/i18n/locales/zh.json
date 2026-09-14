@@ -323,13 +323,16 @@
     "wakeMode_now": "立即"
   },
   "dashboard": {
+    "accountBalance": "账户积分",
     "accountScope": "账号",
     "activeDays": "活跃天数",
-    "actualModel": "按实际调用模型统计 —— 中途切模型会分成两行",
+    "actualModel": "按真实调用的模型统计，中途切换会分开记录。",
     "allTimeSection": "累计",
-    "breakdownsSection": "分布",
     "calls": "调用次数",
     "credits": "积分",
+    "description": "查看任务成果、常用助手、模型消耗和账户积分。",
+    "favoriteAssistant": "常用助手",
+    "hideBillingDetails": "收起计费明细",
     "inputTokens": "输入 Token",
     "last30dSection": "最近 30 天",
     "ledger": {
@@ -353,17 +356,25 @@
       "targetMultiplier": "目标倍率",
       "targetMultiplierHint": "这是目标值，不表示每次结算都精确等于它"
     },
+    "localScope": "本机",
     "modelUsage": "模型消耗",
     "modelUsageEmpty": "暂无调用记录（只统计走中转的调用）",
-    "noBreakdownData": "暂无数据",
+    "modelUsageUnavailable": "暂时无法读取模型消耗，请稍后刷新。",
+    "noAssistantData": "完成一次任务后，这里会显示常用助手。",
     "noData": "暂无网关数据",
     "outputTokens": "输出 Token",
+    "refresh": "刷新数据",
+    "remainingCredits": "剩余积分",
+    "showBillingDetails": "查看计费明细",
+    "taskCount": "{{count}} 次任务",
+    "title": "我的 AI 使用概览",
     "tokenChart": "每日 Token 趋势",
-    "topAgents": "Agent 排行",
-    "topGateways": "网关排行",
+    "topAgents": "常用助手",
     "totalArtifacts": "总文件数",
     "totalMessages": "总消息数",
-    "totalTasks": "总任务数"
+    "totalTasks": "总任务数",
+    "unavailable": "暂时无法读取",
+    "usageSummary": "使用概况"
   },
   "dialog": {
     "confirm": "继续",
@@ -434,7 +445,8 @@
     "noPreview": "暂无消息",
     "searchTasks": "搜索任务…",
     "switchAgent": "切换智能体",
-    "updateAvailable": "有新版本可用"
+    "updateAvailable": "有新版本可用",
+    "usageOverview": "我的 AI 使用概览"
   },
   "login": {
     "agreement": "我已阅读并同意{0}与{1}",

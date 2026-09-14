@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Plus, Search, FolderOpen, Settings, Archive, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { Plus, Search, Settings, Archive, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useTaskStore } from '@/stores/taskStore';
 import { useMessageStore } from '@/stores/messageStore';
@@ -33,6 +33,7 @@ import {
 import { exportToFiles, exportToLocal } from '@/lib/export-session';
 import TaskItem from './TaskItem';
 import AgentSwitcher from './AgentSwitcher';
+import LeftNavPrimaryLinks from './PrimaryLinks';
 import { useGatewaySelector } from '@/hooks/useGatewaySelector';
 import type { Task, TaskStatus } from '@clawwork/shared';
 import EmptyState from '@/components/semantic/EmptyState';
@@ -102,38 +103,6 @@ function IconButton({
       </TooltipTrigger>
       <TooltipContent side={tooltipSide}>{tooltip}</TooltipContent>
     </Tooltip>
-  );
-}
-
-function NavButton({
-  icon: Icon,
-  label,
-  active,
-  onClick,
-  badge,
-}: {
-  icon: ComponentType<{ size: number; className?: string }>;
-  label: string;
-  active: boolean;
-  onClick: () => void;
-  badge?: ReactNode;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={cn(
-        'titlebar-no-drag type-label relative flex w-full items-center gap-2.5 rounded-md px-3 py-2 transition-colors',
-        'focus-visible:outline-none glow-focus',
-        'active:scale-[0.98]',
-        active
-          ? 'bg-[var(--accent-dim)] text-[var(--text-primary)]'
-          : 'text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]',
-      )}
-    >
-      <Icon size={16} className="opacity-60 flex-shrink-0" />
-      {label}
-      {badge}
-    </button>
   );
 }
 
@@ -387,12 +356,7 @@ export default function LeftNav() {
             }}
             className="text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]"
           />
-          <IconButton
-            icon={FolderOpen}
-            tooltip={t('common.fileManager')}
-            onClick={() => setMainView('files')}
-            className={navActiveClass(mainView === 'files')}
-          />
+          <LeftNavPrimaryLinks collapsed mainView={mainView} onSelect={setMainView} />
         </div>
 
         <div className="w-6 h-px bg-[var(--border)]" />
@@ -515,13 +479,8 @@ export default function LeftNav() {
         </AnimatePresence>
 
         <div className="flex flex-col h-full">
-          <div className="px-3 pb-1 flex-shrink-0 space-y-0.5">
-            <NavButton
-              icon={FolderOpen}
-              label={t('common.fileManager')}
-              active={mainView === 'files'}
-              onClick={() => setMainView('files')}
-            />
+          <div className="px-3 pb-1 flex-shrink-0">
+            <LeftNavPrimaryLinks collapsed={false} mainView={mainView} onSelect={setMainView} />
           </div>
 
           <ScrollArea className="flex-1">

@@ -323,13 +323,16 @@
     "wakeMode_now": "Immédiat"
   },
   "dashboard": {
+    "accountBalance": "Account credits",
     "accountScope": "Compte",
     "activeDays": "Jours actifs",
-    "actualModel": "Compté par modèle réellement appelé — un changement crée deux lignes",
+    "actualModel": "Based on the model actually called; model changes are listed separately.",
     "allTimeSection": "Tout l'historique",
-    "breakdownsSection": "Répartitions",
     "calls": "Appels",
     "credits": "Crédits",
+    "description": "See your completed work, favorite assistants, model usage, and account credits.",
+    "favoriteAssistant": "Favorite assistant",
+    "hideBillingDetails": "Hide billing details",
     "inputTokens": "Tokens en entrée",
     "last30dSection": "30 derniers jours",
     "ledger": {
@@ -353,17 +356,25 @@
       "targetMultiplier": "Multiplicateur cible",
       "targetMultiplierHint": "Valeur cible : chaque règlement ne tombe pas forcément exactement dessus"
     },
+    "localScope": "This device",
     "modelUsage": "Consommation par modèle",
     "modelUsageEmpty": "Aucun appel (appels relay uniquement)",
-    "noBreakdownData": "Aucune donnée",
+    "modelUsageUnavailable": "Model usage is temporarily unavailable. Try refreshing shortly.",
+    "noAssistantData": "Your favorite assistants will appear after you complete a task.",
     "noData": "Aucune donnée de passerelle disponible",
     "outputTokens": "Tokens en sortie",
+    "refresh": "Refresh data",
+    "remainingCredits": "Credits remaining",
+    "showBillingDetails": "View billing details",
+    "taskCount": "{{count}} tasks",
+    "title": "My AI usage overview",
     "tokenChart": "Tendance quotidienne des tokens",
-    "topAgents": "Top agents",
-    "topGateways": "Top passerelles",
+    "topAgents": "Favorite assistants",
     "totalArtifacts": "Total des artefacts",
     "totalMessages": "Total des messages",
-    "totalTasks": "Total des tâches"
+    "totalTasks": "Total des tâches",
+    "unavailable": "Temporarily unavailable",
+    "usageSummary": "Usage summary"
   },
   "dialog": {
     "confirm": "Continuer",
@@ -434,7 +445,8 @@
     "noPreview": "Aucun message",
     "searchTasks": "Rechercher des tâches…",
     "switchAgent": "Changer d'agent",
-    "updateAvailable": "Mise à jour disponible"
+    "updateAvailable": "Mise à jour disponible",
+    "usageOverview": "My AI usage overview"
   },
   "login": {
     "agreement": "J'ai lu et j'accepte les {0} et la {1}",

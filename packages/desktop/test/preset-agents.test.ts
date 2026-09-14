@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   PRESET_AGENT_DEFINITIONS,
   STARTER_AGENT_BY_ID,
+  resolveAgentDisplayNameKey,
   resolveStarterAgentId,
 } from '../src/renderer/lib/preset-agents';
 
@@ -41,5 +42,11 @@ describe('preset agent definitions', () => {
   it('uses the professional assistant only when it exists in the current gateway', () => {
     expect(resolveStarterAgentId('content', ['main', 'rongying-content'], 'main')).toBe('rongying-content');
     expect(resolveStarterAgentId('content', ['main'], 'main')).toBe('main');
+  });
+
+  it('maps internal assistant ids to customer-facing translation keys', () => {
+    expect(resolveAgentDisplayNameKey('main')).toBe('mainArea.compassAssistant');
+    expect(resolveAgentDisplayNameKey('rongying-video')).toBe('presetAgents.roles.video');
+    expect(resolveAgentDisplayNameKey('custom-agent')).toBeNull();
   });
 });

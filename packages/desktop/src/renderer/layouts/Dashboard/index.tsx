@@ -1,15 +1,19 @@
-import { useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { ChevronDown, RefreshCw } from 'lucide-react';
 import type { DashboardBreakdownEntry, DashboardModelUsage } from '@clawwork/shared';
 import { PROVIDER_DISPLAY_NAMES } from '@clawwork/shared';
 import { useDashboardStore } from '@/stores/dashboardStore';
+import { useCommercialStore } from '@/stores/commercialStore';
 import { formatCredits, formatRmb, formatTokenCount } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
+import { resolveAgentDisplayNameKey } from '@/lib/preset-agents';
 
 function Tile({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
     <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] p-5">
-      <div className="type-meta uppercase tracking-wider text-[var(--text-muted)]">{label}</div>
+      <div className="type-label text-[var(--text-secondary)]">{label}</div>
       <div className="mt-2 type-page-title text-[var(--text-primary)]">{value}</div>
       {hint ? <div className="mt-1 type-meta text-[var(--text-muted)]">{hint}</div> : null}
     </div>
@@ -40,7 +44,7 @@ function BreakdownTile({
 }) {
   return (
     <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] p-5">
-      <div className="type-meta uppercase tracking-wider text-[var(--text-muted)] mb-4">{label}</div>
+      <div className="type-label mb-4 text-[var(--text-secondary)]">{label}</div>
       {entries.length === 0 ? (
         <div className="type-support text-[var(--text-muted)]">{emptyText}</div>
       ) : (
@@ -193,51 +197,72 @@ function BillingDetail({ entry }: { entry: DashboardModelUsage }) {
  *
  * ⚠️ 不要退回读本地 `tasks.model` —— 那是会话选中的模型，看不出切换也看不出回退。
  */
-function ModelUsageTile({ entries, emptyText }: { entries: DashboardModelUsage[] | null; emptyText: string }) {
+function ModelUsageRow({ entry }: { entry: DashboardModelUsage }) {
+  const { t } = useTranslation();
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const providerName = PROVIDER_DISPLAY_NAMES[entry.provider] ?? entry.provider;
+
+  return (
+    <div className="border-t border-[var(--border-subtle)] py-4 first:border-t-0 first:pt-0 last:pb-0">
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <div className="type-body truncate text-[var(--text-primary)]" title={`${entry.provider}/${entry.model}`}>
+            {entry.model}
+          </div>
+          <div className="mt-1 type-meta text-[var(--text-muted)]">{providerName}</div>
+        </div>
+        <div className="flex-shrink-0 text-right">
+          <div className="type-label text-[var(--text-primary)]">
+            {formatCredits(entry.costMicros)} {t('usage.creditsUnit')}
+          </div>
+          <div className="mt-1 type-meta text-[var(--text-muted)]">
+            {formatTokenCount(entry.totalTokens)} · {entry.calls} {t('dashboard.calls')}
+          </div>
+        </div>
+      </div>
+      <Button
+        variant="ghost"
+        size="sm"
+        className="mt-2 -ml-3"
+        aria-expanded={detailsOpen}
+        onClick={() => setDetailsOpen((open) => !open)}
+      >
+        {detailsOpen ? t('dashboard.hideBillingDetails') : t('dashboard.showBillingDetails')}
+        <ChevronDown size={14} className={detailsOpen ? 'rotate-180 transition-transform' : 'transition-transform'} />
+      </Button>
+      {detailsOpen ? <BillingDetail entry={entry} /> : null}
+    </div>
+  );
+}
+
+function ModelUsageTile({
+  entries,
+  emptyText,
+  unavailableText,
+}: {
+  entries: DashboardModelUsage[] | null;
+  emptyText: string;
+  unavailableText: string;
+}) {
   const { t } = useTranslation();
 
   return (
     <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] p-5">
-      <div className="type-meta uppercase tracking-wider text-[var(--text-muted)]">{t('dashboard.modelUsage')}</div>
-      {/* 「实际调用模型」的副标题：这一行是**读数正确性**的说明，不是装饰 ——
-          用户必须知道这里的行是按真正发出去的模型分的，而不是他选的那个。 */}
-      <div className="mt-1 mb-4 type-meta text-[var(--text-muted)]">{t('dashboard.actualModel')}</div>
-      {entries === null || entries.length === 0 ? (
+      <div className="mb-5 type-support text-[var(--text-muted)]">{t('dashboard.actualModel')}</div>
+      {entries === null ? (
+        <div className="type-support text-[var(--text-muted)]">{unavailableText}</div>
+      ) : entries.length === 0 ? (
         <div className="type-support text-[var(--text-muted)]">{emptyText}</div>
       ) : (
-        <div className="space-y-4">
-          {entries.map((entry) => {
-            const providerName = PROVIDER_DISPLAY_NAMES[entry.provider] ?? entry.provider;
-            return (
-              <div key={`${entry.provider} ${entry.model}`}>
-                <div className="flex items-baseline justify-between gap-2">
-                  {/* 「实际调用模型」—— 括号里的 provider 是实际上游 */}
-                  <span
-                    className="type-body truncate text-[var(--text-primary)]"
-                    title={`${entry.provider}/${entry.model}`}
-                  >
-                    {entry.model}
-                  </span>
-                  <span className="type-support flex-shrink-0 text-[var(--text-secondary)]">
-                    {formatCredits(entry.costMicros)} {t('usage.creditsUnit')}
-                  </span>
-                </div>
-                <div className="mt-0.5 flex items-baseline justify-between gap-2 type-meta text-[var(--text-muted)]">
-                  <span>{providerName}</span>
-                  <span>
-                    {formatTokenCount(entry.totalTokens)} · {entry.calls} {t('dashboard.calls')}
-                  </span>
-                </div>
-                <BillingDetail entry={entry} />
-              </div>
-            );
-          })}
+        <div>
+          {entries.map((entry) => (
+            <ModelUsageRow key={`${entry.provider} ${entry.model}`} entry={entry} />
+          ))}
         </div>
       )}
-      {/* ⚠️ 结算口径的说明，不是装饰：`usage_records` 的行由 report_usage_v2 在
-          一次成功的 RPC 里写入，所以「有这行」= 已结算；而 **HTTP 200 ≠ 已结算**
-          （res.end() 可能先于 await recordUsage 完成）。 */}
-      <div className="mt-4 type-meta text-[var(--text-muted)]">{t('dashboard.ledger.settledNote')}</div>
+      {entries && entries.length > 0 ? (
+        <div className="mt-4 type-meta text-[var(--text-muted)]">{t('dashboard.ledger.settledNote')}</div>
+      ) : null}
     </div>
   );
 }
@@ -245,109 +270,208 @@ function ModelUsageTile({ entries, emptyText }: { entries: DashboardModelUsage[]
 export default function Dashboard() {
   const { t } = useTranslation();
   const data = useDashboardStore((s) => s.data);
+  const loading = useDashboardStore((s) => s.loading);
   const fetchDashboard = useDashboardStore((s) => s.fetch);
+  const commercialOverview = useCommercialStore((s) => s.overview);
+  const loadCommercial = useCommercialStore((s) => s.load);
+  const refreshCommercial = useCommercialStore((s) => s.refresh);
 
   useEffect(() => {
-    fetchDashboard();
-  }, [fetchDashboard]);
+    void fetchDashboard();
+    void loadCommercial();
+  }, [fetchDashboard, loadCommercial]);
+
+  const handleRefresh = useCallback(() => {
+    void fetchDashboard(true);
+    void refreshCommercial();
+  }, [fetchDashboard, refreshCommercial]);
 
   const last30d = data?.last30d;
   const placeholder = '—';
+  const agentEntries = (data?.breakdowns.agents ?? []).map((entry) => {
+    const displayNameKey = resolveAgentDisplayNameKey(entry.name);
+    return displayNameKey ? { ...entry, name: t(displayNameKey) } : entry;
+  });
+  const topAgent = agentEntries[0] ?? null;
+  const license = commercialOverview?.license ?? null;
+  const quotaMicros = license?.tokenQuotaMicros ?? null;
+  const usedMicros = license?.tokenUsedMicros ?? null;
+  const remainingMicros = quotaMicros === null || usedMicros === null ? null : Math.max(0, quotaMicros - usedMicros);
+  const remainingPercent =
+    quotaMicros && remainingMicros !== null ? Math.min(100, (remainingMicros / quotaMicros) * 100) : 0;
 
   return (
-    <div className="h-full w-full overflow-y-auto p-6 space-y-8">
-      <section>
-        <SectionHeader text={t('dashboard.allTimeSection')} scope={t('dashboard.accountScope')} />
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <Tile label={t('dashboard.totalTasks')} value={(data?.totalTasks ?? 0).toLocaleString()} />
-          <Tile label={t('dashboard.activeDays')} value={(data?.activeDays ?? 0).toLocaleString()} />
-          <Tile label={t('dashboard.totalMessages')} value={(data?.totalMessages ?? 0).toLocaleString()} />
-          <Tile label={t('dashboard.totalArtifacts')} value={(data?.totalArtifacts ?? 0).toLocaleString()} />
-        </div>
-      </section>
-
-      <section>
-        <SectionHeader text={t('dashboard.modelUsage')} scope={t('dashboard.accountScope')} />
-        <ModelUsageTile entries={data?.modelUsage ?? null} emptyText={t('dashboard.modelUsageEmpty')} />
-      </section>
-
-      <section>
-        <SectionHeader text={t('dashboard.breakdownsSection')} />
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <BreakdownTile
-            label={t('dashboard.topGateways')}
-            entries={data?.breakdowns.gateways ?? []}
-            emptyText={t('dashboard.noBreakdownData')}
-          />
-          <BreakdownTile
-            label={t('dashboard.topAgents')}
-            entries={data?.breakdowns.agents ?? []}
-            emptyText={t('dashboard.noBreakdownData')}
-          />
-        </div>
-      </section>
-
-      <section>
-        <SectionHeader text={t('dashboard.last30dSection')} scope={t('dashboard.accountScope')} />
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-          <Tile label={t('dashboard.inputTokens')} value={last30d ? formatTokenCount(last30d.input) : placeholder} />
-          <Tile label={t('dashboard.outputTokens')} value={last30d ? formatTokenCount(last30d.output) : placeholder} />
-          {/* 单位是积分（服务端计费），不再是本机网关估的美元 */}
-          <Tile
-            label={t('dashboard.credits')}
-            value={last30d ? `${formatCredits(last30d.costMicros)} ${t('usage.creditsUnit')}` : placeholder}
-          />
-        </div>
-
-        <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] p-5">
-          <div className="type-meta uppercase tracking-wider text-[var(--text-muted)] mb-4">
-            {t('dashboard.tokenChart')}
+    <div className="h-full w-full overflow-y-auto">
+      <div className="mx-auto w-full max-w-6xl space-y-8 p-6 pb-10">
+        <header className="flex items-start justify-between gap-4">
+          <div>
+            <h1 className="type-page-title text-[var(--text-primary)]">{t('dashboard.title')}</h1>
+            <p className="mt-1 max-w-2xl type-body text-[var(--text-muted)]">{t('dashboard.description')}</p>
           </div>
-          {last30d && last30d.daily.length > 0 ? (
-            <ResponsiveContainer width="100%" height={260}>
-              <LineChart data={last30d.daily}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-                <XAxis dataKey="date" stroke="var(--text-muted)" tick={{ fontSize: 11 }} />
-                <YAxis
-                  stroke="var(--text-muted)"
-                  tick={{ fontSize: 11 }}
-                  tickFormatter={(v: number) => formatTokenCount(v)}
-                />
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: 'var(--bg-primary)',
-                    border: '1px solid var(--border)',
-                    borderRadius: '8px',
-                    color: 'var(--text-primary)',
-                  }}
-                  formatter={(value) => (typeof value === 'number' ? formatTokenCount(value) : String(value ?? ''))}
-                />
-                <Legend wrapperStyle={{ fontSize: 12 }} />
-                <Line
-                  type="monotone"
-                  dataKey="input"
-                  stroke="var(--accent)"
-                  name={t('dashboard.inputTokens')}
-                  dot={false}
-                  strokeWidth={2}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="output"
-                  stroke="var(--warning)"
-                  name={t('dashboard.outputTokens')}
-                  dot={false}
-                  strokeWidth={2}
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          ) : (
-            <div className="flex h-40 items-center justify-center type-body text-[var(--text-muted)]">
-              {t('dashboard.noData')}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleRefresh}
+            disabled={loading}
+            aria-label={t('dashboard.refresh')}
+          >
+            <RefreshCw size={15} className={loading ? 'animate-spin' : undefined} />
+            {t('dashboard.refresh')}
+          </Button>
+        </header>
+
+        <section>
+          <SectionHeader text={t('dashboard.allTimeSection')} />
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <Tile
+              label={t('dashboard.totalTasks')}
+              value={data ? data.totalTasks.toLocaleString() : placeholder}
+              hint={t('dashboard.localScope')}
+            />
+            <Tile
+              label={t('dashboard.activeDays')}
+              value={data ? data.activeDays.toLocaleString() : placeholder}
+              hint={t('dashboard.localScope')}
+            />
+            <Tile
+              label={t('dashboard.remainingCredits')}
+              value={remainingMicros === null ? placeholder : formatCredits(remainingMicros)}
+              hint={remainingMicros === null ? t('dashboard.unavailable') : t('dashboard.accountScope')}
+            />
+            <Tile
+              label={t('dashboard.favoriteAssistant')}
+              value={topAgent?.name ?? placeholder}
+              hint={
+                topAgent
+                  ? `${t('dashboard.taskCount', { count: topAgent.count })} · ${t('dashboard.localScope')}`
+                  : data
+                    ? t('dashboard.noAssistantData')
+                    : t('dashboard.unavailable')
+              }
+            />
+          </div>
+        </section>
+
+        <section>
+          <SectionHeader text={t('dashboard.usageSummary')} />
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <BreakdownTile
+              label={t('dashboard.topAgents')}
+              entries={agentEntries}
+              emptyText={data ? t('dashboard.noAssistantData') : t('dashboard.unavailable')}
+            />
+            <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] p-5">
+              <div className="type-label text-[var(--text-secondary)]">{t('dashboard.accountBalance')}</div>
+              {quotaMicros === null || usedMicros === null ? (
+                <div className="mt-4 type-support text-[var(--text-muted)]">{t('dashboard.unavailable')}</div>
+              ) : (
+                <div className="mt-4 space-y-3">
+                  <div className="flex items-baseline justify-between gap-3">
+                    <span className="type-support text-[var(--text-secondary)]">{t('dashboard.remainingCredits')}</span>
+                    <span className="type-section-title text-[var(--text-primary)]">
+                      {formatCredits(remainingMicros ?? 0)} {t('usage.creditsUnit')}
+                    </span>
+                  </div>
+                  <div
+                    className="h-2 overflow-hidden rounded-full bg-[var(--bg-tertiary)]"
+                    role="progressbar"
+                    aria-label={t('dashboard.remainingCredits')}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={Math.round(remainingPercent)}
+                  >
+                    <div className="h-full rounded-full bg-[var(--accent)]" style={{ width: `${remainingPercent}%` }} />
+                  </div>
+                  <div className="flex items-center justify-between type-meta text-[var(--text-muted)]">
+                    <span>
+                      {t('usage.quotaUsed')} {formatCredits(usedMicros)}
+                    </span>
+                    <span>
+                      {t('usage.quotaTotal')} {formatCredits(quotaMicros)}
+                    </span>
+                  </div>
+                </div>
+              )}
+              <div className="mt-5 border-t border-[var(--border-subtle)] pt-4 type-support text-[var(--text-muted)]">
+                {t('dashboard.totalMessages')} {data ? data.totalMessages.toLocaleString() : placeholder} ·{' '}
+                {t('dashboard.totalArtifacts')} {data ? data.totalArtifacts.toLocaleString() : placeholder}
+              </div>
             </div>
-          )}
-        </div>
-      </section>
+          </div>
+        </section>
+
+        <section>
+          <SectionHeader text={t('dashboard.modelUsage')} scope={t('dashboard.accountScope')} />
+          <ModelUsageTile
+            entries={data?.modelUsage ?? null}
+            emptyText={t('dashboard.modelUsageEmpty')}
+            unavailableText={t('dashboard.modelUsageUnavailable')}
+          />
+        </section>
+
+        <section>
+          <SectionHeader text={t('dashboard.last30dSection')} scope={t('dashboard.accountScope')} />
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+            <Tile label={t('dashboard.inputTokens')} value={last30d ? formatTokenCount(last30d.input) : placeholder} />
+            <Tile
+              label={t('dashboard.outputTokens')}
+              value={last30d ? formatTokenCount(last30d.output) : placeholder}
+            />
+            {/* 单位是积分（服务端计费），不再是本机网关估的美元 */}
+            <Tile
+              label={t('dashboard.credits')}
+              value={last30d ? `${formatCredits(last30d.costMicros)} ${t('usage.creditsUnit')}` : placeholder}
+            />
+          </div>
+
+          <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] p-5">
+            <div className="type-label mb-4 text-[var(--text-secondary)]">{t('dashboard.tokenChart')}</div>
+            {last30d && last30d.daily.length > 0 ? (
+              <ResponsiveContainer width="100%" height={260}>
+                <LineChart data={last30d.daily}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                  <XAxis dataKey="date" stroke="var(--text-muted)" tick={{ fontSize: 11 }} />
+                  <YAxis
+                    stroke="var(--text-muted)"
+                    tick={{ fontSize: 11 }}
+                    tickFormatter={(v: number) => formatTokenCount(v)}
+                  />
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: 'var(--bg-primary)',
+                      border: '1px solid var(--border)',
+                      borderRadius: '8px',
+                      color: 'var(--text-primary)',
+                    }}
+                    formatter={(value) => (typeof value === 'number' ? formatTokenCount(value) : String(value ?? ''))}
+                  />
+                  <Legend wrapperStyle={{ fontSize: 12 }} />
+                  <Line
+                    type="monotone"
+                    dataKey="input"
+                    stroke="var(--accent)"
+                    name={t('dashboard.inputTokens')}
+                    dot={false}
+                    strokeWidth={2}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="output"
+                    stroke="var(--warning)"
+                    name={t('dashboard.outputTokens')}
+                    dot={false}
+                    strokeWidth={2}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="flex h-40 items-center justify-center type-body text-[var(--text-muted)]">
+                {t('dashboard.noData')}
+              </div>
+            )}
+          </div>
+        </section>
+      </div>
     </div>
   );
 }

@@ -323,13 +323,16 @@
     "wakeMode_now": "Immediate"
   },
   "dashboard": {
+    "accountBalance": "Account credits",
     "accountScope": "Account",
     "activeDays": "Active Days",
-    "actualModel": "Counted per model actually called — switching mid-session splits into two rows",
+    "actualModel": "Based on the model actually called; model changes are listed separately.",
     "allTimeSection": "All Time",
-    "breakdownsSection": "Breakdowns",
     "calls": "Calls",
     "credits": "Credits",
+    "description": "See your completed work, favorite assistants, model usage, and account credits.",
+    "favoriteAssistant": "Favorite assistant",
+    "hideBillingDetails": "Hide billing details",
     "inputTokens": "Input Tokens",
     "last30dSection": "Last 30 Days",
     "ledger": {
@@ -353,17 +356,25 @@
       "targetMultiplier": "Target multiplier",
       "targetMultiplierHint": "This is the target, not a guarantee that every settlement lands exactly on it"
     },
+    "localScope": "This device",
     "modelUsage": "Model usage",
     "modelUsageEmpty": "No calls yet (relay calls only)",
-    "noBreakdownData": "No data",
+    "modelUsageUnavailable": "Model usage is temporarily unavailable. Try refreshing shortly.",
+    "noAssistantData": "Your favorite assistants will appear after you complete a task.",
     "noData": "No gateway data available",
     "outputTokens": "Output Tokens",
+    "refresh": "Refresh data",
+    "remainingCredits": "Credits remaining",
+    "showBillingDetails": "View billing details",
+    "taskCount": "{{count}} tasks",
+    "title": "My AI usage overview",
     "tokenChart": "Daily Token Trend",
-    "topAgents": "Top Agents",
-    "topGateways": "Top Gateways",
+    "topAgents": "Favorite assistants",
     "totalArtifacts": "Total Artifacts",
     "totalMessages": "Total Messages",
-    "totalTasks": "Total Tasks"
+    "totalTasks": "Total Tasks",
+    "unavailable": "Temporarily unavailable",
+    "usageSummary": "Usage summary"
   },
   "dialog": {
     "confirm": "Continue",
@@ -434,7 +445,8 @@
     "noPreview": "No messages yet",
     "searchTasks": "Search tasks…",
     "switchAgent": "Switch agent",
-    "updateAvailable": "Update available"
+    "updateAvailable": "Update available",
+    "usageOverview": "My AI usage overview"
   },
   "login": {
     "agreement": "I have read and agree to the {0} and {1}",

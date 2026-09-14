@@ -323,13 +323,16 @@
     "wakeMode_now": "立即"
   },
   "dashboard": {
+    "accountBalance": "帳戶積分",
     "accountScope": "帳號",
     "activeDays": "活躍天數",
-    "actualModel": "依實際呼叫模型統計 —— 中途切換模型會分成兩行",
+    "actualModel": "按實際呼叫的模型統計，中途切換會分開記錄。",
     "allTimeSection": "累計",
-    "breakdownsSection": "分布",
     "calls": "呼叫次數",
     "credits": "積分",
+    "description": "查看任務成果、常用助手、模型消耗和帳戶積分。",
+    "favoriteAssistant": "常用助手",
+    "hideBillingDetails": "收起計費明細",
     "inputTokens": "輸入 Token",
     "last30dSection": "最近 30 天",
     "ledger": {
@@ -353,17 +356,25 @@
       "targetMultiplier": "目標倍率",
       "targetMultiplierHint": "這是目標值，不表示每次結算都精確等於它"
     },
+    "localScope": "本機",
     "modelUsage": "模型消耗",
     "modelUsageEmpty": "暫無呼叫記錄（只統計走中轉的呼叫）",
-    "noBreakdownData": "暫無資料",
+    "modelUsageUnavailable": "暫時無法讀取模型消耗，請稍後重新整理。",
+    "noAssistantData": "完成一次任務後，這裡會顯示常用助手。",
     "noData": "暫無閘道資料",
     "outputTokens": "輸出 Token",
+    "refresh": "重新整理資料",
+    "remainingCredits": "剩餘積分",
+    "showBillingDetails": "查看計費明細",
+    "taskCount": "{{count}} 次任務",
+    "title": "我的 AI 使用概覽",
     "tokenChart": "每日 Token 趨勢",
-    "topAgents": "Agent 排行",
-    "topGateways": "閘道排行",
+    "topAgents": "常用助手",
     "totalArtifacts": "總檔案數",
     "totalMessages": "總訊息數",
-    "totalTasks": "總任務數"
+    "totalTasks": "總任務數",
+    "unavailable": "暫時無法讀取",
+    "usageSummary": "使用概況"
   },
   "dialog": {
     "confirm": "繼續",
@@ -434,7 +445,8 @@
     "noPreview": "尚無訊息",
     "searchTasks": "搜尋任務…",
     "switchAgent": "切換智能體",
-    "updateAvailable": "有可用更新"
+    "updateAvailable": "有可用更新",
+    "usageOverview": "我的 AI 使用概覽"
   },
   "login": {
     "agreement": "我已閱讀並同意{0}與{1}",

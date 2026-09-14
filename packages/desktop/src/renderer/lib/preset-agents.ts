@@ -107,6 +107,11 @@ export const PRESET_AGENT_DEFINITIONS: readonly PresetAgentDefinition[] = [
   },
 ];
 
+export function resolveAgentDisplayNameKey(agentId: string): string | null {
+  if (agentId === 'main') return 'mainArea.compassAssistant';
+  return PRESET_AGENT_DEFINITIONS.find((agent) => agent.id === agentId)?.displayNameKey ?? null;
+}
+
 export function isPresetAgentId(id: string): id is PresetAgentId {
   return PRESET_AGENT_IDS.includes(id as PresetAgentId);
 }

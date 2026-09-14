@@ -323,13 +323,16 @@
     "wakeMode_now": "Sofort"
   },
   "dashboard": {
+    "accountBalance": "Account credits",
     "accountScope": "Konto",
     "activeDays": "Aktive Tage",
-    "actualModel": "Nach tatsächlich aufgerufenem Modell gezählt – ein Wechsel teilt in zwei Zeilen",
+    "actualModel": "Based on the model actually called; model changes are listed separately.",
     "allTimeSection": "Gesamt",
-    "breakdownsSection": "Verteilungen",
     "calls": "Aufrufe",
     "credits": "Credits",
+    "description": "See your completed work, favorite assistants, model usage, and account credits.",
+    "favoriteAssistant": "Favorite assistant",
+    "hideBillingDetails": "Hide billing details",
     "inputTokens": "Eingabe-Tokens",
     "last30dSection": "Letzte 30 Tage",
     "ledger": {
@@ -353,17 +356,25 @@
       "targetMultiplier": "Ziel-Multiplikator",
       "targetMultiplierHint": "Dies ist der Zielwert, keine Garantie, dass jede Abrechnung genau darauf fällt"
     },
+    "localScope": "This device",
     "modelUsage": "Modellverbrauch",
     "modelUsageEmpty": "Noch keine Aufrufe (nur Relay-Aufrufe)",
-    "noBreakdownData": "Keine Daten",
+    "modelUsageUnavailable": "Model usage is temporarily unavailable. Try refreshing shortly.",
+    "noAssistantData": "Your favorite assistants will appear after you complete a task.",
     "noData": "Keine Gateway-Daten verfügbar",
     "outputTokens": "Ausgabe-Tokens",
+    "refresh": "Refresh data",
+    "remainingCredits": "Credits remaining",
+    "showBillingDetails": "View billing details",
+    "taskCount": "{{count}} tasks",
+    "title": "My AI usage overview",
     "tokenChart": "Täglicher Token-Trend",
-    "topAgents": "Top-Agenten",
-    "topGateways": "Top-Gateways",
+    "topAgents": "Favorite assistants",
     "totalArtifacts": "Gesamte Artefakte",
     "totalMessages": "Gesamte Nachrichten",
-    "totalTasks": "Gesamte Aufgaben"
+    "totalTasks": "Gesamte Aufgaben",
+    "unavailable": "Temporarily unavailable",
+    "usageSummary": "Usage summary"
   },
   "dialog": {
     "confirm": "Fortfahren",
@@ -434,7 +445,8 @@
     "noPreview": "Noch keine Nachrichten",
     "searchTasks": "Aufgaben suchen…",
     "switchAgent": "Agent wechseln",
-    "updateAvailable": "Update verfuegbar"
+    "updateAvailable": "Update verfuegbar",
+    "usageOverview": "My AI usage overview"
   },
   "login": {
     "agreement": "Ich habe die {0} und die {1} gelesen und stimme ihnen zu",

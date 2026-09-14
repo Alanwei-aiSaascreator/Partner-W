@@ -323,13 +323,16 @@
     "wakeMode_now": "即時"
   },
   "dashboard": {
+    "accountBalance": "Account credits",
     "accountScope": "アカウント",
     "activeDays": "アクティブ日数",
-    "actualModel": "実際に呼び出したモデル単位で集計（途中で切り替えると 2 行に分かれます）",
+    "actualModel": "Based on the model actually called; model changes are listed separately.",
     "allTimeSection": "累計",
-    "breakdownsSection": "分布",
     "calls": "呼び出し回数",
     "credits": "クレジット",
+    "description": "See your completed work, favorite assistants, model usage, and account credits.",
+    "favoriteAssistant": "Favorite assistant",
+    "hideBillingDetails": "Hide billing details",
     "inputTokens": "入力トークン",
     "last30dSection": "過去 30 日間",
     "ledger": {
@@ -353,17 +356,25 @@
       "targetMultiplier": "目標倍率",
       "targetMultiplierHint": "目標値であり、毎回の決済が正確に一致することを意味しません"
     },
+    "localScope": "This device",
     "modelUsage": "モデル別消費",
     "modelUsageEmpty": "呼び出し履歴なし（中継経由のみ集計）",
-    "noBreakdownData": "データなし",
+    "modelUsageUnavailable": "Model usage is temporarily unavailable. Try refreshing shortly.",
+    "noAssistantData": "Your favorite assistants will appear after you complete a task.",
     "noData": "ゲートウェイデータなし",
     "outputTokens": "出力トークン",
+    "refresh": "Refresh data",
+    "remainingCredits": "Credits remaining",
+    "showBillingDetails": "View billing details",
+    "taskCount": "{{count}} tasks",
+    "title": "My AI usage overview",
     "tokenChart": "日次トークン推移",
-    "topAgents": "トップエージェント",
-    "topGateways": "トップゲートウェイ",
+    "topAgents": "Favorite assistants",
     "totalArtifacts": "総アーティファクト数",
     "totalMessages": "総メッセージ数",
-    "totalTasks": "総タスク数"
+    "totalTasks": "総タスク数",
+    "unavailable": "Temporarily unavailable",
+    "usageSummary": "Usage summary"
   },
   "dialog": {
     "confirm": "続行",
@@ -434,7 +445,8 @@
     "noPreview": "メッセージはまだありません",
     "searchTasks": "タスクを検索…",
     "switchAgent": "エージェントを切り替え",
-    "updateAvailable": "アップデートがあります"
+    "updateAvailable": "アップデートがあります",
+    "usageOverview": "My AI usage overview"
   },
   "login": {
     "agreement": "{0}と{1}を読み、同意します",
