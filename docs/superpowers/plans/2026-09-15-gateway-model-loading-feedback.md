@@ -17,7 +17,7 @@
 - Create: `packages/desktop/src/renderer/components/ChatInput/model-availability.ts`
 - Create: `packages/desktop/test/model-availability.test.ts`
 
-- [ ] **Step 1: Write the failing state-derivation tests**
+- [x] **Step 1: Write the failing state-derivation tests**
 
 Create `packages/desktop/test/model-availability.test.ts` with explicit cases for gateway startup, catalog loading, confirmed empty results, and a ready catalog:
 
@@ -57,7 +57,7 @@ describe('deriveModelAvailability', () => {
 });
 ```
 
-- [ ] **Step 2: Run the focused test and confirm it fails**
+- [x] **Step 2: Run the focused test and confirm it fails**
 
 Run:
 
@@ -67,7 +67,7 @@ pnpm --filter @clawwork/desktop test -- model-availability.test.ts
 
 Expected: FAIL because `model-availability.ts` does not exist.
 
-- [ ] **Step 3: Implement the pure state helper**
+- [x] **Step 3: Implement the pure state helper**
 
 Create `packages/desktop/src/renderer/components/ChatInput/model-availability.ts`:
 
@@ -97,7 +97,7 @@ export function deriveModelAvailability({
 }
 ```
 
-- [ ] **Step 4: Run the focused test and confirm it passes**
+- [x] **Step 4: Run the focused test and confirm it passes**
 
 Run:
 
@@ -107,7 +107,7 @@ pnpm --filter @clawwork/desktop test -- model-availability.test.ts
 
 Expected: PASS with four passing tests.
 
-- [ ] **Step 5: Commit the state model**
+- [x] **Step 5: Commit the state model**
 
 ```powershell
 git add packages/desktop/src/renderer/components/ChatInput/model-availability.ts packages/desktop/test/model-availability.test.ts
@@ -122,7 +122,7 @@ git commit -m "test(chat): define model preparation states"
 - Modify: `packages/desktop/src/renderer/components/ChatInput/index.tsx:235-250,455-470,740-805`
 - Modify: `packages/desktop/test/use-chat-send.test.tsx:20-75,80-115`
 
-- [ ] **Step 1: Extend the hook harness with observable availability output**
+- [x] **Step 1: Extend the hook harness with observable availability output**
 
 In `packages/desktop/test/use-chat-send.test.tsx`, add `gatewaysLoaded`, make the gateway status and raw catalog resettable in `beforeEach`, and render `chat.modelAvailability`:
 
@@ -147,7 +147,7 @@ it('keeps a missing connected catalog in the loading state instead of reporting 
 });
 ```
 
-- [ ] **Step 2: Run the hook test and confirm it fails**
+- [x] **Step 2: Run the hook test and confirm it fails**
 
 Run:
 
@@ -157,7 +157,7 @@ pnpm --filter @clawwork/desktop test -- use-chat-send.test.tsx
 
 Expected: FAIL because `useChatSend` does not return `modelAvailability`.
 
-- [ ] **Step 3: Preserve the raw catalog and derive availability in `useChatSend`**
+- [x] **Step 3: Preserve the raw catalog and derive availability in `useChatSend`**
 
 Import `deriveModelAvailability`, keep `rawModelCatalog` separate from the filtered catalog, read the current gateway status, and return the derived state:
 
@@ -175,7 +175,7 @@ const modelAvailability = deriveModelAvailability({
 
 Add `modelAvailability` to the return object without changing send validation or retry behavior.
 
-- [ ] **Step 4: Render truthful trigger and menu states in `ChatInput`**
+- [x] **Step 4: Render truthful trigger and menu states in `ChatInput`**
 
 Destructure `modelAvailability`. Compute preparation copy and use it in the model trigger:
 
@@ -219,7 +219,7 @@ For `modelIsPreparing`, render `<Loader2 className="animate-spin" size={14} />`,
 }
 ```
 
-- [ ] **Step 5: Run the focused state and hook tests**
+- [x] **Step 5: Run the focused state and hook tests**
 
 Run:
 
@@ -229,7 +229,7 @@ pnpm --filter @clawwork/desktop test -- model-availability.test.ts use-chat-send
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit the composer behavior**
+- [x] **Step 6: Commit the composer behavior**
 
 ```powershell
 git add packages/desktop/src/renderer/components/ChatInput/useChatSend.ts packages/desktop/src/renderer/components/ChatInput/index.tsx packages/desktop/test/use-chat-send.test.tsx
@@ -250,7 +250,7 @@ git commit -m "feat(chat): explain gateway model preparation"
 - Modify: `packages/desktop/src/renderer/i18n/locales/ko.json:73-90`
 - Modify: `packages/desktop/src/renderer/i18n/locales/pt.json:73-90`
 
-- [ ] **Step 1: Add matching keys to every locale**
+- [x] **Step 1: Add matching keys to every locale**
 
 Add these keys beside `noModelsAvailable` in all nine locale files:
 
@@ -265,7 +265,7 @@ Add these keys beside `noModelsAvailable` in all nine locale files:
 
 Use natural equivalents in the other eight languages while preserving the same meaning and key set.
 
-- [ ] **Step 2: Verify locale parity and TypeScript compilation**
+- [x] **Step 2: Verify locale parity and TypeScript compilation**
 
 Run:
 
@@ -276,7 +276,7 @@ pnpm --filter @clawwork/desktop build
 
 Expected: focused tests PASS and the desktop build completes successfully.
 
-- [ ] **Step 3: Verify the visible cold-start flow in light and dark themes**
+- [x] **Step 3: Verify the visible cold-start flow in light and dark themes**
 
 Run the app with `pnpm --filter @clawwork/desktop dev`, then verify both Windows-following light and dark appearances:
 
@@ -286,7 +286,7 @@ Run the app with `pnpm --filter @clawwork/desktop dev`, then verify both Windows
 4. When the catalog arrives, the spinner and preparation copy disappear without a reload and the normal model families appear.
 5. A resolved empty catalog is the only state that shows “暂时没有可用模型”.
 
-- [ ] **Step 4: Run repository checks and record pre-existing failures separately**
+- [x] **Step 4: Run repository checks and record pre-existing failures separately**
 
 Run:
 
@@ -296,15 +296,27 @@ pnpm check
 
 Expected: new focused tests and build pass. If the existing ignored probe files still cause the known lint failures, report those filenames and do not modify them as part of this UI fix.
 
-- [ ] **Step 5: Commit translations and verification record**
+- [x] **Step 5: Commit translations and verification record**
 
 ```powershell
 git add packages/desktop/src/renderer/i18n/locales
 git commit -m "feat(i18n): localize model preparation feedback"
 ```
 
-- [ ] **Step 6: Push the completed feature branch**
+- [x] **Step 6: Push the completed feature branch**
 
 ```powershell
 git push origin feat/stage3b-demo-polish
 ```
+
+## Execution record
+
+- Focused renderer tests: 8 passed across `model-availability.test.ts` and `use-chat-send.test.tsx`.
+- Desktop source and test TypeScript checks: passed.
+- Desktop production build: passed. Vite still reports the existing `@theme` Lightning CSS warning.
+- i18n parity and unused-key checks: passed for all desktop and PWA locales.
+- Renderer copy contract: passed.
+- Manual Windows cold-start rehearsal: verified `正在启动 AI 服务…` → `正在准备模型…` → populated model families without a reload. Verified light and dark themes, then restored `自动` (follow Windows).
+- Repository-wide `pnpm check`: stops at 127 existing lint errors in ignored investigation probes (`_scan-probes.cjs`, `_sdk-cache-probe.cjs`, and `packages/desktop/_scratch/*probe*.mjs`).
+- Existing UI contract baseline: 5 violations in `AgentSwitcher.tsx` and `Login/index.tsx`, outside this change.
+- Full desktop suite: 835 passed and 13 existing Windows/path-fixture assertions failed across `file-reader.test.ts`, `inbox-resolve.test.ts`, `inbox-save.test.ts`, `media-resolve.test.ts`, and `workspace-init.test.ts`.
