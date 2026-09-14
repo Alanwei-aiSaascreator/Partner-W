@@ -451,18 +451,16 @@
     "verifyFailed": "O código está incorreto ou expirado"
   },
   "mainArea": {
-    "browseHub": "Explorar hub de equipes",
+    "compassAssistant": "Assistente Bússola",
+    "currentAssistant": "Assistente atual",
     "messageLayoutCentered": "Voltar a centralizar mensagens",
     "messageLayoutWide": "Expandir largura das mensagens",
-    "orchestrateCount": "{{count}} agentes disponíveis neste gateway",
-    "orchestrateDesc": "A IA selecionará automaticamente os agentes adequados, coordenará o trabalho e sintetizará os resultados.",
     "refreshUsage": "Atualizar uso",
     "scrollToBottom": "Rolar para o final",
-    "tabAgent": "Agent",
-    "tabOrchestrate": "Orquestração",
-    "tabTeam": "Equipe",
-    "teamEmpty": "Nenhuma equipe ainda — crie ou instale uma para começar",
-    "toggleContextPanel": "Alternar painel de contexto"
+    "showMoreAssistants": "Mostrar mais {{count}} assistentes",
+    "toggleContextPanel": "Alternar painel de contexto",
+    "welcomeSubtitle": "Descreva sua tarefa e o Rongying Cube ajudará a escolher o assistente e o modelo certos.",
+    "welcomeTitle": "O que você quer fazer hoje?"
   },
   "mentionPicker": {
     "agents": "Agents",

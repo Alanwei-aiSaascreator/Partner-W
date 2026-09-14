@@ -451,18 +451,16 @@
     "verifyFailed": "驗證碼不正確或已過期"
   },
   "mainArea": {
-    "browseHub": "瀏覽團隊市場",
+    "compassAssistant": "羅盤助手",
+    "currentAssistant": "目前助手",
     "messageLayoutCentered": "切回置中訊息區域",
     "messageLayoutWide": "鋪開訊息區域",
-    "orchestrateCount": "當前網關共 {{count}} 個 Agent 可用",
-    "orchestrateDesc": "AI 將根據你的任務自動選擇合適的 Agent，協調分工並彙總結果。",
     "refreshUsage": "重新整理用量",
     "scrollToBottom": "捲動至底部",
-    "tabAgent": "Agent",
-    "tabOrchestrate": "智能編排",
-    "tabTeam": "團隊",
-    "teamEmpty": "還沒有團隊 — 建立或安裝一個開始使用",
-    "toggleContextPanel": "切換上下文面板"
+    "showMoreAssistants": "顯示另外 {{count}} 個助手",
+    "toggleContextPanel": "切換上下文面板",
+    "welcomeSubtitle": "直接描述你的任務，榮盈魔方會幫你選擇合適的助手和模型。",
+    "welcomeTitle": "今天想完成什麼？"
   },
   "mentionPicker": {
     "agents": "Agents",

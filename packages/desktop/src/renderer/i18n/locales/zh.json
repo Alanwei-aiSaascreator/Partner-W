@@ -451,18 +451,16 @@
     "verifyFailed": "验证码不正确或已过期"
   },
   "mainArea": {
-    "browseHub": "浏览团队市场",
+    "compassAssistant": "罗盘助手",
+    "currentAssistant": "当前助手",
     "messageLayoutCentered": "切回居中消息区域",
     "messageLayoutWide": "铺开消息区域",
-    "orchestrateCount": "当前网关共 {{count}} 个 Agent 可用",
-    "orchestrateDesc": "AI 将根据你的任务自动选择合适的 Agent，协调分工并汇总结果。",
     "refreshUsage": "刷新用量",
     "scrollToBottom": "滚动到底部",
-    "tabAgent": "Agent",
-    "tabOrchestrate": "智能编排",
-    "tabTeam": "团队",
-    "teamEmpty": "还没有团队 — 创建或安装一个开始使用",
-    "toggleContextPanel": "切换上下文面板"
+    "showMoreAssistants": "显示另外 {{count}} 个助手",
+    "toggleContextPanel": "切换上下文面板",
+    "welcomeSubtitle": "直接描述你的任务，荣盈魔方会帮你选择合适的助手和模型。",
+    "welcomeTitle": "今天想完成什么？"
   },
   "mentionPicker": {
     "agents": "Agents",

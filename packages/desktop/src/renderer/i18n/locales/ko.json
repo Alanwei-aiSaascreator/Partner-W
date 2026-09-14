@@ -451,18 +451,16 @@
     "verifyFailed": "코드가 올바르지 않거나 만료되었습니다"
   },
   "mainArea": {
-    "browseHub": "팀 허브 둘러보기",
+    "compassAssistant": "나침반 어시스턴트",
+    "currentAssistant": "현재 어시스턴트",
     "messageLayoutCentered": "메시지 가운데 정렬로 복귀",
     "messageLayoutWide": "메시지 영역 펼치기",
-    "orchestrateCount": "현재 게이트웨이에 {{count}}개의 Agent 사용 가능",
-    "orchestrateDesc": "AI가 작업에 맞는 Agent를 자동으로 선택하고, 분업 및 결과를 종합합니다.",
     "refreshUsage": "사용량 새로고침",
     "scrollToBottom": "맨 아래로 스크롤",
-    "tabAgent": "Agent",
-    "tabOrchestrate": "스마트 편성",
-    "tabTeam": "팀",
-    "teamEmpty": "아직 팀이 없습니다 — 만들거나 설치하여 시작하세요",
-    "toggleContextPanel": "컨텍스트 패널 전환"
+    "showMoreAssistants": "어시스턴트 {{count}}개 더 보기",
+    "toggleContextPanel": "컨텍스트 패널 전환",
+    "welcomeSubtitle": "작업을 설명하면 Rongying Cube가 알맞은 어시스턴트와 모델을 선택해 드립니다.",
+    "welcomeTitle": "오늘 무엇을 하고 싶으신가요?"
   },
   "mentionPicker": {
     "agents": "Agents",

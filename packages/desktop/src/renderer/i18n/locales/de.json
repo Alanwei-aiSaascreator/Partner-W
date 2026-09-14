@@ -451,18 +451,16 @@
     "verifyFailed": "Code ist falsch oder abgelaufen"
   },
   "mainArea": {
-    "browseHub": "Team-Hub durchsuchen",
+    "compassAssistant": "Kompass-Assistent",
+    "currentAssistant": "Aktueller Assistent",
     "messageLayoutCentered": "Nachrichten wieder zentrieren",
     "messageLayoutWide": "Nachrichtenbereich verbreitern",
-    "orchestrateCount": "{{count}} Agents auf diesem Gateway verfügbar",
-    "orchestrateDesc": "Die KI wählt automatisch die passenden Agents aus, koordiniert die Arbeit und fasst die Ergebnisse zusammen.",
     "refreshUsage": "Nutzung aktualisieren",
     "scrollToBottom": "Nach unten scrollen",
-    "tabAgent": "Agent",
-    "tabOrchestrate": "Orchestrierung",
-    "tabTeam": "Team",
-    "teamEmpty": "Noch keine Teams — erstellen oder installieren Sie eines",
-    "toggleContextPanel": "Kontextbereich ein-/ausblenden"
+    "showMoreAssistants": "{{count}} weitere Assistenten anzeigen",
+    "toggleContextPanel": "Kontextbereich ein-/ausblenden",
+    "welcomeSubtitle": "Beschreiben Sie Ihre Aufgabe. Rongying Cube hilft bei der Auswahl des passenden Assistenten und Modells.",
+    "welcomeTitle": "Was möchten Sie erledigen?"
   },
   "mentionPicker": {
     "agents": "Agents",

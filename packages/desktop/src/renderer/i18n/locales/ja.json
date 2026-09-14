@@ -451,18 +451,16 @@
     "verifyFailed": "コードが正しくないか期限切れです"
   },
   "mainArea": {
-    "browseHub": "チームハブを見る",
+    "compassAssistant": "コンパスアシスタント",
+    "currentAssistant": "現在のアシスタント",
     "messageLayoutCentered": "メッセージを中央寄せに戻す",
     "messageLayoutWide": "メッセージ幅を広げる",
-    "orchestrateCount": "このゲートウェイで {{count}} 個の Agent が利用可能",
-    "orchestrateDesc": "AI がタスクに応じて適切な Agent を自動選択し、分担・統合します。",
     "refreshUsage": "使用量を更新",
     "scrollToBottom": "最下部へスクロール",
-    "tabAgent": "Agent",
-    "tabOrchestrate": "スマート編成",
-    "tabTeam": "チーム",
-    "teamEmpty": "チームがありません — 作成またはインストールして始めましょう",
-    "toggleContextPanel": "コンテキストパネルの切替"
+    "showMoreAssistants": "他 {{count}} 件のアシスタントを表示",
+    "toggleContextPanel": "コンテキストパネルの切替",
+    "welcomeSubtitle": "タスクを入力すると、Rongying Cube が適切なアシスタントとモデルを選びます。",
+    "welcomeTitle": "今日は何をしますか？"
   },
   "mentionPicker": {
     "agents": "Agents",

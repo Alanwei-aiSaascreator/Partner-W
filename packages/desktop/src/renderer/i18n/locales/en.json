@@ -451,18 +451,16 @@
     "verifyFailed": "Code is incorrect or expired"
   },
   "mainArea": {
-    "browseHub": "Browse Team Hub",
+    "compassAssistant": "Compass Assistant",
+    "currentAssistant": "Current assistant",
     "messageLayoutCentered": "Center message width",
     "messageLayoutWide": "Expand message width",
-    "orchestrateCount": "{{count}} agents available on this gateway",
-    "orchestrateDesc": "AI will automatically select the right agents, coordinate their work, and synthesize results.",
     "refreshUsage": "Refresh usage",
     "scrollToBottom": "Scroll to bottom",
-    "tabAgent": "Agent",
-    "tabOrchestrate": "Orchestrate",
-    "tabTeam": "Team",
-    "teamEmpty": "No teams yet — create or install one to get started",
-    "toggleContextPanel": "Toggle context panel"
+    "showMoreAssistants": "Show {{count}} more assistants",
+    "toggleContextPanel": "Toggle context panel",
+    "welcomeSubtitle": "Describe your task and Rongying Cube will help choose the right assistant and model.",
+    "welcomeTitle": "What would you like to accomplish?"
   },
   "mentionPicker": {
     "agents": "Agents",
