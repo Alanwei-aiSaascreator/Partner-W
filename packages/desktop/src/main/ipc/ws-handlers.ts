@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { ipcMain } from 'electron';
 import { getGatewayClient, getAllGatewayClients, reconnectGateway } from '../ws/index.js';
 import { readConfig, ensureDeviceId } from '../workspace/config.js';
@@ -65,29 +66,79 @@ interface SessionsListPayload {
   sessions?: GatewaySessionRow[];
 }
 
+interface RawContentBlock {
+  type: string;
+  text?: string;
+  thinking?: string;
+  url?: string;
+  openUrl?: string;
+  alt?: string;
+  mimeType?: string;
+  id?: string;
+  name?: string;
+  arguments?: Record<string, unknown> | string;
+  result?: unknown;
+}
+
+/**
+ * `chat.history` 的 `content` 是**多态**的 —— 实测（2026-09-14，`discovery-probe`）：
+ *
+ * ```
+ * role=user       content = "你好"          ← 纯字符串
+ * role=assistant  content = [{type:'text'}] ← 块数组
+ * ```
+ *
+ * 之前这里**只**声明成块数组，运行时拿 user 消息一 `.filter` 就抛
+ * `(m.content ?? []).filter is not a function`，而外层 catch 会因此
+ * **整个网关的会话全部归零**（`discovered=0`，线上潜伏很久）。
+ *
+ * 类型必须如实表达多态，别再用断言把它强行写成数组。
+ * OpenClaw 没有随包发布 `.d.ts`（实测 node_modules 里没有），所以这里用最小本地
+ * union，不去引一套外部类型体系。
+ */
+type RawMessageContent = string | RawContentBlock[] | null | undefined;
+
 interface ChatHistoryMessage {
   role: string;
   /** 实际生成这条回复的模型。**只有 assistant 记录带**（实测网关 transcript）。 */
   model?: string;
-  content: {
-    type: string;
-    text?: string;
-    thinking?: string;
-    url?: string;
-    openUrl?: string;
-    alt?: string;
-    mimeType?: string;
-    id?: string;
-    name?: string;
-    arguments?: Record<string, unknown> | string;
-    result?: unknown;
-  }[];
+  content: RawMessageContent;
   timestamp?: number;
 }
 
 interface ChatHistoryPayload {
   messages?: ChatHistoryMessage[];
   sessionId?: string;
+}
+
+/**
+ * 把多态的 `content` 归一成**块数组**，让下游可以放心 `.filter` / `.map`。
+ *
+ * 规则（刻意显式，不猜）：
+ *   - 字符串 ⇒ 合成一个 `{type:'text'}` 块（**不能**丢，user 消息的正文就在这里）
+ *   - 数组   ⇒ 原样返回
+ *   - null/undefined ⇒ `[]`（空内容，不是错误）
+ *   - 其它未知形状 ⇒ `[]` + 记一条日志，**fail-soft**
+ *
+ * ⚠️ **不要**用 `String(content)` 兜底：对象会被转成 `"[object Object]"` 并污染历史。
+ * ⚠️ 只对**非数组对象**告警。`content` 声明成 `unknown` 是有意的 —— 网关送来的东西
+ *    不受我们控制，类型系统在这里保证不了什么，运行时兜底才是真的。
+ */
+function normalizeMessageContent(content: unknown): RawContentBlock[] {
+  if (typeof content === 'string') return content ? [{ type: 'text', text: content }] : [];
+  if (Array.isArray(content)) {
+    // ⚠️ 元素也要挡一层：`Array.isArray` 只保证外层是数组，**不保证元素是对象**。
+    //    `['x', {type:'text'}]` 这种混合数组若直接 `as RawContentBlock[]`，
+    //    下游 `b.type` 又会炸 —— 同一个 bug 换个形状回来。
+    return content.filter((b): b is RawContentBlock => typeof b === 'object' && b !== null);
+  }
+  if (content === null || content === undefined) return [];
+  getDebugLogger().warn({
+    domain: 'ipc',
+    event: 'ipc.ws.sync-sessions.unknown-content-shape',
+    data: { shape: typeof content },
+  });
+  return [];
 }
 
 const INTERNAL_ASSISTANT_MARKERS = new Set(['NO_REPLY']);
@@ -325,99 +376,124 @@ export function registerWsHandlers(): void {
         const allSessions = raw.sessions ?? [];
         const ours = allSessions.filter((s) => isClawWorkSession(s.key, deviceId));
 
+        // ⚠️ **session 级的隔离边界**：`sessions.list` 属于 gateway 级
+        //    （失败 ⇒ 上面那个 catch ⇒ `gateway-failed`，该网关整体作废，合理）；
+        //    而**单条**会话的 `chat.history` / 解析 / 组装失败**只该丢它自己**。
+        //
+        //    之前这两层共用一个 try，于是一条坏会话会把**整个网关**的会话全部清零
+        //    —— 表现就是 `discovered=0` 且不报错（实测：user 消息 content 是字符串时
+        //    在 `.filter` 上抛，见 `normalizeMessageContent` 的注释）。
         for (const s of ours) {
           const taskId = parseTaskIdFromSessionKey(s.key);
           if (!taskId) continue;
 
-          const historyRaw = (await gw.getChatHistory(s.key, 200)) as unknown as ChatHistoryPayload;
-          const rawMsgs = historyRaw.messages ?? [];
+          try {
+            const historyRaw = (await gw.getChatHistory(s.key, 200)) as unknown as ChatHistoryPayload;
+            const rawMsgs = historyRaw.messages ?? [];
 
-          const toolResultMap = new Map<string, string>();
-          for (const m of rawMsgs) {
-            if (m.role === 'toolResult') {
-              for (const b of m.content ?? []) {
-                if (b.type === 'toolResult' && b.id && b.result !== undefined) {
-                  toolResultMap.set(b.id, typeof b.result === 'string' ? b.result : JSON.stringify(b.result));
+            const toolResultMap = new Map<string, string>();
+            for (const m of rawMsgs) {
+              if (m.role === 'toolResult') {
+                for (const b of normalizeMessageContent(m.content)) {
+                  if (b.type === 'toolResult' && b.id && b.result !== undefined) {
+                    toolResultMap.set(b.id, typeof b.result === 'string' ? b.result : JSON.stringify(b.result));
+                  }
                 }
               }
             }
-          }
 
-          const msgs = rawMsgs
-            .filter((m) => m.role === 'user' || m.role === 'assistant')
-            .map((m) => {
-              const normalizedContent =
-                m.role === 'assistant'
-                  ? normalizeContentBlocks(m.content ?? [], gw.httpBase)
-                  : {
-                      content: (m.content ?? [])
-                        .filter((b) => b.type === 'text' && b.text)
-                        .map((b) => b.text!)
-                        .join(''),
-                    };
+            const msgs = rawMsgs
+              .filter((m) => m.role === 'user' || m.role === 'assistant')
+              .map((m) => {
+                // ⭐ 先归一：user 是字符串、assistant 是块数组（见 RawMessageContent 注释）。
+                const blocks = normalizeMessageContent(m.content);
 
-              const toolCalls: ParsedToolCall[] = (m.content ?? [])
-                .filter((b) => b.type === 'toolCall' && b.id && b.name)
-                .map((b) => {
-                  const tcId = b.id!;
-                  const resultText = toolResultMap.get(tcId);
-                  return {
-                    id: tcId,
-                    name: b.name!,
-                    status: (resultText !== undefined ? 'done' : 'running') as ParsedToolCall['status'],
-                    args:
-                      typeof b.arguments === 'object' && b.arguments !== null
-                        ? (b.arguments as Record<string, unknown>)
-                        : typeof b.arguments === 'string'
-                          ? parseToolArgs(b.arguments)
+                const normalizedContent =
+                  m.role === 'assistant'
+                    ? normalizeContentBlocks(blocks, gw.httpBase)
+                    : {
+                        content: blocks
+                          .filter((b) => b.type === 'text' && b.text)
+                          .map((b) => b.text!)
+                          .join(''),
+                      };
+
+                const toolCalls: ParsedToolCall[] = blocks
+                  .filter((b) => b.type === 'toolCall' && b.id && b.name)
+                  .map((b) => {
+                    const tcId = b.id!;
+                    const resultText = toolResultMap.get(tcId);
+                    return {
+                      id: tcId,
+                      name: b.name!,
+                      status: (resultText !== undefined ? 'done' : 'running') as ParsedToolCall['status'],
+                      args:
+                        typeof b.arguments === 'object' && b.arguments !== null
+                          ? (b.arguments as Record<string, unknown>)
+                          : typeof b.arguments === 'string'
+                            ? parseToolArgs(b.arguments)
+                            : undefined,
+                      result: resultText,
+                      startedAt: m.timestamp ? new Date(m.timestamp).toISOString() : new Date().toISOString(),
+                      completedAt:
+                        resultText !== undefined
+                          ? m.timestamp
+                            ? new Date(m.timestamp).toISOString()
+                            : new Date().toISOString()
                           : undefined,
-                    result: resultText,
-                    startedAt: m.timestamp ? new Date(m.timestamp).toISOString() : new Date().toISOString(),
-                    completedAt:
-                      resultText !== undefined
-                        ? m.timestamp
-                          ? new Date(m.timestamp).toISOString()
-                          : new Date().toISOString()
-                        : undefined,
-                  };
-                });
+                    };
+                  });
 
-              return {
-                role: m.role,
-                content: normalizedContent.content,
-                attachments: normalizedContent.attachments,
-                timestamp: m.timestamp ? new Date(m.timestamp).toISOString() : new Date().toISOString(),
-                toolCalls,
-                // 逐条透传：网关每条 assistant 记录都带它（实测），user 记录没有。
-                model: m.model,
-              };
-            })
-            .filter((m) => {
-              if (!m.content && m.toolCalls.length === 0 && !m.attachments?.length) return false;
-              if (m.role === 'assistant' && INTERNAL_ASSISTANT_MARKERS.has(m.content.trim())) return false;
-              return true;
+                return {
+                  role: m.role,
+                  content: normalizedContent.content,
+                  attachments: normalizedContent.attachments,
+                  timestamp: m.timestamp ? new Date(m.timestamp).toISOString() : new Date().toISOString(),
+                  toolCalls,
+                  // 逐条透传：网关每条 assistant 记录都带它（实测），user 记录没有。
+                  model: m.model,
+                };
+              })
+              .filter((m) => {
+                if (!m.content && m.toolCalls.length === 0 && !m.attachments?.length) return false;
+                if (m.role === 'assistant' && INTERNAL_ASSISTANT_MARKERS.has(m.content.trim())) return false;
+                return true;
+              });
+
+            const firstUserMsg = msgs.find((m) => m.role === 'user' && m.content);
+            const titleFromMsg = firstUserMsg ? firstUserMsg.content.slice(0, 30) : '';
+
+            discovered.push({
+              gatewayId,
+              taskId,
+              sessionKey: s.key,
+              title: s.derivedTitle ?? s.label ?? titleFromMsg,
+              updatedAt: s.updatedAt ? new Date(s.updatedAt).toISOString() : new Date().toISOString(),
+              agentId: parseAgentIdFromSessionKey(s.key),
+              model: s.model,
+              modelProvider: s.modelProvider,
+              thinkingLevel: s.thinkingLevel,
+              inputTokens: s.inputTokens,
+              outputTokens: s.outputTokens,
+              contextTokens: s.contextTokens,
+              messages: msgs,
             });
-
-          const firstUserMsg = msgs.find((m) => m.role === 'user' && m.content);
-          const titleFromMsg = firstUserMsg ? firstUserMsg.content.slice(0, 30) : '';
-
-          discovered.push({
-            gatewayId,
-            taskId,
-            sessionKey: s.key,
-            title: s.derivedTitle ?? s.label ?? titleFromMsg,
-            updatedAt: s.updatedAt ? new Date(s.updatedAt).toISOString() : new Date().toISOString(),
-            agentId: parseAgentIdFromSessionKey(s.key),
-            model: s.model,
-            modelProvider: s.modelProvider,
-            thinkingLevel: s.thinkingLevel,
-            inputTokens: s.inputTokens,
-            outputTokens: s.outputTokens,
-            contextTokens: s.contextTokens,
-            messages: msgs,
-          });
+          } catch (err) {
+            // 只丢这一条，**继续处理同网关的其它会话**。
+            // ⚠️ 日志不带正文；session 标识用哈希截断，不落原文 key。
+            const msg = err instanceof Error ? err.message : 'unknown error';
+            getDebugLogger().error({
+              domain: 'ipc',
+              event: 'ipc.ws.sync-sessions.session-failed',
+              gatewayId,
+              // session 标识只出哈希截断 —— 不落 session key 原文
+              data: { sessionKeyHash: createHash('sha256').update(s.key).digest('hex').slice(0, 8) },
+              error: { message: msg },
+            });
+          }
         }
       } catch (err) {
+        // ⚠️ 走到这里才真的是 **gateway 级**失败（连接 / `sessions.list` / `ensureDeviceId`）。
         const msg = err instanceof Error ? err.message : 'unknown error';
         getDebugLogger().error({
           domain: 'ipc',
