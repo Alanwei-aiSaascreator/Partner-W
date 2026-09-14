@@ -32,7 +32,7 @@ import { sweepStaleProfiles } from '../helpers/temp-root.js';
  */
 
 const REPO_ROOT = path.resolve(__dirname, '../..');
-const APP_EXE = path.join(REPO_ROOT, 'packages/desktop/dist/win-unpacked/魔方罗盘.exe');
+const APP_EXE = path.join(REPO_ROOT, 'packages/desktop/dist/win-unpacked/荣盈魔方.exe');
 const RUNTIME_OUT = path.join(REPO_ROOT, 'runtime-out');
 const ARTIFACTS = path.join(REPO_ROOT, 'packages/desktop/e2e-artifacts');
 const GATEWAY_PORT = 18789;

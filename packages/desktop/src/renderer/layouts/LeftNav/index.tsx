@@ -9,18 +9,7 @@ import {
   type ReactNode,
 } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import {
-  Plus,
-  Search,
-  FolderOpen,
-  Settings,
-  Archive,
-  PanelLeftClose,
-  PanelLeftOpen,
-  Clock,
-  Users,
-  Gauge,
-} from 'lucide-react';
+import { Plus, Search, FolderOpen, Settings, Archive, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useTaskStore } from '@/stores/taskStore';
 import { useMessageStore } from '@/stores/messageStore';
@@ -297,10 +286,7 @@ export default function LeftNav() {
   const setSelectedAgent = useUiStore((s) => s.setSelectedAgent);
 
   const visibleTasks = useMemo(
-    () =>
-      tasks.filter(
-        (t) => t.status !== 'archived' && (!selectedAgentId || t.agentId === selectedAgentId),
-      ),
+    () => tasks.filter((t) => t.status !== 'archived' && (!selectedAgentId || t.agentId === selectedAgentId)),
     [tasks, selectedAgentId],
   );
   const activeTasks = useMemo(() => visibleTasks.filter((t) => t.status === 'active'), [visibleTasks]);
@@ -402,12 +388,6 @@ export default function LeftNav() {
             className="text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]"
           />
           <IconButton
-            icon={Users}
-            tooltip={`${t('teams.title')} (Beta)`}
-            onClick={() => setMainView('teams')}
-            className={navActiveClass(mainView === 'teams')}
-          />
-          <IconButton
             icon={FolderOpen}
             tooltip={t('common.fileManager')}
             onClick={() => setMainView('files')}
@@ -454,22 +434,10 @@ export default function LeftNav() {
 
         <div className="flex flex-col items-center gap-0.5">
           <IconButton
-            icon={Clock}
-            tooltip={t('leftNav.scheduledTasks')}
-            onClick={() => setMainView('cron')}
-            className={navActiveClass(mainView === 'cron')}
-          />
-          <IconButton
             icon={Archive}
             tooltip={t('leftNav.archivedChats')}
             onClick={() => setMainView('archived')}
             className={navActiveClass(mainView === 'archived')}
-          />
-          <IconButton
-            icon={Gauge}
-            tooltip={t('leftNav.dashboard')}
-            onClick={() => setMainView('dashboard')}
-            className={navActiveClass(mainView === 'dashboard')}
           />
           <IconButton
             icon={Settings}
@@ -549,17 +517,6 @@ export default function LeftNav() {
         <div className="flex flex-col h-full">
           <div className="px-3 pb-1 flex-shrink-0 space-y-0.5">
             <NavButton
-              icon={Users}
-              label={t('teams.title')}
-              active={mainView === 'teams'}
-              onClick={() => setMainView('teams')}
-              badge={
-                <span className="ml-auto type-support rounded-full bg-[var(--accent-dim)] px-1.5 py-0.5 text-[var(--accent)]">
-                  Beta
-                </span>
-              }
-            />
-            <NavButton
               icon={FolderOpen}
               label={t('common.fileManager')}
               active={mainView === 'files'}
@@ -585,15 +542,6 @@ export default function LeftNav() {
         </div>
       </div>
 
-      <div className="flex-shrink-0 px-3" style={{ paddingBottom: 'calc(var(--density-panel-gap) / 4)' }}>
-        <NavButton
-          icon={Clock}
-          label={t('leftNav.scheduledTasks')}
-          active={mainView === 'cron'}
-          onClick={() => setMainView('cron')}
-        />
-      </div>
-
       <div className="flex-shrink-0 px-3 py-2 border-t border-[var(--border)]">
         <div className="flex items-center">
           <IconButton
@@ -604,13 +552,6 @@ export default function LeftNav() {
             className={navActiveClass(mainView === 'archived')}
           />
           <div className="flex-1" />
-          <IconButton
-            icon={Gauge}
-            tooltip={t('leftNav.dashboard')}
-            onClick={() => setMainView('dashboard')}
-            tooltipSide="top"
-            className={navActiveClass(mainView === 'dashboard')}
-          />
           <IconButton
             icon={Settings}
             tooltip={hasUpdate ? t('leftNav.updateAvailable') : t('leftNav.appSettings')}

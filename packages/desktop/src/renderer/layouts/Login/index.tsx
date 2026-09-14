@@ -178,7 +178,7 @@ export default function Login({ onSignedIn }: LoginProps) {
               <div className="absolute inset-0 scale-[2.5] rounded-full bg-[var(--accent)] opacity-[0.06] blur-2xl" />
               <img
                 src={logo}
-                alt="Mofang Compass"
+                alt="Rongying Cube"
                 className="relative w-16 h-16 rounded-2xl shadow-[var(--glow-accent)]"
               />
             </div>

@@ -12,7 +12,7 @@ import { freshProfile, safeRemoveTree } from '../helpers/temp-root.js';
  */
 
 export const REPO_ROOT = path.resolve(__dirname, '../..');
-export const APP_EXE = path.join(REPO_ROOT, 'packages/desktop/dist/win-unpacked/魔方罗盘.exe');
+export const APP_EXE = path.join(REPO_ROOT, 'packages/desktop/dist/win-unpacked/荣盈魔方.exe');
 export const RUNTIME_OUT = path.join(REPO_ROOT, 'runtime-out');
 export const ARTIFACTS = path.join(REPO_ROOT, 'packages/desktop/e2e-artifacts');
 export const GATEWAY_PORT = 18789;

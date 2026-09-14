@@ -1,5 +1,5 @@
 appId: com.mofangluopan.app
-productName: 魔方罗盘
+productName: 荣盈魔方
 directories:
   buildResources: build
   output: dist
@@ -39,7 +39,7 @@ mac:
   entitlementsInherit: build/entitlements.mac.plist
   notarize: true
   extendInfo:
-    NSMicrophoneUsageDescription: 魔方罗盘 needs microphone access for voice dictation in chat input.
+    NSMicrophoneUsageDescription: 荣盈魔方 needs microphone access for voice dictation in chat input.
 win:
   target:
     - target: nsis

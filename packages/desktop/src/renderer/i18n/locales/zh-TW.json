@@ -415,7 +415,6 @@
     "appSettings": "應用程式設定",
     "archivedChats": "已封存對話",
     "collapseNav": "收合側邊欄",
-    "dashboard": "儀表板",
     "emptyHint": "點擊「新任務」開始",
     "expandNav": "展開側邊欄",
     "groupLast7Days": "前 7 天",
@@ -424,7 +423,6 @@
     "groupYesterday": "昨天",
     "noAgents": "暫無智能體",
     "noPreview": "尚無訊息",
-    "scheduledTasks": "排程任務",
     "searchTasks": "搜尋任務…",
     "switchAgent": "切換智能體",
     "updateAvailable": "有可用更新"
@@ -850,7 +848,6 @@
     "teamBuilderPreviewTitle": "新團隊",
     "teamBuilderTitle": "AI 建立",
     "teamName": "團隊名稱",
-    "title": "團隊",
     "wizard": {
       "addAgent": "新增 Agent",
       "agentCount": "{{count}} 個 Agent",

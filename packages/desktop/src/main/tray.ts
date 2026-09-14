@@ -98,7 +98,7 @@ function buildMenu(state: TrayState): Menu {
   }
 
   items.push({ type: 'separator' });
-  items.push({ label: 'Open 魔方罗盘', click: focusMainWindow });
+  items.push({ label: 'Open 荣盈魔方', click: focusMainWindow });
   items.push({ label: 'Settings', click: openSettings });
   items.push({ type: 'separator' });
   items.push({ label: 'Quit', click: () => app.quit() });
@@ -110,7 +110,7 @@ function createTray(): void {
   if (tray) return;
   const icon = loadIcon();
   tray = new Tray(icon);
-  tray.setToolTip('魔方罗盘');
+  tray.setToolTip('荣盈魔方');
   tray.setContextMenu(buildMenu({ status: 'idle', tasks: [] }));
   getDebugLogger().info({ domain: 'tray', event: 'tray.init' });
 }
@@ -142,16 +142,16 @@ export function updateTrayStatus(state: TrayState): void {
 
   switch (state.status) {
     case 'running':
-      tray.setToolTip(`魔方罗盘 — ${state.tasks.length} task(s) running`);
+      tray.setToolTip(`荣盈魔方 — ${state.tasks.length} task(s) running`);
       startAnimation();
       break;
     case 'unread':
       tray.setTitle('●');
-      tray.setToolTip('魔方罗盘 — new results');
+      tray.setToolTip('荣盈魔方 — new results');
       break;
     default:
       tray.setTitle('');
-      tray.setToolTip('魔方罗盘');
+      tray.setToolTip('荣盈魔方');
   }
 
   tray.setContextMenu(buildMenu(state));

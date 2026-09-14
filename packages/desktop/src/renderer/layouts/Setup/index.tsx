@@ -181,7 +181,11 @@ export default function Setup({ onSetupComplete, initialStep = 'workspace' }: Se
           <div className="flex flex-col items-center text-center space-y-3">
             <div className="relative">
               <div className="absolute inset-0 scale-[2.5] rounded-full bg-[var(--accent)] opacity-[0.06] blur-2xl" />
-              <img src={logo} alt="Mofang Compass" className="relative w-16 h-16 rounded-2xl shadow-[var(--glow-accent)]" />
+              <img
+                src={logo}
+                alt="Rongying Cube"
+                className="relative w-16 h-16 rounded-2xl shadow-[var(--glow-accent)]"
+              />
             </div>
             <h1 className="type-section-title text-[var(--text-primary)]">{t('setup.welcome')}</h1>
             <p className="type-body leading-relaxed text-[var(--text-muted)]">
