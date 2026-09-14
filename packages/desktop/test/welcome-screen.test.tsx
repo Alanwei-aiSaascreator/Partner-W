@@ -43,6 +43,15 @@ vi.mock('../src/renderer/components/AgentIcon', () => ({
 
 import WelcomeScreen from '../src/renderer/layouts/MainArea/WelcomeScreen';
 
+const onboardingProfile = {
+  version: 1 as const,
+  userId: 'user-1',
+  nickname: '',
+  useCases: ['video'] as const,
+  customGoal: '',
+  completedAt: '2026-09-14T00:00:00.000Z',
+};
+
 function render(ui: ReactElement): { container: HTMLDivElement; unmount: () => void } {
   const container = document.createElement('div');
   document.body.appendChild(container);
@@ -61,7 +70,12 @@ describe('WelcomeScreen task starters', () => {
   it('prefills the composer with the photography workflow', () => {
     (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     const onSelectPrompt = vi.fn();
-    const { container, unmount } = render(<WelcomeScreen onSelectPrompt={onSelectPrompt} />);
+    const { container, unmount } = render(
+      <WelcomeScreen
+        onboardingProfile={{ ...onboardingProfile, useCases: [...onboardingProfile.useCases] }}
+        onSelectPrompt={onSelectPrompt}
+      />,
+    );
     const button = [...container.querySelectorAll('button')].find((item) =>
       item.textContent?.includes('mainArea.starters.photography.title'),
     );

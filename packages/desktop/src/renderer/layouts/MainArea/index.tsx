@@ -48,12 +48,14 @@ import DataTable, { type DataTableColumn } from '@/components/data-display/DataT
 import EmptyState from '@/components/semantic/EmptyState';
 import StatusTag from '@/components/semantic/StatusTag';
 import WelcomeScreen from './WelcomeScreen';
+import type { OnboardingProfile } from '@/lib/user-onboarding';
 
 const STICK_TO_BOTTOM_THRESHOLD_PX = 60;
 const MAX_HEADER_TITLE_LENGTH = 120;
 
 interface MainAreaProps {
   onTogglePanel: () => void;
+  onboardingProfile: OnboardingProfile;
 }
 
 interface ArchivedTaskRow {
@@ -458,7 +460,7 @@ function ChatHeader({
   );
 }
 
-function ChatContent() {
+function ChatContent({ onboardingProfile }: { onboardingProfile: OnboardingProfile }) {
   const { t } = useTranslation();
   const activeTaskId = useTaskStore((s) => s.activeTaskId);
   const activeTask = useTaskStore((s) => s.tasks.find((task) => task.id === s.activeTaskId));
@@ -598,7 +600,11 @@ function ChatContent() {
               messageLayout === 'centered' ? 'max-w-[var(--content-max-width)] mx-auto' : 'w-full max-w-none',
             )}
           >
-            <WelcomeScreen key={activeTaskId ?? '__new'} onSelectPrompt={setStarterPrompt} />
+            <WelcomeScreen
+              key={activeTaskId ?? '__new'}
+              onboardingProfile={onboardingProfile}
+              onSelectPrompt={setStarterPrompt}
+            />
           </div>
         </div>
         <ChatInput
@@ -875,7 +881,7 @@ function ArchivedTasks() {
   );
 }
 
-export default function MainArea({ onTogglePanel }: MainAreaProps) {
+export default function MainArea({ onTogglePanel, onboardingProfile }: MainAreaProps) {
   const mainView = useUiStore((s) => s.mainView);
   const messageLayout = useUiStore((s) => s.messageLayout);
   const toggleMessageLayout = useUiStore((s) => s.toggleMessageLayout);
@@ -916,7 +922,7 @@ export default function MainArea({ onTogglePanel }: MainAreaProps) {
             onToggleMessageLayout={toggleMessageLayout}
           />
           {activeTaskId && <EnsembleAgentBar taskId={activeTaskId} />}
-          <ChatContent />
+          <ChatContent onboardingProfile={onboardingProfile} />
         </div>
       )}
     </div>

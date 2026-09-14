@@ -453,6 +453,8 @@
   "mainArea": {
     "compassAssistant": "羅盤助手",
     "currentAssistant": "目前助手",
+    "customGoalPrompt": "我希望主要用榮盈魔方完成這個目標：{{goal}}。請先幫我明確需求，再給出今天可以開始的第一項任務。",
+    "customGoalTitle": "繼續我的目標",
     "messageLayoutCentered": "切回置中訊息區域",
     "messageLayoutWide": "鋪開訊息區域",
     "popularTasks": "熱門用途",
@@ -464,6 +466,16 @@
         "description": "選題、文案、短影片與社群內容",
         "prompt": "我想圍繞【主題】創作內容，請先詢問發布平台和目標受眾，再幫我完成選題、結構和初稿。",
         "title": "內容創作"
+      },
+      "ecommerce": {
+        "description": "選品、競品、商品文案與客服話術",
+        "prompt": "我正在經營【店鋪/產品】。請先詢問平台、品類、目標和現有資料，再幫我完成選品分析、競品調研、商品文案或客服話術。",
+        "title": "電商營運"
+      },
+      "family": {
+        "description": "菜譜、出行、親子活動與家庭計畫",
+        "prompt": "我需要安排一項家庭事務。請先詢問家庭情況、時間和限制條件，再幫我制定一份清晰、可執行的計畫。",
+        "title": "生活家庭"
       },
       "office": {
         "description": "文件、表格、會議與簡報材料",
@@ -500,6 +512,46 @@
     "approvalRequired": "需要核准",
     "gatewayDisconnected": "Gateway 已斷線",
     "taskComplete": "任務完成"
+  },
+  "onboarding": {
+    "continue": "進入榮盈魔方",
+    "customPlaceholder": "例如：我想每週完成三條產品短影片，或整理家中的學習資料",
+    "customTitle": "還有其他目標？",
+    "multipleHint": "可以多選",
+    "nickname": "怎麼稱呼你",
+    "nicknamePlaceholder": "選填",
+    "optional": "選填",
+    "progress": "首次設定",
+    "skip": "暫時跳過",
+    "subtitle": "選擇你經常要做的事情。我們會據此調整首頁推薦，你之後也可以修改。",
+    "title": "你準備讓榮盈魔方幫你做什麼？",
+    "useCases": {
+      "content": {
+        "description": "選題、文案、短影片和社群內容",
+        "title": "內容創作"
+      },
+      "ecommerce": {
+        "description": "選品、競品、商品文案和客服話術",
+        "title": "電商營運"
+      },
+      "family": {
+        "description": "菜譜、出行、親子活動和家庭計畫",
+        "title": "生活家庭"
+      },
+      "office": {
+        "description": "文件、表格、會議和簡報材料",
+        "title": "辦公提效"
+      },
+      "research": {
+        "description": "資料整理、觀點比較和學習計畫",
+        "title": "學習研究"
+      },
+      "video": {
+        "description": "腳本、分鏡、鏡頭清單和剪輯方案",
+        "title": "拍攝剪輯"
+      }
+    },
+    "useCaseTitle": "常用場景"
   },
   "pairing": {
     "approved": "裝置已核准！連線已建立。",

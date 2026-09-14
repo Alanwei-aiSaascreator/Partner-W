@@ -453,6 +453,8 @@
   "mainArea": {
     "compassAssistant": "罗盘助手",
     "currentAssistant": "当前助手",
+    "customGoalPrompt": "我希望主要用荣盈魔方完成这个目标：{{goal}}。请先帮我明确需求，再给出今天可以开始的第一项任务。",
+    "customGoalTitle": "继续我的目标",
     "messageLayoutCentered": "切回居中消息区域",
     "messageLayoutWide": "铺开消息区域",
     "popularTasks": "热门用途",
@@ -464,6 +466,16 @@
         "description": "选题、文案、短视频与社交媒体内容",
         "prompt": "我想围绕【主题】创作内容，请先询问发布平台和目标受众，再帮我完成选题、结构和初稿。",
         "title": "内容创作"
+      },
+      "ecommerce": {
+        "description": "选品、竞品、商品文案与客服话术",
+        "prompt": "我正在经营【店铺/产品】。请先询问平台、品类、目标和现有数据，再帮我完成选品分析、竞品调研、商品文案或客服话术。",
+        "title": "电商运营"
+      },
+      "family": {
+        "description": "菜谱、出行、亲子活动与家庭计划",
+        "prompt": "我需要安排一项家庭事务。请先询问家庭情况、时间和限制条件，再帮我制定一份清晰、可执行的计划。",
+        "title": "生活家庭"
       },
       "office": {
         "description": "文档、表格、会议与汇报材料",
@@ -500,6 +512,46 @@
     "approvalRequired": "需要执行授权",
     "gatewayDisconnected": "Gateway 已断开",
     "taskComplete": "任务完成"
+  },
+  "onboarding": {
+    "continue": "进入荣盈魔方",
+    "customPlaceholder": "例如：我想每周完成三条产品短视频，或者整理家里的学习资料",
+    "customTitle": "还有其他目标？",
+    "multipleHint": "可以多选",
+    "nickname": "怎么称呼你",
+    "nicknamePlaceholder": "选填",
+    "optional": "选填",
+    "progress": "首次设置",
+    "skip": "暂时跳过",
+    "subtitle": "选择你经常要做的事情。我们会据此调整首页推荐，你以后也可以修改。",
+    "title": "你准备让荣盈魔方帮你做什么？",
+    "useCases": {
+      "content": {
+        "description": "选题、文案、短视频和社交媒体内容",
+        "title": "内容创作"
+      },
+      "ecommerce": {
+        "description": "选品、竞品、商品文案和客服话术",
+        "title": "电商运营"
+      },
+      "family": {
+        "description": "菜谱、出行、亲子活动和家庭计划",
+        "title": "生活家庭"
+      },
+      "office": {
+        "description": "文档、表格、会议和汇报材料",
+        "title": "办公提效"
+      },
+      "research": {
+        "description": "资料整理、观点比较和学习计划",
+        "title": "学习研究"
+      },
+      "video": {
+        "description": "脚本、分镜、镜头清单和剪辑方案",
+        "title": "拍摄剪辑"
+      }
+    },
+    "useCaseTitle": "常用场景"
   },
   "pairing": {
     "approved": "设备已批准！连接成功。",

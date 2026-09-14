@@ -453,6 +453,8 @@
   "mainArea": {
     "compassAssistant": "Compass Assistant",
     "currentAssistant": "Current assistant",
+    "customGoalPrompt": "I mainly want to use Rongying Cube for this goal: {{goal}}. First help me clarify what I need, then suggest the first task I can start today.",
+    "customGoalTitle": "Continue my goal",
     "messageLayoutCentered": "Center message width",
     "messageLayoutWide": "Expand message width",
     "popularTasks": "Popular tasks",
@@ -464,6 +466,16 @@
         "description": "Ideas, copy, short videos, and social posts",
         "prompt": "I want to create content about [topic]. First ask about the platform and target audience, then help me develop the angle, structure, and first draft.",
         "title": "Content creation"
+      },
+      "ecommerce": {
+        "description": "Products, competitors, listings, and customer replies",
+        "prompt": "I run [store/product]. First ask about the platform, category, goal, and available data, then help with product selection, competitor research, listing copy, or customer replies.",
+        "title": "E-commerce operations"
+      },
+      "family": {
+        "description": "Meals, trips, family activities, and household plans",
+        "prompt": "I need to plan a family task. First ask about the household, timing, and constraints, then create a clear and practical plan.",
+        "title": "Home and family"
       },
       "office": {
         "description": "Documents, spreadsheets, meetings, and reports",
@@ -500,6 +512,46 @@
     "approvalRequired": "Approval Required",
     "gatewayDisconnected": "Gateway Disconnected",
     "taskComplete": "Task Complete"
+  },
+  "onboarding": {
+    "continue": "Enter Rongying Cube",
+    "customPlaceholder": "For example: create three product videos each week or organize my family learning materials",
+    "customTitle": "Anything else you want to achieve?",
+    "multipleHint": "Choose more than one",
+    "nickname": "What should we call you?",
+    "nicknamePlaceholder": "Optional",
+    "optional": "Optional",
+    "progress": "Initial setup",
+    "skip": "Skip for now",
+    "subtitle": "Choose the things you do often. We will use them to shape your home recommendations, and you can change them later.",
+    "title": "What would you like Rongying Cube to help with?",
+    "useCases": {
+      "content": {
+        "description": "Ideas, copy, short videos, and social posts",
+        "title": "Content creation"
+      },
+      "ecommerce": {
+        "description": "Products, competitors, listings, and customer replies",
+        "title": "E-commerce operations"
+      },
+      "family": {
+        "description": "Meals, trips, family activities, and household plans",
+        "title": "Home and family"
+      },
+      "office": {
+        "description": "Documents, spreadsheets, meetings, and reports",
+        "title": "Office productivity"
+      },
+      "research": {
+        "description": "Source review, viewpoint comparison, and study plans",
+        "title": "Learning and research"
+      },
+      "video": {
+        "description": "Scripts, storyboards, shot lists, and editing plans",
+        "title": "Shoot and edit"
+      }
+    },
+    "useCaseTitle": "Common tasks"
   },
   "pairing": {
     "approved": "Device approved! Connection established.",

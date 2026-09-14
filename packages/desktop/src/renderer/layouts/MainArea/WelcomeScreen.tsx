@@ -1,5 +1,16 @@
 import { useEffect, useState } from 'react';
-import { Bot, BriefcaseBusiness, ChevronRight, Clapperboard, GraduationCap, PenLine } from 'lucide-react';
+import {
+  Bot,
+  BriefcaseBusiness,
+  ChevronRight,
+  Clapperboard,
+  GraduationCap,
+  HeartHandshake,
+  PenLine,
+  ShoppingBag,
+  Target,
+  type LucideIcon,
+} from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { motion } from 'framer-motion';
 import { useTaskStore } from '@/stores/taskStore';
@@ -9,12 +20,23 @@ import AgentIcon from '@/components/AgentIcon';
 import { useGatewaySelector } from '@/hooks/useGatewaySelector';
 import GatewayInstanceSelector from '@/components/GatewayInstanceSelector';
 import logo from '@/assets/logo.png';
+import { recommendedStarterIds, type OnboardingProfile, type StarterId } from '@/lib/user-onboarding';
 
 interface WelcomeScreenProps {
+  onboardingProfile: OnboardingProfile;
   onSelectPrompt: (prompt: string) => void;
 }
 
-export default function WelcomeScreen({ onSelectPrompt }: WelcomeScreenProps) {
+const STARTER_ICONS: Record<StarterId, LucideIcon> = {
+  content: PenLine,
+  photography: Clapperboard,
+  office: BriefcaseBusiness,
+  research: GraduationCap,
+  ecommerce: ShoppingBag,
+  family: HeartHandshake,
+};
+
+export default function WelcomeScreen({ onboardingProfile, onSelectPrompt }: WelcomeScreenProps) {
   const { t } = useTranslation();
   const pendingNewTask = useTaskStore((s) => s.pendingNewTask);
   const { gateways, selectedGwId, setSelectedGwId, agentCatalog, effectiveAgentId, setSelectedAgentId } =
@@ -26,12 +48,9 @@ export default function WelcomeScreen({ onSelectPrompt }: WelcomeScreenProps) {
   const maxVisible = 3;
   const visibleAgents = agentExpanded ? agentCatalog : agentCatalog.slice(0, maxVisible);
   const hiddenAgentCount = agentCatalog.length - maxVisible;
-  const starters = [
-    { id: 'content', icon: PenLine },
-    { id: 'photography', icon: Clapperboard },
-    { id: 'office', icon: BriefcaseBusiness },
-    { id: 'research', icon: GraduationCap },
-  ] as const;
+  const starterIds = recommendedStarterIds(onboardingProfile);
+  const customGoal = onboardingProfile.customGoal.trim();
+  const visibleStarterIds = customGoal ? starterIds.slice(0, 3) : starterIds;
 
   useEffect(() => {
     if (!selectedGwId || !effectiveAgentId) return;
@@ -74,28 +93,48 @@ export default function WelcomeScreen({ onSelectPrompt }: WelcomeScreenProps) {
       <div className="mt-7 w-full max-w-2xl">
         <p className="type-label mb-3 text-left text-[var(--text-muted)]">{t('mainArea.popularTasks')}</p>
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-          {starters.map(({ id, icon: Icon }) => (
+          {customGoal && (
             <button
-              key={id}
               type="button"
-              onClick={() => onSelectPrompt(t(`mainArea.starters.${id}.prompt`))}
-              className="group rounded-2xl border border-[var(--border)] bg-[var(--bg-secondary)] p-4 text-left transition-colors hover:border-[var(--accent)] hover:bg-[var(--accent-dim)] focus-visible:outline-none glow-focus"
+              onClick={() => onSelectPrompt(t('mainArea.customGoalPrompt', { goal: customGoal }))}
+              className="group rounded-2xl border border-[var(--accent)] bg-[var(--accent-dim)] p-4 text-left transition-colors hover:bg-[var(--bg-hover)] focus-visible:outline-none glow-focus"
             >
               <div className="flex items-start gap-3">
-                <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl bg-[var(--bg-tertiary)] text-[var(--accent)] transition-colors group-hover:bg-[var(--bg-primary)]">
-                  <Icon size={17} />
+                <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl bg-[var(--bg-primary)] text-[var(--accent)]">
+                  <Target size={17} />
                 </span>
-                <span>
-                  <span className="type-label block text-[var(--text-primary)]">
-                    {t(`mainArea.starters.${id}.title`)}
-                  </span>
-                  <span className="type-support mt-1 block text-[var(--text-secondary)]">
-                    {t(`mainArea.starters.${id}.description`)}
-                  </span>
+                <span className="min-w-0">
+                  <span className="type-label block text-[var(--text-primary)]">{t('mainArea.customGoalTitle')}</span>
+                  <span className="type-support mt-1 block truncate text-[var(--text-secondary)]">{customGoal}</span>
                 </span>
               </div>
             </button>
-          ))}
+          )}
+          {visibleStarterIds.map((id) => {
+            const Icon = STARTER_ICONS[id];
+            return (
+              <button
+                key={id}
+                type="button"
+                onClick={() => onSelectPrompt(t(`mainArea.starters.${id}.prompt`))}
+                className="group rounded-2xl border border-[var(--border)] bg-[var(--bg-secondary)] p-4 text-left transition-colors hover:border-[var(--accent)] hover:bg-[var(--accent-dim)] focus-visible:outline-none glow-focus"
+              >
+                <div className="flex items-start gap-3">
+                  <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl bg-[var(--bg-tertiary)] text-[var(--accent)] transition-colors group-hover:bg-[var(--bg-primary)]">
+                    <Icon size={17} />
+                  </span>
+                  <span>
+                    <span className="type-label block text-[var(--text-primary)]">
+                      {t(`mainArea.starters.${id}.title`)}
+                    </span>
+                    <span className="type-support mt-1 block text-[var(--text-secondary)]">
+                      {t(`mainArea.starters.${id}.description`)}
+                    </span>
+                  </span>
+                </div>
+              </button>
+            );
+          })}
         </div>
       </div>
 

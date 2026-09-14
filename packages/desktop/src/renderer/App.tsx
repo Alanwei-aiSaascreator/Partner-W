@@ -6,6 +6,7 @@ import MainArea from './layouts/MainArea';
 import RightPanel from './layouts/RightPanel';
 import Setup from './layouts/Setup';
 import Login from './layouts/Login';
+import Onboarding from './layouts/Onboarding';
 import Settings from './layouts/Settings';
 import ApprovalDialog from './components/ApprovalDialog';
 import CommandPalette from './components/CommandPalette';
@@ -22,6 +23,7 @@ import { useSettingsBootstrap } from './hooks/useSettingsBootstrap';
 import { cn } from '@/lib/utils';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { motionDuration, motionEase } from '@/styles/design-tokens';
+import { loadOnboardingProfile, saveOnboardingProfile, type OnboardingProfile } from '@/lib/user-onboarding';
 
 function AppToaster({ themeMode }: { themeMode: Theme }) {
   return (
@@ -40,6 +42,9 @@ export default function App() {
   const [ready, setReady] = useState(false);
   const [needsSetup, setNeedsSetup] = useState(false);
   const [authState, setAuthState] = useState<'checking' | 'required' | 'ok'>('checking');
+  const [onboardingAccount, setOnboardingAccount] = useState<{ userId: string; nickname: string } | null>(null);
+  const [onboardingProfile, setOnboardingProfile] = useState<OnboardingProfile | null>(null);
+  const [onboardingResolved, setOnboardingResolved] = useState(false);
 
   const rightPanelOpen = useUiStore((s) => s.rightPanelOpen);
   const toggleRightPanel = useUiStore((s) => s.toggleRightPanel);
@@ -129,17 +134,24 @@ export default function App() {
     (async () => {
       try {
         const config = await window.clawwork.commercialGetConfig();
-        const configured = Boolean(
-          config.ok && config.result?.supabaseUrl && config.result?.hasAnonKey,
-        );
+        const configured = Boolean(config.ok && config.result?.supabaseUrl && config.result?.hasAnonKey);
         if (cancelled) return;
         if (!configured) {
+          setOnboardingAccount({ userId: 'local', nickname: '' });
+          setOnboardingProfile(loadOnboardingProfile('local'));
+          setOnboardingResolved(true);
           setAuthState('ok');
           return;
         }
         const session = await window.clawwork.commercialSession();
         if (cancelled) return;
         const signedIn = Boolean(session.ok && session.result?.signedIn);
+        if (signedIn) {
+          const userId = session.result?.profile?.userId ?? 'local';
+          setOnboardingAccount({ userId, nickname: session.result?.profile?.nickname ?? '' });
+          setOnboardingProfile(loadOnboardingProfile(userId));
+          setOnboardingResolved(true);
+        }
         setAuthState(signedIn ? 'ok' : 'required');
       } catch (err) {
         // Fail closed — a thrown session check must not bypass the login gate.
@@ -154,6 +166,25 @@ export default function App() {
       cancelled = true;
       clearTimeout(timeout);
     };
+  }, []);
+
+  const handleSignedIn = useCallback(async () => {
+    try {
+      const session = await window.clawwork.commercialSession();
+      const userId = session.result?.profile?.userId ?? 'local';
+      setOnboardingAccount({ userId, nickname: session.result?.profile?.nickname ?? '' });
+      setOnboardingProfile(loadOnboardingProfile(userId));
+    } catch {
+      setOnboardingAccount({ userId: 'local', nickname: '' });
+      setOnboardingProfile(loadOnboardingProfile('local'));
+    }
+    setOnboardingResolved(true);
+    setAuthState('ok');
+  }, []);
+
+  const handleOnboardingComplete = useCallback((profile: OnboardingProfile) => {
+    saveOnboardingProfile(profile);
+    setOnboardingProfile(profile);
   }, []);
 
   useEffect(() => {
@@ -190,7 +221,7 @@ export default function App() {
   if (authState === 'required') {
     return (
       <TooltipProvider>
-        <Login onSignedIn={() => setAuthState('ok')} />
+        <Login onSignedIn={handleSignedIn} />
         <AppToaster themeMode={themeMode} />
       </TooltipProvider>
     );
@@ -211,6 +242,21 @@ export default function App() {
   }
 
   if (!ready) return null;
+
+  if (!onboardingResolved || !onboardingAccount) return null;
+
+  if (!onboardingProfile) {
+    return (
+      <TooltipProvider>
+        <Onboarding
+          userId={onboardingAccount.userId}
+          defaultNickname={onboardingAccount.nickname}
+          onComplete={handleOnboardingComplete}
+        />
+        <AppToaster themeMode={themeMode} />
+      </TooltipProvider>
+    );
+  }
 
   return (
     <TooltipProvider>
@@ -235,7 +281,11 @@ export default function App() {
         )}
 
         <main className="relative flex-1 min-w-0 flex flex-col z-[1]">
-          {settingsOpen ? <Settings /> : <MainArea onTogglePanel={toggleRightPanel} />}
+          {settingsOpen ? (
+            <Settings />
+          ) : (
+            <MainArea onTogglePanel={toggleRightPanel} onboardingProfile={onboardingProfile} />
+          )}
         </main>
 
         <AnimatePresence>

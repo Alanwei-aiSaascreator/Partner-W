@@ -1,7 +1,7 @@
 ---
 version: alpha
-name: Mofang Compass Operator Console
-description: A dense local-first desktop workspace for OpenClaw agents, tasks, sessions, messages, artifacts, and teams.
+name: Rongying Cube Desktop
+description: A guided desktop workspace that helps everyday users complete tasks with AI assistants and cloud models.
 colors:
   primary: '#13131C'
   secondary: '#1A1A25'
@@ -214,7 +214,7 @@ components:
 
 ## Overview
 
-Mofang Compass is an operator console, not a marketing surface. It should feel like a quiet desktop control room for parallel OpenClaw work: persistent Tasks in the left rail, the active Message stream in the center, and Task-scoped operational context around it.
+Rongying Cube is a working desktop product rather than a marketing surface. It should help everyday users move from a clear task choice to a useful AI result, while keeping Tasks in the left rail, the active Message stream in the center, and relevant context around it.
 
 The visual reference is a local-first agent workspace with terminal-adjacent density and macOS desktop restraint. The product can show Teams, usage, tool calls, artifacts, scheduled Tasks, and search without turning into a dashboard collage. Hierarchy comes from panels, muted text, exact spacing, and sparse accent, not from decorative illustration.
 
