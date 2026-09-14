@@ -455,9 +455,32 @@
     "currentAssistant": "Aktueller Assistent",
     "messageLayoutCentered": "Nachrichten wieder zentrieren",
     "messageLayoutWide": "Nachrichtenbereich verbreitern",
+    "popularTasks": "Popular tasks",
     "refreshUsage": "Nutzung aktualisieren",
     "scrollToBottom": "Nach unten scrollen",
     "showMoreAssistants": "{{count}} weitere Assistenten anzeigen",
+    "starters": {
+      "content": {
+        "description": "Ideas, copy, short videos, and social posts",
+        "prompt": "I want to create content about [topic]. First ask about the platform and target audience, then help me develop the angle, structure, and first draft.",
+        "title": "Content creation"
+      },
+      "office": {
+        "description": "Documents, spreadsheets, meetings, and reports",
+        "prompt": "I need help with an office task. First ask about the goal, available files, and delivery format, then help me produce a document, spreadsheet, or presentation I can use directly.",
+        "title": "Office productivity"
+      },
+      "photography": {
+        "description": "Scripts, storyboards, shot lists, and edit pacing",
+        "prompt": "I am preparing to shoot [topic/product]. First ask about the platform, audience, and footage I already have, then create a script, storyboard, shot list, and editing plan.",
+        "title": "Shoot and edit"
+      },
+      "research": {
+        "description": "Source review, viewpoint comparison, and next steps",
+        "prompt": "I want to research [topic]. First confirm my purpose and time range, then summarize key sources, conclusions, differing viewpoints, and recommended next steps.",
+        "title": "Learning and research"
+      }
+    },
     "toggleContextPanel": "Kontextbereich ein-/ausblenden",
     "welcomeSubtitle": "Beschreiben Sie Ihre Aufgabe. Rongying Cube hilft bei der Auswahl des passenden Assistenten und Modells.",
     "welcomeTitle": "Was möchten Sie erledigen?"

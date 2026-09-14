@@ -477,6 +477,7 @@ function ChatContent() {
   const stickToBottom = useRef(true);
   const isAutoScrolling = useRef(false);
   const [showScrollButton, setShowScrollButton] = useState(false);
+  const [starterPrompt, setStarterPrompt] = useState<string | null>(null);
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
   const closeLightbox = useCallback(() => setLightboxSrc(null), []);
   const handleNavigateToAccount = useCallback(() => setSettingsOpen(true), [setSettingsOpen]);
@@ -597,10 +598,14 @@ function ChatContent() {
               messageLayout === 'centered' ? 'max-w-[var(--content-max-width)] mx-auto' : 'w-full max-w-none',
             )}
           >
-            <WelcomeScreen key={activeTaskId ?? '__new'} />
+            <WelcomeScreen key={activeTaskId ?? '__new'} onSelectPrompt={setStarterPrompt} />
           </div>
         </div>
-        <ChatInput onNavigateToAccount={handleNavigateToAccount} />
+        <ChatInput
+          onNavigateToAccount={handleNavigateToAccount}
+          draftPrompt={starterPrompt}
+          onDraftApplied={() => setStarterPrompt(null)}
+        />
         <ImageLightbox src={lightboxSrc} onClose={closeLightbox} />
         <FilePreviewModal file={previewFile} onClose={closeFilePreview} />
       </>

@@ -455,9 +455,32 @@
     "currentAssistant": "当前助手",
     "messageLayoutCentered": "切回居中消息区域",
     "messageLayoutWide": "铺开消息区域",
+    "popularTasks": "热门用途",
     "refreshUsage": "刷新用量",
     "scrollToBottom": "滚动到底部",
     "showMoreAssistants": "显示另外 {{count}} 个助手",
+    "starters": {
+      "content": {
+        "description": "选题、文案、短视频与社交媒体内容",
+        "prompt": "我想围绕【主题】创作内容，请先询问发布平台和目标受众，再帮我完成选题、结构和初稿。",
+        "title": "内容创作"
+      },
+      "office": {
+        "description": "文档、表格、会议与汇报材料",
+        "prompt": "我需要处理一项办公任务。请先询问目标、已有文件和交付格式，再帮我整理成可直接使用的文档、表格或汇报材料。",
+        "title": "办公提效"
+      },
+      "photography": {
+        "description": "脚本、分镜、镜头清单与剪辑节奏",
+        "prompt": "我准备拍摄【主题/产品】，请先询问发布平台、受众和现有素材，再帮我制定拍摄脚本、分镜、镜头清单和剪辑节奏。",
+        "title": "拍摄剪辑"
+      },
+      "research": {
+        "description": "资料梳理、观点比较与行动建议",
+        "prompt": "我想研究【主题】。请先确认我的用途和时间范围，再帮我整理关键资料、主要结论、不同观点和下一步行动建议。",
+        "title": "学习研究"
+      }
+    },
     "toggleContextPanel": "切换上下文面板",
     "welcomeSubtitle": "直接描述你的任务，荣盈魔方会帮你选择合适的助手和模型。",
     "welcomeTitle": "今天想完成什么？"

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Bot, ChevronRight } from 'lucide-react';
+import { Bot, BriefcaseBusiness, ChevronRight, Clapperboard, GraduationCap, PenLine } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { motion } from 'framer-motion';
 import { useTaskStore } from '@/stores/taskStore';
@@ -10,7 +10,11 @@ import { useGatewaySelector } from '@/hooks/useGatewaySelector';
 import GatewayInstanceSelector from '@/components/GatewayInstanceSelector';
 import logo from '@/assets/logo.png';
 
-export default function WelcomeScreen() {
+interface WelcomeScreenProps {
+  onSelectPrompt: (prompt: string) => void;
+}
+
+export default function WelcomeScreen({ onSelectPrompt }: WelcomeScreenProps) {
   const { t } = useTranslation();
   const pendingNewTask = useTaskStore((s) => s.pendingNewTask);
   const { gateways, selectedGwId, setSelectedGwId, agentCatalog, effectiveAgentId, setSelectedAgentId } =
@@ -22,6 +26,12 @@ export default function WelcomeScreen() {
   const maxVisible = 3;
   const visibleAgents = agentExpanded ? agentCatalog : agentCatalog.slice(0, maxVisible);
   const hiddenAgentCount = agentCatalog.length - maxVisible;
+  const starters = [
+    { id: 'content', icon: PenLine },
+    { id: 'photography', icon: Clapperboard },
+    { id: 'office', icon: BriefcaseBusiness },
+    { id: 'research', icon: GraduationCap },
+  ] as const;
 
   useEffect(() => {
     if (!selectedGwId || !effectiveAgentId) return;
@@ -61,7 +71,35 @@ export default function WelcomeScreen() {
       <h1 className="type-page-title text-[var(--text-primary)]">{t('mainArea.welcomeTitle')}</h1>
       <p className="type-body mt-3 max-w-xl text-[var(--text-secondary)]">{t('mainArea.welcomeSubtitle')}</p>
 
-      <div className="mt-7 flex w-full max-w-xl flex-col items-center gap-4">
+      <div className="mt-7 w-full max-w-2xl">
+        <p className="type-label mb-3 text-left text-[var(--text-muted)]">{t('mainArea.popularTasks')}</p>
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          {starters.map(({ id, icon: Icon }) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => onSelectPrompt(t(`mainArea.starters.${id}.prompt`))}
+              className="group rounded-2xl border border-[var(--border)] bg-[var(--bg-secondary)] p-4 text-left transition-colors hover:border-[var(--accent)] hover:bg-[var(--accent-dim)] focus-visible:outline-none glow-focus"
+            >
+              <div className="flex items-start gap-3">
+                <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl bg-[var(--bg-tertiary)] text-[var(--accent)] transition-colors group-hover:bg-[var(--bg-primary)]">
+                  <Icon size={17} />
+                </span>
+                <span>
+                  <span className="type-label block text-[var(--text-primary)]">
+                    {t(`mainArea.starters.${id}.title`)}
+                  </span>
+                  <span className="type-support mt-1 block text-[var(--text-secondary)]">
+                    {t(`mainArea.starters.${id}.description`)}
+                  </span>
+                </span>
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="mt-5 flex w-full max-w-2xl flex-col items-center gap-4">
         {gateways.length > 1 && (
           <GatewayInstanceSelector
             gateways={gateways}

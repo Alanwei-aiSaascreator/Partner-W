@@ -455,9 +455,32 @@
     "currentAssistant": "目前助手",
     "messageLayoutCentered": "切回置中訊息區域",
     "messageLayoutWide": "鋪開訊息區域",
+    "popularTasks": "熱門用途",
     "refreshUsage": "重新整理用量",
     "scrollToBottom": "捲動至底部",
     "showMoreAssistants": "顯示另外 {{count}} 個助手",
+    "starters": {
+      "content": {
+        "description": "選題、文案、短影片與社群內容",
+        "prompt": "我想圍繞【主題】創作內容，請先詢問發布平台和目標受眾，再幫我完成選題、結構和初稿。",
+        "title": "內容創作"
+      },
+      "office": {
+        "description": "文件、表格、會議與簡報材料",
+        "prompt": "我需要處理一項辦公任務。請先詢問目標、已有文件和交付格式，再幫我整理成可直接使用的文件、表格或簡報材料。",
+        "title": "辦公提效"
+      },
+      "photography": {
+        "description": "腳本、分鏡、鏡頭清單與剪輯節奏",
+        "prompt": "我準備拍攝【主題/產品】，請先詢問發布平台、受眾和現有素材，再幫我制定拍攝腳本、分鏡、鏡頭清單和剪輯節奏。",
+        "title": "拍攝剪輯"
+      },
+      "research": {
+        "description": "資料整理、觀點比較與行動建議",
+        "prompt": "我想研究【主題】。請先確認我的用途和時間範圍，再幫我整理關鍵資料、主要結論、不同觀點和下一步行動建議。",
+        "title": "學習研究"
+      }
+    },
     "toggleContextPanel": "切換上下文面板",
     "welcomeSubtitle": "直接描述你的任務，榮盈魔方會幫你選擇合適的助手和模型。",
     "welcomeTitle": "今天想完成什麼？"

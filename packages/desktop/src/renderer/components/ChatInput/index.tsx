@@ -89,14 +89,28 @@ function SelectionTag({
 
 interface ChatInputProps {
   onNavigateToAccount?: () => void;
+  draftPrompt?: string | null;
+  onDraftApplied?: () => void;
 }
 
-export default function ChatInput({ onNavigateToAccount }: ChatInputProps) {
+export default function ChatInput({ onNavigateToAccount, draftPrompt, onDraftApplied }: ChatInputProps) {
   const { t } = useTranslation();
   const reduced = useReducedMotion();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [canSend, setCanSend] = useState(false);
+
+  useEffect(() => {
+    if (!draftPrompt) return;
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    textarea.value = draftPrompt;
+    textarea.style.height = 'auto';
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 160)}px`;
+    setCanSend(true);
+    textarea.focus();
+    onDraftApplied?.();
+  }, [draftPrompt, onDraftApplied]);
 
   const sendShortcut = useUiStore((s) => s.sendShortcut);
   const mainView = useUiStore((s) => s.mainView);
