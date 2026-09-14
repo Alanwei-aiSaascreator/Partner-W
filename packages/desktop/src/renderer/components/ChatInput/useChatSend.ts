@@ -13,6 +13,7 @@ import { toast } from '@/lib/toast';
 import { evaluateQuota } from '@/lib/quota';
 import { useCommercialStore } from '@/stores/commercialStore';
 import { isModelSelectable, modelFamilyLabel, relayModelsFrom } from './model-families.js';
+import { deriveModelAvailability } from './model-availability.js';
 import { isThinkingSupported, thinkingDefaultFor } from './thinking-levels.js';
 import type {
   Task,
@@ -103,14 +104,19 @@ export function useChatSend(opts: UseChatSendOpts) {
 
   const taskGwId = activeTask?.gatewayId ?? pendingNewTask?.gatewayId;
   const modelCatalogByGateway = useUiStore((s) => s.modelCatalogByGateway);
+  const gatewayStatus = useUiStore((s) => (taskGwId ? s.gatewayStatusMap[taskGwId] : undefined));
   // ⚠️ 先过 relayModelsFrom 再往下走 —— 网关返回的是**全量**目录（含 claude-cli / deepseek
   // 等我们没配的 provider）。下面的「当前模型」标签和下拉列表**必须同源**，
   // 否则标签会解析到我们服务不了的模型：新任务时显示的 `Claude Opus 5 (Claude CLI)`
   // 就是全量目录的第一条，用户会以为默认模型是它。
-  const modelCatalog = useMemo(
-    () => relayModelsFrom((taskGwId ? modelCatalogByGateway[taskGwId] : undefined) ?? EMPTY_MODELS_CATALOG),
-    [taskGwId, modelCatalogByGateway],
-  );
+  const rawModelCatalog = taskGwId ? modelCatalogByGateway[taskGwId] : undefined;
+  const modelCatalog = useMemo(() => relayModelsFrom(rawModelCatalog ?? EMPTY_MODELS_CATALOG), [rawModelCatalog]);
+  const modelAvailability = deriveModelAvailability({
+    gatewayId: taskGwId,
+    gatewayStatus,
+    rawCatalog: rawModelCatalog,
+    modelCount: modelCatalog.length,
+  });
   const toolsCatalogByGateway = useUiStore((s) => s.toolsCatalogByGateway);
   const toolsCatalog = taskGwId ? toolsCatalogByGateway[taskGwId] : undefined;
   const currentModel = activeTask
@@ -611,6 +617,7 @@ export function useChatSend(opts: UseChatSendOpts) {
     currentModel,
     currentThinking,
     modelCatalog,
+    modelAvailability,
     toolsCatalog,
     modelLabel,
     currentModelEntry,

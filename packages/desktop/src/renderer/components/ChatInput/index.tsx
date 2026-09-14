@@ -238,7 +238,7 @@ export default function ChatInput({ onNavigateToAccount, draftPrompt, onDraftApp
     activeTask,
     currentModel,
     currentThinking,
-    modelCatalog,
+    modelAvailability,
     toolsCatalog,
     modelLabel,
     currentModelEntry,
@@ -458,7 +458,24 @@ export default function ChatInput({ onNavigateToAccount, draftPrompt, onDraftApp
   const disabled = isOffline;
   const placeholder = isOffline ? t('chatInput.offlineReadOnly') : t('chatInput.describeTask');
   const voiceTooltip = !isVoiceSupported ? t('voiceInput.unsupportedTooltip') : t('voiceInput.tooltip');
-  const composerModelLabel = (currentModelEntry?.name ?? modelLabel).replace(/^[^/]+\//, '');
+  const modelIsPreparing = modelAvailability === 'service-starting' || modelAvailability === 'models-loading';
+  const modelStatusLabel =
+    modelAvailability === 'service-starting'
+      ? t('chatInput.aiServiceStarting')
+      : modelAvailability === 'models-loading'
+        ? t('chatInput.modelsLoading')
+        : modelAvailability === 'empty'
+          ? t('chatInput.noModelsAvailable')
+          : null;
+  const modelStatusDetail =
+    modelAvailability === 'service-starting'
+      ? t('chatInput.aiServiceStartingDetail')
+      : modelAvailability === 'models-loading'
+        ? t('chatInput.modelsLoadingDetail')
+        : modelAvailability === 'empty'
+          ? t('chatInput.noModelsAvailableDetail')
+          : null;
+  const composerModelLabel = modelStatusLabel ?? (currentModelEntry?.name ?? modelLabel).replace(/^[^/]+\//, '');
 
   // 网关侧准备进度（run_status）。**不能在 `isGenerating` 里才显示** ——
   // 实测那 9 秒发生在 lifecycle.start **之前**，正是最需要提示的时候。
@@ -746,15 +763,24 @@ export default function ChatInput({ onNavigateToAccount, draftPrompt, onDraftApp
                             variant="ghost"
                             size="sm"
                             className="rounded-lg border-none px-2 text-[var(--text-secondary)] shadow-none"
-                            title={currentModelEntry?.name ?? modelLabel}
+                            title={modelStatusLabel ?? currentModelEntry?.name ?? modelLabel}
+                            aria-busy={modelIsPreparing}
+                            aria-live="polite"
                           >
+                            {modelIsPreparing && (
+                              <Loader2
+                                size={14}
+                                aria-hidden="true"
+                                className="shrink-0 animate-spin text-[var(--accent)] motion-reduce:animate-none"
+                              />
+                            )}
                             <span className="max-w-36 truncate">{composerModelLabel}</span>
-                            {currentModelEntry?.reasoning && (
+                            {modelAvailability === 'ready' && currentModelEntry?.reasoning && (
                               <span className="type-badge rounded bg-[var(--accent)]/15 px-1 py-px text-[var(--accent)]">
                                 R
                               </span>
                             )}
-                            {currentModelEntry?.contextWindow && (
+                            {modelAvailability === 'ready' && currentModelEntry?.contextWindow && (
                               <span className="type-badge rounded bg-[var(--info)]/15 px-1 py-px text-[var(--info)]">
                                 {formatContextWindow(currentModelEntry.contextWindow)}
                               </span>
@@ -791,13 +817,38 @@ export default function ChatInput({ onNavigateToAccount, draftPrompt, onDraftApp
                               </DropdownMenuSubContent>
                             </DropdownMenuSub>
                           ))}
-                          {modelCatalog.length === 0 && (
-                            <DropdownMenuItem disabled>
-                              <span className="text-[var(--text-muted)] italic">
-                                {t('chatInput.noModelsAvailable')}
+                          {modelIsPreparing ? (
+                            <DropdownMenuItem
+                              disabled
+                              className="max-w-80 items-start gap-2 py-3 opacity-100"
+                              aria-live="polite"
+                            >
+                              <Loader2
+                                size={16}
+                                aria-hidden="true"
+                                className="mt-0.5 shrink-0 animate-spin text-[var(--accent)] motion-reduce:animate-none"
+                              />
+                              <span className="flex flex-col gap-1">
+                                <span className="type-body font-medium text-[var(--text-primary)]">
+                                  {modelStatusLabel}
+                                </span>
+                                <span className="type-support whitespace-normal text-[var(--text-muted)]">
+                                  {modelStatusDetail}
+                                </span>
                               </span>
                             </DropdownMenuItem>
-                          )}
+                          ) : modelAvailability === 'empty' ? (
+                            <DropdownMenuItem disabled className="max-w-80 items-start py-3 opacity-100">
+                              <span className="flex flex-col gap-1">
+                                <span className="type-body font-medium text-[var(--text-primary)]">
+                                  {modelStatusLabel}
+                                </span>
+                                <span className="type-support whitespace-normal text-[var(--text-muted)]">
+                                  {modelStatusDetail}
+                                </span>
+                              </span>
+                            </DropdownMenuItem>
+                          ) : null}
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </div>

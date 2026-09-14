@@ -3,7 +3,7 @@
 import { act, useRef, type ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Task } from '@clawwork/shared';
+import type { ModelCatalogEntry, Task } from '@clawwork/shared';
 
 const mocks = vi.hoisted(() => {
   const activeTask: Task = {
@@ -39,8 +39,8 @@ const mocks = vi.hoisted(() => {
       activeTurnBySession: {},
     },
     uiState: {
-      gatewayStatusMap: { 'gw-1': 'connected' },
-      modelCatalogByGateway: {},
+      gatewayStatusMap: { 'gw-1': 'connected' } as Record<string, 'connected' | 'connecting' | 'disconnected'>,
+      modelCatalogByGateway: {} as Record<string, ModelCatalogEntry[]>,
       toolsCatalogByGateway: {},
     },
     roomState: {
@@ -125,6 +125,7 @@ function Harness({ initialValue = '' }: { initialValue?: string }) {
         send
       </button>
       <div data-testid="aborting">{chat.aborting ? 'aborting' : 'idle'}</div>
+      <div data-testid="model-availability">{chat.modelAvailability}</div>
     </>
   );
 }
@@ -136,6 +137,8 @@ describe('useChatSend abort flow', () => {
     mocks.abort.mockClear();
     mocks.applySlashCommand.mockClear();
     mocks.send.mockClear();
+    mocks.uiState.gatewayStatusMap = { 'gw-1': 'connected' };
+    mocks.uiState.modelCatalogByGateway = {};
     (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   });
 
@@ -191,5 +194,13 @@ describe('useChatSend abort flow', () => {
     });
 
     expect(mocks.send).toHaveBeenCalledWith('task-1', expect.objectContaining({ presetModel: 'deepseek-v4-flash' }));
+  });
+
+  it('keeps a missing connected catalog in the loading state instead of reporting empty', () => {
+    const { container, unmount } = render(<Harness />);
+
+    expect(container.querySelector('[data-testid="model-availability"]')?.textContent).toBe('models-loading');
+
+    unmount();
   });
 });
