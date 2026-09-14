@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   Bot,
   BriefcaseBusiness,
@@ -21,6 +21,10 @@ import { useGatewaySelector } from '@/hooks/useGatewaySelector';
 import GatewayInstanceSelector from '@/components/GatewayInstanceSelector';
 import logo from '@/assets/logo.png';
 import { recommendedStarterIds, type OnboardingProfile, type StarterId } from '@/lib/user-onboarding';
+import { PRESET_AGENT_DEFINITIONS } from '@/lib/preset-agents';
+import { installPresetAgentPack } from '@/lib/preset-agent-installer';
+import { fetchAgentsForGateway } from '@/hooks/useGatewayBootstrap';
+import PresetAgentPackControl from './PresetAgentPackControl';
 
 interface WelcomeScreenProps {
   onboardingProfile: OnboardingProfile;
@@ -51,6 +55,12 @@ export default function WelcomeScreen({ onboardingProfile, onSelectPrompt }: Wel
   const starterIds = recommendedStarterIds(onboardingProfile);
   const customGoal = onboardingProfile.customGoal.trim();
   const visibleStarterIds = customGoal ? starterIds.slice(0, 3) : starterIds;
+  const missingPresetAgents = PRESET_AGENT_DEFINITIONS.filter(
+    (definition) => !agentCatalog.some((agent) => agent.id === definition.id),
+  );
+  const [packStatus, setPackStatus] = useState<'ready' | 'installing' | 'incomplete'>('ready');
+  const [packProgress, setPackProgress] = useState({ completed: 0, total: PRESET_AGENT_DEFINITIONS.length });
+  const [packError, setPackError] = useState('');
 
   useEffect(() => {
     if (!selectedGwId || !effectiveAgentId) return;
@@ -72,25 +82,86 @@ export default function WelcomeScreen({ onboardingProfile, onSelectPrompt }: Wel
     setAgentExpanded(false);
   };
 
+  const handleInstallPresetAgents = useCallback(async () => {
+    if (!selectedGwId || packStatus === 'installing') return;
+
+    setPackStatus('installing');
+    setPackError('');
+    setPackProgress({ completed: 0, total: PRESET_AGENT_DEFINITIONS.length });
+
+    try {
+      const workspaceRoot = await window.clawwork.getWorkspacePath();
+      if (!workspaceRoot) {
+        setPackStatus('incomplete');
+        setPackError(t('presetAgents.workspaceUnavailable'));
+        return;
+      }
+
+      const displayNames = Object.fromEntries(
+        PRESET_AGENT_DEFINITIONS.map((definition) => [definition.id, t(definition.displayNameKey)]),
+      );
+      const result = await installPresetAgentPack({
+        gatewayId: selectedGwId,
+        workspaceRoot,
+        currentAgentIds: agentCatalog.map((agent) => agent.id),
+        displayNames,
+        api: window.clawwork,
+        onProgress: ({ completed, total }) => setPackProgress({ completed, total }),
+      });
+
+      await fetchAgentsForGateway(selectedGwId);
+      if (result.failed.length > 0) {
+        const failedNames = result.failed
+          .map(({ id }) => {
+            const definition = PRESET_AGENT_DEFINITIONS.find((item) => item.id === id);
+            return definition ? t(definition.displayNameKey) : id;
+          })
+          .join(', ');
+        setPackStatus('incomplete');
+        setPackError(t('presetAgents.failedRoles', { roles: failedNames }));
+        return;
+      }
+
+      setPackStatus('ready');
+    } catch {
+      setPackStatus('incomplete');
+      setPackError(t('presetAgents.setupFailed'));
+    }
+  }, [agentCatalog, packStatus, selectedGwId, t]);
+
   return (
     <motion.div
       {...animationPresets.fadeIn}
-      className="flex h-full flex-col items-center justify-center px-6 py-16 text-center"
+      className="flex min-h-full flex-col items-center justify-start px-6 py-4 text-center"
     >
-      <div className="relative mb-5">
+      <div className="relative mb-3">
         <div className="absolute inset-0 scale-[2.2] rounded-full bg-[var(--accent)] opacity-[0.05] blur-2xl" />
         <img
           src={logo}
           alt={t('common.appName')}
-          className="relative h-16 w-16 rounded-2xl shadow-[var(--glow-accent)]"
+          className="relative h-12 w-12 rounded-xl shadow-[var(--glow-accent)]"
         />
       </div>
 
-      <p className="type-label mb-2 text-[var(--accent)]">{t('common.appName')}</p>
+      <p className="type-label mb-1 text-[var(--accent)]">{t('common.appName')}</p>
       <h1 className="type-page-title text-[var(--text-primary)]">{t('mainArea.welcomeTitle')}</h1>
-      <p className="type-body mt-3 max-w-xl text-[var(--text-secondary)]">{t('mainArea.welcomeSubtitle')}</p>
+      <p className="type-body mt-2 max-w-xl text-[var(--text-secondary)]">{t('mainArea.welcomeSubtitle')}</p>
 
-      <div className="mt-7 w-full max-w-2xl">
+      {missingPresetAgents.length > 0 && (
+        <div className="mt-4 w-full max-w-2xl text-left">
+          <PresetAgentPackControl
+            status={packStatus}
+            missingCount={missingPresetAgents.length}
+            completed={packProgress.completed}
+            total={packProgress.total}
+            error={packError}
+            disabled={!selectedGwId}
+            onInstall={handleInstallPresetAgents}
+          />
+        </div>
+      )}
+
+      <div className="mt-4 w-full max-w-2xl">
         <p className="type-label mb-3 text-left text-[var(--text-muted)]">{t('mainArea.popularTasks')}</p>
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
           {customGoal && (

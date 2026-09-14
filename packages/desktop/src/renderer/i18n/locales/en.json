@@ -563,6 +563,26 @@
     "title": "Device Pairing Required",
     "waiting": "Waiting for approval…"
   },
+  "presetAgents": {
+    "description": "Add focused assistants for content, video, office work, e-commerce, research, and family planning.",
+    "failedRoles": "These assistants were not set up: {{roles}}",
+    "incomplete": "{{count}} assistants are still missing. You can retry without duplicating completed roles.",
+    "install": "Set up {{count}} assistants",
+    "installing": "Setting up {{completed}}/{{total}}",
+    "retry": "Retry setup",
+    "roles": {
+      "content": "Content Creation",
+      "ecommerce": "E-commerce Operations",
+      "family": "Home and Family",
+      "office": "Office Productivity",
+      "research": "Learning and Research",
+      "video": "Video Production"
+    },
+    "setupFailed": "Assistant setup did not finish. Check the service connection and retry.",
+    "title": "Set up your everyday assistants",
+    "unavailable": "Connect the assistant service before setting up these roles.",
+    "workspaceUnavailable": "The assistant workspace is unavailable. Check the service connection and retry."
+  },
   "rightPanel": {
     "artifacts": "Artifacts",
     "context": "Context",

@@ -5,6 +5,8 @@ import { createRoot, type Root } from 'react-dom/client';
 import { describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
+  fetchAgentsForGateway: vi.fn(),
+  installPresetAgentPack: vi.fn(),
   setPending: vi.fn(),
   setSelectedAgentId: vi.fn(),
   setSelectedGwId: vi.fn(),
@@ -35,6 +37,14 @@ vi.mock('../src/renderer/hooks/useGatewaySelector', () => ({
     effectiveAgentId: 'main',
     setSelectedAgentId: mocks.setSelectedAgentId,
   }),
+}));
+
+vi.mock('../src/renderer/hooks/useGatewayBootstrap', () => ({
+  fetchAgentsForGateway: mocks.fetchAgentsForGateway,
+}));
+
+vi.mock('../src/renderer/lib/preset-agent-installer', () => ({
+  installPresetAgentPack: mocks.installPresetAgentPack,
 }));
 
 vi.mock('../src/renderer/components/AgentIcon', () => ({
@@ -83,6 +93,55 @@ describe('WelcomeScreen task starters', () => {
     expect(button).toBeDefined();
     act(() => button!.click());
     expect(onSelectPrompt).toHaveBeenCalledWith('mainArea.starters.photography.prompt');
+    unmount();
+  });
+
+  it('installs missing preset assistants and refreshes the catalog', async () => {
+    Object.defineProperty(window, 'clawwork', {
+      configurable: true,
+      value: {
+        getWorkspacePath: vi.fn(async () => 'D:/cube'),
+        createAgent: vi.fn(),
+        updateAgent: vi.fn(),
+        setAgentFile: vi.fn(),
+        deleteAgent: vi.fn(),
+      },
+    });
+    mocks.installPresetAgentPack.mockImplementation(async ({ onProgress }) => {
+      onProgress?.({ completed: 6, total: 6, currentId: 'rongying-family' });
+      return {
+        installed: [
+          'rongying-content',
+          'rongying-video',
+          'rongying-office',
+          'rongying-ecommerce',
+          'rongying-research',
+          'rongying-family',
+        ],
+        skipped: [],
+        failed: [],
+      };
+    });
+    const { container, unmount } = render(
+      <WelcomeScreen
+        onboardingProfile={{ ...onboardingProfile, useCases: [...onboardingProfile.useCases] }}
+        onSelectPrompt={vi.fn()}
+      />,
+    );
+    const button = [...container.querySelectorAll('button')].find((item) =>
+      item.textContent?.includes('presetAgents.install'),
+    );
+
+    expect(button).toBeDefined();
+    await act(async () => button!.click());
+    expect(mocks.installPresetAgentPack).toHaveBeenCalledWith(
+      expect.objectContaining({
+        gatewayId: 'gw-1',
+        workspaceRoot: 'D:/cube',
+        currentAgentIds: ['main'],
+      }),
+    );
+    expect(mocks.fetchAgentsForGateway).toHaveBeenCalledWith('gw-1');
     unmount();
   });
 });

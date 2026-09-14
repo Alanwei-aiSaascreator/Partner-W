@@ -563,6 +563,26 @@
     "title": "需要裝置配對",
     "waiting": "等待核准中…"
   },
+  "presetAgents": {
+    "description": "加入內容、拍攝、辦公、電商、研究和家庭六個專業助手，完成後可以直接切換使用。",
+    "failedRoles": "這些助手未完成設定：{{roles}}",
+    "incomplete": "還有 {{count}} 個助手未設定成功，可以重試，已完成的角色不會重複建立。",
+    "install": "設定 {{count}} 個助手",
+    "installing": "正在設定 {{completed}}/{{total}}",
+    "retry": "重試設定",
+    "roles": {
+      "content": "內容創作",
+      "ecommerce": "電商營運",
+      "family": "生活家庭",
+      "office": "高效辦公",
+      "research": "學習研究",
+      "video": "拍攝剪輯"
+    },
+    "setupFailed": "助手設定沒有完成，請檢查服務連線後重試。",
+    "title": "設定常用助手",
+    "unavailable": "連接助手服務後即可設定這些角色。",
+    "workspaceUnavailable": "暫時無法讀取助手工作目錄，請檢查服務連線後重試。"
+  },
   "rightPanel": {
     "artifacts": "產出檔案",
     "context": "上下文",

@@ -563,6 +563,26 @@
     "title": "需要设备配对",
     "waiting": "等待批准中…"
   },
+  "presetAgents": {
+    "description": "添加内容、拍摄、办公、电商、研究和家庭六个专业助手，完成后可以直接切换使用。",
+    "failedRoles": "这些助手未完成配置：{{roles}}",
+    "incomplete": "还有 {{count}} 个助手未配置成功，可以重试，已完成的角色不会重复创建。",
+    "install": "配置 {{count}} 个助手",
+    "installing": "正在配置 {{completed}}/{{total}}",
+    "retry": "重试配置",
+    "roles": {
+      "content": "内容创作",
+      "ecommerce": "电商运营",
+      "family": "生活家庭",
+      "office": "高效办公",
+      "research": "学习研究",
+      "video": "拍摄剪辑"
+    },
+    "setupFailed": "助手配置没有完成，请检查服务连接后重试。",
+    "title": "配置常用助手",
+    "unavailable": "连接助手服务后即可配置这些角色。",
+    "workspaceUnavailable": "暂时无法读取助手工作目录，请检查服务连接后重试。"
+  },
   "rightPanel": {
     "artifacts": "产物",
     "context": "上下文",
