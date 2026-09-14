@@ -178,7 +178,14 @@ async function waitForGatewayCatalog(page: Page, timeoutMs = 180_000): Promise<M
 
 test.describe.configure({ mode: 'serial' });
 
-test.beforeAll(() => {
+test.beforeAll(async () => {
+  // ⚠️ 起测前 18789 必须是**空的**。实测：dev 客户端的网关会**活过 app 变成孤儿**，
+  //    而端口被占时 `waitForGateway()` 会**立刻**返回 true —— 但那是**别人的**网关。
+  //    于是后面每一步都在跟一个不属于本 profile 的网关打交道：
+  //    「激活前 relay=0」可能假成立、「模型出现」可能来自别人的配置 ——
+  //    这种失败**看起来像通过**，所以宁可在这里直接失败。
+  expect(await portHasGateway(), '起测前 18789 被占用：先关掉占用它的客户端/网关（按 PID 杀，别按名全杀）').toBe(false);
+
   ensureArtifacts();
   const swept = sweepStaleProfiles({ log: (m) => console.log(m) });
   if (swept.removed.length > 0) console.log(`[e2e-clean] 启动清扫：删了 ${swept.removed.length} 个旧 profile`);
