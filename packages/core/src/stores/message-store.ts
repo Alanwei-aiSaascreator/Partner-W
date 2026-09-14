@@ -1,6 +1,7 @@
 import { createStore } from 'zustand/vanilla';
 import { mergeGatewayStreamText, parseAgentIdFromSessionKey, parseTaskIdFromSessionKey } from '@clawwork/shared';
 import type { Message, MessageRole, MessageAttachment, ToolCall, IpcResult } from '@clawwork/shared';
+import { splitInlineThinking } from '../protocol/normalize-history.js';
 
 const EMPTY_MESSAGES: Message[] = [];
 
@@ -258,11 +259,19 @@ export function createMessageStore(deps: MessageStoreDeps) {
       }
     },
 
+    // ⚠️ 装载**本地已存**的消息时也要切一次行内推理。
+    //    否则「修好之前就落库的那些」永远是脏的 —— 它们早就在磁盘上定形了，
+    //    之后无论怎么改代码都不会被重新归一化（实测：修完当场看仍是脏的）。
     bulkLoad: (taskId, msgs) =>
       set((s) => ({
         messagesByTask: {
           ...s.messagesByTask,
-          [taskId]: msgs,
+          [taskId]: msgs.map((m) => {
+            if (m.role !== 'assistant' || !m.content) return m;
+            const { text, thinkingText } = splitInlineThinking(m.content, m.thinkingContent ?? '');
+            if (text === m.content && !thinkingText) return m;
+            return { ...m, content: text, thinkingContent: thinkingText || undefined };
+          }),
         },
       })),
 
@@ -299,8 +308,16 @@ export function createMessageStore(deps: MessageStoreDeps) {
         const turn = s.activeTurnBySession[sessionKey];
         if (!turn) return s;
 
-        const content = turn.streamingText;
-        const thinkingContent = turn.streamingThinking || undefined;
+        // ⚠️ 推理可能**混在正文里**（有些模型只给闭标签 `</think>`、没有单独的 thinking
+        //    块 —— 2026-09-14 线上实测 qwen3.5-27b）。这里原本是
+        //    `content = turn.streamingText` 原样收下，于是**流式**这条路径把推理留在了
+        //    正文里，而 `normalizeAssistantTurns` 那条路径是干净的 —— 同一会话两条路径
+        //    结果不一致。两处共用同一个切分函数。
+        const { text: content, thinkingText: inlineThinking } = splitInlineThinking(
+          turn.streamingText,
+          turn.streamingThinking,
+        );
+        const thinkingContent = inlineThinking || undefined;
 
         if (!content && !thinkingContent && turn.toolCalls.length === 0) {
           return {

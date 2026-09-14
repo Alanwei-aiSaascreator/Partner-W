@@ -322,6 +322,40 @@ function extractBlockThinking(blocks: RawContentBlock[]): string {
     .join('');
 }
 
+/** 行内思考分隔符。网关的 `text` 块里可能出现它。 */
+const INLINE_THINK_CLOSE_RE = /<\/think>/i;
+
+/**
+ * 有些模型的推理是**混在正文里**的，不是单独的 `thinking` 块。
+ *
+ * 2026-09-14 线上实测（qwen3.5-27b）—— 同一轮对话里各模型的形状**不一样**：
+ *
+ * ```
+ * deepseek-v4-flash / glm-4.7 / kimi-*  →  content: [ {thinking}, {text} ]   ← 规范形状
+ * qwen3.5-27b                           →  content: [ {text: "<推理></think>\n<答案>"} ]
+ * ```
+ *
+ * 第二类**没有开标签**（`<think>` 位置 = -1），只有 `</think>`，且**没有单独的
+ * thinking 块**。不切开的话，用户看到的正文就是一大段推理 —— 这正是
+ * 「切换模型后思考内容全显示正文」那个现象（见 [[model-subsystem-issues]]）。
+ *
+ * ⚠️ 优先级：**有结构化 thinking 块时绝不动 text**。那条路径本来就是对的，
+ *    再切一次只会把正常回复切坏。
+ * ⚠️ 切完左边为空（回复以 `</think>` 开头）时，**保留右侧**，不要造出一个
+ *    空思考块。右边为空时也保留左侧 —— 推理也是内容，总比整条消失强。
+ */
+export function splitInlineThinking(text: string, blockThinking = ''): { text: string; thinkingText: string } {
+  if (blockThinking) return { text, thinkingText: blockThinking };
+
+  const m = INLINE_THINK_CLOSE_RE.exec(text);
+  if (!m || m.index === undefined) return { text, thinkingText: '' };
+
+  const head = text.slice(0, m.index).trim();
+  const tail = text.slice(m.index + m[0].length).trim();
+  if (!head) return { text, thinkingText: '' }; // 没有可分离的推理 ⇒ 原样
+  return { text: tail, thinkingText: head };
+}
+
 function shouldStartVisibleAssistantTurn(
   turn: NormalizedAssistantTurn | null,
   timestamp: string,
@@ -371,8 +405,10 @@ export function normalizeAssistantTurns(rawMsgs: RawHistoryMessage[], httpBase?:
 
     const timestamp = toISOTimestamp(msg.timestamp);
     const normalizedContent = normalizeContentBlocks(msg.content ?? [], httpBase);
-    const text = normalizedContent.content;
-    const thinkingText = extractBlockThinking(msg.content ?? []);
+    const { text, thinkingText } = splitInlineThinking(
+      normalizedContent.content,
+      extractBlockThinking(msg.content ?? []),
+    );
     const toolCalls = (msg.content ?? [])
       .filter((block: RawContentBlock) => block.type === 'toolCall' && block.id && block.name)
       .map(

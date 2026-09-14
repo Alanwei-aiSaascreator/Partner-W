@@ -365,3 +365,84 @@ describe('normalizeAssistantTurns', () => {
     expect(messages.map((m) => m.model)).toEqual([undefined, 'glm-4.7', undefined, 'qwen-turbo', undefined, undefined]);
   });
 });
+
+/**
+ * 推理**混在正文里**的模型（2026-09-14 线上实测 qwen3.5-27b）。
+ *
+ * 同一轮对话里各模型形状并不一致：
+ *   deepseek / glm / kimi → `[{thinking}, {text}]`                    ← 规范形状，正文干净
+ *   qwen3.5-27b           → `[{text: "<推理></think>\n<答案>"}]`      ← 只有闭标签、无 thinking 块
+ *
+ * 不切开的话，用户看到的正文就是一整段推理 —— 这正是「切模型后思考内容显示成正文」。
+ */
+describe('normalizeAssistantTurns —— 行内 </think> 分隔的推理', () => {
+  const userMsg: RawHistoryMessage = { role: 'user', timestamp: 1000, content: [{ type: 'text', text: '你好' }] };
+
+  it('⭐ 把 `推理</think>答案` 切成 thinkingContent + 干净的正文', () => {
+    const rawMsgs: RawHistoryMessage[] = [
+      userMsg,
+      {
+        role: 'assistant',
+        timestamp: 2000,
+        model: 'qwen3.5-27b',
+        content: [
+          {
+            type: 'text',
+            text: 'The user asked what model I am; I should answer directly. </think>\n你好，我是 clawrouter/qwen3.5-27b 模型。',
+          },
+        ],
+      },
+    ];
+
+    const turns = normalizeAssistantTurns(rawMsgs);
+
+    expect(turns).toHaveLength(1);
+    expect(turns[0]!.thinkingContent).toBe('The user asked what model I am; I should answer directly.');
+    expect(turns[0]!.content).toBe('你好，我是 clawrouter/qwen3.5-27b 模型。');
+    expect(turns[0]!.content).not.toContain('</think>');
+  });
+
+  it('有结构化 thinking 块时**不动** text（那条路径本来就是对的）', () => {
+    const rawMsgs: RawHistoryMessage[] = [
+      userMsg,
+      {
+        role: 'assistant',
+        timestamp: 2000,
+        content: [
+          { type: 'thinking', thinking: '结构化推理' },
+          // 正文里也出现 </think>，但既然有 thinking 块，正文就按原样保留
+          { type: 'text', text: '答案里提到 </think> 这个词' },
+        ],
+      },
+    ];
+
+    const turns = normalizeAssistantTurns(rawMsgs);
+
+    expect(turns[0]!.thinkingContent).toBe('结构化推理');
+    expect(turns[0]!.content).toBe('答案里提到 </think> 这个词');
+  });
+
+  it('没有 </think> 的普通正文不受影响', () => {
+    const rawMsgs: RawHistoryMessage[] = [
+      userMsg,
+      { role: 'assistant', timestamp: 2000, content: [{ type: 'text', text: '就是一句普通回复' }] },
+    ];
+
+    const turns = normalizeAssistantTurns(rawMsgs);
+
+    expect(turns[0]!.content).toBe('就是一句普通回复');
+    expect(turns[0]!.thinkingContent).toBeFalsy();
+  });
+
+  it('闭标签在开头（没有推理可分离）⇒ 原样保留，不造空思考块', () => {
+    const rawMsgs: RawHistoryMessage[] = [
+      userMsg,
+      { role: 'assistant', timestamp: 2000, content: [{ type: 'text', text: '</think>答案' }] },
+    ];
+
+    const turns = normalizeAssistantTurns(rawMsgs);
+
+    expect(turns[0]!.content).toBe('</think>答案');
+    expect(turns[0]!.thinkingContent).toBeFalsy();
+  });
+});
