@@ -410,6 +410,15 @@
     "openInEditor": "편집기에서 열기",
     "revealInFolder": "Finder에서 표시"
   },
+  "firstTaskCompletion": {
+    "continue": "Refine result",
+    "continuePrompt": "Review the result above, fill any important gaps, and organize it into a final version I can use directly.",
+    "description": "Your result is saved in this task. You can refine it or start something new.",
+    "dismiss": "Dismiss first task prompt",
+    "newTask": "Start new task",
+    "title": "First task complete",
+    "viewUsage": "View usage"
+  },
   "leftNav": {
     "allAgents": "모든 에이전트",
     "appSettings": "앱 설정",

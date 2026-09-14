@@ -10,6 +10,7 @@ import researchIdentity from '@/preset-agents/research/IDENTITY.md?raw';
 import researchSoul from '@/preset-agents/research/SOUL.md?raw';
 import videoIdentity from '@/preset-agents/video/IDENTITY.md?raw';
 import videoSoul from '@/preset-agents/video/SOUL.md?raw';
+import type { StarterId } from '@/lib/user-onboarding';
 
 export const PRESET_AGENT_IDS = [
   'rongying-content',
@@ -21,6 +22,15 @@ export const PRESET_AGENT_IDS = [
 ] as const;
 
 export type PresetAgentId = (typeof PRESET_AGENT_IDS)[number];
+
+export const STARTER_AGENT_BY_ID: Readonly<Record<StarterId, PresetAgentId>> = {
+  content: 'rongying-content',
+  photography: 'rongying-video',
+  office: 'rongying-office',
+  research: 'rongying-research',
+  ecommerce: 'rongying-ecommerce',
+  family: 'rongying-family',
+};
 
 export interface PresetAgentDefinition {
   id: PresetAgentId;
@@ -99,4 +109,13 @@ export const PRESET_AGENT_DEFINITIONS: readonly PresetAgentDefinition[] = [
 
 export function isPresetAgentId(id: string): id is PresetAgentId {
   return PRESET_AGENT_IDS.includes(id as PresetAgentId);
+}
+
+export function resolveStarterAgentId(
+  starterId: StarterId,
+  availableAgentIds: readonly string[],
+  fallbackAgentId: string,
+): string {
+  const targetId = STARTER_AGENT_BY_ID[starterId];
+  return availableAgentIds.includes(targetId) ? targetId : fallbackAgentId;
 }

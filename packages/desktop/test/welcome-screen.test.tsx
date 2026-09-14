@@ -2,7 +2,7 @@
 
 import { act, type ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   fetchAgentsForGateway: vi.fn(),
@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   setPending: vi.fn(),
   setSelectedAgentId: vi.fn(),
   setSelectedGwId: vi.fn(),
+  gatewayState: { agentCatalog: [{ id: 'main' }] as Array<{ id: string }> },
 }));
 
 vi.mock('react-i18next', () => ({
@@ -33,7 +34,7 @@ vi.mock('../src/renderer/hooks/useGatewaySelector', () => ({
     gateways: [],
     selectedGwId: 'gw-1',
     setSelectedGwId: mocks.setSelectedGwId,
-    agentCatalog: [{ id: 'main' }],
+    agentCatalog: mocks.gatewayState.agentCatalog,
     effectiveAgentId: 'main',
     setSelectedAgentId: mocks.setSelectedAgentId,
   }),
@@ -77,7 +78,12 @@ function render(ui: ReactElement): { container: HTMLDivElement; unmount: () => v
 }
 
 describe('WelcomeScreen task starters', () => {
-  it('prefills the composer with the photography workflow', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.gatewayState.agentCatalog = [{ id: 'main' }];
+  });
+
+  it('prefills the composer and keeps the current assistant when the specialist is absent', () => {
     (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     const onSelectPrompt = vi.fn();
     const { container, unmount } = render(
@@ -91,7 +97,30 @@ describe('WelcomeScreen task starters', () => {
     );
 
     expect(button).toBeDefined();
+    mocks.setPending.mockClear();
     act(() => button!.click());
+    expect(mocks.setPending).toHaveBeenCalledWith({ gatewayId: 'gw-1', agentId: 'main' });
+    expect(onSelectPrompt).toHaveBeenCalledWith('mainArea.starters.photography.prompt');
+    unmount();
+  });
+
+  it('routes a starter to its installed professional assistant before filling the composer', () => {
+    mocks.gatewayState.agentCatalog = [{ id: 'main' }, { id: 'rongying-video' }];
+    const onSelectPrompt = vi.fn();
+    const { container, unmount } = render(
+      <WelcomeScreen
+        onboardingProfile={{ ...onboardingProfile, useCases: [...onboardingProfile.useCases] }}
+        onSelectPrompt={onSelectPrompt}
+      />,
+    );
+    const button = [...container.querySelectorAll('button')].find((item) =>
+      item.textContent?.includes('mainArea.starters.photography.title'),
+    );
+
+    mocks.setPending.mockClear();
+    act(() => button!.click());
+    expect(mocks.setPending).toHaveBeenCalledWith({ gatewayId: 'gw-1', agentId: 'rongying-video' });
+    expect(mocks.setSelectedAgentId).toHaveBeenCalledWith('rongying-video');
     expect(onSelectPrompt).toHaveBeenCalledWith('mainArea.starters.photography.prompt');
     unmount();
   });

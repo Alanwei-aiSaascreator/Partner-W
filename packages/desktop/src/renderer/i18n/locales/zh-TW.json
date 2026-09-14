@@ -410,6 +410,15 @@
     "openInEditor": "在編輯器中開啟",
     "revealInFolder": "在 Finder 中顯示"
   },
+  "firstTaskCompletion": {
+    "continue": "繼續完善",
+    "continuePrompt": "請根據剛才的結果，檢查遺漏、補充關鍵細節，並整理成我可以直接使用的最終版本。",
+    "description": "結果已經儲存在目前任務中，你可以繼續完善，也可以開始下一件事。",
+    "dismiss": "關閉首次任務提示",
+    "newTask": "開始新任務",
+    "title": "第一次任務已完成",
+    "viewUsage": "查看使用情況"
+  },
   "leftNav": {
     "allAgents": "全部智能體",
     "appSettings": "應用程式設定",

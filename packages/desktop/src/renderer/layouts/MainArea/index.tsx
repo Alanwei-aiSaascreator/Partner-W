@@ -48,6 +48,7 @@ import DataTable, { type DataTableColumn } from '@/components/data-display/DataT
 import EmptyState from '@/components/semantic/EmptyState';
 import StatusTag from '@/components/semantic/StatusTag';
 import WelcomeScreen from './WelcomeScreen';
+import FirstTaskCompletionFlow from './FirstTaskCompletionFlow';
 import type { OnboardingProfile } from '@/lib/user-onboarding';
 
 const STICK_TO_BOTTOM_THRESHOLD_PX = 60;
@@ -464,9 +465,11 @@ function ChatContent({ onboardingProfile }: { onboardingProfile: OnboardingProfi
   const { t } = useTranslation();
   const activeTaskId = useTaskStore((s) => s.activeTaskId);
   const activeTask = useTaskStore((s) => s.tasks.find((task) => task.id === s.activeTaskId));
+  const startNewTask = useTaskStore((s) => s.startNewTask);
   const activeRoom = useRoomStore((s) => (activeTaskId ? s.rooms[activeTaskId] : undefined));
   const messageLayout = useUiStore((s) => s.messageLayout);
   const setSettingsOpen = useUiStore((s) => s.setSettingsOpen);
+  const setMainView = useUiStore((s) => s.setMainView);
   const messages = useMessageStore((s) =>
     activeTaskId ? (s.messagesByTask[activeTaskId] ?? EMPTY_MESSAGES) : EMPTY_MESSAGES,
   );
@@ -727,6 +730,16 @@ function ChatContent({ onboardingProfile }: { onboardingProfile: OnboardingProfi
             <AnimatePresence>
               {activity === 'waiting' && !hasRenderableActiveTurn && <ThinkingIndicator />}
             </AnimatePresence>
+            <FirstTaskCompletionFlow
+              userId={onboardingProfile.userId}
+              onboardingCompletedAt={onboardingProfile.completedAt}
+              taskId={activeTaskId}
+              messages={messages}
+              activity={activity}
+              onContinue={() => setStarterPrompt(t('firstTaskCompletion.continuePrompt'))}
+              onNewTask={startNewTask}
+              onViewUsage={() => setMainView('dashboard')}
+            />
           </div>
         </ScrollArea>
         {showScrollButton && (
@@ -740,7 +753,11 @@ function ChatContent({ onboardingProfile }: { onboardingProfile: OnboardingProfi
           </button>
         )}
       </div>
-      <ChatInput onNavigateToAccount={handleNavigateToAccount} />
+      <ChatInput
+        onNavigateToAccount={handleNavigateToAccount}
+        draftPrompt={starterPrompt}
+        onDraftApplied={() => setStarterPrompt(null)}
+      />
       <ImageLightbox src={lightboxSrc} onClose={closeLightbox} />
       <FilePreviewModal file={previewFile} onClose={closeFilePreview} />
     </>

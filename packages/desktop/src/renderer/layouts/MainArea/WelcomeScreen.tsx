@@ -21,7 +21,7 @@ import { useGatewaySelector } from '@/hooks/useGatewaySelector';
 import GatewayInstanceSelector from '@/components/GatewayInstanceSelector';
 import logo from '@/assets/logo.png';
 import { recommendedStarterIds, type OnboardingProfile, type StarterId } from '@/lib/user-onboarding';
-import { PRESET_AGENT_DEFINITIONS } from '@/lib/preset-agents';
+import { PRESET_AGENT_DEFINITIONS, resolveStarterAgentId } from '@/lib/preset-agents';
 import { installPresetAgentPack } from '@/lib/preset-agent-installer';
 import { fetchAgentsForGateway } from '@/hooks/useGatewayBootstrap';
 import PresetAgentPackControl from './PresetAgentPackControl';
@@ -80,6 +80,20 @@ export default function WelcomeScreen({ onboardingProfile, onSelectPrompt }: Wel
     setSelectedGwId(gatewayId);
     setSelectedAgentId('');
     setAgentExpanded(false);
+  };
+
+  const handleSelectStarter = (starterId: StarterId) => {
+    const agentId = resolveStarterAgentId(
+      starterId,
+      agentCatalog.map((agent) => agent.id),
+      effectiveAgentId,
+    );
+    if (selectedGwId && agentId) {
+      const previous = useTaskStore.getState().pendingNewTask;
+      useTaskStore.getState().setPending({ ...previous, gatewayId: selectedGwId, agentId });
+      if (agentId !== effectiveAgentId) setSelectedAgentId(agentId);
+    }
+    onSelectPrompt(t(`mainArea.starters.${starterId}.prompt`));
   };
 
   const handleInstallPresetAgents = useCallback(async () => {
@@ -187,7 +201,7 @@ export default function WelcomeScreen({ onboardingProfile, onSelectPrompt }: Wel
               <button
                 key={id}
                 type="button"
-                onClick={() => onSelectPrompt(t(`mainArea.starters.${id}.prompt`))}
+                onClick={() => handleSelectStarter(id)}
                 className="group rounded-2xl border border-[var(--border)] bg-[var(--bg-secondary)] p-4 text-left transition-colors hover:border-[var(--accent)] hover:bg-[var(--accent-dim)] focus-visible:outline-none glow-focus"
               >
                 <div className="flex items-start gap-3">

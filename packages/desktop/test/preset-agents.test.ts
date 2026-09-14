@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { PRESET_AGENT_DEFINITIONS } from '../src/renderer/lib/preset-agents';
+import {
+  PRESET_AGENT_DEFINITIONS,
+  STARTER_AGENT_BY_ID,
+  resolveStarterAgentId,
+} from '../src/renderer/lib/preset-agents';
 
 describe('preset agent definitions', () => {
   it('ships the six approved assistants with stable unique identities', () => {
@@ -21,5 +25,21 @@ describe('preset agent definitions', () => {
       expect(agent.soulMd).toContain('unknowns');
       expect(agent.soulMd).toContain('Simplified Chinese');
     }
+  });
+
+  it('routes every starter to the matching professional assistant', () => {
+    expect(STARTER_AGENT_BY_ID).toEqual({
+      content: 'rongying-content',
+      photography: 'rongying-video',
+      office: 'rongying-office',
+      research: 'rongying-research',
+      ecommerce: 'rongying-ecommerce',
+      family: 'rongying-family',
+    });
+  });
+
+  it('uses the professional assistant only when it exists in the current gateway', () => {
+    expect(resolveStarterAgentId('content', ['main', 'rongying-content'], 'main')).toBe('rongying-content');
+    expect(resolveStarterAgentId('content', ['main'], 'main')).toBe('main');
   });
 });

@@ -410,6 +410,15 @@
     "openInEditor": "在编辑器中打开",
     "revealInFolder": "在访达中显示"
   },
+  "firstTaskCompletion": {
+    "continue": "继续完善",
+    "continuePrompt": "请基于刚才的结果，检查遗漏、补充关键细节，并整理成我可以直接使用的最终版本。",
+    "description": "结果已经保存在当前任务中，你可以继续完善，也可以开始下一件事。",
+    "dismiss": "关闭首次任务提示",
+    "newTask": "开始新任务",
+    "title": "第一次任务已完成",
+    "viewUsage": "查看使用情况"
+  },
   "leftNav": {
     "allAgents": "全部智能体",
     "appSettings": "应用设置",
