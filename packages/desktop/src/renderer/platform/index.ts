@@ -23,6 +23,7 @@ import type {
 import { toast } from '@/lib/toast';
 import { createElectronPorts } from './electron-adapter';
 import i18n from '../i18n';
+import { thinkingLevelsFor } from '../components/ChatInput/thinking-levels';
 import { syncSettingsUpdate } from '../stores/settingsStore';
 
 let _ports: PlatformPorts | null = null;
@@ -120,6 +121,14 @@ function getComposer(): ChatComposer {
       getModelProvider: (gwId, modelId) => {
         const catalog = uiStoreApi.getState().modelCatalogByGateway[gwId];
         return catalog?.find((m) => m.id === modelId)?.provider;
+      },
+      // 档位是逐模型的（目录里每行带 `thinkingLevels`）。**目录里找不到这个模型
+      // 就返回 undefined** —— 对 composer 而言那是「还不知道」，它会照发不误；
+      // 若返回空数组就变成「确定一个都不支持」，会把用户选的档位悄悄抹掉。
+      getSupportedThinkingLevels: (gwId, modelId) => {
+        const entry = uiStoreApi.getState().modelCatalogByGateway[gwId]?.find((m) => m.id === modelId);
+        if (!entry) return undefined;
+        return thinkingLevelsFor(entry as never);
       },
       getRoomState: (taskId) => roomStoreApi.getState().rooms[taskId],
       setRoomStatus: (taskId, status) => roomStoreApi.getState().setRoomStatus(taskId, status),

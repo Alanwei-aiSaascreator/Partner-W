@@ -8,6 +8,8 @@ interface TaskRef {
   gatewayId: string;
   sessionKey: string;
   title: string;
+  /** 该任务当前用的模型 —— `/think` 要靠它判断档位支不支持。 */
+  model?: string;
   ensemble?: boolean;
 }
 
@@ -51,6 +53,19 @@ export interface ChatComposerDeps {
 
   getModelProvider?: (gatewayId: string, modelId: string) => string | undefined;
 
+  /**
+   * 某模型支持的思考档位（协议 id，顺序即默认优先级）。**拿不准时返回 undefined**。
+   *
+   * 为什么要这个：`presetThinking` 以前只挡了 `'off'`，**从不校验模型到底支不支持**，
+   * 于是任何无效档位都能直达网关，用户看到的是英文报错
+   * `thinkingLevel "adaptive" is not supported for clawrouter/qwen3.5-27b`。
+   *
+   * ⚠️ 必须能区分「确定不支持」（返回数组但不含该值）与「还不知道」（undefined）——
+   * 目录还没加载完就把用户选的档位悄悄改掉，比让他看一次报错更糟。
+   * 数据源与 `thinking-levels.ts` 的 `thinkingLevelsFor` 是同一份。
+   */
+  getSupportedThinkingLevels?: (gatewayId: string, modelId: string) => string[] | undefined;
+
   getRoomState?: (taskId: string) => TaskRoom | undefined;
   setRoomStatus?: (taskId: string, status: RoomStatus) => void;
 
@@ -70,6 +85,50 @@ export interface SendOptions {
 }
 
 const SEND_TIMEOUT_MS = 30_000;
+
+/**
+ * 决定这次到底该把哪个思考档位发给网关。返回 `null` = **不发**。
+ *
+ * 三种情形（顺序即优先级）：
+ *   1. 没选档位 / 选的是 `off` ⇒ 不发（保持既有行为：`off` 是默认态，不必 patch）
+ *   2. 拿不到该模型的能力（目录没加载完）⇒ **照发**，不自作主张替用户改档位
+ *   3. 拿得到但**确实不支持** ⇒ 回落到该模型声明的**第一档**（= 它的默认档位），
+ *      并且**只改状态、不插系统消息** —— 用户可能正在打字，插消息会打断他。
+ *      （与 `useChatSend` 里切模型时那条回落保持同一套语义）
+ *
+ * 为什么优先信任模型自己的声明而不是某个常量表：档位是**逐模型**的，
+ * 客户端写死的表迟早和网关漂开 —— `adaptive` 就是活证据。
+ */
+function resolveThinkingLevel(
+  deps: ChatComposerDeps,
+  gatewayId: string,
+  modelId: string | undefined,
+  requested: string,
+): 'ok' | 'unavailable' | { level: string } {
+  if (!modelId) return 'ok'; // 拿不到模型就无从校验，保持原样
+
+  const supported = deps.getSupportedThinkingLevels?.(gatewayId, modelId);
+  if (!supported) return 'ok'; // 「还不知道」≠「不支持」
+  if (supported.includes(requested)) return 'ok';
+
+  const fallback = supported[0];
+  if (!fallback || fallback === 'off') return 'unavailable'; // 该模型只有 off ⇒ 没档位可发
+  return { level: fallback };
+}
+
+/** `send` 路径：返回**实际该发的档位**，`null` = 这次不发 patch。 */
+function resolveSupportedThinking(
+  deps: ChatComposerDeps,
+  task: { gatewayId: string },
+  options: SendOptions,
+): string | null {
+  const requested = options.presetThinking;
+  if (!requested || requested === 'off') return null; // off 是默认态，不必 patch
+
+  const verdict = resolveThinkingLevel(deps, task.gatewayId, options.presetModel, requested);
+  if (verdict === 'unavailable') return null;
+  return verdict === 'ok' ? requested : verdict.level;
+}
 
 function resolveMentionTargets(
   room: TaskRoom | undefined,
@@ -186,9 +245,12 @@ export function createChatComposer(deps: ChatComposerDeps) {
             modelProvider: deps.getModelProvider?.(task.gatewayId, options.presetModel),
           });
         }
-        if (options.presetThinking && options.presetThinking !== 'off') {
+        // ⚠️ 最后一道关，别再只挡 `'off'`。以前就是这里把无效档位放过去的：
+        //    用户/历史状态带着 `adaptive`，网关回英文 400，用户只看到一条看不懂的错。
+        const thinkingLevel = resolveSupportedThinking(deps, task, options);
+        if (thinkingLevel) {
           const thinkingRes = await deps.gateway.patchSession(task.gatewayId, task.sessionKey, {
-            thinkingLevel: options.presetThinking,
+            thinkingLevel,
           });
           if (!thinkingRes.ok) {
             store.setProcessing(task.sessionKey, false);
@@ -203,7 +265,7 @@ export function createChatComposer(deps: ChatComposerDeps) {
             );
             return { ok: false, taskId: task.id };
           }
-          deps.getTaskStore().updateTaskMetadata(task.id, { thinkingLevel: options.presetThinking });
+          deps.getTaskStore().updateTaskMetadata(task.id, { thinkingLevel });
         }
       }
 
@@ -387,9 +449,23 @@ export function createChatComposer(deps: ChatComposerDeps) {
       }
       case 'think': {
         if (!arg) return { ok: false };
-        const res = await deps.gateway.patchSession(task.gatewayId, task.sessionKey, { thinkingLevel: arg });
+        // ⚠️ `/think` 是**用户手打**的，等于把任意字符串直接送进网关。
+        //    以前这里一个字都没校验 —— `/think adaptive` 会照样发出去，
+        //    然后用户收到一条英文 400。`send` 那条路径已经收了，
+        //    这里不收就只是把同一个洞换个入口。
+        const verdict = resolveThinkingLevel(deps, task.gatewayId, task.model, arg);
+        if (verdict === 'unavailable') {
+          // 造一条**网关原话形状**的错误，好让既有的翻译器把它变成中文
+          // （`gateway-error-message.ts` 认这个格式，见那里的正则）。
+          return {
+            ok: false,
+            error: `thinkingLevel "${arg}" is not supported for ${task.model ?? 'this model'} (use off)`,
+          };
+        }
+        const level = verdict === 'ok' ? arg : verdict.level;
+        const res = await deps.gateway.patchSession(task.gatewayId, task.sessionKey, { thinkingLevel: level });
         if (!res.ok) return { ok: false, error: res.error };
-        deps.getTaskStore().updateTaskMetadata(taskId, { thinkingLevel: arg });
+        deps.getTaskStore().updateTaskMetadata(taskId, { thinkingLevel: level });
         return { ok: true };
       }
     }

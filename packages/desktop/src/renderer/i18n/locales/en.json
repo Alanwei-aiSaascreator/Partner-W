@@ -95,7 +95,6 @@
     "stopGenerating": "Stop generating (Esc)",
     "taskContextLimitExceeded": "Task context exceeds 500KB limit",
     "thinking": "Thinking",
-    "thinkingAdaptive": "Adaptive",
     "thinkingAlwaysOn": "Deep thinking is always on and cannot be turned off",
     "thinkingHigh": "High",
     "thinkingLockedByModel": "This model only supports thinking off",

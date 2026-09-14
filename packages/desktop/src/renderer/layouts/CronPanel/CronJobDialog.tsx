@@ -898,7 +898,7 @@ export default function CronJobDialog({ open, onOpenChange, gatewayId, editingJo
                       <label className={labelClass}>{t('cron.thinking')}</label>
                       <select className={selectClass} value={thinking} onChange={(e) => setThinking(e.target.value)}>
                         <option value="">{t('cron.useDefaultThinking')}</option>
-                        {['off', 'minimal', 'low', 'medium', 'high', 'adaptive'].map((level) => (
+                        {['off', 'minimal', 'low', 'medium', 'high', 'xhigh'].map((level) => (
                           <option key={level} value={level}>
                             {level}
                           </option>

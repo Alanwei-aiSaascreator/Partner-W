@@ -172,7 +172,7 @@ const NATIVE_OVERLAY: CommandEntry[] = [
     scope: 'text',
     category: 'options',
     acceptsArgs: true,
-    args: [enumArg('level', 'Thinking level', ['off', 'minimal', 'low', 'medium', 'high', 'adaptive'])],
+    args: [enumArg('level', 'Thinking level', ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'])],
   },
   {
     name: 'fast',

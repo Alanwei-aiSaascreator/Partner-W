@@ -95,7 +95,6 @@
     "stopGenerating": "생성 중지 (Esc)",
     "taskContextLimitExceeded": "작업 컨텍스트가 500KB 제한을 초과했습니다",
     "thinking": "사고",
-    "thinkingAdaptive": "자동 조절",
     "thinkingAlwaysOn": "심층 사고는 항상 켜져 있으며 끌 수 없습니다",
     "thinkingHigh": "높음",
     "thinkingLockedByModel": "이 모델은 사고 '끔'만 지원합니다",

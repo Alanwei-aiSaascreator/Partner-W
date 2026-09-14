@@ -22,7 +22,6 @@ const THINKING_LEVEL_LABELS: Record<string, string> = {
   low: '低',
   medium: '中',
   high: '高',
-  adaptive: '自适应',
   xhigh: '极高',
   max: '最高',
 };

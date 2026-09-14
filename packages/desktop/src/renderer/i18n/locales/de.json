@@ -95,7 +95,6 @@
     "stopGenerating": "Generierung stoppen (Esc)",
     "taskContextLimitExceeded": "Aufgabenkontext ueberschreitet 500-KB-Limit",
     "thinking": "Denkmodus",
-    "thinkingAdaptive": "Adaptiv",
     "thinkingAlwaysOn": "Tiefes Denken ist immer aktiv und kann nicht deaktiviert werden",
     "thinkingHigh": "Hoch",
     "thinkingLockedByModel": "Dieses Modell unterstützt nur „Aus“ beim Denken",

@@ -95,7 +95,6 @@
     "stopGenerating": "Arrêter la génération (Échap)",
     "taskContextLimitExceeded": "Le contexte de la tâche dépasse la limite de 500 Ko",
     "thinking": "Réflexion",
-    "thinkingAdaptive": "Adaptatif",
     "thinkingAlwaysOn": "La réflexion approfondie est toujours active et ne peut pas être désactivée",
     "thinkingHigh": "Élevé",
     "thinkingLockedByModel": "Ce modèle ne prend en charge que la désactivation de la réflexion",

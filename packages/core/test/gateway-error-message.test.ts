@@ -9,8 +9,10 @@ describe('translateGatewayError —— 已知错误翻中文', () => {
   });
 
   it('思考档位不支持（不带 use 提示）', () => {
-    const raw = 'thinkingLevel "adaptive" is not supported for clawrouter/deepseek-v4-flash';
-    expect(translateGatewayError(raw)).toBe('当前模型（clawrouter/deepseek-v4-flash）不支持「自适应」档思考。');
+    // ⚠️ 这里**刻意不再用 `adaptive` 举例**（2026-09-14）：客户端已经不再提供那个档位，
+    //    用户遇不到它了。拿一个不可能出现的值当用例，这条翻译就成了空转。
+    const raw = 'thinkingLevel "high" is not supported for clawrouter/some-off-only-model';
+    expect(translateGatewayError(raw)).toBe('当前模型（clawrouter/some-off-only-model）不支持「高」档思考。');
   });
 
   it('档位 id 不认识时原样嵌入，不瞎猜', () => {

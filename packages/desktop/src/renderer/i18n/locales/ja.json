@@ -95,7 +95,6 @@
     "stopGenerating": "生成を停止 (Esc)",
     "taskContextLimitExceeded": "タスクコンテキストが 500KB の上限を超えています",
     "thinking": "思考",
-    "thinkingAdaptive": "自動調整",
     "thinkingAlwaysOn": "深い思考は常時オンで、オフにできません",
     "thinkingHigh": "高",
     "thinkingLockedByModel": "このモデルは思考「オフ」のみ対応しています",

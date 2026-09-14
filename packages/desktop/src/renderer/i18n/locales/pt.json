@@ -95,7 +95,6 @@
     "stopGenerating": "Parar geração (Esc)",
     "taskContextLimitExceeded": "O contexto da tarefa excede o limite de 500KB",
     "thinking": "Raciocínio",
-    "thinkingAdaptive": "Adaptativo",
     "thinkingAlwaysOn": "O pensamento profundo está sempre ativo e não pode ser desativado",
     "thinkingHigh": "Alto",
     "thinkingLockedByModel": "Este modelo só suporta o pensamento desativado",
