@@ -33,8 +33,8 @@ describe('commercial store', () => {
           status: 'active',
           expiresAt: null,
           maxActivations: 1,
-          tokenQuotaCents: 5000,
-          tokenUsedCents: 1000,
+          tokenQuotaMicros: 5000,
+          tokenUsedMicros: 1000,
           activated: true,
         },
         device: { fingerprint: 'f', shortFingerprint: 'f' },
@@ -47,20 +47,23 @@ describe('commercial store', () => {
 
     const state = useCommercialStore.getState();
     expect(state.status).toBe('ready');
-    expect(state.overview?.license?.tokenQuotaCents).toBe(5000);
-    expect(state.overview?.license?.tokenUsedCents).toBe(1000);
+    expect(state.overview?.license?.tokenQuotaMicros).toBe(5000);
+    expect(state.overview?.license?.tokenUsedMicros).toBe(1000);
   });
 
   it('marks itself offline but keeps the last good snapshot on failure', async () => {
     overviewMock.mockResolvedValue({ ok: false, error: 'network down' });
 
     const useCommercialStore = await loadStore();
-    useCommercialStore.setState({ status: 'ready', overview: { license: { tokenQuotaCents: 100, tokenUsedCents: 1 } } as never });
+    useCommercialStore.setState({
+      status: 'ready',
+      overview: { license: { tokenQuotaMicros: 100, tokenUsedMicros: 1 } } as never,
+    });
     await useCommercialStore.getState().load();
 
     const state = useCommercialStore.getState();
     expect(state.status).toBe('offline');
-    expect(state.overview?.license?.tokenUsedCents).toBe(1);
+    expect(state.overview?.license?.tokenUsedMicros).toBe(1);
   });
 
   it('stores a null licence without treating it as an error', async () => {

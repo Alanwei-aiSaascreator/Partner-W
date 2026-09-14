@@ -1,13 +1,13 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi, type Mocked } from 'vitest';
 import { PRESET_AGENT_DEFINITIONS } from '../src/renderer/lib/preset-agents';
-import { installPresetAgentPack } from '../src/renderer/lib/preset-agent-installer';
+import { installPresetAgentPack, type PresetAgentInstallerApi } from '../src/renderer/lib/preset-agent-installer';
 
-function createApi() {
+function createApi(): Mocked<PresetAgentInstallerApi> {
   return {
-    createAgent: vi.fn(),
-    updateAgent: vi.fn(async () => ({ ok: true })),
-    setAgentFile: vi.fn(async () => ({ ok: true })),
-    deleteAgent: vi.fn(async () => ({ ok: true })),
+    createAgent: vi.fn<PresetAgentInstallerApi['createAgent']>(),
+    updateAgent: vi.fn<PresetAgentInstallerApi['updateAgent']>().mockResolvedValue({ ok: true }),
+    setAgentFile: vi.fn<PresetAgentInstallerApi['setAgentFile']>().mockResolvedValue({ ok: true }),
+    deleteAgent: vi.fn<PresetAgentInstallerApi['deleteAgent']>().mockResolvedValue({ ok: true }),
   };
 }
 
