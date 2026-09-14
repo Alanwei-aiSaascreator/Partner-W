@@ -10,6 +10,7 @@ import {
   verifyLoginOtp,
 } from '../commercial/auth.js';
 import { activateLicense, clearLicense, deviceFingerprint, readLicenseStatus } from '../commercial/license.js';
+import { notifyCommercialSignedIn } from '../commercial/relay-startup.js';
 import { runUsageReport } from '../commercial/usage-reporter.js';
 import {
   createCustomRechargeOrder,
@@ -45,12 +46,19 @@ export function registerCommercialHandlers(): void {
   });
 
   ipcMain.handle('commercial:send-otp', (_event, target: string) => sendLoginOtp(String(target ?? '')));
-  ipcMain.handle('commercial:verify-otp', (_event, target: string, token: string) =>
-    verifyLoginOtp(String(target ?? ''), String(token ?? '')),
-  );
-  ipcMain.handle('commercial:sign-in-password', (_event, email: string, password: string) =>
-    signInWithPassword(String(email ?? ''), String(password ?? '')),
-  );
+  ipcMain.handle('commercial:verify-otp', async (_event, target: string, token: string) => {
+    const res = await verifyLoginOtp(String(target ?? ''), String(token ?? ''));
+    // ⭐ 「登录成功」是一次**状态转变**（signed-out → signed-in）。
+    //    启动那次 bootstrap 早在"没登录"上收场了，而明确没登录按设计不重试 ——
+    //    所以这里必须再调度一次，否则用户不重启客户端就看不到模型（Stage 2C）。
+    if (res.ok) notifyCommercialSignedIn();
+    return res;
+  });
+  ipcMain.handle('commercial:sign-in-password', async (_event, email: string, password: string) => {
+    const res = await signInWithPassword(String(email ?? ''), String(password ?? ''));
+    if (res.ok) notifyCommercialSignedIn();
+    return res;
+  });
   ipcMain.handle('commercial:sign-out', async () => {
     const result = await signOutCommercial();
     clearCommercialSession();
@@ -71,15 +79,11 @@ export function registerCommercialHandlers(): void {
   ipcMain.handle('commercial:usage-report', () => runUsageReport());
 
   ipcMain.handle('commercial:recharge-skus', () => readRechargeSkus());
-  ipcMain.handle('commercial:recharge-create', (_event, sku: string) =>
-    createRechargeOrder(String(sku ?? '')),
-  );
+  ipcMain.handle('commercial:recharge-create', (_event, sku: string) => createRechargeOrder(String(sku ?? '')));
   // 自定义金额，单位分。范围在 RPC 里还会再校验一次；这里先挡掉非数字，
   // 避免 NaN 一路传到数据库。
   ipcMain.handle('commercial:recharge-create-custom', (_event, amountCents: number) =>
     createCustomRechargeOrder(Number(amountCents)),
   );
-  ipcMain.handle('commercial:recharge-order', (_event, orderNo: string) =>
-    readRechargeOrder(String(orderNo ?? '')),
-  );
+  ipcMain.handle('commercial:recharge-order', (_event, orderNo: string) => readRechargeOrder(String(orderNo ?? '')));
 }

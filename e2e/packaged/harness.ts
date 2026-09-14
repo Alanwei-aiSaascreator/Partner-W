@@ -232,6 +232,29 @@ export function killProfileGateways(userDataDir: string): void {
   }
 }
 
+/**
+ * 当前占着 18789 的网关进程的 PID（没有就 null）。
+ *
+ * ⚠️ 判据用**端口**而不是进程名：这台机器上还有别的 node.exe，按名找必然误伤
+ * （与 `killProfileGateways` 同一口径）。给「登录把网关重启了」这类断言用 ——
+ * 网关一旦重启，PID 必变。
+ */
+export function gatewayPid(): number | null {
+  const ps = [
+    '-NoProfile',
+    '-Command',
+    `$c = Get-NetTCPConnection -LocalPort 18789 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1;` +
+      `if ($c) { Write-Output $c.OwningProcess }`,
+  ];
+  try {
+    const out = execFileSync('powershell', ps, { encoding: 'utf-8', timeout: 30_000, windowsHide: true }).trim();
+    const n = Number(out);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  } catch {
+    return null;
+  }
+}
+
 /** 彻底收摊：app + 这个 profile 的网关，然后**确认端口真空出来**。 */
 export async function stopEverything(app: LaunchedApp | null, userDataDir: string): Promise<void> {
   killApp(app);

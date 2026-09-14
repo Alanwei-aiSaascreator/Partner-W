@@ -1,0 +1,116 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+/**
+ * Stage 2C 的**接线**：两个登录入口成功后必须调度一次 relay bootstrap。
+ *
+ * ## 为什么单独钉这一条
+ *
+ * 2C 的功能全貌是：
+ *
+ *   commercial:send-otp → commercial:verify-otp → verifyLoginOtp()
+ *   → **notifyCommercialSignedIn()** → bootstrapCommercialRelay() → relay applied
+ *
+ * 中间那一环只有两行 `if (res.ok) notifyCommercialSignedIn();`，但它**是**
+ * 「登录成功后模型才出现」这句承诺的开关。单元测试能低成本钉死它：
+ * 成功必须触发、**失败必须不触发**（否则用户打错一次验证码就会白跑一轮 bootstrap）。
+ *
+ * ⚠️ 这里刻意**不**调 `notifyCommercialSignedIn()` 的真身（那是 `relay-bootstrap.test.ts`
+ * 里调度器的活），只钉"handler 有没有叫它"。
+ */
+const mocks = vi.hoisted(() => ({
+  handlers: new Map<string, (...args: unknown[]) => unknown>(),
+  verifyLoginOtp: vi.fn(),
+  signInWithPassword: vi.fn(),
+  notifyCommercialSignedIn: vi.fn(),
+}));
+
+vi.mock('electron', () => ({
+  ipcMain: {
+    handle: (channel: string, fn: (...args: unknown[]) => unknown) => {
+      mocks.handlers.set(channel, fn);
+    },
+  },
+  // 有些 handler 会顺带读配置（`readConfig` → `app.getPath('userData')`）。
+  // 指到一个**不存在的**目录即可：读不到就是"没配置"，正是我们要的默认态。
+  app: { getPath: () => 'C:\\clawwork-test-no-such-dir' },
+  safeStorage: {
+    isEncryptionAvailable: () => false,
+    encryptString: () => Buffer.alloc(0),
+    decryptString: () => '',
+  },
+}));
+
+vi.mock('../src/main/commercial/auth.js', () => ({
+  verifyLoginOtp: (...a: unknown[]) => mocks.verifyLoginOtp(...a),
+  signInWithPassword: (...a: unknown[]) => mocks.signInWithPassword(...a),
+  sendLoginOtp: vi.fn(),
+  signOutCommercial: vi.fn(),
+  readSessionState: vi.fn(),
+  readAccountOverview: vi.fn(),
+}));
+
+vi.mock('../src/main/commercial/relay-startup.js', () => ({
+  notifyCommercialSignedIn: () => mocks.notifyCommercialSignedIn(),
+}));
+
+const { registerCommercialHandlers } = await import('../src/main/ipc/commercial-handlers.js');
+
+function handlerFor(channel: string): (...args: unknown[]) => unknown {
+  const fn = mocks.handlers.get(channel);
+  if (!fn) throw new Error(`没注册 ${channel}；已注册：${[...mocks.handlers.keys()].join(', ')}`);
+  return fn;
+}
+
+describe('登录入口 → notifyCommercialSignedIn（Stage 2C 接线）', () => {
+  beforeEach(() => {
+    mocks.handlers.clear();
+    mocks.verifyLoginOtp.mockReset();
+    mocks.signInWithPassword.mockReset();
+    mocks.notifyCommercialSignedIn.mockReset();
+    registerCommercialHandlers();
+  });
+
+  it('⭐ verifyOtp 成功 ⇒ 触发一次补跑，并把结果原样回给渲染层', async () => {
+    mocks.verifyLoginOtp.mockResolvedValue({ ok: true, result: { userId: 'u-1' } });
+    const res = (await handlerFor('commercial:verify-otp')({}, '+8613800000000', '123456')) as {
+      ok: boolean;
+      result?: { userId: string };
+    };
+
+    expect(res.ok).toBe(true);
+    expect(res.result?.userId).toBe('u-1');
+    expect(mocks.notifyCommercialSignedIn, '登录成功了却没补跑 ⇒ 用户得重启客户端才看得到模型').toHaveBeenCalledTimes(
+      1,
+    );
+  });
+
+  it('⭐ verifyOtp 失败 ⇒ **不**触发（打错一次验证码不该白跑一轮 bootstrap）', async () => {
+    mocks.verifyLoginOtp.mockResolvedValue({ ok: false, error: 'bad code', errorCode: 'otp_verify_failed' });
+    const res = (await handlerFor('commercial:verify-otp')({}, '+8613800000000', '000000')) as { ok: boolean };
+
+    expect(res.ok).toBe(false);
+    expect(mocks.notifyCommercialSignedIn).not.toHaveBeenCalled();
+  });
+
+  it('⭐ 密码登录成功 ⇒ 也触发（两条产品入口都覆盖）', async () => {
+    mocks.signInWithPassword.mockResolvedValue({ ok: true, result: { userId: 'u-2' } });
+    const res = (await handlerFor('commercial:sign-in-password')({}, 'a@b.test', 'pw')) as { ok: boolean };
+
+    expect(res.ok).toBe(true);
+    expect(mocks.notifyCommercialSignedIn).toHaveBeenCalledTimes(1);
+  });
+
+  it('⭐ 密码登录失败 ⇒ 不触发', async () => {
+    mocks.signInWithPassword.mockResolvedValue({ ok: false, error: 'bad credentials', errorCode: 'sign_in_failed' });
+    const res = (await handlerFor('commercial:sign-in-password')({}, 'a@b.test', 'wrong')) as { ok: boolean };
+
+    expect(res.ok).toBe(false);
+    expect(mocks.notifyCommercialSignedIn).not.toHaveBeenCalled();
+  });
+
+  it('⭐ 只有**登录**入口会补跑：发验证码 / 读会话 / 登出都不该触发', async () => {
+    await handlerFor('commercial:session')({});
+    await handlerFor('commercial:get-config')({});
+    expect(mocks.notifyCommercialSignedIn, '读一下会话就重跑 bootstrap 是不可接受的回归').not.toHaveBeenCalled();
+  });
+});

@@ -235,6 +235,95 @@ const POLL_MS = 1_000;
  */
 const AUTH_RETRY_BACKOFF_MS = [2_000, 5_000, 15_000, 30_000, 60_000, 60_000];
 
+/**
+ * 调度器只认两种触发来源，**刻意做成联合类型**：调用点一眼能看出自己属于哪一种，
+ * 也不会有人顺手塞进"收到某个 auth 事件"这种会误伤的来源。
+ *
+ *   - `startup`    —— `app.whenReady()` 里那一次（全仓唯一的启动调用点）
+ *   - `signed-in`  —— 用户**刚刚完成一次交互式登录**（OTP / 密码）
+ */
+export type RelayBootstrapReason = 'startup' | 'signed-in';
+
+export interface RelayBootstrapScheduler {
+  /**
+   * 触发一次 bootstrap。**单飞**：已经有一次在跑就共享它，
+   * 并记一个"跑完补一次"（见下），绝不开第二条链。
+   */
+  trigger: (reason: RelayBootstrapReason) => Promise<RelayBootstrapResult>;
+  /** 现在有没有一次 bootstrap 在跑（排障与测试用）。 */
+  inFlight: () => boolean;
+}
+
+/**
+ * 单飞调度器 —— 商业 bootstrap 的**唯一**入口。
+ *
+ * ## 为什么需要它（2026-09-14，Stage 2C）
+ *
+ * 启动路径只在 `app.whenReady()` 里 bootstrap **一次**。启动时没登录 ⇒ 结论
+ * `unauthenticated` ⇒ 按设计**不重试**（明确没登录，等多久都一样）。
+ * 可用户接下来会在登录页完成 OTP —— 那一刻主进程只有 `verifyLoginOtp()` 返回
+ * `{ok:true}`，**没有任何东西再去调度一次 bootstrap** ⇒ 模型列表一直空着，
+ * 用户必须重启客户端。这是 2C 要补的洞。
+ *
+ * ## 为什么不能只是"再调一次 `bootstrapRelayWithRetry`"
+ *
+ * OTP 成功的那一刻，可能**同时**存在另一条在跑的链：2B 的 `auth-transient`
+ * 退避重试（最长 172 秒）、`runtime-not-ready` 轮询……两条链并行会各自
+ * `applyRelayConfig`，而它带 baseHash 回读校验 —— 会互相打架。
+ *
+ * ⇒ 单飞。而且要解决一个必须解决的细节：**登录这一下不能被吞掉**。
+ * 如果只是"在跑就返回同一个 promise"，那么当那次在跑的链已经过了 `checkAuth`
+ * 这一步（结论是 `unauthenticated`）时，登录就丢了，relay 仍然不会落地。
+ * 所以跑着的时候再触发会记一个 `rerunRequested`，**跑完补一次**。
+ *
+ * ⚠️ `rerunRequested` 用**布尔**而不是计数：一串密集触发只值一次补跑，
+ * 不会滚成无限循环。（触发来源本来就只有两个，且都不是高频。）
+ *
+ * ## 与 `TOKEN_REFRESHED` 的关系
+ *
+ * 本调度器**不认识** auth 事件 —— 触发权在调用方手里，而调用方只挂在
+ * "登录成功"这一个**状态转变**上。所以 auto-refresh（每 ~30 秒刷一次 token）
+ * 连门都进不来，不存在"刷一次 token 就重写一次网关配置"的回归。
+ */
+export function createRelayBootstrapScheduler(
+  deps: RelayBootstrapDeps,
+  opts: RelayBootstrapRunOptions = {},
+): RelayBootstrapScheduler {
+  let inFlight: Promise<RelayBootstrapResult> | null = null;
+  let rerunRequested = false;
+
+  return {
+    trigger: (reason) => {
+      deps.log?.('relay.bootstrap.trigger', { reason, inFlight: inFlight !== null });
+
+      if (inFlight) {
+        // ⚠️ 同步置位（在返回之前）—— 这是"登录不会被吞掉"的关键。
+        rerunRequested = true;
+        return inFlight;
+      }
+
+      const p = (async (): Promise<RelayBootstrapResult> => {
+        let result: RelayBootstrapResult;
+        for (;;) {
+          rerunRequested = false;
+          result = await bootstrapRelayWithRetry(deps, opts);
+          // ⚠️ 从这一行到 `inFlight = null` 之间**没有 await** ⇒ 相对其它任务
+          //    是原子的：要么触发方看见 inFlight 还在（于是置位、被本循环下一轮
+          //    接住），要么看见它已经清空（于是自己起一条新链）。不会两头落空。
+          if (!rerunRequested) break;
+          deps.log?.('relay.bootstrap.rerun', { reason });
+        }
+        inFlight = null;
+        return result;
+      })();
+
+      inFlight = p;
+      return p;
+    },
+    inFlight: () => inFlight !== null,
+  };
+}
+
 export interface RelayBootstrapRunOptions {
   /** 等网关连上的总窗口。 */
   waitForGatewayMs?: number;

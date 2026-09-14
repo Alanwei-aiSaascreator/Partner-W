@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { RELAY_BASE_URL } from '../src/main/commercial/relay-config.js';
-import { bootstrapRelayWithRetry, ensureRelayConfigured } from '../src/main/commercial/relay-bootstrap.js';
+import {
+  bootstrapRelayWithRetry,
+  createRelayBootstrapScheduler,
+  ensureRelayConfigured,
+} from '../src/main/commercial/relay-bootstrap.js';
 import type {
   AuthCheck,
   RelayBootstrapDeps,
@@ -365,5 +369,110 @@ describe('bootstrapRelayWithRetry —— 暂时问不出来 ≠ 没登录', () =
     const res = await bootstrapRelayWithRetry(made.deps, { sleep: async () => {}, now: () => 0 });
     expect(res.status).toBe('applied');
     expect(patchConfig).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * ⭐ 2C：**登录发生在启动之后**时，自动重新触发一次 bootstrap。
+ *
+ * ## 要补的洞
+ *
+ * 启动路径只在 `app.whenReady()` 里 `bootstrapCommercialRelay()` **一次**
+ * （`main/index.ts:300`，全仓唯一调用点）。启动时没登录 ⇒ 结论是 `unauthenticated`
+ * ⇒ `bootstrapRelayWithRetry` **刻意不重试**（明确没登录等多久都一样）。
+ * 而用户接下来在登录页完成 OTP 时，主进程侧只有 `verifyLoginOtp()` 返回 `{ok:true}`，
+ * **没有任何东西再去调度一次 bootstrap** ⇒ 界面模型列表一直是空的，
+ * 用户必须重启客户端才看得到模型。
+ *
+ * ## 这一层的语义边界（刻意划死）
+ *
+ * 触发条件是**「用户刚刚完成一次交互式登录」**这个**转变**，不是"收到某个 auth 事件"：
+ *
+ *   - **收 `SIGNED_IN` 事件是不够的**：auth-js 在 `_recoverAndRefresh`（`:4150/:4165`）、
+ *     `setSession`（`:3069`）等一堆地方都会发 `SIGNED_IN`，启动恢复会话时也会发。
+ *   - **收 `TOKEN_REFRESHED` 是错的**：auto-refresh 每 ~30s 就可能刷一次
+ *     （`GoTrueClient.js:4282`），拿它当触发条件会变成"每半分钟重写一次网关配置"。
+ *   ⇒ 直接挂在**两个登录入口的成功返回**上，`TOKEN_REFRESHED` 连门都进不来。
+ *
+ * ## 必须不并发
+ *
+ * OTP 成功的那一刻，可能同时存在：正在跑的 2B 退避重试（`auth-transient`，
+ * 最长 172s）、`runtime-not-ready` 轮询……如果这里再起一条独立的 bootstrap，
+ * 就会有两条链同时 `patchConfig`（`applyRelayConfig` 的 baseHash 回读校验会打架）。
+ * ⇒ 调度器是**单飞**的：跑着的时候再触发只记一个"待补跑"，绝不开第二条。
+ */
+describe('createRelayBootstrapScheduler —— 2C：登录后自动补跑', () => {
+  const fast = { sleep: async (): Promise<void> => {}, now: (): number => 0 };
+
+  it('⭐⭐ 启动时没登录 ⇒ unauthenticated 且不写配置；用户登录后**同一个调度器再跑一次** ⇒ applied', async () => {
+    let authed = false;
+    const made = makeDeps({ checkAuth: async () => (authed ? 'authenticated' : 'unauthenticated') });
+    const sched = createRelayBootstrapScheduler(made.deps, fast);
+
+    const first = await sched.trigger('startup');
+    expect(first.status, '启动时没登录就该如实报没登录').toBe('unauthenticated');
+    expect(made.patchConfig, '没登录时不该碰网关').not.toHaveBeenCalled();
+
+    // ---- 用户完成 OTP（主进程侧就是 verifyLoginOtp 返回 ok）
+    authed = true;
+    const second = await sched.trigger('signed-in');
+
+    expect(second.status, '登录之后**不重启客户端**也该把中转配置落下去').toBe('applied');
+    expect(second.relayReady).toBe(true);
+    expect(made.patchConfig).toHaveBeenCalledTimes(1);
+  });
+
+  it('⭐⭐ 正在跑的时候登录 ⇒ **不并发**；但这次登录不许被丢掉（跑完补一次）', async () => {
+    let release = (): void => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let live = 0;
+    let maxLive = 0;
+    const made = makeDeps({
+      checkAuth: async () => {
+        live += 1;
+        maxLive = Math.max(maxLive, live);
+        await gate;
+        live -= 1;
+        return 'authenticated';
+      },
+    });
+    const sched = createRelayBootstrapScheduler(made.deps, fast);
+
+    const first = sched.trigger('startup');
+    await Promise.resolve(); // 让它真的进到 checkAuth 里挂住
+    const second = sched.trigger('signed-in');
+    release();
+
+    const [r1, r2] = await Promise.all([first, second]);
+    expect(maxLive, '同时跑了**两条** bootstrap ⇒ 会两条链抢着 patchConfig').toBe(1);
+    // 登录这一下不能被吞掉：补跑的那次会走幂等快路径
+    expect(r2.status).toBe('already-applied');
+    expect(r1.relayReady).toBe(true);
+    expect(made.patchConfig, '补跑不该重复写配置').toHaveBeenCalledTimes(1);
+  });
+
+  it('⭐ 负对照：启动时**明确**未登录 ⇒ 只问一次，不会在后台反复 bootstrap', async () => {
+    const checkAuth = vi.fn(async () => 'unauthenticated' as AuthCheck);
+    const made = makeDeps({ checkAuth });
+    const sched = createRelayBootstrapScheduler(made.deps, fast);
+
+    const res = await sched.trigger('startup');
+    expect(res.status).toBe('unauthenticated');
+    // 「明确没登录」等多久都一样 ⇒ 既不该重试，也不该留着后台循环
+    expect(checkAuth).toHaveBeenCalledTimes(1);
+    expect(sched.inFlight()).toBe(false);
+  });
+
+  it('⭐ 负对照：已经 applied 之后再触发（等价于普通 TOKEN_REFRESHED 场景）⇒ 幂等命中，**不重写配置**', async () => {
+    const made = makeDeps();
+    const sched = createRelayBootstrapScheduler(made.deps, fast);
+
+    expect((await sched.trigger('startup')).status).toBe('applied');
+    expect(made.patchConfig).toHaveBeenCalledTimes(1);
+
+    expect((await sched.trigger('signed-in')).status).toBe('already-applied');
+    expect(made.patchConfig, '刷新一次 token 就重写一次网关配置，是不可接受的回归').toHaveBeenCalledTimes(1);
   });
 });
