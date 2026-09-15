@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect, type RefObject } from 'react';
-import type { Task, Artifact, FileIndexEntry } from '@clawwork/shared';
+import type { Task, Artifact } from '@clawwork/shared';
+import type { TaskContextFile } from './useTaskMaterials';
 import type { MentionItem, MentionTab, AgentMentionEntry } from '../MentionPicker';
 import { useFileStore } from '../../stores/fileStore';
 import { useTaskStore } from '../../stores/taskStore';
@@ -7,13 +8,13 @@ import { MENTION_ALL_AGENT_ID } from './constants';
 
 interface UseMentionPickerOpts {
   textareaRef: RefObject<HTMLTextAreaElement | null>;
-  contextFolders: string[];
-  loadLocalFiles: (query?: string) => Promise<void>;
+  hasContextSources: boolean;
+  loadLocalFiles: (query?: string) => Promise<unknown>;
   hasAgents?: boolean;
 }
 
 export function useMentionPicker(opts: UseMentionPickerOpts) {
-  const { textareaRef, contextFolders, loadLocalFiles, hasAgents } = opts;
+  const { textareaRef, hasContextSources, loadLocalFiles, hasAgents } = opts;
 
   const [mentionVisible, setMentionVisible] = useState(false);
   const [mentionQuery, setMentionQuery] = useState('');
@@ -21,7 +22,7 @@ export function useMentionPicker(opts: UseMentionPickerOpts) {
   const [mentionTab, setMentionTab] = useState<MentionTab>('tasks');
   const [selectedTasks, setSelectedTasks] = useState<Task[]>([]);
   const [selectedArtifacts, setSelectedArtifacts] = useState<Artifact[]>([]);
-  const [selectedLocalFiles, setSelectedLocalFiles] = useState<FileIndexEntry[]>([]);
+  const [selectedLocalFiles, setSelectedLocalFiles] = useState<TaskContextFile[]>([]);
   const [selectedAgents, setSelectedAgents] = useState<AgentMentionEntry[]>([]);
   const mentionItemsRef = useRef<MentionItem[]>([]);
   const mentionWasVisible = useRef(false);
@@ -45,7 +46,7 @@ export function useMentionPicker(opts: UseMentionPickerOpts) {
       if (!mentionWasVisible.current) {
         if (hasAgents) {
           setMentionTab('agents');
-        } else if (contextFolders.length > 0) {
+        } else if (hasContextSources) {
           setMentionTab('local');
         } else {
           const hasArtifactsNow = useFileStore.getState().artifacts.length > 0;
@@ -61,7 +62,7 @@ export function useMentionPicker(opts: UseMentionPickerOpts) {
       mentionWasVisible.current = false;
       setMentionVisible(false);
     }
-  }, [textareaRef, contextFolders, loadLocalFiles, hasAgents]);
+  }, [textareaRef, hasContextSources, loadLocalFiles, hasAgents]);
 
   const closeMentionPicker = useCallback(() => {
     mentionWasVisible.current = false;
@@ -114,7 +115,9 @@ export function useMentionPicker(opts: UseMentionPickerOpts) {
         stripAtQuery();
         setSelectedTasks((prev) => [...prev, item.task]);
       } else if (item.kind === 'local') {
-        if (selectedLocalFiles.some((f) => f.absolutePath === item.file.absolutePath)) {
+        if (
+          selectedLocalFiles.some((f) => f.sourceId === item.file.sourceId && f.relativePath === item.file.relativePath)
+        ) {
           closeMentionPicker();
           return;
         }
@@ -141,8 +144,8 @@ export function useMentionPicker(opts: UseMentionPickerOpts) {
     setSelectedArtifacts((prev) => prev.filter((a) => a.id !== id));
   }, []);
 
-  const removeSelectedLocalFile = useCallback((path: string) => {
-    setSelectedLocalFiles((prev) => prev.filter((f) => f.absolutePath !== path));
+  const removeSelectedLocalFile = useCallback((sourceId: string, relativePath: string) => {
+    setSelectedLocalFiles((prev) => prev.filter((f) => f.sourceId !== sourceId || f.relativePath !== relativePath));
   }, []);
 
   const handleMentionItemsChange = useCallback((items: MentionItem[]) => {

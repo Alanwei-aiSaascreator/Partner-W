@@ -72,6 +72,8 @@ export default function WelcomeScreen({ onSelectPrompt, conversationReady = true
         modelLabel={defaultModel?.label ?? t('chatInput.modelsLoading')}
         ready={conversationReady}
         onSelectPrompt={onSelectPrompt}
+        onAddFiles={() => window.dispatchEvent(new Event('task-materials:add-files'))}
+        onAddFolder={() => window.dispatchEvent(new Event('task-materials:add-folder'))}
       />
 
       <div className="mt-1 flex w-full max-w-[var(--content-max-width)] flex-col items-center gap-3 border-t border-[var(--border-subtle)] pt-4">

@@ -48,13 +48,14 @@ import SlashCommandDashboard from '../SlashCommandDashboard';
 import SlashCommandMenu from '../SlashCommandMenu';
 import ToolsCatalog from '../ToolsCatalog';
 import VoiceIntroDialog from '../VoiceIntroDialog';
-import { ACCEPTED_TYPES, MENTION_ALL_AGENT_ID } from './constants';
+import { MENTION_ALL_AGENT_ID } from './constants';
 import { thinkingAlwaysOnKey, thinkingLabelKey, thinkingMenuFor } from './thinking-levels.js';
 import { useChatSend } from './useChatSend';
-import { useContextFolders } from './useContextFolders';
 import { useAttachments } from './useAttachments';
 import { useMentionPicker } from './useMentionPicker';
 import { useSlashAutocomplete } from './useSlashAutocomplete';
+import TaskMaterials from './TaskMaterials';
+import { useTaskMaterials } from './useTaskMaterials';
 import { formatContextWindow } from './utils';
 
 function SelectionTag({
@@ -103,7 +104,6 @@ export default function ChatInput({
   const { t } = useTranslation();
   const reduced = useReducedMotion();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const [canSend, setCanSend] = useState(false);
 
   useEffect(() => {
@@ -122,11 +122,9 @@ export default function ChatInput({
   const mainView = useUiStore((s) => s.mainView);
   const settingsOpen = useUiStore((s) => s.settingsOpen);
 
-  const { pendingAttachments, setPendingAttachments, handleFileSelect, removeAttachment, handlePaste } =
-    useAttachments();
+  const { pendingAttachments, setPendingAttachments, removeAttachment, handlePaste } = useAttachments();
 
-  const { contextFolders, localFilesForPicker, handleAddContextFolder, handleRemoveContextFolder, loadLocalFiles } =
-    useContextFolders();
+  const materials = useTaskMaterials();
 
   const activeTaskId = useTaskStore((s) => s.activeTaskId);
   const activeTaskGatewayId = useTaskStore((s) => s.tasks.find((task) => task.id === s.activeTaskId)?.gatewayId);
@@ -197,8 +195,8 @@ export default function ChatInput({
     removeSelectedAgent,
   } = useMentionPicker({
     textareaRef,
-    contextFolders,
-    loadLocalFiles,
+    hasContextSources: materials.sources.length > 0,
+    loadLocalFiles: materials.loadSourceFiles,
     hasAgents: mentionAgents.length > 0,
   });
 
@@ -270,9 +268,11 @@ export default function ChatInput({
     setSelectedArtifacts,
     selectedLocalFiles,
     setSelectedLocalFiles,
+    selectedImportedFiles: materials.selectedImportedFiles,
+    clearSelectedImportedFiles: materials.clearSelectedImportedFiles,
+    markImportedFileMissing: materials.markImportedFileMissing,
     selectedAgents,
     setSelectedAgents,
-    contextFolders,
     stopVoiceInput: () => stopVoiceInput(),
     onComposerCleared: () => setCanSend(false),
   });
@@ -308,11 +308,11 @@ export default function ChatInput({
   const mentionTabs = useMemo<MentionTab[]>(
     () => [
       ...(mentionAgents.length > 0 ? (['agents'] as const) : []),
-      ...(contextFolders.length > 0 ? (['local'] as const) : []),
+      ...(materials.sources.length > 0 ? (['local'] as const) : []),
       'tasks',
       'files',
     ],
-    [mentionAgents.length, contextFolders.length],
+    [mentionAgents.length, materials.sources.length],
   );
 
   const handleKeyDown = useCallback(
@@ -454,11 +454,24 @@ export default function ChatInput({
     if (!textarea) return;
     textarea.style.height = 'auto';
     textarea.style.height = `${Math.min(textarea.scrollHeight, 160)}px`;
-    setCanSend(Boolean(textarea.value.trim()) || pendingAttachments.length > 0);
+    setCanSend(
+      Boolean(textarea.value.trim()) ||
+        pendingAttachments.length > 0 ||
+        materials.selectedImportedFiles.length > 0 ||
+        selectedLocalFiles.length > 0,
+    );
     if (argPickerVisible) closeArgPicker();
     updateSlashMenu();
     updateMentionPicker();
-  }, [updateSlashMenu, argPickerVisible, closeArgPicker, updateMentionPicker, pendingAttachments.length]);
+  }, [
+    updateSlashMenu,
+    argPickerVisible,
+    closeArgPicker,
+    updateMentionPicker,
+    pendingAttachments.length,
+    materials.selectedImportedFiles.length,
+    selectedLocalFiles.length,
+  ]);
 
   const voiceActive = isVoiceListening || isVoiceTranscribing;
   const disabled = isOffline || readinessBlocked;
@@ -529,12 +542,24 @@ export default function ChatInput({
 
   useEffect(() => {
     const textarea = textareaRef.current;
-    setCanSend(Boolean(textarea?.value.trim()) || pendingAttachments.length > 0);
-  }, [pendingAttachments.length]);
+    setCanSend(
+      Boolean(textarea?.value.trim()) ||
+        pendingAttachments.length > 0 ||
+        materials.selectedImportedFiles.length > 0 ||
+        selectedLocalFiles.length > 0,
+    );
+  }, [pendingAttachments.length, materials.selectedImportedFiles.length, selectedLocalFiles.length]);
 
   return (
     <div className="flex-shrink-0 px-6 pb-5">
       <div className="max-w-[var(--content-max-width)] mx-auto">
+        <TaskMaterials
+          importedFiles={materials.importedFiles}
+          selectedImportedPaths={materials.selectedImportedPaths}
+          sources={materials.sources}
+          onToggleImported={materials.toggleImportedFile}
+          onRevokeSource={(sourceId) => void materials.revokeSource(sourceId)}
+        />
         <AnimatePresence>
           {pendingAttachments.length > 0 && (
             <motion.div
@@ -600,9 +625,9 @@ export default function ChatInput({
             visible={mentionVisible}
             query={mentionQuery}
             tasks={mentionTasks}
-            localFiles={localFilesForPicker}
+            localFiles={materials.contextFiles}
             agents={mentionAgents}
-            hasContextFolders={contextFolders.length > 0}
+            hasContextFolders={materials.sources.length > 0}
             activeTab={mentionTab}
             selectedIndex={mentionIndex}
             onSelectTask={(task) => commitMention({ kind: 'task', task })}
@@ -635,15 +660,6 @@ export default function ChatInput({
               isOffline && 'opacity-60',
             )}
           >
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept={ACCEPTED_TYPES}
-              multiple
-              className="hidden"
-              onChange={handleFileSelect}
-            />
-
             <div className="px-4 pt-3 pb-3">
               <div className="relative">
                 {(selectedTasks.length > 0 ||
@@ -673,10 +689,10 @@ export default function ChatInput({
                     ))}
                     {selectedLocalFiles.map((f) => (
                       <SelectionTag
-                        key={f.absolutePath}
+                        key={`${f.sourceId}:${f.relativePath}`}
                         icon={<FileCode size={14} />}
                         label={f.relativePath}
-                        onRemove={() => removeSelectedLocalFile(f.absolutePath)}
+                        onRemove={() => removeSelectedLocalFile(f.sourceId, f.relativePath)}
                       />
                     ))}
                     {selectedTasks.map((task) => (
@@ -749,22 +765,29 @@ export default function ChatInput({
               {!isOffline && (
                 <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
                   <div className="flex flex-wrap items-center gap-1.5">
-                    <motion.div
-                      whileHover={reduced ? undefined : motionPresets.scale.whileHover}
-                      whileTap={reduced ? undefined : motionPresets.scale.whileTap}
-                      transition={motionPresets.scale.transition}
-                    >
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        onClick={() => fileInputRef.current?.click()}
-                        disabled={disabled}
-                        aria-label={t('chatInput.attachFile')}
-                        className="rounded-lg text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
-                      >
-                        <Plus size={18} />
-                      </Button>
-                    </motion.div>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          disabled={disabled}
+                          aria-label={t('chatInput.addMaterials')}
+                          className="rounded-lg text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                        >
+                          <Plus size={18} />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="start">
+                        <DropdownMenuItem onClick={() => void materials.importFiles()}>
+                          <File size={15} />
+                          {t('chatInput.addFiles')}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => void materials.grantFolder()}>
+                          <FolderOpen size={15} />
+                          {t('chatInput.addFolder')}
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
 
                     <div className="flex items-center">
                       <DropdownMenu>
@@ -1018,7 +1041,7 @@ export default function ChatInput({
           </div>
         </div>
 
-        {(!isOffline || contextFolders.length > 0 || activeTask) && (
+        {(!isOffline || materials.sources.length > 0 || activeTask) && (
           <div className="mt-3 flex flex-wrap items-center gap-2">
             {!isOffline && (
               <div className="flex items-center gap-1.5 px-1">
@@ -1041,48 +1064,6 @@ export default function ChatInput({
                 )}
               </div>
             )}
-
-            <div className="ml-auto flex flex-wrap items-center gap-2">
-              {contextFolders.length > 0 && (
-                <div className="flex min-w-0 max-w-xl items-center gap-1.5 overflow-x-auto py-0.5">
-                  {contextFolders.map((folder) => (
-                    <span
-                      key={folder}
-                      className={cn(
-                        'type-mono-data inline-flex max-w-48 flex-shrink-0 items-center gap-1 rounded-full px-2 py-1',
-                        'border border-[var(--border-subtle)] bg-[var(--bg-tertiary)] text-[var(--text-secondary)]',
-                      )}
-                    >
-                      <span className="truncate">{folder.split('/').pop()}</span>
-                      <button
-                        onClick={() => handleRemoveContextFolder(folder)}
-                        aria-label={t('common.remove')}
-                        className="flex-shrink-0 opacity-50 transition-opacity hover:opacity-100"
-                      >
-                        <X size={12} />
-                      </button>
-                    </span>
-                  ))}
-                </div>
-              )}
-              <div className="flex items-center gap-1.5 px-1">
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <ToolbarButton
-                      variant="ghost"
-                      size="sm"
-                      onClick={handleAddContextFolder}
-                      disabled={disabled}
-                      className="rounded-lg text-[var(--text-secondary)]"
-                    >
-                      {t('chatInput.linkLocalFolders')}
-                      <FolderOpen size={14} className="flex-shrink-0" />
-                    </ToolbarButton>
-                  </TooltipTrigger>
-                  <TooltipContent side="top">{t('chatInput.addContextFolder')}</TooltipContent>
-                </Tooltip>
-              </div>
-            </div>
           </div>
         )}
       </div>

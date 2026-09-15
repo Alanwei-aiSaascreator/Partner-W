@@ -19,7 +19,6 @@ import type {
   Task,
   AgentInfo,
   Artifact,
-  FileIndexEntry,
   MessageAttachment,
   ModelCatalogEntry,
   ToolEntry,
@@ -34,6 +33,7 @@ import { useRoomStore } from '../../stores/roomStore';
 import { useTeamStore } from '../../stores/teamStore';
 import { composer } from '../../platform';
 import type { PendingAttachment } from './types';
+import type { ImportedMaterialFile, TaskContextFile } from './useTaskMaterials';
 import type { ThinkingLevel } from './constants';
 import { GATEWAY_INJECTED_MODEL, EMPTY_MODELS_CATALOG, MAX_TEXT_TOTAL, MENTION_ALL_AGENT_ID } from './constants';
 import { getModelLabel, readAsBase64 } from './utils';
@@ -47,13 +47,15 @@ interface UseChatSendOpts {
   setSelectedTasks: Dispatch<SetStateAction<Task[]>>;
   selectedArtifacts: Artifact[];
   setSelectedArtifacts: Dispatch<SetStateAction<Artifact[]>>;
-  selectedLocalFiles: FileIndexEntry[];
-  setSelectedLocalFiles: Dispatch<SetStateAction<FileIndexEntry[]>>;
+  selectedLocalFiles: TaskContextFile[];
+  setSelectedLocalFiles: Dispatch<SetStateAction<TaskContextFile[]>>;
+  selectedImportedFiles: ImportedMaterialFile[];
+  clearSelectedImportedFiles: () => void;
+  markImportedFileMissing: (localPath: string) => void;
   selectedAgents: Array<{ agentId: string; agentName: string; emoji?: string; sessionKey: string }>;
   setSelectedAgents: Dispatch<
     SetStateAction<Array<{ agentId: string; agentName: string; emoji?: string; sessionKey: string }>>
   >;
-  contextFolders: string[];
   stopVoiceInput: () => void;
   onComposerCleared?: () => void;
 }
@@ -69,9 +71,11 @@ export function useChatSend(opts: UseChatSendOpts) {
     setSelectedArtifacts,
     selectedLocalFiles,
     setSelectedLocalFiles,
+    selectedImportedFiles,
+    clearSelectedImportedFiles,
+    markImportedFileMissing,
     selectedAgents,
     setSelectedAgents,
-    contextFolders,
     stopVoiceInput,
     onComposerCleared,
   } = opts;
@@ -219,7 +223,7 @@ export function useChatSend(opts: UseChatSendOpts) {
     stopVoiceInput();
 
     const content = textarea.value.trim();
-    if (!content && !pendingAttachments.length) return;
+    if (!content && !pendingAttachments.length && !selectedImportedFiles.length && !selectedLocalFiles.length) return;
 
     let task = activeTask;
     if (!task) {
@@ -256,15 +260,54 @@ export function useChatSend(opts: UseChatSendOpts) {
         )
       : [];
 
-    const msgAttachments: MessageAttachment[] | undefined = attachmentRecords.length
-      ? attachmentRecords.map((a) => ({
-          fileName: a.fileName,
-          dataUrl: a.previewUrl,
-          mimeType: a.mimeType,
-          localPath: a.localPath,
-          size: a.size,
-        }))
-      : undefined;
+    let importedReadFailed = false;
+    const importedAttachmentRecords = selectedImportedFiles.length
+      ? (
+          await Promise.all(
+            selectedImportedFiles.map(async (file) => {
+              try {
+                const read = await window.clawwork.readInboxFile(file.localPath);
+                if (read.ok && read.result) {
+                  return {
+                    fileName: file.fileName,
+                    mimeType: file.mimeType || 'application/octet-stream',
+                    base64: read.result.content,
+                    localPath: file.localPath,
+                    size: file.size,
+                  };
+                }
+              } catch {
+                // The file can disappear between listing and dispatch. Handle it as unavailable below.
+              }
+              importedReadFailed = true;
+              markImportedFileMissing(file.localPath);
+              toast.error(t('chatInput.materialUnavailable', { fileName: file.fileName }));
+              return null;
+            }),
+          )
+        ).filter((record): record is NonNullable<typeof record> => record !== null)
+      : [];
+    if (importedReadFailed) return;
+
+    const allMessageAttachments: MessageAttachment[] | undefined =
+      attachmentRecords.length || importedAttachmentRecords.length
+        ? [
+            ...attachmentRecords.map((record) => ({
+              fileName: record.fileName,
+              dataUrl: record.previewUrl,
+              mimeType: record.mimeType,
+              localPath: record.localPath,
+              size: record.size,
+            })),
+            ...importedAttachmentRecords.map((record) => ({
+              fileName: record.fileName,
+              dataUrl: record.mimeType.startsWith('image/') ? `data:${record.mimeType};base64,${record.base64}` : '',
+              mimeType: record.mimeType,
+              localPath: record.localPath,
+              size: record.size,
+            })),
+          ]
+        : undefined;
 
     if (task.ensemble) {
       const room = useRoomStore.getState().rooms[task.id];
@@ -293,19 +336,10 @@ export function useChatSend(opts: UseChatSendOpts) {
           return;
         }
 
-        if (content || msgAttachments?.length) {
-          addMessage(task.id, 'user', content, msgAttachments);
+        if (content || allMessageAttachments?.length) {
+          addMessage(task.id, 'user', content, allMessageAttachments);
         }
         setProcessing(task.sessionKey, true);
-        textarea.value = '';
-        textarea.style.height = 'auto';
-        onComposerCleared?.();
-        setPendingAttachments([]);
-        setSelectedAgents([]);
-        setSelectedTasks([]);
-        setSelectedArtifacts([]);
-        setSelectedLocalFiles([]);
-
         const descResults = await Promise.allSettled(
           agents.map((a) => window.clawwork.getAgentFile(task.gatewayId, a.id, 'IDENTITY.md')),
         );
@@ -338,24 +372,25 @@ export function useChatSend(opts: UseChatSendOpts) {
         if (!ok) {
           toast.error(t('errors.conductorInitFailed'));
           setProcessing(task.sessionKey, false);
+          return;
         }
+        textarea.value = '';
+        textarea.style.height = 'auto';
+        onComposerCleared?.();
+        setPendingAttachments([]);
+        setSelectedAgents([]);
+        setSelectedTasks([]);
+        setSelectedArtifacts([]);
+        setSelectedLocalFiles([]);
+        clearSelectedImportedFiles();
         return;
       }
     }
 
-    textarea.value = '';
-    textarea.style.height = 'auto';
-    onComposerCleared?.();
     const taskMentions = [...selectedTasks];
     const artifactMentions = [...selectedArtifacts];
     const localFileMentions = [...selectedLocalFiles];
     const agentMentions = [...selectedAgents];
-    setPendingAttachments([]);
-    setSelectedAgents([]);
-    setSelectedTasks([]);
-    setSelectedArtifacts([]);
-    setSelectedLocalFiles([]);
-
     try {
       let finalContent = content || '';
       const extraAttachments: { mimeType: string; fileName: string; content: string }[] = [];
@@ -426,15 +461,21 @@ export function useChatSend(opts: UseChatSendOpts) {
       if (localFileMentions.length > 0) {
         const readResults = await Promise.all(
           localFileMentions.map((f) =>
-            window.clawwork.readContextFile(f.absolutePath, contextFolders).then((res) => ({ file: f, res })),
+            window.clawwork.readTaskContextFile(task.id, f.sourceId, f.relativePath).then((res) => ({ file: f, res })),
           ),
         );
+
+        const unavailable = readResults.find(({ res }) => !res.ok || !res.result);
+        if (unavailable) {
+          toast.error(t('chatInput.materialUnavailable', { fileName: unavailable.file.fileName }));
+          return;
+        }
 
         const localBlocks: string[] = [];
         let totalLocalSize = 0;
 
         for (const { file: f, res } of readResults) {
-          if (!res.ok || !res.result) continue;
+          if (!res.result) continue;
           const read = res.result as unknown as FileReadResult;
 
           if (read.tier === 'text') {
@@ -445,6 +486,12 @@ export function useChatSend(opts: UseChatSendOpts) {
               break;
             }
             localBlocks.push(`<file path="${f.relativePath}">\n${read.content}\n</file>`);
+          } else {
+            extraAttachments.push({
+              mimeType: read.mimeType || f.mimeType || 'application/octet-stream',
+              fileName: f.fileName,
+              content: read.content,
+            });
           }
         }
 
@@ -458,16 +505,25 @@ export function useChatSend(opts: UseChatSendOpts) {
         fileName: a.fileName,
         content: a.base64,
       }));
-      const allAttachments = [...gatewayAttachments, ...extraAttachments];
+      const importedGatewayAttachments = importedAttachmentRecords.map((record) => ({
+        mimeType: record.mimeType,
+        fileName: record.fileName,
+        content: record.base64,
+      }));
+      const allAttachments = [...gatewayAttachments, ...importedGatewayAttachments, ...extraAttachments];
 
       const slashMatch = finalContent.trim().match(/^\/(model|think)\s+(.+)$/);
-      if (slashMatch && allAttachments.length === 0 && !msgAttachments?.length) {
+      if (slashMatch && allAttachments.length === 0 && !allMessageAttachments?.length) {
         const command = slashMatch[1] as 'model' | 'think';
         const result = await composer.applySlashCommand(task.id, command, slashMatch[2].trim());
         if (!result.ok) {
           // 已知错误给中文，未知错误给网关原文 —— 只报「发送失败」等于没报。
           toast.error(describeGatewayError(result.error, t('errors.sendFailed')));
+          return;
         }
+        textarea.value = '';
+        textarea.style.height = 'auto';
+        onComposerCleared?.();
         return;
       }
 
@@ -476,19 +532,30 @@ export function useChatSend(opts: UseChatSendOpts) {
         (localFileMentions.length ? `[@${localFileMentions[0].fileName}]` : '') ||
         (taskMentions.length ? `[@${taskMentions[0].title}]` : '') ||
         (artifactMentions.length ? `[@${artifactMentions[0].name}]` : '') ||
+        (importedAttachmentRecords.length ? `[${importedAttachmentRecords[0].fileName}]` : '') ||
         (attachmentRecords.length ? `[${attachmentRecords[0].fileName}]` : '');
 
       const isMentionAll = agentMentions.some((a) => a.agentId === MENTION_ALL_AGENT_ID);
-      await composer.send(task.id, {
+      const result = await composer.send(task.id, {
         content: finalContent,
         attachments: allAttachments.length > 0 ? allAttachments : undefined,
-        messageAttachments: msgAttachments,
+        messageAttachments: allMessageAttachments,
         presetModel: currentModel,
         presetThinking: currentThinking,
         titleHint: task.title ? undefined : titleHint,
         mentionAll: isMentionAll || undefined,
         mentions: agentMentions.length > 0 && !isMentionAll ? agentMentions.map((a) => a.agentId) : undefined,
       });
+      if (!result.ok) return;
+      textarea.value = '';
+      textarea.style.height = 'auto';
+      onComposerCleared?.();
+      setPendingAttachments([]);
+      setSelectedAgents([]);
+      setSelectedTasks([]);
+      setSelectedArtifacts([]);
+      setSelectedLocalFiles([]);
+      clearSelectedImportedFiles();
     } catch (err) {
       setProcessing(task.id, false);
       const msg = err instanceof Error ? err.message : String(err);
@@ -505,13 +572,15 @@ export function useChatSend(opts: UseChatSendOpts) {
     selectedTasks,
     selectedArtifacts,
     selectedLocalFiles,
+    selectedImportedFiles,
     selectedAgents,
-    contextFolders,
     stopVoiceInput,
     setPendingAttachments,
     setSelectedTasks,
     setSelectedArtifacts,
     setSelectedLocalFiles,
+    clearSelectedImportedFiles,
+    markImportedFileMissing,
     setSelectedAgents,
     textareaRef,
     t,

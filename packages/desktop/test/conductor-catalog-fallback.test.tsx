@@ -147,9 +147,11 @@ function Harness() {
     setSelectedArtifacts: vi.fn(),
     selectedLocalFiles: [],
     setSelectedLocalFiles: vi.fn(),
+    selectedImportedFiles: [],
+    clearSelectedImportedFiles: vi.fn(),
+    markImportedFileMissing: vi.fn(),
     selectedAgents: [],
     setSelectedAgents: vi.fn(),
-    contextFolders: [],
     stopVoiceInput: vi.fn(),
   });
   capturedHandleSend = chat.handleSend;

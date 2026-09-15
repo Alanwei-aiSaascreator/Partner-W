@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, useRef, type ReactElement } from 'react';
+import { act, useRef, type Dispatch, type ReactElement, type SetStateAction } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ModelCatalogEntry, Task } from '@clawwork/shared';
@@ -76,6 +76,7 @@ vi.mock('../src/renderer/platform', () => ({
 }));
 
 import { useChatSend } from '../src/renderer/components/ChatInput/useChatSend';
+import type { ImportedMaterialFile, TaskContextFile } from '../src/renderer/components/ChatInput/useTaskMaterials';
 import { useCommercialStore } from '../src/renderer/stores/commercialStore';
 
 function render(ui: ReactElement): { container: HTMLDivElement; unmount: () => void } {
@@ -110,9 +111,11 @@ function Harness({ initialValue = '' }: { initialValue?: string }) {
     setSelectedArtifacts: vi.fn(),
     selectedLocalFiles: [],
     setSelectedLocalFiles: vi.fn(),
+    selectedImportedFiles: [],
+    clearSelectedImportedFiles: vi.fn(),
+    markImportedFileMissing: vi.fn(),
     selectedAgents: [],
     setSelectedAgents: vi.fn(),
-    contextFolders: [],
     stopVoiceInput: vi.fn(),
   });
 
@@ -131,6 +134,62 @@ function Harness({ initialValue = '' }: { initialValue?: string }) {
   );
 }
 
+const importedMaterial: ImportedMaterialFile = {
+  fileName: 'brief.pdf',
+  localPath: 'tasks/task-1/inbox/brief.pdf',
+  mimeType: 'application/pdf',
+  size: 64,
+  availability: 'available',
+};
+
+const folderMaterial: TaskContextFile = {
+  sourceId: 'source-1',
+  sourceName: 'Research',
+  fileName: 'notes.txt',
+  relativePath: 'notes.txt',
+  mimeType: 'text/plain',
+  size: 5,
+  mtime: 1,
+  tier: 'text',
+};
+
+function MaterialHarness({
+  clearImported,
+  clearFolder,
+  markMissing = vi.fn(),
+}: {
+  clearImported: () => void;
+  clearFolder: Dispatch<SetStateAction<TaskContextFile[]>>;
+  markMissing?: (localPath: string) => void;
+}) {
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const chat = useChatSend({
+    textareaRef,
+    pendingAttachments: [],
+    setPendingAttachments: vi.fn(),
+    selectedTasks: [],
+    setSelectedTasks: vi.fn(),
+    selectedArtifacts: [],
+    setSelectedArtifacts: vi.fn(),
+    selectedLocalFiles: [folderMaterial],
+    setSelectedLocalFiles: clearFolder,
+    selectedImportedFiles: [importedMaterial],
+    clearSelectedImportedFiles: clearImported,
+    markImportedFileMissing: markMissing,
+    selectedAgents: [],
+    setSelectedAgents: vi.fn(),
+    stopVoiceInput: vi.fn(),
+  });
+  return (
+    <>
+      <textarea ref={textareaRef} defaultValue="summarize" />
+      <button type="button" onClick={() => void chat.handleSend()}>
+        send
+      </button>
+    </>
+  );
+}
+
 describe('useChatSend abort flow', () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -138,6 +197,15 @@ describe('useChatSend abort flow', () => {
     mocks.abort.mockClear();
     mocks.applySlashCommand.mockClear();
     mocks.send.mockClear();
+    Object.assign(window, {
+      clawwork: {
+        readInboxFile: vi.fn(async () => ({ ok: true, result: { content: 'cGRm', encoding: 'base64' } })),
+        readTaskContextFile: vi.fn(async () => ({
+          ok: true,
+          result: { content: 'notes', mimeType: 'text/plain', size: 5, truncated: false, tier: 'text' },
+        })),
+      },
+    });
     mocks.uiState.gatewayStatusMap = { 'gw-1': 'connected' };
     mocks.uiState.modelCatalogByGateway = {};
     useCommercialStore.setState({
@@ -241,6 +309,100 @@ describe('useChatSend abort flow', () => {
 
     expect(container.querySelector('[data-testid="model-availability"]')?.textContent).toBe('models-loading');
 
+    unmount();
+  });
+
+  it('sends imported inbox files and task-scoped folder files without renderer absolute paths', async () => {
+    const clearImported = vi.fn();
+    const clearFolder = vi.fn();
+    const { container, unmount } = render(<MaterialHarness clearImported={clearImported} clearFolder={clearFolder} />);
+
+    await act(async () => {
+      (container.querySelector('button') as HTMLButtonElement).click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(window.clawwork.readInboxFile).toHaveBeenCalledWith('tasks/task-1/inbox/brief.pdf');
+    expect(window.clawwork.readTaskContextFile).toHaveBeenCalledWith('task-1', 'source-1', 'notes.txt');
+    expect(mocks.send).toHaveBeenCalledWith(
+      'task-1',
+      expect.objectContaining({
+        content: expect.stringContaining('<file path="notes.txt">\nnotes\n</file>'),
+        attachments: [{ mimeType: 'application/pdf', fileName: 'brief.pdf', content: 'cGRm' }],
+        messageAttachments: [
+          expect.objectContaining({
+            fileName: 'brief.pdf',
+            localPath: 'tasks/task-1/inbox/brief.pdf',
+          }),
+        ],
+      }),
+    );
+    expect(clearImported).toHaveBeenCalledTimes(1);
+    expect(clearFolder).toHaveBeenCalledWith([]);
+    unmount();
+  });
+
+  it('keeps text and material selections when gateway dispatch fails', async () => {
+    mocks.send.mockResolvedValueOnce({ ok: false, taskId: 'task-1' });
+    const clearImported = vi.fn();
+    const clearFolder = vi.fn();
+    const { container, unmount } = render(<MaterialHarness clearImported={clearImported} clearFolder={clearFolder} />);
+
+    await act(async () => {
+      (container.querySelector('button') as HTMLButtonElement).click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect((container.querySelector('textarea') as HTMLTextAreaElement).value).toBe('summarize');
+    expect(clearImported).not.toHaveBeenCalled();
+    expect(clearFolder).not.toHaveBeenCalled();
+    unmount();
+  });
+
+  it('forwards a task-scoped binary folder file as a gateway attachment', async () => {
+    vi.mocked(window.clawwork.readTaskContextFile).mockResolvedValueOnce({
+      ok: true,
+      result: { content: 'aW1hZ2U=', mimeType: 'image/png', size: 5, truncated: false, tier: 'image' },
+    });
+    const { container, unmount } = render(<MaterialHarness clearImported={vi.fn()} clearFolder={vi.fn()} />);
+
+    await act(async () => {
+      (container.querySelector('button') as HTMLButtonElement).click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mocks.send).toHaveBeenCalledWith(
+      'task-1',
+      expect.objectContaining({
+        attachments: expect.arrayContaining([{ mimeType: 'image/png', fileName: 'notes.txt', content: 'aW1hZ2U=' }]),
+      }),
+    );
+    unmount();
+  });
+
+  it('marks an unavailable inbox material and preserves the draft without dispatching', async () => {
+    vi.mocked(window.clawwork.readInboxFile).mockResolvedValueOnce({ ok: false, error: 'missing' });
+    const clearImported = vi.fn();
+    const clearFolder = vi.fn();
+    const markMissing = vi.fn();
+    const { container, unmount } = render(
+      <MaterialHarness clearImported={clearImported} clearFolder={clearFolder} markMissing={markMissing} />,
+    );
+
+    await act(async () => {
+      (container.querySelector('button') as HTMLButtonElement).click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(markMissing).toHaveBeenCalledWith('tasks/task-1/inbox/brief.pdf');
+    expect(mocks.send).not.toHaveBeenCalled();
+    expect((container.querySelector('textarea') as HTMLTextAreaElement).value).toBe('summarize');
+    expect(clearImported).not.toHaveBeenCalled();
+    expect(clearFolder).not.toHaveBeenCalled();
     unmount();
   });
 });

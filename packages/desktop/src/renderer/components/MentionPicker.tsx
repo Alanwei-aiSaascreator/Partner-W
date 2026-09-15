@@ -1,7 +1,8 @@
 import { useEffect, useRef, useMemo } from 'react';
 import { Bot, File, FileCode, FolderOpen, Image as ImageIcon, ListTodo, Users } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import type { Task, Artifact, FileIndexEntry } from '@clawwork/shared';
+import type { Task, Artifact } from '@clawwork/shared';
+import type { TaskContextFile } from './ChatInput/useTaskMaterials';
 import { useFileStore } from '@/stores/fileStore';
 import { cn, formatFileSize } from '@/lib/utils';
 import { getArtifactLabel } from '@/lib/artifact-labels';
@@ -22,20 +23,20 @@ export interface AgentMentionEntry {
 export type MentionItem =
   | { kind: 'task'; task: Task }
   | { kind: 'file'; artifact: Artifact }
-  | { kind: 'local'; file: FileIndexEntry }
+  | { kind: 'local'; file: TaskContextFile }
   | { kind: 'agent'; agent: AgentMentionEntry };
 interface MentionPickerProps {
   visible: boolean;
   query: string;
   tasks: Task[];
-  localFiles: FileIndexEntry[];
+  localFiles: TaskContextFile[];
   agents: AgentMentionEntry[];
   hasContextFolders: boolean;
   activeTab: MentionTab;
   selectedIndex: number;
   onSelectTask: (task: Task) => void;
   onSelectArtifact: (artifact: Artifact) => void;
-  onSelectLocalFile: (file: FileIndexEntry) => void;
+  onSelectLocalFile: (file: TaskContextFile) => void;
   onSelectAgent: (agent: AgentMentionEntry) => void;
   onTabChange: (tab: MentionTab) => void;
   onHoverIndex: (index: number) => void;
@@ -230,7 +231,7 @@ export default function MentionPicker({
               const f = item.file;
               return (
                 <button
-                  key={f.absolutePath}
+                  key={`${f.sourceId}:${f.relativePath}`}
                   data-mention-selected={selectedAttr}
                   className={className}
                   onMouseDown={(e) => e.preventDefault()}

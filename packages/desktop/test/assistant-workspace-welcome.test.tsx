@@ -32,12 +32,16 @@ describe('AssistantWorkspaceWelcome', () => {
   it('renders only the selected assistant identity and its four starters', () => {
     const definition = resolveAssistantWorkspace('rongying-content')!;
     const onSelectPrompt = vi.fn();
+    const onAddFiles = vi.fn();
+    const onAddFolder = vi.fn();
     const { container, unmount } = render(
       <AssistantWorkspaceWelcome
         definition={definition}
         modelLabel="DeepSeek V4 Flash"
         ready
         onSelectPrompt={onSelectPrompt}
+        onAddFiles={onAddFiles}
+        onAddFolder={onAddFolder}
       />,
     );
 
@@ -51,6 +55,10 @@ describe('AssistantWorkspaceWelcome', () => {
 
     act(() => (starterButtons[0] as HTMLButtonElement).click());
     expect(onSelectPrompt).toHaveBeenCalledWith('assistantWorkspaces.content.starters.1.prompt');
+    act(() => (container.querySelector('[data-testid="welcome-add-files"]') as HTMLButtonElement).click());
+    act(() => (container.querySelector('[data-testid="welcome-add-folder"]') as HTMLButtonElement).click());
+    expect(onAddFiles).toHaveBeenCalledTimes(1);
+    expect(onAddFolder).toHaveBeenCalledTimes(1);
     unmount();
   });
 });

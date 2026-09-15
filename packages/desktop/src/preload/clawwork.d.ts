@@ -553,13 +553,6 @@ export interface ClawWorkAPI {
   listTaskContextFiles: (taskId: string, sourceId: string, query?: string) => Promise<IpcResult<FileIndexEntry[]>>;
   readTaskContextFile: (taskId: string, sourceId: string, relativePath: string) => Promise<IpcResult<FileReadResult>>;
 
-  selectContextFolder: () => Promise<IpcResult>;
-  listContextFiles: (folders: string[], query?: string) => Promise<IpcResult>;
-  readContextFile: (absolutePath: string, folders: string[]) => Promise<IpcResult>;
-  watchContextFolder: (folderPath: string) => Promise<IpcResult>;
-  unwatchContextFolder: (folderPath: string) => Promise<IpcResult>;
-  onContextFilesChanged: (callback: (folderPath: string) => void) => () => void;
-
   quickLaunchSubmit: (message: string) => void;
   quickLaunchHide: () => void;
   getQuickLaunchConfig: () => Promise<QuickLaunchConfigResult>;

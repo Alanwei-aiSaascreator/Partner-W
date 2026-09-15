@@ -376,21 +376,6 @@ function buildApi(): ClawWorkAPI {
     readTaskContextFile: (taskId: string, sourceId: string, relativePath: string) =>
       ipcRenderer.invoke('context:read-source-file', { taskId, sourceId, relativePath }),
 
-    selectContextFolder: () => ipcRenderer.invoke('context:select-folder'),
-    listContextFiles: (folders: string[], query?: string) =>
-      ipcRenderer.invoke('context:list-files', { folders, query }),
-    readContextFile: (absolutePath: string, folders: string[]) =>
-      ipcRenderer.invoke('context:read-file', { absolutePath, folders }),
-    watchContextFolder: (folderPath: string) => ipcRenderer.invoke('context:watch-folder', folderPath),
-    unwatchContextFolder: (folderPath: string) => ipcRenderer.invoke('context:unwatch-folder', folderPath),
-    onContextFilesChanged: (callback: (folderPath: string) => void) => {
-      const listener = (_event: Electron.IpcRendererEvent, folderPath: string): void => callback(folderPath);
-      ipcRenderer.on('context:files-changed', listener);
-      return () => {
-        ipcRenderer.removeListener('context:files-changed', listener);
-      };
-    },
-
     sendNotification: (params: { title: string; body: string; taskId?: string }) =>
       ipcRenderer.invoke('notification:send', params),
     onNotificationNavigateTask: (callback: (taskId: string) => void) => {
