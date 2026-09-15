@@ -462,3 +462,4 @@ git push origin feat/stage3b-demo-polish
 - Observed warm-profile startup times were approximately 37 seconds and 74 seconds. The slower run included an 8-second commercial-auth probe timeout before the gateway bootstrap. User copy remains “usually about 1 minute”; operational guidance should surface retry/network help after 90 seconds.
 - Restored the application theme setting to `auto` after dark-mode verification.
 - Existing build warnings remain: the mixed static/dynamic import for `device-identity.ts` and LightningCSS reporting unknown `@theme`.
+- Follow-up verification repaired five platform-specific test fixtures (`file-reader`, `inbox-resolve`, `inbox-save`, `media-resolve`, and `workspace-init`) without changing production code. The Windows desktop suite is now 104/104 files and 862/862 tests passing.
