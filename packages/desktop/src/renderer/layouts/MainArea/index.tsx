@@ -51,7 +51,7 @@ import StatusTag from '@/components/semantic/StatusTag';
 import WelcomeScreen from './WelcomeScreen';
 import FirstTaskCompletionFlow from './FirstTaskCompletionFlow';
 import type { OnboardingProfile } from '@/lib/user-onboarding';
-import type { StartupReadiness } from '@/lib/startup-readiness';
+import type { StartupReadiness, StartupRetry } from '@/lib/startup-readiness';
 import StartupReadinessPanel from './StartupReadinessPanel';
 
 const STICK_TO_BOTTOM_THRESHOLD_PX = 60;
@@ -61,7 +61,7 @@ interface MainAreaProps {
   onTogglePanel: () => void;
   onboardingProfile: OnboardingProfile;
   startupReadiness: StartupReadiness;
-  onRetryStartup: () => void | Promise<void>;
+  onRetryStartup: StartupRetry;
 }
 
 interface ArchivedTaskRow {
@@ -481,7 +481,7 @@ function ChatContent({
 }: {
   onboardingProfile: OnboardingProfile;
   startupReadiness: StartupReadiness;
-  onRetryStartup: () => void | Promise<void>;
+  onRetryStartup: StartupRetry;
 }) {
   const { t } = useTranslation();
   const activeTaskId = useTaskStore((s) => s.activeTaskId);

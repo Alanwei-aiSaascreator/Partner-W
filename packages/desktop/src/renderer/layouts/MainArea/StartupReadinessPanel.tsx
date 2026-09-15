@@ -9,7 +9,7 @@ export default function StartupReadinessPanel({
   onRetry,
 }: {
   readiness: StartupReadiness;
-  onRetry: () => void | Promise<void>;
+  onRetry: () => Promise<void>;
 }) {
   const { t } = useTranslation();
   const [takingLonger, setTakingLonger] = useState(false);
@@ -51,7 +51,7 @@ export default function StartupReadinessPanel({
           <Bot size={17} className="text-[var(--accent)]" />
           <span className="type-support flex-1 text-[var(--text-primary)]">{t('startupReadiness.aiTitle')}</span>
           {aiReady ? (
-            <CheckCircle2 size={17} className="text-[var(--success)]" />
+            <CheckCircle2 size={17} className="text-[var(--accent)]" />
           ) : aiError ? (
             <TriangleAlert size={17} className="text-[var(--danger)]" />
           ) : (
@@ -64,7 +64,7 @@ export default function StartupReadinessPanel({
             {t('startupReadiness.progress', { completed, total: readiness.assistants.total })}
           </span>
           {assistantsReady ? (
-            <CheckCircle2 size={17} className="text-[var(--success)]" />
+            <CheckCircle2 size={17} className="text-[var(--accent)]" />
           ) : assistantsError ? (
             <TriangleAlert size={17} className="text-[var(--danger)]" />
           ) : (

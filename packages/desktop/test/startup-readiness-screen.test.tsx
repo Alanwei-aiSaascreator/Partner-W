@@ -26,6 +26,8 @@ const baseReadiness: StartupReadiness = {
     total: 6,
     missingIds: [],
   },
+  workspaceAvailable: true,
+  conversationReady: false,
   isReady: false,
   hasError: false,
 };

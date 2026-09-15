@@ -6,6 +6,7 @@ import type { PresetAgentBootstrapPhase, PresetAgentBootstrapSnapshot } from '@/
 
 export type StartupAiPhase = 'starting' | 'loading-models' | 'ready' | 'error';
 export type StartupAssistantPhase = 'waiting' | Exclude<PresetAgentBootstrapPhase, 'idle'>;
+export type StartupRetry = () => Promise<void>;
 
 export interface StartupReadiness {
   gatewayId: string | null | undefined;
