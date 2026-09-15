@@ -274,6 +274,7 @@
     "noModelsAvailableDetail": "請檢查網路，或稍後重新開啟模型列表。",
     "offlineReadOnly": "離線 — 唯讀模式",
     "openFailed": "開啟 {{fileName}} 失敗",
+    "partialSendFailed": "部分助理未收到訊息",
     "revokeFolder": "停止使用資料夾 {{name}}",
     "revokeFolderFailed": "取消資料夾授權失敗",
     "runPhase": {

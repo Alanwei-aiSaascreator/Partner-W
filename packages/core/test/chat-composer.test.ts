@@ -17,7 +17,7 @@ type AddMessageOptions = { persist?: boolean; sessionKey?: string };
  */
 let supportedLevels: string[] | undefined = undefined;
 
-function setup() {
+function setup(options: { ensemble?: boolean } = {}) {
   const addMessage = vi.fn(
     (
       _taskId: string,
@@ -50,7 +50,24 @@ function setup() {
     sessionKey: SESSION_KEY,
     title: 'T',
     model: 'qwen3.5-27b',
+    ensemble: options.ensemble,
   };
+  const room = options.ensemble
+    ? {
+        taskId: TASK_ID,
+        conductorSessionKey: `${SESSION_KEY}:conductor`,
+        performers: [
+          {
+            agentId: 'worker',
+            agentName: 'Worker',
+            sessionKey: `${SESSION_KEY}:worker`,
+            verifiedAt: '2026-09-16T00:00:00.000Z',
+          },
+        ],
+        status: 'active' as const,
+        conductorReady: true,
+      }
+    : undefined;
 
   const deps: ChatComposerDeps = {
     gateway: { sendMessage, abortChat, patchSession },
@@ -61,6 +78,7 @@ function setup() {
       updateTaskMetadata,
     }),
     getSupportedThinkingLevels: () => supportedLevels,
+    getRoomState: () => room,
     getMessageStore: () => ({
       addMessage,
       removeMessage,
@@ -92,6 +110,7 @@ function setup() {
     updateTaskMetadata,
     persistMessage,
     removeMessage,
+    onError: deps.onError,
   };
 }
 
@@ -174,6 +193,46 @@ describe('chat-composer', () => {
     expect(addMessage).toHaveBeenCalledWith(TASK_ID, 'user', 'first ensemble message', attachments, { persist: false });
     expect(addMessage.mock.invocationCallOrder[0]).toBeLessThan(sendMessage.mock.invocationCallOrder[0]);
     expect(persistMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps and persists the user message when one ensemble target accepts and one fails', async () => {
+    vi.useFakeTimers();
+    const { composer, sendMessage, persistMessage, removeMessage, addMessage, onError } = setup({ ensemble: true });
+    sendMessage.mockResolvedValueOnce({ ok: true }).mockResolvedValueOnce({ ok: false, error: 'worker offline' });
+
+    const result = await composer.send(TASK_ID, {
+      content: 'team request',
+      mentionAll: true,
+      deferUserMessageUntilSent: true,
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({ ok: true, partialFailure: expect.stringContaining('worker offline') }),
+    );
+    expect(removeMessage).not.toHaveBeenCalled();
+    expect(persistMessage).toHaveBeenCalledTimes(1);
+    expect(addMessage.mock.invocationCallOrder[0]).toBeLessThan(sendMessage.mock.invocationCallOrder[0]);
+    composer.notifyResponse(`${SESSION_KEY}:conductor`);
+    await vi.advanceTimersByTimeAsync(SEND_TIMEOUT_MS);
+    expect(addMessage.mock.calls.filter((call) => call[1] === 'system')).toHaveLength(0);
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it('rolls back a deferred ensemble message only when every target fails', async () => {
+    const { composer, sendMessage, persistMessage, removeMessage } = setup({ ensemble: true });
+    sendMessage
+      .mockResolvedValueOnce({ ok: false, error: 'conductor offline' })
+      .mockRejectedValueOnce(new Error('worker offline'));
+
+    const result = await composer.send(TASK_ID, {
+      content: 'team request',
+      mentionAll: true,
+      deferUserMessageUntilSent: true,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(removeMessage).toHaveBeenCalledWith(TASK_ID, 'm1');
+    expect(persistMessage).not.toHaveBeenCalled();
   });
 });
 

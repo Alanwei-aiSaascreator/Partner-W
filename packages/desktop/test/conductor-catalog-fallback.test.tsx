@@ -208,8 +208,8 @@ describe('conductor initialization - catalog fallback', () => {
         ok: true,
         result: { localPath: 'tasks/task-ensemble/inbox/pasted.png' },
       })),
-      readInboxFile: vi.fn(async () => ({ ok: true, result: { content: 'cGRm', encoding: 'base64' } })),
-      readTaskContextFile: vi.fn(async () => ({
+      readInboxFileForSend: vi.fn(async () => ({ ok: true, result: { content: 'cGRm', encoding: 'base64' } })),
+      readTaskContextFileForSend: vi.fn(async () => ({
         ok: true,
         result: { content: 'aW1hZ2U=', mimeType: 'image/png', size: 5, truncated: false, tier: 'image' },
       })),
@@ -349,8 +349,8 @@ describe('conductor initialization - catalog fallback', () => {
       'agent:main:clawwork:task:task-ensemble',
       expect.any(String),
     );
-    expect(window.clawwork.readInboxFile).toHaveBeenCalledWith('tasks/task-ensemble/inbox/brief.pdf');
-    expect(window.clawwork.readTaskContextFile).toHaveBeenCalledWith('task-ensemble', 'source-1', 'diagram.png');
+    expect(window.clawwork.readInboxFileForSend).toHaveBeenCalledWith('tasks/task-ensemble/inbox/brief.pdf');
+    expect(window.clawwork.readTaskContextFileForSend).toHaveBeenCalledWith('task-ensemble', 'source-1', 'diagram.png');
     expect(mocks.composerSend).toHaveBeenCalledWith(
       'task-ensemble',
       expect.objectContaining({

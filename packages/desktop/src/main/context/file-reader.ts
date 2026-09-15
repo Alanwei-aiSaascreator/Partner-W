@@ -6,6 +6,7 @@ import { classifyTier, getMimeType } from './file-types.js';
 
 const MAX_TEXT_SIZE = 100 * 1024;
 const MAX_BINARY_SIZE = 10 * 1024 * 1024;
+const MAX_SEND_FILE_BYTES = 25 * 1024 * 1024;
 
 function canonicalPath(targetPath: string): string {
   return typeof realpathSync.native === 'function' ? realpathSync.native(targetPath) : realpathSync(targetPath);
@@ -84,7 +85,12 @@ export function resolveFdRealPath(fd: number, absolutePath: string): string {
   return realpathSync(`/dev/fd/${fd}`);
 }
 
-function readContextFileInternal(absolutePath: string, contextFolders: string[], hooks?: ReadHooks): FileReadResult {
+function readContextFileInternal(
+  absolutePath: string,
+  contextFolders: string[],
+  hooks?: ReadHooks,
+  maxBytes?: number,
+): FileReadResult {
   let selected: { canonicalRoot: string; rootIdentity: Stats; targetIdentity: Stats; realTarget: string } | undefined;
   for (const canonicalRoot of contextFolders) {
     try {
@@ -104,6 +110,7 @@ function readContextFileInternal(absolutePath: string, contextFolders: string[],
     hooks?.afterOpen?.();
     const openedIdentity = fstatSync(fd);
     if (!sameIdentity(selected.targetIdentity, openedIdentity, true)) throw new Error('context file changed');
+    if (maxBytes !== undefined && openedIdentity.size > maxBytes) throw new Error('context file is too large to send');
 
     validateRoot(selected.canonicalRoot, selected.rootIdentity);
     const fdRealPath = resolveFdRealPath(fd, absolutePath);
@@ -140,6 +147,10 @@ function readContextFileInternal(absolutePath: string, contextFolders: string[],
     validateRoot(selected.canonicalRoot, selected.rootIdentity);
     const finalTarget = validateTarget(selected.canonicalRoot, fdRealPath);
     if (!sameIdentity(openedIdentity, finalTarget.identity, true)) throw new Error('context file changed');
+    const finalOpenedIdentity = fstatSync(fd);
+    if (maxBytes !== undefined && (finalOpenedIdentity.size > maxBytes || finalTarget.identity.size > maxBytes)) {
+      throw new Error('context file is too large to send');
+    }
     return result;
   } finally {
     closeSync(fd);
@@ -150,7 +161,13 @@ export function readContextFile(absolutePath: string, contextFolders: string[]):
   return readContextFileInternal(absolutePath, contextFolders);
 }
 
+export function readContextFileForSend(absolutePath: string, contextFolders: string[]): FileReadResult {
+  return readContextFileInternal(absolutePath, contextFolders, undefined, MAX_SEND_FILE_BYTES);
+}
+
 export const __testing = Object.freeze({
   readContextFileWithHooks: (absolutePath: string, contextFolders: string[], hooks: ReadHooks): FileReadResult =>
     readContextFileInternal(absolutePath, contextFolders, hooks),
+  readContextFileForSendWithHooks: (absolutePath: string, contextFolders: string[], hooks: ReadHooks): FileReadResult =>
+    readContextFileInternal(absolutePath, contextFolders, hooks, MAX_SEND_FILE_BYTES),
 });

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, type ReactElement } from 'react';
+import { act, useLayoutEffect, type ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -54,8 +54,26 @@ function render(ui: ReactElement): {
   };
 }
 
-function Harness({ taskId }: { taskId: string | null }) {
+function Harness({
+  taskId,
+  immediateAction,
+}: {
+  taskId: string | null;
+  immediateAction?: 'import' | 'grant' | 'revoke' | 'list';
+}) {
   const materials = useTaskMaterials(taskId);
+  useLayoutEffect(() => {
+    if (immediateAction === 'import') void materials.importFiles();
+    if (immediateAction === 'grant') void materials.grantFolder();
+    if (immediateAction === 'revoke') void materials.revokeSource('source-task-1');
+    if (immediateAction === 'list') void materials.listSourceFiles('source-task-1');
+  }, [
+    immediateAction,
+    materials.importFiles,
+    materials.grantFolder,
+    materials.listSourceFiles,
+    materials.revokeSource,
+  ]);
   return (
     <div>
       <output data-testid="task">{materials.taskId ?? 'none'}</output>
@@ -331,4 +349,30 @@ describe('useTaskMaterials', () => {
     expect(view.container.querySelector('[data-testid="context"]')?.textContent).toBe('');
     view.unmount();
   });
+
+  it.each(['import', 'grant', 'revoke', 'list'] as const)(
+    'uses the synchronously rendered task for an immediate %s action before passive effects run',
+    async (action) => {
+      mocks.listImportedTaskFiles.mockResolvedValue({ ok: true, result: [] });
+      mocks.listTaskContextSources.mockResolvedValue({ ok: true, result: [] });
+      mocks.importTaskFiles.mockResolvedValue({ ok: true, result: { imported: [], rejected: [] } });
+      mocks.grantTaskContextFolder.mockResolvedValue({ ok: true, result: null });
+      mocks.revokeTaskContextSource.mockResolvedValue({ ok: true, result: false });
+      mocks.listTaskContextFiles.mockResolvedValue({ ok: true, result: [] });
+      const view = render(<Harness taskId="task-1" />);
+      await act(async () => void (await Promise.resolve()));
+
+      view.rerender(<Harness taskId="task-2" immediateAction={action} />);
+      await act(async () => void (await Promise.resolve()));
+
+      const calls = {
+        import: mocks.importTaskFiles,
+        grant: mocks.grantTaskContextFolder,
+        revoke: mocks.revokeTaskContextSource,
+        list: mocks.listTaskContextFiles,
+      }[action].mock.calls;
+      expect(calls[0]?.[0]).toBe('task-2');
+      view.unmount();
+    },
+  );
 });

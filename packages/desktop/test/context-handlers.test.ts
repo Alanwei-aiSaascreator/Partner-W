@@ -8,6 +8,7 @@ const listTaskContextSourcesMock = vi.fn();
 const revokeTaskContextSourceMock = vi.fn();
 const listGrantedFilesMock = vi.fn();
 const readGrantedFileMock = vi.fn();
+const readGrantedFileForSendMock = vi.fn();
 const importTaskFilesMock = vi.fn();
 const listImportedTaskFilesMock = vi.fn();
 const getWorkspacePathMock = vi.fn();
@@ -26,6 +27,7 @@ vi.mock('../src/main/context/source-service.js', () => ({
   revokeTaskContextSource: revokeTaskContextSourceMock,
   listGrantedFiles: listGrantedFilesMock,
   readGrantedFile: readGrantedFileMock,
+  readGrantedFileForSend: readGrantedFileForSendMock,
 }));
 
 vi.mock('../src/main/context/file-import.js', async (importOriginal) => {
@@ -50,6 +52,17 @@ describe('task context source IPC handlers', () => {
     getWorkspacePathMock.mockReturnValue('C:\\workspace');
     const { registerContextHandlers } = await import('../src/main/ipc/context-handlers.js');
     registerContextHandlers();
+  });
+
+  it('registers a fixed-limit task-scoped source read for sending', () => {
+    readGrantedFileForSendMock.mockReturnValue({ content: 'eA==', tier: 'image' });
+    expect(
+      handleMap.get('context:read-source-file-for-send')?.(
+        {},
+        { taskId: 'task-1', sourceId: 'source-1', relativePath: 'image.png' },
+      ),
+    ).toEqual({ ok: true, result: { content: 'eA==', tier: 'image' } });
+    expect(readGrantedFileForSendMock).toHaveBeenCalledWith('task-1', 'source-1', 'image.png');
   });
 
   it('returns an empty successful import when the native multi-file dialog is canceled', async () => {

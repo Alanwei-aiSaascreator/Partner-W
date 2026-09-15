@@ -4,7 +4,7 @@ import { basename, isAbsolute, relative, resolve, sep } from 'node:path';
 import type { FileIndexEntry, FileReadResult, TaskContextSource } from '@clawwork/shared';
 import { getSqlite } from '../db/index.js';
 import { scanFolder } from './file-index.js';
-import { readContextFile } from './file-reader.js';
+import { readContextFile, readContextFileForSend } from './file-reader.js';
 
 interface SourceRow {
   id: string;
@@ -167,4 +167,11 @@ export function readGrantedFile(taskId: string, sourceId: string, relativePath: 
   const source = findSource(taskId, sourceId);
   trustedCurrentRoot(source);
   return readContextFile(realTarget, [source.absolute_path]);
+}
+
+export function readGrantedFileForSend(taskId: string, sourceId: string, relativePath: string): FileReadResult {
+  const realTarget = resolveGrantedFile(taskId, sourceId, relativePath);
+  const source = findSource(taskId, sourceId);
+  trustedCurrentRoot(source);
+  return readContextFileForSend(realTarget, [source.absolute_path]);
 }

@@ -274,6 +274,7 @@
     "noModelsAvailableDetail": "Vérifiez votre connexion ou rouvrez la liste des modèles plus tard.",
     "offlineReadOnly": "Hors ligne — lecture seule",
     "openFailed": "Échec de l'ouverture de {{fileName}}",
+    "partialSendFailed": "Some assistants did not receive the message",
     "revokeFolder": "Ne plus utiliser le dossier {{name}}",
     "revokeFolderFailed": "Échec de la révocation de l'accès au dossier",
     "runPhase": {

@@ -10,6 +10,7 @@ import {
   listGrantedFiles,
   listTaskContextSources,
   readGrantedFile,
+  readGrantedFileForSend,
   revokeTaskContextSource,
 } from '../context/source-service.js';
 import { getWorkspacePath } from '../workspace/config.js';
@@ -121,6 +122,20 @@ export function registerContextHandlers(): void {
         const sourceId = requireString(params?.sourceId, 'sourceId');
         const relativePath = requireString(params?.relativePath, 'relativePath');
         return { ok: true, result: readGrantedFile(taskId, sourceId, relativePath) };
+      } catch (error) {
+        return failure(error);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    'context:read-source-file-for-send',
+    (_event, params: { taskId?: unknown; sourceId?: unknown; relativePath?: unknown }) => {
+      try {
+        const taskId = requireString(params?.taskId, 'taskId');
+        const sourceId = requireString(params?.sourceId, 'sourceId');
+        const relativePath = requireString(params?.relativePath, 'relativePath');
+        return { ok: true, result: readGrantedFileForSend(taskId, sourceId, relativePath) };
       } catch (error) {
         return failure(error);
       }

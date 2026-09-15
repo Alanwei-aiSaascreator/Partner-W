@@ -66,4 +66,16 @@ describe('inbox file IPC handlers', () => {
     expect(openPathMock).toHaveBeenCalledTimes(1);
     expect(showItemInFolderMock).toHaveBeenCalledTimes(1);
   });
+
+  it('uses a fixed 25MB main-process limit for renderer send reads', async () => {
+    readInboxFileMock.mockResolvedValue('aGVsbG8=');
+
+    await expect(
+      handlers.get('inbox:read-file-for-send')?.({}, { localPath: 'task-1/inbox/note.txt' }),
+    ).resolves.toEqual({
+      ok: true,
+      result: { content: 'aGVsbG8=', encoding: 'base64' },
+    });
+    expect(readInboxFileMock).toHaveBeenCalledWith('C:\\workspace', 'task-1/inbox/note.txt', 25 * 1024 * 1024);
+  });
 });

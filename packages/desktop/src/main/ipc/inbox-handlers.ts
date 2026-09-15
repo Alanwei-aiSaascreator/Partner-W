@@ -4,6 +4,7 @@ import { readInboxFile, resolveInboxPath } from '../inbox/resolve.js';
 import { getWorkspacePath } from '../workspace/config.js';
 
 const MAX_INBOX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+const MAX_SEND_FILE_BYTES = 25 * 1024 * 1024;
 
 export function registerInboxHandlers(): void {
   ipcMain.handle('inbox:save', async (_event, params: { taskId: string; fileName: string; base64: string }) => {
@@ -36,6 +37,18 @@ export function registerInboxHandlers(): void {
     try {
       const content = await readInboxFile(workspacePath, params.localPath);
       if (!content) return { ok: false, error: 'invalid path' };
+      return { ok: true, result: { content, encoding: 'base64' as const } };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : 'unknown error' };
+    }
+  });
+
+  ipcMain.handle('inbox:read-file-for-send', async (_event, params: { localPath: string }) => {
+    const workspacePath = getWorkspacePath();
+    if (!workspacePath) return { ok: false, error: 'workspace not configured' };
+    try {
+      const content = await readInboxFile(workspacePath, params.localPath, MAX_SEND_FILE_BYTES);
+      if (!content) return { ok: false, error: 'invalid path or file too large' };
       return { ok: true, result: { content, encoding: 'base64' as const } };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : 'unknown error' };

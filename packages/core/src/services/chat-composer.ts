@@ -199,7 +199,10 @@ export function createChatComposer(deps: ChatComposerDeps) {
     if (taskId) clearTimer(taskId);
   }
 
-  async function send(taskId: string | undefined, options: SendOptions): Promise<{ ok: boolean; taskId?: string }> {
+  async function send(
+    taskId: string | undefined,
+    options: SendOptions,
+  ): Promise<{ ok: boolean; taskId?: string; partialFailure?: string }> {
     const task = resolveTask(taskId);
     if (!task) {
       deps.onError?.({
@@ -227,6 +230,8 @@ export function createChatComposer(deps: ChatComposerDeps) {
       const room = task.ensemble ? deps.getRoomState?.(task.id) : undefined;
       const mentionTargets = resolveMentionTargets(room, options.mentions, options.mentionAll);
       const isMentionSend = mentionTargets.length > 0;
+      let acceptedMentionTargets = mentionTargets;
+      let partialFailure: string | undefined;
 
       if (!isMentionSend) {
         if (options.presetModel) {
@@ -282,25 +287,30 @@ export function createChatComposer(deps: ChatComposerDeps) {
         const results = await Promise.allSettled(
           mentionTargets.map((sk) => deps.gateway.sendMessage(task.gatewayId, sk, options.content, attachments)),
         );
-        const failed = results.find(
-          (r) => r.status === 'rejected' || (r.status === 'fulfilled' && r.value && !r.value.ok),
-        );
-        if (failed) {
+        acceptedMentionTargets = mentionTargets.filter((_, index) => {
+          const result = results[index];
+          return result.status === 'fulfilled' && (!result.value || result.value.ok);
+        });
+        const failures = results.flatMap((result) => {
+          if (result.status === 'rejected') return [String(result.reason)];
+          if (result.value && !result.value.ok) return [result.value.error ?? deps.translate('errors.sendFailed')];
+          return [];
+        });
+        if (acceptedMentionTargets.length === 0) {
           rollbackPendingUserMessage();
           store.setProcessing(task.sessionKey, false);
-          const reason =
-            failed.status === 'rejected' ? String(failed.reason) : 'value' in failed ? (failed.value?.error ?? '') : '';
           emitError(
             task.id,
             'gateway',
             'send',
-            reason || deps.translate('errors.sendFailed'),
+            failures.join('; ') || deps.translate('errors.sendFailed'),
             undefined,
             undefined,
             task.sessionKey,
           );
           return { ok: false, taskId: task.id };
         }
+        if (failures.length > 0) partialFailure = failures.join('; ');
 
         if (room && !mentionTargets.includes(room.conductorSessionKey)) {
           const targetNames = options.mentions?.join(', ') ?? 'performers';
@@ -337,7 +347,7 @@ export function createChatComposer(deps: ChatComposerDeps) {
       }
 
       clearTimer(task.id);
-      const watchKeys = isMentionSend ? mentionTargets : [task.sessionKey];
+      const watchKeys = isMentionSend ? acceptedMentionTargets : [task.sessionKey];
       for (const sk of watchKeys) sessionToTask.set(sk, task.id);
       responseTimers.set(
         task.id,
@@ -370,7 +380,7 @@ export function createChatComposer(deps: ChatComposerDeps) {
         })
         .catch((err) => console.error('[chat-composer] persistMessage failed:', err));
 
-      return { ok: true, taskId: task.id };
+      return { ok: true, taskId: task.id, ...(partialFailure ? { partialFailure } : {}) };
     } catch (err) {
       rollbackPendingUserMessage();
       store.setProcessing(task.sessionKey, false);

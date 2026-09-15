@@ -274,6 +274,7 @@
     "noModelsAvailableDetail": "Check your network, or open the model list again later.",
     "offlineReadOnly": "Offline — read-only",
     "openFailed": "Failed to open {{fileName}}",
+    "partialSendFailed": "Some assistants did not receive the message",
     "revokeFolder": "Stop using folder {{name}}",
     "revokeFolderFailed": "Failed to revoke folder access",
     "runPhase": {

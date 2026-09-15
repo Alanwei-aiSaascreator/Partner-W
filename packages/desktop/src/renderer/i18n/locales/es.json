@@ -274,6 +274,7 @@
     "noModelsAvailableDetail": "Comprueba la red o vuelve a abrir la lista de modelos más tarde.",
     "offlineReadOnly": "Sin conexión — solo lectura",
     "openFailed": "No se pudo abrir {{fileName}}",
+    "partialSendFailed": "Some assistants did not receive the message",
     "revokeFolder": "Dejar de usar la carpeta {{name}}",
     "revokeFolderFailed": "No se pudo revocar el acceso a la carpeta",
     "runPhase": {

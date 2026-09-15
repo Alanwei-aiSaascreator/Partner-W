@@ -11,6 +11,7 @@ interface InboxPathInfo {
 interface FileIdentity {
   dev: number | bigint;
   ino: number | bigint;
+  size: number;
   isFile(): boolean;
 }
 
@@ -86,7 +87,11 @@ export async function resolveInboxPath(workspacePath: string, localPath: string)
   return resolveValidatedPath(info, info.full, true);
 }
 
-export async function readInboxFile(workspacePath: string, localPath: string): Promise<string | null> {
+export async function readInboxFile(
+  workspacePath: string,
+  localPath: string,
+  maxBytes?: number,
+): Promise<string | null> {
   const info = parseInboxPath(workspacePath, localPath);
   if (!info) return null;
   const handle = await open(info.full, 'r').catch(() => null);
@@ -94,6 +99,7 @@ export async function readInboxFile(workspacePath: string, localPath: string): P
   try {
     const openedStats = await handle.stat();
     if (!openedStats.isFile() || !hasStrongIdentity(openedStats)) return null;
+    if (maxBytes !== undefined && openedStats.size > maxBytes) return null;
     const pathToResolve = process.platform === 'win32' ? info.full : `/dev/fd/${handle.fd}`;
     const realTarget =
       process.platform === 'win32'
@@ -115,11 +121,20 @@ export async function readInboxFile(workspacePath: string, localPath: string): P
       !finalHandleStats.isFile() ||
       !finalPathStats.isFile() ||
       !sameStrongIdentity(openedStats, finalHandleStats) ||
-      !sameStrongIdentity(openedStats, finalPathStats)
+      !sameStrongIdentity(openedStats, finalPathStats) ||
+      (maxBytes !== undefined && (finalHandleStats.size > maxBytes || finalPathStats.size > maxBytes))
     ) {
       return null;
     }
-    return await handle.readFile({ encoding: 'base64' });
+    if (maxBytes === undefined) return await handle.readFile({ encoding: 'base64' });
+
+    const buffer = Buffer.alloc(maxBytes + 1);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    const afterReadStats = await handle.stat();
+    if (bytesRead > maxBytes || afterReadStats.size > maxBytes || !sameStrongIdentity(openedStats, afterReadStats)) {
+      return null;
+    }
+    return buffer.subarray(0, bytesRead).toString('base64');
   } finally {
     await handle.close();
   }

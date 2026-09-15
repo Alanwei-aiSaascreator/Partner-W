@@ -274,6 +274,7 @@
     "noModelsAvailableDetail": "Prüfen Sie Ihre Netzwerkverbindung oder öffnen Sie die Modellliste später erneut.",
     "offlineReadOnly": "Offline — Nur-Lese-Modus",
     "openFailed": "{{fileName}} konnte nicht geoeffnet werden",
+    "partialSendFailed": "Some assistants did not receive the message",
     "revokeFolder": "Ordner {{name}} nicht mehr verwenden",
     "revokeFolderFailed": "Ordnerzugriff konnte nicht aufgehoben werden",
     "runPhase": {

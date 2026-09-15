@@ -5,6 +5,7 @@ import {
   renameSync,
   rmSync,
   symlinkSync,
+  truncateSync,
   utimesSync,
   writeFileSync,
 } from 'node:fs';
@@ -147,6 +148,30 @@ describe('context access race defenses', () => {
       ).toThrow(/changed|unavailable/i);
     } finally {
       rmSync(parent, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects a send read when a granted file grows beyond 25MB after selection', () => {
+    const root = mkdtempSync(join(tmpdir(), 'clawwork-send-size-race-'));
+    const filePath = join(root, 'note.txt');
+    writeFileSync(filePath, 'x');
+    const canonicalRoot = realpathSync.native(root);
+    const testing = fileReaderTesting as typeof fileReaderTesting & {
+      readContextFileForSendWithHooks: (
+        absolutePath: string,
+        contextFolders: string[],
+        hooks: { afterOpen: () => void },
+      ) => unknown;
+    };
+
+    try {
+      expect(() =>
+        testing.readContextFileForSendWithHooks(filePath, [canonicalRoot], {
+          afterOpen: () => truncateSync(filePath, 25 * 1024 * 1024 + 1),
+        }),
+      ).toThrow(/too large/i);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
     }
   });
 

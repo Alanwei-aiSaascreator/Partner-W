@@ -102,15 +102,20 @@ export function useTaskMaterials(taskIdOverride?: string | null) {
       });
   }, [requestedTaskId, t, isCurrent]);
 
+  const resolveCurrentTaskId = useCallback(
+    () => identityRef.current ?? useTaskStore.getState().activeTaskId ?? taskId,
+    [taskId],
+  );
+
   const ensureTaskId = useCallback(() => {
-    const current = taskId ?? useTaskStore.getState().activeTaskId;
+    const current = resolveCurrentTaskId();
     if (current) return current;
     const created = useTaskStore.getState().commitPendingTask();
     identityRef.current = created.id;
     generationRef.current += 1;
     setTaskId(created.id);
     return created.id;
-  }, [taskId]);
+  }, [resolveCurrentTaskId]);
 
   const importFiles = useCallback(async () => {
     const targetTaskId = ensureTaskId();
@@ -167,8 +172,8 @@ export function useTaskMaterials(taskIdOverride?: string | null) {
 
   const revokeSource = useCallback(
     async (sourceId: string) => {
-      if (!taskId) return false;
-      const targetTaskId = taskId;
+      const targetTaskId = resolveCurrentTaskId();
+      if (!targetTaskId) return false;
       const generation = generationRef.current;
       try {
         const result = await window.clawwork.revokeTaskContextSource(targetTaskId, sourceId);
@@ -188,13 +193,13 @@ export function useTaskMaterials(taskIdOverride?: string | null) {
         return false;
       }
     },
-    [isCurrent, taskId, t],
+    [isCurrent, resolveCurrentTaskId, t],
   );
 
   const listSourceFiles = useCallback(
     async (sourceId: string, query?: string): Promise<TaskContextFile[]> => {
-      if (!taskId) return [];
-      const targetTaskId = taskId;
+      const targetTaskId = resolveCurrentTaskId();
+      if (!targetTaskId) return [];
       const generation = generationRef.current;
       const source = sources.find((item) => item.id === sourceId);
       try {
@@ -218,13 +223,13 @@ export function useTaskMaterials(taskIdOverride?: string | null) {
         return [];
       }
     },
-    [isCurrent, sources, taskId, t],
+    [isCurrent, resolveCurrentTaskId, sources, t],
   );
 
   const loadSourceFiles = useCallback(
     async (query?: string) => {
-      if (!taskId) return [];
-      const targetTaskId = taskId;
+      const targetTaskId = resolveCurrentTaskId();
+      if (!targetTaskId) return [];
       const generation = generationRef.current;
       const sequence = ++sourceLoadSequence.current;
       const groups = await Promise.all(
@@ -236,7 +241,7 @@ export function useTaskMaterials(taskIdOverride?: string | null) {
       if (sourceLoadSequence.current === sequence && isCurrent(targetTaskId, generation)) setContextFiles(files);
       return files;
     },
-    [isCurrent, listSourceFiles, sources, taskId],
+    [isCurrent, listSourceFiles, resolveCurrentTaskId, sources],
   );
 
   const toggleImportedFile = useCallback((localPath: string) => {

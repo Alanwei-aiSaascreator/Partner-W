@@ -274,6 +274,7 @@
     "noModelsAvailableDetail": "请检查网络，或稍后重新打开模型列表。",
     "offlineReadOnly": "离线模式 — 只读",
     "openFailed": "打开 {{fileName}} 失败",
+    "partialSendFailed": "部分助手未收到消息",
     "revokeFolder": "取消使用文件夹 {{name}}",
     "revokeFolderFailed": "取消文件夹授权失败",
     "runPhase": {

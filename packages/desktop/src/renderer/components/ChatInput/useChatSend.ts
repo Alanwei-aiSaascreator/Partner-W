@@ -168,7 +168,7 @@ export function useChatSend(opts: UseChatSendOpts) {
 
   const responseTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const abortResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const sendInFlightRef = useRef(false);
+  const sendInFlightTaskIdsRef = useRef(new Set<string>());
   const activeTaskIdRef = useRef(activeTask?.id ?? null);
   activeTaskIdRef.current = activeTask?.id ?? null;
 
@@ -201,8 +201,10 @@ export function useChatSend(opts: UseChatSendOpts) {
   }, []);
 
   const handleSend = useCallback(async () => {
-    if (sendInFlightRef.current) return;
-    sendInFlightRef.current = true;
+    const sendLockKey = activeTask?.id ?? '__pending_task__';
+    if (sendInFlightTaskIdsRef.current.has(sendLockKey)) return;
+    sendInFlightTaskIdsRef.current.add(sendLockKey);
+    const ownedSendLockKeys = new Set([sendLockKey]);
     try {
       // 发送前校验：任务记着的模型可能已经不在目录里了（下架 / 上游调整）。
       // 不拦的话体验是「能选中 → 发出去 → 报错」，而且报错发生在会话就绪之后，
@@ -246,6 +248,11 @@ export function useChatSend(opts: UseChatSendOpts) {
           toast.error(t('errors.agentNotResponding'));
           return;
         }
+      }
+      if (sendLockKey === '__pending_task__' && task.id !== sendLockKey) {
+        if (sendInFlightTaskIdsRef.current.has(task.id)) return;
+        sendInFlightTaskIdsRef.current.add(task.id);
+        ownedSendLockKeys.add(task.id);
       }
 
       if (
@@ -303,7 +310,7 @@ export function useChatSend(opts: UseChatSendOpts) {
       }> = [];
       for (const file of selectedImportedFiles) {
         try {
-          const read = await window.clawwork.readInboxFile(file.localPath);
+          const read = await window.clawwork.readInboxFileForSend(file.localPath);
           if (read.ok && read.result) {
             importedAttachmentRecords.push({
               fileName: file.fileName,
@@ -418,12 +425,12 @@ export function useChatSend(opts: UseChatSendOpts) {
         if (localFileMentions.length > 0) {
           const readResults: Array<{
             file: TaskContextFile;
-            res: Awaited<ReturnType<typeof window.clawwork.readTaskContextFile>>;
+            res: Awaited<ReturnType<typeof window.clawwork.readTaskContextFileForSend>>;
           }> = [];
           for (const file of localFileMentions) {
             readResults.push({
               file,
-              res: await window.clawwork.readTaskContextFile(task.id, file.sourceId, file.relativePath),
+              res: await window.clawwork.readTaskContextFileForSend(task.id, file.sourceId, file.relativePath),
             });
           }
 
@@ -577,6 +584,9 @@ export function useChatSend(opts: UseChatSendOpts) {
           mentions: agentMentions.length > 0 && !isMentionAll ? agentMentions.map((a) => a.agentId) : undefined,
         });
         if (!result.ok) return;
+        if (result.partialFailure) {
+          toast.warning(t('chatInput.partialSendFailed'), { description: result.partialFailure });
+        }
         if (activeTaskIdRef.current === task.id) {
           textarea.value = '';
           textarea.style.height = 'auto';
@@ -595,7 +605,7 @@ export function useChatSend(opts: UseChatSendOpts) {
         toast.error(msg);
       }
     } finally {
-      sendInFlightRef.current = false;
+      for (const key of ownedSendLockKeys) sendInFlightTaskIdsRef.current.delete(key);
     }
   }, [
     activeTask,

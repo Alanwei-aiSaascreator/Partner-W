@@ -274,6 +274,7 @@
     "noModelsAvailableDetail": "Verifique a rede ou abra a lista de modelos novamente mais tarde.",
     "offlineReadOnly": "Offline — somente leitura",
     "openFailed": "Falha ao abrir {{fileName}}",
+    "partialSendFailed": "Some assistants did not receive the message",
     "revokeFolder": "Parar de usar a pasta {{name}}",
     "revokeFolderFailed": "Falha ao revogar acesso à pasta",
     "runPhase": {

@@ -150,6 +150,7 @@ function buildApi(): ClawWorkAPI {
     saveInboxAttachment: (params: { taskId: string; fileName: string; base64: string }) =>
       ipcRenderer.invoke('inbox:save', params),
     readInboxFile: (localPath: string) => ipcRenderer.invoke('inbox:read-file', { localPath }),
+    readInboxFileForSend: (localPath: string) => ipcRenderer.invoke('inbox:read-file-for-send', { localPath }),
     openInboxFile: (localPath: string) => ipcRenderer.invoke('inbox:open', { localPath }),
     showInboxInFolder: (localPath: string) => ipcRenderer.invoke('inbox:show-in-folder', { localPath }),
     readMediaFile: (sourcePath: string) => ipcRenderer.invoke('media:read-file', { sourcePath }),
@@ -375,6 +376,8 @@ function buildApi(): ClawWorkAPI {
       ipcRenderer.invoke('context:list-source-files', { taskId, sourceId, query }),
     readTaskContextFile: (taskId: string, sourceId: string, relativePath: string) =>
       ipcRenderer.invoke('context:read-source-file', { taskId, sourceId, relativePath }),
+    readTaskContextFileForSend: (taskId: string, sourceId: string, relativePath: string) =>
+      ipcRenderer.invoke('context:read-source-file-for-send', { taskId, sourceId, relativePath }),
 
     sendNotification: (params: { title: string; body: string; taskId?: string }) =>
       ipcRenderer.invoke('notification:send', params),

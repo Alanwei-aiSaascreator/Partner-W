@@ -274,6 +274,7 @@
     "noModelsAvailableDetail": "ネットワークを確認するか、後でもう一度モデル一覧を開いてください。",
     "offlineReadOnly": "オフライン — 読み取り専用",
     "openFailed": "{{fileName}} を開けませんでした",
+    "partialSendFailed": "Some assistants did not receive the message",
     "revokeFolder": "フォルダ {{name}} の使用を停止",
     "revokeFolderFailed": "フォルダの許可を解除できませんでした",
     "runPhase": {

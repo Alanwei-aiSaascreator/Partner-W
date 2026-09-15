@@ -274,6 +274,7 @@
     "noModelsAvailableDetail": "네트워크를 확인하거나 나중에 모델 목록을 다시 열어 주세요.",
     "offlineReadOnly": "오프라인 — 읽기 전용",
     "openFailed": "{{fileName}} 열기 실패",
+    "partialSendFailed": "Some assistants did not receive the message",
     "revokeFolder": "{{name}} 폴더 사용 중지",
     "revokeFolderFailed": "폴더 권한을 취소하지 못했습니다",
     "runPhase": {

@@ -24,10 +24,14 @@ const mocks = vi.hoisted(() => {
   return {
     abort: vi.fn(async () => {}),
     applySlashCommand: vi.fn(async () => ({ ok: true })),
-    send: vi.fn(async () => ({ ok: true, taskId: 'task-1' })),
+    send: vi.fn<(taskId: string) => Promise<{ ok: boolean; taskId?: string; partialFailure?: string }>>(async () => ({
+      ok: true,
+      taskId: 'task-1',
+    })),
+    toastWarning: vi.fn(),
     taskState: {
       tasks: [activeTask],
-      activeTaskId: 'task-1',
+      activeTaskId: 'task-1' as string | null,
       pendingNewTask: null,
       commitPendingTask: vi.fn(),
       updateTaskMetadata: vi.fn(),
@@ -56,6 +60,7 @@ vi.mock('react-i18next', () => ({
 vi.mock('sonner', () => ({
   toast: {
     error: vi.fn(),
+    warning: mocks.toastWarning,
   },
 }));
 
@@ -206,12 +211,13 @@ describe('useChatSend abort flow', () => {
     mocks.abort.mockClear();
     mocks.applySlashCommand.mockClear();
     mocks.send.mockClear();
+    mocks.toastWarning.mockClear();
     mocks.taskState.activeTaskId = 'task-1';
     mocks.taskState.tasks = [mocks.taskState.tasks.find((task) => task.id === 'task-1')!];
     Object.assign(window, {
       clawwork: {
-        readInboxFile: vi.fn(async () => ({ ok: true, result: { content: 'cGRm', encoding: 'base64' } })),
-        readTaskContextFile: vi.fn(async () => ({
+        readInboxFileForSend: vi.fn(async () => ({ ok: true, result: { content: 'cGRm', encoding: 'base64' } })),
+        readTaskContextFileForSend: vi.fn(async () => ({
           ok: true,
           result: { content: 'notes', mimeType: 'text/plain', size: 5, truncated: false, tier: 'text' },
         })),
@@ -334,8 +340,8 @@ describe('useChatSend abort flow', () => {
       await Promise.resolve();
     });
 
-    expect(window.clawwork.readInboxFile).toHaveBeenCalledWith('tasks/task-1/inbox/brief.pdf');
-    expect(window.clawwork.readTaskContextFile).toHaveBeenCalledWith('task-1', 'source-1', 'notes.txt');
+    expect(window.clawwork.readInboxFileForSend).toHaveBeenCalledWith('tasks/task-1/inbox/brief.pdf');
+    expect(window.clawwork.readTaskContextFileForSend).toHaveBeenCalledWith('task-1', 'source-1', 'notes.txt');
     expect(mocks.send).toHaveBeenCalledWith(
       'task-1',
       expect.objectContaining({
@@ -373,7 +379,7 @@ describe('useChatSend abort flow', () => {
   });
 
   it('forwards a task-scoped binary folder file as a gateway attachment', async () => {
-    vi.mocked(window.clawwork.readTaskContextFile).mockResolvedValueOnce({
+    vi.mocked(window.clawwork.readTaskContextFileForSend).mockResolvedValueOnce({
       ok: true,
       result: { content: 'aW1hZ2U=', mimeType: 'image/png', size: 5, truncated: false, tier: 'image' },
     });
@@ -395,7 +401,7 @@ describe('useChatSend abort flow', () => {
   });
 
   it('marks an unavailable inbox material and preserves the draft without dispatching', async () => {
-    vi.mocked(window.clawwork.readInboxFile).mockResolvedValueOnce({ ok: false, error: 'missing' });
+    vi.mocked(window.clawwork.readInboxFileForSend).mockResolvedValueOnce({ ok: false, error: 'missing' });
     const clearImported = vi.fn();
     const clearFolder = vi.fn();
     const markMissing = vi.fn();
@@ -430,7 +436,7 @@ describe('useChatSend abort flow', () => {
       (container.querySelector('button') as HTMLButtonElement).click();
       await Promise.resolve();
     });
-    expect(window.clawwork.readInboxFile).not.toHaveBeenCalled();
+    expect(window.clawwork.readInboxFileForSend).not.toHaveBeenCalled();
     expect(mocks.send).not.toHaveBeenCalled();
     unmount();
   });
@@ -452,14 +458,14 @@ describe('useChatSend abort flow', () => {
       (container.querySelector('button') as HTMLButtonElement).click();
       await Promise.resolve();
     });
-    expect(window.clawwork.readInboxFile).not.toHaveBeenCalled();
+    expect(window.clawwork.readInboxFileForSend).not.toHaveBeenCalled();
     expect(mocks.send).not.toHaveBeenCalled();
     unmount();
   });
 
   it('locks the complete send pipeline so a double click dispatches once', async () => {
     let resolveRead!: (value: unknown) => void;
-    vi.mocked(window.clawwork.readInboxFile).mockReturnValueOnce(
+    vi.mocked(window.clawwork.readInboxFileForSend).mockReturnValueOnce(
       new Promise((resolve) => (resolveRead = resolve)) as never,
     );
     const { container, unmount } = render(<MaterialHarness clearImported={vi.fn()} clearFolder={vi.fn()} />);
@@ -473,14 +479,14 @@ describe('useChatSend abort flow', () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(window.clawwork.readInboxFile).toHaveBeenCalledTimes(1);
+    expect(window.clawwork.readInboxFileForSend).toHaveBeenCalledTimes(1);
     expect(mocks.send).toHaveBeenCalledTimes(1);
     unmount();
   });
 
   it('does not clear the next task draft when the originating send finishes later', async () => {
     let resolveRead!: (value: unknown) => void;
-    vi.mocked(window.clawwork.readInboxFile).mockReturnValueOnce(
+    vi.mocked(window.clawwork.readInboxFileForSend).mockReturnValueOnce(
       new Promise((resolve) => (resolveRead = resolve)) as never,
     );
     const clearImported = vi.fn();
@@ -505,6 +511,84 @@ describe('useChatSend abort flow', () => {
     expect(clearImported).not.toHaveBeenCalled();
     expect(clearFolder).not.toHaveBeenCalled();
     expect((view.container.querySelector('textarea') as HTMLTextAreaElement).value).toBe('summarize');
+    view.unmount();
+  });
+
+  it('allows task B to send while task A is still in flight', async () => {
+    let resolveTaskA!: (value: { ok: boolean; taskId: string }) => void;
+    mocks.send.mockImplementation((taskId: string) => {
+      if (taskId === 'task-1') return new Promise((resolve) => (resolveTaskA = resolve));
+      return Promise.resolve({ ok: true, taskId });
+    });
+    const view = render(<Harness initialValue="task A" />);
+    act(() => (view.container.querySelectorAll('button')[1] as HTMLButtonElement).click());
+
+    const firstTask = mocks.taskState.tasks[0];
+    mocks.taskState.tasks = [
+      firstTask,
+      { ...firstTask, id: 'task-2', sessionKey: 'agent:main:clawwork:task:task-2', title: 'Task 2' },
+    ];
+    mocks.taskState.activeTaskId = 'task-2';
+    view.rerender(<Harness initialValue="task B" />);
+    const textarea = view.container.querySelector('textarea') as HTMLTextAreaElement;
+    textarea.value = 'task B';
+    await act(async () => {
+      (view.container.querySelectorAll('button')[1] as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+
+    expect(mocks.send.mock.calls.map((call) => call[0])).toEqual(['task-1', 'task-2']);
+    await act(async () => {
+      resolveTaskA({ ok: true, taskId: 'task-1' });
+      await Promise.resolve();
+    });
+    view.unmount();
+  });
+
+  it('warns about partial ensemble delivery without treating the successful send as failed', async () => {
+    mocks.send.mockResolvedValueOnce({ ok: true, taskId: 'task-1', partialFailure: 'worker offline' });
+    const view = render(<Harness initialValue="team request" />);
+
+    await act(async () => {
+      (view.container.querySelectorAll('button')[1] as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+
+    expect(mocks.toastWarning).toHaveBeenCalledWith(
+      'chatInput.partialSendFailed',
+      expect.objectContaining({ description: 'worker offline' }),
+    );
+    expect((view.container.querySelector('textarea') as HTMLTextAreaElement).value).toBe('');
+    view.unmount();
+  });
+
+  it('keeps the pending-task lock after commit so a rerender cannot duplicate the same send', async () => {
+    const firstTask = mocks.taskState.tasks[0];
+    let resolveRead!: (value: unknown) => void;
+    vi.mocked(window.clawwork.readInboxFileForSend).mockReturnValueOnce(
+      new Promise((resolve) => (resolveRead = resolve)) as never,
+    );
+    mocks.taskState.tasks = [];
+    mocks.taskState.activeTaskId = null;
+    mocks.taskState.pendingNewTask = { gatewayId: 'gw-1', model: 'deepseek-v4-flash' } as never;
+    mocks.taskState.commitPendingTask.mockReturnValue(firstTask);
+    const view = render(<MaterialHarness clearImported={vi.fn()} clearFolder={vi.fn()} />);
+    act(() => (view.container.querySelector('button') as HTMLButtonElement).click());
+
+    mocks.taskState.tasks = [firstTask];
+    mocks.taskState.activeTaskId = 'task-1';
+    mocks.taskState.pendingNewTask = null;
+    view.rerender(<MaterialHarness clearImported={vi.fn()} clearFolder={vi.fn()} />);
+    act(() => (view.container.querySelector('button') as HTMLButtonElement).click());
+
+    await act(async () => {
+      resolveRead({ ok: true, result: { content: 'cGRm', encoding: 'base64' } });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(mocks.taskState.commitPendingTask).toHaveBeenCalledTimes(1);
+    expect(window.clawwork.readInboxFileForSend).toHaveBeenCalledTimes(1);
+    expect(mocks.send).toHaveBeenCalledTimes(1);
     view.unmount();
   });
 });

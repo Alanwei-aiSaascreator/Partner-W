@@ -25,8 +25,8 @@ const INBOX_DIR = join(WORKSPACE_PATH, 'task-1', 'inbox');
 const INBOX_FILE = join(INBOX_DIR, 'file.txt');
 const OUTSIDE_FILE = resolve('outside-fixture', 'passwd');
 
-function fileStats(dev: number, ino: number): { dev: number; ino: number; isFile: () => true } {
-  return { dev, ino, isFile: () => true };
+function fileStats(dev: number, ino: number, size = 1): { dev: number; ino: number; size: number; isFile: () => true } {
+  return { dev, ino, size, isFile: () => true };
 }
 
 describe('inbox path access', () => {
@@ -144,6 +144,32 @@ describe('inbox path access', () => {
       .mockResolvedValueOnce(fileStats(1, 3) as Awaited<ReturnType<typeof stat>>);
 
     await expect(readInboxFile(WORKSPACE_PATH, LOCAL_PATH)).resolves.toBeNull();
+    expect(readFile).not.toHaveBeenCalled();
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a send read when an inbox file grows beyond 25MB after it is opened', async () => {
+    const readFile = vi.fn().mockResolvedValue('oversized');
+    const close = vi.fn().mockResolvedValue(undefined);
+    const handleStat = vi
+      .fn()
+      .mockResolvedValueOnce(fileStats(1, 2, 1))
+      .mockResolvedValueOnce(fileStats(1, 2, 25 * 1024 * 1024 + 1));
+    mockOpen.mockResolvedValue({ fd: 42, stat: handleStat, readFile, close } as unknown as Awaited<
+      ReturnType<typeof open>
+    >);
+    mockRealpath.mockImplementation(async (path) => String(path));
+    mockRealpathSync.mockReturnValue(INBOX_FILE);
+    mockStat
+      .mockResolvedValueOnce(fileStats(1, 2, 1) as Awaited<ReturnType<typeof stat>>)
+      .mockResolvedValueOnce(fileStats(1, 2, 25 * 1024 * 1024 + 1) as Awaited<ReturnType<typeof stat>>);
+    const readForSend = readInboxFile as unknown as (
+      workspacePath: string,
+      localPath: string,
+      maxBytes: number,
+    ) => Promise<string | null>;
+
+    await expect(readForSend(WORKSPACE_PATH, LOCAL_PATH, 25 * 1024 * 1024)).resolves.toBeNull();
     expect(readFile).not.toHaveBeenCalled();
     expect(close).toHaveBeenCalledTimes(1);
   });
