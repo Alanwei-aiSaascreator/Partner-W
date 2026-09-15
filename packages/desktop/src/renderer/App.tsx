@@ -8,6 +8,8 @@ import Setup from './layouts/Setup';
 import Login from './layouts/Login';
 import Onboarding from './layouts/Onboarding';
 import Settings from './layouts/Settings';
+import type { SettingsSection } from './layouts/Settings/SettingsNav';
+import GlobalRail from './layouts/AppShell/GlobalRail';
 import ApprovalDialog from './components/ApprovalDialog';
 import CommandPalette from './components/CommandPalette';
 import { useUiStore, type Theme } from './stores/uiStore';
@@ -45,6 +47,7 @@ export default function App() {
   const [onboardingAccount, setOnboardingAccount] = useState<{ userId: string; nickname: string } | null>(null);
   const [onboardingProfile, setOnboardingProfile] = useState<OnboardingProfile | null>(null);
   const [onboardingResolved, setOnboardingResolved] = useState(false);
+  const [settingsSection, setSettingsSection] = useState<SettingsSection>('general');
 
   const rightPanelOpen = useUiStore((s) => s.rightPanelOpen);
   const toggleRightPanel = useUiStore((s) => s.toggleRightPanel);
@@ -67,6 +70,25 @@ export default function App() {
   const leftNavShortcut = useUiStore((s) => s.leftNavShortcut);
   const rightPanelShortcut = useUiStore((s) => s.rightPanelShortcut);
   const themeMode = useUiStore((s) => s.theme);
+  const hasUpdate = useUiStore((s) => s.hasUpdate);
+  const currentAgentId = useUiStore((s) => {
+    const gatewayId = s.defaultGatewayId;
+    if (!gatewayId) return 'main';
+    return s.selectedAgentByGateway[gatewayId] || s.agentCatalogByGateway[gatewayId]?.defaultId || 'main';
+  });
+
+  const openSettings = useCallback(
+    (section: SettingsSection) => {
+      setSettingsSection(section);
+      setSettingsOpen(true);
+    },
+    [setSettingsOpen],
+  );
+
+  const goHome = useCallback(() => {
+    setActiveTask(null);
+    setMainView('chat');
+  }, [setActiveTask, setMainView]);
 
   useGatewayBootstrap();
   useWorkspaceRefresh();
@@ -207,6 +229,7 @@ export default function App() {
     const cleanupNav = window.clawwork.onTrayNavigateTask(navigateToTask);
     const cleanupNotification = window.clawwork.onNotificationNavigateTask(navigateToTask);
     const cleanupSettings = window.clawwork.onTrayOpenSettings(() => {
+      setSettingsSection('general');
       setSettingsOpen(true);
     });
     return () => {
@@ -262,13 +285,28 @@ export default function App() {
     <TooltipProvider>
       <AnimatePresence>{commandPaletteOpen && <CommandPalette />}</AnimatePresence>
       <div className="relative flex h-screen overflow-hidden bg-[var(--bg-primary)]">
+        <GlobalRail
+          mainView={mainView}
+          settingsOpen={settingsOpen}
+          activeSettingsSection={settingsSection === 'account' ? 'account' : 'general'}
+          assistantCollapsed={leftNavCollapsed}
+          currentAgentId={currentAgentId}
+          hasUpdate={hasUpdate}
+          onGoHome={goHome}
+          onSelectView={setMainView}
+          onOpenIdentity={() => openSettings('account')}
+          onOpenSettings={() => openSettings('general')}
+          onExpandAssistant={toggleLeftNavCollapsed}
+        />
         <motion.aside
-          animate={{ width: leftNavCollapsed ? 52 : leftNavWidth }}
+          animate={{ width: leftNavCollapsed ? 0 : leftNavWidth }}
           transition={{ duration: motionDuration.moderate, ease: motionEase.standard }}
-          className={cn('glass-heavy relative flex-shrink-0 overflow-hidden z-[1] border-r-0')}
-          style={{ minWidth: leftNavCollapsed ? 52 : 180 }}
+          className={cn(
+            'relative z-[1] flex-shrink-0 overflow-hidden border-r border-[var(--border-subtle)] bg-[var(--bg-secondary)]',
+          )}
+          style={{ minWidth: leftNavCollapsed ? 0 : 200 }}
         >
-          <LeftNav />
+          <LeftNav onOpenAssistantSettings={() => openSettings('agents')} />
         </motion.aside>
 
         {!leftNavCollapsed && (
@@ -282,7 +320,7 @@ export default function App() {
 
         <main className="relative flex-1 min-w-0 flex flex-col z-[1]">
           {settingsOpen ? (
-            <Settings />
+            <Settings initialSection={settingsSection} />
           ) : (
             <MainArea onTogglePanel={toggleRightPanel} onboardingProfile={onboardingProfile} />
           )}

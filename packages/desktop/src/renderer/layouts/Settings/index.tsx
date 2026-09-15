@@ -1,4 +1,4 @@
-import { useState, type ComponentType } from 'react';
+import { useEffect, useState, type ComponentType } from 'react';
 import { motion } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
 import { motion as motionPresets, motionDuration } from '@/styles/design-tokens';
@@ -24,9 +24,17 @@ const SECTION_COMPONENTS: Record<SettingsSection, ComponentType> = {
   about: AboutSection,
 };
 
-export default function Settings() {
+interface SettingsProps {
+  initialSection?: SettingsSection;
+}
+
+export default function Settings({ initialSection = 'general' }: SettingsProps) {
   const { t } = useTranslation();
-  const [activeSection, setActiveSection] = useState<SettingsSection>('general');
+  const [activeSection, setActiveSection] = useState<SettingsSection>(initialSection);
+
+  useEffect(() => {
+    setActiveSection(initialSection);
+  }, [initialSection]);
 
   const SectionComponent = SECTION_COMPONENTS[activeSection];
 
