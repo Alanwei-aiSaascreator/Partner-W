@@ -57,7 +57,7 @@ function mountHarness() {
             modelIds: ['deepseek-v4-flash'],
             storage: props.storage,
           },
-          props.session,
+          { ...props.session },
         );
         return <div data-status={analysis.status}>{analysis.result?.summary}</div>;
       }
@@ -119,6 +119,48 @@ describe('useGoalAnalysis', () => {
 
     expect(start).not.toHaveBeenCalled();
     expect(harness.container.querySelector('[data-status]')?.getAttribute('data-status')).toBe('ready');
+    harness.unmount();
+  });
+
+  it('does not restart analysis after a successful result triggers a rerender', async () => {
+    const start = vi.fn(async () => ({ ok: true }));
+    const end = vi.fn(async () => undefined);
+    const storage = memoryStorage();
+    const currentProfile = profile('completion-user');
+    const harness = mountHarness();
+
+    harness.render({
+      profile: currentProfile,
+      enabled: true,
+      storage,
+      session: { status: 'idle', messages: [], error: null, start, end },
+    });
+    await act(async () => undefined);
+
+    harness.render({
+      profile: currentProfile,
+      enabled: true,
+      storage,
+      session: {
+        status: 'active',
+        error: null,
+        start,
+        end,
+        messages: [
+          {
+            role: 'assistant',
+            timestamp: '2026-09-15T00:00:01.000Z',
+            content:
+              '```goal-analysis\n{"kind":"preset","assistantId":"rongying-content","summary":"短视频内容","reason":"需要选题和脚本","model":"deepseek-v4-flash","starters":["整理素材","生成选题","写脚本"]}\n```',
+          },
+        ],
+      },
+    });
+    await act(async () => undefined);
+
+    expect(harness.container.querySelector('[data-status]')?.getAttribute('data-status')).toBe('ready');
+    expect(start).toHaveBeenCalledTimes(1);
+    expect(end).toHaveBeenCalledTimes(1);
     harness.unmount();
   });
 });

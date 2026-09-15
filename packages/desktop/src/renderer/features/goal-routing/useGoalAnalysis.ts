@@ -68,7 +68,7 @@ export function useGoalAnalysisWithSession(
   }, [profile.customGoal, stored, version]);
 
   useEffect(() => {
-    if (!profile.customGoal.trim() || stored) return;
+    if (!profile.customGoal.trim() || stored || result || status === 'ready') return;
     if (!enabled || !gatewayId) {
       setStatus('waiting');
       return;
@@ -97,7 +97,7 @@ export function useGoalAnalysisWithSession(
         setError(reason instanceof Error ? reason.message : String(reason));
         setStatus('error');
       });
-  }, [agentId, attempt, enabled, gatewayId, modelIds, profile, session, stored, version]);
+  }, [agentId, attempt, enabled, gatewayId, modelIds, profile, result, session, status, stored, version]);
 
   useEffect(() => {
     if (!activeVersionRef.current || status !== 'analyzing') return;
