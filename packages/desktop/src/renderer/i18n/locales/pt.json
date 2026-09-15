@@ -411,11 +411,14 @@
   },
   "fileBrowser": {
     "allTypes": "Todos os tipos",
+    "openWorkspace": "Open workspace",
     "searchFiles": "Buscar arquivos…",
     "typeCode": "Codigo",
     "typeFiles": "Arquivos",
     "typeImages": "Imagens",
-    "typeOther": "Outros"
+    "typeOther": "Outros",
+    "workspaceAccessDescription": "Assistants can access only this workspace and files you explicitly add. The app does not scan your whole computer. Generated files are saved here too.",
+    "workspaceAccessTitle": "Data available now"
   },
   "filePreview": {
     "cannotPreview": "Não é possível pré-visualizar este tipo de arquivo",

@@ -411,11 +411,14 @@
   },
   "fileBrowser": {
     "allTypes": "すべての種類",
+    "openWorkspace": "Open workspace",
     "searchFiles": "ファイルを検索…",
     "typeCode": "コード",
     "typeFiles": "ファイル",
     "typeImages": "画像",
-    "typeOther": "その他"
+    "typeOther": "その他",
+    "workspaceAccessDescription": "Assistants can access only this workspace and files you explicitly add. The app does not scan your whole computer. Generated files are saved here too.",
+    "workspaceAccessTitle": "Data available now"
   },
   "filePreview": {
     "cannotPreview": "このファイル形式はプレビューできません",

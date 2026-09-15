@@ -411,11 +411,14 @@
   },
   "fileBrowser": {
     "allTypes": "모든 유형",
+    "openWorkspace": "Open workspace",
     "searchFiles": "파일 검색…",
     "typeCode": "코드",
     "typeFiles": "파일",
     "typeImages": "이미지",
-    "typeOther": "기타"
+    "typeOther": "기타",
+    "workspaceAccessDescription": "Assistants can access only this workspace and files you explicitly add. The app does not scan your whole computer. Generated files are saved here too.",
+    "workspaceAccessTitle": "Data available now"
   },
   "filePreview": {
     "cannotPreview": "이 파일 유형은 미리보기할 수 없습니다",

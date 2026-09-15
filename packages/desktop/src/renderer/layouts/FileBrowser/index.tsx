@@ -20,6 +20,7 @@ import EmptyState from '@/components/semantic/EmptyState';
 import ListItem from '@/components/semantic/ListItem';
 import SectionCard from '@/components/semantic/SectionCard';
 import WindowTitlebar from '@/components/semantic/WindowTitlebar';
+import WorkspaceAccessSummary from './WorkspaceAccessSummary';
 
 function sortArtifacts(list: Artifact[]): Artifact[] {
   return [...list].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
@@ -237,6 +238,8 @@ export default function FileBrowser() {
             </select>
           }
         />
+
+        <WorkspaceAccessSummary />
 
         <div className="titlebar-no-drag px-6 py-3 border-b border-[var(--border)] flex-shrink-0">
           <div className="relative">

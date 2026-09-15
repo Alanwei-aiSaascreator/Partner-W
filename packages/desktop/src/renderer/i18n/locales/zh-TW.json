@@ -411,11 +411,14 @@
   },
   "fileBrowser": {
     "allTypes": "所有類型",
+    "openWorkspace": "開啟工作區",
     "searchFiles": "搜尋檔案…",
     "typeCode": "程式碼",
     "typeFiles": "檔案",
     "typeImages": "圖片",
-    "typeOther": "其他"
+    "typeOther": "其他",
+    "workspaceAccessDescription": "助手僅查看目前工作區和你主動加入的檔案，不會掃描整台電腦。產生的檔案也保存在這裡。",
+    "workspaceAccessTitle": "目前可存取的資料"
   },
   "filePreview": {
     "cannotPreview": "無法預覽此檔案類型",
