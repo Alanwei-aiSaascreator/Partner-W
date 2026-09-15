@@ -7,6 +7,7 @@ import { PROVIDER_DISPLAY_NAMES } from '@clawwork/shared';
 import { useDashboardStore } from '@/stores/dashboardStore';
 import { useCommercialStore } from '@/stores/commercialStore';
 import { formatCredits, formatRmb, formatTokenCount } from '@/lib/utils';
+import { deriveQuotaDisplay } from '@/lib/quota-display';
 import { Button } from '@/components/ui/button';
 import { resolveAgentDisplayNameKey } from '@/lib/preset-agents';
 
@@ -296,9 +297,9 @@ export default function Dashboard() {
   const license = commercialOverview?.license ?? null;
   const quotaMicros = license?.tokenQuotaMicros ?? null;
   const usedMicros = license?.tokenUsedMicros ?? null;
-  const remainingMicros = quotaMicros === null || usedMicros === null ? null : Math.max(0, quotaMicros - usedMicros);
-  const remainingPercent =
-    quotaMicros && remainingMicros !== null ? Math.min(100, (remainingMicros / quotaMicros) * 100) : 0;
+  const quotaDisplay = quotaMicros === null || usedMicros === null ? null : deriveQuotaDisplay(quotaMicros, usedMicros);
+  const remainingMicros = quotaDisplay?.remaining ?? null;
+  const remainingPercent = quotaDisplay?.remainingPercent ?? 0;
 
   return (
     <div className="h-full w-full overflow-y-auto">

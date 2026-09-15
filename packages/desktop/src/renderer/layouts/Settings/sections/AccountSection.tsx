@@ -10,6 +10,7 @@ import {
 import type { RechargeOrderHandle, RechargeSku } from '../../../../preload/clawwork';
 import { toast } from '@/lib/toast';
 import { formatCredits } from '@/lib/utils';
+import { deriveQuotaDisplay } from '@/lib/quota-display';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -72,23 +73,29 @@ function formatCents(cents: number): string {
   return `¥${(cents / 100).toFixed(2)}`;
 }
 
-/** Presents a "used / total" bar; callers must ensure total > 0. */
 function QuotaBar({ used, total }: { used: number; total: number }) {
   const { t } = useTranslation();
-  const percent = Math.min(100, Math.max(0, (used / total) * 100));
+  const { remaining, remainingPercent } = deriveQuotaDisplay(total, used);
   return (
     <div className="space-y-2">
-      <div className="h-2 overflow-hidden rounded-full bg-[var(--bg-hover)]">
+      <div
+        className="h-2 overflow-hidden rounded-full bg-[var(--bg-hover)]"
+        role="progressbar"
+        aria-label={t('dashboard.remainingCredits')}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={Math.round(remainingPercent)}
+      >
         <div
           className="h-full rounded-full bg-[var(--accent)] transition-all duration-300"
-          style={{ width: `${percent}%` }}
+          style={{ width: `${remainingPercent}%` }}
         />
       </div>
       <div className="flex items-center justify-between type-support text-[var(--text-muted)]">
         <span className="type-mono-data text-[var(--text-secondary)]">
-          {formatCredits(used)} / {formatCredits(total)} {t('usage.creditsUnit')}
+          {t('dashboard.remainingCredits')} {formatCredits(remaining)} / {formatCredits(total)} {t('usage.creditsUnit')}
         </span>
-        <span>{percent.toFixed(1)}%</span>
+        <span>{remainingPercent.toFixed(1)}%</span>
       </div>
     </div>
   );

@@ -25,6 +25,7 @@ import { useUiStore } from '@/stores/uiStore';
 import { useRoomStore } from '@/stores/roomStore';
 import { useCommercialStore } from '@/stores/commercialStore';
 import { cn, formatRelativeTime, formatTokenCount, formatCost, formatCredits } from '@/lib/utils';
+import { deriveQuotaDisplay } from '@/lib/quota-display';
 import { resolveModelLabel } from '@/lib/model-display';
 import WindowTitlebar from '@/components/semantic/WindowTitlebar';
 import { Button } from '@/components/ui/button';
@@ -154,7 +155,8 @@ function ChatHeader({
   const quotaMicros = commercialOverview?.license?.tokenQuotaMicros ?? 0;
   const usedMicros = commercialOverview?.license?.tokenUsedMicros ?? 0;
   // 剩余额度，单位微积分 → 显示成积分。
-  const remainingCredits = formatCredits(quotaMicros - usedMicros);
+  const quotaDisplay = deriveQuotaDisplay(quotaMicros, usedMicros);
+  const remainingCredits = formatCredits(quotaDisplay.remaining);
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState('');
   const titleInputRef = useRef<HTMLInputElement>(null);
@@ -284,10 +286,17 @@ function ChatHeader({
                     {formatCredits(usedMicros)} {t('usage.creditsUnit')}
                   </span>
                 </div>
-                <div className="h-1.5 w-full rounded-full bg-[var(--bg-tertiary)]">
+                <div
+                  className="h-1.5 w-full rounded-full bg-[var(--bg-tertiary)]"
+                  role="progressbar"
+                  aria-label={t('dashboard.remainingCredits')}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={Math.round(quotaDisplay.remainingPercent)}
+                >
                   <div
                     className="h-1.5 rounded-full bg-[var(--accent)] transition-all"
-                    style={{ width: `${quotaMicros > 0 ? Math.min(100, (usedMicros / quotaMicros) * 100) : 0}%` }}
+                    style={{ width: `${quotaDisplay.remainingPercent}%` }}
                   />
                 </div>
               </div>
