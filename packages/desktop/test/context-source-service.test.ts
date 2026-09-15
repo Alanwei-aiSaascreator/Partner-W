@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -29,6 +29,10 @@ interface CaptureResult {
 }
 
 interface ProbeResult {
+  replacementSupported: boolean;
+  replacement: CaptureResult;
+  driftFiles: CaptureResult;
+  driftRead: CaptureResult;
   source: SourceShape;
   duplicate: SourceShape;
   listed: SourceShape[];
@@ -120,6 +124,26 @@ describe('task-scoped folder source service', () => {
     const root = mkdtempSync(join(tmpdir(), 'clawwork-missing-grant-'));
     const result = runProbe('missing', root);
     expect(result.listed).toEqual([expect.objectContaining({ taskId: 'task-1', availability: 'missing' })]);
+  });
+
+  it('rejects a grant root replaced by a symlink or junction to another directory', ({ skip }) => {
+    const rootParent = mkdtempSync(join(tmpdir(), 'clawwork-drift-parent-'));
+    const root = join(rootParent, 'granted');
+    const outside = mkdtempSync(join(tmpdir(), 'clawwork-drift-outside-'));
+    try {
+      mkdirSync(root);
+      writeFileSync(join(outside, 'outside.txt'), 'outside');
+
+      const result = runProbe('root-drift', root, outside);
+      if (!result.replacementSupported)
+        skip(`filesystem link unavailable: ${result.replacement.error ?? 'unknown error'}`);
+      expect(result.listed).toEqual([expect.objectContaining({ availability: 'missing' })]);
+      expect(result.driftFiles.error).toMatch(/changed|unavailable/i);
+      expect(result.driftRead.error).toMatch(/changed|unavailable/i);
+    } finally {
+      rmSync(rootParent, { recursive: true, force: true });
+      rmSync(outside, { recursive: true, force: true });
+    }
   });
 
   it('enforces task ownership, revocation, and canonical containment', () => {

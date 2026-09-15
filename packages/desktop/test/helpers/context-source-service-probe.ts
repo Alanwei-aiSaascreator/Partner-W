@@ -1,4 +1,4 @@
-import { rmSync } from 'node:fs';
+import { rmSync, symlinkSync } from 'node:fs';
 import { initDatabase, closeDatabase, getSqlite } from '../../src/main/db/index.js';
 import {
   createFolderSource,
@@ -49,6 +49,20 @@ if (scenario === 'lifecycle') {
   createFolderSource({ taskId: 'task-1', absolutePath: grantedPath });
   rmSync(grantedPath, { recursive: true, force: true });
   result = { listed: listTaskContextSources('task-1') };
+} else if (scenario === 'root-drift') {
+  const source = createFolderSource({ taskId: 'task-1', absolutePath: grantedPath });
+  rmSync(grantedPath, { recursive: true, force: true });
+  const replacement = capture(() =>
+    symlinkSync(outsidePath, grantedPath, process.platform === 'win32' ? 'junction' : 'dir'),
+  );
+  result = replacement.error
+    ? { replacementSupported: false, replacement }
+    : {
+        replacementSupported: true,
+        listed: listTaskContextSources('task-1'),
+        driftFiles: capture(() => listGrantedFiles('task-1', source.id)),
+        driftRead: capture(() => readGrantedFile('task-1', source.id, 'outside.txt')),
+      };
 } else {
   const source = createFolderSource({ taskId: 'task-1', absolutePath: grantedPath });
   result = {

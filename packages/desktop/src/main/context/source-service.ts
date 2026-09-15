@@ -22,9 +22,29 @@ function database() {
   return sqlite;
 }
 
-function isAvailable(folderPath: string): boolean {
+function nativeRealpath(targetPath: string): string {
+  return realpathSync.native(targetPath);
+}
+
+function trustedCurrentRoot(source: SourceRow): string {
+  let currentPath: string;
   try {
-    return statSync(folderPath).isDirectory();
+    currentPath = nativeRealpath(source.absolute_path);
+    if (!statSync(currentPath).isDirectory()) throw new Error();
+  } catch {
+    throw new Error('context source is unavailable');
+  }
+
+  if (relative(source.absolute_path, currentPath) !== '') {
+    throw new Error('context source path changed');
+  }
+  return currentPath;
+}
+
+function isAvailable(source: SourceRow): boolean {
+  try {
+    trustedCurrentRoot(source);
+    return true;
   } catch {
     return false;
   }
@@ -39,7 +59,7 @@ function toSource(row: SourceRow): TaskContextSource {
     displayName: row.display_name,
     createdAt: row.created_at,
     lastSeenAt: row.last_seen_at,
-    availability: isAvailable(row.absolute_path) ? 'available' : 'missing',
+    availability: isAvailable(row) ? 'available' : 'missing',
   };
 }
 
@@ -49,10 +69,6 @@ function findSource(taskId: string, sourceId: string): SourceRow {
     .get(taskId, sourceId) as SourceRow | undefined;
   if (!row) throw new Error('context source is not available for this task');
   return row;
-}
-
-function nativeRealpath(targetPath: string): string {
-  return realpathSync.native(targetPath);
 }
 
 export function createFolderSource(input: { taskId: string; absolutePath: string }): TaskContextSource {
@@ -122,10 +138,9 @@ export function resolveGrantedFile(taskId: string, sourceId: string, relativePat
   if (isAbsolute(relativePath)) throw new Error('relativePath must be relative');
 
   const source = findSource(taskId, sourceId);
-  let realRoot: string;
+  const realRoot = trustedCurrentRoot(source);
   let realTarget: string;
   try {
-    realRoot = nativeRealpath(source.absolute_path);
     realTarget = nativeRealpath(resolve(realRoot, relativePath));
   } catch {
     throw new Error('requested file is unavailable');
@@ -140,18 +155,13 @@ export function resolveGrantedFile(taskId: string, sourceId: string, relativePat
 
 export function listGrantedFiles(taskId: string, sourceId: string, query?: string): FileIndexEntry[] {
   const source = findSource(taskId, sourceId);
-  let realRoot: string;
-  try {
-    realRoot = nativeRealpath(source.absolute_path);
-  } catch {
-    return [];
-  }
+  const realRoot = trustedCurrentRoot(source);
   return scanFolder(realRoot, { query });
 }
 
 export function readGrantedFile(taskId: string, sourceId: string, relativePath: string): FileReadResult {
   const realTarget = resolveGrantedFile(taskId, sourceId, relativePath);
   const source = findSource(taskId, sourceId);
-  const realRoot = nativeRealpath(source.absolute_path);
+  const realRoot = trustedCurrentRoot(source);
   return readContextFile(realTarget, [realRoot]);
 }
