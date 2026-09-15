@@ -126,6 +126,53 @@ export function buildRelayPatch(input: RelayPatchInput): RelayConfigPatch | null
   return patch;
 }
 
+export interface RelayRemovalPatch {
+  patch: RelayConfigPatch;
+  replacePaths: string[];
+}
+
+/**
+ * 构造一份最窄的 JSON merge patch 来移除商业中转凭证。
+ *
+ * `config.get` 会脱敏所有密钥，所以这里绝不能把完整快照通过 `config.set`
+ * 写回；只对确认指向荣盈中转地址的 provider 发 `null` 删除。
+ */
+export function buildRelayRemovalPatch(configSnapshot: unknown): RelayRemovalPatch | null {
+  const config = configOf(configSnapshot);
+  if (!config) return null;
+
+  const providerIds = relayProviderIds(configSnapshot);
+  const patch: RelayConfigPatch = {};
+  const replacePaths: string[] = [];
+
+  if (providerIds.size > 0) {
+    patch.models = {
+      providers: Object.fromEntries(Array.from(providerIds, (id) => [id, null])),
+    };
+  }
+
+  const allow = (config.plugins as { allow?: unknown } | undefined)?.allow;
+  if (Array.isArray(allow)) {
+    const blockedNames = new Set([...providerIds, RELAY_PROVIDER_ID]);
+    const filtered = allow.filter((name) => typeof name !== 'string' || !blockedNames.has(name));
+    if (filtered.length !== allow.length) {
+      patch.plugins = { allow: filtered };
+      replacePaths.push('plugins.allow');
+    }
+  }
+
+  const primary = (config.agents as { defaults?: { model?: { primary?: unknown } } } | undefined)?.defaults?.model
+    ?.primary;
+  if (typeof primary === 'string') {
+    const providerName = primary.split('/', 1)[0];
+    if (providerIds.has(providerName) || providerName === RELAY_PROVIDER_ID) {
+      patch.agents = { defaults: { model: { primary: null } } };
+    }
+  }
+
+  return Object.keys(patch).length > 0 ? { patch, replacePaths } : null;
+}
+
 /** 取 catalog 的超时。catalog 是纯内存查询，正常在百毫秒级。 */
 const CATALOG_TIMEOUT_MS = 8_000;
 
@@ -168,7 +215,7 @@ export interface ApplyRelayConfigDeps {
   /** 读网关配置快照（`gateway-client.getConfig()`）。**会抛**，不返回 IpcResult。 */
   getConfig: () => Promise<unknown>;
   /** 写网关配置（`gateway-client.patchConfig()`）。**会抛**，不返回 IpcResult。 */
-  patchConfig: (params: { baseHash: string; raw: string }) => Promise<unknown>;
+  patchConfig: (params: { baseHash: string; raw: string; replacePaths?: string[] }) => Promise<unknown>;
   /** 解析一个可用的中转模型 ref；拿不到返回 null（不阻塞主流程）。 */
   resolveDefaultModel?: (relayKey: string) => Promise<string | null>;
   /** 日志。**不要传含 relay key 的数据进来**。 */
@@ -206,6 +253,67 @@ function classifyWriteError(error: unknown): 'hash-conflict' | 'transport' | 're
     return 'transport';
   }
   return 'rejected';
+}
+
+export interface RemoveRelayConfigDeps {
+  getConfig: () => Promise<unknown>;
+  patchConfig: (params: { baseHash: string; raw: string; replacePaths?: string[] }) => Promise<unknown>;
+  log?: (event: string, data: Record<string, unknown>) => void;
+}
+
+export interface RemoveRelayResult {
+  ok: boolean;
+  cleaned: boolean;
+  error?: string;
+  errorCode?: 'transport' | 'rejected' | 'hash-conflict' | 'verify-failed';
+}
+
+export async function removeRelayConfig(deps: RemoveRelayConfigDeps): Promise<RemoveRelayResult> {
+  const log = deps.log ?? ((): void => {});
+
+  for (let attempt = 1; attempt <= MAX_HASH_RETRIES; attempt += 1) {
+    let snapshot: unknown;
+    try {
+      snapshot = await deps.getConfig();
+    } catch (error) {
+      return { ok: false, cleaned: false, errorCode: 'transport', error: messageOf(error) };
+    }
+
+    const removal = buildRelayRemovalPatch(snapshot);
+    if (!removal) return { ok: true, cleaned: true };
+
+    const baseHash = (snapshot as { hash?: unknown } | null)?.hash;
+    if (typeof baseHash !== 'string' || !baseHash) {
+      return { ok: false, cleaned: false, errorCode: 'transport', error: 'config snapshot has no hash' };
+    }
+
+    try {
+      await deps.patchConfig({
+        baseHash,
+        raw: JSON.stringify(removal.patch),
+        replacePaths: removal.replacePaths,
+      });
+    } catch (error) {
+      const kind = classifyWriteError(error);
+      log('relay.config-remove-failed', { attempt, kind, message: messageOf(error) });
+      if (kind === 'hash-conflict' && attempt < MAX_HASH_RETRIES) continue;
+      return { ok: false, cleaned: false, errorCode: kind, error: messageOf(error) };
+    }
+
+    try {
+      if (!buildRelayRemovalPatch(await deps.getConfig())) return { ok: true, cleaned: true };
+    } catch (error) {
+      log('relay.config-remove-verify-failed', { attempt, message: messageOf(error) });
+    }
+    return {
+      ok: false,
+      cleaned: false,
+      errorCode: 'verify-failed',
+      error: 'gateway still contains relay configuration',
+    };
+  }
+
+  return { ok: false, cleaned: false, errorCode: 'hash-conflict', error: 'config patch kept conflicting' };
 }
 
 /**

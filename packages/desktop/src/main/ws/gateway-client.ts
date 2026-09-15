@@ -728,6 +728,7 @@ export class GatewayClient {
   async patchConfig(params: {
     raw: string;
     baseHash?: string;
+    replacePaths?: string[];
     sessionKey?: string;
     note?: string;
     restartDelayMs?: number;

@@ -3,7 +3,9 @@ import {
   RELAY_BASE_URL,
   RELAY_PROVIDER_ID,
   applyRelayConfig,
+  buildRelayRemovalPatch,
   buildRelayPatch,
+  removeRelayConfig,
   type ApplyRelayConfigDeps,
 } from '../src/main/commercial/relay-config.js';
 
@@ -176,6 +178,66 @@ describe('fetchFirstRelayModel', () => {
 
     expect(await fetchFirstRelayModel('rly_abc')).toBeNull();
     vi.unstubAllGlobals();
+  });
+});
+
+describe('relay credential removal', () => {
+  const relayEntry = { baseUrl: `${RELAY_BASE_URL}/`, apiKey: '__OPENCLAW_REDACTED__' };
+  const personalEntry = { baseUrl: 'https://example.test/v1', apiKey: '__OPENCLAW_REDACTED__' };
+
+  it('builds a narrow merge patch that removes only relay-owned values', () => {
+    const removal = buildRelayRemovalPatch(
+      snapshot({
+        models: { providers: { oldRelayName: relayEntry, personal: personalEntry } },
+        plugins: { allow: ['oldRelayName', RELAY_PROVIDER_ID, 'personal-plugin'] },
+        agents: { defaults: { model: { primary: 'oldRelayName/deepseek-v4-flash' } } },
+        unrelated: { secret: '__OPENCLAW_REDACTED__' },
+      }),
+    );
+
+    expect(removal).toEqual({
+      patch: {
+        models: { providers: { oldRelayName: null } },
+        plugins: { allow: ['personal-plugin'] },
+        agents: { defaults: { model: { primary: null } } },
+      },
+      replacePaths: ['plugins.allow'],
+    });
+    expect(JSON.stringify(removal)).not.toContain('unrelated');
+    expect(JSON.stringify(removal)).not.toContain('example.test');
+  });
+
+  it('preserves a default model that does not belong to the removed provider', () => {
+    const removal = buildRelayRemovalPatch(
+      snapshot({
+        models: { providers: { oldRelayName: relayEntry } },
+        agents: { defaults: { model: { primary: 'personal/model' } } },
+      }),
+    );
+
+    expect(removal?.patch).toEqual({ models: { providers: { oldRelayName: null } } });
+    expect(removal?.replacePaths).toEqual([]);
+  });
+
+  it('returns null when there is no relay residue', () => {
+    expect(buildRelayRemovalPatch(snapshot({ models: { providers: { personal: personalEntry } } }))).toBeNull();
+  });
+
+  it('patches with null deletion and verifies the relay provider is gone', async () => {
+    const getConfig = vi
+      .fn()
+      .mockResolvedValueOnce(snapshot({ models: { providers: { oldRelayName: relayEntry } } }, 'old-hash'))
+      .mockResolvedValueOnce(snapshot({ models: { providers: { personal: personalEntry } } }, 'new-hash'));
+    const patchConfig = vi.fn(async () => ({ ok: true }));
+
+    const result = await removeRelayConfig({ getConfig, patchConfig });
+
+    expect(result).toEqual({ ok: true, cleaned: true });
+    expect(patchConfig).toHaveBeenCalledWith({
+      baseHash: 'old-hash',
+      raw: JSON.stringify({ models: { providers: { oldRelayName: null } } }),
+      replacePaths: [],
+    });
   });
 });
 

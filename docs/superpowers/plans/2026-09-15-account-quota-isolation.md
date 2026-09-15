@@ -4,9 +4,9 @@
 
 **Goal:** Block commercial chat unless the current account has a verified positive quota, remove the previous account's relay credentials on sign-out/account switch, and correct the workspace permission copy.
 
-**Architecture:** Keep authorization as a fail-closed pure decision in the renderer and keep credential isolation in the Electron main process. Relay cleanup is an idempotent gateway configuration operation, persisted with a small `relayCleanupPending` flag when the gateway is unavailable; login bootstrap must drain that cleanup before applying a current-account relay credential.
+**Architecture:** Keep authorization as a fail-closed pure decision in the renderer and keep credential isolation in the Electron main process. Relay cleanup uses a narrow JSON merge patch (`null` deletes) so redacted unrelated secrets are never written back; it is persisted with a small `relayCleanupPending` flag when the gateway is unavailable. Login bootstrap must drain that cleanup before applying a current-account relay credential.
 
-**Tech Stack:** TypeScript, React 19, Zustand, Electron IPC, gateway `config.get`/`config.set`, Vitest, i18next.
+**Tech Stack:** TypeScript, React 19, Zustand, Electron IPC, gateway `config.get`/`config.patch`, Vitest, i18next.
 
 ---
 
@@ -15,7 +15,7 @@
 - `packages/desktop/src/renderer/lib/quota.ts`: pure, fail-closed quota and commercial-send decision.
 - `packages/desktop/src/renderer/stores/commercialStore.ts`: current-account overview state; cache is display-only and cannot authorize sending.
 - `packages/desktop/src/renderer/components/ChatInput/useChatSend.ts`: invoke the pure gate before any model request.
-- `packages/desktop/src/main/commercial/relay-config.ts`: build and apply a full sanitized gateway config with relay credentials removed.
+- `packages/desktop/src/main/commercial/relay-config.ts`: build and apply a narrow relay-removal merge patch.
 - `packages/desktop/src/main/commercial/relay-cleanup.ts`: coordinate immediate/deferred cleanup and clear the local licence key.
 - `packages/desktop/src/main/commercial/relay-startup.ts`: drain pending cleanup before commercial bootstrap after login/startup.
 - `packages/desktop/src/main/ipc/commercial-handlers.ts`: connect sign-out and successful sign-in to credential isolation.
@@ -144,10 +144,11 @@ git commit -m "fix(chat): require a verified current account quota"
 Cover multiple provider names pointing at `RELAY_BASE_URL`, unrelated providers, `plugins.allow`, and a default model that references the removed provider:
 
 ```ts
-const clean = buildRelayCleanConfig(snapshot);
-expect(clean.models.providers).toEqual({ personal: personalProvider });
-expect(clean.plugins.allow).toEqual(['personal-plugin']);
-expect(clean.agents.defaults.model.primary).toBeUndefined();
+const removal = buildRelayRemovalPatch(snapshot);
+expect(removal?.patch.models.providers).toEqual({ oldRelayName: null });
+expect(removal?.patch.plugins.allow).toEqual(['personal-plugin']);
+expect(removal?.patch.agents.defaults.model.primary).toBeNull();
+expect(removal?.replacePaths).toContain('plugins.allow');
 ```
 
 Also prove a non-relay default model and all unrelated configuration survive unchanged.
@@ -156,18 +157,21 @@ Also prove a non-relay default model and all unrelated configuration survive unc
 
 Run: `pnpm --filter @clawwork/desktop test -- relay-config.test.ts`
 
-Expected: FAIL because `buildRelayCleanConfig` and `removeRelayConfig` do not exist.
+Expected: FAIL because `buildRelayRemovalPatch` and `removeRelayConfig` do not exist.
 
 - [ ] **Step 3: Implement full-config sanitization and verified write**
 
 Add:
 
 ```ts
-export function buildRelayCleanConfig(snapshot: unknown): Record<string, unknown> | null;
+export function buildRelayRemovalPatch(snapshot: unknown): {
+  patch: Record<string, unknown>;
+  replacePaths: string[];
+} | null;
 export async function removeRelayConfig(deps: RemoveRelayConfigDeps): Promise<RemoveRelayResult>;
 ```
 
-`buildRelayCleanConfig` deep-clones `snapshot.config`, deletes only providers identified by `relayProviderIds`, removes those names plus `RELAY_PROVIDER_ID` from an existing `plugins.allow`, and deletes `agents.defaults.model.primary` only when its provider prefix was removed. Return `null` when no relay residue exists. `removeRelayConfig` uses `config.set` with the snapshot hash, retries hash conflicts up to three times, then rereads and succeeds only when `relayProviderIds` is empty.
+`buildRelayRemovalPatch` emits `null` only for providers identified by `relayProviderIds`, replaces an existing `plugins.allow` with those names plus `RELAY_PROVIDER_ID` removed, and emits `null` for `agents.defaults.model.primary` only when its provider prefix was removed. Return `null` when no relay residue exists. Include `plugins.allow` in `replacePaths` only when that array shrinks. `removeRelayConfig` uses `config.patch` with the snapshot hash and `replacePaths`, retries hash conflicts up to three times, then rereads and succeeds only when `relayProviderIds` is empty. Do not use `config.set`: `config.get` redacts unrelated secrets, so full-config round-tripping could corrupt them.
 
 - [ ] **Step 4: Verify relay tests pass**
 
