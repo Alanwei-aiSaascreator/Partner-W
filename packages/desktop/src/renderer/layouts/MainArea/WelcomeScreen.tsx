@@ -21,7 +21,7 @@ import { useGatewaySelector } from '@/hooks/useGatewaySelector';
 import GatewayInstanceSelector from '@/components/GatewayInstanceSelector';
 import logo from '@/assets/logo.png';
 import { recommendedStarterIds, type OnboardingProfile, type StarterId } from '@/lib/user-onboarding';
-import { resolveStarterAgentId } from '@/lib/preset-agents';
+import { resolveStarterAgentId, STARTER_AGENT_BY_ID } from '@/lib/preset-agents';
 import { resolveCommercialDefaultModel } from '@/lib/commercial-default-model';
 import { useUiStore } from '@/stores/uiStore';
 import { relayModelsFrom } from '@/components/ChatInput/model-families';
@@ -54,7 +54,13 @@ export default function WelcomeScreen({ onboardingProfile, onSelectPrompt }: Wel
   const maxVisible = 3;
   const visibleAgents = agentExpanded ? agentCatalog : agentCatalog.slice(0, maxVisible);
   const hiddenAgentCount = agentCatalog.length - maxVisible;
-  const starterIds = recommendedStarterIds(onboardingProfile);
+  const selectedStarterId = (Object.entries(STARTER_AGENT_BY_ID).find(
+    ([, agentId]) => agentId === effectiveAgentId,
+  )?.[0] ?? null) as StarterId | null;
+  const recommendedIds = recommendedStarterIds(onboardingProfile);
+  const starterIds = selectedStarterId
+    ? [selectedStarterId, ...recommendedIds.filter((id) => id !== selectedStarterId)]
+    : recommendedIds;
   const customGoal = onboardingProfile.customGoal.trim();
   const visibleStarterIds = customGoal ? starterIds.slice(0, 3) : starterIds;
 
@@ -122,7 +128,16 @@ export default function WelcomeScreen({ onboardingProfile, onSelectPrompt }: Wel
       <p className="type-body mt-2 max-w-xl text-[var(--text-secondary)]">{t('mainArea.welcomeSubtitle')}</p>
 
       <div className="mt-4 w-full max-w-2xl">
-        <p className="type-label mb-3 text-left text-[var(--text-muted)]">{t('mainArea.popularTasks')}</p>
+        <div className="mb-3 text-left">
+          <p className="type-label text-[var(--text-primary)]">
+            {selectedStarterId ? t(`mainArea.starters.${selectedStarterId}.title`) : t('mainArea.popularTasks')}
+          </p>
+          {selectedStarterId && (
+            <p className="type-support mt-1 text-[var(--text-secondary)]">
+              {t(`mainArea.starters.${selectedStarterId}.description`)}
+            </p>
+          )}
+        </div>
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
           {customGoal && (
             <button
