@@ -1,15 +1,6 @@
-import {
-  useState,
-  useEffect,
-  useRef,
-  useCallback,
-  useMemo,
-  type MouseEvent,
-  type ComponentType,
-  type ReactNode,
-} from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo, type MouseEvent } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Plus, Search, Settings, Archive, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { List, PanelLeftClose, Plus, Search, SquarePen } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useTaskStore } from '@/stores/taskStore';
 import { useMessageStore } from '@/stores/messageStore';
@@ -17,7 +8,6 @@ import { useUiStore } from '@/stores/uiStore';
 import { useFileStore } from '@/stores/fileStore';
 import { useTaskContextMenu, TaskContextMenuPopover, type SessionActions } from '@/components/ContextMenu';
 import SearchResults, { type SearchResult } from '@/components/SearchResults';
-import { cn } from '@/lib/utils';
 import { motionDuration, motion as motionPresets } from '@/styles/design-tokens';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -32,111 +22,41 @@ import {
 } from '@/components/ui/dialog';
 import { exportToFiles, exportToLocal } from '@/lib/export-session';
 import TaskItem from './TaskItem';
-import AgentSwitcher from './AgentSwitcher';
-import LeftNavPrimaryLinks from './PrimaryLinks';
+import AssistantList from './AssistantList';
 import { useGatewaySelector } from '@/hooks/useGatewaySelector';
-import type { Task, TaskStatus } from '@clawwork/shared';
+import type { TaskStatus } from '@clawwork/shared';
 import EmptyState from '@/components/semantic/EmptyState';
 import { useSessionPreviews } from '@/hooks/useSessionPreviews';
 
-function groupTasksByTime(tasks: Task[]): {
-  today: Task[];
-  yesterday: Task[];
-  last7Days: Task[];
-  older: Task[];
-} {
-  const MS_PER_DAY = 24 * 60 * 60 * 1000;
-  const startOfToday = new Date();
-  startOfToday.setHours(0, 0, 0, 0);
-  const startOfTodayMs = startOfToday.getTime();
-  const startOfYesterdayMs = startOfTodayMs - MS_PER_DAY;
-  const startOf7DaysAgoMs = startOfTodayMs - 7 * MS_PER_DAY;
-
-  const today: Task[] = [];
-  const yesterday: Task[] = [];
-  const last7Days: Task[] = [];
-  const older: Task[] = [];
-
-  for (const task of tasks) {
-    const t = new Date(task.updatedAt).getTime();
-    if (t >= startOfTodayMs) today.push(task);
-    else if (t >= startOfYesterdayMs) yesterday.push(task);
-    else if (t >= startOf7DaysAgoMs) last7Days.push(task);
-    else older.push(task);
-  }
-  return { today, yesterday, last7Days, older };
-}
-
 type ConfirmAction = 'reset' | 'delete' | null;
 
-function IconButton({
-  icon: Icon,
-  tooltip,
-  onClick,
-  className,
-  badge,
-  tooltipSide = 'right',
-}: {
-  icon: ComponentType<{ size: number; className?: string }>;
-  tooltip: string;
-  onClick: () => void;
-  className?: string;
-  badge?: ReactNode;
-  tooltipSide?: 'right' | 'top' | 'bottom' | 'left';
-}) {
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <button
-          onClick={onClick}
-          aria-label={tooltip}
-          className={cn(
-            'titlebar-no-drag flex items-center justify-center w-8 h-8 rounded-md transition-colors relative',
-            'focus-visible:outline-none glow-focus',
-            'active:scale-95',
-            className,
-          )}
-        >
-          <Icon size={16} />
-          {badge}
-        </button>
-      </TooltipTrigger>
-      <TooltipContent side={tooltipSide}>{tooltip}</TooltipContent>
-    </Tooltip>
-  );
+interface LeftNavProps {
+  onOpenAssistantSettings: () => void;
 }
 
-const navActiveClass = (active: boolean) =>
-  active
-    ? 'bg-[var(--accent-dim)] text-[var(--text-primary)]'
-    : 'text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]';
-
-export default function LeftNav() {
+export default function LeftNav({ onOpenAssistantSettings }: LeftNavProps) {
   const { t } = useTranslation();
   const tasks = useTaskStore((s) => s.tasks);
   const activeTaskId = useTaskStore((s) => s.activeTaskId);
   const startNewTask = useTaskStore((s) => s.startNewTask);
+  const setPending = useTaskStore((s) => s.setPending);
   const setActiveTask = useTaskStore((s) => s.setActiveTask);
   const updateTaskStatus = useTaskStore((s) => s.updateTaskStatus);
   const removeTask = useTaskStore((s) => s.removeTask);
   const clearMessages = useMessageStore((s) => s.clearMessages);
   const addMessage = useMessageStore((s) => s.addMessage);
   const setHighlightedMessage = useMessageStore((s) => s.setHighlightedMessage);
-  const mainView = useUiStore((s) => s.mainView);
   const setMainView = useUiStore((s) => s.setMainView);
   const setSelectedArtifact = useFileStore((s) => s.setSelectedArtifact);
-  const settingsOpen = useUiStore((s) => s.settingsOpen);
-  const setSettingsOpen = useUiStore((s) => s.setSettingsOpen);
   const gwStatusMap = useUiStore((s) => s.gatewayStatusMap);
-  const hasUpdate = useUiStore((s) => s.hasUpdate);
   const leftNavCollapsed = useUiStore((s) => s.leftNavCollapsed);
   const toggleLeftNavCollapsed = useUiStore((s) => s.toggleLeftNavCollapsed);
-  const focusSearch = useUiStore((s) => s.focusSearch);
   const searchFocusTrigger = useUiStore((s) => s.searchFocusTrigger);
 
   const [confirmAction, setConfirmAction] = useState<ConfirmAction>(null);
   const [confirmTaskId, setConfirmTaskId] = useState('');
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
+  const [showAllTasks, setShowAllTasks] = useState(false);
 
   const findTask = (taskId: string) => useTaskStore.getState().tasks.find((t) => t.id === taskId);
 
@@ -250,53 +170,44 @@ export default function LeftNav() {
     openMenu(e, taskId, status);
   };
 
-  const { selectedGwId, agentCatalog } = useGatewaySelector();
+  const { selectedGwId, agentCatalog, defaultAgentId } = useGatewaySelector();
   const selectedAgentId = useUiStore((s) => s.selectedAgentByGateway[selectedGwId] ?? '');
   const setSelectedAgent = useUiStore((s) => s.setSelectedAgent);
+  const currentAgentId = selectedAgentId || defaultAgentId || agentCatalog[0]?.id || '';
 
   const visibleTasks = useMemo(
-    () => tasks.filter((t) => t.status !== 'archived' && (!selectedAgentId || t.agentId === selectedAgentId)),
-    [tasks, selectedAgentId],
+    () =>
+      tasks
+        .filter((task) => task.status !== 'archived' && (!currentAgentId || task.agentId === currentAgentId))
+        .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
+    [currentAgentId, tasks],
   );
-  const activeTasks = useMemo(() => visibleTasks.filter((t) => t.status === 'active'), [visibleTasks]);
-  const completedTasks = useMemo(() => visibleTasks.filter((t) => t.status === 'completed'), [visibleTasks]);
-  const activeGroups = useMemo(() => groupTasksByTime(activeTasks), [activeTasks]);
+  const displayedTasks = showAllTasks ? visibleTasks : visibleTasks.slice(0, 5);
   const sessionPreviews = useSessionPreviews(visibleTasks);
 
-  const renderTaskGroup = (groupTasks: Task[], label: string) => {
-    if (groupTasks.length === 0) return null;
-    return (
-      <>
-        <p className="type-meta px-3 py-1.5 text-[var(--text-muted)] mt-2">{label}</p>
-        {groupTasks.map((task) => (
-          <TaskItem
-            key={task.id}
-            task={task}
-            active={task.id === activeTaskId}
-            onContextMenu={(e) => handleContextMenu(e, task.id, task.status)}
-            editing={editingTaskId === task.id}
-            onEditDone={() => setEditingTaskId(null)}
-            preview={sessionPreviews[task.id]}
-          />
-        ))}
-      </>
-    );
-  };
+  const handleSelectAgent = useCallback(
+    (agentId: string) => {
+      setSelectedAgent(selectedGwId, agentId);
+      const pending = useTaskStore.getState().pendingNewTask;
+      setPending({ ...pending, gatewayId: selectedGwId, agentId });
+      setActiveTask(null);
+      setMainView('chat');
+    },
+    [selectedGwId, setActiveTask, setMainView, setPending, setSelectedAgent],
+  );
 
   const CollapseToggleButton = (
     <Tooltip>
       <TooltipTrigger asChild>
         <button
           onClick={toggleLeftNavCollapsed}
-          aria-label={leftNavCollapsed ? t('leftNav.expandNav') : t('leftNav.collapseNav')}
+          aria-label={t('leftNav.collapseNav')}
           className="titlebar-no-drag flex items-center justify-center w-8 h-8 rounded-md text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] transition-colors focus-visible:outline-none glow-focus active:scale-95"
         >
-          {leftNavCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
+          <PanelLeftClose size={16} />
         </button>
       </TooltipTrigger>
-      <TooltipContent side="right">
-        {leftNavCollapsed ? t('leftNav.expandNav') : t('leftNav.collapseNav')}
-      </TooltipContent>
+      <TooltipContent side="right">{t('leftNav.collapseNav')}</TooltipContent>
     </Tooltip>
   );
 
@@ -335,121 +246,38 @@ export default function LeftNav() {
     </>
   );
 
-  if (leftNavCollapsed) {
-    return (
-      <div className="flex flex-col h-full items-center py-2 gap-1 overflow-hidden">
-        <div className="flex-shrink-0 flex flex-col items-center gap-1 w-full">{CollapseToggleButton}</div>
-
-        <div className="flex flex-col items-center gap-0.5">
-          <IconButton
-            icon={Plus}
-            tooltip={t('common.newTask')}
-            onClick={() => startNewTask()}
-            className="bg-[var(--accent-dim)] text-[var(--accent)] hover:opacity-80"
-          />
-          <IconButton
-            icon={Search}
-            tooltip={t('leftNav.searchTasks')}
-            onClick={() => {
-              toggleLeftNavCollapsed();
-              focusSearch();
-            }}
-            className="text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]"
-          />
-          <LeftNavPrimaryLinks collapsed mainView={mainView} onSelect={setMainView} />
-        </div>
-
-        <div className="w-6 h-px bg-[var(--border)]" />
-
-        <ScrollArea className="flex-1 w-full">
-          <motion.div
-            variants={motionPresets.staggerContainer}
-            initial="initial"
-            animate="animate"
-            className="flex flex-col items-center gap-0.5 px-1.5"
-          >
-            {activeTasks.map((task) => (
-              <TaskItem
-                key={task.id}
-                task={task}
-                active={task.id === activeTaskId}
-                onContextMenu={(e) => handleContextMenu(e, task.id, task.status)}
-                collapsed
-                preview={sessionPreviews[task.id]}
-              />
-            ))}
-            {completedTasks.length > 0 && activeTasks.length > 0 && (
-              <div className="w-6 h-px bg-[var(--border)] my-0.5" />
-            )}
-            {completedTasks.map((task) => (
-              <TaskItem
-                key={task.id}
-                task={task}
-                active={task.id === activeTaskId}
-                onContextMenu={(e) => handleContextMenu(e, task.id, task.status)}
-                collapsed
-                preview={sessionPreviews[task.id]}
-              />
-            ))}
-          </motion.div>
-        </ScrollArea>
-
-        <div className="w-6 h-px bg-[var(--border)]" />
-
-        <div className="flex flex-col items-center gap-0.5">
-          <IconButton
-            icon={Archive}
-            tooltip={t('leftNav.archivedChats')}
-            onClick={() => setMainView('archived')}
-            className={navActiveClass(mainView === 'archived')}
-          />
-          <IconButton
-            icon={Settings}
-            tooltip={hasUpdate ? t('leftNav.updateAvailable') : t('leftNav.appSettings')}
-            onClick={() => setSettingsOpen(!settingsOpen)}
-            className={navActiveClass(settingsOpen)}
-            badge={
-              hasUpdate ? (
-                <span className="absolute top-0.5 right-0.5 w-2 h-2 rounded-full bg-[var(--accent)]" />
-              ) : undefined
-            }
-          />
-        </div>
-
-        {overlays}
-      </div>
-    );
-  }
-
   return (
-    <div className="flex flex-col h-full pt-10 relative">
-      <div className="titlebar-drag absolute top-0 left-0 right-0 h-10 flex items-center justify-between px-3 z-[51]">
-        <div className="titlebar-no-drag flex items-center gap-1" style={{ marginLeft: 68 }}>
+    <div className="relative flex h-full flex-col overflow-hidden pt-10">
+      <div className="titlebar-drag absolute inset-x-0 top-0 z-[51] flex h-10 items-center justify-between px-3">
+        <h2 className="type-label truncate text-[var(--text-primary)]">{t('leftNav.myAssistants')}</h2>
+        <div className="titlebar-no-drag flex items-center gap-0.5">
           {CollapseToggleButton}
-        </div>
-        <div className="titlebar-no-drag flex items-center gap-1">
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
                 size="icon-sm"
-                onClick={() => startNewTask()}
-                aria-label={t('common.newTask')}
+                variant="ghost"
+                onClick={onOpenAssistantSettings}
+                aria-label={t('leftNav.addAssistant')}
                 className="h-7 w-7"
               >
                 <Plus />
               </Button>
             </TooltipTrigger>
-            <TooltipContent side="bottom">{t('common.newTask')}</TooltipContent>
+            <TooltipContent side="bottom">{t('leftNav.addAssistant')}</TooltipContent>
           </Tooltip>
         </div>
       </div>
-      <AgentSwitcher
-        agents={agentCatalog}
-        selectedAgentId={selectedAgentId}
-        onSelect={(agentId) => setSelectedAgent(selectedGwId, agentId)}
-      />
 
-      <div className="px-3 pb-2 flex-shrink-0">
+      <div className="flex-shrink-0 border-b border-[var(--border-subtle)] px-2 pb-2">
+        {agentCatalog.length > 0 ? (
+          <AssistantList agents={agentCatalog} selectedAgentId={currentAgentId} onSelect={handleSelectAgent} />
+        ) : (
+          <p className="type-support px-2 py-3 text-[var(--text-muted)]">{t('leftNav.noAgents')}</p>
+        )}
+      </div>
+
+      <div className="flex-shrink-0 px-3 py-2">
         <div className="titlebar-no-drag relative">
           <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" />
           <input
@@ -478,9 +306,23 @@ export default function LeftNav() {
           )}
         </AnimatePresence>
 
-        <div className="flex flex-col h-full">
-          <div className="px-3 pb-1 flex-shrink-0">
-            <LeftNavPrimaryLinks collapsed={false} mainView={mainView} onSelect={setMainView} />
+        <div className="flex h-full flex-col">
+          <div className="flex flex-shrink-0 items-center gap-2 px-3 pb-1 pt-1">
+            <List size={14} className="text-[var(--text-muted)]" />
+            <h3 className="type-support flex-1 text-[var(--text-secondary)]">{t('leftNav.recentTasks')}</h3>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={() => startNewTask({ gatewayId: selectedGwId, agentId: currentAgentId })}
+                  aria-label={t('common.newTask')}
+                  className="titlebar-no-drag glow-focus flex h-7 w-7 items-center justify-center rounded-md text-[var(--accent)] transition-colors hover:bg-[var(--accent-dim)] active:scale-95"
+                >
+                  <SquarePen size={15} />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="right">{t('common.newTask')}</TooltipContent>
+            </Tooltip>
           </div>
 
           <ScrollArea className="flex-1">
@@ -491,40 +333,34 @@ export default function LeftNav() {
               className="px-3 py-1"
             >
               {visibleTasks.length === 0 && <EmptyState title={t('leftNav.emptyHint')} className="py-8" />}
-              {renderTaskGroup(activeGroups.today, t('leftNav.groupToday'))}
-              {renderTaskGroup(activeGroups.yesterday, t('leftNav.groupYesterday'))}
-              {renderTaskGroup(activeGroups.last7Days, t('leftNav.groupLast7Days'))}
-              {renderTaskGroup(activeGroups.older, t('leftNav.groupOlder'))}
-              {renderTaskGroup(completedTasks, `${t('common.completed')} (${completedTasks.length})`)}
+              {displayedTasks.map((task) => (
+                <TaskItem
+                  key={task.id}
+                  task={task}
+                  active={task.id === activeTaskId}
+                  onContextMenu={(event) => handleContextMenu(event, task.id, task.status)}
+                  editing={editingTaskId === task.id}
+                  onEditDone={() => setEditingTaskId(null)}
+                  preview={sessionPreviews[task.id]}
+                />
+              ))}
             </motion.div>
           </ScrollArea>
         </div>
       </div>
 
-      <div className="flex-shrink-0 px-3 py-2 border-t border-[var(--border)]">
-        <div className="flex items-center">
-          <IconButton
-            icon={Archive}
-            tooltip={t('leftNav.archivedChats')}
-            onClick={() => setMainView('archived')}
-            tooltipSide="top"
-            className={navActiveClass(mainView === 'archived')}
-          />
-          <div className="flex-1" />
-          <IconButton
-            icon={Settings}
-            tooltip={hasUpdate ? t('leftNav.updateAvailable') : t('leftNav.appSettings')}
-            onClick={() => setSettingsOpen(true)}
-            tooltipSide="top"
-            className={navActiveClass(settingsOpen)}
-            badge={
-              hasUpdate ? (
-                <span className="absolute top-0.5 right-0.5 w-2 h-2 rounded-full bg-[var(--accent)]" />
-              ) : undefined
-            }
-          />
+      {visibleTasks.length > 5 && (
+        <div className="flex-shrink-0 border-t border-[var(--border-subtle)] px-3 py-2">
+          <button
+            type="button"
+            onClick={() => setShowAllTasks((visible) => !visible)}
+            className="titlebar-no-drag glow-focus flex w-full items-center justify-center gap-2 rounded-md py-1.5 type-support text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
+          >
+            <List size={14} />
+            {t(showAllTasks ? 'leftNav.showFewerTasks' : 'leftNav.viewAllTasks')}
+          </button>
         </div>
-      </div>
+      )}
 
       {overlays}
     </div>
