@@ -18,7 +18,7 @@ import {
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { parseAgentIdFromSessionKey } from '@clawwork/shared';
-import { deriveSessionActivity, getTaskSessionKeys } from '@clawwork/core';
+import { deriveSessionActivity, getTaskSessionKeys, serializeIdentityMd } from '@clawwork/core';
 import { useTaskStore } from '@/stores/taskStore';
 import { useMessageStore, EMPTY_MESSAGES, activeTurnToMessage } from '@/stores/messageStore';
 import { useUiStore } from '@/stores/uiStore';
@@ -53,6 +53,12 @@ import FirstTaskCompletionFlow from './FirstTaskCompletionFlow';
 import type { OnboardingProfile } from '@/lib/user-onboarding';
 import type { StartupReadiness, StartupRetry } from '@/lib/startup-readiness';
 import StartupReadinessPanel from './StartupReadinessPanel';
+import GoalRecommendationPanel from '@/features/goal-routing/GoalRecommendationPanel';
+import { useGoalAnalysis } from '@/features/goal-routing/useGoalAnalysis';
+import type { CustomGoalAnalysis } from '@/features/goal-routing/goal-analysis';
+import { createAgentWithRollback } from '@/lib/agent-builder';
+import { fetchAgentsForGateway } from '@/hooks/useGatewayBootstrap';
+import { toast } from '@/lib/toast';
 
 const STICK_TO_BOTTOM_THRESHOLD_PX = 60;
 const MAX_HEADER_TITLE_LENGTH = 120;
@@ -492,6 +498,15 @@ function ChatContent({
   const messageLayout = useUiStore((s) => s.messageLayout);
   const setSettingsOpen = useUiStore((s) => s.setSettingsOpen);
   const setMainView = useUiStore((s) => s.setMainView);
+  const defaultGatewayId = useUiStore((s) => s.defaultGatewayId ?? '');
+  const setSelectedAgent = useUiStore((s) => s.setSelectedAgent);
+  const goalAgentCatalog = useUiStore((s) =>
+    s.defaultGatewayId ? s.agentCatalogByGateway[s.defaultGatewayId] : undefined,
+  );
+  const goalModelCatalog = useUiStore((s) =>
+    s.defaultGatewayId ? s.modelCatalogByGateway[s.defaultGatewayId] : undefined,
+  );
+  const commercialOverview = useCommercialStore((s) => s.overview);
   const messages = useMessageStore((s) =>
     activeTaskId ? (s.messagesByTask[activeTaskId] ?? EMPTY_MESSAGES) : EMPTY_MESSAGES,
   );
@@ -509,6 +524,64 @@ function ChatContent({
   const closeLightbox = useCallback(() => setLightboxSrc(null), []);
   const handleNavigateToAccount = useCallback(() => setSettingsOpen(true), [setSettingsOpen]);
   const [previewFile, setPreviewFile] = useState<{ path: string; content: string } | null>(null);
+  const goalModelIds = useMemo(() => (goalModelCatalog ?? []).map((model) => model.id), [goalModelCatalog]);
+  const license = commercialOverview?.license;
+  const goalAnalysis = useGoalAnalysis({
+    profile: onboardingProfile,
+    enabled:
+      startupReadiness.conversationReady &&
+      Boolean(license?.activated) &&
+      (license?.tokenQuotaMicros ?? 0) > (license?.tokenUsedMicros ?? 0),
+    gatewayId: defaultGatewayId,
+    agentId: goalAgentCatalog?.defaultId ?? 'main',
+    modelIds: goalModelIds,
+  });
+
+  const handleSelectRecommendedAssistant = useCallback(
+    (agentId: string) => {
+      if (!defaultGatewayId) return;
+      setSelectedAgent(defaultGatewayId, agentId);
+      useTaskStore.getState().setPending({ gatewayId: defaultGatewayId, agentId });
+      setStarterPrompt(null);
+    },
+    [defaultGatewayId, setSelectedAgent],
+  );
+
+  const handleCreateCustomAssistant = useCallback(
+    async (analysis: CustomGoalAnalysis) => {
+      if (!defaultGatewayId) return;
+      const slug = analysis.draft.name
+        .toLowerCase()
+        .replace(/[^a-z0-9\s-]/g, '')
+        .replace(/\s+/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-|-$/g, '');
+      const workspaceRoot = await window.clawwork.getWorkspacePath();
+      const workspace = workspaceRoot ? `${workspaceRoot}/${slug || 'custom-assistant'}` : slug || 'custom-assistant';
+      const identityContent = serializeIdentityMd(
+        analysis.draft.description,
+        `${analysis.draft.identity}\n\n## Boundaries\n\n${analysis.draft.boundaries}`,
+      );
+      const response = await createAgentWithRollback(window.clawwork, {
+        gatewayId: defaultGatewayId,
+        name: analysis.draft.name,
+        workspace,
+        model: analysis.model,
+        identityContent,
+        existingAgents: goalAgentCatalog?.agents,
+      });
+      if (!response.ok) {
+        toast.error(response.error ?? t('errors.failed'));
+        throw new Error(response.error ?? 'agent_create_failed');
+      }
+      await fetchAgentsForGateway(defaultGatewayId, { force: true });
+      const agentId = typeof response.result?.agentId === 'string' ? response.result.agentId : '';
+      if (agentId) handleSelectRecommendedAssistant(agentId);
+      setStarterPrompt(analysis.starters[0]);
+      toast.success(t('goalRouting.created'));
+    },
+    [defaultGatewayId, goalAgentCatalog?.agents, handleSelectRecommendedAssistant, t],
+  );
 
   useEffect(() => {
     setStarterPrompt(null);
@@ -625,6 +698,17 @@ function ChatContent({
       <>
         <div className="flex-1 px-5 pt-4 pb-0 overflow-y-auto">
           {!startupReadiness.isReady && <StartupReadinessPanel readiness={startupReadiness} onRetry={onRetryStartup} />}
+          {onboardingProfile.customGoal.trim() && (
+            <GoalRecommendationPanel
+              status={goalAnalysis.status}
+              result={goalAnalysis.result}
+              error={goalAnalysis.error}
+              onRetry={goalAnalysis.retry}
+              onSelectAssistant={handleSelectRecommendedAssistant}
+              onSelectStarter={setStarterPrompt}
+              onCreateCustom={handleCreateCustomAssistant}
+            />
+          )}
           <div
             className={cn(
               messageLayout === 'centered' ? 'max-w-[var(--content-max-width)] mx-auto' : 'w-full max-w-none',

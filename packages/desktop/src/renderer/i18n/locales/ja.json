@@ -614,6 +614,20 @@
     "title": "First task complete",
     "viewUsage": "View usage"
   },
+  "goalRouting": {
+    "analyzing": "Analyzing your goal",
+    "createAssistant": "Create assistant",
+    "created": "Your assistant is ready",
+    "customReady": "A tailored assistant draft is ready",
+    "failed": "Goal analysis could not finish",
+    "promptPreview": "View role prompt",
+    "recommendationReady": "Recommended assistant",
+    "recommendedModel": "Recommended model",
+    "retry": "Analyze again",
+    "saved": "Your goal is saved and will not be lost.",
+    "useAssistant": "Use this assistant",
+    "waiting": "Waiting for AI services"
+  },
   "leftNav": {
     "addAssistant": "アシスタントを追加",
     "appSettings": "アプリ設定",

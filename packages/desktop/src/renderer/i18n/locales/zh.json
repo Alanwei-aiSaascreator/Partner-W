@@ -614,6 +614,20 @@
     "title": "第一次任务已完成",
     "viewUsage": "查看使用情况"
   },
+  "goalRouting": {
+    "analyzing": "正在分析你的目标",
+    "createAssistant": "创建专属助手",
+    "created": "专属助手已创建",
+    "customReady": "专属助手方案已生成",
+    "failed": "暂时未完成目标分析",
+    "promptPreview": "查看角色 Prompt",
+    "recommendationReady": "为你推荐的助手",
+    "recommendedModel": "推荐模型",
+    "retry": "重新分析",
+    "saved": "目标已经保存，不会丢失。",
+    "useAssistant": "使用这个助手",
+    "waiting": "等待 AI 服务准备"
+  },
   "leftNav": {
     "addAssistant": "添加助手",
     "appSettings": "应用设置",

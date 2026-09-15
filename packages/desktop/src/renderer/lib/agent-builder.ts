@@ -12,7 +12,27 @@ interface AgentBuilderApi {
     params: { name: string; workspace: string; avatar?: string },
   ) => Promise<AgentMutationResult>;
   updateAgent: (gatewayId: string, params: { agentId: string; model?: string }) => Promise<AgentMutationResult>;
+  setAgentFile?: (
+    gatewayId: string,
+    agentId: string,
+    fileName: string,
+    content: string,
+  ) => Promise<AgentMutationResult>;
   deleteAgent: (gatewayId: string, params: { agentId: string; deleteFiles?: boolean }) => Promise<AgentMutationResult>;
+}
+
+async function rollbackCreatedAgent(
+  api: AgentBuilderApi,
+  gatewayId: string,
+  agentId: string,
+  failure: AgentMutationResult,
+): Promise<AgentMutationResult> {
+  const rollbackRes = await api.deleteAgent(gatewayId, { agentId, deleteFiles: true });
+  if (rollbackRes.ok) return failure;
+  return {
+    ...failure,
+    error: `${failure.error ?? 'agent update failed'} (rollback failed: ${rollbackRes.error ?? 'unknown error'})`,
+  };
 }
 
 export async function createAgentWithRollback(
@@ -23,8 +43,14 @@ export async function createAgentWithRollback(
     workspace: string;
     avatar?: string;
     model?: string;
+    identityContent?: string;
+    existingAgents?: ReadonlyArray<{ id: string; name?: string }>;
   },
 ): Promise<AgentMutationResult> {
+  const normalizedName = params.name.trim().toLocaleLowerCase();
+  const existing = params.existingAgents?.find((agent) => agent.name?.trim().toLocaleLowerCase() === normalizedName);
+  if (existing) return { ok: true, result: { agentId: existing.id, reused: true } };
+
   const createRes = await api.createAgent(params.gatewayId, {
     name: params.name,
     workspace: params.workspace,
@@ -35,22 +61,18 @@ export async function createAgentWithRollback(
   const created = createRes.result;
   const agentId = typeof created?.agentId === 'string' ? created.agentId : '';
   const model = params.model?.trim();
-  if (!model || !agentId) return createRes;
+  if (model && agentId) {
+    const updateRes = await api.updateAgent(params.gatewayId, { agentId, model });
+    if (!updateRes.ok) return rollbackCreatedAgent(api, params.gatewayId, agentId, updateRes);
+  }
 
-  const updateRes = await api.updateAgent(params.gatewayId, {
-    agentId,
-    model,
-  });
-  if (updateRes.ok) return createRes;
+  const identityContent = params.identityContent?.trim();
+  if (identityContent && agentId) {
+    const fileRes = api.setAgentFile
+      ? await api.setAgentFile(params.gatewayId, agentId, 'IDENTITY.md', identityContent)
+      : { ok: false, error: 'agent identity writer unavailable' };
+    if (!fileRes.ok) return rollbackCreatedAgent(api, params.gatewayId, agentId, fileRes);
+  }
 
-  const rollbackRes = await api.deleteAgent(params.gatewayId, {
-    agentId,
-    deleteFiles: true,
-  });
-  if (rollbackRes.ok) return updateRes;
-
-  return {
-    ...updateRes,
-    error: `${updateRes.error ?? 'agent update failed'} (rollback failed: ${rollbackRes.error ?? 'unknown error'})`,
-  };
+  return createRes;
 }
