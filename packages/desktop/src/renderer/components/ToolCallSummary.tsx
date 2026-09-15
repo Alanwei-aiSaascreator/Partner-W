@@ -6,7 +6,7 @@ import { useTranslation } from 'react-i18next';
 import { cn } from '@/lib/utils';
 import { motion as motionPresets } from '@/styles/design-tokens';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
-import { summarizeToolActivity, type ToolActivityGroup } from '@/lib/tool-activity';
+import { classifyToolActivity, summarizeToolActivity, type ToolActivityGroup } from '@/lib/tool-activity';
 import ToolCallCard from './ToolCallCard';
 
 function StatusIcon({ status }: { status: ToolCall['status'] }) {
@@ -63,6 +63,8 @@ function ToolCallSummary({ toolCalls }: { toolCalls: ToolCall[] }) {
   const [expanded, setExpanded] = useState(false);
   const summary = useMemo(() => summarizeToolActivity(toolCalls), [toolCalls]);
   const status: ToolCall['status'] = summary.errorCount > 0 ? 'error' : summary.runningCount > 0 ? 'running' : 'done';
+  const currentCall = [...toolCalls].reverse().find((call) => call.status === 'running');
+  const currentAction = currentCall ? t(`toolActivity.actions.${classifyToolActivity(currentCall.name)}`) : null;
   const summaryText =
     summary.errorCount > 0
       ? t('chatMessage.toolCallSummaryWithErrors', {
@@ -91,6 +93,9 @@ function ToolCallSummary({ toolCalls }: { toolCalls: ToolCall[] }) {
             {expanded ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
             <StatusIcon status={status} />
             <span className="type-label flex-1 text-left">{summaryText}</span>
+            {currentAction ? (
+              <span className="type-support max-w-44 truncate text-[var(--text-muted)]">{currentAction}</span>
+            ) : null}
             {summary.durationMs !== null ? (
               <span className="type-mono-data text-[var(--text-muted)]">
                 {t('toolActivity.duration', { seconds: (summary.durationMs / 1000).toFixed(1) })}

@@ -84,6 +84,19 @@ describe('ToolCallSummary', () => {
     expect(container.querySelectorAll('[data-testid="tool-call-card"]')).toHaveLength(1);
     unmount();
   });
+
+  it('shows only the current semantic action while work is running', () => {
+    const { container, unmount } = render(
+      <ToolCallSummary toolCalls={[call('1', 'ls'), call('2', 'exec', 'running')]} />,
+    );
+
+    const summary = container.querySelector('[data-testid="tool-activity-summary"]') as HTMLButtonElement;
+    expect(summary.dataset.status).toBe('running');
+    expect(summary.textContent).toContain('toolActivity.running:1');
+    expect(summary.textContent).toContain('toolActivity.actions.execute');
+    expect(container.querySelectorAll('[data-testid="tool-call-card"]')).toHaveLength(0);
+    unmount();
+  });
 });
 
 describe('StreamingMessage tool activity', () => {
