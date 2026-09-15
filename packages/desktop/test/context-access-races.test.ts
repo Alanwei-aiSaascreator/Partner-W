@@ -2,8 +2,8 @@ import { mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, symlinkSync, 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { scanFolder } from '../src/main/context/file-index.js';
-import { readContextFile } from '../src/main/context/file-reader.js';
+import { __testing as fileIndexTesting, scanFolder } from '../src/main/context/file-index.js';
+import { __testing as fileReaderTesting } from '../src/main/context/file-reader.js';
 
 describe('context access race defenses', () => {
   it('rejects a granted root replaced after validation but before opening the file', () => {
@@ -19,7 +19,7 @@ describe('context access race defenses', () => {
 
     try {
       expect(() =>
-        readContextFile(join(root, 'note.txt'), [canonicalRoot], {
+        fileReaderTesting.readContextFileWithHooks(join(root, 'note.txt'), [canonicalRoot], {
           beforeOpen: () => {
             renameSync(root, movedRoot);
             symlinkSync(outside, root, process.platform === 'win32' ? 'junction' : 'dir');
@@ -40,7 +40,7 @@ describe('context access race defenses', () => {
 
     try {
       expect(() =>
-        readContextFile(filePath, [canonicalRoot], {
+        fileReaderTesting.readContextFileWithHooks(filePath, [canonicalRoot], {
           beforeOpen: () => {
             renameSync(filePath, movedPath);
             writeFileSync(filePath, 'replacement');
@@ -65,14 +65,16 @@ describe('context access race defenses', () => {
 
     try {
       expect(() =>
-        scanFolder(canonicalRoot, {
-          testHooks: {
+        fileIndexTesting.scanFolderWithHooks(
+          canonicalRoot,
+          {},
+          {
             afterRootValidation: () => {
               renameSync(root, movedRoot);
               symlinkSync(outside, root, process.platform === 'win32' ? 'junction' : 'dir');
             },
           },
-        }),
+        ),
       ).toThrow(/changed|outside|unavailable/i);
     } finally {
       rmSync(parent, { recursive: true, force: true });
@@ -89,8 +91,10 @@ describe('context access race defenses', () => {
 
     try {
       expect(() =>
-        scanFolder(canonicalRoot, {
-          testHooks: {
+        fileIndexTesting.scanFolderWithHooks(
+          canonicalRoot,
+          {},
+          {
             afterEntryLstat: (entryPath) => {
               if (replaced || entryPath !== filePath) return;
               replaced = true;
@@ -98,8 +102,62 @@ describe('context access race defenses', () => {
               writeFileSync(filePath, 'replacement');
             },
           },
+        ),
+      ).toThrow(/changed|unavailable/i);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects when a path is switched back after open but the fd remains bound to the replacement object', () => {
+    const parent = mkdtempSync(join(tmpdir(), 'clawwork-read-switchback-'));
+    const root = join(parent, 'granted');
+    const outside = join(parent, 'outside');
+    mkdirSync(root);
+    mkdirSync(outside);
+    const filePath = join(root, 'note.txt');
+    const trustedBackup = join(root, 'trusted.txt');
+    const outsideFile = join(outside, 'outside.txt');
+    const outsideAfterOpen = join(outside, 'opened.txt');
+    writeFileSync(filePath, 'trusted');
+    writeFileSync(outsideFile, 'outside');
+    const canonicalRoot = realpathSync.native(root);
+
+    try {
+      expect(() =>
+        fileReaderTesting.readContextFileWithHooks(filePath, [canonicalRoot], {
+          beforeOpen: () => {
+            renameSync(filePath, trustedBackup);
+            renameSync(outsideFile, filePath);
+          },
+          afterOpen: () => {
+            renameSync(filePath, outsideAfterOpen);
+            renameSync(trustedBackup, filePath);
+          },
         }),
       ).toThrow(/changed|unavailable/i);
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
+  });
+
+  it('stops scanning at configured visited-entry and result budgets', () => {
+    const root = mkdtempSync(join(tmpdir(), 'clawwork-scan-budget-'));
+    for (let index = 0; index < 30; index++) writeFileSync(join(root, `file-${index}.txt`), String(index));
+    const canonicalRoot = realpathSync.native(root);
+
+    try {
+      let visited = 0;
+      const visitLimited = fileIndexTesting.scanFolderWithHooks(
+        canonicalRoot,
+        { maxVisitedEntries: 5, maxResults: 100 },
+        { afterEntryLstat: () => visited++ },
+      );
+      expect(visited).toBe(5);
+      expect(visitLimited).toHaveLength(5);
+
+      const resultLimited = scanFolder(canonicalRoot, { maxVisitedEntries: 100, maxResults: 3 });
+      expect(resultLimited).toHaveLength(3);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

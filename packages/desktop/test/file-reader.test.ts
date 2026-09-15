@@ -144,6 +144,25 @@ describe('readContextFile', () => {
     expect(mockCloseSync).toHaveBeenCalledWith(FAKE_FD);
   });
 
+  it('fails closed when fd and path identity fields are all zero', () => {
+    const filePath = join(CONTEXT_DIR, 'small.pdf');
+    mockFile(filePath, 1024);
+    const unstable = {
+      dev: 0,
+      ino: 0,
+      birthtimeMs: 0,
+      size: 1024,
+      isDirectory: () => false,
+      isFile: () => true,
+    } as ReturnType<typeof fstatSync>;
+    mockFstatSync.mockReturnValue(unstable);
+    mockStatSync.mockImplementation(((p: string) =>
+      p === CONTEXT_DIR ? { ...unstable, isDirectory: () => true, isFile: () => false } : unstable) as typeof statSync);
+
+    expect(() => readContextFile(filePath, [CONTEXT_DIR])).toThrow(/identity|changed|unavailable/i);
+    expect(mockCloseSync).toHaveBeenCalledWith(FAKE_FD);
+  });
+
   it('reads context files on win32 without /dev/fd', () => {
     const filePath = join(CONTEXT_DIR, 'small.pdf');
     const win32Spy = vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');

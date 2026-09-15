@@ -16,17 +16,36 @@ function isContained(root: string, target: string): boolean {
   return fromRoot !== '..' && !fromRoot.startsWith(`..${sep}`) && !isAbsolute(fromRoot);
 }
 
-function sameIdentity(left: Stats, right: Stats): boolean {
+interface ReadHooks {
+  beforeOpen?: () => void;
+  afterOpen?: () => void;
+}
+
+function sameIdentity(left: Stats, right: Stats, requireStrong: boolean): boolean {
   const hasDevAndIno =
     Number.isFinite(left.dev) &&
     Number.isFinite(left.ino) &&
     Number.isFinite(right.dev) &&
     Number.isFinite(right.ino) &&
-    (left.dev !== 0 || left.ino !== 0 || right.dev !== 0 || right.ino !== 0);
-  if (hasDevAndIno && (left.dev !== right.dev || left.ino !== right.ino)) return false;
-  const hasBirthtime = Number.isFinite(left.birthtimeMs) && Number.isFinite(right.birthtimeMs);
-  if (hasBirthtime && left.birthtimeMs !== right.birthtimeMs) return false;
-  return true;
+    left.dev > 0 &&
+    left.ino > 0 &&
+    right.dev > 0 &&
+    right.ino > 0;
+  if (hasDevAndIno) return left.dev === right.dev && left.ino === right.ino;
+  if (requireStrong) return false;
+
+  const hasFallback =
+    Number.isFinite(left.birthtimeMs) &&
+    Number.isFinite(right.birthtimeMs) &&
+    left.birthtimeMs > 0 &&
+    right.birthtimeMs > 0 &&
+    Number.isFinite(left.size) &&
+    Number.isFinite(right.size) &&
+    Number.isFinite(left.mtimeMs) &&
+    Number.isFinite(right.mtimeMs);
+  return (
+    hasFallback && left.birthtimeMs === right.birthtimeMs && left.size === right.size && left.mtimeMs === right.mtimeMs
+  );
 }
 
 function validateRoot(canonicalRoot: string, expectedIdentity?: Stats): Stats {
@@ -41,7 +60,7 @@ function validateRoot(canonicalRoot: string, expectedIdentity?: Stats): Stats {
   if (relative(canonicalRoot, currentRoot) !== '' || !identity.isDirectory()) {
     throw new Error('context folder changed');
   }
-  if (expectedIdentity && !sameIdentity(expectedIdentity, identity)) throw new Error('context folder changed');
+  if (expectedIdentity && !sameIdentity(expectedIdentity, identity, false)) throw new Error('context folder changed');
   return identity;
 }
 
@@ -65,11 +84,7 @@ export function resolveFdRealPath(fd: number, absolutePath: string): string {
   return realpathSync(`/dev/fd/${fd}`);
 }
 
-export function readContextFile(
-  absolutePath: string,
-  contextFolders: string[],
-  options?: { beforeOpen?: () => void },
-): FileReadResult {
+function readContextFileInternal(absolutePath: string, contextFolders: string[], hooks?: ReadHooks): FileReadResult {
   let selected: { canonicalRoot: string; rootIdentity: Stats; targetIdentity: Stats; realTarget: string } | undefined;
   for (const canonicalRoot of contextFolders) {
     try {
@@ -83,17 +98,18 @@ export function readContextFile(
   }
   if (!selected) throw new Error('path outside allowed context folders');
 
-  options?.beforeOpen?.();
+  hooks?.beforeOpen?.();
   const fd = openSync(absolutePath, 'r');
   try {
+    hooks?.afterOpen?.();
     const openedIdentity = fstatSync(fd);
-    if (!sameIdentity(selected.targetIdentity, openedIdentity)) throw new Error('context file changed');
+    if (!sameIdentity(selected.targetIdentity, openedIdentity, true)) throw new Error('context file changed');
 
     validateRoot(selected.canonicalRoot, selected.rootIdentity);
     const fdRealPath = resolveFdRealPath(fd, absolutePath);
     if (!isContained(selected.canonicalRoot, fdRealPath)) throw new Error('path outside allowed context folders');
     const currentTarget = validateTarget(selected.canonicalRoot, fdRealPath);
-    if (!sameIdentity(openedIdentity, currentTarget.identity)) throw new Error('context file changed');
+    if (!sameIdentity(openedIdentity, currentTarget.identity, true)) throw new Error('context file changed');
 
     const ext = extname(selected.realTarget).toLowerCase();
     const tier = classifyTier(ext);
@@ -123,9 +139,18 @@ export function readContextFile(
 
     validateRoot(selected.canonicalRoot, selected.rootIdentity);
     const finalTarget = validateTarget(selected.canonicalRoot, fdRealPath);
-    if (!sameIdentity(openedIdentity, finalTarget.identity)) throw new Error('context file changed');
+    if (!sameIdentity(openedIdentity, finalTarget.identity, true)) throw new Error('context file changed');
     return result;
   } finally {
     closeSync(fd);
   }
 }
+
+export function readContextFile(absolutePath: string, contextFolders: string[]): FileReadResult {
+  return readContextFileInternal(absolutePath, contextFolders);
+}
+
+export const __testing = Object.freeze({
+  readContextFileWithHooks: (absolutePath: string, contextFolders: string[], hooks: ReadHooks): FileReadResult =>
+    readContextFileInternal(absolutePath, contextFolders, hooks),
+});
