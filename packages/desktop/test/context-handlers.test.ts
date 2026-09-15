@@ -28,10 +28,14 @@ vi.mock('../src/main/context/source-service.js', () => ({
   readGrantedFile: readGrantedFileMock,
 }));
 
-vi.mock('../src/main/context/file-import.js', () => ({
-  importTaskFiles: importTaskFilesMock,
-  listImportedTaskFiles: listImportedTaskFilesMock,
-}));
+vi.mock('../src/main/context/file-import.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/main/context/file-import.js')>();
+  return {
+    ...actual,
+    importTaskFiles: importTaskFilesMock,
+    listImportedTaskFiles: listImportedTaskFilesMock,
+  };
+});
 
 vi.mock('../src/main/workspace/config.js', () => ({
   getWorkspacePath: getWorkspacePathMock,
@@ -81,6 +85,7 @@ describe('task context source IPC handlers', () => {
         'json',
       ]),
     );
+    expect(extensions).not.toEqual(expect.arrayContaining(['gif', 'svg']));
   });
 
   it('imports every selected native file into the configured task workspace', async () => {
@@ -136,6 +141,11 @@ describe('task context source IPC handlers', () => {
     showOpenDialogMock.mockClear();
     showOpenDialogMock.mockResolvedValue({ canceled: true, filePaths: [] });
     await expect(handleMap.get('context:import-files')?.({}, { taskId: '..' })).resolves.toEqual({
+      ok: false,
+      error: expect.any(String),
+    });
+    expect(showOpenDialogMock).not.toHaveBeenCalled();
+    await expect(handleMap.get('context:import-files')?.({}, { taskId: 'a/b' })).resolves.toEqual({
       ok: false,
       error: expect.any(String),
     });
