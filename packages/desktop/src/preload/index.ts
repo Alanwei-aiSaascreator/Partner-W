@@ -365,6 +365,15 @@ function buildApi(): ClawWorkAPI {
 
     getDeviceId: () => ipcRenderer.invoke('workspace:get-device-id') as Promise<string>,
 
+    grantTaskContextFolder: (taskId: string) => ipcRenderer.invoke('context:grant-folder', { taskId }),
+    listTaskContextSources: (taskId: string) => ipcRenderer.invoke('context:list-sources', { taskId }),
+    revokeTaskContextSource: (taskId: string, sourceId: string) =>
+      ipcRenderer.invoke('context:revoke-source', { taskId, sourceId }),
+    listTaskContextFiles: (taskId: string, sourceId: string, query?: string) =>
+      ipcRenderer.invoke('context:list-source-files', { taskId, sourceId, query }),
+    readTaskContextFile: (taskId: string, sourceId: string, relativePath: string) =>
+      ipcRenderer.invoke('context:read-source-file', { taskId, sourceId, relativePath }),
+
     selectContextFolder: () => ipcRenderer.invoke('context:select-folder'),
     listContextFiles: (folders: string[], query?: string) =>
       ipcRenderer.invoke('context:list-files', { folders, query }),

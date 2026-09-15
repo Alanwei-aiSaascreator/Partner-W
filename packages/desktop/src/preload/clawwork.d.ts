@@ -33,6 +33,9 @@ import type {
   AgentFileSet,
   SessionsPreviewResult,
   CommercialAccountOverview,
+  FileIndexEntry,
+  FileReadResult,
+  TaskContextSource,
 } from '@clawwork/shared';
 
 type IpcResult<T = Record<string, unknown>> = SharedIpcResult<T>;
@@ -539,6 +542,12 @@ export interface ClawWorkAPI {
   setWindowButtonVisibility: (visible: boolean) => void;
 
   getDeviceId: () => Promise<string>;
+
+  grantTaskContextFolder: (taskId: string) => Promise<IpcResult<TaskContextSource | null>>;
+  listTaskContextSources: (taskId: string) => Promise<IpcResult<TaskContextSource[]>>;
+  revokeTaskContextSource: (taskId: string, sourceId: string) => Promise<IpcResult<boolean>>;
+  listTaskContextFiles: (taskId: string, sourceId: string, query?: string) => Promise<IpcResult<FileIndexEntry[]>>;
+  readTaskContextFile: (taskId: string, sourceId: string, relativePath: string) => Promise<IpcResult<FileReadResult>>;
 
   selectContextFolder: () => Promise<IpcResult>;
   listContextFiles: (folders: string[], query?: string) => Promise<IpcResult>;
