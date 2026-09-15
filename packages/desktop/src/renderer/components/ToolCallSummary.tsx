@@ -1,57 +1,122 @@
-import { useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { useMemo, useState } from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
 import type { ToolCall } from '@clawwork/shared';
-import { ChevronDown, ChevronRight, Wrench } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, CircleAlert, Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { cn } from '@/lib/utils';
 import { motion as motionPresets } from '@/styles/design-tokens';
-import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/components/ui/collapsible';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { summarizeToolActivity, type ToolActivityGroup } from '@/lib/tool-activity';
 import ToolCallCard from './ToolCallCard';
 
-function ToolCallSummary({ toolCalls }: { toolCalls: ToolCall[] }) {
+function StatusIcon({ status }: { status: ToolCall['status'] }) {
+  if (status === 'running') return <Loader2 size={14} className="animate-spin text-[var(--accent)]" />;
+  if (status === 'error') return <CircleAlert size={14} className="text-[var(--danger)]" />;
+  return <Check size={14} className="text-[var(--accent)]" />;
+}
+
+function ToolActivityGroupRow({ group }: { group: ToolActivityGroup }) {
   const { t } = useTranslation();
-  const [expanded, setExpanded] = useState(false);
-  const errorCount = toolCalls.filter((tc) => tc.status === 'error').length;
+  const [open, setOpen] = useState(group.status === 'error');
+  const label = t(`toolActivity.actions.${group.kind}`);
 
   return (
-    <Collapsible open={expanded} onOpenChange={setExpanded}>
+    <Collapsible open={open} onOpenChange={setOpen}>
       <CollapsibleTrigger asChild>
         <button
-          className={cn(
-            'type-label mt-2 inline-flex items-center gap-2 rounded-lg px-3 py-2',
-            'text-[var(--text-secondary)] hover:text-[var(--text-primary)]',
-            'bg-[var(--bg-tertiary)] hover:bg-[var(--bg-hover)] transition-colors',
-            'glow-focus',
-          )}
+          type="button"
+          data-testid={`tool-activity-group-${group.kind}-${group.status}`}
+          data-status={group.status}
+          className="glow-focus flex w-full items-center gap-2 rounded-lg px-3 py-2 text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
         >
-          {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-          <Wrench size={14} />
-          <span>
-            {errorCount > 0
-              ? t('chatMessage.toolCallSummaryWithErrors', { count: toolCalls.length, errorCount })
-              : t('chatMessage.toolCallSummary', { count: toolCalls.length })}
+          {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+          <StatusIcon status={group.status} />
+          <span className="type-label flex-1 text-left">{label}</span>
+          <span className="type-mono-data text-[var(--text-muted)]">
+            {t('toolActivity.groupCount', { count: group.calls.length })}
           </span>
         </button>
       </CollapsibleTrigger>
       <CollapsibleContent forceMount>
         <AnimatePresence>
-          {expanded && (
+          {open ? (
             <motion.div
               initial={motionPresets.collapse.initial}
               animate={motionPresets.collapse.animate}
               exit={motionPresets.collapse.exit}
               transition={motionPresets.collapse.transition}
-              className="overflow-hidden"
+              className="ml-4 overflow-hidden border-l border-[var(--border-subtle)] pl-2"
             >
-              <div className="mt-1 space-y-1">
-                {toolCalls.map((tc) => (
-                  <ToolCallCard key={tc.id} toolCall={tc} />
-                ))}
-              </div>
+              {group.calls.map((call) => (
+                <ToolCallCard key={call.id} toolCall={call} label={label} />
+              ))}
             </motion.div>
-          )}
+          ) : null}
         </AnimatePresence>
       </CollapsibleContent>
+    </Collapsible>
+  );
+}
+
+function ToolCallSummary({ toolCalls }: { toolCalls: ToolCall[] }) {
+  const { t } = useTranslation();
+  const [expanded, setExpanded] = useState(false);
+  const summary = useMemo(() => summarizeToolActivity(toolCalls), [toolCalls]);
+  const status: ToolCall['status'] = summary.errorCount > 0 ? 'error' : summary.runningCount > 0 ? 'running' : 'done';
+  const summaryText =
+    summary.errorCount > 0
+      ? t('chatMessage.toolCallSummaryWithErrors', {
+          count: summary.totalCount,
+          errorCount: summary.errorCount,
+        })
+      : summary.runningCount > 0
+        ? t('toolActivity.running', { count: summary.completedCount })
+        : t('toolActivity.completed', { count: summary.completedCount });
+
+  return (
+    <Collapsible open={expanded} onOpenChange={setExpanded}>
+      <div
+        className={cn(
+          'my-2 overflow-hidden rounded-xl border bg-[var(--bg-secondary)]',
+          status === 'error' ? 'border-[var(--danger)]' : 'border-[var(--border-subtle)]',
+        )}
+      >
+        <CollapsibleTrigger asChild>
+          <button
+            type="button"
+            data-testid="tool-activity-summary"
+            data-status={status}
+            className="glow-focus flex w-full items-center gap-2.5 px-3 py-2.5 text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
+          >
+            {expanded ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+            <StatusIcon status={status} />
+            <span className="type-label flex-1 text-left">{summaryText}</span>
+            {summary.durationMs !== null ? (
+              <span className="type-mono-data text-[var(--text-muted)]">
+                {t('toolActivity.duration', { seconds: (summary.durationMs / 1000).toFixed(1) })}
+              </span>
+            ) : null}
+            <span className="type-support text-[var(--text-muted)]">{t('toolActivity.viewDetails')}</span>
+          </button>
+        </CollapsibleTrigger>
+        <CollapsibleContent forceMount>
+          <AnimatePresence>
+            {expanded ? (
+              <motion.div
+                initial={motionPresets.collapse.initial}
+                animate={motionPresets.collapse.animate}
+                exit={motionPresets.collapse.exit}
+                transition={motionPresets.collapse.transition}
+                className="overflow-hidden border-t border-[var(--border-subtle)] p-1.5"
+              >
+                {summary.groups.map((group) => (
+                  <ToolActivityGroupRow key={group.key} group={group} />
+                ))}
+              </motion.div>
+            ) : null}
+          </AnimatePresence>
+        </CollapsibleContent>
+      </div>
     </Collapsible>
   );
 }

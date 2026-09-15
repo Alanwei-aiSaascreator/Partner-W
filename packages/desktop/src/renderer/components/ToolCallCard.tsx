@@ -23,9 +23,10 @@ function StatusIcon({ status }: { status: ToolCall['status'] }) {
 interface ToolCallCardProps {
   toolCall: ToolCall;
   defaultOpen?: boolean;
+  label?: string;
 }
 
-const ToolCallCard = memo(function ToolCallCard({ toolCall, defaultOpen }: ToolCallCardProps) {
+const ToolCallCard = memo(function ToolCallCard({ toolCall, defaultOpen, label }: ToolCallCardProps) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(defaultOpen ?? false);
   const toolColor = getToolColor(toolCall.name);
@@ -39,6 +40,8 @@ const ToolCallCard = memo(function ToolCallCard({ toolCall, defaultOpen }: ToolC
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
       <div
+        data-testid="tool-call-card"
+        data-status={toolCall.status}
         className={cn(
           'my-1.5 rounded-lg overflow-hidden flex',
           'glass-card',
@@ -57,7 +60,10 @@ const ToolCallCard = memo(function ToolCallCard({ toolCall, defaultOpen }: ToolC
             >
               {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
               <StatusIcon status={toolCall.status} />
-              <span className="type-mono-data truncate flex-1 text-left">{toolCall.name}</span>
+              <span className="min-w-0 flex-1 truncate text-left">
+                {label ? <span className="type-label text-[var(--text-secondary)]">{label} · </span> : null}
+                <span className="type-mono-data text-[var(--text-muted)]">{toolCall.name}</span>
+              </span>
               {duration && <span className="text-[var(--text-muted)]">{duration}</span>}
             </button>
           </CollapsibleTrigger>
