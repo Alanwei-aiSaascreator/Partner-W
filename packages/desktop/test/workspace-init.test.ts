@@ -67,7 +67,10 @@ describe('isNestedOrEqualWorkspacePath', () => {
   it('is case-sensitive on linux', () => {
     const resolvedOld = winResolve('C:\\Workspace');
     const resolvedNew = winResolve('C:\\workspace\\sub');
+
+    const linuxSpy = vi.spyOn(process, 'platform', 'get').mockReturnValue('linux');
     expect(isNestedOrEqualWorkspacePath(resolvedOld, resolvedNew)).toBe(false);
+    linuxSpy.mockRestore();
   });
 
   it('is case-insensitive on win32', () => {

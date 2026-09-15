@@ -12,6 +12,7 @@ vi.mock('fs/promises', () => ({
 
 import { realpathSync } from 'fs';
 import { open, realpath, stat } from 'fs/promises';
+import { join, resolve } from 'path';
 import { readOpenClawMediaFile } from '../src/main/media/resolve.js';
 
 const mockOpen = vi.mocked(open);
@@ -19,11 +20,15 @@ const mockRealpath = vi.mocked(realpath);
 const mockStat = vi.mocked(stat);
 const mockRealpathSync = vi.mocked(realpathSync);
 const previousStateDir = process.env.OPENCLAW_STATE_DIR;
+const STATE_DIR = resolve('openclaw-state-fixture');
+const MEDIA_ROOT = join(STATE_DIR, 'media');
+const MEDIA_FILE = join(MEDIA_ROOT, 'tool-image-generation', 'out.png');
+const OUTSIDE_FILE = resolve('outside-fixture', 'passwd');
 
 describe('OpenClaw media file access', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    process.env.OPENCLAW_STATE_DIR = '/state';
+    process.env.OPENCLAW_STATE_DIR = STATE_DIR;
   });
 
   afterEach(() => {
@@ -45,13 +50,14 @@ describe('OpenClaw media file access', () => {
       close,
     } as unknown as Awaited<ReturnType<typeof open>>);
     mockRealpath.mockImplementation(async (path) => {
-      if (path === '/state/media') return '/state/media';
+      if (path === MEDIA_ROOT) return MEDIA_ROOT;
+      if (path === MEDIA_FILE) return MEDIA_FILE;
       throw new Error(`unexpected path ${path}`);
     });
-    mockRealpathSync.mockReturnValue('/state/media/tool-image-generation/out.png');
+    mockRealpathSync.mockReturnValue(MEDIA_FILE);
     mockStat.mockResolvedValue(openedStat as Awaited<ReturnType<typeof stat>>);
 
-    await expect(readOpenClawMediaFile('/state/media/tool-image-generation/out.png')).resolves.toBe('aW1hZ2U=');
+    await expect(readOpenClawMediaFile(MEDIA_FILE)).resolves.toBe('aW1hZ2U=');
     expect(readFile).toHaveBeenCalledWith({ encoding: 'base64' });
     expect(close).toHaveBeenCalledTimes(1);
   });
@@ -67,13 +73,14 @@ describe('OpenClaw media file access', () => {
       close,
     } as unknown as Awaited<ReturnType<typeof open>>);
     mockRealpath.mockImplementation(async (path) => {
-      if (path === '/state/media') return '/state/media';
+      if (path === MEDIA_ROOT) return MEDIA_ROOT;
+      if (path === MEDIA_FILE) return OUTSIDE_FILE;
       throw new Error(`unexpected path ${path}`);
     });
-    mockRealpathSync.mockReturnValue('/private/etc/passwd');
+    mockRealpathSync.mockReturnValue(OUTSIDE_FILE);
     mockStat.mockResolvedValue(openedStat as Awaited<ReturnType<typeof stat>>);
 
-    await expect(readOpenClawMediaFile('/state/media/tool-image-generation/out.png')).resolves.toBeNull();
+    await expect(readOpenClawMediaFile(MEDIA_FILE)).resolves.toBeNull();
     expect(readFile).not.toHaveBeenCalled();
     expect(close).toHaveBeenCalledTimes(1);
   });
@@ -87,21 +94,23 @@ describe('OpenClaw media file access', () => {
       readFile,
       close,
     } as unknown as Awaited<ReturnType<typeof open>>);
-    mockRealpath.mockResolvedValue('/state/media');
-    mockRealpathSync.mockReturnValue('/state/media/secret.txt');
+    mockRealpath.mockResolvedValue(MEDIA_ROOT);
+    const nonImageFile = join(MEDIA_ROOT, 'secret.txt');
+    mockRealpathSync.mockReturnValue(nonImageFile);
 
-    await expect(readOpenClawMediaFile('/state/media/secret.txt')).resolves.toBeNull();
+    await expect(readOpenClawMediaFile(nonImageFile)).resolves.toBeNull();
     expect(mockOpen).not.toHaveBeenCalled();
     expect(readFile).not.toHaveBeenCalled();
     expect(close).not.toHaveBeenCalled();
   });
 
   it('rejects paths outside the media root before opening them', async () => {
-    await expect(readOpenClawMediaFile('/private/tmp/out.png')).resolves.toBeNull();
+    await expect(readOpenClawMediaFile(resolve('outside-fixture', 'out.png'))).resolves.toBeNull();
     expect(mockOpen).not.toHaveBeenCalled();
   });
 
   it('falls back to the requested real path when macOS keeps dev fd aliases unresolved', async () => {
+    const darwinSpy = vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
     const readFile = vi.fn().mockResolvedValue('aW1hZ2U=');
     const close = vi.fn().mockResolvedValue(undefined);
     const openedStat = { dev: 1, ino: 2, isFile: () => true, size: 1024 };
@@ -112,16 +121,17 @@ describe('OpenClaw media file access', () => {
       close,
     } as unknown as Awaited<ReturnType<typeof open>>);
     mockRealpath.mockImplementation(async (path) => {
-      if (path === '/state/media') return '/state/media';
-      if (path === '/state/media/tool-image-generation/out.png') return '/state/media/tool-image-generation/out.png';
+      if (path === MEDIA_ROOT) return MEDIA_ROOT;
+      if (path === MEDIA_FILE) return MEDIA_FILE;
       throw new Error(`unexpected path ${path}`);
     });
     mockRealpathSync.mockReturnValue('/dev/fd/42');
     mockStat.mockResolvedValue(openedStat as Awaited<ReturnType<typeof stat>>);
 
-    await expect(readOpenClawMediaFile('/state/media/tool-image-generation/out.png')).resolves.toBe('aW1hZ2U=');
+    await expect(readOpenClawMediaFile(MEDIA_FILE)).resolves.toBe('aW1hZ2U=');
     expect(readFile).toHaveBeenCalledWith({ encoding: 'base64' });
     expect(close).toHaveBeenCalledTimes(1);
+    darwinSpy.mockRestore();
   });
 
   it('rejects paths that change between open and realpath fallback', async () => {
@@ -135,14 +145,14 @@ describe('OpenClaw media file access', () => {
       close,
     } as unknown as Awaited<ReturnType<typeof open>>);
     mockRealpath.mockImplementation(async (path) => {
-      if (path === '/state/media') return '/state/media';
-      if (path === '/state/media/tool-image-generation/out.png') return '/state/media/tool-image-generation/out.png';
+      if (path === MEDIA_ROOT) return MEDIA_ROOT;
+      if (path === MEDIA_FILE) return MEDIA_FILE;
       throw new Error(`unexpected path ${path}`);
     });
     mockRealpathSync.mockReturnValue('/dev/fd/42');
     mockStat.mockResolvedValue({ dev: 1, ino: 3, isFile: () => true, size: 1024 } as Awaited<ReturnType<typeof stat>>);
 
-    await expect(readOpenClawMediaFile('/state/media/tool-image-generation/out.png')).resolves.toBeNull();
+    await expect(readOpenClawMediaFile(MEDIA_FILE)).resolves.toBeNull();
     expect(readFile).not.toHaveBeenCalled();
     expect(close).toHaveBeenCalledTimes(1);
   });

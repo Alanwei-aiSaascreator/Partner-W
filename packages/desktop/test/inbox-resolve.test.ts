@@ -11,11 +11,17 @@ vi.mock('fs/promises', () => ({
 
 import { realpathSync } from 'fs';
 import { open, realpath } from 'fs/promises';
+import { join, resolve } from 'path';
 import { readInboxFile, resolveInboxPath } from '../src/main/inbox/resolve.js';
 
 const mockOpen = vi.mocked(open);
 const mockRealpath = vi.mocked(realpath);
 const mockRealpathSync = vi.mocked(realpathSync);
+const WORKSPACE_PATH = resolve('workspace-fixture');
+const LOCAL_PATH = join('task-1', 'inbox', 'file.txt');
+const INBOX_DIR = join(WORKSPACE_PATH, 'task-1', 'inbox');
+const INBOX_FILE = join(INBOX_DIR, 'file.txt');
+const OUTSIDE_FILE = resolve('outside-fixture', 'passwd');
 
 describe('inbox path access', () => {
   beforeEach(() => {
@@ -24,13 +30,13 @@ describe('inbox path access', () => {
 
   it('rejects symlink escapes when resolving inbox paths', async () => {
     mockRealpath.mockImplementation(async (path) => {
-      if (path === '/workspace') return '/workspace';
-      if (path === '/workspace/task-1/inbox') return '/workspace/task-1/inbox';
-      if (path === '/workspace/task-1/inbox/file.txt') return '/private/etc/passwd';
+      if (path === WORKSPACE_PATH) return WORKSPACE_PATH;
+      if (path === INBOX_DIR) return INBOX_DIR;
+      if (path === INBOX_FILE) return OUTSIDE_FILE;
       throw new Error(`unexpected path ${path}`);
     });
 
-    await expect(resolveInboxPath('/workspace', 'task-1/inbox/file.txt')).resolves.toBeNull();
+    await expect(resolveInboxPath(WORKSPACE_PATH, LOCAL_PATH)).resolves.toBeNull();
   });
 
   it('reads inbox files only after the opened fd resolves inside the inbox dir', async () => {
@@ -42,13 +48,14 @@ describe('inbox path access', () => {
       close,
     } as unknown as Awaited<ReturnType<typeof open>>);
     mockRealpath.mockImplementation(async (path) => {
-      if (path === '/workspace') return '/workspace';
-      if (path === '/workspace/task-1/inbox') return '/workspace/task-1/inbox';
+      if (path === WORKSPACE_PATH) return WORKSPACE_PATH;
+      if (path === INBOX_DIR) return INBOX_DIR;
+      if (path === INBOX_FILE) return INBOX_FILE;
       throw new Error(`unexpected path ${path}`);
     });
-    mockRealpathSync.mockReturnValue('/workspace/task-1/inbox/file.txt');
+    mockRealpathSync.mockReturnValue(INBOX_FILE);
 
-    await expect(readInboxFile('/workspace', 'task-1/inbox/file.txt')).resolves.toBe('aGVsbG8=');
+    await expect(readInboxFile(WORKSPACE_PATH, LOCAL_PATH)).resolves.toBe('aGVsbG8=');
     expect(readFile).toHaveBeenCalledWith({ encoding: 'base64' });
     expect(close).toHaveBeenCalledTimes(1);
   });
@@ -62,13 +69,14 @@ describe('inbox path access', () => {
       close,
     } as unknown as Awaited<ReturnType<typeof open>>);
     mockRealpath.mockImplementation(async (path) => {
-      if (path === '/workspace') return '/workspace';
-      if (path === '/workspace/task-1/inbox') return '/workspace/task-1/inbox';
+      if (path === WORKSPACE_PATH) return WORKSPACE_PATH;
+      if (path === INBOX_DIR) return INBOX_DIR;
+      if (path === INBOX_FILE) return OUTSIDE_FILE;
       throw new Error(`unexpected path ${path}`);
     });
-    mockRealpathSync.mockReturnValue('/private/etc/passwd');
+    mockRealpathSync.mockReturnValue(OUTSIDE_FILE);
 
-    await expect(readInboxFile('/workspace', 'task-1/inbox/file.txt')).resolves.toBeNull();
+    await expect(readInboxFile(WORKSPACE_PATH, LOCAL_PATH)).resolves.toBeNull();
     expect(readFile).not.toHaveBeenCalled();
     expect(close).toHaveBeenCalledTimes(1);
   });

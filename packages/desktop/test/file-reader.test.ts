@@ -10,6 +10,7 @@ vi.mock('fs', () => ({
 
 import { readContextFile, resolveFdRealPath } from '../src/main/context/file-reader.js';
 import { openSync, realpathSync, fstatSync, readSync, closeSync } from 'fs';
+import { join, resolve } from 'path';
 
 const mockOpenSync = vi.mocked(openSync);
 const mockRealpathSync = vi.mocked(realpathSync);
@@ -18,7 +19,7 @@ const mockReadSync = vi.mocked(readSync);
 const mockCloseSync = vi.mocked(closeSync);
 
 const FAKE_FD = 42;
-const CONTEXT_DIR = '/mock/context';
+const CONTEXT_DIR = resolve('mock', 'context');
 const LARGE_SIZE = 11 * 1024 * 1024;
 const MAX_BINARY_SIZE = 10 * 1024 * 1024;
 
@@ -45,7 +46,7 @@ beforeEach(() => {
 
 describe('readContextFile', () => {
   it('returns truncated: true for PDF files larger than 10MB', () => {
-    const filePath = `${CONTEXT_DIR}/large.pdf`;
+    const filePath = join(CONTEXT_DIR, 'large.pdf');
     mockFile(filePath, LARGE_SIZE);
 
     const result = readContextFile(filePath, [CONTEXT_DIR]);
@@ -59,7 +60,7 @@ describe('readContextFile', () => {
   });
 
   it('returns truncated: true for image files larger than 10MB', () => {
-    const filePath = `${CONTEXT_DIR}/large.jpg`;
+    const filePath = join(CONTEXT_DIR, 'large.jpg');
     mockFile(filePath, LARGE_SIZE);
 
     const result = readContextFile(filePath, [CONTEXT_DIR]);
@@ -73,7 +74,7 @@ describe('readContextFile', () => {
 
   it('returns truncated: false for files smaller than 10MB', () => {
     const smallSize = 1024 * 1024;
-    const filePath = `${CONTEXT_DIR}/small.pdf`;
+    const filePath = join(CONTEXT_DIR, 'small.pdf');
     mockFile(filePath, smallSize);
 
     const result = readContextFile(filePath, [CONTEXT_DIR]);
@@ -86,7 +87,7 @@ describe('readContextFile', () => {
   });
 
   it('returns content as base64 for binary files', () => {
-    const filePath = `${CONTEXT_DIR}/large.jpg`;
+    const filePath = join(CONTEXT_DIR, 'large.jpg');
     mockFile(filePath, LARGE_SIZE);
 
     const result = readContextFile(filePath, [CONTEXT_DIR]);
@@ -97,7 +98,7 @@ describe('readContextFile', () => {
   });
 
   it('truncates text files larger than 100KB and appends marker', () => {
-    const filePath = `${CONTEXT_DIR}/big.ts`;
+    const filePath = join(CONTEXT_DIR, 'big.ts');
     mockFile(filePath, 200 * 1024);
 
     const result = readContextFile(filePath, [CONTEXT_DIR]);
@@ -110,7 +111,7 @@ describe('readContextFile', () => {
   });
 
   it('returns full content for text files under 100KB', () => {
-    const filePath = `${CONTEXT_DIR}/small.ts`;
+    const filePath = join(CONTEXT_DIR, 'small.ts');
     mockFile(filePath, 50 * 1024);
 
     const result = readContextFile(filePath, [CONTEXT_DIR]);
@@ -122,7 +123,7 @@ describe('readContextFile', () => {
   });
 
   it('closes fd even when path check fails', () => {
-    const filePath = '/outside/not-allowed.pdf';
+    const filePath = resolve('outside', 'not-allowed.pdf');
     mockFile(filePath, 1024);
 
     expect(() => readContextFile(filePath, [CONTEXT_DIR])).toThrow('path outside allowed context folders');
@@ -130,7 +131,7 @@ describe('readContextFile', () => {
   });
 
   it('throws for unsupported file types', () => {
-    const filePath = `${CONTEXT_DIR}/data.exe`;
+    const filePath = join(CONTEXT_DIR, 'data.exe');
     mockFile(filePath, 1024);
 
     expect(() => readContextFile(filePath, [CONTEXT_DIR])).toThrow('unsupported file type');
@@ -138,7 +139,7 @@ describe('readContextFile', () => {
   });
 
   it('reads context files on win32 without /dev/fd', () => {
-    const filePath = `${CONTEXT_DIR}/small.pdf`;
+    const filePath = join(CONTEXT_DIR, 'small.pdf');
     const win32Spy = vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
     mockFile(filePath, 1024, 'win32');
 
@@ -154,7 +155,7 @@ describe('readContextFile', () => {
 
 describe('resolveFdRealPath', () => {
   it('resolves via /dev/fd on linux and darwin', () => {
-    const filePath = `${CONTEXT_DIR}/doc.pdf`;
+    const filePath = join(CONTEXT_DIR, 'doc.pdf');
     mockRealpathSync.mockImplementation(((p: string) =>
       p === `/dev/fd/${FAKE_FD}` ? filePath : p) as typeof realpathSync);
 
@@ -168,7 +169,7 @@ describe('resolveFdRealPath', () => {
   });
 
   it('resolves via absolutePath on win32', () => {
-    const filePath = `${CONTEXT_DIR}/doc.pdf`;
+    const filePath = join(CONTEXT_DIR, 'doc.pdf');
     const win32Spy = vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
     mockRealpathSync.mockImplementation(((p: string) => p) as typeof realpathSync);
 

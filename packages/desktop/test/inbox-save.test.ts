@@ -10,6 +10,7 @@ vi.mock('../src/main/workspace/init.js', () => ({
 }));
 
 import { mkdir, writeFile } from 'fs/promises';
+import { basename, dirname, join, resolve } from 'path';
 import { saveInboxAttachment } from '../src/main/inbox/save.js';
 
 const mockMkdir = vi.mocked(mkdir);
@@ -30,11 +31,14 @@ describe('saveInboxAttachment', () => {
       buffer,
     });
 
-    expect(mockMkdir).toHaveBeenCalledWith('/workspace/task-1/inbox', { recursive: true });
+    const inboxDir = join('/workspace/task-1', 'inbox');
+    expect(mockMkdir).toHaveBeenCalledWith(inboxDir, { recursive: true });
     expect(mockWriteFile).toHaveBeenCalledTimes(1);
     const writtenPath = String(mockWriteFile.mock.calls[0][0]);
-    expect(writtenPath).toMatch(/^\/workspace\/task-1\/inbox\/note(?:-[a-f0-9]{8})?\.txt$/);
+    const writtenName = basename(writtenPath);
+    expect(dirname(writtenPath)).toBe(resolve(inboxDir));
+    expect(writtenName).toMatch(/^note(?:-[a-f0-9]{8})?\.txt$/);
     expect(mockWriteFile.mock.calls[0][1]).toBe(buffer);
-    expect(result.localPath).toMatch(/^task-1\/inbox\/note(?:-[a-f0-9]{8})?\.txt$/);
+    expect(result.localPath).toBe(['task-1', 'inbox', writtenName].join('/'));
   });
 });
