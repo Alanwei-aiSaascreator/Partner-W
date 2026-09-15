@@ -53,6 +53,39 @@ describe('initDatabase', () => {
     expect(cleanupSql).toContain('artifacts.message_id = messages.id');
   });
 
+  it('creates task_context_sources with the expected columns and unique task-path index', () => {
+    initDatabase('/tmp/workspace-a');
+
+    const migrationSql = mockDbInstance.exec.mock.calls
+      .map(([sql]) => String(sql))
+      .find((sql) => sql.includes('CREATE TABLE IF NOT EXISTS task_context_sources'));
+    const tableDefinition = migrationSql?.match(/CREATE TABLE IF NOT EXISTS task_context_sources \(([\s\S]*?)\);/)?.[1];
+    const columns = tableDefinition
+      ?.split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => line.match(/^(\w+)/)?.[1]);
+
+    expect(columns).toEqual(['id', 'task_id', 'kind', 'absolute_path', 'display_name', 'created_at', 'last_seen_at']);
+    expect(migrationSql).toContain(
+      'CREATE UNIQUE INDEX IF NOT EXISTS task_context_sources_task_path\nON task_context_sources(task_id, absolute_path)',
+    );
+  });
+
+  it('applies the task context source migration idempotently after reopening', () => {
+    initDatabase('/tmp/workspace-a');
+    initDatabase('/tmp/workspace-a');
+    closeDatabase();
+    initDatabase('/tmp/workspace-a');
+
+    expect(Database).toHaveBeenCalledTimes(2);
+    expect(
+      mockDbInstance.exec.mock.calls.filter(([sql]) =>
+        String(sql).includes('CREATE TABLE IF NOT EXISTS task_context_sources'),
+      ),
+    ).toHaveLength(2);
+  });
+
   it('returns early when called with same path', () => {
     initDatabase('/tmp/workspace-a');
     vi.clearAllMocks();

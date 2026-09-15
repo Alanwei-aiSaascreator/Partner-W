@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, primaryKey } from 'drizzle-orm/sqlite-core';
+import { sqliteTable, text, integer, primaryKey, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
 export const tasks = sqliteTable('tasks', {
   id: text('id').primaryKey(),
@@ -20,6 +20,22 @@ export const tasks = sqliteTable('tasks', {
   artifactDir: text('artifact_dir').notNull().default(''),
   gatewayId: text('gateway_id').notNull().default(''),
 });
+
+export const taskContextSources = sqliteTable(
+  'task_context_sources',
+  {
+    id: text('id').primaryKey(),
+    taskId: text('task_id')
+      .notNull()
+      .references(() => tasks.id, { onDelete: 'cascade' }),
+    kind: text('kind').notNull(),
+    absolutePath: text('absolute_path').notNull(),
+    displayName: text('display_name').notNull(),
+    createdAt: text('created_at').notNull(),
+    lastSeenAt: text('last_seen_at').notNull(),
+  },
+  (table) => [uniqueIndex('task_context_sources_task_path').on(table.taskId, table.absolutePath)],
+);
 
 export const messages = sqliteTable('messages', {
   id: text('id').primaryKey(),

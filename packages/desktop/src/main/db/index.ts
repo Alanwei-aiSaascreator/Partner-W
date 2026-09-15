@@ -46,6 +46,19 @@ CREATE TABLE IF NOT EXISTS tasks (
   gateway_id TEXT NOT NULL DEFAULT ''
 );
 
+CREATE TABLE IF NOT EXISTS task_context_sources (
+  id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK (kind = 'folder'),
+  absolute_path TEXT NOT NULL,
+  display_name TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  last_seen_at TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS task_context_sources_task_path
+ON task_context_sources(task_id, absolute_path);
+
 CREATE TABLE IF NOT EXISTS messages (
   id TEXT PRIMARY KEY,
   task_id TEXT NOT NULL REFERENCES tasks(id),

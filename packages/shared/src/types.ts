@@ -41,6 +41,33 @@ export interface Task {
   teamId?: string;
 }
 
+export type TaskContextSourceKind = 'folder';
+
+export interface TaskContextSource {
+  id: string;
+  taskId: string;
+  kind: TaskContextSourceKind;
+  absolutePath: string;
+  displayName: string;
+  createdAt: string;
+  lastSeenAt: string;
+  availability: 'available' | 'missing';
+}
+
+export interface ImportedTaskFile {
+  fileName: string;
+  localPath: string;
+  mimeType: string;
+  size: number;
+}
+
+export type ImportFileRejectionReason = 'unsupported' | 'too-large' | 'unavailable' | 'copy-failed';
+
+export interface ImportFilesResult {
+  imported: ImportedTaskFile[];
+  rejected: Array<{ fileName: string; reason: ImportFileRejectionReason }>;
+}
+
 export type RoomStatus = 'active' | 'stopping' | 'stopped';
 
 export interface RoomPerformer {
