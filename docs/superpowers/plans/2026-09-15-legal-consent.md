@@ -1,5 +1,7 @@
 # Legal Consent Enforcement Implementation Plan
 
+**Status:** Approved and preserved, but intentionally deferred until the pre-production launch gate. Do not start this plan while the current priority is USB product core development.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build a versioned, auditable 18+ terms/privacy acceptance flow that gates OTP login, activation, and Relay model access without deleting local work.
