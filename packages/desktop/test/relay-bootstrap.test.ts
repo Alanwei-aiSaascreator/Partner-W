@@ -115,6 +115,18 @@ describe('ensureRelayConfigured —— 纯净/未配置', () => {
 });
 
 describe('ensureRelayConfigured —— runtime ready ≠ commercial ready', () => {
+  it('⭐ 旧账号 relay 尚未清理时，不得把它当作当前账号已配置', async () => {
+    const prepareGatewayAccess = vi.fn(async () => false);
+    const { deps, patchConfig } = makeDeps({ prepareGatewayAccess }, alreadyRelay);
+
+    const res = await ensureRelayConfigured(deps);
+
+    expect(res.status).toBe('runtime-not-ready');
+    expect(res.relayReady).toBe(false);
+    expect(prepareGatewayAccess).toHaveBeenCalledTimes(1);
+    expect(patchConfig).not.toHaveBeenCalled();
+  });
+
   it('⭐ 网关还没连上 ⇒ runtime-not-ready（可重试），**不是** unlicensed', async () => {
     const { deps, patchConfig } = makeDeps({ getGateway: () => null });
     const res = await ensureRelayConfigured(deps);

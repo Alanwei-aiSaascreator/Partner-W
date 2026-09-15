@@ -39,6 +39,8 @@ export interface CommercialConfig {
   supabaseUrl: string;
   supabaseAnonKey: string;
   licenseKey?: string;
+  /** A previous account's relay config still needs verified removal from the gateway. */
+  relayCleanupPending?: boolean;
   /** Origin of the Alipay payment service; defaults to the production domain. */
   paymentBaseUrl?: string;
 }

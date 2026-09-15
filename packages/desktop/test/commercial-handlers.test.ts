@@ -21,7 +21,11 @@ const mocks = vi.hoisted(() => ({
   handlers: new Map<string, (...args: unknown[]) => unknown>(),
   verifyLoginOtp: vi.fn(),
   signInWithPassword: vi.fn(),
+  signOutCommercial: vi.fn(),
   notifyCommercialSignedIn: vi.fn(),
+  requestCommercialAccessCleanup: vi.fn(),
+  drainPendingCommercialAccessCleanup: vi.fn(),
+  clearCommercialSession: vi.fn(),
 }));
 
 vi.mock('electron', () => ({
@@ -44,9 +48,20 @@ vi.mock('../src/main/commercial/auth.js', () => ({
   verifyLoginOtp: (...a: unknown[]) => mocks.verifyLoginOtp(...a),
   signInWithPassword: (...a: unknown[]) => mocks.signInWithPassword(...a),
   sendLoginOtp: vi.fn(),
-  signOutCommercial: vi.fn(),
+  signOutCommercial: (...a: unknown[]) => mocks.signOutCommercial(...a),
   readSessionState: vi.fn(),
   readAccountOverview: vi.fn(),
+}));
+
+vi.mock('../src/main/commercial/client.js', () => ({
+  clearCommercialSession: () => mocks.clearCommercialSession(),
+  resetCommercialClient: vi.fn(),
+}));
+
+vi.mock('../src/main/commercial/relay-cleanup.js', () => ({
+  buildCommercialAccessCleanupDeps: () => ({}),
+  requestCommercialAccessCleanup: () => mocks.requestCommercialAccessCleanup(),
+  drainPendingCommercialAccessCleanup: () => mocks.drainPendingCommercialAccessCleanup(),
 }));
 
 vi.mock('../src/main/commercial/relay-startup.js', () => ({
@@ -66,7 +81,14 @@ describe('登录入口 → notifyCommercialSignedIn（Stage 2C 接线）', () =>
     mocks.handlers.clear();
     mocks.verifyLoginOtp.mockReset();
     mocks.signInWithPassword.mockReset();
+    mocks.signOutCommercial.mockReset();
     mocks.notifyCommercialSignedIn.mockReset();
+    mocks.requestCommercialAccessCleanup.mockReset();
+    mocks.drainPendingCommercialAccessCleanup.mockReset();
+    mocks.clearCommercialSession.mockReset();
+    mocks.requestCommercialAccessCleanup.mockResolvedValue({ cleaned: true, pending: false });
+    mocks.drainPendingCommercialAccessCleanup.mockResolvedValue({ cleaned: false, pending: false });
+    mocks.signOutCommercial.mockResolvedValue({ ok: true });
     registerCommercialHandlers();
   });
 
@@ -79,6 +101,7 @@ describe('登录入口 → notifyCommercialSignedIn（Stage 2C 接线）', () =>
 
     expect(res.ok).toBe(true);
     expect(res.result?.userId).toBe('u-1');
+    expect(mocks.requestCommercialAccessCleanup).toHaveBeenCalledTimes(1);
     expect(mocks.notifyCommercialSignedIn, '登录成功了却没补跑 ⇒ 用户得重启客户端才看得到模型').toHaveBeenCalledTimes(
       1,
     );
@@ -97,6 +120,7 @@ describe('登录入口 → notifyCommercialSignedIn（Stage 2C 接线）', () =>
     const res = (await handlerFor('commercial:sign-in-password')({}, 'a@b.test', 'pw')) as { ok: boolean };
 
     expect(res.ok).toBe(true);
+    expect(mocks.requestCommercialAccessCleanup).toHaveBeenCalledTimes(1);
     expect(mocks.notifyCommercialSignedIn).toHaveBeenCalledTimes(1);
   });
 
@@ -112,5 +136,15 @@ describe('登录入口 → notifyCommercialSignedIn（Stage 2C 接线）', () =>
     await handlerFor('commercial:session')({});
     await handlerFor('commercial:get-config')({});
     expect(mocks.notifyCommercialSignedIn, '读一下会话就重跑 bootstrap 是不可接受的回归').not.toHaveBeenCalled();
+  });
+
+  it('⭐ 登出时即使远端失败，也先清除本地许可证和旧 relay', async () => {
+    mocks.signOutCommercial.mockResolvedValue({ ok: false, error: 'network down' });
+
+    const result = (await handlerFor('commercial:sign-out')({})) as { ok: boolean };
+
+    expect(result.ok).toBe(false);
+    expect(mocks.requestCommercialAccessCleanup).toHaveBeenCalledTimes(1);
+    expect(mocks.clearCommercialSession).toHaveBeenCalledTimes(1);
   });
 });

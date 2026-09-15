@@ -71,7 +71,7 @@ export interface RelayBootstrapResult {
 
 export interface RelayGatewayHandle {
   getConfig: () => Promise<unknown>;
-  patchConfig: (params: { baseHash: string; raw: string }) => Promise<unknown>;
+  patchConfig: (params: { baseHash: string; raw: string; replacePaths?: string[] }) => Promise<unknown>;
 }
 
 export interface RelayBootstrapDeps {
@@ -84,6 +84,8 @@ export interface RelayBootstrapDeps {
    * 否则一次网络超时就会被说成"用户已退出登录"。见 `AuthCheck`。
    */
   checkAuth: () => Promise<AuthCheck>;
+  /** Remove any previous account's relay credentials before inspecting readiness. */
+  prepareGatewayAccess?: () => Promise<boolean>;
   /** 读名下 license（账号绑定口径，不依赖设备激活行）。 */
   readLicenseKey: () => Promise<string | null>;
   /** 取中转 key（幂等：同一设备重复调用返回同一把）。 */
@@ -131,6 +133,18 @@ export async function ensureRelayConfigured(deps: RelayBootstrapDeps): Promise<R
     return { status: 'unauthenticated', relayReady: false };
   }
   log('relay.bootstrap.authenticated');
+
+  if (deps.prepareGatewayAccess) {
+    try {
+      if (!(await deps.prepareGatewayAccess())) {
+        log('relay.bootstrap.cleanup-pending');
+        return { status: 'runtime-not-ready', relayReady: false, detail: 'previous account cleanup pending' };
+      }
+    } catch (error) {
+      log('relay.bootstrap.cleanup-failed', { message: messageOf(error) });
+      return { status: 'runtime-not-ready', relayReady: false, detail: 'previous account cleanup failed' };
+    }
+  }
 
   let licenseKey: string | null = null;
   try {

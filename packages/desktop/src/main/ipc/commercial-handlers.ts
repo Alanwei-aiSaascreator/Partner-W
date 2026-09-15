@@ -11,6 +11,7 @@ import {
 } from '../commercial/auth.js';
 import { activateLicense, clearLicense, deviceFingerprint, readLicenseStatus } from '../commercial/license.js';
 import { notifyCommercialSignedIn } from '../commercial/relay-startup.js';
+import { buildCommercialAccessCleanupDeps, requestCommercialAccessCleanup } from '../commercial/relay-cleanup.js';
 import { runUsageReport } from '../commercial/usage-reporter.js';
 import {
   createCustomRechargeOrder,
@@ -51,18 +52,28 @@ export function registerCommercialHandlers(): void {
     // ⭐ 「登录成功」是一次**状态转变**（signed-out → signed-in）。
     //    启动那次 bootstrap 早在"没登录"上收场了，而明确没登录按设计不重试 ——
     //    所以这里必须再调度一次，否则用户不重启客户端就看不到模型（Stage 2C）。
-    if (res.ok) notifyCommercialSignedIn();
+    if (res.ok) {
+      // 每次交互式登录都是账户边界：即使没有先点退出，也不能沿用旧账号的 relay。
+      await requestCommercialAccessCleanup(buildCommercialAccessCleanupDeps());
+      notifyCommercialSignedIn();
+    }
     return res;
   });
   ipcMain.handle('commercial:sign-in-password', async (_event, email: string, password: string) => {
     const res = await signInWithPassword(String(email ?? ''), String(password ?? ''));
-    if (res.ok) notifyCommercialSignedIn();
+    if (res.ok) {
+      await requestCommercialAccessCleanup(buildCommercialAccessCleanupDeps());
+      notifyCommercialSignedIn();
+    }
     return res;
   });
   ipcMain.handle('commercial:sign-out', async () => {
-    const result = await signOutCommercial();
-    clearCommercialSession();
-    return result;
+    try {
+      await requestCommercialAccessCleanup(buildCommercialAccessCleanupDeps());
+      return await signOutCommercial();
+    } finally {
+      clearCommercialSession();
+    }
   });
   ipcMain.handle('commercial:session', () => readSessionState());
   ipcMain.handle('commercial:account-overview', () => readAccountOverview());

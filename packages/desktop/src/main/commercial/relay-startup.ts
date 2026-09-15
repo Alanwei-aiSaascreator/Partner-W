@@ -21,6 +21,7 @@ import type {
 import { getAllGatewayClients } from '../ws/index.js';
 import { getDebugLogger } from '../debug/index.js';
 import { LOCAL_GATEWAY_ID } from '../runtime/state-config.js';
+import { buildCommercialAccessCleanupDeps, drainPendingCommercialAccessCleanup } from './relay-cleanup.js';
 
 /**
  * 找一个**连上的**网关。
@@ -75,6 +76,10 @@ export function buildRelayBootstrapDeps(): RelayBootstrapDeps {
     hasCommercialClient: () => getCommercialClient() !== null,
     // 三态，不是布尔 —— 「没登录」和「暂时问不出来」必须分开（见 auth-classify.ts）。
     checkAuth: () => probeAuth(),
+    prepareGatewayAccess: async () => {
+      const cleanup = await drainPendingCommercialAccessCleanup(buildCommercialAccessCleanupDeps());
+      return !cleanup.pending;
+    },
     readLicenseKey: async () => {
       const res = await readLicenseStatus();
       return res.ok && res.result?.licenseKey ? res.result.licenseKey : null;
