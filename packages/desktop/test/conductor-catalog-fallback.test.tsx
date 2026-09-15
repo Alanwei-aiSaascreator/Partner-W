@@ -114,6 +114,7 @@ vi.mock('../src/renderer/platform', () => ({
 
 import { toast } from '../src/renderer/lib/toast';
 import { useChatSend } from '../src/renderer/components/ChatInput/useChatSend';
+import { useCommercialStore } from '../src/renderer/stores/commercialStore';
 
 /* ---------- helpers ---------- */
 function render(ui: ReactElement): { container: HTMLDivElement; unmount: () => void } {
@@ -167,6 +168,24 @@ describe('conductor initialization - catalog fallback', () => {
     (globalThis as Record<string, unknown> & { clawwork?: Record<string, unknown> }).clawwork = {
       getAgentFile: vi.fn(async () => ({ ok: false })),
     };
+    useCommercialStore.setState({
+      status: 'ready',
+      overview: {
+        account: { userId: 'u-1', phone: null, email: null, nickname: null, avatar: null },
+        org: null,
+        license: {
+          activated: true,
+          licenseKey: 'RY-1',
+          sku: 'USB',
+          status: 'active',
+          expiresAt: null,
+          tokenQuotaMicros: 1000,
+          tokenUsedMicros: 10,
+        },
+        device: { fingerprint: 'fp', shortFingerprint: 'fp' },
+        fetchedAt: '2026-09-15T00:00:00.000Z',
+      },
+    });
 
     (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   });
