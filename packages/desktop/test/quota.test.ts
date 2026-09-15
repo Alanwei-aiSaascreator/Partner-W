@@ -1,9 +1,25 @@
 import { describe, expect, it } from 'vitest';
-import { evaluateQuota, QUOTA_WARN_PERCENT, QUOTA_DEGRADE_PERCENT } from '../src/renderer/lib/quota';
+import type { CommercialAccountOverview } from '@clawwork/shared';
+import {
+  evaluateCommercialSendAccess,
+  evaluateQuota,
+  QUOTA_WARN_PERCENT,
+  QUOTA_DEGRADE_PERCENT,
+} from '../src/renderer/lib/quota';
+
+function overviewWith(license: CommercialAccountOverview['license']): CommercialAccountOverview {
+  return {
+    account: { userId: 'u-1', phone: null, email: null, nickname: null, avatar: null },
+    org: null,
+    license,
+    device: { fingerprint: 'fp', shortFingerprint: 'fp' },
+    fetchedAt: '2026-09-15T00:00:00.000Z',
+  };
+}
 
 describe('evaluateQuota', () => {
-  it('treats a licence without quota as unlimited', () => {
-    expect(evaluateQuota(0, 0).level).toBe('unlimited');
+  it('blocks a licence without quota', () => {
+    expect(evaluateQuota(0, 0).level).toBe('exhausted');
   });
 
   it('reports ok below the warning threshold', () => {
@@ -44,11 +60,66 @@ describe('evaluateQuota', () => {
     expect(evaluateQuota(1000, Number.NEGATIVE_INFINITY).level).toBe('unknown-exhausted');
   });
 
-  it('treats an unreadable quota as unlimited rather than blocking every send', () => {
-    expect(evaluateQuota(Number.NaN, 0).level).toBe('unlimited');
+  it('blocks an unreadable quota', () => {
+    expect(evaluateQuota(Number.NaN, 0).level).toBe('unknown-exhausted');
   });
 
   it('computes the remaining percentage', () => {
     expect(evaluateQuota(1000, 250).remainingPercent).toBe(75);
+  });
+});
+
+describe('evaluateCommercialSendAccess', () => {
+  it('blocks while the current account snapshot is loading', () => {
+    expect(evaluateCommercialSendAccess('loading', null)).toEqual({ allowed: false, reason: 'verifying' });
+  });
+
+  it('does not authorize from a cached snapshot when the current read failed', () => {
+    const cached = overviewWith({
+      activated: true,
+      licenseKey: 'RY-OLD',
+      sku: 'USB',
+      status: 'active',
+      expiresAt: null,
+      tokenQuotaMicros: 1000,
+      tokenUsedMicros: 10,
+    });
+    expect(evaluateCommercialSendAccess('offline', cached)).toEqual({ allowed: false, reason: 'unavailable' });
+  });
+
+  it('blocks an account without a licence', () => {
+    expect(evaluateCommercialSendAccess('ready', overviewWith(null))).toEqual({
+      allowed: false,
+      reason: 'unlicensed',
+    });
+  });
+
+  it('blocks an inactive or unactivated licence', () => {
+    const inactive = overviewWith({
+      activated: false,
+      licenseKey: 'RY-1',
+      sku: 'USB',
+      status: 'active',
+      expiresAt: null,
+      tokenQuotaMicros: 1000,
+      tokenUsedMicros: 10,
+    });
+    expect(evaluateCommercialSendAccess('ready', inactive)).toEqual({ allowed: false, reason: 'unlicensed' });
+  });
+
+  it('allows only a verified active licence with remaining quota', () => {
+    const current = overviewWith({
+      activated: true,
+      licenseKey: 'RY-1',
+      sku: 'USB',
+      status: 'active',
+      expiresAt: null,
+      tokenQuotaMicros: 1000,
+      tokenUsedMicros: 10,
+    });
+    expect(evaluateCommercialSendAccess('ready', current)).toMatchObject({
+      allowed: true,
+      verdict: { level: 'ok', remainingPercent: 99 },
+    });
   });
 });
