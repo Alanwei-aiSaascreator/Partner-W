@@ -22,6 +22,9 @@ import GatewayInstanceSelector from '@/components/GatewayInstanceSelector';
 import logo from '@/assets/logo.png';
 import { recommendedStarterIds, type OnboardingProfile, type StarterId } from '@/lib/user-onboarding';
 import { resolveStarterAgentId } from '@/lib/preset-agents';
+import { resolveCommercialDefaultModel } from '@/lib/commercial-default-model';
+import { useUiStore } from '@/stores/uiStore';
+import { relayModelsFrom } from '@/components/ChatInput/model-families';
 
 interface WelcomeScreenProps {
   onboardingProfile: OnboardingProfile;
@@ -46,6 +49,8 @@ export default function WelcomeScreen({ onboardingProfile, onSelectPrompt }: Wel
       initialAgentId: pendingNewTask?.agentId,
     });
   const [agentExpanded, setAgentExpanded] = useState(false);
+  const rawModelCatalog = useUiStore((s) => (selectedGwId ? s.modelCatalogByGateway[selectedGwId] : undefined));
+  const defaultModel = resolveCommercialDefaultModel(relayModelsFrom(rawModelCatalog ?? []));
   const maxVisible = 3;
   const visibleAgents = agentExpanded ? agentCatalog : agentCatalog.slice(0, maxVisible);
   const hiddenAgentCount = agentCatalog.length - maxVisible;
@@ -60,12 +65,18 @@ export default function WelcomeScreen({ onboardingProfile, onSelectPrompt }: Wel
       previous?.gatewayId === selectedGwId &&
       previous?.agentId === effectiveAgentId &&
       !previous?.ensemble &&
-      !previous?.teamId
+      !previous?.teamId &&
+      previous?.model === defaultModel?.id
     ) {
       return;
     }
-    useTaskStore.getState().setPending({ gatewayId: selectedGwId, agentId: effectiveAgentId });
-  }, [effectiveAgentId, selectedGwId]);
+    useTaskStore.getState().setPending({
+      ...previous,
+      gatewayId: selectedGwId,
+      agentId: effectiveAgentId,
+      model: defaultModel?.id,
+    });
+  }, [defaultModel?.id, effectiveAgentId, selectedGwId]);
 
   const handleSelectGateway = (gatewayId: string) => {
     setSelectedGwId(gatewayId);
@@ -81,7 +92,12 @@ export default function WelcomeScreen({ onboardingProfile, onSelectPrompt }: Wel
     );
     if (selectedGwId && agentId) {
       const previous = useTaskStore.getState().pendingNewTask;
-      useTaskStore.getState().setPending({ ...previous, gatewayId: selectedGwId, agentId });
+      useTaskStore.getState().setPending({
+        ...previous,
+        gatewayId: selectedGwId,
+        agentId,
+        model: previous?.model ?? defaultModel?.id,
+      });
       if (agentId !== effectiveAgentId) setSelectedAgentId(agentId);
     }
     onSelectPrompt(t(`mainArea.starters.${starterId}.prompt`));

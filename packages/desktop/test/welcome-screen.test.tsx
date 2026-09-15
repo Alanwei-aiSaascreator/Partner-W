@@ -9,6 +9,9 @@ const mocks = vi.hoisted(() => ({
   setSelectedAgentId: vi.fn(),
   setSelectedGwId: vi.fn(),
   gatewayState: { agentCatalog: [{ id: 'main' }] as Array<{ id: string }> },
+  modelCatalogByGateway: {
+    'gw-1': [{ id: 'deepseek-v4-flash', provider: 'clawrouter', name: 'DeepSeek V4 Flash' }],
+  },
 }));
 
 vi.mock('react-i18next', () => ({
@@ -25,6 +28,8 @@ vi.mock('../src/renderer/platform', () => ({
     <T,>(selector: (state: { pendingNewTask: null }) => T) => selector({ pendingNewTask: null }),
     { getState: () => ({ pendingNewTask: null, setPending: mocks.setPending }) },
   ),
+  useUiStore: <T,>(selector: (state: { modelCatalogByGateway: typeof mocks.modelCatalogByGateway }) => T) =>
+    selector({ modelCatalogByGateway: mocks.modelCatalogByGateway }),
 }));
 
 vi.mock('../src/renderer/hooks/useGatewaySelector', () => ({
@@ -89,7 +94,11 @@ describe('WelcomeScreen task starters', () => {
     expect(button).toBeDefined();
     mocks.setPending.mockClear();
     act(() => button!.click());
-    expect(mocks.setPending).toHaveBeenCalledWith({ gatewayId: 'gw-1', agentId: 'main' });
+    expect(mocks.setPending).toHaveBeenCalledWith({
+      gatewayId: 'gw-1',
+      agentId: 'main',
+      model: 'deepseek-v4-flash',
+    });
     expect(onSelectPrompt).toHaveBeenCalledWith('mainArea.starters.photography.prompt');
     unmount();
   });
@@ -109,7 +118,11 @@ describe('WelcomeScreen task starters', () => {
 
     mocks.setPending.mockClear();
     act(() => button!.click());
-    expect(mocks.setPending).toHaveBeenCalledWith({ gatewayId: 'gw-1', agentId: 'rongying-video' });
+    expect(mocks.setPending).toHaveBeenCalledWith({
+      gatewayId: 'gw-1',
+      agentId: 'rongying-video',
+      model: 'deepseek-v4-flash',
+    });
     expect(mocks.setSelectedAgentId).toHaveBeenCalledWith('rongying-video');
     expect(onSelectPrompt).toHaveBeenCalledWith('mainArea.starters.photography.prompt');
     unmount();

@@ -37,6 +37,7 @@ import type { PendingAttachment } from './types';
 import type { ThinkingLevel } from './constants';
 import { GATEWAY_INJECTED_MODEL, EMPTY_MODELS_CATALOG, MAX_TEXT_TOTAL, MENTION_ALL_AGENT_ID } from './constants';
 import { getModelLabel, readAsBase64 } from './utils';
+import { resolveCommercialDefaultModel } from '@/lib/commercial-default-model';
 
 interface UseChatSendOpts {
   textareaRef: RefObject<HTMLTextAreaElement | null>;
@@ -119,11 +120,12 @@ export function useChatSend(opts: UseChatSendOpts) {
   });
   const toolsCatalogByGateway = useUiStore((s) => s.toolsCatalogByGateway);
   const toolsCatalog = taskGwId ? toolsCatalogByGateway[taskGwId] : undefined;
+  const defaultModel = useMemo(() => resolveCommercialDefaultModel(modelCatalog), [modelCatalog]);
   const currentModel = activeTask
     ? activeTask.model === GATEWAY_INJECTED_MODEL
       ? undefined
       : activeTask.model
-    : pendingNewTask?.model;
+    : (pendingNewTask?.model ?? defaultModel?.id);
   const currentThinking = (activeTask?.thinkingLevel ?? pendingNewTask?.thinkingLevel ?? 'off') as ThinkingLevel;
 
   const currentModelEntry = currentModel ? modelCatalog.find((m) => m.id === currentModel) : undefined;
@@ -580,14 +582,14 @@ export function useChatSend(opts: UseChatSendOpts) {
     const task = store.tasks.find((item) => item.id === store.activeTaskId);
     if (!task) return;
     const res = await window.clawwork.patchSession(task.gatewayId, task.sessionKey, {
-      model: 'bailian/qwen3.5-flash',
+      model: defaultModel?.id ?? currentModel,
     });
     if (res.ok) {
       toast.success(t('usage.degradeDone'));
     } else {
       toast.error(t('errors.requestFailed'));
     }
-  }, [t]);
+  }, [currentModel, defaultModel?.id, t]);
 
   const handleToolSelect = useCallback(
     (tool: ToolEntry) => {
