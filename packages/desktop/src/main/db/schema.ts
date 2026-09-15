@@ -1,4 +1,5 @@
-import { sqliteTable, text, integer, primaryKey, uniqueIndex } from 'drizzle-orm/sqlite-core';
+import { sql } from 'drizzle-orm';
+import { check, sqliteTable, text, integer, primaryKey, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
 export const tasks = sqliteTable('tasks', {
   id: text('id').primaryKey(),
@@ -28,13 +29,16 @@ export const taskContextSources = sqliteTable(
     taskId: text('task_id')
       .notNull()
       .references(() => tasks.id, { onDelete: 'cascade' }),
-    kind: text('kind').notNull(),
+    kind: text('kind', { enum: ['folder'] }).notNull(),
     absolutePath: text('absolute_path').notNull(),
     displayName: text('display_name').notNull(),
     createdAt: text('created_at').notNull(),
     lastSeenAt: text('last_seen_at').notNull(),
   },
-  (table) => [uniqueIndex('task_context_sources_task_path').on(table.taskId, table.absolutePath)],
+  (table) => [
+    uniqueIndex('task_context_sources_task_path').on(table.taskId, table.absolutePath),
+    check('task_context_sources_kind_check', sql`${table.kind} = 'folder'`),
+  ],
 );
 
 export const messages = sqliteTable('messages', {
