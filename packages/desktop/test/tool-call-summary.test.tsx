@@ -18,6 +18,7 @@ vi.mock('framer-motion', () => ({
 }));
 
 import ToolCallSummary from '../src/renderer/components/ToolCallSummary';
+import StreamingMessage from '../src/renderer/components/StreamingMessage';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -81,6 +82,18 @@ describe('ToolCallSummary', () => {
     expect(summary.textContent).toContain('chatMessage.toolCallSummaryWithErrors');
     act(() => summary.click());
     expect(container.querySelectorAll('[data-testid="tool-call-card"]')).toHaveLength(1);
+    unmount();
+  });
+});
+
+describe('StreamingMessage tool activity', () => {
+  it('renders all streaming calls through one shared compact summary', () => {
+    const calls = Array.from({ length: 10 }, (_, index) => call(String(index), index < 8 ? 'ls' : 'exec'));
+    const { container, unmount } = render(<StreamingMessage content="" toolCalls={calls} />);
+
+    expect(container.querySelectorAll('[data-testid="tool-activity-summary"]')).toHaveLength(1);
+    expect(container.querySelectorAll('[data-testid="tool-call-card"]')).toHaveLength(0);
+    expect(container.textContent).toContain('toolActivity.completed:10');
     unmount();
   });
 });
