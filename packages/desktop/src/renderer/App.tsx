@@ -7,6 +7,7 @@ import RightPanel from './layouts/RightPanel';
 import Setup from './layouts/Setup';
 import Login from './layouts/Login';
 import Onboarding from './layouts/Onboarding';
+import StartupReadinessScreen from './layouts/StartupReadiness';
 import Settings from './layouts/Settings';
 import type { SettingsSection } from './layouts/Settings/SettingsNav';
 import GlobalRail from './layouts/AppShell/GlobalRail';
@@ -22,6 +23,7 @@ import { useUpdateCheck } from './hooks/useUpdateCheck';
 import { useTraySync } from './hooks/useTraySync';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { useSettingsBootstrap } from './hooks/useSettingsBootstrap';
+import { useStartupReadiness } from './hooks/useStartupReadiness';
 import { cn } from '@/lib/utils';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { motionDuration, motionEase } from '@/styles/design-tokens';
@@ -91,6 +93,7 @@ export default function App() {
   }, [setActiveTask, setMainView]);
 
   useGatewayBootstrap();
+  const startupReadiness = useStartupReadiness(ready);
   useWorkspaceRefresh();
   useUpdateCheck();
   useTraySync();
@@ -276,6 +279,15 @@ export default function App() {
           defaultNickname={onboardingAccount.nickname}
           onComplete={handleOnboardingComplete}
         />
+        <AppToaster themeMode={themeMode} />
+      </TooltipProvider>
+    );
+  }
+
+  if (!startupReadiness.isReady) {
+    return (
+      <TooltipProvider>
+        <StartupReadinessScreen readiness={startupReadiness} onRetry={startupReadiness.retry} />
         <AppToaster themeMode={themeMode} />
       </TooltipProvider>
     );
