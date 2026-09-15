@@ -128,11 +128,12 @@ export function createPresetAgentBootstrapCoordinator() {
           error: failedMessages.join('; ') || 'assistant setup incomplete',
         });
       } catch (error) {
+        const unresolvedIds = missingIds.length > 0 ? missingIds : [...PRESET_AGENT_IDS];
         return emit(gatewayId, {
           phase: 'error',
-          completed: PRESET_AGENT_IDS.length - missingIds.length,
+          completed: PRESET_AGENT_IDS.length - unresolvedIds.length,
           total: PRESET_AGENT_IDS.length,
-          missingIds: missingIds.length > 0 ? missingIds : [...PRESET_AGENT_IDS],
+          missingIds: unresolvedIds,
           error: error instanceof Error ? error.message : 'assistant setup failed',
         });
       }

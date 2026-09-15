@@ -119,6 +119,22 @@ describe('preset agent bootstrap coordinator', () => {
     });
   });
 
+  it('reports zero completed roles when the initial catalog refresh fails', async () => {
+    const coordinator = createPresetAgentBootstrapCoordinator();
+    const { deps } = createDeps(['main']);
+    vi.mocked(deps.refreshAgents).mockRejectedValue(new Error('gateway unavailable'));
+
+    const snapshot = await coordinator.run('gw-1', deps);
+
+    expect(snapshot).toMatchObject({
+      phase: 'error',
+      completed: 0,
+      total: 6,
+      missingIds: PRESET_AGENT_IDS,
+      error: 'gateway unavailable',
+    });
+  });
+
   it('allows a clean retry after a failed run is reset', async () => {
     const coordinator = createPresetAgentBootstrapCoordinator();
     const { deps, setAgentIds } = createDeps(['main']);
