@@ -85,4 +85,21 @@ describe('commercial store', () => {
     expect(state.status).toBe('ready');
     expect(state.overview?.license).toBeNull();
   });
+
+  it('marks authorization offline when a silent refresh fails', async () => {
+    overviewMock.mockResolvedValue({ ok: false, error: 'network down' });
+
+    const useCommercialStore = await loadStore();
+    const cachedOverview = {
+      account: { userId: 'u-old' },
+      license: { tokenQuotaMicros: 100, tokenUsedMicros: 1 },
+    } as never;
+    useCommercialStore.setState({ status: 'ready', overview: cachedOverview });
+
+    await useCommercialStore.getState().refresh();
+
+    const state = useCommercialStore.getState();
+    expect(state.status).toBe('offline');
+    expect(state.overview).toBe(cachedOverview);
+  });
 });

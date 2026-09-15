@@ -10,7 +10,7 @@ import {
 } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from '@/lib/toast';
-import { evaluateQuota } from '@/lib/quota';
+import { evaluateCommercialSendAccess } from '@/lib/quota';
 import { useCommercialStore } from '@/stores/commercialStore';
 import { isModelSelectable, modelFamilyLabel, relayModelsFrom } from './model-families.js';
 import { deriveModelAvailability } from './model-availability.js';
@@ -195,14 +195,13 @@ export function useChatSend(opts: UseChatSendOpts) {
       return;
     }
 
-    const commercial = useCommercialStore.getState().overview;
-    const licence = commercial?.license ?? null;
-    const verdict = evaluateQuota(licence?.tokenQuotaMicros ?? 0, licence?.tokenUsedMicros ?? null);
-
-    if (verdict.level === 'exhausted' || verdict.level === 'unknown-exhausted') {
+    const commercial = useCommercialStore.getState();
+    const access = evaluateCommercialSendAccess(commercial.status, commercial.overview);
+    if (!access.allowed) {
       setQuotaBlocked(true);
       return;
     }
+    const verdict = access.verdict;
 
     if (verdict.level === 'warn' && !warnedThisWindowRef.current) {
       warnedThisWindowRef.current = true;
