@@ -31,6 +31,8 @@ describe('deriveStartupReadiness', () => {
     expect(result.ai.phase).toBe('starting');
     expect(result.assistants.phase).toBe('waiting');
     expect(result.isReady).toBe(false);
+    expect(result.workspaceAvailable).toBe(true);
+    expect(result.conversationReady).toBe(false);
   });
 
   it('keeps a connected missing model catalog in the loading state', () => {
@@ -56,6 +58,8 @@ describe('deriveStartupReadiness', () => {
     expect(result.ai.phase).toBe('error');
     expect(result.hasError).toBe(true);
     expect(result.isReady).toBe(false);
+    expect(result.workspaceAvailable).toBe(true);
+    expect(result.conversationReady).toBe(false);
   });
 
   it('preserves installation progress and current assistant', () => {
@@ -79,6 +83,8 @@ describe('deriveStartupReadiness', () => {
       currentId: 'rongying-office',
     });
     expect(result.isReady).toBe(false);
+    expect(result.workspaceAvailable).toBe(true);
+    expect(result.conversationReady).toBe(true);
   });
 
   it('preserves assistant errors and missing role ids', () => {

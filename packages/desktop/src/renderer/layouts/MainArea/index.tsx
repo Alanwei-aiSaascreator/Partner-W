@@ -51,6 +51,8 @@ import StatusTag from '@/components/semantic/StatusTag';
 import WelcomeScreen from './WelcomeScreen';
 import FirstTaskCompletionFlow from './FirstTaskCompletionFlow';
 import type { OnboardingProfile } from '@/lib/user-onboarding';
+import type { StartupReadiness } from '@/lib/startup-readiness';
+import StartupReadinessPanel from './StartupReadinessPanel';
 
 const STICK_TO_BOTTOM_THRESHOLD_PX = 60;
 const MAX_HEADER_TITLE_LENGTH = 120;
@@ -58,6 +60,8 @@ const MAX_HEADER_TITLE_LENGTH = 120;
 interface MainAreaProps {
   onTogglePanel: () => void;
   onboardingProfile: OnboardingProfile;
+  startupReadiness: StartupReadiness;
+  onRetryStartup: () => void | Promise<void>;
 }
 
 interface ArchivedTaskRow {
@@ -470,7 +474,15 @@ function ChatHeader({
   );
 }
 
-function ChatContent({ onboardingProfile }: { onboardingProfile: OnboardingProfile }) {
+function ChatContent({
+  onboardingProfile,
+  startupReadiness,
+  onRetryStartup,
+}: {
+  onboardingProfile: OnboardingProfile;
+  startupReadiness: StartupReadiness;
+  onRetryStartup: () => void | Promise<void>;
+}) {
   const { t } = useTranslation();
   const activeTaskId = useTaskStore((s) => s.activeTaskId);
   const activeTask = useTaskStore((s) => s.tasks.find((task) => task.id === s.activeTaskId));
@@ -607,6 +619,7 @@ function ChatContent({ onboardingProfile }: { onboardingProfile: OnboardingProfi
     return (
       <>
         <div className="flex-1 px-5 pt-4 pb-0 overflow-y-auto">
+          {!startupReadiness.isReady && <StartupReadinessPanel readiness={startupReadiness} onRetry={onRetryStartup} />}
           <div
             className={cn(
               messageLayout === 'centered' ? 'max-w-[var(--content-max-width)] mx-auto' : 'w-full max-w-none',
@@ -623,6 +636,7 @@ function ChatContent({ onboardingProfile }: { onboardingProfile: OnboardingProfi
           onNavigateToAccount={handleNavigateToAccount}
           draftPrompt={starterPrompt}
           onDraftApplied={() => setStarterPrompt(null)}
+          readinessBlocked={!startupReadiness.conversationReady}
         />
         <ImageLightbox src={lightboxSrc} onClose={closeLightbox} />
         <FilePreviewModal file={previewFile} onClose={closeFilePreview} />
@@ -766,6 +780,7 @@ function ChatContent({ onboardingProfile }: { onboardingProfile: OnboardingProfi
         onNavigateToAccount={handleNavigateToAccount}
         draftPrompt={starterPrompt}
         onDraftApplied={() => setStarterPrompt(null)}
+        readinessBlocked={!startupReadiness.conversationReady}
       />
       <ImageLightbox src={lightboxSrc} onClose={closeLightbox} />
       <FilePreviewModal file={previewFile} onClose={closeFilePreview} />
@@ -907,7 +922,12 @@ function ArchivedTasks() {
   );
 }
 
-export default function MainArea({ onTogglePanel, onboardingProfile }: MainAreaProps) {
+export default function MainArea({
+  onTogglePanel,
+  onboardingProfile,
+  startupReadiness,
+  onRetryStartup,
+}: MainAreaProps) {
   const mainView = useUiStore((s) => s.mainView);
   const messageLayout = useUiStore((s) => s.messageLayout);
   const toggleMessageLayout = useUiStore((s) => s.toggleMessageLayout);
@@ -948,7 +968,11 @@ export default function MainArea({ onTogglePanel, onboardingProfile }: MainAreaP
             onToggleMessageLayout={toggleMessageLayout}
           />
           {activeTaskId && <EnsembleAgentBar taskId={activeTaskId} />}
-          <ChatContent onboardingProfile={onboardingProfile} />
+          <ChatContent
+            onboardingProfile={onboardingProfile}
+            startupReadiness={startupReadiness}
+            onRetryStartup={onRetryStartup}
+          />
         </div>
       )}
     </div>

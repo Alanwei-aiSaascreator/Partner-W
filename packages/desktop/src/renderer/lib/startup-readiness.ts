@@ -11,6 +11,8 @@ export interface StartupReadiness {
   gatewayId: string | null | undefined;
   ai: { phase: StartupAiPhase };
   assistants: Omit<PresetAgentBootstrapSnapshot, 'phase'> & { phase: StartupAssistantPhase };
+  workspaceAvailable: boolean;
+  conversationReady: boolean;
   isReady: boolean;
   hasError: boolean;
 }
@@ -50,11 +52,14 @@ export function deriveStartupReadiness({
         : assistantSnapshot.phase;
   const assistants = { ...assistantSnapshot, phase: assistantPhase };
   const isReady = aiPhase === 'ready' && assistantPhase === 'ready';
+  const conversationReady = aiPhase === 'ready';
 
   return {
     gatewayId,
     ai: { phase: aiPhase },
     assistants,
+    workspaceAvailable: true,
+    conversationReady,
     isReady,
     hasError: aiPhase === 'error' || assistantPhase === 'error',
   };

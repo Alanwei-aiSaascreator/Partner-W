@@ -91,9 +91,15 @@ interface ChatInputProps {
   onNavigateToAccount?: () => void;
   draftPrompt?: string | null;
   onDraftApplied?: () => void;
+  readinessBlocked?: boolean;
 }
 
-export default function ChatInput({ onNavigateToAccount, draftPrompt, onDraftApplied }: ChatInputProps) {
+export default function ChatInput({
+  onNavigateToAccount,
+  draftPrompt,
+  onDraftApplied,
+  readinessBlocked = false,
+}: ChatInputProps) {
   const { t } = useTranslation();
   const reduced = useReducedMotion();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -455,8 +461,12 @@ export default function ChatInput({ onNavigateToAccount, draftPrompt, onDraftApp
   }, [updateSlashMenu, argPickerVisible, closeArgPicker, updateMentionPicker, pendingAttachments.length]);
 
   const voiceActive = isVoiceListening || isVoiceTranscribing;
-  const disabled = isOffline;
-  const placeholder = isOffline ? t('chatInput.offlineReadOnly') : t('chatInput.describeTask');
+  const disabled = isOffline || readinessBlocked;
+  const placeholder = isOffline
+    ? t('chatInput.offlineReadOnly')
+    : readinessBlocked
+      ? t('chatInput.aiServiceStartingDetail')
+      : t('chatInput.describeTask');
   const voiceTooltip = !isVoiceSupported ? t('voiceInput.unsupportedTooltip') : t('voiceInput.tooltip');
   const modelIsPreparing = modelAvailability === 'service-starting' || modelAvailability === 'models-loading';
   const modelStatusLabel =

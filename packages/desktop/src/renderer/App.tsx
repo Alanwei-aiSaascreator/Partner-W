@@ -7,7 +7,6 @@ import RightPanel from './layouts/RightPanel';
 import Setup from './layouts/Setup';
 import Login from './layouts/Login';
 import Onboarding from './layouts/Onboarding';
-import StartupReadinessScreen from './layouts/StartupReadiness';
 import Settings from './layouts/Settings';
 import type { SettingsSection } from './layouts/Settings/SettingsNav';
 import GlobalRail from './layouts/AppShell/GlobalRail';
@@ -284,15 +283,6 @@ export default function App() {
     );
   }
 
-  if (!startupReadiness.isReady) {
-    return (
-      <TooltipProvider>
-        <StartupReadinessScreen readiness={startupReadiness} onRetry={startupReadiness.retry} />
-        <AppToaster themeMode={themeMode} />
-      </TooltipProvider>
-    );
-  }
-
   return (
     <TooltipProvider>
       <AnimatePresence>{commandPaletteOpen && <CommandPalette />}</AnimatePresence>
@@ -334,7 +324,12 @@ export default function App() {
           {settingsOpen ? (
             <Settings initialSection={settingsSection} />
           ) : (
-            <MainArea onTogglePanel={toggleRightPanel} onboardingProfile={onboardingProfile} />
+            <MainArea
+              onTogglePanel={toggleRightPanel}
+              onboardingProfile={onboardingProfile}
+              startupReadiness={startupReadiness}
+              onRetryStartup={startupReadiness.retry}
+            />
           )}
         </main>
 
