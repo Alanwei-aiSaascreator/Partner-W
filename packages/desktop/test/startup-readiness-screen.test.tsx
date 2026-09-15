@@ -14,6 +14,7 @@ vi.mock('react-i18next', () => ({
 }));
 
 import StartupReadinessScreen from '../src/renderer/layouts/StartupReadiness';
+import StartupReadinessPanel from '../src/renderer/layouts/MainArea/StartupReadinessPanel';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -119,5 +120,43 @@ describe('StartupReadinessScreen', () => {
     expect(container.textContent).toContain('startupReadiness.assistantsReady');
     expect(container.querySelectorAll('svg').length).toBeGreaterThan(0);
     unmount();
+  });
+});
+
+describe('StartupReadinessPanel', () => {
+  it('reports combined AI, model, assistant, and ready progress', () => {
+    const readiness: StartupReadiness = {
+      ...baseReadiness,
+      ai: { phase: 'ready' },
+      assistants: { ...baseReadiness.assistants, phase: 'installing', completed: 2 },
+    };
+    const { container, unmount } = render(<StartupReadinessPanel readiness={readiness} onRetry={vi.fn()} />);
+    const progress = container.querySelector('[role="progressbar"]');
+
+    expect(container.querySelector('section')?.getAttribute('aria-busy')).toBe('true');
+    expect(progress?.getAttribute('aria-valuemax')).toBe('100');
+    expect(Number(progress?.getAttribute('aria-valuenow'))).toBeGreaterThan(50);
+    expect(container.textContent).toContain('startupReadiness.stageService');
+    expect(container.textContent).toContain('startupReadiness.stageModels');
+    expect(container.textContent).toContain('startupReadiness.stageAssistants');
+    expect(container.textContent).toContain('startupReadiness.stageReady');
+    unmount();
+  });
+
+  it('offers recovery after ninety seconds', () => {
+    vi.useFakeTimers();
+    const onRetry = vi.fn(async () => undefined);
+    const { container, unmount } = render(<StartupReadinessPanel readiness={baseReadiness} onRetry={onRetry} />);
+
+    act(() => vi.advanceTimersByTime(90_000));
+    expect(container.textContent).toContain('startupReadiness.takingLonger');
+    const retry = [...container.querySelectorAll('button')].find((item) =>
+      item.textContent?.includes('startupReadiness.retry'),
+    );
+    act(() => retry?.click());
+    expect(onRetry).toHaveBeenCalledOnce();
+
+    unmount();
+    vi.useRealTimers();
   });
 });

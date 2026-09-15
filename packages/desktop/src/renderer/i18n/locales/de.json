@@ -1092,9 +1092,16 @@
     "assistantsVerifying": "Integrierte Assistenten werden geprüft",
     "assistantsWaiting": "Warten auf den KI-Dienst",
     "description": "Der erste Start dauert normalerweise etwa eine Minute. Danach öffnet sich die Startseite automatisch.",
+    "details": "View preparation details",
     "keepOpen": "Lassen Sie die App geöffnet. Sie müssen nichts erneut ausführen.",
+    "overallProgress": "Overall progress",
     "progress": "{{completed}} / {{total}}",
     "retry": "Erneut vorbereiten",
+    "stageAssistants": "Load common assistants",
+    "stageModels": "Prepare the default model",
+    "stageReady": "Ready to use",
+    "stageService": "Connect AI services",
+    "takingLonger": "This is taking longer than usual. You can retry without leaving the workspace.",
     "title": "Rongying Cube wird vorbereitet"
   },
   "teams": {

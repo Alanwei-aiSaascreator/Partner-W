@@ -1092,9 +1092,16 @@
     "assistantsVerifying": "内蔵アシスタントを確認しています",
     "assistantsWaiting": "AIサービスの起動を待っています",
     "description": "初回起動には通常約1分かかります。準備が完了すると自動でホームを開きます。",
+    "details": "View preparation details",
     "keepOpen": "アプリを開いたままお待ちください。操作を繰り返す必要はありません。",
+    "overallProgress": "Overall progress",
     "progress": "{{completed}} / {{total}}",
     "retry": "もう一度準備する",
+    "stageAssistants": "Load common assistants",
+    "stageModels": "Prepare the default model",
+    "stageReady": "Ready to use",
+    "stageService": "Connect AI services",
+    "takingLonger": "This is taking longer than usual. You can retry without leaving the workspace.",
     "title": "Rongying Cube を準備しています"
   },
   "teams": {

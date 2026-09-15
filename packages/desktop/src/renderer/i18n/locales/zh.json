@@ -1092,9 +1092,16 @@
     "assistantsVerifying": "正在检查内置助手",
     "assistantsWaiting": "等待 AI 服务启动",
     "description": "首次启动通常需要约 1 分钟，准备完成后会自动进入首页。",
+    "details": "查看准备详情",
     "keepOpen": "请保持应用开启，无需重复操作。",
+    "overallProgress": "总体进度",
     "progress": "{{completed}} / {{total}}",
     "retry": "重新准备",
+    "stageAssistants": "加载常用助手",
+    "stageModels": "准备默认模型",
+    "stageReady": "可以开始使用",
+    "stageService": "连接 AI 服务",
+    "takingLonger": "准备时间比平时更久，你可以留在工作台内重新尝试。",
     "title": "正在准备荣盈魔方"
   },
   "teams": {
