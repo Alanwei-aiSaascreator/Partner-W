@@ -455,9 +455,9 @@ git push origin feat/stage3b-demo-polish
 ## Execution record — 2026-09-15
 
 - Implemented and committed Tasks 1–5 on `feat/stage3b-demo-polish`; `main` remains unchanged.
-- Focused verification: gateway dispatcher 25/25; startup readiness, bundled assistant bootstrap, readiness screen, and welcome screen 20/20.
+- Focused verification: gateway dispatcher 26/26; startup readiness, bundled assistant bootstrap, readiness screen, and welcome screen 20/20.
 - Static verification: production and test TypeScript checks, i18n parity/usage, renderer copy, UI contract, and production desktop build passed.
-- Full suites: core 177/177 passed; desktop 849 passed with the same 13 recorded Windows path-fixture failures across file reader, inbox resolve/save, media resolve, and workspace init.
+- Full suites: core 178/178 passed; desktop 849 passed with the same 13 recorded Windows path-fixture failures across file reader, inbox resolve/save, media resolve, and workspace init.
 - Electron rehearsal: light and dark startup screens were legible; the workspace remained blocked while models loaded, then opened with Compass Assistant plus all six bundled assistants. Existing assistants were not recreated.
 - Observed warm-profile startup times were approximately 37 seconds and 74 seconds. The slower run included an 8-second commercial-auth probe timeout before the gateway bootstrap. User copy remains “usually about 1 minute”; operational guidance should surface retry/network help after 90 seconds.
 - Restored the application theme setting to `auto` after dark-mode verification.
