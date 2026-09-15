@@ -159,6 +159,15 @@ describe('fetchAgentsForGateway', () => {
     expect(h.deps.gateway.listAgents).toHaveBeenCalledWith('gw-1');
     expect(h.deps.setAgentCatalogForGateway).toHaveBeenCalledWith('gw-1', agents, 'main');
   });
+
+  it('surfaces a failed forced refresh instead of trusting stale data', async () => {
+    const h = createHarness();
+    h.deps.gateway.listAgents = vi.fn(async () => ({ ok: false, error: 'gateway busy' }));
+
+    await expect(
+      h.dispatcher.fetchAgentsForGateway('gw-1', { 'gw-1': { agents: [{ id: 'main' }] } }, { force: true }),
+    ).rejects.toThrow('gateway busy');
+  });
 });
 
 describe('isSameFailure — chat error dedup by runId / code + source', () => {

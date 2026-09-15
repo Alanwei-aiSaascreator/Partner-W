@@ -795,12 +795,19 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
     if (!options.force && agentCatalogByGateway[gatewayId]) return;
     try {
       const res = await deps.gateway.listAgents(gatewayId);
-      if (res.ok && res.result) {
-        const data = res.result as unknown as AgentListResponse;
-        if (data.agents) deps.setAgentCatalogForGateway(gatewayId, data.agents, data.defaultId);
+      if (!res.ok || !res.result) {
+        if (options.force) throw new Error(res.error?.trim() || 'assistant catalog refresh failed');
+        return;
       }
-    } catch {
+      const data = res.result as unknown as AgentListResponse;
+      if (!data.agents) {
+        if (options.force) throw new Error('assistant catalog refresh returned no agents');
+        return;
+      }
+      deps.setAgentCatalogForGateway(gatewayId, data.agents, data.defaultId);
+    } catch (error) {
       console.warn('[catalogs] Failed to fetch agents for gateway', gatewayId);
+      if (options.force) throw error;
     }
   }
 
