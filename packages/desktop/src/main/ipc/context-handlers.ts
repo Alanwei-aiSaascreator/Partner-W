@@ -1,7 +1,9 @@
 import { ipcMain, dialog, BrowserWindow } from 'electron';
+import { resolve, sep } from 'node:path';
 import { scanFolder } from '../context/file-index.js';
 import { readContextFile } from '../context/file-reader.js';
 import { watchFolder, unwatchFolder } from '../context/file-watcher.js';
+import { importTaskFiles, listImportedTaskFiles } from '../context/file-import.js';
 import {
   createFolderSource,
   listGrantedFiles,
@@ -9,6 +11,7 @@ import {
   readGrantedFile,
   revokeTaskContextSource,
 } from '../context/source-service.js';
+import { getWorkspacePath } from '../workspace/config.js';
 
 function requireString(value: unknown, name: string): string {
   if (typeof value !== 'string' || value.trim().length === 0) throw new Error(`${name} is required`);
@@ -19,7 +22,60 @@ function failure(error: unknown): { ok: false; error: string } {
   return { ok: false, error: error instanceof Error ? error.message : 'unknown error' };
 }
 
+function requireContainedTaskId(workspacePath: string, value: unknown): string {
+  const taskId = requireString(value, 'taskId');
+  const base = resolve(workspacePath);
+  const taskDir = resolve(base, taskId);
+  if (!taskDir.startsWith(`${base}${sep}`)) throw new Error('taskId escapes workspace directory');
+  return taskId;
+}
+
 export function registerContextHandlers(): void {
+  ipcMain.handle('context:import-files', async (_event, params: { taskId?: unknown }) => {
+    try {
+      const requestedTaskId = requireString(params?.taskId, 'taskId');
+      const workspacePath = getWorkspacePath();
+      if (!workspacePath) return { ok: false, error: 'workspace not configured' };
+      const taskId = requireContainedTaskId(workspacePath, requestedTaskId);
+      const win = BrowserWindow.getAllWindows()[0];
+      if (!win) return { ok: false, error: 'no window available' };
+      const selection = await dialog.showOpenDialog(win, {
+        properties: ['openFile', 'multiSelections'],
+        title: 'Import Task Files',
+        filters: [
+          {
+            name: 'Supported Files',
+            extensions:
+              'txt md ts tsx js jsx py go rs java c cpp h rb sh sql yaml yml toml json xml html css scss less csv png jpg jpeg webp pdf doc docx xls xlsx ppt pptx'.split(
+                ' ',
+              ),
+          },
+        ],
+      });
+      if (selection.canceled || selection.filePaths.length === 0) {
+        return { ok: true, result: { imported: [], rejected: [] } };
+      }
+      return {
+        ok: true,
+        result: await importTaskFiles({ workspacePath, taskId, sourcePaths: selection.filePaths }),
+      };
+    } catch (error) {
+      return failure(error);
+    }
+  });
+
+  ipcMain.handle('context:list-imported-files', (_event, params: { taskId?: unknown }) => {
+    try {
+      const requestedTaskId = requireString(params?.taskId, 'taskId');
+      const workspacePath = getWorkspacePath();
+      if (!workspacePath) return { ok: false, error: 'workspace not configured' };
+      const taskId = requireContainedTaskId(workspacePath, requestedTaskId);
+      return { ok: true, result: listImportedTaskFiles(workspacePath, taskId) };
+    } catch (error) {
+      return failure(error);
+    }
+  });
+
   ipcMain.handle('context:grant-folder', async (_event, params: { taskId?: unknown }) => {
     try {
       const taskId = requireString(params?.taskId, 'taskId');

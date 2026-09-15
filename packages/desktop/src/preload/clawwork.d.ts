@@ -36,6 +36,8 @@ import type {
   FileIndexEntry,
   FileReadResult,
   TaskContextSource,
+  ImportedTaskFile,
+  ImportFilesResult,
 } from '@clawwork/shared';
 
 type IpcResult<T = Record<string, unknown>> = SharedIpcResult<T>;
@@ -543,6 +545,8 @@ export interface ClawWorkAPI {
 
   getDeviceId: () => Promise<string>;
 
+  importTaskFiles: (taskId: string) => Promise<IpcResult<ImportFilesResult>>;
+  listImportedTaskFiles: (taskId: string) => Promise<IpcResult<ImportedTaskFile[]>>;
   grantTaskContextFolder: (taskId: string) => Promise<IpcResult<TaskContextSource | null>>;
   listTaskContextSources: (taskId: string) => Promise<IpcResult<TaskContextSource[]>>;
   revokeTaskContextSource: (taskId: string, sourceId: string) => Promise<IpcResult<boolean>>;
