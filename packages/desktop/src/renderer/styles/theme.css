@@ -93,6 +93,11 @@
     --surface-elevated-bg: var(--bg-elevated);
     --surface-floating-bg: var(--bg-elevated);
     --surface-dialog-bg: var(--bg-elevated);
+    --surface-rail: var(--bg-secondary);
+    --surface-assistant-rail: var(--bg-secondary);
+    --surface-onboarding-accent: var(--bg-tertiary);
+    --surface-onboarding-page: var(--bg-primary);
+    --text-onboarding-muted: var(--text-secondary);
 
     --state-hover: var(--bg-hover);
     --state-selected: var(--accent-dim);
@@ -192,6 +197,11 @@
     --surface-elevated-bg: var(--bg-elevated);
     --surface-floating-bg: var(--bg-elevated);
     --surface-dialog-bg: var(--bg-elevated);
+    --surface-rail: #f0eff6;
+    --surface-assistant-rail: #ffffff;
+    --surface-onboarding-accent: #f0eef8;
+    --surface-onboarding-page: #f7f7fb;
+    --text-onboarding-muted: #514b5d;
 
     --state-hover: var(--bg-hover);
     --state-selected: var(--accent-dim);

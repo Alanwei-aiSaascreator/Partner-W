@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
-import { ArrowRight, Loader2, Phone, ShieldCheck } from 'lucide-react';
+import { ArrowRight, CheckCircle2, HardDrive, Loader2, Phone, ShieldCheck, Sparkles } from 'lucide-react';
 import logo from '@/assets/logo.png';
 import { motion as motionPresets } from '@/styles/design-tokens';
 import { cn } from '@/lib/utils';
 import { toast } from '@/lib/toast';
 import { Button } from '@/components/ui/button';
+import GuideMascot, { type GuideMascotPose } from '@/components/GuideMascot';
 
 const RESEND_SECONDS = 60;
 
@@ -78,6 +79,7 @@ export default function Login({ onSignedIn }: LoginProps) {
   const [error, setError] = useState('');
   const [countdown, setCountdown] = useState(0);
   const [agreed, setAgreed] = useState(false);
+  const [mascotPose, setMascotPose] = useState<GuideMascotPose>('idle');
   const codeInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -155,7 +157,8 @@ export default function Login({ onSignedIn }: LoginProps) {
       setError(t('login.verifyFailed'));
       return;
     }
-    onSignedIn();
+    setMascotPose('success');
+    window.setTimeout(onSignedIn, 320);
   }, [busy, code, codeValid, onSignedIn, phone, t]);
 
   const onSubmitForm = (e: React.FormEvent) => {
@@ -168,20 +171,48 @@ export default function Login({ onSignedIn }: LoginProps) {
     'w-full rounded-lg border border-[var(--border)] bg-[var(--bg-input)] px-4 py-2.5 type-body text-[var(--text-primary)] placeholder:text-[var(--text-muted)] outline-none transition-colors focus:border-[var(--accent)] disabled:opacity-60';
 
   return (
-    <div className="flex h-screen overflow-hidden bg-[var(--bg-primary)]">
+    <div className="flex h-screen overflow-y-auto bg-[var(--surface-onboarding-page)] text-[var(--text-primary)] lg:overflow-hidden">
       <div className="titlebar-drag fixed top-0 left-0 right-0 h-8 z-50" />
 
-      <div className="flex flex-col items-center justify-center w-full px-6">
-        <motion.div {...motionPresets.slideUp} className="w-full max-w-sm space-y-8">
+      <section
+        data-login-region="brand"
+        className="relative hidden min-h-screen w-[52%] overflow-hidden border-r border-[var(--border)] bg-[var(--surface-onboarding-accent)] px-12 pb-10 pt-16 lg:flex lg:flex-col"
+      >
+        <div className="absolute -left-24 top-24 h-72 w-72 rounded-full bg-[#ddd8fa] opacity-70 blur-3xl" />
+        <div className="absolute -right-24 bottom-10 h-64 w-64 rounded-full bg-[#f7dce9] opacity-80 blur-3xl" />
+
+        <div className="relative flex items-center gap-3">
+          <img src={logo} alt="" className="h-11 w-11 rounded-xl" />
+          <div>
+            <p className="type-section-title">{t('common.appName')}</p>
+            <p className="type-support mt-0.5 text-[var(--text-onboarding-muted)]">AI USB Workspace</p>
+          </div>
+        </div>
+
+        <div className="relative my-auto max-w-xl pt-12">
+          <p className="type-label text-[var(--accent)]">{t('assistantDefinitions.main.name')}</p>
+          <h2 className="mt-3 max-w-lg text-[clamp(2rem,4vw,3.6rem)] font-semibold leading-[1.08] tracking-[-0.035em] text-[var(--text-primary)]">
+            {t('assistantDefinitions.main.description')}
+          </h2>
+          <div className="mt-7 max-w-md rounded-xl bg-[var(--bg-elevated)] px-4 py-3 text-sm leading-6 text-[var(--text-onboarding-muted)]">
+            {t('fileBrowser.workspaceAccessDescription')}
+          </div>
+        </div>
+
+        <div data-guide-mascot className="relative mx-auto w-full max-w-[330px]">
+          <GuideMascot pose={mascotPose} />
+        </div>
+      </section>
+
+      <section
+        data-login-region="form"
+        className="flex min-h-screen flex-1 items-center justify-center px-6 py-14 sm:px-12"
+      >
+        <motion.div {...motionPresets.slideUp} className="w-full max-w-md space-y-8">
+          <div data-guide-mascot className="mx-auto w-40 lg:hidden">
+            <GuideMascot pose={mascotPose} />
+          </div>
           <div className="flex flex-col items-center text-center space-y-3">
-            <div className="relative">
-              <div className="absolute inset-0 scale-[2.5] rounded-full bg-[var(--accent)] opacity-[0.06] blur-2xl" />
-              <img
-                src={logo}
-                alt="Rongying Cube"
-                className="relative w-16 h-16 rounded-2xl shadow-[var(--glow-accent)]"
-              />
-            </div>
             <h1 className="type-section-title text-[var(--text-primary)]">
               {phase === 'phone' ? t('login.title') : t('login.codeTitle')}
             </h1>
@@ -190,7 +221,10 @@ export default function Login({ onSignedIn }: LoginProps) {
             </p>
           </div>
 
-          <form onSubmit={onSubmitForm} className="space-y-4">
+          <form
+            onSubmit={onSubmitForm}
+            className="space-y-4 rounded-2xl bg-[var(--bg-elevated)] p-5 shadow-[var(--shadow-elevated)] sm:p-6"
+          >
             {phase === 'phone' ? (
               <div className="relative">
                 <Phone size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" />
@@ -202,6 +236,8 @@ export default function Login({ onSignedIn }: LoginProps) {
                   value={phone}
                   disabled={busy}
                   onChange={(e) => setPhone(normalizePhone(e.target.value))}
+                  onFocus={() => setMascotPose('phone')}
+                  onBlur={() => setMascotPose('idle')}
                   placeholder={t('login.phonePlaceholder')}
                   className={cn(inputClass, 'pl-18')}
                 />
@@ -219,6 +255,8 @@ export default function Login({ onSignedIn }: LoginProps) {
                   value={code}
                   disabled={busy}
                   onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                  onFocus={() => setMascotPose('covering')}
+                  onBlur={() => setMascotPose('idle')}
                   placeholder={t('login.codePlaceholder')}
                   className={cn(inputClass, 'pl-10 tracking-[0.3em]')}
                 />
@@ -245,6 +283,21 @@ export default function Login({ onSignedIn }: LoginProps) {
                 </>
               )}
             </Button>
+
+            <div className="grid grid-cols-2 gap-3 border-t border-[var(--border-subtle)] pt-4 type-support text-[var(--text-onboarding-muted)]">
+              <span className="flex items-center gap-2">
+                <HardDrive size={14} className="text-[var(--accent)]" />
+                {t('dashboard.localScope')}
+              </span>
+              <span className="flex items-center gap-2">
+                {phase === 'code' ? (
+                  <CheckCircle2 size={14} className="text-[var(--accent)]" />
+                ) : (
+                  <Sparkles size={14} className="text-[var(--accent)]" />
+                )}
+                {t('dashboard.accountScope')}
+              </span>
+            </div>
           </form>
 
           <div className="flex flex-col items-center gap-2">
@@ -293,7 +346,7 @@ export default function Login({ onSignedIn }: LoginProps) {
             )}
           </div>
         </motion.div>
-      </div>
+      </section>
     </div>
   );
 }
