@@ -25,6 +25,10 @@ const INBOX_DIR = join(WORKSPACE_PATH, 'task-1', 'inbox');
 const INBOX_FILE = join(INBOX_DIR, 'file.txt');
 const OUTSIDE_FILE = resolve('outside-fixture', 'passwd');
 
+function fileStats(dev: number, ino: number): { dev: number; ino: number; isFile: () => true } {
+  return { dev, ino, isFile: () => true };
+}
+
 describe('inbox path access', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -46,7 +50,7 @@ describe('inbox path access', () => {
     const close = vi.fn().mockResolvedValue(undefined);
     mockOpen.mockResolvedValue({
       fd: 42,
-      stat: vi.fn().mockResolvedValue({ isFile: () => true }),
+      stat: vi.fn().mockResolvedValue(fileStats(1, 2)),
       readFile,
       close,
     } as unknown as Awaited<ReturnType<typeof open>>);
@@ -57,6 +61,7 @@ describe('inbox path access', () => {
       throw new Error(`unexpected path ${path}`);
     });
     mockRealpathSync.mockReturnValue(INBOX_FILE);
+    mockStat.mockResolvedValue(fileStats(1, 2) as Awaited<ReturnType<typeof stat>>);
 
     await expect(readInboxFile(WORKSPACE_PATH, LOCAL_PATH)).resolves.toBe('aGVsbG8=');
     expect(readFile).toHaveBeenCalledWith({ encoding: 'base64' });
@@ -68,7 +73,7 @@ describe('inbox path access', () => {
     const close = vi.fn().mockResolvedValue(undefined);
     mockOpen.mockResolvedValue({
       fd: 42,
-      stat: vi.fn().mockResolvedValue({ isFile: () => true }),
+      stat: vi.fn().mockResolvedValue(fileStats(1, 2)),
       readFile,
       close,
     } as unknown as Awaited<ReturnType<typeof open>>);
@@ -79,6 +84,64 @@ describe('inbox path access', () => {
       throw new Error(`unexpected path ${path}`);
     });
     mockRealpathSync.mockReturnValue(OUTSIDE_FILE);
+
+    await expect(readInboxFile(WORKSPACE_PATH, LOCAL_PATH)).resolves.toBeNull();
+    expect(readFile).not.toHaveBeenCalled();
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails closed when the opened handle has no strong identity', async () => {
+    const readFile = vi.fn().mockResolvedValue('aGVsbG8=');
+    const close = vi.fn().mockResolvedValue(undefined);
+    mockOpen.mockResolvedValue({
+      fd: 42,
+      stat: vi.fn().mockResolvedValue(fileStats(0, 0)),
+      readFile,
+      close,
+    } as unknown as Awaited<ReturnType<typeof open>>);
+
+    await expect(readInboxFile(WORKSPACE_PATH, LOCAL_PATH)).resolves.toBeNull();
+    expect(readFile).not.toHaveBeenCalled();
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a Windows-style path swap whose final target identity differs from the opened handle', async () => {
+    const readFile = vi.fn().mockResolvedValue('aGVsbG8=');
+    const close = vi.fn().mockResolvedValue(undefined);
+    mockOpen.mockResolvedValue({
+      fd: 42,
+      stat: vi.fn().mockResolvedValue(fileStats(1, 2)),
+      readFile,
+      close,
+    } as unknown as Awaited<ReturnType<typeof open>>);
+    mockRealpath.mockImplementation(async (path) => {
+      if (path === WORKSPACE_PATH) return WORKSPACE_PATH;
+      if (path === INBOX_DIR) return INBOX_DIR;
+      if (path === INBOX_FILE) return INBOX_FILE;
+      throw new Error(`unexpected path ${path}`);
+    });
+    mockRealpathSync.mockReturnValue(INBOX_FILE);
+    mockStat.mockResolvedValue(fileStats(1, 3) as Awaited<ReturnType<typeof stat>>);
+
+    await expect(readInboxFile(WORKSPACE_PATH, LOCAL_PATH)).resolves.toBeNull();
+    expect(readFile).not.toHaveBeenCalled();
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a final path identity change immediately before reading', async () => {
+    const readFile = vi.fn().mockResolvedValue('aGVsbG8=');
+    const close = vi.fn().mockResolvedValue(undefined);
+    mockOpen.mockResolvedValue({
+      fd: 42,
+      stat: vi.fn().mockResolvedValue(fileStats(1, 2)),
+      readFile,
+      close,
+    } as unknown as Awaited<ReturnType<typeof open>>);
+    mockRealpath.mockImplementation(async (path) => String(path));
+    mockRealpathSync.mockReturnValue(INBOX_FILE);
+    mockStat
+      .mockResolvedValueOnce(fileStats(1, 2) as Awaited<ReturnType<typeof stat>>)
+      .mockResolvedValueOnce(fileStats(1, 3) as Awaited<ReturnType<typeof stat>>);
 
     await expect(readInboxFile(WORKSPACE_PATH, LOCAL_PATH)).resolves.toBeNull();
     expect(readFile).not.toHaveBeenCalled();

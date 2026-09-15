@@ -61,7 +61,12 @@ export interface ImportedTaskFile {
   size: number;
 }
 
-export type ImportFileRejectionReason = 'unsupported' | 'too-large' | 'unavailable' | 'copy-failed';
+export type ImportFileRejectionReason =
+  | 'unsupported'
+  | 'too-large'
+  | 'unavailable'
+  | 'copy-failed'
+  | 'publish-unavailable';
 
 export interface ImportFilesResult {
   imported: ImportedTaskFile[];

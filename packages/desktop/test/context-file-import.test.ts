@@ -28,6 +28,7 @@ const zeroIdentityPaths = vi.hoisted(() => new Set<string>());
 const handleTracker = vi.hoisted(() => ({ enabled: false, opened: 0, closed: 0 }));
 const directoryReadFailures = vi.hoisted(() => new Set<string>());
 const directoryCloseCounts = vi.hoisted(() => new Map<string, number>());
+const linkFailureCodes = vi.hoisted(() => [] as string[]);
 
 vi.mock('node:fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs')>();
@@ -83,6 +84,11 @@ vi.mock('node:fs/promises', async (importOriginal) => {
       if (!symbolicLinkPaths.has(String(args[0]))) return result;
       return { ...result, isFile: () => false, isSymbolicLink: () => true };
     },
+    link: async (...args: Parameters<typeof actual.link>) => {
+      const code = linkFailureCodes.shift();
+      if (code) throw Object.assign(new Error(`simulated ${code}`), { code });
+      return actual.link(...args);
+    },
   };
 });
 
@@ -112,6 +118,7 @@ afterEach(async () => {
   handleTracker.closed = 0;
   directoryReadFailures.clear();
   directoryCloseCounts.clear();
+  linkFailureCodes.splice(0);
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
@@ -255,6 +262,25 @@ describe('task file import', () => {
     expect(attempts).toBe(10);
     expect(result).toEqual({ imported: [], rejected: [{ fileName: 'collision.txt', reason: 'copy-failed' }] });
   });
+
+  it.each(['EPERM', 'ENOTSUP'])(
+    'returns an actionable rejection when atomic publish is unavailable (%s)',
+    async (code) => {
+      const { workspacePath, sources } = await fixture();
+      const source = join(sources, 'portable.txt');
+      await writeFile(source, 'complete content');
+      linkFailureCodes.push(code);
+
+      const result = await importTaskFiles({ workspacePath, taskId: 'task-1', sourcePaths: [source] });
+
+      expect(result).toEqual({
+        imported: [],
+        rejected: [{ fileName: 'portable.txt', reason: 'publish-unavailable' }],
+      });
+      expect(listImportedTaskFiles(workspacePath, 'task-1')).toEqual([]);
+      await expectEmptyStaging(join(workspacePath, 'task-1', 'inbox'));
+    },
+  );
 
   it('uses unique safe names without overwriting same-name inputs or existing inbox files', async () => {
     const { workspacePath, sources } = await fixture();

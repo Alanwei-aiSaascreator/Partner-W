@@ -14,10 +14,10 @@ const COPY_CHUNK_SIZE = 1024 * 1024;
 const MAX_LIST_VISITED = 2000;
 const MAX_LIST_RESULTS = 100;
 const TIMESTAMP_TOLERANCE_MS = 0;
-const STAGING_TTL_MS = 24 * 60 * 60 * 1000;
-const MAX_STAGING_ENTRIES = 32;
-const MAX_STAGING_BYTES = 200 * 1024 * 1024;
-const MAX_STAGING_VISITED = 256;
+const STAGING_GC_TTL_MS = 24 * 60 * 60 * 1000;
+const STAGING_GC_SOFT_MAX_ENTRIES_PER_BATCH = 32;
+const STAGING_GC_SOFT_MAX_BYTES_PER_BATCH = 200 * 1024 * 1024;
+const STAGING_GC_SCAN_BUDGET_PER_BATCH = 256;
 const STAGING_FILE_PATTERN = /^\.import-[a-f0-9-]+\.partial$/;
 
 export const IMPORT_FILE_EXTENSIONS = [
@@ -367,7 +367,7 @@ async function collectStagingGarbage(
   const candidates: Array<{ path: string; stats: Stats; name: string }> = [];
   const directory = opendirSync(staging.realStaging);
   try {
-    for (let visited = 0; visited < MAX_STAGING_VISITED; visited += 1) {
+    for (let visited = 0; visited < STAGING_GC_SCAN_BUDGET_PER_BATCH; visited += 1) {
       const entry = directory.readSync();
       if (!entry) break;
       if (!entry.isFile() || !STAGING_FILE_PATTERN.test(entry.name)) continue;
@@ -398,12 +398,12 @@ async function collectStagingGarbage(
   candidates.sort((left, right) => left.stats.mtimeMs - right.stats.mtimeMs || codePointCompare(left.name, right.name));
   let remainingCount = candidates.length;
   let remainingBytes = candidates.reduce((sum, candidate) => sum + candidate.stats.size, 0);
-  const expiry = Date.now() - STAGING_TTL_MS;
+  const expiry = Date.now() - STAGING_GC_TTL_MS;
   for (const candidate of candidates) {
     if (
       candidate.stats.mtimeMs >= expiry &&
-      remainingCount <= MAX_STAGING_ENTRIES &&
-      remainingBytes <= MAX_STAGING_BYTES
+      remainingCount <= STAGING_GC_SOFT_MAX_ENTRIES_PER_BATCH &&
+      remainingBytes <= STAGING_GC_SOFT_MAX_BYTES_PER_BATCH
     ) {
       continue;
     }
@@ -583,8 +583,19 @@ async function publishTarget(
         }
         await link(stagingPath, destinationPath);
       } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'EEXIST') collision = true;
-        else throw error;
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code === 'EEXIST') collision = true;
+        else if (
+          code === 'EPERM' ||
+          code === 'ENOTSUP' ||
+          code === 'EOPNOTSUPP' ||
+          code === 'ENOSYS' ||
+          code === 'EXDEV'
+        ) {
+          // Node's cross-platform rename replaces an existing destination, so it cannot provide
+          // the no-replace guarantee required here. Report the missing filesystem capability.
+          throw new ImportItemError('publish-unavailable');
+        } else throw error;
       }
       const attemptCloseError = await closeHandle(stagingHandle);
       stagingHandle = null;

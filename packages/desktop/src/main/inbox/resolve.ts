@@ -8,6 +8,27 @@ interface InboxPathInfo {
   inboxDir: string;
 }
 
+interface FileIdentity {
+  dev: number | bigint;
+  ino: number | bigint;
+  isFile(): boolean;
+}
+
+function hasStrongIdentity(stats: FileIdentity): boolean {
+  const dev = Number(stats.dev);
+  const ino = Number(stats.ino);
+  return Number.isFinite(dev) && Number.isFinite(ino) && dev > 0 && ino > 0;
+}
+
+function sameStrongIdentity(left: FileIdentity, right: FileIdentity): boolean {
+  return (
+    hasStrongIdentity(left) &&
+    hasStrongIdentity(right) &&
+    Number(left.dev) === Number(right.dev) &&
+    Number(left.ino) === Number(right.ino)
+  );
+}
+
 function isWithin(parent: string, child: string): boolean {
   return child === parent || child.startsWith(`${parent}${sep}`);
 }
@@ -71,7 +92,8 @@ export async function readInboxFile(workspacePath: string, localPath: string): P
   const handle = await open(info.full, 'r').catch(() => null);
   if (!handle) return null;
   try {
-    if (!(await handle.stat()).isFile()) return null;
+    const openedStats = await handle.stat();
+    if (!openedStats.isFile() || !hasStrongIdentity(openedStats)) return null;
     const pathToResolve = process.platform === 'win32' ? info.full : `/dev/fd/${handle.fd}`;
     const realTarget =
       process.platform === 'win32'
@@ -84,8 +106,19 @@ export async function readInboxFile(workspacePath: string, localPath: string): P
             }
           })();
     if (!realTarget) return null;
+    const resolvedStats = await stat(realTarget);
+    if (!resolvedStats.isFile() || !sameStrongIdentity(openedStats, resolvedStats)) return null;
     const realInboxDir = await resolveValidatedPath(info, info.inboxDir);
     if (!realInboxDir || !isWithin(realInboxDir, realTarget)) return null;
+    const [finalHandleStats, finalPathStats] = await Promise.all([handle.stat(), stat(realTarget)]);
+    if (
+      !finalHandleStats.isFile() ||
+      !finalPathStats.isFile() ||
+      !sameStrongIdentity(openedStats, finalHandleStats) ||
+      !sameStrongIdentity(openedStats, finalPathStats)
+    ) {
+      return null;
+    }
     return await handle.readFile({ encoding: 'base64' });
   } finally {
     await handle.close();
