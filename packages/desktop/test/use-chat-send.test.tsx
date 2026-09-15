@@ -76,6 +76,7 @@ vi.mock('../src/renderer/platform', () => ({
 }));
 
 import { useChatSend } from '../src/renderer/components/ChatInput/useChatSend';
+import { useCommercialStore } from '../src/renderer/stores/commercialStore';
 
 function render(ui: ReactElement): { container: HTMLDivElement; unmount: () => void } {
   const container = document.createElement('div');
@@ -139,6 +140,24 @@ describe('useChatSend abort flow', () => {
     mocks.send.mockClear();
     mocks.uiState.gatewayStatusMap = { 'gw-1': 'connected' };
     mocks.uiState.modelCatalogByGateway = {};
+    useCommercialStore.setState({
+      status: 'ready',
+      overview: {
+        account: { userId: 'u-1', phone: null, email: null, nickname: null, avatar: null },
+        org: null,
+        license: {
+          activated: true,
+          licenseKey: 'RY-1',
+          sku: 'USB',
+          status: 'active',
+          expiresAt: null,
+          tokenQuotaMicros: 1000,
+          tokenUsedMicros: 10,
+        },
+        device: { fingerprint: 'fp', shortFingerprint: 'fp' },
+        fetchedAt: '2026-09-15T00:00:00.000Z',
+      },
+    });
     (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   });
 
@@ -194,6 +213,27 @@ describe('useChatSend abort flow', () => {
     });
 
     expect(mocks.send).toHaveBeenCalledWith('task-1', expect.objectContaining({ presetModel: 'deepseek-v4-flash' }));
+  });
+
+  it('does not call the model or tools when the current account has zero quota', async () => {
+    const current = useCommercialStore.getState().overview!;
+    useCommercialStore.setState({
+      status: 'ready',
+      overview: {
+        ...current,
+        license: { ...current.license!, tokenQuotaMicros: 0, tokenUsedMicros: 0 },
+      },
+    });
+    const { container } = render(<Harness initialValue="run a tool" />);
+    const buttons = container.querySelectorAll('button');
+
+    await act(async () => {
+      buttons[1].dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(mocks.send).not.toHaveBeenCalled();
+    expect(mocks.applySlashCommand).not.toHaveBeenCalled();
   });
 
   it('keeps a missing connected catalog in the loading state instead of reporting empty', () => {
