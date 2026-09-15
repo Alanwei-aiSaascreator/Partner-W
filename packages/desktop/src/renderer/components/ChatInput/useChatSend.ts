@@ -35,7 +35,14 @@ import { composer } from '../../platform';
 import type { PendingAttachment } from './types';
 import type { ImportedMaterialFile, TaskContextFile } from './useTaskMaterials';
 import type { ThinkingLevel } from './constants';
-import { GATEWAY_INJECTED_MODEL, EMPTY_MODELS_CATALOG, MAX_TEXT_TOTAL, MENTION_ALL_AGENT_ID } from './constants';
+import {
+  GATEWAY_INJECTED_MODEL,
+  EMPTY_MODELS_CATALOG,
+  MAX_SEND_MATERIAL_BYTES,
+  MAX_SEND_MATERIAL_COUNT,
+  MAX_TEXT_TOTAL,
+  MENTION_ALL_AGENT_ID,
+} from './constants';
 import { getModelLabel, readAsBase64 } from './utils';
 import { resolveCommercialDefaultModel } from '@/lib/commercial-default-model';
 
@@ -50,8 +57,8 @@ interface UseChatSendOpts {
   selectedLocalFiles: TaskContextFile[];
   setSelectedLocalFiles: Dispatch<SetStateAction<TaskContextFile[]>>;
   selectedImportedFiles: ImportedMaterialFile[];
-  clearSelectedImportedFiles: () => void;
-  markImportedFileMissing: (localPath: string) => void;
+  clearSelectedImportedFiles: (expectedTaskId?: string) => void;
+  markImportedFileMissing: (localPath: string, expectedTaskId?: string) => void;
   selectedAgents: Array<{ agentId: string; agentName: string; emoji?: string; sessionKey: string }>;
   setSelectedAgents: Dispatch<
     SetStateAction<Array<{ agentId: string; agentName: string; emoji?: string; sessionKey: string }>>
@@ -161,6 +168,9 @@ export function useChatSend(opts: UseChatSendOpts) {
 
   const responseTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const abortResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sendInFlightRef = useRef(false);
+  const activeTaskIdRef = useRef(activeTask?.id ?? null);
+  activeTaskIdRef.current = activeTask?.id ?? null;
 
   const [quotaBlocked, setQuotaBlocked] = useState(false);
   const [quotaDegrade, setQuotaDegrade] = useState(false);
@@ -191,364 +201,401 @@ export function useChatSend(opts: UseChatSendOpts) {
   }, []);
 
   const handleSend = useCallback(async () => {
-    // 发送前校验：任务记着的模型可能已经不在目录里了（下架 / 上游调整）。
-    // 不拦的话体验是「能选中 → 发出去 → 报错」，而且报错发生在会话就绪之后，
-    // 看着像网络问题。详见 isModelSelectable 的注释。
-    if (!isModelSelectable(modelCatalog, currentModel)) {
-      toast.error(t('chatInput.modelGone', { model: currentModel ?? '' }));
-      return;
-    }
-
-    const commercial = useCommercialStore.getState();
-    const access = evaluateCommercialSendAccess(commercial.status, commercial.overview);
-    if (!access.allowed) {
-      setQuotaBlocked(true);
-      return;
-    }
-    const verdict = access.verdict;
-
-    if (verdict.level === 'warn' && !warnedThisWindowRef.current) {
-      warnedThisWindowRef.current = true;
-      toast.warning(t('usage.warnToast', { percent: Math.round(verdict.usedPercent) }));
-    }
-
-    if (verdict.level === 'degrade' && !degradePromptedRef.current) {
-      degradePromptedRef.current = true;
-      setQuotaDegrade(true);
-      return;
-    }
-
-    const textarea = textareaRef.current;
-    if (!textarea || isOffline) return;
-    stopVoiceInput();
-
-    const content = textarea.value.trim();
-    if (!content && !pendingAttachments.length && !selectedImportedFiles.length && !selectedLocalFiles.length) return;
-
-    let task = activeTask;
-    if (!task) {
-      try {
-        task = commitPendingTask();
-      } catch {
-        toast.error(t('errors.agentNotResponding'));
+    if (sendInFlightRef.current) return;
+    sendInFlightRef.current = true;
+    try {
+      // 发送前校验：任务记着的模型可能已经不在目录里了（下架 / 上游调整）。
+      // 不拦的话体验是「能选中 → 发出去 → 报错」，而且报错发生在会话就绪之后，
+      // 看着像网络问题。详见 isModelSelectable 的注释。
+      if (!isModelSelectable(modelCatalog, currentModel)) {
+        toast.error(t('chatInput.modelGone', { model: currentModel ?? '' }));
         return;
       }
-    }
 
-    const attachmentRecords = pendingAttachments.length
-      ? await Promise.all(
-          pendingAttachments.map(async (att) => {
-            const mimeType = att.file.type || 'application/octet-stream';
-            const base64 = await readAsBase64(att.file);
-            const save = await window.clawwork.saveInboxAttachment({
-              taskId: task.id,
-              fileName: att.file.name,
-              base64,
+      const commercial = useCommercialStore.getState();
+      const access = evaluateCommercialSendAccess(commercial.status, commercial.overview);
+      if (!access.allowed) {
+        setQuotaBlocked(true);
+        return;
+      }
+      const verdict = access.verdict;
+
+      if (verdict.level === 'warn' && !warnedThisWindowRef.current) {
+        warnedThisWindowRef.current = true;
+        toast.warning(t('usage.warnToast', { percent: Math.round(verdict.usedPercent) }));
+      }
+
+      if (verdict.level === 'degrade' && !degradePromptedRef.current) {
+        degradePromptedRef.current = true;
+        setQuotaDegrade(true);
+        return;
+      }
+
+      const textarea = textareaRef.current;
+      if (!textarea || isOffline) return;
+      stopVoiceInput();
+
+      const content = textarea.value.trim();
+      if (!content && !pendingAttachments.length && !selectedImportedFiles.length && !selectedLocalFiles.length) return;
+
+      let task = activeTask;
+      if (!task) {
+        try {
+          task = commitPendingTask();
+        } catch {
+          toast.error(t('errors.agentNotResponding'));
+          return;
+        }
+      }
+
+      if (
+        selectedImportedFiles.some((file) => file.taskId !== task.id) ||
+        selectedLocalFiles.some((file) => file.taskId !== task.id)
+      ) {
+        toast.error(t('chatInput.materialUnavailable', { fileName: '' }));
+        return;
+      }
+      const materialCount = pendingAttachments.length + selectedImportedFiles.length + selectedLocalFiles.length;
+      const materialBytes = [
+        ...pendingAttachments.map((item) => item.file.size),
+        ...selectedImportedFiles.map((item) => item.size),
+        ...selectedLocalFiles.map((item) => item.size),
+      ].reduce((sum, size) => sum + size, 0);
+      if (materialCount > MAX_SEND_MATERIAL_COUNT || materialBytes > MAX_SEND_MATERIAL_BYTES) {
+        toast.error(t('chatInput.materialLimitExceeded', { count: MAX_SEND_MATERIAL_COUNT, size: 25 }));
+        return;
+      }
+
+      const attachmentRecords: Array<{
+        fileName: string;
+        mimeType: string;
+        base64: string;
+        previewUrl: string;
+        localPath?: string;
+        size: number;
+      }> = [];
+      for (const att of pendingAttachments) {
+        const mimeType = att.file.type || 'application/octet-stream';
+        const base64 = await readAsBase64(att.file);
+        const save = await window.clawwork.saveInboxAttachment({
+          taskId: task.id,
+          fileName: att.file.name,
+          base64,
+        });
+        if (!save.ok) toast.error(t('chatInput.attachmentSaveFailed', { fileName: att.file.name }));
+        attachmentRecords.push({
+          fileName: att.file.name,
+          mimeType,
+          base64,
+          previewUrl: att.previewUrl,
+          localPath: save.result?.localPath,
+          size: att.file.size,
+        });
+      }
+
+      let importedReadFailed = false;
+      const importedAttachmentRecords: Array<{
+        fileName: string;
+        mimeType: string;
+        base64: string;
+        localPath: string;
+        size: number;
+      }> = [];
+      for (const file of selectedImportedFiles) {
+        try {
+          const read = await window.clawwork.readInboxFile(file.localPath);
+          if (read.ok && read.result) {
+            importedAttachmentRecords.push({
+              fileName: file.fileName,
+              mimeType: file.mimeType || 'application/octet-stream',
+              base64: read.result.content,
+              localPath: file.localPath,
+              size: file.size,
             });
-            if (!save.ok) {
-              toast.error(t('chatInput.attachmentSaveFailed', { fileName: att.file.name }));
-            }
-            return {
-              fileName: att.file.name,
-              mimeType,
-              base64,
-              previewUrl: att.previewUrl,
-              localPath: save.result?.localPath,
-              size: att.file.size,
-            };
-          }),
-        )
-      : [];
+            continue;
+          }
+        } catch {
+          // The file can disappear between listing and dispatch. Handle it as unavailable below.
+        }
+        importedReadFailed = true;
+        markImportedFileMissing(file.localPath, task.id);
+        toast.error(t('chatInput.materialUnavailable', { fileName: file.fileName }));
+        break;
+      }
+      if (importedReadFailed) return;
 
-    let importedReadFailed = false;
-    const importedAttachmentRecords = selectedImportedFiles.length
-      ? (
-          await Promise.all(
-            selectedImportedFiles.map(async (file) => {
-              try {
-                const read = await window.clawwork.readInboxFile(file.localPath);
-                if (read.ok && read.result) {
-                  return {
-                    fileName: file.fileName,
-                    mimeType: file.mimeType || 'application/octet-stream',
-                    base64: read.result.content,
-                    localPath: file.localPath,
-                    size: file.size,
-                  };
+      const allMessageAttachments: MessageAttachment[] | undefined =
+        attachmentRecords.length || importedAttachmentRecords.length
+          ? [
+              ...attachmentRecords.map((record) => ({
+                fileName: record.fileName,
+                dataUrl: record.previewUrl,
+                mimeType: record.mimeType,
+                localPath: record.localPath,
+                size: record.size,
+              })),
+              ...importedAttachmentRecords.map((record) => ({
+                fileName: record.fileName,
+                dataUrl: record.mimeType.startsWith('image/') ? `data:${record.mimeType};base64,${record.base64}` : '',
+                mimeType: record.mimeType,
+                localPath: record.localPath,
+                size: record.size,
+              })),
+            ]
+          : undefined;
+
+      const taskMentions = [...selectedTasks];
+      const artifactMentions = [...selectedArtifacts];
+      const localFileMentions = [...selectedLocalFiles];
+      const agentMentions = [...selectedAgents];
+      try {
+        let finalContent = content || '';
+        const extraAttachments: { mimeType: string; fileName: string; content: string }[] = [];
+
+        if (taskMentions.length > 0) {
+          let taskContextSize = 0;
+          const blocks = await Promise.all(
+            taskMentions.map(async (mt) => {
+              const res = await window.clawwork.loadMessages(mt.id);
+              if (!res.ok || !res.rows) return '';
+              const msgs = res.rows.filter((m) => m.role === 'user' || m.role === 'assistant');
+              const lines: string[] = [];
+              for (const m of msgs) {
+                const line = `[${m.role}]\n${m.content}`;
+                taskContextSize += new TextEncoder().encode(line).length;
+                if (taskContextSize > MAX_TEXT_TOTAL) {
+                  toast.error(t('chatInput.taskContextLimitExceeded'));
+                  break;
                 }
-              } catch {
-                // The file can disappear between listing and dispatch. Handle it as unavailable below.
+                lines.push(line);
               }
-              importedReadFailed = true;
-              markImportedFileMissing(file.localPath);
-              toast.error(t('chatInput.materialUnavailable', { fileName: file.fileName }));
-              return null;
+              if (lines.length === 0) return '';
+              return `<task-context name="${mt.title}" id="${mt.id}">\n${lines.join('\n\n')}\n</task-context>`;
             }),
-          )
-        ).filter((record): record is NonNullable<typeof record> => record !== null)
-      : [];
-    if (importedReadFailed) return;
+          );
+          const combined = blocks.filter(Boolean).join('\n\n');
+          if (combined) {
+            finalContent = combined + '\n\n' + finalContent;
+          }
+        }
 
-    const allMessageAttachments: MessageAttachment[] | undefined =
-      attachmentRecords.length || importedAttachmentRecords.length
-        ? [
-            ...attachmentRecords.map((record) => ({
-              fileName: record.fileName,
-              dataUrl: record.previewUrl,
-              mimeType: record.mimeType,
-              localPath: record.localPath,
-              size: record.size,
-            })),
-            ...importedAttachmentRecords.map((record) => ({
-              fileName: record.fileName,
-              dataUrl: record.mimeType.startsWith('image/') ? `data:${record.mimeType};base64,${record.base64}` : '',
-              mimeType: record.mimeType,
-              localPath: record.localPath,
-              size: record.size,
-            })),
-          ]
-        : undefined;
+        if (artifactMentions.length > 0) {
+          const readResults = await Promise.all(
+            artifactMentions.map((a) =>
+              window.clawwork.readArtifactFile(a.localPath).then((res) => ({ artifact: a, res })),
+            ),
+          );
 
-    const taskMentions = [...selectedTasks];
-    const artifactMentions = [...selectedArtifacts];
-    const localFileMentions = [...selectedLocalFiles];
-    const agentMentions = [...selectedAgents];
-    try {
-      let finalContent = content || '';
-      const extraAttachments: { mimeType: string; fileName: string; content: string }[] = [];
+          const textBlocks: string[] = [];
+          let totalTextSize = 0;
 
-      if (taskMentions.length > 0) {
-        let taskContextSize = 0;
-        const blocks = await Promise.all(
-          taskMentions.map(async (mt) => {
-            const res = await window.clawwork.loadMessages(mt.id);
-            if (!res.ok || !res.rows) return '';
-            const msgs = res.rows.filter((m) => m.role === 'user' || m.role === 'assistant');
-            const lines: string[] = [];
-            for (const m of msgs) {
-              const line = `[${m.role}]\n${m.content}`;
-              taskContextSize += new TextEncoder().encode(line).length;
-              if (taskContextSize > MAX_TEXT_TOTAL) {
-                toast.error(t('chatInput.taskContextLimitExceeded'));
+          for (const { artifact: a, res } of readResults) {
+            if (!res.ok || !res.result) continue;
+            const read = res.result as { content: string; encoding: string };
+
+            if (read.encoding === 'utf-8') {
+              const blockSize = new TextEncoder().encode(read.content).length;
+              totalTextSize += blockSize;
+              if (totalTextSize > MAX_TEXT_TOTAL) {
+                toast.error(t('chatInput.fileContextLimitExceeded'));
                 break;
               }
-              lines.push(line);
+              textBlocks.push(`<file path="${a.name}">\n${read.content}\n</file>`);
+            } else {
+              extraAttachments.push({
+                mimeType: a.mimeType || 'application/octet-stream',
+                fileName: a.name,
+                content: read.content,
+              });
             }
-            if (lines.length === 0) return '';
-            return `<task-context name="${mt.title}" id="${mt.id}">\n${lines.join('\n\n')}\n</task-context>`;
-          }),
-        );
-        const combined = blocks.filter(Boolean).join('\n\n');
-        if (combined) {
-          finalContent = combined + '\n\n' + finalContent;
+          }
+
+          if (textBlocks.length > 0) {
+            finalContent = textBlocks.join('\n\n') + '\n\n' + finalContent;
+          }
         }
-      }
 
-      if (artifactMentions.length > 0) {
-        const readResults = await Promise.all(
-          artifactMentions.map((a) =>
-            window.clawwork.readArtifactFile(a.localPath).then((res) => ({ artifact: a, res })),
-          ),
-        );
-
-        const textBlocks: string[] = [];
-        let totalTextSize = 0;
-
-        for (const { artifact: a, res } of readResults) {
-          if (!res.ok || !res.result) continue;
-          const read = res.result as { content: string; encoding: string };
-
-          if (read.encoding === 'utf-8') {
-            const blockSize = new TextEncoder().encode(read.content).length;
-            totalTextSize += blockSize;
-            if (totalTextSize > MAX_TEXT_TOTAL) {
-              toast.error(t('chatInput.fileContextLimitExceeded'));
-              break;
-            }
-            textBlocks.push(`<file path="${a.name}">\n${read.content}\n</file>`);
-          } else {
-            extraAttachments.push({
-              mimeType: a.mimeType || 'application/octet-stream',
-              fileName: a.name,
-              content: read.content,
+        if (localFileMentions.length > 0) {
+          const readResults: Array<{
+            file: TaskContextFile;
+            res: Awaited<ReturnType<typeof window.clawwork.readTaskContextFile>>;
+          }> = [];
+          for (const file of localFileMentions) {
+            readResults.push({
+              file,
+              res: await window.clawwork.readTaskContextFile(task.id, file.sourceId, file.relativePath),
             });
           }
-        }
 
-        if (textBlocks.length > 0) {
-          finalContent = textBlocks.join('\n\n') + '\n\n' + finalContent;
-        }
-      }
-
-      if (localFileMentions.length > 0) {
-        const readResults = await Promise.all(
-          localFileMentions.map((f) =>
-            window.clawwork.readTaskContextFile(task.id, f.sourceId, f.relativePath).then((res) => ({ file: f, res })),
-          ),
-        );
-
-        const unavailable = readResults.find(({ res }) => !res.ok || !res.result);
-        if (unavailable) {
-          toast.error(t('chatInput.materialUnavailable', { fileName: unavailable.file.fileName }));
-          return;
-        }
-
-        const localBlocks: string[] = [];
-        let totalLocalSize = 0;
-
-        for (const { file: f, res } of readResults) {
-          if (!res.result) continue;
-          const read = res.result as unknown as FileReadResult;
-
-          if (read.tier === 'text') {
-            const blockSize = new TextEncoder().encode(read.content).length;
-            totalLocalSize += blockSize;
-            if (totalLocalSize > MAX_TEXT_TOTAL) {
-              toast.error(t('chatInput.fileContextLimitExceeded'));
-              break;
-            }
-            localBlocks.push(`<file path="${f.relativePath}">\n${read.content}\n</file>`);
-          } else {
-            extraAttachments.push({
-              mimeType: read.mimeType || f.mimeType || 'application/octet-stream',
-              fileName: f.fileName,
-              content: read.content,
-            });
-          }
-        }
-
-        if (localBlocks.length > 0) {
-          finalContent = localBlocks.join('\n\n') + '\n\n' + finalContent;
-        }
-      }
-
-      const gatewayAttachments = attachmentRecords.map((a) => ({
-        mimeType: a.mimeType,
-        fileName: a.fileName,
-        content: a.base64,
-      }));
-      const importedGatewayAttachments = importedAttachmentRecords.map((record) => ({
-        mimeType: record.mimeType,
-        fileName: record.fileName,
-        content: record.base64,
-      }));
-      const allAttachments = [...gatewayAttachments, ...importedGatewayAttachments, ...extraAttachments];
-      const deferUserMessageUntilSent = Boolean(task.ensemble);
-
-      if (task.ensemble) {
-        const room = useRoomStore.getState().rooms[task.id];
-        if (!room || !room.conductorReady) {
-          const catalogEntryAll = useUiStore.getState().agentCatalogByGateway[task.gatewayId];
-          const allAgents = catalogEntryAll?.agents ?? [];
-          let agents: AgentInfo[];
-          let teamAgentMap: Map<string, { role?: string }> | null = null;
-          if (task.teamId) {
-            const team = useTeamStore.getState().teams[task.teamId];
-            const teamAgentIds = new Set(team?.agents.map((a) => a.agentId) ?? []);
-            teamAgentMap = new Map(team?.agents.map((a) => [a.agentId, a]));
-            agents = allAgents.filter((a) => teamAgentIds.has(a.id) && a.id !== task.agentId);
-            // Fallback: if gateway agent catalog has not been fetched yet,
-            // build minimal AgentInfo objects from the team definition itself.
-            if (agents.length === 0 && !catalogEntryAll && team) {
-              agents = team.agents
-                .filter((ta) => ta.agentId !== task.agentId)
-                .map((ta) => ({ id: ta.agentId }) satisfies AgentInfo);
-            }
-          } else {
-            agents = allAgents.filter((a) => a.id !== 'main');
-          }
-          if (agents.length === 0) {
-            toast.error(t('errors.conductorInitFailed'));
+          const unavailable = readResults.find(({ res }) => !res.ok || !res.result);
+          if (unavailable) {
+            toast.error(t('chatInput.materialUnavailable', { fileName: unavailable.file.fileName }));
             return;
           }
 
-          const descResults = await Promise.allSettled(
-            agents.map((a) => window.clawwork.getAgentFile(task.gatewayId, a.id, 'IDENTITY.md')),
-          );
-          const descMap = new Map<string, string>();
-          agents.forEach((a, i) => {
-            const r = descResults[i];
-            if (r.status === 'fulfilled' && r.value.ok && r.value.result) {
-              const data = r.value.result as Record<string, unknown>;
-              if (typeof data.content === 'string') {
-                const desc = extractDescription(data.content);
-                if (desc) descMap.set(a.id, desc);
+          const localBlocks: string[] = [];
+          let totalLocalSize = 0;
+
+          for (const { file: f, res } of readResults) {
+            if (!res.result) continue;
+            const read = res.result as unknown as FileReadResult;
+
+            if (read.tier === 'text') {
+              const blockSize = new TextEncoder().encode(read.content).length;
+              totalLocalSize += blockSize;
+              if (totalLocalSize > MAX_TEXT_TOTAL) {
+                toast.error(t('chatInput.fileContextLimitExceeded'));
+                break;
               }
+              localBlocks.push(`<file path="${f.relativePath}">\n${read.content}\n</file>`);
+            } else {
+              extraAttachments.push({
+                mimeType: read.mimeType || f.mimeType || 'application/octet-stream',
+                fileName: f.fileName,
+                content: read.content,
+              });
             }
-          });
+          }
 
-          const agentCatalogStr = agents
-            .map((a) => {
-              const name = (a.name ?? a.id).replaceAll('"', '\\"');
-              const emojiPart = a.identity?.emoji ? `, emoji: ${a.identity.emoji}` : '';
-              const ta = teamAgentMap?.get(a.id);
-              const rolePart = ta?.role ? `, role: "${ta.role.replaceAll('"', '\\"')}"` : '';
-              const desc = descMap.get(a.id);
-              const descPart = desc ? `, description: "${desc.replaceAll('"', '\\"')}"` : '';
-              return `- id: ${a.id}, name: "${name}"${emojiPart}${rolePart}${descPart}`;
-            })
-            .join('\n');
-          const ok = await useRoomStore
-            .getState()
-            .initConductor(task.id, task.gatewayId, task.sessionKey, agentCatalogStr);
-          if (!ok) {
-            toast.error(t('errors.conductorInitFailed'));
-            setProcessing(task.sessionKey, false);
-            return;
+          if (localBlocks.length > 0) {
+            finalContent = localBlocks.join('\n\n') + '\n\n' + finalContent;
           }
         }
-      }
 
-      const slashMatch = finalContent.trim().match(/^\/(model|think)\s+(.+)$/);
-      if (slashMatch && allAttachments.length === 0 && !allMessageAttachments?.length) {
-        const command = slashMatch[1] as 'model' | 'think';
-        const result = await composer.applySlashCommand(task.id, command, slashMatch[2].trim());
-        if (!result.ok) {
-          // 已知错误给中文，未知错误给网关原文 —— 只报「发送失败」等于没报。
-          toast.error(describeGatewayError(result.error, t('errors.sendFailed')));
+        const gatewayAttachments = attachmentRecords.map((a) => ({
+          mimeType: a.mimeType,
+          fileName: a.fileName,
+          content: a.base64,
+        }));
+        const importedGatewayAttachments = importedAttachmentRecords.map((record) => ({
+          mimeType: record.mimeType,
+          fileName: record.fileName,
+          content: record.base64,
+        }));
+        const allAttachments = [...gatewayAttachments, ...importedGatewayAttachments, ...extraAttachments];
+        const deferUserMessageUntilSent = Boolean(task.ensemble);
+
+        if (task.ensemble) {
+          const room = useRoomStore.getState().rooms[task.id];
+          if (!room || !room.conductorReady) {
+            const catalogEntryAll = useUiStore.getState().agentCatalogByGateway[task.gatewayId];
+            const allAgents = catalogEntryAll?.agents ?? [];
+            let agents: AgentInfo[];
+            let teamAgentMap: Map<string, { role?: string }> | null = null;
+            if (task.teamId) {
+              const team = useTeamStore.getState().teams[task.teamId];
+              const teamAgentIds = new Set(team?.agents.map((a) => a.agentId) ?? []);
+              teamAgentMap = new Map(team?.agents.map((a) => [a.agentId, a]));
+              agents = allAgents.filter((a) => teamAgentIds.has(a.id) && a.id !== task.agentId);
+              // Fallback: if gateway agent catalog has not been fetched yet,
+              // build minimal AgentInfo objects from the team definition itself.
+              if (agents.length === 0 && !catalogEntryAll && team) {
+                agents = team.agents
+                  .filter((ta) => ta.agentId !== task.agentId)
+                  .map((ta) => ({ id: ta.agentId }) satisfies AgentInfo);
+              }
+            } else {
+              agents = allAgents.filter((a) => a.id !== 'main');
+            }
+            if (agents.length === 0) {
+              toast.error(t('errors.conductorInitFailed'));
+              return;
+            }
+
+            const descResults = await Promise.allSettled(
+              agents.map((a) => window.clawwork.getAgentFile(task.gatewayId, a.id, 'IDENTITY.md')),
+            );
+            const descMap = new Map<string, string>();
+            agents.forEach((a, i) => {
+              const r = descResults[i];
+              if (r.status === 'fulfilled' && r.value.ok && r.value.result) {
+                const data = r.value.result as Record<string, unknown>;
+                if (typeof data.content === 'string') {
+                  const desc = extractDescription(data.content);
+                  if (desc) descMap.set(a.id, desc);
+                }
+              }
+            });
+
+            const agentCatalogStr = agents
+              .map((a) => {
+                const name = (a.name ?? a.id).replaceAll('"', '\\"');
+                const emojiPart = a.identity?.emoji ? `, emoji: ${a.identity.emoji}` : '';
+                const ta = teamAgentMap?.get(a.id);
+                const rolePart = ta?.role ? `, role: "${ta.role.replaceAll('"', '\\"')}"` : '';
+                const desc = descMap.get(a.id);
+                const descPart = desc ? `, description: "${desc.replaceAll('"', '\\"')}"` : '';
+                return `- id: ${a.id}, name: "${name}"${emojiPart}${rolePart}${descPart}`;
+              })
+              .join('\n');
+            const ok = await useRoomStore
+              .getState()
+              .initConductor(task.id, task.gatewayId, task.sessionKey, agentCatalogStr);
+            if (!ok) {
+              toast.error(t('errors.conductorInitFailed'));
+              setProcessing(task.sessionKey, false);
+              return;
+            }
+          }
+        }
+
+        const slashMatch = finalContent.trim().match(/^\/(model|think)\s+(.+)$/);
+        if (slashMatch && allAttachments.length === 0 && !allMessageAttachments?.length) {
+          const command = slashMatch[1] as 'model' | 'think';
+          const result = await composer.applySlashCommand(task.id, command, slashMatch[2].trim());
+          if (!result.ok) {
+            // 已知错误给中文，未知错误给网关原文 —— 只报「发送失败」等于没报。
+            toast.error(describeGatewayError(result.error, t('errors.sendFailed')));
+            return;
+          }
+          if (activeTaskIdRef.current === task.id) {
+            textarea.value = '';
+            textarea.style.height = 'auto';
+            onComposerCleared?.();
+          }
           return;
         }
-        textarea.value = '';
-        textarea.style.height = 'auto';
-        onComposerCleared?.();
-        return;
+
+        const titleHint =
+          content ||
+          (localFileMentions.length ? `[@${localFileMentions[0].fileName}]` : '') ||
+          (taskMentions.length ? `[@${taskMentions[0].title}]` : '') ||
+          (artifactMentions.length ? `[@${artifactMentions[0].name}]` : '') ||
+          (importedAttachmentRecords.length ? `[${importedAttachmentRecords[0].fileName}]` : '') ||
+          (attachmentRecords.length ? `[${attachmentRecords[0].fileName}]` : '');
+
+        const isMentionAll = agentMentions.some((a) => a.agentId === MENTION_ALL_AGENT_ID);
+        const result = await composer.send(task.id, {
+          content: finalContent,
+          attachments: allAttachments.length > 0 ? allAttachments : undefined,
+          messageAttachments: allMessageAttachments,
+          deferUserMessageUntilSent,
+          presetModel: currentModel,
+          presetThinking: currentThinking,
+          titleHint: task.title ? undefined : titleHint,
+          mentionAll: isMentionAll || undefined,
+          mentions: agentMentions.length > 0 && !isMentionAll ? agentMentions.map((a) => a.agentId) : undefined,
+        });
+        if (!result.ok) return;
+        if (activeTaskIdRef.current === task.id) {
+          textarea.value = '';
+          textarea.style.height = 'auto';
+          onComposerCleared?.();
+          setPendingAttachments([]);
+          setSelectedAgents([]);
+          setSelectedTasks([]);
+          setSelectedArtifacts([]);
+          setSelectedLocalFiles([]);
+          clearSelectedImportedFiles(task.id);
+        }
+      } catch (err) {
+        setProcessing(task.id, false);
+        const msg = err instanceof Error ? err.message : String(err);
+        addMessage(task.id, 'system', msg);
+        toast.error(msg);
       }
-
-      const titleHint =
-        content ||
-        (localFileMentions.length ? `[@${localFileMentions[0].fileName}]` : '') ||
-        (taskMentions.length ? `[@${taskMentions[0].title}]` : '') ||
-        (artifactMentions.length ? `[@${artifactMentions[0].name}]` : '') ||
-        (importedAttachmentRecords.length ? `[${importedAttachmentRecords[0].fileName}]` : '') ||
-        (attachmentRecords.length ? `[${attachmentRecords[0].fileName}]` : '');
-
-      const isMentionAll = agentMentions.some((a) => a.agentId === MENTION_ALL_AGENT_ID);
-      const result = await composer.send(task.id, {
-        content: finalContent,
-        attachments: allAttachments.length > 0 ? allAttachments : undefined,
-        messageAttachments: allMessageAttachments,
-        deferUserMessageUntilSent,
-        presetModel: currentModel,
-        presetThinking: currentThinking,
-        titleHint: task.title ? undefined : titleHint,
-        mentionAll: isMentionAll || undefined,
-        mentions: agentMentions.length > 0 && !isMentionAll ? agentMentions.map((a) => a.agentId) : undefined,
-      });
-      if (!result.ok) return;
-      textarea.value = '';
-      textarea.style.height = 'auto';
-      onComposerCleared?.();
-      setPendingAttachments([]);
-      setSelectedAgents([]);
-      setSelectedTasks([]);
-      setSelectedArtifacts([]);
-      setSelectedLocalFiles([]);
-      clearSelectedImportedFiles();
-    } catch (err) {
-      setProcessing(task.id, false);
-      const msg = err instanceof Error ? err.message : String(err);
-      addMessage(task.id, 'system', msg);
-      toast.error(msg);
+    } finally {
+      sendInFlightRef.current = false;
     }
   }, [
     activeTask,

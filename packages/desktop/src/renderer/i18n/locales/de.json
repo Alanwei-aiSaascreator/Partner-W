@@ -261,6 +261,7 @@
     "grantFolderFailed": "Ordner konnte nicht hinzugefügt werden",
     "importFilesFailed": "Dateien konnten nicht hinzugefügt werden",
     "importFilesPartiallyRejected": "{{count}} Dateien konnten nicht hinzugefügt werden",
+    "materialLimitExceeded": "Add up to {{count}} materials totaling {{size}} MB per message",
     "materialMissing": "Nicht verfügbar",
     "materials": "Aufgabenmaterial",
     "materialSelected": "Wird jetzt verwendet",

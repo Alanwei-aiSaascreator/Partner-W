@@ -4,16 +4,21 @@ import type { FileIndexEntry, ImportedTaskFile, TaskContextSource } from '@claww
 import { toast } from '@/lib/toast';
 import { useTaskStore } from '../../stores/taskStore';
 
-export type ImportedMaterialFile = ImportedTaskFile & { availability: 'available' | 'missing' };
+export type ImportedMaterialFile = ImportedTaskFile & { taskId: string; availability: 'available' | 'missing' };
 
 export type TaskContextFile = Omit<FileIndexEntry, 'absolutePath'> & {
+  taskId: string;
   sourceId: string;
   sourceName: string;
 };
 
-function mergeImported(current: ImportedMaterialFile[], incoming: ImportedTaskFile[]): ImportedMaterialFile[] {
+function mergeImported(
+  current: ImportedMaterialFile[],
+  incoming: ImportedTaskFile[],
+  taskId: string,
+): ImportedMaterialFile[] {
   const byPath = new Map(current.map((file) => [file.localPath, file]));
-  for (const file of incoming) byPath.set(file.localPath, { ...file, availability: 'available' });
+  for (const file of incoming) byPath.set(file.localPath, { ...file, taskId, availability: 'available' });
   return [...byPath.values()];
 }
 
@@ -28,6 +33,28 @@ export function useTaskMaterials(taskIdOverride?: string | null) {
   const [selectedImportedPaths, setSelectedImportedPaths] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   const loadSequence = useRef(0);
+  const sourceLoadSequence = useRef(0);
+  const mountedRef = useRef(true);
+  const identityRef = useRef<string | null>(requestedTaskId ?? null);
+  const generationRef = useRef(0);
+  if (identityRef.current !== (requestedTaskId ?? null)) {
+    identityRef.current = requestedTaskId ?? null;
+    generationRef.current += 1;
+  }
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      generationRef.current += 1;
+    };
+  }, []);
+
+  const isCurrent = useCallback(
+    (targetTaskId: string, generation: number) =>
+      mountedRef.current && identityRef.current === targetTaskId && generationRef.current === generation,
+    [],
+  );
 
   useEffect(() => {
     const nextTaskId = requestedTaskId ?? null;
@@ -36,7 +63,9 @@ export function useTaskMaterials(taskIdOverride?: string | null) {
     setImportedFiles([]);
     setContextFiles([]);
     setSelectedImportedPaths(new Set());
+    sourceLoadSequence.current += 1;
     const sequence = ++loadSequence.current;
+    const generation = generationRef.current;
     if (!nextTaskId) {
       setLoading(false);
       return;
@@ -48,41 +77,53 @@ export function useTaskMaterials(taskIdOverride?: string | null) {
       window.clawwork.listImportedTaskFiles(nextTaskId),
     ])
       .then(([sourceResult, fileResult]) => {
-        if (loadSequence.current !== sequence) return;
-        if (sourceResult.ok) setSources(sourceResult.result ?? []);
+        if (loadSequence.current !== sequence || !isCurrent(nextTaskId, generation)) return;
+        if (!sourceResult.ok || !fileResult.ok) {
+          toast.error(t('chatInput.materialsLoadFailed'), {
+            description: [sourceResult.error, fileResult.error].filter(Boolean).join('; '),
+          });
+          return;
+        }
+        setSources(sourceResult.result ?? []);
         if (fileResult.ok) {
-          setImportedFiles((fileResult.result ?? []).map((file) => ({ ...file, availability: 'available' })));
+          setImportedFiles(
+            (fileResult.result ?? []).map((file) => ({ ...file, taskId: nextTaskId, availability: 'available' })),
+          );
         }
       })
       .catch((error: unknown) => {
-        if (loadSequence.current !== sequence) return;
+        if (loadSequence.current !== sequence || !isCurrent(nextTaskId, generation)) return;
         toast.error(t('chatInput.materialsLoadFailed'), {
           description: error instanceof Error ? error.message : String(error),
         });
       })
       .finally(() => {
-        if (loadSequence.current === sequence) setLoading(false);
+        if (loadSequence.current === sequence && isCurrent(nextTaskId, generation)) setLoading(false);
       });
-  }, [requestedTaskId, t]);
+  }, [requestedTaskId, t, isCurrent]);
 
   const ensureTaskId = useCallback(() => {
     const current = taskId ?? useTaskStore.getState().activeTaskId;
     if (current) return current;
     const created = useTaskStore.getState().commitPendingTask();
+    identityRef.current = created.id;
+    generationRef.current += 1;
     setTaskId(created.id);
     return created.id;
   }, [taskId]);
 
   const importFiles = useCallback(async () => {
+    const targetTaskId = ensureTaskId();
+    const generation = generationRef.current;
     try {
-      const targetTaskId = ensureTaskId();
       const result = await window.clawwork.importTaskFiles(targetTaskId);
+      if (!isCurrent(targetTaskId, generation)) return [];
       if (!result.ok || !result.result) {
         toast.error(t('chatInput.importFilesFailed'), { description: result.error });
         return [];
       }
       const imported = result.result.imported;
-      setImportedFiles((current) => mergeImported(current, imported));
+      setImportedFiles((current) => mergeImported(current, imported, targetTaskId));
       setSelectedImportedPaths((current) => {
         const next = new Set(current);
         for (const file of imported) next.add(file.localPath);
@@ -93,17 +134,20 @@ export function useTaskMaterials(taskIdOverride?: string | null) {
       }
       return imported;
     } catch (error) {
+      if (!isCurrent(targetTaskId, generation)) return [];
       toast.error(t('chatInput.importFilesFailed'), {
         description: error instanceof Error ? error.message : String(error),
       });
       return [];
     }
-  }, [ensureTaskId, t]);
+  }, [ensureTaskId, isCurrent, t]);
 
   const grantFolder = useCallback(async () => {
+    const targetTaskId = ensureTaskId();
+    const generation = generationRef.current;
     try {
-      const targetTaskId = ensureTaskId();
       const result = await window.clawwork.grantTaskContextFolder(targetTaskId);
+      if (!isCurrent(targetTaskId, generation)) return null;
       if (!result.ok) {
         toast.error(t('chatInput.grantFolderFailed'), { description: result.error });
         return null;
@@ -113,54 +157,86 @@ export function useTaskMaterials(taskIdOverride?: string | null) {
       }
       return result.result ?? null;
     } catch (error) {
+      if (!isCurrent(targetTaskId, generation)) return null;
       toast.error(t('chatInput.grantFolderFailed'), {
         description: error instanceof Error ? error.message : String(error),
       });
       return null;
     }
-  }, [ensureTaskId, t]);
+  }, [ensureTaskId, isCurrent, t]);
 
   const revokeSource = useCallback(
     async (sourceId: string) => {
       if (!taskId) return false;
-      const result = await window.clawwork.revokeTaskContextSource(taskId, sourceId);
-      if (!result.ok || !result.result) {
-        toast.error(t('chatInput.revokeFolderFailed'), { description: result.error });
+      const targetTaskId = taskId;
+      const generation = generationRef.current;
+      try {
+        const result = await window.clawwork.revokeTaskContextSource(targetTaskId, sourceId);
+        if (!isCurrent(targetTaskId, generation)) return false;
+        if (!result.ok || !result.result) {
+          toast.error(t('chatInput.revokeFolderFailed'), { description: result.error });
+          return false;
+        }
+        setSources((current) => current.filter((source) => source.id !== sourceId));
+        setContextFiles((current) => current.filter((file) => file.sourceId !== sourceId));
+        return true;
+      } catch (error) {
+        if (!isCurrent(targetTaskId, generation)) return false;
+        toast.error(t('chatInput.revokeFolderFailed'), {
+          description: error instanceof Error ? error.message : String(error),
+        });
         return false;
       }
-      setSources((current) => current.filter((source) => source.id !== sourceId));
-      return true;
     },
-    [taskId, t],
+    [isCurrent, taskId, t],
   );
 
   const listSourceFiles = useCallback(
     async (sourceId: string, query?: string): Promise<TaskContextFile[]> => {
       if (!taskId) return [];
+      const targetTaskId = taskId;
+      const generation = generationRef.current;
       const source = sources.find((item) => item.id === sourceId);
-      const result = await window.clawwork.listTaskContextFiles(taskId, sourceId, query);
-      if (!result.ok || !result.result) return [];
-      return result.result.map(({ absolutePath: _absolutePath, ...file }) => ({
-        ...file,
-        sourceId,
-        sourceName: source?.displayName ?? '',
-      }));
+      try {
+        const result = await window.clawwork.listTaskContextFiles(targetTaskId, sourceId, query);
+        if (!isCurrent(targetTaskId, generation)) return [];
+        if (!result.ok || !result.result) {
+          toast.error(t('chatInput.materialsLoadFailed'), { description: result.error });
+          return [];
+        }
+        return result.result.map(({ absolutePath: _absolutePath, ...file }) => ({
+          ...file,
+          taskId: targetTaskId,
+          sourceId,
+          sourceName: source?.displayName ?? '',
+        }));
+      } catch (error) {
+        if (!isCurrent(targetTaskId, generation)) return [];
+        toast.error(t('chatInput.materialsLoadFailed'), {
+          description: error instanceof Error ? error.message : String(error),
+        });
+        return [];
+      }
     },
-    [sources, taskId],
+    [isCurrent, sources, taskId, t],
   );
 
   const loadSourceFiles = useCallback(
     async (query?: string) => {
+      if (!taskId) return [];
+      const targetTaskId = taskId;
+      const generation = generationRef.current;
+      const sequence = ++sourceLoadSequence.current;
       const groups = await Promise.all(
         sources
           .filter((source) => source.availability === 'available')
           .map((source) => listSourceFiles(source.id, query)),
       );
       const files = groups.flat();
-      setContextFiles(files);
+      if (sourceLoadSequence.current === sequence && isCurrent(targetTaskId, generation)) setContextFiles(files);
       return files;
     },
-    [listSourceFiles, sources],
+    [isCurrent, listSourceFiles, sources, taskId],
   );
 
   const toggleImportedFile = useCallback((localPath: string) => {
@@ -172,8 +248,12 @@ export function useTaskMaterials(taskIdOverride?: string | null) {
     });
   }, []);
 
-  const clearSelectedImportedFiles = useCallback(() => setSelectedImportedPaths(new Set()), []);
-  const markImportedFileMissing = useCallback((localPath: string) => {
+  const clearSelectedImportedFiles = useCallback((expectedTaskId?: string) => {
+    if (!mountedRef.current || (expectedTaskId && identityRef.current !== expectedTaskId)) return;
+    setSelectedImportedPaths(new Set());
+  }, []);
+  const markImportedFileMissing = useCallback((localPath: string, expectedTaskId?: string) => {
+    if (!mountedRef.current || (expectedTaskId && identityRef.current !== expectedTaskId)) return;
     setImportedFiles((current) =>
       current.map((file) => (file.localPath === localPath ? { ...file, availability: 'missing' } : file)),
     );

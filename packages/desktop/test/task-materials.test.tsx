@@ -36,6 +36,7 @@ describe('TaskMaterials', () => {
   it('shows selected and missing states without using color alone', () => {
     const files: ImportedMaterialFile[] = [
       {
+        taskId: 'task-1',
         fileName: 'selected.txt',
         localPath: 'tasks/task-1/inbox/selected.txt',
         mimeType: 'text/plain',
@@ -43,6 +44,7 @@ describe('TaskMaterials', () => {
         availability: 'available',
       },
       {
+        taskId: 'task-1',
         fileName: 'missing.txt',
         localPath: 'tasks/task-1/inbox/missing.txt',
         mimeType: 'text/plain',

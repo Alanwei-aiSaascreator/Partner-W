@@ -79,7 +79,11 @@ import { useChatSend } from '../src/renderer/components/ChatInput/useChatSend';
 import type { ImportedMaterialFile, TaskContextFile } from '../src/renderer/components/ChatInput/useTaskMaterials';
 import { useCommercialStore } from '../src/renderer/stores/commercialStore';
 
-function render(ui: ReactElement): { container: HTMLDivElement; unmount: () => void } {
+function render(ui: ReactElement): {
+  container: HTMLDivElement;
+  rerender: (next: ReactElement) => void;
+  unmount: () => void;
+} {
   const container = document.createElement('div');
   document.body.appendChild(container);
   const root: Root = createRoot(container);
@@ -90,6 +94,7 @@ function render(ui: ReactElement): { container: HTMLDivElement; unmount: () => v
 
   return {
     container,
+    rerender: (next) => act(() => root.render(next)),
     unmount: () => {
       act(() => {
         root.unmount();
@@ -135,6 +140,7 @@ function Harness({ initialValue = '' }: { initialValue?: string }) {
 }
 
 const importedMaterial: ImportedMaterialFile = {
+  taskId: 'task-1',
   fileName: 'brief.pdf',
   localPath: 'tasks/task-1/inbox/brief.pdf',
   mimeType: 'application/pdf',
@@ -143,6 +149,7 @@ const importedMaterial: ImportedMaterialFile = {
 };
 
 const folderMaterial: TaskContextFile = {
+  taskId: 'task-1',
   sourceId: 'source-1',
   sourceName: 'Research',
   fileName: 'notes.txt',
@@ -157,10 +164,12 @@ function MaterialHarness({
   clearImported,
   clearFolder,
   markMissing = vi.fn(),
+  importedMaterials = [importedMaterial],
 }: {
   clearImported: () => void;
   clearFolder: Dispatch<SetStateAction<TaskContextFile[]>>;
   markMissing?: (localPath: string) => void;
+  importedMaterials?: ImportedMaterialFile[];
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const chat = useChatSend({
@@ -173,7 +182,7 @@ function MaterialHarness({
     setSelectedArtifacts: vi.fn(),
     selectedLocalFiles: [folderMaterial],
     setSelectedLocalFiles: clearFolder,
-    selectedImportedFiles: [importedMaterial],
+    selectedImportedFiles: importedMaterials,
     clearSelectedImportedFiles: clearImported,
     markImportedFileMissing: markMissing,
     selectedAgents: [],
@@ -197,6 +206,8 @@ describe('useChatSend abort flow', () => {
     mocks.abort.mockClear();
     mocks.applySlashCommand.mockClear();
     mocks.send.mockClear();
+    mocks.taskState.activeTaskId = 'task-1';
+    mocks.taskState.tasks = [mocks.taskState.tasks.find((task) => task.id === 'task-1')!];
     Object.assign(window, {
       clawwork: {
         readInboxFile: vi.fn(async () => ({ ok: true, result: { content: 'cGRm', encoding: 'base64' } })),
@@ -398,11 +409,102 @@ describe('useChatSend abort flow', () => {
       await Promise.resolve();
     });
 
-    expect(markMissing).toHaveBeenCalledWith('tasks/task-1/inbox/brief.pdf');
+    expect(markMissing).toHaveBeenCalledWith('tasks/task-1/inbox/brief.pdf', 'task-1');
     expect(mocks.send).not.toHaveBeenCalled();
     expect((container.querySelector('textarea') as HTMLTextAreaElement).value).toBe('summarize');
     expect(clearImported).not.toHaveBeenCalled();
     expect(clearFolder).not.toHaveBeenCalled();
     unmount();
+  });
+
+  it('rejects more than ten combined materials before reading or dispatching', async () => {
+    const importedMaterials = Array.from({ length: 10 }, (_, index) => ({
+      ...importedMaterial,
+      fileName: `file-${index}.pdf`,
+      localPath: `tasks/task-1/inbox/file-${index}.pdf`,
+    }));
+    const { container, unmount } = render(
+      <MaterialHarness clearImported={vi.fn()} clearFolder={vi.fn()} importedMaterials={importedMaterials} />,
+    );
+    await act(async () => {
+      (container.querySelector('button') as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+    expect(window.clawwork.readInboxFile).not.toHaveBeenCalled();
+    expect(mocks.send).not.toHaveBeenCalled();
+    unmount();
+  });
+
+  it('rejects cumulative material bytes above twenty-five megabytes before reading', async () => {
+    const importedMaterials = [
+      { ...importedMaterial, size: 13 * 1024 * 1024 },
+      {
+        ...importedMaterial,
+        fileName: 'second.pdf',
+        localPath: 'tasks/task-1/inbox/second.pdf',
+        size: 13 * 1024 * 1024,
+      },
+    ];
+    const { container, unmount } = render(
+      <MaterialHarness clearImported={vi.fn()} clearFolder={vi.fn()} importedMaterials={importedMaterials} />,
+    );
+    await act(async () => {
+      (container.querySelector('button') as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+    expect(window.clawwork.readInboxFile).not.toHaveBeenCalled();
+    expect(mocks.send).not.toHaveBeenCalled();
+    unmount();
+  });
+
+  it('locks the complete send pipeline so a double click dispatches once', async () => {
+    let resolveRead!: (value: unknown) => void;
+    vi.mocked(window.clawwork.readInboxFile).mockReturnValueOnce(
+      new Promise((resolve) => (resolveRead = resolve)) as never,
+    );
+    const { container, unmount } = render(<MaterialHarness clearImported={vi.fn()} clearFolder={vi.fn()} />);
+    const button = container.querySelector('button') as HTMLButtonElement;
+    act(() => {
+      button.click();
+      button.click();
+    });
+    await act(async () => {
+      resolveRead({ ok: true, result: { content: 'cGRm', encoding: 'base64' } });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(window.clawwork.readInboxFile).toHaveBeenCalledTimes(1);
+    expect(mocks.send).toHaveBeenCalledTimes(1);
+    unmount();
+  });
+
+  it('does not clear the next task draft when the originating send finishes later', async () => {
+    let resolveRead!: (value: unknown) => void;
+    vi.mocked(window.clawwork.readInboxFile).mockReturnValueOnce(
+      new Promise((resolve) => (resolveRead = resolve)) as never,
+    );
+    const clearImported = vi.fn();
+    const clearFolder = vi.fn();
+    const view = render(<MaterialHarness clearImported={clearImported} clearFolder={clearFolder} />);
+    act(() => (view.container.querySelector('button') as HTMLButtonElement).click());
+
+    const firstTask = mocks.taskState.tasks[0];
+    mocks.taskState.tasks = [
+      firstTask,
+      { ...firstTask, id: 'task-2', sessionKey: 'agent:main:clawwork:task:task-2', title: 'Task 2' },
+    ];
+    mocks.taskState.activeTaskId = 'task-2';
+    view.rerender(<MaterialHarness clearImported={clearImported} clearFolder={clearFolder} />);
+
+    await act(async () => {
+      resolveRead({ ok: true, result: { content: 'cGRm', encoding: 'base64' } });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(mocks.send).toHaveBeenCalledWith('task-1', expect.any(Object));
+    expect(clearImported).not.toHaveBeenCalled();
+    expect(clearFolder).not.toHaveBeenCalled();
+    expect((view.container.querySelector('textarea') as HTMLTextAreaElement).value).toBe('summarize');
+    view.unmount();
   });
 });

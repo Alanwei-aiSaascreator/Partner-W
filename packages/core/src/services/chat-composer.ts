@@ -31,6 +31,7 @@ export interface ChatComposerDeps {
       attachments?: MessageAttachment[],
       options?: { persist?: boolean; sessionKey?: string },
     ) => Message;
+    removeMessage: (taskId: string, messageId: string) => void;
     setProcessing: (taskId: string, processing: boolean) => void;
     clearMessages: (taskId: string) => void;
   };
@@ -77,7 +78,7 @@ export interface SendOptions {
   content: string;
   attachments?: ChatAttachment[];
   messageAttachments?: MessageAttachment[];
-  /** Add/persist the user message only after gateway dispatch succeeds. */
+  /** Keep an optimistic user message in memory, but persist it only after gateway dispatch succeeds. */
   deferUserMessageUntilSent?: boolean;
   presetModel?: string;
   presetThinking?: string;
@@ -209,11 +210,12 @@ export function createChatComposer(deps: ChatComposerDeps) {
     }
 
     const store = deps.getMessageStore();
-    let pendingUserMessage = options.deferUserMessageUntilSent
-      ? undefined
-      : store.addMessage(task.id, 'user', options.content, options.messageAttachments, {
-          persist: false,
-        });
+    const pendingUserMessage = store.addMessage(task.id, 'user', options.content, options.messageAttachments, {
+      persist: false,
+    });
+    const rollbackPendingUserMessage = () => {
+      if (options.deferUserMessageUntilSent) store.removeMessage(task.id, pendingUserMessage.id);
+    };
     store.setProcessing(task.sessionKey, true);
 
     if (!task.title && options.titleHint) {
@@ -232,6 +234,7 @@ export function createChatComposer(deps: ChatComposerDeps) {
             model: options.presetModel,
           });
           if (!modelRes.ok) {
+            rollbackPendingUserMessage();
             store.setProcessing(task.sessionKey, false);
             emitError(
               task.id,
@@ -257,6 +260,7 @@ export function createChatComposer(deps: ChatComposerDeps) {
             thinkingLevel,
           });
           if (!thinkingRes.ok) {
+            rollbackPendingUserMessage();
             store.setProcessing(task.sessionKey, false);
             emitError(
               task.id,
@@ -282,6 +286,7 @@ export function createChatComposer(deps: ChatComposerDeps) {
           (r) => r.status === 'rejected' || (r.status === 'fulfilled' && r.value && !r.value.ok),
         );
         if (failed) {
+          rollbackPendingUserMessage();
           store.setProcessing(task.sessionKey, false);
           const reason =
             failed.status === 'rejected' ? String(failed.reason) : 'value' in failed ? (failed.value?.error ?? '') : '';
@@ -316,6 +321,7 @@ export function createChatComposer(deps: ChatComposerDeps) {
           options.attachments?.length ? options.attachments : undefined,
         );
         if (result && !result.ok) {
+          rollbackPendingUserMessage();
           store.setProcessing(task.sessionKey, false);
           emitError(
             task.id,
@@ -329,10 +335,6 @@ export function createChatComposer(deps: ChatComposerDeps) {
           return { ok: false, taskId: task.id };
         }
       }
-
-      pendingUserMessage ??= store.addMessage(task.id, 'user', options.content, options.messageAttachments, {
-        persist: false,
-      });
 
       clearTimer(task.id);
       const watchKeys = isMentionSend ? mentionTargets : [task.sessionKey];
@@ -370,6 +372,7 @@ export function createChatComposer(deps: ChatComposerDeps) {
 
       return { ok: true, taskId: task.id };
     } catch (err) {
+      rollbackPendingUserMessage();
       store.setProcessing(task.sessionKey, false);
       emitError(
         task.id,

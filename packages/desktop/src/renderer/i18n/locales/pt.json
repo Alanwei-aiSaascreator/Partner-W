@@ -261,6 +261,7 @@
     "grantFolderFailed": "Falha ao adicionar a pasta",
     "importFilesFailed": "Falha ao adicionar arquivos",
     "importFilesPartiallyRejected": "{{count}} arquivos não puderam ser adicionados",
+    "materialLimitExceeded": "Add up to {{count}} materials totaling {{size}} MB per message",
     "materialMissing": "Indisponível",
     "materials": "Materiais da tarefa",
     "materialSelected": "Em uso agora",

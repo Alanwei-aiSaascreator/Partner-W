@@ -261,6 +261,7 @@
     "grantFolderFailed": "폴더를 추가하지 못했습니다",
     "importFilesFailed": "파일을 추가하지 못했습니다",
     "importFilesPartiallyRejected": "{{count}}개 파일을 추가하지 못했습니다",
+    "materialLimitExceeded": "Add up to {{count}} materials totaling {{size}} MB per message",
     "materialMissing": "사용할 수 없음",
     "materials": "작업 자료",
     "materialSelected": "이번에 사용",

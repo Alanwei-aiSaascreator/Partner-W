@@ -14,11 +14,13 @@ const mocks = vi.hoisted(() => ({
   listTaskContextSources: vi.fn(),
   revokeTaskContextSource: vi.fn(),
   listTaskContextFiles: vi.fn(),
+  toastError: vi.fn(),
 }));
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: mocks.t }),
 }));
+vi.mock('../src/renderer/lib/toast', () => ({ toast: { error: mocks.toastError, warning: vi.fn() } }));
 
 vi.mock('../src/renderer/stores/taskStore', () => ({
   useTaskStore: Object.assign(
@@ -60,6 +62,7 @@ function Harness({ taskId }: { taskId: string | null }) {
       <output data-testid="imported">{materials.importedFiles.map((file) => file.fileName).join(',')}</output>
       <output data-testid="selected">{materials.selectedImportedFiles.map((file) => file.fileName).join(',')}</output>
       <output data-testid="sources">{materials.sources.map((source) => source.displayName).join(',')}</output>
+      <output data-testid="context">{materials.contextFiles.map((file) => file.fileName).join(',')}</output>
       <button type="button" onClick={() => void materials.importFiles()}>
         import
       </button>
@@ -68,6 +71,12 @@ function Harness({ taskId }: { taskId: string | null }) {
       </button>
       <button type="button" onClick={() => void materials.grantFolder()}>
         grant
+      </button>
+      <button type="button" onClick={() => void materials.revokeSource('source-task-1')}>
+        revoke
+      </button>
+      <button type="button" onClick={() => void materials.loadSourceFiles()}>
+        load source files
       </button>
     </div>
   );
@@ -83,6 +92,7 @@ describe('useTaskMaterials', () => {
     mocks.listTaskContextSources.mockReset();
     mocks.revokeTaskContextSource.mockReset();
     mocks.listTaskContextFiles.mockReset();
+    mocks.toastError.mockReset();
     Object.assign(window, {
       clawwork: {
         importTaskFiles: mocks.importTaskFiles,
@@ -193,6 +203,132 @@ describe('useTaskMaterials', () => {
     await act(async () => void (await (buttons[2] as HTMLButtonElement).click()));
     expect(mocks.commitPendingTask).toHaveBeenCalledTimes(1);
     expect(mocks.grantTaskContextFolder).toHaveBeenCalledWith('task-created');
+    view.unmount();
+  });
+
+  it('ignores an import that resolves after switching to another task', async () => {
+    let resolveImport!: (value: unknown) => void;
+    mocks.listImportedTaskFiles.mockResolvedValue({ ok: true, result: [] });
+    mocks.listTaskContextSources.mockResolvedValue({ ok: true, result: [] });
+    mocks.importTaskFiles.mockReturnValue(new Promise((resolve) => (resolveImport = resolve)));
+    const view = render(<Harness taskId="task-1" />);
+    await act(async () => void (await Promise.resolve()));
+    act(() => (view.container.querySelectorAll('button')[0] as HTMLButtonElement).click());
+    view.rerender(<Harness taskId="task-2" />);
+    await act(async () => {
+      resolveImport({
+        ok: true,
+        result: {
+          imported: [
+            { fileName: 'late.txt', localPath: 'tasks/task-1/inbox/late.txt', mimeType: 'text/plain', size: 1 },
+          ],
+          rejected: [],
+        },
+      });
+      await Promise.resolve();
+    });
+    expect(view.container.querySelector('[data-testid="imported"]')?.textContent).toBe('');
+    view.unmount();
+  });
+
+  it('reports structured load failures instead of treating them as an empty success', async () => {
+    mocks.listImportedTaskFiles.mockResolvedValue({ ok: false, error: 'inbox unavailable' });
+    mocks.listTaskContextSources.mockResolvedValue({ ok: false, error: 'sources unavailable' });
+    const view = render(<Harness taskId="task-1" />);
+    await act(async () => void (await Promise.resolve()));
+    expect(mocks.toastError).toHaveBeenCalledWith('chatInput.materialsLoadFailed', expect.any(Object));
+    view.unmount();
+  });
+
+  it('does not let a delayed source listing clear the next task context files', async () => {
+    let resolveTaskOne!: (value: unknown) => void;
+    mocks.listImportedTaskFiles.mockResolvedValue({ ok: true, result: [] });
+    mocks.listTaskContextSources.mockImplementation(async (taskId: string) => ({
+      ok: true,
+      result: [
+        {
+          id: `source-${taskId}`,
+          taskId,
+          kind: 'folder',
+          absolutePath: `C:/${taskId}`,
+          displayName: taskId,
+          createdAt: '',
+          lastSeenAt: '',
+          availability: 'available',
+        },
+      ],
+    }));
+    mocks.listTaskContextFiles.mockImplementation((taskId: string) => {
+      if (taskId === 'task-1') return new Promise((resolve) => (resolveTaskOne = resolve));
+      return Promise.resolve({
+        ok: true,
+        result: [
+          {
+            fileName: 'task-2.txt',
+            relativePath: 'task-2.txt',
+            absolutePath: 'C:/task-2/task-2.txt',
+            mimeType: 'text/plain',
+            size: 1,
+            mtime: 1,
+            tier: 'text',
+          },
+        ],
+      });
+    });
+    const view = render(<Harness taskId="task-1" />);
+    await act(async () => void (await Promise.resolve()));
+    act(() => (view.container.querySelectorAll('button')[4] as HTMLButtonElement).click());
+    view.rerender(<Harness taskId="task-2" />);
+    await act(async () => void (await Promise.resolve()));
+    await act(async () => void (await (view.container.querySelectorAll('button')[4] as HTMLButtonElement).click()));
+    expect(view.container.querySelector('[data-testid="context"]')?.textContent).toBe('task-2.txt');
+
+    await act(async () => {
+      resolveTaskOne({ ok: true, result: [] });
+      await Promise.resolve();
+    });
+    expect(view.container.querySelector('[data-testid="context"]')?.textContent).toBe('task-2.txt');
+    view.unmount();
+  });
+
+  it('removes revoked source files from the current context list', async () => {
+    mocks.listImportedTaskFiles.mockResolvedValue({ ok: true, result: [] });
+    mocks.listTaskContextSources.mockResolvedValue({
+      ok: true,
+      result: [
+        {
+          id: 'source-task-1',
+          taskId: 'task-1',
+          kind: 'folder',
+          absolutePath: 'C:/task-1',
+          displayName: 'task-1',
+          createdAt: '',
+          lastSeenAt: '',
+          availability: 'available',
+        },
+      ],
+    });
+    mocks.listTaskContextFiles.mockResolvedValue({
+      ok: true,
+      result: [
+        {
+          fileName: 'a.txt',
+          relativePath: 'a.txt',
+          absolutePath: 'C:/task-1/a.txt',
+          mimeType: 'text/plain',
+          size: 1,
+          mtime: 1,
+          tier: 'text',
+        },
+      ],
+    });
+    mocks.revokeTaskContextSource.mockResolvedValue({ ok: true, result: true });
+    const view = render(<Harness taskId="task-1" />);
+    await act(async () => void (await Promise.resolve()));
+    await act(async () => void (await (view.container.querySelectorAll('button')[4] as HTMLButtonElement).click()));
+    expect(view.container.querySelector('[data-testid="context"]')?.textContent).toBe('a.txt');
+    await act(async () => void (await (view.container.querySelectorAll('button')[3] as HTMLButtonElement).click()));
+    expect(view.container.querySelector('[data-testid="context"]')?.textContent).toBe('');
     view.unmount();
   });
 });

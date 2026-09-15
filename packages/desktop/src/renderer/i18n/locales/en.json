@@ -261,6 +261,7 @@
     "grantFolderFailed": "Failed to add folder",
     "importFilesFailed": "Failed to add files",
     "importFilesPartiallyRejected": "{{count}} files could not be added",
+    "materialLimitExceeded": "Add up to {{count}} materials totaling {{size}} MB per message",
     "materialMissing": "Unavailable",
     "materials": "Task materials",
     "materialSelected": "Using now",

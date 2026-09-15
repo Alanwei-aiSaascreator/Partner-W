@@ -37,6 +37,7 @@ function setup() {
   );
 
   const sendMessage = vi.fn().mockResolvedValue({ ok: true });
+  const removeMessage = vi.fn();
   const abortChat = vi.fn().mockResolvedValue({ ok: true });
   const patchSession = vi.fn().mockResolvedValue({ ok: true });
   const compactSession = vi.fn().mockResolvedValue({ ok: true });
@@ -62,6 +63,7 @@ function setup() {
     getSupportedThinkingLevels: () => supportedLevels,
     getMessageStore: () => ({
       addMessage,
+      removeMessage,
       setProcessing: vi.fn(),
       clearMessages: vi.fn(),
     }),
@@ -89,6 +91,7 @@ function setup() {
     patchSession,
     updateTaskMetadata,
     persistMessage,
+    removeMessage,
   };
 }
 
@@ -139,7 +142,7 @@ describe('chat-composer', () => {
   });
 
   it('does not create or persist a deferred user message when gateway dispatch fails', async () => {
-    const { composer, addMessage, sendMessage, persistMessage } = setup();
+    const { composer, addMessage, sendMessage, persistMessage, removeMessage } = setup();
     sendMessage.mockResolvedValueOnce({ ok: false, error: 'offline' });
 
     const result = await composer.send(TASK_ID, {
@@ -148,7 +151,8 @@ describe('chat-composer', () => {
     });
 
     expect(result.ok).toBe(false);
-    expect(addMessage.mock.calls.filter((call) => call[1] === 'user')).toHaveLength(0);
+    expect(addMessage.mock.calls.filter((call) => call[1] === 'user')).toHaveLength(1);
+    expect(removeMessage).toHaveBeenCalledWith(TASK_ID, 'm1');
     expect(persistMessage).not.toHaveBeenCalled();
   });
 
@@ -168,7 +172,7 @@ describe('chat-composer', () => {
       { fileName: 'brief.pdf', mimeType: 'application/pdf', content: 'cGRm' },
     ]);
     expect(addMessage).toHaveBeenCalledWith(TASK_ID, 'user', 'first ensemble message', attachments, { persist: false });
-    expect(sendMessage.mock.invocationCallOrder[0]).toBeLessThan(addMessage.mock.invocationCallOrder[0]);
+    expect(addMessage.mock.invocationCallOrder[0]).toBeLessThan(sendMessage.mock.invocationCallOrder[0]);
     expect(persistMessage).toHaveBeenCalledTimes(1);
   });
 });

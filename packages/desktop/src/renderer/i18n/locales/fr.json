@@ -261,6 +261,7 @@
     "grantFolderFailed": "Échec de l'ajout du dossier",
     "importFilesFailed": "Échec de l'ajout des fichiers",
     "importFilesPartiallyRejected": "{{count}} fichiers n'ont pas pu être ajoutés",
+    "materialLimitExceeded": "Add up to {{count}} materials totaling {{size}} MB per message",
     "materialMissing": "Indisponible",
     "materials": "Documents de la tâche",
     "materialSelected": "Utilisé maintenant",

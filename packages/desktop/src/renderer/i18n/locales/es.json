@@ -261,6 +261,7 @@
     "grantFolderFailed": "No se pudo agregar la carpeta",
     "importFilesFailed": "No se pudieron agregar los archivos",
     "importFilesPartiallyRejected": "No se pudieron agregar {{count}} archivos",
+    "materialLimitExceeded": "Add up to {{count}} materials totaling {{size}} MB per message",
     "materialMissing": "No disponible",
     "materials": "Materiales de la tarea",
     "materialSelected": "En uso ahora",

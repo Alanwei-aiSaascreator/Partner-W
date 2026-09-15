@@ -261,6 +261,7 @@
     "grantFolderFailed": "新增資料夾失敗",
     "importFilesFailed": "新增檔案失敗",
     "importFilesPartiallyRejected": "有 {{count}} 個檔案未能新增",
+    "materialLimitExceeded": "每次最多新增 {{count}} 個材料，總計不超過 {{size}} MB",
     "materialMissing": "無法使用",
     "materials": "任務材料",
     "materialSelected": "本次使用",

@@ -261,6 +261,7 @@
     "grantFolderFailed": "フォルダを追加できませんでした",
     "importFilesFailed": "ファイルを追加できませんでした",
     "importFilesPartiallyRejected": "{{count}} 件のファイルを追加できませんでした",
+    "materialLimitExceeded": "Add up to {{count}} materials totaling {{size}} MB per message",
     "materialMissing": "利用不可",
     "materials": "タスク資料",
     "materialSelected": "今回使用",

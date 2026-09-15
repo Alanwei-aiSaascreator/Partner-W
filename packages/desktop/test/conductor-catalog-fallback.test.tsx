@@ -137,6 +137,7 @@ function render(ui: ReactElement): { container: HTMLDivElement; unmount: () => v
 let capturedHandleSend: (() => Promise<void>) | null = null;
 
 const importedMaterial = {
+  taskId: 'task-ensemble',
   fileName: 'brief.pdf',
   localPath: 'tasks/task-ensemble/inbox/brief.pdf',
   mimeType: 'application/pdf',
@@ -145,6 +146,7 @@ const importedMaterial = {
 };
 
 const sourceMaterial: TaskContextFile = {
+  taskId: 'task-ensemble',
   sourceId: 'source-1',
   sourceName: 'Research',
   fileName: 'diagram.png',

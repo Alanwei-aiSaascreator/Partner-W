@@ -38,6 +38,7 @@ export interface MessageState {
     attachments?: MessageAttachment[],
     options?: { persist?: boolean; sessionKey?: string },
   ) => Message;
+  removeMessage: (taskId: string, messageId: string) => void;
   upsertToolCall: (sessionKey: string, taskId: string, tc: ToolCall) => void;
   bulkLoad: (taskId: string, msgs: Message[]) => void;
   appendStreamDelta: (sessionKey: string, delta: string) => void;
@@ -205,6 +206,14 @@ export function createMessageStore(deps: MessageStoreDeps) {
       }
       return msg;
     },
+
+    removeMessage: (taskId, messageId) =>
+      set((s) => ({
+        messagesByTask: {
+          ...s.messagesByTask,
+          [taskId]: (s.messagesByTask[taskId] ?? []).filter((message) => message.id !== messageId),
+        },
+      })),
 
     upsertToolCall: (sessionKey, taskId, tc) => {
       let persistedMessage: Message | null = null;

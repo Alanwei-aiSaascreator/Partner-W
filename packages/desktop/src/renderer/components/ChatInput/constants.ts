@@ -2,6 +2,8 @@ import type { ModelCatalogEntry } from '@clawwork/shared';
 
 export const MAX_ATTACHMENT_SIZE = 100 * 1024 * 1024;
 export const MAX_TEXT_TOTAL = 500 * 1024;
+export const MAX_SEND_MATERIAL_COUNT = 10;
+export const MAX_SEND_MATERIAL_BYTES = 25 * 1024 * 1024;
 export const GATEWAY_INJECTED_MODEL = 'gateway-injected';
 export const EMPTY_MODELS_CATALOG: ModelCatalogEntry[] = [];
 

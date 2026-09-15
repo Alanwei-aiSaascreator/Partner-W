@@ -261,4 +261,16 @@ describe('task context source IPC handlers', () => {
       handleMap.get('context:list-source-files')?.({}, { taskId: 'task-1', sourceId: 'source-1', query: 42 }),
     ).toEqual({ ok: false, error: expect.any(String) });
   });
+
+  it('does not register renderer-chosen absolute path context channels', () => {
+    for (const channel of [
+      'context:select-folder',
+      'context:list-files',
+      'context:read-file',
+      'context:watch-folder',
+      'context:unwatch-folder',
+    ]) {
+      expect(handleMap.has(channel)).toBe(false);
+    }
+  });
 });
