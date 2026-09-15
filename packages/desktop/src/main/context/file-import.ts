@@ -1,4 +1,5 @@
 import type { ImportFileRejectionReason, ImportFilesResult, ImportedTaskFile } from '@clawwork/shared';
+import { execFile } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import type { Dir, Stats } from 'node:fs';
 import { existsSync, lstatSync, mkdirSync, opendirSync, realpathSync, statSync } from 'node:fs';
@@ -134,6 +135,7 @@ interface ImportTestHooks {
   beforeTargetHash?: (context: ImportTestContext) => void | Promise<void>;
   beforePublish?: (context: ImportTestContext) => void | Promise<void>;
   beforeCleanup?: (context: ImportTestContext) => void | Promise<void>;
+  nativeMovePublisher?: (sourcePath: string, destinationPath: string) => Promise<void>;
 }
 
 interface StagingGarbageTestHooks {
@@ -545,17 +547,90 @@ async function hashTarget(handle: FileHandle, expectedBytes: number): Promise<st
   return hash.digest('hex');
 }
 
+const POWERSHELL_NO_REPLACE_MOVE_SCRIPT =
+  '& { param([string]$s,[string]$d) $ErrorActionPreference="Stop"; function Decode([string]$v) { $v=$v.Replace("-","+").Replace("_","/"); while (($v.Length % 4) -ne 0) { $v += "=" }; [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($v)) }; [System.IO.File]::Move((Decode $s),(Decode $d)) }';
+
+function windowsMoveArguments(sourcePath: string, destinationPath: string): string[] {
+  return [
+    '-NoProfile',
+    '-NonInteractive',
+    '-Command',
+    POWERSHELL_NO_REPLACE_MOVE_SCRIPT,
+    Buffer.from(sourcePath, 'utf8').toString('base64url'),
+    Buffer.from(destinationPath, 'utf8').toString('base64url'),
+  ];
+}
+
+function nativeWindowsMove(sourcePath: string, destinationPath: string): Promise<void> {
+  return new Promise((resolvePromise, rejectPromise) => {
+    execFile('powershell.exe', windowsMoveArguments(sourcePath, destinationPath), { windowsHide: true }, (error) =>
+      error ? rejectPromise(error) : resolvePromise(),
+    );
+  });
+}
+
+async function pathExists(filePath: string): Promise<boolean> {
+  try {
+    await lstat(filePath);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw error;
+  }
+}
+
+async function verifyPublishedTarget(
+  trusted: TrustedInbox,
+  destinationPath: string,
+  expectedTarget: Stats,
+  expectedHash: string,
+): Promise<void> {
+  verifyTrustedInbox(trusted);
+  const publishedStats = await lstat(destinationPath);
+  const publishedRealPath = await realpath(destinationPath);
+  const publishedCanonicalStats = await stat(publishedRealPath);
+  if (
+    publishedStats.isSymbolicLink() ||
+    !publishedStats.isFile() ||
+    !samePublishedTarget(expectedTarget, publishedStats) ||
+    !samePublishedTarget(expectedTarget, publishedCanonicalStats) ||
+    !isWithin(trusted.realInbox, publishedRealPath) ||
+    !samePath(publishedRealPath, destinationPath)
+  ) {
+    throw new ImportIntegrityError('published import identity changed');
+  }
+  const handle = await open(destinationPath, 'r');
+  let failure: unknown = null;
+  try {
+    const handleStats = await handle.stat();
+    if (!samePublishedTarget(publishedStats, handleStats)) {
+      throw new ImportIntegrityError('published import handle identity changed');
+    }
+    if ((await hashTarget(handle, publishedStats.size)) !== expectedHash) {
+      throw new ImportIntegrityError('published import hash changed');
+    }
+  } catch (error) {
+    failure = error;
+  }
+  const closeError = await closeHandle(handle);
+  if (closeError) throw new ImportIntegrityError('unable to close published import handle');
+  if (failure) throw failure;
+}
+
 async function publishTarget(
   sourcePath: string,
   stagingPath: string,
   trusted: TrustedInbox,
   staging: TrustedStaging,
   expectedTarget: Stats,
+  expectedHash: string,
   hooks: ImportTestHooks,
-): Promise<string> {
+): Promise<{ destinationName: string; stagingMoved: boolean }> {
   let stagingHandle: FileHandle | null = null;
   let publishedName: string | null = null;
+  let stagingMoved = false;
   let failure: unknown = null;
+  let useNativeMove = false;
   try {
     for (let attempt = 0; attempt < 10; attempt += 1) {
       const destinationName = uniqueFileName(sourceFileName(sourcePath));
@@ -563,6 +638,37 @@ async function publishTarget(
       const context = { sourcePath, destinationPath, inboxPath: trusted.inboxPath };
       await hooks.beforePublish?.(context);
       verifyTrustedStaging(trusted, staging);
+      if (useNativeMove) {
+        const stagedStats = await stagedFileSnapshot(trusted, staging, stagingPath);
+        if (!sameTargetSnapshot(expectedTarget, stagedStats)) {
+          throw new ImportIntegrityError('staged import changed before native publish');
+        }
+        if (await pathExists(destinationPath)) continue;
+        const publisher = hooks.nativeMovePublisher ?? nativeWindowsMove;
+        let moveFailure: unknown = null;
+        try {
+          await publisher(stagingPath, destinationPath);
+        } catch (error) {
+          moveFailure = error;
+        }
+        const [sourceStillExists, destinationExists] = await Promise.all([
+          pathExists(stagingPath),
+          pathExists(destinationPath),
+        ]);
+        if (!sourceStillExists && destinationExists) {
+          await verifyPublishedTarget(trusted, destinationPath, expectedTarget, expectedHash);
+          publishedName = destinationName;
+          stagingMoved = true;
+          break;
+        }
+        if (sourceStillExists && destinationExists) continue;
+        if (sourceStillExists && !destinationExists) {
+          throw new ImportItemError('publish-unavailable');
+        }
+        throw new ImportIntegrityError(
+          moveFailure ? 'native import publish ended in an unknown state' : 'native import publish lost its source',
+        );
+      }
       stagingHandle = await open(stagingPath, 'r');
       let collision = false;
       try {
@@ -592,28 +698,21 @@ async function publishTarget(
           code === 'ENOSYS' ||
           code === 'EXDEV'
         ) {
-          // Node's cross-platform rename replaces an existing destination, so it cannot provide
-          // the no-replace guarantee required here. Report the missing filesystem capability.
-          throw new ImportItemError('publish-unavailable');
+          if (process.platform !== 'win32' && !hooks.nativeMovePublisher) {
+            throw new ImportItemError('publish-unavailable');
+          }
+          useNativeMove = true;
         } else throw error;
       }
       const attemptCloseError = await closeHandle(stagingHandle);
       stagingHandle = null;
       if (attemptCloseError) throw new ImportIntegrityError('unable to close staged import after publish attempt');
       if (collision) continue;
-      const publishedStats = await lstat(destinationPath);
-      const publishedRealPath = await realpath(destinationPath);
-      const publishedCanonicalStats = await stat(publishedRealPath);
-      if (
-        publishedStats.isSymbolicLink() ||
-        !publishedStats.isFile() ||
-        !samePublishedTarget(expectedTarget, publishedStats) ||
-        !samePublishedTarget(expectedTarget, publishedCanonicalStats) ||
-        !isWithin(trusted.realInbox, publishedRealPath) ||
-        !samePath(publishedRealPath, destinationPath)
-      ) {
-        throw new ImportIntegrityError('published import identity changed');
+      if (useNativeMove) {
+        attempt -= 1;
+        continue;
       }
+      await verifyPublishedTarget(trusted, destinationPath, expectedTarget, expectedHash);
       publishedName = destinationName;
       break;
     }
@@ -628,7 +727,7 @@ async function publishTarget(
     // Retry is bounded so an adversarial writer cannot keep the main process in an infinite loop.
     throw new ImportItemError('copy-failed');
   }
-  return publishedName;
+  return { destinationName: publishedName, stagingMoved };
 }
 
 async function writeAll(handle: FileHandle, chunk: Buffer, position: number): Promise<void> {
@@ -710,7 +809,8 @@ async function copyOneFile(
     }
     await hooks.beforeTargetHash?.(context);
     const targetHash = await hashTarget(targetHandle, bytesWritten);
-    if (targetHash !== readHash.digest('hex')) throw new ImportIntegrityError('import destination hash mismatch');
+    const sourceHash = readHash.digest('hex');
+    if (targetHash !== sourceHash) throw new ImportIntegrityError('import destination hash mismatch');
     const finalTarget = await verifyTarget(trusted, destinationPath, targetIdentity, targetHandle);
     if (!sameTargetSnapshot(currentTarget, finalTarget) || finalTarget.size !== bytesWritten) {
       throw new ImportIntegrityError('import destination changed during verification');
@@ -721,12 +821,24 @@ async function copyOneFile(
     const sourceCloseBeforePublish = await closeHandle(sourceHandle);
     sourceHandle = null;
     if (sourceCloseBeforePublish) throw new ImportIntegrityError('unable to close source before publish');
-    const destinationName = await publishTarget(sourcePath, destinationPath, trusted, staging, finalTarget, hooks);
-    cleanupAttempted = true;
-    await hooks.beforeCleanup?.(context);
-    await deleteStagedFile(trusted, staging, destinationPath, targetIdentity);
-    created = false;
-    output = { destinationName, size: finalTarget.size };
+    const published = await publishTarget(
+      sourcePath,
+      destinationPath,
+      trusted,
+      staging,
+      finalTarget,
+      targetHash,
+      hooks,
+    );
+    if (published.stagingMoved) {
+      created = false;
+    } else {
+      cleanupAttempted = true;
+      await hooks.beforeCleanup?.(context);
+      await deleteStagedFile(trusted, staging, destinationPath, targetIdentity);
+      created = false;
+    }
+    output = { destinationName: published.destinationName, size: finalTarget.size };
   } catch (error) {
     failure = error;
   }
@@ -860,6 +972,7 @@ export function listImportedTaskFiles(workspacePath: string, taskIdValue: string
 }
 
 export const __testing = Object.freeze({
+  windowsMoveArguments,
   importTaskFiles: (
     input: { workspacePath: string; taskId: string; sourcePaths: string[] },
     hooks: ImportTestHooks,

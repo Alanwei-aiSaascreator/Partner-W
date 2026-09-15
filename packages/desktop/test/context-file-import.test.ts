@@ -105,7 +105,7 @@ async function fixture(): Promise<{ root: string; workspacePath: string; sources
 }
 
 async function expectEmptyStaging(inbox: string): Promise<void> {
-  expect(await readdir(inbox)).toEqual(['.import-staging']);
+  expect((await readdir(inbox)).filter((name) => name.startsWith('.import-'))).toEqual(['.import-staging']);
   expect(await readdir(join(inbox, '.import-staging'))).toEqual([]);
 }
 
@@ -264,23 +264,85 @@ describe('task file import', () => {
   });
 
   it.each(['EPERM', 'ENOTSUP'])(
-    'returns an actionable rejection when atomic publish is unavailable (%s)',
+    'falls back to a native no-replace move when hard links are unavailable (%s)',
     async (code) => {
       const { workspacePath, sources } = await fixture();
-      const source = join(sources, 'portable.txt');
+      const source = join(sources, 'portable & [safe] file.txt');
       await writeFile(source, 'complete content');
       linkFailureCodes.push(code);
 
-      const result = await importTaskFiles({ workspacePath, taskId: 'task-1', sourcePaths: [source] });
+      const result = await __testing.importTaskFiles(
+        { workspacePath, taskId: 'task-1', sourcePaths: [source] },
+        { nativeMovePublisher: (stagingPath, destinationPath) => rename(stagingPath, destinationPath) },
+      );
 
-      expect(result).toEqual({
-        imported: [],
-        rejected: [{ fileName: 'portable.txt', reason: 'publish-unavailable' }],
-      });
-      expect(listImportedTaskFiles(workspacePath, 'task-1')).toEqual([]);
+      expect(result.rejected).toEqual([]);
+      expect(result.imported).toHaveLength(1);
+      await expect(readFile(join(workspacePath, result.imported[0].localPath), 'utf8')).resolves.toBe(
+        'complete content',
+      );
       await expectEmptyStaging(join(workspacePath, 'task-1', 'inbox'));
     },
   );
+
+  it('retries a native-move collision without overwriting the colliding file', async () => {
+    const { workspacePath, sources } = await fixture();
+    const source = join(sources, 'portable.txt');
+    await writeFile(source, 'complete content');
+    linkFailureCodes.push('EPERM');
+    let attempts = 0;
+    let collisionPath = '';
+
+    const result = await __testing.importTaskFiles(
+      { workspacePath, taskId: 'task-1', sourcePaths: [source] },
+      {
+        nativeMovePublisher: async (stagingPath, destinationPath) => {
+          attempts += 1;
+          if (attempts === 1) {
+            collisionPath = destinationPath;
+            await writeFile(destinationPath, 'existing');
+            throw Object.assign(new Error('destination exists'), { code: 'EEXIST' });
+          }
+          await rename(stagingPath, destinationPath);
+        },
+      },
+    );
+
+    expect(attempts).toBe(2);
+    expect(result.rejected).toEqual([]);
+    await expect(readFile(collisionPath, 'utf8')).resolves.toBe('existing');
+    await expect(readFile(join(workspacePath, result.imported[0].localPath), 'utf8')).resolves.toBe('complete content');
+  });
+
+  it('returns publish-unavailable when the native move helper fails without changing either path', async () => {
+    const { workspacePath, sources } = await fixture();
+    const source = join(sources, 'portable.txt');
+    await writeFile(source, 'complete content');
+    linkFailureCodes.push('EPERM');
+
+    const result = await __testing.importTaskFiles(
+      { workspacePath, taskId: 'task-1', sourcePaths: [source] },
+      { nativeMovePublisher: () => Promise.reject(new Error('powershell.exe not found')) },
+    );
+
+    expect(result).toEqual({
+      imported: [],
+      rejected: [{ fileName: 'portable.txt', reason: 'publish-unavailable' }],
+    });
+    await expectEmptyStaging(join(workspacePath, 'task-1', 'inbox'));
+  });
+
+  it('keeps special-character paths out of the fixed PowerShell script', () => {
+    const source = 'C:\\folder & one\\source [x].txt';
+    const destination = 'C:\\folder & one\\target `$(x).txt';
+    const args = __testing.windowsMoveArguments(source, destination);
+
+    expect(args.slice(0, 3)).toEqual(['-NoProfile', '-NonInteractive', '-Command']);
+    expect(args[3]).not.toContain(source);
+    expect(args[3]).not.toContain(destination);
+    expect(Buffer.from(args[4], 'base64url').toString('utf8')).toBe(source);
+    expect(Buffer.from(args[5], 'base64url').toString('utf8')).toBe(destination);
+  });
 
   it('uses unique safe names without overwriting same-name inputs or existing inbox files', async () => {
     const { workspacePath, sources } = await fixture();
