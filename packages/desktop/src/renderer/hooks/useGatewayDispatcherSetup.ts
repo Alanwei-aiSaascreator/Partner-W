@@ -137,9 +137,9 @@ export function useGatewayDispatcherSetup(): GatewayDispatcher {
   return getDispatcher();
 }
 
-export async function fetchAgentsForGateway(gatewayId: string): Promise<void> {
+export async function fetchAgentsForGateway(gatewayId: string, options: { force?: boolean } = {}): Promise<void> {
   const agentCatalog = useUiStore.getState().agentCatalogByGateway;
-  return getDispatcher().fetchAgentsForGateway(gatewayId, agentCatalog);
+  return getDispatcher().fetchAgentsForGateway(gatewayId, agentCatalog, options);
 }
 
 export async function reinitializeGatewayBootstrap(): Promise<void> {

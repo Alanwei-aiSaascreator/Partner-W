@@ -790,8 +790,9 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
   async function fetchAgentsForGateway(
     gatewayId: string,
     agentCatalogByGateway: Record<string, unknown>,
+    options: { force?: boolean } = {},
   ): Promise<void> {
-    if (agentCatalogByGateway[gatewayId]) return;
+    if (!options.force && agentCatalogByGateway[gatewayId]) return;
     try {
       const res = await deps.gateway.listAgents(gatewayId);
       if (res.ok && res.result) {

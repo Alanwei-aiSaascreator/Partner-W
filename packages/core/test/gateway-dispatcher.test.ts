@@ -139,6 +139,28 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+describe('fetchAgentsForGateway', () => {
+  it('keeps the cache for ordinary reads', async () => {
+    const h = createHarness();
+    h.deps.gateway.listAgents = vi.fn();
+
+    await h.dispatcher.fetchAgentsForGateway('gw-1', { 'gw-1': { agents: [] } });
+
+    expect(h.deps.gateway.listAgents).not.toHaveBeenCalled();
+  });
+
+  it('replaces a stale catalog when force is requested', async () => {
+    const h = createHarness();
+    const agents = [{ id: 'main' }, { id: 'rongying-content' }];
+    h.deps.gateway.listAgents = vi.fn(async () => ({ ok: true, result: { agents, defaultId: 'main' } }));
+
+    await h.dispatcher.fetchAgentsForGateway('gw-1', { 'gw-1': { agents: [{ id: 'main' }] } }, { force: true });
+
+    expect(h.deps.gateway.listAgents).toHaveBeenCalledWith('gw-1');
+    expect(h.deps.setAgentCatalogForGateway).toHaveBeenCalledWith('gw-1', agents, 'main');
+  });
+});
+
 describe('isSameFailure — chat error dedup by runId / code + source', () => {
   it('suppresses a repeat error that shares taskId + code + source', () => {
     const h = createHarness();
