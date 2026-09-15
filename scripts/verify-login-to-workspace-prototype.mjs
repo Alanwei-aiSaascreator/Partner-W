@@ -37,6 +37,12 @@ assert.match(html, /mode-code/, 'verification-code eye-cover state missing');
 assert.match(html, /prefers-reduced-motion:\s*reduce/, 'reduced-motion fallback missing');
 assert.match(html, /data-model-label/, 'shared model label binding missing');
 assert.match(html, /data-remaining-value/, 'shared remaining balance binding missing');
+assert.match(html, /function syncRemaining\(\)/, 'shared remaining balance updater missing');
+assert.match(
+  html,
+  /state\.remaining\s*=\s*5002;\s*syncRemaining\(\);/,
+  'task completion does not refresh visible remaining balances',
+);
 assert.doesNotMatch(html, />[^<]*(gateway|端口|容器)[^<]*</i, 'technical copy leaked into visible UI');
 
 console.log('Login-to-workspace prototype contract passed.');
