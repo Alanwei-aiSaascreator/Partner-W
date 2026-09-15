@@ -70,6 +70,183 @@
     "markdown": "Markdown 文件",
     "text": "文字檔"
   },
+  "assistantWorkspaces": {
+    "compass": {
+      "description": "Your general task hub. Describe the outcome and I will route it to the right specialist.",
+      "starters": {
+        "1": {
+          "description": "Break down goals, steps, timing, and deliverables",
+          "prompt": "I want to complete [goal]. Choose the right assistant, ask only for essential details, and create an actionable plan.",
+          "title": "Plan a task"
+        },
+        "2": {
+          "description": "Read approved files and summarize what matters",
+          "prompt": "Help me organize [file or folder] on this computer. Tell me what to select, then summarize themes and action items.",
+          "title": "Organize local files"
+        },
+        "3": {
+          "description": "Weigh cost, risk, and expected results",
+          "prompt": "Compare [option A] and [option B] by cost, outcome, risk, and fit, then make a clear recommendation.",
+          "title": "Compare options"
+        },
+        "4": {
+          "description": "Turn a request into a document, table, or checklist",
+          "prompt": "Turn my request into a usable [document, table, or checklist]. First confirm the audience and delivery format.",
+          "title": "Create a deliverable"
+        }
+      }
+    },
+    "content": {
+      "description": "Plan topics and turn ideas into publishable writing and social content.",
+      "starters": {
+        "1": {
+          "description": "Define audience, angle, and a content series",
+          "prompt": "Plan topics about [subject]. Confirm the platform, audience, and goal, then give me 10 specific ideas with reasons.",
+          "title": "Plan topics"
+        },
+        "2": {
+          "description": "Write an article, post, or spoken script",
+          "prompt": "Draft a [platform] piece about [subject]. Confirm audience, tone, and length, then provide an editable first draft.",
+          "title": "Draft content"
+        },
+        "3": {
+          "description": "Refine structure, voice, title, and opening",
+          "prompt": "Improve the copy I provide while preserving its facts and intent. Focus on the title, opening, structure, and pace.",
+          "title": "Improve a draft"
+        },
+        "4": {
+          "description": "Schedule themes, formats, and assets",
+          "prompt": "Create a [period] content calendar for [account or brand], including themes, dates, required assets, and goals.",
+          "title": "Content calendar"
+        }
+      }
+    },
+    "ecommerce": {
+      "description": "Solve product, store, and conversion problems with practical operating materials.",
+      "starters": {
+        "1": {
+          "description": "Clarify audience, pain points, and differentiation",
+          "prompt": "Develop selling points for [product]. Confirm the audience, price range, and competitors, then provide layered claims and proof.",
+          "title": "Product selling points"
+        },
+        "2": {
+          "description": "Compare price, content, and customer feedback",
+          "prompt": "Analyze [competitor] across positioning, price, claims, page content, and reviews, then identify differentiation opportunities.",
+          "title": "Competitor review"
+        },
+        "3": {
+          "description": "Build titles, benefits, proof, and conversion flow",
+          "prompt": "Design product-page copy for [product], including the hero, key benefits, proof, scenarios, and call to action.",
+          "title": "Product page copy"
+        },
+        "4": {
+          "description": "Cover presales, objections, payment, and support",
+          "prompt": "Create customer-service scripts for [product or store], covering presales, price objections, payment, shipping, and after-sales.",
+          "title": "Customer service scripts"
+        }
+      }
+    },
+    "family": {
+      "description": "Plan home, family, and parenting tasks with clear, practical steps.",
+      "starters": {
+        "1": {
+          "description": "Match household size, budget, and shopping",
+          "prompt": "Create a weekly meal plan for [household size, preferences, and budget], with a combined shopping list and prep advice.",
+          "title": "Weekly meal plan"
+        },
+        "2": {
+          "description": "Plan routes, timing, cost, and alternatives",
+          "prompt": "Plan a family trip to [destination]. Confirm travelers, dates, and budget, then provide an itinerary, costs, and rain plan.",
+          "title": "Family trip"
+        },
+        "3": {
+          "description": "Give age-appropriate materials and steps",
+          "prompt": "Design a [duration] activity for a [child age], including goals, materials, steps, and safety notes.",
+          "title": "Parent-child activity"
+        },
+        "4": {
+          "description": "Assign owners, reminders, and checklists",
+          "prompt": "Turn [household task] into an actionable plan with timing, owner assignments, required items, and reminders.",
+          "title": "Household plan"
+        }
+      }
+    },
+    "office": {
+      "description": "Turn documents, spreadsheets, meetings, and source material into polished deliverables.",
+      "starters": {
+        "1": {
+          "description": "Build a formal document from source material",
+          "prompt": "Turn my source material into a [document type]. Confirm the audience and purpose, then produce a clear structure and draft.",
+          "title": "Prepare a document"
+        },
+        "2": {
+          "description": "Clean, analyze, and summarize business data",
+          "prompt": "Process the spreadsheet I provide. Explain what can be read, then clean it, analyze key metrics, and summarize findings.",
+          "title": "Analyze a spreadsheet"
+        },
+        "3": {
+          "description": "Extract decisions, owners, and deadlines",
+          "prompt": "Turn these meeting notes into minutes with decisions, action items, owners, deadlines, and open questions.",
+          "title": "Meeting notes"
+        },
+        "4": {
+          "description": "Develop an outline, key points, and slide flow",
+          "prompt": "Create a presentation outline for [topic]. Confirm the audience, goal, and duration, then give slide-by-slide points and data needs.",
+          "title": "Presentation brief"
+        }
+      }
+    },
+    "research": {
+      "description": "Organize evidence, compare viewpoints, and build learning plans while making uncertainty visible.",
+      "starters": {
+        "1": {
+          "description": "Collect sources, findings, and uncertainties",
+          "prompt": "Research [topic]. Confirm scope and recency requirements, then summarize reliable sources, findings, and open questions.",
+          "title": "Quick research"
+        },
+        "2": {
+          "description": "Evaluate evidence, disagreements, and conditions",
+          "prompt": "Compare different views on [question], including evidence, disagreements, applicable conditions, and a balanced conclusion.",
+          "title": "Compare viewpoints"
+        },
+        "3": {
+          "description": "Set milestones, materials, and practice",
+          "prompt": "Create a learning plan for [topic] based on my current level, available time, and goal, with stages, resources, and exercises.",
+          "title": "Learning plan"
+        },
+        "4": {
+          "description": "Extract concepts, evidence, and next actions",
+          "prompt": "Summarize the material I provide, separating facts, author claims, and your inferences, then list key concepts and actions.",
+          "title": "Summarize sources"
+        }
+      }
+    },
+    "video": {
+      "description": "Create scripts, shot plans, and editing directions that can move straight into production.",
+      "starters": {
+        "1": {
+          "description": "Plan spoken lines, visuals, and pace",
+          "prompt": "Write a [platform and duration] shooting script about [topic], including hook, spoken lines, visual cues, and call to action.",
+          "title": "Shooting script"
+        },
+        "2": {
+          "description": "Define shot size, camera, action, and timing",
+          "prompt": "Turn my script into a storyboard with shot number, framing, visual, dialogue, camera, duration, and transition.",
+          "title": "Storyboard"
+        },
+        "3": {
+          "description": "Organize scenes, props, and shooting order",
+          "prompt": "Create a shot list for [topic], grouped into an efficient order, with people, props, equipment, and cautions.",
+          "title": "Shot list"
+        },
+        "4": {
+          "description": "Set structure, transitions, captions, and music",
+          "prompt": "Create an editing plan for [video topic], covering pacing, clip selection, transitions, captions, sound, and music.",
+          "title": "Editing plan"
+        }
+      }
+    }
+  },
   "chatInput": {
     "abortFailed": "無法停止生成",
     "addContextFolder": "新增上下文資料夾以使用 @ 檔案參照",
@@ -482,48 +659,11 @@
   "mainArea": {
     "compassAssistant": "羅盤助手",
     "currentAssistant": "目前助手",
-    "customGoalPrompt": "我希望主要用榮盈魔方完成這個目標：{{goal}}。請先幫我明確需求，再給出今天可以開始的第一項任務。",
-    "customGoalTitle": "繼續我的目標",
     "messageLayoutCentered": "切回置中訊息區域",
     "messageLayoutWide": "鋪開訊息區域",
-    "popularTasks": "熱門用途",
     "refreshUsage": "重新整理用量",
     "scrollToBottom": "捲動至底部",
-    "showMoreAssistants": "顯示另外 {{count}} 個助手",
-    "starters": {
-      "content": {
-        "description": "選題、文案、短影片與社群內容",
-        "prompt": "我想圍繞【主題】創作內容，請先詢問發布平台和目標受眾，再幫我完成選題、結構和初稿。",
-        "title": "內容創作"
-      },
-      "ecommerce": {
-        "description": "選品、競品、商品文案與客服話術",
-        "prompt": "我正在經營【店鋪/產品】。請先詢問平台、品類、目標和現有資料，再幫我完成選品分析、競品調研、商品文案或客服話術。",
-        "title": "電商營運"
-      },
-      "family": {
-        "description": "菜譜、出行、親子活動與家庭計畫",
-        "prompt": "我需要安排一項家庭事務。請先詢問家庭情況、時間和限制條件，再幫我制定一份清晰、可執行的計畫。",
-        "title": "生活家庭"
-      },
-      "office": {
-        "description": "文件、表格、會議與簡報材料",
-        "prompt": "我需要處理一項辦公任務。請先詢問目標、已有文件和交付格式，再幫我整理成可直接使用的文件、表格或簡報材料。",
-        "title": "辦公提效"
-      },
-      "photography": {
-        "description": "腳本、分鏡、鏡頭清單與剪輯節奏",
-        "prompt": "我準備拍攝【主題/產品】，請先詢問發布平台、受眾和現有素材，再幫我制定拍攝腳本、分鏡、鏡頭清單和剪輯節奏。",
-        "title": "拍攝剪輯"
-      },
-      "research": {
-        "description": "資料整理、觀點比較與行動建議",
-        "prompt": "我想研究【主題】。請先確認我的用途和時間範圍，再幫我整理關鍵資料、主要結論、不同觀點和下一步行動建議。",
-        "title": "學習研究"
-      }
-    },
     "toggleContextPanel": "切換上下文面板",
-    "welcomeSubtitle": "直接描述你的任務，榮盈魔方會幫你選擇合適的助手和模型。",
     "welcomeTitle": "今天想完成什麼？"
   },
   "mentionPicker": {

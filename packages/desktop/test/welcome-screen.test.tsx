@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   setPending: vi.fn(),
   setSelectedAgentId: vi.fn(),
   setSelectedGwId: vi.fn(),
+  setSelectedAgent: vi.fn(),
   gatewayState: { agentCatalog: [{ id: 'main' }] as Array<{ id: string }> },
   modelCatalogByGateway: {
     'gw-1': [{ id: 'deepseek-v4-flash', provider: 'clawrouter', name: 'DeepSeek V4 Flash' }],
@@ -28,8 +29,12 @@ vi.mock('../src/renderer/platform', () => ({
     <T,>(selector: (state: { pendingNewTask: null }) => T) => selector({ pendingNewTask: null }),
     { getState: () => ({ pendingNewTask: null, setPending: mocks.setPending }) },
   ),
-  useUiStore: <T,>(selector: (state: { modelCatalogByGateway: typeof mocks.modelCatalogByGateway }) => T) =>
-    selector({ modelCatalogByGateway: mocks.modelCatalogByGateway }),
+  useUiStore: <T,>(
+    selector: (state: {
+      modelCatalogByGateway: typeof mocks.modelCatalogByGateway;
+      setSelectedAgent: typeof mocks.setSelectedAgent;
+    }) => T,
+  ) => selector({ modelCatalogByGateway: mocks.modelCatalogByGateway, setSelectedAgent: mocks.setSelectedAgent }),
 }));
 
 vi.mock('../src/renderer/hooks/useGatewaySelector', () => ({
@@ -72,13 +77,13 @@ function render(ui: ReactElement): { container: HTMLDivElement; unmount: () => v
   };
 }
 
-describe('WelcomeScreen task starters', () => {
+describe('WelcomeScreen assistant workspace', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.gatewayState.agentCatalog = [{ id: 'main' }];
   });
 
-  it('prefills the composer and keeps the current assistant when the specialist is absent', () => {
+  it('prefills the composer from the current assistant workspace', () => {
     (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     const onSelectPrompt = vi.fn();
     const { container, unmount } = render(
@@ -87,23 +92,17 @@ describe('WelcomeScreen task starters', () => {
         onSelectPrompt={onSelectPrompt}
       />,
     );
-    const button = [...container.querySelectorAll('button')].find((item) =>
-      item.textContent?.includes('mainArea.starters.photography.title'),
-    );
+    const button = container.querySelector('[data-testid="assistant-starter"]');
 
     expect(button).toBeDefined();
     mocks.setPending.mockClear();
-    act(() => button!.click());
-    expect(mocks.setPending).toHaveBeenCalledWith({
-      gatewayId: 'gw-1',
-      agentId: 'main',
-      model: 'deepseek-v4-flash',
-    });
-    expect(onSelectPrompt).toHaveBeenCalledWith('mainArea.starters.photography.prompt');
+    act(() => (button as HTMLButtonElement).click());
+    expect(mocks.setPending).not.toHaveBeenCalled();
+    expect(onSelectPrompt).toHaveBeenCalledWith('assistantWorkspaces.compass.starters.1.prompt');
     unmount();
   });
 
-  it('routes a starter to its installed professional assistant before filling the composer', () => {
+  it('does not silently route a compass starter to another installed assistant', () => {
     mocks.gatewayState.agentCatalog = [{ id: 'main' }, { id: 'rongying-video' }];
     const onSelectPrompt = vi.fn();
     const { container, unmount } = render(
@@ -112,19 +111,13 @@ describe('WelcomeScreen task starters', () => {
         onSelectPrompt={onSelectPrompt}
       />,
     );
-    const button = [...container.querySelectorAll('button')].find((item) =>
-      item.textContent?.includes('mainArea.starters.photography.title'),
-    );
+    const button = container.querySelector('[data-testid="assistant-starter"]');
 
     mocks.setPending.mockClear();
-    act(() => button!.click());
-    expect(mocks.setPending).toHaveBeenCalledWith({
-      gatewayId: 'gw-1',
-      agentId: 'rongying-video',
-      model: 'deepseek-v4-flash',
-    });
-    expect(mocks.setSelectedAgentId).toHaveBeenCalledWith('rongying-video');
-    expect(onSelectPrompt).toHaveBeenCalledWith('mainArea.starters.photography.prompt');
+    act(() => (button as HTMLButtonElement).click());
+    expect(mocks.setPending).not.toHaveBeenCalled();
+    expect(mocks.setSelectedAgentId).not.toHaveBeenCalled();
+    expect(onSelectPrompt).toHaveBeenCalledWith('assistantWorkspaces.compass.starters.1.prompt');
     unmount();
   });
 

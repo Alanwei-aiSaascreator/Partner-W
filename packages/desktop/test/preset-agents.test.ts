@@ -57,7 +57,7 @@ describe('preset agent definitions', () => {
       titleKey: 'presetAgents.roles.content',
       descriptionKey: 'assistantWorkspaces.content.description',
     });
-    expect(resolveAssistantWorkspace('rongying-content').starters).toHaveLength(4);
+    expect(resolveAssistantWorkspace('rongying-content')!.starters).toHaveLength(4);
     expect(resolveAssistantWorkspace('main')).toMatchObject({
       id: 'main',
       titleKey: 'mainArea.compassAssistant',

@@ -486,6 +486,7 @@ function ChatContent({
   const { t } = useTranslation();
   const activeTaskId = useTaskStore((s) => s.activeTaskId);
   const activeTask = useTaskStore((s) => s.tasks.find((task) => task.id === s.activeTaskId));
+  const pendingAgentId = useTaskStore((s) => s.pendingNewTask?.agentId);
   const startNewTask = useTaskStore((s) => s.startNewTask);
   const activeRoom = useRoomStore((s) => (activeTaskId ? s.rooms[activeTaskId] : undefined));
   const messageLayout = useUiStore((s) => s.messageLayout);
@@ -508,6 +509,10 @@ function ChatContent({
   const closeLightbox = useCallback(() => setLightboxSrc(null), []);
   const handleNavigateToAccount = useCallback(() => setSettingsOpen(true), [setSettingsOpen]);
   const [previewFile, setPreviewFile] = useState<{ path: string; content: string } | null>(null);
+
+  useEffect(() => {
+    setStarterPrompt(null);
+  }, [pendingAgentId]);
   const closeFilePreview = useCallback(() => setPreviewFile(null), []);
   const handleHighlightDone = useCallback(() => setHighlightedMessage(null), [setHighlightedMessage]);
   const sessionKeys = useMemo(
@@ -626,9 +631,10 @@ function ChatContent({
             )}
           >
             <WelcomeScreen
-              key={activeTaskId ?? '__new'}
+              key={pendingAgentId ?? '__new'}
               onboardingProfile={onboardingProfile}
               onSelectPrompt={setStarterPrompt}
+              conversationReady={startupReadiness.conversationReady}
             />
           </div>
         </div>
