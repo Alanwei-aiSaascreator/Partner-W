@@ -65,4 +65,13 @@ describe('preset agent definitions', () => {
     });
     expect(resolveAssistantWorkspace('custom-agent')).toBeNull();
   });
+
+  it('bounds file exploration and prevents repeated directory scans', () => {
+    for (const agent of PRESET_AGENT_DEFINITIONS) {
+      expect(agent.soulMd).toContain('user-authorized target');
+      expect(agent.soulMd).toContain('Do not repeat directory listings');
+      expect(agent.soulMd).toContain('bounded batch operation');
+      expect(agent.soulMd).toContain('Stop exploring');
+    }
+  });
 });
