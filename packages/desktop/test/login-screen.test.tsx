@@ -56,6 +56,9 @@ describe('Login', () => {
     expect(container.querySelector('[data-login-region="brand"]')).not.toBeNull();
     expect(container.querySelector('[data-login-region="form"]')).not.toBeNull();
     expect(container.querySelector('[data-guide-mascot]')).not.toBeNull();
+    expect(container.textContent).toContain('mainArea.compassAssistant');
+    expect(container.textContent).toContain('assistantWorkspaces.compass.description');
+    expect(container.textContent).not.toContain('assistantDefinitions.main');
 
     unmount();
   });

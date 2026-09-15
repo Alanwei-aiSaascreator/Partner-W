@@ -33,6 +33,10 @@ describe('Onboarding', () => {
       <Onboarding userId="user-1" defaultNickname="小荣" onComplete={onComplete} />,
     );
 
+    expect(container.textContent).toContain('mainArea.compassAssistant');
+    expect(container.textContent).toContain('assistantWorkspaces.compass.description');
+    expect(container.textContent).not.toContain('assistantDefinitions.main');
+
     const buttonFor = (key: string) =>
       [...container.querySelectorAll('button')].find((button) => button.textContent?.includes(key));
 

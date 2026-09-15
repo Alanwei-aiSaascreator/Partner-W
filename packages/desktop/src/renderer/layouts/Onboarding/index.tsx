@@ -152,9 +152,9 @@ export default function Onboarding({ userId, defaultNickname = '', onComplete }:
 
           <aside className="hidden min-h-[540px] flex-col justify-between rounded-2xl bg-[var(--surface-onboarding-accent)] p-6 lg:flex">
             <div>
-              <p className="type-label text-[var(--accent)]">{t('assistantDefinitions.main.name')}</p>
+              <p className="type-label text-[var(--accent)]">{t('mainArea.compassAssistant')}</p>
               <p className="type-body mt-2 leading-6 text-[var(--text-secondary)]">
-                {customGoal.trim() ? t('onboarding.goalAnalysisHint') : t('assistantDefinitions.main.description')}
+                {customGoal.trim() ? t('onboarding.goalAnalysisHint') : t('assistantWorkspaces.compass.description')}
               </p>
             </div>
             <GuideMascot pose={customGoal.trim() ? 'phone' : 'idle'} className="mx-auto max-w-[280px]" />

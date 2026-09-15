@@ -190,9 +190,9 @@ export default function Login({ onSignedIn }: LoginProps) {
         </div>
 
         <div className="relative my-auto max-w-xl pt-12">
-          <p className="type-label text-[var(--accent)]">{t('assistantDefinitions.main.name')}</p>
+          <p className="type-label text-[var(--accent)]">{t('mainArea.compassAssistant')}</p>
           <h2 className="mt-3 max-w-lg text-[clamp(2rem,4vw,3.6rem)] font-semibold leading-[1.08] tracking-[-0.035em] text-[var(--text-primary)]">
-            {t('assistantDefinitions.main.description')}
+            {t('assistantWorkspaces.compass.description')}
           </h2>
           <div className="mt-7 max-w-md rounded-xl bg-[var(--bg-elevated)] px-4 py-3 text-sm leading-6 text-[var(--text-onboarding-muted)]">
             {t('fileBrowser.workspaceAccessDescription')}
