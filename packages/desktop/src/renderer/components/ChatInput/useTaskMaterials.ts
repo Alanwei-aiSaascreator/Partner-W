@@ -110,6 +110,7 @@ export function useTaskMaterials(taskIdOverride?: string | null) {
     const current = resolveCurrentTaskId();
     if (current) return current;
     const created = useTaskStore.getState().commitPendingTask();
+    previousRequestedTaskIdRef.current = created.id;
     identityRef.current = created.id;
     generationRef.current += 1;
     setTaskId(created.id);

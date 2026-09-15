@@ -155,6 +155,7 @@ function resolveMentionTargets(
 export function createChatComposer(deps: ChatComposerDeps) {
   const responseTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const sessionToTask = new Map<string, string>();
+  const pendingResponseSessions = new Map<string, Set<string>>();
 
   function resolveTask(taskId?: string): TaskRef | null {
     if (taskId) {
@@ -189,6 +190,7 @@ export function createChatComposer(deps: ChatComposerDeps) {
       clearTimeout(timer);
       responseTimers.delete(taskId);
     }
+    pendingResponseSessions.delete(taskId);
     for (const [sk, tid] of sessionToTask) {
       if (tid === taskId) sessionToTask.delete(sk);
     }
@@ -197,7 +199,11 @@ export function createChatComposer(deps: ChatComposerDeps) {
   function notifyResponse(sessionKey: string): void {
     deps.getMessageStore().setProcessing(sessionKey, false);
     const taskId = sessionToTask.get(sessionKey);
-    if (taskId) clearTimer(taskId);
+    if (!taskId) return;
+    sessionToTask.delete(sessionKey);
+    const pendingSessions = pendingResponseSessions.get(taskId);
+    pendingSessions?.delete(sessionKey);
+    if (!pendingSessions || pendingSessions.size === 0) clearTimer(taskId);
   }
 
   async function send(
@@ -353,12 +359,15 @@ export function createChatComposer(deps: ChatComposerDeps) {
 
       clearTimer(task.id);
       const watchKeys = isMentionSend ? acceptedMentionTargets : [task.sessionKey];
+      const pendingSessions = new Set(watchKeys);
+      pendingResponseSessions.set(task.id, pendingSessions);
       for (const sk of watchKeys) sessionToTask.set(sk, task.id);
       responseTimers.set(
         task.id,
         setTimeout(() => {
           responseTimers.delete(task.id);
-          for (const sk of watchKeys) {
+          pendingResponseSessions.delete(task.id);
+          for (const sk of pendingSessions) {
             sessionToTask.delete(sk);
             store.setProcessing(sk, false);
           }
@@ -504,6 +513,7 @@ export function createChatComposer(deps: ChatComposerDeps) {
     for (const timer of responseTimers.values()) clearTimeout(timer);
     responseTimers.clear();
     sessionToTask.clear();
+    pendingResponseSessions.clear();
   }
 
   return { send, abort, applySlashCommand, clearTimer, notifyResponse, dispose };

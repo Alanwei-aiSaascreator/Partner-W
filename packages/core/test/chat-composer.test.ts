@@ -256,6 +256,37 @@ describe('chat-composer', () => {
     composer.notifyResponse(SESSION_KEY);
     expect([...processingBySession]).toEqual([]);
   });
+
+  it('keeps the ensemble timer until the remaining accepted target times out', async () => {
+    vi.useFakeTimers();
+    const { composer, processingBySession, addMessage } = setup({ ensemble: true });
+
+    expect((await composer.send(TASK_ID, { content: 'team request', mentionAll: true })).ok).toBe(true);
+    expect(new Set(processingBySession)).toEqual(new Set([`${SESSION_KEY}:conductor`, `${SESSION_KEY}:worker`]));
+
+    composer.notifyResponse(`${SESSION_KEY}:conductor`);
+    expect([...processingBySession]).toEqual([`${SESSION_KEY}:worker`]);
+    expect(vi.getTimerCount()).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(SEND_TIMEOUT_MS);
+    expect([...processingBySession]).toEqual([]);
+    expect(addMessage.mock.calls.filter((call) => call[1] === 'system')).toHaveLength(1);
+  });
+
+  it('cancels the ensemble timer only after every accepted target responds', async () => {
+    vi.useFakeTimers();
+    const { composer, processingBySession, addMessage } = setup({ ensemble: true });
+
+    expect((await composer.send(TASK_ID, { content: 'team request', mentionAll: true })).ok).toBe(true);
+    composer.notifyResponse(`${SESSION_KEY}:conductor`);
+    expect(vi.getTimerCount()).toBe(1);
+    composer.notifyResponse(`${SESSION_KEY}:worker`);
+
+    expect([...processingBySession]).toEqual([]);
+    expect(vi.getTimerCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(SEND_TIMEOUT_MS);
+    expect(addMessage.mock.calls.filter((call) => call[1] === 'system')).toHaveLength(0);
+  });
 });
 
 /**

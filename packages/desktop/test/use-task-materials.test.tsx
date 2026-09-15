@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, useLayoutEffect, type ReactElement } from 'react';
+import { act, useLayoutEffect, useRef, type ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -58,11 +58,14 @@ function Harness({
   taskId,
   immediateAction,
 }: {
-  taskId: string | null;
+  taskId?: string | null;
   immediateAction?: 'import' | 'grant' | 'revoke' | 'list';
 }) {
   const materials = useTaskMaterials(taskId);
+  const actedActionRef = useRef<typeof immediateAction>(undefined);
   useLayoutEffect(() => {
+    if (!immediateAction || actedActionRef.current === immediateAction) return;
+    actedActionRef.current = immediateAction;
     if (immediateAction === 'import') void materials.importFiles();
     if (immediateAction === 'grant') void materials.grantFolder();
     if (immediateAction === 'revoke') void materials.revokeSource('source-task-1');
@@ -103,7 +106,8 @@ function Harness({
 describe('useTaskMaterials', () => {
   beforeEach(() => {
     mocks.activeTaskId = 'task-1';
-    mocks.commitPendingTask.mockClear();
+    mocks.commitPendingTask.mockReset();
+    mocks.commitPendingTask.mockImplementation(() => ({ id: 'task-created' }));
     mocks.importTaskFiles.mockReset();
     mocks.listImportedTaskFiles.mockReset();
     mocks.grantTaskContextFolder.mockReset();
@@ -242,6 +246,78 @@ describe('useTaskMaterials', () => {
       const action = immediateAction === 'import' ? mocks.importTaskFiles : mocks.grantTaskContextFolder;
       expect(action).toHaveBeenCalledWith('task-created');
       expect(action).not.toHaveBeenCalledWith('task-1');
+      view.unmount();
+    },
+  );
+
+  it.each(['import', 'grant'] as const)(
+    'keeps the async %s result current after pending commit publishes the new active task',
+    async (immediateAction) => {
+      let resolveAction!: (value: unknown) => void;
+      mocks.listImportedTaskFiles.mockResolvedValue({ ok: true, result: [] });
+      mocks.listTaskContextSources.mockResolvedValue({ ok: true, result: [] });
+      mocks.commitPendingTask.mockImplementation(() => {
+        mocks.activeTaskId = 'task-created';
+        return { id: 'task-created' };
+      });
+      if (immediateAction === 'import') {
+        mocks.importTaskFiles.mockReturnValue(new Promise((resolve) => (resolveAction = resolve)));
+        mocks.grantTaskContextFolder.mockResolvedValue({ ok: true, result: null });
+      } else {
+        mocks.importTaskFiles.mockResolvedValue({
+          ok: true,
+          result: { imported: [], rejected: [] },
+        });
+        mocks.grantTaskContextFolder.mockReturnValue(new Promise((resolve) => (resolveAction = resolve)));
+      }
+
+      const view = render(<Harness />);
+      await act(async () => void (await Promise.resolve()));
+      mocks.activeTaskId = null;
+      view.rerender(<Harness immediateAction={immediateAction} />);
+      await act(async () => void (await Promise.resolve()));
+      view.rerender(<Harness />);
+
+      await act(async () => {
+        resolveAction(
+          immediateAction === 'import'
+            ? {
+                ok: true,
+                result: {
+                  imported: [
+                    {
+                      fileName: 'created.txt',
+                      localPath: 'tasks/task-created/inbox/created.txt',
+                      mimeType: 'text/plain',
+                      size: 7,
+                    },
+                  ],
+                  rejected: [],
+                },
+              }
+            : {
+                ok: true,
+                result: {
+                  id: 'source-created',
+                  taskId: 'task-created',
+                  kind: 'folder',
+                  absolutePath: 'C:/created',
+                  displayName: 'Created folder',
+                  createdAt: '',
+                  lastSeenAt: '',
+                  availability: 'available',
+                },
+              },
+        );
+        await Promise.resolve();
+      });
+
+      if (immediateAction === 'import') {
+        expect(view.container.querySelector('[data-testid="imported"]')?.textContent).toBe('created.txt');
+        expect(view.container.querySelector('[data-testid="selected"]')?.textContent).toBe('created.txt');
+      } else {
+        expect(view.container.querySelector('[data-testid="sources"]')?.textContent).toBe('Created folder');
+      }
       view.unmount();
     },
   );
