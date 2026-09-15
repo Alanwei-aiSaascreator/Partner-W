@@ -1,12 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { symlinkSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, rm, truncate, utimes, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rename, rm, truncate, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { importTaskFiles, listImportedTaskFiles } from '../src/main/context/file-import.js';
 import { readInboxFile } from '../src/main/inbox/resolve.js';
 
 const copyFailurePaths = vi.hoisted(() => new Set<string>());
+const symbolicLinkPaths = vi.hoisted(() => new Set<string>());
+const afterCopyActions = vi.hoisted(() => new Map<string, (destination: string) => Promise<void>>());
 
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>();
@@ -14,7 +16,13 @@ vi.mock('node:fs/promises', async (importOriginal) => {
     ...actual,
     copyFile: async (...args: Parameters<typeof actual.copyFile>) => {
       if (copyFailurePaths.has(String(args[0]))) throw new Error('simulated copy failure');
-      return actual.copyFile(...args);
+      await actual.copyFile(...args);
+      await afterCopyActions.get(String(args[0]))?.(String(args[1]));
+    },
+    lstat: async (...args: Parameters<typeof actual.lstat>) => {
+      const result = await actual.lstat(...args);
+      if (!symbolicLinkPaths.has(String(args[0]))) return result;
+      return { ...result, isFile: () => false, isSymbolicLink: () => true };
     },
   };
 });
@@ -34,6 +42,8 @@ async function fixture(): Promise<{ root: string; workspacePath: string; sources
 afterEach(async () => {
   vi.restoreAllMocks();
   copyFailurePaths.clear();
+  symbolicLinkPaths.clear();
+  afterCopyActions.clear();
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
@@ -165,6 +175,44 @@ describe('task file import', () => {
     expect(listImportedTaskFiles(workspacePath, 'task-1')).toEqual([]);
   });
 
+  it('deterministically rejects a source reported as a symbolic link', async () => {
+    const { workspacePath, sources } = await fixture();
+    const linked = join(sources, 'linked.txt');
+    await writeFile(linked, 'safe');
+    symbolicLinkPaths.add(linked);
+
+    const result = await importTaskFiles({ workspacePath, taskId: 'task-1', sourcePaths: [linked] });
+    expect(result).toEqual({ imported: [], rejected: [{ fileName: 'linked.txt', reason: 'unavailable' }] });
+    expect(listImportedTaskFiles(workspacePath, 'task-1')).toEqual([]);
+  });
+
+  it('removes the destination when the source identity changes after copy', async () => {
+    const { workspacePath, sources } = await fixture();
+    const source = join(sources, 'changing.txt');
+    await writeFile(source, 'before');
+    afterCopyActions.set(source, async () => {
+      await rename(source, join(sources, 'original.txt'));
+      await writeFile(source, 'replacement');
+    });
+
+    const result = await importTaskFiles({ workspacePath, taskId: 'task-1', sourcePaths: [source] });
+    expect(result).toEqual({ imported: [], rejected: [{ fileName: 'changing.txt', reason: 'copy-failed' }] });
+    await expect(readdir(join(workspacePath, 'task-1', 'inbox'))).resolves.toEqual([]);
+  });
+
+  it('removes and rejects a copied destination that exceeds the size limit', async () => {
+    const { workspacePath, sources } = await fixture();
+    const source = join(sources, 'growing.txt');
+    await writeFile(source, 'small');
+    afterCopyActions.set(source, async (destination) => {
+      await truncate(destination, 100 * 1024 * 1024 + 1);
+    });
+
+    const result = await importTaskFiles({ workspacePath, taskId: 'task-1', sourcePaths: [source] });
+    expect(result).toEqual({ imported: [], rejected: [{ fileName: 'growing.txt', reason: 'too-large' }] });
+    await expect(readdir(join(workspacePath, 'task-1', 'inbox'))).resolves.toEqual([]);
+  });
+
   it('rejects a task directory junction that points outside the workspace', async () => {
     const { root, workspacePath, sources } = await fixture();
     const external = join(root, 'external-task');
@@ -177,7 +225,7 @@ describe('task file import', () => {
       /trusted task inbox/,
     );
     expect(() => listImportedTaskFiles(workspacePath, 'task-1')).toThrow(/trusted task inbox/);
-    await expect(readFile(join(external, 'inbox', 'source.txt'))).rejects.toThrow();
+    await expect(readdir(join(external, 'inbox'))).resolves.toEqual([]);
   });
 
   it('rejects an inbox junction that points outside the task directory', async () => {
@@ -194,7 +242,7 @@ describe('task file import', () => {
       /trusted task inbox/,
     );
     expect(() => listImportedTaskFiles(workspacePath, 'task-1')).toThrow(/trusted task inbox/);
-    await expect(readFile(join(external, 'source.txt'))).rejects.toThrow();
+    await expect(readdir(external)).resolves.toEqual([]);
   });
 
   it('rejects unsupported, oversized, unavailable, symlink, and failed copies independently', async () => {
