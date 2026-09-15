@@ -1,6 +1,6 @@
 import { realpathSync } from 'fs';
-import { open, realpath } from 'fs/promises';
-import { resolve, sep } from 'path';
+import { open, realpath, stat } from 'fs/promises';
+import { isAbsolute, resolve, sep } from 'path';
 
 interface InboxPathInfo {
   base: string;
@@ -13,13 +13,25 @@ function isWithin(parent: string, child: string): boolean {
 }
 
 function parseInboxPath(workspacePath: string, localPath: string): InboxPathInfo | null {
-  if (!localPath) return null;
+  if (!localPath || isAbsolute(localPath)) return null;
+  const parts = localPath.replaceAll('\\', '/').split('/');
+  if (
+    parts.length !== 3 ||
+    !parts[0] ||
+    parts[0] === '.' ||
+    parts[0] === '..' ||
+    parts[1] !== 'inbox' ||
+    !parts[2] ||
+    parts[2] === '.' ||
+    parts[2] === '..' ||
+    parts[2] === '.import-staging' ||
+    /^\.import-.*\.partial$/i.test(parts[2])
+  ) {
+    return null;
+  }
   const base = resolve(workspacePath);
-  const full = resolve(base, localPath);
+  const full = resolve(base, ...parts);
   if (!isWithin(base, full)) return null;
-  const relative = full.slice(base.length + 1);
-  const parts = relative.split(sep);
-  if (parts.length < 3 || parts[1] !== 'inbox') return null;
   return {
     base,
     full,
@@ -27,7 +39,11 @@ function parseInboxPath(workspacePath: string, localPath: string): InboxPathInfo
   };
 }
 
-async function resolveValidatedPath(info: InboxPathInfo, pathToResolve: string): Promise<string | null> {
+async function resolveValidatedPath(
+  info: InboxPathInfo,
+  pathToResolve: string,
+  requireFile = false,
+): Promise<string | null> {
   try {
     const [realBase, realInboxDir, realTarget] = await Promise.all([
       realpath(info.base),
@@ -36,6 +52,7 @@ async function resolveValidatedPath(info: InboxPathInfo, pathToResolve: string):
     ]);
     if (!isWithin(realBase, realInboxDir)) return null;
     if (!isWithin(realInboxDir, realTarget)) return null;
+    if (requireFile && !(await stat(realTarget)).isFile()) return null;
     return realTarget;
   } catch {
     return null;
@@ -45,7 +62,7 @@ async function resolveValidatedPath(info: InboxPathInfo, pathToResolve: string):
 export async function resolveInboxPath(workspacePath: string, localPath: string): Promise<string | null> {
   const info = parseInboxPath(workspacePath, localPath);
   if (!info) return null;
-  return resolveValidatedPath(info, info.full);
+  return resolveValidatedPath(info, info.full, true);
 }
 
 export async function readInboxFile(workspacePath: string, localPath: string): Promise<string | null> {
@@ -54,6 +71,7 @@ export async function readInboxFile(workspacePath: string, localPath: string): P
   const handle = await open(info.full, 'r').catch(() => null);
   if (!handle) return null;
   try {
+    if (!(await handle.stat()).isFile()) return null;
     const pathToResolve = process.platform === 'win32' ? info.full : `/dev/fd/${handle.fd}`;
     const realTarget =
       process.platform === 'win32'

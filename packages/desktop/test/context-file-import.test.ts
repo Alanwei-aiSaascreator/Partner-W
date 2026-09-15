@@ -1,6 +1,18 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { symlinkSync } from 'node:fs';
-import { copyFile, mkdir, mkdtemp, readFile, readdir, rename, rm, truncate, utimes, writeFile } from 'node:fs/promises';
+import {
+  copyFile,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  truncate,
+  utimes,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import {
@@ -86,11 +98,9 @@ async function fixture(): Promise<{ root: string; workspacePath: string; sources
   return { root, workspacePath, sources };
 }
 
-async function expectOnlyInvisibleStagingFiles(inbox: string): Promise<void> {
+async function expectEmptyStaging(inbox: string): Promise<void> {
   expect(await readdir(inbox)).toEqual(['.import-staging']);
-  const names = await readdir(join(inbox, '.import-staging'));
-  expect(names.length).toBeGreaterThan(0);
-  expect(names.every((name) => /^\.import-[a-f0-9-]+\.partial$/.test(name))).toBe(true);
+  expect(await readdir(join(inbox, '.import-staging'))).toEqual([]);
 }
 
 afterEach(async () => {
@@ -137,6 +147,7 @@ describe('task file import', () => {
     );
     const directEntries = await readdir(join(workspacePath, 'task-1', 'inbox'));
     expect(directEntries.filter((name) => name.startsWith('.import-'))).toEqual(['.import-staging']);
+    expect(await readdir(join(workspacePath, 'task-1', 'inbox', '.import-staging'))).toEqual([]);
     expect(vi.mocked(copyFile)).not.toHaveBeenCalled();
   });
 
@@ -355,7 +366,7 @@ describe('task file import', () => {
     );
     expect(result).toEqual({ imported: [], rejected: [{ fileName: 'changing.txt', reason: 'copy-failed' }] });
     expect(listImportedTaskFiles(workspacePath, 'task-1')).toEqual([]);
-    await expectOnlyInvisibleStagingFiles(join(workspacePath, 'task-1', 'inbox'));
+    await expectEmptyStaging(join(workspacePath, 'task-1', 'inbox'));
   });
 
   it('rejects without publishing an in-place same-size source rewrite during copying', async () => {
@@ -376,7 +387,7 @@ describe('task file import', () => {
 
     expect(result).toEqual({ imported: [], rejected: [{ fileName: 'rewritten.txt', reason: 'copy-failed' }] });
     expect(listImportedTaskFiles(workspacePath, 'task-1')).toEqual([]);
-    await expectOnlyInvisibleStagingFiles(join(workspacePath, 'task-1', 'inbox'));
+    await expectEmptyStaging(join(workspacePath, 'task-1', 'inbox'));
   });
 
   it('rejects without publishing a copied destination that exceeds the size limit', async () => {
@@ -393,7 +404,29 @@ describe('task file import', () => {
     );
     expect(result).toEqual({ imported: [], rejected: [{ fileName: 'growing.txt', reason: 'too-large' }] });
     expect(listImportedTaskFiles(workspacePath, 'task-1')).toEqual([]);
-    await expectOnlyInvisibleStagingFiles(join(workspacePath, 'task-1', 'inbox'));
+    await expectEmptyStaging(join(workspacePath, 'task-1', 'inbox'));
+  });
+
+  it('cleans repeated near-limit failed staging files immediately', async () => {
+    const { workspacePath, sources } = await fixture();
+    const sourcePaths = [join(sources, 'first.txt'), join(sources, 'second.txt')];
+    await Promise.all(sourcePaths.map((sourcePath) => writeFile(sourcePath, 'small')));
+
+    const result = await __testing.importTaskFiles(
+      { workspacePath, taskId: 'task-1', sourcePaths },
+      {
+        afterChunkWritten: async ({ destinationPath }) => {
+          await truncate(destinationPath, 99 * 1024 * 1024);
+          throw new Error('simulated failure after growth');
+        },
+      },
+    );
+
+    expect(result.rejected).toEqual([
+      { fileName: 'first.txt', reason: 'copy-failed' },
+      { fileName: 'second.txt', reason: 'copy-failed' },
+    ]);
+    await expectEmptyStaging(join(workspacePath, 'task-1', 'inbox'));
   });
 
   it('rejects a target whose timestamps change during hash verification', async () => {
@@ -491,7 +524,7 @@ describe('task file import', () => {
     await expect(readFile(join(external, externalFiles[0]), 'utf8')).resolves.toBe('keep');
   });
 
-  it('closes both file handles when copying fails after target creation', async () => {
+  it('closes source, target, and cleanup handles when copying fails after target creation', async () => {
     const { workspacePath, sources } = await fixture();
     const source = join(sources, 'source.txt');
     await writeFile(source, 'safe');
@@ -503,7 +536,7 @@ describe('task file import', () => {
     );
 
     expect(result.rejected).toEqual([{ fileName: 'source.txt', reason: 'copy-failed' }]);
-    expect(handleTracker).toMatchObject({ opened: 2, closed: 2 });
+    expect(handleTracker).toMatchObject({ opened: 3, closed: 3 });
   });
 
   it('rejects a task directory junction that points outside the workspace', async () => {
@@ -588,6 +621,69 @@ describe('imported task file listing', () => {
     await writeFile(join(inbox, 'visible.txt'), 'published');
 
     expect(listImportedTaskFiles(workspacePath, 'task-1').map((item) => item.fileName)).toEqual(['visible.txt']);
+  });
+
+  it('garbage-collects expired crash residue while retaining recent partials', async () => {
+    const { workspacePath } = await fixture();
+    const staging = join(workspacePath, 'task-1', 'inbox', '.import-staging');
+    await mkdir(staging, { recursive: true });
+    const expired = join(staging, '.import-deadbeef.partial');
+    const recent = join(staging, '.import-feedface.partial');
+    await writeFile(expired, 'expired');
+    await writeFile(recent, 'recent');
+    const old = new Date('2020-01-01T00:00:00Z');
+    await utimes(expired, old, old);
+
+    await __testing.collectStagingGarbage({ workspacePath, taskId: 'task-1' });
+
+    expect(await readdir(staging)).toEqual(['.import-feedface.partial']);
+  });
+
+  it('bounds repeated near-limit crash residue by total bytes', async () => {
+    const { workspacePath } = await fixture();
+    const staging = join(workspacePath, 'task-1', 'inbox', '.import-staging');
+    await mkdir(staging, { recursive: true });
+    for (const name of ['.import-aaaa.partial', '.import-bbbb.partial', '.import-cccc.partial']) {
+      const partial = join(staging, name);
+      await writeFile(partial, 'x');
+      await truncate(partial, 90 * 1024 * 1024);
+    }
+
+    await __testing.collectStagingGarbage({ workspacePath, taskId: 'task-1' });
+
+    const survivors = await readdir(staging);
+    const totalBytes = (
+      await Promise.all(survivors.map(async (name) => (await lstat(join(staging, name))).size))
+    ).reduce((sum, size) => sum + size, 0);
+    expect(totalBytes).toBeLessThanOrEqual(200 * 1024 * 1024);
+    expect(survivors.length).toBeLessThan(3);
+  });
+
+  it('fails closed without deleting an external file when staging changes before garbage collection', async () => {
+    const { root, workspacePath } = await fixture();
+    const staging = join(workspacePath, 'task-1', 'inbox', '.import-staging');
+    const heldStaging = join(root, 'held-staging');
+    const external = join(root, 'external-staging');
+    const name = '.import-deadbeef.partial';
+    await mkdir(staging, { recursive: true });
+    await mkdir(external);
+    await writeFile(join(staging, name), 'expired');
+    const old = new Date('2020-01-01T00:00:00Z');
+    await utimes(join(staging, name), old, old);
+
+    await expect(
+      __testing.collectStagingGarbage(
+        { workspacePath, taskId: 'task-1' },
+        {
+          beforeDelete: async () => {
+            await rename(staging, heldStaging);
+            symlinkSync(external, staging, 'junction');
+            await writeFile(join(external, name), 'keep');
+          },
+        },
+      ),
+    ).rejects.toBeInstanceOf(ImportIntegrityError);
+    await expect(readFile(join(external, name), 'utf8')).resolves.toBe('keep');
   });
 
   it('returns only supported regular inbox files in stable newest-first order', async () => {

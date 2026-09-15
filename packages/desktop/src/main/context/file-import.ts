@@ -3,7 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { Dir, Stats } from 'node:fs';
 import { existsSync, lstatSync, mkdirSync, opendirSync, realpathSync, statSync } from 'node:fs';
 import type { FileHandle } from 'node:fs/promises';
-import { link, lstat, open, realpath, stat } from 'node:fs/promises';
+import { link, lstat, open, realpath, stat, unlink } from 'node:fs/promises';
 import { basename, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { ensureTaskDir } from '../workspace/init.js';
 import { uniqueFileName } from '../workspace/safe-name.js';
@@ -14,6 +14,11 @@ const COPY_CHUNK_SIZE = 1024 * 1024;
 const MAX_LIST_VISITED = 2000;
 const MAX_LIST_RESULTS = 100;
 const TIMESTAMP_TOLERANCE_MS = 0;
+const STAGING_TTL_MS = 24 * 60 * 60 * 1000;
+const MAX_STAGING_ENTRIES = 32;
+const MAX_STAGING_BYTES = 200 * 1024 * 1024;
+const MAX_STAGING_VISITED = 256;
+const STAGING_FILE_PATTERN = /^\.import-[a-f0-9-]+\.partial$/;
 
 export const IMPORT_FILE_EXTENSIONS = [
   'ts',
@@ -129,6 +134,10 @@ interface ImportTestHooks {
   beforeTargetHash?: (context: ImportTestContext) => void | Promise<void>;
   beforePublish?: (context: ImportTestContext) => void | Promise<void>;
   beforeCleanup?: (context: ImportTestContext) => void | Promise<void>;
+}
+
+interface StagingGarbageTestHooks {
+  beforeDelete?: (path: string) => void | Promise<void>;
 }
 
 class ImportItemError extends Error {
@@ -297,6 +306,113 @@ function verifyTrustedStaging(trusted: TrustedInbox, staging: TrustedStaging): v
   }
 }
 
+async function stagedFileSnapshot(trusted: TrustedInbox, staging: TrustedStaging, filePath: string): Promise<Stats> {
+  verifyTrustedStaging(trusted, staging);
+  const linkStats = await lstat(filePath);
+  const canonicalPath = await realpath(filePath);
+  const canonicalStats = await stat(canonicalPath);
+  if (
+    linkStats.isSymbolicLink() ||
+    !linkStats.isFile() ||
+    !hasStrongIdentity(linkStats) ||
+    !sameSourceSnapshot(linkStats, canonicalStats) ||
+    !isWithin(staging.realStaging, canonicalPath) ||
+    !samePath(canonicalPath, filePath)
+  ) {
+    throw new ImportIntegrityError('staged import file identity changed');
+  }
+  return linkStats;
+}
+
+async function deleteStagedFile(
+  trusted: TrustedInbox,
+  staging: TrustedStaging,
+  filePath: string,
+  requiredIdentity: Stats | null,
+  hooks: StagingGarbageTestHooks = {},
+): Promise<void> {
+  const initial = await stagedFileSnapshot(trusted, staging, filePath);
+  if (requiredIdentity && !sameStrongIdentity(requiredIdentity, initial)) {
+    throw new ImportIntegrityError('staged import file identity changed');
+  }
+  await hooks.beforeDelete?.(filePath);
+  const current = await stagedFileSnapshot(trusted, staging, filePath);
+  if (!sameSourceSnapshot(initial, current)) {
+    throw new ImportIntegrityError('staged import file changed before cleanup');
+  }
+  const handle = await open(filePath, 'r');
+  let failure: unknown = null;
+  try {
+    const handleStats = await handle.stat();
+    const finalPathStats = await stagedFileSnapshot(trusted, staging, filePath);
+    if (!sameSourceSnapshot(current, handleStats) || !sameSourceSnapshot(current, finalPathStats)) {
+      throw new ImportIntegrityError('staged import file changed before unlink');
+    }
+    await unlink(filePath);
+    verifyTrustedStaging(trusted, staging);
+  } catch (error) {
+    failure = error;
+  }
+  const closeError = await closeHandle(handle);
+  if (closeError) throw new ImportIntegrityError('unable to close staged import cleanup handle');
+  if (failure) throw failure;
+}
+
+async function collectStagingGarbage(
+  trusted: TrustedInbox,
+  staging: TrustedStaging,
+  hooks: StagingGarbageTestHooks = {},
+): Promise<void> {
+  verifyTrustedStaging(trusted, staging);
+  const candidates: Array<{ path: string; stats: Stats; name: string }> = [];
+  const directory = opendirSync(staging.realStaging);
+  try {
+    for (let visited = 0; visited < MAX_STAGING_VISITED; visited += 1) {
+      const entry = directory.readSync();
+      if (!entry) break;
+      if (!entry.isFile() || !STAGING_FILE_PATTERN.test(entry.name)) continue;
+      const filePath = join(staging.realStaging, entry.name);
+      try {
+        const stats = lstatSync(filePath);
+        const canonicalPath = realpathSync.native(filePath);
+        if (
+          stats.isSymbolicLink() ||
+          !stats.isFile() ||
+          !hasStrongIdentity(stats) ||
+          !sameSourceSnapshot(stats, statSync(canonicalPath)) ||
+          !isWithin(staging.realStaging, canonicalPath) ||
+          !samePath(canonicalPath, filePath)
+        ) {
+          continue;
+        }
+        candidates.push({ path: filePath, stats, name: entry.name });
+      } catch {
+        continue;
+      }
+    }
+    directory.closeSync();
+  } catch (error) {
+    closeDirectory(directory, error);
+  }
+
+  candidates.sort((left, right) => left.stats.mtimeMs - right.stats.mtimeMs || codePointCompare(left.name, right.name));
+  let remainingCount = candidates.length;
+  let remainingBytes = candidates.reduce((sum, candidate) => sum + candidate.stats.size, 0);
+  const expiry = Date.now() - STAGING_TTL_MS;
+  for (const candidate of candidates) {
+    if (
+      candidate.stats.mtimeMs >= expiry &&
+      remainingCount <= MAX_STAGING_ENTRIES &&
+      remainingBytes <= MAX_STAGING_BYTES
+    ) {
+      continue;
+    }
+    await deleteStagedFile(trusted, staging, candidate.path, candidate.stats, hooks);
+    remainingCount -= 1;
+    remainingBytes -= candidate.stats.size;
+  }
+}
+
 function sourceFileName(sourcePath: string): string {
   return basename(sourcePath.replaceAll('\\', '/'));
 }
@@ -305,25 +421,29 @@ function regularMimeType(extension: string): string {
   return LEGACY_OFFICE_MIME[extension] ?? getMimeType(extension);
 }
 
-function sourceMimeType(fileName: string): string | null {
+function classifyImportFileName(fileName: string, allowStoredSpecialSuffix: boolean): string | null {
   const lowerName = fileName.toLowerCase();
   if (lowerName.startsWith('~$')) return null;
   if (SPECIAL_NAMES.has(lowerName)) return 'text/plain';
+  if (allowStoredSpecialSuffix) {
+    for (const specialName of SPECIAL_NAMES) {
+      const prefix = `${specialName}-`;
+      if (lowerName.startsWith(prefix) && /^[a-f0-9]{8}$/.test(lowerName.slice(prefix.length))) {
+        return 'text/plain';
+      }
+    }
+  }
   if (lowerName.startsWith('.')) return null;
   const extension = extname(lowerName);
   return IMPORT_EXTENSIONS.has(extension) ? regularMimeType(extension) : null;
 }
 
+function sourceMimeType(fileName: string): string | null {
+  return classifyImportFileName(fileName, false);
+}
+
 function storedMimeType(fileName: string): string | null {
-  const lowerName = fileName.toLowerCase();
-  for (const specialName of SPECIAL_NAMES) {
-    if (lowerName === specialName) return 'text/plain';
-    const prefix = `${specialName}-`;
-    if (lowerName.startsWith(prefix) && /^[a-f0-9]{8}$/.test(lowerName.slice(prefix.length))) return 'text/plain';
-  }
-  if (lowerName.startsWith('.')) return null;
-  const extension = extname(lowerName);
-  return IMPORT_EXTENSIONS.has(extension) ? regularMimeType(extension) : null;
+  return classifyImportFileName(fileName, true);
 }
 
 function localPath(taskId: string, fileName: string): string {
@@ -521,6 +641,7 @@ async function copyOneFile(
   let destinationPath = '';
   let context: ImportTestContext | null = null;
   let created = false;
+  let cleanupAttempted = false;
   let output: { destinationName: string; size: number } | null = null;
   let failure: unknown = null;
 
@@ -590,6 +711,10 @@ async function copyOneFile(
     sourceHandle = null;
     if (sourceCloseBeforePublish) throw new ImportIntegrityError('unable to close source before publish');
     const destinationName = await publishTarget(sourcePath, destinationPath, trusted, staging, finalTarget, hooks);
+    cleanupAttempted = true;
+    await hooks.beforeCleanup?.(context);
+    await deleteStagedFile(trusted, staging, destinationPath, targetIdentity);
+    created = false;
     output = { destinationName, size: finalTarget.size };
   } catch (error) {
     failure = error;
@@ -602,16 +727,15 @@ async function copyOneFile(
   if (targetCloseError || sourceCloseError) failure = failure ?? targetCloseError ?? sourceCloseError;
 
   if (failure || !output) {
-    if (created) {
+    if (created && !cleanupAttempted) {
       if (!context || !targetIdentity) throw new ImportIntegrityError('created import target identity is unavailable');
+      cleanupAttempted = true;
       try {
         await hooks.beforeCleanup?.(context);
       } catch {
         throw new ImportIntegrityError('unable to safely prepare imported file cleanup');
       }
-      // Node has no directory-relative unlink. Keep the permanently hidden staging entry instead of
-      // introducing a verify-then-unlink race against a path that a same-privilege process can replace.
-      verifyTrustedStaging(trusted, staging);
+      await deleteStagedFile(trusted, staging, destinationPath, targetIdentity);
     }
     if (failure instanceof ImportIntegrityError || failure instanceof ImportItemError) throw failure;
     throw new ImportItemError(
@@ -629,6 +753,7 @@ async function importTaskFilesImpl(
   const inbox = trustedInbox(input.workspacePath, taskId, true);
   if (!inbox) throw new Error('trusted task inbox is unavailable');
   const staging = resolveTrustedStaging(inbox);
+  await collectStagingGarbage(inbox, staging);
   const result: ImportFilesResult = { imported: [], rejected: [] };
   for (const sourcePath of input.sourcePaths) {
     const fileName = sourceFileName(sourcePath);
@@ -728,4 +853,13 @@ export const __testing = Object.freeze({
     input: { workspacePath: string; taskId: string; sourcePaths: string[] },
     hooks: ImportTestHooks,
   ): Promise<ImportFilesResult> => importTaskFilesImpl(input, hooks),
+  collectStagingGarbage: async (
+    input: { workspacePath: string; taskId: string },
+    hooks: StagingGarbageTestHooks = {},
+  ): Promise<void> => {
+    const inbox = trustedInbox(input.workspacePath, input.taskId, true);
+    if (!inbox) throw new Error('trusted task inbox is unavailable');
+    const staging = resolveTrustedStaging(inbox);
+    await collectStagingGarbage(inbox, staging, hooks);
+  },
 });

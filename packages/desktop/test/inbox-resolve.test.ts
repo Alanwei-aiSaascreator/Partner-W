@@ -7,15 +7,17 @@ vi.mock('fs', () => ({
 vi.mock('fs/promises', () => ({
   open: vi.fn(),
   realpath: vi.fn(),
+  stat: vi.fn(),
 }));
 
 import { realpathSync } from 'fs';
-import { open, realpath } from 'fs/promises';
+import { open, realpath, stat } from 'fs/promises';
 import { join, resolve } from 'path';
 import { readInboxFile, resolveInboxPath } from '../src/main/inbox/resolve.js';
 
 const mockOpen = vi.mocked(open);
 const mockRealpath = vi.mocked(realpath);
+const mockStat = vi.mocked(stat);
 const mockRealpathSync = vi.mocked(realpathSync);
 const WORKSPACE_PATH = resolve('workspace-fixture');
 const LOCAL_PATH = join('task-1', 'inbox', 'file.txt');
@@ -44,6 +46,7 @@ describe('inbox path access', () => {
     const close = vi.fn().mockResolvedValue(undefined);
     mockOpen.mockResolvedValue({
       fd: 42,
+      stat: vi.fn().mockResolvedValue({ isFile: () => true }),
       readFile,
       close,
     } as unknown as Awaited<ReturnType<typeof open>>);
@@ -65,6 +68,7 @@ describe('inbox path access', () => {
     const close = vi.fn().mockResolvedValue(undefined);
     mockOpen.mockResolvedValue({
       fd: 42,
+      stat: vi.fn().mockResolvedValue({ isFile: () => true }),
       readFile,
       close,
     } as unknown as Awaited<ReturnType<typeof open>>);
@@ -79,5 +83,37 @@ describe('inbox path access', () => {
     await expect(readInboxFile(WORKSPACE_PATH, LOCAL_PATH)).resolves.toBeNull();
     expect(readFile).not.toHaveBeenCalled();
     expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects nested and staging paths before opening them', async () => {
+    const invalid = [
+      join('task-1', 'inbox', 'folder', 'file.txt'),
+      join('task-1', 'inbox', '.import-staging', '.import-deadbeef.partial'),
+      join('task-1', 'inbox', '.import-deadbeef.partial'),
+    ];
+
+    for (const localPath of invalid) {
+      await expect(resolveInboxPath(WORKSPACE_PATH, localPath)).resolves.toBeNull();
+      await expect(readInboxFile(WORKSPACE_PATH, localPath)).resolves.toBeNull();
+    }
+    expect(mockOpen).not.toHaveBeenCalled();
+    expect(mockRealpath).not.toHaveBeenCalled();
+  });
+
+  it('rejects a top-level inbox directory while preserving a legitimate top-level file', async () => {
+    const folderPath = join('task-1', 'inbox', 'folder');
+    const fullFolderPath = join(INBOX_DIR, 'folder');
+    mockRealpath.mockImplementation(async (path) => String(path));
+    mockStat.mockImplementation(
+      async (path) =>
+        ({
+          isFile: () => path === INBOX_FILE,
+          isSymbolicLink: () => false,
+        }) as Awaited<ReturnType<typeof stat>>,
+    );
+
+    await expect(resolveInboxPath(WORKSPACE_PATH, folderPath)).resolves.toBeNull();
+    await expect(resolveInboxPath(WORKSPACE_PATH, LOCAL_PATH)).resolves.toBe(INBOX_FILE);
+    expect(mockStat).toHaveBeenCalledWith(fullFolderPath);
   });
 });
