@@ -64,6 +64,20 @@ export function saveOnboardingProfile(
   storage.setItem(storageKey(profile.userId), JSON.stringify(profile));
 }
 
+export function goalAnalysisVersion(profile: OnboardingProfile): string {
+  const normalized = JSON.stringify({
+    userId: profile.userId.trim(),
+    useCases: [...profile.useCases].sort(),
+    customGoal: profile.customGoal.trim().replace(/\s+/g, ' '),
+  });
+  let hash = 2166136261;
+  for (let index = 0; index < normalized.length; index += 1) {
+    hash ^= normalized.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+}
+
 export function recommendedStarterIds(profile: OnboardingProfile | null): StarterId[] {
   const selected: StarterId[] = [];
   const useCaseToStarter: Partial<Record<OnboardingUseCaseId, StarterId>> = {

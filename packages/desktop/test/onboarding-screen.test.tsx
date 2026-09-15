@@ -54,4 +54,32 @@ describe('Onboarding', () => {
     );
     unmount();
   });
+
+  it('allows a custom goal without selecting a preset purpose', () => {
+    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    const onComplete = vi.fn();
+    const { container, unmount } = render(<Onboarding userId="user-2" onComplete={onComplete} />);
+    const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+
+    act(() => {
+      setter?.call(textarea, '  我想整理抖音素材，每周生成三个短视频脚本  ');
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    const continueButton = [...container.querySelectorAll('button')].find((button) =>
+      button.textContent?.includes('onboarding.continue'),
+    );
+    act(() => continueButton!.click());
+
+    expect(onComplete).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 'user-2',
+        useCases: [],
+        customGoal: '我想整理抖音素材，每周生成三个短视频脚本',
+      }),
+    );
+    expect(container.querySelector('[data-onboarding-goal]')).not.toBeNull();
+
+    unmount();
+  });
 });

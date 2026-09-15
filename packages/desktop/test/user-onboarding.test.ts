@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  goalAnalysisVersion,
   loadOnboardingProfile,
   recommendedStarterIds,
   saveOnboardingProfile,
@@ -44,5 +45,26 @@ describe('user onboarding profile', () => {
     };
 
     expect(recommendedStarterIds(profile)).toEqual(['photography', 'ecommerce', 'content', 'office']);
+  });
+
+  it('generates the same analysis version for equivalent normalized goals', () => {
+    const base: OnboardingProfile = {
+      version: 1,
+      userId: 'user-1',
+      nickname: '',
+      useCases: ['content', 'video'],
+      customGoal: '每周完成三条短视频',
+      completedAt: '2026-09-14T00:00:00.000Z',
+    };
+
+    expect(goalAnalysisVersion(base)).toBe(
+      goalAnalysisVersion({
+        ...base,
+        useCases: ['video', 'content'],
+        customGoal: '  每周完成三条短视频  ',
+        completedAt: '2026-09-15T00:00:00.000Z',
+      }),
+    );
+    expect(goalAnalysisVersion({ ...base, customGoal: '每周完成五条短视频' })).not.toBe(goalAnalysisVersion(base));
   });
 });

@@ -686,6 +686,7 @@
     "continue": "Enter Rongying Cube",
     "customPlaceholder": "For example: create three product videos each week or organize my family learning materials",
     "customTitle": "Anything else you want to achieve?",
+    "goalAnalysisHint": "We will save this now. When AI is ready, Compass will analyze it and recommend an assistant.",
     "multipleHint": "Choose more than one",
     "nickname": "What should we call you?",
     "nicknamePlaceholder": "Optional",
