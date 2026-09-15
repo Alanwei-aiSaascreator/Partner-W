@@ -1,7 +1,16 @@
-import { mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { __testing as fileIndexTesting, scanFolder } from '../src/main/context/file-index.js';
 import { __testing as fileReaderTesting } from '../src/main/context/file-reader.js';
 
@@ -158,6 +167,65 @@ describe('context access race defenses', () => {
 
       const resultLimited = scanFolder(canonicalRoot, { maxVisitedEntries: 100, maxResults: 3 });
       expect(resultLimited).toHaveLength(3);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('finds a query match that appears after the first 100 safe files', () => {
+    const root = mkdtempSync(join(tmpdir(), 'clawwork-scan-late-match-'));
+    const orderedNames: string[] = [];
+    for (let index = 0; index < 120; index++) {
+      const name = `ordinary-${index.toString().padStart(3, '0')}.txt`;
+      orderedNames.push(name);
+      writeFileSync(join(root, name), 'ordinary');
+    }
+    orderedNames.push('needle-late.txt');
+    writeFileSync(join(root, 'needle-late.txt'), 'match');
+    const canonicalRoot = realpathSync.native(root);
+
+    try {
+      const readDirectory = vi.fn(() => orderedNames);
+      const results = fileIndexTesting.scanFolderWithHooks(
+        canonicalRoot,
+        { query: 'needle', maxVisitedEntries: 121, maxResults: 100 },
+        { readDirectory },
+      );
+      expect(readDirectory).toHaveBeenCalledWith(canonicalRoot);
+      expect(results.map(({ fileName }) => fileName)).toEqual(['needle-late.txt']);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps the newest files even when they appear after the first 100 entries', () => {
+    const root = mkdtempSync(join(tmpdir(), 'clawwork-scan-late-newest-'));
+    const orderedNames: string[] = [];
+    const oldTime = new Date('2020-01-01T00:00:00.000Z');
+    for (let index = 0; index < 120; index++) {
+      const name = `old-${index.toString().padStart(3, '0')}.txt`;
+      const filePath = join(root, name);
+      orderedNames.push(name);
+      writeFileSync(filePath, 'old');
+      utimesSync(filePath, oldTime, oldTime);
+    }
+    const newestName = 'newest-late.txt';
+    const newestPath = join(root, newestName);
+    orderedNames.push(newestName);
+    writeFileSync(newestPath, 'newest');
+    utimesSync(newestPath, new Date('2030-01-01T00:00:00.000Z'), new Date('2030-01-01T00:00:00.000Z'));
+    const canonicalRoot = realpathSync.native(root);
+
+    try {
+      const readDirectory = vi.fn(() => orderedNames);
+      const results = fileIndexTesting.scanFolderWithHooks(
+        canonicalRoot,
+        { maxVisitedEntries: 121, maxResults: 100 },
+        { readDirectory },
+      );
+      expect(readDirectory).toHaveBeenCalledWith(canonicalRoot);
+      expect(results).toHaveLength(100);
+      expect(results[0]?.fileName).toBe(newestName);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

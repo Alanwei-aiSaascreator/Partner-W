@@ -32,11 +32,13 @@ const HARD_MAX_RESULTS = 5_000;
 interface ScanHooks {
   afterRootValidation?: () => void;
   afterEntryLstat?: (entryPath: string) => void;
+  readDirectory?: (dirPath: string) => string[];
 }
 
 interface IndexedFile {
   entry: FileIndexEntry;
   identity: Stats;
+  score: number;
 }
 
 interface ScanOptions {
@@ -51,6 +53,7 @@ interface ScanState {
   maxVisitedEntries: number;
   maxResults: number;
   stopped: boolean;
+  query?: string;
 }
 
 function isHidden(name: string): boolean {
@@ -124,6 +127,24 @@ function validateEntry(canonicalRoot: string, entryPath: string, expected?: Stat
   }
 }
 
+function compareCandidates(left: IndexedFile, right: IndexedFile, hasQuery: boolean): number {
+  if (hasQuery && left.score !== right.score) return right.score - left.score;
+  if (left.entry.mtime !== right.entry.mtime) return right.entry.mtime - left.entry.mtime;
+  return left.entry.relativePath.localeCompare(right.entry.relativePath);
+}
+
+function insertCandidate(results: IndexedFile[], candidate: IndexedFile, maxResults: number, hasQuery: boolean): void {
+  let low = 0;
+  let high = results.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    if (compareCandidates(candidate, results[middle], hasQuery) < 0) high = middle;
+    else low = middle + 1;
+  }
+  results.splice(low, 0, candidate);
+  if (results.length > maxResults) results.pop();
+}
+
 function walkDir(
   dir: string,
   canonicalRoot: string,
@@ -136,22 +157,26 @@ function walkDir(
   if (depth > maxDepth || state.stopped) return;
   if (!validateEntry(canonicalRoot, dir)) throw new Error('context folder changed or unavailable');
 
-  let directory;
-  try {
-    directory = opendirSync(dir);
-  } catch {
-    throw new Error('context folder changed or unavailable');
+  const injectedNames = hooks?.readDirectory?.(dir);
+  let injectedIndex = 0;
+  let directory: ReturnType<typeof opendirSync> | undefined;
+  if (!injectedNames) {
+    try {
+      directory = opendirSync(dir);
+    } catch {
+      throw new Error('context folder changed or unavailable');
+    }
   }
 
   try {
-    let dirent;
-    while (!state.stopped && (dirent = directory.readSync()) !== null) {
+    while (!state.stopped) {
       if (state.visitedEntries >= state.maxVisitedEntries) {
         state.stopped = true;
         break;
       }
+      const name = injectedNames ? injectedNames[injectedIndex++] : directory?.readSync()?.name;
+      if (name === undefined) break;
       state.visitedEntries++;
-      const name = dirent.name;
       if (isHidden(name)) continue;
       const fullPath = join(dir, name);
       let before: Stats;
@@ -179,22 +204,32 @@ function walkDir(
       const ext = ALLOWED_DOT_FILES.has(lowerName) ? lowerName : extname(name).toLowerCase();
       const tier = classifyTier(ext);
       if (tier === 'unsupported') continue;
-      results.push({
-        entry: {
-          relativePath: relative(canonicalRoot, validated.realPath),
-          absolutePath: validated.realPath,
-          fileName: name,
-          size: validated.stat.size,
-          mtime: validated.stat.mtimeMs,
-          mimeType: getMimeType(ext),
-          tier,
+      const entry: FileIndexEntry = {
+        relativePath: relative(canonicalRoot, validated.realPath),
+        absolutePath: validated.realPath,
+        fileName: name,
+        size: validated.stat.size,
+        mtime: validated.stat.mtimeMs,
+        mimeType: getMimeType(ext),
+        tier,
+      };
+      const score = state.query
+        ? fuzzyScore(entry.fileName.toLowerCase(), entry.relativePath.toLowerCase(), state.query)
+        : 0;
+      if (state.query && score <= 0) continue;
+      insertCandidate(
+        results,
+        {
+          entry,
+          identity: validated.stat,
+          score,
         },
-        identity: validated.stat,
-      });
-      if (results.length >= state.maxResults) state.stopped = true;
+        state.maxResults,
+        state.query !== undefined,
+      );
     }
   } finally {
-    directory.closeSync();
+    directory?.closeSync();
   }
 }
 
@@ -205,6 +240,7 @@ function scanFolderInternal(folderPath: string, opts?: ScanOptions, hooks?: Scan
     maxVisitedEntries: boundedBudget(opts?.maxVisitedEntries, DEFAULT_MAX_VISITED_ENTRIES, HARD_MAX_VISITED_ENTRIES),
     maxResults: boundedBudget(opts?.maxResults, DEFAULT_MAX_RESULTS, HARD_MAX_RESULTS),
     stopped: false,
+    query: opts?.query ? opts.query.toLowerCase() : undefined,
   };
   const rootIdentity = validateRoot(folderPath);
   hooks?.afterRootValidation?.();
@@ -215,17 +251,7 @@ function scanFolderInternal(folderPath: string, opts?: ScanOptions, hooks?: Scan
   }
   validateRoot(folderPath, rootIdentity);
   for (const file of indexed) validateEntry(folderPath, file.entry.absolutePath, file.identity);
-  const results = indexed.map(({ entry }) => entry);
-  if (opts?.query) {
-    const q = opts.query.toLowerCase();
-    const scored = results
-      .map((entry) => ({ entry, score: fuzzyScore(entry.fileName.toLowerCase(), entry.relativePath.toLowerCase(), q) }))
-      .filter(({ score }) => score > 0);
-    scored.sort((a, b) => b.score - a.score || b.entry.mtime - a.entry.mtime);
-    return scored.map(({ entry }) => entry);
-  }
-  results.sort((a, b) => b.mtime - a.mtime);
-  return results;
+  return indexed.map(({ entry }) => entry);
 }
 
 export function scanFolder(folderPath: string, opts?: ScanOptions): FileIndexEntry[] {
