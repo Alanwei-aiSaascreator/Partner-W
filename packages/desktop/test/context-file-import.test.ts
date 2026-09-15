@@ -86,6 +86,13 @@ async function fixture(): Promise<{ root: string; workspacePath: string; sources
   return { root, workspacePath, sources };
 }
 
+async function expectOnlyInvisibleStagingFiles(inbox: string): Promise<void> {
+  expect(await readdir(inbox)).toEqual(['.import-staging']);
+  const names = await readdir(join(inbox, '.import-staging'));
+  expect(names.length).toBeGreaterThan(0);
+  expect(names.every((name) => /^\.import-[a-f0-9-]+\.partial$/.test(name))).toBe(true);
+}
+
 afterEach(async () => {
   vi.restoreAllMocks();
   symbolicLinkPaths.clear();
@@ -128,6 +135,8 @@ describe('task file import', () => {
     await expect(readInboxFile(workspacePath, result.imported[0].localPath)).resolves.toBe(
       Buffer.from('hello').toString('base64'),
     );
+    const directEntries = await readdir(join(workspacePath, 'task-1', 'inbox'));
+    expect(directEntries.filter((name) => name.startsWith('.import-'))).toEqual(['.import-staging']);
     expect(vi.mocked(copyFile)).not.toHaveBeenCalled();
   });
 
@@ -155,7 +164,18 @@ describe('task file import', () => {
 
   it('imports and restores exact supported special names while rejecting other hidden files', async () => {
     const { workspacePath, sources } = await fixture();
-    const names = ['.env', '.gitignore', 'Dockerfile', 'Makefile', '.secret.txt'];
+    const names = [
+      '.env',
+      '.gitignore',
+      '.dockerfile',
+      '.editorconfig',
+      '.cmake',
+      '.makefile',
+      'Dockerfile',
+      'Makefile',
+      '~$draft.docx',
+      '.secret.txt',
+    ];
     await Promise.all(names.map((name) => writeFile(join(sources, name), name)));
 
     const result = await importTaskFiles({
@@ -164,15 +184,65 @@ describe('task file import', () => {
       sourcePaths: names.map((name) => join(sources, name)),
     });
 
-    expect(result.imported).toHaveLength(4);
+    expect(result.imported).toHaveLength(8);
     expect(result.imported.every((item) => item.mimeType === 'text/plain')).toBe(true);
-    expect(result.rejected).toEqual([{ fileName: '.secret.txt', reason: 'unsupported' }]);
+    expect(result.rejected).toEqual([
+      { fileName: '~$draft.docx', reason: 'unsupported' },
+      { fileName: '.secret.txt', reason: 'unsupported' },
+    ]);
     await writeFile(join(workspacePath, 'task-1', 'inbox', '.env-not-an-import'), 'hidden');
     expect(
       listImportedTaskFiles(workspacePath, 'task-1')
         .map((item) => item.fileName)
         .sort(),
     ).toEqual(result.imported.map((item) => item.fileName).sort());
+  });
+
+  it('retries a bounded publish collision without overwriting the existing destination', async () => {
+    const { workspacePath, sources } = await fixture();
+    const source = join(sources, 'collision.txt');
+    await writeFile(source, 'imported');
+    let firstCandidate = '';
+    let attempts = 0;
+
+    const result = await __testing.importTaskFiles(
+      { workspacePath, taskId: 'task-1', sourcePaths: [source] },
+      {
+        beforePublish: async ({ destinationPath }) => {
+          attempts += 1;
+          if (attempts !== 1) return;
+          firstCandidate = destinationPath;
+          await writeFile(destinationPath, 'existing');
+        },
+      },
+    );
+
+    expect(attempts).toBe(2);
+    expect(result.rejected).toEqual([]);
+    expect(result.imported).toHaveLength(1);
+    expect(result.imported[0].fileName).not.toBe(basename(firstCandidate));
+    await expect(readFile(firstCandidate, 'utf8')).resolves.toBe('existing');
+    await expect(readFile(join(workspacePath, result.imported[0].localPath), 'utf8')).resolves.toBe('imported');
+  });
+
+  it('stops after the bounded number of publish collisions', async () => {
+    const { workspacePath, sources } = await fixture();
+    const source = join(sources, 'collision.txt');
+    await writeFile(source, 'imported');
+    let attempts = 0;
+
+    const result = await __testing.importTaskFiles(
+      { workspacePath, taskId: 'task-1', sourcePaths: [source] },
+      {
+        beforePublish: async ({ destinationPath }) => {
+          attempts += 1;
+          await writeFile(destinationPath, 'existing');
+        },
+      },
+    );
+
+    expect(attempts).toBe(10);
+    expect(result).toEqual({ imported: [], rejected: [{ fileName: 'collision.txt', reason: 'copy-failed' }] });
   });
 
   it('uses unique safe names without overwriting same-name inputs or existing inbox files', async () => {
@@ -270,7 +340,7 @@ describe('task file import', () => {
     expect(result).toEqual({ imported: [], rejected: [{ fileName: 'zero-identity.txt', reason: 'unavailable' }] });
   });
 
-  it('removes the destination when the source identity changes after copy', async () => {
+  it('does not publish when the source identity changes after copy', async () => {
     const { workspacePath, sources } = await fixture();
     const source = join(sources, 'changing.txt');
     await writeFile(source, 'before');
@@ -284,10 +354,11 @@ describe('task file import', () => {
       },
     );
     expect(result).toEqual({ imported: [], rejected: [{ fileName: 'changing.txt', reason: 'copy-failed' }] });
-    await expect(readdir(join(workspacePath, 'task-1', 'inbox'))).resolves.toEqual([]);
+    expect(listImportedTaskFiles(workspacePath, 'task-1')).toEqual([]);
+    await expectOnlyInvisibleStagingFiles(join(workspacePath, 'task-1', 'inbox'));
   });
 
-  it('rejects and cleans an in-place same-size source rewrite during copying', async () => {
+  it('rejects without publishing an in-place same-size source rewrite during copying', async () => {
     const { workspacePath, sources } = await fixture();
     const source = join(sources, 'rewritten.txt');
     await writeFile(source, 'before');
@@ -304,10 +375,11 @@ describe('task file import', () => {
     );
 
     expect(result).toEqual({ imported: [], rejected: [{ fileName: 'rewritten.txt', reason: 'copy-failed' }] });
-    await expect(readdir(join(workspacePath, 'task-1', 'inbox'))).resolves.toEqual([]);
+    expect(listImportedTaskFiles(workspacePath, 'task-1')).toEqual([]);
+    await expectOnlyInvisibleStagingFiles(join(workspacePath, 'task-1', 'inbox'));
   });
 
-  it('removes and rejects a copied destination that exceeds the size limit', async () => {
+  it('rejects without publishing a copied destination that exceeds the size limit', async () => {
     const { workspacePath, sources } = await fixture();
     const source = join(sources, 'growing.txt');
     await writeFile(source, 'small');
@@ -320,7 +392,27 @@ describe('task file import', () => {
       },
     );
     expect(result).toEqual({ imported: [], rejected: [{ fileName: 'growing.txt', reason: 'too-large' }] });
-    await expect(readdir(join(workspacePath, 'task-1', 'inbox'))).resolves.toEqual([]);
+    expect(listImportedTaskFiles(workspacePath, 'task-1')).toEqual([]);
+    await expectOnlyInvisibleStagingFiles(join(workspacePath, 'task-1', 'inbox'));
+  });
+
+  it('rejects a target whose timestamps change during hash verification', async () => {
+    const { workspacePath, sources } = await fixture();
+    const source = join(sources, 'target-stability.txt');
+    await writeFile(source, 'stable');
+
+    await expect(
+      __testing.importTaskFiles(
+        { workspacePath, taskId: 'task-1', sourcePaths: [source] },
+        {
+          beforeTargetHash: async ({ destinationPath }) => {
+            const changed = new Date('2020-01-01T00:00:00Z');
+            await utimes(destinationPath, changed, changed);
+          },
+        },
+      ),
+    ).rejects.toBeInstanceOf(ImportIntegrityError);
+    expect(listImportedTaskFiles(workspacePath, 'task-1')).toEqual([]);
   });
 
   it('rejects an inbox replacement after validation and before target open without writing outside', async () => {
@@ -337,6 +429,29 @@ describe('task file import', () => {
         { workspacePath, taskId: 'task-1', sourcePaths: [source] },
         {
           beforeTargetOpen: async () => {
+            await rename(inbox, heldInbox);
+            symlinkSync(external, inbox, 'junction');
+          },
+        },
+      ),
+    ).rejects.toBeInstanceOf(ImportIntegrityError);
+    await expect(readdir(external)).resolves.toEqual([]);
+  });
+
+  it('rejects an inbox replacement immediately before publish without exposing an external file', async () => {
+    const { root, workspacePath, sources } = await fixture();
+    const source = join(sources, 'source.txt');
+    const inbox = join(workspacePath, 'task-1', 'inbox');
+    const heldInbox = join(root, 'held-inbox');
+    const external = join(root, 'external');
+    await writeFile(source, 'safe');
+    await mkdir(external);
+
+    await expect(
+      __testing.importTaskFiles(
+        { workspacePath, taskId: 'task-1', sourcePaths: [source] },
+        {
+          beforePublish: async () => {
             await rename(inbox, heldInbox);
             symlinkSync(external, inbox, 'junction');
           },
@@ -464,6 +579,17 @@ describe('task file import', () => {
 });
 
 describe('imported task file listing', () => {
+  it('permanently ignores an incomplete staging file left by a crashed import', async () => {
+    const { workspacePath } = await fixture();
+    const inbox = join(workspacePath, 'task-1', 'inbox');
+    const staging = join(inbox, '.import-staging');
+    await mkdir(staging, { recursive: true });
+    await writeFile(join(staging, '.import-deadbeef.partial'), 'never published');
+    await writeFile(join(inbox, 'visible.txt'), 'published');
+
+    expect(listImportedTaskFiles(workspacePath, 'task-1').map((item) => item.fileName)).toEqual(['visible.txt']);
+  });
+
   it('returns only supported regular inbox files in stable newest-first order', async () => {
     const { workspacePath } = await fixture();
     const inbox = join(workspacePath, 'task-1', 'inbox');

@@ -1,9 +1,9 @@
 import type { ImportFileRejectionReason, ImportFilesResult, ImportedTaskFile } from '@clawwork/shared';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { Dir, Stats } from 'node:fs';
 import { existsSync, lstatSync, mkdirSync, opendirSync, realpathSync, statSync } from 'node:fs';
 import type { FileHandle } from 'node:fs/promises';
-import { lstat, open, realpath, stat, unlink } from 'node:fs/promises';
+import { link, lstat, open, realpath, stat } from 'node:fs/promises';
 import { basename, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { ensureTaskDir } from '../workspace/init.js';
 import { uniqueFileName } from '../workspace/safe-name.js';
@@ -77,7 +77,16 @@ export const IMPORT_FILE_EXTENSIONS = [
 ] as const;
 
 const IMPORT_EXTENSIONS = new Set<string>(IMPORT_FILE_EXTENSIONS.map((extension) => `.${extension}`));
-const SPECIAL_NAMES = new Set(['.env', '.gitignore', 'dockerfile', 'makefile']);
+const SPECIAL_NAMES = new Set([
+  '.env',
+  '.gitignore',
+  '.dockerfile',
+  '.editorconfig',
+  '.cmake',
+  '.makefile',
+  'dockerfile',
+  'makefile',
+]);
 const LEGACY_OFFICE_MIME: Record<string, string> = {
   '.doc': 'application/msword',
   '.xls': 'application/vnd.ms-excel',
@@ -93,6 +102,12 @@ interface TrustedInbox {
   realInbox: string;
   taskIdentity: Stats;
   inboxIdentity: Stats;
+}
+
+interface TrustedStaging {
+  stagingPath: string;
+  realStaging: string;
+  stagingIdentity: Stats;
 }
 
 interface SourceSnapshot {
@@ -111,6 +126,8 @@ interface ImportTestHooks {
   beforeTargetOpen?: (context: ImportTestContext) => void | Promise<void>;
   afterTargetOpen?: (context: ImportTestContext) => void | Promise<void>;
   afterChunkWritten?: (context: ImportTestContext) => void | Promise<void>;
+  beforeTargetHash?: (context: ImportTestContext) => void | Promise<void>;
+  beforePublish?: (context: ImportTestContext) => void | Promise<void>;
   beforeCleanup?: (context: ImportTestContext) => void | Promise<void>;
 }
 
@@ -150,6 +167,14 @@ function sameSourceSnapshot(left: Stats, right: Stats): boolean {
     sameTimestamp(left.mtimeMs, right.mtimeMs) &&
     sameTimestamp(left.ctimeMs, right.ctimeMs)
   );
+}
+
+function sameTargetSnapshot(left: Stats, right: Stats): boolean {
+  return sameSourceSnapshot(left, right);
+}
+
+function samePublishedTarget(left: Stats, right: Stats): boolean {
+  return sameStrongIdentity(left, right) && left.size === right.size && sameTimestamp(left.mtimeMs, right.mtimeMs);
 }
 
 export function validateImportTaskId(value: unknown): string {
@@ -224,6 +249,51 @@ function verifyTrustedInbox(trusted: TrustedInbox): void {
     }
   } catch {
     throw new ImportIntegrityError('trusted task inbox changed');
+  }
+}
+
+function resolveTrustedStaging(trusted: TrustedInbox): TrustedStaging {
+  verifyTrustedInbox(trusted);
+  const stagingPath = join(trusted.inboxPath, '.import-staging');
+  if (!existsSync(stagingPath)) {
+    try {
+      mkdirSync(stagingPath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+    }
+  }
+  try {
+    const stagingIdentity = lstatSync(stagingPath);
+    const realStaging = realpathSync.native(stagingPath);
+    if (
+      stagingIdentity.isSymbolicLink() ||
+      !stagingIdentity.isDirectory() ||
+      !hasStrongIdentity(stagingIdentity) ||
+      !isWithin(trusted.realInbox, realStaging) ||
+      !samePath(realStaging, stagingPath)
+    ) {
+      throw new Error();
+    }
+    return { stagingPath, realStaging, stagingIdentity };
+  } catch {
+    throw new ImportIntegrityError('trusted import staging directory is unavailable');
+  }
+}
+
+function verifyTrustedStaging(trusted: TrustedInbox, staging: TrustedStaging): void {
+  verifyTrustedInbox(trusted);
+  try {
+    const stats = lstatSync(staging.stagingPath);
+    if (
+      stats.isSymbolicLink() ||
+      !stats.isDirectory() ||
+      !sameStrongIdentity(stats, staging.stagingIdentity) ||
+      !samePath(realpathSync.native(staging.stagingPath), staging.realStaging)
+    ) {
+      throw new Error();
+    }
+  } catch {
+    throw new ImportIntegrityError('trusted import staging directory changed');
   }
 }
 
@@ -342,32 +412,6 @@ async function verifyTarget(
   return handleStats;
 }
 
-async function cleanupCreatedTarget(
-  trusted: TrustedInbox,
-  destinationPath: string,
-  targetIdentity: Stats,
-): Promise<void> {
-  try {
-    verifyTrustedInbox(trusted);
-    const linkStats = await lstat(destinationPath);
-    const canonicalPath = await realpath(destinationPath);
-    const canonicalStats = await stat(canonicalPath);
-    if (
-      linkStats.isSymbolicLink() ||
-      !linkStats.isFile() ||
-      !sameStrongIdentity(targetIdentity, linkStats) ||
-      !sameStrongIdentity(targetIdentity, canonicalStats) ||
-      !isWithin(trusted.realInbox, canonicalPath) ||
-      !samePath(canonicalPath, destinationPath)
-    ) {
-      throw new Error();
-    }
-    await unlink(destinationPath);
-  } catch {
-    throw new ImportIntegrityError('unable to safely clean imported file');
-  }
-}
-
 async function hashTarget(handle: FileHandle, expectedBytes: number): Promise<string> {
   const hash = createHash('sha256');
   const buffer = Buffer.allocUnsafe(COPY_CHUNK_SIZE);
@@ -379,6 +423,81 @@ async function hashTarget(handle: FileHandle, expectedBytes: number): Promise<st
     position += bytesRead;
   }
   return hash.digest('hex');
+}
+
+async function publishTarget(
+  sourcePath: string,
+  stagingPath: string,
+  trusted: TrustedInbox,
+  staging: TrustedStaging,
+  expectedTarget: Stats,
+  hooks: ImportTestHooks,
+): Promise<string> {
+  let stagingHandle: FileHandle | null = null;
+  let publishedName: string | null = null;
+  let failure: unknown = null;
+  try {
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const destinationName = uniqueFileName(sourceFileName(sourcePath));
+      const destinationPath = join(trusted.inboxPath, destinationName);
+      const context = { sourcePath, destinationPath, inboxPath: trusted.inboxPath };
+      await hooks.beforePublish?.(context);
+      verifyTrustedStaging(trusted, staging);
+      stagingHandle = await open(stagingPath, 'r');
+      let collision = false;
+      try {
+        const handleStats = await stagingHandle.stat();
+        const stagingStats = await lstat(stagingPath);
+        const realStagedPath = await realpath(stagingPath);
+        const canonicalStats = await stat(realStagedPath);
+        if (
+          stagingStats.isSymbolicLink() ||
+          !stagingStats.isFile() ||
+          !sameTargetSnapshot(expectedTarget, handleStats) ||
+          !sameTargetSnapshot(expectedTarget, stagingStats) ||
+          !sameTargetSnapshot(expectedTarget, canonicalStats) ||
+          !isWithin(staging.realStaging, realStagedPath) ||
+          !samePath(realStagedPath, stagingPath)
+        ) {
+          throw new ImportIntegrityError('staged import identity changed before publish');
+        }
+        await link(stagingPath, destinationPath);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'EEXIST') collision = true;
+        else throw error;
+      }
+      const attemptCloseError = await closeHandle(stagingHandle);
+      stagingHandle = null;
+      if (attemptCloseError) throw new ImportIntegrityError('unable to close staged import after publish attempt');
+      if (collision) continue;
+      const publishedStats = await lstat(destinationPath);
+      const publishedRealPath = await realpath(destinationPath);
+      const publishedCanonicalStats = await stat(publishedRealPath);
+      if (
+        publishedStats.isSymbolicLink() ||
+        !publishedStats.isFile() ||
+        !samePublishedTarget(expectedTarget, publishedStats) ||
+        !samePublishedTarget(expectedTarget, publishedCanonicalStats) ||
+        !isWithin(trusted.realInbox, publishedRealPath) ||
+        !samePath(publishedRealPath, destinationPath)
+      ) {
+        throw new ImportIntegrityError('published import identity changed');
+      }
+      publishedName = destinationName;
+      break;
+    }
+  } catch (error) {
+    failure = error;
+  }
+  const closeError = await closeHandle(stagingHandle);
+  if (closeError) throw new ImportIntegrityError('unable to close staged import after publish');
+  if (failure) throw failure;
+  if (!publishedName) {
+    // A collision can only arrive from another writer after the generated name was chosen.
+    // Retry is bounded so an adversarial writer cannot keep the main process in an infinite loop.
+    throw new ImportItemError('copy-failed');
+  }
+  return publishedName;
 }
 
 async function writeAll(handle: FileHandle, chunk: Buffer, position: number): Promise<void> {
@@ -393,7 +512,7 @@ async function writeAll(handle: FileHandle, chunk: Buffer, position: number): Pr
 async function copyOneFile(
   sourcePath: string,
   trusted: TrustedInbox,
-  fileName: string,
+  staging: TrustedStaging,
   hooks: ImportTestHooks,
 ): Promise<{ destinationName: string; size: number }> {
   let sourceHandle: FileHandle | null = null;
@@ -410,11 +529,10 @@ async function copyOneFile(
     const source = await sourceSnapshot(sourcePath, sourceHandle);
     if (source.identity.size > MAX_FILE_SIZE) throw new ImportItemError('too-large');
     verifyTrustedInbox(trusted);
-    const destinationName = uniqueFileName(fileName);
-    destinationPath = join(trusted.inboxPath, destinationName);
+    destinationPath = join(staging.stagingPath, `.import-${randomUUID()}.partial`);
     context = { sourcePath, destinationPath, inboxPath: trusted.inboxPath };
     await hooks.beforeTargetOpen?.(context);
-    verifyTrustedInbox(trusted);
+    verifyTrustedStaging(trusted, staging);
     targetHandle = await open(destinationPath, 'wx+');
     created = true;
     targetIdentity = await targetHandle.stat();
@@ -458,10 +576,20 @@ async function copyOneFile(
     if (currentTarget.size > MAX_FILE_SIZE || currentTarget.size !== bytesWritten) {
       throw new ImportItemError(currentTarget.size > MAX_FILE_SIZE ? 'too-large' : 'copy-failed');
     }
+    await hooks.beforeTargetHash?.(context);
     const targetHash = await hashTarget(targetHandle, bytesWritten);
     if (targetHash !== readHash.digest('hex')) throw new ImportIntegrityError('import destination hash mismatch');
     const finalTarget = await verifyTarget(trusted, destinationPath, targetIdentity, targetHandle);
-    if (finalTarget.size !== bytesWritten) throw new ImportIntegrityError('import destination size changed');
+    if (!sameTargetSnapshot(currentTarget, finalTarget) || finalTarget.size !== bytesWritten) {
+      throw new ImportIntegrityError('import destination changed during verification');
+    }
+    const targetCloseBeforePublish = await closeHandle(targetHandle);
+    targetHandle = null;
+    if (targetCloseBeforePublish) throw new ImportIntegrityError('unable to close staged import before publish');
+    const sourceCloseBeforePublish = await closeHandle(sourceHandle);
+    sourceHandle = null;
+    if (sourceCloseBeforePublish) throw new ImportIntegrityError('unable to close source before publish');
+    const destinationName = await publishTarget(sourcePath, destinationPath, trusted, staging, finalTarget, hooks);
     output = { destinationName, size: finalTarget.size };
   } catch (error) {
     failure = error;
@@ -481,7 +609,9 @@ async function copyOneFile(
       } catch {
         throw new ImportIntegrityError('unable to safely prepare imported file cleanup');
       }
-      await cleanupCreatedTarget(trusted, destinationPath, targetIdentity);
+      // Node has no directory-relative unlink. Keep the permanently hidden staging entry instead of
+      // introducing a verify-then-unlink race against a path that a same-privilege process can replace.
+      verifyTrustedStaging(trusted, staging);
     }
     if (failure instanceof ImportIntegrityError || failure instanceof ImportItemError) throw failure;
     throw new ImportItemError(
@@ -498,6 +628,7 @@ async function importTaskFilesImpl(
   const taskId = validateImportTaskId(input.taskId);
   const inbox = trustedInbox(input.workspacePath, taskId, true);
   if (!inbox) throw new Error('trusted task inbox is unavailable');
+  const staging = resolveTrustedStaging(inbox);
   const result: ImportFilesResult = { imported: [], rejected: [] };
   for (const sourcePath of input.sourcePaths) {
     const fileName = sourceFileName(sourcePath);
@@ -507,7 +638,7 @@ async function importTaskFilesImpl(
       continue;
     }
     try {
-      const copied = await copyOneFile(sourcePath, inbox, fileName, hooks);
+      const copied = await copyOneFile(sourcePath, inbox, staging, hooks);
       result.imported.push({
         fileName: copied.destinationName,
         localPath: localPath(taskId, copied.destinationName),
