@@ -36,9 +36,11 @@ export function useTaskMaterials(taskIdOverride?: string | null) {
   const sourceLoadSequence = useRef(0);
   const mountedRef = useRef(true);
   const identityRef = useRef<string | null>(requestedTaskId ?? null);
+  const previousRequestedTaskIdRef = useRef<string | null>(requestedTaskId ?? null);
   const generationRef = useRef(0);
-  if (identityRef.current !== (requestedTaskId ?? null)) {
-    identityRef.current = requestedTaskId ?? null;
+  if (previousRequestedTaskIdRef.current !== (requestedTaskId ?? null)) {
+    previousRequestedTaskIdRef.current = requestedTaskId ?? null;
+    identityRef.current = previousRequestedTaskIdRef.current;
     generationRef.current += 1;
   }
 
@@ -102,10 +104,7 @@ export function useTaskMaterials(taskIdOverride?: string | null) {
       });
   }, [requestedTaskId, t, isCurrent]);
 
-  const resolveCurrentTaskId = useCallback(
-    () => identityRef.current ?? useTaskStore.getState().activeTaskId ?? taskId,
-    [taskId],
-  );
+  const resolveCurrentTaskId = useCallback(() => identityRef.current, []);
 
   const ensureTaskId = useCallback(() => {
     const current = resolveCurrentTaskId();

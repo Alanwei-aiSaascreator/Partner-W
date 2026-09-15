@@ -263,11 +263,7 @@ export function useChatSend(opts: UseChatSendOpts) {
         return;
       }
       const materialCount = pendingAttachments.length + selectedImportedFiles.length + selectedLocalFiles.length;
-      const materialBytes = [
-        ...pendingAttachments.map((item) => item.file.size),
-        ...selectedImportedFiles.map((item) => item.size),
-        ...selectedLocalFiles.map((item) => item.size),
-      ].reduce((sum, size) => sum + size, 0);
+      let materialBytes = pendingAttachments.reduce((sum, item) => sum + item.file.size, 0);
       if (materialCount > MAX_SEND_MATERIAL_COUNT || materialBytes > MAX_SEND_MATERIAL_BYTES) {
         toast.error(t('chatInput.materialLimitExceeded', { count: MAX_SEND_MATERIAL_COUNT, size: 25 }));
         return;
@@ -312,12 +308,17 @@ export function useChatSend(opts: UseChatSendOpts) {
         try {
           const read = await window.clawwork.readInboxFileForSend(file.localPath);
           if (read.ok && read.result) {
+            materialBytes += read.result.byteLength;
+            if (materialBytes > MAX_SEND_MATERIAL_BYTES) {
+              toast.error(t('chatInput.materialLimitExceeded', { count: MAX_SEND_MATERIAL_COUNT, size: 25 }));
+              return;
+            }
             importedAttachmentRecords.push({
               fileName: file.fileName,
               mimeType: file.mimeType || 'application/octet-stream',
               base64: read.result.content,
               localPath: file.localPath,
-              size: file.size,
+              size: read.result.byteLength,
             });
             continue;
           }
@@ -428,10 +429,15 @@ export function useChatSend(opts: UseChatSendOpts) {
             res: Awaited<ReturnType<typeof window.clawwork.readTaskContextFileForSend>>;
           }> = [];
           for (const file of localFileMentions) {
-            readResults.push({
-              file,
-              res: await window.clawwork.readTaskContextFileForSend(task.id, file.sourceId, file.relativePath),
-            });
+            const res = await window.clawwork.readTaskContextFileForSend(task.id, file.sourceId, file.relativePath);
+            if (res.ok && res.result) {
+              materialBytes += res.result.byteLength;
+              if (materialBytes > MAX_SEND_MATERIAL_BYTES) {
+                toast.error(t('chatInput.materialLimitExceeded', { count: MAX_SEND_MATERIAL_COUNT, size: 25 }));
+                return;
+              }
+            }
+            readResults.push({ file, res });
           }
 
           const unavailable = readResults.find(({ res }) => !res.ok || !res.result);

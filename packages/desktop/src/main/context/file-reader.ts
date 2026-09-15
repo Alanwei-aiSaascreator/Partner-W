@@ -148,8 +148,13 @@ function readContextFileInternal(
     const finalTarget = validateTarget(selected.canonicalRoot, fdRealPath);
     if (!sameIdentity(openedIdentity, finalTarget.identity, true)) throw new Error('context file changed');
     const finalOpenedIdentity = fstatSync(fd);
-    if (maxBytes !== undefined && (finalOpenedIdentity.size > maxBytes || finalTarget.identity.size > maxBytes)) {
-      throw new Error('context file is too large to send');
+    if (maxBytes !== undefined) {
+      if (finalOpenedIdentity.size > maxBytes || finalTarget.identity.size > maxBytes) {
+        throw new Error('context file is too large to send');
+      }
+      if (finalOpenedIdentity.size !== openedIdentity.size || finalTarget.identity.size !== openedIdentity.size) {
+        throw new Error('context file changed');
+      }
     }
     return result;
   } finally {
@@ -161,8 +166,12 @@ export function readContextFile(absolutePath: string, contextFolders: string[]):
   return readContextFileInternal(absolutePath, contextFolders);
 }
 
-export function readContextFileForSend(absolutePath: string, contextFolders: string[]): FileReadResult {
-  return readContextFileInternal(absolutePath, contextFolders, undefined, MAX_SEND_FILE_BYTES);
+export function readContextFileForSend(
+  absolutePath: string,
+  contextFolders: string[],
+): FileReadResult & { byteLength: number } {
+  const result = readContextFileInternal(absolutePath, contextFolders, undefined, MAX_SEND_FILE_BYTES);
+  return { ...result, byteLength: result.size };
 }
 
 export const __testing = Object.freeze({

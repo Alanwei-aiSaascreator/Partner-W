@@ -383,7 +383,9 @@ export interface ClawWorkAPI {
     base64: string;
   }) => Promise<IpcResult<{ localPath: string }>>;
   readInboxFile: (localPath: string) => Promise<IpcResult<{ content: string; encoding: 'base64' }>>;
-  readInboxFileForSend: (localPath: string) => Promise<IpcResult<{ content: string; encoding: 'base64' }>>;
+  readInboxFileForSend: (
+    localPath: string,
+  ) => Promise<IpcResult<{ content: string; encoding: 'base64'; byteLength: number }>>;
   openInboxFile: (localPath: string) => Promise<IpcResult>;
   showInboxInFolder: (localPath: string) => Promise<IpcResult>;
   readMediaFile: (sourcePath: string) => Promise<IpcResult<{ content: string; encoding: 'base64' }>>;
@@ -557,7 +559,7 @@ export interface ClawWorkAPI {
     taskId: string,
     sourceId: string,
     relativePath: string,
-  ) => Promise<IpcResult<FileReadResult>>;
+  ) => Promise<IpcResult<FileReadResult & { byteLength: number }>>;
 
   quickLaunchSubmit: (message: string) => void;
   quickLaunchHide: () => void;

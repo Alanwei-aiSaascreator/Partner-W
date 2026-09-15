@@ -55,13 +55,13 @@ describe('task context source IPC handlers', () => {
   });
 
   it('registers a fixed-limit task-scoped source read for sending', () => {
-    readGrantedFileForSendMock.mockReturnValue({ content: 'eA==', tier: 'image' });
+    readGrantedFileForSendMock.mockReturnValue({ content: 'eA==', tier: 'image', byteLength: 1 });
     expect(
       handleMap.get('context:read-source-file-for-send')?.(
         {},
         { taskId: 'task-1', sourceId: 'source-1', relativePath: 'image.png' },
       ),
-    ).toEqual({ ok: true, result: { content: 'eA==', tier: 'image' } });
+    ).toEqual({ ok: true, result: { content: 'eA==', tier: 'image', byteLength: 1 } });
     expect(readGrantedFileForSendMock).toHaveBeenCalledWith('task-1', 'source-1', 'image.png');
   });
 

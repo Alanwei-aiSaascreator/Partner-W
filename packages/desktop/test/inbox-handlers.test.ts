@@ -4,6 +4,7 @@ const handlers = new Map<string, (...args: unknown[]) => unknown>();
 const openPathMock = vi.fn();
 const showItemInFolderMock = vi.fn();
 const readInboxFileMock = vi.fn();
+const readInboxFileForSendMock = vi.fn();
 const resolveInboxPathMock = vi.fn();
 
 vi.mock('electron', () => ({
@@ -16,6 +17,7 @@ vi.mock('electron', () => ({
 vi.mock('../src/main/inbox/save.js', () => ({ saveInboxAttachment: vi.fn() }));
 vi.mock('../src/main/inbox/resolve.js', () => ({
   readInboxFile: readInboxFileMock,
+  readInboxFileForSend: readInboxFileForSendMock,
   resolveInboxPath: resolveInboxPathMock,
 }));
 vi.mock('../src/main/workspace/config.js', () => ({ getWorkspacePath: () => 'C:\\workspace' }));
@@ -25,6 +27,7 @@ describe('inbox file IPC handlers', () => {
     vi.clearAllMocks();
     handlers.clear();
     readInboxFileMock.mockResolvedValue(null);
+    readInboxFileForSendMock.mockResolvedValue(null);
     resolveInboxPathMock.mockResolvedValue(null);
     const { registerInboxHandlers } = await import('../src/main/ipc/inbox-handlers.js');
     registerInboxHandlers();
@@ -68,14 +71,14 @@ describe('inbox file IPC handlers', () => {
   });
 
   it('uses a fixed 25MB main-process limit for renderer send reads', async () => {
-    readInboxFileMock.mockResolvedValue('aGVsbG8=');
+    readInboxFileForSendMock.mockResolvedValue({ content: 'aGVsbG8=', byteLength: 5 });
 
     await expect(
       handlers.get('inbox:read-file-for-send')?.({}, { localPath: 'task-1/inbox/note.txt' }),
     ).resolves.toEqual({
       ok: true,
-      result: { content: 'aGVsbG8=', encoding: 'base64' },
+      result: { content: 'aGVsbG8=', byteLength: 5, encoding: 'base64' },
     });
-    expect(readInboxFileMock).toHaveBeenCalledWith('C:\\workspace', 'task-1/inbox/note.txt', 25 * 1024 * 1024);
+    expect(readInboxFileForSendMock).toHaveBeenCalledWith('C:\\workspace', 'task-1/inbox/note.txt', 25 * 1024 * 1024);
   });
 });

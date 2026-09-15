@@ -211,7 +211,14 @@ describe('conductor initialization - catalog fallback', () => {
       readInboxFileForSend: vi.fn(async () => ({ ok: true, result: { content: 'cGRm', encoding: 'base64' } })),
       readTaskContextFileForSend: vi.fn(async () => ({
         ok: true,
-        result: { content: 'aW1hZ2U=', mimeType: 'image/png', size: 5, truncated: false, tier: 'image' },
+        result: {
+          content: 'aW1hZ2U=',
+          mimeType: 'image/png',
+          size: 5,
+          byteLength: 5,
+          truncated: false,
+          tier: 'image',
+        },
       })),
     };
     useCommercialStore.setState({

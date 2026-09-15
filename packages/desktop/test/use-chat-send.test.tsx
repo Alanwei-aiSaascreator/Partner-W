@@ -160,7 +160,7 @@ const folderMaterial: TaskContextFile = {
   fileName: 'notes.txt',
   relativePath: 'notes.txt',
   mimeType: 'text/plain',
-  size: 5,
+  size: 1,
   mtime: 1,
   tier: 'text',
 };
@@ -216,10 +216,13 @@ describe('useChatSend abort flow', () => {
     mocks.taskState.tasks = [mocks.taskState.tasks.find((task) => task.id === 'task-1')!];
     Object.assign(window, {
       clawwork: {
-        readInboxFileForSend: vi.fn(async () => ({ ok: true, result: { content: 'cGRm', encoding: 'base64' } })),
+        readInboxFileForSend: vi.fn(async () => ({
+          ok: true,
+          result: { content: 'cGRm', encoding: 'base64', byteLength: 3 },
+        })),
         readTaskContextFileForSend: vi.fn(async () => ({
           ok: true,
-          result: { content: 'notes', mimeType: 'text/plain', size: 5, truncated: false, tier: 'text' },
+          result: { content: 'notes', mimeType: 'text/plain', size: 5, byteLength: 5, truncated: false, tier: 'text' },
         })),
       },
     });
@@ -381,7 +384,14 @@ describe('useChatSend abort flow', () => {
   it('forwards a task-scoped binary folder file as a gateway attachment', async () => {
     vi.mocked(window.clawwork.readTaskContextFileForSend).mockResolvedValueOnce({
       ok: true,
-      result: { content: 'aW1hZ2U=', mimeType: 'image/png', size: 5, truncated: false, tier: 'image' },
+      result: {
+        content: 'aW1hZ2U=',
+        mimeType: 'image/png',
+        size: 5,
+        byteLength: 5,
+        truncated: false,
+        tier: 'image',
+      },
     });
     const { container, unmount } = render(<MaterialHarness clearImported={vi.fn()} clearFolder={vi.fn()} />);
 
@@ -441,16 +451,23 @@ describe('useChatSend abort flow', () => {
     unmount();
   });
 
-  it('rejects cumulative material bytes above twenty-five megabytes before reading', async () => {
-    const importedMaterials = [
-      { ...importedMaterial, size: 13 * 1024 * 1024 },
-      {
-        ...importedMaterial,
-        fileName: 'second.pdf',
-        localPath: 'tasks/task-1/inbox/second.pdf',
-        size: 13 * 1024 * 1024,
+  it('rejects cumulative material bytes using main-process byte lengths instead of stale list metadata', async () => {
+    const importedMaterials = [{ ...importedMaterial, size: 1 }];
+    vi.mocked(window.clawwork.readInboxFileForSend).mockResolvedValue({
+      ok: true,
+      result: { content: 'cGRm', encoding: 'base64', byteLength: 20 * 1024 * 1024 },
+    } as never);
+    vi.mocked(window.clawwork.readTaskContextFileForSend).mockResolvedValue({
+      ok: true,
+      result: {
+        content: 'notes',
+        mimeType: 'text/plain',
+        size: 20 * 1024 * 1024,
+        byteLength: 20 * 1024 * 1024,
+        truncated: true,
+        tier: 'text',
       },
-    ];
+    });
     const { container, unmount } = render(
       <MaterialHarness clearImported={vi.fn()} clearFolder={vi.fn()} importedMaterials={importedMaterials} />,
     );
@@ -458,8 +475,10 @@ describe('useChatSend abort flow', () => {
       (container.querySelector('button') as HTMLButtonElement).click();
       await Promise.resolve();
     });
-    expect(window.clawwork.readInboxFileForSend).not.toHaveBeenCalled();
+    expect(window.clawwork.readInboxFileForSend).toHaveBeenCalledTimes(1);
+    expect(window.clawwork.readTaskContextFileForSend).toHaveBeenCalledTimes(1);
     expect(mocks.send).not.toHaveBeenCalled();
+    expect((container.querySelector('textarea') as HTMLTextAreaElement).value).toBe('summarize');
     unmount();
   });
 

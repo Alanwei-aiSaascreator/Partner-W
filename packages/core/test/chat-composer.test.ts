@@ -44,6 +44,11 @@ function setup(options: { ensemble?: boolean } = {}) {
   const resetSession = vi.fn().mockResolvedValue({ ok: true });
   const updateTaskMetadata = vi.fn();
   const persistMessage = vi.fn().mockResolvedValue(undefined);
+  const processingBySession = new Set<string>();
+  const setProcessing = vi.fn((sessionKey: string, processing: boolean) => {
+    if (processing) processingBySession.add(sessionKey);
+    else processingBySession.delete(sessionKey);
+  });
   const task = {
     id: TASK_ID,
     gatewayId: 'gw-1',
@@ -82,7 +87,7 @@ function setup(options: { ensemble?: boolean } = {}) {
     getMessageStore: () => ({
       addMessage,
       removeMessage,
-      setProcessing: vi.fn(),
+      setProcessing,
       clearMessages: vi.fn(),
     }),
     persistMessage,
@@ -110,6 +115,8 @@ function setup(options: { ensemble?: boolean } = {}) {
     updateTaskMetadata,
     persistMessage,
     removeMessage,
+    processingBySession,
+    setProcessing,
     onError: deps.onError,
   };
 }
@@ -195,10 +202,12 @@ describe('chat-composer', () => {
     expect(persistMessage).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps and persists the user message when one ensemble target accepts and one fails', async () => {
+  it('keeps processing only for accepted ensemble targets and clears it when the accepted worker responds', async () => {
     vi.useFakeTimers();
-    const { composer, sendMessage, persistMessage, removeMessage, addMessage, onError } = setup({ ensemble: true });
-    sendMessage.mockResolvedValueOnce({ ok: true }).mockResolvedValueOnce({ ok: false, error: 'worker offline' });
+    const { composer, sendMessage, persistMessage, removeMessage, addMessage, onError, processingBySession } = setup({
+      ensemble: true,
+    });
+    sendMessage.mockResolvedValueOnce({ ok: false, error: 'conductor offline' }).mockResolvedValueOnce({ ok: true });
 
     const result = await composer.send(TASK_ID, {
       content: 'team request',
@@ -207,19 +216,21 @@ describe('chat-composer', () => {
     });
 
     expect(result).toEqual(
-      expect.objectContaining({ ok: true, partialFailure: expect.stringContaining('worker offline') }),
+      expect.objectContaining({ ok: true, partialFailure: expect.stringContaining('conductor offline') }),
     );
     expect(removeMessage).not.toHaveBeenCalled();
     expect(persistMessage).toHaveBeenCalledTimes(1);
     expect(addMessage.mock.invocationCallOrder[0]).toBeLessThan(sendMessage.mock.invocationCallOrder[0]);
-    composer.notifyResponse(`${SESSION_KEY}:conductor`);
+    expect([...processingBySession]).toEqual([`${SESSION_KEY}:worker`]);
+    composer.notifyResponse(`${SESSION_KEY}:worker`);
+    expect([...processingBySession]).toEqual([]);
     await vi.advanceTimersByTimeAsync(SEND_TIMEOUT_MS);
     expect(addMessage.mock.calls.filter((call) => call[1] === 'system')).toHaveLength(0);
     expect(onError).not.toHaveBeenCalled();
   });
 
   it('rolls back a deferred ensemble message only when every target fails', async () => {
-    const { composer, sendMessage, persistMessage, removeMessage } = setup({ ensemble: true });
+    const { composer, sendMessage, persistMessage, removeMessage, processingBySession } = setup({ ensemble: true });
     sendMessage
       .mockResolvedValueOnce({ ok: false, error: 'conductor offline' })
       .mockRejectedValueOnce(new Error('worker offline'));
@@ -233,6 +244,17 @@ describe('chat-composer', () => {
     expect(result.ok).toBe(false);
     expect(removeMessage).toHaveBeenCalledWith(TASK_ID, 'm1');
     expect(persistMessage).not.toHaveBeenCalled();
+    expect([...processingBySession]).toEqual([]);
+  });
+
+  it('keeps ordinary single-target processing until that session responds', async () => {
+    const { composer, processingBySession } = setup();
+
+    expect((await composer.send(TASK_ID, { content: 'hello' })).ok).toBe(true);
+    expect([...processingBySession]).toEqual([SESSION_KEY]);
+
+    composer.notifyResponse(SESSION_KEY);
+    expect([...processingBySession]).toEqual([]);
   });
 });
 

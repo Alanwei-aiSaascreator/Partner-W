@@ -224,6 +224,28 @@ describe('useTaskMaterials', () => {
     view.unmount();
   });
 
+  it.each(['import', 'grant'] as const)(
+    'commits the pending task for an immediate %s action when task A changes to null before effects run',
+    async (immediateAction) => {
+      mocks.listImportedTaskFiles.mockResolvedValue({ ok: true, result: [] });
+      mocks.listTaskContextSources.mockResolvedValue({ ok: true, result: [] });
+      mocks.importTaskFiles.mockResolvedValue({ ok: true, result: { imported: [], rejected: [] } });
+      mocks.grantTaskContextFolder.mockResolvedValue({ ok: true, result: null });
+      const view = render(<Harness taskId="task-1" />);
+      await act(async () => void (await Promise.resolve()));
+
+      mocks.activeTaskId = null;
+      view.rerender(<Harness taskId={null} immediateAction={immediateAction} />);
+      await act(async () => void (await Promise.resolve()));
+
+      expect(mocks.commitPendingTask).toHaveBeenCalledTimes(1);
+      const action = immediateAction === 'import' ? mocks.importTaskFiles : mocks.grantTaskContextFolder;
+      expect(action).toHaveBeenCalledWith('task-created');
+      expect(action).not.toHaveBeenCalledWith('task-1');
+      view.unmount();
+    },
+  );
+
   it('ignores an import that resolves after switching to another task', async () => {
     let resolveImport!: (value: unknown) => void;
     mocks.listImportedTaskFiles.mockResolvedValue({ ok: true, result: [] });

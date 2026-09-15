@@ -87,11 +87,16 @@ export async function resolveInboxPath(workspacePath: string, localPath: string)
   return resolveValidatedPath(info, info.full, true);
 }
 
-export async function readInboxFile(
+interface InboxFileReadResult {
+  content: string;
+  byteLength: number;
+}
+
+async function readInboxFileInternal(
   workspacePath: string,
   localPath: string,
   maxBytes?: number,
-): Promise<string | null> {
+): Promise<InboxFileReadResult | null> {
   const info = parseInboxPath(workspacePath, localPath);
   if (!info) return null;
   const handle = await open(info.full, 'r').catch(() => null);
@@ -122,20 +127,49 @@ export async function readInboxFile(
       !finalPathStats.isFile() ||
       !sameStrongIdentity(openedStats, finalHandleStats) ||
       !sameStrongIdentity(openedStats, finalPathStats) ||
-      (maxBytes !== undefined && (finalHandleStats.size > maxBytes || finalPathStats.size > maxBytes))
+      (maxBytes !== undefined &&
+        (finalHandleStats.size > maxBytes ||
+          finalPathStats.size > maxBytes ||
+          finalHandleStats.size !== openedStats.size ||
+          finalPathStats.size !== openedStats.size))
     ) {
       return null;
     }
-    if (maxBytes === undefined) return await handle.readFile({ encoding: 'base64' });
+    if (maxBytes === undefined) {
+      return { content: await handle.readFile({ encoding: 'base64' }), byteLength: finalHandleStats.size };
+    }
 
-    const buffer = Buffer.alloc(maxBytes + 1);
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
-    const afterReadStats = await handle.stat();
-    if (bytesRead > maxBytes || afterReadStats.size > maxBytes || !sameStrongIdentity(openedStats, afterReadStats)) {
+    const expectedBytes = openedStats.size;
+    const buffer = Buffer.alloc(expectedBytes);
+    let totalBytesRead = 0;
+    while (totalBytesRead < expectedBytes) {
+      const { bytesRead } = await handle.read(buffer, totalBytesRead, expectedBytes - totalBytesRead, totalBytesRead);
+      if (bytesRead <= 0) return null;
+      totalBytesRead += bytesRead;
+    }
+    const [afterReadStats, afterReadPathStats] = await Promise.all([handle.stat(), stat(realTarget)]);
+    if (
+      afterReadStats.size !== expectedBytes ||
+      afterReadPathStats.size !== expectedBytes ||
+      !sameStrongIdentity(openedStats, afterReadStats) ||
+      !sameStrongIdentity(openedStats, afterReadPathStats)
+    ) {
       return null;
     }
-    return buffer.subarray(0, bytesRead).toString('base64');
+    return { content: buffer.toString('base64'), byteLength: totalBytesRead };
   } finally {
     await handle.close();
   }
+}
+
+export async function readInboxFile(workspacePath: string, localPath: string): Promise<string | null> {
+  return (await readInboxFileInternal(workspacePath, localPath))?.content ?? null;
+}
+
+export async function readInboxFileForSend(
+  workspacePath: string,
+  localPath: string,
+  maxBytes: number,
+): Promise<InboxFileReadResult | null> {
+  return readInboxFileInternal(workspacePath, localPath, maxBytes);
 }

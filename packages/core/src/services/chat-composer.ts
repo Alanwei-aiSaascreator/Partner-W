@@ -195,6 +195,7 @@ export function createChatComposer(deps: ChatComposerDeps) {
   }
 
   function notifyResponse(sessionKey: string): void {
+    deps.getMessageStore().setProcessing(sessionKey, false);
     const taskId = sessionToTask.get(sessionKey);
     if (taskId) clearTimer(taskId);
   }
@@ -219,7 +220,7 @@ export function createChatComposer(deps: ChatComposerDeps) {
     const rollbackPendingUserMessage = () => {
       if (options.deferUserMessageUntilSent) store.removeMessage(task.id, pendingUserMessage.id);
     };
-    store.setProcessing(task.sessionKey, true);
+    let processingSessionKeys: string[] = [];
 
     if (!task.title && options.titleHint) {
       const title = options.titleHint.slice(0, 30).replace(/\n/g, ' ').trim();
@@ -230,6 +231,8 @@ export function createChatComposer(deps: ChatComposerDeps) {
       const room = task.ensemble ? deps.getRoomState?.(task.id) : undefined;
       const mentionTargets = resolveMentionTargets(room, options.mentions, options.mentionAll);
       const isMentionSend = mentionTargets.length > 0;
+      processingSessionKeys = isMentionSend ? mentionTargets : [task.sessionKey];
+      for (const sessionKey of processingSessionKeys) store.setProcessing(sessionKey, true);
       let acceptedMentionTargets = mentionTargets;
       let partialFailure: string | undefined;
 
@@ -296,9 +299,11 @@ export function createChatComposer(deps: ChatComposerDeps) {
           if (result.value && !result.value.ok) return [result.value.error ?? deps.translate('errors.sendFailed')];
           return [];
         });
+        for (const sessionKey of mentionTargets) {
+          if (!acceptedMentionTargets.includes(sessionKey)) store.setProcessing(sessionKey, false);
+        }
         if (acceptedMentionTargets.length === 0) {
           rollbackPendingUserMessage();
-          store.setProcessing(task.sessionKey, false);
           emitError(
             task.id,
             'gateway',
@@ -353,7 +358,10 @@ export function createChatComposer(deps: ChatComposerDeps) {
         task.id,
         setTimeout(() => {
           responseTimers.delete(task.id);
-          for (const sk of watchKeys) sessionToTask.delete(sk);
+          for (const sk of watchKeys) {
+            sessionToTask.delete(sk);
+            store.setProcessing(sk, false);
+          }
           const appError = buildAppError({
             source: 'gateway',
             stage: 'lifecycle',
@@ -383,7 +391,7 @@ export function createChatComposer(deps: ChatComposerDeps) {
       return { ok: true, taskId: task.id, ...(partialFailure ? { partialFailure } : {}) };
     } catch (err) {
       rollbackPendingUserMessage();
-      store.setProcessing(task.sessionKey, false);
+      for (const sessionKey of processingSessionKeys) store.setProcessing(sessionKey, false);
       emitError(
         task.id,
         'local',

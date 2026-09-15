@@ -13,7 +13,7 @@ vi.mock('fs/promises', () => ({
 import { realpathSync } from 'fs';
 import { open, realpath, stat } from 'fs/promises';
 import { join, resolve } from 'path';
-import { readInboxFile, resolveInboxPath } from '../src/main/inbox/resolve.js';
+import { readInboxFile, readInboxFileForSend, resolveInboxPath } from '../src/main/inbox/resolve.js';
 
 const mockOpen = vi.mocked(open);
 const mockRealpath = vi.mocked(realpath);
@@ -163,14 +163,76 @@ describe('inbox path access', () => {
     mockStat
       .mockResolvedValueOnce(fileStats(1, 2, 1) as Awaited<ReturnType<typeof stat>>)
       .mockResolvedValueOnce(fileStats(1, 2, 25 * 1024 * 1024 + 1) as Awaited<ReturnType<typeof stat>>);
-    const readForSend = readInboxFile as unknown as (
-      workspacePath: string,
-      localPath: string,
-      maxBytes: number,
-    ) => Promise<string | null>;
-
-    await expect(readForSend(WORKSPACE_PATH, LOCAL_PATH, 25 * 1024 * 1024)).resolves.toBeNull();
+    await expect(readInboxFileForSend(WORKSPACE_PATH, LOCAL_PATH, 25 * 1024 * 1024)).resolves.toBeNull();
     expect(readFile).not.toHaveBeenCalled();
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses bounded short reads until the opened file size is filled', async () => {
+    const bytes = Buffer.from('hello');
+    const read = vi
+      .fn()
+      .mockImplementationOnce(async (buffer: Buffer, offset: number) => {
+        bytes.copy(buffer, offset, 0, 2);
+        return { bytesRead: 2, buffer };
+      })
+      .mockImplementationOnce(async (buffer: Buffer, offset: number) => {
+        bytes.copy(buffer, offset, 2);
+        return { bytesRead: 3, buffer };
+      });
+    const close = vi.fn().mockResolvedValue(undefined);
+    const handleStat = vi.fn().mockResolvedValue(fileStats(1, 2, bytes.length));
+    mockOpen.mockResolvedValue({ fd: 42, stat: handleStat, read, close } as unknown as Awaited<
+      ReturnType<typeof open>
+    >);
+    mockRealpath.mockImplementation(async (path) => String(path));
+    mockRealpathSync.mockReturnValue(INBOX_FILE);
+    mockStat.mockResolvedValue(fileStats(1, 2, bytes.length) as Awaited<ReturnType<typeof stat>>);
+
+    await expect(readInboxFileForSend(WORKSPACE_PATH, LOCAL_PATH, 25 * 1024 * 1024)).resolves.toEqual({
+      content: bytes.toString('base64'),
+      byteLength: bytes.length,
+    });
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(read.mock.calls[0]?.[2]).toBe(5);
+    expect(read.mock.calls[1]?.[2]).toBe(3);
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects growth after a bounded read and still closes the handle', async () => {
+    const read = vi.fn(async (buffer: Buffer) => {
+      buffer[0] = 120;
+      return { bytesRead: 1, buffer };
+    });
+    const close = vi.fn().mockResolvedValue(undefined);
+    const handleStat = vi
+      .fn()
+      .mockResolvedValueOnce(fileStats(1, 2, 1))
+      .mockResolvedValueOnce(fileStats(1, 2, 1))
+      .mockResolvedValueOnce(fileStats(1, 2, 2));
+    mockOpen.mockResolvedValue({ fd: 42, stat: handleStat, read, close } as unknown as Awaited<
+      ReturnType<typeof open>
+    >);
+    mockRealpath.mockImplementation(async (path) => String(path));
+    mockRealpathSync.mockReturnValue(INBOX_FILE);
+    mockStat.mockResolvedValue(fileStats(1, 2, 1) as Awaited<ReturnType<typeof stat>>);
+
+    await expect(readInboxFileForSend(WORKSPACE_PATH, LOCAL_PATH, 25 * 1024 * 1024)).resolves.toBeNull();
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects an early zero-byte read and still closes the handle', async () => {
+    const read = vi.fn(async (buffer: Buffer) => ({ bytesRead: 0, buffer }));
+    const close = vi.fn().mockResolvedValue(undefined);
+    const handleStat = vi.fn().mockResolvedValue(fileStats(1, 2, 1));
+    mockOpen.mockResolvedValue({ fd: 42, stat: handleStat, read, close } as unknown as Awaited<
+      ReturnType<typeof open>
+    >);
+    mockRealpath.mockImplementation(async (path) => String(path));
+    mockRealpathSync.mockReturnValue(INBOX_FILE);
+    mockStat.mockResolvedValue(fileStats(1, 2, 1) as Awaited<ReturnType<typeof stat>>);
+
+    await expect(readInboxFileForSend(WORKSPACE_PATH, LOCAL_PATH, 25 * 1024 * 1024)).resolves.toBeNull();
     expect(close).toHaveBeenCalledTimes(1);
   });
 
