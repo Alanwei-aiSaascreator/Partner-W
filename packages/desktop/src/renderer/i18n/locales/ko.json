@@ -594,7 +594,7 @@
     "typeFiles": "파일",
     "typeImages": "이미지",
     "typeOther": "기타",
-    "workspaceAccessDescription": "Assistants can access only this workspace and files you explicitly add. The app does not scan your whole computer. Generated files are saved here too.",
+    "workspaceAccessDescription": "Assistants view this workspace and files you add by default. Before accessing another computer location, using a computer tool, or saving a file elsewhere, the assistant explains the action and asks for your confirmation.",
     "workspaceAccessTitle": "Data available now"
   },
   "filePreview": {

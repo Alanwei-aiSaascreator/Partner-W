@@ -594,7 +594,7 @@
     "typeFiles": "文件",
     "typeImages": "图片",
     "typeOther": "其他",
-    "workspaceAccessDescription": "助手仅查看当前工作区和你主动添加的文件，不会扫描整台电脑。生成的文件也保存在这里。",
+    "workspaceAccessDescription": "助手默认查看当前工作区和你主动添加的文件。需要访问电脑其他位置、调用电脑工具或保存文件到指定位置时，会先说明操作内容并由你确认。",
     "workspaceAccessTitle": "当前可访问的数据"
   },
   "filePreview": {
