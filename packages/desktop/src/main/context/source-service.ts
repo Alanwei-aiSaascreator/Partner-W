@@ -27,6 +27,9 @@ function nativeRealpath(targetPath: string): string {
 }
 
 function trustedCurrentRoot(source: SourceRow): string {
+  // Grants authorize a canonical path, not a persisted disk-object identity. Recreating an
+  // ordinary directory at this same path remains authorized between operations; a symlink or
+  // junction resolving the stored path somewhere else is never authorized.
   let currentPath: string;
   try {
     currentPath = nativeRealpath(source.absolute_path);
@@ -155,13 +158,13 @@ export function resolveGrantedFile(taskId: string, sourceId: string, relativePat
 
 export function listGrantedFiles(taskId: string, sourceId: string, query?: string): FileIndexEntry[] {
   const source = findSource(taskId, sourceId);
-  const realRoot = trustedCurrentRoot(source);
-  return scanFolder(realRoot, { query });
+  trustedCurrentRoot(source);
+  return scanFolder(source.absolute_path, { query });
 }
 
 export function readGrantedFile(taskId: string, sourceId: string, relativePath: string): FileReadResult {
   const realTarget = resolveGrantedFile(taskId, sourceId, relativePath);
   const source = findSource(taskId, sourceId);
-  const realRoot = trustedCurrentRoot(source);
-  return readContextFile(realTarget, [realRoot]);
+  trustedCurrentRoot(source);
+  return readContextFile(realTarget, [source.absolute_path]);
 }

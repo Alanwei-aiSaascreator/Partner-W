@@ -6,10 +6,11 @@ vi.mock('fs', () => ({
   fstatSync: vi.fn(),
   readSync: vi.fn(),
   closeSync: vi.fn(),
+  statSync: vi.fn(),
 }));
 
 import { readContextFile, resolveFdRealPath } from '../src/main/context/file-reader.js';
-import { openSync, realpathSync, fstatSync, readSync, closeSync } from 'fs';
+import { openSync, realpathSync, fstatSync, readSync, closeSync, statSync } from 'fs';
 import { join, resolve } from 'path';
 
 const mockOpenSync = vi.mocked(openSync);
@@ -17,6 +18,7 @@ const mockRealpathSync = vi.mocked(realpathSync);
 const mockFstatSync = vi.mocked(fstatSync);
 const mockReadSync = vi.mocked(readSync);
 const mockCloseSync = vi.mocked(closeSync);
+const mockStatSync = vi.mocked(statSync);
 
 const FAKE_FD = 42;
 const CONTEXT_DIR = resolve('mock', 'context');
@@ -31,7 +33,10 @@ function mockFile(filePath: string, fileSize: number, platform = process.platfor
     }
     return p === `/dev/fd/${FAKE_FD}` ? filePath : p;
   }) as typeof realpathSync);
-  mockFstatSync.mockReturnValue({ size: fileSize } as ReturnType<typeof fstatSync>);
+  const rootStat = { dev: 1, ino: 1, birthtimeMs: 1, isDirectory: () => true, isFile: () => false };
+  const fileStat = { dev: 1, ino: 2, birthtimeMs: 2, size: fileSize, isDirectory: () => false, isFile: () => true };
+  mockStatSync.mockImplementation(((p: string) => (p === CONTEXT_DIR ? rootStat : fileStat)) as typeof statSync);
+  mockFstatSync.mockReturnValue(fileStat as ReturnType<typeof fstatSync>);
   mockReadSync.mockReturnValue(0);
   mockCloseSync.mockReturnValue(undefined);
 }
@@ -42,6 +47,7 @@ beforeEach(() => {
   mockFstatSync.mockReset();
   mockReadSync.mockReset();
   mockCloseSync.mockReset();
+  mockStatSync.mockReset();
 });
 
 describe('readContextFile', () => {
@@ -122,12 +128,12 @@ describe('readContextFile', () => {
     expect(result.tier).toBe('text');
   });
 
-  it('closes fd even when path check fails', () => {
+  it('rejects an outside path before opening it', () => {
     const filePath = resolve('outside', 'not-allowed.pdf');
     mockFile(filePath, 1024);
 
     expect(() => readContextFile(filePath, [CONTEXT_DIR])).toThrow('path outside allowed context folders');
-    expect(mockCloseSync).toHaveBeenCalledWith(FAKE_FD);
+    expect(mockCloseSync).not.toHaveBeenCalled();
   });
 
   it('throws for unsupported file types', () => {

@@ -105,4 +105,21 @@ describe('task context source IPC handlers', () => {
       expect(handleMap.get(channel)?.({}, {})).toEqual({ ok: false, error: expect.any(String) });
     }
   });
+
+  it('normalizes blank file queries to undefined and rejects non-string queries', () => {
+    listGrantedFilesMock.mockReturnValue([]);
+
+    expect(
+      handleMap.get('context:list-source-files')?.({}, { taskId: 'task-1', sourceId: 'source-1', query: '' }),
+    ).toEqual({ ok: true, result: [] });
+    expect(
+      handleMap.get('context:list-source-files')?.({}, { taskId: 'task-1', sourceId: 'source-1', query: '   ' }),
+    ).toEqual({ ok: true, result: [] });
+    expect(listGrantedFilesMock).toHaveBeenNthCalledWith(1, 'task-1', 'source-1', undefined);
+    expect(listGrantedFilesMock).toHaveBeenNthCalledWith(2, 'task-1', 'source-1', undefined);
+
+    expect(
+      handleMap.get('context:list-source-files')?.({}, { taskId: 'task-1', sourceId: 'source-1', query: 42 }),
+    ).toEqual({ ok: false, error: expect.any(String) });
+  });
 });

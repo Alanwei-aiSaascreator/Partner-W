@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -105,7 +105,7 @@ describe('task-scoped folder source service', () => {
         expect.objectContaining({
           taskId: 'task-1',
           kind: 'folder',
-          absolutePath: root,
+          absolutePath: realpathSync.native(root),
           availability: 'available',
           displayName: expect.any(String),
         }),

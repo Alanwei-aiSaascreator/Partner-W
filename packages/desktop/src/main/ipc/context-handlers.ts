@@ -60,7 +60,8 @@ export function registerContextHandlers(): void {
       try {
         const taskId = requireString(params?.taskId, 'taskId');
         const sourceId = requireString(params?.sourceId, 'sourceId');
-        const query = params?.query === undefined ? undefined : requireString(params.query, 'query');
+        if (params?.query !== undefined && typeof params.query !== 'string') throw new Error('query must be a string');
+        const query = typeof params?.query === 'string' && params.query.trim().length > 0 ? params.query : undefined;
         return { ok: true, result: listGrantedFiles(taskId, sourceId, query) };
       } catch (error) {
         return failure(error);
