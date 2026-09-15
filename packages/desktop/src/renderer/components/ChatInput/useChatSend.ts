@@ -433,7 +433,7 @@ export function useChatSend(opts: UseChatSendOpts) {
         content: record.base64,
       }));
       const allAttachments = [...gatewayAttachments, ...importedGatewayAttachments, ...extraAttachments];
-      let deferUserMessageUntilSent = false;
+      const deferUserMessageUntilSent = Boolean(task.ensemble);
 
       if (task.ensemble) {
         const room = useRoomStore.getState().rooms[task.id];
@@ -496,7 +496,6 @@ export function useChatSend(opts: UseChatSendOpts) {
             setProcessing(task.sessionKey, false);
             return;
           }
-          deferUserMessageUntilSent = true;
         }
       }
 

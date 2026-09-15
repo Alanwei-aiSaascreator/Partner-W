@@ -438,4 +438,59 @@ describe('conductor initialization - catalog fallback', () => {
     expect(clearSource).not.toHaveBeenCalled();
     unmount();
   });
+
+  it('defers every ready ensemble retry and clears once after the first successful dispatch', async () => {
+    mocks.uiState.agentCatalogByGateway = {};
+    mocks.teamState.teams = { 'team-1': mocks.teamData };
+    mocks.roomState.rooms = {
+      'task-ensemble': { taskId: 'task-ensemble', conductorReady: true, status: 'active', performers: [] },
+    };
+    mocks.composerSend
+      .mockResolvedValueOnce({ ok: false, taskId: 'task-ensemble' })
+      .mockResolvedValueOnce({ ok: false, taskId: 'task-ensemble' })
+      .mockResolvedValueOnce({ ok: true, taskId: 'task-ensemble' });
+    const setPendingAttachments = vi.fn();
+    const clearImported = vi.fn();
+    const clearSource = vi.fn();
+    const { container, unmount } = render(
+      <Harness
+        withMaterials
+        setPendingAttachments={setPendingAttachments}
+        clearImported={clearImported}
+        clearSource={clearSource}
+      />,
+    );
+
+    await act(async () => {
+      await capturedHandleSend!();
+      await capturedHandleSend!();
+    });
+
+    expect((container.querySelector('textarea') as HTMLTextAreaElement).value).toBe('hello team');
+    expect(setPendingAttachments).not.toHaveBeenCalled();
+    expect(clearImported).not.toHaveBeenCalled();
+    expect(clearSource).not.toHaveBeenCalled();
+    expect(mocks.messageState.addMessage).not.toHaveBeenCalled();
+    expect(mocks.composerSend).toHaveBeenCalledTimes(2);
+    for (const call of mocks.composerSend.mock.calls as unknown as Array<
+      [string, { deferUserMessageUntilSent?: boolean }]
+    >) {
+      expect(call[1]).toEqual(expect.objectContaining({ deferUserMessageUntilSent: true }));
+    }
+
+    await act(async () => {
+      await capturedHandleSend!();
+    });
+
+    expect(mocks.roomState.initConductor).not.toHaveBeenCalled();
+    expect(mocks.composerSend).toHaveBeenCalledTimes(3);
+    expect(mocks.messageState.addMessage).not.toHaveBeenCalled();
+    expect((container.querySelector('textarea') as HTMLTextAreaElement).value).toBe('');
+    expect(setPendingAttachments).toHaveBeenCalledTimes(1);
+    expect(setPendingAttachments).toHaveBeenCalledWith([]);
+    expect(clearImported).toHaveBeenCalledTimes(1);
+    expect(clearSource).toHaveBeenCalledTimes(1);
+    expect(clearSource).toHaveBeenCalledWith([]);
+    unmount();
+  });
 });
