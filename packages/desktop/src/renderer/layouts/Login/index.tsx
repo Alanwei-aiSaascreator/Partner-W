@@ -203,7 +203,7 @@ export default function Login({ onSignedIn }: LoginProps) {
                   disabled={busy}
                   onChange={(e) => setPhone(normalizePhone(e.target.value))}
                   placeholder={t('login.phonePlaceholder')}
-                  className={cn(inputClass, 'pl-[4.5rem]')}
+                  className={cn(inputClass, 'pl-18')}
                 />
               </div>
             ) : (

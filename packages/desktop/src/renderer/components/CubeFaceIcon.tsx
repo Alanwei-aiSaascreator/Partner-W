@@ -32,7 +32,7 @@ export default function CubeFaceIcon({ agentId, size = 32, className }: CubeFace
       <span className="bg-[var(--cube-face)] opacity-90" />
       <span className="bg-[var(--cube-face)] opacity-50" />
       <span className="col-span-2 bg-[var(--cube-face)] opacity-70" />
-      <span className="absolute left-1/2 top-1/2 h-[42%] w-[42%] -translate-x-1/2 -translate-y-1/2 rotate-45 rounded-[2px] border border-[var(--accent-foreground)] opacity-75" />
+      <span className="absolute left-1/2 top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rotate-45 rounded-[2px] border border-[var(--accent-foreground)] opacity-75" />
     </span>
   );
 }

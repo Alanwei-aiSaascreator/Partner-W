@@ -139,7 +139,6 @@
     "back": "返回",
     "cancel": "取消",
     "close": "关闭",
-    "completed": "已完成",
     "confirm": "确认",
     "dark": "深色",
     "delete": "删除",
@@ -436,22 +435,23 @@
     "viewUsage": "查看使用情况"
   },
   "leftNav": {
-    "allAgents": "全部智能体",
+    "addAssistant": "添加助手",
     "appSettings": "应用设置",
     "archivedChats": "归档对话",
     "collapseNav": "收起侧栏",
     "emptyHint": "点击「新任务」开始",
     "expandNav": "展开侧栏",
-    "groupLast7Days": "前 7 天",
-    "groupOlder": "更早",
-    "groupToday": "今天",
-    "groupYesterday": "昨天",
+    "home": "首页",
+    "identityCenter": "身份中心",
+    "myAssistants": "我的助手",
     "noAgents": "暂无智能体",
     "noPreview": "暂无消息",
+    "recentTasks": "最近任务",
     "searchTasks": "搜索任务…",
-    "switchAgent": "切换智能体",
+    "showFewerTasks": "收起任务",
     "updateAvailable": "有新版本可用",
-    "usageOverview": "我的 AI 使用概览"
+    "usageOverview": "我的 AI 使用概览",
+    "viewAllTasks": "查看全部任务"
   },
   "login": {
     "agreement": "我已阅读并同意{0}与{1}",

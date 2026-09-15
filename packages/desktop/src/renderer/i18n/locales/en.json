@@ -139,7 +139,6 @@
     "back": "Back",
     "cancel": "Cancel",
     "close": "Close",
-    "completed": "Completed",
     "confirm": "Confirm",
     "dark": "Dark",
     "delete": "Delete",
@@ -436,22 +435,23 @@
     "viewUsage": "View usage"
   },
   "leftNav": {
-    "allAgents": "All agents",
+    "addAssistant": "Add assistant",
     "appSettings": "App Settings",
     "archivedChats": "Archived Chats",
     "collapseNav": "Collapse sidebar",
     "emptyHint": "Click \"New Task\" to start",
     "expandNav": "Expand sidebar",
-    "groupLast7Days": "Previous 7 Days",
-    "groupOlder": "Older",
-    "groupToday": "Today",
-    "groupYesterday": "Yesterday",
+    "home": "Home",
+    "identityCenter": "Identity center",
+    "myAssistants": "My assistants",
     "noAgents": "No agents",
     "noPreview": "No messages yet",
+    "recentTasks": "Recent tasks",
     "searchTasks": "Search tasks…",
-    "switchAgent": "Switch agent",
+    "showFewerTasks": "Show fewer tasks",
     "updateAvailable": "Update available",
-    "usageOverview": "My AI usage overview"
+    "usageOverview": "My AI usage overview",
+    "viewAllTasks": "View all tasks"
   },
   "login": {
     "agreement": "I have read and agree to the {0} and {1}",

@@ -139,7 +139,6 @@
     "back": "返回",
     "cancel": "取消",
     "close": "關閉",
-    "completed": "已完成",
     "confirm": "確認",
     "dark": "深色",
     "delete": "刪除",
@@ -436,22 +435,23 @@
     "viewUsage": "查看使用情況"
   },
   "leftNav": {
-    "allAgents": "全部智能體",
+    "addAssistant": "新增助手",
     "appSettings": "應用程式設定",
     "archivedChats": "已封存對話",
     "collapseNav": "收合側邊欄",
     "emptyHint": "點擊「新任務」開始",
     "expandNav": "展開側邊欄",
-    "groupLast7Days": "前 7 天",
-    "groupOlder": "更早",
-    "groupToday": "今天",
-    "groupYesterday": "昨天",
+    "home": "首頁",
+    "identityCenter": "身分中心",
+    "myAssistants": "我的助手",
     "noAgents": "暫無智能體",
     "noPreview": "尚無訊息",
+    "recentTasks": "最近任務",
     "searchTasks": "搜尋任務…",
-    "switchAgent": "切換智能體",
+    "showFewerTasks": "收起任務",
     "updateAvailable": "有可用更新",
-    "usageOverview": "我的 AI 使用概覽"
+    "usageOverview": "我的 AI 使用概覽",
+    "viewAllTasks": "查看全部任務"
   },
   "login": {
     "agreement": "我已閱讀並同意{0}與{1}",

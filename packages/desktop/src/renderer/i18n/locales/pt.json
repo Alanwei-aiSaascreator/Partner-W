@@ -139,7 +139,6 @@
     "back": "Voltar",
     "cancel": "Cancelar",
     "close": "Fechar",
-    "completed": "Concluída",
     "confirm": "Confirmar",
     "dark": "Escuro",
     "delete": "Excluir",
@@ -436,22 +435,23 @@
     "viewUsage": "View usage"
   },
   "leftNav": {
-    "allAgents": "Todos os agentes",
+    "addAssistant": "Adicionar assistente",
     "appSettings": "Configurações do App",
     "archivedChats": "Conversas Arquivadas",
     "collapseNav": "Recolher barra lateral",
     "emptyHint": "Clique em \"Nova Tarefa\" para começar",
     "expandNav": "Expandir barra lateral",
-    "groupLast7Days": "Últimos 7 dias",
-    "groupOlder": "Anterior",
-    "groupToday": "Hoje",
-    "groupYesterday": "Ontem",
+    "home": "Início",
+    "identityCenter": "Central de identidade",
+    "myAssistants": "Meus assistentes",
     "noAgents": "Sem agentes",
     "noPreview": "Ainda sem mensagens",
+    "recentTasks": "Tarefas recentes",
     "searchTasks": "Buscar tarefas…",
-    "switchAgent": "Trocar de agente",
+    "showFewerTasks": "Mostrar menos tarefas",
     "updateAvailable": "Atualização disponível",
-    "usageOverview": "My AI usage overview"
+    "usageOverview": "Visão geral do uso da minha IA",
+    "viewAllTasks": "Ver todas as tarefas"
   },
   "login": {
     "agreement": "Li e concordo com os {0} e a {1}",

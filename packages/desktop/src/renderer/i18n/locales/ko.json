@@ -139,7 +139,6 @@
     "back": "뒤로",
     "cancel": "취소",
     "close": "닫기",
-    "completed": "완료됨",
     "confirm": "확인",
     "dark": "다크",
     "delete": "삭제",
@@ -436,22 +435,23 @@
     "viewUsage": "View usage"
   },
   "leftNav": {
-    "allAgents": "모든 에이전트",
+    "addAssistant": "어시스턴트 추가",
     "appSettings": "앱 설정",
     "archivedChats": "보관된 대화",
     "collapseNav": "사이드바 접기",
     "emptyHint": "\"새 작업\"을 클릭하여 시작하세요",
     "expandNav": "사이드바 펼치기",
-    "groupLast7Days": "지난 7일",
-    "groupOlder": "이전",
-    "groupToday": "오늘",
-    "groupYesterday": "어제",
+    "home": "홈",
+    "identityCenter": "계정 센터",
+    "myAssistants": "내 어시스턴트",
     "noAgents": "에이전트 없음",
     "noPreview": "아직 메시지 없음",
+    "recentTasks": "최근 작업",
     "searchTasks": "작업 검색…",
-    "switchAgent": "에이전트 전환",
+    "showFewerTasks": "작업 접기",
     "updateAvailable": "업데이트 가능",
-    "usageOverview": "My AI usage overview"
+    "usageOverview": "내 AI 사용 현황",
+    "viewAllTasks": "모든 작업 보기"
   },
   "login": {
     "agreement": "{0} 및 {1}을(를) 읽고 동의합니다",

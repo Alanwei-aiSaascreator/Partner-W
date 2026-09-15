@@ -139,7 +139,6 @@
     "back": "戻る",
     "cancel": "キャンセル",
     "close": "閉じる",
-    "completed": "完了",
     "confirm": "確認",
     "dark": "ダーク",
     "delete": "削除",
@@ -436,22 +435,23 @@
     "viewUsage": "View usage"
   },
   "leftNav": {
-    "allAgents": "すべてのエージェント",
+    "addAssistant": "アシスタントを追加",
     "appSettings": "アプリ設定",
     "archivedChats": "アーカイブ済みチャット",
     "collapseNav": "サイドバーを折りたたむ",
     "emptyHint": "「新規タスク」をクリックして開始",
     "expandNav": "サイドバーを展開",
-    "groupLast7Days": "過去 7 日",
-    "groupOlder": "以前",
-    "groupToday": "今日",
-    "groupYesterday": "昨日",
+    "home": "ホーム",
+    "identityCenter": "アカウント",
+    "myAssistants": "マイアシスタント",
     "noAgents": "エージェントなし",
     "noPreview": "メッセージはまだありません",
+    "recentTasks": "最近のタスク",
     "searchTasks": "タスクを検索…",
-    "switchAgent": "エージェントを切り替え",
+    "showFewerTasks": "表示するタスクを減らす",
     "updateAvailable": "アップデートがあります",
-    "usageOverview": "My AI usage overview"
+    "usageOverview": "AI 利用状況",
+    "viewAllTasks": "すべてのタスクを表示"
   },
   "login": {
     "agreement": "{0}と{1}を読み、同意します",
