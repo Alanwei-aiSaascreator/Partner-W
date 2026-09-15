@@ -39,6 +39,23 @@ export interface PresetAgentDefinition {
   emoji: string;
   identityMd: string;
   soulMd: string;
+  workspaceKey: AssistantWorkspaceKey;
+}
+
+export type AssistantWorkspaceKey = 'compass' | 'content' | 'video' | 'office' | 'ecommerce' | 'research' | 'family';
+
+export interface AssistantWorkspaceStarter {
+  titleKey: string;
+  descriptionKey: string;
+  promptKey: string;
+}
+
+export interface AssistantWorkspaceDefinition {
+  id: string;
+  titleKey: string;
+  descriptionKey: string;
+  emoji: string;
+  starters: AssistantWorkspaceStarter[];
 }
 
 const COMMON_OPERATING_CONTRACT = `# Shared operating contract
@@ -64,6 +81,7 @@ export const PRESET_AGENT_DEFINITIONS: readonly PresetAgentDefinition[] = [
     emoji: '✍️',
     identityMd: contentIdentity,
     soulMd: withCommonContract(contentSoul),
+    workspaceKey: 'content',
   },
   {
     id: 'rongying-video',
@@ -72,6 +90,7 @@ export const PRESET_AGENT_DEFINITIONS: readonly PresetAgentDefinition[] = [
     emoji: '🎬',
     identityMd: videoIdentity,
     soulMd: withCommonContract(videoSoul),
+    workspaceKey: 'video',
   },
   {
     id: 'rongying-office',
@@ -80,6 +99,7 @@ export const PRESET_AGENT_DEFINITIONS: readonly PresetAgentDefinition[] = [
     emoji: '📋',
     identityMd: officeIdentity,
     soulMd: withCommonContract(officeSoul),
+    workspaceKey: 'office',
   },
   {
     id: 'rongying-ecommerce',
@@ -88,6 +108,7 @@ export const PRESET_AGENT_DEFINITIONS: readonly PresetAgentDefinition[] = [
     emoji: '🛍️',
     identityMd: ecommerceIdentity,
     soulMd: withCommonContract(ecommerceSoul),
+    workspaceKey: 'ecommerce',
   },
   {
     id: 'rongying-research',
@@ -96,6 +117,7 @@ export const PRESET_AGENT_DEFINITIONS: readonly PresetAgentDefinition[] = [
     emoji: '🔎',
     identityMd: researchIdentity,
     soulMd: withCommonContract(researchSoul),
+    workspaceKey: 'research',
   },
   {
     id: 'rongying-family',
@@ -104,8 +126,36 @@ export const PRESET_AGENT_DEFINITIONS: readonly PresetAgentDefinition[] = [
     emoji: '🏠',
     identityMd: familyIdentity,
     soulMd: withCommonContract(familySoul),
+    workspaceKey: 'family',
   },
 ];
+
+function workspaceDefinition(
+  id: string,
+  titleKey: string,
+  emoji: string,
+  workspaceKey: AssistantWorkspaceKey,
+): AssistantWorkspaceDefinition {
+  return {
+    id,
+    titleKey,
+    emoji,
+    descriptionKey: `assistantWorkspaces.${workspaceKey}.description`,
+    starters: [1, 2, 3, 4].map((index) => ({
+      titleKey: `assistantWorkspaces.${workspaceKey}.starters.${index}.title`,
+      descriptionKey: `assistantWorkspaces.${workspaceKey}.starters.${index}.description`,
+      promptKey: `assistantWorkspaces.${workspaceKey}.starters.${index}.prompt`,
+    })),
+  };
+}
+
+const COMPASS_WORKSPACE = workspaceDefinition('main', 'mainArea.compassAssistant', '✦', 'compass');
+
+export function resolveAssistantWorkspace(agentId: string): AssistantWorkspaceDefinition | null {
+  if (agentId === 'main') return COMPASS_WORKSPACE;
+  const preset = PRESET_AGENT_DEFINITIONS.find((agent) => agent.id === agentId);
+  return preset ? workspaceDefinition(preset.id, preset.displayNameKey, preset.emoji, preset.workspaceKey) : null;
+}
 
 export function resolveAgentDisplayNameKey(agentId: string): string | null {
   if (agentId === 'main') return 'mainArea.compassAssistant';

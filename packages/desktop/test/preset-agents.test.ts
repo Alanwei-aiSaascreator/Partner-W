@@ -4,6 +4,7 @@ import {
   STARTER_AGENT_BY_ID,
   resolveAgentDisplayNameKey,
   resolveStarterAgentId,
+  resolveAssistantWorkspace,
 } from '../src/renderer/lib/preset-agents';
 
 describe('preset agent definitions', () => {
@@ -48,5 +49,20 @@ describe('preset agent definitions', () => {
     expect(resolveAgentDisplayNameKey('main')).toBe('mainArea.compassAssistant');
     expect(resolveAgentDisplayNameKey('rongying-video')).toBe('presetAgents.roles.video');
     expect(resolveAgentDisplayNameKey('custom-agent')).toBeNull();
+  });
+
+  it('provides an independent workspace definition for every built-in assistant', () => {
+    expect(resolveAssistantWorkspace('rongying-content')).toMatchObject({
+      id: 'rongying-content',
+      titleKey: 'presetAgents.roles.content',
+      descriptionKey: 'assistantWorkspaces.content.description',
+    });
+    expect(resolveAssistantWorkspace('rongying-content').starters).toHaveLength(4);
+    expect(resolveAssistantWorkspace('main')).toMatchObject({
+      id: 'main',
+      titleKey: 'mainArea.compassAssistant',
+      descriptionKey: 'assistantWorkspaces.compass.description',
+    });
+    expect(resolveAssistantWorkspace('custom-agent')).toBeNull();
   });
 });
