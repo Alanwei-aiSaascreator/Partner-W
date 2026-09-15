@@ -590,12 +590,6 @@
     "waiting": "En attente d'approbation…"
   },
   "presetAgents": {
-    "description": "Add focused assistants for content, video, office work, e-commerce, research, and family planning.",
-    "failedRoles": "These assistants were not set up: {{roles}}",
-    "incomplete": "{{count}} assistants are still missing. You can retry without duplicating completed roles.",
-    "install": "Set up {{count}} assistants",
-    "installing": "Setting up {{completed}}/{{total}}",
-    "retry": "Retry setup",
     "roles": {
       "content": "Content Creation",
       "ecommerce": "E-commerce Operations",
@@ -604,9 +598,6 @@
       "research": "Learning and Research",
       "video": "Video Production"
     },
-    "setupFailed": "Assistant setup did not finish. Check the service connection and retry.",
-    "title": "Set up your everyday assistants",
-    "unavailable": "Connect the assistant service before setting up these roles.",
     "workspaceUnavailable": "The assistant workspace is unavailable. Check the service connection and retry."
   },
   "rightPanel": {
@@ -929,6 +920,24 @@
     "sourceSkill": "Compétence",
     "title": "Commandes slash",
     "tooltip": "Commandes"
+  },
+  "startupReadiness": {
+    "aiError": "Aucun modèle n’est disponible pour le moment",
+    "aiLoadingModels": "Préparation des modèles disponibles",
+    "aiReady": "Les modèles sont prêts",
+    "aiStarting": "Démarrage du service IA",
+    "aiTitle": "Service IA",
+    "assistantsError": "Ces assistants ne sont pas encore prêts : {{names}}",
+    "assistantsInstalling": "Configuration de {{name}}",
+    "assistantsReady": "Les 6 assistants courants sont prêts",
+    "assistantsTitle": "Assistants courants",
+    "assistantsVerifying": "Vérification des assistants inclus",
+    "assistantsWaiting": "En attente du service IA",
+    "description": "Le premier démarrage prend généralement environ une minute. L’accueil s’ouvrira automatiquement ensuite.",
+    "keepOpen": "Gardez l’application ouverte. Aucune action répétée n’est nécessaire.",
+    "progress": "{{completed}} / {{total}}",
+    "retry": "Préparer à nouveau",
+    "title": "Préparation de Rongying Cube"
   },
   "teams": {
     "confirmDeleteDesc": "Supprimer « {{name}} » ? Cela retire la configuration de l'équipe. Les agents resteront sur la Passerelle et pourront être gérés dans les Réglages.",

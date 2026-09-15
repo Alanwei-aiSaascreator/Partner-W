@@ -590,12 +590,6 @@
     "waiting": "Esperando aprobación…"
   },
   "presetAgents": {
-    "description": "Add focused assistants for content, video, office work, e-commerce, research, and family planning.",
-    "failedRoles": "These assistants were not set up: {{roles}}",
-    "incomplete": "{{count}} assistants are still missing. You can retry without duplicating completed roles.",
-    "install": "Set up {{count}} assistants",
-    "installing": "Setting up {{completed}}/{{total}}",
-    "retry": "Retry setup",
     "roles": {
       "content": "Content Creation",
       "ecommerce": "E-commerce Operations",
@@ -604,9 +598,6 @@
       "research": "Learning and Research",
       "video": "Video Production"
     },
-    "setupFailed": "Assistant setup did not finish. Check the service connection and retry.",
-    "title": "Set up your everyday assistants",
-    "unavailable": "Connect the assistant service before setting up these roles.",
     "workspaceUnavailable": "The assistant workspace is unavailable. Check the service connection and retry."
   },
   "rightPanel": {
@@ -929,6 +920,24 @@
     "sourceSkill": "Skill",
     "title": "Comandos slash",
     "tooltip": "Comandos"
+  },
+  "startupReadiness": {
+    "aiError": "No hay modelos disponibles en este momento",
+    "aiLoadingModels": "Preparando los modelos disponibles",
+    "aiReady": "Los modelos están listos",
+    "aiStarting": "Iniciando el servicio de IA",
+    "aiTitle": "Servicio de IA",
+    "assistantsError": "Estos asistentes aún no están listos: {{names}}",
+    "assistantsInstalling": "Configurando {{name}}",
+    "assistantsReady": "Los 6 asistentes habituales están listos",
+    "assistantsTitle": "Asistentes habituales",
+    "assistantsVerifying": "Comprobando los asistentes incluidos",
+    "assistantsWaiting": "Esperando al servicio de IA",
+    "description": "El primer inicio suele tardar cerca de un minuto. La página principal se abrirá automáticamente al terminar.",
+    "keepOpen": "Mantén la aplicación abierta. No hace falta repetir ninguna acción.",
+    "progress": "{{completed}} / {{total}}",
+    "retry": "Preparar de nuevo",
+    "title": "Preparando Rongying Cube"
   },
   "teams": {
     "confirmDeleteDesc": "¿Eliminar \"{{name}}\"? Se eliminará la configuración del equipo. Los agentes permanecerán en el Gateway y se pueden gestionar en Configuración.",

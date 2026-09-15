@@ -590,12 +590,6 @@
     "waiting": "Warte auf Freigabe…"
   },
   "presetAgents": {
-    "description": "Add focused assistants for content, video, office work, e-commerce, research, and family planning.",
-    "failedRoles": "These assistants were not set up: {{roles}}",
-    "incomplete": "{{count}} assistants are still missing. You can retry without duplicating completed roles.",
-    "install": "Set up {{count}} assistants",
-    "installing": "Setting up {{completed}}/{{total}}",
-    "retry": "Retry setup",
     "roles": {
       "content": "Content Creation",
       "ecommerce": "E-commerce Operations",
@@ -604,9 +598,6 @@
       "research": "Learning and Research",
       "video": "Video Production"
     },
-    "setupFailed": "Assistant setup did not finish. Check the service connection and retry.",
-    "title": "Set up your everyday assistants",
-    "unavailable": "Connect the assistant service before setting up these roles.",
     "workspaceUnavailable": "The assistant workspace is unavailable. Check the service connection and retry."
   },
   "rightPanel": {
@@ -929,6 +920,24 @@
     "sourceSkill": "Skill",
     "title": "Slash-Befehle",
     "tooltip": "Befehle"
+  },
+  "startupReadiness": {
+    "aiError": "Derzeit sind keine Modelle verfügbar",
+    "aiLoadingModels": "Verfügbare Modelle werden vorbereitet",
+    "aiReady": "Modelle sind bereit",
+    "aiStarting": "KI-Dienst wird gestartet",
+    "aiTitle": "KI-Dienst",
+    "assistantsError": "Diese Assistenten sind noch nicht bereit: {{names}}",
+    "assistantsInstalling": "{{name}} wird eingerichtet",
+    "assistantsReady": "6 Alltagsassistenten sind bereit",
+    "assistantsTitle": "Alltagsassistenten",
+    "assistantsVerifying": "Integrierte Assistenten werden geprüft",
+    "assistantsWaiting": "Warten auf den KI-Dienst",
+    "description": "Der erste Start dauert normalerweise etwa eine Minute. Danach öffnet sich die Startseite automatisch.",
+    "keepOpen": "Lassen Sie die App geöffnet. Sie müssen nichts erneut ausführen.",
+    "progress": "{{completed}} / {{total}}",
+    "retry": "Erneut vorbereiten",
+    "title": "Rongying Cube wird vorbereitet"
   },
   "teams": {
     "confirmDeleteDesc": "\"{{name}}\" löschen? Die Teamkonfiguration wird entfernt. Agenten bleiben auf dem Gateway erhalten und können in den Einstellungen verwaltet werden.",

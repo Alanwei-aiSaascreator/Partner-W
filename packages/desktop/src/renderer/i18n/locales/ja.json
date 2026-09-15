@@ -590,12 +590,6 @@
     "waiting": "承認待ち…"
   },
   "presetAgents": {
-    "description": "Add focused assistants for content, video, office work, e-commerce, research, and family planning.",
-    "failedRoles": "These assistants were not set up: {{roles}}",
-    "incomplete": "{{count}} assistants are still missing. You can retry without duplicating completed roles.",
-    "install": "Set up {{count}} assistants",
-    "installing": "Setting up {{completed}}/{{total}}",
-    "retry": "Retry setup",
     "roles": {
       "content": "Content Creation",
       "ecommerce": "E-commerce Operations",
@@ -604,9 +598,6 @@
       "research": "Learning and Research",
       "video": "Video Production"
     },
-    "setupFailed": "Assistant setup did not finish. Check the service connection and retry.",
-    "title": "Set up your everyday assistants",
-    "unavailable": "Connect the assistant service before setting up these roles.",
     "workspaceUnavailable": "The assistant workspace is unavailable. Check the service connection and retry."
   },
   "rightPanel": {
@@ -929,6 +920,24 @@
     "sourceSkill": "スキル",
     "title": "スラッシュコマンド",
     "tooltip": "コマンド"
+  },
+  "startupReadiness": {
+    "aiError": "現在利用できるモデルがありません",
+    "aiLoadingModels": "利用可能なモデルを準備しています",
+    "aiReady": "モデルの準備ができました",
+    "aiStarting": "AIサービスを起動しています",
+    "aiTitle": "AIサービス",
+    "assistantsError": "次のアシスタントはまだ準備できていません：{{names}}",
+    "assistantsInstalling": "{{name}} を設定しています",
+    "assistantsReady": "6個のアシスタントを利用できます",
+    "assistantsTitle": "よく使うアシスタント",
+    "assistantsVerifying": "内蔵アシスタントを確認しています",
+    "assistantsWaiting": "AIサービスの起動を待っています",
+    "description": "初回起動には通常約1分かかります。準備が完了すると自動でホームを開きます。",
+    "keepOpen": "アプリを開いたままお待ちください。操作を繰り返す必要はありません。",
+    "progress": "{{completed}} / {{total}}",
+    "retry": "もう一度準備する",
+    "title": "Rongying Cube を準備しています"
   },
   "teams": {
     "confirmDeleteDesc": "「{{name}}」を削除しますか？チーム設定が削除されます。エージェントは Gateway に残り、設定から管理できます。",

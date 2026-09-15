@@ -590,12 +590,6 @@
     "waiting": "Waiting for approval…"
   },
   "presetAgents": {
-    "description": "Add focused assistants for content, video, office work, e-commerce, research, and family planning.",
-    "failedRoles": "These assistants were not set up: {{roles}}",
-    "incomplete": "{{count}} assistants are still missing. You can retry without duplicating completed roles.",
-    "install": "Set up {{count}} assistants",
-    "installing": "Setting up {{completed}}/{{total}}",
-    "retry": "Retry setup",
     "roles": {
       "content": "Content Creation",
       "ecommerce": "E-commerce Operations",
@@ -604,9 +598,6 @@
       "research": "Learning and Research",
       "video": "Video Production"
     },
-    "setupFailed": "Assistant setup did not finish. Check the service connection and retry.",
-    "title": "Set up your everyday assistants",
-    "unavailable": "Connect the assistant service before setting up these roles.",
     "workspaceUnavailable": "The assistant workspace is unavailable. Check the service connection and retry."
   },
   "rightPanel": {
@@ -929,6 +920,24 @@
     "sourceSkill": "Skill",
     "title": "Slash Commands",
     "tooltip": "Commands"
+  },
+  "startupReadiness": {
+    "aiError": "No models are available right now",
+    "aiLoadingModels": "Preparing available models",
+    "aiReady": "Models are ready",
+    "aiStarting": "Starting the AI service",
+    "aiTitle": "AI service",
+    "assistantsError": "These assistants are not ready: {{names}}",
+    "assistantsInstalling": "Setting up {{name}}",
+    "assistantsReady": "6 everyday assistants are ready",
+    "assistantsTitle": "Everyday assistants",
+    "assistantsVerifying": "Checking bundled assistants",
+    "assistantsWaiting": "Waiting for the AI service",
+    "description": "First launch usually takes about a minute. Home opens automatically when preparation finishes.",
+    "keepOpen": "Keep the app open. No repeated action is needed.",
+    "progress": "{{completed}} / {{total}}",
+    "retry": "Prepare again",
+    "title": "Preparing Rongying Cube"
   },
   "teams": {
     "confirmDeleteDesc": "Delete \"{{name}}\"? This removes the team configuration. Agents will remain on the Gateway and can be managed in Settings.",

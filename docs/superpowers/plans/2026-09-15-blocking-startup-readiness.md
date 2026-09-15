@@ -1,6 +1,6 @@
 # Blocking Startup Readiness Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Prepare the gateway, commercial models, and six bundled assistants in parallel, then block entry to the main workspace until every capability is ready.
 
@@ -37,7 +37,7 @@
 - Modify: `packages/core/src/services/gateway-dispatcher.ts`
 - Modify: `packages/desktop/src/renderer/hooks/useGatewayDispatcherSetup.ts`
 
-- [ ] **Step 1: Write failing dispatcher tests**
+- [x] **Step 1: Write failing dispatcher tests**
 
 Add a `fetchAgentsForGateway` suite that replaces `deps.gateway.listAgents` with a spy returning one preset assistant. Verify the cached call makes zero transport requests, then verify `{ force: true }` makes one request and calls `setAgentCatalogForGateway`:
 
@@ -61,7 +61,7 @@ describe('fetchAgentsForGateway', () => {
 });
 ```
 
-- [ ] **Step 2: Run the focused core test and confirm the new force call fails**
+- [x] **Step 2: Run the focused core test and confirm the new force call fails**
 
 Run:
 
@@ -71,7 +71,7 @@ pnpm --filter @clawwork/core test -- gateway-dispatcher.test.ts
 
 Expected: the forced-refresh assertion fails because the third argument is ignored.
 
-- [ ] **Step 3: Add the explicit force option**
+- [x] **Step 3: Add the explicit force option**
 
 Change the core method to accept an optional options object and bypass only the cache guard:
 
@@ -97,7 +97,7 @@ export async function fetchAgentsForGateway(gatewayId: string, options: { force?
 }
 ```
 
-- [ ] **Step 4: Run the focused core test and confirm both cache behaviors pass**
+- [x] **Step 4: Run the focused core test and confirm both cache behaviors pass**
 
 Run:
 
@@ -107,7 +107,7 @@ pnpm --filter @clawwork/core test -- gateway-dispatcher.test.ts
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit the catalog fix**
+- [x] **Step 5: Commit the catalog fix**
 
 ```powershell
 git add packages/core/src/services/gateway-dispatcher.ts packages/core/test/gateway-dispatcher.test.ts packages/desktop/src/renderer/hooks/useGatewayDispatcherSetup.ts
@@ -121,7 +121,7 @@ git commit -m "fix(agents): refresh stale gateway catalogs"
 - Create: `packages/desktop/src/renderer/lib/preset-agent-bootstrap.ts`
 - Create: `packages/desktop/test/preset-agent-bootstrap.test.ts`
 
-- [ ] **Step 1: Write failing coordinator tests**
+- [x] **Step 1: Write failing coordinator tests**
 
 Define injected dependencies so tests never touch Electron globals:
 
@@ -145,7 +145,7 @@ Test these observable cases:
 5. a missing role after post-refresh produces `error` with exactly that `missingIds` entry;
 6. calling `reset('gw-1')` after a failed run allows a new attempt.
 
-- [ ] **Step 2: Run the focused test and confirm the module is missing**
+- [x] **Step 2: Run the focused test and confirm the module is missing**
 
 Run:
 
@@ -155,7 +155,7 @@ pnpm --filter @clawwork/desktop test -- preset-agent-bootstrap.test.ts
 
 Expected: FAIL because `preset-agent-bootstrap.ts` does not exist.
 
-- [ ] **Step 3: Implement the coordinator**
+- [x] **Step 3: Implement the coordinator**
 
 Create a coordinator with `subscribe`, `getSnapshot`, `run`, and `reset`. Store snapshots, listeners, and in-flight promises in maps keyed by gateway ID. A run must:
 
@@ -174,7 +174,7 @@ return missingAfter.length === 0 ? emitReady(gatewayId) : emitError(gatewayId, m
 
 Return the existing in-flight promise before starting another run. Always clear only the in-flight entry in `finally`; retain the final snapshot so a Strict Mode remount receives current progress immediately.
 
-- [ ] **Step 4: Run the coordinator tests**
+- [x] **Step 4: Run the coordinator tests**
 
 Run:
 
@@ -184,7 +184,7 @@ pnpm --filter @clawwork/desktop test -- preset-agent-bootstrap.test.ts
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit the assistant bootstrap coordinator**
+- [x] **Step 5: Commit the assistant bootstrap coordinator**
 
 ```powershell
 git add packages/desktop/src/renderer/lib/preset-agent-bootstrap.ts packages/desktop/test/preset-agent-bootstrap.test.ts
@@ -199,7 +199,7 @@ git commit -m "feat(agents): reconcile bundled assistants at startup"
 - Create: `packages/desktop/test/startup-readiness.test.ts`
 - Create: `packages/desktop/src/renderer/hooks/useStartupReadiness.ts`
 
-- [ ] **Step 1: Write failing pure-state tests**
+- [x] **Step 1: Write failing pure-state tests**
 
 Use the existing `deriveModelAvailability` and test that the new helper returns:
 
@@ -210,7 +210,7 @@ Use the existing `deriveModelAvailability` and test that the new helper returns:
 - assistants `verifying`, `installing`, `ready`, or `error` from coordinator snapshots;
 - overall `isReady: true` only when AI and assistants are both ready.
 
-- [ ] **Step 2: Run the focused test and confirm it fails**
+- [x] **Step 2: Run the focused test and confirm it fails**
 
 Run:
 
@@ -220,7 +220,7 @@ pnpm --filter @clawwork/desktop test -- startup-readiness.test.ts
 
 Expected: FAIL because the helper does not exist.
 
-- [ ] **Step 3: Implement the pure state and renderer hook**
+- [x] **Step 3: Implement the pure state and renderer hook**
 
 Create string-literal state types and derive the usable model count with `relayModelsFrom(rawCatalog ?? [])`. The hook must use granular Zustand selectors, subscribe to the per-gateway assistant coordinator, and start a run only when the workspace is enabled and the selected gateway is connected.
 
@@ -250,7 +250,7 @@ install: async (currentAgentIds, onProgress) => {
 
 Expose `retry`. Assistant-only failures reset and rerun the coordinator. Gateway/model failures call `reinitializeGatewayBootstrap`; the connected-state effect starts assistant reconciliation once the gateway returns.
 
-- [ ] **Step 4: Run pure readiness and coordinator tests**
+- [x] **Step 4: Run pure readiness and coordinator tests**
 
 Run:
 
@@ -260,7 +260,7 @@ pnpm --filter @clawwork/desktop test -- startup-readiness.test.ts preset-agent-b
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit the startup hook**
+- [x] **Step 5: Commit the startup hook**
 
 ```powershell
 git add packages/desktop/src/renderer/lib/startup-readiness.ts packages/desktop/src/renderer/hooks/useStartupReadiness.ts packages/desktop/test/startup-readiness.test.ts
@@ -279,7 +279,7 @@ git commit -m "feat(startup): derive product readiness"
 - Delete: `packages/desktop/src/renderer/layouts/MainArea/PresetAgentPackControl.tsx`
 - Delete: `packages/desktop/test/preset-agent-pack-control.test.tsx`
 
-- [ ] **Step 1: Write failing readiness-screen tests**
+- [x] **Step 1: Write failing readiness-screen tests**
 
 Render the new screen with explicit props and assert:
 
@@ -290,7 +290,7 @@ Render the new screen with explicit props and assert:
 
 Update `welcome-screen.test.tsx` to assert `presetAgents.install` is absent and remove installer, gateway refresh, and Electron mutation mocks.
 
-- [ ] **Step 2: Run the screen and welcome tests and confirm the new screen is missing**
+- [x] **Step 2: Run the screen and welcome tests and confirm the new screen is missing**
 
 Run:
 
@@ -300,7 +300,7 @@ pnpm --filter @clawwork/desktop test -- startup-readiness-screen.test.tsx welcom
 
 Expected: the startup-screen import fails.
 
-- [ ] **Step 3: Build the readiness screen**
+- [x] **Step 3: Build the readiness screen**
 
 Create a restrained centered layout using existing CSS variables. Render a product mark, one explanatory sentence, and two bordered rows. Use `LoaderCircle`, `Check`, `Bot`, `Boxes`, and `RefreshCw` from `lucide-react`. The assistant progress element must use the actual count:
 
@@ -317,7 +317,7 @@ Create a restrained centered layout using existing CSS variables. Render a produ
 
 The dynamic area uses `aria-live="polite"`, and the screen root uses `aria-busy={!readiness.isReady}`.
 
-- [ ] **Step 4: Gate the shell and remove the old setup path**
+- [x] **Step 4: Gate the shell and remove the old setup path**
 
 Call `useStartupReadiness(ready)` unconditionally after gateway bootstrap. Keep login, workspace setup, and onboarding ahead of the readiness screen. Immediately before the current main-shell return, add:
 
@@ -334,7 +334,7 @@ if (!startupReadiness.isReady) {
 
 Remove `installPresetAgentPack`, `fetchAgentsForGateway`, installation state, installation callbacks, and `PresetAgentPackControl` from `WelcomeScreen`. Delete the superseded component and its test.
 
-- [ ] **Step 5: Run the component tests**
+- [x] **Step 5: Run the component tests**
 
 Run:
 
@@ -344,7 +344,7 @@ pnpm --filter @clawwork/desktop test -- startup-readiness-screen.test.tsx welcom
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit the blocking experience**
+- [x] **Step 6: Commit the blocking experience**
 
 ```powershell
 git add packages/desktop/src/renderer/App.tsx packages/desktop/src/renderer/layouts/StartupReadiness packages/desktop/src/renderer/layouts/MainArea/WelcomeScreen.tsx packages/desktop/test/startup-readiness-screen.test.tsx packages/desktop/test/welcome-screen.test.tsx
@@ -366,7 +366,7 @@ git commit -m "feat(startup): block workspace until assistants are ready"
 - Modify: `packages/desktop/src/renderer/i18n/locales/ko.json`
 - Modify: `packages/desktop/src/renderer/i18n/locales/pt.json`
 
-- [ ] **Step 1: Add the same startup key structure to every locale**
+- [x] **Step 1: Add the same startup key structure to every locale**
 
 Add a `startupReadiness` object beside `presetAgents`. The Simplified Chinese source is:
 
@@ -393,7 +393,7 @@ Add a `startupReadiness` object beside `presetAgents`. The Simplified Chinese so
 
 Translate the same keys naturally in the other eight locale files and preserve interpolation placeholders.
 
-- [ ] **Step 2: Run formatting, focused tests, TypeScript, and i18n checks**
+- [x] **Step 2: Run formatting, focused tests, TypeScript, and i18n checks**
 
 Run:
 
@@ -402,7 +402,7 @@ pnpm exec prettier --write packages/core/src/services/gateway-dispatcher.ts pack
 pnpm --filter @clawwork/core test -- gateway-dispatcher.test.ts
 pnpm --filter @clawwork/desktop test -- preset-agent-bootstrap.test.ts startup-readiness.test.ts startup-readiness-screen.test.tsx welcome-screen.test.tsx
 pnpm typecheck
-pnpm typecheck:test
+pnpm typecheck:tests
 pnpm check:i18n
 pnpm check:renderer-copy
 pnpm check:ui-contract
@@ -411,7 +411,7 @@ pnpm --filter @clawwork/desktop build
 
 Expected: targeted tests, type checks, i18n, renderer-copy, UI contract, and build pass. Preserve the known LightningCSS `@theme` warning as a reported baseline if it remains.
 
-- [ ] **Step 3: Run the full core and desktop suites once**
+- [x] **Step 3: Run the full core and desktop suites once**
 
 Run:
 
@@ -422,7 +422,7 @@ pnpm --filter @clawwork/desktop test
 
 Expected: core remains green. Desktop adds no failures beyond the recorded 13 Windows/path-fixture failures in file reader, inbox resolve/save, media resolve, and workspace init tests.
 
-- [ ] **Step 4: Rehearse the Electron experience in both themes**
+- [x] **Step 4: Rehearse the Electron experience in both themes**
 
 Run:
 
@@ -439,15 +439,26 @@ Verify:
 5. the persistent rail immediately shows Compass Assistant plus six built-ins;
 6. the screen is legible in light and dark themes, then restore Follow Windows.
 
-- [ ] **Step 5: Commit locales and verification record**
+- [x] **Step 5: Commit locales and verification record**
 
 ```powershell
 git add packages/desktop/src/renderer/i18n/locales docs/superpowers/plans/2026-09-15-blocking-startup-readiness.md
 git commit -m "feat(i18n): localize startup readiness"
 ```
 
-- [ ] **Step 6: Push the feature branch**
+- [x] **Step 6: Push the feature branch**
 
 ```powershell
 git push origin feat/stage3b-demo-polish
 ```
+
+## Execution record — 2026-09-15
+
+- Implemented and committed Tasks 1–5 on `feat/stage3b-demo-polish`; `main` remains unchanged.
+- Focused verification: gateway dispatcher 25/25; startup readiness, bundled assistant bootstrap, readiness screen, and welcome screen 20/20.
+- Static verification: production and test TypeScript checks, i18n parity/usage, renderer copy, UI contract, and production desktop build passed.
+- Full suites: core 177/177 passed; desktop 849 passed with the same 13 recorded Windows path-fixture failures across file reader, inbox resolve/save, media resolve, and workspace init.
+- Electron rehearsal: light and dark startup screens were legible; the workspace remained blocked while models loaded, then opened with Compass Assistant plus all six bundled assistants. Existing assistants were not recreated.
+- Observed warm-profile startup times were approximately 37 seconds and 74 seconds. The slower run included an 8-second commercial-auth probe timeout before the gateway bootstrap. User copy remains “usually about 1 minute”; operational guidance should surface retry/network help after 90 seconds.
+- Restored the application theme setting to `auto` after dark-mode verification.
+- Existing build warnings remain: the mixed static/dynamic import for `device-identity.ts` and LightningCSS reporting unknown `@theme`.

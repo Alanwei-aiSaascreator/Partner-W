@@ -54,7 +54,7 @@ export default function StartupReadinessScreen({ readiness, onRetry }: StartupRe
     <div className="relative flex h-screen overflow-hidden bg-[var(--bg-primary)]" aria-busy={!readiness.isReady}>
       <div className="titlebar-drag fixed inset-x-0 top-0 z-50 h-8" />
       <main className="flex w-full items-center justify-center px-6 py-12">
-        <div className="w-full max-w-3xl">
+        <div className="w-full max-w-[var(--content-max-width)]">
           <header className="mb-8 flex flex-col items-center text-center">
             <div className="relative mb-4">
               <div className="absolute inset-0 scale-[2.2] rounded-full bg-[var(--accent)] opacity-[0.06] blur-2xl" />
@@ -71,11 +71,11 @@ export default function StartupReadinessScreen({ readiness, onRetry }: StartupRe
 
           <section
             aria-live="polite"
-            className="rounded-xl border border-[var(--border)] bg-[var(--bg-secondary)] p-5 shadow-[var(--shadow-card)]"
+            className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--bg-secondary)]"
           >
-            <div className="grid gap-4 md:grid-cols-2">
-              <article className="min-h-40 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-primary)] p-5">
-                <div className="mb-6 flex items-start justify-between gap-4">
+            <div className="grid md:grid-cols-5">
+              <article className="min-h-40 border-b border-[var(--border-subtle)] p-6 md:col-span-2 md:border-b-0 md:border-r">
+                <div className="mb-5 flex items-start justify-between gap-4">
                   <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--accent-dim)] text-[var(--accent)]">
                     <Bot size={19} aria-hidden="true" />
                   </span>
@@ -87,21 +87,23 @@ export default function StartupReadinessScreen({ readiness, onRetry }: StartupRe
                 <p className="type-body mt-2 text-[var(--text-secondary)]">{t(aiStatusKey)}</p>
               </article>
 
-              <article className="min-h-40 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-primary)] p-5">
-                <div className="mb-5 flex items-start justify-between gap-4">
-                  <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--accent-dim)] text-[var(--accent)]">
-                    <Boxes size={19} aria-hidden="true" />
-                  </span>
+              <article className="min-h-40 p-6 md:col-span-3">
+                <div className="mb-5 flex items-center justify-between gap-4">
+                  <div className="flex items-center gap-3">
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--accent-dim)] text-[var(--accent)]">
+                      <Boxes size={19} aria-hidden="true" />
+                    </span>
+                    <div>
+                      <h2 className="type-section-title text-[var(--text-primary)]">
+                        {t('startupReadiness.assistantsTitle')}
+                      </h2>
+                      <span className="type-mono-data text-[var(--text-muted)]">
+                        {t('startupReadiness.progress', { completed, total: assistant.total })}
+                      </span>
+                    </div>
+                  </div>
                   <span className={assistant.phase === 'error' ? 'text-[var(--danger)]' : 'text-[var(--accent)]'}>
                     <StateIcon phase={assistantIconPhase} />
-                  </span>
-                </div>
-                <div className="flex items-center justify-between gap-3">
-                  <h2 className="type-section-title text-[var(--text-primary)]">
-                    {t('startupReadiness.assistantsTitle')}
-                  </h2>
-                  <span className="type-mono-data text-[var(--text-muted)]">
-                    {t('startupReadiness.progress', { completed, total: assistant.total })}
                   </span>
                 </div>
                 <div
@@ -126,7 +128,7 @@ export default function StartupReadinessScreen({ readiness, onRetry }: StartupRe
               </article>
             </div>
 
-            <footer className="mt-5 flex min-h-9 items-center justify-between gap-4 border-t border-[var(--border-subtle)] pt-4">
+            <footer className="flex min-h-14 items-center justify-between gap-4 border-t border-[var(--border-subtle)] px-6 py-3">
               <p className="type-support text-[var(--text-muted)]">{t('startupReadiness.keepOpen')}</p>
               {readiness.hasError && (
                 <Button type="button" variant="outline" className="titlebar-no-drag shrink-0" onClick={onRetry}>

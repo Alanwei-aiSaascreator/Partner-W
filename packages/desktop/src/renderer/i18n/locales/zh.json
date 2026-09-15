@@ -590,12 +590,6 @@
     "waiting": "等待批准中…"
   },
   "presetAgents": {
-    "description": "添加内容、拍摄、办公、电商、研究和家庭六个专业助手，完成后可以直接切换使用。",
-    "failedRoles": "这些助手未完成配置：{{roles}}",
-    "incomplete": "还有 {{count}} 个助手未配置成功，可以重试，已完成的角色不会重复创建。",
-    "install": "配置 {{count}} 个助手",
-    "installing": "正在配置 {{completed}}/{{total}}",
-    "retry": "重试配置",
     "roles": {
       "content": "内容创作",
       "ecommerce": "电商运营",
@@ -604,9 +598,6 @@
       "research": "学习研究",
       "video": "拍摄剪辑"
     },
-    "setupFailed": "助手配置没有完成，请检查服务连接后重试。",
-    "title": "配置常用助手",
-    "unavailable": "连接助手服务后即可配置这些角色。",
     "workspaceUnavailable": "暂时无法读取助手工作目录，请检查服务连接后重试。"
   },
   "rightPanel": {
@@ -929,6 +920,24 @@
     "sourceSkill": "Skill",
     "title": "斜杠命令",
     "tooltip": "命令面板"
+  },
+  "startupReadiness": {
+    "aiError": "暂时没有可用模型",
+    "aiLoadingModels": "正在准备可用模型",
+    "aiReady": "模型已准备好",
+    "aiStarting": "正在启动 AI 服务",
+    "aiTitle": "AI 服务",
+    "assistantsError": "这些助手尚未完成：{{names}}",
+    "assistantsInstalling": "正在配置 {{name}}",
+    "assistantsReady": "6 个常用助手已就绪",
+    "assistantsTitle": "常用助手",
+    "assistantsVerifying": "正在检查内置助手",
+    "assistantsWaiting": "等待 AI 服务启动",
+    "description": "首次启动通常需要约 1 分钟，准备完成后会自动进入首页。",
+    "keepOpen": "请保持应用开启，无需重复操作。",
+    "progress": "{{completed}} / {{total}}",
+    "retry": "重新准备",
+    "title": "正在准备荣盈魔方"
   },
   "teams": {
     "confirmDeleteDesc": "确定删除「{{name}}」？此操作将移除团队配置。Agent 将保留在 Gateway 上，可在设置中管理。",
