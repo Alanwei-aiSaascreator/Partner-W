@@ -177,8 +177,20 @@ function lsWidth(
   return vw > 0 ? Math.min(max, Math.max(min, vw * vwFraction)) : min;
 }
 
+function fixedPanelWidth(
+  storage: UiStoreDeps['storage'],
+  key: string,
+  min: number,
+  max: number,
+  fallback: number,
+): number {
+  const value = Number(storage.get(key));
+  if (!Number.isFinite(value) || value <= 0) return fallback;
+  return Math.min(max, Math.max(min, value));
+}
+
 export function createUiStore(deps: UiStoreDeps) {
-  const defaultLeftNavWidth = lsWidth(deps.storage, 'cw:leftNavWidth', 180, 400, 0.18, deps.getViewportWidth);
+  const defaultLeftNavWidth = fixedPanelWidth(deps.storage, 'cw:leftNavWidth', 200, 260, 224);
   const defaultRightPanelWidth = lsWidth(deps.storage, 'cw:rightPanelWidth', 240, 500, 0.2, deps.getViewportWidth);
 
   return createStore<UiState>((set, get) => ({
@@ -359,7 +371,7 @@ export function createUiStore(deps: UiStoreDeps) {
 
     leftNavWidth: defaultLeftNavWidth,
     setLeftNavWidth: (w) => {
-      const clamped = Math.min(400, Math.max(180, w));
+      const clamped = Math.min(260, Math.max(200, w));
       deps.storage.set('cw:leftNavWidth', String(clamped));
       set({ leftNavWidth: clamped });
     },
