@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 
-import { act, useRef, type ReactElement } from 'react';
+import { act, useRef, type Dispatch, type ReactElement, type SetStateAction } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Task, Team } from '@clawwork/shared';
+import type { TaskContextFile } from '../src/renderer/components/ChatInput/useTaskMaterials';
 
 /* ---------- hoisted mocks ---------- */
 const mocks = vi.hoisted(() => {
@@ -44,7 +45,7 @@ const mocks = vi.hoisted(() => {
     ensembleTask,
     teamData,
     initConductor: vi.fn(async () => true),
-    composerSend: vi.fn(async () => {}),
+    composerSend: vi.fn(async () => ({ ok: true, taskId: 'task-ensemble' })),
     taskState: {
       tasks: [ensembleTask],
       activeTaskId: 'task-ensemble',
@@ -135,20 +136,52 @@ function render(ui: ReactElement): { container: HTMLDivElement; unmount: () => v
 
 let capturedHandleSend: (() => Promise<void>) | null = null;
 
-function Harness() {
+const importedMaterial = {
+  fileName: 'brief.pdf',
+  localPath: 'tasks/task-ensemble/inbox/brief.pdf',
+  mimeType: 'application/pdf',
+  size: 64,
+  availability: 'available' as const,
+};
+
+const sourceMaterial: TaskContextFile = {
+  sourceId: 'source-1',
+  sourceName: 'Research',
+  fileName: 'diagram.png',
+  relativePath: 'diagram.png',
+  mimeType: 'image/png',
+  size: 5,
+  mtime: 1,
+  tier: 'image',
+};
+
+function Harness({
+  withMaterials = false,
+  setPendingAttachments = vi.fn(),
+  clearImported = vi.fn(),
+  clearSource = vi.fn(),
+}: {
+  withMaterials?: boolean;
+  setPendingAttachments?: Dispatch<SetStateAction<Array<{ file: File; previewUrl: string }>>>;
+  clearImported?: () => void;
+  clearSource?: Dispatch<SetStateAction<TaskContextFile[]>>;
+} = {}) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const pendingAttachments = withMaterials
+    ? [{ file: new File(['paste'], 'pasted.png', { type: 'image/png' }), previewUrl: 'blob:pasted' }]
+    : [];
   const chat = useChatSend({
     textareaRef,
-    pendingAttachments: [],
-    setPendingAttachments: vi.fn(),
+    pendingAttachments,
+    setPendingAttachments,
     selectedTasks: [],
     setSelectedTasks: vi.fn(),
     selectedArtifacts: [],
     setSelectedArtifacts: vi.fn(),
-    selectedLocalFiles: [],
-    setSelectedLocalFiles: vi.fn(),
-    selectedImportedFiles: [],
-    clearSelectedImportedFiles: vi.fn(),
+    selectedLocalFiles: withMaterials ? [sourceMaterial] : [],
+    setSelectedLocalFiles: clearSource,
+    selectedImportedFiles: withMaterials ? [importedMaterial] : [],
+    clearSelectedImportedFiles: clearImported,
     markImportedFileMissing: vi.fn(),
     selectedAgents: [],
     setSelectedAgents: vi.fn(),
@@ -169,6 +202,15 @@ describe('conductor initialization - catalog fallback', () => {
     (globalThis as Record<string, unknown>).window = globalThis;
     (globalThis as Record<string, unknown> & { clawwork?: Record<string, unknown> }).clawwork = {
       getAgentFile: vi.fn(async () => ({ ok: false })),
+      saveInboxAttachment: vi.fn(async () => ({
+        ok: true,
+        result: { localPath: 'tasks/task-ensemble/inbox/pasted.png' },
+      })),
+      readInboxFile: vi.fn(async () => ({ ok: true, result: { content: 'cGRm', encoding: 'base64' } })),
+      readTaskContextFile: vi.fn(async () => ({
+        ok: true,
+        result: { content: 'aW1hZ2U=', mimeType: 'image/png', size: 5, truncated: false, tier: 'image' },
+      })),
     };
     useCommercialStore.setState({
       status: 'ready',
@@ -276,6 +318,124 @@ describe('conductor initialization - catalog fallback', () => {
     // unrelated-agent is not in the team, should not appear.
     expect(catalogArg).not.toContain('unrelated-agent');
 
+    unmount();
+  });
+
+  it('initializes first, then dispatches imported, source, and pasted attachments before clearing the draft', async () => {
+    mocks.uiState.agentCatalogByGateway = {};
+    mocks.teamState.teams = { 'team-1': mocks.teamData };
+    mocks.roomState.rooms = {};
+    const setPendingAttachments = vi.fn();
+    const clearImported = vi.fn();
+    const clearSource = vi.fn();
+    const { container, unmount } = render(
+      <Harness
+        withMaterials
+        setPendingAttachments={setPendingAttachments}
+        clearImported={clearImported}
+        clearSource={clearSource}
+      />,
+    );
+
+    await act(async () => {
+      await capturedHandleSend!();
+    });
+
+    expect(mocks.roomState.initConductor).toHaveBeenCalledWith(
+      'task-ensemble',
+      'gw-1',
+      'agent:main:clawwork:task:task-ensemble',
+      expect.any(String),
+    );
+    expect(window.clawwork.readInboxFile).toHaveBeenCalledWith('tasks/task-ensemble/inbox/brief.pdf');
+    expect(window.clawwork.readTaskContextFile).toHaveBeenCalledWith('task-ensemble', 'source-1', 'diagram.png');
+    expect(mocks.composerSend).toHaveBeenCalledWith(
+      'task-ensemble',
+      expect.objectContaining({
+        content: 'hello team',
+        attachments: expect.arrayContaining([
+          { mimeType: 'image/png', fileName: 'pasted.png', content: 'cGFzdGU=' },
+          { mimeType: 'application/pdf', fileName: 'brief.pdf', content: 'cGRm' },
+          { mimeType: 'image/png', fileName: 'diagram.png', content: 'aW1hZ2U=' },
+        ]),
+        messageAttachments: expect.arrayContaining([
+          expect.objectContaining({
+            fileName: 'pasted.png',
+            localPath: 'tasks/task-ensemble/inbox/pasted.png',
+          }),
+          expect.objectContaining({
+            fileName: 'brief.pdf',
+            localPath: 'tasks/task-ensemble/inbox/brief.pdf',
+          }),
+        ]),
+      }),
+    );
+    expect(mocks.messageState.addMessage).not.toHaveBeenCalled();
+    expect((container.querySelector('textarea') as HTMLTextAreaElement).value).toBe('');
+    expect(setPendingAttachments).toHaveBeenCalledWith([]);
+    expect(clearImported).toHaveBeenCalledTimes(1);
+    expect(clearSource).toHaveBeenCalledWith([]);
+    unmount();
+  });
+
+  it('preserves the draft and does not persist a user message when conductor initialization fails', async () => {
+    mocks.uiState.agentCatalogByGateway = {};
+    mocks.teamState.teams = { 'team-1': mocks.teamData };
+    mocks.roomState.rooms = {};
+    mocks.roomState.initConductor.mockResolvedValueOnce(false);
+    const setPendingAttachments = vi.fn();
+    const clearImported = vi.fn();
+    const clearSource = vi.fn();
+    const { container, unmount } = render(
+      <Harness
+        withMaterials
+        setPendingAttachments={setPendingAttachments}
+        clearImported={clearImported}
+        clearSource={clearSource}
+      />,
+    );
+
+    await act(async () => {
+      await capturedHandleSend!();
+    });
+
+    expect(mocks.composerSend).not.toHaveBeenCalled();
+    expect(mocks.messageState.addMessage).not.toHaveBeenCalled();
+    expect((container.querySelector('textarea') as HTMLTextAreaElement).value).toBe('hello team');
+    expect(setPendingAttachments).not.toHaveBeenCalled();
+    expect(clearImported).not.toHaveBeenCalled();
+    expect(clearSource).not.toHaveBeenCalled();
+    unmount();
+  });
+
+  it('preserves the draft and avoids a false local message when first dispatch fails after initialization', async () => {
+    mocks.uiState.agentCatalogByGateway = {};
+    mocks.teamState.teams = { 'team-1': mocks.teamData };
+    mocks.roomState.rooms = {};
+    mocks.composerSend.mockResolvedValueOnce({ ok: false, taskId: 'task-ensemble' });
+    const setPendingAttachments = vi.fn();
+    const clearImported = vi.fn();
+    const clearSource = vi.fn();
+    const { container, unmount } = render(
+      <Harness
+        withMaterials
+        setPendingAttachments={setPendingAttachments}
+        clearImported={clearImported}
+        clearSource={clearSource}
+      />,
+    );
+
+    await act(async () => {
+      await capturedHandleSend!();
+    });
+
+    expect(mocks.roomState.initConductor).toHaveBeenCalledTimes(1);
+    expect(mocks.composerSend).toHaveBeenCalledTimes(1);
+    expect(mocks.messageState.addMessage).not.toHaveBeenCalled();
+    expect((container.querySelector('textarea') as HTMLTextAreaElement).value).toBe('hello team');
+    expect(setPendingAttachments).not.toHaveBeenCalled();
+    expect(clearImported).not.toHaveBeenCalled();
+    expect(clearSource).not.toHaveBeenCalled();
     unmount();
   });
 });

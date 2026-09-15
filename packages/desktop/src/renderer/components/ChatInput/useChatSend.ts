@@ -309,84 +309,6 @@ export function useChatSend(opts: UseChatSendOpts) {
           ]
         : undefined;
 
-    if (task.ensemble) {
-      const room = useRoomStore.getState().rooms[task.id];
-      if (!room || !room.conductorReady) {
-        const catalogEntryAll = useUiStore.getState().agentCatalogByGateway[task.gatewayId];
-        const allAgents = catalogEntryAll?.agents ?? [];
-        let agents: AgentInfo[];
-        let teamAgentMap: Map<string, { role?: string }> | null = null;
-        if (task.teamId) {
-          const team = useTeamStore.getState().teams[task.teamId];
-          const teamAgentIds = new Set(team?.agents.map((a) => a.agentId) ?? []);
-          teamAgentMap = new Map(team?.agents.map((a) => [a.agentId, a]));
-          agents = allAgents.filter((a) => teamAgentIds.has(a.id) && a.id !== task.agentId);
-          // Fallback: if gateway agent catalog has not been fetched yet,
-          // build minimal AgentInfo objects from the team definition itself.
-          if (agents.length === 0 && !catalogEntryAll && team) {
-            agents = team.agents
-              .filter((ta) => ta.agentId !== task.agentId)
-              .map((ta) => ({ id: ta.agentId }) satisfies AgentInfo);
-          }
-        } else {
-          agents = allAgents.filter((a) => a.id !== 'main');
-        }
-        if (agents.length === 0) {
-          toast.error(t('errors.conductorInitFailed'));
-          return;
-        }
-
-        if (content || allMessageAttachments?.length) {
-          addMessage(task.id, 'user', content, allMessageAttachments);
-        }
-        setProcessing(task.sessionKey, true);
-        const descResults = await Promise.allSettled(
-          agents.map((a) => window.clawwork.getAgentFile(task.gatewayId, a.id, 'IDENTITY.md')),
-        );
-        const descMap = new Map<string, string>();
-        agents.forEach((a, i) => {
-          const r = descResults[i];
-          if (r.status === 'fulfilled' && r.value.ok && r.value.result) {
-            const data = r.value.result as Record<string, unknown>;
-            if (typeof data.content === 'string') {
-              const desc = extractDescription(data.content);
-              if (desc) descMap.set(a.id, desc);
-            }
-          }
-        });
-
-        const agentCatalogStr = agents
-          .map((a) => {
-            const name = (a.name ?? a.id).replaceAll('"', '\\"');
-            const emojiPart = a.identity?.emoji ? `, emoji: ${a.identity.emoji}` : '';
-            const ta = teamAgentMap?.get(a.id);
-            const rolePart = ta?.role ? `, role: "${ta.role.replaceAll('"', '\\"')}"` : '';
-            const desc = descMap.get(a.id);
-            const descPart = desc ? `, description: "${desc.replaceAll('"', '\\"')}"` : '';
-            return `- id: ${a.id}, name: "${name}"${emojiPart}${rolePart}${descPart}`;
-          })
-          .join('\n');
-        const ok = await useRoomStore
-          .getState()
-          .initConductor(task.id, task.gatewayId, task.sessionKey, agentCatalogStr, content);
-        if (!ok) {
-          toast.error(t('errors.conductorInitFailed'));
-          setProcessing(task.sessionKey, false);
-          return;
-        }
-        textarea.value = '';
-        textarea.style.height = 'auto';
-        onComposerCleared?.();
-        setPendingAttachments([]);
-        setSelectedAgents([]);
-        setSelectedTasks([]);
-        setSelectedArtifacts([]);
-        setSelectedLocalFiles([]);
-        clearSelectedImportedFiles();
-        return;
-      }
-    }
-
     const taskMentions = [...selectedTasks];
     const artifactMentions = [...selectedArtifacts];
     const localFileMentions = [...selectedLocalFiles];
@@ -511,6 +433,72 @@ export function useChatSend(opts: UseChatSendOpts) {
         content: record.base64,
       }));
       const allAttachments = [...gatewayAttachments, ...importedGatewayAttachments, ...extraAttachments];
+      let deferUserMessageUntilSent = false;
+
+      if (task.ensemble) {
+        const room = useRoomStore.getState().rooms[task.id];
+        if (!room || !room.conductorReady) {
+          const catalogEntryAll = useUiStore.getState().agentCatalogByGateway[task.gatewayId];
+          const allAgents = catalogEntryAll?.agents ?? [];
+          let agents: AgentInfo[];
+          let teamAgentMap: Map<string, { role?: string }> | null = null;
+          if (task.teamId) {
+            const team = useTeamStore.getState().teams[task.teamId];
+            const teamAgentIds = new Set(team?.agents.map((a) => a.agentId) ?? []);
+            teamAgentMap = new Map(team?.agents.map((a) => [a.agentId, a]));
+            agents = allAgents.filter((a) => teamAgentIds.has(a.id) && a.id !== task.agentId);
+            // Fallback: if gateway agent catalog has not been fetched yet,
+            // build minimal AgentInfo objects from the team definition itself.
+            if (agents.length === 0 && !catalogEntryAll && team) {
+              agents = team.agents
+                .filter((ta) => ta.agentId !== task.agentId)
+                .map((ta) => ({ id: ta.agentId }) satisfies AgentInfo);
+            }
+          } else {
+            agents = allAgents.filter((a) => a.id !== 'main');
+          }
+          if (agents.length === 0) {
+            toast.error(t('errors.conductorInitFailed'));
+            return;
+          }
+
+          const descResults = await Promise.allSettled(
+            agents.map((a) => window.clawwork.getAgentFile(task.gatewayId, a.id, 'IDENTITY.md')),
+          );
+          const descMap = new Map<string, string>();
+          agents.forEach((a, i) => {
+            const r = descResults[i];
+            if (r.status === 'fulfilled' && r.value.ok && r.value.result) {
+              const data = r.value.result as Record<string, unknown>;
+              if (typeof data.content === 'string') {
+                const desc = extractDescription(data.content);
+                if (desc) descMap.set(a.id, desc);
+              }
+            }
+          });
+
+          const agentCatalogStr = agents
+            .map((a) => {
+              const name = (a.name ?? a.id).replaceAll('"', '\\"');
+              const emojiPart = a.identity?.emoji ? `, emoji: ${a.identity.emoji}` : '';
+              const ta = teamAgentMap?.get(a.id);
+              const rolePart = ta?.role ? `, role: "${ta.role.replaceAll('"', '\\"')}"` : '';
+              const desc = descMap.get(a.id);
+              const descPart = desc ? `, description: "${desc.replaceAll('"', '\\"')}"` : '';
+              return `- id: ${a.id}, name: "${name}"${emojiPart}${rolePart}${descPart}`;
+            })
+            .join('\n');
+          const ok = await useRoomStore
+            .getState()
+            .initConductor(task.id, task.gatewayId, task.sessionKey, agentCatalogStr);
+          if (!ok) {
+            toast.error(t('errors.conductorInitFailed'));
+            setProcessing(task.sessionKey, false);
+            return;
+          }
+          deferUserMessageUntilSent = true;
+        }
+      }
 
       const slashMatch = finalContent.trim().match(/^\/(model|think)\s+(.+)$/);
       if (slashMatch && allAttachments.length === 0 && !allMessageAttachments?.length) {
@@ -540,6 +528,7 @@ export function useChatSend(opts: UseChatSendOpts) {
         content: finalContent,
         attachments: allAttachments.length > 0 ? allAttachments : undefined,
         messageAttachments: allMessageAttachments,
+        deferUserMessageUntilSent,
         presetModel: currentModel,
         presetThinking: currentThinking,
         titleHint: task.title ? undefined : titleHint,

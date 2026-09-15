@@ -77,6 +77,8 @@ export interface SendOptions {
   content: string;
   attachments?: ChatAttachment[];
   messageAttachments?: MessageAttachment[];
+  /** Add/persist the user message only after gateway dispatch succeeds. */
+  deferUserMessageUntilSent?: boolean;
   presetModel?: string;
   presetThinking?: string;
   titleHint?: string;
@@ -207,9 +209,11 @@ export function createChatComposer(deps: ChatComposerDeps) {
     }
 
     const store = deps.getMessageStore();
-    const pendingUserMessage = store.addMessage(task.id, 'user', options.content, options.messageAttachments, {
-      persist: false,
-    });
+    let pendingUserMessage = options.deferUserMessageUntilSent
+      ? undefined
+      : store.addMessage(task.id, 'user', options.content, options.messageAttachments, {
+          persist: false,
+        });
     store.setProcessing(task.sessionKey, true);
 
     if (!task.title && options.titleHint) {
@@ -325,6 +329,10 @@ export function createChatComposer(deps: ChatComposerDeps) {
           return { ok: false, taskId: task.id };
         }
       }
+
+      pendingUserMessage ??= store.addMessage(task.id, 'user', options.content, options.messageAttachments, {
+        persist: false,
+      });
 
       clearTimer(task.id);
       const watchKeys = isMentionSend ? mentionTargets : [task.sessionKey];

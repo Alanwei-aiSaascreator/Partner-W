@@ -42,6 +42,7 @@ function setup() {
   const compactSession = vi.fn().mockResolvedValue({ ok: true });
   const resetSession = vi.fn().mockResolvedValue({ ok: true });
   const updateTaskMetadata = vi.fn();
+  const persistMessage = vi.fn().mockResolvedValue(undefined);
   const task = {
     id: TASK_ID,
     gatewayId: 'gw-1',
@@ -64,7 +65,7 @@ function setup() {
       setProcessing: vi.fn(),
       clearMessages: vi.fn(),
     }),
-    persistMessage: vi.fn().mockResolvedValue(undefined),
+    persistMessage,
     markAbortedByUser: vi.fn(),
     compactSession,
     resetSession,
@@ -87,6 +88,7 @@ function setup() {
     resetSession,
     patchSession,
     updateTaskMetadata,
+    persistMessage,
   };
 }
 
@@ -134,6 +136,40 @@ describe('chat-composer', () => {
       expect(system).toHaveLength(1);
       expect(system[0]?.sessionKey).toBe(SESSION_KEY);
     }
+  });
+
+  it('does not create or persist a deferred user message when gateway dispatch fails', async () => {
+    const { composer, addMessage, sendMessage, persistMessage } = setup();
+    sendMessage.mockResolvedValueOnce({ ok: false, error: 'offline' });
+
+    const result = await composer.send(TASK_ID, {
+      content: 'first ensemble message',
+      deferUserMessageUntilSent: true,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(addMessage.mock.calls.filter((call) => call[1] === 'user')).toHaveLength(0);
+    expect(persistMessage).not.toHaveBeenCalled();
+  });
+
+  it('creates and persists a deferred user message only after gateway dispatch succeeds', async () => {
+    const { composer, addMessage, sendMessage, persistMessage } = setup();
+    const attachments = [{ fileName: 'brief.pdf', dataUrl: '', localPath: 'tasks/abc/inbox/brief.pdf' }];
+
+    const result = await composer.send(TASK_ID, {
+      content: 'first ensemble message',
+      attachments: [{ fileName: 'brief.pdf', mimeType: 'application/pdf', content: 'cGRm' }],
+      messageAttachments: attachments,
+      deferUserMessageUntilSent: true,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(sendMessage).toHaveBeenCalledWith('gw-1', SESSION_KEY, 'first ensemble message', [
+      { fileName: 'brief.pdf', mimeType: 'application/pdf', content: 'cGRm' },
+    ]);
+    expect(addMessage).toHaveBeenCalledWith(TASK_ID, 'user', 'first ensemble message', attachments, { persist: false });
+    expect(sendMessage.mock.invocationCallOrder[0]).toBeLessThan(addMessage.mock.invocationCallOrder[0]);
+    expect(persistMessage).toHaveBeenCalledTimes(1);
   });
 });
 
