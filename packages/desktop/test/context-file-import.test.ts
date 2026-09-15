@@ -14,7 +14,7 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { basename, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import {
   __testing,
   ImportIntegrityError,
@@ -29,6 +29,9 @@ const handleTracker = vi.hoisted(() => ({ enabled: false, opened: 0, closed: 0 }
 const directoryReadFailures = vi.hoisted(() => new Set<string>());
 const directoryCloseCounts = vi.hoisted(() => new Map<string, number>());
 const linkFailureCodes = vi.hoisted(() => [] as string[]);
+const execFileMock = vi.hoisted(() => vi.fn());
+
+vi.mock('node:child_process', () => ({ execFile: execFileMock }));
 
 vi.mock('node:fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs')>();
@@ -119,6 +122,7 @@ afterEach(async () => {
   directoryReadFailures.clear();
   directoryCloseCounts.clear();
   linkFailureCodes.splice(0);
+  execFileMock.mockReset();
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
@@ -342,6 +346,97 @@ describe('task file import', () => {
     expect(args[3]).not.toContain(destination);
     expect(Buffer.from(args[4], 'base64url').toString('utf8')).toBe(source);
     expect(Buffer.from(args[5], 'base64url').toString('utf8')).toBe(destination);
+  });
+
+  it('resolves only the absolute system PowerShell even when a cwd-style fake exists', async () => {
+    const { root } = await fixture();
+    const systemRoot = join(root, 'Windows');
+    const expected = join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+    await mkdir(dirname(expected), { recursive: true });
+    await writeFile(expected, 'system executable');
+    await writeFile(join(root, 'powershell.exe'), 'cwd fake');
+
+    await expect(__testing.resolveWindowsPowerShellPath(systemRoot, false)).resolves.toBe(expected);
+    expect(__testing.windowsMoveOptions).toMatchObject({ windowsHide: true, timeout: 15_000, maxBuffer: 64 * 1024 });
+  });
+
+  it('prefers the absolute Sysnative PowerShell path for a WOW64 process', async () => {
+    const { root } = await fixture();
+    const systemRoot = join(root, 'Windows');
+    const expected = join(systemRoot, 'Sysnative', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+    await mkdir(dirname(expected), { recursive: true });
+    await writeFile(expected, 'system executable');
+
+    await expect(__testing.resolveWindowsPowerShellPath(systemRoot, true)).resolves.toBe(expected);
+  });
+
+  it('executes only the resolved absolute system binary and never a cwd or PATH powershell', async () => {
+    const { root } = await fixture();
+    const systemRoot = join(root, 'Windows');
+    const expected = join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+    const cwdFake = join(root, 'powershell.exe');
+    await mkdir(dirname(expected), { recursive: true });
+    await writeFile(expected, 'system executable');
+    await writeFile(cwdFake, 'cwd fake');
+    const previousSystemRoot = process.env.SystemRoot;
+    process.env.SystemRoot = systemRoot;
+    execFileMock.mockImplementation((...args: unknown[]) => {
+      const callback = args[3] as (error: Error) => void;
+      callback(new Error('stop after executable resolution'));
+    });
+
+    try {
+      await expect(__testing.nativeWindowsMove('C:\\source.txt', 'C:\\destination.txt')).rejects.toThrow(
+        /executable resolution/,
+      );
+    } finally {
+      if (previousSystemRoot === undefined) delete process.env.SystemRoot;
+      else process.env.SystemRoot = previousSystemRoot;
+    }
+    expect(execFileMock).toHaveBeenCalledWith(
+      expected,
+      expect.any(Array),
+      expect.objectContaining({ windowsHide: true, timeout: 15_000, maxBuffer: 64 * 1024 }),
+      expect.any(Function),
+    );
+    expect(execFileMock.mock.calls[0][0]).not.toBe('powershell.exe');
+    expect(execFileMock.mock.calls[0][0]).not.toBe(cwdFake);
+  });
+
+  it('fails closed when the system PowerShell path is missing or redirected outside the system root', async () => {
+    const missing = await fixture();
+    await expect(__testing.resolveWindowsPowerShellPath(join(missing.root, 'Windows'), false)).rejects.toThrow(
+      /PowerShell/,
+    );
+
+    const redirected = await fixture();
+    const systemRoot = join(redirected.root, 'Windows');
+    const powershellParent = join(systemRoot, 'System32', 'WindowsPowerShell');
+    const external = join(redirected.root, 'external-powershell');
+    await mkdir(join(systemRoot, 'System32'), { recursive: true });
+    await mkdir(join(external, 'v1.0'), { recursive: true });
+    await writeFile(join(external, 'v1.0', 'powershell.exe'), 'fake executable');
+    symlinkSync(external, powershellParent, 'junction');
+
+    await expect(__testing.resolveWindowsPowerShellPath(systemRoot, false)).rejects.toThrow(/PowerShell/);
+  });
+
+  it('cleans staging and reports publish-unavailable after a native move timeout', async () => {
+    const { workspacePath, sources } = await fixture();
+    const source = join(sources, 'timeout.txt');
+    await writeFile(source, 'complete content');
+    linkFailureCodes.push('EPERM');
+
+    const result = await __testing.importTaskFiles(
+      { workspacePath, taskId: 'task-1', sourcePaths: [source] },
+      {
+        nativeMovePublisher: () =>
+          Promise.reject(Object.assign(new Error('native move timed out'), { code: 'ETIMEDOUT', killed: true })),
+      },
+    );
+
+    expect(result.rejected).toEqual([{ fileName: 'timeout.txt', reason: 'publish-unavailable' }]);
+    await expectEmptyStaging(join(workspacePath, 'task-1', 'inbox'));
   });
 
   it('uses unique safe names without overwriting same-name inputs or existing inbox files', async () => {

@@ -5,7 +5,7 @@ import type { Dir, Stats } from 'node:fs';
 import { existsSync, lstatSync, mkdirSync, opendirSync, realpathSync, statSync } from 'node:fs';
 import type { FileHandle } from 'node:fs/promises';
 import { link, lstat, open, realpath, stat, unlink } from 'node:fs/promises';
-import { basename, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { ensureTaskDir } from '../workspace/init.js';
 import { uniqueFileName } from '../workspace/safe-name.js';
 import { getMimeType } from './file-types.js';
@@ -550,6 +550,66 @@ async function hashTarget(handle: FileHandle, expectedBytes: number): Promise<st
 const POWERSHELL_NO_REPLACE_MOVE_SCRIPT =
   '& { param([string]$s,[string]$d) $ErrorActionPreference="Stop"; function Decode([string]$v) { $v=$v.Replace("-","+").Replace("_","/"); while (($v.Length % 4) -ne 0) { $v += "=" }; [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($v)) }; [System.IO.File]::Move((Decode $s),(Decode $d)) }';
 
+const WINDOWS_MOVE_OPTIONS = Object.freeze({ windowsHide: true, timeout: 15_000, maxBuffer: 64 * 1024 });
+
+async function resolveWindowsPowerShellPath(
+  systemRootValue = process.env.SystemRoot ?? process.env.WINDIR,
+  useSysnative = process.arch === 'ia32' && Boolean(process.env.PROCESSOR_ARCHITEW6432),
+): Promise<string> {
+  if (!systemRootValue || !isAbsolute(systemRootValue)) throw new Error('trusted Windows PowerShell is unavailable');
+  try {
+    const rootLinkStats = await lstat(systemRootValue);
+    const realRoot = await realpath(systemRootValue);
+    const rootStats = await stat(realRoot);
+    if (
+      rootLinkStats.isSymbolicLink() ||
+      !rootLinkStats.isDirectory() ||
+      !sameStrongIdentity(rootLinkStats, rootStats)
+    ) {
+      throw new Error();
+    }
+
+    const candidateRoots = useSysnative ? ['Sysnative', 'System32'] : ['System32'];
+    for (const candidateRoot of candidateRoots) {
+      const relativeParent = join(candidateRoot, 'WindowsPowerShell', 'v1.0');
+      const candidate = join(systemRootValue, relativeParent, 'powershell.exe');
+      try {
+        const parentPath = dirname(candidate);
+        const [parentLinkStats, executableLinkStats, realParent, realExecutable] = await Promise.all([
+          lstat(parentPath),
+          lstat(candidate),
+          realpath(parentPath),
+          realpath(candidate),
+        ]);
+        const [parentStats, executableStats] = await Promise.all([stat(realParent), stat(realExecutable)]);
+        const expectedParents = (candidateRoot === 'Sysnative' ? ['Sysnative', 'System32'] : [candidateRoot]).map(
+          (physicalRoot) => resolve(realRoot, physicalRoot, 'WindowsPowerShell', 'v1.0'),
+        );
+        if (
+          parentLinkStats.isSymbolicLink() ||
+          executableLinkStats.isSymbolicLink() ||
+          !parentLinkStats.isDirectory() ||
+          !executableLinkStats.isFile() ||
+          !sameStrongIdentity(parentLinkStats, parentStats) ||
+          !sameStrongIdentity(executableLinkStats, executableStats) ||
+          !expectedParents.some((expectedParent) => samePath(realParent, expectedParent)) ||
+          !samePath(realExecutable, join(realParent, 'powershell.exe')) ||
+          !isWithin(realRoot, realExecutable)
+        ) {
+          throw new Error();
+        }
+        return candidate;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
+        throw error;
+      }
+    }
+  } catch {
+    throw new Error('trusted Windows PowerShell is unavailable');
+  }
+  throw new Error('trusted Windows PowerShell is unavailable');
+}
+
 function windowsMoveArguments(sourcePath: string, destinationPath: string): string[] {
   return [
     '-NoProfile',
@@ -561,9 +621,10 @@ function windowsMoveArguments(sourcePath: string, destinationPath: string): stri
   ];
 }
 
-function nativeWindowsMove(sourcePath: string, destinationPath: string): Promise<void> {
-  return new Promise((resolvePromise, rejectPromise) => {
-    execFile('powershell.exe', windowsMoveArguments(sourcePath, destinationPath), { windowsHide: true }, (error) =>
+async function nativeWindowsMove(sourcePath: string, destinationPath: string): Promise<void> {
+  const executable = await resolveWindowsPowerShellPath();
+  await new Promise<void>((resolvePromise, rejectPromise) => {
+    execFile(executable, windowsMoveArguments(sourcePath, destinationPath), WINDOWS_MOVE_OPTIONS, (error) =>
       error ? rejectPromise(error) : resolvePromise(),
     );
   });
@@ -972,6 +1033,9 @@ export function listImportedTaskFiles(workspacePath: string, taskIdValue: string
 }
 
 export const __testing = Object.freeze({
+  nativeWindowsMove,
+  resolveWindowsPowerShellPath,
+  windowsMoveOptions: WINDOWS_MOVE_OPTIONS,
   windowsMoveArguments,
   importTaskFiles: (
     input: { workspacePath: string; taskId: string; sourcePaths: string[] },
