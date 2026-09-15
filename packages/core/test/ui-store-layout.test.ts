@@ -17,6 +17,20 @@ function setup(initial: Record<string, string> = {}) {
 }
 
 describe('ui store assistant rail layout', () => {
+  it('uses light mode for a profile without an explicit theme', () => {
+    const { store } = setup();
+
+    expect(store.getState().theme).toBe('light');
+  });
+
+  it('keeps an explicit dark theme selection', () => {
+    const { store } = setup();
+
+    store.getState().setTheme('dark');
+
+    expect(store.getState().theme).toBe('dark');
+  });
+
   it('starts the assistant rail at the approved 224px width', () => {
     const { store } = setup();
 

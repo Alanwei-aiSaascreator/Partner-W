@@ -204,7 +204,7 @@ export function createUiStore(deps: UiStoreDeps) {
     settingsOpen: false,
     setSettingsOpen: (open) => set({ settingsOpen: open }),
 
-    theme: 'auto',
+    theme: 'light',
     setTheme: (theme) => set({ theme }),
 
     density: 'comfortable',
