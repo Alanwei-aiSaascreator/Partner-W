@@ -1179,6 +1179,22 @@
     "tabMyTeams": "我的团队",
     "teamCount": "{{count}} 个团队"
   },
+  "toolActivity": {
+    "actions": {
+      "browseWeb": "查询网页",
+      "execute": "执行操作",
+      "listDirectory": "查看文件夹",
+      "other": "使用工具",
+      "readFile": "读取文件",
+      "search": "搜索资料",
+      "writeFile": "修改文件"
+    },
+    "completed": "已完成 {{count}} 个步骤",
+    "duration": "{{seconds}} 秒",
+    "groupCount": "× {{count}}",
+    "running": "正在处理 · 已完成 {{count}} 个步骤",
+    "viewDetails": "查看详情"
+  },
   "toolCall": {
     "args": "参数",
     "result": "结果"

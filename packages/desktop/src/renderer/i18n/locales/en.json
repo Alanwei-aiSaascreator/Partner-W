@@ -1179,6 +1179,22 @@
     "tabMyTeams": "My Teams",
     "teamCount": "{{count}} teams"
   },
+  "toolActivity": {
+    "actions": {
+      "browseWeb": "Browse the web",
+      "execute": "Run an operation",
+      "listDirectory": "View folders",
+      "other": "Use a tool",
+      "readFile": "Read files",
+      "search": "Search sources",
+      "writeFile": "Modify files"
+    },
+    "completed": "Completed {{count}} steps",
+    "duration": "{{seconds}} sec",
+    "groupCount": "× {{count}}",
+    "running": "Working · completed {{count}} steps",
+    "viewDetails": "View details"
+  },
   "toolCall": {
     "args": "Arguments",
     "result": "Result"

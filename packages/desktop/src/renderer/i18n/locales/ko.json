@@ -1179,6 +1179,22 @@
     "tabMyTeams": "내 팀",
     "teamCount": "{{count}}개 팀"
   },
+  "toolActivity": {
+    "actions": {
+      "browseWeb": "Browse the web",
+      "execute": "Run an operation",
+      "listDirectory": "View folders",
+      "other": "Use a tool",
+      "readFile": "Read files",
+      "search": "Search sources",
+      "writeFile": "Modify files"
+    },
+    "completed": "Completed {{count}} steps",
+    "duration": "{{seconds}} sec",
+    "groupCount": "× {{count}}",
+    "running": "Working · completed {{count}} steps",
+    "viewDetails": "View details"
+  },
   "toolCall": {
     "args": "인수",
     "result": "결과"
