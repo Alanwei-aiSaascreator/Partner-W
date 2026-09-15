@@ -1,23 +1,70 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { symlinkSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, readdir, rename, rm, truncate, utimes, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readFile, readdir, rename, rm, truncate, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
-import { importTaskFiles, listImportedTaskFiles } from '../src/main/context/file-import.js';
+import {
+  __testing,
+  ImportIntegrityError,
+  importTaskFiles,
+  listImportedTaskFiles,
+} from '../src/main/context/file-import.js';
 import { readInboxFile } from '../src/main/inbox/resolve.js';
 
-const copyFailurePaths = vi.hoisted(() => new Set<string>());
 const symbolicLinkPaths = vi.hoisted(() => new Set<string>());
-const afterCopyActions = vi.hoisted(() => new Map<string, (destination: string) => Promise<void>>());
+const zeroIdentityPaths = vi.hoisted(() => new Set<string>());
+const handleTracker = vi.hoisted(() => ({ enabled: false, opened: 0, closed: 0 }));
+const directoryReadFailures = vi.hoisted(() => new Set<string>());
+const directoryCloseCounts = vi.hoisted(() => new Map<string, number>());
+
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  return {
+    ...actual,
+    opendirSync: (path: string) => {
+      const directory = actual.opendirSync(path);
+      if (!directoryReadFailures.has(path)) return directory;
+      return {
+        readSync: () => {
+          throw new Error('simulated directory read failure');
+        },
+        closeSync: () => {
+          directoryCloseCounts.set(path, (directoryCloseCounts.get(path) ?? 0) + 1);
+          directory.closeSync();
+        },
+      };
+    },
+  };
+});
 
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>();
   return {
     ...actual,
-    copyFile: async (...args: Parameters<typeof actual.copyFile>) => {
-      if (copyFailurePaths.has(String(args[0]))) throw new Error('simulated copy failure');
-      await actual.copyFile(...args);
-      await afterCopyActions.get(String(args[0]))?.(String(args[1]));
+    copyFile: vi.fn(() => {
+      throw new Error('path-based copyFile must not be used');
+    }),
+    open: async (...args: Parameters<typeof actual.open>) => {
+      const handle = await actual.open(...args);
+      if (handleTracker.enabled) handleTracker.opened += 1;
+      return new Proxy(handle, {
+        get(target, property) {
+          if (property === 'close') {
+            return async () => {
+              if (handleTracker.enabled) handleTracker.closed += 1;
+              return target.close();
+            };
+          }
+          if (property === 'stat' && zeroIdentityPaths.has(String(args[0]))) {
+            return async () => {
+              const stats = await target.stat();
+              return Object.assign(Object.create(Object.getPrototypeOf(stats)), stats, { dev: 0, ino: 0 });
+            };
+          }
+          const value = Reflect.get(target, property, target);
+          return typeof value === 'function' ? value.bind(target) : value;
+        },
+      });
     },
     lstat: async (...args: Parameters<typeof actual.lstat>) => {
       const result = await actual.lstat(...args);
@@ -41,9 +88,13 @@ async function fixture(): Promise<{ root: string; workspacePath: string; sources
 
 afterEach(async () => {
   vi.restoreAllMocks();
-  copyFailurePaths.clear();
   symbolicLinkPaths.clear();
-  afterCopyActions.clear();
+  zeroIdentityPaths.clear();
+  handleTracker.enabled = false;
+  handleTracker.opened = 0;
+  handleTracker.closed = 0;
+  directoryReadFailures.clear();
+  directoryCloseCounts.clear();
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
@@ -77,6 +128,7 @@ describe('task file import', () => {
     await expect(readInboxFile(workspacePath, result.imported[0].localPath)).resolves.toBe(
       Buffer.from('hello').toString('base64'),
     );
+    expect(vi.mocked(copyFile)).not.toHaveBeenCalled();
   });
 
   it('accepts legacy Office formats while rejecting GIF and SVG', async () => {
@@ -99,6 +151,28 @@ describe('task file import', () => {
       { fileName: 'animation.gif', reason: 'unsupported' },
       { fileName: 'vector.svg', reason: 'unsupported' },
     ]);
+  });
+
+  it('imports and restores exact supported special names while rejecting other hidden files', async () => {
+    const { workspacePath, sources } = await fixture();
+    const names = ['.env', '.gitignore', 'Dockerfile', 'Makefile', '.secret.txt'];
+    await Promise.all(names.map((name) => writeFile(join(sources, name), name)));
+
+    const result = await importTaskFiles({
+      workspacePath,
+      taskId: 'task-1',
+      sourcePaths: names.map((name) => join(sources, name)),
+    });
+
+    expect(result.imported).toHaveLength(4);
+    expect(result.imported.every((item) => item.mimeType === 'text/plain')).toBe(true);
+    expect(result.rejected).toEqual([{ fileName: '.secret.txt', reason: 'unsupported' }]);
+    await writeFile(join(workspacePath, 'task-1', 'inbox', '.env-not-an-import'), 'hidden');
+    expect(
+      listImportedTaskFiles(workspacePath, 'task-1')
+        .map((item) => item.fileName)
+        .sort(),
+    ).toEqual(result.imported.map((item) => item.fileName).sort());
   });
 
   it('uses unique safe names without overwriting same-name inputs or existing inbox files', async () => {
@@ -186,17 +260,50 @@ describe('task file import', () => {
     expect(listImportedTaskFiles(workspacePath, 'task-1')).toEqual([]);
   });
 
+  it('fails closed when a source handle has no strong identity', async () => {
+    const { workspacePath, sources } = await fixture();
+    const source = join(sources, 'zero-identity.txt');
+    await writeFile(source, 'safe');
+    zeroIdentityPaths.add(source);
+
+    const result = await importTaskFiles({ workspacePath, taskId: 'task-1', sourcePaths: [source] });
+    expect(result).toEqual({ imported: [], rejected: [{ fileName: 'zero-identity.txt', reason: 'unavailable' }] });
+  });
+
   it('removes the destination when the source identity changes after copy', async () => {
     const { workspacePath, sources } = await fixture();
     const source = join(sources, 'changing.txt');
     await writeFile(source, 'before');
-    afterCopyActions.set(source, async () => {
-      await rename(source, join(sources, 'original.txt'));
-      await writeFile(source, 'replacement');
-    });
-
-    const result = await importTaskFiles({ workspacePath, taskId: 'task-1', sourcePaths: [source] });
+    const result = await __testing.importTaskFiles(
+      { workspacePath, taskId: 'task-1', sourcePaths: [source] },
+      {
+        afterChunkWritten: async () => {
+          await rename(source, join(sources, 'original.txt'));
+          await writeFile(source, 'replacement');
+        },
+      },
+    );
     expect(result).toEqual({ imported: [], rejected: [{ fileName: 'changing.txt', reason: 'copy-failed' }] });
+    await expect(readdir(join(workspacePath, 'task-1', 'inbox'))).resolves.toEqual([]);
+  });
+
+  it('rejects and cleans an in-place same-size source rewrite during copying', async () => {
+    const { workspacePath, sources } = await fixture();
+    const source = join(sources, 'rewritten.txt');
+    await writeFile(source, 'before');
+
+    const result = await __testing.importTaskFiles(
+      { workspacePath, taskId: 'task-1', sourcePaths: [source] },
+      {
+        afterChunkWritten: async () => {
+          await writeFile(source, 'after!');
+          const changed = new Date('2020-01-01T00:00:00Z');
+          await utimes(source, changed, changed);
+        },
+      },
+    );
+
+    expect(result).toEqual({ imported: [], rejected: [{ fileName: 'rewritten.txt', reason: 'copy-failed' }] });
     await expect(readdir(join(workspacePath, 'task-1', 'inbox'))).resolves.toEqual([]);
   });
 
@@ -204,13 +311,84 @@ describe('task file import', () => {
     const { workspacePath, sources } = await fixture();
     const source = join(sources, 'growing.txt');
     await writeFile(source, 'small');
-    afterCopyActions.set(source, async (destination) => {
-      await truncate(destination, 100 * 1024 * 1024 + 1);
-    });
-
-    const result = await importTaskFiles({ workspacePath, taskId: 'task-1', sourcePaths: [source] });
+    const result = await __testing.importTaskFiles(
+      { workspacePath, taskId: 'task-1', sourcePaths: [source] },
+      {
+        afterChunkWritten: async ({ destinationPath }) => {
+          await truncate(destinationPath, 100 * 1024 * 1024 + 1);
+        },
+      },
+    );
     expect(result).toEqual({ imported: [], rejected: [{ fileName: 'growing.txt', reason: 'too-large' }] });
     await expect(readdir(join(workspacePath, 'task-1', 'inbox'))).resolves.toEqual([]);
+  });
+
+  it('rejects an inbox replacement after validation and before target open without writing outside', async () => {
+    const { root, workspacePath, sources } = await fixture();
+    const source = join(sources, 'source.txt');
+    const inbox = join(workspacePath, 'task-1', 'inbox');
+    const heldInbox = join(root, 'held-inbox');
+    const external = join(root, 'external');
+    await writeFile(source, 'safe');
+    await mkdir(external);
+
+    await expect(
+      __testing.importTaskFiles(
+        { workspacePath, taskId: 'task-1', sourcePaths: [source] },
+        {
+          beforeTargetOpen: async () => {
+            await rename(inbox, heldInbox);
+            symlinkSync(external, inbox, 'junction');
+          },
+        },
+      ),
+    ).rejects.toBeInstanceOf(ImportIntegrityError);
+    await expect(readdir(external)).resolves.toEqual([]);
+  });
+
+  it('does not unlink an external same-name file when inbox changes before cleanup', async () => {
+    const { root, workspacePath, sources } = await fixture();
+    const source = join(sources, 'source.txt');
+    const inbox = join(workspacePath, 'task-1', 'inbox');
+    const heldInbox = join(root, 'held-inbox');
+    const external = join(root, 'external');
+    await writeFile(source, 'safe');
+    await mkdir(external);
+
+    await expect(
+      __testing.importTaskFiles(
+        { workspacePath, taskId: 'task-1', sourcePaths: [source] },
+        {
+          afterChunkWritten: () => {
+            throw new Error('force cleanup');
+          },
+          beforeCleanup: async ({ destinationPath }) => {
+            const name = basename(destinationPath);
+            await rename(inbox, heldInbox);
+            symlinkSync(external, inbox, 'junction');
+            await writeFile(join(external, name), 'keep');
+          },
+        },
+      ),
+    ).rejects.toBeInstanceOf(ImportIntegrityError);
+    const externalFiles = await readdir(external);
+    expect(externalFiles).toHaveLength(1);
+    await expect(readFile(join(external, externalFiles[0]), 'utf8')).resolves.toBe('keep');
+  });
+
+  it('closes both file handles when copying fails after target creation', async () => {
+    const { workspacePath, sources } = await fixture();
+    const source = join(sources, 'source.txt');
+    await writeFile(source, 'safe');
+    handleTracker.enabled = true;
+
+    const result = await __testing.importTaskFiles(
+      { workspacePath, taskId: 'task-1', sourcePaths: [source] },
+      { afterChunkWritten: () => Promise.reject(new Error('stop')) },
+    );
+
+    expect(result.rejected).toEqual([{ fileName: 'source.txt', reason: 'copy-failed' }]);
+    expect(handleTracker).toMatchObject({ opened: 2, closed: 2 });
   });
 
   it('rejects a task directory junction that points outside the workspace', async () => {
@@ -259,13 +437,18 @@ describe('task file import', () => {
     await truncate(oversized, 100 * 1024 * 1024 + 1);
     await mkdir(linked);
     await writeFile(copyFailure, 'fail');
-    copyFailurePaths.add(copyFailure);
-
-    const result = await importTaskFiles({
-      workspacePath,
-      taskId: 'task-1',
-      sourcePaths: [unsupported, oversized, missing, linked, copyFailure, good],
-    });
+    const result = await __testing.importTaskFiles(
+      {
+        workspacePath,
+        taskId: 'task-1',
+        sourcePaths: [unsupported, oversized, missing, linked, copyFailure, good],
+      },
+      {
+        beforeTargetOpen: ({ sourcePath }) => {
+          if (sourcePath === copyFailure) throw new Error('simulated copy failure');
+        },
+      },
+    );
 
     expect(result.imported).toHaveLength(1);
     expect(result.rejected).toEqual([
@@ -327,8 +510,38 @@ describe('imported task file listing', () => {
     ]);
   });
 
+  it('bounds results, excludes oversized files, and uses code-point tie ordering', async () => {
+    const { workspacePath } = await fixture();
+    const inbox = join(workspacePath, 'task-1', 'inbox');
+    await mkdir(inbox, { recursive: true });
+    await Promise.all(Array.from({ length: 101 }, (_, index) => writeFile(join(inbox, `item-${index}.txt`), 'x')));
+    await writeFile(join(inbox, 'Z-tie.txt'), 'z');
+    await writeFile(join(inbox, 'a-tie.txt'), 'a');
+    await writeFile(join(inbox, 'oversized.pdf'), 'x');
+    await truncate(join(inbox, 'oversized.pdf'), 100 * 1024 * 1024 + 1);
+    const same = new Date('2030-01-01T00:00:00Z');
+    await utimes(join(inbox, 'Z-tie.txt'), same, same);
+    await utimes(join(inbox, 'a-tie.txt'), same, same);
+
+    const result = listImportedTaskFiles(workspacePath, 'task-1');
+
+    expect(result).toHaveLength(100);
+    expect(result.some((item) => item.fileName === 'oversized.pdf')).toBe(false);
+    expect(result.slice(0, 2).map((item) => item.fileName)).toEqual(['Z-tie.txt', 'a-tie.txt']);
+  });
+
   it('does not accept an escaping task id as a scan path', async () => {
     const { workspacePath } = await fixture();
     expect(() => listImportedTaskFiles(workspacePath, '..')).toThrow(/taskId/);
+  });
+
+  it('closes the directory handle when incremental listing fails', async () => {
+    const { workspacePath } = await fixture();
+    const inbox = join(workspacePath, 'task-1', 'inbox');
+    await mkdir(inbox, { recursive: true });
+    directoryReadFailures.add(resolve(inbox));
+
+    expect(() => listImportedTaskFiles(workspacePath, 'task-1')).toThrow(/simulated directory read failure/);
+    expect(directoryCloseCounts.get(resolve(inbox))).toBe(1);
   });
 });

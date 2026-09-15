@@ -1,14 +1,19 @@
 import type { ImportFileRejectionReason, ImportFilesResult, ImportedTaskFile } from '@clawwork/shared';
-import type { Stats } from 'node:fs';
-import { COPYFILE_EXCL } from 'node:constants';
-import { existsSync, lstatSync, mkdirSync, readdirSync, realpathSync } from 'node:fs';
-import { copyFile, lstat, realpath, stat, unlink } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import type { Dir, Stats } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, opendirSync, realpathSync, statSync } from 'node:fs';
+import type { FileHandle } from 'node:fs/promises';
+import { lstat, open, realpath, stat, unlink } from 'node:fs/promises';
 import { basename, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { ensureTaskDir } from '../workspace/init.js';
 import { uniqueFileName } from '../workspace/safe-name.js';
 import { getMimeType } from './file-types.js';
 
 const MAX_FILE_SIZE = 100 * 1024 * 1024;
+const COPY_CHUNK_SIZE = 1024 * 1024;
+const MAX_LIST_VISITED = 2000;
+const MAX_LIST_RESULTS = 100;
+const TIMESTAMP_TOLERANCE_MS = 0;
 
 export const IMPORT_FILE_EXTENSIONS = [
   'ts',
@@ -72,6 +77,7 @@ export const IMPORT_FILE_EXTENSIONS = [
 ] as const;
 
 const IMPORT_EXTENSIONS = new Set<string>(IMPORT_FILE_EXTENSIONS.map((extension) => `.${extension}`));
+const SPECIAL_NAMES = new Set(['.env', '.gitignore', 'dockerfile', 'makefile']);
 const LEGACY_OFFICE_MIME: Record<string, string> = {
   '.doc': 'application/msword',
   '.xls': 'application/vnd.ms-excel',
@@ -85,8 +91,8 @@ interface TrustedInbox {
   realWorkspace: string;
   realTask: string;
   realInbox: string;
-  taskIdentity: { dev: number; ino: number };
-  inboxIdentity: { dev: number; ino: number };
+  taskIdentity: Stats;
+  inboxIdentity: Stats;
 }
 
 interface SourceSnapshot {
@@ -95,16 +101,29 @@ interface SourceSnapshot {
   identity: Stats;
 }
 
-class ImportRejectionError extends Error {
+interface ImportTestContext {
+  sourcePath: string;
+  destinationPath: string;
+  inboxPath: string;
+}
+
+interface ImportTestHooks {
+  beforeTargetOpen?: (context: ImportTestContext) => void | Promise<void>;
+  afterTargetOpen?: (context: ImportTestContext) => void | Promise<void>;
+  afterChunkWritten?: (context: ImportTestContext) => void | Promise<void>;
+  beforeCleanup?: (context: ImportTestContext) => void | Promise<void>;
+}
+
+class ImportItemError extends Error {
   constructor(readonly reason: ImportFileRejectionReason) {
     super(reason);
   }
 }
 
+export class ImportIntegrityError extends Error {}
+
 function samePath(left: string, right: string): boolean {
-  return process.platform === 'win32' || process.platform === 'darwin'
-    ? left.toLowerCase() === right.toLowerCase()
-    : left === right;
+  return relative(resolve(left), resolve(right)) === '';
 }
 
 function isWithin(parent: string, child: string): boolean {
@@ -112,28 +131,24 @@ function isWithin(parent: string, child: string): boolean {
   return fromParent === '' || (!fromParent.startsWith(`..${sep}`) && fromParent !== '..' && !isAbsolute(fromParent));
 }
 
-function sameIdentity(left: Stats, right: Stats): boolean {
-  const hasDevAndIno =
-    Number.isFinite(left.dev) &&
-    Number.isFinite(left.ino) &&
-    Number.isFinite(right.dev) &&
-    Number.isFinite(right.ino) &&
-    left.dev > 0 &&
-    left.ino > 0 &&
-    right.dev > 0 &&
-    right.ino > 0;
-  if (hasDevAndIno) return left.dev === right.dev && left.ino === right.ino;
-  const hasFallback =
-    Number.isFinite(left.birthtimeMs) &&
-    Number.isFinite(right.birthtimeMs) &&
-    left.birthtimeMs > 0 &&
-    right.birthtimeMs > 0 &&
-    Number.isFinite(left.size) &&
-    Number.isFinite(right.size) &&
-    Number.isFinite(left.mtimeMs) &&
-    Number.isFinite(right.mtimeMs);
+function hasStrongIdentity(stats: Stats): boolean {
+  return Number.isFinite(stats.dev) && Number.isFinite(stats.ino) && stats.dev > 0 && stats.ino > 0;
+}
+
+function sameStrongIdentity(left: Stats, right: Stats): boolean {
+  return hasStrongIdentity(left) && hasStrongIdentity(right) && left.dev === right.dev && left.ino === right.ino;
+}
+
+function sameTimestamp(left: number, right: number): boolean {
+  return Number.isFinite(left) && Number.isFinite(right) && Math.abs(left - right) <= TIMESTAMP_TOLERANCE_MS;
+}
+
+function sameSourceSnapshot(left: Stats, right: Stats): boolean {
   return (
-    hasFallback && left.birthtimeMs === right.birthtimeMs && left.size === right.size && left.mtimeMs === right.mtimeMs
+    sameStrongIdentity(left, right) &&
+    left.size === right.size &&
+    sameTimestamp(left.mtimeMs, right.mtimeMs) &&
+    sameTimestamp(left.ctimeMs, right.ctimeMs)
   );
 }
 
@@ -147,26 +162,18 @@ export function validateImportTaskId(value: unknown): string {
 }
 
 function resolveTrustedInbox(workspacePath: string, taskId: string, create: boolean): TrustedInbox | null {
-  let realWorkspace: string;
-  try {
-    realWorkspace = realpathSync.native(workspacePath);
-  } catch {
-    throw new Error('trusted task inbox is unavailable');
-  }
-
+  const realWorkspace = realpathSync.native(workspacePath);
   const workspaceStats = lstatSync(workspacePath);
-  if (!workspaceStats.isDirectory()) throw new Error('trusted task inbox is unavailable');
+  if (!workspaceStats.isDirectory()) throw new Error();
   const taskPath = join(workspacePath, taskId);
   if (!existsSync(taskPath)) {
     if (!create) return null;
     ensureTaskDir(workspacePath, taskId);
   }
   const taskStats = lstatSync(taskPath);
-  if (taskStats.isSymbolicLink() || !taskStats.isDirectory()) throw new Error('trusted task inbox is unavailable');
+  if (taskStats.isSymbolicLink() || !taskStats.isDirectory() || !hasStrongIdentity(taskStats)) throw new Error();
   const realTask = realpathSync.native(taskPath);
-  if (!isWithin(realWorkspace, realTask) || !samePath(realTask, resolve(realWorkspace, taskId))) {
-    throw new Error('trusted task inbox is unavailable');
-  }
+  if (!isWithin(realWorkspace, realTask) || !samePath(realTask, resolve(realWorkspace, taskId))) throw new Error();
 
   const inboxPath = join(taskPath, 'inbox');
   if (!existsSync(inboxPath)) {
@@ -174,12 +181,9 @@ function resolveTrustedInbox(workspacePath: string, taskId: string, create: bool
     mkdirSync(inboxPath);
   }
   const inboxStats = lstatSync(inboxPath);
-  if (inboxStats.isSymbolicLink() || !inboxStats.isDirectory()) throw new Error('trusted task inbox is unavailable');
+  if (inboxStats.isSymbolicLink() || !inboxStats.isDirectory() || !hasStrongIdentity(inboxStats)) throw new Error();
   const realInbox = realpathSync.native(inboxPath);
-  if (!isWithin(realTask, realInbox) || !samePath(realInbox, resolve(realTask, 'inbox'))) {
-    throw new Error('trusted task inbox is unavailable');
-  }
-
+  if (!isWithin(realTask, realInbox) || !samePath(realInbox, resolve(realTask, 'inbox'))) throw new Error();
   return {
     workspacePath,
     taskPath,
@@ -187,8 +191,8 @@ function resolveTrustedInbox(workspacePath: string, taskId: string, create: bool
     realWorkspace,
     realTask,
     realInbox,
-    taskIdentity: { dev: taskStats.dev, ino: taskStats.ino },
-    inboxIdentity: { dev: inboxStats.dev, ino: inboxStats.ino },
+    taskIdentity: taskStats,
+    inboxIdentity: inboxStats,
   };
 }
 
@@ -201,31 +205,25 @@ function trustedInbox(workspacePath: string, taskIdValue: unknown, create: boole
   }
 }
 
-function checkTrustedInbox(trusted: TrustedInbox): void {
-  const taskStats = lstatSync(trusted.taskPath);
-  const inboxStats = lstatSync(trusted.inboxPath);
-  if (
-    taskStats.isSymbolicLink() ||
-    inboxStats.isSymbolicLink() ||
-    !taskStats.isDirectory() ||
-    !inboxStats.isDirectory() ||
-    taskStats.dev !== trusted.taskIdentity.dev ||
-    taskStats.ino !== trusted.taskIdentity.ino ||
-    inboxStats.dev !== trusted.inboxIdentity.dev ||
-    inboxStats.ino !== trusted.inboxIdentity.ino ||
-    !samePath(realpathSync.native(trusted.workspacePath), trusted.realWorkspace) ||
-    !samePath(realpathSync.native(trusted.taskPath), trusted.realTask) ||
-    !samePath(realpathSync.native(trusted.inboxPath), trusted.realInbox)
-  ) {
-    throw new Error('trusted task inbox changed');
-  }
-}
-
 function verifyTrustedInbox(trusted: TrustedInbox): void {
   try {
-    checkTrustedInbox(trusted);
+    const taskStats = lstatSync(trusted.taskPath);
+    const inboxStats = lstatSync(trusted.inboxPath);
+    if (
+      taskStats.isSymbolicLink() ||
+      inboxStats.isSymbolicLink() ||
+      !taskStats.isDirectory() ||
+      !inboxStats.isDirectory() ||
+      !sameStrongIdentity(taskStats, trusted.taskIdentity) ||
+      !sameStrongIdentity(inboxStats, trusted.inboxIdentity) ||
+      !samePath(realpathSync.native(trusted.workspacePath), trusted.realWorkspace) ||
+      !samePath(realpathSync.native(trusted.taskPath), trusted.realTask) ||
+      !samePath(realpathSync.native(trusted.inboxPath), trusted.realInbox)
+    ) {
+      throw new Error();
+    }
   } catch {
-    throw new Error('trusted task inbox changed');
+    throw new ImportIntegrityError('trusted task inbox changed');
   }
 }
 
@@ -233,8 +231,29 @@ function sourceFileName(sourcePath: string): string {
   return basename(sourcePath.replaceAll('\\', '/'));
 }
 
-function importMimeType(extension: string): string {
+function regularMimeType(extension: string): string {
   return LEGACY_OFFICE_MIME[extension] ?? getMimeType(extension);
+}
+
+function sourceMimeType(fileName: string): string | null {
+  const lowerName = fileName.toLowerCase();
+  if (lowerName.startsWith('~$')) return null;
+  if (SPECIAL_NAMES.has(lowerName)) return 'text/plain';
+  if (lowerName.startsWith('.')) return null;
+  const extension = extname(lowerName);
+  return IMPORT_EXTENSIONS.has(extension) ? regularMimeType(extension) : null;
+}
+
+function storedMimeType(fileName: string): string | null {
+  const lowerName = fileName.toLowerCase();
+  for (const specialName of SPECIAL_NAMES) {
+    if (lowerName === specialName) return 'text/plain';
+    const prefix = `${specialName}-`;
+    if (lowerName.startsWith(prefix) && /^[a-f0-9]{8}$/.test(lowerName.slice(prefix.length))) return 'text/plain';
+  }
+  if (lowerName.startsWith('.')) return null;
+  const extension = extname(lowerName);
+  return IMPORT_EXTENSIONS.has(extension) ? regularMimeType(extension) : null;
 }
 
 function localPath(taskId: string, fileName: string): string {
@@ -245,65 +264,263 @@ function rejection(fileName: string, reason: ImportFileRejectionReason): ImportF
   return { fileName, reason };
 }
 
-async function cleanupCreatedFile(destinationPath: string): Promise<void> {
-  await unlink(destinationPath).catch(() => undefined);
+async function closeHandle(handle: FileHandle | null): Promise<Error | null> {
+  if (!handle) return null;
+  try {
+    await handle.close();
+    return null;
+  } catch (error) {
+    return error instanceof Error ? error : new Error('file handle close failed');
+  }
 }
 
-async function verifySourceSnapshot(source: SourceSnapshot): Promise<void> {
+async function sourceSnapshot(selectedPath: string, handle: FileHandle): Promise<SourceSnapshot> {
+  const handleStats = await handle.stat();
+  const linkStats = await lstat(selectedPath);
+  if (
+    !handleStats.isFile() ||
+    !hasStrongIdentity(handleStats) ||
+    !linkStats.isFile() ||
+    linkStats.isSymbolicLink() ||
+    !sameStrongIdentity(handleStats, linkStats)
+  ) {
+    throw new ImportItemError('unavailable');
+  }
+  const canonicalPath = await realpath(selectedPath);
+  const canonicalStats = await stat(canonicalPath);
+  if (!canonicalStats.isFile() || !sameStrongIdentity(handleStats, canonicalStats)) {
+    throw new ImportItemError('unavailable');
+  }
+  return { selectedPath, canonicalPath, identity: handleStats };
+}
+
+async function verifySource(source: SourceSnapshot, handle: FileHandle): Promise<void> {
   try {
-    const selectedStats = await lstat(source.selectedPath);
-    if (!selectedStats.isFile() || selectedStats.isSymbolicLink()) throw new Error('source path changed');
-    const currentCanonicalPath = await realpath(source.selectedPath);
-    const currentIdentity = await stat(currentCanonicalPath);
+    const handleStats = await handle.stat();
+    const linkStats = await lstat(source.selectedPath);
+    const currentCanonical = await realpath(source.selectedPath);
+    const canonicalStats = await stat(currentCanonical);
     if (
-      !samePath(currentCanonicalPath, source.canonicalPath) ||
-      !currentIdentity.isFile() ||
-      !sameIdentity(source.identity, currentIdentity) ||
-      currentIdentity.size !== source.identity.size
+      !handleStats.isFile() ||
+      !linkStats.isFile() ||
+      linkStats.isSymbolicLink() ||
+      !samePath(currentCanonical, source.canonicalPath) ||
+      !sameSourceSnapshot(source.identity, handleStats) ||
+      !sameSourceSnapshot(source.identity, linkStats) ||
+      !sameSourceSnapshot(source.identity, canonicalStats)
     ) {
-      throw new Error('source identity changed');
+      throw new Error();
     }
   } catch {
-    throw new ImportRejectionError('copy-failed');
+    throw new ImportItemError('copy-failed');
   }
 }
 
-async function copyWithUniqueName(
-  source: SourceSnapshot,
+async function verifyTarget(
+  trusted: TrustedInbox,
+  destinationPath: string,
+  targetIdentity: Stats,
+  handle: FileHandle,
+): Promise<Stats> {
+  verifyTrustedInbox(trusted);
+  const handleStats = await handle.stat();
+  const linkStats = await lstat(destinationPath);
+  const canonicalPath = await realpath(destinationPath);
+  const canonicalStats = await stat(canonicalPath);
+  if (
+    !handleStats.isFile() ||
+    !linkStats.isFile() ||
+    linkStats.isSymbolicLink() ||
+    !sameStrongIdentity(targetIdentity, handleStats) ||
+    !sameStrongIdentity(targetIdentity, linkStats) ||
+    !sameStrongIdentity(targetIdentity, canonicalStats) ||
+    !isWithin(trusted.realInbox, canonicalPath) ||
+    !samePath(canonicalPath, destinationPath)
+  ) {
+    throw new ImportIntegrityError('import destination identity changed');
+  }
+  return handleStats;
+}
+
+async function cleanupCreatedTarget(
+  trusted: TrustedInbox,
+  destinationPath: string,
+  targetIdentity: Stats,
+): Promise<void> {
+  try {
+    verifyTrustedInbox(trusted);
+    const linkStats = await lstat(destinationPath);
+    const canonicalPath = await realpath(destinationPath);
+    const canonicalStats = await stat(canonicalPath);
+    if (
+      linkStats.isSymbolicLink() ||
+      !linkStats.isFile() ||
+      !sameStrongIdentity(targetIdentity, linkStats) ||
+      !sameStrongIdentity(targetIdentity, canonicalStats) ||
+      !isWithin(trusted.realInbox, canonicalPath) ||
+      !samePath(canonicalPath, destinationPath)
+    ) {
+      throw new Error();
+    }
+    await unlink(destinationPath);
+  } catch {
+    throw new ImportIntegrityError('unable to safely clean imported file');
+  }
+}
+
+async function hashTarget(handle: FileHandle, expectedBytes: number): Promise<string> {
+  const hash = createHash('sha256');
+  const buffer = Buffer.allocUnsafe(COPY_CHUNK_SIZE);
+  let position = 0;
+  while (position < expectedBytes) {
+    const { bytesRead } = await handle.read(buffer, 0, Math.min(buffer.length, expectedBytes - position), position);
+    if (bytesRead === 0) throw new ImportIntegrityError('import destination ended early');
+    hash.update(buffer.subarray(0, bytesRead));
+    position += bytesRead;
+  }
+  return hash.digest('hex');
+}
+
+async function writeAll(handle: FileHandle, chunk: Buffer, position: number): Promise<void> {
+  let offset = 0;
+  while (offset < chunk.length) {
+    const { bytesWritten } = await handle.write(chunk, offset, chunk.length - offset, position + offset);
+    if (bytesWritten <= 0) throw new ImportItemError('copy-failed');
+    offset += bytesWritten;
+  }
+}
+
+async function copyOneFile(
+  sourcePath: string,
   trusted: TrustedInbox,
   fileName: string,
+  hooks: ImportTestHooks,
 ): Promise<{ destinationName: string; size: number }> {
-  for (let attempt = 0; attempt < 10; attempt += 1) {
+  let sourceHandle: FileHandle | null = null;
+  let targetHandle: FileHandle | null = null;
+  let targetIdentity: Stats | null = null;
+  let destinationPath = '';
+  let context: ImportTestContext | null = null;
+  let created = false;
+  let output: { destinationName: string; size: number } | null = null;
+  let failure: unknown = null;
+
+  try {
+    sourceHandle = await open(sourcePath, 'r');
+    const source = await sourceSnapshot(sourcePath, sourceHandle);
+    if (source.identity.size > MAX_FILE_SIZE) throw new ImportItemError('too-large');
     verifyTrustedInbox(trusted);
     const destinationName = uniqueFileName(fileName);
-    const destinationPath = join(trusted.inboxPath, destinationName);
-    try {
-      await copyFile(source.canonicalPath, destinationPath, COPYFILE_EXCL);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'EEXIST') continue;
-      throw error;
+    destinationPath = join(trusted.inboxPath, destinationName);
+    context = { sourcePath, destinationPath, inboxPath: trusted.inboxPath };
+    await hooks.beforeTargetOpen?.(context);
+    verifyTrustedInbox(trusted);
+    targetHandle = await open(destinationPath, 'wx+');
+    created = true;
+    targetIdentity = await targetHandle.stat();
+    if (!targetIdentity.isFile() || !hasStrongIdentity(targetIdentity)) {
+      throw new ImportIntegrityError('import destination has no strong identity');
+    }
+    await hooks.afterTargetOpen?.(context);
+    await verifyTarget(trusted, destinationPath, targetIdentity, targetHandle);
+
+    const readHash = createHash('sha256');
+    const buffer = Buffer.allocUnsafe(COPY_CHUNK_SIZE);
+    let bytesWritten = 0;
+    let chunkHookCalled = false;
+    while (true) {
+      const { bytesRead } = await sourceHandle.read(buffer, 0, buffer.length, bytesWritten);
+      if (bytesRead === 0) break;
+      if (bytesWritten + bytesRead > MAX_FILE_SIZE) throw new ImportItemError('too-large');
+      const chunk = buffer.subarray(0, bytesRead);
+      readHash.update(chunk);
+      await writeAll(targetHandle, chunk, bytesWritten);
+      bytesWritten += bytesRead;
+      if (!chunkHookCalled) {
+        chunkHookCalled = true;
+        await hooks.afterChunkWritten?.(context);
+      }
+    }
+
+    const beforeSync = await targetHandle.stat();
+    if (beforeSync.size > MAX_FILE_SIZE) throw new ImportItemError('too-large');
+    if (!sameStrongIdentity(targetIdentity, beforeSync) || beforeSync.size !== bytesWritten) {
+      throw new ImportIntegrityError('import destination size changed');
+    }
+    await targetHandle.sync();
+    const afterSync = await targetHandle.stat();
+    if (afterSync.size > MAX_FILE_SIZE) throw new ImportItemError('too-large');
+    if (!sameStrongIdentity(targetIdentity, afterSync) || afterSync.size !== bytesWritten) {
+      throw new ImportIntegrityError('import destination size changed');
+    }
+    await verifySource(source, sourceHandle);
+    const currentTarget = await verifyTarget(trusted, destinationPath, targetIdentity, targetHandle);
+    if (currentTarget.size > MAX_FILE_SIZE || currentTarget.size !== bytesWritten) {
+      throw new ImportItemError(currentTarget.size > MAX_FILE_SIZE ? 'too-large' : 'copy-failed');
+    }
+    const targetHash = await hashTarget(targetHandle, bytesWritten);
+    if (targetHash !== readHash.digest('hex')) throw new ImportIntegrityError('import destination hash mismatch');
+    const finalTarget = await verifyTarget(trusted, destinationPath, targetIdentity, targetHandle);
+    if (finalTarget.size !== bytesWritten) throw new ImportIntegrityError('import destination size changed');
+    output = { destinationName, size: finalTarget.size };
+  } catch (error) {
+    failure = error;
+  }
+
+  const targetCloseError = await closeHandle(targetHandle);
+  targetHandle = null;
+  const sourceCloseError = await closeHandle(sourceHandle);
+  sourceHandle = null;
+  if (targetCloseError || sourceCloseError) failure = failure ?? targetCloseError ?? sourceCloseError;
+
+  if (failure || !output) {
+    if (created) {
+      if (!context || !targetIdentity) throw new ImportIntegrityError('created import target identity is unavailable');
+      try {
+        await hooks.beforeCleanup?.(context);
+      } catch {
+        throw new ImportIntegrityError('unable to safely prepare imported file cleanup');
+      }
+      await cleanupCreatedTarget(trusted, destinationPath, targetIdentity);
+    }
+    if (failure instanceof ImportIntegrityError || failure instanceof ImportItemError) throw failure;
+    throw new ImportItemError(
+      (failure as NodeJS.ErrnoException | null)?.code === 'ENOENT' ? 'unavailable' : 'copy-failed',
+    );
+  }
+  return output;
+}
+
+async function importTaskFilesImpl(
+  input: { workspacePath: string; taskId: string; sourcePaths: string[] },
+  hooks: ImportTestHooks,
+): Promise<ImportFilesResult> {
+  const taskId = validateImportTaskId(input.taskId);
+  const inbox = trustedInbox(input.workspacePath, taskId, true);
+  if (!inbox) throw new Error('trusted task inbox is unavailable');
+  const result: ImportFilesResult = { imported: [], rejected: [] };
+  for (const sourcePath of input.sourcePaths) {
+    const fileName = sourceFileName(sourcePath);
+    const mimeType = sourceMimeType(fileName);
+    if (!mimeType) {
+      result.rejected.push(rejection(fileName, 'unsupported'));
+      continue;
     }
     try {
-      verifyTrustedInbox(trusted);
-      await verifySourceSnapshot(source);
-      const destinationStats = await lstat(destinationPath);
-      const realDestination = await realpath(destinationPath);
-      if (
-        destinationStats.isSymbolicLink() ||
-        !destinationStats.isFile() ||
-        !isWithin(trusted.realInbox, realDestination) ||
-        !samePath(realDestination, resolve(trusted.realInbox, destinationName))
-      ) {
-        throw new Error('copied file escaped trusted task inbox');
-      }
-      if (destinationStats.size > MAX_FILE_SIZE) throw new ImportRejectionError('too-large');
-      return { destinationName, size: destinationStats.size };
+      const copied = await copyOneFile(sourcePath, inbox, fileName, hooks);
+      result.imported.push({
+        fileName: copied.destinationName,
+        localPath: localPath(taskId, copied.destinationName),
+        mimeType,
+        size: copied.size,
+      });
     } catch (error) {
-      await cleanupCreatedFile(destinationPath);
-      throw error;
+      if (error instanceof ImportIntegrityError) throw error;
+      const reason = error instanceof ImportItemError ? error.reason : 'copy-failed';
+      result.rejected.push(rejection(fileName, reason));
     }
   }
-  throw new Error('unable to allocate a unique inbox file name');
+  return result;
 }
 
 export async function importTaskFiles(input: {
@@ -311,57 +528,20 @@ export async function importTaskFiles(input: {
   taskId: string;
   sourcePaths: string[];
 }): Promise<ImportFilesResult> {
-  const taskId = validateImportTaskId(input.taskId);
-  const inbox = trustedInbox(input.workspacePath, taskId, true);
-  if (!inbox) throw new Error('trusted task inbox is unavailable');
-  const result: ImportFilesResult = { imported: [], rejected: [] };
+  return importTaskFilesImpl(input, {});
+}
 
-  for (const sourcePath of input.sourcePaths) {
-    const fileName = sourceFileName(sourcePath);
-    let sourceStat: Awaited<ReturnType<typeof lstat>>;
-    let source: SourceSnapshot;
-    try {
-      sourceStat = await lstat(sourcePath);
-      if (!sourceStat.isFile() || sourceStat.isSymbolicLink()) throw new Error('not a regular file');
-      const canonicalPath = await realpath(sourcePath);
-      const canonicalStat = await stat(canonicalPath);
-      if (!canonicalStat.isFile() || !sameIdentity(sourceStat, canonicalStat)) {
-        throw new Error('source identity changed');
-      }
-      source = { selectedPath: sourcePath, canonicalPath, identity: canonicalStat };
-    } catch {
-      result.rejected.push(rejection(fileName, 'unavailable'));
-      continue;
-    }
-    const extension = extname(fileName).toLowerCase();
-    if (!IMPORT_EXTENSIONS.has(extension)) {
-      result.rejected.push(rejection(fileName, 'unsupported'));
-      continue;
-    }
-    if (source.identity.size > MAX_FILE_SIZE) {
-      result.rejected.push(rejection(fileName, 'too-large'));
-      continue;
-    }
-    try {
-      const copied = await copyWithUniqueName(source, inbox, fileName);
-      result.imported.push({
-        fileName: copied.destinationName,
-        localPath: localPath(taskId, copied.destinationName),
-        mimeType: importMimeType(extension),
-        size: copied.size,
-      });
-    } catch (error) {
-      const reason =
-        error instanceof ImportRejectionError
-          ? error.reason
-          : (error as NodeJS.ErrnoException).code === 'ENOENT'
-            ? 'unavailable'
-            : 'copy-failed';
-      result.rejected.push(rejection(fileName, reason));
-    }
+function codePointCompare(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function closeDirectory(directory: Dir, failure: unknown): never {
+  try {
+    directory.closeSync();
+  } catch {
+    throw new ImportIntegrityError('unable to close imported file listing');
   }
-
-  return result;
+  throw failure;
 }
 
 export function listImportedTaskFiles(workspacePath: string, taskIdValue: string): ImportedTaskFile[] {
@@ -369,40 +549,52 @@ export function listImportedTaskFiles(workspacePath: string, taskIdValue: string
   const inbox = trustedInbox(workspacePath, taskId, false);
   if (!inbox) return [];
   verifyTrustedInbox(inbox);
-
-  const entries = readdirSync(inbox.realInbox, { withFileTypes: true });
-  verifyTrustedInbox(inbox);
-  return entries
-    .filter((entry) => entry.isFile() && !entry.name.startsWith('.') && !entry.name.startsWith('~$'))
-    .map((entry) => {
+  const files: Array<{ item: ImportedTaskFile; mtimeMs: number }> = [];
+  const directory = opendirSync(inbox.realInbox);
+  try {
+    for (let visited = 0; visited < MAX_LIST_VISITED; visited += 1) {
+      const entry = directory.readSync();
+      if (!entry) break;
+      if (!entry.isFile() || entry.name.startsWith('~$')) continue;
+      const mimeType = storedMimeType(entry.name);
+      if (!mimeType) continue;
       try {
-        const extension = extname(entry.name).toLowerCase();
-        if (!IMPORT_EXTENSIONS.has(extension)) return null;
         const fullPath = join(inbox.realInbox, entry.name);
         const stats = lstatSync(fullPath);
         const realFile = realpathSync.native(fullPath);
         if (
           !stats.isFile() ||
           stats.isSymbolicLink() ||
+          !hasStrongIdentity(stats) ||
+          stats.size > MAX_FILE_SIZE ||
           !isWithin(inbox.realInbox, realFile) ||
-          !samePath(realFile, resolve(inbox.realInbox, entry.name))
+          !samePath(realFile, fullPath) ||
+          !sameStrongIdentity(stats, statSync(realFile))
         ) {
-          return null;
+          continue;
         }
-        return {
-          item: {
-            fileName: entry.name,
-            localPath: localPath(taskId, entry.name),
-            mimeType: importMimeType(extension),
-            size: stats.size,
-          },
+        files.push({
+          item: { fileName: entry.name, localPath: localPath(taskId, entry.name), mimeType, size: stats.size },
           mtimeMs: stats.mtimeMs,
-        };
+        });
       } catch {
-        return null;
+        continue;
       }
-    })
-    .filter((entry): entry is { item: ImportedTaskFile; mtimeMs: number } => entry !== null)
-    .sort((left, right) => right.mtimeMs - left.mtimeMs || left.item.fileName.localeCompare(right.item.fileName))
+    }
+    directory.closeSync();
+  } catch (error) {
+    closeDirectory(directory, error);
+  }
+  verifyTrustedInbox(inbox);
+  return files
+    .sort((left, right) => right.mtimeMs - left.mtimeMs || codePointCompare(left.item.fileName, right.item.fileName))
+    .slice(0, MAX_LIST_RESULTS)
     .map((entry) => entry.item);
 }
+
+export const __testing = Object.freeze({
+  importTaskFiles: (
+    input: { workspacePath: string; taskId: string; sourcePaths: string[] },
+    hooks: ImportTestHooks,
+  ): Promise<ImportFilesResult> => importTaskFilesImpl(input, hooks),
+});
