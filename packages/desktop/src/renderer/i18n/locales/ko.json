@@ -1284,10 +1284,13 @@
     "customTask": "Custom task",
     "draftConflictDescription": "Keep the current text and append the template, or replace it with the template.",
     "draftConflictTitle": "The input already has content",
+    "generateFile": "Generate file",
+    "generateFilePrompt": "Please organize the result above into a downloadable file. First determine the most suitable file format, then generate it and save it to the current task's artifacts directory.",
     "materialHint": "Suggested materials",
     "output": "Expected result",
     "recentTasks": "Recently used",
-    "replaceDraft": "Replace content"
+    "replaceDraft": "Replace content",
+    "viewArtifacts": "View artifacts"
   },
   "teams": {
     "confirmDeleteDesc": "\"{{name}}\"을(를) 삭제하시겠습니까? 팀 설정이 제거됩니다. 에이전트는 Gateway에 유지되며 설정에서 관리할 수 있습니다.",

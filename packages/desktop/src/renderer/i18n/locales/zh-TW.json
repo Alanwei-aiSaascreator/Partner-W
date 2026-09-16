@@ -1284,10 +1284,13 @@
     "customTask": "自訂任務",
     "draftConflictDescription": "選擇保留原內容並附加範本，或使用範本取代目前的內容。",
     "draftConflictTitle": "輸入框已有內容",
+    "generateFile": "生成檔案",
+    "generateFilePrompt": "請把剛才的結果整理成一個可下載檔案。先確認最合適的檔案格式，再生成並儲存到目前任務成果目錄。",
     "materialHint": "建議資料",
     "output": "預期成果",
     "recentTasks": "最近使用",
-    "replaceDraft": "取代內容"
+    "replaceDraft": "取代內容",
+    "viewArtifacts": "檢視成果"
   },
   "teams": {
     "confirmDeleteDesc": "確定刪除「{{name}}」？此操作將移除團隊配置。Agent 將保留在 Gateway 上，可在設定中管理。",

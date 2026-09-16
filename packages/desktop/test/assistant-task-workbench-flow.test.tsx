@@ -3,6 +3,7 @@
 import { act, type ButtonHTMLAttributes, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Artifact } from '@clawwork/shared';
 import type { DraftPromptRequest, DraftPromptResolution } from '../src/renderer/components/ChatInput/types';
 import type { OnboardingProfile } from '../src/renderer/lib/user-onboarding';
 import type { StartupReadiness } from '../src/renderer/lib/startup-readiness';
@@ -33,6 +34,11 @@ const mocks = vi.hoisted(() => ({
   chatInputSnapshots: [] as Array<{
     draftRequest?: DraftPromptRequest | null;
     onDraftResolved?: (request: DraftPromptRequest, resolution: DraftPromptResolution) => void;
+  }>,
+  firstTaskFlowSnapshots: [] as Array<{
+    artifactCount: number;
+    onGenerateFile: () => void;
+    onViewArtifacts: () => void;
   }>,
   goalAnalysis: {
     status: 'idle',
@@ -145,11 +151,27 @@ vi.mock('../src/renderer/features/internal-beta/InternalBetaHub', () => ({ defau
 vi.mock('../src/renderer/layouts/MainArea/StartupReadinessPanel', () => ({ default: () => null }));
 
 vi.mock('../src/renderer/layouts/MainArea/FirstTaskCompletionFlow', () => ({
-  default: ({ onContinue }: { onContinue: () => void }) => (
-    <button type="button" data-testid="first-task-continue" onClick={onContinue}>
-      continue
-    </button>
-  ),
+  default: (props: {
+    artifactCount: number;
+    onContinue: () => void;
+    onGenerateFile: () => void;
+    onViewArtifacts: () => void;
+  }) => {
+    mocks.firstTaskFlowSnapshots.push(props);
+    return (
+      <>
+        <button type="button" data-testid="first-task-continue" onClick={props.onContinue}>
+          continue
+        </button>
+        <button type="button" data-testid="result-generate" onClick={props.onGenerateFile}>
+          generate
+        </button>
+        <button type="button" data-testid="result-view" onClick={props.onViewArtifacts}>
+          view
+        </button>
+      </>
+    );
+  },
 }));
 
 vi.mock('../src/renderer/hooks/useVoiceInput', () => ({
@@ -304,6 +326,7 @@ const uiState = {
   },
   setSettingsOpen: vi.fn(),
   setMainView: vi.fn(),
+  setRightPanelOpen: vi.fn(),
   setSelectedAgent: mocks.setSelectedAgent,
   toggleMessageLayout: vi.fn(),
 };
@@ -395,6 +418,7 @@ vi.mock('@clawwork/core', () => ({
 
 import { ChatContent, createDraftPromptRequest } from '../src/renderer/layouts/MainArea';
 import { loadRecentAssistantTasks, recordRecentAssistantTask } from '../src/renderer/lib/assistant-task-history';
+import { useFileStore } from '../src/renderer/stores/fileStore';
 
 const readiness: StartupReadiness = {
   gatewayId: 'gw-1',
@@ -477,7 +501,9 @@ describe('assistant task workbench draft flow', () => {
     mocks.messagesByTask = {};
     mocks.chatInputDraftRequests = [];
     mocks.chatInputSnapshots = [];
+    mocks.firstTaskFlowSnapshots = [];
     mocks.goalAnalysis = { status: 'idle', result: null, error: null, retry: vi.fn() };
+    useFileStore.setState({ artifacts: [], selectedArtifactId: null });
     vi.spyOn(HTMLTextAreaElement.prototype, 'focus').mockImplementation(mocks.focus);
     Object.assign(window, {
       clawwork: {
@@ -634,6 +660,28 @@ describe('assistant task workbench draft flow', () => {
     view.unmount();
   });
 
+  it('rejects a preset resolution from another active task in the same agent and gateway scope', () => {
+    mocks.activeTaskId = 'task-a';
+    mocks.tasks = [
+      { id: 'task-a', sessionKey: 'agent:rongying-content:clawwork:task:task-a', gatewayId: 'gw-1' },
+      { id: 'task-b', sessionKey: 'agent:rongying-content:clawwork:task:task-b', gatewayId: 'gw-1' },
+    ];
+    const view = renderFlow(profile('user-1'));
+    const composer = textarea(view.container);
+    composer.value = 'Task A draft';
+    click(view.container, '[data-preset-id="content:short-video-script"]');
+    const pendingSnapshot = mocks.chatInputSnapshots.filter((snapshot) => snapshot.draftRequest).at(-1);
+    expect(pendingSnapshot?.draftRequest).toBeDefined();
+
+    mocks.activeTaskId = 'task-b';
+    act(() => pendingSnapshot?.onDraftResolved?.(pendingSnapshot.draftRequest as DraftPromptRequest, 'replaced'));
+
+    expect(loadRecentAssistantTasks('user-1')).toEqual([]);
+    expect(composer.value).toBe('Task A draft');
+    expect(mocks.handleSend).not.toHaveBeenCalled();
+    view.unmount();
+  });
+
   it('routes goal starters and first-task follow-ups through their typed sources', () => {
     expect(createDraftPromptRequest(1, 'Goal prompt', 'goal-routing')).toEqual({
       id: 'draft-request-1',
@@ -687,4 +735,149 @@ describe('assistant task workbench draft flow', () => {
     expect(mocks.handleSend).not.toHaveBeenCalled();
     followUpView.unmount();
   });
+
+  it('requests a result-action draft without sending or creating an artifact', () => {
+    mocks.activeTaskId = 'task-1';
+    mocks.tasks = [{ id: 'task-1', sessionKey: 'agent:main:clawwork:task:task-1', gatewayId: 'gw-1' }];
+    mocks.messagesByTask = completedMessages('task-1');
+    const unrelatedArtifact = makeArtifact({ id: 'other', taskId: 'task-2' });
+    useFileStore.setState({ artifacts: [unrelatedArtifact], selectedArtifactId: null });
+    const view = renderFlow();
+
+    expect(mocks.firstTaskFlowSnapshots.at(-1)?.artifactCount).toBe(0);
+    click(view.container, '[data-testid="result-generate"]');
+
+    expect(textarea(view.container).value).toBe('taskWorkbench.generateFilePrompt');
+    expect(mocks.chatInputDraftRequests.filter(Boolean).at(-1)).toMatchObject({
+      prompt: 'taskWorkbench.generateFilePrompt',
+      source: 'result-action',
+    });
+    expect(mocks.handleSend).not.toHaveBeenCalled();
+    expect(useFileStore.getState().artifacts).toEqual([unrelatedArtifact]);
+    view.unmount();
+  });
+
+  it('revokes a conflicting result-action request when the active task changes within the same owner scope', () => {
+    mocks.activeTaskId = 'task-a';
+    mocks.tasks = [
+      { id: 'task-a', sessionKey: 'agent:main:clawwork:task:task-a', gatewayId: 'gw-1', agentId: 'main' },
+      { id: 'task-b', sessionKey: 'agent:main:clawwork:task:task-b', gatewayId: 'gw-1', agentId: 'main' },
+    ];
+    mocks.messagesByTask = {
+      ...completedMessages('task-a'),
+      ...completedMessages('task-b'),
+    };
+    const view = renderFlow();
+    textarea(view.container).value = 'Task A draft';
+
+    click(view.container, '[data-testid="result-generate"]');
+    const oldReplace = [...document.body.querySelectorAll('button')].find(
+      (button) => button.textContent === 'taskWorkbench.replaceDraft',
+    );
+    expect(oldReplace).toBeInstanceOf(HTMLButtonElement);
+    expect(document.body.querySelector('[role="dialog"]')).not.toBeNull();
+
+    mocks.activeTaskId = 'task-b';
+    view.rerender(profile('user-1'));
+
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+    const taskBComposer = textarea(view.container);
+    taskBComposer.value = 'Task B draft';
+    act(() => (oldReplace as HTMLButtonElement).click());
+    expect(taskBComposer.value).toBe('Task B draft');
+    expect(mocks.handleSend).not.toHaveBeenCalled();
+    view.unmount();
+  });
+
+  it('opens artifacts and selects the newest artifact from only the active task', () => {
+    mocks.activeTaskId = 'task-1';
+    mocks.tasks = [{ id: 'task-1', sessionKey: 'agent:main:clawwork:task:task-1', gatewayId: 'gw-1' }];
+    mocks.messagesByTask = completedMessages('task-1');
+    const older = makeArtifact({ id: 'older', createdAt: '2026-09-16T08:00:00.000Z' });
+    const unrelated = makeArtifact({ id: 'other-task', taskId: 'task-2', createdAt: '2026-09-17T10:00:00.000Z' });
+    const newest = makeArtifact({ id: 'newest', createdAt: '2026-09-17T09:00:00.000Z' });
+    useFileStore.setState({ artifacts: [older, unrelated, newest], selectedArtifactId: null });
+    const view = renderFlow();
+
+    expect(mocks.firstTaskFlowSnapshots.at(-1)?.artifactCount).toBe(2);
+    click(view.container, '[data-testid="result-view"]');
+
+    expect(uiState.setRightPanelOpen).toHaveBeenCalledWith(true);
+    expect(useFileStore.getState().selectedArtifactId).toBe('newest');
+    view.unmount();
+  });
+
+  it('sorts missing, empty, and invalid artifact dates behind valid dates', () => {
+    mocks.activeTaskId = 'task-1';
+    mocks.tasks = [{ id: 'task-1', sessionKey: 'agent:main:clawwork:task:task-1', gatewayId: 'gw-1' }];
+    mocks.messagesByTask = completedMessages('task-1');
+    const missing = makeArtifact({ id: 'missing-date' });
+    delete (missing as Partial<Artifact>).createdAt;
+    const empty = makeArtifact({ id: 'empty-date', createdAt: '' });
+    const invalid = makeArtifact({ id: 'invalid-date', createdAt: 'not-a-date' });
+    const valid = makeArtifact({ id: 'valid-date', createdAt: '2026-09-17T09:00:00.000Z' });
+    useFileStore.setState({ artifacts: [missing, empty, invalid, valid], selectedArtifactId: null });
+    const view = renderFlow();
+
+    click(view.container, '[data-testid="result-view"]');
+
+    expect(useFileStore.getState().selectedArtifactId).toBe('valid-date');
+    view.unmount();
+  });
+
+  it('keeps store order when artifact dates are equal', () => {
+    mocks.activeTaskId = 'task-1';
+    mocks.tasks = [{ id: 'task-1', sessionKey: 'agent:main:clawwork:task:task-1', gatewayId: 'gw-1' }];
+    mocks.messagesByTask = completedMessages('task-1');
+    const first = makeArtifact({ id: 'first', createdAt: '2026-09-17T09:00:00.000Z' });
+    const second = makeArtifact({ id: 'second', createdAt: '2026-09-17T09:00:00.000Z' });
+    useFileStore.setState({ artifacts: [first, second], selectedArtifactId: null });
+    const view = renderFlow();
+
+    click(view.container, '[data-testid="result-view"]');
+
+    expect(useFileStore.getState().selectedArtifactId).toBe('first');
+    view.unmount();
+  });
+
+  it('does not open or select artifacts when the active task has none', () => {
+    mocks.activeTaskId = 'task-1';
+    mocks.tasks = [{ id: 'task-1', sessionKey: 'agent:main:clawwork:task:task-1', gatewayId: 'gw-1' }];
+    mocks.messagesByTask = completedMessages('task-1');
+    useFileStore.setState({ artifacts: [makeArtifact({ id: 'other', taskId: 'task-2' })], selectedArtifactId: null });
+    const view = renderFlow();
+
+    expect(mocks.firstTaskFlowSnapshots.at(-1)?.onViewArtifacts).toEqual(expect.any(Function));
+    click(view.container, '[data-testid="result-view"]');
+
+    expect(uiState.setRightPanelOpen).not.toHaveBeenCalled();
+    expect(useFileStore.getState().selectedArtifactId).toBeNull();
+    view.unmount();
+  });
 });
+
+function makeArtifact(overrides: Partial<Artifact> = {}): Artifact {
+  return {
+    id: 'artifact-1',
+    taskId: 'task-1',
+    messageId: 'message-1',
+    type: 'file',
+    name: 'report.pdf',
+    filePath: 'report.pdf',
+    localPath: 'task-1/report.pdf',
+    mimeType: 'application/pdf',
+    size: 2048,
+    createdAt: '2026-09-16T08:00:00.000Z',
+    availability: 'available',
+    ...overrides,
+  };
+}
+
+function completedMessages(taskId: string): Record<string, Array<Record<string, unknown>>> {
+  return {
+    [taskId]: [
+      { id: 'm1', role: 'user', content: 'Question', timestamp: '2026-09-14T00:00:01.000Z' },
+      { id: 'm2', role: 'assistant', content: 'Answer', timestamp: '2026-09-14T00:00:02.000Z' },
+    ],
+  };
+}

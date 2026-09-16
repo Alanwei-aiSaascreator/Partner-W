@@ -1284,10 +1284,13 @@
     "customTask": "自定义任务",
     "draftConflictDescription": "选择保留原内容并追加模板，或使用模板替换当前内容。",
     "draftConflictTitle": "输入框已有内容",
+    "generateFile": "生成文件",
+    "generateFilePrompt": "请把刚才的结果整理成一个可下载文件。先确认最合适的文件格式，再生成并保存到当前任务成果目录。",
     "materialHint": "建议资料",
     "output": "预期成果",
     "recentTasks": "最近使用",
-    "replaceDraft": "替换内容"
+    "replaceDraft": "替换内容",
+    "viewArtifacts": "查看成果"
   },
   "teams": {
     "confirmDeleteDesc": "确定删除「{{name}}」？此操作将移除团队配置。Agent 将保留在 Gateway 上，可在设置中管理。",

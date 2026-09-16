@@ -1284,10 +1284,13 @@
     "customTask": "Custom task",
     "draftConflictDescription": "Keep the current text and append the template, or replace it with the template.",
     "draftConflictTitle": "The input already has content",
+    "generateFile": "Generate file",
+    "generateFilePrompt": "Please organize the result above into a downloadable file. First determine the most suitable file format, then generate it and save it to the current task's artifacts directory.",
     "materialHint": "Suggested materials",
     "output": "Expected result",
     "recentTasks": "Recently used",
-    "replaceDraft": "Replace content"
+    "replaceDraft": "Replace content",
+    "viewArtifacts": "View artifacts"
   },
   "teams": {
     "confirmDeleteDesc": "Excluir \"{{name}}\"? A configuração da equipe será removida. Os agentes permanecerão no Gateway e podem ser gerenciados em Configurações.",

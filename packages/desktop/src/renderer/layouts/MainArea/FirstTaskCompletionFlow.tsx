@@ -10,9 +10,12 @@ interface FirstTaskCompletionFlowProps {
   messages: readonly MilestoneMessage[];
   activity: SessionActivity;
   storage?: MilestoneStorage;
+  artifactCount: number;
   onContinue: () => void;
   onNewTask: () => void;
   onViewUsage: () => void;
+  onGenerateFile: () => void;
+  onViewArtifacts: () => void;
 }
 
 export default function FirstTaskCompletionFlow({
@@ -22,9 +25,12 @@ export default function FirstTaskCompletionFlow({
   messages,
   activity,
   storage,
+  artifactCount,
   onContinue,
   onNewTask,
   onViewUsage,
+  onGenerateFile,
+  onViewArtifacts,
 }: FirstTaskCompletionFlowProps) {
   const milestone = useFirstTaskMilestone({
     userId,
@@ -44,9 +50,12 @@ export default function FirstTaskCompletionFlow({
 
   return (
     <FirstTaskCompletionCard
+      artifactCount={artifactCount}
       onContinue={() => runAndDismiss(onContinue)}
       onNewTask={() => runAndDismiss(onNewTask)}
       onViewUsage={() => runAndDismiss(onViewUsage)}
+      onGenerateFile={() => runAndDismiss(onGenerateFile)}
+      onViewArtifacts={() => runAndDismiss(onViewArtifacts)}
       onDismiss={milestone.dismiss}
     />
   );

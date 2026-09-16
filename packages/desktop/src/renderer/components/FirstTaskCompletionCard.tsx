@@ -3,16 +3,22 @@ import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
 
 interface FirstTaskCompletionCardProps {
+  artifactCount: number;
   onContinue: () => void;
   onNewTask: () => void;
   onViewUsage: () => void;
+  onGenerateFile: () => void;
+  onViewArtifacts: () => void;
   onDismiss: () => void;
 }
 
 export default function FirstTaskCompletionCard({
+  artifactCount,
   onContinue,
   onNewTask,
   onViewUsage,
+  onGenerateFile,
+  onViewArtifacts,
   onDismiss,
 }: FirstTaskCompletionCardProps) {
   const { t } = useTranslation();
@@ -47,6 +53,15 @@ export default function FirstTaskCompletionCard({
         <Button type="button" size="sm" variant="outline" onClick={onNewTask}>
           {t('firstTaskCompletion.newTask')}
         </Button>
+        {artifactCount === 0 ? (
+          <Button type="button" size="sm" variant="outline" onClick={onGenerateFile}>
+            {t('taskWorkbench.generateFile')}
+          </Button>
+        ) : (
+          <Button type="button" size="sm" variant="outline" onClick={onViewArtifacts}>
+            {t('taskWorkbench.viewArtifacts')}
+          </Button>
+        )}
         <Button type="button" size="sm" variant="ghost" onClick={onViewUsage}>
           {t('firstTaskCompletion.viewUsage')}
         </Button>

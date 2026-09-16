@@ -22,6 +22,7 @@ import { deriveSessionActivity, getTaskSessionKeys, serializeIdentityMd } from '
 import { useTaskStore } from '@/stores/taskStore';
 import { useMessageStore, EMPTY_MESSAGES, activeTurnToMessage } from '@/stores/messageStore';
 import { useUiStore } from '@/stores/uiStore';
+import { useFileStore } from '@/stores/fileStore';
 import { useRoomStore } from '@/stores/roomStore';
 import { useCommercialStore } from '@/stores/commercialStore';
 import { cn, formatRelativeTime, formatTokenCount, formatCost, formatCredits } from '@/lib/utils';
@@ -71,6 +72,11 @@ import {
 const STICK_TO_BOTTOM_THRESHOLD_PX = 60;
 const MAX_HEADER_TITLE_LENGTH = 120;
 
+function artifactCreatedAtTimestamp(createdAt: string | null | undefined): number {
+  const timestamp = Date.parse(createdAt ?? '');
+  return Number.isNaN(timestamp) ? Number.NEGATIVE_INFINITY : timestamp;
+}
+
 export function createDraftPromptRequest(
   sequence: number,
   prompt: string,
@@ -112,6 +118,7 @@ interface DraftRequestOwner {
   userId: string;
   gatewayId: string;
   agentId: string;
+  taskId: string | null;
 }
 
 function buildLocalAvatarUrl(gatewayId: string | undefined, agentId: string | undefined): string | undefined {
@@ -521,6 +528,8 @@ export function ChatContent({
   const { t } = useTranslation();
   const activeTaskId = useTaskStore((s) => s.activeTaskId);
   const activeTask = useTaskStore((s) => s.tasks.find((task) => task.id === s.activeTaskId));
+  const artifacts = useFileStore((s) => s.artifacts);
+  const setSelectedArtifact = useFileStore((s) => s.setSelectedArtifact);
   const pendingGatewayId = useTaskStore((s) => s.pendingNewTask?.gatewayId);
   const pendingAgentId = useTaskStore((s) => s.pendingNewTask?.agentId);
   const startNewTask = useTaskStore((s) => s.startNewTask);
@@ -528,6 +537,7 @@ export function ChatContent({
   const messageLayout = useUiStore((s) => s.messageLayout);
   const setSettingsOpen = useUiStore((s) => s.setSettingsOpen);
   const setMainView = useUiStore((s) => s.setMainView);
+  const setRightPanelOpen = useUiStore((s) => s.setRightPanelOpen);
   const defaultGatewayId = useUiStore((s) => s.defaultGatewayId ?? '');
   const setSelectedAgent = useUiStore((s) => s.setSelectedAgent);
   const goalAgentCatalog = useUiStore((s) =>
@@ -539,6 +549,20 @@ export function ChatContent({
   const commercialOverview = useCommercialStore((s) => s.overview);
   const messages = useMessageStore((s) =>
     activeTaskId ? (s.messagesByTask[activeTaskId] ?? EMPTY_MESSAGES) : EMPTY_MESSAGES,
+  );
+  const activeTaskArtifacts = useMemo(
+    () => (activeTaskId ? artifacts.filter((artifact) => artifact.taskId === activeTaskId) : []),
+    [activeTaskId, artifacts],
+  );
+  const newestActiveTaskArtifact = useMemo(
+    () =>
+      [...activeTaskArtifacts].sort((a, b) => {
+        const aTimestamp = artifactCreatedAtTimestamp(a.createdAt);
+        const bTimestamp = artifactCreatedAtTimestamp(b.createdAt);
+        if (aTimestamp === bTimestamp) return 0;
+        return bTimestamp > aTimestamp ? 1 : -1;
+      })[0],
+    [activeTaskArtifacts],
   );
   const activeTurnBySession = useMessageStore((s) => s.activeTurnBySession);
   const processingBySession = useMessageStore((s) => s.processingBySession);
@@ -590,6 +614,7 @@ export function ChatContent({
     const currentPendingTask = taskState.pendingNewTask;
     return {
       userId: activeUserId,
+      taskId: taskState.activeTaskId,
       gatewayId: currentTask?.gatewayId ?? currentPendingTask?.gatewayId ?? '',
       agentId:
         currentTask?.agentId ??
@@ -609,6 +634,16 @@ export function ChatContent({
     [readDraftRequestOwner],
   );
 
+  const handleGenerateFile = useCallback(() => {
+    requestDraft(t('taskWorkbench.generateFilePrompt'), 'result-action');
+  }, [requestDraft, t]);
+
+  const handleViewArtifacts = useCallback(() => {
+    if (!newestActiveTaskArtifact) return;
+    setSelectedArtifact(newestActiveTaskArtifact.id);
+    setRightPanelOpen(true);
+  }, [newestActiveTaskArtifact, setRightPanelOpen, setSelectedArtifact]);
+
   const handleDraftResolved = useCallback(
     (request: DraftPromptRequest, resolution: DraftPromptResolution) => {
       if (activeDraftRequest.current?.id !== request.id) return;
@@ -617,15 +652,14 @@ export function ChatContent({
       activeDraftRequest.current = null;
       activeDraftRequestOwner.current = null;
       setDraftRequest((current) => (current?.id === request.id ? null : current));
-      if (
-        resolution === 'cancelled' ||
-        !request.presetId ||
-        !activeUserId ||
-        owner?.requestId !== request.id ||
-        owner.userId !== currentOwner.userId ||
-        owner.gatewayId !== currentOwner.gatewayId ||
-        owner.agentId !== currentOwner.agentId
-      ) {
+      const ownerMatchesCurrentScope =
+        owner !== null &&
+        owner.requestId === request.id &&
+        owner.userId === currentOwner.userId &&
+        owner.gatewayId === currentOwner.gatewayId &&
+        owner.agentId === currentOwner.agentId &&
+        owner.taskId === currentOwner.taskId;
+      if (resolution === 'cancelled' || !ownerMatchesCurrentScope || !request.presetId || !activeUserId) {
         return;
       }
       const tasks = recordRecentAssistantTask(activeUserId, request.presetId);
@@ -647,12 +681,13 @@ export function ChatContent({
       !owner ||
       (owner.userId === activeUserId &&
         owner.gatewayId === currentDraftGatewayId &&
-        owner.agentId === currentDraftAgentId)
+        owner.agentId === currentDraftAgentId &&
+        owner.taskId === activeTaskId)
     ) {
       return;
     }
     clearDraftRequest();
-  }, [activeUserId, clearDraftRequest, currentDraftAgentId, currentDraftGatewayId]);
+  }, [activeTaskId, activeUserId, clearDraftRequest, currentDraftAgentId, currentDraftGatewayId]);
 
   useEffect(() => {
     setRecentTaskHistory({
@@ -981,9 +1016,12 @@ export function ChatContent({
               taskId={activeTaskId}
               messages={messages}
               activity={activity}
+              artifactCount={activeTaskArtifacts.length}
               onContinue={() => requestDraft(t('firstTaskCompletion.continuePrompt'), 'first-task-follow-up')}
               onNewTask={startNewTask}
               onViewUsage={() => setMainView('dashboard')}
+              onGenerateFile={handleGenerateFile}
+              onViewArtifacts={handleViewArtifacts}
             />
           </div>
         </ScrollArea>
