@@ -67,8 +67,8 @@ export default function Onboarding({ userId, defaultNickname = '', onComplete }:
           </div>
         </div>
 
-        <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_320px]">
-          <div>
+        <div className="grid gap-8 lg:grid-cols-3">
+          <div className="lg:col-span-2">
             <h1 className="type-page-title">{t('onboarding.title')}</h1>
             <p className="type-body mt-3 max-w-2xl text-[var(--text-secondary)]">{t('onboarding.subtitle')}</p>
 
@@ -154,14 +154,14 @@ export default function Onboarding({ userId, defaultNickname = '', onComplete }:
             </div>
           </div>
 
-          <aside className="hidden min-h-[540px] flex-col justify-between rounded-2xl bg-[var(--surface-onboarding-accent)] p-6 lg:flex">
+          <aside className="hidden min-h-full flex-col justify-between rounded-xl bg-[var(--surface-onboarding-accent)] p-6 lg:flex">
             <div>
               <p className="type-label text-[var(--accent)]">{t('mainArea.compassAssistant')}</p>
               <p className="type-body mt-2 leading-6 text-[var(--text-secondary)]">
                 {customGoal.trim() ? t('onboarding.goalAnalysisHint') : t('assistantWorkspaces.compass.description')}
               </p>
             </div>
-            <GuideMascot pose={customGoal.trim() ? 'phone' : 'idle'} className="mx-auto max-w-[280px]" />
+            <GuideMascot pose={customGoal.trim() ? 'phone' : 'idle'} className="mx-auto max-w-xs" />
           </aside>
         </div>
       </main>

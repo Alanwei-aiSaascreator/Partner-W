@@ -176,10 +176,10 @@ export default function Login({ onSignedIn }: LoginProps) {
 
       <section
         data-login-region="brand"
-        className="relative hidden min-h-screen w-[52%] overflow-hidden border-r border-[var(--border)] bg-[var(--surface-onboarding-accent)] px-12 pb-10 pt-16 lg:flex lg:flex-col"
+        className="relative hidden min-h-screen w-1/2 overflow-hidden border-r border-[var(--border)] bg-[var(--surface-onboarding-accent)] px-12 pb-10 pt-16 lg:flex lg:flex-col"
       >
-        <div className="absolute -left-24 top-24 h-72 w-72 rounded-full bg-[#ddd8fa] opacity-70 blur-3xl" />
-        <div className="absolute -right-24 bottom-10 h-64 w-64 rounded-full bg-[#f7dce9] opacity-80 blur-3xl" />
+        <div className="absolute -left-24 top-24 h-72 w-72 rounded-full bg-[var(--accent-dim)] opacity-70 blur-3xl" />
+        <div className="absolute -right-24 bottom-10 h-64 w-64 rounded-full bg-[var(--danger-bg)] opacity-80 blur-3xl" />
 
         <div className="relative flex items-center gap-3">
           <img src={logo} alt="" className="h-11 w-11 rounded-xl" />
@@ -190,18 +190,16 @@ export default function Login({ onSignedIn }: LoginProps) {
         </div>
 
         <div className="relative my-auto max-w-lg py-12">
-          <h2 className="max-w-md text-4xl font-semibold leading-tight tracking-[-0.025em] text-[var(--text-primary)]">
-            {t('mainArea.welcomeTitle')}
-          </h2>
+          <h2 className="type-page-title max-w-md text-[var(--text-primary)]">{t('mainArea.welcomeTitle')}</h2>
           <p className="mt-3 max-w-md type-body leading-7 text-[var(--text-onboarding-muted)]">
             {t('assistantWorkspaces.compass.description')}
           </p>
-          <div className="mt-7 max-w-md border-t border-[var(--border)] pt-4 text-sm leading-6 text-[var(--text-onboarding-muted)]">
+          <div className="type-body mt-7 max-w-md border-t border-[var(--border)] pt-4 leading-6 text-[var(--text-onboarding-muted)]">
             {t('fileBrowser.workspaceAccessDescription')}
           </div>
         </div>
 
-        <div data-guide-mascot className="relative mx-auto w-full max-w-[330px]">
+        <div data-guide-mascot className="relative mx-auto w-full max-w-sm">
           <GuideMascot pose={mascotPose} />
         </div>
       </section>
