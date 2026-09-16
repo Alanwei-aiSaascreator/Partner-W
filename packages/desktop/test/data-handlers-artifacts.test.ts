@@ -43,6 +43,10 @@ async function flushJobs(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+async function flushMicrotasks(): Promise<void> {
+  for (let index = 0; index < 6; index += 1) await Promise.resolve();
+}
+
 describe('assistant artifact reconciliation boundary', () => {
   beforeEach(() => {
     vi.resetModules();
@@ -306,6 +310,230 @@ describe('assistant artifact reconciliation boundary', () => {
     );
   });
 
+  it('strictly binds out-of-order terminal messages to gateway run ids', async () => {
+    captureTaskArtifactBaselineMock
+      .mockResolvedValueOnce({ 'a-before.txt': 'a' })
+      .mockResolvedValueOnce({ 'b-before.txt': 'b' });
+    const { beginArtifactRun, bindArtifactRun, registerDataHandlers } =
+      await import('../src/main/ipc/data-handlers.js');
+    registerDataHandlers();
+    const tokenA = beginArtifactRun('C:\\trusted-workspace', 'task-1', 'session-task-1');
+    const tokenB = beginArtifactRun('C:\\trusted-workspace', 'task-1', 'session-task-1');
+    bindArtifactRun('task-1', 'session-task-1', tokenA, 'run-a');
+    bindArtifactRun('task-1', 'session-task-1', tokenB, 'run-b');
+
+    for (const [id, runId] of [
+      ['assistant-b', 'run-b'],
+      ['assistant-a', 'run-a'],
+    ]) {
+      selectGetMock.mockReturnValueOnce({ id }).mockReturnValueOnce({ gid: 'gateway-1' });
+      handleMap.get('data:create-message')!(
+        {},
+        {
+          id,
+          taskId: 'task-1',
+          role: 'assistant',
+          content: `${runId} done`,
+          timestamp: `2026-09-16T00:00:0${runId === 'run-a' ? '1' : '2'}.000Z`,
+          sessionKey: 'session-task-1',
+          runId,
+        },
+      );
+      await flushJobs();
+    }
+
+    expect(reconcileTaskArtifactsMock.mock.calls[0][0]).toEqual(
+      expect.objectContaining({ messageId: 'assistant-b', baseline: { 'b-before.txt': 'b' } }),
+    );
+    expect(reconcileTaskArtifactsMock.mock.calls[1][0]).toEqual(
+      expect.objectContaining({ messageId: 'assistant-a', baseline: { 'a-before.txt': 'a' } }),
+    );
+  });
+
+  it('does not let a completed assistant replay consume the following run', async () => {
+    captureTaskArtifactBaselineMock
+      .mockResolvedValueOnce({ 'a-before.txt': 'a' })
+      .mockResolvedValueOnce({ 'b-before.txt': 'b' });
+    const { beginArtifactRun, registerDataHandlers } = await import('../src/main/ipc/data-handlers.js');
+    registerDataHandlers();
+    beginArtifactRun('C:\\trusted-workspace', 'task-1', 'session-task-1');
+
+    selectGetMock.mockReturnValueOnce({ id: 'assistant-a' }).mockReturnValueOnce({ gid: 'gateway-1' });
+    handleMap.get('data:create-message')!(
+      {},
+      {
+        id: 'assistant-a-incoming',
+        taskId: 'task-1',
+        role: 'assistant',
+        content: 'A done',
+        timestamp: '2026-09-16T00:00:01.000Z',
+        sessionKey: 'session-task-1',
+      },
+    );
+    await flushJobs();
+
+    beginArtifactRun('C:\\trusted-workspace', 'task-1', 'session-task-1');
+    selectGetMock.mockReturnValueOnce({ id: 'assistant-a' });
+    handleMap.get('data:create-message')!(
+      {},
+      {
+        id: 'assistant-a-replay',
+        taskId: 'task-1',
+        role: 'assistant',
+        content: 'A done',
+        timestamp: '2026-09-16T00:00:01.000Z',
+        sessionKey: 'session-task-1',
+      },
+    );
+    await flushJobs();
+
+    selectGetMock.mockReturnValueOnce({ id: 'assistant-b' }).mockReturnValueOnce({ gid: 'gateway-1' });
+    handleMap.get('data:create-message')!(
+      {},
+      {
+        id: 'assistant-b',
+        taskId: 'task-1',
+        role: 'assistant',
+        content: 'B done',
+        timestamp: '2026-09-16T00:00:02.000Z',
+        sessionKey: 'session-task-1',
+      },
+    );
+    await flushJobs();
+
+    expect(reconcileTaskArtifactsMock).toHaveBeenCalledTimes(2);
+    expect(reconcileTaskArtifactsMock.mock.calls[1][0]).toEqual(
+      expect.objectContaining({ messageId: 'assistant-b', baseline: { 'b-before.txt': 'b' } }),
+    );
+  });
+
+  it('fails the session closed when completed-message dedupe TTL expires', async () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000);
+    captureTaskArtifactBaselineMock
+      .mockResolvedValueOnce({ 'a-before.txt': 'a' })
+      .mockResolvedValueOnce({ 'b-before.txt': 'b' });
+    const { beginArtifactRun, registerDataHandlers } = await import('../src/main/ipc/data-handlers.js');
+    registerDataHandlers();
+    beginArtifactRun('C:\\trusted-workspace', 'task-1', 'session-task-1');
+    selectGetMock.mockReturnValueOnce({ id: 'assistant-a' }).mockReturnValueOnce({ gid: 'gateway-1' });
+    handleMap.get('data:create-message')!(
+      {},
+      {
+        id: 'assistant-a',
+        taskId: 'task-1',
+        role: 'assistant',
+        content: 'A',
+        timestamp: '2026-09-16T00:00:01.000Z',
+        sessionKey: 'session-task-1',
+      },
+    );
+    await flushJobs();
+    expect(reconcileTaskArtifactsMock).toHaveBeenCalledTimes(1);
+
+    now.mockReturnValue(25 * 60 * 60 * 1000);
+    beginArtifactRun('C:\\trusted-workspace', 'task-1', 'session-task-1');
+    selectGetMock.mockReturnValueOnce({ id: 'assistant-b' });
+    handleMap.get('data:create-message')!(
+      {},
+      {
+        id: 'assistant-b',
+        taskId: 'task-1',
+        role: 'assistant',
+        content: 'B',
+        timestamp: '2026-09-17T01:00:01.000Z',
+        sessionKey: 'session-task-1',
+      },
+    );
+    await flushJobs();
+    expect(reconcileTaskArtifactsMock).toHaveBeenCalledTimes(1);
+    now.mockRestore();
+  });
+
+  it('bounds completed-message dedupe and fails evicted sessions closed', async () => {
+    const { beginArtifactRun, registerDataHandlers } = await import('../src/main/ipc/data-handlers.js');
+    registerDataHandlers();
+    for (let index = 0; index < 2050; index += 1) {
+      const taskId = `dedupe-task-${index}`;
+      const sessionKey = `dedupe-session-${index}`;
+      beginArtifactRun('C:\\trusted-workspace', taskId, sessionKey);
+      selectGetMock.mockReturnValueOnce({ id: `assistant-${index}` }).mockReturnValueOnce({ gid: 'gateway-1' });
+      handleMap.get('data:create-message')!(
+        {},
+        {
+          id: `assistant-${index}`,
+          taskId,
+          role: 'assistant',
+          content: 'done',
+          timestamp: `2026-09-16T00:00:00.${String(index).padStart(4, '0')}Z`,
+          sessionKey,
+        },
+      );
+      await flushMicrotasks();
+    }
+    expect(reconcileTaskArtifactsMock).toHaveBeenCalledTimes(2050);
+
+    beginArtifactRun('C:\\trusted-workspace', 'dedupe-task-0', 'dedupe-session-0');
+    selectGetMock.mockReturnValueOnce({ id: 'after-limit' });
+    handleMap.get('data:create-message')!(
+      {},
+      {
+        id: 'after-limit',
+        taskId: 'dedupe-task-0',
+        role: 'assistant',
+        content: 'must fail closed',
+        timestamp: '2026-09-17T00:00:00.000Z',
+        sessionKey: 'dedupe-session-0',
+      },
+    );
+    await flushJobs();
+    expect(reconcileTaskArtifactsMock).toHaveBeenCalledTimes(2050);
+  });
+
+  it('keeps an expired run as a tombstone so its late final cannot steal B', async () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000);
+    captureTaskArtifactBaselineMock
+      .mockResolvedValueOnce({ 'a-before.txt': 'a' })
+      .mockResolvedValueOnce({ 'b-before.txt': 'b' });
+    const { beginArtifactRun, registerDataHandlers } = await import('../src/main/ipc/data-handlers.js');
+    registerDataHandlers();
+    beginArtifactRun('C:\\trusted-workspace', 'task-1', 'session-task-1');
+    now.mockReturnValue(16 * 60 * 1000);
+    beginArtifactRun('C:\\trusted-workspace', 'task-1', 'session-task-1');
+
+    selectGetMock.mockReturnValueOnce({ id: 'assistant-a' }).mockReturnValueOnce({ gid: 'gateway-1' });
+    handleMap.get('data:create-message')!(
+      {},
+      {
+        id: 'assistant-a',
+        taskId: 'task-1',
+        role: 'assistant',
+        content: 'late A',
+        timestamp: '2026-09-16T00:00:01.000Z',
+        sessionKey: 'session-task-1',
+      },
+    );
+    await flushJobs();
+    expect(reconcileTaskArtifactsMock).not.toHaveBeenCalled();
+
+    selectGetMock.mockReturnValueOnce({ id: 'assistant-b' }).mockReturnValueOnce({ gid: 'gateway-1' });
+    handleMap.get('data:create-message')!(
+      {},
+      {
+        id: 'assistant-b',
+        taskId: 'task-1',
+        role: 'assistant',
+        content: 'B',
+        timestamp: '2026-09-16T00:00:02.000Z',
+        sessionKey: 'session-task-1',
+      },
+    );
+    await flushJobs();
+    expect(reconcileTaskArtifactsMock).toHaveBeenCalledWith(
+      expect.objectContaining({ messageId: 'assistant-b', baseline: { 'b-before.txt': 'b' } }),
+    );
+    now.mockRestore();
+  });
+
   it('consumes a failed-baseline slot without stealing the following run', async () => {
     captureTaskArtifactBaselineMock
       .mockRejectedValueOnce(new Error('baseline failed'))
@@ -348,7 +576,7 @@ describe('assistant artifact reconciliation boundary', () => {
     );
   });
 
-  it('removes only failed dispatch A and leaves same-session B queued', async () => {
+  it('keeps failed dispatch A as a tombstone and leaves same-session B queued', async () => {
     captureTaskArtifactBaselineMock
       .mockResolvedValueOnce({ 'a-before.txt': 'a' })
       .mockResolvedValueOnce({ 'b-before.txt': 'b' });
@@ -358,6 +586,21 @@ describe('assistant artifact reconciliation boundary', () => {
     const tokenA = beginArtifactRun('C:\\trusted-workspace', 'task-1', 'session-task-1');
     beginArtifactRun('C:\\trusted-workspace', 'task-1', 'session-task-1');
     cancelArtifactRun('task-1', 'session-task-1', tokenA);
+
+    selectGetMock.mockReturnValueOnce({ id: 'assistant-a-late' }).mockReturnValueOnce({ gid: 'gateway-1' });
+    handleMap.get('data:create-message')!(
+      {},
+      {
+        id: 'assistant-a-late',
+        taskId: 'task-1',
+        role: 'assistant',
+        content: 'A arrived after an uncertain failure',
+        timestamp: '2026-09-16T00:00:01.000Z',
+        sessionKey: 'session-task-1',
+      },
+    );
+    await flushJobs();
+    expect(reconcileTaskArtifactsMock).not.toHaveBeenCalled();
 
     selectGetMock.mockReturnValueOnce({ id: 'assistant-b' }).mockReturnValueOnce({ gid: 'gateway-1' });
     handleMap.get('data:create-message')!(
@@ -373,8 +616,63 @@ describe('assistant artifact reconciliation boundary', () => {
     );
     await flushJobs();
     expect(reconcileTaskArtifactsMock).toHaveBeenCalledWith(
-      expect.objectContaining({ baseline: { 'b-before.txt': 'b' } }),
+      expect.objectContaining({ messageId: 'assistant-b', baseline: { 'b-before.txt': 'b' } }),
     );
+  });
+
+  it('correlates a late terminal run id to the oldest unbound tombstone', async () => {
+    captureTaskArtifactBaselineMock
+      .mockResolvedValueOnce({ 'a-before.txt': 'a' })
+      .mockResolvedValueOnce({ 'b-before.txt': 'b' })
+      .mockResolvedValueOnce({ 'c-before.txt': 'c' });
+    const { beginArtifactRun, bindArtifactRun, cancelArtifactRun, registerDataHandlers } =
+      await import('../src/main/ipc/data-handlers.js');
+    registerDataHandlers();
+    const tokenA = beginArtifactRun('C:\\trusted-workspace', 'task-1', 'session-task-1');
+    cancelArtifactRun('task-1', 'session-task-1', tokenA);
+    const tokenB = beginArtifactRun('C:\\trusted-workspace', 'task-1', 'session-task-1');
+    bindArtifactRun('task-1', 'session-task-1', tokenB, 'run-b');
+
+    for (const [id, runId] of [
+      ['assistant-a', 'run-a'],
+      ['assistant-b', 'run-b'],
+    ]) {
+      selectGetMock.mockReturnValueOnce({ id }).mockReturnValueOnce({ gid: 'gateway-1' });
+      handleMap.get('data:create-message')!(
+        {},
+        {
+          id,
+          taskId: 'task-1',
+          role: 'assistant',
+          content: id,
+          timestamp: `2026-09-16T00:00:0${id.endsWith('a') ? '1' : '2'}.000Z`,
+          sessionKey: 'session-task-1',
+          runId,
+        },
+      );
+      await flushJobs();
+    }
+
+    beginArtifactRun('C:\\trusted-workspace', 'task-1', 'session-task-1');
+    selectGetMock.mockReturnValueOnce({ id: 'assistant-c' }).mockReturnValueOnce({ gid: 'gateway-1' });
+    handleMap.get('data:create-message')!(
+      {},
+      {
+        id: 'assistant-c',
+        taskId: 'task-1',
+        role: 'assistant',
+        content: 'C',
+        timestamp: '2026-09-16T00:00:03.000Z',
+        sessionKey: 'session-task-1',
+      },
+    );
+    await flushJobs();
+
+    expect(reconcileTaskArtifactsMock).toHaveBeenCalledTimes(2);
+    expect(reconcileTaskArtifactsMock.mock.calls.map((call) => call[0])).toEqual([
+      expect.objectContaining({ messageId: 'assistant-b', baseline: { 'b-before.txt': 'b' } }),
+      expect.objectContaining({ messageId: 'assistant-c', baseline: { 'c-before.txt': 'c' } }),
+    ]);
   });
 
   it('logs reconciliation failure without changing successful assistant persistence', async () => {
@@ -473,7 +771,52 @@ describe('assistant artifact reconciliation boundary', () => {
     );
     await flushJobs();
     expect(reconcileTaskArtifactsMock).not.toHaveBeenCalled();
+
+    beginArtifactRun('C:\\trusted-workspace', 'task-0', 'bounded-0');
+    selectGetMock.mockReturnValueOnce({ id: 'desynchronized-final' });
+    handleMap.get('data:create-message')!(
+      {},
+      {
+        id: 'desynchronized-final',
+        taskId: 'task-0',
+        role: 'assistant',
+        content: 'must fail closed',
+        timestamp: '2026-09-17T00:00:02.000Z',
+        sessionKey: 'bounded-0',
+      },
+    );
+    await flushJobs();
+    expect(reconcileTaskArtifactsMock).not.toHaveBeenCalled();
     now.mockRestore();
+  });
+
+  it('cancels a claimed run before reconciliation begins', async () => {
+    let resolveBaseline!: (value: { [key: string]: string }) => void;
+    captureTaskArtifactBaselineMock.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveBaseline = resolve;
+      }),
+    );
+    const { beginArtifactRun, cancelArtifactRunsForSession, registerDataHandlers } =
+      await import('../src/main/ipc/data-handlers.js');
+    registerDataHandlers();
+    beginArtifactRun('C:\\trusted-workspace', 'task-1', 'session-task-1');
+    selectGetMock.mockReturnValueOnce({ id: 'assistant-aborted' }).mockReturnValueOnce({ gid: 'gateway-1' });
+    handleMap.get('data:create-message')!(
+      {},
+      {
+        id: 'assistant-aborted',
+        taskId: 'task-1',
+        role: 'assistant',
+        content: 'done',
+        timestamp: '2026-09-16T00:00:01.000Z',
+        sessionKey: 'session-task-1',
+      },
+    );
+    cancelArtifactRunsForSession('session-task-1');
+    resolveBaseline({ 'before.txt': 'before' });
+    await flushJobs();
+    expect(reconcileTaskArtifactsMock).not.toHaveBeenCalled();
   });
 
   it('clears every artifact run for a deleted task', async () => {

@@ -19,6 +19,7 @@ import { getDebugLogger } from '../debug/index.js';
 import type { GatewayClient } from '../ws/gateway-client.js';
 import {
   beginArtifactRunForGatewayDispatch,
+  bindArtifactRun,
   cancelArtifactRun,
   cancelArtifactRunsForSession,
 } from './data-handlers.js';
@@ -236,7 +237,10 @@ export function registerWsHandlers(): void {
         }
       }
       try {
-        await gw.sendChatMessage(payload.sessionKey, payload.content, payload.attachments);
+        const sendResult = await gw.sendChatMessage(payload.sessionKey, payload.content, payload.attachments);
+        if (taskId && artifactRunToken && typeof sendResult?.runId === 'string') {
+          bindArtifactRun(taskId, payload.sessionKey, artifactRunToken, sendResult.runId);
+        }
         getDebugLogger().info({
           domain: 'ipc',
           event: 'ipc.ws.send-message.completed',

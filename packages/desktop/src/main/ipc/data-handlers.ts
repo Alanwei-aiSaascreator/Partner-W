@@ -26,18 +26,30 @@ function parseTeamAgentSkills(raw: string | null): string[] {
 }
 
 interface ArtifactRunContext {
-  baseline: Promise<ArtifactBaseline>;
+  baseline?: Promise<ArtifactBaseline>;
   token: string;
   createdAt: number;
   sequence: number;
   expiryTimer: ReturnType<typeof setTimeout>;
+  gatewayRunId?: string;
+  state: 'active' | 'canceled' | 'claimed';
+  taskId: string;
+  sessionKey: string;
 }
 
 const artifactRuns = new Map<string, ArtifactRunContext[]>();
-const reconciledAssistantMessages = new Set<string>();
+const claimedArtifactRuns = new Map<string, ArtifactRunContext>();
+const desynchronizedArtifactSessions = new Set<string>();
+const completedAssistantMessages = new Map<
+  string,
+  { state: 'inFlight' | 'completed'; touchedAt: number; sequence: number; taskId: string; sessionKey: string }
+>();
 const ARTIFACT_RUN_TTL_MS = 15 * 60 * 1000;
 const MAX_ARTIFACT_RUNS = 128;
+const COMPLETED_MESSAGE_TTL_MS = 24 * 60 * 60 * 1000;
+const MAX_COMPLETED_MESSAGES = 2048;
 let nextArtifactRunSequence = 0;
+let nextCompletedMessageSequence = 0;
 
 function artifactRunKey(taskId: string, sessionKey: string): string {
   return `${taskId}\0${sessionKey}`;
@@ -56,6 +68,7 @@ function hasRunningToolCall(toolCalls: unknown[] | undefined): boolean {
 
 export function beginArtifactRun(workspacePath: string, taskId: string, sessionKey: string): string {
   pruneArtifactRuns();
+  pruneCompletedAssistantMessages();
   const token = randomUUID();
   const baseline = captureTaskArtifactBaseline({ workspacePath, taskId }).catch((error: unknown) => {
     console.error('[artifact_baseline_failed]', { taskId, error });
@@ -66,11 +79,22 @@ export function beginArtifactRun(workspacePath: string, taskId: string, sessionK
   // become an unhandled process rejection.
   void baseline.catch(() => undefined);
   const key = artifactRunKey(taskId, sessionKey);
-  while (artifactRunCount() >= MAX_ARTIFACT_RUNS) evictOldestArtifactRun();
+  if (desynchronizedArtifactSessions.has(key)) return token;
+  while (artifactRunCount() >= MAX_ARTIFACT_RUNS) desynchronizeOldestArtifactSession();
+  if (desynchronizedArtifactSessions.has(key)) return token;
   const expiryTimer = setTimeout(() => cancelArtifactRun(taskId, sessionKey, token), ARTIFACT_RUN_TTL_MS);
   expiryTimer.unref?.();
   const queue = artifactRuns.get(key) ?? [];
-  queue.push({ baseline, token, createdAt: Date.now(), sequence: nextArtifactRunSequence++, expiryTimer });
+  queue.push({
+    baseline,
+    token,
+    createdAt: Date.now(),
+    sequence: nextArtifactRunSequence++,
+    expiryTimer,
+    state: 'active',
+    taskId,
+    sessionKey,
+  });
   artifactRuns.set(key, queue);
   return token;
 }
@@ -79,37 +103,80 @@ export function cancelArtifactRun(taskId: string, sessionKey: string, token: str
   const key = artifactRunKey(taskId, sessionKey);
   const queue = artifactRuns.get(key);
   const index = queue?.findIndex((run) => run.token === token) ?? -1;
-  if (!queue || index < 0) return;
-  const [run] = queue.splice(index, 1);
+  if (!queue || index < 0) {
+    const claimed = claimedArtifactRuns.get(token);
+    if (claimed?.taskId === taskId && claimed.sessionKey === sessionKey) claimed.state = 'canceled';
+    return;
+  }
+  const run = queue[index];
+  run.state = 'canceled';
+  run.baseline = undefined;
   clearTimeout(run.expiryTimer);
-  if (queue.length === 0) artifactRuns.delete(key);
 }
 
-function claimArtifactRun(taskId: string, sessionKey: string): ArtifactRunContext | undefined {
+export function bindArtifactRun(taskId: string, sessionKey: string, token: string, gatewayRunId: string): void {
+  if (!gatewayRunId) return;
+  const run = artifactRuns.get(artifactRunKey(taskId, sessionKey))?.find((candidate) => candidate.token === token);
+  if (run) run.gatewayRunId = gatewayRunId;
+}
+
+function claimArtifactRun(taskId: string, sessionKey: string, gatewayRunId?: string): ArtifactRunContext | undefined {
   const key = artifactRunKey(taskId, sessionKey);
+  if (desynchronizedArtifactSessions.has(key)) return undefined;
   const queue = artifactRuns.get(key);
-  const run = queue?.shift();
+  const exactRunIndex = gatewayRunId
+    ? (queue?.findIndex((candidate) => candidate.gatewayRunId === gatewayRunId) ?? -1)
+    : -1;
+  const index = gatewayRunId
+    ? exactRunIndex >= 0
+      ? exactRunIndex
+      : (queue?.findIndex((candidate) => candidate.state === 'canceled' && !candidate.gatewayRunId) ?? -1)
+    : queue?.length
+      ? 0
+      : -1;
+  // A terminal carrying a run id only falls back to an unbound canceled
+  // tombstone. That is the timeout/uncertain-send case: it preserves the FIFO
+  // hole without ever assigning an active baseline to an unrelated run id.
+  const run = index >= 0 ? queue?.splice(index, 1)[0] : undefined;
   if (!run || !queue) return undefined;
   clearTimeout(run.expiryTimer);
   if (queue.length === 0) artifactRuns.delete(key);
+  if (run.state === 'active') run.state = 'claimed';
+  claimedArtifactRuns.set(run.token, run);
   return run;
 }
 
 function artifactRunCount(): number {
-  let count = 0;
+  let count = claimedArtifactRuns.size;
   for (const queue of artifactRuns.values()) count += queue.length;
   return count;
 }
 
-function evictOldestArtifactRun(): void {
+function markArtifactSessionDesynchronized(key: string): void {
+  const queue = artifactRuns.get(key) ?? [];
+  for (const run of queue) clearTimeout(run.expiryTimer);
+  artifactRuns.delete(key);
+  for (const [token, run] of claimedArtifactRuns) {
+    if (artifactRunKey(run.taskId, run.sessionKey) !== key) continue;
+    run.state = 'canceled';
+    claimedArtifactRuns.delete(token);
+  }
+  desynchronizedArtifactSessions.add(key);
+}
+
+function desynchronizeOldestArtifactSession(): void {
   let oldest: { key: string; run: ArtifactRunContext } | null = null;
   for (const [key, queue] of artifactRuns) {
     for (const run of queue) {
       if (!oldest || run.sequence < oldest.run.sequence) oldest = { key, run };
     }
   }
-  if (oldest)
-    cancelArtifactRun(oldest.key.split('\0', 1)[0], oldest.key.slice(oldest.key.indexOf('\0') + 1), oldest.run.token);
+  for (const run of claimedArtifactRuns.values()) {
+    const key = artifactRunKey(run.taskId, run.sessionKey);
+    if (!oldest || run.sequence < oldest.run.sequence) oldest = { key, run };
+  }
+  if (!oldest) return;
+  markArtifactSessionDesynchronized(oldest.key);
 }
 
 function pruneArtifactRuns(now = Date.now()): void {
@@ -122,11 +189,46 @@ function pruneArtifactRuns(now = Date.now()): void {
   }
 }
 
+function completedMessageKey(taskId: string, messageId: string): string {
+  return `${taskId}\0${messageId}`;
+}
+
+function isArtifactRunCanceled(run: ArtifactRunContext): boolean {
+  return run.state === 'canceled';
+}
+
+function pruneCompletedAssistantMessages(now = Date.now()): void {
+  for (const [key, value] of completedAssistantMessages) {
+    if (value.state === 'completed' && now - value.touchedAt >= COMPLETED_MESSAGE_TTL_MS) {
+      completedAssistantMessages.delete(key);
+      markArtifactSessionDesynchronized(artifactRunKey(value.taskId, value.sessionKey));
+    }
+  }
+  if (completedAssistantMessages.size < MAX_COMPLETED_MESSAGES) return;
+  const completed = [...completedAssistantMessages.entries()]
+    .filter(([, value]) => value.state === 'completed')
+    .sort((a, b) => a[1].sequence - b[1].sequence);
+  while (completedAssistantMessages.size >= MAX_COMPLETED_MESSAGES && completed.length > 0) {
+    const [key, value] = completed.shift()!;
+    completedAssistantMessages.delete(key);
+    markArtifactSessionDesynchronized(artifactRunKey(value.taskId, value.sessionKey));
+  }
+}
+
 export function cancelArtifactRunsForSession(sessionKey: string): void {
   for (const [key, queue] of artifactRuns) {
     if (!key.endsWith(`\0${sessionKey}`)) continue;
     for (const run of queue) clearTimeout(run.expiryTimer);
     artifactRuns.delete(key);
+  }
+  for (const run of claimedArtifactRuns.values()) {
+    if (run.sessionKey === sessionKey) run.state = 'canceled';
+  }
+  for (const key of desynchronizedArtifactSessions) {
+    if (key.endsWith(`\0${sessionKey}`)) desynchronizedArtifactSessions.delete(key);
+  }
+  for (const [key, value] of completedAssistantMessages) {
+    if (value.sessionKey === sessionKey) completedAssistantMessages.delete(key);
   }
 }
 
@@ -135,6 +237,15 @@ export function cancelArtifactRunsForTask(taskId: string): void {
     if (!key.startsWith(`${taskId}\0`)) continue;
     for (const run of queue) clearTimeout(run.expiryTimer);
     artifactRuns.delete(key);
+  }
+  for (const run of claimedArtifactRuns.values()) {
+    if (run.taskId === taskId) run.state = 'canceled';
+  }
+  for (const key of desynchronizedArtifactSessions) {
+    if (key.startsWith(`${taskId}\0`)) desynchronizedArtifactSessions.delete(key);
+  }
+  for (const [key, value] of completedAssistantMessages) {
+    if (value.taskId === taskId) completedAssistantMessages.delete(key);
   }
 }
 
@@ -159,14 +270,32 @@ function finalizeAssistantArtifacts(input: {
   taskId: string;
   sessionKey: string;
   messageId: string;
+  runId?: string;
   content: string;
   attachments?: MessageAttachment[];
   gatewayHttpBase?: string;
 }): void {
-  if (reconciledAssistantMessages.has(input.messageId)) return;
-  const run = claimArtifactRun(input.taskId, input.sessionKey);
-  if (!run) return;
-  reconciledAssistantMessages.add(input.messageId);
+  pruneCompletedAssistantMessages();
+  const messageKey = completedMessageKey(input.taskId, input.messageId);
+  if (completedAssistantMessages.has(messageKey)) return;
+  completedAssistantMessages.set(messageKey, {
+    state: 'inFlight',
+    touchedAt: Date.now(),
+    sequence: nextCompletedMessageSequence++,
+    taskId: input.taskId,
+    sessionKey: input.sessionKey,
+  });
+  const run = claimArtifactRun(input.taskId, input.sessionKey, input.runId);
+  if (!run) {
+    completedAssistantMessages.set(messageKey, {
+      state: 'completed',
+      touchedAt: Date.now(),
+      sequence: nextCompletedMessageSequence++,
+      taskId: input.taskId,
+      sessionKey: input.sessionKey,
+    });
+    return;
+  }
   void (async () => {
     try {
       await autoExtractArtifacts({
@@ -181,7 +310,9 @@ function finalizeAssistantArtifacts(input: {
       console.error('[auto-extract]', error);
     }
     try {
+      if (isArtifactRunCanceled(run) || !run.baseline) return;
       const baseline = await run.baseline;
+      if (isArtifactRunCanceled(run)) return;
       const result = await reconcileTaskArtifacts({
         workspacePath: input.workspacePath,
         taskId: input.taskId,
@@ -194,7 +325,15 @@ function finalizeAssistantArtifacts(input: {
     } catch (error) {
       console.error('[artifact_reconcile_failed]', { taskId: input.taskId, messageId: input.messageId, error });
     } finally {
-      reconciledAssistantMessages.delete(input.messageId);
+      claimedArtifactRuns.delete(run.token);
+      completedAssistantMessages.set(messageKey, {
+        state: 'completed',
+        touchedAt: Date.now(),
+        sequence: nextCompletedMessageSequence++,
+        taskId: input.taskId,
+        sessionKey: input.sessionKey,
+      });
+      pruneCompletedAssistantMessages();
     }
   })();
 }
@@ -388,6 +527,7 @@ export function registerDataHandlers(): void {
               taskId: msg.taskId,
               sessionKey: resolvedSessionKey,
               messageId: persistedMessageId,
+              runId: msg.runId,
               content: msg.content,
               attachments: msg.attachments as MessageAttachment[] | undefined,
               gatewayHttpBase,
