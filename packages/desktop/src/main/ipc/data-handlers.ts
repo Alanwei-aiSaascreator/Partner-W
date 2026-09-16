@@ -29,13 +29,15 @@ interface ArtifactRunContext {
   baseline: Promise<ArtifactBaseline>;
   token: string;
   createdAt: number;
+  sequence: number;
   expiryTimer: ReturnType<typeof setTimeout>;
 }
 
-const artifactRuns = new Map<string, ArtifactRunContext>();
+const artifactRuns = new Map<string, ArtifactRunContext[]>();
 const reconciledAssistantMessages = new Set<string>();
 const ARTIFACT_RUN_TTL_MS = 15 * 60 * 1000;
 const MAX_ARTIFACT_RUNS = 128;
+let nextArtifactRunSequence = 0;
 
 function artifactRunKey(taskId: string, sessionKey: string): string {
   return `${taskId}\0${sessionKey}`;
@@ -64,49 +66,74 @@ export function beginArtifactRun(workspacePath: string, taskId: string, sessionK
   // become an unhandled process rejection.
   void baseline.catch(() => undefined);
   const key = artifactRunKey(taskId, sessionKey);
-  const previous = artifactRuns.get(key);
-  if (previous) clearTimeout(previous.expiryTimer);
-  while (artifactRuns.size >= MAX_ARTIFACT_RUNS) {
-    const oldestKey = artifactRuns.keys().next().value as string | undefined;
-    if (!oldestKey) break;
-    const oldest = artifactRuns.get(oldestKey);
-    if (oldest) clearTimeout(oldest.expiryTimer);
-    artifactRuns.delete(oldestKey);
-  }
+  while (artifactRunCount() >= MAX_ARTIFACT_RUNS) evictOldestArtifactRun();
   const expiryTimer = setTimeout(() => cancelArtifactRun(taskId, sessionKey, token), ARTIFACT_RUN_TTL_MS);
   expiryTimer.unref?.();
-  artifactRuns.set(key, { baseline, token, createdAt: Date.now(), expiryTimer });
+  const queue = artifactRuns.get(key) ?? [];
+  queue.push({ baseline, token, createdAt: Date.now(), sequence: nextArtifactRunSequence++, expiryTimer });
+  artifactRuns.set(key, queue);
   return token;
 }
 
 export function cancelArtifactRun(taskId: string, sessionKey: string, token: string): void {
   const key = artifactRunKey(taskId, sessionKey);
-  const run = artifactRuns.get(key);
-  if (run?.token !== token) return;
+  const queue = artifactRuns.get(key);
+  const index = queue?.findIndex((run) => run.token === token) ?? -1;
+  if (!queue || index < 0) return;
+  const [run] = queue.splice(index, 1);
   clearTimeout(run.expiryTimer);
-  artifactRuns.delete(key);
+  if (queue.length === 0) artifactRuns.delete(key);
+}
+
+function claimArtifactRun(taskId: string, sessionKey: string): ArtifactRunContext | undefined {
+  const key = artifactRunKey(taskId, sessionKey);
+  const queue = artifactRuns.get(key);
+  const run = queue?.shift();
+  if (!run || !queue) return undefined;
+  clearTimeout(run.expiryTimer);
+  if (queue.length === 0) artifactRuns.delete(key);
+  return run;
+}
+
+function artifactRunCount(): number {
+  let count = 0;
+  for (const queue of artifactRuns.values()) count += queue.length;
+  return count;
+}
+
+function evictOldestArtifactRun(): void {
+  let oldest: { key: string; run: ArtifactRunContext } | null = null;
+  for (const [key, queue] of artifactRuns) {
+    for (const run of queue) {
+      if (!oldest || run.sequence < oldest.run.sequence) oldest = { key, run };
+    }
+  }
+  if (oldest)
+    cancelArtifactRun(oldest.key.split('\0', 1)[0], oldest.key.slice(oldest.key.indexOf('\0') + 1), oldest.run.token);
 }
 
 function pruneArtifactRuns(now = Date.now()): void {
-  for (const [key, run] of artifactRuns) {
-    if (now - run.createdAt < ARTIFACT_RUN_TTL_MS) continue;
-    clearTimeout(run.expiryTimer);
-    artifactRuns.delete(key);
+  for (const [key, queue] of artifactRuns) {
+    for (const run of [...queue]) {
+      if (now - run.createdAt < ARTIFACT_RUN_TTL_MS) continue;
+      const separator = key.indexOf('\0');
+      cancelArtifactRun(key.slice(0, separator), key.slice(separator + 1), run.token);
+    }
   }
 }
 
 export function cancelArtifactRunsForSession(sessionKey: string): void {
-  for (const [key, run] of artifactRuns) {
+  for (const [key, queue] of artifactRuns) {
     if (!key.endsWith(`\0${sessionKey}`)) continue;
-    clearTimeout(run.expiryTimer);
+    for (const run of queue) clearTimeout(run.expiryTimer);
     artifactRuns.delete(key);
   }
 }
 
 export function cancelArtifactRunsForTask(taskId: string): void {
-  for (const [key, run] of artifactRuns) {
+  for (const [key, queue] of artifactRuns) {
     if (!key.startsWith(`${taskId}\0`)) continue;
-    clearTimeout(run.expiryTimer);
+    for (const run of queue) clearTimeout(run.expiryTimer);
     artifactRuns.delete(key);
   }
 }
@@ -137,8 +164,7 @@ function finalizeAssistantArtifacts(input: {
   gatewayHttpBase?: string;
 }): void {
   if (reconciledAssistantMessages.has(input.messageId)) return;
-  const key = artifactRunKey(input.taskId, input.sessionKey);
-  const run = artifactRuns.get(key);
+  const run = claimArtifactRun(input.taskId, input.sessionKey);
   if (!run) return;
   reconciledAssistantMessages.add(input.messageId);
   void (async () => {
@@ -168,7 +194,6 @@ function finalizeAssistantArtifacts(input: {
     } catch (error) {
       console.error('[artifact_reconcile_failed]', { taskId: input.taskId, messageId: input.messageId, error });
     } finally {
-      cancelArtifactRun(input.taskId, input.sessionKey, run.token);
       reconciledAssistantMessages.delete(input.messageId);
     }
   })();
