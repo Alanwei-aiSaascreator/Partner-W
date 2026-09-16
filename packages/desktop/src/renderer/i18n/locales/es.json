@@ -689,12 +689,6 @@
     "phonePlaceholder": "Teléfono",
     "privacyPolicy": "Política de privacidad",
     "privacyUrl": "https://www.rongyinghudong.com/privacy.html",
-    "purposes": {
-      "content": "Content creation",
-      "ecommerce": "E-commerce",
-      "office": "Office work",
-      "research": "Study and research"
-    },
     "rateLimited": "Demasiadas solicitudes, inténtalo en {{seconds}} s",
     "resend": "Reenviar",
     "resendIn": "Reenviar en {{seconds}}s",

@@ -689,12 +689,6 @@
     "phonePlaceholder": "手機號",
     "privacyPolicy": "隱私政策",
     "privacyUrl": "https://www.rongyinghudong.com/privacy.html",
-    "purposes": {
-      "content": "內容創作",
-      "ecommerce": "電商營運",
-      "office": "辦公提效",
-      "research": "學習研究"
-    },
     "rateLimited": "傳送過於頻繁，請 {{seconds}} 秒後再試",
     "resend": "重新發送",
     "resendIn": "{{seconds}} 秒後可重新發送",

@@ -300,6 +300,8 @@ export default function App() {
     );
   }
 
+  if (entryScreen !== 'workspace' || !onboardingProfile) return null;
+
   return (
     <TooltipProvider>
       <AnimatePresence>{commandPaletteOpen && <CommandPalette />}</AnimatePresence>
