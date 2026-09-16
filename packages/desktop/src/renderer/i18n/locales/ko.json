@@ -247,6 +247,13 @@
       }
     }
   },
+  "beta": {
+    "demoBadge": "Company Beta 1.0",
+    "localDataHint": "Local persistent beta data",
+    "navigation": "Beta feature navigation",
+    "reset": "Reset beta data",
+    "title": "Beta Center"
+  },
   "chatInput": {
     "abortFailed": "생성 중지에 실패했습니다",
     "addFiles": "파일 추가",

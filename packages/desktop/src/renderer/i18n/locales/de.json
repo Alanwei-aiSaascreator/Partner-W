@@ -247,6 +247,13 @@
       }
     }
   },
+  "beta": {
+    "demoBadge": "Company Beta 1.0",
+    "localDataHint": "Local persistent beta data",
+    "navigation": "Beta feature navigation",
+    "reset": "Reset beta data",
+    "title": "Beta Center"
+  },
   "chatInput": {
     "abortFailed": "Generierung konnte nicht gestoppt werden",
     "addFiles": "Dateien hinzufügen",

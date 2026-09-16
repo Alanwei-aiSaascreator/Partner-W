@@ -64,12 +64,14 @@ describe('GlobalRail', () => {
     click('leftNav.home');
     click('common.fileManager');
     click('leftNav.usageOverview');
+    click('beta.title');
     click('leftNav.identityCenter');
     click('leftNav.appSettings');
 
     expect(onGoHome).toHaveBeenCalledOnce();
     expect(onSelectView).toHaveBeenNthCalledWith(1, 'files');
     expect(onSelectView).toHaveBeenNthCalledWith(2, 'dashboard');
+    expect(onSelectView).toHaveBeenNthCalledWith(3, 'betaHub');
     expect(onOpenIdentity).toHaveBeenCalledOnce();
     expect(onOpenSettings).toHaveBeenCalledOnce();
 

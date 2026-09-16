@@ -27,6 +27,7 @@ import { cn } from '@/lib/utils';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { motionDuration, motionEase } from '@/styles/design-tokens';
 import { loadOnboardingProfile, saveOnboardingProfile, type OnboardingProfile } from '@/lib/user-onboarding';
+import { parseBetaRoute } from '@/features/internal-beta/beta-route';
 
 function AppToaster({ themeMode }: { themeMode: Theme }) {
   return (
@@ -87,9 +88,19 @@ export default function App() {
   );
 
   const goHome = useCallback(() => {
+    if (window.location.hash.startsWith('#/beta/')) window.history.replaceState(null, '', '#/');
     setActiveTask(null);
     setMainView('chat');
   }, [setActiveTask, setMainView]);
+
+  useEffect(() => {
+    const navigateHash = () => {
+      if (parseBetaRoute(window.location.hash)) setMainView('betaHub');
+    };
+    navigateHash();
+    window.addEventListener('hashchange', navigateHash);
+    return () => window.removeEventListener('hashchange', navigateHash);
+  }, [setMainView]);
 
   useGatewayBootstrap();
   const startupReadiness = useStartupReadiness(ready);

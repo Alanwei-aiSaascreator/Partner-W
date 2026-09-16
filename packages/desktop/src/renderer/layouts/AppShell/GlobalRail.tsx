@@ -1,12 +1,21 @@
 import type { ComponentType, ReactNode } from 'react';
-import { Archive, ChartNoAxesCombined, FolderOpen, House, PanelLeftOpen, Settings, UserRound } from 'lucide-react';
+import {
+  Archive,
+  ChartNoAxesCombined,
+  FolderOpen,
+  House,
+  PanelLeftOpen,
+  Settings,
+  Sparkles,
+  UserRound,
+} from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { MainView } from '@clawwork/core';
 import CubeFaceIcon from '@/components/CubeFaceIcon';
 import { cn } from '@/lib/utils';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
-type GlobalView = Extract<MainView, 'files' | 'dashboard' | 'archived'>;
+type GlobalView = Extract<MainView, 'files' | 'dashboard' | 'archived' | 'betaHub'>;
 
 interface GlobalRailProps {
   mainView: MainView;
@@ -110,6 +119,13 @@ export default function GlobalRail({
           icon={ChartNoAxesCombined}
           active={!settingsOpen && mainView === 'dashboard'}
           onClick={() => onSelectView('dashboard')}
+        />
+        <RailButton
+          label={t('beta.title')}
+          icon={Sparkles}
+          active={!settingsOpen && mainView === 'betaHub'}
+          onClick={() => onSelectView('betaHub')}
+          badge
         />
         <RailButton
           label={t('leftNav.archivedChats')}

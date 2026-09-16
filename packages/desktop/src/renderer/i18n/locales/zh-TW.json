@@ -247,6 +247,13 @@
       }
     }
   },
+  "beta": {
+    "demoBadge": "公司內測 1.0",
+    "localDataHint": "目前為本機持久化內測資料",
+    "navigation": "內測功能導覽",
+    "reset": "重設內測資料",
+    "title": "內測中心"
+  },
   "chatInput": {
     "abortFailed": "無法停止生成",
     "addFiles": "新增檔案",

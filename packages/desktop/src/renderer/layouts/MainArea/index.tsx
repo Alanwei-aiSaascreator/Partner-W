@@ -43,6 +43,7 @@ import FileBrowser from '../FileBrowser';
 import CronPanel from '@/layouts/CronPanel';
 import TeamsPanel from '@/layouts/TeamsPanel';
 import Dashboard from '@/layouts/Dashboard';
+import InternalBetaHub from '@/features/internal-beta/InternalBetaHub';
 import { useUsageStore } from '@/stores/usageStore';
 import { useQuotaRefreshOnTurnEnd } from '@/hooks/useQuotaRefreshOnTurnEnd';
 import DataTable, { type DataTableColumn } from '@/components/data-display/DataTable';
@@ -1049,6 +1050,10 @@ export default function MainArea({
       ) : mainView === 'dashboard' ? (
         <div className="flex-1 min-h-0">
           <Dashboard />
+        </div>
+      ) : mainView === 'betaHub' ? (
+        <div className="flex-1 min-h-0">
+          <InternalBetaHub />
         </div>
       ) : (
         <div key={`chat-${activeTaskId ?? 'welcome'}`} className="relative flex flex-col flex-1 min-h-0">
