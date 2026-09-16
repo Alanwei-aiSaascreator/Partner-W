@@ -58,6 +58,28 @@ export interface CreatorTemplate {
   installs: number;
 }
 
+export type BetaEventType =
+  | 'module_opened'
+  | 'team_created'
+  | 'team_joined'
+  | 'template_installed'
+  | 'bounty_published'
+  | 'post_published'
+  | 'creator_template_created'
+  | 'daily_check_in'
+  | 'compliance_agreed'
+  | 'data_export_requested'
+  | 'data_deletion_requested';
+
+export interface BetaEvent {
+  id: string;
+  type: BetaEventType;
+  timestamp: string;
+  module?: BetaModule;
+}
+
+export type BetaAnalytics = Record<'launch' | 'login' | 'activation' | 'chat' | 'file' | 'artifact' | 'error', number>;
+
 export interface BetaData {
   activeModule: BetaModule;
   team: TeamDemo | null;
@@ -75,12 +97,8 @@ export interface BetaData {
     announcement: string;
     errorCount: number;
   };
-  update: {
-    current: string;
-    available: string;
-    status: 'idle' | 'available' | 'downloaded' | 'installed' | 'rolledBack';
-  };
-  analytics: Record<'launch' | 'login' | 'activation' | 'chat' | 'file' | 'artifact' | 'error', number>;
+  analytics: BetaAnalytics;
+  events: BetaEvent[];
   compliance: { agreed: boolean; exportRequested: boolean; deletionRequested: boolean };
 }
 
@@ -89,24 +107,22 @@ export interface BetaActions {
   createTeam(name: string): void;
   joinTeam(code: string): void;
   leaveTeam(): void;
-  installTemplate(id: string): void;
-  publishBounty(title: string): void;
+  installTemplate(id: string): boolean;
+  publishBounty(title: string): boolean;
   claimBounty(id: string): void;
   submitBounty(id: string): void;
-  publishPost(content: string): void;
+  publishPost(content: string): boolean;
   likePost(id: string): void;
   commentPost(id: string, content: string): void;
-  createCreatorTemplate(name: string): void;
+  createCreatorTemplate(name: string): boolean;
   renameCreatorTemplate(id: string, name: string): void;
   toggleCreatorPublished(id: string): void;
-  checkIn(): void;
+  checkIn(): boolean;
   adjustCredits(amount: number): void;
   toggleModel(): void;
   setModelRate(rate: number): void;
   setAnnouncement(text: string): void;
-  checkUpdate(): void;
-  advanceUpdate(): void;
-  rollbackUpdate(): void;
+  analyticsSummary(): BetaAnalytics;
   agreeCompliance(): void;
   requestDataExport(): void;
   requestDeletion(): void;
@@ -123,7 +139,7 @@ export const BETA_MODULES: Array<{ id: BetaModule; label: string; description: s
   { id: 'creator', label: '创作者中心', description: '发布助手模板' },
   { id: 'game', label: '成长中心', description: '积分、等级与徽章' },
   { id: 'operations', label: '运营后台', description: '基础运营控制台' },
-  { id: 'updates', label: '自动升级', description: '版本检查与回滚' },
+  { id: 'updates', label: '自动升级', description: '检查、下载与安装' },
   { id: 'analytics', label: '埋点分析', description: '核心事件概览' },
   { id: 'compliance', label: '隐私与合规', description: '协议和数据权利' },
 ];
@@ -176,8 +192,8 @@ function seed(): BetaData {
       announcement: '欢迎参加公司内测 1.0',
       errorCount: 3,
     },
-    update: { current: '1.0.0-beta', available: '1.0.1-beta', status: 'idle' },
     analytics: { launch: 186, login: 152, activation: 89, chat: 438, file: 72, artifact: 41, error: 3 },
+    events: [],
     compliance: { agreed: false, exportRequested: false, deletionRequested: false },
   };
 }
@@ -187,11 +203,39 @@ function safeLoad(storage: BetaStorage): BetaData {
     const raw = storage.getItem(BETA_STORAGE_KEY);
     if (!raw) return seed();
     const parsed = JSON.parse(raw) as Partial<BetaData>;
+    const validEventTypes = new Set<BetaEventType>([
+      'module_opened',
+      'team_created',
+      'team_joined',
+      'template_installed',
+      'bounty_published',
+      'post_published',
+      'creator_template_created',
+      'daily_check_in',
+      'compliance_agreed',
+      'data_export_requested',
+      'data_deletion_requested',
+    ]);
+    const events = Array.isArray(parsed.events)
+      ? parsed.events
+          .filter((event): event is BetaEvent => {
+            if (!event || typeof event !== 'object') return false;
+            const candidate = event as Partial<BetaEvent>;
+            return (
+              typeof candidate.id === 'string' &&
+              typeof candidate.timestamp === 'string' &&
+              validEventTypes.has(candidate.type as BetaEventType)
+            );
+          })
+          .slice(-100)
+          .map((event) => ({ id: event.id, type: event.type, timestamp: event.timestamp, module: event.module }))
+      : [];
     return {
       ...seed(),
       ...parsed,
       operations: { ...seed().operations, ...parsed.operations },
       compliance: { ...seed().compliance, ...parsed.compliance },
+      events,
     };
   } catch {
     return seed();
@@ -219,13 +263,11 @@ function serializable(state: BetaState): BetaData {
     toggleModel: _q,
     setModelRate: _r,
     setAnnouncement: _s,
-    checkUpdate: _t,
-    advanceUpdate: _u,
-    rollbackUpdate: _v,
-    agreeCompliance: _w,
-    requestDataExport: _x,
-    requestDeletion: _y,
-    resetDemo: _z,
+    analyticsSummary: _t,
+    agreeCompliance: _u,
+    requestDataExport: _v,
+    requestDeletion: _w,
+    resetDemo: _x,
     ...data
   } = state;
   return data;
@@ -234,20 +276,46 @@ function serializable(state: BetaState): BetaData {
 let sequence = 0;
 const makeId = (prefix: string) => `${prefix}-${Date.now()}-${++sequence}`;
 
+function addEvent(events: BetaEvent[], type: BetaEventType, module?: BetaModule): BetaEvent[] {
+  return [
+    ...events,
+    {
+      id: makeId('event'),
+      type,
+      timestamp: new Date().toISOString(),
+      ...(module ? { module } : {}),
+    },
+  ].slice(-100);
+}
+
+function deriveAnalytics(state: Pick<BetaData, 'analytics' | 'events'>): BetaAnalytics {
+  const summary = { ...state.analytics };
+  for (const event of state.events) {
+    if (event.type === 'post_published') summary.chat += 1;
+    if (event.type === 'template_installed') summary.activation += 1;
+    if (event.type === 'creator_template_created') summary.artifact += 1;
+    if (event.type === 'team_created' || event.type === 'team_joined') summary.login += 1;
+    if (event.type === 'module_opened') summary.launch += 1;
+  }
+  return summary;
+}
+
 export function createBetaStore(storage: BetaStorage): StoreApi<BetaState> {
-  const store = createStore<BetaState>((set) => ({
+  const store = createStore<BetaState>((set, get) => ({
     ...safeLoad(storage),
-    setActiveModule: (activeModule) => set({ activeModule }),
+    setActiveModule: (activeModule) =>
+      set((state) => ({ activeModule, events: addEvent(state.events, 'module_opened', activeModule) })),
     createTeam: (name) =>
-      set({
+      set((state) => ({
         team: {
           name: name.trim() || '我的团队',
           inviteCode: `RY${String(Date.now()).slice(-6)}`,
           members: [{ id: 'me', name: '我', role: '管理员' }],
         },
-      }),
+        events: addEvent(state.events, 'team_created', 'team'),
+      })),
     joinTeam: (code) =>
-      set({
+      set((state) => ({
         team: {
           name: `内测协作组 ${code.trim().toUpperCase().slice(-4) || '0001'}`,
           inviteCode: code.trim().toUpperCase() || 'RY000001',
@@ -256,21 +324,26 @@ export function createBetaStore(storage: BetaStorage): StoreApi<BetaState> {
             { id: 'me', name: '我', role: '成员' },
           ],
         },
-      }),
+        events: addEvent(state.events, 'team_joined', 'team'),
+      })),
     leaveTeam: () => set({ team: null }),
-    installTemplate: (id) =>
+    installTemplate: (id) => {
+      if (get().installedTemplateIds.includes(id)) return false;
       set((state) => ({
-        installedTemplateIds: state.installedTemplateIds.includes(id)
-          ? state.installedTemplateIds
-          : [...state.installedTemplateIds, id],
-      })),
-    publishBounty: (title) =>
+        installedTemplateIds: [...state.installedTemplateIds, id],
+        events: addEvent(state.events, 'template_installed', 'market'),
+      }));
+      return true;
+    },
+    publishBounty: (title) => {
+      const trimmed = title.trim();
+      if (!trimmed) return false;
       set((state) => ({
-        bounties: [
-          ...state.bounties,
-          { id: makeId('bounty'), title: title.trim() || '未命名悬赏', reward: 100, status: 'open' },
-        ],
-      })),
+        bounties: [...state.bounties, { id: makeId('bounty'), title: trimmed, reward: 100, status: 'open' }],
+        events: addEvent(state.events, 'bounty_published', 'bounty'),
+      }));
+      return true;
+    },
     claimBounty: (id) =>
       set((state) => ({
         bounties: state.bounties.map((item) =>
@@ -283,20 +356,25 @@ export function createBetaStore(storage: BetaStorage): StoreApi<BetaState> {
           item.id === id && item.status === 'claimed' ? { ...item, status: 'submitted' } : item,
         ),
       })),
-    publishPost: (content) =>
+    publishPost: (content) => {
+      const trimmed = content.trim();
+      if (!trimmed) return false;
       set((state) => ({
         feed: [
           {
             id: makeId('post'),
             author: '我',
-            content: content.trim() || '分享一条内测动态',
+            content: trimmed,
             likes: 0,
             comments: [],
             createdAt: '刚刚',
           },
           ...state.feed,
         ],
-      })),
+        events: addEvent(state.events, 'post_published', 'square'),
+      }));
+      return true;
+    },
     likePost: (id) =>
       set((state) => ({
         feed: state.feed.map((post) => (post.id === id ? { ...post, likes: post.likes + 1 } : post)),
@@ -307,13 +385,18 @@ export function createBetaStore(storage: BetaStorage): StoreApi<BetaState> {
           post.id === id && content.trim() ? { ...post, comments: [...post.comments, content.trim()] } : post,
         ),
       })),
-    createCreatorTemplate: (name) =>
+    createCreatorTemplate: (name) => {
+      const trimmed = name.trim();
+      if (!trimmed) return false;
       set((state) => ({
         creatorTemplates: [
           ...state.creatorTemplates,
-          { id: makeId('creator'), name: name.trim() || '新助手模板', status: 'draft', views: 0, installs: 0 },
+          { id: makeId('creator'), name: trimmed, status: 'draft', views: 0, installs: 0 },
         ],
-      })),
+        events: addEvent(state.events, 'creator_template_created', 'creator'),
+      }));
+      return true;
+    },
     renameCreatorTemplate: (id, name) =>
       set((state) => ({
         creatorTemplates: state.creatorTemplates.map((item) =>
@@ -326,19 +409,19 @@ export function createBetaStore(storage: BetaStorage): StoreApi<BetaState> {
           item.id === id ? { ...item, status: item.status === 'draft' ? 'published' : 'draft' } : item,
         ),
       })),
-    checkIn: () =>
-      set((state) =>
-        state.game.checkedInToday
-          ? state
-          : {
-              game: {
-                ...state.game,
-                checkedInToday: true,
-                points: state.game.points + 20,
-                level: Math.max(state.game.level, Math.floor((state.game.points + 20) / 200) + 1),
-              },
-            },
-      ),
+    checkIn: () => {
+      if (get().game.checkedInToday) return false;
+      set((state) => ({
+        game: {
+          ...state.game,
+          checkedInToday: true,
+          points: state.game.points + 20,
+          level: Math.max(state.game.level, Math.floor((state.game.points + 20) / 200) + 1),
+        },
+        events: addEvent(state.events, 'daily_check_in', 'game'),
+      }));
+      return true;
+    },
     adjustCredits: (amount) =>
       set((state) => ({
         operations: { ...state.operations, credits: Math.max(0, state.operations.credits + amount) },
@@ -348,20 +431,26 @@ export function createBetaStore(storage: BetaStorage): StoreApi<BetaState> {
     setModelRate: (modelRate) =>
       set((state) => ({ operations: { ...state.operations, modelRate: Math.max(0.1, modelRate) } })),
     setAnnouncement: (announcement) => set((state) => ({ operations: { ...state.operations, announcement } })),
-    checkUpdate: () => set((state) => ({ update: { ...state.update, status: 'available' } })),
-    advanceUpdate: () =>
+    analyticsSummary: () => deriveAnalytics(get()),
+    agreeCompliance: () =>
       set((state) => ({
-        update: {
-          ...state.update,
-          status: state.update.status === 'available' ? 'downloaded' : 'installed',
-          current: state.update.status === 'downloaded' ? state.update.available : state.update.current,
-        },
+        compliance: { ...state.compliance, agreed: true },
+        events: state.compliance.agreed ? state.events : addEvent(state.events, 'compliance_agreed', 'compliance'),
       })),
-    rollbackUpdate: () =>
-      set((state) => ({ update: { ...state.update, status: 'rolledBack', current: '1.0.0-beta' } })),
-    agreeCompliance: () => set((state) => ({ compliance: { ...state.compliance, agreed: true } })),
-    requestDataExport: () => set((state) => ({ compliance: { ...state.compliance, exportRequested: true } })),
-    requestDeletion: () => set((state) => ({ compliance: { ...state.compliance, deletionRequested: true } })),
+    requestDataExport: () =>
+      set((state) => ({
+        compliance: { ...state.compliance, exportRequested: true },
+        events: state.compliance.exportRequested
+          ? state.events
+          : addEvent(state.events, 'data_export_requested', 'compliance'),
+      })),
+    requestDeletion: () =>
+      set((state) => ({
+        compliance: { ...state.compliance, deletionRequested: true },
+        events: state.compliance.deletionRequested
+          ? state.events
+          : addEvent(state.events, 'data_deletion_requested', 'compliance'),
+      })),
     resetDemo: () => set(seed()),
   }));
   store.subscribe((state) => storage.setItem(BETA_STORAGE_KEY, JSON.stringify(serializable(state))));

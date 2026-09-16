@@ -481,8 +481,39 @@ function OperationsModule() {
   const setRate = useBetaStore((s) => s.setModelRate);
   const setAnnouncement = useBetaStore((s) => s.setAnnouncement);
   const [showLogs, setShowLogs] = useState(false);
+  const configuredAdminUrl = (() => {
+    const candidate = import.meta.env.VITE_ADMIN_CONSOLE_URL?.trim();
+    if (!candidate) return null;
+    try {
+      const url = new URL(candidate);
+      return url.protocol === 'https:' || url.protocol === 'http:' ? url.toString() : null;
+    } catch {
+      return null;
+    }
+  })();
   return (
     <div className="space-y-4">
+      <Card>
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <Badge tone={configuredAdminUrl ? 'success' : 'warning'}>{configuredAdminUrl ? '已配置' : '待配置'}</Badge>
+            <h3 className="type-section-title mt-2">运营管理后台</h3>
+            <p className="type-body mt-1 text-[var(--text-muted)]">
+              {configuredAdminUrl
+                ? '在独立后台管理真实用户、发卡、套餐和运营配置。'
+                : '设置 VITE_ADMIN_CONSOLE_URL 后开放入口；桌面端不保存后台密钥。'}
+            </p>
+          </div>
+          <Button
+            data-action="open-admin"
+            disabled={!configuredAdminUrl}
+            onClick={() => configuredAdminUrl && window.open(configuredAdminUrl, '_blank', 'noopener,noreferrer')}
+          >
+            <ShieldCheck />
+            打开后台
+          </Button>
+        </div>
+      </Card>
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {[
           ['用户总览', operations.users],
@@ -557,8 +588,8 @@ function OperationsModule() {
           </div>
         )}
       </Card>
-      <p className="type-support text-[var(--warning)]">
-        内测模拟后台：当前操作只影响本机演示数据，不修改生产用户、账单或模型配置。
+      <p className="type-support text-[var(--text-muted)]">
+        本页统计卡和调节项是公司内测数据；真实用户、账单和卡密只在独立后台中管理。
       </p>
     </div>
   );
@@ -646,7 +677,9 @@ function UpdatesModule() {
 }
 
 function AnalyticsModule() {
-  const analytics = useBetaStore((s) => s.analytics);
+  const events = useBetaStore((s) => s.events);
+  const analyticsSummary = useBetaStore((s) => s.analyticsSummary);
+  const analytics = useMemo(() => analyticsSummary(), [analyticsSummary, events]);
   const labels: Record<keyof typeof analytics, string> = {
     launch: '启动',
     login: '登录',
@@ -680,6 +713,32 @@ function AnalyticsModule() {
           </Card>
         ))}
       </div>
+      <Card className="mt-4">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h3 className="font-semibold">最近内测事件</h3>
+            <p className="type-support mt-1 text-[var(--text-muted)]">仅保存事件类型、模块与时间，不记录输入内容。</p>
+          </div>
+          <Badge>{events.length} 条</Badge>
+        </div>
+        <div className="mt-4 divide-y divide-[var(--border)]">
+          {events.length === 0 ? (
+            <p className="type-body py-3 text-[var(--text-muted)]">暂无本机事件</p>
+          ) : (
+            [...events]
+              .reverse()
+              .slice(0, 8)
+              .map((event) => (
+                <div key={event.id} className="flex items-center justify-between gap-4 py-2.5 type-body">
+                  <span className="text-[var(--text-secondary)]">{event.type}</span>
+                  <span className="type-support text-[var(--text-muted)]">
+                    {new Date(event.timestamp).toLocaleString()}
+                  </span>
+                </div>
+              ))
+          )}
+        </div>
+      </Card>
     </>
   );
 }

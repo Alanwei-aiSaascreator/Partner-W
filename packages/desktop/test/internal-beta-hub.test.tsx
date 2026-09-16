@@ -42,6 +42,7 @@ async function flushAsync(): Promise<void> {
 
 describe('InternalBetaHub', () => {
   beforeEach(() => {
+    vi.unstubAllEnvs();
     localStorage.clear();
     window.history.replaceState(null, '', '#/');
     act(() => useBetaStore.getState().resetDemo());
@@ -102,5 +103,22 @@ describe('InternalBetaHub', () => {
     expect(container.textContent).toContain('1.1.0');
     expect(container.textContent).not.toContain('内测模拟升级');
     unmount();
+  });
+
+  it('opens only the configured admin console URL', () => {
+    useBetaStore.getState().setActiveModule('operations');
+    const first = render(<InternalBetaHub />);
+    const disabled = first.container.querySelector<HTMLButtonElement>('[data-action="open-admin"]')!;
+    expect(disabled.disabled).toBe(true);
+    first.unmount();
+
+    vi.stubEnv('VITE_ADMIN_CONSOLE_URL', 'https://admin.example.com/console');
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null);
+    const second = render(<InternalBetaHub />);
+    const enabled = second.container.querySelector<HTMLButtonElement>('[data-action="open-admin"]')!;
+    expect(enabled.disabled).toBe(false);
+    act(() => enabled.click());
+    expect(open).toHaveBeenCalledWith('https://admin.example.com/console', '_blank', 'noopener,noreferrer');
+    second.unmount();
   });
 });
