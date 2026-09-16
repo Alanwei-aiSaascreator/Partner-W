@@ -49,7 +49,9 @@ import SlashCommandMenu from '../SlashCommandMenu';
 import ToolsCatalog from '../ToolsCatalog';
 import VoiceIntroDialog from '../VoiceIntroDialog';
 import { MENTION_ALL_AGENT_ID } from './constants';
+import DraftConflictDialog from './DraftConflictDialog';
 import { thinkingAlwaysOnKey, thinkingLabelKey, thinkingMenuFor } from './thinking-levels.js';
+import type { DraftPromptRequest, DraftPromptResolution } from './types';
 import { useChatSend } from './useChatSend';
 import { useAttachments } from './useAttachments';
 import { useMentionPicker } from './useMentionPicker';
@@ -92,6 +94,8 @@ interface ChatInputProps {
   onNavigateToAccount?: () => void;
   draftPrompt?: string | null;
   onDraftApplied?: () => void;
+  draftRequest?: DraftPromptRequest | null;
+  onDraftResolved?: (request: DraftPromptRequest, resolution: DraftPromptResolution) => void;
   readinessBlocked?: boolean;
 }
 
@@ -99,12 +103,16 @@ export default function ChatInput({
   onNavigateToAccount,
   draftPrompt,
   onDraftApplied,
+  draftRequest,
+  onDraftResolved,
   readinessBlocked = false,
 }: ChatInputProps) {
   const { t } = useTranslation();
   const reduced = useReducedMotion();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const handledDraftRequestIdsRef = useRef(new Set<string>());
   const [canSend, setCanSend] = useState(false);
+  const [draftConflict, setDraftConflict] = useState<DraftPromptRequest | null>(null);
 
   useEffect(() => {
     if (!draftPrompt) return;
@@ -472,6 +480,57 @@ export default function ChatInput({
     materials.selectedImportedFiles.length,
     selectedLocalFiles.length,
   ]);
+
+  const setComposerDraft = useCallback(
+    (value: string) => {
+      const textarea = textareaRef.current;
+      if (!textarea) return;
+      textarea.value = value;
+      textarea.style.height = 'auto';
+      textarea.style.height = `${Math.min(textarea.scrollHeight, 160)}px`;
+      setCanSend(
+        Boolean(value.trim()) ||
+          pendingAttachments.length > 0 ||
+          materials.selectedImportedFiles.length > 0 ||
+          selectedLocalFiles.length > 0,
+      );
+      textarea.focus();
+    },
+    [pendingAttachments.length, materials.selectedImportedFiles.length, selectedLocalFiles.length],
+  );
+
+  useEffect(() => {
+    if (!draftRequest || draftConflict || handledDraftRequestIdsRef.current.has(draftRequest.id)) return;
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    handledDraftRequestIdsRef.current.add(draftRequest.id);
+    if (draftRequest.prompt.length === 0) {
+      textarea.focus();
+      onDraftResolved?.(draftRequest, 'applied');
+      return;
+    }
+    if (textarea.value.length === 0) {
+      setComposerDraft(draftRequest.prompt);
+      onDraftResolved?.(draftRequest, 'applied');
+      return;
+    }
+    setDraftConflict(draftRequest);
+  }, [draftConflict, draftRequest, onDraftResolved, setComposerDraft]);
+
+  const resolveDraftConflict = useCallback(
+    (resolution: Extract<DraftPromptResolution, 'appended' | 'replaced' | 'cancelled'>) => {
+      if (!draftConflict) return;
+      const request = draftConflict;
+      if (resolution === 'appended') {
+        setComposerDraft(`${textareaRef.current?.value ?? ''}\n\n${request.prompt}`);
+      } else if (resolution === 'replaced') {
+        setComposerDraft(request.prompt);
+      }
+      setDraftConflict(null);
+      onDraftResolved?.(request, resolution);
+    },
+    [draftConflict, onDraftResolved, setComposerDraft],
+  );
 
   const voiceActive = isVoiceListening || isVoiceTranscribing;
   const disabled = isOffline || readinessBlocked;
@@ -1096,6 +1155,12 @@ export default function ChatInput({
         open={dashboardOpen}
         onOpenChange={setDashboardOpen}
         onSelectCommand={commitSlashCommand}
+      />
+      <DraftConflictDialog
+        open={draftConflict !== null}
+        onCancel={() => resolveDraftConflict('cancelled')}
+        onAppend={() => resolveDraftConflict('appended')}
+        onReplace={() => resolveDraftConflict('replaced')}
       />
     </div>
   );
