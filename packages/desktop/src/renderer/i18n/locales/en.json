@@ -729,16 +729,105 @@
     "taskComplete": "Task Complete"
   },
   "onboarding": {
+    "assignmentSubtitle": "We matched your role and goals to a starter assistant set. You can adjust it now or later.",
+    "assignmentTitle": "Your assistant team is ready",
+    "assistants": {
+      "content": {
+        "name": "Content assistant"
+      },
+      "ecommerce": {
+        "name": "E-commerce assistant"
+      },
+      "family": {
+        "name": "Home assistant"
+      },
+      "office": {
+        "name": "Office assistant"
+      },
+      "photography": {
+        "name": "Video assistant"
+      },
+      "research": {
+        "name": "Research assistant"
+      }
+    },
+    "back": "Back",
+    "cancel": "Cancel",
     "continue": "Enter Rongying Cube",
     "customPlaceholder": "For example: create three product videos each week or organize my family learning materials",
+    "customRole": "Custom role",
+    "customRolePlaceholder": "For example: store video lead",
     "customTitle": "Anything else you want to achieve?",
+    "fileOptions": {
+      "ask-every-time": {
+        "description": "Ask before accessing anything outside the current task folder",
+        "title": "Ask every time"
+      },
+      "task-folder": {
+        "description": "Allow direct access to files inside the current task folder",
+        "title": "Current task folder"
+      }
+    },
+    "filePermission": "File access",
+    "finish": "Enter workspace",
     "goalAnalysisHint": "We will save this now. When AI is ready, Compass will analyze it and recommend an assistant.",
     "multipleHint": "Choose more than one",
+    "next": "Next",
     "nickname": "What should we call you?",
     "nicknamePlaceholder": "Optional",
     "optional": "Optional",
+    "personalizeSubtitle": "Choose your display name, response detail, and file access preference.",
+    "personalizeTitle": "Make it yours",
+    "previewAssignment": "Recommendations use your role, common tasks, and goal. Turn off anything you do not need.",
+    "previewPersonalize": "You can change these preferences later without affecting existing tasks.",
+    "previewPurpose": "Tell us what you do most often so the home page and assistants fit your work.",
+    "previewRole": "Your responsibilities help us put the most useful assistants first.",
     "progress": "Initial setup",
+    "purposeSubtitle": "Select several or describe the exact outcome you want.",
+    "purposeTitle": "What will you use it for?",
+    "responseDetail": "Response detail",
+    "responseOptions": {
+      "balanced": "Balanced",
+      "concise": "Concise",
+      "detailed": "Detailed"
+    },
+    "roles": {
+      "custom": {
+        "description": "Describe your role in your own words",
+        "title": "Custom"
+      },
+      "finance": {
+        "description": "Reports, accounting, and processes",
+        "title": "Finance / HR"
+      },
+      "operations": {
+        "description": "Stores, content, and growth",
+        "title": "Operations"
+      },
+      "owner": {
+        "description": "Business overview and efficiency",
+        "title": "Business owner"
+      },
+      "sales": {
+        "description": "Leads, follow-up, and deals",
+        "title": "Sales"
+      },
+      "support": {
+        "description": "Customer help and tickets",
+        "title": "Support"
+      }
+    },
+    "roleSubtitle": "We will match an assistant set to your responsibilities. You can change it later.",
+    "roleTitle": "First, what is your role?",
+    "save": "Save settings",
     "skip": "Skip for now",
+    "stepOf": "Step {{current}} of {{total}}",
+    "steps": {
+      "assignment": "Assistants",
+      "personalize": "Personalize",
+      "purpose": "Use cases",
+      "role": "Your role"
+    },
     "subtitle": "Choose the things you do often. We will use them to shape your home recommendations, and you can change them later.",
     "title": "What would you like Rongying Cube to help with?",
     "useCases": {

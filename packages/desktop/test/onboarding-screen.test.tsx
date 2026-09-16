@@ -3,6 +3,7 @@
 import { act, type ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { OnboardingProfile } from '../src/renderer/lib/user-onboarding';
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
@@ -25,23 +26,74 @@ function render(ui: ReactElement): { container: HTMLDivElement; unmount: () => v
   };
 }
 
+function buttonFor(container: HTMLElement, key: string): HTMLButtonElement {
+  return [...container.querySelectorAll('button')].find((button) => button.textContent?.includes(key))!;
+}
+
+function setInput(element: HTMLInputElement | HTMLTextAreaElement, value: string): void {
+  const prototype = element instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+  const setter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set;
+  act(() => {
+    setter?.call(element, value);
+    element.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+}
+
 describe('Onboarding', () => {
   beforeEach(() => {
     (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     window.localStorage.clear();
   });
 
-  it('prefills the login purpose but still lets the user change it', () => {
-    window.localStorage.setItem('rongying-login-purpose', 'office');
+  it('uses a four-step role, purpose, assistant, and personalization flow', () => {
     const onComplete = vi.fn();
-    const { container, unmount } = render(<Onboarding userId="user-purpose" onComplete={onComplete} />);
-    const office = [...container.querySelectorAll('button')].find((button) =>
-      button.textContent?.includes('onboarding.useCases.office.title'),
-    )!;
-    const content = [...container.querySelectorAll('button')].find((button) =>
-      button.textContent?.includes('onboarding.useCases.content.title'),
-    )!;
+    const { container, unmount } = render(
+      <Onboarding userId="user-1" defaultNickname="小荣" onComplete={onComplete} />,
+    );
 
+    expect(container.textContent).toContain('onboarding.steps.role');
+    expect(container.textContent).toContain('onboarding.roleTitle');
+    act(() => buttonFor(container, 'onboarding.roles.operations.title').click());
+    act(() => buttonFor(container, 'onboarding.next').click());
+
+    expect(container.textContent).toContain('onboarding.purposeTitle');
+    act(() => {
+      buttonFor(container, 'onboarding.useCases.content.title').click();
+      buttonFor(container, 'onboarding.useCases.video.title').click();
+    });
+    act(() => buttonFor(container, 'onboarding.next').click());
+
+    expect(container.textContent).toContain('onboarding.assignmentTitle');
+    expect(container.querySelector('[data-assistant="content"]')).not.toBeNull();
+    expect(container.querySelector('[data-assistant="photography"]')).not.toBeNull();
+    act(() => buttonFor(container, 'onboarding.next').click());
+
+    expect(container.textContent).toContain('onboarding.personalizeTitle');
+    act(() => buttonFor(container, 'onboarding.finish').click());
+
+    expect(onComplete).toHaveBeenCalledWith(
+      expect.objectContaining({
+        version: 2,
+        userId: 'user-1',
+        nickname: '小荣',
+        role: 'operations',
+        useCases: ['content', 'video'],
+        selectedAssistantIds: expect.arrayContaining(['content', 'photography']),
+        responseDetail: 'balanced',
+        filePermission: 'ask-every-time',
+      }),
+    );
+    unmount();
+  });
+
+  it('prefills the login purpose on step two but still lets the user change it', () => {
+    window.localStorage.setItem('rongying-login-purpose', 'office');
+    const { container, unmount } = render(<Onboarding userId="user-purpose" onComplete={vi.fn()} />);
+
+    act(() => buttonFor(container, 'onboarding.roles.owner.title').click());
+    act(() => buttonFor(container, 'onboarding.next').click());
+    const office = buttonFor(container, 'onboarding.useCases.office.title');
+    const content = buttonFor(container, 'onboarding.useCases.content.title');
     expect(office.getAttribute('aria-pressed')).toBe('true');
     act(() => {
       office.click();
@@ -53,64 +105,63 @@ describe('Onboarding', () => {
     unmount();
   });
 
-  it('lets a user choose several purposes and complete setup', () => {
-    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  it('uses free role and goal text in assistant recommendations', () => {
     const onComplete = vi.fn();
-    const { container, unmount } = render(
-      <Onboarding userId="user-1" defaultNickname="小荣" onComplete={onComplete} />,
+    const { container, unmount } = render(<Onboarding userId="user-2" onComplete={onComplete} />);
+
+    act(() => buttonFor(container, 'onboarding.roles.custom.title').click());
+    setInput(container.querySelector('[data-custom-role]') as HTMLInputElement, '门店短视频负责人');
+    act(() => buttonFor(container, 'onboarding.next').click());
+    setInput(
+      container.querySelector('[data-onboarding-goal] textarea') as HTMLTextAreaElement,
+      '  每周生成三个短视频脚本  ',
     );
-
-    expect(container.textContent).toContain('mainArea.compassAssistant');
-    expect(container.textContent).toContain('assistantWorkspaces.compass.description');
-    expect(container.textContent).not.toContain('assistantDefinitions.main');
-
-    const buttonFor = (key: string) =>
-      [...container.querySelectorAll('button')].find((button) => button.textContent?.includes(key));
-
-    act(() => {
-      buttonFor('onboarding.useCases.content.title')!.click();
-      buttonFor('onboarding.useCases.video.title')!.click();
-    });
-    act(() => {
-      buttonFor('onboarding.continue')!.click();
-    });
+    act(() => buttonFor(container, 'onboarding.next').click());
+    expect(container.querySelector('[data-assistant="photography"]')).not.toBeNull();
+    act(() => buttonFor(container, 'onboarding.next').click());
+    act(() => buttonFor(container, 'onboarding.finish').click());
 
     expect(onComplete).toHaveBeenCalledWith(
       expect.objectContaining({
-        version: 1,
-        userId: 'user-1',
-        nickname: '小荣',
-        useCases: ['content', 'video'],
+        role: 'custom',
+        customRole: '门店短视频负责人',
+        customGoal: '每周生成三个短视频脚本',
+        selectedAssistantIds: expect.arrayContaining(['photography']),
       }),
     );
     unmount();
   });
 
-  it('allows a custom goal without selecting a preset purpose', () => {
-    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  it('preloads edit mode and cancels without saving changes', () => {
+    const initialProfile: OnboardingProfile = {
+      version: 2,
+      userId: 'user-edit',
+      nickname: '原昵称',
+      role: 'finance',
+      customRole: '',
+      useCases: ['office'],
+      customGoal: '整理月度报表',
+      selectedAssistantIds: ['office'],
+      responseDetail: 'detailed',
+      filePermission: 'task-folder',
+      completedAt: '2026-09-16T00:00:00.000Z',
+    };
     const onComplete = vi.fn();
-    const { container, unmount } = render(<Onboarding userId="user-2" onComplete={onComplete} />);
-    const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
-    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
-
-    act(() => {
-      setter?.call(textarea, '  我想整理抖音素材，每周生成三个短视频脚本  ');
-      textarea.dispatchEvent(new Event('input', { bubbles: true }));
-    });
-    const continueButton = [...container.querySelectorAll('button')].find((button) =>
-      button.textContent?.includes('onboarding.continue'),
+    const onCancel = vi.fn();
+    const { container, unmount } = render(
+      <Onboarding
+        userId="user-edit"
+        mode="edit"
+        initialProfile={initialProfile}
+        onComplete={onComplete}
+        onCancel={onCancel}
+      />,
     );
-    act(() => continueButton!.click());
 
-    expect(onComplete).toHaveBeenCalledWith(
-      expect.objectContaining({
-        userId: 'user-2',
-        useCases: [],
-        customGoal: '我想整理抖音素材，每周生成三个短视频脚本',
-      }),
-    );
-    expect(container.querySelector('[data-onboarding-goal]')).not.toBeNull();
-
+    expect(buttonFor(container, 'onboarding.roles.finance.title').getAttribute('aria-pressed')).toBe('true');
+    act(() => buttonFor(container, 'onboarding.cancel').click());
+    expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(onComplete).not.toHaveBeenCalled();
     unmount();
   });
 });

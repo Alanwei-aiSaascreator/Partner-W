@@ -729,16 +729,105 @@
     "taskComplete": "任务完成"
   },
   "onboarding": {
+    "assignmentSubtitle": "根据你的岗位和目标生成首批助手，你可以随时调整。",
+    "assignmentTitle": "为你分配专属助手",
+    "assistants": {
+      "content": {
+        "name": "内容创作助手"
+      },
+      "ecommerce": {
+        "name": "电商运营助手"
+      },
+      "family": {
+        "name": "生活家庭助手"
+      },
+      "office": {
+        "name": "办公提效助手"
+      },
+      "photography": {
+        "name": "拍摄剪辑助手"
+      },
+      "research": {
+        "name": "学习研究助手"
+      }
+    },
+    "back": "上一步",
+    "cancel": "取消",
     "continue": "进入荣盈魔方",
     "customPlaceholder": "例如：我想每周完成三条产品短视频，或者整理家里的学习资料",
+    "customRole": "自定义岗位",
+    "customRolePlaceholder": "例如：门店短视频负责人",
     "customTitle": "还有其他目标？",
+    "fileOptions": {
+      "ask-every-time": {
+        "description": "访问任务目录之外的位置前先征求你的确认",
+        "title": "每次询问"
+      },
+      "task-folder": {
+        "description": "允许助手直接处理当前任务文件夹内的文件",
+        "title": "当前任务文件夹"
+      }
+    },
+    "filePermission": "文件访问方式",
+    "finish": "进入工作台",
     "goalAnalysisHint": "先记录下来，AI 服务准备好后，罗盘助手会分析目标并推荐合适的助手。",
     "multipleHint": "可以多选",
+    "next": "下一步",
     "nickname": "怎么称呼你",
     "nicknamePlaceholder": "选填",
     "optional": "选填",
+    "personalizeSubtitle": "选择称呼、回答详细程度和文件访问方式。",
+    "personalizeTitle": "最后做一点个性化",
+    "previewAssignment": "推荐结果来自你的岗位、使用场景和自定义目标，不合适的助手可以关闭。",
+    "previewPersonalize": "这些设置以后都能在账户设置中修改，不会影响已有任务。",
+    "previewPurpose": "把最常做的事情告诉我，首页和助手顺序会更贴近你的工作。",
+    "previewRole": "先了解你的职责，才能把真正有用的助手放在前面。",
     "progress": "首次设置",
+    "purposeSubtitle": "可多选，也可以直接写下你真正想完成的事。",
+    "purposeTitle": "你主要想用它做什么？",
+    "responseDetail": "回答详细程度",
+    "responseOptions": {
+      "balanced": "适中",
+      "concise": "简洁",
+      "detailed": "详细"
+    },
+    "roles": {
+      "custom": {
+        "description": "用自己的话描述岗位",
+        "title": "自定义"
+      },
+      "finance": {
+        "description": "报表、核算与流程",
+        "title": "财务 / 人事"
+      },
+      "operations": {
+        "description": "管店铺、内容和增长",
+        "title": "运营负责人"
+      },
+      "owner": {
+        "description": "关注经营全局与效率",
+        "title": "企业负责人"
+      },
+      "sales": {
+        "description": "拓客、跟进与签约",
+        "title": "销售 / 招商"
+      },
+      "support": {
+        "description": "接待、答疑与工单",
+        "title": "客服 / 售后"
+      }
+    },
+    "roleSubtitle": "我们会按你的职责匹配助手组合，之后仍可修改。",
+    "roleTitle": "先认识一下，你是？",
+    "save": "保存设置",
     "skip": "暂时跳过",
+    "stepOf": "第 {{current}} / {{total}} 步",
+    "steps": {
+      "assignment": "分配助手",
+      "personalize": "个性化",
+      "purpose": "使用用途",
+      "role": "你的角色"
+    },
     "subtitle": "选择你经常要做的事情。我们会据此调整首页推荐，你以后也可以修改。",
     "title": "你准备让荣盈魔方帮你做什么？",
     "useCases": {
