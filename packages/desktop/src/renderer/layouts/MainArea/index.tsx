@@ -36,6 +36,7 @@ import ChatMessage from '@/components/ChatMessage';
 import StreamingMessage from '@/components/StreamingMessage';
 import ThinkingIndicator from '@/components/ThinkingIndicator';
 import ChatInput from '@/components/ChatInput';
+import type { DraftPromptRequest, DraftPromptResolution } from '@/components/ChatInput/types';
 import ImageLightbox from '@/components/ImageLightbox';
 import FilePreviewModal from '@/components/FilePreviewModal';
 import EnsembleAgentBar from '@/components/EnsembleAgentBar';
@@ -60,9 +61,29 @@ import type { CustomGoalAnalysis } from '@/features/goal-routing/goal-analysis';
 import { createAgentWithRollback } from '@/lib/agent-builder';
 import { fetchAgentsForGateway } from '@/hooks/useGatewayBootstrap';
 import { toast } from '@/lib/toast';
+import type { AssistantTaskPreset } from '@/lib/assistant-task-presets';
+import {
+  loadRecentAssistantTasks,
+  recordRecentAssistantTask,
+  type RecentAssistantTask,
+} from '@/lib/assistant-task-history';
 
 const STICK_TO_BOTTOM_THRESHOLD_PX = 60;
 const MAX_HEADER_TITLE_LENGTH = 120;
+
+export function createDraftPromptRequest(
+  sequence: number,
+  prompt: string,
+  source: DraftPromptRequest['source'],
+  presetId?: string,
+): DraftPromptRequest {
+  return {
+    id: `draft-request-${sequence}`,
+    prompt,
+    source,
+    ...(presetId ? { presetId } : {}),
+  };
+}
 
 interface MainAreaProps {
   onTogglePanel: () => void;
@@ -84,6 +105,13 @@ interface AssistantIdentity {
   localAvatarUrl?: string;
   gatewayAvatarUrl?: string;
   agentRoleLabel?: string;
+}
+
+interface DraftRequestOwner {
+  requestId: string;
+  userId: string;
+  gatewayId: string;
+  agentId: string;
 }
 
 function buildLocalAvatarUrl(gatewayId: string | undefined, agentId: string | undefined): string | undefined {
@@ -481,7 +509,7 @@ function ChatHeader({
   );
 }
 
-function ChatContent({
+export function ChatContent({
   onboardingProfile,
   startupReadiness,
   onRetryStartup,
@@ -493,6 +521,7 @@ function ChatContent({
   const { t } = useTranslation();
   const activeTaskId = useTaskStore((s) => s.activeTaskId);
   const activeTask = useTaskStore((s) => s.tasks.find((task) => task.id === s.activeTaskId));
+  const pendingGatewayId = useTaskStore((s) => s.pendingNewTask?.gatewayId);
   const pendingAgentId = useTaskStore((s) => s.pendingNewTask?.agentId);
   const startNewTask = useTaskStore((s) => s.startNewTask);
   const activeRoom = useRoomStore((s) => (activeTaskId ? s.rooms[activeTaskId] : undefined));
@@ -519,8 +548,19 @@ function ChatContent({
   const contentRef = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
   const isAutoScrolling = useRef(false);
+  const draftRequestSequence = useRef(0);
+  const activeDraftRequest = useRef<DraftPromptRequest | null>(null);
+  const activeDraftRequestOwner = useRef<DraftRequestOwner | null>(null);
   const [showScrollButton, setShowScrollButton] = useState(false);
-  const [starterPrompt, setStarterPrompt] = useState<string | null>(null);
+  const [draftRequest, setDraftRequest] = useState<DraftPromptRequest | null>(null);
+  const activeUserId = onboardingProfile.userId.trim();
+  const [recentTaskHistory, setRecentTaskHistory] = useState<{
+    userId: string;
+    tasks: RecentAssistantTask[];
+  }>(() => ({
+    userId: activeUserId,
+    tasks: activeUserId ? loadRecentAssistantTasks(activeUserId) : [],
+  }));
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
   const closeLightbox = useCallback(() => setLightboxSrc(null), []);
   const handleNavigateToAccount = useCallback(() => setSettingsOpen(true), [setSettingsOpen]);
@@ -538,14 +578,105 @@ function ChatContent({
     modelIds: goalModelIds,
   });
 
+  const clearDraftRequest = useCallback(() => {
+    activeDraftRequest.current = null;
+    activeDraftRequestOwner.current = null;
+    setDraftRequest(null);
+  }, []);
+
+  const readDraftRequestOwner = useCallback((): Omit<DraftRequestOwner, 'requestId'> => {
+    const taskState = useTaskStore.getState();
+    const currentTask = taskState.tasks.find((task) => task.id === taskState.activeTaskId);
+    const currentPendingTask = taskState.pendingNewTask;
+    return {
+      userId: activeUserId,
+      gatewayId: currentTask?.gatewayId ?? currentPendingTask?.gatewayId ?? '',
+      agentId:
+        currentTask?.agentId ??
+        (currentTask?.sessionKey ? parseAgentIdFromSessionKey(currentTask.sessionKey) : undefined) ??
+        currentPendingTask?.agentId ??
+        '',
+    };
+  }, [activeUserId]);
+
+  const requestDraft = useCallback(
+    (prompt: string, source: DraftPromptRequest['source'], presetId?: string) => {
+      const request = createDraftPromptRequest(++draftRequestSequence.current, prompt, source, presetId);
+      activeDraftRequest.current = request;
+      activeDraftRequestOwner.current = { requestId: request.id, ...readDraftRequestOwner() };
+      setDraftRequest(request);
+    },
+    [readDraftRequestOwner],
+  );
+
+  const handleDraftResolved = useCallback(
+    (request: DraftPromptRequest, resolution: DraftPromptResolution) => {
+      if (activeDraftRequest.current?.id !== request.id) return;
+      const owner = activeDraftRequestOwner.current;
+      const currentOwner = readDraftRequestOwner();
+      activeDraftRequest.current = null;
+      activeDraftRequestOwner.current = null;
+      setDraftRequest((current) => (current?.id === request.id ? null : current));
+      if (
+        resolution === 'cancelled' ||
+        !request.presetId ||
+        !activeUserId ||
+        owner?.requestId !== request.id ||
+        owner.userId !== currentOwner.userId ||
+        owner.gatewayId !== currentOwner.gatewayId ||
+        owner.agentId !== currentOwner.agentId
+      ) {
+        return;
+      }
+      const tasks = recordRecentAssistantTask(activeUserId, request.presetId);
+      setRecentTaskHistory((current) => (current.userId === activeUserId ? { userId: activeUserId, tasks } : current));
+    },
+    [activeUserId, readDraftRequestOwner],
+  );
+
+  const currentDraftGatewayId = activeTask?.gatewayId ?? pendingGatewayId ?? '';
+  const currentDraftAgentId =
+    activeTask?.agentId ??
+    (activeTask?.sessionKey ? parseAgentIdFromSessionKey(activeTask.sessionKey) : undefined) ??
+    pendingAgentId ??
+    '';
+
+  useEffect(() => {
+    const owner = activeDraftRequestOwner.current;
+    if (
+      !owner ||
+      (owner.userId === activeUserId &&
+        owner.gatewayId === currentDraftGatewayId &&
+        owner.agentId === currentDraftAgentId)
+    ) {
+      return;
+    }
+    clearDraftRequest();
+  }, [activeUserId, clearDraftRequest, currentDraftAgentId, currentDraftGatewayId]);
+
+  useEffect(() => {
+    setRecentTaskHistory({
+      userId: activeUserId,
+      tasks: activeUserId ? loadRecentAssistantTasks(activeUserId) : [],
+    });
+  }, [activeUserId]);
+
+  const recentPresetIds =
+    recentTaskHistory.userId === activeUserId ? recentTaskHistory.tasks.map((item) => item.presetId) : [];
+
+  const handleSelectTaskPreset = useCallback(
+    (preset: AssistantTaskPreset, prompt: string) => requestDraft(prompt, 'assistant-template', preset.id),
+    [requestDraft],
+  );
+
   const handleSelectRecommendedAssistant = useCallback(
     (agentId: string) => {
       if (!defaultGatewayId) return;
       setSelectedAgent(defaultGatewayId, agentId);
       useTaskStore.getState().setPending({ gatewayId: defaultGatewayId, agentId });
-      setStarterPrompt(null);
+      clearDraftRequest();
     },
-    [defaultGatewayId, setSelectedAgent],
+    [clearDraftRequest, defaultGatewayId, setSelectedAgent],
   );
 
   const handleCreateCustomAssistant = useCallback(
@@ -578,15 +709,12 @@ function ChatContent({
       await fetchAgentsForGateway(defaultGatewayId, { force: true });
       const agentId = typeof response.result?.agentId === 'string' ? response.result.agentId : '';
       if (agentId) handleSelectRecommendedAssistant(agentId);
-      setStarterPrompt(analysis.starters[0]);
+      requestDraft(analysis.starters[0] ?? '', 'goal-routing');
       toast.success(t('goalRouting.created'));
     },
-    [defaultGatewayId, goalAgentCatalog?.agents, handleSelectRecommendedAssistant, t],
+    [defaultGatewayId, goalAgentCatalog?.agents, handleSelectRecommendedAssistant, requestDraft, t],
   );
 
-  useEffect(() => {
-    setStarterPrompt(null);
-  }, [pendingAgentId]);
   const closeFilePreview = useCallback(() => setPreviewFile(null), []);
   const handleHighlightDone = useCallback(() => setHighlightedMessage(null), [setHighlightedMessage]);
   const sessionKeys = useMemo(
@@ -706,7 +834,7 @@ function ChatContent({
               error={goalAnalysis.error}
               onRetry={goalAnalysis.retry}
               onSelectAssistant={handleSelectRecommendedAssistant}
-              onSelectStarter={setStarterPrompt}
+              onSelectStarter={(prompt) => requestDraft(prompt, 'goal-routing')}
               onCreateCustom={handleCreateCustomAssistant}
             />
           )}
@@ -718,15 +846,18 @@ function ChatContent({
             <WelcomeScreen
               key={pendingAgentId ?? '__new'}
               onboardingProfile={onboardingProfile}
-              onSelectPrompt={setStarterPrompt}
+              recentPresetIds={recentPresetIds}
+              onSelectPreset={handleSelectTaskPreset}
+              onCustomTask={() => requestDraft('', 'assistant-template')}
+              onAssistantChange={clearDraftRequest}
               conversationReady={startupReadiness.conversationReady}
             />
           </div>
         </div>
         <ChatInput
           onNavigateToAccount={handleNavigateToAccount}
-          draftPrompt={starterPrompt}
-          onDraftApplied={() => setStarterPrompt(null)}
+          draftRequest={draftRequest}
+          onDraftResolved={handleDraftResolved}
           readinessBlocked={!startupReadiness.conversationReady}
         />
         <ImageLightbox src={lightboxSrc} onClose={closeLightbox} />
@@ -850,7 +981,7 @@ function ChatContent({
               taskId={activeTaskId}
               messages={messages}
               activity={activity}
-              onContinue={() => setStarterPrompt(t('firstTaskCompletion.continuePrompt'))}
+              onContinue={() => requestDraft(t('firstTaskCompletion.continuePrompt'), 'first-task-follow-up')}
               onNewTask={startNewTask}
               onViewUsage={() => setMainView('dashboard')}
             />
@@ -869,8 +1000,8 @@ function ChatContent({
       </div>
       <ChatInput
         onNavigateToAccount={handleNavigateToAccount}
-        draftPrompt={starterPrompt}
-        onDraftApplied={() => setStarterPrompt(null)}
+        draftRequest={draftRequest}
+        onDraftResolved={handleDraftResolved}
         readinessBlocked={!startupReadiness.conversationReady}
       />
       <ImageLightbox src={lightboxSrc} onClose={closeLightbox} />

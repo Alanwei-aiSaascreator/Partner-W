@@ -357,6 +357,51 @@ describe('ChatInput draft requests', () => {
     view.unmount();
   });
 
+  it('closes a conflict revoked by the parent and makes its old actions inert', () => {
+    const onDraftResolved = vi.fn();
+    const draftRequest = request('request-revoked', 'Revoked prompt');
+    const view = renderChatInput({ draftRequest: null, onDraftResolved });
+    const composer = textarea(view.container);
+    composer.value = 'Keep this draft';
+    view.rerender({ draftRequest, onDraftResolved });
+
+    const oldAppend = [...document.body.querySelectorAll('button')].find(
+      (candidate) => candidate.textContent === 'taskWorkbench.appendDraft',
+    );
+    expect(oldAppend).toBeInstanceOf(HTMLButtonElement);
+    expect(document.body.querySelector('[role="dialog"]')).not.toBeNull();
+
+    view.rerender({ draftRequest: null, onDraftResolved });
+
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+    act(() => (oldAppend as HTMLButtonElement).click());
+    expect(composer.value).toBe('Keep this draft');
+    expect(onDraftResolved).not.toHaveBeenCalled();
+    expect(mocks.handleSend).not.toHaveBeenCalled();
+    view.unmount();
+  });
+
+  it('discards an old conflict before handling a replacement request ID', () => {
+    const onDraftResolved = vi.fn();
+    const firstRequest = request('request-old', 'Old prompt');
+    const replacementRequest = request('request-new', 'New prompt');
+    const view = renderChatInput({ draftRequest: null, onDraftResolved });
+    const composer = textarea(view.container);
+    composer.value = 'Keep this draft';
+    view.rerender({ draftRequest: firstRequest, onDraftResolved });
+    expect(document.body.querySelector('[role="dialog"]')).not.toBeNull();
+
+    view.rerender({ draftRequest: replacementRequest, onDraftResolved });
+    clickDialogAction('taskWorkbench.appendDraft');
+
+    expect(composer.value).toBe('Keep this draft\n\nNew prompt');
+    expect(composer.value).not.toContain('Old prompt');
+    expect(onDraftResolved).toHaveBeenCalledOnce();
+    expect(onDraftResolved).toHaveBeenCalledWith(replacementRequest, 'appended');
+    expect(mocks.handleSend).not.toHaveBeenCalled();
+    view.unmount();
+  });
+
   it('treats an empty requested prompt as focus-only applied work', () => {
     const onDraftResolved = vi.fn();
     const draftRequest = request('request-6', '');

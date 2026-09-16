@@ -6,6 +6,7 @@ import AgentIcon from '@/components/AgentIcon';
 import GatewayInstanceSelector from '@/components/GatewayInstanceSelector';
 import { useGatewaySelector } from '@/hooks/useGatewaySelector';
 import { resolveCommercialDefaultModel } from '@/lib/commercial-default-model';
+import { resolveModelLabel } from '@/lib/model-display';
 import { PRESET_AGENT_IDS, resolveAssistantWorkspace, resolveProfileAssistantId } from '@/lib/preset-agents';
 import type { OnboardingProfile } from '@/lib/user-onboarding';
 import { cn } from '@/lib/utils';
@@ -13,17 +14,24 @@ import { useTaskStore } from '@/stores/taskStore';
 import { useUiStore } from '@/stores/uiStore';
 import { motion as animationPresets } from '@/styles/design-tokens';
 import { relayModelsFrom } from '@/components/ChatInput/model-families';
-import AssistantWorkspaceWelcome from './AssistantWorkspaceWelcome';
+import type { AssistantTaskPreset } from '@/lib/assistant-task-presets';
+import AssistantTaskWorkbench from './AssistantTaskWorkbench';
 
 interface WelcomeScreenProps {
   onboardingProfile: OnboardingProfile;
-  onSelectPrompt: (prompt: string) => void;
+  recentPresetIds: readonly string[];
+  onSelectPreset: (preset: AssistantTaskPreset, prompt: string) => void;
+  onCustomTask: () => void;
+  onAssistantChange: () => void;
   conversationReady?: boolean;
 }
 
 export default function WelcomeScreen({
   onboardingProfile,
-  onSelectPrompt,
+  recentPresetIds,
+  onSelectPreset,
+  onCustomTask,
+  onAssistantChange,
   conversationReady = true,
 }: WelcomeScreenProps) {
   const { t } = useTranslation();
@@ -37,27 +45,27 @@ export default function WelcomeScreen({
     });
   const rawModelCatalog = useUiStore((state) => (selectedGwId ? state.modelCatalogByGateway[selectedGwId] : undefined));
   const defaultModel = resolveCommercialDefaultModel(relayModelsFrom(rawModelCatalog ?? []));
-  const definition = resolveAssistantWorkspace(effectiveAgentId) ?? resolveAssistantWorkspace('main')!;
+  const selectedModelId = pendingNewTask?.gatewayId === selectedGwId ? pendingNewTask.model : undefined;
+  const modelLabel = selectedModelId
+    ? (resolveModelLabel(selectedModelId, rawModelCatalog) ?? selectedModelId)
+    : (defaultModel?.label ?? t('chatInput.modelsLoading'));
+  const definition = resolveAssistantWorkspace(effectiveAgentId);
 
   useEffect(() => {
     if (!selectedGwId || !effectiveAgentId) return;
     const previous = useTaskStore.getState().pendingNewTask;
+    const sameScope = previous?.gatewayId === selectedGwId && previous.agentId === effectiveAgentId;
+    const model = sameScope && previous.model ? previous.model : defaultModel?.id;
     if (!previous?.agentId && effectiveAgentId === preferredAgentId) {
       setSelectedAgent(selectedGwId, effectiveAgentId);
     }
-    if (
-      previous?.gatewayId === selectedGwId &&
-      previous.agentId === effectiveAgentId &&
-      previous.model === defaultModel?.id &&
-      !previous.ensemble &&
-      !previous.teamId
-    ) {
+    if (sameScope && previous.model === model && !previous.ensemble && !previous.teamId) {
       return;
     }
     useTaskStore.getState().setPending({
       gatewayId: selectedGwId,
       agentId: effectiveAgentId,
-      model: defaultModel?.id,
+      model,
     });
   }, [defaultModel?.id, effectiveAgentId, preferredAgentId, selectedGwId, setSelectedAgent]);
 
@@ -69,18 +77,31 @@ export default function WelcomeScreen({
   const handleSelectAgent = (agentId: string) => {
     setSelectedAgent(selectedGwId, agentId);
     setSelectedAgentId(agentId);
-    useTaskStore.getState().setPending({ gatewayId: selectedGwId, agentId, model: defaultModel?.id });
-    onSelectPrompt('');
+    useTaskStore.getState().setPending({
+      gatewayId: selectedGwId,
+      agentId,
+      model: defaultModel?.id,
+    });
+    onAssistantChange();
   };
 
   return (
     <motion.div {...animationPresets.fadeIn} className="flex min-h-full flex-col items-center px-5 py-2">
-      <AssistantWorkspaceWelcome
-        definition={definition}
-        modelLabel={defaultModel?.label ?? t('chatInput.modelsLoading')}
-        ready={conversationReady}
-        onSelectPrompt={onSelectPrompt}
-      />
+      {definition ? (
+        <AssistantTaskWorkbench
+          definition={definition}
+          modelLabel={modelLabel}
+          ready={conversationReady}
+          recentPresetIds={recentPresetIds}
+          onSelectPreset={(preset) => onSelectPreset(preset, t(preset.promptKey))}
+          onCustomTask={onCustomTask}
+        />
+      ) : (
+        <section className="mx-auto flex w-full max-w-[var(--content-max-width)] flex-col items-center px-2 py-5 text-center">
+          <h1 className="type-page-title text-[var(--text-primary)]">{t('mainArea.welcomeTitle')}</h1>
+          <p className="type-body mt-2 max-w-xl text-[var(--text-secondary)]">{t('mainArea.welcomeSubtitle')}</p>
+        </section>
+      )}
 
       <div className="mt-1 flex w-full max-w-[var(--content-max-width)] flex-col items-center gap-3 border-t border-[var(--border-subtle)] pt-4">
         {gateways.length > 1 && (

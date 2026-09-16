@@ -500,6 +500,11 @@ export default function ChatInput({
   );
 
   useEffect(() => {
+    if (!draftConflict || draftConflict.id === draftRequest?.id) return;
+    setDraftConflict(null);
+  }, [draftConflict, draftRequest?.id]);
+
+  useEffect(() => {
     if (!draftRequest || draftConflict || handledDraftRequestIdsRef.current.has(draftRequest.id)) return;
     const textarea = textareaRef.current;
     if (!textarea) return;
