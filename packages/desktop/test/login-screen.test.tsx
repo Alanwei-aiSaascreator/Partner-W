@@ -60,6 +60,8 @@ describe('Login', () => {
     expect(container.textContent).toContain('mainArea.welcomeTitle');
     expect(container.textContent).toContain('assistantWorkspaces.compass.description');
     expect(container.textContent).not.toContain('assistantDefinitions.main');
+    expect(container.textContent).not.toContain('数据不出内网');
+    expect(container.querySelectorAll('[data-primary-action]')).toHaveLength(1);
 
     unmount();
   });

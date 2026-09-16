@@ -171,7 +171,7 @@ export default function Login({ onSignedIn }: LoginProps) {
     'w-full rounded-lg border border-[var(--border)] bg-[var(--bg-input)] px-4 py-2.5 type-body text-[var(--text-primary)] placeholder:text-[var(--text-muted)] outline-none transition-colors focus:border-[var(--accent)] disabled:opacity-60';
 
   return (
-    <div className="flex h-screen overflow-y-auto bg-[var(--surface-onboarding-page)] text-[var(--text-primary)] lg:overflow-hidden">
+    <div className="brand-first-run flex h-screen overflow-y-auto bg-[var(--surface-onboarding-page)] text-[var(--text-primary)] lg:overflow-hidden">
       <div className="titlebar-drag fixed top-0 left-0 right-0 h-8 z-50" />
 
       <section
@@ -270,9 +270,10 @@ export default function Login({ onSignedIn }: LoginProps) {
             )}
 
             <Button
+              data-primary-action
               type="submit"
               disabled={busy || !agreed || (phase === 'phone' ? !phoneValid : !codeValid)}
-              className="w-full"
+              className="brand-action w-full"
             >
               {busy ? (
                 <Loader2 size={15} className="animate-spin" />

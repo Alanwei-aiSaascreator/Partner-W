@@ -41,6 +41,10 @@
     --accent-dim: rgba(128, 136, 251, 0.16);
     --accent-soft: rgba(128, 136, 251, 0.1);
     --accent-soft-hover: rgba(128, 136, 251, 0.18);
+    --brand-start: #a51ad1;
+    --brand-end: #ff6a2a;
+    --brand-gradient: linear-gradient(105deg, var(--brand-start), #e52378 58%, var(--brand-end));
+    --brand-glow: rgba(229, 35, 120, 0.22);
 
     --text-primary: #f1f1f8;
     --text-secondary: #b0b0bf;
@@ -140,12 +144,16 @@
     --bg-elevated: #ffffff;
     --bg-input: var(--bg-primary);
 
-    --accent: #5860ea;
-    --accent-hover: #474fdb;
+    --accent: #c51d78;
+    --accent-hover: #a81667;
     --accent-foreground: #ffffff;
-    --accent-dim: rgba(88, 96, 234, 0.1);
-    --accent-soft: rgba(88, 96, 234, 0.07);
-    --accent-soft-hover: rgba(88, 96, 234, 0.13);
+    --accent-dim: rgba(197, 29, 120, 0.1);
+    --accent-soft: rgba(197, 29, 120, 0.07);
+    --accent-soft-hover: rgba(197, 29, 120, 0.13);
+    --brand-start: #a30fd0;
+    --brand-end: #ff6b2b;
+    --brand-gradient: linear-gradient(105deg, var(--brand-start), #e51d78 58%, var(--brand-end));
+    --brand-glow: rgba(229, 29, 120, 0.18);
 
     --text-primary: #17171c;
     --text-secondary: #3a3a42;
@@ -156,7 +164,7 @@
 
     --border: rgba(23, 23, 28, 0.07);
     --border-subtle: rgba(23, 23, 28, 0.045);
-    --border-accent: rgba(88, 96, 234, 0.22);
+    --border-accent: rgba(197, 29, 120, 0.24);
     --border-primary: var(--border);
     --border-hover: var(--border-accent);
 
@@ -170,8 +178,8 @@
     --border-warning: rgba(196, 138, 24, 0.26);
     --info: #2f7bd1;
 
-    --ring-accent: rgba(88, 96, 234, 0.3);
-    --glow-accent: rgba(88, 96, 234, 0.06);
+    --ring-accent: rgba(197, 29, 120, 0.3);
+    --glow-accent: rgba(197, 29, 120, 0.08);
 
     --elev-1: 0 0 0 0.5px rgba(23, 23, 28, 0.06), 0 1px 1px rgba(23, 23, 28, 0.03), 0 2px 3px rgba(23, 23, 28, 0.02);
     --elev-2:
@@ -224,10 +232,10 @@
     --glass-blur-heavy: 36px;
     --glass-saturate: 160%;
 
-    --glow-ring: 0 0 0 1px rgba(88, 96, 234, 0.35);
-    --glow-diffuse: 0 0 0 4px rgba(88, 96, 234, 0.1);
-    --glow-inset: inset 0 0 0 1px rgba(88, 96, 234, 0);
-    --glow-pulse-mid: rgba(88, 96, 234, 0.18);
+    --glow-ring: 0 0 0 1px rgba(197, 29, 120, 0.34);
+    --glow-diffuse: 0 0 0 4px rgba(197, 29, 120, 0.1);
+    --glow-inset: inset 0 0 0 1px rgba(197, 29, 120, 0);
+    --glow-pulse-mid: rgba(197, 29, 120, 0.18);
 
     --tool-read: rgba(47, 123, 209, 0.85);
     --tool-write: rgba(196, 138, 24, 0.9);
@@ -640,6 +648,39 @@
       0 0 18px 4px var(--glow-pulse-mid),
       var(--glow-inset);
   }
+}
+
+/* First-run pages stay bright even when the operating system uses dark mode.
+   The full workspace still follows the user's saved theme preference. */
+.brand-first-run {
+  --bg-primary: #f8f7fb;
+  --bg-secondary: #fdfcff;
+  --bg-tertiary: #f1eef5;
+  --bg-hover: #ebe7f0;
+  --bg-elevated: #ffffff;
+  --bg-input: #f8f7fb;
+  --text-primary: #17141d;
+  --text-secondary: #453f4d;
+  --text-muted: #777081;
+  --text-onboarding-muted: #5b5265;
+  --border: rgba(33, 25, 42, 0.09);
+  --border-subtle: rgba(33, 25, 42, 0.055);
+  --surface-onboarding-accent: #f4f0f8;
+  --surface-onboarding-page: #fbfafc;
+  color-scheme: light;
+}
+
+.brand-action:not(:disabled) {
+  background-color: var(--accent);
+  background-image: var(--brand-gradient);
+  color: #ffffff;
+  box-shadow: 0 8px 22px var(--brand-glow);
+}
+
+.brand-action:not(:disabled):hover {
+  background-image: var(--brand-gradient);
+  filter: saturate(1.06) brightness(1.03);
+  box-shadow: 0 10px 28px var(--brand-glow);
 }
 
 /* ============================================================

@@ -167,7 +167,7 @@ export default function Onboarding({
   };
 
   return (
-    <div className="h-screen overflow-y-auto bg-[var(--surface-onboarding-page)] text-[var(--text-primary)]">
+    <div className="brand-first-run h-screen overflow-y-auto bg-[var(--surface-onboarding-page)] text-[var(--text-primary)]">
       <header className="border-b border-[var(--border-subtle)] px-5 py-4 sm:px-8">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-6">
           <div className="flex items-center gap-3">
@@ -187,7 +187,7 @@ export default function Onboarding({
                     index === step
                       ? 'border-[var(--accent)] bg-[var(--accent)] text-[var(--accent-foreground)] shadow-[var(--glow-accent)]'
                       : index < step
-                        ? 'border-[var(--success)] bg-[var(--accent-dim)] text-[var(--success)]'
+                        ? 'border-[var(--accent)] bg-[var(--accent-dim)] text-[var(--accent)]'
                         : 'border-[var(--border)] bg-[var(--bg-elevated)] text-[var(--text-muted)]',
                   )}
                 >
@@ -212,8 +212,8 @@ export default function Onboarding({
         </div>
       </header>
 
-      <main className="mx-auto grid min-h-[calc(100vh-70px)] w-full max-w-6xl gap-10 px-5 py-10 sm:px-8 lg:grid-cols-[minmax(0,1fr)_280px] lg:items-stretch">
-        <section className="flex min-w-0 flex-col">
+      <main className="mx-auto grid min-h-full w-full max-w-6xl gap-10 px-5 py-10 sm:px-8 lg:grid-cols-3 lg:items-stretch">
+        <section className="flex min-w-0 flex-col lg:col-span-2">
           <div className="mb-7">
             <p className="type-support mb-2 text-[var(--accent)]">
               {t('onboarding.stepOf', { current: step + 1, total: STEPS.length })}
@@ -374,7 +374,7 @@ export default function Onboarding({
                         active ? 'justify-end bg-[var(--accent)]' : 'justify-start bg-[var(--bg-hover)]',
                       )}
                     >
-                      <span className="h-5 w-5 rounded-full bg-white shadow-sm" />
+                      <span className="h-5 w-5 rounded-full bg-[var(--bg-elevated)] shadow-[var(--shadow-card)]" />
                     </span>
                   </button>
                 );
@@ -459,12 +459,12 @@ export default function Onboarding({
               )}
             </div>
             {step < STEPS.length - 1 ? (
-              <Button disabled={!canContinue} onClick={next}>
+              <Button data-primary-action className="brand-action" disabled={!canContinue} onClick={next}>
                 {t('onboarding.next')}
                 <ArrowRight size={15} />
               </Button>
             ) : (
-              <Button onClick={complete} title={t('onboarding.continue')}>
+              <Button data-primary-action className="brand-action" onClick={complete} title={t('onboarding.continue')}>
                 {t(mode === 'edit' ? 'onboarding.save' : 'onboarding.finish')}
                 <Check size={15} />
               </Button>

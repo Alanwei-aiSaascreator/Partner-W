@@ -53,10 +53,13 @@ describe('Onboarding', () => {
 
     expect(container.textContent).toContain('onboarding.steps.role');
     expect(container.textContent).toContain('onboarding.roleTitle');
+    expect(container.querySelectorAll('[data-primary-action]')).toHaveLength(1);
+    expect(container.textContent).not.toContain('数据不出内网');
     act(() => buttonFor(container, 'onboarding.roles.operations.title').click());
     act(() => buttonFor(container, 'onboarding.next').click());
 
     expect(container.textContent).toContain('onboarding.purposeTitle');
+    expect(container.querySelectorAll('[data-primary-action]')).toHaveLength(1);
     act(() => {
       buttonFor(container, 'onboarding.useCases.content.title').click();
       buttonFor(container, 'onboarding.useCases.video.title').click();
