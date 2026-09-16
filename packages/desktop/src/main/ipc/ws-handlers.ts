@@ -17,7 +17,11 @@ import type {
 } from '@clawwork/shared';
 import { getDebugLogger } from '../debug/index.js';
 import type { GatewayClient } from '../ws/gateway-client.js';
-import { beginArtifactRunForGatewayDispatch, cancelArtifactRun } from './data-handlers.js';
+import {
+  beginArtifactRunForGatewayDispatch,
+  cancelArtifactRun,
+  cancelArtifactRunsForSession,
+} from './data-handlers.js';
 
 async function gatewayRpc(
   gatewayId: string,
@@ -656,6 +660,7 @@ export function registerWsHandlers(): void {
   });
 
   ipcMain.handle('ws:abort-chat', async (_event, payload: { gatewayId: string; sessionKey: string }) => {
+    cancelArtifactRunsForSession(payload.sessionKey);
     const gw = getGatewayClient(payload.gatewayId);
     if (!gw?.isConnected) return { ok: false, error: 'gateway not connected' };
     try {
@@ -812,6 +817,7 @@ export function registerWsHandlers(): void {
         reason?: 'new' | 'reset';
       },
     ) => {
+      cancelArtifactRunsForSession(payload.sessionKey);
       const gw = getGatewayClient(payload.gatewayId);
       if (!gw?.isConnected) return { ok: false, error: 'gateway not connected' };
       try {
@@ -833,6 +839,7 @@ export function registerWsHandlers(): void {
         sessionKey: string;
       },
     ) => {
+      cancelArtifactRunsForSession(payload.sessionKey);
       const gw = getGatewayClient(payload.gatewayId);
       if (!gw?.isConnected) return { ok: false, error: 'gateway not connected' };
       try {

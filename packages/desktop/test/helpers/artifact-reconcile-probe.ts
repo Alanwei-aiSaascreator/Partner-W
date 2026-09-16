@@ -1,8 +1,10 @@
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, renameSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { closeDatabase, getSqlite, initDatabase } from '../../src/main/db/index.js';
 import { captureTaskArtifactBaseline, reconcileTaskArtifacts } from '../../src/main/artifact/reconcile.js';
+import Database from 'better-sqlite3';
+import { DB_FILE_NAME } from '@clawwork/shared';
 
 const [, , workspacePath, scenario] = process.argv;
 
@@ -24,6 +26,32 @@ function seedTaskAndMessage(taskId = 'task-1', messageId = 'msg-1'): void {
 }
 
 async function main(): Promise<Record<string, unknown>> {
+  if (scenario === 'legacy-artifact-upgrade') {
+    const legacy = new Database(join(workspacePath, DB_FILE_NAME));
+    legacy.exec(`
+      CREATE TABLE tasks (id TEXT PRIMARY KEY, session_key TEXT NOT NULL, session_id TEXT NOT NULL DEFAULT '',
+        title TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'active', created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL, tags TEXT NOT NULL DEFAULT '[]', artifact_dir TEXT NOT NULL DEFAULT '');
+      CREATE TABLE messages (id TEXT PRIMARY KEY, task_id TEXT NOT NULL, role TEXT NOT NULL, content TEXT NOT NULL,
+        timestamp TEXT NOT NULL);
+      CREATE TABLE artifacts (id TEXT PRIMARY KEY, task_id TEXT NOT NULL, message_id TEXT NOT NULL,
+        type TEXT NOT NULL DEFAULT 'file', name TEXT NOT NULL, file_path TEXT NOT NULL, local_path TEXT NOT NULL,
+        mime_type TEXT NOT NULL DEFAULT '', size INTEGER NOT NULL DEFAULT 0, source_key TEXT NOT NULL DEFAULT '',
+        content_text TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL);
+      INSERT INTO tasks VALUES ('task-1', 'session-task-1', '', '', 'active', '2026-01-01', '2026-01-01', '[]', '');
+      INSERT INTO messages VALUES ('msg-old', 'task-1', 'assistant', 'old', '2026-01-01');
+      INSERT INTO messages VALUES ('msg-new', 'task-1', 'assistant', 'new', '2026-01-02');
+      INSERT INTO artifacts VALUES ('old-empty', 'task-1', 'msg-old', 'file', 'report.txt', '', 'task-1/report.txt',
+        'text/plain', 0, '', '', '2026-01-01');
+      INSERT INTO artifacts VALUES ('new-valid', 'task-1', 'msg-new', 'file', 'report.txt', '', 'task-1/report.txt',
+        'text/plain', 42, 'workspace-file:report.txt:new', '', '2026-01-02');
+    `);
+    legacy.close();
+    initDatabase(workspacePath);
+    const rows = getSqlite()!.prepare('SELECT id, size, source_key FROM artifacts').all();
+    return { rows };
+  }
+
   initDatabase(workspacePath);
   seedTaskAndMessage();
   mkdirSync(join(workspacePath, 'task-1', 'inbox', '.import-staging'), { recursive: true });
@@ -101,6 +129,53 @@ async function main(): Promise<Record<string, unknown>> {
     };
   }
 
+  if (scenario === 'changing-once') {
+    const output = join(workspacePath, 'task-1', 'changing-once.txt');
+    writeFileSync(output, 'one');
+    let checks = 0;
+    return {
+      result: await reconcileTaskArtifacts(
+        { workspacePath, taskId: 'task-1', messageId: 'msg-1', baseline: {} },
+        {
+          stabilityDelayMs: 5,
+          beforeSecondSnapshot: () => {
+            checks += 1;
+            if (checks === 1) writeFileSync(output, 'stable-after-first-check');
+          },
+        },
+      ),
+      checks,
+    };
+  }
+
+  if (scenario === 'old-files-budget') {
+    for (let index = 0; index < 105; index += 1) {
+      writeFileSync(join(workspacePath, 'task-1', `old-${String(index).padStart(3, '0')}.txt`), `old-${index}`);
+    }
+    const baseline = await captureTaskArtifactBaseline({ workspacePath, taskId: 'task-1' });
+    writeFileSync(join(workspacePath, 'task-1', 'z-result.txt'), 'new result');
+    return {
+      result: await reconcileTaskArtifacts(
+        { workspacePath, taskId: 'task-1', messageId: 'msg-1', baseline },
+        { budgets: { maxResults: 2 } },
+      ),
+    };
+  }
+
+  if (scenario === 'truncated-baseline') {
+    for (let index = 0; index < 4; index += 1) {
+      writeFileSync(join(workspacePath, 'task-1', `old-${index}.txt`), `old-${index}`);
+    }
+    const baseline = await captureTaskArtifactBaseline(
+      { workspacePath, taskId: 'task-1' },
+      { budgets: { maxVisited: 2 } },
+    );
+    writeFileSync(join(workspacePath, 'task-1', 'result.txt'), 'new result');
+    return {
+      result: await reconcileTaskArtifacts({ workspacePath, taskId: 'task-1', messageId: 'msg-1', baseline }),
+    };
+  }
+
   if (scenario === 'budget') {
     for (let index = 0; index < 12; index += 1) {
       writeFileSync(join(workspacePath, 'task-1', `${String(index).padStart(2, '0')}.txt`), `file-${index}`);
@@ -130,6 +205,19 @@ async function main(): Promise<Record<string, unknown>> {
     const count = getSqlite()!.prepare('SELECT COUNT(*) AS count FROM artifacts').get();
     const stored = getSqlite()!.prepare('SELECT size FROM artifacts WHERE id = ?').get(first.saved[0].id);
     return { first, second, count, stored };
+  }
+
+  if (scenario === 'replaced-same-metadata') {
+    const output = join(workspacePath, 'task-1', 'identity.txt');
+    writeFileSync(output, 'first');
+    const first = await reconcileTaskArtifacts({ workspacePath, taskId: 'task-1', messageId: 'msg-1', baseline: {} });
+    const original = statSync(output);
+    const replacement = join(workspacePath, 'task-1', 'replacement.tmp.txt');
+    writeFileSync(replacement, 'other');
+    utimesSync(replacement, original.atime, original.mtime);
+    renameSync(replacement, output);
+    const second = await reconcileTaskArtifacts({ workspacePath, taskId: 'task-1', messageId: 'msg-1', baseline: {} });
+    return { first, second };
   }
 
   if (scenario === 'attachment') {

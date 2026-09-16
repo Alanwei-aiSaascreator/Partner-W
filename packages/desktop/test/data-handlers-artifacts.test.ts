@@ -15,6 +15,7 @@ const selectGetMock = vi.fn();
 const dbMock = {
   insert: vi.fn(() => ({ values: valuesMock })),
   select: vi.fn(() => ({ from: vi.fn(() => ({ where: vi.fn(() => ({ get: selectGetMock })) })) })),
+  delete: vi.fn(() => ({ where: vi.fn(() => ({ run: vi.fn() })) })),
 };
 
 vi.mock('electron', () => ({
@@ -299,5 +300,85 @@ describe('assistant artifact reconciliation boundary', () => {
       '[artifact_reconcile_failed]',
       expect.objectContaining({ taskId: 'task-1', messageId: 'assistant-persisted', error: expect.any(Error) }),
     );
+
+    selectGetMock.mockReturnValueOnce({ id: 'assistant-after-failure' });
+    handleMap.get('data:create-message')!(
+      {},
+      {
+        id: 'assistant-after-failure',
+        taskId: 'task-1',
+        role: 'assistant',
+        content: 'replayed',
+        timestamp: '2026-09-16T00:00:03.000Z',
+        sessionKey: 'session-task-1',
+      },
+    );
+    await flushJobs();
+    expect(reconcileTaskArtifactsMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('expires old runs and bounds the registry so abandoned sends cannot live forever', async () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000);
+    const { beginArtifactRun, registerDataHandlers } = await import('../src/main/ipc/data-handlers.js');
+    registerDataHandlers();
+    beginArtifactRun('C:\\trusted-workspace', 'task-ttl', 'session-expired');
+    now.mockReturnValue(24 * 60 * 60 * 1000);
+    beginArtifactRun('C:\\trusted-workspace', 'task-live', 'session-live');
+
+    selectGetMock.mockReturnValueOnce({ id: 'expired-final' });
+    handleMap.get('data:create-message')!(
+      {},
+      {
+        id: 'expired-final',
+        taskId: 'task-ttl',
+        role: 'assistant',
+        content: 'late',
+        timestamp: '2026-09-17T00:00:00.000Z',
+        sessionKey: 'session-expired',
+      },
+    );
+    await flushJobs();
+    expect(reconcileTaskArtifactsMock).not.toHaveBeenCalled();
+
+    for (let index = 0; index < 140; index += 1) {
+      beginArtifactRun('C:\\trusted-workspace', `task-${index}`, `bounded-${index}`);
+    }
+    selectGetMock.mockReturnValueOnce({ id: 'evicted-final' });
+    handleMap.get('data:create-message')!(
+      {},
+      {
+        id: 'evicted-final',
+        taskId: 'task-0',
+        role: 'assistant',
+        content: 'too old',
+        timestamp: '2026-09-17T00:00:01.000Z',
+        sessionKey: 'bounded-0',
+      },
+    );
+    await flushJobs();
+    expect(reconcileTaskArtifactsMock).not.toHaveBeenCalled();
+    now.mockRestore();
+  });
+
+  it('clears every artifact run for a deleted task', async () => {
+    const { beginArtifactRun, registerDataHandlers } = await import('../src/main/ipc/data-handlers.js');
+    registerDataHandlers();
+    beginArtifactRun('C:\\trusted-workspace', 'task-deleted', 'session-deleted');
+    expect(handleMap.get('data:delete-task')!({}, { id: 'task-deleted' })).toEqual({ ok: true });
+
+    selectGetMock.mockReturnValueOnce({ id: 'late-assistant' });
+    handleMap.get('data:create-message')!(
+      {},
+      {
+        id: 'late-assistant',
+        taskId: 'task-deleted',
+        role: 'assistant',
+        content: 'late',
+        timestamp: '2026-09-17T00:00:02.000Z',
+        sessionKey: 'session-deleted',
+      },
+    );
+    await flushJobs();
+    expect(reconcileTaskArtifactsMock).not.toHaveBeenCalled();
   });
 });

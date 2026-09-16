@@ -41,6 +41,8 @@ const MIME_TYPES: Record<string, string> = {
 };
 
 export type ArtifactBaseline = Record<string, string>;
+const BASELINE_COMPLETE = Symbol('artifactBaselineComplete');
+type TrackedArtifactBaseline = ArtifactBaseline & { [BASELINE_COMPLETE]?: boolean };
 
 export interface ArtifactScanBudgets {
   maxDepth: number;
@@ -69,6 +71,10 @@ interface ReconcileHooks {
   beforeSecondSnapshot?: (input: { absolutePath: string; relativePath: string }) => void | Promise<void>;
   budgets?: Partial<ArtifactScanBudgets>;
   stabilityDelayMs?: number;
+}
+
+interface CaptureBaselineHooks {
+  budgets?: Partial<ArtifactScanBudgets>;
 }
 
 interface TrustedTaskRoot {
@@ -231,6 +237,7 @@ function safeDirectoryEntries(directoryPath: string, taskRoot: string): Dirent[]
 function collectPaths(
   root: TrustedTaskRoot,
   budgets: ArtifactScanBudgets,
+  baseline?: ArtifactBaseline,
 ): {
   candidates: Candidate[];
   skipped: string[];
@@ -287,6 +294,7 @@ function collectPaths(
         skipped.push(relativePath);
         continue;
       }
+      if (baseline?.[relativePath] === signature(stats)) continue;
       if (candidates.length >= budgets.maxResults || totalBytes + stats.size > budgets.maxTotalBytes) {
         budgetExhausted = true;
         skipped.push(relativePath);
@@ -328,19 +336,32 @@ function listTaskArtifacts(taskId: string): Artifact[] {
   ).map(artifactFromRow);
 }
 
-export async function captureTaskArtifactBaseline(input: {
-  workspacePath: string;
-  taskId: string;
-}): Promise<ArtifactBaseline> {
+export async function captureTaskArtifactBaseline(
+  input: {
+    workspacePath: string;
+    taskId: string;
+  },
+  hooks: CaptureBaselineHooks = {},
+): Promise<ArtifactBaseline> {
   validateImportTaskId(input.taskId);
   if (!existsSync(join(input.workspacePath, input.taskId))) ensureTaskDir(input.workspacePath, input.taskId);
   const root = trustedTaskRoot(input.workspacePath, input.taskId);
-  const { candidates } = collectPaths(root, DEFAULT_BUDGETS);
+  const budgets = {
+    ...DEFAULT_BUDGETS,
+    maxResults: DEFAULT_BUDGETS.maxVisited,
+    maxTotalBytes: Number.MAX_SAFE_INTEGER,
+    ...hooks.budgets,
+  };
+  const { candidates, budgetExhausted } = collectPaths(root, budgets);
   verifyTrustedRoot(root);
-  return Object.fromEntries(candidates.map((candidate) => [candidate.relativePath, signature(candidate.stats)]));
+  const baseline = Object.fromEntries(
+    candidates.map((candidate) => [candidate.relativePath, signature(candidate.stats)]),
+  ) as TrackedArtifactBaseline;
+  Object.defineProperty(baseline, BASELINE_COMPLETE, { value: !budgetExhausted });
+  return baseline;
 }
 
-async function stableCandidate(
+async function stableCandidateOnce(
   root: TrustedTaskRoot,
   candidate: Candidate,
   hooks: ReconcileHooks,
@@ -381,12 +402,50 @@ async function stableCandidate(
   }
 }
 
+function refreshCandidate(root: TrustedTaskRoot, relativePath: string): Candidate | null {
+  try {
+    verifyTrustedRoot(root);
+    const absolutePath = resolve(root.realTask, relativePath);
+    const stats = lstatSync(absolutePath);
+    const mimeType = mimeTypeFor(relativePath);
+    if (
+      !mimeType ||
+      stats.isSymbolicLink() ||
+      !stats.isFile() ||
+      !hasStrongIdentity(stats) ||
+      stats.size <= 0 ||
+      stats.size > MAX_FILE_BYTES ||
+      !isWithin(root.realTask, absolutePath) ||
+      !samePath(realpathSync.native(absolutePath), absolutePath)
+    ) {
+      return null;
+    }
+    return { absolutePath, relativePath, stats, mimeType };
+  } catch {
+    return null;
+  }
+}
+
+async function stableCandidate(
+  root: TrustedTaskRoot,
+  candidate: Candidate,
+  hooks: ReconcileHooks,
+): Promise<{ candidate: Candidate; fd: number; stats: Stats } | null> {
+  let current: Candidate | null = candidate;
+  for (let attempt = 0; attempt < 2 && current; attempt += 1) {
+    const stable = await stableCandidateOnce(root, current, hooks);
+    if (stable) return stable;
+    current = refreshCandidate(root, candidate.relativePath);
+  }
+  return null;
+}
+
 function localPath(taskId: string, relativePath: string): string {
   return `${taskId}/${relativePath}`;
 }
 
 function sourceKey(relativePath: string, stats: Stats): string {
-  return `workspace-file:${relativePath}:${stats.size}:${stats.mtimeMs}`;
+  return `workspace-file:${relativePath}:${stats.dev}:${stats.ino}:${stats.size}:${stats.mtimeMs}:${stats.ctimeMs}`;
 }
 
 export async function reconcileTaskArtifacts(
@@ -395,7 +454,6 @@ export async function reconcileTaskArtifacts(
 ): Promise<ReconcileTaskArtifactsResult> {
   const root = trustedTaskRoot(input.workspacePath, input.taskId);
   const budgets = { ...DEFAULT_BUDGETS, ...hooks.budgets };
-  const discovered = collectPaths(root, budgets);
   const existingRows = listTaskArtifacts(input.taskId);
   const taskLocalPrefix = `${input.taskId}/`;
   const missing = existingRows.filter(
@@ -406,12 +464,16 @@ export async function reconcileTaskArtifacts(
   const saved: Artifact[] = [];
   const existing: Artifact[] = [];
   const updated: Artifact[] = [];
+  if ((input.baseline as TrackedArtifactBaseline)[BASELINE_COMPLETE] === false) {
+    verifyTrustedRoot(root);
+    return { saved, existing, updated, missing, skipped: [], budgetExhausted: true };
+  }
+  const discovered = collectPaths(root, budgets, input.baseline);
   // Open and verify candidates in parallel so the stability window is paid
   // once per reconciliation, not once per output file. The result budget caps
   // the number of simultaneously open read-only handles.
   const stableCandidates = await Promise.all(
     discovered.candidates.map(async (candidate) => {
-      if (input.baseline[candidate.relativePath] === signature(candidate.stats)) return null;
       const stable = await stableCandidate(root, candidate, hooks);
       if (!stable) discovered.skipped.push(candidate.relativePath);
       return stable;

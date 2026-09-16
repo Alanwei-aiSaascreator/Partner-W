@@ -15,6 +15,7 @@ const listSessionsBySpawnerMock = vi.fn();
 const sendChatMessageMock = vi.fn();
 const beginArtifactRunForGatewayDispatchMock = vi.fn();
 const cancelArtifactRunMock = vi.fn();
+const cancelArtifactRunsForSessionMock = vi.fn();
 
 const fakeGatewayClient = {
   isConnected: true,
@@ -59,6 +60,7 @@ vi.mock('../src/main/debug/index.js', () => ({
 vi.mock('../src/main/ipc/data-handlers.js', () => ({
   beginArtifactRunForGatewayDispatch: beginArtifactRunForGatewayDispatchMock,
   cancelArtifactRun: cancelArtifactRunMock,
+  cancelArtifactRunsForSession: cancelArtifactRunsForSessionMock,
 }));
 
 vi.mock('@clawwork/shared', () => ({
@@ -85,6 +87,7 @@ describe('ws-handlers: skills + config IPC channels', () => {
     sendChatMessageMock.mockReset().mockResolvedValue(undefined);
     beginArtifactRunForGatewayDispatchMock.mockReset().mockReturnValue('artifact-run-1');
     cancelArtifactRunMock.mockReset();
+    cancelArtifactRunsForSessionMock.mockReset();
     fakeGatewayClient.isConnected = true;
 
     vi.resetModules();
@@ -137,6 +140,14 @@ describe('ws-handlers: skills + config IPC channels', () => {
     expect(result).toEqual({ ok: true });
     expect(sendChatMessageMock).toHaveBeenCalledTimes(1);
   });
+
+  it.each(['ws:abort-chat', 'ws:session-reset', 'ws:session-delete'])(
+    '%s clears artifact runs for the session',
+    async (channel) => {
+      await invoke(channel, { gatewayId: 'gw-1', sessionKey: 'agent:main:clawwork:task-1' });
+      expect(cancelArtifactRunsForSessionMock).toHaveBeenCalledWith('agent:main:clawwork:task-1');
+    },
+  );
 
   it('registers all expected channels', () => {
     const expected = [

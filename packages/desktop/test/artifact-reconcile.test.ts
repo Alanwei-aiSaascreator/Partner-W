@@ -124,6 +124,26 @@ describe('artifact reconciliation', () => {
     expect(result.skipped).toContain('changing.txt');
   });
 
+  it('retries stability verification once from the trusted root and registers a file that then settles', () => {
+    const { result, checks } = runProbe(workspacePath, 'changing-once') as unknown as {
+      result: ReconcileResult;
+      checks: number;
+    };
+    expect(checks).toBe(2);
+    expect(result.saved).toEqual([expect.objectContaining({ name: 'changing-once.txt' })]);
+  });
+
+  it('does not let unchanged baseline files consume the generated-result budget', () => {
+    const { result } = runProbe(workspacePath, 'old-files-budget') as unknown as { result: ReconcileResult };
+    expect(result.saved).toEqual([expect.objectContaining({ name: 'z-result.txt' })]);
+  });
+
+  it('fails closed when the run baseline was truncated', () => {
+    const { result } = runProbe(workspacePath, 'truncated-baseline') as unknown as { result: ReconcileResult };
+    expect(result.saved).toEqual([]);
+    expect(result.budgetExhausted).toBe(true);
+  });
+
   it('bounds traversal and reports exhaustion without scanning the whole task tree', () => {
     const { result } = runProbe(workspacePath, 'budget') as unknown as { result: ReconcileResult };
     expect(result.budgetExhausted).toBe(true);
@@ -152,6 +172,14 @@ describe('artifact reconciliation', () => {
     expect(result.stored).toEqual({ size: 14 });
   });
 
+  it('updates an artifact when the path is replaced with the same size and mtime', () => {
+    const { first, second } = runProbe(workspacePath, 'replaced-same-metadata') as unknown as {
+      first: ReconcileResult;
+      second: ReconcileResult;
+    };
+    expect(second.updated).toEqual([expect.objectContaining({ id: first.saved[0].id })]);
+  });
+
   it('does not rewrite an artifact already registered by attachment extraction', () => {
     const { result, stored } = runProbe(workspacePath, 'attachment') as unknown as {
       result: ReconcileResult;
@@ -170,5 +198,12 @@ describe('artifact reconciliation', () => {
     if (!probe.supported) return;
     expect(probe.result?.saved.map((artifact) => artifact.name)).toEqual(['own.pdf']);
     expect(probe.result?.skipped).toContain('linked');
+  });
+
+  it('upgrades a legacy database by keeping the newest valid duplicate artifact metadata', () => {
+    const { rows } = runProbe(workspacePath, 'legacy-artifact-upgrade') as {
+      rows: Array<{ id: string; size: number; source_key: string }>;
+    };
+    expect(rows).toEqual([{ id: 'new-valid', size: 42, source_key: 'workspace-file:report.txt:new' }]);
   });
 });

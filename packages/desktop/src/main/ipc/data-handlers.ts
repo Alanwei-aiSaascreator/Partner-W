@@ -28,10 +28,14 @@ function parseTeamAgentSkills(raw: string | null): string[] {
 interface ArtifactRunContext {
   baseline: Promise<ArtifactBaseline>;
   token: string;
+  createdAt: number;
+  expiryTimer: ReturnType<typeof setTimeout>;
 }
 
 const artifactRuns = new Map<string, ArtifactRunContext>();
 const reconciledAssistantMessages = new Set<string>();
+const ARTIFACT_RUN_TTL_MS = 15 * 60 * 1000;
+const MAX_ARTIFACT_RUNS = 128;
 
 function artifactRunKey(taskId: string, sessionKey: string): string {
   return `${taskId}\0${sessionKey}`;
@@ -49,6 +53,7 @@ function hasRunningToolCall(toolCalls: unknown[] | undefined): boolean {
 }
 
 export function beginArtifactRun(workspacePath: string, taskId: string, sessionKey: string): string {
+  pruneArtifactRuns();
   const token = randomUUID();
   const baseline = captureTaskArtifactBaseline({ workspacePath, taskId }).catch((error: unknown) => {
     console.error('[artifact_baseline_failed]', { taskId, error });
@@ -58,13 +63,52 @@ export function beginArtifactRun(workspacePath: string, taskId: string, sessionK
   // arrive (cancel/disconnect), and an unobserved baseline rejection must not
   // become an unhandled process rejection.
   void baseline.catch(() => undefined);
-  artifactRuns.set(artifactRunKey(taskId, sessionKey), { baseline, token });
+  const key = artifactRunKey(taskId, sessionKey);
+  const previous = artifactRuns.get(key);
+  if (previous) clearTimeout(previous.expiryTimer);
+  while (artifactRuns.size >= MAX_ARTIFACT_RUNS) {
+    const oldestKey = artifactRuns.keys().next().value as string | undefined;
+    if (!oldestKey) break;
+    const oldest = artifactRuns.get(oldestKey);
+    if (oldest) clearTimeout(oldest.expiryTimer);
+    artifactRuns.delete(oldestKey);
+  }
+  const expiryTimer = setTimeout(() => cancelArtifactRun(taskId, sessionKey, token), ARTIFACT_RUN_TTL_MS);
+  expiryTimer.unref?.();
+  artifactRuns.set(key, { baseline, token, createdAt: Date.now(), expiryTimer });
   return token;
 }
 
 export function cancelArtifactRun(taskId: string, sessionKey: string, token: string): void {
   const key = artifactRunKey(taskId, sessionKey);
-  if (artifactRuns.get(key)?.token === token) artifactRuns.delete(key);
+  const run = artifactRuns.get(key);
+  if (run?.token !== token) return;
+  clearTimeout(run.expiryTimer);
+  artifactRuns.delete(key);
+}
+
+function pruneArtifactRuns(now = Date.now()): void {
+  for (const [key, run] of artifactRuns) {
+    if (now - run.createdAt < ARTIFACT_RUN_TTL_MS) continue;
+    clearTimeout(run.expiryTimer);
+    artifactRuns.delete(key);
+  }
+}
+
+export function cancelArtifactRunsForSession(sessionKey: string): void {
+  for (const [key, run] of artifactRuns) {
+    if (!key.endsWith(`\0${sessionKey}`)) continue;
+    clearTimeout(run.expiryTimer);
+    artifactRuns.delete(key);
+  }
+}
+
+export function cancelArtifactRunsForTask(taskId: string): void {
+  for (const [key, run] of artifactRuns) {
+    if (!key.startsWith(`${taskId}\0`)) continue;
+    clearTimeout(run.expiryTimer);
+    artifactRuns.delete(key);
+  }
 }
 
 export function beginArtifactRunForGatewayDispatch(input: {
@@ -121,11 +165,11 @@ function finalizeAssistantArtifacts(input: {
       for (const artifact of result.saved) {
         for (const win of BrowserWindow.getAllWindows()) win.webContents.send('artifact:saved', artifact);
       }
+    } catch (error) {
+      console.error('[artifact_reconcile_failed]', { taskId: input.taskId, messageId: input.messageId, error });
+    } finally {
       cancelArtifactRun(input.taskId, input.sessionKey, run.token);
       reconciledAssistantMessages.delete(input.messageId);
-    } catch (error) {
-      reconciledAssistantMessages.delete(input.messageId);
-      console.error('[artifact_reconcile_failed]', { taskId: input.taskId, messageId: input.messageId, error });
     }
   })();
 }
@@ -345,6 +389,7 @@ export function registerDataHandlers(): void {
   );
 
   ipcMain.handle('data:delete-task', (_event, params: { id: string }) => {
+    cancelArtifactRunsForTask(params.id);
     if (!isDbReady()) return ipcError(new Error('database not ready'));
     try {
       const db = getDb();

@@ -171,24 +171,42 @@ function openDatabaseAt(workspacePath: string): void {
   migrateAddColumn(sqlite, "ALTER TABLE artifacts ADD COLUMN content_text TEXT NOT NULL DEFAULT ''");
   migrateAddColumn(sqlite, "ALTER TABLE artifacts ADD COLUMN source_key TEXT NOT NULL DEFAULT ''");
 
-  sqlite.exec(`
-    CREATE UNIQUE INDEX IF NOT EXISTS artifacts_source_dedup
-    ON artifacts(message_id, source_key)
-    WHERE source_key <> ''
-  `);
-
-  // Legacy releases could persist the same task-relative output more than once
-  // (for example after replaying a completed assistant message). Keep the oldest
-  // row, then enforce task-path identity for reconciliation and concurrent runs.
+  // Legacy releases could persist the same task-relative output more than once.
+  // Prefer a row with usable generated-file metadata, then the newest row, before
+  // enforcing task-path identity for reconciliation and concurrent runs.
   sqlite.exec(`
     DELETE FROM artifacts
     WHERE rowid NOT IN (
-      SELECT MIN(rowid) FROM artifacts GROUP BY task_id, local_path
+      SELECT rowid FROM (
+        SELECT rowid,
+          ROW_NUMBER() OVER (
+            PARTITION BY task_id, local_path
+            ORDER BY
+              CASE WHEN size > 0 AND source_key <> '' THEN 1 ELSE 0 END DESC,
+              created_at DESC,
+              rowid DESC
+          ) AS duplicate_rank
+        FROM artifacts
+      )
+      WHERE duplicate_rank = 1
     )
   `);
   sqlite.exec(`
     CREATE UNIQUE INDEX IF NOT EXISTS artifacts_task_local_path
     ON artifacts(task_id, local_path)
+  `);
+  sqlite.exec(`
+    DELETE FROM artifacts
+    WHERE source_key <> '' AND rowid NOT IN (
+      SELECT MAX(rowid) FROM artifacts
+      WHERE source_key <> ''
+      GROUP BY message_id, source_key
+    )
+  `);
+  sqlite.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS artifacts_source_dedup
+    ON artifacts(message_id, source_key)
+    WHERE source_key <> ''
   `);
 
   sqlite.exec(`
