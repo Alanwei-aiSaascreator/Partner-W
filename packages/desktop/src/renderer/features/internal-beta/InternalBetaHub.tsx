@@ -49,15 +49,15 @@ function Badge({ children, tone = 'accent' }: { children: ReactNode; tone?: 'acc
     tone === 'warning'
       ? 'text-[var(--warning)] bg-[var(--bg-warning)]'
       : tone === 'success'
-        ? 'text-emerald-600 bg-emerald-500/10'
+        ? 'text-[var(--accent)] bg-[var(--accent-soft)]'
         : 'text-[var(--accent)] bg-[var(--accent-soft)]';
-  return <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${color}`}>{children}</span>;
+  return <span className={`type-support inline-flex rounded-full px-2 py-0.5 font-medium ${color}`}>{children}</span>;
 }
 
 function Card({ children, className = '' }: { children: ReactNode; className?: string }) {
   return (
     <section
-      className={`rounded-2xl border border-[var(--border)] bg-[var(--bg-secondary)] p-4 shadow-[var(--shadow-card)] ${className}`}
+      className={`rounded-xl border border-[var(--border)] bg-[var(--bg-secondary)] p-4 shadow-[var(--shadow-card)] ${className}`}
     >
       {children}
     </section>
@@ -81,7 +81,7 @@ function Field({
       value={value}
       onChange={(event) => onChange(event.target.value)}
       placeholder={placeholder}
-      className="h-9 min-w-0 flex-1 rounded-lg border border-[var(--border)] bg-[var(--bg-primary)] px-3 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
+      className="type-body h-9 min-w-0 flex-1 rounded-lg border border-[var(--border)] bg-[var(--bg-primary)] px-3 text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
     />
   );
 }
@@ -99,8 +99,8 @@ function TeamModule() {
       <div className="grid gap-4 lg:grid-cols-2">
         <Card>
           <Users className="mb-3 text-[var(--accent)]" />
-          <h3 className="text-lg font-semibold">创建团队</h3>
-          <p className="mb-4 text-sm text-[var(--text-muted)]">为公司成员建立共享协作空间。</p>
+          <h3 className="type-section-title">创建团队</h3>
+          <p className="type-body mb-4 text-[var(--text-muted)]">为公司成员建立共享协作空间。</p>
           <div className="flex gap-2">
             <Field label="beta.teamName" value={name} onChange={setName} placeholder="例如：销售增长组" />
             <Button data-action="create-team" onClick={() => createTeam(name)}>
@@ -111,8 +111,8 @@ function TeamModule() {
         </Card>
         <Card>
           <PackageCheck className="mb-3 text-[var(--accent)]" />
-          <h3 className="text-lg font-semibold">加入团队</h3>
-          <p className="mb-4 text-sm text-[var(--text-muted)]">输入同事发来的邀请码。</p>
+          <h3 className="type-section-title">加入团队</h3>
+          <p className="type-body mb-4 text-[var(--text-muted)]">输入同事发来的邀请码。</p>
           <div className="flex gap-2">
             <Field value={code} onChange={setCode} placeholder="RY123456" />
             <Button variant="outline" onClick={() => joinTeam(code)}>
@@ -128,16 +128,16 @@ function TeamModule() {
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <Badge tone="warning">内测团队数据</Badge>
-            <h3 className="mt-2 text-xl font-semibold">{team.name}</h3>
-            <p className="mt-1 text-sm text-[var(--text-muted)]">{team.members.length} 位成员 · 本机持久化</p>
+            <h3 className="type-dialog-title mt-2">{team.name}</h3>
+            <p className="type-body mt-1 text-[var(--text-muted)]">{team.members.length} 位成员 · 本机持久化</p>
           </div>
           <Button variant="danger" onClick={leaveTeam}>
             退出团队
           </Button>
         </div>
       </Card>
-      <div className="grid gap-4 lg:grid-cols-[1fr_280px]">
-        <Card>
+      <div className="grid gap-4 lg:grid-cols-3">
+        <Card className="lg:col-span-2">
           <h3 className="mb-3 font-semibold">成员列表</h3>
           {team.members.map((member) => (
             <div
@@ -156,10 +156,10 @@ function TeamModule() {
         </Card>
         <Card>
           <h3 className="font-semibold">邀请成员</h3>
-          <p className="my-2 text-sm text-[var(--text-muted)]">把邀请码发给同事</p>
+          <p className="type-body my-2 text-[var(--text-muted)]">把邀请码发给同事</p>
           <div
             data-invite-code
-            className="rounded-xl bg-[var(--bg-tertiary)] p-4 text-center font-mono text-xl tracking-widest"
+            className="type-dialog-title rounded-xl bg-[var(--bg-tertiary)] p-4 text-center font-mono tracking-widest"
           >
             {team.inviteCode}
           </div>
@@ -218,10 +218,10 @@ function MarketModule() {
               <Bot />
             </div>
             <Badge>{item.category}</Badge>
-            <h3 className="mt-2 text-lg font-semibold">{item.name}</h3>
-            <p className="my-3 min-h-10 text-sm text-[var(--text-muted)]">{item.description}</p>
+            <h3 className="type-section-title mt-2">{item.name}</h3>
+            <p className="type-body my-3 min-h-10 text-[var(--text-muted)]">{item.description}</p>
             <div className="flex items-center justify-between">
-              <span className="text-xs text-[var(--text-muted)]">{item.installs.toLocaleString()} 次安装</span>
+              <span className="type-support text-[var(--text-muted)]">{item.installs.toLocaleString()} 次安装</span>
               <Button size="sm" disabled={installed.includes(item.id)} onClick={() => install(item.id)}>
                 {installed.includes(item.id) ? (
                   <>
@@ -264,7 +264,7 @@ function BountyModule() {
             发布悬赏
           </Button>
         </div>
-        <p className="mt-2 text-xs text-[var(--text-muted)]">内测流程：积分仅作展示，不产生付款或真实结算。</p>
+        <p className="type-support mt-2 text-[var(--text-muted)]">内测流程：积分仅作展示，不产生付款或真实结算。</p>
       </Card>
       {bounties.map((item) => (
         <Card key={item.id}>
@@ -274,7 +274,7 @@ function BountyModule() {
                 <Gift className="text-[var(--warning)]" />
                 <h3 className="font-semibold">{item.title}</h3>
               </div>
-              <p className="mt-2 text-sm text-[var(--text-muted)]">
+              <p className="type-body mt-2 text-[var(--text-muted)]">
                 奖励 {item.reward} 积分 · 状态：
                 {item.status === 'open' ? '待领取' : item.status === 'claimed' ? '进行中' : '已提交待审核'}
               </p>
@@ -301,7 +301,7 @@ function SquareModule() {
   const [text, setText] = useState('');
   const [comments, setComments] = useState<Record<string, string>>({});
   return (
-    <div className="mx-auto max-w-3xl space-y-4">
+    <div className="mx-auto max-w-[var(--content-max-width)] space-y-4">
       <Card>
         <textarea
           value={text}
@@ -325,10 +325,10 @@ function SquareModule() {
         <Card key={post.id}>
           <div className="flex items-center justify-between">
             <strong>{post.author}</strong>
-            <span className="text-xs text-[var(--text-muted)]">{post.createdAt}</span>
+            <span className="type-support text-[var(--text-muted)]">{post.createdAt}</span>
           </div>
           <p className="my-4">{post.content}</p>
-          <div className="flex items-center gap-4 text-sm">
+          <div className="type-body flex items-center gap-4">
             <button
               onClick={() => like(post.id)}
               className="flex items-center gap-1 text-[var(--text-secondary)] hover:text-[var(--accent)]"
@@ -342,7 +342,7 @@ function SquareModule() {
             </span>
           </div>
           {post.comments.map((item, index) => (
-            <p key={index} className="mt-2 rounded-lg bg-[var(--bg-tertiary)] px-3 py-2 text-sm">
+            <p key={index} className="type-body mt-2 rounded-lg bg-[var(--bg-tertiary)] px-3 py-2">
               {item}
             </p>
           ))}
@@ -401,19 +401,19 @@ function CreatorModule() {
                 </Badge>
                 <input
                   aria-label="编辑模板名称"
-                  className="mt-2 block w-full bg-transparent text-lg font-semibold outline-none"
+                  className="type-section-title mt-2 block w-full bg-transparent outline-none"
                   value={item.name}
                   onChange={(e) => rename(item.id, e.target.value)}
                 />
               </div>
               <Sparkles className="text-[var(--accent)]" />
             </div>
-            <div className="my-4 grid grid-cols-2 rounded-xl bg-[var(--bg-tertiary)] p-3 text-center text-sm">
+            <div className="type-body my-4 grid grid-cols-2 rounded-xl bg-[var(--bg-tertiary)] p-3 text-center">
               <div>
-                <b className="block text-lg">{item.views}</b>浏览
+                <b className="type-section-title block">{item.views}</b>浏览
               </div>
               <div>
-                <b className="block text-lg">{item.installs}</b>安装
+                <b className="type-section-title block">{item.installs}</b>安装
               </div>
             </div>
             <Button
@@ -435,14 +435,14 @@ function GameModule() {
   const checkIn = useBetaStore((s) => s.checkIn);
   const progress = (game.points % 200) / 2;
   return (
-    <div className="grid gap-4 lg:grid-cols-[1.3fr_1fr]">
+    <div className="grid gap-4 lg:grid-cols-2">
       <Card className="bg-gradient-to-br from-[var(--accent-soft)] to-[var(--bg-secondary)]">
         <Badge>Lv.{game.level}</Badge>
-        <h3 className="mt-3 text-3xl font-semibold">{game.points} 积分</h3>
+        <h3 className="type-page-title mt-3">{game.points} 积分</h3>
         <div className="my-4 h-2 overflow-hidden rounded-full bg-[var(--bg-tertiary)]">
           <div className="h-full rounded-full bg-[var(--accent)]" style={{ width: `${progress}%` }} />
         </div>
-        <p className="text-sm text-[var(--text-muted)]">距离下一等级还需 {200 - (game.points % 200)} 积分</p>
+        <p className="type-body text-[var(--text-muted)]">距离下一等级还需 {200 - (game.points % 200)} 积分</p>
         <Button className="mt-5" disabled={game.checkedInToday} onClick={checkIn}>
           {game.checkedInToday ? (
             <>
@@ -464,7 +464,7 @@ function GameModule() {
             <BadgeCheck className="text-[var(--warning)]" />
             <div>
               <strong>{badge}</strong>
-              <p className="text-xs text-[var(--text-muted)]">参与公司首轮体验</p>
+              <p className="type-support text-[var(--text-muted)]">参与公司首轮体验</p>
             </div>
           </div>
         ))}
@@ -490,8 +490,8 @@ function OperationsModule() {
           ['错误日志', operations.errorCount],
         ].map(([label, value]) => (
           <Card key={String(label)}>
-            <p className="text-sm text-[var(--text-muted)]">{label}</p>
-            <strong className="mt-2 block text-2xl">{value}</strong>
+            <p className="type-body text-[var(--text-muted)]">{label}</p>
+            <strong className="type-page-title mt-2 block">{value}</strong>
           </Card>
         ))}
       </div>
@@ -504,7 +504,7 @@ function OperationsModule() {
               {operations.modelEnabled ? '已启用' : '已关闭'}
             </Button>
           </div>
-          <label className="mt-4 block text-sm">计费倍率：{operations.modelRate.toFixed(1)}×</label>
+          <label className="type-body mt-4 block">计费倍率：{operations.modelRate.toFixed(1)}×</label>
           <input
             aria-label="模型倍率"
             className="mt-2 w-full accent-[var(--accent)]"
@@ -549,14 +549,14 @@ function OperationsModule() {
           <ChevronRight className={showLogs ? 'rotate-90 transition-transform' : 'transition-transform'} />
         </button>
         {showLogs && (
-          <div className="mt-3 space-y-2 border-t border-[var(--border)] pt-3 text-sm">
+          <div className="type-body mt-3 space-y-2 border-t border-[var(--border)] pt-3">
             <p className="rounded-lg bg-[var(--bg-tertiary)] p-2">11:20 · UPDATE_CHECK_TIMEOUT · 已自动重试</p>
             <p className="rounded-lg bg-[var(--bg-tertiary)] p-2">10:41 · MODEL_GATEWAY_RECONNECT · 已恢复</p>
             <p className="rounded-lg bg-[var(--bg-tertiary)] p-2">09:58 · FILE_PREVIEW_UNSUPPORTED · 已提示用户</p>
           </div>
         )}
       </Card>
-      <p className="text-xs text-[var(--warning)]">
+      <p className="type-support text-[var(--warning)]">
         内测模拟后台：当前操作只影响本机演示数据，不修改生产用户、账单或模型配置。
       </p>
     </div>
@@ -577,22 +577,22 @@ function UpdatesModule() {
           ? '已安装'
           : '检查更新';
   return (
-    <div className="mx-auto max-w-3xl space-y-4">
+    <div className="mx-auto max-w-[var(--content-max-width)] space-y-4">
       <Card>
         <div className="flex items-start justify-between gap-4">
           <div>
             <Badge tone="warning">内测模拟升级</Badge>
-            <h3 className="mt-3 text-xl font-semibold">当前版本 {update.current}</h3>
-            <p className="mt-1 text-sm text-[var(--text-muted)]">正式版将接入签名安装包、断点下载和安全回滚。</p>
+            <h3 className="type-dialog-title mt-3">当前版本 {update.current}</h3>
+            <p className="type-body mt-1 text-[var(--text-muted)]">正式版将接入签名安装包、断点下载和安全回滚。</p>
           </div>
           <PackageCheck className="text-[var(--accent)]" size={36} />
         </div>
       </Card>
       {update.status !== 'idle' && (
         <Card>
-          <p className="text-sm text-[var(--text-muted)]">发现可用版本</p>
-          <h3 className="mt-1 text-2xl font-semibold">{update.available}</h3>
-          <ul className="my-4 list-inside list-disc text-sm text-[var(--text-secondary)]">
+          <p className="type-body text-[var(--text-muted)]">发现可用版本</p>
+          <h3 className="type-page-title mt-1">{update.available}</h3>
+          <ul className="type-body my-4 list-inside list-disc text-[var(--text-secondary)]">
             <li>内测中心基础框架</li>
             <li>文件和成果交付稳定性修复</li>
           </ul>
@@ -611,7 +611,7 @@ function UpdatesModule() {
           回滚演示
         </Button>
       </div>
-      <p className="text-sm text-[var(--text-muted)]">状态：{update.status}</p>
+      <p className="type-body text-[var(--text-muted)]">状态：{update.status}</p>
     </div>
   );
 }
@@ -633,7 +633,7 @@ function AnalyticsModule() {
       <div className="mb-4 flex items-center justify-between">
         <div>
           <h3 className="font-semibold">今日核心事件</h3>
-          <p className="text-sm text-[var(--text-muted)]">本地 seed + 内测采集视图</p>
+          <p className="type-body text-[var(--text-muted)]">本地 seed + 内测采集视图</p>
         </div>
         <Badge tone="warning">内测采集</Badge>
       </div>
@@ -641,10 +641,10 @@ function AnalyticsModule() {
         {Object.entries(analytics).map(([key, value]) => (
           <Card key={key}>
             <div className="flex items-center justify-between">
-              <span className="text-sm text-[var(--text-muted)]">{labels[key as keyof typeof analytics]}</span>
+              <span className="type-body text-[var(--text-muted)]">{labels[key as keyof typeof analytics]}</span>
               <BarChart3 size={16} className="text-[var(--accent)]" />
             </div>
-            <strong className="my-3 block text-2xl">{value}</strong>
+            <strong className="type-page-title my-3 block">{value}</strong>
             <div className="h-1.5 overflow-hidden rounded-full bg-[var(--bg-tertiary)]">
               <div className="h-full bg-[var(--accent)]" style={{ width: `${(value / max) * 100}%` }} />
             </div>
@@ -665,8 +665,8 @@ function ComplianceModule() {
     <div className="grid gap-4 lg:grid-cols-2">
       <Card>
         <ShieldCheck className="mb-3 text-[var(--accent)]" />
-        <h3 className="text-lg font-semibold">协议与权限</h3>
-        <div className="my-4 space-y-2 text-sm">
+        <h3 className="type-section-title">协议与权限</h3>
+        <div className="type-body my-4 space-y-2">
           <button
             onClick={() => setOpenPolicy('privacy')}
             className="flex w-full items-center justify-between rounded-lg bg-[var(--bg-tertiary)] p-3"
@@ -698,8 +698,8 @@ function ComplianceModule() {
         </Button>
       </Card>
       <Card>
-        <h3 className="text-lg font-semibold">我的数据权利</h3>
-        <p className="my-3 text-sm text-[var(--text-muted)]">正式上线后由服务端工单处理；内测版仅保存申请状态。</p>
+        <h3 className="type-section-title">我的数据权利</h3>
+        <p className="type-body my-3 text-[var(--text-muted)]">正式上线后由服务端工单处理；内测版仅保存申请状态。</p>
         <div className="space-y-3">
           <Button className="w-full" variant="outline" disabled={state.exportRequested} onClick={exportData}>
             {state.exportRequested ? '导出申请已提交' : '申请导出我的数据'}
@@ -716,7 +716,7 @@ function ComplianceModule() {
               <Badge>
                 {openPolicy === 'privacy' ? '隐私政策摘要' : openPolicy === 'terms' ? '服务条款摘要' : '权限说明'}
               </Badge>
-              <p className="mt-3 text-sm leading-6 text-[var(--text-secondary)]">
+              <p className="type-body mt-3 leading-6 text-[var(--text-secondary)]">
                 {openPolicy === 'privacy'
                   ? '仅采集提供登录、计费和故障分析所需的数据；敏感文件不会在未授权时上传。'
                   : openPolicy === 'terms'
@@ -802,7 +802,7 @@ export default function InternalBetaHub() {
               >
                 <Icon size={18} />
                 <span className="min-w-0">
-                  <strong className="block truncate text-sm">{module.label}</strong>
+                  <strong className="type-body block truncate">{module.label}</strong>
                   <small className="block truncate text-[var(--text-muted)]">{module.description}</small>
                 </span>
               </button>
@@ -812,8 +812,8 @@ export default function InternalBetaHub() {
         <main className="min-w-0 flex-1 overflow-y-auto">
           <div className="mx-auto max-w-6xl p-5 lg:p-7">
             <header className="mb-5">
-              <h1 className="text-2xl font-semibold">{selected.label}</h1>
-              <p className="mt-1 text-sm text-[var(--text-muted)]">
+              <h1 className="type-page-title">{selected.label}</h1>
+              <p className="type-body mt-1 text-[var(--text-muted)]">
                 {selected.description} · {t('beta.localDataHint')}
               </p>
             </header>
