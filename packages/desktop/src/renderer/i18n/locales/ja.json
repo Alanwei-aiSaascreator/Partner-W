@@ -2,6 +2,7 @@
   "account": {
     "activated": "認証済み",
     "device": "このデバイス",
+    "editWorkProfile": "Edit work profile",
     "notActivated": "未認証",
     "offline": "オフラインのため、最新でない可能性があります",
     "plan": "現在のプラン",
@@ -22,7 +23,9 @@
     "refundTitle": "返金について",
     "signOut": "サインアウト",
     "tokenQuota": "Token 残高",
-    "updatedAt": "{{time}} 更新"
+    "updatedAt": "{{time}} 更新",
+    "workProfile": "Work profile",
+    "workProfileUnset": "No common tasks selected"
   },
   "activation": {
     "bound": "Bound license",

@@ -2,6 +2,7 @@
   "account": {
     "activated": "已授權",
     "device": "本機裝置",
+    "editWorkProfile": "Edit work profile",
     "notActivated": "未啟用",
     "offline": "離線，資料可能不是最新",
     "plan": "目前方案",
@@ -22,7 +23,9 @@
     "refundTitle": "退款說明",
     "signOut": "登出",
     "tokenQuota": "Token 額度",
-    "updatedAt": "更新於 {{time}}"
+    "updatedAt": "更新於 {{time}}",
+    "workProfile": "Work profile",
+    "workProfileUnset": "No common tasks selected"
   },
   "activation": {
     "bound": "已綁定授權",

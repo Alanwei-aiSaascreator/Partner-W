@@ -2,6 +2,7 @@
   "account": {
     "activated": "Activé",
     "device": "Cet appareil",
+    "editWorkProfile": "Edit work profile",
     "notActivated": "Non activé",
     "offline": "Hors ligne, données possiblement obsolètes",
     "plan": "Forfait actuel",
@@ -22,7 +23,9 @@
     "refundTitle": "Politique de remboursement",
     "signOut": "Se déconnecter",
     "tokenQuota": "Solde de tokens",
-    "updatedAt": "Mis à jour {{time}}"
+    "updatedAt": "Mis à jour {{time}}",
+    "workProfile": "Work profile",
+    "workProfileUnset": "No common tasks selected"
   },
   "activation": {
     "bound": "Bound license",

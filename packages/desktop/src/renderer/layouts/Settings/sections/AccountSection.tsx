@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { CreditCard, LogOut, Loader2, RefreshCw, User as UserIcon } from 'lucide-react';
+import { CreditCard, LogOut, Loader2, Pencil, RefreshCw, User as UserIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import {
   CUSTOM_RECHARGE_MAX_CENTS,
@@ -25,6 +25,7 @@ import SettingRow from '@/components/semantic/SettingRow';
 import StatusTag from '@/components/semantic/StatusTag';
 import InlineNotice from '@/components/semantic/InlineNotice';
 import LoadingBlock from '@/components/semantic/LoadingBlock';
+import type { OnboardingProfile } from '@/lib/user-onboarding';
 
 type PanelStatus = 'loading' | 'ready' | 'offline';
 
@@ -101,7 +102,12 @@ function QuotaBar({ used, total }: { used: number; total: number }) {
   );
 }
 
-export default function AccountSection() {
+interface AccountSectionProps {
+  onboardingProfile?: OnboardingProfile | null;
+  onEditProfile?: () => void;
+}
+
+export default function AccountSection({ onboardingProfile = null, onEditProfile }: AccountSectionProps) {
   const { t } = useTranslation();
   const [overview, setOverview] = useState<CommercialAccountOverview | null>(null);
   const [status, setStatus] = useState<PanelStatus>('loading');
@@ -372,6 +378,45 @@ export default function AccountSection() {
           </div>
         </div>
       </SettingGroup>
+
+      {onboardingProfile && (
+        <SettingGroup title={t('account.workProfile')}>
+          <div className="space-y-3 px-5 py-4">
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <p className="type-label text-[var(--text-primary)]">
+                  {onboardingProfile.role === 'custom' && onboardingProfile.customRole
+                    ? onboardingProfile.customRole
+                    : t(`onboarding.roles.${onboardingProfile.role ?? 'custom'}.title`)}
+                </p>
+                <p className="type-support mt-1 text-[var(--text-muted)]">
+                  {onboardingProfile.useCases
+                    .filter((useCase) => useCase !== 'general')
+                    .map((useCase) => t(`onboarding.useCases.${useCase}.title`))
+                    .join(' · ') || t('account.workProfileUnset')}
+                </p>
+              </div>
+              {onEditProfile && (
+                <Button
+                  data-account-purpose-edit
+                  variant="outline"
+                  size="sm"
+                  className="flex-shrink-0 gap-1.5"
+                  onClick={onEditProfile}
+                >
+                  <Pencil size={13} />
+                  {t('account.editWorkProfile')}
+                </Button>
+              )}
+            </div>
+            {onboardingProfile.customGoal && (
+              <p className="type-body rounded-lg bg-[var(--bg-tertiary)] px-3 py-2.5 text-[var(--text-secondary)]">
+                {onboardingProfile.customGoal}
+              </p>
+            )}
+          </div>
+        </SettingGroup>
+      )}
 
       <SettingGroup title={t('account.tokenQuota')}>
         <div className="px-5 py-4">

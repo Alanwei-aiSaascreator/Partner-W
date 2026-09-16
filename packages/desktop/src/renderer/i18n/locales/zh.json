@@ -2,6 +2,7 @@
   "account": {
     "activated": "已授权",
     "device": "本机设备",
+    "editWorkProfile": "修改用途",
     "notActivated": "未激活",
     "offline": "离线，数据可能不是最新",
     "plan": "当前套餐",
@@ -22,7 +23,9 @@
     "refundTitle": "退款说明",
     "signOut": "退出登录",
     "tokenQuota": "Token 额度",
-    "updatedAt": "更新于 {{time}}"
+    "updatedAt": "更新于 {{time}}",
+    "workProfile": "工作画像",
+    "workProfileUnset": "尚未选择常用场景"
   },
   "activation": {
     "bound": "已绑定授权",

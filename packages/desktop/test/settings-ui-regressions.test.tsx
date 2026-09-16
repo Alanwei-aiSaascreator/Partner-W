@@ -7,6 +7,8 @@ import { ThemeProvider } from '../src/renderer/context/ThemeProvider';
 import { useUiStore } from '../src/renderer/stores/uiStore';
 import { resetSettingsStore } from '../src/renderer/stores/settingsStore';
 import GatewaysSection from '../src/renderer/layouts/Settings/sections/GatewaysSection';
+import AccountSection from '../src/renderer/layouts/Settings/sections/AccountSection';
+import type { OnboardingProfile } from '../src/renderer/lib/user-onboarding';
 
 vi.mock('sonner', () => ({
   toast: {
@@ -29,6 +31,7 @@ vi.mock('../src/renderer/components/ui/dialog', () => ({
   DialogDescription: ({ children, ...props }: React.HTMLAttributes<HTMLParagraphElement>) => (
     <p {...props}>{children}</p>
   ),
+  DialogFooter: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }));
 
 vi.mock('../src/renderer/components/ui/tooltip', () => ({
@@ -99,6 +102,17 @@ describe('settings UI regressions', () => {
       addGateway: vi.fn().mockResolvedValue({ ok: true }),
       removeGateway: vi.fn().mockResolvedValue({ ok: true }),
       setDefaultGateway: vi.fn().mockResolvedValue({ ok: true }),
+      commercialAccountOverview: vi.fn().mockResolvedValue({
+        ok: true,
+        result: {
+          account: { id: 'user-1', phone: '8618338607148', nickname: '测试用户', avatar: null, email: null },
+          org: null,
+          license: null,
+          device: { shortFingerprint: 'DEV-1234' },
+          fetchedAt: '2026-09-16T00:00:00.000Z',
+        },
+      }),
+      commercialRechargeSkus: vi.fn().mockResolvedValue({ ok: true, result: [] }),
     } as unknown as Window['clawwork'] & Record<string, unknown>;
   });
 
@@ -155,6 +169,36 @@ describe('settings UI regressions', () => {
     await flushAsync();
 
     expect(useUiStore.getState().defaultGatewayId).toBe('gw-2');
+
+    unmount();
+  });
+
+  it('shows the saved work profile and opens the editor without signing out', async () => {
+    const profile: OnboardingProfile = {
+      version: 2,
+      userId: 'user-1',
+      nickname: '小荣',
+      role: 'operations',
+      customRole: '',
+      useCases: ['content', 'ecommerce'],
+      customGoal: '每周整理经营数据并生成活动文案',
+      selectedAssistantIds: ['content', 'ecommerce'],
+      responseDetail: 'balanced',
+      filePermission: 'ask-every-time',
+      completedAt: '2026-09-16T00:00:00.000Z',
+    };
+    const onEditProfile = vi.fn();
+    const { container, unmount } = render(<AccountSection onboardingProfile={profile} onEditProfile={onEditProfile} />);
+
+    await flushAsync();
+    await flushAsync();
+
+    const editButton = container.querySelector('[data-account-purpose-edit]') as HTMLButtonElement;
+    expect(editButton).not.toBeNull();
+    expect(container.textContent).toContain('每周整理经营数据并生成活动文案');
+    act(() => editButton.click());
+    expect(onEditProfile).toHaveBeenCalledTimes(1);
+    expect(window.clawwork.commercialSignOut).toBeUndefined();
 
     unmount();
   });

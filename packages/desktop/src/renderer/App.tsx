@@ -50,6 +50,7 @@ export default function App() {
   const [onboardingAccount, setOnboardingAccount] = useState<{ userId: string; nickname: string } | null>(null);
   const [onboardingProfile, setOnboardingProfile] = useState<OnboardingProfile | null>(null);
   const [onboardingResolved, setOnboardingResolved] = useState(false);
+  const [editingOnboardingProfile, setEditingOnboardingProfile] = useState(false);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>('general');
 
   const rightPanelOpen = useUiStore((s) => s.rightPanelOpen);
@@ -221,6 +222,7 @@ export default function App() {
   const handleOnboardingComplete = useCallback((profile: OnboardingProfile) => {
     saveOnboardingProfile(profile);
     setOnboardingProfile(profile);
+    setEditingOnboardingProfile(false);
   }, []);
 
   useEffect(() => {
@@ -286,6 +288,22 @@ export default function App() {
     );
   }
 
+  if (entryScreen === 'workspace' && editingOnboardingProfile && onboardingAccount && onboardingProfile) {
+    return (
+      <TooltipProvider>
+        <Onboarding
+          userId={onboardingAccount.userId}
+          defaultNickname={onboardingAccount.nickname}
+          mode="edit"
+          initialProfile={onboardingProfile}
+          onComplete={handleOnboardingComplete}
+          onCancel={() => setEditingOnboardingProfile(false)}
+        />
+        <AppToaster themeMode={themeMode} />
+      </TooltipProvider>
+    );
+  }
+
   if (entryScreen === 'setup') {
     return (
       <TooltipProvider>
@@ -341,7 +359,14 @@ export default function App() {
 
         <main className="relative flex-1 min-w-0 flex flex-col z-[1]">
           {settingsOpen ? (
-            <Settings initialSection={settingsSection} />
+            <Settings
+              initialSection={settingsSection}
+              onboardingProfile={onboardingProfile}
+              onEditOnboardingProfile={() => {
+                setSettingsOpen(false);
+                setEditingOnboardingProfile(true);
+              }}
+            />
           ) : (
             <MainArea
               onTogglePanel={toggleRightPanel}

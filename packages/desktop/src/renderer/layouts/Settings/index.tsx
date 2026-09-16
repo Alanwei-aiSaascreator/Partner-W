@@ -12,6 +12,7 @@ import GatewaysSection from './sections/GatewaysSection';
 import AgentsSection from './sections/AgentsSection';
 import SkillsSection from './sections/SkillsSection';
 import AboutSection from './sections/AboutSection';
+import type { OnboardingProfile } from '@/lib/user-onboarding';
 
 const SECTION_COMPONENTS: Record<SettingsSection, ComponentType> = {
   activation: ActivationSection,
@@ -26,9 +27,15 @@ const SECTION_COMPONENTS: Record<SettingsSection, ComponentType> = {
 
 interface SettingsProps {
   initialSection?: SettingsSection;
+  onboardingProfile?: OnboardingProfile | null;
+  onEditOnboardingProfile?: () => void;
 }
 
-export default function Settings({ initialSection = 'general' }: SettingsProps) {
+export default function Settings({
+  initialSection = 'general',
+  onboardingProfile = null,
+  onEditOnboardingProfile,
+}: SettingsProps) {
   const { t } = useTranslation();
   const [activeSection, setActiveSection] = useState<SettingsSection>(initialSection);
 
@@ -58,7 +65,11 @@ export default function Settings({ initialSection = 'general' }: SettingsProps) 
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: motionDuration.normal }}
           >
-            <SectionComponent />
+            {activeSection === 'account' ? (
+              <AccountSection onboardingProfile={onboardingProfile} onEditProfile={onEditOnboardingProfile} />
+            ) : (
+              <SectionComponent />
+            )}
           </motion.div>
         </div>
       </div>

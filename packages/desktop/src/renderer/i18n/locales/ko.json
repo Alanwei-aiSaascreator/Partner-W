@@ -2,6 +2,7 @@
   "account": {
     "activated": "인증됨",
     "device": "이 기기",
+    "editWorkProfile": "Edit work profile",
     "notActivated": "미인증",
     "offline": "오프라인, 최신 데이터가 아닐 수 있습니다",
     "plan": "현재 요금제",
@@ -22,7 +23,9 @@
     "refundTitle": "환불 안내",
     "signOut": "로그아웃",
     "tokenQuota": "Token 잔액",
-    "updatedAt": "{{time}} 업데이트"
+    "updatedAt": "{{time}} 업데이트",
+    "workProfile": "Work profile",
+    "workProfileUnset": "No common tasks selected"
   },
   "activation": {
     "bound": "Bound license",
