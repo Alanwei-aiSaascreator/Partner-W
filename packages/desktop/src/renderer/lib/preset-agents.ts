@@ -10,15 +10,17 @@ import researchIdentity from '@/preset-agents/research/IDENTITY.md?raw';
 import researchSoul from '@/preset-agents/research/SOUL.md?raw';
 import videoIdentity from '@/preset-agents/video/IDENTITY.md?raw';
 import videoSoul from '@/preset-agents/video/SOUL.md?raw';
+import { ASSISTANT_ID_BY_WORKSPACE, resolveAssistantTaskPresets } from '@/lib/assistant-task-presets';
+import type { AssistantTaskPreset, AssistantTaskWorkspaceKey } from '@/lib/assistant-task-presets';
 import type { OnboardingProfile, OnboardingUseCaseId, StarterId } from '@/lib/user-onboarding';
 
 export const PRESET_AGENT_IDS = [
-  'rongying-content',
-  'rongying-video',
-  'rongying-office',
-  'rongying-ecommerce',
-  'rongying-research',
-  'rongying-family',
+  ASSISTANT_ID_BY_WORKSPACE.content,
+  ASSISTANT_ID_BY_WORKSPACE.video,
+  ASSISTANT_ID_BY_WORKSPACE.office,
+  ASSISTANT_ID_BY_WORKSPACE.ecommerce,
+  ASSISTANT_ID_BY_WORKSPACE.research,
+  ASSISTANT_ID_BY_WORKSPACE.family,
 ] as const;
 
 export type PresetAgentId = (typeof PRESET_AGENT_IDS)[number];
@@ -42,20 +44,14 @@ export interface PresetAgentDefinition {
   workspaceKey: AssistantWorkspaceKey;
 }
 
-export type AssistantWorkspaceKey = 'compass' | 'content' | 'video' | 'office' | 'ecommerce' | 'research' | 'family';
-
-export interface AssistantWorkspaceStarter {
-  titleKey: string;
-  descriptionKey: string;
-  promptKey: string;
-}
+export type AssistantWorkspaceKey = AssistantTaskWorkspaceKey;
 
 export interface AssistantWorkspaceDefinition {
   id: string;
   titleKey: string;
   descriptionKey: string;
   emoji: string;
-  starters: AssistantWorkspaceStarter[];
+  starters: readonly AssistantTaskPreset[];
 }
 
 const COMMON_OPERATING_CONTRACT = `# Shared operating contract
@@ -83,8 +79,8 @@ function withCommonContract(roleSoul: string): string {
 
 export const PRESET_AGENT_DEFINITIONS: readonly PresetAgentDefinition[] = [
   {
-    id: 'rongying-content',
-    creationName: 'rongying-content',
+    id: ASSISTANT_ID_BY_WORKSPACE.content,
+    creationName: ASSISTANT_ID_BY_WORKSPACE.content,
     displayNameKey: 'presetAgents.roles.content',
     emoji: '✍️',
     identityMd: contentIdentity,
@@ -92,8 +88,8 @@ export const PRESET_AGENT_DEFINITIONS: readonly PresetAgentDefinition[] = [
     workspaceKey: 'content',
   },
   {
-    id: 'rongying-video',
-    creationName: 'rongying-video',
+    id: ASSISTANT_ID_BY_WORKSPACE.video,
+    creationName: ASSISTANT_ID_BY_WORKSPACE.video,
     displayNameKey: 'presetAgents.roles.video',
     emoji: '🎬',
     identityMd: videoIdentity,
@@ -101,8 +97,8 @@ export const PRESET_AGENT_DEFINITIONS: readonly PresetAgentDefinition[] = [
     workspaceKey: 'video',
   },
   {
-    id: 'rongying-office',
-    creationName: 'rongying-office',
+    id: ASSISTANT_ID_BY_WORKSPACE.office,
+    creationName: ASSISTANT_ID_BY_WORKSPACE.office,
     displayNameKey: 'presetAgents.roles.office',
     emoji: '📋',
     identityMd: officeIdentity,
@@ -110,8 +106,8 @@ export const PRESET_AGENT_DEFINITIONS: readonly PresetAgentDefinition[] = [
     workspaceKey: 'office',
   },
   {
-    id: 'rongying-ecommerce',
-    creationName: 'rongying-ecommerce',
+    id: ASSISTANT_ID_BY_WORKSPACE.ecommerce,
+    creationName: ASSISTANT_ID_BY_WORKSPACE.ecommerce,
     displayNameKey: 'presetAgents.roles.ecommerce',
     emoji: '🛍️',
     identityMd: ecommerceIdentity,
@@ -119,8 +115,8 @@ export const PRESET_AGENT_DEFINITIONS: readonly PresetAgentDefinition[] = [
     workspaceKey: 'ecommerce',
   },
   {
-    id: 'rongying-research',
-    creationName: 'rongying-research',
+    id: ASSISTANT_ID_BY_WORKSPACE.research,
+    creationName: ASSISTANT_ID_BY_WORKSPACE.research,
     displayNameKey: 'presetAgents.roles.research',
     emoji: '🔎',
     identityMd: researchIdentity,
@@ -128,8 +124,8 @@ export const PRESET_AGENT_DEFINITIONS: readonly PresetAgentDefinition[] = [
     workspaceKey: 'research',
   },
   {
-    id: 'rongying-family',
-    creationName: 'rongying-family',
+    id: ASSISTANT_ID_BY_WORKSPACE.family,
+    creationName: ASSISTANT_ID_BY_WORKSPACE.family,
     displayNameKey: 'presetAgents.roles.family',
     emoji: '🏠',
     identityMd: familyIdentity,
@@ -149,11 +145,7 @@ function workspaceDefinition(
     titleKey,
     emoji,
     descriptionKey: `assistantWorkspaces.${workspaceKey}.description`,
-    starters: [1, 2, 3, 4].map((index) => ({
-      titleKey: `assistantWorkspaces.${workspaceKey}.starters.${index}.title`,
-      descriptionKey: `assistantWorkspaces.${workspaceKey}.starters.${index}.description`,
-      promptKey: `assistantWorkspaces.${workspaceKey}.starters.${index}.prompt`,
-    })),
+    starters: resolveAssistantTaskPresets(id),
   };
 }
 
