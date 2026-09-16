@@ -21,22 +21,22 @@ export default function AssistantWorkspaceWelcome({
   const workspaceT = (key: string) => t(`assistantWorkspaces.${key.replace(/^assistantWorkspaces\./, '')}`);
 
   return (
-    <div className="mx-auto flex w-full max-w-[var(--content-max-width)] flex-col items-center px-2 py-6 text-center">
-      <div className="emoji-lg flex h-14 w-14 items-center justify-center rounded-2xl bg-[var(--accent-dim)] text-[var(--accent)]">
+    <div className="mx-auto flex w-full max-w-[var(--content-max-width)] flex-col items-center px-2 py-5 text-center">
+      <div className="emoji-lg flex h-11 w-11 items-center justify-center rounded-xl bg-[var(--accent-dim)] text-[var(--accent)]">
         {definition.emoji}
       </div>
-      <p className="type-label mt-3 text-[var(--accent)]">{t(definition.titleKey)}</p>
-      <h1 className="type-page-title mt-1 text-[var(--text-primary)]">{t('mainArea.welcomeTitle')}</h1>
-      <p className="type-body mt-2 max-w-2xl text-[var(--text-secondary)]">{workspaceT(definition.descriptionKey)}</p>
+      <p className="type-support mt-2 text-[var(--accent)]">{t(definition.titleKey)}</p>
+      <h1 className="type-page-title mt-0.5 text-[var(--text-primary)]">{t('mainArea.welcomeTitle')}</h1>
+      <p className="type-support mt-1 max-w-xl text-[var(--text-secondary)]">{workspaceT(definition.descriptionKey)}</p>
 
-      <div className="mt-6 grid w-full grid-cols-1 gap-3 sm:grid-cols-2">
+      <div className="mt-5 grid w-full grid-cols-1 gap-2 sm:grid-cols-2">
         {definition.starters.map((starter, index) => (
           <button
             key={starter.promptKey}
             type="button"
             data-testid="assistant-starter"
             onClick={() => onSelectPrompt(workspaceT(starter.promptKey))}
-            className="group flex min-h-24 items-start gap-3 rounded-xl border border-[var(--border)] bg-[var(--bg-secondary)] p-4 text-left transition-colors hover:border-[var(--accent)] hover:bg-[var(--accent-dim)] focus-visible:outline-none glow-focus"
+            className="group flex min-h-14 items-center gap-3 rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-2.5 text-left transition-colors hover:border-[var(--accent)] hover:bg-[var(--accent-dim)] focus-visible:outline-none glow-focus"
           >
             <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--bg-tertiary)] text-[var(--accent)]">
               {index === 0 ? (
@@ -51,9 +51,6 @@ export default function AssistantWorkspaceWelcome({
             </span>
             <span className="min-w-0">
               <span className="type-label block text-[var(--text-primary)]">{workspaceT(starter.titleKey)}</span>
-              <span className="type-support mt-1 block text-[var(--text-secondary)]">
-                {workspaceT(starter.descriptionKey)}
-              </span>
             </span>
           </button>
         ))}

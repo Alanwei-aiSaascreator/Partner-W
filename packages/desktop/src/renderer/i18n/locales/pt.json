@@ -68,8 +68,8 @@
     "locateMessage": "Ir para a mensagem que criou {{name}}",
     "missing": "Arquivo ausente",
     "open": "Abrir",
-    "refresh": "Atualizar resultados",
     "recoveryHint": "Gere o arquivo novamente ou restaure-o no espaço de trabalho.",
+    "refresh": "Atualizar resultados",
     "saveAs": "Salvar como",
     "saved": "Cópia salva",
     "showInFolder": "Mostrar na pasta",
@@ -689,6 +689,12 @@
     "phonePlaceholder": "Telefone",
     "privacyPolicy": "Política de Privacidade",
     "privacyUrl": "https://www.rongyinghudong.com/privacy.html",
+    "purposes": {
+      "content": "Content creation",
+      "ecommerce": "E-commerce",
+      "office": "Office work",
+      "research": "Study and research"
+    },
     "rateLimited": "Muitas solicitações, tente novamente em {{seconds}}s",
     "resend": "Reenviar",
     "resendIn": "Reenviar em {{seconds}}s",

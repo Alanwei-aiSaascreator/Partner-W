@@ -1,7 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
-import { ArrowRight, CheckCircle2, HardDrive, Loader2, Phone, ShieldCheck, Sparkles } from 'lucide-react';
+import {
+  ArrowRight,
+  BriefcaseBusiness,
+  CheckCircle2,
+  GraduationCap,
+  HardDrive,
+  Loader2,
+  PenLine,
+  Phone,
+  ShieldCheck,
+  ShoppingBag,
+  Sparkles,
+} from 'lucide-react';
 import logo from '@/assets/logo.png';
 import { motion as motionPresets } from '@/styles/design-tokens';
 import { cn } from '@/lib/utils';
@@ -10,6 +22,14 @@ import { Button } from '@/components/ui/button';
 import GuideMascot, { type GuideMascotPose } from '@/components/GuideMascot';
 
 const RESEND_SECONDS = 60;
+const LOGIN_PURPOSE_STORAGE_KEY = 'rongying-login-purpose';
+const LOGIN_PURPOSES = [
+  { id: 'content', icon: PenLine },
+  { id: 'office', icon: BriefcaseBusiness },
+  { id: 'ecommerce', icon: ShoppingBag },
+  { id: 'research', icon: GraduationCap },
+] as const;
+type LoginPurpose = (typeof LOGIN_PURPOSES)[number]['id'];
 
 interface LoginProps {
   onSignedIn: () => void;
@@ -79,6 +99,10 @@ export default function Login({ onSignedIn }: LoginProps) {
   const [error, setError] = useState('');
   const [countdown, setCountdown] = useState(0);
   const [agreed, setAgreed] = useState(false);
+  const [purpose, setPurpose] = useState<LoginPurpose | null>(() => {
+    const saved = window.localStorage.getItem(LOGIN_PURPOSE_STORAGE_KEY);
+    return LOGIN_PURPOSES.some((item) => item.id === saved) ? (saved as LoginPurpose) : null;
+  });
   const [mascotPose, setMascotPose] = useState<GuideMascotPose>('idle');
   const codeInputRef = useRef<HTMLInputElement>(null);
 
@@ -170,6 +194,11 @@ export default function Login({ onSignedIn }: LoginProps) {
   const inputClass =
     'w-full rounded-lg border border-[var(--border)] bg-[var(--bg-input)] px-4 py-2.5 type-body text-[var(--text-primary)] placeholder:text-[var(--text-muted)] outline-none transition-colors focus:border-[var(--accent)] disabled:opacity-60';
 
+  const selectPurpose = (nextPurpose: LoginPurpose) => {
+    setPurpose(nextPurpose);
+    window.localStorage.setItem(LOGIN_PURPOSE_STORAGE_KEY, nextPurpose);
+  };
+
   return (
     <div className="flex h-screen overflow-y-auto bg-[var(--surface-onboarding-page)] text-[var(--text-primary)] lg:overflow-hidden">
       <div className="titlebar-drag fixed top-0 left-0 right-0 h-8 z-50" />
@@ -194,6 +223,30 @@ export default function Login({ onSignedIn }: LoginProps) {
           <h2 className="mt-3 max-w-lg text-[clamp(2rem,4vw,3.6rem)] font-semibold leading-[1.08] tracking-[-0.035em] text-[var(--text-primary)]">
             {t('assistantWorkspaces.compass.description')}
           </h2>
+          <div className="mt-6 grid max-w-lg grid-cols-2 gap-2">
+            {LOGIN_PURPOSES.map((item) => {
+              const Icon = item.icon;
+              const selected = purpose === item.id;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  data-login-purpose={item.id}
+                  aria-pressed={selected}
+                  onClick={() => selectPurpose(item.id)}
+                  className={cn(
+                    'flex h-11 items-center gap-2.5 rounded-lg border px-3 type-label transition-colors focus-visible:outline-none glow-focus',
+                    selected
+                      ? 'border-[var(--accent)] bg-[var(--accent-dim)] text-[var(--accent)]'
+                      : 'border-[var(--border)] bg-[var(--bg-elevated)] text-[var(--text-secondary)] hover:border-[var(--border-accent)] hover:text-[var(--text-primary)]',
+                  )}
+                >
+                  <Icon size={16} aria-hidden="true" />
+                  {t(`login.purposes.${item.id}`)}
+                </button>
+              );
+            })}
+          </div>
           <div className="mt-7 max-w-md rounded-xl bg-[var(--bg-elevated)] px-4 py-3 text-sm leading-6 text-[var(--text-onboarding-muted)]">
             {t('fileBrowser.workspaceAccessDescription')}
           </div>

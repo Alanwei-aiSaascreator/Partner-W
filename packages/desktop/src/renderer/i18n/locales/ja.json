@@ -68,8 +68,8 @@
     "locateMessage": "{{name}} を作成したメッセージへ移動",
     "missing": "ファイルが見つかりません",
     "open": "開く",
-    "refresh": "成果物を更新",
     "recoveryHint": "ファイルを再生成するか、ワークスペースに戻してから操作してください。",
+    "refresh": "成果物を更新",
     "saveAs": "名前を付けて保存",
     "saved": "コピーを保存しました",
     "showInFolder": "フォルダーで表示",
@@ -689,6 +689,12 @@
     "phonePlaceholder": "電話番号",
     "privacyPolicy": "プライバシーポリシー",
     "privacyUrl": "https://www.rongyinghudong.com/privacy.html",
+    "purposes": {
+      "content": "Content creation",
+      "ecommerce": "E-commerce",
+      "office": "Office work",
+      "research": "Study and research"
+    },
     "rateLimited": "送信が多すぎます。{{seconds}} 秒后再試してください",
     "resend": "再送信",
     "resendIn": "{{seconds}} 秒後に再送信できます",

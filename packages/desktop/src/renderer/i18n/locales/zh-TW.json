@@ -68,8 +68,8 @@
     "locateMessage": "前往產生 {{name}} 的訊息",
     "missing": "檔案已遺失",
     "open": "開啟",
-    "refresh": "重新整理成果",
     "recoveryHint": "請重新產生此檔案，或將它還原到工作區後再操作。",
+    "refresh": "重新整理成果",
     "saveAs": "另存新檔",
     "saved": "副本已儲存",
     "showInFolder": "開啟檔案位置",
@@ -626,7 +626,7 @@
     "typeFiles": "檔案",
     "typeImages": "圖片",
     "typeOther": "其他",
-    "workspaceAccessDescription": "助手預設查看目前工作區和你主動加入的檔案。需要存取電腦其他位置、呼叫電腦工具或將檔案儲存到指定位置時，會先說明操作內容並由你確認。",
+    "workspaceAccessDescription": "只使用目前任務和你加入的檔案；存取其他位置前會先徵求確認。",
     "workspaceAccessTitle": "目前可存取的資料"
   },
   "filePreview": {
@@ -689,6 +689,12 @@
     "phonePlaceholder": "手機號",
     "privacyPolicy": "隱私政策",
     "privacyUrl": "https://www.rongyinghudong.com/privacy.html",
+    "purposes": {
+      "content": "內容創作",
+      "ecommerce": "電商營運",
+      "office": "辦公提效",
+      "research": "學習研究"
+    },
     "rateLimited": "傳送過於頻繁，請 {{seconds}} 秒後再試",
     "resend": "重新發送",
     "resendIn": "{{seconds}} 秒後可重新發送",

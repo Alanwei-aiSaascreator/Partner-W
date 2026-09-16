@@ -68,8 +68,8 @@
     "locateMessage": "定位到生成 {{name}} 的消息",
     "missing": "文件已缺失",
     "open": "打开",
-    "refresh": "刷新成果",
     "recoveryHint": "请重新生成该文件，或将它恢复到工作区后再操作。",
+    "refresh": "刷新成果",
     "saveAs": "另存为",
     "saved": "副本已保存",
     "showInFolder": "打开所在位置",
@@ -86,7 +86,7 @@
   },
   "assistantWorkspaces": {
     "compass": {
-      "description": "综合任务入口。直接描述目标，我会判断任务类型并调用合适的专业助手。",
+      "description": "说出你想完成的事，或从下面选一个开始。",
       "starters": {
         "1": {
           "description": "拆解目标、步骤、时间与交付物",
@@ -626,7 +626,7 @@
     "typeFiles": "文件",
     "typeImages": "图片",
     "typeOther": "其他",
-    "workspaceAccessDescription": "助手默认查看当前工作区和你主动添加的文件。需要访问电脑其他位置、调用电脑工具或保存文件到指定位置时，会先说明操作内容并由你确认。",
+    "workspaceAccessDescription": "只使用当前任务和你添加的文件；访问其他位置前会征求确认。",
     "workspaceAccessTitle": "当前可访问的数据"
   },
   "filePreview": {
@@ -689,6 +689,12 @@
     "phonePlaceholder": "手机号",
     "privacyPolicy": "隐私政策",
     "privacyUrl": "https://www.rongyinghudong.com/privacy.html",
+    "purposes": {
+      "content": "内容创作",
+      "ecommerce": "电商运营",
+      "office": "办公提效",
+      "research": "学习研究"
+    },
     "rateLimited": "发送太频繁，请 {{seconds}} 秒后再试",
     "resend": "重新发送",
     "resendIn": "{{seconds}} 秒后可重新发送",

@@ -29,7 +29,7 @@ function render(ui: ReactElement): { container: HTMLDivElement; unmount: () => v
 }
 
 describe('AssistantWorkspaceWelcome', () => {
-  it('renders only the selected assistant identity and its four starters', () => {
+  it('keeps the selected assistant welcome concise and exposes four starter actions', () => {
     const definition = resolveAssistantWorkspace('rongying-content')!;
     const onSelectPrompt = vi.fn();
     const onAddFiles = vi.fn();
@@ -50,6 +50,7 @@ describe('AssistantWorkspaceWelcome', () => {
     expect(container.textContent).not.toContain('assistantWorkspaces.ecommerce.description');
     const starterButtons = container.querySelectorAll('[data-testid="assistant-starter"]');
     expect(starterButtons).toHaveLength(4);
+    expect(container.textContent).not.toContain('assistantWorkspaces.content.starters.1.description');
     expect(container.textContent).toContain('DeepSeek V4 Flash');
     expect(container.textContent).toContain('startupReadiness.aiReady');
 
