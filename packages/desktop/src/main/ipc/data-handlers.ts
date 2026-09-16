@@ -1,8 +1,9 @@
-import { ipcMain } from 'electron';
+import { BrowserWindow, ipcMain } from 'electron';
 import { and, eq, desc } from 'drizzle-orm';
 import { getDb, isDbReady } from '../db/index.js';
 import { tasks, messages, artifacts, taskRooms, taskRoomSessions, teams, teamAgents } from '../db/schema.js';
 import { autoExtractArtifacts } from '../artifact/auto-extract.js';
+import { captureTaskArtifactBaseline, reconcileTaskArtifacts, type ArtifactBaseline } from '../artifact/reconcile.js';
 import type { MessageAttachment } from '@clawwork/shared';
 import { getWorkspacePath } from '../workspace/config.js';
 import { getGatewayClient } from '../ws/index.js';
@@ -21,6 +22,89 @@ function parseTeamAgentSkills(raw: string | null): string[] {
   } catch {
     return [];
   }
+}
+
+interface ArtifactRunContext {
+  baseline: Promise<ArtifactBaseline>;
+  runStartedAt: string;
+}
+
+const artifactRuns = new Map<string, ArtifactRunContext>();
+const reconciledAssistantMessages = new Set<string>();
+
+function artifactRunKey(taskId: string, sessionKey: string): string {
+  return `${taskId}\0${sessionKey}`;
+}
+
+function hasRunningToolCall(toolCalls: unknown[] | undefined): boolean {
+  return Boolean(
+    toolCalls?.some(
+      (value) =>
+        value !== null &&
+        typeof value === 'object' &&
+        ['pending', 'running'].includes(String((value as { status?: unknown }).status ?? '')),
+    ),
+  );
+}
+
+function captureArtifactRun(workspacePath: string, taskId: string, sessionKey: string, runStartedAt: string): void {
+  const baseline = captureTaskArtifactBaseline({ workspacePath, taskId }).catch((error: unknown) => {
+    console.error('[artifact_baseline_failed]', { taskId, error });
+    throw error;
+  });
+  // Attach a rejection handler immediately. The final assistant write may never
+  // arrive (cancel/disconnect), and an unobserved baseline rejection must not
+  // become an unhandled process rejection.
+  void baseline.catch(() => undefined);
+  artifactRuns.set(artifactRunKey(taskId, sessionKey), { baseline, runStartedAt });
+}
+
+function finalizeAssistantArtifacts(input: {
+  workspacePath: string;
+  taskId: string;
+  sessionKey: string;
+  messageId: string;
+  content: string;
+  attachments?: MessageAttachment[];
+  gatewayHttpBase?: string;
+}): void {
+  if (reconciledAssistantMessages.has(input.messageId)) return;
+  const key = artifactRunKey(input.taskId, input.sessionKey);
+  const run = artifactRuns.get(key);
+  if (!run) return;
+  reconciledAssistantMessages.add(input.messageId);
+  void (async () => {
+    try {
+      await autoExtractArtifacts({
+        workspacePath: input.workspacePath,
+        taskId: input.taskId,
+        messageId: input.messageId,
+        content: input.content,
+        attachments: input.attachments,
+        gatewayHttpBase: input.gatewayHttpBase,
+      });
+    } catch (error) {
+      console.error('[auto-extract]', error);
+    }
+    try {
+      const baseline = await run.baseline;
+      const result = await reconcileTaskArtifacts({
+        workspacePath: input.workspacePath,
+        taskId: input.taskId,
+        messageId: input.messageId,
+        baseline,
+        runStartedAt: run.runStartedAt,
+      });
+      for (const artifact of result.saved) {
+        for (const win of BrowserWindow.getAllWindows()) win.webContents.send('artifact:saved', artifact);
+      }
+      artifactRuns.delete(key);
+      reconciledAssistantMessages.delete(input.messageId);
+    } catch (error) {
+      reconciledAssistantMessages.delete(input.messageId);
+      console.error('[artifact_reconcile_failed]', { taskId: input.taskId, messageId: input.messageId, error });
+    }
+  })();
 }
 
 export function registerDataHandlers(): void {
@@ -196,18 +280,39 @@ export function registerDataHandlers(): void {
           )
           .get();
         const persistedMessageId = persisted?.id ?? msg.id;
-        if (msg.role === 'assistant' && (msg.content.length > 0 || (msg.attachments?.length ?? 0) > 0)) {
-          const workspacePath = getWorkspacePath();
-          if (workspacePath) {
+        const workspacePath = getWorkspacePath();
+        if (workspacePath && msg.role === 'user') {
+          captureArtifactRun(workspacePath, msg.taskId, resolvedSessionKey, msg.timestamp);
+        }
+        if (
+          workspacePath &&
+          msg.role === 'assistant' &&
+          !hasRunningToolCall(msg.toolCalls) &&
+          (msg.content.length > 0 || (msg.attachments?.length ?? 0) > 0)
+        ) {
+          const run = artifactRuns.get(artifactRunKey(msg.taskId, resolvedSessionKey));
+          if (run) {
             const taskRow = db.select({ gid: tasks.gatewayId }).from(tasks).where(eq(tasks.id, msg.taskId)).get();
             const gatewayHttpBase = taskRow ? getGatewayClient(taskRow.gid)?.httpBase : undefined;
+            finalizeAssistantArtifacts({
+              workspacePath,
+              taskId: msg.taskId,
+              sessionKey: resolvedSessionKey,
+              messageId: persistedMessageId,
+              content: msg.content,
+              attachments: msg.attachments as MessageAttachment[] | undefined,
+              gatewayHttpBase,
+            });
+          } else {
+            // Legacy/history hydration still needs attachment and fenced-code
+            // extraction. Reconciliation deliberately fails closed without a
+            // trusted user-turn baseline so old workspace files are not claimed.
             autoExtractArtifacts({
               workspacePath,
               taskId: msg.taskId,
               messageId: persistedMessageId,
               content: msg.content,
               attachments: msg.attachments as MessageAttachment[] | undefined,
-              gatewayHttpBase,
             }).catch((err: unknown) => console.error('[auto-extract]', err));
           }
         }

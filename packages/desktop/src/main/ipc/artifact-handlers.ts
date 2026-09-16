@@ -11,6 +11,7 @@ import { saveArtifact, saveArtifactFromBuffer } from '../artifact/save.js';
 import { getWorkspacePath } from '../workspace/config.js';
 import { searchArtifacts } from '../db/search.js';
 import { safeFetch } from '../net/safe-fetch.js';
+import { getArtifactAvailability } from '../artifact/reconcile.js';
 
 interface SaveParams {
   taskId: string;
@@ -69,7 +70,14 @@ export function registerArtifactHandlers(): void {
       const rows = params.taskId
         ? db.select().from(artifacts).where(eq(artifacts.taskId, params.taskId)).all()
         : db.select().from(artifacts).all();
-      return { ok: true, result: rows };
+      const workspacePath = getWorkspacePath();
+      return {
+        ok: true,
+        result: rows.map((row) => ({
+          ...row,
+          availability: workspacePath ? getArtifactAvailability(row.localPath, workspacePath) : 'missing',
+        })),
+      };
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'unknown error';
       return { ok: false, error: msg };
@@ -83,7 +91,14 @@ export function registerArtifactHandlers(): void {
       if (rows.length === 0) {
         return { ok: false, error: 'artifact not found' };
       }
-      return { ok: true, result: rows[0] };
+      const workspacePath = getWorkspacePath();
+      return {
+        ok: true,
+        result: {
+          ...rows[0],
+          availability: workspacePath ? getArtifactAvailability(rows[0].localPath, workspacePath) : 'missing',
+        },
+      };
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'unknown error';
       return { ok: false, error: msg };

@@ -177,6 +177,20 @@ function openDatabaseAt(workspacePath: string): void {
     WHERE source_key <> ''
   `);
 
+  // Legacy releases could persist the same task-relative output more than once
+  // (for example after replaying a completed assistant message). Keep the oldest
+  // row, then enforce task-path identity for reconciliation and concurrent runs.
+  sqlite.exec(`
+    DELETE FROM artifacts
+    WHERE rowid NOT IN (
+      SELECT MIN(rowid) FROM artifacts GROUP BY task_id, local_path
+    )
+  `);
+  sqlite.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS artifacts_task_local_path
+    ON artifacts(task_id, local_path)
+  `);
+
   sqlite.exec(`
     CREATE TABLE IF NOT EXISTS teams (
       id TEXT PRIMARY KEY,

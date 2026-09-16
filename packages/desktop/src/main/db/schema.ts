@@ -104,21 +104,25 @@ export const teamAgents = sqliteTable(
   (table) => [primaryKey({ columns: [table.teamId, table.agentId] })],
 );
 
-export const artifacts = sqliteTable('artifacts', {
-  id: text('id').primaryKey(),
-  taskId: text('task_id')
-    .notNull()
-    .references(() => tasks.id),
-  messageId: text('message_id')
-    .notNull()
-    .references(() => messages.id),
-  type: text('type').notNull().default('file'),
-  name: text('name').notNull(),
-  filePath: text('file_path').notNull(),
-  localPath: text('local_path').notNull(),
-  mimeType: text('mime_type').notNull().default(''),
-  size: integer('size').notNull().default(0),
-  sourceKey: text('source_key').notNull().default(''),
-  contentText: text('content_text').notNull().default(''),
-  createdAt: text('created_at').notNull(),
-});
+export const artifacts = sqliteTable(
+  'artifacts',
+  {
+    id: text('id').primaryKey(),
+    taskId: text('task_id')
+      .notNull()
+      .references(() => tasks.id),
+    messageId: text('message_id')
+      .notNull()
+      .references(() => messages.id),
+    type: text('type').notNull().default('file'),
+    name: text('name').notNull(),
+    filePath: text('file_path').notNull(),
+    localPath: text('local_path').notNull(),
+    mimeType: text('mime_type').notNull().default(''),
+    size: integer('size').notNull().default(0),
+    sourceKey: text('source_key').notNull().default(''),
+    contentText: text('content_text').notNull().default(''),
+    createdAt: text('created_at').notNull(),
+  },
+  (table) => [uniqueIndex('artifacts_task_local_path').on(table.taskId, table.localPath)],
+);

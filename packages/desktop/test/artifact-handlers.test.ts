@@ -7,6 +7,7 @@ const fromMock = vi.fn(() => ({ where: whereMock, all: allMock }));
 const selectMock = vi.fn(() => ({ from: fromMock }));
 const getDbMock = vi.fn(() => ({ select: selectMock }));
 const autoExtractArtifactsMock = vi.fn();
+const getArtifactAvailabilityMock = vi.fn(() => 'available');
 
 vi.mock('electron', () => ({
   ipcMain: {
@@ -25,7 +26,7 @@ vi.mock('../src/main/db/index.js', () => ({
 }));
 
 vi.mock('../src/main/workspace/config.js', () => ({
-  getWorkspacePath: vi.fn(() => null),
+  getWorkspacePath: vi.fn(() => '/workspace'),
 }));
 
 vi.mock('../src/main/artifact/save.js', () => ({
@@ -35,6 +36,10 @@ vi.mock('../src/main/artifact/save.js', () => ({
 
 vi.mock('../src/main/artifact/auto-extract.js', () => ({
   autoExtractArtifacts: autoExtractArtifactsMock,
+}));
+
+vi.mock('../src/main/artifact/reconcile.js', () => ({
+  getArtifactAvailability: getArtifactAvailabilityMock,
 }));
 
 vi.mock('../src/main/net/safe-fetch.js', () => ({
@@ -81,8 +86,12 @@ describe('artifact handlers', () => {
 
     await expect(listArtifacts?.({}, { taskId: 'task-1' })).resolves.toEqual({
       ok: true,
-      result: [expect.objectContaining({ id: 'a1' }), expect.objectContaining({ id: 'a2' })],
+      result: [
+        expect.objectContaining({ id: 'a1', availability: 'available' }),
+        expect.objectContaining({ id: 'a2', availability: 'available' }),
+      ],
     });
+    expect(getArtifactAvailabilityMock).toHaveBeenCalledTimes(2);
     expect(autoExtractArtifactsMock).not.toHaveBeenCalled();
   });
 });
