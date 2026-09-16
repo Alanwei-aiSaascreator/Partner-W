@@ -1,10 +1,136 @@
 import { describe, expect, it } from 'vitest';
+import i18n from '../src/renderer/i18n';
+import expectedPresetCopy from './fixtures/assistant-task-preset-copy.json';
 import {
   ASSISTANT_ID_BY_WORKSPACE,
   ASSISTANT_TASK_IDS,
   ASSISTANT_TASK_PRESETS,
   resolveAssistantTaskPresets,
 } from '../src/renderer/lib/assistant-task-presets';
+
+const EXPECTED_PRESET_ROOTS = [
+  ['compass:goal-breakdown', 'assistantWorkspaces.compass.starters.1'],
+  ['compass:execution-plan', 'assistantWorkspaces.compass.starters.2'],
+  ['compass:option-comparison', 'assistantWorkspaces.compass.starters.3'],
+  ['compass:comprehensive-analysis', 'assistantWorkspaces.compass.starters.4'],
+  ['content:topic-planning', 'assistantWorkspaces.content.starters.1'],
+  ['content:long-form-writing', 'assistantWorkspaces.content.starters.2'],
+  ['content:short-video-script', 'assistantWorkspaces.content.starters.3'],
+  ['content:rewrite-polish', 'assistantWorkspaces.content.starters.4'],
+  ['video:shooting-script', 'assistantWorkspaces.video.starters.1'],
+  ['video:storyboard', 'assistantWorkspaces.video.starters.2'],
+  ['video:editing-rhythm', 'assistantWorkspaces.video.starters.3'],
+  ['video:title-cover', 'assistantWorkspaces.video.starters.4'],
+  ['ecommerce:product-copy', 'assistantWorkspaces.ecommerce.starters.1'],
+  ['ecommerce:campaign-plan', 'assistantWorkspaces.ecommerce.starters.2'],
+  ['ecommerce:competitor-analysis', 'assistantWorkspaces.ecommerce.starters.3'],
+  ['ecommerce:review-customer-service', 'assistantWorkspaces.ecommerce.starters.4'],
+  ['office:document-writing', 'assistantWorkspaces.office.starters.1'],
+  ['office:spreadsheet-analysis', 'assistantWorkspaces.office.starters.2'],
+  ['office:meeting-minutes', 'assistantWorkspaces.office.starters.3'],
+  ['office:presentation-outline', 'assistantWorkspaces.office.starters.4'],
+  ['research:source-organization', 'assistantWorkspaces.research.starters.1'],
+  ['research:viewpoint-comparison', 'assistantWorkspaces.research.starters.2'],
+  ['research:learning-plan', 'assistantWorkspaces.research.starters.3'],
+  ['research:research-report', 'assistantWorkspaces.research.starters.4'],
+  ['family:travel-plan', 'assistantWorkspaces.family.starters.1'],
+  ['family:family-checklist', 'assistantWorkspaces.family.starters.2'],
+  ['family:purchase-comparison', 'assistantWorkspaces.family.starters.3'],
+  ['family:schedule-plan', 'assistantWorkspaces.family.starters.4'],
+] as const;
+const COPY_FIELDS = ['title', 'description', 'prompt', 'materialHint', 'output'] as const;
+type CopyField = (typeof COPY_FIELDS)[number];
+type PresetCopy = Record<CopyField, string>;
+type LocalePresetCopy = Record<string, PresetCopy>;
+
+const COPY_PROFILE_BY_LOCALE = {
+  zh: 'zh',
+  'zh-TW': 'zh-TW',
+  en: 'en',
+  de: 'en',
+  es: 'en',
+  fr: 'en',
+  ja: 'en',
+  ko: 'en',
+  pt: 'en',
+} as const;
+
+const ZH_TW_REMAPPED_METADATA_MARKERS = {
+  'compass:execution-plan': {
+    materialHint: ['目標', '可用資源'],
+    output: ['執行計畫', '風險預案'],
+  },
+  'compass:comprehensive-analysis': {
+    materialHint: ['待分析的問題', '背景資料'],
+    output: ['現況判斷', '行動建議'],
+  },
+  'content:short-video-script': {
+    materialHint: ['影片時長', '產品資訊'],
+    output: ['短影音腳本', '畫面提示'],
+  },
+  'content:rewrite-polish': {
+    materialHint: ['原文', '發布平台'],
+    output: ['潤色稿', '修改說明'],
+  },
+  'video:editing-rhythm': {
+    materialHint: ['腳本或素材', '參考節奏'],
+    output: ['剪輯節奏', '情緒曲線'],
+  },
+  'video:title-cover': {
+    materialHint: ['影片主題', '封面素材'],
+    output: ['標題備選', '視覺重點'],
+  },
+  'ecommerce:campaign-plan': {
+    materialHint: ['活動目標', '歷史資料'],
+    output: ['通路動作', '檢討指標'],
+  },
+  'ecommerce:competitor-analysis': {
+    materialHint: ['競品資料', '使用者評價'],
+    output: ['評價差異', '競品分析報告'],
+  },
+  'ecommerce:review-customer-service': {
+    materialHint: ['店鋪資訊', '使用者評價'],
+    output: ['評價問題分類', '客服話術'],
+  },
+  'family:travel-plan': {
+    materialHint: ['家庭成員', '旅遊偏好'],
+    output: ['旅行路線', '預訂事項'],
+  },
+  'family:family-checklist': {
+    materialHint: ['家庭事項', '特殊需求'],
+    output: ['家庭清單', '檢查狀態'],
+  },
+  'family:purchase-comparison': {
+    materialHint: ['候選商品', '售後條件'],
+    output: ['購買選項比較', '推薦結論'],
+  },
+  'research:source-organization': {
+    materialHint: ['資料檔案或連結', '研究範圍'],
+    output: ['資料目錄', '可靠性說明'],
+  },
+  'research:research-report': {
+    materialHint: ['研究問題', '分析範圍'],
+    output: ['研究背景', '結論和建議'],
+  },
+} as const;
+
+function readLocalePresetCopy(locale: keyof typeof COPY_PROFILE_BY_LOCALE): LocalePresetCopy {
+  const t = i18n.getFixedT(locale);
+  return Object.fromEntries(
+    EXPECTED_PRESET_ROOTS.map(([id, root]) => [
+      id,
+      Object.fromEntries(COPY_FIELDS.map((field) => [field, t(`${root}.${field}`)])) as PresetCopy,
+    ]),
+  );
+}
+
+function validatePresetCopies(locale: string, actual: LocalePresetCopy, expected: LocalePresetCopy): string[] {
+  return EXPECTED_PRESET_ROOTS.flatMap(([id]) =>
+    COPY_FIELDS.filter((field) => actual[id]?.[field] !== expected[id]?.[field]).map(
+      (field) => `${locale}: ${id} ${field}`,
+    ),
+  );
+}
 
 describe('assistant task presets', () => {
   it('defines the stable task ids for all seven built-in assistants', () => {
@@ -80,6 +206,64 @@ describe('assistant task presets', () => {
         expect(preset.outputKey).toBe(`${keyPrefix}.output`);
         expect(preset.followUpPromptKey).toBe(`${keyPrefix}.followUpPrompt`);
       }
+    }
+  });
+
+  it('maps every stable id to the intended five-field locale slot', () => {
+    expect(
+      ASSISTANT_TASK_PRESETS.map(({ id, titleKey, descriptionKey, promptKey, materialHintKey, outputKey }) => ({
+        id,
+        titleKey,
+        descriptionKey,
+        promptKey,
+        materialHintKey,
+        outputKey,
+      })),
+    ).toEqual(
+      EXPECTED_PRESET_ROOTS.map(([id, root]) => ({
+        id,
+        titleKey: `${root}.title`,
+        descriptionKey: `${root}.description`,
+        promptKey: `${root}.prompt`,
+        materialHintKey: `${root}.materialHint`,
+        outputKey: `${root}.output`,
+      })),
+    );
+  });
+
+  it('matches exact five-field copy for all 28 canonical ids in all nine locales', () => {
+    for (const [locale, profile] of Object.entries(COPY_PROFILE_BY_LOCALE) as Array<
+      [keyof typeof COPY_PROFILE_BY_LOCALE, keyof typeof expectedPresetCopy]
+    >) {
+      const actual = readLocalePresetCopy(locale);
+      const expected = expectedPresetCopy[profile] as LocalePresetCopy;
+      expect(validatePresetCopies(locale, actual, expected), `${locale} exact preset copy`).toEqual([]);
+    }
+  });
+
+  it('keeps remapped zh-TW metadata in natural Traditional Chinese instead of English fallback', () => {
+    const actual = readLocalePresetCopy('zh-TW');
+    const english = readLocalePresetCopy('en');
+
+    for (const [id, fields] of Object.entries(ZH_TW_REMAPPED_METADATA_MARKERS)) {
+      for (const field of ['materialHint', 'output'] as const) {
+        expect(actual[id][field], `zh-TW: ${id} ${field} English fallback`).not.toBe(english[id][field]);
+        for (const marker of fields[field]) {
+          expect(actual[id][field], `zh-TW: ${id} ${field} missing ${marker}`).toContain(marker);
+        }
+      }
+    }
+  });
+
+  it('detects any canonical field copied from another preset', () => {
+    const expected = expectedPresetCopy.en as LocalePresetCopy;
+    const targetId = 'content:short-video-script';
+    const sourceId = 'family:travel-plan';
+
+    for (const field of COPY_FIELDS) {
+      const mutated = structuredClone(expected);
+      mutated[targetId][field] = mutated[sourceId][field];
+      expect(validatePresetCopies('en', mutated, expected), `swapped ${field}`).toEqual([`en: ${targetId} ${field}`]);
     }
   });
 

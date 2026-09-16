@@ -1,0 +1,596 @@
+{
+  "zh": {
+    "compass:goal-breakdown": {
+      "title": "目标拆解",
+      "description": "拆解目标、步骤、时间与交付物",
+      "prompt": "请把【目标】拆解为可执行步骤，明确里程碑、优先级、截止时间和下一步行动。",
+      "materialHint": "目标描述、截止时间、当前进度和限制条件（可选）",
+      "output": "目标分解、阶段里程碑、优先级和下一步行动"
+    },
+    "compass:execution-plan": {
+      "title": "执行计划",
+      "description": "安排阶段、时间、负责人和检查点",
+      "prompt": "请为【目标】制定执行计划，拆分阶段任务，安排时间与负责人，并标出检查点、风险和调整条件。",
+      "materialHint": "目标、截止时间、可用资源、参与人员和限制条件（可选）",
+      "output": "分阶段执行计划、时间安排、责任分工、检查点和风险预案"
+    },
+    "compass:option-comparison": {
+      "title": "方案比较",
+      "description": "从成本、风险与效果给出建议",
+      "prompt": "请比较【方案 A】和【方案 B】。从成本、效果、风险和适用条件分析，并给出明确建议。",
+      "materialHint": "候选方案、预算、时间限制和最看重的判断标准（可选）",
+      "output": "方案对比、关键取舍、适用条件和有依据的建议"
+    },
+    "compass:comprehensive-analysis": {
+      "title": "综合分析",
+      "description": "综合目标、现状、证据、风险与建议",
+      "prompt": "请综合分析【问题】。先确认目标和背景，再从现状、证据、影响因素、风险与机会展开，并给出行动建议。",
+      "materialHint": "待分析的问题、背景资料、目标、数据和限制条件（可选）",
+      "output": "现状判断、关键证据、影响因素、风险机会和行动建议"
+    },
+    "content:topic-planning": {
+      "title": "选题策划",
+      "description": "确定受众、角度和内容系列",
+      "prompt": "围绕【主题】帮我策划选题。请先确认平台、受众和目标，再给出 10 个具体选题及推荐理由。",
+      "materialHint": "主题、平台、目标受众、账号定位和参考内容（可选）",
+      "output": "按主题分组的选题清单、切入角度和推荐理由"
+    },
+    "content:long-form-writing": {
+      "title": "长文写作",
+      "description": "撰写结构完整、可继续修改的长文",
+      "prompt": "请围绕【主题】撰写一篇【平台】长文。先确认受众、语气和篇幅，再交付包含标题、开头、正文结构与结尾引导的初稿。",
+      "materialHint": "主题、受众、发布平台、语气、篇幅和事实素材（可选）",
+      "output": "包含标题、开头、正文结构和结尾引导的长文初稿"
+    },
+    "content:short-video-script": {
+      "title": "短视频脚本",
+      "description": "设计开场、口播、画面与节奏",
+      "prompt": "请为【主题】写一份【平台及时长】短视频脚本，包括开场钩子、口播、画面提示、节奏和行动引导。",
+      "materialHint": "主题、平台、目标受众、视频时长、产品信息和参考内容（可选）",
+      "output": "包含开场钩子、口播、画面提示、节奏和行动引导的短视频脚本"
+    },
+    "content:rewrite-polish": {
+      "title": "改写润色",
+      "description": "保留原意并优化结构、语气和表达",
+      "prompt": "请优化并润色我提供的文案，保留事实和原意，重点改善标题、开头、结构、语气与表达节奏。",
+      "materialHint": "原文、发布平台、目标受众、目标语气和需要保留的事实（可选）",
+      "output": "保留原意的润色稿、修改说明和可选标题"
+    },
+    "video:shooting-script": {
+      "title": "拍摄脚本",
+      "description": "设计口播、画面和内容节奏",
+      "prompt": "请为【主题】写一份【平台及时长】拍摄脚本，包括开头、口播、画面提示和行动引导。",
+      "materialHint": "主题、平台、时长、人物、产品信息和拍摄条件（可选）",
+      "output": "按段落整理的口播、画面、动作、道具和时长建议"
+    },
+    "video:storyboard": {
+      "title": "分镜清单",
+      "description": "明确景别、机位、动作和时长",
+      "prompt": "请把我提供的脚本拆成分镜表，列出镜号、景别、画面、台词、机位、时长和转场。",
+      "materialHint": "脚本、参考视频、目标时长、画面比例和可用场景（可选）",
+      "output": "包含镜号、景别、机位、画面、台词、时长和转场的分镜表"
+    },
+    "video:editing-rhythm": {
+      "title": "剪辑节奏",
+      "description": "规划剪辑结构、时长分配和情绪变化",
+      "prompt": "请为【视频主题】设计剪辑节奏，按时间段规划内容结构、素材取舍、情绪变化、转场和节奏重点。",
+      "materialHint": "脚本或素材、发布平台、目标时长、受众和参考节奏（可选）",
+      "output": "分段时长、剪辑节奏、素材取舍、情绪曲线和转场建议"
+    },
+    "video:title-cover": {
+      "title": "标题封面",
+      "description": "生成标题方向、封面文案和视觉建议",
+      "prompt": "请为【视频主题】设计标题和封面方案，给出多组标题、封面文案、构图、视觉重点及测试建议。",
+      "materialHint": "视频主题、平台、目标受众、核心卖点和封面素材（可选）",
+      "output": "标题备选、封面文案、画面构图、视觉重点和测试建议"
+    },
+    "ecommerce:product-copy": {
+      "title": "商品文案",
+      "description": "撰写标题、卖点、场景和转化文案",
+      "prompt": "请为【商品】撰写商品文案。先确认目标人群、价格带和真实卖点，再输出标题、分层卖点、场景说明、证明信息和行动引导。",
+      "materialHint": "商品信息、目标人群、规格参数、真实卖点和证明材料（可选）",
+      "output": "商品标题、分层卖点、场景说明、证明信息和行动引导"
+    },
+    "ecommerce:campaign-plan": {
+      "title": "活动策划",
+      "description": "规划目标、节奏、渠道和执行清单",
+      "prompt": "请为【商品或店铺】制定【活动】策划方案，明确目标、人群、时间节奏、渠道动作、预算、库存风险和复盘指标。",
+      "materialHint": "活动目标、商品、预算、周期、渠道、库存和历史数据（可选）",
+      "output": "活动主题、目标人群、时间节奏、渠道动作、预算和复盘指标"
+    },
+    "ecommerce:competitor-analysis": {
+      "title": "竞品分析",
+      "description": "对比定位、价格、内容和用户评价",
+      "prompt": "请分析【竞品】。按定位、价格、卖点、页面内容和用户评价对比，并指出可利用的差异化机会。",
+      "materialHint": "自家商品、竞品资料、价格、页面内容和用户评价（可选）",
+      "output": "定位、价格、卖点、页面和评价差异的竞品分析报告"
+    },
+    "ecommerce:review-customer-service": {
+      "title": "评价与客服",
+      "description": "分析用户评价并整理客服应答",
+      "prompt": "请分析【商品或店铺】的用户评价，归纳高频问题和改进方向，并整理覆盖售前、异议、物流与售后的客服话术。",
+      "materialHint": "商品或店铺信息、用户评价、常见问题、物流和售后规则（可选）",
+      "output": "评价问题归类、改进建议和覆盖售前售后的客服话术"
+    },
+    "office:document-writing": {
+      "title": "文档撰写",
+      "description": "从现有资料生成正式文档",
+      "prompt": "请把我提供的资料整理成一份【文档类型】，先确认读者和用途，再输出清晰结构与正文初稿。",
+      "materialHint": "参考资料、文档类型、读者、用途、篇幅和格式要求（可选）",
+      "output": "清晰的文档结构、正文初稿和待确认问题"
+    },
+    "office:spreadsheet-analysis": {
+      "title": "表格分析",
+      "description": "清洗、分析和汇总业务数据",
+      "prompt": "请处理我提供的表格。先说明可读取的数据范围，再完成清洗、关键指标分析和汇总结论。",
+      "materialHint": "表格文件、字段说明、业务问题、时间范围和指标口径（可选）",
+      "output": "清洗说明、关键指标、异常项、分析结论和图表建议"
+    },
+    "office:meeting-minutes": {
+      "title": "会议纪要",
+      "description": "提取决策、责任人和截止时间",
+      "prompt": "请把会议记录整理成纪要，分为结论、待办、责任人、截止时间和仍需确认的问题。",
+      "materialHint": "会议录音转写、手写记录、参会人和会议议程（可选）",
+      "output": "会议结论、待办事项、负责人、截止时间和未决问题"
+    },
+    "office:presentation-outline": {
+      "title": "PPT 大纲",
+      "description": "构建提纲、要点和演示结构",
+      "prompt": "请为【汇报主题】制作汇报提纲，明确听众、目标和时长，并给出逐页要点与数据需求。",
+      "materialHint": "汇报主题、听众、时长、已有数据和品牌模板（可选）",
+      "output": "逐页目的、核心要点、证据需求和视觉建议"
+    },
+    "research:source-organization": {
+      "title": "资料梳理",
+      "description": "整理来源、主题、证据和待查问题",
+      "prompt": "请梳理我提供的【资料】。按主题整理来源、核心内容、证据出处和可靠性，并列出仍需核实的问题。",
+      "materialHint": "资料文件或链接、整理目的、研究范围和来源标准（可选）",
+      "output": "资料目录、主题摘要、证据出处、可靠性说明和待查问题"
+    },
+    "research:viewpoint-comparison": {
+      "title": "观点比较",
+      "description": "比较证据、分歧和适用条件",
+      "prompt": "请比较关于【问题】的不同观点，分别列出依据、争议点、适用条件和你的综合判断。",
+      "materialHint": "待比较的问题、主要观点、已有来源和判断标准（可选）",
+      "output": "证据对照、共识与分歧、适用条件和综合判断"
+    },
+    "research:learning-plan": {
+      "title": "学习计划",
+      "description": "设置阶段目标、材料和练习",
+      "prompt": "请为我制定【主题】学习计划。根据当前基础、可用时间和目标，安排阶段任务、资料与练习。",
+      "materialHint": "学习目标、当前基础、可用时间、截止日期和已有资料（可选）",
+      "output": "分阶段目标、每周任务、学习材料、练习和检查点"
+    },
+    "research:research-report": {
+      "title": "研究报告",
+      "description": "形成问题、方法、发现和结论完整的报告",
+      "prompt": "请围绕【研究问题】撰写研究报告，明确背景、方法、资料来源、主要发现、限制、结论和建议。",
+      "materialHint": "研究问题、资料来源、分析范围、读者和格式要求（可选）",
+      "output": "研究背景、方法、证据、发现、限制、结论和建议"
+    },
+    "family:travel-plan": {
+      "title": "旅行规划",
+      "description": "安排路线、时间、费用和备选方案",
+      "prompt": "请规划一次【目的地】家庭旅行。先确认成员、日期和预算，再给出路线、时间、费用、预订事项和备选方案。",
+      "materialHint": "目的地、家庭成员、日期、预算、出行偏好和限制（可选）",
+      "output": "旅行路线、时间安排、费用、预订事项和备选方案"
+    },
+    "family:family-checklist": {
+      "title": "家庭清单",
+      "description": "整理物品、分工、时间和完成状态",
+      "prompt": "请把【家庭事项】整理成家庭清单，按类别列出物品或任务、负责人、时间节点和完成检查项。",
+      "materialHint": "家庭事项、成员、截止时间、现有物品和特殊需求（可选）",
+      "output": "按类别整理的家庭清单、负责人、时间节点和检查状态"
+    },
+    "family:purchase-comparison": {
+      "title": "购买比较",
+      "description": "比较价格、质量、风险和适用场景",
+      "prompt": "请比较【商品 A】和【商品 B】的购买选择，从价格、质量、功能、评价、售后和适用场景分析并给出建议。",
+      "materialHint": "候选商品、预算、使用需求、参数、评价和售后条件（可选）",
+      "output": "购买选项对比、关键取舍、风险提示和推荐结论"
+    },
+    "family:schedule-plan": {
+      "title": "日程安排",
+      "description": "整理分工、提醒和执行清单",
+      "prompt": "请把【家庭事务】整理成日程安排，明确时间、家庭成员分工、准备物品和提醒节点。",
+      "materialHint": "家庭成员、固定事项、可用时段、优先级和个人偏好（可选）",
+      "output": "按日期和成员整理的安排、冲突提示、缓冲时间和提醒"
+    }
+  },
+  "zh-TW": {
+    "compass:goal-breakdown": {
+      "title": "Goal breakdown",
+      "description": "Break down goals, steps, timing, and deliverables",
+      "prompt": "Break down [goal] into executable steps with milestones, priorities, deadlines, and the next action.",
+      "materialHint": "目標描述、截止時間、目前進度和限制條件（可選）",
+      "output": "目標拆解、階段里程碑、優先順序和下一步行動"
+    },
+    "compass:execution-plan": {
+      "title": "Execution plan",
+      "description": "Schedule stages, timing, owners, and checkpoints",
+      "prompt": "Create an execution plan for [goal] with phased tasks, timing, owners, checkpoints, risks, and adjustment conditions.",
+      "materialHint": "目標、截止時間、可用資源、參與人員和限制條件（可選）",
+      "output": "分階段執行計畫、時間安排、責任分工、檢查點和風險預案"
+    },
+    "compass:option-comparison": {
+      "title": "Compare options",
+      "description": "Weigh cost, risk, and expected results",
+      "prompt": "Compare [option A] and [option B] by cost, outcome, risk, and fit, then make a clear recommendation.",
+      "materialHint": "候選方案、預算、時間限制和最重視的判斷標準（可選）",
+      "output": "方案比較、關鍵取捨、適用條件和有依據的建議"
+    },
+    "compass:comprehensive-analysis": {
+      "title": "Comprehensive analysis",
+      "description": "Combine goals, context, evidence, risks, and recommendations",
+      "prompt": "Analyze [question] comprehensively. Confirm the goal and context, then assess evidence, key factors, risks, opportunities, and recommended actions.",
+      "materialHint": "待分析的問題、背景資料、目標、資料和限制條件（可選）",
+      "output": "現況判斷、關鍵證據、影響因素、風險機會和行動建議"
+    },
+    "content:topic-planning": {
+      "title": "Topic planning",
+      "description": "Define audience, angle, and a content series",
+      "prompt": "Plan topics about [subject]. Confirm the platform, audience, and goal, then give me 10 specific ideas with reasons.",
+      "materialHint": "主題、平台、目標受眾、帳號定位和參考內容（可選）",
+      "output": "依主題分組的題目清單、切入角度和推薦理由"
+    },
+    "content:long-form-writing": {
+      "title": "Long-form writing",
+      "description": "Write a complete, editable long-form piece",
+      "prompt": "Write a long-form [platform] piece about [subject]. Confirm audience, tone, and length, then deliver a title, opening, structured body, and closing action.",
+      "materialHint": "主題、受眾、發布平台、語氣、篇幅和事實素材（可選）",
+      "output": "包含標題、開頭、正文結構和結尾引導的長文初稿"
+    },
+    "content:short-video-script": {
+      "title": "Short-video script",
+      "description": "Design the hook, spoken lines, visuals, and pace",
+      "prompt": "Write a [platform and duration] short-video script about [topic], including the hook, spoken lines, visual cues, pacing, and call to action.",
+      "materialHint": "主題、平台、目標受眾、影片時長、產品資訊和參考內容（可選）",
+      "output": "包含開場鉤子、口播、畫面提示、節奏和行動引導的短影音腳本"
+    },
+    "content:rewrite-polish": {
+      "title": "Rewrite and polish",
+      "description": "Preserve meaning while refining structure, voice, and expression",
+      "prompt": "Improve and polish the copy I provide while preserving its facts and intent. Refine the title, opening, structure, voice, and pace.",
+      "materialHint": "原文、發布平台、目標受眾、目標語氣和需要保留的事實（可選）",
+      "output": "保留原意的潤色稿、修改說明和可選標題"
+    },
+    "video:shooting-script": {
+      "title": "Shooting script",
+      "description": "Plan spoken lines, visuals, and pace",
+      "prompt": "Write a [platform and duration] shooting script about [topic], including hook, spoken lines, visual cues, and call to action.",
+      "materialHint": "主題、平台、時長、人物、產品資訊和拍攝條件（可選）",
+      "output": "依段落整理的口播、畫面、動作、道具和時長建議"
+    },
+    "video:storyboard": {
+      "title": "Storyboard",
+      "description": "Define shot size, camera, action, and timing",
+      "prompt": "Turn my script into a storyboard with shot number, framing, visual, dialogue, camera, duration, and transition.",
+      "materialHint": "腳本、參考影片、目標時長、畫面比例和可用場景（可選）",
+      "output": "包含鏡號、景別、機位、畫面、台詞、時長和轉場的分鏡表"
+    },
+    "video:editing-rhythm": {
+      "title": "Editing rhythm",
+      "description": "Plan editing structure, timing, and emotional progression",
+      "prompt": "Design the editing rhythm for [video topic], mapping structure, footage choices, emotional changes, transitions, and pacing by time segment.",
+      "materialHint": "腳本或素材、發布平台、目標時長、受眾和參考節奏（可選）",
+      "output": "分段時長、剪輯節奏、素材取捨、情緒曲線和轉場建議"
+    },
+    "video:title-cover": {
+      "title": "Title and cover",
+      "description": "Generate title directions, cover copy, and visual guidance",
+      "prompt": "Create title and cover options for [video topic], including multiple titles, cover copy, composition, visual priorities, and testing ideas.",
+      "materialHint": "影片主題、平台、目標受眾、核心賣點和封面素材（可選）",
+      "output": "標題備選、封面文案、畫面構圖、視覺重點和測試建議"
+    },
+    "ecommerce:product-copy": {
+      "title": "Product copy",
+      "description": "Write headlines, benefits, scenarios, and conversion copy",
+      "prompt": "Write product copy for [product]. Confirm the audience, price range, and proven benefits, then provide a headline, layered benefits, use cases, proof points, and call to action.",
+      "materialHint": "商品資訊、目標族群、規格參數、真實賣點和證明資料（可選）",
+      "output": "商品標題、分層賣點、情境說明、證明資訊和行動引導"
+    },
+    "ecommerce:campaign-plan": {
+      "title": "Campaign plan",
+      "description": "Plan objectives, cadence, channels, and execution",
+      "prompt": "Create a campaign plan for [product or store], covering the objective, audience, cadence, channel actions, budget, inventory risks, and review metrics.",
+      "materialHint": "活動目標、商品、預算、週期、通路、庫存和歷史資料（可選）",
+      "output": "活動主題、目標受眾、時間節奏、通路動作、預算和檢討指標"
+    },
+    "ecommerce:competitor-analysis": {
+      "title": "Competitor analysis",
+      "description": "Compare positioning, price, content, and customer feedback",
+      "prompt": "Analyze [competitor] across positioning, price, claims, page content, and reviews, then identify differentiation opportunities.",
+      "materialHint": "自家商品、競品資料、價格、頁面內容和使用者評價（可選）",
+      "output": "定位、價格、賣點、頁面和評價差異的競品分析報告"
+    },
+    "ecommerce:review-customer-service": {
+      "title": "Reviews and customer service",
+      "description": "Analyze reviews and prepare customer-service responses",
+      "prompt": "Analyze customer reviews for [product or store], identify recurring issues and improvements, then create customer-service responses for presales, objections, shipping, and after-sales.",
+      "materialHint": "商品或店鋪資訊、使用者評價、常見問題、物流和售後規則（可選）",
+      "output": "評價問題分類、改善建議和涵蓋售前售後的客服話術"
+    },
+    "office:document-writing": {
+      "title": "Document writing",
+      "description": "Build a formal document from source material",
+      "prompt": "Turn my source material into a [document type]. Confirm the audience and purpose, then produce a clear structure and draft.",
+      "materialHint": "參考資料、文件類型、讀者、用途、篇幅和格式要求（可選）",
+      "output": "清楚的文件結構、正文初稿和待確認問題"
+    },
+    "office:spreadsheet-analysis": {
+      "title": "Spreadsheet analysis",
+      "description": "Clean, analyze, and summarize business data",
+      "prompt": "Process the spreadsheet I provide. Explain what can be read, then clean it, analyze key metrics, and summarize findings.",
+      "materialHint": "試算表檔案、欄位說明、業務問題、時間範圍和指標定義（可選）",
+      "output": "清理說明、關鍵指標、異常項目、分析結論和圖表建議"
+    },
+    "office:meeting-minutes": {
+      "title": "Meeting minutes",
+      "description": "Extract decisions, owners, and deadlines",
+      "prompt": "Turn these meeting notes into minutes with decisions, action items, owners, deadlines, and open questions.",
+      "materialHint": "會議逐字稿、手寫紀錄、與會者和會議議程（可選）",
+      "output": "會議結論、待辦事項、負責人、截止時間和未決問題"
+    },
+    "office:presentation-outline": {
+      "title": "Presentation outline",
+      "description": "Develop an outline, key points, and slide flow",
+      "prompt": "Create a presentation outline for [topic]. Confirm the audience, goal, and duration, then give slide-by-slide points and data needs.",
+      "materialHint": "簡報主題、聽眾、時長、已有資料和品牌範本（可選）",
+      "output": "逐頁目的、核心要點、證據需求和視覺建議"
+    },
+    "research:source-organization": {
+      "title": "Source organization",
+      "description": "Organize sources, themes, evidence, and open questions",
+      "prompt": "Organize the [source material] I provide by theme, source, key finding, evidence, and reliability, then list open questions.",
+      "materialHint": "資料檔案或連結、整理目的、研究範圍和來源標準（可選）",
+      "output": "資料目錄、主題摘要、證據出處、可靠性說明和待查問題"
+    },
+    "research:viewpoint-comparison": {
+      "title": "Viewpoint comparison",
+      "description": "Evaluate evidence, disagreements, and conditions",
+      "prompt": "Compare different viewpoints on [question], including evidence, disagreements, applicable conditions, and a balanced conclusion.",
+      "materialHint": "待比較的問題、主要觀點、已有來源和判斷標準（可選）",
+      "output": "證據對照、共識與分歧、適用條件和綜合判斷"
+    },
+    "research:learning-plan": {
+      "title": "Learning plan",
+      "description": "Set milestones, materials, and practice",
+      "prompt": "Create a learning plan for [topic] based on my current level, available time, and goal, with stages, resources, and exercises.",
+      "materialHint": "學習目標、目前程度、可用時間、截止日期和已有資料（可選）",
+      "output": "分階段目標、每週任務、學習資料、練習和檢查點"
+    },
+    "research:research-report": {
+      "title": "Research report",
+      "description": "Develop a complete report with question, method, findings, and conclusion",
+      "prompt": "Write a research report about [research question], covering background, method, sources, findings, limitations, conclusions, and recommendations.",
+      "materialHint": "研究問題、資料來源、分析範圍、讀者和格式要求（可選）",
+      "output": "研究背景、方法、證據、發現、限制、結論和建議"
+    },
+    "family:travel-plan": {
+      "title": "Travel plan",
+      "description": "Plan routes, timing, cost, and alternatives",
+      "prompt": "Create a travel plan for a family trip to [destination]. Confirm travelers, dates, and budget, then provide routes, timing, costs, bookings, and alternatives.",
+      "materialHint": "目的地、家庭成員、日期、預算、旅遊偏好和限制（可選）",
+      "output": "旅行路線、時間安排、費用、預訂事項和備選方案"
+    },
+    "family:family-checklist": {
+      "title": "Family checklist",
+      "description": "Organize items, owners, timing, and completion status",
+      "prompt": "Turn [household task] into a family checklist grouped by category, with items or tasks, owners, timing, and completion checks.",
+      "materialHint": "家庭事項、成員、截止時間、現有物品和特殊需求（可選）",
+      "output": "依類別整理的家庭清單、負責人、時間節點和檢查狀態"
+    },
+    "family:purchase-comparison": {
+      "title": "Purchase comparison",
+      "description": "Compare price, quality, risks, and use cases",
+      "prompt": "Compare the purchase options [product A] and [product B] by price, quality, features, reviews, support, and fit, then recommend one.",
+      "materialHint": "候選商品、預算、使用需求、規格、評價和售後條件（可選）",
+      "output": "購買選項比較、關鍵取捨、風險提示和推薦結論"
+    },
+    "family:schedule-plan": {
+      "title": "Schedule plan",
+      "description": "Assign owners, reminders, and checklists",
+      "prompt": "Turn [household task] into a schedule plan with timing, owner assignments, required items, and reminders.",
+      "materialHint": "家庭成員、固定事項、可用時段、優先順序和個人偏好（可選）",
+      "output": "依日期和成員整理的安排、衝突提示、緩衝時間和提醒"
+    }
+  },
+  "en": {
+    "compass:goal-breakdown": {
+      "title": "Goal breakdown",
+      "description": "Break down goals, steps, timing, and deliverables",
+      "prompt": "Break down [goal] into executable steps with milestones, priorities, deadlines, and the next action.",
+      "materialHint": "Goal, deadline, current progress, and constraints (optional)",
+      "output": "Goal breakdown, milestones, priorities, and next actions"
+    },
+    "compass:execution-plan": {
+      "title": "Execution plan",
+      "description": "Schedule stages, timing, owners, and checkpoints",
+      "prompt": "Create an execution plan for [goal] with phased tasks, timing, owners, checkpoints, risks, and adjustment conditions.",
+      "materialHint": "Goal, deadline, available resources, participants, and constraints (optional)",
+      "output": "Phased execution plan with timeline, owners, checkpoints, and risk responses"
+    },
+    "compass:option-comparison": {
+      "title": "Compare options",
+      "description": "Weigh cost, risk, and expected results",
+      "prompt": "Compare [option A] and [option B] by cost, outcome, risk, and fit, then make a clear recommendation.",
+      "materialHint": "Options, budget, time constraints, and decision criteria (optional)",
+      "output": "Option comparison, trade-offs, fit conditions, and an evidence-based recommendation"
+    },
+    "compass:comprehensive-analysis": {
+      "title": "Comprehensive analysis",
+      "description": "Combine goals, context, evidence, risks, and recommendations",
+      "prompt": "Analyze [question] comprehensively. Confirm the goal and context, then assess evidence, key factors, risks, opportunities, and recommended actions.",
+      "materialHint": "Question, background, objective, data, and constraints (optional)",
+      "output": "Current-state assessment, evidence, key factors, risks, opportunities, and actions"
+    },
+    "content:topic-planning": {
+      "title": "Topic planning",
+      "description": "Define audience, angle, and a content series",
+      "prompt": "Plan topics about [subject]. Confirm the platform, audience, and goal, then give me 10 specific ideas with reasons.",
+      "materialHint": "Theme, platform, audience, account positioning, and reference content (optional)",
+      "output": "Grouped topic ideas with angles and reasons to prioritize them"
+    },
+    "content:long-form-writing": {
+      "title": "Long-form writing",
+      "description": "Write a complete, editable long-form piece",
+      "prompt": "Write a long-form [platform] piece about [subject]. Confirm audience, tone, and length, then deliver a title, opening, structured body, and closing action.",
+      "materialHint": "Theme, audience, platform, tone, length, and factual material (optional)",
+      "output": "Long-form draft with a title, opening, section structure, and closing action"
+    },
+    "content:short-video-script": {
+      "title": "Short-video script",
+      "description": "Design the hook, spoken lines, visuals, and pace",
+      "prompt": "Write a [platform and duration] short-video script about [topic], including the hook, spoken lines, visual cues, pacing, and call to action.",
+      "materialHint": "Topic, platform, audience, video length, product information, and references (optional)",
+      "output": "Short-video script with a hook, spoken lines, visual cues, pacing, and call to action"
+    },
+    "content:rewrite-polish": {
+      "title": "Rewrite and polish",
+      "description": "Preserve meaning while refining structure, voice, and expression",
+      "prompt": "Improve and polish the copy I provide while preserving its facts and intent. Refine the title, opening, structure, voice, and pace.",
+      "materialHint": "Original copy, platform, audience, target tone, and facts to preserve (optional)",
+      "output": "Polished copy that preserves meaning, with change notes and title options"
+    },
+    "video:shooting-script": {
+      "title": "Shooting script",
+      "description": "Plan spoken lines, visuals, and pace",
+      "prompt": "Write a [platform and duration] shooting script about [topic], including hook, spoken lines, visual cues, and call to action.",
+      "materialHint": "Topic, platform, duration, people, product details, and shooting conditions (optional)",
+      "output": "Structured spoken lines, visuals, actions, props, and timing guidance"
+    },
+    "video:storyboard": {
+      "title": "Storyboard",
+      "description": "Define shot size, camera, action, and timing",
+      "prompt": "Turn my script into a storyboard with shot number, framing, visual, dialogue, camera, duration, and transition.",
+      "materialHint": "Script, reference videos, target duration, aspect ratio, and available locations (optional)",
+      "output": "Storyboard with shot number, framing, camera, visuals, lines, timing, and transitions"
+    },
+    "video:editing-rhythm": {
+      "title": "Editing rhythm",
+      "description": "Plan editing structure, timing, and emotional progression",
+      "prompt": "Design the editing rhythm for [video topic], mapping structure, footage choices, emotional changes, transitions, and pacing by time segment.",
+      "materialHint": "Script or footage, platform, target duration, audience, and pacing references (optional)",
+      "output": "Section timing, editing rhythm, footage choices, emotional curve, and transition guidance"
+    },
+    "video:title-cover": {
+      "title": "Title and cover",
+      "description": "Generate title directions, cover copy, and visual guidance",
+      "prompt": "Create title and cover options for [video topic], including multiple titles, cover copy, composition, visual priorities, and testing ideas.",
+      "materialHint": "Video topic, platform, audience, core message, and cover assets (optional)",
+      "output": "Title options, cover copy, composition, visual priorities, and test ideas"
+    },
+    "ecommerce:product-copy": {
+      "title": "Product copy",
+      "description": "Write headlines, benefits, scenarios, and conversion copy",
+      "prompt": "Write product copy for [product]. Confirm the audience, price range, and proven benefits, then provide a headline, layered benefits, use cases, proof points, and call to action.",
+      "materialHint": "Product details, audience, specifications, proven benefits, and supporting evidence (optional)",
+      "output": "Product headline, layered benefits, use cases, proof points, and call to action"
+    },
+    "ecommerce:campaign-plan": {
+      "title": "Campaign plan",
+      "description": "Plan objectives, cadence, channels, and execution",
+      "prompt": "Create a campaign plan for [product or store], covering the objective, audience, cadence, channel actions, budget, inventory risks, and review metrics.",
+      "materialHint": "Campaign objective, products, budget, period, channels, inventory, and historical data (optional)",
+      "output": "Campaign theme, audience, timeline, channel actions, budget, and review metrics"
+    },
+    "ecommerce:competitor-analysis": {
+      "title": "Competitor analysis",
+      "description": "Compare positioning, price, content, and customer feedback",
+      "prompt": "Analyze [competitor] across positioning, price, claims, page content, and reviews, then identify differentiation opportunities.",
+      "materialHint": "Your product, competitor materials, prices, page content, and customer reviews (optional)",
+      "output": "Competitor report covering positioning, price, claims, page content, and review differences"
+    },
+    "ecommerce:review-customer-service": {
+      "title": "Reviews and customer service",
+      "description": "Analyze reviews and prepare customer-service responses",
+      "prompt": "Analyze customer reviews for [product or store], identify recurring issues and improvements, then create customer-service responses for presales, objections, shipping, and after-sales.",
+      "materialHint": "Product or store details, customer reviews, FAQs, shipping, and after-sales policies (optional)",
+      "output": "Review themes, improvement actions, and customer-service scripts for presales and support"
+    },
+    "office:document-writing": {
+      "title": "Document writing",
+      "description": "Build a formal document from source material",
+      "prompt": "Turn my source material into a [document type]. Confirm the audience and purpose, then produce a clear structure and draft.",
+      "materialHint": "Source material, document type, audience, purpose, length, and format (optional)",
+      "output": "Clear document structure, working draft, and open questions"
+    },
+    "office:spreadsheet-analysis": {
+      "title": "Spreadsheet analysis",
+      "description": "Clean, analyze, and summarize business data",
+      "prompt": "Process the spreadsheet I provide. Explain what can be read, then clean it, analyze key metrics, and summarize findings.",
+      "materialHint": "Spreadsheet, field definitions, business questions, date range, and metric rules (optional)",
+      "output": "Cleaning notes, key metrics, anomalies, findings, and chart suggestions"
+    },
+    "office:meeting-minutes": {
+      "title": "Meeting minutes",
+      "description": "Extract decisions, owners, and deadlines",
+      "prompt": "Turn these meeting notes into minutes with decisions, action items, owners, deadlines, and open questions.",
+      "materialHint": "Transcript, notes, attendee list, and meeting agenda (optional)",
+      "output": "Decisions, action items, owners, deadlines, and unresolved questions"
+    },
+    "office:presentation-outline": {
+      "title": "Presentation outline",
+      "description": "Develop an outline, key points, and slide flow",
+      "prompt": "Create a presentation outline for [topic]. Confirm the audience, goal, and duration, then give slide-by-slide points and data needs.",
+      "materialHint": "Presentation topic, audience, duration, available data, and brand template (optional)",
+      "output": "Slide-by-slide purpose, key points, evidence needs, and visual direction"
+    },
+    "research:source-organization": {
+      "title": "Source organization",
+      "description": "Organize sources, themes, evidence, and open questions",
+      "prompt": "Organize the [source material] I provide by theme, source, key finding, evidence, and reliability, then list open questions.",
+      "materialHint": "Files or links, organization goal, research scope, and source standards (optional)",
+      "output": "Source catalog with thematic summaries, evidence references, reliability notes, and open questions"
+    },
+    "research:viewpoint-comparison": {
+      "title": "Viewpoint comparison",
+      "description": "Evaluate evidence, disagreements, and conditions",
+      "prompt": "Compare different viewpoints on [question], including evidence, disagreements, applicable conditions, and a balanced conclusion.",
+      "materialHint": "Question, main viewpoints, available sources, and decision criteria (optional)",
+      "output": "Evidence matrix, agreements, disagreements, conditions, and a balanced judgment"
+    },
+    "research:learning-plan": {
+      "title": "Learning plan",
+      "description": "Set milestones, materials, and practice",
+      "prompt": "Create a learning plan for [topic] based on my current level, available time, and goal, with stages, resources, and exercises.",
+      "materialHint": "Learning goal, current level, available time, deadline, and existing resources (optional)",
+      "output": "Learning stages, weekly tasks, materials, practice, and checkpoints"
+    },
+    "research:research-report": {
+      "title": "Research report",
+      "description": "Develop a complete report with question, method, findings, and conclusion",
+      "prompt": "Write a research report about [research question], covering background, method, sources, findings, limitations, conclusions, and recommendations.",
+      "materialHint": "Research question, sources, analysis scope, audience, and format requirements (optional)",
+      "output": "Research background, method, evidence, findings, limitations, conclusion, and recommendations"
+    },
+    "family:travel-plan": {
+      "title": "Travel plan",
+      "description": "Plan routes, timing, cost, and alternatives",
+      "prompt": "Create a travel plan for a family trip to [destination]. Confirm travelers, dates, and budget, then provide routes, timing, costs, bookings, and alternatives.",
+      "materialHint": "Destination, family members, dates, budget, travel preferences, and constraints (optional)",
+      "output": "Travel route, schedule, costs, bookings, and alternative plans"
+    },
+    "family:family-checklist": {
+      "title": "Family checklist",
+      "description": "Organize items, owners, timing, and completion status",
+      "prompt": "Turn [household task] into a family checklist grouped by category, with items or tasks, owners, timing, and completion checks.",
+      "materialHint": "Household task, family members, deadline, available items, and special needs (optional)",
+      "output": "Family checklist grouped by category with owners, timing, and completion checks"
+    },
+    "family:purchase-comparison": {
+      "title": "Purchase comparison",
+      "description": "Compare price, quality, risks, and use cases",
+      "prompt": "Compare the purchase options [product A] and [product B] by price, quality, features, reviews, support, and fit, then recommend one.",
+      "materialHint": "Candidate products, budget, use needs, specifications, reviews, and warranty terms (optional)",
+      "output": "Purchase comparison with key trade-offs, risks, and a recommendation"
+    },
+    "family:schedule-plan": {
+      "title": "Schedule plan",
+      "description": "Assign owners, reminders, and checklists",
+      "prompt": "Turn [household task] into a schedule plan with timing, owner assignments, required items, and reminders.",
+      "materialHint": "Family members, fixed events, available times, priorities, and preferences (optional)",
+      "output": "Schedule by date and person, with conflicts, buffer time, and reminders"
+    }
+  }
+}
