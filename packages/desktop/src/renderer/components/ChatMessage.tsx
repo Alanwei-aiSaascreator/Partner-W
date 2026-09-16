@@ -13,6 +13,7 @@ import MessageAvatar from './MessageAvatar';
 import ThinkingSection from './ThinkingSection';
 import ToolCallSummary from './ToolCallSummary';
 import MarkdownContent from './MarkdownContent';
+import ArtifactCard from './ArtifactCard';
 
 interface ChatMessageProps {
   message: Message;
@@ -358,6 +359,13 @@ const ChatMessage = memo(function ChatMessage({
                 <AttachmentFileCard key={`${attachment.fileName}-${i}`} attachment={attachment} />
               );
             })}
+          </div>
+        ) : null}
+        {!isUser && message.artifacts.length > 0 ? (
+          <div className="mt-2 grid max-w-2xl gap-2 sm:grid-cols-2">
+            {message.artifacts.map((artifact) => (
+              <ArtifactCard key={artifact.id} artifact={artifact} assistantLabel={agentName} />
+            ))}
           </div>
         ) : null}
         {message.toolCalls.length > 0 && <ToolCallSummary toolCalls={message.toolCalls} />}

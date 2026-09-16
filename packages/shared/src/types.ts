@@ -3,6 +3,9 @@ export type TaskStatus = 'active' | 'completed' | 'archived';
 export type MessageRole = 'user' | 'assistant' | 'system';
 
 export type ArtifactType = 'file' | 'code' | 'image' | 'link' | 'structured_data';
+export type ArtifactAvailability = 'available' | 'missing' | 'unsafe';
+
+export type ArtifactSaveAsResult = { status: 'cancelled' } | { status: 'saved'; filePath: string };
 
 export type ToolCallStatus = 'running' | 'done' | 'error';
 
@@ -234,6 +237,7 @@ export interface Artifact {
   sourceKey?: string;
   contentText?: string;
   createdAt: string;
+  availability: ArtifactAvailability;
 }
 
 export interface ToolCall {

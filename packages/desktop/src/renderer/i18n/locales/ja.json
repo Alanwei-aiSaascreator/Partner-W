@@ -61,6 +61,20 @@
   "archived": {
     "empty": "アーカイブ済みチャットはありません"
   },
+  "artifactCard": {
+    "available": "使用できます",
+    "cancelled": "保存をキャンセルしました",
+    "error": "操作を完了できませんでした",
+    "locateMessage": "{{name}} を作成したメッセージへ移動",
+    "missing": "ファイルが見つかりません",
+    "open": "開く",
+    "refresh": "成果物を更新",
+    "recoveryHint": "ファイルを再生成するか、ワークスペースに戻してから操作してください。",
+    "saveAs": "名前を付けて保存",
+    "saved": "コピーを保存しました",
+    "showInFolder": "フォルダーで表示",
+    "unsafe": "ファイルをブロックしました"
+  },
   "artifactKinds": {
     "code": "コードスニペット",
     "data": "データ成果物",

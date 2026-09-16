@@ -95,11 +95,11 @@ export default function FileBrowser() {
     return [
       {
         label: t('filePreview.openInEditor'),
-        action: () => window.clawwork.openArtifactFile(a.localPath),
+        action: () => window.clawwork.openArtifactFile(a.id, a.taskId),
       },
       {
         label: t('filePreview.revealInFolder'),
-        action: () => window.clawwork.showArtifactInFolder(a.localPath),
+        action: () => window.clawwork.showArtifactInFolder(a.id, a.taskId),
       },
       {
         label: t('filePreview.goToSourceShort'),

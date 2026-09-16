@@ -61,6 +61,20 @@
   "archived": {
     "empty": "暂无归档对话"
   },
+  "artifactCard": {
+    "available": "可以使用",
+    "cancelled": "已取消另存",
+    "error": "操作未完成",
+    "locateMessage": "定位到生成 {{name}} 的消息",
+    "missing": "文件已缺失",
+    "open": "打开",
+    "refresh": "刷新成果",
+    "recoveryHint": "请重新生成该文件，或将它恢复到工作区后再操作。",
+    "saveAs": "另存为",
+    "saved": "副本已保存",
+    "showInFolder": "打开所在位置",
+    "unsafe": "文件已被拦截"
+  },
   "artifactKinds": {
     "code": "代码片段",
     "data": "数据产物",

@@ -390,7 +390,7 @@ export function useChatSend(opts: UseChatSendOpts) {
         if (artifactMentions.length > 0) {
           const readResults = await Promise.all(
             artifactMentions.map((a) =>
-              window.clawwork.readArtifactFile(a.localPath).then((res) => ({ artifact: a, res })),
+              window.clawwork.readArtifactFile(a.id, a.taskId).then((res) => ({ artifact: a, res })),
             ),
           );
 

@@ -12,6 +12,7 @@ import type {
   SkillUpdateParams,
   ConfigSetParams,
   ConfigPatchParams,
+  Artifact,
 } from '@clawwork/shared';
 import type { ClawWorkAPI, GatewayServerConfig } from './clawwork';
 
@@ -130,11 +131,12 @@ function buildApi(): ClawWorkAPI {
     }) => ipcRenderer.invoke('artifact:save', params),
     listArtifacts: (taskId?: string) => ipcRenderer.invoke('artifact:list', { taskId }),
     getArtifact: (id: string) => ipcRenderer.invoke('artifact:get', { id }),
-    readArtifactFile: (localPath: string) => ipcRenderer.invoke('artifact:read-file', { localPath }),
-    readArtifactThumbnail: (localPath: string, size?: number) =>
-      ipcRenderer.invoke('artifact:thumbnail', { localPath, size }),
-    onArtifactSaved: (callback: (artifact: unknown) => void) => {
-      const listener = (_event: Electron.IpcRendererEvent, artifact: unknown): void => {
+    readArtifactFile: (artifactId: string, taskId?: string) =>
+      ipcRenderer.invoke('artifact:read-file', { artifactId, taskId }),
+    readArtifactThumbnail: (artifactId: string, taskId?: string, size?: number) =>
+      ipcRenderer.invoke('artifact:thumbnail', { artifactId, taskId, size }),
+    onArtifactSaved: (callback: (artifact: Artifact) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, artifact: Artifact): void => {
         callback(artifact);
       };
       ipcRenderer.on('artifact:saved', listener);
@@ -145,8 +147,12 @@ function buildApi(): ClawWorkAPI {
     saveCodeBlock: (params) => ipcRenderer.invoke('artifact:save-content', params),
     saveImageFromUrl: (params) => ipcRenderer.invoke('artifact:save-image-url', params),
     searchArtifacts: (query: string, options) => ipcRenderer.invoke('artifact:search', { query, ...(options ?? {}) }),
-    openArtifactFile: (localPath: string) => ipcRenderer.invoke('artifact:open-file', { localPath }),
-    showArtifactInFolder: (localPath: string) => ipcRenderer.invoke('artifact:show-in-folder', { localPath }),
+    saveArtifactAs: (artifactId: string, taskId?: string) =>
+      ipcRenderer.invoke('artifact:save-as', { artifactId, taskId }),
+    openArtifactFile: (artifactId: string, taskId?: string) =>
+      ipcRenderer.invoke('artifact:open-file', { artifactId, taskId }),
+    showArtifactInFolder: (artifactId: string, taskId?: string) =>
+      ipcRenderer.invoke('artifact:show-in-folder', { artifactId, taskId }),
     saveInboxAttachment: (params: { taskId: string; fileName: string; base64: string }) =>
       ipcRenderer.invoke('inbox:save', params),
     readInboxFile: (localPath: string) => ipcRenderer.invoke('inbox:read-file', { localPath }),

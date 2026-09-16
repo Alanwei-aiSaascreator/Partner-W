@@ -61,6 +61,20 @@
   "archived": {
     "empty": "No archived chats"
   },
+  "artifactCard": {
+    "available": "Ready",
+    "cancelled": "Save cancelled",
+    "error": "Could not complete the action",
+    "locateMessage": "Go to the message that created {{name}}",
+    "missing": "File missing",
+    "open": "Open",
+    "refresh": "Refresh results",
+    "recoveryHint": "Regenerate this file or restore it to the workspace to use these actions.",
+    "saveAs": "Save as",
+    "saved": "Copy saved",
+    "showInFolder": "Show in folder",
+    "unsafe": "File blocked"
+  },
   "artifactKinds": {
     "code": "Code snippet",
     "data": "Data artifact",

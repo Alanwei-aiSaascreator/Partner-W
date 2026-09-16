@@ -61,6 +61,20 @@
   "archived": {
     "empty": "Aucune conversation archivée"
   },
+  "artifactCard": {
+    "available": "Disponible",
+    "cancelled": "Enregistrement annulé",
+    "error": "Impossible de terminer l’action",
+    "locateMessage": "Accéder au message qui a créé {{name}}",
+    "missing": "Fichier manquant",
+    "open": "Ouvrir",
+    "refresh": "Actualiser les résultats",
+    "recoveryHint": "Régénérez le fichier ou restaurez-le dans l’espace de travail.",
+    "saveAs": "Enregistrer sous",
+    "saved": "Copie enregistrée",
+    "showInFolder": "Afficher dans le dossier",
+    "unsafe": "Fichier bloqué"
+  },
   "artifactKinds": {
     "code": "Extrait de code",
     "data": "Artefact de données",

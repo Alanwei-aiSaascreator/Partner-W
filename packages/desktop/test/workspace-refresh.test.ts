@@ -105,6 +105,7 @@ describe('refreshRendererAfterWorkspaceChange', () => {
           mimeType: 'text/plain',
           size: 1,
           createdAt: '2026-03-16T00:00:00.000Z',
+          availability: 'available',
         },
       ],
       selectedArtifactId: 'art-1',

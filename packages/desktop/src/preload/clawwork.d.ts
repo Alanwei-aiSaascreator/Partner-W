@@ -38,6 +38,8 @@ import type {
   TaskContextSource,
   ImportedTaskFile,
   ImportFilesResult,
+  Artifact,
+  ArtifactSaveAsResult,
 } from '@clawwork/shared';
 
 type IpcResult<T = Record<string, unknown>> = SharedIpcResult<T>;
@@ -358,11 +360,15 @@ export interface ClawWorkAPI {
     fileName?: string;
     mediaType?: string;
   }) => Promise<IpcResult>;
-  listArtifacts: (taskId?: string) => Promise<IpcResult>;
-  getArtifact: (id: string) => Promise<IpcResult>;
-  readArtifactFile: (localPath: string) => Promise<IpcResult>;
-  readArtifactThumbnail: (localPath: string, size?: number) => Promise<IpcResult<{ dataUrl: string }>>;
-  onArtifactSaved: (callback: (artifact: unknown) => void) => () => void;
+  listArtifacts: (taskId?: string) => Promise<IpcResult<Artifact[]>>;
+  getArtifact: (id: string) => Promise<IpcResult<Artifact>>;
+  readArtifactFile: (artifactId: string, taskId?: string) => Promise<IpcResult>;
+  readArtifactThumbnail: (
+    artifactId: string,
+    taskId?: string,
+    size?: number,
+  ) => Promise<IpcResult<{ dataUrl: string }>>;
+  onArtifactSaved: (callback: (artifact: Artifact) => void) => () => void;
   saveCodeBlock: (params: {
     taskId: string;
     messageId: string;
@@ -375,8 +381,9 @@ export interface ClawWorkAPI {
     query: string,
     options?: { kind?: 'all' | 'image' | 'code' | 'file' | 'other' },
   ) => Promise<IpcResult>;
-  openArtifactFile: (localPath: string) => Promise<IpcResult>;
-  showArtifactInFolder: (localPath: string) => Promise<IpcResult>;
+  saveArtifactAs: (artifactId: string, taskId?: string) => Promise<IpcResult<ArtifactSaveAsResult>>;
+  openArtifactFile: (artifactId: string, taskId?: string) => Promise<IpcResult>;
+  showArtifactInFolder: (artifactId: string, taskId?: string) => Promise<IpcResult>;
   saveInboxAttachment: (params: {
     taskId: string;
     fileName: string;

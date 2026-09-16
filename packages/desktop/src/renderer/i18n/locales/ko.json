@@ -61,6 +61,20 @@
   "archived": {
     "empty": "보관된 대화가 없습니다"
   },
+  "artifactCard": {
+    "available": "사용 가능",
+    "cancelled": "저장을 취소했습니다",
+    "error": "작업을 완료하지 못했습니다",
+    "locateMessage": "{{name}}을 만든 메시지로 이동",
+    "missing": "파일이 없습니다",
+    "open": "열기",
+    "refresh": "결과 새로 고침",
+    "recoveryHint": "파일을 다시 생성하거나 작업 공간에 복원한 후 사용하세요.",
+    "saveAs": "다른 이름으로 저장",
+    "saved": "사본을 저장했습니다",
+    "showInFolder": "폴더에서 보기",
+    "unsafe": "파일이 차단됨"
+  },
   "artifactKinds": {
     "code": "코드 스니펫",
     "data": "데이터 산출물",

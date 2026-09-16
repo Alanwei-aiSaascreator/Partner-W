@@ -61,6 +61,20 @@
   "archived": {
     "empty": "Keine archivierten Chats"
   },
+  "artifactCard": {
+    "available": "Verfügbar",
+    "cancelled": "Speichern abgebrochen",
+    "error": "Aktion konnte nicht abgeschlossen werden",
+    "locateMessage": "Zur Nachricht wechseln, die {{name}} erstellt hat",
+    "missing": "Datei fehlt",
+    "open": "Öffnen",
+    "refresh": "Ergebnisse aktualisieren",
+    "recoveryHint": "Erstellen Sie die Datei erneut oder stellen Sie sie im Arbeitsbereich wieder her.",
+    "saveAs": "Speichern unter",
+    "saved": "Kopie gespeichert",
+    "showInFolder": "Im Ordner anzeigen",
+    "unsafe": "Datei blockiert"
+  },
   "artifactKinds": {
     "code": "Code-Snippet",
     "data": "Datenartefakt",

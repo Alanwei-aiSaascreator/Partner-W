@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { Dirent, Stats } from 'node:fs';
 import { closeSync, existsSync, fstatSync, lstatSync, openSync, opendirSync, realpathSync, statSync } from 'node:fs';
 import { extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import type { Artifact } from '@clawwork/shared';
+import type { Artifact, ArtifactAvailability } from '@clawwork/shared';
 import { getSqlite } from '../db/index.js';
 import { validateImportTaskId } from '../context/file-import.js';
 import { ensureTaskDir } from '../workspace/init.js';
@@ -322,6 +322,7 @@ function artifactFromRow(row: Record<string, unknown>): Artifact {
     sourceKey: String(row.source_key),
     contentText: String(row.content_text),
     createdAt: String(row.created_at),
+    availability: 'available',
   };
 }
 
@@ -459,7 +460,7 @@ export async function reconcileTaskArtifacts(
   const missing = existingRows.filter(
     (artifact) =>
       !artifact.localPath.startsWith(taskLocalPrefix) ||
-      getArtifactAvailability(artifact.localPath, input.workspacePath) === 'missing',
+      getArtifactAvailability(artifact.localPath, input.workspacePath) !== 'available',
   );
   const saved: Artifact[] = [];
   const existing: Artifact[] = [];
@@ -509,6 +510,7 @@ export async function reconcileTaskArtifacts(
           sourceKey: sourceKey(candidate.relativePath, stable.stats),
           contentText: '',
           createdAt: now,
+          availability: 'available',
         };
         const persist = sqlite.transaction((): { kind: 'saved' | 'existing' | 'updated'; artifact: Artifact } => {
           const beforeHandle = fstatSync(stable.fd);
@@ -601,8 +603,8 @@ export async function reconcileTaskArtifacts(
   };
 }
 
-export function getArtifactAvailability(localPathValue: string, workspacePath: string): 'available' | 'missing' {
-  if (!localPathValue || isAbsolute(localPathValue) || localPathValue.includes('\0')) return 'missing';
+export function getArtifactAvailability(localPathValue: string, workspacePath: string): ArtifactAvailability {
+  if (!localPathValue || isAbsolute(localPathValue) || localPathValue.includes('\0')) return 'unsafe';
   try {
     const absolutePath = resolve(workspacePath, localPathValue);
     const realWorkspace = realpathSync.native(workspacePath);
@@ -617,10 +619,10 @@ export function getArtifactAvailability(localPathValue: string, workspacePath: s
       !isWithin(realWorkspace, realFile) ||
       !samePath(realFile, absolutePath)
     ) {
-      return 'missing';
+      return 'unsafe';
     }
     return 'available';
-  } catch {
-    return 'missing';
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'unsafe';
   }
 }

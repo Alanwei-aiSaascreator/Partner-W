@@ -61,6 +61,20 @@
   "archived": {
     "empty": "No hay chats archivados"
   },
+  "artifactCard": {
+    "available": "Disponible",
+    "cancelled": "Guardado cancelado",
+    "error": "No se pudo completar la acción",
+    "locateMessage": "Ir al mensaje que creó {{name}}",
+    "missing": "Falta el archivo",
+    "open": "Abrir",
+    "refresh": "Actualizar resultados",
+    "recoveryHint": "Vuelve a generar el archivo o restáuralo en el espacio de trabajo.",
+    "saveAs": "Guardar como",
+    "saved": "Copia guardada",
+    "showInFolder": "Mostrar en la carpeta",
+    "unsafe": "Archivo bloqueado"
+  },
   "artifactKinds": {
     "code": "Fragmento de código",
     "data": "Artefacto de datos",

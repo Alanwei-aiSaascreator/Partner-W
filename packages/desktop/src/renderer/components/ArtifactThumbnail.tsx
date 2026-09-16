@@ -31,28 +31,29 @@ function thumbnailResult(value: unknown): { dataUrl: string } | null {
 const thumbnailCache = new Map<string, string | null>();
 const thumbnailRequests = new Map<string, Promise<string | null>>();
 
-function loadThumbnail(localPath: string): Promise<string | null> {
-  if (thumbnailCache.has(localPath)) return Promise.resolve(thumbnailCache.get(localPath) ?? null);
-  const existing = thumbnailRequests.get(localPath);
+function loadThumbnail(artifact: Pick<Artifact, 'id' | 'taskId' | 'localPath'>): Promise<string | null> {
+  const cacheKey = `${artifact.id}:${artifact.localPath}`;
+  if (thumbnailCache.has(cacheKey)) return Promise.resolve(thumbnailCache.get(cacheKey) ?? null);
+  const existing = thumbnailRequests.get(cacheKey);
   if (existing) return existing;
 
   const request = window.clawwork
-    .readArtifactThumbnail(localPath, 128)
+    .readArtifactThumbnail(artifact.id, artifact.taskId, 128)
     .then((res) => {
       const data = res.ok ? thumbnailResult(res.result) : null;
       const src = data?.dataUrl ?? null;
-      thumbnailCache.set(localPath, src);
+      thumbnailCache.set(cacheKey, src);
       return src;
     })
     .catch(() => {
-      thumbnailCache.set(localPath, null);
+      thumbnailCache.set(cacheKey, null);
       return null;
     })
     .finally(() => {
-      thumbnailRequests.delete(localPath);
+      thumbnailRequests.delete(cacheKey);
     });
 
-  thumbnailRequests.set(localPath, request);
+  thumbnailRequests.set(cacheKey, request);
   return request;
 }
 
@@ -70,14 +71,14 @@ export default function ArtifactThumbnail({ artifact, className, iconSize = 18 }
     let cancelled = false;
     setSrc(null);
 
-    loadThumbnail(artifact.localPath).then((thumbnailSrc) => {
+    loadThumbnail(artifact).then((thumbnailSrc) => {
       if (!cancelled) setSrc(thumbnailSrc);
     });
 
     return () => {
       cancelled = true;
     };
-  }, [artifact.localPath, image]);
+  }, [artifact, image]);
 
   return (
     <div className={cn('relative flex shrink-0 items-center justify-center overflow-hidden rounded-lg', bg, className)}>

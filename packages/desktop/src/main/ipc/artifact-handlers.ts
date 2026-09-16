@@ -12,6 +12,7 @@ import { getWorkspacePath } from '../workspace/config.js';
 import { searchArtifacts } from '../db/search.js';
 import { safeFetch } from '../net/safe-fetch.js';
 import { getArtifactAvailability } from '../artifact/reconcile.js';
+import { copyArtifactToDestination, inspectArtifactFile } from '../artifact/access.js';
 
 interface SaveParams {
   taskId: string;
@@ -105,14 +106,37 @@ export function registerArtifactHandlers(): void {
     }
   });
 
-  ipcMain.handle('artifact:read-file', async (_event, params: { localPath: string }) => {
+  ipcMain.handle('artifact:save-as', async (_event, params: { artifactId: string; taskId?: string }) => {
     const workspacePath = getWorkspacePath();
     if (!workspacePath) return { ok: false, error: 'workspace not configured' };
     try {
-      const fullPath = resolveArtifactPath(workspacePath, params.localPath);
-      if (!fullPath) return { ok: false, error: 'invalid path' };
-      const encoding = isTextFile(params.localPath) ? 'utf-8' : 'base64';
-      const content = readFileSync(fullPath, encoding);
+      const artifact = loadArtifactForAction(params.artifactId, params.taskId);
+      if (!artifact) return { ok: false, error: 'artifact not found' };
+      const win = BrowserWindow.getAllWindows()[0];
+      const options = { defaultPath: artifact.name };
+      const choice = win ? await dialog.showSaveDialog(win, options) : await dialog.showSaveDialog(options);
+      if (choice.canceled || !choice.filePath) {
+        return { ok: true, result: { status: 'cancelled' as const } };
+      }
+      const result = await copyArtifactToDestination(workspacePath, artifact.localPath, choice.filePath);
+      return { ok: true, result };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : 'unknown error' };
+    }
+  });
+
+  ipcMain.handle('artifact:read-file', async (_event, params: { artifactId: string; taskId?: string }) => {
+    const workspacePath = getWorkspacePath();
+    if (!workspacePath) return { ok: false, error: 'workspace not configured' };
+    try {
+      const artifact = loadArtifactForAction(params.artifactId, params.taskId);
+      if (!artifact) return { ok: false, error: 'artifact not found' };
+      const inspected = await inspectArtifactFile(workspacePath, artifact.localPath);
+      if (inspected.availability !== 'available' || !inspected.absolutePath) {
+        return { ok: false, error: `artifact ${inspected.availability}` };
+      }
+      const encoding = isTextFile(artifact.localPath) ? 'utf-8' : 'base64';
+      const content = readFileSync(inspected.absolutePath, encoding);
       return { ok: true, result: { content, encoding } };
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'unknown error';
@@ -120,36 +144,44 @@ export function registerArtifactHandlers(): void {
     }
   });
 
-  ipcMain.handle('artifact:thumbnail', async (_event, params: { localPath: string; size?: number }) => {
-    const workspacePath = getWorkspacePath();
-    if (!workspacePath) return { ok: false, error: 'workspace not configured' };
-    try {
-      const fullPath = resolveArtifactPath(workspacePath, params.localPath);
-      if (!fullPath) return { ok: false, error: 'invalid path' };
-      const size = Math.min(Math.max(params.size ?? 128, 32), 256);
-      const image =
-        process.platform === 'darwin' || process.platform === 'win32'
-          ? await nativeImage.createThumbnailFromPath(fullPath, { width: size, height: size })
-          : nativeImage.createEmpty();
-      if (image.isEmpty()) {
-        const fileStat = await stat(fullPath);
-        if (!fileStat.isFile() || fileStat.size > MAX_THUMBNAIL_SOURCE_BYTES) {
-          return { ok: false, error: 'thumbnail unavailable' };
+  ipcMain.handle(
+    'artifact:thumbnail',
+    async (_event, params: { artifactId: string; taskId?: string; size?: number }) => {
+      const workspacePath = getWorkspacePath();
+      if (!workspacePath) return { ok: false, error: 'workspace not configured' };
+      try {
+        const artifact = loadArtifactForAction(params.artifactId, params.taskId);
+        if (!artifact) return { ok: false, error: 'artifact not found' };
+        const inspected = await inspectArtifactFile(workspacePath, artifact.localPath);
+        if (inspected.availability !== 'available' || !inspected.absolutePath) {
+          return { ok: false, error: `artifact ${inspected.availability}` };
         }
-        const buffer = await readFile(fullPath);
-        const decoded = nativeImage.createFromBuffer(buffer);
-        if (!decoded.isEmpty()) {
-          const resized = resizeThumbnailImage(decoded, size);
-          return { ok: true, result: { dataUrl: resized.toDataURL() } };
+        const fullPath = inspected.absolutePath;
+        const size = Math.min(Math.max(params.size ?? 128, 32), 256);
+        const image =
+          process.platform === 'darwin' || process.platform === 'win32'
+            ? await nativeImage.createThumbnailFromPath(fullPath, { width: size, height: size })
+            : nativeImage.createEmpty();
+        if (image.isEmpty()) {
+          const fileStat = await stat(fullPath);
+          if (!fileStat.isFile() || fileStat.size > MAX_THUMBNAIL_SOURCE_BYTES) {
+            return { ok: false, error: 'thumbnail unavailable' };
+          }
+          const buffer = await readFile(fullPath);
+          const decoded = nativeImage.createFromBuffer(buffer);
+          if (!decoded.isEmpty()) {
+            const resized = resizeThumbnailImage(decoded, size);
+            return { ok: true, result: { dataUrl: resized.toDataURL() } };
+          }
         }
+        if (image.isEmpty()) return { ok: false, error: 'thumbnail unavailable' };
+        return { ok: true, result: { dataUrl: image.toDataURL() } };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'unknown error';
+        return { ok: false, error: msg };
       }
-      if (image.isEmpty()) return { ok: false, error: 'thumbnail unavailable' };
-      return { ok: true, result: { dataUrl: image.toDataURL() } };
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'unknown error';
-      return { ok: false, error: msg };
-    }
-  });
+    },
+  );
 
   ipcMain.handle(
     'artifact:save-content',
@@ -243,13 +275,17 @@ export function registerArtifactHandlers(): void {
     },
   );
 
-  ipcMain.handle('artifact:open-file', async (_event, params: { localPath: string }) => {
+  ipcMain.handle('artifact:open-file', async (_event, params: { artifactId: string; taskId?: string }) => {
     const workspacePath = getWorkspacePath();
     if (!workspacePath) return { ok: false, error: 'workspace not configured' };
     try {
-      const fullPath = resolveArtifactPath(workspacePath, params.localPath);
-      if (!fullPath) return { ok: false, error: 'invalid path' };
-      const result = await shell.openPath(fullPath);
+      const artifact = loadArtifactForAction(params.artifactId, params.taskId);
+      if (!artifact) return { ok: false, error: 'artifact not found' };
+      const inspected = await inspectArtifactFile(workspacePath, artifact.localPath);
+      if (inspected.availability !== 'available' || !inspected.absolutePath) {
+        return { ok: false, error: `artifact ${inspected.availability}` };
+      }
+      const result = await shell.openPath(inspected.absolutePath);
       if (result) return { ok: false, error: result };
       return { ok: true };
     } catch (err) {
@@ -257,13 +293,17 @@ export function registerArtifactHandlers(): void {
     }
   });
 
-  ipcMain.handle('artifact:show-in-folder', async (_event, params: { localPath: string }) => {
+  ipcMain.handle('artifact:show-in-folder', async (_event, params: { artifactId: string; taskId?: string }) => {
     const workspacePath = getWorkspacePath();
     if (!workspacePath) return { ok: false, error: 'workspace not configured' };
     try {
-      const fullPath = resolveArtifactPath(workspacePath, params.localPath);
-      if (!fullPath) return { ok: false, error: 'invalid path' };
-      shell.showItemInFolder(fullPath);
+      const artifact = loadArtifactForAction(params.artifactId, params.taskId);
+      if (!artifact) return { ok: false, error: 'artifact not found' };
+      const inspected = await inspectArtifactFile(workspacePath, artifact.localPath);
+      if (inspected.availability !== 'available' || !inspected.absolutePath) {
+        return { ok: false, error: `artifact ${inspected.availability}` };
+      }
+      shell.showItemInFolder(inspected.absolutePath);
       return { ok: true };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : 'unknown error' };
@@ -329,6 +369,17 @@ export function registerArtifactHandlers(): void {
   });
 }
 
+function loadArtifactForAction(
+  artifactId: string,
+  taskId?: string,
+): Pick<typeof artifacts.$inferSelect, 'id' | 'taskId' | 'name' | 'localPath'> | null {
+  if (!artifactId) return null;
+  const rows = getDb().select().from(artifacts).where(eq(artifacts.id, artifactId)).all();
+  const artifact = rows[0];
+  if (!artifact || (taskId && artifact.taskId !== taskId)) return null;
+  return artifact;
+}
+
 const TEXT_EXTS = new Set([
   '.md',
   '.txt',
@@ -358,13 +409,6 @@ function isTextFile(localPath: string): boolean {
   const dot = localPath.lastIndexOf('.');
   if (dot === -1) return true;
   return TEXT_EXTS.has(localPath.slice(dot).toLowerCase());
-}
-
-function resolveArtifactPath(workspacePath: string, localPath: string): string | null {
-  const base = resolve(workspacePath);
-  const full = resolve(base, localPath);
-  if (!full.startsWith(base + sep) && full !== base) return null;
-  return full;
 }
 
 type TaskRow = typeof tasks.$inferSelect;

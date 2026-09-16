@@ -80,6 +80,7 @@ export async function saveArtifact(params: SaveArtifactParams): Promise<Artifact
     size: stat.size,
     sourceKey: sourceKey ?? '',
     createdAt: now,
+    availability: 'available',
   };
 
   const db = getDb();
@@ -148,6 +149,7 @@ export async function saveArtifactFromBuffer(params: SaveArtifactFromBufferParam
     sourceKey: sourceKey ?? '',
     contentText: contentText ?? '',
     createdAt: now,
+    availability: 'available',
   };
 
   const db = getDb();

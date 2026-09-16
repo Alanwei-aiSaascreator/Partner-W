@@ -101,7 +101,7 @@ export default function FilePreview({ artifact, onNavigateToTask, onClose }: Fil
     setLoading(true);
     setError(null);
     setContent(null);
-    window.clawwork.readArtifactFile(artifact.localPath).then((res) => {
+    window.clawwork.readArtifactFile(artifact.id, artifact.taskId).then((res) => {
       if (res.ok && res.result) {
         const r = res.result as { content: string; encoding: string };
         setContent(r.content);
@@ -111,7 +111,7 @@ export default function FilePreview({ artifact, onNavigateToTask, onClose }: Fil
       }
       setLoading(false);
     });
-  }, [artifact.localPath]);
+  }, [artifact.id, artifact.taskId]);
 
   return (
     <motion.div className="glass-card flex flex-col h-full" {...motionPresets.slideIn}>

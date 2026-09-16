@@ -61,6 +61,20 @@
   "archived": {
     "empty": "沒有已封存的對話"
   },
+  "artifactCard": {
+    "available": "可以使用",
+    "cancelled": "已取消另存",
+    "error": "操作未完成",
+    "locateMessage": "前往產生 {{name}} 的訊息",
+    "missing": "檔案已遺失",
+    "open": "開啟",
+    "refresh": "重新整理成果",
+    "recoveryHint": "請重新產生此檔案，或將它還原到工作區後再操作。",
+    "saveAs": "另存新檔",
+    "saved": "副本已儲存",
+    "showInFolder": "開啟檔案位置",
+    "unsafe": "檔案已被封鎖"
+  },
   "artifactKinds": {
     "code": "程式碼片段",
     "data": "資料產物",
