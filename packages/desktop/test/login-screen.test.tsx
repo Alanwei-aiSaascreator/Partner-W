@@ -57,26 +57,23 @@ describe('Login', () => {
     expect(container.querySelector('[data-login-region="brand"]')).not.toBeNull();
     expect(container.querySelector('[data-login-region="form"]')).not.toBeNull();
     expect(container.querySelector('[data-guide-mascot]')).not.toBeNull();
-    expect(container.textContent).toContain('mainArea.compassAssistant');
+    expect(container.textContent).toContain('mainArea.welcomeTitle');
     expect(container.textContent).toContain('assistantWorkspaces.compass.description');
     expect(container.textContent).not.toContain('assistantDefinitions.main');
 
     unmount();
   });
 
-  it('shows four concise purpose choices and remembers the selected purpose', () => {
+  it('keeps purpose selection out of the login screen', () => {
     const { container, unmount } = render(<Login onSignedIn={vi.fn()} />);
-    const choices = container.querySelectorAll('[data-login-purpose]');
 
-    expect(choices).toHaveLength(4);
-    expect(container.textContent).toContain('login.purposes.content');
-    expect(container.textContent).toContain('login.purposes.office');
-    expect(container.textContent).toContain('login.purposes.ecommerce');
-    expect(container.textContent).toContain('login.purposes.research');
-
-    act(() => (choices[1] as HTMLButtonElement).click());
-    expect(choices[1]?.getAttribute('aria-pressed')).toBe('true');
-    expect(window.localStorage.getItem('rongying-login-purpose')).toBe('office');
+    expect(container.querySelectorAll('[data-login-purpose]')).toHaveLength(0);
+    expect(container.textContent).not.toContain('login.purposes.content');
+    expect(container.textContent).not.toContain('login.purposes.office');
+    expect(container.textContent).not.toContain('login.purposes.ecommerce');
+    expect(container.textContent).not.toContain('login.purposes.research');
+    expect(window.localStorage.getItem('rongying-login-purpose')).toBeNull();
+    expect(container.textContent).toContain('fileBrowser.workspaceAccessDescription');
     unmount();
   });
 
