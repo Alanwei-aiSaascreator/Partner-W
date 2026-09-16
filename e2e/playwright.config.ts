@@ -20,6 +20,10 @@ export default defineConfig({
       testMatch: 'pwa/**/*.spec.ts',
     },
     {
+      name: 'artifact-loop',
+      testMatch: 'local-file-artifact-loop.spec.ts',
+    },
+    {
       // 打包态验收：真 exe + 真部署 + 真 spawn，单条用例要几分钟。
       // 跑之前先 `pnpm --filter @clawwork/desktop build && npx electron-builder --win --dir`。
       name: 'packaged',

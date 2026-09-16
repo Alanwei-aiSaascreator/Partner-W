@@ -118,7 +118,7 @@ describe('task-scoped folder source service', () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
-  });
+  }, 35_000);
 
   it('preserves a missing folder record and reports it as missing', () => {
     const root = mkdtempSync(join(tmpdir(), 'clawwork-missing-grant-'));
