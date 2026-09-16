@@ -27,6 +27,7 @@ import { cn } from '@/lib/utils';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { motionDuration, motionEase } from '@/styles/design-tokens';
 import { loadOnboardingProfile, saveOnboardingProfile, type OnboardingProfile } from '@/lib/user-onboarding';
+import { resolveAppEntryScreen } from '@/lib/app-entry-flow';
 import { parseBetaRoute } from '@/features/internal-beta/beta-route';
 
 function AppToaster({ themeMode }: { themeMode: Theme }) {
@@ -252,9 +253,18 @@ export default function App() {
     };
   }, [setActiveTask, setSettingsOpen, setMainView]);
 
-  if (authState === 'checking') return null;
+  const entryScreen = resolveAppEntryScreen({
+    authState,
+    onboardingResolved,
+    hasOnboardingAccount: Boolean(onboardingAccount),
+    hasOnboardingProfile: Boolean(onboardingProfile),
+    needsSetup,
+    ready,
+  });
 
-  if (authState === 'required') {
+  if (entryScreen === 'loading') return null;
+
+  if (entryScreen === 'login') {
     return (
       <TooltipProvider>
         <Login onSignedIn={handleSignedIn} />
@@ -263,7 +273,20 @@ export default function App() {
     );
   }
 
-  if (needsSetup) {
+  if (entryScreen === 'onboarding' && onboardingAccount) {
+    return (
+      <TooltipProvider>
+        <Onboarding
+          userId={onboardingAccount.userId}
+          defaultNickname={onboardingAccount.nickname}
+          onComplete={handleOnboardingComplete}
+        />
+        <AppToaster themeMode={themeMode} />
+      </TooltipProvider>
+    );
+  }
+
+  if (entryScreen === 'setup') {
     return (
       <TooltipProvider>
         <Setup
@@ -271,23 +294,6 @@ export default function App() {
             setNeedsSetup(false);
             setReady(true);
           }}
-        />
-        <AppToaster themeMode={themeMode} />
-      </TooltipProvider>
-    );
-  }
-
-  if (!ready) return null;
-
-  if (!onboardingResolved || !onboardingAccount) return null;
-
-  if (!onboardingProfile) {
-    return (
-      <TooltipProvider>
-        <Onboarding
-          userId={onboardingAccount.userId}
-          defaultNickname={onboardingAccount.nickname}
-          onComplete={handleOnboardingComplete}
         />
         <AppToaster themeMode={themeMode} />
       </TooltipProvider>
