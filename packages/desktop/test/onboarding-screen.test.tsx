@@ -2,7 +2,7 @@
 
 import { act, type ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
@@ -26,6 +26,33 @@ function render(ui: ReactElement): { container: HTMLDivElement; unmount: () => v
 }
 
 describe('Onboarding', () => {
+  beforeEach(() => {
+    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    window.localStorage.clear();
+  });
+
+  it('prefills the login purpose but still lets the user change it', () => {
+    window.localStorage.setItem('rongying-login-purpose', 'office');
+    const onComplete = vi.fn();
+    const { container, unmount } = render(<Onboarding userId="user-purpose" onComplete={onComplete} />);
+    const office = [...container.querySelectorAll('button')].find((button) =>
+      button.textContent?.includes('onboarding.useCases.office.title'),
+    )!;
+    const content = [...container.querySelectorAll('button')].find((button) =>
+      button.textContent?.includes('onboarding.useCases.content.title'),
+    )!;
+
+    expect(office.getAttribute('aria-pressed')).toBe('true');
+    act(() => {
+      office.click();
+      content.click();
+    });
+    expect(office.getAttribute('aria-pressed')).toBe('false');
+    expect(content.getAttribute('aria-pressed')).toBe('true');
+    expect(window.localStorage.getItem('rongying-login-purpose')).toBe('office');
+    unmount();
+  });
+
   it('lets a user choose several purposes and complete setup', () => {
     (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     const onComplete = vi.fn();

@@ -10,7 +10,7 @@ import researchIdentity from '@/preset-agents/research/IDENTITY.md?raw';
 import researchSoul from '@/preset-agents/research/SOUL.md?raw';
 import videoIdentity from '@/preset-agents/video/IDENTITY.md?raw';
 import videoSoul from '@/preset-agents/video/SOUL.md?raw';
-import type { StarterId } from '@/lib/user-onboarding';
+import type { OnboardingProfile, OnboardingUseCaseId, StarterId } from '@/lib/user-onboarding';
 
 export const PRESET_AGENT_IDS = [
   'rongying-content',
@@ -181,4 +181,26 @@ export function resolveStarterAgentId(
 ): string {
   const targetId = STARTER_AGENT_BY_ID[starterId];
   return availableAgentIds.includes(targetId) ? targetId : fallbackAgentId;
+}
+
+export function resolveProfileAssistantId(
+  profile: OnboardingProfile | null,
+  availableAgentIds: readonly string[],
+  fallbackAgentId: string,
+): string {
+  const starterByUseCase: Partial<Record<OnboardingUseCaseId, StarterId>> = {
+    content: 'content',
+    video: 'photography',
+    office: 'office',
+    ecommerce: 'ecommerce',
+    research: 'research',
+    family: 'family',
+  };
+  for (const useCase of profile?.useCases ?? []) {
+    const starterId = starterByUseCase[useCase];
+    if (!starterId) continue;
+    const assistantId = STARTER_AGENT_BY_ID[starterId];
+    if (availableAgentIds.includes(assistantId)) return assistantId;
+  }
+  return fallbackAgentId;
 }

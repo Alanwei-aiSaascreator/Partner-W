@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   setSelectedAgentId: vi.fn(),
   setSelectedGwId: vi.fn(),
   setSelectedAgent: vi.fn(),
+  selectorOptions: undefined as { initialGatewayId?: string; initialAgentId?: string } | undefined,
   gatewayState: { agentCatalog: [{ id: 'main' }] as Array<{ id: string }> },
   modelCatalogByGateway: {
     'gw-1': [{ id: 'deepseek-v4-flash', provider: 'clawrouter', name: 'DeepSeek V4 Flash' }],
@@ -38,14 +39,20 @@ vi.mock('../src/renderer/platform', () => ({
 }));
 
 vi.mock('../src/renderer/hooks/useGatewaySelector', () => ({
-  useGatewaySelector: () => ({
-    gateways: [],
-    selectedGwId: 'gw-1',
-    setSelectedGwId: mocks.setSelectedGwId,
-    agentCatalog: mocks.gatewayState.agentCatalog,
-    effectiveAgentId: 'main',
-    setSelectedAgentId: mocks.setSelectedAgentId,
-  }),
+  useGatewaySelector: (options: { initialGatewayId?: string; initialAgentId?: string }) => {
+    mocks.selectorOptions = options;
+    const effectiveAgentId = mocks.gatewayState.agentCatalog.some((agent) => agent.id === options.initialAgentId)
+      ? options.initialAgentId!
+      : 'main';
+    return {
+      gateways: [],
+      selectedGwId: 'gw-1',
+      setSelectedGwId: mocks.setSelectedGwId,
+      agentCatalog: mocks.gatewayState.agentCatalog,
+      effectiveAgentId,
+      setSelectedAgentId: mocks.setSelectedAgentId,
+    };
+  },
 }));
 
 vi.mock('../src/renderer/components/AgentIcon', () => ({
@@ -79,8 +86,31 @@ function render(ui: ReactElement): { container: HTMLDivElement; unmount: () => v
 
 describe('WelcomeScreen assistant workspace', () => {
   beforeEach(() => {
+    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     vi.clearAllMocks();
     mocks.gatewayState.agentCatalog = [{ id: 'main' }];
+    mocks.selectorOptions = undefined;
+  });
+
+  it('opens the assistant recommended by the completed purpose and keeps its model on the pending task', () => {
+    mocks.gatewayState.agentCatalog = [{ id: 'main' }, { id: 'rongying-video' }];
+    const { container, unmount } = render(
+      <WelcomeScreen
+        onboardingProfile={{ ...onboardingProfile, useCases: [...onboardingProfile.useCases] }}
+        onSelectPrompt={vi.fn()}
+      />,
+    );
+
+    expect(mocks.selectorOptions?.initialAgentId).toBe('rongying-video');
+    expect(container.textContent).toContain('presetAgents.roles.video');
+    expect(container.textContent).toContain('assistantWorkspaces.video.description');
+    expect(mocks.setSelectedAgent).toHaveBeenCalledWith('gw-1', 'rongying-video');
+    expect(mocks.setPending).toHaveBeenCalledWith({
+      gatewayId: 'gw-1',
+      agentId: 'rongying-video',
+      model: 'deepseek-v4-flash',
+    });
+    unmount();
   });
 
   it('prefills the composer from the current assistant workspace', () => {
@@ -102,7 +132,7 @@ describe('WelcomeScreen assistant workspace', () => {
     unmount();
   });
 
-  it('does not silently route a compass starter to another installed assistant', () => {
+  it('keeps a starter on the assistant already selected by the purpose', () => {
     mocks.gatewayState.agentCatalog = [{ id: 'main' }, { id: 'rongying-video' }];
     const onSelectPrompt = vi.fn();
     const { container, unmount } = render(
@@ -117,7 +147,7 @@ describe('WelcomeScreen assistant workspace', () => {
     act(() => (button as HTMLButtonElement).click());
     expect(mocks.setPending).not.toHaveBeenCalled();
     expect(mocks.setSelectedAgentId).not.toHaveBeenCalled();
-    expect(onSelectPrompt).toHaveBeenCalledWith('assistantWorkspaces.compass.starters.1.prompt');
+    expect(onSelectPrompt).toHaveBeenCalledWith('assistantWorkspaces.video.starters.1.prompt');
     unmount();
   });
 

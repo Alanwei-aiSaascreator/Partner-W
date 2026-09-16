@@ -14,6 +14,7 @@ import { cn } from '@/lib/utils';
 import type { OnboardingProfile, OnboardingUseCaseId } from '@/lib/user-onboarding';
 import logo from '@/assets/logo.png';
 import GuideMascot from '@/components/GuideMascot';
+import { readLoginPurpose, resolveLoginPurposeUseCase } from '@/lib/login-purpose';
 
 interface OnboardingProps {
   userId: string;
@@ -33,7 +34,10 @@ const USE_CASES = [
 export default function Onboarding({ userId, defaultNickname = '', onComplete }: OnboardingProps) {
   const { t } = useTranslation();
   const [nickname, setNickname] = useState(defaultNickname);
-  const [selected, setSelected] = useState<OnboardingUseCaseId[]>([]);
+  const [selected, setSelected] = useState<OnboardingUseCaseId[]>(() => {
+    const loginPurpose = readLoginPurpose();
+    return loginPurpose ? [resolveLoginPurposeUseCase(loginPurpose)] : [];
+  });
   const [customGoal, setCustomGoal] = useState('');
   const canContinue = selected.length > 0 || customGoal.trim().length > 0;
 

@@ -124,7 +124,7 @@ describe('StartupReadinessScreen', () => {
 });
 
 describe('StartupReadinessPanel', () => {
-  it('reports combined AI, model, assistant, and ready progress', () => {
+  it('shows one truthful assistant progress indicator and the current stage', () => {
     const readiness: StartupReadiness = {
       ...baseReadiness,
       ai: { phase: 'ready' },
@@ -134,12 +134,21 @@ describe('StartupReadinessPanel', () => {
     const progress = container.querySelector('[role="progressbar"]');
 
     expect(container.querySelector('section')?.getAttribute('aria-busy')).toBe('true');
-    expect(progress?.getAttribute('aria-valuemax')).toBe('100');
-    expect(Number(progress?.getAttribute('aria-valuenow'))).toBeGreaterThan(50);
-    expect(container.textContent).toContain('startupReadiness.stageService');
-    expect(container.textContent).toContain('startupReadiness.stageModels');
-    expect(container.textContent).toContain('startupReadiness.stageAssistants');
-    expect(container.textContent).toContain('startupReadiness.stageReady');
+    expect(container.querySelectorAll('[role="progressbar"]')).toHaveLength(1);
+    expect(progress?.getAttribute('aria-valuemax')).toBe('6');
+    expect(progress?.getAttribute('aria-valuenow')).toBe('2');
+    expect(container.textContent).toContain('startupReadiness.assistantsInstalling');
+    expect(container.textContent).not.toContain('%');
+    unmount();
+  });
+
+  it('uses an indeterminate bar instead of inventing a percentage while the AI service starts', () => {
+    const { container, unmount } = render(<StartupReadinessPanel readiness={baseReadiness} onRetry={vi.fn()} />);
+    const progress = container.querySelector('[role="progressbar"]');
+
+    expect(progress?.hasAttribute('aria-valuenow')).toBe(false);
+    expect(container.textContent).toContain('startupReadiness.aiStarting');
+    expect(container.textContent).not.toContain('%');
     unmount();
   });
 

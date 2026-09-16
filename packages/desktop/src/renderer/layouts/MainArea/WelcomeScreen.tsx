@@ -6,7 +6,7 @@ import AgentIcon from '@/components/AgentIcon';
 import GatewayInstanceSelector from '@/components/GatewayInstanceSelector';
 import { useGatewaySelector } from '@/hooks/useGatewaySelector';
 import { resolveCommercialDefaultModel } from '@/lib/commercial-default-model';
-import { resolveAssistantWorkspace } from '@/lib/preset-agents';
+import { PRESET_AGENT_IDS, resolveAssistantWorkspace, resolveProfileAssistantId } from '@/lib/preset-agents';
 import type { OnboardingProfile } from '@/lib/user-onboarding';
 import { cn } from '@/lib/utils';
 import { useTaskStore } from '@/stores/taskStore';
@@ -21,14 +21,19 @@ interface WelcomeScreenProps {
   conversationReady?: boolean;
 }
 
-export default function WelcomeScreen({ onSelectPrompt, conversationReady = true }: WelcomeScreenProps) {
+export default function WelcomeScreen({
+  onboardingProfile,
+  onSelectPrompt,
+  conversationReady = true,
+}: WelcomeScreenProps) {
   const { t } = useTranslation();
   const pendingNewTask = useTaskStore((state) => state.pendingNewTask);
   const setSelectedAgent = useUiStore((state) => state.setSelectedAgent);
+  const preferredAgentId = resolveProfileAssistantId(onboardingProfile, ['main', ...PRESET_AGENT_IDS], 'main');
   const { gateways, selectedGwId, setSelectedGwId, agentCatalog, effectiveAgentId, setSelectedAgentId } =
     useGatewaySelector({
       initialGatewayId: pendingNewTask?.gatewayId,
-      initialAgentId: pendingNewTask?.agentId,
+      initialAgentId: pendingNewTask?.agentId ?? preferredAgentId,
     });
   const rawModelCatalog = useUiStore((state) => (selectedGwId ? state.modelCatalogByGateway[selectedGwId] : undefined));
   const defaultModel = resolveCommercialDefaultModel(relayModelsFrom(rawModelCatalog ?? []));
@@ -37,6 +42,9 @@ export default function WelcomeScreen({ onSelectPrompt, conversationReady = true
   useEffect(() => {
     if (!selectedGwId || !effectiveAgentId) return;
     const previous = useTaskStore.getState().pendingNewTask;
+    if (!previous?.agentId && effectiveAgentId === preferredAgentId) {
+      setSelectedAgent(selectedGwId, effectiveAgentId);
+    }
     if (
       previous?.gatewayId === selectedGwId &&
       previous.agentId === effectiveAgentId &&
@@ -51,7 +59,7 @@ export default function WelcomeScreen({ onSelectPrompt, conversationReady = true
       agentId: effectiveAgentId,
       model: defaultModel?.id,
     });
-  }, [defaultModel?.id, effectiveAgentId, selectedGwId]);
+  }, [defaultModel?.id, effectiveAgentId, preferredAgentId, selectedGwId, setSelectedAgent]);
 
   const handleSelectGateway = (gatewayId: string) => {
     setSelectedGwId(gatewayId);
@@ -72,8 +80,6 @@ export default function WelcomeScreen({ onSelectPrompt, conversationReady = true
         modelLabel={defaultModel?.label ?? t('chatInput.modelsLoading')}
         ready={conversationReady}
         onSelectPrompt={onSelectPrompt}
-        onAddFiles={() => window.dispatchEvent(new Event('task-materials:add-files'))}
-        onAddFolder={() => window.dispatchEvent(new Event('task-materials:add-folder'))}
       />
 
       <div className="mt-1 flex w-full max-w-[var(--content-max-width)] flex-col items-center gap-3 border-t border-[var(--border-subtle)] pt-4">

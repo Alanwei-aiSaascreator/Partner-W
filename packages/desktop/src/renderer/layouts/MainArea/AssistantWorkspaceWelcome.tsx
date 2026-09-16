@@ -1,4 +1,4 @@
-import { Bot, CheckCircle2, FilePlus2, FileText, FolderPlus, Globe2, LoaderCircle, Sparkles } from 'lucide-react';
+import { Bot, CheckCircle2, FileText, Globe2, LoaderCircle, Sparkles } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { AssistantWorkspaceDefinition } from '@/lib/preset-agents';
 
@@ -7,15 +7,11 @@ export default function AssistantWorkspaceWelcome({
   modelLabel,
   ready,
   onSelectPrompt,
-  onAddFiles,
-  onAddFolder,
 }: {
   definition: AssistantWorkspaceDefinition;
   modelLabel: string;
   ready: boolean;
   onSelectPrompt: (prompt: string) => void;
-  onAddFiles: () => void;
-  onAddFolder: () => void;
 }) {
   const { t } = useTranslation();
   const workspaceT = (key: string) => t(`assistantWorkspaces.${key.replace(/^assistantWorkspaces\./, '')}`);
@@ -69,24 +65,6 @@ export default function AssistantWorkspaceWelcome({
           )}
           {t(ready ? 'startupReadiness.aiReady' : 'startupReadiness.aiStarting')}
         </span>
-        <button
-          type="button"
-          data-testid="welcome-add-files"
-          onClick={onAddFiles}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] px-3 py-1.5 text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none glow-focus"
-        >
-          <FilePlus2 size={13} />
-          {t('chatInput.addFiles')}
-        </button>
-        <button
-          type="button"
-          data-testid="welcome-add-folder"
-          onClick={onAddFolder}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] px-3 py-1.5 text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none glow-focus"
-        >
-          <FolderPlus size={13} />
-          {t('chatInput.addFolder')}
-        </button>
       </div>
     </div>
   );

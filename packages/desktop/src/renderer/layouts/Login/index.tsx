@@ -20,16 +20,15 @@ import { cn } from '@/lib/utils';
 import { toast } from '@/lib/toast';
 import { Button } from '@/components/ui/button';
 import GuideMascot, { type GuideMascotPose } from '@/components/GuideMascot';
+import { LOGIN_PURPOSE_STORAGE_KEY, readLoginPurpose, type LoginPurpose } from '@/lib/login-purpose';
 
 const RESEND_SECONDS = 60;
-const LOGIN_PURPOSE_STORAGE_KEY = 'rongying-login-purpose';
 const LOGIN_PURPOSES = [
   { id: 'content', icon: PenLine },
   { id: 'office', icon: BriefcaseBusiness },
   { id: 'ecommerce', icon: ShoppingBag },
   { id: 'research', icon: GraduationCap },
 ] as const;
-type LoginPurpose = (typeof LOGIN_PURPOSES)[number]['id'];
 
 interface LoginProps {
   onSignedIn: () => void;
@@ -99,10 +98,7 @@ export default function Login({ onSignedIn }: LoginProps) {
   const [error, setError] = useState('');
   const [countdown, setCountdown] = useState(0);
   const [agreed, setAgreed] = useState(false);
-  const [purpose, setPurpose] = useState<LoginPurpose | null>(() => {
-    const saved = window.localStorage.getItem(LOGIN_PURPOSE_STORAGE_KEY);
-    return LOGIN_PURPOSES.some((item) => item.id === saved) ? (saved as LoginPurpose) : null;
-  });
+  const [purpose, setPurpose] = useState<LoginPurpose | null>(() => readLoginPurpose());
   const [mascotPose, setMascotPose] = useState<GuideMascotPose>('idle');
   const codeInputRef = useRef<HTMLInputElement>(null);
 

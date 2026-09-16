@@ -264,17 +264,6 @@ export function useTaskMaterials(taskIdOverride?: string | null) {
     );
   }, []);
 
-  useEffect(() => {
-    const addFiles = () => void importFiles();
-    const addFolder = () => void grantFolder();
-    window.addEventListener('task-materials:add-files', addFiles);
-    window.addEventListener('task-materials:add-folder', addFolder);
-    return () => {
-      window.removeEventListener('task-materials:add-files', addFiles);
-      window.removeEventListener('task-materials:add-folder', addFolder);
-    };
-  }, [grantFolder, importFiles]);
-
   const selectedImportedFiles = importedFiles.filter(
     (file) => file.availability === 'available' && selectedImportedPaths.has(file.localPath),
   );
