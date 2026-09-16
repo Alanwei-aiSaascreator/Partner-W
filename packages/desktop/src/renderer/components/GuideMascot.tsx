@@ -89,18 +89,20 @@ export default function GuideMascot({
           <ellipse cx="144" cy="142" rx="19" ry="23" fill="var(--surface-qr-bg)" />
           <ellipse cx="216" cy="142" rx="19" ry="23" fill="var(--surface-qr-bg)" />
           <motion.circle
+            data-mascot-pupil
             cx="144"
             cy="143"
             r="8"
-            fill="var(--accent-foreground)"
+            fill="var(--mascot-eye)"
             animate={{ x: look.x, y: look.y }}
             transition={{ duration: motionDuration.fast, ease: motionEase.standard }}
           />
           <motion.circle
+            data-mascot-pupil
             cx="216"
             cy="143"
             r="8"
-            fill="var(--accent-foreground)"
+            fill="var(--mascot-eye)"
             animate={{ x: look.x, y: look.y }}
             transition={{ duration: motionDuration.fast, ease: motionEase.standard }}
           />

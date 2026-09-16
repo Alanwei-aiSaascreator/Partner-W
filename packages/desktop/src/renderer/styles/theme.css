@@ -47,6 +47,7 @@
     --text-muted: #797987;
     --text-danger: var(--danger);
     --text-warning: var(--warning);
+    --mascot-eye: #20172b;
 
     --border: rgba(255, 255, 255, 0.08);
     --border-subtle: rgba(255, 255, 255, 0.05);
@@ -151,6 +152,7 @@
     --text-muted: #6e6e7a;
     --text-danger: var(--danger);
     --text-warning: var(--warning);
+    --mascot-eye: #20172b;
 
     --border: rgba(23, 23, 28, 0.07);
     --border-subtle: rgba(23, 23, 28, 0.045);

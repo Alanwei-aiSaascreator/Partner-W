@@ -40,4 +40,14 @@ describe('GuideMascot', () => {
 
     unmount();
   });
+
+  it('uses a dedicated high-contrast color for both pupils', () => {
+    const { container, unmount } = render(<GuideMascot pose="idle" />);
+    const pupils = container.querySelectorAll('[data-mascot-pupil]');
+
+    expect(pupils).toHaveLength(2);
+    expect([...pupils].every((pupil) => pupil.getAttribute('fill') === 'var(--mascot-eye)')).toBe(true);
+
+    unmount();
+  });
 });
