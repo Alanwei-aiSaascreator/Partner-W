@@ -5,11 +5,16 @@ export default defineConfig({
   test: {
     include: ['test/**/*.test.ts', 'test/**/*.test.tsx'],
     environment: 'node',
-    // A cold full-suite run on Windows can spend more than Vitest's 5s
-    // default compiling Electron IPC modules. A timed-out dynamic import keeps
-    // running and can then leak mock calls into the next test, hiding the real
-    // cause behind misleading call-count failures.
-    testTimeout: 15_000,
+    // A cold full-suite run on Windows can spend more than Vitest's default
+    // compiling Electron IPC modules and starting the isolated file-service
+    // probes. Those probes have their own 30s process timeout, so keep Vitest's
+    // outer timeout slightly higher and surface the real probe failure instead
+    // of aborting a healthy child process under parallel load.
+    testTimeout: 35_000,
+    // Several integration tests launch Electron-as-Node probes synchronously.
+    // Unbounded worker fan-out on Windows can starve a worker long enough for
+    // Vitest's RPC heartbeat to fail even after every assertion has passed.
+    maxWorkers: 4,
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json-summary'],
