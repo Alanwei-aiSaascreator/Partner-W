@@ -1,6 +1,5 @@
 import { ipcMain, BrowserWindow, dialog, shell, nativeImage, type NativeImage } from 'electron';
 import { readFileSync, realpathSync, writeFileSync } from 'fs';
-import { readFile, stat } from 'fs/promises';
 import { tmpdir } from 'os';
 import { fileURLToPath } from 'node:url';
 import { resolve, sep } from 'path';
@@ -12,7 +11,7 @@ import { getWorkspacePath } from '../workspace/config.js';
 import { searchArtifacts } from '../db/search.js';
 import { safeFetch } from '../net/safe-fetch.js';
 import { getArtifactAvailability } from '../artifact/reconcile.js';
-import { copyArtifactToDestination, inspectArtifactFile } from '../artifact/access.js';
+import { copyArtifactToDestination, inspectArtifactFile, readVerifiedArtifactFile } from '../artifact/access.js';
 
 interface SaveParams {
   taskId: string;
@@ -131,12 +130,9 @@ export function registerArtifactHandlers(): void {
     try {
       const artifact = loadArtifactForAction(params.artifactId, params.taskId);
       if (!artifact) return { ok: false, error: 'artifact not found' };
-      const inspected = await inspectArtifactFile(workspacePath, artifact.localPath);
-      if (inspected.availability !== 'available' || !inspected.absolutePath) {
-        return { ok: false, error: `artifact ${inspected.availability}` };
-      }
       const encoding = isTextFile(artifact.localPath) ? 'utf-8' : 'base64';
-      const content = readFileSync(inspected.absolutePath, encoding);
+      const buffer = await readVerifiedArtifactFile(workspacePath, artifact.localPath);
+      const content = buffer.toString(encoding);
       return { ok: true, result: { content, encoding } };
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'unknown error';
@@ -152,30 +148,14 @@ export function registerArtifactHandlers(): void {
       try {
         const artifact = loadArtifactForAction(params.artifactId, params.taskId);
         if (!artifact) return { ok: false, error: 'artifact not found' };
-        const inspected = await inspectArtifactFile(workspacePath, artifact.localPath);
-        if (inspected.availability !== 'available' || !inspected.absolutePath) {
-          return { ok: false, error: `artifact ${inspected.availability}` };
-        }
-        const fullPath = inspected.absolutePath;
         const size = Math.min(Math.max(params.size ?? 128, 32), 256);
-        const image =
-          process.platform === 'darwin' || process.platform === 'win32'
-            ? await nativeImage.createThumbnailFromPath(fullPath, { width: size, height: size })
-            : nativeImage.createEmpty();
-        if (image.isEmpty()) {
-          const fileStat = await stat(fullPath);
-          if (!fileStat.isFile() || fileStat.size > MAX_THUMBNAIL_SOURCE_BYTES) {
-            return { ok: false, error: 'thumbnail unavailable' };
-          }
-          const buffer = await readFile(fullPath);
-          const decoded = nativeImage.createFromBuffer(buffer);
-          if (!decoded.isEmpty()) {
-            const resized = resizeThumbnailImage(decoded, size);
-            return { ok: true, result: { dataUrl: resized.toDataURL() } };
-          }
-        }
+        const buffer = await readVerifiedArtifactFile(workspacePath, artifact.localPath, {
+          maxBytes: MAX_THUMBNAIL_SOURCE_BYTES,
+        });
+        const image = nativeImage.createFromBuffer(buffer);
         if (image.isEmpty()) return { ok: false, error: 'thumbnail unavailable' };
-        return { ok: true, result: { dataUrl: image.toDataURL() } };
+        const resized = resizeThumbnailImage(image, size);
+        return { ok: true, result: { dataUrl: resized.toDataURL() } };
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'unknown error';
         return { ok: false, error: msg };
@@ -285,7 +265,11 @@ export function registerArtifactHandlers(): void {
       if (inspected.availability !== 'available' || !inspected.absolutePath) {
         return { ok: false, error: `artifact ${inspected.availability}` };
       }
-      const result = await shell.openPath(inspected.absolutePath);
+      const revalidated = await inspectArtifactFile(workspacePath, artifact.localPath);
+      if (revalidated.availability !== 'available' || revalidated.absolutePath !== inspected.absolutePath) {
+        return { ok: false, error: `artifact ${revalidated.availability}` };
+      }
+      const result = await shell.openPath(revalidated.absolutePath);
       if (result) return { ok: false, error: result };
       return { ok: true };
     } catch (err) {
@@ -303,7 +287,11 @@ export function registerArtifactHandlers(): void {
       if (inspected.availability !== 'available' || !inspected.absolutePath) {
         return { ok: false, error: `artifact ${inspected.availability}` };
       }
-      shell.showItemInFolder(inspected.absolutePath);
+      const revalidated = await inspectArtifactFile(workspacePath, artifact.localPath);
+      if (revalidated.availability !== 'available' || revalidated.absolutePath !== inspected.absolutePath) {
+        return { ok: false, error: `artifact ${revalidated.availability}` };
+      }
+      shell.showItemInFolder(revalidated.absolutePath);
       return { ok: true };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : 'unknown error' };

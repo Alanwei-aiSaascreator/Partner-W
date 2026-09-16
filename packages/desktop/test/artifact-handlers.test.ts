@@ -11,6 +11,7 @@ const getArtifactAvailabilityMock = vi.fn(() => 'available');
 const showSaveDialogMock = vi.fn();
 const copyArtifactToDestinationMock = vi.fn();
 const inspectArtifactFileMock = vi.fn();
+const readVerifiedArtifactFileMock = vi.fn();
 const openPathMock = vi.fn();
 const showItemInFolderMock = vi.fn();
 
@@ -50,6 +51,7 @@ vi.mock('../src/main/artifact/reconcile.js', () => ({
 vi.mock('../src/main/artifact/access.js', () => ({
   copyArtifactToDestination: copyArtifactToDestinationMock,
   inspectArtifactFile: inspectArtifactFileMock,
+  readVerifiedArtifactFile: readVerifiedArtifactFileMock,
 }));
 
 vi.mock('../src/main/net/safe-fetch.js', () => ({
@@ -172,6 +174,35 @@ describe('artifact handlers', () => {
       ok: false,
       error: 'artifact unsafe',
     });
+    expect(openPathMock).not.toHaveBeenCalled();
+  });
+
+  it('reads artifact bytes through the verified handle helper instead of a checked path', async () => {
+    allMock.mockReturnValue([{ id: 'a1', taskId: 'task-1', name: 'report.txt', localPath: 'task-1/report.txt' }]);
+    readVerifiedArtifactFileMock.mockResolvedValue(Buffer.from('trusted'));
+    const { registerArtifactHandlers } = await import('../src/main/ipc/artifact-handlers.js');
+    registerArtifactHandlers();
+
+    await expect(handleMap.get('artifact:read-file')?.({}, { artifactId: 'a1', taskId: 'task-1' })).resolves.toEqual({
+      ok: true,
+      result: { content: 'trusted', encoding: 'utf-8' },
+    });
+    expect(readVerifiedArtifactFileMock).toHaveBeenCalledWith('/workspace', 'task-1/report.txt');
+  });
+
+  it('revalidates identity immediately before passing a path to the shell', async () => {
+    allMock.mockReturnValue([{ id: 'a1', taskId: 'task-1', name: 'report.txt', localPath: 'task-1/report.txt' }]);
+    inspectArtifactFileMock
+      .mockResolvedValueOnce({ availability: 'available', absolutePath: '/workspace/task-1/report.txt' })
+      .mockResolvedValueOnce({ availability: 'unsafe' });
+    const { registerArtifactHandlers } = await import('../src/main/ipc/artifact-handlers.js');
+    registerArtifactHandlers();
+
+    await expect(handleMap.get('artifact:open-file')?.({}, { artifactId: 'a1', taskId: 'task-1' })).resolves.toEqual({
+      ok: false,
+      error: 'artifact unsafe',
+    });
+    expect(inspectArtifactFileMock).toHaveBeenCalledTimes(2);
     expect(openPathMock).not.toHaveBeenCalled();
   });
 });
