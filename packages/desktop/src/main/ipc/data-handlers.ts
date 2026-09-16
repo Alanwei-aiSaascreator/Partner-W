@@ -1,4 +1,5 @@
 import { BrowserWindow, ipcMain } from 'electron';
+import { randomUUID } from 'node:crypto';
 import { and, eq, desc } from 'drizzle-orm';
 import { getDb, isDbReady } from '../db/index.js';
 import { tasks, messages, artifacts, taskRooms, taskRoomSessions, teams, teamAgents } from '../db/schema.js';
@@ -26,7 +27,7 @@ function parseTeamAgentSkills(raw: string | null): string[] {
 
 interface ArtifactRunContext {
   baseline: Promise<ArtifactBaseline>;
-  runStartedAt: string;
+  token: string;
 }
 
 const artifactRuns = new Map<string, ArtifactRunContext>();
@@ -47,7 +48,8 @@ function hasRunningToolCall(toolCalls: unknown[] | undefined): boolean {
   );
 }
 
-function captureArtifactRun(workspacePath: string, taskId: string, sessionKey: string, runStartedAt: string): void {
+export function beginArtifactRun(workspacePath: string, taskId: string, sessionKey: string): string {
+  const token = randomUUID();
   const baseline = captureTaskArtifactBaseline({ workspacePath, taskId }).catch((error: unknown) => {
     console.error('[artifact_baseline_failed]', { taskId, error });
     throw error;
@@ -56,7 +58,29 @@ function captureArtifactRun(workspacePath: string, taskId: string, sessionKey: s
   // arrive (cancel/disconnect), and an unobserved baseline rejection must not
   // become an unhandled process rejection.
   void baseline.catch(() => undefined);
-  artifactRuns.set(artifactRunKey(taskId, sessionKey), { baseline, runStartedAt });
+  artifactRuns.set(artifactRunKey(taskId, sessionKey), { baseline, token });
+  return token;
+}
+
+export function cancelArtifactRun(taskId: string, sessionKey: string, token: string): void {
+  const key = artifactRunKey(taskId, sessionKey);
+  if (artifactRuns.get(key)?.token === token) artifactRuns.delete(key);
+}
+
+export function beginArtifactRunForGatewayDispatch(input: {
+  gatewayId: string;
+  sessionKey: string;
+  taskId: string;
+}): string | null {
+  if (!isDbReady()) return null;
+  const task = getDb()
+    .select({ id: tasks.id })
+    .from(tasks)
+    .where(and(eq(tasks.id, input.taskId), eq(tasks.gatewayId, input.gatewayId)))
+    .get();
+  const workspacePath = getWorkspacePath();
+  if (!task || !workspacePath) return null;
+  return beginArtifactRun(workspacePath, input.taskId, input.sessionKey);
 }
 
 function finalizeAssistantArtifacts(input: {
@@ -93,12 +117,11 @@ function finalizeAssistantArtifacts(input: {
         taskId: input.taskId,
         messageId: input.messageId,
         baseline,
-        runStartedAt: run.runStartedAt,
       });
       for (const artifact of result.saved) {
         for (const win of BrowserWindow.getAllWindows()) win.webContents.send('artifact:saved', artifact);
       }
-      artifactRuns.delete(key);
+      cancelArtifactRun(input.taskId, input.sessionKey, run.token);
       reconciledAssistantMessages.delete(input.messageId);
     } catch (error) {
       reconciledAssistantMessages.delete(input.messageId);
@@ -281,14 +304,11 @@ export function registerDataHandlers(): void {
           .get();
         const persistedMessageId = persisted?.id ?? msg.id;
         const workspacePath = getWorkspacePath();
-        if (workspacePath && msg.role === 'user') {
-          captureArtifactRun(workspacePath, msg.taskId, resolvedSessionKey, msg.timestamp);
-        }
         if (
           workspacePath &&
           msg.role === 'assistant' &&
           !hasRunningToolCall(msg.toolCalls) &&
-          (msg.content.length > 0 || (msg.attachments?.length ?? 0) > 0)
+          (msg.content.length > 0 || (msg.attachments?.length ?? 0) > 0 || (msg.toolCalls?.length ?? 0) > 0)
         ) {
           const run = artifactRuns.get(artifactRunKey(msg.taskId, resolvedSessionKey));
           if (run) {

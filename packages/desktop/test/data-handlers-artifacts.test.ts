@@ -62,10 +62,25 @@ describe('assistant artifact reconciliation boundary', () => {
     consoleErrorMock.mockClear();
   });
 
-  it('captures a trusted baseline for the user turn and reconciles once after extraction for the final assistant write', async () => {
-    const { registerDataHandlers } = await import('../src/main/ipc/data-handlers.js');
+  it('uses the gateway-start baseline even when output appears before the user message is persisted', async () => {
+    const files = new Set<string>();
+    captureTaskArtifactBaselineMock.mockImplementation(async () =>
+      Object.fromEntries([...files].map((name) => [name, 'signature'])),
+    );
+    const { beginArtifactRunForGatewayDispatch, registerDataHandlers } =
+      await import('../src/main/ipc/data-handlers.js');
     registerDataHandlers();
     const createMessage = handleMap.get('data:create-message')!;
+
+    selectGetMock.mockReturnValueOnce({ id: 'task-1' });
+    expect(
+      beginArtifactRunForGatewayDispatch({
+        gatewayId: 'gateway-1',
+        sessionKey: 'session-task-1',
+        taskId: 'task-1',
+      }),
+    ).toEqual(expect.any(String));
+    files.add('created-after-gateway-accept.pdf');
 
     selectGetMock.mockReturnValueOnce({ id: 'user-1' });
     expect(
@@ -82,6 +97,7 @@ describe('assistant artifact reconciliation boundary', () => {
       ),
     ).toEqual({ ok: true });
     await flushJobs();
+    expect(captureTaskArtifactBaselineMock).toHaveBeenCalledTimes(1);
     expect(captureTaskArtifactBaselineMock).toHaveBeenCalledWith({
       workspacePath: 'C:\\trusted-workspace',
       taskId: 'task-1',
@@ -109,8 +125,7 @@ describe('assistant artifact reconciliation boundary', () => {
       workspacePath: 'C:\\trusted-workspace',
       taskId: 'task-1',
       messageId: 'assistant-persisted',
-      baseline: { 'before.txt': 'signature' },
-      runStartedAt: '2026-09-16T00:00:00.000Z',
+      baseline: {},
     });
     expect(autoExtractArtifactsMock.mock.invocationCallOrder[0]).toBeLessThan(
       reconcileTaskArtifactsMock.mock.invocationCallOrder[0],
@@ -136,8 +151,9 @@ describe('assistant artifact reconciliation boundary', () => {
   });
 
   it('does not reconcile while a tool call is still running', async () => {
-    const { registerDataHandlers } = await import('../src/main/ipc/data-handlers.js');
+    const { beginArtifactRun, registerDataHandlers } = await import('../src/main/ipc/data-handlers.js');
     registerDataHandlers();
+    beginArtifactRun('C:\\trusted-workspace', 'task-1', 'session-task-1');
     selectGetMock.mockReturnValueOnce({ id: 'assistant-running' });
 
     const result = handleMap.get('data:create-message')!(
@@ -158,10 +174,97 @@ describe('assistant artifact reconciliation boundary', () => {
     expect(reconcileTaskArtifactsMock).not.toHaveBeenCalled();
   });
 
+  it('finalizes a tool-only assistant message and clears the completed run', async () => {
+    const { beginArtifactRun, registerDataHandlers } = await import('../src/main/ipc/data-handlers.js');
+    registerDataHandlers();
+    beginArtifactRun('C:\\trusted-workspace', 'task-1', 'session-task-1');
+    selectGetMock.mockReturnValueOnce({ id: 'tool-only-final' }).mockReturnValueOnce({ gid: 'gateway-1' });
+
+    expect(
+      handleMap.get('data:create-message')!(
+        {},
+        {
+          id: 'tool-only-final',
+          taskId: 'task-1',
+          role: 'assistant',
+          content: '',
+          timestamp: '2026-09-16T00:00:02.000Z',
+          sessionKey: 'session-task-1',
+          toolCalls: [{ id: 'tool-1', status: 'done' }],
+        },
+      ),
+    ).toEqual({ ok: true });
+    await flushJobs();
+    expect(autoExtractArtifactsMock).toHaveBeenCalledTimes(1);
+    expect(reconcileTaskArtifactsMock).toHaveBeenCalledTimes(1);
+
+    selectGetMock.mockReturnValueOnce({ id: 'tool-only-replay' });
+    handleMap.get('data:create-message')!(
+      {},
+      {
+        id: 'tool-only-replay',
+        taskId: 'task-1',
+        role: 'assistant',
+        content: '',
+        timestamp: '2026-09-16T00:00:03.000Z',
+        sessionKey: 'session-task-1',
+        toolCalls: [{ id: 'tool-2', status: 'done' }],
+      },
+    );
+    await flushJobs();
+    expect(reconcileTaskArtifactsMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not clear a newer retry run when an older reconciliation finishes later', async () => {
+    let finishFirst!: (value: unknown) => void;
+    reconcileTaskArtifactsMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishFirst = resolve;
+        }),
+    );
+    const { beginArtifactRun, registerDataHandlers } = await import('../src/main/ipc/data-handlers.js');
+    registerDataHandlers();
+    beginArtifactRun('C:\\trusted-workspace', 'task-1', 'session-task-1');
+    selectGetMock.mockReturnValueOnce({ id: 'assistant-first' }).mockReturnValueOnce({ gid: 'gateway-1' });
+    handleMap.get('data:create-message')!(
+      {},
+      {
+        id: 'assistant-first',
+        taskId: 'task-1',
+        role: 'assistant',
+        content: 'first',
+        timestamp: '2026-09-16T00:00:01.000Z',
+        sessionKey: 'session-task-1',
+      },
+    );
+    await flushJobs();
+
+    beginArtifactRun('C:\\trusted-workspace', 'task-1', 'session-task-1');
+    finishFirst({ saved: [], existing: [], missing: [], skipped: [], budgetExhausted: false });
+    await flushJobs();
+
+    selectGetMock.mockReturnValueOnce({ id: 'assistant-retry' }).mockReturnValueOnce({ gid: 'gateway-1' });
+    handleMap.get('data:create-message')!(
+      {},
+      {
+        id: 'assistant-retry',
+        taskId: 'task-1',
+        role: 'assistant',
+        content: 'retry',
+        timestamp: '2026-09-16T00:00:02.000Z',
+        sessionKey: 'session-task-1',
+      },
+    );
+    await flushJobs();
+    expect(reconcileTaskArtifactsMock).toHaveBeenCalledTimes(2);
+  });
+
   it('logs reconciliation failure without changing successful assistant persistence', async () => {
     reconcileTaskArtifactsMock.mockRejectedValueOnce(new Error('scan failed'));
-    const { registerDataHandlers } = await import('../src/main/ipc/data-handlers.js');
+    const { beginArtifactRun, registerDataHandlers } = await import('../src/main/ipc/data-handlers.js');
     registerDataHandlers();
+    beginArtifactRun('C:\\trusted-workspace', 'task-1', 'session-task-1');
     selectGetMock.mockReturnValueOnce({ id: 'user-1' });
     expect(
       handleMap.get('data:create-message')!(

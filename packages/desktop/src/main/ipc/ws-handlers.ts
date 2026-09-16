@@ -17,6 +17,7 @@ import type {
 } from '@clawwork/shared';
 import { getDebugLogger } from '../debug/index.js';
 import type { GatewayClient } from '../ws/gateway-client.js';
+import { beginArtifactRunForGatewayDispatch, cancelArtifactRun } from './data-handlers.js';
 
 async function gatewayRpc(
   gatewayId: string,
@@ -211,6 +212,25 @@ export function registerWsHandlers(): void {
         });
         return { ok: false, error: 'gateway not connected', errorCode: 'GATEWAY_NOT_CONNECTED' };
       }
+      let artifactRunToken: string | null = null;
+      if (taskId) {
+        try {
+          artifactRunToken = beginArtifactRunForGatewayDispatch({
+            gatewayId: payload.gatewayId,
+            sessionKey: payload.sessionKey,
+            taskId,
+          });
+        } catch (error) {
+          getDebugLogger().error({
+            domain: 'artifact',
+            event: 'artifact.run.begin-failed',
+            gatewayId: payload.gatewayId,
+            sessionKey: payload.sessionKey,
+            taskId,
+            error: { message: error instanceof Error ? error.message : String(error) },
+          });
+        }
+      }
       try {
         await gw.sendChatMessage(payload.sessionKey, payload.content, payload.attachments);
         getDebugLogger().info({
@@ -223,6 +243,7 @@ export function registerWsHandlers(): void {
         });
         return { ok: true };
       } catch (err) {
+        if (taskId && artifactRunToken) cancelArtifactRun(taskId, payload.sessionKey, artifactRunToken);
         const typed = err as Error & { code?: string; details?: Record<string, unknown> };
         const msg = typed.message ?? 'unknown error';
         getDebugLogger().error({

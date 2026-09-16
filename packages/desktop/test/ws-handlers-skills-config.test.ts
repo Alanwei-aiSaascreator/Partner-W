@@ -12,6 +12,9 @@ const getConfigSchemaMock = vi.fn();
 const lookupConfigSchemaMock = vi.fn();
 const getChatHistoryMock = vi.fn();
 const listSessionsBySpawnerMock = vi.fn();
+const sendChatMessageMock = vi.fn();
+const beginArtifactRunForGatewayDispatchMock = vi.fn();
+const cancelArtifactRunMock = vi.fn();
 
 const fakeGatewayClient = {
   isConnected: true,
@@ -26,6 +29,7 @@ const fakeGatewayClient = {
   lookupConfigSchema: lookupConfigSchemaMock,
   getChatHistory: getChatHistoryMock,
   listSessionsBySpawner: listSessionsBySpawnerMock,
+  sendChatMessage: sendChatMessageMock,
 };
 
 vi.mock('electron', () => ({
@@ -49,7 +53,12 @@ vi.mock('../src/main/workspace/config.js', () => ({
 }));
 
 vi.mock('../src/main/debug/index.js', () => ({
-  getDebugLogger: vi.fn(() => ({ emit: vi.fn() })),
+  getDebugLogger: vi.fn(() => ({ emit: vi.fn(), info: vi.fn(), error: vi.fn() })),
+}));
+
+vi.mock('../src/main/ipc/data-handlers.js', () => ({
+  beginArtifactRunForGatewayDispatch: beginArtifactRunForGatewayDispatchMock,
+  cancelArtifactRun: cancelArtifactRunMock,
 }));
 
 vi.mock('@clawwork/shared', () => ({
@@ -73,11 +82,60 @@ describe('ws-handlers: skills + config IPC channels', () => {
     handleMap.clear();
     vi.clearAllMocks();
     getChatHistoryMock.mockReset();
+    sendChatMessageMock.mockReset().mockResolvedValue(undefined);
+    beginArtifactRunForGatewayDispatchMock.mockReset().mockReturnValue('artifact-run-1');
+    cancelArtifactRunMock.mockReset();
     fakeGatewayClient.isConnected = true;
 
     vi.resetModules();
     const { registerWsHandlers } = await import('../src/main/ipc/ws-handlers.js');
     registerWsHandlers();
+  });
+
+  it('captures an artifact baseline before gateway dispatch', async () => {
+    const result = await invoke('ws:send-message', {
+      gatewayId: 'gw-1',
+      sessionKey: 'agent:main:clawwork:task-1',
+      content: 'create a file',
+    });
+
+    expect(result).toEqual({ ok: true });
+    expect(beginArtifactRunForGatewayDispatchMock).toHaveBeenCalledWith({
+      gatewayId: 'gw-1',
+      sessionKey: 'agent:main:clawwork:task-1',
+      taskId: 'task-1',
+    });
+    expect(beginArtifactRunForGatewayDispatchMock.mock.invocationCallOrder[0]).toBeLessThan(
+      sendChatMessageMock.mock.invocationCallOrder[0],
+    );
+    expect(cancelArtifactRunMock).not.toHaveBeenCalled();
+  });
+
+  it('cancels only the matching artifact run when gateway dispatch fails', async () => {
+    sendChatMessageMock.mockRejectedValueOnce(new Error('dispatch failed'));
+    const result = await invoke('ws:send-message', {
+      gatewayId: 'gw-1',
+      sessionKey: 'agent:main:clawwork:task-1',
+      content: 'create a file',
+    });
+
+    expect(result).toEqual(expect.objectContaining({ ok: false, error: 'dispatch failed' }));
+    expect(cancelArtifactRunMock).toHaveBeenCalledWith('task-1', 'agent:main:clawwork:task-1', 'artifact-run-1');
+  });
+
+  it('still dispatches when artifact baseline setup fails', async () => {
+    beginArtifactRunForGatewayDispatchMock.mockImplementationOnce(() => {
+      throw new Error('baseline unavailable');
+    });
+
+    const result = await invoke('ws:send-message', {
+      gatewayId: 'gw-1',
+      sessionKey: 'agent:main:clawwork:task-1',
+      content: 'create a file',
+    });
+
+    expect(result).toEqual({ ok: true });
+    expect(sendChatMessageMock).toHaveBeenCalledTimes(1);
   });
 
   it('registers all expected channels', () => {

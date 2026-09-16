@@ -54,7 +54,6 @@ export interface ReconcileTaskArtifactsInput {
   taskId: string;
   messageId: string;
   baseline: ArtifactBaseline;
-  runStartedAt?: string;
 }
 
 export interface ReconcileTaskArtifactsResult {
