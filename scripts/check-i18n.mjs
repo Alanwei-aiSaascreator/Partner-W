@@ -2,6 +2,7 @@
 import { readFileSync, readdirSync, existsSync } from 'fs';
 import { join, extname, resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { createI18nUsageMatcher } from './lib/i18n-usage.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..');
@@ -98,18 +99,11 @@ for (const pkg of PACKAGES) {
 
   const sourceFiles = pkg.sourceDirs.flatMap((d) => collectFiles(d, ['.ts', '.tsx']));
   const sourceText = sourceFiles.map((f) => readFileSync(f, 'utf-8')).join('\n');
-
-  const dynamicPrefixRe = /t\(\s*`([^$`]+)\$\{/g;
-  const dynamicPrefixes = [];
-  let dm;
-  while ((dm = dynamicPrefixRe.exec(sourceText)) !== null) {
-    dynamicPrefixes.push(dm[1]);
-  }
+  const isUsed = createI18nUsageMatcher(sourceText);
 
   const unreferenced = [];
   for (const key of enKeys) {
-    if (sourceText.includes(key)) continue;
-    if (dynamicPrefixes.some((p) => key.startsWith(p))) continue;
+    if (isUsed(key)) continue;
     unreferenced.push(key);
   }
 

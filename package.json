@@ -36,7 +36,7 @@
     "test:e2e:packaged": "playwright test --config=e2e/playwright.config.ts --project=packaged",
     "test:e2e:harness": "node --test e2e/helpers/temp-root.test.ts",
     "test:e2e:ledger": "playwright test --config=e2e/playwright.config.ts --project=packaged profile-ledger",
-    "check:i18n": "node scripts/check-i18n.mjs",
+    "check:i18n": "node --test scripts/lib/i18n-usage.test.mjs && node scripts/check-i18n.mjs",
     "check:dead-code": "knip",
     "typecheck:e2e": "pnpm --filter @clawwork/desktop exec tsc --noEmit -p ../../e2e/tsconfig.json",
     "release-notes": "node scripts/generate-release-notes.mjs",

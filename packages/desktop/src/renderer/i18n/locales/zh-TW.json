@@ -93,21 +93,29 @@
       "starters": {
         "1": {
           "description": "Break down goals, steps, timing, and deliverables",
+          "materialHint": "目標描述、截止時間、目前進度和限制條件（可選）",
+          "output": "目標拆解、階段里程碑、優先順序和下一步行動",
           "prompt": "I want to complete [goal]. Choose the right assistant, ask only for essential details, and create an actionable plan.",
           "title": "Plan a task"
         },
         "2": {
           "description": "Read approved files and summarize what matters",
+          "materialHint": "授權檔案或資料夾、整理範圍和希望解決的問題（可選）",
+          "output": "依主題分類的資料重點、摘要和待辦事項",
           "prompt": "Help me organize [file or folder] on this computer. Tell me what to select, then summarize themes and action items.",
           "title": "Organize local files"
         },
         "3": {
           "description": "Weigh cost, risk, and expected results",
+          "materialHint": "候選方案、預算、時間限制和最重視的判斷標準（可選）",
+          "output": "方案比較、關鍵取捨、適用條件和有依據的建議",
           "prompt": "Compare [option A] and [option B] by cost, outcome, risk, and fit, then make a clear recommendation.",
           "title": "Compare options"
         },
         "4": {
           "description": "Turn a request into a document, table, or checklist",
+          "materialHint": "需求說明、使用對象、交付格式和參考資料（可選）",
+          "output": "可繼續編輯的文件、表格或清單結構與內容初稿",
           "prompt": "Turn my request into a usable [document, table, or checklist]. First confirm the audience and delivery format.",
           "title": "Create a deliverable"
         }
@@ -118,21 +126,29 @@
       "starters": {
         "1": {
           "description": "Define audience, angle, and a content series",
+          "materialHint": "主題、平台、目標受眾、帳號定位和參考內容（可選）",
+          "output": "依主題分組的題目清單、切入角度和推薦理由",
           "prompt": "Plan topics about [subject]. Confirm the platform, audience, and goal, then give me 10 specific ideas with reasons.",
           "title": "Plan topics"
         },
         "2": {
           "description": "Write an article, post, or spoken script",
+          "materialHint": "主題、受眾、發布平台、語氣、篇幅和事實素材（可選）",
+          "output": "包含標題、開頭、正文結構和結尾引導的長文初稿",
           "prompt": "Draft a [platform] piece about [subject]. Confirm audience, tone, and length, then provide an editable first draft.",
           "title": "Draft content"
         },
         "3": {
           "description": "Refine structure, voice, title, and opening",
+          "materialHint": "原文、發布平台、目標受眾、目標語氣和需要保留的事實（可選）",
+          "output": "保留原意的優化稿、修改說明和可選標題",
           "prompt": "Improve the copy I provide while preserving its facts and intent. Focus on the title, opening, structure, and pace.",
           "title": "Improve a draft"
         },
         "4": {
           "description": "Schedule themes, formats, and assets",
+          "materialHint": "帳號或品牌、計畫週期、欄目方向、發布時間和現有素材（可選）",
+          "output": "依日期、欄目、素材需求和內容目標整理的發布日曆",
           "prompt": "Create a [period] content calendar for [account or brand], including themes, dates, required assets, and goals.",
           "title": "Content calendar"
         }
@@ -143,21 +159,29 @@
       "starters": {
         "1": {
           "description": "Clarify audience, pain points, and differentiation",
+          "materialHint": "商品資訊、目標族群、規格參數、真實賣點和證明資料（可選）",
+          "output": "商品標題、分層賣點、情境說明、證明資訊和行動引導",
           "prompt": "Develop selling points for [product]. Confirm the audience, price range, and competitors, then provide layered claims and proof.",
           "title": "Product selling points"
         },
         "2": {
           "description": "Compare price, content, and customer feedback",
+          "materialHint": "自家商品、競品資料、價格、頁面內容和使用者評價（可選）",
+          "output": "定位、價格、賣點、頁面和評價差異的競品分析報告",
           "prompt": "Analyze [competitor] across positioning, price, claims, page content, and reviews, then identify differentiation opportunities.",
           "title": "Competitor review"
         },
         "3": {
           "description": "Build titles, benefits, proof, and conversion flow",
+          "materialHint": "商品資料、目標族群、賣點證據和頁面限制（可選）",
+          "output": "首屏標題、核心賣點、信任證明、使用情境和行動引導結構",
           "prompt": "Design product-page copy for [product], including the hero, key benefits, proof, scenarios, and call to action.",
           "title": "Product page copy"
         },
         "4": {
           "description": "Cover presales, objections, payment, and support",
+          "materialHint": "商品或店鋪資訊、常見問題、價格物流和售後規則（可選）",
+          "output": "涵蓋售前、價格異議、催付、物流和售後的客服話術",
           "prompt": "Create customer-service scripts for [product or store], covering presales, price objections, payment, shipping, and after-sales.",
           "title": "Customer service scripts"
         }
@@ -168,21 +192,29 @@
       "starters": {
         "1": {
           "description": "Match household size, budget, and shopping",
+          "materialHint": "用餐人數、飲食偏好、過敏或忌口、預算和現有食材（可選）",
+          "output": "7 天菜單、合併採購清單和備餐建議",
           "prompt": "Create a weekly meal plan for [household size, preferences, and budget], with a combined shopping list and prep advice.",
           "title": "Weekly meal plan"
         },
         "2": {
           "description": "Plan routes, timing, cost, and alternatives",
+          "materialHint": "目的地、家庭成員、日期、預算、出遊偏好和限制（可選）",
+          "output": "路線、時間、費用、預訂事項和雨天備選方案",
           "prompt": "Plan a family trip to [destination]. Confirm travelers, dates, and budget, then provide an itinerary, costs, and rain plan.",
           "title": "Family trip"
         },
         "3": {
           "description": "Give age-appropriate materials and steps",
+          "materialHint": "孩子年齡、活動時長、場地、可用材料和安全限制（可選）",
+          "output": "活動目標、材料清單、執行步驟和安全提示",
           "prompt": "Design a [duration] activity for a [child age], including goals, materials, steps, and safety notes.",
           "title": "Parent-child activity"
         },
         "4": {
           "description": "Assign owners, reminders, and checklists",
+          "materialHint": "家庭成員、固定事項、可用時段、優先順序和個人偏好（可選）",
+          "output": "依日期和成員整理的安排、衝突提示、緩衝時間和提醒",
           "prompt": "Turn [household task] into an actionable plan with timing, owner assignments, required items, and reminders.",
           "title": "Household plan"
         }
@@ -193,21 +225,29 @@
       "starters": {
         "1": {
           "description": "Build a formal document from source material",
+          "materialHint": "參考資料、文件類型、讀者、用途、篇幅和格式要求（可選）",
+          "output": "清楚的文件結構、正文初稿和待確認問題",
           "prompt": "Turn my source material into a [document type]. Confirm the audience and purpose, then produce a clear structure and draft.",
           "title": "Prepare a document"
         },
         "2": {
           "description": "Clean, analyze, and summarize business data",
+          "materialHint": "試算表檔案、欄位說明、業務問題、時間範圍和指標定義（可選）",
+          "output": "清理說明、關鍵指標、異常項目、分析結論和圖表建議",
           "prompt": "Process the spreadsheet I provide. Explain what can be read, then clean it, analyze key metrics, and summarize findings.",
           "title": "Analyze a spreadsheet"
         },
         "3": {
           "description": "Extract decisions, owners, and deadlines",
+          "materialHint": "會議逐字稿、手寫紀錄、與會者和會議議程（可選）",
+          "output": "會議結論、待辦事項、負責人、截止時間和未決問題",
           "prompt": "Turn these meeting notes into minutes with decisions, action items, owners, deadlines, and open questions.",
           "title": "Meeting notes"
         },
         "4": {
           "description": "Develop an outline, key points, and slide flow",
+          "materialHint": "簡報主題、聽眾、時長、已有資料和品牌範本（可選）",
+          "output": "逐頁目的、核心要點、證據需求和視覺建議",
           "prompt": "Create a presentation outline for [topic]. Confirm the audience, goal, and duration, then give slide-by-slide points and data needs.",
           "title": "Presentation brief"
         }
@@ -218,21 +258,29 @@
       "starters": {
         "1": {
           "description": "Collect sources, findings, and uncertainties",
+          "materialHint": "資料檔案或連結、研究範圍、時間要求和來源標準（可選）",
+          "output": "來源目錄、內容摘要、可靠性說明、日期和待查問題",
           "prompt": "Research [topic]. Confirm scope and recency requirements, then summarize reliable sources, findings, and open questions.",
           "title": "Quick research"
         },
         "2": {
           "description": "Evaluate evidence, disagreements, and conditions",
+          "materialHint": "待比較的問題、主要觀點、已有來源和判斷標準（可選）",
+          "output": "證據對照、共識與分歧、適用條件和綜合判斷",
           "prompt": "Compare different views on [question], including evidence, disagreements, applicable conditions, and a balanced conclusion.",
           "title": "Compare viewpoints"
         },
         "3": {
           "description": "Set milestones, materials, and practice",
+          "materialHint": "學習目標、目前程度、可用時間、截止日期和已有資料（可選）",
+          "output": "分階段目標、每週任務、學習資料、練習和檢查點",
           "prompt": "Create a learning plan for [topic] based on my current level, available time, and goal, with stages, resources, and exercises.",
           "title": "Learning plan"
         },
         "4": {
           "description": "Extract concepts, evidence, and next actions",
+          "materialHint": "授權資料、摘要目的、目標讀者和重點問題（可選）",
+          "output": "區分事實、作者觀點和推論的核心概念、重點與行動建議",
           "prompt": "Summarize the material I provide, separating facts, author claims, and your inferences, then list key concepts and actions.",
           "title": "Summarize sources"
         }
@@ -243,21 +291,29 @@
       "starters": {
         "1": {
           "description": "Plan spoken lines, visuals, and pace",
+          "materialHint": "主題、平台、時長、人物、產品資訊和拍攝條件（可選）",
+          "output": "依段落整理的口播、畫面、動作、道具和時長建議",
           "prompt": "Write a [platform and duration] shooting script about [topic], including hook, spoken lines, visual cues, and call to action.",
           "title": "Shooting script"
         },
         "2": {
           "description": "Define shot size, camera, action, and timing",
+          "materialHint": "腳本、參考影片、目標時長、畫面比例和可用場景（可選）",
+          "output": "包含鏡號、景別、機位、畫面、台詞、時長和轉場的分鏡表",
           "prompt": "Turn my script into a storyboard with shot number, framing, visual, dialogue, camera, duration, and transition.",
           "title": "Storyboard"
         },
         "3": {
           "description": "Organize scenes, props, and shooting order",
+          "materialHint": "腳本或拍攝主題、場景、人物、道具和可用設備（可選）",
+          "output": "依場景合併的鏡頭、人物、道具、設備和拍攝順序清單",
           "prompt": "Create a shot list for [topic], grouped into an efficient order, with people, props, equipment, and cautions.",
           "title": "Shot list"
         },
         "4": {
           "description": "Set structure, transitions, captions, and music",
+          "materialHint": "影片素材、發布平台、目標時長、風格和參考作品（可選）",
+          "output": "結構節奏、素材取捨、轉場、字幕、音效和配樂方案",
           "prompt": "Create an editing plan for [video topic], covering pacing, clip selection, transitions, captions, sound, and music.",
           "title": "Editing plan"
         }
@@ -1222,6 +1278,16 @@
     "retry": "重新準備",
     "takingLonger": "準備時間比平時更久，你可以留在工作台內重新嘗試。",
     "title": "正在準備榮盈魔方"
+  },
+  "taskWorkbench": {
+    "appendDraft": "附加範本",
+    "customTask": "自訂任務",
+    "draftConflictDescription": "選擇保留原內容並附加範本，或使用範本取代目前的內容。",
+    "draftConflictTitle": "輸入框已有內容",
+    "materialHint": "建議資料",
+    "output": "預期成果",
+    "recentTasks": "最近使用",
+    "replaceDraft": "取代內容"
   },
   "teams": {
     "confirmDeleteDesc": "確定刪除「{{name}}」？此操作將移除團隊配置。Agent 將保留在 Gateway 上，可在設定中管理。",

@@ -93,21 +93,29 @@
       "starters": {
         "1": {
           "description": "Break down goals, steps, timing, and deliverables",
+          "materialHint": "Goal, deadline, current progress, and constraints (optional)",
+          "output": "Goal breakdown, milestones, priorities, and next actions",
           "prompt": "I want to complete [goal]. Choose the right assistant, ask only for essential details, and create an actionable plan.",
           "title": "Plan a task"
         },
         "2": {
           "description": "Read approved files and summarize what matters",
+          "materialHint": "Approved files or folders, organization scope, and intended use (optional)",
+          "output": "Materials grouped by theme, with key points, summaries, and action items",
           "prompt": "Help me organize [file or folder] on this computer. Tell me what to select, then summarize themes and action items.",
           "title": "Organize local files"
         },
         "3": {
           "description": "Weigh cost, risk, and expected results",
+          "materialHint": "Options, budget, time constraints, and decision criteria (optional)",
+          "output": "Option comparison, trade-offs, fit conditions, and an evidence-based recommendation",
           "prompt": "Compare [option A] and [option B] by cost, outcome, risk, and fit, then make a clear recommendation.",
           "title": "Compare options"
         },
         "4": {
           "description": "Turn a request into a document, table, or checklist",
+          "materialHint": "Request details, intended audience, delivery format, and reference material (optional)",
+          "output": "Editable document, table, or checklist structure with a working draft",
           "prompt": "Turn my request into a usable [document, table, or checklist]. First confirm the audience and delivery format.",
           "title": "Create a deliverable"
         }
@@ -118,21 +126,29 @@
       "starters": {
         "1": {
           "description": "Define audience, angle, and a content series",
+          "materialHint": "Theme, platform, audience, account positioning, and reference content (optional)",
+          "output": "Grouped topic ideas with angles and reasons to prioritize them",
           "prompt": "Plan topics about [subject]. Confirm the platform, audience, and goal, then give me 10 specific ideas with reasons.",
           "title": "Plan topics"
         },
         "2": {
           "description": "Write an article, post, or spoken script",
+          "materialHint": "Theme, audience, platform, tone, length, and factual material (optional)",
+          "output": "Long-form draft with a title, opening, section structure, and closing action",
           "prompt": "Draft a [platform] piece about [subject]. Confirm audience, tone, and length, then provide an editable first draft.",
           "title": "Draft content"
         },
         "3": {
           "description": "Refine structure, voice, title, and opening",
+          "materialHint": "Original copy, platform, audience, target tone, and facts to preserve (optional)",
+          "output": "Revised copy that preserves meaning, with change notes and title options",
           "prompt": "Improve the copy I provide while preserving its facts and intent. Focus on the title, opening, structure, and pace.",
           "title": "Improve a draft"
         },
         "4": {
           "description": "Schedule themes, formats, and assets",
+          "materialHint": "Account or brand, planning period, content pillars, publishing cadence, and available assets (optional)",
+          "output": "Publishing calendar organized by date, content pillar, asset needs, and objective",
           "prompt": "Create a [period] content calendar for [account or brand], including themes, dates, required assets, and goals.",
           "title": "Content calendar"
         }
@@ -143,21 +159,29 @@
       "starters": {
         "1": {
           "description": "Clarify audience, pain points, and differentiation",
+          "materialHint": "Product details, audience, specifications, proven benefits, and supporting evidence (optional)",
+          "output": "Product headline, layered benefits, use cases, proof points, and call to action",
           "prompt": "Develop selling points for [product]. Confirm the audience, price range, and competitors, then provide layered claims and proof.",
           "title": "Product selling points"
         },
         "2": {
           "description": "Compare price, content, and customer feedback",
+          "materialHint": "Your product, competitor materials, prices, page content, and customer reviews (optional)",
+          "output": "Competitor report covering positioning, price, claims, page content, and review differences",
           "prompt": "Analyze [competitor] across positioning, price, claims, page content, and reviews, then identify differentiation opportunities.",
           "title": "Competitor review"
         },
         "3": {
           "description": "Build titles, benefits, proof, and conversion flow",
+          "materialHint": "Product details, audience, evidence for claims, and page constraints (optional)",
+          "output": "Page structure with a hero headline, key benefits, trust proof, use cases, and call to action",
           "prompt": "Design product-page copy for [product], including the hero, key benefits, proof, scenarios, and call to action.",
           "title": "Product page copy"
         },
         "4": {
           "description": "Cover presales, objections, payment, and support",
+          "materialHint": "Product or store details, FAQs, pricing, shipping, and after-sales policies (optional)",
+          "output": "Customer-service scripts for presales, price objections, payment, shipping, and after-sales",
           "prompt": "Create customer-service scripts for [product or store], covering presales, price objections, payment, shipping, and after-sales.",
           "title": "Customer service scripts"
         }
@@ -168,21 +192,29 @@
       "starters": {
         "1": {
           "description": "Match household size, budget, and shopping",
+          "materialHint": "Household size, food preferences, allergies or restrictions, budget, and available ingredients (optional)",
+          "output": "Seven-day meal plan, combined shopping list, and preparation guidance",
           "prompt": "Create a weekly meal plan for [household size, preferences, and budget], with a combined shopping list and prep advice.",
           "title": "Weekly meal plan"
         },
         "2": {
           "description": "Plan routes, timing, cost, and alternatives",
+          "materialHint": "Destination, family members, dates, budget, travel preferences, and constraints (optional)",
+          "output": "Routes, timing, costs, bookings, and a rainy-day alternative",
           "prompt": "Plan a family trip to [destination]. Confirm travelers, dates, and budget, then provide an itinerary, costs, and rain plan.",
           "title": "Family trip"
         },
         "3": {
           "description": "Give age-appropriate materials and steps",
+          "materialHint": "Child age, activity duration, location, available materials, and safety constraints (optional)",
+          "output": "Activity goal, materials list, step-by-step instructions, and safety notes",
           "prompt": "Design a [duration] activity for a [child age], including goals, materials, steps, and safety notes.",
           "title": "Parent-child activity"
         },
         "4": {
           "description": "Assign owners, reminders, and checklists",
+          "materialHint": "Family members, fixed events, available times, priorities, and preferences (optional)",
+          "output": "Schedule by date and person, with conflicts, buffer time, and reminders",
           "prompt": "Turn [household task] into an actionable plan with timing, owner assignments, required items, and reminders.",
           "title": "Household plan"
         }
@@ -193,21 +225,29 @@
       "starters": {
         "1": {
           "description": "Build a formal document from source material",
+          "materialHint": "Source material, document type, audience, purpose, length, and format (optional)",
+          "output": "Clear document structure, working draft, and open questions",
           "prompt": "Turn my source material into a [document type]. Confirm the audience and purpose, then produce a clear structure and draft.",
           "title": "Prepare a document"
         },
         "2": {
           "description": "Clean, analyze, and summarize business data",
+          "materialHint": "Spreadsheet, field definitions, business questions, date range, and metric rules (optional)",
+          "output": "Cleaning notes, key metrics, anomalies, findings, and chart suggestions",
           "prompt": "Process the spreadsheet I provide. Explain what can be read, then clean it, analyze key metrics, and summarize findings.",
           "title": "Analyze a spreadsheet"
         },
         "3": {
           "description": "Extract decisions, owners, and deadlines",
+          "materialHint": "Transcript, notes, attendee list, and meeting agenda (optional)",
+          "output": "Decisions, action items, owners, deadlines, and unresolved questions",
           "prompt": "Turn these meeting notes into minutes with decisions, action items, owners, deadlines, and open questions.",
           "title": "Meeting notes"
         },
         "4": {
           "description": "Develop an outline, key points, and slide flow",
+          "materialHint": "Presentation topic, audience, duration, available data, and brand template (optional)",
+          "output": "Slide-by-slide purpose, key points, evidence needs, and visual direction",
           "prompt": "Create a presentation outline for [topic]. Confirm the audience, goal, and duration, then give slide-by-slide points and data needs.",
           "title": "Presentation brief"
         }
@@ -218,21 +258,29 @@
       "starters": {
         "1": {
           "description": "Collect sources, findings, and uncertainties",
+          "materialHint": "Files or links, research scope, time requirements, and source standards (optional)",
+          "output": "Source catalog with summaries, reliability notes, dates, and open questions",
           "prompt": "Research [topic]. Confirm scope and recency requirements, then summarize reliable sources, findings, and open questions.",
           "title": "Quick research"
         },
         "2": {
           "description": "Evaluate evidence, disagreements, and conditions",
+          "materialHint": "Question, main viewpoints, available sources, and decision criteria (optional)",
+          "output": "Evidence matrix, agreements, disagreements, conditions, and a balanced judgment",
           "prompt": "Compare different views on [question], including evidence, disagreements, applicable conditions, and a balanced conclusion.",
           "title": "Compare viewpoints"
         },
         "3": {
           "description": "Set milestones, materials, and practice",
+          "materialHint": "Learning goal, current level, available time, deadline, and existing resources (optional)",
+          "output": "Learning stages, weekly tasks, materials, practice, and checkpoints",
           "prompt": "Create a learning plan for [topic] based on my current level, available time, and goal, with stages, resources, and exercises.",
           "title": "Learning plan"
         },
         "4": {
           "description": "Extract concepts, evidence, and next actions",
+          "materialHint": "Approved source material, summary purpose, audience, and priority questions (optional)",
+          "output": "Core concepts, key points, and actions separated into facts, author views, and inferences",
           "prompt": "Summarize the material I provide, separating facts, author claims, and your inferences, then list key concepts and actions.",
           "title": "Summarize sources"
         }
@@ -243,21 +291,29 @@
       "starters": {
         "1": {
           "description": "Plan spoken lines, visuals, and pace",
+          "materialHint": "Topic, platform, duration, people, product details, and shooting conditions (optional)",
+          "output": "Structured spoken lines, visuals, actions, props, and timing guidance",
           "prompt": "Write a [platform and duration] shooting script about [topic], including hook, spoken lines, visual cues, and call to action.",
           "title": "Shooting script"
         },
         "2": {
           "description": "Define shot size, camera, action, and timing",
+          "materialHint": "Script, reference videos, target duration, aspect ratio, and available locations (optional)",
+          "output": "Storyboard with shot number, framing, camera, visuals, lines, timing, and transitions",
           "prompt": "Turn my script into a storyboard with shot number, framing, visual, dialogue, camera, duration, and transition.",
           "title": "Storyboard"
         },
         "3": {
           "description": "Organize scenes, props, and shooting order",
+          "materialHint": "Script or shooting topic, locations, people, props, and available equipment (optional)",
+          "output": "Shot list grouped by scene with people, props, equipment, and shooting order",
           "prompt": "Create a shot list for [topic], grouped into an efficient order, with people, props, equipment, and cautions.",
           "title": "Shot list"
         },
         "4": {
           "description": "Set structure, transitions, captions, and music",
+          "materialHint": "Video footage, platform, target duration, style, and references (optional)",
+          "output": "Editing plan for structure, pacing, footage choices, transitions, captions, sound, and music",
           "prompt": "Create an editing plan for [video topic], covering pacing, clip selection, transitions, captions, sound, and music.",
           "title": "Editing plan"
         }
@@ -1222,6 +1278,16 @@
     "retry": "Prepare again",
     "takingLonger": "This is taking longer than usual. You can retry without leaving the workspace.",
     "title": "Preparing Rongying Cube"
+  },
+  "taskWorkbench": {
+    "appendDraft": "Append template",
+    "customTask": "Custom task",
+    "draftConflictDescription": "Keep the current text and append the template, or replace it with the template.",
+    "draftConflictTitle": "The input already has content",
+    "materialHint": "Suggested materials",
+    "output": "Expected result",
+    "recentTasks": "Recently used",
+    "replaceDraft": "Replace content"
   },
   "teams": {
     "confirmDeleteDesc": "Delete \"{{name}}\"? This removes the team configuration. Agents will remain on the Gateway and can be managed in Settings.",

@@ -58,7 +58,11 @@ export default function AssistantTaskWorkbench({
             {ready ? (
               <CheckCircle2 size={13} aria-hidden="true" className="text-[var(--accent)]" />
             ) : (
-              <LoaderCircle size={13} aria-hidden="true" className="animate-spin text-[var(--accent)]" />
+              <LoaderCircle
+                size={13}
+                aria-hidden="true"
+                className="animate-spin text-[var(--accent)] motion-reduce:animate-none"
+              />
             )}
             {t(ready ? 'startupReadiness.aiReady' : 'startupReadiness.aiStarting')}
           </span>
@@ -78,7 +82,7 @@ export default function AssistantTaskWorkbench({
               data-testid="assistant-task-recent-preset"
               data-preset-id={preset.id}
               onClick={() => onSelectPreset(preset)}
-              className="glow-focus rounded-md bg-[var(--bg-tertiary)] px-2.5 py-1.5 text-left type-support text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none"
+              className="glow-focus rounded-md bg-[var(--bg-tertiary)] px-2.5 py-1.5 text-left type-support text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none motion-reduce:transition-none"
             >
               {t(preset.titleKey)}
             </button>
@@ -94,7 +98,7 @@ export default function AssistantTaskWorkbench({
             data-testid="assistant-task-preset"
             data-preset-id={preset.id}
             onClick={() => onSelectPreset(preset)}
-            className="glow-focus group flex min-h-36 flex-col rounded-xl border border-[var(--border)] bg-[var(--bg-secondary)] p-4 text-left transition-colors hover:border-[var(--border-hover)] hover:bg-[var(--bg-hover)] focus-visible:outline-none"
+            className="glow-focus group flex min-h-36 flex-col rounded-xl border border-[var(--border)] bg-[var(--bg-secondary)] p-4 text-left transition-colors hover:border-[var(--border-hover)] hover:bg-[var(--bg-hover)] focus-visible:outline-none motion-reduce:transition-none"
           >
             <span className="type-section-title text-[var(--text-primary)]">{t(preset.titleKey)}</span>
             <span className="type-body mt-1 text-[var(--text-secondary)]">{t(preset.descriptionKey)}</span>
@@ -124,7 +128,7 @@ export default function AssistantTaskWorkbench({
           type="button"
           data-testid="assistant-task-custom"
           onClick={onCustomTask}
-          className="glow-focus inline-flex items-center gap-2 rounded-lg px-3 py-2 type-label text-[var(--accent)] transition-colors hover:bg-[var(--accent-dim)] focus-visible:outline-none"
+          className="glow-focus inline-flex items-center gap-2 rounded-lg px-3 py-2 type-label text-[var(--accent)] transition-colors hover:bg-[var(--accent-dim)] focus-visible:outline-none motion-reduce:transition-none"
         >
           <Plus size={15} aria-hidden="true" />
           {t('taskWorkbench.customTask')}
