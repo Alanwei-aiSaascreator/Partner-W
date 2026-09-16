@@ -372,10 +372,136 @@ test('Demo 主路径：真实 OTP 登录 → UI 输入真卡密 → 激活成功
       '没有任何一次**回读校验通过**的配置写入',
     ).toBe(true);
 
-    // ---- ⑦ 新任务 + 一条真实消息
+    // ---- ⑦ 专业任务模板：只填草稿，绝不偷偷发送
     await page.locator('button[aria-label="新任务"]').click({ timeout: 30_000 });
+
+    // 主路径显式选内容助手，后面两个 preset 才有业务语义。
+    const contentAssistant = page
+      .getByRole('list', { name: '我的助手', exact: true })
+      .getByRole('button', { name: '内容创作', exact: true });
+    await expect(contentAssistant, '七个内置助手中没有内容创作').toBeVisible({ timeout: 180_000 });
+    await contentAssistant.click({ timeout: 30_000 });
+
     const composer = page.locator('textarea').first();
     await composer.waitFor({ state: 'visible', timeout: 30_000 });
+
+    const tasksBeforeTemplates = await callIpc<{
+      ok: boolean;
+      rows?: Array<{ id: string; sessionKey: string }>;
+      error?: string;
+    }>(page, 'loadTasks', []);
+    expect(tasksBeforeTemplates.ok, '模板操作前 loadTasks IPC 失败').toBe(true);
+    expect(Array.isArray(tasksBeforeTemplates.rows), '模板操作前 loadTasks 没有返回 rows').toBe(true);
+    expect(tasksBeforeTemplates.rows, '全新工作区在发送前不应有已落库任务').toEqual([]);
+    const taskWorkbench = page.getByRole('region', { name: '内容创作', exact: true });
+    const shortVideoPreset = taskWorkbench.getByRole('button', { name: /^短视频脚本\s*设计开场/ });
+    await expect(shortVideoPreset, '内容助手没有短视频脚本入口').toBeVisible({ timeout: 30_000 });
+    await shortVideoPreset.click({ timeout: 15_000 });
+    await expect(composer, '短视频脚本模板没有写入草稿').toHaveValue(/短视频/);
+
+    await composer.fill('必须保留的用户草稿');
+    const rewritePreset = taskWorkbench.getByRole('button', { name: /^改写润色\s*保留原意/ });
+    await expect(rewritePreset, '内容助手没有改写润色入口').toBeVisible({ timeout: 30_000 });
+    await rewritePreset.click({ timeout: 15_000 });
+    await page.getByRole('button', { name: '取消', exact: true }).click({ timeout: 15_000 });
+    await expect(composer, '取消模板冲突后用户草稿被改动').toHaveValue('必须保留的用户草稿');
+
+    await rewritePreset.click({ timeout: 15_000 });
+    await page.getByRole('button', { name: '追加模板', exact: true }).click({ timeout: 15_000 });
+    await expect(composer, '追加模板没有保留原草稿或没有加入改写指令').toHaveValue(/必须保留的用户草稿[\s\S]+请优化/);
+
+    const currentSession = await page.evaluate(async () => {
+      const session = await window.clawwork.commercialSession();
+      return {
+        ok: session.ok,
+        signedIn: Boolean(session.result?.signedIn),
+        hasUserId: Boolean(session.result?.profile?.userId.trim()),
+      };
+    });
+    expect(currentSession.ok, '读取当前商业会话失败').toBe(true);
+    expect(currentSession.signedIn, '当前商业会话未登录').toBe(true);
+    expect(currentSession.hasUserId, '当前商业会话缺少 userId').toBe(true);
+
+    const storedHistory = await page.evaluate(async () => {
+      const prefix = 'rongying-cube:assistant-task-history:v1:';
+      const session = await window.clawwork.commercialSession();
+      const userId = session.result?.profile?.userId.trim() ?? '';
+      const authReady = Boolean(session.ok && session.result?.signedIn && userId);
+      if (!authReady) {
+        return {
+          authReady: false,
+          matchingKeyCount: 0,
+          hasOnlyExpectedKey: false,
+          parseOk: false,
+          isArray: false,
+          recent: null as unknown,
+        };
+      }
+
+      const expectedKey = `${prefix}${userId}`;
+      const matchingKeys = Object.keys(window.localStorage).filter((candidate) => candidate.startsWith(prefix));
+      const raw = window.localStorage.getItem(expectedKey);
+      let parsed: unknown = null;
+      let parseOk = false;
+      if (raw !== null) {
+        try {
+          parsed = JSON.parse(raw) as unknown;
+          parseOk = true;
+        } catch {
+          parseOk = false;
+        }
+      }
+
+      return {
+        authReady: true,
+        matchingKeyCount: matchingKeys.length,
+        hasOnlyExpectedKey: matchingKeys.length === 1 && matchingKeys[0] === expectedKey,
+        parseOk,
+        isArray: Array.isArray(parsed),
+        recent: parsed,
+      };
+    });
+    expect(storedHistory.authReady, '验证历史记录时商业会话已失效').toBe(true);
+    expect(storedHistory.matchingKeyCount, '全新 profile 出现了多个账号的任务历史 key').toBe(1);
+    expect(storedHistory.hasOnlyExpectedKey, '任务历史没有写入当前登录账号的精确 key').toBe(true);
+    expect(storedHistory.parseOk, '当前账号的任务历史不是合法 JSON').toBe(true);
+    expect(storedHistory.isArray, '当前账号的任务历史不是数组').toBe(true);
+
+    const recent = storedHistory.recent as unknown[];
+    const latestRecent = recent[0];
+    expect(
+      latestRecent !== null && typeof latestRecent === 'object' && !Array.isArray(latestRecent),
+      '最近使用的第一项不是对象',
+    ).toBe(true);
+    const latestRecentRecord = latestRecent as Record<string, unknown>;
+    expect(typeof latestRecentRecord.presetId, '最近使用的 presetId 不是字符串').toBe('string');
+    expect(typeof latestRecentRecord.usedAt, '最近使用的 usedAt 不是字符串').toBe('string');
+    expect(
+      typeof latestRecentRecord.usedAt === 'string' && Number.isFinite(Date.parse(latestRecentRecord.usedAt)),
+      '最近使用的 usedAt 不是有效时间',
+    ).toBe(true);
+    expect(latestRecentRecord, '最近使用的第一项不是刚选的改写润色').toEqual({
+      presetId: 'content:rewrite-polish',
+      usedAt: expect.any(String),
+    });
+    expect(Object.keys(latestRecentRecord).sort(), '最近使用记录泄露了 prompt/草稿等多余字段').toEqual([
+      'presetId',
+      'usedAt',
+    ]);
+
+    // 模板点击只改输入框：任务未落库，页面也没有用户消息气泡。
+    // 下面的 send.click() 仍是整条用例唯一一次真实/付费模型调用。
+    const tasksAfterTemplates = await callIpc<{
+      ok: boolean;
+      rows?: Array<{ id: string; sessionKey: string }>;
+      error?: string;
+    }>(page, 'loadTasks', []);
+    expect(tasksAfterTemplates.ok, '模板操作后 loadTasks IPC 失败').toBe(true);
+    expect(Array.isArray(tasksAfterTemplates.rows), '模板操作后 loadTasks 没有返回 rows').toBe(true);
+    expect(tasksAfterTemplates.rows, '点击任务模板意外创建了任务/触发了发送').toEqual([]);
+    await expect(page.getByText('必须保留的用户草稿', { exact: true }), '草稿意外出现在消息区').toHaveCount(0);
+
+    // ---- ⑧ 一条真实消息（本用例唯一的付费模型调用）
     await composer.fill(PROMPT);
     const send = page.getByRole('button', { name: '发送', exact: true });
     await expect(send, '输入了内容发送键却不可点').toBeEnabled({ timeout: 15_000 });
@@ -395,7 +521,7 @@ test('Demo 主路径：真实 OTP 登录 → UI 输入真卡密 → 激活成功
     };
     const task = await waitForTask();
 
-    // ---- ⑧ ⭐ 真实往返：网关侧这一轮真的跑完了、真的产出了 token
+    // ---- ⑨ ⭐ 真实往返：网关侧这一轮真的跑完了、真的产出了 token
     const waitTurnDone = async (): Promise<GwSession> => {
       const deadline = Date.now() + 180_000;
       let last = '（一次都没读到）';
@@ -413,7 +539,7 @@ test('Demo 主路径：真实 OTP 登录 → UI 输入真卡密 → 激活成功
     const session = await waitTurnDone();
     const gatewayModel = String(session.model).replace(/^[^/]+\//, '');
 
-    // ---- ⑨ ⭐ 真实 provenance：网关 ↔ UI 徽章 ↔ sqlite，三处对齐
+    // ---- ⑩ ⭐ 真实 provenance：网关 ↔ UI 徽章 ↔ sqlite，三处对齐
     const badges = page.getByTestId('model-badge');
     await expect(badges.first(), '消息上没有 model 徽章').toBeVisible({ timeout: 60_000 });
     // ⚠️ 徽章的**展示名**可能不等于 id ⇒ 用 `title`（原始 id）做铁证
@@ -430,7 +556,7 @@ test('Demo 主路径：真实 OTP 登录 → UI 输入真卡密 → 激活成功
       '库里存的模型和 UI / 网关对不上',
     ).toEqual(rows.map(() => gatewayModel));
 
-    // ---- ⑩ 收尾：卡真的落到了本地配置（还是**产品自己**写的）
+    // ---- ⑪ 收尾：卡真的落到了本地配置（还是**产品自己**写的）
     expect(readConfigFile().commercial?.licenseKey ?? '', '激活成功后 licenseKey 没落盘').toBe(licenceKey);
 
     console.log(
