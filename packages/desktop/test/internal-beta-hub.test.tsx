@@ -34,11 +34,32 @@ function typeInto(input: HTMLInputElement, value: string): void {
   input.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
+async function flushAsync(): Promise<void> {
+  await act(async () => {
+    await Promise.resolve();
+  });
+}
+
 describe('InternalBetaHub', () => {
   beforeEach(() => {
     localStorage.clear();
     window.history.replaceState(null, '', '#/');
     act(() => useBetaStore.getState().resetDemo());
+    (window as unknown as { clawwork: Record<string, unknown> }).clawwork = {
+      getAppVersion: vi.fn().mockResolvedValue('1.0.0'),
+      checkForUpdates: vi.fn().mockResolvedValue({
+        hasUpdate: true,
+        currentVersion: '1.0.0',
+        latestVersion: '1.1.0',
+        releaseUrl: 'https://example.com/release',
+        releaseNotes: '修复文件交付问题',
+      }),
+      downloadUpdate: vi.fn().mockResolvedValue({ ok: true }),
+      installUpdate: vi.fn().mockResolvedValue({ ok: true }),
+      onUpdateDownloadProgress: vi.fn(() => vi.fn()),
+      onUpdateDownloaded: vi.fn(() => vi.fn()),
+      onUpdateError: vi.fn(() => vi.fn()),
+    };
   });
 
   it('exposes every company beta module as direct navigation', () => {
@@ -72,12 +93,14 @@ describe('InternalBetaHub', () => {
     unmount();
   });
 
-  it('moves update simulation through checking and available states', () => {
+  it('uses the Electron updater and shows the real available version', async () => {
     useBetaStore.getState().setActiveModule('updates');
     const { container, unmount } = render(<InternalBetaHub />);
     act(() => container.querySelector<HTMLButtonElement>('[data-action="check-update"]')?.click());
-    expect(useBetaStore.getState().update.status).toBe('available');
-    expect(container.textContent).toContain('1.0.1-beta');
+    await flushAsync();
+    expect(window.clawwork.checkForUpdates).toHaveBeenCalledTimes(1);
+    expect(container.textContent).toContain('1.1.0');
+    expect(container.textContent).not.toContain('内测模拟升级');
     unmount();
   });
 });

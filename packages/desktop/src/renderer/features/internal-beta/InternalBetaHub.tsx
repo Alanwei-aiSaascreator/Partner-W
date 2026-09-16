@@ -30,6 +30,7 @@ import WindowTitlebar from '@/components/semantic/WindowTitlebar';
 import { Button } from '@/components/ui/button';
 import { BETA_MODULES, MARKET_TEMPLATES, useBetaStore, type BetaModule } from './beta-store';
 import { betaRoute, parseBetaRoute } from './beta-route';
+import { createInternalBetaUpdateService, type InternalBetaUpdateState } from './update-service';
 
 const ICONS: Record<BetaModule, typeof Users> = {
   team: Users,
@@ -564,54 +565,82 @@ function OperationsModule() {
 }
 
 function UpdatesModule() {
-  const update = useBetaStore((s) => s.update);
-  const check = useBetaStore((s) => s.checkUpdate);
-  const advance = useBetaStore((s) => s.advanceUpdate);
-  const rollback = useBetaStore((s) => s.rollbackUpdate);
+  const service = useMemo(() => createInternalBetaUpdateService(window.clawwork), []);
+  const [update, setUpdate] = useState<InternalBetaUpdateState>(service.getState());
+
+  useEffect(() => {
+    const unsubscribe = service.subscribe(setUpdate);
+    void service.loadVersion();
+    return () => {
+      unsubscribe();
+      service.dispose();
+    };
+  }, [service]);
+
   const action =
     update.status === 'available'
       ? '下载更新'
       : update.status === 'downloaded'
         ? '安装并重启'
-        : update.status === 'installed'
-          ? '已安装'
-          : '检查更新';
+        : update.status === 'checking'
+          ? '正在检查…'
+          : update.status === 'downloading'
+            ? `正在下载 ${Math.round(update.percent)}%`
+            : update.status === 'installing'
+              ? '正在启动安装…'
+              : '检查更新';
+  const busy = update.status === 'checking' || update.status === 'downloading' || update.status === 'installing';
+  const runPrimaryAction = () => {
+    if (update.status === 'available') return void service.download();
+    if (update.status === 'downloaded') return void service.install();
+    return void service.check();
+  };
+
   return (
     <div className="mx-auto max-w-[var(--content-max-width)] space-y-4">
       <Card>
         <div className="flex items-start justify-between gap-4">
           <div>
-            <Badge tone="warning">内测模拟升级</Badge>
-            <h3 className="type-dialog-title mt-3">当前版本 {update.current}</h3>
-            <p className="type-body mt-1 text-[var(--text-muted)]">正式版将接入签名安装包、断点下载和安全回滚。</p>
+            <Badge tone="success">桌面更新服务</Badge>
+            <h3 className="type-dialog-title mt-3">当前版本 {update.currentVersion ?? '读取中'}</h3>
+            <p className="type-body mt-1 text-[var(--text-muted)]">
+              使用已签名安装包检查、下载并安装更新；安装前会明确提示重启。
+            </p>
           </div>
           <PackageCheck className="text-[var(--accent)]" size={36} />
         </div>
       </Card>
-      {update.status !== 'idle' && (
+      {(update.status === 'available' || update.status === 'downloading' || update.status === 'downloaded') && (
         <Card>
-          <p className="type-body text-[var(--text-muted)]">发现可用版本</p>
-          <h3 className="type-page-title mt-1">{update.available}</h3>
-          <ul className="type-body my-4 list-inside list-disc text-[var(--text-secondary)]">
-            <li>内测中心基础框架</li>
-            <li>文件和成果交付稳定性修复</li>
-          </ul>
+          <p className="type-body text-[var(--text-muted)]">
+            {update.status === 'downloaded' ? '更新已下载，等待安装' : '发现可用版本'}
+          </p>
+          <h3 className="type-page-title mt-1">{update.latestVersion}</h3>
+          {update.releaseNotes && <p className="type-body mt-3 text-[var(--text-secondary)]">{update.releaseNotes}</p>}
+          {update.status === 'downloading' && (
+            <div className="mt-4 h-2 overflow-hidden rounded-full bg-[var(--bg-hover)]">
+              <div
+                className="h-full rounded-full bg-[var(--accent)] transition-[width]"
+                style={{ width: `${update.percent}%` }}
+              />
+            </div>
+          )}
+        </Card>
+      )}
+      {update.status === 'error' && (
+        <Card>
+          <Badge tone="warning">更新未完成</Badge>
+          <p className="type-body mt-3 text-[var(--text-secondary)]">{update.message}</p>
         </Card>
       )}
       <div className="flex gap-2">
-        <Button
-          data-action="check-update"
-          disabled={update.status === 'installed'}
-          onClick={update.status === 'idle' || update.status === 'rolledBack' ? check : advance}
-        >
+        <Button data-action="check-update" disabled={busy} onClick={runPrimaryAction}>
           {action}
         </Button>
-        <Button variant="outline" onClick={rollback}>
-          <RotateCcw />
-          回滚演示
-        </Button>
       </div>
-      <p className="type-body text-[var(--text-muted)]">状态：{update.status}</p>
+      <p className="type-support text-[var(--text-muted)]">
+        如新版本异常，请从管理员发布的上一稳定版本安装包恢复；客户端不会伪装已经完成回滚。
+      </p>
     </div>
   );
 }
