@@ -130,9 +130,10 @@ export function createAnalyticsReporter(options: AnalyticsReporterOptions): Anal
       if (running) return;
       running = true;
       try {
-        // ① 先丢掉**永远不可能被接受**的条目：服务端只收 30 天内的 occurred_at，
-        //    留着它们会让队首永久卡住（整批被拒 ⇒ 整批留在队列 ⇒ 后面全排不到）。
-        //    典型来源：用户离线了很久，队列里攒着老事件。
+        // ① 先丢掉**永远不可能被接受**的条目（服务端只收 30 天内的 occurred_at）。
+        //    ⚠️ 它不是"防卡死"（永久性拒绝那一条已经保证队列会排空），而是**防毒化批次**：
+        //    一条超龄条目会被服务端按 invalid_payload 整批拒绝，同一批里**至多 49 条健康事件**
+        //    会被一起丢掉。先丢它，好事件才活得下来。
         // 判超龄也用注入的时钟（与事件时间戳同源）——否则测试分辨不出实现用的是哪个时钟。
         const staleCutoff = Date.parse(now()) - MAX_EVENT_AGE_MS;
         const stale = state.events.filter((e) => Date.parse(e.occurredAt) < staleCutoff);

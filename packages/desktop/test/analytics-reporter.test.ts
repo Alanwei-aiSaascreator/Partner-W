@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createAnalyticsReporter } from '../src/main/analytics/reporter.js';
+import { createAnalyticsReporter, type AnalyticsReporter } from '../src/main/analytics/reporter.js';
 
 // 与仓库既有做法一致（`../debug/index.js` 会 import `electron`）：不依赖它的内部行为，
 // 顺便去掉未初始化时往 stderr 打的那层噪声。本文件不断言日志。
@@ -104,5 +104,90 @@ describe('analytics reporter', () => {
     b.track('app_launch');
     await b.flush();
     expect(b.peek()).toHaveLength(1);
+  });
+
+  it('★ 只移除这一批：flush 期间新入队的事件不会被一起清掉', async () => {
+    const storage = memoryStorage();
+    let calls = 0;
+    const send = vi.fn(async () => {
+      calls += 1;
+      // 第一次发送的过程中来了新事件（用户正在用）；第二次发它，故意失败让它留在队列里
+      if (calls === 1) reporter.track('chat_sent');
+      return calls === 1 ? { ok: true, inserted: 1 } : { ok: false };
+    });
+    // `send` 里引用了下面这个 const：闭包只在 flush 时才跑，那时它已经初始化了
+    const reporter: AnalyticsReporter = createAnalyticsReporter({ storage, send });
+    reporter.track('app_launch');
+    await reporter.flush();
+
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(reporter.peek().map((e) => e.event)).toEqual(['chat_sent']);
+  });
+
+  it('★ 永久拒绝丢该批后继续发下一批（不是丢一批就收工）', async () => {
+    const storage = memoryStorage();
+    let calls = 0;
+    const send = vi.fn(async () => {
+      calls += 1;
+      return calls === 1 ? { ok: false, permanent: true, errorCode: 'invalid_payload' } : { ok: true, inserted: 1 };
+    });
+    const reporter = createAnalyticsReporter({ storage, send, max: 200 });
+    for (let i = 0; i < 60; i += 1) reporter.track('chat_sent'); // 跨过 BATCH(50) ⇒ 两个批次
+
+    await reporter.flush();
+
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(reporter.peek()).toHaveLength(0);
+  });
+
+  it('★ 落盘回读要过白名单：坏条目进不了队列（否则毒条目会跨重启复活）', () => {
+    const storage = memoryStorage();
+    storage.write(
+      JSON.stringify({
+        events: [
+          { clientEventId: 'ok-1', event: 'app_launch', occurredAt: '2026-01-01T00:00:00.000Z' },
+          { clientEventId: 123, event: 'app_launch', occurredAt: '2026-01-01T00:00:00.000Z' }, // 数字 id
+          { clientEventId: 'bad-1', event: 'not_a_real_event', occurredAt: '2026-01-01T00:00:00.000Z' }, // 非白名单
+          { clientEventId: 'bad-2', event: 'app_launch' }, // 缺 occurredAt
+          null,
+          42,
+          'nope',
+        ],
+        chatSentCount: 2,
+      }),
+    );
+
+    const reporter = createAnalyticsReporter({ storage, send: vi.fn() });
+
+    expect(reporter.peek().map((e) => e.clientEventId)).toEqual(['ok-1']);
+
+    // 整段读不出来也不能炸：退化成空队列
+    const broken = memoryStorage();
+    broken.write('not json{');
+    expect(createAnalyticsReporter({ storage: broken, send: vi.fn() }).peek()).toEqual([]);
+  });
+
+  it('★ 失败之后单飞标志要复位（否则一次失败就再也不发了）', async () => {
+    const storage = memoryStorage();
+    const send = vi.fn().mockResolvedValueOnce({ ok: false }).mockResolvedValue({ ok: true, inserted: 1 });
+    const reporter = createAnalyticsReporter({ storage, send });
+    reporter.track('app_launch');
+
+    await reporter.flush(); // 第一次：临时性失败，条目留在队列里
+    await reporter.flush(); // 第二次：必须**真的**再发一次
+
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(reporter.peek()).toHaveLength(0);
+  });
+
+  it('★ chatSentCount 跨重启只补一次 first_chat_sent', () => {
+    const storage = memoryStorage();
+    storage.write(JSON.stringify({ events: [], chatSentCount: 3 }));
+    const reporter = createAnalyticsReporter({ storage, send: vi.fn() });
+
+    reporter.trackChatSent();
+
+    // 已经聊过 3 次了，重启后不该再补一条 first_chat_sent（会影响看板口径）
+    expect(reporter.peek().map((e) => e.event)).toEqual(['chat_sent']);
   });
 });
