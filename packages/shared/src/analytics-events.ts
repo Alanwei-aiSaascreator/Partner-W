@@ -5,7 +5,8 @@
  * `analytics-events.test.ts` 直接读那份迁移文件比对，改动任一边都会红。
  *
  * 只收「主进程能钉住真实动作点」的事件：`agent_created` / `template_installed`
- * 等目前没有可依赖的成功回调，**刻意不收**（加事件 = 迁移加一个名字 + 一处调用）。
+ * 等目前没有可依赖的成功回调，**刻意不收**
+ * （加事件 = 迁移加一个名字 + **本常量加一个名字** + 一处调用，三处缺一不可）。
  */
 export const ANALYTICS_EVENTS = [
   'app_launch',
