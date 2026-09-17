@@ -1,3 +1,5 @@
+import { ASSISTANT_TASK_PRESETS } from './assistant-task-presets';
+
 export interface RecentAssistantTask {
   presetId: string;
   usedAt: string;
@@ -10,8 +12,8 @@ export interface AssistantTaskHistoryStorage {
 
 const PREFIX = 'rongying-cube:assistant-task-history:v1:';
 const MAX_RECENT = 5;
-const MAX_PRESET_ID_LENGTH = 100;
 const MAX_USED_AT_LENGTH = 64;
+const VALID_PRESET_IDS = new Set(ASSISTANT_TASK_PRESETS.map((preset) => preset.id));
 
 function storageKey(userId: string): string {
   return `${PREFIX}${userId}`;
@@ -42,9 +44,9 @@ function sanitizeHistory(value: unknown): RecentAssistantTask[] {
     const item = valueItem as Record<string, unknown>;
     if (typeof item.presetId !== 'string' || typeof item.usedAt !== 'string') continue;
 
-    const presetId = item.presetId.slice(0, MAX_PRESET_ID_LENGTH);
+    const presetId = item.presetId;
     const usedAt = item.usedAt.slice(0, MAX_USED_AT_LENGTH);
-    if (!presetId || !isStrictIsoTimestamp(usedAt) || seenPresetIds.has(presetId)) continue;
+    if (!VALID_PRESET_IDS.has(presetId) || !isStrictIsoTimestamp(usedAt) || seenPresetIds.has(presetId)) continue;
 
     recent.push({ presetId, usedAt });
     seenPresetIds.add(presetId);
@@ -70,7 +72,10 @@ export function recordRecentAssistantTask(
   storage?: AssistantTaskHistoryStorage,
   usedAt = new Date().toISOString(),
 ): RecentAssistantTask[] {
-  const next = sanitizeHistory([{ presetId, usedAt }, ...loadRecentAssistantTasks(userId, storage)]);
+  const current = loadRecentAssistantTasks(userId, storage);
+  if (!VALID_PRESET_IDS.has(presetId)) return current;
+
+  const next = sanitizeHistory([{ presetId, usedAt }, ...current]);
   try {
     resolveStorage(storage)?.setItem(storageKey(userId), JSON.stringify(next));
   } catch {
