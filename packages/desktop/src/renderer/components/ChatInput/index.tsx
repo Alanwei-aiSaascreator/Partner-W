@@ -102,14 +102,14 @@ interface TextSelection {
   end: number;
 }
 
-function findFirstFillablePlaceholder(value: string): TextSelection | null {
+function findFirstFillablePlaceholder(value: string, searchStart = 0): TextSelection | null {
   let first: TextSelection | null = null;
 
   for (const [open, close] of [
     ['[', ']'],
     ['【', '】'],
   ] as const) {
-    let start = value.indexOf(open);
+    let start = value.indexOf(open, searchStart);
     while (start >= 0) {
       const end = value.indexOf(close, start + open.length);
       if (end < 0) break;
@@ -495,7 +495,7 @@ export default function ChatInput({
   ]);
 
   const setComposerDraft = useCallback(
-    (value: string) => {
+    (value: string, placeholderSearchStart = 0) => {
       const textarea = textareaRef.current;
       if (!textarea) return;
       textarea.value = value;
@@ -508,7 +508,7 @@ export default function ChatInput({
           selectedLocalFiles.length > 0,
       );
       textarea.focus();
-      const selection = findFirstFillablePlaceholder(value);
+      const selection = findFirstFillablePlaceholder(value, placeholderSearchStart);
       textarea.setSelectionRange(selection?.start ?? value.length, selection?.end ?? value.length);
     },
     [pendingAttachments.length, materials.selectedImportedFiles.length, selectedLocalFiles.length],
@@ -542,7 +542,9 @@ export default function ChatInput({
       if (!draftConflict) return;
       const request = draftConflict;
       if (resolution === 'appended') {
-        setComposerDraft(`${textareaRef.current?.value ?? ''}\n\n${request.prompt}`);
+        const existingDraft = textareaRef.current?.value ?? '';
+        const appendedPromptStart = existingDraft.length + 2;
+        setComposerDraft(`${existingDraft}\n\n${request.prompt}`, appendedPromptStart);
       } else if (resolution === 'replaced') {
         setComposerDraft(request.prompt);
       }

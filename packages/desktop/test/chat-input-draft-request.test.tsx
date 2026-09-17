@@ -327,6 +327,25 @@ describe('ChatInput draft requests', () => {
     view.unmount();
   });
 
+  it('selects a placeholder from the appended template instead of one in the existing draft', () => {
+    const onDraftResolved = vi.fn();
+    const draftRequest = request('request-append-offset', 'Write about [new topic].');
+    const view = renderChatInput({ draftRequest: null, onDraftResolved });
+    textarea(view.container).value = 'Keep [old] value';
+    view.rerender({ draftRequest, onDraftResolved });
+
+    clickDialogAction('taskWorkbench.appendDraft');
+
+    const composer = textarea(view.container);
+    expect(composer.value).toBe('Keep [old] value\n\nWrite about [new topic].');
+    expect(composer.selectionStart).toBe(30);
+    expect(composer.selectionEnd).toBe(41);
+    expect(mocks.focus).toHaveBeenCalledTimes(1);
+    expect(onDraftResolved).toHaveBeenCalledWith(draftRequest, 'appended');
+
+    view.unmount();
+  });
+
   it('replaces a conflicting request and selects the first placeholder in the replacement', () => {
     const onDraftResolved = vi.fn();
     const draftRequest = request('request-4', 'Prepared [topic] prompt');
