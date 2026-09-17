@@ -24,6 +24,7 @@ import { registerNotificationHandlers } from './ipc/notification-handlers.js';
 import { registerAvatarHandlers, registerAvatarProtocol } from './ipc/avatar-handlers.js';
 import { registerHubHandlers } from './ipc/hub-handlers.js';
 import { registerCommercialHandlers } from './ipc/commercial-handlers.js';
+import { registerCommunityHandlers } from './ipc/community-handlers.js';
 import { initUsageReporter, destroyUsageReporter } from './commercial/usage-reporter.js';
 import { bootstrapCommercialRelay } from './commercial/relay-startup.js';
 import { unwatchAll } from './context/file-watcher.js';
@@ -239,6 +240,7 @@ if (!gotLock) {
     registerAvatarProtocol();
     registerHubHandlers();
     registerCommercialHandlers();
+    registerCommunityHandlers();
 
     ipcMain.handle('app:rebuild-menu', () => {
       devModeEnabled = readConfig()?.devMode === true;
