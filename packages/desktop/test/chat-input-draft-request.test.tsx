@@ -224,8 +224,6 @@ function renderChatInput(
   props: {
     draftRequest?: DraftPromptRequest | null;
     onDraftResolved?: (request: DraftPromptRequest, resolution: DraftPromptResolution) => void;
-    draftPrompt?: string | null;
-    onDraftApplied?: () => void;
   } = {},
 ): {
   container: HTMLDivElement;
@@ -277,12 +275,15 @@ describe('ChatInput draft requests', () => {
     vi.restoreAllMocks();
   });
 
-  it('applies a request to an empty composer, focuses it, and never sends', () => {
+  it('applies a request to an empty composer and selects its first square-bracket placeholder', () => {
     const onDraftResolved = vi.fn();
-    const draftRequest = request('request-1', 'Prepared prompt');
+    const draftRequest = request('request-1', 'Write about [subject], then compare [option].');
     const view = renderChatInput({ draftRequest, onDraftResolved });
+    const composer = textarea(view.container);
 
-    expect(textarea(view.container).value).toBe('Prepared prompt');
+    expect(composer.value).toBe('Write about [subject], then compare [option].');
+    expect(composer.selectionStart).toBe(12);
+    expect(composer.selectionEnd).toBe(21);
     expect(mocks.focus).toHaveBeenCalledTimes(1);
     expect(onDraftResolved).toHaveBeenCalledWith(draftRequest, 'applied');
     expect(mocks.handleSend).not.toHaveBeenCalled();
@@ -306,32 +307,40 @@ describe('ChatInput draft requests', () => {
     view.unmount();
   });
 
-  it('appends a conflicting request with exactly two newlines', () => {
+  it('appends a conflicting request with exactly two newlines and selects its first full-width placeholder', () => {
     const onDraftResolved = vi.fn();
-    const draftRequest = request('request-3', 'Prepared prompt');
+    const draftRequest = request('request-3', '围绕【主题】写一份提纲，再补充【受众】。');
     const view = renderChatInput({ draftRequest: null, onDraftResolved });
     textarea(view.container).value = 'My draft';
     view.rerender({ draftRequest, onDraftResolved });
 
     clickDialogAction('taskWorkbench.appendDraft');
 
-    expect(textarea(view.container).value).toBe('My draft\n\nPrepared prompt');
+    const composer = textarea(view.container);
+    expect(composer.value).toBe('My draft\n\n围绕【主题】写一份提纲，再补充【受众】。');
+    expect(composer.selectionStart).toBe(12);
+    expect(composer.selectionEnd).toBe(16);
+    expect(mocks.focus).toHaveBeenCalledTimes(1);
     expect(onDraftResolved).toHaveBeenCalledWith(draftRequest, 'appended');
     expect(mocks.handleSend).not.toHaveBeenCalled();
 
     view.unmount();
   });
 
-  it('replaces a conflicting request with only the requested prompt', () => {
+  it('replaces a conflicting request and selects the first placeholder in the replacement', () => {
     const onDraftResolved = vi.fn();
-    const draftRequest = request('request-4', 'Prepared prompt');
+    const draftRequest = request('request-4', 'Prepared [topic] prompt');
     const view = renderChatInput({ draftRequest: null, onDraftResolved });
     textarea(view.container).value = 'My draft';
     view.rerender({ draftRequest, onDraftResolved });
 
     clickDialogAction('taskWorkbench.replaceDraft');
 
-    expect(textarea(view.container).value).toBe('Prepared prompt');
+    const composer = textarea(view.container);
+    expect(composer.value).toBe('Prepared [topic] prompt');
+    expect(composer.selectionStart).toBe(9);
+    expect(composer.selectionEnd).toBe(16);
+    expect(mocks.focus).toHaveBeenCalledTimes(1);
     expect(onDraftResolved).toHaveBeenCalledWith(draftRequest, 'replaced');
     expect(mocks.handleSend).not.toHaveBeenCalled();
 
@@ -419,17 +428,16 @@ describe('ChatInput draft requests', () => {
     view.unmount();
   });
 
-  it('preserves the legacy draft prompt behavior until its caller migrates', () => {
-    const onDraftApplied = vi.fn();
-    const view = renderChatInput({ draftPrompt: null, onDraftApplied });
-    textarea(view.container).value = 'Existing legacy draft';
+  it('places the cursor at the end when an applied request has no placeholder', () => {
+    const onDraftResolved = vi.fn();
+    const draftRequest = request('request-no-placeholder', 'Prepared prompt');
+    const view = renderChatInput({ draftRequest, onDraftResolved });
+    const composer = textarea(view.container);
 
-    view.rerender({ draftPrompt: 'Legacy prompt', onDraftApplied });
-
-    expect(textarea(view.container).value).toBe('Legacy prompt');
-    expect(onDraftApplied).toHaveBeenCalledTimes(1);
-    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
-    expect(mocks.handleSend).not.toHaveBeenCalled();
+    expect(composer.selectionStart).toBe(composer.value.length);
+    expect(composer.selectionEnd).toBe(composer.value.length);
+    expect(mocks.focus).toHaveBeenCalledTimes(1);
+    expect(onDraftResolved).toHaveBeenCalledWith(draftRequest, 'applied');
 
     view.unmount();
   });

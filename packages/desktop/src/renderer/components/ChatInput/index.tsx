@@ -92,17 +92,42 @@ function SelectionTag({
 
 interface ChatInputProps {
   onNavigateToAccount?: () => void;
-  draftPrompt?: string | null;
-  onDraftApplied?: () => void;
   draftRequest?: DraftPromptRequest | null;
   onDraftResolved?: (request: DraftPromptRequest, resolution: DraftPromptResolution) => void;
   readinessBlocked?: boolean;
 }
 
+interface TextSelection {
+  start: number;
+  end: number;
+}
+
+function findFirstFillablePlaceholder(value: string): TextSelection | null {
+  let first: TextSelection | null = null;
+
+  for (const [open, close] of [
+    ['[', ']'],
+    ['【', '】'],
+  ] as const) {
+    let start = value.indexOf(open);
+    while (start >= 0) {
+      const end = value.indexOf(close, start + open.length);
+      if (end < 0) break;
+      const content = value.slice(start + open.length, end);
+      if (content.length > 0 && !content.includes('\n') && !content.includes('\r')) {
+        const candidate = { start, end: end + close.length };
+        if (!first || candidate.start < first.start) first = candidate;
+        break;
+      }
+      start = value.indexOf(open, start + open.length);
+    }
+  }
+
+  return first;
+}
+
 export default function ChatInput({
   onNavigateToAccount,
-  draftPrompt,
-  onDraftApplied,
   draftRequest,
   onDraftResolved,
   readinessBlocked = false,
@@ -113,18 +138,6 @@ export default function ChatInput({
   const handledDraftRequestIdsRef = useRef(new Set<string>());
   const [canSend, setCanSend] = useState(false);
   const [draftConflict, setDraftConflict] = useState<DraftPromptRequest | null>(null);
-
-  useEffect(() => {
-    if (!draftPrompt) return;
-    const textarea = textareaRef.current;
-    if (!textarea) return;
-    textarea.value = draftPrompt;
-    textarea.style.height = 'auto';
-    textarea.style.height = `${Math.min(textarea.scrollHeight, 160)}px`;
-    setCanSend(true);
-    textarea.focus();
-    onDraftApplied?.();
-  }, [draftPrompt, onDraftApplied]);
 
   const sendShortcut = useUiStore((s) => s.sendShortcut);
   const mainView = useUiStore((s) => s.mainView);
@@ -495,6 +508,8 @@ export default function ChatInput({
           selectedLocalFiles.length > 0,
       );
       textarea.focus();
+      const selection = findFirstFillablePlaceholder(value);
+      textarea.setSelectionRange(selection?.start ?? value.length, selection?.end ?? value.length);
     },
     [pendingAttachments.length, materials.selectedImportedFiles.length, selectedLocalFiles.length],
   );
