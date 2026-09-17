@@ -5,6 +5,7 @@ import type { Task, TaskStatus, IpcResult } from '@clawwork/shared';
 export interface PendingNewTask {
   gatewayId: string;
   agentId: string;
+  tags?: string[];
   model?: string;
   thinkingLevel?: string;
   ensemble?: boolean;
@@ -29,6 +30,7 @@ export interface TaskState {
     thinkingLevel?: string;
     ensemble?: boolean;
     teamId?: string;
+    tags?: string[];
   }) => Task;
   setActiveTask: (id: string | null) => void;
   updateTaskTitle: (id: string, title: string) => void;
@@ -147,6 +149,7 @@ export function createTaskStore(deps: TaskStoreDeps) {
         thinkingLevel: pending?.thinkingLevel,
         ensemble: pending?.ensemble,
         teamId: pending?.teamId,
+        tags: pending?.tags,
       });
       set({ pendingNewTask: null });
       return task;
@@ -180,7 +183,7 @@ export function createTaskStore(deps: TaskStoreDeps) {
         ensemble: opts?.ensemble ?? undefined,
         createdAt: now,
         updatedAt: now,
-        tags: [],
+        tags: [...(opts?.tags ?? [])],
         artifactDir: '',
         gatewayId: resolvedGatewayId,
         agentId: resolvedAgentId,
