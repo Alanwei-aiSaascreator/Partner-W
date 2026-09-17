@@ -25,13 +25,13 @@
 
 推送：`supabase db push --linked`，**只应用了 39–41**（先 `--dry-run` 确认过清单）。
 
-| 探针（anon，只读）                                                                  | 结果                                                               |
-| ----------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| `GET /rest/v1/agent_templates?select=id&limit=1`                                    | 200（官方行对所有人可见，符合设计）                                |
-| `GET /rest/v1/agent_template_installs?select=…`                                     | 200 `[]`                                                           |
-| `GET /rest/v1/agent_templates?select=name&limit=5`                                  | **三条官方模板都在**（爆款内容教练 / 电商增长参谋 / 深度研究助手） |
-| **负对照**：不存在的表                                                              | 404 `PGRST205` ⇒ 上面的读不是假象                                  |
-| anon 调 `market_templates` / `creator_templates_mine` / `market_template_installed` | **401 `42501 permission denied`** ⇒ 授权面只给 authenticated       |
+| 探针（anon，只读）                                                                  | 结果                                                                            |
+| ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `GET /rest/v1/agent_templates?select=id&limit=1`                                    | 200 —— ⚠️ 当时我判成「符合设计」，**判错了**：这是 RLS 漏了「必须已登录」，见下 |
+| `GET /rest/v1/agent_template_installs?select=…`                                     | 200 `[]`                                                                        |
+| `GET /rest/v1/agent_templates?select=name&limit=5`                                  | **三条官方模板都在**（爆款内容教练 / 电商增长参谋 / 深度研究助手）              |
+| **负对照**：不存在的表                                                              | 404 `PGRST205` ⇒ 上面的读不是假象                                               |
+| anon 调 `market_templates` / `creator_templates_mine` / `market_template_installed` | **401 `42501 permission denied`** ⇒ 授权面只给 authenticated                    |
 
 自动化证据：SQL **34 条断言**（`scripts/tests/agent_templates.sql`，含两种变异验证 ——
 §见下）；客户端全量 **1349 passed**（2 skipped）；`typecheck` / `typecheck:tests` /
@@ -65,6 +65,12 @@
 7. ⚠️ **一次全量 suite 偶发 4 条失败**（5 个文件），立即重跑两次全绿；形态符合仓库已记录的
    偶发模式（全量并行时冷模块转换超时 + 污染共享 mock），这台机器当时只剩约 1 GB 可用内存、
    Docker 仍在跑。没有抓到失败用例名（日志被过滤吞了）——记录在此，若再复现按该模式排查。
+
+## 后续补丁（同日晚）
+
+探针③ 那条「官方行对所有人可见」**是错的** —— 它是 RLS 漏了「调用者必须已登录」，
+不是设计。已单独出两条迁移收口（42：`agent_templates`；43：`posts`/`comments`/`likes`
+同一类面），证据与回滚见 `2026-09-17-anon-read-guard.md`。
 
 ## 回滚
 
