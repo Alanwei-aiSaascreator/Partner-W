@@ -966,6 +966,18 @@
     },
     "workspaceUnavailable": "The assistant workspace is unavailable. Check the service connection and retry."
   },
+  "question": {
+    "answerAllRequired": "「{{headers}}」が未回答です。選択すると続行できます。",
+    "cancelFailed": "スキップに失敗しました。もう一度お試しください。",
+    "incompleteTitle": "必須の質問に未回答があります",
+    "otherPlaceholder": "または回答を直接入力",
+    "resolveFailed": "送信に失敗しました。もう一度お試しください。",
+    "singleSelectOnly": "「{{header}}」は1つだけ選択できます。",
+    "skip": "スキップ",
+    "submit": "送信",
+    "subtitle": "回答するとタスクを続行します",
+    "title": "確認が必要です"
+  },
   "rightPanel": {
     "artifacts": "成果物",
     "context": "コンテキスト",

@@ -458,3 +458,60 @@ describe('未知事件种类的告警阈值', () => {
     );
   });
 });
+
+describe('重连后与网关对账未决问题', () => {
+  // ⚠️ 事件只在**创建时**发一次；断线或进程重启期间挂起的问题不会补发，
+  //    不对账就等于隐形挂起（用户消息照样被当成答案吞掉）。
+  it('连上（含重连）时触发一次对账，断开时不触发', () => {
+    const h = createHarness();
+    const syncPendingQuestions = vi.fn();
+    h.deps.syncPendingQuestions = syncPendingQuestions;
+    h.dispatcher.startGatewayStatus();
+
+    h.emitStatus({ gatewayId: 'gw-1', connected: true });
+    expect(syncPendingQuestions).toHaveBeenCalledWith('gw-1');
+
+    syncPendingQuestions.mockClear();
+    h.emitStatus({ gatewayId: 'gw-1', connected: false, error: 'boom' });
+    expect(syncPendingQuestions).not.toHaveBeenCalled();
+  });
+});
+
+describe('结构化提问（question.*）事件路由', () => {
+  // ⚠️ 回归点：这条链路以前**根本没人接**，事件被静默丢弃 ⇒ 问题一直 pending ⇒
+  //    网关把该会话里用户发的每条消息都当成「答案」吃掉（2026-09-17 Word 任务锁死）。
+  it('把 question.requested 交给调用方，而不是丢掉', () => {
+    const h = createHarness();
+    const onQuestionRequested = vi.fn();
+    h.deps.onQuestionRequested = onQuestionRequested;
+
+    const payload = {
+      id: 'ask_b331b9ae631f740e1cecf8b24115aaf8',
+      questions: [
+        { questionId: 'doc_type', header: '文档类型', question: '你要什么文档？', options: [{ label: '教案' }] },
+      ],
+      sessionKey: TASK.sessionKey,
+      createdAtMs: 1,
+      expiresAtMs: 2,
+      status: 'pending',
+    };
+    h.emit('question.requested', payload);
+
+    expect(onQuestionRequested).toHaveBeenCalledWith('gw-1', payload);
+  });
+
+  it('把 question.resolved 交给调用方，用来收掉卡片', () => {
+    const h = createHarness();
+    const onQuestionResolved = vi.fn();
+    h.deps.onQuestionResolved = onQuestionResolved;
+
+    h.emit('question.resolved', { id: 'ask_b331b9ae631f740e1cecf8b24115aaf8', status: 'cancelled' });
+
+    expect(onQuestionResolved).toHaveBeenCalledWith('ask_b331b9ae631f740e1cecf8b24115aaf8');
+  });
+
+  it('没接回调也不炸（老版本宿主）', () => {
+    const h = createHarness();
+    expect(() => h.emit('question.requested', { id: 'ask_1', questions: [] })).not.toThrow();
+  });
+});

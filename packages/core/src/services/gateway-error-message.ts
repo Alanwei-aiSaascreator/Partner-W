@@ -15,6 +15,8 @@
  * 网关的原文比我们编的话准，宁可给英文也不要给一句错的中文。
  */
 
+import { describeQuestionFailure } from './question-flow.js';
+
 /** 思考档位的协议 id → 中文。与 `ChatInput/constants.ts` 的展示名保持一致。 */
 const THINKING_LEVEL_LABELS: Record<string, string> = {
   off: '关闭',
@@ -48,7 +50,20 @@ function translateModelNotFound(raw: string): string | null {
   return '该模型在当前服务上不存在。请换一个模型再试。';
 }
 
-const TRANSLATORS = [translateThinkingLevelUnsupported, translateModelNotFound];
+/**
+ * 结构化提问（`ask_user`）的校验失败。
+ *
+ * ⚠️ 原文长这样：`GatewayClientRequestError: question 'doc_type' requires an answer`
+ * —— 直接把 `doc_type` 摆给用户看既是信息泄漏也是中文体验缺陷（2026-09-17 实机）。
+ * 这里没有 question 上下文（拿不到 `header`），所以给通用中文；
+ * 卡片里的具体提示由 `question-flow.ts` 的 `describeQuestionFailure` 负责。
+ */
+function translateQuestionFailure(raw: string): string | null {
+  // fallback 传空串：认不出来的 reason 会返回空串（假值），由外层继续尝试别的翻译器
+  return describeQuestionFailure(raw, [], '') || null;
+}
+
+const TRANSLATORS = [translateThinkingLevelUnsupported, translateModelNotFound, translateQuestionFailure];
 
 /** 命中已知错误返回中文；认不出来返回 null（调用方应回退到网关原文）。 */
 export function translateGatewayError(raw: string | undefined): string | null {

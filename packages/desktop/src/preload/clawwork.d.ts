@@ -5,6 +5,7 @@ import type {
   Team,
   TeamHubRegistry,
   ApprovalDecision,
+  QuestionResolveParams,
   CronJob,
   CronJobCreate,
   CronJobPatch,
@@ -537,6 +538,11 @@ export interface ClawWorkAPI {
   ) => Promise<IpcResult<SessionsPreviewResult>>;
 
   resolveExecApproval: (gatewayId: string, id: string, decision: ApprovalDecision) => Promise<IpcResult>;
+
+  /** 回答（或取消）网关的结构化提问 `ask_user`。 */
+  resolveQuestion: (gatewayId: string, params: QuestionResolveParams) => Promise<IpcResult>;
+  /** 重连 / 重启后捞回仍在挂起的问题。 */
+  listQuestions: (gatewayId: string) => Promise<IpcResult<{ questions: unknown[] }>>;
 
   resetSession: (gatewayId: string, sessionKey: string, reason?: 'new' | 'reset') => Promise<IpcResult>;
   deleteSession: (gatewayId: string, sessionKey: string) => Promise<IpcResult>;

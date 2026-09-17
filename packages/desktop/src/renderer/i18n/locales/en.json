@@ -966,6 +966,18 @@
     },
     "workspaceUnavailable": "The assistant workspace is unavailable. Check the service connection and retry."
   },
+  "question": {
+    "answerAllRequired": "Still missing: {{headers}}. Pick an answer to continue.",
+    "cancelFailed": "Could not skip the question. Please try again.",
+    "incompleteTitle": "Some required questions are unanswered",
+    "otherPlaceholder": "Or type your own answer",
+    "resolveFailed": "Could not submit the answer. Please try again.",
+    "singleSelectOnly": "“{{header}}” accepts only one answer.",
+    "skip": "Skip",
+    "submit": "Submit",
+    "subtitle": "Answer and I'll continue the task",
+    "title": "I need your input"
+  },
   "rightPanel": {
     "artifacts": "Artifacts",
     "context": "Context",

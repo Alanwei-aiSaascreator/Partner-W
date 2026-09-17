@@ -966,6 +966,18 @@
     },
     "workspaceUnavailable": "暫時無法讀取助手工作目錄，請檢查服務連線後重試。"
   },
+  "question": {
+    "answerAllRequired": "還差「{{headers}}」沒有選擇，選完就能繼續。",
+    "cancelFailed": "跳過失敗，請重試。",
+    "incompleteTitle": "還有必答的問題沒有選擇",
+    "otherPlaceholder": "或直接輸入你的答案",
+    "resolveFailed": "提交失敗，請重試。",
+    "singleSelectOnly": "「{{header}}」只能選一個答案。",
+    "skip": "跳過",
+    "submit": "提交",
+    "subtitle": "回答後我會繼續完成任務",
+    "title": "需要你確認一下"
+  },
   "rightPanel": {
     "artifacts": "產出檔案",
     "context": "上下文",

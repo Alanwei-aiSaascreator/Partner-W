@@ -10,6 +10,7 @@ import { useFileStore } from '../stores/fileStore';
 import { useDashboardStore } from '../stores/dashboardStore';
 import { useUsageStore } from '../stores/usageStore';
 import { useApprovalStore } from '../stores/approvalStore';
+import { useQuestionStore } from '../stores/questionStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { hydrateFromLocal, resetHydration } from './session-sync';
 import { reinitializeGatewayBootstrap } from '../hooks/useGatewayDispatcherSetup';
@@ -47,6 +48,8 @@ export async function refreshRendererAfterWorkspaceChange(): Promise<void> {
   useDashboardStore.getState().clear();
   useUsageStore.getState().clear();
   useApprovalStore.getState().clear();
+  // 退出 / 切号后不能留着上一账号的问题卡片：它指向的会话已经不属于当前账号了
+  useQuestionStore.getState().clear();
 
   useUiStore.setState({
     gatewayStatusMap: {},

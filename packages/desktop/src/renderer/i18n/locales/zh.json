@@ -966,6 +966,18 @@
     },
     "workspaceUnavailable": "暂时无法读取助手工作目录，请检查服务连接后重试。"
   },
+  "question": {
+    "answerAllRequired": "还差「{{headers}}」没有选择，选完就能继续。",
+    "cancelFailed": "跳过失败，请重试。",
+    "incompleteTitle": "还有必答的问题没有选择",
+    "otherPlaceholder": "或直接输入你的答案",
+    "resolveFailed": "提交失败，请重试。",
+    "singleSelectOnly": "「{{header}}」只能选一个答案。",
+    "skip": "跳过",
+    "submit": "提交",
+    "subtitle": "回答后我会继续完成任务",
+    "title": "需要你确认一下"
+  },
   "rightPanel": {
     "artifacts": "产物",
     "context": "上下文",

@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
   ApprovalDecision,
+  QuestionResolveParams,
   CommandsListParams,
   CronJobCreate,
   CronJobPatch,
@@ -313,6 +314,10 @@ function buildApi(): ClawWorkAPI {
 
     resolveExecApproval: (gatewayId: string, id: string, decision: ApprovalDecision) =>
       ipcRenderer.invoke('ws:exec-approval-resolve', { gatewayId, id, decision }),
+
+    resolveQuestion: (gatewayId: string, params: QuestionResolveParams) =>
+      ipcRenderer.invoke('ws:question-resolve', { gatewayId, params }),
+    listQuestions: (gatewayId: string) => ipcRenderer.invoke('ws:question-list', { gatewayId }),
 
     resetSession: (gatewayId: string, sessionKey: string, reason?: 'new' | 'reset') =>
       ipcRenderer.invoke('ws:session-reset', { gatewayId, sessionKey, reason }),

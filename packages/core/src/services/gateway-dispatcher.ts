@@ -134,6 +134,18 @@ export interface GatewayDispatcherDeps {
   onSubagentCandidate?: (sessionKey: string, gatewayId: string) => void;
   onApprovalRequested?: (gatewayId: string, approval: unknown) => void;
   onApprovalResolved?: (id: string) => void;
+  /**
+   * 网关结构化提问（`ask_user`）。**必须接**：不接的话问题一直 pending，
+   * 而网关会把该 session 里用户发的任何消息当成「答案」吞掉（见 question-flow.ts）。
+   */
+  onQuestionRequested?: (gatewayId: string, request: unknown) => void;
+  onQuestionResolved?: (id: string) => void;
+  /**
+   * 网关连上（含重连）时与网关对账未决问题。
+   * 进程重启 / 断线期间创建的问题不会补发 `question.requested`，
+   * 不对账就等于隐形挂起 —— 用户的消息会继续被吞。
+   */
+  syncPendingQuestions?: (gatewayId: string) => void;
   notifyAgentResponse?: (sessionKey: string) => void;
   onToast?: (type: 'error' | 'warning' | 'success', title: string, opts?: { description?: string }) => void;
   translate: TranslateFn;
@@ -828,6 +840,10 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
         deps.onApprovalRequested?.(data.gatewayId, data.payload);
       } else if (data.event === 'exec.approval.resolved') {
         deps.onApprovalResolved?.((data.payload as { id: string }).id);
+      } else if (data.event === 'question.requested') {
+        deps.onQuestionRequested?.(data.gatewayId, data.payload);
+      } else if (data.event === 'question.resolved') {
+        deps.onQuestionResolved?.((data.payload as { id: string }).id);
       }
     });
 
@@ -893,6 +909,7 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
       }
       deps.retrySyncPending();
       fetchCatalogs(s.gatewayId);
+      deps.syncPendingQuestions?.(s.gatewayId);
     } else if (!s.connected && wasConnected) {
       connectedGateways.delete(s.gatewayId);
       deps.onToast?.('warning', deps.translate('connection.lostConnection'), {

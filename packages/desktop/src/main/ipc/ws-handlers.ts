@@ -11,6 +11,7 @@ import type {
   ConfigPatchParams,
   ConfigSetParams,
   ExecApprovalResolveParams,
+  QuestionResolveParams,
   SkillInstallParams,
   SkillSearchParams,
   SkillUpdateParams,
@@ -786,6 +787,31 @@ export function registerWsHandlers(): void {
       if (!keys.length) return { ok: false, error: 'no session keys provided' };
       return gatewayRpc(gatewayId, (gw) => gw.previewSessions({ keys, limit, maxChars }));
     },
+  );
+
+  ipcMain.handle(
+    'ws:question-resolve',
+    async (
+      _event,
+      payload: {
+        gatewayId: string;
+        params: QuestionResolveParams;
+      },
+      // 参数原样透传：网关 schema 是 closedObject（多/少字段都会被拒），
+      // 所以这里**不做任何包装或裁剪**，拼装责任在 core 的 buildQuestion*Params。
+    ) =>
+      gatewayRpc(payload.gatewayId, (gw) =>
+        gw.sendReq('question.resolve', payload.params as unknown as Record<string, unknown>),
+      ),
+  );
+
+  /**
+   * 重连 / 重启后捞回仍在挂起的问题。
+   * 少了这一步，进程重启期间创建的问题在客户端不可见，用户下一条消息又会被网关
+   * 当成「答案」吞掉（就是 2026-09-17 那次锁死的窄窗口版本）。
+   */
+  ipcMain.handle('ws:question-list', async (_event, payload: { gatewayId: string }) =>
+    gatewayRpc(payload.gatewayId, (gw) => gw.sendReq('question.list', {})),
   );
 
   ipcMain.handle(

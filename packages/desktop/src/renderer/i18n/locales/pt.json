@@ -966,6 +966,18 @@
     },
     "workspaceUnavailable": "The assistant workspace is unavailable. Check the service connection and retry."
   },
+  "question": {
+    "answerAllRequired": "Falta responder: {{headers}}. Escolha uma opção para continuar.",
+    "cancelFailed": "Falha ao ignorar. Tente novamente.",
+    "incompleteTitle": "Há perguntas obrigatórias sem resposta",
+    "otherPlaceholder": "Ou digite sua própria resposta",
+    "resolveFailed": "Falha ao enviar a resposta. Tente novamente.",
+    "singleSelectOnly": "«{{header}}» aceita apenas uma resposta.",
+    "skip": "Ignorar",
+    "submit": "Enviar",
+    "subtitle": "Responda e eu continuarei a tarefa",
+    "title": "Preciso da sua confirmação"
+  },
   "rightPanel": {
     "artifacts": "Artefatos",
     "context": "Contexto",

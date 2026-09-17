@@ -24,6 +24,21 @@ describe('translateGatewayError —— 已知错误翻中文', () => {
     const raw = 'The selected model was not found by the provider. Check the model id or choose a different model.';
     expect(translateGatewayError(raw)).toBe('该模型在当前服务上不存在。请换一个模型再试。');
   });
+
+  it('结构化提问的答案没给全 —— 且不泄漏内部字段名', () => {
+    // 2026-09-17 实机原文（`GatewayClientRequestError: ` 前缀是客户端包出来的）
+    const raw = "GatewayClientRequestError: question 'doc_type' requires an answer";
+    const translated = translateGatewayError(raw);
+    expect(translated).toBe('还有必答的问题没有选择，请在问题卡片里选完再发送。');
+    expect(translated).not.toContain('doc_type');
+  });
+
+  it('提问已经结束 / 已被回答', () => {
+    expect(translateGatewayError("question 'ask_1' was not found")).toBe('这个问题已经结束，请重新发送消息。');
+    expect(translateGatewayError("question 'ask_1' is already answered")).toBe(
+      '这个问题已经回答过了，请重新发送消息。',
+    );
+  });
 });
 
 describe('translateGatewayError —— 认不出来要返回 null（由调用方回退原文）', () => {

@@ -91,6 +91,23 @@ export type { TranslateFn } from './services/error-classify.js';
 
 export { describeGatewayError, translateGatewayError } from './services/gateway-error-message.js';
 
+export {
+  autofillSelection,
+  buildQuestionCancelParams,
+  buildQuestionResolveParams,
+  describeQuestionFailure,
+  isQuestionExpired,
+  parseQuestionRequest,
+  resolveQuestionSelection,
+} from './services/question-flow.js';
+export type {
+  PendingQuestion,
+  QuestionOption,
+  QuestionRequest,
+  QuestionSelection,
+  QuestionSelectionResult,
+} from './services/question-flow.js';
+
 export { autoTitleIfNeeded } from './services/auto-title.js';
 
 export { deriveSessionActivity, getTaskSessionKeys } from './services/session-activity.js';

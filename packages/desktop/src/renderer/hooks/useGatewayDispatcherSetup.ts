@@ -6,6 +6,7 @@ import { hydrateFromLocal, retrySyncPending, syncFromGateway, syncSessionMessage
 import i18n from '../i18n';
 import { composer, composerBridge, ports, useMessageStore, useTaskStore, useUiStore, useRoomStore } from '../platform';
 import { useApprovalStore } from '../stores/approvalStore';
+import { useQuestionStore } from '../stores/questionStore';
 
 export type GatewayDispatcher = ReturnType<typeof createGatewayDispatcher>;
 
@@ -111,6 +112,19 @@ function getDispatcher(): GatewayDispatcher {
       onApprovalRequested: handleApprovalRequested,
       onApprovalResolved: (id) => {
         useApprovalStore.getState().removeApproval(id);
+      },
+      onQuestionRequested: (gatewayId, request) => useQuestionStore.getState().addQuestion(gatewayId, request),
+      onQuestionResolved: (id) => useQuestionStore.getState().removeQuestion(id),
+      syncPendingQuestions: (gatewayId) => {
+        // 断线 / 重启用期间挂起的问题不会补发事件，必须主动对账（见 store.reconcileQuestions）
+        void window.clawwork
+          .listQuestions(gatewayId)
+          .then((res) => {
+            if (!res.ok || !res.result) return;
+            const list = (res.result as { questions?: unknown[] }).questions;
+            useQuestionStore.getState().reconcileQuestions(gatewayId, Array.isArray(list) ? list : []);
+          })
+          .catch(() => {});
       },
       notifyAgentResponse: (sessionKey) => composer.notifyResponse(sessionKey),
       onToast: (type, title, opts) => {

@@ -966,6 +966,18 @@
     },
     "workspaceUnavailable": "The assistant workspace is unavailable. Check the service connection and retry."
   },
+  "question": {
+    "answerAllRequired": "「{{headers}}」이(가) 아직 선택되지 않았습니다. 선택하면 계속 진행합니다.",
+    "cancelFailed": "건너뛰기에 실패했습니다. 다시 시도해 주세요.",
+    "incompleteTitle": "필수 질문에 답하지 않았습니다",
+    "otherPlaceholder": "또는 직접 답변을 입력하세요",
+    "resolveFailed": "제출에 실패했습니다. 다시 시도해 주세요.",
+    "singleSelectOnly": "「{{header}}」는 하나만 선택할 수 있습니다.",
+    "skip": "건너뛰기",
+    "submit": "제출",
+    "subtitle": "답변하면 작업을 계속 진행합니다",
+    "title": "확인이 필요합니다"
+  },
   "rightPanel": {
     "artifacts": "산출물",
     "context": "컨텍스트",
