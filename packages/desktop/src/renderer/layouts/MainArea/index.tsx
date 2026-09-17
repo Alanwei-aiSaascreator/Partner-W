@@ -47,6 +47,7 @@ import Dashboard from '@/layouts/Dashboard';
 import InternalBetaHub from '@/features/internal-beta/InternalBetaHub';
 import CommunityPanel from '@/layouts/CommunityPanel';
 import MarketPanel from '@/layouts/MarketPanel';
+import GrowthPanel from '@/layouts/GrowthPanel';
 import { useUsageStore } from '@/stores/usageStore';
 import { useQuotaRefreshOnTurnEnd } from '@/hooks/useQuotaRefreshOnTurnEnd';
 import DataTable, { type DataTableColumn } from '@/components/data-display/DataTable';
@@ -1197,6 +1198,10 @@ export default function MainArea({
       ) : mainView === 'market' ? (
         <div className="flex-1 min-h-0">
           <MarketPanel />
+        </div>
+      ) : mainView === 'growth' ? (
+        <div className="flex-1 min-h-0">
+          <GrowthPanel />
         </div>
       ) : (
         // ⚠️ 这里**不能**再挂 `key={activeTaskId}`（2026-09-17 移除）：发第一条消息时

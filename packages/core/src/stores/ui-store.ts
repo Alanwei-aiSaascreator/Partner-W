@@ -10,7 +10,8 @@ export type MainView =
   | 'dashboard'
   | 'betaHub'
   | 'community'
-  | 'market';
+  | 'market'
+  | 'growth';
 export type Theme = 'dark' | 'light' | 'auto';
 export type DensityMode = 'compact' | 'comfortable' | 'spacious';
 export type SendShortcut = 'enter' | 'cmdEnter';
