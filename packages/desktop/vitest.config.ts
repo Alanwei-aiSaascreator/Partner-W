@@ -5,6 +5,8 @@ export default defineConfig({
   test: {
     include: ['test/**/*.test.ts', 'test/**/*.test.tsx'],
     environment: 'node',
+    // jsdom 在这个版本组合下不提供 localStorage，见 test/setup.ts 的说明
+    setupFiles: ['./test/setup.ts'],
     // A cold full-suite run on Windows can spend more than Vitest's default
     // compiling Electron IPC modules and starting the isolated file-service
     // probes. Those probes have their own 30s process timeout, so keep Vitest's
