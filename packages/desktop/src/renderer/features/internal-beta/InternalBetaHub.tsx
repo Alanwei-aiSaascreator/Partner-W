@@ -30,6 +30,7 @@ import WindowTitlebar from '@/components/semantic/WindowTitlebar';
 import { Button } from '@/components/ui/button';
 import { BETA_MODULES, MARKET_TEMPLATES, useBetaStore, type BetaModule } from './beta-store';
 import { betaRoute, parseBetaRoute } from './beta-route';
+import { describeUpdateError } from './update-errors';
 import { createInternalBetaUpdateService, type InternalBetaUpdateState } from './update-service';
 
 const ICONS: Record<BetaModule, typeof Users> = {
@@ -661,7 +662,11 @@ function UpdatesModule() {
       {update.status === 'error' && (
         <Card>
           <Badge tone="warning">更新未完成</Badge>
-          <p className="type-body mt-3 text-[var(--text-secondary)]">{update.message}</p>
+          {/* ⚠️ 不能直接渲染 `update.message`：那是 electron-updater 的英文原文
+              （`HttpError: 404 … latest.yml`）。翻译层见 update-errors.ts。 */}
+          <p className="type-body mt-3 text-[var(--text-secondary)]">
+            {describeUpdateError(update.message, update.operation)}
+          </p>
         </Card>
       )}
       <div className="flex gap-2">
@@ -900,9 +905,13 @@ export default function InternalBetaHub() {
         <main className="min-w-0 flex-1 overflow-y-auto">
           <div className="mx-auto max-w-6xl p-5 lg:p-7">
             <header className="mb-5">
-              <h1 className="type-page-title">{selected.label}</h1>
+              <div className="flex items-center gap-2">
+                <h1 className="type-page-title">{selected.label}</h1>
+                {/* ⚠️ 本机模拟的模块必须**当场**标出来：内测 1.0 不许把这些当"已完成"讲。 */}
+                {selected.preview && <Badge tone="warning">{t('beta.previewBadge')}</Badge>}
+              </div>
               <p className="type-body mt-1 text-[var(--text-muted)]">
-                {selected.description} · {t('beta.localDataHint')}
+                {selected.description} · {selected.preview ? t('beta.previewHint') : t('beta.localDataHint')}
               </p>
             </header>
             <ActiveModule />
