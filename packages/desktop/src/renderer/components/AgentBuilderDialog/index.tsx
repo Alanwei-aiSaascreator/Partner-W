@@ -370,7 +370,7 @@ export default function AgentBuilderDialog({ open, onOpenChange, gatewayId, onCr
             {stalled && (
               <div
                 className="mx-4 mb-2 rounded-lg px-3 py-2 type-support"
-                style={{ background: 'var(--warning-bg, var(--bg-tertiary))', color: 'var(--text-secondary)' }}
+                style={{ background: 'var(--bg-warning)', color: 'var(--text-secondary)' }}
                 data-testid="agent-builder-stalled"
               >
                 {t('settings.agentBuilderStalled')}

@@ -8,6 +8,7 @@ import {
   parseQuestionRequest,
   resolveQuestionSelection,
   type QuestionRequest,
+  type QuestionSelectionResult,
 } from '../src/services/question-flow';
 
 /**
@@ -49,6 +50,16 @@ const REAL_PAYLOAD = {
   expiresAtMs: 1789622825220,
   status: 'pending',
 };
+
+/**
+ * 取出「作答不完整」那一支并**收窄类型**。
+ * `expect(x.ok).toBe(false)` 只是运行期断言，TS 不会因此收窄联合类型 ——
+ * 直接访问 `x.missing` 连 `typecheck:tests` 都过不了。
+ */
+function expectIncomplete(result: QuestionSelectionResult): Extract<QuestionSelectionResult, { ok: false }> {
+  if (result.ok) throw new Error('期望这次作答被判为不完整，但它通过了');
+  return result;
+}
 
 function request(overrides: Partial<QuestionRequest> = {}): QuestionRequest {
   const parsed = parseQuestionRequest(REAL_PAYLOAD);
@@ -110,8 +121,8 @@ describe('resolveQuestionSelection', () => {
     const result = resolveQuestionSelection(request().questions, {
       subject: ['语文 —— 第一课《天地人》（识字）'],
     });
-    expect(result.ok).toBe(false);
-    expect(result.missing).toEqual(['文档类型']);
+    const incomplete = expectIncomplete(result);
+    expect(incomplete.missing).toEqual(['文档类型']);
     expect(JSON.stringify(result)).not.toContain('doc_type');
   });
 
@@ -120,8 +131,7 @@ describe('resolveQuestionSelection', () => {
       subject: ['   '],
       doc_type: [],
     });
-    expect(result.ok).toBe(false);
-    expect(result.missing).toEqual(['科目', '文档类型']);
+    expect(expectIncomplete(result).missing).toEqual(['科目', '文档类型']);
   });
 
   it('trims answers and drops empty entries inside a multi-value answer', () => {
@@ -137,10 +147,10 @@ describe('resolveQuestionSelection', () => {
       subject: ['语文 —— 第一课《天地人》（识字）', '数学 —— 第一课《数一数》（准备课）'],
       doc_type: ['教案（教学设计）'],
     });
-    expect(result.ok).toBe(false);
-    expect(result.missing).toEqual([]);
-    expect(result.errorHeader).toBe('科目');
-    expect(result.reason).toBe('single-select');
+    const incomplete = expectIncomplete(result);
+    expect(incomplete.missing).toEqual([]);
+    expect(incomplete.errorHeader).toBe('科目');
+    expect(incomplete.reason).toBe('single-select');
   });
 });
 

@@ -50,7 +50,9 @@ export function useGoalAnalysisWithSession(
   session: GoalAnalysisSession,
 ): GoalAnalysisState {
   const version = useMemo(() => goalAnalysisVersion(profile), [profile]);
-  const stored = useMemo(() => loadGoalAnalysis(profile, storage), [profile, storage, version]);
+  // ⚠️ 依赖里**不需要** `version`：它是 `profile` 的纯函数，profile 一变它必变，
+  //    而 profile 本来就在依赖里（留着只会让 eslint 报"多余依赖"）。
+  const stored = useMemo(() => loadGoalAnalysis(profile, storage), [profile, storage]);
   const [result, setResult] = useState<GoalAnalysisResult | null>(stored);
   const [status, setStatus] = useState<GoalAnalysisStatus>(() =>
     stored ? 'ready' : profile.customGoal.trim() ? 'waiting' : 'idle',

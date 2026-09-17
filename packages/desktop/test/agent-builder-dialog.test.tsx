@@ -22,7 +22,15 @@ const session = vi.hoisted(() => ({
   status: 'active' as 'idle' | 'active' | 'streaming',
   messages: [] as Array<{ role: 'user' | 'assistant'; content: string; timestamp: string }>,
   error: null as string | null,
-  start: vi.fn(async () => ({ ok: true })),
+  start: vi.fn(
+    async (_opts: {
+      gatewayId: string;
+      agentId: string;
+      purpose: string;
+      initialMessage?: string;
+      model?: string;
+    }) => ({ ok: true }),
+  ),
   send: vi.fn(async () => ({ ok: true })),
   end: vi.fn(async () => undefined),
 }));

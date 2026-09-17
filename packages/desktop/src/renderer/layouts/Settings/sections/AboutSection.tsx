@@ -175,7 +175,7 @@ export default function AboutSection() {
       setUpdateState('error');
       setErrorMessage(describeUpdateError(err instanceof Error ? err.message : String(err), 'check'));
     }
-  }, []);
+  }, [t]);
 
   const handleDownload = useCallback(async () => {
     setUpdateState('downloading');

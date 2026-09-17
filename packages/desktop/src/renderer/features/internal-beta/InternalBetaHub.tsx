@@ -684,6 +684,9 @@ function UpdatesModule() {
 function AnalyticsModule() {
   const events = useBetaStore((s) => s.events);
   const analyticsSummary = useBetaStore((s) => s.analyticsSummary);
+  // ⚠️ `events` 是**真依赖**：`analyticsSummary()` 读的就是同一份 store 状态，
+  //    只是 ESLint 看不到这层间接引用。删掉它 memo 不会随数据刷新（会显示过期统计）。
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   const analytics = useMemo(() => analyticsSummary(), [analyticsSummary, events]);
   const labels: Record<keyof typeof analytics, string> = {
     launch: '启动',

@@ -150,7 +150,7 @@ export default function QuestionPanel(): ReactElement | null {
                       className="rounded-lg border px-2.5 py-1.5 text-left transition-colors"
                       style={{
                         borderColor: selected ? 'var(--accent)' : 'var(--border-subtle)',
-                        background: selected ? 'var(--accent-subtle, var(--bg-elevated))' : 'var(--bg-primary)',
+                        background: selected ? 'var(--accent-soft)' : 'var(--bg-primary)',
                         color: 'var(--text-primary)',
                       }}
                     >

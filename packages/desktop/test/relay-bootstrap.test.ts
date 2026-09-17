@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { RELAY_BASE_URL } from '../src/main/commercial/relay-config.js';
 import {
   bootstrapRelayWithRetry,
+  type GatewayAccessPrep,
   createRelayBootstrapScheduler,
   ensureRelayConfigured,
 } from '../src/main/commercial/relay-bootstrap.js';
@@ -136,7 +137,7 @@ describe('ensureRelayConfigured —— runtime ready ≠ commercial ready', () =
    * 拒绝是**确定性**的：配置不改，重试一万次还是拒。所以一次都不该重试。
    */
   it('⭐ 清理被网关拒绝 ⇒ 不再轮询（确定性失败，重试只会打爆网关）', async () => {
-    const prepareGatewayAccess = vi.fn(async () => ({ ok: false, errorCode: 'rejected' }));
+    const prepareGatewayAccess = vi.fn(async (): Promise<GatewayAccessPrep> => ({ ok: false, errorCode: 'rejected' }));
     const sleep = vi.fn(async () => {});
     const { deps, patchConfig } = makeDeps({ prepareGatewayAccess }, alreadyRelay);
 

@@ -12,7 +12,7 @@
  *   - 只做展示，不改任何更新行为。
  */
 
-export type UpdateOperation = 'check' | 'download' | 'install' | 'updater';
+type UpdateOperation = 'check' | 'download' | 'install' | 'updater';
 
 const OPERATION_LABEL: Record<UpdateOperation, string> = {
   check: '检查更新',

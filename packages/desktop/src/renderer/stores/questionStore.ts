@@ -28,7 +28,7 @@ import { useUiStore } from './uiStore';
  * - 失败/超时/换会话后不留下点不开的残留卡片。
  */
 
-export type PendingQuestion = QuestionRequest & { gatewayId: string; taskId: string | null };
+type PendingQuestion = QuestionRequest & { gatewayId: string; taskId: string | null };
 
 const expireTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
