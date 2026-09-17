@@ -92,6 +92,15 @@ export type { TranslateFn } from './services/error-classify.js';
 export { describeGatewayError, translateGatewayError } from './services/gateway-error-message.js';
 export { describeCommunityError } from './services/community-error-message.js';
 export { normalizeFeed, normalizeTeamInfo, nextFeedCursor } from './services/community-service.js';
+export {
+  normalizeMyTemplates,
+  normalizeTemplateDetail,
+  normalizeTemplateList,
+  templateSlug,
+  templateToInstallDefinition,
+} from './services/agent-template-service.js';
+export type { AgentInstallDefinition } from './services/agent-template-service.js';
+export { describeTemplateError } from './services/agent-template-error-message.js';
 
 export {
   autofillSelection,
