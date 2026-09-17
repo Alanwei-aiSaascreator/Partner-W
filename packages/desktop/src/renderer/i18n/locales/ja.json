@@ -1015,6 +1015,8 @@
     "agentBuilderIdentityPlaceholder": "エージェントの動作を定義するシステムプロンプト...",
     "agentBuilderInputPlaceholder": "作成したいエージェントを説明...",
     "agentBuilderPreviewTitle": "新規エージェント",
+    "agentBuilderSkip": "ガイドをスキップして自分で入力",
+    "agentBuilderStalled": "AI の提案が応答していません。右側のフォームに入力して作成できます。",
     "agentBuilderTitle": "AI ビルダー",
     "agentCreated": "エージェントを作成しました",
     "agentDefault": "デフォルト",

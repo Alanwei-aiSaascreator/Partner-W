@@ -7,7 +7,14 @@ interface UseSystemSessionReturn {
   status: SystemSessionStatus;
   messages: SystemSessionMessage[];
   error: string | null;
-  start: (opts: { gatewayId: string; agentId: string; purpose: string; initialMessage?: string }) => Promise<IpcResult>;
+  start: (opts: {
+    gatewayId: string;
+    agentId: string;
+    purpose: string;
+    initialMessage?: string;
+    /** 侧会话继承 agent 的模型；传它来指定一个当前可用的，避免继承到卡住的模型。 */
+    model?: string;
+  }) => Promise<IpcResult>;
   send: (content: string) => Promise<IpcResult>;
   end: () => Promise<void>;
 }
@@ -19,7 +26,7 @@ export function useSystemSession(): UseSystemSessionReturn {
   const activeRef = useRef(false);
 
   const start = useCallback(
-    async (opts: { gatewayId: string; agentId: string; purpose: string; initialMessage?: string }) => {
+    async (opts: { gatewayId: string; agentId: string; purpose: string; initialMessage?: string; model?: string }) => {
       activeRef.current = true;
       return systemSessionService.start(opts);
     },

@@ -1015,6 +1015,8 @@
     "agentBuilderIdentityPlaceholder": "定义智能体行为的系统提示词...",
     "agentBuilderInputPlaceholder": "描述你想要的智能体...",
     "agentBuilderPreviewTitle": "新智能体",
+    "agentBuilderSkip": "跳过引导，自己填写",
+    "agentBuilderStalled": "AI 建议暂时没有响应，你可以直接在右侧填写并创建。",
     "agentBuilderTitle": "AI 创建",
     "agentCreated": "智能体已创建",
     "agentDefault": "默认",

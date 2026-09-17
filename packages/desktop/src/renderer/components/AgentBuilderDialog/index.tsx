@@ -10,6 +10,16 @@ import { useUiStore } from '@/stores/uiStore';
 import { useSystemSession } from '@/hooks/useSystemSession';
 import type { ModelCatalogEntry } from '@clawwork/shared';
 import { serializeIdentityMd } from '@clawwork/core';
+import { resolveCommercialDefaultModel } from '@/lib/commercial-default-model';
+
+/**
+ * AI 引导多久没吐出新内容就认定「卡住了」并给出跳过入口。
+ *
+ * 2026-09-17 实机：引导侧会话跑在主助手的模型上，那个模型卡在 `starting_model`
+ * 十几秒不出字，用户以为整个「创建智能体」坏了（真正的 `agents.create` 从未执行）。
+ * 引导只是**辅助**，绝不能让主流程看起来像死了。
+ */
+const GUIDANCE_STALL_HINT_MS = 12_000;
 
 interface AgentConfig {
   name: string;
@@ -104,10 +114,15 @@ export default function AgentBuilderDialog({ open, onOpenChange, gatewayId, onCr
   const [userEdited, setUserEdited] = useState<Set<string>>(new Set());
   const [input, setInput] = useState('');
   const [creating, setCreating] = useState(false);
+  const [stalled, setStalled] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const prevStatusRef = useRef(status);
   const startedRef = useRef(false);
+
+  // 用**当前确实可用**的模型，而不是主助手配的那个：侧会话以主助手身份建立会继承它的模型，
+  // 而实机就是那个模型卡住了（见 GUIDANCE_STALL_HINT_MS 的注释）。
+  const availableModelId = useMemo(() => resolveCommercialDefaultModel(models)?.id ?? models[0]?.id ?? '', [models]);
 
   useEffect(() => {
     if (!open) {
@@ -117,10 +132,11 @@ export default function AgentBuilderDialog({ open, onOpenChange, gatewayId, onCr
     if (startedRef.current) return;
     startedRef.current = true;
 
-    setConfig(EMPTY_CONFIG);
-    setUserEdited(new Set());
+    // ⚠️ 这里**不重置** `config`：用户关掉再打开时必须还能看到自己填的草稿
+    //（2026-09-17 之前每次打开都清空，等于让人重填一遍）。只有真的创建成功后才清。
     setInput('');
     setCreating(false);
+    setStalled(false);
 
     const modelListStr = models.map((m) => `${m.name ?? m.id}${m.provider ? ` (${m.provider})` : ''}`).join(', ');
     const prompt = SYSTEM_PROMPT_TEMPLATE.replace('{{modelList}}', modelListStr || 'default').replace(
@@ -132,9 +148,32 @@ export default function AgentBuilderDialog({ open, onOpenChange, gatewayId, onCr
       gatewayId,
       agentId: defaultAgentId,
       purpose: 'agent-builder',
+      model: availableModelId || undefined,
       initialMessage: prompt,
     });
-  }, [open, gatewayId, defaultAgentId, models, start, i18n.language]);
+  }, [open, gatewayId, defaultAgentId, models, start, i18n.language, availableModelId]);
+
+  // 表单里先把可用模型选上：AI 没给出建议（或干脆没响应）时也能一键创建。
+  // 不算「用户编辑」，所以之后 AI 给了别的建议仍然可以覆盖它。
+  useEffect(() => {
+    if (!availableModelId) return;
+    setConfig((prev) => (prev.model ? prev : { ...prev, model: availableModelId }));
+  }, [availableModelId]);
+
+  // 引导卡住检测：streaming 期间只要**有新内容**就重新计时（deltas 会换掉 messages 引用）。
+  useEffect(() => {
+    if (status !== 'streaming') {
+      setStalled(false);
+      return;
+    }
+    const timer = setTimeout(() => setStalled(true), GUIDANCE_STALL_HINT_MS);
+    return () => clearTimeout(timer);
+  }, [status, messages]);
+
+  const skipGuidance = useCallback(() => {
+    setStalled(false);
+    void end();
+  }, [end]);
 
   useEffect(() => {
     if (status === 'streaming' || (prevStatusRef.current === 'streaming' && status === 'active')) {
@@ -240,6 +279,9 @@ export default function AgentBuilderDialog({ open, onOpenChange, gatewayId, onCr
       }
 
       await end();
+      // 创建**成功**之后才清草稿：关掉再打开时用户填过的东西要还在
+      setConfig(EMPTY_CONFIG);
+      setUserEdited(new Set());
       toast.success(t('settings.agentCreated'));
       onCreated?.();
       onOpenChange(false);
@@ -323,6 +365,27 @@ export default function AgentBuilderDialog({ open, onOpenChange, gatewayId, onCr
               ))}
               {error && <p className="type-support text-center text-[var(--danger)]">{error}</p>}
               <div ref={messagesEndRef} />
+            </div>
+
+            {stalled && (
+              <div
+                className="mx-4 mb-2 rounded-lg px-3 py-2 type-support"
+                style={{ background: 'var(--warning-bg, var(--bg-tertiary))', color: 'var(--text-secondary)' }}
+                data-testid="agent-builder-stalled"
+              >
+                {t('settings.agentBuilderStalled')}
+              </div>
+            )}
+
+            <div className="flex items-center justify-between gap-2 px-4 pb-2">
+              {/* 引导只是辅助：任何时候都要能跳过，不能因为侧会话没响应就让「创建」看起来坏掉 */}
+              <button
+                type="button"
+                onClick={skipGuidance}
+                className="type-support text-[var(--text-muted)] underline-offset-2 transition-colors hover:text-[var(--text-primary)] hover:underline"
+              >
+                {t('settings.agentBuilderSkip')}
+              </button>
             </div>
 
             <div className="flex items-center gap-2 border-t border-[var(--border-subtle)] px-4 py-3">

@@ -1015,6 +1015,8 @@
     "agentBuilderIdentityPlaceholder": "System prompt that defines the agent's behavior...",
     "agentBuilderInputPlaceholder": "Describe your agent...",
     "agentBuilderPreviewTitle": "New Agent",
+    "agentBuilderSkip": "Skip guidance and fill it in myself",
+    "agentBuilderStalled": "The AI suggestions aren't responding — you can fill in the form on the right and create it now.",
     "agentBuilderTitle": "AI Builder",
     "agentCreated": "Agent created",
     "agentDefault": "Default",

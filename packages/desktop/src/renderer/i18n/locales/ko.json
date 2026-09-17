@@ -1015,6 +1015,8 @@
     "agentBuilderIdentityPlaceholder": "에이전트 동작을 정의하는 시스템 프롬프트...",
     "agentBuilderInputPlaceholder": "원하는 에이전트를 설명하세요...",
     "agentBuilderPreviewTitle": "새 에이전트",
+    "agentBuilderSkip": "안내 건너뛰고 직접 입력",
+    "agentBuilderStalled": "AI 제안이 응답하지 않습니다. 오른쪽 양식에 입력해 바로 만들 수 있습니다.",
     "agentBuilderTitle": "AI 빌더",
     "agentCreated": "에이전트가 생성되었습니다",
     "agentDefault": "기본값",

@@ -9,6 +9,7 @@ interface SystemSessionGateway {
   createSession: (gatewayId: string, params: { key: string; agentId: string; message?: string }) => Promise<IpcResult>;
   deleteSession: (gatewayId: string, sessionKey: string) => Promise<IpcResult>;
   sendMessage: (gatewayId: string, sessionKey: string, content: string) => Promise<IpcResult>;
+  patchSession?: (gatewayId: string, sessionKey: string, patch: { model?: string }) => Promise<IpcResult>;
   onGatewayEvent: (callback: (data: GatewayEvent) => void) => () => void;
 }
 
@@ -18,7 +19,21 @@ export interface SystemSessionServiceDeps {
 }
 
 export interface SystemSessionService {
-  start(opts: { gatewayId: string; agentId: string; purpose: string; initialMessage?: string }): Promise<IpcResult>;
+  start(opts: {
+    gatewayId: string;
+    agentId: string;
+    purpose: string;
+    initialMessage?: string;
+    /**
+     * 显式指定这条侧会话用哪个模型。
+     *
+     * 侧会话是以某个 agent（通常是主助手 `main`）的身份建的，会**继承它配的模型**。
+     * 2026-09-17 实机：主助手配的模型卡在 `starting_model`，于是「创建智能体」向导的
+     * AI 引导永远转圈，用户以为整个创建功能坏了（真正的 `agents.create` 从未执行）。
+     * 传一个**当前确实可用**的模型就能绕开。
+     */
+    model?: string;
+  }): Promise<IpcResult>;
   send(content: string): Promise<IpcResult>;
   abort(): void;
   end(): Promise<void>;
@@ -94,6 +109,12 @@ export function createSystemSessionService(deps: SystemSessionServiceDeps): Syst
         removeListener = null;
         store.close();
         return res;
+      }
+
+      // 模型补丁必须在首条消息之前：第一条回复就会走这个模型，晚一步等于没打。
+      // 失败只当作「用了继承来的模型」，**不能**因此挡住上层功能（引导只是辅助）。
+      if (opts.model) {
+        await deps.gateway.patchSession?.(opts.gatewayId, sessionKey, { model: opts.model }).catch(() => undefined);
       }
 
       if (opts.initialMessage) {

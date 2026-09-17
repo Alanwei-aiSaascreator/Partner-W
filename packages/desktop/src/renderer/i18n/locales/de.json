@@ -1015,6 +1015,8 @@
     "agentBuilderIdentityPlaceholder": "System-Prompt zur Definition des Agentenverhaltens...",
     "agentBuilderInputPlaceholder": "Beschreiben Sie Ihren Agenten...",
     "agentBuilderPreviewTitle": "Neuer Agent",
+    "agentBuilderSkip": "Anleitung überspringen und selbst ausfüllen",
+    "agentBuilderStalled": "Die KI-Vorschläge antworten nicht – du kannst das Formular rechts ausfüllen und jetzt erstellen.",
     "agentBuilderTitle": "AI-Builder",
     "agentCreated": "Agent erstellt",
     "agentDefault": "Standard",

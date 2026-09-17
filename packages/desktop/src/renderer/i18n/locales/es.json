@@ -1015,6 +1015,8 @@
     "agentBuilderIdentityPlaceholder": "Prompt del sistema que define el comportamiento del agente...",
     "agentBuilderInputPlaceholder": "Describe tu agente...",
     "agentBuilderPreviewTitle": "Nuevo agente",
+    "agentBuilderSkip": "Omitir la guía y rellenarlo yo",
+    "agentBuilderStalled": "Las sugerencias de IA no responden; puedes rellenar el formulario de la derecha y crearlo ya.",
     "agentBuilderTitle": "Constructor IA",
     "agentCreated": "Agente creado",
     "agentDefault": "Predeterminado",

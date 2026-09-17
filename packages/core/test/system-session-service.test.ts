@@ -13,6 +13,7 @@ function setup() {
     createSession: vi.fn().mockResolvedValue({ ok: true }),
     deleteSession: vi.fn().mockResolvedValue({ ok: true }),
     sendMessage: vi.fn().mockResolvedValue({ ok: true }),
+    patchSession: vi.fn().mockResolvedValue({ ok: true }),
     onGatewayEvent: vi.fn((cb: EventCallback) => {
       listeners.add(cb);
       return () => listeners.delete(cb);
@@ -261,5 +262,63 @@ describe('system session service', () => {
     await service.end();
     expect(storeApi.getState().status).toBe('idle');
     expect(storeApi.getState().messages).toEqual([]);
+  });
+});
+
+describe('system session 的模型选择', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  // 为什么必须显式指定模型：这条侧会话是以主助手（`main`）的身份建的，
+  // 会继承主助手配的模型。2026-09-17 实机就是这个模型卡在 `starting_model`，
+  // 于是「创建智能体」向导的 AI 引导永远转圈，用户以为整个功能坏了。
+  it('start() 显式指定模型时，先给会话打补丁再发首条消息', async () => {
+    const { service, gateway } = setup();
+
+    await service.start({
+      gatewayId: 'gw-1',
+      agentId: 'main',
+      purpose: 'agent-builder',
+      model: 'clawrouter/deepseek-v4-flash',
+      initialMessage: 'hello',
+    });
+
+    expect(gateway.patchSession).toHaveBeenCalledWith(
+      'gw-1',
+      expect.stringMatching(/^agent:main:clawwork:system:agent-builder:/),
+      {
+        model: 'clawrouter/deepseek-v4-flash',
+      },
+    );
+    // 补丁必须发生在首条消息之前，否则第一条回复仍会跑到卡住的模型上
+    const patchOrder = gateway.patchSession.mock.invocationCallOrder[0];
+    const sendOrder = gateway.sendMessage.mock.invocationCallOrder[0];
+    expect(patchOrder).toBeLessThan(sendOrder);
+  });
+
+  it('没给模型就不打补丁（保持原有行为）', async () => {
+    const { service, gateway } = setup();
+
+    await service.start({ gatewayId: 'gw-1', agentId: 'main', purpose: 'test', initialMessage: 'hello' });
+
+    expect(gateway.patchSession).not.toHaveBeenCalled();
+  });
+
+  it('打补丁失败时照样继续（引导只是辅助，不能因此挡住向导）', async () => {
+    const { service, gateway, storeApi } = setup();
+    gateway.patchSession.mockResolvedValueOnce({ ok: false, error: 'model not available' });
+
+    const res = await service.start({
+      gatewayId: 'gw-1',
+      agentId: 'main',
+      purpose: 'agent-builder',
+      model: 'clawrouter/nope',
+      initialMessage: 'hello',
+    });
+
+    expect(res.ok).toBe(true);
+    expect(gateway.sendMessage).toHaveBeenCalledOnce();
+    expect(storeApi.getState().status).toBe('streaming');
   });
 });

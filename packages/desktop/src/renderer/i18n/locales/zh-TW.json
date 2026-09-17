@@ -1015,6 +1015,8 @@
     "agentBuilderIdentityPlaceholder": "定義代理行為的系統提示詞...",
     "agentBuilderInputPlaceholder": "描述你想要的代理...",
     "agentBuilderPreviewTitle": "新代理",
+    "agentBuilderSkip": "跳過引導，自己填寫",
+    "agentBuilderStalled": "AI 建議暫時沒有回應，你可以直接在右側填寫並建立。",
     "agentBuilderTitle": "AI 建立",
     "agentCreated": "代理已建立",
     "agentDefault": "預設",
