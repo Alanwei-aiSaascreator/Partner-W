@@ -820,6 +820,11 @@
     "toggleContextPanel": "Afficher/masquer le panneau de contexte",
     "welcomeTitle": "Que souhaitez-vous accomplir ?"
   },
+  "market": {
+    "tabMarket": "Market",
+    "tabMine": "My templates",
+    "title": "Assistant market"
+  },
   "mentionPicker": {
     "agents": "Agents",
     "allAgents": "Tous les agents",

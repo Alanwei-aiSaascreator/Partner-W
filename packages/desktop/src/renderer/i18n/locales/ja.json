@@ -820,6 +820,11 @@
     "toggleContextPanel": "コンテキストパネルの切替",
     "welcomeTitle": "今日は何をしますか？"
   },
+  "market": {
+    "tabMarket": "Market",
+    "tabMine": "My templates",
+    "title": "Assistant market"
+  },
   "mentionPicker": {
     "agents": "Agents",
     "allAgents": "全エージェント",

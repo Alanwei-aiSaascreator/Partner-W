@@ -1,7 +1,16 @@
 import { createStore } from 'zustand/vanilla';
 import type { AgentInfo, CommandEntry, ModelCatalogEntry, SkillStatusReport, ToolsCatalog } from '@clawwork/shared';
 
-export type MainView = 'chat' | 'files' | 'archived' | 'cron' | 'teams' | 'dashboard' | 'betaHub' | 'community';
+export type MainView =
+  | 'chat'
+  | 'files'
+  | 'archived'
+  | 'cron'
+  | 'teams'
+  | 'dashboard'
+  | 'betaHub'
+  | 'community'
+  | 'market';
 export type Theme = 'dark' | 'light' | 'auto';
 export type DensityMode = 'compact' | 'comfortable' | 'spacious';
 export type SendShortcut = 'enter' | 'cmdEnter';

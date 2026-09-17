@@ -820,6 +820,11 @@
     "toggleContextPanel": "Kontextbereich ein-/ausblenden",
     "welcomeTitle": "Was möchten Sie erledigen?"
   },
+  "market": {
+    "tabMarket": "Market",
+    "tabMine": "My templates",
+    "title": "Assistant market"
+  },
   "mentionPicker": {
     "agents": "Agents",
     "allAgents": "Alle Agents",

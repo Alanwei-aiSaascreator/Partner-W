@@ -820,6 +820,11 @@
     "toggleContextPanel": "切换上下文面板",
     "welcomeTitle": "今天想完成什么？"
   },
+  "market": {
+    "tabMarket": "市场",
+    "tabMine": "我的模板",
+    "title": "助手市场"
+  },
   "mentionPicker": {
     "agents": "Agents",
     "allAgents": "所有智能体",

@@ -7,6 +7,7 @@ import {
   PanelLeftOpen,
   Settings,
   Sparkles,
+  Store,
   UserRound,
   Users,
 } from 'lucide-react';
@@ -16,7 +17,7 @@ import CubeFaceIcon from '@/components/CubeFaceIcon';
 import { cn } from '@/lib/utils';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
-type GlobalView = Extract<MainView, 'files' | 'dashboard' | 'archived' | 'betaHub' | 'community'>;
+type GlobalView = Extract<MainView, 'files' | 'dashboard' | 'archived' | 'betaHub' | 'community' | 'market'>;
 
 interface GlobalRailProps {
   mainView: MainView;
@@ -141,6 +142,13 @@ export default function GlobalRail({
           icon={Users}
           active={!settingsOpen && mainView === 'community'}
           onClick={() => onSelectView('community')}
+        />
+        {/* ⚠️ 新入口仍然加在**最后**：global-rail.test.tsx 的 nth 断言锁定着前几个 */}
+        <RailButton
+          label={t('market.title')}
+          icon={Store}
+          active={!settingsOpen && mainView === 'market'}
+          onClick={() => onSelectView('market')}
         />
       </div>
 

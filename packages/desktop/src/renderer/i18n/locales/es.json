@@ -820,6 +820,11 @@
     "toggleContextPanel": "Alternar panel de contexto",
     "welcomeTitle": "¿Qué quieres hacer hoy?"
   },
+  "market": {
+    "tabMarket": "Market",
+    "tabMine": "My templates",
+    "title": "Assistant market"
+  },
   "mentionPicker": {
     "agents": "Agents",
     "allAgents": "Todos los agentes",

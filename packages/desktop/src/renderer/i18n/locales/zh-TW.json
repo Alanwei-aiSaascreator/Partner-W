@@ -820,6 +820,11 @@
     "toggleContextPanel": "切換上下文面板",
     "welcomeTitle": "今天想完成什麼？"
   },
+  "market": {
+    "tabMarket": "市集",
+    "tabMine": "我的範本",
+    "title": "助手市集"
+  },
   "mentionPicker": {
     "agents": "Agents",
     "allAgents": "所有代理",
