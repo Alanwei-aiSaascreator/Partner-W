@@ -16,6 +16,14 @@ export interface CommercialAccessCleanupDeps {
 export interface CommercialAccessCleanupResult {
   cleaned: boolean;
   pending: boolean;
+  /**
+   * 上一次清理**为什么没成**。
+   *
+   * - 没有这个字段（`pending` 但无 errorCode）⇒ 网关还没连上，**等一等会好**；
+   * - `rejected` / `verify-failed` ⇒ 确定性失败（补丁本身不合法 / 网关说写了却没生效），
+   *   重试一万次也一样 —— 调用方**不该**继续轮询，那只会把网关打到限流。
+   */
+  errorCode?: 'transport' | 'rejected' | 'hash-conflict' | 'verify-failed';
 }
 
 export function buildCommercialAccessCleanupDeps(): CommercialAccessCleanupDeps {
@@ -64,7 +72,9 @@ async function performPendingCleanup(deps: CommercialAccessCleanupDeps): Promise
   });
   if (!result.cleaned) {
     deps.log?.('relay.cleanup-pending', { errorCode: result.errorCode, error: result.error });
-    return { cleaned: false, pending: true };
+    // 把失败原因**透给调用方**：它决定"要不要接着重试"，而这两类必须分开
+    //（见 CommercialAccessCleanupResult.errorCode 的注释）。
+    return { cleaned: false, pending: true, ...(result.errorCode ? { errorCode: result.errorCode } : {}) };
   }
 
   const current = deps.readCommercialConfig() ?? { supabaseUrl: '', supabaseAnonKey: '' };

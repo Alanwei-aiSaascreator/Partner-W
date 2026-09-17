@@ -56,6 +56,17 @@ export type RelayBootstrapStatus =
  */
 export type { AuthCheck } from './auth-classify.js';
 
+/**
+ * 「上一个账号的网关配置清理干净了没有」的返回。
+ *
+ * ⚠️ 刻意**不用布尔值**：调用方要按失败原因决定重不重试，而"网关没连上"（可重试）
+ * 与"补丁被网关拒了"（重试一万次也一样）必须分开 —— 混在一起就是 2026-09-17
+ * 那次每秒重试、把网关打到限流的现场。
+ */
+export type GatewayAccessPrep =
+  | { ok: true }
+  | { ok: false; errorCode?: 'transport' | 'rejected' | 'hash-conflict' | 'verify-failed' };
+
 export interface RelayBootstrapResult {
   status: RelayBootstrapStatus;
   /**
@@ -85,7 +96,13 @@ export interface RelayBootstrapDeps {
    */
   checkAuth: () => Promise<AuthCheck>;
   /** Remove any previous account's relay credentials before inspecting readiness. */
-  prepareGatewayAccess?: () => Promise<boolean>;
+  /**
+   * 清理上一个账号的中转配置（`drainPendingCommercialAccessCleanup`）。
+   *
+   * 返回的对象**必须带上失败原因**：`undefined` 的 errorCode 表示"网关还没连上"（可重试），
+   * `rejected` / `verify-failed` 表示确定性失败（**不可重试** —— 重试只会打爆网关）。
+   */
+  prepareGatewayAccess?: () => Promise<GatewayAccessPrep>;
   /** 读名下 license（账号绑定口径，不依赖设备激活行）。 */
   readLicenseKey: () => Promise<string | null>;
   /** 取中转 key（幂等：同一设备重复调用返回同一把）。 */
@@ -136,8 +153,21 @@ export async function ensureRelayConfigured(deps: RelayBootstrapDeps): Promise<R
 
   if (deps.prepareGatewayAccess) {
     try {
-      if (!(await deps.prepareGatewayAccess())) {
-        log('relay.bootstrap.cleanup-pending');
+      const prepared = await deps.prepareGatewayAccess();
+      if (!prepared.ok) {
+        // ⚠️ **确定性失败不能轮询**：清理被网关拒（补丁不合法）或回读校验没过，
+        //    配置不改结论就不变 —— 而每次轮询要打两个网关 RPC，4 分钟窗口能把
+        //    网关自己打到限流（2026-09-17 实测 `rate limit exceeded for config.patch`）。
+        if (prepared.errorCode === 'rejected' || prepared.errorCode === 'verify-failed') {
+          log('relay.bootstrap.cleanup-rejected', { errorCode: prepared.errorCode });
+          return {
+            status: 'failed',
+            relayReady: false,
+            detail: `previous account cleanup was rejected (${prepared.errorCode})`,
+          };
+        }
+        // 网关没连上 / 传输抖动：等一等真的会好，交给调用方轮询。
+        log('relay.bootstrap.cleanup-pending', { errorCode: prepared.errorCode ?? 'gateway-offline' });
         return { status: 'runtime-not-ready', relayReady: false, detail: 'previous account cleanup pending' };
       }
     } catch (error) {

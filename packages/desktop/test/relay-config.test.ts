@@ -219,6 +219,60 @@ describe('relay credential removal', () => {
     expect(removal?.replacePaths).toEqual([]);
   });
 
+  /**
+   * ⚠️ 真实世界形状：网关里的 clawrouter provider **带一个 `models` 数组**
+   * （2026-09-17 实机：`config.patch would remove entries from array path(s):
+   * models.providers.clawrouter.models`）。
+   *
+   * 网关的规则（`dist/patch-replace-paths-*.mjs` 的 `collectBaseArrayPaths`）：
+   * 只要补丁把某个**对象**整个置 null，就必须把该子树下**每一个数组路径**列进
+   * `replacePaths`，否则整条 patch 被拒 —— 而这里被拒的后果不是"少清一点"，
+   * 是**每秒重试一次、永远清不掉**（见 relay-cleanup 的重试策略）。
+   */
+  it('declares array paths under a removed provider so the gateway accepts the patch', () => {
+    const removal = buildRelayRemovalPatch(
+      snapshot({
+        models: {
+          providers: {
+            oldRelayName: {
+              baseUrl: `${RELAY_BASE_URL}/`,
+              apiKey: '__OPENCLAW_REDACTED__',
+              models: [{ id: 'deepseek-v4-flash' }, { id: 'qwen3.5-27b' }],
+            },
+            personal: personalEntry,
+          },
+        },
+      }),
+    );
+
+    expect(removal?.patch).toEqual({ models: { providers: { oldRelayName: null } } });
+    expect(removal?.replacePaths).toEqual(['models.providers.oldRelayName.models']);
+  });
+
+  it('walks nested arrays under the removed provider, like the gateway does', () => {
+    const removal = buildRelayRemovalPatch(
+      snapshot({
+        models: {
+          providers: {
+            oldRelayName: {
+              baseUrl: `${RELAY_BASE_URL}/`,
+              models: [{ id: 'a', aliases: ['a-1'] }],
+              hooks: { retries: [] },
+            },
+          },
+        },
+      }),
+    );
+
+    // 与网关 `collectBaseArrayPaths` 逐字一致：**遇到数组就停**，不往元素里递归
+    // （元素内部由另一条 `collectDestructiveIdKeyedArrayEntryPatchPaths` 负责，
+    //   只在"就地修改 id 数组"时才算 —— 我们这里是整棵子树删除）。
+    expect(removal?.replacePaths).toEqual([
+      'models.providers.oldRelayName.models',
+      'models.providers.oldRelayName.hooks.retries',
+    ]);
+  });
+
   it('returns null when there is no relay residue', () => {
     expect(buildRelayRemovalPatch(snapshot({ models: { providers: { personal: personalEntry } } }))).toBeNull();
   });

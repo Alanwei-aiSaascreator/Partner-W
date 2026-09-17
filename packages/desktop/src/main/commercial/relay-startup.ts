@@ -78,7 +78,8 @@ export function buildRelayBootstrapDeps(): RelayBootstrapDeps {
     checkAuth: () => probeAuth(),
     prepareGatewayAccess: async () => {
       const cleanup = await drainPendingCommercialAccessCleanup(buildCommercialAccessCleanupDeps());
-      return !cleanup.pending;
+      if (!cleanup.pending) return { ok: true };
+      return { ok: false, ...(cleanup.errorCode ? { errorCode: cleanup.errorCode } : {}) };
     },
     readLicenseKey: async () => {
       const res = await readLicenseStatus();

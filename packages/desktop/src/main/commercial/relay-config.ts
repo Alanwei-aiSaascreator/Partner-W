@@ -132,6 +132,28 @@ export interface RelayRemovalPatch {
 }
 
 /**
+ * 与网关 `dist/patch-replace-paths-*.mjs` 的 `collectBaseArrayPaths` **同构**：
+ * 删除一个对象子树时，把该子树下**每一个数组路径**收集出来（点号分隔，
+ * 遇到数组即停、不往元素里递归）。
+ *
+ * 为什么必须一模一样：网关在 `config.patch` 里对"把对象整个置 null"的补丁做
+ * 破坏性校验 —— 少报一个数组路径就**整条 patch 被拒**（`INVALID_REQUEST`）。
+ * 2026-09-17 实机就是这个：provider 的 `models` 数组没报备，清理永远失败，
+ * 然后被每秒重试一次（见 relay-bootstrap 的 runtime-not-ready 轮询）。
+ */
+function collectBaseArrayPaths(base: unknown, path: string): string[] {
+  if (Array.isArray(base)) return [path];
+  if (typeof base !== 'object' || base === null) return [];
+  const paths: string[] = [];
+  for (const [key, value] of Object.entries(base as Record<string, unknown>)) {
+    // 与网关的 isMergePatchObjectKeyAllowed 对齐：原型污染键不参与
+    if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue;
+    paths.push(...collectBaseArrayPaths(value, path ? `${path}.${key}` : key));
+  }
+  return paths;
+}
+
+/**
  * 构造一份最窄的 JSON merge patch 来移除商业中转凭证。
  *
  * `config.get` 会脱敏所有密钥，所以这里绝不能把完整快照通过 `config.set`
@@ -149,6 +171,15 @@ export function buildRelayRemovalPatch(configSnapshot: unknown): RelayRemovalPat
     patch.models = {
       providers: Object.fromEntries(Array.from(providerIds, (id) => [id, null])),
     };
+    // ⚠️ 整棵 provider 子树被删 ⇒ 它下面的数组路径全部要报备，否则网关直接拒整条补丁。
+    const providers = (config.models as { providers?: unknown } | undefined)?.providers;
+    if (providers && typeof providers === 'object') {
+      for (const id of providerIds) {
+        replacePaths.push(
+          ...collectBaseArrayPaths((providers as Record<string, unknown>)[id], `models.providers.${id}`),
+        );
+      }
+    }
   }
 
   const allow = (config.plugins as { allow?: unknown } | undefined)?.allow;

@@ -116,7 +116,7 @@ describe('ensureRelayConfigured —— 纯净/未配置', () => {
 
 describe('ensureRelayConfigured —— runtime ready ≠ commercial ready', () => {
   it('⭐ 旧账号 relay 尚未清理时，不得把它当作当前账号已配置', async () => {
-    const prepareGatewayAccess = vi.fn(async () => false);
+    const prepareGatewayAccess = vi.fn(async () => ({ ok: false }) as const);
     const { deps, patchConfig } = makeDeps({ prepareGatewayAccess }, alreadyRelay);
 
     const res = await ensureRelayConfigured(deps);
@@ -125,6 +125,44 @@ describe('ensureRelayConfigured —— runtime ready ≠ commercial ready', () =
     expect(res.relayReady).toBe(false);
     expect(prepareGatewayAccess).toHaveBeenCalledTimes(1);
     expect(patchConfig).not.toHaveBeenCalled();
+  });
+
+  /**
+   * ⚠️ 2026-09-17 实机：清理用的 `config.patch` 本身不合法（少报 `replacePaths`），
+   *   网关**每次**都拒。而这一支被归进"runtime-not-ready"⇒ 每秒重试一次、
+   *   每次两个网关 RPC，连跑 4 分钟（`DEFAULT_WAIT_MS`），把网关打到限流：
+   *   `rate limit exceeded for config.patch; retry after 7s`。
+   *
+   * 拒绝是**确定性**的：配置不改，重试一万次还是拒。所以一次都不该重试。
+   */
+  it('⭐ 清理被网关拒绝 ⇒ 不再轮询（确定性失败，重试只会打爆网关）', async () => {
+    const prepareGatewayAccess = vi.fn(async () => ({ ok: false, errorCode: 'rejected' }));
+    const sleep = vi.fn(async () => {});
+    const { deps, patchConfig } = makeDeps({ prepareGatewayAccess }, alreadyRelay);
+
+    const res = await bootstrapRelayWithRetry(deps, { sleep, waitForGatewayMs: 240_000 });
+
+    expect(res.status).toBe('failed');
+    expect(res.relayReady).toBe(false);
+    expect(prepareGatewayAccess).toHaveBeenCalledTimes(1);
+    expect(sleep).not.toHaveBeenCalled();
+    expect(patchConfig).not.toHaveBeenCalled();
+  });
+
+  it('网关只是还没连上 ⇒ 仍然轮询（这一类等一等真的会好）', async () => {
+    let calls = 0;
+    const prepareGatewayAccess = vi.fn(async () => {
+      calls += 1;
+      return calls >= 3 ? { ok: true } : { ok: false };
+    });
+    const sleep = vi.fn(async () => {});
+    const { deps } = makeDeps({ prepareGatewayAccess }, alreadyRelay);
+
+    const res = await bootstrapRelayWithRetry(deps, { sleep, waitForGatewayMs: 240_000 });
+
+    expect(prepareGatewayAccess).toHaveBeenCalledTimes(3);
+    expect(sleep).toHaveBeenCalledTimes(2);
+    expect(res.status).toBe('already-applied');
   });
 
   it('⭐ 网关还没连上 ⇒ runtime-not-ready（可重试），**不是** unlicensed', async () => {
