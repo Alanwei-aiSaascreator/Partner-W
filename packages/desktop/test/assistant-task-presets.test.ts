@@ -114,6 +114,16 @@ const ZH_TW_REMAPPED_METADATA_MARKERS = {
   },
 } as const;
 
+const ZH_TW_WORKSPACE_DESCRIPTIONS = {
+  compass: '你的綜合任務入口。說明想達成的結果，我會協助判斷任務類型並交給合適的專業助理。',
+  content: '規劃內容主題，將想法整理成可發布的文章與社群內容。',
+  video: '製作可直接進入拍攝與剪輯流程的腳本、分鏡和後製指引。',
+  ecommerce: '以可執行的營運素材，處理商品、商店與轉換問題。',
+  office: '將文件、試算表、會議紀錄與來源資料整理成可交付成果。',
+  research: '整理證據、比較觀點並建立學習計畫，同時清楚標示不確定之處。',
+  family: '以清楚、實用的步驟規劃居家、家庭與親子任務。',
+} as const;
+
 function readLocalePresetCopy(locale: keyof typeof COPY_PROFILE_BY_LOCALE): LocalePresetCopy {
   const t = i18n.getFixedT(locale);
   return Object.fromEntries(
@@ -251,6 +261,25 @@ describe('assistant task presets', () => {
         for (const marker of fields[field]) {
           expect(actual[id][field], `zh-TW: ${id} ${field} missing ${marker}`).toContain(marker);
         }
+      }
+    }
+  });
+
+  it('keeps all zh-TW workspace and core task copy in natural Traditional Chinese instead of English fallback', () => {
+    const zhTw = i18n.getFixedT('zh-TW');
+    const english = i18n.getFixedT('en');
+    const actual = readLocalePresetCopy('zh-TW');
+    const englishPresetCopy = readLocalePresetCopy('en');
+
+    for (const [workspaceKey, expectedDescription] of Object.entries(ZH_TW_WORKSPACE_DESCRIPTIONS)) {
+      const key = `assistantWorkspaces.${workspaceKey}.description`;
+      expect(zhTw(key), `zh-TW: ${workspaceKey} workspace description`).toBe(expectedDescription);
+      expect(zhTw(key), `zh-TW: ${workspaceKey} workspace description English fallback`).not.toBe(english(key));
+    }
+
+    for (const [id] of EXPECTED_PRESET_ROOTS) {
+      for (const field of ['title', 'description', 'prompt'] as const) {
+        expect(actual[id][field], `zh-TW: ${id} ${field} English fallback`).not.toBe(englishPresetCopy[id][field]);
       }
     }
   });

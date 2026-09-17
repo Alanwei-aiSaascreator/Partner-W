@@ -89,233 +89,233 @@
   },
   "assistantWorkspaces": {
     "compass": {
-      "description": "Your general task hub. Describe the outcome and I will route it to the right specialist.",
+      "description": "你的綜合任務入口。說明想達成的結果，我會協助判斷任務類型並交給合適的專業助理。",
       "starters": {
         "1": {
-          "description": "Break down goals, steps, timing, and deliverables",
+          "description": "將目標拆成步驟、時程與交付成果",
           "materialHint": "目標描述、截止時間、目前進度和限制條件（可選）",
           "output": "目標拆解、階段里程碑、優先順序和下一步行動",
-          "prompt": "Break down [goal] into executable steps with milestones, priorities, deadlines, and the next action.",
-          "title": "Goal breakdown"
+          "prompt": "請將[目標]拆解為可執行步驟，列出里程碑、優先順序、截止時間與下一個行動。",
+          "title": "目標拆解"
         },
         "2": {
-          "description": "Schedule stages, timing, owners, and checkpoints",
+          "description": "安排階段、時程、負責人與檢查點",
           "materialHint": "目標、截止時間、可用資源、參與人員和限制條件（可選）",
           "output": "分階段執行計畫、時間安排、責任分工、檢查點和風險預案",
-          "prompt": "Create an execution plan for [goal] with phased tasks, timing, owners, checkpoints, risks, and adjustment conditions.",
-          "title": "Execution plan"
+          "prompt": "請為[目標]建立執行計畫，包含分階段任務、時程、負責人、檢查點、風險與調整條件。",
+          "title": "執行計畫"
         },
         "3": {
-          "description": "Weigh cost, risk, and expected results",
+          "description": "比較成本、風險與預期成果",
           "materialHint": "候選方案、預算、時間限制和最重視的判斷標準（可選）",
           "output": "方案比較、關鍵取捨、適用條件和有依據的建議",
-          "prompt": "Compare [option A] and [option B] by cost, outcome, risk, and fit, then make a clear recommendation.",
-          "title": "Compare options"
+          "prompt": "請從成本、成果、風險與適用性比較[方案 A]和[方案 B]，並提出理由清楚的建議。",
+          "title": "方案比較"
         },
         "4": {
-          "description": "Combine goals, context, evidence, risks, and recommendations",
+          "description": "整合目標、背景、證據、風險與建議",
           "materialHint": "待分析的問題、背景資料、目標、資料和限制條件（可選）",
           "output": "現況判斷、關鍵證據、影響因素、風險機會和行動建議",
-          "prompt": "Analyze [question] comprehensively. Confirm the goal and context, then assess evidence, key factors, risks, opportunities, and recommended actions.",
-          "title": "Comprehensive analysis"
+          "prompt": "請全面分析[問題]。先確認目標與背景，再評估證據、關鍵因素、風險、機會與建議行動。",
+          "title": "綜合分析"
         }
       }
     },
     "content": {
-      "description": "Plan topics and turn ideas into publishable writing and social content.",
+      "description": "規劃內容主題，將想法整理成可發布的文章與社群內容。",
       "starters": {
         "1": {
-          "description": "Define audience, angle, and a content series",
+          "description": "確認受眾、切入角度與系列方向",
           "materialHint": "主題、平台、目標受眾、帳號定位和參考內容（可選）",
           "output": "依主題分組的題目清單、切入角度和推薦理由",
-          "prompt": "Plan topics about [subject]. Confirm the platform, audience, and goal, then give me 10 specific ideas with reasons.",
-          "title": "Topic planning"
+          "prompt": "請規劃[主題]的內容題目。先確認平台、受眾與目標，再提供 10 個具體題目及推薦理由。",
+          "title": "選題規劃"
         },
         "2": {
-          "description": "Write a complete, editable long-form piece",
+          "description": "撰寫完整且可編輯的長文初稿",
           "materialHint": "主題、受眾、發布平台、語氣、篇幅和事實素材（可選）",
           "output": "包含標題、開頭、正文結構和結尾引導的長文初稿",
-          "prompt": "Write a long-form [platform] piece about [subject]. Confirm audience, tone, and length, then deliver a title, opening, structured body, and closing action.",
-          "title": "Long-form writing"
+          "prompt": "請為[平台]撰寫一篇關於[主題]的長文。先確認受眾、語氣與篇幅，再提供標題、開頭、結構完整的正文和結尾行動引導。",
+          "title": "長文寫作"
         },
         "3": {
-          "description": "Design the hook, spoken lines, visuals, and pace",
+          "description": "設計開場鉤子、口播、畫面與節奏",
           "materialHint": "主題、平台、目標受眾、影片時長、產品資訊和參考內容（可選）",
           "output": "包含開場鉤子、口播、畫面提示、節奏和行動引導的短影音腳本",
-          "prompt": "Write a [platform and duration] short-video script about [topic], including the hook, spoken lines, visual cues, pacing, and call to action.",
-          "title": "Short-video script"
+          "prompt": "請為[平台與時長]撰寫一支關於[主題]的短影音腳本，包含開場鉤子、口播、畫面提示、節奏與行動引導。",
+          "title": "短影音腳本"
         },
         "4": {
-          "description": "Preserve meaning while refining structure, voice, and expression",
+          "description": "保留原意，同時改善結構、語氣與表達",
           "materialHint": "原文、發布平台、目標受眾、目標語氣和需要保留的事實（可選）",
           "output": "保留原意的潤色稿、修改說明和可選標題",
-          "prompt": "Improve and polish the copy I provide while preserving its facts and intent. Refine the title, opening, structure, voice, and pace.",
-          "title": "Rewrite and polish"
+          "prompt": "請改寫並潤飾[原文]，保留原有事實與意圖，並改善標題、開頭、結構、語氣與節奏。",
+          "title": "改寫與潤飾"
         }
       }
     },
     "ecommerce": {
-      "description": "Solve product, store, and conversion problems with practical operating materials.",
+      "description": "以可執行的營運素材，處理商品、商店與轉換問題。",
       "starters": {
         "1": {
-          "description": "Write headlines, benefits, scenarios, and conversion copy",
+          "description": "撰寫標題、賣點、情境與轉換文案",
           "materialHint": "商品資訊、目標族群、規格參數、真實賣點和證明資料（可選）",
           "output": "商品標題、分層賣點、情境說明、證明資訊和行動引導",
-          "prompt": "Write product copy for [product]. Confirm the audience, price range, and proven benefits, then provide a headline, layered benefits, use cases, proof points, and call to action.",
-          "title": "Product copy"
+          "prompt": "請為[商品]撰寫商品文案。先確認目標族群、價格區間與已證實的賣點，再提供標題、分層賣點、使用情境、證明資訊與行動引導。",
+          "title": "商品文案"
         },
         "2": {
-          "description": "Plan objectives, cadence, channels, and execution",
+          "description": "規劃目標、節奏、通路與執行方式",
           "materialHint": "活動目標、商品、預算、週期、通路、庫存和歷史資料（可選）",
           "output": "活動主題、目標受眾、時間節奏、通路動作、預算和檢討指標",
-          "prompt": "Create a campaign plan for [product or store], covering the objective, audience, cadence, channel actions, budget, inventory risks, and review metrics.",
-          "title": "Campaign plan"
+          "prompt": "請為[商品或商店]規劃行銷活動，包含活動目標、目標族群、節奏、各通路動作、預算、庫存風險與檢討指標。",
+          "title": "活動企劃"
         },
         "3": {
-          "description": "Compare positioning, price, content, and customer feedback",
+          "description": "比較定位、價格、內容與顧客評價",
           "materialHint": "自家商品、競品資料、價格、頁面內容和使用者評價（可選）",
           "output": "定位、價格、賣點、頁面和評價差異的競品分析報告",
-          "prompt": "Analyze [competitor] across positioning, price, claims, page content, and reviews, then identify differentiation opportunities.",
-          "title": "Competitor analysis"
+          "prompt": "請分析[競品]的定位、價格、訴求、頁面內容與顧客評價，並找出可行的差異化機會。",
+          "title": "競品分析"
         },
         "4": {
-          "description": "Analyze reviews and prepare customer-service responses",
+          "description": "分析評價並準備客服回覆",
           "materialHint": "商品或店鋪資訊、使用者評價、常見問題、物流和售後規則（可選）",
           "output": "評價問題分類、改善建議和涵蓋售前售後的客服話術",
-          "prompt": "Analyze customer reviews for [product or store], identify recurring issues and improvements, then create customer-service responses for presales, objections, shipping, and after-sales.",
-          "title": "Reviews and customer service"
+          "prompt": "請分析[商品或商店]的顧客評價，找出反覆出現的問題與改善方向，再擬定售前、異議處理、物流及售後客服回覆。",
+          "title": "評價與客服"
         }
       }
     },
     "family": {
-      "description": "Plan home, family, and parenting tasks with clear, practical steps.",
+      "description": "以清楚、實用的步驟規劃居家、家庭與親子任務。",
       "starters": {
         "1": {
-          "description": "Plan routes, timing, cost, and alternatives",
+          "description": "規劃路線、時程、費用與備案",
           "materialHint": "目的地、家庭成員、日期、預算、旅遊偏好和限制（可選）",
           "output": "旅行路線、時間安排、費用、預訂事項和備選方案",
-          "prompt": "Create a travel plan for a family trip to [destination]. Confirm travelers, dates, and budget, then provide routes, timing, costs, bookings, and alternatives.",
-          "title": "Travel plan"
+          "prompt": "請規劃前往[目的地]的家庭旅行。先確認同行成員、日期與預算，再提供路線、時程、費用、預訂事項與備案。",
+          "title": "旅遊規劃"
         },
         "2": {
-          "description": "Organize items, owners, timing, and completion status",
+          "description": "整理項目、負責人、時間與完成狀態",
           "materialHint": "家庭事項、成員、截止時間、現有物品和特殊需求（可選）",
           "output": "依類別整理的家庭清單、負責人、時間節點和檢查狀態",
-          "prompt": "Turn [household task] into a family checklist grouped by category, with items or tasks, owners, timing, and completion checks.",
-          "title": "Family checklist"
+          "prompt": "請將[家庭事項]整理成分類清單，列出物品或任務、負責人、時間與完成檢查。",
+          "title": "家庭清單"
         },
         "3": {
-          "description": "Compare price, quality, risks, and use cases",
+          "description": "比較價格、品質、風險與使用情境",
           "materialHint": "候選商品、預算、使用需求、規格、評價和售後條件（可選）",
           "output": "購買選項比較、關鍵取捨、風險提示和推薦結論",
-          "prompt": "Compare the purchase options [product A] and [product B] by price, quality, features, reviews, support, and fit, then recommend one.",
-          "title": "Purchase comparison"
+          "prompt": "請從價格、品質、功能、評價、售後服務與適用性比較[商品 A]和[商品 B]，並提出購買建議。",
+          "title": "選購比較"
         },
         "4": {
-          "description": "Assign owners, reminders, and checklists",
+          "description": "安排負責人、提醒與檢查清單",
           "materialHint": "家庭成員、固定事項、可用時段、優先順序和個人偏好（可選）",
           "output": "依日期和成員整理的安排、衝突提示、緩衝時間和提醒",
-          "prompt": "Turn [household task] into a schedule plan with timing, owner assignments, required items, and reminders.",
-          "title": "Schedule plan"
+          "prompt": "請將[家庭事項]整理成日程安排，列出時間、家庭成員分工、所需物品與提醒。",
+          "title": "日程安排"
         }
       }
     },
     "office": {
-      "description": "Turn documents, spreadsheets, meetings, and source material into polished deliverables.",
+      "description": "將文件、試算表、會議紀錄與來源資料整理成可交付成果。",
       "starters": {
         "1": {
-          "description": "Build a formal document from source material",
+          "description": "依來源資料撰寫正式文件",
           "materialHint": "參考資料、文件類型、讀者、用途、篇幅和格式要求（可選）",
           "output": "清楚的文件結構、正文初稿和待確認問題",
-          "prompt": "Turn my source material into a [document type]. Confirm the audience and purpose, then produce a clear structure and draft.",
-          "title": "Document writing"
+          "prompt": "請將[參考資料]整理成[文件類型]。先確認讀者與用途，再提供清楚的結構和初稿。",
+          "title": "文件撰寫"
         },
         "2": {
-          "description": "Clean, analyze, and summarize business data",
+          "description": "清理、分析並摘要業務資料",
           "materialHint": "試算表檔案、欄位說明、業務問題、時間範圍和指標定義（可選）",
           "output": "清理說明、關鍵指標、異常項目、分析結論和圖表建議",
-          "prompt": "Process the spreadsheet I provide. Explain what can be read, then clean it, analyze key metrics, and summarize findings.",
-          "title": "Spreadsheet analysis"
+          "prompt": "請處理[試算表]。先說明可讀取的內容，再清理資料、分析關鍵指標並摘要主要發現。",
+          "title": "試算表分析"
         },
         "3": {
-          "description": "Extract decisions, owners, and deadlines",
+          "description": "整理決議、負責人與截止時間",
           "materialHint": "會議逐字稿、手寫紀錄、與會者和會議議程（可選）",
           "output": "會議結論、待辦事項、負責人、截止時間和未決問題",
-          "prompt": "Turn these meeting notes into minutes with decisions, action items, owners, deadlines, and open questions.",
-          "title": "Meeting minutes"
+          "prompt": "請將[會議筆記]整理成會議紀錄，列出決議、待辦事項、負責人、截止時間與未決問題。",
+          "title": "會議紀錄"
         },
         "4": {
-          "description": "Develop an outline, key points, and slide flow",
+          "description": "規劃大綱、重點與投影片流程",
           "materialHint": "簡報主題、聽眾、時長、已有資料和品牌範本（可選）",
           "output": "逐頁目的、核心要點、證據需求和視覺建議",
-          "prompt": "Create a presentation outline for [topic]. Confirm the audience, goal, and duration, then give slide-by-slide points and data needs.",
-          "title": "Presentation outline"
+          "prompt": "請為[主題]建立簡報大綱。先確認聽眾、目標與時長，再逐頁列出重點和所需資料。",
+          "title": "簡報大綱"
         }
       }
     },
     "research": {
-      "description": "Organize evidence, compare viewpoints, and build learning plans while making uncertainty visible.",
+      "description": "整理證據、比較觀點並建立學習計畫，同時清楚標示不確定之處。",
       "starters": {
         "1": {
-          "description": "Organize sources, themes, evidence, and open questions",
+          "description": "整理來源、主題、證據與待查問題",
           "materialHint": "資料檔案或連結、整理目的、研究範圍和來源標準（可選）",
           "output": "資料目錄、主題摘要、證據出處、可靠性說明和待查問題",
-          "prompt": "Organize the [source material] I provide by theme, source, key finding, evidence, and reliability, then list open questions.",
-          "title": "Source organization"
+          "prompt": "請將我提供的[資料]依主題、來源、關鍵發現、證據與可靠性整理，並列出待查問題。",
+          "title": "資料整理"
         },
         "2": {
-          "description": "Evaluate evidence, disagreements, and conditions",
+          "description": "評估證據、分歧與適用條件",
           "materialHint": "待比較的問題、主要觀點、已有來源和判斷標準（可選）",
           "output": "證據對照、共識與分歧、適用條件和綜合判斷",
-          "prompt": "Compare different viewpoints on [question], including evidence, disagreements, applicable conditions, and a balanced conclusion.",
-          "title": "Viewpoint comparison"
+          "prompt": "請比較對[問題]的不同觀點，說明證據、分歧、適用條件，並提出平衡的結論。",
+          "title": "觀點比較"
         },
         "3": {
-          "description": "Set milestones, materials, and practice",
+          "description": "設定里程碑、學習素材與練習",
           "materialHint": "學習目標、目前程度、可用時間、截止日期和已有資料（可選）",
           "output": "分階段目標、每週任務、學習資料、練習和檢查點",
-          "prompt": "Create a learning plan for [topic] based on my current level, available time, and goal, with stages, resources, and exercises.",
-          "title": "Learning plan"
+          "prompt": "請依照我的目前程度、可用時間與目標，為[主題]建立學習計畫，包含階段、資源與練習。",
+          "title": "學習計畫"
         },
         "4": {
-          "description": "Develop a complete report with question, method, findings, and conclusion",
+          "description": "以問題、方法、發現與結論完成報告",
           "materialHint": "研究問題、資料來源、分析範圍、讀者和格式要求（可選）",
           "output": "研究背景、方法、證據、發現、限制、結論和建議",
-          "prompt": "Write a research report about [research question], covering background, method, sources, findings, limitations, conclusions, and recommendations.",
-          "title": "Research report"
+          "prompt": "請撰寫關於[研究問題]的研究報告，包含背景、方法、來源、發現、限制、結論與建議。",
+          "title": "研究報告"
         }
       }
     },
     "video": {
-      "description": "Create scripts, shot plans, and editing directions that can move straight into production.",
+      "description": "製作可直接進入拍攝與剪輯流程的腳本、分鏡和後製指引。",
       "starters": {
         "1": {
-          "description": "Plan spoken lines, visuals, and pace",
+          "description": "規劃口播、畫面與節奏",
           "materialHint": "主題、平台、時長、人物、產品資訊和拍攝條件（可選）",
           "output": "依段落整理的口播、畫面、動作、道具和時長建議",
-          "prompt": "Write a [platform and duration] shooting script about [topic], including hook, spoken lines, visual cues, and call to action.",
-          "title": "Shooting script"
+          "prompt": "請為[平台與時長]撰寫一支關於[主題]的拍攝腳本，包含開場鉤子、口播、畫面提示與行動引導。",
+          "title": "拍攝腳本"
         },
         "2": {
-          "description": "Define shot size, camera, action, and timing",
+          "description": "定義景別、機位、動作與時間",
           "materialHint": "腳本、參考影片、目標時長、畫面比例和可用場景（可選）",
           "output": "包含鏡號、景別、機位、畫面、台詞、時長和轉場的分鏡表",
-          "prompt": "Turn my script into a storyboard with shot number, framing, visual, dialogue, camera, duration, and transition.",
-          "title": "Storyboard"
+          "prompt": "請將[腳本]整理成分鏡表，列出鏡號、景別、畫面、台詞、機位、時長與轉場。",
+          "title": "分鏡表"
         },
         "3": {
-          "description": "Plan editing structure, timing, and emotional progression",
+          "description": "規劃剪輯結構、時間與情緒推進",
           "materialHint": "腳本或素材、發布平台、目標時長、受眾和參考節奏（可選）",
           "output": "分段時長、剪輯節奏、素材取捨、情緒曲線和轉場建議",
-          "prompt": "Design the editing rhythm for [video topic], mapping structure, footage choices, emotional changes, transitions, and pacing by time segment.",
-          "title": "Editing rhythm"
+          "prompt": "請為[影片主題]設計剪輯節奏，依時間區段安排內容結構、素材取捨、情緒變化、轉場與速度。",
+          "title": "剪輯節奏"
         },
         "4": {
-          "description": "Generate title directions, cover copy, and visual guidance",
+          "description": "產出標題方向、封面文案與視覺指引",
           "materialHint": "影片主題、平台、目標受眾、核心賣點和封面素材（可選）",
           "output": "標題備選、封面文案、畫面構圖、視覺重點和測試建議",
-          "prompt": "Create title and cover options for [video topic], including multiple titles, cover copy, composition, visual priorities, and testing ideas.",
-          "title": "Title and cover"
+          "prompt": "請為[影片主題]設計標題與封面方案，包含多組標題、封面文案、構圖、視覺重點與測試方式。",
+          "title": "標題與封面"
         }
       }
     }
