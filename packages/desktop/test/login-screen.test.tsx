@@ -36,8 +36,10 @@ function setInput(input: HTMLInputElement, value: string) {
 }
 
 describe('Login', () => {
-  const sendOtp = vi.fn(async () => ({ ok: true }));
-  const verifyOtp = vi.fn(async () => ({ ok: true }));
+  // ⚠️ 返回类型要写全：登录失败会带 errorCode，推断成 { ok: boolean } 会让
+  //    mockResolvedValueOnce({ ok: false, errorCode }) 在 typecheck:tests 里报错。
+  const sendOtp = vi.fn(async (): Promise<{ ok: boolean; errorCode?: string }> => ({ ok: true }));
+  const verifyOtp = vi.fn(async (): Promise<{ ok: boolean; errorCode?: string }> => ({ ok: true }));
 
   beforeEach(() => {
     window.localStorage.clear();

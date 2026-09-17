@@ -1,4 +1,5 @@
-import { PRESET_AGENT_DEFINITIONS, type PresetAgentDefinition, type PresetAgentId } from '@/lib/preset-agents';
+import { PRESET_AGENT_DEFINITIONS } from '@/lib/preset-agents';
+import type { AgentInstallDefinition } from '@clawwork/core';
 
 interface MutationResult {
   ok: boolean;
@@ -19,21 +20,21 @@ export interface PresetAgentInstallerApi {
 export interface PresetAgentInstallProgress {
   completed: number;
   total: number;
-  currentId: PresetAgentId;
+  currentId: string;
 }
 
 export interface PresetAgentInstallResult {
-  installed: PresetAgentId[];
-  skipped: PresetAgentId[];
-  failed: Array<{ id: PresetAgentId; error: string }>;
+  installed: string[];
+  skipped: string[];
+  failed: Array<{ id: string; error: string }>;
 }
 
 interface InstallPresetAgentPackParams {
   gatewayId: string;
   workspaceRoot: string;
   currentAgentIds: string[];
-  displayNames: Partial<Record<PresetAgentId, string>>;
-  definitions?: readonly PresetAgentDefinition[];
+  displayNames: Record<string, string>;
+  definitions?: readonly AgentInstallDefinition[];
   api: PresetAgentInstallerApi;
   onProgress?: (progress: PresetAgentInstallProgress) => void;
 }
@@ -69,9 +70,9 @@ export async function installPresetAgentPack({
   api,
   onProgress,
 }: InstallPresetAgentPackParams): Promise<PresetAgentInstallResult> {
-  const installed: PresetAgentId[] = [];
-  const skipped: PresetAgentId[] = [];
-  const failed: Array<{ id: PresetAgentId; error: string }> = [];
+  const installed: string[] = [];
+  const skipped: string[] = [];
+  const failed: Array<{ id: string; error: string }> = [];
   const knownAgentIds = new Set(currentAgentIds);
   const cleanWorkspaceRoot = workspaceRoot.replace(/[\\/]+$/, '');
 

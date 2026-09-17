@@ -101,7 +101,8 @@ export function createPresetAgentBootstrapCoordinator() {
             phase: 'installing',
             completed: progress.completed,
             total: progress.total,
-            currentId: progress.currentId,
+            // 安装器被助手市场复用了，id 类型放宽到 string；这条链只装预置助手
+            currentId: progress.currentId as PresetAgentId,
             missingIds,
           });
         });
@@ -118,7 +119,7 @@ export function createPresetAgentBootstrapCoordinator() {
         }
 
         const failedMessages = result.failed
-          .filter((failure) => missingIds.includes(failure.id))
+          .filter((failure) => missingIds.includes(failure.id as PresetAgentId))
           .map((failure) => failure.error);
         return emit(gatewayId, {
           phase: 'error',

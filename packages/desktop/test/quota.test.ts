@@ -8,11 +8,13 @@ import {
   QUOTA_DEGRADE_PERCENT,
 } from '../src/renderer/lib/quota';
 
-function overviewWith(license: CommercialAccountOverview['license']): CommercialAccountOverview {
+// ⚠️ 参数放宽成 unknown 再收窄：有一条用例故意让 tokenUsedMicros = null
+//    （"数据不全 ≠ 用尽"），而正式类型不允许 null。
+function overviewWith(license: unknown): CommercialAccountOverview {
   return {
     account: { userId: 'u-1', phone: null, email: null, nickname: null, avatar: null },
     org: null,
-    license,
+    license: license as CommercialAccountOverview['license'],
     device: { fingerprint: 'fp', shortFingerprint: 'fp' },
     fetchedAt: '2026-09-15T00:00:00.000Z',
   };

@@ -54,7 +54,7 @@ export interface AssistantWorkspaceDefinition {
   starters: readonly AssistantTaskPreset[];
 }
 
-const COMMON_OPERATING_CONTRACT = `# Shared operating contract
+export const COMMON_OPERATING_CONTRACT = `# Shared operating contract
 
 - Start from the result the user needs, then ask only for missing information that materially changes it.
 - Produce a useful first draft early. Do not trap a new user in a long interview.
