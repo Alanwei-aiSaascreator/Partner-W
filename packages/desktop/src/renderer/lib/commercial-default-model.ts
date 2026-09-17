@@ -1,6 +1,11 @@
+import { COMMERCIAL_DEFAULT_MODEL_ID } from '@clawwork/shared';
 import type { ModelCatalogEntry } from '@clawwork/shared';
 
-export const COMMERCIAL_DEFAULT_MODEL_ID = 'deepseek-v4-flash';
+/**
+ * ⚠️ 定义在 `@clawwork/shared/constants.ts`（**唯一真源**，main 进程也要用它写网关
+ * 默认模型）。这里 re-export 是为了不动既有 import 面。
+ */
+export { COMMERCIAL_DEFAULT_MODEL_ID };
 export const COMMERCIAL_DEFAULT_MODEL_LABEL = 'DeepSeek V4 Flash';
 
 export function resolveCommercialDefaultModel(catalog: ModelCatalogEntry[]) {

@@ -1,3 +1,5 @@
+import { COMMERCIAL_DEFAULT_MODEL_ID } from '@clawwork/shared';
+
 /**
  * 中转服务（relay）在客户端这一侧的常量与识别逻辑。
  *
@@ -236,7 +238,15 @@ export async function fetchFirstRelayModel(relayKey: string): Promise<string | n
   const body = (await res.json()) as {
     providers?: Array<{ models?: Array<{ id?: unknown }> }>;
   };
-  const model = body.providers?.[0]?.models?.find((m) => typeof m.id === 'string' && m.id.length > 0);
+  const models = (body.providers ?? []).flatMap((provider) =>
+    (provider.models ?? []).filter((m): m is { id: string } => typeof m.id === 'string' && m.id.length > 0),
+  );
+
+  // ⚠️ **优先**取商业默认模型，而不是目录第一条：这个值会写进网关的
+  //    `agents.defaults.model.primary`，而 composer 显示的也是商业默认 ——
+  //    两处取不同的模型，用户看到的和实际生成消息的就会对不上（2026-09-17 实机）。
+  //    目录里没有它时才退回第一条，免得整个默认都不写。
+  const model = models.find((m) => m.id.split('/').at(-1) === COMMERCIAL_DEFAULT_MODEL_ID) ?? models[0];
   if (!model) return null;
 
   return `${RELAY_PROVIDER_ID}/${String(model.id)}`;

@@ -158,6 +158,44 @@ describe('fetchFirstRelayModel', () => {
     vi.unstubAllGlobals();
   });
 
+  /**
+   * ⭐ 默认模型**只能有一处定义**。
+   *
+   * 2026-09-17 实机：激活时这里取的是**中转目录第一条**（qwen3.5-27b），
+   * 而 composer 显示的是商业默认（deepseek-v4-flash）—— 同一个"默认"两个值，
+   * 于是用户看到的模型和实际生成消息的模型对不上（徽章显示 qwen，用户以为买了 Kimi 跑 glm）。
+   * 这条测试把两边钉成同一个 id。
+   */
+  it('目录第一条不是商业默认时，也优先取商业默认（与 composer 显示保持一致）', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => ({
+          providers: [{ id: 'bailian', models: [{ id: 'qwen3.5-27b' }, { id: 'deepseek-v4-flash' }] }],
+        }),
+      })),
+    );
+    const { fetchFirstRelayModel } = await import('../src/main/commercial/relay-config.js');
+
+    expect(await fetchFirstRelayModel('rly_abc')).toBe('clawrouter/deepseek-v4-flash');
+    vi.unstubAllGlobals();
+  });
+
+  it('目录里没有商业默认时才退回第一条（不能因此不写）', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => ({ providers: [{ id: 'bailian', models: [{ id: 'qwen3.5-27b' }] }] }),
+      })),
+    );
+    const { fetchFirstRelayModel } = await import('../src/main/commercial/relay-config.js');
+
+    expect(await fetchFirstRelayModel('rly_abc')).toBe('clawrouter/qwen3.5-27b');
+    vi.unstubAllGlobals();
+  });
+
   it('拿不到就返回 null，不抛', async () => {
     vi.stubGlobal(
       'fetch',

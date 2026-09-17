@@ -416,3 +416,42 @@ describe('chat-composer —— 思考档位必须对着模型能力校验', () =
     expect(updateTaskMetadata).toHaveBeenCalledWith(TASK_ID, { thinkingLevel: 'high' });
   });
 });
+
+/**
+ * ⭐「首条消息跑的是哪个模型」。
+ *
+ * 2026-09-17 实机：composer 显示 deepseek-v4-flash，实际生成消息的是 qwen3.5-27b ——
+ * 网关侧和客户端对"默认"各有一套定义（已由 shared 常量收敛），而**任务级模型必须
+ * 在 chat.send 之前 patch 进会话**：patch 晚一步，第一条消息就一定跑网关默认。
+ * 这条测试钉的就是那个顺序。
+ */
+describe('chat-composer —— 发送前先把模型写进会话', () => {
+  afterEach(() => {
+    supportedLevels = undefined;
+  });
+
+  it('⭐ patchSession 必须发生在 sendMessage 之前（否则首条消息跑网关默认）', async () => {
+    const h = setup();
+
+    const res = await h.composer.send(TASK_ID, {
+      content: '你好',
+      presetModel: 'clawrouter/deepseek-v4-flash',
+    });
+
+    expect(res.ok).toBe(true);
+    expect(h.patchSession).toHaveBeenCalledWith('gw-1', SESSION_KEY, { model: 'clawrouter/deepseek-v4-flash' });
+    const patchOrder = h.patchSession.mock.invocationCallOrder[0];
+    const sendOrder = h.sendMessage.mock.invocationCallOrder[0];
+    expect(patchOrder).toBeLessThan(sendOrder);
+  });
+
+  it('模型写入失败 ⇒ 不发消息，并把用户消息回滚（别让消息跑在错误模型上）', async () => {
+    const h = setup();
+    h.patchSession.mockResolvedValueOnce({ ok: false, error: 'model not available' });
+
+    const res = await h.composer.send(TASK_ID, { content: '你好', presetModel: 'clawrouter/nope' });
+
+    expect(res.ok).toBe(false);
+    expect(h.sendMessage).not.toHaveBeenCalled();
+  });
+});
