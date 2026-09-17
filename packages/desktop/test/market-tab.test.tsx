@@ -28,11 +28,14 @@ vi.mock('../src/renderer/components/ui/scroll-area', () => ({
 }));
 
 // 安装编排单独测过（template-install.test.ts），这里只验证界面接线
-const install = vi.fn(async () => ({ ok: true, agentId: 'rongying-tpl-x' }));
+// ⚠️ 返回类型必须写全（TemplateInstallOutcome）：推断成 {ok:true; agentId:string} 之后，
+//    mockResolvedValueOnce({ok:false, message}) / ({recordWarning}) 会在 typecheck:tests 报错。
+const install = vi.fn(async (): Promise<TemplateInstallOutcome> => ({ ok: true, agentId: 'rongying-tpl-x' }));
 vi.mock('../src/renderer/layouts/MarketPanel/useTemplateInstall', () => ({
   useTemplateInstall: () => ({ install, installingId: null as string | null }),
 }));
 
+import type { TemplateInstallOutcome } from '../src/renderer/lib/template-install';
 import MarketTab from '../src/renderer/layouts/MarketPanel/MarketTab';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;

@@ -153,7 +153,7 @@ export default function MarketTab() {
               className="rounded-xl border border-[var(--border)] bg-[var(--bg-secondary)] p-4"
             >
               <header className="flex items-start gap-2">
-                <span className="text-xl">{detail.emoji}</span>
+                <span className="type-section-title">{detail.emoji}</span>
                 <div className="flex-1">
                   <h3 className="type-section-title text-[var(--text-primary)]">{detail.name}</h3>
                   <p className="type-support text-[var(--text-muted)]">{detail.description}</p>
@@ -199,7 +199,7 @@ export default function MarketTab() {
                   className="cursor-pointer rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-secondary)] p-4 transition-colors hover:border-[var(--border)]"
                 >
                   <div className="mb-2 flex items-center gap-2">
-                    <span className="text-lg">{row.emoji}</span>
+                    <span className="type-section-title">{row.emoji}</span>
                     <h3 className="type-label flex-1 text-[var(--text-primary)]">{row.name}</h3>
                     {row.isOfficial && (
                       <span className="rounded bg-[var(--accent-soft)] px-1.5 py-0.5 type-support text-[var(--accent)]">

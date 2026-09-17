@@ -231,7 +231,7 @@ export default function MyTemplatesTab() {
               className="space-y-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-secondary)] p-4"
             >
               <header className="flex items-center gap-2">
-                <span className="text-lg">{row.emoji}</span>
+                <span className="type-section-title">{row.emoji}</span>
                 <h3 className="type-label flex-1 text-[var(--text-primary)]">{row.name}</h3>
                 <span className="rounded bg-[var(--bg-hover)] px-1.5 py-0.5 type-support text-[var(--text-secondary)]">
                   {t(STATUS_KEY[row.status])}
