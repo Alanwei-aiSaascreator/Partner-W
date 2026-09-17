@@ -12,13 +12,6 @@
 
 export type TeamRole = 'owner' | 'admin' | 'member';
 
-/** 团队里的角色文案键（界面直接用 t() 取）。 */
-export const TEAM_ROLE_LABEL_KEY: Record<TeamRole, string> = {
-  owner: 'community.roleOwner',
-  admin: 'community.roleAdmin',
-  member: 'community.roleMember',
-};
-
 /** 帖子的可见范围。`public` **不在 P1 范围内**（没有审核能力，RPC 一律拒绝）。 */
 export type PostVisibility = 'private' | 'org';
 
