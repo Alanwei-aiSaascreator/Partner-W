@@ -2,19 +2,12 @@ import { createStore, type StoreApi } from 'zustand/vanilla';
 import { useStore } from 'zustand';
 
 export const BETA_STORAGE_KEY = 'rongying:company-beta:v1';
-export type BetaModule = 'bounty' | 'game' | 'operations' | 'updates' | 'analytics' | 'compliance';
+export type BetaModule = 'operations' | 'updates' | 'analytics' | 'compliance';
 
 export interface BetaStorage {
   getItem(key: string): string | null;
   setItem(key: string, value: string): void;
   removeItem(key: string): void;
-}
-
-export interface BountyDemo {
-  id: string;
-  title: string;
-  reward: number;
-  status: 'open' | 'claimed' | 'submitted';
 }
 
 export type BetaEventType =
@@ -41,8 +34,6 @@ export type BetaAnalytics = Record<'launch' | 'login' | 'activation' | 'chat' | 
 
 export interface BetaData {
   activeModule: BetaModule;
-  bounties: BountyDemo[];
-  game: { points: number; level: number; checkedInToday: boolean; badges: string[] };
   operations: {
     users: number;
     activeCodes: number;
@@ -59,10 +50,6 @@ export interface BetaData {
 
 export interface BetaActions {
   setActiveModule(module: BetaModule): void;
-  publishBounty(title: string): boolean;
-  claimBounty(id: string): void;
-  submitBounty(id: string): void;
-  checkIn(): boolean;
   adjustCredits(amount: number): void;
   toggleModel(): void;
   setModelRate(rate: number): void;
@@ -87,8 +74,6 @@ export type BetaState = BetaData & BetaActions;
  *（`window.clawwork.checkForUpdates` → electron-updater），失败也会如实说明原因。
  */
 export const BETA_MODULES: Array<{ id: BetaModule; label: string; description: string; preview?: true }> = [
-  { id: 'bounty', label: '悬赏', description: '发布与交付任务', preview: true },
-  { id: 'game', label: '成长中心', description: '积分、等级与徽章', preview: true },
   { id: 'operations', label: '运营后台', description: '基础运营控制台', preview: true },
   { id: 'updates', label: '自动升级', description: '检查、下载与安装' },
   { id: 'analytics', label: '埋点分析', description: '核心事件概览', preview: true },
@@ -97,12 +82,7 @@ export const BETA_MODULES: Array<{ id: BetaModule; label: string; description: s
 
 function seed(): BetaData {
   return {
-    activeModule: 'bounty',
-    bounties: [
-      { id: 'bounty-seed-1', title: '优化新品详情页标题', reward: 120, status: 'open' },
-      { id: 'bounty-seed-2', title: '整理本周客户反馈', reward: 80, status: 'open' },
-    ],
-    game: { points: 260, level: 2, checkedInToday: false, badges: ['内测先锋'] },
+    activeModule: 'operations',
     operations: {
       users: 128,
       activeCodes: 46,
@@ -123,10 +103,11 @@ function safeLoad(storage: BetaStorage): BetaData {
     const raw = storage.getItem(BETA_STORAGE_KEY);
     if (!raw) return seed();
     const parsed = JSON.parse(raw) as Partial<BetaData>;
-    // ⚠️ 词表里保留已不再发出的五个事件名（`team_created` / `team_joined` /
-    //    `post_published` / `template_installed` / `creator_template_created`）：
-    //    P1、P2 把它们的模块搬到主界面后，老版本写进 localStorage 的事件
-    //    不能被静默丢掉（那会凭空抹掉用户的历史）。留给 P4 的埋点分析用真数据重新发出。
+    // ⚠️ 词表里保留已不再发出的七个事件名（`team_created` / `team_joined` /
+    //    `post_published` / `template_installed` / `creator_template_created` /
+    //    `bounty_published` / `daily_check_in`）：P1/P2/P3 把它们的模块搬到主界面后，
+    //    老版本写进 localStorage 的事件不能被静默丢掉（那会凭空抹掉用户的历史）。
+    //    留给 P4 的埋点分析用真数据重新发出。
     const validEventTypes = new Set<BetaEventType>([
       'module_opened',
       'team_created',
@@ -169,10 +150,6 @@ function safeLoad(storage: BetaStorage): BetaData {
 function serializable(state: BetaState): BetaData {
   const {
     setActiveModule: _a,
-    publishBounty: _f,
-    claimBounty: _g,
-    submitBounty: _h,
-    checkIn: _o,
     adjustCredits: _p,
     toggleModel: _q,
     setModelRate: _r,
@@ -215,40 +192,6 @@ export function createBetaStore(storage: BetaStorage): StoreApi<BetaState> {
     ...safeLoad(storage),
     setActiveModule: (activeModule) =>
       set((state) => ({ activeModule, events: addEvent(state.events, 'module_opened', activeModule) })),
-    publishBounty: (title) => {
-      const trimmed = title.trim();
-      if (!trimmed) return false;
-      set((state) => ({
-        bounties: [...state.bounties, { id: makeId('bounty'), title: trimmed, reward: 100, status: 'open' }],
-        events: addEvent(state.events, 'bounty_published', 'bounty'),
-      }));
-      return true;
-    },
-    claimBounty: (id) =>
-      set((state) => ({
-        bounties: state.bounties.map((item) =>
-          item.id === id && item.status === 'open' ? { ...item, status: 'claimed' } : item,
-        ),
-      })),
-    submitBounty: (id) =>
-      set((state) => ({
-        bounties: state.bounties.map((item) =>
-          item.id === id && item.status === 'claimed' ? { ...item, status: 'submitted' } : item,
-        ),
-      })),
-    checkIn: () => {
-      if (get().game.checkedInToday) return false;
-      set((state) => ({
-        game: {
-          ...state.game,
-          checkedInToday: true,
-          points: state.game.points + 20,
-          level: Math.max(state.game.level, Math.floor((state.game.points + 20) / 200) + 1),
-        },
-        events: addEvent(state.events, 'daily_check_in', 'game'),
-      }));
-      return true;
-    },
     adjustCredits: (amount) =>
       set((state) => ({
         operations: { ...state.operations, credits: Math.max(0, state.operations.credits + amount) },

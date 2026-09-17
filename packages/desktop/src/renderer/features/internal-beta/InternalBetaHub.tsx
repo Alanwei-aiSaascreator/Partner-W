@@ -1,15 +1,11 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
-  BadgeCheck,
   BarChart3,
   Check,
   ChevronRight,
   CircleDollarSign,
-  Gamepad2,
-  Gift,
   Megaphone,
   PackageCheck,
-  Plus,
   RefreshCw,
   RotateCcw,
   ShieldCheck,
@@ -27,7 +23,6 @@ import { createInternalBetaUpdateService, type InternalBetaUpdateState } from '.
 
 const ICONS: Record<BetaModule, typeof Users> = {
   bounty: CircleDollarSign,
-  game: Gamepad2,
   operations: Wrench,
   updates: RefreshCw,
   analytics: BarChart3,
@@ -51,121 +46,6 @@ function Card({ children, className = '' }: { children: ReactNode; className?: s
     >
       {children}
     </section>
-  );
-}
-
-function Field({
-  value,
-  onChange,
-  placeholder,
-  label,
-}: {
-  value: string;
-  onChange: (value: string) => void;
-  placeholder: string;
-  label?: string;
-}) {
-  return (
-    <input
-      aria-label={label}
-      value={value}
-      onChange={(event) => onChange(event.target.value)}
-      placeholder={placeholder}
-      className="type-body h-9 min-w-0 flex-1 rounded-lg border border-[var(--border)] bg-[var(--bg-primary)] px-3 text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
-    />
-  );
-}
-
-function BountyModule() {
-  const bounties = useBetaStore((s) => s.bounties);
-  const publish = useBetaStore((s) => s.publishBounty);
-  const claim = useBetaStore((s) => s.claimBounty);
-  const submit = useBetaStore((s) => s.submitBounty);
-  const [title, setTitle] = useState('');
-  return (
-    <div className="space-y-4">
-      <Card>
-        <div className="flex gap-2">
-          <Field value={title} onChange={setTitle} placeholder="描述需要协作完成的任务" />
-          <Button
-            onClick={() => {
-              publish(title);
-              setTitle('');
-            }}
-          >
-            <Plus />
-            发布悬赏
-          </Button>
-        </div>
-        <p className="type-support mt-2 text-[var(--text-muted)]">内测流程：积分仅作展示，不产生付款或真实结算。</p>
-      </Card>
-      {bounties.map((item) => (
-        <Card key={item.id}>
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <div className="flex items-center gap-2">
-                <Gift className="text-[var(--warning)]" />
-                <h3 className="font-semibold">{item.title}</h3>
-              </div>
-              <p className="type-body mt-2 text-[var(--text-muted)]">
-                奖励 {item.reward} 积分 · 状态：
-                {item.status === 'open' ? '待领取' : item.status === 'claimed' ? '进行中' : '已提交待审核'}
-              </p>
-            </div>
-            {item.status === 'open' ? (
-              <Button onClick={() => claim(item.id)}>领取任务</Button>
-            ) : item.status === 'claimed' ? (
-              <Button onClick={() => submit(item.id)}>提交成果</Button>
-            ) : (
-              <Badge tone="success">已提交</Badge>
-            )}
-          </div>
-        </Card>
-      ))}
-    </div>
-  );
-}
-
-function GameModule() {
-  const game = useBetaStore((s) => s.game);
-  const checkIn = useBetaStore((s) => s.checkIn);
-  const progress = (game.points % 200) / 2;
-  return (
-    <div className="grid gap-4 lg:grid-cols-2">
-      <Card className="bg-gradient-to-br from-[var(--accent-soft)] to-[var(--bg-secondary)]">
-        <Badge>Lv.{game.level}</Badge>
-        <h3 className="type-page-title mt-3">{game.points} 积分</h3>
-        <div className="my-4 h-2 overflow-hidden rounded-full bg-[var(--bg-tertiary)]">
-          <div className="h-full rounded-full bg-[var(--accent)]" style={{ width: `${progress}%` }} />
-        </div>
-        <p className="type-body text-[var(--text-muted)]">距离下一等级还需 {200 - (game.points % 200)} 积分</p>
-        <Button className="mt-5" disabled={game.checkedInToday} onClick={checkIn}>
-          {game.checkedInToday ? (
-            <>
-              <Check />
-              今日已签到
-            </>
-          ) : (
-            <>
-              <Gift />
-              每日签到 +20
-            </>
-          )}
-        </Button>
-      </Card>
-      <Card>
-        <h3 className="mb-3 font-semibold">我的徽章</h3>
-        {game.badges.map((badge) => (
-          <div key={badge} className="flex items-center gap-3 rounded-xl bg-[var(--bg-tertiary)] p-3">
-            <BadgeCheck className="text-[var(--warning)]" />
-            <div>
-              <strong>{badge}</strong>
-              <p className="type-support text-[var(--text-muted)]">参与公司首轮体验</p>
-            </div>
-          </div>
-        ))}
-      </Card>
-    </div>
   );
 }
 
@@ -525,8 +405,6 @@ function ComplianceModule() {
 }
 
 const MODULE_COMPONENTS: Record<BetaModule, () => ReactNode> = {
-  bounty: BountyModule,
-  game: GameModule,
   operations: OperationsModule,
   updates: UpdatesModule,
   analytics: AnalyticsModule,
