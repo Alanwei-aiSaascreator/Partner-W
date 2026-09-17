@@ -666,6 +666,31 @@ export interface ClawWorkAPI {
   communityMemberSetRole: (userId: string, role: 'admin' | 'member') => Promise<IpcResult<null>>;
   communityMemberRemove: (userId: string) => Promise<IpcResult<null>>;
   communityLeave: () => Promise<IpcResult<null>>;
+
+  // ── 助手市场 / 创作者中心（P2）──────────────────────────────────────
+  // ⚠️ 列表类返回后端原样行（snake_case），由 core 的 normalizer 归一；
+  //    单对象的 marketTemplateInstalled 已在 IPC 层翻成驼峰。
+  marketTemplates: (params?: { category?: string | null; query?: string | null }) => Promise<IpcResult<unknown[]>>;
+  marketTemplateDetail: (id: string) => Promise<IpcResult<unknown>>;
+  marketTemplateInstalled: (id: string) => Promise<IpcResult<{ installCount: number }>>;
+  marketMyTemplates: () => Promise<IpcResult<unknown[]>>;
+  marketCreateTemplate: (params: {
+    name: string;
+    description: string;
+    category: string;
+    emoji: string;
+    instructions: string;
+  }) => Promise<IpcResult<unknown>>;
+  marketUpdateTemplate: (params: {
+    id: string;
+    name: string;
+    description: string;
+    category: string;
+    emoji: string;
+    instructions: string;
+  }) => Promise<IpcResult<null>>;
+  marketSetTemplateStatus: (id: string, status: 'draft' | 'published' | 'archived') => Promise<IpcResult<null>>;
+  marketDeleteTemplate: (id: string) => Promise<IpcResult<null>>;
 }
 
 export interface RechargeSku {

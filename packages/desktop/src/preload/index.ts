@@ -490,6 +490,33 @@ function buildApi(): ClawWorkAPI {
       ipcRenderer.invoke('community:member-set-role', { userId, role }),
     communityMemberRemove: (userId: string) => ipcRenderer.invoke('community:member-remove', { userId }),
     communityLeave: () => ipcRenderer.invoke('community:leave'),
+
+    // ── 助手市场 / 创作者中心（P2）────────────────────────────────────
+    // 注意：**安装动作不在这里** —— 真安装要在本地网关建 agent，由渲染进程走
+    // window.clawwork 的 agent API（见 useTemplateInstall）。这里只有记账与增删改查。
+    marketTemplates: (params?: { category?: string | null; query?: string | null }) =>
+      ipcRenderer.invoke('market:templates', params),
+    marketTemplateDetail: (id: string) => ipcRenderer.invoke('market:detail', { id }),
+    marketTemplateInstalled: (id: string) => ipcRenderer.invoke('market:installed', { id }),
+    marketMyTemplates: () => ipcRenderer.invoke('market:mine'),
+    marketCreateTemplate: (params: {
+      name: string;
+      description: string;
+      category: string;
+      emoji: string;
+      instructions: string;
+    }) => ipcRenderer.invoke('market:create', params),
+    marketUpdateTemplate: (params: {
+      id: string;
+      name: string;
+      description: string;
+      category: string;
+      emoji: string;
+      instructions: string;
+    }) => ipcRenderer.invoke('market:update', params),
+    marketSetTemplateStatus: (id: string, status: 'draft' | 'published' | 'archived') =>
+      ipcRenderer.invoke('market:set-status', { id, status }),
+    marketDeleteTemplate: (id: string) => ipcRenderer.invoke('market:delete', { id }),
   };
 }
 
