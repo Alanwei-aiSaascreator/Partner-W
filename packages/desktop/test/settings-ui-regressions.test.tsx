@@ -8,6 +8,7 @@ import { useUiStore } from '../src/renderer/stores/uiStore';
 import { resetSettingsStore } from '../src/renderer/stores/settingsStore';
 import GatewaysSection from '../src/renderer/layouts/Settings/sections/GatewaysSection';
 import AccountSection from '../src/renderer/layouts/Settings/sections/AccountSection';
+import AboutSection from '../src/renderer/layouts/Settings/sections/AboutSection';
 import type { OnboardingProfile } from '../src/renderer/lib/user-onboarding';
 
 vi.mock('sonner', () => ({
@@ -199,6 +200,53 @@ describe('settings UI regressions', () => {
     act(() => editButton.click());
     expect(onEditProfile).toHaveBeenCalledTimes(1);
     expect(window.clawwork.commercialSignOut).toBeUndefined();
+
+    unmount();
+  });
+});
+
+/**
+ * 关于面板的更新检查。
+ *
+ * 2026-09-17 实机日志（×10）：面板把 electron-updater 的英文原文直接渲染出来 ——
+ * `Cannot find channel "latest.yml" update info: HttpError: 404 Not Found`。
+ * 而更新服务**当时还没部署**，等于每次打开设置都甩一段英文堆栈。
+ */
+describe('AboutSection —— 更新失败要说人话', () => {
+  it('⭐ 404 不留英文堆栈，说明"更新清单还没就绪"', async () => {
+    Object.assign(window, {
+      clawwork: {
+        ...(window as unknown as { clawwork?: object }).clawwork,
+        checkForUpdates: vi.fn(async () => {
+          throw new Error('Error: Cannot find channel "latest.yml" update info: HttpError: 404 Not Found');
+        }),
+        onUpdateError: vi.fn(() => () => {}),
+        onUpdateDownloaded: vi.fn(() => () => {}),
+        onUpdateDownloadProgress: vi.fn(() => () => {}),
+        getDeviceId: vi.fn(async () => 'device-1'),
+        getAppVersion: vi.fn(async () => '0.0.16'),
+        reportDebugEvent: vi.fn(),
+        getUpdateChannel: vi.fn(async () => 'stable'),
+        setUpdateChannel: vi.fn(async () => ({ ok: true })),
+        installUpdate: vi.fn(async () => ({ ok: true })),
+        downloadUpdate: vi.fn(async () => ({ ok: true })),
+      },
+    });
+
+    const { container, unmount } = render(<AboutSection />);
+    // 挂载后的检查是一条 then/catch 链，光等微任务不够 —— 让它跑完一个宏任务
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(
+      (window as unknown as { clawwork: { checkForUpdates: ReturnType<typeof vi.fn> } }).clawwork.checkForUpdates,
+      '挂载时应当发起一次检查',
+    ).toHaveBeenCalled();
+    expect(container.textContent).toContain('更新清单');
+    expect(container.textContent).not.toContain('HttpError');
+    expect(container.textContent).not.toContain('latest.yml');
+    expect(container.textContent).not.toContain('404');
 
     unmount();
   });

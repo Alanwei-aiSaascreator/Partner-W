@@ -10,6 +10,7 @@ import InlineNotice from '@/components/semantic/InlineNotice';
 import SegmentedControl from '../components/SegmentedControl';
 import { useUiStore } from '@/stores/uiStore';
 import { useSettingsStore } from '@/stores/settingsStore';
+import { describeUpdateError } from '@/features/internal-beta/update-errors';
 
 const linkClass = cn(
   'type-label flex h-9 items-center justify-center gap-2 rounded-lg px-4 transition-colors',
@@ -112,7 +113,8 @@ export default function AboutSection() {
     unsubs.push(
       window.clawwork.onUpdateError((err) => {
         setUpdateState('error');
-        setErrorMessage(err.message);
+        // electron-updater 的原文是英文堆栈，翻译层见 update-errors.ts
+        setErrorMessage(describeUpdateError(err.message, 'updater'));
       }),
     );
 
@@ -131,10 +133,18 @@ export default function AboutSection() {
         }
       })
       .catch((err: unknown) => {
-        window.clawwork.reportDebugEvent({
+        const raw = err instanceof Error ? err.message : String(err);
+        // ⚠️ 顺序有意为之：**先**把错误摆到界面上，**再**写调试日志。
+        //    反过来（日志在前）时，只要 `reportDebugEvent` 不可用（老版本 preload、
+        //    测试桩、上报本身抛错），catch 会自己抛出去 ⇒ 错误状态永远设不上，
+        //    界面静默 —— 2026-09-17 我就是这么被它骗了一轮。
+        //    更新服务没部署时每次打开设置都会走这里，静默等于"关于页坏了"。
+        setUpdateState('error');
+        setErrorMessage(describeUpdateError(raw, 'check'));
+        window.clawwork.reportDebugEvent?.({
           domain: 'renderer',
           event: 'about.update-check.mount-failed',
-          data: { error: err instanceof Error ? err.message : String(err) },
+          data: { error: raw },
         });
       });
 
@@ -161,11 +171,11 @@ export default function AboutSection() {
         setUpdateState('idle');
         toast.success(t('settings.alreadyLatest'));
       }
-    } catch {
+    } catch (err: unknown) {
       setUpdateState('error');
-      setErrorMessage(t('settings.updateCheckFailed'));
+      setErrorMessage(describeUpdateError(err instanceof Error ? err.message : String(err), 'check'));
     }
-  }, [t]);
+  }, []);
 
   const handleDownload = useCallback(async () => {
     setUpdateState('downloading');
@@ -173,7 +183,7 @@ export default function AboutSection() {
     const result = await window.clawwork.downloadUpdate();
     if (!result.ok && result.error !== 'cancelled') {
       setUpdateState('error');
-      setErrorMessage(result.error ?? 'Download failed');
+      setErrorMessage(describeUpdateError(result.error, 'download'));
     }
   }, []);
 
