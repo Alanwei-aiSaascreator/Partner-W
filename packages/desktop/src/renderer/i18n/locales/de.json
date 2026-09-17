@@ -464,6 +464,11 @@
     "task": "Aufgabe",
     "time": "Zeit"
   },
+  "community": {
+    "tabFeed": "Feed",
+    "tabMembers": "Members",
+    "title": "Team"
+  },
   "connection": {
     "addGateway": "Gateway hinzufuegen",
     "connected": "Verbunden",

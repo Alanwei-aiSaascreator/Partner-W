@@ -80,4 +80,32 @@ describe('GlobalRail', () => {
     expect(active[0]?.getAttribute('aria-label')).toBe('common.fileManager');
     unmount();
   });
+
+  it('有团队协作入口（P1），且排在既有入口之后', () => {
+    const onSelectView = vi.fn();
+    const { container, unmount } = render(
+      <GlobalRail
+        mainView="community"
+        settingsOpen={false}
+        activeSettingsSection="general"
+        assistantCollapsed={false}
+        currentAgentId="main"
+        hasUpdate={false}
+        onGoHome={vi.fn()}
+        onSelectView={onSelectView}
+        onOpenIdentity={vi.fn()}
+        onOpenSettings={vi.fn()}
+        onExpandAssistant={vi.fn()}
+      />,
+    );
+
+    // 这个文件把 t 换成了「返回 key 本身」，所以 aria-label 就是 i18n key
+    const button = container.querySelector<HTMLButtonElement>('button[aria-label="community.title"]');
+    expect(button).toBeTruthy();
+    expect(button?.getAttribute('aria-current')).toBe('page');
+
+    act(() => button?.click());
+    expect(onSelectView).toHaveBeenCalledWith('community');
+    unmount();
+  });
 });

@@ -464,6 +464,11 @@
     "task": "Tarea",
     "time": "Hora"
   },
+  "community": {
+    "tabFeed": "Feed",
+    "tabMembers": "Members",
+    "title": "Team"
+  },
   "connection": {
     "addGateway": "Agregar Gateway",
     "connected": "Conectado",

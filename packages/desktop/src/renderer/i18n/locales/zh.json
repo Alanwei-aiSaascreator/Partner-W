@@ -464,6 +464,11 @@
     "task": "任务",
     "time": "时间"
   },
+  "community": {
+    "tabFeed": "广场",
+    "tabMembers": "成员",
+    "title": "团队协作"
+  },
   "connection": {
     "addGateway": "添加网关",
     "connected": "已连接",

@@ -464,6 +464,11 @@
     "task": "タスク",
     "time": "時刻"
   },
+  "community": {
+    "tabFeed": "Feed",
+    "tabMembers": "Members",
+    "title": "Team"
+  },
   "connection": {
     "addGateway": "ゲートウェイを追加",
     "connected": "接続済み",

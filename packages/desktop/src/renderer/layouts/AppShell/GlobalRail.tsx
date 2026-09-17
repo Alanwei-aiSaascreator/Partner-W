@@ -8,6 +8,7 @@ import {
   Settings,
   Sparkles,
   UserRound,
+  Users,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { MainView } from '@clawwork/core';
@@ -15,7 +16,7 @@ import CubeFaceIcon from '@/components/CubeFaceIcon';
 import { cn } from '@/lib/utils';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
-type GlobalView = Extract<MainView, 'files' | 'dashboard' | 'archived' | 'betaHub'>;
+type GlobalView = Extract<MainView, 'files' | 'dashboard' | 'archived' | 'betaHub' | 'community'>;
 
 interface GlobalRailProps {
   mainView: MainView;
@@ -132,6 +133,14 @@ export default function GlobalRail({
           icon={Archive}
           active={!settingsOpen && mainView === 'archived'}
           onClick={() => onSelectView('archived')}
+        />
+        {/* ⚠️ 新入口必须排在**最后**：global-rail.test.tsx 用
+            toHaveBeenNthCalledWith(1..3) 锁定了前几个按钮的顺序。 */}
+        <RailButton
+          label={t('community.title')}
+          icon={Users}
+          active={!settingsOpen && mainView === 'community'}
+          onClick={() => onSelectView('community')}
         />
       </div>
 

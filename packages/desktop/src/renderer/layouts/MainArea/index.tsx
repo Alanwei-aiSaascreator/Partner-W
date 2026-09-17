@@ -45,6 +45,7 @@ import CronPanel from '@/layouts/CronPanel';
 import TeamsPanel from '@/layouts/TeamsPanel';
 import Dashboard from '@/layouts/Dashboard';
 import InternalBetaHub from '@/features/internal-beta/InternalBetaHub';
+import CommunityPanel from '@/layouts/CommunityPanel';
 import { useUsageStore } from '@/stores/usageStore';
 import { useQuotaRefreshOnTurnEnd } from '@/hooks/useQuotaRefreshOnTurnEnd';
 import DataTable, { type DataTableColumn } from '@/components/data-display/DataTable';
@@ -1187,6 +1188,10 @@ export default function MainArea({
       ) : mainView === 'betaHub' ? (
         <div className="flex-1 min-h-0">
           <InternalBetaHub />
+        </div>
+      ) : mainView === 'community' ? (
+        <div className="flex-1 min-h-0">
+          <CommunityPanel />
         </div>
       ) : (
         // ⚠️ 这里**不能**再挂 `key={activeTaskId}`（2026-09-17 移除）：发第一条消息时

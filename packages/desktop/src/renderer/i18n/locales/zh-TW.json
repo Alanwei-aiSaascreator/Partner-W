@@ -464,6 +464,11 @@
     "task": "任務",
     "time": "時間"
   },
+  "community": {
+    "tabFeed": "廣場",
+    "tabMembers": "成員",
+    "title": "團隊協作"
+  },
   "connection": {
     "addGateway": "新增 Gateway",
     "connected": "已連線",

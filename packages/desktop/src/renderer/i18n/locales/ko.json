@@ -464,6 +464,11 @@
     "task": "작업",
     "time": "시간"
   },
+  "community": {
+    "tabFeed": "Feed",
+    "tabMembers": "Members",
+    "title": "Team"
+  },
   "connection": {
     "addGateway": "게이트웨이 추가",
     "connected": "연결됨",

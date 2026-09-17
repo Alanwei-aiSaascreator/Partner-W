@@ -464,6 +464,11 @@
     "task": "Tarefa",
     "time": "Hora"
   },
+  "community": {
+    "tabFeed": "Feed",
+    "tabMembers": "Members",
+    "title": "Team"
+  },
   "connection": {
     "addGateway": "Adicionar Gateway",
     "connected": "Conectado",

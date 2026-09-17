@@ -464,6 +464,11 @@
     "task": "Tâche",
     "time": "Heure"
   },
+  "community": {
+    "tabFeed": "Feed",
+    "tabMembers": "Members",
+    "title": "Team"
+  },
   "connection": {
     "addGateway": "Ajouter une passerelle",
     "connected": "Connecté",
