@@ -2,11 +2,9 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   BadgeCheck,
   BarChart3,
-  Bot,
   Check,
   ChevronRight,
   CircleDollarSign,
-  Download,
   Gamepad2,
   Gift,
   Megaphone,
@@ -14,25 +12,21 @@ import {
   Plus,
   RefreshCw,
   RotateCcw,
-  Search,
   ShieldCheck,
   Sparkles,
-  Store,
   Users,
   Wrench,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import WindowTitlebar from '@/components/semantic/WindowTitlebar';
 import { Button } from '@/components/ui/button';
-import { BETA_MODULES, MARKET_TEMPLATES, useBetaStore, type BetaModule } from './beta-store';
+import { BETA_MODULES, useBetaStore, type BetaModule } from './beta-store';
 import { betaRoute, parseBetaRoute } from './beta-route';
 import { describeUpdateError } from './update-errors';
 import { createInternalBetaUpdateService, type InternalBetaUpdateState } from './update-service';
 
 const ICONS: Record<BetaModule, typeof Users> = {
-  market: Store,
   bounty: CircleDollarSign,
-  creator: Bot,
   game: Gamepad2,
   operations: Wrench,
   updates: RefreshCw,
@@ -82,69 +76,6 @@ function Field({
   );
 }
 
-function MarketModule() {
-  const installed = useBetaStore((s) => s.installedTemplateIds);
-  const install = useBetaStore((s) => s.installTemplate);
-  const [query, setQuery] = useState('');
-  const [category, setCategory] = useState('全部');
-  const filtered = MARKET_TEMPLATES.filter(
-    (item) => (category === '全部' || item.category === category) && item.name.includes(query),
-  );
-  return (
-    <>
-      <div className="mb-4 flex flex-wrap gap-2">
-        <div className="flex min-w-64 flex-1 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] px-3">
-          <Search size={16} />
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="搜索助手模板"
-            className="h-9 flex-1 bg-transparent outline-none"
-          />
-        </div>
-        {['全部', '内容创作', '电商运营', '学习研究'].map((item) => (
-          <Button
-            key={item}
-            size="sm"
-            variant={category === item ? 'default' : 'outline'}
-            onClick={() => setCategory(item)}
-          >
-            {item}
-          </Button>
-        ))}
-      </div>
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {filtered.map((item) => (
-          <Card key={item.id}>
-            <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-xl bg-[var(--accent-soft)] text-[var(--accent)]">
-              <Bot />
-            </div>
-            <Badge>{item.category}</Badge>
-            <h3 className="type-section-title mt-2">{item.name}</h3>
-            <p className="type-body my-3 min-h-10 text-[var(--text-muted)]">{item.description}</p>
-            <div className="flex items-center justify-between">
-              <span className="type-support text-[var(--text-muted)]">{item.installs.toLocaleString()} 次安装</span>
-              <Button size="sm" disabled={installed.includes(item.id)} onClick={() => install(item.id)}>
-                {installed.includes(item.id) ? (
-                  <>
-                    <Check />
-                    已安装
-                  </>
-                ) : (
-                  <>
-                    <Download />
-                    安装
-                  </>
-                )}
-              </Button>
-            </div>
-          </Card>
-        ))}
-      </div>
-    </>
-  );
-}
-
 function BountyModule() {
   const bounties = useBetaStore((s) => s.bounties);
   const publish = useBetaStore((s) => s.publishBounty);
@@ -191,67 +122,6 @@ function BountyModule() {
           </div>
         </Card>
       ))}
-    </div>
-  );
-}
-
-function CreatorModule() {
-  const templates = useBetaStore((s) => s.creatorTemplates);
-  const create = useBetaStore((s) => s.createCreatorTemplate);
-  const rename = useBetaStore((s) => s.renameCreatorTemplate);
-  const toggle = useBetaStore((s) => s.toggleCreatorPublished);
-  const [name, setName] = useState('');
-  return (
-    <div className="space-y-4">
-      <Card>
-        <div className="flex gap-2">
-          <Field value={name} onChange={setName} placeholder="新助手模板名称" />
-          <Button
-            onClick={() => {
-              create(name);
-              setName('');
-            }}
-          >
-            <Plus />
-            创建模板
-          </Button>
-        </div>
-      </Card>
-      <div className="grid gap-4 md:grid-cols-2">
-        {templates.map((item) => (
-          <Card key={item.id}>
-            <div className="flex items-start justify-between">
-              <div>
-                <Badge tone={item.status === 'published' ? 'success' : 'warning'}>
-                  {item.status === 'published' ? '已发布' : '草稿'}
-                </Badge>
-                <input
-                  aria-label="编辑模板名称"
-                  className="type-section-title mt-2 block w-full bg-transparent outline-none"
-                  value={item.name}
-                  onChange={(e) => rename(item.id, e.target.value)}
-                />
-              </div>
-              <Sparkles className="text-[var(--accent)]" />
-            </div>
-            <div className="type-body my-4 grid grid-cols-2 rounded-xl bg-[var(--bg-tertiary)] p-3 text-center">
-              <div>
-                <b className="type-section-title block">{item.views}</b>浏览
-              </div>
-              <div>
-                <b className="type-section-title block">{item.installs}</b>安装
-              </div>
-            </div>
-            <Button
-              className="w-full"
-              variant={item.status === 'published' ? 'outline' : 'default'}
-              onClick={() => toggle(item.id)}
-            >
-              {item.status === 'published' ? '下架模板' : '发布模板'}
-            </Button>
-          </Card>
-        ))}
-      </div>
     </div>
   );
 }
@@ -655,9 +525,7 @@ function ComplianceModule() {
 }
 
 const MODULE_COMPONENTS: Record<BetaModule, () => ReactNode> = {
-  market: MarketModule,
   bounty: BountyModule,
-  creator: CreatorModule,
   game: GameModule,
   operations: OperationsModule,
   updates: UpdatesModule,

@@ -1,7 +1,6 @@
 import { useCallback, useState } from 'react';
 import type { AgentTemplateDetail } from '@clawwork/shared';
 import { COMMON_OPERATING_CONTRACT } from '@/lib/preset-agents';
-import { fetchAgentsForGateway } from '@/hooks/useGatewayDispatcherSetup';
 import { useGatewaySelector } from '@/hooks/useGatewaySelector';
 import { installTemplate, type TemplateInstallOutcome } from '@/lib/template-install';
 import { useUiStore } from '@/stores/uiStore';
@@ -35,7 +34,13 @@ export function useTemplateInstall(): {
             currentAgentIds,
             // 安装 agent 用的就是这几个既有 IPC（与创建向导、预置助手同一条链）
             api: window.clawwork,
-            refreshAgents: () => fetchAgentsForGateway(selectedGwId, { force: true }),
+            refreshAgents: async () => {
+              // ⚠️ 动态 import：这条链会一路拉到网关 dispatcher（很重），而"安装完刷新目录"
+              //    是低频动作。静态引入会让任何 import 本模块的页面/测试都被迫加载整条
+              //    网关链（实测：两个只 mock 了 core/platform 的既有测试直接加载失败）。
+              const { fetchAgentsForGateway } = await import('@/hooks/useGatewayDispatcherSetup');
+              await fetchAgentsForGateway(selectedGwId, { force: true });
+            },
             recordInstalled: (id) => window.clawwork.marketTemplateInstalled(id),
             commonContract: COMMON_OPERATING_CONTRACT,
           },

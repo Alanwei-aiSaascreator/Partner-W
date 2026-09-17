@@ -3,16 +3,7 @@ import { betaRoute, parseBetaRoute } from '../src/renderer/features/internal-bet
 
 describe('internal beta route', () => {
   it('round trips every beta module through a stable hash route', () => {
-    for (const module of [
-      'market',
-      'bounty',
-      'creator',
-      'game',
-      'operations',
-      'updates',
-      'analytics',
-      'compliance',
-    ] as const) {
+    for (const module of ['bounty', 'game', 'operations', 'updates', 'analytics', 'compliance'] as const) {
       expect(parseBetaRoute(betaRoute(module))).toBe(module);
     }
   });

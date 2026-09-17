@@ -59,12 +59,14 @@ describe('InternalBetaHub', () => {
 
   it('exposes every company beta module as direct navigation', () => {
     const { container, unmount } = render(<InternalBetaHub />);
-    for (const id of ['market', 'bounty', 'creator', 'game', 'operations', 'updates', 'analytics', 'compliance']) {
+    for (const id of ['bounty', 'game', 'operations', 'updates', 'analytics', 'compliance']) {
       expect(container.querySelector(`[data-module="${id}"]`)).toBeTruthy();
     }
     // 广场与团队已毕业到主界面（真后端），内测中心不再有它们的入口
     expect(container.querySelector('[data-module="team"]')).toBeNull();
     expect(container.querySelector('[data-module="square"]')).toBeNull();
+    expect(container.querySelector('[data-module="market"]')).toBeNull();
+    expect(container.querySelector('[data-module="creator"]')).toBeNull();
     unmount();
   });
 
@@ -106,18 +108,18 @@ describe('InternalBetaHub', () => {
    */
   it('⭐ 本机模拟的模块必须标成「功能预览」（不能宣称已完成）', () => {
     // 广场与团队已经毕业出去了，这里改用助手市场（仍是本机模拟）
-    useBetaStore.getState().setActiveModule('market');
+    useBetaStore.getState().setActiveModule('bounty');
     const { container, unmount } = render(<InternalBetaHub />);
 
-    expect(container.textContent).toContain('助手市场');
+    expect(container.textContent).toContain('悬赏');
     expect(container.textContent).toContain('beta.previewBadge');
     expect(container.textContent).toContain('beta.previewHint');
 
     unmount();
   });
 
-  it('每个模拟模块都标（抽查助手市场 / 悬赏 / 创作者中心 / 成长中心）', () => {
-    for (const moduleId of ['market', 'bounty', 'creator', 'game'] as const) {
+  it('每个模拟模块都标（抽查悬赏 / 成长中心 / 运营后台 / 埋点）', () => {
+    for (const moduleId of ['bounty', 'game', 'operations', 'analytics'] as const) {
       useBetaStore.getState().setActiveModule(moduleId);
       const { container, unmount } = render(<InternalBetaHub />);
       expect(container.textContent, moduleId).toContain('beta.previewBadge');

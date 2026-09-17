@@ -19,13 +19,13 @@ describe('internal beta store', () => {
 
   it('persists the selected module and demo mutations across a restart', () => {
     const first = createBetaStore(storage);
-    first.getState().setActiveModule('market');
-    first.getState().installTemplate('tpl-content');
+    first.getState().setActiveModule('bounty');
+    first.getState().publishBounty('整理销售日报');
     first.getState().checkIn();
 
     const restarted = createBetaStore(storage);
-    expect(restarted.getState().activeModule).toBe('market');
-    expect(restarted.getState().installedTemplateIds).toContain('tpl-content');
+    expect(restarted.getState().activeModule).toBe('bounty');
+    expect(restarted.getState().bounties.some((b) => b.title === '整理销售日报')).toBe(true);
     expect(restarted.getState().game.checkedInToday).toBe(true);
   });
 
@@ -38,33 +38,22 @@ describe('internal beta store', () => {
     const keys = BETA_MODULES.map((module) => module.id);
     expect(keys).not.toContain('square');
     expect(keys).not.toContain('team');
+    // P2 之后：助手市场与创作者中心也毕业了（真实现在主界面的「助手市场」面板）
+    expect(keys).not.toContain('market');
+    expect(keys).not.toContain('creator');
     // 其余模块一个都不能少
     expect(keys).toEqual(
-      expect.arrayContaining([
-        'market',
-        'bounty',
-        'creator',
-        'game',
-        'operations',
-        'updates',
-        'analytics',
-        'compliance',
-      ]),
+      expect.arrayContaining(['bounty', 'game', 'operations', 'updates', 'analytics', 'compliance']),
     );
   });
 
-  it('supports the minimum bounty and creator publishing state flows', () => {
+  it('supports the minimum bounty flow', () => {
     const store = createBetaStore(storage);
     store.getState().publishBounty('整理销售日报');
     const bounty = store.getState().bounties.at(-1)!;
     store.getState().claimBounty(bounty.id);
     store.getState().submitBounty(bounty.id);
     expect(store.getState().bounties.at(-1)?.status).toBe('submitted');
-
-    store.getState().createCreatorTemplate('复盘助手');
-    const template = store.getState().creatorTemplates.at(-1)!;
-    store.getState().toggleCreatorPublished(template.id);
-    expect(store.getState().creatorTemplates.at(-1)?.status).toBe('published');
   });
 
   it('resets all demo changes to the versioned seed', () => {
@@ -99,16 +88,14 @@ describe('internal beta store', () => {
     const store = createBetaStore(storage);
     expect(store.getState().publishBounty('   ')).toBe(false);
 
-    store.getState().installTemplate('tpl-content');
-    store.getState().installTemplate('tpl-content');
     store.getState().checkIn();
     store.getState().checkIn();
     store.getState().publishBounty('真实内容不会进入埋点');
+    store.getState().publishBounty('再来一条');
 
     const events = store.getState().events;
-    expect(events.filter((event) => event.type === 'template_installed')).toHaveLength(1);
+    expect(events.filter((event) => event.type === 'bounty_published')).toHaveLength(2);
     expect(events.filter((event) => event.type === 'daily_check_in')).toHaveLength(1);
-    expect(events.filter((event) => event.type === 'bounty_published')).toHaveLength(1);
     expect(events.every((event) => Number.isFinite(Date.parse(event.timestamp)))).toBe(true);
     const serializedEvents = JSON.stringify(events);
     for (const forbidden of ['phone', 'licenseKey', 'token', 'prompt', 'content']) {
@@ -118,11 +105,10 @@ describe('internal beta store', () => {
 
   it('derives analytics from the explicit seed baseline and local events', () => {
     const store = createBetaStore(storage);
-    const baseline = store.getState().analytics.activation;
-    store.getState().installTemplate('tpl-content');
-    store.getState().createCreatorTemplate('复盘助手');
+    const baseline = store.getState().analytics.launch;
+    store.getState().setActiveModule('bounty');
     const analytics = store.getState().analyticsSummary();
-    expect(analytics.activation).toBe(baseline + 1);
-    expect(analytics.artifact).toBe(store.getState().analytics.artifact + 1);
+    // 只剩 module_opened → launch 这条映射了（市场/创作者毕业后，它们的映射也删了）
+    expect(analytics.launch).toBe(baseline + 1);
   });
 });
