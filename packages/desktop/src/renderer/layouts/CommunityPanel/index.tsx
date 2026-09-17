@@ -3,8 +3,9 @@ import { useTranslation } from 'react-i18next';
 import { cn } from '@/lib/utils';
 import FeedTab from './FeedTab';
 import MemberTab from './MemberTab';
+import BountyTab from './BountyTab';
 
-type Tab = 'feed' | 'members';
+type Tab = 'feed' | 'members' | 'bounties';
 
 /**
  * 广场 + 团队（P1）。
@@ -23,6 +24,7 @@ export default function CommunityPanel() {
   const tabs: Array<{ key: Tab; label: string }> = [
     { key: 'feed', label: t('community.tabFeed') },
     { key: 'members', label: t('community.tabMembers') },
+    { key: 'bounties', label: t('bounty.tab') },
   ];
 
   return (
@@ -47,7 +49,9 @@ export default function CommunityPanel() {
         ))}
       </div>
 
-      <div className="min-h-0 flex-1">{tab === 'feed' ? <FeedTab /> : <MemberTab />}</div>
+      <div className="min-h-0 flex-1">
+        {tab === 'feed' ? <FeedTab /> : tab === 'members' ? <MemberTab /> : <BountyTab />}
+      </div>
     </div>
   );
 }
