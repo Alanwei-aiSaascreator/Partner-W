@@ -8,9 +8,7 @@ import {
   ArchiveRestore,
   Search,
   MessageSquare,
-  ArrowUp,
   ArrowDown,
-  DollarSign,
   RefreshCw,
   AlertTriangle,
   ArrowLeftRight,
@@ -25,7 +23,7 @@ import { useUiStore } from '@/stores/uiStore';
 import { useFileStore } from '@/stores/fileStore';
 import { useRoomStore } from '@/stores/roomStore';
 import { useCommercialStore } from '@/stores/commercialStore';
-import { cn, formatRelativeTime, formatTokenCount, formatCost, formatCredits } from '@/lib/utils';
+import { cn, formatRelativeTime, formatCredits } from '@/lib/utils';
 import { deriveQuotaDisplay } from '@/lib/quota-display';
 import { resolveModelLabel } from '@/lib/model-display';
 import WindowTitlebar from '@/components/semantic/WindowTitlebar';
@@ -249,8 +247,6 @@ function ChatHeader({
     [commitTitleEdit, cancelTitleEdit],
   );
   const rightPanelOpen = useUiStore((s) => s.rightPanelOpen);
-  const sessionUsage = useUsageStore((s) => s.sessionUsage);
-  const cost = useUsageStore((s) => s.cost);
   const usageStatus = useUsageStore((s) => s.status);
   const usageLoading = useUsageStore((s) => s.loading);
   const fetchUsage = useUsageStore((s) => s.fetchUsage);
@@ -264,17 +260,14 @@ function ChatHeader({
     return () => stopAutoRefresh();
   }, [costGatewayId, sessionKey, startAutoRefresh, stopAutoRefresh]);
 
-  const inputTokens = sessionUsage?.input ?? activeTask?.inputTokens ?? null;
-  const outputTokens = sessionUsage?.output ?? activeTask?.outputTokens ?? null;
   const contextTokens = activeTask?.contextTokens ?? null;
-  const sessionCost = sessionUsage?.totalCost ?? null;
   const contextUsagePercent =
     contextTokens != null && contextTokens > 0 ? Math.round((contextTokens / 200_000) * 100) : null;
-  const hasInputSummary = inputTokens != null;
-  const hasOutputSummary = outputTokens != null;
   const hasContextSummary = contextUsagePercent != null;
-  const hasCostSummary = sessionCost != null && sessionCost > 0;
-  const hasUsageData = hasInputSummary || hasOutputSummary || hasContextSummary || hasCostSummary;
+  // ⚠️ 顶栏**只报上下文占用**（功能仪表），不再报 token 数与美元成本：
+  //    用户账单单据只有积分（产品决定 2026-09-17），token/官方参考价/倍率/人民币
+  //    属于运营口径，留在服务端账本与运营后台。回归测试见 test/dashboard-overview.test.tsx。
+  const hasUsageData = hasContextSummary;
 
   return (
     <header className="titlebar-drag flex items-center justify-between px-5 h-[var(--density-toolbar-height)] border-b border-[var(--border)] flex-shrink-0">
@@ -359,78 +352,25 @@ function ChatHeader({
           <Popover>
             <PopoverTrigger asChild>
               <button className="type-meta inline-flex h-8 items-center gap-0 rounded-lg border border-[var(--border-subtle)] px-1 text-[var(--text-secondary)] hover:border-[var(--border)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer">
-                {inputTokens != null && (
-                  <span className="inline-flex items-center gap-0.5 px-1.5">
-                    <ArrowUp size={14} className="text-[var(--text-secondary)]" />
-                    {formatTokenCount(inputTokens)}
-                  </span>
-                )}
-                {hasOutputSummary && (
-                  <>
-                    {hasInputSummary && <span className="h-3.5 w-px bg-[var(--border-subtle)]" />}
-                    <span className="inline-flex items-center gap-0.5 px-1.5">
-                      <ArrowDown size={14} className="text-[var(--text-secondary)]" />
-                      {formatTokenCount(outputTokens)}
-                    </span>
-                  </>
-                )}
                 {hasContextSummary && (
-                  <>
-                    {(hasInputSummary || hasOutputSummary) && <span className="h-3.5 w-px bg-[var(--border-subtle)]" />}
-                    <span
-                      className={cn(
-                        'inline-flex items-center gap-0.5 px-1.5',
-                        contextUsagePercent >= 90
-                          ? 'text-[var(--danger)]'
-                          : contextUsagePercent >= 70
-                            ? 'text-[var(--warning)]'
-                            : 'text-[var(--accent)]',
-                      )}
-                    >
-                      <span className="text-[var(--text-secondary)]">{t('rightPanel.contextUsage')}</span>
-                      {contextUsagePercent}%
-                    </span>
-                  </>
-                )}
-                {hasCostSummary && (
-                  <>
-                    {(hasInputSummary || hasOutputSummary || hasContextSummary) && (
-                      <span className="h-3.5 w-px bg-[var(--border-subtle)]" />
+                  <span
+                    className={cn(
+                      'inline-flex items-center gap-0.5 px-1.5',
+                      contextUsagePercent >= 90
+                        ? 'text-[var(--danger)]'
+                        : contextUsagePercent >= 70
+                          ? 'text-[var(--warning)]'
+                          : 'text-[var(--accent)]',
                     )}
-                    <span className="inline-flex items-center gap-0.5 px-1.5 text-[var(--accent)]">
-                      <DollarSign size={14} className="text-[var(--text-secondary)]" />
-                      {formatCost(sessionCost)}
-                    </span>
-                  </>
+                  >
+                    <span className="text-[var(--text-secondary)]">{t('rightPanel.contextUsage')}</span>
+                    {contextUsagePercent}%
+                  </span>
                 )}
               </button>
             </PopoverTrigger>
             <PopoverContent align="end" className="w-80 max-h-screen overflow-y-auto">
               <div className="space-y-3">
-                {cost && (
-                  <div className="space-y-2">
-                    <div className="type-label text-[var(--text-secondary)]">
-                      {t('usage.period', { days: cost.days || 30 })}
-                    </div>
-                    <div className="type-meta flex h-8 w-full items-center gap-0 rounded-lg border border-[var(--border-subtle)] px-1 text-[var(--text-secondary)]">
-                      <span className="inline-flex min-w-0 flex-1 items-center gap-0.5 px-1.5 text-[var(--accent)]">
-                        <DollarSign size={14} className="text-[var(--text-secondary)]" />
-                        {formatCost(cost.totals.totalCost)}
-                      </span>
-                      <span className="h-3.5 w-px bg-[var(--border-subtle)]" />
-                      <span className="inline-flex min-w-0 flex-1 items-center gap-0.5 px-1.5">
-                        <ArrowUp size={14} className="text-[var(--text-secondary)]" />
-                        {formatTokenCount(cost.totals.input)}
-                      </span>
-                      <span className="h-3.5 w-px bg-[var(--border-subtle)]" />
-                      <span className="inline-flex min-w-0 flex-1 items-center gap-0.5 px-1.5">
-                        <ArrowDown size={14} className="text-[var(--text-secondary)]" />
-                        {formatTokenCount(cost.totals.output)}
-                      </span>
-                    </div>
-                  </div>
-                )}
-
                 {usageStatus && usageStatus.providers.length > 0 && (
                   <div className="space-y-2 border-t border-[var(--border)] pt-3">
                     <div className="flex items-center justify-between">

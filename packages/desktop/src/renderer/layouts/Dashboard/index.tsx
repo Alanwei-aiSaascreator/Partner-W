@@ -1,12 +1,12 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { ChevronDown, RefreshCw } from 'lucide-react';
+import { RefreshCw } from 'lucide-react';
 import type { DashboardBreakdownEntry, DashboardModelUsage } from '@clawwork/shared';
 import { PROVIDER_DISPLAY_NAMES } from '@clawwork/shared';
 import { useDashboardStore } from '@/stores/dashboardStore';
 import { useCommercialStore } from '@/stores/commercialStore';
-import { formatCredits, formatRmb, formatTokenCount } from '@/lib/utils';
+import { formatCredits } from '@/lib/utils';
 import { deriveQuotaDisplay } from '@/lib/quota-display';
 import { Button } from '@/components/ui/button';
 import { resolveAgentDisplayNameKey } from '@/lib/preset-agents';
@@ -68,128 +68,6 @@ function BreakdownTile({
 }
 
 /**
- * 价格数字的显示格式：**去掉无意义的尾零**，但保留有效精度。
- * `Number(x.toFixed(4))` 之后再 String() —— 1.6 不会变成 "1.6000"，
- * 0.3333333 也不会因为取整变成 0。
- */
-function fmtNum(value: number | null | undefined): string {
-  if (value === null || value === undefined || !Number.isFinite(value)) return '—';
-  return String(Number(value.toFixed(4)));
-}
-
-function DetailRow({ label, value, hint }: { label: string; value: string; hint?: string }) {
-  return (
-    <div className="flex items-baseline justify-between gap-3">
-      <span className="flex-shrink-0 text-[var(--text-muted)]" title={hint}>
-        {label}
-      </span>
-      <span className="text-right tabular-nums text-[var(--text-secondary)]">{value}</span>
-    </div>
-  );
-}
-
-/**
- * 透明计费明细（M4）。全部来自**落账时的快照**，不是拿今天的价目回算的。
- *
- * ⚠️ 文案红线（用户 2026-09-12 明确要求）：
- *   · 「官方参考价 / 官方参考费用」**不是**供应商实际成本 —— 我们没做供应商
- *     账单对账，也没有阶梯折扣/返点/税的数据。所以**不许**写「供应商账单」
- *     「供应商实付」「官方实付」。
- *   · 「目标倍率 1.6×」**不表示每次结算都精确 1.6×** —— 售价经过 ceil，
- *     跨档重定价与 greatest 不退款都会让实际结算倍率偏离。想表达实际值，
- *     只能用 `effectiveMultiplier`（并且要跟覆盖率一起看）。
- *   · 历史行没有快照时显示「历史记录未保存官方价格快照」，**不许显示 0 元**。
- */
-function BillingDetail({ entry }: { entry: DashboardModelUsage }) {
-  const { t } = useTranslation();
-
-  const hasSnapshot = entry.settledCalls > 0;
-  const priceUnavailable = entry.pricingMixed
-    ? t('dashboard.ledger.multiTier')
-    : hasSnapshot
-      ? t('dashboard.ledger.notRecorded')
-      : t('dashboard.ledger.historicalNoSnapshot');
-
-  // ⚠️ 单位只跟在**真的有数字**的时候 —— 否则会渲染成「未记录 元/百万 token」，
-  //    读起来像「未记录」是一种单位。
-  const hasOfficialPrice =
-    !entry.pricingMixed && (entry.officialInputYuanPerMtok !== null || entry.officialOutputYuanPerMtok !== null);
-  const hasSaleRate =
-    !entry.pricingMixed && (entry.saleInputYuanPerMtok !== null || entry.saleOutputYuanPerMtok !== null);
-
-  const priceText = !hasOfficialPrice
-    ? priceUnavailable
-    : `${[
-        `in ${fmtNum(entry.officialInputYuanPerMtok)}`,
-        // mode=none ⇒ 本来就没有缓存价，显示 N/A 而不是 0
-        entry.officialCachePricingMode === 'none'
-          ? `cached ${t('dashboard.ledger.cachedNa')}`
-          : `cached ${fmtNum(entry.officialCachedYuanPerMtok)}`,
-        `out ${fmtNum(entry.officialOutputYuanPerMtok)}`,
-      ].join(' · ')} ${t('dashboard.ledger.perMtok')}`;
-
-  const saleText = !hasSaleRate
-    ? entry.pricingMixed
-      ? t('dashboard.ledger.multiTier')
-      : t('dashboard.ledger.notRecorded')
-    : `${[
-        `in ${fmtNum(entry.saleInputYuanPerMtok)}`,
-        entry.saleCachedYuanPerMtok === null
-          ? `cached ${t('dashboard.ledger.cachedNa')}`
-          : `cached ${fmtNum(entry.saleCachedYuanPerMtok)}`,
-        `out ${fmtNum(entry.saleOutputYuanPerMtok)}`,
-      ].join(' · ')} ${t('dashboard.ledger.perMtok')}`;
-
-  // 官方参考费用：算不出就是算不出（不是 0）；覆盖不全时如实标注覆盖条数
-  const officialCostText =
-    entry.officialReferenceCostMicros === null
-      ? t('dashboard.ledger.notAvailable')
-      : entry.officialReferenceComplete
-        ? `${formatCredits(entry.officialReferenceCostMicros)} ${t('usage.creditsUnit')}`
-        : `${formatCredits(entry.officialReferenceCostMicros)} ${t('usage.creditsUnit')} (${t(
-            'dashboard.ledger.covered',
-          )} ${entry.officialReferenceCoveredCalls}/${entry.settledCalls})`;
-
-  return (
-    <div className="mt-2 space-y-1 rounded border border-[var(--border-subtle)] bg-[var(--bg-primary)] px-2.5 py-2 type-meta">
-      <DetailRow
-        label={t('dashboard.ledger.actualTokens')}
-        value={`in ${formatTokenCount(entry.inputTokens)} · cached ${formatTokenCount(entry.cachedTokens)} · out ${formatTokenCount(entry.outputTokens)}`}
-      />
-      {/* 实际扣费：账本事实。人民币是等值换算（1 元 = 100 积分）。 */}
-      <DetailRow
-        label={t('dashboard.ledger.actualCharge')}
-        value={`${formatCredits(entry.costMicros)} ${t('usage.creditsUnit')} ≈ ¥${formatRmb(entry.costMicros)}`}
-      />
-      <DetailRow
-        label={t('dashboard.ledger.officialPrice')}
-        value={priceText}
-        hint={t('dashboard.ledger.officialPriceHint')}
-      />
-      <DetailRow
-        label={t('dashboard.ledger.officialCost')}
-        value={officialCostText}
-        hint={t('dashboard.ledger.officialCostHint')}
-      />
-      <DetailRow
-        label={t('dashboard.ledger.targetMultiplier')}
-        value={fmtNum(entry.targetMultiplier) === '—' ? '—' : `${fmtNum(entry.targetMultiplier)}×`}
-        hint={t('dashboard.ledger.targetMultiplierHint')}
-      />
-      <DetailRow label={t('dashboard.ledger.saleRate')} value={saleText} />
-      {/* 实际结算倍率：只在**覆盖完整**时才有值（分子分母必须是同一批记录） */}
-      {entry.effectiveMultiplier !== null ? (
-        <DetailRow
-          label={t('dashboard.ledger.effectiveMultiplier')}
-          value={`${fmtNum(entry.effectiveMultiplier)}×`}
-          hint={t('dashboard.ledger.effectiveMultiplierHint')}
-        />
-      ) : null}
-    </div>
-  );
-}
-
-/**
  * 模型消耗。这是全页**唯一**按「实际调用模型」统计的板块 ——
  * 数据来自服务端计费表（每次调用一行，model 是真正发到上游的那个名字）。
  *
@@ -200,7 +78,6 @@ function BillingDetail({ entry }: { entry: DashboardModelUsage }) {
  */
 function ModelUsageRow({ entry }: { entry: DashboardModelUsage }) {
   const { t } = useTranslation();
-  const [detailsOpen, setDetailsOpen] = useState(false);
   const providerName = PROVIDER_DISPLAY_NAMES[entry.provider] ?? entry.provider;
 
   return (
@@ -216,22 +93,13 @@ function ModelUsageRow({ entry }: { entry: DashboardModelUsage }) {
           <div className="type-label text-[var(--text-primary)]">
             {formatCredits(entry.costMicros)} {t('usage.creditsUnit')}
           </div>
+          {/* ⚠️ 这里**只报积分**：token 数、官方参考价、倍率、人民币换算一律不给用户看
+              （产品决定 2026-09-17）。真实字段在服务端账本与运营后台，不在用户界面。 */}
           <div className="mt-1 type-meta text-[var(--text-muted)]">
-            {formatTokenCount(entry.totalTokens)} · {entry.calls} {t('dashboard.calls')}
+            {entry.calls} {t('dashboard.calls')}
           </div>
         </div>
       </div>
-      <Button
-        variant="ghost"
-        size="sm"
-        className="mt-2 -ml-3"
-        aria-expanded={detailsOpen}
-        onClick={() => setDetailsOpen((open) => !open)}
-      >
-        {detailsOpen ? t('dashboard.hideBillingDetails') : t('dashboard.showBillingDetails')}
-        <ChevronDown size={14} className={detailsOpen ? 'rotate-180 transition-transform' : 'transition-transform'} />
-      </Button>
-      {detailsOpen ? <BillingDetail entry={entry} /> : null}
     </div>
   );
 }
@@ -413,12 +281,8 @@ export default function Dashboard() {
         <section>
           <SectionHeader text={t('dashboard.last30dSection')} scope={t('dashboard.accountScope')} />
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-            <Tile label={t('dashboard.inputTokens')} value={last30d ? formatTokenCount(last30d.input) : placeholder} />
-            <Tile
-              label={t('dashboard.outputTokens')}
-              value={last30d ? formatTokenCount(last30d.output) : placeholder}
-            />
-            {/* 单位是积分（服务端计费），不再是本机网关估的美元 */}
+            {/* ⚠️ 只给**积分**：token 明细（in/out/cached）属于运营口径，不摆给用户看
+                （产品决定 2026-09-17）。真实字段在服务端账本与运营后台。 */}
             <Tile
               label={t('dashboard.credits')}
               value={last30d ? `${formatCredits(last30d.costMicros)} ${t('usage.creditsUnit')}` : placeholder}
@@ -426,7 +290,7 @@ export default function Dashboard() {
           </div>
 
           <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] p-5">
-            <div className="type-label mb-4 text-[var(--text-secondary)]">{t('dashboard.tokenChart')}</div>
+            <div className="type-label mb-4 text-[var(--text-secondary)]">{t('dashboard.creditsChart')}</div>
             {last30d && last30d.daily.length > 0 ? (
               <ResponsiveContainer width="100%" height={260}>
                 <LineChart data={last30d.daily}>
@@ -435,7 +299,7 @@ export default function Dashboard() {
                   <YAxis
                     stroke="var(--text-muted)"
                     tick={{ fontSize: 11 }}
-                    tickFormatter={(v: number) => formatTokenCount(v)}
+                    tickFormatter={(v: number) => formatCredits(v)}
                   />
                   <Tooltip
                     contentStyle={{
@@ -444,22 +308,18 @@ export default function Dashboard() {
                       borderRadius: '8px',
                       color: 'var(--text-primary)',
                     }}
-                    formatter={(value) => (typeof value === 'number' ? formatTokenCount(value) : String(value ?? ''))}
+                    formatter={(value) =>
+                      typeof value === 'number'
+                        ? `${formatCredits(value)} ${t('usage.creditsUnit')}`
+                        : String(value ?? '')
+                    }
                   />
                   <Legend wrapperStyle={{ fontSize: 12 }} />
                   <Line
                     type="monotone"
-                    dataKey="input"
+                    dataKey="costMicros"
                     stroke="var(--accent)"
-                    name={t('dashboard.inputTokens')}
-                    dot={false}
-                    strokeWidth={2}
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="output"
-                    stroke="var(--warning)"
-                    name={t('dashboard.outputTokens')}
+                    name={t('dashboard.credits')}
                     dot={false}
                     strokeWidth={2}
                   />

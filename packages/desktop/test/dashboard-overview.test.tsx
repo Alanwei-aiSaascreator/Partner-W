@@ -134,16 +134,42 @@ describe('Dashboard overview', () => {
     unmount();
   });
 
-  it('keeps transparent billing details behind an explicit action', () => {
+  /**
+   * 产品决定（2026-09-17）：**用户界面只显示「消耗 X 积分」**。
+   *
+   * 之前这里挂着一个「显示计费明细」开关，展开后能看到官方参考价 / 官方参考费用 /
+   * 目标倍率 / 实际售价 / 实际结算倍率 / tokens / cached / 人民币换算 —— 那些是
+   * 运营侧口径，摆给普通用户既看不懂也过度暴露商业细节。
+   *
+   * ⚠️ 数据层（服务端账本、`DashboardModelUsage` 里的字段、admin console）**不动**：
+   *    只是不再往用户界面上渲染。
+   */
+  it('shows only credits and never exposes billing internals to the end user', () => {
     const { container, unmount } = render(<Dashboard />);
 
-    expect(container.textContent).not.toContain('dashboard.ledger.officialPrice');
+    // 该有的：模型名 + 消耗积分 + 调用次数
+    expect(container.textContent).toContain('deepseek-v4-flash');
+    expect(container.textContent).toContain('20.00');
+    expect(container.textContent).toContain('3 dashboard.calls');
+
+    // 不该有的：计费明细的任何一项，连入口都不该存在
+    for (const forbidden of [
+      'dashboard.ledger.officialPrice',
+      'dashboard.ledger.officialCost',
+      'dashboard.ledger.actualTokens',
+      'dashboard.ledger.actualCharge',
+      'dashboard.ledger.targetMultiplier',
+      'dashboard.ledger.saleRate',
+      'dashboard.ledger.effectiveMultiplier',
+    ]) {
+      expect(container.textContent).not.toContain(forbidden);
+    }
     const detailsButton = [...container.querySelectorAll('button')].find((button) =>
       button.textContent?.includes('dashboard.showBillingDetails'),
     );
-    expect(detailsButton).toBeTruthy();
-    act(() => detailsButton?.click());
-    expect(container.textContent).toContain('dashboard.ledger.officialPrice');
+    expect(detailsButton).toBeUndefined();
+    // token 数也不再出现在用户界面（2,000 是 fixture 里那一行的总 token）
+    expect(container.textContent).not.toContain('2,000');
     unmount();
   });
 
