@@ -1,6 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createAnalyticsReporter } from '../src/main/analytics/reporter.js';
 
+// 与仓库既有做法一致（`../debug/index.js` 会 import `electron`）：不依赖它的内部行为，
+// 顺便去掉未初始化时往 stderr 打的那层噪声。本文件不断言日志。
+vi.mock('../src/main/debug/index.js', () => ({
+  getDebugLogger: () => ({ debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }),
+}));
+
 function memoryStorage() {
   let raw: string | null = null;
   return {

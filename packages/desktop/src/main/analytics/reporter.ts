@@ -133,7 +133,8 @@ export function createAnalyticsReporter(options: AnalyticsReporterOptions): Anal
         // ① 先丢掉**永远不可能被接受**的条目：服务端只收 30 天内的 occurred_at，
         //    留着它们会让队首永久卡住（整批被拒 ⇒ 整批留在队列 ⇒ 后面全排不到）。
         //    典型来源：用户离线了很久，队列里攒着老事件。
-        const staleCutoff = Date.now() - MAX_EVENT_AGE_MS;
+        // 判超龄也用注入的时钟（与事件时间戳同源）——否则测试分辨不出实现用的是哪个时钟。
+        const staleCutoff = Date.parse(now()) - MAX_EVENT_AGE_MS;
         const stale = state.events.filter((e) => Date.parse(e.occurredAt) < staleCutoff);
         if (stale.length > 0) {
           getDebugLogger().warn({
