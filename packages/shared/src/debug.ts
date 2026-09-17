@@ -16,6 +16,7 @@ export type DebugDomain =
   | 'quick-launch'
   | 'updater'
   | 'commercial'
+  | 'analytics'
   | 'avatar';
 
 export interface DebugError {
