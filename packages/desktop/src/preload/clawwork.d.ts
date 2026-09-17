@@ -1,5 +1,7 @@
 import type {
   IpcResult as SharedIpcResult,
+  LikeToggleResult,
+  JoinTeamResult,
   ChatAttachment as SharedChatAttachment,
   CommandsListParams,
   Team,
@@ -639,6 +641,31 @@ export interface ClawWorkAPI {
   /** Free-form recharge, in cents. Range is enforced by the RPC (¥1–¥500). */
   commercialRechargeCreateCustom: (amountCents: number) => Promise<IpcResult<RechargeOrderHandle>>;
   commercialRechargeOrder: (orderNo: string) => Promise<IpcResult<RechargeOrderStatus>>;
+
+  // ── 广场 / 团队（P1）───────────────────────────────────────────────
+  // ⚠️ 列表类返回的是**后端原样的行**（snake_case），由 core 的 normalizer 归一；
+  //    单个对象的三个（like / inviteCreate / join）在 IPC 层已经翻成驼峰 DTO。
+  //    这里刻意不写 `CommunityPost[]` —— 类型要对得上实际拿到的东西。
+  communityInfo: () => Promise<IpcResult<unknown>>;
+  communityMembers: () => Promise<IpcResult<unknown[]>>;
+  communitySwitchTeam: (orgId: string) => Promise<IpcResult<null>>;
+  communityFeed: (params?: { limit?: number; before?: string | null }) => Promise<IpcResult<unknown[]>>;
+  communityCreatePost: (params: { body: string; visibility: 'private' | 'org' }) => Promise<IpcResult<string>>;
+  communityDeletePost: (postId: string) => Promise<IpcResult<null>>;
+  communityComments: (postId: string, limit?: number) => Promise<IpcResult<unknown[]>>;
+  communityAddComment: (postId: string, body: string) => Promise<IpcResult<string>>;
+  communityLikeToggle: (postId: string) => Promise<IpcResult<LikeToggleResult>>;
+  communityInviteCreate: (params: {
+    role: 'admin' | 'member';
+    maxUses: number;
+    expiresInHours: number;
+  }) => Promise<IpcResult<{ code: string; expiresAt: string }>>;
+  communityInviteList: () => Promise<IpcResult<unknown[]>>;
+  communityInviteRevoke: (id: string) => Promise<IpcResult<null>>;
+  communityJoin: (code: string) => Promise<IpcResult<JoinTeamResult>>;
+  communityMemberSetRole: (userId: string, role: 'admin' | 'member') => Promise<IpcResult<null>>;
+  communityMemberRemove: (userId: string) => Promise<IpcResult<null>>;
+  communityLeave: () => Promise<IpcResult<null>>;
 }
 
 export interface RechargeSku {

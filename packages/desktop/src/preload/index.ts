@@ -465,6 +465,31 @@ function buildApi(): ClawWorkAPI {
     commercialRechargeCreateCustom: (amountCents: number) =>
       ipcRenderer.invoke('commercial:recharge-create-custom', amountCents),
     commercialRechargeOrder: (orderNo: string) => ipcRenderer.invoke('commercial:recharge-order', orderNo),
+
+    // ── 广场 / 团队（P1）──────────────────────────────────────────────
+    // 频道名与 `main/ipc/community-handlers.ts` 一一对应（那个文件的测试
+    // 会把频道清单锁死）；这里的键名由 `community-preload-surface.test.ts` 锁死。
+    communityInfo: () => ipcRenderer.invoke('community:info'),
+    communityMembers: () => ipcRenderer.invoke('community:members'),
+    communitySwitchTeam: (orgId: string) => ipcRenderer.invoke('community:switch-team', { orgId }),
+    communityFeed: (params?: { limit?: number; before?: string | null }) =>
+      ipcRenderer.invoke('community:feed', params),
+    communityCreatePost: (params: { body: string; visibility: 'private' | 'org' }) =>
+      ipcRenderer.invoke('community:post-create', params),
+    communityDeletePost: (postId: string) => ipcRenderer.invoke('community:post-delete', { postId }),
+    communityComments: (postId: string, limit?: number) => ipcRenderer.invoke('community:comments', { postId, limit }),
+    communityAddComment: (postId: string, body: string) =>
+      ipcRenderer.invoke('community:comment-add', { postId, body }),
+    communityLikeToggle: (postId: string) => ipcRenderer.invoke('community:like-toggle', { postId }),
+    communityInviteCreate: (params: { role: 'admin' | 'member'; maxUses: number; expiresInHours: number }) =>
+      ipcRenderer.invoke('community:invite-create', params),
+    communityInviteList: () => ipcRenderer.invoke('community:invite-list'),
+    communityInviteRevoke: (id: string) => ipcRenderer.invoke('community:invite-revoke', { id }),
+    communityJoin: (code: string) => ipcRenderer.invoke('community:join', { code }),
+    communityMemberSetRole: (userId: string, role: 'admin' | 'member') =>
+      ipcRenderer.invoke('community:member-set-role', { userId, role }),
+    communityMemberRemove: (userId: string) => ipcRenderer.invoke('community:member-remove', { userId }),
+    communityLeave: () => ipcRenderer.invoke('community:leave'),
   };
 }
 
