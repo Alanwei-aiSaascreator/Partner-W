@@ -3,7 +3,6 @@ import {
   BarChart3,
   Check,
   ChevronRight,
-  CircleDollarSign,
   Megaphone,
   PackageCheck,
   RefreshCw,
@@ -22,7 +21,6 @@ import { describeUpdateError } from './update-errors';
 import { createInternalBetaUpdateService, type InternalBetaUpdateState } from './update-service';
 
 const ICONS: Record<BetaModule, typeof Users> = {
-  bounty: CircleDollarSign,
   operations: Wrench,
   updates: RefreshCw,
   analytics: BarChart3,
