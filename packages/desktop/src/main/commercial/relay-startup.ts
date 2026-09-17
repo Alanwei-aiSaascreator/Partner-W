@@ -14,6 +14,7 @@ import { fetchFirstRelayModel } from './relay-config.js';
 import { createRelayBootstrapScheduler } from './relay-bootstrap.js';
 import type {
   RelayBootstrapDeps,
+  RelayBootstrapReason,
   RelayBootstrapResult,
   RelayBootstrapScheduler,
   RelayGatewayHandle,
@@ -152,15 +153,40 @@ export async function bootstrapCommercialRelay(
  * 让登录 IPC 等它会把界面卡住。重复触发由调度器的单飞吸收。
  */
 export function notifyCommercialSignedIn(): void {
+  notifyRelayBootstrapNeeded('signed-in', '登录后补跑 relay bootstrap');
+}
+
+/**
+ * 「用户**刚刚激活了一张卡**」—— 让商业 bootstrap 再跑一次。
+ *
+ * ## 为什么激活也需要它（2026-09-17 实机 `relay.config-no-gateway`）
+ *
+ * `activateLicense` 内部确实会顺手把中转配置写进网关，但那条路**遇到网关没连上就
+ * 放弃了** —— 只记一条 `relay.config-no-gateway` 日志、返回 false，**没有任何重试**
+ * （`license.ts` 的 `configureRelay`）。而激活那一刻恰恰是网关最可能还没起好的时候：
+ * 全新环境、刚装完、刚输完卡密。
+ *
+ * 结果是：卡激活了、额度到账了，模型列表却是空的 —— 用户会以为激活失败。
+ * 与登录（Stage 2C）是同一个道理、同一个调度器，所以这里补上第二道保险：
+ * 调度器会等网关连上（最长 240 秒）并把配置落下去，用户不必重启客户端。
+ *
+ * ⚠️ 与登录不同：激活**不做**账户清理（`requestCommercialAccessCleanup`）——
+ *    那会把刚拿到的 license 清掉。
+ */
+export function notifyCommercialActivated(): void {
+  notifyRelayBootstrapNeeded('activated', '激活后补跑 relay bootstrap');
+}
+
+function notifyRelayBootstrapNeeded(reason: Exclude<RelayBootstrapReason, 'startup'>, label: string): void {
   try {
     void getScheduler()
-      .trigger('signed-in')
-      .then((res) => log('commercial.relay.bootstrap', { ...res, trigger: 'signed-in' }))
+      .trigger(reason)
+      .then((res) => log('commercial.relay.bootstrap', { ...res, trigger: reason }))
       .catch((error: unknown) => {
         // 调度器内部已经不抛（`bootstrapRelayWithRetry` 永不抛），这里只是兜底。
-        console.error('[commercial] 登录后补跑 relay bootstrap 失败（忽略，界面照常）:', error);
+        console.error(`[commercial] ${label} 失败（忽略，界面照常）:`, error);
       });
   } catch (error) {
-    console.error('[commercial] 登录后补跑 relay bootstrap 失败（忽略，界面照常）:', error);
+    console.error(`[commercial] ${label} 失败（忽略，界面照常）:`, error);
   }
 }

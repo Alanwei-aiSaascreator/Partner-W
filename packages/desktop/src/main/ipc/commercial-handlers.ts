@@ -10,7 +10,7 @@ import {
   verifyLoginOtp,
 } from '../commercial/auth.js';
 import { activateLicense, clearLicense, deviceFingerprint, readLicenseStatus } from '../commercial/license.js';
-import { notifyCommercialSignedIn } from '../commercial/relay-startup.js';
+import { notifyCommercialActivated, notifyCommercialSignedIn } from '../commercial/relay-startup.js';
 import { buildCommercialAccessCleanupDeps, requestCommercialAccessCleanup } from '../commercial/relay-cleanup.js';
 import { runUsageReport } from '../commercial/usage-reporter.js';
 import {
@@ -79,9 +79,16 @@ export function registerCommercialHandlers(): void {
   ipcMain.handle('commercial:account-overview', () => readAccountOverview());
 
   ipcMain.handle('commercial:license-status', () => readLicenseStatus());
-  ipcMain.handle('commercial:license-activate', (_event, licenseKey: string) =>
-    activateLicense(String(licenseKey ?? '')),
-  );
+  ipcMain.handle('commercial:license-activate', async (_event, licenseKey: string) => {
+    const res = await activateLicense(String(licenseKey ?? ''));
+    // ⭐ 激活和登录一样是一次**状态转变**，而激活那一刻网关常常还没连上：
+    //    `activateLicense` 里的 `configureRelay` 遇到没网关只记一条
+    //    `relay.config-no-gateway` 就放弃，**没有第二道保险**。
+    //    这里补跑一次（调度器会等网关连上，最长 240 秒）。
+    // ⚠️ 与登录不同：**不做**账户清理 —— 那会把刚激活的 license 清掉。
+    if (res.ok) notifyCommercialActivated();
+    return res;
+  });
   ipcMain.handle('commercial:license-clear', () => clearLicense());
   ipcMain.handle('commercial:device-fingerprint', () => deviceFingerprint());
 

@@ -23,6 +23,8 @@ const mocks = vi.hoisted(() => ({
   signInWithPassword: vi.fn(),
   signOutCommercial: vi.fn(),
   notifyCommercialSignedIn: vi.fn(),
+  notifyCommercialActivated: vi.fn(),
+  activateLicense: vi.fn(),
   requestCommercialAccessCleanup: vi.fn(),
   drainPendingCommercialAccessCleanup: vi.fn(),
   clearCommercialSession: vi.fn(),
@@ -66,6 +68,14 @@ vi.mock('../src/main/commercial/relay-cleanup.js', () => ({
 
 vi.mock('../src/main/commercial/relay-startup.js', () => ({
   notifyCommercialSignedIn: () => mocks.notifyCommercialSignedIn(),
+  notifyCommercialActivated: () => mocks.notifyCommercialActivated(),
+}));
+
+vi.mock('../src/main/commercial/license.js', () => ({
+  activateLicense: (...a: unknown[]) => mocks.activateLicense(...a),
+  clearLicense: vi.fn(),
+  deviceFingerprint: () => 'fp-test',
+  readLicenseStatus: vi.fn(),
 }));
 
 const { registerCommercialHandlers } = await import('../src/main/ipc/commercial-handlers.js');
@@ -83,6 +93,8 @@ describe('登录入口 → notifyCommercialSignedIn（Stage 2C 接线）', () =>
     mocks.signInWithPassword.mockReset();
     mocks.signOutCommercial.mockReset();
     mocks.notifyCommercialSignedIn.mockReset();
+    mocks.notifyCommercialActivated.mockReset();
+    mocks.activateLicense.mockReset();
     mocks.requestCommercialAccessCleanup.mockReset();
     mocks.drainPendingCommercialAccessCleanup.mockReset();
     mocks.clearCommercialSession.mockReset();
@@ -146,5 +158,47 @@ describe('登录入口 → notifyCommercialSignedIn（Stage 2C 接线）', () =>
     expect(result.ok).toBe(false);
     expect(mocks.requestCommercialAccessCleanup).toHaveBeenCalledTimes(1);
     expect(mocks.clearCommercialSession).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * 激活入口的第二道保险（2026-09-17 实机 `relay.config-no-gateway`）。
+ *
+ * `activateLicense` 内部会顺手把中转配置写进网关，但**遇到网关没连上就放弃** ——
+ * 只记一条 `relay.config-no-gateway` 日志、返回 false，没有任何重试。
+ * 而激活那一刻恰恰是网关最可能还没起好的时候（全新环境、刚装完）。
+ * 结果：卡激活了、额度到了、模型列表却是空的，用户以为激活失败。
+ */
+describe('激活入口 → 补跑 relay bootstrap（第二道保险）', () => {
+  beforeEach(() => {
+    mocks.handlers.clear();
+    // ⚠️ 必须**自己**重置：上一个 describe 的用例已经动过这些计数器
+    mocks.notifyCommercialActivated.mockReset();
+    mocks.activateLicense.mockReset();
+    mocks.requestCommercialAccessCleanup.mockReset();
+    mocks.notifyCommercialSignedIn.mockReset();
+    registerCommercialHandlers();
+  });
+
+  it('⭐ 激活成功 ⇒ 补跑一次（否则用户得重启客户端才看得到模型）', async () => {
+    mocks.activateLicense.mockResolvedValue({ ok: true, result: { activated: true } });
+
+    const res = (await handlerFor('commercial:license-activate')({}, 'RY-AAAA-BBBB')) as { ok: boolean };
+
+    expect(res.ok).toBe(true);
+    expect(mocks.notifyCommercialActivated, '激活成功了却没补跑 ⇒ 网关没连上时中转永远落不下去').toHaveBeenCalledTimes(
+      1,
+    );
+    // 激活**不是**账户边界：顺手做账户清理会把刚拿到的 license 清掉
+    expect(mocks.requestCommercialAccessCleanup).not.toHaveBeenCalled();
+  });
+
+  it('激活失败 ⇒ 不补跑（卡密打错不该白跑一轮 bootstrap）', async () => {
+    mocks.activateLicense.mockResolvedValue({ ok: false, error: '卡密无效', errorCode: 'invalid_license' });
+
+    const res = (await handlerFor('commercial:license-activate')({}, 'BAD-KEY')) as { ok: boolean };
+
+    expect(res.ok).toBe(false);
+    expect(mocks.notifyCommercialActivated).not.toHaveBeenCalled();
   });
 });

@@ -285,8 +285,9 @@ const AUTH_RETRY_BACKOFF_MS = [2_000, 5_000, 15_000, 30_000, 60_000, 60_000];
  *
  *   - `startup`    —— `app.whenReady()` 里那一次（全仓唯一的启动调用点）
  *   - `signed-in`  —— 用户**刚刚完成一次交互式登录**（OTP / 密码）
+ *   - `activated`  —— 用户**刚刚激活了一张卡**（卡密输入成功；激活那刻网关常常还没连上）
  */
-export type RelayBootstrapReason = 'startup' | 'signed-in';
+export type RelayBootstrapReason = 'startup' | 'signed-in' | 'activated';
 
 export interface RelayBootstrapScheduler {
   /**
