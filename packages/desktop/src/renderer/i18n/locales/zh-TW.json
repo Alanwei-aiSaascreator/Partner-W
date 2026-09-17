@@ -806,7 +806,9 @@
     "termsOfService": "服務條款",
     "termsUrl": "https://www.rongyinghudong.com/privacy.html",
     "title": "登入魔方羅盤",
-    "verifyFailed": "驗證碼不正確或已過期"
+    "verifyFailed": "驗證碼不正確或已過期",
+    "verifyTooMany": "嘗試太頻繁了，請稍後再試。",
+    "verifyUnreachable": "連不上伺服器，驗證碼沒能校驗成功。驗證碼是一次性的，請點「重新傳送」取得新碼後再試。"
   },
   "mainArea": {
     "compassAssistant": "羅盤助手",
@@ -1483,6 +1485,10 @@
     "quotaUsed": "已用",
     "rateLimits": "速率限制",
     "resetsAt": "{{time}} 重設",
+    "unknownDesc": "網路似乎不穩，沒能讀到你的額度。這不代表額度用盡 —— 稍後重試即可。",
+    "unknownTitle": "暫時沒能確認你的額度",
+    "unlicensedDesc": "啟用或兌換卡密後即可繼續使用。",
+    "unlicensedTitle": "還沒有可用的額度",
     "warnToast": "額度已用 {{percent}}%，請及時儲值"
   },
   "voiceInput": {

@@ -10,7 +10,7 @@ import {
 } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from '@/lib/toast';
-import { evaluateCommercialSendAccess } from '@/lib/quota';
+import { evaluateCommercialSendAccess, type CommercialBlockReason } from '@/lib/quota';
 import { useCommercialStore } from '@/stores/commercialStore';
 import { isModelSelectable, modelFamilyLabel, relayModelsFrom } from './model-families.js';
 import { deriveModelAvailability } from './model-availability.js';
@@ -172,7 +172,9 @@ export function useChatSend(opts: UseChatSendOpts) {
   const activeTaskIdRef = useRef(activeTask?.id ?? null);
   activeTaskIdRef.current = activeTask?.id ?? null;
 
-  const [quotaBlocked, setQuotaBlocked] = useState(false);
+  // ⚠️ 存的是**原因**而不是布尔：原来四种原因共用一个 true，界面只能弹同一句话
+  //    （「额度已用尽，充值…」），于是"读不到额度"被说成了"额度用尽"。
+  const [quotaBlock, setQuotaBlock] = useState<CommercialBlockReason | null>(null);
   const [quotaDegrade, setQuotaDegrade] = useState(false);
   const warnedThisWindowRef = useRef(false);
   const degradePromptedRef = useRef(false);
@@ -217,7 +219,7 @@ export function useChatSend(opts: UseChatSendOpts) {
       const commercial = useCommercialStore.getState();
       const access = evaluateCommercialSendAccess(commercial.status, commercial.overview);
       if (!access.allowed) {
-        setQuotaBlocked(true);
+        setQuotaBlock(access.reason);
         return;
       }
       const verdict = access.verdict;
@@ -745,8 +747,8 @@ export function useChatSend(opts: UseChatSendOpts) {
     modelsByProvider,
     pendingNewTask: pendingNewTask as PendingNewTask | null,
     taskGwId,
-    quotaBlocked,
-    setQuotaBlocked,
+    quotaBlock,
+    setQuotaBlock,
     quotaDegrade,
     setQuotaDegrade,
     switchToFallbackModel,

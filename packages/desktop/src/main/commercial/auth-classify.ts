@@ -37,6 +37,47 @@
 /** 会话检查的结果。**三态，不是布尔**。 */
 export type AuthCheck = 'authenticated' | 'unauthenticated' | 'transient';
 
+/** 验证码校验失败的结果。 */
+export type OtpVerifyFailure = 'unreachable' | 'rejected' | 'too-many';
+
+/**
+ * 把一次**验证码校验**的失败归类。
+ *
+ * ⚠️ 与 `classifyAuthFailure` **刻意相反**，别"顺手统一"成一个函数：
+ *   · 会话检查里 4xx 说明不了问题 ⇒ 保守归 transient（宁可重试也别把人踢成未登录）；
+ *   · 校验验证码时 **auth 服务器已经回话了** ⇒ 那就是"这个码我没接受"，
+ *     正是用户需要知道的信息。两边判反了都会出 bug。
+ *
+ * ⭐ 为什么必须分（2026-09-17 实机）：校验请求**超时**，界面却统一说
+ *   「验证码不正确或已过期」⇒ 用户拿同一个码重试 ⇒ OTP 是一次性的、
+ *   那次超时的请求其实已把它消费掉 ⇒ 第二次必然失败（"收到验证码登不上"）。
+ *
+ * `too-many` 单列的理由：429 时服务端在说"你试得太频繁"，
+ * 让用户去"检查验证码"是错的引导（而且他正是因为被误导才反复重试）。
+ */
+export function classifyOtpVerifyFailure(error: unknown): OtpVerifyFailure {
+  // 问不出来「为什么」⇒ 更不能替用户断定"你码错了"。
+  if (error === null || error === undefined) return 'unreachable';
+
+  const e = error as { status?: unknown; name?: unknown; code?: unknown };
+  const status = typeof e.status === 'number' ? e.status : undefined;
+  const name = String(e.name ?? '');
+  const code = String(e.code ?? '');
+
+  // 请求压根没到 / 没回来
+  if (name === 'AuthRetryableFetchError') return 'unreachable';
+  if (status === undefined) return 'unreachable';
+  if (status === 0) return 'unreachable';
+  // 服务端自己的毛病（含短信 hook 塌缩成的 500）—— 不能说人家码错
+  if (status >= 500) return 'unreachable';
+
+  if (status === 429) return 'too-many';
+  if (code.includes('rate_limit') || code.startsWith('over_')) return 'too-many';
+
+  // 到这一步：auth 服务器明确回复了"不接受这次校验"
+  return 'rejected';
+}
+
 /**
  * 服务端**明确**说"你没登录"的状态码。
  *

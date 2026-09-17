@@ -806,7 +806,9 @@
     "termsOfService": "Terms of Service",
     "termsUrl": "https://www.rongyinghudong.com/privacy.html",
     "title": "Sign in to Rongying Cube",
-    "verifyFailed": "Code is incorrect or expired"
+    "verifyFailed": "Code is incorrect or expired",
+    "verifyTooMany": "Too many attempts. Please wait a moment and try again.",
+    "verifyUnreachable": "Could not reach the server, so the code was not verified. Codes are single-use — send a new one and try again."
   },
   "mainArea": {
     "compassAssistant": "Compass Assistant",
@@ -1483,6 +1485,10 @@
     "quotaUsed": "Used",
     "rateLimits": "Rate Limits",
     "resetsAt": "Resets at {{time}}",
+    "unknownDesc": "The network seems unstable, so your balance could not be read. This does not mean you are out of quota — please retry in a moment.",
+    "unknownTitle": "Could not confirm your quota",
+    "unlicensedDesc": "Activate a licence or redeem a code to continue.",
+    "unlicensedTitle": "No quota available yet",
     "warnToast": "Balance is {{percent}}% used — top up soon"
   },
   "voiceInput": {

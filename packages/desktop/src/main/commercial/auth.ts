@@ -1,7 +1,7 @@
 import type { CommercialAccountOverview, CommercialLicenseSummary, IpcResult } from '@clawwork/shared';
 import { getCommercialClient, resetCommercialClient } from './client.js';
 import { deviceFingerprint } from './license.js';
-import { classifyAuthFailure, type AuthCheck } from './auth-classify.js';
+import { classifyAuthFailure, classifyOtpVerifyFailure, type AuthCheck } from './auth-classify.js';
 import { getDebugLogger } from '../debug/index.js';
 
 export interface CommercialProfile {
@@ -131,6 +131,32 @@ export async function sendLoginOtp(target: string): Promise<IpcResult> {
   }
 }
 
+/**
+ * 验证码校验失败的出口。
+ *
+ * ⚠️ 必须**留痕**：原先这里只是 `return fail(...)`，实机出现"收到验证码却登不上"时
+ *    日志里一个字都没有，只能靠猜。只记错误类名/状态码/错误码 ——
+ *    **不记手机号、不记验证码**。
+ *
+ * ⚠️ 错误码分三档（见 `classifyOtpVerifyFailure`）：界面据此说不同的话，
+ *    否则"超时"会被说成"验证码不正确"，用户拿同一个一次性码反复重试。
+ */
+function failOtp(error: unknown, where: string): IpcResult {
+  const kind = classifyOtpVerifyFailure(error);
+  const e = error as { name?: unknown; status?: unknown; code?: unknown; message?: unknown };
+  console.error(
+    `[commercial] otp.verify.failed kind=${kind} where=${where} ` +
+      `name=${String(e?.name ?? '')} status=${String(e?.status ?? '')} code=${String(e?.code ?? '')}`,
+  );
+  const errorCode =
+    kind === 'unreachable'
+      ? 'otp_verify_unreachable'
+      : kind === 'too-many'
+        ? 'otp_verify_too_many'
+        : 'otp_verify_failed';
+  return { ok: false, error: e?.message ? String(e.message) : kind, errorCode };
+}
+
 export async function verifyLoginOtp(target: string, token: string): Promise<IpcResult> {
   const supabase = getCommercialClient();
   if (!supabase) {
@@ -141,10 +167,10 @@ export async function verifyLoginOtp(target: string, token: string): Promise<Ipc
     const { data, error } = isEmail
       ? await supabase.auth.verifyOtp({ email: target, token, type: 'email' })
       : await supabase.auth.verifyOtp({ phone: target, token, type: 'sms' });
-    if (error) return fail(error, 'otp_verify_failed');
+    if (error) return failOtp(error, isEmail ? 'email' : 'sms');
     return { ok: true, result: { userId: data.user?.id ?? null } };
   } catch (error) {
-    return fail(error, 'otp_verify_failed');
+    return failOtp(error, isEmail ? 'email' : 'sms');
   }
 }
 

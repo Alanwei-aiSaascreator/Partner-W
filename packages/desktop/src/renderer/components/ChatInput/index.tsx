@@ -53,6 +53,8 @@ import DraftConflictDialog from './DraftConflictDialog';
 import { thinkingAlwaysOnKey, thinkingLabelKey, thinkingMenuFor } from './thinking-levels.js';
 import type { DraftPromptRequest, DraftPromptResolution } from './types';
 import { useChatSend } from './useChatSend';
+import { quotaBlockCopy } from '@/lib/quota';
+import { useCommercialStore } from '@/stores/commercialStore';
 import { useAttachments } from './useAttachments';
 import { useMentionPicker } from './useMentionPicker';
 import { useSlashAutocomplete } from './useSlashAutocomplete';
@@ -269,8 +271,8 @@ export default function ChatInput({
     currentModelEntry,
     modelsByProvider,
     taskGwId: _taskGwId,
-    quotaBlocked,
-    setQuotaBlocked,
+    quotaBlock,
+    setQuotaBlock,
     quotaDegrade,
     setQuotaDegrade,
     switchToFallbackModel,
@@ -297,6 +299,9 @@ export default function ChatInput({
     stopVoiceInput: () => stopVoiceInput(),
     onComposerCleared: () => setCanSend(false),
   });
+
+  // 拦截文案跟着**原因**走（quotaBlock 为 null 时对话框根本没打开，取哪个都不影响）
+  const quotaCopy = quotaBlockCopy(quotaBlock ?? 'unavailable');
 
   const {
     isSupported: isVoiceSupported,
@@ -1148,17 +1153,25 @@ export default function ChatInput({
           </div>
         )}
       </div>
+      {/* ⚠️ 文案按**原因**给：四种情况共用「额度已用尽，请充值」正是实机 bug 的成因
+          （读不到额度被说成用尽）。见 lib/quota.ts 的 quotaBlockCopy。 */}
       <ConfirmDialog
-        open={quotaBlocked}
-        title={t('usage.blockedTitle')}
-        description={t('usage.blockedDesc')}
-        confirmLabel={t('account.recharge')}
+        open={quotaBlock !== null}
+        title={t(quotaCopy.titleKey)}
+        description={t(quotaCopy.descKey)}
+        confirmLabel={t(quotaCopy.confirmKey)}
         cancelLabel={t('common.cancel')}
         onConfirm={() => {
-          setQuotaBlocked(false);
+          const action = quotaCopy.action;
+          setQuotaBlock(null);
+          if (action === 'retry') {
+            // 重试：重新拉一次额度快照（拉到了闸门自然放行，拉不到下次仍会说明原因）
+            void useCommercialStore.getState().refresh();
+            return;
+          }
           onNavigateToAccount?.();
         }}
-        onCancel={() => setQuotaBlocked(false)}
+        onCancel={() => setQuotaBlock(null)}
       />
       <ConfirmDialog
         open={quotaDegrade}

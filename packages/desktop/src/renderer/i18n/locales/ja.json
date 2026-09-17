@@ -806,7 +806,9 @@
     "termsOfService": "利用規約",
     "termsUrl": "https://www.rongyinghudong.com/privacy.html",
     "title": "Rongying Cube にログイン",
-    "verifyFailed": "コードが正しくないか期限切れです"
+    "verifyFailed": "コードが正しくないか期限切れです",
+    "verifyTooMany": "Too many attempts. Please wait a moment and try again.",
+    "verifyUnreachable": "Could not reach the server, so the code was not verified. Codes are single-use — send a new one and try again."
   },
   "mainArea": {
     "compassAssistant": "コンパスアシスタント",
@@ -1483,6 +1485,10 @@
     "quotaUsed": "使用済み",
     "rateLimits": "レート制限",
     "resetsAt": "{{time}} にリセット",
+    "unknownDesc": "The network seems unstable, so your balance could not be read. This does not mean you are out of quota — please retry in a moment.",
+    "unknownTitle": "Could not confirm your quota",
+    "unlicensedDesc": "Activate a licence or redeem a code to continue.",
+    "unlicensedTitle": "No quota available yet",
     "warnToast": "残高の {{percent}}% を使用しました。まもなくチャージしてください"
   },
   "voiceInput": {

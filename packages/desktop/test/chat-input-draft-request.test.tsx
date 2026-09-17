@@ -172,7 +172,7 @@ vi.mock('../src/renderer/components/ChatInput/useChatSend', () => ({
     currentModelEntry: undefined,
     modelsByProvider: {},
     taskGwId: null,
-    quotaBlocked: false,
+    quotaBlock: null,
     setQuotaBlocked: vi.fn(),
     quotaDegrade: false,
     setQuotaDegrade: vi.fn(),

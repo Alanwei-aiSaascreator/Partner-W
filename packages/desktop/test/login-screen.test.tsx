@@ -79,6 +79,62 @@ describe('Login', () => {
     unmount();
   });
 
+  /**
+   * ⭐ 2026-09-17 实机 bug：校验验证码**超时**时，界面统一说
+   * 「验证码不正确或已过期」⇒ 用户拿同一个码重试 ⇒ OTP 是一次性的、
+   * 那次超时的请求已把它消费掉 ⇒ 第二次必然失败（"收到验证码登不上"）。
+   *
+   * 修法：主进程把失败分成「没到服务器」和「服务端拒绝了」，界面分开说。
+   */
+  it('⭐ 校验时连不上服务器 ⇒ 说网络，不说验证码错', async () => {
+    verifyOtp.mockResolvedValueOnce({ ok: false, errorCode: 'otp_verify_unreachable' });
+    const { container, unmount } = render(<Login onSignedIn={vi.fn()} />);
+
+    const phone = container.querySelector('input[type="tel"]') as HTMLInputElement;
+    const agreement = container.querySelector('input[type="checkbox"]') as HTMLInputElement;
+    act(() => {
+      setInput(phone, '13800138000');
+      agreement.click();
+    });
+    await act(async () => {
+      container.querySelector('form')?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+
+    const code = container.querySelector('input[inputmode="numeric"]') as HTMLInputElement;
+    act(() => setInput(code, '123456'));
+    await act(async () => {
+      container.querySelector('form')?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+
+    expect(container.textContent).toContain('login.verifyUnreachable');
+    expect(container.textContent).not.toContain('login.verifyFailed');
+    unmount();
+  });
+
+  it('服务端拒绝了验证码 ⇒ 仍然是"验证码不正确或已过期"', async () => {
+    verifyOtp.mockResolvedValueOnce({ ok: false, errorCode: 'otp_verify_failed' });
+    const { container, unmount } = render(<Login onSignedIn={vi.fn()} />);
+
+    const phone = container.querySelector('input[type="tel"]') as HTMLInputElement;
+    const agreement = container.querySelector('input[type="checkbox"]') as HTMLInputElement;
+    act(() => {
+      setInput(phone, '13800138000');
+      agreement.click();
+    });
+    await act(async () => {
+      container.querySelector('form')?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+
+    const code = container.querySelector('input[inputmode="numeric"]') as HTMLInputElement;
+    act(() => setInput(code, '123456'));
+    await act(async () => {
+      container.querySelector('form')?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+
+    expect(container.textContent).toContain('login.verifyFailed');
+    unmount();
+  });
+
   it('covers its eyes with the same mascot arms while entering the verification code', async () => {
     const { container, unmount } = render(<Login onSignedIn={vi.fn()} />);
     const phone = container.querySelector('input[type="tel"]') as HTMLInputElement;

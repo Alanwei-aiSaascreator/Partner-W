@@ -806,7 +806,9 @@
     "termsOfService": "서비스 약관",
     "termsUrl": "https://www.rongyinghudong.com/privacy.html",
     "title": "Rongying Cube 로그인",
-    "verifyFailed": "코드가 올바르지 않거나 만료되었습니다"
+    "verifyFailed": "코드가 올바르지 않거나 만료되었습니다",
+    "verifyTooMany": "Too many attempts. Please wait a moment and try again.",
+    "verifyUnreachable": "Could not reach the server, so the code was not verified. Codes are single-use — send a new one and try again."
   },
   "mainArea": {
     "compassAssistant": "나침반 어시스턴트",
@@ -1483,6 +1485,10 @@
     "quotaUsed": "사용됨",
     "rateLimits": "요청 제한",
     "resetsAt": "{{time}}에 초기화",
+    "unknownDesc": "The network seems unstable, so your balance could not be read. This does not mean you are out of quota — please retry in a moment.",
+    "unknownTitle": "Could not confirm your quota",
+    "unlicensedDesc": "Activate a licence or redeem a code to continue.",
+    "unlicensedTitle": "No quota available yet",
     "warnToast": "잔액의 {{percent}}%를 사용했습니다. 곧 충전하세요"
   },
   "voiceInput": {

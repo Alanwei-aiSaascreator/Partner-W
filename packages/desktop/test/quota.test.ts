@@ -3,6 +3,7 @@ import type { CommercialAccountOverview } from '@clawwork/shared';
 import {
   evaluateCommercialSendAccess,
   evaluateQuota,
+  quotaBlockCopy,
   QUOTA_WARN_PERCENT,
   QUOTA_DEGRADE_PERCENT,
 } from '../src/renderer/lib/quota';
@@ -74,7 +75,22 @@ describe('evaluateCommercialSendAccess', () => {
     expect(evaluateCommercialSendAccess('loading', null)).toEqual({ allowed: false, reason: 'verifying' });
   });
 
-  it('does not authorize from a cached snapshot when the current read failed', () => {
+  /**
+   * ⭐ 2026-09-17 改判：读失败时**用最近一次成功的快照**放行。
+   *
+   * 原先这条断言的是「缓存不许授权发送」（fail-closed）。实机证明那样做的代价是：
+   * 一次 8 秒网络抖动 ⇒ `status='offline'` ⇒ 发送被拦，且弹的对话框是
+   * 「Token 额度已用尽，充值或兑换卡密后可继续使用」——**把读不到说成了用尽**。
+   *
+   * 改判的依据（两条都是事实，不是偏好）：
+   *   ① 计费边界在**服务端**：`services/relay/src/index.ts` 自己会 `evaluateQuota`
+   *      并对真耗尽的请求回 `insufficient balance`。客户端闸门只是提前给个好听的说法。
+   *   ② 仓库里已有同款先例：`auth-classify.ts` 就是为「8 秒抖动被固化成没登录」写的，
+   *      那里立的原则是"把『暂时』误判成『确定』，代价大得多"。
+   *
+   * 结果形状带 `stale: true`，好让界面知道这是**旧数据**。
+   */
+  it('⭐ 读失败但缓存里有有效额度 ⇒ 放行（标记 stale），不拿"额度已用尽"挡人', () => {
     const cached = overviewWith({
       activated: true,
       licenseKey: 'RY-OLD',
@@ -84,7 +100,31 @@ describe('evaluateCommercialSendAccess', () => {
       tokenQuotaMicros: 1000,
       tokenUsedMicros: 10,
     });
-    expect(evaluateCommercialSendAccess('offline', cached)).toEqual({ allowed: false, reason: 'unavailable' });
+    expect(evaluateCommercialSendAccess('offline', cached)).toMatchObject({
+      allowed: true,
+      stale: true,
+      verdict: { level: 'ok' },
+    });
+  });
+
+  it('缓存里就已经用尽 ⇒ 仍然拦（真用尽不因为"这次没读到"就放过）', () => {
+    const cached = overviewWith({
+      activated: true,
+      licenseKey: 'RY-OLD',
+      sku: 'USB',
+      status: 'active',
+      expiresAt: null,
+      tokenQuotaMicros: 1000,
+      tokenUsedMicros: 1000,
+    });
+    expect(evaluateCommercialSendAccess('offline', cached)).toMatchObject({
+      allowed: false,
+      reason: 'exhausted',
+    });
+  });
+
+  it('读失败且**没有**任何快照 ⇒ unavailable（不是 exhausted —— 读不到 ≠ 用尽）', () => {
+    expect(evaluateCommercialSendAccess('offline', null)).toEqual({ allowed: false, reason: 'unavailable' });
   });
 
   it('blocks an account without a licence', () => {
@@ -121,5 +161,58 @@ describe('evaluateCommercialSendAccess', () => {
       allowed: true,
       verdict: { level: 'ok', remainingPercent: 99 },
     });
+  });
+
+  it('额度/用量本身读成了空 ⇒ unavailable（数据不全 ≠ 用尽）', () => {
+    const partial = overviewWith({
+      activated: true,
+      licenseKey: 'RY-1',
+      sku: 'USB',
+      status: 'active',
+      expiresAt: null,
+      tokenQuotaMicros: 1000,
+      tokenUsedMicros: null,
+    });
+    expect(evaluateCommercialSendAccess('ready', partial)).toMatchObject({
+      allowed: false,
+      reason: 'unavailable',
+    });
+  });
+});
+
+/**
+ * 拦截时说什么。⭐ 这几条是本轮实机 bug 的直接回归：
+ * 原来四种原因共用「额度已用尽，请充值」，于是"读不到"被说成了"用尽"。
+ */
+describe('quotaBlockCopy —— 每种拦截原因说自己的话', () => {
+  it('⭐ 真正用尽才说"额度已用尽"，确认按钮去充值', () => {
+    expect(quotaBlockCopy('exhausted')).toEqual({
+      titleKey: 'usage.blockedTitle',
+      descKey: 'usage.blockedDesc',
+      confirmKey: 'account.recharge',
+      action: 'recharge',
+    });
+  });
+
+  it('⭐ 读不到/还在确认 ⇒ 用"暂时没确认"的话术，确认按钮是重试（不是充值）', () => {
+    for (const reason of ['unavailable', 'verifying'] as const) {
+      const copy = quotaBlockCopy(reason);
+      expect(copy.action).toBe('retry');
+      expect(copy.descKey).toBe('usage.unknownDesc');
+      expect(copy.descKey).not.toBe('usage.blockedDesc');
+      expect(copy.confirmKey).toBe('common.retry');
+    }
+  });
+
+  it('⭐ 没激活 ⇒ 说"还没有可用额度"，不说"已用尽"', () => {
+    const copy = quotaBlockCopy('unlicensed');
+    expect(copy.titleKey).toBe('usage.unlicensedTitle');
+    expect(copy.titleKey).not.toBe('usage.blockedTitle');
+  });
+
+  it('四种原因各不相同（除了两个"说不清"的共用一句）', () => {
+    expect(quotaBlockCopy('exhausted').descKey).not.toBe(quotaBlockCopy('unlicensed').descKey);
+    expect(quotaBlockCopy('exhausted').descKey).not.toBe(quotaBlockCopy('unavailable').descKey);
+    expect(quotaBlockCopy('unlicensed').descKey).not.toBe(quotaBlockCopy('unavailable').descKey);
   });
 });

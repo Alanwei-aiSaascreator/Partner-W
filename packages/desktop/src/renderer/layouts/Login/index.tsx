@@ -142,6 +142,23 @@ export default function Login({ onSignedIn }: LoginProps) {
     toast.success(t('login.codeSent', { phone }));
   }, [busy, describeSendError, phone, phoneValid, t]);
 
+  /**
+   * 校验失败时**必须分原因**说。
+   *
+   * ⭐ 实机 bug（2026-09-17）：校验请求超时，界面却统一说「验证码不正确或已过期」
+   * ⇒ 用户拿同一个码再试 ⇒ 而 OTP 是一次性的、那次超时的请求其实已把它消费掉
+   * ⇒ 第二次必然失败，表现成"收到验证码却登不上"。
+   * 说明里要提醒「验证码是一次性的，请重新发送」，把人从重试死循环里拉出来。
+   */
+  const describeVerifyError = useCallback(
+    (errorCode?: string): string => {
+      if (errorCode === 'otp_verify_unreachable') return t('login.verifyUnreachable');
+      if (errorCode === 'otp_verify_too_many') return t('login.verifyTooMany');
+      return t('login.verifyFailed');
+    },
+    [t],
+  );
+
   const submit = useCallback(async () => {
     if (!codeValid || busy) return;
     setBusy(true);
@@ -150,16 +167,17 @@ export default function Login({ onSignedIn }: LoginProps) {
     try {
       res = await window.clawwork.commercialVerifyOtp(`+86${phone}`, code);
     } catch {
-      res = { ok: false, errorCode: 'otp_verify_failed' };
+      // IPC 自己炸了 = 我们没拿到答案 ⇒ 属于"问不出来"，**不是**"你码错了"
+      res = { ok: false, errorCode: 'otp_verify_unreachable' };
     }
     setBusy(false);
     if (!res.ok) {
-      setError(t('login.verifyFailed'));
+      setError(describeVerifyError(res.errorCode));
       return;
     }
     setMascotPose('success');
     window.setTimeout(onSignedIn, 320);
-  }, [busy, code, codeValid, onSignedIn, phone, t]);
+  }, [busy, code, codeValid, describeVerifyError, onSignedIn, phone]);
 
   const onSubmitForm = (e: React.FormEvent) => {
     e.preventDefault();

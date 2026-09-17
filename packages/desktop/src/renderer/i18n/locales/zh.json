@@ -806,7 +806,9 @@
     "termsOfService": "服务条款",
     "termsUrl": "https://www.rongyinghudong.com/privacy.html",
     "title": "登录荣盈魔方",
-    "verifyFailed": "验证码不正确或已过期"
+    "verifyFailed": "验证码不正确或已过期",
+    "verifyTooMany": "尝试太频繁了，请等一会儿再试。",
+    "verifyUnreachable": "连不上服务器，验证码没能校验成功。验证码是一次性的，请点「重新发送」获取新码后再试。"
   },
   "mainArea": {
     "compassAssistant": "罗盘助手",
@@ -1483,6 +1485,10 @@
     "quotaUsed": "已用",
     "rateLimits": "速率限制",
     "resetsAt": "{{time}} 重置",
+    "unknownDesc": "网络似乎不稳，没能读到你的额度。这不代表额度用尽 —— 稍后重试即可；已确认过的余额不会因为这次读取失败而消失。",
+    "unknownTitle": "暂时没能确认你的额度",
+    "unlicensedDesc": "激活或兑换卡密后即可继续使用。",
+    "unlicensedTitle": "还没有可用的额度",
     "warnToast": "额度已用 {{percent}}%，请及时充值"
   },
   "voiceInput": {
