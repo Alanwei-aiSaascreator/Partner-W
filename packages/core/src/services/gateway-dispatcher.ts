@@ -761,12 +761,10 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
 
   async function fetchCatalogs(gatewayId: string): Promise<void> {
     try {
-      const [modelsRes, agentsRes, toolsRes, skillsRes, commandsRes] = await Promise.all([
+      const [modelsRes, agentsRes, skillsRes] = await Promise.all([
         deps.gateway.listModels(gatewayId),
         deps.gateway.listAgents(gatewayId),
-        deps.gateway.getToolsCatalog(gatewayId),
         deps.gateway.getSkillsStatus(gatewayId),
-        deps.gateway.listCommands(gatewayId, { scope: 'text', includeArgs: true }),
       ]);
       if (modelsRes.ok && modelsRes.result) {
         const data = modelsRes.result as unknown as ModelListResponse;
@@ -776,6 +774,22 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
         const data = agentsRes.result as unknown as AgentListResponse;
         if (data.agents) deps.setAgentCatalogForGateway(gatewayId, data.agents, data.defaultId);
       }
+
+      // ⚠️ 工具目录与斜杠命令**必须**带上 agentId。多 agent 配置下网关把"没有 owner"
+      //    的请求整条拒掉（`AGENT_SELECTION_REQUIRED`）——2026-09-17 实机 431 次，
+      //    后果是 composer 的工具菜单与斜杠命令**永远是空的**，而且不报错（ok=false 被吞）。
+      //    owner 取网关自己的默认 agent；只有一个 agent 时退回那一个。
+      const agentCatalog = agentsRes.ok ? (agentsRes.result as unknown as AgentListResponse | undefined) : undefined;
+      const agentId = agentCatalog?.defaultId ?? agentCatalog?.agents?.[0]?.id;
+
+      const [toolsRes, commandsRes] = await Promise.all([
+        deps.gateway.getToolsCatalog(gatewayId, agentId),
+        deps.gateway.listCommands(gatewayId, {
+          scope: 'text',
+          includeArgs: true,
+          ...(agentId ? { agentId } : {}),
+        }),
+      ]);
       if (toolsRes.ok && toolsRes.result) {
         const data = toolsRes.result as unknown as ToolsCatalog;
         if (data.groups) deps.setToolsCatalogForGateway(gatewayId, data);

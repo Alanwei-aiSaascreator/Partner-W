@@ -67,6 +67,25 @@ describe('usage reporter', () => {
     rpcMock.mockResolvedValue({ data: null, error: null } as never);
   });
 
+  /**
+   * ⭐ 2026-09-17 实机日志：上报器 38 次拿到
+   * `Multiple agents are configured, but session key "main" has no explicit owner.`
+   *
+   * 客户端原来只发 `{}`，注释还写着"省略 key 就返回全部会话"—— 那是**猜的协议**。
+   * 网关 schema（`SessionsUsageParamsSchema`）里"跨 agent 列表查询"要显式声明
+   * `agentScope: "all"`。少了它，网关逐个会话解析归属，碰到没有 owner 的 `main`
+   * 就整条失败 ⇒ **上报器整个网关跳过**，用户的非中转用量一分都记不上。
+   */
+  it('⭐ 查全部会话必须显式带 agentScope:"all"（否则多 agent 网关整条拒绝）', async () => {
+    getAllGatewayClientsMock.mockReturnValue(new Map([['gw-1', gatewayWith()]]));
+    getSessionUsageMock.mockResolvedValue({ sessions: [] });
+    const { runUsageReport } = await import('../src/main/commercial/usage-reporter.js');
+
+    await runUsageReport();
+
+    expect(getSessionUsageMock).toHaveBeenCalledWith({ agentScope: 'all' });
+  });
+
   it('reports each model line of each session as a cumulative total', async () => {
     getSessionUsageMock.mockResolvedValue({
       sessions: [
@@ -156,9 +175,19 @@ describe('usage reporter', () => {
           key: 'sess-1',
           modelUsage: [
             // 名字像 relay，但 baseUrl 指向别处 —— **必须照报**，不能凭名字跳过
-            { provider: 'clawrouter', model: 'm1', count: 1, totals: { input: 10, output: 0, cacheRead: 0, cacheWrite: 0 } },
+            {
+              provider: 'clawrouter',
+              model: 'm1',
+              count: 1,
+              totals: { input: 10, output: 0, cacheRead: 0, cacheWrite: 0 },
+            },
             // 名字完全不像，但 baseUrl 指向我们 —— **必须跳过**
-            { provider: 'relay-gw', model: 'm2', count: 1, totals: { input: 20, output: 0, cacheRead: 0, cacheWrite: 0 } },
+            {
+              provider: 'relay-gw',
+              model: 'm2',
+              count: 1,
+              totals: { input: 20, output: 0, cacheRead: 0, cacheWrite: 0 },
+            },
           ],
         },
       ],
@@ -176,10 +205,7 @@ describe('usage reporter', () => {
 
     expect(sent).toBe(1);
     expect(rpcMock).toHaveBeenCalledTimes(1);
-    expect(rpcMock).toHaveBeenCalledWith(
-      'report_usage',
-      expect.objectContaining({ p_provider: 'clawrouter' }),
-    );
+    expect(rpcMock).toHaveBeenCalledWith('report_usage', expect.objectContaining({ p_provider: 'clawrouter' }));
   });
 
   it('尾斜杠不同也算指向 relay', async () => {

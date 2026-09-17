@@ -757,9 +757,15 @@ export class GatewayClient {
   }
 
   async getSessionUsage(params: {
-    // Optional per the gateway protocol: omitting it returns every session's
-    // usage in one call, which is what the usage reporter needs.
     key?: string;
+    /**
+     * 跨 agent 的"全部会话"查询**必须显式声明**（网关 `SessionsUsageParamsSchema`
+     * 里的 `agentScope: "all"`）。
+     *
+     * ⚠️ 只发 `{}` 是不行的 —— 网关会逐个会话解析归属，碰到没有 owner 的 `main`
+     * 就整条拒绝（2026-09-17 实测 38 次 `session key "main" has no explicit owner`）。
+     */
+    agentScope?: 'all';
     startDate?: string;
     endDate?: string;
   }): Promise<Record<string, unknown>> {

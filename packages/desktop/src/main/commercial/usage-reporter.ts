@@ -88,7 +88,10 @@ export async function runUsageReport(): Promise<number> {
 
       let payload: unknown;
       try {
-        payload = await gw.getSessionUsage({});
+        // ⚠️ 必须带 `agentScope: 'all'`：只发 `{}` 时网关逐个会话解析归属，
+        //    碰到没有 owner 的 `main` 会整条拒绝（实机 38 次），于是**整个网关被跳过**、
+        //    非中转用量一分都记不上。见 SessionsUsageParamsSchema 的字段注释。
+        payload = await gw.getSessionUsage({ agentScope: 'all' });
       } catch (error) {
         getDebugLogger().warn({
           domain: 'commercial',

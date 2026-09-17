@@ -459,6 +459,49 @@ describe('未知事件种类的告警阈值', () => {
   });
 });
 
+/**
+ * ⭐ 多 agent 场景下，`tools.catalog` / `commands.list` **必须**带上 agentId。
+ *
+ * 2026-09-17 实机日志：这两条请求分别只发了 `{includePlugins:true}` /
+ * `{scope,includeArgs}`，网关回**431 次**
+ * `Multiple agents are configured, but this Gateway request has no explicit owner`。
+ * 后果不是"少几个工具"，而是**整份目录拿不到** —— composer 的工具菜单与斜杠命令
+ * 一直是空的（`toolsRes.ok` 为假，谁都没报错）。
+ */
+describe('工具目录与斜杠命令必须带 agentId（多 agent 网关拒绝无主请求）', () => {
+  it('⭐ 用网关的默认 agent 作为 owner', async () => {
+    const h = createHarness();
+    h.deps.gateway.listAgents = vi.fn(async () => ({
+      ok: true,
+      result: { agents: [{ id: 'main' }, { id: 'rongying-content' }], defaultId: 'main' },
+    }));
+    const getToolsCatalog = vi.fn(async () => ({ ok: true, result: { groups: [] } }));
+    const listCommands = vi.fn(async () => ({ ok: true, result: { commands: [] } }));
+    h.deps.gateway.getToolsCatalog = getToolsCatalog;
+    h.deps.gateway.listCommands = listCommands;
+
+    h.dispatcher.startGatewayStatus();
+    h.emitStatus({ gatewayId: 'gw-1', connected: true });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(getToolsCatalog).toHaveBeenCalledWith('gw-1', 'main');
+    expect(listCommands).toHaveBeenCalledWith('gw-1', expect.objectContaining({ agentId: 'main' }));
+  });
+
+  it('网关只报了一个 agent（没有 defaultId）时，退回用那一个', async () => {
+    const h = createHarness();
+    h.deps.gateway.listAgents = vi.fn(async () => ({ ok: true, result: { agents: [{ id: 'solo' }] } }));
+    const getToolsCatalog = vi.fn(async () => ({ ok: true, result: { groups: [] } }));
+    h.deps.gateway.getToolsCatalog = getToolsCatalog;
+
+    h.dispatcher.startGatewayStatus();
+    h.emitStatus({ gatewayId: 'gw-1', connected: true });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(getToolsCatalog).toHaveBeenCalledWith('gw-1', 'solo');
+  });
+});
+
 describe('重连后与网关对账未决问题', () => {
   // ⚠️ 事件只在**创建时**发一次；断线或进程重启期间挂起的问题不会补发，
   //    不对账就等于隐形挂起（用户消息照样被当成答案吞掉）。
