@@ -11,6 +11,7 @@ import type { RechargeOrderHandle, RechargeSku } from '../../../../preload/claww
 import { toast } from '@/lib/toast';
 import { formatCredits } from '@/lib/utils';
 import { deriveQuotaDisplay } from '@/lib/quota-display';
+import { useCommercialStore } from '@/stores/commercialStore';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -217,6 +218,10 @@ export default function AccountSection({ onboardingProfile = null, onEditProfile
     } catch {
       // ignore
     }
+    // ⚠️ 闸门用的那份缓存（cw:commercial-overview）必须一起清：它现在**能授权发送**
+    //    （读失败时用旧快照放行），留着就会让下一个登录的账号用到上一个人的许可证。
+    //    内存里的状态会被下面的 reload 抹掉，但 localStorage 不会。
+    useCommercialStore.getState().clearCache();
     // A reload is the only way to guarantee no store retains a stale session:
     // the auth gate re-runs and routes back to Login.
     window.location.reload();

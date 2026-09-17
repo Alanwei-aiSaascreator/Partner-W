@@ -1166,7 +1166,9 @@ export default function ChatInput({
           setQuotaBlock(null);
           if (action === 'retry') {
             // 重试：重新拉一次额度快照（拉到了闸门自然放行，拉不到下次仍会说明原因）
-            void useCommercialStore.getState().refresh();
+            // ⚠️ 用 load() 而不是 refresh()：refresh() 在没有已登录账号时**直接返回**，
+            //    而那正是最需要重试的场景（从未成功读到过快照）。
+            void useCommercialStore.getState().load();
             return;
           }
           onNavigateToAccount?.();
