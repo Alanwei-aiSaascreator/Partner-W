@@ -37,6 +37,7 @@ import ChatMessage from '@/components/ChatMessage';
 import StreamingMessage from '@/components/StreamingMessage';
 import ThinkingIndicator from '@/components/ThinkingIndicator';
 import ChatInput from '@/components/ChatInput';
+import QuestionPanel from '@/components/QuestionPanel';
 import type { DraftPromptRequest, DraftPromptResolution } from '@/components/ChatInput/types';
 import ImageLightbox from '@/components/ImageLightbox';
 import FilePreviewModal from '@/components/FilePreviewModal';
@@ -876,9 +877,14 @@ export function ChatContent({
     setShowScrollButton(false);
   }, []);
 
-  if (showWelcome) {
-    return (
-      <>
+  // ⚠️ 这里**不能**给聊天列挂 `key={activeTaskId}`：新任务的第一条消息会先把 pending
+  //    任务 commit 成真任务，key 一变整列（含用户刚打字的输入框）就被卸载重建 ——
+  //    实机表现就是「发送后内容区空白约 1 秒」。两棵分支树也必须保持同样的子节点
+  //    数量，否则 React 只能整块重建（见 test/chat-send-stability.test.tsx）。
+  //    切任务需要重置的东西由下面的 effect 负责，不靠重挂载。
+  return (
+    <>
+      {showWelcome ? (
         <div className="flex-1 px-5 pt-4 pb-0 overflow-y-auto">
           {!startupReadiness.isReady && <StartupReadinessPanel readiness={startupReadiness} onRetry={onRetryStartup} />}
           {onboardingProfile.customGoal.trim() && (
@@ -908,160 +914,152 @@ export function ChatContent({
             />
           </div>
         </div>
-        <ChatInput
-          onNavigateToAccount={handleNavigateToAccount}
-          draftRequest={draftRequest}
-          onDraftResolved={handleDraftResolved}
-          readinessBlocked={!startupReadiness.conversationReady}
-        />
-        <ImageLightbox src={lightboxSrc} onClose={closeLightbox} />
-        <FilePreviewModal file={previewFile} onClose={closeFilePreview} />
-      </>
-    );
-  }
+      ) : (
+        <div className="relative flex-1 min-h-0">
+          <ScrollArea viewportRef={viewportRef} className="h-full px-5 pt-4 pb-0" onScrollCapture={handleScroll}>
+            <div
+              ref={contentRef}
+              className={cn(
+                'space-y-3',
+                messageLayout === 'centered' ? 'max-w-[var(--content-max-width)] mx-auto' : 'w-full max-w-none',
+              )}
+            >
+              {timelineItems.map((item, index) => {
+                if (item.kind === 'message') {
+                  const previous = index > 0 ? timelineItems[index - 1] : null;
+                  const previousRole = previous?.kind === 'message' ? previous.message.role : 'assistant';
+                  const identity =
+                    item.message.role === 'assistant'
+                      ? resolveAssistantIdentity({
+                          task: activeTask,
+                          sessionKey: item.message.sessionKey,
+                          agentId: item.message.agentId,
+                          gatewayId: activeTask?.gatewayId,
+                          performerBySessionKey,
+                          performerByAgentId,
+                          catalogAgentById,
+                          conductorLabel,
+                        })
+                      : undefined;
+                  return (
+                    <div
+                      key={item.key}
+                      className={cn(index > 0 && item.message.role === 'user' && previousRole !== 'user' && 'pt-3')}
+                    >
+                      <ChatMessage
+                        message={item.message}
+                        agentName={identity?.agentName}
+                        agentEmoji={identity?.agentEmoji}
+                        localAvatarUrl={identity?.localAvatarUrl}
+                        gatewayAvatarUrl={identity?.gatewayAvatarUrl}
+                        agentRoleLabel={identity?.agentRoleLabel}
+                        modelLabel={resolveModelLabel(item.message.model, modelCatalog)}
+                        highlighted={item.message.id === highlightedId}
+                        onHighlightDone={handleHighlightDone}
+                        onImageClick={setLightboxSrc}
+                        onFileClick={setPreviewFile}
+                      />
+                    </div>
+                  );
+                }
 
-  return (
-    <>
-      <div className="relative flex-1 min-h-0">
-        <ScrollArea viewportRef={viewportRef} className="h-full px-5 pt-4 pb-0" onScrollCapture={handleScroll}>
-          <div
-            ref={contentRef}
-            className={cn(
-              'space-y-3',
-              messageLayout === 'centered' ? 'max-w-[var(--content-max-width)] mx-auto' : 'w-full max-w-none',
-            )}
-          >
-            {timelineItems.map((item, index) => {
-              if (item.kind === 'message') {
-                const previous = index > 0 ? timelineItems[index - 1] : null;
-                const previousRole = previous?.kind === 'message' ? previous.message.role : 'assistant';
-                const identity =
-                  item.message.role === 'assistant'
-                    ? resolveAssistantIdentity({
-                        task: activeTask,
-                        sessionKey: item.message.sessionKey,
-                        agentId: item.message.agentId,
-                        gatewayId: activeTask?.gatewayId,
-                        performerBySessionKey,
-                        performerByAgentId,
-                        catalogAgentById,
-                        conductorLabel,
-                      })
-                    : undefined;
-                return (
-                  <div
-                    key={item.key}
-                    className={cn(index > 0 && item.message.role === 'user' && previousRole !== 'user' && 'pt-3')}
-                  >
+                if (item.turn.finalized && item.turn.content) {
+                  const identity = resolveAssistantIdentity({
+                    task: activeTask,
+                    sessionKey: item.sessionKey,
+                    agentId: parseAgentIdFromSessionKey(item.sessionKey),
+                    gatewayId: activeTask?.gatewayId,
+                    performerBySessionKey,
+                    performerByAgentId,
+                    catalogAgentById,
+                    conductorLabel,
+                  });
+                  return (
                     <ChatMessage
-                      message={item.message}
-                      agentName={identity?.agentName}
-                      agentEmoji={identity?.agentEmoji}
-                      localAvatarUrl={identity?.localAvatarUrl}
-                      gatewayAvatarUrl={identity?.gatewayAvatarUrl}
-                      agentRoleLabel={identity?.agentRoleLabel}
-                      modelLabel={resolveModelLabel(item.message.model, modelCatalog)}
-                      highlighted={item.message.id === highlightedId}
+                      key={item.key}
+                      message={activeTurnToMessage(item.turn, activeTaskId!, item.sessionKey)}
+                      agentName={identity.agentName}
+                      agentEmoji={identity.agentEmoji}
+                      localAvatarUrl={identity.localAvatarUrl}
+                      gatewayAvatarUrl={identity.gatewayAvatarUrl}
+                      agentRoleLabel={identity.agentRoleLabel}
+                      highlighted={false}
                       onHighlightDone={handleHighlightDone}
                       onImageClick={setLightboxSrc}
                       onFileClick={setPreviewFile}
                     />
-                  </div>
-                );
-              }
-
-              if (item.turn.finalized && item.turn.content) {
-                const identity = resolveAssistantIdentity({
-                  task: activeTask,
-                  sessionKey: item.sessionKey,
-                  agentId: parseAgentIdFromSessionKey(item.sessionKey),
-                  gatewayId: activeTask?.gatewayId,
-                  performerBySessionKey,
-                  performerByAgentId,
-                  catalogAgentById,
-                  conductorLabel,
-                });
-                return (
-                  <ChatMessage
-                    key={item.key}
-                    message={activeTurnToMessage(item.turn, activeTaskId!, item.sessionKey)}
-                    agentName={identity.agentName}
-                    agentEmoji={identity.agentEmoji}
-                    localAvatarUrl={identity.localAvatarUrl}
-                    gatewayAvatarUrl={identity.gatewayAvatarUrl}
-                    agentRoleLabel={identity.agentRoleLabel}
-                    highlighted={false}
-                    onHighlightDone={handleHighlightDone}
-                    onImageClick={setLightboxSrc}
-                    onFileClick={setPreviewFile}
-                  />
-                );
-              }
-
-              if (item.turn.streamingText || item.turn.streamingThinking || item.turn.toolCalls.length > 0) {
-                const identity = resolveAssistantIdentity({
-                  task: activeTask,
-                  sessionKey: item.sessionKey,
-                  agentId: parseAgentIdFromSessionKey(item.sessionKey),
-                  gatewayId: activeTask?.gatewayId,
-                  performerBySessionKey,
-                  performerByAgentId,
-                  catalogAgentById,
-                  conductorLabel,
-                });
-                return (
-                  <StreamingMessage
-                    key={item.key}
-                    content={item.turn.streamingText}
-                    thinkingContent={item.turn.streamingThinking || undefined}
-                    toolCalls={item.turn.toolCalls}
-                    agentEmoji={identity.agentEmoji}
-                    localAvatarUrl={identity.localAvatarUrl}
-                    gatewayAvatarUrl={identity.gatewayAvatarUrl}
-                    agentName={identity.agentName}
-                    agentRoleLabel={identity.agentRoleLabel}
-                  />
-                );
-              }
-
-              return null;
-            })}
-            <AnimatePresence>
-              {activity === 'waiting' && !hasRenderableActiveTurn && <ThinkingIndicator />}
-            </AnimatePresence>
-            <FirstTaskCompletionFlow
-              userId={onboardingProfile.userId}
-              onboardingCompletedAt={onboardingProfile.completedAt}
-              taskId={activeTaskId}
-              messages={messages}
-              activity={activity}
-              artifactCount={activeTaskArtifacts.length}
-              onContinue={() => {
-                if (activeTaskPreset) {
-                  const preset = activeTaskPreset;
-                  requestDraft(t(preset.followUpPromptKey), 'first-task-follow-up');
-                  return;
+                  );
                 }
-                requestDraft(t('firstTaskCompletion.continuePrompt'), 'first-task-follow-up');
-              }}
-              onNewTask={startNewTask}
-              onViewUsage={() => setMainView('dashboard')}
-              onGenerateFile={handleGenerateFile}
-              onViewArtifacts={handleViewArtifacts}
-            />
-          </div>
-        </ScrollArea>
-        {showScrollButton && (
-          <button
-            onClick={scrollToBottom}
-            aria-label={t('mainArea.scrollToBottom')}
-            className="absolute bottom-3 left-1/2 -translate-x-1/2 z-10 flex h-8 w-8 items-center justify-center rounded-full border border-[var(--border-primary)] bg-[var(--bg-primary)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-secondary)] hover:text-[var(--text-primary)]"
-            style={{ boxShadow: 'var(--shadow-elevated)' }}
-          >
-            <ArrowDown className="h-4 w-4" />
-          </button>
-        )}
-      </div>
+
+                if (item.turn.streamingText || item.turn.streamingThinking || item.turn.toolCalls.length > 0) {
+                  const identity = resolveAssistantIdentity({
+                    task: activeTask,
+                    sessionKey: item.sessionKey,
+                    agentId: parseAgentIdFromSessionKey(item.sessionKey),
+                    gatewayId: activeTask?.gatewayId,
+                    performerBySessionKey,
+                    performerByAgentId,
+                    catalogAgentById,
+                    conductorLabel,
+                  });
+                  return (
+                    <StreamingMessage
+                      key={item.key}
+                      content={item.turn.streamingText}
+                      thinkingContent={item.turn.streamingThinking || undefined}
+                      toolCalls={item.turn.toolCalls}
+                      agentEmoji={identity.agentEmoji}
+                      localAvatarUrl={identity.localAvatarUrl}
+                      gatewayAvatarUrl={identity.gatewayAvatarUrl}
+                      agentName={identity.agentName}
+                      agentRoleLabel={identity.agentRoleLabel}
+                    />
+                  );
+                }
+
+                return null;
+              })}
+              <AnimatePresence>
+                {activity === 'waiting' && !hasRenderableActiveTurn && <ThinkingIndicator />}
+              </AnimatePresence>
+              <FirstTaskCompletionFlow
+                userId={onboardingProfile.userId}
+                onboardingCompletedAt={onboardingProfile.completedAt}
+                taskId={activeTaskId}
+                messages={messages}
+                activity={activity}
+                artifactCount={activeTaskArtifacts.length}
+                onContinue={() => {
+                  if (activeTaskPreset) {
+                    const preset = activeTaskPreset;
+                    requestDraft(t(preset.followUpPromptKey), 'first-task-follow-up');
+                    return;
+                  }
+                  requestDraft(t('firstTaskCompletion.continuePrompt'), 'first-task-follow-up');
+                }}
+                onNewTask={startNewTask}
+                onViewUsage={() => setMainView('dashboard')}
+                onGenerateFile={handleGenerateFile}
+                onViewArtifacts={handleViewArtifacts}
+              />
+            </div>
+          </ScrollArea>
+          {showScrollButton && (
+            <button
+              onClick={scrollToBottom}
+              aria-label={t('mainArea.scrollToBottom')}
+              className="absolute bottom-3 left-1/2 -translate-x-1/2 z-10 flex h-8 w-8 items-center justify-center rounded-full border border-[var(--border-primary)] bg-[var(--bg-primary)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-secondary)] hover:text-[var(--text-primary)]"
+              style={{ boxShadow: 'var(--shadow-elevated)' }}
+            >
+              <ArrowDown className="h-4 w-4" />
+            </button>
+          )}
+        </div>
+      )}
+      {/* 结构化提问（ask_user）作答面板：挂在输入框上方，与 openclaw Control UI 一致。
+          必须在输入框**之前**渲染，用户才会先看到「还要选什么」再去打字 ——
+          漏答时网关会把用户的下一条消息当成答案吞掉。 */}
+      <QuestionPanel />
       <ChatInput
         onNavigateToAccount={handleNavigateToAccount}
         draftRequest={draftRequest}
@@ -1251,7 +1249,12 @@ export default function MainArea({
           <InternalBetaHub />
         </div>
       ) : (
-        <div key={`chat-${activeTaskId ?? 'welcome'}`} className="relative flex flex-col flex-1 min-h-0">
+        // ⚠️ 这里**不能**再挂 `key={activeTaskId}`（2026-09-17 移除）：发第一条消息时
+        //    `commitPendingTask()` 会让 activeTaskId 从 null 变成 id，key 一变整列被卸载重建，
+        //    用户看到的就是「发送后内容区空白约 1 秒」，输入框也跟着重建（丢焦点/草稿）。
+        //    切任务要重置的东西由 ChatContent 里监听 activeTaskId 的 effect 负责。
+        //    回归测试：test/chat-send-stability.test.tsx
+        <div className="relative flex flex-col flex-1 min-h-0">
           <ChatHeader
             onTogglePanel={onTogglePanel}
             messageLayout={messageLayout}
