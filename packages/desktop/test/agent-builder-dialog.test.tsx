@@ -250,4 +250,26 @@ describe('AgentBuilderDialog', () => {
     expect(window.clawwork.createAgent).toHaveBeenCalledOnce();
     view.unmount();
   });
+  /**
+   * ⭐ 2026-09-17 顺手修的真缺陷：这条创建路径**没有回滚** ——
+   * 创建成功但写 IDENTITY.md 失败时，网关里会留下一个半成品助手（用户看得见、用不了）。
+   * 另两条路径（预置助手安装、模板安装）都会 `deleteAgent({deleteFiles:true})` 收尾。
+   */
+  it('⭐ 写身份文件失败 ⇒ 把刚建的 agent 删掉（不留半成品）', async () => {
+    const deleteAgent = vi.fn(async () => ({ ok: true }));
+    const setAgentFile = vi.fn(async () => ({ ok: false, error: 'disk full' }));
+    Object.assign(window.clawwork, { deleteAgent, setAgentFile });
+
+    const view = render();
+    typeInto(inputByName(view.container, translate('settings.agentName')) as HTMLElement, '我的助手');
+    typeInto(inputByName(view.container, translate('settings.agentDescription')) as HTMLElement, '测试失败回滚');
+
+    await act(async () => {
+      buttonByText(view.container, translate('settings.agentBuilderCreate'))?.click();
+    });
+
+    expect(setAgentFile).toHaveBeenCalled();
+    expect(deleteAgent).toHaveBeenCalledWith('gw-1', { agentId: 'agent-9', deleteFiles: true });
+    view.unmount();
+  });
 });

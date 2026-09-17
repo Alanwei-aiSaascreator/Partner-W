@@ -10,6 +10,7 @@ import { useUiStore } from '@/stores/uiStore';
 import { useSystemSession } from '@/hooks/useSystemSession';
 import type { ModelCatalogEntry } from '@clawwork/shared';
 import { serializeIdentityMd } from '@clawwork/core';
+import { createAgentWithRollback } from '@/lib/agent-builder';
 import { resolveCommercialDefaultModel } from '@/lib/commercial-default-model';
 
 /**
@@ -244,38 +245,25 @@ export default function AgentBuilderDialog({ open, onOpenChange, gatewayId, onCr
       const wsBase = await window.clawwork.getWorkspacePath();
       const workspace = wsBase ? `${wsBase}/${slug}` : slug;
 
-      const createRes = await window.clawwork.createAgent(gatewayId, {
+      const identityContent =
+        config.identity.trim() || config.description.trim()
+          ? serializeIdentityMd(config.description.trim() || undefined, config.identity.trim())
+          : '';
+
+      // ⚠️ 走 createAgentWithRollback：任一步失败都会把刚建的 agent 删掉。
+      //    原先这里是手写的三步、**没有回滚** ⇒ 写 IDENTITY.md 失败会在网关里
+      //    留下一个半成品助手（用户看得见、用不了）。另两条创建路径（预置助手、
+      //    模板安装）一直都有回滚，这条是漏网的。
+      const createRes = await createAgentWithRollback(window.clawwork, {
+        gatewayId,
         name: config.name.trim(),
         workspace,
+        model: config.model.trim() || undefined,
+        identityContent: identityContent || undefined,
       });
       if (!createRes.ok) {
         toast.error(createRes.error ?? t('errors.failed'));
         return;
-      }
-
-      const created = createRes.result as Record<string, unknown> | undefined;
-      const agentId = (created?.agentId as string) ?? '';
-
-      if (config.model.trim() && agentId) {
-        const updateRes = await window.clawwork.updateAgent(gatewayId, {
-          agentId,
-          model: config.model.trim(),
-        });
-        if (!updateRes.ok) {
-          toast.error(updateRes.error ?? t('errors.failed'));
-          return;
-        }
-      }
-
-      if ((config.identity.trim() || config.description.trim()) && agentId) {
-        const content = serializeIdentityMd(config.description.trim() || undefined, config.identity.trim());
-        if (content) {
-          const fileRes = await window.clawwork.setAgentFile(gatewayId, agentId, 'IDENTITY.md', content);
-          if (!fileRes.ok) {
-            toast.error(fileRes.error ?? t('errors.failed'));
-            return;
-          }
-        }
       }
 
       await end();
