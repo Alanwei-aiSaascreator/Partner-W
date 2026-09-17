@@ -101,6 +101,8 @@ export {
 } from './services/agent-template-service.js';
 export type { AgentInstallDefinition } from './services/agent-template-service.js';
 export { describeTemplateError } from './services/agent-template-error-message.js';
+export { normalizeGrowthSummary, normalizeGrowthHistory, normalizeBounties } from './services/growth-service.js';
+export { describeGrowthError } from './services/growth-error-message.js';
 
 export {
   autofillSelection,
