@@ -352,6 +352,8 @@
     "demoBadge": "Company Beta 1.0",
     "localDataHint": "Local persistent beta data",
     "navigation": "Beta feature navigation",
+    "previewBadge": "기능 미리보기",
+    "previewHint": "로컬 데모 데이터만 사용하며 실제 시스템과 연결되지 않았습니다",
     "reset": "Reset beta data",
     "title": "Beta Center"
   },

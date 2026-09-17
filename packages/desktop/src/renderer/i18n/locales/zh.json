@@ -352,6 +352,8 @@
     "demoBadge": "公司内测 1.0",
     "localDataHint": "当前为本机持久化内测数据",
     "navigation": "内测功能导航",
+    "previewBadge": "功能预览",
+    "previewHint": "仅本机演示数据，尚未接入真实系统",
     "reset": "重置内测数据",
     "title": "内测中心"
   },

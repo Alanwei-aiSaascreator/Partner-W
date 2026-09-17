@@ -131,17 +131,27 @@ export interface BetaActions {
 
 export type BetaState = BetaData & BetaActions;
 
-export const BETA_MODULES: Array<{ id: BetaModule; label: string; description: string }> = [
-  { id: 'team', label: '团队', description: '邀请成员并协作' },
-  { id: 'market', label: '助手市场', description: '发现并安装模板' },
-  { id: 'bounty', label: '悬赏', description: '发布与交付任务' },
-  { id: 'square', label: '广场', description: '分享团队动态' },
-  { id: 'creator', label: '创作者中心', description: '发布助手模板' },
-  { id: 'game', label: '成长中心', description: '积分、等级与徽章' },
-  { id: 'operations', label: '运营后台', description: '基础运营控制台' },
+/**
+ * 内测中心的功能清单。
+ *
+ * ⚠️ `preview: true` = **本机模拟**（Zustand + localStorage）：数据只存在这台电脑上，
+ *    不影响真实系统，别人也看不到。交接单（2026-09-16）明确要求内测 1.0
+ *    **不许**把这些当成「已完成」对外讲 —— 界面上必须标出来（见 InternalBetaHub 的表头）。
+ *
+ * 唯一 `preview` 为假的是「自动升级」：它调的是**真的**更新接口
+ *（`window.clawwork.checkForUpdates` → electron-updater），失败也会如实说明原因。
+ */
+export const BETA_MODULES: Array<{ id: BetaModule; label: string; description: string; preview?: true }> = [
+  { id: 'team', label: '团队', description: '邀请成员并协作', preview: true },
+  { id: 'market', label: '助手市场', description: '发现并安装模板', preview: true },
+  { id: 'bounty', label: '悬赏', description: '发布与交付任务', preview: true },
+  { id: 'square', label: '广场', description: '分享团队动态', preview: true },
+  { id: 'creator', label: '创作者中心', description: '发布助手模板', preview: true },
+  { id: 'game', label: '成长中心', description: '积分、等级与徽章', preview: true },
+  { id: 'operations', label: '运营后台', description: '基础运营控制台', preview: true },
   { id: 'updates', label: '自动升级', description: '检查、下载与安装' },
-  { id: 'analytics', label: '埋点分析', description: '核心事件概览' },
-  { id: 'compliance', label: '隐私与合规', description: '协议和数据权利' },
+  { id: 'analytics', label: '埋点分析', description: '核心事件概览', preview: true },
+  { id: 'compliance', label: '隐私与合规', description: '协议和数据权利', preview: true },
 ];
 
 export const MARKET_TEMPLATES: MarketTemplate[] = [

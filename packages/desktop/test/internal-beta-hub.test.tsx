@@ -121,4 +121,43 @@ describe('InternalBetaHub', () => {
     expect(open).toHaveBeenCalledWith('https://admin.example.com/console', '_blank', 'noopener,noreferrer');
     second.unmount();
   });
+
+  /**
+   * 交接单（2026-09-16）明确点名：内测中心里除「调用真实更新接口」外**几乎全是**
+   * Zustand + localStorage 本地模拟（假团队、假邀请码、本地模板 ID、本机悬赏…），
+   * 内测 1.0 **不能**把这些宣称成「已完成」。
+   *
+   * 两个方向都要断言：模拟模块**必须**标成「功能预览」，真接口模块（自动升级）
+   * **不许**被标 —— 只测一个方向的话，"全标成预览"和"全不标"都能蒙混过去。
+   */
+  it('⭐ 本机模拟的模块必须标成「功能预览」（不能宣称已完成）', () => {
+    const { container, unmount } = render(<InternalBetaHub />);
+
+    // 默认落在「团队」（假团队 + 假邀请码）
+    expect(container.textContent).toContain('团队');
+    expect(container.textContent).toContain('beta.previewBadge');
+    expect(container.textContent).toContain('beta.previewHint');
+
+    unmount();
+  });
+
+  it('每个模拟模块都标（抽查助手市场 / 悬赏 / 创作者中心 / 成长中心）', () => {
+    for (const moduleId of ['market', 'bounty', 'creator', 'game'] as const) {
+      useBetaStore.getState().setActiveModule(moduleId);
+      const { container, unmount } = render(<InternalBetaHub />);
+      expect(container.textContent, moduleId).toContain('beta.previewBadge');
+      unmount();
+    }
+  });
+
+  it('⭐ 自动升级接的是真接口 ⇒ **不**标成预览', () => {
+    useBetaStore.getState().setActiveModule('updates');
+    const { container, unmount } = render(<InternalBetaHub />);
+
+    expect(container.textContent).toContain('自动升级');
+    expect(container.textContent).not.toContain('beta.previewBadge');
+    expect(container.textContent).not.toContain('beta.previewHint');
+
+    unmount();
+  });
 });

@@ -352,6 +352,8 @@
     "demoBadge": "Company Beta 1.0",
     "localDataHint": "Local persistent beta data",
     "navigation": "Beta feature navigation",
+    "previewBadge": "Aperçu de fonctionnalité",
+    "previewHint": "Données de démo locales uniquement, non connectées au système réel",
     "reset": "Reset beta data",
     "title": "Beta Center"
   },
