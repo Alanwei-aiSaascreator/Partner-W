@@ -799,7 +799,6 @@
     "emptyHistory": "还没有记录",
     "history": "成长明细",
     "level": "Lv.{{level}}",
-    "loadFailed": "成长值没读出来，稍后重试。",
     "noBadges": "完成任务就能点亮徽章",
     "reason_bounty_escrow": "发布悬赏托管",
     "reason_bounty_refund": "悬赏取消退回",
