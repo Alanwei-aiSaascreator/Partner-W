@@ -17,7 +17,7 @@ const mocks = vi.hoisted(() => ({
     gatewayId: 'gw-1',
     agentId: 'rongying-content',
     model: 'deepseek-v4-flash',
-  } as { gatewayId?: string; agentId?: string; model?: string } | null,
+  } as { gatewayId?: string; agentId?: string; model?: string; tags?: string[] } | null,
   tasks: [] as Array<Record<string, unknown>>,
   activeTaskId: null as string | null,
   messagesByTask: {} as Record<string, Array<Record<string, unknown>>>,
@@ -302,6 +302,9 @@ const taskState = {
     return mocks.pendingNewTask;
   },
   startNewTask: vi.fn(),
+  updatePending: vi.fn((patch: Record<string, unknown>) => {
+    if (mocks.pendingNewTask) mocks.pendingNewTask = { ...mocks.pendingNewTask, ...patch };
+  }),
 };
 
 const uiState = {
@@ -495,6 +498,7 @@ describe('assistant task workbench draft flow', () => {
       gatewayId: 'gw-1',
       agentId: 'rongying-content',
       model: 'deepseek-v4-flash',
+      tags: ['private'],
     };
     mocks.tasks = [];
     mocks.activeTaskId = null;
@@ -526,6 +530,7 @@ describe('assistant task workbench draft flow', () => {
 
     expect(textarea(view.container).value).toBe('assistantWorkspaces.content.starters.3.prompt');
     expect(loadRecentAssistantTasks('user-1').map((item) => item.presetId)).toEqual(['content:short-video-script']);
+    expect(mocks.pendingNewTask?.tags).toEqual(['private', 'assistant-task-preset:content:short-video-script']);
     expect(mocks.handleSend).not.toHaveBeenCalled();
     view.unmount();
   });
@@ -540,6 +545,7 @@ describe('assistant task workbench draft flow', () => {
 
     expect(textarea(view.container).value).toBe('Keep my draft');
     expect(loadRecentAssistantTasks('user-1')).toEqual([]);
+    expect(mocks.pendingNewTask?.tags).toEqual(['private']);
     expect(mocks.handleSend).not.toHaveBeenCalled();
     view.unmount();
   });
@@ -558,9 +564,21 @@ describe('assistant task workbench draft flow', () => {
     expect(textarea(view.container).value).toBe(expectedDraft);
     expect(loadRecentAssistantTasks('user-1').map((item) => item.presetId)).toEqual(['content:short-video-script']);
     expect(loadRecentAssistantTasks('user-2')).toEqual([]);
+    expect(mocks.pendingNewTask?.tags).toEqual(['private', 'assistant-task-preset:content:short-video-script']);
     expect(storageWrite).toHaveBeenCalledTimes(1);
     expect(storageWrite.mock.calls[0]?.[0]).toContain('user-1');
     expect(mocks.handleSend).not.toHaveBeenCalled();
+    view.unmount();
+  });
+
+  it('keeps only the most recently accepted canonical preset on a pending task', () => {
+    const view = renderFlow();
+
+    click(view.container, '[data-preset-id="content:topic-planning"]');
+    click(view.container, '[data-preset-id="content:short-video-script"]');
+    clickText('taskWorkbench.replaceDraft');
+
+    expect(mocks.pendingNewTask?.tags).toEqual(['private', 'assistant-task-preset:content:short-video-script']);
     view.unmount();
   });
 
@@ -603,6 +621,7 @@ describe('assistant task workbench draft flow', () => {
     expect(textarea(view.container).value).toBe('Keep my draft');
     expect(document.body.querySelector('[role="dialog"]')).toBeNull();
     expect(loadRecentAssistantTasks('user-1')).toEqual([]);
+    expect(mocks.pendingNewTask?.tags).toEqual(['private']);
     expect(mocks.focus).toHaveBeenCalledTimes(1);
     expect(mocks.handleSend).not.toHaveBeenCalled();
     view.unmount();
@@ -734,6 +753,50 @@ describe('assistant task workbench draft flow', () => {
     });
     expect(mocks.handleSend).not.toHaveBeenCalled();
     followUpView.unmount();
+  });
+
+  it('uses the completed task preset follow-up copy without sending automatically', () => {
+    mocks.activeTaskId = 'task-1';
+    mocks.tasks = [
+      {
+        id: 'task-1',
+        sessionKey: 'agent:rongying-content:clawwork:task:task-1',
+        gatewayId: 'gw-1',
+        tags: ['private', 'assistant-task-preset:content:short-video-script'],
+      },
+    ];
+    mocks.messagesByTask = completedMessages('task-1');
+    const view = renderFlow();
+
+    click(view.container, '[data-testid="first-task-continue"]');
+
+    expect(textarea(view.container).value).toBe('assistantWorkspaces.content.starters.3.followUpPrompt');
+    expect(mocks.chatInputDraftRequests.filter(Boolean).at(-1)).toMatchObject({
+      prompt: 'assistantWorkspaces.content.starters.3.followUpPrompt',
+      source: 'first-task-follow-up',
+    });
+    expect(mocks.handleSend).not.toHaveBeenCalled();
+    view.unmount();
+  });
+
+  it('falls back to the generic follow-up for an unknown preset tag', () => {
+    mocks.activeTaskId = 'task-1';
+    mocks.tasks = [
+      {
+        id: 'task-1',
+        sessionKey: 'agent:main:clawwork:task:task-1',
+        gatewayId: 'gw-1',
+        tags: ['assistant-task-preset:content:unknown'],
+      },
+    ];
+    mocks.messagesByTask = completedMessages('task-1');
+    const view = renderFlow();
+
+    click(view.container, '[data-testid="first-task-continue"]');
+
+    expect(textarea(view.container).value).toBe('firstTaskCompletion.continuePrompt');
+    expect(mocks.handleSend).not.toHaveBeenCalled();
+    view.unmount();
   });
 
   it('requests a result-action draft without sending or creating an artifact', () => {

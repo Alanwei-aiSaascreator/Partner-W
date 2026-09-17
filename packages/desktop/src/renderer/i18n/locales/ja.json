@@ -93,6 +93,7 @@
       "starters": {
         "1": {
           "description": "Break down goals, steps, timing, and deliverables",
+          "followUpPrompt": "Review the goal breakdown above for missing dependencies, then make the next action specific with an owner, start time, and definition of done.",
           "materialHint": "Goal, deadline, current progress, and constraints (optional)",
           "output": "Goal breakdown, milestones, priorities, and next actions",
           "prompt": "Break down [goal] into executable steps with milestones, priorities, deadlines, and the next action.",
@@ -100,6 +101,7 @@
         },
         "2": {
           "description": "Schedule stages, timing, owners, and checkpoints",
+          "followUpPrompt": "Review the execution plan above and add the critical path, resource conflicts, risk triggers, and acceptance criteria for each checkpoint.",
           "materialHint": "Goal, deadline, available resources, participants, and constraints (optional)",
           "output": "Phased execution plan with timeline, owners, checkpoints, and risk responses",
           "prompt": "Create an execution plan for [goal] with phased tasks, timing, owners, checkpoints, risks, and adjustment conditions.",
@@ -107,6 +109,7 @@
         },
         "3": {
           "description": "Weigh cost, risk, and expected results",
+          "followUpPrompt": "Extend the comparison above with weighted criteria and sensitivity analysis, and explain which changes would justify choosing the other option.",
           "materialHint": "Options, budget, time constraints, and decision criteria (optional)",
           "output": "Option comparison, trade-offs, fit conditions, and an evidence-based recommendation",
           "prompt": "Compare [option A] and [option B] by cost, outcome, risk, and fit, then make a clear recommendation.",
@@ -114,6 +117,7 @@
         },
         "4": {
           "description": "Combine goals, context, evidence, risks, and recommendations",
+          "followUpPrompt": "Refine the analysis above by separating facts, assumptions, and open questions, then rank the recommendations by impact and urgency.",
           "materialHint": "Question, background, objective, data, and constraints (optional)",
           "output": "Current-state assessment, evidence, key factors, risks, opportunities, and actions",
           "prompt": "Analyze [question] comprehensively. Confirm the goal and context, then assess evidence, key factors, risks, opportunities, and recommended actions.",
@@ -126,6 +130,7 @@
       "starters": {
         "1": {
           "description": "Define audience, angle, and a content series",
+          "followUpPrompt": "Select the three strongest ideas from the topic plan above and add title directions, an outline, material needs, and a recommended publishing order for each.",
           "materialHint": "Theme, platform, audience, account positioning, and reference content (optional)",
           "output": "Grouped topic ideas with angles and reasons to prioritize them",
           "prompt": "Plan topics about [subject]. Confirm the platform, audience, and goal, then give me 10 specific ideas with reasons.",
@@ -133,6 +138,7 @@
         },
         "2": {
           "description": "Write a complete, editable long-form piece",
+          "followUpPrompt": "Edit the long-form draft above for factual support and logical gaps, then improve the title, opening, transitions, and closing call to action.",
           "materialHint": "Theme, audience, platform, tone, length, and factual material (optional)",
           "output": "Long-form draft with a title, opening, section structure, and closing action",
           "prompt": "Write a long-form [platform] piece about [subject]. Confirm audience, tone, and length, then deliver a title, opening, structured body, and closing action.",
@@ -140,6 +146,7 @@
         },
         "3": {
           "description": "Design the hook, spoken lines, visuals, and pace",
+          "followUpPrompt": "Turn the short-video script above into a second-by-second plan covering spoken lines, visuals, captions, transitions, and required materials.",
           "materialHint": "Topic, platform, audience, video length, product information, and references (optional)",
           "output": "Short-video script with a hook, spoken lines, visual cues, pacing, and call to action",
           "prompt": "Write a [platform and duration] short-video script about [topic], including the hook, spoken lines, visual cues, pacing, and call to action.",
@@ -147,6 +154,7 @@
         },
         "4": {
           "description": "Preserve meaning while refining structure, voice, and expression",
+          "followUpPrompt": "Compare the polished copy above with the original, explain the key changes, then provide one more concise version and one more engaging version.",
           "materialHint": "Original copy, platform, audience, target tone, and facts to preserve (optional)",
           "output": "Polished copy that preserves meaning, with change notes and title options",
           "prompt": "Improve and polish the copy I provide while preserving its facts and intent. Refine the title, opening, structure, voice, and pace.",
@@ -159,6 +167,7 @@
       "starters": {
         "1": {
           "description": "Write headlines, benefits, scenarios, and conversion copy",
+          "followUpPrompt": "Review the product copy above, separate verifiable facts from marketing language, and optimize the opening section, benefit section, and call to action.",
           "materialHint": "Product details, audience, specifications, proven benefits, and supporting evidence (optional)",
           "output": "Product headline, layered benefits, use cases, proof points, and call to action",
           "prompt": "Write product copy for [product]. Confirm the audience, price range, and proven benefits, then provide a headline, layered benefits, use cases, proof points, and call to action.",
@@ -166,6 +175,7 @@
         },
         "2": {
           "description": "Plan objectives, cadence, channels, and execution",
+          "followUpPrompt": "Turn the campaign plan above into an execution schedule with daily milestones, owners, budget allocation, inventory alerts, and review metrics.",
           "materialHint": "Campaign objective, products, budget, period, channels, inventory, and historical data (optional)",
           "output": "Campaign theme, audience, timeline, channel actions, budget, and review metrics",
           "prompt": "Create a campaign plan for [product or store], covering the objective, audience, cadence, channel actions, budget, inventory risks, and review metrics.",
@@ -173,6 +183,7 @@
         },
         "3": {
           "description": "Compare positioning, price, content, and customer feedback",
+          "followUpPrompt": "Extend the competitor analysis above with evidence sources and differentiation priorities, then propose three small experiments that can be tested immediately.",
           "materialHint": "Your product, competitor materials, prices, page content, and customer reviews (optional)",
           "output": "Competitor report covering positioning, price, claims, page content, and review differences",
           "prompt": "Analyze [competitor] across positioning, price, claims, page content, and reviews, then identify differentiation opportunities.",
@@ -180,6 +191,7 @@
         },
         "4": {
           "description": "Analyze reviews and prepare customer-service responses",
+          "followUpPrompt": "Turn the review analysis above into an action list, then refine the responses and escalation rules for presales, objections, shipping, and after-sales.",
           "materialHint": "Product or store details, customer reviews, FAQs, shipping, and after-sales policies (optional)",
           "output": "Review themes, improvement actions, and customer-service scripts for presales and support",
           "prompt": "Analyze customer reviews for [product or store], identify recurring issues and improvements, then create customer-service responses for presales, objections, shipping, and after-sales.",
@@ -192,6 +204,7 @@
       "starters": {
         "1": {
           "description": "Plan routes, timing, cost, and alternatives",
+          "followUpPrompt": "Expand the travel plan above into a daily itinerary with transport connections, booking deadlines, cost ranges, child or older-traveler needs, and weather alternatives.",
           "materialHint": "Destination, family members, dates, budget, travel preferences, and constraints (optional)",
           "output": "Travel route, schedule, costs, bookings, and alternative plans",
           "prompt": "Create a travel plan for a family trip to [destination]. Confirm travelers, dates, and budget, then provide routes, timing, costs, bookings, and alternatives.",
@@ -199,6 +212,7 @@
         },
         "2": {
           "description": "Organize items, owners, timing, and completion status",
+          "followUpPrompt": "Review the family checklist above, merge duplicates, and add an owner, deadline, prerequisite, and final pre-departure check where relevant.",
           "materialHint": "Household task, family members, deadline, available items, and special needs (optional)",
           "output": "Family checklist grouped by category with owners, timing, and completion checks",
           "prompt": "Turn [household task] into a family checklist grouped by category, with items or tasks, owners, timing, and completion checks.",
@@ -206,6 +220,7 @@
         },
         "3": {
           "description": "Compare price, quality, risks, and use cases",
+          "followUpPrompt": "Re-rank the purchase options above by budget, essential needs, and risk, then list the specifications and support terms that must be verified before buying.",
           "materialHint": "Candidate products, budget, use needs, specifications, reviews, and warranty terms (optional)",
           "output": "Purchase comparison with key trade-offs, risks, and a recommendation",
           "prompt": "Compare the purchase options [product A] and [product B] by price, quality, features, reviews, support, and fit, then recommend one.",
@@ -213,6 +228,7 @@
         },
         "4": {
           "description": "Assign owners, reminders, and checklists",
+          "followUpPrompt": "Check the schedule above for conflicts and add buffer time, family assignments, reminder points, and alternatives for last-minute changes.",
           "materialHint": "Family members, fixed events, available times, priorities, and preferences (optional)",
           "output": "Schedule by date and person, with conflicts, buffer time, and reminders",
           "prompt": "Turn [household task] into a schedule plan with timing, owner assignments, required items, and reminders.",
@@ -225,6 +241,7 @@
       "starters": {
         "1": {
           "description": "Build a formal document from source material",
+          "followUpPrompt": "Edit the document draft above for structure, facts, terminology, and tone, list the information that still needs my confirmation, and then provide a revised version.",
           "materialHint": "Source material, document type, audience, purpose, length, and format (optional)",
           "output": "Clear document structure, working draft, and open questions",
           "prompt": "Turn my source material into a [document type]. Confirm the audience and purpose, then produce a clear structure and draft.",
@@ -232,6 +249,7 @@
         },
         "2": {
           "description": "Clean, analyze, and summarize business data",
+          "followUpPrompt": "Validate the spreadsheet analysis above, explain metric definitions, anomaly handling, and conclusion limits, then recommend the most useful charts.",
           "materialHint": "Spreadsheet, field definitions, business questions, date range, and metric rules (optional)",
           "output": "Cleaning notes, key metrics, anomalies, findings, and chart suggestions",
           "prompt": "Process the spreadsheet I provide. Explain what can be read, then clean it, analyze key metrics, and summarize findings.",
@@ -239,6 +257,7 @@
         },
         "3": {
           "description": "Extract decisions, owners, and deadlines",
+          "followUpPrompt": "Review the meeting minutes above, separate decisions, action items, and open questions, and add an owner, deadline, and dependency for each item.",
           "materialHint": "Transcript, notes, attendee list, and meeting agenda (optional)",
           "output": "Decisions, action items, owners, deadlines, and unresolved questions",
           "prompt": "Turn these meeting notes into minutes with decisions, action items, owners, deadlines, and open questions.",
@@ -246,6 +265,7 @@
         },
         "4": {
           "description": "Develop an outline, key points, and slide flow",
+          "followUpPrompt": "Expand the presentation outline above into a slide-by-slide script with each slide’s main conclusion, evidence needs, speaking time, and visual treatment.",
           "materialHint": "Presentation topic, audience, duration, available data, and brand template (optional)",
           "output": "Slide-by-slide purpose, key points, evidence needs, and visual direction",
           "prompt": "Create a presentation outline for [topic]. Confirm the audience, goal, and duration, then give slide-by-slide points and data needs.",
@@ -258,6 +278,7 @@
       "starters": {
         "1": {
           "description": "Organize sources, themes, evidence, and open questions",
+          "followUpPrompt": "Refine the source organization above by removing duplicates, marking corroborating or conflicting evidence, and producing a prioritized verification list.",
           "materialHint": "Files or links, organization goal, research scope, and source standards (optional)",
           "output": "Source catalog with thematic summaries, evidence references, reliability notes, and open questions",
           "prompt": "Organize the [source material] I provide by theme, source, key finding, evidence, and reliability, then list open questions.",
@@ -265,6 +286,7 @@
         },
         "2": {
           "description": "Evaluate evidence, disagreements, and conditions",
+          "followUpPrompt": "Review the viewpoint comparison above for evidence strength and limits of applicability, and explain what new evidence would change the current judgment.",
           "materialHint": "Question, main viewpoints, available sources, and decision criteria (optional)",
           "output": "Evidence matrix, agreements, disagreements, conditions, and a balanced judgment",
           "prompt": "Compare different viewpoints on [question], including evidence, disagreements, applicable conditions, and a balanced conclusion.",
@@ -272,6 +294,7 @@
         },
         "3": {
           "description": "Set milestones, materials, and practice",
+          "followUpPrompt": "Turn the learning plan above into a detailed first week with daily tasks, exercises, success checks, and an adjustment plan if progress falls behind.",
           "materialHint": "Learning goal, current level, available time, deadline, and existing resources (optional)",
           "output": "Learning stages, weekly tasks, materials, practice, and checkpoints",
           "prompt": "Create a learning plan for [topic] based on my current level, available time, and goal, with stages, resources, and exercises.",
@@ -279,6 +302,7 @@
         },
         "4": {
           "description": "Develop a complete report with question, method, findings, and conclusion",
+          "followUpPrompt": "Edit the research report above by separating conclusions, evidence, and inference, strengthening the limitations section, and prioritizing what still needs verification.",
           "materialHint": "Research question, sources, analysis scope, audience, and format requirements (optional)",
           "output": "Research background, method, evidence, findings, limitations, conclusion, and recommendations",
           "prompt": "Write a research report about [research question], covering background, method, sources, findings, limitations, conclusions, and recommendations.",
@@ -291,6 +315,7 @@
       "starters": {
         "1": {
           "description": "Plan spoken lines, visuals, and pace",
+          "followUpPrompt": "Convert the shooting script above into a production checklist with locations, performer actions, props, camera positions, audio needs, and estimated timing.",
           "materialHint": "Topic, platform, duration, people, product details, and shooting conditions (optional)",
           "output": "Structured spoken lines, visuals, actions, props, and timing guidance",
           "prompt": "Write a [platform and duration] shooting script about [topic], including hook, spoken lines, visual cues, and call to action.",
@@ -298,6 +323,7 @@
         },
         "2": {
           "description": "Define shot size, camera, action, and timing",
+          "followUpPrompt": "Review the storyboard above and add shot continuity, backup shots, on-set risks, and a shooting priority for each shot.",
           "materialHint": "Script, reference videos, target duration, aspect ratio, and available locations (optional)",
           "output": "Storyboard with shot number, framing, camera, visuals, lines, timing, and transitions",
           "prompt": "Turn my script into a storyboard with shot number, framing, visual, dialogue, camera, duration, and transition.",
@@ -305,6 +331,7 @@
         },
         "3": {
           "description": "Plan editing structure, timing, and emotional progression",
+          "followUpPrompt": "Map the editing plan above onto a timeline, marking footage to keep or cut, music beats, caption density, and transition points.",
           "materialHint": "Script or footage, platform, target duration, audience, and pacing references (optional)",
           "output": "Section timing, editing rhythm, footage choices, emotional curve, and transition guidance",
           "prompt": "Design the editing rhythm for [video topic], mapping structure, footage choices, emotional changes, transitions, and pacing by time segment.",
@@ -312,6 +339,7 @@
         },
         "4": {
           "description": "Generate title directions, cover copy, and visual guidance",
+          "followUpPrompt": "Choose the three strongest title-and-cover combinations above and explain the audience, information hierarchy, visual focus, and A/B test for each.",
           "materialHint": "Video topic, platform, audience, core message, and cover assets (optional)",
           "output": "Title options, cover copy, composition, visual priorities, and test ideas",
           "prompt": "Create title and cover options for [video topic], including multiple titles, cover copy, composition, visual priorities, and testing ideas.",

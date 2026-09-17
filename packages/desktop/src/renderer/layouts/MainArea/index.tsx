@@ -62,7 +62,12 @@ import type { CustomGoalAnalysis } from '@/features/goal-routing/goal-analysis';
 import { createAgentWithRollback } from '@/lib/agent-builder';
 import { fetchAgentsForGateway } from '@/hooks/useGatewayBootstrap';
 import { toast } from '@/lib/toast';
-import type { AssistantTaskPreset } from '@/lib/assistant-task-presets';
+import { ASSISTANT_TASK_PRESETS, type AssistantTaskPreset } from '@/lib/assistant-task-presets';
+import {
+  encodeAssistantTaskPresetTag,
+  resolveAssistantTaskPresetIdFromTags,
+  upsertAssistantTaskPresetTag,
+} from '@/lib/assistant-task-preset-tags';
 import {
   loadRecentAssistantTasks,
   recordRecentAssistantTask,
@@ -528,6 +533,10 @@ export function ChatContent({
   const { t } = useTranslation();
   const activeTaskId = useTaskStore((s) => s.activeTaskId);
   const activeTask = useTaskStore((s) => s.tasks.find((task) => task.id === s.activeTaskId));
+  const activeTaskPreset = useMemo(() => {
+    const presetId = resolveAssistantTaskPresetIdFromTags(activeTask?.tags ?? []);
+    return presetId ? ASSISTANT_TASK_PRESETS.find((preset) => preset.id === presetId) : undefined;
+  }, [activeTask?.tags]);
   const artifacts = useFileStore((s) => s.artifacts);
   const setSelectedArtifact = useFileStore((s) => s.setSelectedArtifact);
   const pendingGatewayId = useTaskStore((s) => s.pendingNewTask?.gatewayId);
@@ -661,6 +670,13 @@ export function ChatContent({
         owner.taskId === currentOwner.taskId;
       if (resolution === 'cancelled' || !ownerMatchesCurrentScope || !request.presetId || !activeUserId) {
         return;
+      }
+      if (!encodeAssistantTaskPresetTag(request.presetId)) return;
+      const taskState = useTaskStore.getState();
+      if (taskState.activeTaskId === null && taskState.pendingNewTask) {
+        taskState.updatePending({
+          tags: upsertAssistantTaskPresetTag(taskState.pendingNewTask.tags ?? [], request.presetId),
+        });
       }
       const tasks = recordRecentAssistantTask(activeUserId, request.presetId);
       setRecentTaskHistory((current) => (current.userId === activeUserId ? { userId: activeUserId, tasks } : current));
@@ -1017,7 +1033,14 @@ export function ChatContent({
               messages={messages}
               activity={activity}
               artifactCount={activeTaskArtifacts.length}
-              onContinue={() => requestDraft(t('firstTaskCompletion.continuePrompt'), 'first-task-follow-up')}
+              onContinue={() => {
+                if (activeTaskPreset) {
+                  const preset = activeTaskPreset;
+                  requestDraft(t(preset.followUpPromptKey), 'first-task-follow-up');
+                  return;
+                }
+                requestDraft(t('firstTaskCompletion.continuePrompt'), 'first-task-follow-up');
+              }}
               onNewTask={startNewTask}
               onViewUsage={() => setMainView('dashboard')}
               onGenerateFile={handleGenerateFile}

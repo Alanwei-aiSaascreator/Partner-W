@@ -9,6 +9,7 @@ test('recognizes only supported assistant preset translation member calls', () =
     t(preset.materialHintKey);
     t(preset.outputKey);
     t(preset.promptKey);
+    t(preset.followUpPromptKey);
   `);
 
   assert.equal(isUsed('assistantWorkspaces.compass.starters.1.title'), true);
@@ -16,6 +17,7 @@ test('recognizes only supported assistant preset translation member calls', () =
   assert.equal(isUsed('assistantWorkspaces.content.starters.1.materialHint'), true);
   assert.equal(isUsed('assistantWorkspaces.video.starters.4.output'), true);
   assert.equal(isUsed('assistantWorkspaces.office.starters.2.prompt'), true);
+  assert.equal(isUsed('assistantWorkspaces.family.starters.4.followUpPrompt'), true);
   assert.equal(isUsed('totallyUnused.title'), false);
   assert.equal(isUsed('otherNamespace.item.materialHint'), false);
   assert.equal(isUsed('assistantWorkspaces.content.starters.5.output'), false);

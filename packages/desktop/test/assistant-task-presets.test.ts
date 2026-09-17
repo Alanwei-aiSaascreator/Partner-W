@@ -38,7 +38,7 @@ const EXPECTED_PRESET_ROOTS = [
   ['family:purchase-comparison', 'assistantWorkspaces.family.starters.3'],
   ['family:schedule-plan', 'assistantWorkspaces.family.starters.4'],
 ] as const;
-const COPY_FIELDS = ['title', 'description', 'prompt', 'materialHint', 'output'] as const;
+const COPY_FIELDS = ['title', 'description', 'prompt', 'materialHint', 'output', 'followUpPrompt'] as const;
 type CopyField = (typeof COPY_FIELDS)[number];
 type PresetCopy = Record<CopyField, string>;
 type LocalePresetCopy = Record<string, PresetCopy>;
@@ -219,16 +219,19 @@ describe('assistant task presets', () => {
     }
   });
 
-  it('maps every stable id to the intended five-field locale slot', () => {
+  it('maps every stable id to the intended six-field locale slot', () => {
     expect(
-      ASSISTANT_TASK_PRESETS.map(({ id, titleKey, descriptionKey, promptKey, materialHintKey, outputKey }) => ({
-        id,
-        titleKey,
-        descriptionKey,
-        promptKey,
-        materialHintKey,
-        outputKey,
-      })),
+      ASSISTANT_TASK_PRESETS.map(
+        ({ id, titleKey, descriptionKey, promptKey, materialHintKey, outputKey, followUpPromptKey }) => ({
+          id,
+          titleKey,
+          descriptionKey,
+          promptKey,
+          materialHintKey,
+          outputKey,
+          followUpPromptKey,
+        }),
+      ),
     ).toEqual(
       EXPECTED_PRESET_ROOTS.map(([id, root]) => ({
         id,
@@ -237,17 +240,27 @@ describe('assistant task presets', () => {
         promptKey: `${root}.prompt`,
         materialHintKey: `${root}.materialHint`,
         outputKey: `${root}.output`,
+        followUpPromptKey: `${root}.followUpPrompt`,
       })),
     );
   });
 
-  it('matches exact five-field copy for all 28 canonical ids in all nine locales', () => {
+  it('matches exact six-field copy for all 28 canonical ids in all nine locales', () => {
     for (const [locale, profile] of Object.entries(COPY_PROFILE_BY_LOCALE) as Array<
       [keyof typeof COPY_PROFILE_BY_LOCALE, keyof typeof expectedPresetCopy]
     >) {
       const actual = readLocalePresetCopy(locale);
       const expected = expectedPresetCopy[profile] as LocalePresetCopy;
       expect(validatePresetCopies(locale, actual, expected), `${locale} exact preset copy`).toEqual([]);
+    }
+  });
+
+  it('provides a non-empty task-specific follow-up prompt for every canonical preset', () => {
+    for (const locale of Object.keys(COPY_PROFILE_BY_LOCALE) as Array<keyof typeof COPY_PROFILE_BY_LOCALE>) {
+      const copy = readLocalePresetCopy(locale);
+      const prompts = EXPECTED_PRESET_ROOTS.map(([id]) => copy[id].followUpPrompt.trim());
+      expect(prompts.every(Boolean), `${locale} missing follow-up prompt`).toBe(true);
+      expect(new Set(prompts).size, `${locale} follow-up prompts must be task-specific`).toBe(28);
     }
   });
 

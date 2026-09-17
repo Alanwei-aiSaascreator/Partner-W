@@ -7,7 +7,7 @@ export function createI18nUsageMatcher(sourceText) {
   }
 
   const workspaceSegment = '(?:compass|content|video|ecommerce|office|research|family)';
-  const presetLeaves = ['title', 'description', 'prompt', 'materialHint', 'output'];
+  const presetLeaves = ['title', 'description', 'prompt', 'materialHint', 'output', 'followUpPrompt'];
   const usedPresetPatterns = [];
   for (const leaf of presetLeaves) {
     const callRe = new RegExp(`\\bt\\(\\s*preset\\.${leaf}Key\\s*(?=[,)])`);
