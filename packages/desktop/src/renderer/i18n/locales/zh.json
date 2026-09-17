@@ -465,6 +465,21 @@
     "time": "时间"
   },
   "community": {
+    "comments": "评论",
+    "composePlaceholder": "说点什么…",
+    "composeVisibilityOrg": "团队可见",
+    "composeVisibilityPrivate": "仅自己",
+    "delete": "删除",
+    "emptyFeed": "还没有动态，发第一条吧",
+    "like": "赞",
+    "liked": "已赞",
+    "loadFailed": "加载失败，请重试",
+    "loading": "加载中…",
+    "loadMore": "加载更多",
+    "privateBadge": "仅自己可见",
+    "publish": "发布",
+    "publishing": "发布中…",
+    "retry": "重试",
     "tabFeed": "广场",
     "tabMembers": "成员",
     "title": "团队协作"

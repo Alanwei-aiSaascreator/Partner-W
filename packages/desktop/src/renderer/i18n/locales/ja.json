@@ -465,6 +465,21 @@
     "time": "時刻"
   },
   "community": {
+    "comments": "Comments",
+    "composePlaceholder": "Say something…",
+    "composeVisibilityOrg": "Team visible",
+    "composeVisibilityPrivate": "Only me",
+    "delete": "Delete",
+    "emptyFeed": "Nothing here yet — post the first one.",
+    "like": "Like",
+    "liked": "Liked",
+    "loadFailed": "Could not load. Try again.",
+    "loading": "Loading…",
+    "loadMore": "Load more",
+    "privateBadge": "Only me",
+    "publish": "Publish",
+    "publishing": "Publishing…",
+    "retry": "Retry",
     "tabFeed": "Feed",
     "tabMembers": "Members",
     "title": "Team"

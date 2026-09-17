@@ -465,6 +465,21 @@
     "time": "時間"
   },
   "community": {
+    "comments": "評論",
+    "composePlaceholder": "說點什麼…",
+    "composeVisibilityOrg": "團隊可見",
+    "composeVisibilityPrivate": "僅自己",
+    "delete": "刪除",
+    "emptyFeed": "還沒有動態，發第一條吧",
+    "like": "讚",
+    "liked": "已讚",
+    "loadFailed": "載入失敗，請重試",
+    "loading": "載入中…",
+    "loadMore": "載入更多",
+    "privateBadge": "僅自己可見",
+    "publish": "發布",
+    "publishing": "發布中…",
+    "retry": "重試",
     "tabFeed": "廣場",
     "tabMembers": "成員",
     "title": "團隊協作"
