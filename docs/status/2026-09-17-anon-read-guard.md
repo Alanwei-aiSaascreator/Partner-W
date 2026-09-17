@@ -1,7 +1,7 @@
-# 未登录读面收口（迁移 42 / 43）上生产记录
+# 未登录读面收口（迁移 42 / 43 / 44）上生产记录
 
 **日期：** 2026-09-17
-**外层分支：** `feat/p2-market-creator`（提交 `c277658` / `56e6907`）
+**外层分支：** `feat/p2-market-creator`（提交 `c277658` / `56e6907` / `44eb7d0`）
 **触发：** P2 上线探针③ —— 拿 anon key 能 select 出 `agent_templates` 官方模板**整行**（含 `instructions` 提示词）。
 
 ## 做了什么
@@ -12,7 +12,8 @@
 | `20260917000043_community_anon_read_guard.sql`         | `posts` / `comments` / `likes` | `post_select` / `comment_select` / `like_select` 同样加 `to authenticated`                    |
 | `20260917000044_posts_policy_mirrors_can_see_post.sql` | 同上三张表                     | 三条策略改为**直接调用 `can_see_post()`**（与 RPC 同一份定义）；并给 authenticated 授权该函数 |
 
-两条都**只改策略**：不动表结构、不动数据、不动 RPC、不动触发器。业务语义不变 ——
+三条**都不动表结构、不动数据、不动 RPC、不动触发器**（42/43 纯策略；44 除三条策略外，
+只多一条给 authenticated 的函数授权 —— 因为策略要调用 `can_see_post()`）。业务语义不变 ——
 「公开」= 所有**登录**用户可见（客户端根本没有匿名场景：所有读都走 definer RPC，
 RPC 只 `grant` 给 authenticated，anon 实测 401 `42501`）。
 
