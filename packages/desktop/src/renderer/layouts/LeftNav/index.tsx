@@ -24,6 +24,7 @@ import { exportToFiles, exportToLocal } from '@/lib/export-session';
 import TaskItem from './TaskItem';
 import AssistantList from './AssistantList';
 import { useGatewaySelector } from '@/hooks/useGatewaySelector';
+import { removeAssistantTaskPresetTags } from '@/lib/assistant-task-preset-tags';
 import type { TaskStatus } from '@clawwork/shared';
 import EmptyState from '@/components/semantic/EmptyState';
 import { useSessionPreviews } from '@/hooks/useSessionPreviews';
@@ -189,7 +190,15 @@ export default function LeftNav({ onOpenAssistantSettings }: LeftNavProps) {
     (agentId: string) => {
       setSelectedAgent(selectedGwId, agentId);
       const pending = useTaskStore.getState().pendingNewTask;
-      setPending({ ...pending, gatewayId: selectedGwId, agentId });
+      const sameScope = pending?.gatewayId === selectedGwId && pending.agentId === agentId;
+      const tags = sameScope ? pending?.tags : removeAssistantTaskPresetTags(pending?.tags ?? []);
+      const { tags: _previousTags, ...pendingWithoutTags } = pending ?? {};
+      setPending({
+        ...(sameScope ? pending : pendingWithoutTags),
+        gatewayId: selectedGwId,
+        agentId,
+        ...(tags && tags.length > 0 ? { tags } : {}),
+      });
       setActiveTask(null);
       setMainView('chat');
     },

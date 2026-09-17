@@ -535,8 +535,11 @@ export function ChatContent({
   const activeTask = useTaskStore((s) => s.tasks.find((task) => task.id === s.activeTaskId));
   const activeTaskPreset = useMemo(() => {
     const presetId = resolveAssistantTaskPresetIdFromTags(activeTask?.tags ?? []);
-    return presetId ? ASSISTANT_TASK_PRESETS.find((preset) => preset.id === presetId) : undefined;
-  }, [activeTask?.tags]);
+    const preset = presetId ? ASSISTANT_TASK_PRESETS.find((item) => item.id === presetId) : undefined;
+    const activeTaskAgentId =
+      activeTask?.agentId ?? (activeTask?.sessionKey ? parseAgentIdFromSessionKey(activeTask.sessionKey) : undefined);
+    return preset?.assistantId === activeTaskAgentId ? preset : undefined;
+  }, [activeTask?.agentId, activeTask?.sessionKey, activeTask?.tags]);
   const artifacts = useFileStore((s) => s.artifacts);
   const setSelectedArtifact = useFileStore((s) => s.setSelectedArtifact);
   const pendingGatewayId = useTaskStore((s) => s.pendingNewTask?.gatewayId);

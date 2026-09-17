@@ -15,6 +15,7 @@ import { useUiStore } from '@/stores/uiStore';
 import { motion as animationPresets } from '@/styles/design-tokens';
 import { relayModelsFrom } from '@/components/ChatInput/model-families';
 import type { AssistantTaskPreset } from '@/lib/assistant-task-presets';
+import { removeAssistantTaskPresetTags } from '@/lib/assistant-task-preset-tags';
 import AssistantTaskWorkbench from './AssistantTaskWorkbench';
 
 interface WelcomeScreenProps {
@@ -59,13 +60,16 @@ export default function WelcomeScreen({
     if (!previous?.agentId && effectiveAgentId === preferredAgentId) {
       setSelectedAgent(selectedGwId, effectiveAgentId);
     }
-    if (sameScope && previous.model === model && !previous.ensemble && !previous.teamId) {
+    if (sameScope) {
+      if (previous.model !== model) useTaskStore.getState().updatePending({ model });
       return;
     }
+    const tags = removeAssistantTaskPresetTags(previous?.tags ?? []);
     useTaskStore.getState().setPending({
       gatewayId: selectedGwId,
       agentId: effectiveAgentId,
       model,
+      ...(tags.length > 0 ? { tags } : {}),
     });
   }, [defaultModel?.id, effectiveAgentId, preferredAgentId, selectedGwId, setSelectedAgent]);
 
@@ -77,11 +81,20 @@ export default function WelcomeScreen({
   const handleSelectAgent = (agentId: string) => {
     setSelectedAgent(selectedGwId, agentId);
     setSelectedAgentId(agentId);
-    useTaskStore.getState().setPending({
-      gatewayId: selectedGwId,
-      agentId,
-      model: defaultModel?.id,
-    });
+    const taskState = useTaskStore.getState();
+    const previous = taskState.pendingNewTask;
+    const sameScope = previous?.gatewayId === selectedGwId && previous.agentId === agentId;
+    if (sameScope) {
+      taskState.updatePending({ model: previous.model ?? defaultModel?.id });
+    } else {
+      const tags = removeAssistantTaskPresetTags(previous?.tags ?? []);
+      taskState.setPending({
+        gatewayId: selectedGwId,
+        agentId,
+        model: defaultModel?.id,
+        ...(tags.length > 0 ? { tags } : {}),
+      });
+    }
     onAssistantChange();
   };
 

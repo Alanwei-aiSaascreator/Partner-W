@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   ASSISTANT_TASK_PRESET_TAG_PREFIX,
   encodeAssistantTaskPresetTag,
+  removeAssistantTaskPresetTags,
   resolveAssistantTaskPresetIdFromTags,
   upsertAssistantTaskPresetTag,
 } from '../src/renderer/lib/assistant-task-preset-tags';
@@ -43,5 +44,16 @@ describe('assistant task preset tags', () => {
         'custom:secret prompt',
       ),
     ).toEqual(['private']);
+  });
+
+  it('removes every preset tag while preserving unrelated task tags', () => {
+    expect(
+      removeAssistantTaskPresetTags([
+        'private',
+        `${ASSISTANT_TASK_PRESET_TAG_PREFIX}content:short-video-script`,
+        `${ASSISTANT_TASK_PRESET_TAG_PREFIX}unknown:value`,
+        'important',
+      ]),
+    ).toEqual(['private', 'important']);
   });
 });

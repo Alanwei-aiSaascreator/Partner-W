@@ -799,6 +799,27 @@ describe('assistant task workbench draft flow', () => {
     view.unmount();
   });
 
+  it('falls back to the generic follow-up when the tagged preset belongs to another assistant', () => {
+    mocks.activeTaskId = 'task-1';
+    mocks.tasks = [
+      {
+        id: 'task-1',
+        sessionKey: 'agent:main:clawwork:task:task-1',
+        gatewayId: 'gw-1',
+        agentId: 'main',
+        tags: ['assistant-task-preset:content:short-video-script'],
+      },
+    ];
+    mocks.messagesByTask = completedMessages('task-1');
+    const view = renderFlow();
+
+    click(view.container, '[data-testid="first-task-continue"]');
+
+    expect(textarea(view.container).value).toBe('firstTaskCompletion.continuePrompt');
+    expect(mocks.handleSend).not.toHaveBeenCalled();
+    view.unmount();
+  });
+
   it('requests a result-action draft without sending or creating an artifact', () => {
     mocks.activeTaskId = 'task-1';
     mocks.tasks = [{ id: 'task-1', sessionKey: 'agent:main:clawwork:task:task-1', gatewayId: 'gw-1' }];

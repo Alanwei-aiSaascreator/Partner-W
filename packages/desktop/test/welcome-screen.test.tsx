@@ -6,12 +6,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   setPending: vi.fn(),
+  updatePending: vi.fn((patch: Record<string, unknown>) => {
+    if (mocks.pendingNewTask) mocks.pendingNewTask = { ...mocks.pendingNewTask, ...patch };
+  }),
   setSelectedAgentId: vi.fn(),
   setSelectedGwId: vi.fn(),
   setSelectedAgent: vi.fn(),
   selectorOptions: undefined as { initialGatewayId?: string; initialAgentId?: string } | undefined,
   selectedGwId: 'gw-1',
-  pendingNewTask: null as { gatewayId?: string; agentId?: string; model?: string } | null,
+  pendingNewTask: null as { gatewayId?: string; agentId?: string; model?: string; tags?: string[] } | null,
   gatewayState: { agentCatalog: [{ id: 'main' }] as Array<{ id: string }> },
   modelCatalogByGateway: {
     'gw-1': [
@@ -42,7 +45,13 @@ vi.mock('../src/renderer/platform', () => ({
   useTaskStore: Object.assign(
     <T,>(selector: (state: { pendingNewTask: typeof mocks.pendingNewTask }) => T) =>
       selector({ pendingNewTask: mocks.pendingNewTask }),
-    { getState: () => ({ pendingNewTask: mocks.pendingNewTask, setPending: mocks.setPending }) },
+    {
+      getState: () => ({
+        pendingNewTask: mocks.pendingNewTask,
+        setPending: mocks.setPending,
+        updatePending: mocks.updatePending,
+      }),
+    },
   ),
   useUiStore: <T,>(
     selector: (state: {
@@ -257,6 +266,36 @@ describe('WelcomeScreen assistant workspace', () => {
     mocks.modelCatalogByGateway['gw-1'] = previousCatalog;
   });
 
+  it('adds a loaded default model without replacing same-scope preset tags', () => {
+    const previousCatalog = mocks.modelCatalogByGateway['gw-1'];
+    mocks.modelCatalogByGateway['gw-1'] = [];
+    mocks.pendingNewTask = {
+      gatewayId: 'gw-1',
+      agentId: 'main',
+      tags: ['private', 'assistant-task-preset:compass:goal-breakdown'],
+    };
+    const ui = () => (
+      <WelcomeScreen
+        onboardingProfile={{ ...onboardingProfile, useCases: [] }}
+        recentPresetIds={[]}
+        onSelectPreset={vi.fn()}
+        onCustomTask={vi.fn()}
+        onAssistantChange={vi.fn()}
+      />
+    );
+    const view = render(ui());
+
+    mocks.modelCatalogByGateway['gw-1'] = previousCatalog;
+    mocks.setPending.mockClear();
+    mocks.updatePending.mockClear();
+    view.rerender(ui());
+
+    expect(mocks.updatePending).toHaveBeenCalledWith({ model: 'deepseek-v4-flash' });
+    expect(mocks.setPending).not.toHaveBeenCalled();
+    expect(mocks.pendingNewTask?.tags).toEqual(['private', 'assistant-task-preset:compass:goal-breakdown']);
+    view.unmount();
+  });
+
   it('uses the destination gateway default label before stale pending state is normalized', () => {
     const ui = () => (
       <WelcomeScreen
@@ -273,6 +312,7 @@ describe('WelcomeScreen assistant workspace', () => {
       gatewayId: 'gw-1',
       agentId: 'main',
       model: 'qwen3.5-plus',
+      tags: ['private', 'assistant-task-preset:compass:goal-breakdown'],
     };
     view.rerender(ui());
     expect(view.container.textContent).toContain('Qwen 3.5 Plus');
@@ -288,8 +328,42 @@ describe('WelcomeScreen assistant workspace', () => {
       gatewayId: 'gw-2',
       agentId: 'main',
       model: 'clawrouter/deepseek-v4-flash',
+      tags: ['private'],
     });
     view.unmount();
+  });
+
+  it('does not carry a preset tag when switching assistants', () => {
+    mocks.gatewayState.agentCatalog = [{ id: 'main' }, { id: 'rongying-video' }];
+    mocks.pendingNewTask = {
+      gatewayId: 'gw-1',
+      agentId: 'main',
+      model: 'qwen3.5-plus',
+      tags: ['private', 'assistant-task-preset:compass:goal-breakdown'],
+    };
+    const { container, unmount } = render(
+      <WelcomeScreen
+        onboardingProfile={{ ...onboardingProfile, useCases: [] }}
+        recentPresetIds={[]}
+        onSelectPreset={vi.fn()}
+        onCustomTask={vi.fn()}
+        onAssistantChange={vi.fn()}
+      />,
+    );
+    mocks.setPending.mockClear();
+
+    const videoButton = [...container.querySelectorAll('button')].find(
+      (button) => button.textContent?.trim() === 'rongying-video',
+    );
+    act(() => videoButton?.click());
+
+    expect(mocks.setPending).toHaveBeenCalledWith({
+      gatewayId: 'gw-1',
+      agentId: 'rongying-video',
+      model: 'deepseek-v4-flash',
+      tags: ['private'],
+    });
+    unmount();
   });
 
   it('keeps a starter on the assistant already selected by the purpose', () => {

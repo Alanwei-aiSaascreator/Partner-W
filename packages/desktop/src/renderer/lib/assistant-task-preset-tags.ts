@@ -21,8 +21,12 @@ export function resolveAssistantTaskPresetIdFromTags(tags: readonly string[]): s
   return null;
 }
 
+export function removeAssistantTaskPresetTags(tags: readonly string[]): string[] {
+  return tags.filter((tag) => !tag.startsWith(ASSISTANT_TASK_PRESET_TAG_PREFIX));
+}
+
 export function upsertAssistantTaskPresetTag(tags: readonly string[], presetId: string): string[] {
-  const nonPresetTags = tags.filter((tag) => !tag.startsWith(ASSISTANT_TASK_PRESET_TAG_PREFIX));
+  const nonPresetTags = removeAssistantTaskPresetTags(tags);
   const presetTag = encodeAssistantTaskPresetTag(presetId);
   return presetTag ? [...nonPresetTags, presetTag] : nonPresetTags;
 }
