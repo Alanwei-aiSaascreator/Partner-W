@@ -12,6 +12,7 @@ import { searchArtifacts } from '../db/search.js';
 import { safeFetch } from '../net/safe-fetch.js';
 import { getArtifactAvailability } from '../artifact/reconcile.js';
 import { copyArtifactToDestination, inspectArtifactFile, readVerifiedArtifactFile } from '../artifact/access.js';
+import { trackOnSuccess } from '../analytics/reporter.js';
 
 interface SaveParams {
   taskId: string;
@@ -57,7 +58,7 @@ export function registerArtifactHandlers(): void {
         win.webContents.send('artifact:saved', artifact);
       }
 
-      return { ok: true, result: artifact };
+      return trackOnSuccess({ ok: true, result: artifact }, 'artifact_saved');
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'unknown error';
       return { ok: false, error: msg };

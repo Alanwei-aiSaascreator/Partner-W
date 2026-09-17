@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createAnalyticsReporter, type AnalyticsReporter } from '../src/main/analytics/reporter.js';
+import {
+  createAnalyticsReporter,
+  initAnalyticsReporterForTest,
+  trackOnSuccess,
+  type AnalyticsReporter,
+} from '../src/main/analytics/reporter.js';
 
 // 与仓库既有做法一致（`../debug/index.js` 会 import `electron`）：不依赖它的内部行为，
 // 顺便去掉未初始化时往 stderr 打的那层噪声。本文件不断言日志。
@@ -189,5 +194,28 @@ describe('analytics reporter', () => {
 
     // 已经聊过 3 次了，重启后不该再补一条 first_chat_sent（会影响看板口径）
     expect(reporter.peek().map((e) => e.event)).toEqual(['chat_sent']);
+  });
+});
+
+describe('trackOnSuccess', () => {
+  it('ok:false 时一条都不记（失败不能被记成"用户干了这件事"）', () => {
+    const reporter = createAnalyticsReporter({ storage: memoryStorage(), send: vi.fn() });
+    initAnalyticsReporterForTest(reporter);
+
+    const result = trackOnSuccess({ ok: false, errorCode: 'network' }, 'post_published');
+
+    expect(reporter.peek()).toHaveLength(0);
+    // 收口写法要**原样把结果还回去**：handler 的返回值不能被埋点改掉
+    expect(result).toEqual({ ok: false, errorCode: 'network' });
+  });
+
+  it('ok:true 时记一次，并把结果原样返回', () => {
+    const reporter = createAnalyticsReporter({ storage: memoryStorage(), send: vi.fn() });
+    initAnalyticsReporterForTest(reporter);
+
+    const result = trackOnSuccess({ ok: true, result: null }, 'post_published');
+
+    expect(reporter.peek().map((e) => e.event)).toEqual(['post_published']);
+    expect(result).toEqual({ ok: true, result: null });
   });
 });

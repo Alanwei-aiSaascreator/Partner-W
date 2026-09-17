@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron';
 import type { IpcResult } from '@clawwork/shared';
 import { getCommercialClient } from '../commercial/client.js';
+import { trackOnSuccess } from '../analytics/reporter.js';
 
 /**
  * 广场 / 团队的 IPC。
@@ -82,7 +83,7 @@ export function registerCommunityHandlers(): void {
       'community_post_create',
       { p_body: payload?.body ?? '', p_visibility: payload?.visibility ?? 'org' },
       (data) => firstRow(data),
-    ),
+    ).then((res) => trackOnSuccess(res, 'post_published')),
   );
 
   ipcMain.handle('community:post-delete', (_e, payload: { postId?: string }) =>
@@ -135,7 +136,7 @@ export function registerCommunityHandlers(): void {
     callRpc('team_join_with_code', { p_code: payload?.code ?? '' }, (data) => {
       const row = asRecord(data);
       return { orgId: asString(row.org_id), orgName: asString(row.org_name), role: row.role ?? 'member' };
-    }),
+    }).then((res) => trackOnSuccess(res, 'team_joined')),
   );
 
   ipcMain.handle('community:member-set-role', (_e, payload: { userId?: string; role?: string }) =>

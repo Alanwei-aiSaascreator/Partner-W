@@ -212,3 +212,17 @@ export function trackEvent(event: AnalyticsEvent, props?: QueuedAnalyticsEvent['
 export function trackChatSent(): void {
   active?.reporter.trackChatSent();
 }
+
+/**
+ * handler 的收口写法：`callRpc(...).then((r) => trackOnSuccess(r, 'post_published'))`。
+ * **只有成功才记** —— 失败要能在看板上看出来，不能被记成"用户干了这件事"。
+ */
+export function trackOnSuccess<T extends { ok: boolean }>(result: T, event: AnalyticsEvent): T {
+  if (result.ok) trackEvent(event);
+  return result;
+}
+
+/** 仅测试用：把模块级单例指向一个自己造的 reporter。 */
+export function initAnalyticsReporterForTest(reporter: AnalyticsReporter): void {
+  active = { reporter, timer: setInterval(() => {}, 1 << 30) };
+}

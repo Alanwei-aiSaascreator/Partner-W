@@ -27,6 +27,8 @@ import { registerCommercialHandlers } from './ipc/commercial-handlers.js';
 import { registerCommunityHandlers } from './ipc/community-handlers.js';
 import { registerMarketHandlers } from './ipc/market-handlers.js';
 import { registerGrowthHandlers } from './ipc/growth-handlers.js';
+import { registerAnalyticsHandlers } from './ipc/analytics-handlers.js';
+import { setupAnalytics, teardownAnalytics } from './analytics/setup.js';
 import { initUsageReporter, destroyUsageReporter } from './commercial/usage-reporter.js';
 import { bootstrapCommercialRelay } from './commercial/relay-startup.js';
 import { unwatchAll } from './context/file-watcher.js';
@@ -245,6 +247,7 @@ if (!gotLock) {
     registerCommunityHandlers();
     registerMarketHandlers();
     registerGrowthHandlers();
+    registerAnalyticsHandlers();
 
     ipcMain.handle('app:rebuild-menu', () => {
       devModeEnabled = readConfig()?.devMode === true;
@@ -309,6 +312,7 @@ if (!gotLock) {
 
     // 放在网关之后：首跑要立刻读一次额度，此时会话/配置已就绪，否则首报必然是空
     initUsageReporter();
+    setupAnalytics();
     initTray();
     initQuickLaunch();
 
@@ -347,6 +351,8 @@ app.on('before-quit', (event) => {
       unwatchAll();
       // 先掐定时器，否则拆网关的过程中还会触发一次上报，撞上半死会话
       destroyUsageReporter();
+      // 顺手把队列里剩下的事件发出去（最后一次 flush 只在这一刻发生）
+      teardownAnalytics();
       // ⚠️ 只有 ownership==='spawned' 才会真的停 —— 复用的网关是**先于客户端存在**的，
       // 绝不能因为用户关掉客户端就把它带走（判断在 stopGatewayIfOwned 里，有单测钉住）
       void shutdownLocalGatewayRuntime()

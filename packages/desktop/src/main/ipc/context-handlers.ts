@@ -14,6 +14,7 @@ import {
   revokeTaskContextSource,
 } from '../context/source-service.js';
 import { getWorkspacePath } from '../workspace/config.js';
+import { trackEvent } from '../analytics/reporter.js';
 
 function requireString(value: unknown, name: string): string {
   if (typeof value !== 'string' || value.trim().length === 0) throw new Error(`${name} is required`);
@@ -43,12 +44,14 @@ export function registerContextHandlers(): void {
         ],
       });
       if (selection.canceled || selection.filePaths.length === 0) {
+        // ⚠️ 用户「打开选择框又关掉」也是 ok:true —— 这里**绝不能**记埋点，
+        //    否则 `file_attached` 把取消也算成一次附带文件，数据当场失真。
         return { ok: true, result: { imported: [], rejected: [] } };
       }
-      return {
-        ok: true,
-        result: await importTaskFiles({ workspacePath, taskId, sourcePaths: selection.filePaths }),
-      };
+      const result = await importTaskFiles({ workspacePath, taskId, sourcePaths: selection.filePaths });
+      // 只有**真的进来文件**才算「附带文件」：选了文件但全被拒（超大/不支持）不算
+      if (result.imported.length > 0) trackEvent('file_attached');
+      return { ok: true, result };
     } catch (error) {
       return failure(error);
     }

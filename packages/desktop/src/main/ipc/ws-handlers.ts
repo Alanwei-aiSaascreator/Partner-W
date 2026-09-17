@@ -17,6 +17,7 @@ import type {
   SkillUpdateParams,
 } from '@clawwork/shared';
 import { getDebugLogger } from '../debug/index.js';
+import { trackChatSent } from '../analytics/reporter.js';
 import type { GatewayClient } from '../ws/gateway-client.js';
 import {
   beginArtifactRunForGatewayDispatch,
@@ -250,6 +251,9 @@ export function registerWsHandlers(): void {
           taskId,
           ok: true,
         });
+        // 到这一行说明消息**真的发出去了**（失败从下面的 catch 返回）。
+        // 埋点绝不 await、绝不改返回值 —— 它对这条路径必须完全透明。
+        trackChatSent();
         return { ok: true };
       } catch (err) {
         if (taskId && artifactRunToken) cancelArtifactRun(taskId, payload.sessionKey, artifactRunToken);

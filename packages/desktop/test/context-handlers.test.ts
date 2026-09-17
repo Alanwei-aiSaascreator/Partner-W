@@ -117,6 +117,50 @@ describe('task context source IPC handlers', () => {
     });
   });
 
+  /**
+   * 埋点：`file_attached` 的口径是「**真的**有文件进来」。
+   *
+   * ⚠️ 这里必须走**真的** reporter 单例（而不是 mock 掉 `trackEvent`）：
+   *    被钉住的行为是「handler 记了哪个事件、记了几次」，只有真实队列看得见
+   *    —— mock 掉之后这条测试会退化成"handler 里出现过某个字符串"。
+   * ⚠️ 必须在 `vi.resetModules()` **之后**动态 import：静态 import 拿到的是
+   *    重置前那个注册表里的实例，而 handler 用的是重置后的新实例 —— 两者不是同一个 `active`。
+   */
+  async function freshReporter() {
+    const { createAnalyticsReporter, initAnalyticsReporterForTest } = await import('../src/main/analytics/reporter.js');
+    const reporter = createAnalyticsReporter({
+      storage: { read: () => null, write: () => {} },
+      send: vi.fn(),
+    });
+    initAnalyticsReporterForTest(reporter);
+    return reporter;
+  }
+
+  it('★ 取消选择文件**不算**一次 file_attached', async () => {
+    showOpenDialogMock.mockResolvedValue({ canceled: true, filePaths: [] });
+    const reporter = await freshReporter();
+
+    await expect(handleMap.get('context:import-files')?.({}, { taskId: 'task-1' })).resolves.toEqual({
+      ok: true,
+      result: { imported: [], rejected: [] },
+    });
+
+    expect(reporter.peek()).toEqual([]);
+  });
+
+  it('★ 真导入才记一次 file_attached；选中的文件**全被拒**也不记', async () => {
+    const reporter = await freshReporter();
+    showOpenDialogMock.mockResolvedValue({ canceled: false, filePaths: ['C:\\source\\a.txt'] });
+
+    importTaskFilesMock.mockResolvedValue({ imported: [], rejected: [{ fileName: 'a.exe' }] });
+    await handleMap.get('context:import-files')?.({}, { taskId: 'task-1' });
+    expect(reporter.peek()).toEqual([]);
+
+    importTaskFilesMock.mockResolvedValue({ imported: [{ fileName: 'a.txt' }], rejected: [] });
+    await handleMap.get('context:import-files')?.({}, { taskId: 'task-1' });
+    expect(reporter.peek().map((e) => e.event)).toEqual(['file_attached']);
+  });
+
   it('lists imported files through the configured task workspace', () => {
     const files = [{ fileName: 'a.txt' }];
     listImportedTaskFilesMock.mockReturnValue(files);

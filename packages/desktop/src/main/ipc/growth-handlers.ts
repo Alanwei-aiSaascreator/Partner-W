@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron';
 import type { IpcResult } from '@clawwork/shared';
 import { getCommercialClient } from '../commercial/client.js';
+import { trackOnSuccess } from '../analytics/reporter.js';
 
 /**
  * 成长值 / 悬赏的 IPC。
@@ -47,7 +48,9 @@ export function registerGrowthHandlers(): void {
   // ── 成长值 ──────────────────────────────────────────────────────
   ipcMain.handle('growth:summary', () => callRpc('growth_summary', {}, firstRow));
 
-  ipcMain.handle('growth:check-in', () => callRpc('growth_check_in', {}, firstRow));
+  ipcMain.handle('growth:check-in', () =>
+    callRpc('growth_check_in', {}, firstRow).then((res) => trackOnSuccess(res, 'daily_check_in')),
+  );
 
   ipcMain.handle('growth:history', (_e, payload?: { limit?: number; before?: string | null }) =>
     callRpc('growth_history', { p_limit: payload?.limit ?? 50, p_before: payload?.before ?? null }, rows),
@@ -67,7 +70,7 @@ export function registerGrowthHandlers(): void {
         p_reward: payload?.reward ?? 50,
       },
       firstRow,
-    ),
+    ).then((res) => trackOnSuccess(res, 'bounty_published')),
   );
 
   ipcMain.handle('bounty:claim', (_e, payload: { id?: string }) =>

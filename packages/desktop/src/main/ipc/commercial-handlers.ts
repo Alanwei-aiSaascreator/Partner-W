@@ -10,6 +10,7 @@ import {
   verifyLoginOtp,
 } from '../commercial/auth.js';
 import { activateLicense, clearLicense, deviceFingerprint, readLicenseStatus } from '../commercial/license.js';
+import { trackOnSuccess } from '../analytics/reporter.js';
 import { notifyCommercialActivated, notifyCommercialSignedIn } from '../commercial/relay-startup.js';
 import { buildCommercialAccessCleanupDeps, requestCommercialAccessCleanup } from '../commercial/relay-cleanup.js';
 import { runUsageReport } from '../commercial/usage-reporter.js';
@@ -57,7 +58,7 @@ export function registerCommercialHandlers(): void {
       await requestCommercialAccessCleanup(buildCommercialAccessCleanupDeps());
       notifyCommercialSignedIn();
     }
-    return res;
+    return trackOnSuccess(res, 'login_success');
   });
   ipcMain.handle('commercial:sign-in-password', async (_event, email: string, password: string) => {
     const res = await signInWithPassword(String(email ?? ''), String(password ?? ''));
@@ -65,7 +66,7 @@ export function registerCommercialHandlers(): void {
       await requestCommercialAccessCleanup(buildCommercialAccessCleanupDeps());
       notifyCommercialSignedIn();
     }
-    return res;
+    return trackOnSuccess(res, 'login_success');
   });
   ipcMain.handle('commercial:sign-out', async () => {
     try {
@@ -87,7 +88,7 @@ export function registerCommercialHandlers(): void {
     //    这里补跑一次（调度器会等网关连上，最长 240 秒）。
     // ⚠️ 与登录不同：**不做**账户清理 —— 那会把刚激活的 license 清掉。
     if (res.ok) notifyCommercialActivated();
-    return res;
+    return trackOnSuccess(res, 'license_activated');
   });
   ipcMain.handle('commercial:license-clear', () => clearLicense());
   ipcMain.handle('commercial:device-fingerprint', () => deviceFingerprint());
