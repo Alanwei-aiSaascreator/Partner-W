@@ -517,6 +517,20 @@ function buildApi(): ClawWorkAPI {
     marketSetTemplateStatus: (id: string, status: 'draft' | 'published' | 'archived') =>
       ipcRenderer.invoke('market:set-status', { id, status }),
     marketDeleteTemplate: (id: string) => ipcRenderer.invoke('market:delete', { id }),
+    // ── 成长值 / 悬赏（P3）──────────────────────────────────────────
+    growthSummary: () => ipcRenderer.invoke('growth:summary'),
+    growthCheckIn: () => ipcRenderer.invoke('growth:check-in'),
+    growthHistory: (params?: { limit?: number; before?: string | null }) =>
+      ipcRenderer.invoke('growth:history', params),
+    bountyList: (params?: { status?: string | null }) => ipcRenderer.invoke('bounty:list', params),
+    bountyCreate: (params: { title: string; description: string; reward: number }) =>
+      ipcRenderer.invoke('bounty:create', params),
+    bountyClaim: (id: string) => ipcRenderer.invoke('bounty:claim', { id }),
+    bountyRelease: (id: string) => ipcRenderer.invoke('bounty:release', { id }),
+    bountySubmit: (params: { id: string; note: string }) => ipcRenderer.invoke('bounty:submit', params),
+    bountyAccept: (id: string) => ipcRenderer.invoke('bounty:accept', { id }),
+    bountyReject: (params: { id: string; note: string }) => ipcRenderer.invoke('bounty:reject', params),
+    bountyCancel: (id: string) => ipcRenderer.invoke('bounty:cancel', { id }),
   };
 }
 

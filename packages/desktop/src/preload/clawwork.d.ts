@@ -691,6 +691,18 @@ export interface ClawWorkAPI {
   }) => Promise<IpcResult<null>>;
   marketSetTemplateStatus: (id: string, status: 'draft' | 'published' | 'archived') => Promise<IpcResult<null>>;
   marketDeleteTemplate: (id: string) => Promise<IpcResult<null>>;
+  // 成长值 / 悬赏（P3）
+  growthSummary: () => Promise<IpcResult<unknown>>;
+  growthCheckIn: () => Promise<IpcResult<unknown>>;
+  growthHistory: (params?: { limit?: number; before?: string | null }) => Promise<IpcResult<unknown[]>>;
+  bountyList: (params?: { status?: string | null }) => Promise<IpcResult<unknown[]>>;
+  bountyCreate: (params: { title: string; description: string; reward: number }) => Promise<IpcResult<unknown>>;
+  bountyClaim: (id: string) => Promise<IpcResult<null>>;
+  bountyRelease: (id: string) => Promise<IpcResult<null>>;
+  bountySubmit: (params: { id: string; note: string }) => Promise<IpcResult<null>>;
+  bountyAccept: (id: string) => Promise<IpcResult<null>>;
+  bountyReject: (params: { id: string; note: string }) => Promise<IpcResult<null>>;
+  bountyCancel: (id: string) => Promise<IpcResult<null>>;
 }
 
 export interface RechargeSku {
