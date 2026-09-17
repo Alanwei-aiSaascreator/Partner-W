@@ -9,16 +9,12 @@ import {
   Download,
   Gamepad2,
   Gift,
-  Heart,
-  LayoutGrid,
   Megaphone,
-  MessageCircle,
   PackageCheck,
   Plus,
   RefreshCw,
   RotateCcw,
   Search,
-  Send,
   ShieldCheck,
   Sparkles,
   Store,
@@ -34,10 +30,8 @@ import { describeUpdateError } from './update-errors';
 import { createInternalBetaUpdateService, type InternalBetaUpdateState } from './update-service';
 
 const ICONS: Record<BetaModule, typeof Users> = {
-  team: Users,
   market: Store,
   bounty: CircleDollarSign,
-  square: LayoutGrid,
   creator: Bot,
   game: Gamepad2,
   operations: Wrench,
@@ -85,100 +79,6 @@ function Field({
       placeholder={placeholder}
       className="type-body h-9 min-w-0 flex-1 rounded-lg border border-[var(--border)] bg-[var(--bg-primary)] px-3 text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
     />
-  );
-}
-
-function TeamModule() {
-  const team = useBetaStore((s) => s.team);
-  const createTeam = useBetaStore((s) => s.createTeam);
-  const joinTeam = useBetaStore((s) => s.joinTeam);
-  const leaveTeam = useBetaStore((s) => s.leaveTeam);
-  const [name, setName] = useState('');
-  const [code, setCode] = useState('');
-  const [copied, setCopied] = useState(false);
-  if (!team)
-    return (
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Card>
-          <Users className="mb-3 text-[var(--accent)]" />
-          <h3 className="type-section-title">创建团队</h3>
-          <p className="type-body mb-4 text-[var(--text-muted)]">为公司成员建立共享协作空间。</p>
-          <div className="flex gap-2">
-            <Field label="beta.teamName" value={name} onChange={setName} placeholder="例如：销售增长组" />
-            <Button data-action="create-team" onClick={() => createTeam(name)}>
-              <Plus />
-              创建
-            </Button>
-          </div>
-        </Card>
-        <Card>
-          <PackageCheck className="mb-3 text-[var(--accent)]" />
-          <h3 className="type-section-title">加入团队</h3>
-          <p className="type-body mb-4 text-[var(--text-muted)]">输入同事发来的邀请码。</p>
-          <div className="flex gap-2">
-            <Field value={code} onChange={setCode} placeholder="RY123456" />
-            <Button variant="outline" onClick={() => joinTeam(code)}>
-              加入
-            </Button>
-          </div>
-        </Card>
-      </div>
-    );
-  return (
-    <div className="space-y-4">
-      <Card>
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <Badge tone="warning">内测团队数据</Badge>
-            <h3 className="type-dialog-title mt-2">{team.name}</h3>
-            <p className="type-body mt-1 text-[var(--text-muted)]">{team.members.length} 位成员 · 本机持久化</p>
-          </div>
-          <Button variant="danger" onClick={leaveTeam}>
-            退出团队
-          </Button>
-        </div>
-      </Card>
-      <div className="grid gap-4 lg:grid-cols-3">
-        <Card className="lg:col-span-2">
-          <h3 className="mb-3 font-semibold">成员列表</h3>
-          {team.members.map((member) => (
-            <div
-              key={member.id}
-              className="flex items-center justify-between border-b border-[var(--border-subtle)] py-3 last:border-0"
-            >
-              <div className="flex items-center gap-3">
-                <div className="grid h-9 w-9 place-items-center rounded-full bg-[var(--accent-soft)] text-[var(--accent)]">
-                  {member.name.slice(0, 1)}
-                </div>
-                <span>{member.name}</span>
-              </div>
-              <Badge>{member.role}</Badge>
-            </div>
-          ))}
-        </Card>
-        <Card>
-          <h3 className="font-semibold">邀请成员</h3>
-          <p className="type-body my-2 text-[var(--text-muted)]">把邀请码发给同事</p>
-          <div
-            data-invite-code
-            className="type-dialog-title rounded-xl bg-[var(--bg-tertiary)] p-4 text-center font-mono tracking-widest"
-          >
-            {team.inviteCode}
-          </div>
-          <Button
-            className="mt-3 w-full"
-            variant="outline"
-            onClick={() => {
-              void navigator.clipboard?.writeText(team.inviteCode);
-              setCopied(true);
-            }}
-          >
-            {copied ? <Check /> : <PackageCheck />}
-            {copied ? '已复制' : '复制邀请码'}
-          </Button>
-        </Card>
-      </div>
-    </div>
   );
 }
 
@@ -288,82 +188,6 @@ function BountyModule() {
             ) : (
               <Badge tone="success">已提交</Badge>
             )}
-          </div>
-        </Card>
-      ))}
-    </div>
-  );
-}
-
-function SquareModule() {
-  const feed = useBetaStore((s) => s.feed);
-  const publish = useBetaStore((s) => s.publishPost);
-  const like = useBetaStore((s) => s.likePost);
-  const comment = useBetaStore((s) => s.commentPost);
-  const [text, setText] = useState('');
-  const [comments, setComments] = useState<Record<string, string>>({});
-  return (
-    <div className="mx-auto max-w-[var(--content-max-width)] space-y-4">
-      <Card>
-        <textarea
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          placeholder="分享一个进展、问题或灵感…"
-          className="min-h-24 w-full resize-none rounded-xl border border-[var(--border)] bg-[var(--bg-primary)] p-3 outline-none"
-        />
-        <div className="mt-2 flex justify-end">
-          <Button
-            onClick={() => {
-              publish(text);
-              setText('');
-            }}
-          >
-            <Send />
-            发布
-          </Button>
-        </div>
-      </Card>
-      {feed.map((post) => (
-        <Card key={post.id}>
-          <div className="flex items-center justify-between">
-            <strong>{post.author}</strong>
-            <span className="type-support text-[var(--text-muted)]">{post.createdAt}</span>
-          </div>
-          <p className="my-4">{post.content}</p>
-          <div className="type-body flex items-center gap-4">
-            <button
-              onClick={() => like(post.id)}
-              className="flex items-center gap-1 text-[var(--text-secondary)] hover:text-[var(--accent)]"
-            >
-              <Heart size={16} />
-              {post.likes}
-            </button>
-            <span className="flex items-center gap-1 text-[var(--text-secondary)]">
-              <MessageCircle size={16} />
-              {post.comments.length}
-            </span>
-          </div>
-          {post.comments.map((item, index) => (
-            <p key={index} className="type-body mt-2 rounded-lg bg-[var(--bg-tertiary)] px-3 py-2">
-              {item}
-            </p>
-          ))}
-          <div className="mt-3 flex gap-2">
-            <Field
-              value={comments[post.id] ?? ''}
-              onChange={(value) => setComments((old) => ({ ...old, [post.id]: value }))}
-              placeholder="写评论"
-            />
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => {
-                comment(post.id, comments[post.id] ?? '');
-                setComments((old) => ({ ...old, [post.id]: '' }));
-              }}
-            >
-              评论
-            </Button>
           </div>
         </Card>
       ))}
@@ -831,10 +655,8 @@ function ComplianceModule() {
 }
 
 const MODULE_COMPONENTS: Record<BetaModule, () => ReactNode> = {
-  team: TeamModule,
   market: MarketModule,
   bounty: BountyModule,
-  square: SquareModule,
   creator: CreatorModule,
   game: GameModule,
   operations: OperationsModule,
@@ -870,7 +692,9 @@ export default function InternalBetaHub() {
             size="sm"
             variant="ghost"
             onClick={() => {
-              window.history.replaceState(null, '', betaRoute('team'));
+              // 复位后回到清单里的第一个模块（原来写死 'team'，
+              // 而广场/团队已经毕业出去了 —— 写死会指向一个不存在的模块）
+              window.history.replaceState(null, '', betaRoute(BETA_MODULES[0].id));
               reset();
             }}
           >

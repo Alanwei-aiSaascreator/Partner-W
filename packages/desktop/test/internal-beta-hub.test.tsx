@@ -28,12 +28,6 @@ function render(ui: ReactElement): { container: HTMLDivElement; unmount: () => v
   };
 }
 
-function typeInto(input: HTMLInputElement, value: string): void {
-  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-  setter?.call(input, value);
-  input.dispatchEvent(new Event('input', { bubbles: true }));
-}
-
 async function flushAsync(): Promise<void> {
   await act(async () => {
     await Promise.resolve();
@@ -65,32 +59,12 @@ describe('InternalBetaHub', () => {
 
   it('exposes every company beta module as direct navigation', () => {
     const { container, unmount } = render(<InternalBetaHub />);
-    for (const id of [
-      'team',
-      'market',
-      'bounty',
-      'square',
-      'creator',
-      'game',
-      'operations',
-      'updates',
-      'analytics',
-      'compliance',
-    ]) {
+    for (const id of ['market', 'bounty', 'creator', 'game', 'operations', 'updates', 'analytics', 'compliance']) {
       expect(container.querySelector(`[data-module="${id}"]`)).toBeTruthy();
     }
-    unmount();
-  });
-
-  it('allows creating a team and then exposes its invite code', () => {
-    const { container, unmount } = render(<InternalBetaHub />);
-    const input = container.querySelector<HTMLInputElement>('[aria-label="beta.teamName"]')!;
-    act(() => {
-      typeInto(input, '销售一组');
-    });
-    act(() => container.querySelector<HTMLButtonElement>('[data-action="create-team"]')?.click());
-    expect(container.textContent).toContain('销售一组');
-    expect(container.querySelector('[data-invite-code]')).toBeTruthy();
+    // 广场与团队已毕业到主界面（真后端），内测中心不再有它们的入口
+    expect(container.querySelector('[data-module="team"]')).toBeNull();
+    expect(container.querySelector('[data-module="square"]')).toBeNull();
     unmount();
   });
 
@@ -131,10 +105,11 @@ describe('InternalBetaHub', () => {
    * **不许**被标 —— 只测一个方向的话，"全标成预览"和"全不标"都能蒙混过去。
    */
   it('⭐ 本机模拟的模块必须标成「功能预览」（不能宣称已完成）', () => {
+    // 广场与团队已经毕业出去了，这里改用助手市场（仍是本机模拟）
+    useBetaStore.getState().setActiveModule('market');
     const { container, unmount } = render(<InternalBetaHub />);
 
-    // 默认落在「团队」（假团队 + 假邀请码）
-    expect(container.textContent).toContain('团队');
+    expect(container.textContent).toContain('助手市场');
     expect(container.textContent).toContain('beta.previewBadge');
     expect(container.textContent).toContain('beta.previewHint');
 

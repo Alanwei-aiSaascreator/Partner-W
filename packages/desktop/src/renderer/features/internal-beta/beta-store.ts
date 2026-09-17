@@ -3,10 +3,8 @@ import { useStore } from 'zustand';
 
 export const BETA_STORAGE_KEY = 'rongying:company-beta:v1';
 export type BetaModule =
-  | 'team'
   | 'market'
   | 'bounty'
-  | 'square'
   | 'creator'
   | 'game'
   | 'operations'
@@ -18,12 +16,6 @@ export interface BetaStorage {
   getItem(key: string): string | null;
   setItem(key: string, value: string): void;
   removeItem(key: string): void;
-}
-
-export interface TeamDemo {
-  name: string;
-  inviteCode: string;
-  members: Array<{ id: string; name: string; role: string }>;
 }
 
 export interface MarketTemplate {
@@ -39,15 +31,6 @@ export interface BountyDemo {
   title: string;
   reward: number;
   status: 'open' | 'claimed' | 'submitted';
-}
-
-export interface FeedPost {
-  id: string;
-  author: string;
-  content: string;
-  likes: number;
-  comments: string[];
-  createdAt: string;
 }
 
 export interface CreatorTemplate {
@@ -82,10 +65,8 @@ export type BetaAnalytics = Record<'launch' | 'login' | 'activation' | 'chat' | 
 
 export interface BetaData {
   activeModule: BetaModule;
-  team: TeamDemo | null;
   installedTemplateIds: string[];
   bounties: BountyDemo[];
-  feed: FeedPost[];
   creatorTemplates: CreatorTemplate[];
   game: { points: number; level: number; checkedInToday: boolean; badges: string[] };
   operations: {
@@ -104,16 +85,10 @@ export interface BetaData {
 
 export interface BetaActions {
   setActiveModule(module: BetaModule): void;
-  createTeam(name: string): void;
-  joinTeam(code: string): void;
-  leaveTeam(): void;
   installTemplate(id: string): boolean;
   publishBounty(title: string): boolean;
   claimBounty(id: string): void;
   submitBounty(id: string): void;
-  publishPost(content: string): boolean;
-  likePost(id: string): void;
-  commentPost(id: string, content: string): void;
   createCreatorTemplate(name: string): boolean;
   renameCreatorTemplate(id: string, name: string): void;
   toggleCreatorPublished(id: string): void;
@@ -142,10 +117,8 @@ export type BetaState = BetaData & BetaActions;
  *（`window.clawwork.checkForUpdates` → electron-updater），失败也会如实说明原因。
  */
 export const BETA_MODULES: Array<{ id: BetaModule; label: string; description: string; preview?: true }> = [
-  { id: 'team', label: '团队', description: '邀请成员并协作', preview: true },
   { id: 'market', label: '助手市场', description: '发现并安装模板', preview: true },
   { id: 'bounty', label: '悬赏', description: '发布与交付任务', preview: true },
-  { id: 'square', label: '广场', description: '分享团队动态', preview: true },
   { id: 'creator', label: '创作者中心', description: '发布助手模板', preview: true },
   { id: 'game', label: '成长中心', description: '积分、等级与徽章', preview: true },
   { id: 'operations', label: '运营后台', description: '基础运营控制台', preview: true },
@@ -174,22 +147,11 @@ export const MARKET_TEMPLATES: MarketTemplate[] = [
 
 function seed(): BetaData {
   return {
-    activeModule: 'team',
-    team: null,
+    activeModule: 'market',
     installedTemplateIds: [],
     bounties: [
       { id: 'bounty-seed-1', title: '优化新品详情页标题', reward: 120, status: 'open' },
       { id: 'bounty-seed-2', title: '整理本周客户反馈', reward: 80, status: 'open' },
-    ],
-    feed: [
-      {
-        id: 'post-seed-1',
-        author: '荣盈产品组',
-        content: '公司内测 1.0 框架已开启，请把真实问题留在广场。',
-        likes: 12,
-        comments: ['收到，开始体验'],
-        createdAt: '今天 09:30',
-      },
     ],
     creatorTemplates: [{ id: 'creator-seed-1', name: '门店日报助手', status: 'draft', views: 36, installs: 0 }],
     game: { points: 260, level: 2, checkedInToday: false, badges: ['内测先锋'] },
@@ -213,6 +175,9 @@ function safeLoad(storage: BetaStorage): BetaData {
     const raw = storage.getItem(BETA_STORAGE_KEY);
     if (!raw) return seed();
     const parsed = JSON.parse(raw) as Partial<BetaData>;
+    // ⚠️ 词表里保留已不再发出的 `team_created` / `team_joined` / `post_published`：
+    //    老版本写进 localStorage 的事件不能被静默丢掉（那会凭空抹掉用户的历史）。
+    //    这三个事件名留给 P4 的埋点分析用真数据重新发出。
     const validEventTypes = new Set<BetaEventType>([
       'module_opened',
       'team_created',
@@ -255,16 +220,10 @@ function safeLoad(storage: BetaStorage): BetaData {
 function serializable(state: BetaState): BetaData {
   const {
     setActiveModule: _a,
-    createTeam: _b,
-    joinTeam: _c,
-    leaveTeam: _d,
     installTemplate: _e,
     publishBounty: _f,
     claimBounty: _g,
     submitBounty: _h,
-    publishPost: _i,
-    likePost: _j,
-    commentPost: _k,
     createCreatorTemplate: _l,
     renameCreatorTemplate: _m,
     toggleCreatorPublished: _n,
@@ -301,10 +260,8 @@ function addEvent(events: BetaEvent[], type: BetaEventType, module?: BetaModule)
 function deriveAnalytics(state: Pick<BetaData, 'analytics' | 'events'>): BetaAnalytics {
   const summary = { ...state.analytics };
   for (const event of state.events) {
-    if (event.type === 'post_published') summary.chat += 1;
     if (event.type === 'template_installed') summary.activation += 1;
     if (event.type === 'creator_template_created') summary.artifact += 1;
-    if (event.type === 'team_created' || event.type === 'team_joined') summary.login += 1;
     if (event.type === 'module_opened') summary.launch += 1;
   }
   return summary;
@@ -315,28 +272,6 @@ export function createBetaStore(storage: BetaStorage): StoreApi<BetaState> {
     ...safeLoad(storage),
     setActiveModule: (activeModule) =>
       set((state) => ({ activeModule, events: addEvent(state.events, 'module_opened', activeModule) })),
-    createTeam: (name) =>
-      set((state) => ({
-        team: {
-          name: name.trim() || '我的团队',
-          inviteCode: `RY${String(Date.now()).slice(-6)}`,
-          members: [{ id: 'me', name: '我', role: '管理员' }],
-        },
-        events: addEvent(state.events, 'team_created', 'team'),
-      })),
-    joinTeam: (code) =>
-      set((state) => ({
-        team: {
-          name: `内测协作组 ${code.trim().toUpperCase().slice(-4) || '0001'}`,
-          inviteCode: code.trim().toUpperCase() || 'RY000001',
-          members: [
-            { id: 'owner', name: '团队管理员', role: '管理员' },
-            { id: 'me', name: '我', role: '成员' },
-          ],
-        },
-        events: addEvent(state.events, 'team_joined', 'team'),
-      })),
-    leaveTeam: () => set({ team: null }),
     installTemplate: (id) => {
       if (get().installedTemplateIds.includes(id)) return false;
       set((state) => ({
@@ -364,35 +299,6 @@ export function createBetaStore(storage: BetaStorage): StoreApi<BetaState> {
       set((state) => ({
         bounties: state.bounties.map((item) =>
           item.id === id && item.status === 'claimed' ? { ...item, status: 'submitted' } : item,
-        ),
-      })),
-    publishPost: (content) => {
-      const trimmed = content.trim();
-      if (!trimmed) return false;
-      set((state) => ({
-        feed: [
-          {
-            id: makeId('post'),
-            author: '我',
-            content: trimmed,
-            likes: 0,
-            comments: [],
-            createdAt: '刚刚',
-          },
-          ...state.feed,
-        ],
-        events: addEvent(state.events, 'post_published', 'square'),
-      }));
-      return true;
-    },
-    likePost: (id) =>
-      set((state) => ({
-        feed: state.feed.map((post) => (post.id === id ? { ...post, likes: post.likes + 1 } : post)),
-      })),
-    commentPost: (id, content) =>
-      set((state) => ({
-        feed: state.feed.map((post) =>
-          post.id === id && content.trim() ? { ...post, comments: [...post.comments, content.trim()] } : post,
         ),
       })),
     createCreatorTemplate: (name) => {

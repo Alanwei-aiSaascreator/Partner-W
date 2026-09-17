@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { createBetaStore, type BetaStorage } from '../src/renderer/features/internal-beta/beta-store';
+import { BETA_MODULES, createBetaStore, type BetaStorage } from '../src/renderer/features/internal-beta/beta-store';
 
 function memoryStorage(): BetaStorage {
   const data = new Map<string, string>();
@@ -20,15 +20,37 @@ describe('internal beta store', () => {
   it('persists the selected module and demo mutations across a restart', () => {
     const first = createBetaStore(storage);
     first.getState().setActiveModule('market');
-    first.getState().createTeam('增长实验组');
     first.getState().installTemplate('tpl-content');
     first.getState().checkIn();
 
     const restarted = createBetaStore(storage);
     expect(restarted.getState().activeModule).toBe('market');
-    expect(restarted.getState().team?.name).toBe('增长实验组');
     expect(restarted.getState().installedTemplateIds).toContain('tpl-content');
     expect(restarted.getState().game.checkedInToday).toBe(true);
+  });
+
+  /**
+   * 广场与团队已经**毕业**到主界面（真后端：迁移 35–38 + CommunityPanel）。
+   * 内测中心不能再列它们 —— 列着就又是一份假实现，而且和真功能同名，
+   * 用户分不清点进去的是哪一个。
+   */
+  it('广场和团队已毕业到主界面，内测中心不再列出它们', () => {
+    const keys = BETA_MODULES.map((module) => module.id);
+    expect(keys).not.toContain('square');
+    expect(keys).not.toContain('team');
+    // 其余模块一个都不能少
+    expect(keys).toEqual(
+      expect.arrayContaining([
+        'market',
+        'bounty',
+        'creator',
+        'game',
+        'operations',
+        'updates',
+        'analytics',
+        'compliance',
+      ]),
+    );
   });
 
   it('supports the minimum bounty and creator publishing state flows', () => {
@@ -47,28 +69,16 @@ describe('internal beta store', () => {
 
   it('resets all demo changes to the versioned seed', () => {
     const store = createBetaStore(storage);
-    store.getState().createTeam('临时团队');
-    store.getState().publishPost('今天完成内测框架');
+    store.getState().publishBounty('今天完成内测框架');
     store.getState().adjustCredits(500);
     store.getState().resetDemo();
 
-    expect(store.getState().team).toBeNull();
-    expect(store.getState().feed.some((post) => post.content === '今天完成内测框架')).toBe(false);
+    expect(store.getState().bounties.some((item) => item.title === '今天完成内测框架')).toBe(false);
     expect(store.getState().operations.credits).toBe(5000);
   });
 
-  it('covers the remaining social, operations, and compliance actions', () => {
+  it('covers the remaining operations and compliance actions', () => {
     const store = createBetaStore(storage);
-    store.getState().joinTeam('RY778899');
-    expect(store.getState().team?.members).toHaveLength(2);
-    store.getState().leaveTeam();
-    expect(store.getState().team).toBeNull();
-
-    store.getState().publishPost('内测反馈');
-    const post = store.getState().feed[0]!;
-    store.getState().likePost(post.id);
-    store.getState().commentPost(post.id, '已记录');
-    expect(store.getState().feed[0]).toMatchObject({ likes: 1, comments: ['已记录'] });
 
     store.getState().toggleModel();
     store.getState().setModelRate(1.5);
@@ -87,20 +97,18 @@ describe('internal beta store', () => {
 
   it('records bounded redacted events and rejects empty user content', () => {
     const store = createBetaStore(storage);
-    const initialFeedLength = store.getState().feed.length;
-    expect(store.getState().publishPost('   ')).toBe(false);
-    expect(store.getState().feed).toHaveLength(initialFeedLength);
+    expect(store.getState().publishBounty('   ')).toBe(false);
 
     store.getState().installTemplate('tpl-content');
     store.getState().installTemplate('tpl-content');
     store.getState().checkIn();
     store.getState().checkIn();
-    store.getState().publishPost('真实内容不会进入埋点');
+    store.getState().publishBounty('真实内容不会进入埋点');
 
     const events = store.getState().events;
     expect(events.filter((event) => event.type === 'template_installed')).toHaveLength(1);
     expect(events.filter((event) => event.type === 'daily_check_in')).toHaveLength(1);
-    expect(events.filter((event) => event.type === 'post_published')).toHaveLength(1);
+    expect(events.filter((event) => event.type === 'bounty_published')).toHaveLength(1);
     expect(events.every((event) => Number.isFinite(Date.parse(event.timestamp)))).toBe(true);
     const serializedEvents = JSON.stringify(events);
     for (const forbidden of ['phone', 'licenseKey', 'token', 'prompt', 'content']) {
@@ -110,11 +118,11 @@ describe('internal beta store', () => {
 
   it('derives analytics from the explicit seed baseline and local events', () => {
     const store = createBetaStore(storage);
-    const baseline = store.getState().analytics.chat;
-    store.getState().publishPost('内测动态');
+    const baseline = store.getState().analytics.activation;
     store.getState().installTemplate('tpl-content');
+    store.getState().createCreatorTemplate('复盘助手');
     const analytics = store.getState().analyticsSummary();
-    expect(analytics.chat).toBe(baseline + 1);
-    expect(analytics.activation).toBe(store.getState().analytics.activation + 1);
+    expect(analytics.activation).toBe(baseline + 1);
+    expect(analytics.artifact).toBe(store.getState().analytics.artifact + 1);
   });
 });
