@@ -1,4 +1,10 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  createAnalyticsReporter,
+  initAnalyticsReporterForTest,
+  stopAnalyticsReporter,
+  type AnalyticsReporter,
+} from '../src/main/analytics/reporter.js';
 
 /**
  * Stage 2C 的**接线**：两个登录入口成功后必须调度一次 relay bootstrap。
@@ -86,6 +92,22 @@ function handlerFor(channel: string): (...args: unknown[]) => unknown {
   return fn;
 }
 
+// 埋点走真的 reporter 单例（同 context-handlers.test.ts 的写法）：
+// 断言的是「handler 到底记了哪个事件」，mock 掉 trackEvent 就退化成看字符串了。
+let analytics: AnalyticsReporter;
+
+beforeEach(() => {
+  analytics = createAnalyticsReporter({
+    storage: { read: () => null, write: () => {} },
+    send: vi.fn(async () => ({ ok: true, inserted: 0 })),
+  });
+  initAnalyticsReporterForTest(analytics);
+});
+
+afterEach(() => {
+  stopAnalyticsReporter();
+});
+
 describe('登录入口 → notifyCommercialSignedIn（Stage 2C 接线）', () => {
   beforeEach(() => {
     mocks.handlers.clear();
@@ -144,6 +166,28 @@ describe('登录入口 → notifyCommercialSignedIn（Stage 2C 接线）', () =>
     expect(mocks.notifyCommercialSignedIn).not.toHaveBeenCalled();
   });
 
+  it('★ 登录成功记一次 login_success（两个入口都记）；失败一条都不记', async () => {
+    mocks.verifyLoginOtp.mockResolvedValue({ ok: true, result: { userId: 'u-1' } });
+    await handlerFor('commercial:verify-otp')({}, '+8613800000000', '123456');
+    expect(analytics.peek().map((e) => e.event)).toEqual(['login_success']);
+
+    mocks.signInWithPassword.mockResolvedValue({ ok: true, result: { userId: 'u-2' } });
+    await handlerFor('commercial:sign-in-password')({}, 'a@b.test', 'pw');
+    expect(analytics.peek().map((e) => e.event)).toEqual(['login_success', 'login_success']);
+
+    mocks.verifyLoginOtp.mockResolvedValue({ ok: false, errorCode: 'otp_verify_failed' });
+    await handlerFor('commercial:verify-otp')({}, '+8613800000000', '000000');
+    expect(analytics.peek().map((e) => e.event)).toEqual(['login_success', 'login_success']);
+  });
+
+  it('★ 登录成功但账户清理抛错：事件仍记下（清理失败不该把「登录成功了」吞掉）', async () => {
+    mocks.verifyLoginOtp.mockResolvedValue({ ok: true, result: { userId: 'u-1' } });
+    mocks.requestCommercialAccessCleanup.mockRejectedValue(new Error('cleanup down'));
+
+    await expect(handlerFor('commercial:verify-otp')({}, '+8613800000000', '123456')).rejects.toThrow('cleanup down');
+    expect(analytics.peek().map((e) => e.event)).toEqual(['login_success']);
+  });
+
   it('⭐ 只有**登录**入口会补跑：发验证码 / 读会话 / 登出都不该触发', async () => {
     await handlerFor('commercial:session')({});
     await handlerFor('commercial:get-config')({});
@@ -200,5 +244,15 @@ describe('激活入口 → 补跑 relay bootstrap（第二道保险）', () => {
 
     expect(res.ok).toBe(false);
     expect(mocks.notifyCommercialActivated).not.toHaveBeenCalled();
+  });
+
+  it('★ 激活成功记一次 license_activated；失败不记', async () => {
+    mocks.activateLicense.mockResolvedValue({ ok: true, result: { activated: true } });
+    await handlerFor('commercial:license-activate')({}, 'RY-AAAA-BBBB');
+    expect(analytics.peek().map((e) => e.event)).toEqual(['license_activated']);
+
+    mocks.activateLicense.mockResolvedValue({ ok: false, errorCode: 'invalid_license' });
+    await handlerFor('commercial:license-activate')({}, 'BAD-KEY');
+    expect(analytics.peek().map((e) => e.event)).toEqual(['license_activated']);
   });
 });

@@ -202,20 +202,23 @@ describe('trackOnSuccess', () => {
     const reporter = createAnalyticsReporter({ storage: memoryStorage(), send: vi.fn() });
     initAnalyticsReporterForTest(reporter);
 
-    const result = trackOnSuccess({ ok: false, errorCode: 'network' }, 'post_published');
+    const input = { ok: false, errorCode: 'network' };
+    const result = trackOnSuccess(input, 'post_published');
 
     expect(reporter.peek()).toHaveLength(0);
-    // 收口写法要**原样把结果还回去**：handler 的返回值不能被埋点改掉
-    expect(result).toEqual({ ok: false, errorCode: 'network' });
+    // 收口写法要**原样把结果还回去**：handler 的返回值不能被埋点改掉。
+    // 用 `toBe` 而不是 `toEqual` —— 结构相等的**副本**也能过 toEqual，那不叫透明。
+    expect(result).toBe(input);
   });
 
   it('ok:true 时记一次，并把结果原样返回', () => {
     const reporter = createAnalyticsReporter({ storage: memoryStorage(), send: vi.fn() });
     initAnalyticsReporterForTest(reporter);
 
-    const result = trackOnSuccess({ ok: true, result: null }, 'post_published');
+    const input = { ok: true, result: null };
+    const result = trackOnSuccess(input, 'post_published');
 
     expect(reporter.peek().map((e) => e.event)).toEqual(['post_published']);
-    expect(result).toEqual({ ok: true, result: null });
+    expect(result).toBe(input);
   });
 });

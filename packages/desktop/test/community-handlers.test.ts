@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * 广场 / 团队的 IPC 层。
@@ -32,6 +32,12 @@ vi.mock('../src/main/commercial/client.js', () => ({
 }));
 
 import { registerCommunityHandlers } from '../src/main/ipc/community-handlers.js';
+import {
+  createAnalyticsReporter,
+  initAnalyticsReporterForTest,
+  stopAnalyticsReporter,
+  type AnalyticsReporter,
+} from '../src/main/analytics/reporter.js';
 
 function call(channel: string, ...args: unknown[]): Promise<unknown> {
   const fn = mocks.handlers.get(channel);
@@ -39,12 +45,25 @@ function call(channel: string, ...args: unknown[]): Promise<unknown> {
   return Promise.resolve(fn({}, ...args));
 }
 
+let analytics: AnalyticsReporter;
+
 describe('community IPC handlers', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.handlers.clear();
     mocks.client = { rpc: mocks.rpc };
+    // 埋点走真的 reporter 单例：断言的是「handler 到底记了哪个事件」，
+    // 而不是「handler 里出现过某个字符串」（见 context-handlers.test.ts 的同款写法）。
+    analytics = createAnalyticsReporter({
+      storage: { read: () => null, write: () => {} },
+      send: vi.fn(async () => ({ ok: true, inserted: 0 })),
+    });
+    initAnalyticsReporterForTest(analytics);
     registerCommunityHandlers();
+  });
+
+  afterEach(() => {
+    stopAnalyticsReporter();
   });
 
   it('未登录（拿不到商业客户端）⇒ not_authenticated，且不抛异常', async () => {
@@ -131,6 +150,26 @@ describe('community IPC handlers', () => {
       result?: { code: string; expiresAt: string };
     };
     expect(res.result).toEqual({ code: 'ABCDEF1234', expiresAt: '2026-09-20T00:00:00Z' });
+  });
+
+  it('★ 发帖成功记一次 post_published；失败一条都不记', async () => {
+    mocks.rpc.mockResolvedValueOnce({ data: 'new-id', error: null });
+    await call('community:post-create', { body: '你好', visibility: 'private' });
+    expect(analytics.peek().map((e) => e.event)).toEqual(['post_published']);
+
+    mocks.rpc.mockResolvedValueOnce({ data: null, error: { message: 'not_org_member' } });
+    await call('community:post-create', { body: '你好', visibility: 'private' });
+    expect(analytics.peek().map((e) => e.event)).toEqual(['post_published']);
+  });
+
+  it('★ 加入团队成功记一次 team_joined；重复加入（already_member）不记', async () => {
+    mocks.rpc.mockResolvedValueOnce({ data: [{ org_id: 'o1', org_name: '甲', role: 'member' }], error: null });
+    await call('community:join', { code: 'X' });
+    expect(analytics.peek().map((e) => e.event)).toEqual(['team_joined']);
+
+    mocks.rpc.mockResolvedValueOnce({ data: null, error: { message: 'already_member' } });
+    await call('community:join', { code: 'X' });
+    expect(analytics.peek().map((e) => e.event)).toEqual(['team_joined']);
   });
 
   it('每个 RPC 都注册了 handler，且频道名与 preload 约定一致', () => {

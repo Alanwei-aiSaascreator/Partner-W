@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * 成长值 / 悬赏的 IPC。
@@ -30,6 +30,12 @@ vi.mock('../src/main/commercial/client.js', () => ({
 }));
 
 import { registerGrowthHandlers } from '../src/main/ipc/growth-handlers.js';
+import {
+  createAnalyticsReporter,
+  initAnalyticsReporterForTest,
+  stopAnalyticsReporter,
+  type AnalyticsReporter,
+} from '../src/main/analytics/reporter.js';
 
 function call(channel: string, ...args: unknown[]): Promise<unknown> {
   const fn = mocks.handlers.get(channel);
@@ -37,12 +43,24 @@ function call(channel: string, ...args: unknown[]): Promise<unknown> {
   return Promise.resolve(fn({}, ...args));
 }
 
+let analytics: AnalyticsReporter;
+
 describe('growth / bounty IPC handlers', () => {
   beforeEach(() => {
     mocks.handlers.clear();
     mocks.rpc.mockReset();
     mocks.client = { rpc: mocks.rpc };
+    // 埋点走真的 reporter 单例（同 context-handlers.test.ts 的写法）
+    analytics = createAnalyticsReporter({
+      storage: { read: () => null, write: () => {} },
+      send: vi.fn(async () => ({ ok: true, inserted: 0 })),
+    });
+    initAnalyticsReporterForTest(analytics);
     registerGrowthHandlers();
+  });
+
+  afterEach(() => {
+    stopAnalyticsReporter();
   });
 
   it('注册了 11 个通道', () => {
@@ -125,5 +143,37 @@ describe('growth / bounty IPC handlers', () => {
   it('rpc 抛异常 ⇒ network，异常不穿透 IPC', async () => {
     mocks.rpc.mockRejectedValueOnce(new Error('socket hang up'));
     await expect(call('bounty:list')).resolves.toEqual({ ok: false, errorCode: 'network' });
+  });
+
+  it('★ 签到：只有真的新签（awarded > 0）记一次 daily_check_in', async () => {
+    mocks.rpc.mockResolvedValueOnce({
+      data: [{ balance: 20, total_earned: 20, level: 1, checked_in_today: true, awarded: 20 }],
+      error: null,
+    });
+    await call('growth:check-in');
+    expect(analytics.peek().map((e) => e.event)).toEqual(['daily_check_in']);
+  });
+
+  it('★ 签到幂等：同一天重复调用（awarded = 0）不记；RPC 失败也不记', async () => {
+    mocks.rpc.mockResolvedValueOnce({
+      data: [{ balance: 20, total_earned: 20, level: 1, checked_in_today: true, awarded: 0 }],
+      error: null,
+    });
+    await call('growth:check-in');
+
+    mocks.rpc.mockResolvedValueOnce({ data: null, error: { message: 'not_authenticated' } });
+    await call('growth:check-in');
+
+    expect(analytics.peek()).toEqual([]);
+  });
+
+  it('★ 悬赏发布成功记一次 bounty_published；失败不记', async () => {
+    mocks.rpc.mockResolvedValueOnce({ data: 'b-1', error: null });
+    await call('bounty:create', { title: '写周报', description: 'd', reward: 120 });
+    expect(analytics.peek().map((e) => e.event)).toEqual(['bounty_published']);
+
+    mocks.rpc.mockResolvedValueOnce({ data: null, error: { message: 'insufficient_balance' } });
+    await call('bounty:create', { title: '写周报', description: 'd', reward: 120 });
+    expect(analytics.peek().map((e) => e.event)).toEqual(['bounty_published']);
   });
 });

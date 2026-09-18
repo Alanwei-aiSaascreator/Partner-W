@@ -1,4 +1,10 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  createAnalyticsReporter,
+  initAnalyticsReporterForTest,
+  stopAnalyticsReporter,
+  type AnalyticsReporter,
+} from '../src/main/analytics/reporter.js';
 
 const handleMap = new Map<string, (...args: unknown[]) => unknown>();
 const allMock = vi.fn();
@@ -58,10 +64,29 @@ vi.mock('../src/main/net/safe-fetch.js', () => ({
   safeFetch: vi.fn(),
 }));
 
+// ⚠️ 必须 mock：本文件静态 import 了 `analytics/reporter.js`，它会拉 `debug/index.js → electron`，
+//    而本文件的 electron mock 工厂引用了未 hoist 的 const（showSaveDialogMock 等）⇒ 导入期 TDZ。
+//    切断 debug 这条链就够了（handler 本身不用它，reporter 只在告警时用）。
+vi.mock('../src/main/debug/index.js', () => ({
+  getDebugLogger: () => ({ debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }),
+}));
+
+let analytics: AnalyticsReporter;
+
 describe('artifact handlers', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     handleMap.clear();
+    // 埋点走真的 reporter 单例（同 context-handlers.test.ts 的写法）
+    analytics = createAnalyticsReporter({
+      storage: { read: () => null, write: () => {} },
+      send: vi.fn(async () => ({ ok: true, inserted: 0 })),
+    });
+    initAnalyticsReporterForTest(analytics);
+  });
+
+  afterEach(() => {
+    stopAnalyticsReporter();
   });
 
   it('lists artifacts without triggering auto-extract side effects', async () => {
@@ -204,5 +229,40 @@ describe('artifact handlers', () => {
     });
     expect(inspectArtifactFileMock).toHaveBeenCalledTimes(2);
     expect(openPathMock).not.toHaveBeenCalled();
+  });
+
+  it('★ 另存为成功记一次 artifact_saved；取消对话框不记', async () => {
+    allMock.mockReturnValue([{ id: 'a1', taskId: 'task-1', name: 'report.txt', localPath: 'task-1/report.txt' }]);
+    showSaveDialogMock.mockResolvedValue({ canceled: false, filePath: 'C:\\Exports\\report.txt' });
+    copyArtifactToDestinationMock.mockResolvedValue({ status: 'saved', filePath: 'C:\\Exports\\report.txt' });
+    const { registerArtifactHandlers } = await import('../src/main/ipc/artifact-handlers.js');
+    registerArtifactHandlers();
+
+    await handleMap.get('artifact:save-as')?.({}, { artifactId: 'a1', taskId: 'task-1' });
+    expect(analytics.peek().map((e) => e.event)).toEqual(['artifact_saved']);
+
+    // 取消也返回 ok:true（与 context:import-files 同一个坑）——「打开又关掉」不算保存
+    showSaveDialogMock.mockResolvedValue({ canceled: true });
+    await handleMap.get('artifact:save-as')?.({}, { artifactId: 'a1', taskId: 'task-1' });
+    expect(analytics.peek().map((e) => e.event)).toEqual(['artifact_saved']);
+  });
+
+  it('★ 聊天里保存代码块 / 保存图片也记 artifact_saved（用户真实的保存入口）', async () => {
+    const { registerArtifactHandlers } = await import('../src/main/ipc/artifact-handlers.js');
+    registerArtifactHandlers();
+
+    await handleMap.get('artifact:save-content')?.(
+      {},
+      { taskId: 'task-1', messageId: 'm1', content: 'const a = 1;', language: 'ts' },
+    );
+    expect(analytics.peek().map((e) => e.event)).toEqual(['artifact_saved']);
+
+    const { safeFetch } = await import('../src/main/net/safe-fetch.js');
+    vi.mocked(safeFetch).mockResolvedValue(Buffer.from('img'));
+    await handleMap.get('artifact:save-image-url')?.(
+      {},
+      { taskId: 'task-1', messageId: 'm1', url: 'https://x.test/a.png' },
+    );
+    expect(analytics.peek().map((e) => e.event)).toEqual(['artifact_saved', 'artifact_saved']);
   });
 });

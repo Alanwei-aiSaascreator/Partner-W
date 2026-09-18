@@ -107,4 +107,18 @@ describe('analytics setup', () => {
 
     teardownAnalytics();
   });
+
+  it('★ teardown 会把队列里剩下的发出去（退出前那次 flush 不是摆设）', async () => {
+    rpcMock.mockResolvedValue({ data: null, error: { message: 'rate_limited' } });
+    const { setupAnalytics, teardownAnalytics } = await freshSetup();
+
+    setupAnalytics();
+    await vi.advanceTimersByTimeAsync(TICK_MS);
+    expect(rpcMock).toHaveBeenCalledTimes(1); // 限流：条目留在队列里
+
+    rpcMock.mockResolvedValue({ data: 1, error: null });
+    teardownAnalytics();
+    await vi.advanceTimersByTimeAsync(1); // 让 teardown 里那次 void flush 跑完
+    expect(rpcMock).toHaveBeenCalledTimes(2); // 队列已经排空
+  });
 });

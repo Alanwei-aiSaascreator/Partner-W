@@ -81,6 +81,21 @@ async function invoke(channel: string, payload: unknown): Promise<unknown> {
   return handler({}, payload);
 }
 
+/**
+ * 埋点走真的 reporter 单例（同 context-handlers.test.ts 的写法）。
+ * ⚠️ 必须在 `vi.resetModules()` **之后**（即用例里）动态 import：静态 import 拿到的是
+ * 重置前那个注册表里的实例，和 handler 用的新 `active` 不是同一个。
+ */
+async function freshReporter() {
+  const { createAnalyticsReporter, initAnalyticsReporterForTest } = await import('../src/main/analytics/reporter.js');
+  const reporter = createAnalyticsReporter({
+    storage: { read: () => null, write: () => {} },
+    send: vi.fn(async () => ({ ok: true, inserted: 0 })),
+  });
+  initAnalyticsReporterForTest(reporter);
+  return reporter;
+}
+
 describe('ws-handlers: skills + config IPC channels', () => {
   beforeEach(async () => {
     handleMap.clear();
@@ -169,6 +184,39 @@ describe('ws-handlers: skills + config IPC channels', () => {
       expect(cancelArtifactRunsForSessionMock).toHaveBeenCalledWith('agent:main:clawwork:task-1');
     },
   );
+
+  it('★ 发送成功才记 chat_sent（首条同时记 first_chat_sent）', async () => {
+    const reporter = await freshReporter();
+
+    await invoke('ws:send-message', {
+      gatewayId: 'gw-1',
+      sessionKey: 'agent:main:clawwork:task-1',
+      content: 'hi',
+    });
+
+    expect(reporter.peek().map((e) => e.event)).toEqual(['first_chat_sent', 'chat_sent']);
+  });
+
+  it('★ 失败路径一条都不记：网关没连上、派发抛错', async () => {
+    const reporter = await freshReporter();
+
+    fakeGatewayClient.isConnected = false;
+    await invoke('ws:send-message', {
+      gatewayId: 'gw-1',
+      sessionKey: 'agent:main:clawwork:task-1',
+      content: 'hi',
+    });
+
+    fakeGatewayClient.isConnected = true;
+    sendChatMessageMock.mockRejectedValueOnce(new Error('dispatch failed'));
+    await invoke('ws:send-message', {
+      gatewayId: 'gw-1',
+      sessionKey: 'agent:main:clawwork:task-1',
+      content: 'hi',
+    });
+
+    expect(reporter.peek()).toEqual([]);
+  });
 
   it('registers all expected channels', () => {
     const expected = [
