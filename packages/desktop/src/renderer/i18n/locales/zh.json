@@ -874,6 +874,8 @@
     "indexNow": "继续建索引（{{count}} 段）",
     "loadFailed": "资料库打不开了",
     "loading": "正在准备资料库…",
+    "modeHybrid": "混合检索（关键词 + 语义）：命中 {{count}} 段",
+    "modeKeyword": "仅关键词检索：命中 {{count}} 段",
     "noteAdded": "笔记已加入资料库",
     "noteBodyLabel": "正文",
     "noteBodyPlaceholder": "随手写点什么…",

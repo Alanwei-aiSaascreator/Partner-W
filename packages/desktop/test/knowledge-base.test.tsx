@@ -326,6 +326,146 @@ describe('检索模式（T-c1 第三条）', () => {
       'kb.degraded.noVectors',
     );
   });
+
+  /** 一条命中，用来把"有结果"这条路走通。 */
+  const HIT = {
+    chunkId: 'c1',
+    sourceId: 'a',
+    ordinal: 0,
+    text: '收入主要来自软件订阅',
+    snippet: '收入主要来自软件订阅',
+    sourceKind: 'file' as const,
+    sourceTitle: '预算说明',
+    sourcePath: 'C:/x.md',
+    score: 0.83,
+  };
+  const searchReturning = (
+    outcome: Partial<{ mode: 'keyword' | 'hybrid'; degraded: boolean; degradedReason: string; hits: unknown[] }>,
+  ): void =>
+    stubClawwork({
+      kbSearch: vi.fn(async () => ({
+        ok: true as const,
+        outcome: { candidateCount: 3, degraded: false, ...outcome } as never,
+      })),
+    });
+
+  /**
+   * 取"检索模式行"的文本。
+   *
+   * ⚠️ 断言必须**限定在这一行上**，不能用 `container.textContent`：面板顶上还有一条
+   * **常驻**的降级提示（`!state.engine` 时显示 `kb.degraded.noEngine`），
+   * 桩里引擎默认就是 null ⇒ 全局找 `kb.degraded.` 永远能找着（这条假红我踩过一次）。
+   */
+  const modeLine = (): string => {
+    const el = container.querySelector('[data-testid="kb-search-mode"]');
+    if (!el) throw new Error('没有检索模式行');
+    return el.textContent ?? '';
+  };
+  const modeLineOrNull = (): string | null =>
+    container.querySelector('[data-testid="kb-search-mode"]')?.textContent ?? null;
+
+  /**
+   * ⭐ 这条就是队列里那句"补混合检索的正面说明"。
+   *
+   * 现在的界面**只有降级才会说话**。于是"什么都没显示"既可能是"混合检索跑得好好的"，
+   * 也可能是"我忘了渲染"—— 用户没法分辨，也就没法判断那个 0.83 分是语义算出来的
+   * 还是纯关键词撞上的。检索模式是**结果的一部分**，不是异常信息。
+   */
+  it('⭐ 混合检索成功时也要如实标明（不能只有降级才说话）', async () => {
+    searchReturning({ mode: 'hybrid', hits: [HIT] });
+    await renderPanel();
+
+    await searchFor('收入');
+
+    expect(modeLine()).toContain('kb.modeHybrid:{"count":1}');
+    expect(modeLine(), 'hybrid 时这一行不该带降级说明').not.toContain('kb.degraded.');
+  });
+
+  it('关键词检索时标明模式，并把**为什么**接在同一行', async () => {
+    searchReturning({ mode: 'keyword', degraded: true, degradedReason: 'no-engine', hits: [HIT] });
+    await renderPanel();
+
+    await searchFor('收入');
+
+    expect(modeLine()).toContain('kb.modeKeyword:{"count":1}');
+    expect(modeLine(), '光说"关键词"不够，得说清为什么没用上语义').toContain('kb.degraded.noEngine');
+  });
+
+  it('一条都没搜到时不显示模式行（"命中 0 段"跟"没搜到"是重复的两句）', async () => {
+    searchReturning({ mode: 'keyword', degraded: true, degradedReason: 'no-recall', hits: [] });
+    await renderPanel();
+
+    await searchFor('订阅');
+
+    expect(modeLineOrNull(), '这时该讲"为什么"，模式本身没有信息量').toBeNull();
+    expect(container.textContent, '但原因还是要说').toContain('kb.degraded.noRecall');
+  });
+
+  /**
+   * 检索**失败**跟"搜了但没有"是两回事。
+   *
+   * 收拾成 `SearchState` 之前这里是三个并列的 `useState`：失败时只清了 `hits`，
+   * 上一次那句降级原因还挂在界面上 —— 用户会以为"这次搜索是因为没有引擎才没结果"，
+   * 而其实是它压根没跑成（已经有 toast 说过了，再挂一句原因就是误导）。
+   */
+  it('检索失败 ⇒ 不留"没搜到"空态，也不留上一次的模式行', async () => {
+    let call = 0;
+    stubClawwork({
+      kbSearch: vi.fn(async () => {
+        call += 1;
+        if (call === 1) {
+          return {
+            ok: true as const,
+            outcome: {
+              candidateCount: 3,
+              degraded: true,
+              mode: 'keyword' as const,
+              degradedReason: 'no-engine' as const,
+              hits: [HIT],
+            },
+          };
+        }
+        return { ok: false as const, error: 'boom' };
+      }),
+    });
+    await renderPanel();
+
+    await searchFor('收入');
+    expect(modeLine()).toContain('kb.modeKeyword');
+    expect(modeLine()).toContain('kb.degraded.noEngine');
+
+    await searchFor('支出');
+
+    expect(modeLineOrNull(), '失败不该留着上一次的模式行').toBeNull();
+    expect(container.textContent, '"没搜到"是"搜了但没有"，这次压根没搜成').not.toContain('kb.searchEmpty');
+  });
+
+  it('换了查询词重搜 ⇒ 模式跟着更新，不留上一次的', async () => {
+    let call = 0;
+    stubClawwork({
+      kbSearch: vi.fn(async () => {
+        call += 1;
+        return {
+          ok: true as const,
+          outcome: {
+            candidateCount: 3,
+            degraded: call > 1,
+            mode: (call > 1 ? 'keyword' : 'hybrid') as 'keyword' | 'hybrid',
+            degradedReason: call > 1 ? ('no-engine' as const) : undefined,
+            hits: [HIT],
+          },
+        };
+      }),
+    });
+    await renderPanel();
+
+    await searchFor('收入');
+    expect(modeLine()).toContain('kb.modeHybrid');
+
+    await searchFor('支出');
+    expect(modeLine(), '第二次是关键词检索，界面不能还挂着上一次的 hybrid').toContain('kb.modeKeyword');
+    expect(modeLine()).not.toContain('kb.modeHybrid');
+  });
 });
 
 describe('资料库面板', () => {

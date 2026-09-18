@@ -874,6 +874,8 @@
     "indexNow": "Keep indexing ({{count}} left)",
     "loadFailed": "Couldn't open the knowledge base",
     "loading": "Preparing the knowledge base…",
+    "modeHybrid": "Hybrid search (keywords + semantics): {{count}} matches",
+    "modeKeyword": "Keyword-only search: {{count}} matches",
     "noteAdded": "Note added to the knowledge base",
     "noteBodyLabel": "Body",
     "noteBodyPlaceholder": "Jot something down…",

@@ -874,6 +874,8 @@
     "indexNow": "Continuer l’indexation ({{count}} restants)",
     "loadFailed": "Impossible d’ouvrir la base de connaissances",
     "loading": "Préparation de la base…",
+    "modeHybrid": "Recherche hybride (mots-clés + sémantique) : {{count}} résultats",
+    "modeKeyword": "Recherche par mots-clés uniquement : {{count}} résultats",
     "noteAdded": "Note ajoutée à la base de connaissances",
     "noteBodyLabel": "Contenu",
     "noteBodyPlaceholder": "Écrivez quelque chose…",

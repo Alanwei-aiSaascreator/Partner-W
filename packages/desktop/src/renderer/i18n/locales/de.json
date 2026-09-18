@@ -874,6 +874,8 @@
     "indexNow": "Indizierung fortsetzen ({{count}} übrig)",
     "loadFailed": "Wissensbasis lässt sich nicht öffnen",
     "loading": "Wissensbasis wird vorbereitet…",
+    "modeHybrid": "Hybride Suche (Stichwörter + Semantik): {{count}} Treffer",
+    "modeKeyword": "Nur Stichwortsuche: {{count}} Treffer",
     "noteAdded": "Notiz zur Wissensbasis hinzugefügt",
     "noteBodyLabel": "Inhalt",
     "noteBodyPlaceholder": "Schreiben Sie etwas…",

@@ -874,6 +874,8 @@
     "indexNow": "索引を続ける（残り {{count}} 件）",
     "loadFailed": "ナレッジベースを開けませんでした",
     "loading": "ナレッジベースを準備しています…",
+    "modeHybrid": "ハイブリッド検索（キーワード＋意味）: {{count}} 件",
+    "modeKeyword": "キーワード検索のみ: {{count}} 件",
     "noteAdded": "ノートをナレッジベースに追加しました",
     "noteBodyLabel": "本文",
     "noteBodyPlaceholder": "何か書き留めてください…",

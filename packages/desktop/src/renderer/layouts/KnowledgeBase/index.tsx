@@ -57,12 +57,27 @@ const DEGRADED_SUFFIX: Record<KbDegradedReason, string> = {
   'no-vectors': 'noVectors',
 };
 
+/**
+ * 一次检索的结果。**三个字段必须同生同死**，所以放一个对象里。
+ *
+ * 原来是三个并列的 `useState`，于是搜索**失败**时只清了 `hits`，
+ * `degraded` 还留着上一次那句 —— 界面会为一次根本没跑成的检索显示降级原因。
+ * 收成一个对象后，"这次检索是什么样"在结构上就只有一份。
+ *
+ * `search === null` = 还没搜过 / 查询词被清空 / 这次没搜成（错误另有 toast）。
+ * ⚠️ 失败时刻意**不留**"没搜到"的空态：那是"搜了但没有"，跟"没搜成"是两回事。
+ */
+interface SearchState {
+  mode: KbSearchOutcomeView['mode'];
+  degraded: KbDegradedReason | null;
+  hits: KbSearchHitView[];
+}
+
 export default function KnowledgeBase(): React.JSX.Element {
   const { t } = useTranslation();
   const [state, setState] = useState<LoadState>({ kind: 'loading' });
   const [query, setQuery] = useState('');
-  const [hits, setHits] = useState<KbSearchHitView[] | null>(null);
-  const [degraded, setDegraded] = useState<KbDegradedReason | null>(null);
+  const [search, setSearch] = useState<SearchState | null>(null);
   const [searching, setSearching] = useState(false);
   const [pendingRemove, setPendingRemove] = useState<KbSourceSummaryView | null>(null);
   const [noteOpen, setNoteOpen] = useState(false);
@@ -169,18 +184,20 @@ export default function KnowledgeBase(): React.JSX.Element {
   const handleSearch = useCallback(async () => {
     const trimmed = query.trim();
     if (!trimmed) {
-      setHits(null);
-      setDegraded(null);
+      setSearch(null);
       return;
     }
     setSearching(true);
     try {
       const reply = await window.clawwork.kbSearch({ query: trimmed });
       if (reply.ok) {
-        setHits(reply.outcome.hits);
-        setDegraded(reply.outcome.degraded ? (reply.outcome.degradedReason ?? null) : null);
+        setSearch({
+          mode: reply.outcome.mode,
+          degraded: reply.outcome.degraded ? (reply.outcome.degradedReason ?? null) : null,
+          hits: reply.outcome.hits,
+        });
       } else {
-        setHits([]);
+        setSearch(null);
         toast.error(t('kb.loadFailed'));
       }
     } finally {
@@ -279,18 +296,35 @@ export default function KnowledgeBase(): React.JSX.Element {
                   </Button>
                 </div>
 
-                {degraded && (
-                  <p className="type-meta mt-2 text-[var(--text-muted)]">
-                    {t(`kb.degraded.${DEGRADED_SUFFIX[degraded]}`)}
+                {/*
+                  ⚠️ 检索模式**有结果就说**，不是只在降级时说话。
+                  原来"什么都没显示"既可能是"混合检索跑得好"，也可能是"忘了渲染"，
+                  用户分不出那个 0.83 分是语义算出来的还是关键词撞上的 ——
+                  检索模式是**结果的一部分**，不是异常信息。
+                  一条都没搜到时**不说**模式行："命中 0 段"跟下面那句"没搜到"是重复的两句，
+                  这时该讲的是**为什么**（降级原因），模式本身没有信息量。
+                */}
+                {search !== null && search.hits.length > 0 && (
+                  <p data-testid="kb-search-mode" className="type-meta mt-2 text-[var(--text-muted)]">
+                    {search.mode === 'hybrid'
+                      ? t('kb.modeHybrid', { count: search.hits.length })
+                      : t('kb.modeKeyword', { count: search.hits.length })}
+                    {search.degraded && ` · ${t(`kb.degraded.${DEGRADED_SUFFIX[search.degraded]}`)}`}
                   </p>
                 )}
 
-                {hits !== null &&
-                  (hits.length === 0 ? (
+                {search !== null && search.hits.length === 0 && search.degraded && (
+                  <p className="type-meta mt-2 text-[var(--text-muted)]">
+                    {t(`kb.degraded.${DEGRADED_SUFFIX[search.degraded]}`)}
+                  </p>
+                )}
+
+                {search !== null &&
+                  (search.hits.length === 0 ? (
                     <p className="type-support mt-3 py-4 text-center text-[var(--text-muted)]">{t('kb.searchEmpty')}</p>
                   ) : (
                     <ul className="mt-3 flex flex-col gap-2">
-                      {hits.map((hit) => (
+                      {search.hits.map((hit) => (
                         <li key={hit.chunkId} className="rounded-lg border border-[var(--border-subtle)] p-2.5">
                           <div className="flex items-center gap-2">
                             <span className="type-label min-w-0 flex-1 truncate">{hit.sourceTitle}</span>

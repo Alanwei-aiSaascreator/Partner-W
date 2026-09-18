@@ -874,6 +874,8 @@
     "indexNow": "繼續建索引（{{count}} 段）",
     "loadFailed": "資料庫打不開",
     "loading": "正在準備資料庫…",
+    "modeHybrid": "混合檢索（關鍵詞 + 語意）：命中 {{count}} 段",
+    "modeKeyword": "僅關鍵詞檢索：命中 {{count}} 段",
     "noteAdded": "筆記已加入資料庫",
     "noteBodyLabel": "正文",
     "noteBodyPlaceholder": "隨手寫點什麼…",
