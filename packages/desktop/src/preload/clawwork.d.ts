@@ -44,6 +44,9 @@ import type {
   Artifact,
   ArtifactSaveAsResult,
 } from '@clawwork/shared';
+// 隐私工单状态的**归一化后**形状（snake→camel、字节数字、真布尔）由 core 定义，
+// 这里只引用 —— 渲染层不该再抄一份字段名。
+import type { PrivacyState } from '@clawwork/core';
 
 type IpcResult<T = Record<string, unknown>> = SharedIpcResult<T>;
 
@@ -711,6 +714,16 @@ export interface ClawWorkAPI {
     event: string;
     props?: Record<string, string | number | boolean>;
   }) => Promise<IpcResult<null>>;
+
+  // ── 隐私与数据（P4）──────────────────────────────────────────────────
+  // 状态已过 core 的 `normalizePrivacyState`：camelCase + 数字字节 + 真布尔。
+  // 导出的结果 = 服务端快照 + 本地数据合成**一个** JSON；成功时回落盘路径，
+  // 用户在保存对话框取消回 `cancelled`（界面据此安静收场）。
+  privacyState: () => Promise<IpcResult<PrivacyState>>;
+  privacyRequestExport: () => Promise<IpcResult<unknown>>;
+  privacyRequestDeletion: (payload: { reason?: string }) => Promise<IpcResult<unknown>>;
+  privacyCancelDeletion: (payload: { id: string }) => Promise<IpcResult<null>>;
+  privacyDownloadExport: () => Promise<IpcResult<{ path: string }>>;
 }
 
 export interface RechargeSku {

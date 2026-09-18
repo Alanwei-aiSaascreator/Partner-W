@@ -28,6 +28,7 @@ import { registerCommunityHandlers } from './ipc/community-handlers.js';
 import { registerMarketHandlers } from './ipc/market-handlers.js';
 import { registerGrowthHandlers } from './ipc/growth-handlers.js';
 import { registerAnalyticsHandlers } from './ipc/analytics-handlers.js';
+import { registerPrivacyHandlers } from './ipc/privacy-handlers.js';
 import { setupAnalytics, teardownAnalytics } from './analytics/setup.js';
 import { initUsageReporter, destroyUsageReporter } from './commercial/usage-reporter.js';
 import { bootstrapCommercialRelay } from './commercial/relay-startup.js';
@@ -248,6 +249,7 @@ if (!gotLock) {
     registerMarketHandlers();
     registerGrowthHandlers();
     registerAnalyticsHandlers();
+    registerPrivacyHandlers();
 
     ipcMain.handle('app:rebuild-menu', () => {
       devModeEnabled = readConfig()?.devMode === true;

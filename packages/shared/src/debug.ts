@@ -17,6 +17,7 @@ export type DebugDomain =
   | 'updater'
   | 'commercial'
   | 'analytics'
+  | 'privacy'
   | 'avatar';
 
 export interface DebugError {
