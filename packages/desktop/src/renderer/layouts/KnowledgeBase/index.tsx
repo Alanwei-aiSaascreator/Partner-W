@@ -9,6 +9,7 @@ import InlineNotice from '@/components/semantic/InlineNotice';
 import SectionCard from '@/components/semantic/SectionCard';
 import WindowTitlebar from '@/components/semantic/WindowTitlebar';
 import ConfirmDialog from '@/components/semantic/ConfirmDialog';
+import NoteComposerDialog from './NoteComposerDialog';
 import { toast } from '@/lib/toast';
 import type { KbSearchHitView, KbSourceSummaryView, KbStatsView } from '../../../preload/clawwork';
 
@@ -43,6 +44,7 @@ export default function KnowledgeBase(): React.JSX.Element {
   const [degraded, setDegraded] = useState<'no-engine' | 'engine-error' | 'no-vectors' | null>(null);
   const [searching, setSearching] = useState(false);
   const [pendingRemove, setPendingRemove] = useState<KbSourceSummaryView | null>(null);
+  const [noteOpen, setNoteOpen] = useState(false);
 
   const refresh = useCallback(async () => {
     const [statsReply, sourcesReply] = await Promise.all([window.clawwork.kbStats(), window.clawwork.kbListSources()]);
@@ -85,6 +87,21 @@ export default function KnowledgeBase(): React.JSX.Element {
 
     await runIndexThenRefresh();
   }, [runIndexThenRefresh, t]);
+
+  /** 建笔记 → 关框 → 建索引 → 刷列表。顺序刻意如此：先关框让用户看到反馈，再干活。 */
+  const handleCreateNote = useCallback(
+    async (input: { title: string; text: string }) => {
+      const reply = await window.clawwork.kbAddNote(input);
+      if (!reply.ok) {
+        toast.error(t('kb.loadFailed'));
+        return;
+      }
+      setNoteOpen(false);
+      toast.success(t('kb.noteAdded'));
+      await runIndexThenRefresh();
+    },
+    [runIndexThenRefresh, t],
+  );
 
   const handleRemove = useCallback(async () => {
     if (!pendingRemove) return;
@@ -147,6 +164,10 @@ export default function KnowledgeBase(): React.JSX.Element {
                     <Button size="sm" variant="outline" onClick={() => void handleAddFiles()}>
                       <FilePlus2 size={14} />
                       {t('kb.addFile')}
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => setNoteOpen(true)}>
+                      <NotebookPen size={14} />
+                      {t('kb.addNote')}
                     </Button>
                     {pendingChunks > 0 && (
                       <Button size="sm" variant="ghost" onClick={() => void runIndexThenRefresh()}>
@@ -261,6 +282,8 @@ export default function KnowledgeBase(): React.JSX.Element {
           )}
         </div>
       </ScrollArea>
+
+      <NoteComposerDialog open={noteOpen} onCancel={() => setNoteOpen(false)} onSubmit={handleCreateNote} />
 
       <ConfirmDialog
         open={pendingRemove !== null}

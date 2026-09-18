@@ -94,6 +94,77 @@ async function renderPanel(): Promise<void> {
   });
 }
 
+describe('新建笔记（T-c1）', () => {
+  /** Radix 的弹层走 portal 挂到 body ⇒ 断言要看 `document.body`，不是 container。 */
+  const bodyText = (): string => document.body.textContent ?? '';
+  const clickByText = (text: string): void => {
+    const btn = [...document.body.querySelectorAll('button')].find((b) => (b.textContent ?? '').includes(text));
+    if (!btn) throw new Error(`找不到按钮：${text}`);
+    act(() => (btn as HTMLButtonElement).click());
+  };
+
+  it('⭐ 点「新建笔记」弹出对话框（不是直接建一条空笔记）', async () => {
+    stubClawwork({});
+    await renderPanel();
+
+    expect(bodyText()).not.toContain('kb.noteTitle');
+    clickByText('kb.addNote');
+    expect(bodyText()).toContain('kb.noteTitle');
+  });
+
+  it('⭐ 标题或正文为空 ⇒ **不提交**，并给出可读提示（不能静默什么都没发生）', async () => {
+    const kbAddNote = vi.fn(async () => ({
+      ok: true,
+      outcome: { status: 'indexed', chunkCount: 1, embeddedCount: 1, pendingCount: 0 },
+    }));
+    stubClawwork({ kbAddNote });
+    await renderPanel();
+    clickByText('kb.addNote');
+
+    // 什么都不填直接点「创建」
+    clickByText('kb.noteCreate');
+
+    expect(kbAddNote, '空笔记不该发出去').not.toHaveBeenCalled();
+    // 提示必须出现 —— 静默失败会让用户以为按钮坏了
+    expect(bodyText()).toContain('kb.noteNeedContent');
+  });
+
+  it('填好标题与正文 ⇒ 调 kbAddNote 带上参数，并关掉对话框', async () => {
+    const kbAddNote = vi.fn(async () => ({
+      ok: true,
+      outcome: { status: 'indexed', chunkCount: 1, embeddedCount: 1, pendingCount: 0 },
+    }));
+    stubClawwork({ kbAddNote });
+    await renderPanel();
+    clickByText('kb.addNote');
+
+    // ⚠️ 必须**限定在对话框里**查：`document.body` 还挂着面板自己的搜索框，
+    //    按全局顺序取会因为"第一个 input 是搜索框"而抓错元素（测验改过一次）。
+    const dialog = document.querySelector('[data-testid="kb-note-dialog"]');
+    expect(dialog, '对话框应挂了 kb-note-dialog').not.toBeNull();
+    const inputs = [...dialog!.querySelectorAll('input, textarea')] as (HTMLInputElement | HTMLTextAreaElement)[];
+    expect(inputs.length, '对话框里应有标题与正文两个输入').toBe(2);
+    // ⚠️ setter 要**按元素各自取**：标题是 `<input>`、正文是 `<textarea>`，
+    //    拿 input 的 setter 去写 textarea 会抛 "not a valid instance"。
+    const setValue = (el: HTMLInputElement | HTMLTextAreaElement, value: string): void => {
+      const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+      Object.getOwnPropertyDescriptor(proto, 'value')!.set!.call(el, value);
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    await act(async () => {
+      setValue(inputs[0], '会议纪要');
+      setValue(inputs[1], '今天定了三件事。');
+    });
+
+    await act(async () => {
+      clickByText('kb.noteCreate');
+    });
+
+    expect(kbAddNote).toHaveBeenCalledWith({ title: '会议纪要', text: '今天定了三件事。' });
+    expect(bodyText(), '提交后对话框该关掉').not.toContain('kb.noteTitle');
+  });
+});
+
 describe('资料库面板', () => {
   it('⭐ 「还没就绪」显示成**准备中**，不是"还没有资料"（否则用户以为东西丢了）', async () => {
     stubClawwork({
