@@ -41,6 +41,8 @@ vi.mock('ws', () => ({
 vi.mock('electron', () => ({
   app: {
     getVersion: vi.fn(() => '0.0.0-test'),
+    // GatewayClient.connect 会拿它算 win-ca 的证书目录（tls-trust 已在本文件被 mock）
+    getPath: vi.fn(() => '/tmp/clawwork-test-userdata'),
   },
 }));
 

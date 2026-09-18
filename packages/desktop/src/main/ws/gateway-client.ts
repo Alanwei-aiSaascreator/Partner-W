@@ -117,7 +117,7 @@ export class GatewayClient {
 
   connect(): void {
     if (this.destroyed) return;
-    ensureGatewayWindowsSystemTrust();
+    ensureGatewayWindowsSystemTrust(app.getPath('userData'));
     this.cleanup();
     this.lastError = null;
 
