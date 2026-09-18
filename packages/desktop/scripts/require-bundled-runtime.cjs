@@ -29,6 +29,40 @@ const BUNDLED_TO = 'runtime';
 /** 认盘/认包的 marker（必须与 `locate.ts` 的 RUNTIME_MANIFEST_FILE 一致）。 */
 const MARKER = 'openclaw-runtime-manifest.json';
 
+/** 随包嵌入模型在 `<resources>` 下的目录名 —— 必须与 `kb/embedding/locate.ts` 的 KB_MODEL_DIR_NAME 一致。 */
+const KB_MODEL_TO = 'kb-model';
+
+/**
+ * 模型 id —— 必须与 `kb/embedding/engine.ts` 的 `KB_EMBEDDING_MODEL_ID` 一致。
+ *
+ * ⚠️ 它是**子目录名**：`<resources>/kb-model/bge-small-zh-v1.5/…`。这层不能省 ——
+ * `@huggingface/transformers` 要的是 `localModelPath`（=`<resources>/kb-model`）
+ * 加一个模型 id，两段拼起来才是权重所在。
+ * 本钩子第一版把必查路径写成了 `kb-model/config.json`（漏了这层），
+ * 结果**被自己这道门禁挡在构建里** —— 挡得对，如果不挡，装出来的包里
+ * 引擎会找不到模型、静默退化成纯关键词检索。
+ */
+const KB_MODEL_ID = 'bge-small-zh-v1.5';
+
+/**
+ * 模型目录里**必须齐**的文件（相对 `<resources>/kb-model`）。
+ *
+ * ⚠️ 只查"目录在不在"是不够的：`runtime-out/kb-model/` 完全可以只有半份
+ *（比如 `onnx/model.onnx` 那 90MB 下载中断，而抓取脚本是**先写 .part 再改名**的，
+ * 所以正常情况下不会留半个文件 —— 但手工拷、或换台机器重建时就可能）。
+ * 缺 onnx 权重的表现最坏：包能装、应用能开，**只是资料库永远退化成纯关键词检索**，
+ * 没有任何报错。所以这里把"齐"变成硬失败。
+ */
+const KB_MODEL_REQUIRED = ['manifest.json', 'config.json', 'tokenizer.json', 'onnx/model.onnx'].map(
+  (file) => `${KB_MODEL_ID}/${file}`,
+);
+
+/** 每个 `to:` 目标各自"必须存在"的路径；没有条目的目标只查目录本身。 */
+const REQUIRED_UNDER = {
+  [BUNDLED_TO]: [MARKER],
+  [KB_MODEL_TO]: KB_MODEL_REQUIRED,
+};
+
 /** 通配源（`*.png` 那类）跳过：匹配不到不一定是错，与这道门禁的意图不同。 */
 function isLiteralSource(from) {
   return !/[*?[\]{}]/.test(from);
@@ -80,8 +114,16 @@ function collectProblems(config, projectDir, exists = fs.existsSync) {
       problems.push(`缺源：${s.abs}   ← 配置里写的是 from: ${s.from}（基准 = ${projectDir}）`);
       continue;
     }
-    if (s.to === BUNDLED_TO && !exists(path.join(s.abs, MARKER))) {
-      problems.push(`源在但**不是一份运行时**：${s.abs} 里没有 ${MARKER}（半成品/拷错了目录都会被判为"这不是运行时"）`);
+    const required = s.to ? REQUIRED_UNDER[s.to] : undefined;
+    if (!required) continue;
+    for (const file of required) {
+      if (exists(path.join(s.abs, file))) continue;
+      problems.push(
+        s.to === BUNDLED_TO
+          ? `源在但**不是一份运行时**：${s.abs} 里没有 ${file}（半成品/拷错了目录都会被判为"这不是运行时"）`
+          : `源在但**不完整**：${s.abs} 里没有 ${file}` +
+              `（模型齐不齐决定的是"资料库能不能建索引"—— 缺了不报错，只是静默退化成纯关键词检索）`,
+      );
     }
   }
 
@@ -128,3 +170,6 @@ exports.collectProblems = collectProblems;
 exports.staticExtraResourceSources = staticExtraResourceSources;
 exports.BUNDLED_TO = BUNDLED_TO;
 exports.MARKER = MARKER;
+exports.KB_MODEL_TO = KB_MODEL_TO;
+exports.KB_MODEL_ID = KB_MODEL_ID;
+exports.KB_MODEL_REQUIRED = KB_MODEL_REQUIRED;

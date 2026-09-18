@@ -30,9 +30,15 @@ function makeModelDir(files: Record<string, string> = { 'config.json': '{"hidden
   return root;
 }
 
-/** 假 pipeline：把输入映射成固定向量，形状与真的一致（Tensor 有 dims + data）。 */
+/**
+ * 假 pipeline：把输入映射成固定向量，形状与真的一致（Tensor 有 dims + data）。
+ *
+ * ⚠️ 第二个参数（`options`）**必须声明**，哪怕用不上：不然 `mock.calls[0]` 的类型
+ * 是只有一项的元组，`calls[0][1]` 在 tsc 下直接报 TS2493 —— 而运行时不报，
+ * 只有 `typecheck:tests` 会抓。别为了"用不上就不写"把它省掉。
+ */
 function fakePipeline() {
-  return vi.fn(async (texts: string[]) => ({
+  return vi.fn(async (texts: string[], _options: { pooling: string; normalize: boolean }) => ({
     dims: [texts.length, 4],
     data: new Float32Array(texts.flatMap(() => [1, 0, 0, 0])),
   }));

@@ -32,11 +32,45 @@ extraResources:
   #    所以下面挂了 beforePack 钩子把"缺运行时"变成**硬失败**。
   - from: ../../runtime-out
     to: runtime
+    # ⚠️ 必须排除 kb-model：`runtime-out` 是**整个**映射进 `<resources>/runtime` 的，
+    #    而运行时在首次启动时会把 `<resources>/runtime` **复制到 userData**
+    #    ⇒ 不排除的话 90MB 模型会被白拷一份，而且是被当成运行时内容来拷的。
+    filter:
+      - '**/*'
+      - '!kb-model/**'
+  # T6b：本地嵌入模型（bge-small-zh-v1.5，约 91MB）。单独映射成 `<resources>/kb-model`，
+  # **不能**塞在上面那个 runtime 映射里（见上一条）。客户端侧的解析见
+  # `src/main/kb/embedding/`（打包态用 process.resourcesPath + kb-model）。
+  # 产出方式：仓库根跑 `node scripts/fetch-kb-model.mjs`。
+  - from: ../../runtime-out/kb-model
+    to: kb-model
 beforePack: ./scripts/require-bundled-runtime.cjs
+
+# 原生二进制**不能**从 app.asar 里加载（`LoadLibrary` 读不了 asar 虚拟路径）。
+# better-sqlite3 / win-ca 由 electron-builder 自动解包；onnxruntime-node 是**自己按路径
+# 去 bin/napi-v6/<平台>/<架构>/ 找 .node 和 .dll** 的，自动检测未必覆盖得到，所以写明。
+# 漏了它的表现：开发态一切正常，装出来的包里"资料库索引永远建不出来"。
+asarUnpack:
+  - '**/node_modules/onnxruntime-node/**'
 
 files:
   - 'out/**/*'
   - 'node_modules/**/*'
+  # ⚠️ 排掉工作区软链（`@clawwork/core` / `@clawwork/shared` → `packages/*`）。
+  #    理由有两条，第二条是**必须**：
+  #    ① 它们被 `electron-vite.config.ts` 的 `externalizeDepsPlugin({ exclude: [...] })`
+  #       **打进了 `out/`**（等于"不外部化"），运行时根本不会去 node_modules 里 require 它们 ⇒
+  #       打进包只是白白多一份源码。
+  #    ② 更要命的是：软链的目标在 app 目录**之外**，electron-builder 走到 asar 那一步会直接报
+  #       `<repo>/packages/core/dist/index.d.ts.map must be under <repo>/packages/desktop/`。
+  #       这个雷**只在 `packages/core/dist` 非空时才炸** —— 而 `pnpm typecheck`（`tsc -b`）
+  #       正好会把它填满。换句话说：**先跑 typecheck 再打包 = 构建失败**，
+  #       而两次发版之间没人跑过它，所以一直没被发现。2026-09-18 加 T6b 时撞上并修掉。
+  - '!../core/**'
+  - '!../shared/**'
+  # onnxruntime-web 是浏览器/WASM 后端，Node 走的是 onnxruntime-node。
+  # 实测：把这个包整个移走，嵌入照样出向量（dim=512）。140MB 纯死重。
+  - '!**/onnxruntime-web/**'
   - 'package.json'
 artifactName: ${productName}-${version}-${os}-${arch}.${ext}
 afterPack: ./scripts/afterPack.cjs
@@ -57,6 +91,17 @@ mac:
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
   notarize: true
+  # 见 win.files 那条说明（为什么要裁、为什么基础三条要重复写）。mac 出 arm64 + x64，
+  # darwin 两套都留着 —— 只有 linux / win32 是死重。
+  files:
+    - 'out/**/*'
+    - 'node_modules/**/*'
+    - '!../core/**'
+    - '!../shared/**'
+    - '!**/onnxruntime-web/**'
+    - 'package.json'
+    - '!**/onnxruntime-node/bin/napi-v6/linux/**'
+    - '!**/onnxruntime-node/bin/napi-v6/win32/**'
   extendInfo:
     NSMicrophoneUsageDescription: 荣盈魔方 needs microphone access for voice dictation in chat input.
 win:
@@ -65,6 +110,24 @@ win:
       arch:
         - x64
   icon: build/icon.ico
+  # ⚠️ onnxruntime-node 把**三个平台**的二进制都放在包里（darwin 86MB + linux 69MB +
+  #    win32 134MB = 289MB），而我们只需要自己那一个。不裁的话 Windows 安装包会白背
+  #    225MB 死重（darwin/linux 各一份 + win32 里我们用不到的 arm64）。
+  # ⚠️ 基础三条**故意重复写**：electron-builder 的平台级 `files` 是"覆盖顶层"还是
+  #    "叠加"没有明确文档，两种写法都重复一遍 ⇒ 无论它按哪种语义都拿到完整集合。
+  # ⚠️ 用 `**/onnxruntime-node/...` 而不是 `node_modules/...`：pnpm 下这个包在
+  #    `node_modules/.pnpm/onnxruntime-node@<ver>/...`，`node_modules/onnxruntime-node`
+  #    只是个软链 —— 只写一条会漏掉真实路径。
+  files:
+    - 'out/**/*'
+    - 'node_modules/**/*'
+    - '!../core/**'
+    - '!../shared/**'
+    - '!**/onnxruntime-web/**'
+    - 'package.json'
+    - '!**/onnxruntime-node/bin/napi-v6/darwin/**'
+    - '!**/onnxruntime-node/bin/napi-v6/linux/**'
+    - '!**/onnxruntime-node/bin/napi-v6/win32/arm64/**'
 nsis:
   oneClick: false
   perMachine: false
@@ -80,6 +143,16 @@ linux:
         - x64
   category: Development
   icon: build/icon.png
+  # 见 win.files 那条说明。linux 只出 x64 ⇒ darwin（含两套架构）和 win32 都是死重。
+  files:
+    - 'out/**/*'
+    - 'node_modules/**/*'
+    - '!../core/**'
+    - '!../shared/**'
+    - '!**/onnxruntime-web/**'
+    - 'package.json'
+    - '!**/onnxruntime-node/bin/napi-v6/darwin/**'
+    - '!**/onnxruntime-node/bin/napi-v6/win32/**'
   maintainer: samzong <samzong.lu@gmail.com>
   desktop:
     StartupWMClass: mofangluopan
