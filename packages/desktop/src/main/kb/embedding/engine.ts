@@ -24,6 +24,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import type { EmbeddingEngine } from '@clawwork/core';
 
 /**
  * 模型 id。**会落库成 `kb_meta.embedding_model`，也是目录名。**
@@ -33,17 +34,11 @@ import path from 'node:path';
  */
 export const KB_EMBEDDING_MODEL_ID = 'bge-small-zh-v1.5';
 
-// 不导出：目前只有本模块和它的调用方用得到；`check:dead-code`(knip) 会抓"导出了没人用"。
-// 将来别处要显式声明这个类型时再导出即可。
-interface EmbeddingEngine {
-  /** 见 `KB_EMBEDDING_MODEL_ID`。 */
-  readonly modelId: string;
-  /** 向量维度（取自模型 config 的 `hidden_size`）。 */
-  readonly dim: number;
-  /** 一批文本 → 一批向量。顺序与入参一一对应。 */
-  embed(texts: readonly string[]): Promise<Float32Array[]>;
-}
-
+// ⚠️ 引擎的接口**不在本文件定义**，直接用 core 的 `EmbeddingEngine`（T6a 就定好的那个）：
+//    两者形状一致（`model` / `dim` / `embed`）时，引擎可以**直接**喂给 core 的
+//    `embedPendingChunks`，不需要中间再套一层适配器。自己另立一份的话，
+//    两份接口一旦漂移就是这么坏：类型都对、运行时才发现字段名不是那个。
+//
 /** 真 pipeline 的最小形状（只声明我们用到的那点）。 */
 interface FeatureExtractionPipeline {
   (
@@ -120,7 +115,7 @@ export async function loadEmbeddingEngine(opts: LoadEmbeddingEngineOptions): Pro
   log('kb.embedding.ready', { modelId, dim });
 
   return {
-    modelId,
+    model: modelId,
     dim,
     async embed(texts) {
       if (texts.length === 0) return [];
@@ -132,10 +127,12 @@ export async function loadEmbeddingEngine(opts: LoadEmbeddingEngineOptions): Pro
 
       const width = out.dims[out.dims.length - 1];
       const rows = out.data.length / width;
-      const result: Float32Array[] = [];
+      const result: number[][] = [];
       for (let i = 0; i < rows; i++) {
         // 按行切出来 —— 整块 data 原样给的话，每条切片都会拿到所有人的向量。
-        result.push(Float32Array.from(Array.from({ length: width }, (_, d) => out.data[i * width + d])));
+        const row: number[] = [];
+        for (let d = 0; d < width; d += 1) row.push(out.data[i * width + d]);
+        result.push(row);
       }
       return result;
     },

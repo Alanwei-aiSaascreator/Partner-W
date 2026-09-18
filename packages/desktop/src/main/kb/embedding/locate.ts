@@ -22,7 +22,7 @@ export const KB_MODEL_DIR_NAME = 'kb-model';
 // 但跟别处 `path.join` 出来的 `C:\a\b` **字符串不相等** —— 拿它做缓存键、去重、
 // 或跟配置里的路径比对时会静默不命中。本文件第一版就是这么写的，被单测抓了出来。
 
-interface ResolveKbModelRootOptions {
+export interface ResolveKbModelRootOptions {
   isPackaged: boolean;
   /** 打包态的 `<resources>`（真机上是 `process.resourcesPath`）。 */
   resourcesPath?: string;

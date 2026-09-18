@@ -107,13 +107,13 @@ describe('loadEmbeddingEngine —— 成功路径', () => {
     expect(engine?.dim).toBe(768);
   });
 
-  it('modelId 是稳定常量（它落库成 kb_meta.embedding_model，换值=所有向量作废）', async () => {
+  it('model 是稳定常量（它落库成 kb_meta.embedding_model，换值=所有向量作废）', async () => {
     const engine = await loadEmbeddingEngine({
       modelRoot: tmpDir(),
       createPipeline: (async () => fakePipeline()) as never,
     });
 
-    expect(engine?.modelId).toBe(KB_EMBEDDING_MODEL_ID);
+    expect(engine?.model).toBe(KB_EMBEDDING_MODEL_ID);
   });
 
   it('⭐ 必须开 normalize —— 关了的话余弦相似度就不是点积，"归一化后点积"那套假设全崩', async () => {
@@ -133,14 +133,14 @@ describe('loadEmbeddingEngine —— 成功路径', () => {
     expect(pipe).not.toHaveBeenCalled();
   });
 
-  it('输出是 Float32Array（下游要按它 encodeVector 落库）', async () => {
+  it('返回 number[][]（core 的 EmbeddingEngine 就是这形状，直接喂 embedPendingChunks）', async () => {
     const engine = await loadEmbeddingEngine({ modelRoot: tmpDir(), createPipeline: (() => pipeHolder.pipe) as never });
     void pipeHolder;
 
     const out = await engine!.embed(['甲', '乙']);
 
     expect(out).toHaveLength(2);
-    expect(out[0]).toBeInstanceOf(Float32Array);
+    expect(Array.isArray(out[0])).toBe(true);
     expect(out[0]).toHaveLength(4);
   });
 
@@ -153,8 +153,8 @@ describe('loadEmbeddingEngine —— 成功路径', () => {
 
     const out = await engine!.embed(['甲', '乙']);
 
-    expect(Array.from(out[0])).toEqual([1, 2]);
-    expect(Array.from(out[1])).toEqual([3, 4]);
+    expect(out[0]).toEqual([1, 2]);
+    expect(out[1]).toEqual([3, 4]);
   });
 });
 
