@@ -393,23 +393,49 @@ Requires `caps: ["tool-events"]` capability. Provides granular agent execution v
 
 **Stream types:**
 
-| stream      | data fields                                       | description              |
-| ----------- | ------------------------------------------------- | ------------------------ |
-| `assistant` | `{ text, delta }`                                 | Text generation fragment |
-| `tool`      | `{ phase, name, args?, result?, partialResult? }` | Tool invocation          |
-| `lifecycle` | `{ phase, error?, stopReason? }`                  | Run lifecycle            |
-| `error`     | `{ reason, expected?, received? }`                | Sequence errors          |
+| stream      | data fields                                                                                                | description                            |
+| ----------- | ---------------------------------------------------------------------------------------------------------- | -------------------------------------- |
+| `assistant` | `{ text, delta }`                                                                                          | Text generation fragment               |
+| `tool`      | `{ phase, name, toolCallId, args?, result?, partialResult?, meta?, isError?, commandBearing? }`            | Tool invocation                        |
+| `item`      | `{ itemId, kind, phase, toolCallId?, name?, title?, progressText?, status?, meta?, startedAt?, endedAt? }` | Human-readable "what is it doing" feed |
+| `lifecycle` | `{ phase, error?, stopReason? }`                                                                           | Run lifecycle                          |
+| `error`     | `{ reason, expected?, received? }`                                                                         | Sequence errors                        |
 
-**Tool event phases:**
+> ⚠️ **Corrected 2026-09-19 against the runtime we actually ship (`2026.9.3`).**
+> This section previously documented the tool phases as `start` / `end` and did not list
+> `item` at all. That content was reverse-engineered from OpenClaw **2026.4.2**
+> (see the header note) — in 2026.9.3 **`end` is never emitted for `stream: "tool"`**.
+> Method: every `emitAgentEvent` / `emitTrackedItemEvent` call site in
+> `runtime/deployed/2026.9.3-*/node_modules/openclaw/dist/*.mjs` was scanned for the
+> `stream:` / `phase:` / `status:` literals. Values below are **observed**, not inferred.
 
-- `phase: "start"` — tool invocation begins, includes `name` and `args`
-- `phase: "end"` — tool invocation complete, includes `result` (stripped unless `verboseLevel=full`)
+**Tool event phases** (observed in 2026.9.3 — note: **no `end`**):
 
-**Lifecycle event phases:**
+- `phase: "start"` — invocation begins: `name`, `toolCallId`, `args`
+- `phase: "update"` — progress: `partialResult` only (**no** `args`, **no** `result`)
+- `phase: "result"` — invocation finished: `result`, `isError`, `meta`.
+  **Failures are `isError: true`, not a separate phase** (there is no `phase: "error"` on this stream)
+- `phase: "review"` — approval review: `approvalReviewOutcome`, `hideFromChannelProgress: true`
+
+⚠️ Because `update` carries neither `args` nor `result`, a consumer that lets later frames
+overwrite earlier ones will **lose the arguments and the output**, and can flip a finished
+call back to "running". Merge by `toolCallId`; never overwrite with `undefined`.
+
+**Item stream kinds** (observed in 2026.9.3): `tool` | `command` | `preamble`
+
+- `tool` — echoes a tool invocation, adding a gateway-composed `title` ("tool name + args summary")
+- `command` — shell/exec items; carries live output, and may be `status: "blocked"`
+- `preamble` — model-authored progress text in `progressText`
+
+Observed `item.phase`: `start`, `update`, `end`. Observed `item.status`: `running`, `blocked`
+(treat the set as open — it is a free-form field, not a schema-validated enum).
+
+**Lifecycle event phases** (observed in 2026.9.3):
 
 - `phase: "start"` — agent run begins
 - `phase: "end"` — agent run completes normally, may include `stopReason`
 - `phase: "error"` — agent run failed, includes `error`
+- `phase: "fallback"` — provider/model fallback: `selectedProvider`, `selectedModel`, `activeProvider`, `activeModel`
 
 **Tool Event Delivery:**
 Tool events use **targeted delivery**, not broadcast. Only connections that:
