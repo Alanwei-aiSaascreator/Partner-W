@@ -531,6 +531,13 @@ function buildApi(): ClawWorkAPI {
     bountyAccept: (id: string) => ipcRenderer.invoke('bounty:accept', { id }),
     bountyReject: (params: { id: string; note: string }) => ipcRenderer.invoke('bounty:reject', params),
     bountyCancel: (id: string) => ipcRenderer.invoke('bounty:cancel', { id }),
+
+    // ── 埋点上报（P4）────────────────────────────────────────────────
+    // ⚠️ 渲染层只能上报白名单里的事件名（`@clawwork/shared` 的 ANALYTICS_EVENTS，
+    //    与迁移 48 的表 CHECK 逐字一致）；`props` 到主进程还会过一遍标量白名单化
+    //    与体积上限。**不要**在这里加任何加工 —— 白名单只有一份，在 main 侧。
+    analyticsTrack: (payload: { event: string; props?: Record<string, string | number | boolean> }) =>
+      ipcRenderer.invoke('analytics:track', payload),
   };
 }
 

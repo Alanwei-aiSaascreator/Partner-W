@@ -703,6 +703,14 @@ export interface ClawWorkAPI {
   bountyAccept: (id: string) => Promise<IpcResult<null>>;
   bountyReject: (params: { id: string; note: string }) => Promise<IpcResult<null>>;
   bountyCancel: (id: string) => Promise<IpcResult<null>>;
+
+  // ── 埋点上报（P4）────────────────────────────────────────────────────
+  // 事件名由主进程按白名单校验（不在名单里返回 `{ok:false,errorCode:'invalid_event'}`）；
+  // props 只收标量，超限时**丢 props、保事件**。
+  analyticsTrack: (payload: {
+    event: string;
+    props?: Record<string, string | number | boolean>;
+  }) => Promise<IpcResult<null>>;
 }
 
 export interface RechargeSku {

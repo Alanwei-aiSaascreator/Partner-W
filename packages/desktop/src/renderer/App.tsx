@@ -20,6 +20,7 @@ import { useGatewayBootstrap } from './hooks/useGatewayBootstrap';
 import { useWorkspaceRefresh } from './hooks/useWorkspaceRefresh';
 import { useUpdateCheck } from './hooks/useUpdateCheck';
 import { useTraySync } from './hooks/useTraySync';
+import { useModuleOpenTracking } from './hooks/useModuleOpenTracking';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { useSettingsBootstrap } from './hooks/useSettingsBootstrap';
 import { useStartupReadiness } from './hooks/useStartupReadiness';
@@ -110,6 +111,7 @@ export default function App() {
   useUpdateCheck();
   useTraySync();
   useSettingsBootstrap(ready);
+  useModuleOpenTracking();
   useKeyboardShortcuts({
     startNewTask,
     setMainView,
