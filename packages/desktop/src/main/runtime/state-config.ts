@@ -19,6 +19,9 @@
  *
  * ⚠️ openclaw 自己也会往这个目录写东西（`openclaw.json.last-good` 等），
  * 所以**只在缺失或认证段不一致时补**，绝不整文件覆盖。
+ *
+ * 除了认证段，这里还会补一条**记忆检索的默认值**（`memory.search.provider = 'none'`，
+ * 见 `MEMORY_SEARCH_PROVIDER`）—— 不补的话模型每次调 `memory_search` 都会卡 15 秒再失败。
  */
 
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
@@ -34,6 +37,26 @@ export const STATE_CONFIG_FILE = 'openclaw.json';
 /** 稳定 id：有了它，upsert 才是幂等的（不会每次启动多出一条网关）。 */
 export const LOCAL_GATEWAY_ID = 'local-runtime';
 export const LOCAL_GATEWAY_NAME = 'Local Runtime';
+
+/**
+ * 记忆检索走**本地 FTS-only**，不接任何嵌入服务。
+ *
+ * 现场（2026-09-18，用户机器）：对话里模型一调 `memory_search` 就卡**整整 15.0 秒**
+ * 然后报错，再接着调别的工具（`ls`/`ask_user` 都正常）—— 用户看到的正是"调用
+ * memory 失败然后继续调用其他工具"。调试日志里三次调用，每次都是 15.0 秒后才 error。
+ *
+ * 根因不是我们写错了配置，而是**没写**：`memory.search.provider` 不写默认是 `openai`
+ * （`docs/reference/memory-config.md`），而我们从不出任何嵌入凭据 ⇒ 每次调用都去够
+ * OpenAI 直到超时。文档同时写明"显式远端 provider 在运行时不可达时 **fail closed**"，
+ * 即它不是悄悄退回全文检索，而是直接失败 —— 这就是那 15 秒。
+ *
+ * `none` 是运行时**一等公民**（`memory-core/manager-runtime.js` 多处特判走 FTS-only 分支），
+ * 文档写明"`provider: "none"` 有意选择 FTS-only 模式，记忆召回仍可正常工作"。
+ * 选它而不是 `enabled: false`：召回继续可用、不出网、不要凭据，符合"内容不出网"。
+ *
+ * ⚠️ 将来 T6b 接上我们自己的嵌入通道（走 relay 并计费）时，把这里换成对应 provider。
+ */
+export const MEMORY_SEARCH_PROVIDER = 'none';
 
 export interface OpenClawStateConfig {
   gateway: {
@@ -63,6 +86,32 @@ export function minimalGatewayConfig(token: string): OpenClawStateConfig {
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
+/** 从（任意的）配置里挖出 `memory.search.provider`；没有则 null。 */
+export function readMemorySearchProvider(raw: unknown): string | null {
+  if (!isRecord(raw)) return null;
+  const memory = raw.memory;
+  if (!isRecord(memory)) return null;
+  const search = memory.search;
+  if (!isRecord(search)) return null;
+  const provider = search.provider;
+  return typeof provider === 'string' && provider.length > 0 ? provider : null;
+}
+
+/**
+ * 记忆段合并（纯函数）：**只在没有 provider 时补默认**，设过的一个字都不动。
+ *
+ * 为什么要合并而不是整段覆盖：用户机器上这份文件**早就存在**（`ensureStateConfig`
+ * 里那条"已经一致就一个字节都不写"的提前返回会直接跳过它）⇒ 只在"新建"路径上补默认值
+ * 等于对存量用户完全没修。另外 openclaw 自己也可能往 `memory` 里写别的东西。
+ */
+export function mergeMemoryDefaults(existing: Record<string, unknown> | null): Record<string, unknown> {
+  const memory = existing && isRecord(existing.memory) ? existing.memory : {};
+  if (readMemorySearchProvider(existing) !== null) return memory;
+
+  const search = isRecord(memory.search) ? memory.search : {};
+  return { ...memory, search: { ...search, provider: MEMORY_SEARCH_PROVIDER } };
 }
 
 /** 从（任意的）已有配置里挖出 token；没有则 null。 */
@@ -130,7 +179,11 @@ export function ensureStateConfig(userDataDir: string): {
   });
 
   // ② 已经一致 ⇒ 一个字节都不写（不每次启动都重写别人的文件）
-  if (existingToken === store.token && existing) {
+  //
+  // ⚠️ "一致"必须**含**记忆默认值：这条提前返回是存量用户的必经之路（他们的 token
+  //    本来就是对的），只看 token 的话 `memory.search.provider` 永远补不上 ——
+  //    那正是"对用户机器无效"的那一版修法。token 对 + 记忆段已设 ⇒ 才真的不写。
+  if (existingToken === store.token && existing && readMemorySearchProvider(existing) !== null) {
     return { token: store.token, created: false, configPath };
   }
 
@@ -138,6 +191,7 @@ export function ensureStateConfig(userDataDir: string): {
   const merged: Record<string, unknown> = {
     ...(existing ?? {}),
     gateway: { ...gateway, auth: { mode: 'token', token: store.token } },
+    memory: mergeMemoryDefaults(existing),
   };
 
   writeJsonAtomic(configPath, merged);

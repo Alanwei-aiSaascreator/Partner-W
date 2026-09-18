@@ -94,7 +94,10 @@ describe('ensureStateConfig', () => {
     expect(fs.existsSync(stateConfigPath(stateDirFor(userDataDir)))).toBe(true);
 
     const raw = JSON.parse(fs.readFileSync(res.configPath, 'utf-8'));
-    expect(raw).toEqual({ gateway: { auth: { mode: 'token', token: res.token } } });
+    expect(raw).toEqual({
+      gateway: { auth: { mode: 'token', token: res.token } },
+      memory: { search: { provider: 'none' } },
+    });
     expect(res.token).toMatch(/^[A-Za-z0-9_-]{43}$/); // 32 字节 → 43 个 base64url 字符
   });
 
@@ -120,6 +123,63 @@ describe('ensureStateConfig', () => {
     const raw = JSON.parse(fs.readFileSync(res.configPath, 'utf-8'));
     expect(raw.other).toBe(1);
     expect(raw.gateway.logLevel).toBe('debug');
+  });
+
+  it('⭐ 显式选 FTS-only（memory.search.provider="none"）—— 否则 memory_search 卡 15 秒再失败', () => {
+    // 现场（2026-09-18，用户机器）：模型调 `memory_search` ⇒ 整整 15.0 秒 ⇒ error ⇒
+    // 再接着调别的工具（ls / ask_user 都正常）。根因：`memory.search.provider` 默认
+    // **openai**，而我们从不出嵌入凭据 ⇒ 每次调用都去够 OpenAI 直到超时；
+    // openclaw 文档写明"显式远端 provider 不可达时 fail closed"。
+    // `provider: "none"` 是有意的本地全文检索模式：recall 仍可用、不出网、不需要凭据。
+    // 将来 T6b 接上自己的嵌入通道时，把这里改成对应 provider 即可。
+    const res = ensureStateConfig(userDataDir);
+
+    const raw = JSON.parse(fs.readFileSync(res.configPath, 'utf-8'));
+    expect(raw.memory?.search?.provider).toBe('none');
+  });
+
+  it('老配置（没有 memory 段）⇒ 补上这条默认；用户/将来版本设过的 provider 不覆盖', () => {
+    const stateDir = stateDirFor(userDataDir);
+    fs.mkdirSync(stateDir, { recursive: true });
+    // ① 老配置：只有 gateway ⇒ 补齐
+    fs.writeFileSync(stateConfigPath(stateDir), JSON.stringify({ gateway: { logLevel: 'debug' } }));
+    ensureStateConfig(userDataDir);
+    let raw = JSON.parse(fs.readFileSync(stateConfigPath(stateDir), 'utf-8'));
+    expect(raw.memory.search.provider).toBe('none');
+    expect(raw.gateway.logLevel).toBe('debug');
+
+    // ② 已经设过（将来接了嵌入通道会写成别的）⇒ 一个字都不改
+    fs.writeFileSync(
+      stateConfigPath(stateDir),
+      JSON.stringify({
+        gateway: { auth: { mode: 'token', token: 't' } },
+        memory: { search: { provider: 'local', model: 'bge-small-zh-v1.5' } },
+      }),
+    );
+    ensureStateConfig(userDataDir);
+    raw = JSON.parse(fs.readFileSync(stateConfigPath(stateDir), 'utf-8'));
+    expect(raw.memory.search).toEqual({ provider: 'local', model: 'bge-small-zh-v1.5' });
+  });
+
+  it('⭐ 存量用户（token 本来就对）也必须补上 memory 默认值 —— 提前返回不能只看 token', () => {
+    // 这条是这次修复最容易被写漏的地方：`ensureStateConfig` 里"已经一致就一个字节都不写"
+    // 那条提前返回，**存量用户每次启动都从它出去**（他们的 token 本来就是对的）。
+    // 只在"新建"路径上补默认值 ⇒ 对用户那台机器完全无效 —— 症状原样还在。
+    const stateDir = stateDirFor(userDataDir);
+    fs.mkdirSync(stateDir, { recursive: true });
+    // 先建一次，拿到"正确的" token（模拟用户机器上早就存在的状态文件）
+    const first = ensureStateConfig(userDataDir);
+
+    // 再把 memory 段摘掉，模拟修复前写下的那份文件（token 是对的、没有 memory 段）
+    const cfg = JSON.parse(fs.readFileSync(stateConfigPath(stateDir), 'utf-8'));
+    delete cfg.memory;
+    fs.writeFileSync(stateConfigPath(stateDir), JSON.stringify(cfg));
+
+    const res = ensureStateConfig(userDataDir);
+
+    expect(res.token).toBe(first.token); // token 一个字节没动
+    const raw = JSON.parse(fs.readFileSync(stateConfigPath(stateDir), 'utf-8'));
+    expect(raw.memory.search.provider).toBe('none');
   });
 
   it('已有配置但**没有** token ⇒ 补一个，但不覆盖别的字段', () => {
