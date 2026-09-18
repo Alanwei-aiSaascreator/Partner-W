@@ -598,10 +598,12 @@
     "deleteTask": "Excluir Tarefa",
     "exportToFiles": "Exportar para Arquivos",
     "markCompleted": "Marcar como Concluída",
+    "pinTask": "Fixar tarefa",
     "reactivate": "Reativar",
     "rename": "Renomear",
     "resetSession": "Redefinir Sessão",
-    "saveToMarkdown": "Salvar como Markdown"
+    "saveToMarkdown": "Salvar como Markdown",
+    "unpinTask": "Desafixar tarefa"
   },
   "cron": {
     "advanced": "Opções Avançadas",
@@ -868,6 +870,7 @@
     "myAssistants": "Meus assistentes",
     "noAgents": "Sem agentes",
     "noPreview": "Ainda sem mensagens",
+    "pinned": "Fixada",
     "recentTasks": "Tarefas recentes",
     "searchTasks": "Buscar tarefas…",
     "showFewerTasks": "Mostrar menos tarefas",

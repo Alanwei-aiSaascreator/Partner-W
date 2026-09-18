@@ -38,6 +38,7 @@ function Harness({ actions }: { actions: SessionActions }): ReactElement | null 
 function makeActions(): SessionActions {
   return {
     rename: vi.fn(),
+    togglePin: vi.fn(),
     compact: vi.fn(),
     reset: vi.fn(),
     deleteTask: vi.fn(),
@@ -98,6 +99,58 @@ describe('任务右键菜单的接线', () => {
     expect(statuses).toEqual(['task-2:archived']);
     expect(actions.rename).not.toHaveBeenCalled();
     expect(actions.reset).not.toHaveBeenCalled();
+  });
+
+  it('⭐ 「置顶」调 togglePin(id, true)（未置顶时）', async () => {
+    const actions = makeActions();
+    await act(async () => root.render(<Harness actions={actions} />));
+    await act(async () => {
+      menu?.openMenu({ preventDefault: () => {} } as unknown as ReactMouseEvent, 'task-3', 'active');
+    });
+
+    const pinItem = findItem(/置顶|pin/i);
+    expect(pinItem, '菜单里必须有「置顶」').toBeTruthy();
+
+    act(() => pinItem?.action());
+
+    expect(actions.togglePin).toHaveBeenCalledWith('task-3', true);
+    expect(actions.rename).not.toHaveBeenCalled();
+    expect(actions.reset).not.toHaveBeenCalled();
+  });
+
+  it('⭐ 已置顶的任务菜单变成「取消置顶」，调 togglePin(id, false)', async () => {
+    const { useTaskStore } = await import('../src/renderer/stores/taskStore');
+    const actions = makeActions();
+    await act(async () => root.render(<Harness actions={actions} />));
+
+    // 菜单按 store 里的**当前**状态决定文案，所以先把它标成已置顶
+    useTaskStore.setState({
+      tasks: [
+        {
+          id: 'task-4',
+          sessionKey: 'k',
+          sessionId: '',
+          title: 'T',
+          status: 'active',
+          createdAt: '',
+          updatedAt: '',
+          tags: [],
+          artifactDir: '',
+          gatewayId: 'gw-1',
+          pinnedAt: '2026-09-18T00:00:00.000Z',
+        },
+      ],
+    });
+    await act(async () => {
+      menu?.openMenu({ preventDefault: () => {} } as unknown as ReactMouseEvent, 'task-4', 'active');
+    });
+
+    const unpinItem = findItem(/取消置顶|unpin/i);
+    expect(unpinItem, '已置顶时菜单项必须是「取消置顶」').toBeTruthy();
+
+    act(() => unpinItem?.action());
+
+    expect(actions.togglePin).toHaveBeenCalledWith('task-4', false);
   });
 });
 

@@ -42,6 +42,14 @@ export interface Task {
   outputTokens?: number;
   contextTokens?: number;
   teamId?: string;
+  /**
+   * 置顶时间（ISO）。**空/缺省 = 未置顶**；取消置顶就是清掉它。
+   *
+   * 为什么存时间戳而不是布尔：多个置顶之间还要有稳定顺序（最近置顶的排最前），
+   * 布尔只能靠数组原顺序兜底，而那个顺序会被任何一次列表刷新打乱。
+   * 排序与"只显示 5 条"的裁剪规则见 `lib/task-sort`（置顶**不吃**那 5 个名额）。
+   */
+  pinnedAt?: string;
 }
 
 export type TaskContextSourceKind = 'folder';

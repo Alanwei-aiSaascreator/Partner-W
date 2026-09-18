@@ -266,6 +266,8 @@ function buildApi(): ClawWorkAPI {
       contextTokens?: number;
       teamId?: string | null;
       sessionKey?: string;
+      /** 置顶时间（ISO）；`null` = 取消置顶。与 `updatedAt` 无关。 */
+      pinnedAt?: string | null;
       updatedAt: string;
     }) => ipcRenderer.invoke('data:update-task', params),
 

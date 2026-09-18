@@ -598,10 +598,12 @@
     "deleteTask": "タスクを削除",
     "exportToFiles": "ファイルにエクスポート",
     "markCompleted": "完了にする",
+    "pinTask": "タスクをピン留め",
     "reactivate": "再開",
     "rename": "名前を変更",
     "resetSession": "セッションをリセット",
-    "saveToMarkdown": "Markdown に保存"
+    "saveToMarkdown": "Markdown に保存",
+    "unpinTask": "ピン留めを解除"
   },
   "cron": {
     "advanced": "詳細オプション",
@@ -868,6 +870,7 @@
     "myAssistants": "マイアシスタント",
     "noAgents": "エージェントなし",
     "noPreview": "メッセージはまだありません",
+    "pinned": "ピン留め済み",
     "recentTasks": "最近のタスク",
     "searchTasks": "タスクを検索…",
     "showFewerTasks": "表示するタスクを減らす",

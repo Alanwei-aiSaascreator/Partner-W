@@ -598,10 +598,12 @@
     "deleteTask": "Delete Task",
     "exportToFiles": "Export to Files",
     "markCompleted": "Mark Completed",
+    "pinTask": "Pin task",
     "reactivate": "Reactivate",
     "rename": "Rename",
     "resetSession": "Reset Session",
-    "saveToMarkdown": "Save to Markdown"
+    "saveToMarkdown": "Save to Markdown",
+    "unpinTask": "Unpin task"
   },
   "cron": {
     "advanced": "Advanced Options",
@@ -868,6 +870,7 @@
     "myAssistants": "My assistants",
     "noAgents": "No agents",
     "noPreview": "No messages yet",
+    "pinned": "Pinned",
     "recentTasks": "Recent tasks",
     "searchTasks": "Search tasks…",
     "showFewerTasks": "Show fewer tasks",

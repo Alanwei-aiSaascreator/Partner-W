@@ -72,6 +72,8 @@ export interface PersistencePort {
     inputTokens?: number;
     outputTokens?: number;
     contextTokens?: number;
+    /** 置顶时间（ISO）；`null` = 取消置顶。与 `updatedAt` 无关。 */
+    pinnedAt?: string | null;
     updatedAt: string;
   }) => Promise<IpcResult>;
   persistMessage: (msg: {

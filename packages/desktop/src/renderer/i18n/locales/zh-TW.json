@@ -598,10 +598,12 @@
     "deleteTask": "刪除任務",
     "exportToFiles": "匯出為檔案",
     "markCompleted": "標記為完成",
+    "pinTask": "置頂任務",
     "reactivate": "重新啟用",
     "rename": "重新命名",
     "resetSession": "重設工作階段",
-    "saveToMarkdown": "儲存為 Markdown"
+    "saveToMarkdown": "儲存為 Markdown",
+    "unpinTask": "取消置頂"
   },
   "cron": {
     "advanced": "進階選項",
@@ -868,6 +870,7 @@
     "myAssistants": "我的助手",
     "noAgents": "暫無智能體",
     "noPreview": "尚無訊息",
+    "pinned": "已置頂",
     "recentTasks": "最近任務",
     "searchTasks": "搜尋任務…",
     "showFewerTasks": "收起任務",

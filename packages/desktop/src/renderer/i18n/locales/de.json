@@ -598,10 +598,12 @@
     "deleteTask": "Aufgabe loeschen",
     "exportToFiles": "In Dateien exportieren",
     "markCompleted": "Als abgeschlossen markieren",
+    "pinTask": "Aufgabe anheften",
     "reactivate": "Reaktivieren",
     "rename": "Umbenennen",
     "resetSession": "Sitzung zuruecksetzen",
-    "saveToMarkdown": "Als Markdown speichern"
+    "saveToMarkdown": "Als Markdown speichern",
+    "unpinTask": "Anheftung lösen"
   },
   "cron": {
     "advanced": "Erweiterte Optionen",
@@ -868,6 +870,7 @@
     "myAssistants": "Meine Assistenten",
     "noAgents": "Keine Agenten",
     "noPreview": "Noch keine Nachrichten",
+    "pinned": "Angeheftet",
     "recentTasks": "Letzte Aufgaben",
     "searchTasks": "Aufgaben suchen…",
     "showFewerTasks": "Weniger Aufgaben anzeigen",

@@ -418,6 +418,12 @@ export function registerDataHandlers(): void {
          * ⚠️ 只改**指针**：这条会话在网关侧本来就在，不新建也不删。
          */
         sessionKey?: string;
+        /**
+         * 置顶时间（ISO）。`null` = 取消置顶。
+         * ⚠️ 与 `updatedAt` **无关**：置顶不是"活动"，不该刷新更新时间 ——
+         * 否则取消置顶的瞬间，它会凭着一个假的新鲜度插回列表最前面。
+         */
+        pinnedAt?: string | null;
         updatedAt: string;
       },
     ) => {
@@ -436,6 +442,7 @@ export function registerDataHandlers(): void {
         if (params.contextTokens !== undefined) updates.contextTokens = params.contextTokens;
         if (params.teamId !== undefined) updates.teamId = params.teamId;
         if (params.sessionKey !== undefined) updates.sessionKey = params.sessionKey;
+        if (params.pinnedAt !== undefined) updates.pinnedAt = params.pinnedAt;
         db.update(tasks).set(updates).where(eq(tasks.id, params.id)).run();
         return { ok: true };
       } catch (err) {

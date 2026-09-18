@@ -18,6 +18,8 @@ export const tasks = sqliteTable('tasks', {
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
   tags: text('tags').notNull().default('[]'),
+  /** 置顶时间（ISO）；NULL = 未置顶。见 `@clawwork/shared` 的 `Task.pinnedAt`。 */
+  pinnedAt: text('pinned_at'),
   artifactDir: text('artifact_dir').notNull().default(''),
   gatewayId: text('gateway_id').notNull().default(''),
 });

@@ -8,6 +8,7 @@ import { useUiStore } from '@/stores/uiStore';
 import { useFileStore } from '@/stores/fileStore';
 import { useTaskContextMenu, TaskContextMenuPopover, type SessionActions } from '@/components/ContextMenu';
 import SearchResults, { type SearchResult } from '@/components/SearchResults';
+import { splitVisibleTasks } from '@/lib/task-sort';
 import { motionDuration, motion as motionPresets } from '@/styles/design-tokens';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -106,6 +107,7 @@ export default function LeftNav({ onOpenAssistantSettings }: LeftNavProps) {
   const sessionActions: SessionActions = useMemo(
     () => ({
       rename: (taskId: string) => setEditingTaskId(taskId),
+      togglePin: (taskId: string, pinned: boolean) => useTaskStore.getState().setTaskPinned(taskId, pinned),
       compact: handleCompact,
       reset: (taskId: string) => {
         setConfirmTaskId(taskId);
@@ -176,14 +178,17 @@ export default function LeftNav({ onOpenAssistantSettings }: LeftNavProps) {
   const setSelectedAgent = useUiStore((s) => s.setSelectedAgent);
   const currentAgentId = selectedAgentId || defaultAgentId || agentCatalog[0]?.id || '';
 
+  // ⚠️ 排序**不能**就地 `.sort()`：`tasks` 是 store 里的数组，就地排会改到别人。
+  //    排序规则与"只显示 5 条"的裁剪统一放在 `lib/task-sort` 里（纯函数、有单测）——
+  //    置顶要在最前，**且不吃那 5 个名额**，否则置顶越多、普通任务露脸越少。
   const visibleTasks = useMemo(
-    () =>
-      tasks
-        .filter((task) => task.status !== 'archived' && (!currentAgentId || task.agentId === currentAgentId))
-        .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
+    () => tasks.filter((task) => task.status !== 'archived' && (!currentAgentId || task.agentId === currentAgentId)),
     [currentAgentId, tasks],
   );
-  const displayedTasks = showAllTasks ? visibleTasks : visibleTasks.slice(0, 5);
+  const { visible: displayedTasks, hiddenCount } = useMemo(
+    () => splitVisibleTasks(visibleTasks, { limit: 5, showAll: showAllTasks }),
+    [visibleTasks, showAllTasks],
+  );
   const sessionPreviews = useSessionPreviews(visibleTasks);
 
   const handleSelectAgent = useCallback(
@@ -358,7 +363,7 @@ export default function LeftNav({ onOpenAssistantSettings }: LeftNavProps) {
         </div>
       </div>
 
-      {visibleTasks.length > 5 && (
+      {hiddenCount > 0 && (
         <div className="flex-shrink-0 border-t border-[var(--border-subtle)] px-3 py-2">
           <button
             type="button"

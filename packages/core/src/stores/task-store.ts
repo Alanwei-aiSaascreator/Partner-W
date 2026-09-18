@@ -33,6 +33,14 @@ export interface TaskState {
     tags?: string[];
   }) => Task;
   setActiveTask: (id: string | null) => void;
+  /**
+   * 置顶 / 取消置顶。
+   *
+   * ⚠️ **不碰 `updatedAt`**：置顶是"我要它一直在眼前"，不是"这个任务有活动"。
+   * 顺手刷新更新时间的话，取消置顶的那一刻它会凭一个假的新鲜度插回列表最前面，
+   * 用户会以为没取消掉。排序与"只显示 5 条"的裁剪见 renderer 的 `lib/task-sort`。
+   */
+  setTaskPinned: (id: string, pinned: boolean) => void;
   updateTaskTitle: (id: string, title: string) => void;
   updateTaskStatus: (id: string, status: TaskStatus) => void;
   updateTaskMetadata: (
@@ -93,6 +101,8 @@ export interface TaskStoreDeps {
     teamId?: string | null;
     /** 见 `updateTaskMetadata` 的说明（采纳后改会话指针）。 */
     sessionKey?: string;
+    /** 置顶时间（ISO）；`null` = 取消置顶。与 `updatedAt` 无关。 */
+    pinnedAt?: string | null;
     updatedAt: string;
   }) => Promise<IpcResult>;
   deleteTask: (taskId: string) => Promise<IpcResult>;
@@ -117,6 +127,8 @@ export interface TaskStoreDeps {
       tags: string[];
       artifactDir: string;
       gatewayId: string;
+      /** 置顶时间（ISO）；SQLite 里没置顶是 NULL。 */
+      pinnedAt?: string | null;
     }[];
   }>;
   patchSession: (gatewayId: string, sessionKey: string, patch: Record<string, unknown>) => Promise<IpcResult>;
@@ -209,6 +221,22 @@ export function createTaskStore(deps: TaskStoreDeps) {
     },
 
     setActiveTask: (id) => set({ activeTaskId: id }),
+
+    setTaskPinned: (id, pinned) => {
+      const task = get().tasks.find((t) => t.id === id);
+      if (!task) return;
+
+      const pinnedAt = pinned ? new Date().toISOString() : undefined;
+      set((s) => ({
+        tasks: s.tasks.map((t) => (t.id === id ? { ...t, pinnedAt } : t)),
+      }));
+      // ⚠️ 带的是**原来的** updatedAt：这一步只改置顶，不该制造"刚刚活动过"的假象。
+      // 取消置顶要写 `null`（不是 undefined）—— 否则 IPC 那侧 `!== undefined`
+      // 判不出来，库里那行会留着旧值，重启后置顶"复活"。
+      deps.persistTaskUpdate({ id, pinnedAt: pinnedAt ?? null, updatedAt: task.updatedAt }).catch((err) => {
+        console.error('[persist:task]', err);
+      });
+    },
 
     updateTaskTitle: (id, title) => {
       const now = new Date().toISOString();
@@ -303,6 +331,9 @@ export function createTaskStore(deps: TaskStoreDeps) {
               tags: r.tags,
               artifactDir: r.artifactDir,
               gatewayId: r.gatewayId,
+              // ⚠️ 这一行漏了置顶就"重启失效"（写库那侧照常通）。这种"加一列"的功能
+              //    最典型的暗坑就是读回来没带上，用户看到的是功能根本不管用。
+              pinnedAt: r.pinnedAt ?? undefined,
             })),
             hydrated: true,
           });

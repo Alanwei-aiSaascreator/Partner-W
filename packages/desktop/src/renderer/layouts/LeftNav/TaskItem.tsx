@@ -1,6 +1,6 @@
 import { type MouseEvent, useState, useRef, useEffect, useCallback } from 'react';
 import { motion, useReducedMotion } from 'framer-motion';
-import { MessageSquare } from 'lucide-react';
+import { MessageSquare, Pin } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { cn } from '@/lib/utils';
 import { useTaskStore } from '@/stores/taskStore';
@@ -186,6 +186,15 @@ export default function TaskItem({
         </div>
 
         {isRunning && <ActivityBars className="flex-shrink-0 scale-75 origin-center" />}
+        {/* 置顶标记。带 aria-label 而不是纯装饰：置顶是个**状态**，读屏用户也该知道。 */}
+        {task.pinnedAt && (
+          <Pin
+            size={12}
+            data-testid="task-pinned-marker"
+            aria-label={t('leftNav.pinned')}
+            className="flex-shrink-0 text-[var(--text-muted)]"
+          />
+        )}
         {hasUnread && <span className="flex-shrink-0 w-2 h-2 rounded-full bg-[var(--accent)]" />}
       </div>
     </motion.button>

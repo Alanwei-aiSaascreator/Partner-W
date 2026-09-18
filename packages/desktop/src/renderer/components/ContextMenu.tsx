@@ -29,6 +29,12 @@ const INITIAL_STATE: MenuState = {
 
 export interface SessionActions {
   rename: (taskId: string) => void;
+  /**
+   * 置顶 / 取消置顶。
+   * ⚠️ 状态由**调用方**给（`pinned`），菜单自己不读 store —— 菜单只是个弹层，
+   * 让它去查 store 会把"某一刻的快照"变成菜单渲染的输入，跟别处的接线方式也不一致。
+   */
+  togglePin: (taskId: string, pinned: boolean) => void;
   compact: (taskId: string) => void;
   reset: (taskId: string) => void;
   deleteTask: (taskId: string) => void;
@@ -59,6 +65,14 @@ export function useTaskContextMenu(
     items.push({
       label: i18n.t('contextMenu.rename'),
       action: () => sessionActions.rename(state.taskId),
+    });
+    // 置顶紧跟在重命名后面：这两个都是"我怎么摆这个任务"，跟下面的会话操作不是一类。
+    // ⚠️ label 用模板串而不是 `t(变量)` —— 扫描器只认字面 key 或「前缀 + ${变量}」，
+    //    写成 `t(pinned ? 'a' : 'b')` 会被判成 unused 然后 check:i18n 失败。
+    const pinned = Boolean(useTaskStore.getState().tasks.find((t) => t.id === state.taskId)?.pinnedAt);
+    items.push({
+      label: i18n.t(`contextMenu.${pinned ? 'unpinTask' : 'pinTask'}`),
+      action: () => sessionActions.togglePin(state.taskId, !pinned),
     });
   }
 

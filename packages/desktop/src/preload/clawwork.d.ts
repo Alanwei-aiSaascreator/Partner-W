@@ -488,6 +488,8 @@ export interface ClawWorkAPI {
     teamId?: string | null;
     /** 采纳对比结果后改会话指针用（见 core 的 updateTaskMetadata）。 */
     sessionKey?: string;
+    /** 置顶时间（ISO）；`null` = 取消置顶。与 `updatedAt` 无关。 */
+    pinnedAt?: string | null;
     updatedAt: string;
   }) => Promise<IpcResult>;
 

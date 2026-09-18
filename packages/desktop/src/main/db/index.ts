@@ -143,6 +143,8 @@ function openAndMigrate(dbPath: string): void {
   }
 
   migrateAddColumn(sqlite, 'ALTER TABLE tasks ADD COLUMN ensemble INTEGER NOT NULL DEFAULT 0');
+  // 置顶（NULL = 未置顶）。老数据留 NULL —— 语义就是"没置顶"，不需要 backfill。
+  migrateAddColumn(sqlite, 'ALTER TABLE tasks ADD COLUMN pinned_at TEXT');
   migrateAddColumn(sqlite, 'ALTER TABLE tasks ADD COLUMN team_id TEXT');
 
   sqlite.exec(`
