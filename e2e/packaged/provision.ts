@@ -165,26 +165,32 @@ export function provisionProfile(userDataDir: string, p: CommercialProvision, op
 }
 
 /**
- * 报告用：只给"有没有、多长"，**不给值**。
+ * 露出两头所需的最短长度。
  *
- * ⚠️ 测试手机号**连脱敏都不给**（只给"配没配"）—— 它的信息量本来就只有"谁的电话"，
- * 脱敏后剩不下任何对报告有用的东西，而一旦打出来就可能进日志/截图。
+ * 11 = 中国大陆手机号的位数（`demo-main-path.spec.ts` 里那条
+ * `/^1[3-9]\d{9}$/` 也是 11 位）；带上 `+86` 是 14 位 —— 真实用例的两种形态
+ * 都在这条线以上，所以这个门槛**不改变任何真实号码的日志长相**。
+ *
+ * ⚠️ 短于它的一律全遮：固定的"前 3 后 2"在短号上会露掉大半
+ * （6 位会露 5 位、8 位露 5 位）—— 而本函数的**全部意义**就是不让手机号泄露。
  */
-export function describeProvision(p: CommercialProvision): Record<string, unknown> {
-  return {
-    supabaseHost: new URL(p.supabaseUrl).host,
-    hasAnonKey: p.supabaseAnonKey.length > 0,
-    licenseKeyPrefix: p.licenseKey.slice(0, 3) + '…',
-    licenseKeyLength: p.licenseKey.length,
-    hasSession: true,
-    hasDeviceId: p.deviceId.length > 0,
-    lateLoginTestAccount: p.testPhone && p.testOtp ? 'configured' : 'missing',
-    demoLicenceKey: p.testLicenseKey ? 'configured' : 'missing',
-  };
-}
+const MIN_LENGTH_FOR_PARTIAL_MASK = 11;
 
-/** 脱敏手机号：只留国家码与末 2 位。日志/报告里要标识时**只能**用它。 */
+/**
+ * 脱敏手机号：只留国家码与末 2 位。**日志**里要标识时只能用它。
+ *
+ * ⚠️ 两类去处的口径**不一样**，别混：
+ *
+ * - **日志**：允许用本函数的结果来标识（`+86****00`）—— 那是"标识"，不是"披露"。
+ * - **报告 / 产物 / 截图**：测试手机号**连脱敏都不给**，只给"配没配"。
+ *   它的信息量本来就只有"谁的电话"，脱敏后剩不下任何对报告有用的东西。
+ *
+ * （第二条原来写在 `describeProvision` 的 docblock 里。那个函数**从加进来那天起
+ * 就没被调用过**（`33493cc` 加入、2026-09-19 删除），规则挂在死代码上等于没挂
+ * —— 现在挪到真正执行遮蔽的这里。顺带：它还会把卡密的**前 3 位**放进报告，
+ * 与本文件顶部"绝不把任何 secret 落进报告"的纪律是冲突的。）
+ */
 export function maskPhone(phone: string): string {
-  if (phone.length <= 5) return '***';
+  if (phone.length < MIN_LENGTH_FOR_PARTIAL_MASK) return '***';
   return `${phone.slice(0, 3)}****${phone.slice(-2)}`;
 }

@@ -35,6 +35,7 @@
     "test:e2e:gateway": "playwright test --config=e2e/playwright.config.ts --project=gateway",
     "test:e2e:packaged": "playwright test --config=e2e/playwright.config.ts --project=packaged",
     "test:e2e:harness": "node --test e2e/helpers/temp-root.test.ts",
+    "test:e2e:unit": "node --test e2e/helpers/temp-root.test.ts e2e/packaged/provision.test.ts",
     "test:e2e:ledger": "playwright test --config=e2e/playwright.config.ts --project=packaged profile-ledger",
     "check:i18n": "node --test scripts/lib/i18n-usage.test.mjs && node scripts/check-i18n.mjs",
     "check:dead-code": "knip",
