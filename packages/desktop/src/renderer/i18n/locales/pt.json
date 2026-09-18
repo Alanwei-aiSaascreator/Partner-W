@@ -1446,6 +1446,7 @@
     "next": "Próximo",
     "pairingCodeHint": "Use apenas quando não tiver um Token ou senha compartilhados. Códigos de pareamento são credenciais de uso único para integração.",
     "passwordHint": "Use a senha compartilhada do gateway. Conexões remotas de primeiro acesso ainda podem exigir aprovação do dispositivo.",
+    "portableWorkspaceNotice": "A área de trabalho fica automaticamente nesta unidade: {{path}} (não precisa escolher).",
     "selectDir": "Selecionar diretório…",
     "skipGateway": "Pular por enquanto",
     "stepGateway": "Gateway",

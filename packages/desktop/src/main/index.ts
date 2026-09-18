@@ -1,4 +1,4 @@
-import { app, shell, BrowserWindow, Menu, ipcMain, globalShortcut, dialog, protocol } from 'electron';
+import { app, shell, BrowserWindow, Menu, ipcMain, globalShortcut, protocol } from 'electron';
 import { join } from 'path';
 import { electronApp, is } from '@electron-toolkit/utils';
 import { nativeTheme } from 'electron';
@@ -36,8 +36,10 @@ import { unwatchAll } from './context/file-watcher.js';
 import { isInstallingUpdate } from './auto-updater.js';
 import { initTray, destroyTray } from './tray.js';
 import { initQuickLaunch, destroyQuickLaunch } from './quick-launch.js';
-import { getWorkspacePath, getDefaultWorkspacePath, readConfig, updateConfig } from './workspace/config.js';
-import { initDatabase, closeDatabase } from './db/index.js';
+import { readConfig, updateConfig } from './workspace/config.js';
+import { prepareWorkspaceAtStartup } from './workspace/startup.js';
+import { createWorkspaceStartupDialogs } from './workspace/startup-dialogs.js';
+import { closeDatabase } from './db/index.js';
 import { applyUserDataOverride } from './runtime/user-data-override.js';
 import { bootstrapLocalGatewayRuntime, shutdownLocalGatewayRuntime } from './runtime/index.js';
 
@@ -219,120 +221,139 @@ if (!gotLock) {
     }
   });
 
-  app.whenReady().then(async () => {
-    initDebugLogger(app.getPath('logs'));
-    getDebugLogger().info({ domain: 'app', event: 'app.start', data: { userData: app.getPath('userData') } });
-    electronApp.setAppUserModelId('com.mofangluopan.app');
+  app
+    .whenReady()
+    .then(async () => {
+      initDebugLogger(app.getPath('logs'));
+      getDebugLogger().info({ domain: 'app', event: 'app.start', data: { userData: app.getPath('userData') } });
+      electronApp.setAppUserModelId('com.mofangluopan.app');
 
-    registerWsHandlers();
-    registerArtifactHandlers();
-    registerInboxHandlers();
-    registerMediaHandlers();
-    registerWorkspaceHandlers();
-    registerSettingsHandlers();
-    registerSearchHandlers();
-    registerDataHandlers();
-    registerStatsHandlers();
-    registerUpdateHandlers();
-    registerDebugHandlers();
-    registerVoiceHandlers();
-    configureVoicePermissionHandlers();
-    registerTrayHandlers();
-    registerQuickLaunchHandlers();
-    registerContextHandlers();
-    registerNotificationHandlers();
-    registerAvatarHandlers();
-    registerAvatarProtocol();
-    registerHubHandlers();
-    registerCommercialHandlers();
-    registerCommunityHandlers();
-    registerMarketHandlers();
-    registerGrowthHandlers();
-    registerAnalyticsHandlers();
-    registerPrivacyHandlers();
+      registerWsHandlers();
+      registerArtifactHandlers();
+      registerInboxHandlers();
+      registerMediaHandlers();
+      registerWorkspaceHandlers();
+      registerSettingsHandlers();
+      registerSearchHandlers();
+      registerDataHandlers();
+      registerStatsHandlers();
+      registerUpdateHandlers();
+      registerDebugHandlers();
+      registerVoiceHandlers();
+      configureVoicePermissionHandlers();
+      registerTrayHandlers();
+      registerQuickLaunchHandlers();
+      registerContextHandlers();
+      registerNotificationHandlers();
+      registerAvatarHandlers();
+      registerAvatarProtocol();
+      registerHubHandlers();
+      registerCommercialHandlers();
+      registerCommunityHandlers();
+      registerMarketHandlers();
+      registerGrowthHandlers();
+      registerAnalyticsHandlers();
+      registerPrivacyHandlers();
 
-    ipcMain.handle('app:rebuild-menu', () => {
-      devModeEnabled = readConfig()?.devMode === true;
-      Menu.setApplicationMenu(buildAppMenu(devModeEnabled));
-    });
+      ipcMain.handle('app:rebuild-menu', () => {
+        devModeEnabled = readConfig()?.devMode === true;
+        Menu.setApplicationMenu(buildAppMenu(devModeEnabled));
+      });
 
-    ipcMain.on('ui:set-window-button-visibility', (_event, visible: boolean) => {
-      if (process.platform === 'darwin') {
+      ipcMain.on('ui:set-window-button-visibility', (_event, visible: boolean) => {
+        if (process.platform === 'darwin') {
+          const win = getMainWindow();
+          if (win) win.setWindowButtonVisibility(visible);
+        }
+      });
+
+      // ⚠️ 工作区准备（T-U1）——盘上首启不选盘、盘符变了自愈、数据库打不开给「换目录/重建/退出」
+      //    三选一。**任何失败路径都不许在这里 `app.quit()`**：退出只能由用户在对话框里选
+      //    （源码契约钉在 `test/workspace-startup-flow.test.ts`）。旧行为是
+      //    `showErrorBox('Database Error') + app.quit()` —— 换机器/换盘符就是死路一条。
+      const workspace = await prepareWorkspaceAtStartup({
+        exePath: process.execPath,
+        dialogs: createWorkspaceStartupDialogs(),
+        quit: () => app.quit(),
+        onEvent: (event, data) => getDebugLogger().info({ domain: 'workspace', event, data }),
+      });
+      if (workspace.kind === 'quit') return;
+      const wsPath = workspace.path;
+      getDebugLogger().info({
+        domain: 'workspace',
+        event: 'workspace.detected',
+        data: { workspacePath: wsPath, portable: workspace.portable, decision: workspace.decision.kind },
+      });
+
+      // ⚠️ 埋点必须**在开窗之前**初始化：窗口一开，登录/激活的 IPC 就活了，
+      //    而下面那次运行时就绪等待在首跑要 37–74 秒 —— 用户在这段里完成登录/激活时，
+      //    未初始化的 `trackEvent` 是**静默 no-op**（无日志、无重试），首跑最关键的
+      //    `login_success` / `license_activated` 会直接丢掉。
+      setupAnalytics();
+
+      // 窗口先出来，别像卡死 —— 首次启动要解压 35k 个文件（1–3 分钟）
+      createWindow();
+
+      // ⚠️ 拉起本机运行时（定位 → 部署 → 起网关 → 等就绪）。**这一步永不抛**：
+      // 失败只是"网关没起来"，界面照常出，让 ConnectionBanner 说真话；
+      // 上一轮留下的、或用户自己的网关可能还活着，下面 initAllGateways() 照样要去连它。
+      const runtimeResult = await bootstrapLocalGatewayRuntime({ userDataDir: app.getPath('userData') });
+      if (!runtimeResult.ok) {
+        getDebugLogger().error({
+          domain: 'gateway',
+          event: 'runtime.bootstrap.failed',
+          data: { code: runtimeResult.code, reason: runtimeResult.reason },
+        });
+      }
+
+      initAllGateways();
+
+      // ⚠️ **runtime ready ≠ commercial ready**：网关活着只说明连得上；模型能不能用
+      // 要看中转配置有没有落到网关（clawrouter provider）。
+      //
+      // 刻意**不 await**：这一步要等网关握手、要问服务端要 key，首次启动可能十几秒 ——
+      // 挡住的话窗口白屏。也不抛（内部永不抛），因为"没登录/没激活"是**正常状态**，
+      // 不是启动失败；界面自己有未激活的表达。
+      //
+      // 目录刷新靠 dispatcher 既有的退避重试（~60s 预算，见 gateway-dispatcher），
+      // 它本来就是为"网关目录还没热"这件事写的。
+      void bootstrapCommercialRelay().then((res) => {
+        getDebugLogger().info({ domain: 'commercial', event: 'commercial.relay.bootstrap', data: { ...res } });
+      });
+
+      // 放在网关之后：首跑要立刻读一次额度，此时会话/配置已就绪，否则首报必然是空
+      initUsageReporter();
+      initTray();
+      initQuickLaunch();
+
+      app.on('activate', () => {
         const win = getMainWindow();
-        if (win) win.setWindowButtonVisibility(visible);
+        if (win) {
+          win.show();
+          win.focus();
+        } else {
+          createWindow();
+        }
+      });
+    })
+    // ⚠️ 这条 `.catch()` 是**必须**的，不是保险丝：上面那条链一个 `await` 拒绝，
+    //    `createWindow()` 就永远不会执行 —— 进程活着、屏幕上什么都没有，用户
+    //    只会说"双击了没反应"（没有全局 unhandledRejection 兜底，日志里也就那一行）。
+    //    兜住之后至少开一个窗口，让界面自己把"没就绪/连不上"说出来。
+    .catch((err: unknown) => {
+      const message = err instanceof Error ? err.message : String(err);
+      try {
+        getDebugLogger().error({ domain: 'app', event: 'app.whenReady.failed', data: { message } });
+      } catch {
+        // 日志系统本身还没起来时也不能在这里再抛
+      }
+      console.error('[app] whenReady chain failed:', err);
+      try {
+        if (!getMainWindow()) createWindow();
+      } catch (windowErr) {
+        console.error('[app] failed to open a window after startup failure:', windowErr);
       }
     });
-
-    const wsPath = getWorkspacePath() || getDefaultWorkspacePath();
-    getDebugLogger().info({ domain: 'workspace', event: 'workspace.detected', data: { workspacePath: wsPath } });
-    try {
-      getDebugLogger().info({ domain: 'db', event: 'db.init.start', data: { workspacePath: wsPath } });
-      initDatabase(wsPath);
-      getDebugLogger().info({ domain: 'db', event: 'db.init.ok', data: { workspacePath: wsPath } });
-    } catch (e) {
-      const err = e instanceof Error ? e : new Error(String(e));
-      getDebugLogger().error({
-        domain: 'db',
-        event: 'db.init.failed',
-        data: { workspacePath: wsPath },
-        error: { name: err.name, message: err.message, stack: err.stack },
-      });
-      dialog.showErrorBox('Database Error', err.message);
-      app.quit();
-      return;
-    }
-
-    // ⚠️ 埋点必须**在开窗之前**初始化：窗口一开，登录/激活的 IPC 就活了，
-    //    而下面那次运行时就绪等待在首跑要 37–74 秒 —— 用户在这段里完成登录/激活时，
-    //    未初始化的 `trackEvent` 是**静默 no-op**（无日志、无重试），首跑最关键的
-    //    `login_success` / `license_activated` 会直接丢掉。
-    setupAnalytics();
-
-    // 窗口先出来，别像卡死 —— 首次启动要解压 35k 个文件（1–3 分钟）
-    createWindow();
-
-    // ⚠️ 拉起本机运行时（定位 → 部署 → 起网关 → 等就绪）。**这一步永不抛**：
-    // 失败只是"网关没起来"，界面照常出，让 ConnectionBanner 说真话；
-    // 上一轮留下的、或用户自己的网关可能还活着，下面 initAllGateways() 照样要去连它。
-    const runtimeResult = await bootstrapLocalGatewayRuntime({ userDataDir: app.getPath('userData') });
-    if (!runtimeResult.ok) {
-      getDebugLogger().error({
-        domain: 'gateway',
-        event: 'runtime.bootstrap.failed',
-        data: { code: runtimeResult.code, reason: runtimeResult.reason },
-      });
-    }
-
-    initAllGateways();
-
-    // ⚠️ **runtime ready ≠ commercial ready**：网关活着只说明连得上；模型能不能用
-    // 要看中转配置有没有落到网关（clawrouter provider）。
-    //
-    // 刻意**不 await**：这一步要等网关握手、要问服务端要 key，首次启动可能十几秒 ——
-    // 挡住的话窗口白屏。也不抛（内部永不抛），因为"没登录/没激活"是**正常状态**，
-    // 不是启动失败；界面自己有未激活的表达。
-    //
-    // 目录刷新靠 dispatcher 既有的退避重试（~60s 预算，见 gateway-dispatcher），
-    // 它本来就是为"网关目录还没热"这件事写的。
-    void bootstrapCommercialRelay().then((res) => {
-      getDebugLogger().info({ domain: 'commercial', event: 'commercial.relay.bootstrap', data: { ...res } });
-    });
-
-    // 放在网关之后：首跑要立刻读一次额度，此时会话/配置已就绪，否则首报必然是空
-    initUsageReporter();
-    initTray();
-    initQuickLaunch();
-
-    app.on('activate', () => {
-      const win = getMainWindow();
-      if (win) {
-        win.show();
-        win.focus();
-      } else {
-        createWindow();
-      }
-    });
-  });
 }
 
 app.on('window-all-closed', () => {

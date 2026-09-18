@@ -1446,6 +1446,7 @@
     "next": "Siguiente",
     "pairingCodeHint": "Úsalo solo cuando no tengas un Token o contraseña compartidos. Los códigos de vinculación son credenciales de un solo uso.",
     "passwordHint": "Usa la contraseña compartida del Gateway. Las conexiones remotas nuevas pueden requerir aprobación del dispositivo.",
+    "portableWorkspaceNotice": "El espacio de trabajo se guarda automáticamente en esta unidad: {{path}} (no hace falta elegir).",
     "selectDir": "Seleccionar directorio…",
     "skipGateway": "Omitir por ahora",
     "stepGateway": "Gateway",

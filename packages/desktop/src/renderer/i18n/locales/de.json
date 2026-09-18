@@ -1446,6 +1446,7 @@
     "next": "Weiter",
     "pairingCodeHint": "Nur verwenden, wenn Sie keinen gemeinsamen Token oder kein Passwort haben. Kopplungscodes sind einmalige Zugangsdaten fuer die Ersteinrichtung.",
     "passwordHint": "Verwenden Sie das gemeinsame Gateway-Passwort. Bei der ersten Remote-Verbindung kann eine Geraetefreigabe erforderlich sein.",
+    "portableWorkspaceNotice": "Der Arbeitsbereich liegt automatisch auf diesem Laufwerk: {{path}} (keine Auswahl nötig).",
     "selectDir": "Verzeichnis auswaehlen…",
     "skipGateway": "Vorerst ueberspringen",
     "stepGateway": "Gateway",

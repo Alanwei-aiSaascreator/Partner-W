@@ -90,6 +90,24 @@ CREATE TABLE IF NOT EXISTS artifacts (
 function openDatabaseAt(workspacePath: string): void {
   const dbPath = join(workspacePath, DB_FILE_NAME);
   mkdirSync(dirname(dbPath), { recursive: true });
+  try {
+    openAndMigrate(dbPath);
+  } catch (err) {
+    // ⚠️ 打不开就必须**把句柄放掉**，不能只把异常抛出去。
+    //
+    // 现场（2026-09-18 实测，真 sqlite）：库文件损坏时 `new Database()` 是成功的，
+    // 炸在下面第一条 `pragma`（非数据库文件 ⇒ SQLITE_NOTADB）。此时句柄已经开着了，
+    // 而调用方（`workspace/startup.ts` 的「重建工作区」）紧接着就要把这个坏文件
+    // `rename` 到一边 —— Windows 上 sqlite 打开文件用的共享模式**不含**
+    // FILE_SHARE_DELETE ⇒ 必然 EBUSY。改名失败 ⇒ 下一轮 init 还是同一个坏文件
+    // ⇒ 转满 5 轮后退出。也就是说"可恢复"这条路上**永远修不好**。
+    closeDatabase();
+    throw err;
+  }
+  console.log(`[db] initialized at ${dbPath}`);
+}
+
+function openAndMigrate(dbPath: string): void {
   sqlite = new Database(dbPath);
   sqlite.pragma('journal_mode = WAL');
   sqlite.pragma('foreign_keys = ON');
@@ -248,7 +266,6 @@ function openDatabaseAt(workspacePath: string): void {
   initKbSchema(sqlite);
 
   db = drizzle(sqlite, { schema });
-  console.log(`[db] initialized at ${dbPath}`);
 }
 
 export function initDatabase(workspacePath: string): void {
@@ -259,15 +276,17 @@ export function initDatabase(workspacePath: string): void {
     }
     return;
   }
-  initializedWorkspacePath = canonicalPath;
+  // ⚠️ 顺序：先真的打开，**再**认这个路径。反过来的话，一次失败的 init 会留下
+  //    "路径记下了、库其实没开（或不完整）"的状态，后面每一次判断都建立在谎上。
   openDatabaseAt(canonicalPath);
+  initializedWorkspacePath = canonicalPath;
 }
 
 export function reinitDatabase(workspacePath: string): void {
   const canonicalPath = canonicalWorkspacePath(workspacePath);
   closeDatabase();
-  initializedWorkspacePath = canonicalPath;
   openDatabaseAt(canonicalPath);
+  initializedWorkspacePath = canonicalPath;
 }
 
 export function getDb(): ReturnType<typeof drizzle> {

@@ -1446,6 +1446,7 @@
     "next": "Suivant",
     "pairingCodeHint": "À utiliser uniquement si vous n'avez pas de token ou de mot de passe partagé. Les codes d'appairage sont des identifiants d'intégration à usage unique.",
     "passwordHint": "Utilisez le mot de passe partagé de la passerelle. Les premières connexions à distance peuvent tout de même nécessiter l'approbation de l'appareil.",
+    "portableWorkspaceNotice": "L'espace de travail est défini automatiquement sur ce lecteur : {{path}} (aucun choix nécessaire).",
     "selectDir": "Sélectionner un dossier…",
     "skipGateway": "Ignorer pour l'instant",
     "stepGateway": "Passerelle",

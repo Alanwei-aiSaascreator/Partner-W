@@ -68,11 +68,56 @@ export default function Setup({ onSetupComplete, initialStep = 'workspace' }: Se
     setTestResult(null);
   };
 
+  /**
+   * 盘上形态（T-U1）：工作区已经由主进程**自动**设好（`<盘根>\荣盈魔方工作区`），
+   * 数据库也开在那儿了 —— 首启不该再让用户选盘。
+   *
+   * ⚠️ 这个状态**不需要新 IPC**：判据就是"配置里已经有 workspacePath
+   *    （`getWorkspacePath()` 有值），但引导还没走完（`isWorkspaceConfigured()` 为 false）"。
+   *    两者同时成立只可能是主进程在盘上首启时自动就位的那一次。
+   */
+  // ⚠️ 只记"是不是主进程自动就位的那一次"，**不记路径**：路径要用下面那个
+  //    随时间变的 `path` —— 用户点「编辑」改了目录再回来，说明句必须跟着变
+  //    （记死一份快照的话，它会一直说老路径，用户以为没改成功）。
+  const [portableWorkspace, setPortableWorkspace] = useState(false);
+  const [probing, setProbing] = useState(true);
+
   useEffect(() => {
-    window.clawwork
-      .getDefaultWorkspacePath()
-      .then(setPath)
-      .catch((err) => console.error('[Setup] getDefaultWorkspacePath failed:', err));
+    let cancelled = false;
+    (async () => {
+      try {
+        const [configured, savedPath, defaultPath] = await Promise.all([
+          window.clawwork.isWorkspaceConfigured(),
+          window.clawwork.getWorkspacePath(),
+          window.clawwork.getDefaultWorkspacePath(),
+        ]);
+        if (cancelled) return;
+
+        if (!configured && savedPath) {
+          setPath(savedPath);
+          setPortableWorkspace(true);
+          setStep('gateway'); // 选盘那一步整步跳过，只剩网关
+          return;
+        }
+        setPath(defaultPath);
+      } catch (err) {
+        console.error('[Setup] workspace probe failed:', err);
+        // 探测不出来就退回老行为：默认位置 + 让用户自己选
+        if (!cancelled) {
+          await window.clawwork
+            .getDefaultWorkspacePath()
+            .then((value) => {
+              if (!cancelled) setPath(value);
+            })
+            .catch((fallbackErr) => console.error('[Setup] getDefaultWorkspacePath failed:', fallbackErr));
+        }
+      } finally {
+        if (!cancelled) setProbing(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const handleBrowse = async (): Promise<void> => {
@@ -202,44 +247,46 @@ export default function Setup({ onSetupComplete, initialStep = 'workspace' }: Se
           </div>
 
           <div className="flex items-center justify-center gap-2">
-            {(['workspace', 'gateway'] as const).map((s, i) => (
-              <div key={s} className="flex items-center gap-2">
-                <div className="flex items-center gap-1.5">
-                  <div
-                    className={cn(
-                      'type-badge flex h-7 w-7 items-center justify-center rounded-full transition-colors',
-                      step === s
-                        ? 'bg-[var(--accent)] text-[var(--accent-foreground)]'
-                        : s === 'workspace' && step === 'gateway'
-                          ? 'bg-[var(--accent-soft)] text-[var(--accent)]'
-                          : 'bg-[var(--bg-tertiary)] text-[var(--text-muted)]',
+            {probing
+              ? null
+              : (['workspace', 'gateway'] as const).map((s, i) => (
+                  <div key={s} className="flex items-center gap-2">
+                    <div className="flex items-center gap-1.5">
+                      <div
+                        className={cn(
+                          'type-badge flex h-7 w-7 items-center justify-center rounded-full transition-colors',
+                          step === s
+                            ? 'bg-[var(--accent)] text-[var(--accent-foreground)]'
+                            : s === 'workspace' && step === 'gateway'
+                              ? 'bg-[var(--accent-soft)] text-[var(--accent)]'
+                              : 'bg-[var(--bg-tertiary)] text-[var(--text-muted)]',
+                        )}
+                      >
+                        {s === 'workspace' && step === 'gateway' ? <CheckCircle2 size={14} /> : i + 1}
+                      </div>
+                      <span
+                        className={cn(
+                          'type-support',
+                          step === s ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]',
+                        )}
+                      >
+                        {s === 'workspace' ? t('setup.stepWorkspace') : t('setup.stepGateway')}
+                      </span>
+                    </div>
+                    {i === 0 && (
+                      <div
+                        className={cn(
+                          'w-8 h-0.5 rounded mx-1',
+                          step === 'gateway' ? 'bg-[var(--accent)]' : 'bg-[var(--bg-tertiary)]',
+                        )}
+                      />
                     )}
-                  >
-                    {s === 'workspace' && step === 'gateway' ? <CheckCircle2 size={14} /> : i + 1}
                   </div>
-                  <span
-                    className={cn(
-                      'type-support',
-                      step === s ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]',
-                    )}
-                  >
-                    {s === 'workspace' ? t('setup.stepWorkspace') : t('setup.stepGateway')}
-                  </span>
-                </div>
-                {i === 0 && (
-                  <div
-                    className={cn(
-                      'w-8 h-0.5 rounded mx-1',
-                      step === 'gateway' ? 'bg-[var(--accent)]' : 'bg-[var(--bg-tertiary)]',
-                    )}
-                  />
-                )}
-              </div>
-            ))}
+                ))}
           </div>
 
           <AnimatePresence mode="wait">
-            {step === 'workspace' ? (
+            {probing ? null : step === 'workspace' ? (
               <motion.div
                 key="workspace"
                 initial={{ opacity: 0, x: -20 }}
@@ -300,6 +347,18 @@ export default function Setup({ onSetupComplete, initialStep = 'workspace' }: Se
                 transition={{ duration: motionDuration.moderate, ease: motionEase.standard }}
                 className="space-y-6"
               >
+                {portableWorkspace ? (
+                  <InlineNotice
+                    tone="info"
+                    action={
+                      <ToolbarButton variant="outline" onClick={() => setStep('workspace')} className="h-7">
+                        {t('common.edit')}
+                      </ToolbarButton>
+                    }
+                  >
+                    {t('setup.portableWorkspaceNotice', { path })}
+                  </InlineNotice>
+                ) : null}
                 <SectionCard
                   title={
                     <span className="inline-flex items-center gap-2">

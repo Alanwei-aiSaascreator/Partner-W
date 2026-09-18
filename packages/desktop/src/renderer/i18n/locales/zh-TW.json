@@ -1446,6 +1446,7 @@
     "next": "下一步",
     "pairingCodeHint": "僅在沒有共用 Token 或密碼時使用。配對碼為一次性的入門憑證。",
     "passwordHint": "使用共用的 Gateway 密碼。首次遠端連線可能仍需裝置核准。",
+    "portableWorkspaceNotice": "工作區已自動設在 {{path}}（跟著這個盤走，不用選）。",
     "selectDir": "選擇目錄…",
     "skipGateway": "先跳過",
     "stepGateway": "Gateway",

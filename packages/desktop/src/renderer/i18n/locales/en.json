@@ -1446,6 +1446,7 @@
     "next": "Next",
     "pairingCodeHint": "Use only when you do not have a shared token or password. Pairing codes are single-use onboarding credentials.",
     "passwordHint": "Use the shared gateway password. First-time remote connections may still require device approval.",
+    "portableWorkspaceNotice": "Workspace is saved on this drive at {{path}} automatically — you do not need to choose a folder.",
     "selectDir": "Select directory…",
     "skipGateway": "Skip for now",
     "stepGateway": "Gateway",

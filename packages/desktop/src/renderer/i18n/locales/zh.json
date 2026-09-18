@@ -1446,6 +1446,7 @@
     "next": "下一步",
     "pairingCodeHint": "仅在没有共享 Token 或密码时使用。配对码属于一次性的首次接入凭证。",
     "passwordHint": "使用共享 Gateway 密码。首次远程连接时仍可能需要设备授权。",
+    "portableWorkspaceNotice": "工作区已自动设在 {{path}}（跟着这个盘走，不用选）。",
     "selectDir": "选择目录…",
     "skipGateway": "暂时跳过",
     "stepGateway": "网关",
