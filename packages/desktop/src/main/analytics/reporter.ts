@@ -222,7 +222,8 @@ export function trackOnSuccess<T extends { ok: boolean }>(result: T, event: Anal
   return result;
 }
 
-/** 仅测试用：把模块级单例指向一个自己造的 reporter。 */
+/** 仅测试用：把模块级单例指向一个自己造的 reporter（先掐掉旧定时器，别跨用例泄漏）。 */
 export function initAnalyticsReporterForTest(reporter: AnalyticsReporter): void {
+  if (active) clearInterval(active.timer);
   active = { reporter, timer: setInterval(() => {}, 1 << 30) };
 }

@@ -1,7 +1,7 @@
 import { ipcMain } from 'electron';
 import type { IpcResult } from '@clawwork/shared';
 import { getCommercialClient } from '../commercial/client.js';
-import { trackOnSuccess } from '../analytics/reporter.js';
+import { trackEvent, trackOnSuccess } from '../analytics/reporter.js';
 
 /**
  * 成长值 / 悬赏的 IPC。
@@ -49,7 +49,15 @@ export function registerGrowthHandlers(): void {
   ipcMain.handle('growth:summary', () => callRpc('growth_summary', {}, firstRow));
 
   ipcMain.handle('growth:check-in', () =>
-    callRpc('growth_check_in', {}, firstRow).then((res) => trackOnSuccess(res, 'daily_check_in')),
+    callRpc('growth_check_in', {}, firstRow).then((res) => {
+      // ⚠️ `growth_check_in` 是**幂等**的（迁移 46：靠唯一索引，撞了 do nothing）：
+      //    同一天再调一次仍返回 ok:true，但 `awarded = 0`。只有**真的新签到**才算一次
+      //    `daily_check_in` —— 否则重复调用（双开窗口 / 未来新调用方）会把看板刷高。
+      if (res.ok && Number((res.result as { awarded?: unknown } | null)?.awarded ?? 0) > 0) {
+        trackEvent('daily_check_in');
+      }
+      return res;
+    }),
   );
 
   ipcMain.handle('growth:history', (_e, payload?: { limit?: number; before?: string | null }) =>

@@ -50,6 +50,9 @@ export function registerCommercialHandlers(): void {
   ipcMain.handle('commercial:send-otp', (_event, target: string) => sendLoginOtp(String(target ?? '')));
   ipcMain.handle('commercial:verify-otp', async (_event, target: string, token: string) => {
     const res = await verifyLoginOtp(String(target ?? ''), String(token ?? ''));
+    // ⚠️ 事件要在**清理之前**记：`requestCommercialAccessCleanup` 一旦抛错，
+    //    这一句之后的代码全都不执行 —— 服务端登录其实成功了，`login_success` 却是 0。
+    const tracked = trackOnSuccess(res, 'login_success');
     // ⭐ 「登录成功」是一次**状态转变**（signed-out → signed-in）。
     //    启动那次 bootstrap 早在"没登录"上收场了，而明确没登录按设计不重试 ——
     //    所以这里必须再调度一次，否则用户不重启客户端就看不到模型（Stage 2C）。
@@ -58,15 +61,16 @@ export function registerCommercialHandlers(): void {
       await requestCommercialAccessCleanup(buildCommercialAccessCleanupDeps());
       notifyCommercialSignedIn();
     }
-    return trackOnSuccess(res, 'login_success');
+    return tracked;
   });
   ipcMain.handle('commercial:sign-in-password', async (_event, email: string, password: string) => {
     const res = await signInWithPassword(String(email ?? ''), String(password ?? ''));
+    const tracked = trackOnSuccess(res, 'login_success'); // 同上：先记事件，再跑清理
     if (res.ok) {
       await requestCommercialAccessCleanup(buildCommercialAccessCleanupDeps());
       notifyCommercialSignedIn();
     }
-    return trackOnSuccess(res, 'login_success');
+    return tracked;
   });
   ipcMain.handle('commercial:sign-out', async () => {
     try {

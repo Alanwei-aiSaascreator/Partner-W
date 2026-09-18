@@ -116,10 +116,12 @@ export function registerArtifactHandlers(): void {
       const options = { defaultPath: artifact.name };
       const choice = win ? await dialog.showSaveDialog(win, options) : await dialog.showSaveDialog(options);
       if (choice.canceled || !choice.filePath) {
+        // ⚠️ 取消保存对话框也返回 ok:true（与 `context:import-files` 同一个坑）：
+        //    「打开对话框又关掉」不算一次 artifact_saved。
         return { ok: true, result: { status: 'cancelled' as const } };
       }
       const result = await copyArtifactToDestination(workspacePath, artifact.localPath, choice.filePath);
-      return { ok: true, result };
+      return trackOnSuccess({ ok: true, result }, 'artifact_saved');
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : 'unknown error' };
     }
@@ -211,7 +213,7 @@ export function registerArtifactHandlers(): void {
         });
         const win = BrowserWindow.getAllWindows()[0];
         if (win) win.webContents.send('artifact:saved', artifact);
-        return { ok: true, result: artifact };
+        return trackOnSuccess({ ok: true, result: artifact }, 'artifact_saved');
       } catch (err) {
         return { ok: false, error: err instanceof Error ? err.message : 'unknown' };
       }
@@ -249,7 +251,7 @@ export function registerArtifactHandlers(): void {
         });
         const win = BrowserWindow.getAllWindows()[0];
         if (win) win.webContents.send('artifact:saved', artifact);
-        return { ok: true, result: artifact };
+        return trackOnSuccess({ ok: true, result: artifact }, 'artifact_saved');
       } catch (err) {
         return { ok: false, error: err instanceof Error ? err.message : 'unknown' };
       }

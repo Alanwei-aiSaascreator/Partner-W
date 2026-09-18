@@ -280,6 +280,12 @@ if (!gotLock) {
       return;
     }
 
+    // ⚠️ 埋点必须**在开窗之前**初始化：窗口一开，登录/激活的 IPC 就活了，
+    //    而下面那次运行时就绪等待在首跑要 37–74 秒 —— 用户在这段里完成登录/激活时，
+    //    未初始化的 `trackEvent` 是**静默 no-op**（无日志、无重试），首跑最关键的
+    //    `login_success` / `license_activated` 会直接丢掉。
+    setupAnalytics();
+
     // 窗口先出来，别像卡死 —— 首次启动要解压 35k 个文件（1–3 分钟）
     createWindow();
 
@@ -312,7 +318,6 @@ if (!gotLock) {
 
     // 放在网关之后：首跑要立刻读一次额度，此时会话/配置已就绪，否则首报必然是空
     initUsageReporter();
-    setupAnalytics();
     initTray();
     initQuickLaunch();
 
