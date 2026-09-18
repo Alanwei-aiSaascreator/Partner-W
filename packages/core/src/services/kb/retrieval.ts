@@ -12,6 +12,9 @@ import type { KbChunkState, KbSourceKind } from './types.js';
  * ⚠️ 设计 §二说"`embedding_model` 与当前模型不一致的切片，检索时跳过"——这里跳过的是
  *    它的**向量**（`vectorUsed=false`），不是这一块本身：正文与关键词命中都不依赖嵌入
  *    模型，把整块丢掉只会让"换了模型但还没重建"直接检索不到东西，与 §五的降级原则相悖。
+ *
+ * ⚠️ "一致"是**模型名 + 维度**两条：同名换维（`{model:'x',dim:4}` → `{model:'x',dim:8}`）
+ *    的旧向量不能算可用（详见 `isVectorUsable`）。
  */
 
 export interface KbSearchCandidate {
@@ -80,6 +83,12 @@ function isVectorUsable(
 ): boolean {
   if (!queryVector || !candidate.vector) return false;
   if (candidate.state !== 'embedded') return false;
+  // **维度也要一致**：模型名相同、维度却变了（同名换维）时，旧向量与新查询向量根本不是
+  // 同一个空间里的东西。不判这一条的话，余弦那边只会算出 0（`vectors.ts` 对维度不符返 0），
+  // 排序上"用了个寂寞"，而 `vectorUsed` 仍是 true ⇒ `mode='hybrid'`、`degraded=false` ——
+  // 界面看到的是"一切正常"，既不会提示需要重建，也永远发现不了旧向量是错的。
+  // 判掉它就自动退成 keyword 降级，调用方据此提示"切了维度，需要重建索引"。
+  if (candidate.vector.length !== queryVector.length) return false;
   return candidate.embeddingModel !== null && candidate.embeddingModel === activeModel;
 }
 
@@ -124,6 +133,9 @@ export function rankKbCandidates(candidates: readonly KbSearchCandidate[], optio
   scored.sort((left, right) => {
     if (right.hit.score !== left.hit.score) return right.hit.score - left.hit.score;
     if (right.keywordScore !== left.keywordScore) return right.keywordScore - left.keywordScore;
+    // ⚠️ 先比 `ordinal`、**再**比 `chunkId`：切片 id 里的序号是 `padStart(4)`，
+    //    ≥ 10000 的块字典序会排到 9999 前面（同一份资料内就乱了）。id 只做最后兜底。
+    if (left.hit.ordinal !== right.hit.ordinal) return left.hit.ordinal - right.hit.ordinal;
     return left.hit.chunkId < right.hit.chunkId ? -1 : left.hit.chunkId > right.hit.chunkId ? 1 : 0;
   });
 

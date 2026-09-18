@@ -1,10 +1,10 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { EmbeddingEngine } from '@clawwork/core';
 import { closeDatabase, getSqlite, initDatabase } from '../src/main/db/index.js';
-import { listKbChunks, readKbMeta, searchKbChunks } from '../src/main/db/kb.js';
+import { listKbChunks, listKbSources, readKbMeta, searchKbChunks } from '../src/main/db/kb.js';
 import { MAX_KB_FILE_BYTES, createKbService, readLocalTextFile, type KbService } from '../src/main/kb/service.js';
 
 /**
@@ -319,6 +319,37 @@ describe('换嵌入模型', () => {
     expect((await service.search('收入')).hits[0].vectorUsed).toBe(true);
   });
 
+  it('同名换维（模型名不变、维度变了）：旧向量不能算"可用"，检索如实降级并指向"需要重建"', async () => {
+    const dim4: EmbeddingEngine = { model: 'same-name', dim: 4, embed: async (texts) => texts.map(() => [1, 0, 0, 0]) };
+    service = createService(dim4);
+    const outcome = await service.addNote({ title: '预算说明', text: NOTE });
+    const sourceId = outcome.sourceId as string;
+    expect(listKbChunks(getSqlite() as never, sourceId).every((chunk) => chunk.vector?.length === 4)).toBe(true);
+
+    const dim8: EmbeddingEngine = {
+      model: 'same-name',
+      dim: 8,
+      embed: async (texts) => texts.map(() => [1, 0, 0, 0, 0, 0, 0, 0]),
+    };
+    const switched = service.setEmbeddingEngine(dim8);
+
+    // 名字没变 ⇒ 状态机看不出任何异常（这正是"静默"的来源：不标 stale、也不重嵌）
+    expect(switched).toMatchObject({ model: 'same-name', dim: 8 });
+    expect(listKbChunks(getSqlite() as never, sourceId).every((chunk) => chunk.state === 'embedded')).toBe(true);
+    expect(await service.indexPending()).toMatchObject({ attempted: 0, embedded: 0 });
+    expect(readKbMeta(getSqlite() as never)).toMatchObject({ embeddingModel: 'same-name', dim: 8 });
+
+    const result = await service.search('收入');
+
+    expect(result.mode).toBe('keyword'); // 修复前是 hybrid（拿 4 维向量配 8 维查询算了半天 0）
+    expect(result.degraded).toBe(true);
+    expect(result.degradedReason).toBe('no-vectors'); // 界面据此提示"嵌入维度变了，需要重建"
+    expect(result.hits.length).toBeGreaterThan(0); // 降级 ≠ 搜不到（设计 §五）
+    expect(result.hits.every((hit) => hit.vectorUsed === false && hit.vectorScore === 0)).toBe(true);
+    // 旧向量原样留着：切回 4 维不用重新花积分
+    expect(listKbChunks(getSqlite() as never, sourceId).every((chunk) => chunk.vector?.length === 4)).toBe(true);
+  });
+
   it('摘掉引擎（null）不算换模型：状态不动、meta 归零', async () => {
     service = createService(createFakeEngine('fake-v1'));
     const outcome = await service.addNote({ title: '预算说明', text: NOTE });
@@ -418,6 +449,155 @@ describe('重复入库与重建', () => {
     expect(service.getStats()).toMatchObject({ sources: 0, chunks: 0 });
     expect((await service.search('收入')).hits).toEqual([]);
   });
+});
+
+describe('并发：单飞与"两代正文不串味"', () => {
+  /** 闸门式引擎：每次调用挂起，测试自己决定什么时候放行（模拟 U 盘上很慢的嵌入）。 */
+  function createGatedEngine(
+    model = 'gated',
+    dim = 2,
+  ): { engine: FakeEngine; gates: Array<() => void>; releaseAll: () => void } {
+    const gates: Array<() => void> = [];
+    const calls: string[][] = [];
+    // 默认每一批都要等测试放行。`releaseAll()` 之后**新来的批次不再挂起** —— 一轮索引
+    // 可能发多批（batchSize 上限），要冻结的只是测试关心的那一批，尾部不该留在半空。
+    let open = false;
+    const releaseAll = (): void => {
+      open = true;
+      for (const release of gates.splice(0)) release();
+    };
+    return {
+      gates,
+      releaseAll,
+      engine: {
+        model,
+        dim,
+        calls,
+        async embed(texts: readonly string[]): Promise<number[][]> {
+          calls.push([...texts]);
+          if (!open) await new Promise<void>((resolve) => gates.push(resolve));
+          // 向量第一维 = 正文长度 ⇒ 任何"向量不是这块正文算出来的"都能一眼看出来
+          return texts.map((text) => [text.length, 1]);
+        },
+      },
+    };
+  }
+
+  it('并发的索引请求只把同一批文本送一遍（付费嵌入不能重复扣费）', async () => {
+    const offline = createOfflineEngine('slow');
+    service = createService(offline);
+    const outcome = await service.addNote({ title: '预算说明', text: NOTE });
+    expect(outcome.pendingCount).toBe(outcome.chunkCount); // 全是待嵌的
+
+    const { engine, gates } = createGatedEngine('slow');
+    service.setEmbeddingEngine(engine);
+
+    const first = service.indexPending();
+    const second = service.indexPending(); // 同时来的第二次请求
+    await vi.waitFor(() => expect(gates).toHaveLength(1));
+    gates[0]();
+    const [a, b] = await Promise.all([first, second]);
+
+    // ⭐ 引擎只被调了**一次**，而且那批文本里没有重复（修复前：两批、同一批文本各来一遍）
+    expect(engine.calls).toHaveLength(1);
+    const sent = engine.calls.flat();
+    expect(new Set(sent).size).toBe(sent.length);
+    expect(sent.length).toBe(outcome.chunkCount);
+    expect(a.embedded + b.embedded).toBeGreaterThan(0);
+    expect(
+      listKbChunks(getSqlite() as never, outcome.sourceId as string).every((chunk) => chunk.state === 'embedded'),
+    ).toBe(true);
+  });
+
+  it('单飞期间新写进来的切片不会被吞掉：跑完补一轮', async () => {
+    const { engine, gates } = createGatedEngine('slow');
+    service = createService(engine);
+
+    const first = service.addNote({ title: '第一份', text: NOTE });
+    await vi.waitFor(() => expect(gates).toHaveLength(1));
+    // 第一轮还在嵌的时候，第二份资料入库（它的切片是"后面才出现的活"）
+    const second = service.addNote({ title: '第二份', text: `${NOTE}\n\n## 追加\n\n又是一段新正文。` });
+    gates[0]();
+    await vi.waitFor(() => expect(gates).toHaveLength(2));
+    gates[1]();
+    const [one, two] = await Promise.all([first, second]);
+
+    expect(engine.calls).toHaveLength(2); // 第一轮 + 补的那一轮，没有第三轮空转
+    expect(one.pendingCount).toBe(0);
+    expect(two.pendingCount).toBe(0);
+    for (const sourceId of [one.sourceId as string, two.sourceId as string]) {
+      expect(
+        listKbChunks(getSqlite() as never, sourceId).every(
+          (chunk) => chunk.state === 'embedded' && chunk.vector?.[0] === chunk.text.length,
+        ),
+      ).toBe(true);
+    }
+  });
+
+  it('同一份资料两代并发入库：第一代（慢）的向量不许写到第二代的正文上', async () => {
+    const { engine, gates, releaseAll } = createGatedEngine('slow');
+    service = createService(engine);
+    const filePath = join(workspace, 'doc.md');
+    writeFileSync(filePath, '第一代正文。'.repeat(60), 'utf8');
+
+    const first = service.addFile(filePath);
+    await vi.waitFor(() => expect(gates).toHaveLength(1));
+
+    // 第一代还没嵌完，用户又加了一次同一个文件（U 盘上很常见）
+    writeFileSync(filePath, '第二代完全不同的正文，长度也不一样。'.repeat(60), 'utf8');
+    const second = service.addFile(filePath);
+    // ⚠️ 这里**不能** await second：它要等第一代的嵌入放行（单飞），await 会死等
+    const sourceId = (listKbSources(getSqlite() as never)[0] ?? { id: '' }).id;
+
+    gates[0](); // 第一代的嵌入结果现在才回来（此时库里的正文已经是第二代）
+    releaseAll(); // 补的那一轮可能分多批：放完第一批后其余批次自动放行
+    const [firstOutcome] = await Promise.all([first, second]);
+
+    const chunks = listKbChunks(getSqlite() as never, sourceId);
+    expect(chunks.length).toBeGreaterThan(0);
+    expect(firstOutcome.sourceId).toBe(sourceId); // 同一份资料，同一个 source
+    expect(chunks.every((chunk) => chunk.state === 'embedded')).toBe(true);
+    // ⭐ 每块向量编码的长度 == **它自己这块正文**的长度 ⇒ 没有一块带着上一代的向量
+    expect(chunks.map((chunk) => chunk.vector?.[0])).toEqual(chunks.map((chunk) => chunk.text.length));
+    // 补的那一轮确实把**第二代**的正文送进了引擎（没被单飞吞掉）
+    expect(engine.calls.length).toBeGreaterThan(1);
+    expect(engine.calls.slice(1).flat().join('\n')).toContain('第二代');
+    expect((await service.search('第二代')).hits.length).toBeGreaterThan(0);
+  });
+});
+
+describe('路径规范化（同一个文件只有一条资料）', () => {
+  it('带 `..` 的写法与规范写法收敛到同一条（realpath）', async () => {
+    service = createService(createFakeEngine());
+    mkdirSync(join(workspace, 'sub'), { recursive: true });
+    const filePath = join(workspace, '预算说明.md');
+    writeFileSync(filePath, NOTE, 'utf8');
+
+    const first = await service.addFile(filePath);
+    // ⚠️ 不能用 `join(workspace, 'sub', '..', ...)`：`path.join` 自己会把 `..` 规范化掉，
+    // 那样两条路径**本来就相等**，测试就成了假绿（实测：去掉 realpath 它照样通过）。
+    const withDotDot = `${workspace}/sub/../预算说明.md`;
+    const second = await service.addFile(withDotDot);
+
+    expect(first.status).toBe('indexed');
+    expect(second).toMatchObject({ status: 'unchanged', sourceId: first.sourceId });
+    expect(service.getStats().sources).toBe(1);
+  });
+
+  it.runIf(process.platform === 'win32' || process.platform === 'darwin')(
+    '大小写不同的同一路径也只能有一条（Windows/macOS 上路径大小写不敏感）',
+    async () => {
+      service = createService(createFakeEngine());
+      const filePath = join(workspace, 'Budget.md');
+      writeFileSync(filePath, NOTE, 'utf8');
+
+      const first = await service.addFile(filePath);
+      const second = await service.addFile(filePath.toUpperCase());
+
+      expect(second).toMatchObject({ status: 'unchanged', sourceId: first.sourceId });
+      expect(service.getStats().sources).toBe(1); // 修复前是 2（重复索引、重复扣费、检索里重复引用）
+    },
+  );
 });
 
 describe('本地文件读取（不出网、不改文件）', () => {

@@ -36,11 +36,17 @@ export function chunkNeedsEmbedding(chunk: KbEmbeddableChunk, model: string | nu
 }
 
 /**
- * 换嵌入模型：把"用别的模型嵌过"的块标成 `stale`。
+ * 换嵌入模型：把"用别的模型嵌过"的块标成 `stale`（**纯逻辑版，只算不落库**）。
  *
  * **向量保留**（不删）—— 设计 §二：模型不一致的切片检索时跳过并在界面提示"需要重建"。
  * 保留的好处是用户切回原模型时不用重花积分。
  * `model` 为 `null`（引擎被摘掉）时**什么都不做**：那不是"换了模型"，只是暂时没引擎。
+ *
+ * ⚠️ **生产路径不在这里**：真正改状态的是 desktop 侧 `syncKbChunkStates`（SQL，一次
+ *    `CASE` 同时管两个方向：模型不符 ⇒ `stale`，又换回原模型且向量还在 ⇒ 直接升回
+ *    `embedded`）。本函数只覆盖前一个方向、且没有调用方，保留它是当"口径说明书"用的：
+ *    要改判定口径时，**两边一起改**（`packages/desktop/test/kb-store.test.ts` 里那条
+ *    "该不该重嵌只有一份口径"的用例会把 `chunkNeedsEmbedding` 与 SQL 逐行对照）。
  */
 export function markStaleChunks(chunks: readonly KbEmbeddableChunk[], model: string | null): KbEmbeddableChunk[] {
   if (!model) return [];

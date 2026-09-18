@@ -105,6 +105,29 @@ describe('rankKbCandidates：换过模型的向量不参与排序', () => {
     expect(result.hits).toHaveLength(2);
   });
 
+  it('同名换维：模型名一样、维度不一致的旧向量同样不可用（否则会静默用错空间的向量）', () => {
+    // 4 维旧向量 + 8 维查询向量：余弦在 vectors.ts 那边只会返回 0，但"能不能用"是
+    // 这里判的 —— 不判维度就会报 hybrid/vectorUsed=true，界面看不出要重建。
+    const wrongDim = candidate('wrong-dim', 0.2, [0, 1, 0, 0], { embeddingModel: MODEL });
+    const result = rankKbCandidates([candidate('keyword-heavy', 1, [1, 0]), wrongDim], {
+      queryVector: new Float32Array([0, 1, 0, 0, 0, 0, 0, 0]),
+      activeModel: MODEL,
+    });
+
+    expect(result.hits.map((hit) => hit.chunkId)).toEqual(['keyword-heavy', 'wrong-dim']);
+    const hit = result.hits.find((entry) => entry.chunkId === 'wrong-dim');
+    expect(hit?.vectorUsed).toBe(false);
+    expect(hit?.vectorScore).toBe(0);
+    expect(result.mode).toBe('keyword'); // 不是 hybrid：调用方靠这个把"需要重建"提示出来
+    // 同一批候选、同一维度 ⇒ 向量照常参与（对照组，证明上面不是因为别的原因掉下去的）
+    expect(
+      rankKbCandidates([candidate('same-dim', 0.2, [0, 1])], {
+        queryVector: new Float32Array([0, 1]),
+        activeModel: MODEL,
+      }).mode,
+    ).toBe('hybrid');
+  });
+
   it('负余弦夹到 0（不会把"反相关"当成负分往下踩）', () => {
     const result = rankKbCandidates([candidate('opposite', 0.5, [-1, 0])], {
       queryVector: new Float32Array([1, 0]),
@@ -132,5 +155,18 @@ describe('rankKbCandidates：截断与确定性', () => {
 
     expect(result.hits[0].snippet).toBe('<<a>> 的正文');
     expect(result.hits[0]).toMatchObject({ sourceTitle: 'a 那份资料', sourceKind: 'note', ordinal: 0 });
+  });
+
+  it('同分时先比 ordinal 再比 chunkId：序号 ≥ 10000 不会被排到 9999 前面', () => {
+    // 切片 id 里的序号是 `padStart(4)`，`src#10000` 的**字典序**反而在 `src#9999` 之前；
+    // 同一份资料里正确的顺序只能由 `ordinal` 决定（长文档到得了四位数以上）。
+    const late = candidate('src#10000', 0.5, null, { sourceId: 'src', ordinal: 10000 });
+    const early = candidate('src#9999', 0.5, null, { sourceId: 'src', ordinal: 9999 });
+
+    expect(rankKbCandidates([late, early]).hits.map((hit) => hit.ordinal)).toEqual([9999, 10000]);
+    // 对照：ordinal 相同才轮到 chunkId 兜底（纯字典序）
+    expect(
+      rankKbCandidates([candidate('src#b', 0.5, null), candidate('src#a', 0.5, null)]).hits.map((hit) => hit.chunkId),
+    ).toEqual(['src#a', 'src#b']);
   });
 });

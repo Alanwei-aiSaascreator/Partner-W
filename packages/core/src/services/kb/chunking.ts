@@ -42,7 +42,8 @@ interface Section {
 }
 
 const HEADING_PATTERN = /^(#{1,6})\s+(.*)$/;
-const FENCE_PATTERN = /^\s*(```|~~~)/;
+/** 围栏（``` 或 ~~~，三个起步）；**必须**连着写，`~~` 不是围栏。 */
+const FENCE_PATTERN = /^\s*(`{3,}|~{3,})/;
 const SENTENCE_PATTERN = /[^。！？!?；;\n]*[。！？!?；;]+|[^。！？!?；;\n]+/g;
 
 export function headingPrefix(headingPath: readonly string[]): string {
@@ -50,13 +51,28 @@ export function headingPrefix(headingPath: readonly string[]): string {
   return path.length === 0 ? '' : `【${HEADING_PREFIX_LABEL}：${path.join(' › ')}】\n`;
 }
 
-/** 按标题层级把正文切成小节（标题本身不进正文，只进路径）。 */
+/** 打开中的代码围栏：记住**它是什么字符、有几个**（关闭必须同字符且不短于它）。 */
+interface Fence {
+  char: string;
+  length: number;
+}
+
+/**
+ * 按标题层级把正文切成小节（标题本身不进正文，只进路径）。
+ *
+ * 围栏按 markdown 的标准规则配对（不按"见到围栏就取反"）：
+ * - 开围栏记下**字符与长度**，只有**同字符且不更短**的围栏才算关闭（`~~~` 关不掉 ``` 块）；
+ * - 没闭合的围栏一直吃到文末。
+ * 不这么判的两个已知误判：① ``` 块里的 `~~~` 会把围栏"提前关掉"，块里的 `# 注释`
+ * 于是被当成标题、渗进 `headingPath`；② 少写一个闭合围栏就会把**后面所有标题**都吞进
+ * 同一节（整段正文贴上同一个出处）。
+ */
 function splitSections(text: string): Section[] {
   const sections: Section[] = [];
   const stack: Array<string | undefined> = [];
   let lines: string[] = [];
   let headingPath: string[] = [];
-  let inFence = false;
+  let fence: Fence | null = null;
 
   const flush = (): void => {
     const body = lines.join('\n').trim();
@@ -65,8 +81,13 @@ function splitSections(text: string): Section[] {
   };
 
   for (const line of text.split(/\r?\n/)) {
-    if (FENCE_PATTERN.test(line)) inFence = !inFence;
-    const heading = inFence ? null : HEADING_PATTERN.exec(line);
+    const marker = FENCE_PATTERN.exec(line);
+    if (marker) {
+      const token = marker[1];
+      if (!fence) fence = { char: token[0], length: token.length };
+      else if (token[0] === fence.char && token.length >= fence.length) fence = null;
+    }
+    const heading = fence ? null : HEADING_PATTERN.exec(line);
     if (!heading) {
       lines.push(line);
       continue;
@@ -82,6 +103,22 @@ function splitSections(text: string): Section[] {
   return sections;
 }
 
+/**
+ * 把 `end` 从"刚切进一个代理对"的位置挪开。
+ *
+ * `String.prototype.slice` 数的是 UTF-16 码元，而 emoji（😀 等）占**两个**码元：
+ * 切在 `end` 上、而 `end-1` 是高代理时，两块各留半个字符 —— 落库/送模型时是非法
+ * UTF-16（JSON 与编码器会把它变成 U+FFFD），**存下来的正文与原文不再逐字相等**。
+ * 所以：往后收一格（收不动时往后**放**一格，保证循环有进展）。
+ */
+function surrogateSafeEnd(text: string, start: number, end: number): number {
+  if (end >= text.length) return end;
+  const last = text.charCodeAt(end - 1);
+  const isHighSurrogate = last >= 0xd800 && last <= 0xdbff;
+  if (!isHighSurrogate) return end;
+  return end - 1 > start ? end - 1 : end + 1;
+}
+
 /** 把一个段落拆成不超过 `chunkSize` 的原子片段（优先句子边界，兜底字符硬切）。 */
 function splitParagraph(paragraph: string, chunkSize: number): string[] {
   if (paragraph.length <= chunkSize) return [paragraph];
@@ -93,8 +130,10 @@ function splitParagraph(paragraph: string, chunkSize: number): string[] {
       atoms.push(sentence);
       continue;
     }
-    for (let start = 0; start < sentence.length; start += chunkSize) {
-      atoms.push(sentence.slice(start, start + chunkSize));
+    for (let start = 0; start < sentence.length; ) {
+      const end = surrogateSafeEnd(sentence, start, Math.min(sentence.length, start + chunkSize));
+      atoms.push(sentence.slice(start, end));
+      start = end;
     }
   }
   return atoms;
@@ -157,7 +196,20 @@ function packAtoms(
   return packed;
 }
 
-/** 把一份资料的正文切成块。 */
+/**
+ * 把一份资料的正文切成块。
+ *
+ * ⚠️ **已知边界（刻意保留，等 T6c 的命中率抽查再决定要不要改）：切片不跨小节。**
+ *    装箱的边界是"小节"（见 `splitSections`），不是整篇正文，于是：
+ *    ① 短于 `chunkSize` 的小节**自己就是一块**，既不会跟相邻小节拼成一块，也拿不到
+ *       `chunkOverlap`（重叠只发生在同一小节内）—— 一节一句话的笔记（`# 收入` +
+ *       一行正文）会得到很多碎块，每块都带一遍"所属"前缀；
+ *    ② 反过来，一节远大于 `chunkSize` 时重叠照常，行为与整篇切一致。
+ *    这么做是因为"跨小节合并"会把两节的标题路径糊在一起（`【所属：A › B】` 对合并块
+ *    就是错的）。要改的话，得先给合并块定义"它属于哪一节"，不是把边界挪一下就行。
+ *    当前行为有测试钉着：`packages/core/test/kb-chunking.test.ts` 里那条
+ *    "小节短于块大小时不跨小节（已知边界）"。
+ */
 export function splitText(text: string, options: KbChunkingOptions = {}): TextChunk[] {
   const chunkSize = Math.max(1, Math.floor(options.chunkSize ?? DEFAULT_CHUNK_SIZE));
   const overlap = Math.max(0, Math.min(Math.floor(options.chunkOverlap ?? DEFAULT_CHUNK_OVERLAP), chunkSize - 1));

@@ -62,6 +62,42 @@ describe('splitText：标题层级', () => {
 
     expect(splitText(text).map((chunk) => chunk.headingPath)).toEqual([['一'], ['一', '一之下'], ['二']]);
   });
+
+  it('围栏按"同字符且不更短"配对：``` 块里的 ~~~ 关不掉它', () => {
+    const text = [
+      '# 真标题',
+      '',
+      '```md',
+      '~~~',
+      '# 这是代码里的注释，不是标题',
+      '~~~',
+      '```',
+      '',
+      '## 真二级标题',
+      '',
+      '正文。',
+    ].join('\n');
+
+    const chunks = splitText(text);
+
+    // 修复前：`~~~` 把围栏"提前关掉" ⇒ 里面那行 `# 注释` 被当成标题，路径带偏成
+    // [['真标题'], ['真标题','这是代码里的注释，不是标题'], ['真标题','真二级标题']]
+    expect(chunks.map((chunk) => chunk.headingPath)).toEqual([['真标题'], ['真标题', '真二级标题']]);
+    expect(chunks[0].body).toContain('# 这是代码里的注释，不是标题');
+  });
+
+  it('没闭合的围栏一直吃到文末（后面的标题不会被单独切出来）', () => {
+    const text = ['# 标题', '', '```bash', 'echo 第一行', '# 这行仍在围栏里', '', '## 也在围栏里', 'echo 收尾'].join(
+      '\n',
+    );
+
+    const chunks = splitText(text);
+
+    // 现状（与 CommonMark 一致）：未闭合的围栏把后面全吞进同一节 ⇒ 一个块、一个路径。
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0].headingPath).toEqual(['标题']);
+    expect(chunks[0].body).toContain('## 也在围栏里');
+  });
 });
 
 describe('splitText：块大小与重叠', () => {
@@ -131,6 +167,37 @@ describe('splitText：块大小与重叠', () => {
     expect(splitText('')).toEqual([]);
     expect(splitText('   \n\n \t ')).toEqual([]);
     expect(splitText('# 只有个标题\n\n## 再来一个')).toEqual([]);
+  });
+
+  it('硬切不切碎代理对（emoji 不会被劈成半个字符）', () => {
+    // 20 个 emoji = 40 个 UTF-16 码元；chunkSize 取**奇数** 7 ⇒ 切点必落在某个 emoji 中间
+    const text = '😀'.repeat(20);
+
+    const chunks = splitText(text, { chunkSize: 7, chunkOverlap: 0 });
+
+    expect(chunks.length).toBeGreaterThan(1);
+    for (const chunk of chunks) {
+      // 孤立的高/低代理 = 半个字符（落库/送模型时会变成 U+FFFD）
+      expect(chunk.body).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
+      expect(chunk.body).not.toMatch(/(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/);
+      const body = chunk.body.replace(/\n/g, ''); // 装箱时原子之间会插 `\n`
+      expect((body.match(/😀/gu) ?? []).length * 2).toBe(body.length); // 长度是偶数 ⇒ 全是完整 emoji
+    }
+    // 拼回来必须与原文**逐字相等**（这正是修复前做不到的那条：修复前这里会出现两个
+    // 半个字符拼成的乱码/替换字符，而且 `[...,'😀\uDE00']` 这种半字符也过不了上面的正则）。
+    expect(reconstructBodies(chunks).replace(/\n/g, '')).toBe(text);
+  });
+
+  it('小节短于块大小时**不跨小节**也不带重叠（已知边界，T6c 抽查后再决定要不要改）', () => {
+    const text = ['# 一', '', '一句话。', '', '# 二', '', '另一句话。'].join('\n');
+
+    const chunks = splitText(text, { chunkSize: 500, chunkOverlap: 75 });
+
+    // 现状：每节各自成块（哪怕只有四个字），既不合并、也没有重叠。
+    expect(chunks).toHaveLength(2);
+    expect(chunks.map((chunk) => chunk.body)).toEqual(['一句话。', '另一句话。']);
+    expect(chunks.map((chunk) => chunk.overlapChars)).toEqual([0, 0]);
+    expect(chunks.map((chunk) => chunk.text)).toEqual(['【所属：一】\n一句话。', '【所属：二】\n另一句话。']);
   });
 });
 
