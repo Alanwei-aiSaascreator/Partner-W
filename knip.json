@@ -2,7 +2,8 @@
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "workspaces": {
     ".": {
-      "entry": ["scripts/**/*.mjs", "scripts/**/*.ts"]
+      "entry": ["scripts/**/*.mjs", "scripts/**/*.ts", "e2e/**/*.spec.ts", "e2e/**/*.test.ts"],
+      "project": ["scripts/**/*.{mjs,ts}", "e2e/**/*.ts"]
     },
     "packages/shared": {},
     "packages/core": {},
@@ -32,6 +33,7 @@
     },
     "website": {}
   },
-  "ignore": ["keynote/**", ".claude/**", ".agents/**"],
+  "ignoreExportsUsedInFile": true,
+  "ignore": ["keynote/**"],
   "exclude": ["unlisted"]
 }

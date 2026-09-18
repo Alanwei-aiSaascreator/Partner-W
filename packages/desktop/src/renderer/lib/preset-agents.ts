@@ -162,10 +162,6 @@ export function resolveAgentDisplayNameKey(agentId: string): string | null {
   return PRESET_AGENT_DEFINITIONS.find((agent) => agent.id === agentId)?.displayNameKey ?? null;
 }
 
-export function isPresetAgentId(id: string): id is PresetAgentId {
-  return PRESET_AGENT_IDS.includes(id as PresetAgentId);
-}
-
 export function resolveStarterAgentId(
   starterId: StarterId,
   availableAgentIds: readonly string[],

@@ -58,10 +58,6 @@ let current: KbRuntime | null = null;
 /** 正在建的那一次：并发调用复用，避免同时加载两遍模型。 */
 let inFlight: Promise<KbRuntime> | null = null;
 
-export interface EnsureKbRuntimeOptions {
-  loadEngine?: Parameters<typeof createKbRuntime>[0]['loadEngine'];
-}
-
 /** 取当前运行时；没建好就是 `null`（调用方据此回"还没就绪"，**不要**顺手建一个）。 */
 export function getKbRuntime(): KbRuntime | null {
   return current;

@@ -350,11 +350,6 @@ export function profilesInUse(dirs: string[]): Set<string> {
   return inUse;
 }
 
-/** 单个目录是否在用（薄封装）。 */
-export function profileInUse(dir: string): boolean {
-  return profilesInUse([dir]).has(dir);
-}
-
 // ---------------------------------------------------------------- 保留策略
 
 export interface ProfileEntry {

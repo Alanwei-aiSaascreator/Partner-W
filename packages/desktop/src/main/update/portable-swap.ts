@@ -49,9 +49,6 @@ function P(): typeof path.win32 {
 export const PART_PREFIX = '.part-';
 /** 备份后缀（`.bak` 在 = 有一次换包还没被确认）。 */
 export const BACKUP_SUFFIX = '.bak';
-/** 换包字条：记"换进去的是哪个版本"，下次启动据此确认或回退。 */
-export const PORTABLE_UPDATE_MARKER = 'pending-portable-update.json';
-
 /** 卷根（`E:\a\b` → `E:\`）；相对路径/空返回 null。 */
 function volumeRootOf(target: string): string | null {
   if (!target) return null;

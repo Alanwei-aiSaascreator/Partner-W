@@ -28,13 +28,6 @@ function trigger(page: Page): ReturnType<Page['locator']> {
   return page.locator('button:has(span.max-w-36)').first();
 }
 
-/** 当前选中的模型展示名（触发器上的文本）。 */
-export async function currentModelLabel(page: Page): Promise<string> {
-  const t = trigger(page);
-  await t.waitFor({ state: 'visible', timeout: 30_000 });
-  return (await t.innerText()).trim();
-}
-
 /**
  * 打开下拉并选中展示名为 `modelName` 的模型。
  *
