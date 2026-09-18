@@ -99,6 +99,14 @@ function safeLoad(storage: BetaStorage): BetaData {
     const raw = storage.getItem(BETA_STORAGE_KEY);
     if (!raw) return seed();
     const parsed = JSON.parse(raw) as Partial<BetaData>;
+    // ⚠️ `activeModule` 必须 clamp：升级前点过「埋点分析 / 隐私与合规」的用户，
+    //    localStorage 里留着 `'analytics' | 'compliance'` —— 盲信它会让内测中心
+    //    整页抛 TypeError 并被根 ErrorBoundary 接成整应用错误页，重载后照样崩。
+    //    而且**界面自愈不了**：整页崩的时候连「重置内测数据」按钮都渲染不出来。
+    //    不认识的模块一律回落到清单里的第一个。
+    const activeModule = BETA_MODULES.some((item) => item.id === parsed.activeModule)
+      ? (parsed.activeModule as BetaModule)
+      : BETA_MODULES[0].id;
     // ⚠️ 词表里保留已不再发出的十个事件名（`team_created` / `team_joined` /
     //    `post_published` / `template_installed` / `creator_template_created` /
     //    `bounty_published` / `daily_check_in`，以及随 P4 毕业的合规三件
@@ -134,9 +142,18 @@ function safeLoad(storage: BetaStorage): BetaData {
           .slice(-100)
           .map((event) => ({ id: event.id, type: event.type, timestamp: event.timestamp, module: event.module }))
       : [];
+    // ⚠️ 老 blob 里 `analytics` / `compliance` 两个残块**刻意原样保留**（下面的
+    //    `...parsed`）：它们是老版本内测中心的模拟 UI 数据（计数器 + 三个布尔
+    //    开关，没有用户正文），现在既没有类型也没有界面消费 —— 但"清用户本机
+    //    已有的数据"属于**单独的数据迁移决策**，不是一次审阅修正能顺手做的
+    //    （Task 15 遗留清单里记着这笔）。原样回写 = 不改动用户本机数据。
+    //    ⚠️ 与上面 `activeModule` 的区别：那个**必须** clamp，因为盲信它会让
+    //    内测中心整页崩；这两块没有任何界面消费，留着不会崩。
+    //    ⚠️ `activeModule` 放在 `...parsed` **之后**：否则又被旧 blob 覆盖回去了。
     return {
       ...seed(),
       ...parsed,
+      activeModule,
       operations: { ...seed().operations, ...parsed.operations },
       events,
     };

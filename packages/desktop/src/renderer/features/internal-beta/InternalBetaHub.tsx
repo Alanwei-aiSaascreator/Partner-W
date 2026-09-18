@@ -274,8 +274,12 @@ export default function InternalBetaHub() {
     if (routed) setActive(routed);
     else window.history.replaceState(null, '', betaRoute(active));
   }, [active, setActive]);
-  const ActiveModule = MODULE_COMPONENTS[active];
-  const selected = useMemo(() => BETA_MODULES.find((item) => item.id === active)!, [active]);
+  // ⚠️ 第二道防线：store 里已经 clamp 过（见 beta-store.ts 的 safeLoad），但界面
+  //    不能假设"内存里一定是认识的模块" —— 认不出来就回落到清单里的第一个，
+  //    而不是 `find(...)!` 加 `MODULE_COMPONENTS[active]` 双双 undefined
+  //    （那会当场抛 TypeError，被根 ErrorBoundary 接成整应用错误页）。
+  const ActiveModule = MODULE_COMPONENTS[active] ?? MODULE_COMPONENTS[BETA_MODULES[0].id];
+  const selected = useMemo(() => BETA_MODULES.find((item) => item.id === active) ?? BETA_MODULES[0], [active]);
   return (
     <div className="flex h-full min-h-0 flex-col bg-[var(--bg-primary)]">
       <WindowTitlebar
@@ -336,8 +340,15 @@ export default function InternalBetaHub() {
                 {/* ⚠️ 本机模拟的模块必须**当场**标出来：内测 1.0 不许把这些当"已完成"讲。 */}
                 {selected.preview && <Badge tone="warning">{t('beta.previewBadge')}</Badge>}
               </div>
+              {/*
+                ⚠️ 「本机数据」提示**只给本机模拟的模块**：`updates` 调的是真更新接口
+                （electron-updater），给它挂一句"当前为本机持久化内测数据"是假话。
+                真接口模块这里不加提示 —— 它的正文已经写明用的是已签名安装包，
+                而"不标预览"本身也不是在宣称已完成（交接单只要求模拟模块必须标出来）。
+              */}
               <p className="type-body mt-1 text-[var(--text-muted)]">
-                {selected.description} · {selected.preview ? t('beta.previewHint') : t('beta.localDataHint')}
+                {selected.description}
+                {selected.preview ? ` · ${t('beta.previewHint')}` : null}
               </p>
             </header>
             <ActiveModule />

@@ -350,7 +350,6 @@
   },
   "beta": {
     "demoBadge": "公司內測 1.0",
-    "localDataHint": "目前為本機持久化內測資料",
     "navigation": "內測功能導覽",
     "previewBadge": "功能預覽",
     "previewHint": "僅本機示範資料，尚未接入真實系統",
@@ -466,6 +465,7 @@
     "discard": "捨棄",
     "discardChangesDesc": "你有未儲存的變更，確定捨棄嗎？",
     "discardChangesTitle": "捨棄變更？",
+    "edit": "編輯",
     "fileManager": "檔案管理",
     "gateway": "Gateway",
     "justNow": "剛剛",
@@ -479,6 +479,7 @@
     "noFiles": "尚無檔案",
     "notConfigured": "尚未設定",
     "noTitle": "（無標題）",
+    "remove": "移除",
     "retry": "重試",
     "save": "儲存",
     "select": "選取",
@@ -860,6 +861,7 @@
     "refreshUsage": "重新整理用量",
     "scrollToBottom": "捲動至底部",
     "toggleContextPanel": "切換上下文面板",
+    "welcomeSubtitle": "直接描述你的任務，榮盈魔方會幫你選擇合適的助手和模型。",
     "welcomeTitle": "今天想完成什麼？"
   },
   "market": {

@@ -124,6 +124,103 @@ describe('internal beta store', () => {
     }
   });
 
+  /**
+   * ⭐ F1：升级前点过「埋点分析 / 隐私与合规」的用户，localStorage 里留着
+   *    `activeModule: 'analytics'`（这两个 id 已经毕业、不在 BETA_MODULES 里）。
+   *    盲信它 ⇒ 内测中心 `BETA_MODULES.find(...)!` 给 undefined ⇒ 渲染时抛
+   *    TypeError ⇒ 被根 ErrorBoundary 接成**整应用错误页**，重载后再点照样崩。
+   *
+   * ⚠️ 三种输入一起钉：两个真的会出现的旧 id，和一个纯粹不认识的值 ——
+   *    判据是"在不在清单里"，不是"是不是那两个名字"。
+   */
+  it('⭐ 旧 blob 里已毕业/不认识的 activeModule 一律回落到清单第一个模块', () => {
+    for (const stale of ['analytics', 'compliance', 'not_a_module']) {
+      storage.setItem(BETA_STORAGE_KEY, JSON.stringify({ activeModule: stale, events: [] }));
+
+      const state = createBetaStore(storage).getState();
+      expect(state.activeModule, stale).toBe(BETA_MODULES[0].id);
+      expect(
+        BETA_MODULES.map((module) => module.id),
+        stale,
+      ).toContain(state.activeModule);
+    }
+  });
+
+  /**
+   * ⭐ F1 自愈：脏值不只是"这次不崩"，下一次写回就被干净值覆盖掉
+   *    （否则用户每次启动都要再走一遍回落逻辑，且脏值永远留在盘上）。
+   */
+  it('⭐ 脏 activeModule 在下次写回时被干净值覆盖', () => {
+    storage.setItem(BETA_STORAGE_KEY, JSON.stringify({ activeModule: 'compliance', events: [] }));
+
+    const store = createBetaStore(storage);
+    store.getState().adjustCredits(100);
+
+    const written = JSON.parse(storage.getItem(BETA_STORAGE_KEY) ?? '{}') as { activeModule?: string };
+    expect(written.activeModule).toBe(BETA_MODULES[0].id);
+  });
+
+  /**
+   * ⭐ F3：老 blob 里的 `analytics` / `compliance` **残块**是"**语义级保留**"
+   *    （值一字不差进内存、原样回写、没有任何界面消费）—— 这是**显式决定**，
+   *    不是漏网之鱼，所以在这里钉死，别让它以后又被当成 bug 顺手改掉。
+   *
+   * 为什么保留而不清掉：这两块是老版本内测中心的模拟 UI 数据（计数器 + 三个
+   * 布尔开关，没有用户正文），而"清用户本机已有的数据"属于**单独的数据迁移
+   * 决策**，不是一次审阅修正能顺手做的（Task 15 遗留清单里记着这笔）。
+   * ⚠️ 上面那条「六个名字一个都不许出现」只对**全新存储**成立：老 blob 的残块
+   *    会被 `...parsed` 带进来，判据不同不是自相矛盾。
+   * ⚠️ 与 `activeModule` 的区别（F1）：那个**必须** clamp，盲信它会让内测中心
+   *    整页崩；这两块没有任何界面消费，留着不会崩。
+   */
+  it('⭐ 旧 blob 的 analytics / compliance 残块：原样保留、原样回写、无界面消费', () => {
+    const legacyBlocks = {
+      analytics: { launch: 7, login: 1 },
+      compliance: { agreed: true, exportRequested: true, deletionRequested: false },
+    };
+    storage.setItem(
+      BETA_STORAGE_KEY,
+      JSON.stringify({
+        activeModule: 'operations',
+        operations: {
+          users: 1,
+          activeCodes: 2,
+          credits: 3,
+          modelEnabled: false,
+          modelRate: 2,
+          announcement: '旧公告',
+          errorCount: 9,
+        },
+        ...legacyBlocks,
+        events: [{ id: 'e1', type: 'compliance_agreed', timestamp: '2026-09-02T00:00:00.000Z', module: 'compliance' }],
+      }),
+    );
+
+    const store = createBetaStore(storage);
+    const state = store.getState() as unknown as Record<string, unknown>;
+    // 值一字不差（不是被"归一化"过的近似值）
+    expect(state.analytics).toEqual(legacyBlocks.analytics);
+    expect(state.compliance).toEqual(legacyBlocks.compliance);
+    // 认识的部分照样恢复 + 事件保留（兼容性不能一起砍掉）
+    expect(store.getState().operations.announcement).toBe('旧公告');
+    expect(store.getState().operations.modelRate).toBe(2);
+    expect(store.getState().events.map((event) => event.id)).toEqual(['e1']);
+
+    // 无界面消费：每个动作跑一遍，残块一个字节都没被碰过（没有任何 action 绑在上面）
+    store.getState().adjustCredits(100);
+    store.getState().toggleModel();
+    store.getState().setModelRate(2);
+    store.getState().setAnnouncement('新公告');
+    store.getState().setActiveModule('updates');
+
+    const written = JSON.parse(storage.getItem(BETA_STORAGE_KEY) ?? '{}') as Record<string, unknown>;
+    expect(written.analytics).toEqual(legacyBlocks.analytics);
+    expect(written.compliance).toEqual(legacyBlocks.compliance);
+    expect(written.activeModule).toBe('updates');
+    // 回写的是**原样**的两块，不是被清掉、也不是被补全过的形状
+    expect(Object.keys(written).sort()).toEqual(['activeModule', 'analytics', 'compliance', 'events', 'operations']);
+  });
+
   it('events 只留结构字段：没有用户内容、没有多余字段、条数有上限', () => {
     const store = createBetaStore(storage);
     store.getState().setActiveModule('operations');

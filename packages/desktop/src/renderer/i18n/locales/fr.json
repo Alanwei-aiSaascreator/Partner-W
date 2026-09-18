@@ -350,7 +350,6 @@
   },
   "beta": {
     "demoBadge": "Company Beta 1.0",
-    "localDataHint": "Local persistent beta data",
     "navigation": "Beta feature navigation",
     "previewBadge": "Aperçu de fonctionnalité",
     "previewHint": "Données de démo locales uniquement, non connectées au système réel",
@@ -466,6 +465,7 @@
     "discard": "Abandonner",
     "discardChangesDesc": "Vous avez des modifications non enregistrées. Les abandonner ?",
     "discardChangesTitle": "Abandonner les modifications ?",
+    "edit": "Modifier",
     "fileManager": "Gestionnaire de fichiers",
     "gateway": "Passerelle",
     "justNow": "à l'instant",
@@ -479,6 +479,7 @@
     "noFiles": "Aucun fichier",
     "notConfigured": "Non configuré",
     "noTitle": "(Sans titre)",
+    "remove": "Retirer",
     "retry": "Réessayer",
     "save": "Enregistrer",
     "select": "sélectionner",
@@ -860,6 +861,7 @@
     "refreshUsage": "Actualiser l'utilisation",
     "scrollToBottom": "Aller en bas",
     "toggleContextPanel": "Afficher/masquer le panneau de contexte",
+    "welcomeSubtitle": "Décrivez votre tâche. Rongying Cube vous aidera à choisir le bon assistant et le bon modèle.",
     "welcomeTitle": "Que souhaitez-vous accomplir ?"
   },
   "market": {

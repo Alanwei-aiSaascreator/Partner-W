@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import { readFileSync, readdirSync, existsSync } from 'fs';
-import { join, extname, resolve, dirname } from 'path';
+import { join, extname, resolve, dirname, relative } from 'path';
 import { fileURLToPath } from 'url';
-import { createI18nUsageMatcher } from './lib/i18n-usage.mjs';
+import { createI18nUsageMatcher, findMissingLiteralKeys } from './lib/i18n-usage.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..');
@@ -24,6 +24,22 @@ const SHARED_CONSTANTS = join(ROOT, 'packages/shared/src/constants.ts');
 const QUICK_LAUNCH = join(ROOT, 'packages/desktop/src/renderer/quick-launch.html');
 
 let exitCode = 0;
+
+/**
+ * `SUPPORTED_LANGUAGE_CODES` 是语言集合的唯一定义。locale 目录与 quick-launch.html
+ * 都按它比对 —— 否则**整个删掉 `de.json` 不会响**（少一个文件时，键位对照循环根本
+ * 遍历不到它，未用键检查也只认 en.json，于是"德语没了"看起来跟"全绿"一模一样）。
+ */
+function readSupportedLanguageCodes() {
+  if (!existsSync(SHARED_CONSTANTS)) return null;
+  const sharedSrc = readFileSync(SHARED_CONSTANTS, 'utf-8');
+  const codesMatch = sharedSrc.match(/SUPPORTED_LANGUAGE_CODES\s*=\s*\[([^\]]+)\]/);
+  if (!codesMatch) return null;
+  return codesMatch[1]
+    .split(',')
+    .map((s) => s.trim().replace(/['"]/g, ''))
+    .filter(Boolean);
+}
 
 function flatten(obj, prefix = '') {
   const keys = [];
@@ -67,6 +83,30 @@ for (const pkg of PACKAGES) {
   const localeFiles = readdirSync(pkg.localeDir).filter((f) => f.endsWith('.json'));
   const enKeys = flatten(readJson(join(pkg.localeDir, 'en.json')));
   const enSet = new Set(enKeys);
+
+  // ── Locale file set check ─────────────────────────────────────────
+  const supportedCodes = readSupportedLanguageCodes();
+  if (supportedCodes === null) {
+    console.error('  ERROR could not parse SUPPORTED_LANGUAGE_CODES from shared/constants.ts');
+    exitCode = 1;
+  } else {
+    const dirCodes = new Set(localeFiles.map((f) => f.replace('.json', '')));
+    const supportedSet = new Set(supportedCodes);
+    const missingFiles = supportedCodes.filter((code) => !dirCodes.has(code));
+    const extraFiles = [...dirCodes].filter((code) => !supportedSet.has(code));
+
+    if (missingFiles.length > 0) {
+      console.error(`  ERROR locale files missing for supported codes: ${missingFiles.join(', ')}`);
+      exitCode = 1;
+    }
+    if (extraFiles.length > 0) {
+      console.error(`  ERROR locale files without a supported code: ${extraFiles.join(', ')}`);
+      exitCode = 1;
+    }
+    if (missingFiles.length === 0 && extraFiles.length === 0) {
+      console.log('  OK — locale files match SUPPORTED_LANGUAGE_CODES');
+    }
+  }
 
   for (const file of localeFiles) {
     if (file === 'en.json') continue;
@@ -119,6 +159,31 @@ for (const pkg of PACKAGES) {
     console.log('  OK — no unused keys detected');
   }
 
+  // ── Missing key check (code → locale word list) ────────────────────
+  // ⚠️ 上一条只走「词表 → 代码」方向：它从 en.json 出发，所以**代码引用了、9 个
+  //    locale 全缺**的键永远不在它的视野里（例：`mainArea.welcomeSubtitle` 渲染出
+  //    裸键、`common.edit` / `common.remove` 的 aria-label 变成键名）。这里反向兜底。
+  console.log('\n── i18n missing key check (referenced in code) ──');
+
+  const missingKeys = new Map(); // key -> files referencing it
+  for (const file of sourceFiles) {
+    const missing = findMissingLiteralKeys(readFileSync(file, 'utf-8'), enSet);
+    for (const key of missing) {
+      if (!missingKeys.has(key)) missingKeys.set(key, []);
+      missingKeys.get(key).push(relative(ROOT, file).split('\\').join('/'));
+    }
+  }
+
+  if (missingKeys.size > 0) {
+    console.error(`  ERROR ${missingKeys.size} keys referenced in code but missing from en.json:`);
+    for (const [key, files] of [...missingKeys].sort(([a], [b]) => (a < b ? -1 : 1))) {
+      console.error(`    - ${key}  (${files.join(', ')})`);
+    }
+    exitCode = 1;
+  } else {
+    console.log('  OK — every literal key in code exists in the locale files');
+  }
+
   // ── defaultValue anti-pattern check ───────────────────────────────
   console.log('\n── i18n defaultValue check ──');
 
@@ -150,18 +215,12 @@ for (const pkg of PACKAGES) {
 if (existsSync(QUICK_LAUNCH) && existsSync(SHARED_CONSTANTS)) {
   console.log('\n── quick-launch.html locale drift check ──');
 
-  const sharedSrc = readFileSync(SHARED_CONSTANTS, 'utf-8');
-  const codesMatch = sharedSrc.match(/SUPPORTED_LANGUAGE_CODES\s*=\s*\[([^\]]+)\]/);
-  if (!codesMatch) {
+  const supportedCodes = readSupportedLanguageCodes();
+  if (supportedCodes === null) {
     console.error('  ERROR could not parse SUPPORTED_LANGUAGE_CODES from shared/constants.ts');
     exitCode = 1;
   } else {
-    const sharedCodes = new Set(
-      codesMatch[1]
-        .split(',')
-        .map((s) => s.trim().replace(/['"]/g, ''))
-        .filter(Boolean),
-    );
+    const sharedCodes = new Set(supportedCodes);
 
     const qlHtml = readFileSync(QUICK_LAUNCH, 'utf-8');
     const messagesMatch = qlHtml.match(/var\s+messages\s*=\s*\{([\s\S]*?)\};/);

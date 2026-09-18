@@ -350,7 +350,6 @@
   },
   "beta": {
     "demoBadge": "公司内测 1.0",
-    "localDataHint": "当前为本机持久化内测数据",
     "navigation": "内测功能导航",
     "previewBadge": "功能预览",
     "previewHint": "仅本机演示数据，尚未接入真实系统",
@@ -466,6 +465,7 @@
     "discard": "放弃",
     "discardChangesDesc": "你有未保存的更改，确定放弃吗？",
     "discardChangesTitle": "放弃更改？",
+    "edit": "编辑",
     "fileManager": "文件管理",
     "gateway": "网关",
     "justNow": "刚刚",
@@ -479,6 +479,7 @@
     "noFiles": "暂无文件",
     "notConfigured": "未配置",
     "noTitle": "(无标题)",
+    "remove": "移除",
     "retry": "重试",
     "save": "保存",
     "select": "选择",
@@ -860,6 +861,7 @@
     "refreshUsage": "刷新用量",
     "scrollToBottom": "滚动到底部",
     "toggleContextPanel": "切换上下文面板",
+    "welcomeSubtitle": "直接描述你的任务，荣盈魔方会帮你选择合适的助手和模型。",
     "welcomeTitle": "今天想完成什么？"
   },
   "market": {

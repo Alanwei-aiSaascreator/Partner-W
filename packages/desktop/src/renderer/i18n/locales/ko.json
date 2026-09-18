@@ -350,7 +350,6 @@
   },
   "beta": {
     "demoBadge": "Company Beta 1.0",
-    "localDataHint": "Local persistent beta data",
     "navigation": "Beta feature navigation",
     "previewBadge": "기능 미리보기",
     "previewHint": "로컬 데모 데이터만 사용하며 실제 시스템과 연결되지 않았습니다",
@@ -466,6 +465,7 @@
     "discard": "취소",
     "discardChangesDesc": "저장되지 않은 변경 사항이 있습니다. 취소하시겠습니까?",
     "discardChangesTitle": "변경 사항을 취소하시겠습니까?",
+    "edit": "편집",
     "fileManager": "파일 관리자",
     "gateway": "게이트웨이",
     "justNow": "방금",
@@ -479,6 +479,7 @@
     "noFiles": "파일이 없습니다",
     "notConfigured": "구성되지 않음",
     "noTitle": "(제목 없음)",
+    "remove": "제거",
     "retry": "다시 시도",
     "save": "저장",
     "select": "선택",
@@ -860,6 +861,7 @@
     "refreshUsage": "사용량 새로고침",
     "scrollToBottom": "맨 아래로 스크롤",
     "toggleContextPanel": "컨텍스트 패널 전환",
+    "welcomeSubtitle": "작업을 설명하면 Rongying Cube가 알맞은 어시스턴트와 모델을 선택해 드립니다.",
     "welcomeTitle": "오늘 무엇을 하고 싶으신가요?"
   },
   "market": {

@@ -350,7 +350,6 @@
   },
   "beta": {
     "demoBadge": "Company Beta 1.0",
-    "localDataHint": "Local persistent beta data",
     "navigation": "Beta feature navigation",
     "previewBadge": "Vista previa",
     "previewHint": "Solo datos de demo locales, sin conexión al sistema real",
@@ -466,6 +465,7 @@
     "discard": "Descartar",
     "discardChangesDesc": "Tienes cambios sin guardar. ¿Descartarlos?",
     "discardChangesTitle": "¿Descartar cambios?",
+    "edit": "Editar",
     "fileManager": "Gestor de archivos",
     "gateway": "Gateway",
     "justNow": "justo ahora",
@@ -479,6 +479,7 @@
     "noFiles": "Sin archivos aún",
     "notConfigured": "No configurado",
     "noTitle": "(Sin título)",
+    "remove": "Eliminar",
     "retry": "Reintentar",
     "save": "Guardar",
     "select": "seleccionar",
@@ -860,6 +861,7 @@
     "refreshUsage": "Actualizar uso",
     "scrollToBottom": "Desplazar al final",
     "toggleContextPanel": "Alternar panel de contexto",
+    "welcomeSubtitle": "Describe tu tarea y Rongying Cube te ayudará a elegir el asistente y el modelo adecuados.",
     "welcomeTitle": "¿Qué quieres hacer hoy?"
   },
   "market": {

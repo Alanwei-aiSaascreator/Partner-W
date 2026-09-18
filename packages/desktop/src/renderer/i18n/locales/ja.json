@@ -350,7 +350,6 @@
   },
   "beta": {
     "demoBadge": "Company Beta 1.0",
-    "localDataHint": "Local persistent beta data",
     "navigation": "Beta feature navigation",
     "previewBadge": "機能プレビュー",
     "previewHint": "ローカルのデモデータのみで、実システムには未接続です",
@@ -466,6 +465,7 @@
     "discard": "破棄",
     "discardChangesDesc": "保存されていない変更があります。破棄しますか？",
     "discardChangesTitle": "変更を破棄しますか？",
+    "edit": "編集",
     "fileManager": "ファイルマネージャー",
     "gateway": "ゲートウェイ",
     "justNow": "たった今",
@@ -479,6 +479,7 @@
     "noFiles": "ファイルがありません",
     "notConfigured": "未設定",
     "noTitle": "(無題)",
+    "remove": "削除",
     "retry": "再試行",
     "save": "保存",
     "select": "選択",
@@ -860,6 +861,7 @@
     "refreshUsage": "使用量を更新",
     "scrollToBottom": "最下部へスクロール",
     "toggleContextPanel": "コンテキストパネルの切替",
+    "welcomeSubtitle": "タスクを入力すると、Rongying Cube が適切なアシスタントとモデルを選びます。",
     "welcomeTitle": "今日は何をしますか？"
   },
   "market": {

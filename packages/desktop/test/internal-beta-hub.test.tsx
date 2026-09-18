@@ -10,9 +10,17 @@ vi.mock('react-i18next', () => ({
 }));
 
 import InternalBetaHub from '../src/renderer/features/internal-beta/InternalBetaHub';
-import { useBetaStore } from '../src/renderer/features/internal-beta/beta-store';
+import { BETA_MODULES, useBetaStore, type BetaModule } from '../src/renderer/features/internal-beta/beta-store';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+/**
+ * 真接口模块的**测试侧锚点**：白名单之外的一切模块都是 Zustand + localStorage
+ * 本机模拟，因此必须标「功能预览」。写成常量而不是从 `module.preview` 推导 ——
+ * 从 preview 推导是循环论证（新模块忘了标 preview 也照样"通过"）。
+ */
+const REAL_IPC_MODULES = ['updates'];
+const SIMULATED_MODULES = BETA_MODULES.filter((module) => !REAL_IPC_MODULES.includes(module.id));
 
 function render(ui: ReactElement): { container: HTMLDivElement; unmount: () => void } {
   const container = document.createElement('div');
@@ -111,17 +119,24 @@ describe('InternalBetaHub', () => {
    *
    * 两个方向都要断言：模拟模块**必须**标成「功能预览」，真接口模块（自动升级）
    * **不许**被标 —— 只测一个方向的话，"全标成预览"和"全不标"都能蒙混过去。
+   *
+   * ⚠️ 遍历的是 `BETA_MODULES` 派生出来的集合，不是写死的 'operations'：
+   *    只查运营后台的话，**新加一个模拟模块忘了标 `preview` 不会红**（F4）。
    */
   it('⭐ 本机模拟的模块必须标成「功能预览」（不能宣称已完成）', () => {
-    // 广场/团队/市场/创作者/悬赏/成长都毕业了，这里改用运营后台（仍是本机模拟）
-    useBetaStore.getState().setActiveModule('operations');
-    const { container, unmount } = render(<InternalBetaHub />);
+    expect(SIMULATED_MODULES.length).toBeGreaterThan(0);
+    for (const module of SIMULATED_MODULES) {
+      // 数据侧：本机模拟的模块必须带 preview 标记
+      expect(module.preview, module.id).toBe(true);
 
-    expect(container.textContent).toContain('运营后台');
-    expect(container.textContent).toContain('beta.previewBadge');
-    expect(container.textContent).toContain('beta.previewHint');
-
-    unmount();
+      // 界面侧：当场出现「功能预览」徽章与提示（内测 1.0 不许当成"已完成"讲）
+      useBetaStore.getState().setActiveModule(module.id);
+      const { container, unmount } = render(<InternalBetaHub />);
+      expect(container.textContent, module.id).toContain(module.label);
+      expect(container.textContent, module.id).toContain('beta.previewBadge');
+      expect(container.textContent, module.id).toContain('beta.previewHint');
+      unmount();
+    }
   });
 
   /**
@@ -157,14 +172,50 @@ describe('InternalBetaHub', () => {
     unmount();
   });
 
-  it('⭐ 自动升级接的是真接口 ⇒ **不**标成预览', () => {
-    useBetaStore.getState().setActiveModule('updates');
-    const { container, unmount } = render(<InternalBetaHub />);
+  /**
+   * ⭐ F6：真接口模块不但不标预览，**也不许挂「本机内测数据」提示**。
+   *
+   * 原来非 preview 分支统一挂 `beta.localDataHint`（"当前为本机持久化内测数据"），
+   * 而 `updates` 是全清单里**唯一接真 IPC** 的模块 —— 那是句假话。
+   * 选择「不给真模块挂提示」而不是"新造一条文案"：不用再编 9 种语言的翻译，
+   * 而"没有预览徽章"本身已经把它和模拟模块区分开了。
+   */
+  it('⭐ 自动升级接的是真接口 ⇒ 既不标预览、也不挂「本机内测数据」提示', () => {
+    expect(REAL_IPC_MODULES.length).toBeGreaterThan(0);
+    for (const id of REAL_IPC_MODULES) {
+      useBetaStore.getState().setActiveModule(id as BetaModule);
+      const { container, unmount } = render(<InternalBetaHub />);
 
-    expect(container.textContent).toContain('自动升级');
-    expect(container.textContent).not.toContain('beta.previewBadge');
-    expect(container.textContent).not.toContain('beta.previewHint');
+      expect(container.textContent, id).toContain('自动升级');
+      expect(container.textContent, id).not.toContain('beta.previewBadge');
+      expect(container.textContent, id).not.toContain('beta.previewHint');
+      expect(container.textContent, id).not.toContain('beta.localDataHint');
 
-    unmount();
+      unmount();
+    }
+  });
+
+  /**
+   * ⭐ F1 第二道防线：store 里冒出清单外的模块时，内测中心**不许抛**。
+   *
+   * 触发路径（真实存在）：旧版本用户点过「埋点分析 / 隐私与合规」⇒ localStorage
+   * 里留着 `activeModule: 'analytics'`。store 层已经 clamp（见 beta-store 测试），
+   * 这里注入的是"clamp 失效"的内存状态，验证界面自己的兜底：
+   * `BETA_MODULES.find(...)!` 会给 undefined、`MODULE_COMPONENTS[active]` 也是
+   * undefined —— 两个都会抛 TypeError，被根 ErrorBoundary 接成整应用错误页。
+   */
+  it('⭐ store 里冒出清单外的模块时不抛异常，界面回落到第一个模块', () => {
+    useBetaStore.getState().setActiveModule('analytics' as unknown as BetaModule);
+
+    let rendered: { container: HTMLDivElement; unmount: () => void } | null = null;
+    expect(() => {
+      rendered = render(<InternalBetaHub />);
+    }).not.toThrow();
+
+    const container = rendered!.container;
+    expect(container.textContent).toContain(BETA_MODULES[0].label);
+    expect(container.querySelector('[data-module="analytics"]')).toBeNull();
+    expect(container.querySelector('[data-module="compliance"]')).toBeNull();
+    rendered!.unmount();
   });
 });
