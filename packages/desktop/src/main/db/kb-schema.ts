@@ -105,22 +105,37 @@ INSERT OR IGNORE INTO kb_chunks_fts(rowid, text) SELECT rowid, text FROM kb_chun
  * 触发器改定义只能"先删再建"（`CREATE TRIGGER IF NOT EXISTS` 不会替换已有的同名触发器）。
  * 早期版本建的是 `AFTER UPDATE`（不带列限定）⇒ 每次写向量都白重写一遍 FTS 行。
  * **只在这种老形状上删一次**：健康的库不碰，免得凭空造出"触发器缺失窗口"。
+ *
+ * ⚠️ 读 `sqlite_master` 要 `prepare`。**这条是尽力而为的巡检，不是建表的必经之路**：
+ *    调用方给的句柄万一不支持查询（测试里的假库就只实现 `exec`），跳过即可 ——
+ *    为了"检查优化"把建表整个搞挂，是捡了芝麻。
  */
 function upgradeKbFtsTriggers(db: Database.Database): void {
-  const row = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = 'kb_chunks_au'").get() as
-    | { sql: string }
-    | undefined;
+  let row: { sql: string } | undefined;
+  try {
+    row = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = 'kb_chunks_au'").get() as
+      | { sql: string }
+      | undefined;
+  } catch {
+    return;
+  }
   if (row && !/UPDATE\s+OF\s+text/i.test(row.sql)) db.exec('DROP TRIGGER IF EXISTS kb_chunks_au');
 }
 
 /**
  * 回填后的自查：FTS 行数必须与切片行数一致。
  * **只报警不抛**：一次体检失败不该让应用起不来（库已经能用了，最坏只是召回率下降）。
+ * 句柄不支持查询时同 `upgradeKbFtsTriggers`：跳过，不报错。
  */
 function warnIfKbFtsOutOfSync(db: Database.Database): void {
-  const row = db
-    .prepare(`SELECT (SELECT COUNT(*) FROM kb_chunks) AS chunks, (SELECT COUNT(*) FROM kb_chunks_fts) AS fts`)
-    .get() as { chunks: number; fts: number } | undefined;
+  let row: { chunks: number; fts: number } | undefined;
+  try {
+    row = db
+      .prepare(`SELECT (SELECT COUNT(*) FROM kb_chunks) AS chunks, (SELECT COUNT(*) FROM kb_chunks_fts) AS fts`)
+      .get() as { chunks: number; fts: number } | undefined;
+  } catch {
+    return;
+  }
   if (row && row.chunks !== row.fts) {
     console.warn(
       `[kb] FTS 与切片行数不一致（chunks=${row.chunks} / fts=${row.fts}）` +
