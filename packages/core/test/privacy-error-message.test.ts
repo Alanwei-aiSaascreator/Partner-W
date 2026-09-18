@@ -25,6 +25,7 @@ const TABLE: ReadonlyArray<readonly [string, string]> = [
   ['not_an_export_request', '这条申请不是导出申请'],
   ['not_a_deletion_request', '这条申请不是删除申请'],
   ['snapshot_missing', '导出内容已过期，请重新申请'],
+  ['request_not_downloadable', '这条申请当前不能下载，请刷新后重试'],
   ['export_too_large', '数据量较大，已转人工处理，我们会尽快联系你'],
   ['invalid_state', '当前状态不允许这个操作'],
   ['cooldown_elapsed', '冷却期已过，无法再撤回'],
@@ -56,5 +57,17 @@ describe('describePrivacyError —— 码 → 中文', () => {
   it('表里没有两条相同的码（复制粘贴改漏会静默盖掉一条）', () => {
     const codes = TABLE.map(([code]) => code);
     expect(new Set(codes).size).toBe(codes.length);
+  });
+
+  it('原型链上的名字不当成码（`constructor`/`__proto__` 必须走兜底，不能返回函数/对象）', () => {
+    // 查表若写成 `MESSAGES[key] ?? fallback`，这两个会命中原型链上的成员 ——
+    // 而签名声称返回 string，界面会把函数渲染成崩溃或空白。
+    expect(describePrivacyError('constructor')).toBe('操作失败，请稍后重试');
+    expect(describePrivacyError('__proto__')).toBe('操作失败，请稍后重试');
+    expect(describePrivacyError('toString')).toBe('操作失败，请稍后重试');
+  });
+
+  it('码两侧的空白被容忍（服务端原文可能带换行）', () => {
+    expect(describePrivacyError(' not_authenticated\n')).toBe('请先登录后再操作');
   });
 });

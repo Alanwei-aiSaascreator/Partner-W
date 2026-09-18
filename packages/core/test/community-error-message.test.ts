@@ -54,4 +54,11 @@ describe('describeCommunityError', () => {
     expect(describeCommunityError(undefined)).toMatch(/[一-龥]/);
     expect(describeCommunityError('')).toMatch(/[一-龥]/);
   });
+
+  it('原型链上的名字不当成码（`constructor`/`__proto__` 走兜底，不能返回函数/对象）', () => {
+    // 同族第四例（community / growth / agent-template / privacy）统一收紧：
+    // `MESSAGES[key] ?? fallback` 会命中原型链，返回的不是 string。
+    expect(describeCommunityError('constructor')).toBe('操作没成功，请稍后重试。');
+    expect(describeCommunityError('__proto__')).toBe('操作没成功，请稍后重试。');
+  });
 });

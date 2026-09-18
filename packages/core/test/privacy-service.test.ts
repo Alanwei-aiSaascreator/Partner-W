@@ -114,4 +114,11 @@ describe('normalizePrivacyState —— 把 RPC 的行转成 DTO', () => {
       deletion: null,
     });
   });
+
+  it('非有限数一律当没有（NaN / Infinity / 1e999 不许穿透成数字）', () => {
+    for (const bad of [NaN, Infinity, -Infinity, 'Infinity', '1e999', 'NaN', true, [12]]) {
+      const state = normalizePrivacyState({ export: { id: 'e', snapshot_bytes: bad } });
+      expect(state.export?.snapshotBytes, `${String(bad)} 不该被归一成数字`).toBeNull();
+    }
+  });
 });

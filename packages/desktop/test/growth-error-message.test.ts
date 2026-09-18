@@ -19,4 +19,11 @@ describe('describeGrowthError', () => {
       expect(text.length).toBeGreaterThan(0);
     }
   });
+
+  it('原型链上的名字不当成码（`constructor`/`__proto__` 走兜底，不能返回函数/对象）', () => {
+    // 同族第四例（community / growth / agent-template / privacy）统一收紧：
+    // `MESSAGES[key] ?? fallback` 会命中原型链，返回的不是 string。
+    expect(describeGrowthError('constructor')).toBe('操作没成功，请稍后重试。');
+    expect(describeGrowthError('__proto__')).toBe('操作没成功，请稍后重试。');
+  });
 });

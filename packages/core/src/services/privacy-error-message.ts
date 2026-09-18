@@ -5,13 +5,16 @@
  * 码必须与迁移 51 里的 `raise exception '<码>'` **逐字对齐**（客户端工单那条路）：
  *   not_authenticated / export_too_large / request_not_found / not_an_export_request /
  *   snapshot_missing / owner_transfer_required / not_a_deletion_request / invalid_state /
- *   cooldown_elapsed
- * 另有三个不是迁移 51 的码，但都是真实存在的：
+ *   cooldown_elapsed / request_not_downloadable
+ * 另有几组码不在这两份迁移里：
  *   · invalid_event / invalid_payload / rate_limited —— 迁移 49（埋点上报）
- *   · target_is_operator / reason_required —— 运营侧工单 RPC（计划 Task 11）
  *   · network / unknown —— handler 兜底（`privacy-handlers.ts`）
  *   · cancelled —— 用户在保存对话框点了取消，handler 如实回这个码让界面安静收场
+ *   · target_is_operator / reason_required —— **只在计划 Task 11**（运营侧 RPC 尚未落库），
+ *     落地时必须逐字核对；`cooldown_active` / `invalid_status` 同理（后两条客户端不可达、
+ *     仅运营后台可见，标准中文在 growth / agent-template 两份表里已有先例：'不支持的状态。'）
  * 改码名就是改客户端文案，两边都有人手写；认不出的码一律走兜底，绝不回显机器码。
+ * `privacy-migration-consistency.test.ts` 会**读迁移文件**把这条锁死（漏码 = 测试红）。
  */
 const MESSAGES: Record<string, string> = {
   not_authenticated: '请先登录后再操作',
@@ -22,6 +25,7 @@ const MESSAGES: Record<string, string> = {
   not_an_export_request: '这条申请不是导出申请',
   not_a_deletion_request: '这条申请不是删除申请',
   snapshot_missing: '导出内容已过期，请重新申请',
+  request_not_downloadable: '这条申请当前不能下载，请刷新后重试',
   export_too_large: '数据量较大，已转人工处理，我们会尽快联系你',
   invalid_state: '当前状态不允许这个操作',
   cooldown_elapsed: '冷却期已过，无法再撤回',
@@ -34,6 +38,9 @@ const MESSAGES: Record<string, string> = {
 };
 
 export function describePrivacyError(code: string | null | undefined): string {
-  if (!code) return MESSAGES.unknown;
-  return MESSAGES[code] ?? MESSAGES.unknown;
+  const key = (code ?? '').trim();
+  // ⚠️ 不能写 `MESSAGES[key] ?? fallback`：查表会走原型链，`constructor` / `__proto__`
+  //    这类码会命中 Object.prototype 上的成员（函数/对象），而签名声称返回 string。
+  const message = Object.prototype.hasOwnProperty.call(MESSAGES, key) ? MESSAGES[key] : undefined;
+  return message ?? MESSAGES.unknown;
 }

@@ -44,5 +44,8 @@ const MESSAGES: Record<string, string> = {
 
 export function describeCommunityError(code: string | undefined): string {
   const key = (code ?? '').trim();
-  return MESSAGES[key] ?? '操作没成功，请稍后重试。';
+  // ⚠️ 不能写 `MESSAGES[key] ?? fallback`：查表会走原型链，`constructor` / `__proto__`
+  //    这类码会命中 Object.prototype 上的成员（函数/对象），而签名声称返回 string。
+  const message = Object.prototype.hasOwnProperty.call(MESSAGES, key) ? MESSAGES[key] : undefined;
+  return message ?? '操作没成功，请稍后重试。';
 }
