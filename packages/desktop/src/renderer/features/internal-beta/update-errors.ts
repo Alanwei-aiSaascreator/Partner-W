@@ -22,9 +22,12 @@ const OPERATION_LABEL: Record<UpdateOperation, string> = {
 };
 
 /** 判定顺序：内容比操作更能说明"该怎么办"，所以先按内容认，认不出才用操作兜底。 */
-function classify(raw: string): 'no-metadata' | 'network' | 'signature' | 'cancelled' | 'no-update' | null {
+function classify(
+  raw: string,
+): 'no-metadata' | 'network' | 'signature' | 'cancelled' | 'no-update' | 'portable' | null {
   if (/cancel/i.test(raw)) return 'cancelled';
   if (/no-update-available/i.test(raw)) return 'no-update';
+  if (/portable-manual-update/i.test(raw)) return 'portable';
   if (/latest.*ya?ml|no published|not found|404|cannot find/i.test(raw)) return 'no-metadata';
   if (/ENOTFOUND|ECONNREFUSED|ECONNRESET|ETIMEDOUT|EPIPE|getaddrinfo|network|socket hang up/i.test(raw)) {
     return 'network';
@@ -43,6 +46,9 @@ export function describeUpdateError(raw: string | undefined, operation: UpdateOp
     case 'no-metadata':
       // 说实话：这是**服务端**还没准备好，不是用户的锅，也不是"已是最新"
       return '更新服务还没有提供更新清单（服务端未就绪），当前版本可以继续使用。';
+    case 'portable':
+      // U 盘版：更新包不该装到本机（那只会多出一份副本，盘上那份还是旧的）
+      return 'U 盘版请手动换包：拿到新版本后，用新的「荣盈魔方」文件夹替换盘上那份即可。';
     case 'network':
       return '连不上更新服务器，请检查网络后重试。';
     case 'signature':

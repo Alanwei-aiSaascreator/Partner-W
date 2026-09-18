@@ -1317,6 +1317,7 @@
     "password": "パスワード",
     "passwordPlaceholder": "ゲートウェイパスワード",
     "passwordRequired": "パスワードは必須です",
+    "portableUpdateHint": "USB（ポータブル）版は自動更新されません。新しいバージョンを入手したら、ドライブ上のプログラムフォルダーを差し替えてください。",
     "pressShortcut": "ショートカットを入力...",
     "privacy": "プライバシーとデータ",
     "quickLaunch": "クイック起動",

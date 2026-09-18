@@ -1317,6 +1317,7 @@
     "password": "Senha",
     "passwordPlaceholder": "Senha do Gateway",
     "passwordRequired": "A senha é obrigatória",
+    "portableUpdateHint": "A versão portátil (USB) não se atualiza sozinha. Para atualizar, substitua a pasta do programa na unidade pela nova versão.",
     "pressShortcut": "Pressione o atalho...",
     "privacy": "Privacidade e dados",
     "quickLaunch": "Acesso Rápido",

@@ -11,6 +11,7 @@ import SegmentedControl from '../components/SegmentedControl';
 import { useUiStore } from '@/stores/uiStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { describeUpdateError } from '@/features/internal-beta/update-errors';
+import { updateStatusFromCheck } from '@/lib/update-status';
 
 const linkClass = cn(
   'type-label flex h-9 items-center justify-center gap-2 rounded-lg px-4 transition-colors',
@@ -39,6 +40,8 @@ export default function AboutSection() {
   const [downloadPercent, setDownloadPercent] = useState(0);
   const [errorMessage, setErrorMessage] = useState('');
   const [deviceId, setDeviceId] = useState<string | null>(null);
+  /** 盘上运行（U 盘形态）：不自动下载、不安装，改为提示"换包"。 */
+  const [portable, setPortable] = useState(false);
 
   const devMode = useUiStore((s) => s.devMode);
   const setDevMode = useUiStore((s) => s.setDevMode);
@@ -128,9 +131,9 @@ export default function AboutSection() {
           releaseNotes: result.releaseNotes,
         });
         setCurrentVersion(result.currentVersion);
-        if (result.hasUpdate) {
-          setUpdateState('available');
-        }
+        setPortable(result.portable);
+        // 状态照主进程说的显示：它可能**已经自动下载完了**（见 lib/update-status.ts）
+        setUpdateState(updateStatusFromCheck(result));
       })
       .catch((err: unknown) => {
         const raw = err instanceof Error ? err.message : String(err);
@@ -139,7 +142,10 @@ export default function AboutSection() {
         //    测试桩、上报本身抛错），catch 会自己抛出去 ⇒ 错误状态永远设不上，
         //    界面静默 —— 2026-09-17 我就是这么被它骗了一轮。
         //    更新服务没部署时每次打开设置都会走这里，静默等于"关于页坏了"。
-        setUpdateState('error');
+        // 但**已经拿到手**的更新不能被一次失败的检查弄没：主进程那边保的是
+        // downloaded 与 downloading 两个（见 auto-updater.ts 的 holdUpdate），
+        // 界面照抄 —— 否则下载中点一次检查失败，进度条和「取消下载」会一起消失。
+        setUpdateState((prev) => (prev === 'downloaded' || prev === 'downloading' ? prev : 'error'));
         setErrorMessage(describeUpdateError(raw, 'check'));
         window.clawwork.reportDebugEvent?.({
           domain: 'renderer',
@@ -165,12 +171,10 @@ export default function AboutSection() {
         releaseNotes: result.releaseNotes,
       });
       setCurrentVersion(result.currentVersion);
-      if (result.hasUpdate) {
-        setUpdateState('available');
-      } else {
-        setUpdateState('idle');
-        toast.success(t('settings.alreadyLatest'));
-      }
+      setPortable(result.portable);
+      const status = updateStatusFromCheck(result);
+      setUpdateState(status);
+      if (status === 'idle') toast.success(t('settings.alreadyLatest'));
     } catch (err: unknown) {
       setUpdateState('error');
       setErrorMessage(describeUpdateError(err instanceof Error ? err.message : String(err), 'check'));
@@ -196,7 +200,13 @@ export default function AboutSection() {
   }, []);
 
   const handleInstall = useCallback(async () => {
-    await window.clawwork.installUpdate();
+    // 成功的话应用会直接退出并重启，走不到下一句；失败必须说出来 ——
+    // 原来这里把返回值丢掉，点了没反应用户只会以为"按钮坏了"。
+    const result = await window.clawwork.installUpdate();
+    if (!result.ok) {
+      setUpdateState('error');
+      setErrorMessage(describeUpdateError(result.error, 'install'));
+    }
   }, []);
 
   const handleChannelChange = useCallback(
@@ -256,22 +266,28 @@ export default function AboutSection() {
                 <p className="type-label mb-2 text-[var(--text-primary)]">
                   {t('settings.newVersionAvailable', { version: versionInfo.latestVersion })}
                 </p>
-                <div className="flex items-center gap-2">
-                  <Button variant="default" size="sm" onClick={handleDownload} className="gap-1.5">
-                    <Download size={14} />
-                    {t('settings.downloadUpdate')}
-                  </Button>
-                  {versionInfo.releaseUrl && (
-                    <a
-                      href={versionInfo.releaseUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="type-support text-[var(--text-muted)] hover:text-[var(--text-secondary)] underline"
-                    >
-                      {t('settings.downloadManually')}
-                    </a>
-                  )}
-                </div>
+                {portable ? (
+                  // U 盘版：主进程既不下载也不安装（装到本机只会多出一份副本，
+                  // 盘上那份还是旧的）⇒ 这里给一句能照做的指引，而不是一个点了没用的按钮。
+                  <p className="type-support text-[var(--text-muted)]">{t('settings.portableUpdateHint')}</p>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <Button variant="default" size="sm" onClick={handleDownload} className="gap-1.5">
+                      <Download size={14} />
+                      {t('settings.downloadUpdate')}
+                    </Button>
+                    {versionInfo.releaseUrl && (
+                      <a
+                        href={versionInfo.releaseUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="type-support text-[var(--text-muted)] hover:text-[var(--text-secondary)] underline"
+                      >
+                        {t('settings.downloadManually')}
+                      </a>
+                    )}
+                  </div>
+                )}
               </div>
             </InlineNotice>
           </div>
@@ -337,7 +353,9 @@ export default function AboutSection() {
         )}
 
         <div className="px-5 py-4 space-y-2">
-          {(updateState === 'idle' || updateState === 'checking') && (
+          {/* 便携形态的"有新版本"卡片上没有下载按钮，得留一个重新检查的入口；
+              其余状态各自有按钮（下载/安装/重试），不用重复给。 */}
+          {(updateState === 'idle' || updateState === 'checking' || (portable && updateState === 'available')) && (
             <Button
               variant="outline"
               size="sm"

@@ -1,3 +1,5 @@
+import { updateStatusFromCheck } from '@/lib/update-status';
+
 export interface InternalBetaUpdateApi {
   getAppVersion: () => Promise<string>;
   checkForUpdates: () => Promise<{
@@ -6,6 +8,10 @@ export interface InternalBetaUpdateApi {
     latestVersion: string;
     releaseUrl: string;
     releaseNotes?: string | null;
+    /** 主进程此刻的更新状态（自动下载可能已经跑完了）。见 lib/update-status.ts。 */
+    state?: 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'error';
+    /** 盘上运行（U 盘形态）：不自动下载、不安装，界面该提示"换包"。 */
+    portable?: boolean;
   }>;
   downloadUpdate: () => Promise<{ ok: boolean; error?: string }>;
   installUpdate: () => Promise<{ ok: boolean; error?: string }>;
@@ -89,18 +95,28 @@ export function createInternalBetaUpdateService(api: InternalBetaUpdateApi): Int
       setState({ status: 'checking', ...versionSnapshot() });
       try {
         const result = await api.checkForUpdates();
-        if (result.hasUpdate) {
-          setState({
-            status: 'available',
-            currentVersion: result.currentVersion,
-            latestVersion: result.latestVersion,
-            releaseUrl: result.releaseUrl,
-            releaseNotes: result.releaseNotes ?? null,
-          });
-        } else {
+        // ⚠️ 状态由主进程说了算：自动下载可能已经跑完 ⇒ 必须是 downloaded，
+        //    不能一律显示成 available（见 lib/update-status.ts）。
+        const status = updateStatusFromCheck(result);
+        const snapshot = {
+          currentVersion: result.currentVersion,
+          latestVersion: result.latestVersion,
+          releaseUrl: result.releaseUrl,
+          releaseNotes: result.releaseNotes ?? null,
+        };
+        if (status === 'idle') {
           setState({ status: 'idle', currentVersion: result.currentVersion });
+        } else if (status === 'downloading') {
+          setState({ status: 'downloading', percent: 0, ...snapshot });
+        } else if (status === 'downloaded') {
+          setState({ status: 'downloaded', ...snapshot });
+        } else {
+          setState({ status: 'available', ...snapshot });
         }
       } catch (error) {
+        // 检查失败不该弄丢"已经拿到手"的更新：主进程那边也**故意**保着
+        // downloaded / downloading（见 auto-updater.ts 的 holdUpdate），界面要跟它一致。
+        if (state.status === 'downloaded' || state.status === 'downloading') return;
         setState({ status: 'error', ...versionSnapshot(), operation: 'check', message: errorMessage(error) });
       }
     },

@@ -1317,6 +1317,7 @@
     "password": "비밀번호",
     "passwordPlaceholder": "게이트웨이 비밀번호",
     "passwordRequired": "비밀번호를 입력해 주세요",
+    "portableUpdateHint": "USB(포터블) 버전은 자동 업데이트되지 않습니다. 새 버전을 받은 뒤 드라이브의 프로그램 폴더를 교체하세요.",
     "pressShortcut": "단축키를 누르세요...",
     "privacy": "개인정보 및 데이터",
     "quickLaunch": "빠른 실행",

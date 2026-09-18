@@ -106,6 +106,25 @@ describe('internal beta update service', () => {
     expect(service.getState()).toMatchObject({ status: 'installing' });
   });
 
+  it('⭐ 下载好之后再检查一次：状态保持 downloaded（自动下载已完成时不能显示成"可下载"）', async () => {
+    const mock = createApi({
+      checkForUpdates: vi.fn().mockResolvedValue({
+        hasUpdate: true,
+        currentVersion: '1.0.0',
+        latestVersion: '1.1.0',
+        releaseUrl: '',
+        releaseNotes: null,
+        state: 'downloaded',
+        portable: false,
+      }),
+    });
+    const service = createInternalBetaUpdateService(mock.api);
+
+    await service.check();
+
+    expect(service.getState()).toMatchObject({ status: 'downloaded', latestVersion: '1.1.0' });
+  });
+
   it('subscribes once, forwards updater errors, and releases listeners', () => {
     const mock = createApi();
     const service = createInternalBetaUpdateService(mock.api);

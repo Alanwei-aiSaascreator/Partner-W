@@ -1317,6 +1317,7 @@
     "password": "密码",
     "passwordPlaceholder": "Gateway 密码",
     "passwordRequired": "密码不能为空",
+    "portableUpdateHint": "U 盘版不自动更新：拿到新版本后，用新的「荣盈魔方」文件夹替换盘上那份即可。",
     "pressShortcut": "按下快捷键...",
     "privacy": "隐私与数据",
     "quickLaunch": "快速启动",

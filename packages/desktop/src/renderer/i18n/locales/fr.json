@@ -1317,6 +1317,7 @@
     "password": "Mot de passe",
     "passwordPlaceholder": "Mot de passe de la passerelle",
     "passwordRequired": "Le mot de passe est requis",
+    "portableUpdateHint": "La version portable (USB) ne se met pas à jour automatiquement. Pour mettre à niveau, remplacez le dossier du programme sur la clé par la nouvelle version.",
     "pressShortcut": "Appuyez sur le raccourci...",
     "privacy": "Confidentialité et données",
     "quickLaunch": "Lancement rapide",

@@ -48,6 +48,14 @@ describe('describeUpdateError', () => {
     expect(describeUpdateError('cancelled', 'download')).toBe('已取消更新。');
   });
 
+  it('⭐ U 盘版被拒绝下载/安装 ⇒ 说清"手动换包"，而不是"下载没完成，请稍后重试"', () => {
+    const text = describeUpdateError('portable-manual-update', 'install');
+
+    expect(text).toContain('U 盘');
+    expect(text).not.toContain('portable-manual-update');
+    expect(text).not.toContain('稍后重试');
+  });
+
   it('认不出来的错误给中文兜底，且**绝不**把英文原文带出去', () => {
     const text = describeUpdateError('ERR_UPDATER_SOMETHING_WEIRD_42', 'download');
 

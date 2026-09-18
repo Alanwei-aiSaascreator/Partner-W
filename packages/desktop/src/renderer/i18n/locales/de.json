@@ -1317,6 +1317,7 @@
     "password": "Passwort",
     "passwordPlaceholder": "Gateway-Passwort",
     "passwordRequired": "Passwort ist erforderlich",
+    "portableUpdateHint": "Die portable USB-Version aktualisiert sich nicht selbst. Ersetzen Sie zum Aktualisieren den Programmordner auf dem Laufwerk durch die neue Version.",
     "pressShortcut": "Tastenkuerzel druecken…",
     "privacy": "Datenschutz & Daten",
     "quickLaunch": "Schnellstart",
