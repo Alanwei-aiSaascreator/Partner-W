@@ -1,7 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
-  BarChart3,
-  Check,
   ChevronRight,
   Megaphone,
   PackageCheck,
@@ -20,11 +18,13 @@ import { betaRoute, parseBetaRoute } from './beta-route';
 import { describeUpdateError } from './update-errors';
 import { createInternalBetaUpdateService, type InternalBetaUpdateState } from './update-service';
 
+/**
+ * ⚠️ P4 毕业后这里只剩两项。**别把埋点分析 / 隐私与合规加回来**：
+ *    真实现分别在运营看板与设置页「隐私与数据」，加回来 = 界面上同时挂真入口和假入口。
+ */
 const ICONS: Record<BetaModule, typeof Users> = {
   operations: Wrench,
   updates: RefreshCw,
-  analytics: BarChart3,
-  compliance: ShieldCheck,
 };
 
 function Badge({ children, tone = 'accent' }: { children: ReactNode; tone?: 'accent' | 'warning' | 'success' }) {
@@ -253,160 +253,15 @@ function UpdatesModule() {
   );
 }
 
-function AnalyticsModule() {
-  const events = useBetaStore((s) => s.events);
-  const analyticsSummary = useBetaStore((s) => s.analyticsSummary);
-  // ⚠️ `events` 是**真依赖**：`analyticsSummary()` 读的就是同一份 store 状态，
-  //    只是 ESLint 看不到这层间接引用。删掉它 memo 不会随数据刷新（会显示过期统计）。
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const analytics = useMemo(() => analyticsSummary(), [analyticsSummary, events]);
-  const labels: Record<keyof typeof analytics, string> = {
-    launch: '启动',
-    login: '登录',
-    activation: '激活',
-    chat: '对话',
-    file: '文件',
-    artifact: '成果',
-    error: '错误',
-  };
-  const max = Math.max(...Object.values(analytics));
-  return (
-    <>
-      <div className="mb-4 flex items-center justify-between">
-        <div>
-          <h3 className="font-semibold">今日核心事件</h3>
-          <p className="type-body text-[var(--text-muted)]">本地 seed + 内测采集视图</p>
-        </div>
-        <Badge tone="warning">内测采集</Badge>
-      </div>
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {Object.entries(analytics).map(([key, value]) => (
-          <Card key={key}>
-            <div className="flex items-center justify-between">
-              <span className="type-body text-[var(--text-muted)]">{labels[key as keyof typeof analytics]}</span>
-              <BarChart3 size={16} className="text-[var(--accent)]" />
-            </div>
-            <strong className="type-page-title my-3 block">{value}</strong>
-            <div className="h-1.5 overflow-hidden rounded-full bg-[var(--bg-tertiary)]">
-              <div className="h-full bg-[var(--accent)]" style={{ width: `${(value / max) * 100}%` }} />
-            </div>
-          </Card>
-        ))}
-      </div>
-      <Card className="mt-4">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <h3 className="font-semibold">最近内测事件</h3>
-            <p className="type-support mt-1 text-[var(--text-muted)]">仅保存事件类型、模块与时间，不记录输入内容。</p>
-          </div>
-          <Badge>{events.length} 条</Badge>
-        </div>
-        <div className="mt-4 divide-y divide-[var(--border)]">
-          {events.length === 0 ? (
-            <p className="type-body py-3 text-[var(--text-muted)]">暂无本机事件</p>
-          ) : (
-            [...events]
-              .reverse()
-              .slice(0, 8)
-              .map((event) => (
-                <div key={event.id} className="flex items-center justify-between gap-4 py-2.5 type-body">
-                  <span className="text-[var(--text-secondary)]">{event.type}</span>
-                  <span className="type-support text-[var(--text-muted)]">
-                    {new Date(event.timestamp).toLocaleString()}
-                  </span>
-                </div>
-              ))
-          )}
-        </div>
-      </Card>
-    </>
-  );
-}
-
-function ComplianceModule() {
-  const state = useBetaStore((s) => s.compliance);
-  const agree = useBetaStore((s) => s.agreeCompliance);
-  const exportData = useBetaStore((s) => s.requestDataExport);
-  const remove = useBetaStore((s) => s.requestDeletion);
-  const [openPolicy, setOpenPolicy] = useState<'privacy' | 'terms' | 'permissions' | null>(null);
-  return (
-    <div className="grid gap-4 lg:grid-cols-2">
-      <Card>
-        <ShieldCheck className="mb-3 text-[var(--accent)]" />
-        <h3 className="type-section-title">协议与权限</h3>
-        <div className="type-body my-4 space-y-2">
-          <button
-            onClick={() => setOpenPolicy('privacy')}
-            className="flex w-full items-center justify-between rounded-lg bg-[var(--bg-tertiary)] p-3"
-          >
-            隐私政策 <ChevronRight size={16} />
-          </button>
-          <button
-            onClick={() => setOpenPolicy('terms')}
-            className="flex w-full items-center justify-between rounded-lg bg-[var(--bg-tertiary)] p-3"
-          >
-            服务条款 <ChevronRight size={16} />
-          </button>
-          <button
-            onClick={() => setOpenPolicy('permissions')}
-            className="flex w-full items-center justify-between rounded-lg bg-[var(--bg-tertiary)] p-3"
-          >
-            电脑与文件权限说明 <ChevronRight size={16} />
-          </button>
-        </div>
-        <Button disabled={state.agreed} onClick={agree}>
-          {state.agreed ? (
-            <>
-              <Check />
-              已记录同意
-            </>
-          ) : (
-            '同意并继续'
-          )}
-        </Button>
-      </Card>
-      <Card>
-        <h3 className="type-section-title">我的数据权利</h3>
-        <p className="type-body my-3 text-[var(--text-muted)]">正式上线后由服务端工单处理；内测版仅保存申请状态。</p>
-        <div className="space-y-3">
-          <Button className="w-full" variant="outline" disabled={state.exportRequested} onClick={exportData}>
-            {state.exportRequested ? '导出申请已提交' : '申请导出我的数据'}
-          </Button>
-          <Button className="w-full" variant="danger" disabled={state.deletionRequested} onClick={remove}>
-            {state.deletionRequested ? '删除申请已提交' : '申请删除账号与数据'}
-          </Button>
-        </div>
-      </Card>
-      {openPolicy && (
-        <Card className="lg:col-span-2">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <Badge>
-                {openPolicy === 'privacy' ? '隐私政策摘要' : openPolicy === 'terms' ? '服务条款摘要' : '权限说明'}
-              </Badge>
-              <p className="type-body mt-3 leading-6 text-[var(--text-secondary)]">
-                {openPolicy === 'privacy'
-                  ? '仅采集提供登录、计费和故障分析所需的数据；敏感文件不会在未授权时上传。'
-                  : openPolicy === 'terms'
-                    ? '公司内测账号仅限授权员工体验，生成内容需由使用者复核后再对外使用。'
-                    : '读取文件、写入成果或调用电脑工具前，会显示操作范围并请求确认；你可以随时撤销授权。'}
-              </p>
-            </div>
-            <Button size="sm" variant="ghost" onClick={() => setOpenPolicy(null)}>
-              关闭
-            </Button>
-          </div>
-        </Card>
-      )}
-    </div>
-  );
-}
-
+/**
+ * ⚠️ P4：`AnalyticsModule`（埋点分析）与 `ComplianceModule`（隐私与合规）**已删除**。
+ *    它们原来只是 Zustand + localStorage 的模拟：埋点数据搬到运营看板、隐私与数据
+ *    搬到设置页（`layouts/Settings/sections/PrivacySection.tsx`，走 main 的隐私 IPC）。
+ *    留在这里会变成和真入口同名的第二个假入口 —— 用户点哪个、运营看到什么全凭运气。
+ */
 const MODULE_COMPONENTS: Record<BetaModule, () => ReactNode> = {
   operations: OperationsModule,
   updates: UpdatesModule,
-  analytics: AnalyticsModule,
-  compliance: ComplianceModule,
 };
 
 export default function InternalBetaHub() {

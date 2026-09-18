@@ -2,7 +2,12 @@ import { createStore, type StoreApi } from 'zustand/vanilla';
 import { useStore } from 'zustand';
 
 export const BETA_STORAGE_KEY = 'rongying:company-beta:v1';
-export type BetaModule = 'operations' | 'updates' | 'analytics' | 'compliance';
+/**
+ * ⚠️ P4 毕业清单：`analytics`（埋点分析）搬进了运营看板，`compliance`（隐私与合规）
+ *    搬进了设置页「隐私与数据」—— 两个都**只许有一份真实现**，内测中心里那份
+ *    Zustand + localStorage 的模拟版必须整块删掉，否则界面上会同时挂着真入口和假入口。
+ */
+export type BetaModule = 'operations' | 'updates';
 
 export interface BetaStorage {
   getItem(key: string): string | null;
@@ -30,8 +35,6 @@ export interface BetaEvent {
   module?: BetaModule;
 }
 
-export type BetaAnalytics = Record<'launch' | 'login' | 'activation' | 'chat' | 'file' | 'artifact' | 'error', number>;
-
 export interface BetaData {
   activeModule: BetaModule;
   operations: {
@@ -43,9 +46,7 @@ export interface BetaData {
     announcement: string;
     errorCount: number;
   };
-  analytics: BetaAnalytics;
   events: BetaEvent[];
-  compliance: { agreed: boolean; exportRequested: boolean; deletionRequested: boolean };
 }
 
 export interface BetaActions {
@@ -54,10 +55,6 @@ export interface BetaActions {
   toggleModel(): void;
   setModelRate(rate: number): void;
   setAnnouncement(text: string): void;
-  analyticsSummary(): BetaAnalytics;
-  agreeCompliance(): void;
-  requestDataExport(): void;
-  requestDeletion(): void;
   resetDemo(): void;
 }
 
@@ -72,12 +69,13 @@ export type BetaState = BetaData & BetaActions;
  *
  * 唯一 `preview` 为假的是「自动升级」：它调的是**真的**更新接口
  *（`window.clawwork.checkForUpdates` → electron-updater），失败也会如实说明原因。
+ *
+ * P4：`analytics` 与 `compliance` 两项**已毕业**（真实现分别在运营看板与设置页
+ * 「隐私与数据」），这里的列表里不再有它们。
  */
 export const BETA_MODULES: Array<{ id: BetaModule; label: string; description: string; preview?: true }> = [
   { id: 'operations', label: '运营后台', description: '基础运营控制台', preview: true },
   { id: 'updates', label: '自动升级', description: '检查、下载与安装' },
-  { id: 'analytics', label: '埋点分析', description: '核心事件概览', preview: true },
-  { id: 'compliance', label: '隐私与合规', description: '协议和数据权利', preview: true },
 ];
 
 function seed(): BetaData {
@@ -92,9 +90,7 @@ function seed(): BetaData {
       announcement: '欢迎参加公司内测 1.0',
       errorCount: 3,
     },
-    analytics: { launch: 186, login: 152, activation: 89, chat: 438, file: 72, artifact: 41, error: 3 },
     events: [],
-    compliance: { agreed: false, exportRequested: false, deletionRequested: false },
   };
 }
 
@@ -103,11 +99,14 @@ function safeLoad(storage: BetaStorage): BetaData {
     const raw = storage.getItem(BETA_STORAGE_KEY);
     if (!raw) return seed();
     const parsed = JSON.parse(raw) as Partial<BetaData>;
-    // ⚠️ 词表里保留已不再发出的七个事件名（`team_created` / `team_joined` /
+    // ⚠️ 词表里保留已不再发出的十个事件名（`team_created` / `team_joined` /
     //    `post_published` / `template_installed` / `creator_template_created` /
-    //    `bounty_published` / `daily_check_in`）：P1/P2/P3 把它们的模块搬到主界面后，
+    //    `bounty_published` / `daily_check_in`，以及随 P4 毕业的合规三件
+    //    `compliance_agreed` / `data_export_requested` / `data_deletion_requested`）：
+    //    P1/P2/P3 把它们的模块搬到主界面、P4 把隐私与合规搬进设置页之后，
     //    老版本写进 localStorage 的事件不能被静默丢掉（那会凭空抹掉用户的历史）。
-    //    留给 P4 的埋点分析用真数据重新发出。
+    //    ⚠️ 这张词表**只为兼容旧 localStorage 而留**：真埋点已由 P4 的 reporter
+    //    走服务端 `/analytics` 重发，本机这份不再上服务端，也不再有界面展示。
     const validEventTypes = new Set<BetaEventType>([
       'module_opened',
       'team_created',
@@ -139,7 +138,6 @@ function safeLoad(storage: BetaStorage): BetaData {
       ...seed(),
       ...parsed,
       operations: { ...seed().operations, ...parsed.operations },
-      compliance: { ...seed().compliance, ...parsed.compliance },
       events,
     };
   } catch {
@@ -154,10 +152,6 @@ function serializable(state: BetaState): BetaData {
     toggleModel: _q,
     setModelRate: _r,
     setAnnouncement: _s,
-    analyticsSummary: _t,
-    agreeCompliance: _u,
-    requestDataExport: _v,
-    requestDeletion: _w,
     resetDemo: _x,
     ...data
   } = state;
@@ -179,16 +173,8 @@ function addEvent(events: BetaEvent[], type: BetaEventType, module?: BetaModule)
   ].slice(-100);
 }
 
-function deriveAnalytics(state: Pick<BetaData, 'analytics' | 'events'>): BetaAnalytics {
-  const summary = { ...state.analytics };
-  for (const event of state.events) {
-    if (event.type === 'module_opened') summary.launch += 1;
-  }
-  return summary;
-}
-
 export function createBetaStore(storage: BetaStorage): StoreApi<BetaState> {
-  const store = createStore<BetaState>((set, get) => ({
+  const store = createStore<BetaState>((set) => ({
     ...safeLoad(storage),
     setActiveModule: (activeModule) =>
       set((state) => ({ activeModule, events: addEvent(state.events, 'module_opened', activeModule) })),
@@ -201,26 +187,6 @@ export function createBetaStore(storage: BetaStorage): StoreApi<BetaState> {
     setModelRate: (modelRate) =>
       set((state) => ({ operations: { ...state.operations, modelRate: Math.max(0.1, modelRate) } })),
     setAnnouncement: (announcement) => set((state) => ({ operations: { ...state.operations, announcement } })),
-    analyticsSummary: () => deriveAnalytics(get()),
-    agreeCompliance: () =>
-      set((state) => ({
-        compliance: { ...state.compliance, agreed: true },
-        events: state.compliance.agreed ? state.events : addEvent(state.events, 'compliance_agreed', 'compliance'),
-      })),
-    requestDataExport: () =>
-      set((state) => ({
-        compliance: { ...state.compliance, exportRequested: true },
-        events: state.compliance.exportRequested
-          ? state.events
-          : addEvent(state.events, 'data_export_requested', 'compliance'),
-      })),
-    requestDeletion: () =>
-      set((state) => ({
-        compliance: { ...state.compliance, deletionRequested: true },
-        events: state.compliance.deletionRequested
-          ? state.events
-          : addEvent(state.events, 'data_deletion_requested', 'compliance'),
-      })),
     resetDemo: () => set(seed()),
   }));
   store.subscribe((state) => storage.setItem(BETA_STORAGE_KEY, JSON.stringify(serializable(state))));

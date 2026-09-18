@@ -59,7 +59,7 @@ describe('InternalBetaHub', () => {
 
   it('exposes every company beta module as direct navigation', () => {
     const { container, unmount } = render(<InternalBetaHub />);
-    for (const id of ['operations', 'updates', 'analytics', 'compliance']) {
+    for (const id of ['operations', 'updates']) {
       expect(container.querySelector(`[data-module="${id}"]`)).toBeTruthy();
     }
     // 广场与团队已毕业到主界面（真后端），内测中心不再有它们的入口
@@ -70,6 +70,9 @@ describe('InternalBetaHub', () => {
     // P3：悬赏与成长中心也毕业了（真实现分别在「团队协作 → 悬赏」与全局栏「成长」）
     expect(container.querySelector('[data-module="bounty"]')).toBeNull();
     expect(container.querySelector('[data-module="game"]')).toBeNull();
+    // P4：埋点分析（数据搬到运营看板）与隐私与合规（搬到设置页「隐私与数据」）
+    expect(container.querySelector('[data-module="analytics"]')).toBeNull();
+    expect(container.querySelector('[data-module="compliance"]')).toBeNull();
     unmount();
   });
 
@@ -121,13 +124,37 @@ describe('InternalBetaHub', () => {
     unmount();
   });
 
-  it('每个模拟模块都标（抽查运营后台 / 埋点 / 合规）', () => {
-    for (const moduleId of ['operations', 'analytics', 'compliance'] as const) {
-      useBetaStore.getState().setActiveModule(moduleId);
-      const { container, unmount } = render(<InternalBetaHub />);
-      expect(container.textContent, moduleId).toContain('beta.previewBadge');
-      unmount();
+  /**
+   * ⭐ P4 毕业的**最重要**一条：界面上不许同时存在一个真入口和一个假入口。
+   *
+   * 真入口 = 设置页「隐私与数据」（Task 14，走 main 的隐私 IPC + 真工单）；
+   * 假入口 = 内测中心原来的「隐私与合规」（Zustand + localStorage，只写本机）。
+   * 两个同名入口并排挂着，用户点哪个取决于运气；运营看到的后台数据也取决于运气。
+   *
+   * ⚠️ 只断言导航项不存在是不够的：模块可以从导航里摘掉而组件照样被渲染出来
+   *    （比如路由直进 / 渲染分支漏删）—— 所以正文里的**假控件原文**也一并钉住。
+   */
+  it('⭐ 埋点分析与隐私合规已毕业：导航与正文都不再留假入口', () => {
+    useBetaStore.getState().setActiveModule('operations');
+    const { container, unmount } = render(<InternalBetaHub />);
+
+    expect(container.querySelector('[data-module="analytics"]')).toBeNull();
+    expect(container.querySelector('[data-module="compliance"]')).toBeNull();
+    for (const fake of [
+      '埋点分析',
+      '隐私与合规',
+      '今日核心事件',
+      '我的数据权利',
+      '申请导出我的数据',
+      '申请删除账号与数据',
+      '同意并继续',
+    ]) {
+      expect(container.textContent, fake).not.toContain(fake);
     }
+    // 运营后台（仍是本机模拟）还在，毕业生只走了这两个
+    expect(container.textContent).toContain('运营后台');
+
+    unmount();
   });
 
   it('⭐ 自动升级接的是真接口 ⇒ **不**标成预览', () => {
