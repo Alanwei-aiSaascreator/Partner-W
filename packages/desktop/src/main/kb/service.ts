@@ -82,6 +82,8 @@ export interface KbIndexReport {
 export interface KbRebuildReport extends KbIndexReport {
   sources: number;
   chunks: number;
+  /** `no-engine` = 没有可用引擎，**什么都没动**（见 `rebuild` 的注释）。 */
+  skipped?: 'no-engine';
 }
 
 export interface KbSearchOutcome {
@@ -463,7 +465,27 @@ export function createKbService(deps: KbServiceDeps): KbService {
       return requestIndex(sourceId);
     },
 
+    /**
+     * 整库（或单份资料）重切 + 重嵌。
+     *
+     * ## 🔴 没有引擎时**必须什么都不做**
+     *
+     * `replaceKbChunks` 是"先删后插"（旧切片连同向量一起没），而 `runIndex` 在没有引擎时
+     * **第一行就空手返回**。两者凑一起就是：把库里所有向量删干净、再补不回来 ——
+     * 检索永久退化成关键词，界面还显示"重建完成"。实测过：删之前每行都有向量，
+     * 删之后 `vector`/`embedding_model` 全变 NULL、`state` 回 `pending_embedding`。
+     *
+     * 触发路径一点都不刁钻：模型没打进包 / 被杀软拦 / U 盘换台机器 ⇒ 引擎起不来
+     *（界面这时**正好**在提示"只能关键词检索"，用户很容易想"重建一下试试"）。
+     *
+     * 所以这里**提前返回**并带上 `skipped: 'no-engine'`，而不是"尽力而为" ——
+     * 重建是**可重入**的（源文本才是真相），等引擎回来了再做完全来得及，没有任何损失。
+     */
     async rebuild(sourceId) {
+      if (!isEmbeddingEngineReady(engine)) {
+        return { sources: 0, chunks: 0, ...EMPTY_INDEX_REPORT, skipped: 'no-engine' as const };
+      }
+
       const sources = (sourceId ? [getKbSource(sqlite, sourceId)] : listKbSources(sqlite)).filter(
         (source): source is NonNullable<typeof source> => source !== null,
       );

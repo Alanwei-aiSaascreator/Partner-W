@@ -440,6 +440,45 @@ describe('重复入库与重建', () => {
     expect(searchKbChunks(getSqlite() as never, '收入').length).toBeGreaterThan(0);
   });
 
+  /**
+   * ⭐ 这一条钉的是一个**会静默毁数据**的组合：没有引擎 + 点重建。
+   *
+   * `replaceKbChunks` 是"先删后插"，而 `runIndex` 在没有引擎时**第一行就空手返回**。
+   * 两者凑一起就是：把库里所有向量删干净、再补不回来 —— 检索永久退化成关键词，
+   * 而界面上只显示"重建完成"。
+   *
+   * 触发路径一点都不刁钻：模型文件没打进包 / 被杀软拦 / U 盘换台机器 ⇒ 引擎起不来
+   * （界面这时**正好**在提示"只能关键词检索"）⇒ 用户想"重建一下试试" ⇒ 东西没了。
+   *
+   * 所以 `rebuild` 在没引擎时必须**什么都不动**并把话说清楚，而不是"尽力而为"。
+   */
+  it('⭐ 没有引擎时 rebuild **拒绝执行**：现有向量一个字都不能动', async () => {
+    service = createService(createFakeEngine());
+    const outcome = await service.addNote({ title: '预算说明', text: NOTE });
+    const sourceId = outcome.sourceId as string;
+    const snapshot = (): unknown[] =>
+      listKbChunks(getSqlite() as never, sourceId).map(({ id, text, state, vector, embeddingModel }) => ({
+        id,
+        text,
+        state,
+        vector: vector ? Array.from(vector) : null,
+        embeddingModel,
+      }));
+    const before = snapshot();
+    expect(before.length, '先得真有向量可丢，否则这条测试是空的').toBeGreaterThan(0);
+    expect(before.every((row) => (row as { vector: unknown }).vector !== null)).toBe(true);
+
+    // ⚠️ 要模拟的是"**下次启动时**模型没起来"：同一个库、引擎为 null。
+    //    不能写成 `service.setEmbeddingEngine(null)` —— 那条路会**故意**把 meta 归零
+    //    （见"摘掉引擎（null）不算换模型"），跟"引擎压根没加载成功"不是一回事。
+    const restarted = createService(null);
+    const report = await restarted.rebuild();
+
+    expect(report.skipped, '要明确告诉调用方"我没做"，不能回一份全 0 的报告').toBe('no-engine');
+    expect(snapshot(), '没引擎还重建 = 把向量删了补不回来').toEqual(before);
+    expect(restarted.getStats().meta.embeddingModel, 'meta 也该保持原样').toBe('fake-embed-v1');
+  });
+
   it('removeSource ⇒ 切片级联删掉，检索也搜不到', async () => {
     service = createService(createFakeEngine());
     const outcome = await service.addNote({ title: '预算说明', text: NOTE });
