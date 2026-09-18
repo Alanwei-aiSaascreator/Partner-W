@@ -16,7 +16,12 @@ const mocks = vi.hoisted(() => ({
     messages: [] as unknown[],
     artifacts: [] as unknown[],
     messageCount: null as number | null,
+    messageBytes: null as number | null,
+    /** true = 把"读消息正文"的每一次分块读记进 `reads`（钉"超限时一行都不读"）。 */
+    recordReads: false,
   },
+  /** 读消息正文发生的**时序台账**（分块读的 offset + 事件循环探针）。 */
+  reads: [] as string[],
   config: null as unknown,
   showSaveDialog: vi.fn(),
   writeFile: vi.fn(),
@@ -27,9 +32,11 @@ vi.mock('electron', () => ({
   dialog: { showSaveDialog: mocks.showSaveDialog },
 }));
 
-vi.mock('node:fs/promises', () => ({
-  writeFile: mocks.writeFile,
-}));
+// 保留真的 fs（个别用例要用**真文件**读回落盘字节数），只把 writeFile 换成 spy
+vi.mock('node:fs/promises', async () => {
+  const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+  return { ...actual, writeFile: mocks.writeFile };
+});
 
 vi.mock('../src/main/debug/index.js', () => ({
   getDebugLogger: () => mocks.logger,
@@ -38,6 +45,15 @@ vi.mock('../src/main/debug/index.js', () => ({
 vi.mock('../src/main/workspace/config.js', () => ({
   readConfig: () => mocks.config,
 }));
+
+/** 消息的正文字节**下界**（与 SQL 侧 `length()` 同口径：数的是字符，不是 UTF-8 字节）。 */
+function approxMessageBytes(list: unknown[]): number {
+  const columns = ['content', 'thinkingContent', 'attachments', 'toolCalls'];
+  return list.reduce<number>((sum, row) => {
+    const record = (row ?? {}) as Record<string, unknown>;
+    return sum + columns.reduce((inner, key) => inner + String(record[key] ?? '').length, 0);
+  }, 0);
+}
 
 // 假库：按**表名**回行（`getTableName` 认表，不认调用顺序）。
 vi.mock('../src/main/db/index.js', async () => {
@@ -51,20 +67,47 @@ vi.mock('../src/main/db/index.js', async () => {
         : name(table) === 'artifacts'
           ? mocks.state.artifacts
           : [];
+  const noteRead = (table: unknown, offset: number) => {
+    if (name(table) === 'messages' && mocks.state.recordReads) mocks.reads.push(`read:${offset}`);
+  };
   return {
     isDbReady: () => mocks.state.ready,
     getDb: () => ({
-      // `select()` 取行；`select({…})` 是聚合（count(*)）—— 与 drizzle 的签名同形
+      // `select()` 取行；`select({…})` 是聚合（count(*) + 正文字节）—— 与 drizzle 的签名同形
       select: (...args: unknown[]) => ({
-        from: (table: unknown) =>
-          args.length > 0
-            ? { all: () => [{ n: mocks.state.messageCount ?? mocks.state.messages.length }] }
-            : { orderBy: () => ({ all: () => rows(table) }), all: () => rows(table) },
+        from: (table: unknown) => {
+          if (args.length > 0) {
+            return {
+              all: () => [
+                {
+                  n: mocks.state.messageCount ?? mocks.state.messages.length,
+                  bytes: mocks.state.messageBytes ?? approxMessageBytes(mocks.state.messages),
+                },
+              ],
+            };
+          }
+          const orderBy = () => ({
+            all: () => rows(table),
+            // 分块读：`.limit(n).offset(o).all()`（真实代码就是这么分页的）
+            limit: (limit: number) => ({
+              offset: (offset: number) => ({
+                all: () => {
+                  noteRead(table, offset);
+                  return rows(table).slice(offset, offset + limit);
+                },
+              }),
+            }),
+          });
+          return { orderBy, all: () => rows(table) };
+        },
       }),
     }),
   };
 });
 
+import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { writeFile } from 'node:fs/promises';
 import {
   buildLocalExport,
@@ -80,6 +123,8 @@ function setup(input: {
   messages?: unknown[];
   artifacts?: unknown[];
   messageCount?: number;
+  messageBytes?: number;
+  recordReads?: boolean;
   config?: unknown;
 }): void {
   mocks.state.ready = input.ready ?? true;
@@ -87,7 +132,26 @@ function setup(input: {
   mocks.state.messages = input.messages ?? [];
   mocks.state.artifacts = input.artifacts ?? [];
   mocks.state.messageCount = input.messageCount ?? null;
+  mocks.state.messageBytes = input.messageBytes ?? null;
+  mocks.state.recordReads = input.recordReads ?? false;
   mocks.config = input.config ?? null;
+  mocks.reads = [];
+}
+
+/**
+ * **独立尺子**：不复用 `measureLocalBodies`。
+ *
+ * ⚠️ 体积边界的用例如果拿被测函数自己当尺子，把 `measureLocalBodies` 改成
+ * "只量 tasks" 之后**两条边界断言都还是绿的**（尺子和被量的是同一个 bug）。
+ * 所以这里手写一份等价实现，并另有用例钉住"两份尺子给出同一个数"。
+ */
+function independentBytes(bodies: {
+  tasks: unknown[];
+  sessions: unknown[];
+  messages: unknown[];
+  artifacts: unknown[];
+}): number {
+  return Buffer.byteLength(JSON.stringify(bodies), 'utf8');
 }
 
 function task(id: string): Record<string, unknown> {
@@ -272,11 +336,12 @@ describe('本地导出：上限', () => {
     expect(MAX_EXPORT_BYTES).toBe(200 * 1024 * 1024);
   });
 
-  it('消息数超上限 ⇒ 只导出计数与索引，不含正文，且如实说明', async () => {
+  it('消息数超上限 ⇒ 只导出计数与索引，不含正文，且如实说明（**一行正文都不读**）', async () => {
     setup({
       tasks: [task('t1')],
       messages: [message('m1', 't1', '2026-09-01T00:00:01Z')],
       messageCount: 500_001,
+      recordReads: true,
       config: appConfig,
     });
 
@@ -285,12 +350,86 @@ describe('本地导出：上限', () => {
     expect(out.messages).toEqual([]);
     expect(out.meta.truncated).toBe(true);
     expect(out.meta.counts.messages).toBe(500_001);
+    // 条数预检是真的：超限时**根本不该去读正文**
+    expect(mocks.reads).toEqual([]);
     // 说明里要带上限与实际条数 —— 用户得知道"这份不是完整历史"
     expect(out.notes.join('')).toContain('500000');
     expect(out.notes.join('')).toContain('500001');
     // 任务 / 会话 / 成果不受消息上限牵连
     expect(out.tasks).toHaveLength(1);
     expect(out.sessions).toHaveLength(1);
+  });
+
+  it('正文字节预检：下界估计就超限 ⇒ 直接退到元数据，**绝不把正文捞进内存**', async () => {
+    setup({
+      tasks: [task('t1')],
+      messages: [message('m1', 't1', '2026-09-01T00:00:01Z'), message('m2', 't1', '2026-09-01T00:00:02Z')],
+      messageBytes: 300,
+      recordReads: true,
+      config: appConfig,
+    });
+
+    const out = await buildLocalExport({ maxBytes: 100 });
+
+    expect(out.meta.truncated).toBe(true);
+    expect(out.messages).toEqual([]);
+    expect(out.tasks).toEqual([]);
+    expect(out.artifacts).toEqual([]);
+    // 计数与设置仍然如实带上
+    expect(out.meta.counts).toEqual({ tasks: 1, sessions: 1, messages: 2, artifacts: 0 });
+    expect(out.meta.limits.maxBytes).toBe(100);
+    expect(out.settings?.theme).toBe('dark');
+    // ⭐ 核心断言：一条正文都没读（去掉预检 ⇒ 这里会变成 ['read:0'] ⇒ 红）
+    expect(mocks.reads).toEqual([]);
+    expect(out.notes.join('')).toContain('100');
+  });
+
+  it('体积预检与逐字节上限一致：下界没超但真值超 ⇒ 仍由精确尺子拦下', async () => {
+    setup({ tasks: [task('t1')], messages: [message('m1', 't1', '2026-09-01T00:00:01Z')], config: appConfig });
+
+    const full = await buildLocalExport();
+    const bodies = {
+      tasks: full.tasks,
+      sessions: full.sessions,
+      messages: full.messages,
+      artifacts: full.artifacts,
+    };
+    const exact = independentBytes(bodies);
+
+    // 下界（45 字符）远小于 exact ⇒ 预检放行 ⇒ 必须走"读了正文再按精确尺子判"这条路
+    const out = await buildLocalExport({ maxBytes: exact - 1 });
+
+    expect(out.meta.truncated).toBe(true);
+    expect(out.messages).toEqual([]);
+  });
+
+  it('消息正文分块读：每块之间让出事件循环（主进程不被长时间独占），且不丢行不重行', async () => {
+    const many: unknown[] = [];
+    for (let i = 0; i < 12_000; i += 1)
+      many.push(message(`m${i}`, 't1', `2026-09-01T00:${String(i % 60).padStart(2, '0')}:00Z`));
+    setup({ tasks: [task('t1')], messages: many, recordReads: true, config: appConfig });
+
+    // 事件循环探针：与分块读共用一本台账，才能看出"读块"和"让出"的**交错**
+    let stop = false;
+    const probe = () => {
+      mocks.reads.push('tick');
+      if (!stop) setImmediate(probe);
+    };
+    setImmediate(probe);
+
+    const out = await buildLocalExport();
+    stop = true;
+
+    expect(out.messages).toHaveLength(12_000);
+    expect(out.meta.truncated).toBe(false);
+    // 分块证据：三次读、每块 5000 行
+    const readsOnly = mocks.reads.filter((entry) => entry.startsWith('read:'));
+    expect(readsOnly).toEqual(['read:0', 'read:5000', 'read:10000']);
+    // 让出事件循环的证据：**最后一块读之前**探针已经跑过至少一次
+    // （一次性同步读完 12000 行的话，所有 tick 都会排在三次读之后 ⇒ 红）
+    const firstTick = mocks.reads.indexOf('tick');
+    expect(firstTick).toBeGreaterThan(-1);
+    expect(firstTick).toBeLessThan(mocks.reads.lastIndexOf('read:10000'));
   });
 
   it('消息数正好等于上限 ⇒ 不算超限（边界是 >，不是 >=）', async () => {
@@ -341,16 +480,20 @@ describe('本地导出：上限', () => {
     expect(out.settings?.theme).toBe('dark');
   });
 
-  it('体积边界：正好等于上限 ⇒ 不截断；少 1 字节 ⇒ 截断', async () => {
+  it('体积边界：正好等于上限 ⇒ 不截断；少 1 字节 ⇒ 截断（**独立尺子**）', async () => {
     setup({ tasks: [task('t1')], messages: [message('m1', 't1', '2026-09-01T00:00:01Z')], config: appConfig });
 
     const full = await buildLocalExport();
-    const exact = measureLocalBodies({
+    const bodies = {
       tasks: full.tasks,
       sessions: full.sessions,
       messages: full.messages,
       artifacts: full.artifacts,
-    });
+    };
+    // ⚠️ 边界值由**测试自己**算（不是拿被测函数量自己）—— 见 `independentBytes`
+    const exact = independentBytes(bodies);
+    // 两份尺子必须给出同一个数（否则这条边界量的是另一回事）
+    expect(measureLocalBodies(bodies)).toBe(exact);
 
     const atLimit = await buildLocalExport({ maxBytes: exact });
     expect(atLimit.meta.truncated).toBe(false);
@@ -359,6 +502,43 @@ describe('本地导出：上限', () => {
     const overLimit = await buildLocalExport({ maxBytes: exact - 1 });
     expect(overLimit.meta.truncated).toBe(true);
     expect(overLimit.messages).toEqual([]);
+  });
+
+  it('上限量的是**四类正文合起来**的字节：小任务 + 大成果，卡在两者之间必须整体截断', async () => {
+    const big = {
+      id: 'a1',
+      taskId: 't1',
+      messageId: 'm1',
+      name: 'big.bin',
+      localPath: 'out/big.bin',
+      size: 1,
+      // 成果正文也是正文：漏量它就会"看起来没超限"
+      contentText: 'x'.repeat(4_000),
+      createdAt: '2026-09-01T00:00:02Z',
+    };
+    setup({ tasks: [task('t1')], artifacts: [big], messages: [], config: appConfig });
+
+    const full = await buildLocalExport();
+    const tasksOnly = independentBytes({ tasks: full.tasks, sessions: [], messages: [], artifacts: [] });
+    const everything = independentBytes({
+      tasks: full.tasks,
+      sessions: full.sessions,
+      messages: full.messages,
+      artifacts: full.artifacts,
+    });
+    // 上限卡在"只算任务"与"算上成果"之间
+    const maxBytes = Math.floor((tasksOnly + everything) / 2);
+    expect(maxBytes).toBeGreaterThan(tasksOnly);
+    expect(maxBytes).toBeLessThan(everything);
+
+    const out = await buildLocalExport({ maxBytes });
+
+    // 真值超了 ⇒ 必须整体退到元数据。把尺子缩成"只量 tasks"的话这里会变成
+    // truncated=false 且成果正文照样导出（假绿），所以这条用例就是那把独立尺子。
+    expect(out.meta.truncated).toBe(true);
+    expect(out.artifacts).toEqual([]);
+    expect(out.meta.counts).toEqual({ tasks: 1, sessions: 1, messages: 0, artifacts: 1 });
+    expect(out.notes.join('')).toContain(String(maxBytes));
   });
 });
 
@@ -411,6 +591,56 @@ describe('本地导出：绝不带密钥', () => {
   });
 });
 
+describe('本地导出：配置形状坏掉也不许整份失败', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('数组字段被手改成非数组 ⇒ 当空数组 + notes 说明，导出照常成功', async () => {
+    setup({
+      tasks: [task('t1')],
+      config: { ...appConfig, gateways: { not: 'an array' }, teamHubRegistries: 'oops' },
+    });
+
+    const out = await buildLocalExport();
+
+    // 坏字段降级
+    expect(out.settings?.gateways).toEqual([]);
+    expect(out.settings?.teamHubRegistries).toEqual([]);
+    expect(out.notes.join('')).toContain('gateways');
+    expect(out.notes.join('')).toContain('teamHubRegistries');
+    // 好字段与正文照旧（用户要的是把数据导出来，不是被一份坏配置拦住）
+    expect(out.settings?.theme).toBe('dark');
+    expect(out.tasks).toHaveLength(1);
+    expect(out.meta.truncated).toBe(false);
+  });
+
+  it('数组里混进非对象项 ⇒ 跳过它们并说明（剩下的照常导出）', async () => {
+    setup({
+      tasks: [task('t1')],
+      config: {
+        ...appConfig,
+        gateways: [null, 'oops', { id: 'g1', name: '本地网关', url: 'ws://127.0.0.1:18789' }],
+      },
+    });
+
+    const out = await buildLocalExport();
+
+    expect(out.settings?.gateways).toEqual([
+      {
+        id: 'g1',
+        name: '本地网关',
+        url: 'ws://127.0.0.1:18789',
+        authMode: null,
+        tlsVerify: null,
+        isDefault: false,
+        color: null,
+      },
+    ]);
+    expect(out.notes.join('')).toContain('跳过');
+  });
+});
+
 describe('saveExportFile', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -440,5 +670,95 @@ describe('saveExportFile', () => {
     // 建议文件名固定形状：rongying-mofang-export-YYYY-MM-DD.json
     const suggested = (mocks.showSaveDialog.mock.calls[0][0] as { defaultPath: string }).defaultPath;
     expect(suggested).toMatch(/rongying-mofang-export-\d{4}-\d{2}-\d{2}\.json$/);
+  });
+
+  it('保存对话框带 JSON filter（不给 filter 时用户很容易存成没后缀的文件）', async () => {
+    mocks.showSaveDialog.mockResolvedValue({ canceled: false, filePath: 'D:\\out\\export.json' });
+    mocks.writeFile.mockResolvedValue(undefined);
+
+    await saveExportFile({ a: 1 });
+
+    const options = mocks.showSaveDialog.mock.calls[0][0] as { filters?: unknown };
+    expect(options.filters).toEqual([{ name: 'JSON', extensions: ['json'] }]);
+  });
+
+  it('建议文件名用**本地日期**：本地与 UTC 不同日时不许写成昨天', async () => {
+    vi.useFakeTimers();
+    try {
+      // 本地 2026-09-18 00:30；东八区此刻 UTC 还是 09-17
+      vi.setSystemTime(new Date(2026, 8, 18, 0, 30, 0));
+      const now = new Date();
+      const localStamp = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+      mocks.showSaveDialog.mockResolvedValue({ canceled: false, filePath: 'D:\\out\\export.json' });
+      mocks.writeFile.mockResolvedValue(undefined);
+
+      await saveExportFile({ a: 1 });
+
+      const suggested = (mocks.showSaveDialog.mock.calls[0][0] as { defaultPath: string }).defaultPath;
+      expect(suggested).toContain(`rongying-mofang-export-${localStamp}.json`);
+      // 本地日期与 UTC 日期确实不同的时区里，文件名必须是**本地**那个
+      const utcStamp = now.toISOString().slice(0, 10);
+      if (utcStamp !== localStamp) expect(suggested).not.toContain(utcStamp);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('落盘的实际字节数 vs 上限：完整那份确实装着正文，截断那份明显更小（真 fs 读回）', async () => {
+    const messages: unknown[] = [];
+    for (let i = 0; i < 200; i += 1) {
+      messages.push({
+        ...message(`m${i}`, 't1', `2026-09-01T00:00:${String(i % 60).padStart(2, '0')}Z`),
+        content: `第 ${i} 条消息的正文，长度足够让体积上限有感`,
+      });
+    }
+    setup({ tasks: [task('t1')], messages, config: appConfig });
+
+    const dir = await mkdtemp(join(tmpdir(), 'clawwork-privacy-export-'));
+    // 这个用例要**真文件**：读回长度才算"落盘的实际字节数"。
+    // ⚠️ 走 `importActual` 拿真函数 —— 上面 import 到的 `writeFile` 就是 spy 自己，
+    //    在 spy 的实现里调它会无限递归。
+    const actualFs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+    mocks.writeFile.mockImplementation((target: string, data: string, encoding: BufferEncoding) =>
+      actualFs.writeFile(target, data, encoding),
+    );
+    try {
+      const full = await buildLocalExport();
+      expect(full.meta.truncated).toBe(false);
+      const fullBytes = independentBytes({
+        tasks: full.tasks,
+        sessions: full.sessions,
+        messages: full.messages,
+        artifacts: full.artifacts,
+      });
+
+      const fullPath = join(dir, 'full.json');
+      mocks.showSaveDialog.mockResolvedValue({ canceled: false, filePath: fullPath });
+      await saveExportFile({ format: 'rongying-mofang-export@1', local: full });
+
+      const fullWritten = (await stat(fullPath)).size;
+      // 文件里确实装着那份正文（≥ 四类正文的序列化字节，另加外层字段）
+      expect(fullWritten).toBeGreaterThanOrEqual(fullBytes);
+      expect(JSON.parse(await readFile(fullPath, 'utf8')).local.messages).toHaveLength(200);
+
+      // 上限卡在正文之下 ⇒ 退化成元数据那份必须明显更小
+      const truncated = await buildLocalExport({ maxBytes: 500 });
+      expect(truncated.meta.truncated).toBe(true);
+
+      const truncatedPath = join(dir, 'truncated.json');
+      mocks.showSaveDialog.mockResolvedValue({ canceled: false, filePath: truncatedPath });
+      await saveExportFile({ format: 'rongying-mofang-export@1', local: truncated });
+
+      const truncatedWritten = (await stat(truncatedPath)).size;
+      expect(truncatedWritten).toBeLessThan(fullWritten);
+      const parsed = JSON.parse(await readFile(truncatedPath, 'utf8')) as {
+        local: { messages: unknown[]; tasks: unknown[] };
+      };
+      expect(parsed.local.messages).toEqual([]);
+      expect(parsed.local.tasks).toEqual([]);
+    } finally {
+      mocks.writeFile.mockReset();
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });

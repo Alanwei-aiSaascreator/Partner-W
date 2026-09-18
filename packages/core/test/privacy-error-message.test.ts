@@ -13,7 +13,8 @@ import { describePrivacyError } from '../src/services/privacy-error-message.js';
  *     invalid_state / cooldown_elapsed
  *   · 迁移 49 `analytics_rpcs.sql`：invalid_event / invalid_payload / rate_limited
  *   · 运营侧 RPC（计划 Task 11）：target_is_operator / reason_required
- *   · 客户端合成的码：network / unknown（handler 兜底）、cancelled（用户点了保存对话框的取消）
+ *   · 客户端合成的码：network / unknown（handler 兜底）、cancelled（用户点了保存对话框的取消）、
+ *     local_export_failed（本地组装/写盘失败 —— 磁盘满、无权限这类，**不是**网络问题）
  */
 
 const TABLE: ReadonlyArray<readonly [string, string]> = [
@@ -33,6 +34,7 @@ const TABLE: ReadonlyArray<readonly [string, string]> = [
   ['target_is_operator', '该账号是运营账号，不能通过此流程删除'],
   ['reason_required', '请填写驳回理由'],
   ['cancelled', '已取消导出'],
+  ['local_export_failed', '本地数据整理或写文件失败，请检查磁盘空间与保存位置后重试'],
   ['network', '网络连接失败，请检查网络后重试'],
   ['unknown', '操作失败，请稍后重试'],
 ];

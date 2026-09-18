@@ -3,6 +3,7 @@ import type { IpcResult } from '@clawwork/shared';
 import { normalizePrivacyState } from '@clawwork/core';
 import { getCommercialClient } from '../commercial/client.js';
 import { buildLocalExport, saveExportFile } from '../privacy/export-local.js';
+import type { LocalExport } from '../privacy/export-local.js';
 
 /**
  * 隐私工单（导出 / 删除）的 IPC。
@@ -32,7 +33,16 @@ async function callRpc<T>(
   params: Record<string, unknown>,
   map: (data: unknown) => T,
 ): Promise<IpcResult<T>> {
-  const client = getCommercialClient() as RpcLike | null;
+  // ⚠️ `getCommercialClient()` 自己也**可能抛**（supabase-js 在 URL 非法时构造即抛），
+  //    所以它必须在 try 里面：否则异常直接穿透 IPC，渲染层看到的是
+  //    `Error invoking remote method '...': Invalid supabaseUrl` 这种英文原文。
+  let client: RpcLike | null;
+  try {
+    client = getCommercialClient() as RpcLike | null;
+  } catch (error) {
+    console.error('[privacy] getCommercialClient failed:', error);
+    return { ok: false, errorCode: 'unknown' };
+  }
   if (!client) return { ok: false, errorCode: 'not_authenticated' };
 
   try {
@@ -42,6 +52,88 @@ async function callRpc<T>(
   } catch (error) {
     console.error(`[privacy] ${fn} failed:`, error);
     return { ok: false, errorCode: 'network' };
+  }
+}
+
+/** 下载导出的返回形状（R3：截断说明要跟着一起回去，界面才提示得出"这不是完整历史"）。 */
+export interface DownloadExportResult {
+  path: string;
+  /** true = 本地或服务端那份因为上限退化了（界面据此提示）。 */
+  truncated: boolean;
+  /** 本地组装过程中的如实说明（含截断原因、坏配置降级等）。 */
+  notes: string[];
+}
+
+/**
+ * 本地那份的截断信息。
+ * 用 `Partial` 读是为了**边界防御**：这一层不该因为本地组装返回了个缺字段的对象
+ * 而再抛一次异常（真抛了就会被上面那句 `local_export_failed` 兜住，
+ * 但用户拿到的就是"失败了"，而这本可以是"成功但截断"）。
+ */
+function localTruncation(local: Partial<LocalExport> | null | undefined): {
+  truncated: boolean;
+  notes: string[];
+} {
+  const notes = local?.notes;
+  return {
+    truncated: local?.meta?.truncated === true,
+    notes: Array.isArray(notes) ? notes.filter((note) => typeof note === 'string') : [],
+  };
+}
+
+/** 下载的**单飞**：双击 / 两个窗口同时点只跑一次（见 `privacy:download-export`）。 */
+let downloadInFlight: Promise<IpcResult<DownloadExportResult>> | null = null;
+
+/** 把上一步的失败原样往前带（只带错误字段：`result` 在失败路径上没有意义）。 */
+function forwardFailure<T>(failure: {
+  errorCode?: string;
+  error?: string;
+  errorDetails?: Record<string, unknown>;
+}): IpcResult<T> {
+  return {
+    ok: false,
+    errorCode: failure.errorCode,
+    error: failure.error,
+    errorDetails: failure.errorDetails,
+  };
+}
+
+async function runDownloadExport(): Promise<IpcResult<DownloadExportResult>> {
+  // `map` 直接把 id 抽出来：失败路径由 `forwardFailure` 收敛成下载的返回形状
+  const requested = await callRpc('privacy_request_export', {}, (d) => d as { id?: string } | null);
+  if (!requested.ok) return forwardFailure(requested);
+
+  const id = requested.result?.id;
+  if (!id) return { ok: false as const, errorCode: 'unknown' };
+
+  const snapshot = await callRpc('privacy_export_download', { p_id: id }, (d) => d ?? null);
+  if (!snapshot.ok) return forwardFailure(snapshot);
+
+  // 本地那一半：**读库 / 写盘**失败与"RPC 失败"是两回事，错误码必须分开 ——
+  // 磁盘满、无权限、保存位置不可写说成"网络连接失败"，用户只会去反复重试网络。
+  let local: LocalExport;
+  try {
+    local = await buildLocalExport();
+  } catch (error) {
+    console.error('[privacy] buildLocalExport failed:', error);
+    return { ok: false as const, errorCode: 'local_export_failed' };
+  }
+
+  try {
+    const path = await saveExportFile({
+      format: 'rongying-mofang-export@1',
+      exported_at: new Date().toISOString(),
+      server: snapshot.result,
+      local,
+    });
+    const { truncated, notes } = localTruncation(local);
+    return { ok: true as const, result: { path, truncated, notes } };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    // 用户在保存对话框点了取消：不是错误，如实回一个码让界面安静收场
+    if (message === 'cancelled') return { ok: false as const, errorCode: 'cancelled' };
+    console.error('[privacy] saveExportFile failed:', error);
+    return { ok: false as const, errorCode: 'local_export_failed' };
   }
 }
 
@@ -65,29 +157,24 @@ export function registerPrivacyHandlers(): void {
   // ⚠️ 这里先调 `privacy_request_export`（RPC 自己幂等：已有还能下载的未结单会复用），
   //    再拿**服务端回的 id** 去下载 —— 不接渲染层传来的 id：那个 id 可能是上一单、
   //    也可能已经被驳回/清快照，拿它下载只会拿到 request_not_downloadable。
-  ipcMain.handle('privacy:download-export', async () => {
-    const requested = await callRpc('privacy_request_export', {}, (d) => d ?? null);
-    if (!requested.ok) return requested;
-
-    const id = (requested.result as { id?: string } | null)?.id;
-    if (!id) return { ok: false as const, errorCode: 'unknown' };
-
-    const snapshot = await callRpc('privacy_export_download', { p_id: id }, (d) => d ?? null);
-    if (!snapshot.ok) return snapshot;
-
-    try {
-      const local = await buildLocalExport();
-      const path = await saveExportFile({
-        format: 'rongying-mofang-export@1',
-        exported_at: new Date().toISOString(),
-        server: snapshot.result,
-        local,
-      });
-      return { ok: true as const, result: { path } };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      // 用户在保存对话框点了取消：不是错误，如实回一个码让界面安静收场
-      return { ok: false as const, errorCode: message === 'cancelled' ? 'cancelled' : 'network' };
-    }
+  //
+  // ⚠️ **单飞**：下载要弹系统保存对话框、还要跑十秒级的本地组装。双击（或两个窗口
+  //    同时点）会并发跑两遍 —— 服务端幂等所以数据不坏，但用户会看到两个对话框、
+  //    主进程叠两次阻塞。跑着的时候再点就共享那一条链（`inFlight` 形状与 Stage 2C 的
+  //    relay bootstrap 同款，只是这里**不需要**补跑：用户再点一次本来就会重来）。
+  ipcMain.handle('privacy:download-export', () => {
+    if (downloadInFlight) return downloadInFlight;
+    // ⚠️ 从这一行到 `downloadInFlight = ...` 之间**没有 await** ⇒ 相对其它任务原子：
+    //    要么后来者看见 inFlight（于是共享），要么它自己成为 inFlight。
+    const run = runDownloadExport().catch((error): IpcResult<DownloadExportResult> => {
+      // runDownloadExport 内部已经收敛了所有异常；这一层只是不让"意外泄漏的异常"
+      // 变成 IPC 的英文原文穿透到界面。
+      console.error('[privacy] download-export failed:', error);
+      return { ok: false, errorCode: 'unknown' };
+    });
+    downloadInFlight = run.finally(() => {
+      downloadInFlight = null;
+    });
+    return downloadInFlight;
   });
 }

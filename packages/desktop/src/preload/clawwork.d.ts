@@ -719,11 +719,13 @@ export interface ClawWorkAPI {
   // 状态已过 core 的 `normalizePrivacyState`：camelCase + 数字字节 + 真布尔。
   // 导出的结果 = 服务端快照 + 本地数据合成**一个** JSON；成功时回落盘路径，
   // 用户在保存对话框取消回 `cancelled`（界面据此安静收场）。
+  // ⚠️ 下载结果自 Task 13 审阅修正起带 `truncated` / `notes`（本地那份因上限退化成
+  //    元数据时，界面必须提示"这份不是完整历史"）；Task 14 按新形状消费。
   privacyState: () => Promise<IpcResult<PrivacyState>>;
   privacyRequestExport: () => Promise<IpcResult<unknown>>;
   privacyRequestDeletion: (payload: { reason?: string }) => Promise<IpcResult<unknown>>;
   privacyCancelDeletion: (payload: { id: string }) => Promise<IpcResult<null>>;
-  privacyDownloadExport: () => Promise<IpcResult<{ path: string }>>;
+  privacyDownloadExport: () => Promise<IpcResult<{ path: string; truncated: boolean; notes: string[] }>>;
 }
 
 export interface RechargeSku {

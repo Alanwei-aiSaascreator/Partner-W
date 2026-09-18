@@ -10,6 +10,9 @@
  *   · invalid_event / invalid_payload / rate_limited —— 迁移 49（埋点上报）
  *   · network / unknown —— handler 兜底（`privacy-handlers.ts`）
  *   · cancelled —— 用户在保存对话框点了取消，handler 如实回这个码让界面安静收场
+ *   · local_export_failed —— **本地**那一半失败（组装读库 / 写文件：磁盘满、无权限、
+ *     保存位置不可写）。它**不是**网络问题：说成 network 会让用户去反复重试网络，
+ *     而真正该做的是换保存位置 / 清磁盘空间
  *   · target_is_operator / reason_required —— **只在计划 Task 11**（运营侧 RPC 尚未落库），
  *     落地时必须逐字核对；`cooldown_active` / `invalid_status` 同理（后两条客户端不可达、
  *     仅运营后台可见，标准中文在 growth / agent-template 两份表里已有先例：'不支持的状态。'）
@@ -33,6 +36,7 @@ const MESSAGES: Record<string, string> = {
   target_is_operator: '该账号是运营账号，不能通过此流程删除',
   reason_required: '请填写驳回理由',
   cancelled: '已取消导出',
+  local_export_failed: '本地数据整理或写文件失败，请检查磁盘空间与保存位置后重试',
   network: '网络连接失败，请检查网络后重试',
   unknown: '操作失败，请稍后重试',
 };
