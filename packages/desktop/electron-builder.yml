@@ -14,6 +14,25 @@ publish:
 extraResources:
   - from: build/icon.png
     to: icon.png
+  # T-U0「fat installer」：把**出厂运行时**随包发出去，落到 `<resources>/runtime`
+  # （Windows 上 = 安装目录\resources\runtime）。没有它，一台从没部署过运行时的机器
+  # 装上我们的包**必然起不来** —— 客户端侧认这份的候选叫 `bundled`，
+  # 见 src/main/runtime/locate.ts 的 resolveBundledRuntimeRoot()。
+  #
+  # ⚠️ `from` 的基准是 **projectDir**，也就是"运行 electron-builder 的那个目录"
+  #    （npm script 从 packages/desktop 启动 ⇒ projectDir = packages/desktop），
+  #    **不是** yml 所在目录、也不是 appDir。依据是 app-builder-lib 源码：
+  #    `createGetFileMatchersOptions()` 里写死 `defaultSrc: this.projectDir`，
+  #    而 `getFileMatchers()` 用 `path.resolve(defaultSrc, pattern.from)`；
+  #    `packager.js` 里 `projectDir = options.projectDir == null ? process.cwd() : ...`。
+  #    ⇒ `runtime-out/` 在**仓库根** ⇒ 这里必须是 `../../runtime-out`。
+  #
+  # ⚠️ 源不存在时 electron-builder **只 warn 不报错**（fileMatcher.js 的
+  #    "file source doesn't exist"）—— 那正是这次事故的形状（静默打出一个没有运行时的包）。
+  #    所以下面挂了 beforePack 钩子把"缺运行时"变成**硬失败**。
+  - from: ../../runtime-out
+    to: runtime
+beforePack: ./scripts/require-bundled-runtime.cjs
 
 files:
   - 'out/**/*'

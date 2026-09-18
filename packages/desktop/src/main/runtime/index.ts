@@ -16,6 +16,7 @@
  * ⚠️ 真正的判断都在各自模块里（这是刻意的）：本文件应该读起来像一张清单。
  */
 
+import { app } from 'electron';
 import { GATEWAY_WS_PORT } from '@clawwork/shared';
 import {
   GATEWAY_PORT_OCCUPIED,
@@ -28,16 +29,18 @@ import {
 import { loadNodeVersionContract, nodeCandidates, pickNode, probeNodeVersion } from './node-runtime.js';
 import type { PickNodeResult } from './node-runtime.js';
 import {
-  RUNTIME_MANIFEST_FILE,
-  candidateRuntimeRoots,
+  describeRuntimeSearch,
   fallbackDriveCandidates,
   findDevRuntimeRoots,
   findRuntimeRoot,
   listRemovableDrives,
+  planRuntimeSearch,
+  type RuntimeSearchInputs,
 } from './locate.js';
 import { CLAWROUTER_ENTRY, ensureRuntimeDeployed, readCurrentDeployment } from './deploy.js';
 import type { CurrentDeployment, DeployResult, DeploymentStamp } from './deploy.js';
 import { parseManifest, parseNodeManifest, selectNodeVariant, selectRuntimeVariant } from './manifest.js';
+import type { NodeVariant, RuntimeVariant } from './manifest.js';
 import { ensureClientGatewayEntry } from './state-config.js';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -83,42 +86,97 @@ export interface RuntimeBootstrapDeps {
   now: () => number;
 }
 
-/** 定位部署源 + 读两份 manifest，算出这次要部署什么。 */
-async function locateAndPlan(userDataDir: string): Promise<{
-  runtimeRoot: string;
-  deploy: (o: { userDataDir: string }) => Promise<DeployResult>;
-} | null> {
-  const devRoots = findDevRuntimeRoots(process.cwd());
-  const drives = listRemovableDrives();
-  const candidates = candidateRuntimeRoots({
+/**
+ * 采集**环境**侧的检索输入（cwd / 盘符 / 打包态）。
+ *
+ * 真机上的这三个值都是环境，单测注入不了 ⇒ 抽出来单独喂给 `planRuntimeSearch`，
+ * 让「打包态 ⇒ 随包那份进候选」这条可以被钉住。
+ */
+export function collectRuntimeSearchInputs(): RuntimeSearchInputs {
+  const cwd = process.cwd();
+  return {
+    cwd,
     envDir: process.env.CLAWWORK_RUNTIME_DIR,
-    devRoots,
-    drives: drives.map((d) => `${d}\\`),
-  });
-  const hit = findRuntimeRoot(candidates) ?? findRuntimeRoot(fallbackDriveCandidates());
-  if (!hit) return null;
+    devRoots: findDevRuntimeRoots(cwd),
+    driveLetters: listRemovableDrives(),
+    // ⚠️ **打包态才有 `<resources>/runtime`**：`process.resourcesPath` 在
+    // `electron-vite dev` 下指的是 `node_modules/electron/dist/resources` ——
+    // 那里永远不会有我们这份运行时。⇒ 连同 `isPackaged` 一起交给
+    // `planRuntimeSearch`，由它决定要不要产生 bundled 候选（dev 下优雅缺席）。
+    isPackaged: app.isPackaged,
+    resourcesPath: process.resourcesPath,
+  };
+}
+
+/** `locateAndPlan` 的结果：要么有得部署，要么带一句**能排障**的原因。 */
+export type LocatePlan =
+  | { ok: true; runtimeRoot: string; deploy: (o: { userDataDir: string }) => Promise<DeployResult> }
+  | { ok: false; reason: string };
+
+/**
+ * 定位部署源 + 读两份 manifest，算出这次要部署什么。
+ *
+ * ⚠️ 失败一律 `{ ok:false, reason }`（**不抛**）—— 「找不到运行时」的原因必须能
+ * 一路传到启动日志里，所以原因文本要自带"找过哪些地方"（见 `describeRuntimeSearch`）。
+ *
+ * `inputs` 只在单测里给（真机恒走 `collectRuntimeSearchInputs()`）：cwd、盘符枚举、
+ * 打包态都是**环境**，不注入的话"随包那份能用"这条在测试里就没法稳定复现
+ * （机器上插着一个真 U 盘就会翻）。
+ */
+export async function locateAndPlan(
+  userDataDir: string,
+  inputs: RuntimeSearchInputs = collectRuntimeSearchInputs(),
+): Promise<LocatePlan> {
+  const search = planRuntimeSearch(inputs);
+  const hit = findRuntimeRoot(search.candidates) ?? findRuntimeRoot(fallbackDriveCandidates());
+  if (!hit) {
+    return {
+      ok: false,
+      // ⚠️ 这段文本是**排障入口**：必须能看出找过谁、谁连候选都没产生
+      reason: describeRuntimeSearch({
+        candidates: search.candidates,
+        absent: search.absent,
+        fallbackScanned: true,
+      }),
+    };
+  }
 
   const runtimeRoot = hit.root;
   const manifestPath = hit.manifestPath;
-  const raw: unknown = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
-  const manifest = parseManifest(raw);
-  const runtime = selectRuntimeVariant(manifest, process.platform, process.arch);
+  const from = `（来源 [${hit.origin}]：${runtimeRoot}）`;
 
-  const nodeManifestFile = path.join(runtimeRoot, 'node', 'node-manifest.json');
-  if (!fs.existsSync(nodeManifestFile)) return null;
-  const nodeManifestRaw: unknown = JSON.parse(fs.readFileSync(nodeManifestFile, 'utf-8'));
-  const nodeManifest = parseNodeManifest(nodeManifestRaw);
-  const node = selectNodeVariant(nodeManifest, process.platform, process.arch);
+  let parsed: { manifestPath: string; runtime: RuntimeVariant; node: NodeVariant };
+  try {
+    const raw: unknown = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
+    const manifest = parseManifest(raw);
+    const runtime = selectRuntimeVariant(manifest, process.platform, process.arch);
+
+    const nodeManifestFile = path.join(runtimeRoot, 'node', 'node-manifest.json');
+    if (!fs.existsSync(nodeManifestFile)) {
+      return {
+        ok: false,
+        reason: `找到了运行时 ${from}，但它不完整：缺 ${path.join('node', 'node-manifest.json')}（随行 Node 的清单）。`,
+      };
+    }
+    const nodeManifestRaw: unknown = JSON.parse(fs.readFileSync(nodeManifestFile, 'utf-8'));
+    const node = selectNodeVariant(parseNodeManifest(nodeManifestRaw), process.platform, process.arch);
+    parsed = { manifestPath, runtime, node };
+  } catch (err) {
+    // ⚠️ 命中了一个**坏掉的**来源时，原因里必须带上"是哪一份" —— 只说
+    // "manifest 字段不对"，拿到日志的人不知道要去修哪个盘/哪个包。
+    return { ok: false, reason: `找到了运行时 ${from}，但它用不了：${(err as Error).message}` };
+  }
 
   return {
+    ok: true,
     runtimeRoot,
     deploy: (o) =>
       ensureRuntimeDeployed({
         userDataDir: o.userDataDir,
         runtimeRoot,
-        runtime,
-        node,
-        manifestPath,
+        runtime: parsed.runtime,
+        node: parsed.node,
+        manifestPath: parsed.manifestPath,
       }),
   };
 }
@@ -132,12 +190,9 @@ function makeDefaultDeps(): RuntimeBootstrapDeps {
     readCached: (userDataDir) => readCurrentDeployment(userDataDir),
     deployFromMedia: async ({ userDataDir }) => {
       const plan = await locateAndPlan(userDataDir);
-      if (!plan) {
-        throw new Error(
-          `找不到运行时盘（认盘的标志是根部有 ${RUNTIME_MANIFEST_FILE}）—— 请插入运行时盘，` +
-            '或用 CLAWWORK_RUNTIME_DIR 指定它的位置',
-        );
-      }
+      // ⚠️ 原因文本原样抛出：它自带"找过哪些地方"（见 describeRuntimeSearch），
+      // 而 bootstrap 会把它写进 `runtime.bootstrap.failed` 的 reason。
+      if (!plan.ok) throw new Error(plan.reason);
       return plan.deploy({ userDataDir });
     },
     resolveNode: async ({ deployedRoot }) => {

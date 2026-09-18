@@ -1,5 +1,5 @@
 /**
- * 找运行时**部署源**（U 盘 / 环境变量 / 配置 / dev 的 `runtime-out/`）。
+ * 找运行时**部署源**（U 盘 / 环境变量 / 配置 / dev 的 `runtime-out/` / 随包那份）。
  *
  * ⚠️ 注意区分两个概念，混起来是最容易出的错：
  *   - **部署源**（本模块）：盘上那份 128MB 的包，只在**首次部署**时读它。
@@ -15,6 +15,10 @@
  *
  * 本模块的判定逻辑全是纯函数（`exists` 注入）—— 「静默用了错的那份运行时」
  * 只有把顺序钉死才查得出来。
+ *
+ * ⚠️ **诊断文本是本模块的交付物之一**（`describeRuntimeSearch`）：2026-09-18 那次
+ * 「装上装包也起不来」的事故里，日志只有一句笼统的失败，没人能看出**找过哪些地方**。
+ * 「一个来源都没命中」时必须能一眼读出：找过谁、谁连候选都没产生、盘符兜底扫没扫。
  */
 
 import { execFileSync } from 'node:child_process';
@@ -27,16 +31,35 @@ export const RUNTIME_MANIFEST_FILE = 'openclaw-runtime-manifest.json';
 /** dev 形态下运行时包所在的目录名（`pack-runtime.mjs` 的默认输出）。 */
 export const DEV_RUNTIME_DIR_NAME = 'runtime-out';
 
+/** 随安装包自带的那份运行时在 **`<resources>` 下的目录名**（T-U0「fat installer」）。 */
+export const BUNDLED_RUNTIME_DIR_NAME = 'runtime';
+
 /**
  * 候选来源。顺序即优先级，也决定错误措辞。
  *
- * - `env`    —— `CLAWWORK_RUNTIME_DIR`，测试/排障用的最高优先级后门
- * - `config` —— 客户端配置里的 `runtimeDir`
- * - `dev`    —— 从当前目录向上找 `runtime-out/`（**不硬编码层数**）
- * - `drive`  —— 可移动盘根目录（U 盘形态）
- * - `cache`  —— 本机 `current.json` 指向的部署目录（拔盘后走这条）
+ * - `env`     —— `CLAWWORK_RUNTIME_DIR`，测试/排障用的最高优先级后门
+ * - `config`  —— 客户端配置里的 `runtimeDir`
+ * - `dev`     —— 从当前目录向上找 `runtime-out/`（**不硬编码层数**）
+ * - `drive`   —— 可移动盘根目录（U 盘形态）
+ * - `bundled` —— 随安装包自带的那份（`<resources>/runtime`）
+ * - `cache`   —— 本机 `current.json` 指向的部署目录（拔盘后走这条）
  */
-export type RuntimeRootOrigin = 'env' | 'config' | 'dev' | 'drive' | 'cache';
+export type RuntimeRootOrigin = 'env' | 'config' | 'dev' | 'drive' | 'bundled' | 'cache';
+
+/**
+ * 每个来源的**人话**名字 —— 只进诊断文本（「找过哪些地方」要读得懂）。
+ *
+ * ⚠️ 这里写的是"这个来源是什么"，不是"这个来源有没有命中"：诊断文本里
+ * 命中不了的原因要单独说（见 `describeRuntimeSearch` 的 `absent`）。
+ */
+export const RUNTIME_ORIGIN_LABELS: Record<RuntimeRootOrigin, string> = {
+  env: '环境变量 CLAWWORK_RUNTIME_DIR',
+  config: '客户端配置 runtimeDir',
+  dev: '开发目录（从 cwd 逐级向上找 runtime-out/）',
+  drive: '可移动盘（U 盘）盘根',
+  bundled: '随安装包自带（<resources>/runtime）',
+  cache: '本机缓存（current.json 指向的部署目录）',
+};
 
 export interface RuntimeRootCandidate {
   root: string;
@@ -60,6 +83,11 @@ export function candidateRuntimeRoots(opts: {
   configDir?: string;
   devRoots?: string[];
   drives?: string[];
+  /**
+   * 随安装包自带的那份（`<resources>/runtime`）。
+   * ⚠️ 打包态才有意义 —— 传进来之前先过 `resolveBundledRuntimeRoot()`。
+   */
+  bundledRoot?: string;
   cacheRoot?: string;
 }): RuntimeRootCandidate[] {
   const out: RuntimeRootCandidate[] = [];
@@ -67,8 +95,136 @@ export function candidateRuntimeRoots(opts: {
   if (opts.configDir) out.push(candidate(opts.configDir, 'config'));
   for (const root of opts.devRoots ?? []) out.push(candidate(root, 'dev'));
   for (const root of opts.drives ?? []) out.push(candidate(root, 'drive'));
+  // ⚠️ 位置是刻意的：**盘在 bundled 之前**。插着运行时盘时用盘上的那份
+  // （盘上通常比安装包里那份新），拔了盘才回落到随包那份。
+  if (opts.bundledRoot) out.push(candidate(opts.bundledRoot, 'bundled'));
   if (opts.cacheRoot) out.push(candidate(opts.cacheRoot, 'cache'));
   return out;
+}
+
+/**
+ * 随包运行时的候选根：`<resources>/runtime`（T-U0「fat installer」）。
+ *
+ * ⚠️ **只在打包态成立**，所以这里拿 `isPackaged` 当闸门：
+ * `process.resourcesPath` 在 `electron-vite dev` 下指的是
+ * `node_modules/electron/dist/resources` —— 那里永远不会有我们这份运行时。
+ * 硬塞进候选只会往「找过哪些地方」里加一条永远不命中的噪音，而那段文本
+ * 正是排障时唯一要看的东西。
+ *
+ * ⇒ dev 下**优雅缺席**：返回 `undefined`，连候选都不产生（诊断文本会写明原因）。
+ *
+ * ⚠️ 纯函数：`isPackaged` / `resourcesPath` 由调用方给（真机上是
+ * `app.isPackaged` / `process.resourcesPath`），本模块不 import electron。
+ */
+export function resolveBundledRuntimeRoot(opts: { isPackaged: boolean; resourcesPath?: string }): string | undefined {
+  if (!opts.isPackaged) return undefined;
+  if (!opts.resourcesPath) return undefined;
+  return path.join(opts.resourcesPath, BUNDLED_RUNTIME_DIR_NAME);
+}
+
+/** 某个来源**连候选都没产生**时的说明 —— 诊断文本里要区分"没得找"和"找了没命中"。 */
+export interface AbsentRuntimeOrigin {
+  origin: RuntimeRootOrigin;
+  why: string;
+}
+
+/** 检索输入 —— 全是**环境**（cwd / 盘符 / 打包态），由调用方采集，本模块只做纯计算。 */
+export interface RuntimeSearchInputs {
+  /** dev 向上找 `runtime-out/` 的起点（真机上是 `process.cwd()`）。 */
+  cwd: string;
+  envDir?: string;
+  configDir?: string;
+  /** 已经向上找好的 dev 候选（真机上是 `findDevRuntimeRoots(cwd)`）。 */
+  devRoots?: readonly string[];
+  /** 已经枚举好的可移动盘盘符（如 `'Z:'`）。本模块**不自己枚举**（那要起 PowerShell）。 */
+  driveLetters?: readonly string[];
+  /** 打包态判定（真机上是 `app.isPackaged`）—— 决定 bundled 那条到底存不存在。 */
+  isPackaged: boolean;
+  /** 打包态的 `<resources>` 目录（真机上是 `process.resourcesPath`）。 */
+  resourcesPath?: string;
+}
+
+/**
+ * 把**输入**排成候选清单 + 说清哪些来源没产生候选。
+ *
+ * 抽成纯函数是为了让"index 那一侧到底有没有把 bundled 接进来"能被单测钉住 ——
+ * 只测 `candidateRuntimeRoots` 的话，调用方漏传 `bundledRoot` 不会有测试变红。
+ */
+export function planRuntimeSearch(inputs: RuntimeSearchInputs): {
+  candidates: RuntimeRootCandidate[];
+  absent: AbsentRuntimeOrigin[];
+} {
+  const bundledRoot = resolveBundledRuntimeRoot({
+    isPackaged: inputs.isPackaged,
+    resourcesPath: inputs.resourcesPath,
+  });
+
+  const candidates = candidateRuntimeRoots({
+    envDir: inputs.envDir,
+    configDir: inputs.configDir,
+    devRoots: inputs.devRoots ? [...inputs.devRoots] : undefined,
+    // 盘符（`Z:`）→ 候选根（`Z:\`），与 buildDriveCandidates 同一条规则
+    drives: inputs.driveLetters?.map((d) => (d.endsWith('\\') ? d : `${d}\\`)),
+    bundledRoot,
+    // ⚠️ cacheRoot 刻意不给：本机缓存是**热路径**，bootstrap 在部署之前就已经
+    // 单独认过它（`readCached`）。这里再放一条只会让"部署源"这个概念变模糊。
+  });
+
+  const absent: AbsentRuntimeOrigin[] = [];
+  if (!inputs.envDir) absent.push({ origin: 'env', why: '没设 CLAWWORK_RUNTIME_DIR' });
+  if (!inputs.configDir) absent.push({ origin: 'config', why: '没有值（本版客户端还没接线到配置里的 runtimeDir）' });
+  if (!inputs.devRoots || inputs.devRoots.length === 0) {
+    absent.push({ origin: 'dev', why: `从 ${inputs.cwd} 逐级向上都没找到 ${DEV_RUNTIME_DIR_NAME}/` });
+  }
+  if (!inputs.driveLetters || inputs.driveLetters.length === 0) {
+    absent.push({ origin: 'drive', why: '没有枚举到可移动盘（枚举失败不算错，见 listRemovableDrives）' });
+  }
+  if (!bundledRoot) {
+    absent.push({
+      origin: 'bundled',
+      why: inputs.isPackaged
+        ? '打包态但拿不到 process.resourcesPath'
+        : '开发态（app.isPackaged=false）—— dev 下 process.resourcesPath 指向 electron 自带的 resources，不会有我们这份',
+    });
+  }
+  return { candidates, absent };
+}
+
+/**
+ * 「一个都没命中」时的诊断文本。
+ *
+ * ⚠️ 这段文本是**排障入口**，不是装饰：它必须能回答"找过哪些地方"。
+ * 事故形状（2026-09-18）：安装包没带运行时 + 一句笼统的"找不到运行时盘" ⇒
+ * 没人看得出到底是"盘没插"还是"包里根本没有"。
+ */
+export function describeRuntimeSearch(opts: {
+  candidates: readonly RuntimeRootCandidate[];
+  absent?: readonly AbsentRuntimeOrigin[];
+  /** 是否已经扫过盘符兜底（Z: → D: 逐个探 marker）。 */
+  fallbackScanned?: boolean;
+}): string {
+  const lines: string[] = [];
+  lines.push(`找不到运行时的部署源（认盘标志：目录根下有 ${RUNTIME_MANIFEST_FILE} 这个文件）。`);
+
+  if (opts.candidates.length === 0) {
+    lines.push('一个候选都没有 —— 不是"找不到"，是"没得找"（下面每条都说明了原因）。');
+  } else {
+    lines.push(`已找过 ${opts.candidates.length} 个位置，全部没有 ${RUNTIME_MANIFEST_FILE}：`);
+    for (const c of opts.candidates) lines.push(`  - [${c.origin}] ${c.root}（${RUNTIME_ORIGIN_LABELS[c.origin]}）`);
+  }
+
+  if (opts.absent && opts.absent.length > 0) {
+    lines.push('没产生候选的来源：');
+    for (const a of opts.absent) lines.push(`  - ${a.origin}：${a.why}`);
+  }
+
+  if (opts.fallbackScanned) lines.push('盘符兜底扫描（Z: → D: 逐个探 marker）也没命中。');
+
+  lines.push('怎么办：插上出厂运行时盘（盘根要有该 manifest），或用 CLAWWORK_RUNTIME_DIR 指定运行时目录。');
+  lines.push(
+    '若这是刚装好的正式包，上面 bundled 那条本该命中 —— 不命中说明**安装包里没带运行时**（打包时 runtime-out/ 不存在）。',
+  );
+  return lines.join('\n');
 }
 
 /** 盘符（`'Z:'`）→ 候选根（`'Z:\'`）。U 盘形态下运行时包**直接放在盘根**。 */
