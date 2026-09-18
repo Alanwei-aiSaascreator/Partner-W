@@ -1,7 +1,8 @@
 import type { ImportFileRejectionReason, ImportFilesResult, ImportedTaskFile } from '@clawwork/shared';
 import { execFile } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import type { Dir, Stats } from 'node:fs';
+import type { BigIntStats, Dir } from 'node:fs';
+import { hasStrongIdentity, identityOf, sameIdentity } from '../util/file-identity.js';
 import { existsSync, lstatSync, mkdirSync, opendirSync, realpathSync, statSync } from 'node:fs';
 import type { FileHandle } from 'node:fs/promises';
 import { link, lstat, open, realpath, stat, unlink } from 'node:fs/promises';
@@ -106,20 +107,20 @@ interface TrustedInbox {
   realWorkspace: string;
   realTask: string;
   realInbox: string;
-  taskIdentity: Stats;
-  inboxIdentity: Stats;
+  taskIdentity: BigIntStats;
+  inboxIdentity: BigIntStats;
 }
 
 interface TrustedStaging {
   stagingPath: string;
   realStaging: string;
-  stagingIdentity: Stats;
+  stagingIdentity: BigIntStats;
 }
 
 interface SourceSnapshot {
   selectedPath: string;
   canonicalPath: string;
-  identity: Stats;
+  identity: BigIntStats;
 }
 
 interface ImportTestContext {
@@ -159,19 +160,27 @@ function isWithin(parent: string, child: string): boolean {
   return fromParent === '' || (!fromParent.startsWith(`..${sep}`) && fromParent !== '..' && !isAbsolute(fromParent));
 }
 
-function hasStrongIdentity(stats: Stats): boolean {
-  return Number.isFinite(stats.dev) && Number.isFinite(stats.ino) && stats.dev > 0 && stats.ino > 0;
+/**
+ * 身份判定一律走 `util/file-identity.ts`（bigint，逐位比）。
+ *
+ * ⚠️ 原来的守卫是 `Number.isFinite(dev) && Number.isFinite(ino) && dev > 0 && ino > 0`，
+ *    **挡不住丢精度**：`ino` 是 64 位，Number 在超过 2^53 后会把**相邻的两个值**舍入成同一个，
+ *    而 NTFS 顺序分配 inode ⇒ 连续创建的两个文件 ino 必然相邻 ⇒ **必然**被判成「同一个文件」。
+ *
+ * ⚠️ 这里是**导入**路径：这些判定管的是"我打开的这个文件，还是用户选的那份吗"。
+ *    答错的代价是把**别的内容**当成用户选的那份导进来 —— 而且**不报错**（fail-open）。
+ */
+function sameStrongIdentity(left: BigIntStats, right: BigIntStats): boolean {
+  return sameIdentity(identityOf(left), identityOf(right));
 }
 
-function sameStrongIdentity(left: Stats, right: Stats): boolean {
-  return hasStrongIdentity(left) && hasStrongIdentity(right) && left.dev === right.dev && left.ino === right.ino;
+function sameTimestamp(left: bigint, right: bigint): boolean {
+  // ⚠️ 必须转 Number 再比：bigint 上 `Math.abs` 会抛（不能用 Number.isFinite 判 bigint，恒为 false）
+  const delta = Number(left) - Number(right);
+  return Number.isFinite(delta) && Math.abs(delta) <= TIMESTAMP_TOLERANCE_MS;
 }
 
-function sameTimestamp(left: number, right: number): boolean {
-  return Number.isFinite(left) && Number.isFinite(right) && Math.abs(left - right) <= TIMESTAMP_TOLERANCE_MS;
-}
-
-function sameSourceSnapshot(left: Stats, right: Stats): boolean {
+function sameSourceSnapshot(left: BigIntStats, right: BigIntStats): boolean {
   return (
     sameStrongIdentity(left, right) &&
     left.size === right.size &&
@@ -180,11 +189,11 @@ function sameSourceSnapshot(left: Stats, right: Stats): boolean {
   );
 }
 
-function sameTargetSnapshot(left: Stats, right: Stats): boolean {
+function sameTargetSnapshot(left: BigIntStats, right: BigIntStats): boolean {
   return sameSourceSnapshot(left, right);
 }
 
-function samePublishedTarget(left: Stats, right: Stats): boolean {
+function samePublishedTarget(left: BigIntStats, right: BigIntStats): boolean {
   return sameStrongIdentity(left, right) && left.size === right.size && sameTimestamp(left.mtimeMs, right.mtimeMs);
 }
 
@@ -199,14 +208,14 @@ export function validateImportTaskId(value: unknown): string {
 
 function resolveTrustedInbox(workspacePath: string, taskId: string, create: boolean): TrustedInbox | null {
   const realWorkspace = realpathSync.native(workspacePath);
-  const workspaceStats = lstatSync(workspacePath);
+  const workspaceStats = lstatSync(workspacePath, { bigint: true });
   if (!workspaceStats.isDirectory()) throw new Error();
   const taskPath = join(workspacePath, taskId);
   if (!existsSync(taskPath)) {
     if (!create) return null;
     ensureTaskDir(workspacePath, taskId);
   }
-  const taskStats = lstatSync(taskPath);
+  const taskStats = lstatSync(taskPath, { bigint: true });
   if (taskStats.isSymbolicLink() || !taskStats.isDirectory() || !hasStrongIdentity(taskStats)) throw new Error();
   const realTask = realpathSync.native(taskPath);
   if (!isWithin(realWorkspace, realTask) || !samePath(realTask, resolve(realWorkspace, taskId))) throw new Error();
@@ -216,7 +225,7 @@ function resolveTrustedInbox(workspacePath: string, taskId: string, create: bool
     if (!create) return null;
     mkdirSync(inboxPath);
   }
-  const inboxStats = lstatSync(inboxPath);
+  const inboxStats = lstatSync(inboxPath, { bigint: true });
   if (inboxStats.isSymbolicLink() || !inboxStats.isDirectory() || !hasStrongIdentity(inboxStats)) throw new Error();
   const realInbox = realpathSync.native(inboxPath);
   if (!isWithin(realTask, realInbox) || !samePath(realInbox, resolve(realTask, 'inbox'))) throw new Error();
@@ -243,8 +252,8 @@ function trustedInbox(workspacePath: string, taskIdValue: unknown, create: boole
 
 function verifyTrustedInbox(trusted: TrustedInbox): void {
   try {
-    const taskStats = lstatSync(trusted.taskPath);
-    const inboxStats = lstatSync(trusted.inboxPath);
+    const taskStats = lstatSync(trusted.taskPath, { bigint: true });
+    const inboxStats = lstatSync(trusted.inboxPath, { bigint: true });
     if (
       taskStats.isSymbolicLink() ||
       inboxStats.isSymbolicLink() ||
@@ -274,7 +283,7 @@ function resolveTrustedStaging(trusted: TrustedInbox): TrustedStaging {
     }
   }
   try {
-    const stagingIdentity = lstatSync(stagingPath);
+    const stagingIdentity = lstatSync(stagingPath, { bigint: true });
     const realStaging = realpathSync.native(stagingPath);
     if (
       stagingIdentity.isSymbolicLink() ||
@@ -294,7 +303,7 @@ function resolveTrustedStaging(trusted: TrustedInbox): TrustedStaging {
 function verifyTrustedStaging(trusted: TrustedInbox, staging: TrustedStaging): void {
   verifyTrustedInbox(trusted);
   try {
-    const stats = lstatSync(staging.stagingPath);
+    const stats = lstatSync(staging.stagingPath, { bigint: true });
     if (
       stats.isSymbolicLink() ||
       !stats.isDirectory() ||
@@ -308,11 +317,15 @@ function verifyTrustedStaging(trusted: TrustedInbox, staging: TrustedStaging): v
   }
 }
 
-async function stagedFileSnapshot(trusted: TrustedInbox, staging: TrustedStaging, filePath: string): Promise<Stats> {
+async function stagedFileSnapshot(
+  trusted: TrustedInbox,
+  staging: TrustedStaging,
+  filePath: string,
+): Promise<BigIntStats> {
   verifyTrustedStaging(trusted, staging);
-  const linkStats = await lstat(filePath);
+  const linkStats = await lstat(filePath, { bigint: true });
   const canonicalPath = await realpath(filePath);
-  const canonicalStats = await stat(canonicalPath);
+  const canonicalStats = await stat(canonicalPath, { bigint: true });
   if (
     linkStats.isSymbolicLink() ||
     !linkStats.isFile() ||
@@ -330,7 +343,7 @@ async function deleteStagedFile(
   trusted: TrustedInbox,
   staging: TrustedStaging,
   filePath: string,
-  requiredIdentity: Stats | null,
+  requiredIdentity: BigIntStats | null,
   hooks: StagingGarbageTestHooks = {},
 ): Promise<void> {
   const initial = await stagedFileSnapshot(trusted, staging, filePath);
@@ -345,7 +358,7 @@ async function deleteStagedFile(
   const handle = await open(filePath, 'r');
   let failure: unknown = null;
   try {
-    const handleStats = await handle.stat();
+    const handleStats = await handle.stat({ bigint: true });
     const finalPathStats = await stagedFileSnapshot(trusted, staging, filePath);
     if (!sameSourceSnapshot(current, handleStats) || !sameSourceSnapshot(current, finalPathStats)) {
       throw new ImportIntegrityError('staged import file changed before unlink');
@@ -366,7 +379,7 @@ async function collectStagingGarbage(
   hooks: StagingGarbageTestHooks = {},
 ): Promise<void> {
   verifyTrustedStaging(trusted, staging);
-  const candidates: Array<{ path: string; stats: Stats; name: string }> = [];
+  const candidates: Array<{ path: string; stats: BigIntStats; name: string }> = [];
   const directory = opendirSync(staging.realStaging);
   try {
     for (let visited = 0; visited < STAGING_GC_SCAN_BUDGET_PER_BATCH; visited += 1) {
@@ -375,13 +388,13 @@ async function collectStagingGarbage(
       if (!entry.isFile() || !STAGING_FILE_PATTERN.test(entry.name)) continue;
       const filePath = join(staging.realStaging, entry.name);
       try {
-        const stats = lstatSync(filePath);
+        const stats = lstatSync(filePath, { bigint: true });
         const canonicalPath = realpathSync.native(filePath);
         if (
           stats.isSymbolicLink() ||
           !stats.isFile() ||
           !hasStrongIdentity(stats) ||
-          !sameSourceSnapshot(stats, statSync(canonicalPath)) ||
+          !sameSourceSnapshot(stats, statSync(canonicalPath, { bigint: true })) ||
           !isWithin(staging.realStaging, canonicalPath) ||
           !samePath(canonicalPath, filePath)
         ) {
@@ -397,9 +410,11 @@ async function collectStagingGarbage(
     closeDirectory(directory, error);
   }
 
-  candidates.sort((left, right) => left.stats.mtimeMs - right.stats.mtimeMs || codePointCompare(left.name, right.name));
+  candidates.sort(
+    (left, right) => Number(left.stats.mtimeMs - right.stats.mtimeMs) || codePointCompare(left.name, right.name),
+  );
   let remainingCount = candidates.length;
-  let remainingBytes = candidates.reduce((sum, candidate) => sum + candidate.stats.size, 0);
+  let remainingBytes = candidates.reduce((sum, candidate) => sum + Number(candidate.stats.size), 0);
   const expiry = Date.now() - STAGING_GC_TTL_MS;
   for (const candidate of candidates) {
     if (
@@ -411,7 +426,7 @@ async function collectStagingGarbage(
     }
     await deleteStagedFile(trusted, staging, candidate.path, candidate.stats, hooks);
     remainingCount -= 1;
-    remainingBytes -= candidate.stats.size;
+    remainingBytes -= Number(candidate.stats.size);
   }
 }
 
@@ -467,8 +482,8 @@ async function closeHandle(handle: FileHandle | null): Promise<Error | null> {
 }
 
 async function sourceSnapshot(selectedPath: string, handle: FileHandle): Promise<SourceSnapshot> {
-  const handleStats = await handle.stat();
-  const linkStats = await lstat(selectedPath);
+  const handleStats = await handle.stat({ bigint: true });
+  const linkStats = await lstat(selectedPath, { bigint: true });
   if (
     !handleStats.isFile() ||
     !hasStrongIdentity(handleStats) ||
@@ -479,7 +494,7 @@ async function sourceSnapshot(selectedPath: string, handle: FileHandle): Promise
     throw new ImportItemError('unavailable');
   }
   const canonicalPath = await realpath(selectedPath);
-  const canonicalStats = await stat(canonicalPath);
+  const canonicalStats = await stat(canonicalPath, { bigint: true });
   if (!canonicalStats.isFile() || !sameStrongIdentity(handleStats, canonicalStats)) {
     throw new ImportItemError('unavailable');
   }
@@ -488,10 +503,10 @@ async function sourceSnapshot(selectedPath: string, handle: FileHandle): Promise
 
 async function verifySource(source: SourceSnapshot, handle: FileHandle): Promise<void> {
   try {
-    const handleStats = await handle.stat();
-    const linkStats = await lstat(source.selectedPath);
+    const handleStats = await handle.stat({ bigint: true });
+    const linkStats = await lstat(source.selectedPath, { bigint: true });
     const currentCanonical = await realpath(source.selectedPath);
-    const canonicalStats = await stat(currentCanonical);
+    const canonicalStats = await stat(currentCanonical, { bigint: true });
     if (
       !handleStats.isFile() ||
       !linkStats.isFile() ||
@@ -511,14 +526,14 @@ async function verifySource(source: SourceSnapshot, handle: FileHandle): Promise
 async function verifyTarget(
   trusted: TrustedInbox,
   destinationPath: string,
-  targetIdentity: Stats,
+  targetIdentity: BigIntStats,
   handle: FileHandle,
-): Promise<Stats> {
+): Promise<BigIntStats> {
   verifyTrustedInbox(trusted);
-  const handleStats = await handle.stat();
-  const linkStats = await lstat(destinationPath);
+  const handleStats = await handle.stat({ bigint: true });
+  const linkStats = await lstat(destinationPath, { bigint: true });
   const canonicalPath = await realpath(destinationPath);
-  const canonicalStats = await stat(canonicalPath);
+  const canonicalStats = await stat(canonicalPath, { bigint: true });
   if (
     !handleStats.isFile() ||
     !linkStats.isFile() ||
@@ -558,9 +573,9 @@ async function resolveWindowsPowerShellPath(
 ): Promise<string> {
   if (!systemRootValue || !isAbsolute(systemRootValue)) throw new Error('trusted Windows PowerShell is unavailable');
   try {
-    const rootLinkStats = await lstat(systemRootValue);
+    const rootLinkStats = await lstat(systemRootValue, { bigint: true });
     const realRoot = await realpath(systemRootValue);
-    const rootStats = await stat(realRoot);
+    const rootStats = await stat(realRoot, { bigint: true });
     if (
       rootLinkStats.isSymbolicLink() ||
       !rootLinkStats.isDirectory() ||
@@ -576,12 +591,15 @@ async function resolveWindowsPowerShellPath(
       try {
         const parentPath = dirname(candidate);
         const [parentLinkStats, executableLinkStats, realParent, realExecutable] = await Promise.all([
-          lstat(parentPath),
-          lstat(candidate),
+          lstat(parentPath, { bigint: true }),
+          lstat(candidate, { bigint: true }),
           realpath(parentPath),
           realpath(candidate),
         ]);
-        const [parentStats, executableStats] = await Promise.all([stat(realParent), stat(realExecutable)]);
+        const [parentStats, executableStats] = await Promise.all([
+          stat(realParent, { bigint: true }),
+          stat(realExecutable, { bigint: true }),
+        ]);
         const expectedParents = (candidateRoot === 'Sysnative' ? ['Sysnative', 'System32'] : [candidateRoot]).map(
           (physicalRoot) => resolve(realRoot, physicalRoot, 'WindowsPowerShell', 'v1.0'),
         );
@@ -632,7 +650,7 @@ async function nativeWindowsMove(sourcePath: string, destinationPath: string): P
 
 async function pathExists(filePath: string): Promise<boolean> {
   try {
-    await lstat(filePath);
+    await lstat(filePath, { bigint: true });
     return true;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
@@ -643,13 +661,13 @@ async function pathExists(filePath: string): Promise<boolean> {
 async function verifyPublishedTarget(
   trusted: TrustedInbox,
   destinationPath: string,
-  expectedTarget: Stats,
+  expectedTarget: BigIntStats,
   expectedHash: string,
 ): Promise<void> {
   verifyTrustedInbox(trusted);
-  const publishedStats = await lstat(destinationPath);
+  const publishedStats = await lstat(destinationPath, { bigint: true });
   const publishedRealPath = await realpath(destinationPath);
-  const publishedCanonicalStats = await stat(publishedRealPath);
+  const publishedCanonicalStats = await stat(publishedRealPath, { bigint: true });
   if (
     publishedStats.isSymbolicLink() ||
     !publishedStats.isFile() ||
@@ -663,11 +681,11 @@ async function verifyPublishedTarget(
   const handle = await open(destinationPath, 'r');
   let failure: unknown = null;
   try {
-    const handleStats = await handle.stat();
+    const handleStats = await handle.stat({ bigint: true });
     if (!samePublishedTarget(publishedStats, handleStats)) {
       throw new ImportIntegrityError('published import handle identity changed');
     }
-    if ((await hashTarget(handle, publishedStats.size)) !== expectedHash) {
+    if ((await hashTarget(handle, Number(publishedStats.size))) !== expectedHash) {
       throw new ImportIntegrityError('published import hash changed');
     }
   } catch (error) {
@@ -683,7 +701,7 @@ async function publishTarget(
   stagingPath: string,
   trusted: TrustedInbox,
   staging: TrustedStaging,
-  expectedTarget: Stats,
+  expectedTarget: BigIntStats,
   expectedHash: string,
   hooks: ImportTestHooks,
 ): Promise<{ destinationName: string; stagingMoved: boolean }> {
@@ -733,10 +751,10 @@ async function publishTarget(
       stagingHandle = await open(stagingPath, 'r');
       let collision = false;
       try {
-        const handleStats = await stagingHandle.stat();
-        const stagingStats = await lstat(stagingPath);
+        const handleStats = await stagingHandle.stat({ bigint: true });
+        const stagingStats = await lstat(stagingPath, { bigint: true });
         const realStagedPath = await realpath(stagingPath);
-        const canonicalStats = await stat(realStagedPath);
+        const canonicalStats = await stat(realStagedPath, { bigint: true });
         if (
           stagingStats.isSymbolicLink() ||
           !stagingStats.isFile() ||
@@ -808,7 +826,7 @@ async function copyOneFile(
 ): Promise<{ destinationName: string; size: number }> {
   let sourceHandle: FileHandle | null = null;
   let targetHandle: FileHandle | null = null;
-  let targetIdentity: Stats | null = null;
+  let targetIdentity: BigIntStats | null = null;
   let destinationPath = '';
   let context: ImportTestContext | null = null;
   let created = false;
@@ -827,7 +845,7 @@ async function copyOneFile(
     verifyTrustedStaging(trusted, staging);
     targetHandle = await open(destinationPath, 'wx+');
     created = true;
-    targetIdentity = await targetHandle.stat();
+    targetIdentity = await targetHandle.stat({ bigint: true });
     if (!targetIdentity.isFile() || !hasStrongIdentity(targetIdentity)) {
       throw new ImportIntegrityError('import destination has no strong identity');
     }
@@ -852,28 +870,29 @@ async function copyOneFile(
       }
     }
 
-    const beforeSync = await targetHandle.stat();
-    if (beforeSync.size > MAX_FILE_SIZE) throw new ImportItemError('too-large');
-    if (!sameStrongIdentity(targetIdentity, beforeSync) || beforeSync.size !== bytesWritten) {
+    const beforeSync = await targetHandle.stat({ bigint: true });
+    if (Number(beforeSync.size) > MAX_FILE_SIZE) throw new ImportItemError('too-large');
+    if (!sameStrongIdentity(targetIdentity, beforeSync) || Number(beforeSync.size) !== bytesWritten) {
       throw new ImportIntegrityError('import destination size changed');
     }
     await targetHandle.sync();
-    const afterSync = await targetHandle.stat();
-    if (afterSync.size > MAX_FILE_SIZE) throw new ImportItemError('too-large');
-    if (!sameStrongIdentity(targetIdentity, afterSync) || afterSync.size !== bytesWritten) {
+    const afterSync = await targetHandle.stat({ bigint: true });
+    if (Number(afterSync.size) > MAX_FILE_SIZE) throw new ImportItemError('too-large');
+    if (!sameStrongIdentity(targetIdentity, afterSync) || Number(afterSync.size) !== bytesWritten) {
       throw new ImportIntegrityError('import destination size changed');
     }
     await verifySource(source, sourceHandle);
     const currentTarget = await verifyTarget(trusted, destinationPath, targetIdentity, targetHandle);
-    if (currentTarget.size > MAX_FILE_SIZE || currentTarget.size !== bytesWritten) {
-      throw new ImportItemError(currentTarget.size > MAX_FILE_SIZE ? 'too-large' : 'copy-failed');
+    const currentTargetSize = Number(currentTarget.size);
+    if (currentTargetSize > MAX_FILE_SIZE || currentTargetSize !== bytesWritten) {
+      throw new ImportItemError(currentTargetSize > MAX_FILE_SIZE ? 'too-large' : 'copy-failed');
     }
     await hooks.beforeTargetHash?.(context);
     const targetHash = await hashTarget(targetHandle, bytesWritten);
     const sourceHash = readHash.digest('hex');
     if (targetHash !== sourceHash) throw new ImportIntegrityError('import destination hash mismatch');
     const finalTarget = await verifyTarget(trusted, destinationPath, targetIdentity, targetHandle);
-    if (!sameTargetSnapshot(currentTarget, finalTarget) || finalTarget.size !== bytesWritten) {
+    if (!sameTargetSnapshot(currentTarget, finalTarget) || Number(finalTarget.size) !== bytesWritten) {
       throw new ImportIntegrityError('import destination changed during verification');
     }
     const targetCloseBeforePublish = await closeHandle(targetHandle);
@@ -899,7 +918,7 @@ async function copyOneFile(
       await deleteStagedFile(trusted, staging, destinationPath, targetIdentity);
       created = false;
     }
-    output = { destinationName: published.destinationName, size: finalTarget.size };
+    output = { destinationName: published.destinationName, size: Number(finalTarget.size) };
   } catch (error) {
     failure = error;
   }
@@ -1000,7 +1019,7 @@ export function listImportedTaskFiles(workspacePath: string, taskIdValue: string
       if (!mimeType) continue;
       try {
         const fullPath = join(inbox.realInbox, entry.name);
-        const stats = lstatSync(fullPath);
+        const stats = lstatSync(fullPath, { bigint: true });
         const realFile = realpathSync.native(fullPath);
         if (
           !stats.isFile() ||
@@ -1009,13 +1028,13 @@ export function listImportedTaskFiles(workspacePath: string, taskIdValue: string
           stats.size > MAX_FILE_SIZE ||
           !isWithin(inbox.realInbox, realFile) ||
           !samePath(realFile, fullPath) ||
-          !sameStrongIdentity(stats, statSync(realFile))
+          !sameStrongIdentity(stats, statSync(realFile, { bigint: true }))
         ) {
           continue;
         }
         files.push({
-          item: { fileName: entry.name, localPath: localPath(taskId, entry.name), mimeType, size: stats.size },
-          mtimeMs: stats.mtimeMs,
+          item: { fileName: entry.name, localPath: localPath(taskId, entry.name), mimeType, size: Number(stats.size) },
+          mtimeMs: Number(stats.mtimeMs),
         });
       } catch {
         continue;
@@ -1033,6 +1052,16 @@ export function listImportedTaskFiles(workspacePath: string, taskIdValue: string
 }
 
 export const __testing = Object.freeze({
+  /**
+   * 身份判定只给测试用。
+   *
+   * ⚠️ 为什么必须露出来：`sameStrongIdentity` 是否**精确**，用真文件测不出来 ——
+   *    造不出"只有 dev/ino 不同"的形态（size/mtime 能对齐，ctime 改不了）。
+   *    而它答错的代价是：把**别的内容**当成用户选的那份导进来，且**不报错**。
+   *    ⇒ 只能在函数层用合成的 bigint stats 钉。
+   */
+  sameStrongIdentity,
+  sameSourceSnapshot,
   nativeWindowsMove,
   resolveWindowsPowerShellPath,
   windowsMoveOptions: WINDOWS_MOVE_OPTIONS,
