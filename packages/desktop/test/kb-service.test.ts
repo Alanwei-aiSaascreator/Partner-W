@@ -532,6 +532,68 @@ describe('重复入库与重建', () => {
     expect(restarted.getStats().meta.embeddingModel, 'meta 也该保持原样').toBe('fake-embed-v1');
   });
 
+  /**
+   * ⭐ 界面上的**两个数必须是同一件事**。
+   *
+   * 面板顶上那个「继续建索引（N 段）」用的是 `byState.pending_embedding + byState.stale`
+   *（`KnowledgeBase/index.tsx` 的 `pendingChunks`），而每份资料那一行显示的是
+   * `KbSourceSummary.pending` —— 它**只数了 `pending_embedding`**。
+   *
+   * ⇒ 换过嵌入模型之后（老向量被标 `stale`，向量还在但用不了）：
+   *   顶部说"待建索引 40 段"，而**每一行资料都不标**。用户知道有活要干，
+   *   却不知道是哪份资料要干 —— 两个数字对不上，只能怀疑哪个是假的。
+   */
+  it('⭐ 每份资料的"待建索引"= pending + stale（与顶部同一个口径，两种都要算）', async () => {
+    service = createService(createFakeEngine('model-a'));
+    const first = await service.addNote({ title: '预算说明', text: NOTE });
+    const firstId = first.sourceId as string;
+
+    // 第二份**在没有引擎时**入库 ⇒ 它的块是 `pending_embedding`（从没嵌过），不是 stale。
+    // ⚠️ 这一份是**必需的夹具**：只有它能让"pending + stale"与"只数 stale"区分开
+    //    —— 第一版我的夹具里所有块都是 stale，两个写法结果相同，
+    //    变异验证当场把这条用例的漏洞抓出来了（`pending: stale` 那个变异活了下来）。
+    const noEngine = createService(null);
+    // ⚠️ 用一段**明显更长**的文本：两份资料的块数必须不同，下面两个断言才互相独立
+    //    （第一版两份都用 `NOTE`，块数一样，"一个撞成另一个"也会一起绿）。
+    const second = await noEngine.addNote({
+      title: '排期',
+      text: [
+        '# 排期',
+        '',
+        '第一阶段讲需求，第二阶段讲实现，第三阶段讲验收。',
+        '',
+        '## 需求',
+        '',
+        '需求由业务方提出，产品经理整理成文档。',
+        '',
+        '## 实现',
+        '',
+        '实现由工程团队负责，每周同步一次进度。',
+      ].join('\n'),
+    });
+    const secondId = second.sourceId as string;
+    const secondChunks = listKbChunks(getSqlite() as never, secondId).length;
+    expect(secondChunks).toBeGreaterThan(0);
+
+    const byId = (): Map<string, number> => new Map(service.listSources().map((source) => [source.id, source.pending]));
+
+    // 前提：两份资料的块数不同，这样下面两个断言互相独立（一个撞成另一个也不会一起绿）
+    expect(first.chunkCount).not.toBe(secondChunks);
+    expect(byId().get(firstId), '刚入库、全嵌好了 ⇒ 没有待建的').toBe(0);
+    expect(byId().get(secondId), '第二份从没嵌过 ⇒ 全部待建').toBe(secondChunks);
+
+    // 换模型：第一份的老向量被标 stale（**不删**，切回去还能救回来）；第二份仍是 pending
+    service.setEmbeddingEngine(createFakeEngine('model-b'));
+    const byState = service.getStats().byState;
+    expect(byState.stale, '前提：这一换确实产生了 stale，否则这条用例是空的').toBe(first.chunkCount);
+    expect(byState.pending_embedding, '前提：第二份仍然是"从没嵌过"').toBe(secondChunks);
+
+    expect(byId().get(firstId), '第一份：向量被标 stale ⇒ 待建（顶部会显示"待建 N 段"，行上就必须标出来）').toBe(
+      first.chunkCount,
+    );
+    expect(byId().get(secondId), '第二份：从没嵌过 ⇒ 当然也要算').toBe(secondChunks);
+  });
+
   it('removeSource ⇒ 切片级联删掉，检索也搜不到', async () => {
     service = createService(createFakeEngine());
     const outcome = await service.addNote({ title: '预算说明', text: NOTE });

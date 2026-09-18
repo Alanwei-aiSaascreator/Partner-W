@@ -114,7 +114,15 @@ export interface KbSourceSummary {
   bytes: number;
   addedAt: string;
   chunks: number;
-  /** 这份资料还差多少切片没向量。 */
+  /**
+   * 这份资料**待建索引**的切片数 = `pending_embedding` + `stale`。
+   *
+   * ⚠️ 口径必须与界面顶部那个「继续建索引（N 段）」**一致**（那边就是两者相加）：
+   *    只数 `pending_embedding` 的话，换过嵌入模型之后会出现
+   *    "顶部说待建 40 段、每一行资料却都不标" —— 用户知道有活要干，却不知道是哪份资料要干。
+   * ⚠️ `stale` 的块**有**向量（只是别的模型嵌的，切回去还能救回来），所以别把它
+   *    当成"没向量"来理解 —— 它是"**这个**模型的向量还没有"。
+   */
   pending: number;
 }
 
@@ -573,8 +581,9 @@ export function createKbService(deps: KbServiceDeps): KbService {
         bytes: source.bytes,
         addedAt: source.addedAt,
         chunks: countKbChunks(sqlite, source.id),
-        // 这份资料还差多少切片没向量（界面显示"待建索引"）
-        pending: kbChunkStateCounts(sqlite, source.id).pending_embedding,
+        // 界面这一行显示的是"待建索引" ⇒ 必须与顶部同一个口径（pending + stale）。
+        // 见 `KbSourceSummary.pending` 的注释：只数 pending_embedding 会让两个数对不上。
+        pending: pendingCount(source.id),
       }));
     },
   };
