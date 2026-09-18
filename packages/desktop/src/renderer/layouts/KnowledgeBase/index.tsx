@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { BookOpen, FilePlus2, Loader2, NotebookPen, Pin, Search, Trash2 } from 'lucide-react';
+import { BookOpen, FilePlus2, Loader2, NotebookPen, Pin, RefreshCw, Search, Trash2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -45,6 +45,7 @@ export default function KnowledgeBase(): React.JSX.Element {
   const [searching, setSearching] = useState(false);
   const [pendingRemove, setPendingRemove] = useState<KbSourceSummaryView | null>(null);
   const [noteOpen, setNoteOpen] = useState(false);
+  const [rebuilding, setRebuilding] = useState(false);
 
   const refresh = useCallback(async () => {
     const [statsReply, sourcesReply] = await Promise.all([window.clawwork.kbStats(), window.clawwork.kbListSources()]);
@@ -102,6 +103,40 @@ export default function KnowledgeBase(): React.JSX.Element {
     },
     [runIndexThenRefresh, t],
   );
+
+  /**
+   * 重建索引：整库重切 + 重嵌。
+   *
+   * ⚠️ 三种结果要**说成三句不同的话**：
+   *   - `skipped: 'no-engine'` ⇒ "没有可用的嵌入模型，已跳过"。服务在这种情况下
+   *     **一个字节都没动**（没引擎重建只会把向量删了补不回来），说成"重建完成"是最坏的撒谎。
+   *   - 出错 ⇒ 报错，别让界面停在"什么都没发生"上。
+   *   - 成功 ⇒ 说清重建了多少份资料、多少切片。
+   *
+   * 为什么不弹确认框：重建是**安全且可重入**的（真相是源文本，切片只是派生），
+   * 失败了大不了再来一次。给一个非破坏性操作加确认框，只会训练用户闭眼点"确定"。
+   */
+  const handleRebuild = useCallback(async () => {
+    if (rebuilding) return; // 双保险：按钮本身也 disabled，但连点事件可能在重渲前到
+    setRebuilding(true);
+    try {
+      const reply = await window.clawwork.kbRebuild();
+      if (!reply.ok) {
+        toast.error(t('kb.loadFailed'));
+        return;
+      }
+      if (reply.report.skipped === 'no-engine') {
+        toast.warning(t('kb.rebuildSkipped'));
+      } else {
+        toast.success(t('kb.rebuildDone', { sources: reply.report.sources, chunks: reply.report.chunks }));
+      }
+    } catch {
+      toast.error(t('kb.loadFailed'));
+    } finally {
+      setRebuilding(false);
+      await refresh().catch(() => undefined);
+    }
+  }, [rebuilding, refresh, t]);
 
   const handleRemove = useCallback(async () => {
     if (!pendingRemove) return;
@@ -175,6 +210,20 @@ export default function KnowledgeBase(): React.JSX.Element {
                         {t('kb.indexNow', { count: pendingChunks })}
                       </Button>
                     )}
+                    {/* ⚠️ 重建按钮**始终显示**，不按"有没有引擎"隐藏。
+                        理由是引擎状态是这一次 `kbStats` 的快照，而运行时是异步建的 ——
+                        按快照决定按钮存不存在，会让入口迟到；而"没有引擎"时点它也不是
+                        白点：那句 `kb.rebuildSkipped` 正是在告诉用户为什么搜得不准。 */}
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      data-testid="kb-rebuild"
+                      disabled={rebuilding}
+                      onClick={() => void handleRebuild()}
+                    >
+                      {rebuilding ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+                      {rebuilding ? t('kb.rebuilding') : t('kb.rebuild')}
+                    </Button>
                   </div>
                 }
               >

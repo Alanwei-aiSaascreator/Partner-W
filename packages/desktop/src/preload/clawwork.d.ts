@@ -357,6 +357,18 @@ export interface KbIndexReportView {
   engineError: string | null;
 }
 
+export interface KbRebuildReportView extends KbIndexReportView {
+  sources: number;
+  chunks: number;
+  /**
+   * `no-engine` = 没有可用的嵌入模型，**一个字节都没动**（重建会先把向量删干净、
+   * 而没引擎补不回来，所以服务直接拒绝）。
+   *
+   * ⚠️ 界面必须把它跟"重建完成"分开说 —— 显示成完成是最坏的一种撒谎。
+   */
+  skipped?: 'no-engine';
+}
+
 /**
  * 资料库接口的统一答复。
  *
@@ -814,6 +826,7 @@ export interface ClawWorkAPI {
   kbRemoveSource: (sourceId: string) => Promise<KbReply<{ removed: boolean }>>;
   kbSearch: (params: { query: string; limit?: number }) => Promise<KbReply<{ outcome: KbSearchOutcomeView }>>;
   kbIndexPending: (params?: { sourceId?: string }) => Promise<KbReply<{ report: KbIndexReportView }>>;
+  kbRebuild: (params?: { sourceId?: string }) => Promise<KbReply<{ report: KbRebuildReportView }>>;
 
   privacyState: () => Promise<IpcResult<PrivacyState>>;
   privacyRequestExport: () => Promise<IpcResult<unknown>>;

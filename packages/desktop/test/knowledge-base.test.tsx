@@ -60,6 +60,10 @@ function stubClawwork(overrides: Partial<Record<string, unknown>>): void {
       ok: true,
       report: { attempted: 0, embedded: 0, failed: 0, engineError: null },
     })),
+    kbRebuild: vi.fn(async () => ({
+      ok: true,
+      report: { sources: 0, chunks: 0, attempted: 0, embedded: 0, failed: 0, engineError: null },
+    })),
     ...overrides,
   };
   // 断言成 `never` 只是为了让 TS 闭嘴：这里**故意**只造用到的那几个方法，
@@ -75,6 +79,10 @@ beforeEach(() => {
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
+  // ⚠️ `toast` 的桩是 `vi.mock` 工厂建的、**整个文件共享一份**，不像 `stubClawwork`
+  //    那样每个用例现造。不清调用记录的话，上一个用例喊过的 `kb.rebuildDone`
+  //    会留到这一个里，让 `not.toHaveBeenCalledWith` 变成假红（真踩过一次）。
+  vi.clearAllMocks();
 });
 
 afterEach(() => {
@@ -94,15 +102,20 @@ async function renderPanel(): Promise<void> {
   });
 }
 
-describe('新建笔记（T-c1）', () => {
-  /** Radix 的弹层走 portal 挂到 body ⇒ 断言要看 `document.body`，不是 container。 */
-  const bodyText = (): string => document.body.textContent ?? '';
-  const clickByText = (text: string): void => {
-    const btn = [...document.body.querySelectorAll('button')].find((b) => (b.textContent ?? '').includes(text));
-    if (!btn) throw new Error(`找不到按钮：${text}`);
-    act(() => (btn as HTMLButtonElement).click());
-  };
+/** Radix 的弹层走 portal 挂到 body ⇒ 断言要看 `document.body`，不是 container。 */
+const bodyText = (): string => document.body.textContent ?? '';
+/** 按文案找按钮。找不到时**直接抛**：静默返回 undefined 会让后面的断言变成假绿。 */
+const findButton = (text: string): HTMLButtonElement => {
+  const btn = [...document.body.querySelectorAll('button')].find((b) => (b.textContent ?? '').includes(text));
+  if (!btn) throw new Error(`找不到按钮：${text}`);
+  return btn as HTMLButtonElement;
+};
+const clickByText = (text: string): void => {
+  const btn = findButton(text);
+  act(() => btn.click());
+};
 
+describe('新建笔记（T-c1）', () => {
   it('⭐ 点「新建笔记」弹出对话框（不是直接建一条空笔记）', async () => {
     stubClawwork({});
     await renderPanel();
@@ -162,6 +175,106 @@ describe('新建笔记（T-c1）', () => {
 
     expect(kbAddNote).toHaveBeenCalledWith({ title: '会议纪要', text: '今天定了三件事。' });
     expect(bodyText(), '提交后对话框该关掉').not.toContain('kb.noteTitle');
+  });
+});
+
+describe('重建索引（T-c1 第二条）', () => {
+  /**
+   * 重建按钮按 **testid** 找，不按文字：它的两种文案互为前缀
+   *（`kb.rebuilding` 里就含 `kb.rebuild`），按文字找会在重建中抓错元素、把那句断言变成假绿。
+   */
+  const rebuildButton = (): HTMLButtonElement => {
+    const el = document.querySelector('[data-testid="kb-rebuild"]');
+    if (!el) throw new Error('找不到重建索引按钮（data-testid="kb-rebuild"）');
+    return el as HTMLButtonElement;
+  };
+  const clickRebuild = async (): Promise<void> => {
+    await act(async () => {
+      rebuildButton().click();
+    });
+  };
+  /** 拿到被桩掉的 toast，用来断言"到底说了哪句话"。 */
+  async function toastMock(): Promise<Record<'success' | 'warning' | 'error', ReturnType<typeof vi.fn>>> {
+    const mod = (await import('@/lib/toast')) as unknown as {
+      toast: Record<'success' | 'warning' | 'error', ReturnType<typeof vi.fn>>;
+    };
+    return mod.toast;
+  }
+  const OK_REPORT = { sources: 1, chunks: 7, attempted: 7, embedded: 7, failed: 0, engineError: null };
+
+  it('点「重建索引」⇒ 调 kbRebuild', async () => {
+    const kbRebuild = vi.fn(async () => ({ ok: true as const, report: OK_REPORT }));
+    stubClawwork({ kbRebuild });
+    await renderPanel();
+
+    await clickRebuild();
+
+    expect(kbRebuild).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * ⭐ 这一条就是验收里的"重建期间有进行中的反馈"。
+   *
+   * 重建可能要嵌几百块（秒级到分钟级），期间界面**必须**看得出来在干活：
+   * 按钮禁用（防连点 —— 连点两次会把第一遍刚写好的向量又删一遍）+ 文案变成"正在重建"。
+   * 没有这个，用户看到的就是"点了没反应"，然后再点、再点。
+   */
+  it('⭐ 重建期间：按钮禁用 + 文案变成"正在重建"；做完恢复', async () => {
+    let release!: () => void;
+    const kbRebuild = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          release = () => resolve({ ok: true as const, report: OK_REPORT });
+        }),
+    );
+    stubClawwork({ kbRebuild });
+    await renderPanel();
+
+    await clickRebuild();
+
+    // 还没 resolve
+    expect(rebuildButton().disabled, '重建中必须禁用：连点会把刚写好的向量又删一遍').toBe(true);
+    expect(bodyText()).toContain('kb.rebuilding');
+
+    release();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(rebuildButton().disabled).toBe(false);
+    expect(bodyText()).not.toContain('kb.rebuilding');
+  });
+
+  /**
+   * ⭐ 服务说 `skipped: 'no-engine'` 时**不能**报"重建完成"。
+   *
+   * 那种情况是"一个字节都没动"（见 `service.ts` 里 `rebuild` 的注释：没引擎时重建
+   * 只会把向量删了补不回来，所以直接拒绝）。把它显示成"完成"是最坏的一种撒谎。
+   */
+  it('⭐ 服务回 skipped=no-engine ⇒ 说"已跳过"，不能说"重建完成"', async () => {
+    const kbRebuild = vi.fn(async () => ({
+      ok: true as const,
+      report: { ...OK_REPORT, sources: 0, chunks: 0, attempted: 0, embedded: 0, skipped: 'no-engine' as const },
+    }));
+    stubClawwork({ kbRebuild });
+    await renderPanel();
+
+    await clickRebuild();
+
+    const toast = await toastMock();
+    expect(toast.warning).toHaveBeenCalledWith(expect.stringContaining('kb.rebuildSkipped'));
+    expect(toast.success).not.toHaveBeenCalledWith(expect.stringContaining('kb.rebuildDone'));
+  });
+
+  it('重建完 ⇒ 重新拉一次统计（否则界面还显示重建前的切片数）', async () => {
+    const kbStats = vi.fn(async () => ({ ok: true as const, stats: STATS, engine: null }));
+    stubClawwork({ kbStats, kbRebuild: vi.fn(async () => ({ ok: true as const, report: OK_REPORT })) });
+    await renderPanel();
+    const before = kbStats.mock.calls.length;
+
+    await clickRebuild();
+
+    expect(kbStats.mock.calls.length, '重建改的是切片，不刷新统计界面就是旧的').toBeGreaterThan(before);
   });
 });
 

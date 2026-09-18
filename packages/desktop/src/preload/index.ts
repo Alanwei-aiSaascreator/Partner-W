@@ -555,6 +555,7 @@ function buildApi(): ClawWorkAPI {
     kbRemoveSource: (sourceId: string) => ipcRenderer.invoke('kb:remove-source', { sourceId }),
     kbSearch: (params: { query: string; limit?: number }) => ipcRenderer.invoke('kb:search', params),
     kbIndexPending: (params?: { sourceId?: string }) => ipcRenderer.invoke('kb:index-pending', params),
+    kbRebuild: (params?: { sourceId?: string }) => ipcRenderer.invoke('kb:rebuild', params),
 
     // ── 隐私与数据（P4）──────────────────────────────────────────────
     // 工单状态机、7 天冷却期、多成员团队 owner 拦截**全在数据库 RPC 里**，

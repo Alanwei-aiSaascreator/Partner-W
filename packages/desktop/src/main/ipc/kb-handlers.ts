@@ -111,4 +111,21 @@ export function registerKbHandlers(): void {
       return ipcError(err);
     }
   });
+
+  /**
+   * 「重建索引」按钮：整库（或单份资料）**重切 + 重嵌**。
+   *
+   * ⚠️ 报告里的 `skipped: 'no-engine'` 必须原样透出去：那是"我**什么都没做**"的唯一信号
+   *（没有引擎时重建只会把现有向量删了补不回来，服务直接拒绝）。
+   * 这一层要是把它抹平成一份全 0 的报告，界面就会把"没做"说成"重建完成"。
+   */
+  ipcMain.handle('kb:rebuild', async (_event, params: { sourceId?: string } | undefined) => {
+    const runtime = getKbRuntime();
+    if (!runtime) return NOT_READY;
+    try {
+      return { ok: true, report: await runtime.service.rebuild(params?.sourceId) };
+    } catch (err) {
+      return ipcError(err);
+    }
+  });
 }
