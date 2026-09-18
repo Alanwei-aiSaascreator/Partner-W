@@ -9,4 +9,12 @@ allowBuilds:
   better-sqlite3: true
   electron: true
   esbuild: true
+  # ⚠️ 这两个**故意是 false**（pnpm 装上后留了 "set this to true or false" 让人表态）：
+  #   · onnxruntime-node 的 postinstall 是去 NuGet 下**没随包的那部分二进制**
+  #     （主要是 CUDA EP，几百 MB）。CPU 版本来就随包，我们只用 CPU 推理 ——
+  #     2026-09-18 实测：拦住它，`@huggingface/transformers` 照样算得出向量
+  #     （3 条 25ms、语义区分正常）。放行只会白下几百 MB 并多开一个供应链口子。
+  #   · protobufjs 的构建只跟它自己的 CLI/typings 有关，运行时用不到。
+  onnxruntime-node: false
+  protobufjs: false
   win-ca: true
