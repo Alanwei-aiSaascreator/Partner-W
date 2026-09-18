@@ -1082,6 +1082,7 @@
     "workspaceUnavailable": "The assistant workspace is unavailable. Check the service connection and retry."
   },
   "privacy": {
+    "actionsBlocked": "Impossible de lire l’état actuel : les actions d’export et de suppression sont temporairement désactivées. Relancez d’abord.",
     "cancelDeletion": "Retirer la demande de suppression",
     "confirmDeletion": "Confirmer la demande de suppression",
     "cooldownLeft": "Délai en cours : encore {{days}} jours",
@@ -1091,7 +1092,6 @@
     "deletionConsequences": "Après la suppression : les sessions, tâches et artefacts locaux sont effacés par le client ; les cartes de transfert des organisations dont vous êtes propriétaire sont révoquées et le crédit acheté n’est pas remboursé ; les registres financiers et d’audit sont conservés conformément à la loi. Retrait possible sous 7 jours.",
     "deletionDue": "Le délai est écoulé, la demande attend d’être traitée",
     "deletionHint": "Après l’envoi, un délai de 7 jours s’applique ; vous pouvez retirer la demande pendant ce délai.",
-    "deletionReason": "Suppression demandée par l’utilisateur",
     "deletionTitle": "Supprimer le compte et les données",
     "deletionTypeLabel": "Saisissez « {{word}} » pour confirmer",
     "downloadExport": "Télécharger le fichier d’export",
@@ -1102,8 +1102,10 @@
     "exportHint": "Regroupe dans un seul fichier les données du serveur et de cet ordinateur.",
     "exportPending": "Export demandé. Préparation du fichier.",
     "exportTitle": "Exporter mes données",
+    "notesSeparator": " ; ",
     "requestDeletion": "Demander la suppression du compte et des données",
     "requestExport": "Demander l’export de mes données",
+    "retrying": "Nouvelle tentative…",
     "statusUnknown": "Le statut ne peut pas être confirmé pour l’instant. Actualisez pour vérifier."
   },
   "question": {

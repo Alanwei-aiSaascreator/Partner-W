@@ -44,6 +44,17 @@ export interface PrivacyState {
   deletion: PrivacyDeletionState | null;
 }
 
+/**
+ * 删除申请落到 `privacy_requests.note` 的**审计口径**：固定机器码，**不是**界面文案。
+ *
+ * ⚠️ 以前这一格发的是 `privacy.deletionReason`（当前语言的 UI 文案）⇒ 用户换个语言，
+ *    运营在后台看到的"理由"就跟着变，审计口径不是稳定的东西。机器码只此一处定义，
+ *    main 与渲染层共用，改码名 = 改口径（迁移 51 的 `left(coalesce(p_reason,''),500)`
+ *    原样收下，不做语义校验）。
+ * 人类可读的理由另走可选字段（`reason`），界面目前不收集它 ⇒ 让出（见 privacy-handlers.ts）。
+ */
+export const DELETION_REQUEST_NOTE = 'user_requested';
+
 /** 与迁移 50 的 `check (status in (...))` 逐字对齐；'unknown' 是客户端降级态，不在此列。 */
 const STATUSES: readonly PrivacyRequestStatus[] = [
   'pending',

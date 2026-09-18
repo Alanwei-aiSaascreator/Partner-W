@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
 import {
@@ -9,7 +9,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import SectionCard from '@/components/semantic/SectionCard';
+import SettingGroup from '@/components/semantic/SettingGroup';
 import { describePrivacyError, type PrivacyState } from '@clawwork/core';
 import { toast } from '@/lib/toast';
 
@@ -23,6 +23,8 @@ import { toast } from '@/lib/toast';
  *    会把 `scheduledFor` 抹成 null，冷却天数就被说成"冷却期已结束"。
  * ⚠️ 删除的两条后果（本地数据一并清除 / 名下组织的中转卡吊销且额度不退）必须写在
  *    确认弹层里，且要**勾选 + 输入确认词**两道门都过了才允许提交（设计 §5.3）。
+ * ⚠️ 删除申请的 `note` 由 **main 戳固定机器码**（`DELETION_REQUEST_NOTE`），这里**不发
+ *    界面文案**：文案当数据发上去，用户换个语言审计口径就跟着漂。这里也不收集用户理由。
  */
 
 const DAY_MS = 86_400_000;
@@ -32,6 +34,9 @@ const ENDED_DELETION_STATUSES = ['cancelled', 'rejected', 'failed'];
 
 /** 导出还在准备中（服务端同步出快照，正常看不到这两个状态，但状态机允许）。 */
 const RUNNING_EXPORT_STATUSES = ['pending', 'processing'];
+
+/** 只有这两个状态有可下载的产物（设计 §5.3：ready / completed 可下载）。 */
+const DOWNLOADABLE_EXPORT_STATUSES = ['ready', 'completed'];
 
 /** 一次隐私 IPC 的返回：`ok` + main 压缩过的机器码。 */
 type PrivacyOutcome = { ok: boolean; errorCode?: string };
@@ -49,10 +54,10 @@ type PrivacyAction = () => PrivacyPending;
 /**
  * 冷却期剩余天数。三态必须分开：
  *   · 数字 > 0 ⇒ 还剩几天
- *   · 0 ⇒ 已到期（可以执行了）
+ *   · 0 ⇒ 本地时钟算下来已到期（**注意：这不等于"服务端也说到期了"**，见冷却期那一处注释）
  *   · **null ⇒ 读不出绝对时刻**（缺失或 `Date.parse` → NaN）
- * ⚠️ null 绝不能被当成 0 说成"冷却期已结束"——那是把"不知道"讲成"已经到期"，
- *    用户会以为再也撤不回来。
+ * ⚠️ 这个数**只用来显示"还剩几天"**，绝不拿它判断能不能撤回 —— 判据只有服务端的
+ *    `cancellable`。否则客户端时间一偏，就会出现"冷却期已结束"和撤回按钮同时挂着。
  */
 function cooldownDaysLeft(scheduledFor: string | null): number | null {
   if (!scheduledFor) return null;
@@ -66,13 +71,16 @@ export default function PrivacySection() {
   const [state, setState] = useState<PrivacyState>({ export: null, deletion: null });
   const [loadError, setLoadError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [acknowledged, setAcknowledged] = useState(false);
   const [typedWord, setTypedWord] = useState('');
   const [downloadResult, setDownloadResult] = useState<{ truncated: boolean; notes: string } | null>(null);
+  /** 单飞闸：一次只发一条 `privacy:state`（连点重试 / 双击都只发一次）。 */
+  const refreshInFlight = useRef(false);
 
   // ⚠️ 这个函数**不抛**：它被 `run` / `download` 的 finally 调用，抛了就会把 busy 卡住。
-  const refresh = useCallback(async () => {
+  const loadState = useCallback(async () => {
     try {
       const res = await window.clawwork.privacyState();
       if (res.ok && res.result) {
@@ -87,6 +95,25 @@ export default function PrivacySection() {
       setLoadError('unknown');
     }
   }, []);
+
+  /**
+   * 读一次状态。**单飞**：飞着的时候再点不会再发一条（连点 3 次 = 1 次请求）。
+   * 丢掉并发那几次不会吞掉新数据：所有触发点（挂载 / 重试 / 动作后的刷新）都排在
+   * 同一条 busy/loading 闸门后面 ⇒ 飞着的那条一定是最近发出去的。
+   * ⚠️ 重试按钮的 busy 只挡 `loading`，**不挡 `loadError`** —— 否则读不到状态时
+   *    连重试都点不动（正是现在这条路上的死循环）。
+   */
+  const refresh = useCallback(async () => {
+    if (refreshInFlight.current) return;
+    refreshInFlight.current = true;
+    setLoading(true);
+    try {
+      await loadState();
+    } finally {
+      refreshInFlight.current = false;
+      setLoading(false);
+    }
+  }, [loadState]);
 
   useEffect(() => {
     void refresh();
@@ -111,6 +138,8 @@ export default function PrivacySection() {
   );
 
   const download = useCallback(async () => {
+    // 上一份导出的说明从这一刻起就失效了（它讲的是**上一份**文件）。
+    setDownloadResult(null);
     setBusy(true);
     try {
       const res = await window.clawwork.privacyDownloadExport();
@@ -125,7 +154,15 @@ export default function PrivacySection() {
         // ⚠️ 截断必须让用户看见：只弹一句"成功"等于把"这份不是完整历史"藏起来。
         if (truncated) toast.warning(t('privacy.downloadSavedTruncated', { path }));
         else toast.success(t('privacy.downloadSaved', { path }));
-        setDownloadResult({ truncated, notes: notes.join('；') });
+        // ⚠️ `notes` 来自 IPC，**不能假定是数组**：`join` 一抛就会被同一段 catch 兜住，
+        //    用户先看到"已保存"再看到"操作失败"（两句还互相矛盾）。照 main 同款过滤：
+        //    非数组 ⇒ 空、逐元素只留字符串。分隔符也进 i18n（中文的「；」不该喂给别的语言）。
+        setDownloadResult({
+          truncated,
+          notes: Array.isArray(notes)
+            ? notes.filter((note) => typeof note === 'string').join(t('privacy.notesSeparator'))
+            : '',
+        });
       }
     } catch (error) {
       console.error('[privacy] download failed:', error);
@@ -144,15 +181,26 @@ export default function PrivacySection() {
 
   const submitDeletion = useCallback(async () => {
     closeConfirm();
-    await run(() => window.clawwork.privacyRequestDeletion({ reason: t('privacy.deletionReason') }));
-  }, [closeConfirm, run, t]);
+    // 不带任何界面文案：审计口径（固定机器码）由 main 戳上去，界面文案当数据发 = 语言一变口径就变。
+    await run(() => window.clawwork.privacyRequestDeletion({}));
+  }, [closeConfirm, run]);
 
   const exportStatus = state.export?.status ?? null;
   const deletion = state.deletion;
+  // 说明只对"当前这份还能下载的导出"有效：换了单子（重新申请 / 失败 / 撤回）就不再适用。
+  const exportDownloadable = exportStatus !== null && DOWNLOADABLE_EXPORT_STATUSES.includes(exportStatus);
   const cooldownDays =
     deletion === null || ENDED_DELETION_STATUSES.includes(deletion.status) || deletion.status === 'unknown'
       ? null
       : cooldownDaysLeft(deletion.scheduledFor);
+
+  /**
+   * 读不到状态（或正有一次读在飞）时，**一切依赖状态的入口都停掉**：手里那份 state 可能
+   * 是上一次的陈旧快照，"申请导出/下载/申请删除/撤回"都可能对着错的前提点下去（删除还会
+   * 开二次确认弹层，一路点到不可逆的提交）。理由写在错误卡里，用户知道为什么点不动。
+   * ⚠️ 重试按钮**不受这条约束**（它是出口，不是入口）。
+   */
+  const actionsBlocked = loadError !== null || loading;
 
   /** 未知状态的显式分支：**不猜**，只说明读不出来 + 给一次刷新。 */
   function renderUnknown(scope: 'export' | 'deletion') {
@@ -161,8 +209,13 @@ export default function PrivacySection() {
         <p data-field={`${scope}-unknown`} className="type-body text-[var(--text-secondary)]">
           {t('privacy.statusUnknown')}
         </p>
-        <Button variant="outline" data-action={`privacy-retry-${scope}`} disabled={busy} onClick={() => void refresh()}>
-          {t('common.retry')}
+        <Button
+          variant="outline"
+          data-action={`privacy-retry-${scope}`}
+          disabled={busy || loading}
+          onClick={() => void refresh()}
+        >
+          {loading ? t('privacy.retrying') : t('common.retry')}
         </Button>
       </div>
     );
@@ -171,94 +224,113 @@ export default function PrivacySection() {
   return (
     <div className="space-y-4">
       {loadError ? (
-        <SectionCard>
-          <p data-field="privacy-load-error" className="type-body text-[var(--danger)]" role="alert">
-            {describePrivacyError(loadError)}
-          </p>
-          <Button
-            className="mt-3"
-            variant="outline"
-            data-action="privacy-retry-state"
-            disabled={busy}
-            onClick={() => void refresh()}
-          >
-            {t('common.retry')}
-          </Button>
-        </SectionCard>
+        <SettingGroup>
+          <div className="px-5 py-4">
+            <p data-field="privacy-load-error" className="type-body text-[var(--danger)]" role="alert">
+              {describePrivacyError(loadError)}
+            </p>
+            <p data-field="privacy-actions-blocked" className="mt-1 type-support text-[var(--text-muted)]">
+              {t('privacy.actionsBlocked')}
+            </p>
+            <Button
+              className="mt-3"
+              variant="outline"
+              data-action="privacy-retry-state"
+              disabled={busy || loading}
+              onClick={() => void refresh()}
+            >
+              {loading ? t('privacy.retrying') : t('common.retry')}
+            </Button>
+          </div>
+        </SettingGroup>
       ) : null}
 
-      <SectionCard title={t('privacy.exportTitle')} subtitle={t('privacy.exportHint')}>
-        {exportStatus === 'unknown' ? (
-          renderUnknown('export')
-        ) : exportStatus === 'ready' || exportStatus === 'completed' ? (
-          <Button data-action="privacy-download" disabled={busy} onClick={() => void download()}>
-            {t('privacy.downloadExport')}
-          </Button>
-        ) : (
-          <div className="space-y-3">
-            {exportStatus !== null && RUNNING_EXPORT_STATUSES.includes(exportStatus) ? (
-              <p data-field="export-pending" className="type-body text-[var(--text-secondary)]">
-                {t('privacy.exportPending')}
-              </p>
-            ) : null}
-            <Button
-              data-action="privacy-export"
-              disabled={busy}
-              onClick={() => void run(() => window.clawwork.privacyRequestExport())}
-            >
-              {t('privacy.requestExport')}
+      <SettingGroup title={t('privacy.exportTitle')} subtitle={t('privacy.exportHint')}>
+        <div className="space-y-3 px-5 py-4">
+          {exportStatus === 'unknown' ? (
+            renderUnknown('export')
+          ) : exportDownloadable ? (
+            <Button data-action="privacy-download" disabled={busy || actionsBlocked} onClick={() => void download()}>
+              {t('privacy.downloadExport')}
             </Button>
-          </div>
-        )}
-
-        {downloadResult && (downloadResult.truncated || downloadResult.notes !== '') ? (
-          <div className="mt-3 space-y-1">
-            {downloadResult.truncated ? (
-              <p data-field="export-truncated" className="type-support text-[var(--danger)]" role="alert">
-                {t('privacy.downloadTruncatedHint')}
-              </p>
-            ) : null}
-            {downloadResult.notes !== '' ? (
-              <p data-field="export-notes" className="type-support text-[var(--text-muted)]">
-                {t('privacy.downloadNotes', { notes: downloadResult.notes })}
-              </p>
-            ) : null}
-          </div>
-        ) : null}
-      </SectionCard>
-
-      <SectionCard title={t('privacy.deletionTitle')}>
-        {deletion === null || ENDED_DELETION_STATUSES.includes(deletion.status) ? (
-          <div className="space-y-3">
-            <p className="type-body text-[var(--text-secondary)]">{t('privacy.deletionHint')}</p>
-            <Button variant="danger" data-action="privacy-delete" disabled={busy} onClick={() => setConfirmOpen(true)}>
-              {t('privacy.requestDeletion')}
-            </Button>
-          </div>
-        ) : deletion.status === 'unknown' ? (
-          renderUnknown('deletion')
-        ) : (
-          <div className="space-y-3">
-            <p data-field="deletion-cooldown" className="type-body text-[var(--text-secondary)]">
-              {cooldownDays === null
-                ? t('privacy.cooldownUnknown')
-                : cooldownDays > 0
-                  ? t('privacy.cooldownLeft', { days: cooldownDays })
-                  : t('privacy.deletionDue')}
-            </p>
-            {deletion.cancellable ? (
+          ) : (
+            <>
+              {exportStatus !== null && RUNNING_EXPORT_STATUSES.includes(exportStatus) ? (
+                <p data-field="export-pending" className="type-body text-[var(--text-secondary)]">
+                  {t('privacy.exportPending')}
+                </p>
+              ) : null}
               <Button
-                variant="outline"
-                data-action="privacy-cancel"
-                disabled={busy}
-                onClick={() => void run(() => window.clawwork.privacyCancelDeletion({ id: deletion.id }))}
+                data-action="privacy-export"
+                disabled={busy || actionsBlocked}
+                onClick={() => void run(() => window.clawwork.privacyRequestExport())}
               >
-                {t('privacy.cancelDeletion')}
+                {t('privacy.requestExport')}
               </Button>
-            ) : null}
-          </div>
-        )}
-      </SectionCard>
+            </>
+          )}
+
+          {downloadResult && exportDownloadable && (downloadResult.truncated || downloadResult.notes !== '') ? (
+            <div className="space-y-1">
+              {downloadResult.truncated ? (
+                <p data-field="export-truncated" className="type-support text-[var(--danger)]" role="alert">
+                  {t('privacy.downloadTruncatedHint')}
+                </p>
+              ) : null}
+              {downloadResult.notes !== '' ? (
+                <p data-field="export-notes" className="type-support text-[var(--text-muted)]">
+                  {t('privacy.downloadNotes', { notes: downloadResult.notes })}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      </SettingGroup>
+
+      <SettingGroup title={t('privacy.deletionTitle')}>
+        <div className="space-y-3 px-5 py-4">
+          {deletion === null || ENDED_DELETION_STATUSES.includes(deletion.status) ? (
+            <>
+              <p className="type-body text-[var(--text-secondary)]">{t('privacy.deletionHint')}</p>
+              <Button
+                variant="danger"
+                data-action="privacy-delete"
+                disabled={busy || actionsBlocked}
+                onClick={() => setConfirmOpen(true)}
+              >
+                {t('privacy.requestDeletion')}
+              </Button>
+            </>
+          ) : deletion.status === 'unknown' ? (
+            renderUnknown('deletion')
+          ) : (
+            <>
+              {/* ⚠️ 文案与撤回按钮**同源**：唯一判据是服务端的 `cancellable`
+                  （`privacy_my_state()` 的 `status = 'pending' and now() < scheduled_for`）。
+                  本地时钟算出的天数只用来显示"还剩几天"：天数为 0 而服务端仍说可撤回 =
+                  两边时钟不一致 ⇒ 说"读不出可信的剩余时间"，**绝不说成"冷却期已结束"**
+                  —— 否则就会出现"已结束"和撤回按钮同时挂着这种自相矛盾的界面。 */}
+              <p data-field="deletion-cooldown" className="type-body text-[var(--text-secondary)]">
+                {!deletion.cancellable
+                  ? t('privacy.deletionDue')
+                  : cooldownDays !== null && cooldownDays > 0
+                    ? t('privacy.cooldownLeft', { days: cooldownDays })
+                    : t('privacy.cooldownUnknown')}
+              </p>
+              {deletion.cancellable ? (
+                <Button
+                  variant="outline"
+                  data-action="privacy-cancel"
+                  disabled={busy || actionsBlocked}
+                  onClick={() => void run(() => window.clawwork.privacyCancelDeletion({ id: deletion.id }))}
+                >
+                  {t('privacy.cancelDeletion')}
+                </Button>
+              ) : null}
+            </>
+          )}
+        </div>
+      </SettingGroup>
 
       <Dialog open={confirmOpen} onOpenChange={(next) => (next ? setConfirmOpen(true) : closeConfirm())}>
         <DialogContent>
@@ -303,7 +375,13 @@ export default function PrivacySection() {
             <Button
               variant="danger"
               data-action="privacy-confirm-delete"
-              disabled={!acknowledged || typedWord.trim() !== t('privacy.deletionConfirmWord') || busy}
+              // ⚠️ 大小写不敏感：en/de/es/fr/pt 的确认词是**大写**（DELETE / LÖSCHEN / …），
+              //    用户照着提示敲小写也得算数 —— 否则按钮一直灰着，界面还不解释为什么。
+              disabled={
+                !acknowledged ||
+                typedWord.trim().toLowerCase() !== t('privacy.deletionConfirmWord').toLowerCase() ||
+                busy
+              }
               onClick={() => void submitDeletion()}
             >
               {t('privacy.confirmDeletion')}

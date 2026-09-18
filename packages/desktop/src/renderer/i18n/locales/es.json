@@ -1082,6 +1082,7 @@
     "workspaceUnavailable": "The assistant workspace is unavailable. Check the service connection and retry."
   },
   "privacy": {
+    "actionsBlocked": "No se puede leer el estado actual, así que las acciones de exportación y eliminación están desactivadas temporalmente. Reintenta primero.",
     "cancelDeletion": "Retirar la solicitud de eliminación",
     "confirmDeletion": "Confirmar la solicitud de eliminación",
     "cooldownLeft": "Periodo de espera: quedan {{days}} días",
@@ -1091,7 +1092,6 @@
     "deletionConsequences": "Tras la eliminación: el cliente borra las sesiones, tareas y artefactos locales; las tarjetas de transferencia de las organizaciones de las que eres propietario se revocan y el saldo comprado no se reembolsa; los registros financieros y de auditoría se conservan por obligación legal. Puedes retirarla en 7 días.",
     "deletionDue": "El periodo de espera ha terminado; la solicitud está pendiente de tramitación",
     "deletionHint": "Tras enviarla hay un periodo de espera de 7 días; dentro de ese plazo puedes retirarla.",
-    "deletionReason": "Eliminación solicitada por el usuario",
     "deletionTitle": "Eliminar cuenta y datos",
     "deletionTypeLabel": "Escribe «{{word}}» para confirmar",
     "downloadExport": "Descargar el archivo de exportación",
@@ -1102,8 +1102,10 @@
     "exportHint": "Empaqueta en un solo archivo los datos del servidor y de este equipo.",
     "exportPending": "Exportación solicitada. Preparando el archivo.",
     "exportTitle": "Exportar mis datos",
+    "notesSeparator": "; ",
     "requestDeletion": "Solicitar la eliminación de la cuenta y los datos",
     "requestExport": "Solicitar la exportación de mis datos",
+    "retrying": "Reintentando…",
     "statusUnknown": "Ahora mismo no se puede confirmar el estado. Actualiza para comprobarlo."
   },
   "question": {

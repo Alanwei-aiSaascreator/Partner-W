@@ -1082,6 +1082,7 @@
     "workspaceUnavailable": "暫時無法讀取助手工作目錄，請檢查服務連線後重試。"
   },
   "privacy": {
+    "actionsBlocked": "讀不到目前狀態，匯出與刪除的操作入口暫時停用；請先重試。",
     "cancelDeletion": "撤回刪除申請",
     "confirmDeletion": "確認提交刪除申請",
     "cooldownLeft": "冷卻期中，還剩 {{days}} 天",
@@ -1091,7 +1092,6 @@
     "deletionConsequences": "刪除後：本機會話、任務與成果將由客戶端清除；你名下組織的中轉卡會被吊銷，已購額度不退還；財務與審計記錄依法保留。7 天內可撤回。",
     "deletionDue": "冷卻期已結束，等待處理",
     "deletionHint": "提交後有 7 天冷卻期，期內可以撤回。",
-    "deletionReason": "使用者申請刪除",
     "deletionTitle": "刪除帳號與資料",
     "deletionTypeLabel": "請輸入「{{word}}」以確認",
     "downloadExport": "下載匯出檔案",
@@ -1102,8 +1102,10 @@
     "exportHint": "把伺服器上與這台電腦上的資料打包成一個檔案。",
     "exportPending": "匯出申請已提交，正在準備檔案。",
     "exportTitle": "匯出我的資料",
+    "notesSeparator": "；",
     "requestDeletion": "申請刪除帳號與資料",
     "requestExport": "申請匯出我的資料",
+    "retrying": "正在重試…",
     "statusUnknown": "狀態暫時無法確認，請重新整理後再看"
   },
   "question": {

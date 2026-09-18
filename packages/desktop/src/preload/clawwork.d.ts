@@ -723,6 +723,9 @@ export interface ClawWorkAPI {
   //    元数据时，界面必须提示"这份不是完整历史"）；Task 14 按新形状消费。
   privacyState: () => Promise<IpcResult<PrivacyState>>;
   privacyRequestExport: () => Promise<IpcResult<unknown>>;
+  // `reason` = **用户自述理由**（可选，自由文本）。界面目前不收集 ⇒ 让出（`{}`）。
+  // ⚠️ 审计口径（落到 `privacy_requests.note` 的固定机器码 `DELETION_REQUEST_NOTE`）**不在
+  //    这里传**：由 main 戳上去。界面文案当数据发 = 用户换个语言审计口径就跟着变。
   privacyRequestDeletion: (payload: { reason?: string }) => Promise<IpcResult<unknown>>;
   privacyCancelDeletion: (payload: { id: string }) => Promise<IpcResult<null>>;
   privacyDownloadExport: () => Promise<IpcResult<{ path: string; truncated: boolean; notes: string[] }>>;

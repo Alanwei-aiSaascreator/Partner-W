@@ -6,10 +6,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import zh from '../src/renderer/i18n/locales/zh.json';
 
 /**
+ * 确认词的**本 locale 覆盖**：en/de/es/fr/pt 的确认词是大写词（DELETE / LÖSCHEN / …），
+ * 而这条测试渲染的是 zh.json（"删除"没有大小写）⇒ 大小写敏感与否在 zh 下**测不出来**。
+ * 需要时把它临时设成大写词，用完还原（`beforeEach` 也兜一次）。
+ */
+let confirmWordOverride: string | null = null;
+
+/**
  * 用 zh.json 的**真实文案**渲染并断言：写 `t('privacy.xxx')` 回显会在键没落地时
  * 两边一起退化成键名 ⇒ 空对空的假绿。
  */
 function translate(key: string, values?: Record<string, unknown>): string {
+  if (key === 'privacy.deletionConfirmWord' && confirmWordOverride) return confirmWordOverride;
   let node: unknown = zh;
   for (const part of key.split('.')) {
     if (typeof node !== 'object' || node === null) return key;
@@ -97,6 +105,15 @@ function setInput(input: HTMLInputElement, value: string): void {
   input.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
+/** 手工控制 resolve 时刻的 promise：用来把"请求飞在半空"的那一瞬间钉住。 */
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((settle) => {
+    resolve = settle;
+  });
+  return { promise, resolve };
+}
+
 async function click(element: HTMLElement | null): Promise<void> {
   if (!element) throw new Error('要点的元素不存在');
   await act(async () => {
@@ -117,6 +134,7 @@ async function confirmDeletion(container: HTMLElement): Promise<void> {
 describe('PrivacySection', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    confirmWordOverride = null;
     Object.assign(window, {
       clawwork: {
         privacyState: vi.fn(async () => ({ ok: true, result: { export: null, deletion: null } })),
@@ -260,9 +278,9 @@ describe('PrivacySection', () => {
     await act(async () => setInput(word, confirmWord));
     expect(confirm.disabled).toBe(false);
     await click(confirm);
-    expect(window.clawwork.privacyRequestDeletion).toHaveBeenCalledWith({
-      reason: translate('privacy.deletionReason'),
-    });
+    // ⚠️ 发的是**空 payload**：审计口径（固定机器码 `user_requested`）由 main 戳上去，
+    //    界面文案当数据发 = 用户换个语言审计口径就跟着变。
+    expect(window.clawwork.privacyRequestDeletion).toHaveBeenCalledWith({});
     expect(window.clawwork.privacyRequestDeletion).toHaveBeenCalledTimes(1);
     view.unmount();
   });
@@ -384,6 +402,154 @@ describe('PrivacySection', () => {
     await click(action(view.container, 'privacy-retry-state'));
     expect(field(view.container, 'privacy-load-error')).toBeNull();
     expect(action(view.container, 'privacy-download')).not.toBeNull();
+    view.unmount();
+  });
+
+  it('★ 读不到状态 ⇒ 申请入口一律不可点（删除连二次确认弹层都开不出来），并写明理由', async () => {
+    stateMock().mockResolvedValue({ ok: false, errorCode: 'network' });
+    const view = await render();
+    expect(field(view.container, 'privacy-load-error')).not.toBeNull();
+    expect(field(view.container, 'privacy-actions-blocked')?.textContent).toBe(translate('privacy.actionsBlocked'));
+
+    const deletionButton = action(view.container, 'privacy-delete') as HTMLButtonElement;
+    expect(deletionButton.disabled).toBe(true);
+    expect((action(view.container, 'privacy-export') as HTMLButtonElement).disabled).toBe(true);
+
+    // 灰着不够：点下去也不能开弹层、不能发请求（不可逆操作绝不能对着陈旧的 state 走）
+    await click(deletionButton);
+    expect(document.querySelector('[data-field="privacy-ack"]')).toBeNull();
+    expect(window.clawwork.privacyRequestDeletion).not.toHaveBeenCalled();
+    view.unmount();
+  });
+
+  it('★ 连点重试只发一条请求（单飞），且飞着的时候按钮显示"正在重试"', async () => {
+    stateMock().mockResolvedValue({ ok: false, errorCode: 'network' });
+    const view = await render();
+    expect(action(view.container, 'privacy-retry-state')).not.toBeNull();
+
+    const pending = deferred<{ ok: boolean; errorCode?: string }>();
+    stateMock().mockReturnValue(pending.promise);
+    const before = stateMock().mock.calls.length;
+
+    // 同一个 tick 里连点 3 次：`disabled` 还没 re-render，挡不住后两下 ——
+    // 挡住它们的是 refresh 自己那条单飞闸。
+    await act(async () => {
+      const retry = action(view.container, 'privacy-retry-state') as HTMLButtonElement;
+      retry.click();
+      retry.click();
+      retry.click();
+    });
+    expect(stateMock().mock.calls.length - before).toBe(1);
+
+    const retry = action(view.container, 'privacy-retry-state') as HTMLButtonElement;
+    expect(retry.disabled).toBe(true);
+    expect(retry.textContent).toContain(translate('privacy.retrying'));
+
+    await act(async () => {
+      pending.resolve({ ok: false, errorCode: 'network' });
+    });
+    view.unmount();
+  });
+
+  it('★ notes 不是数组（IPC 形状漂移）⇒ 不 join 崩掉，也不弹"已保存 + 操作失败"两句矛盾提示', async () => {
+    mockState({ export: exportRow(), deletion: null });
+    (window.clawwork.privacyDownloadExport as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      result: { path: 'D:/exports/export.json', truncated: false, notes: '本该是数组' },
+    });
+    const view = await render();
+    await click(action(view.container, 'privacy-download'));
+    expect(toast.success).toHaveBeenCalledWith(expect.stringContaining('已保存'));
+    expect(toast.error).not.toHaveBeenCalled();
+    expect(field(view.container, 'export-notes')).toBeNull();
+    view.unmount();
+  });
+
+  it('★ notes 里混进非字符串 ⇒ 只丢那一条，剩下的照常展示，分隔符走 i18n', async () => {
+    mockState({ export: exportRow(), deletion: null });
+    (window.clawwork.privacyDownloadExport as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      result: { path: 'D:/exports/export.json', truncated: false, notes: ['第一条说明', 42, '第二条说明'] },
+    });
+    const view = await render();
+    await click(action(view.container, 'privacy-download'));
+    const joined = ['第一条说明', '第二条说明'].join(translate('privacy.notesSeparator'));
+    expect(field(view.container, 'export-notes')?.textContent).toBe(
+      translate('privacy.downloadNotes', { notes: joined }),
+    );
+    expect(field(view.container, 'export-notes')?.textContent).not.toContain('42');
+    view.unmount();
+  });
+
+  it('★ 下载过截断包之后单子失效 / 重新申请 ⇒ 上一份的"不是完整历史"说明必须失效', async () => {
+    // 第一次读（挂载）⇒ 有可下载的导出；此后（下载后的那次刷新）⇒ 单子已经失败
+    stateMock()
+      .mockResolvedValueOnce({ ok: true, result: { export: exportRow({ status: 'completed' }), deletion: null } })
+      .mockResolvedValue({ ok: true, result: { export: exportRow({ id: 'e2', status: 'failed' }), deletion: null } });
+    (window.clawwork.privacyDownloadExport as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      result: { path: 'D:/exports/export.json', truncated: true, notes: ['本地消息超过上限'] },
+    });
+    const view = await render();
+    await click(action(view.container, 'privacy-download'));
+    // 说明讲的是**上一份**文件：单子一失效就不再适用（不能一直挂着）
+    expect(field(view.container, 'export-truncated')).toBeNull();
+    expect(field(view.container, 'export-notes')).toBeNull();
+
+    // 重新申请也不该把它翻出来
+    await click(action(view.container, 'privacy-export'));
+    expect(field(view.container, 'export-truncated')).toBeNull();
+    view.unmount();
+  });
+
+  it('★ 再点一次下载却在保存对话框取消 ⇒ 上一份的说明也失效（不留陈旧信息）', async () => {
+    mockState({ export: exportRow({ status: 'completed' }), deletion: null });
+    (window.clawwork.privacyDownloadExport as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      result: { path: 'D:/exports/export.json', truncated: true, notes: ['本地消息超过上限'] },
+    });
+    const view = await render();
+    await click(action(view.container, 'privacy-download'));
+    expect(field(view.container, 'export-truncated')).not.toBeNull();
+
+    (window.clawwork.privacyDownloadExport as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: false,
+      errorCode: 'cancelled',
+    });
+    await click(action(view.container, 'privacy-download'));
+    expect(field(view.container, 'export-truncated')).toBeNull();
+    expect(toast.error).not.toHaveBeenCalled();
+    view.unmount();
+  });
+
+  it('★ 确认词大小写不敏感：大写词 locale 下照着提示敲小写也算数', async () => {
+    confirmWordOverride = 'DELETE';
+    const view = await render();
+    await click(action(view.container, 'privacy-delete'));
+    const ack = document.querySelector('[data-field="privacy-ack"]') as HTMLInputElement;
+    const word = document.querySelector('[data-field="privacy-word"]') as HTMLInputElement;
+    const confirm = document.querySelector('button[data-action="privacy-confirm-delete"]') as HTMLButtonElement;
+    await click(ack);
+
+    await act(async () => setInput(word, 'delete'));
+    expect(confirm.disabled).toBe(false);
+    // 仍然只认那个词 —— 不是"大小写不敏感"变成"随便敲都行"
+    await act(async () => setInput(word, 'deletex'));
+    expect(confirm.disabled).toBe(true);
+    view.unmount();
+  });
+
+  it('★ 本地时钟说冷却期已过、服务端仍说可撤回 ⇒ 文案不说"已结束"，撤回按钮照给', async () => {
+    mockState({
+      export: null,
+      deletion: deletionRow({ scheduledFor: new Date(Date.now() - DAY_MS).toISOString(), cancellable: true }),
+    });
+    const view = await render();
+    const copy = field(view.container, 'deletion-cooldown')?.textContent ?? '';
+    // 唯一判据是服务端的 cancellable：本地时钟算出的天数不下结论（否则文案与按钮互相打架）
+    expect(copy).not.toBe(translate('privacy.deletionDue'));
+    expect(copy).toBe(translate('privacy.cooldownUnknown'));
+    expect(action(view.container, 'privacy-cancel')).not.toBeNull();
     view.unmount();
   });
 });

@@ -1082,6 +1082,7 @@
     "workspaceUnavailable": "暂时无法读取助手工作目录，请检查服务连接后重试。"
   },
   "privacy": {
+    "actionsBlocked": "读不到当前状态，导出与删除的操作入口暂时停用；请先重试。",
     "cancelDeletion": "撤回删除申请",
     "confirmDeletion": "确认提交删除申请",
     "cooldownLeft": "冷却期中，还剩 {{days}} 天",
@@ -1091,7 +1092,6 @@
     "deletionConsequences": "删除后：本地会话、任务与成果将由客户端清除；你名下组织的中转卡会被吊销，已购额度不退还；财务与审计记录依法保留。7 天内可撤回。",
     "deletionDue": "冷却期已结束，等待处理",
     "deletionHint": "提交后有 7 天冷却期，期内可以撤回。",
-    "deletionReason": "用户申请删除",
     "deletionTitle": "删除账号与数据",
     "deletionTypeLabel": "请输入「{{word}}」以确认",
     "downloadExport": "下载导出文件",
@@ -1102,8 +1102,10 @@
     "exportHint": "把服务器上与这台电脑上的数据打包成一个文件。",
     "exportPending": "导出申请已提交，正在准备文件。",
     "exportTitle": "导出我的数据",
+    "notesSeparator": "；",
     "requestDeletion": "申请删除账号与数据",
     "requestExport": "申请导出我的数据",
+    "retrying": "正在重试…",
     "statusUnknown": "状态暂时无法确认，请刷新后再看"
   },
   "question": {

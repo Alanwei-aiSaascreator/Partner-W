@@ -1082,6 +1082,7 @@
     "workspaceUnavailable": "The assistant workspace is unavailable. Check the service connection and retry."
   },
   "privacy": {
+    "actionsBlocked": "Can't read the current status, so the export and deletion actions are disabled. Retry first.",
     "cancelDeletion": "Withdraw deletion request",
     "confirmDeletion": "Confirm deletion request",
     "cooldownLeft": "Cooling-off period: {{days}} day(s) left",
@@ -1091,7 +1092,6 @@
     "deletionConsequences": "After deletion: local sessions, tasks and artifacts are removed by the client; transfer cards of organizations you own are revoked and purchased credits are not refunded; financial and audit records are retained as required by law. You can withdraw within 7 days.",
     "deletionDue": "The cooling-off period has ended; the request is waiting to be processed",
     "deletionHint": "There is a 7-day cooling-off period after you submit; you can withdraw it during that time.",
-    "deletionReason": "User requested deletion",
     "deletionTitle": "Delete account and data",
     "deletionTypeLabel": "Type \"{{word}}\" to confirm",
     "downloadExport": "Download export file",
@@ -1102,8 +1102,10 @@
     "exportHint": "Bundles the data on the server and on this computer into one file.",
     "exportPending": "Export requested. Preparing the file.",
     "exportTitle": "Export my data",
+    "notesSeparator": "; ",
     "requestDeletion": "Request account and data deletion",
     "requestExport": "Request a data export",
+    "retrying": "Retrying…",
     "statusUnknown": "The status cannot be confirmed right now. Refresh to check again."
   },
   "question": {

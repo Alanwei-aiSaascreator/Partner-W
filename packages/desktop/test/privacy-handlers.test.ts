@@ -43,6 +43,7 @@ vi.mock('../src/main/privacy/export-local.js', () => ({
 }));
 
 import { registerPrivacyHandlers } from '../src/main/ipc/privacy-handlers.js';
+import { DELETION_REQUEST_NOTE } from '@clawwork/core';
 
 function call(channel: string, ...args: unknown[]): Promise<unknown> {
   const fn = mocks.handlers.get(channel);
@@ -155,18 +156,34 @@ describe('privacy IPC handlers', () => {
   it('参数名翻成 p_*', async () => {
     mocks.rpc.mockResolvedValue({ data: { id: 'r1', status: 'pending' }, error: null });
 
+    // 删除申请：审计口径的机器码在**这一层**戳上去，用户自述理由（可选）拼在后面
     await call('privacy:request-deletion', { reason: '不想用了' });
-    expect(mocks.rpc).toHaveBeenCalledWith('privacy_request_deletion', { p_reason: '不想用了' });
+    expect(mocks.rpc).toHaveBeenCalledWith('privacy_request_deletion', {
+      p_reason: `${DELETION_REQUEST_NOTE} | 不想用了`,
+    });
 
     await call('privacy:cancel-deletion', { id: 'd1' });
     expect(mocks.rpc).toHaveBeenCalledWith('privacy_cancel_deletion', { p_id: 'd1' });
+  });
+
+  it('★ 删除申请不带界面文案：审计口径是固定机器码（语言一变口径不能跟着变）', async () => {
+    mocks.rpc.mockResolvedValue({ data: { id: 'r1', status: 'pending' }, error: null });
+
+    // 渲染层现在只发 `{}`（界面不收集理由）⇒ 落库的就是机器码本身
+    await call('privacy:request-deletion', {});
+    expect(mocks.rpc).toHaveBeenCalledWith('privacy_request_deletion', { p_reason: DELETION_REQUEST_NOTE });
+
+    // 渲染层塞什么界面文案进来都改不动它（机器码在后面拼，不在前面让位）
+    await call('privacy:request-deletion', { reason: '用户申请删除' });
+    const last = mocks.rpc.mock.calls.at(-1) as [string, { p_reason: string }];
+    expect(last[1].p_reason.startsWith(`${DELETION_REQUEST_NOTE} | `)).toBe(true);
   });
 
   it('参数缺省时也发合法 RPC（不把 undefined 塞进 params）', async () => {
     mocks.rpc.mockResolvedValue({ data: null, error: null });
 
     await call('privacy:request-deletion');
-    expect(mocks.rpc).toHaveBeenCalledWith('privacy_request_deletion', { p_reason: '' });
+    expect(mocks.rpc).toHaveBeenCalledWith('privacy_request_deletion', { p_reason: DELETION_REQUEST_NOTE });
 
     await call('privacy:cancel-deletion');
     expect(mocks.rpc).toHaveBeenCalledWith('privacy_cancel_deletion', { p_id: null });

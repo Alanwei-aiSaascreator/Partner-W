@@ -1,6 +1,6 @@
 import { ipcMain } from 'electron';
 import type { IpcResult } from '@clawwork/shared';
-import { normalizePrivacyState } from '@clawwork/core';
+import { DELETION_REQUEST_NOTE, normalizePrivacyState } from '@clawwork/core';
 import { getCommercialClient } from '../commercial/client.js';
 import { buildLocalExport, saveExportFile } from '../privacy/export-local.js';
 import type { LocalExport } from '../privacy/export-local.js';
@@ -144,9 +144,17 @@ export function registerPrivacyHandlers(): void {
 
   ipcMain.handle('privacy:request-export', () => callRpc('privacy_request_export', {}, (d) => d ?? null));
 
-  ipcMain.handle('privacy:request-deletion', (_e, payload?: { reason?: string }) =>
-    callRpc('privacy_request_deletion', { p_reason: payload?.reason ?? '' }, (d) => d ?? null),
-  );
+  // ⚠️ 审计口径 = **固定机器码**（`DELETION_REQUEST_NOTE`），**不是**界面文案：以前渲染层把
+  //    `privacy.deletionReason`（当前语言的 UI 文案）当数据发上来 ⇒ 用户换个语言，运营在
+  //    后台看到的"理由"也跟着变（审计口径不该随界面语言漂）。机器码在**这一层**戳上去：
+  //    渲染层传什么都改不动它。用户自述理由（`reason`，可选）拼在机器码后面；界面目前不
+  //    收集它 ⇒ 让出。分隔符固定且不进 i18n —— 它同样是审计数据的一部分。
+  ipcMain.handle('privacy:request-deletion', (_e, payload?: { reason?: string }) => {
+    const note = [DELETION_REQUEST_NOTE, payload?.reason]
+      .filter((part): part is string => typeof part === 'string' && part !== '')
+      .join(' | ');
+    return callRpc('privacy_request_deletion', { p_reason: note }, (d) => d ?? null);
+  });
 
   ipcMain.handle('privacy:cancel-deletion', (_e, payload?: { id?: string }) =>
     callRpc('privacy_cancel_deletion', { p_id: payload?.id ?? null }, () => null),

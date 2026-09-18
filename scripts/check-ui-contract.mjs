@@ -199,6 +199,14 @@ const COMPONENT_USAGE_RULES = [
     message: 'Settings sections must use SettingGroup instead of hand-rolled shell containers.',
   },
   {
+    // ⚠️ 这份规则表是**逐文件列举**的 ⇒ 新分区不加进来，规则对它静默不适用（第九个分区
+    //    一度是唯一不用 SettingGroup 的，契约却一声不吭）。加分区时**顺手加这一条**。
+    file: 'packages/desktop/src/renderer/layouts/Settings/sections/PrivacySection.tsx',
+    requiredPattern: /\bSettingGroup\b/,
+    category: 'component-usage',
+    message: 'Settings sections must use SettingGroup instead of hand-rolled shell containers.',
+  },
+  {
     file: 'packages/desktop/src/renderer/layouts/MainArea/index.tsx',
     requiredPattern: /\bDataTable\b/,
     category: 'component-usage',

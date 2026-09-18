@@ -68,7 +68,7 @@ describe('preload 暴露的隐私工单接口', () => {
     expect(expected.privacyDownloadExport).toBe('privacy:download-export');
   });
 
-  it('删除申请把理由原样透传（主进程再翻成 p_reason）', () => {
+  it('删除申请把 payload 原样透传（主进程再翻成 p_reason，并戳审计口径的机器码）', () => {
     expect(preload).toMatch(
       /privacyRequestDeletion:[\s\S]{0,200}?invoke\(\s*'privacy:request-deletion',\s*[A-Za-z_$][\w$]*\s*\)/,
     );
