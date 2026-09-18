@@ -62,7 +62,13 @@ const ToolCallCard = memo(function ToolCallCard({ toolCall, defaultOpen, label }
               <StatusIcon status={toolCall.status} />
               <span className="min-w-0 flex-1 truncate text-left">
                 {label ? <span className="type-label text-[var(--text-secondary)]">{label} · </span> : null}
-                <span className="type-mono-data text-[var(--text-muted)]">{toolCall.name}</span>
+                {/*
+                  ⭐ 优先显示网关拼好的 `title`（形如「memory_search 游戏 爆款 创作 内容」）——
+                  这才是用户要的"做了什么操作"。只有工具名（`name`）时说明拿不到 item 流，退回原名。
+                */}
+                <span className="type-mono-data text-[var(--text-muted)]" title={toolCall.title}>
+                  {toolCall.title ?? toolCall.name}
+                </span>
               </span>
               {duration && <span className="text-[var(--text-muted)]">{duration}</span>}
             </button>

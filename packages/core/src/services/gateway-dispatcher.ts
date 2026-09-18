@@ -9,7 +9,13 @@ import type {
   SkillStatusReport,
   ToolsCatalog,
 } from '@clawwork/shared';
-import { extractText, extractThinking, extractToolCalls, parseToolArgs } from '../protocol/parse-content.js';
+import {
+  extractText,
+  extractThinking,
+  extractToolCalls,
+  extractToolResultText,
+  parseToolArgs,
+} from '../protocol/parse-content.js';
 import type { ChatEventPayload } from '../protocol/types.js';
 import { buildAppError, formatErrorForUser, formatErrorForToast } from './error-classify.js';
 import type { TranslateFn } from './error-classify.js';
@@ -20,12 +26,44 @@ import type { GatewayTransportPort, GatewayStatusEvent } from '../ports/gateway-
 type AgentEventStream = 'lifecycle' | 'tool' | 'assistant' | 'thinking' | 'error' | 'compaction';
 
 interface AgentToolData {
+  /**
+   * 实测只有 `start` / `result` 两个值（2026-09-18 真机帧）。
+   * **失败不是单独一个 phase** —— 是 `result` + `isError:true`。
+   */
   phase?: string;
   name?: string;
   toolCallId?: string;
+  /** 网关拼的一行摘要（工具名 + 参数摘要），**不是**工具的真实输出。 */
   meta?: string;
   isError?: boolean;
-  args?: string;
+  /** ⚠️ 实测是**对象**（不是 JSON 串）。写成 `string` 会让调用点传对象时 tsc 不吭声。 */
+  args?: unknown;
+  /** 工具的真实输出：`{content:[{type:'text',text}]}`。 */
+  result?: unknown;
+  commandBearing?: boolean;
+}
+
+/**
+ * `item` 流（`kind:"tool"`）—— 网关的**统一活动条目**。
+ *
+ * 和 `tool` 流讲的是同一件事，但多了两样这里没有的东西：**人话 `title`**
+ *（`"memory_search 游戏 爆款 创作 内容"`）和**真实起止时间**（`startedAt`/`endedAt` 毫秒）。
+ * 两边共用同一个 `toolCallId`，所以按 id upsert 就能自然合并。
+ */
+interface AgentItemData {
+  itemId?: string;
+  phase?: string;
+  kind?: string;
+  title?: string;
+  status?: string;
+  name?: string;
+  meta?: string;
+  toolCallId?: string;
+  startedAt?: number;
+  endedAt?: number;
+  error?: string;
+  /** `kind:"preamble"` 的模型自述进度。 */
+  progressText?: string;
 }
 
 interface AgentLifecycleData {
@@ -567,6 +605,12 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
       case 'assistant':
         debugEvent('renderer.agent.assistant_stream', { taskId, sessionKey });
         break;
+      case 'item': {
+        // 网关的**统一活动条目**。从前没有这个分支 ⇒ 整条被当未知事件丢掉，
+        // 而里面正带着「做了什么操作」的人话标题和真实起止时间。
+        handleAgentItemStream(taskId, sessionKey, data as AgentItemData);
+        break;
+      }
       case 'thinking': {
         // 模型的推理输出走的是 **agent 通道**，此前被 default 当未知整段丢掉。
         // ⚠️ chat 通道**补不回来**：网关只在 `evt.stream === "assistant"` 时才 emitChatDelta
@@ -675,8 +719,10 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
       name: data.name,
       status,
       args: parseToolArgs(data.args),
-      result: data.meta,
-      startedAt: data.phase === 'update' ? new Date().toISOString() : '',
+      // ⭐ 真实输出优先，`meta`（一行摘要）只在拿不到真输出时兜底 —— 顺序反了就等于
+      //    用户点开卡片永远看不到工具到底返回了什么。
+      result: extractToolResultText(data.result) ?? data.meta,
+      startedAt: '',
       completedAt: status !== 'running' ? new Date().toISOString() : undefined,
     };
 
@@ -698,6 +744,41 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
       toolCallId: tc.id,
       status: tc.status,
       name: tc.name,
+    });
+  }
+
+  function handleAgentItemStream(taskId: string, sessionKey: string, data: AgentItemData): void {
+    // 只接工具条目。`kind:"preamble"` 是模型自述进度，形状完全不同，
+    // 当成工具写进 store 会凭空多出一张卡片。
+    if (data.kind !== 'tool') return;
+    if (!data.toolCallId || !data.name) return;
+
+    const failed = data.status === 'failed' || data.status === 'error' || Boolean(data.error);
+    const settled = data.phase === 'end' || failed;
+    const status: ToolCallStatus = failed ? 'error' : settled ? 'done' : 'running';
+
+    const toMs = (v: unknown): string | undefined =>
+      typeof v === 'number' && v > 0 ? new Date(v).toISOString() : undefined;
+
+    deps.getMessageStore().upsertToolCall(sessionKey, taskId, {
+      id: data.toolCallId,
+      name: data.name,
+      status,
+      // ⭐ `title` 就是用户要的"做了什么操作"：网关拼好的「工具名 + 参数摘要」。
+      title: data.title,
+      // 网关给的是**真实**起止时间（毫秒），比自己打点准。
+      startedAt: toMs(data.startedAt) ?? new Date().toISOString(),
+      completedAt: settled ? (toMs(data.endedAt) ?? new Date().toISOString()) : undefined,
+      result: data.error,
+    });
+
+    debugEvent('renderer.toolcall.upserted', {
+      taskId,
+      sessionKey,
+      toolCallId: data.toolCallId,
+      status,
+      name: data.name,
+      source: 'item',
     });
   }
 

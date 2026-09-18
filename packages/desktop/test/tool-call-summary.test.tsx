@@ -99,6 +99,46 @@ describe('ToolCallSummary', () => {
   });
 });
 
+/**
+ * 「做了什么操作」= 网关 `item` 流里拼好的 `title`（形如 `memory_search 游戏 爆款 创作 内容`）。
+ *
+ * 用户原话：「回复期间显示调用了什么工具、做了什么操作很重要」。
+ * 只显示 `name`（工具名）或按工具名分类的泛化文案（"执行命令"）说不出**具体在干什么**，
+ * 而 `title` 是网关带参数摘要拼好的、可直接给人看的一行。
+ */
+describe('工具过程显示"做了什么操作"', () => {
+  const TITLED = 'memory_search 游戏 爆款 创作 内容';
+
+  it('⭐ 运行中那一行优先显示 title，不是泛化文案', () => {
+    const running: ToolCall = { ...call('1', 'memory_search', 'running'), title: TITLED };
+    const { container, unmount } = render(<ToolCallSummary toolCalls={[running]} />);
+
+    const summary = container.querySelector('[data-testid="tool-activity-summary"]') as HTMLButtonElement;
+    expect(summary.dataset.status).toBe('running');
+    expect(summary.textContent).toContain(TITLED);
+    unmount();
+  });
+
+  it('展开后的单卡标题也用 title（点开能看到具体那一条）', () => {
+    const failed: ToolCall = { ...call('2', 'memory_search', 'error'), title: TITLED };
+    const { container, unmount } = render(<ToolCallSummary toolCalls={[call('1', 'ls'), failed]} />);
+
+    act(() => (container.querySelector('[data-testid="tool-activity-summary"]') as HTMLButtonElement).click());
+
+    const card = container.querySelector('[data-testid="tool-call-card"]');
+    expect(card?.textContent).toContain(TITLED);
+    unmount();
+  });
+
+  it('拿不到 title 时退回工具名，不留空白', () => {
+    const running: ToolCall = { ...call('1', 'exec', 'running') };
+    const { container, unmount } = render(<ToolCallSummary toolCalls={[running]} />);
+
+    expect(container.textContent).toContain('toolActivity.actions.execute');
+    unmount();
+  });
+});
+
 describe('StreamingMessage tool activity', () => {
   it('renders all streaming calls through one shared compact summary', () => {
     const calls = Array.from({ length: 10 }, (_, index) => call(String(index), index < 8 ? 'ls' : 'exec'));

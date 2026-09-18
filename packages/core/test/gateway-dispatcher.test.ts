@@ -817,3 +817,202 @@ describe('临时会话（多模型对比的一列）：只有那一列看得到�
     expect(h.deps.syncSessionMessages).toHaveBeenCalledWith('task-1', KEY_0);
   });
 });
+
+/**
+ * 工具过程的**数据质量** —— 夹具一律用**真实网关帧**（2026-09-18 从本机
+ * `debug-*.ndjson` 原样抄下来的），不再自己编形状。
+ *
+ * ⚠️ 为什么这条很重要：从前这里（`gateway-dispatcher.test.ts` 老用例）用的是
+ * `phase:'update'` + **字符串** args，而真实网关发的是：
+ *   - phase 只有 `start` / `result`（**失败是 `result` + `isError:true`，没有 `error` 这个 phase**）
+ *   - `args` 是**对象**，不是 JSON 串
+ * 假夹具让两个真缺陷长期测不出来：参数被裹成 `{raw:{…}}`、工具真正的输出被整块丢掉。
+ * ⇒ 夹具跟真实对不上，测试就是绿的谎话。
+ */
+describe('tool 流：真实网关帧下的数据质量', () => {
+  type EmittedToolCall = {
+    id: string;
+    name: string;
+    status: string;
+    args?: unknown;
+    result?: string;
+    title?: string;
+    startedAt?: string;
+    completedAt?: string;
+  };
+
+  /** 取最近一次 upsertToolCall 落下去的 ToolCall。 */
+  function lastToolCall(h: ReturnType<typeof createHarness>): EmittedToolCall {
+    const calls = h.messageStore.upsertToolCall.mock.calls;
+    expect(calls.length, '应该有工具调用被写进 store').toBeGreaterThan(0);
+    return calls[calls.length - 1]![2] as EmittedToolCall;
+  }
+
+  it('⭐ args 是对象时原样用，不能裹成 {raw:{…}}（真实网关发的是对象）', () => {
+    const h = createHarness();
+    h.emit('agent', {
+      sessionKey: TASK.sessionKey,
+      stream: 'tool',
+      data: {
+        phase: 'start',
+        name: 'memory_search',
+        toolCallId: 'call_f1236bd519f54d6e816e79b1',
+        args: { query: '游戏 爆款 创作 内容' },
+      },
+    });
+
+    expect(lastToolCall(h).args).toEqual({ query: '游戏 爆款 创作 内容' });
+  });
+
+  it('⭐ 工具的真实输出要显示出来：data.result.content 的文本，不是只留一行 meta', () => {
+    const h = createHarness();
+    h.emit('agent', {
+      sessionKey: TASK.sessionKey,
+      stream: 'tool',
+      data: {
+        phase: 'result',
+        name: 'ls',
+        toolCallId: 'call_ls_1',
+        meta: '工作区',
+        isError: false,
+        commandBearing: false,
+        result: { content: [{ type: 'text', text: 'a.md\nb.md' }] },
+      },
+    });
+
+    const tc = lastToolCall(h);
+    expect(tc.status).toBe('done');
+    expect(tc.result).toContain('a.md');
+    expect(tc.result).toContain('b.md');
+  });
+
+  it('真实输出缺失时才退回 meta（不能显示空白）', () => {
+    const h = createHarness();
+    h.emit('agent', {
+      sessionKey: TASK.sessionKey,
+      stream: 'tool',
+      data: { phase: 'result', name: 'ls', toolCallId: 'call_ls_2', meta: '工作区', isError: false },
+    });
+
+    expect(lastToolCall(h).result).toBe('工作区');
+  });
+
+  it('失败帧是 phase:"result" + isError:true ⇒ error（网关根本没有 "error" 这个 phase）', () => {
+    const h = createHarness();
+    h.emit('agent', {
+      sessionKey: TASK.sessionKey,
+      stream: 'tool',
+      data: {
+        phase: 'result',
+        name: 'memory_search',
+        toolCallId: 'call_ms_1',
+        meta: '游戏 爆款',
+        isError: true,
+        result: { content: [{ type: 'text', text: 'memory_search timed out after 15s' }] },
+      },
+    });
+
+    const tc = lastToolCall(h);
+    expect(tc.status).toBe('error');
+    expect(tc.result).toContain('timed out');
+  });
+});
+
+/**
+ * `item` 流 —— 网关**拼好的**「做了什么操作」人话标题，我们从前整条丢掉
+ *（归到 default 分支只记遥测 `renderer.agent.unknown_stream`）。
+ *
+ * 真实帧（2026-09-18T05:38:37.780Z）里 `title` 是「工具名 + 参数摘要」：
+ *   "memory_search 游戏 爆款 创作 内容"
+ * 这正是用户说的「显示调用了什么工具、做了什么操作」最直接的数据源。
+ */
+describe('item 流：网关拼好的人话标题与真实起止时间', () => {
+  type EmittedToolCall = {
+    id: string;
+    name: string;
+    status: string;
+    title?: string;
+    startedAt?: string;
+    completedAt?: string;
+  };
+
+  function lastToolCall(h: ReturnType<typeof createHarness>): EmittedToolCall {
+    const calls = h.messageStore.upsertToolCall.mock.calls;
+    expect(calls.length, 'item 应该也走 upsertToolCall').toBeGreaterThan(0);
+    return calls[calls.length - 1]![2] as EmittedToolCall;
+  }
+
+  it('⭐ kind:"tool" 的 item 带着人话标题，挂到同一个 toolCallId 上', () => {
+    const h = createHarness();
+    h.emit('agent', {
+      sessionKey: TASK.sessionKey,
+      stream: 'item',
+      data: {
+        itemId: 'tool:call_f1236bd519f54d6e816e79b1',
+        phase: 'start',
+        kind: 'tool',
+        title: 'memory_search 游戏 爆款 创作 内容',
+        status: 'running',
+        name: 'memory_search',
+        meta: '游戏 爆款 创作 内容',
+        commandBearing: false,
+        toolCallId: 'call_f1236bd519f54d6e816e79b1',
+        startedAt: 1789709917722,
+      },
+    });
+
+    const tc = lastToolCall(h);
+    expect(tc.id).toBe('call_f1236bd519f54d6e816e79b1');
+    expect(tc.title).toBe('memory_search 游戏 爆款 创作 内容');
+    expect(tc.startedAt).toBe(new Date(1789709917722).toISOString());
+  });
+
+  it('item 的收尾帧（phase:"end" + status:"failed"）落成 error 并带上结束时间', () => {
+    const h = createHarness();
+    h.emit('agent', {
+      sessionKey: TASK.sessionKey,
+      stream: 'item',
+      data: {
+        itemId: 'tool:call_f1236bd519f54d6e816e79b1',
+        phase: 'end',
+        kind: 'tool',
+        title: 'memory_search 游戏 爆款 创作 内容',
+        status: 'failed',
+        name: 'memory_search',
+        toolCallId: 'call_f1236bd519f54d6e816e79b1',
+        startedAt: 1789709917722,
+        endedAt: 1789709932780,
+        error: 'memory_search timed out after 15s',
+      },
+    });
+
+    const tc = lastToolCall(h);
+    expect(tc.status).toBe('error');
+    expect(tc.completedAt).toBe(new Date(1789709932780).toISOString());
+  });
+
+  it('认不出的 kind 不写 store（别把 preamble 之类的当工具）', () => {
+    const h = createHarness();
+    h.emit('agent', {
+      sessionKey: TASK.sessionKey,
+      stream: 'item',
+      data: { itemId: 'commentary-1', kind: 'preamble', phase: 'end', progressText: '正在梳理…' },
+    });
+
+    expect(h.messageStore.upsertToolCall).not.toHaveBeenCalled();
+  });
+
+  it('修好之后不再上报为未知事件', () => {
+    const h = createHarness();
+    for (let i = 0; i < 12; i++) {
+      h.emit('agent', {
+        sessionKey: TASK.sessionKey,
+        stream: 'item',
+        data: { itemId: `tool:call_${i}`, kind: 'tool', phase: 'start', name: 'ls', toolCallId: `call_${i}` },
+      });
+    }
+    expect(h.deps.reportDebugEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'renderer.agent.unknown_stream.threshold' }),
+    );
+  });
+});

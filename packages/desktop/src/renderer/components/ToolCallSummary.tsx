@@ -64,7 +64,11 @@ function ToolCallSummary({ toolCalls }: { toolCalls: ToolCall[] }) {
   const summary = useMemo(() => summarizeToolActivity(toolCalls), [toolCalls]);
   const status: ToolCall['status'] = summary.errorCount > 0 ? 'error' : summary.runningCount > 0 ? 'running' : 'done';
   const currentCall = [...toolCalls].reverse().find((call) => call.status === 'running');
-  const currentAction = currentCall ? t(`toolActivity.actions.${classifyToolActivity(currentCall.name)}`) : null;
+  // ⭐ "正在做什么"优先用网关拼好的 `title`（带参数摘要），拿不到才退回按工具名分类的泛化文案
+  //（泛化文案是"查看文件"这种，说不出具体在看哪个文件）。
+  const currentAction = currentCall
+    ? (currentCall.title ?? t(`toolActivity.actions.${classifyToolActivity(currentCall.name)}`))
+    : null;
   const summaryText =
     summary.errorCount > 0
       ? t('chatMessage.toolCallSummaryWithErrors', {

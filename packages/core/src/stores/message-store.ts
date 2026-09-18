@@ -146,6 +146,9 @@ function mergeToolCallState(existing: ToolCall | undefined, incoming: ToolCall):
     status: preferIncoming ? incoming.status : existing.status,
     args: incoming.args ?? existing.args,
     result: incoming.result ?? existing.result,
+    // `title` 来自 `item` 流、`args` 来自 `tool` 流 —— 两条流各带一半，
+    // 谁先到都不许把对方那半冲掉（`...incoming` 会把显式 undefined 一起铺过来）。
+    title: incoming.title ?? existing.title,
     startedAt: existing.startedAt || incoming.startedAt,
     completedAt: incoming.completedAt ?? existing.completedAt,
   };

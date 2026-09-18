@@ -34,6 +34,7 @@ export type {
 export {
   extractText,
   extractThinking,
+  extractToolResultText,
   extractToolCalls,
   parseToolArgs,
   safeJsonParse,

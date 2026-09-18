@@ -248,6 +248,14 @@ export interface ToolCall {
   result?: string;
   startedAt: string;
   completedAt?: string;
+  /**
+   * 网关**自己拼好的**一行"做了什么"人话，形如 `memory_search 游戏 爆款 创作 内容`
+   *（工具名 + 参数摘要）。来自 `agent` 通道的 `item` 流（`kind:"tool"` 的 `title`）。
+   *
+   * 有它才谈得上"显示做了什么操作"：`name` 只有工具名，`args` 是原始 JSON，
+   * 而这行是网关替你摘要好的、可直接给人看的。缺失时界面退回 `name`。
+   */
+  title?: string;
 }
 
 export type ErrorSource = 'local' | 'gateway' | 'upstream' | 'agent' | 'tool' | 'sync' | 'db';
