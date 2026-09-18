@@ -718,6 +718,55 @@ describe('并发：单飞与"两代正文不串味"', () => {
     expect(engine.calls.slice(1).flat().join('\n')).toContain('第二代');
     expect((await service.search('第二代')).hits.length).toBeGreaterThan(0);
   });
+  /**
+   * ⭐ **重建与索引并发** —— 这条债记了很久：「读代码看是收敛的，但**没有测试钉住**」。
+   *
+   * `rebuild()` 的"重切"那一步**不走单飞队列**：它直接 `replaceKbChunks`（先删后插），
+   * 而此刻 `runIndex` 可能正拿着**重切前**读到的那批切片在嵌。两条路撞上会不会串味、
+   * 会不会留下没嵌完的块，此前只有"我读过代码"这一句保证。
+   *
+   * 用的向量是 `[正文长度, 1]`（见闸门引擎）⇒ **"向量不是这段正文算出来的"一眼就能看出来**。
+   */
+  it('⭐ 索引在飞时并发重建：跑完必须收敛（无残留、无重复、向量对得上正文）', async () => {
+    service = createService(createFakeEngine('model-a'));
+    const outcome = await service.addNote({ title: '预算说明', text: NOTE });
+    const sourceId = outcome.sourceId as string;
+    const before = listKbChunks(getSqlite() as never, sourceId);
+    expect(before.length).toBeGreaterThan(1);
+    expect(before.every((chunk) => chunk.state === 'embedded')).toBe(true);
+
+    // 换模型 ⇒ 老向量标 stale（要重嵌），再用闸门引擎把它冻在半路
+    const gated = createGatedEngine('model-b');
+    service.setEmbeddingEngine(gated.engine);
+    expect(service.getStats().byState.stale, '前提：换模型后确实有待重嵌的').toBe(before.length);
+
+    const indexing = service.indexPending();
+    await vi.waitFor(() => expect(gated.gates).toHaveLength(1));
+
+    // 索引正挂在半空时，**并发**发起重建 —— 它会立刻重切切片（不走单飞队列）
+    const rebuilding = service.rebuild();
+
+    gated.releaseAll();
+    await Promise.all([indexing, rebuilding]);
+
+    // ---- 收敛后的不变量 ----
+    const after = listKbChunks(getSqlite() as never, sourceId);
+    expect(after.length, '同一份正文、同一套切块参数 ⇒ 切片数不能变').toBe(before.length);
+    expect(new Set(after.map((chunk) => chunk.id)).size, '不能出现重复切片').toBe(after.length);
+    expect(
+      after.every((chunk) => chunk.state === 'embedded' && chunk.vector !== null),
+      '跑完不该还剩没嵌的块',
+    ).toBe(true);
+    expect(
+      after.every((chunk) => chunk.embeddingModel === 'model-b'),
+      '向量必须是**当前**模型算的（否则检索会跳过它）',
+    ).toBe(true);
+    // ⭐ 最强的一条：向量得对得上**各自那一段正文**
+    expect(
+      after.filter((chunk) => chunk.vector![0] !== chunk.text.length).map((chunk) => chunk.id),
+      '有向量的第一维不等于自己正文长度 ⇒ 它被写到**别人的正文**上了',
+    ).toEqual([]);
+  });
 });
 
 describe('路径规范化（同一个文件只有一条资料）', () => {
