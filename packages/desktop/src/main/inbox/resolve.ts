@@ -1,33 +1,12 @@
 import { realpathSync } from 'fs';
 import { open, realpath, stat } from 'fs/promises';
+import { hasStrongIdentity, identityOf, sameIdentity } from '../util/file-identity.js';
 import { isAbsolute, resolve, sep } from 'path';
 
 interface InboxPathInfo {
   base: string;
   full: string;
   inboxDir: string;
-}
-
-interface FileIdentity {
-  dev: number | bigint;
-  ino: number | bigint;
-  size: number;
-  isFile(): boolean;
-}
-
-function hasStrongIdentity(stats: FileIdentity): boolean {
-  const dev = Number(stats.dev);
-  const ino = Number(stats.ino);
-  return Number.isFinite(dev) && Number.isFinite(ino) && dev > 0 && ino > 0;
-}
-
-function sameStrongIdentity(left: FileIdentity, right: FileIdentity): boolean {
-  return (
-    hasStrongIdentity(left) &&
-    hasStrongIdentity(right) &&
-    Number(left.dev) === Number(right.dev) &&
-    Number(left.ino) === Number(right.ino)
-  );
 }
 
 function isWithin(parent: string, child: string): boolean {
@@ -74,7 +53,7 @@ async function resolveValidatedPath(
     ]);
     if (!isWithin(realBase, realInboxDir)) return null;
     if (!isWithin(realInboxDir, realTarget)) return null;
-    if (requireFile && !(await stat(realTarget)).isFile()) return null;
+    if (requireFile && !(await stat(realTarget, { bigint: true })).isFile()) return null;
     return realTarget;
   } catch {
     return null;
@@ -102,9 +81,13 @@ async function readInboxFileInternal(
   const handle = await open(info.full, 'r').catch(() => null);
   if (!handle) return null;
   try {
-    const openedStats = await handle.stat();
-    if (!openedStats.isFile() || !hasStrongIdentity(openedStats)) return null;
-    if (maxBytes !== undefined && openedStats.size > maxBytes) return null;
+    // ⚠️ 身份一律走 bigint：`ino` 是 64 位，Number 版在超过 2^53 后会把**相邻的两个文件**
+    //    舍入成同一个值 ⇒ "这个文件被换过吗"会答成"没换"（fail-open，见 util/file-identity.ts）
+    const openedStats = await handle.stat({ bigint: true });
+    const openedIdentity = identityOf(openedStats);
+    const openedSize = Number(openedStats.size);
+    if (!openedStats.isFile() || !hasStrongIdentity(openedIdentity)) return null;
+    if (maxBytes !== undefined && openedSize > maxBytes) return null;
     const pathToResolve = process.platform === 'win32' ? info.full : `/dev/fd/${handle.fd}`;
     const realTarget =
       process.platform === 'win32'
@@ -117,29 +100,34 @@ async function readInboxFileInternal(
             }
           })();
     if (!realTarget) return null;
-    const resolvedStats = await stat(realTarget);
-    if (!resolvedStats.isFile() || !sameStrongIdentity(openedStats, resolvedStats)) return null;
+    const resolvedStats = await stat(realTarget, { bigint: true });
+    if (!resolvedStats.isFile() || !sameIdentity(openedIdentity, identityOf(resolvedStats))) return null;
     const realInboxDir = await resolveValidatedPath(info, info.inboxDir);
     if (!realInboxDir || !isWithin(realInboxDir, realTarget)) return null;
-    const [finalHandleStats, finalPathStats] = await Promise.all([handle.stat(), stat(realTarget)]);
+    const [finalHandleStats, finalPathStats] = await Promise.all([
+      handle.stat({ bigint: true }),
+      stat(realTarget, { bigint: true }),
+    ]);
+    const finalHandleSize = Number(finalHandleStats.size);
+    const finalPathSize = Number(finalPathStats.size);
     if (
       !finalHandleStats.isFile() ||
       !finalPathStats.isFile() ||
-      !sameStrongIdentity(openedStats, finalHandleStats) ||
-      !sameStrongIdentity(openedStats, finalPathStats) ||
+      !sameIdentity(openedIdentity, identityOf(finalHandleStats)) ||
+      !sameIdentity(openedIdentity, identityOf(finalPathStats)) ||
       (maxBytes !== undefined &&
-        (finalHandleStats.size > maxBytes ||
-          finalPathStats.size > maxBytes ||
-          finalHandleStats.size !== openedStats.size ||
-          finalPathStats.size !== openedStats.size))
+        (finalHandleSize > maxBytes ||
+          finalPathSize > maxBytes ||
+          finalHandleSize !== openedSize ||
+          finalPathSize !== openedSize))
     ) {
       return null;
     }
     if (maxBytes === undefined) {
-      return { content: await handle.readFile({ encoding: 'base64' }), byteLength: finalHandleStats.size };
+      return { content: await handle.readFile({ encoding: 'base64' }), byteLength: finalHandleSize };
     }
 
-    const expectedBytes = openedStats.size;
+    const expectedBytes = openedSize;
     const buffer = Buffer.alloc(expectedBytes);
     let totalBytesRead = 0;
     while (totalBytesRead < expectedBytes) {
@@ -147,12 +135,15 @@ async function readInboxFileInternal(
       if (bytesRead <= 0) return null;
       totalBytesRead += bytesRead;
     }
-    const [afterReadStats, afterReadPathStats] = await Promise.all([handle.stat(), stat(realTarget)]);
+    const [afterReadStats, afterReadPathStats] = await Promise.all([
+      handle.stat({ bigint: true }),
+      stat(realTarget, { bigint: true }),
+    ]);
     if (
-      afterReadStats.size !== expectedBytes ||
-      afterReadPathStats.size !== expectedBytes ||
-      !sameStrongIdentity(openedStats, afterReadStats) ||
-      !sameStrongIdentity(openedStats, afterReadPathStats)
+      Number(afterReadStats.size) !== expectedBytes ||
+      Number(afterReadPathStats.size) !== expectedBytes ||
+      !sameIdentity(openedIdentity, identityOf(afterReadStats)) ||
+      !sameIdentity(openedIdentity, identityOf(afterReadPathStats))
     ) {
       return null;
     }

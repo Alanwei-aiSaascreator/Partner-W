@@ -265,6 +265,10 @@ describe('inbox path access', () => {
 
     await expect(resolveInboxPath(WORKSPACE_PATH, folderPath)).resolves.toBeNull();
     await expect(resolveInboxPath(WORKSPACE_PATH, LOCAL_PATH)).resolves.toBe(INBOX_FILE);
-    expect(mockStat).toHaveBeenCalledWith(fullFolderPath);
+    // ⚠️ 参数里带上 `{ bigint: true }` 是**故意钉死**的，不是顺手抄的实现细节：
+    //    `ino` 是 64 位，用 Number 版读会让"相邻的两个文件"舍入成同一个身份
+    //    ⇒ "这个文件被换过吗"答成"没换"（fail-open，见 `util/file-identity.ts`）。
+    //    这条断言原来只写 `(fullFolderPath)` —— 那样**改回 Number 也照样绿**。
+    expect(mockStat).toHaveBeenCalledWith(fullFolderPath, { bigint: true });
   });
 });

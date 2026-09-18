@@ -1,5 +1,6 @@
 import { lstatSync, opendirSync, realpathSync, statSync } from 'node:fs';
-import type { Stats } from 'node:fs';
+import type { BigIntStats } from 'node:fs';
+import { hasStrongIdentity, identityOf, sameIdentity } from '../util/file-identity.js';
 import { extname, isAbsolute, join, relative, sep } from 'node:path';
 import type { FileIndexEntry } from '@clawwork/shared';
 import { classifyTier, getMimeType } from './file-types.js';
@@ -37,7 +38,7 @@ interface ScanHooks {
 
 interface IndexedFile {
   entry: FileIndexEntry;
-  identity: Stats;
+  identity: BigIntStats;
   score: number;
 }
 
@@ -70,41 +71,41 @@ function isContained(root: string, target: string): boolean {
   return fromRoot !== '..' && !fromRoot.startsWith(`..${sep}`) && !isAbsolute(fromRoot);
 }
 
-function sameIdentity(left: Stats, right: Stats): boolean {
-  const devAndIno =
-    Number.isFinite(left.dev) &&
-    Number.isFinite(left.ino) &&
-    Number.isFinite(right.dev) &&
-    Number.isFinite(right.ino) &&
-    left.dev > 0 &&
-    left.ino > 0 &&
-    right.dev > 0 &&
-    right.ino > 0;
-  if (devAndIno) return left.dev === right.dev && left.ino === right.ino;
-  const hasFallback =
-    Number.isFinite(left.birthtimeMs) &&
-    Number.isFinite(right.birthtimeMs) &&
-    left.birthtimeMs > 0 &&
-    right.birthtimeMs > 0 &&
-    Number.isFinite(left.size) &&
-    Number.isFinite(right.size) &&
-    Number.isFinite(left.mtimeMs) &&
-    Number.isFinite(right.mtimeMs);
+/**
+ * 身份判定 + 一个**弱兜底**分支。
+ *
+ * ⚠️ 强分支走 `util/file-identity.ts`（bigint，逐位比）：`ino` 是 64 位，用 Number 读会让
+ *    **相邻的两个文件**（NTFS 顺序分配 ⇒ 连续创建的文件必然相邻）舍入成同一个值
+ *    ⇒ 扫描时把两个不同的文件当成同一个、并拿它去确认"扫描期间没被掉包"（**fail-open**）。
+ *    原来的守卫 `Number.isFinite(ino) && ino > 0` **挡不住**丢精度：舍入后照样是有限正数。
+ *
+ * 兜底分支只在文件系统**没给** dev/ino（为 0）时生效：birthtime + size + mtime 近似。
+ * 它是**弱**判据（同毫秒创建的两个文件可能撞），但没有更好的选择。
+ */
+function sameIdentityWithFallback(left: BigIntStats, right: BigIntStats): boolean {
+  const leftId = identityOf(left);
+  const rightId = identityOf(right);
+  if (hasStrongIdentity(leftId) && hasStrongIdentity(rightId)) return sameIdentity(leftId, rightId);
+
   return (
-    hasFallback && left.birthtimeMs === right.birthtimeMs && left.size === right.size && left.mtimeMs === right.mtimeMs
+    left.birthtimeMs > 0n &&
+    right.birthtimeMs > 0n &&
+    left.birthtimeMs === right.birthtimeMs &&
+    left.size === right.size &&
+    left.mtimeMs === right.mtimeMs
   );
 }
 
-function validateRoot(canonicalRoot: string, expected?: Stats): Stats {
+function validateRoot(canonicalRoot: string, expected?: BigIntStats): BigIntStats {
   try {
-    const linkStat = lstatSync(canonicalRoot);
+    const linkStat = lstatSync(canonicalRoot, { bigint: true });
     const currentRoot = realpathSync.native(canonicalRoot);
-    const identity = statSync(currentRoot);
+    const identity = statSync(currentRoot, { bigint: true });
     if (
       linkStat.isSymbolicLink() ||
       relative(canonicalRoot, currentRoot) !== '' ||
       !identity.isDirectory() ||
-      (expected && !sameIdentity(expected, identity))
+      (expected && !sameIdentityWithFallback(expected, identity))
     )
       throw new Error();
     return identity;
@@ -113,13 +114,19 @@ function validateRoot(canonicalRoot: string, expected?: Stats): Stats {
   }
 }
 
-function validateEntry(canonicalRoot: string, entryPath: string, expected?: Stats): { realPath: string; stat: Stats } {
+function validateEntry(
+  canonicalRoot: string,
+  entryPath: string,
+  expected?: BigIntStats,
+): { realPath: string; stat: BigIntStats } {
   try {
-    const linkStat = lstatSync(entryPath);
+    const linkStat = lstatSync(entryPath, { bigint: true });
     if (linkStat.isSymbolicLink()) throw new Error('skip symlink');
     const realPath = realpathSync.native(entryPath);
-    const stat = statSync(realPath);
-    if (!isContained(canonicalRoot, realPath) || (expected && !sameIdentity(expected, stat))) throw new Error();
+    const stat = statSync(realPath, { bigint: true });
+    if (!isContained(canonicalRoot, realPath) || (expected && !sameIdentityWithFallback(expected, stat))) {
+      throw new Error();
+    }
     return { realPath, stat };
   } catch (error) {
     if (error instanceof Error && error.message === 'skip symlink') throw error;
@@ -179,16 +186,16 @@ function walkDir(
       state.visitedEntries++;
       if (isHidden(name)) continue;
       const fullPath = join(dir, name);
-      let before: Stats;
+      let before: BigIntStats;
       try {
-        before = lstatSync(fullPath);
+        before = lstatSync(fullPath, { bigint: true });
       } catch {
         continue;
       }
       if (before.isSymbolicLink()) continue;
       hooks?.afterEntryLstat?.(fullPath);
 
-      let validated: { realPath: string; stat: Stats };
+      let validated: { realPath: string; stat: BigIntStats };
       try {
         validated = validateEntry(canonicalRoot, fullPath, before);
       } catch {
@@ -199,7 +206,7 @@ function walkDir(
         walkDir(validated.realPath, canonicalRoot, results, depth + 1, maxDepth, state, hooks);
         continue;
       }
-      if (!validated.stat.isFile() || validated.stat.size > MAX_FILE_SIZE) continue;
+      if (!validated.stat.isFile() || Number(validated.stat.size) > MAX_FILE_SIZE) continue;
       const lowerName = name.toLowerCase();
       const ext = ALLOWED_DOT_FILES.has(lowerName) ? lowerName : extname(name).toLowerCase();
       const tier = classifyTier(ext);
@@ -208,8 +215,8 @@ function walkDir(
         relativePath: relative(canonicalRoot, validated.realPath),
         absolutePath: validated.realPath,
         fileName: name,
-        size: validated.stat.size,
-        mtime: validated.stat.mtimeMs,
+        size: Number(validated.stat.size),
+        mtime: Number(validated.stat.mtimeMs),
         mimeType: getMimeType(ext),
         tier,
       };
