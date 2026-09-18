@@ -6,10 +6,16 @@ import path from 'node:path';
  * 给**隔离 profile** 准备「已配置商业层 + 已登录」的初始状态。
  *
  * 为什么必须从开发机的既有 profile 取，而不是环境变量：
- * 客户端**没有**任何内置的 Supabase 地址/anon key（全仓库搜过，只有
- * `config?.commercial?.supabaseUrl ?? ''` 一处读取），`commercial:set-config`
- * 这条 IPC 也没有界面调用方 —— 也就是说 provisioning 本来就是**带外**的。
- * E2E 只能沿用同一套带外数据。
+ * 这里要的东西（会话、deviceId、卡密）都不在安装包里 —— 客户端能自带的只有
+ * 商业后端的**公共地址与 anon key**（`packages/shared/src/commercial.ts` 的读取期
+ * 默认值），而 `commercial:set-config` 这条 IPC 也没有界面调用方。也就是说
+ * provisioning 本来就是**带外**的，E2E 只能沿用同一套带外数据。
+ *
+ * ⚠️ 也正因为凭据现在是随包默认值，**这份 provision 会掩盖"干净机器"**：
+ *    打包态 E2E 全部注入 profile，测不到"什么都没有时屏幕上会不会出现登录页"
+ *    —— 2026-09-18 的 P0（干净机器没有登录界面）就是这么被每一场彩排盖住的。
+ *    那条链的回归靠 `packages/desktop/test/commercial-config-defaults.test.ts`
+ *    与 `commercial-client-defaults.test.ts`（真临时 profile、真读配置）。
  *
  * ## 会话为什么要连 `Local State` 一起拷
  *

@@ -118,12 +118,15 @@ is the owner's real card. Leaving it in means the app boots already-licensed,
 would no longer be testing activation at all.
 
 **Boundary, stated explicitly.** `supabaseUrl`, `supabaseAnonKey`,
-`workspacePath` and `deviceId` are still provisioned. The client ships **no**
-built-in Supabase address — the only read is
-`config?.commercial?.supabaseUrl ?? ''`, and the `commercial:set-config` IPC has
-no UI caller — so provisioning them is the product's own out-of-band setup, not
-a bypass. The single field being withheld is `licenseKey`, i.e. the one thing
-that could substitute for activation.
+`workspacePath` and `deviceId` are still provisioned. Provisioning the first two
+is the product's own out-of-band setup, not a bypass — and as of 2026-09-18 they
+are also the **shipped defaults** (`packages/shared/src/commercial-defaults.ts`,
+resolved at read time), so a provisioned profile no longer has to carry them at
+all; the `commercial:set-config` IPC still has no UI caller. The single field
+being withheld is `licenseKey`, i.e. the one thing that could substitute for
+activation. (Note the flip side: because every packaged spec provisions a
+profile, none of them can see the "clean machine" path — see
+`packages/desktop/test/commercial-config-defaults.test.ts` for the coverage of that.)
 
 `deviceId` stays shared with the dev profile (existing behaviour) so the
 fingerprint is stable: re-runs hit the idempotent branch instead of churning

@@ -1,4 +1,5 @@
 import { ipcMain } from 'electron';
+import { resolveCommercialCredentials } from '@clawwork/shared';
 import { readConfig, updateConfig } from '../workspace/config.js';
 import { clearCommercialSession, resetCommercialClient } from '../commercial/client.js';
 import {
@@ -24,11 +25,16 @@ import {
 export function registerCommercialHandlers(): void {
   ipcMain.handle('commercial:get-config', () => {
     const config = readConfig()?.commercial;
+    // 读取期兜底：干净机器上 `commercial` 段是空的，这里必须回落到随包下发的
+    // 生产默认值 —— 渲染层**只凭这个返回值**决定进不进登录页（App.tsx 里
+    // `Boolean(supabaseUrl && hasAnonKey)`），返回空就等于屏幕上没有登录页。
+    // 见 `@clawwork/shared` 的 resolveCommercialCredentials / P0 事故记录。
+    const { supabaseUrl, supabaseAnonKey } = resolveCommercialCredentials(config);
     return {
       ok: true,
       result: {
-        supabaseUrl: config?.supabaseUrl ?? '',
-        hasAnonKey: Boolean(config?.supabaseAnonKey),
+        supabaseUrl,
+        hasAnonKey: Boolean(supabaseAnonKey),
         licenseKey: config?.licenseKey ?? '',
       },
     };
@@ -39,7 +45,10 @@ export function registerCommercialHandlers(): void {
     updateConfig({
       commercial: {
         ...current,
-        supabaseUrl: payload.supabaseUrl?.trim() ?? current.supabaseUrl,
+        // 空串 = **不改动**（两个字段一致）。这里是唯一会写凭据的 IPC：留一个
+        // "清得掉 url、清不掉 key"的口子，就会造出"用户 URL + 生产 key"这种
+        // 必坏、且报错读不出原因的半配置（与刚修的 P0 同一类症状）。
+        supabaseUrl: payload.supabaseUrl?.trim() || current.supabaseUrl,
         supabaseAnonKey: payload.supabaseAnonKey?.trim() || current.supabaseAnonKey,
       },
     });

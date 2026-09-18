@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { app, safeStorage } from 'electron';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import WebSocketImpl from 'ws';
+import { resolveCommercialCredentials } from '@clawwork/shared';
 import { readConfig } from '../workspace/config.js';
 
 // @supabase/supabase-js builds its Realtime client eagerly and requires a global
@@ -63,9 +64,13 @@ function createStorage(): SecureStorage {
 }
 
 export function getCommercialClient(): SupabaseClient | null {
-  const config = readConfig();
-  const url = config?.commercial?.supabaseUrl ?? '';
-  const anonKey = config?.commercial?.supabaseAnonKey ?? '';
+  // 读取期兜底（2026-09-18 P0）：干净机器上 `commercial` 段是空的，回落到随包
+  // 下发的生产默认值。不兜底就是这里返回 null —— 登录/激活/用量全部静默失败。
+  // 兜底只发生在**读取期**，绝不写回 config：见 shared/commercial-defaults.ts。
+  const { supabaseUrl: url, supabaseAnonKey: anonKey } = resolveCommercialCredentials(readConfig()?.commercial);
+  // 常量非空时这条恒假，留着是因为**它就是"凭据为空 ⇒ 返回 null"这个契约的落点**：
+  // 哪天常量被清空（占位符化、分支裁剪），这里必须继续挡住，而不是拿着空 URL 去
+  // createClient（那会在别处炸，报错还读不出原因）。
   if (!url || !anonKey) return null;
 
   const nextKey = `${url}::${anonKey}`;
