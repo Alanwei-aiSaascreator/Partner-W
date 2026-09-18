@@ -55,7 +55,17 @@ export const DEFAULT_KB_CANDIDATE_LIMIT = 30;
 export const DEFAULT_KB_EMBED_BATCH_SIZE = 16;
 
 export type KbIngestSkipReason = 'empty' | 'unsupported' | 'unreadable' | 'missing';
-export type KbDegradedReason = 'no-engine' | 'engine-error' | 'no-vectors';
+/**
+ * 向量没能参与排序的**原因**（界面据此说明"为什么这样排"）。
+ *
+ * ⚠️ `no-recall` 与 `no-vectors` 是**两件事**，别合并：
+ *   - `no-recall`：关键词一条候选都没召回（`candidateCount === 0`）。向量好端端在库里，
+ *     只是**没有东西可排** —— 因为召回那一步是纯 FTS（见 `search` 的注释）。
+ *   - `no-vectors`：候选有，但都没有可用的向量。
+ * 合并的代价实测过：中文查同义词（`unicode61` 不切词 ⇒ 零召回）会被说成
+ * "资料还没有建立向量索引"，用户照着重重建一遍还是搜不到。
+ */
+export type KbDegradedReason = 'no-engine' | 'engine-error' | 'no-recall' | 'no-vectors';
 
 export interface KbIngestOutcome {
   status: 'indexed' | 'unchanged' | 'skipped';
@@ -525,13 +535,18 @@ export function createKbService(deps: KbServiceDeps): KbService {
       });
 
       const degraded = ranked.mode === 'keyword';
+      // 判定顺序即因果顺序：先"有没有引擎"，再"引擎这次行不行"，再"有没有东西可排"，
+      // 最后才是"排的东西里有没有向量"。⚠️ `candidates.length === 0` 必须排在
+      // `'no-vectors'` **前面** —— 否则零召回会被说成"资料还没建向量索引"（假的）。
       const degradedReason: KbDegradedReason | undefined = !degraded
         ? undefined
         : !isEmbeddingEngineReady(engine)
           ? 'no-engine'
           : engineFailed || !queryVector
             ? 'engine-error'
-            : 'no-vectors';
+            : candidates.length === 0
+              ? 'no-recall'
+              : 'no-vectors';
 
       return { hits: ranked.hits, mode: ranked.mode, degraded, degradedReason, candidateCount: candidates.length };
     },

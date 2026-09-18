@@ -102,6 +102,21 @@ async function renderPanel(): Promise<void> {
   });
 }
 
+/** 在搜索框里输入并回车。 */
+async function searchFor(query: string): Promise<void> {
+  const input = container.querySelector('input') as HTMLInputElement;
+  await act(async () => {
+    // ⚠️ 直接 `input.value = x` **不会**触发 React 的 onChange —— React 自己维护了一个
+    //    value tracker，看到"值没变"就跳过。必须走原型上的原生 setter 再派发 input 事件。
+    const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+    setValue.call(input, query);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await act(async () => {
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  });
+}
+
 /** Radix 的弹层走 portal 挂到 body ⇒ 断言要看 `document.body`，不是 container。 */
 const bodyText = (): string => document.body.textContent ?? '';
 /** 按文案找按钮。找不到时**直接抛**：静默返回 undefined 会让后面的断言变成假绿。 */
@@ -278,6 +293,41 @@ describe('重建索引（T-c1 第二条）', () => {
   });
 });
 
+describe('检索模式（T-c1 第三条）', () => {
+  /**
+   * ⭐ 这一条钉的是**一句会让用户白忙的提示**。
+   *
+   * 召回是纯 FTS 关键词、向量只在重排时进场（见 `service.ts` 的 `search`），所以
+   * 关键词零召回时界面会显示「资料还没有建立向量索引」—— 而向量好端端在库里。
+   * 用户照它去点「重建索引」，重建完还是一条都搜不到。
+   *
+   * 中文尤其容易踩：`unicode61` 不切词，`收入主要来自软件订阅` 是一整个 token，
+   * 所以查 `订阅` 就是零召回（`kb-store.test.ts` 里那条"已知边界"）。
+   */
+  it('⭐ 关键词零召回 ⇒ 说"没匹配上"，不能说"资料还没有建立向量索引"', async () => {
+    stubClawwork({
+      kbSearch: vi.fn(async () => ({
+        ok: true as const,
+        outcome: {
+          mode: 'keyword' as const,
+          degraded: true,
+          degradedReason: 'no-recall' as const,
+          hits: [],
+          candidateCount: 0,
+        },
+      })),
+    });
+    await renderPanel();
+
+    await searchFor('订阅');
+
+    expect(container.textContent).toContain('kb.degraded.noRecall');
+    expect(container.textContent, '"没有向量索引"会让用户去重建一个好端端的索引').not.toContain(
+      'kb.degraded.noVectors',
+    );
+  });
+});
+
 describe('资料库面板', () => {
   it('⭐ 「还没就绪」显示成**准备中**，不是"还没有资料"（否则用户以为东西丢了）', async () => {
     stubClawwork({
@@ -356,18 +406,7 @@ describe('资料库面板', () => {
     });
 
     await renderPanel();
-
-    const input = container.querySelector('input') as HTMLInputElement;
-    await act(async () => {
-      // ⚠️ 直接 `input.value = x` **不会**触发 React 的 onChange —— React 自己维护了一个
-      //    value tracker，看到"值没变"就跳过。必须走原型上的原生 setter 再派发 input 事件。
-      const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
-      setValue.call(input, '收入');
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-    });
-    await act(async () => {
-      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-    });
+    await searchFor('收入');
 
     expect(container.textContent).toContain('预算说明');
     expect(container.textContent).toContain('0.83');

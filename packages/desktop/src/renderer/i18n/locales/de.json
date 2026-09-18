@@ -866,6 +866,7 @@
     "addPartial": "{{added}} hinzugefügt, {{skipped}} übersprungen",
     "degraded.engineError": "Das Embedding-Modell war diesmal nicht nutzbar – Rückfall auf Stichwörter.",
     "degraded.noEngine": "Das lokale Embedding-Modell ist nicht verfügbar – diese Suche nutzte nur Stichwörter.",
+    "degraded.noRecall": "Kein Abschnitt passte zu Ihren Suchbegriffen – versuchen Sie eine andere Formulierung",
     "degraded.noVectors": "Für diese Quellen gibt es noch keinen Vektorindex – nur Stichwortsuche.",
     "empty": "Noch nichts vorhanden. Textdateien hinzufügen, dann sind sie durchsuchbar.",
     "engineKeywordOnly": "Derzeit nur Stichwortsuche (lokales Embedding-Modell nicht verfügbar)",

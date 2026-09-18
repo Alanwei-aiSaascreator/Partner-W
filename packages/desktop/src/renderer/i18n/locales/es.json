@@ -866,6 +866,7 @@
     "addPartial": "{{added}} añadidos, {{skipped}} omitidos",
     "degraded.engineError": "Esta vez no se pudo usar el modelo de embeddings; se usaron palabras clave.",
     "degraded.noEngine": "El modelo de embeddings local no está disponible; esta búsqueda usó solo palabras clave.",
+    "degraded.noRecall": "Ningún fragmento coincide con tus palabras clave; prueba con otras",
     "degraded.noVectors": "Estas fuentes aún no tienen índice vectorial; solo se usaron palabras clave.",
     "empty": "Aún no hay nada. Añade archivos de texto para poder buscarlos.",
     "engineKeywordOnly": "Ahora mismo solo búsqueda por palabras clave (modelo de embeddings local no disponible)",

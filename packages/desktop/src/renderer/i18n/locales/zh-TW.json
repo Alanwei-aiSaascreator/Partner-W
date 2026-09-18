@@ -866,6 +866,7 @@
     "addPartial": "加了 {{added}} 份，{{skipped}} 份沒能加進來",
     "degraded.engineError": "嵌入模型這次沒能用上，已退回關鍵字比對。",
     "degraded.noEngine": "本機嵌入模型不可用，這次搜尋只用了關鍵字比對。",
+    "degraded.noRecall": "關鍵詞一條都沒對上，換個說法再試試",
     "degraded.noVectors": "資料還沒建立向量索引，這次搜尋只用了關鍵字比對。",
     "empty": "還沒有資料。加入文字檔後就能在這裡搜到它們。",
     "engineKeywordOnly": "目前為純關鍵字檢索（本機嵌入模型不可用）",

@@ -11,7 +11,7 @@ import WindowTitlebar from '@/components/semantic/WindowTitlebar';
 import ConfirmDialog from '@/components/semantic/ConfirmDialog';
 import NoteComposerDialog from './NoteComposerDialog';
 import { toast } from '@/lib/toast';
-import type { KbSearchHitView, KbSourceSummaryView, KbStatsView } from '../../../preload/clawwork';
+import type { KbSearchHitView, KbSearchOutcomeView, KbSourceSummaryView, KbStatsView } from '../../../preload/clawwork';
 
 /**
  * 资料库（T6）—— 工作区本地库 + **本地嵌入**检索。
@@ -36,12 +36,33 @@ type LoadState =
   | { kind: 'ready'; stats: KbStatsView; engine: string | null; sources: KbSourceSummaryView[] }
   | { kind: 'error'; message: string };
 
+type KbDegradedReason = NonNullable<KbSearchOutcomeView['degradedReason']>;
+
+/**
+ * 降级原因 → i18n key 后缀。
+ *
+ * ⚠️ 表里存的是**后缀**，整 key 由 `t(\`kb.degraded.${后缀}\`)` 拼出来。这不是风格问题：
+ *    `check:i18n` 的扫描器只认字面量 key 和这种模板串 —— 把整 key 当字符串常量放进表里，
+ *    它认不出来，那些 key 会被判成"没有任何地方在用"。
+ *
+ * ⚠️ 类型写成 `Record<KbDegradedReason, string>` 是**故意的**：将来在 preload 的
+ *    `KbSearchOutcomeView` 里加了新原因，这里少写一行就是编译错误。
+ *    之前那个内联三元没有这层保护 —— 新原因会静默落进最后那个 `else`，
+ *    显示成**另一句**降级说明（我这次加的 `'no-recall'` 差点就这样）。
+ */
+const DEGRADED_SUFFIX: Record<KbDegradedReason, string> = {
+  'no-engine': 'noEngine',
+  'engine-error': 'engineError',
+  'no-recall': 'noRecall',
+  'no-vectors': 'noVectors',
+};
+
 export default function KnowledgeBase(): React.JSX.Element {
   const { t } = useTranslation();
   const [state, setState] = useState<LoadState>({ kind: 'loading' });
   const [query, setQuery] = useState('');
   const [hits, setHits] = useState<KbSearchHitView[] | null>(null);
-  const [degraded, setDegraded] = useState<'no-engine' | 'engine-error' | 'no-vectors' | null>(null);
+  const [degraded, setDegraded] = useState<KbDegradedReason | null>(null);
   const [searching, setSearching] = useState(false);
   const [pendingRemove, setPendingRemove] = useState<KbSourceSummaryView | null>(null);
   const [noteOpen, setNoteOpen] = useState(false);
@@ -260,9 +281,7 @@ export default function KnowledgeBase(): React.JSX.Element {
 
                 {degraded && (
                   <p className="type-meta mt-2 text-[var(--text-muted)]">
-                    {t(
-                      `kb.degraded.${degraded === 'no-engine' ? 'noEngine' : degraded === 'engine-error' ? 'engineError' : 'noVectors'}`,
-                    )}
+                    {t(`kb.degraded.${DEGRADED_SUFFIX[degraded]}`)}
                   </p>
                 )}
 

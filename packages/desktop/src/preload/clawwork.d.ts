@@ -332,10 +332,18 @@ export interface KbSearchHitView {
 
 export interface KbSearchOutcomeView {
   hits: KbSearchHitView[];
+  /** 这次实际用的是哪种排序：`hybrid` = 关键词 + 语义，`keyword` = 只有关键词。 */
   mode: 'keyword' | 'hybrid';
-  /** 向量没参与排序（没引擎 / 嵌不了）—— 界面据此标"离线检索"。 */
+  /** 向量没参与排序（没引擎 / 嵌不了 / 没东西可排）—— 界面据此标"离线检索"。 */
   degraded: boolean;
-  degradedReason?: 'no-engine' | 'engine-error' | 'no-vectors';
+  /**
+   * 向量为什么没参与排序。⚠️ `no-recall` 与 `no-vectors` 是两件事：
+   * 前者是"关键词一条候选都没召回"（向量在库里，只是没东西可排），
+   * 后者才是"候选都没有可用向量"。合并会让用户去重建一个好端端的索引
+   *（中文查同义词很常见：`unicode61` 不切词 ⇒ 零召回）。
+   */
+  degradedReason?: 'no-engine' | 'engine-error' | 'no-recall' | 'no-vectors';
+  /** 关键词召回了几条候选（**不是**命中数：重排后才截到 `hits`）。 */
   candidateCount: number;
 }
 

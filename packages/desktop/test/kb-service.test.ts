@@ -376,6 +376,59 @@ describe('换嵌入模型', () => {
   });
 });
 
+describe('检索模式与降级原因（用户看到的"为什么这样排"）', () => {
+  /**
+   * ⭐ 这一条钉的是**一句会误导人的提示**。
+   *
+   * 召回这一步是**纯 FTS 关键词**（`searchKbChunks` 里只有 `WHERE kb_chunks_fts MATCH ?`），
+   * 向量只在**重排**时进场（`rankKbCandidates`）。所以关键词零召回时，候选为空 ⇒
+   * `vectorHits = 0` ⇒ `mode = 'keyword'`，而原因链一路落到兜底的 `'no-vectors'` ——
+   * 界面于是显示「资料还没有建立向量索引」。
+   *
+   * **那句话是假的**：向量好端端地在库里、引擎也在。真因是"关键词一个都没召回"。
+   * 用户按那句提示去点「重建索引」，重建完还是搜不到。
+   */
+  it("⭐ 关键词零召回时不能说'没有向量索引'——向量在库里好好的", async () => {
+    service = createService(createFakeEngine());
+    const outcome = await service.addNote({ title: '预算说明', text: NOTE }); // 正文里有"收入""软件订阅"
+    expect(outcome.embeddedCount, '先确认向量真的嵌上了，否则这条测试是空的').toBeGreaterThan(0);
+
+    // `订阅` 在正文里，但 `unicode61` 不切中文词（`收入主要来自软件订阅` 是一整个 token），
+    // 所以 `订阅*` 匹配不上 —— 这是 kb-store.test.ts 里那条"已知边界"。
+    const result = await service.search('订阅');
+
+    expect(result.candidateCount, '关键词召回是 0 条候选').toBe(0);
+    expect(result.hits).toHaveLength(0);
+    expect(result.degradedReason, "说'没有向量索引'会让用户去点重建，重建完照样搜不到").toBe('no-recall');
+  });
+
+  it('候选有、但都没有可用向量 ⇒ 这才是真的 no-vectors（与上一条分开）', async () => {
+    service = createService(createFakeEngine());
+    const outcome = await service.addNote({ title: '预算说明', text: NOTE });
+    // 把向量全清掉：候选还在（FTS 走文本），只是没向量可用
+    getSqlite()
+      ?.prepare('UPDATE kb_chunks SET vector = NULL, embedding_model = NULL, state = ? WHERE source_id = ?')
+      .run('pending_embedding', outcome.sourceId);
+
+    const result = await service.search('收入');
+
+    expect(result.candidateCount, '关键词召回得到候选').toBeGreaterThan(0);
+    expect(result.degradedReason).toBe('no-vectors');
+  });
+
+  it('混合检索时如实报 mode=hybrid 且没有任何降级原因（界面的正面说明靠它）', async () => {
+    service = createService(createFakeEngine());
+    await service.addNote({ title: '预算说明', text: NOTE });
+
+    const result = await service.search('收入');
+
+    expect(result.mode).toBe('hybrid');
+    expect(result.degraded).toBe(false);
+    expect(result.degradedReason, 'hybrid 时不该有原因，有的话界面会同时显示"混合检索"和一句降级说明').toBeUndefined();
+    expect(result.candidateCount).toBeGreaterThan(0);
+  });
+});
+
 describe('重复入库与重建', () => {
   it('内容没变时重复加入 ⇒ unchanged：不重切、不重嵌、不重复花积分', async () => {
     const engine = createFakeEngine();
