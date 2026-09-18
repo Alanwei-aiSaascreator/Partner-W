@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { lstat, open, realpath, rename, stat, unlink, type FileHandle } from 'node:fs/promises';
+import type { BigIntStats } from 'node:fs';
 import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import type { ArtifactAvailability } from '@clawwork/shared';
 
@@ -17,11 +18,45 @@ interface ArtifactAccessHooks {
 }
 
 interface FileSnapshot {
-  dev: number;
-  ino: number;
+  /**
+   * ⚠️ `dev` / `ino` 存**字符串**，不是 number —— 见 `snapshotOf`。
+   * 其余字段保持 number：调用方到处按 number 用（读循环、`hashHandle(size)`）。
+   */
+  dev: string;
+  ino: string;
   size: number;
   mtimeMs: number;
   ctimeMs: number;
+}
+
+/**
+ * 从 **bigint** 的 stat 结果造快照。
+ *
+ * ## 🔴 为什么必须用 bigint（2026-09-19 查出的偶发失败真因）
+ *
+ * `ino` 是 **64 位**文件索引，而 Node 默认用 **JS Number** 暴露它。本机（NTFS）的真实值
+ * 在 ~1.1e16，**超过 2^53**（9.007e15）⇒ Number 的间距是 **2** ⇒ **相邻的两个 ino 会舍入成
+ * 同一个 Number**。实测连开 200 个文件撞了 **5 次**（约 2.5%）。
+ *
+ * 后果：`sameIdentity` 把两个毫不相干的文件判成"同一个文件"，`copyArtifactToDestination`
+ * 于是在 `destination matches source` 上**拒绝保存**（或 `openVerifiedArtifactFile` 报
+ * `artifact unsafe`）—— 表现为"偶尔就是存不了"，重试一下又好了。
+ *
+ * ⚠️ 丢精度只会让**不同**的值相等，不会让**相同**的值不等（舍入是确定的函数）
+ *    ⇒ 硬链接那类"本该判相同"的保护**不受影响**，出错方向是**保守的**（宁可不存也不写坏）。
+ *    这也正是它一直没被当成 bug、只被记成"测试抖动"的原因。
+ *
+ * ⚠️ 别改回 number：`Number(stats.ino)` 一旦超 2^53 就再也回不来，
+ *    而"偶尔失败"在真机上极难复现（这次是靠单文件连跑 30 遍才逮到）。
+ */
+function snapshotOf(stats: Pick<BigIntStats, 'dev' | 'ino' | 'size' | 'mtimeMs' | 'ctimeMs'>): FileSnapshot {
+  return {
+    dev: stats.dev.toString(),
+    ino: stats.ino.toString(),
+    size: Number(stats.size),
+    mtimeMs: Number(stats.mtimeMs),
+    ctimeMs: Number(stats.ctimeMs),
+  };
 }
 
 interface VerifiedArtifactFile {
@@ -60,7 +95,7 @@ async function openVerifiedArtifactFile(
 
   let link: Awaited<ReturnType<typeof lstat>>;
   try {
-    link = await lstat(candidate);
+    link = await lstat(candidate, { bigint: true });
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') throw new Error('artifact missing');
     throw new Error('artifact unsafe');
@@ -71,9 +106,14 @@ async function openVerifiedArtifactFile(
 
   const handle = await open(canonical, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
-    const snapshot = await handle.stat();
-    const pathSnapshot = await stat(canonical);
-    if (!snapshot.isFile() || !sameIdentity(snapshot, link) || !sameIdentity(snapshot, pathSnapshot)) {
+    const raw = await handle.stat({ bigint: true });
+    const snapshot = snapshotOf(raw);
+    const pathSnapshot = await stat(canonical, { bigint: true });
+    if (
+      !raw.isFile() ||
+      !sameIdentity(snapshot, snapshotOf(link)) ||
+      !sameIdentity(snapshot, snapshotOf(pathSnapshot))
+    ) {
       throw new Error('artifact unsafe');
     }
     if (hooks.maxBytes !== undefined && snapshot.size > hooks.maxBytes) throw new Error('artifact too large');
@@ -99,11 +139,11 @@ async function hashHandle(handle: FileHandle, size: number): Promise<string> {
 }
 
 async function assertStableSource(file: VerifiedArtifactFile, expectedHash: string): Promise<void> {
-  const after = await file.handle.stat();
+  const after = await file.handle.stat({ bigint: true });
   let pathSnapshot: Awaited<ReturnType<typeof lstat>>;
   let canonical: string;
   try {
-    pathSnapshot = await lstat(file.absolutePath);
+    pathSnapshot = await lstat(file.absolutePath, { bigint: true });
     canonical = await realpath(file.absolutePath);
   } catch {
     throw new Error('artifact changed while reading');
@@ -111,9 +151,9 @@ async function assertStableSource(file: VerifiedArtifactFile, expectedHash: stri
   if (
     pathSnapshot.isSymbolicLink() ||
     canonical !== file.absolutePath ||
-    !sameSnapshot(file.snapshot, after) ||
-    !sameIdentity(after, pathSnapshot) ||
-    (await hashHandle(file.handle, after.size)) !== expectedHash
+    !sameSnapshot(file.snapshot, snapshotOf(after)) ||
+    !sameIdentity(snapshotOf(after), snapshotOf(pathSnapshot)) ||
+    (await hashHandle(file.handle, Number(after.size))) !== expectedHash
   ) {
     throw new Error('artifact changed while reading');
   }
@@ -186,9 +226,9 @@ async function copyArtifactToDestinationWithHooks(
     const destinationParent = await realpath(dirname(destination));
     if (!isWithin(destinationParent, destination)) throw new Error('destination unsafe');
     try {
-      const destinationInfo = await lstat(destination);
+      const destinationInfo = await lstat(destination, { bigint: true });
       if (destinationInfo.isSymbolicLink() || !destinationInfo.isFile()) throw new Error('destination unsafe');
-      if (sameIdentity(source.snapshot, destinationInfo)) throw new Error('destination matches source');
+      if (sameIdentity(source.snapshot, snapshotOf(destinationInfo))) throw new Error('destination matches source');
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }
@@ -220,13 +260,13 @@ async function copyArtifactToDestinationWithHooks(
     await target.sync();
     const sourceDigest = hash.digest('hex');
     await assertStableSource(source, sourceDigest);
-    const targetSnapshot = await target.stat();
-    const targetPathSnapshot = await lstat(temporaryPath);
+    const targetSnapshot = await target.stat({ bigint: true });
+    const targetPathSnapshot = await lstat(temporaryPath, { bigint: true });
     if (
       !targetSnapshot.isFile() ||
-      targetSnapshot.size !== source.snapshot.size ||
-      !sameIdentity(targetSnapshot, targetPathSnapshot) ||
-      (await hashHandle(target, targetSnapshot.size)) !== sourceDigest
+      Number(targetSnapshot.size) !== source.snapshot.size ||
+      !sameIdentity(snapshotOf(targetSnapshot), snapshotOf(targetPathSnapshot)) ||
+      (await hashHandle(target, Number(targetSnapshot.size))) !== sourceDigest
     ) {
       throw new Error('destination verification failed');
     }
@@ -267,4 +307,8 @@ export function copyArtifactToDestination(
 export const __testing = Object.freeze({
   readVerifiedArtifactFile: readVerifiedArtifactFileWithHooks,
   copyArtifactToDestination: copyArtifactToDestinationWithHooks,
+  // 身份判定的那一条（2026-09-19 的 64 位 ino 丢精度）**只有**把这两个露出来才测得到：
+  // 它要的是"两个不同的 64 位 ino 舍入成同一个 number"这种夹具，光靠真文件复现不了。
+  snapshotOf,
+  sameIdentity,
 });
