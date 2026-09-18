@@ -48,6 +48,14 @@ export interface UiState {
   settingsOpen: boolean;
   setSettingsOpen: (open: boolean) => void;
 
+  /**
+   * 「打开设置时先落在哪一页」（`null` = 用默认页）。
+   * ⚠️ 类型刻意是 `string | null`：页面枚举住在 desktop 渲染层，core 不该反向依赖它；
+   *    渲染层读的时候自己做合法性校验（不认识的值必须忽略，否则会渲染出空白页）。
+   */
+  settingsSection: string | null;
+  setSettingsSection: (section: string | null) => void;
+
   theme: Theme;
   setTheme: (theme: Theme) => void;
 
@@ -213,6 +221,8 @@ export function createUiStore(deps: UiStoreDeps) {
 
     settingsOpen: false,
     setSettingsOpen: (open) => set({ settingsOpen: open }),
+    settingsSection: null,
+    setSettingsSection: (section) => set({ settingsSection: section }),
 
     theme: 'light',
     setTheme: (theme) => set({ theme }),

@@ -16,11 +16,16 @@ const source = readFileSync(join(__dirname, '../src/main/index.ts'), 'utf8');
 
 describe('主进程启动顺序：埋点必须在开窗之前', () => {
   it('setupAnalytics() 的调用出现在 createWindow() 之前', () => {
-    const analyticsCall = source.indexOf('\n    setupAnalytics();');
-    const windowCall = source.indexOf('\n    createWindow();');
+    // ⚠️ 匹配**行首缩进不敏感**：这段启动块会被重排/嵌进分支里（T-U1 就把工作区准备
+    //    提到了最前，整块缩进从 4 空格变 6 空格）。钉缩进等于钉排版 —— 一旦重排，
+    //    测试会因为"找不到调用"而红，而它想守的次序其实没变（这种假红浪费过一次排查）。
+    const analyticsCall = source.search(/^\s*setupAnalytics\(\);/m);
+    const windowCall = source.search(/^\s*createWindow\(\);/m);
 
     expect(analyticsCall, 'index.ts 里找不到 `setupAnalytics();` 调用').toBeGreaterThan(-1);
     expect(windowCall, 'index.ts 里找不到 `createWindow();` 调用').toBeGreaterThan(-1);
+    // 注意：`createWindow` 还有第二处调用（`app.on('activate')` 里重建窗口），
+    // `search` 取的是**首次**出现，也就是启动块那处，正是要比较的那个。
     expect(analyticsCall).toBeLessThan(windowCall);
   });
 });

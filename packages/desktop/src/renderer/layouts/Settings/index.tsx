@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { motion as motionPresets, motionDuration } from '@/styles/design-tokens';
 import WindowTitlebar from '@/components/semantic/WindowTitlebar';
 import SettingsNav, { type SettingsSection } from './SettingsNav';
+import { useUiStore } from '@/stores/uiStore';
 import ActivationSection from './sections/ActivationSection';
 import AccountSection from './sections/AccountSection';
 import GeneralSection from './sections/GeneralSection';
@@ -39,11 +40,24 @@ export default function Settings({
   onEditOnboardingProfile,
 }: SettingsProps) {
   const { t } = useTranslation();
+  const requestedSection = useUiStore((s) => s.settingsSection);
+  const setRequestedSection = useUiStore((s) => s.setSettingsSection);
   const [activeSection, setActiveSection] = useState<SettingsSection>(initialSection);
 
   useEffect(() => {
     setActiveSection(initialSection);
   }, [initialSection]);
+
+  // 外部请求落在某一页时（例如「有新版本可用」的提示点进来）用它。
+  // ⚠️ 认不出的值必须**忽略** —— SECTION_COMPONENTS 取不到会渲染出空白页。
+  // 读完即清，否则下次打开设置还会跳到这一页。
+  useEffect(() => {
+    if (!requestedSection) return;
+    if (requestedSection in SECTION_COMPONENTS) {
+      setActiveSection(requestedSection as SettingsSection);
+    }
+    setRequestedSection(null);
+  }, [requestedSection, setRequestedSection]);
 
   const SectionComponent = SECTION_COMPONENTS[activeSection];
 

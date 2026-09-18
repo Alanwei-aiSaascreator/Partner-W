@@ -82,7 +82,10 @@ export function initAutoUpdater(): void {
   if (initialized) return;
   initialized = true;
 
-  autoUpdater.autoDownload = false;
+  // T-U3：远程/无人值守的用户不会主动去点「下载」，所以**默认自动下载**。
+  // 安装时机仍由用户决定：`autoInstallOnAppQuit` 让下载好的更新在退出时装上，
+  // 用户也可以提前在「设置 → 关于」里点安装。想回到"只提示不下载"把这里改回 false 即可。
+  autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
   autoUpdater.autoRunAppAfterInstall = true;
 
