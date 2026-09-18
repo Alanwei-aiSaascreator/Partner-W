@@ -22,7 +22,10 @@ describe('preload 暴露的埋点接口', () => {
   });
 
   it('payload 原样透传给 IPC（渲染层在 preload 里不做二次加工）', () => {
-    expect(preload).toContain("ipcRenderer.invoke('analytics:track', payload)");
+    // 只钉「通道 + 原样透传一个裸标识符」，不钉变量名与折行（同款先例
+    // `growth-preload-surface.test.ts`）：钉死 `payload` 这个名字会在任何一次
+    // 重命名/重排上误报，而行为没变。
+    expect(preload).toMatch(/analyticsTrack:[\s\S]{0,200}?invoke\(\s*'analytics:track',\s*[A-Za-z_$][\w$]*\s*\)/);
   });
 
   it('类型声明的返回值是 IpcResult<null>，不是默认的 Record', () => {

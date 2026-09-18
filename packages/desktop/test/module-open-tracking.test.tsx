@@ -86,9 +86,15 @@ describe('module_opened 节流单元（时钟与发送函数都可注入）', ()
 describe('module_opened 的渲染层接线', () => {
   let analyticsTrack: ReturnType<typeof vi.fn>;
 
+  // 单例的节流表活在**模块作用域**、跨用例共享：每条用例的基准时钟都单调前进
+  // 若干个节流窗口，免得复用同一 module 值时报文/漏报（把时钟重置回同一个基准
+  // 会恰好落回上一条记录出来的节流窗口里）。
+  let clockBase = Date.parse('2026-09-18T00:00:00Z');
+
   beforeEach(() => {
+    clockBase += 10 * THROTTLE_MS;
     vi.useFakeTimers();
-    vi.setSystemTime(new Date('2026-09-18T00:00:00Z'));
+    vi.setSystemTime(new Date(clockBase));
     analyticsTrack = vi.fn().mockResolvedValue({ ok: true, result: null });
     (window as unknown as { clawwork: Record<string, unknown> }).clawwork = { analyticsTrack };
   });
@@ -125,7 +131,7 @@ describe('module_opened 的渲染层接线', () => {
     unmount();
   });
 
-  it('同一个值再设一遍不算切换（不重复发）', () => {
+  it('同一个值再设一遍不算切换（不重复上报）', () => {
     useUiStore.setState({ mainView: 'files' });
     const { unmount } = render(<Probe />);
 
@@ -133,6 +139,44 @@ describe('module_opened 的渲染层接线', () => {
 
     expect(analyticsTrack).toHaveBeenCalledTimes(1);
     unmount();
+  });
+
+  it('满 60 秒后重挂载/再进入同一模块可以再发（接线层也过一遍时间）', () => {
+    useUiStore.setState({ mainView: 'market' });
+    const first = render(<Probe />);
+    expect(analyticsTrack).toHaveBeenCalledTimes(1);
+    first.unmount();
+
+    vi.advanceTimersByTime(THROTTLE_MS + 1);
+    const second = render(<Probe />);
+    second.unmount();
+
+    expect(analyticsTrack).toHaveBeenCalledTimes(2);
+  });
+
+  it('主进程拒收时只记日志：不产生未处理拒绝、也不打扰用户', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    analyticsTrack.mockRejectedValueOnce(new Error('no handler registered for analytics:track'));
+
+    const { unmount } = render(<Probe />);
+    await act(async () => {});
+    unmount();
+
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
+  it('preload 没注入 analyticsTrack 时静默跳过（版本漂移不许炸渲染层）', () => {
+    // 属性读取是同步抛：`.catch` 接不住它 —— 没有守卫的话这一句会把异常抛回 useEffect
+    (window as unknown as { clawwork: Record<string, unknown> }).clawwork = {};
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const { unmount } = render(<Probe />);
+    unmount();
+
+    expect(analyticsTrack).not.toHaveBeenCalled();
+    expect(errorSpy).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
   });
 
   it('App 挂了 useModuleOpenTracking（渲染层唯一一处上报调用点）', () => {

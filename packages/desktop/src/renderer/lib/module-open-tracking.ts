@@ -39,6 +39,10 @@ export function createModuleOpenTracker(deps: {
 
 /** 真正把事件交给主进程。埋点是尽力而为：失败只记一行日志，不打扰用户。 */
 export function sendModuleOpened(module: string): void {
+  // ⚠️ preload 与 renderer 可能版本漂移（dev 下 renderer 热更新、preload 是独立构建产物），
+  //    `analyticsTrack` 缺席时**属性读取本身就是同步抛** —— `.catch` 只接得住 reject，接不住它。
+  //    仓库既有件（usageStore / AboutSection）对同类漂移都做了 typeof 守卫。
+  if (typeof window.clawwork?.analyticsTrack !== 'function') return;
   window.clawwork
     .analyticsTrack({ event: 'module_opened', props: { module } })
     .catch((error: unknown) => console.error('[analytics] module_opened failed:', error));
