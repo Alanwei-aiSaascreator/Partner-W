@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import type { Dirent, Stats } from 'node:fs';
+import type { BigIntStats, Dirent } from 'node:fs';
+import { hasStrongIdentity, identityKey, identityOf, sameIdentity } from '../util/file-identity.js';
 import { closeSync, existsSync, fstatSync, lstatSync, openSync, opendirSync, realpathSync, statSync } from 'node:fs';
 import { extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { Artifact, ArtifactAvailability } from '@clawwork/shared';
@@ -82,30 +83,31 @@ interface TrustedTaskRoot {
   taskPath: string;
   realWorkspace: string;
   realTask: string;
-  workspaceIdentity: Stats;
-  taskIdentity: Stats;
+  workspaceIdentity: BigIntStats;
+  taskIdentity: BigIntStats;
 }
 
 interface Candidate {
   absolutePath: string;
   relativePath: string;
-  stats: Stats;
+  stats: BigIntStats;
   mimeType: string;
 }
 
 class UnstableArtifactError extends Error {}
 
-function hasStrongIdentity(stats: Stats): boolean {
-  return Number.isFinite(stats.dev) && Number.isFinite(stats.ino) && stats.dev > 0 && stats.ino > 0;
-}
-
-function sameIdentity(left: Stats, right: Stats): boolean {
-  return hasStrongIdentity(left) && hasStrongIdentity(right) && left.dev === right.dev && left.ino === right.ino;
-}
-
-function sameSnapshot(left: Stats, right: Stats): boolean {
+/**
+ * 身份判定一律走 `util/file-identity.ts`（bigint，逐位比）。
+ *
+ * ⚠️ 这段原来的守卫是 `Number.isFinite(dev) && Number.isFinite(ino) && dev > 0 && ino > 0`，
+ *    **挡不住丢精度**：`ino` 是 64 位，Number 在超过 2^53 后会把**相邻的两个值**舍入成同一个
+ *    ⇒ 两个不同的文件被判成「同一个」。而这里几处全是**变更检测 / 防掉包**
+ *    （「扫描期间这个文件/目录被换过吗」），误判 = **fail-open**：
+ *    把变了的当成没变 ⇒ 索引到陈旧内容、或把别的内容当成用户那份，**不报错、只出错**。
+ */
+function sameSnapshot(left: BigIntStats, right: BigIntStats): boolean {
   return (
-    sameIdentity(left, right) &&
+    sameIdentity(identityOf(left), identityOf(right)) &&
     left.size === right.size &&
     left.mtimeMs === right.mtimeMs &&
     left.ctimeMs === right.ctimeMs
@@ -124,18 +126,18 @@ function isWithin(parent: string, child: string): boolean {
 function trustedTaskRoot(workspacePath: string, taskIdValue: string): TrustedTaskRoot {
   const taskId = validateImportTaskId(taskIdValue);
   try {
-    const workspaceIdentity = lstatSync(workspacePath);
+    const workspaceIdentity = lstatSync(workspacePath, { bigint: true });
     const realWorkspace = realpathSync.native(workspacePath);
     const taskPath = join(workspacePath, taskId);
-    const taskIdentity = lstatSync(taskPath);
+    const taskIdentity = lstatSync(taskPath, { bigint: true });
     const realTask = realpathSync.native(taskPath);
     if (
       workspaceIdentity.isSymbolicLink() ||
       taskIdentity.isSymbolicLink() ||
       !workspaceIdentity.isDirectory() ||
       !taskIdentity.isDirectory() ||
-      !hasStrongIdentity(workspaceIdentity) ||
-      !hasStrongIdentity(taskIdentity) ||
+      !hasStrongIdentity(identityOf(workspaceIdentity)) ||
+      !hasStrongIdentity(identityOf(taskIdentity)) ||
       !isWithin(realWorkspace, realTask) ||
       !samePath(realTask, resolve(realWorkspace, taskId))
     ) {
@@ -149,15 +151,15 @@ function trustedTaskRoot(workspacePath: string, taskIdValue: string): TrustedTas
 
 function verifyTrustedRoot(root: TrustedTaskRoot): void {
   try {
-    const workspaceIdentity = lstatSync(root.workspacePath);
-    const taskIdentity = lstatSync(root.taskPath);
+    const workspaceIdentity = lstatSync(root.workspacePath, { bigint: true });
+    const taskIdentity = lstatSync(root.taskPath, { bigint: true });
     if (
       workspaceIdentity.isSymbolicLink() ||
       taskIdentity.isSymbolicLink() ||
       !workspaceIdentity.isDirectory() ||
       !taskIdentity.isDirectory() ||
-      !sameIdentity(workspaceIdentity, root.workspaceIdentity) ||
-      !sameIdentity(taskIdentity, root.taskIdentity) ||
+      !sameIdentity(identityOf(workspaceIdentity), identityOf(root.workspaceIdentity)) ||
+      !sameIdentity(identityOf(taskIdentity), identityOf(root.taskIdentity)) ||
       !samePath(realpathSync.native(root.workspacePath), root.realWorkspace) ||
       !samePath(realpathSync.native(root.taskPath), root.realTask)
     ) {
@@ -172,8 +174,14 @@ function normalizedRelativePath(taskPath: string, absolutePath: string): string 
   return relative(taskPath, absolutePath).split(sep).join('/');
 }
 
-function signature(stats: Stats): string {
-  return `${stats.dev}:${stats.ino}:${stats.size}:${stats.mtimeMs}:${stats.ctimeMs}`;
+/**
+ * 基线签名。⚠️ 身份部分必须用 `identityKey`（bigint 的精确值）：
+ *    这里比的是「内容没变就跳过」，用 Number 版的身份会让两个**不同**文件的签名相同
+ *    ⇒ 该处理的被跳过 ⇒ **陈旧数据**。
+ * ⚠️ 换格式会让**旧基线一次性作废**（多跑一轮全量），方向是安全的（多做不会漏）。
+ */
+function signature(stats: BigIntStats): string {
+  return `${identityKey(identityOf(stats))}:${stats.size}:${stats.mtimeMs}:${stats.ctimeMs}`;
 }
 
 function excludedName(name: string): boolean {
@@ -198,13 +206,13 @@ function artifactType(mimeType: string): Artifact['type'] {
 }
 
 function safeDirectoryEntries(directoryPath: string, taskRoot: string): Dirent[] {
-  const before = lstatSync(directoryPath);
+  const before = lstatSync(directoryPath, { bigint: true });
   const realDirectory = realpathSync.native(directoryPath);
-  const canonical = statSync(realDirectory);
+  const canonical = statSync(realDirectory, { bigint: true });
   if (
     before.isSymbolicLink() ||
     !before.isDirectory() ||
-    !sameIdentity(before, canonical) ||
+    !sameIdentity(identityOf(before), identityOf(canonical)) ||
     !isWithin(taskRoot, realDirectory) ||
     !samePath(realDirectory, directoryPath)
   ) {
@@ -218,8 +226,11 @@ function safeDirectoryEntries(directoryPath: string, taskRoot: string): Dirent[]
       if (!entry) break;
       entries.push(entry);
     }
-    const after = lstatSync(directoryPath);
-    if (!sameIdentity(before, after) || !samePath(realpathSync.native(directoryPath), realDirectory)) {
+    const after = lstatSync(directoryPath, { bigint: true });
+    if (
+      !sameIdentity(identityOf(before), identityOf(after)) ||
+      !samePath(realpathSync.native(directoryPath), realDirectory)
+    ) {
       throw new Error('task output directory identity changed');
     }
     directory.closeSync();
@@ -264,9 +275,9 @@ function collectPaths(
         skipped.push(relativePath);
         continue;
       }
-      let stats: Stats;
+      let stats: BigIntStats;
       try {
-        stats = lstatSync(absolutePath);
+        stats = lstatSync(absolutePath, { bigint: true });
       } catch {
         skipped.push(relativePath);
         continue;
@@ -290,18 +301,19 @@ function collectPaths(
         continue;
       }
       const mimeType = mimeTypeFor(entry.name);
-      if (!stats.isFile() || !mimeType || !hasStrongIdentity(stats) || stats.size <= 0 || stats.size > MAX_FILE_BYTES) {
+      const size = Number(stats.size);
+      if (!stats.isFile() || !mimeType || !hasStrongIdentity(identityOf(stats)) || size <= 0 || size > MAX_FILE_BYTES) {
         skipped.push(relativePath);
         continue;
       }
       if (baseline?.[relativePath] === signature(stats)) continue;
-      if (candidates.length >= budgets.maxResults || totalBytes + stats.size > budgets.maxTotalBytes) {
+      if (candidates.length >= budgets.maxResults || totalBytes + size > budgets.maxTotalBytes) {
         budgetExhausted = true;
         skipped.push(relativePath);
         continue;
       }
       candidates.push({ absolutePath, relativePath, stats, mimeType });
-      totalBytes += stats.size;
+      totalBytes += size;
     }
     if (budgetExhausted && visited >= budgets.maxVisited) break;
   }
@@ -366,12 +378,12 @@ async function stableCandidateOnce(
   root: TrustedTaskRoot,
   candidate: Candidate,
   hooks: ReconcileHooks,
-): Promise<{ candidate: Candidate; fd: number; stats: Stats } | null> {
+): Promise<{ candidate: Candidate; fd: number; stats: BigIntStats } | null> {
   let fd = -1;
   try {
     fd = openSync(candidate.absolutePath, 'r');
-    const opened = fstatSync(fd);
-    const pathStats = lstatSync(candidate.absolutePath);
+    const opened = fstatSync(fd, { bigint: true });
+    const pathStats = lstatSync(candidate.absolutePath, { bigint: true });
     const realFile = realpathSync.native(candidate.absolutePath);
     if (
       pathStats.isSymbolicLink() ||
@@ -386,8 +398,8 @@ async function stableCandidateOnce(
     }
     await hooks.beforeSecondSnapshot?.({ absolutePath: candidate.absolutePath, relativePath: candidate.relativePath });
     await new Promise((resolvePromise) => setTimeout(resolvePromise, hooks.stabilityDelayMs ?? STABILITY_DELAY_MS));
-    const secondHandle = fstatSync(fd);
-    const secondPath = lstatSync(candidate.absolutePath);
+    const secondHandle = fstatSync(fd, { bigint: true });
+    const secondPath = lstatSync(candidate.absolutePath, { bigint: true });
     if (!sameSnapshot(opened, secondHandle) || !sameSnapshot(opened, secondPath)) {
       closeSync(fd);
       return null;
@@ -407,15 +419,15 @@ function refreshCandidate(root: TrustedTaskRoot, relativePath: string): Candidat
   try {
     verifyTrustedRoot(root);
     const absolutePath = resolve(root.realTask, relativePath);
-    const stats = lstatSync(absolutePath);
+    const stats = lstatSync(absolutePath, { bigint: true });
     const mimeType = mimeTypeFor(relativePath);
     if (
       !mimeType ||
       stats.isSymbolicLink() ||
       !stats.isFile() ||
-      !hasStrongIdentity(stats) ||
-      stats.size <= 0 ||
-      stats.size > MAX_FILE_BYTES ||
+      !hasStrongIdentity(identityOf(stats)) ||
+      Number(stats.size) <= 0 ||
+      Number(stats.size) > MAX_FILE_BYTES ||
       !isWithin(root.realTask, absolutePath) ||
       !samePath(realpathSync.native(absolutePath), absolutePath)
     ) {
@@ -431,7 +443,7 @@ async function stableCandidate(
   root: TrustedTaskRoot,
   candidate: Candidate,
   hooks: ReconcileHooks,
-): Promise<{ candidate: Candidate; fd: number; stats: Stats } | null> {
+): Promise<{ candidate: Candidate; fd: number; stats: BigIntStats } | null> {
   let current: Candidate | null = candidate;
   for (let attempt = 0; attempt < 2 && current; attempt += 1) {
     const stable = await stableCandidateOnce(root, current, hooks);
@@ -445,8 +457,12 @@ function localPath(taskId: string, relativePath: string): string {
   return `${taskId}/${relativePath}`;
 }
 
-function sourceKey(relativePath: string, stats: Stats): string {
-  return `workspace-file:${relativePath}:${stats.dev}:${stats.ino}:${stats.size}:${stats.mtimeMs}:${stats.ctimeMs}`;
+/**
+ * 落库的来源键。⚠️ 身份部分是 `artifacts` 表里用来判「同一个来源文件」的，
+ *    同样必须精确 —— 否则两个不同文件会被认成同一个来源（去重错误）。
+ */
+function sourceKey(relativePath: string, stats: BigIntStats): string {
+  return `workspace-file:${relativePath}:${identityKey(identityOf(stats))}:${stats.size}:${stats.mtimeMs}:${stats.ctimeMs}`;
 }
 
 export async function reconcileTaskArtifacts(
@@ -487,8 +503,8 @@ export async function reconcileTaskArtifacts(
       const { candidate } = stable;
       try {
         verifyTrustedRoot(root);
-        const finalHandle = fstatSync(stable.fd);
-        const finalPath = lstatSync(candidate.absolutePath);
+        const finalHandle = fstatSync(stable.fd, { bigint: true });
+        const finalPath = lstatSync(candidate.absolutePath, { bigint: true });
         if (!sameSnapshot(stable.stats, finalHandle) || !sameSnapshot(stable.stats, finalPath)) {
           discovered.skipped.push(candidate.relativePath);
           continue;
@@ -506,15 +522,15 @@ export async function reconcileTaskArtifacts(
           filePath: '',
           localPath: storedLocalPath,
           mimeType: candidate.mimeType,
-          size: stable.stats.size,
+          size: Number(stable.stats.size),
           sourceKey: sourceKey(candidate.relativePath, stable.stats),
           contentText: '',
           createdAt: now,
           availability: 'available',
         };
         const persist = sqlite.transaction((): { kind: 'saved' | 'existing' | 'updated'; artifact: Artifact } => {
-          const beforeHandle = fstatSync(stable.fd);
-          const beforePath = lstatSync(candidate.absolutePath);
+          const beforeHandle = fstatSync(stable.fd, { bigint: true });
+          const beforePath = lstatSync(candidate.absolutePath, { bigint: true });
           if (!sameSnapshot(stable.stats, beforeHandle) || !sameSnapshot(stable.stats, beforePath)) {
             throw new UnstableArtifactError();
           }
@@ -562,8 +578,8 @@ export async function reconcileTaskArtifacts(
               result = { kind: 'existing', artifact: artifactFromRow(winner) };
             }
           }
-          const afterHandle = fstatSync(stable.fd);
-          const afterPath = lstatSync(candidate.absolutePath);
+          const afterHandle = fstatSync(stable.fd, { bigint: true });
+          const afterPath = lstatSync(candidate.absolutePath, { bigint: true });
           if (!sameSnapshot(stable.stats, afterHandle) || !sameSnapshot(stable.stats, afterPath)) {
             throw new UnstableArtifactError();
           }
@@ -609,13 +625,13 @@ export function getArtifactAvailability(localPathValue: string, workspacePath: s
     const absolutePath = resolve(workspacePath, localPathValue);
     const realWorkspace = realpathSync.native(workspacePath);
     const realFile = realpathSync.native(absolutePath);
-    const linkStats = lstatSync(absolutePath);
-    const canonicalStats = statSync(realFile);
+    const linkStats = lstatSync(absolutePath, { bigint: true });
+    const canonicalStats = statSync(realFile, { bigint: true });
     if (
       linkStats.isSymbolicLink() ||
       !linkStats.isFile() ||
-      !hasStrongIdentity(linkStats) ||
-      !sameIdentity(linkStats, canonicalStats) ||
+      !hasStrongIdentity(identityOf(linkStats)) ||
+      !sameIdentity(identityOf(linkStats), identityOf(canonicalStats)) ||
       !isWithin(realWorkspace, realFile) ||
       !samePath(realFile, absolutePath)
     ) {
@@ -626,3 +642,13 @@ export function getArtifactAvailability(localPathValue: string, workspacePath: s
     return (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'unsafe';
   }
 }
+
+/**
+ * 只给测试用。
+ *
+ * ⚠️ 为什么必须把它们露出来：`signature` / `sourceKey` 的**身份部分**是否精确，
+ *    用**真文件**测不出来 —— 真文件上没法造出"只有 dev/ino 不同、size/mtime/ctime 全一样"
+ *    的形态（ctime 改不了，它总会在签名里兜住）。而恰恰是"两个不同的文件签名相同"
+ *    才会导致"该重建的跳过 ⇒ 陈旧数据"。所以只能在函数层面用合成的 bigint stats 钉。
+ */
+export const __testing = Object.freeze({ signature, sourceKey });
