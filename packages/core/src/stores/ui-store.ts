@@ -11,7 +11,9 @@ export type MainView =
   | 'betaHub'
   | 'community'
   | 'market'
-  | 'growth';
+  | 'growth'
+  /** 资料库（工作区本地库 + 本地嵌入检索，T6）。 */
+  | 'kb';
 export type Theme = 'dark' | 'light' | 'auto';
 export type DensityMode = 'compact' | 'comfortable' | 'spacious';
 export type SendShortcut = 'enter' | 'cmdEnter';

@@ -1,4 +1,4 @@
-import { ipcMain, dialog, BrowserWindow, shell } from 'electron';
+import { app, ipcMain, dialog, BrowserWindow, shell } from 'electron';
 import { existsSync } from 'node:fs';
 import { join } from 'path';
 import {
@@ -12,7 +12,34 @@ import {
 import { initWorkspace, migrateWorkspace } from '../workspace/init.js';
 import { workspaceLocationPatch } from '../workspace/portable.js';
 import { refreshRemovableDrives } from '../workspace/removable-drives.js';
-import { reinitDatabase, closeDatabase } from '../db/index.js';
+import { reinitDatabase, closeDatabase, getSqlite } from '../db/index.js';
+import { buildKbRuntime, ensureKbRuntime, resetKbRuntime } from '../kb/runtime.js';
+
+/**
+ * 换库之后重建资料库运行时。
+ *
+ * ⚠️ **必须先 reset 再建**：`KbService` 抓着的是**旧的 sqlite 实例**，而
+ * `reinitDatabase` 已经把连接关掉换成新的了 —— 继续用旧服务就是往一个关掉的连接上写。
+ * 表现是"换完工作区后资料库就不动了"，而且只在换盘这条路径上出现。
+ */
+function restartKbRuntime(): void {
+  resetKbRuntime();
+  void ensureKbRuntime(() => {
+    const sqlite = getSqlite();
+    if (!sqlite) throw new Error('工作区库未初始化');
+    return buildKbRuntime({
+      sqlite,
+      isPackaged: app.isPackaged,
+      resourcesPath: process.resourcesPath,
+      appPath: app.getAppPath(),
+      log: () => {
+        /* 换库路径上不额外记日志：`kb.runtime.*` 在启动那条已经记过 */
+      },
+    });
+  }).catch(() => {
+    /* 建不起来就是纯关键词检索（合法降级），换工作区不该因此失败 */
+  });
+}
 
 const TEAM_WORKSPACE_SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
@@ -56,6 +83,7 @@ export function registerWorkspaceHandlers(): void {
     try {
       await initWorkspace(workspacePath);
       reinitDatabase(workspacePath);
+      restartKbRuntime();
       // writeConfig 是**整份覆盖**：`portableSetupPending` 这类首启标记到这里就该没了
       writeConfig({ workspacePath, gateways: [], ...locationPatch(workspacePath) });
       ensureDeviceId();
@@ -74,12 +102,14 @@ export function registerWorkspaceHandlers(): void {
       closeDatabase();
       await migrateWorkspace(oldPath, newWorkspacePath);
       reinitDatabase(newWorkspacePath);
+      restartKbRuntime();
       updateConfig({ workspacePath: newWorkspacePath, ...locationPatch(newWorkspacePath) });
       const win = BrowserWindow.getAllWindows()[0];
       if (win) win.webContents.send('workspace:changed', newWorkspacePath);
       return { ok: true };
     } catch (err) {
       reinitDatabase(oldPath);
+      restartKbRuntime();
       return { ok: false, error: err instanceof Error ? err.message : 'migration failed' };
     }
   });

@@ -1,6 +1,7 @@
 import type { ComponentType, ReactNode } from 'react';
 import {
   Archive,
+  BookOpen,
   ChartNoAxesCombined,
   FolderOpen,
   House,
@@ -18,7 +19,10 @@ import CubeFaceIcon from '@/components/CubeFaceIcon';
 import { cn } from '@/lib/utils';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
-type GlobalView = Extract<MainView, 'files' | 'dashboard' | 'archived' | 'betaHub' | 'community' | 'market' | 'growth'>;
+type GlobalView = Extract<
+  MainView,
+  'files' | 'dashboard' | 'archived' | 'betaHub' | 'community' | 'market' | 'growth' | 'kb'
+>;
 
 interface GlobalRailProps {
   mainView: MainView;
@@ -157,6 +161,12 @@ export default function GlobalRail({
           icon={Trophy}
           active={!settingsOpen && mainView === 'growth'}
           onClick={() => onSelectView('growth')}
+        />
+        <RailButton
+          label={t('kb.title')}
+          icon={BookOpen}
+          active={!settingsOpen && mainView === 'kb'}
+          onClick={() => onSelectView('kb')}
         />
       </div>
 

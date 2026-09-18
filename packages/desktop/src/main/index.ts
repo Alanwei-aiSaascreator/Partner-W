@@ -30,6 +30,8 @@ import { registerMarketHandlers } from './ipc/market-handlers.js';
 import { registerGrowthHandlers } from './ipc/growth-handlers.js';
 import { registerAnalyticsHandlers } from './ipc/analytics-handlers.js';
 import { registerPrivacyHandlers } from './ipc/privacy-handlers.js';
+import { registerKbHandlers } from './ipc/kb-handlers.js';
+import { buildKbRuntime, ensureKbRuntime } from './kb/runtime.js';
 import { setupAnalytics, teardownAnalytics } from './analytics/setup.js';
 import { initUsageReporter, destroyUsageReporter } from './commercial/usage-reporter.js';
 import { bootstrapCommercialRelay } from './commercial/relay-startup.js';
@@ -40,7 +42,7 @@ import { initQuickLaunch, destroyQuickLaunch } from './quick-launch.js';
 import { readConfig, updateConfig } from './workspace/config.js';
 import { prepareWorkspaceAtStartup } from './workspace/startup.js';
 import { createWorkspaceStartupDialogs } from './workspace/startup-dialogs.js';
-import { closeDatabase } from './db/index.js';
+import { closeDatabase, getSqlite } from './db/index.js';
 import { applyUserDataOverride } from './runtime/user-data-override.js';
 import { bootstrapLocalGatewayRuntime, shutdownLocalGatewayRuntime } from './runtime/index.js';
 
@@ -255,6 +257,7 @@ if (!gotLock) {
       registerGrowthHandlers();
       registerAnalyticsHandlers();
       registerPrivacyHandlers();
+      registerKbHandlers();
 
       ipcMain.handle('app:rebuild-menu', () => {
         devModeEnabled = readConfig()?.devMode === true;
@@ -301,6 +304,30 @@ if (!gotLock) {
 
       // 窗口先出来，别像卡死 —— 首次启动要解压 35k 个文件（1–3 分钟）
       createWindow();
+
+      // 资料库运行时（T6b/T6c）：加载本地嵌入模型 + 建服务。
+      //
+      // ⚠️ **故意不 await**：加载要读 90MB 模型（几百毫秒到几秒），绝不能挡在开窗之前。
+      // ⚠️ 失败也**不影响别的**：`createKbRuntime` 在引擎起不来时返回一个 engine=null 的
+      //    服务（纯关键词检索，合法降级），所以这里只需要把"连服务都没建起来"记进日志。
+      //    界面拿到的是 `kb:not-ready`，与"你还没加过资料"是两回事（见 kb-handlers 的说明）。
+      void ensureKbRuntime(() => {
+        const sqlite = getSqlite();
+        if (!sqlite) throw new Error('工作区库未初始化');
+        return buildKbRuntime({
+          sqlite,
+          isPackaged: app.isPackaged,
+          resourcesPath: process.resourcesPath,
+          appPath: app.getAppPath(),
+          log: (event, data) => getDebugLogger().info({ domain: 'kb', event, data }),
+        });
+      }).catch((err: unknown) => {
+        getDebugLogger().error({
+          domain: 'kb',
+          event: 'kb.runtime.create_failed',
+          data: { message: err instanceof Error ? err.message : String(err) },
+        });
+      });
 
       // ⚠️ 拉起本机运行时（定位 → 部署 → 起网关 → 等就绪）。**这一步永不抛**：
       // 失败只是"网关没起来"，界面照常出，让 ConnectionBanner 说真话；

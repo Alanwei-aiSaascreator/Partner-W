@@ -46,6 +46,12 @@ vi.mock('../src/main/db/index.js', () => ({
   initDatabase: initDatabaseMock,
   reinitDatabase: reinitDatabaseMock,
   closeDatabase: closeDatabaseMock,
+  // `workspace-handlers` 换库后会重建资料库运行时，而它要拿 sqlite。
+  // ⚠️ mock 必须与真实模块的**被用到的那部分**对齐：少一个导出，
+  //    vitest 直接抛 `No "getSqlite" export is defined on the mock`，
+  //    报错指向的是 mock 而不是被测代码。返回 null ⇒ 运行时重建那条路静默跳过，
+  //    本文件关心的"换库顺序"不受影响。
+  getSqlite: () => null,
 }));
 
 function createDeferred(): {

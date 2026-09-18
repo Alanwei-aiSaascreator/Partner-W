@@ -93,6 +93,19 @@ export interface KbSearchOutcome {
   candidateCount: number;
 }
 
+/** 资料列表里的一条（**不含正文**）。 */
+export interface KbSourceSummary {
+  id: string;
+  kind: KbSourceKind;
+  path: string;
+  title: string;
+  bytes: number;
+  addedAt: string;
+  chunks: number;
+  /** 这份资料还差多少切片没向量。 */
+  pending: number;
+}
+
 export interface KbStats {
   sources: number;
   chunks: number;
@@ -188,6 +201,15 @@ export interface KbService {
   search(query: string, options?: { limit?: number; candidateLimit?: number }): Promise<KbSearchOutcome>;
   setEmbeddingEngine(engine: EmbeddingEngine | null): KbEngineSwitch;
   getStats(): KbStats;
+  /**
+   * 已加入的资料（**不带正文**）。
+   *
+   * ⚠️ 单独开一条而不是塞进 `getStats()`：统计是每次都能算的轻量数字，而这条会
+   * 把每份资料的元数据（标题/路径/字节数）都读出来 —— 界面上是"资料列表"那个页签
+   * 才需要它。混在一起会让每次刷统计都拖一份全表。
+   * ⚠️ 只回**元数据**：正文（最长 2MB/份）由 `search` 按命中片段给，别顺手带上。
+   */
+  listSources(): KbSourceSummary[];
 }
 
 export function createKbService(deps: KbServiceDeps): KbService {
@@ -503,6 +525,20 @@ export function createKbService(deps: KbServiceDeps): KbService {
         byState: kbChunkStateCounts(sqlite),
         meta: readKbMeta(sqlite),
       };
+    },
+
+    listSources() {
+      return listKbSources(sqlite).map((source) => ({
+        id: source.id,
+        kind: source.kind,
+        path: source.path,
+        title: source.title,
+        bytes: source.bytes,
+        addedAt: source.addedAt,
+        chunks: countKbChunks(sqlite, source.id),
+        // 这份资料还差多少切片没向量（界面显示"待建索引"）
+        pending: kbChunkStateCounts(sqlite, source.id).pending_embedding,
+      }));
     },
   };
 }

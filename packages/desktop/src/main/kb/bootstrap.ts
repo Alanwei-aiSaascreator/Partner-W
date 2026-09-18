@@ -25,7 +25,7 @@ import { createKbService, type KbService } from './service.js';
 import { loadEmbeddingEngine } from './embedding/engine.js';
 import { resolveKbModelRoot, type ResolveKbModelRootOptions } from './embedding/locate.js';
 
-interface KbRuntime {
+export interface KbRuntime {
   service: KbService;
   /** `null` = 没有可用引擎，服务走纯关键词检索（合法降级，不是错误）。 */
   engine: EmbeddingEngine | null;

@@ -18,7 +18,9 @@ export type DebugDomain =
   | 'commercial'
   | 'analytics'
   | 'privacy'
-  | 'avatar';
+  | 'avatar'
+  /** 资料库：索引流水线、嵌入引擎、检索（T6）。 */
+  | 'kb';
 
 export interface DebugError {
   name?: string;

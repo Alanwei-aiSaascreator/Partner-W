@@ -542,6 +542,20 @@ function buildApi(): ClawWorkAPI {
     analyticsTrack: (payload: { event: string; props?: Record<string, string | number | boolean> }) =>
       ipcRenderer.invoke('analytics:track', payload),
 
+    // ── 资料库（T6c）────────────────────────────────────────────────
+    // ⚠️ 这里**只做管道**：哪些块该嵌、能不能搜、降级成什么，全在 `kb/service.ts`。
+    //    唯一需要渲染层理解的是 `{ ok:false, code:'not-ready' }` —— 运行时是工作区就绪后
+    //    **异步**建的（加载 90MB 模型），界面可能在那之前就问上来；这跟"你还没加过资料"
+    //    是两回事，混在一起用户会以为自己的东西丢了。
+    kbStats: () => ipcRenderer.invoke('kb:stats'),
+    kbListSources: () => ipcRenderer.invoke('kb:list-sources'),
+    kbPickFiles: () => ipcRenderer.invoke('kb:pick-files'),
+    kbAddFile: (params: { path: string; title?: string }) => ipcRenderer.invoke('kb:add-file', params),
+    kbAddNote: (params: { title: string; text: string }) => ipcRenderer.invoke('kb:add-note', params),
+    kbRemoveSource: (sourceId: string) => ipcRenderer.invoke('kb:remove-source', { sourceId }),
+    kbSearch: (params: { query: string; limit?: number }) => ipcRenderer.invoke('kb:search', params),
+    kbIndexPending: (params?: { sourceId?: string }) => ipcRenderer.invoke('kb:index-pending', params),
+
     // ── 隐私与数据（P4）──────────────────────────────────────────────
     // 工单状态机、7 天冷却期、多成员团队 owner 拦截**全在数据库 RPC 里**，
     // 这里只是管道：参数原样透传，错误码由主进程压成裸机器码（见 privacy-handlers.ts）。

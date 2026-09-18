@@ -291,6 +291,81 @@ interface ListResult<T> {
 
 type ChatAttachment = SharedChatAttachment;
 
+/**
+ * 资料库（T6c）。
+ *
+ * ⚠️ 这几个类型是**结构性重复**了一份：真正的定义在 `src/main/kb/service.ts`，
+ * 而那份不在 preload 的构建范围里，跨不过来。字段名与那边**逐字一致** ——
+ * 改了一边不改另一边时，tsc 抓不到（两边各自合法），只有运行时字段是 undefined。
+ * 所以改动时**两处一起改**（`test/kb-ipc.test.ts` 会把返回形状钉住）。
+ */
+export interface KbSourceSummaryView {
+  id: string;
+  kind: 'file' | 'artifact' | 'note';
+  path: string;
+  title: string;
+  bytes: number;
+  addedAt: string;
+  chunks: number;
+  /** 这份资料还差多少切片没向量。 */
+  pending: number;
+}
+
+export interface KbStatsView {
+  sources: number;
+  chunks: number;
+  byState: Record<string, number>;
+  meta: { embeddingModel: string | null; dim: number | null; updatedAt: string };
+}
+
+export interface KbSearchHitView {
+  chunkId: string;
+  sourceId: string;
+  ordinal: number;
+  text: string;
+  snippet: string;
+  sourceKind: 'file' | 'artifact' | 'note';
+  sourceTitle: string;
+  sourcePath: string;
+  score: number;
+}
+
+export interface KbSearchOutcomeView {
+  hits: KbSearchHitView[];
+  mode: 'keyword' | 'hybrid';
+  /** 向量没参与排序（没引擎 / 嵌不了）—— 界面据此标"离线检索"。 */
+  degraded: boolean;
+  degradedReason?: 'no-engine' | 'engine-error' | 'no-vectors';
+  candidateCount: number;
+}
+
+export interface KbIngestOutcomeView {
+  status: 'indexed' | 'unchanged' | 'skipped';
+  reason?: 'empty' | 'unsupported' | 'unreadable' | 'missing';
+  sourceId?: string;
+  chunkCount: number;
+  embeddedCount: number;
+  pendingCount: number;
+  truncated?: boolean;
+  engineError?: string | null;
+}
+
+export interface KbIndexReportView {
+  attempted: number;
+  embedded: number;
+  failed: number;
+  engineError: string | null;
+}
+
+/**
+ * 资料库接口的统一答复。
+ *
+ * ⚠️ `not-ready` 是**独立的一种情况**：运行时是工作区就绪之后**异步**建的
+ *（要读 90MB 嵌入模型），界面可能在那之前就问上来。它跟"你还没加过资料"是两回事 ——
+ * 混在一起，用户会以为自己的东西丢了。
+ */
+export type KbReply<T> = (T & { ok: true }) | { ok: false; error?: string; code?: 'not-ready' };
+
 export interface ClawWorkAPI {
   getHttpBase: (gatewayId: string) => Promise<string | undefined>;
   sendMessage: (
@@ -729,6 +804,17 @@ export interface ClawWorkAPI {
   // 用户在保存对话框取消回 `cancelled`（界面据此安静收场）。
   // ⚠️ 下载结果自 Task 13 审阅修正起带 `truncated` / `notes`（本地那份因上限退化成
   //    元数据时，界面必须提示"这份不是完整历史"）；Task 14 按新形状消费。
+  // ── 资料库（T6c）────────────────────────────────────────────────
+  kbStats: () => Promise<KbReply<{ stats: KbStatsView; engine: string | null }>>;
+  kbListSources: () => Promise<KbReply<{ sources: KbSourceSummaryView[] }>>;
+  /** 选文件（只回路径，不入库）；用户取消时 `paths` 为空数组。 */
+  kbPickFiles: () => Promise<{ ok: true; paths: string[] }>;
+  kbAddFile: (params: { path: string; title?: string }) => Promise<KbReply<{ outcome: KbIngestOutcomeView }>>;
+  kbAddNote: (params: { title: string; text: string }) => Promise<KbReply<{ outcome: KbIngestOutcomeView }>>;
+  kbRemoveSource: (sourceId: string) => Promise<KbReply<{ removed: boolean }>>;
+  kbSearch: (params: { query: string; limit?: number }) => Promise<KbReply<{ outcome: KbSearchOutcomeView }>>;
+  kbIndexPending: (params?: { sourceId?: string }) => Promise<KbReply<{ report: KbIndexReportView }>>;
+
   privacyState: () => Promise<IpcResult<PrivacyState>>;
   privacyRequestExport: () => Promise<IpcResult<unknown>>;
   // `reason` = **用户自述理由**（可选，自由文本）。界面目前不收集 ⇒ 让出（`{}`）。
