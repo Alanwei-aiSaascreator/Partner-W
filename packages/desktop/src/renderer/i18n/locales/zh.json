@@ -443,6 +443,7 @@
         "veryLong1": "慢工出细活，我还在写",
         "veryLong2": "还在跑，别关我"
       },
+      "modelProgress": "模型进度：{{what}}",
       "runningTool": "执行中：{{what}}",
       "working": "正在处理…",
       "writing": "已完成 {{count}} 步 · 正在写回答…"

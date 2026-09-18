@@ -443,6 +443,7 @@
         "veryLong1": "Travailler lentement, travailler bien — j’écris encore",
         "veryLong2": "Ça tourne encore. Ne me fermez pas"
       },
+      "modelProgress": "Progression du modèle : {{what}}",
       "runningTool": "En cours : {{what}}",
       "working": "Traitement…",
       "writing": "{{count}} étapes faites · rédaction de la réponse…"

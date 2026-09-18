@@ -443,6 +443,7 @@
         "veryLong1": "Despacio y bien — sigo escribiendo",
         "veryLong2": "Sigue en marcha. No me cierres"
       },
+      "modelProgress": "Progreso del modelo: {{what}}",
       "runningTool": "Ejecutando: {{what}}",
       "working": "Procesando…",
       "writing": "{{count}} pasos hechos · escribiendo la respuesta…"

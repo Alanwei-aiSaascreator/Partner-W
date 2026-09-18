@@ -30,6 +30,17 @@ export interface MessageState {
    */
   runPhaseBySession: Record<string, string | null>;
   /**
+   * 模型**自述**的进度（网关 `item` 流的 `kind:"preamble"`）。
+   *
+   * 为什么要它：正文本就不流式（整轮结束才蹦出来，见 `waiting-copy.ts` 的结论），
+   * 所以那一大段"卡住"的时间里，**这是唯一在动的东西**。
+   * 网关一直在报，我们此前整块丢掉 —— `AgentItemData` 里声明了 `progressText` 却没人读。
+   *
+   * ⚠️ 是模型的**原话**，不是我们写的文案 —— 界面上要让它跟自家文案能区分开。
+   * ⚠️ 不落库：本轮界面状态，与 `runPhaseBySession` 同性质。
+   */
+  progressTextBySession: Record<string, string | null>;
+  /**
    * 本轮**从什么时候开始等**（`Date.now()` 毫秒），要么没有这条键。
    *
    * 为什么要它：输入框上方要显示一个**一直在走的秒数** —— 用户骂"卡住"多半是
@@ -99,6 +110,8 @@ export interface MessageState {
   setProcessing: (sessionKey: string, processing: boolean) => void;
   /** 传 `null` 表示这一轮结束，清掉进行中提示。 */
   setRunPhase: (sessionKey: string, phase: string | null) => void;
+  /** 传 `null` 清掉；空串由调用方挡在外面（别把上一句盖成空的）。 */
+  setSessionProgressText: (sessionKey: string, text: string | null) => void;
   /** 传 `null` 清掉该会话的失败文案（重试时用）。 */
   setSessionError: (sessionKey: string, message: string | null) => void;
 }
@@ -232,6 +245,7 @@ export function createMessageStore(deps: MessageStoreDeps) {
     activeTurnBySession: {},
     processingBySession: new Set(),
     runPhaseBySession: {},
+    progressTextBySession: {},
     turnStartedAtBySession: {},
     errorBySession: {},
     highlightedMessageId: null,
@@ -520,6 +534,11 @@ export function createMessageStore(deps: MessageStoreDeps) {
     setRunPhase: (sessionKey, phase) =>
       set((s) => ({
         runPhaseBySession: { ...s.runPhaseBySession, [sessionKey]: phase },
+      })),
+
+    setSessionProgressText: (sessionKey, text) =>
+      set((s) => ({
+        progressTextBySession: { ...s.progressTextBySession, [sessionKey]: text },
       })),
 
     setSessionError: (sessionKey, message) =>

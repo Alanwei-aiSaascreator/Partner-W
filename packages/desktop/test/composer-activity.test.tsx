@@ -43,6 +43,8 @@ async function setup(storeState: {
   processing?: boolean;
   startedAgoMs?: number;
   runPhase?: string | null;
+  /** 网关 `item` 流的 `kind:"preamble"` —— 模型自述的进度。 */
+  progressText?: string | null;
   toolCalls?: { id: string; name: string; status: string; title?: string; startedAt: string }[];
 }): Promise<{ onCancel: ReturnType<typeof vi.fn> }> {
   const { useMessageStore } = await import('../src/renderer/stores/messageStore');
@@ -55,6 +57,8 @@ async function setup(storeState: {
     processingBySession: storeState.processing === false ? new Set() : new Set([SK]),
     turnStartedAtBySession: storeState.processing === false ? {} : { [SK]: T0 - (storeState.startedAgoMs ?? 0) },
     runPhaseBySession: { [SK]: storeState.runPhase ?? null },
+    // ⚠️ 必须**无条件**设：`setState` 是浅合并，漏设的键会留上一个用例的值
+    progressTextBySession: { [SK]: storeState.progressText ?? null },
     activeTurnBySession: storeState.toolCalls
       ? ({
           [SK]: { toolCalls: storeState.toolCalls },
@@ -143,5 +147,46 @@ describe('ComposerActivity —— 等待期别让用户以为它死了', () => {
     });
 
     expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * 模型自述的进度（网关 `item` 流的 `kind:"preamble"`）。
+ *
+ * 这是"卡住好久突然跳出来"那段时间里**唯一在动的东西** —— 正文本就不流式，
+ * 而网关其实一直在报模型自己的进度叙述，我们此前整块丢掉了。
+ */
+describe('模型自述进度', () => {
+  it('⭐ 没有正在跑的工具时，主行显示模型自述的进度', async () => {
+    await setup({ progressText: '正在核对第三章的数字' });
+
+    expect(q('composer-activity')!.textContent).toContain('chatInput.waiting.modelProgress(正在核对第三章的数字)');
+  });
+
+  it('有工具在跑时工具优先（模型的话不抢它）', async () => {
+    await setup({
+      progressText: '正在核对第三章的数字',
+      toolCalls: [{ id: 'c1', name: 'ls', status: 'running', title: 'ls 目录', startedAt: new Date(T0).toISOString() }],
+    });
+
+    const text = q('composer-activity')!.textContent ?? '';
+    expect(text).toContain('chatInput.waiting.runningTool(ls 目录)');
+    expect(text, '工具是更具体的事实，模型的话不该盖过它').not.toContain('正在核对第三章的数字');
+  });
+
+  it('模型进度优先于网关的粗粒度阶段（那只是"在调用模型"这种级别）', async () => {
+    await setup({ progressText: '正在核对第三章的数字', runPhase: 'starting_model' });
+
+    const text = q('composer-activity')!.textContent ?? '';
+    expect(text).toContain('modelProgress(正在核对第三章的数字)');
+    expect(text).not.toContain('chatInput.runPhase.starting_model');
+  });
+
+  it('没有进度时退回原来的链（不显示空壳）', async () => {
+    await setup({ runPhase: 'starting_model' });
+
+    const text = q('composer-activity')!.textContent ?? '';
+    expect(text).toContain('chatInput.runPhase.starting_model');
+    expect(text).not.toContain('modelProgress');
   });
 });

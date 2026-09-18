@@ -443,6 +443,7 @@
         "veryLong1": "丁寧にやっています、まだ書いています",
         "veryLong2": "まだ動いています、閉じないでください"
       },
+      "modelProgress": "モデルの進捗：{{what}}",
       "runningTool": "実行中：{{what}}",
       "working": "処理中…",
       "writing": "{{count}} ステップ完了 · 回答を書いています…"

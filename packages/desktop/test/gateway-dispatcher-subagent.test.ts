@@ -34,6 +34,7 @@ function createHarness(
     clearActiveTurn: vi.fn(),
     setProcessing: vi.fn(),
     setRunPhase: vi.fn(),
+    setSessionProgressText: vi.fn(),
   };
 
   const deps: GatewayDispatcherDeps = {

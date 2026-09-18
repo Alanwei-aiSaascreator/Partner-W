@@ -42,6 +42,8 @@ export default function ComposerActivity({ sessionKey, onCancel }: ComposerActiv
   const processing = useMessageStore((s) => (sessionKey ? s.processingBySession.has(sessionKey) : false));
   const startedAt = useMessageStore((s) => (sessionKey ? s.turnStartedAtBySession[sessionKey] : undefined));
   const runPhase = useMessageStore((s) => (sessionKey ? s.runPhaseBySession[sessionKey] : null));
+  // 模型**自述**的进度（网关 item 流的 preamble）—— 正文不流式时唯一在动的东西。
+  const modelProgress = useMessageStore((s) => (sessionKey ? s.progressTextBySession[sessionKey] : null));
   const toolCalls = useMessageStore((s) => (sessionKey ? s.activeTurnBySession[sessionKey]?.toolCalls : undefined));
 
   // 每秒重渲染一次，只为让秒数和轮播文案往前走。不在跑的时候连定时器都不挂。
@@ -64,6 +66,10 @@ export default function ComposerActivity({ sessionKey, onCancel }: ComposerActiv
   let headline: string;
   if (runningCall) {
     headline = t('chatInput.waiting.runningTool', { what: runningCall.title ?? runningCall.name });
+  } else if (modelProgress) {
+    // 工具的 `title` 是网关拼好的**事实**（工具名 + 参数），比模型的话更硬 ⇒ 排在它后面。
+    // 但它比 `runPhase` 具体得多（后者只是"正在调用模型"这一档），所以排在它前面。
+    headline = t('chatInput.waiting.modelProgress', { what: modelProgress });
   } else if (runPhase) {
     headline = t(`chatInput.runPhase.${RUN_PHASE_IDS.includes(runPhase) ? runPhase : 'unknown'}`);
   } else if (doneCount > 0) {

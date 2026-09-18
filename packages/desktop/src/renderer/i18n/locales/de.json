@@ -443,6 +443,7 @@
         "veryLong1": "Gut Ding will Weile haben — ich schreibe noch",
         "veryLong2": "Läuft noch. Bitte nicht schließen"
       },
+      "modelProgress": "Modellfortschritt: {{what}}",
       "runningTool": "Läuft: {{what}}",
       "working": "In Arbeit…",
       "writing": "{{count}} Schritte fertig · Antwort wird geschrieben…"

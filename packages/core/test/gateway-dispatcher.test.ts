@@ -36,6 +36,7 @@ function createHarness() {
     clearActiveTurn: vi.fn(),
     setProcessing: vi.fn(),
     setRunPhase: vi.fn(),
+    setSessionProgressText: vi.fn(),
     /** 临时会话（多模型对比的一列）的失败走这条旁路，不进时间线。 */
     setSessionError: vi.fn(),
   };
@@ -989,6 +990,43 @@ describe('item 流：网关拼好的人话标题与真实起止时间', () => {
     const tc = lastToolCall(h);
     expect(tc.status).toBe('error');
     expect(tc.completedAt).toBe(new Date(1789709932780).toISOString());
+  });
+
+  /**
+   * ⭐ `kind:"preamble"` 的 `progressText` 是**模型自述的进度**（真帧形状见
+   * `assistant-text-not-streaming` 记忆里的日志片段）：
+   *
+   * ```json
+   * {"stream":"item","data":{"kind":"preamble","progressText":"…模型自述的进度…"}}
+   * ```
+   *
+   * 它此前被整块丢掉 —— `AgentItemData` 里**声明了** `progressText` 字段却没人读，
+   * 而 `handleAgentItemStream` 见到非 tool 就 `return`。
+   * 这恰恰是"卡住好久突然跳出来"那段时间里**唯一在动的东西**（正文本就不流式）。
+   */
+  it('⭐ preamble 的 progressText 要写进本轮进度（不是丢掉，也不是当工具）', () => {
+    const h = createHarness();
+    h.emit('agent', {
+      sessionKey: TASK.sessionKey,
+      stream: 'item',
+      data: { itemId: 'commentary-1', kind: 'preamble', phase: 'start', progressText: '正在梳理第三章' },
+    });
+
+    expect(h.messageStore.setSessionProgressText).toHaveBeenCalledWith(TASK.sessionKey, '正在梳理第三章');
+    expect(h.messageStore.upsertToolCall, '它仍然**不是**工具卡片').not.toHaveBeenCalled();
+  });
+
+  it('preamble 没带 progressText（或空串）⇒ 不写，别把上一句盖成空的', () => {
+    const h = createHarness();
+    for (const data of [
+      { itemId: 'p1', kind: 'preamble', phase: 'start' },
+      { itemId: 'p2', kind: 'preamble', phase: 'start', progressText: '' },
+      { itemId: 'p3', kind: 'preamble', phase: 'start', progressText: '   ' },
+    ]) {
+      h.emit('agent', { sessionKey: TASK.sessionKey, stream: 'item', data });
+    }
+
+    expect(h.messageStore.setSessionProgressText).not.toHaveBeenCalled();
   });
 
   it('认不出的 kind 不写 store（别把 preamble 之类的当工具）', () => {

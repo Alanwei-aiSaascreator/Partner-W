@@ -443,6 +443,7 @@
         "veryLong1": "Slow work, good work — still writing",
         "veryLong2": "Still going. Don't close me"
       },
+      "modelProgress": "Model progress: {{what}}",
       "runningTool": "Running: {{what}}",
       "working": "Working…",
       "writing": "{{count}} steps done · writing the answer…"

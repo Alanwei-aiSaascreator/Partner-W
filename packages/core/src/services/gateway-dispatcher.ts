@@ -148,6 +148,7 @@ export interface GatewayDispatcherDeps {
     | 'clearActiveTurn'
     | 'setProcessing'
     | 'setRunPhase'
+    | 'setSessionProgressText'
     | 'setSessionError'
   >;
 
@@ -748,8 +749,18 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
   }
 
   function handleAgentItemStream(taskId: string, sessionKey: string, data: AgentItemData): void {
-    // 只接工具条目。`kind:"preamble"` 是模型自述进度，形状完全不同，
-    // 当成工具写进 store 会凭空多出一张卡片。
+    // `kind:"preamble"` 是**模型自述的进度**（真帧：
+    // `{"stream":"item","data":{"kind":"preamble","progressText":"…"}}`）。
+    // 它不是工具，所以**不能**写进工具列表（会凭空多出一张卡片）——
+    // 但它也不能丢：正文不流式的那段时间里，这是唯一在动的东西。
+    if (data.kind === 'preamble') {
+      const progress = typeof data.progressText === 'string' ? data.progressText.trim() : '';
+      // 空的不写：把上一句盖成空的，用户看到的是"进度突然没了"
+      if (progress) deps.getMessageStore().setSessionProgressText(sessionKey, progress);
+      return;
+    }
+
+    // 其余非工具条目照旧不接（形状没验过的东西不往 store 里写）。
     if (data.kind !== 'tool') return;
     if (!data.toolCallId || !data.name) return;
 
@@ -802,11 +813,13 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
       case 'end':
         store.setProcessing(sessionKey, false);
         store.setRunPhase(sessionKey, null);
+        store.setSessionProgressText(sessionKey, null);
         debugEvent('renderer.agent.lifecycle.end', { taskId, sessionKey });
         break;
       case 'error': {
         store.setProcessing(sessionKey, false);
         store.setRunPhase(sessionKey, null);
+        store.setSessionProgressText(sessionKey, null);
         debugEvent('renderer.agent.lifecycle.error', { taskId, sessionKey, error: data.error });
         if (!data.error) break;
 
