@@ -15,6 +15,7 @@ import { registerSearchHandlers } from './ipc/search-handlers.js';
 import { registerDataHandlers } from './ipc/data-handlers.js';
 import { registerStatsHandlers } from './ipc/stats-handlers.js';
 import { registerUpdateHandlers } from './ipc/update-handlers.js';
+import { runUpdaterStartupHousekeeping } from './auto-updater.js';
 import { registerDebugHandlers } from './ipc/debug-handlers.js';
 import { configureVoicePermissionHandlers, registerVoiceHandlers } from './ipc/voice-handlers.js';
 import { registerTrayHandlers } from './ipc/tray-handlers.js';
@@ -284,6 +285,13 @@ if (!gotLock) {
         event: 'workspace.detected',
         data: { workspacePath: wsPath, portable: workspace.portable, decision: workspace.decision.kind },
       });
+
+      // ⚠️ 更新缓存的日常维护必须**在工作区就绪之后**做：清理逻辑要靠
+      //    `getPortableWorkspaceRoot()` 判断"这一进程是不是盘上运行"，而那个判定
+      //    就是上面 `prepareWorkspaceAtStartup()` 写下的（放在 registerUpdateHandlers
+      //    那会儿还恒为 null ⇒ U 盘那份会去清本机共享的更新缓存，把同机另一份副本
+      //    正等着装的包删掉）。
+      runUpdaterStartupHousekeeping();
 
       // ⚠️ 埋点必须**在开窗之前**初始化：窗口一开，登录/激活的 IPC 就活了，
       //    而下面那次运行时就绪等待在首跑要 37–74 秒 —— 用户在这段里完成登录/激活时，
