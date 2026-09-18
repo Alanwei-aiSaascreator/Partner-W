@@ -12,12 +12,16 @@ import { DatabaseSync } from 'node:sqlite';
  *    原样交给 `node:sqlite`（真文件），而不是一律换 `:memory:` —— 资料库要测
  *    "关掉再打开同一个工作区库"（老库补表 + FTS 回填不能重复/丢数据）。
  *
- * 用法：
- * ```ts
- * vi.mock('better-sqlite3', async () => ({
- *   default: (await import('./helpers/node-sqlite-shim.js')).NodeSqliteShim,
- * }));
- * ```
+ * 用法：抄任意一个用例文件顶部的 `vi.mock('better-sqlite3', …)` 即可
+ * （`kb-bootstrap` / `kb-fts-query` / `kb-recall-boundary` / `kb-service` /
+ * `kb-store` / `workspace-db-rebuild`）。全都一字不差，所以不再在这里抄一遍。
+ *
+ * ⚠️ **刻意不在 docblock 里写那段代码块**：knip 会把 docblock 代码块里的
+ * `import('<相对路径>')` 当成真的导入去解析，而那条路径是相对**用例文件**
+ * （`test/*.test.ts`）写的，从本文件所在的 `helpers/` 自然解析不到
+ * ⇒ 白报一条「未解析导入」。换个位置写只是让它换个行号继续报（试过），
+ * 所以这里改成指路。（触发条件没能完全收敛：静态 `import … from '…'` 写在
+ * 注释里、以及动态 `import()` 写在**自由注释**里，实测都**不**会触发。）
  */
 interface NodeSqliteStatement {
   all: (...params: unknown[]) => unknown;
@@ -63,6 +67,12 @@ class ShimStatement {
   }
 }
 
+/**
+ * `better-sqlite3` 的替身。接法见本文件顶部的说明（那里列了 6 个现成用例）。
+ *
+ * ⚠️ 装法本身值得记一句：`vi.mock` 的工厂会被 vitest **提升**到 import 之前，
+ * 所以工厂里**不能**用静态 import（那时模块还没求值），只能用 `await import(...)`。
+ */
 export class NodeSqliteShim {
   private readonly inner: DatabaseSync;
 
