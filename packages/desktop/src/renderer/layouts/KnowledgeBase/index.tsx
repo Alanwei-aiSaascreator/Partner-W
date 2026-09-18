@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { BookOpen, FilePlus2, Loader2, NotebookPen, Pin, RefreshCw, Search, Trash2 } from 'lucide-react';
+import { BookOpen, ChevronRight, FilePlus2, Loader2, NotebookPen, Pin, RefreshCw, Search, Trash2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -82,6 +82,8 @@ export default function KnowledgeBase(): React.JSX.Element {
   const [pendingRemove, setPendingRemove] = useState<KbSourceSummaryView | null>(null);
   const [noteOpen, setNoteOpen] = useState(false);
   const [rebuilding, setRebuilding] = useState(false);
+  /** 展开的是哪一条命中（同时只开一条：搜索结果本来就短，全展开反而看不清）。 */
+  const [expandedHit, setExpandedHit] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     const [statsReply, sourcesReply] = await Promise.all([window.clawwork.kbStats(), window.clawwork.kbListSources()]);
@@ -191,6 +193,8 @@ export default function KnowledgeBase(): React.JSX.Element {
     try {
       const reply = await window.clawwork.kbSearch({ query: trimmed });
       if (reply.ok) {
+        // 新一次检索 ⇒ 收起上一次展开的那条（否则它会挂在一个不该存在的 id 上，看着像卡住）
+        setExpandedHit(null);
         setSearch({
           mode: reply.outcome.mode,
           degraded: reply.outcome.degraded ? (reply.outcome.degradedReason ?? null) : null,
@@ -324,17 +328,48 @@ export default function KnowledgeBase(): React.JSX.Element {
                     <p className="type-support mt-3 py-4 text-center text-[var(--text-muted)]">{t('kb.searchEmpty')}</p>
                   ) : (
                     <ul className="mt-3 flex flex-col gap-2">
-                      {search.hits.map((hit) => (
-                        <li key={hit.chunkId} className="rounded-lg border border-[var(--border-subtle)] p-2.5">
-                          <div className="flex items-center gap-2">
-                            <span className="type-label min-w-0 flex-1 truncate">{hit.sourceTitle}</span>
-                            <span className="type-mono-data shrink-0 text-[var(--text-muted)]">
-                              {hit.score.toFixed(2)}
-                            </span>
-                          </div>
-                          <p className="type-support mt-1 line-clamp-3 text-[var(--text-secondary)]">{hit.snippet}</p>
-                        </li>
-                      ))}
+                      {search.hits.map((hit) => {
+                        // 依据要看得见：默认只给摘要（3 行），点开才是**完整正文 + 出处**。
+                        // 摘要够用来挑，正文才是"这条依据到底说了什么"。
+                        const open = expandedHit === hit.chunkId;
+                        return (
+                          <li key={hit.chunkId} className="rounded-lg border border-[var(--border-subtle)] p-2.5">
+                            <button
+                              type="button"
+                              data-testid="kb-hit-toggle"
+                              aria-expanded={open}
+                              aria-label={t('kb.hitToggle')}
+                              onClick={() => setExpandedHit(open ? null : hit.chunkId)}
+                              className="glow-focus flex w-full items-center gap-2 rounded-md text-left"
+                            >
+                              <ChevronRight
+                                size={13}
+                                className={cn(
+                                  'shrink-0 text-[var(--text-muted)] transition-transform',
+                                  open && 'rotate-90',
+                                )}
+                              />
+                              <span className="type-label min-w-0 flex-1 truncate">{hit.sourceTitle}</span>
+                              <span className="type-mono-data shrink-0 text-[var(--text-muted)]">
+                                {hit.score.toFixed(2)}
+                              </span>
+                            </button>
+                            <p
+                              className={cn('type-support mt-1 text-[var(--text-secondary)]', !open && 'line-clamp-3')}
+                            >
+                              {open ? hit.text : hit.snippet}
+                            </p>
+                            {open && (
+                              <p data-testid="kb-hit-source" className="type-meta mt-1.5 text-[var(--text-muted)]">
+                                {/* ⚠️ 笔记没有磁盘路径。显示"出处："后面跟个空串，比不显示更糟 */}
+                                {hit.sourceKind === 'note'
+                                  ? t('kb.hitFromNote')
+                                  : t('kb.hitFromFile', { path: hit.sourcePath })}
+                              </p>
+                            )}
+                          </li>
+                        );
+                      })}
                     </ul>
                   ))}
               </SectionCard>

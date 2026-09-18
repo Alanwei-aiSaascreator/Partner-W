@@ -468,6 +468,127 @@ describe('检索模式（T-c1 第三条）', () => {
   });
 });
 
+/**
+ * 「依据要看得见」（T-c5 里**客户端能做的这一半**）。
+ *
+ * ⚠️ T-c5 的原验收是"回答里出现可点的出处"，那个**做不到** ——
+ *    资料库的检索结果**从来不会到模型那里**（只有面板自己的搜索框调 `kb.search`，
+ *    全仓没有第二条路径把 kb 的正文送出去）。
+ *    要让回答带出处，得先决定"怎么把资料库内容喂给模型"：自动注入会让**每次请求都变大、
+ *    用户积分扣更多**（产品决定），或者给代理做一个检索工具（网关/插件层，在客户端之外）。
+ *
+ * 所以这一组钉的是**现在就能做实的部分**：命中的"依据"本身要看得见 ——
+ * 今天只能看到被截成 3 行的摘要，既看不到完整正文、也看不到它出自哪个文件。
+ */
+describe('检索命中的依据可展开', () => {
+  const FULL_TEXT = '收入主要来自软件订阅与授权，第二部分讲的是支出结构。';
+  const FILE_HIT = {
+    chunkId: 'c1',
+    sourceId: 'a',
+    ordinal: 0,
+    text: FULL_TEXT,
+    snippet: '收入主要来自软件订阅…',
+    sourceKind: 'file' as const,
+    sourceTitle: '预算说明',
+    sourcePath: 'C:/docs/预算.md',
+    score: 0.83,
+  };
+  const NOTE_HIT = { ...FILE_HIT, chunkId: 'c2', sourceKind: 'note' as const, sourceTitle: '会议纪要', sourcePath: '' };
+
+  const searchWith = (hits: unknown[]): void =>
+    stubClawwork({
+      kbSearch: vi.fn(async () => ({
+        ok: true as const,
+        outcome: { candidateCount: hits.length, degraded: false, mode: 'hybrid' as const, hits },
+      })),
+    });
+
+  /** 命中卡片上的"展开依据"开关。 */
+  const toggles = (): HTMLButtonElement[] =>
+    [...container.querySelectorAll('[data-testid="kb-hit-toggle"]')] as HTMLButtonElement[];
+
+  it('⭐ 默认只给摘要：完整正文与出处路径都不显示', async () => {
+    searchWith([FILE_HIT]);
+    await renderPanel();
+    await searchFor('收入');
+
+    expect(container.textContent).toContain('预算说明');
+    expect(container.textContent).toContain(FILE_HIT.snippet);
+    expect(container.textContent, '完整正文默认不该展开').not.toContain(FULL_TEXT);
+    expect(container.textContent, '出处路径默认不显示').not.toContain('预算.md');
+  });
+
+  it('⭐ 点开 ⇒ 完整正文与出处路径都出现（依据要看得见）', async () => {
+    searchWith([FILE_HIT]);
+    await renderPanel();
+    await searchFor('收入');
+
+    await act(async () => {
+      toggles()[0].click();
+    });
+
+    expect(container.textContent).toContain(FULL_TEXT);
+    expect(container.textContent, '得说清这条依据出自哪个文件').toContain('预算.md');
+    expect(toggles()[0].getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('再点一下收起来（不是单向展开）', async () => {
+    searchWith([FILE_HIT]);
+    await renderPanel();
+    await searchFor('收入');
+
+    await act(async () => {
+      toggles()[0].click();
+    });
+    await act(async () => {
+      toggles()[0].click();
+    });
+
+    expect(container.textContent).not.toContain(FULL_TEXT);
+    expect(toggles()[0].getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('点第二条不会把第一条也打开（同时只开一条）', async () => {
+    searchWith([FILE_HIT, { ...FILE_HIT, chunkId: 'c9', sourceTitle: '排期', sourcePath: 'C:/docs/排期.md' }]);
+    await renderPanel();
+    await searchFor('收入');
+
+    await act(async () => {
+      toggles()[1].click();
+    });
+
+    expect(toggles()[0].getAttribute('aria-expanded')).toBe('false');
+    expect(toggles()[1].getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('换一次检索 ⇒ 收起上次展开的那条（否则它会挂在一个不该还开着的 id 上）', async () => {
+    searchWith([FILE_HIT]);
+    await renderPanel();
+    await searchFor('收入');
+    await act(async () => {
+      toggles()[0].click();
+    });
+    expect(toggles()[0].getAttribute('aria-expanded')).toBe('true');
+
+    await searchFor('支出');
+
+    expect(toggles()[0].getAttribute('aria-expanded'), '新检索不该接着展开上一条').toBe('false');
+  });
+
+  it('笔记类来源不显示空路径（"出处：空"比不显示更糟）', async () => {
+    searchWith([NOTE_HIT]);
+    await renderPanel();
+    await searchFor('收入');
+
+    await act(async () => {
+      toggles()[0].click();
+    });
+
+    expect(container.textContent).toContain(FULL_TEXT);
+    expect(container.textContent).toContain('kb.hitFromNote');
+  });
+});
+
 describe('资料库面板', () => {
   it('⭐ 「还没就绪」显示成**准备中**，不是"还没有资料"（否则用户以为东西丢了）', async () => {
     stubClawwork({
