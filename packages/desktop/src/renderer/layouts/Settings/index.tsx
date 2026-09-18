@@ -11,6 +11,7 @@ import SystemSection from './sections/SystemSection';
 import GatewaysSection from './sections/GatewaysSection';
 import AgentsSection from './sections/AgentsSection';
 import SkillsSection from './sections/SkillsSection';
+import PrivacySection from './sections/PrivacySection';
 import AboutSection from './sections/AboutSection';
 import type { OnboardingProfile } from '@/lib/user-onboarding';
 
@@ -22,6 +23,7 @@ const SECTION_COMPONENTS: Record<SettingsSection, ComponentType> = {
   gateways: GatewaysSection,
   agents: AgentsSection,
   skills: SkillsSection,
+  privacy: PrivacySection,
   about: AboutSection,
 };
 
