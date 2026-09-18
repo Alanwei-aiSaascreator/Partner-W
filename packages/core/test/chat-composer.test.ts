@@ -17,7 +17,7 @@ type AddMessageOptions = { persist?: boolean; sessionKey?: string };
  */
 let supportedLevels: string[] | undefined = undefined;
 
-function setup(options: { ensemble?: boolean } = {}) {
+function setup(options: { ensemble?: boolean; model?: string } = {}) {
   const addMessage = vi.fn(
     (
       _taskId: string,
@@ -54,7 +54,7 @@ function setup(options: { ensemble?: boolean } = {}) {
     gatewayId: 'gw-1',
     sessionKey: SESSION_KEY,
     title: 'T',
-    model: 'qwen3.5-27b',
+    model: options.model ?? 'qwen3.5-27b',
     ensemble: options.ensemble,
   };
   const room = options.ensemble
@@ -453,5 +453,64 @@ describe('chat-composer —— 发送前先把模型写进会话', () => {
 
     expect(res.ok).toBe(false);
     expect(h.sendMessage).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * 任务级模型**必须下发**，否则 composer 显示的就是谎话。
+ *
+ * 实机症状（2026-09-14 彩排）：composer 显示 `deepseek-v4-flash`，消息徽章却是 `QWEN3.5-27B`。
+ * 徽章是对的（它只认网关逐条记录的 `model`）；错的是**第一条消息根本没带模型** ——
+ * 网关用 `agents.defaults.model.primary` 跑，而界面显示的是任务级的另一个值。
+ *
+ * 根因：`chat.send` **不带模型字段**（模型是**会话级**的），而这里**只在 `presetModel`
+ * 存在时**才 patch 会话 —— 用户直接打字发送（最常见的那条路）时模型从不下发。
+ * 同一份文件里 `thinkingLevel` 是**每次发送都 patch** 的，模型却没有。
+ */
+describe('任务级模型下发', () => {
+  /** `patchSession` 里带 model 的那些调用。 */
+  const modelPatches = (patchSession: ReturnType<typeof vi.fn>): string[] =>
+    patchSession.mock.calls
+      .map((c) => (c[2] as { model?: string } | undefined)?.model)
+      .filter((m): m is string => typeof m === 'string');
+
+  it('⭐ 不带 presetModel 的普通发送，也要把**任务的模型**钉到会话上', async () => {
+    const h = setup(); // 夹具里 task.model = 'qwen3.5-27b'
+
+    await h.composer.send(TASK_ID, { content: '你好' });
+
+    expect(
+      modelPatches(h.patchSession),
+      '不钉的话第一条消息一定跑网关默认，而界面显示的是另一个模型 —— 用户看到的就是"显示的不算数"',
+    ).toContain('qwen3.5-27b');
+  });
+
+  it('⭐ 钉不上时**照发**：显示问题不能升级成发不出去', async () => {
+    const h = setup();
+    h.patchSession.mockResolvedValue({ ok: false, error: 'model not available' });
+
+    const res = await h.composer.send(TASK_ID, { content: '你好' });
+
+    expect(h.sendMessage, '宁可跑网关默认（徽章会显示真实模型），也不能把消息卡住').toHaveBeenCalled();
+    expect(res.ok).toBe(true);
+  });
+
+  it('任务没有模型 ⇒ 不产生多余的 patch', async () => {
+    const h = setup({ model: '' });
+
+    await h.composer.send(TASK_ID, { content: '你好' });
+
+    expect(modelPatches(h.patchSession)).toHaveLength(0);
+    expect(h.sendMessage).toHaveBeenCalled();
+  });
+
+  it('presetModel 优先于任务模型（用户显式选的那一个说了算）', async () => {
+    const h = setup();
+
+    await h.composer.send(TASK_ID, { content: '你好', presetModel: 'deepseek-v4-flash' });
+
+    const patched = modelPatches(h.patchSession);
+    expect(patched).toContain('deepseek-v4-flash');
+    expect(patched, '不要再用任务级的老值覆盖用户刚选的').not.toContain('qwen3.5-27b');
   });
 });

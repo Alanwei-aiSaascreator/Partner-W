@@ -266,6 +266,20 @@ export function createChatComposer(deps: ChatComposerDeps) {
             modelProvider: deps.getModelProvider?.(task.gatewayId, options.presetModel),
           });
         }
+        // ⚠️ 用户**没**显式选模型时，任务级的那个也必须下发 —— 否则第一条消息一定跑
+        //    网关默认，而 composer 显示的是任务级的值，**界面在说谎**（2026-09-14 实机：
+        //    composer 显示 deepseek-v4-flash，消息徽章却是 QWEN3.5-27B）。
+        //    `chat.send` 不带模型（模型是**会话级**的），所以不钉就没人钉。
+        //
+        //    与上面 presetModel 的**关键差别**：这里**尽力而为**。用户没显式选过，
+        //    钉不上（模型下架/中转不提供）就照发 —— 跑网关默认，徽章会如实显示真实模型；
+        //    而"因为一个显示问题把消息卡住"是更坏的失败。
+        else if (task.model) {
+          const pinned = await deps.gateway.patchSession(task.gatewayId, task.sessionKey, { model: task.model });
+          if (!pinned?.ok) {
+            console.warn('[chat-composer] pin task model failed:', task.model, pinned?.error);
+          }
+        }
         // ⚠️ 最后一道关，别再只挡 `'off'`。以前就是这里把无效档位放过去的：
         //    用户/历史状态带着 `adaptive`，网关回英文 400，用户只看到一条看不懂的错。
         const thinkingLevel = resolveSupportedThinking(deps, task, options);
