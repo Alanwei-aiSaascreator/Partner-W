@@ -45,8 +45,11 @@ const MIN_FTS_QUERY_LENGTH = 2;
  * when it is empty or shorter than {@link MIN_FTS_QUERY_LENGTH}. Letters and
  * digits of any script (Latin incl. accents, CJK, kana, Hangul, Cyrillic, \u2026)
  * are preserved; everything else is treated as a separator.
+ *
+ * \u8d44\u6599\u5e93\u7684\u5173\u952e\u8bcd\u68c0\u7d22\uff08`db/kb.ts`\uff09\u590d\u7528\u540c\u4e00\u4e2a\u51fd\u6570 \u2014\u2014 \u4e24\u8fb9\u7684"\u4ec0\u4e48\u7b97\u5408\u6cd5\u67e5\u8be2"\u5fc5\u987b\u4e00\u81f4\uff0c
+ * \u5426\u5219\u540c\u4e00\u53e5\u8bdd\u5728\u5168\u5c40\u641c\u7d22\u80fd\u641c\u5230\u3001\u5728\u8d44\u6599\u5e93\u91cc\u8fd4\u56de\u7a7a\u3002
  */
-function toFtsPrefixQuery(query: string): string | null {
+export function toFtsPrefixQuery(query: string): string | null {
   const normalized = query.replace(/[^\p{L}\p{N}_]/gu, ' ').trim();
   if (normalized.length < MIN_FTS_QUERY_LENGTH) return null;
   return normalized + '*';

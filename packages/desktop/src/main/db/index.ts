@@ -5,6 +5,7 @@ import { mkdirSync } from 'fs';
 import { DB_FILE_NAME } from '@clawwork/shared';
 import * as schema from './schema.js';
 import { initFTS } from './fts.js';
+import { initKbSchema } from './kb-schema.js';
 
 let db: ReturnType<typeof drizzle> | null = null;
 let sqlite: Database.Database | null = null;
@@ -92,6 +93,9 @@ function openDatabaseAt(workspacePath: string): void {
   sqlite = new Database(dbPath);
   sqlite.pragma('journal_mode = WAL');
   sqlite.pragma('foreign_keys = ON');
+  // 工作区可能在 U 盘上、也可能被两台机器先后挂载 ⇒ 写锁撞上时**等一下重试**，
+  // 而不是当场抛 SQLITE_BUSY（资料库的批量写入会更容易撞上，见 db/kb.ts 的并发说明）。
+  sqlite.pragma('busy_timeout = 5000');
   sqlite.exec(CREATE_TABLES_SQL);
 
   migrateAddColumn(sqlite, "ALTER TABLE tasks ADD COLUMN gateway_id TEXT NOT NULL DEFAULT ''");
@@ -239,6 +243,9 @@ function openDatabaseAt(workspacePath: string): void {
   migrateAddColumn(sqlite, "ALTER TABLE team_agents ADD COLUMN skills_json TEXT DEFAULT '[]'");
 
   initFTS(sqlite);
+  // 资料库（T6a）：kb_meta / kb_sources / kb_chunks + kb_chunks_fts。
+  // 表与库同生共死（工作区可指向 U 盘），**不落服务器**。
+  initKbSchema(sqlite);
 
   db = drizzle(sqlite, { schema });
   console.log(`[db] initialized at ${dbPath}`);

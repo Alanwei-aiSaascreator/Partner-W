@@ -154,3 +154,55 @@ export {
 } from './services/team-parser.js';
 export { installTeam } from './services/team-installer.js';
 export type { InstallerDeps } from './services/team-installer.js';
+
+// 资料库（T6a：切片 / 状态机 / 向量 / 混合排序）。纯逻辑，无 IO。
+export { KB_CHUNK_STATES, isKbChunkState } from './services/kb/types.js';
+export type {
+  KbSourceKind,
+  KbChunkState,
+  KbChunkDraft,
+  KbEmbeddableChunk,
+  KbChunkingOptions,
+} from './services/kb/types.js';
+
+export { hashText, hashBytes } from './services/kb/hashing.js';
+
+export {
+  KbVectorError,
+  isKbVectorError,
+  encodeVector,
+  decodeVector,
+  toVectorArray,
+  cosineSimilarity,
+} from './services/kb/vectors.js';
+
+export {
+  DEFAULT_CHUNK_SIZE,
+  DEFAULT_CHUNK_OVERLAP,
+  DEFAULT_MIN_CHUNK_SIZE,
+  HEADING_PREFIX_LABEL,
+  headingPrefix,
+  splitText,
+  estimateTokens,
+} from './services/kb/chunking.js';
+export type { TextChunk } from './services/kb/chunking.js';
+
+export { isEmbeddingEngineReady } from './services/kb/embedding.js';
+export type { EmbeddingEngine } from './services/kb/embedding.js';
+
+export {
+  DEFAULT_EMBED_BATCH_SIZE,
+  buildChunkDrafts,
+  chunkNeedsEmbedding,
+  markStaleChunks,
+  embedPendingChunks,
+} from './services/kb/pipeline.js';
+export type { EmbedPendingOptions, EmbedPendingResult } from './services/kb/pipeline.js';
+
+export {
+  DEFAULT_KB_LIMIT,
+  DEFAULT_KEYWORD_WEIGHT,
+  DEFAULT_VECTOR_WEIGHT,
+  rankKbCandidates,
+} from './services/kb/retrieval.js';
+export type { KbSearchCandidate, KbSearchHit, KbRankOptions, KbRankResult } from './services/kb/retrieval.js';
