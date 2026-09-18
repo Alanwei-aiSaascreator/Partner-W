@@ -30,6 +30,18 @@ export interface MessageState {
    */
   runPhaseBySession: Record<string, string | null>;
   /**
+   * 本轮**从什么时候开始等**（`Date.now()` 毫秒），要么没有这条键。
+   *
+   * 为什么要它：输入框上方要显示一个**一直在走的秒数** —— 用户骂"卡住"多半是
+   * **看不出是否还在动**，一个持续在变的数字比任何 spinner 都能证明"它没死"。
+   *
+   * ⚠️ 起算点**只在"从空闲变忙"那一刻**打一次：一轮里 `setProcessing(true)`
+   * 会被重复调到（重连、迟到的 lifecycle.start），每次都拨表的话，
+   * 等了两分钟的用户会看着计时器跳回 3 秒 —— 比不显示还糟。
+   * 不落库（与本文件其它 `*BySession` 同性质：本轮界面状态，不是对话数据）。
+   */
+  turnStartedAtBySession: Record<string, number>;
+  /**
    * 「临时会话」（多模型对比的每一列）本轮的失败文案，按 sessionKey 存。
    *
    * 为什么不复用时间线的 system 消息：对比的每一列**还没被采纳**，它不是这个任务的
@@ -220,6 +232,7 @@ export function createMessageStore(deps: MessageStoreDeps) {
     activeTurnBySession: {},
     processingBySession: new Set(),
     runPhaseBySession: {},
+    turnStartedAtBySession: {},
     errorBySession: {},
     highlightedMessageId: null,
 
@@ -458,6 +471,7 @@ export function createMessageStore(deps: MessageStoreDeps) {
         const nextTurns = { ...s.activeTurnBySession };
         const nextProcessing = new Set(s.processingBySession);
         const nextErrors = { ...s.errorBySession };
+        const nextTurnStartedAt = { ...s.turnStartedAtBySession };
 
         delete nextMessages[taskId];
         for (const key of Object.keys(nextTurns)) {
@@ -469,12 +483,16 @@ export function createMessageStore(deps: MessageStoreDeps) {
         for (const key of Object.keys(nextErrors)) {
           if (parseTaskIdFromSessionKey(key) === taskId) delete nextErrors[key];
         }
+        for (const key of Object.keys(nextTurnStartedAt)) {
+          if (parseTaskIdFromSessionKey(key) === taskId) delete nextTurnStartedAt[key];
+        }
 
         return {
           messagesByTask: nextMessages,
           activeTurnBySession: nextTurns,
           processingBySession: nextProcessing,
           errorBySession: nextErrors,
+          turnStartedAtBySession: nextTurnStartedAt,
         };
       }),
 
@@ -482,10 +500,21 @@ export function createMessageStore(deps: MessageStoreDeps) {
 
     setProcessing: (sessionKey, processing) =>
       set((s) => {
+        const wasProcessing = s.processingBySession.has(sessionKey);
         const next = new Set(s.processingBySession);
         if (processing) next.add(sessionKey);
         else next.delete(sessionKey);
-        return { processingBySession: next };
+
+        // ⚠️ 只在**从空闲变忙**那一刻打点。已经在忙时再收到 `true`（重连、迟到的
+        //    lifecycle.start）绝不能拨表 —— 见 `turnStartedAtBySession` 的说明。
+        const startedAt = { ...s.turnStartedAtBySession };
+        if (processing) {
+          if (!wasProcessing) startedAt[sessionKey] = Date.now();
+        } else {
+          delete startedAt[sessionKey];
+        }
+
+        return { processingBySession: next, turnStartedAtBySession: startedAt };
       }),
 
     setRunPhase: (sessionKey, phase) =>

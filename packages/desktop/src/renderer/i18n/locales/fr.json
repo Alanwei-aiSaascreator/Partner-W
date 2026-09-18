@@ -430,7 +430,23 @@
     "thinkingOff": "Désactivé",
     "thinkingResetByModel": "Passé à {{model}} ; niveau de réflexion réinitialisé",
     "thinkingUltra": "Ultra",
-    "thinkingXhigh": "Très élevé"
+    "thinkingXhigh": "Très élevé",
+    "waiting": {
+      "line": {
+        "fresh0": "Je regarde ce que vous m’avez donné",
+        "fresh1": "Ça, je connais — un instant",
+        "fresh2": "Je lis attentivement vos documents",
+        "long0": "Toujours au travail — pas bloqué, promis",
+        "long1": "Il y a du pain sur la planche ; je fais dans l’ordre",
+        "long2": "Je mets ça en mots",
+        "veryLong0": "C’est du costaud. J’y suis — pas planté",
+        "veryLong1": "Travailler lentement, travailler bien — j’écris encore",
+        "veryLong2": "Ça tourne encore. Ne me fermez pas"
+      },
+      "runningTool": "En cours : {{what}}",
+      "working": "Traitement…",
+      "writing": "{{count}} étapes faites · rédaction de la réponse…"
+    }
   },
   "chatMessage": {
     "conductor": "Coordinateur",

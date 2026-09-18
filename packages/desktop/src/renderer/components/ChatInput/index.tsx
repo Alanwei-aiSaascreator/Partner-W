@@ -36,6 +36,7 @@ import { cn } from '@/lib/utils';
 import { getArtifactLabel } from '@/lib/artifact-labels';
 import { createWhisperSttSession } from '@/lib/voice/whisper-stt';
 import { RUN_PHASE_IDS } from '@clawwork/core';
+import ComposerActivity from '@/components/ComposerActivity';
 import { useMessageStore } from '@/stores/messageStore';
 import { useRoomStore } from '@/stores/roomStore';
 import { useSettingsStore } from '@/stores/settingsStore';
@@ -646,6 +647,11 @@ export default function ChatInput({
           onToggleImported={materials.toggleImportedFile}
           onRevokeSource={(sourceId) => void materials.revokeSource(sourceId)}
         />
+        {/*
+          等待期的活动条：秒数 + "正在做什么" + 俏皮话 + 取消。
+          放在这一行的位置是有意的 —— 它在**输入框正上方**，用户发完消息视线就停在这儿。
+        */}
+        <ComposerActivity sessionKey={activeTask?.sessionKey ?? null} onCancel={handleAbort} />
         <AnimatePresence>
           {pendingAttachments.length > 0 && (
             <motion.div

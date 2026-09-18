@@ -430,7 +430,23 @@
     "thinkingOff": "关闭",
     "thinkingResetByModel": "已切换到 {{model}}，思考档位已重置为默认",
     "thinkingUltra": "极限",
-    "thinkingXhigh": "超高"
+    "thinkingXhigh": "超高",
+    "waiting": {
+      "line": {
+        "fresh0": "让我看看你给的料",
+        "fresh1": "这活儿我熟，稍等",
+        "fresh2": "正在认真读你给的东西",
+        "long0": "还在忙，别急，我没卡住",
+        "long1": "活儿有点多，我一件件来",
+        "long2": "正把话组织好，这就说",
+        "veryLong0": "这题有点大，我在认真答，不是死机了",
+        "veryLong1": "慢工出细活，我还在写",
+        "veryLong2": "还在跑，别关我"
+      },
+      "runningTool": "执行中：{{what}}",
+      "working": "正在处理…",
+      "writing": "已完成 {{count}} 步 · 正在写回答…"
+    }
   },
   "chatMessage": {
     "conductor": "协调者",

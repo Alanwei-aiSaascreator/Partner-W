@@ -430,7 +430,23 @@
     "thinkingOff": "Aus",
     "thinkingResetByModel": "Zu {{model}} gewechselt – Denkstufe auf Standard zurückgesetzt",
     "thinkingUltra": "Ultra",
-    "thinkingXhigh": "Sehr hoch"
+    "thinkingXhigh": "Sehr hoch",
+    "waiting": {
+      "line": {
+        "fresh0": "Ich schaue mir an, was du mir gegeben hast",
+        "fresh1": "Das kenne ich — einen Moment",
+        "fresh2": "Ich lese dein Material durch",
+        "long0": "Noch dran — nicht hängen geblieben, versprochen",
+        "long1": "Einiges zu tun; ich mache es eins nach dem anderen",
+        "long2": "Ich bringe es gerade in Worte",
+        "veryLong0": "Das ist ein großer Brocken. Ich bin dran — nicht eingefroren",
+        "veryLong1": "Gut Ding will Weile haben — ich schreibe noch",
+        "veryLong2": "Läuft noch. Bitte nicht schließen"
+      },
+      "runningTool": "Läuft: {{what}}",
+      "working": "In Arbeit…",
+      "writing": "{{count}} Schritte fertig · Antwort wird geschrieben…"
+    }
   },
   "chatMessage": {
     "conductor": "Koordinator",

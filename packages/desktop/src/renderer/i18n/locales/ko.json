@@ -430,7 +430,23 @@
     "thinkingOff": "끄기",
     "thinkingResetByModel": "{{model}}(으)로 전환했습니다. 사고 수준을 기본값으로 재설정했습니다",
     "thinkingUltra": "울트라",
-    "thinkingXhigh": "매우 높음"
+    "thinkingXhigh": "매우 높음",
+    "waiting": {
+      "line": {
+        "fresh0": "주신 자료를 보고 있습니다",
+        "fresh1": "이 작업은 익숙합니다, 잠시만요",
+        "fresh2": "주신 내용을 꼼꼼히 읽고 있습니다",
+        "long0": "아직 작업 중입니다, 멈춘 거 아니에요",
+        "long1": "할 일이 좀 많네요, 하나씩 처리합니다",
+        "long2": "문장을 다듬고 있습니다, 곧 말씀드려요",
+        "veryLong0": "질문이 좀 큽니다, 멈춘 게 아닙니다",
+        "veryLong1": "천천히 확실하게, 아직 쓰고 있습니다",
+        "veryLong2": "아직 돌아가고 있어요, 닫지 마세요"
+      },
+      "runningTool": "실행 중: {{what}}",
+      "working": "처리 중…",
+      "writing": "{{count}}단계 완료 · 답변을 작성하고 있습니다…"
+    }
   },
   "chatMessage": {
     "conductor": "코디네이터",
