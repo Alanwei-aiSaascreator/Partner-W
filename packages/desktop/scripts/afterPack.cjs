@@ -1,6 +1,7 @@
 const { execSync } = require('child_process');
 const { existsSync } = require('node:fs');
 const path = require('node:path');
+const { scanBundlePath } = require('./bundle-secrets.cjs');
 
 function sign(run, targetPath, entitlements) {
   const entitlementsArg = entitlements ? ` --entitlements "${entitlements}"` : '';
@@ -42,5 +43,30 @@ async function adHocSignApp(context, run = execSync, exists = existsSync) {
   sign(run, appPath, entitlements);
 }
 
+/**
+ * 打包后立刻扫一遍产物里有没有**不该随包的密钥** —— 跨平台都跑，扫到就让构建失败。
+ *
+ * 为什么放在这里：这种事一旦发出去就收不回（隔壁同类产品就是把真模型钥匙随包发的，
+ * 更新只换 asar、config 不动 ⇒ 钥匙永远换不掉）。构建期拦下来是唯一便宜的时机。
+ * 扫的是 `resources/app.asar`（内容是原样存的，直接当文本扫）；允许 anon key。
+ */
+async function checkBundledSecrets(context, scan = scanBundlePath) {
+  const resourcesDir = path.join(context.appOutDir, 'resources');
+  const asar = path.join(resourcesDir, 'app.asar');
+  const target = existsSync(asar) ? asar : resourcesDir;
+  const findings = scan(target);
+  if (findings.length > 0) {
+    const lines = findings.map((f) => `  · [${f.rule}] ${f.detail}  ${f.file}\n    样例: ${f.sample}`).join('\n');
+    throw new Error(`[bundle-secrets] 产物里有不该随包的密钥（随包只许 anon key）：\n${lines}`);
+  }
+  return findings.length;
+}
+
+async function afterPack(context) {
+  await checkBundledSecrets(context);
+  await adHocSignApp(context);
+}
+
 exports.adHocSignApp = adHocSignApp;
-exports.default = adHocSignApp;
+exports.checkBundledSecrets = checkBundledSecrets;
+exports.default = afterPack;
