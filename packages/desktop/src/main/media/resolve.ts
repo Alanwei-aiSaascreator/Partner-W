@@ -1,8 +1,9 @@
-import type { Stats } from 'fs';
+import type { BigIntStats } from 'fs';
 import { realpathSync } from 'fs';
 import { open, realpath, stat } from 'fs/promises';
 import { homedir } from 'os';
 import { isAbsolute, join, resolve, sep } from 'path';
+import { identityOf, sameIdentity } from '../util/file-identity.js';
 
 const MAX_MEDIA_BYTES = 25 * 1024 * 1024;
 const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|avif)$/i;
@@ -18,8 +19,16 @@ function mediaRoots(): string[] {
   return [resolve(stateDir, 'media')];
 }
 
-function isSameFile(left: Stats, right: Stats): boolean {
-  return left.dev === right.dev && left.ino === right.ino;
+/**
+ * 身份判定走 `util/file-identity.ts`（bigint，逐位比）。
+ *
+ * ⚠️ 原来比的是 Number 版的 `dev`/`ino`。`ino` 是 **64 位**，超过 2^53 后**相邻的两个值**
+ *    会舍入成同一个（NTFS 顺序分配 inode ⇒ 连续创建的文件必然相邻 ⇒ **必然**撞），
+ *    而这个判定的用途是"重算出来的路径还是我刚打开的那个文件吗" ——
+ *    答错就是把**另一份文件**当成允许的媒体发出去。
+ */
+function isSameFile(left: BigIntStats, right: BigIntStats): boolean {
+  return sameIdentity(identityOf(left), identityOf(right));
 }
 
 function isLexicallyAllowedMediaPath(sourcePath: string): boolean {
@@ -29,7 +38,11 @@ function isLexicallyAllowedMediaPath(sourcePath: string): boolean {
   return mediaRoots().some((root) => isWithin(root, requested));
 }
 
-async function resolveAllowedMediaPath(sourcePath: string, fd: number, openedStat: Stats): Promise<string | null> {
+async function resolveAllowedMediaPath(
+  sourcePath: string,
+  fd: number,
+  openedStat: BigIntStats,
+): Promise<string | null> {
   const requested = resolve(sourcePath);
   const roots = await Promise.all(
     mediaRoots().map((root) =>
@@ -52,7 +65,7 @@ async function resolveAllowedMediaPath(sourcePath: string, fd: number, openedSta
   const realTarget = fdTarget ?? (await realpath(requested).catch(() => null));
   if (!realTarget) return null;
   if (!roots.some((root) => root !== null && isWithin(root, realTarget))) return null;
-  const targetStat = await stat(realTarget).catch(() => null);
+  const targetStat = await stat(realTarget, { bigint: true }).catch(() => null);
   if (!targetStat || !isSameFile(openedStat, targetStat)) return null;
   return realTarget;
 }
@@ -62,8 +75,8 @@ export async function readOpenClawMediaFile(sourcePath: string): Promise<string 
   const handle = await open(sourcePath, 'r').catch(() => null);
   if (!handle) return null;
   try {
-    const stat = await handle.stat();
-    if (!stat.isFile() || stat.size > MAX_MEDIA_BYTES) return null;
+    const stat = await handle.stat({ bigint: true });
+    if (!stat.isFile() || Number(stat.size) > MAX_MEDIA_BYTES) return null;
     const realTarget = await resolveAllowedMediaPath(sourcePath, handle.fd, stat);
     if (!realTarget) return null;
     return await handle.readFile({ encoding: 'base64' });
@@ -71,3 +84,9 @@ export async function readOpenClawMediaFile(sourcePath: string): Promise<string 
     await handle.close();
   }
 }
+
+/**
+ * 只给测试用：身份判定是否**精确**在真文件上验不了（造不出"只有 dev/ino 不同"的形态），
+ * 只能在函数层用合成的 bigint stats 钉。
+ */
+export const __testing = Object.freeze({ isSameFile });

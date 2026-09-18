@@ -13,7 +13,7 @@ vi.mock('fs/promises', () => ({
 import { realpathSync } from 'fs';
 import { open, realpath, stat } from 'fs/promises';
 import { join, resolve } from 'path';
-import { readOpenClawMediaFile } from '../src/main/media/resolve.js';
+import { __testing, readOpenClawMediaFile } from '../src/main/media/resolve.js';
 
 const mockOpen = vi.mocked(open);
 const mockRealpath = vi.mocked(realpath);
@@ -155,5 +155,39 @@ describe('OpenClaw media file access', () => {
     await expect(readOpenClawMediaFile(MEDIA_FILE)).resolves.toBeNull();
     expect(readFile).not.toHaveBeenCalled();
     expect(close).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * 身份判定 —— `media/resolve.ts` 里那段 `isSameFile`。
+ *
+ * ⚠️ 为什么只能函数层钉：要构造"只有 dev/ino 不同"的形态，size/mtime 能对齐，
+ *    但这里比对的就是 dev/ino 本身，真文件上没法让它们"只差 1"。
+ *    （`ino` 是 64 位，Node 用 Number 暴露 ⇒ 超过 2^53 后相邻值舍入成同一个。）
+ *
+ * 这个判定的用途是"重算出来的真实路径还是我刚打开的那个文件吗" ——
+ * 答错就是把**另一份文件**当成允许的媒体发出去，而且**不报错**。
+ */
+describe('媒体路径的文件身份（64 位 ino 不许丢精度）', () => {
+  const statsWith = (ino: bigint, dev = 1n): Parameters<typeof __testing.isSameFile>[0] =>
+    ({ dev, ino }) as Parameters<typeof __testing.isSameFile>[0];
+
+  it('⭐ 两个不同的 64 位 ino 转成 number 后相等 ⇒ 必须判为**不同**文件', () => {
+    expect(Number(10977524094393692n) === Number(10977524094393693n), '前提：舍入后相等').toBe(true);
+
+    expect(__testing.isSameFile(statsWith(10977524094393692n), statsWith(10977524094393693n))).toBe(false);
+  });
+
+  it('同一个文件必须判为相同', () => {
+    const ino = 39125021765459235n;
+    expect(__testing.isSameFile(statsWith(ino), statsWith(ino))).toBe(true);
+  });
+
+  it('换卷（dev 不同）即使 ino 一样也要判为不同', () => {
+    expect(__testing.isSameFile(statsWith(7n, 1n), statsWith(7n, 2n))).toBe(false);
+  });
+
+  it('身份为 0（文件系统没给）⇒ 判为"不是同一个"（保守）', () => {
+    expect(__testing.isSameFile(statsWith(0n), statsWith(0n))).toBe(false);
   });
 });
