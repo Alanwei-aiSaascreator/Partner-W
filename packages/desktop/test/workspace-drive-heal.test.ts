@@ -107,6 +107,64 @@ describe('buildWorkspaceHealCandidates —— 候选顺序即优先级', () => {
     expect(candidatePaths(candidates)).toEqual([WIN.join('E:\\', '新位置', WS_NAME)]);
   });
 
+  it('⭐ 跑在盘上、但盘列表为空（报成固定盘的 U 盘 / 枚举失败）：按"自己在的那块盘"找回', () => {
+    // 现场复现（2026-09-18 实测）：Windows 把盘报成固定盘 ⇒ removableDrives 为空；
+    // 记录里的 Z: 又不存在 ⇒ 两条老判据全落空，只能弹「找不到工作区」。
+    // 而应用**正跑在 F: 盘上**，盘根有 marker、工作区也在那儿 —— 这条必须命中。
+    const candidates = buildWorkspaceHealCandidates({
+      recordedPath: WIN.join('Z:\\', WS_NAME),
+      relPath: WS_NAME,
+      removableDrives: [], // 关键：枚举不出可移动盘
+      runVolumeRoot: 'F:\\', // 应用自己所在的卷
+      exists: vfs(WIN.join('F:\\', WS_NAME), WIN.join('F:\\', MANIFEST)),
+    });
+
+    expect(candidates).toEqual([{ path: WIN.join('F:\\', WS_NAME), origin: 'run-volume', evidence: 'volume-marker' }]);
+  });
+
+  it('"自己在的盘"同样要证据：目录同名但没有 marker ⇒ 不认', () => {
+    expect(
+      buildWorkspaceHealCandidates({
+        recordedPath: WIN.join('Z:\\', WS_NAME),
+        relPath: WS_NAME,
+        removableDrives: [],
+        runVolumeRoot: 'F:\\',
+        exists: vfs(WIN.join('F:\\', WS_NAME)),
+      }),
+    ).toEqual([]);
+  });
+
+  it('同一条路径只算一次：它在的盘 == 记录里那个盘时，不会数成"多命中"', () => {
+    const candidates = buildWorkspaceHealCandidates({
+      recordedPath: WIN.join('F:\\', '旧位置', WS_NAME),
+      relPath: WS_NAME,
+      removableDrives: [],
+      runVolumeRoot: 'F:\\',
+      exists: vfs(WIN.join('F:\\', WS_NAME), WIN.join('F:\\', MANIFEST)),
+    });
+
+    expect(candidates).toEqual([{ path: WIN.join('F:\\', WS_NAME), origin: 'same-letter', evidence: 'volume-marker' }]);
+  });
+
+  it('⭐⭐ 判定层：固定盘 + 盘符变了 ⇒ 静默自愈（不弹框，正是实机那次该有的行为）', () => {
+    const decision = decideWorkspaceStartup({
+      recordedPath: WIN.join('Z:\\', WS_NAME),
+      recordedRelPath: WS_NAME,
+      volumeMarker: MANIFEST,
+      portableRoot: 'F:\\', // 应用跑在 F:（盘上运行判定给的卷根）
+      defaultPath: WIN.join('C:\\', 'Users', 'u', 'ClawWork-Workspace'),
+      removableDrives: [],
+      exists: vfs(WIN.join('F:\\', WS_NAME), WIN.join('F:\\', MANIFEST)),
+    });
+
+    expect(decision).toEqual({
+      kind: 'healed',
+      path: WIN.join('F:\\', WS_NAME),
+      from: WIN.join('Z:\\', WS_NAME),
+      via: { path: WIN.join('F:\\', WS_NAME), origin: 'run-volume', evidence: 'volume-marker' },
+    });
+  });
+
   it('没记相对路径 ⇒ 一个候选都不给（拿 C:\\Users\\… 反推出来的路径去扫盘是"猜"）', () => {
     expect(
       buildWorkspaceHealCandidates({

@@ -186,7 +186,13 @@ export function workspaceLocationPatch(input: {
   return { workspaceRelPath: undefined, volumeMarker: undefined, ...location };
 }
 
-export type WorkspaceHealOrigin = 'same-letter' | 'removable-scan';
+/**
+ * 候选是怎么被找到的：
+ * - `same-letter`：记录里那个盘符还在，按相对路径找回来；
+ * - `run-volume`：**应用自己运行所在的那块盘**（盘列表为空/报成固定盘时的救命判据）；
+ * - `removable-scan`：扫可移动盘列表。
+ */
+export type WorkspaceHealOrigin = 'same-letter' | 'run-volume' | 'removable-scan';
 
 export type WorkspaceCandidateEvidence = 'volume-marker' | 'workspace-marker';
 
@@ -204,6 +210,15 @@ export interface WorkspaceHealInput {
   relPath?: string | null;
   volumeMarker?: string | null;
   removableDrives: readonly string[];
+  /**
+   * 应用**自己运行所在**的卷根（盘上运行时 = `detectPortableRun().volumeRoot`）。
+   *
+   * ⚠️ 为什么必须有这一条（2026-09-18 实机复现）：Windows 把不少 U 盘/SSD/读卡器报成
+   *    **固定盘**（DriveType=3），枚举可移动盘是空数组；那时"记录里的盘符变了"就两条
+   *    判据全落空 —— 尽管盘根本人就在眼前（应用正跑在上面，盘根 marker 与工作区都在）。
+   *    结果用户换了个 USB 口就弹「找不到工作区」。
+   */
+  runVolumeRoot?: string | null;
   exists: (p: string) => boolean;
 }
 
@@ -257,7 +272,20 @@ export function buildWorkspaceHealCandidates(input: WorkspaceHealInput): Workspa
     }
   }
 
-  // ② 扫可移动盘
+  // ② 应用**自己运行所在的那块盘**（排在扫盘之前：它比"别的某块盘"更像答案）。
+  //    盘列表为空/报成固定盘时，这是唯一还能救命的判据。
+  if (input.runVolumeRoot) {
+    const root = normalizeVolumeRoot(input.runVolumeRoot);
+    if (root) {
+      const candidate = P().join(root, rel);
+      if (input.exists(candidate)) {
+        const evidence = evidenceOf(candidate, root);
+        if (evidence) push({ path: candidate, origin: 'run-volume', evidence });
+      }
+    }
+  }
+
+  // ③ 扫可移动盘
   for (const drive of input.removableDrives) {
     const root = normalizeVolumeRoot(drive);
     if (!root) continue;
@@ -325,6 +353,8 @@ export function decideWorkspaceStartup(input: WorkspaceStartupInput): WorkspaceS
       relPath: input.recordedRelPath,
       volumeMarker: input.volumeMarker,
       removableDrives: input.removableDrives,
+      // 盘上运行时把"自己在的那块盘"也当候选（固定盘/枚举失败时的唯一活路）
+      runVolumeRoot: input.portableRoot ?? null,
       exists: input.exists,
     });
 
