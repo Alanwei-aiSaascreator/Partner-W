@@ -78,6 +78,8 @@ const mocks = vi.hoisted(() => {
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
+  // 见 use-chat-send.test.tsx 的同名说明：i18n 实例加载时会 use(initReactI18next)。
+  initReactI18next: { type: '3rdParty', init: vi.fn() },
 }));
 
 vi.mock('../src/renderer/lib/toast', () => ({

@@ -413,6 +413,11 @@ export function registerDataHandlers(): void {
         outputTokens?: number;
         contextTokens?: number;
         teamId?: string | null;
+        /**
+         * 改任务的会话指针（多模型对比采纳后指到赢的那条会话）。
+         * ⚠️ 只改**指针**：这条会话在网关侧本来就在，不新建也不删。
+         */
+        sessionKey?: string;
         updatedAt: string;
       },
     ) => {
@@ -430,6 +435,7 @@ export function registerDataHandlers(): void {
         if (params.outputTokens !== undefined) updates.outputTokens = params.outputTokens;
         if (params.contextTokens !== undefined) updates.contextTokens = params.contextTokens;
         if (params.teamId !== undefined) updates.teamId = params.teamId;
+        if (params.sessionKey !== undefined) updates.sessionKey = params.sessionKey;
         db.update(tasks).set(updates).where(eq(tasks.id, params.id)).run();
         return { ok: true };
       } catch (err) {

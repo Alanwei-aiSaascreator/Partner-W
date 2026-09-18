@@ -46,6 +46,14 @@ export interface TaskState {
       outputTokens?: number;
       contextTokens?: number;
       teamId?: string | null;
+      /**
+       * 改任务的会话指针（多模型对比「采纳」后指到赢的那条会话上）。
+       *
+       * 为什么要它：网关侧一个会话 = 一份上下文，`chat.send` 只认 sessionKey。
+       * 采纳后不改指针的话，下一句话仍发回**原来的**会话（里面没有用户刚采纳的那段问答），
+       * 「采纳后新会话带上下文」就落空了。
+       */
+      sessionKey?: string;
       updatedAt?: string;
     },
   ) => void;
@@ -83,6 +91,8 @@ export interface TaskStoreDeps {
     outputTokens?: number;
     contextTokens?: number;
     teamId?: string | null;
+    /** 见 `updateTaskMetadata` 的说明（采纳后改会话指针）。 */
+    sessionKey?: string;
     updatedAt: string;
   }) => Promise<IpcResult>;
   deleteTask: (taskId: string) => Promise<IpcResult>;
@@ -246,6 +256,7 @@ export function createTaskStore(deps: TaskStoreDeps) {
           outputTokens: meta.outputTokens,
           contextTokens: meta.contextTokens,
           teamId: meta.teamId,
+          sessionKey: meta.sessionKey,
           updatedAt,
         })
         .catch((err) => {

@@ -118,6 +118,15 @@ export interface SessionSyncDeps {
       }) => Partial<{ messagesByTask: Record<string, Message[]> }>,
     ) => void;
   };
+  /**
+   * 这个会话是不是**临时会话**（多模型对比的某一列，见 gateway-dispatcher 的同名依赖）。
+   *
+   * 对账路径上它是第二道闸：对比列的会话键解析出来的 taskId 是**真**任务，
+   * 于是 `retrySyncPending`（重连时）会把它当成"这个任务有一条跑完但还没落库的回复"
+   * 去拉 `chat.history` —— 那样**用户没采纳的答案会被写进时间线**。
+   * 第一道闸在 dispatcher（final 时不触发 sync），这里兜住重连这条旁路。
+   */
+  isEphemeralSession?: (sessionKey: string) => boolean;
 }
 
 const RETRY_DELAYS = [2000, 4000, 8000];
@@ -248,6 +257,7 @@ export function createSessionSync(deps: SessionSyncDeps) {
     const task = deps.getTaskStore().tasks.find((t) => t.id === taskId);
     const sessionKey = sessionKeyOverride ?? task?.sessionKey;
     if (!task?.gatewayId || !sessionKey) return;
+    if (deps.isEphemeralSession?.(sessionKey)) return;
 
     const httpBase = await deps.gateway.getHttpBase?.(task.gatewayId);
     if (syncEpoch !== epoch) return;
@@ -359,6 +369,7 @@ export function createSessionSync(deps: SessionSyncDeps) {
   function retrySyncPending(): void {
     const turns = deps.getMessageStore().activeTurnBySession;
     for (const [sessionKey, turn] of Object.entries(turns)) {
+      if (deps.isEphemeralSession?.(sessionKey)) continue;
       if ((turn as ActiveTurn).finalized) {
         const taskId = parseTaskIdFromSessionKey(sessionKey);
         if (taskId) syncSessionMessages(taskId, sessionKey).catch(() => {});

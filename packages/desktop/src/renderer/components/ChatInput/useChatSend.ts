@@ -32,6 +32,8 @@ import { useUiStore } from '../../stores/uiStore';
 import { useRoomStore } from '../../stores/roomStore';
 import { useTeamStore } from '../../stores/teamStore';
 import { composer } from '../../platform';
+import { compareStore } from '@/features/compare/compare-store-instance';
+import { compareRuntimeForTask } from '@/features/compare/compare-plan';
 import type { PendingAttachment } from './types';
 import type { ImportedMaterialFile, TaskContextFile } from './useTaskMaterials';
 import type { ThinkingLevel } from './constants';
@@ -208,10 +210,16 @@ export function useChatSend(opts: UseChatSendOpts) {
     sendInFlightTaskIdsRef.current.add(sendLockKey);
     const ownedSendLockKeys = new Set([sendLockKey]);
     try {
+      // 对比模式：这次「发送」不是发一条消息，而是同一句话**并发**问 N 个模型
+      //（见下面「多模型对比」那一段）。先取一份快照 —— 后面几道闸门要让路。
+      const compare = compareStore().getState();
+
       // 发送前校验：任务记着的模型可能已经不在目录里了（下架 / 上游调整）。
       // 不拦的话体验是「能选中 → 发出去 → 报错」，而且报错发生在会话就绪之后，
       // 看着像网络问题。详见 isModelSelectable 的注释。
-      if (!isModelSelectable(modelCatalog, currentModel)) {
+      // ⚠️ 对比模式**跳过这一关**：对比用的是各列自己钉的模型，任务级模型下架
+      //    不该把对比一起拦住（拦住的话用户会以为"对比坏了"）。
+      if (!compare.mode && !isModelSelectable(modelCatalog, currentModel)) {
         toast.error(t('chatInput.modelGone', { model: currentModel ?? '' }));
         return;
       }
@@ -255,6 +263,55 @@ export function useChatSend(opts: UseChatSendOpts) {
         if (sendInFlightTaskIdsRef.current.has(task.id)) return;
         sendInFlightTaskIdsRef.current.add(task.id);
         ownedSendLockKeys.add(task.id);
+      }
+
+      // ── 多模型对比 ────────────────────────────────────────────────────────
+      // 对比模式下的「发送」= 同一句话并发问 N 个模型，走对比自己的编排
+      //（每路一条会话、各自独立结算）。不能落进下面的 composer.send —— 那只会
+      // 发成"一个模型的一条"，用户以为在对比、其实只有一个答案。
+      //
+      // 放在这个位置是有意的：离线/空内容/额度/**任务已就绪**四关都已经过了，
+      // 而「任务级模型可用」那一关刻意跳过（对比用的是各列自己的模型）。
+      if (compare.mode) {
+        // ⚠️ 闸门带**任务身份**：`active` 是全局唯一的，而用户可以切任务 ——
+        // 用 `compare.active` 直接拦的话，前一个任务里跑着的一轮会让**这个任务**
+        // 一个字都发不出去（提示"上一轮对比还在跑"，可用户眼前这一屏根本没有对比面板）。
+        // 别的任务里的那一轮不该管这里；本任务里的才拦（界面只有一组列）。
+        if (compareRuntimeForTask(compare.active, task.id)) {
+          toast.error(t('compare.roundRunning'));
+          return;
+        }
+        // 对比只发一句话：附件/引用要先落盘、要按任务拼上下文，而 N 路并行时
+        // 这些"前置打包"会各自重复一遍且难以解释给用户。**如实拦住**，不静默丢弃。
+        const compareMaterials =
+          pendingAttachments.length +
+          selectedImportedFiles.length +
+          selectedLocalFiles.length +
+          selectedTasks.length +
+          selectedArtifacts.length +
+          selectedAgents.length;
+        if (compareMaterials > 0) {
+          toast.error(t('compare.materialsUnsupported'));
+          return;
+        }
+
+        const started = compare.start({
+          taskId: task.id,
+          gatewayId: task.gatewayId,
+          agentId: task.agentId ?? 'main',
+          prompt: content,
+        });
+        if (!started) {
+          // 没发起来 = 选中的模型数量不对（库里已置 compare.error，选择条上会显示原因）
+          toast.error(t('compare.sendBlocked'));
+          return;
+        }
+        if (activeTaskIdRef.current === task.id) {
+          textarea.value = '';
+          textarea.style.height = 'auto';
+          onComposerCleared?.();
+        }
+        return;
       }
 
       if (

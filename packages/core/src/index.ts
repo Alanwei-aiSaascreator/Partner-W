@@ -46,6 +46,7 @@ export {
   normalizeContentBlocks,
   normalizeAssistantTurns,
   collapseDiscoveredMessages,
+  toISOTimestamp,
 } from './protocol/normalize-history.js';
 
 export {

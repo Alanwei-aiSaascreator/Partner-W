@@ -110,10 +110,47 @@ export interface GatewayDispatcherDeps {
     | 'clearActiveTurn'
     | 'setProcessing'
     | 'setRunPhase'
+    | 'setSessionError'
   >;
 
   getActiveTaskId: () => string | null;
   markUnread: (taskId: string) => void;
+  /**
+   * 这个会话是不是**临时会话**（多模型对比的某一列）。
+   *
+   * ## 为什么需要这条边界
+   *
+   * 对比的每一列都是一条**独立网关会话**，但为了让 `resolveTaskId` 把它们的事件
+   * 路由回原任务，会话键里嵌的是**真** taskId（伪 deviceId：
+   * `agent:X:clawwork:compare-<id>-<n>:task:<taskId>`，见 compare-plan.ts）。
+   * 路由通了，副作用也跟着通了 —— 不加这道闸，未采纳的回答会被
+   * `syncSessionMessages` 当成该任务的一轮回复写进时间线（用户会看到自己**没采纳**的答案），
+   * 报错会插 system 消息、还会弹 toast、把任务标未读、按列的内容自动改标题。
+   *
+   * ⇒ 临时会话：流式照常（各列要显示），**时间线/未读/通知/自动标题一律不碰**，
+   *    失败改走 `messageStore.setSessionError`（按会话存的旁路，只显示在该列上）。
+   *
+   * ⚠️ 实际宿主（`useGatewayDispatcherSetup`）用的是对比 store 里的一张**登记表**：
+   *    键在「开跑」时登记，在「**尽力关掉这一列**」之后摘掉 —— 即 `deleteSession` 成功
+   *    （或网关说它本来就不存在），或者任务连 `gatewayId` 都还没有、根本没法删
+   *    （见 compare-store 的 `cleanupSessions`）。**不是**"当前对比是否活跃"。
+   *    退出/采纳之后事件还会飞一会儿（abort 回执、迟到的 final），
+   *    判据若跟着 `active` 走，那些迟到事件就会以**普通回复**的身份写进时间线。
+   *    判据必须是**动态**的（每次现读），所以这里不能缓存。
+   */
+  isEphemeralSession?: (sessionKey: string) => boolean;
+
+  /**
+   * 这个会话的**这一轮**是用户自己中断的吗（对比「取消」按钮 → abort 掉那几列）。
+   *
+   * 为什么需要它、以及为什么不复用 `abortedByUser`（那是 **task 级** 的）：
+   * 对比列的登记表在 `deleteSession` 成功那一刻就把键摘掉了（那之后它不再是"临时"的），
+   * 可网关那边的 `aborted` 帧可能还在路上。这一帧到了以后：会话看起来是**普通会话**，
+   * 而 task 级标记可能已经被别的 delta 清过 —— 于是它会被当成"服务端单方面中断"，
+   * 往时间线里插一条 system 消息，还把任务标未读、发通知。
+   * 中断是**按会话**发生的（用户点的是某一轮的"取消"），标记就按会话记。
+   */
+  isSessionAbortedByUser?: (sessionKey: string) => boolean;
 
   setGatewayStatusByGateway: (gatewayId: string, status: 'connected' | 'connecting' | 'disconnected') => void;
   setGatewayVersion: (gatewayId: string, version: string | undefined) => void;
@@ -295,6 +332,14 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
       clearTimeout(buffered.timer);
       lifecycleErrorBuffer.delete(taskId);
     }
+    // 临时会话的缓冲键是**会话键**（见 handleAgentLifecycleStream）。这一轮已经开始出正文了，
+    // 那条待发的失败就不该再补到该列上 —— 不清的话界面会出现「正在输出 + 同时报错」。
+    for (const key of [...lifecycleErrorBuffer.keys()]) {
+      if (key === taskId || parseTaskIdFromSessionKey(key) !== taskId) continue;
+      const stale = lifecycleErrorBuffer.get(key)!;
+      clearTimeout(stale.timer);
+      lifecycleErrorBuffer.delete(key);
+    }
   }
 
   function resolveTaskId(sessionKey: string): string | null {
@@ -338,15 +383,19 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
       return;
     }
 
-    if (matchedTask.ensemble && sessionKey !== matchedTask.sessionKey) {
-      deps.onPerformerCandidate?.(taskId, sessionKey, matchedTask.gatewayId);
-    }
+    const ephemeral = deps.isEphemeralSession?.(sessionKey) === true;
 
-    if (taskId !== deps.getActiveTaskId()) {
-      deps.markUnread(taskId);
-    }
+    if (!ephemeral) {
+      if (matchedTask.ensemble && sessionKey !== matchedTask.sessionKey) {
+        deps.onPerformerCandidate?.(taskId, sessionKey, matchedTask.gatewayId);
+      }
 
-    deps.notifyAgentResponse?.(sessionKey);
+      if (taskId !== deps.getActiveTaskId()) {
+        deps.markUnread(taskId);
+      }
+
+      deps.notifyAgentResponse?.(sessionKey);
+    }
 
     const store = deps.getMessageStore();
     const text = extractText(payload);
@@ -377,22 +426,28 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
       }
       store.finalizeStream(sessionKey, { runId: payload.runId });
       debugEvent('renderer.chat.finalized', { taskId, sessionKey });
-      autoTitleIfNeeded(taskId, sessionKey, deps.getTaskStore, deps.getMessageStore);
-      if (!deps.isWindowFocused() || deps.getActiveTaskId() !== taskId) {
-        const task = deps.getTaskStore().tasks.find((t) => t.id === taskId);
-        maybeNotify('taskComplete', {
-          title: deps.translate('notifications.taskComplete'),
-          body: task?.title || taskId,
-          taskId,
+      // 临时会话到此为止：正文留在 activeTurn 里（各列自己显示），
+      // 不进时间线、不改标题、不发通知、**不拉网关历史**。
+      // 最后一条尤其重要 —— `syncSessionMessages` 会把这轮回复 promote 进任务时间线，
+      // 那正是"没采纳的答案自己跑进对话里"的路径。
+      if (!ephemeral) {
+        autoTitleIfNeeded(taskId, sessionKey, deps.getTaskStore, deps.getMessageStore);
+        if (!deps.isWindowFocused() || deps.getActiveTaskId() !== taskId) {
+          const task = deps.getTaskStore().tasks.find((t) => t.id === taskId);
+          maybeNotify('taskComplete', {
+            title: deps.translate('notifications.taskComplete'),
+            body: task?.title || taskId,
+            taskId,
+          });
+        }
+        deps.syncSessionMessages(taskId, sessionKey).catch((err) => {
+          debugEvent('renderer.sync.post-final.failed', {
+            taskId,
+            sessionKey,
+            error: err instanceof Error ? err.message : 'unknown',
+          });
         });
       }
-      deps.syncSessionMessages(taskId, sessionKey).catch((err) => {
-        debugEvent('renderer.sync.post-final.failed', {
-          taskId,
-          sessionKey,
-          error: err instanceof Error ? err.message : 'unknown',
-        });
-      });
     } else if (state === 'error') {
       store.setProcessing(sessionKey, false);
       store.clearActiveTurn(sessionKey);
@@ -433,7 +488,11 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
         displayedAt: 0,
       };
 
-      if (shouldDisplayError(correlation)) {
+      if (ephemeral) {
+        // 临时会话的失败**总是**要显示在该列上：`shouldDisplayError` 是按 taskId 去重的，
+        // N 列同时撞上同一个错误时它会把第 2..N 列吃掉 —— 那就不是"失败隔离"了。
+        store.setSessionError(sessionKey, formatErrorForUser(appError, deps.translate));
+      } else if (shouldDisplayError(correlation)) {
         const userText = formatErrorForUser(appError, deps.translate);
         store.addMessage(taskId, 'system', userText, undefined, { sessionKey });
         const { title, description } = formatErrorForToast(appError, deps.translate);
@@ -443,16 +502,17 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
     } else if (state === 'aborted') {
       store.setProcessing(sessionKey, false);
       store.clearActiveTurn(sessionKey);
-      debugEvent('renderer.chat.aborted', { taskId, sessionKey, userInitiated: abortedByUser.has(taskId) });
+      // 用户中断可能记在两处：task 级（普通会话的「停止」）与**会话**级（对比的某一列，
+      // 它的登记表在删会话那一刻就摘键了，task 级标记也已经跟不上 —— 见依赖的说明）。
+      const userAborted = abortedByUser.has(taskId) || deps.isSessionAbortedByUser?.(sessionKey) === true;
+      debugEvent('renderer.chat.aborted', { taskId, sessionKey, userInitiated: userAborted });
 
-      if (!abortedByUser.has(taskId)) {
-        store.addMessage(
-          taskId,
-          'system',
-          deps.translate('errors.serverAborted', { defaultValue: 'Task interrupted by server' }),
-          undefined,
-          { sessionKey },
-        );
+      if (!userAborted) {
+        const serverAborted = deps.translate('errors.serverAborted', { defaultValue: 'Task interrupted by server' });
+        // 用户点「取消对比」是**预期内**的中断（用户中断标记，两边都不显示）；
+        // 服务端单方面中断则要让那一列说出原因，否则那一列会永远停在空白。
+        if (ephemeral) store.setSessionError(sessionKey, serverAborted);
+        else store.addMessage(taskId, 'system', serverAborted, undefined, { sessionKey });
       }
     }
   }
@@ -488,16 +548,18 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
       return;
     }
 
-    if (agentTask.ensemble && sessionKey !== agentTask.sessionKey) {
+    const ephemeral = deps.isEphemeralSession?.(sessionKey) === true;
+
+    if (!ephemeral && agentTask.ensemble && sessionKey !== agentTask.sessionKey) {
       deps.onPerformerCandidate?.(taskId, sessionKey, agentTask.gatewayId);
     }
 
     switch (stream) {
       case 'tool':
-        handleAgentToolStream(taskId, sessionKey, data as AgentToolData);
+        handleAgentToolStream(taskId, sessionKey, data as AgentToolData, ephemeral);
         break;
       case 'lifecycle':
-        handleAgentLifecycleStream(taskId, sessionKey, data as AgentLifecycleData);
+        handleAgentLifecycleStream(taskId, sessionKey, data as AgentLifecycleData, ephemeral);
         break;
       case 'error':
         handleAgentErrorStream(taskId, sessionKey, data as AgentErrorData);
@@ -593,13 +655,15 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
     debugEvent('renderer.session.performer_candidate', { taskId, sessionKey, spawnedBy, reason, phase });
   }
 
-  function handleAgentToolStream(taskId: string, sessionKey: string, data: AgentToolData): void {
+  function handleAgentToolStream(taskId: string, sessionKey: string, data: AgentToolData, ephemeral: boolean): void {
     if (!data.name || !data.toolCallId) return;
 
-    deps.notifyAgentResponse?.(sessionKey);
+    if (!ephemeral) {
+      deps.notifyAgentResponse?.(sessionKey);
 
-    if (taskId !== deps.getActiveTaskId()) {
-      deps.markUnread(taskId);
+      if (taskId !== deps.getActiveTaskId()) {
+        deps.markUnread(taskId);
+      }
     }
 
     let status: ToolCallStatus = 'running';
@@ -637,12 +701,17 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
     });
   }
 
-  function handleAgentLifecycleStream(taskId: string, sessionKey: string, data: AgentLifecycleData): void {
+  function handleAgentLifecycleStream(
+    taskId: string,
+    sessionKey: string,
+    data: AgentLifecycleData,
+    ephemeral: boolean,
+  ): void {
     const store = deps.getMessageStore();
 
     switch (data.phase) {
       case 'start':
-        deps.notifyAgentResponse?.(sessionKey);
+        if (!ephemeral) deps.notifyAgentResponse?.(sessionKey);
         store.setProcessing(sessionKey, true);
         // ⚠️ 这里**不**清 run phase：实测 `starting_model` 会在 lifecycle.start **之后**才到
         //（2026-09-11 实测：start 7.5s、starting_model 7.6s），清了会被立刻覆盖回去。
@@ -660,11 +729,14 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
         debugEvent('renderer.agent.lifecycle.error', { taskId, sessionKey, error: data.error });
         if (!data.error) break;
 
-        const existing = lifecycleErrorBuffer.get(taskId);
+        // 去重缓冲的**键**：普通会话按任务（同一条错误在两处报只显示一次），
+        // 临时会话按**会话**（每列各自要能看到自己的失败，不能被别的列顶掉）。
+        const bufferKey = ephemeral ? sessionKey : taskId;
+        const existing = lifecycleErrorBuffer.get(bufferKey);
         if (existing) clearTimeout(existing.timer);
 
         const timer = setTimeout(() => {
-          lifecycleErrorBuffer.delete(taskId);
+          lifecycleErrorBuffer.delete(bufferKey);
           const errorText = data.error!;
           const appError = buildAppError({ source: 'agent', stage: 'lifecycle', rawMessage: errorText });
           const correlation: ErrorCorrelation = {
@@ -674,7 +746,9 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
             rawMessage: errorText,
             displayedAt: 0,
           };
-          if (shouldDisplayError(correlation)) {
+          if (ephemeral) {
+            store.setSessionError(sessionKey, formatErrorForUser(appError, deps.translate));
+          } else if (shouldDisplayError(correlation)) {
             store.addMessage(taskId, 'system', formatErrorForUser(appError, deps.translate), undefined, {
               sessionKey,
             });
@@ -684,7 +758,7 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
           }
         }, DEDUP_FALLBACK_WINDOW_MS);
 
-        lifecycleErrorBuffer.set(taskId, { error: data.error, timer });
+        lifecycleErrorBuffer.set(bufferKey, { error: data.error, timer });
         break;
       }
       case 'fallback':
@@ -694,7 +768,9 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
           from: `${data.selectedProvider}/${data.selectedModel}`,
           to: `${data.activeProvider}/${data.activeModel}`,
         });
-        if (data.activeModel) {
+        // 临时会话不写这条：用户看到的列标题就是他挑的模型，「已切换到 X」进时间线
+        // 反而是在未采纳的列上改了对话内容（debug 事件照旧记录）。
+        if (data.activeModel && !ephemeral) {
           const msg = deps.translate('agent.modelFallback', {
             model: data.activeModel,
             defaultValue: `Switched to model: ${data.activeModel}`,

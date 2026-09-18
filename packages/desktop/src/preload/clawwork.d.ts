@@ -482,6 +482,8 @@ export interface ClawWorkAPI {
     outputTokens?: number;
     contextTokens?: number;
     teamId?: string | null;
+    /** 采纳对比结果后改会话指针用（见 core 的 updateTaskMetadata）。 */
+    sessionKey?: string;
     updatedAt: string;
   }) => Promise<IpcResult>;
 

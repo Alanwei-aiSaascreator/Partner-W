@@ -265,6 +265,7 @@ function buildApi(): ClawWorkAPI {
       outputTokens?: number;
       contextTokens?: number;
       teamId?: string | null;
+      sessionKey?: string;
       updatedAt: string;
     }) => ipcRenderer.invoke('data:update-task', params),
 

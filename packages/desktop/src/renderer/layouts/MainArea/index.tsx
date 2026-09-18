@@ -13,6 +13,7 @@ import {
   AlertTriangle,
   ArrowLeftRight,
   Wallet,
+  Columns3,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { parseAgentIdFromSessionKey } from '@clawwork/shared';
@@ -75,6 +76,11 @@ import {
   recordRecentAssistantTask,
   type RecentAssistantTask,
 } from '@/lib/assistant-task-history';
+import { relayModelsFrom } from '@/components/ChatInput/model-families';
+import ComparePanel from '@/features/compare/ComparePanel';
+import CompareSetupBar from '@/features/compare/CompareSetupBar';
+import { compareRuntimeForTask } from '@/features/compare/compare-plan';
+import { useCompareStore } from '@/features/compare/compare-store-instance';
 
 const STICK_TO_BOTTOM_THRESHOLD_PX = 60;
 const MAX_HEADER_TITLE_LENGTH = 120;
@@ -190,10 +196,14 @@ function ChatHeader({
   onTogglePanel,
   messageLayout,
   onToggleMessageLayout,
+  compareMode,
+  onToggleCompare,
 }: {
   onTogglePanel: () => void;
   messageLayout: 'centered' | 'wide';
   onToggleMessageLayout: () => void;
+  compareMode: boolean;
+  onToggleCompare: () => void;
 }) {
   const { t } = useTranslation();
   const activeTask = useTaskStore((s) => s.tasks.find((task) => task.id === s.activeTaskId));
@@ -460,6 +470,25 @@ function ChatHeader({
           </TooltipTrigger>
           <TooltipContent>{t('mainArea.toggleContextPanel')}</TooltipContent>
         </Tooltip>
+        {/* 多模型对比的**入口**：只在有任务时出现（对比必须挂在一个真实任务上，
+            否则 N 路会话没有归属，采纳也无处可落）。 */}
+        {activeTask && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant={compareMode ? 'secondary' : 'ghost'}
+                size="icon"
+                onClick={onToggleCompare}
+                aria-pressed={compareMode}
+                data-testid="compare-toggle"
+                aria-label={t('compare.enter')}
+              >
+                <Columns3 size={18} />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{t('compare.enter')}</TooltipContent>
+          </Tooltip>
+        )}
       </div>
     </header>
   );
@@ -524,6 +553,26 @@ export function ChatContent({
   const processingBySession = useMessageStore((s) => s.processingBySession);
   const highlightedId = useMessageStore((s) => s.highlightedMessageId);
   const setHighlightedMessage = useMessageStore((s) => s.setHighlightedMessage);
+  // 多模型对比：`active` 非空时对话区换成并排面板（时间线原样留在下面，采纳/取消后立刻回来）。
+  // ⚠️ 只认**属于当前任务**的那一轮：`active` 是全局唯一的，用户跑到别的任务里看时
+  //    这一屏不该还杵着别人的对比（判据收在 `compareRuntimeForTask` 一处）。
+  const compareActive = useCompareStore((s) => compareRuntimeForTask(s.active, activeTaskId));
+  const compareMode = useCompareStore((s) => s.mode);
+  const setCompareMode = useCompareStore((s) => s.setMode);
+  const seedCompareDraftModels = useCompareStore((s) => s.seedDraftModels);
+  const compareGatewayId = activeTask?.gatewayId ?? defaultGatewayId;
+  const rawCompareCatalog = useUiStore((s) =>
+    compareGatewayId ? s.modelCatalogByGateway[compareGatewayId] : undefined,
+  );
+  const compareCatalog = useMemo(() => relayModelsFrom(rawCompareCatalog ?? []), [rawCompareCatalog]);
+  // 进入对比模式时给个能直接开跑的默认（目录里的前两个），省掉"还要先勾两个才能发"。
+  // 「要不要回填」判在 store 里（`draftSeeded`）：用"现在是空的"当判据会在用户**主动清空**之后
+  // 立刻填回去 —— 用户删一个、它补一个，永远清不干净。目录还没到时什么都不做（不置位），
+  // 目录到了这个 effect 会再跑一次。
+  useEffect(() => {
+    if (!compareMode) return;
+    seedCompareDraftModels(compareCatalog.map((m) => m.id));
+  }, [compareMode, compareCatalog, seedCompareDraftModels]);
   const viewportRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
@@ -827,7 +876,13 @@ export function ChatContent({
   //    切任务需要重置的东西由下面的 effect 负责，不靠重挂载。
   return (
     <>
-      {showWelcome ? (
+      {/* 对比面板与对话区**互斥**：一轮对比在跑时，这一屏就是那几列。
+          不叠在时间线上（两套滚动会互相打架），也不缩在角落（用户会以为没反应）。
+          采纳/取消后 `compareActive` 归 null，对话区原样回来 —— 注意这里没有换 `key`，
+          输入框那个节点自始至终没被卸载（见 test/chat-send-stability.test.tsx）。 */}
+      {compareActive ? (
+        <ComparePanel modelCatalog={modelCatalog ?? []} taskId={activeTaskId} />
+      ) : showWelcome ? (
         <div className="flex-1 px-5 pt-4 pb-0 overflow-y-auto">
           {!startupReadiness.isReady && <StartupReadinessPanel readiness={startupReadiness} onRetry={onRetryStartup} />}
           {onboardingProfile.customGoal.trim() && (
@@ -1003,6 +1058,12 @@ export function ChatContent({
           必须在输入框**之前**渲染，用户才会先看到「还要选什么」再去打字 ——
           漏答时网关会把用户的下一条消息当成答案吞掉。 */}
       <QuestionPanel />
+      {/* 选择条挂在输入框**上方**、与输入框同一段：模型选完照常按发送（发送键的语义
+          在 useChatSend 里整条换成"并发问 N 个模型"，见那边的注释）。
+          `active` 非空时不显示 —— 那一轮已经带着模型跑起来了，这时候换选择只会误导。 */}
+      {compareMode && !compareActive && (
+        <CompareSetupBar modelCatalog={compareCatalog} onClose={() => setCompareMode(false)} />
+      )}
       <ChatInput
         onNavigateToAccount={handleNavigateToAccount}
         draftRequest={draftRequest}
@@ -1159,6 +1220,9 @@ export default function MainArea({
   const messageLayout = useUiStore((s) => s.messageLayout);
   const toggleMessageLayout = useUiStore((s) => s.toggleMessageLayout);
   const activeTaskId = useTaskStore((s) => s.activeTaskId);
+  // 「对比」是顶栏那个开关（有任务才出现）；选择条与并排面板都读同一个 store。
+  const compareMode = useCompareStore((s) => s.mode);
+  const setCompareMode = useCompareStore((s) => s.setMode);
 
   // 一轮对话结束后把额度拉新（否则发完消息顶栏数字不动，看着像没扣费）。
   // 挂在 MainArea 而不是 ChatHeader：后者带 key、切任务会重挂，会多触发。
@@ -1214,6 +1278,8 @@ export default function MainArea({
             onTogglePanel={onTogglePanel}
             messageLayout={messageLayout}
             onToggleMessageLayout={toggleMessageLayout}
+            compareMode={compareMode}
+            onToggleCompare={() => setCompareMode(!compareMode)}
           />
           {activeTaskId && <EnsembleAgentBar taskId={activeTaskId} />}
           <ChatContent

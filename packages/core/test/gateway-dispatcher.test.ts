@@ -36,6 +36,8 @@ function createHarness() {
     clearActiveTurn: vi.fn(),
     setProcessing: vi.fn(),
     setRunPhase: vi.fn(),
+    /** 临时会话（多模型对比的一列）的失败走这条旁路，不进时间线。 */
+    setSessionError: vi.fn(),
   };
 
   const deps: GatewayDispatcherDeps = {
@@ -556,5 +558,262 @@ describe('结构化提问（question.*）事件路由', () => {
   it('没接回调也不炸（老版本宿主）', () => {
     const h = createHarness();
     expect(() => h.emit('question.requested', { id: 'ask_1', questions: [] })).not.toThrow();
+  });
+});
+
+/**
+ * ⭐ 临时会话 = 多模型对比的**某一列**（伪设备号 `compare-<id>-<n>`）。
+ *
+ * 为什么这道闸必须有：对比列的会话键里嵌的是**真** taskId（不这样事件就路由不回原任务），
+ * 于是「路由通」把副作用也一起带通了。没有这道闸，用户**没采纳**的回答会被
+ * `syncSessionMessages` promote 进任务时间线（界面上凭空多出一轮没发生过的问答）、
+ * 报错插 system 消息 + 弹 toast + 把任务标未读、还会拿列里的内容把空标题任务命名。
+ *
+ * 每条断言都配了**同形状的普通会话对照**：证明差异来自 ephemeral 这个判据，
+ * 而不是"事件根本没被处理"。
+ */
+describe('临时会话（多模型对比的一列）：只有那一列看得到自己，时间线一律不碰', () => {
+  /** 第 0 / 1 列（伪设备号，真 taskId 在内）。 */
+  const KEY_0 = 'agent:main:clawwork:compare-run-1-0:task:task-1';
+  const KEY_1 = 'agent:main:clawwork:compare-run-1-1:task:task-1';
+
+  function createCompareHarness(ephemeralKeys: string[] = [KEY_0, KEY_1]) {
+    const h = createHarness();
+    const ephemeral = new Set(ephemeralKeys);
+    // 判据刻意做成**动态**读 Set：采纳之后赢家会被移出去（转正），这里要能跟着变。
+    h.deps.isEphemeralSession = (sessionKey: string) => ephemeral.has(sessionKey);
+    const updateTaskTitle = vi.fn();
+    h.deps.getTaskStore = () => ({
+      tasks: [{ ...TASK, title: '' }],
+      updateTaskTitle,
+    });
+    return { ...h, ephemeral, updateTaskTitle };
+  }
+
+  function emitChat(
+    h: ReturnType<typeof createHarness>,
+    sessionKey: string,
+    state: string,
+    extra: Record<string, unknown> = {},
+  ) {
+    h.emit('chat', { sessionKey, state, ...extra });
+  }
+
+  /** 网关在 chat 通道发的是**内容块数组**（不是纯字符串），照它的形状来。 */
+  function textBlocks(text: string) {
+    return { content: [{ type: 'text', text }] };
+  }
+
+  it('事件仍然路由到**真**任务：流式照常落在那一列的会话键上', () => {
+    const h = createCompareHarness();
+    emitChat(h, KEY_0, 'delta', { ...textBlocks('第 1 列的字') });
+
+    expect(h.messageStore.appendStreamDelta).toHaveBeenCalledWith(KEY_0, '第 1 列的字');
+    // 没被当成"认不出的会话"丢掉
+    expect(h.deps.reportDebugEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'renderer.event.dropped.invalid_task' }),
+    );
+    // 对照：不是一个对比键的陌生会话仍然会被丢掉
+    emitChat(h, 'agent:main:clawwork:someone-else:task:no-such-task', 'delta', { ...textBlocks('x') });
+    expect(h.deps.reportDebugEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'renderer.event.dropped.unknown_task' }),
+    );
+  });
+
+  it('final 之后**不拉网关历史**（这是"没采纳的答案不会自己跑进对话"的关键路径）', () => {
+    const h = createCompareHarness();
+    const notify = vi.fn();
+    h.deps.notifyAgentResponse = notify;
+
+    emitChat(h, KEY_0, 'final', { ...textBlocks('我是千问') });
+    expect(h.messageStore.finalizeStream).toHaveBeenCalledWith(KEY_0, expect.anything());
+    expect(h.deps.syncSessionMessages).not.toHaveBeenCalled();
+    expect(h.messageStore.addMessage).not.toHaveBeenCalled();
+    expect(h.deps.markUnread).not.toHaveBeenCalled();
+    expect(notify).not.toHaveBeenCalled();
+
+    // 对照：普通会话的 final 照旧对账 + 标未读 + 通知
+    emitChat(h, TASK.sessionKey, 'final', { ...textBlocks('正式回复') });
+    expect(h.deps.syncSessionMessages).toHaveBeenCalledWith('task-1', TASK.sessionKey);
+    expect(h.deps.markUnread).toHaveBeenCalledWith('task-1');
+    expect(notify).toHaveBeenCalledWith(TASK.sessionKey);
+  });
+
+  it('final 不改标题：空的标题不会被**没采纳**的那一列命名', () => {
+    const h = createCompareHarness();
+    // 列的正文留在 activeTurn 里（auto-title 会读它）
+    h.messageStore.activeTurnBySession[KEY_0] = {
+      content: '这段是没被采纳的答案',
+      finalized: true,
+    } as unknown as Record<string, unknown>[string];
+
+    emitChat(h, KEY_0, 'final', { ...textBlocks('这段是没被采纳的答案') });
+    expect(h.updateTaskTitle).not.toHaveBeenCalled();
+
+    // 对照：同一个任务走普通会话时，标题照常自动起（正文同样在 activeTurn 里）
+    h.messageStore.activeTurnBySession[TASK.sessionKey] = {
+      content: '被采纳的答案',
+      finalized: true,
+    } as unknown as Record<string, unknown>[string];
+    emitChat(h, TASK.sessionKey, 'final', { ...textBlocks('被采纳的答案') });
+    expect(h.updateTaskTitle).toHaveBeenCalledWith('task-1', expect.stringContaining('被采纳的答案'));
+  });
+
+  it('N 列同时撞上同一个错误：**每一列都有自己的错误**，谁都不进时间线', () => {
+    const h = createCompareHarness();
+    for (const key of [KEY_0, KEY_1]) {
+      emitChat(h, key, 'error', { errorMessage: 'rate limit exceeded', errorCode: 'rate_limit' });
+    }
+
+    expect(h.messageStore.setSessionError).toHaveBeenCalledWith(KEY_0, expect.stringContaining('rate limit exceeded'));
+    expect(h.messageStore.setSessionError).toHaveBeenCalledWith(KEY_1, expect.stringContaining('rate limit exceeded'));
+    expect(h.messageStore.addMessage).not.toHaveBeenCalled();
+    expect(h.toasts).toHaveLength(0);
+
+    // 对照：普通会话的同一个错误照旧进时间线 + 弹一次 toast，且**会被去重**（这正是列不能复用的原因）
+    emitChat(h, TASK.sessionKey, 'error', { errorMessage: 'rate limit exceeded', errorCode: 'rate_limit' });
+    emitChat(h, TASK.sessionKey, 'error', { errorMessage: 'rate limit exceeded', errorCode: 'rate_limit' });
+    expect(h.systemMessages).toHaveLength(1);
+    expect(h.toasts).toHaveLength(1);
+  });
+
+  it('lifecycle 失败按**会话**缓冲：两列在同一窗口里各报各的，不互相顶掉', async () => {
+    vi.useFakeTimers();
+    const h = createCompareHarness();
+    for (const key of [KEY_0, KEY_1]) {
+      h.emit('agent', {
+        sessionKey: key,
+        stream: 'lifecycle',
+        data: { phase: 'error', error: 'provider unavailable' },
+      });
+    }
+    expect(h.messageStore.setSessionError).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(DEDUP_FALLBACK_WINDOW_MS);
+    expect(h.messageStore.setSessionError).toHaveBeenNthCalledWith(
+      1,
+      KEY_0,
+      expect.stringContaining('provider unavailable'),
+    );
+    expect(h.messageStore.setSessionError).toHaveBeenNthCalledWith(
+      2,
+      KEY_1,
+      expect.stringContaining('provider unavailable'),
+    );
+    expect(h.messageStore.addMessage).not.toHaveBeenCalled();
+  });
+
+  it('这一轮起来之后，之前挂起的那条列错误不再补发（不能"正在输出 + 同时报错"）', async () => {
+    vi.useFakeTimers();
+    const h = createCompareHarness();
+    h.emit('agent', {
+      sessionKey: KEY_0,
+      stream: 'lifecycle',
+      data: { phase: 'error', error: 'provider unavailable' },
+    });
+
+    // 同一个任务的正式会话开始出字 ⇒ 那条待发的列错误作废
+    emitChat(h, TASK.sessionKey, 'delta', { ...textBlocks('正式回复开始了') });
+    await vi.advanceTimersByTimeAsync(DEDUP_FALLBACK_WINDOW_MS);
+
+    expect(h.messageStore.setSessionError).not.toHaveBeenCalled();
+  });
+
+  it('服务端单方面中断某一列：那一列说出原因，不写时间线', () => {
+    const h = createCompareHarness();
+    emitChat(h, KEY_0, 'aborted');
+
+    expect(h.messageStore.setSessionError).toHaveBeenCalledWith(KEY_0, 'errors.serverAborted');
+    expect(h.messageStore.addMessage).not.toHaveBeenCalled();
+
+    // 对照：普通会话仍是时间线里的 system 消息
+    emitChat(h, TASK.sessionKey, 'aborted');
+    expect(h.systemMessages).toHaveLength(1);
+    expect(h.systemMessages[0].taskId).toBe('task-1');
+  });
+
+  /**
+   * 迟到的 `aborted` 帧：用户点「取消对比 / 采纳」时，那一列的登记表键**已经摘了**
+   * （摘键之后这一帧看起来就是一条普通会话的中断），而「这一轮是用户自己中断的」记在**会话**上。
+   *
+   * 少了这条判据的表现：一句「被服务端中断」凭空插进对话时间线（+ 标未读 + 弹通知）。
+   */
+  it('用户自己中断的列：登记表已摘键，迟到的 aborted 帧也不再往时间线里塞话', () => {
+    const h = createCompareHarness();
+    // 「采纳」那一刻：赢家从登记表里出去（转正），此后它的事件与普通会话无异
+    h.ephemeral.delete(KEY_0);
+    h.deps.isSessionAbortedByUser = (sessionKey: string) => sessionKey === KEY_0;
+
+    emitChat(h, KEY_0, 'aborted');
+
+    expect(h.systemMessages).toHaveLength(0);
+    // 遥测里看得出这是"用户中断"，不是"服务端单方面中断"
+    expect(h.deps.reportDebugEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'renderer.chat.aborted',
+        data: expect.objectContaining({ sessionKey: KEY_0, userInitiated: true }),
+      }),
+    );
+
+    // 对照：同一个键、同一帧，只是没有这条判据（老宿主）⇒ system 消息照样进时间线
+    h.deps.isSessionAbortedByUser = undefined;
+    emitChat(h, KEY_0, 'aborted');
+    expect(h.systemMessages).toHaveLength(1);
+    expect(h.systemMessages[0].content).toBe('errors.serverAborted');
+    expect(h.systemMessages[0].taskId).toBe('task-1');
+  });
+
+  it('工具调用照旧记（列里要显示），但不标未读、不发通知', () => {
+    const h = createCompareHarness();
+    const notify = vi.fn();
+    h.deps.notifyAgentResponse = notify;
+    const tool = { name: 'search', toolCallId: 'call-1', phase: 'update', args: '{}' };
+
+    h.emit('agent', { sessionKey: KEY_0, stream: 'tool', data: tool });
+    expect(h.messageStore.upsertToolCall).toHaveBeenCalledWith(
+      KEY_0,
+      'task-1',
+      expect.objectContaining({ id: 'call-1' }),
+    );
+    expect(notify).not.toHaveBeenCalled();
+    expect(h.deps.markUnread).not.toHaveBeenCalled();
+
+    // 对照：普通会话的工具流会通知 + 标未读
+    h.emit('agent', { sessionKey: TASK.sessionKey, stream: 'tool', data: tool });
+    expect(notify).toHaveBeenCalledWith(TASK.sessionKey);
+    expect(h.deps.markUnread).toHaveBeenCalledWith('task-1');
+  });
+
+  it('「已切换到 X」不写进未采纳的列（列标题就是用户挑的模型）', () => {
+    const h = createCompareHarness();
+    const fallback = {
+      phase: 'fallback',
+      selectedProvider: 'p1',
+      selectedModel: 'qwen-plus',
+      activeProvider: 'p2',
+      activeModel: 'glm-4.7',
+    };
+
+    h.emit('agent', { sessionKey: KEY_0, stream: 'lifecycle', data: fallback });
+    expect(h.messageStore.addMessage).not.toHaveBeenCalled();
+    // 但遥测照旧记录（这条降级必须看得见）
+    expect(h.deps.reportDebugEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'renderer.agent.lifecycle.fallback' }),
+    );
+
+    // 对照：普通会话照旧插一条 system 消息
+    h.emit('agent', { sessionKey: TASK.sessionKey, stream: 'lifecycle', data: fallback });
+    expect(h.systemMessages).toHaveLength(1);
+  });
+
+  it('采纳之后那一列"转正"：同一个键不再是临时会话，final 照常对账', () => {
+    const h = createCompareHarness();
+    emitChat(h, KEY_0, 'final', { ...textBlocks('没采纳') });
+    expect(h.deps.syncSessionMessages).not.toHaveBeenCalled();
+
+    // 采纳 = 这一列成为任务的会话（调用方把它从临时集合里移出去）
+    h.ephemeral.delete(KEY_0);
+    emitChat(h, KEY_0, 'final', { ...textBlocks('采纳了') });
+    expect(h.deps.syncSessionMessages).toHaveBeenCalledWith('task-1', KEY_0);
   });
 });

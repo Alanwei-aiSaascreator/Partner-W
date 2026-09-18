@@ -7,6 +7,7 @@ import i18n from '../i18n';
 import { composer, composerBridge, ports, useMessageStore, useTaskStore, useUiStore, useRoomStore } from '../platform';
 import { useApprovalStore } from '../stores/approvalStore';
 import { useQuestionStore } from '../stores/questionStore';
+import { compareStore } from '../features/compare/compare-store-instance';
 
 export type GatewayDispatcher = ReturnType<typeof createGatewayDispatcher>;
 
@@ -127,6 +128,16 @@ function getDispatcher(): GatewayDispatcher {
           .catch(() => {});
       },
       notifyAgentResponse: (sessionKey) => composer.notifyResponse(sessionKey),
+      // 多模型对比的临时列：事件照常收、照样流式，但**不写进对话时间线**（不要标题、
+      // 不要未读、不要系统提示、不要通知），失败也只落在那一列自己身上。
+      // 动态判 —— 采纳之后赢家转正，就不再是临时会话了。
+      isEphemeralSession: (sessionKey) => compareStore().getState().isEphemeral(sessionKey),
+      // 「这一轮是用户自己中断的吗」——按**会话**判。对比的列走的是 compare-store 自己的
+      // abort 动作，打不到 task 级的 `abortedByUser`；而它的登记表在 `deleteSession` 成功那一刻
+      // 就摘键了（那之后这一帧看着像普通会话），所以标记必须在 compare-store 里按会话记。
+      // 少这一条的表现：用户点「取消对比 / 采纳」之后，迟到的 aborted 帧会把一句话写进对话时间线、
+      // 还把任务标未读、弹通知。
+      isSessionAbortedByUser: (sessionKey) => compareStore().getState().wasAbortedByUser(sessionKey),
       onToast: (type, title, opts) => {
         if (type === 'error') toast.error(title, opts);
         else if (type === 'warning') toast.warning(title, opts);

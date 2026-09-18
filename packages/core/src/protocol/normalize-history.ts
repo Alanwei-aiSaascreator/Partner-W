@@ -263,7 +263,17 @@ export function normalizeContentBlocks(
   return { content, attachments };
 }
 
-function toISOTimestamp(epoch: number | undefined): string {
+/**
+ * 网关的 `chat.history` 时间戳（**epoch 毫秒**）→ 客户端统一的 ISO 串。
+ *
+ * ⚠️ 导出它是因为**不止一处**要拿网关时间戳：
+ *    - `normalizeAssistantTurns`（对账把它当去重键的一半）；
+ *    - 对比采纳时探到的「这条回复是什么时候生成的」。
+ *    两处必须过**同一个函数**：去重键是 `${sessionKey}|${timestamp}` 拼出来的字符串，
+ *    一边 ISO、一边 epoch（或毫秒精度不同）就等于键永远对不上 ——
+ *    表现为采纳过的答案被当"网关新回复"再写一遍。
+ */
+export function toISOTimestamp(epoch: number | undefined): string {
   return epoch ? new Date(epoch).toISOString() : new Date().toISOString();
 }
 

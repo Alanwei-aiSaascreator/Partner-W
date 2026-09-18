@@ -145,6 +145,16 @@ export const composer = new Proxy({} as ChatComposer, {
   },
 });
 
+/**
+ * 裸 store 实例（非 hook）。
+ *
+ * 给「需要在事件处理器里同步读一份状态快照」的场景用 —— 例如多模型对比要在
+ * 点击「发送」那一刻就拿到当前消息/任务状态。React 组件里请用 `useMessageStore` /
+ * `useTaskStore`（会订阅更新）。
+ */
+export const messageStore = messageStoreApi;
+export const taskStore = taskStoreApi;
+
 export function useMessageStore(): MessageState;
 export function useMessageStore<T>(selector: (state: MessageState) => T): T;
 export function useMessageStore<T>(selector?: (state: MessageState) => T) {

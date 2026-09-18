@@ -29,6 +29,7 @@ const mocks = vi.hoisted(() => {
       taskId: 'task-1',
     })),
     toastWarning: vi.fn(),
+    toastError: vi.fn(),
     taskState: {
       tasks: [activeTask],
       activeTaskId: 'task-1' as string | null,
@@ -41,6 +42,11 @@ const mocks = vi.hoisted(() => {
       setProcessing: vi.fn(),
       processingBySession: new Set<string>(),
       activeTurnBySession: {},
+      // 对比那条路要用到的几个字段（按会话键索引的旁路 + 采纳落库）：
+      errorBySession: {} as Record<string, string>,
+      setSessionError: vi.fn(),
+      clearActiveTurn: vi.fn(),
+      adoptActiveTurn: vi.fn(),
     },
     uiState: {
       gatewayStatusMap: { 'gw-1': 'connected' } as Record<string, 'connected' | 'connecting' | 'disconnected'>,
@@ -55,11 +61,14 @@ const mocks = vi.hoisted(() => {
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
+  // i18n 实例在模块加载时就会 `use(initReactI18next)`（见 src/renderer/i18n），
+  // 而 useChatSend → 对比 store 会把它拉进这个测试；少了这个导出，整个测试文件加载即失败。
+  initReactI18next: { type: '3rdParty', init: vi.fn() },
 }));
 
 vi.mock('sonner', () => ({
   toast: {
-    error: vi.fn(),
+    error: mocks.toastError,
     warning: mocks.toastWarning,
   },
 }));
@@ -70,6 +79,10 @@ vi.mock('../src/renderer/platform', () => ({
     applySlashCommand: mocks.applySlashCommand,
     send: mocks.send,
   },
+  // 对比 store 的单例是惰性建的，但它要从 platform 拿这两个 store 的 getState
+  //（对比模式那条路要用）—— 少了它们，走对比分支的用例会在建实例时炸。
+  messageStore: { getState: () => mocks.messageState },
+  taskStore: { getState: () => mocks.taskState },
   useTaskStore: <T,>(selector?: (state: typeof mocks.taskState) => T) =>
     selector ? selector(mocks.taskState) : mocks.taskState,
   useMessageStore: <T,>(selector?: (state: typeof mocks.messageState) => T) =>
@@ -83,6 +96,7 @@ vi.mock('../src/renderer/platform', () => ({
 import { useChatSend } from '../src/renderer/components/ChatInput/useChatSend';
 import type { ImportedMaterialFile, TaskContextFile } from '../src/renderer/components/ChatInput/useTaskMaterials';
 import { useCommercialStore } from '../src/renderer/stores/commercialStore';
+import { compareStore } from '../src/renderer/features/compare/compare-store-instance';
 
 function render(ui: ReactElement): {
   container: HTMLDivElement;
@@ -609,5 +623,173 @@ describe('useChatSend abort flow', () => {
     expect(window.clawwork.readInboxFileForSend).toHaveBeenCalledTimes(1);
     expect(mocks.send).toHaveBeenCalledTimes(1);
     view.unmount();
+  });
+});
+
+// 对比模式下的「发送」不是发一条消息，而是同一句话并发问 N 个模型。
+// 这段分支以前**一条测试都没有**（把它整段注释掉，全量套件照样全绿）——
+// 于是"对比按钮按下去什么都没发生"这种最要命的故障，恰恰是测试看不见的那种。
+describe('对比模式下的发送', () => {
+  /** 网关边界上的调用（真行为在**这里**看：N 条会话、各自钉模型、各发一次）。 */
+  const gateway = {
+    // 参数列表照真实 IPC 的形状写出来（只写 `vi.fn(async () => …)` 的话 calls 的元素类型是
+    // 空元组，断言里取 `c[0]`/`c[1]` 通不过 tsc）。
+    createSession: vi.fn(async (_gatewayId: string, _params: { key: string; agentId: string }) => ({ ok: true })),
+    patchSession: vi.fn(async (_gatewayId: string, _sessionKey: string, _patch: Record<string, unknown>) => ({
+      ok: true,
+    })),
+    sendMessage: vi.fn(async (_gatewayId: string, _sessionKey: string, _content: string) => ({ ok: true })),
+    abortChat: vi.fn(async () => ({ ok: true })),
+    deleteSession: vi.fn(async () => ({ ok: true })),
+    chatHistory: vi.fn(async () => ({ ok: true, result: { messages: [] } })),
+  };
+
+  async function flush(rounds = 12): Promise<void> {
+    for (let i = 0; i < rounds; i++)
+      await act(async () => {
+        await Promise.resolve();
+      });
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    document.body.innerHTML = '';
+    mocks.send.mockClear();
+    mocks.toastWarning.mockClear();
+    mocks.toastError.mockClear();
+    for (const fn of Object.values(gateway)) fn.mockClear();
+    mocks.taskState.activeTaskId = 'task-1';
+    mocks.taskState.tasks = [mocks.taskState.tasks.find((task) => task.id === 'task-1')!];
+    Object.assign(window, {
+      clawwork: {
+        readInboxFileForSend: vi.fn(async () => ({
+          ok: true,
+          result: { content: 'cGRm', encoding: 'base64', byteLength: 3 },
+        })),
+        readTaskContextFileForSend: vi.fn(async () => ({
+          ok: true,
+          result: { content: 'notes', mimeType: 'text/plain', size: 5, byteLength: 5, truncated: false, tier: 'text' },
+        })),
+        ...gateway,
+      },
+    });
+    mocks.uiState.gatewayStatusMap = { 'gw-1': 'connected' };
+    mocks.uiState.modelCatalogByGateway = {};
+    useCommercialStore.setState({
+      status: 'ready',
+      overview: {
+        account: { userId: 'u-1', phone: null, email: null, nickname: null, avatar: null },
+        org: null,
+        license: {
+          activated: true,
+          licenseKey: 'RY-1',
+          sku: 'USB',
+          status: 'active',
+          expiresAt: null,
+          tokenQuotaMicros: 1000,
+          tokenUsedMicros: 10,
+        },
+        device: { fingerprint: 'fp', shortFingerprint: 'fp' },
+        fetchedAt: '2026-09-15T00:00:00.000Z',
+      },
+    });
+    compareStore().setState({
+      active: null,
+      mode: true,
+      draftModels: ['qwen-plus', 'glm-4.7'],
+      draftSeeded: true,
+      adoptingKey: null,
+      ephemeralKeys: new Set<string>(),
+      abortedKeys: new Set<string>(),
+      error: null,
+    });
+    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** 两个 harness 的按钮数量不一样，按文案找那个「发送」（别按序号）。 */
+  function clickSend(target: HTMLElement): void {
+    const button = [...target.querySelectorAll('button')].find((el) => el.textContent === 'send');
+    act(() => {
+      button!.click();
+    });
+  }
+
+  it('一句话并发问 N 个模型：N 条会话各自钉模型、各发一次，输入框清空', async () => {
+    const { container } = render(<Harness initialValue="对比一下" />);
+    clickSend(container);
+    await flush();
+
+    const state = compareStore().getState();
+    expect(state.active?.columns).toHaveLength(2);
+    const keys = state.active!.columns.map((c) => c.sessionKey);
+
+    expect(gateway.createSession).toHaveBeenCalledTimes(2);
+    expect(gateway.createSession.mock.calls.map((c) => c[0])).toEqual(['gw-1', 'gw-1']);
+    // 模型是**会话级**的：不逐列钉死的话，N 路跑的是同一个默认模型（"对比"变成复读）
+    expect(gateway.patchSession.mock.calls.map((c) => c[2])).toEqual([{ model: 'qwen-plus' }, { model: 'glm-4.7' }]);
+    expect(gateway.sendMessage).toHaveBeenCalledTimes(2);
+    expect(gateway.sendMessage.mock.calls.map((c) => c[1])).toEqual(keys);
+    expect(gateway.sendMessage.mock.calls.map((c) => c[2])).toEqual(['对比一下', '对比一下']);
+
+    // 不能落进单模型那条 composer.send（那只会发成"一个模型的一条"，用户以为在对比）
+    expect(mocks.send).not.toHaveBeenCalled();
+    // 发出去之后输入框要清掉（用户看得见"这一句已经发出去了"）
+    expect((container.querySelector('textarea') as HTMLTextAreaElement).value).toBe('');
+  });
+
+  it('带附件/引用时不发：只提示一句，**一个网关调用都不发**', async () => {
+    const view = render(<MaterialHarness clearImported={vi.fn()} clearFolder={vi.fn()} />);
+    clickSend(view.container);
+    await flush();
+
+    expect(mocks.toastError).toHaveBeenCalledTimes(1);
+    expect(String(mocks.toastError.mock.calls[0][0])).toContain('compare.materialsUnsupported');
+    // 静默丢弃是被禁止的：要么真发出去 N 份、要么拦住并说清楚 —— 但绝不能一边说
+    // "不支持"一边把 N 路请求打出去（那是用户看不见的 N 份钱）。
+    expect(gateway.createSession).not.toHaveBeenCalled();
+    expect(gateway.sendMessage).not.toHaveBeenCalled();
+    expect(mocks.send).not.toHaveBeenCalled();
+    // 草稿与材料都留着（用户要能把附件去掉再发，不该重打一遍字）
+    expect((view.container.querySelector('textarea') as HTMLTextAreaElement).value).toBe('summarize');
+    expect(compareStore().getState().active).toBeNull();
+  });
+
+  it('闸门带任务身份：别的任务在跑对比，不妨碍**这个任务**发消息', async () => {
+    // 任务 A（task-1）里先跑起一轮对比
+    compareStore().getState().start({ taskId: 'task-1', gatewayId: 'gw-1', agentId: 'main', prompt: '第一轮' });
+    await flush();
+    const firstRoundKeys = compareStore()
+      .getState()
+      .active!.columns.map((c) => c.sessionKey);
+    expect(firstRoundKeys).toHaveLength(2);
+    for (const fn of Object.values(gateway)) fn.mockClear();
+
+    // 用户切到任务 B（task-2）再发一句话
+    const taskB = {
+      ...mocks.taskState.tasks[0],
+      id: 'task-2',
+      sessionKey: 'agent:main:clawwork:task:task-2',
+      title: 'Task 2',
+    };
+    mocks.taskState.tasks = [mocks.taskState.tasks[0], taskB];
+    mocks.taskState.activeTaskId = 'task-2';
+
+    const { container } = render(<Harness initialValue="B 里的一句话" />);
+    clickSend(container);
+    await flush();
+
+    // 任务 B 真的发出去了（不是"上一轮对比还在跑"）
+    expect(mocks.toastError).not.toHaveBeenCalled();
+    expect(gateway.sendMessage).toHaveBeenCalledTimes(2);
+    expect(gateway.sendMessage.mock.calls.every((c) => String(c[1]).includes('task-2'))).toBe(true);
+    // 上一轮属于任务 A，被这一轮顶掉并收拾干净（它的会话不会变成没人管的孤儿）
+    expect(compareStore().getState().active?.taskId).toBe('task-2');
+    for (const key of firstRoundKeys) {
+      expect(compareStore().getState().wasAbortedByUser(key)).toBe(true);
+    }
   });
 });
