@@ -103,6 +103,14 @@ export type { AgentInstallDefinition } from './services/agent-template-service.j
 export { describeTemplateError } from './services/agent-template-error-message.js';
 export { normalizeGrowthSummary, normalizeGrowthHistory, normalizeBounties } from './services/growth-service.js';
 export { describeGrowthError } from './services/growth-error-message.js';
+export { normalizePrivacyState } from './services/privacy-service.js';
+export type {
+  PrivacyState,
+  PrivacyExportState,
+  PrivacyDeletionState,
+  PrivacyRequestStatus,
+} from './services/privacy-service.js';
+export { describePrivacyError } from './services/privacy-error-message.js';
 
 export {
   autofillSelection,
