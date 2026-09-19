@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo, type MouseEvent } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { List, PanelLeftClose, Plus, Search, SquarePen } from 'lucide-react';
+import { List, PanelLeftClose, Search, SquarePen } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { runManualCompaction } from '@clawwork/core';
 import { useTaskStore } from '@/stores/taskStore';
@@ -24,7 +24,7 @@ import {
 } from '@/components/ui/dialog';
 import { exportToFiles, exportToLocal } from '@/lib/export-session';
 import TaskItem from './TaskItem';
-import AssistantList from './AssistantList';
+import AssistantSwitcher from './AssistantSwitcher';
 import { useGatewaySelector } from '@/hooks/useGatewaySelector';
 import { removeAssistantTaskPresetTags } from '@/lib/assistant-task-preset-tags';
 import type { TaskStatus } from '@clawwork/shared';
@@ -293,40 +293,10 @@ export default function LeftNav({ onOpenAssistantSettings, onOpenSkills, onOpenS
         </div>
       </div>
 
-      {/* 我的助手：**放在搜索框下面**（2026-09-19 从最顶上挪下来 —— 用户反馈
-          「我的助手模块放在搜索任务下面，现在太别扭了」）。
-          ⚠️ 为什么必须留：这是全应用**唯一**切助手的地方，拿掉就没得切了。
-          ⚠️ 为什么压高度（`max-h-36`）：这一列还要装页面导航 + 最近任务，
-             不能让助手列表把版面吃光。助手多的用户在这里滚动。
-          标题与「+ 添加助手」跟着一起下来 —— 否则顶部会剩一个说了不算的标题。 */}
-      <div className="flex-shrink-0 border-b border-[var(--border-subtle)] px-2 pb-2">
-        <div className="flex items-center gap-0.5 px-1 pb-0.5">
-          <h2 className="type-label flex-1 truncate text-[var(--text-primary)]">{t('leftNav.myAssistants')}</h2>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                size="icon-sm"
-                variant="ghost"
-                onClick={onOpenAssistantSettings}
-                aria-label={t('leftNav.addAssistant')}
-                className="h-7 w-7"
-              >
-                <Plus />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom">{t('leftNav.addAssistant')}</TooltipContent>
-          </Tooltip>
-        </div>
-        <div className="max-h-36 overflow-y-auto">
-          {agentCatalog.length > 0 ? (
-            <AssistantList agents={agentCatalog} selectedAgentId={currentAgentId} onSelect={handleSelectAgent} />
-          ) : (
-            <p className="type-support px-2 py-3 text-[var(--text-muted)]">{t('leftNav.noAgents')}</p>
-          )}
-        </div>
-      </div>
-
       {/* 页面导航（2026-09-19，按老板设计稿 + 方案 B）。
+          ⚠️ 「我的助手」不再是一块常驻展开的列表 —— 它变成导航列表里**「身份中心」上面那一行**
+             （`AssistantSwitcher`，点开才选角色）。用户口径：
+             「把他放身份中心上面，点击后可以选择这几个角色」+「现在不好看」。
           ⚠️ 放在助手之后、最近任务之前 —— 设计稿里这一列是「搜索框 + 页面清单」，
              我们额外把助手切换与最近任务保留在这一列（否则界面上没有别的地方能切）。
           ⚠️ **必须可滚动**：去掉图标栏后这一列涨到 16 项，加上助手列表与最近任务
@@ -341,6 +311,14 @@ export default function LeftNav({ onOpenAssistantSettings, onOpenSkills, onOpenS
           onOpenSkills={onOpenSkills}
           onOpenSettings={onOpenSettings}
           hasUpdate={hasUpdate}
+          assistantSlot={
+            <AssistantSwitcher
+              agents={agentCatalog}
+              selectedAgentId={currentAgentId}
+              onSelect={handleSelectAgent}
+              onAddAssistant={onOpenAssistantSettings}
+            />
+          }
         />
       </div>
 

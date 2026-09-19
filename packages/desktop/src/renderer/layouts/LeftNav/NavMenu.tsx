@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Archive,
@@ -58,6 +59,12 @@ export interface NavMenuProps {
   onOpenSettings: () => void;
   /** 有更新时给「设置」挂个角标（原来在图标栏上，本刀搬过来）。 */
   hasUpdate: boolean;
+  /**
+   * 「我的助手」切换器 —— 渲染在**「身份中心」上面那一行**（2026-09-19 用户要求：
+   * 「把他放身份中心上面，点击后可以选择这几个角色」）。
+   * 它是插在列表里的一个槽位，不是 `mainView` 项。
+   */
+  assistantSlot?: ReactNode;
 }
 
 type NavItem = {
@@ -77,6 +84,7 @@ export default function NavMenu({
   onOpenSkills,
   onOpenSettings,
   hasUpdate,
+  assistantSlot,
 }: NavMenuProps) {
   const { t } = useTranslation();
 
@@ -145,7 +153,12 @@ export default function NavMenu({
 
   return (
     <nav data-testid="left-nav-menu" aria-label={t('leftNav.pages.search')} className="flex flex-col gap-0.5 px-2">
-      {items.map(renderItem)}
+      {/* ⚠️ 助手切换器插在**「身份中心」上面**（用户点名要的位置）。
+          写法是「第 0 项 + 助手槽位 + 其余项」—— 别改成 `items.map` 里塞条件，
+          那样顺序会随 `items` 的增删飘掉。 */}
+      {renderItem(items[0])}
+      {assistantSlot}
+      {items.slice(1).map(renderItem)}
       <div className="mx-2.5 my-1.5 border-t border-[var(--border-subtle)]" />
       {footItems.map(renderItem)}
     </nav>
