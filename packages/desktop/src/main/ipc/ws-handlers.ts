@@ -899,8 +899,21 @@ export function registerWsHandlers(): void {
       const gw = getGatewayClient(payload.gatewayId);
       if (!gw?.isConnected) return { ok: false, error: 'gateway not connected' };
       try {
-        await gw.compactSession(payload.sessionKey, payload.maxLines);
-        return { ok: true };
+        const raw = (await gw.compactSession(payload.sessionKey, payload.maxLines)) as {
+          compacted?: unknown;
+          reason?: unknown;
+          kept?: unknown;
+        };
+        // ⭐ 把网关的结论**带回去**（B8）：从前这个 payload 整个被丢掉，调用方只剩 `ok`
+        //    ⇒ "RPC 被接受"被当成了"压缩完成"。现在手动那条只认 `compacted === true`。
+        return {
+          ok: true,
+          result: {
+            compacted: raw.compacted === true,
+            ...(typeof raw.reason === 'string' ? { reason: raw.reason } : {}),
+            ...(typeof raw.kept === 'number' ? { kept: raw.kept } : {}),
+          },
+        };
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'unknown error';
         return { ok: false, error: msg };

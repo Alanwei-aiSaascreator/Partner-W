@@ -388,6 +388,7 @@
     "aiServiceStartingDetail": "初回起動には約 1 分かかる場合があります。しばらくお待ちください。",
     "attachmentSaveFailed": "添付ファイル {{fileName}} の保存に失敗しました",
     "attachmentTooLarge": "{{fileName}} が 100MB の上限を超えています",
+    "compacting": "コンテキストを圧縮しています…",
     "describeTask": "タスクを入力…",
     "fileContextLimitExceeded": "ファイルコンテキストの合計が 500KB の上限を超えています",
     "grantFolderFailed": "フォルダを追加できませんでした",

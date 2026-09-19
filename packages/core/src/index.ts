@@ -89,6 +89,15 @@ export { createSessionSync } from './services/session-sync.js';
 export type { SessionSyncDeps } from './services/session-sync.js';
 
 export { buildAppError, formatErrorForUser, formatErrorForToast } from './services/error-classify.js';
+export {
+  COMPACTION_FALLBACK_MS,
+  COMPACTION_NOTICE_KEY,
+  announceCompaction,
+  currentCompactionEpisode,
+  noteManualCompactionResult,
+  runManualCompaction,
+  type CompactionDeps,
+} from './services/compaction-announce.js';
 export type { TranslateFn } from './services/error-classify.js';
 
 export { describeGatewayError, translateGatewayError } from './services/gateway-error-message.js';

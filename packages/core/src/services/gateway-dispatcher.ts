@@ -20,6 +20,7 @@ import type { ChatEventPayload } from '../protocol/types.js';
 import { buildAppError, formatErrorForUser, formatErrorForToast } from './error-classify.js';
 import type { TranslateFn } from './error-classify.js';
 import { autoTitleIfNeeded } from './auto-title.js';
+import { announceCompaction, currentCompactionEpisode } from './compaction-announce.js';
 import type { MessageState } from '../stores/message-store.js';
 import type { GatewayTransportPort, GatewayStatusEvent } from '../ports/gateway-transport.js';
 
@@ -153,6 +154,8 @@ interface SessionChangedEvent {
   spawnedBy?: string;
   reason?: string;
   phase?: string;
+  /** ⚠️ 只在 `reason === "compact"` 时出现：这次到底压没压成（网关给的）。 */
+  compacted?: boolean;
 }
 
 interface ErrorCorrelation {
@@ -190,6 +193,10 @@ export interface GatewayDispatcherDeps {
     | 'setProcessing'
     | 'setRunPhase'
     | 'setSessionProgressText'
+    | 'setSessionCompacting'
+    | 'announceCompactionOnce'
+    | 'beginCompactionEpisode'
+    | 'ensureCompactionEpisode'
     | 'setSessionError'
   >;
 
@@ -698,14 +705,37 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
         debugEvent('renderer.agent.thinking', { taskId, sessionKey, chars: chunk.length });
         break;
       }
-      case 'compaction':
+      case 'compaction': {
+        const compaction = data as AgentCompactionData;
+        // 遥测**保留不动**（它一直有，别顺手删）
         debugEvent('renderer.agent.compaction', {
           taskId,
           sessionKey,
-          phase: (data as AgentCompactionData).phase,
-          completed: (data as AgentCompactionData).completed,
+          phase: compaction.phase,
+          completed: compaction.completed,
         });
+
+        const store = deps.getMessageStore();
+
+        if (compaction.phase === 'start') {
+          // Phase 2：压缩会让界面**停住一会儿** —— 让用户看得见（"正在压缩上下文…"）。
+          store.beginCompactionEpisode(sessionKey);
+          store.setSessionCompacting(sessionKey, true);
+          break;
+        }
+
+        // end（含失败/取消）先收掉"正在压缩"的提示 —— 不管成没成，它都不再"正在"了。
+        store.setSessionCompacting(sessionKey, false);
+
+        // ⭐ 只有"**真的压完了**"才报：completed && !willRetry。
+        //    `!willRetry` 是**运行时自己**判"真正结束"的条件（见 compaction-announce.ts），
+        //    少了它"压缩→重试→再压缩"会报两条。
+        if (compaction.completed === true && compaction.willRetry !== true) {
+          const episode = currentCompactionEpisode(compactionDeps, sessionKey);
+          announceCompaction(compactionDeps, { taskId, sessionKey, episode });
+        }
         break;
+      }
       case 'run_status': {
         // 网关在报「这一轮走到哪一步了」。从前没有这个分支，事件被当未知的丢掉，
         // 于是首条消息有 9 秒界面毫无反应（用户报的「响应太慢」就是这么来的）。
@@ -739,6 +769,23 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
     const { sessionKey, spawnedBy, reason, phase } = payload;
     if (!sessionKey) {
       debugEvent('renderer.session.dropped.missing_session', { gatewayId, reason, phase });
+      return;
+    }
+
+    // ⭐ "压缩完成了" —— **必须排在下面那个过滤之前**。那个过滤只看**子代理**会话，
+    //    而压缩发生在**普通任务会话**上 ⇒ 放到它后面就永远收不到（有用例专门钉这个顺序）。
+    //
+    //    只认 `compacted === true`：网关两处都带了这个字段，而其中一处的守卫只写了
+    //    `if (result.ok)`（比"真的压了"宽）⇒ 不加这个判断会把"没压成"也报成压了。
+    if (reason === 'compact' && payload.compacted === true) {
+      const taskId = resolveTaskId(sessionKey);
+      if (taskId) {
+        // 取"当前轮次"（手动那条在发 RPC 时已经开了一轮 ⇒ 这里读到的就是同一轮；
+        // start 没收到过就现开一轮）。两条路同一个轮次号，去重才成立。
+        const episode = currentCompactionEpisode(compactionDeps, sessionKey);
+        announceCompaction(compactionDeps, { taskId, sessionKey, episode });
+      }
+      debugEvent('renderer.session.compacted', { gatewayId, sessionKey, taskId: taskId ?? null });
       return;
     }
 
@@ -957,6 +1004,9 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
       source: 'approval',
     });
   }
+
+  /** 统一出口的依赖：⚠️ 传取值函数而不是快照（兜底在定时器回调里跑）。 */
+  const compactionDeps = { getStore: () => deps.getMessageStore(), translate: deps.translate };
 
   function handleAgentLifecycleStream(
     taskId: string,

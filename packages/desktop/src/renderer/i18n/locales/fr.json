@@ -388,6 +388,7 @@
     "aiServiceStartingDetail": "Le premier démarrage peut prendre environ une minute. Veuillez patienter.",
     "attachmentSaveFailed": "Échec de l'enregistrement de la pièce jointe {{fileName}}",
     "attachmentTooLarge": "{{fileName}} dépasse la limite de 100 Mo",
+    "compacting": "Compression du contexte…",
     "describeTask": "Décrivez votre tâche…",
     "fileContextLimitExceeded": "Le contexte total des fichiers dépasse la limite de 500 Ko",
     "grantFolderFailed": "Échec de l'ajout du dossier",

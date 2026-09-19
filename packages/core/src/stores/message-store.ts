@@ -41,6 +41,39 @@ export interface MessageState {
    */
   progressTextBySession: Record<string, string | null>;
   /**
+   * 「会话已压缩」这句话的**播报记账** —— 只为一件事：**同一个会话别报两次**。
+   *
+   * 为什么需要：压缩有**两条**来源，都可能说这句话 ——
+   * ① 网关的 `sessions.changed {reason:"compact", compacted:true}`（手动压缩走它）；
+   * ② 手动压缩那条 RPC 的返回值兜底（万一 ① 没送到）。
+   * 两边都只认"真的压了"，但**都要防重复**：事件先到就别再兜底，兜底报过就别再被事件重复。
+   *
+   * ⚠️ 不落库：本轮界面状态，与 `runPhaseBySession` 同性质。
+   *
+   * ⚠️ **用"轮次号"而不是时间戳**：时间戳在毫秒内撞车（两轮压缩落在同一毫秒）时，
+   *    "同一轮只报一次"的判断会把**新一轮**误杀。轮次号单调递增，没有这个歧义。
+   *    （这个坑是测试抓出来的：连做两轮压缩，第二轮被去重挡掉了。）
+   */
+  compactionAnnouncedEpisodeBySession: Record<string, number>;
+  /**
+   * **本轮压缩是从什么时候开始的**（ms）。两条路各自在"开始那一刻"记一次：
+   * 自动压缩记在网关的 `compaction start` 上；手动压缩记在发出 RPC 那一刻。
+   *
+   * ⚠️ 为什么必须有它：播报去重是"**同一轮的 `since` 之后只报一次**"，
+   *    两条路必须拿到**同一个** `since`，否则会漏判一种顺序 ——
+   *    兜底先报(T3)、事件迟到(T4)：若事件用"到达时刻"当 since，T3<T4 就挡不住了 ⇒ 报两次。
+   */
+  compactionEpisodeBySession: Record<string, number>;
+  /**
+   * 这个会话**正在压缩上下文**（活动条据此显示"正在压缩上下文…"）。
+   *
+   * ⚠️ 刻意**不复用** `progressTextBySession`：那一槽的约定是"**模型的原话**，
+   *    不是我们写的文案"，而这句是**我们的**文案 —— 塞进去会破坏那条约定
+   *    （界面就分不清"模型在说"还是"系统在说"了）。
+   * ⚠️ 压缩会让界面**停住一会儿**，这段时间必须看得见东西（用户抱怨的"卡住"）。
+   */
+  compactingBySession: Record<string, boolean>;
+  /**
    * 本轮**从什么时候开始等**（`Date.now()` 毫秒），要么没有这条键。
    *
    * 为什么要它：输入框上方要显示一个**一直在走的秒数** —— 用户骂"卡住"多半是
@@ -114,6 +147,20 @@ export interface MessageState {
   setSessionProgressText: (sessionKey: string, text: string | null) => void;
   /** 传 `null` 清掉该会话的失败文案（重试时用）。 */
   setSessionError: (sessionKey: string, message: string | null) => void;
+  /**
+   * 播报一次「会话已压缩」。
+   *
+   * **幂等**：同一个会话在 `since`（这次压缩的开始时刻）之后**已经报过**就什么都不做、
+   * 返回 false —— 这是"两条来源各报一次 ⇒ 只出现一条"的那道闸。
+   * `text` 由调用方翻译好（store 不该依赖翻译器）。
+   */
+  announceCompactionOnce: (taskId: string, sessionKey: string, episode: number, text: string) => boolean;
+  /** 开一轮压缩，返回本轮轮次号（自动那条记在网关的 `compaction start` 上）。 */
+  beginCompactionEpisode: (sessionKey: string) => number;
+  /** 取当前轮次号；还没有过就开一轮（事件先到、start 没收到时用）。 */
+  ensureCompactionEpisode: (sessionKey: string) => number;
+  /** 压缩进行中标记（活动条显示"正在压缩上下文…"用）。 */
+  setSessionCompacting: (sessionKey: string, compacting: boolean) => void;
 }
 
 export interface MessageStoreDeps {
@@ -245,6 +292,9 @@ export function createMessageStore(deps: MessageStoreDeps) {
     activeTurnBySession: {},
     processingBySession: new Set(),
     runPhaseBySession: {},
+    compactionAnnouncedEpisodeBySession: {},
+    compactionEpisodeBySession: {},
+    compactingBySession: {},
     progressTextBySession: {},
     turnStartedAtBySession: {},
     errorBySession: {},
@@ -540,6 +590,42 @@ export function createMessageStore(deps: MessageStoreDeps) {
       set((s) => ({
         progressTextBySession: { ...s.progressTextBySession, [sessionKey]: text },
       })),
+
+    announceCompactionOnce: (taskId, sessionKey, episode, text) => {
+      // ⚠️ 判断与写入必须在**同一次** `set` 里（zustand 的 updater 是同步的）——
+      //    分两步读-改-写的话，两条来源几乎同时到达时会**都**通过检查。
+      let announced = false;
+      set((s) => {
+        if ((s.compactionAnnouncedEpisodeBySession[sessionKey] ?? 0) >= episode) return s;
+        announced = true;
+        return {
+          compactionAnnouncedEpisodeBySession: { ...s.compactionAnnouncedEpisodeBySession, [sessionKey]: episode },
+        };
+      });
+      if (!announced) return false;
+      get().addMessage(taskId, 'system', text, undefined, { sessionKey });
+      return true;
+    },
+
+    beginCompactionEpisode: (sessionKey) => {
+      const next = (get().compactionEpisodeBySession[sessionKey] ?? 0) + 1;
+      set((s) => ({ compactionEpisodeBySession: { ...s.compactionEpisodeBySession, [sessionKey]: next } }));
+      return next;
+    },
+
+    ensureCompactionEpisode: (sessionKey) => {
+      const current = get().compactionEpisodeBySession[sessionKey];
+      return current ?? get().beginCompactionEpisode(sessionKey);
+    },
+
+    setSessionCompacting: (sessionKey, compacting) =>
+      set((s) => {
+        if (compacting) return { compactingBySession: { ...s.compactingBySession, [sessionKey]: true } };
+        if (!(sessionKey in s.compactingBySession)) return s;
+        const next = { ...s.compactingBySession };
+        delete next[sessionKey];
+        return { compactingBySession: next };
+      }),
 
     setSessionError: (sessionKey, message) =>
       set((s) => {

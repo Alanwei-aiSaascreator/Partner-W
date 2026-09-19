@@ -41,6 +41,26 @@ function createHarness() {
     setProcessing: vi.fn(),
     setRunPhase: vi.fn(),
     setSessionProgressText: vi.fn(),
+    // ⭐ B8：压缩那三个**真的实现**（不是空 vi.fn()）—— 去重/幂等是要被断言的行为，
+    //    桩成空函数的话"报两次"这种 bug 在测试里根本看不出来。
+    compactionAnnouncedEpisodeBySession: {} as Record<string, number>,
+    compactionEpisodeBySession: {} as Record<string, number>,
+    compactingBySession: {} as Record<string, boolean>,
+    setSessionCompacting: vi.fn(),
+    beginCompactionEpisode: vi.fn((sessionKey: string) => {
+      const next = (messageStore.compactionEpisodeBySession[sessionKey] ?? 0) + 1;
+      messageStore.compactionEpisodeBySession[sessionKey] = next;
+      return next;
+    }),
+    ensureCompactionEpisode: vi.fn((sessionKey: string) => {
+      return messageStore.compactionEpisodeBySession[sessionKey] ?? messageStore.beginCompactionEpisode(sessionKey);
+    }),
+    announceCompactionOnce: vi.fn((taskId: string, sessionKey: string, episode: number, text: string) => {
+      if ((messageStore.compactionAnnouncedEpisodeBySession[sessionKey] ?? 0) >= episode) return false;
+      messageStore.compactionAnnouncedEpisodeBySession[sessionKey] = episode;
+      messageStore.addMessage(taskId, 'system', text, undefined, { sessionKey });
+      return true;
+    }),
     /** 临时会话（多模型对比的一列）的失败走这条旁路，不进时间线。 */
     setSessionError: vi.fn(),
   };
@@ -1500,5 +1520,153 @@ describe('chat 错误的 errorKind 一路传到文案', () => {
 
     expect(h.systemMessages[0]!.content).toContain('SomeBrandNewProviderError');
     expect(h.systemMessages[0]!.content).not.toContain('errors.kind.');
+  });
+});
+
+/**
+ * 压缩：**两条来源统一出口**（B8）。
+ *
+ * ## 背景
+ *
+ * 压缩有两条来源，而它们**不共用网关事件**（读随包运行时 2026.9.3 确认）：
+ * - **自动**（上下文满了）：agent `stream:"compaction"`；
+ * - **手动**（斜杠命令 / 右键菜单）：**不发 agent 流**，发 `sessions.changed {reason:"compact", compacted}`。
+ *
+ * ⇒ 从前客户端只能凭 `sessions.compact` 那条 RPC 的 `ok` 就宣布"会话已压缩"，
+ * 而 `ok` 只代表**请求被接受**。现在两条路都只认"**真的压了**"，且都走同一个出口。
+ */
+describe('压缩：两条来源统一出口', () => {
+  function emitCompaction(h: ReturnType<typeof createHarness>, data: Record<string, unknown>): void {
+    h.emit('agent', { sessionKey: TASK.sessionKey, stream: 'compaction', data });
+  }
+  function emitCompacted(h: ReturnType<typeof createHarness>, compacted: boolean): void {
+    h.emit('sessions.changed', { sessionKey: TASK.sessionKey, reason: 'compact', compacted });
+  }
+
+  it('⭐ 自动压缩跑完 ⇒ 一条「会话已压缩」（带 sessionKey）', () => {
+    const h = createHarness();
+
+    emitCompaction(h, { phase: 'start' });
+    emitCompaction(h, { phase: 'end', completed: true, willRetry: false, outcome: 'completed' });
+
+    expect(h.systemMessages, '压完了就要说一句').toHaveLength(1);
+    expect(h.systemMessages[0]!.content).toBe('session.contextCompacted');
+    expect(h.systemMessages[0]!.sessionKey, 'system 消息要带 sessionKey（本文件既有纪律）').toBe(TASK.sessionKey);
+  });
+
+  it('⭐ 压缩还要重试（willRetry）⇒ 不说 —— 否则"压缩→重试→再压缩"会报两条', () => {
+    const h = createHarness();
+
+    emitCompaction(h, { phase: 'start' });
+    emitCompaction(h, { phase: 'end', completed: true, willRetry: true });
+
+    expect(h.systemMessages, '还要重试就不算真的压完').toHaveLength(0);
+  });
+
+  it('没压成（completed=false）⇒ 不说（别把失败的压缩说成成功）', () => {
+    const h = createHarness();
+
+    emitCompaction(h, { phase: 'start' });
+    emitCompaction(h, { phase: 'end', completed: false });
+
+    expect(h.systemMessages).toHaveLength(0);
+  });
+
+  it('只有 start ⇒ 不说（那句话留给活动条，不是时间线）', () => {
+    const h = createHarness();
+
+    emitCompaction(h, { phase: 'start' });
+
+    expect(h.systemMessages).toHaveLength(0);
+  });
+
+  it('⭐ 手动压缩完成（网关 sessions.changed）⇒ 一条 —— 而它**必须**能穿过"只看子代理"那道过滤', () => {
+    const h = createHarness();
+
+    // ⚠️ TASK.sessionKey 是**普通任务会话**（不是子代理）：把 compact 分支写到过滤之后的话，
+    //    这条永远收不到 —— 这个用例就是钉那个顺序的。
+    emitCompacted(h, true);
+
+    expect(h.systemMessages, '普通会话的压缩也要说').toHaveLength(1);
+    expect(h.systemMessages[0]!.content).toBe('session.contextCompacted');
+    expect(h.systemMessages[0]!.sessionKey).toBe(TASK.sessionKey);
+  });
+
+  it('⭐ 网关说"没真压成"（compacted=false）⇒ 不说', () => {
+    const h = createHarness();
+
+    // 网关那处守卫只写了 `if (result.ok)`（比"真的压了"宽）⇒ 这个字段必须真的被判。
+    emitCompacted(h, false);
+
+    expect(h.systemMessages).toHaveLength(0);
+  });
+
+  it('⭐ 两条来源都说同一件事 ⇒ 仍然只有一条', () => {
+    const h = createHarness();
+
+    emitCompaction(h, { phase: 'start' }); // 同一轮：开始时刻记在这儿
+    emitCompacted(h, true); // 手动那条先到
+    emitCompaction(h, { phase: 'end', completed: true, willRetry: false }); // 自动那条（同一轮）后到
+
+    expect(h.systemMessages, '同一轮压缩只许出现一条').toHaveLength(1);
+  });
+
+  it('第二轮压缩要能再说一次（去重按"轮"而不是"会话"）', () => {
+    const h = createHarness();
+
+    emitCompaction(h, { phase: 'start' });
+    emitCompaction(h, { phase: 'end', completed: true, willRetry: false });
+    // 隔一轮再来（start 会刷新本轮开始时刻）
+    emitCompaction(h, { phase: 'start' });
+    emitCompaction(h, { phase: 'end', completed: true, willRetry: false });
+
+    expect(h.systemMessages, '长会话会压缩多次，不能只报第一次').toHaveLength(2);
+  });
+
+  it('⭐ Phase 2：start 时活动条显示"正在压缩"，end（含失败）收掉', () => {
+    const h = createHarness();
+
+    emitCompaction(h, { phase: 'start' });
+    expect(h.messageStore.setSessionCompacting, '压缩期间必须让用户看得见').toHaveBeenCalledWith(TASK.sessionKey, true);
+
+    emitCompaction(h, { phase: 'end', completed: true, willRetry: false });
+    expect(h.messageStore.setSessionCompacting).toHaveBeenLastCalledWith(TASK.sessionKey, false);
+  });
+
+  it('Phase 2：压缩**失败/取消**（completed=false）也要把提示收掉', () => {
+    const h = createHarness();
+
+    emitCompaction(h, { phase: 'start' });
+    emitCompaction(h, { phase: 'end', completed: false });
+
+    expect(h.messageStore.setSessionCompacting).toHaveBeenLastCalledWith(TASK.sessionKey, false);
+  });
+
+  it('遥测照旧记（别为了新行为把老的丢了）', () => {
+    const h = createHarness();
+
+    emitCompaction(h, { phase: 'end', completed: true, willRetry: false });
+
+    expect(h.deps.reportDebugEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'renderer.agent.compaction' }),
+    );
+  });
+});
+
+/**
+ * ⚠️ 补一条**变异验证抓出来的**缺口：`reason:"compact"` 但**不带** `compacted` 字段。
+ *
+ * 网关确实会在两处带这个字段（一处恒 `true`、一处是 `result.compacted`），
+ * 所以"缺字段"在今天的实现里大概不会出现 —— 但**判据必须写严**：
+ * 只要不是**严格** `true` 就不报，否则哪天网关那处守卫（`if (result.ok)`，比"真的压了"宽）
+ * 把 `compacted` 漏了，我们就会跟着把"没压成"报成压了。
+ */
+describe('压缩：判据要严（变异验证抓出来的缺口）', () => {
+  it('⭐ `reason:"compact"` 但不带 `compacted` ⇒ **不报**（不能把"没提"当成"压了"）', () => {
+    const h = createHarness();
+
+    h.emit('sessions.changed', { sessionKey: TASK.sessionKey, reason: 'compact' });
+
+    expect(h.systemMessages, '缺字段 ⇒ 证不出"压了" ⇒ 不报').toHaveLength(0);
   });
 });

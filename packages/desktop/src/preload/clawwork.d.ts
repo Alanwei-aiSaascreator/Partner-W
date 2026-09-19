@@ -654,7 +654,11 @@ export interface ClawWorkAPI {
 
   resetSession: (gatewayId: string, sessionKey: string, reason?: 'new' | 'reset') => Promise<IpcResult>;
   deleteSession: (gatewayId: string, sessionKey: string) => Promise<IpcResult>;
-  compactSession: (gatewayId: string, sessionKey: string, maxLines?: number) => Promise<IpcResult>;
+  compactSession: (
+    gatewayId: string,
+    sessionKey: string,
+    maxLines?: number,
+  ) => Promise<IpcResult<{ compacted: boolean; reason?: string; kept?: number }>>;
 
   updateTrayStatus: (
     status: 'idle' | 'running' | 'unread',

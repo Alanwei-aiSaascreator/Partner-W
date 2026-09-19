@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo, type MouseEvent } fr
 import { AnimatePresence, motion } from 'framer-motion';
 import { List, PanelLeftClose, Plus, Search, SquarePen } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { runManualCompaction } from '@clawwork/core';
 import { useTaskStore } from '@/stores/taskStore';
 import { useMessageStore } from '@/stores/messageStore';
 import { useUiStore } from '@/stores/uiStore';
@@ -66,14 +67,18 @@ export default function LeftNav({ onOpenAssistantSettings }: LeftNavProps) {
     (taskId: string) => {
       const task = findTask(taskId);
       if (!task) return;
-      window.clawwork
-        .compactSession(task.gatewayId, task.sessionKey)
-        .then((res) => {
-          if (res.ok) addMessage(taskId, 'system', t('session.contextCompacted'));
-        })
-        .catch(() => {});
+      // ⭐ B8：走**共享入口**（与斜杠命令同一条路）—— 这里不再自己插消息，
+      //    也不再自己判断"压没压成"，那些都在统一出口里（见 compaction-announce.ts）。
+      void runManualCompaction(
+        {
+          getStore: () => useMessageStore.getState(),
+          translate: (key: string) => t(key),
+          compactSession: (gw, sk) => window.clawwork.compactSession(gw, sk),
+        },
+        { gatewayId: task.gatewayId, sessionKey: task.sessionKey, taskId },
+      ).catch(() => {});
     },
-    [addMessage, t],
+    [t],
   );
 
   const handleResetConfirm = useCallback(() => {

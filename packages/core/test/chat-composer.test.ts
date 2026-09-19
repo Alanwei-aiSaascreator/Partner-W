@@ -89,6 +89,17 @@ function setup(options: { ensemble?: boolean; model?: string } = {}) {
       removeMessage,
       setProcessing,
       clearMessages: vi.fn(),
+      // ⭐ B8：压缩播报交给统一出口 ⇒ 这三个要走真的（桩成空函数的话"报没报"根本看不出来）
+      compactionAnnouncedEpisodeBySession: {},
+      compactionEpisodeBySession: {},
+      beginCompactionEpisode: () => {
+        const next = 1;
+        return next;
+      },
+      ensureCompactionEpisode: () => 1,
+      announceCompactionOnce: vi.fn(() => {
+        throw new Error('composer 不该自己播报压缩（B8：交给统一出口）');
+      }),
     }),
     persistMessage,
     markAbortedByUser: vi.fn(),
@@ -126,7 +137,7 @@ describe('chat-composer', () => {
     vi.useRealTimers();
   });
 
-  it('attaches task.sessionKey to system messages from emitError, send-timeout, compact, reset', async () => {
+  it('attaches task.sessionKey to system messages from emitError, send-timeout, reset（compact 已改走统一出口）', async () => {
     {
       const { composer, systemOptions, sendMessage } = setup();
       sendMessage.mockResolvedValueOnce({ ok: false });
@@ -149,12 +160,13 @@ describe('chat-composer', () => {
     }
 
     {
+      // ⭐ B8：compact **不再**由 composer 自己插消息 —— 它只把网关的结论
+      //    （`compacted === true`）交给统一出口，由那边负责"什么时候、报不报"。
       const { composer, systemOptions, compactSession } = setup();
-      compactSession.mockResolvedValueOnce({ ok: true });
-      await composer.applySlashCommand(TASK_ID, 'compact');
-      const system = systemOptions();
-      expect(system).toHaveLength(1);
-      expect(system[0]?.sessionKey).toBe(SESSION_KEY);
+      compactSession.mockResolvedValueOnce({ ok: true, result: { compacted: true } });
+      const result = await composer.applySlashCommand(TASK_ID, 'compact');
+      expect(result.ok, '命令本身仍然成功').toBe(true);
+      expect(systemOptions(), 'composer 不再自己报"已压缩"').toHaveLength(0);
     }
 
     {

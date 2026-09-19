@@ -388,6 +388,7 @@
     "aiServiceStartingDetail": "Der erste Start kann etwa eine Minute dauern. Bitte warten Sie.",
     "attachmentSaveFailed": "Anhang {{fileName}} konnte nicht gespeichert werden",
     "attachmentTooLarge": "{{fileName}} ueberschreitet das 100-MB-Limit",
+    "compacting": "Kontext wird komprimiert…",
     "describeTask": "Beschreiben Sie Ihre Aufgabe…",
     "fileContextLimitExceeded": "Dateikontext ueberschreitet 500-KB-Limit",
     "grantFolderFailed": "Ordner konnte nicht hinzugefügt werden",

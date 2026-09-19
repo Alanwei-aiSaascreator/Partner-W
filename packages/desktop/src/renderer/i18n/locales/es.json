@@ -388,6 +388,7 @@
     "aiServiceStartingDetail": "El primer inicio puede tardar alrededor de un minuto. Espera un momento.",
     "attachmentSaveFailed": "No se pudo guardar el adjunto {{fileName}}",
     "attachmentTooLarge": "{{fileName}} excede el límite de 100MB",
+    "compacting": "Comprimiendo el contexto…",
     "describeTask": "Describe tu tarea…",
     "fileContextLimitExceeded": "El contexto total de archivos excede el límite de 500KB",
     "grantFolderFailed": "No se pudo agregar la carpeta",

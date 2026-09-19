@@ -2,6 +2,7 @@ import type { Message, MessageAttachment, IpcResult, ErrorStage, TaskRoom, RoomS
 import type { GatewayTransportPort, ChatAttachment } from '../ports/gateway-transport.js';
 import { buildAppError, formatErrorForUser, formatErrorForToast } from './error-classify.js';
 import type { TranslateFn } from './error-classify.js';
+import { runManualCompaction } from './compaction-announce.js';
 
 interface TaskRef {
   id: string;
@@ -34,6 +35,10 @@ export interface ChatComposerDeps {
     removeMessage: (taskId: string, messageId: string) => void;
     setProcessing: (taskId: string, processing: boolean) => void;
     clearMessages: (taskId: string) => void;
+    // ⭐ B8 统一出口要用的三个（压缩播报的记账与幂等）
+    announceCompactionOnce: (taskId: string, sessionKey: string, episode: number, text: string) => boolean;
+    beginCompactionEpisode: (sessionKey: string) => number;
+    ensureCompactionEpisode: (sessionKey: string) => number;
   };
 
   persistMessage: (msg: {
@@ -457,6 +462,9 @@ export function createChatComposer(deps: ChatComposerDeps) {
     deps.setRoomStatus(taskId, 'stopped');
   }
 
+  /** 统一出口的依赖（B8）：⚠️ 传取值函数而不是快照（兜底在定时器里跑）。 */
+  const compactionDeps = { getStore: () => deps.getMessageStore(), translate: deps.translate };
+
   async function applySlashCommand(
     taskId: string,
     command: 'compact' | 'reset' | 'model' | 'think',
@@ -470,12 +478,17 @@ export function createChatComposer(deps: ChatComposerDeps) {
     switch (command) {
       case 'compact': {
         const res = await deps.compactSession(task.gatewayId, task.sessionKey);
-        if (res.ok) {
-          const msg = deps.translate('session.contextCompacted');
-          store.addMessage(taskId, 'system', msg, undefined, { sessionKey: task.sessionKey });
-          return { ok: true, message: msg };
-        }
-        return { ok: false };
+        if (!res.ok) return { ok: false };
+
+        // ⭐ **不再在这里插消息了**（B8）：从前"RPC 被接受"就被当成了"压缩完成"。
+        //    现在只把网关的结论交给统一出口 —— **只认 `compacted === true`**；
+        //    若网关的 `sessions.changed` 先到，兜底那次会被幂等挡掉
+        //    （见 compaction-announce.ts 的三条硬规矩）。
+        await runManualCompaction(
+          { ...compactionDeps, compactSession: (gw, sk) => deps.compactSession(gw, sk) },
+          { gatewayId: task.gatewayId, sessionKey: task.sessionKey, taskId },
+        );
+        return { ok: true };
       }
       case 'reset': {
         const res = await deps.resetSession(task.gatewayId, task.sessionKey, 'reset');

@@ -45,6 +45,8 @@ export default function ComposerActivity({ sessionKey, onCancel }: ComposerActiv
   // 模型**自述**的进度（网关 item 流的 preamble）—— 正文不流式时唯一在动的东西。
   const modelProgress = useMessageStore((s) => (sessionKey ? s.progressTextBySession[sessionKey] : null));
   const toolCalls = useMessageStore((s) => (sessionKey ? s.activeTurnBySession[sessionKey]?.toolCalls : undefined));
+  // 正在压缩上下文（B8 Phase 2）—— 压缩会让界面**停住一会儿**，必须有东西说明"为什么不动"。
+  const compacting = useMessageStore((s) => (sessionKey ? s.compactingBySession[sessionKey] === true : false));
 
   // 每秒重渲染一次，只为让秒数和轮播文案往前走。不在跑的时候连定时器都不挂。
   const [now, setNow] = useState(() => Date.now());
@@ -66,6 +68,11 @@ export default function ComposerActivity({ sessionKey, onCancel }: ComposerActiv
   let headline: string;
   if (runningCall) {
     headline = t('chatInput.waiting.runningTool', { what: runningCall.title ?? runningCall.name });
+  } else if (compacting) {
+    // ⭐ 压缩是**此刻系统在做的事**（与"正在跑的工具"同类：都是事实），而且它正是
+    //    "界面为什么停住"的答案 ⇒ 排在模型**自述**的进度前面
+    //    （那句是它上一轮说的话，压缩期间已经过期了）。
+    headline = t('chatInput.compacting');
   } else if (modelProgress) {
     // 工具的 `title` 是网关拼好的**事实**（工具名 + 参数），比模型的话更硬 ⇒ 排在它后面。
     // 但它比 `runPhase` 具体得多（后者只是"正在调用模型"这一档），所以排在它前面。

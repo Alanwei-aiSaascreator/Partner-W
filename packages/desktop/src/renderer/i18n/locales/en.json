@@ -388,6 +388,7 @@
     "aiServiceStartingDetail": "The first startup may take about a minute. Please wait.",
     "attachmentSaveFailed": "Failed to save attachment {{fileName}}",
     "attachmentTooLarge": "{{fileName}} exceeds 100MB limit",
+    "compacting": "Compacting context…",
     "describeTask": "Describe your task…",
     "fileContextLimitExceeded": "Total file context exceeds 500KB limit",
     "grantFolderFailed": "Failed to add folder",

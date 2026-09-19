@@ -388,6 +388,7 @@
     "aiServiceStartingDetail": "A primeira inicialização pode levar cerca de um minuto. Aguarde.",
     "attachmentSaveFailed": "Falha ao salvar o anexo {{fileName}}",
     "attachmentTooLarge": "{{fileName}} excede o limite de 100MB",
+    "compacting": "Compactando o contexto…",
     "describeTask": "Descreva sua tarefa…",
     "fileContextLimitExceeded": "O contexto total de arquivos excede o limite de 500KB",
     "grantFolderFailed": "Falha ao adicionar a pasta",
