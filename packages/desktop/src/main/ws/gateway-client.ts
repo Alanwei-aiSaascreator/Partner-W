@@ -18,6 +18,7 @@ import type {
   ChatAttachment,
 } from '@clawwork/shared';
 import { sendToWindow } from './window-utils.js';
+import { helloFeatureLogData } from './hello-features.js';
 import { getMainWindow } from '../window-manager.js';
 import {
   loadOrCreateDeviceIdentity,
@@ -338,6 +339,10 @@ export class GatewayClient {
             event: 'gateway.connect.res.ok',
             gatewayId: this.gatewayId,
             requestId: 'connect-handshake',
+            // ⭐ 网关**自报的能力面**（`HelloOkSchema.features`，契约里的必需字段）。
+            //    接上它之前，整个 2026-09 的协议漂移都是事后读源码才发现的 ——
+            //    而这份答案每次握手都送到我们手上。只记数量 + capabilities（见该模块说明）。
+            data: helloFeatureLogData(payload),
           });
           this.authenticated = true;
           this.reconnectAttempts = 0;
