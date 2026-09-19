@@ -499,6 +499,91 @@ describe('run_status 的重试相位', () => {
   });
 });
 
+/**
+ * `lifecycle` 的 **`finishing`** 相位 —— **一个危险的陷阱**，我们此前不认它。
+ *
+ * 实测（`~/git/openclaw`，2026-09-09）：`src/agents/command/lifecycle.ts`
+ * 的 terminal 相位联合是 **`"finishing" | "end" | "error"`**，而
+ * `src/agents/embedded-agent-runner/run/attempt-stream-prepare.ts` 写着：
+ *
+ * ```js
+ * terminalLifecyclePhase: attempt.deferTerminalLifecycle ? "finishing" : "end"
+ * ```
+ *
+ * ⇒ **`finishing` 是 `end` 的替代品**，在"还有后续尝试"时发。网关自己的注释说得更明白：
+ *   「Finishing is an **attempt fence**, not the outer execution's final publication」、
+ *   「the caller owns the terminal」。
+ *
+ * ## 为什么必须钉住
+ *
+ * 它今天走 `default` ⇒ 记 `lifecycle.unknown`、**不改状态** ⇒ 行为是对的（碰巧）。
+ * 但那是一条**没有护栏的对**：后人看到日志里 `lifecycle.unknown {phase:"finishing"}`，
+ * 最自然的"修复"就是**照着 `end` 那样补一个 case** —— 于是在还有后续尝试时
+ * `setProcessing(false)` + 清 run phase ⇒ **活动条在 agent 还在干活时消失**，
+ * 用户以为它做完了。
+ *
+ * ⚠️ 所以这一组用例是**护栏**：`finishing` **必须什么都不改**。
+ */
+describe('lifecycle.finishing —— 是"还要继续"，不是"结束"', () => {
+  const emitLifecycle = (h: ReturnType<typeof createHarness>, phase: string) =>
+    h.emit('agent', { sessionKey: TASK.sessionKey, stream: 'lifecycle', data: { phase } });
+
+  it('⭐ `finishing` **不许**收掉这一轮（它是 attempt fence，不是终态）', () => {
+    const h = createHarness();
+    h.messageStore.setProcessing.mockClear();
+
+    emitLifecycle(h, 'finishing');
+
+    expect(h.messageStore.setProcessing, '把它当 end 处理 = 活动条在 agent 还在干活时消失').not.toHaveBeenCalled();
+  });
+
+  it('⭐ `finishing` **不许**清掉 run phase / 进度文本', () => {
+    const h = createHarness();
+    h.messageStore.setRunPhase.mockClear();
+    h.messageStore.setSessionProgressText.mockClear();
+
+    emitLifecycle(h, 'finishing');
+
+    expect(h.messageStore.setRunPhase).not.toHaveBeenCalled();
+    expect(h.messageStore.setSessionProgressText).not.toHaveBeenCalled();
+  });
+
+  it('⭐ 它要记成**自己的**事件，不是"未知相位"（否则后人会去"补上处理"）', () => {
+    const h = createHarness();
+
+    emitLifecycle(h, 'finishing');
+
+    expect(h.deps.reportDebugEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'renderer.agent.lifecycle.finishing' }),
+    );
+    expect(h.deps.reportDebugEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'renderer.agent.lifecycle.unknown' }),
+    );
+  });
+
+  it('对照：`end` 照旧收尾（别为了 finishing 把 end 也改了）', () => {
+    const h = createHarness();
+
+    emitLifecycle(h, 'end');
+
+    expect(h.messageStore.setProcessing).toHaveBeenCalledWith(TASK.sessionKey, false);
+    expect(h.messageStore.setRunPhase).toHaveBeenCalledWith(TASK.sessionKey, null);
+  });
+
+  it('对照：**真**未知的相位仍然走 unknown（default 那条不能被吃掉）', () => {
+    const h = createHarness();
+
+    emitLifecycle(h, 'some_future_phase');
+
+    expect(h.deps.reportDebugEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'renderer.agent.lifecycle.unknown',
+        data: expect.objectContaining({ phase: 'some_future_phase' }),
+      }),
+    );
+  });
+});
+
 describe('agent lifecycle error buffer', () => {
   it('buffers a lifecycle error for the dedup window, then releases it as a system message', async () => {
     vi.useFakeTimers();

@@ -102,13 +102,27 @@ interface AgentApprovalData {
 
 interface AgentLifecycleData {
   /**
-   * 实测六个值（2026-09-19 扫随包运行时 2026.9.3 的 emit 点）：
-   * `start` / `end` / `error` / `fallback` / **`fallback_step`** / **`fallback_cleared`**。
+   * 实测**七个**值（2026-09-19 扫 `~/git/openclaw` 2026-09-09 的 emit 点）：
+   * `start` / `end` / `error` / `fallback` / `fallback_step` / `fallback_cleared` / **`finishing`**。
    *
    * ⚠️ `fallback_step` 与 `fallback_cleared` 此前**连类型都没声明**，
    * 而下面那个 switch **没有 default** ⇒ 这两条**完全静默**（连一条日志都没有）。
+   *
+   * ⚠️ **`finishing` 是 2026-09-19 补的，而它此前没被处理的真正原因就在这个类型上**：
+   *    这里是个**封闭联合**，把它声明成"已经齐了" ⇒ 下面那个 switch 的穷尽性检查
+   *    **反而挡住了**加 `case 'finishing'`（TS2678），于是它只能走 `default`。
+   *    ⇒ 教训：**"我们认得的值"不要写成封闭联合**，除非有东西能保证它真的闭。
+   *    （网关那边 `phase` 在协议里是开放字符串，闭的是我们自己的认知。）
    */
-  phase?: 'start' | 'end' | 'error' | 'fallback' | 'fallback_step' | 'fallback_cleared';
+  phase?:
+    | 'start'
+    | 'end'
+    | 'error'
+    | 'fallback'
+    | 'fallback_step'
+    | 'fallback_cleared'
+    /** ⚠️ **不是结束**：还有后续尝试时发的「本 attempt 收尾」（见 case 里的说明）。 */
+    | 'finishing';
   error?: string;
   startedAt?: number;
   endedAt?: number;
@@ -1260,6 +1274,22 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
         }
         break;
       }
+      case 'finishing':
+        // ⚠️ **这一条是护栏，不是功能**。`finishing` 是 `lifecycle` 的一个**真相位**，
+        //    但它**不是结束** —— 网关那边的原话：
+        //      · `lifecycle.ts` 的终态联合是 `"finishing" | "end" | "error"`；
+        //      · `attempt-stream-prepare.ts`：`terminalLifecyclePhase:
+        //        attempt.deferTerminalLifecycle ? "finishing" : "end"` —— **它替代 `end`**；
+        //      · 注释：`Finishing is an attempt fence, not the outer execution's final publication`。
+        //
+        //    ⇒ **还有后续尝试时**发它。所以这里**什么都不做**（不收 processing、不清 run phase）。
+        //
+        //    为什么明明"什么都不做"还要单写一个 case：它以前走 `default` ⇒ 记
+        //    `lifecycle.unknown`。后人看到日志里一条"未知相位"，最自然的修复就是
+        //    **照着 `end` 补一个 case** —— 那会在 agent 还在干活时把活动条收掉。
+        //    写成显式 case = 把"我知道它、我故意不处理"摆在代码里，而不是留给下一个人猜。
+        debugEvent('renderer.agent.lifecycle.finishing', { taskId, sessionKey });
+        break;
       case 'fallback_step':
         // 逐个候选尝试的**过程**：只留遥测。
         // 每一步都往时间线插话会把对话刷爆，而它对用户没有增量信息。
