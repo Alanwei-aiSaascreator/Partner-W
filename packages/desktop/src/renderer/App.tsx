@@ -28,7 +28,7 @@ import { cn } from '@/lib/utils';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { motionDuration, motionEase } from '@/styles/design-tokens';
 import { loadOnboardingProfile, saveOnboardingProfile, type OnboardingProfile } from '@/lib/user-onboarding';
-import { resolveAppEntryScreen } from '@/lib/app-entry-flow';
+import { AUTH_CHECK_FALLBACK_MS, resolveAppEntryScreen, runAuthBootstrap } from '@/lib/app-entry-flow';
 import { parseBetaRoute } from '@/features/internal-beta/beta-route';
 
 function AppToaster({ themeMode }: { themeMode: Theme }) {
@@ -166,15 +166,15 @@ export default function App() {
 
   useEffect(() => {
     let cancelled = false;
-    const timeout = setTimeout(() => {
-      if (!cancelled) setAuthState((prev) => (prev === 'checking' ? 'required' : prev));
-    }, 5000);
+    /** 配置读完才会知道要不要做会话检查，所以取消函数得晚一步才有 —— 先占个位。 */
+    let cancelAuthCheck: (() => void) | null = null;
 
     (async () => {
+      // ① 先看商业配置。**没配置就是本地模式，压根没有会话要检查**（也就没有网络依赖）。
       try {
         const config = await window.clawwork.commercialGetConfig();
-        const configured = Boolean(config.ok && config.result?.supabaseUrl && config.result?.hasAnonKey);
         if (cancelled) return;
+        const configured = Boolean(config.ok && config.result?.supabaseUrl && config.result?.hasAnonKey);
         if (!configured) {
           setOnboardingAccount({ userId: 'local', nickname: '' });
           setOnboardingProfile(loadOnboardingProfile('local'));
@@ -182,28 +182,39 @@ export default function App() {
           setAuthState('ok');
           return;
         }
-        const session = await window.clawwork.commercialSession();
-        if (cancelled) return;
-        const signedIn = Boolean(session.ok && session.result?.signedIn);
-        if (signedIn) {
-          const userId = session.result?.profile?.userId ?? 'local';
-          setOnboardingAccount({ userId, nickname: session.result?.profile?.nickname ?? '' });
-          setOnboardingProfile(loadOnboardingProfile(userId));
-          setOnboardingResolved(true);
-        }
-        setAuthState(signedIn ? 'ok' : 'required');
       } catch (err) {
-        // Fail closed — a thrown session check must not bypass the login gate.
-        console.error('[App] commercial auth check failed:', err);
+        // Fail closed — a thrown config read must not bypass the login gate.
+        console.error('[App] commercial config read failed:', err);
         if (!cancelled) setAuthState('required');
-      } finally {
-        clearTimeout(timeout);
+        return;
       }
+      if (cancelled) return;
+
+      // ② 会话检查（B7）：本地快速态只决定**兜底怎么判**，结论一律听后台的。
+      cancelAuthCheck = runAuthBootstrap<Awaited<ReturnType<typeof window.clawwork.commercialSession>>>({
+        readLocalSession: () => window.clawwork.commercialLocalSession().then((r) => Boolean(r.ok && r.result)),
+        checkBackend: () => window.clawwork.commercialSession(),
+        isSignedIn: (session) => Boolean(session.ok && session.result?.signedIn),
+        timeoutMs: AUTH_CHECK_FALLBACK_MS,
+        onSettled: (session, authState) => {
+          if (cancelled) return;
+          if (authState === 'ok') {
+            const userId = session?.result?.profile?.userId ?? 'local';
+            setOnboardingAccount({ userId, nickname: session?.result?.profile?.nickname ?? '' });
+            setOnboardingProfile(loadOnboardingProfile(userId));
+            setOnboardingResolved(true);
+          }
+          setAuthState(authState);
+        },
+        onTimeout: (fallback) => {
+          if (!cancelled) setAuthState((prev) => (prev === 'checking' ? fallback : prev));
+        },
+      });
     })();
 
     return () => {
       cancelled = true;
-      clearTimeout(timeout);
+      cancelAuthCheck?.();
     };
   }, []);
 

@@ -290,9 +290,16 @@ export async function readSessionState(): Promise<IpcResult<CommercialSessionSta
     }
 
     const user = authResult.user;
-    const { data: memberships } = await supabase
-      .from('org_members')
-      .select('role, organizations(id, name, slug, plan)');
+    // ⚠️ 这条查询**原来没有超时** —— 它一挂住，整个 `readSessionState` 就永不 resolve。
+    //    今天这个洞被界面那侧"5 秒改判未登录"盖着；B7 改成"本地有会话就继续等真答案"
+    //    之后它就会露出来（界面永远停在加载页）⇒ 必须补上。
+    //    超时后仍然报 `signedIn: true`：登录已被 `getUser()` 确认过，只是团队没读出来 ——
+    //    说成"未登录"会把已登录的人扔回登录页，那是另一种撒谎。
+    const membershipsResult = await withTimeoutOrNull(
+      supabase.from('org_members').select('role, organizations(id, name, slug, plan)'),
+      'org_members.select',
+    );
+    const memberships = membershipsResult?.data;
 
     const orgs: CommercialOrg[] = [];
     for (const row of memberships ?? []) {

@@ -740,6 +740,13 @@ export interface ClawWorkAPI {
   commercialSignInPassword: (email: string, password: string) => Promise<IpcResult<{ userId: string | null }>>;
   commercialSignOut: () => Promise<IpcResult>;
   commercialSession: () => Promise<IpcResult<CommercialSessionState>>;
+  /**
+   * B7 **本地快速态**：本地存着一个会话吗。**不发网络**。
+   *
+   * ⚠️ 只用来决定"网络慢时兜底该怎么判"，**不是**"已登录"的结论 ——
+   *    token 可能早就失效了。结论只认 `commercialSession()`。
+   */
+  commercialLocalSession: () => Promise<IpcResult<boolean>>;
   commercialAccountOverview: () => Promise<IpcResult<CommercialAccountOverview>>;
   commercialLicenseStatus: () => Promise<IpcResult<CommercialLicenseStatus>>;
   commercialLicenseActivate: (licenseKey: string) => Promise<IpcResult<CommercialLicenseStatus>>;

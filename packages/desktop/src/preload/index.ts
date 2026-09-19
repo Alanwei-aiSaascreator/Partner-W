@@ -457,6 +457,8 @@ function buildApi(): ClawWorkAPI {
       ipcRenderer.invoke('commercial:sign-in-password', email, password),
     commercialSignOut: () => ipcRenderer.invoke('commercial:sign-out'),
     commercialSession: () => ipcRenderer.invoke('commercial:session'),
+    /** B7 本地快速态：**不发网络**，只回答"本地存着一个会话吗"。 */
+    commercialLocalSession: () => ipcRenderer.invoke('commercial:local-session'),
     commercialAccountOverview: () => ipcRenderer.invoke('commercial:account-overview'),
     commercialLicenseStatus: () => ipcRenderer.invoke('commercial:license-status'),
     commercialLicenseActivate: (licenseKey: string) => ipcRenderer.invoke('commercial:license-activate', licenseKey),

@@ -34,6 +34,8 @@ const mocks = vi.hoisted(() => ({
   requestCommercialAccessCleanup: vi.fn(),
   drainPendingCommercialAccessCleanup: vi.fn(),
   clearCommercialSession: vi.fn(),
+  hasLocalSession: vi.fn(),
+  readSessionState: vi.fn(),
 }));
 
 vi.mock('electron', () => ({
@@ -57,13 +59,14 @@ vi.mock('../src/main/commercial/auth.js', () => ({
   signInWithPassword: (...a: unknown[]) => mocks.signInWithPassword(...a),
   sendLoginOtp: vi.fn(),
   signOutCommercial: (...a: unknown[]) => mocks.signOutCommercial(...a),
-  readSessionState: vi.fn(),
+  readSessionState: () => mocks.readSessionState(),
   readAccountOverview: vi.fn(),
 }));
 
 vi.mock('../src/main/commercial/client.js', () => ({
   clearCommercialSession: () => mocks.clearCommercialSession(),
   resetCommercialClient: vi.fn(),
+  hasLocalSession: () => mocks.hasLocalSession(),
 }));
 
 vi.mock('../src/main/commercial/relay-cleanup.js', () => ({
@@ -186,6 +189,18 @@ describe('登录入口 → notifyCommercialSignedIn（Stage 2C 接线）', () =>
 
     await expect(handlerFor('commercial:verify-otp')({}, '+8613800000000', '123456')).rejects.toThrow('cleanup down');
     expect(analytics.peek().map((e) => e.event)).toEqual(['login_success']);
+  });
+
+  it('⭐ `commercial:local-session` 走的是**本地**那条路（B7：它是"不发网络"的保证）', async () => {
+    mocks.hasLocalSession.mockReturnValue(true);
+
+    const result = (await handlerFor('commercial:local-session')({})) as { ok: boolean; result: boolean };
+
+    expect(result).toEqual({ ok: true, result: true });
+    expect(mocks.hasLocalSession, '必须委托给本地那条路，不许另外发一次网络').toHaveBeenCalledTimes(1);
+    // ⚠️ 它**不是**会话结论 —— 读它不该触发任何"登录了"的副作用
+    expect(mocks.notifyCommercialSignedIn).not.toHaveBeenCalled();
+    expect(mocks.readSessionState).not.toHaveBeenCalled();
   });
 
   it('⭐ 只有**登录**入口会补跑：发验证码 / 读会话 / 登出都不该触发', async () => {

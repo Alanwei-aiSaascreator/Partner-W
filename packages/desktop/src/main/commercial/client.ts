@@ -94,6 +94,44 @@ export function getCommercialClient(): SupabaseClient | null {
   return client;
 }
 
+/**
+ * **本地快速态**（B7）：本地存着一个会话吗。**不发网络、同步返回**。
+ *
+ * ## 它解决什么
+ *
+ * 会话检查走的是 `supabase.auth.getUser()` —— **每次都要发网络**，主进程给它 8 秒；
+ * 而界面那边的兜底只有 5 秒。两个时限顺序是反的 ⇒ 网络一慢，一个**已经登录**的用户
+ * 在 5 秒时被扔进登录页，等真答案回来（≤8 秒）又从登录页弹进工作区。
+ *
+ * ⇒ 界面用它决定**兜底该怎么判**：命中就继续等真答案，缺席才回登录页。
+ * 详见 `renderer/lib/app-entry-flow.ts` 的 `runAuthBootstrap`。
+ *
+ * ## 三条不许（用户拍板的口径）
+ *
+ * 1. **不得**拿它当"已登录"的结论 —— 它只说明"本地有个 token"，token 可能早就失效。
+ * 2. **不得**因为它是 true 就跳过后台校验。
+ * 3. **不得**让它去发网络 —— 发了就退回今天的问题。所以它是 `boolean` 而不是
+ *    `Promise<boolean>`：同步函数**不可能** await 过一次网络，这条签名本身就是保证。
+ *
+ * ⚠️ 刻意**不用** `supabase.auth.getSession()`：`autoRefreshToken: true` 时它会在
+ *    token 过期时**顺手发一次刷新请求** —— 那就不是"快速态"了。这里只读我们自己的
+ *    那份会话文件（supabase-js 没配 `userStorage`，存下去的就是 session 对象本身，
+ *    `access_token` 是顶层键）。
+ *
+ * ⚠️ 读不出来（没有文件 / JSON 坏 / 密文解不开）一律当**缺席**：宁可回到今天的行为，
+ *    也不凭一个"读不到"去拖延登录页。
+ */
+export function hasLocalSession(): boolean {
+  const raw = readSecure(sessionFilePath());
+  if (!raw) return false;
+  try {
+    const parsed = JSON.parse(raw) as { access_token?: unknown } | null;
+    return typeof parsed?.access_token === 'string' && parsed.access_token.length > 0;
+  } catch {
+    return false;
+  }
+}
+
 export function resetCommercialClient(): void {
   client = null;
   clientKey = '';

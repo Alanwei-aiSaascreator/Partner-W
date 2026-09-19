@@ -1,7 +1,7 @@
 import { ipcMain } from 'electron';
 import { resolveCommercialCredentials } from '@clawwork/shared';
 import { readConfig, updateConfig } from '../workspace/config.js';
-import { clearCommercialSession, resetCommercialClient } from '../commercial/client.js';
+import { clearCommercialSession, hasLocalSession, resetCommercialClient } from '../commercial/client.js';
 import {
   readAccountOverview,
   readSessionState,
@@ -90,6 +90,16 @@ export function registerCommercialHandlers(): void {
     }
   });
   ipcMain.handle('commercial:session', () => readSessionState());
+  /**
+   * **本地快速态**（B7）：本地存着一个会话吗。**不发网络、同步**。
+   *
+   * 与 `commercial:session` 的分工（别把两者搞混）：
+   * - 这个只回答"本地有没有 token" —— 用来决定**网络慢时兜底该怎么判**；
+   * - `commercial:session` 才是"到底登没登录"的**唯一**来源，它照旧发网络。
+   *
+   * ⇒ 渲染层**不得**拿它的 `true` 直接进工作区（那是"本地有 token 即已登录"）。
+   */
+  ipcMain.handle('commercial:local-session', () => ({ ok: true, result: hasLocalSession() }));
   ipcMain.handle('commercial:account-overview', () => readAccountOverview());
 
   ipcMain.handle('commercial:license-status', () => readLicenseStatus());
