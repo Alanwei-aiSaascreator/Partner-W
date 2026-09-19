@@ -4,6 +4,8 @@ import {
   DELIBERATELY_IGNORED_STREAMS,
   RETRY_RUN_PHASE,
   RUN_PHASE_IDS,
+  TOOL_IGNORED_PHASES,
+  TOOL_PHASE_IDS,
   type GatewayDispatcherDeps,
 } from '../src/services/gateway-dispatcher.js';
 import type { GatewayEvent, GatewayStatusEvent } from '../src/ports/gateway-transport.js';
@@ -873,6 +875,148 @@ describe('approval 的 status：未处理的取值要留痕', () => {
     expect(h.deps.reportDebugEvent).not.toHaveBeenCalledWith(
       expect.objectContaining({ event: 'renderer.agent.approval.ignored_status' }),
     );
+  });
+});
+
+/**
+ * `tool` 流的 `phase` —— **词表是五个，不是四个**。
+ *
+ * ⚠️ 我们的 `AgentToolData.phase` docblock 曾经白纸黑字写着「实测四个值
+ * （2026-09-19 扫随包运行时的 emit 点）：`start`/`result`/`update`/`review`」——
+ * **那是个完整性声明，而它是错的**。2026-09-19 拿源码重扫（`~/git/openclaw` 0153d84c，
+ * 生产代码里 25 个 `stream:"tool"` 发射点）多出第五个：
+ * `src/agents/embedded-agent-subscribe.handlers.messages.update.ts:73`
+ * ⇒ `phase:"input_delta"`（活体编辑差异）。
+ *
+ * 那次漏掉的原因值得记：我只扫了 `handlers.tools.*` 那几个文件，
+ * **而发射点不在那里**。「扫过一遍」写成了「只有这些」—— 那句声明才是真正的盖子：
+ * 后一个人看到"已实测四个"，就不会再去数第五个。
+ *
+ * ⚠️ 附带核清的：`phase:"error"` 我们**有个分支在防守，但运行时一次都不发**
+ *（11 个生产发射点里没有它）。留着无害（真发出来能接住），但它**不该被当成活代码** ——
+ * 那正是当初没人发现三个真实非终态相位没被命名的原因之一。
+ *
+ * ⚠️ 还有一件：`phase` **可以整个缺失**（`host-hooks.contract.test.ts` 那类帧
+ * 就发 `data:{name}`）。缺失也要留痕，不许静默。
+ */
+describe('tool 的 phase：词表是五个，丢弃不许没声音', () => {
+  const emitTool = (h: ReturnType<typeof createHarness>, data: Record<string, unknown>) =>
+    h.emit('agent', {
+      sessionKey: TASK.sessionKey,
+      stream: 'tool',
+      data: { name: 'shell', toolCallId: 'tc-1', ...data },
+    });
+
+  it('⭐⭐ `phase:"input_delta"` ⇒ 记 `ignored_phase`（**实测第五个，我们的清单漏了它**）', () => {
+    const h = createHarness();
+
+    emitTool(h, { phase: 'input_delta' });
+
+    expect(h.deps.reportDebugEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'renderer.agent.tool.ignored_phase',
+        data: expect.objectContaining({ phase: 'input_delta' }),
+      }),
+    );
+  });
+
+  it.each(['start', 'update', 'review'])(
+    '⭐ `phase:"%s"` ⇒ 记 `ignored_phase`（已知非终态：卡片停在"进行中"就是对的）',
+    (phase) => {
+      const h = createHarness();
+
+      emitTool(h, { phase });
+
+      expect(h.deps.reportDebugEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          event: 'renderer.agent.tool.ignored_phase',
+          data: expect.objectContaining({ phase }),
+        }),
+      );
+    },
+  );
+
+  it('⭐⭐ **认不出的** phase ⇒ 记 `unknown_phase` 并带上取值', () => {
+    const h = createHarness();
+
+    emitTool(h, { phase: 'some_future_phase' });
+
+    expect(h.deps.reportDebugEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'renderer.agent.tool.unknown_phase',
+        data: expect.objectContaining({ phase: 'some_future_phase' }),
+      }),
+    );
+  });
+
+  it('⚠️ `phase` 整个缺失 ⇒ 也留痕，用 `(missing)`', () => {
+    const h = createHarness();
+
+    emitTool(h, { phase: undefined });
+
+    expect(h.deps.reportDebugEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'renderer.agent.tool.unknown_phase',
+        data: expect.objectContaining({ phase: '(missing)' }),
+      }),
+    );
+  });
+
+  it('对照：`phase:"result"`（**终态**，会改卡片状态）不记那两个', () => {
+    const h = createHarness();
+
+    emitTool(h, { phase: 'result' });
+
+    expect(h.messageStore.upsertToolCall).toHaveBeenCalled();
+    expect(h.deps.reportDebugEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'renderer.agent.tool.unknown_phase' }),
+    );
+    expect(h.deps.reportDebugEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'renderer.agent.tool.ignored_phase' }),
+    );
+  });
+
+  it('对照：`phase:"error"`（防守用的、运行时**不发**的值）也不记', () => {
+    const h = createHarness();
+
+    emitTool(h, { phase: 'error' });
+
+    expect(h.deps.reportDebugEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'renderer.agent.tool.unknown_phase' }),
+    );
+  });
+
+  it('⚠️ 缺 `name`/`toolCallId` 的帧从前**静默 return**（卡片永远不出现）⇒ 现在留痕', () => {
+    const h = createHarness();
+
+    h.emit('agent', { sessionKey: TASK.sessionKey, stream: 'tool', data: { phase: 'result' } });
+
+    expect(h.deps.reportDebugEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'renderer.agent.tool.dropped_missing_fields',
+        data: expect.objectContaining({ hasName: false, hasToolCallId: false, phase: 'result' }),
+      }),
+    );
+  });
+
+  it('⭐⭐ 冻结名单：运行时发过的**每一个** phase 都说得出归哪一类', () => {
+    // 这条是**灵敏度哨兵**：上游加了相位、或我们把某个相位从名单里删掉，这里都会红。
+    // 归类只有三种，且必须穷尽 —— "落在 `unknown` 里" 不该是**默认**结果，只该是意外。
+    expect(TOOL_PHASE_IDS).toEqual(['start', 'result', 'update', 'review', 'input_delta']);
+
+    const handled = new Set(['result', 'error']);
+    const ignored = new Set(TOOL_IGNORED_PHASES);
+    for (const phase of TOOL_PHASE_IDS) {
+      const inHandled = handled.has(phase);
+      const inIgnored = ignored.has(phase);
+      expect(inHandled || inIgnored, `phase "${phase}" 既没被处理也不在"知道但不接"名单里`).toBe(true);
+      expect(inHandled && inIgnored, `phase "${phase}" 同时落在两个名单里`).toBe(false);
+    }
+    // 反向：名单里不许出现运行时根本不发的值（否则"知道"是假的 —— `error` 就是这种，
+    // 所以它**故意**不在这两个名单里，它是我们自己的防守分支）。
+    for (const phase of ignored) {
+      expect(TOOL_PHASE_IDS, `"知道但不接"名单里的 "${phase}" 运行时并不发`).toContain(phase as never);
+    }
   });
 });
 

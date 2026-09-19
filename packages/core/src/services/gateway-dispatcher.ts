@@ -29,12 +29,20 @@ type AgentEventStream = 'lifecycle' | 'tool' | 'assistant' | 'thinking' | 'error
 
 interface AgentToolData {
   /**
-   * 实测四个值（2026-09-19 扫随包运行时 2026.9.3 的 emit 点）：
-   * `start` / `result` / `update` / `review` —— **没有 `end`**
-   *（早先按 2026-09-18 的真机帧记成"只有 start/result"，不全）。
-   * **失败不是单独一个 phase** —— 是 `result` + `isError:true`。
+   * 实测**五个**值 —— 权威清单在 `TOOL_PHASE_IDS`（那里有每个的发射点）。
+   *
+   * ⚠️ 这里**曾经写着「实测四个值」并列举 `start`/`result`/`update`/`review`** ——
+   *    那是个**完整性声明，而它是错的**：漏了 `input_delta`。漏的原因不是"难以发现"，
+   *    是我当时**只扫了 `handlers.tools.*`**，而第五个的发射点在
+   *    `handlers.messages.update.ts`。⇒ 教训：**写"只有这些"之前，先问自己扫描的边界
+   *    是不是恰好等于"全部"**；边界之外的发射点不会自己举手。
+   *
+   * ⚠️ 另外两件同样要记住的：
+   *    · **没有 `end`**（早先按 2026-09-18 的真机帧记成"只有 start/result"，不全）；
+   *    · **`error` 我们有个防守分支，但运行时一次都不发** —— 失败是 `result` + `isError:true`。
    *
    * ⚠️ 只有 `result` 会收尾；`update` 只带 `partialResult`（既没 args 也没 result）。
+   * ⚠️ `phase` **可以整个缺失**（有帧只发 `data:{name}`）—— 缺失也走"认不出"那条路留痕。
    */
   phase?: string;
   name?: string;
@@ -368,6 +376,42 @@ export const RETRY_RUN_PHASE = 'retrying';
 
 /** 供界面判断「这个 phase 有没有对应的文案」，没有就显示泛化的「正在准备…」。 */
 export const RUN_PHASE_IDS: readonly string[] = [...RUN_STARTUP_PHASES, RETRY_RUN_PHASE];
+
+/**
+ * `tool` 流实测**五个** `phase` —— 权威清单，别再靠"扫一遍"。
+ *
+ * （`~/git/openclaw` 0153d84c，生产代码里 25 个 `stream:"tool"` 发射点逐个取 `phase`）
+ *
+ * | phase | 发射点 |
+ * | --- | --- |
+ * | `start` | `handlers.tools.start.ts`、`cli-runner/execute-events.ts` |
+ * | `result` | `handlers.tools.completion.ts`、`cli-runner/execute-events.ts` |
+ * | `update` | `handlers.tools.progress.ts`（只带 `partialResult`） |
+ * | `review` | `bash-tools.exec-host-gateway.ts`（guardian 复核，带 `approvalReviewOutcome`） |
+ * | **`input_delta`** | **`handlers.messages.update.ts`（活体编辑差异）** |
+ *
+ * ⚠️ 这份名单的前一版写着「**实测四个值**」，把 `input_delta` 漏了 —— 而且那是个
+ * **完整性声明**。漏的原因值得记：当时只扫了 `handlers.tools.*` 那几个文件，
+ * **而第五个的发射点不在那里**。「扫过一遍」被写成了「只有这些」，
+ * 那句声明就成了盖子：后一个人看到"已实测四个"，就不会再去数第五个。
+ * ⇒ 所以现在写成**可测的常量**，并由用例钉住（加了相位这里会红）。
+ *
+ * ⚠️ 名单里**没有 `error`** —— 那个值运行时一次都不发（见处理点的说明）。
+ */
+export const TOOL_PHASE_IDS: readonly string[] = ['start', 'result', 'update', 'review', 'input_delta'];
+
+/**
+ * 上面那五个里，**知道、但我们不改卡片状态**的四个。
+ *
+ * 它们不改状态是**对的**（都是非终态，卡片就该停在"进行中"）——
+ * 但"不改"和"不留痕"是两件事：留痕是为了让**新冒出来的相位**在日志里一眼看得见
+ * （与 `ignored_stream` / `item.ignored_kind` / `chat.ignored_state` 同一条纪律）。
+ *
+ * ⚠️ `input_delta` 刻意留在名单里而**不是**直接当作已知项静音：它意味着
+ *    **agent 正在带活体差异地改文件** —— 那是个现在没用上、但将来可能有用的信号
+ *    （`preamble` 当年就是这么被重新发现的）。让它继续在日志里现身，成本是一行。
+ */
+export const TOOL_IGNORED_PHASES = new Set(['start', 'update', 'review', 'input_delta']);
 
 /**
  * 从 `run_status` 的 data 里取重试次数（`{ attempt, maxAttempts }`）。
@@ -1000,7 +1044,18 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
   }
 
   function handleAgentToolStream(taskId: string, sessionKey: string, data: AgentToolData, ephemeral: boolean): void {
-    if (!data.name || !data.toolCallId) return;
+    if (!data.name || !data.toolCallId) {
+      // ⚠️ 从前是**静默 return**：这张工具卡片永远不出现，而日志里连一行都没有 ——
+      //    用户看到的是"模型好像什么都没干"。
+      debugEvent('renderer.agent.tool.dropped_missing_fields', {
+        taskId,
+        sessionKey,
+        hasName: Boolean(data.name),
+        hasToolCallId: Boolean(data.toolCallId),
+        phase: data.phase ?? null,
+      });
+      return;
+    }
 
     if (!ephemeral) {
       deps.notifyAgentResponse?.(sessionKey);
@@ -1012,7 +1067,24 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
 
     let status: ToolCallStatus = 'running';
     if (data.phase === 'result') status = data.isError ? 'error' : 'done';
-    else if (data.phase === 'error') status = 'error';
+    else if (data.phase === 'error') {
+      // ⚠️ **这条分支运行时不发** —— 生产代码 11 个发射点里没有 `phase:"error"`
+      //    （失败是 `result` + `isError:true`）。留着是防守：真发出来能接住。
+      //    但它**不是活代码**，别把它当"我们处理了 error 相位"读。
+      status = 'error';
+    } else {
+      // ⭐ 其余相位**不改状态** —— 卡片停在"进行中"就是对的（它们都是非终态）。
+      //    但"不改"和"不留痕"是两件事：从前这里没有 `else`，未知相位静默变成"进行中"；
+      //    而如果它其实是**终态**，卡片会**永远转圈**（`chat.state` / `approval.status`
+      //    / `item.kind` 同一类坑，这是第六处）。
+      const phase = data.phase ? data.phase : '(missing)';
+      const phasePayload = { taskId, sessionKey, phase, toolCallId: data.toolCallId, name: data.name };
+      if (TOOL_IGNORED_PHASES.has(phase)) {
+        debugEvent('renderer.agent.tool.ignored_phase', phasePayload);
+      } else {
+        debugEvent('renderer.agent.tool.unknown_phase', { ...phasePayload, topLevelKeys: Object.keys(data) });
+      }
+    }
 
     const tc: ToolCall = {
       id: data.toolCallId,
