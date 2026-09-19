@@ -1577,6 +1577,7 @@
     "assistantsWaiting": "Aguardando o serviço de IA",
     "description": "A primeira inicialização costuma levar cerca de um minuto. A página inicial abrirá automaticamente ao terminar.",
     "keepOpen": "Mantenha o aplicativo aberto. Não é necessário repetir nenhuma ação.",
+    "notAnInstall": "Não é uma instalação: nada é gravado no sistema e nenhum atalho é criado. Na primeira inicialização, o ambiente de execução é preparado num cache local para continuar a funcionar depois de remover o USB.",
     "overallProgress": "Overall progress",
     "progress": "{{completed}} / {{total}}",
     "retry": "Preparar novamente",

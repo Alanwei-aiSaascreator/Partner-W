@@ -1577,6 +1577,7 @@
     "assistantsWaiting": "Esperando al servicio de IA",
     "description": "El primer inicio suele tardar cerca de un minuto. La página principal se abrirá automáticamente al terminar.",
     "keepOpen": "Mantén la aplicación abierta. No hace falta repetir ninguna acción.",
+    "notAnInstall": "No es una instalación: no se escribe nada en el sistema ni se crea un acceso directo. En el primer inicio, el entorno de ejecución se prepara en una caché local para que siga funcionando al desconectar el USB.",
     "overallProgress": "Overall progress",
     "progress": "{{completed}} / {{total}}",
     "retry": "Preparar de nuevo",

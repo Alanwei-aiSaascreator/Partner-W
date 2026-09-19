@@ -1577,6 +1577,7 @@
     "assistantsWaiting": "等待 AI 服务启动",
     "description": "首次启动通常需要约 1 分钟，准备完成后会自动进入首页。",
     "keepOpen": "请保持应用开启，无需重复操作。",
+    "notAnInstall": "这不是安装：程序不写进系统，也不创建桌面图标。首次启动会把运行环境准备到本机缓存，拔掉 U 盘后仍可继续用。",
     "overallProgress": "总体进度",
     "progress": "{{completed}} / {{total}}",
     "retry": "重新准备",

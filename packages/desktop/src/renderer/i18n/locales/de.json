@@ -1577,6 +1577,7 @@
     "assistantsWaiting": "Warten auf den KI-Dienst",
     "description": "Der erste Start dauert normalerweise etwa eine Minute. Danach öffnet sich die Startseite automatisch.",
     "keepOpen": "Lassen Sie die App geöffnet. Sie müssen nichts erneut ausführen.",
+    "notAnInstall": "Keine Installation: Es wird nichts ins System geschrieben und keine Desktop-Verknüpfung erstellt. Beim ersten Start wird die Laufzeitumgebung in einen lokalen Cache entpackt, damit sie nach dem Abziehen des USB-Sticks weiterläuft.",
     "overallProgress": "Overall progress",
     "progress": "{{completed}} / {{total}}",
     "retry": "Erneut vorbereiten",

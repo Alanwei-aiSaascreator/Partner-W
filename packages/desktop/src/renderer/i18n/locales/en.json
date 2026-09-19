@@ -1577,6 +1577,7 @@
     "assistantsWaiting": "Waiting for the AI service",
     "description": "First launch usually takes about a minute. Home opens automatically when preparation finishes.",
     "keepOpen": "Keep the app open. No repeated action is needed.",
+    "notAnInstall": "Not an installation: nothing is written into the system and no desktop shortcut is created. On first launch the runtime is prepared into a local cache so it still works after you unplug the USB drive.",
     "overallProgress": "Overall progress",
     "progress": "{{completed}} / {{total}}",
     "retry": "Prepare again",

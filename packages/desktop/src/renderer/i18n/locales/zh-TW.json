@@ -1577,6 +1577,7 @@
     "assistantsWaiting": "等待 AI 服務啟動",
     "description": "首次啟動通常需要約 1 分鐘，準備完成後會自動進入首頁。",
     "keepOpen": "請保持應用程式開啟，無需重複操作。",
+    "notAnInstall": "這不是安裝：程式不寫進系統，也不建立桌面圖示。首次啟動會把執行環境準備到本機快取，拔掉隨身碟後仍可繼續用。",
     "overallProgress": "總體進度",
     "progress": "{{completed}} / {{total}}",
     "retry": "重新準備",

@@ -57,6 +57,37 @@ describe('StartupReadinessScreen', () => {
     unmount();
   });
 
+  /**
+   * ⭐⭐ C（2026-09-19，明天出 U 盘内测版）：**必须说清"这不是安装"**。
+   *
+   * 实测的误解来源：U 盘版首次启动会**把运行环境解压到本机缓存**（约 2–3 分钟，
+   * 设计如此 —— 为了拔盘后还能继续用），那个进度界面**看起来就是在装软件**。
+   * 同事确实这么反馈过（"双击 exe 装到电脑"）。
+   *
+   * ⇒ 这句要写死在这儿：**程序不写进系统、不创建桌面图标、不出现在「程序和功能」里**。
+   */
+  it('⭐⭐ 说清「这不是安装」（否则首启那 2–3 分钟会被当成在装软件）', () => {
+    const { container, unmount } = render(<StartupReadinessScreen readiness={baseReadiness} onRetry={vi.fn()} />);
+
+    expect(container.textContent, '首启界面必须有一句"这不是安装"').toContain('startupReadiness.notAnInstall');
+    unmount();
+  });
+
+  it('⭐ 那句在**错误态**也要在，而且要**看得见**（那时用户最容易怀疑"装坏了"）', () => {
+    // ⚠️ 断言**可见性**，不只是"在不在 DOM 里"：`hidden` / `display:none` 都不会把文字
+    //    从 `textContent` 里去掉 ⇒ 只断 textContent 的话，"把它藏起来"这种改法**抓不住**。
+    //    （变异验证实测过：加 `hidden={!isReady}` 时，只断 textContent 是全绿的。）
+    const readiness: StartupReadiness = { ...baseReadiness, ai: { phase: 'error' }, hasError: true };
+    const { container, unmount } = render(<StartupReadinessScreen readiness={readiness} onRetry={vi.fn()} />);
+
+    const line = container.querySelector<HTMLElement>('[data-testid="not-an-install"]');
+    expect(line, '错误态也必须有这句').not.toBeNull();
+    expect(line!.hidden, '不许把它藏起来').toBe(false);
+    expect(line!.style.display, '也不许用 CSS 藏').not.toBe('none');
+    expect(line!.textContent).toContain('startupReadiness.notAnInstall');
+    unmount();
+  });
+
   it('renders the real assistant count and current localized role', () => {
     const readiness: StartupReadiness = {
       ...baseReadiness,

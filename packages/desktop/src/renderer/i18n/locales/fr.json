@@ -1577,6 +1577,7 @@
     "assistantsWaiting": "En attente du service IA",
     "description": "Le premier démarrage prend généralement environ une minute. L’accueil s’ouvrira automatiquement ensuite.",
     "keepOpen": "Gardez l’application ouverte. Aucune action répétée n’est nécessaire.",
+    "notAnInstall": "Ce n'est pas une installation : rien n'est écrit dans le système et aucun raccourci n'est créé. Au premier lancement, l'environnement d'exécution est préparé dans un cache local pour continuer à fonctionner après avoir retiré la clé USB.",
     "overallProgress": "Overall progress",
     "progress": "{{completed}} / {{total}}",
     "retry": "Préparer à nouveau",

@@ -67,6 +67,17 @@ export default function StartupReadinessScreen({ readiness, onRetry }: StartupRe
             <p className="type-label mb-1 text-[var(--accent)]">{t('common.appName')}</p>
             <h1 className="type-page-title text-[var(--text-primary)]">{t('startupReadiness.title')}</h1>
             <p className="type-body mt-2 max-w-xl text-[var(--text-secondary)]">{t('startupReadiness.description')}</p>
+            {/*
+              ⭐ C（2026-09-19）：**必须说清"这不是安装"。**
+              U 盘版首次启动会把运行环境解压到**本机缓存**（约 2–3 分钟，设计如此 ——
+              为了拔盘后还能继续用），那个进度界面**看起来就是在装软件**。实测有同事
+              因此反馈"双击 exe 装到电脑"。
+              ⇒ 这句是**永远为真**的说法（程序确实不写系统、不建图标），
+                所以不依赖"此刻是否在部署" —— 那个信号 readiness 里根本没有。
+            */}
+            <p className="type-support mt-2 max-w-xl text-[var(--text-muted)]" data-testid="not-an-install">
+              {t('startupReadiness.notAnInstall')}
+            </p>
           </header>
 
           <section
