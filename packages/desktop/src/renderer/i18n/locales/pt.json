@@ -873,6 +873,60 @@
     "toNext": "faltam {{value}} para o próximo nível",
     "totalEarned": "{{value}} acumulados"
   },
+  "identity": {
+    "apply": "Aplicar persona",
+    "cardHint": "Escolha uma etiqueta de identidade, siga o guia para criar sua persona e aplique o papel e as habilidades recomendadas com um clique.",
+    "cardTitle": "Gerar persona",
+    "direction": "Foco: {{value}}",
+    "directionValue": "Análise de dados",
+    "footerHint": "Trocar de cenário substitui as habilidades e o tom padrão desta identidade. O papel não muda; aplica-se após salvar.",
+    "group": {
+      "ecommerce": {
+        "desc": "Seleção, anúncios e análise",
+        "name": "E-commerce"
+      },
+      "educator": {
+        "desc": "Preparo, slides e análise",
+        "name": "Educadores"
+      },
+      "engineer": {
+        "desc": "Revisão de código, docs e depuração",
+        "name": "Engenheiro de software"
+      },
+      "legal": {
+        "desc": "Revisão de contratos e riscos",
+        "name": "Jurídico e compliance"
+      }
+    },
+    "otherGroups": "Outros públicos",
+    "personaDesc": "Um profissional que concilia relatórios, documentos, reuniões e dados: valoriza organização e resultado.",
+    "personaTag": "Profissional de escritório",
+    "reselect": "Escolher de novo",
+    "roleLabel": "Papel recomendado",
+    "roleValue": "Escritório eficiente",
+    "save": "Salvar e aplicar esta identidade",
+    "shuffle": "Trocar etiqueta",
+    "skill": {
+      "dataAssistant": "Assistente de dados",
+      "dataViz": "Assistente de gráficos",
+      "docManager": "Gestor de documentos",
+      "mailExpert": "Especialista em e-mail",
+      "meetingSecretary": "Secretário de reuniões",
+      "officeDoc": "Gerador de documentos",
+      "toolbox": "Caixa de ferramentas"
+    },
+    "skillsLabel": "Habilidades recomendadas",
+    "subtitle": "Escolha seu público: a IA recomenda papéis, habilidades e tom para essa identidade. Pode trocar quando quiser.",
+    "tag": {
+      "efficiency": "Eficiente",
+      "goalOriented": "Orientado a metas",
+      "logical": "Lógico",
+      "reporting": "Relatórios frequentes",
+      "timeManagement": "Gestão de tempo"
+    },
+    "tagsLabel": "Etiquetas de persona",
+    "title": "Central de identidade"
+  },
   "kb": {
     "addDone": "{{count}} fonte(s) adicionada(s)",
     "addFile": "Adicionar arquivos",

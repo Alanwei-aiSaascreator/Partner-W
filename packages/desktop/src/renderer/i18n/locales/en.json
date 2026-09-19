@@ -873,6 +873,60 @@
     "toNext": "{{value}} to the next level",
     "totalEarned": "{{value}} earned in total"
   },
+  "identity": {
+    "apply": "Apply persona",
+    "cardHint": "Pick an identity tag, follow the guide to build your persona, then apply the recommended role and skills in one click.",
+    "cardTitle": "Persona generation",
+    "direction": "Focus: {{value}}",
+    "directionValue": "Data analysis",
+    "footerHint": "Switching scenarios replaces the default skill set and tone preview for this identity. The role stays the same; changes apply after saving.",
+    "group": {
+      "ecommerce": {
+        "desc": "Product picks, listings and reviews",
+        "name": "E-commerce ops"
+      },
+      "educator": {
+        "desc": "Lesson prep, slides and student analysis",
+        "name": "Educator"
+      },
+      "engineer": {
+        "desc": "Code review, docs and debugging",
+        "name": "Software engineer"
+      },
+      "legal": {
+        "desc": "Contract review and clause risk",
+        "name": "Legal & compliance"
+      }
+    },
+    "otherGroups": "Other audience groups",
+    "personaDesc": "A professional juggling reports, documents, meetings and data — values structure and output.",
+    "personaTag": "Office professional",
+    "reselect": "Choose again",
+    "roleLabel": "Recommended role",
+    "roleValue": "Efficient office",
+    "save": "Save and apply this identity",
+    "shuffle": "Shuffle tag",
+    "skill": {
+      "dataAssistant": "Data assistant",
+      "dataViz": "Chart assistant",
+      "docManager": "Document manager",
+      "mailExpert": "Email expert",
+      "meetingSecretary": "Meeting secretary",
+      "officeDoc": "Office doc generator",
+      "toolbox": "Productivity toolbox"
+    },
+    "skillsLabel": "Recommended skills",
+    "subtitle": "Pick your audience group. Roles, skills and tone are recommended for that identity — switch any time.",
+    "tag": {
+      "efficiency": "Efficiency-minded",
+      "goalOriented": "Goal-driven",
+      "logical": "Logical",
+      "reporting": "Frequent reporting",
+      "timeManagement": "Time management"
+    },
+    "tagsLabel": "Persona tags",
+    "title": "Identity Center"
+  },
   "kb": {
     "addDone": "Added {{count}} source(s)",
     "addFile": "Add files",

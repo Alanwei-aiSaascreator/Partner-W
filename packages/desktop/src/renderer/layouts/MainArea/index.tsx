@@ -50,6 +50,7 @@ import InternalBetaHub from '@/features/internal-beta/InternalBetaHub';
 import CommunityPanel from '@/layouts/CommunityPanel';
 import MarketPanel from '@/layouts/MarketPanel';
 import GrowthPanel from '@/layouts/GrowthPanel';
+import IdentityCenter from '@/layouts/IdentityCenter';
 import KnowledgeBase from '@/layouts/KnowledgeBase';
 import { useUsageStore } from '@/stores/usageStore';
 import { useQuotaRefreshOnTurnEnd } from '@/hooks/useQuotaRefreshOnTurnEnd';
@@ -1274,6 +1275,10 @@ export default function MainArea({
       ) : mainView === 'market' ? (
         <div className="flex-1 min-h-0">
           <MarketPanel />
+        </div>
+      ) : mainView === 'identity' ? (
+        <div className="flex-1 min-h-0">
+          <IdentityCenter />
         </div>
       ) : mainView === 'growth' ? (
         <div className="flex-1 min-h-0">

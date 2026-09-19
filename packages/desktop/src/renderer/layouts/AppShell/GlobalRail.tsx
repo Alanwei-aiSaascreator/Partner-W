@@ -176,7 +176,7 @@ export default function GlobalRail({
         <RailButton
           label={t('leftNav.identityCenter')}
           icon={UserRound}
-          active={settingsOpen && activeSettingsSection === 'account'}
+          active={!settingsOpen && mainView === 'identity'}
           onClick={onOpenIdentity}
         />
         <RailButton

@@ -12,6 +12,8 @@ export type MainView =
   | 'community'
   | 'market'
   | 'growth'
+  /** 身份中心。⚠️ 本版**只有排版**，没有数据/逻辑（见 `layouts/IdentityCenter/index.tsx` 文件头）。 */
+  | 'identity'
   /** 资料库（工作区本地库 + 本地嵌入检索，T6）。 */
   | 'kb';
 export type Theme = 'dark' | 'light' | 'auto';

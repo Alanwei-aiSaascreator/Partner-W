@@ -873,6 +873,60 @@
     "toNext": "距離下一級還需 {{value}}",
     "totalEarned": "累計獲得 {{value}}"
   },
+  "identity": {
+    "apply": "套用此畫像",
+    "cardHint": "選一個身分標籤，跟著引導生成你的專屬人群畫像，一鍵套用推薦角色與技能。",
+    "cardTitle": "畫像生成",
+    "direction": "分析方向：{{value}}",
+    "directionValue": "資料分析",
+    "footerHint": "切換場景會更換目前身分下的預設技能組合與話術預覽，角色保持不變，儲存後生效。",
+    "group": {
+      "ecommerce": {
+        "desc": "選品、詳情頁與資料複盤",
+        "name": "電商營運"
+      },
+      "educator": {
+        "desc": "備課、課件與學情分析",
+        "name": "教育工作者"
+      },
+      "engineer": {
+        "desc": "程式碼審查、文件與排障",
+        "name": "研發工程師"
+      },
+      "legal": {
+        "desc": "合約審閱與條款風險提示",
+        "name": "法務合規"
+      }
+    },
+    "otherGroups": "其它客群",
+    "personaDesc": "高效職場人匯報、文件、會議、資料多線並行，講究條理與產出。",
+    "personaTag": "職場人",
+    "reselect": "重新選擇",
+    "roleLabel": "推薦角色",
+    "roleValue": "高效辦公",
+    "save": "儲存並套用此身分設定",
+    "shuffle": "換一個標籤",
+    "skill": {
+      "dataAssistant": "資料助手",
+      "dataViz": "資料視覺化助手",
+      "docManager": "文件管家",
+      "mailExpert": "郵件專家",
+      "meetingSecretary": "會議秘書",
+      "officeDoc": "辦公文件生成",
+      "toolbox": "效率工具箱"
+    },
+    "skillsLabel": "推薦技能",
+    "subtitle": "選擇你的客群，AI 將依身分為你推薦角色、技能組合與話術基調，隨時可切換。",
+    "tag": {
+      "efficiency": "注重效率",
+      "goalOriented": "目標導向",
+      "logical": "邏輯清晰",
+      "reporting": "匯報頻繁",
+      "timeManagement": "時間管理"
+    },
+    "tagsLabel": "人群畫像標籤組合",
+    "title": "身分中心"
+  },
   "kb": {
     "addDone": "已加入 {{count}} 份資料",
     "addFile": "加入檔案",

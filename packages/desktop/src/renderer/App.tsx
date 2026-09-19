@@ -337,6 +337,9 @@ export default function App() {
     <TooltipProvider>
       <AnimatePresence>{commandPaletteOpen && <CommandPalette />}</AnimatePresence>
       <div className="relative flex h-screen overflow-hidden bg-[var(--bg-primary)]">
+        {/* 身份中心是**独立页面**（`mainView='identity'`），不是设置里的账户页。
+            原来 `onOpenIdentity` 接的是 `openSettings('account')` —— 按钮写着「身份中心」
+            却打开账户设置，文不对题（2026-09-19 修）。 */}
         <GlobalRail
           mainView={mainView}
           settingsOpen={settingsOpen}
@@ -346,7 +349,7 @@ export default function App() {
           hasUpdate={hasUpdate}
           onGoHome={goHome}
           onSelectView={setMainView}
-          onOpenIdentity={() => openSettings('account')}
+          onOpenIdentity={() => setMainView('identity')}
           onOpenSettings={() => openSettings('general')}
           onExpandAssistant={toggleLeftNavCollapsed}
         />
