@@ -549,8 +549,7 @@
     "roleOwner": "擁有者",
     "switchTeam": "切換團隊：",
     "tabFeed": "廣場",
-    "tabMembers": "成員",
-    "title": "團隊協作"
+    "tabMembers": "成員"
   },
   "compare": {
     "addModel": "新增模型",
@@ -1015,7 +1014,6 @@
     "collapseNav": "收合側邊欄",
     "emptyHint": "點擊「新任務」開始",
     "expandNav": "展開側邊欄",
-    "home": "首頁",
     "identityCenter": "身分中心",
     "myAssistants": "我的助手",
     "noAgents": "暫無智能體",
@@ -1122,7 +1120,6 @@
     "statusPublished": "已發布",
     "tabMarket": "市集",
     "tabMine": "我的範本",
-    "title": "助手市集",
     "unpublish": "下架",
     "unpublishDone": "已下架",
     "views": "{{count}} 次瀏覽"

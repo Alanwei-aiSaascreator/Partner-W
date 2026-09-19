@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useTranslation } from 'react-i18next';
+import { PanelLeftOpen } from 'lucide-react';
 import { Toaster, TOAST_DURATION_MS, TOAST_OPTIONS } from '@/lib/toast';
 import LeftNav from './layouts/LeftNav';
 import MainArea from './layouts/MainArea';
@@ -9,7 +11,6 @@ import Login from './layouts/Login';
 import Onboarding from './layouts/Onboarding';
 import Settings from './layouts/Settings';
 import type { SettingsSection } from './layouts/Settings/SettingsNav';
-import GlobalRail from './layouts/AppShell/GlobalRail';
 import ApprovalDialog from './components/ApprovalDialog';
 import CommandPalette from './components/CommandPalette';
 import { useUiStore, type Theme } from './stores/uiStore';
@@ -45,6 +46,7 @@ function AppToaster({ themeMode }: { themeMode: Theme }) {
 }
 
 export default function App() {
+  const { t } = useTranslation();
   const [ready, setReady] = useState(false);
   const [needsSetup, setNeedsSetup] = useState(false);
   const [authState, setAuthState] = useState<'checking' | 'required' | 'ok'>('checking');
@@ -75,13 +77,6 @@ export default function App() {
   const leftNavShortcut = useUiStore((s) => s.leftNavShortcut);
   const rightPanelShortcut = useUiStore((s) => s.rightPanelShortcut);
   const themeMode = useUiStore((s) => s.theme);
-  const hasUpdate = useUiStore((s) => s.hasUpdate);
-  const currentAgentId = useUiStore((s) => {
-    const gatewayId = s.defaultGatewayId;
-    if (!gatewayId) return 'main';
-    return s.selectedAgentByGateway[gatewayId] || s.agentCatalogByGateway[gatewayId]?.defaultId || 'main';
-  });
-
   const openSettings = useCallback(
     (section: SettingsSection) => {
       setSettingsSection(section);
@@ -89,12 +84,6 @@ export default function App() {
     },
     [setSettingsOpen],
   );
-
-  const goHome = useCallback(() => {
-    if (window.location.hash.startsWith('#/beta/')) window.history.replaceState(null, '', '#/');
-    setActiveTask(null);
-    setMainView('chat');
-  }, [setActiveTask, setMainView]);
 
   useEffect(() => {
     const navigateHash = () => {
@@ -337,22 +326,10 @@ export default function App() {
     <TooltipProvider>
       <AnimatePresence>{commandPaletteOpen && <CommandPalette />}</AnimatePresence>
       <div className="relative flex h-screen overflow-hidden bg-[var(--bg-primary)]">
-        {/* 身份中心是**独立页面**（`mainView='identity'`），不是设置里的账户页。
-            原来 `onOpenIdentity` 接的是 `openSettings('account')` —— 按钮写着「身份中心」
-            却打开账户设置，文不对题（2026-09-19 修）。 */}
-        <GlobalRail
-          mainView={mainView}
-          settingsOpen={settingsOpen}
-          activeSettingsSection={settingsSection === 'account' ? 'account' : 'general'}
-          assistantCollapsed={leftNavCollapsed}
-          currentAgentId={currentAgentId}
-          hasUpdate={hasUpdate}
-          onGoHome={goHome}
-          onSelectView={setMainView}
-          onOpenIdentity={() => setMainView('identity')}
-          onOpenSettings={() => openSettings('general')}
-          onExpandAssistant={toggleLeftNavCollapsed}
-        />
+        {/* 图标栏（`GlobalRail`）已删除（2026-09-19）—— 它的页面入口与左侧导航列
+            **基本重复**；去掉后把别处还没有的几项搬进了 `NavMenu`：
+            文件管理 / 归档对话 / 资料库（主清单）、内测中心 / 设置（底部一组）。
+            ⇒ 现在左侧只剩**一列**：导航列（`LeftNav`）。 */}
         <motion.aside
           animate={{ width: leftNavCollapsed ? 0 : leftNavWidth }}
           transition={{ duration: motionDuration.moderate, ease: motionEase.standard }}
@@ -361,7 +338,11 @@ export default function App() {
           )}
           style={{ minWidth: leftNavCollapsed ? 0 : 200 }}
         >
-          <LeftNav onOpenAssistantSettings={() => openSettings('agents')} onOpenSkills={() => openSettings('skills')} />
+          <LeftNav
+            onOpenAssistantSettings={() => openSettings('agents')}
+            onOpenSkills={() => openSettings('skills')}
+            onOpenSettings={() => openSettings('general')}
+          />
         </motion.aside>
 
         {!leftNavCollapsed && (
@@ -370,6 +351,23 @@ export default function App() {
             onMouseDown={(e) => startPanelDrag(e, leftNavWidth, setLeftNavWidth, 1)}
           >
             <div className="h-full w-px mx-auto bg-[var(--border)] group-hover:bg-[var(--accent)] transition-colors" />
+          </div>
+        )}
+        {/* ⚠️ 收起侧栏后**必须留一个展开入口**。
+            原来这个入口在图标栏上（`GlobalRail` 的 `expandNav` 按钮），本刀连图标栏一起删了
+            ⇒ 不留的话用户收起之后**再也点不回来**（只剩键盘快捷键）。
+            这里留一条 28px 窄条，只放一个展开按钮。 */}
+        {leftNavCollapsed && (
+          <div className="titlebar-drag flex w-7 flex-shrink-0 flex-col items-center border-r border-[var(--border-subtle)] bg-[var(--bg-secondary)] pt-2">
+            <button
+              type="button"
+              onClick={toggleLeftNavCollapsed}
+              aria-label={t('leftNav.expandNav')}
+              title={t('leftNav.expandNav')}
+              className="titlebar-no-drag glow-focus flex h-7 w-7 items-center justify-center rounded-md text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
+            >
+              <PanelLeftOpen size={15} />
+            </button>
           </div>
         )}
 

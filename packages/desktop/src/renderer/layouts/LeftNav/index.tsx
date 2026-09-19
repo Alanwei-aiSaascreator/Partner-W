@@ -38,9 +38,11 @@ interface LeftNavProps {
   onOpenAssistantSettings: () => void;
   /** 「技能市场」不是独立页面，它在设置面板里 ⇒ 点它 = 打开设置并定位到那一节。 */
   onOpenSkills: () => void;
+  /** 「设置」同理 —— 它也是覆盖层。 */
+  onOpenSettings: () => void;
 }
 
-export default function LeftNav({ onOpenAssistantSettings, onOpenSkills }: LeftNavProps) {
+export default function LeftNav({ onOpenAssistantSettings, onOpenSkills, onOpenSettings }: LeftNavProps) {
   const { t } = useTranslation();
   const tasks = useTaskStore((s) => s.tasks);
   const activeTaskId = useTaskStore((s) => s.activeTaskId);
@@ -55,6 +57,7 @@ export default function LeftNav({ onOpenAssistantSettings, onOpenSkills }: LeftN
   const setMainView = useUiStore((s) => s.setMainView);
   const mainView = useUiStore((s) => s.mainView);
   const settingsOpen = useUiStore((s) => s.settingsOpen);
+  const hasUpdate = useUiStore((s) => s.hasUpdate);
   const setSelectedArtifact = useFileStore((s) => s.setSelectedArtifact);
   const gwStatusMap = useUiStore((s) => s.gatewayStatusMap);
   const leftNavCollapsed = useUiStore((s) => s.leftNavCollapsed);
@@ -272,37 +275,8 @@ export default function LeftNav({ onOpenAssistantSettings, onOpenSkills }: LeftN
 
   return (
     <div className="relative flex h-full flex-col overflow-hidden pt-10">
-      <div className="titlebar-drag absolute inset-x-0 top-0 z-[51] flex h-10 items-center justify-between px-3">
-        <h2 className="type-label truncate text-[var(--text-primary)]">{t('leftNav.myAssistants')}</h2>
-        <div className="titlebar-no-drag flex items-center gap-0.5">
-          {CollapseToggleButton}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                size="icon-sm"
-                variant="ghost"
-                onClick={onOpenAssistantSettings}
-                aria-label={t('leftNav.addAssistant')}
-                className="h-7 w-7"
-              >
-                <Plus />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom">{t('leftNav.addAssistant')}</TooltipContent>
-          </Tooltip>
-        </div>
-      </div>
-
-      {/* 助手切换：**保留在顶部，但压缩高度**（2026-09-19）。
-          ⚠️ 为什么必须留：这是全应用**唯一**切助手的地方，拿掉就没得切了。
-          ⚠️ 为什么压高度：这一列现在还要装页面导航 + 最近任务，不能让助手列表把版面吃光。
-            助手多的用户在这里滚动。 */}
-      <div className="max-h-36 flex-shrink-0 overflow-y-auto border-b border-[var(--border-subtle)] px-2 pb-2">
-        {agentCatalog.length > 0 ? (
-          <AssistantList agents={agentCatalog} selectedAgentId={currentAgentId} onSelect={handleSelectAgent} />
-        ) : (
-          <p className="type-support px-2 py-3 text-[var(--text-muted)]">{t('leftNav.noAgents')}</p>
-        )}
+      <div className="titlebar-drag absolute inset-x-0 top-0 z-[51] flex h-10 items-center justify-end px-3">
+        <div className="titlebar-no-drag flex items-center gap-0.5">{CollapseToggleButton}</div>
       </div>
 
       <div className="flex-shrink-0 px-3 py-2">
@@ -319,15 +293,54 @@ export default function LeftNav({ onOpenAssistantSettings, onOpenSkills }: LeftN
         </div>
       </div>
 
+      {/* 我的助手：**放在搜索框下面**（2026-09-19 从最顶上挪下来 —— 用户反馈
+          「我的助手模块放在搜索任务下面，现在太别扭了」）。
+          ⚠️ 为什么必须留：这是全应用**唯一**切助手的地方，拿掉就没得切了。
+          ⚠️ 为什么压高度（`max-h-36`）：这一列还要装页面导航 + 最近任务，
+             不能让助手列表把版面吃光。助手多的用户在这里滚动。
+          标题与「+ 添加助手」跟着一起下来 —— 否则顶部会剩一个说了不算的标题。 */}
+      <div className="flex-shrink-0 border-b border-[var(--border-subtle)] px-2 pb-2">
+        <div className="flex items-center gap-0.5 px-1 pb-0.5">
+          <h2 className="type-label flex-1 truncate text-[var(--text-primary)]">{t('leftNav.myAssistants')}</h2>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                onClick={onOpenAssistantSettings}
+                aria-label={t('leftNav.addAssistant')}
+                className="h-7 w-7"
+              >
+                <Plus />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">{t('leftNav.addAssistant')}</TooltipContent>
+          </Tooltip>
+        </div>
+        <div className="max-h-36 overflow-y-auto">
+          {agentCatalog.length > 0 ? (
+            <AssistantList agents={agentCatalog} selectedAgentId={currentAgentId} onSelect={handleSelectAgent} />
+          ) : (
+            <p className="type-support px-2 py-3 text-[var(--text-muted)]">{t('leftNav.noAgents')}</p>
+          )}
+        </div>
+      </div>
+
       {/* 页面导航（2026-09-19，按老板设计稿 + 方案 B）。
-          ⚠️ 放在搜索框之后、最近任务之前 —— 设计稿里这一列是「搜索框 + 页面清单」，
-             我们额外把助手切换与最近任务保留在这一列（否则界面上没有别的地方能切）。 */}
-      <div className="flex-shrink-0 border-b border-[var(--border-subtle)] py-2">
+          ⚠️ 放在助手之后、最近任务之前 —— 设计稿里这一列是「搜索框 + 页面清单」，
+             我们额外把助手切换与最近任务保留在这一列（否则界面上没有别的地方能切）。
+          ⚠️ **必须可滚动**：去掉图标栏后这一列涨到 16 项，加上助手列表与最近任务
+             会挤爆整列 —— 实测底部两项（内测中心 / 设置）被裁在视口外。
+             `min-h-0 + shrink + overflow-y-auto`：让它在空间不够时自己滚，
+             而不是把下面的「最近任务」挤出屏幕。 */}
+      <div className="min-h-0 shrink overflow-y-auto border-b border-[var(--border-subtle)] py-2">
         <NavMenu
           mainView={mainView}
           settingsOpen={settingsOpen}
           onSelectView={setMainView}
           onOpenSkills={onOpenSkills}
+          onOpenSettings={onOpenSettings}
+          hasUpdate={hasUpdate}
         />
       </div>
 

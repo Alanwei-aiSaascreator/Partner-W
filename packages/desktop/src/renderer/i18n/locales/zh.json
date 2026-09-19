@@ -549,8 +549,7 @@
     "roleOwner": "所有者",
     "switchTeam": "切换团队：",
     "tabFeed": "广场",
-    "tabMembers": "成员",
-    "title": "团队协作"
+    "tabMembers": "成员"
   },
   "compare": {
     "addModel": "添加模型",
@@ -1015,7 +1014,6 @@
     "collapseNav": "收起侧栏",
     "emptyHint": "点击「新任务」开始",
     "expandNav": "展开侧栏",
-    "home": "首页",
     "identityCenter": "身份中心",
     "myAssistants": "我的助手",
     "noAgents": "暂无智能体",
@@ -1122,7 +1120,6 @@
     "statusPublished": "已发布",
     "tabMarket": "市场",
     "tabMine": "我的模板",
-    "title": "助手市场",
     "unpublish": "下架",
     "unpublishDone": "已下架",
     "views": "{{count}} 次浏览"

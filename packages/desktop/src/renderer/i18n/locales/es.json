@@ -549,8 +549,7 @@
     "roleOwner": "Owner",
     "switchTeam": "Switch team:",
     "tabFeed": "Feed",
-    "tabMembers": "Members",
-    "title": "Team"
+    "tabMembers": "Members"
   },
   "compare": {
     "addModel": "Añadir modelo",
@@ -1015,7 +1014,6 @@
     "collapseNav": "Contraer barra lateral",
     "emptyHint": "Haz clic en “Nueva tarea” para comenzar",
     "expandNav": "Expandir barra lateral",
-    "home": "Inicio",
     "identityCenter": "Centro de identidad",
     "myAssistants": "Mis asistentes",
     "noAgents": "Sin agentes",
@@ -1122,7 +1120,6 @@
     "statusPublished": "Published",
     "tabMarket": "Market",
     "tabMine": "My templates",
-    "title": "Assistant market",
     "unpublish": "Unpublish",
     "unpublishDone": "Unpublished",
     "views": "{{count}} views"

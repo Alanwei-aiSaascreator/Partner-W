@@ -549,8 +549,7 @@
     "roleOwner": "Owner",
     "switchTeam": "Switch team:",
     "tabFeed": "Feed",
-    "tabMembers": "Members",
-    "title": "Team"
+    "tabMembers": "Members"
   },
   "compare": {
     "addModel": "モデルを追加",
@@ -1015,7 +1014,6 @@
     "collapseNav": "サイドバーを折りたたむ",
     "emptyHint": "「新規タスク」をクリックして開始",
     "expandNav": "サイドバーを展開",
-    "home": "ホーム",
     "identityCenter": "アカウント",
     "myAssistants": "マイアシスタント",
     "noAgents": "エージェントなし",
@@ -1122,7 +1120,6 @@
     "statusPublished": "Published",
     "tabMarket": "Market",
     "tabMine": "My templates",
-    "title": "Assistant market",
     "unpublish": "Unpublish",
     "unpublishDone": "Unpublished",
     "views": "{{count}} views"

@@ -30,10 +30,19 @@ function render(ui: ReactElement): { container: HTMLDivElement; unmount: () => v
 function setup(over: Partial<Parameters<typeof NavMenu>[0]> = {}) {
   const onSelectView = vi.fn();
   const onOpenSkills = vi.fn();
+  const onOpenSettings = vi.fn();
   const utils = render(
-    <NavMenu mainView="chat" settingsOpen={false} onSelectView={onSelectView} onOpenSkills={onOpenSkills} {...over} />,
+    <NavMenu
+      mainView="chat"
+      settingsOpen={false}
+      onSelectView={onSelectView}
+      onOpenSkills={onOpenSkills}
+      onOpenSettings={onOpenSettings}
+      hasUpdate={false}
+      {...over}
+    />,
   );
-  return { ...utils, onSelectView, onOpenSkills };
+  return { ...utils, onSelectView, onOpenSkills, onOpenSettings };
 }
 
 const clickNav = (container: HTMLElement, key: string) => {
@@ -49,10 +58,12 @@ const clickNav = (container: HTMLElement, key: string) => {
  *    改顺序 = 改设计稿的对齐，应当是一次有意的决定而不是手抖。
  */
 describe('LeftNav NavMenu', () => {
-  it('⭐ 按设计稿的顺序渲染全部 11 项', () => {
+  it('⭐ 按设计稿的顺序渲染，并把图标栏搬来的几项接在后面', () => {
     const { container, unmount } = setup();
     const keys = [...container.querySelectorAll('[data-nav]')].map((el) => el.getAttribute('data-nav'));
 
+    // 前 11 项 = 设计稿的顺序；后 5 项 = 2026-09-19 去掉图标栏后搬来的
+    //（文件管理 / 归档对话 / 资料库 进主清单，内测中心 / 设置 进底部一组）。
     expect(keys).toEqual([
       'search',
       'identity',
@@ -65,8 +76,47 @@ describe('LeftNav NavMenu', () => {
       'usage',
       'growth',
       'cron',
+      'files',
+      'archived',
+      'kb',
+      'betaHub',
+      'settings',
     ]);
     unmount();
+  });
+
+  it('⭐ 图标栏搬来的三项能落到对应页面', () => {
+    const { container, onSelectView, unmount } = setup();
+
+    clickNav(container, 'files');
+    expect(onSelectView).toHaveBeenLastCalledWith('files');
+    clickNav(container, 'archived');
+    expect(onSelectView).toHaveBeenLastCalledWith('archived');
+    clickNav(container, 'kb');
+    expect(onSelectView).toHaveBeenLastCalledWith('kb');
+    clickNav(container, 'betaHub');
+    expect(onSelectView).toHaveBeenLastCalledWith('betaHub');
+    unmount();
+  });
+
+  it('⭐「设置」走设置面板（和技能市场一样，不是 mainView）', () => {
+    const { container, onSelectView, onOpenSettings, unmount } = setup();
+
+    clickNav(container, 'settings');
+
+    expect(onOpenSettings).toHaveBeenCalledTimes(1);
+    expect(onSelectView).not.toHaveBeenCalled();
+    unmount();
+  });
+
+  it('「设置」在有更新时带角标', () => {
+    const plain = setup({ hasUpdate: false });
+    expect(plain.container.querySelector('[data-nav="settings"]')!.textContent).not.toContain('•');
+    plain.unmount();
+
+    const upd = setup({ hasUpdate: true });
+    expect(upd.container.querySelector('[data-nav="settings"]')!.textContent).toContain('•');
+    upd.unmount();
   });
 
   it('每一项都渲染出文案（i18n 键解析到位）', () => {

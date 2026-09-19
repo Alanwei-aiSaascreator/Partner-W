@@ -549,8 +549,7 @@
     "roleOwner": "Owner",
     "switchTeam": "Switch team:",
     "tabFeed": "Feed",
-    "tabMembers": "Members",
-    "title": "Team"
+    "tabMembers": "Members"
   },
   "compare": {
     "addModel": "모델 추가",
@@ -1015,7 +1014,6 @@
     "collapseNav": "사이드바 접기",
     "emptyHint": "\"새 작업\"을 클릭하여 시작하세요",
     "expandNav": "사이드바 펼치기",
-    "home": "홈",
     "identityCenter": "계정 센터",
     "myAssistants": "내 어시스턴트",
     "noAgents": "에이전트 없음",
@@ -1122,7 +1120,6 @@
     "statusPublished": "Published",
     "tabMarket": "Market",
     "tabMine": "My templates",
-    "title": "Assistant market",
     "unpublish": "Unpublish",
     "unpublishDone": "Unpublished",
     "views": "{{count}} views"
