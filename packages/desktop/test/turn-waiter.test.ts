@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { watchTurnEnd } from '../src/renderer/lib/turn-waiter';
+import { waitForCondition, watchTurnEnd } from '../src/renderer/lib/turn-waiter';
 
 const KEY = 'agent:e:clawwork:dev:task:t1';
 
@@ -119,6 +119,59 @@ describe('watchTurnEnd', () => {
     s.setBusy(true);
     s.setBusy(false);
     await w.ended;
+
+    expect(s.listenerCount()).toBe(0);
+  });
+});
+
+/**
+ * `waitForCondition`（2026-09-20）。
+ *
+ * 为什么需要它：实测生命周期是 `lifecycle.end`（不忙了）→ **22ms 后** → `chat.finalized`。
+ * 而 `finalizeStream` 才把混在正文里的 `</think>` 推理切出去 ⇒ 只等"不忙"就开始读，
+ * 会把模型的思考过程喂给下一位。
+ */
+describe('waitForCondition', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('条件后来成立 ⇒ resolve', async () => {
+    let done = false;
+    const s = makeStore();
+    const p = waitForCondition(s.store, () => done);
+
+    done = true;
+    s.setBusy(true); // 用任意一次状态变化把监听器叫醒
+
+    await expect(p).resolves.toBeUndefined();
+  });
+
+  it('订阅那刻就已经成立 ⇒ 立刻返回，不占监听器', async () => {
+    const s = makeStore();
+    await expect(waitForCondition(s.store, () => true)).resolves.toBeUndefined();
+    expect(s.listenerCount()).toBe(0);
+  });
+
+  it('一直不成立 ⇒ 超时 reject（不能永远挂着）', async () => {
+    vi.useFakeTimers();
+    const s = makeStore();
+    const p = waitForCondition(s.store, () => false, { timeoutMs: 1000 });
+    const err = p.catch((e: Error) => e);
+
+    await vi.advanceTimersByTimeAsync(1100);
+    expect(await err).toBeInstanceOf(Error);
+    expect(s.listenerCount()).toBe(0);
+  });
+
+  it('成立之后监听器要摘掉（不能攒着）', async () => {
+    let done = false;
+    const s = makeStore();
+    const p = waitForCondition(s.store, () => done);
+
+    done = true;
+    s.setBusy(true);
+    await p;
 
     expect(s.listenerCount()).toBe(0);
   });

@@ -111,3 +111,58 @@ export function watchTurnEnd(store: ProcessingStore, sessionKey: string, opts: T
 
   return { ended, dispose: () => settle(() => {}) };
 }
+
+/**
+ * 等某个条件成立。**只用来等"将来才会发生的事"** —— 如果条件在订阅那一刻就已经成立，
+ * 它会立刻 resolve。所以它不适合判断"状态有没有变化"（那种用 `watchTurnEnd`）。
+ *
+ * 为什么需要它：实测（debug 日志时间线）
+ *
+ * ```
+ * 10:40:13.716  agent.lifecycle.end
+ * 10:40:13.738  chat.final.received   (+22ms)
+ * 10:40:13.738  chat.finalized        (+22ms)
+ * ```
+ *
+ * ⇒ 拿到"不忙了"的时候，这一轮**还没 finalize**。而 `finalizeStream` 才做
+ * `splitInlineThinking`（把混在正文里的 `</think>` 推理切出去）。
+ * 少等这一步，会把模型的思考过程当成"发言"喂给下一位。
+ */
+export function waitForCondition(
+  store: ProcessingStore,
+  isDone: () => boolean,
+  opts: { timeoutMs?: number } = {},
+): Promise<void> {
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_START_TIMEOUT_MS;
+
+  if (isDone()) return Promise.resolve();
+
+  return new Promise<void>((resolve, reject) => {
+    let settled = false;
+    let unsubscribe: (() => void) | undefined;
+    // 与 `watchTurnEnd` 同一种写法：计时器放容器里 —— `cleanup` 要引用它，
+    // 它的回调又要引用 `settle`（依赖 `cleanup`），直接互相引用会绕成循环。
+    const timers: { t?: ReturnType<typeof setTimeout> } = {};
+
+    const cleanup = () => {
+      if (timers.t) clearTimeout(timers.t);
+      unsubscribe?.();
+      unsubscribe = undefined;
+    };
+    const settle = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      fn();
+    };
+
+    const check = () => {
+      if (settled) return;
+      if (isDone()) settle(resolve);
+    };
+
+    unsubscribe = store.subscribe(check);
+    timers.t = setTimeout(() => settle(() => reject(new Error('等条件成立超时'))), timeoutMs);
+    check();
+  });
+}
