@@ -89,6 +89,32 @@ export function latestRunningCall(toolCalls: ToolCall[]): ToolCall | null {
   return null;
 }
 
+/**
+ * 还没结束的状态 —— `running` 与 `awaitingApproval`（A2，2026-09-19）。
+ *
+ * ⚠️ **它们不是一回事，但都"没结束"**：显示上要分开说（`awaitingApproval` 有自己的文案，
+ * 见 `ToolCallCard` / `ComposerActivity`），**归类**上必须同一桶 ——
+ * 少了 `awaitingApproval`，`summarizeToolActivity` 的 `runningCount` 就是 0，
+ * 而 `ToolCallSummary` 会据此把"等着人批准"渲染成 **`done`**（那是撒谎）。
+ */
+function isUnfinished(status: ToolCall['status']): boolean {
+  return status === 'running' || status === 'awaitingApproval';
+}
+
+/**
+ * 最新一条**在等人批准**的调用（没有就 null）。
+ *
+ * ⚠️ 与 `latestRunningCall` **分开**，因为它们的文案不同：
+ * "执行中：X" 说的是"在动"，而这条要说的是"**没动，在等人**" ——
+ * 复用前者就等于什么都没说（A2 的口径就是不让复用）。
+ */
+export function latestAwaitingApproval(toolCalls: ToolCall[]): ToolCall | null {
+  for (let i = toolCalls.length - 1; i >= 0; i -= 1) {
+    if (toolCalls[i].status === 'awaitingApproval') return toolCalls[i];
+  }
+  return null;
+}
+
 export function summarizeToolActivity(toolCalls: ToolCall[]): ToolActivitySummaryModel {
   const groups = new Map<string, ToolActivityGroup>();
   let completedCount = 0;
@@ -96,7 +122,7 @@ export function summarizeToolActivity(toolCalls: ToolCall[]): ToolActivitySummar
   let errorCount = 0;
 
   for (const call of toolCalls) {
-    if (call.status === 'running') runningCount += 1;
+    if (isUnfinished(call.status)) runningCount += 1;
     else completedCount += 1;
     if (call.status === 'error') errorCount += 1;
 

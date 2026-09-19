@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { ToolCall } from '@clawwork/shared';
-import { Wrench, CheckCircle, Loader, AlertCircle, ChevronDown, ChevronRight } from 'lucide-react';
+import { Wrench, CheckCircle, Loader, AlertCircle, Clock, ChevronDown, ChevronRight } from 'lucide-react';
 
 interface ToolCallCardProps {
   toolCall: ToolCall;
@@ -17,6 +17,11 @@ function getStatusIcon(status: ToolCall['status']) {
       return AlertCircle;
     case 'running':
       return Loader;
+    // ⭐ A2「等待批准」：**不转圈** —— 转圈说的是"在动"，而这条恰恰是"没动，在等人"。
+    // ⚠️ 这个 switch 是**穷尽**的（没有 default）⇒ 桌面端那边加状态时，这里会被
+    //    `tsc` 点名（真被点过一次）——那是好事，别改成 default 把它糊过去。
+    case 'awaitingApproval':
+      return Clock;
   }
 }
 
@@ -27,6 +32,7 @@ function getStatusColor(status: ToolCall['status']): string {
     case 'error':
       return 'var(--danger)';
     case 'running':
+    case 'awaitingApproval':
       return 'var(--text-muted)';
   }
 }

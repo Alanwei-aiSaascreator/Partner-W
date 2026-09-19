@@ -361,4 +361,48 @@ describe('模型自述进度', () => {
     expect(text).toContain('chatInput.runPhase.starting_model');
     expect(text).not.toContain('modelProgress');
   });
+
+  it('⭐⭐ A2：等在批准时说的是「等待批准」，**不是**「执行中」', async () => {
+    await setup({
+      toolCalls: [
+        {
+          id: 'call_1',
+          name: 'exec',
+          status: 'awaitingApproval',
+          title: 'npm view diver name version description',
+          startedAt: new Date(T0).toISOString(),
+        },
+      ],
+    });
+
+    const text = q('composer-activity')!.textContent ?? '';
+    expect(text).toContain('chatInput.waiting.awaitingApproval(npm view diver name version description)');
+    // ⚠️ 复用 `runningTool` 就等于什么都没说 —— 这条就是防那个。
+    expect(text).not.toContain('chatInput.waiting.runningTool');
+  });
+
+  it('⭐⭐ A2：它**排在最前面** —— 正在跑的工具也要让位（它才是"为什么没进展"的答案）', async () => {
+    await setup({
+      toolCalls: [
+        {
+          id: 'call_1',
+          name: 'memory_search',
+          status: 'running',
+          title: 'memory_search 游戏',
+          startedAt: new Date(T0).toISOString(),
+        },
+        {
+          id: 'call_2',
+          name: 'exec',
+          status: 'awaitingApproval',
+          title: 'rm -rf /tmp/x',
+          startedAt: new Date(T0).toISOString(),
+        },
+      ],
+    });
+
+    const text = q('composer-activity')!.textContent ?? '';
+    expect(text).toContain('chatInput.waiting.awaitingApproval(rm -rf /tmp/x)');
+    expect(text, '被"执行中"抢了头条就等于没说').not.toContain('chatInput.waiting.runningTool');
+  });
 });

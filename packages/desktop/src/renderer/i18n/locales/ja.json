@@ -438,6 +438,7 @@
     "thinkingUltra": "ウルトラ",
     "thinkingXhigh": "超高",
     "waiting": {
+      "awaitingApproval": "承認待ち：{{what}}",
       "line": {
         "fresh0": "いただいた資料を見ています",
         "fresh1": "この作業は慣れています、少々お待ちを",
@@ -1710,6 +1711,7 @@
   },
   "toolCall": {
     "args": "引数",
+    "awaitingApproval": "承認待ち",
     "result": "結果"
   },
   "usage": {

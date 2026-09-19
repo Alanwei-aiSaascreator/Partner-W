@@ -438,6 +438,7 @@
     "thinkingUltra": "Ultra",
     "thinkingXhigh": "Muy alto",
     "waiting": {
+      "awaitingApproval": "Esperando aprobación: {{what}}",
       "line": {
         "fresh0": "Déjame ver lo que me diste",
         "fresh1": "Esto lo tengo — un momento",
@@ -1710,6 +1711,7 @@
   },
   "toolCall": {
     "args": "Argumentos",
+    "awaitingApproval": "Esperando aprobación",
     "result": "Resultado"
   },
   "usage": {

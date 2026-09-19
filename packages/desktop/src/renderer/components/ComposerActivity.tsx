@@ -5,7 +5,7 @@ import { RETRY_RUN_PHASE, RUN_PHASE_IDS } from '@clawwork/core';
 import { useMessageStore } from '@/stores/messageStore';
 import { cn } from '@/lib/utils';
 import { formatElapsed, waitingLineSuffix } from '@/lib/waiting-copy';
-import { latestRunningCall } from '@/lib/tool-activity';
+import { latestAwaitingApproval, latestRunningCall } from '@/lib/tool-activity';
 
 /**
  * 输入框上方的**活动条** —— 一轮在跑的时候，把"它在干什么"和"等了多久"摆出来。
@@ -67,11 +67,19 @@ export default function ComposerActivity({ sessionKey, onCancel }: ComposerActiv
   // ⚠️ 走**唯一出口**（`latestRunningCall`）：这个推导原先在本组件与 `ToolCallSummary`
   //    各写了一遍，一字不差 ⇒ 迟早只改一处。返回 null 就是"该收掉了"（跑完/失败/取消）。
   const runningCall = latestRunningCall(calls);
+  // ⭐ A2：**在等人批准**的调用 —— 排在**最前面**。它正是"为什么没有进展"的答案，
+  //    而且**该谁动**在用户那边（不是我们）。
+  const awaitingCall = latestAwaitingApproval(calls);
   const doneCount = calls.filter((call) => call.status === 'done' || call.status === 'error').length;
 
-  // 主行要说的是"此刻在干什么"，优先级：正在跑的工具 > 网关报的准备阶段 > 写回答。
+  // 主行要说的是"此刻在干什么"，优先级：**等人批准的工具** > 正在跑的工具 >
+  // 网关报的准备阶段 > 写回答。
   let headline: string;
-  if (runningCall) {
+  if (awaitingCall) {
+    // ⚠️ **不复用 `runningTool`**："执行中：X" 说的是"在动"，而这条要说的是"没动，在等人"
+    //    —— 复用就等于什么都没说（A2 的口径就是不让复用）。
+    headline = t('chatInput.waiting.awaitingApproval', { what: awaitingCall.title ?? awaitingCall.name });
+  } else if (runningCall) {
     headline = t('chatInput.waiting.runningTool', { what: runningCall.title ?? runningCall.name });
   } else if (compacting) {
     // ⭐ 压缩是**此刻系统在做的事**（与"正在跑的工具"同类：都是事实），而且它正是

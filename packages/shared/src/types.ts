@@ -7,7 +7,19 @@ export type ArtifactAvailability = 'available' | 'missing' | 'unsafe';
 
 export type ArtifactSaveAsResult = { status: 'cancelled' } | { status: 'saved'; filePath: string };
 
-export type ToolCallStatus = 'running' | 'done' | 'error';
+/**
+ * 工具卡片的状态。
+ *
+ * ⚠️ `awaitingApproval`（2026-09-19 新增）**不是** `running` 的别名，也**不是**终态：
+ * 它表示"这条命令停在审批那儿了，**在等人**"。三处刻意分开：
+ *
+ * 1. **显示**：卡片/活动条要单独说一句「等待批准」，不许复用"进行中" ——
+ *    用户得知道**为什么没有进展**，以及**该谁动**。
+ * 2. **合并权重**：与 `running` **同级**（都属"没结束"）⇒ 后来的 `done`/`error` 能覆盖它，
+ *    它也能覆盖 `running`（帧序：tool 流的 result 先到落 running，approval 帧随后改判）。
+ * 3. **不是**"失败"：审批还没结论时把它算成失败，是另一种撒谎。
+ */
+export type ToolCallStatus = 'running' | 'done' | 'error' | 'awaitingApproval';
 
 import type { GatewayAuth } from './gateway-protocol.js';
 

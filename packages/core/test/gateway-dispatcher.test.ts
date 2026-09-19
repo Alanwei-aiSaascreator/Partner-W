@@ -842,16 +842,16 @@ describe('approval 的 status：未处理的取值要留痕', () => {
     );
   });
 
-  it('⭐ `pending` 同样算"知道但不接"（那时命令**还有可能跑**，报成失败是另一种撒谎）', () => {
+  it('⭐⭐ `pending` **不再是**"知道但不接" —— A2 起它被显式标成「等待批准」', () => {
+    // ⚠️ 这条**从前断言的是 `ignored_status`**。A2（2026-09-19）把它改成"接"：
+    //    命令停在等人时，用户得知道**为什么没有进展**、以及**该谁动**。
+    //    ⇒ 断言方向没放松：从"记一条'我不接它'"变成"**必须**把它标出来"。
     const h = createHarness();
 
     emitApproval(h, 'pending');
 
-    expect(h.deps.reportDebugEvent).toHaveBeenCalledWith(
-      expect.objectContaining({
-        event: 'renderer.agent.approval.ignored_status',
-        data: expect.objectContaining({ status: 'pending' }),
-      }),
+    expect(h.deps.reportDebugEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'renderer.agent.approval.ignored_status' }),
     );
   });
 
@@ -2623,8 +2623,118 @@ describe('item 流：网关拼好的人话标题与真实起止时间', () => {
  * 它**不许降级**（那是为了防止迟到的 update 把已完成的调用转回 running）。
  * 所以这里只做**唯一能做的诚实修正**：确知没跑成的，不许留在「已完成」。
  */
+/**
+ * ⭐ A2：「**等待批准**」要单独说一句（2026-09-19 拍板）。
+ *
+ * 现行：审批等待期只显示"进行中"，与普通运行**看不出区别** ——
+ * 用户不知道**为什么没进展**，也不知道**该谁动**。
+ *
+ * ⚠️ 这一刀**只动显示**：谁批、怎么批、批完干嘛，**一个字节没改**。
+ * `awaitingApproval` 也不是终态 —— 它与 `running` **同级**（都算"没结束"），
+ * 好让随后的真结果/拒绝照样压得过去。
+ */
+describe('A2：审批等待期要单独说一句「等待批准」', () => {
+  const emitTool = (h: ReturnType<typeof createHarness>, data: Record<string, unknown>) =>
+    h.emit('agent', {
+      sessionKey: TASK.sessionKey,
+      stream: 'tool',
+      data: { name: 'exec', toolCallId: 'call_wait', isError: false, ...data },
+    });
+
+  const emitApproval = (h: ReturnType<typeof createHarness>, data: Record<string, unknown>) =>
+    h.emit('agent', { sessionKey: TASK.sessionKey, stream: 'approval', data });
+
+  /** 真实形状：exec 挂起等审批 ⇒ tool 流先报 `isError:false`，approval 帧随后说 `pending`。 */
+  function enterApprovalWait(h: ReturnType<typeof createHarness>, toolCallId = 'call_wait'): void {
+    emitTool(h, {
+      phase: 'result',
+      toolCallId,
+      result: {
+        content: [{ type: 'text', text: 'Command requires approval.' }],
+        details: { status: 'approval-pending', approvalId: 'a1', approvalSlug: '12345678', host: 'gateway' },
+      },
+    });
+    emitApproval(h, {
+      phase: 'requested',
+      kind: 'exec',
+      status: 'pending',
+      title: 'Command approval requested',
+      itemId: `command:${toolCallId}`,
+      toolCallId,
+      command: 'npm view diver name version description',
+      host: 'gateway',
+    });
+  }
+
+  const lastStatus = (h: ReturnType<typeof createHarness>): string => {
+    const calls = h.messageStore.upsertToolCall.mock.calls;
+    expect(calls.length, '应该有工具调用被写进 store').toBeGreaterThan(0);
+    return (calls[calls.length - 1]![2] as { status: string }).status;
+  };
+
+  it('⭐⭐ 进入审批等待 ⇒ 状态是 `awaitingApproval`，**不是** `running`', () => {
+    const h = createHarness();
+
+    enterApprovalWait(h);
+
+    expect(lastStatus(h), '复用"进行中"就等于什么都没说').toBe('awaitingApproval');
+  });
+
+  it('⭐⭐ 它与 `running` **同级**：审批还没结论时，**不算** done/error', () => {
+    const h = createHarness();
+
+    enterApprovalWait(h);
+
+    const seen = h.messageStore.upsertToolCall.mock.calls.map((c) => (c[2] as { status: string }).status);
+    expect(seen).not.toContain('done');
+    expect(seen).not.toContain('error');
+  });
+
+  it('⭐ 审批**被拒** ⇒ 正常收场（落 `error`，不许停在"等待批准"）', () => {
+    const h = createHarness();
+    enterApprovalWait(h);
+
+    emitApproval(h, {
+      phase: 'resolved',
+      kind: 'exec',
+      status: 'denied',
+      title: 'Command approval resolved',
+      toolCallId: 'call_wait',
+      command: 'npm view x',
+      host: 'gateway',
+      reason: 'user-denied',
+      message: 'The command was not run.',
+    });
+
+    expect(lastStatus(h)).toBe('error');
+  });
+
+  it('⭐ 审批**通过后真结果到达** ⇒ 正常收场（落 `done`）', () => {
+    const h = createHarness();
+    enterApprovalWait(h);
+
+    emitTool(h, {
+      phase: 'result',
+      toolCallId: 'call_wait',
+      result: { content: [{ type: 'text', text: 'diver 1.2.3' }] },
+    });
+
+    expect(lastStatus(h), '同级 ⇒ 后来的 done 压得过去').toBe('done');
+  });
+
+  it('⭐ 对照：普通工具运行**永远不会**出现这个状态', () => {
+    const h = createHarness();
+
+    emitTool(h, { phase: 'start' });
+    emitTool(h, { phase: 'result', result: { content: [{ type: 'text', text: 'ok' }] } });
+
+    const seen = h.messageStore.upsertToolCall.mock.calls.map((c) => (c[2] as { status: string }).status);
+    expect(seen, `只有审批那条路能产生它：${seen.join(' → ')}`).not.toContain('awaitingApproval');
+  });
+});
+
 describe('approval 流：被拦下的命令不许显示成"已完成"', () => {
-  type EmittedToolCall = { id: string; name: string; status: string; result?: string };
+  type EmittedToolCall = { id: string; name: string; status: string; result?: string; completedAt?: string };
 
   function lastToolCall(h: ReturnType<typeof createHarness>): EmittedToolCall {
     const calls = h.messageStore.upsertToolCall.mock.calls;
@@ -2707,10 +2817,14 @@ describe('approval 流：被拦下的命令不许显示成"已完成"', () => {
     expect(lastToolCall(h).result).toContain('denied');
   });
 
-  it('审批**还在等**（status:"pending"）不动它 —— 命令还有可能跑', () => {
+  it('审批**还在等**（status:"pending"）⇒ 标成「等待批准」，**但不报成失败/完成**', () => {
+    // ⚠️ 这条**从前断言的是"不动它"**（`callsBefore === callsAfter`），理由是
+    //    「报成失败是另一种撒谎，而'退回进行中'又做不到（不许降级）」。
+    //    A2（2026-09-19 拍板）改了后半句的前提：**有第三个状态可用了**
+    //    （`awaitingApproval`，与 `running` 同级 ⇒ 既不撒谎也不再"降不了级"）。
+    // ⇒ 断言方向**没放松**：从"一个字都别写"变成"**必须**写，且只能写成等待批准"。
     const h = createHarness();
     emitBlockedExecResult(h, 'call_pending');
-    const callsBefore = h.messageStore.upsertToolCall.mock.calls.length;
 
     emitApproval(h, {
       phase: 'requested',
@@ -2724,10 +2838,11 @@ describe('approval 流：被拦下的命令不许显示成"已完成"', () => {
       host: 'local',
     });
 
-    expect(
-      h.messageStore.upsertToolCall.mock.calls.length,
-      'pending 不该写 store：报成失败是另一种撒谎，而"退回进行中"又做不到（不许降级）',
-    ).toBe(callsBefore);
+    const after = lastToolCall(h);
+    expect(after.status, '命令还有可能跑 ⇒ 不许说"没跑成"').not.toBe('error');
+    expect(after.status, '更不许说"完成"').not.toBe('done');
+    expect(after.status, '要单独说一句"在等人"').toBe('awaitingApproval');
+    expect(after.completedAt, '它没结束').toBeUndefined();
   });
 
   it('approval 帧要留遥测 —— 这条链出事时得查得到', () => {

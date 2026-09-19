@@ -1,6 +1,6 @@
 import { memo, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { ChevronDown, ChevronRight, Loader2, Check, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, Clock, Loader2, Check, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { ToolCall } from '@clawwork/shared';
 import { cn } from '@/lib/utils';
@@ -13,6 +13,11 @@ function StatusIcon({ status }: { status: ToolCall['status'] }) {
     <AnimatePresence mode="wait">
       <motion.span key={status} {...motionPresets.crossfade} className="inline-flex">
         {status === 'running' && <Loader2 size={14} className="animate-spin text-[var(--accent)]" />}
+        {/*
+          ⭐ A2「等待批准」：**不转圈** —— 转圈说的"在动"，而这条恰恰是"没动，在等人"。
+          用现成的 `Clock`（lucide 图标集里已有的，不是新造的视觉件）。
+        */}
+        {status === 'awaitingApproval' && <Clock size={14} className="text-[var(--text-muted)]" />}
         {status === 'done' && <Check size={14} className="text-[var(--accent)]" />}
         {status === 'error' && <X size={14} className="text-[var(--danger)]" />}
       </motion.span>
@@ -70,6 +75,16 @@ const ToolCallCard = memo(function ToolCallCard({ toolCall, defaultOpen, label }
                   {toolCall.title ?? toolCall.name}
                 </span>
               </span>
+              {/*
+                ⭐ A2：**说一句**「等待批准」—— 光换图标不够（用户得知道
+                "没进展是因为在等人"、"该谁动"）。走 `t()`，不写死文案：
+                写死的话这条 key 会变成 unused，`check:i18n` 直接红。
+              */}
+              {toolCall.status === 'awaitingApproval' && (
+                <span className="type-label shrink-0 text-[var(--text-muted)]" data-testid="awaiting-approval-label">
+                  {t('toolCall.awaitingApproval')}
+                </span>
+              )}
               {duration && <span className="text-[var(--text-muted)]">{duration}</span>}
             </button>
           </CollapsibleTrigger>

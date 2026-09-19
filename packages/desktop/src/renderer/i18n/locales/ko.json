@@ -438,6 +438,7 @@
     "thinkingUltra": "울트라",
     "thinkingXhigh": "매우 높음",
     "waiting": {
+      "awaitingApproval": "승인 대기 중: {{what}}",
       "line": {
         "fresh0": "주신 자료를 보고 있습니다",
         "fresh1": "이 작업은 익숙합니다, 잠시만요",
@@ -1710,6 +1711,7 @@
   },
   "toolCall": {
     "args": "인수",
+    "awaitingApproval": "승인 대기 중",
     "result": "결과"
   },
   "usage": {

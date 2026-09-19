@@ -1369,7 +1369,16 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
    *    运行时的类型里真要新增一个"没跑成"的 status，今天就会被这条**逮住**，
    *    而不是像从前那样静默 `return`（那会让卡片一直停在"进行中"）。
    */
-  const APPROVAL_DELIBERATELY_IGNORED = new Set(['pending', 'approved']);
+  const APPROVAL_DELIBERATELY_IGNORED = new Set(['approved']);
+
+  /**
+   * 审批 status 里**表示"命令停在等人"**的那个。
+   *
+   * `pending`（`AgentApprovalEventStatus`）= 审批请求已经发出、还没结论。
+   * ⚠️ A2（2026-09-19）起它从"知道但不接"改成**接**：用户得知道
+   * **为什么没有进展**、以及**该谁动**。只动**显示**，审批语义一个字节没改。
+   */
+  const APPROVAL_WAITING_STATUS = 'pending';
 
   /**
    * `item` 的 **`kind`** 里"知道但不接"的那些。
@@ -1423,6 +1432,32 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
     //    "我们不接它"是对的（见两处名单的说明），但"不接"本身必须留痕 ——
     //    否则下一个冒出来的 status 会以同样的方式消失。
     const approvalStatus = data.status ? data.status : '(missing)';
+
+    // ⭐ A2：审批**还在等人** ⇒ 单独标出来（不是"进行中"，也不是"失败"）。
+    //
+    //    ⚠️ **只动显示**：谁批、怎么批、批完干嘛，一个字节没改。`awaitingApproval`
+    //    与 `running` **同级**（见 message-store 的 `toolStatusRank`）⇒
+    //    随后的真结果 / 拒绝照样压得过去，不会卡住收不了场。
+    if (approvalStatus === APPROVAL_WAITING_STATUS) {
+      const name = existingToolName(taskId, sessionKey, data.toolCallId) ?? data.kind ?? 'exec';
+      deps.getMessageStore().upsertToolCall(sessionKey, taskId, {
+        id: data.toolCallId,
+        name,
+        status: 'awaitingApproval',
+        // ⚠️ **不填 `completedAt`**：它没结束。
+        // `result` 也**不写**：这张卡片要说的只是"在等人"，命令内容由 `title` 带出；
+        // 真结果到了再写（合并器里 `incoming.result ?? existing.result` 会自然覆盖）。
+        startedAt: new Date().toISOString(),
+      });
+      debugEvent('renderer.toolcall.awaiting_approval', {
+        taskId,
+        sessionKey,
+        toolCallId: data.toolCallId,
+        name,
+      });
+      return;
+    }
+
     if (!APPROVAL_NOT_EXECUTED.has(approvalStatus)) {
       const statusPayload = {
         taskId,

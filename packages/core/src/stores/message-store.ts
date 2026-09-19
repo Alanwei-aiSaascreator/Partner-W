@@ -252,7 +252,13 @@ function toolStatusRank(status: ToolCall['status']): number {
       return 3;
     case 'done':
       return 2;
+    // ⚠️ `awaitingApproval` 与 `running` **同级**——它俩都是"没结束"，谁也不比谁更"新"。
+    //    同级时 `preferIncoming` 取 `>=` ⇒ 后到的说了算，这正是我们要的帧序：
+    //    tool 流的 result 先落 `running`，随后的 approval 帧把它改判成 `awaitingApproval`；
+    //    审批有了结论之后，`done`/`error`（2/3）照样压得过去。
+    //    ⇒ 既不会"降级"，也不会卡住收不了场。
     case 'running':
+    case 'awaitingApproval':
       return 1;
   }
 }

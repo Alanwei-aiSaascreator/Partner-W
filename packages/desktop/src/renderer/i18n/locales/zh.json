@@ -438,6 +438,7 @@
     "thinkingUltra": "极限",
     "thinkingXhigh": "超高",
     "waiting": {
+      "awaitingApproval": "等待批准：{{what}}",
       "line": {
         "fresh0": "让我看看你给的料",
         "fresh1": "这活儿我熟，稍等",
@@ -1710,6 +1711,7 @@
   },
   "toolCall": {
     "args": "参数",
+    "awaitingApproval": "等待批准",
     "result": "结果"
   },
   "usage": {
