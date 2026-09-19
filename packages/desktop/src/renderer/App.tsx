@@ -361,7 +361,7 @@ export default function App() {
           )}
           style={{ minWidth: leftNavCollapsed ? 0 : 200 }}
         >
-          <LeftNav onOpenAssistantSettings={() => openSettings('agents')} />
+          <LeftNav onOpenAssistantSettings={() => openSettings('agents')} onOpenSkills={() => openSettings('skills')} />
         </motion.aside>
 
         {!leftNavCollapsed && (

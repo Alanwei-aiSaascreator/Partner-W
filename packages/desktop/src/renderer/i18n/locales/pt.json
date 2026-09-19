@@ -989,6 +989,16 @@
     "myAssistants": "Meus assistentes",
     "noAgents": "Sem agentes",
     "noPreview": "Ainda sem mensagens",
+    "pages": {
+      "agents": "Mercado de agentes",
+      "bounty": "Recompensas",
+      "creator": "Central de criadores",
+      "growth": "Gamificação",
+      "search": "Buscar tarefas",
+      "skills": "Mercado de habilidades",
+      "square": "Praça",
+      "teams": "Equipes"
+    },
     "pinned": "Fixada",
     "recentTasks": "Tarefas recentes",
     "searchTasks": "Buscar tarefas…",

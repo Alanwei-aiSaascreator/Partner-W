@@ -30,14 +30,17 @@ import { removeAssistantTaskPresetTags } from '@/lib/assistant-task-preset-tags'
 import type { TaskStatus } from '@clawwork/shared';
 import EmptyState from '@/components/semantic/EmptyState';
 import { useSessionPreviews } from '@/hooks/useSessionPreviews';
+import NavMenu from './NavMenu';
 
 type ConfirmAction = 'reset' | 'delete' | null;
 
 interface LeftNavProps {
   onOpenAssistantSettings: () => void;
+  /** 「技能市场」不是独立页面，它在设置面板里 ⇒ 点它 = 打开设置并定位到那一节。 */
+  onOpenSkills: () => void;
 }
 
-export default function LeftNav({ onOpenAssistantSettings }: LeftNavProps) {
+export default function LeftNav({ onOpenAssistantSettings, onOpenSkills }: LeftNavProps) {
   const { t } = useTranslation();
   const tasks = useTaskStore((s) => s.tasks);
   const activeTaskId = useTaskStore((s) => s.activeTaskId);
@@ -50,6 +53,8 @@ export default function LeftNav({ onOpenAssistantSettings }: LeftNavProps) {
   const addMessage = useMessageStore((s) => s.addMessage);
   const setHighlightedMessage = useMessageStore((s) => s.setHighlightedMessage);
   const setMainView = useUiStore((s) => s.setMainView);
+  const mainView = useUiStore((s) => s.mainView);
+  const settingsOpen = useUiStore((s) => s.settingsOpen);
   const setSelectedArtifact = useFileStore((s) => s.setSelectedArtifact);
   const gwStatusMap = useUiStore((s) => s.gatewayStatusMap);
   const leftNavCollapsed = useUiStore((s) => s.leftNavCollapsed);
@@ -288,7 +293,11 @@ export default function LeftNav({ onOpenAssistantSettings }: LeftNavProps) {
         </div>
       </div>
 
-      <div className="flex-shrink-0 border-b border-[var(--border-subtle)] px-2 pb-2">
+      {/* 助手切换：**保留在顶部，但压缩高度**（2026-09-19）。
+          ⚠️ 为什么必须留：这是全应用**唯一**切助手的地方，拿掉就没得切了。
+          ⚠️ 为什么压高度：这一列现在还要装页面导航 + 最近任务，不能让助手列表把版面吃光。
+            助手多的用户在这里滚动。 */}
+      <div className="max-h-[136px] flex-shrink-0 overflow-y-auto border-b border-[var(--border-subtle)] px-2 pb-2">
         {agentCatalog.length > 0 ? (
           <AssistantList agents={agentCatalog} selectedAgentId={currentAgentId} onSelect={handleSelectAgent} />
         ) : (
@@ -308,6 +317,18 @@ export default function LeftNav({ onOpenAssistantSettings }: LeftNavProps) {
             className="w-full h-[var(--density-control-height-sm)] pl-9 pr-3 rounded-md bg-[var(--bg-primary)] border border-[var(--border)] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] type-body glow-focus focus:border-transparent transition-all"
           />
         </div>
+      </div>
+
+      {/* 页面导航（2026-09-19，按老板设计稿 + 方案 B）。
+          ⚠️ 放在搜索框之后、最近任务之前 —— 设计稿里这一列是「搜索框 + 页面清单」，
+             我们额外把助手切换与最近任务保留在这一列（否则界面上没有别的地方能切）。 */}
+      <div className="flex-shrink-0 border-b border-[var(--border-subtle)] py-2">
+        <NavMenu
+          mainView={mainView}
+          settingsOpen={settingsOpen}
+          onSelectView={setMainView}
+          onOpenSkills={onOpenSkills}
+        />
       </div>
 
       <div className="relative flex-1 min-h-0">

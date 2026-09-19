@@ -989,6 +989,16 @@
     "myAssistants": "我的助手",
     "noAgents": "暫無智能體",
     "noPreview": "尚無訊息",
+    "pages": {
+      "agents": "智能體市集",
+      "bounty": "需求懸賞",
+      "creator": "創作者中心",
+      "growth": "遊戲化中心",
+      "search": "搜尋任務",
+      "skills": "技能市集",
+      "square": "廣場",
+      "teams": "團隊"
+    },
     "pinned": "已置頂",
     "recentTasks": "最近任務",
     "searchTasks": "搜尋任務…",

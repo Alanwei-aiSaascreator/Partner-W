@@ -16,10 +16,14 @@ type Tab = 'feed' | 'members' | 'bounties';
  *
  * 数据来源：`window.clawwork.community*`（main 进程 → Supabase definer RPC）。
  * 权限、可见性一律由数据库判定，这里不做第二套判断。
+ *
+ * ⚠️ `initialTab` 是给**左侧导航**用的（2026-09-19）：导航里「广场」与「需求悬赏」
+ *    是两个独立入口，但都落到这个面板 —— 靠初始 tab 区分。
+ *    只在**首次挂载**时生效；调用方在入口之间切换时要给**不同的 `key`**。
  */
-export default function CommunityPanel() {
+export default function CommunityPanel({ initialTab = 'feed' }: { initialTab?: Tab } = {}) {
   const { t } = useTranslation();
-  const [tab, setTab] = useState<Tab>('feed');
+  const [tab, setTab] = useState<Tab>(initialTab);
 
   const tabs: Array<{ key: Tab; label: string }> = [
     { key: 'feed', label: t('community.tabFeed') },

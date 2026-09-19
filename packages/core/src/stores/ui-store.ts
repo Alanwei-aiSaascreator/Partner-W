@@ -10,7 +10,11 @@ export type MainView =
   | 'dashboard'
   | 'betaHub'
   | 'community'
+  /** 需求悬赏 —— 与 `community` 同一个面板、不同初始 tab（导航里是两个独立入口）。 */
+  | 'bounty'
   | 'market'
+  /** 创作者中心 —— 与 `market` 同一个面板、不同初始 tab。 */
+  | 'creator'
   | 'growth'
   /** 身份中心。⚠️ 本版**只有排版**，没有数据/逻辑（见 `layouts/IdentityCenter/index.tsx` 文件头）。 */
   | 'identity'

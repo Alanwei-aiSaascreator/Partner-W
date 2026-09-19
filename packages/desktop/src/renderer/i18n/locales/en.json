@@ -989,6 +989,16 @@
     "myAssistants": "My assistants",
     "noAgents": "No agents",
     "noPreview": "No messages yet",
+    "pages": {
+      "agents": "Agent market",
+      "bounty": "Bounties",
+      "creator": "Creator center",
+      "growth": "Gamification",
+      "search": "Search tasks",
+      "skills": "Skill market",
+      "square": "Square",
+      "teams": "Teams"
+    },
     "pinned": "Pinned",
     "recentTasks": "Recent tasks",
     "searchTasks": "Search tasks…",

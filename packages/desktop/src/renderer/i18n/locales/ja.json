@@ -989,6 +989,16 @@
     "myAssistants": "マイアシスタント",
     "noAgents": "エージェントなし",
     "noPreview": "メッセージはまだありません",
+    "pages": {
+      "agents": "エージェント市場",
+      "bounty": "バウンティ",
+      "creator": "クリエイターセンター",
+      "growth": "ゲーミフィケーション",
+      "search": "タスク検索",
+      "skills": "スキルマーケット",
+      "square": "広場",
+      "teams": "チーム"
+    },
     "pinned": "ピン留め済み",
     "recentTasks": "最近のタスク",
     "searchTasks": "タスクを検索…",

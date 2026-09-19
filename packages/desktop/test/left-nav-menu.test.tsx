@@ -1,0 +1,128 @@
+// @vitest-environment jsdom
+
+import { act, type ReactElement } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
+import { describe, expect, it, vi } from 'vitest';
+
+vi.mock('react-i18next', () => ({
+  useTranslation: () => ({ t: (key: string) => key }),
+  initReactI18next: { type: '3rdParty', init: vi.fn() },
+}));
+
+import NavMenu from '../src/renderer/layouts/LeftNav/NavMenu';
+
+(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+function render(ui: ReactElement): { container: HTMLDivElement; unmount: () => void } {
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const root: Root = createRoot(container);
+  act(() => root.render(ui));
+  return {
+    container,
+    unmount: () => {
+      act(() => root.unmount());
+      container.remove();
+    },
+  };
+}
+
+function setup(over: Partial<Parameters<typeof NavMenu>[0]> = {}) {
+  const onSelectView = vi.fn();
+  const onOpenSkills = vi.fn();
+  const utils = render(
+    <NavMenu mainView="chat" settingsOpen={false} onSelectView={onSelectView} onOpenSkills={onOpenSkills} {...over} />,
+  );
+  return { ...utils, onSelectView, onOpenSkills };
+}
+
+const clickNav = (container: HTMLElement, key: string) => {
+  const el = container.querySelector(`[data-nav="${key}"]`) as HTMLButtonElement | null;
+  if (!el) throw new Error(`找不到导航项 ${key}`);
+  act(() => el.click());
+};
+
+/**
+ * 左侧页面导航（2026-09-19）。
+ *
+ * ⚠️ 这条**顺序断言是刻意的** —— 顺序就是与老板设计稿的对应关系，
+ *    改顺序 = 改设计稿的对齐，应当是一次有意的决定而不是手抖。
+ */
+describe('LeftNav NavMenu', () => {
+  it('⭐ 按设计稿的顺序渲染全部 11 项', () => {
+    const { container, unmount } = setup();
+    const keys = [...container.querySelectorAll('[data-nav]')].map((el) => el.getAttribute('data-nav'));
+
+    expect(keys).toEqual([
+      'search',
+      'identity',
+      'teams',
+      'skills',
+      'agents',
+      'bounty',
+      'square',
+      'creator',
+      'usage',
+      'growth',
+      'cron',
+    ]);
+    unmount();
+  });
+
+  it('每一项都渲染出文案（i18n 键解析到位）', () => {
+    const { container, unmount } = setup();
+    expect(container.textContent).toContain('leftNav.pages.search');
+    expect(container.textContent).toContain('leftNav.identityCenter');
+    expect(container.textContent).toContain('leftNav.pages.bounty');
+    expect(container.textContent).toContain('cron.title');
+    unmount();
+  });
+
+  it('点有页面的项 ⇒ 落到对应的 mainView', () => {
+    const { container, onSelectView, onOpenSkills, unmount } = setup();
+
+    clickNav(container, 'identity');
+    expect(onSelectView).toHaveBeenLastCalledWith('identity');
+    clickNav(container, 'bounty');
+    expect(onSelectView).toHaveBeenLastCalledWith('bounty');
+    clickNav(container, 'creator');
+    expect(onSelectView).toHaveBeenLastCalledWith('creator');
+    clickNav(container, 'square');
+    expect(onSelectView).toHaveBeenLastCalledWith('community');
+    clickNav(container, 'agents');
+    expect(onSelectView).toHaveBeenLastCalledWith('market');
+
+    expect(onOpenSkills).not.toHaveBeenCalled();
+    unmount();
+  });
+
+  it('⭐ 点「技能市场」走的是设置面板，不是 mainView', () => {
+    const { container, onSelectView, onOpenSkills, unmount } = setup();
+
+    clickNav(container, 'skills');
+
+    expect(onOpenSkills).toHaveBeenCalledTimes(1);
+    // ⚠️ 它**不该**去切 mainView —— 技能市场不是独立页面
+    expect(onSelectView).not.toHaveBeenCalled();
+    unmount();
+  });
+
+  it('选中态只标一个，且只在设置没开时标', () => {
+    const { container, unmount } = setup({ mainView: 'growth', settingsOpen: false });
+    const current = [...container.querySelectorAll('[aria-current="page"]')].map((el) => el.getAttribute('data-nav'));
+    expect(current).toEqual(['growth']);
+    unmount();
+
+    // 设置面板开着时，页面导航整体不处于选中态
+    const second = setup({ mainView: 'growth', settingsOpen: true });
+    expect(second.container.querySelectorAll('[aria-current="page"]')).toHaveLength(0);
+    second.unmount();
+  });
+
+  it('「团队」带 Beta 角标，其它项不带', () => {
+    const { container, unmount } = setup();
+    expect(container.querySelector('[data-nav="teams"]')!.textContent).toContain('Beta');
+    expect(container.querySelector('[data-nav="identity"]')!.textContent).not.toContain('Beta');
+    unmount();
+  });
+});

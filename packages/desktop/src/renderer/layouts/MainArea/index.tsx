@@ -1270,11 +1270,22 @@ export default function MainArea({
         </div>
       ) : mainView === 'community' ? (
         <div className="flex-1 min-h-0">
-          <CommunityPanel />
+          <CommunityPanel key="feed" initialTab="feed" />
+        </div>
+      ) : mainView === 'bounty' ? (
+        // ⚠️ 与 community 是同一个面板、不同初始 tab ⇒ **必须给不同的 `key`**，
+        //    否则 React 复用实例，tab 不会跟着导航重置（2026-09-19）。
+        <div className="flex-1 min-h-0">
+          <CommunityPanel key="bounties" initialTab="bounties" />
         </div>
       ) : mainView === 'market' ? (
         <div className="flex-1 min-h-0">
-          <MarketPanel />
+          <MarketPanel key="market" initialTab="market" />
+        </div>
+      ) : mainView === 'creator' ? (
+        // 同上：与 market 同面板不同 tab，靠 key 区分。
+        <div className="flex-1 min-h-0">
+          <MarketPanel key="mine" initialTab="mine" />
         </div>
       ) : mainView === 'identity' ? (
         <div className="flex-1 min-h-0">

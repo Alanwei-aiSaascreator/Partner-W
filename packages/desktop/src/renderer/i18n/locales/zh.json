@@ -989,6 +989,16 @@
     "myAssistants": "我的助手",
     "noAgents": "暂无智能体",
     "noPreview": "暂无消息",
+    "pages": {
+      "agents": "智能体市场",
+      "bounty": "需求悬赏",
+      "creator": "创作者中心",
+      "growth": "游戏化中心",
+      "search": "搜索任务",
+      "skills": "技能市场",
+      "square": "广场",
+      "teams": "团队"
+    },
     "pinned": "已置顶",
     "recentTasks": "最近任务",
     "searchTasks": "搜索任务…",

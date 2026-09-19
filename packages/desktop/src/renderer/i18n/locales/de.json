@@ -989,6 +989,16 @@
     "myAssistants": "Meine Assistenten",
     "noAgents": "Keine Agenten",
     "noPreview": "Noch keine Nachrichten",
+    "pages": {
+      "agents": "Agenten-Markt",
+      "bounty": "Prämien",
+      "creator": "Creator-Center",
+      "growth": "Gamification",
+      "search": "Aufgaben suchen",
+      "skills": "Skill-Markt",
+      "square": "Platz",
+      "teams": "Teams"
+    },
     "pinned": "Angeheftet",
     "recentTasks": "Letzte Aufgaben",
     "searchTasks": "Aufgaben suchen…",

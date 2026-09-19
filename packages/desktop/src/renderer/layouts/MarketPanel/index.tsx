@@ -11,10 +11,15 @@ type Tab = 'market' | 'mine';
  *
  * 两个 tab 是同一件事的两面：市场里"装"的那些模板，就是创作者中心"发"的那些。
  * 安装动作在 `useTemplateInstall`（真在本地网关建 agent），这一层只管切 tab。
+ *
+ * ⚠️ `initialTab` 是给**左侧导航**用的（2026-09-19）：导航里「智能体市场」与
+ *    「创作者中心」是两个独立入口，但都落到这个面板 —— 靠初始 tab 区分。
+ *    只有**首次挂载**时生效（`useState` 的初值）；用户在里面手动切 tab 不会被拉回去。
+ *    调用方要在两个入口之间切换时给出**不同的 `key`**，否则 React 会复用实例、tab 不重置。
  */
-export default function MarketPanel() {
+export default function MarketPanel({ initialTab = 'market' }: { initialTab?: Tab } = {}) {
   const { t } = useTranslation();
-  const [tab, setTab] = useState<Tab>('market');
+  const [tab, setTab] = useState<Tab>(initialTab);
 
   const tabs: Array<{ key: Tab; label: string }> = [
     { key: 'market', label: t('market.tabMarket') },
