@@ -785,6 +785,12 @@
     "boundaryTitle": "Algo salió mal",
     "conductorInitFailed": "Error al inicializar el coordinador del equipo",
     "failed": "falló",
+    "kind": {
+      "context_length": "La conversación supera el límite de contexto del modelo.",
+      "rate_limit": "Demasiadas solicitudes: inténtalo de nuevo en un momento.",
+      "refusal": "El modelo rechazó esta solicitud.",
+      "timeout": "La solicitud agotó el tiempo de espera."
+    },
     "reload": "Recargar",
     "requestFailed": "Error en la solicitud",
     "sendFailed": "Error de envío",

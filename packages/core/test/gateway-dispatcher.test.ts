@@ -1359,3 +1359,45 @@ describe('lifecycle 的 fallback 三相', () => {
     expect(h.systemMessages, '未知相位不许猜着渲染').toHaveLength(0);
   });
 });
+
+/**
+ * chat 错误的 `errorKind` → 文案：**端到端接线**。
+ *
+ * ⚠️ 光有 `error-classify` 的单测证明不了"它被用上了" —— 那正是这类加固最容易掉的地方
+ * （能力写好了、忘了接；或者接了却从 payload 里没传过来）。这条补的就是那个缝。
+ * 真实文案由 desktop 的 `gateway-copy-coverage.test.ts` 保证（每个语言都得有）。
+ */
+describe('chat 错误的 errorKind 一路传到文案', () => {
+  it('⭐ 网关给的 errorKind 要真的决定用户看到哪句话', () => {
+    const h = createHarness();
+    // 把类别 key 换成可辨认的标记（真实文案在 locale 里，core 不读 desktop 的 locale）
+    h.deps.translate = (key: string, opts?: Record<string, unknown>) =>
+      key.startsWith('errors.kind.') ? `«${key}»` : ((opts?.defaultValue as string) ?? key);
+
+    h.emit('chat', {
+      sessionKey: TASK.sessionKey,
+      state: 'error',
+      errorMessage: 'RateLimitExceededError: upstream said no',
+      errorKind: 'rate_limit',
+    });
+
+    expect(h.systemMessages, '错误要显示出来').toHaveLength(1);
+    expect(h.systemMessages[0]!.content, 'errorKind 必须真的被用上').toContain('errors.kind.rate_limit');
+    expect(h.systemMessages[0]!.content, '不该把厂商英文原文摆给用户').not.toContain('upstream said no');
+  });
+
+  it('没有 errorKind 时照旧透出网关原文（不许瞎猜）', () => {
+    const h = createHarness();
+    h.deps.translate = (key: string, opts?: Record<string, unknown>) =>
+      key.startsWith('errors.kind.') ? `«${key}»` : ((opts?.defaultValue as string) ?? key);
+
+    h.emit('chat', {
+      sessionKey: TASK.sessionKey,
+      state: 'error',
+      errorMessage: 'SomeBrandNewProviderError: whatever',
+    });
+
+    expect(h.systemMessages[0]!.content).toContain('SomeBrandNewProviderError');
+    expect(h.systemMessages[0]!.content).not.toContain('errors.kind.');
+  });
+});

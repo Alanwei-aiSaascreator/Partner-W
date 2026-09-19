@@ -577,6 +577,10 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
         stage: 'stream',
         rawMessage,
         code: errorCode,
+        // ⭐ 结构化类别：chat 错误帧只有它（`errorCode` / `error` 在协议 schema 里不存在，
+        //    所以上面那个 `errorCode` 在这条路上**永远是 undefined**）。
+        //    没有它，我们只能按各厂商五花八门的措辞猜。
+        kind: payload.errorKind,
         details: errorDetails,
       });
       const correlation: ErrorCorrelation = {

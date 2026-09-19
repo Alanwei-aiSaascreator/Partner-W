@@ -785,6 +785,12 @@
     "boundaryTitle": "오류가 발생했습니다",
     "conductorInitFailed": "팀 코디네이터 초기화에 실패했습니다",
     "failed": "실패",
+    "kind": {
+      "context_length": "대화가 모델의 컨텍스트 길이를 초과했습니다.",
+      "rate_limit": "요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.",
+      "refusal": "모델이 이 요청을 거부했습니다.",
+      "timeout": "요청 시간이 초과되었습니다."
+    },
     "reload": "새로고침",
     "requestFailed": "요청 실패",
     "sendFailed": "전송 실패",

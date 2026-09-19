@@ -785,6 +785,12 @@
     "boundaryTitle": "Algo deu errado",
     "conductorInitFailed": "Falha ao inicializar o coordenador da equipe",
     "failed": "falhou",
+    "kind": {
+      "context_length": "A conversa excede o limite de contexto do modelo.",
+      "rate_limit": "Muitas solicitações — tente novamente em instantes.",
+      "refusal": "O modelo recusou esta solicitação.",
+      "timeout": "A solicitação expirou."
+    },
     "reload": "Recarregar",
     "requestFailed": "Falha na requisição",
     "sendFailed": "Falha no envio",

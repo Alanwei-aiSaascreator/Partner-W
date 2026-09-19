@@ -785,6 +785,12 @@
     "boundaryTitle": "問題が発生しました",
     "conductorInitFailed": "チームコーディネーターの初期化に失敗しました",
     "failed": "失敗",
+    "kind": {
+      "context_length": "会話がモデルのコンテキスト長を超えています。",
+      "rate_limit": "リクエストが多すぎます。しばらくしてから再試行してください。",
+      "refusal": "モデルがこのリクエストを拒否しました。",
+      "timeout": "リクエストがタイムアウトしました。"
+    },
     "reload": "再読み込み",
     "requestFailed": "リクエストに失敗しました",
     "sendFailed": "送信に失敗しました",

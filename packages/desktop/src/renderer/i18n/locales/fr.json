@@ -785,6 +785,12 @@
     "boundaryTitle": "Une erreur est survenue",
     "conductorInitFailed": "Échec de l'initialisation du coordinateur d'équipe",
     "failed": "échoué",
+    "kind": {
+      "context_length": "La conversation dépasse la limite de contexte du modèle.",
+      "rate_limit": "Trop de requêtes — veuillez réessayer plus tard.",
+      "refusal": "Le modèle a refusé cette requête.",
+      "timeout": "La requête a expiré."
+    },
     "reload": "Recharger",
     "requestFailed": "Échec de la requête",
     "sendFailed": "Échec de l'envoi",

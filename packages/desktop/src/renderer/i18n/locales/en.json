@@ -785,6 +785,12 @@
     "boundaryTitle": "Something went wrong",
     "conductorInitFailed": "Failed to initialize team coordinator",
     "failed": "failed",
+    "kind": {
+      "context_length": "The conversation exceeds the model's context limit.",
+      "rate_limit": "Too many requests — please try again shortly.",
+      "refusal": "The model refused this request.",
+      "timeout": "The request timed out."
+    },
     "reload": "Reload",
     "requestFailed": "Request failed",
     "sendFailed": "Send failed",

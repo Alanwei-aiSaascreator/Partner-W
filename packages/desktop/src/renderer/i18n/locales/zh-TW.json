@@ -785,6 +785,12 @@
     "boundaryTitle": "發生錯誤",
     "conductorInitFailed": "團隊協調者初始化失敗",
     "failed": "失敗",
+    "kind": {
+      "context_length": "對話已超出模型的上下文長度上限。",
+      "rate_limit": "請求過於頻繁，請稍後再試。",
+      "refusal": "模型拒絕了這次請求。",
+      "timeout": "請求逾時。"
+    },
     "reload": "重新載入",
     "requestFailed": "請求失敗",
     "sendFailed": "傳送失敗",

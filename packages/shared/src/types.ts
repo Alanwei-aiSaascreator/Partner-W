@@ -274,6 +274,14 @@ export interface AppError {
   source: ErrorSource;
   stage: ErrorStage;
   code?: string;
+  /**
+   * 网关给的**结构化**错误类别（chat 错误帧的 `errorKind`，协议里的闭集枚举）。
+   *
+   * ⚠️ 与 `code` 是两回事：`code` 来自 RPC 那套（`RATE_LIMIT` / `TIMEOUT` …），
+   * 而 chat 错误帧**不带 `code`**（协议 schema 里没有这个字段）—— 所以只靠 `code`
+   * 的话，聊天这条路上永远是 undefined。
+   */
+  kind?: string;
   rawMessage: string;
   details?: Record<string, unknown>;
   retryable: Retryable;

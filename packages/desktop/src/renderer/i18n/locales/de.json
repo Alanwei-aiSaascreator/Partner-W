@@ -785,6 +785,12 @@
     "boundaryTitle": "Etwas ist schiefgelaufen",
     "conductorInitFailed": "Team-Koordinator konnte nicht initialisiert werden",
     "failed": "Fehlgeschlagen",
+    "kind": {
+      "context_length": "Die Unterhaltung überschreitet das Kontextlimit des Modells.",
+      "rate_limit": "Zu viele Anfragen – bitte später erneut versuchen.",
+      "refusal": "Das Modell hat diese Anfrage abgelehnt.",
+      "timeout": "Zeitüberschreitung bei der Anfrage."
+    },
     "reload": "Neu laden",
     "requestFailed": "Anfrage fehlgeschlagen",
     "sendFailed": "Senden fehlgeschlagen",

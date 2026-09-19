@@ -14,6 +14,23 @@ export interface ChatEventPayload {
   content?: ChatContentBlock[];
   text?: string;
   errorMessage?: string;
+  /**
+   * 网关给的**结构化**错误类别 —— 协议里有 validator（`ChatEventErrorKindSchema`）。
+   *
+   * ⚠️ 这才是稳定的那一半：`errorMessage` 是各厂商自己的措辞（改一个字就认不出），
+   * 而这里是闭集。用它选文案比按措辞猜可靠。
+   */
+  errorKind?: 'refusal' | 'timeout' | 'rate_limit' | 'context_length' | 'unknown';
+  /** 脱敏后的厂商诊断信息（协议里的 `errorDetail`）。 */
+  errorDetail?: Record<string, unknown>;
+  /** 结束原因（如 `stop` / `length`）。 */
+  stopReason?: string;
+  /**
+   * ⚠️ 下面两个**当前协议 schema 里没有** —— 它们是我们照着 RPC 那套猜的形状。
+   * 实测运行时的 `ChatErrorEventSchema` 只有：`state` / `message` / `errorMessage` /
+   * `errorKind` / `errorDetail` / `usage` / `stopReason`（外加 base 的 runId/sessionKey/seq）。
+   * 保留读取是为了容错（万一别的版本发），但**别把它们当准**：真实数据走 `errorKind`。
+   */
   errorCode?: string;
   error?: { code?: string; message?: string; details?: Record<string, unknown> };
 }
