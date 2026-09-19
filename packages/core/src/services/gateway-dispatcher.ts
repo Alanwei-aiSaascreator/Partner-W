@@ -315,6 +315,64 @@ export interface GatewayDispatcherDeps {
 }
 
 const DEDUP_FALLBACK_WINDOW_MS = 2000;
+
+/**
+ * `sessions.changed` 的 `reason` —— **没有权威词表**（这条很重要，别硬凑）。
+ *
+ * 运行时的类型就写着 `reason: string`：
+ * `src/gateway/server-methods/session-change-event.ts` 的 `SessionChangedPayload`
+ * **没有联合类型可读**。⇒ 这不是"闭集漏了几个"，而是**开放词表**。
+ *
+ * ⚠️ 所以这份名单和 `ITEM_STATUS_IDS` / `TOOL_PHASE_IDS` 那类常量**性质不同**：
+ * - 那些是**抄运行时的类型**，可以当"已知全集"用；
+ * - 这份是**数出来的**（`~/git/openclaw` 0153d84c；生产代码里 44 个带字面量 reason
+ *   的发射点），**不是证明只有这些**。
+ *
+ * 它的用途恰恰相反：让"没见过的新 reason"能被 `unknown_reason` 记出来，
+ * 然后**长进这份名单**。⇒ **别把它读成全集。**
+ *
+ * ⚠️ 记忆里曾经把 reason 记成"五个"（`delete`/`archive`/`cron-binding`/
+ * `runner-availability`/`profile-identity`）—— 那份清单**本身就是个盖子**：
+ * 真实数是 **26 个以上**。这就是为什么这里要写"数出来的"而不是"实测 N 个"。
+ */
+export const SESSION_CHANGE_REASONS: readonly string[] = [
+  'abort',
+  'archive',
+  'board',
+  'checkpoint-branch',
+  'cleanup',
+  'compact',
+  'create',
+  'cron-binding',
+  'cron-bindings-loaded',
+  'cron-continuation',
+  'delete',
+  'dispatch',
+  'fork',
+  'goal',
+  'groups',
+  'move',
+  'owner',
+  'patch',
+  'placement',
+  'plugin-patch',
+  'profile-identity',
+  'project',
+  'reclaim',
+  'runner-availability',
+  'send',
+  'sharing',
+];
+
+/** 上面那些 **+** 我们自己宽出来的两个删除别名（`SESSION_DELETE_REASONS` 里的）。 */
+const SESSION_CHANGE_KNOWN_REASONS = new Set<string>([...SESSION_CHANGE_REASONS, 'deleted', 'session-delete']);
+
+/**
+ * 会话**没了**的 reason（**行为**白名单，不是"已知词表"）。
+ *
+ * ⚠️ 这两个别名（`deleted` / `session-delete`）在运行时发射点里**数不到** ——
+ * 是我们自己宽出来的容错。所以它们进"已知"但不进 `SESSION_CHANGE_REASONS`。
+ */
 const SESSION_DELETE_REASONS = new Set(['delete', 'deleted', 'session-delete']);
 
 /**
@@ -1057,6 +1115,29 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
     }
 
     if (isSystemSession(sessionKey) || !isSubagentSession(sessionKey)) return;
+
+    // ⭐ **认不出的 reason 要留痕 —— 位置是刻意的，就在这道过滤下面。**
+    //
+    // 为什么不在上面：上面那道 `isSystemSession || !isSubagentSession` 是**设计边界**
+    //（非子代理会话的任何 reason 我们都不处理），不是"丢弃"。在它上面记 =
+    // 对**每一条** `sessions.changed` 记一条 ⇒ 那是噪音，没有信号。
+    //
+    // 为什么在这里值得记：**在它下面，`reason` 是有后果的** —— 它会一路走到
+    // "把这条会话提名为对比列"。⇒ 一个没见过的新 reason 在这里可能做出**错的提名**，
+    // 那正是要看见的东西。
+    //
+    // ⚠️ **行为一个字节不改**：认不出就照旧走 fallthrough（和 `item` 那边"不知道就别改它的
+    //    样子"同一条纪律）。留痕只是让"将来要不要为它加分支"这件事**有据可查**。
+    const reasonName = reason ? reason : '(missing)';
+    if (!SESSION_CHANGE_KNOWN_REASONS.has(reasonName)) {
+      debugEvent('renderer.session.unknown_reason', {
+        gatewayId,
+        sessionKey,
+        spawnedBy,
+        phase,
+        reason: reasonName,
+      });
+    }
 
     if (reason && SESSION_DELETE_REASONS.has(reason)) {
       debugEvent('renderer.session.ignored.delete', { gatewayId, sessionKey, reason });

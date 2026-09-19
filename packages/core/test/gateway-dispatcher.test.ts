@@ -7,6 +7,7 @@ import {
   ITEM_STATUS_IDS,
   RETRY_RUN_PHASE,
   RUN_PHASE_IDS,
+  SESSION_CHANGE_REASONS,
   TOOL_IGNORED_PHASES,
   TOOL_PHASE_IDS,
   type GatewayDispatcherDeps,
@@ -1150,6 +1151,171 @@ describe('item 流的两个词表：未处理的取值要留痕', () => {
 
     const calls = h.messageStore.upsertToolCall.mock.calls;
     expect((calls[calls.length - 1]![2] as { status: string }).status).toBe('running');
+  });
+});
+
+/**
+ * `sessions.changed` 的 `reason` —— **没有权威词表**，所以规则不一样。
+ *
+ * ## 与前面几刀的关键差别
+ *
+ * 前面几处（`item.status` / `tool.phase` / `chat.state` …）都有运行时的**闭集**，
+ * 所以"认不出的"必然是**少数**，逐条留痕是**信号**。
+ * 这里不是：运行时的类型就写着
+ *
+ * ```ts
+ * // src/gateway/server-methods/session-change-event.ts
+ * type SessionChangedPayload = { …, reason: string, … };   // ← string，没有联合
+ * ```
+ *
+ * **⇒ 无权威词表。** 数出来的已知取值有 **26 个以上**（44 个带字面量 reason 的发射点），
+ * 而我们对其中**绝大多数**都是"不处理"。⇒ 如果对每条 `sessions.changed` 都记一条
+ * "认不出的 reason"，那不是信号，是**噪音**。
+ *
+ * ## 所以留痕放在哪儿：**过滤之后**，位置是刻意的
+ *
+ * `isSystemSession(sessionKey) || !isSubagentSession(sessionKey)` 那道过滤是
+ * **设计边界**（非子代理会话的任何 reason 我们都不处理），不是"丢弃"。
+ * 而在它**下面**，`reason` 决定要不要把这条会话**提名为对比列**
+ * ⇒ **一个没见过的新 reason 在这里是有后果的**。那才值得留痕。
+ *
+ * ⚠️ 另一头：这份"已知"名单**不是全集也不是证明**，它是**会长的**。
+ *    `unknown_reason` 就是让它长的机制 —— 看到一条就从这里补一个。
+ *    （记忆里曾把 reason 记成"五个" —— 那份清单本身就是这种"盖子"。）
+ */
+describe('sessions.changed 的 reason：无权威词表，认不出要留痕', () => {
+  /** 真形状：`/^agent:([^:]+):subagent:([a-f0-9-]+)$/`（`shared/src/constants.ts`）。 */
+  const SUBAGENT_KEY = 'agent:main:subagent:11111111-2222-3333-4444-555555555555';
+  const SYSTEM_KEY = 'agent:main:clawwork:system:memory:a1b2c3d4-e5f6-7890-abcd-ef1234567890';
+
+  const emitSessionChanged = (h: ReturnType<typeof createHarness>, payload: Record<string, unknown>) =>
+    h.emit('sessions.changed', { gatewayId: 'gw-1', ...payload });
+
+  /** 让子代理会话能一路走到「提名对比列」那一步。 */
+  function asEnsembleTask(h: ReturnType<typeof createHarness>) {
+    h.deps.getTaskStore = () => ({ tasks: [{ ...TASK, ensemble: true }], updateTaskTitle: vi.fn() });
+    const onPerformerCandidate = vi.fn();
+    h.deps.onPerformerCandidate = onPerformerCandidate;
+    return onPerformerCandidate;
+  }
+
+  it('⭐ 未知 reason（子代理会话）⇒ 留痕一条，带 reason 原值 / sessionKey / 来源', () => {
+    const h = createHarness();
+    asEnsembleTask(h);
+
+    emitSessionChanged(h, { sessionKey: SUBAGENT_KEY, spawnedBy: TASK.sessionKey, reason: 'some_future_reason' });
+
+    expect(h.deps.reportDebugEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'renderer.session.unknown_reason',
+        data: expect.objectContaining({
+          reason: 'some_future_reason',
+          sessionKey: SUBAGENT_KEY,
+          gatewayId: 'gw-1',
+        }),
+      }),
+    );
+  });
+
+  it('⭐⭐ **行为不变**（这是刻意的）：未知 reason 照旧走 fallthrough ⇒ 仍然提名对比列', () => {
+    // ⚠️ 这条**钉的是现有行为**，不是"我们认为它对"。
+    //    口径是「认不出的 reason：**不改行为**、只加留痕」，所以这里只把现状写下来。
+    //    留痕的意义**正是**：将来真要决定"新 reason 该不该提名"时，日志里有据可查。
+    const h = createHarness();
+    const onPerformerCandidate = asEnsembleTask(h);
+
+    emitSessionChanged(h, { sessionKey: SUBAGENT_KEY, spawnedBy: TASK.sessionKey, reason: 'some_future_reason' });
+
+    expect(onPerformerCandidate).toHaveBeenCalledWith('task-1', SUBAGENT_KEY, 'gw-1');
+  });
+
+  it('⚠️ `reason` **整个缺失**（畸形帧）⇒ 也留痕，用 `(missing)`', () => {
+    const h = createHarness();
+    asEnsembleTask(h);
+
+    emitSessionChanged(h, { sessionKey: SUBAGENT_KEY, spawnedBy: TASK.sessionKey });
+
+    expect(h.deps.reportDebugEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'renderer.session.unknown_reason',
+        data: expect.objectContaining({ reason: '(missing)' }),
+      }),
+    );
+  });
+
+  it('⭐ 非子代理会话 + 未知 reason ⇒ 过滤照旧（**行为不变，且不记**）', () => {
+    // 位置是刻意的：那条过滤是**设计边界**（非子代理会话的任何 reason 都不处理）。
+    // 在它上面记 = 对**每一条** sessions.changed 记一条 ⇒ 噪音，没有信号。
+    const h = createHarness();
+
+    emitSessionChanged(h, { sessionKey: TASK.sessionKey, reason: 'some_future_reason' });
+
+    expect(h.deps.reportDebugEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'renderer.session.unknown_reason' }),
+    );
+  });
+
+  it('⭐ 系统会话 + 未知 reason ⇒ 同样被挡在前面，且不记', () => {
+    const h = createHarness();
+
+    emitSessionChanged(h, { sessionKey: SYSTEM_KEY, reason: 'some_future_reason' });
+
+    expect(h.deps.reportDebugEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'renderer.session.unknown_reason' }),
+    );
+  });
+
+  it.each(['delete', 'deleted', 'session-delete'])(
+    '对照：已知的删除 reason `%s` ⇒ 走原分支、行为与留痕都不变',
+    (reason) => {
+      const h = createHarness();
+      const onPerformerCandidate = asEnsembleTask(h);
+
+      emitSessionChanged(h, { sessionKey: SUBAGENT_KEY, spawnedBy: TASK.sessionKey, reason });
+
+      expect(h.deps.reportDebugEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ event: 'renderer.session.ignored.delete' }),
+      );
+      expect(onPerformerCandidate, '删掉的会话不许被提名为对比列').not.toHaveBeenCalled();
+      expect(h.deps.reportDebugEvent).not.toHaveBeenCalledWith(
+        expect.objectContaining({ event: 'renderer.session.unknown_reason' }),
+      );
+    },
+  );
+
+  it('⭐ 对照：`compact` 是**已知**的（别把它也记成认不出）', () => {
+    const h = createHarness();
+
+    emitSessionChanged(h, { sessionKey: TASK.sessionKey, reason: 'compact', compacted: true });
+
+    expect(h.systemMessages, '压缩提示照旧').toHaveLength(1);
+    expect(h.deps.reportDebugEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'renderer.session.unknown_reason' }),
+    );
+  });
+
+  it('⭐⭐ `compact` 分支**必须仍在过滤之前**（普通会话也收得到）—— 钉住顺序', () => {
+    // 这条是给"顺手调顺序"准备的：`compact` 分支若被挪到
+    // `isSystemSession || !isSubagentSession` 之后，普通任务会话的压缩就**永远收不到**。
+    const h = createHarness();
+
+    // TASK.sessionKey 是**普通任务会话**（不是子代理）——这正是关键。
+    emitSessionChanged(h, { sessionKey: TASK.sessionKey, reason: 'compact', compacted: true });
+
+    expect(h.systemMessages, '普通会话的压缩也要说').toHaveLength(1);
+  });
+
+  it('⭐⭐ 冻结名单：数出来的 reason 全在里面，且没有塞假的', () => {
+    // ⚠️ 这份名单**不是权威闭集**（运行时就是 `string`），它是**数出来的**。
+    //    这条用例只保证"我们数过的那些没被误删"，**不保证**它等于全集 ——
+    //    这正是它和 `ITEM_STATUS_IDS` 那类常量的**根本区别**。
+    // 灵敏度：上游数出来的样本抽查（覆盖常见的、漏了会出事的那几个）。
+    for (const r of ['send', 'abort', 'goal', 'create', 'compact', 'delete', 'archive', 'fork', 'checkpoint-branch']) {
+      expect(SESSION_CHANGE_REASONS, `数过的 reason "${r}" 不在名单里`).toContain(r);
+    }
+    expect(SESSION_CHANGE_REASONS.length, '名单短得不像数过').toBeGreaterThanOrEqual(26);
+    // 反向：名单里不许塞运行时根本不发的（那等于把"知道"写虚）。
+    expect(SESSION_CHANGE_REASONS).not.toContain('some_future_reason');
   });
 });
 
