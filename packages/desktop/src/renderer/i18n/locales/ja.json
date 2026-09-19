@@ -410,8 +410,12 @@
     "revokeFolder": "フォルダ {{name}} の使用を停止",
     "revokeFolderFailed": "フォルダの許可を解除できませんでした",
     "runPhase": {
+      "creating_worktree": "ワークツリーを作成しています…",
+      "naming_worktree": "セッションに名前を付けています…",
       "preparing_context": "コンテキストを準備しています…",
       "preparing_workspace": "ワークスペースを準備しています…",
+      "provisioning_environment": "実行環境を準備しています…",
+      "running_setup": "セットアップを実行しています…",
       "starting_model": "モデルを呼び出しています…",
       "unknown": "準備しています…"
     },

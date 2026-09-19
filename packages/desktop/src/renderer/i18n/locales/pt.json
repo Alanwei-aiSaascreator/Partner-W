@@ -410,8 +410,12 @@
     "revokeFolder": "Parar de usar a pasta {{name}}",
     "revokeFolderFailed": "Falha ao revogar acesso à pasta",
     "runPhase": {
+      "creating_worktree": "Criando o worktree…",
+      "naming_worktree": "Nomeando a sessão…",
       "preparing_context": "Preparando o contexto…",
       "preparing_workspace": "Preparando o espaço de trabalho…",
+      "provisioning_environment": "Preparando o ambiente…",
+      "running_setup": "Executando a configuração…",
       "starting_model": "Chamando o modelo…",
       "unknown": "Preparando…"
     },

@@ -410,8 +410,12 @@
     "revokeFolder": "Ne plus utiliser le dossier {{name}}",
     "revokeFolderFailed": "Échec de la révocation de l'accès au dossier",
     "runPhase": {
+      "creating_worktree": "Création du worktree…",
+      "naming_worktree": "Nommage de la session…",
       "preparing_context": "Préparation du contexte…",
       "preparing_workspace": "Préparation de l'espace de travail…",
+      "provisioning_environment": "Préparation de l'environnement…",
+      "running_setup": "Exécution de la configuration…",
       "starting_model": "Appel du modèle…",
       "unknown": "Préparation…"
     },

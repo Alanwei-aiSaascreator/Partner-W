@@ -302,11 +302,31 @@ const SESSION_DELETE_REASONS = new Set(['delete', 'deleted', 'session-delete']);
 const CATALOG_RETRY_DELAYS_MS = [1000, 2000, 4000, 8000, 15000, 30000];
 
 /**
- * `run_status` 的 phase 是**闭集** —— openclaw `resolveRunStartupPhase` 把内部更细的
- * 阶段归并成对外这 3 个（`tool_execution_started` / `assistant_output_started` 不产出）。
- * 所以映射表可以写死；认不出的 phase 也要显示，不能丢。
+ * `run_status` 的 phase 是**闭集**，但**不是三个而是七个**。
+ *
+ * ⚠️ 这里原先只列了三个，理由是"openclaw `resolveRunStartupPhase` 把内部阶段归并成 3 个"。
+ * **那句话只对了一半**：`resolveRunStartupPhase` 确实只产出三个，但它**不是唯一发出点** ——
+ * 实测随包运行时 2026.9.3 还有两处直接发：
+ * - `chat-send-handler-*.mjs`：`preparing_workspace` / `naming_worktree` / `running_setup` /
+ *   `creating_worktree`（`onProgress: stage => status(stage === "setup" ? "running_setup" : "creating_worktree")`）
+ * - `server-worker-placement-startup-*.mjs`：`provisioning_environment`
+ *
+ * 权威清单在 `sessions-*.mjs` 的 `ChatRunStartupPhaseSchema`（七个字面量），注释写着
+ * *"Coarse startup stages shown while a run has not produced visible activity yet"* ——
+ * 也就是说**这七个全都发生在"还没有任何可见活动"的那段**，正是用户抱怨"卡住好久"的那段死时间。
+ * 只认三个 ⇒ 另外四个退化成泛化的「正在准备…」，白白丢掉网关已经告诉我们的人话。
+ *
+ * 认不出的 phase 依旧照常显示（界面自己退化），不能丢。
  */
-const RUN_STARTUP_PHASES = new Set(['preparing_workspace', 'preparing_context', 'starting_model']);
+const RUN_STARTUP_PHASES = new Set([
+  'preparing_workspace',
+  'naming_worktree',
+  'creating_worktree',
+  'running_setup',
+  'provisioning_environment',
+  'preparing_context',
+  'starting_model',
+]);
 
 /** 供界面判断「这个 phase 有没有对应的文案」，没有就显示泛化的「正在准备…」。 */
 export const RUN_PHASE_IDS: readonly string[] = [...RUN_STARTUP_PHASES];

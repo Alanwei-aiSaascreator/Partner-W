@@ -410,8 +410,12 @@
     "revokeFolder": "停止使用資料夾 {{name}}",
     "revokeFolderFailed": "取消資料夾授權失敗",
     "runPhase": {
+      "creating_worktree": "正在建立工作樹…",
+      "naming_worktree": "正在為工作階段命名…",
       "preparing_context": "正在準備上下文…",
       "preparing_workspace": "正在準備工作區…",
+      "provisioning_environment": "正在準備執行環境…",
+      "running_setup": "正在執行初始化指令碼…",
       "starting_model": "正在呼叫模型…",
       "unknown": "正在準備…"
     },

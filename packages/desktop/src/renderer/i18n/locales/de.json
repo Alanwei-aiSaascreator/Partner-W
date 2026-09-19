@@ -410,8 +410,12 @@
     "revokeFolder": "Ordner {{name}} nicht mehr verwenden",
     "revokeFolderFailed": "Ordnerzugriff konnte nicht aufgehoben werden",
     "runPhase": {
+      "creating_worktree": "Worktree wird erstellt…",
+      "naming_worktree": "Sitzung wird benannt…",
       "preparing_context": "Kontext wird vorbereitet…",
       "preparing_workspace": "Arbeitsbereich wird vorbereitet…",
+      "provisioning_environment": "Umgebung wird vorbereitet…",
+      "running_setup": "Setup wird ausgeführt…",
       "starting_model": "Modell wird aufgerufen…",
       "unknown": "Wird vorbereitet…"
     },

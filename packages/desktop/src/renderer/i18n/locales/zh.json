@@ -410,8 +410,12 @@
     "revokeFolder": "取消使用文件夹 {{name}}",
     "revokeFolderFailed": "取消文件夹授权失败",
     "runPhase": {
+      "creating_worktree": "正在创建工作树…",
+      "naming_worktree": "正在为会话命名…",
       "preparing_context": "正在准备上下文…",
       "preparing_workspace": "正在准备工作区…",
+      "provisioning_environment": "正在准备运行环境…",
+      "running_setup": "正在运行初始化脚本…",
       "starting_model": "正在调用模型…",
       "unknown": "正在准备…"
     },

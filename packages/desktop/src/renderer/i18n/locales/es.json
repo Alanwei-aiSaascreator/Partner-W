@@ -410,8 +410,12 @@
     "revokeFolder": "Dejar de usar la carpeta {{name}}",
     "revokeFolderFailed": "No se pudo revocar el acceso a la carpeta",
     "runPhase": {
+      "creating_worktree": "Creando el worktree…",
+      "naming_worktree": "Nombrando la sesión…",
       "preparing_context": "Preparando el contexto…",
       "preparing_workspace": "Preparando el espacio de trabajo…",
+      "provisioning_environment": "Preparando el entorno…",
+      "running_setup": "Ejecutando la configuración…",
       "starting_model": "Llamando al modelo…",
       "unknown": "Preparando…"
     },

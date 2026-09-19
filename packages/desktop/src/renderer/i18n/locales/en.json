@@ -410,8 +410,12 @@
     "revokeFolder": "Stop using folder {{name}}",
     "revokeFolderFailed": "Failed to revoke folder access",
     "runPhase": {
+      "creating_worktree": "Creating the worktree…",
+      "naming_worktree": "Naming the session…",
       "preparing_context": "Preparing context…",
       "preparing_workspace": "Preparing workspace…",
+      "provisioning_environment": "Preparing the environment…",
+      "running_setup": "Running setup…",
       "starting_model": "Calling model…",
       "unknown": "Preparing…"
     },

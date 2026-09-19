@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createGatewayDispatcher, type GatewayDispatcherDeps } from '../src/services/gateway-dispatcher.js';
+import {
+  createGatewayDispatcher,
+  RUN_PHASE_IDS,
+  type GatewayDispatcherDeps,
+} from '../src/services/gateway-dispatcher.js';
 import type { GatewayEvent, GatewayStatusEvent } from '../src/ports/gateway-transport.js';
 
 type EventListener = (data: GatewayEvent) => void;
@@ -375,6 +379,47 @@ describe('run_status —— 网关的准备进度要显示出来，不能静默�
     const h = createHarness();
     h.emit('agent', { sessionKey: TASK.sessionKey, stream: 'lifecycle', data: { phase: 'end' } });
     expect(h.messageStore.setRunPhase).toHaveBeenCalledWith(TASK.sessionKey, null);
+  });
+
+  /**
+   * ⚠️ 网关实际会发的准备阶段有 **七个**，我们此前只认三个。
+   *
+   * 证据（都是随包运行时 2026.9.3 里读出来的，不是猜的）：
+   * - schema：`sessions-*.mjs` 的 `ChatRunStartupPhaseSchema` —— 七个字面量，注释写着
+   *   *"Coarse startup stages shown while a run has not produced visible activity yet"*；
+   * - emit 点：`chat-send-handler-*.mjs`（`preparing_workspace` / `naming_worktree` /
+   *   `running_setup` / `creating_worktree`）与 `server-worker-placement-startup-*.mjs`
+   *   （`provisioning_environment`）。
+   *
+   * ⇒ 认不出的那四个会退化成泛化文案「正在准备…」，而这四个**恰恰都发生在"还没有任何
+   * 可见活动"的那段**（正是用户说的「卡住好久突然跳出来」那段死时间）——
+   * 网关明明在报"正在创建工作树"，我们却只说"正在准备"。
+   */
+  const REAL_STARTUP_PHASES = [
+    'preparing_workspace',
+    'naming_worktree',
+    'creating_worktree',
+    'running_setup',
+    'provisioning_environment',
+    'preparing_context',
+    'starting_model',
+  ] as const;
+
+  it('⭐ 七个真实准备阶段都要标成 known（否则遥测里全记成"网关发了没见过的东西"）', () => {
+    for (const phase of REAL_STARTUP_PHASES) {
+      const h = createHarness();
+      emitRunStatus(h, phase);
+      expect(h.deps.reportDebugEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          event: 'renderer.agent.run_status',
+          data: expect.objectContaining({ phase, known: true }),
+        }),
+      );
+    }
+  });
+
+  it('RUN_PHASE_IDS 与网关的七阶段一致（渲染层靠它挑文案，少一个就少一句人话）', () => {
+    expect([...RUN_PHASE_IDS].sort()).toEqual([...REAL_STARTUP_PHASES].sort());
   });
 });
 
