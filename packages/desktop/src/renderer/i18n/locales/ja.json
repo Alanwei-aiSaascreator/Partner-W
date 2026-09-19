@@ -459,6 +459,7 @@
     "copied": "コピーしました",
     "copyCode": "コードをコピー",
     "copyMessage": "メッセージをコピー",
+    "retryHint": "前のメッセージを再送します（もう一度消費されます）",
     "thinkingProcess": "思考プロセス",
     "toolCallSummary": "{{count}} 件のツール呼び出しを実行",
     "toolCallSummaryWithErrors": "{{count}} 件のツール呼び出しを実行（{{errorCount}} 件失敗）"

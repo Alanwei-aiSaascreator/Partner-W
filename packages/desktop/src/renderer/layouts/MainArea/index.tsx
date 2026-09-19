@@ -33,6 +33,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover';
 import ChatMessage from '@/components/ChatMessage';
+import { useRetryLastTurn, useRetryableErrorMessageId } from '@/hooks/useRetryLastTurn';
 import StreamingMessage from '@/components/StreamingMessage';
 import ThinkingIndicator from '@/components/ThinkingIndicator';
 import ChatInput from '@/components/ChatInput';
@@ -554,6 +555,10 @@ export function ChatContent({
   const processingBySession = useMessageStore((s) => s.processingBySession);
   const highlightedId = useMessageStore((s) => s.highlightedMessageId);
   const setHighlightedMessage = useMessageStore((s) => s.setHighlightedMessage);
+  // B10：错误消息上的「重试」入口。查得到 id 才给按钮（判据由网关的 `errorKind` 来，
+  // 不是从正文猜 —— 见 `useRetryLastTurn` 的说明）。
+  const retryableErrorMessageId = useRetryableErrorMessageId(activeTaskId);
+  const retryLastTurn = useRetryLastTurn(activeTask, messages);
   // 多模型对比：`active` 非空时对话区换成并排面板（时间线原样留在下面，采纳/取消后立刻回来）。
   // ⚠️ 只认**属于当前任务**的那一轮：`active` 是全局唯一的，用户跑到别的任务里看时
   //    这一屏不该还杵着别人的对比（判据收在 `compareRuntimeForTask` 一处）。
@@ -957,6 +962,8 @@ export function ChatContent({
                         onHighlightDone={handleHighlightDone}
                         onImageClick={setLightboxSrc}
                         onFileClick={setPreviewFile}
+                        retryable={item.message.id === retryableErrorMessageId}
+                        onRetry={() => retryLastTurn(item.message.id)}
                       />
                     </div>
                   );

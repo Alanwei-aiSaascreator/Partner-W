@@ -459,6 +459,7 @@
     "copied": "Copié",
     "copyCode": "Copier le code",
     "copyMessage": "Copier le message",
+    "retryHint": "Renvoyer le message précédent — une nouvelle consommation sera facturée",
     "thinkingProcess": "Processus de réflexion",
     "toolCallSummary": "{{count}} appels d'outil exécutés",
     "toolCallSummaryWithErrors": "{{count}} appels d'outil exécutés ({{errorCount}} échoués)"

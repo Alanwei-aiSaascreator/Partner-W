@@ -31,6 +31,16 @@ interface ChatMessageProps {
   onHighlightDone?: () => void;
   onImageClick?: (src: string) => void;
   onFileClick?: (file: { path: string; content: string }) => void;
+  /**
+   * 这条错误**重发能改变结果**（网关说 `rate_limit` / `timeout` 之类）。
+   *
+   * ⚠️ 由调用方从 store 的 `retryableErrorBySession` 取，**别拿正文猜** ——
+   *    判据在网关给的结构化 `errorKind` 里，不在那串给人看的文案里。
+   * ⚠️ 组件**同时**要求 `onRetry` 才渲染按钮：缺一个都不给，点了没反应的按钮比没有更糟。
+   */
+  retryable?: boolean;
+  /** 点「重试」要做什么（重发上一条用户消息 —— 由调用方决定，组件不碰发送）。 */
+  onRetry?: () => void;
 }
 
 function parseFileBlocks(content: string): {
@@ -199,6 +209,8 @@ const ChatMessage = memo(function ChatMessage({
   onHighlightDone,
   onImageClick,
   onFileClick,
+  retryable = false,
+  onRetry,
 }: ChatMessageProps) {
   const { t } = useTranslation();
   const isUser = message.role === 'user';
@@ -241,10 +253,29 @@ const ChatMessage = memo(function ChatMessage({
   }
 
   if (isSystem) {
+    // ⚠️ 两个条件**都**要满足才给按钮：`retryable` 是网关的判断（重发有没有意义），
+    //    `onRetry` 是调用方能不能真的发出去。只满足一个就渲染，等于给一个点了没反应、
+    //    或者点一下白花一次钱的按钮。
+    const showRetry = retryable && Boolean(onRetry);
     return (
       <div className="flex justify-center py-3">
-        <span className="type-support rounded-full bg-[var(--bg-tertiary)] px-3 py-1 text-[var(--text-muted)]">
+        <span className="type-support inline-flex items-center gap-2 rounded-full bg-[var(--bg-tertiary)] px-3 py-1 text-[var(--text-muted)]">
           {message.content}
+          {showRetry ? (
+            <button
+              type="button"
+              data-testid="chat-message-retry"
+              // 重试 = 重新发一条消息，跟正常发送一样计费 —— 必须说出来
+              title={t('chatMessage.retryHint')}
+              className={cn(
+                'type-support shrink-0 rounded-full px-2 py-0.5 font-medium',
+                'text-[var(--accent)] hover:bg-[var(--bg-hover)] transition-colors glow-focus',
+              )}
+              onClick={() => onRetry?.()}
+            >
+              {t('common.retry')}
+            </button>
+          ) : null}
         </span>
       </div>
     );

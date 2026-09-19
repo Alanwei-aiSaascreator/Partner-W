@@ -459,6 +459,7 @@
     "copied": "Copiado",
     "copyCode": "Copiar código",
     "copyMessage": "Copiar mensagem",
+    "retryHint": "Reenviar a mensagem anterior — será cobrado novamente",
     "thinkingProcess": "Processo de raciocínio",
     "toolCallSummary": "{{count}} chamadas de ferramenta executadas",
     "toolCallSummaryWithErrors": "{{count}} chamadas de ferramenta executadas ({{errorCount}} falharam)"

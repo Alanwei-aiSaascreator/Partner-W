@@ -344,6 +344,9 @@ const messageState = {
   highlightedMessageId: null,
   setHighlightedMessage: vi.fn(),
   runPhaseBySession: {},
+  // B10：MainArea 会读它决定"给不给重试按钮"。手写的 store 桩**必须跟着长**，
+  // 缺一个字段就是整屏聊天区渲染崩掉（这里是桩的保真度问题，不是产品代码的问题）。
+  retryableErrorBySession: {},
 };
 
 const roomState = { rooms: {} };

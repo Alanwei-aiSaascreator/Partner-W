@@ -459,6 +459,7 @@
     "copied": "Kopiert",
     "copyCode": "Code kopieren",
     "copyMessage": "Nachricht kopieren",
+    "retryHint": "Vorherige Nachricht erneut senden – es wird erneut abgerechnet",
     "thinkingProcess": "Denkprozess",
     "toolCallSummary": "{{count}} Tool-Aufrufe ausgefuehrt",
     "toolCallSummaryWithErrors": "{{count}} Tool-Aufrufe ausgefuehrt ({{errorCount}} fehlgeschlagen)"

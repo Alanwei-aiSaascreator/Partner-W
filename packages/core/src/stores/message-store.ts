@@ -96,6 +96,23 @@ export interface MessageState {
    * ⚠️ 不落库：这是**本轮界面状态**，不是对话数据（与 `runPhaseBySession` 同性质）。
    */
   errorBySession: Record<string, string>;
+  /**
+   * 这个会话上**可以重试**的那条错误（`messageId` 指向时间线里那句错误）。
+   *
+   * 为什么要它：`AppError.retryable` 长期是个**死字段** —— 算了没人读，而且在
+   * chat 这条路上还恒为 `'unknown'`（判断只认 `code`，而 chat 错误帧里没有 `code`）。
+   * 接上它需要一处"界面能查到"的落点，就是这里。**只有 `retryable === 'yes'` 才登记。**
+   *
+   * 为什么**不**落库（不加 `messages` 的列）：这是**本轮界面状态**，与
+   * `runPhaseBySession` / `errorBySession` 同性质；而且重启后对着一条旧错误重发同一句话，
+   * 模型/上下文可能早变了 —— 那不是我们想促成的行为。
+   *
+   * ⚠️ 两条纪律（都有用例钉着）：
+   *   ① **空闲→忙**（真的又跑起来一轮）就作废 —— 否则旧按钮点一下 = 再花一次钱；
+   *   ② `setProcessing(false)` **不许**清 —— dispatcher 的错误分支正是"先关忙、再登记"，
+   *      在那里清会把刚登记的按钮立刻抹掉，用户永远看不到。
+   */
+  retryableErrorBySession: Record<string, { taskId: string; messageId: string }>;
   highlightedMessageId: string | null;
 
   addMessage: (
@@ -161,6 +178,13 @@ export interface MessageState {
   ensureCompactionEpisode: (sessionKey: string) => number;
   /** 压缩进行中标记（活动条显示"正在压缩上下文…"用）。 */
   setSessionCompacting: (sessionKey: string, compacting: boolean) => void;
+  /**
+   * 登记"这条错误可以重试"，界面据此给「重试」按钮。
+   *
+   * ⚠️ **只能**在 `retryable === 'yes'` 时调 —— "不可重试"（模型拒答 / 上下文超长）
+   *    给按钮等于劝用户白花一次钱；`'unknown'` 同理（不知道就别装作知道）。
+   */
+  markRetryableError: (sessionKey: string, target: { taskId: string; messageId: string }) => void;
 }
 
 export interface MessageStoreDeps {
@@ -298,6 +322,7 @@ export function createMessageStore(deps: MessageStoreDeps) {
     progressTextBySession: {},
     turnStartedAtBySession: {},
     errorBySession: {},
+    retryableErrorBySession: {},
     highlightedMessageId: null,
 
     addMessage: (taskId, role, content, attachments?, options?) => {
@@ -535,6 +560,7 @@ export function createMessageStore(deps: MessageStoreDeps) {
         const nextTurns = { ...s.activeTurnBySession };
         const nextProcessing = new Set(s.processingBySession);
         const nextErrors = { ...s.errorBySession };
+        const nextRetryable = { ...s.retryableErrorBySession };
         const nextTurnStartedAt = { ...s.turnStartedAtBySession };
 
         delete nextMessages[taskId];
@@ -547,6 +573,9 @@ export function createMessageStore(deps: MessageStoreDeps) {
         for (const key of Object.keys(nextErrors)) {
           if (parseTaskIdFromSessionKey(key) === taskId) delete nextErrors[key];
         }
+        for (const key of Object.keys(nextRetryable)) {
+          if (parseTaskIdFromSessionKey(key) === taskId) delete nextRetryable[key];
+        }
         for (const key of Object.keys(nextTurnStartedAt)) {
           if (parseTaskIdFromSessionKey(key) === taskId) delete nextTurnStartedAt[key];
         }
@@ -556,6 +585,7 @@ export function createMessageStore(deps: MessageStoreDeps) {
           activeTurnBySession: nextTurns,
           processingBySession: nextProcessing,
           errorBySession: nextErrors,
+          retryableErrorBySession: nextRetryable,
           turnStartedAtBySession: nextTurnStartedAt,
         };
       }),
@@ -572,13 +602,27 @@ export function createMessageStore(deps: MessageStoreDeps) {
         // ⚠️ 只在**从空闲变忙**那一刻打点。已经在忙时再收到 `true`（重连、迟到的
         //    lifecycle.start）绝不能拨表 —— 见 `turnStartedAtBySession` 的说明。
         const startedAt = { ...s.turnStartedAtBySession };
+        // 「可重试错误」同一条纪律：只有**空闲→忙**（真的又跑起来一轮）才作废。
+        // ⚠️ 反过来 `processing === false` **绝不能**清 —— dispatcher 的错误分支正是
+        //    "先 setProcessing(false)、再登记"，在这里清会把刚登记的按钮立刻抹掉。
+        let nextRetryable = s.retryableErrorBySession;
         if (processing) {
-          if (!wasProcessing) startedAt[sessionKey] = Date.now();
+          if (!wasProcessing) {
+            startedAt[sessionKey] = Date.now();
+            if (sessionKey in s.retryableErrorBySession) {
+              nextRetryable = { ...s.retryableErrorBySession };
+              delete nextRetryable[sessionKey];
+            }
+          }
         } else {
           delete startedAt[sessionKey];
         }
 
-        return { processingBySession: next, turnStartedAtBySession: startedAt };
+        return {
+          processingBySession: next,
+          turnStartedAtBySession: startedAt,
+          retryableErrorBySession: nextRetryable,
+        };
       }),
 
     setRunPhase: (sessionKey, phase) =>
@@ -637,5 +681,10 @@ export function createMessageStore(deps: MessageStoreDeps) {
         }
         return { errorBySession: { ...s.errorBySession, [sessionKey]: message } };
       }),
+
+    // 每会话**只留最近一条** —— 攒着没用（界面只给最新那次失败配按钮），还容易给出一条
+    // 早就被后续对话甩在身后的"重试"。
+    markRetryableError: (sessionKey, target) =>
+      set((s) => ({ retryableErrorBySession: { ...s.retryableErrorBySession, [sessionKey]: target } })),
   }));
 }

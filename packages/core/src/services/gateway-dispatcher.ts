@@ -198,6 +198,7 @@ export interface GatewayDispatcherDeps {
     | 'beginCompactionEpisode'
     | 'ensureCompactionEpisode'
     | 'setSessionError'
+    | 'markRetryableError'
   >;
 
   getActiveTaskId: () => string | null;
@@ -605,7 +606,14 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
         store.setSessionError(sessionKey, formatErrorForUser(appError, deps.translate));
       } else if (shouldDisplayError(correlation)) {
         const userText = formatErrorForUser(appError, deps.translate);
-        store.addMessage(taskId, 'system', userText, undefined, { sessionKey });
+        const shown = store.addMessage(taskId, 'system', userText, undefined, { sessionKey });
+        // ⭐ B10：只有**重试真能改变结果**的失败才登记 —— 界面据此给「重试」按钮。
+        //    `'no'`（模型拒答 / 上下文超长）与 `'unknown'` 一律不给：前者重发必然再失败，
+        //    后者我们根本不知道，两种情况下给按钮都是劝用户白花一次钱。
+        //    紧跟在 `addMessage` 之后（而不是提前算），是因为按钮要挂在**这一条**消息上。
+        if (appError.retryable === 'yes') {
+          store.markRetryableError(sessionKey, { taskId, messageId: shown.id });
+        }
         const { title, description } = formatErrorForToast(appError, deps.translate);
         deps.onToast?.('error', title, { description });
         recordDisplayedError(correlation);

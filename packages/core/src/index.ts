@@ -99,6 +99,8 @@ export {
   type CompactionDeps,
 } from './services/compaction-announce.js';
 export type { TranslateFn } from './services/error-classify.js';
+export { findRetryTarget } from './services/retry-turn.js';
+export type { RetryTarget } from './services/retry-turn.js';
 
 export { describeGatewayError, translateGatewayError } from './services/gateway-error-message.js';
 export { describeCommunityError } from './services/community-error-message.js';

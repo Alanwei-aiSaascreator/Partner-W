@@ -63,6 +63,8 @@ function createHarness() {
     }),
     /** 临时会话（多模型对比的一列）的失败走这条旁路，不进时间线。 */
     setSessionError: vi.fn(),
+    /** B10：可重试错误的登记（界面据此给「重试」按钮）。 */
+    markRetryableError: vi.fn(),
   };
 
   const deps: GatewayDispatcherDeps = {
@@ -143,13 +145,14 @@ function createHarness() {
 
 function emitChatError(
   h: ReturnType<typeof createHarness>,
-  opts: { errorMessage: string; errorCode?: string; runId?: string },
+  opts: { errorMessage: string; errorCode?: string; runId?: string; errorKind?: string },
 ) {
   h.emit('chat', {
     sessionKey: TASK.sessionKey,
     state: 'error',
     errorMessage: opts.errorMessage,
     errorCode: opts.errorCode,
+    errorKind: opts.errorKind,
     runId: opts.runId,
   });
 }
@@ -273,6 +276,69 @@ describe('DEDUP_FALLBACK_WINDOW_MS — 2000ms fallback window', () => {
     vi.advanceTimersByTime(1000);
     emitChatError(h, { errorMessage: 'boom' });
     expect(h.systemMessages).toHaveLength(2);
+  });
+});
+
+/**
+ * B10：把 `retryable` 接上 —— 可重试的失败给界面一个「重试」入口。
+ *
+ * 这里盯的**只有一件事**：**该不该登记**。判据是网关给的结构化 `errorKind`
+ * （chat 错误帧里没有 `code`，这也是这个字段长期恒为 `unknown` 的原因）。
+ *
+ * ⚠️ 最关键的一条是"**不**登记"：模型拒答、上下文超长这类重发同一句话只会再失败一次，
+ *    给了按钮等于劝用户白花一次钱。宁可少给，不可乱给。
+ */
+describe('可重试错误的登记（B10）', () => {
+  const TARGET = { taskId: 'task-1', messageId: 'msg-1' };
+
+  it('⭐ 网关说"太频繁/超时" ⇒ 登记，并指向刚落下的那句错误', () => {
+    for (const errorKind of ['rate_limit', 'timeout']) {
+      const h = createHarness();
+      emitChatError(h, { errorMessage: 'RateLimitExceededError: slow down', errorKind });
+
+      expect(h.messageStore.markRetryableError, `kind=${errorKind}`).toHaveBeenCalledWith(TASK.sessionKey, TARGET);
+    }
+  });
+
+  it('⭐ 重发也没用的（拒答 / 上下文超长）⇒ **不**登记 —— 不给按钮就是不劝人白花钱', () => {
+    for (const errorKind of ['refusal', 'context_length']) {
+      const h = createHarness();
+      emitChatError(h, { errorMessage: 'model refused', errorKind });
+
+      expect(h.messageStore.markRetryableError, `kind=${errorKind} 不该给重试入口`).not.toHaveBeenCalled();
+      // 但失败本身照旧要说出来 —— "不给重试"不等于"不告诉用户"
+      expect(h.systemMessages).toHaveLength(1);
+    }
+  });
+
+  it('认不出类别（unknown / 没有 kind）⇒ 不登记', () => {
+    for (const errorKind of ['unknown', undefined]) {
+      const h = createHarness();
+      emitChatError(h, { errorMessage: 'SomethingNewError: x', ...(errorKind ? { errorKind } : {}) });
+
+      expect(h.messageStore.markRetryableError).not.toHaveBeenCalled();
+    }
+  });
+
+  it('去重挡掉的重复错误不再登记 —— 没有新消息，就不该冒出一个新按钮', () => {
+    vi.useFakeTimers();
+    const h = createHarness();
+
+    emitChatError(h, { errorMessage: 'boom', errorKind: 'rate_limit' });
+    emitChatError(h, { errorMessage: 'boom', errorKind: 'rate_limit' });
+
+    expect(h.messageStore.markRetryableError).toHaveBeenCalledTimes(1);
+  });
+
+  it('临时会话（对比的一列）不登记：那列的错误走旁路，时间线上没有可挂按钮的消息', () => {
+    const h = createHarness();
+    const KEY_0 = 'agent:main:clawwork:compare-run-1-0:task:task-1';
+    h.deps.isEphemeralSession = (k: string) => k === KEY_0;
+
+    h.emit('chat', { sessionKey: KEY_0, state: 'error', errorMessage: 'boom', errorKind: 'rate_limit' });
+
+    expect(h.messageStore.markRetryableError).not.toHaveBeenCalled();
+    expect(h.messageStore.setSessionError).toHaveBeenCalled();
   });
 });
 

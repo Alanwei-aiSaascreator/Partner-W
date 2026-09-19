@@ -2,11 +2,36 @@ import type { AppError, ErrorSource, ErrorStage, Retryable } from '@clawwork/sha
 import { RETRYABLE_ERROR_CODES, NON_RETRYABLE_ERROR_CODES } from '@clawwork/shared';
 import { translateGatewayError } from './gateway-error-message.js';
 
-function classifyRetryable(code?: string): Retryable {
-  if (!code) return 'unknown';
-  if (RETRYABLE_ERROR_CODES.has(code)) return 'yes';
-  if (NON_RETRYABLE_ERROR_CODES.has(code)) return 'no';
-  return 'unknown';
+/**
+ * 网关的**结构化**错误类别 → 能不能重试（拍板口径 2026-09-19）。
+ *
+ * ⚠️ 这张表是必需的，不是锦上添花：chat 错误帧里**没有 `code`**（协议 schema 只有
+ *    `errorKind`），所以在那条路上"按 code 判"永远判不出东西 —— 这正是 `retryable`
+ *    长期恒为 `'unknown'` 的原因。
+ *
+ * `refusal` / `context_length` 判**不可**：重发同一句话只会再失败一次，
+ * 给了按钮等于劝用户白花一次钱。`unknown` 故意不在表里 —— 认不出就别替用户下结论。
+ */
+const KIND_RETRYABLE: Record<string, Retryable> = {
+  rate_limit: 'yes',
+  timeout: 'yes',
+  refusal: 'no',
+  context_length: 'no',
+};
+
+/**
+ * `code` 优先（它更具体），认不出再落到 `kind`。
+ *
+ * ⚠️ 认不出的 `code` **不能**早退成 `'unknown'` —— 那会把 `kind` 里现成的信息丢掉
+ *    （网关换一个码的写法就会让判断失效，而 `kind` 是协议里的闭集，稳定得多）。
+ */
+function classifyRetryable(code?: string, kind?: string): Retryable {
+  if (code) {
+    if (RETRYABLE_ERROR_CODES.has(code)) return 'yes';
+    if (NON_RETRYABLE_ERROR_CODES.has(code)) return 'no';
+  }
+  const byKind = kind ? KIND_RETRYABLE[kind] : undefined;
+  return byKind ?? 'unknown';
 }
 
 export function buildAppError(opts: {
@@ -25,7 +50,7 @@ export function buildAppError(opts: {
     kind: opts.kind,
     rawMessage: opts.rawMessage,
     details: opts.details,
-    retryable: classifyRetryable(opts.code),
+    retryable: classifyRetryable(opts.code, opts.kind),
   };
 }
 

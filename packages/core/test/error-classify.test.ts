@@ -85,6 +85,51 @@ describe('formatErrorForUser —— 已知网关错误给中文，未知保留�
   });
 });
 
+/**
+ * `retryable` —— 它此前是个**死字段**：`classifyRetryable()` 算了它，全仓没有任何地方读；
+ * 而在这条路上（chat 错误帧）它还**恒为 `'unknown'`**，因为判断只认 `code`，
+ * 而 chat 帧里**根本没有** `code`（协议 schema 里只有 `errorKind`）。
+ *
+ * ⇒ 接上两件事：①用 `errorKind` 判类别；②（见 `retry-turn` / UI）让界面真的读它。
+ *
+ * 拍板口径（2026-09-19）：`rate_limit` / `timeout` 可重试；`refusal` / `context_length` 不可。
+ */
+describe('retryable —— 用结构化 kind 判，不再恒为 unknown', () => {
+  const retryableOf = (opts: { code?: string; kind?: string }): string =>
+    buildAppError({ source: 'upstream', stage: 'stream', rawMessage: 'x', ...opts }).retryable;
+
+  it('⭐ chat 那条路上没有 code，只有 kind —— 它必须能判出"可以重试"', () => {
+    // 这条就是队列第 10 项说的"永远是 unknown"：只给 kind，老实现返回 unknown。
+    for (const kind of ['rate_limit', 'timeout']) {
+      expect(retryableOf({ kind }), `kind=${kind} 应当可以重试`).toBe('yes');
+    }
+  });
+
+  it('⭐ 结构性不可能靠重试解决的（模型拒答 / 上下文超长）判**不可**重试', () => {
+    // 这两类重发同一句话只会再失败一次 —— 给按钮等于劝用户白花一次钱
+    for (const kind of ['refusal', 'context_length']) {
+      expect(retryableOf({ kind }), `kind=${kind} 不该给重试入口`).toBe('no');
+    }
+  });
+
+  it('认不出的 kind / 没有 kind ⇒ unknown（既不劝重试，也不装作知道）', () => {
+    for (const kind of ['unknown', undefined]) {
+      expect(retryableOf(kind ? { kind } : {})).toBe('unknown');
+    }
+  });
+
+  it('code 与 kind 都给时**以 code 为准**（它更具体）', () => {
+    // 网关说"请求太频繁"，但我们认得这个码、且它躺在不可重试表里 ⇒ 听码的
+    expect(retryableOf({ code: 'QUOTA_EXHAUSTED', kind: 'rate_limit' })).toBe('no');
+    expect(retryableOf({ code: 'RATE_LIMIT', kind: 'refusal' })).toBe('yes');
+  });
+
+  it('code 认不出时**不许早退成 unknown** —— 还有 kind 可用', () => {
+    expect(retryableOf({ code: 'SOME_PROVIDER_SPECIFIC_CODE', kind: 'rate_limit' })).toBe('yes');
+    expect(retryableOf({ code: 'SOME_PROVIDER_SPECIFIC_CODE' })).toBe('unknown');
+  });
+});
+
 describe('formatErrorForToast', () => {
   it('描述字段同样走翻译', () => {
     const err = buildAppError({

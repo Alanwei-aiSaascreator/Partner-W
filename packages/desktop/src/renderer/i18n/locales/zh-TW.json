@@ -459,6 +459,7 @@
     "copied": "已複製",
     "copyCode": "複製程式碼",
     "copyMessage": "複製訊息",
+    "retryHint": "重發上一則訊息，會再扣一次積分",
     "thinkingProcess": "思考過程",
     "toolCallSummary": "已執行 {{count}} 次工具呼叫",
     "toolCallSummaryWithErrors": "已執行 {{count}} 次工具呼叫（{{errorCount}} 次失敗）"
