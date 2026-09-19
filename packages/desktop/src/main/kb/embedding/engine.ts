@@ -18,8 +18,8 @@
  * ## 为什么用 `@huggingface/transformers` 而不是裸 onnxruntime + 自己写分词
  *
  * BERT 的中文分词（CJK 逐字切、WordPiece 续接）细节极多，**写错了不报错**，
- * 只是嵌入质量悄悄变差 —— 检索结果"看起来有点不对"，没人会怀疑到分词头上
- *（跟 `vector-math.ts` 头注释里那条顾虑是同一类）。用参考实现换掉这个风险。
+ * 只是嵌入质量悄悄变差 —— 检索结果"看起来有点不对"，没人会怀疑到分词头上。
+ * 用参考实现换掉这个风险。
  */
 
 import fs from 'node:fs';
@@ -121,8 +121,21 @@ export async function loadEmbeddingEngine(opts: LoadEmbeddingEngineOptions): Pro
       if (texts.length === 0) return [];
 
       // ⚠️ `normalize: true` 不能省：落库的向量按"归一化过"对待，
-      //    之后余弦相似度直接用点积算（见 `vector-math.ts`）。
+      //    之后余弦相似度直接用点积算（消费方是 core 的
+      //    `services/kb/vectors.ts` → `retrieval.ts` 用它排序）。
       //    这里关了的话检索排序会整体失真，而且不报错。
+      //
+      // ⚠️⚠️ **这一行就是池化与归一化的实现。**
+      //    本仓库曾经另有一份手写的 `vector-math.ts`（`meanPool` / `l2Normalize`），
+      //    内容正确、有手算用例，但**从未被任何生产代码调用** —— 而它的头注释
+      //    读起来像是"我们自己在做池化"。那份文件已删：它不提供任何保障，
+      //    却会让来查排序问题的人改一个**根本不执行**的地方。
+      //    要改池化/归一化语义就改这一行；`kb-embedding-engine.test.ts` 钉着它。
+      //
+      // ⚠️ `pooling: 'mean'` 是**按 attention mask 加权**的均值（库的语义），
+      //    不是把整段平铺求平均。padding 位在模型输出里不是精确的 0，而是
+      //    "看起来像噪声"的小值 ⇒ 简单平均会把短句的向量往噪声方向拉，
+      //    短句越多偏得越厉害 —— 又一次"不报错、只是排序悄悄变差"。
       const out = await pipe([...texts], { pooling: 'mean', normalize: true });
 
       const width = out.dims[out.dims.length - 1];
