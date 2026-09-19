@@ -1,14 +1,77 @@
 # OpenClaw Gateway Protocol Whitepaper
 
-> Source of truth: reverse-engineered from `~/git/openclaw` (version 2026.4.2)
-> Date: 2026-04-02
+> Source of truth: reverse-engineered from `~/git/openclaw`
+> Baseline: `0153d84c` (2026-09-09) — previous baseline `2026.4.2` (2026-04-02)
+> ⚠️ **与随包运行时 2026.9.3 的对齐未确认**：本机没有 2026.9.3 的源码 checkout，
+> 无法判定 `0153d84c` 与随包运行时是不是同一条线（见「0. Re-sync 记录」）。
 > Maintenance note: this whitepaper was originally organized from the 2026.3.12-era Gateway implementation and should be refreshed periodically as OpenClaw evolves.
+
+---
+
+## 0. Re-sync 记录（2026.4.2 → `0153d84c` / 2026-09-09）
+
+> 本节是**本次 re-sync 的账**：改了什么、凭什么改、**哪些没覆盖**。
+> 逐条都能在 `~/git/openclaw` 里复核（路径 + 行号见正文的 `> Source:` 标注）。
+
+### 0.1 结构变更：源码**搬了家**，不是协议变了
+
+白皮书原来引用的 28 条源码路径里，**19 条已经不存在**。查清了去向：
+
+| 原来                                            | 现在                                                                      | 性质                                                                                                       |
+| ----------------------------------------------- | ------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `src/gateway/protocol/schema/*.ts`（17 个文件） | **`packages/gateway-protocol/src/schema/*.ts`**                           | **1:1 搬家**，文件名全部保留                                                                               |
+| `src/gateway/protocol/client-info.ts`           | `packages/gateway-protocol/src/client-info.ts`                            | 1:1 搬家                                                                                                   |
+| `src/gateway/server.impl.ts`                    | **拆成 `src/gateway/server/` 下的一大批模块**                             | 结构重构（`client-registry.ts` / `close-reason.ts` / `health-state.ts` / `http-listen.ts` / `hooks.ts` …） |
+| `src/gateway/server-methods/sessions.ts`        | **拆成 `src/gateway/server-methods/sessions-*.ts` + 若干 `session-*.ts`** | 结构重构                                                                                                   |
+
+⇒ 正文里 41 处路径标注已按上表改写；**这是路径修正，不是协议结论变化**。
+
+### 0.2 协议漂移（**本节按口径单独列，不混进正文**）
+
+1. 🔴 **方法目录从"字符串清单"变成"描述符 + 版本门禁"**。
+   原来 `BASE_METHODS` 是一组名字；现在是 `GatewayMethodDescriptor` 元组数组
+   `["<方法>", "<area>", "<scope>", "<since>", {startup}?]`（`src/gateway/methods/core-descriptors.ts`），
+   字段有 `since` / `scope` / `profileAccess` / `startup` / `controlPlaneWrite` / `advertise`。
+   ⇒ **方法有了"从哪个版本开始存在"的语义**，客户端可以据此做能力探测。
+2. 🔴 **方法数量从 111 → 424**（同一文件里数出来的元组行数）。`since` 标注 `<=2026.7` 之外的有 **158 个**，
+   即成批新增。新子系统包括 `question.*`、`users.authConnect.*`、`environments.*`、`worktrees.*`、
+   `skills.library.*`、`audit.*`、`exec.approval.grants.*`、`board.*`、`canvas.*`、`portals.*`、
+   `artifacts.*`、`migrations.*`、`gateway.suspend.*`、`openclaw.*`。
+3. 🔴 **出现了协议版本号**（`packages/gateway-protocol/src/version.ts`）：
+   `PROTOCOL_VERSION = 4`、`MIN_CLIENT_PROTOCOL_VERSION = 4`、
+   `MIN_NODE_PROTOCOL_VERSION = 3`、`MIN_PROBE_PROTOCOL_VERSION = 3`。白皮书此前**没有**这一节。
+4. 🔴 **事件从 24 → 60**（`GATEWAY_EVENTS`：56 个字面量 + 4 个常量）。
+   新增的包括 `question.*`、`terminal.*`、`session.approval`、`session.observer`、
+   `session.operation`、`session.sharing*`、`session.suggestion`、`session.typing`、
+   `task*`、`update.run.changed`、`device.pair.changed`、`node.runnerInventory.changed`、
+   `progressCard.changed`、`mentions.changed`、`portal.changed`、`gateway.suspension` …
+5. ⚠️ **确认删除的 4 个方法**（全库宽松搜索都找不到）：
+   `sessions.unsubscribe`、`node.pair.request`、`node.pair.verify`、`node.canvas.capability.refresh`。
+   （`sessions.subscribe` **还在**；`node.pair.requested`/`resolved` 是**事件**不是方法，别混。）
+6. ✅ **§2.4 的几个常量取值没变**（逐个核过）：`MAX_PAYLOAD_BYTES` 25MB、
+   `MAX_BUFFERED_BYTES` 50MB、`MAX_PREAUTH_PAYLOAD_BYTES` 64KB、`TICK_INTERVAL_MS` 30s、
+   `HEALTH_REFRESH_INTERVAL_MS` 60s、`DEDUPE_TTL_MS` 5min、`DEDUPE_MAX` 1000。
+   ⚠️ 但 `HANDSHAKE_TIMEOUT_MS` **不在 `server-constants.ts` 里了**（见 §2.4）。
+
+### 0.3 ⚠️ 本轮**没有**覆盖的范围（如实）
+
+这次做的是**结构 + 可机械核对的那一层**（路径、方法目录、事件目录、常量取值、确认删除项）。
+**没有**逐节重验语义：
+
+- §5.2–5.17 的**逐方法参数/返回值**没有重验 —— 方法从 111 涨到 424，逐方法重验不是一次能做完的；
+- §7 鉴权内部（`auth-rate-limit.ts` / `method-scopes.ts` 仍在原路径，但**内容没逐行对本**）；
+- §6 HTTP 端点、§9 消息格式、§10 集成指引未重验；
+- **没有**任何真实运行验证（没有起过网关、没有发过帧）——本节所有结论都来自**读源码**。
+
+⇒ 把这份白皮书当"2026.4.2 时代的协议画像 + 2026-09-09 的结构与目录现状"用，
+**别**当"2026-09-09 的完整协议规范"用。
 
 ---
 
 ## 1. Architecture Overview
 
-> Source: `src/gateway/server.impl.ts`, `src/gateway/server-broadcast.ts`, `src/gateway/server-http.ts`
+> Source: `src/gateway/server/`（`server.impl.ts` 在 2026-09-09 已拆成一批模块）,
+> `src/gateway/server-broadcast.ts`, `src/gateway/server-http.ts`
 
 Gateway is a WebSocket-first server (default port `:18789`) sitting between clients and the OpenClaw Agent Engine. All client communication goes through a **single persistent WebSocket connection**.
 
@@ -47,7 +110,7 @@ Key design decisions:
 
 ## 2. Frame Protocol
 
-> Source: `src/gateway/protocol/schema/frames.ts` (RequestFrame, ResponseFrame, EventFrame, GatewayFrame discriminated union)
+> Source: `packages/gateway-protocol/src/schema/frames.ts` (RequestFrame, ResponseFrame, EventFrame, GatewayFrame discriminated union)
 
 All communication uses JSON frames over WebSocket. Three frame types form a discriminated union on the `type` field.
 
@@ -80,7 +143,7 @@ All communication uses JSON frames over WebSocket. Three frame types form a disc
 }
 ```
 
-**Error Codes:** (source: `src/gateway/protocol/schema/error-codes.ts`)
+**Error Codes:** (source: `packages/gateway-protocol/src/schema/error-codes.ts`)
 
 | Code                 | Meaning                              |
 | -------------------- | ------------------------------------ |
@@ -108,18 +171,28 @@ All communication uses JSON frames over WebSocket. Three frame types form a disc
 
 ### 2.4 Constants
 
-> Source: `src/gateway/server-constants.ts`, `src/gateway/handshake-timeouts.ts`
+> Source: `src/gateway/server-constants.ts`（仍在原路径）;
+> 握手超时**搬到了** `packages/gateway-client/src/timeouts.ts`（由 `src/gateway/handshake-timeouts.ts` 再导出）
 
-| Constant                     | Value                  |
-| ---------------------------- | ---------------------- |
-| `MAX_PAYLOAD_BYTES`          | 25 MB                  |
-| `MAX_BUFFERED_BYTES`         | 50 MB (per connection) |
-| `MAX_PREAUTH_PAYLOAD_BYTES`  | 64 KB                  |
-| `TICK_INTERVAL_MS`           | 30,000 ms              |
-| `HEALTH_REFRESH_INTERVAL_MS` | 60,000 ms              |
-| `HANDSHAKE_TIMEOUT_MS`       | 10,000 ms              |
-| `DEDUPE_TTL_MS`              | 5 minutes              |
-| `DEDUPE_MAX`                 | 1,000 entries          |
+| Constant                               | Value                                       |
+| -------------------------------------- | ------------------------------------------- |
+| `MAX_PAYLOAD_BYTES`                    | 25 MB ✅ 未变                               |
+| `MAX_BUFFERED_BYTES`                   | 50 MB (per connection) ✅ 未变              |
+| `MAX_PREAUTH_PAYLOAD_BYTES`            | 64 KB ✅ 未变                               |
+| `TICK_INTERVAL_MS`                     | 30,000 ms ✅ 未变                           |
+| `HEALTH_REFRESH_INTERVAL_MS`           | 60,000 ms ✅ 未变                           |
+| `DEDUPE_TTL_MS`                        | 5 minutes ✅ 未变                           |
+| `DEDUPE_MAX`                           | 1,000 entries ✅ 未变                       |
+| ~~`HANDSHAKE_TIMEOUT_MS`~~             | ⚠️ **这个名字没有了**（2026-09-09 实测）    |
+| `DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS` | **15,000 ms**（原来记的 10,000 **是错的**） |
+| `DEFAULT_GATEWAY_REQUEST_TIMEOUT_MS`   | 30,000 ms（新增记录）                       |
+| `MIN_CONNECT_CHALLENGE_TIMEOUT_MS`     | 250 ms（新增记录）                          |
+| `MAX_CONNECT_CHALLENGE_TIMEOUT_MS`     | = 上面的 preauth 值                         |
+| `MAX_SAFE_TIMEOUT_DELAY_MS`            | 2,147,483,647                               |
+| `WS_COMPRESSION_THRESHOLD_BYTES`       | 4 KB（新增记录）                            |
+| `WEBSOCKET_CLOSE_GRACE_MS`             | 1,000 ms（新增记录）                        |
+
+⚠️ 握手超时可用环境变量覆盖：`OPENCLAW_HANDSHAKE_TIMEOUT_MS`（`src/gateway/call.ts`）。
 
 ---
 
@@ -151,7 +224,7 @@ Client                          Gateway
 
 ### 3.2 ConnectParams
 
-> Source: `src/gateway/protocol/schema/frames.ts` → `ConnectParamsSchema`
+> Source: `packages/gateway-protocol/src/schema/frames.ts` → `ConnectParamsSchema`
 
 ```typescript
 {
@@ -193,7 +266,7 @@ Client                          Gateway
 
 ### 3.3 Client Identity
 
-> Source: `src/gateway/protocol/client-info.ts` → `GATEWAY_CLIENT_IDS`, `GATEWAY_CLIENT_MODES`, `GATEWAY_CLIENT_CAPS`
+> Source: `packages/gateway-protocol/src/client-info.ts` → `GATEWAY_CLIENT_IDS`, `GATEWAY_CLIENT_MODES`, `GATEWAY_CLIENT_CAPS`
 
 **Client IDs** (for ClawWork, use `openclaw-macos`):
 
@@ -235,7 +308,7 @@ Capabilities are requested in `ConnectParams.caps` and gate access to specific e
 
 ### 3.5 HelloOk Response
 
-> Source: `src/gateway/protocol/schema/frames.ts` → `HelloOkSchema`, `src/gateway/protocol/schema/snapshot.ts` → `SnapshotSchema`
+> Source: `packages/gateway-protocol/src/schema/frames.ts` → `HelloOkSchema`, `packages/gateway-protocol/src/schema/snapshot.ts` → `SnapshotSchema`
 
 ```typescript
 {
@@ -324,6 +397,25 @@ Gateway broadcasts 24 event types. All events use the Event Frame format.
 | `plugin.approval.resolved`  | varies                                       | No                    | `operator.approvals` | Plugin approval resolution |
 | `update.available`          | `{ currentVersion, latestVersion, channel }` | No                    | —                    | Software update            |
 
+**2026-09-09 更新：源里存在、上表没有的事件（36 个）**
+
+> ⚠️ 只列**名字**（`GATEWAY_EVENTS` 里数出来的）。**payload / dropIfSlow / scope 没有验**，
+> 所以不填 —— 填了就是猜。上表那 24 行的 payload 列同理**未重验**。
+
+`chat.metadata.changed` · `ui.command` · `session.approval` · `session.observer` ·
+`session.operation` · `session.sharing` · `session.sharing.evidence` · `session.suggestion` ·
+`session.typing` · `controlUi.sessionPullRequests.changed` · `plugins.controlUi.changed` ·
+`talk.event` · `gateway.suspension` · `task` · `task.suggestion` · `node.presence` ·
+`node.hostStats` · `node.invoke.cancel` · `node.invoke.input` · `node.runnerInventory.changed` ·
+`device.pair.changed` · `device.pair.setup.completed` · `device.pair.setup.deliveryUncertain` ·
+`users.prefs.changed` · `skills.changed` · `voicewake.routing.changed` · `question.requested` ·
+`question.resolved` · `openclaw.approval.requested` · `openclaw.approval.resolved` ·
+`terminal.data` · `terminal.exit` · `portal.changed` · `progressCard.changed` ·
+`mentions.changed` · `update.run.changed`
+
+（`update.available` 上表已有；它是 `GATEWAY_EVENT_UPDATE_AVAILABLE` 常量的值，**在源里不是字面量**，
+所以按常量解析后比对。）
+
 **Scope Guards:**
 
 - `operator.admin` — has access to all scoped events
@@ -334,7 +426,7 @@ Gateway broadcasts 24 event types. All events use the Event Frame format.
 
 ### 4.2 Chat Event (event: `chat`)
 
-> Source: `src/gateway/protocol/schema/logs-chat.ts` → `ChatEventSchema`
+> Source: `packages/gateway-protocol/src/schema/logs-chat.ts` → `ChatEventSchema`
 
 The primary event for receiving AI responses. Streams incrementally.
 
@@ -376,7 +468,7 @@ The primary event for receiving AI responses. Streams incrementally.
 
 ### 4.3 Agent Event (event: `agent`)
 
-> Source: `src/gateway/protocol/schema/agent.ts` → `AgentEventSchema`
+> Source: `packages/gateway-protocol/src/schema/agent.ts` → `AgentEventSchema`
 
 Requires `caps: ["tool-events"]` capability. Provides granular agent execution visibility.
 
@@ -461,7 +553,27 @@ receive tool events. Registration happens automatically when a client sends `cha
 
 ### 5.1 Complete Method List
 
-> Source: `src/gateway/server-methods-list.ts` → `BASE_METHODS`, `listGatewayMethods()`
+> Source: `src/gateway/methods/core-descriptors.ts`（元组数组）→ `src/gateway/server-methods-list.ts` → `listGatewayMethods()`
+>
+> ⚠️ **2026-09-09 更新（口径变了，不只是数字变了）**：
+>
+> 1. 方法目录**不再是一串名字**，而是 `GatewayMethodDescriptor` 元组：
+>    `["<方法>", "<area>", "<scope>", "<since>", { startup }?]`，字段有
+>    `since` / `scope` / `profileAccess` / `startup` / `controlPlaneWrite` / `advertise`。
+>    ⇒ **方法有了"从哪个版本开始存在"的语义**，客户端可以据此做能力探测。
+> 2. **数量：111 → 424**（同一文件里的元组行数）。`since` 标 `<=2026.7` 之外的有 **158 个**。
+> 3. **scope 分布**：`operator.read` 145、`operator.admin` 122、`operator.write` 86、
+>    `operator.approvals` 16、`operator.talk` 14、`operator.pairing` 14、`dynamic` 11、
+>    `node` 11、`operator.questions` 5。
+> 4. **新增子系统**（成批出现）：`question.*`、`users.authConnect.*`、`environments.*`、
+>    `worktrees.*`、`skills.library.*`、`audit.*`、`exec.approval.grants.*`、`board.*`、
+>    `canvas.*`、`portals.*`、`artifacts.*`、`migrations.*`、`gateway.suspend.*`、`openclaw.*`。
+> 5. ⚠️ **确认删除的 4 个**（全库宽松搜索都找不到）：`sessions.unsubscribe`、
+>    `node.pair.request`、`node.pair.verify`、`node.canvas.capability.refresh`。
+>    （`sessions.subscribe` 还在；`node.pair.requested`/`resolved` 是**事件**不是方法。）
+>
+> ⚠️ 下面这份清单是 **2026.4.2 时代的快照**，**不再完整**（缺 ~313 个）。
+> 权威清单看源码；**逐方法的参数/返回值本轮没有重验**（见 §0.3）。
 
 ```
 health                    doctor.memory.status      logs.tail
@@ -516,7 +628,7 @@ Channel plugins may register additional methods.
 
 ### 5.2 Chat Methods (Core for ClawWork)
 
-> Source: schema `src/gateway/protocol/schema/logs-chat.ts`, impl `src/gateway/server-methods/chat.ts`
+> Source: schema `packages/gateway-protocol/src/schema/logs-chat.ts`, impl `src/gateway/server-methods/chat.ts`
 
 #### `chat.send`
 
@@ -614,7 +726,7 @@ Inject a system message into a session (admin/testing).
 
 ### 5.3 Session Methods
 
-> Source: schema `src/gateway/protocol/schema/sessions.ts`, impl `src/gateway/server-methods/sessions.ts`
+> Source: schema `packages/gateway-protocol/src/schema/sessions.ts`, impl `src/gateway/server-methods/sessions.ts`
 
 #### `sessions.create`
 
@@ -793,7 +905,7 @@ Compress session transcript.
 
 ### 5.4 Agent Methods
 
-> Source: `src/gateway/protocol/schema/agent.ts` → `AgentParamsSchema`, `AgentIdentityParamsSchema`, `AgentWaitParamsSchema`
+> Source: `packages/gateway-protocol/src/schema/agent.ts` → `AgentParamsSchema`, `AgentIdentityParamsSchema`, `AgentWaitParamsSchema`
 
 #### `agent`
 
@@ -857,7 +969,7 @@ Wait for an agent run to complete.
 
 ### 5.5 Agent & Model Management
 
-> Source: `src/gateway/protocol/schema/agents-models-skills.ts`
+> Source: `packages/gateway-protocol/src/schema/agents-models-skills.ts`
 
 #### `agents.list`
 
@@ -980,7 +1092,7 @@ Manage agent configuration files (system prompt, etc).
 
 ### 5.6 External Messaging
 
-> Source: `src/gateway/protocol/schema/agent.ts` → `SendParamsSchema`, `PollParamsSchema`
+> Source: `packages/gateway-protocol/src/schema/agent.ts` → `SendParamsSchema`, `PollParamsSchema`
 
 #### `send`
 
@@ -1025,7 +1137,7 @@ Create a poll in an external channel.
 
 ### 5.7 Configuration Methods
 
-> Source: `src/gateway/protocol/schema/config.ts`
+> Source: `packages/gateway-protocol/src/schema/config.ts`
 
 #### `config.get` / `config.set` / `config.patch` / `config.apply`
 
@@ -1037,7 +1149,7 @@ Get JSON Schema for configuration validation.
 
 ### 5.8 Cron Methods
 
-> Source: `src/gateway/protocol/schema/cron.ts`
+> Source: `packages/gateway-protocol/src/schema/cron.ts`
 
 Scheduled task management.
 
@@ -1136,7 +1248,7 @@ Get execution history.
 
 #### `tools.effective`
 
-> Source: `src/gateway/protocol/schema/agents-models-skills.ts` → `ToolsEffectiveParamsSchema`, `ToolsEffectiveResultSchema`
+> Source: `packages/gateway-protocol/src/schema/agents-models-skills.ts` → `ToolsEffectiveParamsSchema`, `ToolsEffectiveResultSchema`
 
 Get session-effective tool inventory (what tools are actually available for a session at runtime).
 
@@ -1163,7 +1275,7 @@ Get session-effective tool inventory (what tools are actually available for a se
 
 ### 5.9 Skills Methods
 
-> Source: `src/gateway/protocol/schema/agents-models-skills.ts` → `SkillsStatusParamsSchema`, `SkillsInstallParamsSchema`, `SkillsUpdateParamsSchema`
+> Source: `packages/gateway-protocol/src/schema/agents-models-skills.ts` → `SkillsStatusParamsSchema`, `SkillsInstallParamsSchema`, `SkillsUpdateParamsSchema`
 
 #### `skills.status`
 
@@ -1185,7 +1297,7 @@ Get session-effective tool inventory (what tools are actually available for a se
 
 ### 5.10 Node Methods
 
-> Source: `src/gateway/protocol/schema/nodes.ts`
+> Source: `packages/gateway-protocol/src/schema/nodes.ts`
 
 Remote compute node management.
 
@@ -1209,7 +1321,7 @@ Remote compute node management.
 
 ### 5.11 Device Methods
 
-> Source: `src/gateway/protocol/schema/devices.ts`
+> Source: `packages/gateway-protocol/src/schema/devices.ts`
 
 Device authentication lifecycle.
 
@@ -1224,7 +1336,7 @@ Device authentication lifecycle.
 
 ### 5.12 Execution Approval
 
-> Source: `src/gateway/protocol/schema/exec-approvals.ts`
+> Source: `packages/gateway-protocol/src/schema/exec-approvals.ts`
 
 Interactive approval workflow for agent actions.
 
@@ -1240,7 +1352,7 @@ Interactive approval workflow for agent actions.
 
 ### 5.13 Plugin Approval
 
-> Source: `src/gateway/protocol/schema/plugin-approvals.ts`
+> Source: `packages/gateway-protocol/src/schema/plugin-approvals.ts`
 
 Interactive approval workflow for plugin installations.
 
@@ -1252,7 +1364,7 @@ Interactive approval workflow for plugin installations.
 
 ### 5.14 Talk (Voice/TTS) Methods
 
-> Source: `src/gateway/protocol/schema/channels.ts` → `TalkSpeakParamsSchema`, `TalkSpeakResultSchema`, `TalkModeParamsSchema`, `TalkConfigResultSchema`
+> Source: `packages/gateway-protocol/src/schema/channels.ts` → `TalkSpeakParamsSchema`, `TalkSpeakResultSchema`, `TalkModeParamsSchema`, `TalkConfigResultSchema`
 
 #### `talk.speak`
 
@@ -1288,7 +1400,7 @@ Text-to-speech synthesis.
 
 ### 5.15 Push Notification Testing
 
-> Source: `src/gateway/protocol/schema/push.ts` → `PushTestParamsSchema`, `PushTestResultSchema`
+> Source: `packages/gateway-protocol/src/schema/push.ts` → `PushTestParamsSchema`, `PushTestResultSchema`
 
 #### `push.test`
 
@@ -1296,7 +1408,7 @@ Test push notification delivery.
 
 ### 5.16 Web Login
 
-> Source: `src/gateway/protocol/schema/channels.ts` → `WebLoginStartParamsSchema`, `WebLoginWaitParamsSchema`
+> Source: `packages/gateway-protocol/src/schema/channels.ts` → `WebLoginStartParamsSchema`, `WebLoginWaitParamsSchema`
 
 #### `web.login.start` / `web.login.wait`
 
@@ -1363,7 +1475,7 @@ The `/v1/chat/completions` endpoint allows OpenAI-compatible integration, but fo
 
 ### 7.1 Auth Modes
 
-> Source: `src/gateway/protocol/schema/snapshot.ts` → `SnapshotSchema.authMode`
+> Source: `packages/gateway-protocol/src/schema/snapshot.ts` → `SnapshotSchema.authMode`
 
 Gateway supports four authentication modes (configured server-side):
 
@@ -1410,7 +1522,7 @@ Scopes (carried in `ConnectParams.scopes`):
 
 ## 8. Session Key Format
 
-> Source: `src/gateway/protocol/schema/primitives.ts` → `ChatSendSessionKeyString` (regex: max 512 chars), `src/gateway/protocol/schema/sessions.ts` → `SessionsCreateParamsSchema`
+> Source: `packages/gateway-protocol/src/schema/primitives.ts` → `ChatSendSessionKeyString` (regex: max 512 chars), `packages/gateway-protocol/src/schema/sessions.ts` → `SessionsCreateParamsSchema`
 
 Session keys uniquely identify conversation contexts:
 
@@ -1433,7 +1545,7 @@ agent:main:clawwork:task:<taskId>
 
 ## 9. Message Format
 
-> Source: `src/gateway/protocol/schema/logs-chat.ts` → `ChatEventSchema.message`, `src/gateway/protocol/schema/agent.ts` → content block types
+> Source: `packages/gateway-protocol/src/schema/logs-chat.ts` → `ChatEventSchema.message`, `packages/gateway-protocol/src/schema/agent.ts` → content block types
 
 Messages in `chat` events and `chat.history` responses follow this structure:
 
@@ -1453,7 +1565,7 @@ Messages in `chat` events and `chat.history` responses follow this structure:
 
 ## 10. ClawWork Integration Guide
 
-> Source: composite — see inline references in §2–§9; connection flow from `src/gateway/protocol/schema/frames.ts` → `ConnectParamsSchema`, `HelloOkSchema`
+> Source: composite — see inline references in §2–§9; connection flow from `packages/gateway-protocol/src/schema/frames.ts` → `ConnectParamsSchema`, `HelloOkSchema`
 
 ### 10.1 Connection Setup
 
@@ -1529,26 +1641,33 @@ ws.send(
 
 ## 11. Quick Source Index
 
-All sources are annotated inline at each section. This condensed index maps domain → primary schema file for fast lookup:
+All sources are annotated inline at each section. This condensed index maps domain → primary schema file for fast lookup.
 
-| Domain           | Schema File                                           | Implementation                           |
-| ---------------- | ----------------------------------------------------- | ---------------------------------------- |
-| Frames           | `src/gateway/protocol/schema/frames.ts`               | `src/gateway/server.impl.ts`             |
-| Chat             | `src/gateway/protocol/schema/logs-chat.ts`            | `src/gateway/server-methods/chat.ts`     |
-| Sessions         | `src/gateway/protocol/schema/sessions.ts`             | `src/gateway/server-methods/sessions.ts` |
-| Agent            | `src/gateway/protocol/schema/agent.ts`                | —                                        |
-| Agents/Models    | `src/gateway/protocol/schema/agents-models-skills.ts` | —                                        |
-| Cron             | `src/gateway/protocol/schema/cron.ts`                 | —                                        |
-| Nodes            | `src/gateway/protocol/schema/nodes.ts`                | —                                        |
-| Devices          | `src/gateway/protocol/schema/devices.ts`              | —                                        |
-| Config           | `src/gateway/protocol/schema/config.ts`               | —                                        |
-| Exec Approvals   | `src/gateway/protocol/schema/exec-approvals.ts`       | —                                        |
-| Plugin Approvals | `src/gateway/protocol/schema/plugin-approvals.ts`     | —                                        |
-| Methods list     | `src/gateway/server-methods-list.ts`                  | —                                        |
-| Method scopes    | `src/gateway/method-scopes.ts`                        | —                                        |
-| Broadcast        | `src/gateway/server-broadcast.ts`                     | —                                        |
-| Constants        | `src/gateway/server-constants.ts`                     | —                                        |
-| Rate limit       | `src/gateway/auth-rate-limit.ts`                      | —                                        |
-| Error codes      | `src/gateway/protocol/schema/error-codes.ts`          | —                                        |
-| Client IDs       | `src/gateway/protocol/client-info.ts`                 | —                                        |
-| Primitives       | `src/gateway/protocol/schema/primitives.ts`           | —                                        |
+> ⚠️ **2026-09-09 更新**：schema 整棵树从 `src/gateway/protocol/schema/` **搬到了**
+> `packages/gateway-protocol/src/schema/`（17 个文件 1:1，文件名全保留）。本表已按新路径改写。
+> ⚠️ 但**这张表已不再完整**：新 schema 文件成批出现（`artifacts` / `audit` / `board` / `canvas` /
+> `channel-pairing` / `commands` / `desktop` / `environments` / `fs` / `hooks` /
+> `human-mentions` / `migrations` / `portals` …），权威清单请看
+> `packages/gateway-protocol/src/schema/` 目录本身。
+
+| Domain           | Schema File                                                    | Implementation                                                          |
+| ---------------- | -------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| Frames           | `packages/gateway-protocol/src/schema/frames.ts`               | `src/gateway/server/`（`server.impl.ts` **已拆成一批模块**）            |
+| Chat             | `packages/gateway-protocol/src/schema/logs-chat.ts`            | `src/gateway/server-methods/chat.ts`                                    |
+| Sessions         | `packages/gateway-protocol/src/schema/sessions.ts`             | `src/gateway/server-methods/sessions-*.ts`（原 `sessions.ts` **已拆**） |
+| Agent            | `packages/gateway-protocol/src/schema/agent.ts`                | —                                                                       |
+| Agents/Models    | `packages/gateway-protocol/src/schema/agents-models-skills.ts` | —                                                                       |
+| Cron             | `packages/gateway-protocol/src/schema/cron.ts`                 | —                                                                       |
+| Nodes            | `packages/gateway-protocol/src/schema/nodes.ts`                | —                                                                       |
+| Devices          | `packages/gateway-protocol/src/schema/devices.ts`              | —                                                                       |
+| Config           | `packages/gateway-protocol/src/schema/config.ts`               | —                                                                       |
+| Exec Approvals   | `packages/gateway-protocol/src/schema/exec-approvals.ts`       | —                                                                       |
+| Plugin Approvals | `packages/gateway-protocol/src/schema/plugin-approvals.ts`     | —                                                                       |
+| Methods list     | `src/gateway/server-methods-list.ts`                           | —                                                                       |
+| Method scopes    | `src/gateway/method-scopes.ts`                                 | —                                                                       |
+| Broadcast        | `src/gateway/server-broadcast.ts`                              | —                                                                       |
+| Constants        | `src/gateway/server-constants.ts`                              | —                                                                       |
+| Rate limit       | `src/gateway/auth-rate-limit.ts`                               | —                                                                       |
+| Error codes      | `packages/gateway-protocol/src/schema/error-codes.ts`          | —                                                                       |
+| Client IDs       | `packages/gateway-protocol/src/client-info.ts`                 | —                                                                       |
+| Primitives       | `packages/gateway-protocol/src/schema/primitives.ts`           | —                                                                       |
