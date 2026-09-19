@@ -68,6 +68,27 @@ describe('Login', () => {
     unmount();
   });
 
+  /**
+   * ⭐ 合规最小告知（2026-09-19，明天出 U 盘内测版）。
+   *
+   * 内测同事用**手机号**注册 —— 手机号是个人信息，PIPL 下"内部员工"**不是豁免**。
+   * 完整的同意记录（落库 + 版本门禁）是合规二期，**今晚不做**；
+   * 但"**我们拿手机号干什么、留多久**"这一句必须**现在就摆出来**，否则是"采了没说"。
+   *
+   * ⚠️ 位置是刻意的：摆在**输入手机号那一屏**（`phase === 'phone'`）——
+   *    用户正要填手机号的那一刻，才是这句话有用的时刻。
+   */
+  it('⭐⭐ 输入手机号那一屏必须写明手机号用途与保留期（合规最小告知）', () => {
+    const { container, unmount } = render(<Login onSignedIn={vi.fn()} />);
+
+    const notice = container.querySelector<HTMLElement>('[data-testid="beta-phone-notice"]');
+    expect(notice, '这一句必须在，且要能定位到').not.toBeNull();
+    expect(notice!.hidden, '不许藏起来').toBe(false);
+    expect(notice!.textContent).toContain('login.betaPhoneNotice');
+
+    unmount();
+  });
+
   it('keeps purpose selection out of the login screen', () => {
     const { container, unmount } = render(<Login onSignedIn={vi.fn()} />);
 

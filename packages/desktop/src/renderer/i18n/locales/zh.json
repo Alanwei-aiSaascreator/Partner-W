@@ -945,6 +945,7 @@
   },
   "login": {
     "agreement": "我已阅读并同意{0}与{1}",
+    "betaPhoneNotice": "手机号仅用于内测账号的注册与通知；测试结束后 30 天内删除，不用于其他用途。",
     "changePhone": "更换手机号",
     "codePlaceholder": "验证码",
     "codeSent": "验证码已发送至 +86{{phone}}，请注意查收",

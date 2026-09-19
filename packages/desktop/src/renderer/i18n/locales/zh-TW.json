@@ -945,6 +945,7 @@
   },
   "login": {
     "agreement": "我已閱讀並同意{0}與{1}",
+    "betaPhoneNotice": "手機號僅用於內測帳號的註冊與通知；測試結束後 30 天內刪除，不用於其他用途。",
     "changePhone": "更換手機號",
     "codePlaceholder": "驗證碼",
     "codeSent": "驗證碼已傳送至 +86{{phone}}，請注意查收",

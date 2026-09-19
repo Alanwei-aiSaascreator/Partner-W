@@ -945,6 +945,7 @@
   },
   "login": {
     "agreement": "Ich habe die {0} und die {1} gelesen und stimme ihnen zu",
+    "betaPhoneNotice": "Ihre Telefonnummer wird nur für die Registrierung und Benachrichtigung in dieser Beta verwendet. Sie wird innerhalb von 30 Tagen nach Testende gelöscht und nicht anderweitig genutzt.",
     "changePhone": "Nummer ändern",
     "codePlaceholder": "Code",
     "codeSent": "Code an +86{{phone}} gesendet, bitte prüfen",

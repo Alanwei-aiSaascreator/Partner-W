@@ -237,6 +237,17 @@ export default function Login({ onSignedIn }: LoginProps) {
             <p className="type-body leading-relaxed text-[var(--text-muted)]">
               {phase === 'phone' ? t('login.subtitle') : t('login.codeSubtitle', { phone })}
             </p>
+            {/*
+              ⭐ 合规最小告知（2026-09-19）：内测用**手机号**注册，手机号是个人信息。
+              完整的同意记录（落库 + 版本门禁）是合规二期，**本轮不做**；
+              但"我们拿它干什么、留多久"这一句必须**现在**摆出来 —— 否则就是"采了没说"。
+              位置刻意放在**输入手机号那一屏**：用户正要填的那一刻才是有用的时刻。
+            */}
+            {phase === 'phone' && (
+              <p className="type-support mt-2 leading-relaxed text-[var(--text-muted)]" data-testid="beta-phone-notice">
+                {t('login.betaPhoneNotice')}
+              </p>
+            )}
           </div>
 
           <form
