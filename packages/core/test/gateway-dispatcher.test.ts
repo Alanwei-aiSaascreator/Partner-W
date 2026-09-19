@@ -7,6 +7,7 @@ import {
   type GatewayDispatcherDeps,
 } from '../src/services/gateway-dispatcher.js';
 import type { GatewayEvent, GatewayStatusEvent } from '../src/ports/gateway-transport.js';
+import type { ChatEventPayload } from '../src/protocol/types.js';
 
 type EventListener = (data: GatewayEvent) => void;
 
@@ -709,6 +710,168 @@ describe('item 的 kind：丢可以，但不能丢得没声音', () => {
     expect(h.messageStore.setSessionProgressText).toHaveBeenCalledWith(TASK.sessionKey, '正在核对第三章');
     expect(h.deps.reportDebugEvent).not.toHaveBeenCalledWith(
       expect.objectContaining({ event: 'renderer.agent.item.unknown_kind' }),
+    );
+  });
+});
+
+/**
+ * 补上**剩下两处静默丢弃**（`chat` 的 `state`、`approval` 的 `status`）。
+ *
+ * 上一组（`item.kind`）把这条纪律写清楚了：**开放词表 + 静默丢弃 = 必然会重演**。
+ * 当时把"还没补的三处"记在了队列里，本轮补掉其中两处：
+ *
+ * | 处 | 现状 |
+ * | --- | --- |
+ * | `agent` 的 `error` 流 `reason` | ✅ 已经**全量记**了（`stream_error` 带 reason/expected/received）⇒ 不用动 |
+ * | **`chat` 的 `state`** | ⚠️ `if/else if` 链**没有 else** ⇒ 未处理的 state **静默穿过** |
+ * | **`approval` 的 `status`** | ⚠️ 只认 3 个值，其余**静默 return**（遥测有，但"这个值我不认识"没说出来） |
+ */
+describe('chat 的 state：未处理的取值要留痕', () => {
+  /**
+   * ⭐ **类型护栏**：`state` 必须**保持开放**。
+   *
+   * 下面那行不是断言"运行时行为"，是断言**类型不许被收窄** —— 而它防的是一桩真事：
+   * `ChatEventPayload.state` 曾写成恰好四个值的封闭联合 `'delta'|'final'|'aborted'|'error'`。
+   * 于是 `handleChatEvent` 的 `if/else if` 链在 TS 眼里**已经穷尽**，谁也不会去写 `else`
+   * （写了反而像多余的防御）。而运行时实际发**五个**
+   * （`ChatEventSchema` = Status/Delta/Final/Aborted/Error，源码 `~/git/openclaw` 2026-09-09），
+   * `state:"status"` 就这么静默穿了很久。
+   *
+   * ⚠️ 变异验证记过一笔：**只**把类型回退成封闭联合时，`typecheck` 与 `lint` **都抓不住**
+   *    （TS 只是把 `else` 里的 `state` 窄成 `never`，不报错）。唯一的抓手就是这里 ——
+   *    收窄回去，这行**编译不过** ⇒ `pnpm typecheck:tests` 红。
+   */
+  it('⭐ 类型护栏：`state` 不许收窄回封闭联合', () => {
+    const unknownState: ChatEventPayload['state'] = 'some_state_only_the_runtime_knows';
+
+    expect(unknownState).toBe('some_state_only_the_runtime_knows');
+  });
+
+  const emitChatState = (h: ReturnType<typeof createHarness>, state: string | undefined) =>
+    h.emit('chat', { sessionKey: TASK.sessionKey, state, message: { content: [{ type: 'text', text: 'x' }] } });
+
+  it('⭐ `state:"status"` ⇒ 记 `ignored_state`，**不许静默**', () => {
+    // 运行时**会发**它（`ChatStatusEventSchema`，是 `run_status` 的 chat 投影）。
+    // 我们刻意不用那份（agent 流那份才是我们消费的）—— 但"刻意不用"必须写出来。
+    const h = createHarness();
+
+    emitChatState(h, 'status');
+
+    expect(h.deps.reportDebugEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'renderer.chat.ignored_state',
+        data: expect.objectContaining({ state: 'status' }),
+      }),
+    );
+  });
+
+  it('⭐⭐ **认不出的** state ⇒ 记 `unknown_state` 并带上取值', () => {
+    const h = createHarness();
+
+    emitChatState(h, 'some_future_state');
+
+    expect(h.deps.reportDebugEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'renderer.chat.unknown_state',
+        data: expect.objectContaining({ state: 'some_future_state' }),
+      }),
+    );
+  });
+
+  it('⚠️ `state` 整个缺失 ⇒ 也留痕，用 `(missing)`', () => {
+    const h = createHarness();
+
+    emitChatState(h, undefined);
+
+    expect(h.deps.reportDebugEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'renderer.chat.unknown_state',
+        data: expect.objectContaining({ state: '(missing)' }),
+      }),
+    );
+  });
+
+  it.each(['delta', 'final', 'aborted', 'error'])('对照：`%s` 走原来的路（不记那两个）', (state) => {
+    const h = createHarness();
+
+    emitChatState(h, state);
+
+    expect(h.deps.reportDebugEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'renderer.chat.unknown_state' }),
+    );
+    expect(h.deps.reportDebugEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'renderer.chat.ignored_state' }),
+    );
+  });
+});
+
+/**
+ * `approval` 的 `status` —— 运行时的闭集是
+ * **`"pending" | "unavailable" | "approved" | "denied" | "failed"`**（`~/git/openclaw`，2026-09-09）。
+ *
+ * ⚠️ 我们只对 **`unavailable` / `denied` / `failed`** 动手（"确定没跑成"），
+ * 而 **`approved` 从没被记录过** —— 核过判定规则后结论是**我们是对的**：
+ * `approved` 意味着命令**会跑**，把它当"没执行"才是撒谎（与 `pending` 同一条纪律）。
+ *
+ * ⇒ 但"正确"和"有护栏"是两件事：新冒出来的 status 今天会**静默 return**。
+ */
+describe('approval 的 status：未处理的取值要留痕', () => {
+  const emitApproval = (h: ReturnType<typeof createHarness>, status: string) =>
+    h.emit('agent', {
+      sessionKey: TASK.sessionKey,
+      stream: 'approval',
+      data: { phase: 'resolved', status, toolCallId: 'tc-1', kind: 'exec' },
+    });
+
+  it('⭐ `approved` ⇒ 记 `ignored_status`（**刻意不接**：它意味着命令会跑）', () => {
+    const h = createHarness();
+
+    emitApproval(h, 'approved');
+
+    expect(h.deps.reportDebugEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'renderer.agent.approval.ignored_status',
+        data: expect.objectContaining({ status: 'approved' }),
+      }),
+    );
+  });
+
+  it('⭐ `pending` 同样算"知道但不接"（那时命令**还有可能跑**，报成失败是另一种撒谎）', () => {
+    const h = createHarness();
+
+    emitApproval(h, 'pending');
+
+    expect(h.deps.reportDebugEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'renderer.agent.approval.ignored_status',
+        data: expect.objectContaining({ status: 'pending' }),
+      }),
+    );
+  });
+
+  it('⭐⭐ **认不出的** status ⇒ 记 `unknown_status`（这条才是要防的）', () => {
+    const h = createHarness();
+
+    emitApproval(h, 'some_future_status');
+
+    expect(h.deps.reportDebugEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'renderer.agent.approval.unknown_status',
+        data: expect.objectContaining({ status: 'some_future_status' }),
+      }),
+    );
+  });
+
+  it.each(['denied', 'failed', 'unavailable'])('对照：`%s` 走原来的路（不记那两个）', (status) => {
+    const h = createHarness();
+
+    emitApproval(h, status);
+
+    expect(h.deps.reportDebugEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'renderer.agent.approval.unknown_status' }),
+    );
+    expect(h.deps.reportDebugEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'renderer.agent.approval.ignored_status' }),
     );
   });
 });

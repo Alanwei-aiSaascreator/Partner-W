@@ -588,6 +588,20 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
     return parseTaskIdFromSessionKey(spawnedBy);
   }
 
+  /**
+   * chat 帧里**知道但不接**的 `state`。
+   *
+   * `status` —— 运行时**会发**（`ChatStatusEventSchema`），内容是**准备相位 + 重试次数**
+   * （`{ phase, retry: { attempt, maxAttempts, reason } }`）。而这两样我们已经在
+   * `agent` 的 `run_status` 流上消费了，且相位清单**逐字相同**
+   * （运行时的 `ChatRunStartupPhaseSchema` 对我们 `RUN_STARTUP_PHASES` 的 7 个）
+   * ⇒ 这是**同一条信息的第二个来源**，接进来只会多一处要同步的状态。
+   *
+   * ⚠️ 名单只放**验过会发、且我们决定不接**的。认不出的要落到 `unknown_state` ——
+   *    那才是要看见的信号（`item.kind` 那次就是这么把 `preamble` 暴露出来的）。
+   */
+  const DELIBERATELY_IGNORED_CHAT_STATES = new Set(['status']);
+
   function handleChatEvent(payload: ChatEventPayload, gatewayId: string): void {
     const { sessionKey, state } = payload;
     if (!sessionKey) {
@@ -766,6 +780,22 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
         // 服务端单方面中断则要让那一列说出原因，否则那一列会永远停在空白。
         if (ephemeral) store.setSessionError(sessionKey, serverAborted);
         else store.addMessage(taskId, 'system', serverAborted, undefined, { sessionKey });
+      }
+    } else {
+      // ⭐ **不许静默**。这条链从前**没有 `else`**，而未处理的 state 就此一声不响地穿过
+      //    （整帧的效果只剩上面那次 `notifyAgentResponse` / `markUnread`）。
+      //
+      // ⚠️ 不写 `else` 不是疏忽，是**类型**这么说的：`ChatEventPayload.state` 曾写成
+      //    恰好四个值的封闭联合 ⇒ TS 认为这里不可达。真相是运行时发**五个**
+      //    （`ChatEventSchema` = Status/Delta/Final/Aborted/Error）。
+      //    这跟 `lifecycle` 的 `finishing` 是**同一个根**：拿实测样本写出来的类型，
+      //    被当成了"运行时保证只有这些"的契约。
+      const stateName = typeof state === 'string' ? state : '(missing)';
+      const statePayload = { taskId, sessionKey, state: stateName };
+      if (DELIBERATELY_IGNORED_CHAT_STATES.has(stateName)) {
+        debugEvent('renderer.chat.ignored_state', statePayload);
+      } else {
+        debugEvent('renderer.chat.unknown_state', { ...statePayload, topLevelKeys: Object.keys(payload) });
       }
     }
   }
@@ -1091,6 +1121,21 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
   const APPROVAL_NOT_EXECUTED = new Set(['unavailable', 'denied', 'failed']);
 
   /**
+   * 审批**知道但不接**的 status（与上面那个相对）。
+   *
+   * 运行时的闭集是
+   * `"pending" | "unavailable" | "approved" | "denied" | "failed"`
+   * （`~/git/openclaw` 2026-09-09，`AgentApprovalEventStatus`），除上面三个之外还剩两个：
+   * - `pending` —— 那时命令**还有可能跑**，报成失败是另一种撒谎；
+   * - `approved` —— 命令**会跑**（真结果随后由 `tool` 流给出），更不该当失败。
+   *
+   * ⚠️ 名单只放**验过会发、且我们决定不接**的。认不出的走 `unknown_status` ——
+   *    运行时的类型里真要新增一个"没跑成"的 status，今天就会被这条**逮住**，
+   *    而不是像从前那样静默 `return`（那会让卡片一直停在"进行中"）。
+   */
+  const APPROVAL_DELIBERATELY_IGNORED = new Set(['pending', 'approved']);
+
+  /**
    * `item` 的 `status` 里表示**没成**的取值。
    *
    * 实测（随包运行时 2026.9.3，`builtin-openclaw-*.mjs`）：
@@ -1158,7 +1203,26 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
     });
 
     if (!data.toolCallId) return;
-    if (!data.status || !APPROVAL_NOT_EXECUTED.has(data.status)) return;
+
+    // ⭐ 下面只认"**确定没跑成**"的三个值，其余从前**一声不响地 return**。
+    //    "我们不接它"是对的（见两处名单的说明），但"不接"本身必须留痕 ——
+    //    否则下一个冒出来的 status 会以同样的方式消失。
+    const approvalStatus = data.status ? data.status : '(missing)';
+    if (!APPROVAL_NOT_EXECUTED.has(approvalStatus)) {
+      const statusPayload = {
+        taskId,
+        sessionKey,
+        toolCallId: data.toolCallId,
+        status: approvalStatus,
+        phase: data.phase,
+      };
+      if (APPROVAL_DELIBERATELY_IGNORED.has(approvalStatus)) {
+        debugEvent('renderer.agent.approval.ignored_status', statusPayload);
+      } else {
+        debugEvent('renderer.agent.approval.unknown_status', { ...statusPayload, reason: data.reason });
+      }
+      return;
+    }
 
     // 用网关自己的话解释：`message` 是人话，`reason` 是机器码，`command` 让用户认出是哪条。
     const explanation = [

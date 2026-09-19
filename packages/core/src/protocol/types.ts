@@ -9,7 +9,19 @@ export interface ChatMessage {
 export interface ChatEventPayload {
   sessionKey: string;
   runId?: string;
-  state?: 'delta' | 'final' | 'aborted' | 'error';
+  /**
+   * 帧的状态（`ChatEventSchema` 的判别键）。
+   *
+   * ⚠️ **这不是封闭联合** —— 前四个是我们**处理**的；而运行时
+   *    （`~/git/openclaw` 2026-09-09，`packages/gateway-protocol/src/schema/logs-chat.ts`）
+   *    的 `ChatEventSchema` 是**五个** schema 的联合，在它们之外还有
+   *    `ChatStatusEventSchema`（`state:"status"`）。
+   *    照实测样本写成封闭联合，代价我们**已经付过一次**：`AgentLifecycleData.phase`
+   *    那样写 ⇒ switch 的穷尽性检查反过来**挡住**了新取值，只能静默走 `default`
+   *    （`finishing` 就是这么被吞掉的）。
+   * ⇒ `(string & {})` 保住自动补全，同时**不许**这个类型替运行时保证"没有别的了"。
+   */
+  state?: 'delta' | 'final' | 'aborted' | 'error' | (string & {});
   message?: ChatMessage;
   content?: ChatContentBlock[];
   text?: string;
