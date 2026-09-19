@@ -807,6 +807,25 @@ describe('临时会话（多模型对比的一列）：只有那一列看得到�
     expect(h.systemMessages).toHaveLength(1);
   });
 
+  it('`fallback_cleared`（切回来）走**同一条**纪律：临时会话不写', () => {
+    const h = createCompareHarness();
+
+    h.emit('agent', {
+      sessionKey: KEY_0,
+      stream: 'lifecycle',
+      data: {
+        phase: 'fallback_cleared',
+        selectedProvider: 'p1',
+        selectedModel: 'qwen-plus',
+        activeProvider: 'p1',
+        activeModel: 'qwen-plus',
+        previousActiveModel: 'glm-4.7',
+      },
+    });
+
+    expect(h.messageStore.addMessage, '列标题就是用户挑的模型，不该被这条动到').not.toHaveBeenCalled();
+  });
+
   it('采纳之后那一列"转正"：同一个键不再是临时会话，final 照常对账', () => {
     const h = createCompareHarness();
     emitChat(h, KEY_0, 'final', { ...textBlocks('没采纳') });
@@ -1223,5 +1242,75 @@ describe('approval 流：被拦下的命令不许显示成"已完成"', () => {
     emitApproval(h, { phase: 'requested', kind: 'exec', status: 'unavailable', title: 'x' });
 
     expect(h.messageStore.upsertToolCall).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * `lifecycle` 的**三个** fallback 相位 —— 实测随包运行时 2026.9.3 会发：
+ *
+ * | phase              | 含义                                   | 我们此前 |
+ * | ------------------ | -------------------------------------- | -------- |
+ * | `fallback`         | 切到了别的模型（`reasonSummary` 等）   | ✅ 有处理 |
+ * | `fallback_cleared` | **切回**用户选的那个模型               | ❌ 静默吞 |
+ * | `fallback_step`    | 逐个候选试的过程（诊断用）             | ❌ 静默吞 |
+ *
+ * ⚠️ 为什么 `fallback_cleared` 必须说一句：我们会在 `fallback` 时插一条
+ * 「已切换至模型: X」进时间线。切回来了却不说，**时间线上最后一句就停在 X** ——
+ * 用户以为还在用 X 回答。而每条消息的模型徽章是对的（那是网关逐条给的），
+ * 偏偏用户刚被告知的那句话是旧的。
+ *
+ * ✅ **复用现成的 key**（`agent.modelFallback`）：切回来**本来就**是一次模型切换
+ *（切回用户挑的那个），"已切换至模型: Y" 字面为真 ⇒ **不需要新文案、不动 9 语言**。
+ *
+ * ⚠️ `fallback_step` 只留遥测：它是逐个候选尝试的过程，每一步都插一句会把时间线刷爆。
+ */
+describe('lifecycle 的 fallback 三相', () => {
+  function emitLifecycle(h: ReturnType<typeof createHarness>, data: Record<string, unknown>): void {
+    h.emit('agent', { sessionKey: TASK.sessionKey, stream: 'lifecycle', data });
+  }
+
+  it('⭐ `fallback_cleared`（切回用户选的模型）也要说 —— 否则最后一句停在"已切换到 X"', () => {
+    const h = createHarness();
+
+    emitLifecycle(h, {
+      phase: 'fallback_cleared',
+      selectedProvider: 'p1',
+      selectedModel: 'qwen-plus',
+      activeProvider: 'p1',
+      activeModel: 'qwen-plus',
+      previousActiveModel: 'glm-4.7',
+    });
+
+    expect(h.systemMessages, '切回来也是一次模型切换，必须让用户知道').toHaveLength(1);
+    expect(h.systemMessages[0]!.content).toContain('modelFallback');
+  });
+
+  it('`fallback_step` 只留遥测，不往时间线插话（逐个候选的过程太吵）', () => {
+    const h = createHarness();
+
+    emitLifecycle(h, { phase: 'fallback_step', attempt: 1, provider: 'p2', model: 'glm-4.7' });
+
+    expect(h.systemMessages, '诊断步骤不该出现在时间线上').toHaveLength(0);
+    expect(h.deps.reportDebugEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'renderer.agent.lifecycle.fallback_step' }),
+    );
+  });
+
+  it('⭐ 将来新增的未知相位至少要留一条遥测（此前是**连一条日志都没有**）', () => {
+    const h = createHarness();
+
+    emitLifecycle(h, { phase: 'something_new_in_a_later_version' });
+
+    expect(
+      h.deps.reportDebugEvent,
+      '这个 switch 原先**没有 default** ⇒ 未知相位完全静默。将来网关加一个相位，我们连查都查不到',
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'renderer.agent.lifecycle.unknown',
+        // ⚠️ `debugEvent(event, data)` 把负载放在 **`data` 里**，不是顶层
+        data: expect.objectContaining({ phase: 'something_new_in_a_later_version' }),
+      }),
+    );
+    expect(h.systemMessages, '未知相位不许猜着渲染').toHaveLength(0);
   });
 });

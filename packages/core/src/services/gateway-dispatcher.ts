@@ -99,7 +99,14 @@ interface AgentApprovalData {
 }
 
 interface AgentLifecycleData {
-  phase?: 'start' | 'end' | 'error' | 'fallback';
+  /**
+   * 实测六个值（2026-09-19 扫随包运行时 2026.9.3 的 emit 点）：
+   * `start` / `end` / `error` / `fallback` / **`fallback_step`** / **`fallback_cleared`**。
+   *
+   * ⚠️ `fallback_step` 与 `fallback_cleared` 此前**连类型都没声明**，
+   * 而下面那个 switch **没有 default** ⇒ 这两条**完全静默**（连一条日志都没有）。
+   */
+  phase?: 'start' | 'end' | 'error' | 'fallback' | 'fallback_step' | 'fallback_cleared';
   error?: string;
   startedAt?: number;
   endedAt?: number;
@@ -107,6 +114,8 @@ interface AgentLifecycleData {
   selectedModel?: string;
   activeProvider?: string;
   activeModel?: string;
+  /** `fallback_cleared` 专有：切回去**之前**用的是哪个模型。 */
+  previousActiveModel?: string;
 }
 
 interface AgentErrorData {
@@ -982,6 +991,40 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
           });
           store.addMessage(taskId, 'system', msg, undefined, { persist: false, sessionKey });
         }
+        break;
+      case 'fallback_cleared':
+        // ⚠️ **必须说一句**：`fallback` 那次我们已经往时间线插了「已切换至模型: X」，
+        //    切回来却不说 ⇒ **时间线最后一句停在 X**，用户以为还在用 X 回答。
+        //    （每条消息的模型徽章是对的 —— 那是网关逐条给的；偏偏用户刚被告知的那句是旧的。）
+        //
+        // ✅ 复用现成的 `agent.modelFallback`：切回来**本来就**是一次模型切换
+        //    （切回用户挑的那个），"已切换至模型: Y" 字面为真 ⇒ 不需要新文案、不动 9 语言。
+        debugEvent('renderer.agent.lifecycle.fallback_cleared', {
+          taskId,
+          sessionKey,
+          model: data.activeModel,
+          previousActiveModel: data.previousActiveModel,
+        });
+        // 临时会话照旧不写（同 `fallback` 那条纪律：列标题就是用户挑的模型）。
+        if (data.activeModel && !ephemeral) {
+          const msg = deps.translate('agent.modelFallback', {
+            model: data.activeModel,
+            defaultValue: `Switched to model: ${data.activeModel}`,
+          });
+          store.addMessage(taskId, 'system', msg, undefined, { persist: false, sessionKey });
+        }
+        break;
+      case 'fallback_step':
+        // 逐个候选尝试的**过程**：只留遥测。
+        // 每一步都往时间线插话会把对话刷爆，而它对用户没有增量信息。
+        debugEvent('renderer.agent.lifecycle.fallback_step', { taskId, sessionKey });
+        break;
+      default:
+        // ⚠️ 这个 switch 从前**没有 default** ⇒ 未知相位**连一条日志都没有**。
+        //    上面两个 `fallback_*` 就是这么被静默吞掉很久的。
+        //    与 `agent` 流那个 switch 的 `default`（`unknown_stream`）保持同一条纪律：
+        //    **不认识的东西可以不理，但不能不留痕。**
+        debugEvent('renderer.agent.lifecycle.unknown', { taskId, sessionKey, phase: data.phase });
         break;
     }
   }
