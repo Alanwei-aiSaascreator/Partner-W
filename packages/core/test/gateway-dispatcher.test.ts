@@ -2,6 +2,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createGatewayDispatcher,
   DELIBERATELY_IGNORED_STREAMS,
+  ITEM_FAILURE_STATUSES,
+  ITEM_PHASE_IDS,
+  ITEM_STATUS_IDS,
   RETRY_RUN_PHASE,
   RUN_PHASE_IDS,
   TOOL_IGNORED_PHASES,
@@ -1017,6 +1020,136 @@ describe('tool 的 phase：词表是五个，丢弃不许没声音', () => {
     for (const phase of ignored) {
       expect(TOOL_PHASE_IDS, `"知道但不接"名单里的 "${phase}" 运行时并不发`).toContain(phase as never);
     }
+  });
+});
+
+/**
+ * `item` 流 —— **最后一个**没有"认不出就留痕"的处理点。
+ *
+ * 两个词表都是运行时**自己的类型**定义的（不是我们扫出来的）：
+ * `src/infra/agent-activity-events.ts`
+ *
+ * ```ts
+ * type AgentItemEventPhase  = "start" | "update" | "end";                      // 三个
+ * type AgentItemEventStatus = "running" | "completed" | "failed" | "blocked";  // 四个
+ * type AgentItemEventKind   = "tool" | "command" | "patch" | "search" | "analysis" | (string & {});
+ * ```
+ *
+ * ⚠️ 跑一遍下来发现**前两处都有静默**：
+ * 1. `kind:"tool"` 但缺 `toolCallId`/`name` 的帧**直接 `return`**（卡片永远不出现、日志一行没有）；
+ * 2. 认不出的 `status` 会被**默默归类** —— `phase:"end"` 落 `done`、`start`/`update` 落 `running`。
+ *    后者正是 `blocked` 当初那条老路（`fc4afa3`）：**帧序在兜底，不是我们认对了**。
+ */
+describe('item 流的两个词表：未处理的取值要留痕', () => {
+  const emitItem = (h: ReturnType<typeof createHarness>, data: Record<string, unknown>) =>
+    h.emit('agent', { sessionKey: TASK.sessionKey, stream: 'item', data });
+
+  it('⭐ `kind:"tool"` 却缺 `toolCallId` ⇒ 从前**静默 return**（卡片永远不出现）⇒ 现在留痕', () => {
+    const h = createHarness();
+
+    emitItem(h, { kind: 'tool', phase: 'end', name: 'ls', status: 'completed' });
+
+    expect(h.deps.reportDebugEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'renderer.agent.item.dropped_missing_fields',
+        data: expect.objectContaining({ hasToolCallId: false, hasName: true, phase: 'end', status: 'completed' }),
+      }),
+    );
+    expect(h.messageStore.upsertToolCall).not.toHaveBeenCalled();
+  });
+
+  it('⭐ 缺 `name` 同样留痕', () => {
+    const h = createHarness();
+
+    emitItem(h, { kind: 'tool', phase: 'end', toolCallId: 'tc-1', status: 'completed' });
+
+    expect(h.deps.reportDebugEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'renderer.agent.item.dropped_missing_fields',
+        data: expect.objectContaining({ hasToolCallId: true, hasName: false }),
+      }),
+    );
+  });
+
+  it('⭐⭐ 认不出的 `status` ⇒ 记 `unknown_status`，**不许默默归类**', () => {
+    const h = createHarness();
+
+    emitItem(h, { kind: 'tool', phase: 'end', toolCallId: 'tc-1', name: 'ls', status: 'some_future_status' });
+
+    expect(h.deps.reportDebugEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'renderer.agent.item.unknown_status',
+        data: expect.objectContaining({
+          status: 'some_future_status',
+          phase: 'end',
+          // 顺手记下**我们把它归成了什么** —— 否则光看日志没法判断影响面。
+          classifiedAs: 'done',
+        }),
+      }),
+    );
+  });
+
+  it('⚠️ `status` 整个缺失 ⇒ 也留痕（用 `(missing)`）', () => {
+    const h = createHarness();
+
+    emitItem(h, { kind: 'tool', phase: 'end', toolCallId: 'tc-1', name: 'ls' });
+
+    expect(h.deps.reportDebugEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'renderer.agent.item.unknown_status',
+        data: expect.objectContaining({ status: '(missing)' }),
+      }),
+    );
+  });
+
+  it('⭐⭐ **行为刻意不变**：认不出的 status + `phase:"end"` 仍然落 `done`（不知道就别改它的样子）', () => {
+    // 这是个**判断**，理由写在这里：`phase:"end"` 说的是"这条目结束了"，
+    // 而 `running` 是**确定的错**（它确实结束了）；改成 `error` 则是朝另一个方向猜。
+    // ⇒ 认不出时**保留原有归类**，只在日志里把它点出来 —— 那才是能让人来修的东西。
+    const h = createHarness();
+
+    emitItem(h, { kind: 'tool', phase: 'end', toolCallId: 'tc-1', name: 'ls', status: 'some_future_status' });
+
+    const calls = h.messageStore.upsertToolCall.mock.calls;
+    expect((calls[calls.length - 1]![2] as { status: string }).status).toBe('done');
+  });
+
+  it.each(['running', 'completed', 'failed', 'blocked'])('对照：已知 status `%s` 不记 `unknown_status`', (status) => {
+    const h = createHarness();
+
+    emitItem(h, { kind: 'tool', phase: 'end', toolCallId: 'tc-1', name: 'ls', status });
+
+    expect(h.deps.reportDebugEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'renderer.agent.item.unknown_status' }),
+    );
+  });
+
+  it('⭐⭐ 冻结名单：两个词表都来自运行时的类型，且分类**穷尽**', () => {
+    // 灵敏度哨兵：上游加了取值、或我们把某个值从名单里删掉，这里都会红。
+    expect(ITEM_PHASE_IDS).toEqual(['start', 'update', 'end']);
+    expect(ITEM_STATUS_IDS).toEqual(['running', 'completed', 'failed', 'blocked']);
+
+    // 四个 status 必须**说得出**归哪一类，且只归一类。
+    // `error` 是容错多出来的，不在运行时词表里（所以它不参与这条断言）。
+    const failure = new Set(ITEM_FAILURE_STATUSES);
+    const nonFailure = new Set(['running', 'completed']);
+    for (const status of ITEM_STATUS_IDS) {
+      const inFailure = failure.has(status);
+      const inNonFailure = nonFailure.has(status);
+      expect(inFailure || inNonFailure, `status "${status}" 既不在失败集也不在非失败集`).toBe(true);
+      expect(inFailure && inNonFailure, `status "${status}" 同时落在两个集合里`).toBe(false);
+    }
+    // 反向：失败集里**允许**有词表外的容错值（`error`），但要显式知道它是谁。
+    expect([...failure].filter((s) => !ITEM_STATUS_IDS.includes(s))).toEqual(['error']);
+  });
+
+  it('冻结名单：三个 phase 里只有 `end` 算"结束"（这条钉的是分类本身）', () => {
+    const h = createHarness();
+
+    emitItem(h, { kind: 'tool', phase: 'start', toolCallId: 'tc-1', name: 'ls', status: 'running' });
+
+    const calls = h.messageStore.upsertToolCall.mock.calls;
+    expect((calls[calls.length - 1]![2] as { status: string }).status).toBe('running');
   });
 });
 

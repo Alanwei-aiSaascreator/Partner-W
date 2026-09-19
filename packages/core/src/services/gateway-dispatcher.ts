@@ -415,6 +415,44 @@ export const TOOL_PHASE_IDS: readonly string[] = ['start', 'result', 'update', '
 export const TOOL_IGNORED_PHASES = new Set(['start', 'update', 'review', 'input_delta']);
 
 /**
+ * `item` 流的两个词表 —— **抄运行时的类型定义**，不是我们扫出来的。
+ *
+ * 权威出处：`src/infra/agent-activity-events.ts`（`~/git/openclaw` 0153d84c）
+ *
+ * ```ts
+ * type AgentItemEventPhase  = "start" | "update" | "end";
+ * type AgentItemEventStatus = "running" | "completed" | "failed" | "blocked";
+ * ```
+ *
+ * ⚠️ 写成**可测常量**，并由用例钉住（加了取值这里会红）—— 上一刀的教训：
+ *    散文里那句"实测 N 个"是**不可测**的，它会变成盖子，让下一个人不再去数 N+1。
+ */
+export const ITEM_PHASE_IDS: readonly string[] = ['start', 'update', 'end'];
+export const ITEM_STATUS_IDS: readonly string[] = ['running', 'completed', 'failed', 'blocked'];
+
+/**
+ * `item` 的 `status` 里表示**没成**的取值。
+ *
+ * 实测（随包运行时 2026.9.3，`builtin-openclaw-*.mjs`）：
+ *
+ * ```js
+ * terminalErrorStatus = terminal.executionStarted ? "failed" : "blocked"
+ * emitTrackedItemEvent(ctx, { …, phase: "end", kind: "tool",
+ *     status: isToolError ? terminalErrorStatus : "completed", … })
+ * ```
+ *
+ * - `failed` —— 执行了、失败了
+ * - `blocked` —— **压根没执行**（被拦下）
+ * - `error` —— 容错，<b>运行时的四个取值里没有它</b>（见 `ITEM_STATUS_IDS`），
+ *   刻意留着别把见过的形状漏掉
+ *
+ * ⚠️ 少了 `blocked` 的后果：`phase:"end"` 会让它落进 `settled` ⇒ 算成 `done`
+ * ⇒ **一条根本没跑的命令显示成"已完成"**。（平时被 `tool` 流 result 帧的
+ * `error` 权重挡着，但那是**帧序在兜底**，不是我们认对了。）
+ */
+export const ITEM_FAILURE_STATUSES = new Set(['failed', 'blocked', 'error']);
+
+/**
  * 从 `run_status` 的 data 里取重试次数（`{ attempt, maxAttempts }`）。
  *
  * ⚠️ **两个都必须是正整数才返回**：只拿到一半时给界面一个"第 2/?"没有意义，
@@ -1163,11 +1201,44 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
       }
       return;
     }
-    if (!data.toolCallId || !data.name) return;
+    if (!data.toolCallId || !data.name) {
+      // ⚠️ 从前是**静默 return**：这张条目**永远不会出现在界面上**，日志里一行都没有
+      //    （与 `tool` 流那处同形，见 `dropped_missing_fields` 的说明）。
+      debugEvent('renderer.agent.item.dropped_missing_fields', {
+        taskId,
+        sessionKey,
+        hasToolCallId: Boolean(data.toolCallId),
+        hasName: Boolean(data.name),
+        phase: data.phase,
+        status: data.status,
+      });
+      return;
+    }
 
     const failed = (data.status !== undefined && ITEM_FAILURE_STATUSES.has(data.status)) || Boolean(data.error);
     const settled = data.phase === 'end' || failed;
     const status: ToolCallStatus = failed ? 'error' : settled ? 'done' : 'running';
+
+    // ⭐ 认不出的 `status` **不许默默归类** —— `blocked` 当初就是被"默默归类"漏掉的
+    //    （`fc4afa3`：`phase:"end"` 让它落进 `done`，靠帧序而不是靠我们认对来兜底）。
+    //
+    // ⚠️ **行为刻意不变**：`phase` 已经告诉我们"这条目结没结束"，
+    //    ⇒ 认不出时**保留原有归类**，只把"我认不出"写进日志。
+    //    理由：改成 `running` 是**确定的错**（它确实结束了）；改成 `error` 是朝另一个
+    //    方向猜。**不知道就别改它的样子，但要留下能被查的痕迹。**
+    if (!data.status || !ITEM_STATUS_IDS.includes(data.status)) {
+      debugEvent('renderer.agent.item.unknown_status', {
+        taskId,
+        sessionKey,
+        toolCallId: data.toolCallId,
+        name: data.name,
+        status: data.status ? data.status : '(missing)',
+        phase: data.phase,
+        // 顺手记下**我们把它归成了什么** —— 否则光看日志没法判断影响面。
+        classifiedAs: status,
+        topLevelKeys: Object.keys(data),
+      });
+    }
 
     const toMs = (v: unknown): string | undefined =>
       typeof v === 'number' && v > 0 ? new Date(v).toISOString() : undefined;
@@ -1216,27 +1287,6 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
    *    而不是像从前那样静默 `return`（那会让卡片一直停在"进行中"）。
    */
   const APPROVAL_DELIBERATELY_IGNORED = new Set(['pending', 'approved']);
-
-  /**
-   * `item` 的 `status` 里表示**没成**的取值。
-   *
-   * 实测（随包运行时 2026.9.3，`builtin-openclaw-*.mjs`）：
-   *
-   * ```js
-   * terminalErrorStatus = terminal.executionStarted ? "failed" : "blocked"
-   * emitTrackedItemEvent(ctx, { …, phase: "end", kind: "tool",
-   *     status: isToolError ? terminalErrorStatus : "completed", … })
-   * ```
-   *
-   * - `failed` —— 执行了、失败了
-   * - `blocked` —— **压根没执行**（被拦下）
-   * - `error` —— 容错，别把见过的形状漏掉
-   *
-   * ⚠️ 少了 `blocked` 的后果：`phase:"end"` 会让它落进 `settled` ⇒ 算成 `done`
-   * ⇒ **一条根本没跑的命令显示成"已完成"**。（平时被 `tool` 流 result 帧的
-   * `error` 权重挡着，但那是**帧序在兜底**，不是我们认对了。）
-   */
-  const ITEM_FAILURE_STATUSES = new Set(['failed', 'blocked', 'error']);
 
   /**
    * `item` 的 **`kind`** 里"知道但不接"的那些。
