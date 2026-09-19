@@ -34,7 +34,7 @@ function makeDeps(overrides?: Partial<InstallerDeps>): InstallerDeps {
       result: {
         raw: '{}',
         hash: 'config-hash',
-        config: { agents: { list: [{ id: 'agent-1' }, { id: 'agent-2' }] } },
+        config: { agents: { entries: { 'agent-1': {}, 'agent-2': {} } } },
         path: '/openclaw.json',
       },
     }),
@@ -257,7 +257,7 @@ describe('installTeam', () => {
     ]);
   });
 
-  it('configures coordinator subagent allowlists for worker agents', async () => {
+  it('⭐ 给协调者配 subagent 白名单，形状必须是 agents.entries.<id>（不是 agents.list）', async () => {
     const parsed = makeParsed();
     const deps = makeDeps({
       getConfig: vi.fn().mockResolvedValue({
@@ -267,11 +267,11 @@ describe('installTeam', () => {
           hash: 'config-hash',
           config: {
             agents: {
-              list: [
-                { id: 'agent-1', subagents: { allowAgents: ['existing-worker'] } },
-                { id: 'existing-worker' },
-                { id: 'agent-2' },
-              ],
+              entries: {
+                'agent-1': { subagents: { allowAgents: ['existing-worker'] } },
+                'existing-worker': {},
+                'agent-2': {},
+              },
             },
           },
           path: '/openclaw.json',
@@ -286,8 +286,13 @@ describe('installTeam', () => {
     expect(deps.patchConfig).toHaveBeenCalledWith({
       baseHash: 'config-hash',
       raw: JSON.stringify({
+        // ⚠️ 形状是 `agents.entries.<id>`（以 id 为键的对象）。老写法 `agents.list: [...]`
+        //    会被随包运行时拒（`Unrecognized key: "list"`）—— 而旧测试断言的正是那个
+        //    错形状，所以代码和测试一起绿、真机一起挂（2026-09-20 实机踩到）。
         agents: {
-          list: [{ id: 'agent-1', subagents: { allowAgents: ['existing-worker', 'agent-2'] } }],
+          entries: {
+            'agent-1': { subagents: { allowAgents: ['existing-worker', 'agent-2'] } },
+          },
         },
       }),
     });

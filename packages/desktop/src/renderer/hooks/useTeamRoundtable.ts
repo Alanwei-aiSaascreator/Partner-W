@@ -2,27 +2,37 @@ import { useCallback, useRef, useState } from 'react';
 import { buildSessionKey } from '@clawwork/shared';
 import { useMessageStore } from '@/stores/messageStore';
 import { runRoundtable } from '@/lib/team-roundtable-runner';
-import { waitForCondition, watchTurnEnd } from '@/lib/turn-waiter';
+import { watchTurn } from '@/lib/turn-waiter';
 import type { Speaker, Turn } from '@/lib/team-roundtable';
 
 /**
  * 圆桌讨论接进真实世界（2026-09-20）。
  *
  * 这一层只做**接线**：把 `runRoundtable` 的 `send` 换成真身 ——
- * 「发到这位助手自己的会话 → 等这一轮结束 → 取回正文」。
+ * 「发到这位助手自己的会话 → 等这一轮结束并取回干净正文」。
  * 顺序、失败即停、人数上限那些判断全在 `lib/team-roundtable-runner.ts`（有单测）。
  *
  * ## 三个实测得来的细节，少一个就出错
  *
  * 1. **会话键**是 `buildSessionKey(taskId, agentId, deviceId)`，形状
  *    `agent:<agentId>:clawwork:<deviceId>:task:<taskId>`（运行时日志里抄下来的）。
- * 2. **先订阅、后发送** —— 反过来的话，`sendMessage` 返回之后、订阅之前那一小段里
- *    start/end 可能已经过去了 ⇒ 永远等不到"忙"（见 `turn-waiter.ts`）。
- * 3. ⚠️ **`lifecycle.end` 比 `chat.final` 早 22–36ms**（debug 日志时间线实测）。
- *    而 `finalizeStream`（在 `chat.final` 那条路上）才做 `splitInlineThinking`，
- *    把混在正文里的 `</think>` 推理切出去。所以只等"不忙"就开始读，
- *    读到的是**带推理的流式缓冲** —— 等于把模型的思考过程当成"发言"喂给下一位。
- *    必须再等一次 finalize。
+ * 2. **先起监视、后发送** —— 反过来的话，`sendMessage` 返回之后、订阅之前那一小段里
+ *    start/end 可能已经过去 ⇒ 永远等不到"忙"。
+ * 3. ⚠️ **正文要在它出现的那一刻抓，不能"等结束了再去读"**：dispatcher 在
+ *    `chat.finalized` 之后紧接着就 `syncSessionMessages`，把 active turn 收编走并删除。
+ *    2026-09-20 实机就是这样挂的 —— 第一位助手明明说完了，却卡在"等条件成立超时"，
+ *    整个讨论停在第一句。细节见 `lib/turn-waiter.ts`。
+ *
+ * ## 🔴 已知未解决（2026-09-20 停手时的实测状态）
+ *
+ * 第一位助手（主持人）**能跑、能出完整回答**（屏幕上看得见），但**这一层拿不到它的正文**：
+ * 探针实测那一轮 `messagesByTask[taskId]` 是 **0 条**，而 `activeTurnBySession` 是
+ * `finalized:false / content 空` —— 也就是说**界面上显示的那份回答不在我读的这两个地方**。
+ * 还没定位到渲染用的数据源。所以**团队讨论目前跑不完第一位**（会以
+ * "这一轮结束了但拿不到正文"中断）。
+ *
+ * 下一步排查方向：从 ChatPanel/消息列表的渲染源反查（谁在读、读的是哪个字段/
+ * 哪次 IPC 的返回），而不是继续猜 store 的字段名。
  */
 
 /** `turn-waiter` 只要这两件，直接借 store 的，不另造一层。 */
@@ -31,16 +41,32 @@ const messageStorePort = {
   subscribe: (fn: () => void) => useMessageStore.subscribe(fn),
 };
 
-/** finalize 的宽限：实测只差几十毫秒，给 5 秒已经非常宽松。 */
-const FINALIZE_WAIT_MS = 5_000;
-
 /**
- * 读这一轮**已经 finalize 的**正文。没 finalize 返回 null（调用方据此等一等）。
- * ⚠️ 不要退回 `streamingText` —— 那里面可能还混着 `</think>` 推理。
+ * 读这一位**这一轮**的正文。
+ *
+ * ⚠️ 读的是**任务消息列表**，不是 `activeTurnBySession`。
+ *    2026-09-20 实机踩了两次才定位：
+ *      · 先读 active turn 的 `finalized` —— 但 dispatcher 在 `chat.finalized` 之后
+ *        紧接着就 `syncSessionMessages`，把它收编走；
+ *      · 改成"出现那一刻抓"仍然拿不到 —— 探针实测那一轮的 active turn 是
+ *        `finalized:false / content 空 / toolCalls:2`，**压根没有正文**：
+ *        这一轮 `chat.final` 没带文本（模型跑了工具），真正的答案是从
+ *        `chat.history` 回来、由 sync 落进**任务消息列表**的。
+ *    ⇒ 正文的权威位置是消息列表，不是那个短暂的 turn 缓冲。
+ *
+ * 取该 session 最新一条**有正文的** assistant 消息。取不到返回 null（调用方据此等）。
+ * "不能把上一轮的答案当成本轮"由 `watchTurn` 的初始快照负责，这里不做判断。
  */
-function readFinalText(sessionKey: string): string | null {
-  const turn = useMessageStore.getState().activeTurnBySession[sessionKey];
-  return turn?.finalized ? turn.content : null;
+function readTurnText(taskId: string, sessionKey: string): string | null {
+  const msgs = useMessageStore.getState().messagesByTask[taskId] ?? [];
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    const m = msgs[i];
+    if (!m || m.sessionKey !== sessionKey) continue;
+    if (m.role !== 'assistant') continue;
+    const text = (m.content ?? '').trim();
+    if (text) return text;
+  }
+  return null;
 }
 
 export interface StartRoundtableArgs {
@@ -58,6 +84,8 @@ export interface TeamRoundtableApi {
   /** 某位失败时停在他的 agentId 上；用户点了停止则填 stoppedByUser。 */
   stoppedAt?: string;
   stoppedByUser?: boolean;
+  /** 中断的原因。界面要能说出为什么停，不能只在日志里（否则用户只看到"悄悄停了"）。 */
+  errorMessage?: string;
   start: (args: StartRoundtableArgs) => Promise<void>;
   /** 停止：既不再往下发，也中断当前这一位。 */
   stop: () => void;
@@ -69,6 +97,7 @@ export function useTeamRoundtable(): TeamRoundtableApi {
   const [doneCount, setDoneCount] = useState(0);
   const [stoppedAt, setStoppedAt] = useState<string | undefined>();
   const [stoppedByUser, setStoppedByUser] = useState<boolean | undefined>();
+  const [errorMessage, setErrorMessage] = useState<string | undefined>();
 
   const runningRef = useRef(false);
   const stopRef = useRef(false);
@@ -93,6 +122,7 @@ export function useTeamRoundtable(): TeamRoundtableApi {
     setDoneCount(0);
     setStoppedAt(undefined);
     setStoppedByUser(undefined);
+    setErrorMessage(undefined);
 
     // 与 `CronJobDialog` 同一种取法：拿不到就当没有（会话键少一段，网关那边仍是合法的）。
     const deviceId = (await window.clawwork.getDeviceId().catch(() => '')) || undefined;
@@ -100,20 +130,15 @@ export function useTeamRoundtable(): TeamRoundtableApi {
     const send = async (agentId: string, prompt: string): Promise<string> => {
       const sessionKey = buildSessionKey(taskId, agentId, deviceId);
 
-      // ⚠️ 顺序不能反：先订阅，再发。
-      const watch = watchTurnEnd(messageStorePort, sessionKey);
+      // ⚠️ 顺序不能反：先起监视，再发送。
+      const watch = watchTurn(messageStorePort, sessionKey, () => readTurnText(taskId, sessionKey));
       inFlightRef.current = { gatewayId, sessionKey };
       try {
         const res = await window.clawwork.sendMessage(gatewayId, sessionKey, prompt);
         if (res && res.ok === false) throw new Error(`发送失败：${res.error ?? ''}`);
 
-        await watch.ended;
-
-        await waitForCondition(messageStorePort, () => readFinalText(sessionKey) !== null, {
-          timeoutMs: FINALIZE_WAIT_MS,
-        });
-        const text = readFinalText(sessionKey);
-        if (text === null || text.trim() === '') throw new Error(`${agentId} 这一轮没有产出正文`);
+        const text = await watch.text;
+        if (text.trim() === '') throw new Error(`${agentId} 这一轮没有产出正文`);
         return text;
       } finally {
         watch.dispose();
@@ -134,9 +159,14 @@ export function useTeamRoundtable(): TeamRoundtableApi {
       });
       setStoppedAt(result.stoppedAt);
       setStoppedByUser(result.stoppedByUser);
-    } catch {
+      setErrorMessage(result.errorMessage);
+      if (result.errorMessage) console.error('[roundtable] 中断：', result.errorMessage);
+    } catch (error) {
       // 人数超限之类在**发之前**就抛了 —— 一位都没发出去，停在第 0 位。
       setStoppedAt(speakers[0]?.agentId);
+      const msg = error instanceof Error ? error.message : String(error);
+      setErrorMessage(msg);
+      console.error('[roundtable] 起不来：', msg);
     } finally {
       runningRef.current = false;
       inFlightRef.current = null;
@@ -144,5 +174,5 @@ export function useTeamRoundtable(): TeamRoundtableApi {
     }
   }, []);
 
-  return { running, turns, doneCount, stoppedAt, stoppedByUser, start, stop };
+  return { running, turns, doneCount, stoppedAt, stoppedByUser, errorMessage, start, stop };
 }

@@ -1,34 +1,45 @@
 /**
- * 「等某一次回复结束」（2026-09-20）。
+ * 「等某一次回复结束，并把**干净正文**拿回来」（2026-09-20）。
  *
  * 圆桌要串行：第 2 位必须等第 1 位说完。客户端原本只有"发出去就不管"的扇出
- * （`chat-composer.ts` 的 `Promise.allSettled`），没有等待原语 —— 这个文件补上它。
+ * （`chat-composer.ts` 的 `Promise.allSettled`），这个文件补上等待原语。
  *
  * ## 信号是什么（运行时实测，不是猜的）
  *
  * gateway 每轮都会发 `agent.lifecycle.start` / `.end`，**带 `sessionKey`**
- * （实测样本见 `%APPDATA%/@clawwork/desktop/logs/debug-*.ndjson`，
- * 形如 `agent:main:clawwork:<deviceId>:task:<taskId>`）。
+ * （实测样本在 `%APPDATA%/@clawwork/desktop/logs/debug-*.ndjson`）。
  * dispatcher 收到后调 `messageStore.setProcessing(sessionKey, bool)`
  * —— `processingBySession` 就是这个信号在渲染进程里的落点。
  *
- * ## ⚠️ 竞态是这里唯一的难点
+ * ## ⚠️ 两个竞态，一个都不能省
  *
- * 如果**先发再订阅**：`sendMessage` 返回之后、我们开始订阅之前，那一小段里
- * start（甚至 start+end）可能已经过去了 ⇒ 我们会**永远等不到"忙"**，然后超时。
- * 所以接口是 `watchTurnEnd()` 先订阅、拿到 `ended` 之后**再**发。
+ * 1. **必须先订阅、后发送**。反过来的话，`sendMessage` 返回之后、订阅之前那一小段里
+ *    start（甚至 start+end）可能已经过去了 ⇒ 永远等不到"忙"。
  *
- * store 是注入的（而不是直接 import），这样上面这条竞态可以用假 store 直接测掉。
+ * 2. ⭐ **正文必须在它出现的那一刻抓下来，不能"等结束了再去读"**。
+ *    实测时间线（debug 日志）：
+ *    ```
+ *    agent.lifecycle.end      ← "不忙了"
+ *    chat.final.received      (+22ms)
+ *    chat.finalized           (+22ms)  ← 此刻 finalized 才为 true、正文才切掉 </think>
+ *    ```
+ *    而 dispatcher 在 `chat.finalized` 之后**紧接着**就 `syncSessionMessages`，
+ *    把这条 active turn **收编走并删除**。所以"等结束 → 再去读"必然读到 undefined
+ *    —— 2026-09-20 实机就是这样：第一位助手明明说完了，却卡在"等条件成立超时"，
+ *    整个讨论停在第一句。
+ *    ⇒ 订阅时就把 `readFinalText` 挂上，看到非空立刻 resolve。
+ *
+ * `readFinalText` 与 store 都是注入的，所以上面两条竞态都能用假 store 直接测掉。
  */
 
-interface ProcessingStore {
+interface TurnStore {
   getState: () => { processingBySession: Set<string> };
   subscribe: (listener: () => void) => () => void;
 }
 
 export interface TurnWatch {
-  /** 这一轮说完时 resolve。 */
-  ended: Promise<void>;
+  /** 这一轮说完时 resolve，值是**已 finalize 的正文**。 */
+  text: Promise<string>;
   /** 取消订阅（无论 resolve 与否都要调，否则监听器会攒着）。 */
   dispose: () => void;
 }
@@ -38,38 +49,70 @@ export interface TurnWatchOptions {
   timeoutMs?: number;
   /** 等它"开始忙"的上限 —— 超过说明这条消息根本没跑起来（网关没连、会话不对）。 */
   startTimeoutMs?: number;
+  /** "变闲"之后还允许等多久正文（见 DEFAULT_FINALIZE_GRACE_MS 的说明）。 */
+  finalizeGraceMs?: number;
 }
 
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
 const DEFAULT_START_TIMEOUT_MS = 60 * 1000;
 
 /**
- * 订阅某个 session 的"说完"。**先订阅、后发送**，别反过来。
+ * "变闲"之后还允许等多久正文。
+ *
+ * ⚠️ **不能一闲下来就判死**：实测 `lifecycle.end`（变闲）比 `chat.finalized`（正文才切干净）
+ *    **早 22–36ms** —— 变闲那一刻正文本来就还没好。这段宽限就是给那几十毫秒用的；
+ *    给 5 秒是为了容忍慢的 finalize，同时又不至于让真失败一直挂着。
  */
-export function watchTurnEnd(store: ProcessingStore, sessionKey: string, opts: TurnWatchOptions = {}): TurnWatch {
+const DEFAULT_FINALIZE_GRACE_MS = 5_000;
+
+/**
+ * 盯住某个 session 的这一轮。**先调用它、再去发送**。
+ */
+export function watchTurn(
+  store: TurnStore,
+  sessionKey: string,
+  readFinalText: () => string | null,
+  opts: TurnWatchOptions = {},
+): TurnWatch {
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const startTimeoutMs = opts.startTimeoutMs ?? DEFAULT_START_TIMEOUT_MS;
+  const graceMs = opts.finalizeGraceMs ?? DEFAULT_FINALIZE_GRACE_MS;
 
   const busy = () => store.getState().processingBySession.has(sessionKey);
 
+  /**
+   * 订阅那一刻的正文。
+   *
+   * ⚠️ 必须有它：**同一个 session 会被重复使用**（同一场讨论跑第二轮、或用户对同一位
+   *    助手再问一次）。上一轮 finalize 的 turn 会留在 store 里，新一轮一"忙"我们就
+   *    读到它 —— 于是把**上一轮的答案**当成本轮结果。不能只看"非空"。
+   */
+  const initialText = readFinalText();
+
   let seenBusy = false;
+  /** 忙起来之后见过一次"还没 finalize" ⇒ 说明新一轮确实把 turn 重置了。 */
+  let sawResetAfterBusy = false;
   let settled = false;
   let unsubscribe: (() => void) | undefined;
-
-  // 计时器放在容器里而不是两个 `let`：`cleanup` 要引用它们，而它们的回调又要引用
+  // 计时器放容器里而不是两个 `let`：`cleanup` 要引用它们，而它们的回调又要引用
   // `settle`（它依赖 `cleanup`）—— 直接互相引用会绕成一个循环。
-  const timers: { start?: ReturnType<typeof setTimeout>; end?: ReturnType<typeof setTimeout> } = {};
+  const timers: {
+    start?: ReturnType<typeof setTimeout>;
+    end?: ReturnType<typeof setTimeout>;
+    grace?: ReturnType<typeof setTimeout>;
+  } = {};
 
-  let resolveEnded!: () => void;
-  let rejectEnded!: (e: Error) => void;
-  const ended = new Promise<void>((res, rej) => {
-    resolveEnded = res;
-    rejectEnded = rej;
+  let resolveText!: (v: string) => void;
+  let rejectText!: (e: Error) => void;
+  const text = new Promise<string>((res, rej) => {
+    resolveText = res;
+    rejectText = rej;
   });
 
   const cleanup = () => {
     if (timers.start) clearTimeout(timers.start);
     if (timers.end) clearTimeout(timers.end);
+    if (timers.grace) clearTimeout(timers.grace);
     unsubscribe?.();
     unsubscribe = undefined;
   };
@@ -83,86 +126,53 @@ export function watchTurnEnd(store: ProcessingStore, sessionKey: string, opts: T
 
   const check = () => {
     if (settled) return;
-    if (busy()) {
+
+    const nowBusy = busy();
+    if (nowBusy) {
       seenBusy = true;
       if (timers.start) {
         clearTimeout(timers.start);
         timers.start = undefined;
       }
-      return;
     }
-    // 只有**先见过忙**才算"说完了"；否则发出去之前那一下闲会被误判成一整轮结束。
-    if (seenBusy) settle(resolveEnded);
+
+    // 只有**先见过忙**才认正文 —— 否则上一轮残留的会被当成本轮的结果。
+    if (seenBusy) {
+      const t = readFinalText();
+      if (t === null) {
+        // 还没出现新正文。记下来 —— 有它就能容忍"本轮答案与上一轮一字不差"。
+        sawResetAfterBusy = true;
+      } else if (t !== initialText || sawResetAfterBusy) {
+        settle(() => resolveText(t));
+        return;
+      }
+
+      // ⚠️ 变闲之后还没拿到新正文 ⇒ 给一个宽限窗口，**不管读到的是空还是旧值**。
+      //    两种真实情形都会走到这里：
+      //      ① `lifecycle.end` 比 `chat.finalized` 早 22–36ms，那一刻正文还没好；
+      //      ② 正文要走 `chat.history` 往返才落进消息列表，期间读到的还是**上一轮**那条。
+      //    少了这个窗口，情形 ② 会一直挂到总超时（实机与单测都踩过）。
+      if (!nowBusy && !timers.grace) {
+        timers.grace = setTimeout(() => {
+          settle(() => rejectText(new Error(`这一轮结束了但拿不到正文（${sessionKey}）`)));
+        }, graceMs);
+      }
+    }
   };
 
   unsubscribe = store.subscribe(check);
 
   timers.start = setTimeout(() => {
     if (seenBusy) return; // 已经在忙了，这个表不用管
-    settle(() => rejectEnded(new Error(`等不到这一轮开始（${sessionKey}）`)));
+    settle(() => rejectText(new Error(`等不到这一轮开始（${sessionKey}）`)));
   }, startTimeoutMs);
 
   timers.end = setTimeout(() => {
-    settle(() => rejectEnded(new Error(`等这一轮结束超时（${sessionKey}）`)));
+    settle(() => rejectText(new Error(`等这一轮结束超时（${sessionKey}）`)));
   }, timeoutMs);
 
   // 订阅之后立刻查一次：订阅之前它可能就已经在忙了。
   check();
 
-  return { ended, dispose: () => settle(() => {}) };
-}
-
-/**
- * 等某个条件成立。**只用来等"将来才会发生的事"** —— 如果条件在订阅那一刻就已经成立，
- * 它会立刻 resolve。所以它不适合判断"状态有没有变化"（那种用 `watchTurnEnd`）。
- *
- * 为什么需要它：实测（debug 日志时间线）
- *
- * ```
- * 10:40:13.716  agent.lifecycle.end
- * 10:40:13.738  chat.final.received   (+22ms)
- * 10:40:13.738  chat.finalized        (+22ms)
- * ```
- *
- * ⇒ 拿到"不忙了"的时候，这一轮**还没 finalize**。而 `finalizeStream` 才做
- * `splitInlineThinking`（把混在正文里的 `</think>` 推理切出去）。
- * 少等这一步，会把模型的思考过程当成"发言"喂给下一位。
- */
-export function waitForCondition(
-  store: ProcessingStore,
-  isDone: () => boolean,
-  opts: { timeoutMs?: number } = {},
-): Promise<void> {
-  const timeoutMs = opts.timeoutMs ?? DEFAULT_START_TIMEOUT_MS;
-
-  if (isDone()) return Promise.resolve();
-
-  return new Promise<void>((resolve, reject) => {
-    let settled = false;
-    let unsubscribe: (() => void) | undefined;
-    // 与 `watchTurnEnd` 同一种写法：计时器放容器里 —— `cleanup` 要引用它，
-    // 它的回调又要引用 `settle`（依赖 `cleanup`），直接互相引用会绕成循环。
-    const timers: { t?: ReturnType<typeof setTimeout> } = {};
-
-    const cleanup = () => {
-      if (timers.t) clearTimeout(timers.t);
-      unsubscribe?.();
-      unsubscribe = undefined;
-    };
-    const settle = (fn: () => void) => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      fn();
-    };
-
-    const check = () => {
-      if (settled) return;
-      if (isDone()) settle(resolve);
-    };
-
-    unsubscribe = store.subscribe(check);
-    timers.t = setTimeout(() => settle(() => reject(new Error('等条件成立超时'))), timeoutMs);
-    check();
-  });
+  return { text, dispose: () => settle(() => {}) };
 }

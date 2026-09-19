@@ -53,12 +53,30 @@ function setBusy(sessionKey: string, busy: boolean) {
   });
 }
 
-function finalize(sessionKey: string, content: string) {
+/**
+ * 模拟"这一轮答完了、正文落进任务消息列表"。
+ *
+ * ⚠️ 真实链路里正文**不在** `activeTurnBySession` —— 2026-09-20 实机实测：
+ *    那一轮 active turn 是 `finalized:false / content 空 / toolCalls:2`，
+ *    真正的答案是从 `chat.history` 回来、由 sync 落进消息列表的。
+ *    所以夹具也必须落在消息列表上，否则测的是个不存在的形态。
+ */
+function answer(sessionKey: string, content: string) {
   setBusy(sessionKey, false);
   useMessageStore.setState((s) => ({
-    activeTurnBySession: {
-      ...s.activeTurnBySession,
-      [sessionKey]: { finalized: true, content } as never,
+    messagesByTask: {
+      ...s.messagesByTask,
+      [TASK]: [
+        ...(s.messagesByTask[TASK] ?? []),
+        {
+          id: `m-${content}`,
+          taskId: TASK,
+          role: 'assistant',
+          sessionKey,
+          content,
+          timestamp: new Date().toISOString(),
+        } as never,
+      ],
     },
   }));
 }
@@ -90,7 +108,7 @@ beforeEach(() => {
   const gw = makeGateway();
   abortChat = gw.abortChat;
   (window as unknown as { clawwork: unknown }).clawwork = gw;
-  useMessageStore.setState({ processingBySession: new Set(), activeTurnBySession: {} });
+  useMessageStore.setState({ processingBySession: new Set(), activeTurnBySession: {}, messagesByTask: {} });
 });
 
 /**
@@ -104,7 +122,7 @@ beforeEach(() => {
  */
 describe('useTeamRoundtable', () => {
   it('⭐ 按顺序给每位发到**他自己的会话**，会话键形状正确', async () => {
-    respond = (key) => finalize(key, `答复-${key}`);
+    respond = (key) => answer(key, `答复-${key}`);
     const { unmount } = render(<Probe />);
 
     await act(async () => {
@@ -121,7 +139,7 @@ describe('useTeamRoundtable', () => {
   }, 8000);
 
   it('⭐ 第 2 位拿到的输入里带着第 1 位的正文（这就是"讨论"）', async () => {
-    respond = (key) => finalize(key, `答复-${key}`);
+    respond = (key) => answer(key, `答复-${key}`);
     const { unmount } = render(<Probe />);
 
     await act(async () => {
@@ -135,11 +153,11 @@ describe('useTeamRoundtable', () => {
     unmount();
   });
 
-  it('⭐ finalize 比"不忙"晚到（实测差 22–36ms）⇒ 仍要等到 finalize 才取正文', async () => {
+  it('⭐ 正文比"不忙"晚到（实测差 22–36ms + 一次 chat.history 往返）⇒ 仍拿得到', async () => {
     // 只置闲、**不** finalize，隔一会儿再 finalize —— 复刻真实时序
     respond = (key) => {
       setBusy(key, false);
-      setTimeout(() => finalize(key, `干净正文-${key}`), 30);
+      setTimeout(() => answer(key, `干净正文-${key}`), 30);
     };
     const { unmount } = render(<Probe />);
 
@@ -151,19 +169,13 @@ describe('useTeamRoundtable', () => {
     unmount();
   });
 
-  it('⚠️ 这一位始终不 finalize ⇒ 停在他那里，**不**退回流式缓冲（那里面混着推理）', async () => {
+  it('⚠️ 这一位始终拿不到正文 ⇒ 停在他那里（不退回流式缓冲，那里面混着推理）', async () => {
     respond = (key) => {
       if (key === sk('e')) {
-        setBusy(key, false); // 闲了，但永远不 finalize
-        useMessageStore.setState((s) => ({
-          activeTurnBySession: {
-            ...s.activeTurnBySession,
-            [key]: { finalized: false, streamingText: '带着</think>推理的半成品' } as never,
-          },
-        }));
+        setBusy(key, false); // 闲了，但正文始终没落到消息列表
         return;
       }
-      finalize(key, `答复-${key}`);
+      answer(key, `答复-${key}`);
     };
     const { unmount } = render(<Probe />);
 
@@ -180,7 +192,7 @@ describe('useTeamRoundtable', () => {
   it('⚠️ 用户点停止 ⇒ 不再往下发，且**中断当前那一位**', async () => {
     respond = (key) => {
       if (key === sk('m')) api.stop(); // 主持人说完的瞬间点停止
-      finalize(key, `答复-${key}`);
+      answer(key, `答复-${key}`);
     };
     const { unmount } = render(<Probe />);
 
@@ -196,7 +208,7 @@ describe('useTeamRoundtable', () => {
   });
 
   it('人数超限在**发之前**就拒绝（不能先替用户花钱再报错）', async () => {
-    respond = (key) => finalize(key, `答复-${key}`);
+    respond = (key) => answer(key, `答复-${key}`);
     const many: Speaker[] = ['a', 'b', 'c', 'd', 'e'].map((id) => ({ agentId: id, name: id, position: 'expert' }));
     const { unmount } = render(<Probe />);
 

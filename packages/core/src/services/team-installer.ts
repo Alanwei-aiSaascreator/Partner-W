@@ -56,10 +56,24 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+/**
+ * 读某个助手当前的 `subagents.allowAgents`。
+ *
+ * ⚠️ **形状是 `agents.entries.<agentId>`（以 id 为键的对象），不是 `agents.list`（数组）。**
+ *    2026-09-20 实机踩到：老写法打 patch 时运行时直接拒 ——
+ *    `invalid config: agents: Unrecognized key: "list"` —— **团队根本装不完**
+ *    （卡在 75% 的"配置 subagent"那一步）。
+ *    权威依据是随包运行时的类型定义：`agents.entries` 下每个助手可带
+ *    `subagents.allowAgents`（注释原文 "Allow spawning sub-agents under other agent ids"），
+ *    而网关自己的控制台也写 `agents.entries.<id>`。
+ *
+ * ⚠️ 这个 bug 之所以长期没被发现，是因为**测试用了同一个错误假设**（旧测试断言的
+ *    就是 `agents.list`），于是代码和测试一起绿、真机一起挂。
+ */
 function readAllowAgents(config: Record<string, unknown>, agentId: string): string[] {
   const agents = config.agents;
-  const list = isRecord(agents) && Array.isArray(agents.list) ? agents.list : [];
-  const entry = list.find((item) => isRecord(item) && item.id === agentId);
+  const entries = isRecord(agents) && isRecord(agents.entries) ? agents.entries : undefined;
+  const entry = entries ? entries[agentId] : undefined;
   if (!isRecord(entry) || !isRecord(entry.subagents) || !Array.isArray(entry.subagents.allowAgents)) return [];
   return entry.subagents.allowAgents.filter((id): id is string => typeof id === 'string' && id.trim().length > 0);
 }
@@ -76,16 +90,23 @@ async function configureTeamSubagents(
   if (!configRes.ok || !configRes.result) return { ok: false, error: configRes.error ?? 'failed to read config' };
   const snapshot = configRes.result;
 
-  const list = managerIds.map((agentId) => ({
-    id: agentId,
-    subagents: {
-      allowAgents: [...new Set([...readAllowAgents(snapshot.config, agentId), ...workerIds])],
-    },
-  }));
+  // ⚠️ 形状必须是 `agents.entries.<agentId>.subagents.allowAgents`（以 id 为键的对象）。
+  //    写成 `agents.list: [{id, ...}]` 会被运行时拒：`Unrecognized key: "list"`。
+  //    `config.patch` 是**深合并**（`applyMergePatch`），所以只写 entries 这一支
+  //    不会破坏 `agents.defaults`、`agents.ownership` 或别的助手。
+  const entries: Record<string, { subagents: { allowAgents: string[] } }> = {};
+  for (const agentId of managerIds) {
+    entries[agentId] = {
+      subagents: {
+        // 并集：保留它原有的白名单（可能是别的团队装的），别覆盖掉。
+        allowAgents: [...new Set([...readAllowAgents(snapshot.config, agentId), ...workerIds])],
+      },
+    };
+  }
 
   const patchRes = await deps.patchConfig({
     baseHash: snapshot.hash,
-    raw: JSON.stringify({ agents: { list } }),
+    raw: JSON.stringify({ agents: { entries } }),
   });
   if (!patchRes.ok) return { ok: false, error: patchRes.error ?? 'failed to configure subagents' };
   return { ok: true };
