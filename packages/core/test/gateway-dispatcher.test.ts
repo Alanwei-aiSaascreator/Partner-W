@@ -2050,6 +2050,69 @@ describe('网关事件的审批家族：接了一个，另外三个要留痕', (
     );
   });
 
+  /**
+   * ⭐⭐ 把 `WIRED_APPROVAL_EVENTS` 与**真实的分派代码**绑起来。
+   *
+   * ## 为什么需要这条
+   *
+   * 下面那条「冻结名单」断言的是**常量等于一个字面量清单** —— 它只能证明
+   * 「常量没被人手抖改过」，**证明不了"这些事件真的接上了"**。
+   * 换句话说：`exec.approval.requested` 的处理分支**被删掉**，那条测试照样绿，
+   * 而常量会变成一句**没人验证过的声明**。
+   *
+   * ⇒ 这正是本项目反复栽的那个形状：**清单本身变成盖子** ——
+   *   后人看到"已接：exec.approval.requested"，就不会再去数它到底接没接。
+   *
+   * ## 这条怎么绑
+   *
+   * **用常量本身驱动**：`WIRED_APPROVAL_EVENTS` 里每有一个成员，就必须
+   * ①在下面的映射表里说得出它该走哪个回调、②发出去真的走到那个回调。
+   * 少任何一头都红 ⇒ 常量、映射表、分派分支**三者只能一起改**。
+   *
+   * ⚠️ 与 `ITEM_PHASE_IDS` 那次是**同一类**（定义了却没接线）；
+   *    区别是那次常量根本没人用，这次是常量被用在了"断言自己"上。
+   */
+  const DEP_FOR_WIRED_EVENT: Record<string, string> = {
+    'exec.approval.requested': 'onApprovalRequested',
+    'exec.approval.resolved': 'onApprovalResolved',
+    'question.requested': 'onQuestionRequested',
+    'question.resolved': 'onQuestionResolved',
+  };
+
+  it.each([...WIRED_APPROVAL_EVENTS].sort())('⭐⭐ 名单里的 `%s` **真的接了**：发出去会走到对应的处理函数', (event) => {
+    const depName = DEP_FOR_WIRED_EVENT[event];
+    expect(
+      depName,
+      `${event} 被 WIRED_APPROVAL_EVENTS 声明为"已接"，但映射表里没有它 —— 加成员时两处都要改`,
+    ).toBeDefined();
+
+    const h = createHarness();
+    const spy = vi.fn();
+    (h.deps as unknown as Record<string, unknown>)[depName] = spy;
+
+    emitEvent(h, event, { id: 'ap-1' });
+
+    expect(spy, `${event} 声明为"已接"，但没有任何分派分支走到 ${depName} —— 常量在撒谎`).toHaveBeenCalled();
+  });
+
+  it('⭐⭐ 反向：`UNWIRED_APPROVAL_EVENTS` 里的每个都**不该**走到那四个回调', () => {
+    // 与上一条对称：名单说"没接"，那就得真的没接（否则既记 unwired 又走了处理，自相矛盾）。
+    const wiredDeps = Object.values(DEP_FOR_WIRED_EVENT);
+    for (const event of UNWIRED_APPROVAL_EVENTS) {
+      const h = createHarness();
+      const spies = wiredDeps.map(() => vi.fn());
+      wiredDeps.forEach((d, i) => {
+        (h.deps as unknown as Record<string, unknown>)[d] = spies[i];
+      });
+
+      emitEvent(h, event, { id: 'ap-1' });
+
+      for (let i = 0; i < wiredDeps.length; i++) {
+        expect(spies[i], `${event} 声明为"未接"，却走到了 ${wiredDeps[i]}`).not.toHaveBeenCalled();
+      }
+    }
+  });
+
   it('⭐⭐ 冻结名单：**已接与未接不相交**，且并集 = 运行时审批家族的全名单', () => {
     // 灵敏度哨兵：运行时哪天加了第五个 `*.approval.*`，这里**不会**自动发现
     //（那份名单在运行时里，不在这边）—— 所以下面这条只能保证"我们现有的分类是自洽的"，
