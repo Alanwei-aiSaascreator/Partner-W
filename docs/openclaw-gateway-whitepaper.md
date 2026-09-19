@@ -66,6 +66,38 @@
 ⇒ 把这份白皮书当"2026.4.2 时代的协议画像 + 2026-09-09 的结构与目录现状"用，
 **别**当"2026-09-09 的完整协议规范"用。
 
+### 0.4 取值词表：**每条都标来源**（2026-09-19 补）
+
+§0.2 管的是**结构**漂移（方法/事件目录、常量）。这一节管**取值**：
+某个字段到底有哪些值、**凭什么说齐了**。
+
+**为什么单开一节**：这份文档吃过三次同一句话的亏 ——
+「扫过一遍」被写成了「只有这些」，而那句声明**不可测**，于是它成了盖子：
+`tool.phase` 漏了 `input_delta`、`lifecycle` 漏了 `finishing`、`item.status` 漏了两个。
+⇒ 从今天起的规矩：**凡写一份取值清单，必须同时写清来源**，并写明**是否可能不全**。
+
+| 词表                                            | **来源**（能不能当全集用）                                                                                     | 全部取值                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `chat` 的 `state`                               | ✅ **类型定义**：`ChatEventSchema` = 5 个 schema 的联合（`logs-chat.ts`）                                      | `status` `delta` `final` `aborted` `error`                                                                                                                                                                                                                                                                                                                                                                  |
+| `chat` 的 `errorKind`                           | ✅ **类型定义**：`ChatEventErrorKindSchema`                                                                    | `refusal` `timeout` `rate_limit` `context_length` `unknown`                                                                                                                                                                                                                                                                                                                                                 |
+| `chat` 的 `phase`（`state:"status"` 时）        | ✅ **类型定义**：`ChatRunStartupPhaseSchema`                                                                   | 7 个启动相位（与 agent 流的 `run_status` **逐字相同**）                                                                                                                                                                                                                                                                                                                                                     |
+| `agent.item` 的 `phase` / `status`              | ✅ **类型定义**：`AgentItemEventPhase` / `AgentItemEventStatus`（`src/infra/agent-activity-events.ts`）        | phase 3 个：`start` `update` `end`；status 4 个：`running` `completed` `failed` `blocked`                                                                                                                                                                                                                                                                                                                   |
+| `agent.item` 的 `kind`                          | ✅ **类型定义**，但**开放**（`… \| (string & {})`）                                                            | `tool` `command` `patch` `search` `analysis`（后两个无发射点）                                                                                                                                                                                                                                                                                                                                              |
+| `agent.approval` 的 `phase` / `status` / `kind` | ✅ **类型定义**：`AgentApprovalEventPhase` / `…Status` / `…Kind`（`src/infra/agent-events.ts`）                | phase：`requested` `resolved`；status：`pending` `unavailable` `approved` `denied` `failed`；kind：`exec` `plugin` `unknown`                                                                                                                                                                                                                                                                                |
+| `ExecToolDetails.status`                        | ✅ **类型定义**：`bash-tools.exec-types.ts`（闭合联合）                                                        | `running` / `completed\|failed` / `approval-pending` / `approval-unavailable`                                                                                                                                                                                                                                                                                                                               |
+| `agent.tool` 的 `phase`                         | ⚠️ **数出来的**（生产代码 25 个发射点）—— **不保证全集**                                                       | `start` `result` `update` `review` `input_delta`                                                                                                                                                                                                                                                                                                                                                            |
+| `agent.lifecycle` 的 `phase`                    | ⚠️ **数出来的 + 抄运行时代码注释** —— **不保证全集**（⚠️ 其中 `finishing` 是**变量**发的，**扫字面量扫不到**） | `start` `end` `error` `fallback` `fallback_step` `fallback_cleared` `finishing`                                                                                                                                                                                                                                                                                                                             |
+| `agent.run_status` 的 `phase`                   | ⚠️ **数出来的**（权威的是那份 7 个的 schema，`retrying` 是发射点数的）                                         | 7 个启动相位 + `retrying`                                                                                                                                                                                                                                                                                                                                                                                   |
+| **`sessions.changed` 的 `reason`**              | 🔴 **无权威来源** —— 运行时类型就是 `reason: string`（`SessionChangedPayload`），**没有联合**                  | 数出来 **26 个以上**（`abort` `archive` `board` `checkpoint-branch` `cleanup` `compact` `create` `cron-binding` `cron-bindings-loaded` `cron-continuation` `delete` `dispatch` `fork` `goal` `groups` `move` `owner` `patch` `placement` `plugin-patch` `profile-identity` `project` `reclaim` `runner-availability` `send` `sharing` …）；⚠️ 模板 `checkpoint-${action}` 还会产出 **`checkpoint-restore`** |
+
+**读这张表的规矩：**
+
+1. **"类型定义"那一行**可以当全集用（除非运行时改了类型）；
+2. **"数出来的"那几行是样本** —— 用之前先问"我的扫描边界是不是恰好等于全部"；
+3. **没有来源的那一行（`reason`）默认是开放集**，别当闭集用；
+4. ⇒ 对应的客户端做法：**认不出就留痕**（`unknown_*`），让清单**能长**。
+   我们的实现里这类护栏已有 6 处，见内层仓库的 `gateway-dispatcher.ts`。
+
 ---
 
 ## 1. Architecture Overview
@@ -435,7 +467,7 @@ The primary event for receiving AI responses. Streams incrementally.
   runId: string,          // unique run identifier
   sessionKey: string,     // session this message belongs to
   seq: number,            // monotonic sequence within the run
-  state: "delta" | "final" | "aborted" | "error",
+  state: "status" | "delta" | "final" | "aborted" | "error",
   message?: {
     role: "assistant",
     content: [{ type: "text", text: string }],
@@ -459,12 +491,25 @@ The primary event for receiving AI responses. Streams incrementally.
  ┌──────┐ ┌───────┐ ┌───────┐
  │final │ │aborted│ │ error │
  └──────┘ └───────┘ └───────┘
+
+  (status — 旁路，见下)
 ```
 
 - **delta**: Streamed text fragment. Throttled at 150ms intervals. `message.content[0].text` contains the **full accumulated text** up to this point (not just the delta).
+  ⚠️ **协议 v4 起还有两个增量字段**：`deltaText`（**本次增量**）与 `replace`（`true` ⇒ `deltaText` 是**全文重写**）。
+  取错会把全文当增量拼起来 —— 实测膨胀 **5–57 倍**。详见 §0.4。
 - **final**: Complete response. Contains final text (or `undefined` message if suppressed). May include `stopReason`.
 - **aborted**: User-initiated abort via `chat.abort`.
-- **error**: Execution failure. `errorMessage` contains details.
+- **error**: Execution failure. `errorMessage` contains details. `errorKind` 是**结构化类别**
+  （`refusal` / `timeout` / `rate_limit` / `context_length` / `unknown`，`ChatEventErrorKindSchema`）。
+  ⚠️ `errorCode` / `error` **在协议 schema 里不存在** —— 想按错误码分流是走不通的，用它。
+- **status**（2026-09-19 补）：`ChatStatusEventSchema` —— **准备阶段的 chat 投影**，
+  带 `phase`（7 个启动相位之一）与可选的 `retry:{attempt,maxAttempts,reason}`。
+  ⚠️ 它此前**没被列在这里**，而正文那个 `state` 类型字面量也不含它 ⇒ 照着写的消费者会把它当"未知"。
+  它和 agent 流的 `run_status` **讲同一件事**（相位清单逐字相同），消费一个即可。
+
+> **`state` 的权威来源**：`ChatEventSchema = Type.Union([Status, Delta, Final, Aborted, Error])`
+> —— **五个 schema 的联合**（`logs-chat.ts`）。任何"只有四个"的写法都是**样本**，不是契约。
 
 ### 4.3 Agent Event (event: `agent`)
 
@@ -483,15 +528,32 @@ Requires `caps: ["tool-events"]` capability. Provides granular agent execution v
 }
 ```
 
-**Stream types:**
+**Stream types**（⚠️ **数出来的**：扫运行时代码里的 `stream:` 字面量 —— **不保证全集**。
+表里标 ✅ 的是我们**已接**的，🔇 的是**刻意不接**的，⛔ 是**声明了但一个发射点都没有**的）：
 
-| stream      | data fields                                                                                                | description                            |
-| ----------- | ---------------------------------------------------------------------------------------------------------- | -------------------------------------- |
-| `assistant` | `{ text, delta }`                                                                                          | Text generation fragment               |
-| `tool`      | `{ phase, name, toolCallId, args?, result?, partialResult?, meta?, isError?, commandBearing? }`            | Tool invocation                        |
-| `item`      | `{ itemId, kind, phase, toolCallId?, name?, title?, progressText?, status?, meta?, startedAt?, endedAt? }` | Human-readable "what is it doing" feed |
-| `lifecycle` | `{ phase, error?, stopReason? }`                                                                           | Run lifecycle                          |
-| `error`     | `{ reason, expected?, received? }`                                                                         | Sequence errors                        |
+| stream              | data fields                                                                                                | description                            |
+| ------------------- | ---------------------------------------------------------------------------------------------------------- | -------------------------------------- |
+| `assistant` ✅      | `{ text, delta }`                                                                                          | Text generation fragment               |
+| `tool` ✅           | `{ phase, name, toolCallId, args?, result?, partialResult?, meta?, isError?, commandBearing? }`            | Tool invocation                        |
+| `item` ✅           | `{ itemId, kind, phase, toolCallId?, name?, title?, progressText?, status?, meta?, startedAt?, endedAt? }` | Human-readable "what is it doing" feed |
+| `lifecycle` ✅      | `{ phase, error?, stopReason? }`                                                                           | Run lifecycle                          |
+| `error` ✅          | `{ reason, expected?, received? }`                                                                         | Sequence errors                        |
+| `thinking` ✅       | `{ text?（**累计快照**）, delta?（本次增量）, progressTokens? }`                                           | 推理过程（取错会重复）                 |
+| `run_status` ✅     | `{ phase, … }` — 8 个相位（7 启动 + `retrying`，带 `{attempt,maxAttempts}`）                               | 「走到哪一步了」                       |
+| `compaction` ✅     | `{ phase:"start"\|"end", itemId, willRetry?, completed? }`                                                 | 上下文压缩                             |
+| `approval` ✅       | `{ phase:"requested"\|"resolved", kind, status, toolCallId?, command?, reason?, message? }`                | 审批（**命令没跑成的真相只在这里**）   |
+| `usage` 🔇          | —                                                                                                          | 刻意不接                               |
+| `patch` 🔇          | —                                                                                                          | 只对 `apply_patch` 发                  |
+| `command_output` 🔇 | —                                                                                                          | exec 实时输出                          |
+| `stdout` 🔇         | —                                                                                                          | 同上                                   |
+| `stderr` 🔇         | —                                                                                                          | 同上                                   |
+| `acp` 🔇            | —                                                                                                          | ACP 桥                                 |
+| `plan` 🔇           | `{ phase, title, steps, explanation }`                                                                     | 由内建工具 `progress_card` 产生        |
+
+> ⚠️ 本文此前只列了 5 个 stream。**"只列了 5 个"不等于"只有 5 个"** —— 这正是这份文档
+> 反复吃亏的地方：一个不求全的清单被当成契约读。
+> ✅ **可机械核对的替代**：连上之后看 `hello-ok.features.events / methods` —— 那是网关
+> **自己**声明的能力面（§3.5），比本文的清单可靠。
 
 > ⚠️ **Corrected 2026-09-19 against the runtime we actually ship (`2026.9.3`).**
 > This section previously documented the tool phases as `start` / `end` and did not list
@@ -501,33 +563,69 @@ Requires `caps: ["tool-events"]` capability. Provides granular agent execution v
 > `runtime/deployed/2026.9.3-*/node_modules/openclaw/dist/*.mjs` was scanned for the
 > `stream:` / `phase:` / `status:` literals. Values below are **observed**, not inferred.
 
-**Tool event phases** (observed in 2026.9.3 — note: **no `end`**):
+**Tool event phases** (**数出来的** —— 生产代码 25 个 `stream:"tool"` 发射点逐个取；
+没有集中的类型定义 ⇒ **不保证全集**):
 
 - `phase: "start"` — invocation begins: `name`, `toolCallId`, `args`
 - `phase: "update"` — progress: `partialResult` only (**no** `args`, **no** `result`)
 - `phase: "result"` — invocation finished: `result`, `isError`, `meta`.
   **Failures are `isError: true`, not a separate phase** (there is no `phase: "error"` on this stream)
 - `phase: "review"` — approval review: `approvalReviewOutcome`, `hideFromChannelProgress: true`
+- **`phase: "input_delta"`**（2026-09-19 补）— live edit diff
+  （`handlers.messages.update.ts`）。此前这份名单写的是"四个"，**漏了它**。
 
 ⚠️ Because `update` carries neither `args` nor `result`, a consumer that lets later frames
 overwrite earlier ones will **lose the arguments and the output**, and can flip a finished
 call back to "running". Merge by `toolCallId`; never overwrite with `undefined`.
 
-**Item stream kinds** (observed in 2026.9.3): `tool` | `command` | `preamble`
+⚠️ **`ExecToolDetails.status` 是个闭合联合**（`bash-tools.exec-types.ts`），四个分支：
+`running` / `completed|failed` / **`approval-pending`** / **`approval-unavailable`**。
+**后两个都不代表"跑完了"**，而工具流那一帧上**两个都带 `isError: false`**（原因不同：
+前者不在 `isToolResultError` 的失败清单里且没有 `exitCode`；后者在清单里但被
+`approvalUnavailable` 压掉）⇒ **照 `isError` 落地会把"没跑的命令"显示成"已完成"**。
+详见 §0.4。
+
+**Item stream kinds**（**权威来源是类型定义**，`src/infra/agent-activity-events.ts`）:
+
+```ts
+type AgentItemEventKind = 'tool' | 'command' | 'patch' | 'search' | 'analysis' | (string & {});
+```
 
 - `tool` — echoes a tool invocation, adding a gateway-composed `title` ("tool name + args summary")
 - `command` — shell/exec items; carries live output, and may be `status: "blocked"`
+- `patch` — `apply_patch` only
 - `preamble` — model-authored progress text in `progressText`
+- ⚠️ `search` / `analysis` 在**类型里声明了，但一个发射点都没有**（实测）。
+- ⚠️ **`kind` 是这份名单里唯一"开放"的字段**（`(string & {})`）。
 
-Observed `item.phase`: `start`, `update`, `end`. Observed `item.status`: `running`, `blocked`
-(treat the set as open — it is a free-form field, not a schema-validated enum).
+**Item phases / statuses**（**权威来源同上，是类型定义 —— 不是"自由字段"**）:
 
-**Lifecycle event phases** (observed in 2026.9.3):
+```ts
+type AgentItemEventPhase = 'start' | 'update' | 'end';
+type AgentItemEventStatus = 'running' | 'completed' | 'failed' | 'blocked';
+```
+
+- ⚠️ 本文此前写的是「observed `item.status`: `running`, `blocked`（treat the set as open
+  — it is a free-form field, not a schema-validated enum）」—— **两处都不对**：
+  漏了 `completed`/`failed`，而"自由字段"的说法**是错的**（它是个字面量联合）。
+  ⇒ 按"开放集"读会把 `completed` 当成认不出的值；按"只有两个"读会让
+  `phase:"end"` 落进"已结束" —— 而 **`blocked` 意味着命令压根没执行**。
+- `blocked` = **没执行**（被拦下），**不是**"执行了但失败"（那是 `failed`）。
+
+**Lifecycle event phases**（**数出来的 + 抄运行时代码里的注释** —— 没有集中的类型定义，
+**不保证全集**）：
 
 - `phase: "start"` — agent run begins
 - `phase: "end"` — agent run completes normally, may include `stopReason`
 - `phase: "error"` — agent run failed, includes `error`
 - `phase: "fallback"` — provider/model fallback: `selectedProvider`, `selectedModel`, `activeProvider`, `activeModel`
+- **`phase: "fallback_step"`** / **`phase: "fallback_cleared"`** — 逐个候选尝试的过程 / 切回来
+- **`phase: "finishing"`** — ⚠️ **不是结束**：还有后续尝试时发的"本 attempt 收尾"
+  （运行时注释：_"Finishing is an attempt fence, not the outer execution's final publication"_；
+  `terminalLifecyclePhase: attempt.deferTerminalLifecycle ? "finishing" : "end"` —— **它替代 `end`**）。
+  ⇒ **按 `end` 处理会在 agent 还在干活时把活动条收掉。**
+  ⚠️ 补一句方法上的教训：它是**变量**发的，**扫字面量扫不到** —— 本文前述"observed"名单
+  正是这么漏掉它的。
 
 **Tool Event Delivery:**
 Tool events use **targeted delivery**, not broadcast. Only connections that:
