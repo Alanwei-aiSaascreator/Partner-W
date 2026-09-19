@@ -657,6 +657,12 @@
     "errorNameRequired": "Insira um nome para a tarefa",
     "errorScheduleRequired": "Configure o agendamento",
     "errorTimeoutInvalid": "O tempo limite deve ser maior que zero",
+    "every": {
+      "days": "a cada {{n}} d",
+      "hours": "a cada {{n}} h",
+      "minutes": "a cada {{n}} min",
+      "seconds": "a cada {{n}} s"
+    },
     "everyValuePlaceholder": "Valor do intervalo",
     "failureAlert": "Alerta de Falha",
     "failureAlertAfter": "Alertar após erros",
@@ -692,12 +698,27 @@
     "pagination": "{{start}}–{{end}} de {{total}}",
     "payload_agentTurn": "Mensagem do Agente",
     "payload_systemEvent": "Evento do Sistema",
+    "payloadKind": {
+      "agentTurn": "turno do agente",
+      "heartbeat": "batimento",
+      "systemEvent": "evento do sistema"
+    },
     "preset_dailyAt9": "Diário às 9h",
     "preset_every5min": "A cada 5 min",
     "preset_everyHour": "A cada hora",
     "preset_everyMonday": "Toda segunda-feira",
     "preset_weekdays9": "Dias úteis às 9h",
     "prev": "Anterior",
+    "rel": {
+      "daysAgo": "há {{n}} d",
+      "hoursAgo": "há {{n}} h",
+      "inDays": "em {{n}} d",
+      "inHours": "em {{n}} h",
+      "inLessThanMinute": "em menos de um minuto",
+      "inMinutes": "em {{n}} min",
+      "lessThanMinuteAgo": "agora mesmo",
+      "minutesAgo": "há {{n}} min"
+    },
     "retry": "Tentar Novamente",
     "runEnqueued": "Tarefa enfileirada",
     "runFailed": "Falha ao executar tarefa",
@@ -721,12 +742,22 @@
     "schedule_at": "Única",
     "schedule_cron": "Cron",
     "schedule_every": "Intervalo",
+    "scheduleKind": {
+      "at": "única vez",
+      "cron": "agendado",
+      "every": "intervalo"
+    },
     "schedulerStopped": "Agendador parado",
     "searchPlaceholder": "Buscar tarefas…",
     "selectGateway": "Selecionar Gateway",
     "sessionTarget_main": "Sessão Principal",
     "sessionTarget_task": "Sessão da tarefa (conversa estável do Rongying Cube)",
     "subtitle": "Gerenciar tarefas recorrentes de agentes",
+    "target": {
+      "current": "sessão atual",
+      "isolated": "sessão isolada",
+      "main": "sessão principal"
+    },
     "taskSessionNote": "Cada tarefa cron usa sua própria sessão estável do Rongying Cube. O modo isolado está oculto até que o OpenClaw o suporte completamente.",
     "thinking": "Modo de Raciocínio",
     "timeout": "Tempo limite (segundos)",

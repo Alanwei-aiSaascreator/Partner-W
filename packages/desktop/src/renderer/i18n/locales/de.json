@@ -657,6 +657,12 @@
     "errorNameRequired": "Bitte geben Sie einen Aufgabennamen ein",
     "errorScheduleRequired": "Bitte konfigurieren Sie den Zeitplan",
     "errorTimeoutInvalid": "Timeout muss groesser als null sein",
+    "every": {
+      "days": "alle {{n}} T.",
+      "hours": "alle {{n}} Std.",
+      "minutes": "alle {{n}} Min.",
+      "seconds": "alle {{n}} s"
+    },
     "everyValuePlaceholder": "Intervallwert",
     "failureAlert": "Fehlerwarnung",
     "failureAlertAfter": "Warnung nach Fehlern",
@@ -692,12 +698,27 @@
     "pagination": "{{start}}–{{end}} von {{total}}",
     "payload_agentTurn": "Agent-Nachricht",
     "payload_systemEvent": "Systemereignis",
+    "payloadKind": {
+      "agentTurn": "Agenten-Durchlauf",
+      "heartbeat": "Heartbeat",
+      "systemEvent": "Systemereignis"
+    },
     "preset_dailyAt9": "Taeglich 9 Uhr",
     "preset_every5min": "Alle 5 Min.",
     "preset_everyHour": "Stuendlich",
     "preset_everyMonday": "Jeden Montag",
     "preset_weekdays9": "Werktags 9 Uhr",
     "prev": "Zurueck",
+    "rel": {
+      "daysAgo": "vor {{n}} T.",
+      "hoursAgo": "vor {{n}} Std.",
+      "inDays": "in {{n}} T.",
+      "inHours": "in {{n}} Std.",
+      "inLessThanMinute": "in unter einer Minute",
+      "inMinutes": "in {{n}} Min.",
+      "lessThanMinuteAgo": "gerade eben",
+      "minutesAgo": "vor {{n}} Min."
+    },
     "retry": "Erneut versuchen",
     "runEnqueued": "Job eingereiht",
     "runFailed": "Job-Ausfuehrung fehlgeschlagen",
@@ -721,12 +742,22 @@
     "schedule_at": "Einmalig",
     "schedule_cron": "Cron",
     "schedule_every": "Intervall",
+    "scheduleKind": {
+      "at": "Einmalig",
+      "cron": "Zeitplan",
+      "every": "Intervall"
+    },
     "schedulerStopped": "Planer gestoppt",
     "searchPlaceholder": "Aufgaben suchen…",
     "selectGateway": "Gateway auswaehlen",
     "sessionTarget_main": "Haupt-Sitzung",
     "sessionTarget_task": "Aufgaben-Sitzung (stabile Rongying Cube-Aufgabenkonversation)",
     "subtitle": "Wiederkehrende Agent-Aufgaben verwalten",
+    "target": {
+      "current": "aktuelle Sitzung",
+      "isolated": "isolierte Sitzung",
+      "main": "Hauptsitzung"
+    },
     "taskSessionNote": "Jeder Cron-Job verwendet seine eigene stabile Rongying Cube-Aufgaben-Sitzung. Der isolierte Modus ist ausgeblendet, bis OpenClaw ihn vollstaendig unterstuetzt.",
     "thinking": "Denkmodus",
     "timeout": "Timeout (Sekunden)",

@@ -101,7 +101,7 @@ export default function NavMenu({ mainView, settingsOpen, onSelectView, onOpenSk
             <Icon size={15} className="flex-shrink-0" />
             <span className="min-w-0 flex-1 truncate">{t(item.labelKey)}</span>
             {item.badge && (
-              <span className="flex-shrink-0 rounded-full bg-[var(--accent-soft)] px-1.5 text-[10px] leading-4 text-[var(--accent)]">
+              <span className="type-badge flex-shrink-0 rounded-full bg-[var(--accent-soft)] px-1.5 text-[var(--accent)]">
                 {item.badge}
               </span>
             )}

@@ -657,6 +657,12 @@
     "errorNameRequired": "請輸入任務名稱",
     "errorScheduleRequired": "請設定排程",
     "errorTimeoutInvalid": "逾時必須大於零",
+    "every": {
+      "days": "每 {{n}} 天",
+      "hours": "每 {{n}} 小時",
+      "minutes": "每 {{n}} 分鐘",
+      "seconds": "每 {{n}} 秒"
+    },
     "everyValuePlaceholder": "間隔數值",
     "failureAlert": "失敗警報",
     "failureAlertAfter": "錯誤次數後警報",
@@ -692,12 +698,27 @@
     "pagination": "{{start}}–{{end}} / {{total}}",
     "payload_agentTurn": "代理訊息",
     "payload_systemEvent": "系統事件",
+    "payloadKind": {
+      "agentTurn": "智慧體回合",
+      "heartbeat": "心跳",
+      "systemEvent": "系統事件"
+    },
     "preset_dailyAt9": "每天上午 9 點",
     "preset_every5min": "每 5 分鐘",
     "preset_everyHour": "每小時",
     "preset_everyMonday": "每週一",
     "preset_weekdays9": "平日上午 9 點",
     "prev": "上一頁",
+    "rel": {
+      "daysAgo": "{{n}} 天前",
+      "hoursAgo": "{{n}} 小時前",
+      "inDays": "{{n}} 天後",
+      "inHours": "{{n}} 小時後",
+      "inLessThanMinute": "不到 1 分鐘後",
+      "inMinutes": "{{n}} 分鐘後",
+      "lessThanMinuteAgo": "剛剛",
+      "minutesAgo": "{{n}} 分鐘前"
+    },
     "retry": "重試",
     "runEnqueued": "工作已加入佇列",
     "runFailed": "執行工作失敗",
@@ -721,12 +742,22 @@
     "schedule_at": "一次性",
     "schedule_cron": "Cron",
     "schedule_every": "固定間隔",
+    "scheduleKind": {
+      "at": "一次性",
+      "cron": "定時",
+      "every": "間隔"
+    },
     "schedulerStopped": "排程器已停止",
     "searchPlaceholder": "搜尋任務…",
     "selectGateway": "選擇 Gateway",
     "sessionTarget_main": "主要工作階段",
     "sessionTarget_task": "任務工作階段（穩定的 魔方羅盤 任務對話）",
     "subtitle": "管理定期執行的代理任務",
+    "target": {
+      "current": "目前工作階段",
+      "isolated": "獨立工作階段",
+      "main": "主工作階段"
+    },
     "taskSessionNote": "每個 Cron 工作使用獨立的穩定 魔方羅盤 任務工作階段。隔離模式在 OpenClaw 完整支援前會隱藏。",
     "thinking": "思考模式",
     "timeout": "逾時（秒）",

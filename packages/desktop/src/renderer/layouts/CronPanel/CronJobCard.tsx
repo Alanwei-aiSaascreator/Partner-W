@@ -4,6 +4,7 @@ import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
+import type { TFunction } from 'i18next';
 import type { CronJob } from '@clawwork/shared';
 import { cronPayloadPreview } from './payload.js';
 
@@ -16,41 +17,44 @@ interface CronJobCardProps {
   onShowHistory: (job: CronJob) => void;
 }
 
-function formatRelativeMs(ms: number): string {
-  const now = Date.now();
+/**
+ * ⚠️⚠️ **这一段原来把英文写死在纯函数里**（`in 21m` / `every 30m` / `interval` / `isolated`），
+ *      中文界面上整片露英文（2026-09-19 用户报「汉化没做好」）。
+ *
+ * 修法：纯函数只算**判别式**，文案在下面用**带引号的字面量键**取。
+ * ⚠️ **不要改成 `cron.rel.${unit}` 那种拼串** —— `check:i18n` 只认带引号的字面量键。
+ *    （见 `scripts/lib/i18n-usage.mjs` 的头注释：模板键会让整组键被当成"未使用"从而**静默漏掉**）。
+ */
+type RelUnit = 'ltMinute' | 'minute' | 'hour' | 'day';
+
+function relativeUnit(ms: number, now = Date.now()): { future: boolean; unit: RelUnit; n: number } {
   const diff = ms - now;
   const absDiff = Math.abs(diff);
-  if (absDiff < 60_000) return diff > 0 ? 'in <1m' : '<1m ago';
-  if (absDiff < 3600_000) {
-    const m = Math.round(absDiff / 60_000);
-    return diff > 0 ? `in ${m}m` : `${m}m ago`;
-  }
-  if (absDiff < 86400_000) {
-    const h = Math.round(absDiff / 3600_000);
-    return diff > 0 ? `in ${h}h` : `${h}h ago`;
-  }
-  const d = Math.round(absDiff / 86400_000);
-  return diff > 0 ? `in ${d}d` : `${d}d ago`;
+  const future = diff > 0;
+  if (absDiff < 60_000) return { future, unit: 'ltMinute', n: 0 };
+  if (absDiff < 3600_000) return { future, unit: 'minute', n: Math.round(absDiff / 60_000) };
+  if (absDiff < 86400_000) return { future, unit: 'hour', n: Math.round(absDiff / 3600_000) };
+  return { future, unit: 'day', n: Math.round(absDiff / 86400_000) };
 }
 
-function formatEveryMs(ms: number): string {
-  if (ms >= 86400_000) return `every ${Math.round(ms / 86400_000)}d`;
-  if (ms >= 3600_000) return `every ${Math.round(ms / 3600_000)}h`;
-  if (ms >= 60_000) return `every ${Math.round(ms / 60_000)}m`;
-  return `every ${Math.round(ms / 1000)}s`;
+type EveryUnit = 'second' | 'minute' | 'hour' | 'day';
+
+function everyUnit(ms: number): { unit: EveryUnit; n: number } {
+  if (ms >= 86400_000) return { unit: 'day', n: Math.round(ms / 86400_000) };
+  if (ms >= 3600_000) return { unit: 'hour', n: Math.round(ms / 3600_000) };
+  if (ms >= 60_000) return { unit: 'minute', n: Math.round(ms / 60_000) };
+  return { unit: 'second', n: Math.round(ms / 1000) };
 }
 
-function scheduleLabel(schedule: CronJob['schedule']): { text: string; badge: string } {
+/** 计划的**表达式部分**（不含角标文案 —— 那要靠 `t` 取）。 */
+function scheduleExpr(schedule: CronJob['schedule']): { text: string } | { every: { unit: EveryUnit; n: number } } {
   switch (schedule.kind) {
     case 'cron':
-      return {
-        text: schedule.tz ? `${schedule.expr} (${schedule.tz})` : schedule.expr,
-        badge: 'cron',
-      };
+      return { text: schedule.tz ? `${schedule.expr} (${schedule.tz})` : schedule.expr };
     case 'every':
-      return { text: formatEveryMs(schedule.everyMs), badge: 'interval' };
+      return { every: everyUnit(schedule.everyMs) };
     case 'at':
-      return { text: new Date(schedule.at).toLocaleString(), badge: 'one-time' };
+      return { text: new Date(schedule.at).toLocaleString() };
   }
 }
 
@@ -61,9 +65,67 @@ function payloadPreview(payload: CronJob['payload']): string {
   return raw.length > 60 ? `${raw.slice(0, 57)}...` : raw;
 }
 
-function sessionTargetLabel(target: CronJob['sessionTarget']): string {
-  if (target === 'isolated' || target === 'main' || target === 'current') return target;
-  return target;
+// ── 以下是"判别式 → 文案"的取词层 ─────────────────────────────────
+// ⚠️ 全部用**字面量键**。拼串会让 `check:i18n` 静默漏掉整组键（见文件上方注释）。
+
+function relativeText(t: TFunction, ms: number): string {
+  const { future, unit, n } = relativeUnit(ms);
+  if (unit === 'ltMinute') return future ? t('cron.rel.inLessThanMinute') : t('cron.rel.lessThanMinuteAgo');
+  if (unit === 'minute') return future ? t('cron.rel.inMinutes', { n }) : t('cron.rel.minutesAgo', { n });
+  if (unit === 'hour') return future ? t('cron.rel.inHours', { n }) : t('cron.rel.hoursAgo', { n });
+  return future ? t('cron.rel.inDays', { n }) : t('cron.rel.daysAgo', { n });
+}
+
+function everyText(t: TFunction, every: { unit: EveryUnit; n: number }): string {
+  switch (every.unit) {
+    case 'day':
+      return t('cron.every.days', { n: every.n });
+    case 'hour':
+      return t('cron.every.hours', { n: every.n });
+    case 'minute':
+      return t('cron.every.minutes', { n: every.n });
+    case 'second':
+      return t('cron.every.seconds', { n: every.n });
+  }
+}
+
+function scheduleBadgeText(t: TFunction, kind: CronJob['schedule']['kind']): string {
+  switch (kind) {
+    case 'cron':
+      return t('cron.scheduleKind.cron');
+    case 'every':
+      return t('cron.scheduleKind.every');
+    case 'at':
+      return t('cron.scheduleKind.at');
+  }
+}
+
+/** ⚠️ 认不出的 target **原样显示**（与 `payload.ts` 同一条纪律：显示原文比空白有用）。 */
+function targetText(t: TFunction, target: CronJob['sessionTarget']): string {
+  switch (target) {
+    case 'main':
+      return t('cron.target.main');
+    case 'isolated':
+      return t('cron.target.isolated');
+    case 'current':
+      return t('cron.target.current');
+    default:
+      return String(target);
+  }
+}
+
+/** ⚠️ 同上：认不出的 kind 原样显示（网关会发我们类型里没有的 kind）。 */
+function payloadKindText(t: TFunction, kind: string): string {
+  switch (kind) {
+    case 'agentTurn':
+      return t('cron.payloadKind.agentTurn');
+    case 'heartbeat':
+      return t('cron.payloadKind.heartbeat');
+    case 'systemEvent':
+      return t('cron.payloadKind.systemEvent');
+    default:
+      return kind;
+  }
 }
 
 const STATUS_DOT: Record<string, string> = {
@@ -81,9 +143,11 @@ export default function CronJobCard({
   onShowHistory,
 }: CronJobCardProps) {
   const { t } = useTranslation();
-  const { text: schedText, badge: schedBadge } = scheduleLabel(job.schedule);
+  const expr = scheduleExpr(job.schedule);
+  const schedText = 'every' in expr ? everyText(t, expr.every) : expr.text;
+  const schedBadge = scheduleBadgeText(t, job.schedule.kind);
   const preview = payloadPreview(job.payload);
-  const targetLabel = sessionTargetLabel(job.sessionTarget);
+  const targetLabel = targetText(t, job.sessionTarget);
   const { state } = job;
 
   return (
@@ -120,7 +184,7 @@ export default function CronJobCard({
                   <span className="inline-block h-2 w-2 rounded-full bg-[var(--text-muted)]" />
                 )}
                 {state.lastRunAtMs && (
-                  <span className="type-support text-[var(--text-muted)]">{formatRelativeMs(state.lastRunAtMs)}</span>
+                  <span className="type-support text-[var(--text-muted)]">{relativeText(t, state.lastRunAtMs)}</span>
                 )}
               </div>
             </div>
@@ -133,7 +197,7 @@ export default function CronJobCard({
             </div>
 
             <div className="type-support mt-1 truncate text-[var(--text-secondary)]">
-              <span className="text-[var(--text-muted)]">{job.payload.kind}:</span> {preview}
+              <span className="text-[var(--text-muted)]">{payloadKindText(t, job.payload.kind)}:</span> {preview}
             </div>
 
             <div className="flex items-center gap-2 mt-1 type-support text-[var(--text-muted)]">
@@ -142,7 +206,7 @@ export default function CronJobCard({
                 <>
                   <span>&middot;</span>
                   <span>
-                    {t('cron.nextRun')}: {formatRelativeMs(state.nextRunAtMs)}
+                    {t('cron.nextRun')}: {relativeText(t, state.nextRunAtMs)}
                   </span>
                 </>
               )}

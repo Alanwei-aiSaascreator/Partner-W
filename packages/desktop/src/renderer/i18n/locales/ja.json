@@ -657,6 +657,12 @@
     "errorNameRequired": "タスク名を入力してください",
     "errorScheduleRequired": "スケジュールを設定してください",
     "errorTimeoutInvalid": "タイムアウトは 0 より大きい値にしてください",
+    "every": {
+      "days": "{{n}} 日ごと",
+      "hours": "{{n}} 時間ごと",
+      "minutes": "{{n}} 分ごと",
+      "seconds": "{{n}} 秒ごと"
+    },
     "everyValuePlaceholder": "インターバル値",
     "failureAlert": "失敗アラート",
     "failureAlertAfter": "エラー後にアラート",
@@ -692,12 +698,27 @@
     "pagination": "{{start}}–{{end}} / {{total}}",
     "payload_agentTurn": "エージェントメッセージ",
     "payload_systemEvent": "システムイベント",
+    "payloadKind": {
+      "agentTurn": "エージェント実行",
+      "heartbeat": "ハートビート",
+      "systemEvent": "システムイベント"
+    },
     "preset_dailyAt9": "毎日 9:00",
     "preset_every5min": "5分ごと",
     "preset_everyHour": "1時間ごと",
     "preset_everyMonday": "毎週月曜",
     "preset_weekdays9": "平日 9:00",
     "prev": "前へ",
+    "rel": {
+      "daysAgo": "{{n}} 日前",
+      "hoursAgo": "{{n}} 時間前",
+      "inDays": "{{n}} 日後",
+      "inHours": "{{n}} 時間後",
+      "inLessThanMinute": "1 分以内に",
+      "inMinutes": "{{n}} 分後",
+      "lessThanMinuteAgo": "たった今",
+      "minutesAgo": "{{n}} 分前"
+    },
     "retry": "再試行",
     "runEnqueued": "ジョブをキューに追加しました",
     "runFailed": "ジョブの実行に失敗しました",
@@ -721,12 +742,22 @@
     "schedule_at": "ワンタイム",
     "schedule_cron": "Cron",
     "schedule_every": "インターバル",
+    "scheduleKind": {
+      "at": "単発",
+      "cron": "定時",
+      "every": "間隔"
+    },
     "schedulerStopped": "スケジューラーが停止しています",
     "searchPlaceholder": "タスクを検索…",
     "selectGateway": "ゲートウェイを選択",
     "sessionTarget_main": "メインセッション",
     "sessionTarget_task": "タスクセッション (Rongying Cube タスク会話を維持)",
     "subtitle": "定期実行エージェントタスクの管理",
+    "target": {
+      "current": "現在のセッション",
+      "isolated": "独立セッション",
+      "main": "メインセッション"
+    },
     "taskSessionNote": "各 cron ジョブは独自の Rongying Cube タスクセッションを使用します。分離モードは OpenClaw が完全にサポートするまで非表示です。",
     "thinking": "思考モード",
     "timeout": "タイムアウト (秒)",

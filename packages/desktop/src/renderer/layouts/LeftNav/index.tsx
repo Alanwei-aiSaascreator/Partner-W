@@ -297,7 +297,7 @@ export default function LeftNav({ onOpenAssistantSettings, onOpenSkills }: LeftN
           ⚠️ 为什么必须留：这是全应用**唯一**切助手的地方，拿掉就没得切了。
           ⚠️ 为什么压高度：这一列现在还要装页面导航 + 最近任务，不能让助手列表把版面吃光。
             助手多的用户在这里滚动。 */}
-      <div className="max-h-[136px] flex-shrink-0 overflow-y-auto border-b border-[var(--border-subtle)] px-2 pb-2">
+      <div className="max-h-36 flex-shrink-0 overflow-y-auto border-b border-[var(--border-subtle)] px-2 pb-2">
         {agentCatalog.length > 0 ? (
           <AssistantList agents={agentCatalog} selectedAgentId={currentAgentId} onSelect={handleSelectAgent} />
         ) : (

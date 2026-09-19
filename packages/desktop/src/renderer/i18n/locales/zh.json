@@ -657,6 +657,12 @@
     "errorNameRequired": "请输入任务名称",
     "errorScheduleRequired": "请配置调度计划",
     "errorTimeoutInvalid": "超时时间必须大于 0",
+    "every": {
+      "days": "每 {{n}} 天",
+      "hours": "每 {{n}} 小时",
+      "minutes": "每 {{n}} 分钟",
+      "seconds": "每 {{n}} 秒"
+    },
     "everyValuePlaceholder": "间隔数值",
     "failureAlert": "失败告警",
     "failureAlertAfter": "连续错误告警阈值",
@@ -692,12 +698,27 @@
     "pagination": "{{start}}–{{end}} / 共 {{total}}",
     "payload_agentTurn": "Agent 消息",
     "payload_systemEvent": "系统事件",
+    "payloadKind": {
+      "agentTurn": "智能体回合",
+      "heartbeat": "心跳",
+      "systemEvent": "系统事件"
+    },
     "preset_dailyAt9": "每天 9 点",
     "preset_every5min": "每 5 分钟",
     "preset_everyHour": "每小时",
     "preset_everyMonday": "每周一",
     "preset_weekdays9": "工作日 9 点",
     "prev": "上一页",
+    "rel": {
+      "daysAgo": "{{n}} 天前",
+      "hoursAgo": "{{n}} 小时前",
+      "inDays": "{{n}} 天后",
+      "inHours": "{{n}} 小时后",
+      "inLessThanMinute": "不到 1 分钟后",
+      "inMinutes": "{{n}} 分钟后",
+      "lessThanMinuteAgo": "刚刚",
+      "minutesAgo": "{{n}} 分钟前"
+    },
     "retry": "重试",
     "runEnqueued": "任务已入队",
     "runFailed": "执行任务失败",
@@ -721,12 +742,22 @@
     "schedule_at": "一次性",
     "schedule_cron": "Cron 表达式",
     "schedule_every": "固定间隔",
+    "scheduleKind": {
+      "at": "一次性",
+      "cron": "定时",
+      "every": "间隔"
+    },
     "schedulerStopped": "调度器已停止",
     "searchPlaceholder": "搜索任务…",
     "selectGateway": "选择网关",
     "sessionTarget_main": "主会话",
     "sessionTarget_task": "任务会话（稳定绑定到 荣盈魔方 任务对话）",
     "subtitle": "管理周期性 Agent 任务",
+    "target": {
+      "current": "当前会话",
+      "isolated": "独立会话",
+      "main": "主会话"
+    },
     "taskSessionNote": "每个 cron job 都绑定到一个稳定的 荣盈魔方 任务会话。isolated 模式会等 OpenClaw 完整支持后再开放。",
     "thinking": "思考模式",
     "timeout": "超时时间（秒）",

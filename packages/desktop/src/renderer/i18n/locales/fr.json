@@ -657,6 +657,12 @@
     "errorNameRequired": "Veuillez saisir un nom de tâche",
     "errorScheduleRequired": "Veuillez configurer la planification",
     "errorTimeoutInvalid": "Le délai d'expiration doit être supérieur à zéro",
+    "every": {
+      "days": "tous les {{n}} j",
+      "hours": "toutes les {{n}} h",
+      "minutes": "toutes les {{n}} min",
+      "seconds": "toutes les {{n}} s"
+    },
     "everyValuePlaceholder": "Valeur de l'intervalle",
     "failureAlert": "Alerte d'échec",
     "failureAlertAfter": "Alerter après n erreurs",
@@ -692,12 +698,27 @@
     "pagination": "{{start}}–{{end}} sur {{total}}",
     "payload_agentTurn": "Message d'agent",
     "payload_systemEvent": "Événement système",
+    "payloadKind": {
+      "agentTurn": "tour d’agent",
+      "heartbeat": "battement",
+      "systemEvent": "événement système"
+    },
     "preset_dailyAt9": "Tous les jours à 9 h",
     "preset_every5min": "Toutes les 5 min",
     "preset_everyHour": "Toutes les heures",
     "preset_everyMonday": "Tous les lundis",
     "preset_weekdays9": "En semaine à 9 h",
     "prev": "Précédent",
+    "rel": {
+      "daysAgo": "il y a {{n}} j",
+      "hoursAgo": "il y a {{n}} h",
+      "inDays": "dans {{n}} j",
+      "inHours": "dans {{n}} h",
+      "inLessThanMinute": "dans moins d’une minute",
+      "inMinutes": "dans {{n}} min",
+      "lessThanMinuteAgo": "à l’instant",
+      "minutesAgo": "il y a {{n}} min"
+    },
     "retry": "Réessayer",
     "runEnqueued": "Tâche mise en file d'attente",
     "runFailed": "Échec de l'exécution de la tâche",
@@ -721,12 +742,22 @@
     "schedule_at": "Ponctuelle",
     "schedule_cron": "Cron",
     "schedule_every": "Intervalle",
+    "scheduleKind": {
+      "at": "unique",
+      "cron": "planifié",
+      "every": "intervalle"
+    },
     "schedulerStopped": "Planificateur arrêté",
     "searchPlaceholder": "Rechercher des tâches…",
     "selectGateway": "Sélectionner une passerelle",
     "sessionTarget_main": "Session principale",
     "sessionTarget_task": "Session de tâche (conversation de tâche Rongying Cube stable)",
     "subtitle": "Gérer les tâches d'agent récurrentes",
+    "target": {
+      "current": "session actuelle",
+      "isolated": "session isolée",
+      "main": "session principale"
+    },
     "taskSessionNote": "Chaque tâche Cron utilise sa propre session de tâche Rongying Cube stable. Le mode isolé est masqué jusqu'à ce qu'OpenClaw le prenne entièrement en charge.",
     "thinking": "Mode de réflexion",
     "timeout": "Délai d'expiration (secondes)",
