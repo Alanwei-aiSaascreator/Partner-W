@@ -1639,6 +1639,19 @@
     "workspaceExplain": "O Rongying Cube salva todos os arquivos gerados por IA em uma pasta local, organizados por tarefa e totalmente pesquisáveis.",
     "workspaceHint": "Você pode escolher qualquer pasta vazia. Os arquivos serão armazenados aqui, organizados por tarefa."
   },
+  "skillMarket": {
+    "actionFailed": "Não foi possível concluir: {{reason}}",
+    "empty": "Esta versão não inclui habilidades.",
+    "gatewayRequired": "Ainda sem conexão com um gateway — instalar exige uma. Conecte e atualize.",
+    "install": "Instalar",
+    "installed": "“{{name}}” instalada",
+    "installedBadge": "Instalada",
+    "loadFailed": "Não foi possível carregar a lista de habilidades. Tente novamente em instantes.",
+    "refresh": "Atualizar",
+    "remove": "Remover",
+    "removed": "“{{name}}” removida",
+    "subtitle": "Estas habilidades acompanham o aplicativo. Depois de instalada, todos os assistentes podem usá-la."
+  },
   "slash": {
     "argOptions": "Opções para /{{command}}"
   },

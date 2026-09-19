@@ -29,20 +29,18 @@ function render(ui: ReactElement): { container: HTMLDivElement; unmount: () => v
 
 function setup(over: Partial<Parameters<typeof NavMenu>[0]> = {}) {
   const onSelectView = vi.fn();
-  const onOpenSkills = vi.fn();
   const onOpenSettings = vi.fn();
   const utils = render(
     <NavMenu
       mainView="chat"
       settingsOpen={false}
       onSelectView={onSelectView}
-      onOpenSkills={onOpenSkills}
       onOpenSettings={onOpenSettings}
       hasUpdate={false}
       {...over}
     />,
   );
-  return { ...utils, onSelectView, onOpenSkills, onOpenSettings };
+  return { ...utils, onSelectView, onOpenSettings };
 }
 
 const clickNav = (container: HTMLElement, key: string) => {
@@ -129,7 +127,7 @@ describe('LeftNav NavMenu', () => {
   });
 
   it('点有页面的项 ⇒ 落到对应的 mainView', () => {
-    const { container, onSelectView, onOpenSkills, unmount } = setup();
+    const { container, onSelectView, unmount } = setup();
 
     clickNav(container, 'identity');
     expect(onSelectView).toHaveBeenLastCalledWith('identity');
@@ -141,19 +139,21 @@ describe('LeftNav NavMenu', () => {
     expect(onSelectView).toHaveBeenLastCalledWith('community');
     clickNav(container, 'agents');
     expect(onSelectView).toHaveBeenLastCalledWith('market');
-
-    expect(onOpenSkills).not.toHaveBeenCalled();
     unmount();
   });
 
-  it('⭐ 点「技能市场」走的是设置面板，不是 mainView', () => {
-    const { container, onSelectView, onOpenSkills, unmount } = setup();
+  it('⭐ 点「技能市场」落到 `skills` 这个 mainView（T-a2 起它**不再是**设置里的一节）', () => {
+    // ⚠️ 这条**改过**：原来钉的是"走设置面板、不切 mainView"。
+    //    改的理由是用户 2026-09-20 的原话：「技能市场点击居然是设置的主页面」
+    //    —— 点"市场"落到设置页本身就是被投诉的那个现象。
+    //    现在它是个真页面，**顺带**修掉了"这一项永远没有选中态"那个已知缺口
+    //    （旧注释写着"要做对得把 settingsSection 也传下来"；变成 view 之后就不需要了）。
+    const { container, onSelectView, onOpenSettings, unmount } = setup();
 
     clickNav(container, 'skills');
 
-    expect(onOpenSkills).toHaveBeenCalledTimes(1);
-    // ⚠️ 它**不该**去切 mainView —— 技能市场不是独立页面
-    expect(onSelectView).not.toHaveBeenCalled();
+    expect(onSelectView).toHaveBeenLastCalledWith('skills');
+    expect(onOpenSettings).not.toHaveBeenCalled();
     unmount();
   });
 

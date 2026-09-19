@@ -1639,6 +1639,19 @@
     "workspaceExplain": "Rongying Cube guarda todos los archivos generados por la IA en una carpeta local, organizados por tarea y totalmente buscables.",
     "workspaceHint": "Puedes elegir cualquier carpeta vacía. Los archivos se almacenarán aquí, organizados por tarea."
   },
+  "skillMarket": {
+    "actionFailed": "No se pudo completar: {{reason}}",
+    "empty": "Esta versión no incluye habilidades.",
+    "gatewayRequired": "Aún sin conexión con una pasarela; para instalar hace falta una. Conéctala y actualiza.",
+    "install": "Instalar",
+    "installed": "“{{name}}” instalada",
+    "installedBadge": "Instalada",
+    "loadFailed": "No se pudo cargar la lista de habilidades. Inténtalo de nuevo en un momento.",
+    "refresh": "Actualizar",
+    "remove": "Quitar",
+    "removed": "“{{name}}” quitada",
+    "subtitle": "Estas habilidades vienen incluidas con la aplicación. Una vez instalada, todos los asistentes pueden usarla."
+  },
   "slash": {
     "argOptions": "Opciones de /{{command}}"
   },

@@ -1639,6 +1639,19 @@
     "workspaceExplain": "Rongying Cube speichert alle KI-generierten Dateien in einem lokalen Arbeitsbereich-Ordner, nach Aufgaben sortiert und vollstaendig durchsuchbar.",
     "workspaceHint": "Sie koennen einen beliebigen leeren Ordner waehlen. Dateien werden hier nach Aufgaben geordnet gespeichert."
   },
+  "skillMarket": {
+    "actionFailed": "Aktion fehlgeschlagen: {{reason}}",
+    "empty": "In dieser Version sind keine Skills enthalten.",
+    "gatewayRequired": "Noch keine Verbindung zum Gateway — zum Installieren wird eine benötigt. Verbinden und dann aktualisieren.",
+    "install": "Installieren",
+    "installed": "„{{name}}“ installiert",
+    "installedBadge": "Installiert",
+    "loadFailed": "Die Skill-Liste konnte nicht geladen werden. Bitte später erneut versuchen.",
+    "refresh": "Aktualisieren",
+    "remove": "Entfernen",
+    "removed": "„{{name}}“ entfernt",
+    "subtitle": "Diese Skills sind im Programm enthalten. Einmal installiert, stehen sie allen Assistenten zur Verfügung."
+  },
   "slash": {
     "argOptions": "Optionen fuer /{{command}}"
   },

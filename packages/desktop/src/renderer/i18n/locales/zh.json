@@ -1639,6 +1639,19 @@
     "workspaceExplain": "荣盈魔方 将所有 AI 生成的文件保存到本地工作区，按任务分类且支持全文检索。",
     "workspaceHint": "可以选择任意空文件夹，文件将按任务目录保存在此处。"
   },
+  "skillMarket": {
+    "actionFailed": "操作失败：{{reason}}",
+    "empty": "这个版本没有随包的技能。",
+    "gatewayRequired": "还没连上网关；装上技能需要先连上。连上后回来刷新即可。",
+    "install": "装上",
+    "installed": "已装上「{{name}}」",
+    "installedBadge": "已装",
+    "loadFailed": "读取技能列表失败，请稍后重试。",
+    "refresh": "刷新",
+    "remove": "卸载",
+    "removed": "已卸载「{{name}}」",
+    "subtitle": "这些是随程序一起提供的技能，装上之后所有助手都能用。"
+  },
   "slash": {
     "argOptions": "/{{command}} 的可选项"
   },

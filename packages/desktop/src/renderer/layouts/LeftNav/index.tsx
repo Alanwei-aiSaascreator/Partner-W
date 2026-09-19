@@ -36,13 +36,11 @@ type ConfirmAction = 'reset' | 'delete' | null;
 
 interface LeftNavProps {
   onOpenAssistantSettings: () => void;
-  /** 「技能市场」不是独立页面，它在设置面板里 ⇒ 点它 = 打开设置并定位到那一节。 */
-  onOpenSkills: () => void;
-  /** 「设置」同理 —— 它也是覆盖层。 */
+  /** 「设置」是覆盖层，不是 `mainView`。 */
   onOpenSettings: () => void;
 }
 
-export default function LeftNav({ onOpenAssistantSettings, onOpenSkills, onOpenSettings }: LeftNavProps) {
+export default function LeftNav({ onOpenAssistantSettings, onOpenSettings }: LeftNavProps) {
   const { t } = useTranslation();
   const tasks = useTaskStore((s) => s.tasks);
   const activeTaskId = useTaskStore((s) => s.activeTaskId);
@@ -291,7 +289,6 @@ export default function LeftNav({ onOpenAssistantSettings, onOpenSkills, onOpenS
           mainView={mainView}
           settingsOpen={settingsOpen}
           onSelectView={setMainView}
-          onOpenSkills={onOpenSkills}
           onOpenSettings={onOpenSettings}
           hasUpdate={hasUpdate}
           assistantSlot={

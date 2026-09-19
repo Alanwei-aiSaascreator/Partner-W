@@ -1639,6 +1639,19 @@
     "workspaceExplain": "Rongying Cube enregistre tous les fichiers générés par l'IA dans un dossier d'espace de travail local, organisé par tâche et entièrement consultable.",
     "workspaceHint": "Vous pouvez choisir n'importe quel dossier vide. Les fichiers y seront stockés, organisés par tâche."
   },
+  "skillMarket": {
+    "actionFailed": "Échec de l'opération : {{reason}}",
+    "empty": "Cette version ne contient aucune compétence.",
+    "gatewayRequired": "Pas encore connecté à une passerelle — l'installation en a besoin. Connectez-vous puis actualisez.",
+    "install": "Installer",
+    "installed": "« {{name}} » installée",
+    "installedBadge": "Installée",
+    "loadFailed": "Impossible de charger la liste des compétences. Réessayez dans un instant.",
+    "refresh": "Actualiser",
+    "remove": "Retirer",
+    "removed": "« {{name}} » retirée",
+    "subtitle": "Ces compétences sont fournies avec l'application. Une fois installée, tous les assistants peuvent l'utiliser."
+  },
   "slash": {
     "argOptions": "Options pour /{{command}}"
   },

@@ -340,7 +340,6 @@ export default function App() {
         >
           <LeftNav
             onOpenAssistantSettings={() => openSettings('agents')}
-            onOpenSkills={() => openSettings('skills')}
             onOpenSettings={() => openSettings('general')}
           />
         </motion.aside>

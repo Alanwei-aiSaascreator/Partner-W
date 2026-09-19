@@ -1639,6 +1639,19 @@
     "workspaceExplain": "Rongying Cube saves all AI-generated files to a local workspace folder, organized by task and fully searchable.",
     "workspaceHint": "You can pick any empty folder. Files will be stored here, organized by task."
   },
+  "skillMarket": {
+    "actionFailed": "Could not complete that: {{reason}}",
+    "empty": "This build ships no skills.",
+    "gatewayRequired": "Not connected to a gateway yet — installing a skill needs one. Reconnect, then refresh.",
+    "install": "Install",
+    "installed": "Installed “{{name}}”",
+    "installedBadge": "Installed",
+    "loadFailed": "Could not load the skill list. Please try again in a moment.",
+    "refresh": "Refresh",
+    "remove": "Remove",
+    "removed": "Removed “{{name}}”",
+    "subtitle": "These skills come with the app. Once installed, every assistant can use them."
+  },
   "slash": {
     "argOptions": "Options for /{{command}}"
   },

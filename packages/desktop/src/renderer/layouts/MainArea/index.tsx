@@ -52,6 +52,7 @@ import CommunityPanel from '@/layouts/CommunityPanel';
 import MarketPanel from '@/layouts/MarketPanel';
 import GrowthPanel from '@/layouts/GrowthPanel';
 import IdentityCenter from '@/layouts/IdentityCenter';
+import SkillMarket from '@/layouts/SkillMarket';
 import KnowledgeBase from '@/layouts/KnowledgeBase';
 import { useUsageStore } from '@/stores/usageStore';
 import { useQuotaRefreshOnTurnEnd } from '@/hooks/useQuotaRefreshOnTurnEnd';
@@ -1222,6 +1223,8 @@ export default function MainArea({
         <div className="flex-1 min-h-0">
           <MarketPanel key="mine" initialTab="mine" />
         </div>
+      ) : mainView === 'skills' ? (
+        <SkillMarket />
       ) : mainView === 'identity' ? (
         <div className="flex-1 min-h-0">
           <IdentityCenter />

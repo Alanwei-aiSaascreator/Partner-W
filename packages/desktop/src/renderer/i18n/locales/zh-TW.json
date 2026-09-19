@@ -1639,6 +1639,19 @@
     "workspaceExplain": "魔方羅盤 會將所有 AI 產生的檔案儲存至本機工作區資料夾，依任務分類並可全文搜尋。",
     "workspaceHint": "選擇任意空資料夾即可。檔案將依任務分類儲存於此。"
   },
+  "skillMarket": {
+    "actionFailed": "操作失敗：{{reason}}",
+    "empty": "這個版本沒有隨附的技能。",
+    "gatewayRequired": "還沒連上閘道；安裝技能需要先連上。連上後回來重新整理即可。",
+    "install": "裝上",
+    "installed": "已裝上「{{name}}」",
+    "installedBadge": "已裝",
+    "loadFailed": "讀取技能清單失敗，請稍後再試。",
+    "refresh": "重新整理",
+    "remove": "移除",
+    "removed": "已移除「{{name}}」",
+    "subtitle": "這些是隨程式一起提供的技能，裝上之後所有助手都能用。"
+  },
   "slash": {
     "argOptions": "/{{command}} 的選項"
   },

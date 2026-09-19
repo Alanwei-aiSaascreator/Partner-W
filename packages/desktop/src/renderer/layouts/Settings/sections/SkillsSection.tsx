@@ -827,10 +827,22 @@ export default function SkillsSection() {
         </div>
       </div>
 
+      {/*
+        ⚠️ `ClawHub` 那个 trigger **故意不挂出来**（2026-09-20，用户要求：
+        「隐藏 ClawHub 那个，用户一般不会用，我们提供就行」）。
+
+        能力**没删**：`ClawHubTab`、`searchSkills` / `installSkill` 的 RPC、i18n 键全都在，
+        下面的三元分支也还在 —— 要恢复只需把这个 trigger 加回来：
+            <TabsTrigger value="clawhub">{t('settings.skillTabClawHub')}</TabsTrigger>
+        ⇒ 所以**别**顺手删掉 `ClawHubTab` 或 `type SkillsTab` 里的 `'clawhub'`：
+          那是"删能力"，与"藏入口"是两件事。
+
+        ⚠️ 面向用户的技能入口现在在**左边的「技能市场」主页面**（列我们随包的技能）。
+        这一页留给要自己调网关技能的高级用户。
+      */}
       <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as SkillsTab)} className="mb-3">
         <TabsList>
           <TabsTrigger value="installed">{t('settings.skillTabInstalled')}</TabsTrigger>
-          <TabsTrigger value="clawhub">{t('settings.skillTabClawHub')}</TabsTrigger>
         </TabsList>
       </Tabs>
 

@@ -1639,6 +1639,19 @@
     "workspaceExplain": "Rongying Cube は AI が生成したすべてのファイルをローカルワークスペースに保存します。タスクごとに整理され、全文検索が可能です。",
     "workspaceHint": "空のフォルダを選択してください。ファイルはタスクごとに整理されて保存されます。"
   },
+  "skillMarket": {
+    "actionFailed": "操作に失敗しました：{{reason}}",
+    "empty": "このバージョンには同梱スキルがありません。",
+    "gatewayRequired": "ゲートウェイに接続されていません。インストールには接続が必要です。接続後に更新してください。",
+    "install": "インストール",
+    "installed": "「{{name}}」をインストールしました",
+    "installedBadge": "インストール済み",
+    "loadFailed": "スキル一覧を読み込めませんでした。しばらくしてからお試しください。",
+    "refresh": "更新",
+    "remove": "削除",
+    "removed": "「{{name}}」を削除しました",
+    "subtitle": "これらはアプリに同梱されているスキルです。インストールするとすべてのアシスタントが使えます。"
+  },
   "slash": {
     "argOptions": "/{{command}} のオプション"
   },

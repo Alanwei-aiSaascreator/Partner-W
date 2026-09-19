@@ -53,9 +53,7 @@ export interface NavMenuProps {
   mainView: MainView;
   settingsOpen: boolean;
   onSelectView: (view: MainView) => void;
-  /** 「技能市场」不是独立页面，它在设置面板里 —— 点它 = 打开设置并定位到该节。 */
-  onOpenSkills: () => void;
-  /** 「设置」同理：它是覆盖层，不是 `mainView`。 */
+  /** 「设置」是覆盖层，不是 `mainView`。 */
   onOpenSettings: () => void;
   /** 有更新时给「设置」挂个角标（原来在图标栏上，本刀搬过来）。 */
   hasUpdate: boolean;
@@ -81,7 +79,6 @@ export default function NavMenu({
   mainView,
   settingsOpen,
   onSelectView,
-  onOpenSkills,
   onOpenSettings,
   hasUpdate,
   assistantSlot,
@@ -93,7 +90,10 @@ export default function NavMenu({
     { key: 'search', labelKey: 'leftNav.pages.search', icon: MessageSquare, view: 'chat' },
     { key: 'identity', labelKey: 'leftNav.identityCenter', icon: UserRound, view: 'identity' },
     { key: 'teams', labelKey: 'leftNav.pages.teams', icon: Users, view: 'teams', badge: 'Beta' },
-    { key: 'skills', labelKey: 'leftNav.pages.skills', icon: Sparkles, onClick: onOpenSkills },
+    // T-a2：从 `onClick`（打开设置并定位）改成**真正的主页面**。
+    // ⚠️ 顺带修掉了下面那条"不显示选中态"的注释里写的缺口 —— 它当时就是因为
+    //    这一项不是 `mainView` 才没有选中态。
+    { key: 'skills', labelKey: 'leftNav.pages.skills', icon: Sparkles, view: 'skills' },
     { key: 'agents', labelKey: 'leftNav.pages.agents', icon: Store, view: 'market' },
     { key: 'bounty', labelKey: 'leftNav.pages.bounty', icon: Target, view: 'bounty' },
     { key: 'square', labelKey: 'leftNav.pages.square', icon: Compass, view: 'community' },
@@ -121,9 +121,9 @@ export default function NavMenu({
 
   const renderItem = (item: NavItem) => {
     const Icon = item.icon;
-    // ⚠️ 「技能市场」与「设置」落在设置面板里，而**这一层拿不到"设置停在哪一节"**
-    //    （那是 App.tsx 的局部 state）⇒ 它们**不会显示选中态**。
-    //    这是个已知的小缺口：要做对得把 settingsSection 也传下来。
+    // ⚠️ 「设置」是覆盖层，而**这一层拿不到"设置停在哪一节"**（那是 App.tsx 的局部 state）
+    //    ⇒ 它经过时不显示选中态。这是个已知的小缺口：要做对得把 settingsSection 也传下来。
+    //    （「技能市场」原来是同一个缺口 —— 它已经不在这里了，见上面 items 里的说明。）
     const active = item.view !== undefined && !settingsOpen && mainView === item.view;
 
     return (
