@@ -35,7 +35,6 @@ import { buildKbRuntime, ensureKbRuntime } from './kb/runtime.js';
 import { setupAnalytics, teardownAnalytics } from './analytics/setup.js';
 import { initUsageReporter, destroyUsageReporter } from './commercial/usage-reporter.js';
 import { bootstrapCommercialRelay } from './commercial/relay-startup.js';
-import { unwatchAll } from './context/file-watcher.js';
 import { isInstallingUpdate } from './auto-updater.js';
 import { initTray, destroyTray } from './tray.js';
 import { initQuickLaunch, destroyQuickLaunch } from './quick-launch.js';
@@ -411,7 +410,6 @@ app.on('before-quit', (event) => {
     .catch(() => {})
     .finally(() => {
       globalShortcut.unregisterAll();
-      unwatchAll();
       // 先掐定时器，否则拆网关的过程中还会触发一次上报，撞上半死会话
       destroyUsageReporter();
       // 顺手把队列里剩下的事件发出去（最后一次 flush 只在这一刻发生）
