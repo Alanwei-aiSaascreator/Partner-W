@@ -1725,15 +1725,6 @@
       "moderator": "司会",
       "scribe": "記録係"
     },
-    "roundtable": {
-      "empty": "まず議論したい問題を書いてください",
-      "hint": "今回は {{count}} 名のアシスタントが参加するため、積分の消費がやや多くなる場合があります",
-      "needTwo": "議論には少なくとも 2 名のアシスタントが必要です",
-      "running": "{{done}}/{{total}} 番目が発言中…",
-      "start": "議論を開始",
-      "stop": "停止",
-      "title": "一緒に議論"
-    },
     "startChat": "チャットを開始",
     "teamBuilderCreate": "チームを作成",
     "teamBuilderCreated": "チームが作成されました",

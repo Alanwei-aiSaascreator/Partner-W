@@ -13,7 +13,6 @@ import { useTeamStore } from '@/stores/teamStore';
 import { useTaskStore, useUiStore } from '@/platform';
 import TeamCard from './TeamCard';
 import TeamDetailView from './TeamDetailView';
-import { useTeamRoundtable } from '@/hooks/useTeamRoundtable';
 import TeamHubDetailView from './TeamHubDetailView';
 import CreateTeamWizard from './CreateTeamWizard';
 import TeamBuilderDialog from '@/components/TeamBuilderDialog';
@@ -27,10 +26,6 @@ export default function TeamsPanel() {
   const startNewTask = useTaskStore((s) => s.startNewTask);
   const setMainView = useUiStore((s) => s.setMainView);
   const defaultGatewayId = useUiStore((s) => s.defaultGatewayId);
-  const agentCatalogByGateway = useUiStore((s) => s.agentCatalogByGateway);
-  const createTask = useTaskStore((s) => s.createTask);
-  const setActiveTask = useTaskStore((s) => s.setActiveTask);
-  const roundtable = useTeamRoundtable();
   const [activeTab, setActiveTab] = useState<'myTeams' | 'hub'>('myTeams');
   const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
   const [wizardOpen, setWizardOpen] = useState(false);
@@ -59,38 +54,6 @@ export default function TeamsPanel() {
       setMainView('chat');
     },
     [teamsMap, startNewTask, setMainView, t],
-  );
-
-  /**
-   * 开始一轮圆桌讨论。
-   *
-   * ⚠️ 必须先建一个**真任务**：圆桌的会话键是
-   * `agent:<agentId>:clawwork:<deviceId>:task:<taskId>`，没有 taskId 就发不出去。
-   * 建完切到对话页 —— 各家的发言会落在同一条时间线上（dispatcher 按 sessionKey 归档），
-   * 所以不需要另做一套展示。
-   */
-  const handleStartRoundtable = useCallback(
-    (teamId: string, question: string) => {
-      const team = teamsMap[teamId];
-      if (!team || team.agents.length < 2) {
-        toast.error(t('teams.roundtable.needTwo'));
-        return;
-      }
-
-      const catalog = agentCatalogByGateway[team.gatewayId]?.agents ?? [];
-      const nameById = new Map(catalog.map((a) => [a.id, a.name ?? a.id]));
-      const speakers = team.agents.map((a) => ({
-        agentId: a.agentId,
-        name: nameById.get(a.agentId) ?? a.agentId,
-        position: a.position,
-      }));
-
-      const task = createTask({ gatewayId: team.gatewayId, agentId: speakers[0]!.agentId, teamId });
-      setActiveTask(task.id);
-      setMainView('chat');
-      void roundtable.start({ taskId: task.id, gatewayId: team.gatewayId, question, speakers });
-    },
-    [teamsMap, agentCatalogByGateway, createTask, setActiveTask, setMainView, roundtable, t],
   );
 
   const handleEdit = useCallback(
@@ -124,9 +87,6 @@ export default function TeamsPanel() {
     <>
       {selectedTeam ? (
         <TeamDetailView
-          roundtableRunning={roundtable.running}
-          onStartRoundtable={(question) => handleStartRoundtable(selectedTeam.id, question)}
-          onStopRoundtable={roundtable.stop}
           team={selectedTeam}
           onBack={() => setSelectedTeamId(null)}
           onStartChat={() => handleStartChat(selectedTeam.id)}

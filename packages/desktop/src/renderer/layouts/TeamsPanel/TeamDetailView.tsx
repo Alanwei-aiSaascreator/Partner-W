@@ -1,17 +1,5 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
-import {
-  ArrowLeft,
-  MessageSquare,
-  Pencil,
-  Check,
-  X,
-  Loader2,
-  Puzzle,
-  Package,
-  Sparkles,
-  Square,
-  Users,
-} from 'lucide-react';
+import { ArrowLeft, MessageSquare, Pencil, Check, X, Loader2, Puzzle, Package } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { toast } from '@/lib/toast';
 import type { Team } from '@clawwork/shared';
@@ -33,29 +21,10 @@ interface TeamDetailViewProps {
   onBack: () => void;
   onStartChat: () => void;
   onEdit: () => void;
-  /** 开始一轮圆桌讨论（问题由这一层收集，跑由上层编排）。 */
-  onStartRoundtable: (question: string) => void;
-  /** 停止当前这一轮：不再往下发，并中断正在说的那一位。 */
-  onStopRoundtable: () => void;
-  /** 正在跑时禁用按钮，避免重复开一轮（每一轮都是真花钱）。 */
-  roundtableRunning?: boolean;
 }
 
-export default function TeamDetailView({
-  team,
-  onBack,
-  onStartChat,
-  onEdit,
-  onStartRoundtable,
-  onStopRoundtable,
-  roundtableRunning,
-}: TeamDetailViewProps) {
+export default function TeamDetailView({ team, onBack, onStartChat, onEdit }: TeamDetailViewProps) {
   const { t } = useTranslation();
-  const [roundtableQuestion, setRoundtableQuestion] = useState('');
-  const memberCount = team.agents.length;
-  // ⚠️ 这里**不**再判 `!roundtableRunning`：跑的时候渲染的是「停止」按钮，
-  //    开始按钮压根不在 DOM 里 —— 加了就是死条件（变异验证实测：去掉它测试全绿）。
-  const canStartRoundtable = memberCount >= 2 && roundtableQuestion.trim().length > 0;
   const agentCatalog = useUiStore((s) => s.agentCatalogByGateway[team.gatewayId]);
   const catalogById = useMemo(
     () => new Map((agentCatalog?.agents ?? []).map((a) => [a.id, a])),
@@ -263,55 +232,6 @@ export default function TeamDetailView({
           </div>
         </div>
         {team.description && <p className="type-body text-[var(--text-secondary)]">{team.description}</p>}
-
-        {/*
-          一起讨论：成员按**职位顺序**依次发言，后面的人能看到前面所有人的原话
-          （顺序与拼装见 `lib/team-roundtable.ts`）。
-          ⚠️ 代价提示刻意**不报份数**：报"约消耗 4 份积分"会变成账单。这里只说
-             "几位助手一起做、可能稍高一些"，既诚实又不吓人（用户 2026-09-20 拍板）。
-        */}
-        <div className="mt-3 rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-3">
-          <div className="flex items-center gap-2">
-            <Users size={14} className="text-[var(--accent)]" />
-            <span className="type-body font-semibold text-[var(--text-primary)]">{t('teams.roundtable.title')}</span>
-          </div>
-          <p className="type-support mt-1 text-[var(--text-muted)]">
-            {memberCount < 2
-              ? t('teams.roundtable.needTwo')
-              : roundtableRunning
-                ? t('teams.roundtable.running', { done: 0, total: memberCount })
-                : t('teams.roundtable.hint', { count: memberCount })}
-          </p>
-          <div className="mt-2 flex items-end gap-2">
-            <textarea
-              value={roundtableQuestion}
-              onChange={(e) => setRoundtableQuestion(e.target.value.slice(0, 500))}
-              placeholder={t('teams.roundtable.empty')}
-              rows={2}
-              maxLength={500}
-              disabled={roundtableRunning}
-              data-field="roundtable-question"
-              className="type-body min-h-0 flex-1 resize-none rounded-md border border-[var(--border)] bg-[var(--bg-primary)] px-3 py-2 text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)] disabled:opacity-60"
-            />
-            {roundtableRunning ? (
-              // 跑的时候必须给出口 —— 一轮要花好几份积分，用户想停就得能停。
-              <Button size="sm" variant="outline" onClick={onStopRoundtable} data-action="stop-roundtable">
-                <Square size={14} />
-                {t('teams.roundtable.stop')}
-              </Button>
-            ) : (
-              <Button
-                size="sm"
-                disabled={!canStartRoundtable}
-                onClick={() => onStartRoundtable(roundtableQuestion.trim())}
-                data-action="start-roundtable"
-              >
-                <Sparkles size={14} />
-                {t('teams.roundtable.start')}
-              </Button>
-            )}
-          </div>
-        </div>
       </div>
 
       <div className="flex flex-1 min-h-0">

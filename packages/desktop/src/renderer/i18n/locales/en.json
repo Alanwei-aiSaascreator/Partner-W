@@ -1725,15 +1725,6 @@
       "moderator": "Moderator",
       "scribe": "Note-taker"
     },
-    "roundtable": {
-      "empty": "Write the question to discuss first",
-      "hint": "This round involves {{count}} assistants, so the credit cost may be somewhat higher",
-      "needTwo": "A discussion needs at least 2 assistants",
-      "running": "Speaking {{done}}/{{total}}…",
-      "start": "Start discussion",
-      "stop": "Stop",
-      "title": "Discuss together"
-    },
     "startChat": "Start Chat",
     "teamBuilderCreate": "Create Team",
     "teamBuilderCreated": "Team created",

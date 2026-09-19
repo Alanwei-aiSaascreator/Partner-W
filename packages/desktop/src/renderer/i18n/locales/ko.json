@@ -1725,15 +1725,6 @@
       "moderator": "진행자",
       "scribe": "기록자"
     },
-    "roundtable": {
-      "empty": "먼저 토론할 문제를 적어 주세요",
-      "hint": "이번에는 어시스턴트 {{count}}명이 참여하므로 크레딧 소모가 다소 높을 수 있습니다",
-      "needTwo": "토론에는 어시스턴트가 최소 2명 필요합니다",
-      "running": "{{done}}/{{total}}번째 발언 중…",
-      "start": "토론 시작",
-      "stop": "중지",
-      "title": "함께 토론"
-    },
     "startChat": "대화 시작",
     "teamBuilderCreate": "팀 생성",
     "teamBuilderCreated": "팀이 생성되었습니다",

@@ -1725,15 +1725,6 @@
       "moderator": "主持人",
       "scribe": "记录员"
     },
-    "roundtable": {
-      "empty": "先写下这次要讨论的问题",
-      "hint": "本次由 {{count}} 位助手一起讨论，可能会产生稍高的积分消耗",
-      "needTwo": "至少要有 2 位助手才谈得上讨论",
-      "running": "第 {{done}}/{{total}} 位发言中…",
-      "start": "开始讨论",
-      "stop": "停止",
-      "title": "一起讨论"
-    },
     "startChat": "发起对话",
     "teamBuilderCreate": "创建团队",
     "teamBuilderCreated": "团队已创建",
