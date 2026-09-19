@@ -151,6 +151,132 @@ describe('ComposerActivity —— 等待期别让用户以为它死了', () => {
 });
 
 /**
+ * 「进行中」反馈的**四个相位**（§12）—— 驱动**真实的 store 动作**，不是手塞状态。
+ *
+ * 为什么单开一组：上面那些用例都是把 `toolCalls` 直接摆好再断言渲染，
+ * 覆盖的是"给定状态长什么样"；而真正会坏的是**相位之间的转换** ——
+ * 起跑之后收不掉（转圈永远不停）、失败之后还显示"正在执行"（在说谎）、
+ * 那一轮取消了还挂着。这三种坏法在"手塞状态"的写法里**根本表达不出来**。
+ *
+ * ⚠️ 这条链正是"卡住好久突然跳出来"那 15 秒的可见性来源：`item` 流开工 → 活动条出现；
+ *    跑完/失败/取消 → 收掉。所以每个相位都对着一个变异。
+ */
+describe('进行中反馈的四个相位（§7/§12）', () => {
+  const TID = 't1';
+
+  async function mountLive(initial: { processing?: boolean } = {}) {
+    const { useMessageStore } = await import('../src/renderer/stores/messageStore');
+    const { default: ComposerActivity } = await import('../src/renderer/components/ComposerActivity');
+
+    vi.useFakeTimers();
+    vi.setSystemTime(T0);
+    useMessageStore.setState({
+      processingBySession: initial.processing === false ? new Set() : new Set([SK]),
+      turnStartedAtBySession: { [SK]: T0 },
+      runPhaseBySession: { [SK]: null },
+      progressTextBySession: { [SK]: null },
+      compactingBySession: {},
+      activeTurnBySession: {
+        [SK]: {
+          id: 'turn-1',
+          streamingText: '',
+          streamingThinking: '',
+          toolCalls: [],
+          finalized: false,
+          content: '',
+          timestamp: new Date(T0).toISOString(),
+        },
+      } as never,
+    });
+
+    const onCancel = vi.fn();
+    act(() => root.render((<ComposerActivity sessionKey={SK} onCancel={onCancel} />) as ReactElement));
+
+    const store = useMessageStore.getState();
+    const upsert = (status: 'running' | 'done' | 'error') =>
+      act(() => {
+        store.upsertToolCall(SK, TID, {
+          id: 'call_mem',
+          name: 'memory_search',
+          status,
+          title: 'memory_search 游戏 爆款',
+          startedAt: new Date(T0).toISOString(),
+          ...(status === 'running' ? {} : { completedAt: new Date(T0 + 1000).toISOString() }),
+        });
+      });
+
+    return { store, onCancel, upsert };
+  }
+
+  it('⭐ 起跑 ⇒ 显示"正在执行 XXX"（这就是那几秒里"它没死"的证据）', async () => {
+    const { upsert } = await mountLive();
+
+    upsert('running');
+
+    expect(q('composer-activity')?.getAttribute('data-status')).toBe('running-tool');
+    expect(q('composer-activity')?.textContent).toContain('memory_search 游戏 爆款');
+  });
+
+  it('⭐ 跑完 ⇒ **收掉**（不能永远转圈；但那一轮还没结束，活动条本身要留着）', async () => {
+    const { upsert } = await mountLive();
+    upsert('running');
+
+    upsert('done');
+
+    expect(q('composer-activity'), '这一轮还在跑，整条不该消失').not.toBeNull();
+    expect(q('composer-activity')?.getAttribute('data-status'), '跑完了还说"正在执行"就是撒谎').not.toBe(
+      'running-tool',
+    );
+    expect(q('composer-activity')?.textContent).not.toContain('memory_search 游戏 爆款');
+  });
+
+  it('⭐ 失败 ⇒ 也**收掉**（报错了还说在跑，与 `status:"blocked"` 那条是同一类谎）', async () => {
+    const { upsert } = await mountLive();
+    upsert('running');
+
+    upsert('error');
+
+    expect(q('composer-activity')?.getAttribute('data-status')).not.toBe('running-tool');
+    expect(q('composer-activity')?.textContent).not.toContain('memory_search 游戏 爆款');
+  });
+
+  it('⭐ 取消 ⇒ 整条**收掉**（那一轮已经作废了，不该还挂着一条"正在跑"）', async () => {
+    const { store, upsert } = await mountLive();
+    upsert('running');
+    expect(q('composer-activity')).not.toBeNull();
+
+    // 复刻真实的取消链路（`handleAbort`）：关忙 + 清掉这一轮
+    act(() => {
+      store.setProcessing(SK, false);
+      store.clearActiveTurn(SK);
+    });
+
+    expect(q('composer-activity'), '取消了还留着活动条，用户会以为没取消成功').toBeNull();
+  });
+
+  it('连跑两个工具 ⇒ 显示**正在跑的那个**，收一个不会把另一个也收掉', async () => {
+    const { store, upsert } = await mountLive();
+    upsert('running');
+
+    act(() => {
+      store.upsertToolCall(SK, TID, {
+        id: 'call_exec',
+        name: 'exec',
+        status: 'running',
+        title: 'exec npm test',
+        startedAt: new Date(T0).toISOString(),
+      });
+    });
+    expect(q('composer-activity')?.textContent).toContain('exec npm test');
+
+    upsert('done'); // 收掉 memory_search，exec 还在跑
+
+    expect(q('composer-activity')?.getAttribute('data-status')).toBe('running-tool');
+    expect(q('composer-activity')?.textContent).toContain('exec npm test');
+  });
+});
+
+/**
  * 模型自述的进度（网关 `item` 流的 `kind:"preamble"`）。
  *
  * 这是"卡住好久突然跳出来"那段时间里**唯一在动的东西** —— 正文本就不流式，

@@ -5,6 +5,7 @@ import { RUN_PHASE_IDS } from '@clawwork/core';
 import { useMessageStore } from '@/stores/messageStore';
 import { cn } from '@/lib/utils';
 import { formatElapsed, waitingLineSuffix } from '@/lib/waiting-copy';
+import { latestRunningCall } from '@/lib/tool-activity';
 
 /**
  * 输入框上方的**活动条** —— 一轮在跑的时候，把"它在干什么"和"等了多久"摆出来。
@@ -61,7 +62,9 @@ export default function ComposerActivity({ sessionKey, onCancel }: ComposerActiv
 
   const elapsedMs = startedAt ? Math.max(0, now - startedAt) : 0;
   const calls = toolCalls ?? [];
-  const runningCall = [...calls].reverse().find((call) => call.status === 'running');
+  // ⚠️ 走**唯一出口**（`latestRunningCall`）：这个推导原先在本组件与 `ToolCallSummary`
+  //    各写了一遍，一字不差 ⇒ 迟早只改一处。返回 null 就是"该收掉了"（跑完/失败/取消）。
+  const runningCall = latestRunningCall(calls);
   const doneCount = calls.filter((call) => call.status === 'done' || call.status === 'error').length;
 
   // 主行要说的是"此刻在干什么"，优先级：正在跑的工具 > 网关报的准备阶段 > 写回答。

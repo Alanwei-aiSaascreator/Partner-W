@@ -6,7 +6,12 @@ import { useTranslation } from 'react-i18next';
 import { cn } from '@/lib/utils';
 import { motion as motionPresets } from '@/styles/design-tokens';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
-import { classifyToolActivity, summarizeToolActivity, type ToolActivityGroup } from '@/lib/tool-activity';
+import {
+  classifyToolActivity,
+  latestRunningCall,
+  summarizeToolActivity,
+  type ToolActivityGroup,
+} from '@/lib/tool-activity';
 import ToolCallCard from './ToolCallCard';
 
 function StatusIcon({ status }: { status: ToolCall['status'] }) {
@@ -63,7 +68,8 @@ function ToolCallSummary({ toolCalls }: { toolCalls: ToolCall[] }) {
   const [expanded, setExpanded] = useState(false);
   const summary = useMemo(() => summarizeToolActivity(toolCalls), [toolCalls]);
   const status: ToolCall['status'] = summary.errorCount > 0 ? 'error' : summary.runningCount > 0 ? 'running' : 'done';
-  const currentCall = [...toolCalls].reverse().find((call) => call.status === 'running');
+  // ⚠️ 走**唯一出口**（与活动条同一个判据）：两处各写一遍的话，改一处就会两处不一致。
+  const currentCall = latestRunningCall(toolCalls);
   // ⭐ "正在做什么"优先用网关拼好的 `title`（带参数摘要），拿不到才退回按工具名分类的泛化文案
   //（泛化文案是"查看文件"这种，说不出具体在看哪个文件）。
   const currentAction = currentCall
