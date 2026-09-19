@@ -416,6 +416,7 @@
       "preparing_context": "コンテキストを準備しています…",
       "preparing_workspace": "ワークスペースを準備しています…",
       "provisioning_environment": "実行環境を準備しています…",
+      "retrying": "再試行中（{{attempt}}/{{maxAttempts}} 回目）…",
       "running_setup": "セットアップを実行しています…",
       "starting_model": "モデルを呼び出しています…",
       "unknown": "準備しています…"

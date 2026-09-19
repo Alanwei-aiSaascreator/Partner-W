@@ -51,11 +51,13 @@ describe('网关 id 的文案覆盖', () => {
   });
 
   it('两份 id 清单都非空（上游被清空时不该静默通过）', () => {
-    expect(RUN_PHASE_IDS.length).toBe(7);
+    // 7 个准备相位 + 1 个重试相位（`retrying`，2026-09-09 实测新增的那个）。
+    // ⚠️ 这个数字是**灵敏度哨兵**：上游把清单清空了，这条要红。
+    expect(RUN_PHASE_IDS.length).toBe(8);
     expect(ERROR_KINDS_WITH_COPY.length).toBe(4);
   });
 
-  it('⭐ 七个准备阶段在**每个**语言里都有文案，且**不是**泛化兜底那句', () => {
+  it('⭐ 每个相位在**每个**语言里都有文案，且**不是**泛化兜底那句', () => {
     for (const file of locales) {
       const runPhase = at(localeJson(file), 'chatInput.runPhase');
       const fallback = runPhase.unknown;

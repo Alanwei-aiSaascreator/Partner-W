@@ -338,8 +338,38 @@ const RUN_STARTUP_PHASES = new Set([
   'starting_model',
 ]);
 
+/**
+ * **重试**相位 —— 第 8 个取值，此前不认。
+ *
+ * 实测（`~/git/openclaw`，2026-09-09）：`src/agents/embedded-agent-runner/run/attempt-recovery.ts`
+ * 在重试时发 `{ stream:"run_status", data:{ phase:"retrying", message, attempt, maxAttempts,
+ * reason, delayMs, … } }`。
+ *
+ * ⚠️ 而 `server-chat.ts` 的 **chat 投影会把它改写成 `phase:"starting_model"`** ——
+ *    所以只有 **agent 流**上是原样的 `retrying`，正好是我们消费的那条。
+ * ⚠️ 它**不算"启动"相位**（名字里的 startup 是真的在启动），所以单独列。
+ *    但它要进 `RUN_PHASE_IDS`，否则界面会把它当"认不出的相位"退回泛化文案。
+ */
+export const RETRY_RUN_PHASE = 'retrying';
+
 /** 供界面判断「这个 phase 有没有对应的文案」，没有就显示泛化的「正在准备…」。 */
-export const RUN_PHASE_IDS: readonly string[] = [...RUN_STARTUP_PHASES];
+export const RUN_PHASE_IDS: readonly string[] = [...RUN_STARTUP_PHASES, RETRY_RUN_PHASE];
+
+/**
+ * 从 `run_status` 的 data 里取重试次数（`{ attempt, maxAttempts }`）。
+ *
+ * ⚠️ **两个都必须是正整数才返回**：只拿到一半时给界面一个"第 2/?"没有意义，
+ *    还不如退回泛化的「正在重试…」。畸形帧不该把这一轮搞坏。
+ */
+function readRetryProgress(data: unknown): { attempt: number; maxAttempts: number } | undefined {
+  const d = data as Record<string, unknown> | undefined;
+  const attempt = d?.['attempt'];
+  const maxAttempts = d?.['maxAttempts'];
+  if (typeof attempt !== 'number' || typeof maxAttempts !== 'number') return undefined;
+  if (!Number.isInteger(attempt) || !Number.isInteger(maxAttempts)) return undefined;
+  if (attempt < 1 || maxAttempts < 1) return undefined;
+  return { attempt, maxAttempts };
+}
 
 /**
  * 未知事件种类的告警阈值。
@@ -839,12 +869,17 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
         // 于是首条消息有 9 秒界面毫无反应（用户报的「响应太慢」就是这么来的）。
         const phase = (data as Record<string, unknown>)?.phase;
         if (typeof phase === 'string' && phase) {
-          deps.getMessageStore().setRunPhase(sessionKey, phase);
+          // ⭐ 重试相位带**次数**（`attempt`/`maxAttempts`）—— "第 2/4 次"比"正在重试"有用得多：
+          //    它同时回答了"在动吗"和"还要多久"。只有重试相位才带，其余传 undefined。
+          const retry = phase === RETRY_RUN_PHASE ? readRetryProgress(data) : undefined;
+          if (retry) deps.getMessageStore().setRunPhase(sessionKey, phase, retry);
+          else deps.getMessageStore().setRunPhase(sessionKey, phase);
           debugEvent('renderer.agent.run_status', {
             taskId,
             sessionKey,
             phase,
-            known: RUN_STARTUP_PHASES.has(phase),
+            known: RUN_PHASE_IDS.includes(phase),
+            ...(retry ? { attempt: retry.attempt, maxAttempts: retry.maxAttempts } : {}),
           });
         }
         break;

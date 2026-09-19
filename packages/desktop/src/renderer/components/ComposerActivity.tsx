@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Loader2, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { RUN_PHASE_IDS } from '@clawwork/core';
+import { RETRY_RUN_PHASE, RUN_PHASE_IDS } from '@clawwork/core';
 import { useMessageStore } from '@/stores/messageStore';
 import { cn } from '@/lib/utils';
 import { formatElapsed, waitingLineSuffix } from '@/lib/waiting-copy';
@@ -43,6 +43,8 @@ export default function ComposerActivity({ sessionKey, onCancel }: ComposerActiv
   const processing = useMessageStore((s) => (sessionKey ? s.processingBySession.has(sessionKey) : false));
   const startedAt = useMessageStore((s) => (sessionKey ? s.turnStartedAtBySession[sessionKey] : undefined));
   const runPhase = useMessageStore((s) => (sessionKey ? s.runPhaseBySession[sessionKey] : null));
+  // 重试到第几次了（只有 `run_status` 的 `phase:"retrying"` 才有）—— 见下面的文案分支。
+  const retry = useMessageStore((s) => (sessionKey ? s.runRetryBySession[sessionKey] : undefined));
   // 模型**自述**的进度（网关 item 流的 preamble）—— 正文不流式时唯一在动的东西。
   const modelProgress = useMessageStore((s) => (sessionKey ? s.progressTextBySession[sessionKey] : null));
   const toolCalls = useMessageStore((s) => (sessionKey ? s.activeTurnBySession[sessionKey]?.toolCalls : undefined));
@@ -80,8 +82,19 @@ export default function ComposerActivity({ sessionKey, onCancel }: ComposerActiv
     // 工具的 `title` 是网关拼好的**事实**（工具名 + 参数），比模型的话更硬 ⇒ 排在它后面。
     // 但它比 `runPhase` 具体得多（后者只是"正在调用模型"这一档），所以排在它前面。
     headline = t('chatInput.waiting.modelProgress', { what: modelProgress });
+  } else if (runPhase === RETRY_RUN_PHASE && retry) {
+    // ⭐ 重试相位要说得出"**第 2/4 次**" —— 比"正在重试…"有用得多：
+    //    它同时回答了"在动吗"和"还要等几轮"。
+    // ⚠️ **只有同时拿到两个数字**才走这条（畸形帧没有数字 ⇒ 落回下面的泛化文案，
+    //    而不是显示一句"第 / 次"）。
+    headline = t('chatInput.runPhase.retrying', { attempt: retry.attempt, maxAttempts: retry.maxAttempts });
   } else if (runPhase) {
-    headline = t(`chatInput.runPhase.${RUN_PHASE_IDS.includes(runPhase) ? runPhase : 'unknown'}`);
+    // ⚠️ `retrying` **必须排除在这条泛化路之外**：它有自己的分支（上面那条，要两个数字），
+    //    走到这里就说明**没拿到数字**（畸形帧）。而 `runPhase.retrying` 那句里有
+    //    `{{attempt}}/{{maxAttempts}}` —— 没数字时 i18next 会渲染出
+    //    「正在重试（第 / 次）…」这种半截话，比泛化文案更糟。
+    const generic = runPhase !== RETRY_RUN_PHASE && RUN_PHASE_IDS.includes(runPhase) ? runPhase : 'unknown';
+    headline = t(`chatInput.runPhase.${generic}`);
   } else if (doneCount > 0) {
     headline = t('chatInput.waiting.writing', { count: doneCount });
   } else {

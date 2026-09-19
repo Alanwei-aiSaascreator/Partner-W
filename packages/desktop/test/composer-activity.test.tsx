@@ -14,7 +14,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
     t: (key: string, opts?: Record<string, unknown>) =>
-      opts && 'what' in opts ? `${key}(${String(opts.what)})` : opts && 'count' in opts ? `${key}(${opts.count})` : key,
+      opts && 'what' in opts
+        ? `${key}(${String(opts.what)})`
+        : opts && 'count' in opts
+          ? `${key}(${opts.count})`
+          : opts && 'attempt' in opts
+            ? `${key}(${opts.attempt}/${opts.maxAttempts})`
+            : key,
   }),
   initReactI18next: { type: '3rdParty', init: vi.fn() },
 }));
@@ -43,6 +49,8 @@ async function setup(storeState: {
   processing?: boolean;
   startedAgoMs?: number;
   runPhase?: string | null;
+  /** 重试到第几次了（`run_status` 的 `phase:"retrying"` 才带）。 */
+  runRetry?: { attempt: number; maxAttempts: number };
   /** 网关 `item` 流的 `kind:"preamble"` —— 模型自述的进度。 */
   progressText?: string | null;
   toolCalls?: { id: string; name: string; status: string; title?: string; startedAt: string }[];
@@ -57,6 +65,7 @@ async function setup(storeState: {
     processingBySession: storeState.processing === false ? new Set() : new Set([SK]),
     turnStartedAtBySession: storeState.processing === false ? {} : { [SK]: T0 - (storeState.startedAgoMs ?? 0) },
     runPhaseBySession: { [SK]: storeState.runPhase ?? null },
+    runRetryBySession: storeState.runRetry ? { [SK]: storeState.runRetry } : {},
     // ⚠️ 必须**无条件**设：`setState` 是浅合并，漏设的键会留上一个用例的值
     progressTextBySession: { [SK]: storeState.progressText ?? null },
     activeTurnBySession: storeState.toolCalls
@@ -147,6 +156,43 @@ describe('ComposerActivity —— 等待期别让用户以为它死了', () => {
     });
 
     expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * ⭐ **重试相位**（`run_status` 的 `phase:"retrying"`）—— 我们此前不认它。
+ *
+ * 网关在重试时会带上**次数**（"第 2/4 次"）—— 那比"正在重试…"有用得多：
+ * 它同时回答了"在动吗"和"还要等几轮"。次数是**跟着相位**来的，相位一换就必须收掉。
+ */
+describe('重试相位要说得出"第几次"', () => {
+  it('⭐ 有次数 ⇒ 文案带上 `attempt`/`maxAttempts`', async () => {
+    await setup({ runPhase: 'retrying', runRetry: { attempt: 2, maxAttempts: 4 } });
+
+    const text = q('composer-activity')?.textContent ?? '';
+    expect(text).toContain('chatInput.runPhase.retrying');
+    expect(text, '次数是这句话的重点，不能丢').toContain('2');
+    expect(text).toContain('4');
+  });
+
+  it('⚠️ 认得出这个相位（不再走"认不出的相位"那条泛化路）', async () => {
+    await setup({ runPhase: 'retrying', runRetry: { attempt: 1, maxAttempts: 3 } });
+
+    expect(q('composer-activity')?.textContent).not.toContain('chatInput.runPhase.unknown');
+  });
+
+  it('⚠️ 相位是 `retrying` 但**没有次数**（畸形帧）⇒ 退回泛化文案，不显示"第 / 次"', async () => {
+    await setup({ runPhase: 'retrying' });
+
+    const text = q('composer-activity')?.textContent ?? '';
+    expect(text).not.toContain('chatInput.runPhase.retrying');
+    expect(text).toContain('chatInput.runPhase.unknown');
+  });
+
+  it('⚠️ **次数粘不到别的相位上**', async () => {
+    await setup({ runPhase: 'preparing_workspace' });
+
+    expect(q('composer-activity')?.textContent).not.toContain('chatInput.runPhase.retrying');
   });
 });
 

@@ -416,6 +416,7 @@
       "preparing_context": "正在準備上下文…",
       "preparing_workspace": "正在準備工作區…",
       "provisioning_environment": "正在準備執行環境…",
+      "retrying": "正在重試（第 {{attempt}}/{{maxAttempts}} 次）…",
       "running_setup": "正在執行初始化指令碼…",
       "starting_model": "正在呼叫模型…",
       "unknown": "正在準備…"

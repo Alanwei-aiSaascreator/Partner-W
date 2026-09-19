@@ -416,6 +416,7 @@
       "preparing_context": "Preparing context…",
       "preparing_workspace": "Preparing workspace…",
       "provisioning_environment": "Preparing the environment…",
+      "retrying": "Retrying (attempt {{attempt}} of {{maxAttempts}})…",
       "running_setup": "Running setup…",
       "starting_model": "Calling model…",
       "unknown": "Preparing…"

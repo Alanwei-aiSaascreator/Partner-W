@@ -416,6 +416,7 @@
       "preparing_context": "Préparation du contexte…",
       "preparing_workspace": "Préparation de l'espace de travail…",
       "provisioning_environment": "Préparation de l'environnement…",
+      "retrying": "Nouvelle tentative ({{attempt}}/{{maxAttempts}})…",
       "running_setup": "Exécution de la configuration…",
       "starting_model": "Appel du modèle…",
       "unknown": "Préparation…"

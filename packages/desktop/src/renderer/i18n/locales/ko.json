@@ -416,6 +416,7 @@
       "preparing_context": "컨텍스트를 준비하는 중…",
       "preparing_workspace": "작업 공간을 준비하는 중…",
       "provisioning_environment": "실행 환경을 준비하는 중…",
+      "retrying": "다시 시도 중 ({{attempt}}/{{maxAttempts}}회)…",
       "running_setup": "설정 스크립트를 실행하는 중…",
       "starting_model": "모델을 호출하는 중…",
       "unknown": "준비하는 중…"

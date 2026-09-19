@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createGatewayDispatcher,
   DELIBERATELY_IGNORED_STREAMS,
+  RETRY_RUN_PHASE,
   RUN_PHASE_IDS,
   type GatewayDispatcherDeps,
 } from '../src/services/gateway-dispatcher.js';
@@ -417,6 +418,87 @@ describe('chat delta：追加还是替换（接线）', () => {
   });
 });
 
+/**
+ * `run_status` 的 **`retrying`** 相位 —— 第 8 个取值，我们此前不认。
+ *
+ * 实测（`~/git/openclaw`，2026-09-09）：`src/agents/embedded-agent-runner/run/attempt-recovery.ts`
+ * 在重试时发 `{stream:"run_status", data:{phase:"retrying", message, retryAttempt, maxRetries,
+ * delayMs, attempt, maxAttempts, reason}}`。
+ *
+ * ⚠️ 而 `server-chat.ts` 的 **chat 投影会把它改写成 `phase:"starting_model"`** ——
+ * 所以只有 **agent 流**上是原样的 `retrying`，正好是我们消费的那条。
+ * ⇒ 我们此前 `RUN_STARTUP_PHASES` 里没有它 ⇒ 界面退回泛化的「正在准备…」，
+ * 用户看不出"它在重试、而且已经试到第 2 次了"。
+ */
+describe('run_status 的重试相位', () => {
+  it('⭐ `phase:"retrying"` 要**认**（并把它当已知，不落进泛化文案）', () => {
+    const h = createHarness();
+
+    h.emit('agent', { sessionKey: TASK.sessionKey, stream: 'run_status', data: { phase: 'retrying' } });
+
+    expect(h.deps.reportDebugEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'renderer.agent.run_status',
+        data: expect.objectContaining({ phase: 'retrying', known: true }),
+      }),
+    );
+  });
+
+  it('⭐ 把重试的**次数**一起带给 store（"第 2/4 次"比"正在重试"有用得多）', () => {
+    const h = createHarness();
+
+    h.emit('agent', {
+      sessionKey: TASK.sessionKey,
+      stream: 'run_status',
+      data: { phase: 'retrying', attempt: 2, maxAttempts: 4, reason: 'rate_limit' },
+    });
+
+    expect(h.messageStore.setRunPhase).toHaveBeenCalledWith(TASK.sessionKey, 'retrying', {
+      attempt: 2,
+      maxAttempts: 4,
+    });
+  });
+
+  it('普通相位**不带**次数（别把上一轮的残留带进去）', () => {
+    const h = createHarness();
+
+    h.emit('agent', {
+      sessionKey: TASK.sessionKey,
+      stream: 'run_status',
+      data: { phase: 'preparing_workspace' },
+    });
+
+    expect(h.messageStore.setRunPhase).toHaveBeenCalledWith(TASK.sessionKey, 'preparing_workspace');
+  });
+
+  it('⭐ **非重试相位即使帧里带了次数，也不许往下传**（数字粘到别的相位上就是说谎）', () => {
+    // `attempt`/`maxAttempts` 是重试帧的字段；别的相位若碰巧带着它们（网关改动 / 转发污染），
+    // 我们**只能认相位说得通的那一半** —— 否则界面会显示"正在准备（第 2/4 次）"。
+    const h = createHarness();
+
+    h.emit('agent', {
+      sessionKey: TASK.sessionKey,
+      stream: 'run_status',
+      data: { phase: 'starting_model', attempt: 2, maxAttempts: 4 },
+    });
+
+    expect(h.messageStore.setRunPhase).toHaveBeenCalledWith(TASK.sessionKey, 'starting_model');
+    expect(h.messageStore.setRunPhase).not.toHaveBeenCalledWith(TASK.sessionKey, 'starting_model', expect.anything());
+  });
+
+  it('⚠️ `retrying` 但**没有次数**（畸形/裁剪过的帧）⇒ 仍然切相位，只是不带数字', () => {
+    const h = createHarness();
+
+    h.emit('agent', {
+      sessionKey: TASK.sessionKey,
+      stream: 'run_status',
+      data: { phase: 'retrying', attempt: 'x' },
+    });
+
+    expect(h.messageStore.setRunPhase).toHaveBeenCalledWith(TASK.sessionKey, 'retrying');
+  });
+});
+
 describe('agent lifecycle error buffer', () => {
   it('buffers a lifecycle error for the dedup window, then releases it as a system message', async () => {
     vi.useFakeTimers();
@@ -579,8 +661,15 @@ describe('run_status —— 网关的准备进度要显示出来，不能静默�
     }
   });
 
-  it('RUN_PHASE_IDS 与网关的七阶段一致（渲染层靠它挑文案，少一个就少一句人话）', () => {
-    expect([...RUN_PHASE_IDS].sort()).toEqual([...REAL_STARTUP_PHASES].sort());
+  it('RUN_PHASE_IDS 覆盖网关的七阶段（渲染层靠它挑文案，少一个就少一句人话）', () => {
+    // ⚠️ 原断言是"**恰好等于**那七个"。现在改成"**包含**那七个 + 重试相位"：
+    //    前者与"重试"那条新增的已知相位互斥，而这条用例的**本意**是"网关会发的，
+    //    我们都要有文案" —— 包含式才是它要的（且更严：少一个仍然会红）。
+    for (const phase of REAL_STARTUP_PHASES) {
+      expect(RUN_PHASE_IDS, `少了网关会发的相位 ${phase}`).toContain(phase);
+    }
+    // 重试相位**不是**启动相位（名字里的 startup 是真的在启动），但它同样要有文案
+    expect(RUN_PHASE_IDS).toContain(RETRY_RUN_PHASE);
   });
 });
 

@@ -30,6 +30,17 @@ export interface MessageState {
    */
   runPhaseBySession: Record<string, string | null>;
   /**
+   * 这一轮**重试到第几次了**（`run_status` 的 `phase:"retrying"` 才带）。
+   *
+   * 为什么单独存：`runPhaseBySession` 只放相位名，而"第 2/4 次"这句话需要两个数字。
+   * ⚠️ 与相位**同一次 set 写**，且**相位不是 `retrying` 时一定清掉** ——
+   *    否则数字会粘在后面的相位上（"正在准备（第 2/4 次）"这种）。
+   *
+   * ⚠️ 不落库：本轮界面状态，与 `runPhaseBySession` 同性质。
+   */
+  runRetryBySession: Record<string, { attempt: number; maxAttempts: number }>;
+
+  /**
    * 模型**自述**的进度（网关 `item` 流的 `kind:"preamble"`）。
    *
    * 为什么要它：正文本就不流式（整轮结束才蹦出来，见 `waiting-copy.ts` 的结论），
@@ -167,8 +178,13 @@ export interface MessageState {
   clearMessages: (taskId: string) => void;
   setHighlightedMessage: (id: string | null) => void;
   setProcessing: (sessionKey: string, processing: boolean) => void;
-  /** 传 `null` 表示这一轮结束，清掉进行中提示。 */
-  setRunPhase: (sessionKey: string, phase: string | null) => void;
+  /**
+   * 传 `null` 表示这一轮结束，清掉进行中提示。
+   *
+   * `retry` 只有**重试相位**才带（"第 2/4 次"）—— 它和相位**同一次 set 写进去**，
+   * 且**相位不是重试时一定清掉**：否则上一轮的数字会粘到后面的相位上。
+   */
+  setRunPhase: (sessionKey: string, phase: string | null, retry?: { attempt: number; maxAttempts: number }) => void;
   /** 传 `null` 清掉；空串由调用方挡在外面（别把上一句盖成空的）。 */
   setSessionProgressText: (sessionKey: string, text: string | null) => void;
   /** 传 `null` 清掉该会话的失败文案（重试时用）。 */
@@ -325,6 +341,7 @@ export function createMessageStore(deps: MessageStoreDeps) {
     activeTurnBySession: {},
     processingBySession: new Set(),
     runPhaseBySession: {},
+    runRetryBySession: {},
     compactionAnnouncedEpisodeBySession: {},
     compactionEpisodeBySession: {},
     compactingBySession: {},
@@ -581,6 +598,7 @@ export function createMessageStore(deps: MessageStoreDeps) {
         const nextErrors = { ...s.errorBySession };
         const nextRetryable = { ...s.retryableErrorBySession };
         const nextTurnStartedAt = { ...s.turnStartedAtBySession };
+        const nextRunRetry = { ...s.runRetryBySession };
 
         delete nextMessages[taskId];
         for (const key of Object.keys(nextTurns)) {
@@ -598,6 +616,9 @@ export function createMessageStore(deps: MessageStoreDeps) {
         for (const key of Object.keys(nextTurnStartedAt)) {
           if (parseTaskIdFromSessionKey(key) === taskId) delete nextTurnStartedAt[key];
         }
+        for (const key of Object.keys(nextRunRetry)) {
+          if (parseTaskIdFromSessionKey(key) === taskId) delete nextRunRetry[key];
+        }
 
         return {
           messagesByTask: nextMessages,
@@ -606,6 +627,7 @@ export function createMessageStore(deps: MessageStoreDeps) {
           errorBySession: nextErrors,
           retryableErrorBySession: nextRetryable,
           turnStartedAtBySession: nextTurnStartedAt,
+          runRetryBySession: nextRunRetry,
         };
       }),
 
@@ -644,10 +666,18 @@ export function createMessageStore(deps: MessageStoreDeps) {
         };
       }),
 
-    setRunPhase: (sessionKey, phase) =>
-      set((s) => ({
-        runPhaseBySession: { ...s.runPhaseBySession, [sessionKey]: phase },
-      })),
+    setRunPhase: (sessionKey, phase, retry) =>
+      set((s) => {
+        // ⚠️ 相位不是 `retrying`（含 null）时**一定清掉**数字 —— 它与相位同一次 set 写，
+        //    这样"什么时候清"只有一条规则，不需要在各个收尾点补清理。
+        const nextRetry = { ...s.runRetryBySession };
+        if (retry) nextRetry[sessionKey] = retry;
+        else delete nextRetry[sessionKey];
+        return {
+          runPhaseBySession: { ...s.runPhaseBySession, [sessionKey]: phase },
+          runRetryBySession: nextRetry,
+        };
+      }),
 
     setSessionProgressText: (sessionKey, text) =>
       set((s) => ({

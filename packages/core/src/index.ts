@@ -148,7 +148,7 @@ export { autoTitleIfNeeded } from './services/auto-title.js';
 export { deriveSessionActivity, getTaskSessionKeys } from './services/session-activity.js';
 export type { SessionActivity } from './services/session-activity.js';
 
-export { createGatewayDispatcher, RUN_PHASE_IDS } from './services/gateway-dispatcher.js';
+export { createGatewayDispatcher, RETRY_RUN_PHASE, RUN_PHASE_IDS } from './services/gateway-dispatcher.js';
 export type { GatewayDispatcherDeps } from './services/gateway-dispatcher.js';
 
 export { createChatComposer } from './services/chat-composer.js';
