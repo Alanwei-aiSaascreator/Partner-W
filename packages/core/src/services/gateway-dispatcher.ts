@@ -15,7 +15,7 @@ import {
   extractThinking,
   extractToolCalls,
   extractToolResultText,
-  isAwaitingApproval,
+  isExecHeldByApproval,
   parseToolArgs,
 } from '../protocol/parse-content.js';
 import type { ChatEventPayload } from '../protocol/types.js';
@@ -1193,8 +1193,10 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
       //    照它落地 ⇒ **一条一步都没跑的命令显示成「已完成」**，而且**没有任何后续帧
       //    会纠正它**：`approval` 流的 `pending` 是"知道但不接"、`item` 的
       //    `kind:"command"+status:"blocked"` 也在"刻意不接"名单里、合并器**不许降级**。
+      //    （2026-09-19 扩：`approval-unavailable` 也归这条 —— 从前它靠 `approval` 流
+      //     **事后**压成 `error`，最终态对，但中间**先闪一下「已完成」**。用户拍板"不让它先闪"。）
       if (data.isError) status = 'error';
-      else if (isAwaitingApproval(data.result)) status = 'running';
+      else if (isExecHeldByApproval(data.result)) status = 'running';
       else status = 'done';
     } else if (data.phase === 'error') {
       // ⚠️ **这条分支运行时不发** —— 生产代码 11 个发射点里没有 `phase:"error"`

@@ -138,37 +138,50 @@ export function extractToolResultText(result: unknown): string | undefined {
 }
 
 /**
- * 这个工具结果是不是**「命令还没跑，正等着人批准」**？
+ * `ExecToolDetails.status` 里**表示"这一帧不代表跑完了"**的两个取值
+ * （`src/agents/bash-tools.exec-types.ts`）。
+ *
+ * - `approval-pending` —— exec **挂起等人批准**（批了还会跑）；
+ * - `approval-unavailable` —— **没有审批通道**，命令根本跑不了。
+ *
+ * ⚠️ 两个都**不在**"跑完了"那一类，名字里的 `Held`（被按住）就是这层意思。
+ */
+export const EXEC_APPROVAL_HELD_STATUSES: readonly string[] = ['approval-pending', 'approval-unavailable'];
+
+/**
+ * 这个工具结果是不是**「被审批按住了」**（跑不了 or 还没跑）？
  *
  * ## 为什么必须单独判
  *
- * 运行时的 `ExecToolDetails.status` 是个闭集，其中 **`approval-pending`**
- *（`src/agents/bash-tools.exec-types.ts`）表示 exec 已挂起、等人批准。
- * 而工具流那一帧带的是 **`isError: false`**，两道都放行：
+ * 这两种 status 在工具流那一帧上**都带 `isError: false`**，两道都放行：
  *
- * 1. `isToolResultError` 的失败清单（`src/agents/tool-result-error.ts`）里
- *    **没有** `approval-pending`；
- * 2. 它的兜底是 `exitCode !== 0`，而 `approval-pending` 那个分支**根本没有
- *    `exitCode` 字段** ⇒ `typeof undefined !== 'number'` ⇒ `return false`。
+ * 1. `approval-pending` **不在** `isToolResultError` 的失败清单
+ *    （`src/agents/tool-result-error.ts`）里；它的兜底是 `exitCode !== 0`，
+ *    而那个分支**根本没有 `exitCode` 字段** ⇒ `typeof undefined !== 'number'` ⇒ `false`。
+ * 2. `approval-unavailable` **在**失败清单里，但它被 `approvalUnavailable`
+ *    压掉（`completion.ts` 的 `isToolError = observerIsError && !approvalUnavailable`）
+ *    ⇒ 那一帧**同样**是 `isError: false`。
  *
  * ⇒ 照 `isError` 落地，**一条一步都没跑的命令会显示成「已完成」**。
  *
- * ## 为什么只认这一个值
+ * ## 两个值为什么现在一起管（2026-09-19 扩的）
  *
- * 同族的 `approval-unavailable`（没有审批通道）**在**失败清单里，但它被
- * `approvalUnavailable` 压掉 ⇒ 那一帧**同样**是 `isError: false`。
- * **那条路不归这里管**：它由 `approval` 流兜住，且有回归用例钉着
- *（连"只看 tool 流会给 done"这个前置都显式断言了）。把它一起收进来是对既有
- * 行为的改动，属另一个决定 —— 所以这里**刻意收窄**。
+ * 原先只认 `approval-pending`，理由是 `approval-unavailable` 随后会被
+ * `approval` 流压成 `error`（权重 3 > done 2）⇒ **最终态是对的**。
+ * 但那只是"**最终**对"：中间会**先闪一下「已完成」**再被纠正 ——
+ * 用户看得见，而且是句假话。⇒ 用户拍板："不让它先闪"，
+ * 于是两个值在这里**同一条待遇**：都**不许**落 `done`，由后续帧收场
+ * （`pending` 等真结果 / `unavailable` 由 `approval` 流的 `error` 收场）。
  *
  * ⚠️ 形状认不出时一律 `false`：说错了会把**真结果**压成"还在跑"（卡片永远转圈），
  *    那个方向的错更贵。
  */
-export function isAwaitingApproval(result: unknown): boolean {
+export function isExecHeldByApproval(result: unknown): boolean {
   if (!result || typeof result !== 'object') return false;
   const details = (result as { details?: unknown }).details;
   if (!details || typeof details !== 'object') return false;
-  return (details as { status?: unknown }).status === 'approval-pending';
+  const status = (details as { status?: unknown }).status;
+  return typeof status === 'string' && EXEC_APPROVAL_HELD_STATUSES.includes(status);
 }
 
 export function safeJsonParse(raw: string): Record<string, unknown> | undefined {

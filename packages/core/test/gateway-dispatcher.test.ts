@@ -2276,7 +2276,10 @@ describe('exec 停在「等人批准」时，卡片不许说「已完成」', ()
     expect(lastToolCall(h).status).toBe('done');
   });
 
-  it('对照：`details.status:"approval-unavailable"` 行为**照旧**（那条路由 approval 流兜，本刀不动）', () => {
+  it('⭐⭐ 「审批不可用」**也不许**先落 done（拍板"不让它先闪"，`edbc8ff` 之后扩的）', () => {
+    // 从前的理由是"随后会被 `approval` 流压成 error ⇒ **最终**态是对的"。
+    // 但那只是最终对：中间会**先闪一下「已完成」**再被纠正 —— 用户看得见，而且是假话。
+    // ⇒ 现在两个 status **同一条待遇**：都不许落 done。
     const h = createHarness();
 
     h.emit('agent', {
@@ -2294,7 +2297,12 @@ describe('exec 停在「等人批准」时，卡片不许说「已完成」', ()
       },
     });
 
-    expect(lastToolCall(h).status, '刻意收窄：只认 approval-pending').toBe('done');
+    const seen = h.messageStore.upsertToolCall.mock.calls.map(
+      (c) => (c[2] as { status: string; completedAt?: string }).status,
+    );
+    expect(seen, '一次都不许落 done —— 落一次就是"闪一下"').not.toContain('done');
+    expect(lastToolCall(h).status).toBe('running');
+    expect(lastToolCall(h).completedAt, '没结束却带结束时间，等于把谎话写进数据里').toBeUndefined();
   });
 });
 
@@ -2650,7 +2658,11 @@ describe('approval 流：被拦下的命令不许显示成"已完成"', () => {
   it('⭐ tool 流说"没出错"、随后 approval 说"不可用" ⇒ 卡片不许停在"已完成"', () => {
     const h = createHarness();
     emitBlockedExecResult(h, 'call_appr');
-    expect(lastToolCall(h).status, '前置：只看 tool 流，网关确实报的是"没出错"').toBe('done');
+    // ⚠️ 这条**前置** 2026-09-19 改过：从前断言的是 `'done'`。
+    //    网关的**行为**没变（它照旧在 tool 流上报 `isError: false`），
+    //    变的是**我们**：不再把这个 `isError:false` 落成"已完成"（拍板"不让它先闪"）。
+    //    ⇒ 断言的方向没放松，是**更早一步**就拦住了。
+    expect(lastToolCall(h).status, '前置：tool 流那一帧上命令还没结论，不许说"完成"').toBe('running');
 
     emitApproval(h, {
       phase: 'requested',
@@ -2668,6 +2680,13 @@ describe('approval 流：被拦下的命令不许显示成"已完成"', () => {
     const tc = lastToolCall(h);
     expect(tc.status, '命令根本没跑 ⇒ 不许显示成已完成').toBe('error');
     expect(tc.result, '要把网关给的原因带上，否则用户不知道为什么').toContain('not run');
+
+    // ⭐⭐ **"不闪"就是这条**：把两帧合起来看，`done` **一次都不许出现**。
+    //    光看最终态是查不出"闪一下"的 —— 那正是这条断言存在的理由。
+    const everSeen = h.messageStore.upsertToolCall.mock.calls.map(
+      (c) => (c[2] as { status: string; completedAt?: string }).status,
+    );
+    expect(everSeen, `中间出现过「已完成」：${everSeen.join(' → ')}`).not.toContain('done');
   });
 
   it('审批被拒（phase:"resolved" + status:"denied"）同样不许是"已完成"', () => {
