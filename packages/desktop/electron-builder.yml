@@ -44,6 +44,17 @@ extraResources:
   # 产出方式：仓库根跑 `node scripts/fetch-kb-model.mjs`。
   - from: ../../runtime-out/kb-model
     to: kb-model
+  # T-a2：「我们自己的技能」—— 技能市场里列的那批（中文名/描述），用户点一下就装。
+  # 落点是 `<resources>/our-skills`，客户端侧见 `src/main/skills/locate.ts`。
+  #
+  # ⚠️ 技能要么在包里、要么整个功能就是个空页面。运行时的加载器对**格式不对 = 静默丢弃**，
+  #    所以这里除了"源在不在"（`beforePack` 钩子会自动查），
+  #    还有一道**内容闸**在 `test/our-skills-packaging-gate.test.ts`：
+  #    逐个技能解析 frontmatter，`name`/`description` 缺一即红。
+  #
+  # ⚠️ `to:` 必须与 `locate.ts` 的 `OUR_SKILLS_DIR_NAME` 一字不差，靠上面那个测试钉住。
+  - from: our-skills
+    to: our-skills
 beforePack: ./scripts/require-bundled-runtime.cjs
 
 # 原生二进制**不能**从 app.asar 里加载（`LoadLibrary` 读不了 asar 虚拟路径）。
