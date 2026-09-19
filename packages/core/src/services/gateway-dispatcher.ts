@@ -832,7 +832,7 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
     if (data.kind !== 'tool') return;
     if (!data.toolCallId || !data.name) return;
 
-    const failed = data.status === 'failed' || data.status === 'error' || Boolean(data.error);
+    const failed = (data.status !== undefined && ITEM_FAILURE_STATUSES.has(data.status)) || Boolean(data.error);
     const settled = data.phase === 'end' || failed;
     const status: ToolCallStatus = failed ? 'error' : settled ? 'done' : 'running';
 
@@ -868,6 +868,27 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
    * 而"退回进行中"当前做不到 —— `mergeToolCallState` 的状态权重不许降级。
    */
   const APPROVAL_NOT_EXECUTED = new Set(['unavailable', 'denied', 'failed']);
+
+  /**
+   * `item` 的 `status` 里表示**没成**的取值。
+   *
+   * 实测（随包运行时 2026.9.3，`builtin-openclaw-*.mjs`）：
+   *
+   * ```js
+   * terminalErrorStatus = terminal.executionStarted ? "failed" : "blocked"
+   * emitTrackedItemEvent(ctx, { …, phase: "end", kind: "tool",
+   *     status: isToolError ? terminalErrorStatus : "completed", … })
+   * ```
+   *
+   * - `failed` —— 执行了、失败了
+   * - `blocked` —— **压根没执行**（被拦下）
+   * - `error` —— 容错，别把见过的形状漏掉
+   *
+   * ⚠️ 少了 `blocked` 的后果：`phase:"end"` 会让它落进 `settled` ⇒ 算成 `done`
+   * ⇒ **一条根本没跑的命令显示成"已完成"**。（平时被 `tool` 流 result 帧的
+   * `error` 权重挡着，但那是**帧序在兜底**，不是我们认对了。）
+   */
+  const ITEM_FAILURE_STATUSES = new Set(['failed', 'blocked', 'error']);
 
   /**
    * 这条工具调用**已经有的**工具名。

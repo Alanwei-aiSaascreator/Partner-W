@@ -1057,6 +1057,70 @@ describe('item 流：网关拼好的人话标题与真实起止时间', () => {
   });
 
   /**
+   * ⭐ `status:"blocked"` —— **没跑成**的那一类，此前会显示成「已完成」。
+   *
+   * 实测（随包运行时 2026.9.3，`builtin-openclaw-*.mjs` 原文）：
+   *
+   * ```js
+   * terminalErrorStatus = terminal.executionStarted ? "failed" : "blocked"
+   * emitTrackedItemEvent(ctx, { …, phase: "end", kind: "tool",
+   *     status: isToolError ? terminalErrorStatus : "completed", … })
+   * ```
+   *
+   * ⇒ 工具**被拦下、根本没执行**时，item 发的是 `phase:"end"` + `status:"blocked"`。
+   * 而我们的判定只认 `failed` / `error` ⇒ `failed=false`、`settled=(phase==='end')`
+   * ⇒ **算成 `'done'`：一条没跑的命令被标成成功。**
+   *
+   * ⚠️ 为何"平时看不见"：`tool` 流的 result 帧通常先到（`isError:true` ⇒ `error`，权重 3），
+   * 随后的 `done`（权重 2）会被 `mergeToolCallState` 的"不许降级"挡掉。
+   * 但那是**排序在兜底**，不是我们认对了 —— 帧序一变、或那条 result 的 `isError` 被网关
+   * 压成 false（`isToolError = observerIsError && !approvalUnavailable` 就是这种情形），
+   * 界面就会说成功。
+   */
+  it('⭐ item 的 `status:"blocked"`（工具没执行）不许落成 done', () => {
+    const h = createHarness();
+    h.emit('agent', {
+      sessionKey: TASK.sessionKey,
+      stream: 'item',
+      data: {
+        itemId: 'tool:call_blocked',
+        phase: 'end',
+        kind: 'tool',
+        title: 'exec rm -rf /tmp/x',
+        status: 'blocked',
+        name: 'exec',
+        toolCallId: 'call_blocked',
+        startedAt: 1789709917722,
+        endedAt: 1789709932780,
+      },
+    });
+
+    expect(lastToolCall(h).status, '没跑成 ⇒ 不许显示成已完成').toBe('error');
+    expect(lastToolCall(h).completedAt, '它确实结束了，结束时间要给').toBe(new Date(1789709932780).toISOString());
+  });
+
+  it('成功那条路不受影响（`status:"completed"` + phase:"end" 仍是 done）', () => {
+    const h = createHarness();
+    h.emit('agent', {
+      sessionKey: TASK.sessionKey,
+      stream: 'item',
+      data: {
+        itemId: 'tool:call_ok',
+        phase: 'end',
+        kind: 'tool',
+        title: 'ls 工作区',
+        status: 'completed',
+        name: 'ls',
+        toolCallId: 'call_ok',
+        startedAt: 1789709917722,
+        endedAt: 1789709932780,
+      },
+    });
+
+    expect(lastToolCall(h).status).toBe('done');
+  });
+
+  /**
    * ⭐ `kind:"preamble"` 的 `progressText` 是**模型自述的进度**（真帧形状见
    * `assistant-text-not-streaming` 记忆里的日志片段）：
    *
