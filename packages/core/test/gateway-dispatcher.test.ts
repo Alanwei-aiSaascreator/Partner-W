@@ -1074,19 +1074,30 @@ describe('item 流的两个词表：未处理的取值要留痕', () => {
     );
   });
 
-  it('⭐⭐ 认不出的 `status` ⇒ 记 `unknown_status`，**不许默默归类**', () => {
+  /**
+   * ⚠️ **这条用例原来断言的是单个 `classifiedAs: 'done'`，而那是一条形同虚设的断言**：
+   *    变异验证实测，把 `classifiedAs` 硬编码成 `'done'` 后 **191 条用例一条都不红**。
+   *    原因很简单 —— 输入固定、期望值也固定，一个常量就能满足，等于没在测。
+   *
+   * ⇒ 改成**两个会产生不同归类的输入**：`phase:"end"` ⇒ `done`、`phase:"start"` ⇒ `running`。
+   *    任何硬编码都**不可能同时满足**这两条。这才是"记下我们把它归成了什么"该有的强度。
+   */
+  it.each([
+    ['end', 'done'],
+    ['start', 'running'],
+  ])('⭐⭐ 认不出的 `status` ⇒ 记 `unknown_status`，并如实记下归类（phase=%s ⇒ %s）', (phase, expectedClassifiedAs) => {
     const h = createHarness();
 
-    emitItem(h, { kind: 'tool', phase: 'end', toolCallId: 'tc-1', name: 'ls', status: 'some_future_status' });
+    emitItem(h, { kind: 'tool', phase, toolCallId: 'tc-1', name: 'ls', status: 'some_future_status' });
 
     expect(h.deps.reportDebugEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         event: 'renderer.agent.item.unknown_status',
         data: expect.objectContaining({
           status: 'some_future_status',
-          phase: 'end',
+          phase,
           // 顺手记下**我们把它归成了什么** —— 否则光看日志没法判断影响面。
-          classifiedAs: 'done',
+          classifiedAs: expectedClassifiedAs,
         }),
       }),
     );
@@ -1153,6 +1164,83 @@ describe('item 流的两个词表：未处理的取值要留痕', () => {
 
     const calls = h.messageStore.upsertToolCall.mock.calls;
     expect((calls[calls.length - 1]![2] as { status: string }).status).toBe('running');
+  });
+
+  /**
+   * ⭐⭐ `phase` 的护栏 —— 之前**只有常量没有护栏**。
+   *
+   * `ITEM_PHASE_IDS` 早就定义了（还带灵敏度哨兵用例），但**生产代码里一次都没用过**：
+   * `status` 有 `unknown_status`，`tool` 流的 `phase` 也有 `unknown_phase`，
+   * 唯独 `item` 的 `phase` 是**裸奔**的。
+   *
+   * ## 为什么这条值得防
+   *
+   * 判"结没结束"全靠这一行：`const settled = data.phase === 'end' || failed;`
+   * ⇒ 运行时**若给 item 加一个表示"结束"的新相位**，`settled` 会是 `false`，
+   *   条目**永远停在"进行中"**（卡片一直转），而且**一声不响**。
+   *
+   * 这不是假想：`tool` 流的 `phase` 就真从 4 个长到过 5 个（漏掉 `input_delta`，
+   * 见本文件 `tool` 流那一节）。同一条河，`item` 这边没有护栏。
+   *
+   * ⚠️ **行为刻意不变**：与 `unknown_status` 同一条纪律 ——
+   *    "不知道就别改它的样子，但要留下能被查的痕迹"。所以这里既断言**留痕**，
+   *    也断言**归类没被改动**。
+   */
+  it('⭐⭐ 认不出的 `phase` ⇒ 记 `unknown_phase`，**不许默默归类**', () => {
+    const h = createHarness();
+
+    // ⚠️ 这里**故意**让 `status` 与 `phase` 的归类不同：`status:"failed"` 无论
+    //    `phase` 认不认得出都会归成 `error`，所以 `classifiedAs` 必须记 **`error`**。
+    //    若把 `status` 写成 `"running"`，那条断言用硬编码的 `'running'` 也能过
+    //    —— 变异测试里这种断言等于没写（本项目栽过这个）。
+    emitItem(h, { kind: 'tool', phase: 'some_future_phase', toolCallId: 'tc-1', name: 'ls', status: 'failed' });
+
+    expect(h.deps.reportDebugEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'renderer.agent.item.unknown_phase',
+        data: expect.objectContaining({
+          phase: 'some_future_phase',
+          status: 'failed',
+          // 顺手记下**我们把它归成了什么** —— 否则光看日志没法判断影响面。
+          classifiedAs: 'error',
+        }),
+      }),
+    );
+  });
+
+  it('⚠️ `phase` 整个缺失 ⇒ 也留痕（用 `(missing)`）', () => {
+    const h = createHarness();
+
+    emitItem(h, { kind: 'tool', toolCallId: 'tc-1', name: 'ls', status: 'running' });
+
+    expect(h.deps.reportDebugEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'renderer.agent.item.unknown_phase',
+        data: expect.objectContaining({ phase: '(missing)' }),
+      }),
+    );
+  });
+
+  it('⚠️ **行为刻意不变**：认不出的 phase 仍然按原判据归类（不知道就别改它的样子）', () => {
+    // `phase` 认不出 ⇒ 不满足 `phase === 'end'` ⇒ `settled` 只看 `failed`。
+    // 这里给 `status: 'running'`，所以归类**本来就是** `running` ——
+    // 护栏**不许**把它改成别的（那才是朝另一个方向猜）。
+    const h = createHarness();
+
+    emitItem(h, { kind: 'tool', phase: 'some_future_phase', toolCallId: 'tc-1', name: 'ls', status: 'running' });
+
+    const calls = h.messageStore.upsertToolCall.mock.calls;
+    expect((calls[calls.length - 1]![2] as { status: string }).status).toBe('running');
+  });
+
+  it.each(['start', 'update', 'end'])('对照：已知 phase `%s` 不记 `unknown_phase`', (phase) => {
+    const h = createHarness();
+
+    emitItem(h, { kind: 'tool', phase, toolCallId: 'tc-1', name: 'ls', status: 'running' });
+
+    expect(h.deps.reportDebugEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'renderer.agent.item.unknown_phase' }),
+    );
   });
 });
 

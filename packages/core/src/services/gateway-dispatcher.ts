@@ -1365,6 +1365,31 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
       });
     }
 
+    // ⭐⭐ `phase` 的护栏 —— 与上面 `status` 那条**同形同纪律**，但它是后补的：
+    //    `ITEM_PHASE_IDS` 早就定义好了（还配了灵敏度哨兵用例），
+    //    可**生产代码里一次都没用过** —— 定义 ≠ 接线。`status` 有护栏、
+    //    `tool` 流的 `phase` 也有护栏，唯独 `item` 的 `phase` 是裸奔的。
+    //
+    // ⚠️ 为什么值得防：判"结没结束"全靠 `data.phase === 'end'`（上面那行 `settled`）。
+    //    运行时**若加一个表示"结束"的新相位**，`settled` 会是 `false` ⇒ 条目
+    //    **永远停在"进行中"**（卡片一直转），而且一声不响。这不是假想：
+    //    `tool` 流的 `phase` 就真从 4 个长到过 5 个（漏掉 `input_delta`）。
+    //
+    // ⚠️ **行为刻意不变**（同 `unknown_status`）：不知道就别改它的样子，只留痕迹。
+    if (!data.phase || !ITEM_PHASE_IDS.includes(data.phase)) {
+      debugEvent('renderer.agent.item.unknown_phase', {
+        taskId,
+        sessionKey,
+        toolCallId: data.toolCallId,
+        name: data.name,
+        phase: data.phase ? data.phase : '(missing)',
+        status: data.status,
+        // 同 `unknown_status`：记下我们把它归成了什么，否则看不出影响面。
+        classifiedAs: status,
+        topLevelKeys: Object.keys(data),
+      });
+    }
+
     const toMs = (v: unknown): string | undefined =>
       typeof v === 'number' && v > 0 ? new Date(v).toISOString() : undefined;
 
