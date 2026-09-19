@@ -104,6 +104,18 @@ export default function GlobalRail({
           active={!settingsOpen && mainView === 'chat'}
           onClick={onGoHome}
         />
+        {/* 身份中心：**排在首页之后**（2026-09-19 从图标栏底部提上来的）。
+            原来它和「应用设置」一起待在底部 —— 那是因为它当初接的是**账户设置**
+            （文不对题，本刀一并修了）。改成真正的页面后，按产品口径它是**日常入口**，
+            埋在底部没人找得到。
+            ⚠️ 这是**移动已有按钮**、不是新增 ⇒ 不影响 global-rail.test.tsx
+               （那个测试按 label 找按钮，不按位置）。 */}
+        <RailButton
+          label={t('leftNav.identityCenter')}
+          icon={UserRound}
+          active={!settingsOpen && mainView === 'identity'}
+          onClick={onOpenIdentity}
+        />
         {assistantCollapsed && (
           <RailButton label={t('leftNav.expandNav')} onClick={onExpandAssistant}>
             <span className="relative">
@@ -173,12 +185,6 @@ export default function GlobalRail({
       <div className="flex-1" />
 
       <div className="flex flex-col items-center gap-1">
-        <RailButton
-          label={t('leftNav.identityCenter')}
-          icon={UserRound}
-          active={!settingsOpen && mainView === 'identity'}
-          onClick={onOpenIdentity}
-        />
         <RailButton
           label={hasUpdate ? t('leftNav.updateAvailable') : t('leftNav.appSettings')}
           icon={Settings}
