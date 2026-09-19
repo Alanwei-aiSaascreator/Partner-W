@@ -97,6 +97,7 @@ describe('ensureStateConfig', () => {
     expect(raw).toEqual({
       gateway: { auth: { mode: 'token', token: res.token } },
       memory: { search: { provider: 'none' } },
+      tools: { deny: ['memory_search', 'memory_get'] },
     });
     expect(res.token).toMatch(/^[A-Za-z0-9_-]{43}$/); // 32 字节 → 43 个 base64url 字符
   });
@@ -208,6 +209,87 @@ describe('ensureStateConfig', () => {
   it('state 目录名固定在 <userData>/openclaw-state（不是随手一个临时目录）', () => {
     expect(stateDirFor(userDataDir)).toBe(path.join(userDataDir, STATE_DIR_NAME));
     expect(STATE_CONFIG_FILE).toBe('openclaw.json');
+  });
+});
+
+describe('tools.deny —— 摘掉那两个会必然失败的 memory 工具', () => {
+  /**
+   * 为什么摘：模型每轮都可能调 `memory_search`，而在 `provider: "none"` 下
+   * `corpus=sessions` **必然失败**（`Session transcript search is not enabled.`）。
+   * 用户原话（2026-09-20）：「我不希望每次对话就有这个报错，用户会认为卡了」。
+   *
+   * ⚠️ **两个都要摘**：只摘 `memory_search` 的话，记忆提示段会换成 `memory_get` 版本，
+   *    "强制回忆"的指令还在（`memory-tool-contract-*.mjs` 的 `hasMemoryGet` 分支）。
+   * ⚠️ **不用** `memory.search.enabled: false`：那会**静默关掉 "## Project Memory" 注入**，
+   *    是个看不见的损失。
+   */
+  it('⭐ 首跑就带上：两个名字都在，且不多不少', () => {
+    const res = ensureStateConfig(userDataDir);
+    const raw = JSON.parse(fs.readFileSync(res.configPath, 'utf-8'));
+
+    expect(raw.tools.deny).toEqual(['memory_search', 'memory_get']);
+  });
+
+  it('⭐ 存量用户（token 与 memory 段都早就对了）也必须补上 —— 提前返回不能漏了它', () => {
+    // 与 memory 那条同源的坑：`ensureStateConfig` 的提前返回是**存量用户每次启动的必经之路**。
+    // 守卫里只加 `tools` 这一项，否则用户那台机器上这个报错原样还在。
+    const stateDir = stateDirFor(userDataDir);
+    fs.mkdirSync(stateDir, { recursive: true });
+    const first = ensureStateConfig(userDataDir);
+
+    // 摘掉 tools 段，模拟"这一版修复之前写下的文件"（token 对、memory 也设过）
+    const cfg = JSON.parse(fs.readFileSync(stateConfigPath(stateDir), 'utf-8'));
+    delete cfg.tools;
+    fs.writeFileSync(stateConfigPath(stateDir), JSON.stringify(cfg));
+
+    const res = ensureStateConfig(userDataDir);
+
+    expect(res.token).toBe(first.token);
+    const raw = JSON.parse(fs.readFileSync(stateConfigPath(stateDir), 'utf-8'));
+    expect(raw.tools.deny).toEqual(['memory_search', 'memory_get']);
+  });
+
+  it('用户/将来版本已经设过别的 deny ⇒ 并集，不动他原有的项', () => {
+    const stateDir = stateDirFor(userDataDir);
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(
+      stateConfigPath(stateDir),
+      JSON.stringify({
+        gateway: { auth: { mode: 'token', token: 'existing-token' } },
+        memory: { search: { provider: 'none' } },
+        tools: { deny: ['some_other_tool'] },
+      }),
+    );
+
+    ensureStateConfig(userDataDir);
+
+    const raw = JSON.parse(fs.readFileSync(stateConfigPath(stateDir), 'utf-8'));
+    expect(raw.tools.deny).toContain('some_other_tool');
+    expect(raw.tools.deny).toContain('memory_search');
+    expect(raw.tools.deny).toContain('memory_get');
+  });
+
+  it('⭐ 查重：已经有 `memory_search` 时补 `memory_get`，**不能把它追加成两条**', () => {
+    // ⚠️ 这条**必须**从"只 deny 了一个"起步。若从空配置起步，第一次跑完就满足了
+    //    `hasMemoryToolsDenied` ⇒ 后续启动走**提前返回**，根本到不了查重那一行 ——
+    //    那样测的其实是提前返回（变异验证实测：去掉 `new Set` 照样全绿）。
+    const stateDir = stateDirFor(userDataDir);
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(
+      stateConfigPath(stateDir),
+      JSON.stringify({
+        gateway: { auth: { mode: 'token', token: 'existing-token' } },
+        memory: { search: { provider: 'none' } },
+        tools: { deny: ['memory_search'] },
+      }),
+    );
+
+    ensureStateConfig(userDataDir);
+    ensureStateConfig(userDataDir);
+
+    const raw = JSON.parse(fs.readFileSync(stateConfigPath(stateDir), 'utf-8'));
+    expect(raw.tools.deny).toEqual(['memory_search', 'memory_get']);
+    expect(raw.tools.deny.filter((n: string) => n === 'memory_search')).toHaveLength(1);
   });
 });
 

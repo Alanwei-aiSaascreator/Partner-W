@@ -114,6 +114,58 @@ export function mergeMemoryDefaults(existing: Record<string, unknown> | null): R
   return { ...memory, search: { ...search, provider: MEMORY_SEARCH_PROVIDER } };
 }
 
+/**
+ * 要从模型可见的工具里摘掉的两个名字。
+ *
+ * 为什么摘：模型每轮都可能调 `memory_search`，而在 `provider: "none"` 下
+ * `corpus=sessions` **必然失败**（`Session transcript search is not enabled.`）——
+ * 用户原话（2026-09-20）：「我不希望每次对话就有这个报错，用户会认为卡了」。
+ *
+ * ⚠️ **两个一起摘**。只摘 `memory_search` 的话，记忆提示段会换成 `memory_get` 版本
+ *（`memory-tool-contract-*.mjs` 的 `hasMemoryGet` 分支），"强制回忆"的指令还在，
+ * 模型照样去调。
+ *
+ * ⚠️ **不要改用 `memory.search.enabled: false`**：那条更"干净"（工具根本不注册），
+ * 但会**静默关掉 "## Project Memory" 注入**（manager 变 null ⇒ 那一段消失），
+ * 是个看不见的损失。
+ *
+ * ⚠️ 代价要说清（免得后人以为是白捡）：`provider: "none"` 下 `memory_search` 对
+ * `MEMORY.md` / `USER.md` / `memory/**` 的 **FTS 召回是能用的**，摘掉它等于放弃这条。
+ * 之所以可接受：根 `MEMORY.md` 本来就**每轮全文注入**（6 文件 bootstrap 清单），
+ * 召回它的边际价值很小；真正有价值的 `sessions` 语料在本配置下根本用不了。
+ * 将来 T6b 接上自己的嵌入通道时，把这里连同 `MEMORY_SEARCH_PROVIDER` 一起改。
+ */
+export const MEMORY_TOOLS_DENIED = ['memory_search', 'memory_get'] as const;
+
+/** 从（任意的）配置里挖出全局 `tools.deny`；不是字符串数组则 null。 */
+export function readToolsDeny(raw: unknown): string[] | null {
+  if (!isRecord(raw)) return null;
+  const tools = raw.tools;
+  if (!isRecord(tools)) return null;
+  const deny = tools.deny;
+  if (!Array.isArray(deny)) return null;
+  return deny.filter((v): v is string => typeof v === 'string');
+}
+
+/** 那两个名字是不是都已经被 deny 掉了（决定"要不要写盘"的判据）。 */
+export function hasMemoryToolsDenied(raw: unknown): boolean {
+  const deny = readToolsDeny(raw);
+  return deny !== null && MEMORY_TOOLS_DENIED.every((name) => deny.includes(name));
+}
+
+/**
+ * 工具段合并（纯函数）：把这两个名字**并进** deny，其余一概不动。
+ *
+ * 为什么是并集而不是"没有才补"：用户/将来版本可能已经 deny 了别的东西，
+ * 整段覆盖会把他的设置抹掉；而这两个名字必须确保在里面，所以只能并。
+ * 幂等由 `Set` 保证 —— 连跑多次不会重复追加。
+ */
+export function mergeToolsDefaults(existing: Record<string, unknown> | null): Record<string, unknown> {
+  const tools = existing && isRecord(existing.tools) ? existing.tools : {};
+  const deny = readToolsDeny(existing) ?? [];
+  return { ...tools, deny: [...new Set([...deny, ...MEMORY_TOOLS_DENIED])] };
+}
+
 /** 从（任意的）已有配置里挖出 token；没有则 null。 */
 export function readStateToken(raw: unknown): string | null {
   if (!isRecord(raw)) return null;
@@ -183,7 +235,15 @@ export function ensureStateConfig(userDataDir: string): {
   // ⚠️ "一致"必须**含**记忆默认值：这条提前返回是存量用户的必经之路（他们的 token
   //    本来就是对的），只看 token 的话 `memory.search.provider` 永远补不上 ——
   //    那正是"对用户机器无效"的那一版修法。token 对 + 记忆段已设 ⇒ 才真的不写。
-  if (existingToken === store.token && existing && readMemorySearchProvider(existing) !== null) {
+  // ⚠️ "一致"必须**同时**含记忆默认值与工具 deny：这条提前返回是存量用户每次启动的
+  //    必经之路（他们的 token 本来就是对的）。漏掉任一项 ⇒ 对用户那台机器完全无效，
+  //    症状原样还在（memory 那条当初就是这么栽的）。
+  if (
+    existingToken === store.token &&
+    existing &&
+    readMemorySearchProvider(existing) !== null &&
+    hasMemoryToolsDenied(existing)
+  ) {
     return { token: store.token, created: false, configPath };
   }
 
@@ -192,6 +252,7 @@ export function ensureStateConfig(userDataDir: string): {
     ...(existing ?? {}),
     gateway: { ...gateway, auth: { mode: 'token', token: store.token } },
     memory: mergeMemoryDefaults(existing),
+    tools: mergeToolsDefaults(existing),
   };
 
   writeJsonAtomic(configPath, merged);
