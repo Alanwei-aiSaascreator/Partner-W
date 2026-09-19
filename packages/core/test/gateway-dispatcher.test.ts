@@ -10,6 +10,8 @@ import {
   SESSION_CHANGE_REASONS,
   TOOL_IGNORED_PHASES,
   TOOL_PHASE_IDS,
+  UNWIRED_APPROVAL_EVENTS,
+  WIRED_APPROVAL_EVENTS,
   type GatewayDispatcherDeps,
 } from '../src/services/gateway-dispatcher.js';
 import type { GatewayEvent, GatewayStatusEvent } from '../src/ports/gateway-transport.js';
@@ -1883,6 +1885,109 @@ describe('结构化提问（question.*）事件路由', () => {
   it('没接回调也不炸（老版本宿主）', () => {
     const h = createHarness();
     expect(() => h.emit('question.requested', { id: 'ask_1', questions: [] })).not.toThrow();
+  });
+});
+
+/**
+ * ⭐⭐ **审批有四个家族，我们只接了一个。**
+ *
+ * 权威来源：运行时的 `src/gateway/server-methods-list.ts` 里的 `GATEWAY_EVENTS`
+ *（`~/git/openclaw` 0153d84c）—— 那是一份**常量清单**，不是"数出来的"，可以当准。
+ *
+ * | 家族 | 事件 | 我们 |
+ * | --- | --- | --- |
+ * | `exec.approval.*` | requested / resolved | ✅ 已接（→ `ApprovalDialog`） |
+ * | `question.*` | requested / resolved | ✅ 已接（→ `QuestionPanel`） |
+ * | **`plugin.approval.*`** | requested / resolved | ❌ **没接** |
+ * | **`openclaw.approval.*`** | requested / resolved | ❌ **没接** |
+ * | **`session.approval`** | （单个） | ❌ **没接** |
+ *
+ * ⚠️ **三个未接的都带 `APPROVALS_SCOPE`，而我们的连接**正好**申请了 `operator.approvals`**
+ *    ⇒ **它们真的会送到我们这儿，然后被丢掉**。
+ *
+ * ⚠️ **后果要说准**（别夸大）：它们**不会永久卡住** —— 网关那侧有自己的审批超时
+ *    （`plugin.approval.request` 的注释写着 "Buffer beyond the approval timeout so the
+ *    gateway can clean up"，且审批面不可用时直接按 `CANCELLED` 收场）。
+ *    **真正的后果是**：用户**永远看不到这个请求** ⇒ 相关能力**静默不可用**。
+ *    这与 `exec.approval`（`23e909e`）和 `question.*`（锁死 15 分钟）是**同一类**，
+ *    只是有网关上超时兜着，所以没到"卡死"那么严重。
+ *
+ * ⇒ 这一刀**不改行为**（接不接是产品决定），只做两件事：
+ *    ① 把名单写成**可测常量**；② 收到未接的审批事件时记一条**点名**的日志 ——
+ *    否则用户报"插件功能用不了"时，我们连"那条请求其实来过"都查不到。
+ */
+describe('网关事件的审批家族：接了一个，另外三个要留痕', () => {
+  const emitEvent = (h: ReturnType<typeof createHarness>, event: string, payload: Record<string, unknown> = {}) =>
+    h.emit(event, payload);
+
+  it.each([
+    'plugin.approval.requested',
+    'plugin.approval.resolved',
+    'openclaw.approval.requested',
+    'openclaw.approval.resolved',
+    'session.approval',
+  ])('⭐⭐ `%s` ⇒ 记一条**点名**的 `approval_event.unwired`', (event) => {
+    const h = createHarness();
+
+    emitEvent(h, event, { id: 'ap-1' });
+
+    expect(h.deps.reportDebugEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'renderer.gateway.approval_event.unwired',
+        data: expect.objectContaining({ event }),
+      }),
+    );
+  });
+
+  it.each(['exec.approval.requested', 'exec.approval.resolved', 'question.requested', 'question.resolved'])(
+    '对照：已接的 `%s` **不**记那条（它有自己的去处）',
+    (event) => {
+      const h = createHarness();
+
+      emitEvent(h, event, { id: 'ap-1' });
+
+      expect(h.deps.reportDebugEvent).not.toHaveBeenCalledWith(
+        expect.objectContaining({ event: 'renderer.gateway.approval_event.unwired' }),
+      );
+    },
+  );
+
+  it('对照：无关事件（`tick`）也不记（别把"每个事件都记一条"当留痕）', () => {
+    const h = createHarness();
+
+    emitEvent(h, 'tick');
+
+    expect(h.deps.reportDebugEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'renderer.gateway.approval_event.unwired' }),
+    );
+  });
+
+  it('⭐⭐ 冻结名单：**已接与未接不相交**，且并集 = 运行时审批家族的全名单', () => {
+    // 灵敏度哨兵：运行时哪天加了第五个 `*.approval.*`，这里**不会**自动发现
+    //（那份名单在运行时里，不在这边）—— 所以下面这条只能保证"我们现有的分类是自洽的"，
+    // 并在注释里点明它**不是**自动哨兵。真要做自动哨兵，得把 `GATEWAY_EVENTS` 快照进来。
+    const wired = [...WIRED_APPROVAL_EVENTS];
+    const unwired = [...UNWIRED_APPROVAL_EVENTS];
+
+    expect(
+      wired.filter((e) => UNWIRED_APPROVAL_EVENTS.has(e)),
+      '一个事件不能既接又没接',
+    ).toEqual([]);
+    expect(unwired.filter((e) => WIRED_APPROVAL_EVENTS.has(e))).toEqual([]);
+
+    // 已知的审批家族一个都不能漏（这四条是从运行时清单里逐字抄的）。
+    expect(wired.sort()).toEqual(
+      ['exec.approval.requested', 'exec.approval.resolved', 'question.requested', 'question.resolved'].sort(),
+    );
+    expect(unwired.sort()).toEqual(
+      [
+        'openclaw.approval.requested',
+        'openclaw.approval.resolved',
+        'plugin.approval.requested',
+        'plugin.approval.resolved',
+        'session.approval',
+      ].sort(),
+    );
   });
 });
 

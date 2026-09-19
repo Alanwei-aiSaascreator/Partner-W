@@ -574,6 +574,48 @@ export const DELIBERATELY_IGNORED_STREAMS = new Set([
   'plan',
 ]);
 
+/**
+ * **网关事件**里的审批家族 —— 已接的那一半。
+ *
+ * 权威来源：运行时的 `src/gateway/server-methods-list.ts` 的 `GATEWAY_EVENTS`
+ *（`~/git/openclaw` 0153d84c）。那是一份**常量清单**（不是"数出来的"）⇒ 可以当准。
+ *
+ * - `exec.approval.*` → `ApprovalDialog`（`onApprovalRequested` / `onApprovalResolved`）
+ * - `question.*` → `QuestionPanel`（`onQuestionRequested` / `onQuestionResolved`）
+ */
+export const WIRED_APPROVAL_EVENTS = new Set([
+  'exec.approval.requested',
+  'exec.approval.resolved',
+  'question.requested',
+  'question.resolved',
+]);
+
+/**
+ * **知道、但没接**的审批家族 —— 收到就记一条**点名**的日志（见 `start()` 里那一段）。
+ *
+ * ⚠️ 三个都带 `APPROVALS_SCOPE`，而我们的连接**正好申请了** `operator.approvals`
+ *    ⇒ **它们真的会送到我们这儿，然后被丢掉**。
+ *
+ * ⚠️ **后果要说准**：它们**不会永久卡住** —— 网关那侧有自己的审批超时
+ *    （`plugin.approval.request` 的注释：*"Buffer beyond the approval timeout so the
+ *    gateway can clean up"*；审批面不可用时直接按 `CANCELLED` 收场）。
+ *    **真正的后果是**：用户**永远看不到这个请求** ⇒ 相关能力**静默不可用**。
+ *    ⇒ 与 `exec.approval`（`23e909e`）和 `question.*`（曾锁死 15 分钟）**同一类**，
+ *      只是有网关超时兜着，所以没到"卡死"那么严重。
+ *
+ * ⚠️ `session.approval` 的**确切含义我没验**（它由 `operator-approval-session-events.ts`
+ *    发出、按 conn id 定向广播）⇒ 归在"没接"里，但**别把它的后果当成已验证的**。
+ *
+ * ⇒ **接不接是产品决定**，这里只做"丢得有名有姓"。
+ */
+export const UNWIRED_APPROVAL_EVENTS = new Set([
+  'plugin.approval.requested',
+  'plugin.approval.resolved',
+  'openclaw.approval.requested',
+  'openclaw.approval.resolved',
+  'session.approval',
+]);
+
 export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
   const perTaskLastError = new Map<string, ErrorCorrelation>();
   const lifecycleErrorBuffer = new Map<
@@ -1806,6 +1848,17 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
         deps.onQuestionRequested?.(data.gatewayId, data.payload);
       } else if (data.event === 'question.resolved') {
         deps.onQuestionResolved?.((data.payload as { id: string }).id);
+      } else if (UNWIRED_APPROVAL_EVENTS.has(data.event)) {
+        // ⭐ **点名记一条**（`renderer.gateway.event.received` 其实每个事件都记，但它只给
+        //    事件名 —— 排查的人得**知道要去找那个名字**才看得到）。这一条的意义是：
+        //    用户报"插件功能用不了"时，我们能直接在日志里查到"那条审批请求**来过**"。
+        //
+        //    ⚠️ **不改行为**：不弹窗、不回复、不做任何事 —— 接不接是产品决定。
+        debugEvent('renderer.gateway.approval_event.unwired', {
+          gatewayId: data.gatewayId,
+          event: data.event,
+          payloadKeys: Object.keys(data.payload ?? {}),
+        });
       }
     });
 
