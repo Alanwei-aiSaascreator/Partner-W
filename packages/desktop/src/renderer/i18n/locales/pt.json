@@ -877,7 +877,7 @@
     "addPartial": "{{added}} adicionados, {{skipped}} ignorados",
     "degraded.engineError": "Desta vez o modelo de embeddings não pôde ser usado; recorremos às palavras-chave.",
     "degraded.noEngine": "O modelo de embeddings local está indisponível; esta busca usou apenas palavras-chave.",
-    "degraded.noRecall": "Nenhum trecho correspondeu às suas palavras-chave — tente outra formulação",
+    "degraded.noRecall": "A biblioteca ainda não tem conteúdo pesquisável.",
     "degraded.noVectors": "Estas fontes ainda não têm índice vetorial; usamos apenas palavras-chave.",
     "empty": "Ainda não há nada. Adicione arquivos de texto para poder pesquisá-los.",
     "engineKeywordOnly": "No momento, apenas busca por palavras-chave (modelo de embeddings local indisponível)",

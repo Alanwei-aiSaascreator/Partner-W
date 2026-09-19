@@ -877,7 +877,7 @@
     "addPartial": "Added {{added}}, skipped {{skipped}}",
     "degraded.engineError": "The embedding model couldn't be used this time — fell back to keywords.",
     "degraded.noEngine": "The on-device embedding model is unavailable, so this search used keywords only.",
-    "degraded.noRecall": "No chunk matched your keywords — try different wording",
+    "degraded.noRecall": "There is nothing searchable in the library yet.",
     "degraded.noVectors": "These sources have no vector index yet, so this search used keywords only.",
     "empty": "Nothing here yet. Add text files and they become searchable.",
     "engineKeywordOnly": "Keyword search only right now (the on-device embedding model is unavailable)",

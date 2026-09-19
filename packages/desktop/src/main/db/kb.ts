@@ -444,6 +444,79 @@ export function kbChunkStateCounts(sqlite: Database.Database, sourceId?: string)
 }
 
 /**
+ * 向量**补召回**：把这个模型已嵌好的块捞出来，交给上层按余弦排。
+ *
+ * ⚠️ 为什么必须有这一步：关键词召回（`searchKbChunks`）是**纯 FTS**，
+ * 而向量原本**只在重排时进场** —— `rankKbCandidates` 只能给**已经被召回的**候选打分
+ * ⇒ **FTS 没召回的，向量永远没机会看到**。
+ * 而 `unicode61` 不切中文词，`收入主要来自软件订阅` 是**一整个 token**，
+ * 于是"正文里明明有'软件订阅'，查 `订阅` ⇒ 0 命中"。
+ *
+ * ⚠️ 这里**只捞、不算相似度、不排序**：余弦与维度/模型一致性那套判据都在 core 的
+ * `rankKbCandidates` 里（它已经会算）。两边各算一次的话，那套判据迟早漂。
+ *
+ * ⚠️ **必须有上限**：这是**全表扫**。上层只在"FTS 没填满结果页"时才调它，
+ * 所以常见查询（关键词能命中的）根本不付这个代价。
+ */
+export function listKbChunksForVectorRecall(
+  sqlite: Database.Database,
+  options: { model: string; scanLimit: number },
+): KbChunkHit[] {
+  const scanLimit = Math.max(1, Math.floor(options.scanLimit));
+
+  const rows = sqlite
+    .prepare(
+      `SELECT c.id AS chunk_id, c.source_id, c.ordinal, c.text, c.vector, c.embedding_model, c.state,
+              s.kind AS source_kind, s.title AS source_title, s.path AS source_path
+       FROM kb_chunks c
+       JOIN kb_sources s ON s.id = c.source_id
+       WHERE c.state = 'embedded' AND c.embedding_model = ? AND c.vector IS NOT NULL
+       ORDER BY c.source_id, c.ordinal, c.id
+       LIMIT ?`,
+    )
+    .all(options.model, scanLimit) as Array<{
+    chunk_id: string;
+    source_id: string;
+    ordinal: number;
+    text: string;
+    vector: Uint8Array | null;
+    embedding_model: string | null;
+    state: string;
+    source_kind: string;
+    source_title: string;
+    source_path: string;
+  }>;
+
+  return rows.map((row) => {
+    const state = row.state;
+    const kind = row.source_kind;
+    if (!isKbChunkState(state)) throw new Error(`kb_chunks.state 非法：${state}`);
+    if (!isSourceKind(kind)) throw new Error(`kb_sources.kind 非法：${kind}`);
+    return {
+      chunkId: row.chunk_id,
+      sourceId: row.source_id,
+      ordinal: row.ordinal,
+      text: row.text,
+      // 没有 FTS 命中就没有高亮片段 ⇒ 给个朴素头一段。
+      // 刻意**不带** `<<`/`>>` 标记：那两个符号的含义是"这里匹配上了"，这里并没有。
+      snippet: row.text.slice(0, VECTOR_RECALL_SNIPPET_CHARS),
+      // 没有关键词分 ⇒ 0。权重是"关键词 0.4 / 向量 0.6"，所以它只能靠向量往上走，
+      // 这正是"FTS 优先"的表达方式：关键词命中的候选天然多一份关键词分。
+      keywordScore: 0,
+      vector: row.vector ? decodeVector(row.vector) : null,
+      embeddingModel: row.embedding_model,
+      state,
+      sourceKind: kind,
+      sourceTitle: row.source_title,
+      sourcePath: row.source_path,
+    };
+  });
+}
+
+/** 补召回的朴素片段长度（够卡片显示一行多一点）。 */
+const VECTOR_RECALL_SNIPPET_CHARS = 120;
+
+/**
  * 关键词召回（FTS5）。**这条路径永远可用**：它不碰向量、不碰网络，所以断网/U 盘换机
  * 时它照样返回结果 —— 设计 §五的降级全靠它。
  */

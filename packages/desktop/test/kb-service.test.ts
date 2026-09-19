@@ -378,28 +378,42 @@ describe('换嵌入模型', () => {
 
 describe('检索模式与降级原因（用户看到的"为什么这样排"）', () => {
   /**
-   * ⭐ 这一条钉的是**一句会误导人的提示**。
+   * ⭐ 这一条从前钉的是**一句会误导人的提示**：关键词零召回时，候选为空 ⇒ 原因链落到
+   * `'no-vectors'` ⇒ 界面说「资料还没有建立向量索引」，而真相是"关键词一个都没召回"
+   *（用户照那句去点「重建索引」，重建完还是搜不到）。
    *
-   * 召回这一步是**纯 FTS 关键词**（`searchKbChunks` 里只有 `WHERE kb_chunks_fts MATCH ?`），
-   * 向量只在**重排**时进场（`rankKbCandidates`）。所以关键词零召回时，候选为空 ⇒
-   * `vectorHits = 0` ⇒ `mode = 'keyword'`，而原因链一路落到兜底的 `'no-vectors'` ——
-   * 界面于是显示「资料还没有建立向量索引」。
-   *
-   * **那句话是假的**：向量好端端地在库里、引擎也在。真因是"关键词一个都没召回"。
-   * 用户按那句提示去点「重建索引」，重建完还是搜不到。
+   * ✅ **2026-09-19 起这条边界不存在了**：用户拍板做**混合召回**（关键词优先 + 向量补召回），
+   * 所以下面这个查询现在**真的能召回**（`kb-recall-boundary.test.ts` 用它当主用例）。
+   * 这里保留"同一个查询"作对照，钉的是**新事实**：能召回、且不该再有任何降级说明。
    */
-  it("⭐ 关键词零召回时不能说'没有向量索引'——向量在库里好好的", async () => {
+  it('⭐ 中文词中查询现在召得回来（补召回上线后，这里不再是"零召回"）', async () => {
     service = createService(createFakeEngine());
     const outcome = await service.addNote({ title: '预算说明', text: NOTE }); // 正文里有"收入""软件订阅"
     expect(outcome.embeddedCount, '先确认向量真的嵌上了，否则这条测试是空的').toBeGreaterThan(0);
 
     // `订阅` 在正文里，但 `unicode61` 不切中文词（`收入主要来自软件订阅` 是一整个 token），
-    // 所以 `订阅*` 匹配不上 —— 这是 kb-store.test.ts 里那条"已知边界"。
+    // 所以 `订阅*` 匹配不上 ⇒ 靠**向量补召回**捞回来。
     const result = await service.search('订阅');
 
-    expect(result.candidateCount, '关键词召回是 0 条候选').toBe(0);
+    expect(result.hits.length, '「订阅」应当命中').toBeGreaterThan(0);
+    expect(result.candidateCount, '候选来自补召回，不该再是 0').toBeGreaterThan(0);
+    expect(result.mode).toBe('hybrid');
+    expect(result.degraded, '能召回 + 有向量参与 ⇒ 不该报降级').toBe(false);
+    expect(result.degradedReason).toBeUndefined();
+  });
+
+  /**
+   * `no-recall` 的**新含义**：关键词与向量**两路都没捞到**（库里根本没有可搜的内容）。
+   * 不再等于旧的"关键词没匹配上"。
+   */
+  it("库里没有可搜内容时如实说 no-recall（不是'没有向量索引'）", async () => {
+    service = createService(createFakeEngine());
+    // 什么都不加：库是空的 ⇒ FTS 0 条、补召回也 0 条
+    const result = await service.search('订阅');
+
+    expect(result.candidateCount).toBe(0);
     expect(result.hits).toHaveLength(0);
-    expect(result.degradedReason, "说'没有向量索引'会让用户去点重建，重建完照样搜不到").toBe('no-recall');
+    expect(result.degradedReason, "空库要说'没有可搜内容'，不是'没有向量索引'（后者会让人去点重建）").toBe('no-recall');
   });
 
   it('候选有、但都没有可用向量 ⇒ 这才是真的 no-vectors（与上一条分开）', async () => {

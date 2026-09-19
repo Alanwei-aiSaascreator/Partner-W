@@ -877,7 +877,7 @@
     "addPartial": "{{added}}개 추가, {{skipped}}개 실패",
     "degraded.engineError": "이번에는 임베딩 모델을 쓸 수 없어 키워드 일치로 대체했습니다.",
     "degraded.noEngine": "기기 내 임베딩 모델을 쓸 수 없어 이번 검색은 키워드 일치만 사용했습니다.",
-    "degraded.noRecall": "키워드와 일치하는 부분이 없습니다. 다른 표현으로 시도해 보세요",
+    "degraded.noRecall": "라이브러리에 아직 검색할 수 있는 내용이 없습니다.",
     "degraded.noVectors": "자료에 벡터 색인이 아직 없어 이번 검색은 키워드 일치만 사용했습니다.",
     "empty": "아직 자료가 없습니다. 텍스트 파일을 추가하면 검색할 수 있습니다.",
     "engineKeywordOnly": "현재는 키워드 검색만 (기기 내 임베딩 모델을 쓸 수 없음)",

@@ -31,6 +31,7 @@ import {
   syncKbChunkStates,
   writeKbMeta,
   type KbMetaRecord,
+  listKbChunksForVectorRecall,
 } from '../db/kb.js';
 
 /**
@@ -52,6 +53,15 @@ import {
 /** 单个文件的读取上限（超出部分不索引，但不报错 —— 结果里带 `truncated`）。 */
 export const MAX_KB_FILE_BYTES = 2 * 1024 * 1024;
 export const DEFAULT_KB_CANDIDATE_LIMIT = 30;
+
+/**
+ * 向量补召回的**全表扫上限**（块数）。
+ *
+ * ⚠️ 这是关键词没填满结果页才会走的路，但它是**全表扫**（读向量 + 逐条解码）。
+ * 个人资料库通常几百到几千块；5000 足够覆盖，又不会让一次搜索变成几秒。
+ * 超了只扫前 N 块 —— 宁可漏掉靠后的，也不能把搜索拖垮。
+ */
+export const VECTOR_RECALL_SCAN_LIMIT = 5000;
 export const DEFAULT_KB_EMBED_BATCH_SIZE = 16;
 
 export type KbIngestSkipReason = 'empty' | 'unsupported' | 'unreadable' | 'missing';
@@ -60,7 +70,8 @@ export type KbIngestSkipReason = 'empty' | 'unsupported' | 'unreadable' | 'missi
  *
  * ⚠️ `no-recall` 与 `no-vectors` 是**两件事**，别合并：
  *   - `no-recall`：关键词一条候选都没召回（`candidateCount === 0`）。向量好端端在库里，
- *     只是**没有东西可排** —— 因为召回那一步是纯 FTS（见 `search` 的注释）。
+ *     只是**没有东西可排**：关键词一条都没召回，而且**补召回的向量也没捞到**
+ *     （补召回要有查询向量才有；没引擎时它压根不参与）。
  *   - `no-vectors`：候选有，但都没有可用的向量。
  * 合并的代价实测过：中文查同义词（`unicode61` 不切词 ⇒ 零召回）会被说成
  * "资料还没有建立向量索引"，用户照着重重建一遍还是搜不到。
@@ -153,7 +164,7 @@ export type KbFileTextReader = (absolutePath: string) => KbFileText;
 
 export interface KbServiceDeps {
   sqlite: Database.Database;
-  /** 缺省 `null` = 未配置嵌入 ⇒ 纯 FTS（合法默认，不是降级错误）。 */
+  /** 缺省 `null` = 未配置嵌入 ⇒ 只有关键词召回、**也不会有向量补召回**（合法默认，不是降级错误）。 */
   engine?: EmbeddingEngine | null;
   now?: () => string;
   readFileText?: KbFileTextReader;
@@ -521,7 +532,7 @@ export function createKbService(deps: KbServiceDeps): KbService {
     async search(query, options = {}) {
       const limit = options.limit ?? DEFAULT_KB_LIMIT;
       const candidateLimit = options.candidateLimit ?? Math.max(limit * 3, DEFAULT_KB_CANDIDATE_LIMIT);
-      const candidates: KbSearchCandidate[] = searchKbChunks(sqlite, query, { limit: candidateLimit });
+      const keywordCandidates: KbSearchCandidate[] = searchKbChunks(sqlite, query, { limit: candidateLimit });
 
       let queryVector: Float32Array | null = null;
       let engineFailed = false;
@@ -534,6 +545,34 @@ export function createKbService(deps: KbServiceDeps): KbService {
           // 断网 / relay 不可达：**不抛**，直接退化成关键词检索（设计 §五）
           engineFailed = true;
         }
+      }
+
+      // ⭐ 混合召回：**关键词优先，向量补召回**。
+      //
+      // 从前召回是**纯 FTS**，向量只在重排时进场 ⇒ FTS 没召回的，向量永远看不到
+      //（`unicode61` 不切中文词：查 `订阅` 对 `收入主要来自软件订阅` 是 0 命中）。
+      //
+      // ⚠️ **只在关键词没填满结果页时才扫向量** —— 那是一次全表扫，
+      //    常见查询（关键词命中足够的）不该付这个代价。
+      // ⚠️ `no-recall`（candidateCount === 0）的语义随之变成：**两路都没捞到**。
+      // ⚠️ 补进来的候选 `keywordScore` 是 0，最终排序交给 `rankKbCandidates`
+      //    （权重 关键词 0.4 / 向量 0.6）—— "关键词优先"就体现在这份关键词分上。
+      const candidates: KbSearchCandidate[] =
+        queryVector && keywordCandidates.length < limit ? mergeVectorRecall(keywordCandidates) : keywordCandidates;
+
+      function mergeVectorRecall(keyword: KbSearchCandidate[]): KbSearchCandidate[] {
+        const activeModel = engine?.model ?? null;
+        if (!activeModel) return keyword;
+
+        const seen = new Set(keyword.map((candidate) => candidate.chunkId));
+        const extra = listKbChunksForVectorRecall(sqlite, {
+          model: activeModel,
+          scanLimit: VECTOR_RECALL_SCAN_LIMIT,
+        }).filter((candidate) => !seen.has(candidate.chunkId));
+
+        // 不去重的话，两路都召回同一块时会出两张一样的卡片（也有用例钉着）。
+        // 补了多少条不需要额外遥测：`candidateCount` 如实反映（它就是候选总数）。
+        return [...keyword, ...extra];
       }
 
       const ranked = rankKbCandidates(candidates, {

@@ -877,7 +877,7 @@
     "addPartial": "加了 {{added}} 份，{{skipped}} 份没能加进来",
     "degraded.engineError": "嵌入模型这次没能用上，已退回关键词匹配。",
     "degraded.noEngine": "本机嵌入模型不可用，这次搜索只用了关键词匹配。",
-    "degraded.noRecall": "关键词一条都没匹配上，换个说法再试试",
+    "degraded.noRecall": "资料库里还没有可搜索的内容。",
     "degraded.noVectors": "资料还没有建立向量索引，这次搜索只用了关键词匹配。",
     "empty": "还没有资料。添加文本文件后就能在这里搜到它们。",
     "engineKeywordOnly": "当前为纯关键词检索（本机嵌入模型不可用）",

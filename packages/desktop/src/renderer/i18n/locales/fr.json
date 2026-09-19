@@ -877,7 +877,7 @@
     "addPartial": "{{added}} ajouté(s), {{skipped}} ignoré(s)",
     "degraded.engineError": "Le modèle d’embedding n’a pas pu être utilisé — repli sur les mots-clés.",
     "degraded.noEngine": "Le modèle d’embedding local est indisponible : cette recherche n’a utilisé que les mots-clés.",
-    "degraded.noRecall": "Aucun passage ne correspond à vos mots-clés — essayez une autre formulation",
+    "degraded.noRecall": "La bibliothèque ne contient encore aucun contenu interrogeable.",
     "degraded.noVectors": "Ces sources n’ont pas encore d’index vectoriel : recherche par mots-clés seulement.",
     "empty": "Rien pour l’instant. Ajoutez des fichiers texte pour les rendre recherchables.",
     "engineKeywordOnly": "Recherche par mots-clés uniquement (modèle d’embedding local indisponible)",
