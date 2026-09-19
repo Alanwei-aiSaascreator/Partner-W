@@ -28,6 +28,8 @@ interface Harness {
   cancel: () => void;
   resolveBackend: (session: Session) => void;
   rejectBackend: (err: unknown) => void;
+  /** 后台校验**被发起了几次**（口径 3 要能断言"没发"）。 */
+  backendCalls: () => number;
 }
 
 function start(opts: { localSession?: boolean | Promise<boolean>; timeoutMs?: number }): Harness {
@@ -35,6 +37,7 @@ function start(opts: { localSession?: boolean | Promise<boolean>; timeoutMs?: nu
   const timedOut: string[] = [];
   let resolveBackend!: (s: Session) => void;
   let rejectBackend!: (e: unknown) => void;
+  let backendCalls = 0;
   const backend = new Promise<Session>((res, rej) => {
     resolveBackend = res;
     rejectBackend = rej;
@@ -42,14 +45,17 @@ function start(opts: { localSession?: boolean | Promise<boolean>; timeoutMs?: nu
 
   const cancel = runAuthBootstrap<Session>({
     readLocalSession: () => Promise.resolve(opts.localSession ?? false),
-    checkBackend: () => backend,
+    checkBackend: () => {
+      backendCalls += 1;
+      return backend;
+    },
     isSignedIn: (session) => session.signedIn,
     timeoutMs: opts.timeoutMs ?? 5000,
     onSettled: (session, authState) => settled.push({ session, authState }),
     onTimeout: (authState) => timedOut.push(authState),
   });
 
-  return { settled, timedOut, cancel, resolveBackend, rejectBackend };
+  return { settled, timedOut, cancel, resolveBackend, rejectBackend, backendCalls: () => backendCalls };
 }
 
 /** 让 `readLocalSession` 那个微任务先落地。 */
@@ -95,14 +101,57 @@ describe('runAuthBootstrap —— 会话检查', () => {
     expect(h.settled).toEqual([]);
   });
 
-  it('快速态**缺席** + 后台没返回 ⇒ 照旧回未登录（没有会话可等）', async () => {
+  it('⭐⭐ 快速态**缺席** ⇒ **直接**回未登录，且**不发**那一次无谓请求', async () => {
+    // 口径 3：「本地无 token ⇒ 直接未登录，**不发无谓请求**」。
+    //
+    // 为什么这是**安全的**（不是"本地说了算"）：本地那份会话文件和 supabase-js 的存储
+    // 是**同一份字节** —— `createStorage()` 的 `getItem` 就是 `readSecure(sessionFilePath())`，
+    // 而 `hasLocalSession()` 读的也正是它。⇒ 本地判"没有 token"时，
+    // **后台必然也判未登录**（`getUser()` 拿不到会话）。这不是"本地当结论"，是**等价**。
     vi.useFakeTimers();
     const h = start({ localSession: false, timeoutMs: 5000 });
 
     await flushMicrotasks();
-    vi.advanceTimersByTime(5000);
 
-    expect(h.timedOut).toEqual(['required']);
+    expect(h.settled).toEqual([{ session: null, authState: 'required' }]);
+    expect(h.backendCalls(), '本地已确定没有会话 ⇒ 那次往返是白跑的').toBe(0);
+    expect(h.timedOut, '已经收场了，兜底不该再说话').toEqual([]);
+  });
+
+  it('⭐ 对照：快速态**命中** ⇒ 后台校验**照发**（这是"已登录"的唯一来源）', async () => {
+    vi.useFakeTimers();
+    const h = start({ localSession: true, timeoutMs: 5000 });
+
+    await flushMicrotasks();
+
+    expect(h.backendCalls()).toBe(1);
+    expect(h.settled, '还没结论，不许先收场').toEqual([]);
+  });
+
+  it('⭐⭐ 边界：快速态**读不出来**（reject）⇒ **仍然问后台**，不当成"缺席"去短路', async () => {
+    // ⚠️ 这条是 `hasLocalSession()` docblock 里那条既有决定的钉子：
+    //    「读不出来（没有文件 / JSON 坏 / 密文解不开）一律当**缺席**：宁可回到**今天的行为**」。
+    //    "今天的行为" = 问后台。所以**读失败不能短路** —— 那会把"读不到"变成"没登录"。
+    //    （读**成功**且为空才是口径 3 说的那种"没有 token"。）
+    vi.useFakeTimers();
+    const h = start({ localSession: Promise.reject(new Error('ipc down')), timeoutMs: 5000 });
+
+    await flushMicrotasks();
+
+    expect(h.backendCalls(), '读不出来 ≠ 没有：不能凭它短路').toBe(1);
+  });
+
+  it('⭐⭐ 后台**超时**（reject）⇒ 走既有回退回未登录，**不因本地有 token 误判已登录**', async () => {
+    // 口径 4：不改 401/402/超时那些分支的行为 —— fail closed，与今天一致。
+    // 主进程那侧的超时（`NETWORK_TIMEOUT_MS` = 8s）到界面这一侧就是一次 reject。
+    vi.useFakeTimers();
+    const h = start({ localSession: true, timeoutMs: 5000 });
+
+    h.rejectBackend(Object.assign(new Error('timeout'), { code: 'TIMEOUT' }));
+    await flushMicrotasks();
+
+    expect(h.settled).toEqual([{ session: null, authState: 'required' }]);
+    expect(h.settled[0]!.authState, '本地有 token **不是**"已登录"的结论').not.toBe('ok');
   });
 
   it('⚠️ 快速态命中、兜底放过之后，后台**迟到**的"未登录"仍然说了算', async () => {
@@ -139,6 +188,31 @@ describe('runAuthBootstrap —— 会话检查', () => {
     vi.advanceTimersByTime(5000);
 
     expect(h.timedOut).toEqual(['required']);
+  });
+
+  it('⭐⭐ 先**取消**（卸载）、本地那步才回来 ⇒ 一次请求都不许发', async () => {
+    // ⚠️ 这条钉的是 `askBackend` 里那个 `done` 检查。
+    //    读本地会话是**异步**的 ⇒ 它回来时组件可能**已经卸载**（`cancel()`）。
+    //    少了那个检查不会出错（`settle` 也是幂等的），但会**白发一次网络** ——
+    //    而这正是本项要消掉的那类"无谓请求"。
+    vi.useFakeTimers();
+    let resolveLocal!: (v: boolean) => void;
+    const local = new Promise<boolean>((r) => {
+      resolveLocal = r;
+    });
+    const h = start({ localSession: local, timeoutMs: 5000 });
+
+    await flushMicrotasks();
+    expect(h.backendCalls(), '本地还没回来 ⇒ 这一趟本来就还没发').toBe(0);
+
+    h.cancel();
+    resolveLocal(true); // 迟到的"命中"
+    await flushMicrotasks();
+    vi.advanceTimersByTime(60_000);
+
+    expect(h.backendCalls(), '已经取消了 ⇒ 不许再发').toBe(0);
+    expect(h.settled).toEqual([]);
+    expect(h.timedOut).toEqual([]);
   });
 
   it('取消之后**不再有任何回调**（组件卸载 / 已登录）', async () => {
