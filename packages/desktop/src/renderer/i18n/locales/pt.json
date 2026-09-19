@@ -1719,6 +1719,21 @@
     "memberCount": "{{count}} membros",
     "namePlaceholder": "Nome da equipe",
     "noAgents": "Nenhum agente disponível",
+    "position": {
+      "challenger": "Questionador",
+      "expert": "Especialista",
+      "moderator": "Moderador",
+      "scribe": "Relator"
+    },
+    "roundtable": {
+      "empty": "Escreva primeiro a questão a debater",
+      "hint": "Nesta rodada participam {{count}} assistentes, então o consumo de créditos pode ser um pouco maior",
+      "needTwo": "Um debate precisa de pelo menos 2 assistentes",
+      "running": "Falando {{done}}/{{total}}…",
+      "start": "Iniciar debate",
+      "stop": "Parar",
+      "title": "Debater juntos"
+    },
     "startChat": "Iniciar conversa",
     "teamBuilderCreate": "Create Team",
     "teamBuilderCreated": "Team created",
@@ -1751,6 +1766,7 @@
       "needCoordinator": "Uma equipe precisa de um coordenador",
       "needTwoAgents": "Uma equipe precisa de pelo menos 2 agentes",
       "next": "Próximo",
+      "position": "Função",
       "prev": "Voltar",
       "reviewInstall": "Revisar e instalar",
       "reviewSave": "Revisar e salvar",

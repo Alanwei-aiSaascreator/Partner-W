@@ -44,6 +44,22 @@ export const inputClass = cn(
   'glow-focus focus:border-transparent transition-all',
 );
 
+/**
+ * 新建一个成员草稿。
+ *
+ * `position` 给个**默认值**（协调者=主持人、其余=领域专家）：圆桌要求按职位排顺序，
+ * 一个都没填的话所有人都是领域专家，"主持人先定口径"这件事就没了。
+ */
 export function createAgentDraft(role: 'coordinator' | 'worker'): AgentDraft {
-  return { uid: crypto.randomUUID(), name: '', description: '', role, model: '', agentMd: '', soulMd: '', skills: [] };
+  return {
+    uid: crypto.randomUUID(),
+    name: '',
+    description: '',
+    role,
+    position: role === 'coordinator' ? 'moderator' : 'expert',
+    model: '',
+    agentMd: '',
+    soulMd: '',
+    skills: [],
+  };
 }

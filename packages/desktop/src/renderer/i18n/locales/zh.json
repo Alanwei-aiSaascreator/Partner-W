@@ -1719,6 +1719,21 @@
     "memberCount": "{{count}} 位成员",
     "namePlaceholder": "输入团队名称",
     "noAgents": "暂无可用 Agent",
+    "position": {
+      "challenger": "质疑者",
+      "expert": "领域专家",
+      "moderator": "主持人",
+      "scribe": "记录员"
+    },
+    "roundtable": {
+      "empty": "先写下这次要讨论的问题",
+      "hint": "本次由 {{count}} 位助手一起讨论，可能会产生稍高的积分消耗",
+      "needTwo": "至少要有 2 位助手才谈得上讨论",
+      "running": "第 {{done}}/{{total}} 位发言中…",
+      "start": "开始讨论",
+      "stop": "停止",
+      "title": "一起讨论"
+    },
     "startChat": "发起对话",
     "teamBuilderCreate": "创建团队",
     "teamBuilderCreated": "团队已创建",
@@ -1751,6 +1766,7 @@
       "needCoordinator": "团队必须有一个协调者",
       "needTwoAgents": "团队至少需要 2 个 Agent",
       "next": "下一步",
+      "position": "职位",
       "prev": "上一步",
       "reviewInstall": "确认安装",
       "reviewSave": "确认并保存",

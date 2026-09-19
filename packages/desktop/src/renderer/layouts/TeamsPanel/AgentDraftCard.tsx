@@ -2,7 +2,9 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ChevronDown, ChevronRight, Trash2, X, Crown, Loader2, Search, Check } from 'lucide-react';
 import type { AgentInfo, SkillSearchResultEntry, SkillStatusEntry, SkillStatusReport } from '@clawwork/shared';
+import { TEAM_POSITIONS, type TeamPosition } from '@clawwork/shared';
 import { parseIdentityMd } from '@clawwork/core';
+import { normalizePosition } from '@/lib/team-roundtable';
 import { cn } from '@/lib/utils';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover';
@@ -297,6 +299,28 @@ export default function AgentDraftCard({
               </Popover>
             </div>
           )}
+
+          {/*
+            ⚠️ 职位放在**模式切换之下、两种模式共用**的位置：从市场下载来的助手正是
+               靠它决定圆桌里的发言顺序，放在"新建"那一支里等于让主要场景选不到。
+            ⚠️ 显示的是 `normalizePosition` 的结果而不是原始值：老草稿可能是 undefined，
+               而它的**实际行为**就是领域专家 —— 显示成主持人会骗人。
+          */}
+          <div className="space-y-1">
+            <label className="type-meta text-[var(--text-muted)]">{t('teams.wizard.position')}</label>
+            <select
+              value={normalizePosition(agent.position)}
+              onChange={(e) => onUpdate({ position: e.target.value as TeamPosition })}
+              className={inputClass}
+              data-field="position"
+            >
+              {TEAM_POSITIONS.map((p) => (
+                <option key={p} value={p}>
+                  {t(`teams.position.${p}`)}
+                </option>
+              ))}
+            </select>
+          </div>
 
           {isExisting ? (
             agent.description ? (

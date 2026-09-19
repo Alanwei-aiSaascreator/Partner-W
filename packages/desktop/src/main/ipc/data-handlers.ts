@@ -794,6 +794,7 @@ export function registerDataHandlers(): void {
           role: a.role ?? '',
           isManager: a.isManager ?? false,
           skills: parseTeamAgentSkills(a.skillsJson),
+          position: a.position ?? '',
         }));
       return { ok: true, result: { ...row, agents } };
     } catch (err) {
@@ -815,7 +816,14 @@ export function registerDataHandlers(): void {
         source?: string;
         version?: string;
         hubSlug?: string;
-        agents: Array<{ agentId: string; role?: string; isManager?: boolean; skills?: string[] }>;
+        agents: Array<{
+          agentId: string;
+          role?: string;
+          isManager?: boolean;
+          skills?: string[];
+          /** 讨论职位（圆桌用）。'' = 用户没选。 */
+          position?: string;
+        }>;
         createdAt: string;
         updatedAt: string;
       },
@@ -860,6 +868,9 @@ export function registerDataHandlers(): void {
                 role: agent.role ?? '',
                 isManager: agent.isManager ?? false,
                 skillsJson: JSON.stringify(agent.skills ?? []),
+                // 讨论职位。空串 = 用户没选，读的时候由 normalizePosition 兜底 ——
+                // 这里**不**替它填默认值，否则分不清"没选"和"选了领域专家"。
+                position: agent.position ?? '',
               })
               .run();
           }

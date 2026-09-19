@@ -1719,6 +1719,21 @@
     "memberCount": "{{count}} members",
     "namePlaceholder": "Enter team name",
     "noAgents": "No agents available",
+    "position": {
+      "challenger": "Challenger",
+      "expert": "Domain expert",
+      "moderator": "Moderator",
+      "scribe": "Note-taker"
+    },
+    "roundtable": {
+      "empty": "Write the question to discuss first",
+      "hint": "This round involves {{count}} assistants, so the credit cost may be somewhat higher",
+      "needTwo": "A discussion needs at least 2 assistants",
+      "running": "Speaking {{done}}/{{total}}…",
+      "start": "Start discussion",
+      "stop": "Stop",
+      "title": "Discuss together"
+    },
     "startChat": "Start Chat",
     "teamBuilderCreate": "Create Team",
     "teamBuilderCreated": "Team created",
@@ -1751,6 +1766,7 @@
       "needCoordinator": "A team must have a coordinator",
       "needTwoAgents": "A team needs at least 2 agents",
       "next": "Next",
+      "position": "Position",
       "prev": "Back",
       "reviewInstall": "Review & Install",
       "reviewSave": "Review & Save",

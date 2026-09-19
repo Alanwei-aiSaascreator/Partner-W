@@ -1719,6 +1719,21 @@
     "memberCount": "{{count}} 位成員",
     "namePlaceholder": "輸入團隊名稱",
     "noAgents": "暫無可用 Agent",
+    "position": {
+      "challenger": "質疑者",
+      "expert": "領域專家",
+      "moderator": "主持人",
+      "scribe": "記錄員"
+    },
+    "roundtable": {
+      "empty": "先寫下這次要討論的問題",
+      "hint": "本次由 {{count}} 位助手一起討論，可能會產生稍高的積分消耗",
+      "needTwo": "至少要有 2 位助手才談得上討論",
+      "running": "第 {{done}}/{{total}} 位發言中…",
+      "start": "開始討論",
+      "stop": "停止",
+      "title": "一起討論"
+    },
     "startChat": "發起對話",
     "teamBuilderCreate": "建立團隊",
     "teamBuilderCreated": "團隊已建立",
@@ -1751,6 +1766,7 @@
       "needCoordinator": "團隊必須有一個協調者",
       "needTwoAgents": "團隊至少需要 2 個 Agent",
       "next": "下一步",
+      "position": "職位",
       "prev": "上一步",
       "reviewInstall": "確認安裝",
       "reviewSave": "確認並儲存",

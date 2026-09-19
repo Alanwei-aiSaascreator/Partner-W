@@ -1,7 +1,7 @@
 import { useState, useCallback, useMemo, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ChevronLeft, ChevronRight, Loader2, Rocket, Save } from 'lucide-react';
-import type { Team, AgentInfo } from '@clawwork/shared';
+import type { Team, AgentInfo, TeamPosition } from '@clawwork/shared';
 import {
   Dialog,
   DialogContent,
@@ -86,6 +86,8 @@ export default function CreateTeamWizard({ open, onOpenChange, defaultGatewayId,
               agentMd: '',
               soulMd: '',
               skills: a.skills ?? [],
+              // 带回来 —— 不带的话进一次编辑页，职位就被抹成"没选"了。
+              position: a.position ? (a.position as TeamPosition) : undefined,
               existingAgentId: a.agentId,
               lockedExisting: true,
             };

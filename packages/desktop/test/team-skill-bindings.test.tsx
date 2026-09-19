@@ -164,7 +164,16 @@ describe('team skill bindings UI', () => {
       updatedAt: '2026-04-10T00:00:00.000Z',
     };
 
-    const view = render(<TeamDetailView team={team} onBack={vi.fn()} onStartChat={vi.fn()} onEdit={vi.fn()} />);
+    const view = render(
+      <TeamDetailView
+        team={team}
+        onBack={vi.fn()}
+        onStartChat={vi.fn()}
+        onEdit={vi.fn()}
+        onStartRoundtable={vi.fn()}
+        onStopRoundtable={vi.fn()}
+      />,
+    );
     cleanups.push(view.unmount);
 
     await act(async () => Promise.resolve());
