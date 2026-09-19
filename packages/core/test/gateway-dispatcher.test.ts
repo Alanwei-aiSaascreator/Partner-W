@@ -584,6 +584,135 @@ describe('lifecycle.finishing —— 是"还要继续"，不是"结束"', () => 
   });
 });
 
+/**
+ * `item` 的 **`kind`** —— 又一个**开放词表**，而我们的丢弃是**静默的**。
+ *
+ * ## 实测（`~/git/openclaw`，2026-09-09）
+ *
+ * 运行时自己的类型（`src/infra/agent-activity-events.ts`）写着：
+ *
+ * ```ts
+ * type AgentItemEventKind = "tool" | "command" | "patch" | "search" | "analysis" | (string & {});
+ * ```
+ *
+ * ⚠️ **最后那个 `(string & {})` 是关键：它是开放式词表。**
+ * 逐一核过发射点：
+ * - `tool` / `preamble` —— 我们已接；
+ * - `command` —— 真会发（exec 专用，C2 已决定不接实时输出）；
+ * - `patch` —— 真会发，但**只对 `apply_patch`**（我们的 agent 不用这个工具）；
+ * - `search` / `analysis` —— **一个发射点都没有**（类型里声明了，没人发）。
+ *
+ * ## 问题不在"我们丢了哪几个"，而在"**丢得没有声音**"
+ *
+ * 我们的代码是：
+ *
+ * ```ts
+ * if (data.kind === 'preamble') { …; return; }
+ * if (data.kind !== 'tool') return;   // ← 其余 kind 一句日志都没有
+ * ```
+ *
+ * `preamble` 当初就是这么被整块丢掉的（后来才发现它有用）。词表**开放** + 丢弃**无声**
+ * = 下次网关加一个我们其实想要的 kind，我们**还是**要等几个月才知道。
+ *
+ * ⇒ 这一刀**零行为变更**：照旧不往 store 里写，但**分开记两种**：
+ *   知道但不接的（`command`/`patch`）记 `ignored_kind`；**认不出的**记 `unknown_kind`。
+ */
+
+describe('item 的 kind：丢可以，但不能丢得没声音', () => {
+  const emitItem = (h: ReturnType<typeof createHarness>, data: Record<string, unknown>) =>
+    h.emit('agent', { sessionKey: TASK.sessionKey, stream: 'item', data });
+
+  it('⭐ 知道但不接的 kind（`command`）⇒ 记 `ignored_kind`，**不是** unknown', () => {
+    const h = createHarness();
+
+    emitItem(h, { kind: 'command', itemId: 'command:tc-1', phase: 'update', toolCallId: 'tc-1' });
+
+    expect(h.deps.reportDebugEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'renderer.agent.item.ignored_kind',
+        data: expect.objectContaining({ kind: 'command' }),
+      }),
+    );
+    expect(h.deps.reportDebugEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'renderer.agent.item.unknown_kind' }),
+    );
+  });
+
+  it('⭐ `patch` 同样算"知道但不接"（只为 `apply_patch` 发，我们的 agent 不用）', () => {
+    const h = createHarness();
+
+    emitItem(h, { kind: 'patch', itemId: 'patch:tc-2', phase: 'end', toolCallId: 'tc-2' });
+
+    expect(h.deps.reportDebugEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'renderer.agent.item.ignored_kind',
+        data: expect.objectContaining({ kind: 'patch' }),
+      }),
+    );
+  });
+
+  it('⭐⭐ **认不出的** kind ⇒ 记 `unknown_kind` 并**带上 kind 名**（否则没法定位）', () => {
+    // 这条才是真正要防的：`kind` 是开放词表，将来会冒出新值。
+    const h = createHarness();
+
+    emitItem(h, { kind: 'some_future_kind', itemId: 'x:1', phase: 'start', toolCallId: 'tc-9' });
+
+    expect(h.deps.reportDebugEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'renderer.agent.item.unknown_kind',
+        data: expect.objectContaining({ kind: 'some_future_kind' }),
+      }),
+    );
+    expect(h.deps.reportDebugEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'renderer.agent.item.ignored_kind' }),
+    );
+  });
+
+  it('⚠️ `kind` 整个缺失 ⇒ 也要留痕，且用 `(missing)` 而不是 undefined', () => {
+    const h = createHarness();
+
+    emitItem(h, { itemId: 'x:1', phase: 'start' });
+
+    expect(h.deps.reportDebugEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'renderer.agent.item.unknown_kind',
+        data: expect.objectContaining({ kind: '(missing)' }),
+      }),
+    );
+  });
+
+  it('对照：`kind:"tool"` 走原来的路（两个 kind 事件都不该记）', () => {
+    const h = createHarness();
+
+    emitItem(h, {
+      kind: 'tool',
+      phase: 'start',
+      toolCallId: 'tc-3',
+      name: 'ls',
+      title: 'ls 目录',
+    });
+
+    expect(h.messageStore.upsertToolCall).toHaveBeenCalled();
+    expect(h.deps.reportDebugEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'renderer.agent.item.unknown_kind' }),
+    );
+    expect(h.deps.reportDebugEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'renderer.agent.item.ignored_kind' }),
+    );
+  });
+
+  it('对照：`kind:"preamble"` 也照旧（不记那两个）', () => {
+    const h = createHarness();
+
+    emitItem(h, { kind: 'preamble', progressText: '正在核对第三章' });
+
+    expect(h.messageStore.setSessionProgressText).toHaveBeenCalledWith(TASK.sessionKey, '正在核对第三章');
+    expect(h.deps.reportDebugEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'renderer.agent.item.unknown_kind' }),
+    );
+  });
+});
+
 describe('agent lifecycle error buffer', () => {
   it('buffers a lifecycle error for the dedup window, then releases it as a system message', async () => {
     vi.useFakeTimers();

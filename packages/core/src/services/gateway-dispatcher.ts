@@ -1029,8 +1029,28 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
       return;
     }
 
-    // 其余非工具条目照旧不接（形状没验过的东西不往 store 里写）。
-    if (data.kind !== 'tool') return;
+    // 其余非工具条目照旧**不往 store 里写** —— 但**不许丢得没声音**。
+    //
+    // ⚠️ `kind` 是**开放词表**（运行时自己的类型是
+    //    `"tool" | "command" | "patch" | "search" | "analysis" | (string & {})`）。
+    //    我们踩过一次：`preamble` 当初就是这样整块被丢掉的，后来才发现它有用
+    //    （正文不流式时唯一在动的东西）。词表开放 + 丢弃无声 = 下次还会重演。
+    //
+    // ⇒ 分两种记：**知道但不接的**记 `ignored_kind`，**认不出的**记 `unknown_kind`。
+    //    分开是为了让"新冒出来的 kind"在一堆噪音里一眼看得见。
+    if (data.kind !== 'tool') {
+      const kind = typeof data.kind === 'string' ? data.kind : '(missing)';
+      const payload = { taskId, sessionKey, kind, toolCallId: data.toolCallId, phase: data.phase };
+      if (DELIBERATELY_IGNORED_ITEM_KINDS.has(kind)) {
+        debugEvent('renderer.agent.item.ignored_kind', payload);
+      } else {
+        debugEvent('renderer.agent.item.unknown_kind', {
+          ...payload,
+          topLevelKeys: Object.keys(data),
+        });
+      }
+      return;
+    }
     if (!data.toolCallId || !data.name) return;
 
     const failed = (data.status !== undefined && ITEM_FAILURE_STATUSES.has(data.status)) || Boolean(data.error);
@@ -1090,6 +1110,20 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
    * `error` 权重挡着，但那是**帧序在兜底**，不是我们认对了。）
    */
   const ITEM_FAILURE_STATUSES = new Set(['failed', 'blocked', 'error']);
+
+  /**
+   * `item` 的 **`kind`** 里"知道但不接"的那些。
+   *
+   * ⚠️ 会发的 kind 实测就四个（`~/git/openclaw`，2026-09-09）：
+   * - `tool` / `preamble` —— **已接**（上面处理掉了）；
+   * - `command` —— exec 专用；C2 已决定**不接实时输出**（实测 delta 只比 end 早 0.2 秒）；
+   * - `patch` —— **只对 `apply_patch` 发**（我们的 agent 不用这个工具，实测工具清单里没有它）。
+   *
+   * ⚠️ 运行时**类型里**还声明了 `search` / `analysis`，但**一个发射点都没有** ——
+   *    所以它们不在这份名单里：真冒出来就该按"认不出"记一条（那才是我们要看见的信号）。
+   *    名单只放**验过会发、且我们决定不接**的。
+   */
+  const DELIBERATELY_IGNORED_ITEM_KINDS = new Set(['command', 'patch']);
 
   /**
    * 这条工具调用**已经有的**工具名。
