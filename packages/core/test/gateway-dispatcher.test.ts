@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createGatewayDispatcher,
+  DELIBERATELY_IGNORED_STREAMS,
   RUN_PHASE_IDS,
   type GatewayDispatcherDeps,
 } from '../src/services/gateway-dispatcher.js';
@@ -590,6 +591,111 @@ describe('未知事件种类的告警阈值', () => {
     expect(h.deps.reportDebugEvent).not.toHaveBeenCalledWith(
       expect.objectContaining({ event: 'renderer.agent.unknown_stream.threshold' }),
     );
+  });
+});
+
+/**
+ * 「**已知**但刻意不接」的流要从告警里摘出去（C2 调查的结论）。
+ *
+ * 为什么必须摘：这些流**形状已经验过、决定也写下来了**（见队列「未接流」那一节），
+ * 它们不是"协议变了"的信号。可它们照样在真实流量里几十上百条地过 ——
+ * 实测日志：`command_output` 72 条、`usage` 73 条。让它们占用那 10 次的额度，
+ * 等于告警在**正常流量**上响（真实日志里已经响过 9 次），
+ * 真正冒出来的新流反而淹在里面看不见。
+ *
+ * ⚠️ 摘的只是**计数**，不是**观测**：这些流照旧上遥测，只是换一个事件名说
+ *    "我知道它、我故意不接"，而不是"我不认识它"。
+ */
+describe('已知但刻意不接的流：记遥测，但不计入"未知"告警', () => {
+  const IGNORED = ['command_output', 'usage', 'patch', 'stdout', 'stderr', 'acp', 'plan'];
+
+  it('⭐ 这些流来一整屏也不该触发"协议变了"的告警', () => {
+    vi.useFakeTimers();
+    const h = createHarness();
+    for (const stream of IGNORED) {
+      for (let i = 0; i < 12; i++) {
+        h.emit('agent', { sessionKey: TASK.sessionKey, stream, data: {} });
+      }
+    }
+    expect(h.deps.reportDebugEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'renderer.agent.unknown_stream.threshold' }),
+    );
+  });
+
+  it('⭐ 它们**不占**真未知流的额度（真未知仍要能自己凑够 10 条）', () => {
+    vi.useFakeTimers();
+    const h = createHarness();
+    // 先灌 30 条已知忽略的 —— 老实现会把计数器推到阈值以上
+    for (let i = 0; i < 30; i++) {
+      h.emit('agent', { sessionKey: TASK.sessionKey, stream: 'command_output', data: {} });
+    }
+    // 再来 9 条真未知：没到 10，不该报
+    for (let i = 0; i < 9; i++) {
+      h.emit('agent', { sessionKey: TASK.sessionKey, stream: 'brand_new_stream', data: {} });
+    }
+    expect(h.deps.reportDebugEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'renderer.agent.unknown_stream.threshold' }),
+    );
+
+    // 第 10 条真未知才报
+    h.emit('agent', { sessionKey: TASK.sessionKey, stream: 'brand_new_stream', data: {} });
+    expect(h.deps.reportDebugEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'renderer.agent.unknown_stream.threshold',
+        data: expect.objectContaining({ stream: 'brand_new_stream' }),
+      }),
+    );
+  });
+
+  it('⚠️ 但仍要看得见 —— 换一个名字上遥测，不是"再也不出声"', () => {
+    const h = createHarness();
+    h.emit('agent', {
+      sessionKey: TASK.sessionKey,
+      stream: 'command_output',
+      data: { itemId: 'command:tc-1', phase: 'delta', output: 'x' },
+    });
+
+    expect(h.deps.reportDebugEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'renderer.agent.ignored_stream',
+        data: expect.objectContaining({ stream: 'command_output' }),
+      }),
+    );
+    // 不许再叫"未知"
+    expect(h.deps.reportDebugEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'renderer.agent.unknown_stream' }),
+    );
+  });
+
+  it('认不出的流照旧算未知（名单不是"什么都收"）', () => {
+    const h = createHarness();
+    h.emit('agent', { sessionKey: TASK.sessionKey, stream: 'stream_from_the_future', data: {} });
+
+    expect(h.deps.reportDebugEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'renderer.agent.unknown_stream',
+        data: expect.objectContaining({ stream: 'stream_from_the_future' }),
+      }),
+    );
+  });
+
+  it('⭐ 名单是**冻结**的：加/删一条都必须是有意的（顺带拦住"死条目"）', () => {
+    // 这份名单本身就危险：往里塞一个**其实该被盯着**的流，等于把告警调聋。
+    // 而它平时是悄悄生效的 —— 所以这里把成员钉死，任何改动都得先改这条用例，
+    // 改的时候就必然要回答"为什么"。
+    //
+    // ⚠️ 同时拦一种特别隐蔽的情形：把**已经有 `case` 分支**的流写进来。
+    //    那种条目**永远不会生效**（它到不了 `default`），却会让下一个人以为
+    //    "这个流我们决定不接了" —— 与事实相反。
+    expect([...DELIBERATELY_IGNORED_STREAMS].sort()).toEqual([
+      'acp',
+      'command_output',
+      'patch',
+      'plan',
+      'stderr',
+      'stdout',
+      'usage',
+    ]);
   });
 });
 

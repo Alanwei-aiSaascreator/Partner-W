@@ -349,6 +349,44 @@ export const RUN_PHASE_IDS: readonly string[] = [...RUN_STARTUP_PHASES];
 const UNKNOWN_STREAM_ALERT_THRESHOLD = 10;
 const UNKNOWN_STREAM_WINDOW_MS = 60_000;
 
+/**
+ * **已知形状、但刻意不接**的流 —— 它们不算"未知"。
+ *
+ * ## 为什么要有这份名单（2026-09-19，C2 调查的结论）
+ *
+ * 上面那个告警的用途是"协议里冒出我们不认识的东西了"，可它的计数不看流名，
+ * 而下面这些流**是认识的**：形状实测过、决定也写在队列「未接流」那一节里。
+ * 它们在真实流量里是**常态**（实测客户端日志：`command_output` 72 条、
+ * `usage` 73 条），照旧计入就等于让告警在**正常流量**上响 ——
+ * 实测日志里已经响过 9 次，真正的新流反而淹在里面。
+ *
+ * ⇒ 查名单：在名单里 → 记 `ignored_stream` **遥测**（照旧看得见）但不计数；
+ *    不在名单里 → 记 `unknown_stream` 并计数。
+ *
+ * ⚠️ 名单**只**放"验过形状 + 决定不接"的，且每一笔都要能指到队列里的理由。
+ *    放错一个（比如把某个其实会变的东西当成稳定接口）就是把告警调聋：
+ *    这条名单的**任何新增**都该同时更新队列里的「未接流」表。
+ *
+ * 逐条理由：
+ * - `usage`        —— 计费口径走 rpc 的 `report_usage_v2`，事件流这份是重复的（仅遥测）
+ * - `patch`        —— 补丁类输出，与 `command_output` 同族；界面已有 patch 工具卡
+ * - `command_output` —— exec 的实时输出。**C2 决定不接**：实测 delta 只比 end 早
+ *                      **0.2 秒**（27 对里最长 0.5 秒），而 exec 本身最长 **2.6 秒**、
+ *                      中位 0.87 秒 ⇒ 显示出来是一闪而过，用户什么也看不见。
+ *                      （`status:"blocked"` 那半边已由 `approval` 流覆盖。）
+ * - `stdout`/`stderr` —— 同族；`acp` 是编辑器协议桥
+ * - `plan`         —— `progress_card` 内建工具产生；**B9 已定：我们的 agent 不用它**
+ */
+export const DELIBERATELY_IGNORED_STREAMS = new Set([
+  'usage',
+  'patch',
+  'command_output',
+  'stdout',
+  'stderr',
+  'acp',
+  'plan',
+]);
+
 export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
   const perTaskLastError = new Map<string, ErrorCorrelation>();
   const lifecycleErrorBuffer = new Map<
@@ -759,17 +797,24 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
         }
         break;
       }
-      default:
-        debugEvent('renderer.agent.unknown_stream', {
+      default: {
+        const payload = {
           taskId,
           sessionKey,
           stream,
           topLevelKeys: data ? Object.keys(data) : [],
           phase: (data as Record<string, unknown>)?.phase,
           reason: (data as Record<string, unknown>)?.reason,
-        });
+        };
+        // 已知形状、决定不接的流：**照旧看得见**，但不占"未知"的额度（见名单的说明）。
+        if (stream && DELIBERATELY_IGNORED_STREAMS.has(stream)) {
+          debugEvent('renderer.agent.ignored_stream', payload);
+          break;
+        }
+        debugEvent('renderer.agent.unknown_stream', payload);
         noteUnknownStream(stream, taskId, sessionKey);
         break;
+      }
     }
   }
 
