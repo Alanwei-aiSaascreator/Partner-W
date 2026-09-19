@@ -1,5 +1,10 @@
 import { createStore } from 'zustand/vanilla';
-import { mergeGatewayStreamText, parseAgentIdFromSessionKey, parseTaskIdFromSessionKey } from '@clawwork/shared';
+import {
+  mergeGatewayStreamText,
+  mergeThinkingSegments,
+  parseAgentIdFromSessionKey,
+  parseTaskIdFromSessionKey,
+} from '@clawwork/shared';
 import type { Message, MessageRole, MessageAttachment, ToolCall, IpcResult } from '@clawwork/shared';
 import { splitInlineThinking } from '../protocol/normalize-history.js';
 
@@ -494,7 +499,9 @@ export function createMessageStore(deps: MessageStoreDeps) {
             ...s.activeTurnBySession,
             [sessionKey]: {
               ...turn,
-              streamingThinking: mergeGatewayStreamText(turn.streamingThinking, delta),
+              // ⚠️ 思考走**分段**合并：跨段要空行隔开，不能用通用那条（会直接拼接，
+              //    把 8 段推理糊成一团 —— 见 `mergeThinkingSegments` 的注释与实测数据）。
+              streamingThinking: mergeThinkingSegments(turn.streamingThinking, delta),
             },
           },
         };

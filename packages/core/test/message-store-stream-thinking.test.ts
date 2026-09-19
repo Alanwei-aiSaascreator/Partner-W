@@ -72,3 +72,36 @@ describe('message-store finalizeStream —— 行内 </think> 的推理要切出
     expect(turn.content).toBe('答案');
   });
 });
+
+/**
+ * 推理**分段**合并（2026-09-20 实机）。
+ *
+ * 实测形状：一个 worker 的 121 条 thinking 事件里有 **7 次重置**
+ *（`chars` 从 227 → 3、1409 → 3、860 → 3 …，共 8 段）——
+ * 每段工具调用之后推理重新开始、网关从空快照重新累积。
+ *
+ * ⚠️ 这条守的是**接线**：store 必须用 `mergeThinkingSegments`（分段、空行隔开），
+ *    而不是通用的 `mergeGatewayStreamText`（跨段会直接拼接 ⇒ 8 段推理糊成一团，
+ *    界面上"同一句反复出现、越接越长"）。纯函数的规则本身在
+ *    `packages/shared/test/stream-text.test.ts` 里测。
+ */
+describe('message-store appendThinkingDelta —— 跨段要隔开，不能粘成一团', () => {
+  it('⭐ 两个不同的推理段之间有空行，不是直接拼接', () => {
+    const store = makeStore();
+    const seg1 = 'Let me read the key files to understand the identity, soul, and dreams';
+    const seg2 = 'Let me understand the context: this is a 爆款内容教练 agent';
+
+    store.getState().appendThinkingDelta(SK, seg1);
+    store.getState().appendThinkingDelta(SK, seg2);
+
+    expect(store.getState().activeTurnBySession[SK]!.streamingThinking).toBe(`${seg1}\n\n${seg2}`);
+  });
+
+  it('同一段内的快照变长仍然只保留最新（不能因为分段改动把这条弄丢）', () => {
+    const store = makeStore();
+    store.getState().appendThinkingDelta(SK, 'Let me read');
+    store.getState().appendThinkingDelta(SK, 'Let me read the key files');
+
+    expect(store.getState().activeTurnBySession[SK]!.streamingThinking).toBe('Let me read the key files');
+  });
+});

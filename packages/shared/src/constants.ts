@@ -74,6 +74,32 @@ export function mergeGatewayStreamText(previous: string, incoming: string): stri
   return previous + incoming;
 }
 
+/**
+ * 推理（thinking）流的合并 —— 与 `mergeGatewayStreamText` 的关键差别：**按段**。
+ *
+ * 推理是**分段重发**的：每段工具调用之后模型重新开始推理，网关从空快照重新累积
+ * （不是接在上一段后面）。实机实测（2026-09-20，一个 worker 的 121 条 thinking 事件）
+ * 里有 **7 次重置** —— `chars` 从 227 → 3、1409 → 3、860 → 3 …，共 8 段。
+ *
+ * ⚠️ 跨段时两个方向**都不是前缀**，`mergeGatewayStreamText` 会落到 `previous + incoming`
+ * **直接拼接** ⇒ 8 段推理糊成一团，界面上就是"同一句反复出现、越接越长"。
+ * ⇒ 这里把无法判定为同段的情况当成**新的一段**，用空行隔开。
+ *
+ * ⚠️ 本通道送的是**累计快照**（见 `AgentThinkingData` 的注释），所以不处理"真增量片段"；
+ *    即便真来了增量，空行隔开也只是多一个换行，不会丢内容。
+ */
+export function mergeThinkingSegments(previous: string, incoming: string): string {
+  if (!incoming) return previous;
+  if (incoming === previous) return previous;
+  if (incoming.startsWith(previous)) return incoming;
+  if (previous.startsWith(incoming)) return previous;
+  // ⚠️ 重连/重订阅会把**旧段**再投一次：它已经是我们结果的尾部 ⇒ 保持，别再加一遍。
+  //    否则"重复投递不会把推理拼成两遍"这条保证就破了。
+  if (previous.endsWith(incoming)) return previous;
+  // 空行隔开：它们是**不同**的推理块，不该粘成一团。
+  return previous + '\n\n' + incoming;
+}
+
 export function isClawWorkSession(sessionKey: string, deviceId?: string): boolean {
   if (deviceId) {
     const dm = sessionKey.match(CLAWWORK_DEVICE_SESSION_RE);
