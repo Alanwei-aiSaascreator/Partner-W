@@ -66,6 +66,33 @@ export function isSubagentSession(sessionKey: string): boolean {
   return SUBAGENT_SESSION_RE.test(sessionKey);
 }
 
+/**
+ * 房间成员（worker）在界面上显示什么名字 —— **唯一**的优先级规则。
+ *
+ * 为什么要收成一处：`RoomPerformer.agentName` 是**派活那一刻写的快照**，
+ * 而网关目录里的 `name` 是**活的**。两处（消息头像区、成员头像提示条）各写一遍优先级，
+ * 就会像 2026-09-20 那样一处对一处错。
+ *
+ * ⚠️ 实测（2026-09-20，`agents.list` 直连网关）：目录里
+ * `rongying-tpl-78b62899` 的 `name` 就是「爆款内容教练」——
+ * 所以**目录优先**能直接消掉"消息头显示裸 agentId"那个症状。
+ *
+ * ⚠️ 快照**不能删**：agent 被删/换网关后目录里就没有它了，那时只有快照还记得名字。
+ * 但它必须排在目录**后面**：存量数据库里这个字段存的就是裸 agentId（两个写入方都传错了），
+ * 排在前面就会**永远遮住**目录里的真名。
+ */
+export function resolvePerformerAgentName(
+  performer: { agentId: string; agentName?: string } | undefined,
+  // `id` 只是为了让调用方能直接塞 `AgentInfo`（结构化类型）；本函数不读它。
+  catalogEntry: { id?: string; name?: string } | undefined,
+): string {
+  const catalogName = catalogEntry?.name;
+  if (catalogName) return catalogName;
+  const snapshot = performer?.agentName;
+  if (snapshot) return snapshot;
+  return performer?.agentId ?? '';
+}
+
 export function mergeGatewayStreamText(previous: string, incoming: string): string {
   if (!incoming) return previous;
   if (incoming === previous) return previous;

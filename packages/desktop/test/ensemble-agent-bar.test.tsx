@@ -187,4 +187,28 @@ describe('EnsembleAgentBar', () => {
     expect(tooltips.length).toBe(1);
     expect(tooltips[0].textContent).toContain('Researcher');
   });
+
+  // T-a7：快照里存的是裸 agentId（存量数据就是这样），目录里才有真名。
+  // 这一条守的是**接线** —— 与 `assistant-identity.test.ts` 守同一套规则的另一处显示面。
+  it('⭐ 快照是裸 agentId、目录里有中文名 ⇒ 提示条用目录名', () => {
+    const WORKER_ID = 'rongying-tpl-78b62899';
+    seedTask(true);
+    seedRoom([buildPerformer({ agentId: WORKER_ID, agentName: WORKER_ID, emoji: '✍️' })]);
+    useUiStore.setState({
+      agentCatalogByGateway: {
+        [GATEWAY_ID]: {
+          defaultId: 'main',
+          agents: [{ id: WORKER_ID, name: '爆款内容教练' }],
+        },
+      },
+    });
+
+    const { container, unmount } = render(<EnsembleAgentBar taskId={TASK_ID} />);
+    cleanups.push(unmount);
+
+    const tooltips = container.querySelectorAll('[data-testid="tooltip-content"]');
+    expect(tooltips.length).toBe(1);
+    expect(tooltips[0].textContent).toContain('爆款内容教练');
+    expect(tooltips[0].textContent).not.toContain(WORKER_ID);
+  });
 });

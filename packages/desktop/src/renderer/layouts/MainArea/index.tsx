@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { parseAgentIdFromSessionKey } from '@clawwork/shared';
+import { resolveAssistantIdentity } from './assistant-identity';
 import { deriveSessionActivity, getTaskSessionKeys, serializeIdentityMd } from '@clawwork/core';
 import { useTaskStore } from '@/stores/taskStore';
 import { useMessageStore, EMPTY_MESSAGES, activeTurnToMessage } from '@/stores/messageStore';
@@ -121,78 +122,12 @@ interface ArchivedTaskRow {
   updatedAt: string;
 }
 
-interface AssistantIdentity {
-  agentName?: string;
-  agentEmoji?: string;
-  localAvatarUrl?: string;
-  gatewayAvatarUrl?: string;
-  agentRoleLabel?: string;
-}
-
 interface DraftRequestOwner {
   requestId: string;
   userId: string;
   gatewayId: string;
   agentId: string;
   taskId: string | null;
-}
-
-function buildLocalAvatarUrl(gatewayId: string | undefined, agentId: string | undefined): string | undefined {
-  if (!gatewayId || !agentId) return undefined;
-  return `clawwork-avatar://${gatewayId}/${agentId}`;
-}
-
-function resolveAssistantIdentity({
-  task,
-  sessionKey,
-  agentId,
-  gatewayId,
-  performerBySessionKey,
-  performerByAgentId,
-  catalogAgentById,
-  conductorLabel,
-}: {
-  task?: { sessionKey: string; agentId?: string; ensemble?: boolean };
-  sessionKey?: string;
-  agentId?: string;
-  gatewayId?: string;
-  performerBySessionKey: Map<string, { sessionKey: string; agentId: string; agentName: string; emoji?: string }>;
-  performerByAgentId: Map<string, { sessionKey: string; agentId: string; agentName: string; emoji?: string }>;
-  catalogAgentById: Map<string, { id: string; name?: string; identity?: { emoji?: string; avatarUrl?: string } }>;
-  conductorLabel: string;
-}): AssistantIdentity {
-  const resolvedAgentId = agentId ?? (sessionKey ? parseAgentIdFromSessionKey(sessionKey) : undefined);
-  const conductorAgentId =
-    task?.agentId ?? (task?.sessionKey ? parseAgentIdFromSessionKey(task.sessionKey) : undefined);
-  const performer =
-    (sessionKey ? performerBySessionKey.get(sessionKey) : undefined) ??
-    (resolvedAgentId ? performerByAgentId.get(resolvedAgentId) : undefined);
-  const catalogEntry = resolvedAgentId ? catalogAgentById.get(resolvedAgentId) : undefined;
-  const conductorCatalogEntry = conductorAgentId ? catalogAgentById.get(conductorAgentId) : undefined;
-  const isConductor = Boolean(
-    task?.ensemble &&
-    ((sessionKey && sessionKey === task.sessionKey) ||
-      (!sessionKey && resolvedAgentId && conductorAgentId && resolvedAgentId === conductorAgentId)),
-  );
-
-  if (isConductor) {
-    const targetId = conductorAgentId ?? resolvedAgentId;
-    const agentName = conductorCatalogEntry?.name ?? catalogEntry?.name ?? conductorAgentId ?? conductorLabel;
-    return {
-      agentName,
-      agentEmoji: conductorCatalogEntry?.identity?.emoji ?? catalogEntry?.identity?.emoji,
-      localAvatarUrl: buildLocalAvatarUrl(gatewayId, targetId),
-      gatewayAvatarUrl: conductorCatalogEntry?.identity?.avatarUrl ?? catalogEntry?.identity?.avatarUrl,
-      agentRoleLabel: agentName === conductorLabel ? undefined : conductorLabel,
-    };
-  }
-
-  return {
-    agentName: performer?.agentName ?? catalogEntry?.name ?? resolvedAgentId,
-    agentEmoji: performer?.emoji ?? catalogEntry?.identity?.emoji,
-    localAvatarUrl: buildLocalAvatarUrl(gatewayId, resolvedAgentId),
-    gatewayAvatarUrl: catalogEntry?.identity?.avatarUrl,
-  };
 }
 
 function ChatHeader({

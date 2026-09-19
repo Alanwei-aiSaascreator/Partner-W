@@ -6,6 +6,7 @@ import { useUiStore } from '@/stores/uiStore';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import AgentIcon from '@/components/AgentIcon';
 import type { RoomPerformer } from '@clawwork/shared';
+import { resolvePerformerAgentName } from '@clawwork/shared';
 import { motionDuration } from '@/styles/design-tokens';
 
 const EMPTY_PERFORMERS: readonly RoomPerformer[] = [];
@@ -66,7 +67,7 @@ export default function EnsembleAgentBar({ taskId }: EnsembleAgentBarProps) {
                     </div>
                   </TooltipTrigger>
                   <TooltipContent side="bottom">
-                    <div className="type-label">{p.agentName}</div>
+                    <div className="type-label">{resolvePerformerAgentName(p, catalog)}</div>
                     {modelName && <div className="type-meta text-[var(--text-muted)]">{modelName}</div>}
                   </TooltipContent>
                 </Tooltip>
