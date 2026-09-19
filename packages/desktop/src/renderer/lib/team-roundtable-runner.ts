@@ -27,6 +27,14 @@ export interface RoundtableResult {
   turns: Turn[];
   /** 因为某位发言人失败而中断时，停在他的 agentId 上。 */
   stoppedAt?: string;
+  /**
+   * 中断的**原因**。
+   *
+   * ⚠️ 不带这句的话，失败在界面上表现为"悄悄停住了" —— 用户只看到讨论没继续，
+   *    不知道为什么，我们排查也只能靠猜（2026-09-20 实机踩到：第一次跑就是
+   *    只出了一位然后没声了，而这行原因当时被我吞掉了）。
+   */
+  errorMessage?: string;
   /** 用户点了停止。 */
   stoppedByUser?: boolean;
 }
@@ -66,9 +74,14 @@ export async function runRoundtable(args: {
     let text: string;
     try {
       text = await send(speaker.agentId, prompt);
-    } catch {
+    } catch (error) {
       // 停在这一位：拿半截讨论去汇总，用户会以为这就是全部结论。
-      return { turns, stoppedAt: speaker.agentId };
+      // ⚠️ 把原因**带出去**，别吞（吞掉之后界面上就是"悄悄停了"）。
+      return {
+        turns,
+        stoppedAt: speaker.agentId,
+        errorMessage: error instanceof Error ? error.message : String(error),
+      };
     }
 
     const turn: Turn = { agentId: speaker.agentId, name: speaker.name, text };
