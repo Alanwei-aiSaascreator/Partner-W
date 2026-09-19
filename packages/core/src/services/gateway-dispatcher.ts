@@ -27,8 +27,12 @@ type AgentEventStream = 'lifecycle' | 'tool' | 'assistant' | 'thinking' | 'error
 
 interface AgentToolData {
   /**
-   * 实测只有 `start` / `result` 两个值（2026-09-18 真机帧）。
+   * 实测四个值（2026-09-19 扫随包运行时 2026.9.3 的 emit 点）：
+   * `start` / `result` / `update` / `review` —— **没有 `end`**
+   *（早先按 2026-09-18 的真机帧记成"只有 start/result"，不全）。
    * **失败不是单独一个 phase** —— 是 `result` + `isError:true`。
+   *
+   * ⚠️ 只有 `result` 会收尾；`update` 只带 `partialResult`（既没 args 也没 result）。
    */
   phase?: string;
   name?: string;
@@ -64,6 +68,34 @@ interface AgentItemData {
   error?: string;
   /** `kind:"preamble"` 的模型自述进度。 */
   progressText?: string;
+}
+
+/**
+ * `approval` 流 —— 一个 exec 命令的审批结果。
+ *
+ * ⚠️ **为什么必须接**：审批不可用而被拦下的命令，`tool` 流发的是
+ * `isError:false` 的 result（运行时原文：`isToolError = observerIsError && !approvalUnavailable`）
+ * ⇒ 只看 tool 流，卡片会显示「已完成」，而命令**根本没跑**。真相只在这一帧里。
+ *
+ * 实测取值（2026.9.3）：
+ * - `phase:"requested"` + `status:"pending"`（等审批）/ `"unavailable"`（审批不可用）
+ * - `phase:"resolved"` + `status:"denied"` / `"failed"`
+ */
+interface AgentApprovalData {
+  phase?: string;
+  /** 实测只有 `exec`。 */
+  kind?: string;
+  status?: string;
+  title?: string;
+  toolCallId?: string;
+  itemId?: string;
+  approvalId?: string;
+  command?: string;
+  host?: string;
+  /** 机器码（如 `no-approval-channel`）。 */
+  reason?: string;
+  /** 网关写的人话解释。 */
+  message?: string;
 }
 
 interface AgentLifecycleData {
@@ -606,6 +638,9 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
       case 'assistant':
         debugEvent('renderer.agent.assistant_stream', { taskId, sessionKey });
         break;
+      case 'approval':
+        handleAgentApprovalStream(taskId, sessionKey, data as AgentApprovalData);
+        break;
       case 'item': {
         // 网关的**统一活动条目**。从前没有这个分支 ⇒ 整条被当未知事件丢掉，
         // 而里面正带着「做了什么操作」的人话标题和真实起止时间。
@@ -790,6 +825,82 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
       status,
       name: data.name,
       source: 'item',
+    });
+  }
+
+  /**
+   * 审批**确定没跑成**的 status（与 `pending` 相对）。
+   *
+   * `pending` 刻意不在里面：那时命令**还有可能跑**，报成失败是另一种撒谎。
+   * 而"退回进行中"当前做不到 —— `mergeToolCallState` 的状态权重不许降级。
+   */
+  const APPROVAL_NOT_EXECUTED = new Set(['unavailable', 'denied', 'failed']);
+
+  /**
+   * 这条工具调用**已经有的**工具名。
+   *
+   * `approval` 帧**不带工具名**（只有 `kind:"exec"`），而 `ToolCall.name` 是必填 ⇒
+   * 只能拿 `kind` 顶上。但那样会把真实工具名（`shell` / `bash` …）顶掉，
+   * 而卡片标题正是靠它 —— 偏偏这批"被拦下的命令"最需要用户认得出是哪一个。
+   * ⇒ 先找已有的，找不到才用 `kind` 兜底。
+   */
+  function existingToolName(taskId: string, sessionKey: string, toolCallId: string): string | undefined {
+    const store = deps.getMessageStore();
+    const inFlight = store.activeTurnBySession[sessionKey]?.toolCalls.find((t) => t.id === toolCallId);
+    if (inFlight?.name) return inFlight.name;
+
+    const msgs = store.messagesByTask[taskId] ?? [];
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const found = msgs[i]?.toolCalls?.find((t) => t.id === toolCallId);
+      if (found?.name) return found.name;
+    }
+    return undefined;
+  }
+
+  function handleAgentApprovalStream(taskId: string, sessionKey: string, data: AgentApprovalData): void {
+    // 先留遥测：这条链从前**整条落到 default**，出事时只看到一条 unknown_stream，
+    // 查不出是哪次审批、什么原因。
+    debugEvent('renderer.agent.approval', {
+      taskId,
+      sessionKey,
+      phase: data.phase,
+      status: data.status,
+      reason: data.reason,
+    });
+
+    if (!data.toolCallId) return;
+    if (!data.status || !APPROVAL_NOT_EXECUTED.has(data.status)) return;
+
+    // 用网关自己的话解释：`message` 是人话，`reason` 是机器码，`command` 让用户认出是哪条。
+    const explanation = [
+      data.title,
+      data.message,
+      data.reason && `(${data.reason})`,
+      data.command && `$ ${data.command}`,
+    ]
+      .filter((part): part is string => Boolean(part))
+      .join(' ');
+
+    const name = existingToolName(taskId, sessionKey, data.toolCallId) ?? data.kind ?? 'exec';
+
+    deps.getMessageStore().upsertToolCall(sessionKey, taskId, {
+      id: data.toolCallId,
+      name,
+      // ⚠️ `error` 不是"命令失败"，是"**没跑成**" —— 这是当前唯一能表达的、且不撒谎的状态。
+      //    `done` 是明确错的（命令没执行）；`running` 做不到（合并不许降级）。
+      status: 'error',
+      result: explanation || undefined,
+      startedAt: new Date().toISOString(),
+      completedAt: new Date().toISOString(),
+    });
+
+    debugEvent('renderer.toolcall.upserted', {
+      taskId,
+      sessionKey,
+      toolCallId: data.toolCallId,
+      status: 'error',
+      name,
+      source: 'approval',
     });
   }
 

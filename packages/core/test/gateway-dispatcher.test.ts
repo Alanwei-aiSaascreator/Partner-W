@@ -1054,3 +1054,174 @@ describe('item 流：网关拼好的人话标题与真实起止时间', () => {
     );
   });
 });
+
+/**
+ * `approval` 流 —— 命令被审批拦下时，网关**会把"没跑成"报成"没出错"**。
+ *
+ * 实测（随包运行时 2026.9.3，`builtin-openclaw-*.mjs` 原文）：
+ *
+ * ```js
+ * observerIsError     = isError || isToolResultError(result)
+ * approvalUnavailable = isExecToolName(toolName)
+ *                    && readExecToolDetails(sanitizedResult)?.status === "approval-unavailable"
+ * isToolError         = observerIsError && !approvalUnavailable   // ← 被强制压成 false
+ * ```
+ *
+ * ⇒ **审批不可用而被拦下的命令，`tool` 流发的是 `isError:false` 的 result**。
+ * 只看 tool 流，卡片会显示「已完成」—— 而那条命令**根本没执行**。
+ * 对一个会替用户跑 shell 的产品来说，这是**界面在撒谎**，比报错更糟。
+ *
+ * 真相只在另外两帧里，而这两帧我们**都没接**：
+ * - `stream:"approval"`（本文件要接的）：
+ *   - `{ phase:"requested", kind:"exec", status:"pending"|"unavailable", title, toolCallId,
+ *      approvalId?, command, host, reason?, message }`
+ *   - `{ phase:"resolved", kind:"exec", status:"denied"|"failed", title, toolCallId, message }`
+ * - `item` 流的 `kind:"command"` + `status:"blocked"`（另一个已知缺口，仍未接）
+ *
+ * ⚠️ **`status:"pending"` 刻意不处理**：那时命令**还有可能跑**，报成失败是另一种撒谎；
+ * 而"退回进行中"当前**做不到** —— `mergeToolCallState` 的状态权重是 `error(3) > done(2) > running(1)`，
+ * 它**不许降级**（那是为了防止迟到的 update 把已完成的调用转回 running）。
+ * 所以这里只做**唯一能做的诚实修正**：确知没跑成的，不许留在「已完成」。
+ */
+describe('approval 流：被拦下的命令不许显示成"已完成"', () => {
+  type EmittedToolCall = { id: string; name: string; status: string; result?: string };
+
+  function lastToolCall(h: ReturnType<typeof createHarness>): EmittedToolCall {
+    const calls = h.messageStore.upsertToolCall.mock.calls;
+    expect(calls.length, '应该有工具调用被写进 store').toBeGreaterThan(0);
+    return calls[calls.length - 1]![2] as EmittedToolCall;
+  }
+
+  /** 真实的 exec 完成帧：审批不可用 ⇒ 网关把 `isError` 压成 `false`。 */
+  function emitBlockedExecResult(h: ReturnType<typeof createHarness>, toolCallId: string): void {
+    h.emit('agent', {
+      sessionKey: TASK.sessionKey,
+      stream: 'tool',
+      data: {
+        phase: 'result',
+        name: 'exec',
+        toolCallId,
+        meta: 'ls 工作区',
+        isError: false,
+        result: {
+          content: [{ type: 'text', text: 'Command requires approval.' }],
+          details: { status: 'approval-unavailable', reason: 'no-approval-channel' },
+        },
+      },
+    });
+  }
+
+  function emitApproval(h: ReturnType<typeof createHarness>, data: Record<string, unknown>): void {
+    h.emit('agent', { sessionKey: TASK.sessionKey, stream: 'approval', data });
+  }
+
+  it('⭐ tool 流说"没出错"、随后 approval 说"不可用" ⇒ 卡片不许停在"已完成"', () => {
+    const h = createHarness();
+    emitBlockedExecResult(h, 'call_appr');
+    expect(lastToolCall(h).status, '前置：只看 tool 流，网关确实报的是"没出错"').toBe('done');
+
+    emitApproval(h, {
+      phase: 'requested',
+      kind: 'exec',
+      status: 'unavailable',
+      title: 'Command approval unavailable',
+      itemId: 'command:call_appr',
+      toolCallId: 'call_appr',
+      command: 'rm -rf /tmp/x',
+      host: 'local',
+      reason: 'no-approval-channel',
+      message: 'Approval is unavailable; the command was not run.',
+    });
+
+    const tc = lastToolCall(h);
+    expect(tc.status, '命令根本没跑 ⇒ 不许显示成已完成').toBe('error');
+    expect(tc.result, '要把网关给的原因带上，否则用户不知道为什么').toContain('not run');
+  });
+
+  it('审批被拒（phase:"resolved" + status:"denied"）同样不许是"已完成"', () => {
+    const h = createHarness();
+    emitBlockedExecResult(h, 'call_denied');
+
+    emitApproval(h, {
+      phase: 'resolved',
+      kind: 'exec',
+      status: 'denied',
+      title: 'Command approval resolved',
+      itemId: 'command:call_denied',
+      toolCallId: 'call_denied',
+      message: 'The command was denied and not executed.',
+    });
+
+    expect(lastToolCall(h).status).toBe('error');
+    expect(lastToolCall(h).result).toContain('denied');
+  });
+
+  it('审批**还在等**（status:"pending"）不动它 —— 命令还有可能跑', () => {
+    const h = createHarness();
+    emitBlockedExecResult(h, 'call_pending');
+    const callsBefore = h.messageStore.upsertToolCall.mock.calls.length;
+
+    emitApproval(h, {
+      phase: 'requested',
+      kind: 'exec',
+      status: 'pending',
+      title: 'Command approval requested',
+      itemId: 'command:call_pending',
+      toolCallId: 'call_pending',
+      approvalId: 'ap-1',
+      command: 'ls',
+      host: 'local',
+    });
+
+    expect(
+      h.messageStore.upsertToolCall.mock.calls.length,
+      'pending 不该写 store：报成失败是另一种撒谎，而"退回进行中"又做不到（不许降级）',
+    ).toBe(callsBefore);
+  });
+
+  it('approval 帧要留遥测 —— 这条链出事时得查得到', () => {
+    const h = createHarness();
+    emitBlockedExecResult(h, 'call_tel');
+    emitApproval(h, {
+      phase: 'requested',
+      kind: 'exec',
+      status: 'unavailable',
+      title: 'Command approval unavailable',
+      toolCallId: 'call_tel',
+      command: 'ls',
+      host: 'local',
+      reason: 'no-approval-channel',
+    });
+
+    expect(h.deps.reportDebugEvent).toHaveBeenCalledWith(expect.objectContaining({ event: 'renderer.agent.approval' }));
+  });
+
+  it('⭐ approval 帧不带工具名 ⇒ 必须沿用已有的真实工具名（别把卡片标题变成 exec）', () => {
+    const h = createHarness();
+    // harness 的 store 是 mock，这里按**真实 store 的形状**放一条"已经在飞的"工具调用，
+    // 好让 `existingToolName` 有东西可找（真机上这由前面那帧 tool 流写进去）
+    (h.messageStore as unknown as { activeTurnBySession: Record<string, unknown> }).activeTurnBySession = {
+      [TASK.sessionKey]: { toolCalls: [{ id: 'call_named', name: 'shell', status: 'running' }] },
+    };
+
+    emitApproval(h, {
+      phase: 'requested',
+      kind: 'exec',
+      status: 'unavailable',
+      title: 'Command approval unavailable',
+      toolCallId: 'call_named',
+      command: 'ls',
+      host: 'local',
+      message: 'Command was not run.',
+    });
+
+    expect(lastToolCall(h).name, '`kind:"exec"` 只是兜底，不许顶掉真实的 `shell`').toBe('shell');
+  });
+
+  it('缺 toolCallId 的 approval 帧直接忽略（不能凭空造一张卡）', () => {
+    const h = createHarness();
+    emitApproval(h, { phase: 'requested', kind: 'exec', status: 'unavailable', title: 'x' });
+
+    expect(h.messageStore.upsertToolCall).not.toHaveBeenCalled();
+  });
+});
