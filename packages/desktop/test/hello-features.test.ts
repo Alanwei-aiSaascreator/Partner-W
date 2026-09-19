@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseHelloFeatures, helloFeatureLogData } from '../src/main/ws/hello-features';
+import { parseHelloFeatures, helloFeatureLogData, createAdvertisedSurface } from '../src/main/ws/hello-features';
 
 /**
  * `hello-ok` 里**网关自报的能力面**。
@@ -93,5 +93,84 @@ describe('helloFeatureLogData —— 落到调试日志里的形状', () => {
 
   it('⚠️ 没有 `features` ⇒ 记一条明确的"没广告"，而不是空对象', () => {
     expect(helloFeatureLogData({ type: 'hello-ok' })).toEqual({ advertisedFeatures: 'missing' });
+  });
+});
+
+/**
+ * 「我们要调的方法，网关**广告过**吗」——在 `sendReq` 那个唯一咽喉点上问一句。
+ *
+ * ## 为什么值得
+ *
+ * 这一整轮的教训都是同一个形状：**我们以为网关有，其实没有**（方法被删、字段改名、
+ * 事件分流变了）。而网关**每次握手都把方法表送过来** —— 有了它，"调一个不存在的方法"
+ * 从"等它失败 / 五个月后读源码"变成"当场记一条"。
+ *
+ * ⚠️ **零行为变更**：照样把请求发出去（不拦、不改道）。这是**诊断**，不是门禁。
+ *    要拿它做门禁（不支持就不显示入口）是另一刀，且属产品选择。
+ */
+describe('createAdvertisedSurface —— 调了网关没广告的方法吗', () => {
+  it('⭐ 广告过 ⇒ 永远不报', () => {
+    const s = createAdvertisedSurface();
+    s.setAdvertised(['chat.send', 'sessions.list']);
+
+    expect(s.takeUnadvertised('chat.send')).toBe(false);
+    expect(s.takeUnadvertised('chat.send')).toBe(false);
+  });
+
+  it('⭐ 没广告过 ⇒ 第一次报，**同一个方法第二次不报**（否则 `chat.send` 会刷屏）', () => {
+    const s = createAdvertisedSurface();
+    s.setAdvertised(['sessions.list']);
+
+    expect(s.takeUnadvertised('chat.send')).toBe(true);
+    expect(s.takeUnadvertised('chat.send'), '第二次不该再报 —— 一条就够定位了').toBe(false);
+    expect(s.takeUnadvertised('chat.send')).toBe(false);
+  });
+
+  it('不同的方法各报各的（一次只报一条，但每个都报得到）', () => {
+    const s = createAdvertisedSurface();
+    s.setAdvertised([]);
+
+    expect(s.takeUnadvertised('a.method')).toBe(true);
+    expect(s.takeUnadvertised('b.method')).toBe(true);
+    expect(s.takeUnadvertised('a.method')).toBe(false);
+  });
+
+  it('⚠️ **还没收到 `hello-ok`**（没有广告表）⇒ 永远不报 —— "不知道"不等于"没有"', () => {
+    // 握手之前 / 老网关没有 `features` ⇒ 我们不能断言任何事。
+    // 在这里报会把**每次连接的头几个请求**全报一遍，纯噪音。
+    const s = createAdvertisedSurface();
+
+    expect(s.takeUnadvertised('chat.send')).toBe(false);
+    expect(s.takeUnadvertised('anything')).toBe(false);
+  });
+
+  it('⭐ 重连后拿到**新的**广告表 ⇒ 已报过的可以**再报一次**（网关可能被降级了）', () => {
+    // ⚠️ 第一版这里写错了：先 `setAdvertised(['chat.send'])`，于是第一次 take 返回 **false**
+    //    （它广告过）—— 根本没有"已报过"这回事，用例等于没测到重置。
+    //    变异验证当场抓出来（去掉重置逻辑那条**存活**）。现在让第一轮**真的报一次**。
+    const s = createAdvertisedSurface();
+    s.setAdvertised(['sessions.list']);
+    expect(s.takeUnadvertised('chat.send'), '第一轮就没广告过 ⇒ 报').toBe(true);
+
+    s.setAdvertised(['other.method']); // 新的一轮握手，仍然没有 chat.send
+
+    expect(s.takeUnadvertised('chat.send'), '新广告表里仍然没有它，值得再说一次').toBe(true);
+  });
+
+  it('同一份广告表重复 set ⇒ 不清空已报记录（否则每次重设都会重报）', () => {
+    const s = createAdvertisedSurface();
+    s.setAdvertised(['sessions.list']);
+    expect(s.takeUnadvertised('chat.send')).toBe(true);
+
+    s.setAdvertised(['sessions.list']);
+
+    expect(s.takeUnadvertised('chat.send'), '内容没变就不该重报').toBe(false);
+  });
+
+  it('空广告表 ⇒ 什么都报（网关明确说"我什么都没有"——这是确定的，不是"不知道"）', () => {
+    const s = createAdvertisedSurface();
+    s.setAdvertised([]);
+
+    expect(s.takeUnadvertised('whatever')).toBe(true);
   });
 });

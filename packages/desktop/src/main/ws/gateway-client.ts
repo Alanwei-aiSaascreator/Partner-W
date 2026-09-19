@@ -18,7 +18,7 @@ import type {
   ChatAttachment,
 } from '@clawwork/shared';
 import { sendToWindow } from './window-utils.js';
-import { helloFeatureLogData } from './hello-features.js';
+import { createAdvertisedSurface, helloFeatureLogData, parseHelloFeatures } from './hello-features.js';
 import { getMainWindow } from '../window-manager.js';
 import {
   loadOrCreateDeviceIdentity,
@@ -85,6 +85,13 @@ export class GatewayClient {
   private lastError: string | null = null;
   private lastErrorCode: string | null = null;
   private serverVersion: string | undefined;
+  /**
+   * 网关自报的方法表（`hello-ok.features.methods`）。
+   *
+   * ⚠️ **只用于诊断**：`sendReq` 里查一下"这个方法广告过吗"，没广告过就记一条
+   *    （每个方法只记一次）。**不拦请求**——拦了就是行为变更，那是另一刀的事。
+   */
+  private readonly advertisedSurface = createAdvertisedSurface();
   private onPairingSuccess?: (gatewayId: string) => void;
 
   constructor(config: GatewayClientConfig, opts?: GatewayClientOptions) {
@@ -344,6 +351,9 @@ export class GatewayClient {
             //    而这份答案每次握手都送到我们手上。只记数量 + capabilities（见该模块说明）。
             data: helloFeatureLogData(payload),
           });
+          // 把方法表喂给那个"调了没广告的方法吗"的诊断器（**只记日志，不拦请求**）。
+          const advertised = parseHelloFeatures(payload);
+          if (advertised) this.advertisedSurface.setAdvertised(advertised.methods);
           this.authenticated = true;
           this.reconnectAttempts = 0;
           this.lastError = null;
@@ -506,6 +516,22 @@ export class GatewayClient {
         notConnErr.code = 'GATEWAY_NOT_CONNECTED';
         reject(notConnErr);
         return;
+      }
+
+      // ⭐ 这个方法网关**广告过**吗？没广告过就记一条（每个方法只记一次）。
+      //    ⚠️ **照发不误** —— 这是诊断，不是门禁。这一整轮的教训都是同一个形状：
+      //    "我们以为网关有，其实没有"，而这份答案每次握手都送到手上。
+      //    见 `createAdvertisedSurface` 的三条判断（尤其"没有广告表时永远不报"）。
+      if (this.advertisedSurface.takeUnadvertised(method)) {
+        getDebugLogger().warn({
+          domain: 'gateway',
+          event: 'gateway.req.unadvertised_method',
+          gatewayId: this.gatewayId,
+          requestId: meta?.requestId,
+          sessionKey: meta?.sessionKey,
+          taskId: meta?.taskId,
+          data: { method, hint: 'hello-ok.features.methods 里没有它；请求仍然发出' },
+        });
       }
 
       const id = randomUUID();

@@ -66,6 +66,61 @@ export function parseHelloFeatures(payload: Record<string, unknown>): HelloFeatu
 }
 
 /**
+ * 「我们要调的方法，网关**广告过**吗」—— 在 `sendReq` 那个唯一咽喉点上问一句。
+ *
+ * ## 为什么值得
+ *
+ * 这一整轮的教训都是同一个形状：**我们以为网关有，其实没有**（方法被删、字段改名、
+ * 事件分流变了）。而网关**每次握手都把方法表送过来** —— 有了它，"调一个不存在的方法"
+ * 从"等它失败 / 五个月后读源码"变成"当场记一条"。
+ *
+ * ## ⚠️ 零行为变更
+ *
+ * 照样把请求发出去（**不拦、不改道、不重试**）。这是**诊断**，不是门禁。
+ * 要拿它做门禁（比如"网关没有 `question.list` 就不显示问题卡片"）是另一刀，
+ * 而且属产品选择（不支持时**隐藏**还是**禁用**，得有人拍）。
+ *
+ * ## 三条判断（都有用例钉着）
+ *
+ * 1. **没有广告表 ⇒ 永远不报**：握手之前 / 老网关没有 `features` ⇒ 我们**不能断言任何事**。
+ *    在这里报会把每次连接的头几个请求全报一遍，纯噪音。"不知道"不等于"没有"。
+ * 2. **空广告表 ⇒ 什么都报**：网关**明确说**"我什么都没有"，这是确定的判断，不是不知道。
+ * 3. **每个方法只报一次**：`chat.send` 一轮会调很多次，每次都报等于没报。
+ *    但**拿到新的广告表就重置已报记录** —— 重连后网关可能被降级了，值得再说一次。
+ */
+export interface AdvertisedSurface {
+  /** 收到 `hello-ok` 时喂进来。**内容与上次相同则不清空已报记录**（否则每次重设都重报）。 */
+  setAdvertised(methods: string[]): void;
+  /**
+   * 这个方法没被广告过吗？**每个方法只会回答一次 `true`**（消费式命名就是这个意思）。
+   */
+  takeUnadvertised(method: string): boolean;
+}
+
+export function createAdvertisedSurface(): AdvertisedSurface {
+  let advertised: Set<string> | null = null;
+  let lastSignature: string | null = null;
+  let warned = new Set<string>();
+
+  return {
+    setAdvertised(methods) {
+      // ⚠️ 用**排序后的签名**比对："内容没变"不该重置已报记录（重连时很容易重复喂同一份）。
+      const signature = [...methods].sort().join('\n');
+      if (signature !== lastSignature) warned = new Set();
+      lastSignature = signature;
+      advertised = new Set(methods);
+    },
+    takeUnadvertised(method) {
+      if (!advertised) return false; // 不知道 ≠ 没有
+      if (advertised.has(method)) return false;
+      if (warned.has(method)) return false;
+      warned.add(method);
+      return true;
+    },
+  };
+}
+
+/**
  * 落进调试日志的形状。
  *
  * ⚠️ 记**数量**而不是整份清单：方法表 400+ 条，塞进日志就没人看了；而数量足以看出
