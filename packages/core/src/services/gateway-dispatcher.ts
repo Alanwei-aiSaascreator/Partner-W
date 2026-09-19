@@ -1037,21 +1037,31 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
           store.addMessage(taskId, 'system', msg, undefined, { persist: false, sessionKey });
         }
         break;
-      case 'fallback_cleared':
-        // ⚠️ **必须说一句**：`fallback` 那次我们已经往时间线插了「已切换至模型: X」，
+      case 'fallback_cleared': {
+        // ⚠️ **切回来了就得说一句**：`fallback` 那次我们已经往时间线插了「已切换至模型: X」，
         //    切回来却不说 ⇒ **时间线最后一句停在 X**，用户以为还在用 X 回答。
         //    （每条消息的模型徽章是对的 —— 那是网关逐条给的；偏偏用户刚被告知的那句是旧的。）
         //
         // ✅ 复用现成的 `agent.modelFallback`：切回来**本来就**是一次模型切换
         //    （切回用户挑的那个），"已切换至模型: Y" 字面为真 ⇒ 不需要新文案、不动 9 语言。
+        //
+        // ⚠️ 但**"降级结束"≠"模型换了"**（见下面的 `modelChanged`）。
         debugEvent('renderer.agent.lifecycle.fallback_cleared', {
           taskId,
           sessionKey,
           model: data.activeModel,
           previousActiveModel: data.previousActiveModel,
         });
+        // ⚠️ **只在模型真的变了时才说**（用户 2026-09-19 的要求：避免噪音）。
+        //    `fallback_cleared` 说的是"降级状态结束了"，**不一定**意味着模型换了 ——
+        //    清标记时用的还是同一个模型的话，插一句「已切换至模型: 同一个」纯属噪音。
+        //    判据用网关给的 `previousActiveModel`（"之前是哪个模型"）。
+        //    ⚠️ 缺这个字段就**不说**：证不出"确实变了"时，宁可少一句也不要多一句噪音。
+        const modelChanged =
+          Boolean(data.activeModel && data.previousActiveModel) && data.previousActiveModel !== data.activeModel;
+
         // 临时会话照旧不写（同 `fallback` 那条纪律：列标题就是用户挑的模型）。
-        if (data.activeModel && !ephemeral) {
+        if (modelChanged && !ephemeral) {
           const msg = deps.translate('agent.modelFallback', {
             model: data.activeModel,
             defaultValue: `Switched to model: ${data.activeModel}`,
@@ -1059,6 +1069,7 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
           store.addMessage(taskId, 'system', msg, undefined, { persist: false, sessionKey });
         }
         break;
+      }
       case 'fallback_step':
         // 逐个候选尝试的**过程**：只留遥测。
         // 每一步都往时间线插话会把对话刷爆，而它对用户没有增量信息。

@@ -1394,6 +1394,43 @@ describe('lifecycle 的 fallback 三相', () => {
     expect(h.systemMessages[0]!.content).toContain('modelFallback');
   });
 
+  it('⭐ 模型**没变**时不许说（用户要求：只在真正切回时显示，避免噪音）', () => {
+    const h = createHarness();
+
+    // `fallback_cleared` 说的是"降级状态结束了"，但**不一定**意味着模型换了：
+    // 清掉标记时用的还是同一个模型时，插一句「已切换至模型: 同一个」纯属噪音。
+    emitLifecycle(h, {
+      phase: 'fallback_cleared',
+      selectedProvider: 'p1',
+      selectedModel: 'qwen-plus',
+      activeProvider: 'p1',
+      activeModel: 'qwen-plus',
+      previousActiveModel: 'qwen-plus',
+    });
+
+    expect(h.systemMessages, '前后是同一个模型 ⇒ 别插话').toHaveLength(0);
+    // 遥测照旧记录（这条状态转换必须看得见）
+    expect(h.deps.reportDebugEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'renderer.agent.lifecycle.fallback_cleared' }),
+    );
+  });
+
+  it('证不了"确实变了"时也不说（`previousActiveModel` 缺失）', () => {
+    const h = createHarness();
+
+    // 没有"之前是哪个模型"就没法判断变没变。用户的要求是**避免噪音** ⇒ 宁可不吵。
+    // （`activeModel` 本身还是照往常一样进遥测。）
+    emitLifecycle(h, {
+      phase: 'fallback_cleared',
+      selectedProvider: 'p1',
+      selectedModel: 'qwen-plus',
+      activeProvider: 'p1',
+      activeModel: 'qwen-plus',
+    });
+
+    expect(h.systemMessages, '无法证明变了 ⇒ 按"不吵"处理').toHaveLength(0);
+  });
+
   it('`fallback_step` 只留遥测，不往时间线插话（逐个候选的过程太吵）', () => {
     const h = createHarness();
 
