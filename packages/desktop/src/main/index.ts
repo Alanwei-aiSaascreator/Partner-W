@@ -31,6 +31,7 @@ import { registerGrowthHandlers } from './ipc/growth-handlers.js';
 import { registerAnalyticsHandlers } from './ipc/analytics-handlers.js';
 import { registerPrivacyHandlers } from './ipc/privacy-handlers.js';
 import { registerKbHandlers } from './ipc/kb-handlers.js';
+import { registerSkillsHandlers } from './skills/handlers.js';
 import { buildKbRuntime, ensureKbRuntime } from './kb/runtime.js';
 import { setupAnalytics, teardownAnalytics } from './analytics/setup.js';
 import { initUsageReporter, destroyUsageReporter } from './commercial/usage-reporter.js';
@@ -257,6 +258,8 @@ if (!gotLock) {
       registerAnalyticsHandlers();
       registerPrivacyHandlers();
       registerKbHandlers();
+      // 「我们自己的技能」—— 随包目录 + 一键装/卸（T-a2）。
+      registerSkillsHandlers();
 
       ipcMain.handle('app:rebuild-menu', () => {
         devModeEnabled = readConfig()?.devMode === true;

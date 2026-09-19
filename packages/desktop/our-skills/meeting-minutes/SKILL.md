@@ -1,7 +1,7 @@
 ---
 name: 会议纪要整理
 description: '把会议录音转写、零散笔记或聊天记录整理成结构化纪要：决议、待办、责任人、时间点，并标出没有结论的悬置事项。用户说‘整理一下会议’‘纪要’‘会后总结’时用。'
-metadata: { 'openclaw': { 'emoji': '📝', 'skillKey': 'our-meeting-minutes' } }
+metadata: { 'openclaw': { 'emoji': '📝', 'skillKey': 'meeting-minutes' } }
 ---
 
 # 会议纪要整理

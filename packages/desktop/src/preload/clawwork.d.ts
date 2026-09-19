@@ -25,6 +25,7 @@ import type {
   SkillUpdateParams,
   SkillUpdateResult,
   SkillBinsResult,
+  OurSkillsListResult,
   ConfigSnapshot,
   ConfigSetParams,
   ConfigPatchParams,
@@ -427,6 +428,10 @@ export interface ClawWorkAPI {
   installSkill: (gatewayId: string, params: SkillInstallParams) => Promise<IpcResult<SkillInstallResult>>;
   updateSkill: (gatewayId: string, params: SkillUpdateParams) => Promise<IpcResult<SkillUpdateResult>>;
   getSkillBins: (gatewayId: string) => Promise<IpcResult<SkillBinsResult>>;
+  /** 「我们自己的技能」—— 随包目录（T-a2）。`installed` 靠主进程问网关要的目录判定。 */
+  listOurSkills: (gatewayId?: string, agentId?: string) => Promise<IpcResult<OurSkillsListResult>>;
+  installOurSkill: (gatewayId: string, slug: string, agentId?: string) => Promise<IpcResult>;
+  removeOurSkill: (gatewayId: string, slug: string, agentId?: string) => Promise<IpcResult>;
   getConfig: (gatewayId: string) => Promise<IpcResult<ConfigSnapshot>>;
   setConfig: (gatewayId: string, params: ConfigSetParams) => Promise<IpcResult<ConfigSetResult>>;
   patchConfig: (gatewayId: string, params: ConfigPatchParams) => Promise<IpcResult<ConfigPatchResult>>;

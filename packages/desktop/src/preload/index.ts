@@ -72,6 +72,14 @@ function buildApi(): ClawWorkAPI {
     updateSkill: (gatewayId: string, params: SkillUpdateParams) =>
       ipcRenderer.invoke('ws:skills-update', { gatewayId, ...params }),
     getSkillBins: (gatewayId: string) => ipcRenderer.invoke('ws:skills-bins', { gatewayId }),
+    // 「我们自己的技能」（T-a2）：列随包目录 + 一键装/卸。
+    // ⚠️ 只传 `{gatewayId, agentId, slug}` —— 安装目录由主进程问网关要，渲染层碰不到路径。
+    listOurSkills: (gatewayId?: string, agentId?: string) =>
+      ipcRenderer.invoke('skills:our-list', { gatewayId, agentId }),
+    installOurSkill: (gatewayId: string, slug: string, agentId?: string) =>
+      ipcRenderer.invoke('skills:our-install', { gatewayId, agentId, slug }),
+    removeOurSkill: (gatewayId: string, slug: string, agentId?: string) =>
+      ipcRenderer.invoke('skills:our-remove', { gatewayId, agentId, slug }),
     getConfig: (gatewayId: string) => ipcRenderer.invoke('ws:config-get', { gatewayId }),
     setConfig: (gatewayId: string, params: ConfigSetParams) =>
       ipcRenderer.invoke('ws:config-set', { gatewayId, ...params }),

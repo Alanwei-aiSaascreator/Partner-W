@@ -651,6 +651,38 @@ export interface SkillBinsResult {
   bins: string[];
 }
 
+/**
+ * 「我们自己的技能」—— 随包发的那批（T-a2）。
+ *
+ * 与 `SkillStatusEntry` 的差别：那是**网关报告的状态**（`skills.status` 的产物），
+ * 这是**我们打包带上来的目录清单**。两者不是一回事 —— 网关没连上时前者根本拿不到，
+ * 但技能市场仍然应该能显示"我们有什么"。
+ *
+ * `name` / `description` 来自 `SKILL.md` 的 frontmatter，**不是** i18n 键：
+ * 与市场里的官方模板同一个口径（内容自带，不随界面语言变）。
+ */
+export interface OurSkillEntry {
+  /** 目录名，也是 `metadata.openclaw.skillKey`（内容闸钉住了这个相等关系）。 */
+  slug: string;
+  /** ⚠️ `undefined` = 这份 SKILL.md 格式不对（运行时会静默丢掉）。由内容闸判红。 */
+  name?: string;
+  description?: string;
+  emoji?: string;
+  skillKey?: string;
+  installed: boolean;
+}
+
+export interface OurSkillsListResult {
+  skills: OurSkillEntry[];
+  /**
+   * 网关报出 `managedSkillsDir` 了吗。
+   *
+   * ⚠️ 为 `false` 时 `installed` 全是 `false` —— 但那是**"不知道"**，不是"没装"。
+   * 界面必须分开说：网关没连上时说"未连接"，别让用户以为技能丢了。
+   */
+  managedDirKnown: boolean;
+}
+
 export interface ConfigSnapshot {
   raw: string;
   hash: string;
