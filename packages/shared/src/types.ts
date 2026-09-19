@@ -114,11 +114,26 @@ export interface TaskRoom {
   performers: RoomPerformer[];
 }
 
+/**
+ * 团队里的**职位** —— 决定他在圆桌讨论里怎么发言、按什么顺序发言。
+ *
+ * ⚠️ 与 `TeamAgent.role` 是**两回事，别合并**：
+ * - `role`（'coordinator' | 'worker'）是**编排**角色，`team-installer.ts` 拿它建
+ *   subagent 白名单。删了它 conductor 就编不动。
+ * - `position` 是**讨论**角色，只在圆桌里用，不影响编排。
+ *
+ * 数组顺序 = 发言顺序（记录员永远收尾）。
+ */
+export const TEAM_POSITIONS = ['moderator', 'expert', 'challenger', 'scribe'] as const;
+export type TeamPosition = (typeof TEAM_POSITIONS)[number];
+
 export interface TeamAgent {
   agentId: string;
   role: string;
   isManager: boolean;
   skills: string[];
+  /** 讨论职位。老数据可能没有 ⇒ 一律用 `normalizePosition` 兜底，别直接当联合类型用。 */
+  position?: TeamPosition;
 }
 
 export interface Team {

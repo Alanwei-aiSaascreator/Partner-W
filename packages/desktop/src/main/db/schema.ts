@@ -102,6 +102,9 @@ export const teamAgents = sqliteTable(
     role: text('role').default(''),
     isManager: integer('is_manager', { mode: 'boolean' }).default(false),
     skillsJson: text('skills_json').default('[]'),
+    // 讨论职位（圆桌用）。与 role 是两回事，理由见 shared/src/types.ts 的注释。
+    // 老行没有值 ⇒ 空串，读的时候由 normalizePosition 兜底成 'expert'。
+    position: text('position').default(''),
   },
   (table) => [primaryKey({ columns: [table.teamId, table.agentId] })],
 );

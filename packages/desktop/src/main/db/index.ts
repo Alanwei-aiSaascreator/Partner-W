@@ -129,6 +129,10 @@ function openAndMigrate(dbPath: string): void {
     migrateAddColumn(sqlite, sql);
   }
 
+  // 团队成员的**讨论职位**（圆桌用）。与已有的 `role`（编排角色）是两回事。
+  // 老库这一列不存在 ⇒ 加上，默认空串；读的时候由 `normalizePosition` 兜底成领域专家，
+  // 所以老团队升级后不会报错、也不需要回填。
+  migrateAddColumn(sqlite, "ALTER TABLE team_agents ADD COLUMN position TEXT DEFAULT ''");
   migrateAddColumn(sqlite, 'ALTER TABLE messages ADD COLUMN image_attachments TEXT');
   migrateAddColumn(sqlite, 'ALTER TABLE messages ADD COLUMN tool_calls TEXT');
   // 模型的推理输出（`stream:"thinking"`）。落库是为了重载后还在 ——
