@@ -904,7 +904,9 @@
     "totalEarned": "insgesamt {{value}} gesammelt"
   },
   "identity": {
+    "appliedToast": "„{{role}}“ übernommen",
     "apply": "Persona übernehmen",
+    "applyFailed": "Kein Gateway verbunden – Übernahme nicht möglich",
     "cardHint": "Wählen Sie ein Identitäts-Tag, erstellen Sie geführt Ihre Persona und übernehmen Sie empfohlene Rolle und Skills mit einem Klick.",
     "cardTitle": "Persona generieren",
     "direction": "Fokus: {{value}}",
@@ -928,6 +930,7 @@
         "name": "Recht & Compliance"
       }
     },
+    "needTag": "Mindestens ein Tag auswählen",
     "otherGroups": "Weitere Zielgruppen",
     "personaDesc": "Eine Fachkraft, die Berichte, Dokumente, Meetings und Daten parallel managt – strukturiert und ergebnisorientiert.",
     "personaTag": "Bürofachkraft",
@@ -935,6 +938,7 @@
     "roleLabel": "Empfohlene Rolle",
     "roleValue": "Effizientes Büro",
     "save": "Diese Identität speichern und anwenden",
+    "savedToast": "Identität gespeichert und übernommen",
     "shuffle": "Tag wechseln",
     "skill": {
       "dataAssistant": "Datenassistent",

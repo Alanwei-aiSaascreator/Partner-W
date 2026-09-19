@@ -904,7 +904,9 @@
     "totalEarned": "{{value}} acumulados"
   },
   "identity": {
+    "appliedToast": "«{{role}}» aplicado",
     "apply": "Aplicar persona",
+    "applyFailed": "Gateway não conectado — não é possível aplicar",
     "cardHint": "Escolha uma etiqueta de identidade, siga o guia para criar sua persona e aplique o papel e as habilidades recomendadas com um clique.",
     "cardTitle": "Gerar persona",
     "direction": "Foco: {{value}}",
@@ -928,6 +930,7 @@
         "name": "Jurídico e compliance"
       }
     },
+    "needTag": "Escolha pelo menos uma etiqueta",
     "otherGroups": "Outros públicos",
     "personaDesc": "Um profissional que concilia relatórios, documentos, reuniões e dados: valoriza organização e resultado.",
     "personaTag": "Profissional de escritório",
@@ -935,6 +938,7 @@
     "roleLabel": "Papel recomendado",
     "roleValue": "Escritório eficiente",
     "save": "Salvar e aplicar esta identidade",
+    "savedToast": "Identidade salva e aplicada",
     "shuffle": "Trocar etiqueta",
     "skill": {
       "dataAssistant": "Assistente de dados",

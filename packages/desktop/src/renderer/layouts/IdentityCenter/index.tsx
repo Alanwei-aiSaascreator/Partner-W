@@ -1,42 +1,105 @@
+import { useCallback, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Check, RotateCcw, Sparkles, UserRound } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { toast } from '@/lib/toast';
+import { useUiStore } from '@/stores/uiStore';
+import { useSelectAgent } from '@/hooks/useSelectAgent';
+import { ASSISTANT_ID_BY_WORKSPACE } from '@/lib/assistant-task-presets';
+import {
+  IDENTITY_DEFAULT_TAGS,
+  IDENTITY_PERSONA_TAGS,
+  nextTagSelection,
+  type IdentityTagId,
+} from '@/lib/identity-persona';
+
+/** 标签选择的落盘位置（本机、不上云 —— 与引导问卷一样用 localStorage）。 */
+export const IDENTITY_STORAGE_KEY = 'cw:identity-tags';
+
+/** 推荐技能（**展示用** —— 见文件头"刻意没做的"）。 */
+export const IDENTITY_SKILL_IDS = [
+  'docManager',
+  'officeDoc',
+  'dataAssistant',
+  'dataViz',
+  'meetingSecretary',
+  'toolbox',
+  'mailExpert',
+] as const;
 
 /**
- * 身份中心 —— **本版只做排版，未接任何数据/逻辑**（2026-09-19）。
+ * 身份中心。
  *
- * ## 为什么是静态的
+ * ## 这一版做了什么（2026-09-19 第二刀）
  *
- * 需求原话是「**就是排版**」：先把版式立起来给老板看密度，逻辑后面单独排期。
- * ⇒ 下面所有标签、角色、技能都是**写死的展示数据**，不是从任何 store / IPC 来的；
- *    「应用此画像」「保存并应用此身份配置」两个按钮**没有 onClick**（按下去不会有任何事）。
+ * 第一版是**纯排版**（按钮没有 `onClick`，用户反馈「功能用不了」）。这一刀把它接上：
  *
- * ⚠️ 后面接逻辑时，**别把这份写死数据当成"接口形状"照抄** —— 它是照设计稿摆的版。
+ * | 按钮 | 现在真的做什么 |
+ * | --- | --- |
+ * | 标签 | 点击切换选中（多选） |
+ * | 重新选择 | 清空全部选中 |
+ * | 换一个标签 | 按环轮换一格（纯函数 `nextTagSelection`，可单测） |
+ * | 应用此画像 | **真的切到「高效办公」助手**（`setSelectedAgent`）+ 提示 |
+ * | 保存并应用此身份配置 | 上面那步 + 把标签选择存进 localStorage |
  *
- * ## 密度
- *
- * 版式按 `D:\Desktop\mofang-ui-preview\app-dense.html` 那版原型定稿的密度来
- * （间距用 gap-2/gap-3 一档，不是仓库既有的 gap-4/gap-6）。
- * ⚠️ 仓库**已有**一套密度变量（`--density-*`，见 theme.css 的 data-density 三档），
- *    但实测它**只覆盖控件高度/工具栏**（`--density-panel-gap` 甚至 0 引用），
- *    管不到页面级留白 ⇒ 这里先用显式的间距类；全应用统一收紧是另一件事。
+ * ⚠️ **这一版刻意没做的**（都要先定口径，见 `docs/superpowers/specs/2026-09-19-身份中心-design.md`）：
+ * - **推荐技能那排仍是展示** —— 那 7 个技能在网关里**不存在**，而客户端**没有写技能的通道**
+ * - **没有新立一份「画像」** —— 产品里已有一份（引导问卷 + 设置→账户的「工作画像」），
+ *   再立一份会打架；这里只存了**标签选择**
+ * - 「其它客群」四张卡仍是展示（没有对应的助手 / 内容）
  */
 export default function IdentityCenter() {
   const { t } = useTranslation();
+  const gatewayId = useUiStore((s) => s.defaultGatewayId);
+  const selectAgent = useSelectAgent();
+  const [selected, setSelected] = useState<IdentityTagId[]>(IDENTITY_DEFAULT_TAGS);
 
-  /** 写死的展示数据 —— 见文件头「为什么是静态的」。 */
-  const personaTags = ['goalOriented', 'efficiency', 'logical', 'reporting', 'timeManagement'] as const;
-  const selectedTags = new Set<(typeof personaTags)[number]>(['goalOriented', 'efficiency', 'logical', 'reporting']);
-  const skills = [
-    'docManager',
-    'officeDoc',
-    'dataAssistant',
-    'dataViz',
-    'meetingSecretary',
-    'toolbox',
-    'mailExpert',
-  ] as const;
+  const roleLabel = t('identity.roleValue');
+  const officeAssistantId = ASSISTANT_ID_BY_WORKSPACE.office;
+
+  /**
+   * 「应用」= 把推荐角色**真的切成当前助手**（走 `useSelectAgent`，与左侧
+   * 「我的助手」切换器**同一条路**：改选择 + 改待发任务 + 离开旧会话 + 回到对话）。
+   *
+   * ⚠️ 没有网关时**如实报错**，不假装成功（本项目栽过"把不确定说成确定"）。
+   * ⚠️ **不做**"这个助手在不在目录里"的检查：六个预设助手由 `useStartupReadiness`
+   *    在进首页前装好（`preset-agent-installer`），目录还没拉回来时会误报失败。
+   */
+  const applyPersona = useCallback((): boolean => {
+    if (!gatewayId) {
+      toast.error(t('identity.applyFailed'));
+      return false;
+    }
+    selectAgent(officeAssistantId);
+    return true;
+  }, [gatewayId, officeAssistantId, selectAgent, t]);
+
+  const onApply = useCallback(() => {
+    if (selected.length === 0) {
+      toast.error(t('identity.needTag'));
+      return;
+    }
+    if (applyPersona()) toast.success(t('identity.appliedToast', { role: roleLabel }));
+  }, [selected.length, applyPersona, roleLabel, t]);
+
+  const onSave = useCallback(() => {
+    if (selected.length === 0) {
+      toast.error(t('identity.needTag'));
+      return;
+    }
+    if (!applyPersona()) return;
+    try {
+      window.localStorage.setItem(IDENTITY_STORAGE_KEY, JSON.stringify(selected));
+    } catch {
+      /* 存不进就算了 —— 应用那一步已经生效，不该因为存储报错把它说成失败 */
+    }
+    toast.success(t('identity.savedToast'));
+  }, [selected, applyPersona, t]);
+
+  const toggleTag = (id: IdentityTagId) =>
+    setSelected((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+
   const otherGroups = ['educator', 'legal', 'ecommerce', 'engineer'] as const;
 
   return (
@@ -69,34 +132,41 @@ export default function IdentityCenter() {
 
               <p className="type-support mt-3 text-[var(--text-muted)]">{t('identity.tagsLabel')}</p>
               <div className="mt-1.5 flex flex-wrap gap-1.5">
-                {personaTags.map((key) => (
-                  <span
-                    key={key}
-                    data-tag={key}
-                    data-selected={selectedTags.has(key) ? 'true' : 'false'}
-                    className={
-                      'type-badge inline-flex items-center rounded-full px-2.5 py-1 ' +
-                      (selectedTags.has(key)
-                        ? 'bg-[var(--accent-dim)] font-semibold text-[var(--accent)]'
-                        : 'bg-[var(--bg-tertiary)] text-[var(--text-secondary)]')
-                    }
-                  >
-                    {t(`identity.tag.${key}`)}
-                  </span>
-                ))}
+                {IDENTITY_PERSONA_TAGS.map((id) => {
+                  const on = selected.includes(id);
+                  return (
+                    <button
+                      key={id}
+                      type="button"
+                      data-tag={id}
+                      data-selected={on ? 'true' : 'false'}
+                      aria-pressed={on}
+                      onClick={() => toggleTag(id)}
+                      className={
+                        'type-badge glow-focus inline-flex items-center rounded-full px-2.5 py-1 transition-colors ' +
+                        (on
+                          ? 'bg-[var(--accent-dim)] font-semibold text-[var(--accent)]'
+                          : 'bg-[var(--bg-tertiary)] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]')
+                      }
+                    >
+                      {t(`identity.tag.${id}`)}
+                    </button>
+                  );
+                })}
               </div>
 
               <div className="mt-3 grid grid-cols-4 gap-4">
                 <div>
                   <p className="type-support text-[var(--text-muted)]">{t('identity.roleLabel')}</p>
                   <p className="type-body mt-1 font-semibold text-[var(--text-primary)]" data-field="role">
-                    {t('identity.roleValue')}
+                    {roleLabel}
                   </p>
                 </div>
                 <div className="col-span-3">
                   <p className="type-support text-[var(--text-muted)]">{t('identity.skillsLabel')}</p>
+                  {/* ⚠️ 这一排**仍是展示**：那 7 个技能在网关里不存在，客户端也没有写技能的通道。 */}
                   <div className="mt-1 flex flex-wrap gap-1.5" data-field="skills">
-                    {skills.map((key) => (
+                    {IDENTITY_SKILL_IDS.map((key) => (
                       <span
                         key={key}
                         className="type-badge inline-flex items-center rounded-md bg-[var(--bg-tertiary)] px-2.5 py-1 text-[var(--text-secondary)]"
@@ -110,22 +180,34 @@ export default function IdentityCenter() {
             </div>
 
             <div className="flex items-center gap-2 border-t border-[var(--border)] px-4 py-2">
-              <Button variant="ghost" size="sm" className="type-support">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="type-support"
+                data-action="reset"
+                onClick={() => setSelected([])}
+              >
                 <RotateCcw />
                 {t('identity.reselect')}
               </Button>
-              <Button variant="ghost" size="sm" className="type-support">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="type-support"
+                data-action="shuffle"
+                onClick={() => setSelected((prev) => nextTagSelection(prev))}
+              >
                 {t('identity.shuffle')}
               </Button>
               <span className="flex-1" />
-              <Button size="sm" className="type-support">
+              <Button size="sm" className="type-support" data-action="apply" onClick={onApply}>
                 <Check />
                 {t('identity.apply')}
               </Button>
             </div>
           </section>
 
-          {/* ── 其它客群 ── */}
+          {/* ── 其它客群（仍是展示：没有对应的助手与内容） ── */}
           <p className="type-body mt-4 font-semibold text-[var(--text-primary)]">{t('identity.otherGroups')}</p>
           <div className="mt-2 grid grid-cols-4 gap-2.5">
             {otherGroups.map((key) => (
@@ -145,7 +227,7 @@ export default function IdentityCenter() {
       {/* ── 固定底栏 ── */}
       <div className="flex flex-none items-center gap-3 border-t border-[var(--border)] bg-[var(--bg-secondary)] px-5 py-2">
         <span className="type-support flex-1 text-[var(--text-muted)]">{t('identity.footerHint')}</span>
-        <Button size="sm" className="type-support">
+        <Button size="sm" className="type-support" data-action="save" onClick={onSave}>
           {t('identity.save')}
         </Button>
       </div>

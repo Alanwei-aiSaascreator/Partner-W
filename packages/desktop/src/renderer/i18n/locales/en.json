@@ -904,7 +904,9 @@
     "totalEarned": "{{value}} earned in total"
   },
   "identity": {
+    "appliedToast": "Applied \"{{role}}\"",
     "apply": "Apply persona",
+    "applyFailed": "Gateway not connected — cannot apply yet",
     "cardHint": "Pick an identity tag, follow the guide to build your persona, then apply the recommended role and skills in one click.",
     "cardTitle": "Persona generation",
     "direction": "Focus: {{value}}",
@@ -928,6 +930,7 @@
         "name": "Legal & compliance"
       }
     },
+    "needTag": "Pick at least one tag",
     "otherGroups": "Other audience groups",
     "personaDesc": "A professional juggling reports, documents, meetings and data — values structure and output.",
     "personaTag": "Office professional",
@@ -935,6 +938,7 @@
     "roleLabel": "Recommended role",
     "roleValue": "Efficient office",
     "save": "Save and apply this identity",
+    "savedToast": "Identity saved and applied",
     "shuffle": "Shuffle tag",
     "skill": {
       "dataAssistant": "Data assistant",

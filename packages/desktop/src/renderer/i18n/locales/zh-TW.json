@@ -904,7 +904,9 @@
     "totalEarned": "累計獲得 {{value}}"
   },
   "identity": {
+    "appliedToast": "已套用「{{role}}」",
     "apply": "套用此畫像",
+    "applyFailed": "還沒連上閘道，暫時無法套用",
     "cardHint": "選一個身分標籤，跟著引導生成你的專屬人群畫像，一鍵套用推薦角色與技能。",
     "cardTitle": "畫像生成",
     "direction": "分析方向：{{value}}",
@@ -928,6 +930,7 @@
         "name": "法務合規"
       }
     },
+    "needTag": "請至少選一個標籤",
     "otherGroups": "其它客群",
     "personaDesc": "高效職場人匯報、文件、會議、資料多線並行，講究條理與產出。",
     "personaTag": "職場人",
@@ -935,6 +938,7 @@
     "roleLabel": "推薦角色",
     "roleValue": "高效辦公",
     "save": "儲存並套用此身分設定",
+    "savedToast": "身分設定已儲存並套用",
     "shuffle": "換一個標籤",
     "skill": {
       "dataAssistant": "資料助手",

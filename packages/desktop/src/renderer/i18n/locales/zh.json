@@ -904,7 +904,9 @@
     "totalEarned": "累计获得 {{value}}"
   },
   "identity": {
+    "appliedToast": "已应用「{{role}}」",
     "apply": "应用此画像",
+    "applyFailed": "还没连上网关，暂时应用不了",
     "cardHint": "选一个身份标签，跟着引导生成你的专属人群画像，一键应用推荐角色与技能。",
     "cardTitle": "画像生成",
     "direction": "分析方向：{{value}}",
@@ -928,6 +930,7 @@
         "name": "法务合规"
       }
     },
+    "needTag": "请至少选一个标签",
     "otherGroups": "其它客群",
     "personaDesc": "高效职场人汇报、文档、会议、数据多线并行，讲究条理与产出。",
     "personaTag": "职场人",
@@ -935,6 +938,7 @@
     "roleLabel": "推荐角色",
     "roleValue": "高效办公",
     "save": "保存并应用此身份配置",
+    "savedToast": "身份配置已保存并应用",
     "shuffle": "换一个标签",
     "skill": {
       "dataAssistant": "数据助手",

@@ -904,7 +904,9 @@
     "totalEarned": "{{value}} cumulés"
   },
   "identity": {
+    "appliedToast": "« {{role}} » appliqué",
     "apply": "Appliquer le persona",
+    "applyFailed": "Passerelle non connectée — application impossible",
     "cardHint": "Choisissez une étiquette d’identité, suivez le guide pour créer votre persona, puis appliquez le rôle et les compétences recommandés en un clic.",
     "cardTitle": "Générer le persona",
     "direction": "Axe : {{value}}",
@@ -928,6 +930,7 @@
         "name": "Juridique et conformité"
       }
     },
+    "needTag": "Choisissez au moins une étiquette",
     "otherGroups": "Autres audiences",
     "personaDesc": "Un professionnel qui mène de front rapports, documents, réunions et données : structuré et orienté résultats.",
     "personaTag": "Professionnel de bureau",
@@ -935,6 +938,7 @@
     "roleLabel": "Rôle recommandé",
     "roleValue": "Bureau efficace",
     "save": "Enregistrer et appliquer cette identité",
+    "savedToast": "Identité enregistrée et appliquée",
     "shuffle": "Changer d’étiquette",
     "skill": {
       "dataAssistant": "Assistant données",

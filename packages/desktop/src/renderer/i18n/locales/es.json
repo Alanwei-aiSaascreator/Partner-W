@@ -904,7 +904,9 @@
     "totalEarned": "{{value}} acumulados"
   },
   "identity": {
+    "appliedToast": "Se aplicó «{{role}}»",
     "apply": "Aplicar persona",
+    "applyFailed": "Sin conexión con la pasarela: no se puede aplicar",
     "cardHint": "Elige una etiqueta de identidad, sigue la guía para crear tu persona y aplica el rol y las habilidades recomendadas con un clic.",
     "cardTitle": "Generar persona",
     "direction": "Enfoque: {{value}}",
@@ -928,6 +930,7 @@
         "name": "Legal y cumplimiento"
       }
     },
+    "needTag": "Elige al menos una etiqueta",
     "otherGroups": "Otros grupos",
     "personaDesc": "Un profesional que compagina informes, documentos, reuniones y datos: valora el orden y los resultados.",
     "personaTag": "Profesional de oficina",
@@ -935,6 +938,7 @@
     "roleLabel": "Rol recomendado",
     "roleValue": "Oficina eficiente",
     "save": "Guardar y aplicar esta identidad",
+    "savedToast": "Identidad guardada y aplicada",
     "shuffle": "Cambiar etiqueta",
     "skill": {
       "dataAssistant": "Asistente de datos",

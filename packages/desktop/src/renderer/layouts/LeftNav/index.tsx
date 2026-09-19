@@ -26,7 +26,7 @@ import { exportToFiles, exportToLocal } from '@/lib/export-session';
 import TaskItem from './TaskItem';
 import AssistantSwitcher from './AssistantSwitcher';
 import { useGatewaySelector } from '@/hooks/useGatewaySelector';
-import { removeAssistantTaskPresetTags } from '@/lib/assistant-task-preset-tags';
+import { useSelectAgent } from '@/hooks/useSelectAgent';
 import type { TaskStatus } from '@clawwork/shared';
 import EmptyState from '@/components/semantic/EmptyState';
 import { useSessionPreviews } from '@/hooks/useSessionPreviews';
@@ -47,7 +47,6 @@ export default function LeftNav({ onOpenAssistantSettings, onOpenSkills, onOpenS
   const tasks = useTaskStore((s) => s.tasks);
   const activeTaskId = useTaskStore((s) => s.activeTaskId);
   const startNewTask = useTaskStore((s) => s.startNewTask);
-  const setPending = useTaskStore((s) => s.setPending);
   const setActiveTask = useTaskStore((s) => s.setActiveTask);
   const updateTaskStatus = useTaskStore((s) => s.updateTaskStatus);
   const removeTask = useTaskStore((s) => s.removeTask);
@@ -188,7 +187,6 @@ export default function LeftNav({ onOpenAssistantSettings, onOpenSkills, onOpenS
 
   const { selectedGwId, agentCatalog, defaultAgentId } = useGatewaySelector();
   const selectedAgentId = useUiStore((s) => s.selectedAgentByGateway[selectedGwId] ?? '');
-  const setSelectedAgent = useUiStore((s) => s.setSelectedAgent);
   const currentAgentId = selectedAgentId || defaultAgentId || agentCatalog[0]?.id || '';
 
   // ⚠️ 排序**不能**就地 `.sort()`：`tasks` 是 store 里的数组，就地排会改到别人。
@@ -204,24 +202,9 @@ export default function LeftNav({ onOpenAssistantSettings, onOpenSkills, onOpenS
   );
   const sessionPreviews = useSessionPreviews(visibleTasks);
 
-  const handleSelectAgent = useCallback(
-    (agentId: string) => {
-      setSelectedAgent(selectedGwId, agentId);
-      const pending = useTaskStore.getState().pendingNewTask;
-      const sameScope = pending?.gatewayId === selectedGwId && pending.agentId === agentId;
-      const tags = sameScope ? pending?.tags : removeAssistantTaskPresetTags(pending?.tags ?? []);
-      const { tags: _previousTags, ...pendingWithoutTags } = pending ?? {};
-      setPending({
-        ...(sameScope ? pending : pendingWithoutTags),
-        gatewayId: selectedGwId,
-        agentId,
-        ...(tags && tags.length > 0 ? { tags } : {}),
-      });
-      setActiveTask(null);
-      setMainView('chat');
-    },
-    [selectedGwId, setActiveTask, setMainView, setPending, setSelectedAgent],
-  );
+  // ⚠️ 切助手的四步**不在这里**，在 `useSelectAgent` —— 身份中心的「应用此画像」
+  //    也要切助手，两边各写一遍必然漂移（最典型是漏掉 `setPending`）。
+  const handleSelectAgent = useSelectAgent();
 
   const CollapseToggleButton = (
     <Tooltip>
