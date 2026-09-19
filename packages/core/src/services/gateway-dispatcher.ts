@@ -15,6 +15,7 @@ import {
   extractThinking,
   extractToolCalls,
   extractToolResultText,
+  isAwaitingApproval,
   parseToolArgs,
 } from '../protocol/parse-content.js';
 import type { ChatEventPayload } from '../protocol/types.js';
@@ -1066,8 +1067,17 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
     }
 
     let status: ToolCallStatus = 'running';
-    if (data.phase === 'result') status = data.isError ? 'error' : 'done';
-    else if (data.phase === 'error') {
+    if (data.phase === 'result') {
+      // ⚠️ **`isError` 不足以判断"跑完了"**：exec 停在「等人批准」时，工具流那一帧
+      //    带的是 `isError: false`（运行时的失败清单里没有 `approval-pending`，
+      //    且它没有 `exitCode` ⇒ 判断一路兜底 false）。
+      //    照它落地 ⇒ **一条一步都没跑的命令显示成「已完成」**，而且**没有任何后续帧
+      //    会纠正它**：`approval` 流的 `pending` 是"知道但不接"、`item` 的
+      //    `kind:"command"+status:"blocked"` 也在"刻意不接"名单里、合并器**不许降级**。
+      if (data.isError) status = 'error';
+      else if (isAwaitingApproval(data.result)) status = 'running';
+      else status = 'done';
+    } else if (data.phase === 'error') {
       // ⚠️ **这条分支运行时不发** —— 生产代码 11 个发射点里没有 `phase:"error"`
       //    （失败是 `result` + `isError:true`）。留着是防守：真发出来能接住。
       //    但它**不是活代码**，别把它当"我们处理了 error 相位"读。

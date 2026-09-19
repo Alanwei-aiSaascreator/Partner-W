@@ -137,6 +137,40 @@ export function extractToolResultText(result: unknown): string | undefined {
   }
 }
 
+/**
+ * 这个工具结果是不是**「命令还没跑，正等着人批准」**？
+ *
+ * ## 为什么必须单独判
+ *
+ * 运行时的 `ExecToolDetails.status` 是个闭集，其中 **`approval-pending`**
+ *（`src/agents/bash-tools.exec-types.ts`）表示 exec 已挂起、等人批准。
+ * 而工具流那一帧带的是 **`isError: false`**，两道都放行：
+ *
+ * 1. `isToolResultError` 的失败清单（`src/agents/tool-result-error.ts`）里
+ *    **没有** `approval-pending`；
+ * 2. 它的兜底是 `exitCode !== 0`，而 `approval-pending` 那个分支**根本没有
+ *    `exitCode` 字段** ⇒ `typeof undefined !== 'number'` ⇒ `return false`。
+ *
+ * ⇒ 照 `isError` 落地，**一条一步都没跑的命令会显示成「已完成」**。
+ *
+ * ## 为什么只认这一个值
+ *
+ * 同族的 `approval-unavailable`（没有审批通道）**在**失败清单里，但它被
+ * `approvalUnavailable` 压掉 ⇒ 那一帧**同样**是 `isError: false`。
+ * **那条路不归这里管**：它由 `approval` 流兜住，且有回归用例钉着
+ *（连"只看 tool 流会给 done"这个前置都显式断言了）。把它一起收进来是对既有
+ * 行为的改动，属另一个决定 —— 所以这里**刻意收窄**。
+ *
+ * ⚠️ 形状认不出时一律 `false`：说错了会把**真结果**压成"还在跑"（卡片永远转圈），
+ *    那个方向的错更贵。
+ */
+export function isAwaitingApproval(result: unknown): boolean {
+  if (!result || typeof result !== 'object') return false;
+  const details = (result as { details?: unknown }).details;
+  if (!details || typeof details !== 'object') return false;
+  return (details as { status?: unknown }).status === 'approval-pending';
+}
+
 export function safeJsonParse(raw: string): Record<string, unknown> | undefined {
   try {
     return JSON.parse(raw) as Record<string, unknown>;

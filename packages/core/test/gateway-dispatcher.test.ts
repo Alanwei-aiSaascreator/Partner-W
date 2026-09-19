@@ -1877,6 +1877,128 @@ describe('临时会话（多模型对比的一列）：只有那一列看得到�
  * 假夹具让两个真缺陷长期测不出来：参数被裹成 `{raw:{…}}`、工具真正的输出被整块丢掉。
  * ⇒ 夹具跟真实对不上，测试就是绿的谎话。
  */
+/**
+ * ⭐⭐ **一条一步都没跑的命令，卡片不许说「已完成」。**
+ *
+ * 运行时的 `ExecToolDetails.status` 是闭集，里面 **`approval-pending`**
+ * =「命令挂起，等人批准」：
+ * - 它**不在** `isToolResultError` 的失败清单里（`src/agents/tool-result-error.ts`）；
+ * - 那个分支**没有 `exitCode` 字段** ⇒ 判断一路兜底 `return false`；
+ * ⇒ 工具流那一帧带的是 **`isError: false`**（fixture 里工具自己的 `isError` 也是 false，
+ *   因为命令没抛错，只是被挂起了）。
+ *
+ * 照 `isError` 直接落地 ⇒ 我们标 **`done`**。而**没有任何后续帧会纠正它**：
+ * - `approval` 流的 `pending` 我们刻意不接（记过理由：命令还有可能跑）；
+ * - `item` 的 `kind:"command" + status:"blocked"` 也在"刻意不接"名单里；
+ * - 合并器**不许降级**（`done` 一旦落下就粘住）。
+ *
+ * ⚠️ 同族的 `approval-unavailable` **被 approval 流兜住了**（有回归用例钉着，
+ * 它的"前置"还显式断言了 tool 流会给 `done`）⇒ **这一刀只认 `approval-pending`**，
+ * 不动那条路（要动是另一个决定，不是顺手改）。
+ */
+describe('exec 停在「等人批准」时，卡片不许说「已完成」', () => {
+  type EmittedToolCall = { id: string; status: string; completedAt?: string };
+
+  function lastToolCall(h: ReturnType<typeof createHarness>): EmittedToolCall {
+    const calls = h.messageStore.upsertToolCall.mock.calls;
+    expect(calls.length, '应该有工具调用被写进 store').toBeGreaterThan(0);
+    return calls[calls.length - 1]![2] as EmittedToolCall;
+  }
+
+  /** 真实帧：命令挂起等审批 ⇒ 网关报 `isError:false`（字段照抄运行时 fixture）。 */
+  function emitParkedExec(h: ReturnType<typeof createHarness>, toolCallId: string): void {
+    h.emit('agent', {
+      sessionKey: TASK.sessionKey,
+      stream: 'tool',
+      data: {
+        phase: 'result',
+        name: 'exec',
+        toolCallId,
+        meta: 'npm view diver name version description',
+        isError: false,
+        commandBearing: true,
+        result: {
+          content: [{ type: 'text', text: 'Command requires approval.' }],
+          details: {
+            status: 'approval-pending',
+            approvalId: '12345678-1234-1234-1234-123456789012',
+            approvalSlug: '12345678',
+            expiresAtMs: 1_800_000_000_000,
+            host: 'gateway',
+            command: 'npm view diver name version description',
+            cwd: '/tmp/work',
+          },
+        },
+      },
+    });
+  }
+
+  it('⭐⭐ `details.status:"approval-pending"` + `isError:false` ⇒ **不许** done', () => {
+    const h = createHarness();
+
+    emitParkedExec(h, 'call_park');
+
+    const tc = lastToolCall(h);
+    expect(tc.status, '命令一步都没跑 ⇒ 说"已完成"是撒谎').not.toBe('done');
+    expect(tc.status, '它**确实还没结束** ⇒ 诚实的落点是"进行中"').toBe('running');
+  });
+
+  it('⭐ 也**不许**说 error（它没失败，人还没批呢）', () => {
+    const h = createHarness();
+
+    emitParkedExec(h, 'call_park');
+
+    expect(lastToolCall(h).status).not.toBe('error');
+  });
+
+  it('⭐ 不许填 `completedAt`（没结束却带结束时间，等于把谎话写进数据里）', () => {
+    const h = createHarness();
+
+    emitParkedExec(h, 'call_park');
+
+    expect(lastToolCall(h).completedAt).toBeUndefined();
+  });
+
+  it('对照：普通结果（没有 `details`）**照样**是 done', () => {
+    const h = createHarness();
+
+    h.emit('agent', {
+      sessionKey: TASK.sessionKey,
+      stream: 'tool',
+      data: {
+        phase: 'result',
+        name: 'ls',
+        toolCallId: 'call_ls',
+        isError: false,
+        result: { content: [{ type: 'text', text: 'a.md' }] },
+      },
+    });
+
+    expect(lastToolCall(h).status).toBe('done');
+  });
+
+  it('对照：`details.status:"approval-unavailable"` 行为**照旧**（那条路由 approval 流兜，本刀不动）', () => {
+    const h = createHarness();
+
+    h.emit('agent', {
+      sessionKey: TASK.sessionKey,
+      stream: 'tool',
+      data: {
+        phase: 'result',
+        name: 'exec',
+        toolCallId: 'call_unavail',
+        isError: false,
+        result: {
+          content: [{ type: 'text', text: 'Command requires approval.' }],
+          details: { status: 'approval-unavailable', reason: 'no-approval-channel' },
+        },
+      },
+    });
+
+    expect(lastToolCall(h).status, '刻意收窄：只认 approval-pending').toBe('done');
+  });
+});
+
 describe('tool 流：真实网关帧下的数据质量', () => {
   type EmittedToolCall = {
     id: string;
