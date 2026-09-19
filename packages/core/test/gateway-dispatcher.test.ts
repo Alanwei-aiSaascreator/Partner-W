@@ -667,6 +667,110 @@ describe('已知但刻意不接的流：记遥测，但不计入"未知"告警',
     );
   });
 
+  it('⭐ 两种不同的未知流**各算各的**（§11：全局计数会误导排查）', () => {
+    // 一个全局计数器的话，9 + 9 = 18 早就越过阈值了；
+    // 而真实的信号应该是"**同一个**陌生流反复出现"——各 9 条谁都没到 10，都不该报。
+    vi.useFakeTimers();
+    const h = createHarness();
+
+    for (let i = 0; i < 9; i++) {
+      h.emit('agent', { sessionKey: TASK.sessionKey, stream: 'stream_a', data: {} });
+      h.emit('agent', { sessionKey: TASK.sessionKey, stream: 'stream_b', data: {} });
+    }
+    expect(h.deps.reportDebugEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'renderer.agent.unknown_stream.threshold' }),
+    );
+
+    // stream_a 再来一条（它自己满 10）⇒ 只报 a，且带上**它自己的**计数
+    h.emit('agent', { sessionKey: TASK.sessionKey, stream: 'stream_a', data: {} });
+    expect(h.deps.reportDebugEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'renderer.agent.unknown_stream.threshold',
+        data: expect.objectContaining({ stream: 'stream_a', count: 10 }),
+      }),
+    );
+    // stream_b 仍然是 9，不该被顺带报出来
+    expect(h.deps.reportDebugEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'renderer.agent.unknown_stream.threshold',
+        data: expect.objectContaining({ stream: 'stream_b' }),
+      }),
+    );
+  });
+
+  it('⭐ 告警里的 `count` 是**那个流自己**的次数，不是全局累计', () => {
+    // 先把别的未知流灌到 9（全局视角下再加 1 就满 10）
+    vi.useFakeTimers();
+    const h = createHarness();
+    for (let i = 0; i < 9; i++) {
+      h.emit('agent', { sessionKey: TASK.sessionKey, stream: 'noise_stream', data: {} });
+    }
+
+    // 换一个新的流，凑到它自己的第 10 条
+    for (let i = 0; i < 10; i++) {
+      h.emit('agent', { sessionKey: TASK.sessionKey, stream: 'real_signal', data: {} });
+    }
+
+    expect(h.deps.reportDebugEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'renderer.agent.unknown_stream.threshold',
+        data: expect.objectContaining({ stream: 'real_signal', count: 10 }),
+      }),
+    );
+  });
+
+  it('窗口按流**各自**重置（一个流的窗口过了，不该把另一个流的计数也清零）', () => {
+    vi.useFakeTimers();
+    const h = createHarness();
+
+    for (let i = 0; i < 9; i++) h.emit('agent', { sessionKey: TASK.sessionKey, stream: 'stream_a', data: {} });
+    vi.advanceTimersByTime(70_000); // a 的窗口作废
+    for (let i = 0; i < 5; i++) h.emit('agent', { sessionKey: TASK.sessionKey, stream: 'stream_b', data: {} });
+    // b 只到 5，不该报
+    expect(h.deps.reportDebugEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'renderer.agent.unknown_stream.threshold' }),
+    );
+    // a 的窗口过了 ⇒ 从 1 重新数起，要**再满 10 条**才报（不是接着上一次的 9 往下数）
+    for (let i = 0; i < 9; i++) h.emit('agent', { sessionKey: TASK.sessionKey, stream: 'stream_a', data: {} });
+    expect(h.deps.reportDebugEvent, '第 9 条还不该报（上一次窗口的 9 条必须已经作废）').not.toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'renderer.agent.unknown_stream.threshold' }),
+    );
+    h.emit('agent', { sessionKey: TASK.sessionKey, stream: 'stream_a', data: {} });
+    expect(h.deps.reportDebugEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'renderer.agent.unknown_stream.threshold',
+        data: expect.objectContaining({ stream: 'stream_a', count: 10 }),
+      }),
+    );
+  });
+
+  it('⚠️ 跟踪的流名有**上限**：被挤掉的老流从头数起（那张表不能无界增长）', () => {
+    // 键是**外部数据**（网关给的流名）⇒ 不设上限就是一个长驻进程的内存泄漏。
+    // 这里盯的是可观测的后果：老流被挤掉之后，它的计数**重新从 1 开始**。
+    vi.useFakeTimers();
+    const h = createHarness();
+
+    // 100 个不同的陌生流名各来 1 条（超过 64 的上限 ⇒ 最早的会被挤掉）
+    for (let i = 0; i < 100; i++) {
+      h.emit('agent', { sessionKey: TASK.sessionKey, stream: `flood_${i}`, data: {} });
+    }
+
+    for (let i = 0; i < 9; i++) {
+      h.emit('agent', { sessionKey: TASK.sessionKey, stream: 'flood_0', data: {} });
+    }
+    expect(h.deps.reportDebugEvent, 'flood_0 已经被挤掉了，这 9 条是它新一轮的前 9 条').not.toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'renderer.agent.unknown_stream.threshold' }),
+    );
+
+    h.emit('agent', { sessionKey: TASK.sessionKey, stream: 'flood_0', data: {} });
+    expect(h.deps.reportDebugEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'renderer.agent.unknown_stream.threshold',
+        data: expect.objectContaining({ stream: 'flood_0', count: 10 }),
+      }),
+    );
+  });
+
   it('认不出的流照旧算未知（名单不是"什么都收"）', () => {
     const h = createHarness();
     h.emit('agent', { sessionKey: TASK.sessionKey, stream: 'stream_from_the_future', data: {} });

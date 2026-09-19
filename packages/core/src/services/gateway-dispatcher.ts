@@ -399,22 +399,62 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
   const catalogRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   let synced = false;
 
-  let unknownStreamWindowStart = 0;
-  let unknownStreamCount = 0;
+  /**
+   * 未知流的窗口与计数 —— **按流名各算各的**（§11）。
+   *
+   * ⚠️ 原来只有一个**全局**计数器，于是告警里那个 `stream` 根本不是肇事者，
+   * 只是"凑够第 10 条的那个"。实测日志里 9 次告警的 `stream` 分别是
+   * `thinking` / `item` / `usage` —— 其中 `thinking` 和 `item` 是我们**已经处理**的流。
+   * 照那条告警去查，只会查到一个没问题的流。
+   *
+   * 按流分开之后，"同一个陌生流反复出现"才是信号（10 条混合的陌生流不算），
+   * 阈值与窗口都没动（仍是 10 / 60 秒）。
+   */
+  const unknownStreamWindows = new Map<string, { windowStart: number; count: number }>();
 
-  /** 未知事件种类计数；超阈值时额外上报一条，避免它们永远只躺在 debug 日志里。 */
+  /**
+   * 同时跟踪的流名上限。
+   *
+   * ⚠️ 这张表的键是**外部数据**（网关给的流名）。不设上限的话，一个随机流名的发送方
+   * 就能让它无界增长 —— 那是个长驻进程里的内存泄漏。满了先清过期的，还满就丢最早的
+   * （被丢的那个最多少报一次告警，代价可接受）。
+   */
+  const UNKNOWN_STREAM_MAX_TRACKED = 64;
+
+  /** 未知事件种类计数；**同一个流**超阈值时额外上报一条，避免它们永远只躺在 debug 日志里。 */
   function noteUnknownStream(stream: string | undefined, taskId: string, sessionKey: string): void {
     const now = Date.now();
-    if (now - unknownStreamWindowStart > UNKNOWN_STREAM_WINDOW_MS) {
-      unknownStreamWindowStart = now;
-      unknownStreamCount = 0;
+    const key = stream ?? '(missing)';
+
+    if (unknownStreamWindows.size >= UNKNOWN_STREAM_MAX_TRACKED) {
+      for (const [k, w] of unknownStreamWindows) {
+        if (now - w.windowStart > UNKNOWN_STREAM_WINDOW_MS) unknownStreamWindows.delete(k);
+      }
+      if (unknownStreamWindows.size >= UNKNOWN_STREAM_MAX_TRACKED) {
+        const oldest = unknownStreamWindows.keys().next().value;
+        if (oldest !== undefined) unknownStreamWindows.delete(oldest);
+      }
     }
-    unknownStreamCount += 1;
-    if (unknownStreamCount === UNKNOWN_STREAM_ALERT_THRESHOLD) {
+
+    const prev = unknownStreamWindows.get(key);
+    const next =
+      !prev || now - prev.windowStart > UNKNOWN_STREAM_WINDOW_MS
+        ? { windowStart: now, count: 1 }
+        : { windowStart: prev.windowStart, count: prev.count + 1 };
+    unknownStreamWindows.set(key, next);
+
+    if (next.count === UNKNOWN_STREAM_ALERT_THRESHOLD) {
       deps.reportDebugEvent({
         domain: 'renderer',
         event: 'renderer.agent.unknown_stream.threshold',
-        data: { stream, count: unknownStreamCount, windowMs: UNKNOWN_STREAM_WINDOW_MS, taskId, sessionKey },
+        data: {
+          stream: stream ?? null,
+          // ⚠️ 是**这个流自己的**次数，不是全局累计 —— 告警要能直接读懂
+          count: next.count,
+          windowMs: UNKNOWN_STREAM_WINDOW_MS,
+          taskId,
+          sessionKey,
+        },
       });
     }
   }
