@@ -10,6 +10,7 @@ import type {
   ToolsCatalog,
 } from '@clawwork/shared';
 import {
+  extractDeltaText,
   extractText,
   extractThinking,
   extractToolCalls,
@@ -199,6 +200,7 @@ export interface GatewayDispatcherDeps {
     | 'ensureCompactionEpisode'
     | 'setSessionError'
     | 'markRetryableError'
+    | 'replaceStreamText'
   >;
 
   getActiveTaskId: () => string | null;
@@ -589,10 +591,19 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
 
     if (state === 'delta') {
       clearTaskErrorState(taskId);
-      if (text) {
+      // ⭐ **追加还是替换**：delta 帧的 `message.content` 是**全文快照**（白皮书 §4.2 原文），
+      //    只有 v4 的 `deltaText` 才是增量。一律追加会把正文重复膨胀（实测 5–57 倍）。
+      const delta = extractDeltaText(payload);
+      if (delta.text) {
         store.setProcessing(sessionKey, false);
-        store.appendStreamDelta(sessionKey, text);
-        debugEvent('renderer.chat.delta.applied', { taskId, sessionKey, chars: text.length });
+        if (delta.replace) store.replaceStreamText(sessionKey, delta.text);
+        else store.appendStreamDelta(sessionKey, delta.text);
+        debugEvent('renderer.chat.delta.applied', {
+          taskId,
+          sessionKey,
+          chars: delta.text.length,
+          replace: delta.replace,
+        });
       }
       if (thinking) {
         store.appendThinkingDelta(sessionKey, thinking);
@@ -603,7 +614,8 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
       }
     } else if (state === 'final') {
       store.setProcessing(sessionKey, false);
-      if (text) store.appendStreamDelta(sessionKey, text);
+      // `final` 带的同样是**完整正文** ⇒ 替换（追加等于把答案再重复一遍）
+      if (text) store.replaceStreamText(sessionKey, text);
       if (thinking) store.appendThinkingDelta(sessionKey, thinking);
       debugEvent('renderer.chat.final.received', { taskId, sessionKey, chars: text.length });
       const toolCalls = extractToolCalls(payload);

@@ -32,6 +32,7 @@ export type {
 } from './protocol/types.js';
 
 export {
+  extractDeltaText,
   extractText,
   extractThinking,
   extractToolResultText,

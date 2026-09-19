@@ -1,6 +1,46 @@
 import type { ToolCall } from '@clawwork/shared';
 import type { ChatEventPayload, ChatContentBlock } from './types.js';
 
+/**
+ * `chat` 的 delta 帧里**该追加什么、还是该替换**。
+ *
+ * ## 为什么必须有这个函数（真 bug，2026-09-19 定位）
+ *
+ * 原来对 delta 一律 `appendStreamDelta(extractText(payload))`，而 `extractText` 取的是
+ * `message.content[0].text` —— 那是**到此刻为止的全文**，不是增量。两条独立证据：
+ *
+ * 1. **白皮书 §4.2**（2026.4.2 时代，也就是这套代码当初照着写的契约）明写：
+ *    「delta: `message.content[0].text` contains the **full accumulated text** up to this
+ *    point (not just the delta)」。
+ * 2. **真实日志**（09-14，`renderer.chat.delta.applied`）：一轮 118 帧的 Σ字符数 **84,927**，
+ *    而那一轮的 `final` 只有 **1,486** —— **57 倍**。5–57 倍的膨胀只可能是"把全文当增量拼"。
+ *
+ * ⇒ 症状是**流式期间正文重复膨胀**，到 `final`（正文以网关历史为准）才纠正回来；
+ *    中途看到的字是错的。帧少的时候看不出来（多轮实测每轮只有 1 帧）。
+ *
+ * ## 三种形状，每种一个理由（不能一律 append 或一律 replace）
+ *
+ * | 帧 | 正文在哪 | 语义 | 做什么 |
+ * | --- | --- | --- | --- |
+ * | v4 delta | `deltaText` | **增量**（网关用 `text.slice(previous.length)` 切出来的） | 追加 |
+ * | v4 delta + `replace: true` | `deltaText` | **全文**（网关发现新文本不是旧文本的前缀，重发一份） | 替换 |
+ * | 旧形状 delta / final | `message.content` | **全文** | 替换 |
+ *
+ * ⚠️ **v4 帧两者都有**（`deltaText` 是增量、`message.content[0].text` 是全文）
+ *    ⇒ 必须优先取 `deltaText`，取错一个就是那个 57 倍。
+ * ⚠️ 空的 `deltaText` **不做替换**：`replace` 却带空文本会把已生成的正文**清空**，
+ *    用户眼看着内容消失。
+ */
+export function extractDeltaText(payload: ChatEventPayload): { text: string; replace: boolean } {
+  const deltaText = payload.deltaText;
+  if (typeof deltaText === 'string' && deltaText.length > 0) {
+    return { text: deltaText, replace: payload.replace === true };
+  }
+  // 旧形状：`message.content` / 顶层 `content` 是**全文快照** ⇒ 替换，不是追加。
+  const full = extractText(payload);
+  return { text: full, replace: full.length > 0 };
+}
+
 export function extractText(payload: ChatEventPayload): string {
   const blocks = payload.message?.content ?? payload.content;
   if (blocks) {

@@ -64,6 +64,8 @@ function createHarness() {
     }),
     /** 临时会话（多模型对比的一列）的失败走这条旁路，不进时间线。 */
     setSessionError: vi.fn(),
+    /** delta 的 `replace` 语义要用它（见 `extractDeltaText`）。 */
+    replaceStreamText: vi.fn(),
     /** B10：可重试错误的登记（界面据此给「重试」按钮）。 */
     markRetryableError: vi.fn(),
   };
@@ -340,6 +342,78 @@ describe('可重试错误的登记（B10）', () => {
 
     expect(h.messageStore.markRetryableError).not.toHaveBeenCalled();
     expect(h.messageStore.setSessionError).toHaveBeenCalled();
+  });
+});
+
+/**
+ * 🔴 正文的**追加 vs 替换**（2026-09-19 实测定位的真 bug）。
+ *
+ * 原来一律 `appendStreamDelta(extractText(...))`，而 `extractText` 取的是
+ * `message.content[0].text` —— **到此刻为止的全文**。结果：流式期间正文重复膨胀，
+ * 09-14 实测一轮 Σdelta **84,927** 字符 vs final **1,486**，**57 倍**。
+ *
+ * 这里钉的是**接线**：判定在 `extractDeltaText`（有自己的用例），
+ * 但"判定结果有没有真的走到 store 的对应动作"只有在这一层才看得见。
+ */
+describe('chat delta：追加还是替换（接线）', () => {
+  const SK = TASK.sessionKey;
+
+  it('⭐ 旧形状（`content` 是全文快照）⇒ 走 **replace**，不是 append', () => {
+    const h = createHarness();
+
+    h.emit('chat', {
+      sessionKey: SK,
+      state: 'delta',
+      message: { role: 'assistant', content: [{ type: 'text', text: '到此刻为止的全文' }] },
+    });
+
+    expect(h.messageStore.replaceStreamText).toHaveBeenCalledWith(SK, '到此刻为止的全文');
+    expect(h.messageStore.appendStreamDelta, '把全文当增量追加 = 那个 57 倍').not.toHaveBeenCalled();
+  });
+
+  it('⭐ v4：有 `deltaText`（增量）⇒ 走 **append**', () => {
+    const h = createHarness();
+
+    h.emit('chat', {
+      sessionKey: SK,
+      state: 'delta',
+      deltaText: '增量',
+      message: { role: 'assistant', content: [{ type: 'text', text: '很长很长的全文' }] },
+    });
+
+    expect(h.messageStore.appendStreamDelta).toHaveBeenCalledWith(SK, '增量');
+    expect(h.messageStore.replaceStreamText).not.toHaveBeenCalled();
+  });
+
+  it('⭐ v4 + `replace: true` ⇒ `deltaText` 是全文 ⇒ 走 **replace**', () => {
+    const h = createHarness();
+
+    h.emit('chat', { sessionKey: SK, state: 'delta', deltaText: '重写的全文', replace: true });
+
+    expect(h.messageStore.replaceStreamText).toHaveBeenCalledWith(SK, '重写的全文');
+    expect(h.messageStore.appendStreamDelta).not.toHaveBeenCalled();
+  });
+
+  it('⚠️ `replace` 但文本为空 ⇒ **两个都不调**（空的替换会把正文清空）', () => {
+    const h = createHarness();
+
+    h.emit('chat', { sessionKey: SK, state: 'delta', deltaText: '', replace: true });
+
+    expect(h.messageStore.replaceStreamText).not.toHaveBeenCalled();
+    expect(h.messageStore.appendStreamDelta).not.toHaveBeenCalled();
+  });
+
+  it('`final` 的正文也是**全文** ⇒ 也走 replace（不是 append）', () => {
+    const h = createHarness();
+
+    h.emit('chat', {
+      sessionKey: SK,
+      state: 'final',
+      message: { role: 'assistant', content: [{ type: 'text', text: '最终全文' }] },
+    });
+
+    expect(h.messageStore.replaceStreamText).toHaveBeenCalledWith(SK, '最终全文');
+    expect(h.messageStore.appendStreamDelta).not.toHaveBeenCalled();
   });
 });
 
@@ -950,7 +1024,10 @@ describe('临时会话（多模型对比的一列）：只有那一列看得到�
     const h = createCompareHarness();
     emitChat(h, KEY_0, 'delta', { ...textBlocks('第 1 列的字') });
 
-    expect(h.messageStore.appendStreamDelta).toHaveBeenCalledWith(KEY_0, '第 1 列的字');
+    // ⚠️ 断言的是"**落到了那一列的会话键上**"，不是"用了哪个 store 动作"——
+    //    这条用的是旧形状（`content` 是全文快照）⇒ 现在走 `replaceStreamText`。
+    //    见 `extractDeltaText`：content 是全文，追加它会把正文重复膨胀（实测 57 倍）。
+    expect(h.messageStore.replaceStreamText).toHaveBeenCalledWith(KEY_0, '第 1 列的字');
     // 没被当成"认不出的会话"丢掉
     expect(h.deps.reportDebugEvent).not.toHaveBeenCalledWith(
       expect.objectContaining({ event: 'renderer.event.dropped.invalid_task' }),

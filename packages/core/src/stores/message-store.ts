@@ -126,6 +126,15 @@ export interface MessageState {
   upsertToolCall: (sessionKey: string, taskId: string, tc: ToolCall) => void;
   bulkLoad: (taskId: string, msgs: Message[]) => void;
   appendStreamDelta: (sessionKey: string, delta: string) => void;
+  /**
+   * 把这一轮的流式正文**整个换掉**（不是追加）。
+   *
+   * ⚠️ 为什么增量之外还需要它：`chat` 的 delta 帧里 `message.content[0].text`
+   *    是**到此刻为止的全文**（白皮书 §4.2 原文），v4 的 `deltaText` 在 `replace` 时
+   *    也是全文。把这些当增量追加，正文会**重复膨胀**（实测 5–57 倍）。
+   *    见 `extractDeltaText` 的说明。
+   */
+  replaceStreamText: (sessionKey: string, text: string) => void;
   appendThinkingDelta: (sessionKey: string, delta: string) => void;
   finalizeStream: (sessionKey: string, meta?: { runId?: string }) => void;
   promoteActiveTurn: (sessionKey: string, taskId: string, canonical: Message) => void;
@@ -441,6 +450,16 @@ export function createMessageStore(deps: MessageStoreDeps) {
               streamingText: mergeGatewayStreamText(turn.streamingText, delta),
             },
           },
+        };
+      }),
+
+    // ⚠️ 不用 `mergeGatewayStreamText`：那是给**增量**用的合并规则，
+    //    对"全文快照"会做出重复拼接（正是要修的那个 bug）。
+    replaceStreamText: (sessionKey, text) =>
+      set((s) => {
+        const turn = s.activeTurnBySession[sessionKey] ?? newActiveTurn();
+        return {
+          activeTurnBySession: { ...s.activeTurnBySession, [sessionKey]: { ...turn, streamingText: text } },
         };
       }),
 

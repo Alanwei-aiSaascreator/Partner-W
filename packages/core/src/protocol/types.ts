@@ -13,6 +13,19 @@ export interface ChatEventPayload {
   message?: ChatMessage;
   content?: ChatContentBlock[];
   text?: string;
+  /**
+   * **增量**正文（协议 v4 的 `ChatDeltaEventSchema.deltaText`）。
+   *
+   * ⚠️ v4 的 delta 帧**同时**带它和 `message.content`：这里是**增量**，
+   *    而 `message.content[0].text` 是**到此刻为止的全文**。取错一个就会把全文
+   *    当增量拼起来（实测膨胀 5–57 倍）。见 `extractDeltaText` 的说明。
+   */
+  deltaText?: string;
+  /**
+   * `deltaText` 是**全文**而不是增量（网关发现新文本不是旧文本的前缀时会这么标）。
+   * 契约是 `ChatDeltaEventSchema.replace`。
+   */
+  replace?: boolean;
   errorMessage?: string;
   /**
    * 网关给的**结构化**错误类别 —— 协议里有 validator（`ChatEventErrorKindSchema`）。
