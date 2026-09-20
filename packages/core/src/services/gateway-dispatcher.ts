@@ -1788,17 +1788,27 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
     scheduleCatalogRetry(gatewayId, attempt);
   }
 
-  /** 落目录。空目录先不当真 —— 理由见 CATALOG_RETRY_DELAYS_MS。 */
+  /**
+   * 落目录。空目录先不当真 —— 理由见 CATALOG_RETRY_DELAYS_MS。
+   *
+   * ⚠️ 这里**不**自己清「取不到」标记（2026-09-20 复核拍板：那两处是冗余的）。
+   *    清理由 store 的 `setModelCatalogForGateway` **原子**完成 —— 落下目录本身就是
+   *    "取不到"被否证的证据，写两遍只是让同一个判断有两个可漂移的副本。
+   *    该不变式由 `packages/core/test/ui-store-catalog-failure.test.ts` 直接钉住。
+   *    （实测口径：变异验证里删掉 store 的清理，红的是**那条 store 单测**，
+   *      不是跨层测试 —— 因为每次落目录之前都先有一次"起链归位"，所以那份清理今天
+   *      在真实调用图里**不可达**，它是 store 层的兜底不变式，不是死代码。）
+   *    ⚠️ 但**起链时**那次归位（`fetchCatalogs`，界面回到"正在准备"）要留着 ——
+   *    它才是重连后不让用户看到上一轮失败结论的那一次。
+   */
   function applyModelsCatalog(gatewayId: string, models: unknown[], attempt: number): void {
     if (models.length > 0) {
       cancelCatalogRetry(gatewayId);
-      deps.setModelCatalogFailureForGateway(gatewayId, false);
       deps.setModelCatalogForGateway(gatewayId, models);
       return;
     }
     if (attempt >= CATALOG_RETRY_DELAYS_MS.length) {
       // 退避用完还是空：当作真的没有模型，让界面如实显示「暂无可用模型」。
-      deps.setModelCatalogFailureForGateway(gatewayId, false);
       deps.setModelCatalogForGateway(gatewayId, models);
       return;
     }

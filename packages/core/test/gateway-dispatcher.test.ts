@@ -1689,11 +1689,11 @@ describe('fetchCatalogs —— 目录**取失败**也要进退避，用尽后落
 
     expect(calls).toBeGreaterThan(1);
     expect(h.deps.setModelCatalogForGateway).toHaveBeenLastCalledWith('gw-1', models);
-    // 落目录那一刻"取不到"就该归位（清理由 store 的 setModelCatalogForGateway 负责，
-    // 这里只钉住**没有**在成功之后还留着失败标记）。
-    const failures = (h.deps.setModelCatalogFailureForGateway as unknown as { mock: { calls: unknown[][] } }).mock
-      .calls;
-    expect(failures.at(-1)).toEqual(['gw-1', false]);
+    // 落目录那一刻"取不到"就该归位。⚠️ 2026-09-20 复核拍板：**清理由 store 的
+    // `setModelCatalogForGateway` 原子完成**，dispatcher 里那两处显式清是冗余的、已删。
+    // 所以这里不再断言"最后调了一次 (gw,false)"（那其实钉的是**起链时**那次归位），
+    // 改成钉住更要紧的那件事：**成功这一路从没把标记写成 true**（写脏了才是真 bug）。
+    expect(h.deps.setModelCatalogFailureForGateway).not.toHaveBeenCalledWith('gw-1', true);
   });
 });
 
