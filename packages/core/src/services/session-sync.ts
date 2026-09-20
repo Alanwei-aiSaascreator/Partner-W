@@ -105,6 +105,13 @@ export interface SessionSyncDeps {
         inputTokens?: number;
         outputTokens?: number;
         contextTokens?: number;
+        /**
+         * 这一轮的"最后活动时间"。**同步元数据时必须带上它** —— 缺省时 store 会填
+         * `new Date()`（见 `task-store.ts` 的 `meta.updatedAt ?? new Date()`），
+         * 于是每启动同步一圈就把所有任务的排序时间抹平（2026-09-20 实测 42 个任务
+         * 全落在 5 毫秒里），侧栏「最近任务」的排序退化成任意顺序。
+         */
+        updatedAt?: string;
       },
     ) => void;
   };
