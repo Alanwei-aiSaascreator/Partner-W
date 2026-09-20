@@ -1492,6 +1492,7 @@
     "agentSkillUnavailable": "Unavailable",
     "agentUpdated": "Agent updated",
     "agentWorkspace": "Workspace",
+    "agentWorkspaceMustBeAbsolute": "Enter a full path for the workspace (for example D:\\workspace). A relative path gets resolved somewhere else, and the assistant will not find its own files.",
     "agentWorkspacePlaceholder": "/path/to/workspace",
     "agentWorkspaceRequired": "Workspace path is required",
     "alreadyLatest": "You are on the latest version",

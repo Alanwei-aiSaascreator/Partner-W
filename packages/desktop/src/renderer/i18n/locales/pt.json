@@ -1492,6 +1492,7 @@
     "agentSkillUnavailable": "Indisponível",
     "agentUpdated": "Agente atualizado",
     "agentWorkspace": "Workspace",
+    "agentWorkspaceMustBeAbsolute": "Informe um caminho completo para o espaço de trabalho (por exemplo, D:\\workspace). Um caminho relativo é resolvido em outro lugar e o assistente não encontrará os próprios arquivos.",
     "agentWorkspacePlaceholder": "/caminho/para/workspace",
     "agentWorkspaceRequired": "O caminho do workspace é obrigatório",
     "alreadyLatest": "Você está na versão mais recente",

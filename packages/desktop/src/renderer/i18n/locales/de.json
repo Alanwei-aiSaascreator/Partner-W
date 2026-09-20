@@ -1492,6 +1492,7 @@
     "agentSkillUnavailable": "Nicht verfuegbar",
     "agentUpdated": "Agent aktualisiert",
     "agentWorkspace": "Arbeitsbereich",
+    "agentWorkspaceMustBeAbsolute": "Gib einen vollständigen Pfad für den Arbeitsbereich an (z. B. D:\\workspace). Ein relativer Pfad wird woanders aufgelöst, und der Assistent findet seine eigenen Dateien nicht.",
     "agentWorkspacePlaceholder": "/pfad/zum/arbeitsbereich",
     "agentWorkspaceRequired": "Arbeitsbereich-Pfad ist erforderlich",
     "alreadyLatest": "Sie verwenden die neueste Version",

@@ -3,6 +3,7 @@ import {
   WORKSPACE_UNAVAILABLE_MESSAGE,
   checkInstallWorkspace,
   isAbsoluteWorkspacePath,
+  isWorkspaceInputResolvable,
 } from '../src/renderer/lib/install-workspace';
 
 /**
@@ -66,5 +67,41 @@ describe('isAbsoluteWorkspacePath', () => {
     expect(isAbsoluteWorkspacePath('C:')).toBe(false);
     expect(isAbsoluteWorkspacePath('C:ws')).toBe(false);
     expect(isAbsoluteWorkspacePath('')).toBe(false);
+  });
+});
+
+/**
+ * ⭐ 2026-09-20 T-a28 同族（设置里那个**手打**工作区输入框）。
+ *
+ * 判据为什么比 `isAbsoluteWorkspacePath` 宽一档：`~` 是**网关那边真的会展开**的写法
+ * （随包运行时 `home-dir-59dFSOZn.mjs:55-63`：只认 `~` 后跟结尾或 `[\\/]`）。
+ * 而相对路径是**必须拒**的 —— `agents.create` 由网关那个进程解析
+ * （`agent-create-BSK3Nvv3.mjs:121` → `home-dir-59dFSOZn.mjs:66-79 path.resolve`），
+ * 相对路径 = 网关的 cwd，目录落在别处而且**不报错**。
+ */
+describe('isWorkspaceInputResolvable', () => {
+  it('绝对路径 ⇒ 放行', () => {
+    expect(isWorkspaceInputResolvable('D:\\魔方工作区')).toBe(true);
+    expect(isWorkspaceInputResolvable('  D:/ws  ')).toBe(true);
+    expect(isWorkspaceInputResolvable('\\\\nas\\share\\ws')).toBe(true);
+  });
+
+  it('⭐ `~` / `~/…` / `~\\…` ⇒ 放行（网关会展开成家目录，这条本来就能用）', () => {
+    expect(isWorkspaceInputResolvable('~')).toBe(true);
+    expect(isWorkspaceInputResolvable('~/工作区')).toBe(true);
+    expect(isWorkspaceInputResolvable('~\\工作区')).toBe(true);
+  });
+
+  it('⭐ `~abc` ⇒ 拒（网关只认 `~` 后跟结尾或分隔符，其余情况会**不展开**然后按 cwd 解析）', () => {
+    expect(isWorkspaceInputResolvable('~abc')).toBe(false);
+  });
+
+  it('相对路径 / 空 ⇒ 拒', () => {
+    expect(isWorkspaceInputResolvable('荣盈魔方-运行数据\\工作区')).toBe(false);
+    expect(isWorkspaceInputResolvable('new-agent')).toBe(false);
+    expect(isWorkspaceInputResolvable('C:')).toBe(false);
+    expect(isWorkspaceInputResolvable('')).toBe(false);
+    expect(isWorkspaceInputResolvable('   ')).toBe(false);
+    expect(isWorkspaceInputResolvable(null)).toBe(false);
   });
 });

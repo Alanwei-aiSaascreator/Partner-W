@@ -1492,6 +1492,7 @@
     "agentSkillUnavailable": "利用不可",
     "agentUpdated": "エージェントを更新しました",
     "agentWorkspace": "ワークスペース",
+    "agentWorkspaceMustBeAbsolute": "ワークスペースには完全なパスを入力してください（例：D:\\workspace）。相対パスは別の場所に解決されるため、アシスタントは自分のファイルを見つけられません。",
     "agentWorkspacePlaceholder": "/path/to/workspace",
     "agentWorkspaceRequired": "ワークスペースパスは必須です",
     "alreadyLatest": "最新バージョンです",

@@ -1492,6 +1492,7 @@
     "agentSkillUnavailable": "사용 불가",
     "agentUpdated": "에이전트가 업데이트되었습니다",
     "agentWorkspace": "워크스페이스",
+    "agentWorkspaceMustBeAbsolute": "작업 공간에는 전체 경로를 입력하세요(예: D:\\workspace). 상대 경로는 다른 위치로 해석되어 도우미가 자신의 파일을 찾지 못합니다.",
     "agentWorkspacePlaceholder": "/path/to/workspace",
     "agentWorkspaceRequired": "워크스페이스 경로를 입력해 주세요",
     "alreadyLatest": "최신 버전을 사용 중입니다",

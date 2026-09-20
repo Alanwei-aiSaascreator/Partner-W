@@ -1492,6 +1492,7 @@
     "agentSkillUnavailable": "No disponible",
     "agentUpdated": "Agente actualizado",
     "agentWorkspace": "Espacio de trabajo",
+    "agentWorkspaceMustBeAbsolute": "Indica una ruta completa para el espacio de trabajo (p. ej. D:\\workspace). Una ruta relativa se resuelve en otro lugar y el asistente no encontrará sus propios archivos.",
     "agentWorkspacePlaceholder": "/ruta/al/espacio",
     "agentWorkspaceRequired": "La ruta del espacio de trabajo es obligatoria",
     "alreadyLatest": "Ya tienes la versión más reciente",

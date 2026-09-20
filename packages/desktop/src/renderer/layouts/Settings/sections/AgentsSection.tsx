@@ -40,6 +40,7 @@ import LoadingBlock from '@/components/semantic/LoadingBlock';
 import SettingGroup from '@/components/semantic/SettingGroup';
 import ToolbarButton from '@/components/semantic/ToolbarButton';
 import { createAgentWithRollback } from '@/lib/agent-builder';
+import { isWorkspaceInputResolvable } from '@/lib/install-workspace';
 import { AVATAR_ACCEPT, readFileAsDataUrl, validateAvatarFile } from '@/lib/avatar-utils';
 
 const EMPTY_MODELS: ModelCatalogEntry[] = [];
@@ -822,6 +823,16 @@ export default function AgentsSection() {
 
     if (!editingAgentId && !form.workspace.trim()) {
       toast.error(t('settings.agentWorkspaceRequired'));
+      return;
+    }
+
+    // ⭐ 非空还不够：手打相对路径的话，值会原样进 `agents.create`，由**网关那个进程**按它自己的
+    // cwd 解析（随包运行时 `agent-create-BSK3Nvv3.mjs:121` → `home-dir-59dFSOZn.mjs:66-79`）
+    // ⇒ 助手的文件落在谁也没预期的地方，而且**不报错**。`~` 开头放行（网关会展开成家目录）。
+    // ⚠️ 只查**新建**：编辑态那个框是只读的（值来自网关），不拦 —— 否则存量里已经被旧 bug
+    // 写成相对路径的助手，连改个名字都会被这里挡住。
+    if (!editingAgentId && !isWorkspaceInputResolvable(form.workspace)) {
+      toast.error(t('settings.agentWorkspaceMustBeAbsolute'));
       return;
     }
 

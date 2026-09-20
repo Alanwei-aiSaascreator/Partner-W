@@ -27,3 +27,23 @@ export function checkInstallWorkspace(raw: string | null | undefined): InstallWo
   if (!path || !isAbsoluteWorkspacePath(path)) return { ok: false, message: WORKSPACE_UNAVAILABLE_MESSAGE };
   return { ok: true, path };
 }
+
+/**
+ * 「**用户手打**的工作区字符串」能不能信 —— 比 `isAbsoluteWorkspacePath` 宽一档：
+ * 绝对路径之外，`~` / `~/…` / `~\…` 也放行，因为**网关那边确实会**把 `~` 展开成家目录
+ * （随包运行时 `home-dir-59dFSOZn.mjs:55-63` `expandHomePrefix`：只认 `~` 后跟结尾或 `[\\/]`
+ * ⇒ `~abc` 不算、要拒）。
+ *
+ * ⚠️ 为什么这个判据非要有：写进 `agents.create` 的工作区是交给**网关那个进程**去解析的
+ * （`agent-create-BSK3Nvv3.mjs:121` → `home-dir-59dFSOZn.mjs:66-79` `path.resolve`）
+ * ⇒ **相对路径 = 网关进程的 cwd**，助手的文件落在谁也没预期的地方，而且**全程不报错**。
+ *
+ * ⚠️ 与 `checkInstallWorkspace` 分开、别互相替代：安装路径是**我们自己**给的
+ * （`getWorkspacePath()` 的返回值，天然绝对），不需要为 `~` 开口子；这里是**用户手打**的。
+ */
+export function isWorkspaceInputResolvable(raw: string | null | undefined): boolean {
+  const path = (raw ?? '').trim();
+  if (!path) return false;
+  if (path === '~' || /^~[\\/]/.test(path)) return true;
+  return isAbsoluteWorkspacePath(path);
+}

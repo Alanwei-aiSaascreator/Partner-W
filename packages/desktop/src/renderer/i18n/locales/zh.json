@@ -1492,6 +1492,7 @@
     "agentSkillUnavailable": "不可用",
     "agentUpdated": "智能体已更新",
     "agentWorkspace": "工作空间",
+    "agentWorkspaceMustBeAbsolute": "工作空间要填完整路径（例如 D:\\工作区）—— 相对路径会被解析到别的地方，助手会找不到自己的文件",
     "agentWorkspacePlaceholder": "/path/to/workspace",
     "agentWorkspaceRequired": "工作空间路径不能为空",
     "alreadyLatest": "已是最新版本",
