@@ -110,6 +110,15 @@ export interface UiState {
   modelCatalogByGateway: Record<string, ModelCatalogEntry[]>;
   setModelCatalogForGateway: (gatewayId: string, models: ModelCatalogEntry[]) => void;
 
+  /**
+   * 模型目录**取不到**的标记（缺席 = 没失败）。与"目录为空"是两件事：
+   * 空目录是**已解决**的结论（网关确实没给出可用模型），取不到是**没问出来**。
+   * 界面把 `undefined` 目录读成"正在准备模型…"，所以取不到必须有自己的名字，
+   * 否则用户会**永远**停在加载态（2026-09-20 用户报障）。
+   */
+  modelCatalogFailureByGateway: Record<string, true>;
+  setModelCatalogFailureForGateway: (gatewayId: string, failed: boolean) => void;
+
   agentCatalogByGateway: Record<string, { agents: AgentInfo[]; defaultId: string }>;
   setAgentCatalogForGateway: (gatewayId: string, agents: AgentInfo[], defaultId: string) => void;
 
@@ -312,13 +321,26 @@ export function createUiStore(deps: UiStoreDeps) {
     setHasUpdate: (has) => set({ hasUpdate: has }),
 
     modelCatalogByGateway: {},
+    modelCatalogFailureByGateway: {},
     setModelCatalogForGateway: (gatewayId, models) =>
-      set((s) => ({
-        modelCatalogByGateway: {
-          ...s.modelCatalogByGateway,
-          [gatewayId]: models,
-        },
-      })),
+      set((s) => {
+        const modelCatalogByGateway = { ...s.modelCatalogByGateway, [gatewayId]: models };
+        // 落目录本身就作废「取不到」的标记：空目录是**已解决**的结论，不是失败。
+        if (s.modelCatalogFailureByGateway[gatewayId] === undefined) return { modelCatalogByGateway };
+        const modelCatalogFailureByGateway = { ...s.modelCatalogFailureByGateway };
+        delete modelCatalogFailureByGateway[gatewayId];
+        return { modelCatalogByGateway, modelCatalogFailureByGateway };
+      }),
+    setModelCatalogFailureForGateway: (gatewayId, failed) =>
+      set((s) => {
+        const marked = s.modelCatalogFailureByGateway[gatewayId] === true;
+        // 没变化就不写：否则每次重连都会换一次对象引用 ⇒ 订阅者整片重渲染。
+        if (marked === failed) return s;
+        const modelCatalogFailureByGateway = { ...s.modelCatalogFailureByGateway };
+        if (failed) modelCatalogFailureByGateway[gatewayId] = true;
+        else delete modelCatalogFailureByGateway[gatewayId];
+        return { modelCatalogFailureByGateway };
+      }),
 
     agentCatalogByGateway: {},
     setAgentCatalogForGateway: (gatewayId, agents, defaultId) =>

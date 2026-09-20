@@ -101,6 +101,8 @@ function getDispatcher(): GatewayDispatcher {
 
       setModelCatalogForGateway: (gatewayId, models) =>
         useUiStore.getState().setModelCatalogForGateway(gatewayId, models as ModelCatalogEntry[]),
+      setModelCatalogFailureForGateway: (gatewayId, failed) =>
+        useUiStore.getState().setModelCatalogFailureForGateway(gatewayId, failed),
       setAgentCatalogForGateway: (gatewayId, agents, defaultId) =>
         useUiStore.getState().setAgentCatalogForGateway(gatewayId, agents as AgentInfo[], defaultId),
       setToolsCatalogForGateway: (gatewayId, catalog) =>

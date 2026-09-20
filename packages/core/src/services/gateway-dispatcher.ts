@@ -274,6 +274,7 @@ export interface GatewayDispatcherDeps {
   getGatewayInfoMap: () => Record<string, { id: string; name: string; color?: string }>;
 
   setModelCatalogForGateway: (gatewayId: string, models: unknown[]) => void;
+  setModelCatalogFailureForGateway: (gatewayId: string, failed: boolean) => void;
   setAgentCatalogForGateway: (gatewayId: string, agents: unknown[], defaultId: string) => void;
   setToolsCatalogForGateway: (gatewayId: string, catalog: ToolsCatalog) => void;
   setSkillsStatusForGateway: (gatewayId: string, report: SkillStatusReport) => void;
@@ -1768,15 +1769,36 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
     catalogRetryTimers.set(gatewayId, timer);
   }
 
+  /**
+   * 取失败（`ok:false` / 回包里没有 `models` / 直接抛异常）走**同一条**有界退避。
+   *
+   * ⚠️ 2026-09-20（用户报障「用着用着一直卡在加载模型」）：这三种形态原来**什么都不做**
+   *    —— 只有一句 `console.warn`。退避链于是**根本不启动**，`applyModelsCatalog`
+   *    也永远不会被调用，store 里那个网关的目录**永远是 `undefined`**；
+   *    而界面把 `undefined` 读成"正在准备模型…" ⇒ **永远停在加载态**，重试按钮也不出现。
+   *    修法：失败与"空目录"共用同一个预算（次数与延迟都一样，约 60 秒），
+   *    退避用尽后落一个**显式失败态**（`setModelCatalogFailureForGateway`）——
+   *    它既不是"没有模型"（那是替网关下结论），也不是"还在加载"（那会让人一直等）。
+   */
+  function handleCatalogFailure(gatewayId: string, attempt: number): void {
+    if (attempt >= CATALOG_RETRY_DELAYS_MS.length) {
+      deps.setModelCatalogFailureForGateway(gatewayId, true);
+      return;
+    }
+    scheduleCatalogRetry(gatewayId, attempt);
+  }
+
   /** 落目录。空目录先不当真 —— 理由见 CATALOG_RETRY_DELAYS_MS。 */
   function applyModelsCatalog(gatewayId: string, models: unknown[], attempt: number): void {
     if (models.length > 0) {
       cancelCatalogRetry(gatewayId);
+      deps.setModelCatalogFailureForGateway(gatewayId, false);
       deps.setModelCatalogForGateway(gatewayId, models);
       return;
     }
     if (attempt >= CATALOG_RETRY_DELAYS_MS.length) {
       // 退避用完还是空：当作真的没有模型，让界面如实显示「暂无可用模型」。
+      deps.setModelCatalogFailureForGateway(gatewayId, false);
       deps.setModelCatalogForGateway(gatewayId, models);
       return;
     }
@@ -1788,24 +1810,30 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
       const res = await deps.gateway.listModels(gatewayId);
       if (res.ok && res.result) {
         const data = res.result as unknown as ModelListResponse;
-        if (data.models) applyModelsCatalog(gatewayId, data.models, attempt);
+        if (data.models) {
+          applyModelsCatalog(gatewayId, data.models, attempt);
+          return;
+        }
       }
+      // `ok:false` / 没有 `models` 字段：都算**没问出来**，进同一条退避。
+      handleCatalogFailure(gatewayId, attempt);
     } catch {
       console.warn('[catalogs] Failed to refetch models for gateway', gatewayId);
+      handleCatalogFailure(gatewayId, attempt);
     }
   }
 
   async function fetchCatalogs(gatewayId: string): Promise<void> {
+    // 起一条新链：先把「取不到」归位（界面回到"正在准备"），失败与为空都会自己再走退避。
+    deps.setModelCatalogFailureForGateway(gatewayId, false);
+    // 目录**单独**起步：它的失败必须进退避（见 handleCatalogFailure），
+    // 不能因为同一批里别的目录抛错就被整体的 try/catch 吞掉。
+    void refetchModelsCatalog(gatewayId, 0);
     try {
-      const [modelsRes, agentsRes, skillsRes] = await Promise.all([
-        deps.gateway.listModels(gatewayId),
+      const [agentsRes, skillsRes] = await Promise.all([
         deps.gateway.listAgents(gatewayId),
         deps.gateway.getSkillsStatus(gatewayId),
       ]);
-      if (modelsRes.ok && modelsRes.result) {
-        const data = modelsRes.result as unknown as ModelListResponse;
-        if (data.models) applyModelsCatalog(gatewayId, data.models, 0);
-      }
       if (agentsRes.ok && agentsRes.result) {
         const data = agentsRes.result as unknown as AgentListResponse;
         if (data.agents) deps.setAgentCatalogForGateway(gatewayId, data.agents, data.defaultId);

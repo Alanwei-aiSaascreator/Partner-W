@@ -403,6 +403,8 @@
     "modelGone": "「{{model}}」は利用できなくなりました。下のメニューから別のモデルを選んでください",
     "modelsLoading": "モデルを準備しています…",
     "modelsLoadingDetail": "準備が完了すると、モデルが自動的に表示されます。",
+    "modelsUnavailable": "モデル一覧を取得できませんでした",
+    "modelsUnavailableDetail": "ローカルサービスかネットワークが応答しませんでした。再接続すると自動でもう一度取得します。",
     "noModelsAvailable": "現在利用できるモデルはありません",
     "noModelsAvailableDetail": "ネットワークを確認するか、後でもう一度モデル一覧を開いてください。",
     "offlineReadOnly": "オフライン — 読み取り専用",
@@ -1752,6 +1754,7 @@
     "tooltip": "コマンド"
   },
   "startupReadiness": {
+    "aiCatalogFailed": "モデル一覧を取得できませんでした",
     "aiError": "現在利用できるモデルがありません",
     "aiLoadingModels": "利用可能なモデルを準備しています",
     "aiReady": "モデルの準備ができました",

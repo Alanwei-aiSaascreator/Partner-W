@@ -31,6 +31,7 @@ const baseReadiness: StartupReadiness = {
   conversationReady: false,
   isReady: false,
   hasError: false,
+  composerBlocked: true,
 };
 
 function render(ui: ReactElement): { container: HTMLDivElement; unmount: () => void } {
@@ -202,6 +203,28 @@ describe('StartupReadinessScreen', () => {
 });
 
 describe('StartupReadinessPanel', () => {
+  /**
+   * ⭐ 2026-09-20（用户报障「一直卡在加载模型」）：`StartupAiPhase` 新增 `'catalog-failed'` 之后，
+   * 面板的 `currentStatus` 是一条**三元链** —— 认不出的相位不会报错，只会**静默落到**
+   * `assistants.*` / `aiReady`，于是"没能取到模型列表"会被显示成"模型已准备好"。
+   * 这条就守着那条链（同时守着：失败态必须给重试出口）。
+   */
+  it('⭐ 目录取不到 ⇒ 说的是"没能取到"，不是"模型已准备好"', () => {
+    const readiness: StartupReadiness = {
+      ...baseReadiness,
+      ai: { phase: 'catalog-failed' },
+      hasError: true,
+      composerBlocked: false,
+    };
+    const { container, unmount } = render(<StartupReadinessPanel readiness={readiness} onRetry={vi.fn()} />);
+
+    expect(container.textContent).toContain('startupReadiness.aiCatalogFailed');
+    expect(container.textContent).not.toContain('startupReadiness.aiReady');
+    expect(container.textContent).not.toContain('startupReadiness.aiLoadingModels');
+    expect(container.textContent, '失败态要给重试出口').toContain('startupReadiness.retry');
+    unmount();
+  });
+
   it('shows one truthful assistant progress indicator and the current stage', () => {
     const readiness: StartupReadiness = {
       ...baseReadiness,

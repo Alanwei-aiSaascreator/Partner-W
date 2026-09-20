@@ -25,14 +25,18 @@ export default function StartupReadinessScreen({ readiness, onRetry }: StartupRe
     const definition = PRESET_AGENT_DEFINITIONS.find((item) => item.id === id);
     return definition ? t(definition.displayNameKey) : id;
   };
+  // ⚠️ 这是一条**三元链**：认不出的相位不会报错，只会静默落到最后的 `aiReady`。
+  //    所以每加一个相位都得在这里显式提到（`catalog-failed` 就是这么补上的）。
   const aiStatusKey =
     readiness.ai.phase === 'starting'
       ? 'startupReadiness.aiStarting'
       : readiness.ai.phase === 'loading-models'
         ? 'startupReadiness.aiLoadingModels'
-        : readiness.ai.phase === 'error'
-          ? 'startupReadiness.aiError'
-          : 'startupReadiness.aiReady';
+        : readiness.ai.phase === 'catalog-failed'
+          ? 'startupReadiness.aiCatalogFailed'
+          : readiness.ai.phase === 'error'
+            ? 'startupReadiness.aiError'
+            : 'startupReadiness.aiReady';
   const assistantStatus =
     assistant.phase === 'waiting'
       ? t('startupReadiness.assistantsWaiting')
@@ -47,7 +51,12 @@ export default function StartupReadinessScreen({ readiness, onRetry }: StartupRe
                 names: assistant.missingIds.map(roleName).join(', '),
               })
             : t('startupReadiness.assistantsReady');
-  const aiIconPhase = readiness.ai.phase === 'ready' ? 'ready' : readiness.ai.phase === 'error' ? 'error' : 'active';
+  const aiIconPhase =
+    readiness.ai.phase === 'ready'
+      ? 'ready'
+      : readiness.ai.phase === 'error' || readiness.ai.phase === 'catalog-failed'
+        ? 'error'
+        : 'active';
   const assistantIconPhase = assistant.phase === 'ready' ? 'ready' : assistant.phase === 'error' ? 'error' : 'active';
 
   return (
@@ -90,7 +99,7 @@ export default function StartupReadinessScreen({ readiness, onRetry }: StartupRe
                   <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--accent-dim)] text-[var(--accent)]">
                     <Bot size={19} aria-hidden="true" />
                   </span>
-                  <span className={readiness.ai.phase === 'error' ? 'text-[var(--danger)]' : 'text-[var(--accent)]'}>
+                  <span className={aiIconPhase === 'error' ? 'text-[var(--danger)]' : 'text-[var(--accent)]'}>
                     <StateIcon phase={aiIconPhase} />
                   </span>
                 </div>

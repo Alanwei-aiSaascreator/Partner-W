@@ -403,6 +403,8 @@
     "modelGone": "„{{model}}\" ist nicht mehr verfügbar – bitte unten ein anderes Modell wählen",
     "modelsLoading": "Modelle werden vorbereitet…",
     "modelsLoadingDetail": "Die Modelle erscheinen automatisch, sobald sie bereit sind.",
+    "modelsUnavailable": "Modellliste konnte nicht geladen werden",
+    "modelsUnavailableDetail": "Der lokale Dienst oder das Netzwerk hat nicht geantwortet. Beim erneuten Verbinden wird sie erneut geladen.",
     "noModelsAvailable": "Zurzeit sind keine Modelle verfügbar",
     "noModelsAvailableDetail": "Prüfen Sie Ihre Netzwerkverbindung oder öffnen Sie die Modellliste später erneut.",
     "offlineReadOnly": "Offline — Nur-Lese-Modus",
@@ -1752,6 +1754,7 @@
     "tooltip": "Befehle"
   },
   "startupReadiness": {
+    "aiCatalogFailed": "Modellliste konnte nicht geladen werden",
     "aiError": "Derzeit sind keine Modelle verfügbar",
     "aiLoadingModels": "Verfügbare Modelle werden vorbereitet",
     "aiReady": "Modelle sind bereit",

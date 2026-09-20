@@ -77,6 +77,7 @@ function createHarness(
     setGatewaysLoaded: vi.fn(),
     getGatewayInfoMap: () => ({}),
     setModelCatalogForGateway: vi.fn(),
+    setModelCatalogFailureForGateway: vi.fn(),
     setAgentCatalogForGateway: vi.fn(),
     setToolsCatalogForGateway: vi.fn(),
     setSkillsStatusForGateway: vi.fn(),

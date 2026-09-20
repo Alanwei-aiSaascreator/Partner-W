@@ -51,6 +51,7 @@ import ToolsCatalog from '../ToolsCatalog';
 import VoiceIntroDialog from '../VoiceIntroDialog';
 import { MENTION_ALL_AGENT_ID } from './constants';
 import DraftConflictDialog from './DraftConflictDialog';
+import { modelStatusCopy } from './model-availability';
 import { thinkingAlwaysOnKey, thinkingLabelKey, thinkingMenuFor } from './thinking-levels.js';
 import type { DraftPromptRequest, DraftPromptResolution } from './types';
 import { useChatSend } from './useChatSend';
@@ -564,23 +565,12 @@ export default function ChatInput({
       ? t('chatInput.aiServiceStartingDetail')
       : t('chatInput.describeTask');
   const voiceTooltip = !isVoiceSupported ? t('voiceInput.unsupportedTooltip') : t('voiceInput.tooltip');
-  const modelIsPreparing = modelAvailability === 'service-starting' || modelAvailability === 'models-loading';
-  const modelStatusLabel =
-    modelAvailability === 'service-starting'
-      ? t('chatInput.aiServiceStarting')
-      : modelAvailability === 'models-loading'
-        ? t('chatInput.modelsLoading')
-        : modelAvailability === 'empty'
-          ? t('chatInput.noModelsAvailable')
-          : null;
-  const modelStatusDetail =
-    modelAvailability === 'service-starting'
-      ? t('chatInput.aiServiceStartingDetail')
-      : modelAvailability === 'models-loading'
-        ? t('chatInput.modelsLoadingDetail')
-        : modelAvailability === 'empty'
-          ? t('chatInput.noModelsAvailableDetail')
-          : null;
+  // 文案分档全部住在 `modelStatusCopy` 里（可单测）：哪一档转圈、哪一档说什么话，
+  // 一个地方定；尤其「无需重复操作」**只许**在真加载那一档出现（2026-09-20 报障）。
+  const modelStatus = modelStatusCopy(modelAvailability, t);
+  const modelIsPreparing = modelStatus?.preparing ?? false;
+  const modelStatusLabel = modelStatus?.label ?? null;
+  const modelStatusDetail = modelStatus?.detail ?? null;
   const composerModelLabel = modelStatusLabel ?? (currentModelEntry?.name ?? modelLabel).replace(/^[^/]+\//, '');
 
   // 网关侧准备进度（run_status）。**不能在 `isGenerating` 里才显示** ——

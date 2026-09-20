@@ -124,11 +124,14 @@ export function useChatSend(opts: UseChatSendOpts) {
   // 否则标签会解析到我们服务不了的模型：新任务时显示的 `Claude Opus 5 (Claude CLI)`
   // 就是全量目录的第一条，用户会以为默认模型是它。
   const rawModelCatalog = taskGwId ? modelCatalogByGateway[taskGwId] : undefined;
+  const modelCatalogFailureByGateway = useUiStore((s) => s.modelCatalogFailureByGateway);
+  const catalogFailed = taskGwId ? modelCatalogFailureByGateway[taskGwId] === true : false;
   const modelCatalog = useMemo(() => relayModelsFrom(rawModelCatalog ?? EMPTY_MODELS_CATALOG), [rawModelCatalog]);
   const modelAvailability = deriveModelAvailability({
     gatewayId: taskGwId,
     gatewayStatus,
     rawCatalog: rawModelCatalog,
+    catalogFailed,
     modelCount: modelCatalog.length,
   });
   const toolsCatalogByGateway = useUiStore((s) => s.toolsCatalogByGateway);

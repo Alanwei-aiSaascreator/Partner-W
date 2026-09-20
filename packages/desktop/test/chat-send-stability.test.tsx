@@ -269,32 +269,54 @@ vi.mock('../src/renderer/components/ChatInput/useSlashAutocomplete', () => ({
   }),
 }));
 
-vi.mock('../src/renderer/components/ChatInput/useChatSend', () => ({
-  useChatSend: () => ({
-    isGenerating: false,
-    aborting: false,
-    isOffline: false,
-    activeTask: null,
-    currentModel: '',
-    currentThinking: 'off',
-    modelAvailability: 'available',
-    toolsCatalog: null,
-    modelLabel: 'DeepSeek V4 Flash',
-    currentModelEntry: undefined,
-    modelsByProvider: {},
-    taskGwId: null,
-    quotaBlock: null,
-    setQuotaBlocked: vi.fn(),
-    quotaDegrade: false,
-    setQuotaDegrade: vi.fn(),
-    switchToFallbackModel: vi.fn(),
-    handleSend: mocks.handleSend,
-    handleModelQuickSend: vi.fn(),
-    handleThinkingQuickSend: vi.fn(),
-    handleAbort: vi.fn(),
-    handleToolSelect: vi.fn(),
-  }),
-}));
+/**
+ * ⚠️ 这个桩原来把 `modelAvailability` **写死成 `'available'`** —— 那是**从来不存在**的取值
+ * （真身联合是 `'service-starting' | 'models-loading' | 'catalog-failed' | 'empty' | 'ready'`）。
+ * 写死的值不会跟着产品走：产品把"目录取不到"单列成一档之后，桩照样报 `'available'` ⇒
+ * 「store → 可用性 → 输入框文案」这条链子在这个文件里**根本跑不到真身**（新加的用例就是
+ * 这么红起来的：DOM 里只有模型名，没有任何状态文案）。
+ * ⇒ 桩改成**现算**：用真身 `deriveModelAvailability`，输入取真实 store 桩的状态。
+ */
+vi.mock('../src/renderer/components/ChatInput/useChatSend', async () => {
+  const { deriveModelAvailability } = await import('../src/renderer/components/ChatInput/model-availability');
+  const { relayModelsFrom } = await import('../src/renderer/components/ChatInput/model-families');
+  const availabilityFor = (gatewayId: string | null) => {
+    const rawCatalog = gatewayId ? uiState.modelCatalogByGateway[gatewayId] : undefined;
+    return deriveModelAvailability({
+      gatewayId,
+      gatewayStatus: gatewayId ? uiState.gatewayStatusMap[gatewayId] : undefined,
+      rawCatalog,
+      catalogFailed: gatewayId ? uiState.modelCatalogFailureByGateway[gatewayId] === true : false,
+      modelCount: relayModelsFrom(rawCatalog ?? []).length,
+    });
+  };
+  return {
+    useChatSend: () => ({
+      isGenerating: false,
+      aborting: false,
+      isOffline: false,
+      activeTask: null,
+      currentModel: '',
+      currentThinking: 'off',
+      modelAvailability: availabilityFor(mocks.pendingNewTask?.gatewayId ?? null),
+      toolsCatalog: null,
+      modelLabel: 'DeepSeek V4 Flash',
+      currentModelEntry: undefined,
+      modelsByProvider: {},
+      taskGwId: null,
+      quotaBlock: null,
+      setQuotaBlocked: vi.fn(),
+      quotaDegrade: false,
+      setQuotaDegrade: vi.fn(),
+      switchToFallbackModel: vi.fn(),
+      handleSend: mocks.handleSend,
+      handleModelQuickSend: vi.fn(),
+      handleThinkingQuickSend: vi.fn(),
+      handleAbort: vi.fn(),
+      handleToolSelect: vi.fn(),
+    }),
+  };
+});
 
 const taskState = {
   get activeTaskId() {
@@ -329,9 +351,16 @@ const uiState = {
       ],
     },
   },
+  // ⚠️ 按**真实 store 的类型**写宽（`Record<string, …>`，不是一个字面量对象）：
+  //    窄写法会让"某个网关暂时没有目录"这种真实状态在桩里**根本表达不出来**。
   modelCatalogByGateway: {
     'gw-1': [{ id: 'deepseek-v4-flash', provider: 'clawrouter', name: 'DeepSeek V4 Flash' }],
-  },
+  } as Record<string, Array<{ id: string; provider: string; name?: string }>>,
+  // 手写 store 桩**必须跟着长**（缺一个字段 = 整屏渲染崩）。
+  modelCatalogFailureByGateway: {} as Record<string, true>,
+  // ⚠️ 少了这个字段，`deriveModelAvailability` 会把每个网关都看成"没连上"⇒ 永远
+  //    `service-starting`，于是"取不到"这一档在本文件里**测不到**（曾如此）。
+  gatewayStatusMap: { 'gw-1': 'connected' } as Record<string, 'connected' | 'connecting' | 'disconnected'>,
   setSettingsOpen: vi.fn(),
   setMainView: vi.fn(),
   setRightPanelOpen: vi.fn(),
@@ -503,7 +532,11 @@ function userMessage(id: string, content: string) {
   };
 }
 
-function renderMainArea(): { container: HTMLDivElement; rerender: () => void; unmount: () => void } {
+function renderMainArea(readinessOverride: typeof readiness = readiness): {
+  container: HTMLDivElement;
+  rerender: () => void;
+  unmount: () => void;
+} {
   const container = document.createElement('div');
   document.body.appendChild(container);
   const root: Root = createRoot(container);
@@ -512,7 +545,7 @@ function renderMainArea(): { container: HTMLDivElement; rerender: () => void; un
       <MainArea
         onTogglePanel={vi.fn()}
         onboardingProfile={profile('user-1')}
-        startupReadiness={readiness}
+        startupReadiness={readinessOverride}
         onRetryStartup={vi.fn(async () => undefined)}
       />,
     );
@@ -769,5 +802,51 @@ describe('聊天区在发送时的稳定性', () => {
       '等待块要排在那条消息**之后**',
     ).toBeTruthy();
     view.unmount();
+  });
+
+  /**
+   * ⭐ 2026-09-20（用户报障「使用出现加载模型那个一直卡住」）：
+   * `MainArea` 原来写的是 `readinessBlocked = !startupReadiness.conversationReady`。
+   * 目录**取不到**时 `ai.phase` 永远停在 loading ⇒ `conversationReady` 永远 false ⇒
+   * **输入框一直被禁用**：用户连字都打不了，也看不到任何"出错了"的信号。
+   * 收敛后：只有"还在准备"拦；一旦有结论（取不到也是结论）就得给出口。
+   */
+  it('⭐ 模型目录取不到 ⇒ 输入框不再被锁死；还在准备时仍然锁着', () => {
+    const loading = renderMainArea({
+      ...readiness,
+      ai: { phase: 'loading-models' },
+      conversationReady: false,
+      isReady: false,
+      hasError: false,
+      composerBlocked: true,
+    });
+    expect(loading.container.querySelector<HTMLTextAreaElement>('textarea')?.disabled, '还在准备 ⇒ 拦').toBe(true);
+    loading.unmount();
+
+    // 「取不到」的真实形态是：**没有任何目录** + 退避用尽落下的失败标记。
+    // （目录在手时不算失败 —— 那条在 model-availability 的单测里钉着。）
+    uiState.modelCatalogByGateway = {};
+    uiState.modelCatalogFailureByGateway = { 'gw-1': true };
+    try {
+      const failed = renderMainArea({
+        ...readiness,
+        ai: { phase: 'catalog-failed' },
+        conversationReady: false,
+        isReady: false,
+        hasError: true,
+        composerBlocked: false,
+      });
+      const textarea = failed.container.querySelector<HTMLTextAreaElement>('textarea');
+      expect(textarea?.disabled, '取不到 ⇒ 不锁人').toBe(false);
+      // 文案也得跟着分档：「无需重复操作」这句**绝不许**在取不到时出现，否则用户会一直等。
+      expect(failed.container.textContent).toContain('chatInput.modelsUnavailable');
+      expect(failed.container.textContent).not.toContain('chatInput.modelsLoadingDetail');
+      failed.unmount();
+    } finally {
+      uiState.modelCatalogByGateway = {
+        'gw-1': [{ id: 'deepseek-v4-flash', provider: 'clawrouter', name: 'DeepSeek V4 Flash' }],
+      };
+      uiState.modelCatalogFailureByGateway = {};
+    }
   });
 });

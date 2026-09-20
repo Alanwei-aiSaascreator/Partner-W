@@ -403,6 +403,8 @@
     "modelGone": "«{{model}}» ya no está disponible: elige otro modelo abajo",
     "modelsLoading": "Preparando los modelos…",
     "modelsLoadingDetail": "Los modelos aparecerán automáticamente cuando estén listos.",
+    "modelsUnavailable": "No se pudo obtener la lista de modelos",
+    "modelsUnavailableDetail": "El servicio local o la red no respondieron. Se volverá a intentar al reconectar.",
     "noModelsAvailable": "No hay modelos disponibles por ahora",
     "noModelsAvailableDetail": "Comprueba la red o vuelve a abrir la lista de modelos más tarde.",
     "offlineReadOnly": "Sin conexión — solo lectura",
@@ -1752,6 +1754,7 @@
     "tooltip": "Comandos"
   },
   "startupReadiness": {
+    "aiCatalogFailed": "No se pudo obtener la lista de modelos",
     "aiError": "No hay modelos disponibles en este momento",
     "aiLoadingModels": "Preparando los modelos disponibles",
     "aiReady": "Los modelos están listos",

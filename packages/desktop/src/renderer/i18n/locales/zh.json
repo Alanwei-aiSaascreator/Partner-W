@@ -403,6 +403,8 @@
     "modelGone": "「{{model}}」已不可用，请在下方模型菜单里换一个",
     "modelsLoading": "正在准备模型…",
     "modelsLoadingDetail": "准备完成后会自动显示，无需重复操作。",
+    "modelsUnavailable": "没能取到模型列表",
+    "modelsUnavailableDetail": "本地服务或网络没回应，重连后会自动再取一次。",
     "noModelsAvailable": "暂时没有可用模型",
     "noModelsAvailableDetail": "请检查网络，或稍后重新打开模型列表。",
     "offlineReadOnly": "离线模式 — 只读",
@@ -1752,6 +1754,7 @@
     "tooltip": "命令面板"
   },
   "startupReadiness": {
+    "aiCatalogFailed": "没能取到模型列表",
     "aiError": "暂时没有可用模型",
     "aiLoadingModels": "正在准备可用模型",
     "aiReady": "模型已准备好",

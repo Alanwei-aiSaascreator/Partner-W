@@ -10,6 +10,8 @@ type Translate = (key: string, values?: Record<string, unknown>) => string;
 function currentStatus(readiness: StartupReadiness, t: Translate): string {
   if (readiness.ai.phase === 'starting') return t('startupReadiness.aiStarting');
   if (readiness.ai.phase === 'loading-models') return t('startupReadiness.aiLoadingModels');
+  // 取不到 ≠ 没有模型：这句得说"没能取到"，否则用户会以为自己的账号/网关真的没模型。
+  if (readiness.ai.phase === 'catalog-failed') return t('startupReadiness.aiCatalogFailed');
   if (readiness.ai.phase === 'error') return t('startupReadiness.aiError');
 
   const assistants = readiness.assistants;

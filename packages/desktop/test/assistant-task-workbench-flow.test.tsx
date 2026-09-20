@@ -448,6 +448,7 @@ const readiness: StartupReadiness = {
   conversationReady: true,
   isReady: true,
   hasError: false,
+  composerBlocked: false,
 };
 
 function profile(userId: string, customGoal = ''): OnboardingProfile {

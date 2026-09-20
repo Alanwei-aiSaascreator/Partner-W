@@ -147,6 +147,8 @@ function getDispatcher() {
       getGatewayInfoMap: () => uiStoreApi.getState().gatewayInfoMap,
       setModelCatalogForGateway: (gwId, models) =>
         uiStoreApi.getState().setModelCatalogForGateway(gwId, models as ModelCatalogEntry[]),
+      setModelCatalogFailureForGateway: (gwId, failed) =>
+        uiStoreApi.getState().setModelCatalogFailureForGateway(gwId, failed),
       setAgentCatalogForGateway: (gwId, agents, defaultId) =>
         uiStoreApi.getState().setAgentCatalogForGateway(gwId, agents as AgentInfo[], defaultId),
       setToolsCatalogForGateway: (gwId, catalog) => uiStoreApi.getState().setToolsCatalogForGateway(gwId, catalog),

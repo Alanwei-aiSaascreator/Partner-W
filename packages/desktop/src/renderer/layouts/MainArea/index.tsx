@@ -1123,7 +1123,7 @@ export function ChatContent({
         onNavigateToAccount={handleNavigateToAccount}
         draftRequest={draftRequest}
         onDraftResolved={handleDraftResolved}
-        readinessBlocked={!startupReadiness.conversationReady}
+        readinessBlocked={startupReadiness.composerBlocked}
       />
       <ImageLightbox src={lightboxSrc} onClose={closeLightbox} />
       <FilePreviewModal file={previewFile} onClose={closeFilePreview} />

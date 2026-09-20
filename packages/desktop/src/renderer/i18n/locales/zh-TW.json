@@ -403,6 +403,8 @@
     "modelGone": "「{{model}}」已無法使用，請在下方模型選單裡換一個",
     "modelsLoading": "正在準備模型…",
     "modelsLoadingDetail": "準備完成後會自動顯示，無需重複操作。",
+    "modelsUnavailable": "沒能取到模型列表",
+    "modelsUnavailableDetail": "本機服務或網路沒回應，重連後會自動再取一次。",
     "noModelsAvailable": "暫時沒有可用模型",
     "noModelsAvailableDetail": "請檢查網路，或稍後重新開啟模型列表。",
     "offlineReadOnly": "離線 — 唯讀模式",
@@ -1752,6 +1754,7 @@
     "tooltip": "指令"
   },
   "startupReadiness": {
+    "aiCatalogFailed": "沒能取到模型列表",
     "aiError": "暫時沒有可用模型",
     "aiLoadingModels": "正在準備可用模型",
     "aiReady": "模型已準備好",

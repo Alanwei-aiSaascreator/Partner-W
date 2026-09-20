@@ -54,6 +54,11 @@ export function useStartupReadiness(enabled: boolean) {
   const rawModelCatalog = useUiStore((state) =>
     state.defaultGatewayId ? state.modelCatalogByGateway[state.defaultGatewayId] : undefined,
   );
+  // 目录**取不到**（退避已用尽）与"还在取"是两件事：前者得落显式失败态，
+  // 否则界面永远停在"正在准备模型…"（2026-09-20 用户报障）。
+  const catalogFailed = useUiStore((state) =>
+    state.defaultGatewayId ? state.modelCatalogFailureByGateway[state.defaultGatewayId] === true : false,
+  );
   const [assistantSnapshot, setAssistantSnapshot] = useState<PresetAgentBootstrapSnapshot>(emptyAssistantSnapshot);
 
   useEffect(() => {
@@ -78,6 +83,7 @@ export function useStartupReadiness(enabled: boolean) {
     gatewayId,
     gatewayStatus,
     rawModelCatalog,
+    catalogFailed,
     assistantSnapshot,
   });
 

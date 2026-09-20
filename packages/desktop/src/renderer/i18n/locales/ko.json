@@ -403,6 +403,8 @@
     "modelGone": "\"{{model}}\"은(는) 더 이상 사용할 수 없습니다. 아래 메뉴에서 다른 모델을 선택하세요",
     "modelsLoading": "모델을 준비하는 중…",
     "modelsLoadingDetail": "준비가 끝나면 모델이 자동으로 표시됩니다.",
+    "modelsUnavailable": "모델 목록을 가져오지 못했습니다",
+    "modelsUnavailableDetail": "로컬 서비스나 네트워크가 응답하지 않았습니다. 다시 연결하면 자동으로 한 번 더 가져옵니다.",
     "noModelsAvailable": "현재 사용할 수 있는 모델이 없습니다",
     "noModelsAvailableDetail": "네트워크를 확인하거나 나중에 모델 목록을 다시 열어 주세요.",
     "offlineReadOnly": "오프라인 — 읽기 전용",
@@ -1752,6 +1754,7 @@
     "tooltip": "명령어"
   },
   "startupReadiness": {
+    "aiCatalogFailed": "모델 목록을 가져오지 못했습니다",
     "aiError": "현재 사용할 수 있는 모델이 없습니다",
     "aiLoadingModels": "사용 가능한 모델을 준비하는 중",
     "aiReady": "모델 준비 완료",

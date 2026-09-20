@@ -51,6 +51,8 @@ const mocks = vi.hoisted(() => {
     uiState: {
       gatewayStatusMap: { 'gw-1': 'connected' } as Record<string, 'connected' | 'connecting' | 'disconnected'>,
       modelCatalogByGateway: {} as Record<string, ModelCatalogEntry[]>,
+      // 手写 store 桩**必须跟着长**（缺一个字段 = 整屏渲染崩）。
+      modelCatalogFailureByGateway: {} as Record<string, true>,
       toolsCatalogByGateway: {},
     },
     roomState: {
@@ -344,6 +346,21 @@ describe('useChatSend abort flow', () => {
     expect(container.querySelector('[data-testid="model-availability"]')?.textContent).toBe('models-loading');
 
     unmount();
+  });
+
+  it('⭐ 目录取不到（退避已用尽）⇒ 报显式失败态，不再冒充"正在加载"', () => {
+    // 2026-09-20 用户报障「使用出现加载模型那个一直卡住」：取失败那条路不进重试，
+    // 目录永远 `undefined` ⇒ 输入框那句"正在准备模型…"**永远不会变**。
+    mocks.uiState.modelCatalogFailureByGateway = { 'gw-1': true };
+    try {
+      const { container, unmount } = render(<Harness />);
+
+      expect(container.querySelector('[data-testid="model-availability"]')?.textContent).toBe('catalog-failed');
+
+      unmount();
+    } finally {
+      mocks.uiState.modelCatalogFailureByGateway = {};
+    }
   });
 
   it('sends imported inbox files and task-scoped folder files without renderer absolute paths', async () => {

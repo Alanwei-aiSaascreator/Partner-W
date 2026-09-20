@@ -62,6 +62,8 @@ const mocks = vi.hoisted(() => {
     uiState: {
       gatewayStatusMap: { 'gw-1': 'connected' } as Record<string, string>,
       modelCatalogByGateway: {} as Record<string, unknown>,
+      // 手写 store 桩**必须跟着长**（缺一个字段 = 整屏渲染崩）：`useChatSend` 每帧都要读它。
+      modelCatalogFailureByGateway: {} as Record<string, true>,
       toolsCatalogByGateway: {} as Record<string, unknown>,
       agentCatalogByGateway: {} as Record<string, unknown>,
       setMainView: vi.fn(),

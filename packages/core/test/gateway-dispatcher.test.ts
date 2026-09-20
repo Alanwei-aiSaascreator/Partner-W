@@ -126,6 +126,7 @@ function createHarness() {
     setGatewaysLoaded: vi.fn(),
     getGatewayInfoMap: () => ({}),
     setModelCatalogForGateway: vi.fn(),
+    setModelCatalogFailureForGateway: vi.fn(),
     setAgentCatalogForGateway: vi.fn(),
     setToolsCatalogForGateway: vi.fn(),
     setSkillsStatusForGateway: vi.fn(),
@@ -1610,6 +1611,89 @@ describe('fetchCatalogs — 网关冷目录返回空时要退避重试', () => {
     expect(calls).toBeGreaterThan(1);
     expect(calls).toBeLessThanOrEqual(7);
     expect(h.deps.setModelCatalogForGateway).toHaveBeenLastCalledWith('gw-1', []);
+  });
+});
+
+describe('fetchCatalogs —— 目录**取失败**也要进退避，用尽后落显式失败态', () => {
+  // 背景（2026-09-20，用户报障「一直卡在加载模型」）：
+  // 上面那条退避只在"**有回包**但目录为空"时才启动。而取失败的三种形态 ——
+  // `ok:false` / `ok:true` 但没有 `models` 字段 / 直接抛异常 —— 原来的处理是
+  // **什么都不做**（只有一句 console.warn），于是 store 里那个网关的目录
+  // **永远是 `undefined`**，界面把 `undefined` 读成"正在准备模型…" ⇒ **永远在加载**。
+  // 修法：取失败与"空目录"走**同一条**有界退避（同一个预算、同一批延迟），
+  // 退避用尽后落一个**显式失败态**（不是"没有模型"，也不是"还在加载"）。
+  function connectWith(listModels: () => Promise<{ ok: boolean; result?: unknown }>) {
+    const h = createHarness();
+    h.deps.gateway.listModels = listModels as unknown as typeof h.deps.gateway.listModels;
+    h.dispatcher.startGatewayStatus();
+    h.emitStatus({ gatewayId: 'gw-1', connected: true });
+    return h;
+  }
+
+  it('listModels 一直 ok:false ⇒ 会重试，用尽后落显式失败态', async () => {
+    vi.useFakeTimers();
+    let calls = 0;
+    const h = connectWith(async () => {
+      calls += 1;
+      return { ok: false, error: 'gateway not ready' };
+    });
+
+    await vi.advanceTimersByTimeAsync(120_000);
+
+    expect(calls).toBeGreaterThan(1);
+    expect(calls).toBeLessThanOrEqual(7);
+    expect(h.deps.setModelCatalogFailureForGateway).toHaveBeenLastCalledWith('gw-1', true);
+    // 「取不到」**不许**被写成「确实没有模型」—— 那是替网关下结论。
+    expect(h.deps.setModelCatalogForGateway).not.toHaveBeenCalled();
+  });
+
+  it('listModels 抛异常 ⇒ 同样进退避并落失败态（原来只有一句 console.warn）', async () => {
+    vi.useFakeTimers();
+    let calls = 0;
+    const h = connectWith(async () => {
+      calls += 1;
+      throw new Error('gateway connection closed');
+    });
+
+    await vi.advanceTimersByTimeAsync(120_000);
+
+    expect(calls).toBeGreaterThan(1);
+    expect(calls).toBeLessThanOrEqual(7);
+    expect(h.deps.setModelCatalogFailureForGateway).toHaveBeenLastCalledWith('gw-1', true);
+  });
+
+  it('ok:true 但没有 models 字段 ⇒ 也算取不到，进退避', async () => {
+    vi.useFakeTimers();
+    let calls = 0;
+    const h = connectWith(async () => {
+      calls += 1;
+      return { ok: true, result: { entries: [] } };
+    });
+
+    await vi.advanceTimersByTimeAsync(120_000);
+
+    expect(calls).toBeGreaterThan(1);
+    expect(h.deps.setModelCatalogFailureForGateway).toHaveBeenLastCalledWith('gw-1', true);
+  });
+
+  it('⭐ 失败几次后成功 ⇒ 落真目录（失败态不是终点，退避链会自己走出去）', async () => {
+    vi.useFakeTimers();
+    const models = [{ id: 'deepseek-v4-flash', provider: 'clawrouter' }];
+    let calls = 0;
+    const h = connectWith(async () => {
+      calls += 1;
+      return calls === 1 ? { ok: false, error: 'not ready' } : { ok: true, result: { models } };
+    });
+
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(calls).toBeGreaterThan(1);
+    expect(h.deps.setModelCatalogForGateway).toHaveBeenLastCalledWith('gw-1', models);
+    // 落目录那一刻"取不到"就该归位（清理由 store 的 setModelCatalogForGateway 负责，
+    // 这里只钉住**没有**在成功之后还留着失败标记）。
+    const failures = (h.deps.setModelCatalogFailureForGateway as unknown as { mock: { calls: unknown[][] } }).mock
+      .calls;
+    expect(failures.at(-1)).toEqual(['gw-1', false]);
   });
 });
 
