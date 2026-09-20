@@ -24,6 +24,7 @@ import {
   bucketOf,
   CLAWROUTER_ENTRY,
   classifyLink,
+  classifyLinkProbe,
   CONFIG_FILE_NAME,
   CURRENT_POINTER_FILE,
   decidePortable,
@@ -35,11 +36,13 @@ import {
   MAX_DELIVERY_DEPTH,
   isBrokenLink,
   judgeDeployment,
+  LINK_PROBE_DIR_PREFIX,
   looksLikeBundledNode,
   looksWrong,
   peerLinkNeeded,
   POINTER_KEY_FIELD,
   PORTABLE_USER_DATA_DIR_NAME,
+  probeLinkCapability,
   readPointerKey,
   REDACTED,
   redactSecrets,
@@ -813,6 +816,336 @@ test('⑪ --emit-tool：产出的那个夹子能独立跑（.bat 是 ASCII、脚
   fs.rmSync(box, { recursive: true, force: true });
 });
 
+// ────────────────── ⑫ 「这块盘到底能不能装」：链接（reparse point）能力探测 ──────────────────
+//
+// 为什么要有这一条（T-a28 候选 D）：同事那台机器上还剩两个活口，其中一条是**文件系统能力**
+// （FAT/exFAT 建不了 reparse point ⇒ 网关的 `plugin-skills\*` 链接**根本建不出来**，
+// 它只 `log.warn` 一句，用户看到的就是「插件用不了」）。
+// ⚠️ 这一条**不能靠推断**：判据是"在这块盘上真建一个 junction 再删掉"，然后再看
+//    "建不了"与 `Get-CimInstance` 报出来的**文件系统类型**是否一致。
+// ⚠️ 我们手上**没有** FAT/exFAT 的卷（本机四个卷全是 NTFS）⇒ "这类盘建不了链接"是按 Windows
+//    的设计说的，**没有本机实测**。报告里必须把这句写出来（见 ⑫a 的最后一条断言）。
+
+test('⑫a 链接能力：能建 / 建不了 / 没测 必须分开，谁也不许说成"能"', () => {
+  const ok = classifyLinkProbe({ tested: true, ok: true, errorCode: null, errorMessage: null, fileSystem: 'NTFS' });
+  assert.equal(ok.verdict, 'ok');
+  assert.match(ok.headline, /能建/);
+  assert.equal(ok.advice, '', '"能建"不需要额外的建议');
+
+  const untested = classifyLinkProbe({
+    tested: false,
+    ok: false,
+    errorCode: null,
+    errorMessage: '--no-write-test：没测',
+    fileSystem: 'NTFS',
+  });
+  assert.equal(untested.verdict, 'untested');
+  assert.match(untested.headline, /没测/);
+  assert.match(untested.advice, /别当成/, '没测就得不许当成"能建链接"');
+
+  const exfat = classifyLinkProbe({
+    tested: true,
+    ok: false,
+    errorCode: 'EPERM',
+    errorMessage: 'EPERM: operation not permitted, symlink',
+    fileSystem: 'exFAT',
+  });
+  assert.equal(exfat.verdict, 'unsupported');
+  assert.ok(exfat.detail.includes('EPERM: operation not permitted, symlink'), '错误原文必须留在报告里');
+  assert.match(exfat.advice, /NTFS/, '要给出能照做的下一步');
+  assert.match(exfat.advice, /没实测/, '⚠️ 诚实：我们手上没有 FAT/exFAT 的卷 ⇒ 这条推断没实测过，必须写出来');
+
+  const fat32 = classifyLinkProbe({
+    tested: true,
+    ok: false,
+    errorCode: 'UNKNOWN',
+    errorMessage: 'UNKNOWN: unknown error, symlink',
+    fileSystem: 'FAT32',
+  });
+  assert.equal(fat32.verdict, 'unsupported');
+
+  const ntfsFail = classifyLinkProbe({
+    tested: true,
+    ok: false,
+    errorCode: 'EPERM',
+    errorMessage: 'EPERM: operation not permitted, symlink',
+    fileSystem: 'NTFS',
+  });
+  assert.equal(ntfsFail.verdict, 'failed', 'NTFS 上的失败 ≠ 文件系统不支持（别把话说死）');
+  assert.match(ntfsFail.advice, /原文/, '要给"看原文"的方向');
+
+  const unknownFs = classifyLinkProbe({
+    tested: true,
+    ok: false,
+    errorCode: null,
+    errorMessage: 'boom',
+    fileSystem: null,
+  });
+  assert.equal(unknownFs.verdict, 'failed', '文件系统读不出来时不许猜成"不支持"');
+
+  const contradiction = classifyLinkProbe({
+    tested: false,
+    ok: true,
+    errorCode: null,
+    errorMessage: null,
+    fileSystem: 'NTFS',
+  });
+  assert.equal(contradiction.verdict, 'untested', '自相矛盾的输入先信 tested');
+});
+
+test(
+  '⑫b 真建一个 junction 再删干净：顺序是"先摘链接、再删目录"，别人的东西一个字节不动',
+  { skip: process.platform !== 'win32' ? 'junction 要 Windows' : false },
+  () => {
+    const box = fs.mkdtempSync(path.join(os.tmpdir(), 'udisk-linkprobe-'));
+    const volumeRoot = path.join(box, 'volume');
+    fs.mkdirSync(volumeRoot);
+    const foreign = path.join(volumeRoot, '别动我.txt');
+    fs.writeFileSync(foreign, 'keep', 'utf8');
+
+    const calls = [];
+    const spy = {
+      lstatSync: (p) => fs.lstatSync(p),
+      mkdirSync: (p, o) => {
+        calls.push(`mkdir ${path.basename(p)}`);
+        return fs.mkdirSync(p, o);
+      },
+      symlinkSync: (t, l, k) => {
+        calls.push(`symlink ${k}`);
+        return fs.symlinkSync(t, l, k);
+      },
+      unlinkSync: (p) => {
+        calls.push(`unlink ${path.basename(p)}`);
+        return fs.unlinkSync(p);
+      },
+      rmdirSync: (p) => {
+        calls.push(`rmdir ${path.basename(p)}`);
+        return fs.rmdirSync(p);
+      },
+    };
+    const name = `${LINK_PROBE_DIR_PREFIX}test`;
+
+    const res = probeLinkCapability({ volumeRoot, probeName: name, fsLike: spy });
+
+    assert.equal(res.tested, true, `要真去建（没测的原因：${res.errorMessage}）`);
+    assert.equal(res.ok, true, `临时目录（NTFS）上应该建得成：${res.errorCode} ${res.errorMessage}`);
+    assert.deepEqual(res.leftBehind, [], '自己建的东西必须删干净');
+    assert.deepEqual(
+      calls,
+      [`mkdir ${name}`, 'mkdir target', 'symlink junction', 'unlink link', 'rmdir target', `rmdir ${name}`],
+      '⚠️ 顺序钉死：先摘链接、再删空目录（反了、或改成递归删，会**沿着 junction 进目标目录** —— 本仓库栽过一次）',
+    );
+    assert.equal(fs.readFileSync(foreign, 'utf8'), 'keep');
+    assert.deepEqual(fs.readdirSync(volumeRoot), ['别动我.txt'], '探针不许在盘上留东西');
+
+    fs.rmSync(box, { recursive: true, force: true });
+  },
+);
+
+test(
+  '⑫c ⭐ 探针名字被占用 ⇒ 拒绝（这一次"没测"），别人的东西一个字节不动',
+  { skip: process.platform !== 'win32' ? 'junction 要 Windows' : false },
+  () => {
+    const box = fs.mkdtempSync(path.join(os.tmpdir(), 'udisk-linkprobe-busy-'));
+    const volumeRoot = path.join(box, 'volume');
+    const name = `${LINK_PROBE_DIR_PREFIX}occupied`;
+    const dir = path.join(volumeRoot, name);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'someone-else.txt'), 'precious', 'utf8');
+
+    const res = probeLinkCapability({ volumeRoot, probeName: name, fsLike: fs });
+
+    assert.equal(res.tested, false, '名字被占用 ⇒ 报"没测"，不是"建不了"');
+    assert.equal(res.ok, false);
+    assert.ok(res.errorCode, '要说清为什么没测（错误码留着）');
+    assert.equal(fs.readFileSync(path.join(dir, 'someone-else.txt'), 'utf8'), 'precious');
+    assert.deepEqual(res.leftBehind, [], '本来就不是我们建的 ⇒ 不算"我们留下的东西"');
+
+    fs.rmSync(box, { recursive: true, force: true });
+  },
+);
+
+test(
+  '⑫d 建链接那一下抛错：原文留住、自己刚建的那点东西仍然删掉',
+  { skip: process.platform !== 'win32' ? 'junction 要 Windows' : false },
+  () => {
+    const box = fs.mkdtempSync(path.join(os.tmpdir(), 'udisk-linkprobe-boom-'));
+    const volumeRoot = path.join(box, 'volume');
+    fs.mkdirSync(volumeRoot);
+
+    const calls = [];
+    const spy = {
+      lstatSync: (p) => fs.lstatSync(p),
+      mkdirSync: (p, o) => {
+        calls.push(`mkdir ${path.basename(p)}`);
+        return fs.mkdirSync(p, o);
+      },
+      symlinkSync: () => {
+        calls.push('symlink');
+        throw Object.assign(new Error('EPERM: operation not permitted, symlink'), { code: 'EPERM' });
+      },
+      unlinkSync: (p) => {
+        calls.push(`unlink ${path.basename(p)}`);
+        return fs.unlinkSync(p);
+      },
+      rmdirSync: (p) => {
+        calls.push(`rmdir ${path.basename(p)}`);
+        return fs.rmdirSync(p);
+      },
+    };
+    const name = `${LINK_PROBE_DIR_PREFIX}boom`;
+
+    const res = probeLinkCapability({ volumeRoot, probeName: name, fsLike: spy });
+
+    assert.equal(res.tested, true, '真去试过了（"试过但失败" ≠ "没测"）');
+    assert.equal(res.ok, false);
+    assert.equal(res.errorCode, 'EPERM', '错误码要原样带出来（报告靠它说人话）');
+    assert.ok(res.errorMessage.includes('operation not permitted'), '原文也要留着');
+    assert.ok(calls.includes('unlink link'), '链接没建成也要试一下摘（可能建了一半）');
+    assert.ok(calls.includes(`rmdir ${name}`), '自己建的目录要删掉');
+    assert.deepEqual(res.leftBehind, []);
+    assert.equal(fs.existsSync(path.join(volumeRoot, name)), false, '不许留在盘上');
+
+    fs.rmSync(box, { recursive: true, force: true });
+  },
+);
+
+test(
+  '⑫e 删不掉时要说出来（不许在别人盘上悄悄地留东西）',
+  { skip: process.platform !== 'win32' ? 'junction 要 Windows' : false },
+  () => {
+    const box = fs.mkdtempSync(path.join(os.tmpdir(), 'udisk-linkprobe-stuck-'));
+    const volumeRoot = path.join(box, 'volume');
+    fs.mkdirSync(volumeRoot);
+    const name = `${LINK_PROBE_DIR_PREFIX}stuck`;
+
+    const spy = {
+      lstatSync: (p) => fs.lstatSync(p),
+      mkdirSync: (p, o) => fs.mkdirSync(p, o),
+      symlinkSync: (t, l, k) => fs.symlinkSync(t, l, k),
+      unlinkSync: () => {
+        throw Object.assign(new Error('EPERM: operation not permitted, unlink'), { code: 'EPERM' });
+      },
+      rmdirSync: (p) => fs.rmdirSync(p),
+    };
+
+    const res = probeLinkCapability({ volumeRoot, probeName: name, fsLike: spy });
+
+    assert.equal(res.ok, true, '链接本身是建成了的 —— 这一条测的是"没删掉"');
+    // 摘不掉的时候**两条**都留在盘上：链接本身，以及它所在的那个目录（空目录才 rmdir 得掉）
+    assert.deepEqual(
+      res.leftBehind,
+      [path.join(volumeRoot, name, 'link'), path.join(volumeRoot, name)],
+      `没删掉的都要列出来（这条路径下第一版只报了目录 —— 因为 existsSync 会跟随链接，` +
+        `悬空链接被它判成"不存在"，于是静默少报了一条）：实到 ${JSON.stringify(res.leftBehind)}`,
+    );
+
+    // ⚠️ 收尾必须**手动**摘链接再删目录（这条路径下盘上真的留着一个 junction；
+    //    对含 junction 的树用 rmSync(recursive) 正是我们绝不做的那件事）。
+    //    target 已经被探针自己删掉了（它删得掉），所以这里只剩两下。
+    fs.unlinkSync(path.join(volumeRoot, name, 'link'));
+    fs.rmdirSync(path.join(volumeRoot, name));
+    fs.rmSync(box, { recursive: true, force: true });
+  },
+);
+
+test('⑫f 报告：摘要那一段里就要有"这块盘能不能建链接"（同事常常只发摘要）', () => {
+  const withProbe = (patch) =>
+    renderReport({
+      ...makeFacts(),
+      linkProbe: {
+        volumeRoot: 'E:\\',
+        fileSystem: 'NTFS',
+        tested: true,
+        ok: true,
+        errorCode: null,
+        errorMessage: null,
+        leftBehind: [],
+        ...patch,
+      },
+    });
+
+  const ok = withProbe({});
+  assert.match(ok, /链接能力：能建/);
+  assert.match(ok.split('## 这台机器')[0], /链接能力/, '摘要那一段必须带这一条');
+  assert.match(ok, /探针/, '尾部那句"只读"要照实说清它自己的临时探针');
+
+  const bad = withProbe({
+    fileSystem: 'exFAT',
+    ok: false,
+    errorCode: 'EPERM',
+    errorMessage: 'EPERM: operation not permitted, symlink',
+  });
+  assert.match(bad, /链接能力：建不了/);
+  assert.ok(bad.includes('EPERM: operation not permitted, symlink'), '错误原文要进报告');
+  assert.match(bad, /换一块 NTFS/, '要给出能照做的下一步');
+  assert.match(bad, /没实测/, '那条"FAT/exFAT 建不了"的推断没实测过，必须写在旁边');
+  assert.match(bad.split('## 这台机器')[0], /链接能力/, '摘要里也要有（哪怕建不了）');
+
+  const untested = withProbe({ tested: false, ok: false, errorMessage: '--no-write-test：没测' });
+  assert.match(untested, /链接能力：没测/);
+  assert.match(untested.split('## 这台机器')[0], /链接能力/, '没测也要出现在摘要里');
+});
+
+test(
+  '⑫g 真 CLI 跑一遍：默认真去建一个 junction，--no-write-test 时如实写"没测"',
+  { skip: process.platform !== 'win32' ? 'junction 要 Windows' : false },
+  () => {
+    const box = fs.mkdtempSync(path.join(os.tmpdir(), 'udisk-diag-linkprobe-'));
+    const volumeRoot = path.join(box, 'volume');
+    const appData = path.join(box, 'Roaming');
+    const out = path.join(box, '报告.txt');
+    fs.mkdirSync(volumeRoot, { recursive: true });
+    fs.mkdirSync(appData, { recursive: true });
+    const args = ['--appdata', appData, '--volume-root', volumeRoot, '--out', out];
+    const env = envWithSystemDrive('D:');
+
+    const facts = JSON.parse(execFileSync(process.execPath, [CLI, ...args, '--json'], { encoding: 'utf8', env }));
+    assert.equal(facts.linkProbe.tested, true, `默认要真测（${facts.linkProbe.errorMessage}）`);
+    assert.equal(
+      facts.linkProbe.ok,
+      true,
+      `临时目录上应该建得成：${facts.linkProbe.errorCode} ${facts.linkProbe.errorMessage}`,
+    );
+    assert.deepEqual(
+      fs.readdirSync(volumeRoot).filter((n) => n.startsWith(LINK_PROBE_DIR_PREFIX)),
+      [],
+      '盘上不许留探针目录',
+    );
+
+    // 屏幕上也要有：同事常常只截屏 / 只转发这一屏，报告文件未必被打开
+    const stdout = execFileSync(process.execPath, [CLI, ...args], { encoding: 'utf8', env });
+    assert.match(stdout, /链接能力：能建/, '屏幕上就要有这一行（不是只在报告文件里）');
+    assert.match(fs.readFileSync(out, 'utf8'), /链接能力：能建/, '报告里要有这一行');
+
+    const skipped = JSON.parse(
+      execFileSync(process.execPath, [CLI, ...args, '--no-write-test', '--json'], { encoding: 'utf8', env }),
+    );
+    assert.equal(skipped.linkProbe.tested, false, '--no-write-test ⇒ 两种写盘探针都不做');
+    const stdoutSkipped = execFileSync(process.execPath, [CLI, ...args, '--no-write-test'], { encoding: 'utf8', env });
+    assert.match(stdoutSkipped, /链接能力：没测/, '屏幕上也要如实说"没测"，不能因为是跳过的就不提');
+    const text = fs.readFileSync(out, 'utf8');
+    assert.match(text, /链接能力：没测/);
+    assert.match(text, /--no-write-test/, '要说清"为什么没测"，不能只写"没测"');
+
+    fs.rmSync(box, { recursive: true, force: true });
+  },
+);
+
+test('⑫h 交给同事的那份说明要写明"它会自己建两个临时探针"（别让人以为它只读却动了盘）', () => {
+  const box = fs.mkdtempSync(path.join(os.tmpdir(), 'udisk-emit-linkprobe-'));
+  const outDir = path.join(box, '诊断工具');
+  execFileSync(process.execPath, [CLI, '--emit-tool', outDir], { encoding: 'utf8' });
+
+  const txtName = fs.readdirSync(outDir).find((f) => f.endsWith('.txt'));
+  assert.ok(txtName, '要有给用户看的那份说明');
+  const txt = fs.readFileSync(path.join(outDir, txtName), 'utf8');
+  assert.match(txt, /探针/, '要先说清它会自己建东西再删掉（不然同事以为"只读"却看见盘上多了目录）');
+  assert.match(txt, /不会改任何设置/, '这句要留着 —— 它仍然是真的');
+
+  fs.rmSync(box, { recursive: true, force: true });
+});
+
 /** 一份"事实对象"（renderReport 的输入）。形状在测试里写死 = 顺便当文档。 */
 function makeFacts() {
   return {
@@ -902,6 +1235,16 @@ function makeFacts() {
       },
     ],
     writable: { volumeRoot: 'E:\\', tested: false, message: '--no-write-test：没测可写性' },
+    // 形状跟 CLI 的 `probeLinkCapability()` 真产出一致（含 leftBehind：删不掉的要列出来）
+    linkProbe: {
+      volumeRoot: 'E:\\',
+      fileSystem: 'exFAT',
+      tested: true,
+      ok: false,
+      errorCode: 'EPERM',
+      errorMessage: 'EPERM: operation not permitted, symlink',
+      leftBehind: [],
+    },
     warnings: [],
   };
 }

@@ -15,10 +15,13 @@
  *      `<state>\npm\projects\*\node_modules\openclaw`）—— 网关只在自己的时机修它们，
  *      而 `plugin-skills` 那半连 `openclaw doctor` 都不查（第五轮实测）。
  *
- * ⚠️ **只读**。唯一会写盘的一下：在盘根建一个几字节的探针文件再**立刻删掉**（判断盘
- *    能不能写，"装不上"的一大类原因就是这个）。不想让它写就加 `--no-write-test`。
+ * ⚠️ **只读**。会写盘的一共两下，都是**它自己的临时探针**，建完立刻删：盘根一个几字节
+ *    的文件（测可写性 "装不上"的一大类原因就是这个）、盘根一个空目录 + 一个 junction
+ *    （测"这块盘到底能不能建链接" —— FAT/exFAT 不支持 reparse point）。两句都能用
+ *    `--no-write-test` 关掉（关掉时报告里照实写"没测"，不当成"没问题"）。
  *
- * ⚠️ **本模块是纯函数**（不碰 fs / 不起进程）：判据要能用夹具测，CLI 才碰真机器。
+ * ⚠️ **本模块不 import fs、不起进程**：要么是纯函数，要么副作用全部由调用方注入
+ *    （`probeLinkCapability` 拿的是 `fsLike`）—— 判据要能用夹具测，CLI 才碰真机器。
  * ⚠️ 所有路径按 **Windows 语义**（`path.win32`）拼 —— 这是个 Windows 专用工具，
  *    不跟着宿主平台变（测试因此在任何平台上都得到同一份期望值）。
  */
@@ -374,6 +377,156 @@ export function bucketOf(kind) {
   return BUCKETS[kind] ?? 'unjudged';
 }
 
+// ─────────────────── 「这块盘到底能不能装」：链接（reparse point）能力探测 ───────────────────
+//
+// 为什么要有这一段（T-a28 候选 D，见队列第十刀"这条对方案的影响"）：
+// 同事那台机器上还剩两个活口，其中一条是**文件系统能力** —— FAT/exFAT 建不了 reparse
+// point（junction）⇒ 网关的 `plugin-skills\*` 链接**根本建不出来**，它只 `log.warn` 一句，
+// 用户看到的就是「插件用不了」。而本机四个卷**全是 NTFS** ⇒ 这个前提在我们这边造不出来。
+//
+// ➡ 所以判据不是"查文件系统类型猜能不能"，而是**在这块盘上真建一个 junction 再删掉**，
+//    然后把结果与 `Win32_LogicalDisk.FileSystem` 报出来的类型**并列**写进报告：
+//    · 建不成 + FAT/exFAT ⇒ 与"这类文件系统不支持 reparse point"一致 ⇒ 让用户换 NTFS 的盘
+//      （⚠️ 我们手上没有这类卷，这句话是按 Windows 的设计说的，报告里必须写明"没实测过"）；
+//    · 建不成 + NTFS ⇒ **不把话说死**，只把原文给出去（可能是杀软/权限/只读）；
+//    · 没测（--no-write-test / 探针没建起来）⇒ 照实写"没测"，绝不当成"没问题"。
+
+/** 探针目录名前缀。唯一命名（带 pid）⇒ 绝不会撞上盘上别人的东西。 */
+export const LINK_PROBE_DIR_PREFIX = '.clawwork-link-test-';
+
+/**
+ * 在这块盘上真建一个 junction 再删掉（**依赖注入**：本模块不 import fs，见文件头那条纪律）。
+ *
+ * ⚠️ 三条纪律（测试 ⑫b/⑫c/⑫d/⑫e 逐条钉着）：
+ *   ① 探针目录用 **非递归** `mkdirSync` 建：名字被别人占用了就该失败 ⇒ 报"没测"，
+ *      **绝不**用递归建/递归删去"清开一条路"（那是能删掉用户数据的动作）；
+ *   ② 收尾只删**自己刚建的那两个**，而且顺序是 **先摘链接 → 再删空目录**：
+ *      `rmSync(dir, {recursive:true})` 会**沿着 junction 进目标目录**（本仓库栽过一次，
+ *      删过真身）⇒ 这里一次递归删都没有；
+ *   ③ 删不掉的要**列出来**（`leftBehind`），报告照实说"我们在你盘上留了个目录"。
+ *
+ * @param {{ volumeRoot: string, probeName: string, fsLike: {
+ *   lstatSync: (p: string) => unknown,
+ *   mkdirSync: (p: string, o?: object) => unknown,
+ *   symlinkSync: (t: string, l: string, k?: string) => unknown,
+ *   unlinkSync: (p: string) => unknown,
+ *   rmdirSync: (p: string) => unknown,
+ * } }} args
+ */
+export function probeLinkCapability({ volumeRoot, probeName, fsLike }) {
+  const dir = W.join(volumeRoot, probeName);
+  const target = W.join(dir, 'target');
+  const link = W.join(dir, 'link');
+  const errText = (err) => (err instanceof Error ? err.message : String(err));
+  const errCode = (err) => (err && typeof err === 'object' && err.code ? String(err.code) : null);
+
+  try {
+    // ⚠️ 非递归（见纪律 ①）：EEXIST 时这里就抛，下面照实报"没测"
+    fsLike.mkdirSync(dir);
+  } catch (err) {
+    return {
+      volumeRoot,
+      dir,
+      tested: false,
+      ok: false,
+      errorCode: errCode(err),
+      errorMessage: errText(err),
+      leftBehind: [],
+      message: `探针目录没建起来（${errText(err)}）⇒ 这一条没测`,
+    };
+  }
+
+  let outcome;
+  try {
+    fsLike.mkdirSync(target);
+    fsLike.symlinkSync(target, link, 'junction'); // ← 真正要测的那一下
+    outcome = { tested: true, ok: true, errorCode: null, errorMessage: null };
+  } catch (err) {
+    outcome = { tested: true, ok: false, errorCode: errCode(err), errorMessage: errText(err) };
+  }
+
+  // 收尾（纪律 ②③）：先摘链接、再删空目录；删不掉的列出来
+  for (const [p, how] of [
+    [link, 'unlinkSync'],
+    [target, 'rmdirSync'],
+    [dir, 'rmdirSync'],
+  ]) {
+    try {
+      fsLike[how](p);
+    } catch {
+      /* 本来就没有（比如链接那一下没建成）不算错；真没删掉由下面 existsSync 兜出来 */
+    }
+  }
+  // ⚠️ 用 `lstatSync` 而**不是** `existsSync`：后者会**跟随链接** —— 一个"摘不掉、目标又已经被
+  //    删掉"的悬空链接，`existsSync` 会说"不存在"，我们就会**静默少报**一条留在别人盘上的东西。
+  //    （这一条是测试 ⑫e 当场抓到的：第一版就是 `existsSync`，实到只报了目录、没报链接。）
+  const leftBehind = [link, target, dir].filter((p) => {
+    try {
+      fsLike.lstatSync(p);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+
+  return { volumeRoot, dir, ...outcome, leftBehind, message: outcome.ok ? '建成了（已删干净）' : '建失败了' };
+}
+
+/** 文件系统是不是 FAT 家族（这类**按设计**不支持 reparse point）。 */
+const FAT_FAMILY = /^(fat|fat16|fat32|vfat|exfat)$/i;
+
+/**
+ * 把探测结果判成能写进报告的三句话（纯函数）：`headline`（短，进摘要）/ `detail`（带原文）/
+ * `advice`（下一步 + 诚实边界）。
+ */
+export function classifyLinkProbe(f) {
+  const raw = [f.errorCode, f.errorMessage].filter(Boolean).join('：') || '（没有错误信息）';
+
+  if (!f.tested) {
+    return {
+      verdict: 'untested',
+      tested: false,
+      headline: '链接能力：没测',
+      detail: `链接能力：没测（${f.errorMessage ?? '这一条没跑'}）`,
+      advice: '这一条没测 ⇒ **别当成"能建链接"**（插件/技能这类找"随包运行时"的功能就靠链接）。',
+    };
+  }
+
+  if (f.ok) {
+    return {
+      verdict: 'ok',
+      tested: true,
+      headline: '链接能力：能建',
+      detail: '链接能力：能建（在这块盘上真建了一个 junction 又删掉了）',
+      advice: '',
+    };
+  }
+
+  const fsType = typeof f.fileSystem === 'string' && f.fileSystem.trim().length > 0 ? f.fileSystem.trim() : null;
+  if (fsType && FAT_FAMILY.test(fsType)) {
+    return {
+      verdict: 'unsupported',
+      tested: true,
+      headline: `链接能力：建不了 —— 换一块 NTFS 的盘`,
+      detail: `链接能力：建不了（${raw}）`,
+      advice:
+        `这块盘的文件系统是 ${fsType}：FAT/exFAT **按设计**就不支持 reparse point（junction）⇒ ` +
+        `插件、技能这类功能在这块盘上用不了 —— **换一块 NTFS 的盘**。` +
+        '（⚠️ 这条是按 Windows 的设计说的：我们手上没有 FAT/exFAT 的卷 ⇒ **没实测**过。）',
+    };
+  }
+
+  return {
+    verdict: 'failed',
+    tested: true,
+    headline: '链接能力：建不了（原因见下面「## 盘」那节的原文）',
+    detail: `链接能力：建不了（${raw}）`,
+    advice:
+      `文件系统是 ${fsType ?? '读不出来'}：这本该能建链接 ⇒ 这一次失败的原因要看上面那句原文` +
+      '（常见：杀软拦、目录只读、权限）。把这一行原样发回来即可。',
+  };
+}
+
 /**
  * 项目声明了 `openclaw` 依赖吗 —— 判据**照抄**网关的 `resolveOpenClawHostDependency`
  * （`dist/plugin-peer-link-*.mjs`：先 `peerDependencies.openclaw`，再 `dependencies.openclaw`，
@@ -603,6 +756,11 @@ export function renderReport(facts) {
         ? ` · ${driveTypeName(vol.driveType)} · 文件系统 ${vol.fileSystem ?? '?'} · 可用 ${humanBytes(vol.freeBytes)} / ${humanBytes(vol.totalBytes)}`
         : ''),
   );
+  // ⭐ 「这块盘能不能装」要在摘要里（同事常常只截这一段）：建不了时摘要就得带上"换 NTFS 的盘"
+  if (f.linkProbe) {
+    const cap = classifyLinkProbe(f.linkProbe);
+    lines.push(`   ${cap.headline}`);
+  }
   lines.push(`2. 判定：${f.portable.portable ? '盘上形态（便携）' : '本机形态（非便携）'} —— ${f.portable.reason}`);
   lines.push(`   ${f.portable.explain}`);
   const lived = f.userDatas.filter((u) => u.exists);
@@ -663,6 +821,17 @@ export function renderReport(facts) {
       `可写性：${f.writable.tested ? (f.writable.ok ? '能写' : `写不进去（${f.writable.message}）`) : `没测（${f.writable.message}）`}`,
     );
   }
+  if (f.linkProbe) {
+    const cap = classifyLinkProbe(f.linkProbe);
+    lines.push(cap.detail);
+    if (cap.advice) lines.push(`   → ${cap.advice}`);
+    if (f.linkProbe.leftBehind?.length) {
+      lines.push(`   ⚠️ 探针自己没删掉：${f.linkProbe.leftBehind.join('；')} —— 这几样是本工具建的，可以手动删`);
+    }
+    // 只在"不正常"时才写它建在哪（正常时这一行是噪声；要排查"为什么说没测"时它才有用）
+    if (f.linkProbe.dir && (!f.linkProbe.ok || f.linkProbe.leftBehind?.length))
+      lines.push(`   （探针本来要建在 ${f.linkProbe.dir}）`);
+  }
   lines.push('');
 
   lines.push('## 程序与运行时');
@@ -722,6 +891,10 @@ export function renderReport(facts) {
 
   lines.push('---');
   lines.push('这份文件是**只读**诊断的结果：它没有改过任何设置，也不需要联网。');
+  lines.push(
+    '（会动盘的地方只有它自己的两个**临时探针**：盘根一个几字节的文件、一个空目录 + 一个链接，' +
+      '建完就删；`--no-write-test` 时连这两下都不做。链接探针的结果见「## 盘」那节。）',
+  );
   lines.push('回传方式：把**整个文件**发回给我们（微信/邮件/截图「## 摘要」那一段都行）。');
   lines.push('里面可能含路径与日志片段，token 一类字段已自动打码；如果里面有不想给我们看的东西，');
   lines.push('删掉那几行再发也行 —— 但请保留「## 摘要」那一段，那一段是判断问题用的。');

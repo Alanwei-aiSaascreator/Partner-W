@@ -5,7 +5,7 @@
  * 用法（一般不用带参数）：
  *   node scripts/udisk-diagnose.mjs                    # 诊断"这个脚本所在的盘 + 这台机器"
  *   node scripts/udisk-diagnose.mjs --json             # 只打机器可读的事实（给测试/自己用）
- *   node scripts/udisk-diagnose.mjs --no-write-test    # 连那个几字节的探针文件都不建
+ *   node scripts/udisk-diagnose.mjs --no-write-test    # 两个写盘探针都不做（探针文件 / 建删一个 junction）
  *   node scripts/udisk-diagnose.mjs --emit-tool <目录>  # 产出"交给同事的那个夹子"（.bat + 脚本 + 一句话说明）
  *
  * 给人用的那个夹子长这样（`--emit-tool` 生成）：
@@ -15,8 +15,10 @@
  *   <目录>\先看这里.txt       ← 一句话说明 + 回传哪个文件
  * 结果写在 `<目录>\荣盈魔方-诊断结果.txt`（UTF-8 带 BOM，记事本直接打开）。
  *
- * ⚠️ **只读**：唯一会写盘的一下是"在盘根建一个几字节的探针文件再立刻删掉"（测可写性），
- *    `--no-write-test` 可以关掉；报告里会照实写"没测"，不当成"没问题"。
+ * ⚠️ **只读**：会写盘的两下都是**它自己的临时探针**，建完立刻删 —— ①盘根一个几字节的探针
+ *    文件（测可写性）；②盘根一个空目录 + 一个 junction（测**这块盘到底能不能建链接**：
+ *    FAT/exFAT 按设计不支持 reparse point，"插件用不了"的一大类原因就是这个）。
+ *    `--no-write-test` 把两下都关掉；报告里会照实写"没测"，不当成"没问题"。
  * ⚠️ 只在**报告**里出现的东西才可能含隐私；token 一类字段会被打码（见 lib 的 `redactSecrets`）。
  */
 
@@ -31,6 +33,7 @@ import {
   bucketOf,
   CLAWROUTER_ENTRY,
   classifyLink,
+  classifyLinkProbe,
   CONFIG_FILE_NAME,
   CURRENT_POINTER_FILE,
   decidePortable,
@@ -40,10 +43,12 @@ import {
   MAX_DELIVERY_DEPTH,
   isBrokenLink,
   judgeDeployment,
+  LINK_PROBE_DIR_PREFIX,
   looksLikeBundledNode,
   looksWrong,
   peerLinkNeeded,
   POINTER_KEY_FIELD,
+  probeLinkCapability,
   readPointerKey,
   PORTABLE_WORKSPACE_DIR_NAME,
   redactSecrets,
@@ -380,6 +385,33 @@ function probeWritable(volumeRoot) {
   }
 }
 
+/**
+ * 在这块盘上真建一个 junction 再删掉 —— 「插件/技能装不上」那一类里，**文件系统不支持
+ * reparse point**（FAT/exFAT）是唯一我们在这边造不出来的前提（本机四个卷全是 NTFS）。
+ *
+ * ⚠️ 名字带 pid（唯一）⇒ 绝不会撞上盘上别人的东西；万一撞上了（上次崩了留下的同名目录），
+ *    `probeLinkCapability` 会在非递归 mkdir 那一步失败并**拒绝**清理 —— 报"没测"，不报"建不了"。
+ * ⚠️ `--no-write-test` 把这一条与可写性一起关掉（两下都是写盘），报告里照实写"没测"。
+ */
+function probeLink(volumeRoot, fileSystem, enabled) {
+  if (!enabled) {
+    return {
+      volumeRoot,
+      fileSystem,
+      tested: false,
+      ok: false,
+      errorCode: null,
+      errorMessage: '--no-write-test：没测',
+      leftBehind: [],
+      message: '--no-write-test：没测',
+    };
+  }
+  return {
+    fileSystem,
+    ...probeLinkCapability({ volumeRoot, probeName: `${LINK_PROBE_DIR_PREFIX}${process.pid}`, fsLike: fs }),
+  };
+}
+
 function gather(opts) {
   const warnings = [];
   const now = new Date();
@@ -463,6 +495,17 @@ function gather(opts) {
     : { tested: false, ok: false, message: '--no-write-test：没测（别当成"能写"）' };
   if (!opts.writeTest) warnings.push('可写性没测（--no-write-test）—— "装不上/写不进去"这一类原因这次没有排除');
 
+  const linkProbe = probeLink(volumeRoot, selfVolume?.fileSystem ?? null, opts.writeTest);
+  if (!opts.writeTest) {
+    warnings.push('链接能力没测（--no-write-test）—— "插件/技能用不了"这一类原因这次没有排除');
+  } else if (!linkProbe.tested) {
+    // ⚠️ 探针自己没建起来（路径写错/权限/同名被占）⇒ 这是**工具没做成**，不是"这块盘建不了链接"
+    warnings.push(`链接能力没测成（探针没建起来）：${linkProbe.errorMessage} —— 换一块盘或手动看一眼`);
+  }
+  if (linkProbe.leftBehind?.length) {
+    warnings.push(`探针自己没删掉：${linkProbe.leftBehind.join('；')}（是本工具建的，可以手动删）`);
+  }
+
   const facts = {
     generatedAt,
     host: { platform: process.platform, release: os.release(), arch: process.arch, systemDrive },
@@ -487,6 +530,7 @@ function gather(opts) {
     deployments,
     logs,
     writable,
+    linkProbe,
     installedPcVersion: installedPcVersion(localAppDataDir),
     warnings,
   };
@@ -506,7 +550,8 @@ function emitTool(outDir) {
   const readme = [
     '这份东西是干什么的：',
     '',
-    `1. 双击「${TOOL_BAT_NAME}」（它只会读，不会改任何设置）；`,
+    `1. 双击「${TOOL_BAT_NAME}」（它只会读，不会改任何设置；只在盘上建两个**它自己的**临时探针再删掉：`,
+    '   一个几字节的文件、一个空目录+链接 —— 就这两下，不碰你的任何文件）；',
     `2. 跑完会在同一个夹子里出现「${REPORT_NAME}」；`,
     '3. 把那个 txt 整个发回给我们（微信/邮件都行）。',
     '',
@@ -584,6 +629,11 @@ async function main(argv) {
     }`,
   );
   console.log(`坏链：${broken.length} 条${absent.length ? `；另有 ${absent.length} 处"链接还没建"（多半正常）` : ''}`);
+  // ⚠️ 这一行**屏幕上也必须有**（不能只写进报告文件）：同事常常只截屏/只转发这一屏，
+  //    而"插件/技能用不了"的一大类原因就落在这条上。
+  const linkCap = classifyLinkProbe(facts.linkProbe);
+  console.log(linkCap.headline);
+  if (linkCap.advice) console.log(`   ${linkCap.advice}`);
   if (facts.warnings.length) console.log(`这个工具自己没做成的：${facts.warnings.length} 条（报告里有）`);
   console.log(`\n报告已写好：${out}`);
   console.log('把它整个发回来即可。');
