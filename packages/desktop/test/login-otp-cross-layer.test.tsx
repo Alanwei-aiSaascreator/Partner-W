@@ -79,10 +79,7 @@ function hangingVerifyClient(): unknown {
 }
 
 /** 明确回话的桩：用来走"服务端说了什么"的那两条路。 */
-function replyingClient(
-  signInWithOtp: () => Promise<unknown>,
-  verifyOtp: () => Promise<unknown>,
-): unknown {
+function replyingClient(signInWithOtp: () => Promise<unknown>, verifyOtp: () => Promise<unknown>): unknown {
   return { auth: { signInWithOtp, verifyOtp } };
 }
 
@@ -146,7 +143,9 @@ describe('登录验证码：真主进程 ↔ 真界面', () => {
       global: { fetch: hangingFetch() as never },
       auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
     });
-    mocks.client = { auth: { signInWithOtp: (p: unknown) => (real.auth.signInWithOtp as (x: unknown) => Promise<unknown>)(p) } };
+    mocks.client = {
+      auth: { signInWithOtp: (p: unknown) => (real.auth.signInWithOtp as (x: unknown) => Promise<unknown>)(p) },
+    };
 
     const { container, unmount } = render(<Login onSignedIn={onSignedIn} />);
     const phone = container.querySelector('input[type="tel"]') as HTMLInputElement;

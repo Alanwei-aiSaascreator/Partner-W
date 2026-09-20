@@ -155,10 +155,9 @@ export async function sendLoginOtp(target: string): Promise<IpcResult> {
   const isEmail = target.includes('@');
   try {
     const raced = await withTimeout<{ error: unknown } | OtpTimeout>(
-      (isEmail
-        ? supabase.auth.signInWithOtp({ email: target })
-        : supabase.auth.signInWithOtp({ phone: target })
-      ).then((r) => ({ error: r.error as unknown })),
+      (isEmail ? supabase.auth.signInWithOtp({ email: target }) : supabase.auth.signInWithOtp({ phone: target })).then(
+        (r) => ({ error: r.error as unknown }),
+      ),
       OTP_TIMED_OUT,
       'otp.send',
     );

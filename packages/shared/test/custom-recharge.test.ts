@@ -1,9 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import {
-  CUSTOM_RECHARGE_MAX_CENTS,
-  CUSTOM_RECHARGE_MIN_CENTS,
-  parseRechargeYuanToCents,
-} from '../src/constants';
+import { CUSTOM_RECHARGE_MAX_CENTS, CUSTOM_RECHARGE_MIN_CENTS, parseRechargeYuanToCents } from '../src/constants';
 
 describe('parseRechargeYuanToCents', () => {
   it('turns whole yuan into cents', () => {
@@ -28,12 +24,8 @@ describe('parseRechargeYuanToCents', () => {
   });
 
   it('accepts the bounds exactly', () => {
-    expect(parseRechargeYuanToCents(String(CUSTOM_RECHARGE_MIN_CENTS / 100))).toBe(
-      CUSTOM_RECHARGE_MIN_CENTS,
-    );
-    expect(parseRechargeYuanToCents(String(CUSTOM_RECHARGE_MAX_CENTS / 100))).toBe(
-      CUSTOM_RECHARGE_MAX_CENTS,
-    );
+    expect(parseRechargeYuanToCents(String(CUSTOM_RECHARGE_MIN_CENTS / 100))).toBe(CUSTOM_RECHARGE_MIN_CENTS);
+    expect(parseRechargeYuanToCents(String(CUSTOM_RECHARGE_MAX_CENTS / 100))).toBe(CUSTOM_RECHARGE_MAX_CENTS);
   });
 
   it('rejects amounts outside the bounds', () => {

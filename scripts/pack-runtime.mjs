@@ -221,9 +221,7 @@ async function main() {
   const sz = sevenZip();
 
   if (args.verifyOnly) {
-    const archives = fs
-      .readdirSync(args.out, { recursive: true })
-      .filter((f) => String(f).endsWith('.7z'));
+    const archives = fs.readdirSync(args.out, { recursive: true }).filter((f) => String(f).endsWith('.7z'));
     if (!archives.length) throw new Error(`${args.out} 下没有 .7z 产物`);
     for (const a of archives) {
       verifyArchive(sz, path.join(args.out, a));
@@ -235,7 +233,11 @@ async function main() {
   if (!args.version) throw new Error('缺 --version，例如 --version 2026.9.3');
 
   const keepList = args.keepFile
-    ? fs.readFileSync(args.keepFile, 'utf8').split(/\r?\n/).map((s) => s.trim()).filter((s) => s && !s.startsWith('#'))
+    ? fs
+        .readFileSync(args.keepFile, 'utf8')
+        .split(/\r?\n/)
+        .map((s) => s.trim())
+        .filter((s) => s && !s.startsWith('#'))
     : DEFAULT_KEEP_SKILLS;
 
   const work = path.join(args.out, '.work');
@@ -266,7 +268,8 @@ async function main() {
   // ③ 剪技能
   const skillsDir = path.join(pkgDir, 'skills');
   if (args.prune && fs.existsSync(skillsDir)) {
-    const existing = fs.readdirSync(skillsDir, { withFileTypes: true })
+    const existing = fs
+      .readdirSync(skillsDir, { withFileTypes: true })
       .filter((e) => e.isDirectory())
       .map((e) => e.name);
     const drop = selectSkillsToPrune(existing, keepList);
@@ -302,7 +305,14 @@ async function main() {
   const fileCount = countFiles(path.join(stage, 'node_modules'));
 
   // ⑥ 写 manifest（两份：产物根目录一份，运行时目录里一份 —— 荣盈就是两份）
-  const manifest = buildManifest({ version: args.version, archive: `win32-x64/${archiveName}`, archiveSize, fileCount, sha256, extractor: 'win32-x64/extractor/7za.exe' });
+  const manifest = buildManifest({
+    version: args.version,
+    archive: `win32-x64/${archiveName}`,
+    archiveSize,
+    fileCount,
+    sha256,
+    extractor: 'win32-x64/extractor/7za.exe',
+  });
   const runtimeDir = path.join(args.out, 'openclaw-runtime');
   fs.mkdirSync(runtimeDir, { recursive: true });
   const json = `${JSON.stringify(manifest, null, 2)}\n`;
@@ -314,7 +324,9 @@ async function main() {
   verifyArchive(sz, archivePath);
 
   fs.rmSync(work, { recursive: true, force: true });
-  console.log(`\n✅ 完成\n   版本   ${args.version}\n   产物   ${archivePath}\n   大小   ${(archiveSize / 1024 / 1024).toFixed(1)} MB\n   文件数 ${fileCount}\n   sha256 ${sha256}`);
+  console.log(
+    `\n✅ 完成\n   版本   ${args.version}\n   产物   ${archivePath}\n   大小   ${(archiveSize / 1024 / 1024).toFixed(1)} MB\n   文件数 ${fileCount}\n   sha256 ${sha256}`,
+  );
 }
 
 // 只在被直接执行时跑 main，被 import 时（测试）不跑。
