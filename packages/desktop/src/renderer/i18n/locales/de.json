@@ -1024,7 +1024,6 @@
     "appSettings": "App-Einstellungen",
     "archivedChats": "Archivierte Chats",
     "collapseNav": "Seitenleiste einklappen",
-    "emptyHint": "Klicken Sie auf \"Neue Aufgabe\"",
     "expandNav": "Seitenleiste ausklappen",
     "identityCenter": "Identitätscenter",
     "myAssistants": "Meine Assistenten",
@@ -1042,10 +1041,8 @@
     "pinned": "Angeheftet",
     "recentTasks": "Letzte Aufgaben",
     "searchTasks": "Aufgaben suchen…",
-    "showFewerTasks": "Weniger Aufgaben anzeigen",
     "updateAvailable": "Update verfuegbar",
-    "usageOverview": "Meine KI-Nutzungsübersicht",
-    "viewAllTasks": "Alle Aufgaben anzeigen"
+    "usageOverview": "Meine KI-Nutzungsübersicht"
   },
   "login": {
     "agreement": "Ich habe die {0} und die {1} gelesen und stimme ihnen zu",
@@ -1710,7 +1707,8 @@
     "filter_all": "Alle",
     "filter_archived": "Archiviert",
     "filterLabel": "Filter",
-    "searchPlaceholder": "Aufgabentitel suchen…"
+    "searchPlaceholder": "Aufgabentitel suchen…",
+    "unread": "Ungelesen"
   },
   "taskWorkbench": {
     "appendDraft": "Append template",

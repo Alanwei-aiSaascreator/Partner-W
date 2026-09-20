@@ -5,7 +5,6 @@ import { runManualCompaction } from '@clawwork/core';
 import { useTaskStore } from '@/stores/taskStore';
 import { useMessageStore } from '@/stores/messageStore';
 import { useUiStore } from '@/stores/uiStore';
-import { useSessionPreviews } from '@/hooks/useSessionPreviews';
 import { compareTasksForSidebar } from '@/lib/task-sort';
 import { filterTasksForPanel, type TaskPanelFilter } from '@/lib/task-panel';
 import { exportToFiles, exportToLocal } from '@/lib/export-session';
@@ -22,7 +21,9 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog';
 import EmptyState from '@/components/semantic/EmptyState';
-import TaskItem from '../LeftNav/TaskItem';
+import { useGatewaySelector } from '@/hooks/useGatewaySelector';
+import { resolveTaskAgentId } from '@/lib/task-sort';
+import TaskRow from './TaskRow';
 
 type ConfirmAction = 'reset' | 'delete' | null;
 
@@ -41,9 +42,12 @@ const FILTERS: TaskPanelFilter[] = ['all', 'active', 'archived'];
  *
  * ## 功能对等（搬过来时一条都不能少）
  *
- * 行仍然是 `LeftNav/TaskItem`（点击 = 打开会话 + 清未读 + 切到 chat；
- * 双击/菜单重命名；运行中/未读/置顶的角标都在它身上），右键菜单与"重置/删除"确认框
- * 也从左栏原样搬过来 —— 撤掉左栏那块**不能**顺手把这些能力一起撤掉。
+ * 右键菜单（置顶/压缩/重置/删除/导出）、"重置/删除"确认框、行内重命名，
+ * 以及点击打开会话/清未读 —— 全部从 `LeftNav` 原样搬过来，
+ * 撤掉左栏那块**不能**顺手把这些能力一起撤掉。
+ *
+ * ⚠️ 行是**宽版** `./TaskRow`，不是窄栏的 `LeftNav/TaskItem`（用户截图打回过一次：
+ *    窄栏行带着整条预览横贯宽屏 ⇒ 看着堆成一团）。为什么、以及别加什么，写在 `TaskRow` 里。
  */
 export default function TasksPanel() {
   const { t } = useTranslation();
@@ -54,6 +58,8 @@ export default function TasksPanel() {
   const clearMessages = useMessageStore((s) => s.clearMessages);
   const addMessage = useMessageStore((s) => s.addMessage);
   const gwStatusMap = useUiStore((s) => s.gatewayStatusMap);
+  const { agentCatalog } = useGatewaySelector();
+  const agentById = useMemo(() => new Map(agentCatalog.map((agent) => [agent.id, agent])), [agentCatalog]);
 
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<TaskPanelFilter>('all');
@@ -67,7 +73,6 @@ export default function TasksPanel() {
     () => filterTasksForPanel(tasks, { query, filter }).slice().sort(compareTasksForSidebar),
     [tasks, query, filter],
   );
-  const sessionPreviews = useSessionPreviews(visibleTasks);
 
   const findTask = useCallback((taskId: string) => useTaskStore.getState().tasks.find((t2) => t2.id === taskId), []);
 
@@ -192,21 +197,25 @@ export default function TasksPanel() {
       </div>
 
       <ScrollArea className="min-h-0 flex-1">
-        <div className="px-4 pb-6">
+        <div className="space-y-0.5 px-4 pb-6">
           {visibleTasks.length === 0 && (
             <EmptyState title={t(searchActive ? 'tasksPanel.emptySearch' : 'tasksPanel.empty')} className="py-10" />
           )}
-          {visibleTasks.map((task) => (
-            <TaskItem
-              key={task.id}
-              task={task}
-              active={task.id === activeTaskId}
-              onContextMenu={(event) => handleContextMenu(event, task.id, task.status)}
-              editing={editingTaskId === task.id}
-              onEditDone={() => setEditingTaskId(null)}
-              preview={sessionPreviews[task.id]}
-            />
-          ))}
+          {visibleTasks.map((task) => {
+            const owner = agentById.get(resolveTaskAgentId(task));
+            return (
+              <TaskRow
+                key={task.id}
+                task={task}
+                active={task.id === activeTaskId}
+                agentLabel={owner?.name}
+                agentEmoji={owner?.identity?.emoji}
+                onContextMenu={(event) => handleContextMenu(event, task.id, task.status)}
+                editing={editingTaskId === task.id}
+                onEditDone={() => setEditingTaskId(null)}
+              />
+            );
+          })}
         </div>
       </ScrollArea>
 

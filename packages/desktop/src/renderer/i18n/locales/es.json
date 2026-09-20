@@ -1024,7 +1024,6 @@
     "appSettings": "Configuración de la app",
     "archivedChats": "Chats archivados",
     "collapseNav": "Contraer barra lateral",
-    "emptyHint": "Haz clic en “Nueva tarea” para comenzar",
     "expandNav": "Expandir barra lateral",
     "identityCenter": "Centro de identidad",
     "myAssistants": "Mis asistentes",
@@ -1042,10 +1041,8 @@
     "pinned": "Fijada",
     "recentTasks": "Tareas recientes",
     "searchTasks": "Buscar tareas…",
-    "showFewerTasks": "Mostrar menos tareas",
     "updateAvailable": "Actualización disponible",
-    "usageOverview": "Resumen de uso de mi IA",
-    "viewAllTasks": "Ver todas las tareas"
+    "usageOverview": "Resumen de uso de mi IA"
   },
   "login": {
     "agreement": "He leído y acepto los {0} y la {1}",
@@ -1710,7 +1707,8 @@
     "filter_all": "Todas",
     "filter_archived": "Archivadas",
     "filterLabel": "Filtro",
-    "searchPlaceholder": "Buscar títulos de tareas…"
+    "searchPlaceholder": "Buscar títulos de tareas…",
+    "unread": "Sin leer"
   },
   "taskWorkbench": {
     "appendDraft": "Append template",

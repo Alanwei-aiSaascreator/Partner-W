@@ -1024,7 +1024,6 @@
     "appSettings": "應用程式設定",
     "archivedChats": "已封存對話",
     "collapseNav": "收合側邊欄",
-    "emptyHint": "點擊「新任務」開始",
     "expandNav": "展開側邊欄",
     "identityCenter": "身分中心",
     "myAssistants": "我的助手",
@@ -1042,10 +1041,8 @@
     "pinned": "已置頂",
     "recentTasks": "最近任務",
     "searchTasks": "搜尋任務…",
-    "showFewerTasks": "收起任務",
     "updateAvailable": "有可用更新",
-    "usageOverview": "我的 AI 使用概覽",
-    "viewAllTasks": "查看全部任務"
+    "usageOverview": "我的 AI 使用概覽"
   },
   "login": {
     "agreement": "我已閱讀並同意{0}與{1}",
@@ -1710,7 +1707,8 @@
     "filter_all": "全部",
     "filter_archived": "已封存",
     "filterLabel": "篩選",
-    "searchPlaceholder": "搜尋任務標題…"
+    "searchPlaceholder": "搜尋任務標題…",
+    "unread": "未讀"
   },
   "taskWorkbench": {
     "appendDraft": "附加範本",

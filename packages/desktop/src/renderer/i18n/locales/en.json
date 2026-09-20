@@ -1024,7 +1024,6 @@
     "appSettings": "App Settings",
     "archivedChats": "Archived Chats",
     "collapseNav": "Collapse sidebar",
-    "emptyHint": "Click \"New Task\" to start",
     "expandNav": "Expand sidebar",
     "identityCenter": "Identity center",
     "myAssistants": "My assistants",
@@ -1042,10 +1041,8 @@
     "pinned": "Pinned",
     "recentTasks": "Recent tasks",
     "searchTasks": "Search tasks…",
-    "showFewerTasks": "Show fewer tasks",
     "updateAvailable": "Update available",
-    "usageOverview": "My AI usage overview",
-    "viewAllTasks": "View all tasks"
+    "usageOverview": "My AI usage overview"
   },
   "login": {
     "agreement": "I have read and agree to the {0} and {1}",
@@ -1710,7 +1707,8 @@
     "filter_all": "All",
     "filter_archived": "Archived",
     "filterLabel": "Filter",
-    "searchPlaceholder": "Search task titles…"
+    "searchPlaceholder": "Search task titles…",
+    "unread": "Unread"
   },
   "taskWorkbench": {
     "appendDraft": "Append template",

@@ -1024,7 +1024,6 @@
     "appSettings": "应用设置",
     "archivedChats": "归档对话",
     "collapseNav": "收起侧栏",
-    "emptyHint": "点击「新任务」开始",
     "expandNav": "展开侧栏",
     "identityCenter": "身份中心",
     "myAssistants": "我的助手",
@@ -1042,10 +1041,8 @@
     "pinned": "已置顶",
     "recentTasks": "最近任务",
     "searchTasks": "搜索任务…",
-    "showFewerTasks": "收起任务",
     "updateAvailable": "有新版本可用",
-    "usageOverview": "我的 AI 使用概览",
-    "viewAllTasks": "查看全部任务"
+    "usageOverview": "我的 AI 使用概览"
   },
   "login": {
     "agreement": "我已阅读并同意{0}与{1}",
@@ -1710,7 +1707,8 @@
     "filter_all": "全部",
     "filter_archived": "已归档",
     "filterLabel": "筛选",
-    "searchPlaceholder": "搜索任务标题…"
+    "searchPlaceholder": "搜索任务标题…",
+    "unread": "未读"
   },
   "taskWorkbench": {
     "appendDraft": "追加模板",

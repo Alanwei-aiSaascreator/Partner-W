@@ -1024,7 +1024,6 @@
     "appSettings": "アプリ設定",
     "archivedChats": "アーカイブ済みチャット",
     "collapseNav": "サイドバーを折りたたむ",
-    "emptyHint": "「新規タスク」をクリックして開始",
     "expandNav": "サイドバーを展開",
     "identityCenter": "アカウント",
     "myAssistants": "マイアシスタント",
@@ -1042,10 +1041,8 @@
     "pinned": "ピン留め済み",
     "recentTasks": "最近のタスク",
     "searchTasks": "タスクを検索…",
-    "showFewerTasks": "表示するタスクを減らす",
     "updateAvailable": "アップデートがあります",
-    "usageOverview": "AI 利用状況",
-    "viewAllTasks": "すべてのタスクを表示"
+    "usageOverview": "AI 利用状況"
   },
   "login": {
     "agreement": "{0}と{1}を読み、同意します",
@@ -1710,7 +1707,8 @@
     "filter_all": "すべて",
     "filter_archived": "アーカイブ",
     "filterLabel": "絞り込み",
-    "searchPlaceholder": "タスク名を検索…"
+    "searchPlaceholder": "タスク名を検索…",
+    "unread": "未読"
   },
   "taskWorkbench": {
     "appendDraft": "Append template",
