@@ -906,6 +906,28 @@ describe('chat 的 state-only 帧不许当成"助手回应了"', () => {
 
     expect(notify).toHaveBeenCalledWith(TASK.sessionKey);
   });
+
+  /**
+   * ⚠️ 同一类错误的**另一个出口**：`markUnread` 与 `notify` 在同一个 `if (!ephemeral)` 块里。
+   * 未读小红点的语义是"那边**有内容**可看" —— 纯状态帧把它点亮，用户点进去会一脸茫然。
+   */
+  it('⭐ `state:"status"` ⇒ 不许把**别的**任务标未读（小红点要对得上内容）', () => {
+    const { h } = harnessWithNotify();
+    h.deps.getActiveTaskId = () => 'another-task';
+
+    emitState(h, 'status');
+
+    expect(h.deps.markUnread).not.toHaveBeenCalled();
+  });
+
+  it('对照：`delta` 带正文 ⇒ 照旧标未读', () => {
+    const { h } = harnessWithNotify();
+    h.deps.getActiveTaskId = () => 'another-task';
+
+    emitState(h, 'delta', { message: { content: [{ type: 'text', text: '你好' }] } });
+
+    expect(h.deps.markUnread).toHaveBeenCalledWith('task-1');
+  });
 });
 
 /**

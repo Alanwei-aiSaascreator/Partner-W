@@ -838,15 +838,19 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
       state === 'error';
 
     if (!ephemeral) {
+      // ⚠️ `onPerformerCandidate` **不跟着 `carriesResponse` 走**：它记的是
+      //    "这个会话在参与这个任务"（**路由事实**），不是"有内容可看"。
+      //    一个 worker 只要开着就已经是 performer 了，等它有正文再登记会让房间/派活名单晚一拍。
       if (matchedTask.ensemble && sessionKey !== matchedTask.sessionKey) {
         deps.onPerformerCandidate?.(taskId, sessionKey, matchedTask.gatewayId);
       }
 
-      if (taskId !== deps.getActiveTaskId()) {
-        deps.markUnread(taskId);
+      if (carriesResponse) {
+        // 未读小红点的语义 = "那边**有内容**可看"。纯状态帧点亮它，用户点进去一脸茫然
+        // （与 `notify` 同一类错误、同一个出口，2026-09-20 一起收掉）。
+        if (taskId !== deps.getActiveTaskId()) deps.markUnread(taskId);
+        deps.notifyAgentResponse?.(sessionKey);
       }
-
-      if (carriesResponse) deps.notifyAgentResponse?.(sessionKey);
     }
 
     if (state === 'delta') {
