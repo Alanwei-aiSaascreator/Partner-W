@@ -1702,6 +1702,16 @@
     "takingLonger": "This is taking longer than usual. You can retry without leaving the workspace.",
     "title": "Rongying Cube を準備しています"
   },
+  "tasksPanel": {
+    "count": "全 {{count}} 件",
+    "empty": "タスクはまだありません",
+    "emptySearch": "一致するタスクがありません",
+    "filter_active": "進行中",
+    "filter_all": "すべて",
+    "filter_archived": "アーカイブ",
+    "filterLabel": "絞り込み",
+    "searchPlaceholder": "タスク名を検索…"
+  },
   "taskWorkbench": {
     "appendDraft": "Append template",
     "customTask": "Custom task",

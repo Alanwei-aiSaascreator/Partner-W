@@ -57,6 +57,7 @@ import MarketPanel from '@/layouts/MarketPanel';
 import GrowthPanel from '@/layouts/GrowthPanel';
 import IdentityCenter from '@/layouts/IdentityCenter';
 import SkillMarket from '@/layouts/SkillMarket';
+import TasksPanel from '@/layouts/TasksPanel';
 import KnowledgeBase from '@/layouts/KnowledgeBase';
 import { useUsageStore } from '@/stores/usageStore';
 import { useQuotaRefreshOnTurnEnd } from '@/hooks/useQuotaRefreshOnTurnEnd';
@@ -1244,7 +1245,11 @@ export default function MainArea({
   return (
     <div className="flex flex-col h-full">
       <ConnectionBanner />
-      {mainView === 'files' ? (
+      {mainView === 'tasks' ? (
+        <div className="flex-1 min-h-0">
+          <TasksPanel />
+        </div>
+      ) : mainView === 'files' ? (
         <div className="flex-1 min-h-0">
           <FileBrowser />
         </div>

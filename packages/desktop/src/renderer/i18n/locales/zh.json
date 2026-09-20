@@ -1702,6 +1702,16 @@
     "takingLonger": "准备时间比平时更久，你可以留在工作台内重新尝试。",
     "title": "正在准备荣盈魔方"
   },
+  "tasksPanel": {
+    "count": "共 {{count}} 个",
+    "empty": "还没有任务",
+    "emptySearch": "没有匹配的任务",
+    "filter_active": "进行中",
+    "filter_all": "全部",
+    "filter_archived": "已归档",
+    "filterLabel": "筛选",
+    "searchPlaceholder": "搜索任务标题…"
+  },
   "taskWorkbench": {
     "appendDraft": "追加模板",
     "customTask": "自定义任务",

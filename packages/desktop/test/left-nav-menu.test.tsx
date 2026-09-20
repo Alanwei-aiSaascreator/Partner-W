@@ -62,8 +62,11 @@ describe('LeftNav NavMenu', () => {
 
     // 前 11 项 = 设计稿的顺序；后 5 项 = 2026-09-19 去掉图标栏后搬来的
     //（文件管理 / 归档对话 / 资料库 进主清单，内测中心 / 设置 进底部一组）。
+    // ⚠️ `tasks`（最近任务）是 2026-09-20 用户点名加的：**放在「身份中心」上面**
+    //    —— 原来那栏在左列最下面、"显示也不全"，改成导航入口 + 右侧全量面板。
     expect(keys).toEqual([
       'search',
+      'tasks',
       'identity',
       'teams',
       'skills',
@@ -80,6 +83,23 @@ describe('LeftNav NavMenu', () => {
       'betaHub',
       'settings',
     ]);
+    unmount();
+  });
+
+  it('⭐ 点「最近任务」落到 `tasks` 这个 mainView（它不再是左列最下面那一块）', () => {
+    const { container, onSelectView, unmount } = setup();
+
+    clickNav(container, 'tasks');
+
+    expect(onSelectView).toHaveBeenLastCalledWith('tasks');
+    unmount();
+  });
+
+  it('⭐「最近任务」在「身份中心」上面（用户点名：原来在最下面不好）', () => {
+    const { container, unmount } = setup();
+    const keys = [...container.querySelectorAll('[data-nav]')].map((el) => el.getAttribute('data-nav'));
+
+    expect(keys.indexOf('tasks')).toBe(keys.indexOf('identity') - 1);
     unmount();
   });
 

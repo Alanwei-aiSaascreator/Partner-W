@@ -1702,6 +1702,16 @@
     "takingLonger": "This is taking longer than usual. You can retry without leaving the workspace.",
     "title": "Preparando Rongying Cube"
   },
+  "tasksPanel": {
+    "count": "{{count}} en total",
+    "empty": "Aún no hay tareas",
+    "emptySearch": "No hay tareas coincidentes",
+    "filter_active": "Activas",
+    "filter_all": "Todas",
+    "filter_archived": "Archivadas",
+    "filterLabel": "Filtro",
+    "searchPlaceholder": "Buscar títulos de tareas…"
+  },
   "taskWorkbench": {
     "appendDraft": "Append template",
     "customTask": "Custom task",

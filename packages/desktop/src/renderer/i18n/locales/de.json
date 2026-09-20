@@ -1702,6 +1702,16 @@
     "takingLonger": "This is taking longer than usual. You can retry without leaving the workspace.",
     "title": "Rongying Cube wird vorbereitet"
   },
+  "tasksPanel": {
+    "count": "{{count}} insgesamt",
+    "empty": "Noch keine Aufgaben",
+    "emptySearch": "Keine passenden Aufgaben",
+    "filter_active": "Aktiv",
+    "filter_all": "Alle",
+    "filter_archived": "Archiviert",
+    "filterLabel": "Filter",
+    "searchPlaceholder": "Aufgabentitel suchen…"
+  },
   "taskWorkbench": {
     "appendDraft": "Append template",
     "customTask": "Custom task",

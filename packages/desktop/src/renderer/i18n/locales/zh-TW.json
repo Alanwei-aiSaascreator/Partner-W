@@ -1702,6 +1702,16 @@
     "takingLonger": "準備時間比平時更久，你可以留在工作台內重新嘗試。",
     "title": "正在準備榮盈魔方"
   },
+  "tasksPanel": {
+    "count": "共 {{count}} 個",
+    "empty": "還沒有任務",
+    "emptySearch": "沒有符合的任務",
+    "filter_active": "進行中",
+    "filter_all": "全部",
+    "filter_archived": "已封存",
+    "filterLabel": "篩選",
+    "searchPlaceholder": "搜尋任務標題…"
+  },
   "taskWorkbench": {
     "appendDraft": "附加範本",
     "customTask": "自訂任務",

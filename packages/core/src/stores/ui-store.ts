@@ -3,6 +3,10 @@ import type { AgentInfo, CommandEntry, ModelCatalogEntry, SkillStatusReport, Too
 
 export type MainView =
   | 'chat'
+  /** 最近任务 —— 全量任务列表（搜索 / 状态筛选 / 跨助手）。
+   *  2026-09-20 用户点名：原来它是**左列最下面那一块**（只 5 条、"显示也不全"），
+   *  改成导航入口（放在「身份中心」上面）+ 这个右侧面板。 */
+  | 'tasks'
   | 'files'
   | 'archived'
   | 'cron'

@@ -1702,6 +1702,16 @@
     "takingLonger": "This is taking longer than usual. You can retry without leaving the workspace.",
     "title": "Rongying Cube 준비 중"
   },
+  "tasksPanel": {
+    "count": "총 {{count}}개",
+    "empty": "아직 작업이 없습니다",
+    "emptySearch": "일치하는 작업이 없습니다",
+    "filter_active": "진행 중",
+    "filter_all": "전체",
+    "filter_archived": "보관됨",
+    "filterLabel": "필터",
+    "searchPlaceholder": "작업 제목 검색…"
+  },
   "taskWorkbench": {
     "appendDraft": "Append template",
     "customTask": "Custom task",

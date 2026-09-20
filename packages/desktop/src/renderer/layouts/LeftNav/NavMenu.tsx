@@ -9,6 +9,7 @@ import {
   Feather,
   FlaskConical,
   FolderOpen,
+  List,
   MessageSquare,
   Settings as SettingsIcon,
   Sparkles,
@@ -88,6 +89,9 @@ export default function NavMenu({
   // ⚠️ 顺序**照设计稿**排（不是按功能分组）。改顺序 = 改与设计稿的对应关系。
   const items: NavItem[] = [
     { key: 'search', labelKey: 'leftNav.pages.search', icon: MessageSquare, view: 'chat' },
+    // ⚠️ 位置是**用户点名**的：「最近任务」放在「身份中心」上面（2026-09-20，
+    //    原话「在最下面不好，显示也不全」）⇒ 顺序断言在 `left-nav-menu.test.tsx` 里钉着。
+    { key: 'tasks', labelKey: 'leftNav.recentTasks', icon: List, view: 'tasks' },
     { key: 'identity', labelKey: 'leftNav.identityCenter', icon: UserRound, view: 'identity' },
     { key: 'teams', labelKey: 'leftNav.pages.teams', icon: Users, view: 'teams', badge: 'Beta' },
     // T-a2：从 `onClick`（打开设置并定位）改成**真正的主页面**。
