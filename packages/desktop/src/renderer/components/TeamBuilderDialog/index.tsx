@@ -582,7 +582,15 @@ export function InstallProgress({
   status: 'idle' | 'installing' | 'done' | 'error';
   events: InstallEvent[];
   progressPercent: number;
-  agents: AgentConfig[];
+  /**
+   * 只收「它真正用到的那部分」：这个面板只读助手的 `name`（换算成 slug 去对事件），
+   * 而 `buildInstallEventView` 收的也正是 `ReadonlyArray<{ name: string }>`。
+   *
+   * ⚠️ 写成 `AgentConfig[]` 是**过度约束**：`test/install-progress-reason.test.tsx`
+   *    要造的就是"两个只有名字的助手"，于是 `typecheck:tests` 报
+   *    「缺少 role/description/model/identity」（既有红，2026-09-20 修）。
+   */
+  agents: ReadonlyArray<{ name: string }>;
 }) {
   const { t } = useTranslation();
 
