@@ -35,6 +35,10 @@ vi.mock('../src/main/workspace/config.js', () => ({
   updateConfig: updateConfigMock,
   isWorkspaceConfigured: isWorkspaceConfiguredMock,
   getDefaultWorkspacePath: getDefaultWorkspacePathMock,
+  // 补记盘符自愈线索时也要看"程序自己运行的那块盘"（本机安装形态 = null）。
+  // ⚠️ 与上面 `getSqlite` 同一条纪律：mock 少一个被用到的导出，vitest 报的是
+  //    `No "…" export is defined on the mock`，指向 mock 而不是被测代码。
+  getPortableWorkspaceRoot: () => null,
 }));
 
 vi.mock('../src/main/workspace/init.js', () => ({

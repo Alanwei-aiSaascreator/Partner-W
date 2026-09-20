@@ -31,6 +31,7 @@
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import {
+  isDeliveryLayout,
   isRemovableVolume,
   normalizeVolumeRoot,
   PORTABLE_WORKSPACE_DIR_NAME,
@@ -50,7 +51,7 @@ import { RUNTIME_MANIFEST_FILE } from './locate.js';
 export const PORTABLE_APP_DATA_DIR_NAME = '荣盈魔方-运行数据';
 
 /** 凭什么认为"这是盘上运行"。与 `PortableRunReason` 同名同义（便于日志对照）。 */
-export type PortableAppDataReason = 'removable-drive' | 'volume-marker' | 'workspace-marker';
+export type PortableAppDataReason = 'delivery-layout' | 'removable-drive' | 'volume-marker' | 'workspace-marker';
 
 export interface PortableAppDataInput {
   /** 打包态是 `process.execPath`。 */
@@ -66,7 +67,9 @@ export interface PortableAppDataInput {
    */
   systemDrive?: string | null;
   exists: (p: string) => boolean;
-  /** **惰性**的可移动盘列表：只有前两条判据都没命中时才会被调用。 */
+  /** 打包态的 `<resources>`（真机上是 `process.resourcesPath`）—— 交付形态判据要用。 */
+  resourcesPath?: string | null;
+  /** **惰性**的可移动盘列表：只有前几条判据都没命中时才会被调用。 */
   removableDrives: () => readonly string[];
 }
 
@@ -115,9 +118,14 @@ function notPortable(volumeRoot: string | null): PortableAppDataDecision {
  * exe 就在系统盘上                            ⇒ 不动（连文件都不看）
  * 盘根有 openclaw-runtime-manifest.json       ⇒ 放盘里（volume-marker）
  * 盘里已有 荣盈魔方工作区\.clawwork-workspace.json ⇒ 放盘里（workspace-marker）
+ * exe 自己那份交付夹的形状（isDeliveryLayout）⇒ 放盘里（delivery-layout）
  * exe 的盘在可移动盘列表里                    ⇒ 放盘里（removable-drive）
  * 否则                                        ⇒ 不动
  * ```
+ *
+ * ⚠️ `delivery-layout` 排在枚举**之前**：它是纯文件检查（不花钱），而枚举是一次
+ *    PowerShell（秒级）；更关键的是 `DriveType=3` 的 U 盘/移动固态/读卡器上枚举
+ *    **永远不命中** —— 那些盘的判据只剩前面几条（2026-09-20 同事那份交付包的症状链）。
  *
  * ⚠️ `workspace-marker` 那一条是**换盘符之后的主判据**：它由我们自己写（工作区
  *    初始化时），不依赖卷标、不依赖 DriveType、也不依赖盘根那份运行时 ——
@@ -147,6 +155,9 @@ export function decidePortableAppData(input: PortableAppDataInput): PortableAppD
 function classify(input: PortableAppDataInput, volumeRoot: string): PortableAppDataReason | null {
   if (input.exists(P().join(volumeRoot, RUNTIME_MANIFEST_FILE))) return 'volume-marker';
   if (input.exists(workspaceMarkerPathFor(volumeRoot))) return 'workspace-marker';
+  if (isDeliveryLayout({ exePath: input.exePath, resourcesPath: input.resourcesPath, exists: input.exists })) {
+    return 'delivery-layout';
+  }
   if (isRemovableVolume(volumeRoot, input.removableDrives())) return 'removable-drive';
   return null;
 }
@@ -185,6 +196,7 @@ export function applyPortableAppData(opts: PortableAppDataApplyInput): PortableA
     defaultUserData: opts.app.getPath('userData'),
     systemDrive: opts.systemDrive,
     exists: opts.exists,
+    resourcesPath: opts.resourcesPath,
     removableDrives: opts.removableDrives,
   });
   if (!decision.target) {

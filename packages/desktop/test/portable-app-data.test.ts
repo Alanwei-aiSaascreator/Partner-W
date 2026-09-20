@@ -18,7 +18,11 @@ import {
   decidePortableAppData,
   PORTABLE_APP_DATA_DIR_NAME,
 } from '../src/main/runtime/portable-app-data.js';
-import { PORTABLE_WORKSPACE_DIR_NAME, WORKSPACE_MARKER_FILE } from '../src/main/workspace/portable.js';
+import {
+  PORTABLE_WORKSPACE_DIR_NAME,
+  detectPortableRun,
+  WORKSPACE_MARKER_FILE,
+} from '../src/main/workspace/portable.js';
 
 const WIN = path.win32;
 const MANIFEST = 'openclaw-runtime-manifest.json';
@@ -134,6 +138,104 @@ describe('decidePortableAppData', () => {
   });
 });
 
+/**
+ * 交付形态判据（`delivery-layout`）—— 与 `workspace/portable.ts` 的
+ * `detectPortableRun` **同一份事实、同一个结论**（两边打架过一次，别再来）。
+ *
+ * 为什么必须有它：`DriveType=3` 的 U 盘/移动固态/读卡器上，"枚举可移动盘"永远不命中，
+ * 盘根 marker 又是交付说明里叮嘱不要拷的文件 ⇒ 判据全落空 ⇒ 数据留在本机，
+ * 用户换台机器就是"东西不见了"。
+ */
+describe('decidePortableAppData：交付形态判据', () => {
+  beforeEach(() => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const deliveredExe = (drive: string, wrapper?: string): string =>
+    WIN.join(drive, ...(wrapper ? [wrapper] : []), '荣盈魔方', '荣盈魔方.exe');
+  const resourcesOf = (exePath: string): string => WIN.join(WIN.dirname(exePath), 'resources');
+  const bundledManifestOf = (exePath: string): string => WIN.join(resourcesOf(exePath), 'runtime', MANIFEST);
+
+  it('⑫ 交付夹在盘根下一层、带着随包运行时 ⇒ 数据放盘里，且**不枚举**可移动盘', () => {
+    const exePath = deliveredExe(DRIVE_E);
+    const drives = vi.fn(() => []);
+    const result = decide({
+      exePath,
+      resourcesPath: resourcesOf(exePath),
+      exists: vfs([bundledManifestOf(exePath)]),
+      removableDrives: drives,
+    });
+
+    expect(result.target).toBe(appDataDirOn(DRIVE_E));
+    expect(result.reason).toBe('delivery-layout');
+    expect(drives).not.toHaveBeenCalled();
+  });
+
+  it('⑬ 交付夹套一层包装夹（同事那份 zip 解压出来的形状）也认', () => {
+    const exePath = deliveredExe(DRIVE_E, '荣盈魔方U盘交付-0.0.24');
+    const result = decide({
+      exePath,
+      resourcesPath: resourcesOf(exePath),
+      exists: vfs([bundledManifestOf(exePath)]),
+      removableDrives: () => [],
+    });
+
+    expect(result.reason).toBe('delivery-layout');
+  });
+
+  it('⑭ 系统盘上的交付夹 ⇒ 仍不动（系统盘闸门在判据**之前**，一个文件都不看）', () => {
+    const exePath = deliveredExe(DRIVE_C);
+    const exists = vi.fn(() => true);
+    const result = decide({ exePath, resourcesPath: resourcesOf(exePath), exists, removableDrives: () => [] });
+
+    expect(result.target).toBeNull();
+    expect(result.reason).toBeNull();
+    expect(exists).not.toHaveBeenCalled();
+  });
+
+  it('⑮ 埋得太深 / 装在 Program Files ⇒ 不动（交付说明是"解压到盘根"）', () => {
+    for (const dir of [
+      WIN.join('E:\\', '下载', '解压到这里', '荣盈魔方'),
+      WIN.join('E:\\', 'Program Files', '荣盈魔方'),
+    ]) {
+      const exePath = WIN.join(dir, '荣盈魔方.exe');
+      const result = decide({
+        exePath,
+        resourcesPath: resourcesOf(exePath),
+        exists: vfs([bundledManifestOf(exePath)]),
+        removableDrives: () => [],
+      });
+      expect(result.target).toBeNull();
+    }
+  });
+
+  it('⑯ 两份判据不许打架：同一组事实，数据侧与工作区侧结论必须一致', () => {
+    const exePath = deliveredExe(DRIVE_E);
+    const facts = vfs([bundledManifestOf(exePath)]);
+    const data = decidePortableAppData({
+      exePath,
+      isPackaged: true,
+      defaultUserData: appDataOn(DRIVE_C),
+      systemDrive: DRIVE_C,
+      resourcesPath: resourcesOf(exePath),
+      exists: facts,
+      removableDrives: () => [],
+    });
+    const run = detectPortableRun({
+      exePath,
+      removableDrives: [],
+      resourcesPath: resourcesOf(exePath),
+      exists: facts,
+    });
+
+    expect(run.portable).toBe(true);
+    expect(data.target).not.toBeNull();
+  });
+});
+
 describe('applyPortableAppData', () => {
   beforeEach(() => {
     vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
@@ -210,5 +312,38 @@ describe('applyPortableAppData', () => {
     expect(result.target).toBeNull();
     expect(setPath).not.toHaveBeenCalled();
     expect(mkdir).not.toHaveBeenCalled();
+  });
+
+  /**
+   * ⚠️ 这条钉的是**真机上的那条路**：`index.ts` 传进来的就是 `process.resourcesPath`，
+   *    而交付形态（盘根没 marker）**只能**靠它认出来。少了这个透传，同事那块盘上
+   *    userData 仍旧留在本机（登录态/设备私钥/日志/缓存全在本机，换台机器就要重新登录）
+   *    —— 其余用例走的都是盘根 marker，测不到这个透传。
+   */
+  it('⑰ 交付形态（盘根没 marker）+ resourcesPath ⇒ 一样把 userData 搬上盘', () => {
+    const mkdir = vi.fn();
+    const { app, setPath } = makeApp();
+    const exePath = WIN.join(DRIVE_E, '荣盈魔方U盘交付-0.0.24', '荣盈魔方', '荣盈魔方.exe');
+    const resourcesPath = WIN.join(WIN.dirname(exePath), 'resources');
+
+    const result = applyPortableAppData({
+      app,
+      exePath,
+      isPackaged: true,
+      systemDrive: DRIVE_C,
+      resourcesPath,
+      exists: vfs([WIN.join(resourcesPath, 'runtime', MANIFEST)]),
+      removableDrives: () => [],
+      mkdir,
+    });
+
+    const target = appDataDirOn(DRIVE_E);
+    expect(result.reason).toBe('delivery-layout');
+    expect(result.target).toBe(target);
+    expect(setPath.mock.calls).toEqual([
+      ['userData', target],
+      ['sessionData', target],
+      ['logs', WIN.join(target, 'logs')],
+    ]);
   });
 });

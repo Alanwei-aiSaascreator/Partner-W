@@ -66,6 +66,8 @@ import {
   quarantineDatabaseFiles,
   type WorkspaceDatabasePort,
 } from '../src/main/workspace/startup.js';
+// 只取这一个常量：工作区自身的标记文件名（真 `initWorkspace()` 会往工作区里写它）。
+import { WORKSPACE_MARKER_FILE } from '../src/main/workspace/portable.js';
 
 const MANIFEST = 'openclaw-runtime-manifest.json';
 const WS_NAME = '荣盈魔方工作区';
@@ -209,6 +211,164 @@ describe('盘上首启：不选盘、直接就有工作区', () => {
     expect(readConfig()?.portableSetupPending).toBe(false);
     expect(isWorkspaceConfigured()).toBe(true);
     expect(getDefaultWorkspacePath()).toBe(win32.join('Q:\\', WS_NAME));
+    expect(h.dialogs.askForMissingWorkspace).not.toHaveBeenCalled();
+    expect(h.quit).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * 同事那份交付包的**真实形状**（2026-09-20 实机，`荣盈魔方U盘交付-0.0.24`）：
+ * 解压到 U 盘根目录 ⇒ `<盘>\荣盈魔方U盘交付-0.0.24\荣盈魔方\荣盈魔方.exe`，
+ * exe 旁边是 `resources\`，随包运行时清单在 `resources\runtime\openclaw-runtime-manifest.json`。
+ *
+ * ⚠️ 那两块盘上**两条老判据同时落空**，这就是「找不到工作区」的来源：
+ *    · 盘根**没有** marker —— 交付说明叮嘱那个文件"千万别拷"；
+ *    · 很多 U 盘/移动固态/读卡器被 Windows 报成 `DriveType=3`（固定盘）⇒ 枚举永远不命中。
+ *    ⇒ 老行为：判成安装形态 ⇒ 工作区设到**本机** homedir、一条迁移线索都不记。
+ *
+ * 这一组测的是**编排层**（判定逻辑的纯函数单测在 `portable-run-detection.test.ts`）：
+ * 判据接上之后，首启 / 换口 / 稳态 / 本机安装四种情形到底发生了什么。
+ */
+describe('交付形态（DriveType=3 的 U 盘）：同事那份交付包', () => {
+  const DELIVERY_DIR = '荣盈魔方U盘交付-0.0.24';
+  const deliveryAppDir = (drive: string): string => win32.join(drive, DELIVERY_DIR, '荣盈魔方');
+  const deliveryExeOn = (drive: string): string => win32.join(deliveryAppDir(drive), '荣盈魔方.exe');
+  const deliveryResourcesOn = (drive: string): string => win32.join(deliveryAppDir(drive), 'resources');
+  /** 判据 ④ 认的那一份文件（随包运行时清单）。 */
+  const bundledManifestOn = (drive: string): string => win32.join(deliveryResourcesOn(drive), 'runtime', MANIFEST);
+  /** 同一份交付包挂在任意盘符上的启动参数。 */
+  const deliveryOn = (drive: string): Partial<Parameters<typeof prepareWorkspaceAtStartup>[0]> => ({
+    exePath: deliveryExeOn(drive),
+    resourcesPath: deliveryResourcesOn(drive),
+    // 枚举**空数组**：DriveType=3 的那块盘永远不在列表里 —— 正是判据要补的那个洞。
+    removableDrives: [],
+  });
+
+  it('⭐ 首启：盘根没 marker、枚举也空 ⇒ 仍然认得出，工作区自动落在盘上、零对话框', async () => {
+    const h = makeHarness(deliveryOn('E:\\'));
+    seedVirtual(h, bundledManifestOn('E:\\'));
+
+    const result = await h.run();
+
+    expect(result.kind).toBe('ready');
+    if (result.kind !== 'ready') throw new Error('unreachable');
+    expect(result.decision.kind).toBe('auto-portable');
+    if (result.decision.kind !== 'auto-portable') throw new Error('unreachable');
+    expect(result.decision.volumeRoot).toBe('E:\\');
+    expect(result.path).toBe(win32.join('E:\\', WS_NAME));
+    expect(result.portable).toBe(true);
+
+    // 凭什么认为是盘上运行：日志/诊断 txt 就靠这句说清楚
+    expect(h.events).toContainEqual({
+      event: 'workspace.portable.detected',
+      data: { portable: true, reason: 'delivery-layout' },
+    });
+
+    expect(h.dialogs.askForMissingWorkspace).not.toHaveBeenCalled();
+    expect(h.dialogs.browseForDirectory).not.toHaveBeenCalled();
+    expect(h.dialogs.askForUnusableWorkspace).not.toHaveBeenCalled();
+    expect(h.quit).not.toHaveBeenCalled();
+    expect(h.initWorkspace).toHaveBeenCalledWith(win32.join('E:\\', WS_NAME));
+
+    const config = readConfig();
+    expect(config?.workspacePath).toBe(win32.join('E:\\', WS_NAME));
+    // 换口自愈的线索：老行为这里一个字段都没有 ⇒ 换台机器/换个口就是「找不到工作区」
+    expect(config?.workspaceRelPath).toBe(WS_NAME);
+    // 渲染进程要看到"盘上那份"，而不是本机 homedir
+    expect(getDefaultWorkspacePath()).toBe(win32.join('E:\\', WS_NAME));
+    // 引导还没走完 ⇒ 首启仍然进 Setup（但跳过选盘那一步）
+    expect(config?.portableSetupPending).toBe(true);
+    expect(isWorkspaceConfigured()).toBe(false);
+  });
+
+  it('⭐ 换个 USB 口（E: → F:）⇒ 静默找回盘上那份，不弹框、不退出', async () => {
+    const first = makeHarness(deliveryOn('E:\\'));
+    seedVirtual(first, bundledManifestOn('E:\\'));
+    const firstRun = await first.run();
+    expect(firstRun.kind).toBe('ready');
+    if (firstRun.kind !== 'ready') throw new Error('unreachable');
+    expect(firstRun.decision.kind).toBe('auto-portable');
+
+    // 同一个包换到 F: 上。⚠️ 用**另一块虚拟盘**（不是往旧 harness 里加路径）：
+    //    换口之后旧盘符整块不在了，E: 上的残留路径不该参与这次判定。
+    const second = makeHarness(deliveryOn('F:\\'));
+    seedVirtual(
+      second,
+      bundledManifestOn('F:\\'),
+      win32.join('F:\\', WS_NAME),
+      win32.join('F:\\', WS_NAME, WORKSPACE_MARKER_FILE), // 真 initWorkspace() 写的那份标记
+    );
+
+    const result = await second.run();
+
+    expect(result.kind).toBe('ready');
+    if (result.kind !== 'ready') throw new Error('unreachable');
+    expect(result.decision.kind).toBe('healed');
+    if (result.decision.kind !== 'healed') throw new Error('unreachable');
+    // 候选来自"程序自己运行的那块盘"—— 枚举空数组时的唯一活路
+    expect(result.decision.via.origin).toBe('run-volume');
+    expect(result.decision.via.evidence).toBe('workspace-marker');
+    expect(result.path).toBe(win32.join('F:\\', WS_NAME));
+
+    expect(second.dialogs.askForMissingWorkspace).not.toHaveBeenCalled();
+    expect(second.dialogs.browseForDirectory).not.toHaveBeenCalled();
+    expect(second.quit).not.toHaveBeenCalled();
+    expect(second.events.map((e) => e.event)).toContain('workspace.healed');
+
+    const config = readConfig();
+    expect(config?.workspacePath).toBe(win32.join('F:\\', WS_NAME));
+    expect(config?.workspaceRelPath).toBe(WS_NAME);
+  });
+
+  it('第二次启动（同一个口）⇒ configured；不枚举盘也仍然认得盘上形态', async () => {
+    const h = makeHarness(deliveryOn('E:\\'));
+    seedVirtual(h, bundledManifestOn('E:\\'));
+
+    const first = await h.run();
+    expect(first.kind).toBe('ready');
+
+    const firstRunEvents = h.events.length;
+    const second = await h.run();
+    const secondEvents = h.events.slice(firstRunEvents);
+
+    expect(second.kind).toBe('ready');
+    if (second.kind !== 'ready') throw new Error('unreachable');
+    expect(second.decision.kind).toBe('configured');
+    // ⚠️ `portable` 是**第二次判定**的结果：记录的位置还在 ⇒ 只做纯文件检查。
+    //    它要还是 true —— 否则设置页/日志会把盘上那份说成"本机默认位置"。
+    expect(second.portable).toBe(true);
+    expect(getDefaultWorkspacePath()).toBe(win32.join('E:\\', WS_NAME));
+    expect(readConfig()?.portableSetupPending).toBe(false);
+    expect(isWorkspaceConfigured()).toBe(true);
+    // 这条日志只在"纯文件检查没认出来、只好去枚举"之后才写 ⇒ 它不出现 = 一次枚举都没跑
+    //（枚举是一次 PowerShell，启动路径上不该有）
+    expect(secondEvents.map((e) => e.event)).not.toContain('workspace.portable.detected');
+    expect(secondEvents).toContainEqual({ event: 'workspace.startup.decision', data: { kind: 'configured' } });
+    expect(h.dialogs.askForMissingWorkspace).not.toHaveBeenCalled();
+    expect(h.quit).not.toHaveBeenCalled();
+  });
+
+  it('本机安装形态（`C:\\Program Files\\荣盈魔方\\`，运行时也在夹子里）⇒ 不认，别把工作区指到 C 盘盘根', async () => {
+    const appDir = win32.join('C:\\', 'Program Files', '荣盈魔方');
+    const h = makeHarness({
+      exePath: win32.join(appDir, '荣盈魔方.exe'),
+      resourcesPath: win32.join(appDir, 'resources'),
+      removableDrives: [],
+    });
+    seedVirtual(h, win32.join(appDir, 'resources', 'runtime', MANIFEST));
+
+    const result = await h.run();
+
+    expect(result.kind).toBe('ready');
+    if (result.kind !== 'ready') throw new Error('unreachable');
+    expect(result.decision.kind).toBe('default');
+    expect(result.path).toBe(getHomedirWorkspacePath());
+    expect(result.portable).toBe(false);
+    expect(getDefaultWorkspacePath()).toBe(getHomedirWorkspacePath());
+    expect(h.events).toContainEqual({
+      event: 'workspace.portable.detected',
+      data: { portable: false, reason: null },
+    });
     expect(h.dialogs.askForMissingWorkspace).not.toHaveBeenCalled();
     expect(h.quit).not.toHaveBeenCalled();
   });
@@ -538,5 +698,25 @@ describe('源码契约：失败路径不许 app.quit()', () => {
 
   it('工作区准备好**之后**才开窗（先有工作区，再有界面）', () => {
     expect(start).toBeLessThan(code.indexOf('createWindow();'));
+  });
+
+  /**
+   * ⚠️ 这两处 `process.resourcesPath` 是**交付形态判据在真机上唯一的入口**（只有打包态
+   *    才知道 exe 旁边那份 `resources\` 在哪）。少了任何一处，判据在真机上直接哑掉 ——
+   *    而所有单测传的都是注入的路径，测不到"真机上到底传没传"，所以这里读源码钉住
+   *    （与上面那条 `app.quit()` 契约同款手法）。
+   */
+  it('两处调用都把 `process.resourcesPath` 传下去（真机上交付判据的唯一入口）', () => {
+    expect(region, 'prepareWorkspaceAtStartup 调用块里没传 resourcesPath').toContain(
+      'resourcesPath: process.resourcesPath',
+    );
+
+    const appDataStart = code.indexOf('applyPortableAppData({');
+    const appDataEnd = code.indexOf('const gotLock');
+    expect(appDataStart, 'index.ts 里找不到 applyPortableAppData 调用').toBeGreaterThan(-1);
+    expect(appDataEnd).toBeGreaterThan(appDataStart);
+    expect(code.slice(appDataStart, appDataEnd), 'applyPortableAppData 调用里没传 resourcesPath').toContain(
+      'resourcesPath: process.resourcesPath',
+    );
   });
 });

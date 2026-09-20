@@ -13,7 +13,7 @@
  */
 
 import path from 'node:path';
-import { RUNTIME_MANIFEST_FILE } from '../runtime/locate.js';
+import { RUNTIME_MANIFEST_FILE, resolveBundledRuntimeRoot } from '../runtime/locate.js';
 
 /** 盘上运行时工作区目录名（`<盘根>\荣盈魔方工作区\`）。 */
 export const PORTABLE_WORKSPACE_DIR_NAME = '荣盈魔方工作区';
@@ -71,6 +71,74 @@ export function isRemovableVolume(volumeRoot: string | null, removableDrives: re
   });
 }
 
+/** 交付夹最多埋在卷根下**几层**（我们的包 1 层；手工压的包多一层包装夹 = 2 层）。 */
+export const MAX_DELIVERY_DEPTH = 2;
+
+/** 安装形态的常见位置：命中任一段就不算交付夹（哪怕深度够浅、哪怕夹子里带着运行时）。 */
+const INSTALL_DIR_SEGMENTS: readonly RegExp[] = [/^program files( \(x86\))?$/i, /^programs$/i, /^appdata$/i];
+
+/** 同一卷根吗（大小写不敏感，Windows 语义）。 */
+function sameVolumeRoot(a: string | null | undefined, b: string | null | undefined): boolean {
+  if (!a || !b) return false;
+  const ra = normalizeVolumeRoot(a);
+  const rb = normalizeVolumeRoot(b);
+  return ra !== null && rb !== null && foldForCompare(ra) === foldForCompare(rb);
+}
+
+/** 随包运行时清单的绝对路径：`<resources>\runtime\openclaw-runtime-manifest.json`。 */
+function bundledRuntimeManifestPath(resourcesPath: string): string | undefined {
+  const root = resolveBundledRuntimeRoot({ isPackaged: true, resourcesPath });
+  return root ? P().join(root, RUNTIME_MANIFEST_FILE) : undefined;
+}
+
+export interface DeliveryLayoutInput {
+  /** 打包态是 `process.execPath`（exe）。 */
+  exePath: string;
+  /** 打包态的 `<resources>`（真机上是 `process.resourcesPath`）。不给就判否。 */
+  resourcesPath?: string | null;
+  exists: (p: string) => boolean;
+}
+
+/**
+ * 交付形态判据：exe 就在**我们自己那份交付夹**里吗（盘上运行的第 3 条判据）。
+ *
+ * 为什么必须有（2026-09-20 同事那份交付包暴露出来的"判据全落空"）：
+ * 交付说明让用户"解压到 U 盘根目录"，而很多 U 盘/移动固态/读卡器把 `DriveType` 报成
+ * **3（固定盘）** ⇒ `listRemovableDrives()` 永远不命中；盘根 marker 又是说明里
+ * 叮嘱"千万别拷"的那个文件 ⇒ 两条判据全落空，数据与工作区都留在本机，
+ * 换台机器/换个 USB 口就是「找不到工作区」。
+ *
+ * 认的是**我们自己的交付形状**（实测于真交付包 `荣盈魔方U盘交付-0.0.24\荣盈魔方\`：
+ * exe 旁边就是 `resources\runtime\openclaw-runtime-manifest.json`），四条一起成立才算：
+ *
+ * ① `resourcesPath` 就是**这个 exe 自己那份**（`dirname(resourcesPath) === exe 所在目录`）
+ *    —— 否则"带着运行时"可以来自任何地方，判据就不是这个夹子的形状了；
+ * ② 程序目录埋在卷根下 **≤ `MAX_DELIVERY_DEPTH` 层** —— 交付说明是"解压到盘根"
+ *    （我们的包 1 层、手工压的包 2 层）；本机开发树/构建产物都在更深的目录里，
+ *    这条同时挡住"dev/CI 被误判成盘上形态"；
+ * ③ 路径里没有安装形态的常见段（`Program Files` / `Programs` / `AppData`）
+ *    —— 用户完全可能把安装版装在 `D:\Program Files\荣盈魔方`，那时深度也够浅；
+ * ④ 夹子里**真带着我们那份随包运行时**（`<resources>\runtime\openclaw-runtime-manifest.json`）
+ *    —— 只认这一份文件，不认目录名、不认卷标（与"认盘只认 marker 与 DriveType"同一条纪律）。
+ */
+export function isDeliveryLayout(input: DeliveryLayoutInput): boolean {
+  const volumeRoot = volumeRootOf(input.exePath);
+  if (!volumeRoot) return false;
+  if (!input.resourcesPath) return false;
+
+  const appDir = P().dirname(input.exePath);
+  if (foldForCompare(P().dirname(input.resourcesPath)) !== foldForCompare(appDir)) return false;
+
+  const rel = P().relative(volumeRoot, appDir);
+  if (!rel || rel.startsWith('..') || P().isAbsolute(rel)) return false;
+  const segments = rel.split(/[\\/]+/).filter(Boolean);
+  if (segments.length === 0 || segments.length > MAX_DELIVERY_DEPTH) return false;
+  if (segments.some((segment) => INSTALL_DIR_SEGMENTS.some((re) => re.test(segment)))) return false;
+
+  const manifest = bundledRuntimeManifestPath(input.resourcesPath);
+  return Boolean(manifest && input.exists(manifest));
+}
+
 export interface PortableRunInput {
   /** 打包态是 `process.execPath`（exe），dev 是 electron 的 exe。 */
   exePath: string;
@@ -79,9 +147,11 @@ export interface PortableRunInput {
   exists: (p: string) => boolean;
   /** 盘根 marker 名，默认 `openclaw-runtime-manifest.json`。 */
   volumeMarker?: string | null;
+  /** 打包态的 `<resources>`（真机上是 `process.resourcesPath`）—— 交付形态判据要用。 */
+  resourcesPath?: string | null;
 }
 
-export type PortableRunReason = 'removable-drive' | 'volume-marker';
+export type PortableRunReason = 'delivery-layout' | 'removable-drive' | 'volume-marker';
 
 export interface PortableRunDetection {
   portable: boolean;
@@ -93,17 +163,24 @@ export interface PortableRunDetection {
 /**
  * 「是不是从盘上运行」——判定顺序：
  *
- * ① `exePath` 所在卷在**可移动盘**列表里（DriveType=2）⇒ 是；
- * ② 该卷**根目录**存在盘根 marker（`openclaw-runtime-manifest.json`）⇒ 是；
- * ③ 否则不是（本机安装形态 / dev）。
+ * ① `exePath` 自己那份交付夹的形状（`isDeliveryLayout`）⇒ 是；
+ * ② `exePath` 所在卷在**可移动盘**列表里（DriveType=2）⇒ 是；
+ * ③ 该卷**根目录**存在盘根 marker（`openclaw-runtime-manifest.json`）⇒ 是；
+ * ④ 否则不是（本机安装形态 / dev）。
  *
- * ⚠️ ②不能省：`listRemovableDrives()` 是靠 PowerShell 枚举的，**失败时返回空数组**
- *    （枚举失败不是错误，见 `locate.ts`）—— 少了 ② 的话，一旦枚举失败，
+ * ⚠️ ①排在最前：它最具体（"这就是我们发出去的那个夹子"），而且**不依赖枚举**
+ *    —— `DriveType=3` 的盘上 ② 永远不命中，②③ 都会把它判成安装形态。
+ * ⚠️ ③不能省：`listRemovableDrives()` 是靠 PowerShell 枚举的，**失败时返回空数组**
+ *    （枚举失败不是错误，见 `locate.ts`）—— 少了 ③ 的话，一旦枚举失败，
  *    盘上运行会被误判成安装形态，用户又回到"要选盘"。
  */
 export function detectPortableRun(input: PortableRunInput): PortableRunDetection {
   const volumeRoot = volumeRootOf(input.exePath);
   if (!volumeRoot) return { portable: false, volumeRoot: null, reason: null };
+
+  if (isDeliveryLayout({ exePath: input.exePath, resourcesPath: input.resourcesPath, exists: input.exists })) {
+    return { portable: true, volumeRoot, reason: 'delivery-layout' };
+  }
 
   if (isRemovableVolume(volumeRoot, input.removableDrives)) {
     return { portable: true, volumeRoot, reason: 'removable-drive' };
@@ -145,19 +222,31 @@ export interface WorkspaceLocationDescription {
 /**
  * 为工作区**补记**迁移线索（`workspaceRelPath` + `volumeMarker`），供下次自愈用。
  *
- * ⚠️ **只对可移动盘上的工作区记录**：本机固定盘（`C:\Users\…`）的工作区目录被删了，
- *    旧行为是"悄悄重建"，不该因为多记了一条相对路径就变成"弹框让你选盘"。
- *    这条边界是刻意的 —— 记了就代表"这份工作区在某个盘上，下次得去找它"。
+ * 记的条件（两条**或**）：工作区在**可移动盘**上，或者工作区在**程序自己运行的那块盘**上
+ * （`runVolumeRoot`，= 盘上运行时判定出来的卷根）。
+ *
+ * ⚠️ 第二条是 2026-09-20 补的（同事那份交付包暴露的）：交付形态判据认出来的盘
+ *    （`DriveType=3` 的 U 盘/移动固态/读卡器）**不在**可移动盘列表里 ⇒ 老判据一条线索
+ *    都不记 ⇒ 工作区明明在盘上，换个 USB 口（盘符变了）却零候选，又是「找不到工作区」。
+ *    工作区落在"程序自己所在的那块盘"上，语义上就等于"这块盘会被插到别的口/别的机器"
+ *    —— 正是该记线索的那种工作区。
+ *
+ * ⚠️ **本机安装形态一条都不记**（`runVolumeRoot` 为 null、也不在可移动盘上）：本机固定盘
+ *    （`C:\Users\…`）的工作区目录被删了，旧行为是"悄悄重建"，不该因为多记了一条相对路径
+ *    就变成"弹框让你选盘"。这条边界是刻意的 —— 记了就代表"这份工作区在某个盘上，下次得去找它"。
  */
 export function describeWorkspaceLocation(input: {
   workspacePath: string;
   removableDrives: readonly string[];
   exists: (p: string) => boolean;
   volumeMarker?: string | null;
+  /** 应用**自己运行所在**的卷根（启动时判出来的 `portableRoot`；非盘上运行时给 null）。 */
+  runVolumeRoot?: string | null;
 }): WorkspaceLocationDescription {
   const volumeRoot = volumeRootOf(input.workspacePath);
   if (!volumeRoot) return {};
-  if (!isRemovableVolume(volumeRoot, input.removableDrives)) return {};
+  const onRunVolume = sameVolumeRoot(volumeRoot, input.runVolumeRoot);
+  if (!onRunVolume && !isRemovableVolume(volumeRoot, input.removableDrives)) return {};
 
   const rel = deriveWorkspaceRelPath(input.workspacePath);
   if (!rel) return {};
@@ -181,6 +270,7 @@ export function workspaceLocationPatch(input: {
   removableDrives: readonly string[];
   exists: (p: string) => boolean;
   volumeMarker?: string | null;
+  runVolumeRoot?: string | null;
 }): { workspaceRelPath?: string; volumeMarker?: string } {
   const location = describeWorkspaceLocation(input);
   return { workspaceRelPath: undefined, volumeMarker: undefined, ...location };

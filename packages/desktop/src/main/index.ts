@@ -234,6 +234,8 @@ const portableAppData = applyPortableAppData({
   exePath: process.execPath,
   isPackaged: app.isPackaged,
   systemDrive: process.env.SystemDrive ?? null,
+  // 交付形态判据要拿它跟自己那份随包运行时对（`DriveType=3` 的盘上只剩这条判据）。
+  resourcesPath: process.resourcesPath,
   exists: existsSync,
   // 惰性：前两条判据（纯文件检查）命中时**不枚举**可移动盘（PowerShell，秒级）。
   removableDrives: () => removableDrives(),
@@ -360,6 +362,7 @@ if (!gotLock) {
       //    `showErrorBox('Database Error') + app.quit()` —— 换机器/换盘符就是死路一条。
       const workspace = await prepareWorkspaceAtStartup({
         exePath: process.execPath,
+        resourcesPath: process.resourcesPath,
         dialogs: createWorkspaceStartupDialogs(),
         quit: () => app.quit(),
         onEvent: (event, data) => getDebugLogger().info({ domain: 'workspace', event, data }),

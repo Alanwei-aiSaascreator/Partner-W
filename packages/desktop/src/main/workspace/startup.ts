@@ -76,6 +76,8 @@ export type WorkspaceStartupResult =
 export interface PrepareWorkspaceOptions {
   /** 打包态传 `process.execPath`。 */
   exePath: string;
+  /** 打包态传 `process.resourcesPath` —— 交付形态判据要用（不给就只能靠盘列表/marker 认盘）。 */
+  resourcesPath?: string | null;
   /** 默认取 `workspace/startup-dialogs.ts` 里的真实 Electron 对话框。 */
   dialogs: WorkspaceStartupDialogs;
   /** 默认真数据库（`db/index.js`）。 */
@@ -101,6 +103,14 @@ interface StartupContext {
   drives: () => readonly string[];
   prepare: (workspacePath: string) => void | Promise<void>;
   log: EventLog;
+  /**
+   * 判定出来的盘上运行卷根（非盘上形态为 null）。**判定之后**才赋值：那之前
+   * 没有任何 `locationOf()` 会跑到（补记线索一律发生在"决定用哪个工作区"之后）。
+   *
+   * 用途只有一个：工作区落在**程序自己运行的那块盘**上时也要记盘符自愈线索
+   * （`DriveType=3` 的盘不在可移动盘列表里，光靠列表一条都记不上）。
+   */
+  portableRoot: string | null;
 }
 
 /**
@@ -170,6 +180,7 @@ async function runWorkspaceStartup(options: PrepareWorkspaceOptions): Promise<Wo
     drives,
     prepare: options.workspaceInit ?? initWorkspace,
     log: options.onEvent ?? ((): void => {}),
+    portableRoot: null,
   };
 
   const config = readConfig();
@@ -184,16 +195,26 @@ async function runWorkspaceStartup(options: PrepareWorkspaceOptions): Promise<Wo
   let portableRoot: string | null = null;
   if (recordedExists) {
     // 记录的位置还在 ⇒ 判定必然停在第一分支（`configured`），盘列表用不上。
-    // 先按**盘根 marker**认一下（纯文件检查，不枚举盘）—— 只为让 `portable`
+    // 先按**纯文件检查**认一下（交付夹形状 / 盘根 marker，都不枚举盘）—— 只为让 `portable`
     // 和"默认位置"在常态启动下也是对的（日志要说真话、设置页要显示盘上那份）。
-    const detection = detectPortableRun({ exePath: options.exePath, removableDrives: [], exists });
+    const detection = detectPortableRun({
+      exePath: options.exePath,
+      resourcesPath: options.resourcesPath,
+      removableDrives: [],
+      exists,
+    });
     if (detection.portable) {
       portableRoot = detection.volumeRoot;
     } else {
-      // marker 没认出来时**才**值得花一次枚举（PowerShell，秒级）：
+      // 纯文件检查没认出来时**才**值得花一次枚举（PowerShell，秒级）：
       // 盘根没放运行时的盘（用户自己挑目录的普通 U 盘）只有 DriveType=2 这一条判据。
       // 少了这一步，"第二次启动竟然说 not portable"会让日志和 T-U2 的判据一起说谎。
-      const withDrives = detectPortableRun({ exePath: options.exePath, removableDrives: drives(), exists });
+      const withDrives = detectPortableRun({
+        exePath: options.exePath,
+        resourcesPath: options.resourcesPath,
+        removableDrives: drives(),
+        exists,
+      });
       portableRoot = withDrives.portable ? withDrives.volumeRoot : null;
       ctx.log('workspace.portable.detected', {
         portable: withDrives.portable,
@@ -201,13 +222,19 @@ async function runWorkspaceStartup(options: PrepareWorkspaceOptions): Promise<Wo
       });
     }
   } else {
-    const detection = detectPortableRun({ exePath: options.exePath, removableDrives: drives(), exists });
+    const detection = detectPortableRun({
+      exePath: options.exePath,
+      resourcesPath: options.resourcesPath,
+      removableDrives: drives(),
+      exists,
+    });
     portableRoot = detection.portable ? detection.volumeRoot : null;
     ctx.log('workspace.portable.detected', { portable: detection.portable, reason: detection.reason });
   }
   // 必须在任何 `getDefaultWorkspacePath()` / IPC 之前灌进去：渲染进程要靠它
   // 把"默认工作区"显示成盘上那份（用户不用选盘）。
   setPortableWorkspaceRoot(portableRoot);
+  ctx.portableRoot = portableRoot;
 
   const decision = decideWorkspaceStartup({
     recordedPath,
@@ -274,7 +301,12 @@ async function runWorkspaceStartup(options: PrepareWorkspaceOptions): Promise<Wo
 }
 
 function locationOf(ctx: StartupContext, workspacePath: string): { workspaceRelPath?: string; volumeMarker?: string } {
-  return workspaceLocationPatch({ workspacePath, removableDrives: ctx.drives(), exists: ctx.exists });
+  return workspaceLocationPatch({
+    workspacePath,
+    removableDrives: ctx.drives(),
+    exists: ctx.exists,
+    runVolumeRoot: ctx.portableRoot,
+  });
 }
 
 /**

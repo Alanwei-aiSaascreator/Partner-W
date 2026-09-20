@@ -7,6 +7,7 @@ import {
   updateConfig,
   isWorkspaceConfigured,
   getDefaultWorkspacePath,
+  getPortableWorkspaceRoot,
   ensureDeviceId,
 } from '../workspace/config.js';
 import { initWorkspace, migrateWorkspace } from '../workspace/init.js';
@@ -44,15 +45,22 @@ function restartKbRuntime(): void {
 const TEAM_WORKSPACE_SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 /**
- * 工作区落在**可移动盘**上时，补记"相对盘根 + 盘根 marker"两个字段
- * （T-U1 的盘符自愈就靠它们找回来）。不在可移动盘上则显式清掉旧线索。
+ * 工作区落在**可移动盘**上、或落在**程序自己运行的那块盘**上时，补记"相对盘根 + 盘根 marker"
+ * 两个字段（T-U1 的盘符自愈就靠它们找回来）。两条都不满足则显式清掉旧线索。
  *
  * ⚠️ 这里**重新枚举**（不是用启动时那份缓存）：用户完全可能先开应用、后插盘，
  *    再用这个入口把工作区设到那个盘上 —— 用缓存的话那一刻的列表里没有它，
  *    线索就永远记不上（见 `refreshRemovableDrives`）。
  */
 function locationPatch(workspacePath: string): { workspaceRelPath?: string; volumeMarker?: string } {
-  return workspaceLocationPatch({ workspacePath, removableDrives: refreshRemovableDrives(), exists: existsSync });
+  return workspaceLocationPatch({
+    workspacePath,
+    removableDrives: refreshRemovableDrives(),
+    exists: existsSync,
+    // 程序自己所在的那块盘（盘上形态才有）：`DriveType=3` 的盘不在可移动盘列表里，
+    // 少了这一条，用户把工作区设到那块盘上时一条线索都记不上（换口就丢）。
+    runVolumeRoot: getPortableWorkspaceRoot(),
+  });
 }
 
 export function registerWorkspaceHandlers(): void {
