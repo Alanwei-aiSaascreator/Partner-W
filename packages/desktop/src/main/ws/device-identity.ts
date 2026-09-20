@@ -2,9 +2,18 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { app } from 'electron';
+import { decryptSecret, encryptSecret } from '../util/secure-field.js';
 
 const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
 
+/**
+ * 落盘形状。
+ *
+ * ⚠️ `privateKeyPem` / `publicKeyPem` 这两个**字段名**是从加固前沿用下来的：
+ *    私钥现在存的是密文（`enc:` 前缀），公钥仍是明文（公钥本来就是公开的，
+ *    留着明文还能让人一眼看出"这是哪台设备"）。改名会让老文件读不出来，
+ *    所以不改名、只换内容。
+ */
 interface StoredIdentity {
   version: 1;
   deviceId: string;
@@ -54,6 +63,12 @@ function resolveDefaultIdentityPath(): string {
   return path.join(app.getPath('userData'), 'device-identity.json');
 }
 
+/** 落盘（私钥在这里加密；传进来的是**已存形式**，所以 re-derive 时不会二次加密）。 */
+function writeIdentityFile(resolved: string, stored: StoredIdentity): void {
+  fs.mkdirSync(path.dirname(resolved), { recursive: true });
+  fs.writeFileSync(resolved, `${JSON.stringify(stored, null, 2)}\n`, { mode: 0o600 });
+}
+
 export function loadOrCreateDeviceIdentity(filePath?: string): DeviceIdentity {
   const resolved = filePath ?? resolveDefaultIdentityPath();
   try {
@@ -66,26 +81,30 @@ export function loadOrCreateDeviceIdentity(filePath?: string): DeviceIdentity {
         typeof parsed.publicKeyPem === 'string' &&
         typeof parsed.privateKeyPem === 'string'
       ) {
-        const derivedId = fingerprintPublicKey(parsed.publicKeyPem);
-        if (derivedId && derivedId !== parsed.deviceId) {
-          const updated: StoredIdentity = { ...parsed, deviceId: derivedId };
-          fs.writeFileSync(resolved, `${JSON.stringify(updated, null, 2)}\n`, { mode: 0o600 });
-          return { deviceId: derivedId, publicKeyPem: parsed.publicKeyPem, privateKeyPem: parsed.privateKeyPem };
+        // 明文（加固前落的）与密文都从这里出来；**解不开**才返回 null
+        const privateKeyPem = decryptSecret(parsed.privateKeyPem);
+        if (privateKeyPem) {
+          const derivedId = fingerprintPublicKey(parsed.publicKeyPem);
+          if (derivedId && derivedId !== parsed.deviceId) {
+            const updated: StoredIdentity = { ...parsed, deviceId: derivedId };
+            writeIdentityFile(resolved, updated);
+            return { deviceId: derivedId, publicKeyPem: parsed.publicKeyPem, privateKeyPem };
+          }
+          return { deviceId: parsed.deviceId, publicKeyPem: parsed.publicKeyPem, privateKeyPem };
         }
-        return { deviceId: parsed.deviceId, publicKeyPem: parsed.publicKeyPem, privateKeyPem: parsed.privateKeyPem };
+        // 密文解不开（换了机器 / 换了 Windows 账户）⇒ 落到下面**重新生成**：
+        // 设备身份丢了要重新配对，但绝不能因此让应用起不来。
       }
     }
   } catch {}
   const identity = generateIdentity();
-  fs.mkdirSync(path.dirname(resolved), { recursive: true });
-  const stored: StoredIdentity = {
+  writeIdentityFile(resolved, {
     version: 1,
     deviceId: identity.deviceId,
     publicKeyPem: identity.publicKeyPem,
-    privateKeyPem: identity.privateKeyPem,
+    privateKeyPem: encryptSecret(identity.privateKeyPem),
     createdAtMs: Date.now(),
-  };
-  fs.writeFileSync(resolved, `${JSON.stringify(stored, null, 2)}\n`, { mode: 0o600 });
+  });
   return identity;
 }
 
@@ -197,7 +216,14 @@ function readTokenStore(): DeviceTokenStore {
     if (fs.existsSync(storePath)) {
       const parsed = JSON.parse(fs.readFileSync(storePath, 'utf8')) as DeviceTokenStore;
       if (parsed?.version === 1 && parsed.tokens && typeof parsed.tokens === 'object') {
-        return parsed;
+        const tokens: DeviceTokenStore['tokens'] = {};
+        for (const [gatewayId, entry] of Object.entries(parsed.tokens)) {
+          // 明文（加固前落的）照读；密文解不开就**丢掉这一条**（当成没配对过，
+          // 走重新配对）——比拿着半个 token 去连网关最后被判 foreign 清楚。
+          const token = typeof entry?.token === 'string' ? decryptSecret(entry.token) : null;
+          if (token) tokens[gatewayId] = { ...entry, token };
+        }
+        return { version: 1, tokens };
       }
     }
   } catch {}
@@ -207,7 +233,16 @@ function readTokenStore(): DeviceTokenStore {
 function writeTokenStore(store: DeviceTokenStore): void {
   const storePath = resolveDeviceTokenStorePath();
   fs.mkdirSync(path.dirname(storePath), { recursive: true });
-  fs.writeFileSync(storePath, `${JSON.stringify(store, null, 2)}\n`, { mode: 0o600 });
+  const encrypted: DeviceTokenStore = {
+    version: 1,
+    tokens: Object.fromEntries(
+      Object.entries(store.tokens).map(([gatewayId, entry]) => [
+        gatewayId,
+        { ...entry, token: encryptSecret(entry.token) },
+      ]),
+    ),
+  };
+  fs.writeFileSync(storePath, `${JSON.stringify(encrypted, null, 2)}\n`, { mode: 0o600 });
 }
 
 export function saveDeviceToken(gatewayId: string, token: string, role: string, issuedAtMs: number): void {
