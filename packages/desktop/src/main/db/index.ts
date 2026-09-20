@@ -129,10 +129,6 @@ function openAndMigrate(dbPath: string): void {
     migrateAddColumn(sqlite, sql);
   }
 
-  // 团队成员的**讨论职位**（圆桌用）。与已有的 `role`（编排角色）是两回事。
-  // 老库这一列不存在 ⇒ 加上，默认空串；读的时候由 `normalizePosition` 兜底成领域专家，
-  // 所以老团队升级后不会报错、也不需要回填。
-  migrateAddColumn(sqlite, "ALTER TABLE team_agents ADD COLUMN position TEXT DEFAULT ''");
   migrateAddColumn(sqlite, 'ALTER TABLE messages ADD COLUMN image_attachments TEXT');
   migrateAddColumn(sqlite, 'ALTER TABLE messages ADD COLUMN tool_calls TEXT');
   // 模型的推理输出（`stream:"thinking"`）。落库是为了重载后还在 ——
@@ -265,6 +261,16 @@ function openAndMigrate(dbPath: string): void {
   `);
 
   migrateAddColumn(sqlite, "ALTER TABLE team_agents ADD COLUMN skills_json TEXT DEFAULT '[]'");
+  // 团队成员的**讨论职位**（圆桌用）。与已有的 `role`（编排角色）是两回事。
+  // 老库这一列不存在 ⇒ 加上，默认空串；读的时候由 `normalizePosition` 兜底成领域专家，
+  // 所以老团队升级后不会报错、也不需要回填。
+  //
+  // ⚠️ **这一句必须待在自己那张表的 `CREATE TABLE` 之后**（就是这个位置）。
+  //    2026-09-20：它一度被放进 `tasks` 那一串改造里（文件更靠前处）⇒ 老库上毫无异样，
+  //    **全新库直接 `no such table: team_agents`**（新装/换机器/U 盘首启全中）。
+  //    那条路径平时看不到：开发机上的库早就建好了。守它的是
+  //    `test/db-fresh-init.test.ts`（空目录 init 一遍）与 kb 系列那几个用临时目录的测试。
+  migrateAddColumn(sqlite, "ALTER TABLE team_agents ADD COLUMN position TEXT DEFAULT ''");
 
   initFTS(sqlite);
   // 资料库（T6a）：kb_meta / kb_sources / kb_chunks + kb_chunks_fts。
