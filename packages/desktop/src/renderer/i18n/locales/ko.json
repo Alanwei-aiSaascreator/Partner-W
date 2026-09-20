@@ -752,6 +752,14 @@
     "sessionTarget_main": "메인 세션",
     "sessionTarget_task": "작업 세션 (안정적인 Rongying Cube 작업 대화)",
     "subtitle": "반복 에이전트 작업 관리",
+    "systemJob": {
+      "descHeartbeat": "주기적으로 어시스턴트가 정상 응답하는지 확인합니다",
+      "descMemoryDreaming": "어시스턴트의 장기 기억을 정리하고 남길 것을 남깁니다",
+      "descSkillReview": "이 어시스턴트의 스킬을 점검합니다: 중복 통합, 오래된 내용 제거, 구조 정리",
+      "heartbeat": "어시스턴트 상태 확인",
+      "memoryDreaming": "기억 정리",
+      "skillReview": "스킬 점검 ({{agent}})"
+    },
     "target": {
       "current": "현재 세션",
       "isolated": "독립 세션",

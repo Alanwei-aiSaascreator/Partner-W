@@ -752,6 +752,14 @@
     "sessionTarget_main": "Sessão Principal",
     "sessionTarget_task": "Sessão da tarefa (conversa estável do Rongying Cube)",
     "subtitle": "Gerenciar tarefas recorrentes de agentes",
+    "systemJob": {
+      "descHeartbeat": "Verifica periodicamente se o assistente continua respondendo",
+      "descMemoryDreaming": "Organiza a memória de longo prazo do assistente, mantendo o que deve ser mantido",
+      "descSkillReview": "Revisa as habilidades deste assistente: unir duplicadas, remover conteúdo desatualizado, organizar a estrutura",
+      "heartbeat": "Verificação do assistente",
+      "memoryDreaming": "Organização da memória",
+      "skillReview": "Revisão de habilidades ({{agent}})"
+    },
     "target": {
       "current": "sessão atual",
       "isolated": "sessão isolada",

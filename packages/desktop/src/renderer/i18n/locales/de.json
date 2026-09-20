@@ -752,6 +752,14 @@
     "sessionTarget_main": "Haupt-Sitzung",
     "sessionTarget_task": "Aufgaben-Sitzung (stabile Rongying Cube-Aufgabenkonversation)",
     "subtitle": "Wiederkehrende Agent-Aufgaben verwalten",
+    "systemJob": {
+      "descHeartbeat": "Prüft regelmäßig, ob der Assistent noch antwortet",
+      "descMemoryDreaming": "Räumt das Langzeitgedächtnis des Assistenten auf und behält, was bleiben soll",
+      "descSkillReview": "Überprüft die Skills dieses Assistenten: Duplikate zusammenführen, Veraltetes entfernen, Struktur ordnen",
+      "heartbeat": "Assistenten-Heartbeat",
+      "memoryDreaming": "Gedächtnis-Aufräumung",
+      "skillReview": "Skill-Überprüfung ({{agent}})"
+    },
     "target": {
       "current": "aktuelle Sitzung",
       "isolated": "isolierte Sitzung",

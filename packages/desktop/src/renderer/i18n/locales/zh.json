@@ -752,6 +752,14 @@
     "sessionTarget_main": "主会话",
     "sessionTarget_task": "任务会话（稳定绑定到 荣盈魔方 任务对话）",
     "subtitle": "管理周期性 Agent 任务",
+    "systemJob": {
+      "descHeartbeat": "定时让助手自检一次，确认还能正常响应",
+      "descMemoryDreaming": "整理助手的长期记忆：把该沉淀的留下来",
+      "descSkillReview": "审阅这个助手的技能库：合并重复、清掉过时内容、理顺结构",
+      "heartbeat": "助手心跳检查",
+      "memoryDreaming": "记忆整理",
+      "skillReview": "技能库巡检（{{agent}}）"
+    },
     "target": {
       "current": "当前会话",
       "isolated": "独立会话",

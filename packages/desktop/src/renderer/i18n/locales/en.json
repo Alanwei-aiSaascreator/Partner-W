@@ -752,6 +752,14 @@
     "sessionTarget_main": "Main Session",
     "sessionTarget_task": "Task session (stable Rongying Cube task conversation)",
     "subtitle": "Manage recurring agent tasks",
+    "systemJob": {
+      "descHeartbeat": "Periodically checks the assistant is still responding",
+      "descMemoryDreaming": "Tidies the assistant’s long-term memory, keeping what should be kept",
+      "descSkillReview": "Reviews this assistant’s skills: merge duplicates, drop outdated content, tidy the structure",
+      "heartbeat": "Assistant heartbeat",
+      "memoryDreaming": "Memory tidy-up",
+      "skillReview": "Skill review ({{agent}})"
+    },
     "target": {
       "current": "current session",
       "isolated": "isolated session",

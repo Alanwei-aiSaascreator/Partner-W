@@ -29,6 +29,7 @@ import type { CronJob, CronListResult, CronRunResult, CronStatusResult } from '@
 import ToolbarButton from '@/components/semantic/ToolbarButton';
 import EmptyState from '@/components/semantic/EmptyState';
 import InlineNotice from '@/components/semantic/InlineNotice';
+import { systemJobLabel } from '@/lib/cron-job-label';
 
 const PAGE_SIZE = 20;
 
@@ -37,6 +38,7 @@ export default function CronPanel() {
 
   const gatewayInfoMap = useUiStore((s) => s.gatewayInfoMap);
   const gatewayStatusMap = useUiStore((s) => s.gatewayStatusMap);
+  const agentCatalogByGateway = useUiStore((s) => s.agentCatalogByGateway);
   const defaultGatewayId = useUiStore((s) => s.defaultGatewayId);
 
   const [jobs, setJobs] = useState<CronJob[]>([]);
@@ -147,6 +149,24 @@ export default function CronPanel() {
     };
   }, []);
 
+  /**
+   * 任务的**显示名**（T-a4）。网关自己建的那几个是英文名（`heartbeat-main` 之类），
+   * 这里换成中文；**认不出来的一律原样返回**（含用户自己改过名的）——
+   * 见 `lib/cron-job-label.ts` 的说明：宁可又是英文（良性），也不要张冠李戴（恶性）。
+   *
+   * ⚠️ `job.name` 本身**一个字节都不动** —— 它是网关侧的数据，而且用户能改。
+   */
+  const agentLabelOf = useCallback(
+    (agentId: string) =>
+      (selectedGatewayId ? agentCatalogByGateway[selectedGatewayId]?.agents : undefined)?.find((a) => a.id === agentId)
+        ?.name ?? undefined,
+    [selectedGatewayId, agentCatalogByGateway],
+  );
+  const jobDisplayName = useCallback(
+    (job: CronJob) => systemJobLabel(job.name, t, agentLabelOf) ?? job.name,
+    [t, agentLabelOf],
+  );
+
   const handleToggleEnabled = useCallback(
     async (job: CronJob) => {
       if (!selectedGatewayId) return;
@@ -157,18 +177,18 @@ export default function CronPanel() {
           enabled: !prev,
         });
         if (res.ok) {
-          toast.success(!prev ? t('cron.enabledToast') : t('cron.disabledToast'), { description: job.name });
+          toast.success(!prev ? t('cron.enabledToast') : t('cron.disabledToast'), { description: jobDisplayName(job) });
           await refreshData();
         } else {
           setJobs((curr) => curr.map((j) => (j.id === job.id ? { ...j, enabled: prev } : j)));
-          toast.error(t('cron.toggleFailed'), { description: res.error ?? job.name });
+          toast.error(t('cron.toggleFailed'), { description: res.error ?? jobDisplayName(job) });
         }
       } catch {
         setJobs((curr) => curr.map((j) => (j.id === job.id ? { ...j, enabled: prev } : j)));
-        toast.error(t('cron.toggleFailed'), { description: job.name });
+        toast.error(t('cron.toggleFailed'), { description: jobDisplayName(job) });
       }
     },
-    [refreshData, selectedGatewayId, t],
+    [refreshData, selectedGatewayId, t, jobDisplayName],
   );
 
   const handleDelete = useCallback(async (job: CronJob) => {
@@ -179,13 +199,13 @@ export default function CronPanel() {
     if (!selectedGatewayId || !deletingJob) return;
     const res = await window.clawwork.removeCronJob(selectedGatewayId, deletingJob.id);
     if (res.ok) {
-      toast.success(t('cron.deletedToast'), { description: deletingJob.name });
+      toast.success(t('cron.deletedToast'), { description: jobDisplayName(deletingJob) });
       setDeletingJob(null);
       await refreshData();
       return;
     }
-    toast.error(t('cron.deleteFailed'), { description: res.error ?? deletingJob.name });
-  }, [deletingJob, refreshData, selectedGatewayId, t]);
+    toast.error(t('cron.deleteFailed'), { description: res.error ?? jobDisplayName(deletingJob) });
+  }, [deletingJob, refreshData, selectedGatewayId, t, jobDisplayName]);
 
   const handleRunNow = useCallback(
     async (job: CronJob) => {
@@ -197,7 +217,7 @@ export default function CronPanel() {
           toast.error(t('cron.runNotRun', { reason: result.reason ?? t('cron.unknownError') }));
           return;
         }
-        toast.success(t('cron.runEnqueued'), { description: job.name });
+        toast.success(t('cron.runEnqueued'), { description: jobDisplayName(job) });
         await refreshData();
         if (deferredRefreshRef.current) clearTimeout(deferredRefreshRef.current);
         deferredRefreshRef.current = setTimeout(() => {
@@ -205,10 +225,10 @@ export default function CronPanel() {
           deferredRefreshRef.current = null;
         }, 5000);
       } else {
-        toast.error(t('cron.runFailed'), { description: res.error ?? job.name });
+        toast.error(t('cron.runFailed'), { description: res.error ?? jobDisplayName(job) });
       }
     },
-    [refreshData, selectedGatewayId, t],
+    [refreshData, selectedGatewayId, t, jobDisplayName],
   );
 
   const handleEdit = useCallback((job: CronJob) => {
@@ -425,6 +445,7 @@ export default function CronPanel() {
                   >
                     <CronJobCard
                       job={job}
+                      agentLabelOf={agentLabelOf}
                       onToggleEnabled={handleToggleEnabled}
                       onEdit={handleEdit}
                       onDelete={handleDelete}
@@ -435,7 +456,7 @@ export default function CronPanel() {
                       <div className="mt-2 rounded-lg border border-[var(--border)] overflow-hidden">
                         <CronRunHistory
                           jobId={job.id}
-                          jobName={job.name}
+                          jobName={jobDisplayName(job)}
                           jobSessionKey={job.sessionKey}
                           gatewayId={selectedGatewayId}
                           onClose={handleCloseHistory}
@@ -492,7 +513,9 @@ export default function CronPanel() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{t('cron.deleteJob')}</DialogTitle>
-            <DialogDescription>{t('cron.deleteConfirm', { name: deletingJob?.name ?? '' })}</DialogDescription>
+            <DialogDescription>
+              {t('cron.deleteConfirm', { name: deletingJob ? jobDisplayName(deletingJob) : '' })}
+            </DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setDeletingJob(null)}>

@@ -752,6 +752,14 @@
     "sessionTarget_main": "メインセッション",
     "sessionTarget_task": "タスクセッション (Rongying Cube タスク会話を維持)",
     "subtitle": "定期実行エージェントタスクの管理",
+    "systemJob": {
+      "descHeartbeat": "定期的にアシスタントの応答を確認します",
+      "descMemoryDreaming": "アシスタントの長期記憶を整理し、残すべきものを残します",
+      "descSkillReview": "このアシスタントのスキルを見直します：重複の統合、古い内容の削除、構成の整理",
+      "heartbeat": "アシスタントの稼働確認",
+      "memoryDreaming": "記憶の整理",
+      "skillReview": "スキル棚卸し（{{agent}}）"
+    },
     "target": {
       "current": "現在のセッション",
       "isolated": "独立セッション",

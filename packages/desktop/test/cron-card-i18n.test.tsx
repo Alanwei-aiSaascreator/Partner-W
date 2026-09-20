@@ -68,10 +68,18 @@ const mk = (over: Partial<CronJob>): CronJob =>
     ...over,
   }) as unknown as CronJob;
 
-function draw(job: CronJob) {
+function draw(job: CronJob, agentLabelOf?: (agentId: string) => string | undefined) {
   const noop = vi.fn();
   return render(
-    <CronJobCard job={job} onToggleEnabled={noop} onEdit={noop} onDelete={noop} onRunNow={noop} onShowHistory={noop} />,
+    <CronJobCard
+      job={job}
+      agentLabelOf={agentLabelOf}
+      onToggleEnabled={noop}
+      onEdit={noop}
+      onDelete={noop}
+      onRunNow={noop}
+      onShowHistory={noop}
+    />,
   );
 }
 
@@ -136,6 +144,78 @@ describe('CronJobCard 文案：走 i18n，屏幕上看到中文', () => {
 
     expect(text).toContain('something-new');
     expect(text).toContain('brandNewKind');
+    unmount();
+  });
+});
+
+/**
+ * 卡片**标题**：网关自动建的那几个任务在界面上是英文名（T-a4）。
+ *
+ * ⚠️ 这一条守的是**接线**（`CronJobCard` 有没有真的去调那个映射）。
+ *    纯函数的规则由 `test/cron-job-label.test.ts` 守，两者缺一不可 ——
+ *    光有对的规则而展示层不调用，用户看到的还是 `heartbeat-main`。
+ */
+describe('CronJobCard 标题：系统任务的英文名换成中文', () => {
+  it('⭐ 心跳任务显示「助手心跳检查」，不再露 `heartbeat-main`', () => {
+    const { container, unmount } = draw(mk({ name: 'heartbeat-main' }));
+    const text = container.textContent ?? '';
+
+    expect(text).toContain('助手心跳检查');
+    expect(text).not.toContain('heartbeat-main');
+    unmount();
+  });
+
+  it('⭐ 技能库巡检带上**这个助手的中文名**（不然用户不知道是给谁建的）', () => {
+    const { container, unmount } = draw(mk({ name: 'skill-collection-review-rongying-tpl-78b62899' }), (id) =>
+      id === 'rongying-tpl-78b62899' ? '爆款内容教练' : undefined,
+    );
+    const text = container.textContent ?? '';
+
+    expect(text).toContain('技能库巡检');
+    expect(text).toContain('爆款内容教练');
+    unmount();
+  });
+
+  it('⭐ 用户自己改过名的任务**原样显示** —— 宁可又是英文，也不能张冠李戴', () => {
+    const { container, unmount } = draw(mk({ name: '我的周报提醒' }));
+    const text = container.textContent ?? '';
+
+    expect(text).toContain('我的周报提醒');
+    expect(text).not.toContain('助手心跳检查');
+    unmount();
+  });
+
+  it('⭐ 系统任务的载荷改说「它干什么」—— 不再把内部标记串/英文长文甩给用户', () => {
+    // 实测（2026-09-20）三个任务的真载荷：
+    //   heartbeat → 没有正文；memoryDreaming → `__openclaw_..._dream__` 这种内部标记；
+    //   skillReview → 一整段英文指令（截断后只剩 "Review this agent's Skill Workshop as a…"）
+    const memory = draw(
+      mk({
+        name: 'Memory Dreaming Promotion',
+        payload: { kind: 'agentTurn', message: '__openclaw_memory_core_short_term_promotion_dream__' } as never,
+      }),
+    );
+    expect(memory.container.textContent).toContain('记忆整理');
+    expect(memory.container.textContent).toContain('整理助手的长期记忆');
+    expect(memory.container.textContent).not.toContain('__openclaw_');
+    memory.unmount();
+
+    const review = draw(
+      mk({
+        name: 'skill-collection-review-x',
+        payload: { kind: 'agentTurn', message: "Review this agent's Skill Workshop as a collection" } as never,
+      }),
+    );
+    expect(review.container.textContent).toContain('审阅这个助手的技能库');
+    expect(review.container.textContent).not.toContain("Review this agent's");
+    review.unmount();
+  });
+
+  it('⭐ 非系统任务**照常显示原文载荷**（改的只是系统任务那三种，不是全局屏蔽）', () => {
+    const { container, unmount } = draw(
+      mk({ name: '我的提醒', payload: { kind: 'agentTurn', message: '记得给客户回电话' } as never }),
+    );
+    expect(container.textContent).toContain('记得给客户回电话');
     unmount();
   });
 });

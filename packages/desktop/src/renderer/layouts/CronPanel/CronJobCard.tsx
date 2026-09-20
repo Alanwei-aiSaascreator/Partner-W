@@ -7,9 +7,12 @@ import { cn } from '@/lib/utils';
 import type { TFunction } from 'i18next';
 import type { CronJob } from '@clawwork/shared';
 import { cronPayloadPreview } from './payload.js';
+import { systemJobDescription, systemJobLabel } from '@/lib/cron-job-label';
 
 interface CronJobCardProps {
   job: CronJob;
+  /** 把 agent id 翻成中文名 —— 系统任务「技能库巡检（{{agent}}）」要用。 */
+  agentLabelOf?: (agentId: string) => string | undefined;
   onToggleEnabled: (job: CronJob) => void;
   onEdit: (job: CronJob) => void;
   onDelete: (job: CronJob) => void;
@@ -136,6 +139,7 @@ const STATUS_DOT: Record<string, string> = {
 
 export default function CronJobCard({
   job,
+  agentLabelOf,
   onToggleEnabled,
   onEdit,
   onDelete,
@@ -143,6 +147,10 @@ export default function CronJobCard({
   onShowHistory,
 }: CronJobCardProps) {
   const { t } = useTranslation();
+  // 网关自动建的那几个任务在界面上是英文名（`heartbeat-main` 之类）——
+  // 认得出就换中文，认不出（包括用户自己改过名的）**原样显示**。
+  const displayName = systemJobLabel(job.name, t, agentLabelOf) ?? job.name;
+  const systemJobDesc = systemJobDescription(job.name, job.payload, t);
   const expr = scheduleExpr(job.schedule);
   const schedText = 'every' in expr ? everyText(t, expr.every) : expr.text;
   const schedBadge = scheduleBadgeText(t, job.schedule.kind);
@@ -169,7 +177,7 @@ export default function CronJobCard({
 
           <div className="min-w-0 flex-1">
             <div className="flex items-center justify-between gap-2">
-              <span className="type-label truncate text-[var(--text-primary)]">{job.name}</span>
+              <span className="type-label truncate text-[var(--text-primary)]">{displayName}</span>
               <div className="flex items-center gap-2 shrink-0">
                 {state.runningAtMs && <Loader2 size={14} className="animate-spin text-[var(--accent)]" />}
                 {state.lastRunStatus && (
@@ -196,8 +204,18 @@ export default function CronJobCard({
               <span className="type-mono-data truncate text-[var(--text-secondary)]">{schedText}</span>
             </div>
 
+            {/* 系统任务的载荷是人看不懂的：`heartbeat` 没有正文，
+                另外两个一个是内部标记串（`__openclaw_..._dream__`）、
+                一个是整段英文指令。认得出是系统任务时改说**它干什么**，
+                原文仍然留在编辑对话框里（那里是数据，一个字都不动）。 */}
             <div className="type-support mt-1 truncate text-[var(--text-secondary)]">
-              <span className="text-[var(--text-muted)]">{payloadKindText(t, job.payload.kind)}:</span> {preview}
+              {systemJobDesc ? (
+                systemJobDesc
+              ) : (
+                <>
+                  <span className="text-[var(--text-muted)]">{payloadKindText(t, job.payload.kind)}:</span> {preview}
+                </>
+              )}
             </div>
 
             <div className="flex items-center gap-2 mt-1 type-support text-[var(--text-muted)]">
