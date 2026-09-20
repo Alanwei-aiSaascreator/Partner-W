@@ -752,10 +752,6 @@ export function registerWsHandlers(): void {
     gatewayRpc(payload.gatewayId, (gw) => gw.getUsageStatus()),
   );
 
-  ipcMain.handle('ws:session-usage', async (_event, payload: { gatewayId: string; sessionKey: string }) =>
-    gatewayRpc(payload.gatewayId, (gw) => gw.getSessionUsage({ key: payload.sessionKey })),
-  );
-
   ipcMain.handle(
     'ws:session-preview',
     async (

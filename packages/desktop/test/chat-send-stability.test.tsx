@@ -378,8 +378,6 @@ vi.mock('../src/renderer/stores/commercialStore', () => ({
 vi.mock('../src/renderer/stores/usageStore', () => ({
   useUsageStore: <T,>(selector: (state: Record<string, unknown>) => T) =>
     selector({
-      sessionUsage: null,
-      cost: null,
       status: null,
       loading: false,
       fetchUsage: vi.fn(),

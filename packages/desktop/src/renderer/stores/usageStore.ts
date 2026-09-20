@@ -1,36 +1,40 @@
 import { create } from 'zustand';
-import type { UsageStatus, SessionCostSummary } from '@clawwork/shared';
+import type { UsageStatus } from '@clawwork/shared';
 
 const REFRESH_INTERVAL_MS = 60_000;
 const INSTANCE_CACHE_MS = 30_000;
 
 /**
- * ⚠️ 这里**曾经**还查一条 `usage.cost`（`getUsageCost(gatewayId, { days: 30 })`）——
- * 2026-09-20 删掉（T-a23）。两个理由，缺一不可：
+ * ⚠️ 这个 store 以前每 60 秒还发两条**会话级**请求，2026-09-20 两条都撤了
+ * （`usage.cost` 见 T-a23 / `sessions.usage` 见 T-a25）。撤法不同，但**理由是同一个**：
+ * 取回的数据在渲染层**只有写没有读**，而请求本身在真实配置下**会失败**。
  *
- * 1. **它注定失败**：不带 `agentScope`/`agentId` 时，网关拿 `"main"` 去解析归属
+ * 1. `usage.cost`（T-a23，`5ef96a56`）：不带 `agentScope`/`agentId` 时网关拿 `"main"` 解析归属
  *    （随包运行时 `dist/usage-lCaKvodi.mjs`：`resolveRequestedSessionAgentId(config, "main")`），
  *    多 agent 配置下解析不出来 ⇒ 整条 `INVALID_REQUEST`
  *    「Multiple agents are configured, but session key "main" has no explicit owner」。
- *    本机日志存档（`%APPDATA%/@clawwork/desktop/logs/debug-*.ndjson`）里：432 发 / 266 成功 /
- *    **160 失败**，而那 266 次成功**全在 09-07…09-14**（单 agent 时期），09-15 之后 0 次成功。
- *    （同族的 `sessions.usage` 09-17 已用 `agentScope: 'all'` 修好，这条是漏掉的孪生兄弟。）
- * 2. **它取回的数据没人看**：`cost` 在渲染层只有写没有读（`grep -rn "\.cost\b" src/renderer`
- *    唯一命中就是那行赋值），顶栏也按产品决定（2026-09-17）不再显示美元成本。
- *    ⇒ 每分钟一次的无效请求 + 死状态 + 一条**从来没浮到界面上**的错误（旧写法里
- *    `updates.error` 要求 status 与 cost **同时**失败才设）。
+ *    本机全档日志（`%APPDATA%/@clawwork/desktop/logs/debug-*.ndjson`）：432 发 / 266 成功 /
+ *    **160 失败**，而那 266 次成功**全在 09-07…09-14**（单 agent 时期），此后 0 次成功。
+ * 2. `sessions.usage`（T-a25）：`{ key }` 里传的是**客户端自己拼的 task 级会话键**，而 `chat.send`
+ *    是**用 key 惰性建会话**的 ⇒ "还没发过消息 / 会话被删 / agent 前缀变过"的 key 在网关上
+ *    **不是会话**，报文 `Invalid session reference: agent:…:clawwork:…:task:<uuid>`（全档 **36 次**，
+ *    其中 25 次聚在 09-19 17:02–18:01）。同族证据：**同一个会话 id** 在单 agent 时期报 `agent:main:…`、
+ *    09-19 报 `agent:rongying-office:…` —— 前缀跟着配置走，而它**两个时期都报错**。
  *
- * 将来真要做成本视图，第一步是重新立项，并把 `agentScope: 'all'`（或 `agentId`）写进那一刀；
- * 不要照着旧代码把不带 owner 的那一版抄回来。
+ * ⚠️ **两条都没有消费者**：`cost` 与 `sessionUsage` 两个字段在渲染层都只有写没有读
+ * （全仓 grep：读者 **0 处**），顶栏也按产品决定（2026-09-17）不再显示 token 数与美元成本。
+ *
+ * 将来真要做成本/用量视图，第一步是**重新立项**，并把 owner 的规矩写进那一刀：
+ * `usage.cost` 必须带 `agentScope: 'all'` 或 `agentId`；`sessions.usage` 只对**网关上已存在的**会话键有效，
+ * 别再拿客户端自己拼的 task 键去问。**不要照着旧代码把不带 owner 的那一版抄回来。**
  */
 interface UsageState {
   status: UsageStatus | null;
-  sessionUsage: SessionCostSummary | null;
   loading: boolean;
   error: string | null;
 
-  fetchUsage: (gatewayId: string, sessionKey?: string) => Promise<void>;
-  startAutoRefresh: (gatewayId: string, sessionKey?: string) => void;
+  fetchUsage: (gatewayId: string) => Promise<void>;
+  startAutoRefresh: (gatewayId: string) => void;
   stopAutoRefresh: () => void;
   clear: () => void;
 }
@@ -40,53 +44,32 @@ let instanceFetchedAt = 0;
 
 export const useUsageStore = create<UsageState>((set, get) => ({
   status: null,
-  sessionUsage: null,
   loading: false,
   error: null,
 
-  fetchUsage: async (gatewayId: string, sessionKey?: string) => {
+  fetchUsage: async (gatewayId: string) => {
     if (!gatewayId) return;
-    if (
-      typeof window.clawwork.getUsageStatus !== 'function' ||
-      (sessionKey && typeof window.clawwork.getSessionUsage !== 'function')
-    ) {
-      set({ loading: false, error: null, sessionUsage: null });
+    if (typeof window.clawwork.getUsageStatus !== 'function') {
+      set({ loading: false, error: null });
       return;
     }
     set({ loading: true, error: null });
     try {
-      const skipInstance = Date.now() - instanceFetchedAt < INSTANCE_CACHE_MS && get().status != null;
-
-      const promises: Promise<{ ok: boolean; result?: Record<string, unknown>; error?: string }>[] = [];
-      if (!skipInstance) {
-        promises.push(window.clawwork.getUsageStatus(gatewayId));
-      }
-      if (sessionKey) {
-        promises.push(window.clawwork.getSessionUsage(gatewayId, sessionKey));
+      // 30 秒窗口内实例级查询已被跳过 ⇒ 这条路上**再没有别的请求**可发（会话级两条都已撤掉）。
+      if (Date.now() - instanceFetchedAt < INSTANCE_CACHE_MS && get().status != null) {
+        set({ loading: false });
+        return;
       }
 
-      const results = await Promise.all(promises);
+      const statusRes = await window.clawwork.getUsageStatus(gatewayId);
       const updates: Partial<UsageState> = { loading: false };
-
-      if (!skipInstance) {
-        const [statusRes] = results;
-        if (statusRes.ok && statusRes.result) {
-          updates.status = statusRes.result as unknown as UsageStatus;
-        }
-        if (!statusRes.ok) {
-          updates.error = statusRes.error ?? 'fetch failed';
-        }
-        instanceFetchedAt = Date.now();
+      if (statusRes.ok && statusRes.result) {
+        updates.status = statusRes.result as unknown as UsageStatus;
       }
-
-      const sessionRes = skipInstance ? results[0] : results[1];
-      if (sessionRes?.ok && sessionRes.result) {
-        const r = sessionRes.result as unknown as { sessions?: { usage: SessionCostSummary | null }[] };
-        updates.sessionUsage = r.sessions?.[0]?.usage ?? null;
-      } else if (!sessionKey) {
-        updates.sessionUsage = null;
+      if (!statusRes.ok) {
+        updates.error = statusRes.error ?? 'fetch failed';
       }
-
+      instanceFetchedAt = Date.now();
       set(updates);
     } catch (err) {
       set({
@@ -96,12 +79,11 @@ export const useUsageStore = create<UsageState>((set, get) => ({
     }
   },
 
-  startAutoRefresh: (gatewayId: string, sessionKey?: string) => {
+  startAutoRefresh: (gatewayId: string) => {
     get().stopAutoRefresh();
-    set({ sessionUsage: null });
-    get().fetchUsage(gatewayId, sessionKey);
+    get().fetchUsage(gatewayId);
     refreshTimer = setInterval(() => {
-      get().fetchUsage(gatewayId, sessionKey);
+      get().fetchUsage(gatewayId);
     }, REFRESH_INTERVAL_MS);
   },
 
@@ -115,6 +97,6 @@ export const useUsageStore = create<UsageState>((set, get) => ({
   clear: () => {
     get().stopAutoRefresh();
     instanceFetchedAt = 0;
-    set({ status: null, sessionUsage: null, loading: false, error: null });
+    set({ status: null, loading: false, error: null });
   },
 }));

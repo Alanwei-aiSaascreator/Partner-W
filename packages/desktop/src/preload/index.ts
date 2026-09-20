@@ -316,8 +316,6 @@ function buildApi(): ClawWorkAPI {
       ipcRenderer.invoke('ws:create-session', { gatewayId, ...params }),
 
     getUsageStatus: (gatewayId: string) => ipcRenderer.invoke('ws:usage-status', { gatewayId }),
-    getSessionUsage: (gatewayId: string, sessionKey: string) =>
-      ipcRenderer.invoke('ws:session-usage', { gatewayId, sessionKey }),
     previewSessions: (gatewayId: string, keys: string[], options?: { limit?: number; maxChars?: number }) =>
       ipcRenderer.invoke('ws:session-preview', { gatewayId, keys, ...options }),
 

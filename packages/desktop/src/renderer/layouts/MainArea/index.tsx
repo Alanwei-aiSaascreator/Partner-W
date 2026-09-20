@@ -228,11 +228,12 @@ function ChatHeader({
   const stopAutoRefresh = useUsageStore((s) => s.stopAutoRefresh);
 
   const costGatewayId = activeTask?.gatewayId ?? '';
-  const sessionKey = activeTask?.sessionKey ?? '';
   useEffect(() => {
-    if (costGatewayId) startAutoRefresh(costGatewayId, sessionKey || undefined);
+    // 只要网关级用量：会话级两条（`usage.cost` / `sessions.usage`）已撤（T-a23/T-a25），
+    // 所以这里**不再需要** sessionKey，切任务也不必重开计时器（`costGatewayId` 换了才重开）。
+    if (costGatewayId) startAutoRefresh(costGatewayId);
     return () => stopAutoRefresh();
-  }, [costGatewayId, sessionKey, startAutoRefresh, stopAutoRefresh]);
+  }, [costGatewayId, startAutoRefresh, stopAutoRefresh]);
 
   const contextTokens = activeTask?.contextTokens ?? null;
   const contextUsagePercent =
@@ -350,7 +351,7 @@ function ChatHeader({
                     <div className="flex items-center justify-between">
                       <span className="type-label text-[var(--text-secondary)]">{t('usage.rateLimits')}</span>
                       <button
-                        onClick={() => fetchUsage(costGatewayId, sessionKey || undefined)}
+                        onClick={() => fetchUsage(costGatewayId)}
                         disabled={usageLoading}
                         aria-label={t('mainArea.refreshUsage')}
                         className="rounded p-1 text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] disabled:opacity-50"
