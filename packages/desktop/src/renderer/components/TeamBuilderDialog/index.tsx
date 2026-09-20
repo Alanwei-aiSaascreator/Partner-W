@@ -17,6 +17,7 @@ import { useTranslation } from 'react-i18next';
 import { toast } from '@/lib/toast';
 import type { ModelCatalogEntry, InstallEvent } from '@clawwork/shared';
 import { cn } from '@/lib/utils';
+import { buildInstallEventView } from '@/lib/install-event-view';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover';
@@ -571,7 +572,8 @@ export default function TeamBuilderDialog({ open, onOpenChange, gatewayId, onCre
   );
 }
 
-function InstallProgress({
+/** 导出是为了能**直接渲染它**测那条实机教训：失败原因必须上屏（见 `test/install-progress-reason.test.tsx`）。 */
+export function InstallProgress({
   status,
   events,
   progressPercent,
@@ -584,24 +586,19 @@ function InstallProgress({
 }) {
   const { t } = useTranslation();
 
-  const agentStates = useMemo(() => {
-    const stateMap = new Map<string, { slug: string; status: 'pending' | 'creating' | 'created' | 'warning' }>();
-    for (const a of agents) {
-      const slug = toSlug(a.name);
-      stateMap.set(slug, { slug, status: 'pending' });
-    }
-    for (const e of events) {
-      const s = e.agentSlug ? stateMap.get(e.agentSlug) : undefined;
-      if (!s) continue;
-      if (e.type === 'agent_creating') s.status = 'creating';
-      if (e.type === 'agent_created') s.status = 'created';
-      if (e.type === 'warning' && s.status === 'creating') s.status = 'warning';
-    }
-    return agents.map((a) => stateMap.get(toSlug(a.name))!).filter(Boolean);
-  }, [agents, events]);
-
-  const teamSaved = events.some((e) => e.type === 'team_persisted');
-  const globalError = events.find((e) => e.type === 'error')?.message;
+  /**
+   * ⚠️ 2026-09-20 U 盘交付实机（截图 4）：这里原来自己数事件，**只认
+   *    `agent_creating`/`agent_created`/`warning` 三种状态**，逐助手的
+   *    `warning.message`（里面才是网关的失败原文）**从头到尾没渲染过**，
+   *    于是"四个助手全建失败"上屏的只剩「安装失败」+ 四行 slug +
+   *    一句大写英文 `NO AGENTS WERE CREATED SUCCESSFULLY`。
+   *    ⇒ 改用与「创建团队」面板**同一份**事件视图（`lib/install-event-view`），
+   *      并把行上的告警原因渲染出来。
+   */
+  const { agentStates, teamSaved, globalWarnings, globalError } = useMemo(
+    () => buildInstallEventView(agents, events),
+    [agents, events],
+  );
 
   return (
     <div className="flex flex-col h-full p-4">
@@ -624,15 +621,25 @@ function InstallProgress({
 
       <div className="flex-1 space-y-2 overflow-y-auto">
         {agentStates.map((agent) => (
-          <div
-            key={agent.slug}
-            className="flex items-center gap-2 rounded-md border border-[var(--border)] bg-[var(--bg-primary)] px-3 py-2"
-          >
-            {agent.status === 'pending' && <div className="h-3 w-3 rounded-full border border-[var(--border)]" />}
-            {agent.status === 'creating' && <Loader2 size={12} className="animate-spin text-[var(--text-muted)]" />}
-            {agent.status === 'created' && <Check size={12} className="text-[var(--accent)]" />}
-            {agent.status === 'warning' && <AlertTriangle size={12} className="text-[var(--text-warning)]" />}
-            <span className="type-body text-[var(--text-primary)] flex-1 truncate">{agent.slug}</span>
+          <div key={agent.slug} className="rounded-md border border-[var(--border)] bg-[var(--bg-primary)] px-3 py-2">
+            <div className="flex items-center gap-2">
+              {agent.status === 'pending' && <div className="h-3 w-3 rounded-full border border-[var(--border)]" />}
+              {agent.status === 'creating' && <Loader2 size={12} className="animate-spin text-[var(--text-muted)]" />}
+              {agent.status === 'created' && <Check size={12} className="text-[var(--accent)]" />}
+              {agent.status === 'warning' && <AlertTriangle size={12} className="text-[var(--text-warning)]" />}
+              <span className="type-body text-[var(--text-primary)] flex-1 truncate">{agent.slug}</span>
+            </div>
+            {/* ⚠️ 逐助手的失败原文：**必须上屏**，否则用户和我们都没有可读的原因 */}
+            {agent.warnings.length > 0 && (
+              <div className="mt-1 space-y-0.5">
+                {agent.warnings.map((w, i) => (
+                  <div key={i} className="flex items-start gap-1.5 type-meta text-[var(--text-warning)]">
+                    <AlertTriangle size={10} className="mt-0.5 flex-shrink-0" />
+                    {w}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         ))}
 
@@ -642,6 +649,13 @@ function InstallProgress({
             {t('teams.wizard.teamSaved')}
           </div>
         )}
+
+        {globalWarnings.map((w, i) => (
+          <div key={i} className="flex items-center gap-2 px-3 py-2 type-meta text-[var(--text-warning)]">
+            <AlertTriangle size={12} />
+            {w}
+          </div>
+        ))}
 
         {globalError && (
           <div className="flex items-center gap-2 px-3 py-2 type-meta text-[var(--text-danger)]">

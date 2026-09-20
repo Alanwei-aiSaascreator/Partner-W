@@ -3,75 +3,8 @@ import { useTranslation } from 'react-i18next';
 import { Check, AlertTriangle, Loader2, Crown, Users } from 'lucide-react';
 import type { InstallEvent } from '@clawwork/shared';
 import { cn } from '@/lib/utils';
+import { buildInstallEventView, type InstallAgentState } from '@/lib/install-event-view';
 import type { AgentDraft } from './types';
-import { toSlug } from './utils';
-
-interface AgentInstallState {
-  slug: string;
-  status: 'pending' | 'creating' | 'created' | 'warning';
-  files: Array<{ name: string; ok: boolean }>;
-  skills: Array<{ id: string; ok: boolean }>;
-  warnings: string[];
-}
-
-function buildAgentStates(
-  agents: AgentDraft[],
-  events: InstallEvent[],
-): {
-  agentStates: AgentInstallState[];
-  teamSaved: boolean;
-  globalWarnings: string[];
-  globalError: string | null;
-} {
-  const stateMap = new Map<string, AgentInstallState>();
-  for (const a of agents) {
-    const slug = toSlug(a.name);
-    stateMap.set(slug, { slug, status: 'pending', files: [], skills: [], warnings: [] });
-  }
-
-  let teamSaved = false;
-  const globalWarnings: string[] = [];
-  let globalError: string | null = null;
-
-  for (const e of events) {
-    const s = e.agentSlug ? stateMap.get(e.agentSlug) : undefined;
-    switch (e.type) {
-      case 'agent_creating':
-        if (s) s.status = 'creating';
-        break;
-      case 'agent_created':
-        if (s) s.status = 'created';
-        break;
-      case 'file_set':
-        if (s && e.fileName) s.files.push({ name: e.fileName, ok: true });
-        break;
-      case 'file_setting':
-        break;
-      case 'skill_installed':
-        if (s && e.skillId) s.skills.push({ id: e.skillId, ok: true });
-        break;
-      case 'skill_installing':
-        break;
-      case 'team_persisted':
-        teamSaved = true;
-        break;
-      case 'warning':
-        if (s) {
-          s.warnings.push(e.message ?? 'Warning');
-          if (s.status === 'creating') s.status = 'warning';
-        } else {
-          globalWarnings.push(e.message ?? 'Warning');
-        }
-        break;
-      case 'error':
-        globalError = e.message ?? 'Installation failed';
-        break;
-    }
-  }
-
-  const agentStates = agents.map((a) => stateMap.get(toSlug(a.name))!).filter(Boolean);
-  return { agentStates, teamSaved, globalWarnings, globalError };
-}
 
 interface InstallStepProps {
   teamInfo: { name: string; emoji: string; description: string };
@@ -94,7 +27,7 @@ export default function InstallStep({ teamInfo, agents, status, events, isEdit }
   const progressPercent = lastProgress ? Math.round((lastProgress.current / lastProgress.total) * 100) : 0;
 
   const { agentStates, teamSaved, globalWarnings, globalError } = useMemo(
-    () => buildAgentStates(agents, events),
+    () => buildInstallEventView(agents, events),
     [agents, events],
   );
 
@@ -225,7 +158,7 @@ export default function InstallStep({ teamInfo, agents, status, events, isEdit }
   );
 }
 
-function AgentStatusIcon({ status }: { status: AgentInstallState['status'] }) {
+function AgentStatusIcon({ status }: { status: InstallAgentState['status'] }) {
   switch (status) {
     case 'pending':
       return <div className="h-3 w-3 rounded-full border border-[var(--border)]" />;
