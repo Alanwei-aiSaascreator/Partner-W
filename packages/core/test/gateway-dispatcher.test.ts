@@ -814,6 +814,101 @@ describe('chat 的 state：未处理的取值要留痕', () => {
 });
 
 /**
+ * ⭐ state-only 的 `chat` 帧**不许**当成"助手回应了"。
+ *
+ * ## 现场（2026-09-20 实机，store 级取证 —— 不是推的）
+ *
+ * 用户报障：「我发完要求，那个对话头像会消失一下，然后再给我反馈」。
+ * 在 dev 客户端上把 store 的 `setProcessing` 包起来抓调用栈，一次发送里它被这样调用：
+ *
+ * ```
+ * +  88ms  → true    （发送：chat-composer 打开"处理中"）
+ * +1581ms  → false   ← notifyResponse（handleChatEvent）
+ * +2148ms  → true    （lifecycle.start）
+ * +2235ms  → false   ← notifyResponse（handleChatEvent）
+ * ```
+ *
+ * 两次 `false` 让 `MainArea` 的等待块**被卸载又重建**
+ * （MutationObserver 实录：`移除[BLOCK(flex gap-3.5 py-4)]` / `新增[BLOCK(...)]`）——
+ * 用户看到的就是"头像消失一下"。而那两帧是 `state:"status"`
+ * （准备相位的 chat 投影）：**只带状态、一个字的内容都没有**。
+ *
+ * ⇒ 判据：这一帧真的带来了回应内容（正文/推理/工具），或者标记了这一轮结束
+ *   （`final`/`aborted`/`error`）—— 才叫"回应了"。
+ *   `notifyAgentResponse` 的下游是 `composer.notifyResponse` → `setProcessing(session,false)`
+ *   （`useGatewayDispatcherSetup.ts` 的接线），所以这里断言的就是"等待块会不会被关掉"。
+ */
+describe('chat 的 state-only 帧不许当成"助手回应了"', () => {
+  const emitState = (h: ReturnType<typeof createHarness>, state: string | undefined, extra = {}) =>
+    h.emit('chat', { sessionKey: TASK.sessionKey, state, ...extra });
+
+  const harnessWithNotify = () => {
+    const h = createHarness();
+    const notify = vi.fn();
+    h.deps.notifyAgentResponse = notify;
+    return { h, notify };
+  };
+
+  it('⭐ `state:"status"`（一个字都没有）⇒ 不通知（否则等待块会被卸载）', () => {
+    const { h, notify } = harnessWithNotify();
+
+    emitState(h, 'status');
+
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  it('⭐ 认不出的 state 同理（陌生帧不该让等待块闪一下）', () => {
+    const { h, notify } = harnessWithNotify();
+
+    emitState(h, 'some_future_state');
+
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  it('⭐ `delta` 但**什么都没带**（无正文/推理/工具）⇒ 也不算回应', () => {
+    const { h, notify } = harnessWithNotify();
+
+    emitState(h, 'delta');
+
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  it('对照：`delta` 带正文 ⇒ 照旧通知', () => {
+    const { h, notify } = harnessWithNotify();
+
+    emitState(h, 'delta', { message: { content: [{ type: 'text', text: '你好' }] } });
+
+    expect(notify).toHaveBeenCalledWith(TASK.sessionKey);
+  });
+
+  it('对照：`delta` **只带推理** ⇒ 也算（思考块要渲染出来）', () => {
+    const { h, notify } = harnessWithNotify();
+
+    emitState(h, 'delta', { message: { content: [{ type: 'thinking', thinking: '在想…' }] } });
+
+    expect(notify).toHaveBeenCalledWith(TASK.sessionKey);
+  });
+
+  it('对照：`delta` 只带工具调用 ⇒ 也算', () => {
+    const { h, notify } = harnessWithNotify();
+
+    emitState(h, 'delta', {
+      message: { content: [{ type: 'toolCall', id: 'call-1', name: 'search', arguments: '{}' }] },
+    });
+
+    expect(notify).toHaveBeenCalledWith(TASK.sessionKey);
+  });
+
+  it.each(['final', 'aborted', 'error'])('对照：`%s` ⇒ 照旧通知（这一轮结束了）', (state) => {
+    const { h, notify } = harnessWithNotify();
+
+    emitState(h, state);
+
+    expect(notify).toHaveBeenCalledWith(TASK.sessionKey);
+  });
+});
+
+/**
  * `approval` 的 `status` —— 运行时的闭集是
  * **`"pending" | "unavailable" | "approved" | "denied" | "failed"`**（`~/git/openclaw`，2026-09-09）。
  *

@@ -814,6 +814,29 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
 
     const ephemeral = deps.isEphemeralSession?.(sessionKey) === true;
 
+    const store = deps.getMessageStore();
+    const text = extractText(payload);
+    const thinking = extractThinking(payload);
+    const toolCalls = extractToolCalls(payload);
+
+    /**
+     * ⭐ 「助手回应了」的判据 = **这一帧真的带了回应**（正文/推理/工具），
+     * 或者这一轮**结束了**（`final`/`aborted`/`error`）。
+     *
+     * ⚠️ 只看 `state` 是不够的：`state:"status"`（准备相位的 chat 投影）**一个字都没有**，
+     * 却被当成"回应了" ⇒ 下游 `composer.notifyResponse` 把 `processing` 关掉
+     * ⇒ `MainArea` 的等待块**卸载又重建**。
+     * 2026-09-20 实机取证（包住 `setProcessing` 抓调用栈）：一次发送里它被
+     * `+1581ms → false`、`+2148ms → true`、`+2235ms → false` 这样来回拨，
+     * 而这两次 `false` 都是 `handleChatEvent` → `notifyAgentResponse` 打出来的 ——
+     * 用户看到的就是「我发完要求，那个对话头像会消失一下」。
+     */
+    const carriesResponse =
+      Boolean(text || thinking || toolCalls.length > 0) ||
+      state === 'final' ||
+      state === 'aborted' ||
+      state === 'error';
+
     if (!ephemeral) {
       if (matchedTask.ensemble && sessionKey !== matchedTask.sessionKey) {
         deps.onPerformerCandidate?.(taskId, sessionKey, matchedTask.gatewayId);
@@ -823,12 +846,8 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
         deps.markUnread(taskId);
       }
 
-      deps.notifyAgentResponse?.(sessionKey);
+      if (carriesResponse) deps.notifyAgentResponse?.(sessionKey);
     }
-
-    const store = deps.getMessageStore();
-    const text = extractText(payload);
-    const thinking = extractThinking(payload);
 
     if (state === 'delta') {
       clearTaskErrorState(taskId);
@@ -849,7 +868,6 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
       if (thinking) {
         store.appendThinkingDelta(sessionKey, thinking);
       }
-      const toolCalls = extractToolCalls(payload);
       for (const tc of toolCalls) {
         store.upsertToolCall(sessionKey, taskId, tc);
       }
@@ -859,7 +877,6 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
       if (text) store.replaceStreamText(sessionKey, text);
       if (thinking) store.appendThinkingDelta(sessionKey, thinking);
       debugEvent('renderer.chat.final.received', { taskId, sessionKey, chars: text.length });
-      const toolCalls = extractToolCalls(payload);
       for (const tc of toolCalls) {
         store.upsertToolCall(sessionKey, taskId, tc);
       }
