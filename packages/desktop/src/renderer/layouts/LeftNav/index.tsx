@@ -9,7 +9,7 @@ import { useUiStore } from '@/stores/uiStore';
 import { useFileStore } from '@/stores/fileStore';
 import { useTaskContextMenu, TaskContextMenuPopover, type SessionActions } from '@/components/ContextMenu';
 import SearchResults, { type SearchResult } from '@/components/SearchResults';
-import { splitVisibleTasks } from '@/lib/task-sort';
+import { splitVisibleTasks, visibleTasksForAgent } from '@/lib/task-sort';
 import { motionDuration, motion as motionPresets } from '@/styles/design-tokens';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -190,10 +190,10 @@ export default function LeftNav({ onOpenAssistantSettings, onOpenSettings }: Lef
   // ⚠️ 排序**不能**就地 `.sort()`：`tasks` 是 store 里的数组，就地排会改到别人。
   //    排序规则与"只显示 5 条"的裁剪统一放在 `lib/task-sort` 里（纯函数、有单测）——
   //    置顶要在最前，**且不吃那 5 个名额**，否则置顶越多、普通任务露脸越少。
-  const visibleTasks = useMemo(
-    () => tasks.filter((task) => task.status !== 'archived' && (!currentAgentId || task.agentId === currentAgentId)),
-    [currentAgentId, tasks],
-  );
+  // ⚠️ 归属判据**不能**只看 `task.agentId`：从本地库读回来的任务没有它
+  //    （`tasks` 表就没这列）⇒ 原来那样过滤会让侧栏**整片空**（2026-09-20 用户报障）。
+  //    规则收在 `lib/task-sort` 的 `visibleTasksForAgent` 里（纯函数 + 单测）。
+  const visibleTasks = useMemo(() => visibleTasksForAgent(tasks, currentAgentId), [currentAgentId, tasks]);
   const { visible: displayedTasks, hiddenCount } = useMemo(
     () => splitVisibleTasks(visibleTasks, { limit: 5, showAll: showAllTasks }),
     [visibleTasks, showAllTasks],
