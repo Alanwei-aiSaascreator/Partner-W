@@ -42,6 +42,10 @@ function makeDeps(over: Partial<RuntimeBootstrapDeps> = {}) {
         cliPath: 'C:\\fake\\userdata\\runtime\\deployed\\k1\\node_modules\\openclaw\\openclaw.mjs',
       };
     }),
+    selfCheckLinks: vi.fn(() => {
+      calls.push('selfCheckLinks');
+      return { checked: 0, broken: 0, repaired: 0, failures: [], stillBroken: [], notes: [], summary: '干净' };
+    }),
     resolveNode: vi.fn(async () => {
       calls.push('resolveNode');
       return {
@@ -73,7 +77,7 @@ describe('bootstrapLocalGatewayRuntime', () => {
     vi.resetModules();
   });
 
-  it('⭐ 顺序：对齐配置 → 认缓存 → 部署 → 解析 Node → 起网关', async () => {
+  it('⭐ 顺序：对齐配置 → 认缓存 → 部署 → 坏链自检 → 解析 Node → 起网关', async () => {
     const { deps, calls } = makeDeps();
     const { bootstrapLocalGatewayRuntime } = await import('../src/main/runtime/index.js');
 
@@ -84,11 +88,66 @@ describe('bootstrapLocalGatewayRuntime', () => {
       'setStateDirEnv:C:\\fake\\userdata\\openclaw-state',
       'readCached',
       'deployFromMedia',
+      // 自检紧跟部署：`deployedRoot` 刚到手的那个，先把 state 里的链接对齐它，再谈起网关
+      'selfCheckLinks',
       'resolveNode',
       'startGateway',
     ]);
     expect(res.ok).toBe(true);
     expect(res.ownership).toBe('spawned');
+  });
+
+  it('⭐ 自检要拿到**这一轮真正在用的**那个 deployedRoot（不是猜的、也不是上一次的）', async () => {
+    const { deps } = makeDeps();
+    const { bootstrapLocalGatewayRuntime } = await import('../src/main/runtime/index.js');
+
+    await bootstrapLocalGatewayRuntime({ userDataDir: USER_DATA, deps });
+
+    expect(deps.selfCheckLinks).toHaveBeenCalledWith({
+      stateDir: 'C:\\fake\\userdata\\openclaw-state',
+      deployedRoot: 'C:\\fake\\userdata\\runtime\\deployed\\k1',
+    });
+  });
+
+  it('⭐ 自检**炸了也不能拦住启动**（软失败：它只是额外的一层保险，不是必经之路）', async () => {
+    const log = vi.fn();
+    const { deps, calls } = makeDeps({
+      selfCheckLinks: vi.fn(() => {
+        calls.push('selfCheckLinks');
+        throw new Error('EPERM: 这个卷建不了链接');
+      }),
+      log,
+    });
+    const { bootstrapLocalGatewayRuntime } = await import('../src/main/runtime/index.js');
+
+    const res = await bootstrapLocalGatewayRuntime({ userDataDir: USER_DATA, deps });
+
+    expect(res.ok).toBe(true); // ← 照常起网关
+    expect(calls).toContain('startGateway');
+    expect(log.mock.calls.map((c) => String(c[0]))).toContain('runtime.links.failed');
+  });
+
+  it('自检的结论要能一路带出去（界面/日志靠它说"修了几条"）', async () => {
+    const { deps } = makeDeps({
+      selfCheckLinks: vi.fn(() => ({
+        checked: 4,
+        broken: 2,
+        repaired: 1,
+        failures: [{ path: 'C:\\x\\b', target: null, reason: '读不出目标串' }],
+        stillBroken: [{ path: 'C:\\x\\c', kind: 'real-dir' as const, target: null }],
+        notes: [],
+        summary: '坏链自检：探了 4 条，坏的 2 条，修好 1 条，修不了 1 条',
+      })),
+    });
+    const { bootstrapLocalGatewayRuntime } = await import('../src/main/runtime/index.js');
+
+    const res = await bootstrapLocalGatewayRuntime({ userDataDir: USER_DATA, deps });
+
+    expect(res.links?.checked).toBe(4);
+    expect(res.links?.broken).toBe(2);
+    expect(res.links?.repaired).toBe(1);
+    expect(res.links?.failed).toBe(1);
+    expect(res.links?.summary).toContain('修好 1 条');
   });
 
   it('⭐ 本机缓存可用 ⇒ **不去碰盘**（拔盘后走的就是这条）', async () => {

@@ -42,6 +42,8 @@ import type { CurrentDeployment, DeployResult, DeploymentStamp } from './deploy.
 import { parseManifest, parseNodeManifest, selectNodeVariant, selectRuntimeVariant } from './manifest.js';
 import type { NodeVariant, RuntimeVariant } from './manifest.js';
 import { ensureClientGatewayEntry } from './state-config.js';
+import { runStateLinksSelfCheck } from './state-links-selfcheck.js';
+import type { LinkSelfCheckResult } from './state-links-selfcheck.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -56,7 +58,19 @@ export interface RuntimeBootstrapResult {
   deployStatus?: 'deployed' | 'skipped';
   nodeVersion?: string;
   nodeExe?: string;
+  /** 坏链自检的结论（摘要；明细在日志里）—— 见 `state-links-selfcheck.ts`。 */
+  links?: LinkSelfCheckSummary;
   elapsedMs?: number;
+}
+
+/** 自检结果的**摘要**（日志/界面用；明细不往外带）。 */
+export interface LinkSelfCheckSummary {
+  checked: number;
+  broken: number;
+  repaired: number;
+  /** 试过要修、没修成的条数（原因逐条写进日志）。 */
+  failed: number;
+  summary: string;
 }
 
 /**
@@ -68,6 +82,13 @@ export interface RuntimeBootstrapDeps {
   alignClientConfig: (opts: { userDataDir: string }) => Promise<{ token: string; stateDir: string }>;
   readCached: (userDataDir: string) => CurrentDeployment;
   deployFromMedia: (opts: { userDataDir: string }) => Promise<DeployResult>;
+  /**
+   * 坏链自检（**同步、永不抛**的默认实现见 `state-links-selfcheck.ts`）。
+   *
+   * 单独做成一个 dep 是为了让"自检炸了也不能拦住启动"这条能被钉住 —— 真机上
+   * 一个 EPERM 就把整个启动吞掉，是这一层最不该有的行为。
+   */
+  selfCheckLinks: (opts: { stateDir: string; deployedRoot: string }) => LinkSelfCheckResult;
   /**
    * ⚠️ 只给 `deployedRoot`。**不提供"盘上那个 node"当候选** —— 部署成功即代表
    * `deployed/<key>/node/node.exe` 已验过 hash 且自包含，运行期就该只用它；
@@ -188,6 +209,7 @@ function makeDefaultDeps(): RuntimeBootstrapDeps {
       return { token: res.token, stateDir: res.stateDir };
     },
     readCached: (userDataDir) => readCurrentDeployment(userDataDir),
+    selfCheckLinks: ({ stateDir, deployedRoot }) => runStateLinksSelfCheck({ stateDir, deployedRoot }),
     deployFromMedia: async ({ userDataDir }) => {
       const plan = await locateAndPlan(userDataDir);
       // ⚠️ 原因文本原样抛出：它自带"找过哪些地方"（见 describeRuntimeSearch），
@@ -284,7 +306,38 @@ export async function bootstrapLocalGatewayRuntime(opts: {
       deps.log('runtime.deploy.done', { deploymentKey: res.deploymentKey, status: res.status });
     }
 
-    // ④ 解析一个能跑 openclaw 的 Node（**必须先探版本**）
+    // ④ 坏链自检 + 我们能修的那半（**只修悬空的**：换根前缀、后缀不动、目标必须真存在）。
+    //
+    // ⚠️ 位置刻意紧跟部署之后：要的是**这一轮真正在用的**那个 deployedRoot；而
+    //    `plugin-skills\*` 是网关启动时才会去读/建的，所以必须赶在它前面。
+    // ⚠️ **软失败**：自检只是额外一层保险，炸了不能拦住启动（有测试钉着这一条）。
+    let links: LinkSelfCheckSummary | undefined;
+    try {
+      const check = deps.selfCheckLinks({ stateDir, deployedRoot: deployed.deployedRoot });
+      links = {
+        checked: check.checked,
+        broken: check.broken,
+        repaired: check.repaired,
+        failed: check.failures.length,
+        summary: check.summary,
+      };
+      deps.log('runtime.links.checked', {
+        checked: check.checked,
+        broken: check.broken,
+        repaired: check.repaired,
+        failed: check.failures.length,
+        stillBroken: check.stillBroken.length,
+      });
+      if (check.repaired > 0) deps.log('runtime.links.repaired', { repaired: check.repaired });
+      for (const f of check.failures) {
+        deps.log('runtime.links.repair-failed', { path: f.path, target: f.target, reason: f.reason });
+      }
+      for (const n of check.notes) deps.log('runtime.links.note', { note: n });
+    } catch (err) {
+      deps.log('runtime.links.failed', { reason: (err as Error).message });
+    }
+
+    // ⑤ 解析一个能跑 openclaw 的 Node（**必须先探版本**）
     const nodeRes = await deps.resolveNode({
       userDataDir,
       deploymentKey: deployed.deploymentKey,
@@ -292,7 +345,7 @@ export async function bootstrapLocalGatewayRuntime(opts: {
     });
     if (!nodeRes.ok) return fail('runtime.no-usable-node', nodeRes.message, { deploymentKey: deployed.deploymentKey });
 
-    // ⑤ 三态判定后 spawn / 复用（判成 foreign 会抛 port-occupied，由下面接住）
+    // ⑥ 三态判定后 spawn / 复用（判成 foreign 会抛 port-occupied，由下面接住）
     const gateway = await deps.startGateway({
       nodeExe: nodeRes.node.exe,
       cliPath: deployed.cliPath,
@@ -330,6 +383,7 @@ export async function bootstrapLocalGatewayRuntime(opts: {
       deployStatus,
       nodeVersion: nodeRes.node.version,
       nodeExe: nodeRes.node.exe,
+      links,
       elapsedMs: deps.now() - startedAt,
     };
   } catch (err) {
