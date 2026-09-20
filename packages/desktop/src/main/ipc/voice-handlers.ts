@@ -4,13 +4,9 @@ import { writeFileSync, unlinkSync, existsSync } from 'fs';
 import { join } from 'path';
 import { tmpdir, homedir } from 'os';
 import { randomUUID } from 'crypto';
+import { allowsAudioMedia } from '../voice/media-permission';
 
 type VoicePermissionStatus = 'granted' | 'not-determined' | 'denied' | 'unsupported';
-
-interface MediaPermissionDetails {
-  mediaType?: string;
-  mediaTypes?: string[];
-}
 
 interface WhisperCheckResult {
   available: boolean;
@@ -150,7 +146,7 @@ export function configureVoicePermissionHandlers(): void {
 
   defaultSession.setPermissionCheckHandler((_webContents, permission, _requestingOrigin, details) => {
     if (permission !== 'media') return false;
-    return allowsAudioMedia(details as MediaPermissionDetails);
+    return allowsAudioMedia(details);
   });
 
   defaultSession.setPermissionRequestHandler((_webContents, permission, callback, details) => {
@@ -158,7 +154,7 @@ export function configureVoicePermissionHandlers(): void {
       callback(false);
       return;
     }
-    callback(allowsAudioMedia(details as MediaPermissionDetails));
+    callback(allowsAudioMedia(details));
   });
 }
 
@@ -184,12 +180,4 @@ function normalizeMediaAccessStatus(status: string): VoicePermissionStatus {
   if (status === 'granted') return 'granted';
   if (status === 'not-determined') return 'not-determined';
   return 'denied';
-}
-
-function allowsAudioMedia(details: MediaPermissionDetails | undefined): boolean {
-  if (!details) return false;
-  if (Array.isArray(details.mediaTypes) && details.mediaTypes.includes('audio')) {
-    return true;
-  }
-  return details.mediaType === 'audio' || details.mediaType === 'unknown';
 }
