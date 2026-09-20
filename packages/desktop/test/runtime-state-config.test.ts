@@ -316,7 +316,30 @@ describe('ensureClientGatewayEntry', () => {
     expect(JSON.parse(fs.readFileSync(stateConfigPath(res.stateDir), 'utf-8')).gateway.auth.token).toBe(
       'legacy-portable-token',
     );
+    expect(JSON.parse(fs.readFileSync(stateConfigPath(res.stateDir), 'utf-8')).agents.defaults.skipBootstrap).toBe(
+      true,
+    );
     expect(fs.existsSync(authStorePath(localStateUserDataDir))).toBe(false);
+  });
+
+  it('便携版只强制跳过 exFAT 不支持的 bootstrap 硬链接，不覆盖已有助手默认值', async () => {
+    const localStateUserDataDir = path.join(tmpRoot, 'local-runtime-cache');
+    const first = await ensureClientGatewayEntry({ userDataDir, stateUserDataDir: localStateUserDataDir });
+    const raw = JSON.parse(fs.readFileSync(stateConfigPath(first.stateDir), 'utf-8'));
+    raw.agents = { defaults: { model: 'clawrouter/existing-model', skipBootstrap: false }, keep: 'yes' };
+    fs.writeFileSync(stateConfigPath(first.stateDir), JSON.stringify(raw));
+
+    await ensureClientGatewayEntry({ userDataDir, stateUserDataDir: localStateUserDataDir });
+
+    const rewritten = JSON.parse(fs.readFileSync(stateConfigPath(first.stateDir), 'utf-8'));
+    expect(rewritten.agents).toEqual({
+      defaults: { model: 'clawrouter/existing-model', skipBootstrap: true },
+      keep: 'yes',
+    });
+
+    const onceFixed = fs.readFileSync(stateConfigPath(first.stateDir), 'utf-8');
+    await ensureClientGatewayEntry({ userDataDir, stateUserDataDir: localStateUserDataDir });
+    expect(fs.readFileSync(stateConfigPath(first.stateDir), 'utf-8')).toBe(onceFixed);
   });
 
   it('⭐ 同一盘符换成另一支 U 盘时，本机 state 按便携身份隔离，不能继承前一支盘的密钥/会话', async () => {

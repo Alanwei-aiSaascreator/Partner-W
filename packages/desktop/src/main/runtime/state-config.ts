@@ -131,6 +131,28 @@ export function mergeMemoryDefaults(existing: Record<string, unknown> | null): R
 }
 
 /**
+ * 便携版的 agent workspace 在 U 盘上，可能是 exFAT。OpenClaw 2026.9.3
+ * 默认创建 bootstrap 文件时会用硬链接，exFAT 不支持，Node 在真盘上返回
+ * `EISDIR` 并使 `agents.create` 整体失败。ClawWork 在创建后会自己写入
+ * IDENTITY.md / SOUL.md，所以便携形态只需跳过上游这次 bootstrap。
+ *
+ * 安装版仍用上游默认值：只有 state 与便携数据分根时才合并这段。
+ */
+function hasPortableBootstrapDisabled(raw: unknown): boolean {
+  if (!isRecord(raw)) return false;
+  const agents = raw.agents;
+  if (!isRecord(agents)) return false;
+  const defaults = agents.defaults;
+  return isRecord(defaults) && defaults.skipBootstrap === true;
+}
+
+function mergePortableAgentDefaults(existing: Record<string, unknown> | null): Record<string, unknown> {
+  const agents = existing && isRecord(existing.agents) ? existing.agents : {};
+  const defaults = isRecord(agents.defaults) ? agents.defaults : {};
+  return { ...agents, defaults: { ...defaults, skipBootstrap: true } };
+}
+
+/**
  * 要从模型可见的工具里摘掉的两个名字。
  *
  * 为什么摘：模型每轮都可能调 `memory_search`，而在 `provider: "none"` 下
@@ -272,7 +294,8 @@ export function ensureStateConfig(
     existingToken === store.token &&
     existing &&
     readMemorySearchProvider(existing) !== null &&
-    hasMemoryToolsDenied(existing)
+    hasMemoryToolsDenied(existing) &&
+    (!splitState || hasPortableBootstrapDisabled(existing))
   ) {
     return { token: store.token, created: false, configPath, stateDir };
   }
@@ -283,6 +306,7 @@ export function ensureStateConfig(
     gateway: { ...gateway, auth: { mode: 'token', token: store.token } },
     memory: mergeMemoryDefaults(existing),
     tools: mergeToolsDefaults(existing),
+    ...(splitState ? { agents: mergePortableAgentDefaults(existing) } : {}),
   };
 
   writeJsonAtomic(configPath, merged);

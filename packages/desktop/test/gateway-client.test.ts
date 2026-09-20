@@ -186,6 +186,132 @@ describe('GatewayClient connection lifecycle', () => {
     expect(pendingRequestCount(client)).toBe(0);
     expect(vi.getTimerCount()).toBe(0);
   });
+
+  it('exFAT 写后身份校验误报 unsafe 时，只有精确读回同内容才算写成功', async () => {
+    const { GatewayClient } = await import('../src/main/ws/gateway-client.js');
+    const client = new GatewayClient({
+      id: 'gw-1',
+      name: 'Gateway',
+      url: 'ws://127.0.0.1:18789',
+      auth: { token: 'token' },
+    });
+    clients.push(client);
+
+    const unsafe = Object.assign(new Error('unsafe workspace file "IDENTITY.md"'), { code: 'INVALID_REQUEST' });
+    const sendReq = vi
+      .spyOn(client, 'sendReq')
+      .mockRejectedValueOnce(unsafe)
+      .mockResolvedValueOnce({
+        agentId: 'writer',
+        file: { name: 'IDENTITY.md', missing: false, content: '# 身份\n' },
+      });
+
+    await expect(client.setAgentFile('writer', 'IDENTITY.md', '# 身份\n')).resolves.toMatchObject({
+      ok: true,
+      agentId: 'writer',
+      file: { content: '# 身份\n' },
+    });
+    expect(sendReq).toHaveBeenNthCalledWith(1, 'agents.files.set', {
+      agentId: 'writer',
+      name: 'IDENTITY.md',
+      content: '# 身份\n',
+    });
+    expect(sendReq).toHaveBeenNthCalledWith(2, 'agents.files.get', {
+      agentId: 'writer',
+      name: 'IDENTITY.md',
+    });
+  });
+
+  it.each([
+    ['内容不同', { agentId: 'writer', file: { name: 'SOUL.md', missing: false, content: '旧内容' } }],
+    ['agent 不同', { agentId: 'other', file: { name: 'SOUL.md', missing: false, content: '新内容' } }],
+    ['文件名不同', { agentId: 'writer', file: { name: 'IDENTITY.md', missing: false, content: '新内容' } }],
+    ['文件缺失', { agentId: 'writer', file: { name: 'SOUL.md', missing: true, content: '新内容' } }],
+    ['回包畸形', { agentId: 'writer', file: null }],
+  ])('unsafe 后读回%s仍然失败，不能把真写失败伪装成成功', async (_case, readback) => {
+    const { GatewayClient } = await import('../src/main/ws/gateway-client.js');
+    const client = new GatewayClient({
+      id: 'gw-1',
+      name: 'Gateway',
+      url: 'ws://127.0.0.1:18789',
+      auth: { token: 'token' },
+    });
+    clients.push(client);
+
+    const unsafe = Object.assign(new Error('unsafe workspace file "SOUL.md"'), { code: 'INVALID_REQUEST' });
+    vi.spyOn(client, 'sendReq').mockRejectedValueOnce(unsafe).mockResolvedValueOnce(readback);
+
+    await expect(client.setAgentFile('writer', 'SOUL.md', '新内容')).rejects.toBe(unsafe);
+  });
+
+  it('不是这个文件的精确 unsafe 写后误报时，不读回、不吞错', async () => {
+    const { GatewayClient } = await import('../src/main/ws/gateway-client.js');
+    const client = new GatewayClient({
+      id: 'gw-1',
+      name: 'Gateway',
+      url: 'ws://127.0.0.1:18789',
+      auth: { token: 'token' },
+    });
+    clients.push(client);
+
+    const unsafe = Object.assign(new Error('unsafe workspace file "OTHER.md"'), { code: 'INVALID_REQUEST' });
+    const sendReq = vi.spyOn(client, 'sendReq').mockRejectedValueOnce(unsafe);
+
+    await expect(client.setAgentFile('writer', 'IDENTITY.md', '# 身份\n')).rejects.toBe(unsafe);
+    expect(sendReq).toHaveBeenCalledTimes(1);
+  });
+
+  it('unsafe 后的读回自身失败时，仍然抛最初的写失败', async () => {
+    const { GatewayClient } = await import('../src/main/ws/gateway-client.js');
+    const client = new GatewayClient({
+      id: 'gw-1',
+      name: 'Gateway',
+      url: 'ws://127.0.0.1:18789',
+      auth: { token: 'token' },
+    });
+    clients.push(client);
+
+    const unsafe = Object.assign(new Error('unsafe workspace file "IDENTITY.md"'), { code: 'INVALID_REQUEST' });
+    const verifyError = Object.assign(new Error('not connected'), { code: 'GATEWAY_NOT_CONNECTED' });
+    const sendReq = vi.spyOn(client, 'sendReq').mockRejectedValueOnce(unsafe).mockRejectedValueOnce(verifyError);
+
+    await expect(client.setAgentFile('writer', 'IDENTITY.md', '# 身份\n')).rejects.toBe(unsafe);
+    expect(sendReq).toHaveBeenCalledTimes(2);
+  });
+
+  it('错误码不精确匹配时，即使文案一样也不读回', async () => {
+    const { GatewayClient } = await import('../src/main/ws/gateway-client.js');
+    const client = new GatewayClient({
+      id: 'gw-1',
+      name: 'Gateway',
+      url: 'ws://127.0.0.1:18789',
+      auth: { token: 'token' },
+    });
+    clients.push(client);
+
+    const unsafe = Object.assign(new Error('unsafe workspace file "IDENTITY.md"'), { code: 'CONFLICT' });
+    const sendReq = vi.spyOn(client, 'sendReq').mockRejectedValueOnce(unsafe);
+
+    await expect(client.setAgentFile('writer', 'IDENTITY.md', '# 身份\n')).rejects.toBe(unsafe);
+    expect(sendReq).toHaveBeenCalledTimes(1);
+  });
+
+  it('正常写成功时原样返回，不多做一次读回', async () => {
+    const { GatewayClient } = await import('../src/main/ws/gateway-client.js');
+    const client = new GatewayClient({
+      id: 'gw-1',
+      name: 'Gateway',
+      url: 'ws://127.0.0.1:18789',
+      auth: { token: 'token' },
+    });
+    clients.push(client);
+
+    const response = { ok: true, agentId: 'writer', file: { name: 'SOUL.md', content: '内容' } };
+    const sendReq = vi.spyOn(client, 'sendReq').mockResolvedValueOnce(response);
+
+    await expect(client.setAgentFile('writer', 'SOUL.md', '内容')).resolves.toBe(response);
+    expect(sendReq).toHaveBeenCalledTimes(1);
+  });
 });
 
 /**

@@ -60,6 +60,29 @@ const CLIENT_TRANSPORT_FAILURE_CODES = new Set([
 
 type HandshakeFailure = Error & { code?: string; details?: Record<string, unknown> };
 
+type GatewayRequestFailure = Error & { code?: string };
+
+function isUnsafeWorkspacePostWriteFailure(error: unknown, name: string): error is GatewayRequestFailure {
+  return (
+    error instanceof Error &&
+    (error as GatewayRequestFailure).code === 'INVALID_REQUEST' &&
+    error.message === `unsafe workspace file "${name}"`
+  );
+}
+
+function isVerifiedAgentFileWrite(
+  payload: Record<string, unknown>,
+  agentId: string,
+  name: string,
+  content: string,
+): boolean {
+  if (payload['agentId'] !== agentId) return false;
+  const file = payload['file'];
+  if (typeof file !== 'object' || file === null || Array.isArray(file)) return false;
+  const record = file as Record<string, unknown>;
+  return record['name'] === name && record['missing'] === false && record['content'] === content;
+}
+
 /**
  * 这次握手失败，是**网关明确拒绝**，还是**这次连接本身没成**？只有前者该停止重连。
  *
@@ -757,7 +780,30 @@ export class GatewayClient {
   }
 
   async setAgentFile(agentId: string, name: string, content: string): Promise<Record<string, unknown>> {
-    return this.sendReq('agents.files.set', { agentId, name, content });
+    try {
+      return await this.sendReq('agents.files.set', { agentId, name, content });
+    } catch (error) {
+      // OpenClaw 在 exFAT 上可能已成功落盘，却在随后的文件身份校验中返回
+      // `unsafe workspace file` 。只对“同一文件 + 同一错误码”做一次读后校验；
+      // agentId、文件名、missing 和内容必须全部精确匹配，否则仍抛原错。
+      if (!isUnsafeWorkspacePostWriteFailure(error, name)) throw error;
+
+      try {
+        const verified = await this.getAgentFile(agentId, name);
+        if (isVerifiedAgentFileWrite(verified, agentId, name, content)) {
+          getDebugLogger().warn({
+            domain: 'gateway',
+            event: 'gateway.agent-file.write-verified-after-unsafe',
+            gatewayId: this.gatewayId,
+            data: { agentId, name, errorCode: error.code },
+          });
+          return { ...verified, ok: true };
+        }
+      } catch {
+        // 读回本身失败也不能改写语义：对上层保留原始写失败。
+      }
+      throw error;
+    }
   }
 
   async patchSession(params: Record<string, unknown>): Promise<Record<string, unknown>> {
