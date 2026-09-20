@@ -73,6 +73,7 @@ import GoalRecommendationPanel from '@/features/goal-routing/GoalRecommendationP
 import { useGoalAnalysis } from '@/features/goal-routing/useGoalAnalysis';
 import type { CustomGoalAnalysis } from '@/features/goal-routing/goal-analysis';
 import { createAgentWithRollback } from '@/lib/agent-builder';
+import { checkInstallWorkspace } from '@/lib/install-workspace';
 import { fetchAgentsForGateway } from '@/hooks/useGatewayBootstrap';
 import { toast } from '@/lib/toast';
 import { ASSISTANT_TASK_PRESETS, type AssistantTaskPreset } from '@/lib/assistant-task-presets';
@@ -701,8 +702,15 @@ export function ChatContent({
         .replace(/\s+/g, '-')
         .replace(/-+/g, '-')
         .replace(/^-|-$/g, '');
-      const workspaceRoot = await window.clawwork.getWorkspacePath();
-      const workspace = workspaceRoot ? `${workspaceRoot}/${slug || 'custom-assistant'}` : slug || 'custom-assistant';
+      // ⚠️ 不许再用 `workspaceRoot ? ... : slug`（2026-09-20，T-a28 同族）：拿不到工作区时
+      //    发出去的是**相对路径**，而 `agents.create` 由另一个进程按自己的 cwd 解析 ⇒
+      //    助手文件落在谁也没预期的地方，界面还不报错。判据与模板/团队安装、创建向导同一份。
+      const wsCheck = checkInstallWorkspace(await window.clawwork.getWorkspacePath());
+      if (!wsCheck.ok) {
+        toast.error(wsCheck.message);
+        return;
+      }
+      const workspace = `${wsCheck.path}/${slug || 'custom-assistant'}`;
       const identityContent = serializeIdentityMd(
         analysis.draft.description,
         `${analysis.draft.identity}\n\n## Boundaries\n\n${analysis.draft.boundaries}`,

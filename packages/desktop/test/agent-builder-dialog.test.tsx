@@ -86,6 +86,8 @@ vi.mock('../src/renderer/stores/uiStore', () => ({
 }));
 
 import AgentBuilderDialog from '../src/renderer/components/AgentBuilderDialog';
+import { WORKSPACE_UNAVAILABLE_MESSAGE } from '../src/renderer/lib/install-workspace';
+import { toast } from 'sonner';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -234,6 +236,44 @@ describe('AgentBuilderDialog', () => {
 
     const reopened = inputByName(view.container, translate('settings.agentName')) as HTMLInputElement;
     expect(reopened.value).toBe('我的助手');
+    view.unmount();
+  });
+
+  /**
+   * ⭐ 2026-09-20 T-a28 同族：**这一处以前会把 slug 当工作区发出去**。
+   *
+   * 旧写法 `const workspace = wsBase ? `${wsBase}/${slug}` : slug;` —— 拿不到工作区时
+   * 发出去的是**相对路径**（`new-agent` 之类），而 `agents.create` 是**另一个进程**在解析它
+   * （按它自己的 cwd）⇒ 助手的文件会落在一个谁也没预期的地方，且**界面不报错**。
+   * 判据收在 `checkInstallWorkspace`（与模板安装、团队安装同一份）：坏输入**一个请求都不发**，
+   * 给中文原因。
+   */
+  it('⭐ 拿不到工作区 ⇒ 一个 createAgent 都不发，给中文原因（不再把 slug 当路径发）', async () => {
+    Object.assign(window.clawwork, { getWorkspacePath: vi.fn(async () => null) });
+
+    const view = render();
+    typeInto(inputByName(view.container, translate('settings.agentName')) as HTMLElement, '我的助手');
+    await act(async () => {
+      buttonByText(view.container, translate('settings.agentBuilderCreate'))?.click();
+    });
+
+    expect(window.clawwork.createAgent).not.toHaveBeenCalled();
+    // ⚠️ 第二个参数是 `@/lib/toast` 自己加的错误时长，所以用 `expect.anything()` 放过它
+    expect(toast.error).toHaveBeenCalledWith(WORKSPACE_UNAVAILABLE_MESSAGE, expect.anything());
+    view.unmount();
+  });
+
+  it('工作区正常 ⇒ 发出去的是「根 + 子目录」（正向对照，证明上面那条不是把功能关掉了）', async () => {
+    const view = render();
+    typeInto(inputByName(view.container, translate('settings.agentName')) as HTMLElement, '我的助手');
+    await act(async () => {
+      buttonByText(view.container, translate('settings.agentBuilderCreate'))?.click();
+    });
+
+    expect(window.clawwork.createAgent).toHaveBeenCalledWith(
+      'gw-1',
+      expect.objectContaining({ workspace: expect.stringMatching(/^\/tmp\/ws\/.+/) }),
+    );
     view.unmount();
   });
 

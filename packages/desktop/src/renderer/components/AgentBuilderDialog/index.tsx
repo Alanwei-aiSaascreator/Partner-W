@@ -11,6 +11,7 @@ import { useSystemSession } from '@/hooks/useSystemSession';
 import type { ModelCatalogEntry } from '@clawwork/shared';
 import { serializeIdentityMd } from '@clawwork/core';
 import { createAgentWithRollback } from '@/lib/agent-builder';
+import { checkInstallWorkspace } from '@/lib/install-workspace';
 import { resolveCommercialDefaultModel } from '@/lib/commercial-default-model';
 
 /**
@@ -242,8 +243,16 @@ export default function AgentBuilderDialog({ open, onOpenChange, gatewayId, onCr
 
     try {
       const slug = deriveWorkspace(config.name) || 'new-agent';
-      const wsBase = await window.clawwork.getWorkspacePath();
-      const workspace = wsBase ? `${wsBase}/${slug}` : slug;
+      // ⚠️ 不许再用 `wsBase ? `${wsBase}/${slug}` : slug`（2026-09-20，T-a28 同族）：
+      //    拿不到工作区时**发出去的 slug 是相对路径**，而 `agents.create` 是**另一个进程**
+      //    按它自己的 cwd 解析 ⇒ 助手的文件落在谁也没预期的地方，且界面不报错。
+      //    判据与模板安装 / 团队安装同一份（`checkInstallWorkspace`）：坏输入一个请求都不发。
+      const wsCheck = checkInstallWorkspace(await window.clawwork.getWorkspacePath());
+      if (!wsCheck.ok) {
+        toast.error(wsCheck.message);
+        return;
+      }
+      const workspace = `${wsCheck.path}/${slug}`;
 
       const identityContent =
         config.identity.trim() || config.description.trim()
