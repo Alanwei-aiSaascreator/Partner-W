@@ -16,6 +16,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   buildInstanceBusyCopy,
+  buildPortBusyCopy,
   INSTANCE_OWNER_FILE,
   instanceOwnerPathFor,
   readInstanceOwner,
@@ -113,6 +114,19 @@ describe('buildInstanceBusyCopy', () => {
     });
 
     expect(copy.detail).not.toContain('完全退出');
+  });
+});
+
+describe('buildPortBusyCopy', () => {
+  it('⑩ 说出端口号、说出最可能的原因、给出口（不许只说"连不上"）', () => {
+    const copy = buildPortBusyCopy({ port: 18789 });
+
+    expect(copy.title).toContain('端口');
+    expect(copy.message).toContain('18789');
+    expect(copy.detail).toContain('另一份');
+    expect(copy.detail).toContain('退出');
+    // ⚠️ 不许把"另一份"写成断言 —— 也可能是别的程序占着这个端口
+    expect(copy.detail).toContain('可能是');
   });
 });
 

@@ -46,9 +46,15 @@ import { createWorkspaceStartupDialogs } from './workspace/startup-dialogs.js';
 import { closeDatabase, getSqlite } from './db/index.js';
 import { applyUserDataOverride } from './runtime/user-data-override.js';
 import { applyPortableAppData } from './runtime/portable-app-data.js';
-import { buildInstanceBusyCopy, readInstanceOwner, recordInstanceOwner } from './runtime/instance-guard.js';
-import { bootstrapLocalGatewayRuntime, shutdownLocalGatewayRuntime } from './runtime/index.js';
+import {
+  buildInstanceBusyCopy,
+  buildPortBusyCopy,
+  readInstanceOwner,
+  recordInstanceOwner,
+} from './runtime/instance-guard.js';
+import { bootstrapLocalGatewayRuntime, GATEWAY_PORT_OCCUPIED, shutdownLocalGatewayRuntime } from './runtime/index.js';
 import { removableDrives } from './workspace/removable-drives.js';
+import { GATEWAY_WS_PORT } from '@clawwork/shared';
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'clawwork-avatar', privileges: { secure: true, supportFetchAPI: true } },
@@ -416,6 +422,24 @@ if (!gotLock) {
           event: 'runtime.bootstrap.failed',
           data: { code: runtimeResult.code, reason: runtimeResult.reason },
         });
+        // ⚠️ 盘上那份与"装到电脑"那份的应用数据现在是**分开**的（各自一个单实例锁），
+        //    "两份同时开着"于是从"第二份根本起不来"变成了"第二份能开、本地网关抢不到
+        //    18789"。这个失败必须**当面说出来**：界面只会显示"连不上"，用户无从下手。
+        //    （原来只有一行日志，出了事谁也看不见。）
+        if (runtimeResult.code === GATEWAY_PORT_OCCUPIED) {
+          const copy = buildPortBusyCopy({ port: GATEWAY_WS_PORT });
+          const win = getMainWindow();
+          const options: Electron.MessageBoxOptions = {
+            type: 'warning',
+            title: copy.title,
+            message: copy.message,
+            detail: copy.detail,
+            buttons: [copy.button],
+            noLink: true,
+            defaultId: 0,
+          };
+          void (win ? dialog.showMessageBox(win, options) : dialog.showMessageBox(options));
+        }
       }
 
       initAllGateways();
