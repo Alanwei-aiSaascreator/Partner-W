@@ -100,7 +100,7 @@ describe('buildInstanceBusyCopy', () => {
 
   it('⑦ 主人是**另一条路径**上的那份 ⇒ 补一句"先退出那一份"', () => {
     const copy = buildInstanceBusyCopy({
-      owner: { pid: 1, exePath: 'C:\\Users\\u\\AppData\\Local\\Programs\\魔方罗盘\\魔方罗盘.exe', portable: false },
+      owner: { pid: 1, exePath: 'C:\\Users\\u\\AppData\\Local\\Programs\\荣盈魔方\\荣盈魔方.exe', portable: false },
       currentExePath: 'E:\\荣盈魔方\\荣盈魔方.exe',
     });
 
@@ -127,6 +127,28 @@ describe('buildPortBusyCopy', () => {
     expect(copy.detail).toContain('退出');
     // ⚠️ 不许把"另一份"写成断言 —— 也可能是别的程序占着这个端口
     expect(copy.detail).toContain('可能是');
+  });
+});
+
+describe('产品名（用户可见文案里必须叫「荣盈魔方」）', () => {
+  /**
+   * ⚠️ 这个产品改过名：老名字是「魔方罗盘」，现在的 `productName` 是「荣盈魔方」
+   *    （`packages/desktop/electron-builder.yml`）。改名前留下的文案只剩注释里几处，
+   *    但**新写的文案很容易顺手用回老名字** —— 弹框里一个名字、托盘/任务管理器里
+   *    另一个名字，用户会以为是两个不同的程序（U 盘那份最需要"对得上号"）。
+   */
+  const copies = (): string[] => {
+    const busy = buildInstanceBusyCopy({ owner: null, currentExePath: 'E:\\荣盈魔方\\荣盈魔方.exe' });
+    const port = buildPortBusyCopy({ port: 18789 });
+    return [busy.title, busy.message, busy.detail, busy.button, port.title, port.message, port.detail, port.button];
+  };
+
+  it('⑪ 文案里出现产品名时，用的是「荣盈魔方」', () => {
+    expect(copies().join('\n')).toContain('荣盈魔方');
+  });
+
+  it('⑫ 一个「魔方罗盘」都不许有（老名字，用户对不上号）', () => {
+    expect(copies().join('\n')).not.toContain('魔方罗盘');
   });
 });
 
