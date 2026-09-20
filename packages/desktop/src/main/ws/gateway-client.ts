@@ -779,13 +779,11 @@ export class GatewayClient {
     return this.sendReq('usage.status', {});
   }
 
-  async getUsageCost(params?: {
-    startDate?: string;
-    endDate?: string;
-    days?: number;
-  }): Promise<Record<string, unknown>> {
-    return this.sendReq('usage.cost', (params as Record<string, unknown>) ?? {});
-  }
+  // ⚠️ 这里**曾经**有一个查"按日期区间的成本汇总"的方法 —— 2026-09-20 撤掉整条链（T-a23）：
+  //    只带日期区间时它多 agent 下**恒为** INVALID_REQUEST（网关拿 `"main"` 解析归属，
+  //    见随包运行时 `dist/usage-lCaKvodi.mjs`），而取回的成本数据在渲染层无人消费。
+  //    ⇒ 将来要重开这条，**必须**带上 `agentScope: 'all'` 或 `agentId`（同 `getSessionUsage` 的办法；
+  //    那条 09-17 就是这么修好的）。原因与证据见 `renderer/stores/usageStore.ts` 的 docblock 与能力图。
 
   async getSessionUsage(params: {
     key?: string;

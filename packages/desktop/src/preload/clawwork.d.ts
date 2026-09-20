@@ -639,10 +639,6 @@ export interface ClawWorkAPI {
   createSession: (gatewayId: string, params: { key: string; agentId: string; message?: string }) => Promise<IpcResult>;
 
   getUsageStatus: (gatewayId: string) => Promise<IpcResult>;
-  getUsageCost: (
-    gatewayId: string,
-    params?: { startDate?: string; endDate?: string; days?: number },
-  ) => Promise<IpcResult>;
   getSessionUsage: (gatewayId: string, sessionKey: string) => Promise<IpcResult>;
   previewSessions: (
     gatewayId: string,

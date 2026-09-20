@@ -752,26 +752,6 @@ export function registerWsHandlers(): void {
     gatewayRpc(payload.gatewayId, (gw) => gw.getUsageStatus()),
   );
 
-  ipcMain.handle(
-    'ws:usage-cost',
-    async (
-      _event,
-      payload: {
-        gatewayId: string;
-        startDate?: string;
-        endDate?: string;
-        days?: number;
-      },
-    ) =>
-      gatewayRpc(payload.gatewayId, (gw) =>
-        gw.getUsageCost({
-          startDate: payload.startDate,
-          endDate: payload.endDate,
-          days: payload.days,
-        }),
-      ),
-  );
-
   ipcMain.handle('ws:session-usage', async (_event, payload: { gatewayId: string; sessionKey: string }) =>
     gatewayRpc(payload.gatewayId, (gw) => gw.getSessionUsage({ key: payload.sessionKey })),
   );

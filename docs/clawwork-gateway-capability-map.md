@@ -90,16 +90,24 @@
 
 **Schema:** `src/gateway/protocol/schema/agents-models-skills.ts`
 
-**Not used:** `tools.effective`, `skills.install`, `skills.update`, `skills.bins`
+**Not used:** `tools.effective`, `skills.install`, `skills.bins`
+
+⚠️ `skills.update` **在用**（2026-09-20 更正：原先列在这里是错的）——A2-6 的缓存失效通知：
+`main/skills/cache-refresh.ts` → `gateway-client.ts:731` `updateSkill()` → IPC `ws:skills-update`。
+它是在**装/卸技能之后**写 `skills.entries.<slug>.enabled` 用的，见队列 A2-6 与 T-a22。
 
 ### 1.5 Usage
 
-| Gateway Method | ClawWork Call Site                         | IPC Channel       | Purpose                              |
-| -------------- | ------------------------------------------ | ----------------- | ------------------------------------ |
-| `usage.status` | `gateway-client.ts:631` `getUsageStatus()` | `ws:usage-status` | Overall usage summary                |
-| `usage.cost`   | `gateway-client.ts:635` `getUsageCost()`   | `ws:usage-cost`   | Cost breakdown (supports date range) |
+| Gateway Method | ClawWork Call Site                         | IPC Channel       | Purpose               |
+| -------------- | ------------------------------------------ | ----------------- | --------------------- |
+| `usage.status` | `gateway-client.ts:778` `getUsageStatus()` | `ws:usage-status` | Overall usage summary |
 
 **Schema:** see whitepaper §5.17
+
+**Not used:** `usage.cost` —— 2026-09-20 撤掉整条链（T-a23）：不带 `agentScope`/`agentId` 时
+网关拿 `"main"` 解析归属，多 agent 配置下**恒为** `INVALID_REQUEST`（本机日志 160 次全同一条文案），
+而取回的 cost 在渲染层无人消费（产品决定 2026-09-17 起界面只显示积分）。
+要重开这条**必须**带 `agentScope: 'all'` 或 `agentId`（同 `sessions.usage` 09-17 的修法）。
 
 ### 1.6 Cron
 
