@@ -60,6 +60,7 @@ import { useAttachments } from './useAttachments';
 import { useMentionPicker } from './useMentionPicker';
 import { useSlashAutocomplete } from './useSlashAutocomplete';
 import TaskMaterials from './TaskMaterials';
+import { buildMentionAgents } from './mention-agents';
 import { useTaskMaterials } from './useTaskMaterials';
 import { formatContextWindow } from './utils';
 
@@ -156,23 +157,18 @@ export default function ChatInput({
   const agentCatalog = useUiStore((s) =>
     activeTaskGatewayId ? s.agentCatalogByGateway[activeTaskGatewayId] : undefined,
   );
-  const mentionAgents = useMemo<AgentMentionEntry[]>(() => {
-    if (!performers) return [];
-    const catalogMap = new Map((agentCatalog?.agents ?? []).map((a) => [a.id, a]));
-    const byAgent = new Map<string, AgentMentionEntry>();
-    for (const p of performers) {
-      const catalogEntry = catalogMap.get(p.agentId);
-      byAgent.set(p.agentId, {
-        agentId: p.agentId,
-        agentName: p.agentName,
-        emoji: p.emoji,
-        avatarUrl: catalogEntry?.identity?.avatarUrl,
+  // ⚠️ 名字走**目录优先**那条唯一规则（`resolvePerformerAgentName`）—— 从前这里直接写
+  // `agentName: p.agentName`，于是存量脏快照（存的是裸 agentId）在 `@` 选择器里直接露出来。
+  // 规则与拼装都在 `./mention-agents`，这里有测试守着接线（`test/mention-agents-wiring.test.tsx`）。
+  const mentionAgents = useMemo<AgentMentionEntry[]>(
+    () =>
+      buildMentionAgents({
+        performers,
+        catalogAgents: agentCatalog?.agents,
         gatewayId: activeTaskGatewayId,
-        sessionKey: p.sessionKey,
-      });
-    }
-    return [...byAgent.values()];
-  }, [performers, agentCatalog, activeTaskGatewayId]);
+      }),
+    [performers, agentCatalog, activeTaskGatewayId],
+  );
 
   const {
     slashMenuVisible,
