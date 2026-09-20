@@ -1101,7 +1101,6 @@
     "expandNav": "Seitenleiste ausklappen",
     "identityCenter": "Identitätscenter",
     "myAssistants": "Meine Assistenten",
-    "noPreview": "Noch keine Nachrichten",
     "pages": {
       "agents": "Agenten-Markt",
       "bounty": "Prämien",
@@ -1112,7 +1111,6 @@
       "square": "Platz",
       "teams": "Teams"
     },
-    "pinned": "Angeheftet",
     "recentTasks": "Letzte Aufgaben",
     "searchTasks": "Aufgaben suchen…",
     "updateAvailable": "Update verfuegbar",

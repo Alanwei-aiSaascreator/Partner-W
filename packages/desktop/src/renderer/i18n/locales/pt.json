@@ -1101,7 +1101,6 @@
     "expandNav": "Expandir barra lateral",
     "identityCenter": "Central de identidade",
     "myAssistants": "Meus assistentes",
-    "noPreview": "Ainda sem mensagens",
     "pages": {
       "agents": "Mercado de agentes",
       "bounty": "Recompensas",
@@ -1112,7 +1111,6 @@
       "square": "Praça",
       "teams": "Equipes"
     },
-    "pinned": "Fixada",
     "recentTasks": "Tarefas recentes",
     "searchTasks": "Buscar tarefas…",
     "updateAvailable": "Atualização disponível",

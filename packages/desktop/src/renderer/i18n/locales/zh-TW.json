@@ -1101,7 +1101,6 @@
     "expandNav": "展開側邊欄",
     "identityCenter": "身分中心",
     "myAssistants": "我的助手",
-    "noPreview": "尚無訊息",
     "pages": {
       "agents": "智能體市集",
       "bounty": "需求懸賞",
@@ -1112,7 +1111,6 @@
       "square": "廣場",
       "teams": "團隊"
     },
-    "pinned": "已置頂",
     "recentTasks": "最近任務",
     "searchTasks": "搜尋任務…",
     "updateAvailable": "有可用更新",

@@ -1101,7 +1101,6 @@
     "expandNav": "Expand sidebar",
     "identityCenter": "Identity center",
     "myAssistants": "My assistants",
-    "noPreview": "No messages yet",
     "pages": {
       "agents": "Agent market",
       "bounty": "Bounties",
@@ -1112,7 +1111,6 @@
       "square": "Square",
       "teams": "Teams"
     },
-    "pinned": "Pinned",
     "recentTasks": "Recent tasks",
     "searchTasks": "Search tasks…",
     "updateAvailable": "Update available",

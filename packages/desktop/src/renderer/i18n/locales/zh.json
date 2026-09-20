@@ -1101,7 +1101,6 @@
     "expandNav": "展开侧栏",
     "identityCenter": "身份中心",
     "myAssistants": "我的助手",
-    "noPreview": "暂无消息",
     "pages": {
       "agents": "智能体市场",
       "bounty": "需求悬赏",
@@ -1112,7 +1111,6 @@
       "square": "广场",
       "teams": "团队"
     },
-    "pinned": "已置顶",
     "recentTasks": "最近任务",
     "searchTasks": "搜索任务…",
     "updateAvailable": "有新版本可用",

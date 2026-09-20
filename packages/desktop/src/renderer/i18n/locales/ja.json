@@ -1101,7 +1101,6 @@
     "expandNav": "サイドバーを展開",
     "identityCenter": "アカウント",
     "myAssistants": "マイアシスタント",
-    "noPreview": "メッセージはまだありません",
     "pages": {
       "agents": "エージェント市場",
       "bounty": "バウンティ",
@@ -1112,7 +1111,6 @@
       "square": "広場",
       "teams": "チーム"
     },
-    "pinned": "ピン留め済み",
     "recentTasks": "最近のタスク",
     "searchTasks": "タスクを検索…",
     "updateAvailable": "アップデートがあります",
