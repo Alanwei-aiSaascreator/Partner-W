@@ -76,10 +76,16 @@ export default function SkillMarket() {
         //    但这一页显示的"装没装"看的是**磁盘**（主进程 `fs.existsSync`），
         //    所以这里立刻重载就是准的 —— 不要为了"等网关"故意延迟，
         //    也别把这一页的已装状态改成去读 `skills.status`（那会平白多出那 0.7 秒的闪烁）。
+        // ⚠️ 卸载要**载明代价**：实测网关侧**在进程内不失效** ——
+        //    装上 ~0.7 秒就生效，卸掉之后 **≥3 分钟仍报存在**
+        //    （按 agent 缓存：换一个 agent 问立刻正确），**重启客户端后正确**。
+        //    不写这句，用户卸完发现助手还在用它，只会当成我们的 bug。
+        //    装上不提 —— 它确实马上就生效，加警告是噪音。
         toast.success(
           skill.installed
             ? t('skillMarket.removed', { name: skill.name ?? '' })
             : t('skillMarket.installed', { name: skill.name ?? '' }),
+          skill.installed ? { description: t('skillMarket.removedCaveat') } : undefined,
         );
         await load();
       } finally {

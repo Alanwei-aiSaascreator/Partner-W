@@ -1658,6 +1658,7 @@
     "refresh": "Actualiser",
     "remove": "Retirer",
     "removed": "« {{name}} » retirée",
+    "removedCaveat": "Un assistant peut encore l'utiliser pendant cette session ; redémarrez l'application pour que ce soit définitif.",
     "subtitle": "Ces compétences sont fournies avec l'application. Une fois installée, tous les assistants peuvent l'utiliser."
   },
   "slash": {

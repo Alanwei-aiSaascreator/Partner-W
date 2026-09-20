@@ -1658,6 +1658,7 @@
     "refresh": "Actualizar",
     "remove": "Quitar",
     "removed": "“{{name}}” quitada",
+    "removedCaveat": "Puede que un asistente aún la use en esta ejecución; reinicia la aplicación para que sea definitivo.",
     "subtitle": "Estas habilidades vienen incluidas con la aplicación. Una vez instalada, todos los asistentes pueden usarla."
   },
   "slash": {

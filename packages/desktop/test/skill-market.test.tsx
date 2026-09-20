@@ -203,6 +203,30 @@ describe('技能市场面板', () => {
     unmount();
   });
 
+  it('⭐ 卸载的提示必须**说清代价**：网关侧要重启才彻底生效（装上则不提，它 0.7 秒就生效）', async () => {
+    // 实测（2026-09-20）：装上 ~0.7 秒网关就看到；**卸载之后网关在进程内一直不失效**
+    //（≥3 分钟仍报存在，按 agent 缓存；换一个 agent 问立刻正确），
+    // 重启客户端后正确。⇒ 不写这句，用户卸完发现助手还在用它，只会觉得是 bug。
+    const stubs = installStubs();
+    const { container, unmount } = render(<SkillMarket />);
+    await flush();
+
+    await act(async () => {
+      (row(container, 'meeting-minutes').querySelector('[data-testid="our-skill-install"]') as HTMLElement).click();
+    });
+    await flush();
+    expect(toastSpy.success.mock.calls[0][1]).toBeUndefined(); // 装上：不加说明
+
+    await act(async () => {
+      (row(container, 'weekly-report').querySelector('[data-testid="our-skill-remove"]') as HTMLElement).click();
+    });
+    await flush();
+    const removeCall = toastSpy.success.mock.calls.at(-1) as [string, { description?: string } | undefined];
+    expect(removeCall[1]?.description).toContain('skillMarket.removedCaveat');
+    expect(stubs.removeOurSkill).toHaveBeenCalled();
+    unmount();
+  });
+
   it('⭐ 刷新按钮真的会重新拉（网关重连后这一页没有别的办法恢复）', async () => {
     const stubs = installStubs();
     const { container, unmount } = render(<SkillMarket />);

@@ -1658,6 +1658,7 @@
     "refresh": "Refresh",
     "remove": "Remove",
     "removed": "Removed “{{name}}”",
+    "removedCaveat": "An assistant may still use it during this run; restarting the app makes it final.",
     "subtitle": "These skills come with the app. Once installed, every assistant can use them."
   },
   "slash": {

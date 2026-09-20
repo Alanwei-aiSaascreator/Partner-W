@@ -1658,6 +1658,7 @@
     "refresh": "Aktualisieren",
     "remove": "Entfernen",
     "removed": "„{{name}}“ entfernt",
+    "removedCaveat": "Ein Assistent kann sie in diesem Lauf noch verwenden; endgültig wird es nach einem Neustart der App.",
     "subtitle": "Diese Skills sind im Programm enthalten. Einmal installiert, stehen sie allen Assistenten zur Verfügung."
   },
   "slash": {
