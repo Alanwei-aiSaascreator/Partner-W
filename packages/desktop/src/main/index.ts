@@ -1,4 +1,4 @@
-import { app, shell, BrowserWindow, Menu, ipcMain, globalShortcut, protocol } from 'electron';
+import { app, dialog, shell, BrowserWindow, Menu, ipcMain, globalShortcut, protocol } from 'electron';
 import { join } from 'path';
 import { electronApp, is } from '@electron-toolkit/utils';
 import { existsSync } from 'node:fs';
@@ -46,6 +46,7 @@ import { createWorkspaceStartupDialogs } from './workspace/startup-dialogs.js';
 import { closeDatabase, getSqlite } from './db/index.js';
 import { applyUserDataOverride } from './runtime/user-data-override.js';
 import { applyPortableAppData } from './runtime/portable-app-data.js';
+import { buildInstanceBusyCopy, readInstanceOwner, recordInstanceOwner } from './runtime/instance-guard.js';
 import { bootstrapLocalGatewayRuntime, shutdownLocalGatewayRuntime } from './runtime/index.js';
 import { removableDrives } from './workspace/removable-drives.js';
 
@@ -234,8 +235,38 @@ const portableAppData = applyPortableAppData({
 
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
-  app.quit();
+  /**
+   * ⚠️ 旧行为是**裸 `app.quit()`** —— 用户看到的是"双击了没反应"（U 盘交付包里那个
+   * `①双击这里启动.bat` 唯一在做的事，就是拿 tasklist 查一遍再 echo 一段人话）。
+   * 交付包不再带 `.bat`（用户直接双击 `荣盈魔方\荣盈魔方.exe`），这句话就得由程序说。
+   * 抢不到锁 ⇒ 同一个 userData 目录下已经有一份在跑 ⇒ 那一份刚写过主人文件，读出来
+   * 告诉用户是哪一份、出口在哪儿。
+   */
+  void app.whenReady().then(async () => {
+    const copy = buildInstanceBusyCopy({
+      owner: readInstanceOwner({ userDataDir: app.getPath('userData') }),
+      currentExePath: process.execPath,
+    });
+    await dialog.showMessageBox({
+      type: 'info',
+      title: copy.title,
+      message: copy.message,
+      detail: copy.detail,
+      buttons: [copy.button],
+      noLink: true,
+      defaultId: 0,
+    });
+    app.quit();
+  });
 } else {
+  // 抢到锁 ⇒ 先把"这一份在跑"记下来（越早越好：第二次双击时才有得读）。
+  // 失败无所谓（盘只读/没权限），它只是给对话框用的一句解释。
+  recordInstanceOwner({
+    userDataDir: app.getPath('userData'),
+    exePath: process.execPath,
+    portable: portableAppData.target !== null,
+  });
+
   app.on('second-instance', () => {
     const win = getMainWindow();
     if (win) {
