@@ -507,3 +507,158 @@ describe('room-store initConductor', () => {
     expect(message).not.toContain('ignore all previous instructions');
   });
 });
+
+/**
+ * T-a7 **残余一**：存量数据库里的脏快照（`agentName` 存的是裸 agentId）。
+ *
+ * 展示层早就目录优先了（看不见 id），但目录是**异步**拉的 —— 刚启动 / 网关离线时
+ * `deps.resolveAgentName` 返回 undefined，展示层只能退回快照，那时存量房间又会露出
+ * `rongying-tpl-78b62899`。所以数据本身也得修：借 hydrate 这一拍问一次目录，
+ * 问到就**就地改名并落盘**（`persistPerformer`）。
+ *
+ * ⚠️ 判据故意收得很窄：只有「空串 / 与 agentId 相同」才算脏。
+ *    **改名前的老称呼是人名**，不在修复范围 —— 否则每次 hydrate 都会把所有人重写一遍。
+ */
+describe('room-store —— hydrate 时把脏快照（裸 agentId）修成人名', () => {
+  const TASK_ID = 'task-dirty';
+  const AGENT_ID = 'rongying-tpl-78b62899';
+  const AGENT_NAME = '爆款内容教练';
+  const CONDUCTOR_KEY = buildSessionKey(TASK_ID);
+  const WORKER_KEY = `agent:${AGENT_ID}:subagent:0e0b5f3a-1111-2222-3333-444455556666`;
+
+  /** 一个"库里存着某个 agentName"的房间 + 可注入的目录解析器。 */
+  function dirtyDeps(opts: {
+    agentName?: string;
+    resolver?: RoomStoreDeps['resolveAgentName'];
+    performers?: Array<{ sessionKey: string; agentId: string; agentName: string }>;
+  }) {
+    const performers = opts.performers ?? [
+      { sessionKey: WORKER_KEY, agentId: AGENT_ID, agentName: opts.agentName ?? AGENT_ID },
+    ];
+    return createDeps({
+      resolveAgentName: opts.resolver ?? (() => AGENT_NAME),
+      loadRoom: vi.fn(async () => ({
+        ok: true,
+        room: { status: 'active', conductorReady: true },
+        performers: performers.map((p) => ({
+          ...p,
+          taskId: TASK_ID,
+          emoji: null,
+          verifiedAt: '2026-09-16T00:00:00.000Z',
+        })),
+      })),
+    });
+  }
+
+  const workerOf = (store: ReturnType<typeof createRoomStore>) =>
+    store
+      .getState()
+      .getRoom(TASK_ID)
+      ?.performers.find((p) => p.agentId === AGENT_ID);
+
+  it('⭐ 脏快照（agentName === agentId）⇒ 房间里的名字变成目录名', async () => {
+    const store = createRoomStore(dirtyDeps({}));
+
+    await store.getState().hydrateRoom(TASK_ID, CONDUCTOR_KEY);
+
+    expect(workerOf(store)?.agentName).toBe(AGENT_NAME);
+  });
+
+  it('⭐ 修完还要**落盘**（否则每次启动都白修一遍，离线时照旧露 id）', async () => {
+    const deps = dirtyDeps({});
+    const store = createRoomStore(deps);
+
+    await store.getState().hydrateRoom(TASK_ID, CONDUCTOR_KEY);
+    await flushMicrotasks();
+
+    expect(deps.persistPerformer).toHaveBeenCalledTimes(1);
+    const persisted = (deps.persistPerformer as ReturnType<typeof vi.fn>).mock.calls[0][0] as {
+      taskId: string;
+      agentName: string;
+      agentId: string;
+      sessionKey: string;
+    };
+    expect(persisted).toEqual({
+      taskId: TASK_ID,
+      agentId: AGENT_ID,
+      agentName: AGENT_NAME,
+      sessionKey: WORKER_KEY,
+      emoji: undefined,
+      verifiedAt: '2026-09-16T00:00:00.000Z',
+    });
+  });
+
+  it('⚠️ 快照是空串（DB 默认值）⇒ 也算脏，一样修', async () => {
+    const deps = dirtyDeps({ agentName: '' });
+    const store = createRoomStore(deps);
+
+    await store.getState().hydrateRoom(TASK_ID, CONDUCTOR_KEY);
+
+    expect(workerOf(store)?.agentName).toBe(AGENT_NAME);
+  });
+
+  it('⭐ 已经是人名 ⇒ **不重写**（幂等：每次启动都重写一遍就是刷写）', async () => {
+    const deps = dirtyDeps({ agentName: AGENT_NAME });
+    const store = createRoomStore(deps);
+
+    await store.getState().hydrateRoom(TASK_ID, CONDUCTOR_KEY);
+
+    expect(workerOf(store)?.agentName).toBe(AGENT_NAME);
+    expect(deps.persistPerformer).not.toHaveBeenCalled();
+  });
+
+  it('⚠️ 快照是**改名前的老称呼** ⇒ 不动它（判据是"存的是机器 id"，不是"和目录不一致"）', async () => {
+    const deps = dirtyDeps({ agentName: '改名前的老称呼' });
+    const store = createRoomStore(deps);
+
+    await store.getState().hydrateRoom(TASK_ID, CONDUCTOR_KEY);
+
+    expect(workerOf(store)?.agentName).toBe('改名前的老称呼');
+    expect(deps.persistPerformer).not.toHaveBeenCalled();
+  });
+
+  it('⚠️ 目录查不到（网关离线 / agent 被删）⇒ 保持原样且**不落盘**（别把 id 写成空串）', async () => {
+    const deps = dirtyDeps({ resolver: () => undefined });
+    const store = createRoomStore(deps);
+
+    await store.getState().hydrateRoom(TASK_ID, CONDUCTOR_KEY);
+
+    expect(workerOf(store)?.agentName).toBe(AGENT_ID);
+    expect(deps.persistPerformer).not.toHaveBeenCalled();
+  });
+
+  it('⚠️ 解析器抛错 ⇒ hydrate 照常完成（房间进 state），不抛也不乱写', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const deps = dirtyDeps({
+      resolver: () => {
+        throw new Error('catalog exploded');
+      },
+    });
+    const store = createRoomStore(deps);
+
+    await expect(store.getState().hydrateRoom(TASK_ID, CONDUCTOR_KEY)).resolves.toBeUndefined();
+
+    expect(workerOf(store)?.agentName).toBe(AGENT_ID);
+    expect(deps.persistPerformer).not.toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+
+  it('⚠️ 一个房间两个 performer（一脏一净）⇒ 只落盘脏的那一个', async () => {
+    const deps = dirtyDeps({
+      performers: [
+        { sessionKey: WORKER_KEY, agentId: AGENT_ID, agentName: AGENT_ID },
+        { sessionKey: `${WORKER_KEY}-2`, agentId: 'worker-2', agentName: '深度研究助手' },
+      ],
+      resolver: (taskId, agentId) => (agentId === AGENT_ID ? AGENT_NAME : '深度研究助手'),
+    });
+    const store = createRoomStore(deps);
+
+    await store.getState().hydrateRoom(TASK_ID, CONDUCTOR_KEY);
+    await flushMicrotasks();
+
+    expect(deps.persistPerformer).toHaveBeenCalledTimes(1);
+    const persisted = (deps.persistPerformer as ReturnType<typeof vi.fn>).mock.calls[0][0] as { agentId: string };
+    expect(persisted.agentId).toBe(AGENT_ID);
+  });
+});

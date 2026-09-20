@@ -84,22 +84,30 @@ const VERIFY_COOLDOWN_MS = 2000;
 const TERMINAL_ROOM_STATUSES: ReadonlySet<RoomStatus> = new Set(['stopped']);
 
 /**
+ * 问一次宿主「这个 agent 现在叫什么」。**问不到就是 `undefined`**（不是空串、不是裸 id）——
+ * 调用方自己决定降级成什么（写快照时降级成裸 id；修脏数据时**放弃**这一条）。
+ *
+ * ⚠️ **fail-soft**：宿主解析时会碰网关目录 / 任务表，都可能抛。**不能**因为"取个名字"
+ * 把派活流程炸掉 —— 抛了就当作"问不到"。
+ */
+function lookupAgentName(deps: RoomStoreDeps, taskId: string, agentId: string): string | undefined {
+  try {
+    return deps.resolveAgentName?.(taskId, agentId) || undefined;
+  } catch (err) {
+    console.warn('[room-store] resolveAgentName failed:', err);
+    return undefined;
+  }
+}
+
+/**
  * 往快照里写什么名字（T-a7 的写入方那一半）。
  *
  * 顺序只有一条：**问宿主**（目录里的活名字）⇒ 问不到就写**裸 agentId**。
  * 为什么不写空串：`RoomPerformer.agentName` 是"agent 从目录里消失之后**唯一**还记得的
  * 名字"，写空等于把它变成没用的字段（`resolvePerformerAgentName` 也会跳过空值）。
- *
- * ⚠️ **fail-soft**：宿主解析时会碰网关目录 / 任务表，都可能抛。**不能**因为"取个名字"
- * 把派活流程炸掉 —— 抛了就退回裸 id（与今天的行为一样，只是名字丑）。
  */
 function snapshotAgentName(deps: RoomStoreDeps, taskId: string, agentId: string): string {
-  try {
-    return deps.resolveAgentName?.(taskId, agentId) || agentId;
-  } catch (err) {
-    console.warn('[room-store] resolveAgentName failed:', err);
-    return agentId;
-  }
+  return lookupAgentName(deps, taskId, agentId) ?? agentId;
 }
 
 export function createRoomStore(deps: RoomStoreDeps) {
@@ -168,13 +176,24 @@ export function createRoomStore(deps: RoomStoreDeps) {
       try {
         const res = await deps.loadRoom(taskId);
         if (!res.ok || !res.room) return;
-        const performers = res.performers.map((p) => ({
+        const loaded = res.performers.map((p) => ({
           sessionKey: p.sessionKey,
           agentId: p.agentId,
           agentName: p.agentName,
           emoji: p.emoji ?? undefined,
           verifiedAt: p.verifiedAt,
         }));
+        // 存量脏快照的**就地修复**（T-a7 残余一）：`agentName` 存的是裸 agentId（或空串）时
+        // 借这一拍问一次目录，问到就改名并落盘。
+        // 为什么展示层已经目录优先了还要修数据：目录是**异步**拉的 —— 刚启动 / 网关离线时
+        // 宿主返回 undefined，展示层只能退回快照，那时存量房间又会露出 `rongying-tpl-…`。
+        // ⚠️ 判据故意收窄（`!name || name === agentId`）：改名前的老称呼**是人名**、不是脏数据，
+        //    不在范围内 —— 否则每次启动都会把所有人重写一遍。
+        const performers = loaded.map((p) => {
+          if (p.agentName && p.agentName !== p.agentId) return p;
+          const name = lookupAgentName(deps, taskId, p.agentId);
+          return name ? { ...p, agentName: name } : p;
+        });
         const room: TaskRoom = {
           taskId,
           conductorSessionKey,
@@ -192,6 +211,14 @@ export function createRoomStore(deps: RoomStoreDeps) {
           rooms: { ...s.rooms, [taskId]: room },
           subagentKeyMap: { ...s.subagentKeyMap, ...keyMap },
         }));
+        // 落盘修过的那几条（**先 set 再写**：写库是异步的，界面不该等它）。
+        for (const p of performers) {
+          const before = loaded.find((o) => o.sessionKey === p.sessionKey);
+          if (!before || before.agentName === p.agentName) continue;
+          deps.persistPerformer({ taskId, ...p }).catch((err) => {
+            console.warn('[room-store] persistPerformer failed:', err);
+          });
+        }
       } catch (err) {
         console.warn('[room-store] hydrateRoom failed for', taskId, err);
       }
