@@ -1,6 +1,7 @@
 import { app, shell, BrowserWindow, Menu, ipcMain, globalShortcut, protocol } from 'electron';
 import { join } from 'path';
 import { electronApp, is } from '@electron-toolkit/utils';
+import { existsSync } from 'node:fs';
 import { nativeTheme } from 'electron';
 import { initAllGateways, destroyAllGateways } from './ws/index.js';
 import { getMainWindow, setMainWindow } from './window-manager.js';
@@ -44,7 +45,9 @@ import { prepareWorkspaceAtStartup } from './workspace/startup.js';
 import { createWorkspaceStartupDialogs } from './workspace/startup-dialogs.js';
 import { closeDatabase, getSqlite } from './db/index.js';
 import { applyUserDataOverride } from './runtime/user-data-override.js';
+import { applyPortableAppData } from './runtime/portable-app-data.js';
 import { bootstrapLocalGatewayRuntime, shutdownLocalGatewayRuntime } from './runtime/index.js';
+import { removableDrives } from './workspace/removable-drives.js';
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'clawwork-avatar', privileges: { secure: true, supportFetchAPI: true } },
@@ -211,6 +214,24 @@ function createWindow(): BrowserWindow {
 // **唯一**合法手段（绝不靠删真实 %APPDATA%，见 junction 事故）。
 applyUserDataOverride({ app, isPackaged: app.isPackaged });
 
+/**
+ * ⚠️ **必须排在 `requestSingleInstanceLock()` 之前**，也就必须在 `app.ready` 之前：
+ * 单实例锁是**按 userData 目录**算的 —— 先搬、再抢锁，U 盘那份才不会和"装到电脑"
+ * 那份抢同一个实例（那正是交付包里那个 `.bat` 唯一在做的事：怕用户"双击没反应"）。
+ *
+ * ⚠️ 判定只认盘（可移动盘 / 盘根 marker / 我们自己的工作区 marker），本机安装形态
+ * 一次 `setPath` 都不会发生（`portable-app-data.ts` 里有测试钉住）。
+ */
+const portableAppData = applyPortableAppData({
+  app,
+  exePath: process.execPath,
+  isPackaged: app.isPackaged,
+  systemDrive: process.env.SystemDrive ?? null,
+  exists: existsSync,
+  // 惰性：前两条判据（纯文件检查）命中时**不枚举**可移动盘（PowerShell，秒级）。
+  removableDrives: () => removableDrives(),
+});
+
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
@@ -229,6 +250,29 @@ if (!gotLock) {
     .then(async () => {
       initDebugLogger(app.getPath('logs'));
       getDebugLogger().info({ domain: 'app', event: 'app.start', data: { userData: app.getPath('userData') } });
+      // 盘上形态（把应用数据放进 U 盘）在 `app.ready` 之前就决定了，那时还没有日志 ——
+      // 补记一笔，否则"数据到底落在哪儿"在日志里查不到（外部审计问过这个）。
+      if (portableAppData.target) {
+        getDebugLogger().info({
+          domain: 'app',
+          event: 'app.userData.portable',
+          data: {
+            userData: portableAppData.target,
+            volumeRoot: portableAppData.volumeRoot,
+            reason: portableAppData.reason,
+          },
+        });
+      } else if (portableAppData.failed) {
+        getDebugLogger().warn({
+          domain: 'app',
+          event: 'app.userData.portable_failed',
+          data: {
+            volumeRoot: portableAppData.volumeRoot,
+            reason: portableAppData.reason,
+            message: portableAppData.failed,
+          },
+        });
+      }
       electronApp.setAppUserModelId('com.mofangluopan.app');
 
       registerWsHandlers();
