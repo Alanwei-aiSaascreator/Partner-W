@@ -6,6 +6,7 @@ import MessageAvatar from './MessageAvatar';
 import ThinkingSection from './ThinkingSection';
 import MarkdownContent from './MarkdownContent';
 import ToolCallSummary from './ToolCallSummary';
+import ThinkingIndicator from './ThinkingIndicator';
 
 interface StreamingMessageProps {
   content: string;
@@ -52,6 +53,10 @@ const StreamingMessage = memo(function StreamingMessage({
             ) : null}
           </div>
         )}
+        {/* ⚠️ 顺序要紧：**什么都没到**时才显示跳动点。
+            发出之后到第一个字之前，这一块已经在页面上（头像+名字也在），
+            于是这条消息从"发出"到"结束"始终是**同一个 DOM 节点** —— 头像不会闪。 */}
+        {!content && !thinkingContent && !toolCalls?.length ? <ThinkingIndicator /> : null}
         {thinkingContent && <ThinkingSection content={thinkingContent} defaultOpen streaming showCursor={!content} />}
         {toolCalls?.length ? (
           <div className="mb-2">

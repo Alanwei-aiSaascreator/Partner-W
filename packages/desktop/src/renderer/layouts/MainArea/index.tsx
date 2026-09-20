@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import ConnectionBanner from '@/components/ConnectionBanner';
-import { AnimatePresence } from 'framer-motion';
 import {
   PanelRightOpen,
   PanelRightClose,
@@ -16,9 +15,15 @@ import {
   Columns3,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { parseAgentIdFromSessionKey } from '@clawwork/shared';
+import { parseAgentIdFromSessionKey, type ToolCall } from '@clawwork/shared';
 import { resolveAssistantIdentity } from './assistant-identity';
-import { deriveSessionActivity, getTaskSessionKeys, serializeIdentityMd } from '@clawwork/core';
+import {
+  deriveSessionActivity,
+  getTaskSessionKeys,
+  pickWaitingSessionKey,
+  serializeIdentityMd,
+  type ActiveTurn,
+} from '@clawwork/core';
 import { useTaskStore } from '@/stores/taskStore';
 import { useMessageStore, EMPTY_MESSAGES, activeTurnToMessage } from '@/stores/messageStore';
 import { useUiStore } from '@/stores/uiStore';
@@ -36,7 +41,6 @@ import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover
 import ChatMessage from '@/components/ChatMessage';
 import { useRetryLastTurn, useRetryableErrorMessageId } from '@/hooks/useRetryLastTurn';
 import StreamingMessage from '@/components/StreamingMessage';
-import ThinkingIndicator from '@/components/ThinkingIndicator';
 import ChatInput from '@/components/ChatInput';
 import QuestionPanel from '@/components/QuestionPanel';
 import type { DraftPromptRequest, DraftPromptResolution } from '@/components/ChatInput/types';
@@ -86,6 +90,23 @@ import ComparePanel from '@/features/compare/ComparePanel';
 import CompareSetupBar from '@/features/compare/CompareSetupBar';
 import { compareRuntimeForTask } from '@/features/compare/compare-plan';
 import { useCompareStore } from '@/features/compare/compare-store-instance';
+
+const EMPTY_TOOL_CALLS: ToolCall[] = [];
+
+/**
+ * 「正在等第一个字」那一项的排序哨兵。
+ *
+ * ⚠️ 必须是**常量**：写 `Date.now()` 的话每次渲染都变，排序结果会跟着抖
+ *（排序用的是 `localeCompare` 比字符串，所以这里就是一个能排到最后的固定串）。
+ */
+const WAITING_ITEM_TIMESTAMP = '9999-12-31T23:59:59.999Z';
+
+/** 时间线上的一项：已落库的消息，或一个进行中的回合（`turn` 为空 = 还没收到任何内容）。 */
+type TimelineItem =
+  | { key: string; timestamp: string; kind: 'message'; message: MessageRow }
+  | { key: string; timestamp: string; kind: 'turn'; sessionKey: string; turn: ActiveTurn | undefined };
+
+type MessageRow = (typeof EMPTY_MESSAGES)[number];
 
 const STICK_TO_BOTTOM_THRESHOLD_PX = 60;
 const MAX_HEADER_TITLE_LENGTH = 120;
@@ -727,6 +748,11 @@ export function ChatContent({
     () => deriveSessionActivity(sessionKeys, activeTurnBySession, processingBySession),
     [activeTurnBySession, processingBySession, sessionKeys],
   );
+  // 「发出去了但第一个字还没到」的会话 —— 给它渲染**同一个**助手块（见下面渲染处的说明）。
+  const waitingSessionKey = useMemo(
+    () => pickWaitingSessionKey(sessionKeys, activeTurnBySession, processingBySession),
+    [activeTurnBySession, processingBySession, sessionKeys],
+  );
   const timelineItems = useMemo(() => {
     const messageItems = messages.map((message) => ({
       key: message.id,
@@ -734,15 +760,38 @@ export function ChatContent({
       kind: 'message' as const,
       message,
     }));
-    const turnItems = activeTurns.map(({ sessionKey, turn }) => ({
-      key: `turn-${sessionKey}-${turn.id}`,
+    const turnItems: TimelineItem[] = activeTurns.map(({ sessionKey, turn }) => ({
+      // ⚠️ key 里**不带 `turn.id`**：等待态那一项（turn 还没建出来）要用**同一个 key**。
+      //    同一个会话同时只可能有一个进行中的 turn ⇒ 不会撞。
+      //    带上 id 的后果：等待态与流式态是两个节点 ⇒ 头像被卸载重建 ⇒ 闪一下（2026-09-20 报障）。
+      key: `turn-${sessionKey}`,
       timestamp: turn.timestamp,
       kind: 'turn' as const,
       sessionKey,
       turn,
     }));
+
+    // ⭐ 等待态是**同一个数组里的一项**，而不是列表外面的一块。
+    //
+    // ⚠️ 这一条是踩出来的：一开始把它写成 `{waitingSessionKey ? <StreamingMessage/> : null}` 放在
+    //    `timelineItems.map()` **后面** —— 于是"等待 → 收到内容"时，这一块从**数组外**挪到了
+    //    **数组内**。React 对"数组 vs 单个子元素"是两个不同的槽位，**key 一样也没用**：
+    //    实测（`chat-send-stability.test.tsx`）父节点、key、类型全都相同，节点照样被重建。
+    //    ⇒ 放进同一个数组，槽位才真的不变。
+    if (waitingSessionKey && !turnItems.some((item) => item.key === `turn-${waitingSessionKey}`)) {
+      turnItems.push({
+        key: `turn-${waitingSessionKey}`,
+        // 固定哨兵值：等待中的那一块永远排在最后（它确实是"此刻正在发生的事"）。
+        // ⚠️ 不能写 `Date.now()` —— 每次渲染都会变，排序结果跟着抖。
+        timestamp: WAITING_ITEM_TIMESTAMP,
+        kind: 'turn',
+        sessionKey: waitingSessionKey,
+        turn: undefined,
+      });
+    }
+
     return [...messageItems, ...turnItems].sort((left, right) => left.timestamp.localeCompare(right.timestamp));
-  }, [activeTurns, messages]);
+  }, [activeTurns, messages, waitingSessionKey]);
   const performerBySessionKey = useMemo(
     () => new Map((activeRoom?.performers ?? []).map((performer) => [performer.sessionKey, performer])),
     [activeRoom?.performers],
@@ -906,7 +955,7 @@ export function ChatContent({
                   );
                 }
 
-                if (item.turn.finalized && item.turn.content) {
+                if (item.turn?.finalized && item.turn.content) {
                   const identity = resolveAssistantIdentity({
                     task: activeTask,
                     sessionKey: item.sessionKey,
@@ -934,7 +983,20 @@ export function ChatContent({
                   );
                 }
 
-                if (item.turn.streamingText || item.turn.streamingThinking || item.turn.toolCalls.length > 0) {
+                // 剩下两种情形**共用这一个分支**（这才是"头像不闪"的关键）：
+                //   ① 已经有内容 —— 流式正文/推理/工具；
+                //   ② 轮到它"等待中"（`pickWaitingSessionKey` 选中的会话）—— 可能 `turn`
+                //      还没建出来（`item.turn === undefined`），也可能建了但什么都还没到。
+                //
+                // ⚠️ 它们必须落在**同一个数组槽位 + 同一个 key + 同一个组件**上，React 才复用
+                //    同一个 DOM 节点。拆成"数组内 / 数组外"两处渲染时，key 一样也照样重建
+                //    —— 2026-09-20 实测：父节点、key、组件类型全都相同，节点还是被换掉（测试里
+                //    那两条 `expect(after).toBe(waiting)`）。
+                const turnHasContent = Boolean(
+                  item.turn &&
+                  (item.turn.streamingText || item.turn.streamingThinking || item.turn.toolCalls.length > 0),
+                );
+                if (turnHasContent || item.sessionKey === waitingSessionKey) {
                   const identity = resolveAssistantIdentity({
                     task: activeTask,
                     sessionKey: item.sessionKey,
@@ -948,9 +1010,9 @@ export function ChatContent({
                   return (
                     <StreamingMessage
                       key={item.key}
-                      content={item.turn.streamingText}
-                      thinkingContent={item.turn.streamingThinking || undefined}
-                      toolCalls={item.turn.toolCalls}
+                      content={item.turn?.streamingText ?? ''}
+                      thinkingContent={item.turn?.streamingThinking || undefined}
+                      toolCalls={item.turn?.toolCalls ?? EMPTY_TOOL_CALLS}
                       agentEmoji={identity.agentEmoji}
                       localAvatarUrl={identity.localAvatarUrl}
                       gatewayAvatarUrl={identity.gatewayAvatarUrl}
@@ -962,9 +1024,15 @@ export function ChatContent({
 
                 return null;
               })}
-              <AnimatePresence>
-                {activity === 'waiting' && !hasRenderableActiveTurn && <ThinkingIndicator />}
-              </AnimatePresence>
+              {/*
+                ⚠️ 这里**原来还有一块**等待指示器（`AnimatePresence` + `ThinkingIndicator`），
+                2026-09-20 删掉了：它和 `StreamingMessage` 是**两个组件、两个头像**，内容一到
+                占位淡出、流式块淡入 ⇒ **同一帧里两个头像并存**（MutationObserver 实测抓到
+                `头像=2` + 跳动点=3）= 用户说的「我发完要求，那个对话头像会消失一下」。
+
+                现在等待态由**上面列表里那一项**渲染（同一个 key、同一个组件），这里的
+                `AnimatePresence` 也就没有需要退场的节点了。
+              */}
               <FirstTaskCompletionFlow
                 userId={onboardingProfile.userId}
                 onboardingCompletedAt={onboardingProfile.completedAt}

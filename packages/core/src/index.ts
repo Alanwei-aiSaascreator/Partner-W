@@ -145,7 +145,7 @@ export type {
 
 export { autoTitleIfNeeded } from './services/auto-title.js';
 
-export { deriveSessionActivity, getTaskSessionKeys } from './services/session-activity.js';
+export { deriveSessionActivity, getTaskSessionKeys, pickWaitingSessionKey } from './services/session-activity.js';
 export type { SessionActivity } from './services/session-activity.js';
 
 export { createGatewayDispatcher, RETRY_RUN_PHASE, RUN_PHASE_IDS } from './services/gateway-dispatcher.js';

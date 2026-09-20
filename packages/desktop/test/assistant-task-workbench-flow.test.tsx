@@ -413,14 +413,28 @@ vi.mock('../src/renderer/hooks/useGatewayBootstrap', () => ({
   fetchAgentsForGateway: vi.fn(async () => undefined),
 }));
 
-vi.mock('@clawwork/core', () => ({
-  RUN_PHASE_IDS: [],
-  EMPTY_MESSAGES: [],
-  activeTurnToMessage: vi.fn(),
-  deriveSessionActivity: () => 'idle',
-  getTaskSessionKeys: (task: { sessionKey?: string } | undefined) => (task?.sessionKey ? [task.sessionKey] : []),
-  serializeIdentityMd: vi.fn(),
-}));
+/**
+ * ⚠️ 用 `importOriginal` 铺底，只盖掉**有副作用/要钉死行为**的那几个。
+ * 原来这里手写了一份白名单 —— `@clawwork/core` 每加一个新导出（比如
+ * `pickWaitingSessionKey`），这个文件就整片崩（`No "…" export is defined on the mock`）。
+ *
+ * ⚠️ 两个会话活动函数仍然盖掉：这个文件测的是任务工作台那条流，不想被"等待中"那块干扰；
+ * 而且下面的 store 桩里 `processingBySession` 写成了 `{}`（生产是 `Set`），
+ * 真身 `pickWaitingSessionKey` 会调 `.has` 直接 TypeError。
+ */
+vi.mock('@clawwork/core', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@clawwork/core')>();
+  return {
+    ...actual,
+    RUN_PHASE_IDS: [],
+    EMPTY_MESSAGES: [],
+    activeTurnToMessage: vi.fn(),
+    deriveSessionActivity: () => 'idle',
+    pickWaitingSessionKey: () => undefined,
+    getTaskSessionKeys: (task: { sessionKey?: string } | undefined) => (task?.sessionKey ? [task.sessionKey] : []),
+    serializeIdentityMd: vi.fn(),
+  };
+});
 
 import { ChatContent, createDraftPromptRequest } from '../src/renderer/layouts/MainArea';
 import { loadRecentAssistantTasks, recordRecentAssistantTask } from '../src/renderer/lib/assistant-task-history';

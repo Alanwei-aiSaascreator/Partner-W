@@ -339,8 +339,11 @@ const messageState = {
   get messagesByTask() {
     return mocks.messagesByTask;
   },
-  activeTurnBySession: {},
-  processingBySession: {},
+  activeTurnBySession: {} as Record<string, unknown>,
+  // ⚠️ 生产里是 `Set`（`message-store.ts` 的 `processingBySession: Set<string>`）。
+  //    桩里原来写成 `{}` —— 那是**保真度不够**：`deriveSessionActivity` 会调
+  //    `processingBySession.has(...)`，普通对象上会 TypeError。现在跟着生产写成 Set。
+  processingBySession: new Set<string>(),
   highlightedMessageId: null,
   setHighlightedMessage: vi.fn(),
   runPhaseBySession: {},
@@ -414,14 +417,23 @@ vi.mock('../src/renderer/hooks/useGatewayBootstrap', () => ({
   fetchAgentsForGateway: vi.fn(async () => undefined),
 }));
 
-vi.mock('@clawwork/core', () => ({
-  RUN_PHASE_IDS: [],
-  EMPTY_MESSAGES: [],
-  activeTurnToMessage: vi.fn(),
-  deriveSessionActivity: () => 'idle',
-  getTaskSessionKeys: (task: { sessionKey?: string } | undefined) => (task?.sessionKey ? [task.sessionKey] : []),
-  serializeIdentityMd: vi.fn(),
-}));
+/**
+ * ⚠️ 这里原来把 `deriveSessionActivity` **写成常量 `'idle'`** —— 那是保真度不足：
+ * 等待态（`waiting`）分支在这个文件里**根本走不到**，于是"等待→流式"那次交接
+ * （2026-09-20 报障：头像闪一下）不可能被这里测到。
+ * ⇒ 现在只替换**确实有副作用**的那几个，其余（`deriveSessionActivity` /
+ *   `pickWaitingSessionKey` / `getTaskSessionKeys`）用**真身**。
+ */
+vi.mock('@clawwork/core', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@clawwork/core')>();
+  return {
+    ...actual,
+    RUN_PHASE_IDS: [],
+    EMPTY_MESSAGES: [],
+    activeTurnToMessage: vi.fn(),
+    serializeIdentityMd: vi.fn(),
+  };
+});
 
 import MainArea from '../src/renderer/layouts/MainArea';
 
@@ -527,6 +539,8 @@ describe('聊天区在发送时的稳定性', () => {
     mocks.activeTaskId = null;
     mocks.messagesByTask = {};
     mocks.goalAnalysis = { status: 'idle', result: null, error: null, retry: vi.fn() };
+    messageState.processingBySession = new Set<string>();
+    messageState.activeTurnBySession = {};
     Object.assign(window, { clawwork: {} });
     (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   });
@@ -564,6 +578,111 @@ describe('聊天区在发送时的稳定性', () => {
     expect(after.map((node) => node.textContent)).toEqual(['第一条消息', '第二条消息']);
     // 同一个 DOM 节点 = 第一条消息没有被卸载重建过（用户看不到「突然变空」）
     expect(after[0]).toBe(rendered[0]);
+    view.unmount();
+  });
+
+  /**
+   * 2026-09-20 实机报障：「我发完要求，那个对话头像会消失一下，然后再给我反馈」。
+   *
+   * 根因：**等待态**渲染的是 `ThinkingIndicator`（它自带一个头像），**内容一到**换成
+   * `StreamingMessage`（另一个头像）——两个块各自淡入淡出，同一帧里**两个头像并存**
+   * （MutationObserver 实测抓到 `头像=2` + 跳动点=3）。用户看到的就是"头像闪一下"。
+   *
+   * 修法：等待态也走 `StreamingMessage`、**用同一个 key**，React 复用同一个 DOM 节点。
+   * 这条断言守的就是"复用"本身 —— 只要节点还是同一个，头像就不可能闪。
+   */
+  it('⭐ 等待中 → 收到内容：助手块必须是**同一个 DOM 节点**（否则头像会闪一下）', () => {
+    const SESSION = 'agent:rongying-content:clawwork:abc:task:task-1';
+    mocks.tasks = [activeTask()];
+    mocks.activeTaskId = 'task-1';
+    mocks.messagesByTask = { 'task-1': [userMessage('msg-1', '你好')] };
+    // 等待中：正在处理，但什么都还没到
+    messageState.processingBySession = new Set([SESSION]);
+    messageState.activeTurnBySession = {};
+
+    const view = renderMainArea();
+    const waiting = view.container.querySelector('[data-testid="streaming-message"]');
+    const parentBefore = waiting?.parentElement ?? null;
+    if (process.env.DBG)
+      console.log(
+        'BEFORE-PARENT',
+        waiting?.parentElement?.tagName,
+        waiting?.parentElement?.className,
+        'CHILDREN',
+        waiting?.parentElement?.children.length,
+        'HTML',
+        waiting?.parentElement?.innerHTML?.slice(0, 300),
+      );
+    expect(waiting, '等待态也应该有一个助手块（头像+名字），而不是另一个组件').not.toBeNull();
+
+    // 第一段内容到了（推理先来）
+    messageState.activeTurnBySession = {
+      [SESSION]: {
+        id: 'turn-1',
+        streamingText: '',
+        streamingThinking: '正在想…',
+        toolCalls: [],
+        finalized: false,
+        content: '',
+        timestamp: '2026-09-20T00:00:00.000Z',
+      },
+    };
+    view.rerender();
+
+    const after = view.container.querySelector('[data-testid="streaming-message"]');
+    if (process.env.DBG) {
+      let anc = 0;
+      let x = after?.parentElement;
+      let y = parentBefore;
+      while (x && y && x === y) {
+        anc++;
+        x = x.parentElement;
+        y = y.parentElement;
+      }
+      console.log(
+        'SAME-ANCESTOR-DEPTH',
+        anc,
+        'PARENT-SAME',
+        after?.parentElement === parentBefore,
+        'DIVERGED-AT',
+        x?.tagName,
+        x?.className?.slice(0, 60),
+        'vs',
+        y?.tagName,
+        y?.className?.slice(0, 60),
+      );
+    }
+    expect(after, '内容到了之后助手块不能消失').not.toBeNull();
+    expect(after, '必须是同一个节点 —— 换了节点就等于头像被卸载重建了一次').toBe(waiting);
+    view.unmount();
+  });
+
+  /**
+   * 等待项用的是**固定哨兵时间戳**（`WAITING_ITEM_TIMESTAMP`），注释里写的理由是
+   * 「等待中的那一块永远排在最后（它确实是"此刻正在发生的事"）」。
+   *
+   * ⚠️ 这条断言刻意用一条**未来**时间戳的消息：写 `Date.now()` 的实现会排到它前面 ⇒
+   * 只有这样这条测试才**分得开**两种实现（变异 K8 就是靠它抓到的）。
+   */
+  it('⭐ 等待中那一块永远排在最后（哨兵时间戳，不是 `Date.now()`）', () => {
+    const SESSION = 'agent:rongying-content:clawwork:abc:task:task-1';
+    mocks.tasks = [activeTask()];
+    mocks.activeTaskId = 'task-1';
+    mocks.messagesByTask = {
+      'task-1': [{ ...userMessage('msg-1', '你好'), timestamp: '2099-01-01T00:00:00.000Z' }],
+    };
+    messageState.processingBySession = new Set([SESSION]);
+    messageState.activeTurnBySession = {};
+
+    const view = renderMainArea();
+    const message = view.container.querySelector('[data-testid="chat-message"]');
+    const waiting = view.container.querySelector('[data-testid="streaming-message"]');
+    expect(waiting, '等待态该有一个助手块').not.toBeNull();
+    expect(message, '那条消息该在').not.toBeNull();
+    expect(
+      message!.compareDocumentPosition(waiting!) & Node.DOCUMENT_POSITION_FOLLOWING,
+      '等待块要排在那条消息**之后**',
+    ).toBeTruthy();
     view.unmount();
   });
 });
