@@ -198,7 +198,11 @@ test('⑩ 整条命令行走一遍（体检 → 打包 → 解出来对账）；
   write(path.join('荣盈魔方', '荣盈魔方.exe'), 'exe');
   write(path.join('荣盈魔方', 'resources', 'app.asar'), `const t = "${INSTANCE_BUSY_TITLE}";`);
   write(path.join('荣盈魔方', 'resources', 'runtime', RUNTIME_MANIFEST_NAME), '{}');
-  write('使用说明.txt', `双击 荣盈魔方\\荣盈魔方.exe；数据落在盘上的 荣盈魔方-运行数据\\ 里\r\n`);
+  write(
+    '使用说明.txt',
+    `双击 荣盈魔方\\荣盈魔方.exe；数据落在盘上的 荣盈魔方-运行数据\\ 里；` +
+      '请一直插在同一个 USB 口上（盘符变了就找不到数据）\r\n',
+  );
 
   const out = path.join(base, '出包.zip');
   const cli = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'make-udisk-archive.mjs');

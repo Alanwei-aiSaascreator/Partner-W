@@ -11,7 +11,9 @@
  * ② 交付包必须自带运行时（`<app>/resources/runtime/openclaw-runtime-manifest.json`）——
  *    2026-09-18 那次"装完完全用不了"就是包里没有运行时；
  * ③ 说明里教的入口必须是真的那个（双击 `<app>\<exe>`）—— 说明教用户点一个不存在的
- *    文件，比没有说明更坏。
+ *    文件，比没有说明更坏；
+ * ④ 说明里必须有"盘符不能变"这一句（2026-09-20 加，T-a28）—— 绝对路径写进了配置与
+ *    运行时的链接，换口/换机就是把它们集体打哑，而网关不会自己修（详见 `readmeProblems`）。
  *
  * ⚠️ 判据是**文件名与文件内容**，不是"人工确认过"：三个常量都要与 TS 源码对齐，
  *    有守卫测盯着（`udisk-delivery.test.mjs` 的漂移用例）—— 改名字不改这里会红。
@@ -75,11 +77,24 @@ export function bufferHasString(buf, s) {
 }
 
 /**
+ * "别换盘符"提醒的判据词。判据是**字符串级**的：说明里得出现这两个字。
+ * ⚠️ 这会把"意思到了、但没用这两个字"的说明也报出来 —— 刻意的口径：
+ *    报出来只花一句改写，漏掉则是"用户换台机器就坏了、而他毫无线索"。
+ */
+const DRIVE_CAUTION_WORD = '盘符';
+
+/**
  * 说明文件有没有"教用户去做一件不可能做成的事"。
  *
- * 只查三件最容易过期的事（**不查文风**）：入口是不是还在讲 `.bat`、有没有点名
+ * 只查四件最容易过期的事（**不查文风**）：入口是不是还在讲 `.bat`、有没有点名
  * `<exe>`、有没有写清数据落在盘上（数据在盘上是这个产品的卖点，也是"拔盘前先退出"
- * 这条注意事项的前提）。
+ * 这条注意事项的前提）、有没有提醒**盘符不能变**。
+ *
+ * ⚠️ 第四条（2026-09-20 加，T-a28 同族）不是"建议"，是硬伤：写进配置的 `workspacePath`
+ *    是**绝对路径**，随包运行时那侧的链接（`plugin-skills\*`、managed npm 里指向运行时的
+ *    link）记的也是**绝对目标** ⇒ 换个 USB 口 / 换台机器让盘符一变，这些串集体指空；
+ *    而网关**只在"检查点过期"时才修**（普通重启不修）。说明里没有这句话，用户就没有
+ *    任何线索知道"为什么换台机器就用不了"。
  */
 export function readmeProblems(text) {
   const flat = String(text ?? '').replace(/\s+/g, ' ');
@@ -88,6 +103,12 @@ export function readmeProblems(text) {
   if (!flat.includes(EXE_NAME)) problems.push(`没点名入口 ${APP_DIR_NAME}\\${EXE_NAME}`);
   if (!flat.includes('双击')) problems.push('没写"双击"这个动作（用户要找的是一句话）');
   if (!flat.includes(RUN_DATA_DIR_NAME)) problems.push(`没写数据落在盘上的 ${RUN_DATA_DIR_NAME}\\`);
+  if (!flat.includes(DRIVE_CAUTION_WORD))
+    problems.push(
+      `没提醒"${DRIVE_CAUTION_WORD}不能变"（差一句带「${DRIVE_CAUTION_WORD}」的话）—— ` +
+        '换 USB 口 / 换机器都会换盘符，而助手的工作区与随包运行时里的链接记的都是绝对路径 ⇒ 换了就集体指空。' +
+        '建议照抄：请一直插在同一个 USB 口上，盘符变了程序就找不到自己的数据',
+    );
   return problems;
 }
 

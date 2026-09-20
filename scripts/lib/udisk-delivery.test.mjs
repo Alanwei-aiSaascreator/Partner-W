@@ -60,7 +60,12 @@ function makeDelivery(over = {}) {
   write(EXE_REL, 'stub exe');
   write(ASAR_REL, Buffer.from(`...const t = "${INSTANCE_BUSY_TITLE}";...`, 'utf8'));
   write(BUNDLED_RUNTIME_MANIFEST_REL, '{}');
-  write(README_NAME, `怎么打开：双击 ${APP_DIR_NAME}\\荣盈魔方.exe\r\n数据在盘上的 ${RUN_DATA_DIR_NAME}\\ 里\r\n`);
+  write(
+    README_NAME,
+    `怎么打开：双击 ${APP_DIR_NAME}\\荣盈魔方.exe\r\n` +
+      `数据在盘上的 ${RUN_DATA_DIR_NAME}\\ 里\r\n` +
+      '请一直插在同一个 USB 口上（盘符变了，程序和助手就找不到数据了）\r\n',
+  );
 
   if (over.bat) write(LAUNCHER_BAT_NAME, '@echo off\r\n');
   if (over.installer) write(`${INSTALLER_DIR_PREFIX}-装了就不能用便携版/荣盈魔方-0.0.24-win-x64.exe`, 'stub');
@@ -194,8 +199,33 @@ test('⑪ planFixes 只动"标记了 fix 的那条"，且搬到交付包**外面
 });
 
 test('⑫ 说明体检本身：写全了就不报，缺哪条报哪条', () => {
-  assert.deepEqual(readmeProblems(`双击 ${APP_DIR_NAME}\\荣盈魔方.exe，数据在 ${RUN_DATA_DIR_NAME}\\`), []);
-  assert.equal(readmeProblems('双击这里启动.bat').length, 3);
+  assert.deepEqual(
+    readmeProblems(
+      `双击 ${APP_DIR_NAME}\\荣盈魔方.exe，数据在 ${RUN_DATA_DIR_NAME}\\；插在同一个口上别换（换了盘符就变了）`,
+    ),
+    [],
+  );
+  // 旧 .bat 入口 + 没点名 exe + 没写数据落盘 + 没提醒盘符 = 4 条
+  assert.equal(readmeProblems('双击这里启动.bat').length, 4);
+});
+
+/**
+ * ⭐ 2026-09-20 T-a28 同族：**「盘符不能变」必须是说明里的一句话**（不是我们心里的默契）。
+ *
+ * 机制（第三/四轮读随包运行时读出来的）：记进配置的 `workspacePath` 是**绝对路径**，
+ * 而随包运行时那侧的链接（`plugin-skills\*`、managed npm 里指向运行时的 link）记的也是
+ * **绝对目标** ⇒ 换个 USB 口/换台机器让盘符一变，这些串就集体指空，而网关**只在"检查点过期"
+ * 时**才修（普通重启不修）。⇒ 至少要让用户知道"别换"。
+ */
+test('⑫b 说明里没提醒「盘符不能变」⇒ 报出来（T-a28 的机制）', () => {
+  const without = `双击 ${APP_DIR_NAME}\\荣盈魔方.exe，数据在 ${RUN_DATA_DIR_NAME}\\`;
+  assert.ok(
+    readmeProblems(without).some((p) => p.includes('盘符')),
+    '缺这条提醒时必须报出来',
+  );
+
+  const withCaution = `${without}。请一直插在同一个 USB 口上：盘符一变，程序和助手的路径就对不上了`;
+  assert.deepEqual(readmeProblems(withCaution), []);
 });
 
 test('⑬ 版本号从交付夹名字里取（取不到就说取不到，不许编）', () => {
