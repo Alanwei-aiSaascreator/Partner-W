@@ -32,6 +32,8 @@ import { execFileSync, spawn as nodeSpawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import type { ChildProcess } from 'node:child_process';
 import WebSocket from 'ws';
+import { getDebugLogger } from '../debug/index.js';
+import { attachGatewayOutputStreams, gatewayOutputDigest } from './gateway-output.js';
 
 /** 端口被**别人**的网关占着（或占着的那个不可信）。 */
 export const GATEWAY_PORT_OCCUPIED = 'runtime.gateway-port-occupied';
@@ -333,10 +335,46 @@ export type GatewaySpawnFn = (opts: {
   args: string[];
   cwd: string;
   env: NodeJS.ProcessEnv;
+  secrets: readonly string[];
 }) => GatewayChildProcess;
 
-function toGatewayChild(child: ChildProcess): GatewayChildProcess {
+function toGatewayChild(child: ChildProcess, secrets: readonly string[]): GatewayChildProcess {
+  const output = attachGatewayOutputStreams(
+    {
+      stdout: child.stdout,
+      stderr: child.stderr,
+      onClose: (listener) => child.once('close', listener),
+    },
+    {
+      secrets,
+      onSinkError: (error) => console.error('[runtime] 网关输出日志写入失败（管道继续排空）:', error),
+    },
+    (line) => {
+      getDebugLogger().info({
+        domain: 'gateway',
+        event: 'runtime.gateway.output',
+        // stdout/stderr 是任意自由文本，可能含用户/模型正文。不能用换字段名绕过
+        // shared debug 对 `text` 的隐私摘除；这里只落可关联的指纹与计数。
+        data: {
+          stream: line.stream,
+          repeat: line.repeat,
+          summary: line.summary,
+          dropped: line.dropped,
+          textBytes: Buffer.byteLength(line.text, 'utf8'),
+          textDigest: gatewayOutputDigest(line.text),
+        },
+      });
+    },
+  );
   let exited = false;
+  child.once('close', () => {
+    // attachGatewayOutputStreams 先注册 close，故此处读到的是 flush 之后的最终统计。
+    getDebugLogger().info({
+      domain: 'gateway',
+      event: 'runtime.gateway.output.closed',
+      data: { ...output.stats() },
+    });
+  });
   child.once('exit', () => {
     exited = true;
   });
@@ -356,8 +394,8 @@ function toGatewayChild(child: ChildProcess): GatewayChildProcess {
   };
 }
 
-const realSpawn: GatewaySpawnFn = ({ nodeExe, args, cwd, env }) =>
-  toGatewayChild(nodeSpawn(nodeExe, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }));
+const realSpawn: GatewaySpawnFn = ({ nodeExe, args, cwd, env, secrets }) =>
+  toGatewayChild(nodeSpawn(nodeExe, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }), secrets);
 
 export interface EnsureGatewayRunningOptions {
   nodeExe: string;
@@ -447,7 +485,7 @@ export async function ensureGatewayRunning(opts: EnsureGatewayRunningOptions): P
     OPENCLAW_SUPERVISOR_MODE: 'external',
   };
 
-  const child = spawn({ nodeExe: opts.nodeExe, args, cwd: opts.deployedRoot, env });
+  const child = spawn({ nodeExe: opts.nodeExe, args, cwd: opts.deployedRoot, env, secrets: [token] });
   await (
     opts.waitReady ??
     defaultWaitReady(
