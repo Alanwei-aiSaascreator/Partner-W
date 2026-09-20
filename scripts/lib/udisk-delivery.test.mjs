@@ -102,12 +102,16 @@ test('② 新构建但还留着 .bat ⇒ error，且给出"搬出去"的动作',
   fs.rmSync(root, { recursive: true, force: true });
 });
 
-test('③ 老构建（asar 里没有指纹）⇒ error「不能去掉 .bat」，且不许报 .bat 该删', () => {
+test('③ 老构建（asar 里没有指纹）⇒ warn「不能去掉 .bat」，且不许报 .bat 该删', () => {
   const root = makeDelivery({ staleBuild: true, bat: true });
   const findings = auditDelivery(io, root);
 
   assert.ok(ids(findings).includes('stale-build'));
   assert.ok(!ids(findings).includes('launcher-bat'), '.bat 是老构建的救命稻草，不该建议删掉');
+  // ⚠️ 等级必须是 **warn**：现役版本（0.0.24 就在客户手里）照样要能打压缩包分发，
+  //    判成 error 会把"给现役版本出压缩包"这条正常需求一起堵死。
+  assert.equal(findings.find((f) => f.id === 'stale-build').level, 'warn');
+  assert.deepEqual(errors(findings), [], '老构建 + 带 .bat 的包应当"可发"，不该有 error');
   fs.rmSync(root, { recursive: true, force: true });
 });
 

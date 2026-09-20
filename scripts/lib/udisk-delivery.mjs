@@ -135,11 +135,15 @@ export function auditDelivery(io, root) {
   if (selfExplains === false) {
     findings.push({
       id: 'stale-build',
-      level: 'error',
+      // ⚠️ 是 warn 不是 error：这一版**仍然可以发**（0.0.24 现在就在客户手里），
+      //    它要说的只有一句"**别去掉 .bat**"。判成 error 会把"给现役版本打压缩包分发"
+      //    这条正常需求也堵死（见 make-udisk-archive.mjs 的拒绝条件）。
+      level: 'warn',
       title: '这份构建还不带"自解释"行为（不能去掉 .bat）',
       detail:
         `在 app.asar 里找不到指纹「${INSTANCE_BUSY_TITLE}」。这种构建抢不到单实例锁时是静默退出 ——` +
-        `用户双击第二次看到的就是"没反应"，所以它**必须**靠 ${LAUNCHER_BAT_NAME} 去解释。`,
+        `用户双击第二次看到的就是"没反应"，所以它**必须**靠 ${LAUNCHER_BAT_NAME} 去解释。` +
+        '⇒ 这一版照发，但 `.bat` 留着；下一版带上新启动行为之后才能删掉它。',
     });
   }
 
