@@ -53,7 +53,7 @@
 | `sessions.reset`            | `gateway-client.ts:605` `resetSession()`          | `ws:session-reset`            | Reset session (reason: `"new"` or `"reset"`)              |
 | `sessions.delete`           | `gateway-client.ts:609` `deleteSession()`         | `ws:session-delete`           | Delete session (always `deleteTranscript=true`)           |
 | `sessions.compact`          | `gateway-client.ts:613` `compactSession()`        | `ws:session-compact`          | Compact session context                                   |
-| `sessions.usage`            | `gateway-client.ts:643` `getSessionUsage()`       | `ws:session-usage`            | Per-session token usage breakdown                         |
+| `sessions.usage`            | `gateway-client.ts:788` `getSessionUsage()`       | —（无 IPC，见下注）           | Per-session token usage breakdown                         |
 
 **Schema:** `src/gateway/protocol/schema/sessions.ts`
 **Handler:** `src/gateway/server-methods/sessions.ts`
@@ -64,6 +64,14 @@
 - `sessions.patch`: passes generic `Record<string, unknown>`, but Gateway supports 17 patchable fields (whitepaper §5.3)
 - `sessions.usage`: `startDate`, `endDate`, `mode`, `utcOffset`, `includeContextWeight`
 - `sessions.delete`: `emitLifecycleHooks`
+
+**注（`sessions.usage` 的唯一调用方是商业上报器，2026-09-20 起）**：渲染层那条（preload 桥
+`getSessionUsage` → IPC `ws:session-usage`）已在 T-a25 撤掉（`d91b2a83`）—— 它传的是**客户端自己拼的
+task 级会话键**，而 `chat.send` 是**用 key 惰性建会话**的 ⇒ 键一失效（没发过消息 / 会话被删 /
+agent 前缀变过）网关就回 `Invalid session reference`，且取回的数据在渲染层**没人读**。
+现在只剩 `main/commercial/usage-reporter.ts:94` 直调（**不经 IPC**），它带 `agentScope: 'all'`：
+⚠️ **只发 `{}` 不行** —— 网关会逐个会话解析归属，碰到没有 owner 的 `main` 整条拒绝（09-17 实测 38 次）。
+将来要在界面上做用量视图，**重新立项**，并注意 `sessions.usage` 只对**网关上已存在的**会话键有效。
 
 ### 1.3 Agents
 
