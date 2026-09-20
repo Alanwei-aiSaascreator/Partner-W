@@ -586,6 +586,7 @@
   },
   "connection": {
     "addGateway": "Adicionar Gateway",
+    "attemptProgress": "(tentativa {{attempt}}/{{max}})",
     "connected": "Conectado",
     "connecting": "Conectando…",
     "disconnected": "Desconectado",
@@ -599,6 +600,8 @@
     "reconnecting": "Tentando reconectar...",
     "reconnectingBanner": "Gateway \"{{name}}\" desconectado. Tentando reconectar...",
     "retryNow": "Tentar Agora",
+    "startingBanner": "Iniciando o serviço de IA. A primeira inicialização leva cerca de um minuto.",
+    "startupFailedBanner": "O serviço local ainda não respondeu. Tente \"Tentar Agora\" ou verifique a configuração em \"Abrir Configurações\".",
     "unreachableBanner": "Gateway \"{{name}}\" inacessível. A reconexão automática foi interrompida. Clique em \"Tentar Agora\" ou \"Abrir Configurações\" para verificar a configuração."
   },
   "contextMenu": {

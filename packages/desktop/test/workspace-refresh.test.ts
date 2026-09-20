@@ -90,6 +90,9 @@ describe('refreshRendererAfterWorkspaceChange', () => {
       unreadTaskIds: new Set(['stale-task']),
       gatewaysLoaded: true,
       defaultGatewayId: 'gw-1',
+      // 「这次运行连上过」是**上一账号/上一轮**的账：切号不清就会让新账号一进来
+      // 就被当成"连上过"，首启预热期又会说成"已断开"（见 `gateway-display-phase.ts`）。
+      gatewayEverConnected: { 'gw-1': true },
     });
 
     useFileStore.setState({
@@ -156,6 +159,7 @@ describe('refreshRendererAfterWorkspaceChange', () => {
     expect(useUiStore.getState().agentCatalogByGateway).toEqual({});
     expect(useUiStore.getState().unreadTaskIds.size).toBe(0);
     expect(useUiStore.getState().gatewaysLoaded).toBe(false);
+    expect(useUiStore.getState().gatewayEverConnected).toEqual({});
     expect(useFileStore.getState().artifacts).toEqual([]);
     expect(useFileStore.getState().selectedArtifactId).toBeNull();
     expect(useTeamStore.getState().teams).toEqual({});

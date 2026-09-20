@@ -14,6 +14,7 @@ import { evaluateCommercialSendAccess, type CommercialBlockReason } from '@/lib/
 import { useCommercialStore } from '@/stores/commercialStore';
 import { isModelSelectable, modelFamilyLabel, relayModelsFrom } from './model-families.js';
 import { deriveModelAvailability } from './model-availability.js';
+import { deriveGatewayDisplayPhase } from '../../lib/gateway-display-phase.js';
 import { isThinkingSupported, thinkingDefaultFor } from './thinking-levels.js';
 import type {
   Task,
@@ -119,6 +120,16 @@ export function useChatSend(opts: UseChatSendOpts) {
   const taskGwId = activeTask?.gatewayId ?? pendingNewTask?.gatewayId;
   const modelCatalogByGateway = useUiStore((s) => s.modelCatalogByGateway);
   const gatewayStatus = useUiStore((s) => (taskGwId ? s.gatewayStatusMap[taskGwId] : undefined));
+  // 「这一格该说哪句话」的判据是纯函数（`lib/gateway-display-phase.ts`）：预热期（这次运行
+  // 从没连上过）与真断开必须说两套话 —— 否则首启那 50 秒里输入框会说「离线模式 — 只读」，
+  // 而它其实只是在启动（2026-09-20 实机截图）。`?.` 照顾手写 store 桩缺字段。
+  const gatewayReconnect = useUiStore((s) => (taskGwId ? s.gatewayReconnectInfo?.[taskGwId] : undefined));
+  const gatewayEverConnected = useUiStore((s) => (taskGwId ? s.gatewayEverConnected?.[taskGwId] === true : false));
+  const gatewayDisplayPhase = deriveGatewayDisplayPhase({
+    status: gatewayStatus,
+    everConnected: gatewayEverConnected,
+    reconnect: gatewayReconnect,
+  });
   // ⚠️ 先过 relayModelsFrom 再往下走 —— 网关返回的是**全量**目录（含 claude-cli / deepseek
   // 等我们没配的 provider）。下面的「当前模型」标签和下拉列表**必须同源**，
   // 否则标签会解析到我们服务不了的模型：新任务时显示的 `Claude Opus 5 (Claude CLI)`
@@ -796,6 +807,7 @@ export function useChatSend(opts: UseChatSendOpts) {
     isGenerating,
     aborting,
     isOffline,
+    gatewayDisplayPhase,
     activeTask,
     currentModel,
     currentThinking,

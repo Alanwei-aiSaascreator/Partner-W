@@ -280,6 +280,7 @@ vi.mock('../src/renderer/components/ChatInput/useSlashAutocomplete', () => ({
 vi.mock('../src/renderer/components/ChatInput/useChatSend', async () => {
   const { deriveModelAvailability } = await import('../src/renderer/components/ChatInput/model-availability');
   const { relayModelsFrom } = await import('../src/renderer/components/ChatInput/model-families');
+  const { deriveGatewayDisplayPhase } = await import('../src/renderer/lib/gateway-display-phase');
   const availabilityFor = (gatewayId: string | null) => {
     const rawCatalog = gatewayId ? uiState.modelCatalogByGateway[gatewayId] : undefined;
     return deriveModelAvailability({
@@ -290,11 +291,43 @@ vi.mock('../src/renderer/components/ChatInput/useChatSend', async () => {
       modelCount: relayModelsFrom(rawCatalog ?? []).length,
     });
   };
+  /**
+   * ⚠️ 这个桩**必须跟真身同一条规则**，否则这一格测的是桩、不是产品。
+   *
+   * 原来这里写死 `isOffline: false`，而且**根本没给 `gatewayDisplayPhase`**（缺字段 ⇒
+   * `ChatInput` 拿到 `undefined`）。后果：「预热期输入框不许说离线只读」那条用例其实是
+   * 靠 `readinessBlocked: true` 才绿的 —— 把判据顺序调换（变异 M4：先判 `isOffline`）
+   * 它照样绿，也就是说**那条缝根本没被钉住**（2026-09-20 变异验证打出来的）。
+   * 规则照抄 `ChatInput/useChatSend.ts` 的 `isOffline` / `gatewayDisplayPhase` 两处；
+   * 真身那条缝本身由 `test/use-chat-send.test.tsx` 用**真 hook** 另钉一遍。
+   *
+   * 网关 id 取 `pendingNewTask.gatewayId ?? defaultGatewayId`：这个文件里活跃任务永远是
+   * `gw-1`，与真身的 `activeTask?.gatewayId ?? pendingNewTask?.gatewayId` 同解。
+   */
+  const taskGatewayId = (): string | null => mocks.pendingNewTask?.gatewayId ?? uiState.defaultGatewayId ?? null;
+  const isOfflineFor = (): boolean => {
+    const gwId = taskGatewayId();
+    if (gwId) {
+      const st = uiState.gatewayStatusMap[gwId];
+      return st === 'disconnected' || st === undefined;
+    }
+    const values = Object.values(uiState.gatewayStatusMap);
+    return values.length > 0 && !values.some((v) => v === 'connected');
+  };
+  const displayPhaseFor = () => {
+    const gwId = taskGatewayId();
+    return deriveGatewayDisplayPhase({
+      status: gwId ? uiState.gatewayStatusMap[gwId] : undefined,
+      everConnected: gwId ? uiState.gatewayEverConnected[gwId] === true : false,
+      reconnect: gwId ? uiState.gatewayReconnectInfo[gwId] : undefined,
+    });
+  };
   return {
     useChatSend: () => ({
       isGenerating: false,
       aborting: false,
-      isOffline: false,
+      isOffline: isOfflineFor(),
+      gatewayDisplayPhase: displayPhaseFor(),
       activeTask: null,
       currentModel: '',
       currentThinking: 'off',
@@ -361,6 +394,10 @@ const uiState = {
   // ⚠️ 少了这个字段，`deriveModelAvailability` 会把每个网关都看成"没连上"⇒ 永远
   //    `service-starting`，于是"取不到"这一档在本文件里**测不到**（曾如此）。
   gatewayStatusMap: { 'gw-1': 'connected' } as Record<string, 'connected' | 'connecting' | 'disconnected'>,
+  // ⚠️ 手写 store 桩必须跟着长（缺字段 = 输入框那格的文案分档拿不到输入）。
+  gatewayReconnectInfo: {} as Record<string, { attempt: number; max: number; gaveUp: boolean }>,
+  // 「这次运行连上过没有」—— 预热期与真断开就靠它分（`lib/gateway-display-phase.ts`）。
+  gatewayEverConnected: {} as Record<string, true>,
   setSettingsOpen: vi.fn(),
   setMainView: vi.fn(),
   setRightPanelOpen: vi.fn(),
@@ -847,6 +884,44 @@ describe('聊天区在发送时的稳定性', () => {
         'gw-1': [{ id: 'deepseek-v4-flash', provider: 'clawrouter', name: 'DeepSeek V4 Flash' }],
       };
       uiState.modelCatalogFailureByGateway = {};
+    }
+  });
+
+  it('⭐ 首次启动的预热期：输入框**不许**说"离线模式 — 只读"（那时它只是在启动）', () => {
+    // 实机形状（2026-09-20 截图）：本机网关配过；客户端已经因为一次连接错误把状态写成
+    // `disconnected`；但**这次运行从没连上过**，也还没有任何重连信息。
+    // 老判据里 `isOffline` 把"还不知道"当成离线 ⇒ 输入框说"离线模式 — 只读" —— 那不是事实。
+    const before = {
+      status: uiState.gatewayStatusMap,
+      reconnect: uiState.gatewayReconnectInfo,
+      ever: uiState.gatewayEverConnected,
+    };
+    uiState.gatewayStatusMap = { 'gw-1': 'disconnected' };
+    uiState.gatewayReconnectInfo = { 'gw-1': { attempt: 0, max: 10, gaveUp: false } };
+    uiState.gatewayEverConnected = {};
+    try {
+      const view = renderMainArea({
+        ...readiness,
+        ai: { phase: 'starting' },
+        conversationReady: false,
+        isReady: false,
+        composerBlocked: true,
+      });
+      const placeholder = () => view.container.querySelector<HTMLTextAreaElement>('textarea')?.placeholder;
+      expect(placeholder()).toBe('chatInput.aiServiceStartingDetail');
+      expect(placeholder(), '预热期说"离线只读"就是假话').not.toBe('chatInput.offlineReadOnly');
+
+      // 对照读数（同一台机器、同一个输入框、只改"这次运行连上过没有"）：
+      // 连上过又掉了 ⇒ 这时"离线模式 — 只读"**才是**事实。两次读数必须不同 ——
+      // 否则上面那句"不是离线只读"可能只是因为这一格压根不读网关状态（变异 M4 就是这么溜过去的）。
+      uiState.gatewayEverConnected = { 'gw-1': true };
+      view.rerender();
+      expect(placeholder()).toBe('chatInput.offlineReadOnly');
+      view.unmount();
+    } finally {
+      uiState.gatewayStatusMap = before.status;
+      uiState.gatewayReconnectInfo = before.reconnect;
+      uiState.gatewayEverConnected = before.ever;
     }
   });
 });

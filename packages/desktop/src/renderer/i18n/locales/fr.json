@@ -586,6 +586,7 @@
   },
   "connection": {
     "addGateway": "Ajouter une passerelle",
+    "attemptProgress": "(tentative {{attempt}}/{{max}})",
     "connected": "Connecté",
     "connecting": "Connexion…",
     "disconnected": "Déconnecté",
@@ -599,6 +600,8 @@
     "reconnecting": "Tentative de reconnexion...",
     "reconnectingBanner": "Passerelle « {{name}} » déconnectée. Tentative de reconnexion...",
     "retryNow": "Réessayer maintenant",
+    "startingBanner": "Démarrage du service IA. Le premier lancement prend environ une minute.",
+    "startupFailedBanner": "Le service local n’est pas encore joignable. Essayez « Réessayer maintenant », ou vérifiez la configuration dans « Ouvrir les réglages ».",
     "unreachableBanner": "Passerelle « {{name}} » injoignable. La reconnexion automatique est arrêtée. Cliquez sur « Réessayer maintenant » ou sur « Ouvrir les réglages » si le problème persiste."
   },
   "contextMenu": {

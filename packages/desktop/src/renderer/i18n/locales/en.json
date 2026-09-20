@@ -586,6 +586,7 @@
   },
   "connection": {
     "addGateway": "Add Gateway",
+    "attemptProgress": "(attempt {{attempt}} of {{max}})",
     "connected": "Connected",
     "connecting": "Connecting…",
     "disconnected": "Disconnected",
@@ -599,6 +600,8 @@
     "reconnecting": "Attempting to reconnect...",
     "reconnectingBanner": "Gateway \"{{name}}\" disconnected. Attempting to reconnect...",
     "retryNow": "Retry Now",
+    "startingBanner": "Starting the AI service. The first launch usually takes about a minute.",
+    "startupFailedBanner": "The local service has not come up yet. Try \"Retry Now\", or check your configuration under \"Open Settings\".",
     "unreachableBanner": "Gateway \"{{name}}\" is unreachable. Auto-reconnect has stopped. Click \"Retry Now\", or \"Open Settings\" to check the configuration."
   },
   "contextMenu": {

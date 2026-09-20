@@ -52,6 +52,7 @@ import VoiceIntroDialog from '../VoiceIntroDialog';
 import { MENTION_ALL_AGENT_ID } from './constants';
 import DraftConflictDialog from './DraftConflictDialog';
 import { modelStatusCopy } from './model-availability';
+import { composerPlaceholderKey } from '@/lib/gateway-display-phase';
 import { thinkingAlwaysOnKey, thinkingLabelKey, thinkingMenuFor } from './thinking-levels.js';
 import type { DraftPromptRequest, DraftPromptResolution } from './types';
 import { useChatSend } from './useChatSend';
@@ -260,6 +261,7 @@ export default function ChatInput({
     isGenerating,
     aborting,
     isOffline,
+    gatewayDisplayPhase,
     activeTask,
     currentModel,
     currentThinking,
@@ -559,11 +561,10 @@ export default function ChatInput({
 
   const voiceActive = isVoiceListening || isVoiceTranscribing;
   const disabled = isOffline || readinessBlocked;
-  const placeholder = isOffline
-    ? t('chatInput.offlineReadOnly')
-    : readinessBlocked
-      ? t('chatInput.aiServiceStartingDetail')
-      : t('chatInput.describeTask');
+  // ⚠️ 顺序在 `composerPlaceholderKey` 里定（纯函数 + 单测）：**预热期不许说"离线模式 — 只读"**。
+  //    老写法把"还不知道"（网关状态还没有这一条）也算成离线，于是首启那 50 秒里
+  //    输入框在说一件不是事实的话（2026-09-20 实机截图）。
+  const placeholder = t(composerPlaceholderKey({ phase: gatewayDisplayPhase, isOffline, readinessBlocked }));
   const voiceTooltip = !isVoiceSupported ? t('voiceInput.unsupportedTooltip') : t('voiceInput.tooltip');
   // 文案分档全部住在 `modelStatusCopy` 里（可单测）：哪一档转圈、哪一档说什么话，
   // 一个地方定；尤其「无需重复操作」**只许**在真加载那一档出现（2026-09-20 报障）。

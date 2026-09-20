@@ -53,6 +53,9 @@ export async function refreshRendererAfterWorkspaceChange(): Promise<void> {
 
   useUiStore.setState({
     gatewayStatusMap: {},
+    // ⭐ "这次运行连上过"也是**上一个账号/上一轮**的账，切号必须一起清 ——
+    //    否则新账号一进来就被当成"连上过"，预热期又会说成"已断开"。
+    gatewayEverConnected: {},
     gatewayVersionMap: {},
     gatewayReconnectInfo: {},
     gatewaysLoaded: false,

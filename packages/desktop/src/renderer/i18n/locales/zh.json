@@ -586,6 +586,7 @@
   },
   "connection": {
     "addGateway": "添加网关",
+    "attemptProgress": "(第 {{attempt}}/{{max}} 次)",
     "connected": "已连接",
     "connecting": "连接中…",
     "disconnected": "未连接",
@@ -599,6 +600,8 @@
     "reconnecting": "正在尝试重连…",
     "reconnectingBanner": "网关“{{name}}”已断开，正在尝试重连…",
     "retryNow": "立即重试",
+    "startingBanner": "正在启动 AI 服务，首次启动通常需要约 1 分钟。",
+    "startupFailedBanner": "本地服务还没能连上。可点「立即重试」，或到「打开设置」检查配置。",
     "unreachableBanner": "网关“{{name}}”连不上，已停止自动重连。可点“立即重试”，或到“打开设置”检查配置。"
   },
   "contextMenu": {

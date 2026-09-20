@@ -54,6 +54,10 @@ const mocks = vi.hoisted(() => {
       // 手写 store 桩**必须跟着长**（缺一个字段 = 整屏渲染崩）。
       modelCatalogFailureByGateway: {} as Record<string, true>,
       toolsCatalogByGateway: {},
+      // 「这次运行连上过没有」+ 重连进度：输入框那格说"正在启动"还是"离线只读"靠它们分
+      //（`lib/gateway-display-phase.ts`）。缺这两个字段时真身走 `?.` ⇒ 一律"从没连上过"。
+      gatewayReconnectInfo: {} as Record<string, { attempt: number; max: number; gaveUp: boolean }>,
+      gatewayEverConnected: {} as Record<string, true>,
     },
     roomState: {
       rooms: {},
@@ -808,5 +812,85 @@ describe('对比模式下的发送', () => {
     for (const key of firstRoundKeys) {
       expect(compareStore().getState().wasAbortedByUser(key)).toBe(true);
     }
+  });
+});
+
+/**
+ * 输入框那一格的**分档输入**——用真身 hook，不用桩。
+ *
+ * 为什么单独钉：`chat-send-stability.test.tsx` 里 `useChatSend` 是**整块桩**，它算得对不对
+ * 没人管；而「预热期（这次运行从没连上过）说"正在启动"，连上过又掉了才说"离线只读"」
+ * 这条判断的**输入**正是这里产出的 `{ isOffline, gatewayDisplayPhase }`。
+ * 变异 M7（把 `gatewayEverConnected` 读成"有网关就算连上过"）在原测试网下**全绿** ——
+ * 就是这条缝当时没人钉（2026-09-20 变异验证打出来的；桩测试绿 ≠ 缝对上了）。
+ */
+describe('网关分档接进输入框之前：真身 useChatSend 读出来的那两个值', () => {
+  function GatewayCopyHarness() {
+    const textareaRef = useRef<HTMLTextAreaElement>(null);
+    const chat = useChatSend({
+      textareaRef,
+      pendingAttachments: [],
+      setPendingAttachments: vi.fn(),
+      selectedTasks: [],
+      setSelectedTasks: vi.fn(),
+      selectedArtifacts: [],
+      setSelectedArtifacts: vi.fn(),
+      selectedLocalFiles: [],
+      setSelectedLocalFiles: vi.fn(),
+      selectedImportedFiles: [],
+      clearSelectedImportedFiles: vi.fn(),
+      markImportedFileMissing: vi.fn(),
+      selectedAgents: [],
+      setSelectedAgents: vi.fn(),
+      stopVoiceInput: vi.fn(),
+    });
+    return (
+      <>
+        <textarea ref={textareaRef} />
+        <div data-testid="phase">{chat.gatewayDisplayPhase}</div>
+        <div data-testid="offline">{chat.isOffline ? 'offline' : 'online'}</div>
+      </>
+    );
+  }
+
+  beforeEach(() => {
+    document.body.innerHTML = '';
+    mocks.taskState.tasks = [mocks.taskState.tasks.find((task) => task.id === 'task-1')!];
+    mocks.taskState.activeTaskId = 'task-1';
+    mocks.uiState.modelCatalogByGateway = {};
+    mocks.uiState.gatewayStatusMap = { 'gw-1': 'connected' };
+    mocks.uiState.gatewayReconnectInfo = {};
+    mocks.uiState.gatewayEverConnected = {};
+    Object.assign(window, { clawwork: {} });
+    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  });
+
+  it('⭐ 从没连上过（预热期）⇒ starting + offline；连上过又掉了 ⇒ retrying —— 两次读数必须不同', () => {
+    mocks.uiState.gatewayStatusMap = { 'gw-1': 'disconnected' };
+    mocks.uiState.gatewayReconnectInfo = { 'gw-1': { attempt: 0, max: 10, gaveUp: false } };
+    mocks.uiState.gatewayEverConnected = {};
+
+    const view = render(<GatewayCopyHarness />);
+    const read = () => ({
+      phase: view.container.querySelector('[data-testid="phase"]')?.textContent,
+      offline: view.container.querySelector('[data-testid="offline"]')?.textContent,
+    });
+
+    // 实机那一刻的形状：当前状态已经是 `disconnected`（真有过一次连接错误），
+    // 但历史是"从没连上过"—— 那正说明还在启动窗口里。
+    expect(read()).toEqual({ phase: 'starting', offline: 'offline' });
+
+    // 只改"这次运行连上过没有"，读数必须跟着换（否则这两个值根本没接上 store）
+    mocks.uiState.gatewayEverConnected = { 'gw-1': true };
+    view.rerender(<GatewayCopyHarness />);
+    expect(read()).toEqual({ phase: 'retrying', offline: 'offline' });
+
+    // 网关明确拒绝 ⇒ 那是**结论**，哪怕从没连上过也要说失败（界面据此给出口）
+    mocks.uiState.gatewayEverConnected = {};
+    mocks.uiState.gatewayReconnectInfo = { 'gw-1': { attempt: 0, max: 10, gaveUp: true } };
+    view.rerender(<GatewayCopyHarness />);
+    expect(read()).toEqual({ phase: 'unreachable', offline: 'offline' });
+
+    view.unmount();
   });
 });

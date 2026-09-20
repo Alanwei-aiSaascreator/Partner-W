@@ -586,6 +586,7 @@
   },
   "connection": {
     "addGateway": "게이트웨이 추가",
+    "attemptProgress": "({{attempt}}/{{max}}번째)",
     "connected": "연결됨",
     "connecting": "연결 중…",
     "disconnected": "연결 끊김",
@@ -599,6 +600,8 @@
     "reconnecting": "재연결 시도 중...",
     "reconnectingBanner": "게이트웨이 \"{{name}}\" 연결이 끊어졌습니다. 재연결 시도 중...",
     "retryNow": "지금 재시도",
+    "startingBanner": "AI 서비스를 시작하는 중입니다. 첫 실행은 보통 1분 정도 걸립니다.",
+    "startupFailedBanner": "로컬 서비스에 아직 연결하지 못했습니다. \"지금 재시도\"를 누르거나 \"설정 열기\"에서 구성을 확인하세요.",
     "unreachableBanner": "게이트웨이 \"{{name}}\"에 연결할 수 없습니다. 자동 재연결이 중지되었습니다. \"지금 재시도\"를 누르거나 \"설정 열기\"에서 확인하세요."
   },
   "contextMenu": {

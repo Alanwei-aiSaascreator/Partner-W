@@ -586,6 +586,7 @@
   },
   "connection": {
     "addGateway": "ゲートウェイを追加",
+    "attemptProgress": "({{attempt}}/{{max}} 回目)",
     "connected": "接続済み",
     "connecting": "接続中…",
     "disconnected": "切断",
@@ -599,6 +600,8 @@
     "reconnecting": "再接続を試行中...",
     "reconnectingBanner": "ゲートウェイ「{{name}}」が切断されました。再接続を試行中...",
     "retryNow": "今すぐ再試行",
+    "startingBanner": "AI サービスを起動しています。初回起動は 1 分ほどかかります。",
+    "startupFailedBanner": "ローカルサービスにまだ接続できません。「今すぐ再試行」を押すか、「設定を開く」で構成を確認してください。",
     "unreachableBanner": "ゲートウェイ「{{name}}」に到達できません。自動再接続は停止しました。「今すぐ再試行」または「設定を開く」から確認してください。"
   },
   "contextMenu": {

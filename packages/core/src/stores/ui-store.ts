@@ -83,6 +83,15 @@ export interface UiState {
   gatewayStatusMap: Record<string, GatewayConnectionStatus>;
   setGatewayStatusByGateway: (gatewayId: string, status: GatewayConnectionStatus) => void;
 
+  /**
+   * **这一次运行里**这个网关成功连上过（缺席 = 从没连上过）。
+   *
+   * 与 `gatewayStatusMap` 是两件事：那是"此刻"，这是"历史"。首启预热期里两者会分叉 ——
+   * 当前状态已经是 `disconnected`（真有过一次连接错误），但历史是"从没连上过"，
+   * 那正说明我们还在启动窗口里（说"已断开"就是假话）。见 `gateway-display-phase.ts`。
+   */
+  gatewayEverConnected: Record<string, true>;
+
   gatewayRegistry: Record<string, GatewayState>;
 
   gatewayVersionMap: Record<string, string>;
@@ -265,7 +274,15 @@ export function createUiStore(deps: UiStoreDeps) {
     setGatewayStatusByGateway: (gatewayId, status) =>
       set((s) => ({
         gatewayStatusMap: { ...s.gatewayStatusMap, [gatewayId]: status },
+        // ⭐ "这一次运行里连上过"只能在这里落账：它是**历史**，不是当前状态，
+        //    而状态事件是唯一知道"真的握上手了"的地方（`gateway-display-phase.ts` 用它
+        //    把"还在启动窗口里"和"连上过又掉了"分开 —— 只看当前状态分不开这两件事）。
+        ...(status === 'connected' && s.gatewayEverConnected[gatewayId] !== true
+          ? { gatewayEverConnected: { ...s.gatewayEverConnected, [gatewayId]: true as const } }
+          : {}),
       })),
+
+    gatewayEverConnected: {},
 
     gatewayRegistry: {},
 
