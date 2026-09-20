@@ -21,6 +21,7 @@ import type {
   SystemSessionService,
 } from '@clawwork/core';
 import { toast } from '@/lib/toast';
+import { resolveTaskAgentName } from '@/lib/task-agent-name';
 import { createElectronPorts } from './electron-adapter';
 import i18n from '../i18n';
 import { thinkingLevelsFor } from '../components/ChatInput/thinking-levels';
@@ -100,6 +101,15 @@ const roomStoreApi = createRoomStore({
   persistRoom: (params) => window.clawwork.persistRoom(params),
   persistPerformer: (params) => window.clawwork.persistPerformer(params),
   loadRoom: (taskId) => window.clawwork.loadRoom(taskId),
+  // 写 `RoomPerformer.agentName` 快照时问一次目录（T-a7 的写入方那一半）：
+  // 问不到就返回 undefined，core 那边降级成裸 agentId。规则见 `lib/task-agent-name.ts`。
+  resolveAgentName: (taskId, agentId) =>
+    resolveTaskAgentName({
+      tasks: taskStoreApi.getState().tasks,
+      agentsForGateway: (gwId) => uiStoreApi.getState().agentCatalogByGateway[gwId]?.agents,
+      taskId,
+      agentId,
+    }),
 });
 
 export const composerBridge = {

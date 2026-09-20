@@ -43,6 +43,16 @@ export interface RoomStoreDeps {
       verifiedAt: string;
     }>;
   }>;
+  /**
+   * 「这个任务的这个 agent 在界面上叫什么」—— 写**快照**时用（T-a7 的写入方那一半）。
+   *
+   * 为什么不把目录塞进来：core 不认识网关目录，也不需要认识。宿主（桌面端）知道
+   * 怎么从 taskId 找到网关、再从目录里找到名字；core 只负责"问一次、问不到就降级"。
+   *
+   * 返回值语义：**空串 / undefined 都算问不到**（快照存空串等于什么都没记）。
+   * 这个函数**抛错也不会影响派活** —— 见 `snapshotAgentName` 的 fail-soft。
+   */
+  resolveAgentName?: (taskId: string, agentId: string) => string | undefined;
 }
 
 export interface RoomState {
@@ -60,13 +70,37 @@ export interface RoomState {
   setRoomStatus: (taskId: string, status: RoomStatus) => void;
   getRoom: (taskId: string) => TaskRoom | undefined;
   lookupTaskIdBySubagentKey: (subagentKey: string) => string | undefined;
-  registerPerformerKey: (taskId: string, subagentKey: string, agentId: string, agentName: string) => void;
+  /**
+   * ⚠️ **没有 `agentName` 参数**，是故意的：两个写入方都曾经自己拼名字，而且都拼错了
+   * （传的就是裸 agentId）—— 名字由 store 通过 `deps.resolveAgentName` 统一解析，
+   * 写入方**没有机会**再传错。见 T-a7。
+   */
+  registerPerformerKey: (taskId: string, subagentKey: string, agentId: string) => void;
   verifyCandidates: (taskId: string, gatewayId: string) => Promise<void>;
 }
 
 const VERIFY_COOLDOWN_MS = 2000;
 
 const TERMINAL_ROOM_STATUSES: ReadonlySet<RoomStatus> = new Set(['stopped']);
+
+/**
+ * 往快照里写什么名字（T-a7 的写入方那一半）。
+ *
+ * 顺序只有一条：**问宿主**（目录里的活名字）⇒ 问不到就写**裸 agentId**。
+ * 为什么不写空串：`RoomPerformer.agentName` 是"agent 从目录里消失之后**唯一**还记得的
+ * 名字"，写空等于把它变成没用的字段（`resolvePerformerAgentName` 也会跳过空值）。
+ *
+ * ⚠️ **fail-soft**：宿主解析时会碰网关目录 / 任务表，都可能抛。**不能**因为"取个名字"
+ * 把派活流程炸掉 —— 抛了就退回裸 id（与今天的行为一样，只是名字丑）。
+ */
+function snapshotAgentName(deps: RoomStoreDeps, taskId: string, agentId: string): string {
+  try {
+    return deps.resolveAgentName?.(taskId, agentId) || agentId;
+  } catch (err) {
+    console.warn('[room-store] resolveAgentName failed:', err);
+    return agentId;
+  }
+}
 
 export function createRoomStore(deps: RoomStoreDeps) {
   const taskGateways = new Map<string, string>();
@@ -189,7 +223,7 @@ export function createRoomStore(deps: RoomStoreDeps) {
 
     lookupTaskIdBySubagentKey: (subagentKey) => get().subagentKeyMap[subagentKey],
 
-    registerPerformerKey: (taskId, subagentKey, agentId, agentName) => {
+    registerPerformerKey: (taskId, subagentKey, agentId) => {
       const room = get().rooms[taskId];
       if (!room) return;
 
@@ -199,7 +233,7 @@ export function createRoomStore(deps: RoomStoreDeps) {
       const performer: RoomPerformer = {
         sessionKey: subagentKey,
         agentId,
-        agentName,
+        agentName: snapshotAgentName(deps, taskId, agentId),
         verifiedAt: new Date().toISOString(),
       };
 
@@ -233,7 +267,9 @@ export function createRoomStore(deps: RoomStoreDeps) {
         for (const sess of sessions) {
           if (!isSubagentSession(sess.key)) continue;
           const agentId = sess.agentId ?? parseAgentIdFromSessionKey(sess.key);
-          get().registerPerformerKey(taskId, sess.key, agentId, agentId);
+          // ⚠️ 这里从前传的是 `agentId, agentId` —— 第二个参数就是那个 bug 的一半。
+          // 现在名字由 store 统一解析，见 `registerPerformerKey` 的注释。
+          get().registerPerformerKey(taskId, sess.key, agentId);
         }
       } catch (err) {
         console.warn('[room-store] verifyCandidates failed:', err);

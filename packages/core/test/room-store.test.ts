@@ -91,7 +91,8 @@ describe('room-store persistence failures', () => {
     const store = createRoomStore(deps);
     await store.getState().hydrateRoom(taskId, sessionKey);
 
-    store.getState().registerPerformerKey(taskId, subagentKey, 'performer-1', 'Performer');
+    // ⚠️ 第 4 个参数（名字）已经**删掉**了 —— 写入方不再自己拼名字，见 T-a7。
+    store.getState().registerPerformerKey(taskId, subagentKey, 'performer-1');
     await flushMicrotasks();
 
     expect(warnSpy).toHaveBeenCalledWith('[room-store] persistPerformer failed:', err);
@@ -139,7 +140,8 @@ describe('room store', () => {
     });
     const store = createRoomStore(deps);
     await store.getState().hydrateRoom(taskId, sessionKey);
-    store.getState().registerPerformerKey(taskId, subagentKey, 'performer-1', 'Performer');
+    // ⚠️ 第 4 个参数（名字）已经**删掉**了 —— 写入方不再自己拼名字，见 T-a7。
+    store.getState().registerPerformerKey(taskId, subagentKey, 'performer-1');
 
     expect(store.getState().lookupTaskIdBySubagentKey(subagentKey)).toBe(taskId);
 

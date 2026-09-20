@@ -20,7 +20,10 @@ function handlePerformerCandidate(taskId: string, sessionKey: string): void {
   if (!room || room.status === 'stopped') return;
 
   const agentId = parseAgentIdFromSessionKey(sessionKey);
-  useRoomStore.getState().registerPerformerKey(taskId, sessionKey, agentId, agentId);
+  // ⚠️ 从前这里传的是 `agentId, agentId` —— 第二个参数就是 T-a7 那个 bug 的一半：
+  // 快照里存的是裸 id，不是「爆款内容教练」。名字现在由 store 统一解析
+  // （见 `createRoomStore` 的 `deps.resolveAgentName`），**写入方不再自己拼名字**。
+  useRoomStore.getState().registerPerformerKey(taskId, sessionKey, agentId);
   void syncSessionMessages(taskId, sessionKey).catch((err) => {
     console.error('[performer] syncSessionMessages failed:', err);
   });
