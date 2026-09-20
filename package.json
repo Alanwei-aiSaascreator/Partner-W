@@ -39,11 +39,13 @@
     "test:e2e:ledger": "playwright test --config=e2e/playwright.config.ts --project=packaged profile-ledger",
     "check:i18n": "node --test scripts/lib/i18n-usage.test.mjs && node scripts/check-i18n.mjs",
     "check:udisk-delivery": "node --test scripts/lib/udisk-delivery.test.mjs scripts/lib/udisk-archive.test.mjs scripts/lib/udisk-diagnose.test.mjs",
+    "check:gateway-probe": "node --test scripts/lib/gateway-probe.test.mjs",
     "udisk:delivery": "node scripts/udisk-delivery.mjs",
+    "gateway:probe": "node scripts/gateway-probe.mjs",
     "check:dead-code": "knip",
     "typecheck:e2e": "pnpm --filter @clawwork/desktop exec tsc --noEmit -p ../../e2e/tsconfig.json",
     "release-notes": "node scripts/generate-release-notes.mjs",
-    "check": "pnpm lint && pnpm check:architecture && pnpm check:ci-bot-security && pnpm check:ui-contract && pnpm check:renderer-copy && pnpm check:i18n && pnpm check:udisk-delivery && pnpm check:dead-code && pnpm format:check && pnpm typecheck && pnpm typecheck:tests && pnpm typecheck:e2e && pnpm test",
+    "check": "pnpm lint && pnpm check:architecture && pnpm check:ci-bot-security && pnpm check:ui-contract && pnpm check:renderer-copy && pnpm check:i18n && pnpm check:udisk-delivery && pnpm check:gateway-probe && pnpm check:dead-code && pnpm format:check && pnpm typecheck && pnpm typecheck:tests && pnpm typecheck:e2e && pnpm test",
     "udisk:archive": "node scripts/make-udisk-archive.mjs"
   },
   "lint-staged": {
