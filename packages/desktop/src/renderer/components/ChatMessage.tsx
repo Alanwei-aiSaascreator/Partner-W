@@ -1,19 +1,16 @@
 import { memo, useEffect, useRef, useState } from 'react';
-import type { ReactNode } from 'react';
 import { motion } from 'framer-motion';
 import type { Message } from '@clawwork/shared';
-import { Check, Copy, File, FileCode, Loader2, Save } from 'lucide-react';
+import { Check, Copy, FileCode, Loader2, Save } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 import { motion as motionPresets } from '@/styles/design-tokens';
 import { copyTextToClipboard } from '@/lib/clipboard';
-import { Button } from '@/components/ui/button';
+import AssistantBlock from './AssistantBlock';
+import { AttachmentFileCard, InlineImageBubble, MessageActionButton } from './MessageParts';
 import MessageAvatar from './MessageAvatar';
-import ThinkingSection from './ThinkingSection';
-import ToolCallSummary from './ToolCallSummary';
 import MarkdownContent from './MarkdownContent';
-import ArtifactCard from './ArtifactCard';
+import ToolCallSummary from './ToolCallSummary';
 
 interface ChatMessageProps {
   message: Message;
@@ -83,120 +80,13 @@ function FileBlockChip({
   );
 }
 
-function MessageActionButton({
-  title,
-  onClick,
-  children,
-  disabled = false,
-  tone = 'default',
-}: {
-  title: string;
-  onClick: () => void;
-  children: ReactNode;
-  disabled?: boolean;
-  tone?: 'default' | 'accent' | 'danger';
-}) {
-  return (
-    <Button
-      type="button"
-      variant="ghost"
-      size="icon-sm"
-      aria-label={title}
-      title={title}
-      disabled={disabled}
-      className={cn(
-        'h-7 w-7 rounded-md border-none bg-transparent shadow-none',
-        tone === 'default' && 'text-[var(--text-muted)] hover:text-[var(--text-primary)]',
-        tone === 'accent' && 'text-[var(--accent)] hover:text-[var(--accent)]',
-        tone === 'danger' && 'text-[var(--danger)] hover:text-[var(--danger)]',
-      )}
-      onClick={(event) => {
-        event.stopPropagation();
-        onClick();
-      }}
-    >
-      {children}
-    </Button>
-  );
-}
-
-function AttachmentFileCard({ attachment }: { attachment: { fileName: string; localPath?: string } }) {
-  const { t } = useTranslation();
-  const canOpen = Boolean(attachment.localPath);
-  return (
-    <button
-      type="button"
-      disabled={!canOpen}
-      onClick={async () => {
-        if (!attachment.localPath) return;
-        const res = await window.clawwork.openInboxFile(attachment.localPath);
-        if (!res.ok) toast.error(t('chatInput.openFailed', { fileName: attachment.fileName }));
-      }}
-      className={cn(
-        'inline-flex items-center gap-2 rounded-xl px-3 py-2 max-w-xs',
-        'border border-[var(--border-subtle)] bg-[var(--bg-tertiary)] text-[var(--text-secondary)]',
-        canOpen
-          ? 'cursor-pointer hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors'
-          : 'opacity-70 cursor-default',
-      )}
-      title={attachment.fileName}
-    >
-      <File size={16} className="flex-shrink-0" />
-      <span className="type-body truncate">{attachment.fileName}</span>
-    </button>
-  );
-}
-
-function InlineImageBubble({
-  attachment,
-  single,
-  onOpen,
-}: {
-  attachment: { fileName: string; dataUrl: string; mimeType?: string; localPath?: string; sourcePath?: string };
-  single: boolean;
-  onOpen?: (src: string) => void;
-}) {
-  const [src, setSrc] = useState(attachment.dataUrl);
-  useEffect(() => {
-    if (attachment.sourcePath) {
-      let aborted = false;
-      window.clawwork.readMediaFile(attachment.sourcePath).then((res) => {
-        if (aborted) return;
-        if (res.ok && res.result) {
-          setSrc(`data:${attachment.mimeType ?? 'image/png'};base64,${res.result.content}`);
-        }
-      });
-      return () => {
-        aborted = true;
-      };
-    }
-    if (!attachment.localPath) return;
-    if (attachment.dataUrl.startsWith('data:')) return;
-    let aborted = false;
-    window.clawwork.readInboxFile(attachment.localPath).then((res) => {
-      if (aborted) return;
-      if (res.ok && res.result) {
-        setSrc(`data:${attachment.mimeType ?? 'image/png'};base64,${res.result.content}`);
-      }
-    });
-    return () => {
-      aborted = true;
-    };
-  }, [attachment.localPath, attachment.sourcePath, attachment.mimeType, attachment.dataUrl]);
-  return (
-    <img
-      src={src}
-      alt={attachment.fileName}
-      className={cn(
-        'rounded-xl object-cover cursor-pointer border border-[var(--border-subtle)]',
-        'hover:opacity-90 transition-opacity',
-        single ? 'max-w-72 max-h-48' : 'w-20 h-20',
-      )}
-      onClick={() => onOpen?.(src)}
-    />
-  );
-}
-
+/**
+ * 一条消息的渲染入口：**用户 / 系统**消息在这里，**助手**那一格交给 `AssistantBlock`。
+ *
+ * ⚠️ 助手分支**必须**走 `AssistantBlock`（而不是自己在外面再包一层壳）：
+ *    同一个槽位还要渲染"等待中/流式"的助手块，两个组件类型换来换去 = 整块卸载重建 =
+ *    头像被换节点（2026-09-20 实机报障「头像会消失一下」）。见 `AssistantBlock.tsx` 顶部注释。
+ */
 const ChatMessage = memo(function ChatMessage({
   message,
   agentName,
@@ -281,6 +171,27 @@ const ChatMessage = memo(function ChatMessage({
     );
   }
 
+  if (!isUser) {
+    return (
+      <AssistantBlock
+        state="finalized"
+        message={message}
+        identity={{
+          agentName,
+          agentRoleLabel,
+          modelLabel,
+          modelTitle: message.model,
+          agentEmoji,
+          localAvatarUrl,
+          gatewayAvatarUrl,
+        }}
+        highlighted={highlighted}
+        onHighlightDone={onHighlightDone}
+        onImageClick={onImageClick}
+      />
+    );
+  }
+
   const canSaveMessage = Boolean(message.content.trim()) && Boolean(message.taskId) && Boolean(message.id);
 
   const handleCopy = (): void => {
@@ -312,42 +223,19 @@ const ChatMessage = memo(function ChatMessage({
       transition={motionPresets.messageEnter.transition}
       className={cn(
         'group/message flex gap-3.5 py-4',
-        isUser && 'flex-row-reverse mt-5',
+        'flex-row-reverse mt-5',
         highlighted && 'animate-highlight rounded-lg',
       )}
     >
       <MessageAvatar
-        role={isUser ? 'user' : 'assistant'}
+        role="user"
         agentEmoji={agentEmoji}
         localAvatarUrl={localAvatarUrl}
         gatewayAvatarUrl={gatewayAvatarUrl}
       />
 
-      <div className={cn('min-w-0 flex-1', isUser && 'text-right')}>
-        {!isUser && (agentName || agentRoleLabel || modelLabel) && (
-          <div className="mb-1.5 flex min-w-0 flex-wrap items-center gap-2 text-[var(--text-muted)]">
-            {agentName ? <div className="type-label truncate text-[var(--text-secondary)]">{agentName}</div> : null}
-            {agentRoleLabel ? (
-              <span className="type-meta inline-flex items-center rounded-full border border-[var(--border-subtle)] bg-[var(--bg-tertiary)] px-2 py-0.5 text-[var(--text-muted)]">
-                {agentRoleLabel}
-              </span>
-            ) : null}
-            {/* 这条回复实际是谁生成的 —— 取自网关逐条消息的 model，不是会话选中的模型。
-                模型自述不可信（会照抄历史里上一轮的答案），所以这枚徽章是用户唯一的可验证来源。 */}
-            {modelLabel ? (
-              <span
-                data-testid="model-badge"
-                title={message.model}
-                className="type-meta inline-flex items-center rounded-full border border-[var(--border-subtle)] bg-[var(--bg-tertiary)] px-2 py-0.5 text-[var(--text-muted)]"
-              >
-                {modelLabel}
-              </span>
-            ) : null}
-          </div>
-        )}
-        {!isUser && message.thinkingContent && <ThinkingSection content={message.thinkingContent} />}
-
-        {isUser && parsedFiles && (parsedFiles.files.length > 0 || parsedFiles.text) ? (
+      <div className="min-w-0 flex-1 text-right">
+        {parsedFiles && (parsedFiles.files.length > 0 || parsedFiles.text) ? (
           <div
             className={cn(
               'inline-block max-w-full text-left leading-relaxed rounded-2xl px-4 py-3',
@@ -376,7 +264,7 @@ const ChatMessage = memo(function ChatMessage({
           </div>
         ) : null}
         {attachments?.length ? (
-          <div className={cn('flex gap-2 mt-2 flex-wrap', isUser ? 'justify-end' : 'justify-start')}>
+          <div className="flex gap-2 mt-2 flex-wrap justify-end">
             {attachments.map((attachment, i) => {
               const isImage = !attachment.mimeType || attachment.mimeType.startsWith('image/');
               return isImage ? (
@@ -392,69 +280,34 @@ const ChatMessage = memo(function ChatMessage({
             })}
           </div>
         ) : null}
-        {!isUser && message.artifacts.length > 0 ? (
-          <div className="mt-2 grid max-w-2xl gap-2 sm:grid-cols-2">
-            {message.artifacts.map((artifact) => (
-              <ArtifactCard key={artifact.id} artifact={artifact} assistantLabel={agentName} />
-            ))}
-          </div>
-        ) : null}
         {message.toolCalls.length > 0 && <ToolCallSummary toolCalls={message.toolCalls} />}
-        {isUser
-          ? message.content.trim() && (
-              <div className="mt-1.5 flex justify-end gap-1 opacity-0 transition-opacity group-hover/message:opacity-100 focus-within:opacity-100">
-                {canSaveMessage && (
-                  <MessageActionButton
-                    title={t('contextMenu.saveToMarkdown')}
-                    onClick={handleSaveMessage}
-                    disabled={saveState === 'saving'}
-                    tone={saveState === 'saved' ? 'accent' : saveState === 'error' ? 'danger' : 'default'}
-                  >
-                    {saveState === 'saving' ? (
-                      <Loader2 size={14} className="animate-spin" />
-                    ) : saveState === 'saved' ? (
-                      <Check size={14} />
-                    ) : (
-                      <Save size={14} />
-                    )}
-                  </MessageActionButton>
+        {message.content.trim() && (
+          <div className="mt-1.5 flex justify-end gap-1 opacity-0 transition-opacity group-hover/message:opacity-100 focus-within:opacity-100">
+            {canSaveMessage && (
+              <MessageActionButton
+                title={t('contextMenu.saveToMarkdown')}
+                onClick={handleSaveMessage}
+                disabled={saveState === 'saving'}
+                tone={saveState === 'saved' ? 'accent' : saveState === 'error' ? 'danger' : 'default'}
+              >
+                {saveState === 'saving' ? (
+                  <Loader2 size={14} className="animate-spin" />
+                ) : saveState === 'saved' ? (
+                  <Check size={14} />
+                ) : (
+                  <Save size={14} />
                 )}
-                <MessageActionButton
-                  title={copied ? t('chatMessage.copied') : t('chatMessage.copyMessage')}
-                  onClick={handleCopy}
-                  tone={copied ? 'accent' : 'default'}
-                >
-                  {copied ? <Check size={14} /> : <Copy size={14} />}
-                </MessageActionButton>
-              </div>
-            )
-          : message.content.trim() && (
-              <div className="mt-1.5 flex items-center gap-1 opacity-0 transition-opacity group-hover/message:opacity-100 focus-within:opacity-100">
-                {canSaveMessage && (
-                  <MessageActionButton
-                    title={t('contextMenu.saveToMarkdown')}
-                    onClick={handleSaveMessage}
-                    disabled={saveState === 'saving'}
-                    tone={saveState === 'saved' ? 'accent' : saveState === 'error' ? 'danger' : 'default'}
-                  >
-                    {saveState === 'saving' ? (
-                      <Loader2 size={14} className="animate-spin" />
-                    ) : saveState === 'saved' ? (
-                      <Check size={14} />
-                    ) : (
-                      <Save size={14} />
-                    )}
-                  </MessageActionButton>
-                )}
-                <MessageActionButton
-                  title={copied ? t('chatMessage.copied') : t('chatMessage.copyMessage')}
-                  onClick={handleCopy}
-                  tone={copied ? 'accent' : 'default'}
-                >
-                  {copied ? <Check size={14} /> : <Copy size={14} />}
-                </MessageActionButton>
-              </div>
+              </MessageActionButton>
             )}
+            <MessageActionButton
+              title={copied ? t('chatMessage.copied') : t('chatMessage.copyMessage')}
+              onClick={handleCopy}
+              tone={copied ? 'accent' : 'default'}
+            >
+              {copied ? <Check size={14} /> : <Copy size={14} />}
+            </MessageActionButton>
+          </div>
+        )}
       </div>
     </motion.div>
   );

@@ -17,6 +17,10 @@ export default function MessageAvatar({ role, agentEmoji, localAvatarUrl, gatewa
 
   return (
     <div
+      // 探针/测试用：一个助手块在"等待→流式→定稿→收编"之间换的是**状态**不是节点，
+      // 而肉眼能看出来的就是这颗头像。给它一个稳定的抓手，才钉得住"同一个节点"。
+      data-testid="message-avatar"
+      data-role={role}
       className={cn(
         'flex-shrink-0 size-[var(--density-avatar-size)] rounded-full flex items-center justify-center overflow-hidden',
         role === 'user' ? 'bg-[var(--bg-tertiary)]' : !showImg && 'bg-[var(--accent-dim)]',

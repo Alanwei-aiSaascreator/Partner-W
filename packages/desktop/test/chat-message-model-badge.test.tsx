@@ -6,7 +6,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Message } from '@clawwork/shared';
 import '../src/renderer/i18n';
 import ChatMessage from '../src/renderer/components/ChatMessage';
-import StreamingMessage from '../src/renderer/components/StreamingMessage';
+// 流式那一格现在与定稿态是**同一个组件**（`StreamingMessage` 已并入 `AssistantBlock`），
+// 只是 `state="streaming"`。见 `AssistantBlock.tsx` 顶部注释。
+import AssistantBlock from '../src/renderer/components/AssistantBlock';
 
 vi.mock('framer-motion', async () => {
   const React = await import('react');
@@ -122,7 +124,13 @@ describe('per-message model badge', () => {
   // finalize 之后由 canonical 消息带出来。
   it('流式期间不显示徽章（这一刻还不知道是谁生成的）', () => {
     const { container, unmount } = render(
-      <StreamingMessage content="正在回复" thinkingContent="" toolCalls={[]} agentName="助手" />,
+      <AssistantBlock
+        state="streaming"
+        content="正在回复"
+        thinkingContent=""
+        toolCalls={[]}
+        identity={{ agentName: '助手' }}
+      />,
     );
     cleanups.push(unmount);
 

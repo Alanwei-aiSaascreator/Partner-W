@@ -18,7 +18,8 @@ vi.mock('framer-motion', () => ({
 }));
 
 import ToolCallSummary from '../src/renderer/components/ToolCallSummary';
-import StreamingMessage from '../src/renderer/components/StreamingMessage';
+// 流式那一格现在是 `AssistantBlock` 的 `state="streaming"`（`StreamingMessage` 已并入）。
+import AssistantBlock from '../src/renderer/components/AssistantBlock';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -139,10 +140,12 @@ describe('工具过程显示"做了什么操作"', () => {
   });
 });
 
-describe('StreamingMessage tool activity', () => {
+describe('AssistantBlock tool activity', () => {
   it('renders all streaming calls through one shared compact summary', () => {
     const calls = Array.from({ length: 10 }, (_, index) => call(String(index), index < 8 ? 'ls' : 'exec'));
-    const { container, unmount } = render(<StreamingMessage content="" toolCalls={calls} />);
+    const { container, unmount } = render(
+      <AssistantBlock state="streaming" content="" toolCalls={calls} identity={{ agentName: '助手' }} />,
+    );
 
     expect(container.querySelectorAll('[data-testid="tool-activity-summary"]')).toHaveLength(1);
     expect(container.querySelectorAll('[data-testid="tool-call-card"]')).toHaveLength(0);

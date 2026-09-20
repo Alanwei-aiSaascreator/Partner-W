@@ -6,7 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Message } from '@clawwork/shared';
 import '../src/renderer/i18n';
 import ChatMessage from '../src/renderer/components/ChatMessage';
-import StreamingMessage from '../src/renderer/components/StreamingMessage';
+// 流式那一格现在是 `AssistantBlock` 的 `state="streaming"`（`StreamingMessage` 已并入）。
+import AssistantBlock from '../src/renderer/components/AssistantBlock';
 
 vi.mock('framer-motion', async () => {
   const React = await import('react');
@@ -139,7 +140,11 @@ describe('chat message copy actions', () => {
 
   it('shows a copy button for fenced code blocks and copies only the code', async () => {
     const { container, unmount } = render(
-      <StreamingMessage content={'```ts\nconst alpha = 1;\nconst beta = alpha + 1;\n```'} />,
+      <AssistantBlock
+        state="streaming"
+        content={'```ts\nconst alpha = 1;\nconst beta = alpha + 1;\n```'}
+        identity={{ agentName: '助手' }}
+      />,
     );
     cleanups.push(unmount);
 

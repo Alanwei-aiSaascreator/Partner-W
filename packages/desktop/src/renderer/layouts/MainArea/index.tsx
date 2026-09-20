@@ -39,8 +39,8 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover';
 import ChatMessage from '@/components/ChatMessage';
+import AssistantBlock from '@/components/AssistantBlock';
 import { useRetryLastTurn, useRetryableErrorMessageId } from '@/hooks/useRetryLastTurn';
-import StreamingMessage from '@/components/StreamingMessage';
 import ChatInput from '@/components/ChatInput';
 import QuestionPanel from '@/components/QuestionPanel';
 import type { DraftPromptRequest, DraftPromptResolution } from '@/components/ChatInput/types';
@@ -755,17 +755,42 @@ export function ChatContent({
     [activeTurnBySession, processingBySession, sessionKeys],
   );
   const timelineItems = useMemo(() => {
-    const messageItems = messages.map((message) => ({
-      key: message.id,
-      timestamp: message.timestamp,
-      kind: 'message' as const,
-      message,
-    }));
+    // 助手那一格用的是**会话内稳定的槽位号**：`assistant-<会话>#<第几条>`。
+    //
+    // 为什么要按"第几条"编，而不是用消息 id / `turn-<会话>`：
+    //   同一个槽位要经历 **等待 → 流式 → 定稿 → 收编成正式消息**，四步都得是同一个 DOM 节点，
+    //   而 React 只在"同一父节点 + 同一 key + 同一类型"时才复用节点。
+    //   收编那一刻（现场日志：定稿后 **+95ms**）active turn 被删、答复作为正式消息追加进来 ⇒
+    //   如果正式消息用的还是自己的 id，节点就会换一次（用户看到的第二次闪）。
+    //   "第几条助手消息"这个号在**一进一出之间是不变的**：追加进来的是第 N+1 条，
+    //   而刚才那个 turn 项算出来也是第 N+1 条 ⇒ 两者天然接得上。
+    //   ⚠️ 它只在"往后追加"时不抖；历史被**前插**（换任务重新水合）时序号会整体挪一格，
+    //      那一刻本来就在换屏，可以接受。
+    const assistantCountBySession = new Map<string, number>();
+    for (const message of messages) {
+      if (message.role !== 'assistant') continue;
+      const session = message.sessionKey ?? '';
+      assistantCountBySession.set(session, (assistantCountBySession.get(session) ?? 0) + 1);
+    }
+    const liveAssistantKey = (sessionKey: string): string =>
+      `assistant-${sessionKey}#${(assistantCountBySession.get(sessionKey) ?? 0) + 1}`;
+
+    const seenAssistantBySession = new Map<string, number>();
+    const messageItems = messages.map((message) => {
+      let key: string = message.id;
+      if (message.role === 'assistant') {
+        const session = message.sessionKey ?? '';
+        const ordinal = (seenAssistantBySession.get(session) ?? 0) + 1;
+        seenAssistantBySession.set(session, ordinal);
+        key = `assistant-${session}#${ordinal}`;
+      }
+      return { key, timestamp: message.timestamp, kind: 'message' as const, message };
+    });
     const turnItems: TimelineItem[] = activeTurns.map(({ sessionKey, turn }) => ({
       // ⚠️ key 里**不带 `turn.id`**：等待态那一项（turn 还没建出来）要用**同一个 key**。
       //    同一个会话同时只可能有一个进行中的 turn ⇒ 不会撞。
       //    带上 id 的后果：等待态与流式态是两个节点 ⇒ 头像被卸载重建 ⇒ 闪一下（2026-09-20 报障）。
-      key: `turn-${sessionKey}`,
+      key: liveAssistantKey(sessionKey),
       timestamp: turn.timestamp,
       kind: 'turn' as const,
       sessionKey,
@@ -774,14 +799,15 @@ export function ChatContent({
 
     // ⭐ 等待态是**同一个数组里的一项**，而不是列表外面的一块。
     //
-    // ⚠️ 这一条是踩出来的：一开始把它写成 `{waitingSessionKey ? <StreamingMessage/> : null}` 放在
+    // ⚠️ 这一条是踩出来的：一开始把它写成 `{waitingSessionKey ? <AssistantBlock/> : null}` 放在
     //    `timelineItems.map()` **后面** —— 于是"等待 → 收到内容"时，这一块从**数组外**挪到了
     //    **数组内**。React 对"数组 vs 单个子元素"是两个不同的槽位，**key 一样也没用**：
     //    实测（`chat-send-stability.test.tsx`）父节点、key、类型全都相同，节点照样被重建。
     //    ⇒ 放进同一个数组，槽位才真的不变。
-    if (waitingSessionKey && !turnItems.some((item) => item.key === `turn-${waitingSessionKey}`)) {
+    const waitingKey = waitingSessionKey ? liveAssistantKey(waitingSessionKey) : null;
+    if (waitingSessionKey && waitingKey && !turnItems.some((item) => item.key === waitingKey)) {
       turnItems.push({
-        key: `turn-${waitingSessionKey}`,
+        key: waitingKey,
         // 固定哨兵值：等待中的那一块永远排在最后（它确实是"此刻正在发生的事"）。
         // ⚠️ 不能写 `Date.now()` —— 每次渲染都会变，排序结果跟着抖。
         timestamp: WAITING_ITEM_TIMESTAMP,
@@ -916,47 +942,65 @@ export function ChatContent({
               )}
             >
               {timelineItems.map((item, index) => {
-                if (item.kind === 'message') {
-                  const previous = index > 0 ? timelineItems[index - 1] : null;
-                  const previousRole = previous?.kind === 'message' ? previous.message.role : 'assistant';
-                  const identity =
-                    item.message.role === 'assistant'
-                      ? resolveAssistantIdentity({
-                          task: activeTask,
-                          sessionKey: item.message.sessionKey,
-                          agentId: item.message.agentId,
-                          gatewayId: activeTask?.gatewayId,
-                          performerBySessionKey,
-                          performerByAgentId,
-                          catalogAgentById,
-                          conductorLabel,
-                        })
-                      : undefined;
-                  return (
-                    <div
-                      key={item.key}
-                      className={cn(index > 0 && item.message.role === 'user' && previousRole !== 'user' && 'pt-3')}
-                    >
+                const previous = index > 0 ? timelineItems[index - 1] : null;
+                const previousRole = previous?.kind === 'message' ? previous.message.role : 'assistant';
+                // ⚠️ **每一项都包在同一个 `div` 里**（连"进行中"那一项也是）：
+                //    助手那一格要从"等待 → 流式 → 定稿 → 收编成正式消息"一路是同一个 DOM 节点，
+                //    而"收编"那次是 turn 项被删、消息项被加 —— 只要其中一个不带这层 wrapper，
+                //    React 看到的父节点就变了 ⇒ 整个助手块照样被卸载重建（实测抓到 `移除[BLOCK]`）。
+                const wrapperClass = cn(
+                  index > 0 &&
+                    item.kind === 'message' &&
+                    item.message.role === 'user' &&
+                    previousRole !== 'user' &&
+                    'pt-3',
+                );
+
+                const renderTile = () => {
+                  if (item.kind === 'message') {
+                    const message = item.message;
+                    if (message.role === 'assistant') {
+                      const identity = resolveAssistantIdentity({
+                        task: activeTask,
+                        sessionKey: message.sessionKey,
+                        agentId: message.agentId,
+                        gatewayId: activeTask?.gatewayId,
+                        performerBySessionKey,
+                        performerByAgentId,
+                        catalogAgentById,
+                        conductorLabel,
+                      });
+                      return (
+                        <AssistantBlock
+                          state="finalized"
+                          message={message}
+                          identity={{
+                            ...identity,
+                            // 这条回复**实际**是谁生成的 —— 取自网关逐条消息的 model，
+                            // 不是会话选中的模型（模型自述不可信，这枚徽章是唯一的可验证来源）。
+                            modelLabel: resolveModelLabel(message.model, modelCatalog),
+                            modelTitle: message.model,
+                          }}
+                          highlighted={message.id === highlightedId}
+                          onHighlightDone={handleHighlightDone}
+                          onImageClick={setLightboxSrc}
+                        />
+                      );
+                    }
+                    return (
                       <ChatMessage
-                        message={item.message}
-                        agentName={identity?.agentName}
-                        agentEmoji={identity?.agentEmoji}
-                        localAvatarUrl={identity?.localAvatarUrl}
-                        gatewayAvatarUrl={identity?.gatewayAvatarUrl}
-                        agentRoleLabel={identity?.agentRoleLabel}
-                        modelLabel={resolveModelLabel(item.message.model, modelCatalog)}
-                        highlighted={item.message.id === highlightedId}
+                        message={message}
+                        modelLabel={resolveModelLabel(message.model, modelCatalog)}
+                        highlighted={message.id === highlightedId}
                         onHighlightDone={handleHighlightDone}
                         onImageClick={setLightboxSrc}
                         onFileClick={setPreviewFile}
-                        retryable={item.message.id === retryableErrorMessageId}
-                        onRetry={() => retryLastTurn(item.message.id)}
+                        retryable={message.id === retryableErrorMessageId}
+                        onRetry={() => retryLastTurn(message.id)}
                       />
-                    </div>
-                  );
-                }
+                    );
+                  }
 
-                if (item.turn?.finalized && item.turn.content) {
                   const identity = resolveAssistantIdentity({
                     task: activeTask,
                     sessionKey: item.sessionKey,
@@ -967,67 +1011,55 @@ export function ChatContent({
                     catalogAgentById,
                     conductorLabel,
                   });
-                  return (
-                    <ChatMessage
-                      key={item.key}
-                      message={activeTurnToMessage(item.turn, activeTaskId!, item.sessionKey)}
-                      agentName={identity.agentName}
-                      agentEmoji={identity.agentEmoji}
-                      localAvatarUrl={identity.localAvatarUrl}
-                      gatewayAvatarUrl={identity.gatewayAvatarUrl}
-                      agentRoleLabel={identity.agentRoleLabel}
-                      highlighted={false}
-                      onHighlightDone={handleHighlightDone}
-                      onImageClick={setLightboxSrc}
-                      onFileClick={setPreviewFile}
-                    />
-                  );
-                }
 
-                // 剩下两种情形**共用这一个分支**（这才是"头像不闪"的关键）：
-                //   ① 已经有内容 —— 流式正文/推理/工具；
-                //   ② 轮到它"等待中"（`pickWaitingSessionKey` 选中的会话）—— 可能 `turn`
-                //      还没建出来（`item.turn === undefined`），也可能建了但什么都还没到。
-                //
-                // ⚠️ 它们必须落在**同一个数组槽位 + 同一个 key + 同一个组件**上，React 才复用
-                //    同一个 DOM 节点。拆成"数组内 / 数组外"两处渲染时，key 一样也照样重建
-                //    —— 2026-09-20 实测：父节点、key、组件类型全都相同，节点还是被换掉（测试里
-                //    那两条 `expect(after).toBe(waiting)`）。
-                const turnHasContent = Boolean(
-                  item.turn &&
-                  (item.turn.streamingText || item.turn.streamingThinking || item.turn.toolCalls.length > 0),
+                  if (item.turn?.finalized && item.turn.content) {
+                    return (
+                      <AssistantBlock
+                        state="finalized"
+                        message={activeTurnToMessage(item.turn, activeTaskId!, item.sessionKey)}
+                        identity={identity}
+                        onImageClick={setLightboxSrc}
+                      />
+                    );
+                  }
+
+                  // 剩下两种情形**共用这一个分支**（这才是"头像不闪"的关键）：
+                  //   ① 已经有内容 —— 流式正文/推理/工具；
+                  //   ② 轮到它"等待中"（`pickWaitingSessionKey` 选中的会话）—— 可能 `turn`
+                  //      还没建出来（`item.turn === undefined`），也可能建了但什么都还没到。
+                  //
+                  // ⚠️ 它们必须落在**同一个数组槽位 + 同一个 key + 同一个组件**上，React 才复用
+                  //    同一个 DOM 节点。拆成"数组内 / 数组外"两处渲染时，key 一样也照样重建
+                  //    —— 2026-09-20 实测：父节点、key、组件类型全都相同，节点还是被换掉（测试里
+                  //    那两条 `expect(after).toBe(waiting)`）。
+                  const turnHasContent = Boolean(
+                    item.turn &&
+                    (item.turn.streamingText || item.turn.streamingThinking || item.turn.toolCalls.length > 0),
+                  );
+                  if (turnHasContent || item.sessionKey === waitingSessionKey) {
+                    return (
+                      <AssistantBlock
+                        state="streaming"
+                        content={item.turn?.streamingText ?? ''}
+                        thinkingContent={item.turn?.streamingThinking || undefined}
+                        toolCalls={item.turn?.toolCalls ?? EMPTY_TOOL_CALLS}
+                        identity={identity}
+                      />
+                    );
+                  }
+
+                  return null;
+                };
+
+                return (
+                  <div key={item.key} className={wrapperClass}>
+                    {renderTile()}
+                  </div>
                 );
-                if (turnHasContent || item.sessionKey === waitingSessionKey) {
-                  const identity = resolveAssistantIdentity({
-                    task: activeTask,
-                    sessionKey: item.sessionKey,
-                    agentId: parseAgentIdFromSessionKey(item.sessionKey),
-                    gatewayId: activeTask?.gatewayId,
-                    performerBySessionKey,
-                    performerByAgentId,
-                    catalogAgentById,
-                    conductorLabel,
-                  });
-                  return (
-                    <StreamingMessage
-                      key={item.key}
-                      content={item.turn?.streamingText ?? ''}
-                      thinkingContent={item.turn?.streamingThinking || undefined}
-                      toolCalls={item.turn?.toolCalls ?? EMPTY_TOOL_CALLS}
-                      agentEmoji={identity.agentEmoji}
-                      localAvatarUrl={identity.localAvatarUrl}
-                      gatewayAvatarUrl={identity.gatewayAvatarUrl}
-                      agentName={identity.agentName}
-                      agentRoleLabel={identity.agentRoleLabel}
-                    />
-                  );
-                }
-
-                return null;
               })}
               {/*
                 ⚠️ 这里**原来还有一块**等待指示器（`AnimatePresence` + `ThinkingIndicator`），
-                2026-09-20 删掉了：它和 `StreamingMessage` 是**两个组件、两个头像**，内容一到
+                2026-09-20 删掉了：它和流式块是**两个组件、两个头像**，内容一到
                 占位淡出、流式块淡入 ⇒ **同一帧里两个头像并存**（MutationObserver 实测抓到
                 `头像=2` + 跳动点=3）= 用户说的「我发完要求，那个对话头像会消失一下」。
 

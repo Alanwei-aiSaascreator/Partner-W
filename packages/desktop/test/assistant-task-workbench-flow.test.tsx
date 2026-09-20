@@ -133,7 +133,9 @@ vi.mock('../src/renderer/components/ChatInput', async (importOriginal) => {
   };
 });
 vi.mock('../src/renderer/components/ChatMessage', () => ({ default: () => null }));
-vi.mock('../src/renderer/components/StreamingMessage', () => ({ default: () => null }));
+// 助手那一格（等待/流式/定稿）现在统一是 `AssistantBlock`（`StreamingMessage` 已并入）；
+// 这份用例只关心草稿流，助手块照旧桩成空。
+vi.mock('../src/renderer/components/AssistantBlock', () => ({ default: () => null }));
 vi.mock('../src/renderer/components/ThinkingIndicator', () => ({ default: () => null }));
 vi.mock('../src/renderer/components/ImageLightbox', () => ({ default: () => null }));
 vi.mock('../src/renderer/components/FilePreviewModal', () => ({ default: () => null }));

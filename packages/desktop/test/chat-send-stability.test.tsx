@@ -50,15 +50,20 @@ vi.mock('react-i18next', () => ({
   initReactI18next: { type: '3rdParty', init: vi.fn() },
 }));
 
-vi.mock('framer-motion', () => ({
-  AnimatePresence: ({ children }: { children: ReactNode }) => children,
-  motion: {
-    div: ({ children, className }: { children?: ReactNode; className?: string }) => (
-      <div className={className}>{children}</div>
-    ),
-  },
-  useReducedMotion: () => true,
-}));
+vi.mock('framer-motion', () => {
+  // ⚠️ 必须把 `data-testid` 之类的**普通 props 透传下去**：只转发 `className` 的假 div 会让
+  //    `[data-testid="assistant-block"]` 永远查不到 —— 于是"块不见了"这种假红，掩盖真问题。
+  //    （同样的自伤形状：假组件每次返回新类型 ⇒ React 每渲染都当换组件卸载重建。）
+  const MOTION_ONLY = new Set(['initial', 'animate', 'exit', 'transition', 'variants', 'whileHover', 'whileTap']);
+  const div = ({ children, ...rest }: { children?: ReactNode } & Record<string, unknown>) => (
+    <div {...Object.fromEntries(Object.entries(rest).filter(([key]) => !MOTION_ONLY.has(key)))}>{children}</div>
+  );
+  return {
+    AnimatePresence: ({ children }: { children: ReactNode }) => children,
+    motion: { div },
+    useReducedMotion: () => true,
+  };
+});
 
 vi.mock('../src/renderer/components/ui/button', () => ({
   Button: ({ children, ...props }: ButtonHTMLAttributes<HTMLButtonElement>) => <button {...props}>{children}</button>,
@@ -129,11 +134,10 @@ vi.mock('../src/renderer/components/ChatInput', async (importOriginal) => {
     },
   };
 });
+// 只有**用户/系统**消息还走 `ChatMessage`；助手那一格现在统一是 `AssistantBlock`
+//（真身 —— 它带真头像，那正是本文件要盯的东西），身体里的组件不必桩。
 vi.mock('../src/renderer/components/ChatMessage', () => ({
   default: ({ message }: { message: { content: string } }) => <div data-testid="chat-message">{message.content}</div>,
-}));
-vi.mock('../src/renderer/components/StreamingMessage', () => ({
-  default: ({ content }: { content: string }) => <div data-testid="streaming-message">{content}</div>,
 }));
 vi.mock('../src/renderer/components/ThinkingIndicator', () => ({ default: () => null }));
 vi.mock('../src/renderer/components/ImageLightbox', () => ({ default: () => null }));
@@ -430,7 +434,8 @@ vi.mock('@clawwork/core', async (importOriginal) => {
     ...actual,
     RUN_PHASE_IDS: [],
     EMPTY_MESSAGES: [],
-    activeTurnToMessage: vi.fn(),
+    // `activeTurnToMessage` 是**纯函数**，用真身 —— 桩成 `vi.fn()` 的话，
+    // 定稿那一路会拿到 `undefined`（"定稿块"根本渲染不出来，测的就成了另一回事）。
     serializeIdentityMd: vi.fn(),
   };
 });
@@ -588,8 +593,8 @@ describe('聊天区在发送时的稳定性', () => {
    * `StreamingMessage`（另一个头像）——两个块各自淡入淡出，同一帧里**两个头像并存**
    * （MutationObserver 实测抓到 `头像=2` + 跳动点=3）。用户看到的就是"头像闪一下"。
    *
-   * 修法：等待态也走 `StreamingMessage`、**用同一个 key**，React 复用同一个 DOM 节点。
-   * 这条断言守的就是"复用"本身 —— 只要节点还是同一个，头像就不可能闪。
+   * 修法：等待态也走**同一个助手块**（`AssistantBlock`）、**用同一个 key**，React 复用同一个
+   * DOM 节点。这条断言守的就是"复用"本身 —— 只要节点还是同一个，头像就不可能闪。
    */
   it('⭐ 等待中 → 收到内容：助手块必须是**同一个 DOM 节点**（否则头像会闪一下）', () => {
     const SESSION = 'agent:rongying-content:clawwork:abc:task:task-1';
@@ -601,18 +606,7 @@ describe('聊天区在发送时的稳定性', () => {
     messageState.activeTurnBySession = {};
 
     const view = renderMainArea();
-    const waiting = view.container.querySelector('[data-testid="streaming-message"]');
-    const parentBefore = waiting?.parentElement ?? null;
-    if (process.env.DBG)
-      console.log(
-        'BEFORE-PARENT',
-        waiting?.parentElement?.tagName,
-        waiting?.parentElement?.className,
-        'CHILDREN',
-        waiting?.parentElement?.children.length,
-        'HTML',
-        waiting?.parentElement?.innerHTML?.slice(0, 300),
-      );
+    const waiting = view.container.querySelector('[data-testid="assistant-block"]');
     expect(waiting, '等待态也应该有一个助手块（头像+名字），而不是另一个组件').not.toBeNull();
 
     // 第一段内容到了（推理先来）
@@ -629,31 +623,124 @@ describe('聊天区在发送时的稳定性', () => {
     };
     view.rerender();
 
-    const after = view.container.querySelector('[data-testid="streaming-message"]');
-    if (process.env.DBG) {
-      let anc = 0;
-      let x = after?.parentElement;
-      let y = parentBefore;
-      while (x && y && x === y) {
-        anc++;
-        x = x.parentElement;
-        y = y.parentElement;
-      }
-      console.log(
-        'SAME-ANCESTOR-DEPTH',
-        anc,
-        'PARENT-SAME',
-        after?.parentElement === parentBefore,
-        'DIVERGED-AT',
-        x?.tagName,
-        x?.className?.slice(0, 60),
-        'vs',
-        y?.tagName,
-        y?.className?.slice(0, 60),
-      );
-    }
+    const after = view.container.querySelector('[data-testid="assistant-block"]');
     expect(after, '内容到了之后助手块不能消失').not.toBeNull();
     expect(after, '必须是同一个节点 —— 换了节点就等于头像被卸载重建了一次').toBe(waiting);
+    view.unmount();
+  });
+
+  /**
+   * 2026-09-20 另一道口子（队列 T-a12）：**定稿那一刻**。
+   *
+   * 流式态与定稿态原来分别是 `StreamingMessage` 与 `ChatMessage` **两个组件**
+   * ⇒ key 相同也没用，React 照样把整块（含头像）卸载重建。
+   * 修法=抽出一个共享的助手块，两种状态只是**身体不同**。
+   */
+  it('⭐ 流式 → 定稿：助手块与头像都必须是**同一个 DOM 节点**', () => {
+    const SESSION = 'agent:rongying-content:clawwork:abc:task:task-1';
+    mocks.tasks = [activeTask()];
+    mocks.activeTaskId = 'task-1';
+    mocks.messagesByTask = { 'task-1': [userMessage('msg-1', '你好')] };
+    messageState.processingBySession = new Set([SESSION]);
+    messageState.activeTurnBySession = {
+      [SESSION]: {
+        id: 'turn-1',
+        streamingText: '正在写…',
+        streamingThinking: '',
+        toolCalls: [],
+        finalized: false,
+        content: '',
+        timestamp: '2026-09-20T00:00:00.000Z',
+      },
+    };
+
+    const view = renderMainArea();
+    const block = view.container.querySelector('[data-testid="assistant-block"]');
+    const avatar = view.container.querySelector('[data-testid="message-avatar"]');
+    expect(block, '流式态该有助手块').not.toBeNull();
+    expect(avatar, '块里该有头像').not.toBeNull();
+    expect(view.container.textContent).toContain('正在写…');
+
+    // 定稿：`finalizeStream` 那一次 set —— 正文从流式那份搬到 content
+    messageState.activeTurnBySession = {
+      [SESSION]: {
+        id: 'turn-1',
+        streamingText: '',
+        streamingThinking: '',
+        toolCalls: [],
+        finalized: true,
+        content: '答好了',
+        timestamp: '2026-09-20T00:00:00.000Z',
+      },
+    };
+    view.rerender();
+
+    // 判据（队列 T-a12 原文）：定稿前后 `头像` 必须是同一个 DOM 节点。
+    expect(view.container.querySelector('[data-testid="assistant-block"]'), '整块必须是同一个节点').toBe(block);
+    expect(view.container.querySelector('[data-testid="message-avatar"]'), '头像必须是同一个节点').toBe(avatar);
+    expect(view.container.textContent, '身体确实换成了定稿那一版').toContain('答好了');
+    expect(view.container.textContent).not.toContain('正在写…');
+    view.unmount();
+  });
+
+  /**
+   * 2026-09-20 现场日志定的第三道口子：**收编**。
+   *
+   * 实测（`debug-2026-09-20.1.ndjson`）：`renderer.chat.finalized` 之后 **+85ms** 就发出
+   * `chat.history`、**+95ms** 收到（这段历史里**已经带着**刚生成的那条答复）⇒
+   * `promoteActiveTurn` 当场把 active turn 删掉、把答复作为正式消息追加进时间线。
+   * 于是"定稿块"只活了 ~95ms 就被换成一个**新 key + 新父节点**的块（消息项外面还包了一层
+   * `div`）——用户看到的是第二次闪。
+   *
+   * 修法=助手那一格用**会话内稳定的 key**（`assistant-<会话>#<第几条>`），并且时间线每一项
+   * 都包在同一个 `div` 里 ⇒ 收编前后 `key`、父节点、组件类型全不变。
+   */
+  it('⭐ 定稿 → 收编成正式消息：助手块与头像还是**同一个 DOM 节点**', () => {
+    const SESSION = 'agent:rongying-content:clawwork:abc:task:task-1';
+    mocks.tasks = [activeTask()];
+    mocks.activeTaskId = 'task-1';
+    mocks.messagesByTask = { 'task-1': [userMessage('msg-1', '你好')] };
+    messageState.processingBySession = new Set([SESSION]);
+    messageState.activeTurnBySession = {
+      [SESSION]: {
+        id: 'turn-1',
+        streamingText: '',
+        streamingThinking: '',
+        toolCalls: [],
+        finalized: true,
+        content: '答好了',
+        timestamp: '2026-09-20T00:00:00.000Z',
+      },
+    };
+
+    const view = renderMainArea();
+    const block = view.container.querySelector('[data-testid="assistant-block"]');
+    const avatar = view.container.querySelector('[data-testid="message-avatar"]');
+    expect(block, '定稿态该有助手块').not.toBeNull();
+
+    // `promoteActiveTurn`：一次 set 里"删掉 active turn + 追加正式消息"
+    messageState.activeTurnBySession = {};
+    mocks.messagesByTask = {
+      'task-1': [
+        userMessage('msg-1', '你好'),
+        {
+          id: 'msg-2',
+          taskId: 'task-1',
+          role: 'assistant',
+          content: '答好了',
+          artifacts: [],
+          toolCalls: [],
+          sessionKey: SESSION,
+          agentId: 'rongying-content',
+          timestamp: '2026-09-20T00:00:01.000Z',
+        },
+      ],
+    };
+    view.rerender();
+
+    expect(view.container.querySelector('[data-testid="assistant-block"]'), '块必须是同一个节点').toBe(block);
+    expect(view.container.querySelector('[data-testid="message-avatar"]'), '头像必须是同一个节点').toBe(avatar);
+    expect(view.container.textContent).toContain('答好了');
     view.unmount();
   });
 
@@ -676,7 +763,7 @@ describe('聊天区在发送时的稳定性', () => {
 
     const view = renderMainArea();
     const message = view.container.querySelector('[data-testid="chat-message"]');
-    const waiting = view.container.querySelector('[data-testid="streaming-message"]');
+    const waiting = view.container.querySelector('[data-testid="assistant-block"]');
     expect(waiting, '等待态该有一个助手块').not.toBeNull();
     expect(message, '那条消息该在').not.toBeNull();
     expect(
