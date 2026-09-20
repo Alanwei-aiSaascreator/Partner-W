@@ -435,6 +435,13 @@ export function createSessionSync(deps: SessionSyncDeps) {
           inputTokens: d.inputTokens,
           outputTokens: d.outputTokens,
           contextTokens: d.contextTokens,
+          // ⚠️ **必须带上**：`updateTaskMetadata` 对缺省的 `updatedAt` 会填 `new Date()`
+          //    ⇒ 每启动同步一圈，就把**所有任务**的"最后活动时间"抹平成"现在"
+          //    （2026-09-20 实测：42 个任务的 `updated_at` 全落在 5 毫秒里）。
+          //    后果是侧栏「最近任务」按时间排序**退化成任意顺序** —— 用户最近那次对话
+          //    不一定在最上面，看起来就像"聊天记录找不到了"。
+          //    同步元数据（模型/用量）不是"任务又活动了"；网关报的这个值才是真的。
+          updatedAt: d.updatedAt,
         });
         if (collapsedMessages.length === 0) continue;
 

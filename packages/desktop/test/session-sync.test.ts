@@ -97,6 +97,87 @@ describe('session sync startup flow', () => {
     );
   });
 
+  /**
+   * ⭐ 同步**元数据**（模型/用量）不是"任务又活动了"。
+   *
+   * ## 现场（2026-09-20，同时是用户「聊天记录咋找不到」的另一半）
+   *
+   * `syncFromGateway` 每发现一个会话就调 `updateTaskMetadata(d.taskId, {…})`，
+   * **没带 `updatedAt`** ⇒ store 里 `meta.updatedAt ?? new Date().toISOString()`
+   * ⇒ 每启动同步一圈，就把**所有任务**的"最后活动时间"改成"现在"。
+   * 实测（dev 客户端，直读 sqlite）：42 个任务的 `updated_at` 全落在
+   * `03:13:49.996Z ~ 03:13:50.000Z` 这 5 毫秒里。
+   *
+   * 后果：侧栏「最近任务」按 `updatedAt` 排序 ⇒ **全同时间戳 = 顺序退化成任意**，
+   * 用户最近那次对话不一定在最上面（找起来就像"记录没了"）。
+   *
+   * 判据：网关报的 `d.updatedAt`（那才是真实的最后活动时间，`adoptTasks` 新建任务时
+   * 用的也是它）—— 一期一致，不许让本地默认值把它盖掉。
+   */
+  it('⭐ 同步元数据不许把任务的"最后活动时间"改成"现在"（侧栏排序靠它）', async () => {
+    const { sessionSync, taskStore, messageStore } = await loadModules();
+
+    taskStore.useTaskStore.setState({ tasks: [], activeTaskId: null, hydrated: false });
+    messageStore.useMessageStore.setState({
+      messagesByTask: {},
+      activeTurnBySession: {},
+      processingBySession: new Set(),
+      highlightedMessageId: null,
+    });
+
+    const taskRow = {
+      id: 'task-1',
+      sessionKey: 'agent:main:clawwork:task:task-1',
+      sessionId: 'session-1',
+      title: 'Task 1',
+      status: 'active',
+      model: null,
+      modelProvider: null,
+      thinkingLevel: null,
+      inputTokens: null,
+      outputTokens: null,
+      contextTokens: null,
+      createdAt: '2026-03-16T00:00:00.000Z',
+      updatedAt: '2026-03-16T00:00:00.000Z',
+      tags: [],
+      artifactDir: 'tasks/task-1',
+      gatewayId: 'gw-1',
+    };
+
+    mockApi.loadTasks.mockResolvedValue({ ok: true, rows: [taskRow] });
+    mockApi.loadMessages.mockResolvedValue({ ok: true, rows: [] });
+    mockApi.syncSessions.mockResolvedValue({
+      ok: true,
+      discovered: [
+        {
+          gatewayId: 'gw-1',
+          taskId: 'task-1',
+          sessionKey: 'agent:main:clawwork:task:task-1',
+          title: 'Task 1',
+          updatedAt: '2026-03-16T10:00:03.000Z',
+          agentId: 'main',
+          model: 'model-1',
+          modelProvider: 'openclaw',
+          thinkingLevel: 'medium',
+          inputTokens: 1,
+          outputTokens: 2,
+          contextTokens: 3,
+          messages: [],
+        },
+      ],
+    });
+
+    await sessionSync.hydrateFromLocal();
+    await sessionSync.syncFromGateway();
+
+    // 内存里：等于网关报的那个时间，不是"现在"
+    expect(taskStore.useTaskStore.getState().tasks[0].updatedAt).toBe('2026-03-16T10:00:03.000Z');
+    // 落库那次也要带上它（否则重启后读回来还是"现在"）
+    expect(mockApi.persistTaskUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'task-1', updatedAt: '2026-03-16T10:00:03.000Z' }),
+    );
+  });
+
   it('waits for local hydration before syncing gateway history for an existing task', async () => {
     const { sessionSync, taskStore, messageStore } = await loadModules();
 
