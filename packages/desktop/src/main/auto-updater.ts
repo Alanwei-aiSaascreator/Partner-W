@@ -208,7 +208,12 @@ export async function checkForUpdatesViaUpdater(): Promise<UpdateCheckResult> {
 
       const info = result.updateInfo;
       const latestVersion = info.version;
-      const hasUpdate = latestVersion !== currentVersion;
+      // ⚠️ 判据是**比本机新**，不是"不相等"（2026-09-20 实测：打包态 0.0.24 跑着、
+      //    更新源上是 0.0.23，左下角却亮着「有新版本可用」）。降级不是更新 ——
+      //    electron-updater 自己就拒绝降级，亮角标只会让用户点进去撞一头雾水。
+      //    ⚠️ 必须用**数字**比较：`compareVersions` 逐段 `Number()`，
+      //    字符串比会把 `0.0.9 → 0.0.10` 判反。
+      const hasUpdate = compareVersions(latestVersion, currentVersion) > 0;
       latestKnownVersion = latestVersion;
 
       if (hasUpdate) {

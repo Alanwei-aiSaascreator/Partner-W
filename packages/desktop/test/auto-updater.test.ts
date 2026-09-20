@@ -228,6 +228,35 @@ describe('检查更新：状态与便携形态', () => {
     expect(result.state).toBe('downloading');
   });
 
+  /**
+   * ⭐ 判定必须是「**比本机新**」，不是「**不相等**」。
+   *
+   * 2026-09-20 实机撞到：打包态 0.0.24 跑着、更新源上是 0.0.23（还没发新版），
+   * 左下角却亮着「有新版本可用」—— 因为判据写的是 `latestVersion !== currentVersion`。
+   * 用户点进去只会看到 electron-updater 拒绝降级（它自己不接受降级），白困惑一场。
+   *
+   * ⚠️ 顺带钉住"按数字比"：`0.0.9` → `0.0.10` 必须是新版本（字符串比会判反）。
+   */
+  it('⭐ 更新源比本机旧（0.0.24 跑着、源上 0.0.23）⇒ 不许说"有新版本可用"', async () => {
+    mocks.currentVersion = '0.0.24';
+    const { checkForUpdatesViaUpdater } = await loadFresh();
+    mocks.checkForUpdates.mockResolvedValue(updateInfo('0.0.23'));
+
+    const result = await checkForUpdatesViaUpdater();
+
+    expect(result.latestVersion, '源上确实是这个版本').toBe('0.0.23');
+    expect(result.hasUpdate, '降级不是更新 —— 别亮角标').toBe(false);
+    expect(mocks.downloadUpdate, '更旧的包更不能自动下').not.toHaveBeenCalled();
+  });
+
+  it('⭐ 版本按数字比：0.0.9 → 0.0.10 是新版本', async () => {
+    mocks.currentVersion = '0.0.9';
+    const { checkForUpdatesViaUpdater } = await loadFresh();
+    mocks.checkForUpdates.mockResolvedValue(updateInfo('0.0.10'));
+
+    expect((await checkForUpdatesViaUpdater()).hasUpdate).toBe(true);
+  });
+
   it('⭐ 便携（U 盘）形态：不自动下载，结果里标明 portable', async () => {
     const { checkForUpdatesViaUpdater } = await loadFresh();
     mocks.portableRoot = 'F:\\';
