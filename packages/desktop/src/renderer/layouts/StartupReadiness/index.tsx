@@ -136,6 +136,20 @@ export default function StartupReadinessScreen({ readiness, onRetry }: StartupRe
                 >
                   {assistantStatus}
                 </p>
+                {/*
+                  ⭐⭐ 2026-09-20（T-a28 U 盘交付实机）：**原因必须说出来。**
+                  `preset-agent-bootstrap` 在**抛错**（refreshAgents 失败等）和**全部失败**两种情况下
+                  填的 `missingIds` 都是"全部 6 个" ⇒ 上面那句「这些助手尚未完成：…」在两种原因下
+                  **长得一模一样**；而原因一直在 `assistants.error` 里
+                  （`Failed to create agent "X": <网关原文>`），此前**没有任何界面渲染它**。
+                  ⚠️ 这段原文**不翻译**：它是网关/安装器给的**证据**（与 `InstallProgress` 里那些
+                  逐助手告警同一类），译掉就没法拿去定位了。
+                */}
+                {assistant.phase === 'error' && assistant.error && (
+                  <p className="type-support mt-2 break-words text-[var(--danger)]" data-testid="readiness-reason">
+                    {assistant.error}
+                  </p>
+                )}
               </article>
             </div>
 

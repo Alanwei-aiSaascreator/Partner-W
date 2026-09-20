@@ -43,6 +43,10 @@ export default function StartupReadinessPanel({
   const [takingLonger, setTakingLonger] = useState(false);
   const completed = Math.min(readiness.assistants.completed, readiness.assistants.total);
   const hasAssistantProgress = readiness.ai.phase === 'ready' && readiness.assistants.total > 0;
+  // ⭐ 2026-09-20（T-a28 实机）：助手没就绪时，**原因**一直躺在 `assistants.error` 里
+  // （`preset-agent-bootstrap` 在"抛错"和"全部失败"两种情况下填的 missingIds 都是全部 6 个
+  // ⇒ 光看「0 / 6」分不出是哪种），而这个面板从没渲染过它。原文不翻译：它是证据。
+  const assistantError = readiness.assistants.phase === 'error' ? readiness.assistants.error : undefined;
   const progressPercent = hasAssistantProgress ? (completed / readiness.assistants.total) * 100 : 0;
   const status = readiness.hasError ? 'error' : readiness.isReady ? 'ready' : 'active';
 
@@ -96,6 +100,11 @@ export default function StartupReadinessPanel({
               style={hasAssistantProgress ? { width: `${progressPercent}%` } : undefined}
             />
           </div>
+          {assistantError && (
+            <p className="type-meta mt-1.5 break-words text-[var(--text-danger)]" data-testid="readiness-reason">
+              {assistantError}
+            </p>
+          )}
         </div>
         {(readiness.hasError || takingLonger) && (
           <Button type="button" variant="outline" size="sm" onClick={onRetry} className="shrink-0">

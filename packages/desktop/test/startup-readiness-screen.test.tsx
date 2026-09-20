@@ -133,6 +133,53 @@ describe('StartupReadinessScreen', () => {
     unmount();
   });
 
+  /**
+   * ⭐⭐ 2026-09-20 U 盘交付实机（T-a28）：**「这些助手尚未完成：… 0 / 6」说不出"为什么"**。
+   *
+   * `preset-agent-bootstrap` 在**抛错**（`refreshAgents` 失败等）和**全部失败**两种情况下
+   * 填的 `missingIds` 都是"全部 6 个" ⇒ 两种截然不同的原因，在界面上**长得一模一样**；
+   * 而它其实**把原因放进了 `snapshot.error`**（`Failed to create agent "X": <网关原文>`），
+   * 门禁屏与工作台面板**都从来没渲染过这个字段**。
+   * ⇒ 同事那边"一些助手安装失败了"我们看到的就是一个 0 / 6，没有可定位的原文。
+   *
+   * ⚠️ 断言**原文出现在屏幕上**（`textContent` + 没被 `hidden`），不是"某个 state 变了"。
+   */
+  it('⭐⭐ 助手没就绪时要说出**原因原文**（不只是"0 / 6"）', () => {
+    const readiness: StartupReadiness = {
+      ...baseReadiness,
+      ai: { phase: 'ready' },
+      assistants: {
+        phase: 'error',
+        completed: 0,
+        total: 6,
+        missingIds: ['rongying-office'],
+        error: 'Failed to create agent "rongying-office": gateway not connected',
+      },
+      hasError: true,
+    };
+    const { container, unmount } = render(<StartupReadinessScreen readiness={readiness} onRetry={vi.fn()} />);
+
+    expect(container.textContent).toContain('Failed to create agent "rongying-office": gateway not connected');
+    const reason = container.querySelector<HTMLElement>('[data-testid="readiness-reason"]');
+    expect(reason, '原因要有一个能定位的节点').not.toBeNull();
+    expect(reason!.hidden, '不许把它藏起来').toBe(false);
+    unmount();
+  });
+
+  it('没有原因原文时不许编一句（节点照着不渲染）', () => {
+    const readiness: StartupReadiness = {
+      ...baseReadiness,
+      ai: { phase: 'ready' },
+      assistants: { phase: 'error', completed: 0, total: 6, missingIds: ['rongying-office'] },
+      hasError: true,
+    };
+    const { container, unmount } = render(<StartupReadinessScreen readiness={readiness} onRetry={vi.fn()} />);
+
+    expect(container.querySelector('[data-testid="readiness-reason"]')).toBeNull();
+    expect(container.textContent).toContain('startupReadiness.assistantsError');
+    unmount();
+  });
+
   it('uses explicit ready copy for completed capability rows', () => {
     const readiness: StartupReadiness = {
       ...baseReadiness,
@@ -180,6 +227,26 @@ describe('StartupReadinessPanel', () => {
     expect(progress?.hasAttribute('aria-valuenow')).toBe(false);
     expect(container.textContent).toContain('startupReadiness.aiStarting');
     expect(container.textContent).not.toContain('%');
+    unmount();
+  });
+
+  it('⭐⭐ 面板上也要有原因原文（同一个原因，两个面都不许吞）', () => {
+    const readiness: StartupReadiness = {
+      ...baseReadiness,
+      ai: { phase: 'ready' },
+      assistants: {
+        phase: 'error',
+        completed: 0,
+        total: 6,
+        missingIds: ['rongying-office'],
+        error: 'Failed to create agent "rongying-office": gateway not connected',
+      },
+      hasError: true,
+    };
+    const { container, unmount } = render(<StartupReadinessPanel readiness={readiness} onRetry={vi.fn()} />);
+
+    expect(container.textContent).toContain('Failed to create agent "rongying-office": gateway not connected');
+    expect(container.querySelector('[data-testid="readiness-reason"]')).not.toBeNull();
     unmount();
   });
 
