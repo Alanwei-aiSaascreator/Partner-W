@@ -46,6 +46,7 @@ import { createWorkspaceStartupDialogs } from './workspace/startup-dialogs.js';
 import { closeDatabase, getSqlite } from './db/index.js';
 import { applyUserDataOverride } from './runtime/user-data-override.js';
 import { applyPortableAppData } from './runtime/portable-app-data.js';
+import { runtimeCacheScopeDir } from './runtime/cache-scope.js';
 import {
   buildInstanceBusyCopy,
   buildPortBusyCopy,
@@ -221,6 +222,10 @@ function createWindow(): BrowserWindow {
 // **唯一**合法手段（绝不靠删真实 %APPDATA%，见 junction 事故）。
 applyUserDataOverride({ app, isPackaged: app.isPackaged });
 
+// 运行时是可重建的本机缓存，不能跟着便携 userData 搬到 exFAT U 盘。
+// 此刻 dev override 已生效、portable override 尚未发生，正好是正确的本机缓存根。
+const localUserDataDir = app.getPath('userData');
+
 /**
  * ⚠️ **必须排在 `requestSingleInstanceLock()` 之前**，也就必须在 `app.ready` 之前：
  * 单实例锁是**按 userData 目录**算的 —— 先搬、再抢锁，U 盘那份才不会和"装到电脑"
@@ -239,6 +244,14 @@ const portableAppData = applyPortableAppData({
   exists: existsSync,
   // 惰性：前两条判据（纯文件检查）命中时**不枚举**可移动盘（PowerShell，秒级）。
   removableDrives: () => removableDrives(),
+});
+
+// 运行时是可重建的本机缓存：盘上形态按“实际 userData”分一个独立作用域。
+// 同作用域受下面的单实例锁保护；不同 U 盘、安装版互不争写 current.json / deploy-*。
+const runtimeCacheUserDataDir = runtimeCacheScopeDir({
+  localUserDataDir,
+  effectiveUserDataDir: app.getPath('userData'),
+  portable: portableAppData.reason !== null && portableAppData.failed === undefined,
 });
 
 const gotLock = app.requestSingleInstanceLock();
@@ -418,7 +431,10 @@ if (!gotLock) {
       // ⚠️ 拉起本机运行时（定位 → 部署 → 起网关 → 等就绪）。**这一步永不抛**：
       // 失败只是"网关没起来"，界面照常出，让 ConnectionBanner 说真话；
       // 上一轮留下的、或用户自己的网关可能还活着，下面 initAllGateways() 照样要去连它。
-      const runtimeResult = await bootstrapLocalGatewayRuntime({ userDataDir: app.getPath('userData') });
+      const runtimeResult = await bootstrapLocalGatewayRuntime({
+        userDataDir: app.getPath('userData'),
+        runtimeCacheUserDataDir,
+      });
       if (!runtimeResult.ok) {
         getDebugLogger().error({
           domain: 'gateway',

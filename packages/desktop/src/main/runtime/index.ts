@@ -259,10 +259,12 @@ function makeDefaultDeps(): RuntimeBootstrapDeps {
  */
 export async function bootstrapLocalGatewayRuntime(opts: {
   userDataDir: string;
+  runtimeCacheUserDataDir?: string;
   deps?: Partial<RuntimeBootstrapDeps>;
 }): Promise<RuntimeBootstrapResult> {
   const deps: RuntimeBootstrapDeps = { ...makeDefaultDeps(), ...opts.deps };
   const { userDataDir } = opts;
+  const runtimeCacheUserDataDir = opts.runtimeCacheUserDataDir ?? userDataDir;
   const startedAt = deps.now();
 
   const fail = (
@@ -279,23 +281,14 @@ export async function bootstrapLocalGatewayRuntime(opts: {
     const { token, stateDir } = await deps.alignClientConfig({ userDataDir });
     deps.setStateDirEnv(stateDir);
 
-    // ② 先认本机缓存（拔盘 / 已部署都走这条，一次都不碰盘）
+    // ② 安装形态先认本机缓存（保留“部署源暂时不在也能启动”的既有退路）。
+    //    便携形态用了独立缓存作用域，必须先拿本包 manifest 算目标 key；否则同机旧版
+    //    留下的一份“结构完整”缓存会盖过当前包随附的运行时。
     let deployed: { deploymentKey: string; deployedRoot: string; cliPath: string; nodePath: string };
     let deployStatus: 'deployed' | 'skipped' | undefined;
 
-    const cached = deps.readCached(userDataDir);
-    if (cached.status === 'ok' && cached.deploymentKey && cached.deployedRoot && cached.cliPath && cached.nodePath) {
-      deployed = {
-        deploymentKey: cached.deploymentKey,
-        deployedRoot: cached.deployedRoot,
-        cliPath: cached.cliPath,
-        nodePath: cached.nodePath,
-      };
-      deployStatus = 'skipped';
-      deps.log('runtime.deploy.skipped', { deploymentKey: cached.deploymentKey });
-    } else {
-      // ③ 没有可用缓存 ⇒ 从盘上部署一份
-      const res = await deps.deployFromMedia({ userDataDir });
+    if (runtimeCacheUserDataDir !== userDataDir) {
+      const res = await deps.deployFromMedia({ userDataDir: runtimeCacheUserDataDir });
       deployed = {
         deploymentKey: res.deploymentKey,
         deployedRoot: res.deployedRoot,
@@ -304,6 +297,29 @@ export async function bootstrapLocalGatewayRuntime(opts: {
       };
       deployStatus = res.status;
       deps.log('runtime.deploy.done', { deploymentKey: res.deploymentKey, status: res.status });
+    } else {
+      const cached = deps.readCached(runtimeCacheUserDataDir);
+      if (cached.status === 'ok' && cached.deploymentKey && cached.deployedRoot && cached.cliPath && cached.nodePath) {
+        deployed = {
+          deploymentKey: cached.deploymentKey,
+          deployedRoot: cached.deployedRoot,
+          cliPath: cached.cliPath,
+          nodePath: cached.nodePath,
+        };
+        deployStatus = 'skipped';
+        deps.log('runtime.deploy.skipped', { deploymentKey: cached.deploymentKey });
+      } else {
+        // ③ 没有可用缓存 ⇒ 从部署源部署一份
+        const res = await deps.deployFromMedia({ userDataDir: runtimeCacheUserDataDir });
+        deployed = {
+          deploymentKey: res.deploymentKey,
+          deployedRoot: res.deployedRoot,
+          cliPath: res.cliPath,
+          nodePath: res.nodePath,
+        };
+        deployStatus = res.status;
+        deps.log('runtime.deploy.done', { deploymentKey: res.deploymentKey, status: res.status });
+      }
     }
 
     // ④ 坏链自检 + 我们能修的那半（**只修悬空的**：换根前缀、后缀不动、目标必须真存在）。
@@ -339,7 +355,7 @@ export async function bootstrapLocalGatewayRuntime(opts: {
 
     // ⑤ 解析一个能跑 openclaw 的 Node（**必须先探版本**）
     const nodeRes = await deps.resolveNode({
-      userDataDir,
+      userDataDir: runtimeCacheUserDataDir,
       deploymentKey: deployed.deploymentKey,
       deployedRoot: deployed.deployedRoot,
     });

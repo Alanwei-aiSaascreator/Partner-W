@@ -381,6 +381,33 @@ describe('ensureClientGatewayEntry', () => {
     expect(fs.existsSync(stateConfigPath(stateDirFor(userDataDir)))).toBe(true);
   });
 
+  it('⭐ 清理 0.0.25 向导写下的空令牌本机伪网关，并恢复真正的 local-runtime 为默认', async () => {
+    const { writeConfig } = await import('../src/main/workspace/config.js');
+    writeConfig({
+      workspacePath: '/w',
+      gateways: [
+        {
+          id: 'legacy-setup-gateway',
+          name: 'Default Gateway',
+          url: 'ws://127.0.0.1:' + GATEWAY_WS_PORT,
+          authMode: 'token',
+          isDefault: true,
+        },
+      ],
+      defaultGatewayId: 'legacy-setup-gateway',
+    });
+
+    const result = await ensureClientGatewayEntry({ userDataDir });
+
+    const config = readConfigRaw();
+    const gateways = config.gateways as Array<Record<string, unknown>>;
+    expect(result.changed).toBe(true);
+    expect(gateways).toHaveLength(1);
+    expect(gateways[0].id).toBe(LOCAL_GATEWAY_ID);
+    expect(gateways[0].isDefault).toBe(true);
+    expect(config.defaultGatewayId).toBe(LOCAL_GATEWAY_ID);
+  });
+
   it('用户自己配的其它网关**原封不动**（我们只 upsert 自己那一条）', async () => {
     const { writeConfig } = await import('../src/main/workspace/config.js');
     writeConfig({

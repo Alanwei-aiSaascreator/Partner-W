@@ -187,8 +187,8 @@ async function runWorkspaceStartup(options: PrepareWorkspaceOptions): Promise<Wo
   const recordedPath = config?.workspacePath?.trim() || null;
   const recordedExists = Boolean(recordedPath && exists(recordedPath));
 
-  // 上一次启动如果停在"盘上首启"那一步，这次就不再拦了：工作区本来就在盘上。
-  if (config?.portableSetupPending && recordedExists) {
+  // 兼容 0.0.25 留下的首启标记：即使盘符变了也先清掉，避免自愈后又落回空 token 表单。
+  if (config?.portableSetupPending) {
     updateConfig({ portableSetupPending: false });
   }
 
@@ -278,7 +278,7 @@ async function runWorkspaceStartup(options: PrepareWorkspaceOptions): Promise<Wo
         updateConfig({
           workspacePath: decision.path,
           ...locationOf(ctx, decision.path),
-          portableSetupPending: true,
+          portableSetupPending: false,
         });
         ctx.log('workspace.portable.auto', { path: decision.path });
       }

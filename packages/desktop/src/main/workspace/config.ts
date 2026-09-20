@@ -56,11 +56,8 @@ export interface AppConfig {
   /** 记下这个工作区时，盘根认到的 marker 文件名。 */
   volumeMarker?: string;
   /**
-   * 盘上首启：工作区已**自动**就位（`<盘根>\荣盈魔方工作区\`），但引导还没走完。
-   *
-   * ⚠️ 作用只有一个：让首启那次仍然进 Setup（**跳过选盘那一步**、直接落在网关步骤），
-   *    好把那句"工作区已自动设在…、可改"说给用户听。下一次启动它就会被清掉 ——
-   *    工作区本来就在盘上，不该每次都拦一次。
+   * 兼容 0.0.25 写下的盘上首启标记。新版发现它后会清掉，避免把内置本地网关
+   * 暴露成需要用户填写地址和令牌的远程网关表单。
    */
   portableSetupPending?: boolean;
   theme?: 'dark' | 'light' | 'auto';
@@ -259,10 +256,7 @@ export function getWorkspacePath(): string | null {
 /**
  * 引导是否**走完了**（App 用它决定进 Setup 还是进主界面）。
  *
- * ⚠️ 与 `getWorkspacePath() !== null` 的差别就在 `portableSetupPending`：盘上首启时
- *    工作区已经自动就位（`getWorkspacePath()` 有值、数据库也开在那），但用户还没见过
- *    引导 —— 这时返回 false，是为了让首启**仍然过一遍 Setup**（落在"网关"那一步，
- *    选盘那一步已被跳过）。渲染进程据此分辨这个状态，无需新增 IPC。
+ * `portableSetupPending` 只为兼容 0.0.25 的旧配置；启动编排会先把它清掉。
  */
 export function isWorkspaceConfigured(): boolean {
   const config = readConfig();

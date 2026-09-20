@@ -283,6 +283,15 @@ export function mergeGatewayEntry(
   return next;
 }
 
+function isLegacyEmptyLocalGateway(gateway: GatewayServerConfig): boolean {
+  if (gateway.id === LOCAL_GATEWAY_ID) return false;
+  const url = gateway.url.trim().replace(/\/+$/u, '');
+  if (url !== 'ws://127.0.0.1:' + GATEWAY_WS_PORT) return false;
+  return ![gateway.token, gateway.password, gateway.pairingCode].some(
+    (credential) => typeof credential === 'string' && credential.trim().length > 0,
+  );
+}
+
 export interface EnsureClientGatewayEntryResult {
   token: string;
   /** config 被改写了没。 */
@@ -303,7 +312,10 @@ export async function ensureClientGatewayEntry(opts: { userDataDir: string }): P
   const stateDir = stateDirFor(opts.userDataDir);
 
   const current: AppConfig = readConfig() ?? { workspacePath: '', gateways: [] };
-  const existing = current.gateways.find((g) => g.id === LOCAL_GATEWAY_ID);
+  const retainedGateways = current.gateways.filter((gateway) => !isLegacyEmptyLocalGateway(gateway));
+  const existing = retainedGateways.find((g) => g.id === LOCAL_GATEWAY_ID);
+  const configuredDefaultStillExists = retainedGateways.some((gateway) => gateway.id === current.defaultGatewayId);
+  const defaultGatewayId = configuredDefaultStillExists ? current.defaultGatewayId : LOCAL_GATEWAY_ID;
 
   const entry: GatewayServerConfig = {
     id: LOCAL_GATEWAY_ID,
@@ -311,20 +323,21 @@ export async function ensureClientGatewayEntry(opts: { userDataDir: string }): P
     url: `ws://127.0.0.1:${GATEWAY_WS_PORT}`,
     token,
     authMode: 'token',
-    isDefault: true,
+    isDefault: defaultGatewayId === LOCAL_GATEWAY_ID,
   };
 
   const drifted = Boolean(existing && existing.token !== undefined && existing.token !== token);
-  const changed = drifted || !existing || existing.url !== entry.url || existing.authMode !== 'token';
+  const gateways = mergeGatewayEntry(retainedGateways, entry);
+  const changed =
+    JSON.stringify(gateways) !== JSON.stringify(current.gateways) || current.defaultGatewayId !== defaultGatewayId;
 
   if (!changed) {
     return { token, changed: false, drifted: false, stateDir };
   }
 
-  const gateways = mergeGatewayEntry(current.gateways, entry);
   updateConfig({
     gateways,
-    defaultGatewayId: current.defaultGatewayId ?? LOCAL_GATEWAY_ID,
+    defaultGatewayId,
   });
 
   if (drifted) {

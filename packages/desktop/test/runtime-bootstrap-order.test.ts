@@ -20,6 +20,8 @@ vi.mock('electron', () => ({
 }));
 
 const USER_DATA = 'C:\\fake\\userdata';
+const PORTABLE_USER_DATA = 'E:\\荣盈魔方-运行数据';
+const LOCAL_RUNTIME_CACHE = 'C:\\Users\\u\\AppData\\Roaming\\@clawwork\\desktop';
 
 function makeDeps(over: Partial<RuntimeBootstrapDeps> = {}) {
   const calls: string[] = [];
@@ -95,6 +97,48 @@ describe('bootstrapLocalGatewayRuntime', () => {
     ]);
     expect(res.ok).toBe(true);
     expect(res.ownership).toBe('spawned');
+  });
+
+  it('⭐ 盘上形态：登录状态留在 U 盘，运行时只读写本机缓存', async () => {
+    const portableStateDir = 'E:\\荣盈魔方-运行数据\\openclaw-state';
+    const { deps } = makeDeps({
+      alignClientConfig: vi.fn(async () => ({ token: 'tok-1', stateDir: portableStateDir })),
+      // 故意放一份结构完整但来源不明的旧缓存：便携版必须拿随包 manifest
+      // 重新算目标 key，不能因它“看起来能跑”就直接跳过出厂运行时。
+      readCached: vi.fn(() => ({
+        status: 'ok' as const,
+        deploymentKey: 'stale-installed-runtime',
+        deployedRoot: 'C:\\installed-cache\\stale-installed-runtime',
+        nodePath: 'C:\\installed-cache\\stale-installed-runtime\\node\\node.exe',
+        cliPath: 'C:\\installed-cache\\stale-installed-runtime\\node_modules\\openclaw\\openclaw.mjs',
+      })),
+    });
+    const { bootstrapLocalGatewayRuntime } = await import('../src/main/runtime/index.js');
+
+    await bootstrapLocalGatewayRuntime({
+      userDataDir: PORTABLE_USER_DATA,
+      runtimeCacheUserDataDir: LOCAL_RUNTIME_CACHE,
+      deps,
+    });
+
+    expect(deps.alignClientConfig).toHaveBeenCalledWith({ userDataDir: PORTABLE_USER_DATA });
+    expect(deps.readCached).not.toHaveBeenCalled();
+    expect(deps.deployFromMedia).toHaveBeenCalledWith({ userDataDir: LOCAL_RUNTIME_CACHE });
+    expect(deps.resolveNode).toHaveBeenCalledWith({
+      userDataDir: LOCAL_RUNTIME_CACHE,
+      deploymentKey: 'k1',
+      deployedRoot: 'C:\\fake\\userdata\\runtime\\deployed\\k1',
+    });
+    expect(deps.selfCheckLinks).toHaveBeenCalledWith({
+      stateDir: portableStateDir,
+      deployedRoot: 'C:\\fake\\userdata\\runtime\\deployed\\k1',
+    });
+    expect(deps.startGateway).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stateDir: portableStateDir,
+        deployedRoot: 'C:\\fake\\userdata\\runtime\\deployed\\k1',
+      }),
+    );
   });
 
   it('⭐ 自检要拿到**这一轮真正在用的**那个 deployedRoot（不是猜的、也不是上一次的）', async () => {

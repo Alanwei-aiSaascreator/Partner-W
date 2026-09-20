@@ -186,10 +186,9 @@ describe('盘上首启：不选盘、直接就有工作区', () => {
     // 迁移线索（下次换盘符靠它找回来）
     expect(config?.workspaceRelPath).toBe(WS_NAME);
     expect(config?.volumeMarker).toBe(MANIFEST);
-    // 引导还没走完 ⇒ 首启仍然进 Setup（但跳过选盘那一步）
-    expect(config?.portableSetupPending).toBe(true);
-    expect(isWorkspaceConfigured()).toBe(false);
-    // 渲染进程不用新 IPC 就能分辨这个状态：路径有值 + 未配置 = "盘上已就位、待引导"
+    // 内置本地网关由主进程自动配置，首启不该把用户送进手工网关表单。
+    expect(config?.portableSetupPending).toBe(false);
+    expect(isWorkspaceConfigured()).toBe(true);
     expect(getWorkspacePath()).toBe(win32.join('Q:\\', WS_NAME));
     expect(getDefaultWorkspacePath()).toBe(win32.join('Q:\\', WS_NAME));
   });
@@ -276,9 +275,9 @@ describe('交付形态（DriveType=3 的 U 盘）：同事那份交付包', () =
     expect(config?.workspaceRelPath).toBe(WS_NAME);
     // 渲染进程要看到"盘上那份"，而不是本机 homedir
     expect(getDefaultWorkspacePath()).toBe(win32.join('E:\\', WS_NAME));
-    // 引导还没走完 ⇒ 首启仍然进 Setup（但跳过选盘那一步）
-    expect(config?.portableSetupPending).toBe(true);
-    expect(isWorkspaceConfigured()).toBe(false);
+    // 工作区和内置网关都自动准备：直接进入登录/工作台，不暴露空 token 表单。
+    expect(config?.portableSetupPending).toBe(false);
+    expect(isWorkspaceConfigured()).toBe(true);
   });
 
   it('⭐ 换个 USB 口（E: → F:）⇒ 静默找回盘上那份，不弹框、不退出', async () => {
@@ -288,6 +287,9 @@ describe('交付形态（DriveType=3 的 U 盘）：同事那份交付包', () =
     expect(firstRun.kind).toBe('ready');
     if (firstRun.kind !== 'ready') throw new Error('unreachable');
     expect(firstRun.decision.kind).toBe('auto-portable');
+    const legacyConfig = readConfig();
+    if (!legacyConfig) throw new Error('首启没有写配置');
+    writeConfig({ ...legacyConfig, portableSetupPending: true }); // 模拟 0.0.25 已写下的旧标记
 
     // 同一个包换到 F: 上。⚠️ 用**另一块虚拟盘**（不是往旧 harness 里加路径）：
     //    换口之后旧盘符整块不在了，E: 上的残留路径不该参与这次判定。
@@ -318,6 +320,8 @@ describe('交付形态（DriveType=3 的 U 盘）：同事那份交付包', () =
     const config = readConfig();
     expect(config?.workspacePath).toBe(win32.join('F:\\', WS_NAME));
     expect(config?.workspaceRelPath).toBe(WS_NAME);
+    expect(config?.portableSetupPending).toBe(false);
+    expect(isWorkspaceConfigured()).toBe(true);
   });
 
   it('第二次启动（同一个口）⇒ configured；不枚举盘也仍然认得盘上形态', async () => {
@@ -717,6 +721,30 @@ describe('源码契约：失败路径不许 app.quit()', () => {
     expect(appDataEnd).toBeGreaterThan(appDataStart);
     expect(code.slice(appDataStart, appDataEnd), 'applyPortableAppData 调用里没传 resourcesPath').toContain(
       'resourcesPath: process.resourcesPath',
+    );
+  });
+
+  it('盘上 userData 覆盖前保存本机运行时缓存根，并明确传给 bootstrap', () => {
+    const override = code.indexOf('applyUserDataOverride({');
+    const capture = code.indexOf("const localUserDataDir = app.getPath('userData');");
+    const portable = code.indexOf('applyPortableAppData({');
+    expect(override, 'index.ts 里找不到 applyUserDataOverride 调用').toBeGreaterThan(-1);
+    expect(capture, '没有在搬 userData 前保存本机运行时缓存根').toBeGreaterThan(override);
+    expect(capture).toBeLessThan(portable);
+
+    const scopedCache = code.indexOf('const runtimeCacheUserDataDir = runtimeCacheScopeDir({');
+    const lock = code.indexOf('app.requestSingleInstanceLock()');
+    expect(scopedCache, '没有按便携 userData 隔离本机运行时缓存').toBeGreaterThan(portable);
+    expect(scopedCache, '缓存作用域必须先定好，再进入同 userData 的单实例保护').toBeLessThan(lock);
+    expect(code.slice(scopedCache, lock), '盘上判定失败/未命中时不能误切到便携缓存作用域').toContain(
+      'portable: portableAppData.reason !== null && portableAppData.failed === undefined',
+    );
+
+    const bootstrapStart = code.indexOf('bootstrapLocalGatewayRuntime({');
+    const bootstrapEnd = code.indexOf('});', bootstrapStart);
+    expect(bootstrapStart, 'index.ts 里找不到 bootstrapLocalGatewayRuntime 调用').toBeGreaterThan(portable);
+    expect(code.slice(bootstrapStart, bootstrapEnd), 'bootstrap 没有收到本机运行时缓存根').toContain(
+      'runtimeCacheUserDataDir',
     );
   });
 });
