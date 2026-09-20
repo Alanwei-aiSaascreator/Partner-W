@@ -22,7 +22,9 @@ export function useTemplateInstall(): {
     async (template: AgentTemplateDetail): Promise<TemplateInstallOutcome> => {
       setInstallingId(template.id);
       try {
-        const workspaceRoot = (await window.clawwork.getWorkspacePath()) ?? '';
+        // ⚠️ 不在这里 `?? ''`：拿不到工作区就交给 `installTemplate` 明确拒绝，
+        //    空串一路拼下去会变成根相对路径，坏得看不见（2026-09-20 U 盘交付实机）
+        const workspaceRoot = await window.clawwork.getWorkspacePath();
         const currentAgentIds = (useUiStore.getState().agentCatalogByGateway[selectedGwId]?.agents ?? []).map(
           (agent) => agent.id,
         );

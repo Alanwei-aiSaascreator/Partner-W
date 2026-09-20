@@ -141,7 +141,13 @@ describe('registerWorkspaceHandlers', () => {
     expect(result.includes('//test-team')).toBe(false);
   });
 
-  it('returns slug alone when no workspace is configured', async () => {
+  /**
+   * ⚠️ 2026-09-20 U 盘交付实机**改掉的旧行为**：以前这里 `return slug`（把 slug 本身
+   *    当路径发出去）。调用方拿到的是相对路径，交给网关进程按它自己的 home 解释
+   *    ⇒ 每个助手都建失败，界面只剩 `No agents were created successfully`。
+   *    现在**拒绝**：拿不到工作区就不许伪造一条路径。
+   */
+  it('⭐ 没有工作区时拒绝，不再把 slug 当路径发出去', async () => {
     getWorkspacePathMock.mockReturnValue(null);
     const { registerWorkspaceHandlers } = await import('../src/main/ipc/workspace-handlers.js');
     registerWorkspaceHandlers();
@@ -149,7 +155,7 @@ describe('registerWorkspaceHandlers', () => {
     const handler = handleMap.get('workspace:team-path');
     expect(handler).toBeTypeOf('function');
 
-    expect(handler?.({}, 'lonely-team')).toBe('lonely-team');
+    expect(() => handler?.({}, 'lonely-team')).toThrow('workspace not configured');
   });
 
   it('rejects invalid team workspace slugs', async () => {

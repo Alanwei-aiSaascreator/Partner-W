@@ -1,5 +1,6 @@
 import type { AgentTemplateDetail } from '@clawwork/shared';
 import { describeTemplateError, templateToInstallDefinition } from '@clawwork/core';
+import { checkInstallWorkspace } from './install-workspace';
 import { installPresetAgentPack, type PresetAgentInstallerApi } from './preset-agent-installer';
 
 /**
@@ -13,7 +14,14 @@ import { installPresetAgentPack, type PresetAgentInstallerApi } from './preset-a
  */
 export interface TemplateInstallDeps {
   gatewayId: string;
-  workspaceRoot: string;
+  /**
+   * 工作区根。**可以是 null**：拿不到工作区时不许在这里用 `?? ''` 吞掉 ——
+   * 空串会被拼成 `/rongying-agents/<id>`（根相对路径），交给网关那个进程去
+   * 按它自己的 cwd 解释 ⇒ 每个助手都建失败，而界面上只剩一句英文
+   * `No agents were created successfully`（2026-09-20 U 盘交付实机）。
+   * ⇒ 判定收在 `checkInstallWorkspace`，坏输入直接拒绝并给中文原因。
+   */
+  workspaceRoot: string | null;
   currentAgentIds: string[];
   api: PresetAgentInstallerApi;
   refreshAgents: () => Promise<void>;
@@ -41,11 +49,16 @@ export async function installTemplate(
     return { ok: false, message: '还没有连上本地服务，先等它准备好再试。' };
   }
 
+  // ⚠️ 必须在**发任何请求之前**判：工作区坏掉时"建一个助手试试看"只会在网关那边
+  //    留下 N 条失败记录，而用户看到的仍然只是一句「操作没成功，请稍后重试。」
+  const workspace = checkInstallWorkspace(deps.workspaceRoot);
+  if (!workspace.ok) return { ok: false, message: workspace.message };
+
   const definition = templateToInstallDefinition(template, deps.commonContract);
 
   const res = await installPresetAgentPack({
     gatewayId: deps.gatewayId,
-    workspaceRoot: deps.workspaceRoot,
+    workspaceRoot: workspace.path,
     currentAgentIds: deps.currentAgentIds,
     displayNames: { [definition.id]: template.name },
     definitions: [definition],

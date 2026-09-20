@@ -123,7 +123,11 @@ export function registerWorkspaceHandlers(): void {
       throw new Error('Invalid team slug');
     }
     const base = getWorkspacePath();
-    if (!base) return slug;
+    // ⚠️ **不许 `return slug`**（2026-09-20 U 盘交付实机改掉的行为）：调用方拿这个字符串
+    //    去 `agents.create`，而那是**另一个进程**按它自己的 home 解析相对路径
+    //    ⇒ 每个助手都建失败，界面只剩 `No agents were created successfully`。
+    //    没有工作区就明确报错，由渲染侧翻成中文（见 `lib/install-workspace.ts`）。
+    if (!base) throw new Error('workspace not configured');
     return join(base, slug);
   });
 }

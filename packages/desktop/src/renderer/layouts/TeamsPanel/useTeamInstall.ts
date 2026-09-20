@@ -9,6 +9,7 @@ import type {
 } from '@clawwork/shared';
 import type { InstallerDeps } from '@clawwork/core';
 import { installTeam, serializeIdentityMd } from '@clawwork/core';
+import { WORKSPACE_UNAVAILABLE_MESSAGE, checkInstallWorkspace } from '@/lib/install-workspace';
 import { toSlug } from './utils';
 import type { TeamInfo, AgentDraft } from './types';
 
@@ -142,8 +143,24 @@ export function useTeamInstall(onDone?: () => void) {
       };
 
       try {
-        const workspace = await window.clawwork.getTeamWorkspacePath(toSlug(teamInfo.name));
-        for await (const event of installTeam(parsed, agentFiles, teamInfo.gatewayId, workspace, deps, hubMeta)) {
+        /**
+         * ⚠️ 工作区必须是**绝对路径**才装上（2026-09-20 U 盘交付实机）：
+         *    没工作区时 `workspace:team-path` 过去会返回 slug 本身（相对路径），
+         *    而工作区字符串是交给**网关那个进程**解析的 ⇒ 每个助手都建失败，
+         *    界面上只剩一句英文 `No agents were created successfully`。
+         *    ⇒ 坏输入**一个助手都不建**，直接抛一条中文原因给界面。
+         */
+        let workspace: string;
+        try {
+          workspace = await window.clawwork.getTeamWorkspacePath(toSlug(teamInfo.name));
+        } catch {
+          // 主进程会 `throw new Error('workspace not configured')`（IPC 会包一层英文前缀，别往界面上摆）
+          throw new Error(WORKSPACE_UNAVAILABLE_MESSAGE);
+        }
+        const checked = checkInstallWorkspace(workspace);
+        if (!checked.ok) throw new Error(checked.message);
+
+        for await (const event of installTeam(parsed, agentFiles, teamInfo.gatewayId, checked.path, deps, hubMeta)) {
           setInstallEvents((prev) => [...prev, event]);
 
           if (event.type === 'agent_created' && event.agentSlug && event.agentId) {
@@ -167,7 +184,14 @@ export function useTeamInstall(onDone?: () => void) {
             return;
           }
         }
-      } catch {
+      } catch (err) {
+        /**
+         * ⚠️ 原来这里是**裸 `catch {}`**：连"为什么"都不留，界面只剩「安装失败」三个字
+         *    （2026-09-20 U 盘交付实机就是这么变成"无法定位"的）。
+         *    现在把原因送进事件列表 —— 它是界面唯一会显示失败原因的地方。
+         */
+        const message = err instanceof Error && err.message ? err.message : '安装没能完成，请重试。';
+        setInstallEvents((prev) => [...prev, { type: 'error', message }]);
         setInstallStatus('error');
       }
     },

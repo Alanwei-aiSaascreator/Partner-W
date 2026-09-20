@@ -125,6 +125,24 @@ describe('installTemplate —— 真安装的编排', () => {
     expect(recordInstalled).toHaveBeenCalledOnce();
   });
 
+  /**
+   * ⚠️ 2026-09-20 U 盘交付实机：工作区没解析出来时，这里原来是
+   *    `(await getWorkspacePath()) ?? ''` ⇒ 空串被一路拼成 `/rongying-agents/<id>`
+   *    ⇒ 每个助手都建失败，界面只剩一句英文。⇒ 现在必须在**发请求之前**拒绝。
+   */
+  it('⭐ 工作区还没就绪（空 / 相对）⇒ 直接拒绝，一次网关调用都不发', async () => {
+    for (const bad of ['', '   ', null, 'lonely-team']) {
+      const { deps, api, recordInstalled, refreshAgents } = makeDeps({ workspaceRoot: bad });
+      const outcome = await installTemplate(deps, template);
+
+      expect(outcome.ok).toBe(false);
+      expect(outcome.message ?? '').toMatch(/[一-龥]/);
+      expect(api.calls).toHaveLength(0);
+      expect(refreshAgents).not.toHaveBeenCalled();
+      expect(recordInstalled).not.toHaveBeenCalled();
+    }
+  });
+
   it('拿不到网关 id ⇒ 直接拒绝（不发任何请求）', async () => {
     const { deps, recordInstalled } = makeDeps({ gatewayId: '' });
     const outcome = await installTemplate(deps, template);
