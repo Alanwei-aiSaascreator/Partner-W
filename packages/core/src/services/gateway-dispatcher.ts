@@ -1812,8 +1812,16 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
       }
 
       // ⚠️ 工具目录与斜杠命令**必须**带上 agentId。多 agent 配置下网关把"没有 owner"
-      //    的请求整条拒掉（`AGENT_SELECTION_REQUIRED`）——2026-09-17 实机 431 次，
+      //    的请求整条拒掉 —— 内部错误类是 `AgentSelectionRequiredError`（`code` 字段为
+      //    `AGENT_SELECTION_REQUIRED`），但 RPC 侧 `resolveAgentIdOrRespondError` 会把它
+      //    接住后**重新回包**，所以**过界看到的 code 是 `INVALID_REQUEST`**
+      //    （2026-09-20 全档普查：日志里 `AGENT_SELECTION_REQUIRED` 0 条 —— 别按它 grep 日志）。
       //    后果是 composer 的工具菜单与斜杠命令**永远是空的**，而且不报错（ok=false 被吞）。
+      //    ⚠️ 这里原先写「2026-09-17 实机 431 次」，该数**当日无法复现**：2026-09-20 全档普查里
+      //    这两条方法当天**各 3 次**，而当天**全量**错误帧是 **435**（431 与 435 只差 4，像当日
+      //    某一时刻的快照）⇒ 原数很可能是"当日全量"被当成了这两条方法的证据。**原数保留**，
+      //    只写明来路。本条的**真身证据**（同一普查）：09-15 16 发/15 错、09-16 16/15、
+      //    09-17 10/3、09-18 3/2 → **09-19 105 发/0 错、09-20 63 发/0 错**（合计 168/168）。
       //    owner 取网关自己的默认 agent；只有一个 agent 时退回那一个。
       const agentCatalog = agentsRes.ok ? (agentsRes.result as unknown as AgentListResponse | undefined) : undefined;
       const agentId = agentCatalog?.defaultId ?? agentCatalog?.agents?.[0]?.id;
