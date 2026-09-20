@@ -1,7 +1,12 @@
 import type { CommercialAccountOverview, CommercialLicenseSummary, IpcResult } from '@clawwork/shared';
 import { getCommercialClient, resetCommercialClient } from './client.js';
 import { deviceFingerprint } from './license.js';
-import { classifyAuthFailure, classifyOtpVerifyFailure, type AuthCheck } from './auth-classify.js';
+import {
+  classifyAuthFailure,
+  classifyOtpVerifyFailure,
+  type AuthCheck,
+  type OtpVerifyFailure,
+} from './auth-classify.js';
 import { getDebugLogger } from '../debug/index.js';
 
 export interface CommercialProfile {
@@ -114,6 +119,34 @@ function withTimeoutOrNull<T>(work: PromiseLike<T>, label: string): Promise<T | 
   ]);
 }
 
+/**
+ * 超时哨兵：`withTimeout` 的 fallback。
+ *
+ * ⚠️ 用**哨兵**而不是 `null`/`undefined`：`signInWithOtp` 的返回值是个对象、
+ *    失败时也是对象，拿"空值"当超时只能靠猜；哨兵能一字不差地判等，
+ *    而且不会跟"服务端真的回了错"混在一起。
+ */
+const OTP_TIMED_OUT = Symbol('otp-timeout');
+type OtpTimeout = typeof OTP_TIMED_OUT;
+
+/**
+ * 超时时的**代用错误**：只为了让 `failOtp` 的日志与分类有东西可读。
+ * `name=OtpTimeout` ⇒ `classifyOtpVerifyFailure` 判 `unreachable`（status 缺失），
+ * 这正是我们要的：**问不出来**就绝不能说"你码错了"。
+ */
+const OTP_TIMEOUT_ERROR = {
+  name: 'OtpTimeout',
+  message: `otp request timed out after ${NETWORK_TIMEOUT_MS}ms`,
+};
+
+/**
+ * 发验证码。
+ *
+ * ⚠️ **必须有 8 秒上限**（2026-09-20 复核点名）：这是"用户正盯着按钮转圈"的那条路，
+ *    而同文件的探测早就走 `NETWORK_TIMEOUT_MS` —— 它原来**直接 await**，
+ *    网络挂住时界面无限等待，用户既不知道在等什么、也没法重试。
+ *    超时**不取消**底层请求（凭据可能已经发出去了），只是不再等它。
+ */
 export async function sendLoginOtp(target: string): Promise<IpcResult> {
   const supabase = getCommercialClient();
   if (!supabase) {
@@ -121,14 +154,38 @@ export async function sendLoginOtp(target: string): Promise<IpcResult> {
   }
   const isEmail = target.includes('@');
   try {
-    const { error } = isEmail
-      ? await supabase.auth.signInWithOtp({ email: target })
-      : await supabase.auth.signInWithOtp({ phone: target });
-    if (error) return fail(error, classifyOtpError(error));
+    const raced = await withTimeout<{ error: unknown } | OtpTimeout>(
+      (isEmail
+        ? supabase.auth.signInWithOtp({ email: target })
+        : supabase.auth.signInWithOtp({ phone: target })
+      ).then((r) => ({ error: r.error as unknown })),
+      OTP_TIMED_OUT,
+      'otp.send',
+    );
+    if (raced === OTP_TIMED_OUT) {
+      return { ok: false, error: OTP_TIMEOUT_ERROR.message, errorCode: 'otp_send_unreachable' };
+    }
+    if (raced.error) return fail(raced.error, classifyOtpError(raced.error));
     return { ok: true, result: { target, channel: isEmail ? 'email' : 'phone' } };
   } catch (error) {
     return fail(error, 'otp_send_failed');
   }
+}
+
+/**
+ * 校验失败的出口码。**四档**，界面据此说不同的话（见 `classifyOtpVerifyFailure`）。
+ *
+ * ⚠️ `timedOut` 单列 `otp_verify_timeout`（而不是并进 `otp_verify_unreachable`）：
+ *    复核口径要求"验证超过 8 秒 ⇒ 说『验证请求超时，请重试』"。
+ *    **但两档的文案都必须带上"验证码是一次性的、请重新发送"** —— 那次超时的请求
+ *    可能已经服务端消费掉了码，只让人"重试"会把他推回 09-17 那个死循环
+ *    （拿同一个码反复试、次次报"验证码不正确"）。
+ */
+function otpVerifyErrorCode(kind: OtpVerifyFailure, timedOut: boolean): string {
+  if (timedOut) return 'otp_verify_timeout';
+  if (kind === 'unreachable') return 'otp_verify_unreachable';
+  if (kind === 'too-many') return 'otp_verify_too_many';
+  return 'otp_verify_failed';
 }
 
 /**
@@ -137,40 +194,52 @@ export async function sendLoginOtp(target: string): Promise<IpcResult> {
  * ⚠️ 必须**留痕**：原先这里只是 `return fail(...)`，实机出现"收到验证码却登不上"时
  *    日志里一个字都没有，只能靠猜。只记错误类名/状态码/错误码 ——
  *    **不记手机号、不记验证码**。
- *
- * ⚠️ 错误码分三档（见 `classifyOtpVerifyFailure`）：界面据此说不同的话，
- *    否则"超时"会被说成"验证码不正确"，用户拿同一个一次性码反复重试。
  */
-function failOtp(error: unknown, where: string): IpcResult {
+function failOtp(error: unknown, where: string, timedOut = false): IpcResult {
   const kind = classifyOtpVerifyFailure(error);
   const e = error as { name?: unknown; status?: unknown; code?: unknown; message?: unknown };
   console.error(
-    `[commercial] otp.verify.failed kind=${kind} where=${where} ` +
+    `[commercial] otp.verify.failed kind=${kind} where=${where} timedOut=${timedOut} ` +
       `name=${String(e?.name ?? '')} status=${String(e?.status ?? '')} code=${String(e?.code ?? '')}`,
   );
-  const errorCode =
-    kind === 'unreachable'
-      ? 'otp_verify_unreachable'
-      : kind === 'too-many'
-        ? 'otp_verify_too_many'
-        : 'otp_verify_failed';
-  return { ok: false, error: e?.message ? String(e.message) : kind, errorCode };
+  return {
+    ok: false,
+    error: e?.message ? String(e.message) : kind,
+    errorCode: otpVerifyErrorCode(kind, timedOut),
+  };
 }
 
+/**
+ * 校验验证码。
+ *
+ * ⚠️ 与发送同理，**必须有 8 秒上限**：这里挂住时用户看到的是"输入了吗？是不是我打错了？"
+ *    的空白等待。超时走 `otp_verify_timeout` ⇒ 界面说「验证请求超时，请重试」
+ *    + 一次性提醒，**绝不说"验证码错误"**。
+ */
 export async function verifyLoginOtp(target: string, token: string): Promise<IpcResult> {
   const supabase = getCommercialClient();
   if (!supabase) {
     return { ok: false, error: 'Commercial backend is not configured', errorCode: 'not_configured' };
   }
   const isEmail = target.includes('@');
+  const where = isEmail ? 'email' : 'sms';
   try {
-    const { data, error } = isEmail
-      ? await supabase.auth.verifyOtp({ email: target, token, type: 'email' })
-      : await supabase.auth.verifyOtp({ phone: target, token, type: 'sms' });
-    if (error) return failOtp(error, isEmail ? 'email' : 'sms');
-    return { ok: true, result: { userId: data.user?.id ?? null } };
+    const raced = await withTimeout<{ data: { user: { id?: string } | null }; error: unknown } | OtpTimeout>(
+      (isEmail
+        ? supabase.auth.verifyOtp({ email: target, token, type: 'email' })
+        : supabase.auth.verifyOtp({ phone: target, token, type: 'sms' })
+      ).then((r) => ({
+        data: r.data as { user: { id?: string } | null },
+        error: r.error as unknown,
+      })),
+      OTP_TIMED_OUT,
+      'otp.verify',
+    );
+    if (raced === OTP_TIMED_OUT) return failOtp(OTP_TIMEOUT_ERROR, where, true);
+    if (raced.error) return failOtp(raced.error, where);
+    return { ok: true, result: { userId: raced.data.user?.id ?? null } };
   } catch (error) {
-    return failOtp(error, isEmail ? 'email' : 'sms');
+    return failOtp(error, where);
   }
 }
 

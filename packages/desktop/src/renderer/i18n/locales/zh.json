@@ -1134,6 +1134,7 @@
     "resendIn": "{{seconds}} 秒后可重新发送",
     "sendCode": "获取验证码",
     "sendFailed": "验证码发送失败，请稍后重试",
+    "sendTimeout": "服务暂时无响应，请重新发送",
     "serviceUnavailable": "短信服务暂时不可用，请稍后重试",
     "signIn": "登录",
     "subtitle": "输入手机号，我们会发送验证码",
@@ -1141,6 +1142,7 @@
     "termsUrl": "https://www.rongyinghudong.com/terms.html",
     "title": "登录荣盈魔方",
     "verifyFailed": "验证码不正确或已过期",
+    "verifyTimeout": "验证请求超时，请重试。验证码是一次性的，若这次仍不行，请点「重新发送」获取新码。",
     "verifyTooMany": "尝试太频繁了，请等一会儿再试。",
     "verifyUnreachable": "连不上服务器，验证码没能校验成功。验证码是一次性的，请点「重新发送」获取新码后再试。"
   },

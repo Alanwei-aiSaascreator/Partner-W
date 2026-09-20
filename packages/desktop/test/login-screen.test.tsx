@@ -181,4 +181,154 @@ describe('Login', () => {
 
     unmount();
   });
+
+  /**
+   * 🔴 2026-09-20 复核拍板（登录是内测门槛）：
+   *
+   *   · `sendLoginOtp` / `verifyLoginOtp` 在**主进程**里必须有 8 秒上限
+   *     （`test/commercial-otp-timeout.test.ts` 直接钉住那两条），界面这两条路
+   *     各自要有话说：发送超时说「服务暂时无响应，请重新发送」、
+   *     校验超时说「验证请求超时，请重试」，**都不能无限转圈**。
+   *   · 校验超时**绝不能**塌成「验证码不正确或已过期」：OTP 是一次性的，
+   *     把"我们没问出来"说成"你码错了"会把人推进重试死循环（09-17 实机那条）。
+   *   · 迟到的响应**不许**覆盖当前界面状态。
+   */
+  it('⭐ 发送验证码超时 ⇒ 说"服务暂时无响应，请重新发送"，不是笼统的发送失败', async () => {
+    sendOtp.mockResolvedValueOnce({ ok: false, errorCode: 'otp_send_unreachable' });
+    const { container, unmount } = render(<Login onSignedIn={vi.fn()} />);
+
+    const phone = container.querySelector('input[type="tel"]') as HTMLInputElement;
+    const agreement = container.querySelector('input[type="checkbox"]') as HTMLInputElement;
+    act(() => {
+      setInput(phone, '13800138000');
+      agreement.click();
+    });
+    await act(async () => {
+      container.querySelector('form')?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+
+    expect(container.textContent, '超时说"没响应，重新发送"，别混进笼统的发送失败').toContain('login.sendTimeout');
+    expect(container.textContent).not.toContain('login.sendFailed');
+    expect(container.querySelector('[role="alert"]')).not.toBeNull();
+    // 结论已出 ⇒ 不能停在转圈上：转圈的图标只在这一处，且输入框必须能再输入。
+    // （提交按钮此刻是灰的属于正常：已经进到"填验证码"那一屏，而码还是空的。）
+    expect(container.querySelector('.animate-spin')).toBeNull();
+    expect((container.querySelector('input[inputmode="numeric"]') as HTMLInputElement).disabled).toBe(false);
+    unmount();
+  });
+
+  it('⭐ 校验验证码超时 ⇒ 说"验证请求超时，请重试"，且**不是**"验证码不正确"', async () => {
+    verifyOtp.mockResolvedValueOnce({ ok: false, errorCode: 'otp_verify_timeout' });
+    const { container, unmount } = render(<Login onSignedIn={vi.fn()} />);
+
+    const phone = container.querySelector('input[type="tel"]') as HTMLInputElement;
+    const agreement = container.querySelector('input[type="checkbox"]') as HTMLInputElement;
+    act(() => {
+      setInput(phone, '13800138000');
+      agreement.click();
+    });
+    await act(async () => {
+      container.querySelector('form')?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+
+    const code = container.querySelector('input[inputmode="numeric"]') as HTMLInputElement;
+    act(() => setInput(code, '123456'));
+    await act(async () => {
+      container.querySelector('form')?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+
+    expect(container.textContent).toContain('login.verifyTimeout');
+    expect(container.textContent, '"问不出来"绝不能说成"你码错了"').not.toContain('login.verifyFailed');
+    unmount();
+  });
+
+  /**
+   * ⭐ 「防止超时后的迟到响应覆盖当前 UI 状态」。
+   *
+   * 做法：只有**最新一次**尝试才准写界面（每次尝试带一个递增序号，await 回来先对号）。
+   *
+   * ⚠️ 这条用例先钉住前提：**同一 tick 里的两次提交真的会发两次**——
+   *    否则"迟到覆盖"根本无从发生，这条用例也就什么都没证明。
+   *    （React 只在事件处理结束时刷新状态，`busy` 是 state 不是同步锁，
+   *      所以第二次提交读到的还是旧闭包里的 `busy === false`。）
+   */
+  it('⭐ 迟到的响应不许覆盖当前界面状态（以最新一次尝试的结论为准）', async () => {
+    let resolveLate!: (value: { ok: boolean; errorCode?: string }) => void;
+    sendOtp
+      .mockImplementationOnce(
+        () =>
+          new Promise<{ ok: boolean; errorCode?: string }>((resolve) => {
+            resolveLate = resolve;
+          }),
+      )
+      .mockImplementationOnce(async () => ({ ok: false, errorCode: 'otp_rate_limited' }));
+
+    const { container, unmount } = render(<Login onSignedIn={vi.fn()} />);
+    const phone = container.querySelector('input[type="tel"]') as HTMLInputElement;
+    const agreement = container.querySelector('input[type="checkbox"]') as HTMLInputElement;
+    act(() => {
+      setInput(phone, '13800138000');
+      agreement.click();
+    });
+
+    await act(async () => {
+      const form = container.querySelector('form') as HTMLFormElement;
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+
+    expect(sendOtp, '前提：这次重叠真的发生了，否则本用例证明不了任何事').toHaveBeenCalledTimes(2);
+    expect(container.textContent).toContain('login.rateLimited:60');
+
+    // 第 1 次（已被第 2 次取代）这时才回来 —— 它说什么都不该改变界面。
+    await act(async () => {
+      resolveLate({ ok: false, errorCode: 'otp_send_unreachable' });
+    });
+    expect(container.textContent, '迟到的第 1 次响应把第 2 次的结论覆盖掉了').toContain('login.rateLimited:60');
+    expect(container.textContent).not.toContain('login.sendTimeout');
+    unmount();
+  });
+
+  /** 同一条纪律，校验侧也要有（两条路的序号各自独立，别只钉一半）。 */
+  it('⭐ 校验时迟到的响应同样不许覆盖当前结论（不许多出一个"超时"）', async () => {
+    let resolveLate!: (value: { ok: boolean; errorCode?: string }) => void;
+    verifyOtp
+      .mockImplementationOnce(
+        () =>
+          new Promise<{ ok: boolean; errorCode?: string }>((resolve) => {
+            resolveLate = resolve;
+          }),
+      )
+      .mockImplementationOnce(async () => ({ ok: false, errorCode: 'otp_verify_failed' }));
+
+    const { container, unmount } = render(<Login onSignedIn={vi.fn()} />);
+    const phone = container.querySelector('input[type="tel"]') as HTMLInputElement;
+    const agreement = container.querySelector('input[type="checkbox"]') as HTMLInputElement;
+    act(() => {
+      setInput(phone, '13800138000');
+      agreement.click();
+    });
+    await act(async () => {
+      container.querySelector('form')?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+    const code = container.querySelector('input[inputmode="numeric"]') as HTMLInputElement;
+    act(() => setInput(code, '123456'));
+
+    await act(async () => {
+      const form = container.querySelector('form') as HTMLFormElement;
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+
+    expect(verifyOtp, '前提：这次重叠真的发生了').toHaveBeenCalledTimes(2);
+    expect(container.textContent).toContain('login.verifyFailed');
+
+    await act(async () => {
+      resolveLate({ ok: false, errorCode: 'otp_verify_unreachable' });
+    });
+    expect(container.textContent, '迟到的第 1 次响应把第 2 次的结论覆盖掉了').toContain('login.verifyFailed');
+    expect(container.textContent).not.toContain('login.verifyUnreachable');
+    expect(container.textContent).not.toContain('login.verifyTimeout');
+    unmount();
+  });
 });

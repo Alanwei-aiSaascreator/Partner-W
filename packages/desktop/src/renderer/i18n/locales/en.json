@@ -1134,6 +1134,7 @@
     "resendIn": "Resend in {{seconds}}s",
     "sendCode": "Send code",
     "sendFailed": "Could not send the code, please try again",
+    "sendTimeout": "The service didn't respond in time. Please send a new code.",
     "serviceUnavailable": "SMS service is temporarily unavailable, please try later",
     "signIn": "Sign in",
     "subtitle": "Enter your phone number and we will send a code",
@@ -1141,6 +1142,7 @@
     "termsUrl": "https://www.rongyinghudong.com/terms.html",
     "title": "Sign in to Rongying Cube",
     "verifyFailed": "Code is incorrect or expired",
+    "verifyTimeout": "The verification request timed out, please try again. Codes are single-use — if it still fails, send a new code.",
     "verifyTooMany": "Too many attempts. Please wait a moment and try again.",
     "verifyUnreachable": "Could not reach the server, so the code was not verified. Codes are single-use — send a new one and try again."
   },

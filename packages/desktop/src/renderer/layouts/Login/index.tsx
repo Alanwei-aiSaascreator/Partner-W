@@ -81,6 +81,16 @@ export default function Login({ onSignedIn }: LoginProps) {
   const [agreed, setAgreed] = useState(false);
   const [mascotPose, setMascotPose] = useState<GuideMascotPose>('idle');
   const codeInputRef = useRef<HTMLInputElement>(null);
+  /**
+   * 尝试序号：只有最新一次尝试的结果才准写界面。
+   *
+   * ⚠️ 为什么需要它（2026-09-20 复核点名"防止超时后的迟到响应覆盖当前 UI 状态"）：
+   *    `busy` 是 state，React 要到事件处理结束才刷新 ⇒ **同一 tick 里的两次提交
+   *    都会读到 `busy === false`**，于是真的会并发两次。主进程那侧各自 8 秒封顶，
+   *    谁先回来不确定 —— 第 1 次的超时结论完全可能盖掉第 2 次的结论
+   *    （实测：`test/login-screen.test.tsx` 里"迟到的响应不许覆盖当前界面状态"）。
+   */
+  const attemptSeq = useRef(0);
 
   useEffect(() => {
     if (countdown <= 0) return;
@@ -107,6 +117,11 @@ export default function Login({ onSignedIn }: LoginProps) {
       switch (errorCode) {
         case 'otp_rate_limited':
           return t('login.rateLimited', { seconds: RESEND_SECONDS });
+        case 'otp_send_unreachable':
+          // 主进程 8 秒上限到了（`auth.ts` 的 `sendLoginOtp`）—— 请求发出去过，
+          // 但我们没等到回话。与"服务端明确说发不了"分开说：让用户**重新发送**，
+          // 而不是去猜自己哪里填错了。
+          return t('login.sendTimeout');
         case 'otp_hook_failed':
         case 'otp_send_failed':
           return t('login.serviceUnavailable');
@@ -119,6 +134,11 @@ export default function Login({ onSignedIn }: LoginProps) {
 
   const sendCode = useCallback(async () => {
     if (!phoneValid || busy) return;
+    // ⚠️ `busy` 是 state、不是同步锁：同一个 tick 里的两次提交（表单 + 「重新发送」、
+    //    或连点）都会读到 `busy === false` ⇒ 真的会发两次。发两次拦不住没关系，
+    //    但**结论只能有一个**：给每次尝试编号，await 回来先对号，迟到的响应一律丢掉
+    //    （2026-09-20：否则第 1 次的超时结论会盖掉第 2 次的结论，界面在骗人）。
+    const seq = ++attemptSeq.current;
     setBusy(true);
     setError('');
     let res: Awaited<ReturnType<typeof window.clawwork.commercialSendOtp>>;
@@ -127,6 +147,7 @@ export default function Login({ onSignedIn }: LoginProps) {
     } catch {
       res = { ok: false, errorCode: 'otp_send_failed' };
     }
+    if (seq !== attemptSeq.current) return;
     setBusy(false);
 
     // Start the cooldown on every attempt, not just success. Throttling is
@@ -149,9 +170,13 @@ export default function Login({ onSignedIn }: LoginProps) {
    * ⇒ 用户拿同一个码再试 ⇒ 而 OTP 是一次性的、那次超时的请求其实已把它消费掉
    * ⇒ 第二次必然失败，表现成"收到验证码却登不上"。
    * 说明里要提醒「验证码是一次性的，请重新发送」，把人从重试死循环里拉出来。
+   *
+   * ⭐ 2026-09-20 起"超时"单列一档（主进程 8 秒上限 ⇒ `otp_verify_timeout`）：
+   * 文案照旧**必须**带上那句一次性提醒 —— "请重试"单独说会把人推回同一个死循环。
    */
   const describeVerifyError = useCallback(
     (errorCode?: string): string => {
+      if (errorCode === 'otp_verify_timeout') return t('login.verifyTimeout');
       if (errorCode === 'otp_verify_unreachable') return t('login.verifyUnreachable');
       if (errorCode === 'otp_verify_too_many') return t('login.verifyTooMany');
       return t('login.verifyFailed');
@@ -161,6 +186,8 @@ export default function Login({ onSignedIn }: LoginProps) {
 
   const submit = useCallback(async () => {
     if (!codeValid || busy) return;
+    // 同 `sendCode`：编号 + 对号，迟到的响应不许覆盖当前界面状态。
+    const seq = ++attemptSeq.current;
     setBusy(true);
     setError('');
     let res: Awaited<ReturnType<typeof window.clawwork.commercialVerifyOtp>>;
@@ -170,6 +197,7 @@ export default function Login({ onSignedIn }: LoginProps) {
       // IPC 自己炸了 = 我们没拿到答案 ⇒ 属于"问不出来"，**不是**"你码错了"
       res = { ok: false, errorCode: 'otp_verify_unreachable' };
     }
+    if (seq !== attemptSeq.current) return;
     setBusy(false);
     if (!res.ok) {
       setError(describeVerifyError(res.errorCode));

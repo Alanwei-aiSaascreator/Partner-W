@@ -1134,6 +1134,7 @@
     "resendIn": "{{seconds}} 秒後に再送信できます",
     "sendCode": "コードを送信",
     "sendFailed": "コードを送信できませんでした。後でもう一度お試しください",
+    "sendTimeout": "サービスが応答しませんでした。もう一度送信してください",
     "serviceUnavailable": "SMS サービスが一時的に利用できません。後でもう一度お試しください",
     "signIn": "ログイン",
     "subtitle": "電話番号を入力してください。確認コードをお送りします",
@@ -1141,6 +1142,7 @@
     "termsUrl": "https://www.rongyinghudong.com/terms.html",
     "title": "Rongying Cube にログイン",
     "verifyFailed": "コードが正しくないか期限切れです",
+    "verifyTimeout": "確認リクエストがタイムアウトしました。もう一度お試しください。認証コードは1回限りです。それでも失敗する場合は「再送信」で新しいコードを取得してください。",
     "verifyTooMany": "Too many attempts. Please wait a moment and try again.",
     "verifyUnreachable": "Could not reach the server, so the code was not verified. Codes are single-use — send a new one and try again."
   },
