@@ -14,6 +14,7 @@
  */
 
 import { app, ipcMain } from 'electron';
+import type { IpcResult, OurSkillsListResult } from '@clawwork/shared';
 import { getGatewayClient } from '../ws/index.js';
 import { installBundledSkill, isBundledSkillInstalled, readBundledSkills, removeBundledSkill } from './bundled.js';
 import { resolveOurSkillsRoot } from './locate.js';
@@ -53,23 +54,36 @@ export function registerSkillsHandlers(): void {
   /**
    * 列出随包技能。**网关没连上也能列**（`installed` 全为 `false`）——
    * 技能市场是"我们有什么"，不该因为网关没起来就整页空着。
+   *
+   * ⚠️ **返回类型必须显式写出来**。`ipcMain.handle` 的返回值不参与类型检查，
+   *    所以"handler 回什么形状"和"渲染层按什么形状读"这两件事**编译器管不着** ——
+   *    第一版就是在这里栽的：handler 回的是**扁平**的 `{ ok, managedDirKnown, skills }`，
+   *    而渲染层按 `IpcResult` 约定的 `res.result.skills` 去读 ⇒ 永远是 undefined ⇒
+   *    整页显示"读取失败"。**单测没抓到**，因为测试里的桩是按渲染层的假设写的
+   *    ——桩与真身各写一遍，就是这个形状的假绿。实机第一次点进去就露了。
+   *    写上返回类型之后，再漂移 `typecheck` 就会红。
    */
-  ipcMain.handle('skills:our-list', async (_event, payload: { gatewayId?: string; agentId?: string } = {}) => {
-    try {
-      const skills = readBundledSkills(ourSkillsRoot());
-      const managedDir = payload?.gatewayId ? await managedSkillsDirOf(payload.gatewayId, payload.agentId) : null;
-      return {
-        ok: true,
-        managedDirKnown: managedDir !== null,
-        skills: skills.map((skill) => ({
-          ...skill,
-          installed: managedDir ? isBundledSkillInstalled(managedDir, skill.slug) : false,
-        })),
-      };
-    } catch (err) {
-      return ipcError(err);
-    }
-  });
+  ipcMain.handle(
+    'skills:our-list',
+    async (_event, payload: { gatewayId?: string; agentId?: string } = {}): Promise<IpcResult<OurSkillsListResult>> => {
+      try {
+        const skills = readBundledSkills(ourSkillsRoot());
+        const managedDir = payload?.gatewayId ? await managedSkillsDirOf(payload.gatewayId, payload.agentId) : null;
+        return {
+          ok: true,
+          result: {
+            managedDirKnown: managedDir !== null,
+            skills: skills.map((skill) => ({
+              ...skill,
+              installed: managedDir ? isBundledSkillInstalled(managedDir, skill.slug) : false,
+            })),
+          },
+        };
+      } catch (err) {
+        return ipcError(err);
+      }
+    },
+  );
 
   ipcMain.handle(
     'skills:our-install',
