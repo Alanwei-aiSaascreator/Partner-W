@@ -29,6 +29,16 @@ const W = path.win32;
 
 /** 盘上应用数据目录名（与 `runtime/portable-app-data.ts` 的 `PORTABLE_APP_DATA_DIR_NAME` 同名）。 */
 export const PORTABLE_USER_DATA_DIR_NAME = '荣盈魔方-运行数据';
+/**
+ * 交付夹最多埋在卷根下几层（与 `workspace/portable.ts` 的 `MAX_DELIVERY_DEPTH` 同名同值）。
+ * ⚠️ 这个数**照抄**源码：抄错 ⇒ 诊断会把"埋太深的本机目录"说成盘上形态（或反过来）。
+ */
+export const MAX_DELIVERY_DEPTH = 2;
+/**
+ * 安装形态的常见位置段（镜像 `workspace/portable.ts` 的 `INSTALL_DIR_SEGMENTS` 三条正则）。
+ * 命中任一段就不算交付夹 —— 用户完全可能把安装版装在 `D:\Program Files\荣盈魔方`。
+ */
+export const INSTALL_DIR_SEGMENTS = ['Program Files', 'Program Files (x86)', 'Programs', 'AppData'];
 /** 网关状态目录名（与 `runtime/state-config.ts` 的 `STATE_DIR_NAME` 同名）。 */
 export const STATE_DIR_NAME = 'openclaw-state';
 /** 客户端配置文件（与 `@clawwork/shared` 的 `CONFIG_FILE_NAME` 同名）。 */
@@ -146,13 +156,62 @@ export function userDataCandidates({ volumeRoot, appDataDir, localAppDataDir }) 
 }
 
 /**
+ * 交付形态那几条事实（镜像 `workspace/portable.ts` 的 `isDeliveryLayout`）。
+ *
+ * 现场（2026-09-20 同事那份 0.0.24）：交付说明让用户"解压到 U 盘根目录"，而不少
+ * U 盘/移动固态/读卡器被 Windows 报成 `DriveType=3`（固定盘）⇒「枚举可移动盘」永远
+ * 不命中；盘根 marker 又是说明里叮嘱"千万别拷"的文件 ⇒ 老两条判据全落空。
+ * 交付形态认的是**我们自己的包**：`<盘根>\…\荣盈魔方\resources\runtime\<manifest>`。
+ *
+ * 四条与源码一一对应：深度 ≤ `MAX_DELIVERY_DEPTH`、路径里没有安装形态的段、
+ * 夹子里真有随包运行时清单（`hasBundledRuntime`）。
+ *（源码里还有一条"resources 必须是 exe 自己那份"—— 本工具找夹子时就按
+ *  `<夹子>\resources\runtime\` 找，天然成立，不再重复判。）
+ *
+ * ⚠️ 传进来的 `volumeRoot` **按原样用**（不规范化成盘符根）：本工具拿 `--volume-root`
+ *    当"这块盘"的根，端到端测试里它是临时目录；规范化会把任何路径都变成 `C:\`。
+ */
+export function deliveryLayoutOf({ volumeRoot, appDir, hasBundledRuntime }) {
+  const miss = {
+    isLayout: false,
+    appDir: appDir ?? null,
+    depth: null,
+    blockedSegment: null,
+    hasBundledRuntime: Boolean(hasBundledRuntime),
+  };
+  if (!volumeRoot || !appDir) return miss;
+
+  const root = String(volumeRoot).replace(/[\\/]+$/, '');
+  const rel = W.relative(root, appDir);
+  if (!rel || rel.startsWith('..') || W.isAbsolute(rel)) return miss;
+
+  const segments = rel.split(/[\\/]+/).filter(Boolean);
+  const blocked = segments.find((s) => INSTALL_DIR_SEGMENTS.some((d) => d.toLowerCase() === s.toLowerCase())) ?? null;
+  const depth = segments.length;
+  return {
+    isLayout: depth > 0 && depth <= MAX_DELIVERY_DEPTH && blocked === null && Boolean(hasBundledRuntime),
+    appDir,
+    depth,
+    blockedSegment: blocked,
+    hasBundledRuntime: Boolean(hasBundledRuntime),
+  };
+}
+
+/**
  * 这块盘会被判成"盘上运行"吗 —— 判据**照抄** `decidePortableAppData`（顺序也照抄）。
  *
  * ⚠️ 这是**镜像**，不是引用：运行时改了顺序这里要跟着改（队列里记着这条风险）。
- *    但哪怕它过期，报告里也同时列了原始事实（marker 有没有、DriveType 几），
+ *    但哪怕它过期，报告里也同时列了原始事实（marker 有没有、DriveType 几、交付夹几层），
  *    后人能自己重判。
  */
-export function decidePortable({ volumeRoot, systemDrive, driveType, hasRuntimeMarker, hasWorkspaceMarker }) {
+export function decidePortable({
+  volumeRoot,
+  systemDrive,
+  driveType,
+  hasRuntimeMarker,
+  hasWorkspaceMarker,
+  deliveryLayout,
+}) {
   if (systemDrive && volumeRoot && sameVolume(volumeRoot, systemDrive)) {
     return {
       code: 'system-drive',
@@ -179,6 +238,19 @@ export function decidePortable({ volumeRoot, systemDrive, driveType, hasRuntimeM
         ` ⇒ 按"盘上运行"处理：数据落 <盘根>\\${PORTABLE_USER_DATA_DIR_NAME}\\。`,
     };
   }
+  if (deliveryLayout?.isLayout) {
+    return {
+      code: 'delivery-layout',
+      portable: true,
+      reason: `exe 就在我们自己的交付夹里（盘根下 ${deliveryLayout.depth} 层 + 夹子里有随包运行时）⇒ 认`,
+      explain:
+        `交付夹形状（${deliveryLayout.appDir}，盘根下 ${deliveryLayout.depth} 层，` +
+        `里面有 resources\\runtime\\${RUNTIME_MANIFEST_FILE}）` +
+        ` ⇒ 按"盘上运行"处理：数据落 <盘根>\\${PORTABLE_USER_DATA_DIR_NAME}\\。` +
+        `⚠️ 这条判据是 2026-09-20 补的：DriveType=3 的盘上「枚举可移动盘」永远不命中，` +
+        `只有它能认出"这就是我们发出去的那份"。`,
+    };
+  }
   if (driveType === 2) {
     return {
       code: 'removable-drive',
@@ -190,14 +262,27 @@ export function decidePortable({ volumeRoot, systemDrive, driveType, hasRuntimeM
   return {
     code: 'no-criterion',
     portable: false,
-    reason: '两条判据都不命中 ⇒ 不认',
+    reason: '三条判据都不命中 ⇒ 不认',
     explain:
-      `两块判据都没命中：盘根没有 ${RUNTIME_MANIFEST_FILE}、` +
+      `三块判据都没命中：盘根没有 ${RUNTIME_MANIFEST_FILE}、` +
+      `盘里没有 ${PORTABLE_WORKSPACE_DIR_NAME}\\${WORKSPACE_MARKER_FILE}、` +
+      `exe 也不在我们自己的交付夹里${deliveryFactsNote(deliveryLayout)}、` +
       `也不在 DriveType=2 的可移动盘列表里（这块盘 DriveType=${driveType ?? '?'}，` +
       `${driveTypeName(driveType ?? -1)}）` +
       ` ⇒ 数据落本机 %APPDATA%、工作区落用户主目录。` +
       `⚠️ 这正是"换台机器/换个口就找不到数据"的那条链：判成非便携之后，连"把正在运行的那块盘当候选"的能力也一起丢掉了。`,
   };
+}
+
+/** "没认成交付夹"的那点事实（深度/被哪一段挡下/有没有随包运行时）—— 报告里要能看出为什么。 */
+function deliveryFactsNote(layout) {
+  if (!layout) return '（没扫到任何带随包运行时的夹子）';
+  const bits = [];
+  if (layout.appDir) bits.push(`扫到 ${layout.appDir}`);
+  if (layout.depth !== null && layout.depth !== undefined) bits.push(`盘根下 ${layout.depth} 层`);
+  if (layout.blockedSegment) bits.push(`命中安装位置段 ${layout.blockedSegment}`);
+  if (!layout.hasBundledRuntime) bits.push(`夹子里没有 ${RUNTIME_MANIFEST_FILE}`);
+  return bits.length ? `（${bits.join('；')}）` : '（没扫到任何带随包运行时的夹子）';
 }
 
 /**
@@ -559,6 +644,17 @@ export function renderReport(facts) {
     );
   }
   lines.push(`认盘 marker（盘根 ${RUNTIME_MANIFEST_FILE}）：${yesNo(f.markers?.runtime)}`);
+  if (f.deliveryLayout) {
+    const d = f.deliveryLayout;
+    lines.push(
+      `交付夹形状（盘根下 ≤${MAX_DELIVERY_DEPTH} 层 + resources\\runtime\\${RUNTIME_MANIFEST_FILE}）：` +
+        (d.appDir
+          ? `${d.isLayout ? '认' : '不认'} —— ${d.appDir}` +
+            `（盘根下 ${d.depth} 层${d.blockedSegment ? `；命中安装位置段 ${d.blockedSegment}` : ''}` +
+            `${d.hasBundledRuntime ? '' : `；夹子里没有 ${RUNTIME_MANIFEST_FILE}`}）`
+          : '没扫到（盘根与它下一层都没有带随包运行时的夹子）'),
+    );
+  }
   lines.push(
     `工作区 marker（${PORTABLE_WORKSPACE_DIR_NAME}\\${WORKSPACE_MARKER_FILE}）：${yesNo(f.markers?.workspace)}`,
   );

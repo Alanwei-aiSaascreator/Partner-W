@@ -34,8 +34,10 @@ import {
   CONFIG_FILE_NAME,
   CURRENT_POINTER_FILE,
   decidePortable,
+  deliveryLayoutOf,
   DEPLOYMENT_STAMP_FILE,
   digestLine,
+  MAX_DELIVERY_DEPTH,
   isBrokenLink,
   judgeDeployment,
   looksLikeBundledNode,
@@ -141,18 +143,59 @@ function volumesOn() {
   return { list, error: null };
 }
 
-/** 盘里那个"随包程序目录"：顶层任一目录含 resources\runtime\node\node.exe。 */
+/**
+ * 交付夹的**候选目录**：盘根 + 它下面 ≤`MAX_DELIVERY_DEPTH` 层（浅的先试）。
+ *
+ * ⚠️ 必须有这一层深度：交付包解压到盘根之后是
+ *    `<盘根>\荣盈魔方U盘交付-0.0.24\荣盈魔方\resources\runtime\…` —— 夹子在盘根下**两层**。
+ *    只扫一层的话，工具会对着**判据本来要救的那种盘**说"没找到随包程序目录"
+ *    （本机 e2e 测试 ⑩b 当场抓到的就是这个：判据说"认"，扫描说"没找到"）。
+ */
+function deliveryCandidateDirs(volumeRoot) {
+  const out = [volumeRoot];
+  let level = [volumeRoot];
+  for (let depth = 1; depth <= MAX_DELIVERY_DEPTH; depth += 1) {
+    const next = [];
+    for (const dir of level) {
+      try {
+        for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+          if (e.isDirectory()) next.push(path.join(dir, e.name));
+        }
+      } catch {
+        /* 读不了就跳过这一支 */
+      }
+    }
+    out.push(...next);
+    level = next;
+  }
+  return out;
+}
+
+/**
+ * 交付夹形状的现场事实（判据本体在 lib 的 `deliveryLayoutOf`）。
+ *
+ * ⚠️ 与 `findDelivery` 分开、**不要求 node.exe 在**：同事那句「安装失败」很可能就是
+ *    运行时没解压全 —— 那时 `findDelivery` 找不到夹子，判据却仍该认出"exe 在我们自己的
+ *    交付夹里"（判据只看那份 manifest）。两件事混成一件，报告就会在**最该有用的那次**说"没找到"。
+ */
+function deliveryLayoutFacts(volumeRoot) {
+  const candidates = deliveryCandidateDirs(volumeRoot);
+
+  let rejected = null;
+  for (const dir of candidates) {
+    const hasBundledRuntime = exists(path.join(dir, 'resources', 'runtime', RUNTIME_MANIFEST_FILE));
+    const facts = deliveryLayoutOf({ volumeRoot, appDir: dir, hasBundledRuntime });
+    if (facts.isLayout) return facts;
+    // 留一条"最像但被挡下"的现场（有随包运行时才算"像"）：报告要能说清为什么没认
+    if (hasBundledRuntime && !rejected) rejected = facts;
+  }
+  return rejected ?? { isLayout: false, appDir: null, depth: null, blockedSegment: null, hasBundledRuntime: false };
+}
+
+/** 盘里那个"随包程序目录"：盘根下 ≤MAX_DELIVERY_DEPTH 层里，含 resources\runtime\node\node.exe 的那个。 */
 function findDelivery(volumeRoot) {
   const looks = (dir) => path.join(dir, 'resources', 'runtime');
-  const candidates = [volumeRoot];
-  try {
-    for (const e of fs.readdirSync(volumeRoot, { withFileTypes: true })) {
-      if (e.isDirectory()) candidates.push(path.join(volumeRoot, e.name));
-    }
-  } catch {
-    /* 盘读不了就不是这里的问题 */
-  }
-  for (const dir of candidates) {
+  for (const dir of deliveryCandidateDirs(volumeRoot)) {
     const nodeExe = path.join(dir, 'resources', 'runtime', 'node', 'node.exe');
     if (!exists(nodeExe)) continue;
     const manifest = path.join(looks(dir), 'openclaw-runtime-manifest.json');
@@ -362,6 +405,7 @@ function gather(opts) {
   const hasRuntimeMarker = exists(path.join(volumeRoot, RUNTIME_MANIFEST_FILE));
   const hasWorkspaceMarker = exists(path.join(volumeRoot, PORTABLE_WORKSPACE_DIR_NAME, WORKSPACE_MARKER_FILE));
 
+  const deliveryLayout = deliveryLayoutFacts(volumeRoot);
   const delivery = findDelivery(volumeRoot);
   // ⭐ 本工具自己正跑在随包运行时上吗？不写这一句，报告就会自相矛盾：
   //    上面说"没在盘里找到随包程序目录"，下面那行 node 又明明是从里面跑起来的
@@ -426,6 +470,7 @@ function gather(opts) {
     volumes,
     markers: { runtime: hasRuntimeMarker, workspace: hasWorkspaceMarker },
     delivery,
+    deliveryLayout,
     node: { path: nodePath, version: nodeVersion },
     portable: decidePortable({
       volumeRoot,
@@ -433,6 +478,8 @@ function gather(opts) {
       driveType: selfVolume?.driveType ?? null,
       hasRuntimeMarker,
       hasWorkspaceMarker,
+      // 同事那份交付包（盘根没 marker + DriveType=3）只有这条判据能认出来
+      deliveryLayout,
     }),
     userDatas,
     configs,

@@ -27,9 +27,12 @@ import {
   CONFIG_FILE_NAME,
   CURRENT_POINTER_FILE,
   decidePortable,
+  deliveryLayoutOf,
   DEPLOYMENT_STAMP_FILE,
   digestLine,
   driveTypeName,
+  INSTALL_DIR_SEGMENTS,
+  MAX_DELIVERY_DEPTH,
   isBrokenLink,
   judgeDeployment,
   looksLikeBundledNode,
@@ -53,6 +56,28 @@ import {
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const CLI = path.join(ROOT, 'scripts', 'udisk-diagnose.mjs');
 const W = path.win32;
+
+/**
+ * 跑 CLI 用的环境，把 `SystemDrive` 换成指定盘符。
+ *
+ * ⚠️ 两个坑叠在一起，只有端到端测试会撞到：
+ *   ① "系统盘闸门"比的是**盘符根**（`normalizeVolumeRoot`），而夹具里的 `--volume-root`
+ *      是临时目录 ⇒ 它规范化之后就是 `C:\`，于是"这块假盘是系统盘"必然成立、
+ *      其它判据一条都不会被走到（断言会因为**错的原因**通过）。
+ *   ② Windows 的环境块**大小写不敏感**：父进程里那份叫 `SYSTEMDRIVE`，直接
+ *      `{...process.env, SystemDrive: 'D:'}` 会留两个只差大小写的键，
+ *      实际生效的是**旧的那个**（我第一版就这么写，红出来的 reason 仍是 `C:`）。
+ *      ⇒ 必须先按大小写不敏感**删掉**旧键，再放新键。
+ */
+function envWithSystemDrive(letter) {
+  const env = {};
+  for (const [k, v] of Object.entries(process.env)) {
+    if (k.toLowerCase() === 'systemdrive') continue;
+    env[k] = v;
+  }
+  env.SystemDrive = letter;
+  return env;
+}
 
 test('①b 认得出"本工具正跑在随包运行时上"（否则报告会自相矛盾：说没找到，却从里面跑起来）', () => {
   assert.equal(looksLikeBundledNode('E:\\荣盈魔方\\resources\\runtime\\node\\node.exe'), true);
@@ -114,6 +139,90 @@ test('③ 便携判据：系统盘不认；盘根 marker / 工作区 marker / �
   assert.equal(nothing.portable, false);
   assert.match(nothing.explain, /DriveType=3|固定盘/);
   assert.match(nothing.explain, /%APPDATA%|本机/);
+});
+
+/**
+ * ③b–③d 交付形态判据（2026-09-20 补）。
+ *
+ * ⚠️ 为什么必须有：同事那份 0.0.24 的**真实形态**是「盘根没 marker + DriveType=3 +
+ *    包解压在盘根下两层」—— 上面 ③ 的最后那段（固定盘 + 两个 marker 都没有）说的
+ *    正是那台机器，而它当时只能得出"非便携"这个**错的**结论（工具照着老判据说，
+ *    我们照着老判据改）⇒ 数据落本机、换台机器就找不到工作区。
+ */
+test('③b 交付形态：盘根没 marker、DriveType=3，但 exe 就在我们自己的交付夹里 ⇒ 认', () => {
+  const base = {
+    volumeRoot: 'E:\\',
+    systemDrive: 'C:',
+    driveType: 3,
+    hasRuntimeMarker: false,
+    hasWorkspaceMarker: false,
+  };
+  // 同事那份包解压到盘根：E:\荣盈魔方U盘交付-0.0.24\荣盈魔方\（盘根下 2 层）
+  const appDir = W.join('E:\\', '荣盈魔方U盘交付-0.0.24', '荣盈魔方');
+  const layout = deliveryLayoutOf({ volumeRoot: 'E:\\', appDir, hasBundledRuntime: true });
+
+  assert.equal(layout.depth, 2, `层数要按盘根算：${JSON.stringify(layout)}`);
+  assert.equal(layout.blockedSegment, null);
+  assert.equal(layout.isLayout, true);
+
+  const verdict = decidePortable({ ...base, deliveryLayout: layout });
+  assert.equal(verdict.portable, true);
+  assert.equal(verdict.code, 'delivery-layout');
+  assert.match(verdict.reason, /交付夹/);
+  assert.match(verdict.explain, new RegExp(PORTABLE_USER_DATA_DIR_NAME), '要写明数据落盘里哪');
+});
+
+test('③c 交付形态的三个"不算"：埋太深 / 装在 Program Files / 夹子里没有随包运行时', () => {
+  const mk = (appDir, hasBundledRuntime = true) => deliveryLayoutOf({ volumeRoot: 'E:\\', appDir, hasBundledRuntime });
+
+  const deep = mk(W.join('E:\\', '下载', '解压到这里', '荣盈魔方'));
+  assert.equal(deep.depth, 3);
+  assert.equal(deep.isLayout, false, '交付说明是"解压到盘根"，三层已经是随便找个目录放了');
+
+  const installed = mk(W.join('E:\\', 'Program Files', '荣盈魔方'));
+  assert.equal(installed.isLayout, false);
+  assert.equal(installed.blockedSegment, 'Program Files', '要说出是被哪一段挡下的');
+
+  const noRuntime = mk(W.join('E:\\', '荣盈魔方'), false);
+  assert.equal(noRuntime.isLayout, false, '只有同名目录、没有随包运行时 ⇒ 不算（与运行时同一判据）');
+
+  // 判否的理由要**出现在报告里**（同事那份 txt 回来时，我们要能看出是"为什么没认"）
+  const verdict = decidePortable({
+    volumeRoot: 'E:\\',
+    systemDrive: 'C:',
+    driveType: 3,
+    hasRuntimeMarker: false,
+    hasWorkspaceMarker: false,
+    deliveryLayout: installed,
+  });
+  assert.equal(verdict.portable, false);
+  assert.match(verdict.explain, /Program Files/);
+});
+
+test('③d 判据顺序与运行时一致：盘根 marker 优先于交付形态，交付形态优先于 DriveType=2', () => {
+  const appDir = W.join('E:\\', '荣盈魔方U盘交付-0.0.24', '荣盈魔方');
+  const layout = deliveryLayoutOf({ volumeRoot: 'E:\\', appDir, hasBundledRuntime: true });
+  const base = {
+    volumeRoot: 'E:\\',
+    systemDrive: 'C:',
+    driveType: 2,
+    hasRuntimeMarker: false,
+    hasWorkspaceMarker: false,
+  };
+
+  // 盘根 marker 是更早的那条判据（与 `classify()` 同序）
+  const both = decidePortable({ ...base, hasRuntimeMarker: true, deliveryLayout: layout });
+  assert.equal(both.code, 'volume-marker');
+
+  // 没有 marker 时：交付形态比 DriveType=2 更具体（driveType 这里也是 2，仍应报交付夹）
+  const onlyLayout = decidePortable({ ...base, deliveryLayout: layout });
+  assert.equal(onlyLayout.code, 'delivery-layout');
+
+  // 交付形态不成立时，DriveType=2 照旧兜底
+  const incomplete = deliveryLayoutOf({ volumeRoot: 'E:\\', appDir, hasBundledRuntime: false });
+  assert.equal(incomplete.isLayout, false);
+  const onlyRemovable = decidePortable({ ...base, deliveryLayout: incomplete });
+  assert.equal(onlyRemovable.code, 'removable-drive');
 });
 
 test('④ 链接分类：活 junction / 悬空 junction / 真目录 / 不在 / 指到别处', () => {
@@ -431,6 +540,21 @@ test('⑨ 目录名与 TS 源码一致：state 目录 / 客户端 config 名 / �
     new RegExp(`interface DeploymentStamp \\{[^}]*${POINTER_KEY_FIELD}`),
     '部署凭据里也有同一个字段名',
   );
+
+  // ⚠️ 交付形态那几条阈值/黑名单：**照抄** `workspace/portable.ts`（本轮新加）。
+  //    抄错了不会报错，只会让诊断指着错的地方说"这里没问题" —— 比不诊断更坏。
+  assert.match(ws, new RegExp(`MAX_DELIVERY_DEPTH\\s*=\\s*${MAX_DELIVERY_DEPTH}\\b`));
+  // 四个"安装位置"：工具侧那份**逐名**要求（漏一个 ⇒ 交付形态会把装在 C:\Program Files 的那份认成盘上运行）
+  for (const name of ['Program Files', 'Program Files (x86)', 'Programs', 'AppData']) {
+    assert.ok(
+      INSTALL_DIR_SEGMENTS.some((d) => d.toLowerCase() === name.toLowerCase()),
+      `工具侧漏了安装位置段：${name}`,
+    );
+  }
+  // 源码侧是正则，按**字面**比对（改写语义必红）
+  for (const re of ['/^program files( \\(x86\\))?$/i', '/^programs$/i', '/^appdata$/i']) {
+    assert.ok(ws.includes(re), `portable.ts 里的安装位置正则变了：${re}`);
+  }
 });
 
 /**
@@ -525,13 +649,19 @@ test(
     const stdout = execFileSync(
       process.execPath,
       [CLI, '--appdata', appData, '--volume-root', volumeRoot, '--out', out, '--no-write-test', '--json'],
-      { encoding: 'utf8' },
+      // ⚠️ `--volume-root` 是**临时目录**，而"系统盘闸门"比的是**盘符根** ⇒ 不换 SystemDrive 的话
+      //    任何临时目录都会先撞上"系统盘 ⇒ 不认"，下面 ① 那条断言就会**因为错的原因**通过。
+      { encoding: 'utf8', env: envWithSystemDrive('D:') },
     );
     const facts = JSON.parse(stdout);
 
     // ① 便携判定：这块"盘"（临时目录，盘根没有 marker）⇒ 非便携，且理由要能读
+    //    ⚠️ 必须**恰好**是 `no-criterion`：别的 code 也满足"非便携"，而这里要验的是
+    //       "三块判据都不命中"那条路（系统盘/交付夹/可移动盘都不是）。
     assert.equal(facts.portable.portable, false);
+    assert.equal(facts.portable.code, 'no-criterion', `实到：${JSON.stringify(facts.portable)}`);
     assert.ok(facts.portable.explain.length > 10);
+    assert.equal(facts.deliveryLayout.isLayout, false, '这个假盘里没有交付夹');
 
     // ② 三个字段
     const cfg = facts.configs.find((c) => c.path === path.join(userData, CONFIG_FILE_NAME));
@@ -568,6 +698,7 @@ test(
       [CLI, '--appdata', appData, '--volume-root', volumeRoot, '--out', out, '--no-write-test'],
       {
         encoding: 'utf8',
+        env: envWithSystemDrive('D:'), // 见上面那条（假盘在 C:\ 上）
       },
     );
     // ⭐ 屏幕上那行「坏链 N 条」必须跟报告用**同一套判据**：本机实测它与报告不一致 ——
@@ -589,10 +720,72 @@ test(
       [CLI, '--appdata', appData, '--volume-root', volumeRoot, '--out', out, '--no-write-test'],
       {
         encoding: 'utf8',
+        env: envWithSystemDrive('D:'), // 见上面那条（假盘在 C:\ 上）
       },
     );
     const text2 = fs.readFileSync(out, 'utf8');
     assert.ok(text2.includes('部署凭据') || text2.includes('不完整'), `凭据没了必须报出来：\n${text2}`);
+
+    fs.rmSync(box, { recursive: true, force: true });
+  },
+);
+
+/**
+ * ⭐ ⑩b 端到端走一遍**交付形态**的盘（同事那台机器的形状）。
+ *
+ * ⚠️ 为什么非要端到端：这一轮改的就是"这块盘会被判成什么"，而判据的**事实**是 CLI
+ *    在真文件系统上采集的（盘根下扫一层、看 `resources\runtime\<manifest>` 在不在）。
+ *    只测纯函数的话，"采集那一步压根没传进去"（= 报告又说回"非便携"）会全绿。
+ */
+test(
+  '⑩b 真 CLI 跑一遍交付形态的盘：判成便携、理由说交付夹、txt 里能看见层数',
+  { skip: process.platform !== 'win32' ? '要 Windows 的盘符语义' : false },
+  () => {
+    const box = fs.mkdtempSync(path.join(os.tmpdir(), 'udisk-diag-layout-'));
+    const volumeRoot = path.join(box, 'volume');
+    const appData = path.join(box, 'Roaming');
+    const out = path.join(box, '报告.txt');
+    // 同事那份包的形状：<盘根>\荣盈魔方U盘交付-0.0.24\荣盈魔方\resources\runtime\...
+    const appDir = path.join(volumeRoot, '荣盈魔方U盘交付-0.0.24', '荣盈魔方');
+    const runtimeDir = path.join(appDir, 'resources', 'runtime');
+    fs.mkdirSync(path.join(runtimeDir, 'node'), { recursive: true });
+    fs.writeFileSync(path.join(runtimeDir, 'node', 'node.exe'), 'stub', 'utf8');
+    fs.writeFileSync(path.join(runtimeDir, RUNTIME_MANIFEST_FILE), JSON.stringify({ version: '2026.9.3' }), 'utf8');
+    fs.mkdirSync(appData, { recursive: true });
+
+    const stdout = execFileSync(
+      process.execPath,
+      [CLI, '--appdata', appData, '--volume-root', volumeRoot, '--out', out, '--no-write-test', '--json'],
+      // 同上一条：假盘在 C:\ 上，不换 SystemDrive 会先撞"系统盘 ⇒ 不认"
+      { encoding: 'utf8', env: envWithSystemDrive('D:') },
+    );
+    const facts = JSON.parse(stdout);
+
+    assert.equal(
+      facts.deliveryLayout.isLayout,
+      true,
+      `盘根下两层就是我们自己的交付夹，必须认出来：${JSON.stringify(facts.deliveryLayout)}`,
+    );
+    assert.equal(facts.deliveryLayout.depth, 2);
+    assert.equal(facts.portable.portable, true);
+    assert.equal(facts.portable.code, 'delivery-layout');
+
+    execFileSync(
+      process.execPath,
+      [CLI, '--appdata', appData, '--volume-root', volumeRoot, '--out', out, '--no-write-test'],
+      { encoding: 'utf8', env: envWithSystemDrive('D:') },
+    );
+    const text = fs.readFileSync(out, 'utf8');
+    assert.ok(text.includes('交付夹'), `报告要说清"凭什么认成盘上形态"：\n${text}`);
+    assert.match(text, /盘根下 2 层/, `层数要写对（写错层数 = 判据不对）：\n${text}`);
+    // ⚠️ 上面两条**单独不够**：「判定解释」里也带着"交付夹 / 盘根下 2 层"，把报告「## 盘」那节
+    //    删掉它们照样绿（变异 T8 实测 MISS 过一次）。真正钉住那行的是它的**前缀**——
+    //    只有报告行写"≤2 层"（判定解释写的是"盘根下 2 层"）。
+    assert.match(
+      text,
+      /交付夹形状（盘根下 ≤2 层[^\n]*）：认/,
+      `报告「## 盘」那节要有一行讲清交付夹形状与结论（同事回传的 txt 就靠它）：\n${text}`,
+    );
 
     fs.rmSync(box, { recursive: true, force: true });
   },
