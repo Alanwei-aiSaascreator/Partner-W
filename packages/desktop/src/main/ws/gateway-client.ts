@@ -34,6 +34,18 @@ const WS_CLOSE_POLICY_VIOLATION = 1008;
 const WS_HANDSHAKE_TIMEOUT_MS = 10_000;
 
 /**
+ * 连上之后**等 `connect.challenge`** 的上限。
+ *
+ * 这段等待过去**没有任何计时器**：`ws.on('open')` 只记一条日志 `Waiting for connect challenge`，
+ * 而那条 15 秒请求超时只有**收到 challenge、发出 `connect`** 之后才开始跑
+ * ⇒ 网关事件循环卡死时（T-a8 那种：端口在听、TCP 能连、RPC 全超时）客户端**静默挂**在这一段：
+ * 界面状态一直是 `undefined`，**连横幅都不会出现**，用户比"正在尝试重连"更没得判断。
+ *
+ * 取 15 秒 = 与 RPC 请求超时同一个数（客户端对"网关多久算没反应"只留一个口径）。
+ */
+const CHALLENGE_WAIT_TIMEOUT_MS = 15_000;
+
+/**
  * 我们自己造的**传输层**失败码（不是网关说的）。
  *
  * ⚠️ 用途只有一个：区分「网关明确拒绝」（认证 / 配对 / 协议）与「这次连接本身没成」。
@@ -104,6 +116,7 @@ export class GatewayClient {
   private authenticated = false;
   private reconnectAttempts = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private challengeTimer: ReturnType<typeof setTimeout> | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private pendingRequests = new Map<string, PendingReq>();
   private destroyed = false;
@@ -182,6 +195,8 @@ export class GatewayClient {
         gatewayId: this.gatewayId,
         message: 'Waiting for connect challenge',
       });
+      // ⭐ 从这里开始**必须有人喊**：网关不发 challenge 时以前是静默挂住（见常量上的注释）
+      this.startChallengeTimer();
     });
 
     this.ws.on('message', (raw) => {
@@ -284,6 +299,8 @@ export class GatewayClient {
 
   private handleEvent(frame: { event: string; payload: Record<string, unknown>; seq?: number }): void {
     if (frame.event === 'connect.challenge') {
+      // challenge 到了 ⇒ 等待结束（不取消的话它会在 15 秒时误报"没收到 challenge"）
+      this.clearChallengeTimer();
       const nonce = frame.payload && typeof frame.payload.nonce === 'string' ? frame.payload.nonce.trim() : '';
       if (!nonce) {
         getDebugLogger().error({
@@ -942,6 +959,47 @@ export class GatewayClient {
     }
   }
 
+  /**
+   * 开始等 `connect.challenge`（连上之后才开始算，WS 握手本身有 `handshakeTimeout`）。
+   *
+   * ⚠️ 超时后**绝不能**走 1008：1008 在我们的状态机里等于"服务端明确拒绝" ⇒ 那条路**刻意不重连**
+   *    ⇒ 明明只是"网关卡住了"，反而变成永久停摆（正是 `2e17f291` 修的同一个死法）。
+   *    这里按"**这次连接没成**"处理：如实报状态 + 关掉它 ⇒ 走普通背退重连。
+   */
+  private startChallengeTimer(): void {
+    this.clearChallengeTimer();
+    this.challengeTimer = setTimeout(() => {
+      this.challengeTimer = null;
+      const seconds = Math.round(CHALLENGE_WAIT_TIMEOUT_MS / 1000);
+      this.lastError = `gateway sent no connect.challenge within ${seconds}s`;
+      getDebugLogger().warn({
+        domain: 'gateway',
+        event: 'gateway.challenge.timeout',
+        gatewayId: this.gatewayId,
+        error: { message: this.lastError },
+        data: { waitedMs: CHALLENGE_WAIT_TIMEOUT_MS, pendingRequests: this.pendingRequests.size },
+      });
+      // ⭐ 先把状态送出去**再**关：对端没反应时 `ws.close()` 要等 close 握手超时（默认 30 秒）
+      //    才触发 `close` 事件，光靠 close 处理器报，界面还要再白等半分钟。
+      sendToWindow(getMainWindow(), 'gateway-status', {
+        gatewayId: this.gatewayId,
+        connected: false,
+        error: this.lastError,
+        reconnectAttempt: this.reconnectAttempts,
+        maxAttempts: MAX_RECONNECT_ATTEMPTS,
+        gaveUp: false,
+      });
+      this.ws?.close();
+    }, CHALLENGE_WAIT_TIMEOUT_MS);
+  }
+
+  private clearChallengeTimer(): void {
+    if (this.challengeTimer) {
+      clearTimeout(this.challengeTimer);
+      this.challengeTimer = null;
+    }
+  }
+
   private scheduleReconnect(): void {
     if (this.destroyed || this.noReconnect) return;
     if (this.reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
@@ -981,6 +1039,7 @@ export class GatewayClient {
 
   private cleanup(): void {
     this.stopHeartbeat();
+    this.clearChallengeTimer();
     this.connectNonce = null;
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);

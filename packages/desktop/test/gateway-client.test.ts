@@ -352,3 +352,122 @@ describe('断线之后不许无声停摆：服务端拒绝 vs 这次连接没成
     expect(websocketMock.instances.length).toBe(2);
   });
 });
+
+/**
+ * 2026-09-20 的**第三个**缺口（T-a30）：网关**连上了**，却连 `connect.challenge` 都不发。
+ *
+ * 代码事实（改之前）：`ws.on('open')` 只记一条日志 `Waiting for connect challenge`，
+ * **没有任何计时器**；那条 15 秒请求超时只有**收到 challenge、发出 `connect` 之后**才开始跑
+ * ⇒ 网关事件循环卡死时（T-a8 那种：端口在听、TCP 能连、RPC 全超时），客户端会**静默挂**
+ * 在这一段：界面状态一直是 `undefined` ⇒ **连横幅都不会出现**，用户只看到"看起来在准备、
+ * 就是不动"，比"正在尝试重连"更没法判断。
+ *
+ * 另一条同族理由：`ws.close()` 在对端没反应时要等 **close 握手超时（默认 30 秒）**才触发
+ * `close` 事件 ⇒ 光靠 `close` 处理器报状态，界面还要再白等半分钟 ⇒ 状态必须**自己先报**。
+ */
+describe('网关连上了却不发 challenge：必须有人喊一声（不是静默挂住）', () => {
+  const clients: Array<{ destroy: () => void }> = [];
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    websocketMock.constructor.mockClear();
+    websocketMock.instances.length = 0;
+    vi.mocked(sendToWindow).mockClear();
+  });
+
+  afterEach(() => {
+    for (const client of clients) client.destroy();
+    clients.length = 0;
+    vi.clearAllTimers();
+    vi.useRealTimers();
+  });
+
+  async function makeClient() {
+    const { GatewayClient } = await import('../src/main/ws/gateway-client.js');
+    const client = new GatewayClient({
+      id: 'gw-1',
+      name: 'Gateway',
+      url: 'ws://127.0.0.1:18789',
+      auth: { token: 'token' },
+    });
+    clients.push(client);
+    return client;
+  }
+
+  function openSocket(client: { connect: () => void }, opts: { closeEmits?: boolean } = {}) {
+    client.connect();
+    const socket = websocketMock.instances.at(-1);
+    if (!socket) throw new Error('expected a websocket instance');
+    if (opts.closeEmits !== false) {
+      socket.close.mockImplementation((...args: unknown[]) => {
+        socket.readyState = 3;
+        socket.emit('close', (args[0] as number | undefined) ?? 1005, Buffer.from(''));
+      });
+    }
+    socket.readyState = 1;
+    socket.emit('open');
+    return socket;
+  }
+
+  function lastStatus(): Record<string, unknown> {
+    const call = vi.mocked(sendToWindow).mock.calls.at(-1);
+    if (!call) throw new Error('没有给界面发过 gateway-status');
+    expect(call[1]).toBe('gateway-status');
+    return call[2] as Record<string, unknown>;
+  }
+
+  it('网关一个字都不回：15 秒后要如实报出来，而且必须能再连一次（不许静默挂住）', async () => {
+    const client = await makeClient();
+    const socket = openSocket(client);
+
+    await vi.advanceTimersByTimeAsync(14_999);
+    expect(vi.mocked(sendToWindow)).not.toHaveBeenCalled(); // 沉默期是设计的一部分
+    expect(websocketMock.instances.length).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(1);
+    const status = lastStatus();
+    expect(status['connected']).toBe(false);
+    expect(String(status['error'])).toContain('challenge'); // 如实说清"在等什么"
+    expect(status['gaveUp']).not.toBe(true); // 这**不是**"服务端拒绝"
+    expect(socket.close).toHaveBeenCalled(); // 关掉它，交给普通断线路径
+
+    await vi.advanceTimersByTimeAsync(RECONNECT_DELAY_MS);
+    expect(websocketMock.instances.length).toBe(2); // ⭐ 真的又连了一次
+  });
+
+  it('对端卡死时连 close 都迟迟不回来：状态必须自己先报出去（不许干等 close 事件）', async () => {
+    const client = await makeClient();
+    // 这个 socket 的 close() **不**触发 close 事件 —— 对端没反应时就是这种形态
+    openSocket(client, { closeEmits: false });
+
+    await vi.advanceTimersByTimeAsync(15_000);
+
+    const status = lastStatus();
+    expect(status['connected']).toBe(false);
+    expect(String(status['error'])).toContain('challenge');
+    expect(websocketMock.instances.length).toBe(1); // close 事件没回来 ⇒ 还没轮到重连
+  });
+
+  it('challenge 一到手，等待计时器就要被取消（15 秒该报的是“请求超时”，不是“没收到 challenge”）', async () => {
+    const client = await makeClient();
+    const socket = openSocket(client);
+
+    socket.emit('message', JSON.stringify({ type: 'event', event: 'connect.challenge', payload: { nonce: 'n1' } }));
+    await vi.advanceTimersByTimeAsync(15_000);
+
+    const status = lastStatus();
+    expect(String(status['error'])).toContain('request timeout'); // 是那条 15 秒请求超时在报
+    expect(String(status['error'])).not.toContain('challenge'); // 不许是"没收到 challenge"
+  });
+
+  it('destroy() 之后等待计时器不许再开火（不留悬空定时器）', async () => {
+    const client = await makeClient();
+    openSocket(client);
+    client.destroy();
+
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(vi.mocked(sendToWindow)).not.toHaveBeenCalled();
+    expect(websocketMock.instances.length).toBe(1);
+  });
+});
