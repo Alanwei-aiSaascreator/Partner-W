@@ -423,6 +423,134 @@ export interface EnsureGatewayRunningResult {
 }
 
 /**
+ * 给随包 Gateway 的环境变量。
+ *
+ * 便携版会在同事/客户电脑上运行。真实现场里宿主的 `DEEPSEEK_API_KEY` /
+ * `DASHSCOPE_API_KEY` 被 OpenClaw 当成“已配置外置插件”，于是自动调用 npm；随包
+ * 运行时刻意不带 npm，网关直接以 `spawn npm.cmd ENOENT` 退出。
+ *
+ * 这里按随包 OpenClaw 2026.9.3 的官方 external provider/web/channel catalog 精确摘掉
+ * **会触发外置插件安装**的环境入口。不能用 `*_TOKEN|*_SECRET` 这类广义正则：那会
+ * 误删 GitHub/AWS/用户工具凭证和随包 `CLAWROUTER_API_KEY`，悄悄改变产品能力。
+ * 普通 PATH、代理、企业证书等全部保留；外部 OPENCLAW_* 控制项与 NODE_OPTIONS/
+ * NODE_PATH 仍统一清掉，再只写回我们自己拥有的两个 OPENCLAW_* 值。
+ */
+const EXTERNAL_PLUGIN_ENV_KEYS = new Set([
+  'AI_GATEWAY_API_KEY',
+  'ARCEEAI_API_KEY',
+  'BASETEN_API_KEY',
+  'BRAVE_API_KEY',
+  'BYTEPLUS_API_KEY',
+  'CEREBRAS_API_KEY',
+  'CHUTES_API_KEY',
+  'CHUTES_OAUTH_TOKEN',
+  'CLOUDFLARE_AI_GATEWAY_API_KEY',
+  'COMFY_API_KEY',
+  'COMFY_CLOUD_API_KEY',
+  'DASHSCOPE_API_KEY',
+  'DEEPINFRA_API_KEY',
+  'DEEPSEEK_API_KEY',
+  'EXA_API_KEY',
+  'FEATHERLESS_API_KEY',
+  'FIRECRAWL_API_KEY',
+  'FIREWORKS_API_KEY',
+  'GOOGLE_CHAT_SERVICE_ACCOUNT',
+  'GOOGLE_CHAT_SERVICE_ACCOUNT_FILE',
+  'GROQ_API_KEY',
+  'KILOCODE_API_KEY',
+  'KIMI_API_KEY',
+  'KIMICODE_API_KEY',
+  'LONGCAT_API_KEY',
+  'MISTRAL_API_KEY',
+  'MODELSTUDIO_API_KEY',
+  'MODEL_API_KEY',
+  'MOONSHOT_API_KEY',
+  'NOVITA_API_KEY',
+  'OPENCODE_API_KEY',
+  'OPENCODE_ZEN_API_KEY',
+  'OPENROUTER_API_KEY',
+  'PARALLEL_API_KEY',
+  'PERPLEXITY_API_KEY',
+  'QIANFAN_API_KEY',
+  'QWEN_API_KEY',
+  'QWEN_TOKEN_PLAN_API_KEY',
+  'SEARXNG_BASE_URL',
+  'STEPFUN_API_KEY',
+  'SYNTHETIC_API_KEY',
+  'TAVILY_API_KEY',
+  'TOKENHUB_API_KEY',
+  'TOKENPLAN_API_KEY',
+  'TWILIO_ACCOUNT_SID',
+  'TWILIO_AUTH_TOKEN',
+  'TWILIO_MESSAGING_SERVICE_SID',
+  'TWILIO_PHONE_NUMBER',
+  'TWILIO_SMS_FROM',
+  'VENICE_API_KEY',
+  'VOLCANO_ENGINE_API_KEY',
+  'VOYAGE_API_KEY',
+  'VYDRA_API_KEY',
+  'XIAOMI_API_KEY',
+  'XIAOMI_TOKEN_PLAN_API_KEY',
+  'ZCA_PROFILE',
+  'Z_AI_API_KEY',
+  'ZAI_API_KEY',
+]);
+
+const EXTERNAL_CHANNEL_ENV_PREFIXES = [
+  'BUZZ_',
+  'CLICKCLACK_',
+  'DISCORD_',
+  'FEISHU_',
+  'GOOGLECHAT_',
+  'IMESSAGE_',
+  'IRC_',
+  'LINE_',
+  'MATRIX_',
+  'MATTERMOST_',
+  'MSTEAMS_',
+  'NEXTCLOUD_TALK_',
+  'NOSTR_',
+  'OPENCLAW_WEIXIN_',
+  'OPENCLAW_ZALOCLAWBOT_',
+  'QQBOT_',
+  'RAFT_',
+  'SIGNAL_',
+  'SLACK_',
+  'SMS_',
+  'SYNOLOGY_CHAT_',
+  'TLON_',
+  'TWITCH_',
+  'WECOM_',
+  'WHATSAPP_',
+  'YUANBAO_',
+  'ZALO_',
+  'ZALOUSER_',
+] as const;
+
+function triggersExternalPluginInstall(upperKey: string): boolean {
+  return (
+    EXTERNAL_PLUGIN_ENV_KEYS.has(upperKey) ||
+    EXTERNAL_CHANNEL_ENV_PREFIXES.some((prefix) => upperKey.startsWith(prefix))
+  );
+}
+
+export function buildGatewayEnvironment(baseEnv: NodeJS.ProcessEnv, stateDir: string): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+
+  for (const [key, value] of Object.entries(baseEnv)) {
+    if (value === undefined) continue;
+    const upper = key.toUpperCase();
+    if (upper.startsWith('OPENCLAW_') || upper === 'NODE_OPTIONS' || upper === 'NODE_PATH') continue;
+    if (triggersExternalPluginInstall(upper)) continue;
+    env[key] = value;
+  }
+
+  env.OPENCLAW_STATE_DIR = stateDir;
+  env.OPENCLAW_SUPERVISOR_MODE = 'external';
+  return env;
+}
+
+/**
  * 确保端口上跑着**我们的**网关。返回 `ownership` 决定退出时该怎么收尾。
  *
  * ⚠️ 判定在 spawn **之前**，而且判定为 foreign 时**直接抛错**：
@@ -478,12 +606,7 @@ export async function ensureGatewayRunning(opts: EnsureGatewayRunningOptions): P
   }
 
   const args = buildGatewayArgs({ cliPath: opts.cliPath, port });
-  const env: NodeJS.ProcessEnv = {
-    ...process.env,
-    OPENCLAW_STATE_DIR: opts.stateDir,
-    // 刻意关掉网关的原生 service / 自更新：生命周期归客户端管
-    OPENCLAW_SUPERVISOR_MODE: 'external',
-  };
+  const env = buildGatewayEnvironment(process.env, opts.stateDir);
 
   const child = spawn({ nodeExe: opts.nodeExe, args, cwd: opts.deployedRoot, env, secrets: [token] });
   await (
@@ -560,7 +683,7 @@ export async function stopGateway(opts: StopGatewayOptions): Promise<void> {
   try {
     runCommand(nodeExe, [cliPath, 'gateway', 'stop', '--force'], {
       cwd: deployedRoot,
-      env: { ...process.env, OPENCLAW_STATE_DIR: stateDir },
+      env: buildGatewayEnvironment(process.env, stateDir),
       timeout: gracefulTimeoutMs,
     });
   } catch (err) {

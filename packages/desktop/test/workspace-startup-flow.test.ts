@@ -746,5 +746,19 @@ describe('源码契约：失败路径不许 app.quit()', () => {
     expect(code.slice(bootstrapStart, bootstrapEnd), 'bootstrap 没有收到本机运行时缓存根').toContain(
       'runtimeCacheUserDataDir',
     );
+    expect(code.slice(bootstrapStart, bootstrapEnd), 'OpenClaw state 没有使用短的本机根目录').toContain(
+      'stateCacheUserDataDir: localUserDataDir',
+    );
+  });
+
+  it('把 runtime 内部阶段事件接到 debug 日志（否则真盘只能看到最终失败，定位不了慢在哪）', () => {
+    const bootstrapStart = code.indexOf('bootstrapLocalGatewayRuntime({');
+    const resultCheck = code.indexOf('if (!runtimeResult.ok)', bootstrapStart);
+    expect(bootstrapStart).toBeGreaterThan(-1);
+    expect(resultCheck).toBeGreaterThan(bootstrapStart);
+    const bootstrapRegion = code.slice(bootstrapStart, resultCheck);
+    expect(bootstrapRegion).toContain('deps:');
+    expect(bootstrapRegion).toContain('log: (event, data)');
+    expect(bootstrapRegion).toContain("domain: 'gateway'");
   });
 });

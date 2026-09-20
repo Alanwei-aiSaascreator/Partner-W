@@ -24,6 +24,7 @@
  * 见 `MEMORY_SEARCH_PROVIDER`）—— 不补的话模型每次调 `memory_search` 都会卡 15 秒再失败。
  */
 
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { GATEWAY_WS_PORT } from '@clawwork/shared';
@@ -34,6 +35,7 @@ import { ensureLocalGatewayToken } from './token-store.js';
 
 export const STATE_DIR_NAME = 'openclaw-state';
 export const STATE_CONFIG_FILE = 'openclaw.json';
+export const PORTABLE_STATE_DIR_NAME = 'state';
 /** 稳定 id：有了它，upsert 才是幂等的（不会每次启动多出一条网关）。 */
 export const LOCAL_GATEWAY_ID = 'local-runtime';
 export const LOCAL_GATEWAY_NAME = 'Local Runtime';
@@ -72,6 +74,20 @@ export function stateDirFor(userDataDir: string): string {
 
 export function stateConfigPath(stateDir: string): string {
   return path.join(stateDir, STATE_CONFIG_FILE);
+}
+
+/**
+ * 便携版的 OpenClaw state 还要按**便携身份**隔离。
+ *
+ * 本机 runtime cache 的外层 scope 只区分 `E:\\荣盈魔方-运行数据` 这类路径；换一支
+ * U 盘后盘符和目录可能完全相同。若直接共用 `<cache>/openclaw-state`，后一支盘会继承
+ * 前一支盘的 provider key、会话和插件状态。token 是每支盘自己的稳定随机身份，取
+ * SHA-256 的前 96 bit 作目录名既不泄露 token，也足够把一台机器上的几支盘隔开。
+ * 不用完整 64 hex：OpenClaw 的 npm/plugin 子树很深，Windows 路径预算是真实故障面。
+ */
+export function portableStateDirFor(stateUserDataDir: string, token: string): string {
+  const identity = createHash('sha256').update(token, 'utf8').digest('hex').slice(0, 24);
+  return path.join(stateUserDataDir, PORTABLE_STATE_DIR_NAME, identity);
 }
 
 /**
@@ -191,6 +207,17 @@ function readClientLocalRuntimeToken(): string | null {
   }
 }
 
+function readStateConfigFile(configPath: string): Record<string, unknown> | null {
+  if (!existsSync(configPath)) return null;
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(configPath, 'utf-8'));
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    // 半截 JSON（掉电）当成“没有”——重建，而不是让整个启动失败。
+    return null;
+  }
+}
+
 /**
  * 确保状态目录里那份 `openclaw.json` 带的是 **store 的** token。
  *
@@ -200,35 +227,38 @@ function readClientLocalRuntimeToken(): string | null {
  *   - 这份文件是**镜像**：缺了、或认证段与 store 不一致 ⇒ 按 store 写回去
  *   - 已有配置里的其它字段一律保留（openclaw 也会往这里写东西）
  *
- * ⚠️ 接管顺序：state 文件 → 客户端 config。**state 文件优先**是因为它才是正在跑的
- * 那个网关实际在用的 token —— 反过来会让升级后第一次启动就把活着的网关踢掉。
+ * ⚠️ 便携版的两个根目录故意分开：
+ *   - `userDataDir`：U 盘，放 token store 与客户端 config（身份随盘走）
+ *   - `stateUserDataDir`：本机 NTFS 缓存，放 OpenClaw 内部 state（exFAT 不满足它的
+ *     文件身份/原子写约束，实机会报 `file identity changed or could not be verified`）
+ *
+ * store 首次建立时只接管 **U 盘旧 state** → 客户端 config，不能接管本机缓存里残留的
+ * token：同一个盘符以后可能插入另一支 U 盘，本机残留没有资格冒充新盘的身份。
  */
-export function ensureStateConfig(userDataDir: string): {
+export function ensureStateConfig(
+  userDataDir: string,
+  stateUserDataDir = userDataDir,
+): {
   token: string;
   created: boolean;
   configPath: string;
+  stateDir: string;
 } {
-  const stateDir = stateDirFor(userDataDir);
-  const configPath = stateConfigPath(stateDir);
-  mkdirSync(stateDir, { recursive: true });
+  const splitState = stateUserDataDir !== userDataDir;
+  const legacyPortableConfig = readStateConfigFile(stateConfigPath(stateDirFor(userDataDir)));
+  const legacyPortableToken = readStateToken(legacyPortableConfig);
 
-  let existing: Record<string, unknown> | null = null;
-  if (existsSync(configPath)) {
-    try {
-      const parsed: unknown = JSON.parse(readFileSync(configPath, 'utf-8'));
-      if (isRecord(parsed)) existing = parsed;
-    } catch {
-      // 半截 JSON（掉电）当成"没有" —— 重建，而不是让整个启动失败
-    }
-  }
-
-  const existingToken = readStateToken(existing);
-
-  // ① 真相源：ClawWork 自己的 store。store 不存在时才问一次"有没有旧 token 可接管"。
+  // ① 真相源：U 盘上 ClawWork 自己的 store。store 不存在时才问一次旧便携身份。
   const store = ensureLocalGatewayToken({
     userDataDir,
-    adopt: () => existingToken ?? readClientLocalRuntimeToken(),
+    adopt: () => legacyPortableToken ?? readClientLocalRuntimeToken(),
   });
+
+  const stateDir = splitState ? portableStateDirFor(stateUserDataDir, store.token) : stateDirFor(userDataDir);
+  const configPath = stateConfigPath(stateDir);
+  mkdirSync(stateDir, { recursive: true });
+  const existing = splitState ? readStateConfigFile(configPath) : legacyPortableConfig;
+  const existingToken = readStateToken(existing);
 
   // ② 已经一致 ⇒ 一个字节都不写（不每次启动都重写别人的文件）
   //
@@ -244,7 +274,7 @@ export function ensureStateConfig(userDataDir: string): {
     readMemorySearchProvider(existing) !== null &&
     hasMemoryToolsDenied(existing)
   ) {
-    return { token: store.token, created: false, configPath };
+    return { token: store.token, created: false, configPath, stateDir };
   }
 
   const gateway = existing && isRecord(existing.gateway) ? existing.gateway : {};
@@ -264,7 +294,7 @@ export function ensureStateConfig(userDataDir: string): {
     );
   }
 
-  return { token: store.token, created: existing === null, configPath };
+  return { token: store.token, created: existing === null, configPath, stateDir };
 }
 
 /**
@@ -296,20 +326,23 @@ export interface EnsureClientGatewayEntryResult {
   token: string;
   /** config 被改写了没。 */
   changed: boolean;
-  /** 是否发生了令牌漂移（state 与 config 不一致，已按 state 纠正）。 */
+  /** 是否发生了令牌漂移（store 与客户端 config 不一致，已按 store 纠正）。 */
   drifted: boolean;
   stateDir: string;
 }
 
 /**
- * 让客户端 config 与 state 文件对齐，返回**以 state 为准**的 token。
+ * 让客户端 config 与 state 镜像都按 U 盘 token store 对齐。
  *
  * ⚠️ 必须走 `updateConfig`（而不是自己拼 JSON）：safeStorage 加密是在
  * `writeConfig` 里做的，绕过去 token 就明文落盘了。
  */
-export async function ensureClientGatewayEntry(opts: { userDataDir: string }): Promise<EnsureClientGatewayEntryResult> {
-  const { token } = ensureStateConfig(opts.userDataDir);
-  const stateDir = stateDirFor(opts.userDataDir);
+export async function ensureClientGatewayEntry(opts: {
+  userDataDir: string;
+  stateUserDataDir?: string;
+}): Promise<EnsureClientGatewayEntryResult> {
+  const stateUserDataDir = opts.stateUserDataDir ?? opts.userDataDir;
+  const { token, stateDir } = ensureStateConfig(opts.userDataDir, stateUserDataDir);
 
   const current: AppConfig = readConfig() ?? { workspacePath: '', gateways: [] };
   const retainedGateways = current.gateways.filter((gateway) => !isLegacyEmptyLocalGateway(gateway));
@@ -341,7 +374,7 @@ export async function ensureClientGatewayEntry(opts: { userDataDir: string }): P
   });
 
   if (drifted) {
-    console.warn('[runtime] runtime.token-mismatch：config 里的网关令牌与 state 文件不一致，已按 state 纠正');
+    console.warn('[runtime] runtime.token-mismatch：客户端 config 里的网关令牌与 token store 不一致，已按 store 纠正');
   }
 
   return { token, changed: true, drifted, stateDir };

@@ -21,7 +21,8 @@ vi.mock('electron', () => ({
 
 const USER_DATA = 'C:\\fake\\userdata';
 const PORTABLE_USER_DATA = 'E:\\荣盈魔方-运行数据';
-const LOCAL_RUNTIME_CACHE = 'C:\\Users\\u\\AppData\\Roaming\\@clawwork\\desktop';
+const LOCAL_USER_DATA = 'C:\\Users\\u\\AppData\\Roaming\\@clawwork\\desktop';
+const LOCAL_RUNTIME_CACHE = `${LOCAL_USER_DATA}\\portable-runtime-cache\\${'a'.repeat(64)}`;
 
 function makeDeps(over: Partial<RuntimeBootstrapDeps> = {}) {
   const calls: string[] = [];
@@ -99,10 +100,10 @@ describe('bootstrapLocalGatewayRuntime', () => {
     expect(res.ownership).toBe('spawned');
   });
 
-  it('⭐ 盘上形态：登录状态留在 U 盘，运行时只读写本机缓存', async () => {
-    const portableStateDir = 'E:\\荣盈魔方-运行数据\\openclaw-state';
+  it('⭐ 盘上形态：登录状态留在 U 盘，运行时与 OpenClaw 内部 state 只读写本机缓存', async () => {
+    const localStateDir = `${LOCAL_USER_DATA}\\state\\0123456789abcdef01234567`;
     const { deps } = makeDeps({
-      alignClientConfig: vi.fn(async () => ({ token: 'tok-1', stateDir: portableStateDir })),
+      alignClientConfig: vi.fn(async () => ({ token: 'tok-1', stateDir: localStateDir })),
       // 故意放一份结构完整但来源不明的旧缓存：便携版必须拿随包 manifest
       // 重新算目标 key，不能因它“看起来能跑”就直接跳过出厂运行时。
       readCached: vi.fn(() => ({
@@ -118,10 +119,14 @@ describe('bootstrapLocalGatewayRuntime', () => {
     await bootstrapLocalGatewayRuntime({
       userDataDir: PORTABLE_USER_DATA,
       runtimeCacheUserDataDir: LOCAL_RUNTIME_CACHE,
+      stateCacheUserDataDir: LOCAL_USER_DATA,
       deps,
     });
 
-    expect(deps.alignClientConfig).toHaveBeenCalledWith({ userDataDir: PORTABLE_USER_DATA });
+    expect(deps.alignClientConfig).toHaveBeenCalledWith({
+      userDataDir: PORTABLE_USER_DATA,
+      stateUserDataDir: LOCAL_USER_DATA,
+    });
     expect(deps.readCached).not.toHaveBeenCalled();
     expect(deps.deployFromMedia).toHaveBeenCalledWith({ userDataDir: LOCAL_RUNTIME_CACHE });
     expect(deps.resolveNode).toHaveBeenCalledWith({
@@ -130,12 +135,14 @@ describe('bootstrapLocalGatewayRuntime', () => {
       deployedRoot: 'C:\\fake\\userdata\\runtime\\deployed\\k1',
     });
     expect(deps.selfCheckLinks).toHaveBeenCalledWith({
-      stateDir: portableStateDir,
+      stateDir: localStateDir,
       deployedRoot: 'C:\\fake\\userdata\\runtime\\deployed\\k1',
     });
     expect(deps.startGateway).toHaveBeenCalledWith(
       expect.objectContaining({
-        stateDir: portableStateDir,
+        stateDir: localStateDir,
+        // 设备身份属于登录/授权身份，仍随 U 盘；不能因 state 拆到本机而悄悄换一份。
+        identityPath: `${PORTABLE_USER_DATA}\\device-identity.json`,
         deployedRoot: 'C:\\fake\\userdata\\runtime\\deployed\\k1',
       }),
     );

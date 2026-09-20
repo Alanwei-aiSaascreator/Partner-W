@@ -79,7 +79,10 @@ export interface LinkSelfCheckSummary {
  * 默认实现全部来自各自模块；测试传一个记录调用的假集合即可。
  */
 export interface RuntimeBootstrapDeps {
-  alignClientConfig: (opts: { userDataDir: string }) => Promise<{ token: string; stateDir: string }>;
+  alignClientConfig: (opts: {
+    userDataDir: string;
+    stateUserDataDir: string;
+  }) => Promise<{ token: string; stateDir: string }>;
   readCached: (userDataDir: string) => CurrentDeployment;
   deployFromMedia: (opts: { userDataDir: string }) => Promise<DeployResult>;
   /**
@@ -100,6 +103,7 @@ export interface RuntimeBootstrapDeps {
     cliPath: string;
     deployedRoot: string;
     stateDir: string;
+    identityPath: string;
     token: string;
   }) => Promise<EnsureGatewayRunningResult>;
   setStateDirEnv: (stateDir: string) => void;
@@ -204,8 +208,8 @@ export async function locateAndPlan(
 
 function makeDefaultDeps(): RuntimeBootstrapDeps {
   return {
-    alignClientConfig: async ({ userDataDir }) => {
-      const res = await ensureClientGatewayEntry({ userDataDir });
+    alignClientConfig: async ({ userDataDir, stateUserDataDir }) => {
+      const res = await ensureClientGatewayEntry({ userDataDir, stateUserDataDir });
       return { token: res.token, stateDir: res.stateDir };
     },
     readCached: (userDataDir) => readCurrentDeployment(userDataDir),
@@ -233,7 +237,7 @@ function makeDefaultDeps(): RuntimeBootstrapDeps {
         supportedRange: contract.supportedRange,
       });
     },
-    startGateway: async ({ nodeExe, cliPath, deployedRoot, stateDir, token }) =>
+    startGateway: async ({ nodeExe, cliPath, deployedRoot, stateDir, identityPath, token }) =>
       ensureGatewayRunning({
         nodeExe,
         cliPath,
@@ -241,7 +245,7 @@ function makeDefaultDeps(): RuntimeBootstrapDeps {
         stateDir,
         token,
         port: GATEWAY_WS_PORT,
-        identityPath: path.join(stateDir, '..', 'device-identity.json'),
+        identityPath,
       }),
     setStateDirEnv: (stateDir) => {
       // ⚠️ media/resolve.ts 读它；不设的话聊天里的图片会**静默**读不到
@@ -260,11 +264,13 @@ function makeDefaultDeps(): RuntimeBootstrapDeps {
 export async function bootstrapLocalGatewayRuntime(opts: {
   userDataDir: string;
   runtimeCacheUserDataDir?: string;
+  stateCacheUserDataDir?: string;
   deps?: Partial<RuntimeBootstrapDeps>;
 }): Promise<RuntimeBootstrapResult> {
   const deps: RuntimeBootstrapDeps = { ...makeDefaultDeps(), ...opts.deps };
   const { userDataDir } = opts;
   const runtimeCacheUserDataDir = opts.runtimeCacheUserDataDir ?? userDataDir;
+  const stateCacheUserDataDir = opts.stateCacheUserDataDir ?? runtimeCacheUserDataDir;
   const startedAt = deps.now();
 
   const fail = (
@@ -277,8 +283,11 @@ export async function bootstrapLocalGatewayRuntime(opts: {
   };
 
   try {
-    // ① token 真相源在 state 文件；config 里的那份是副本，在这里对齐
-    const { token, stateDir } = await deps.alignClientConfig({ userDataDir });
+    // ① token/store 仍跟着 U 盘；OpenClaw 内部 state 放本机缓存（exFAT 不满足其文件语义）。
+    const { token, stateDir } = await deps.alignClientConfig({
+      userDataDir,
+      stateUserDataDir: stateCacheUserDataDir,
+    });
     deps.setStateDirEnv(stateDir);
 
     // ② 安装形态先认本机缓存（保留“部署源暂时不在也能启动”的既有退路）。
@@ -367,6 +376,8 @@ export async function bootstrapLocalGatewayRuntime(opts: {
       cliPath: deployed.cliPath,
       deployedRoot: deployed.deployedRoot,
       stateDir,
+      // 设备身份与登录/授权同属便携身份，仍随 U 盘；只有 OpenClaw 内部 state 本机化。
+      identityPath: path.join(userDataDir, 'device-identity.json'),
       token,
     });
 

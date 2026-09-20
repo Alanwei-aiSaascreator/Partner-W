@@ -434,13 +434,18 @@ if (!gotLock) {
       const runtimeResult = await bootstrapLocalGatewayRuntime({
         userDataDir: app.getPath('userData'),
         runtimeCacheUserDataDir,
+        // OpenClaw state 不能落 exFAT，也不能嵌在运行时的 64 位 scope 下：其日志/插件
+        // 子树很深，Windows 路径预算会被吃光。token 派生的短目录仍会隔离不同 U 盘。
+        stateCacheUserDataDir: localUserDataDir,
+        deps: {
+          log: (event, data) => {
+            const entry = { domain: 'gateway' as const, event, data };
+            if (event === 'runtime.bootstrap.failed') getDebugLogger().error(entry);
+            else getDebugLogger().info(entry);
+          },
+        },
       });
       if (!runtimeResult.ok) {
-        getDebugLogger().error({
-          domain: 'gateway',
-          event: 'runtime.bootstrap.failed',
-          data: { code: runtimeResult.code, reason: runtimeResult.reason },
-        });
         // ⚠️ 盘上那份与"装到电脑"那份的应用数据现在是**分开**的（各自一个单实例锁），
         //    "两份同时开着"于是从"第二份根本起不来"变成了"第二份能开、本地网关抢不到
         //    18789"。这个失败必须**当面说出来**：界面只会显示"连不上"，用户无从下手。

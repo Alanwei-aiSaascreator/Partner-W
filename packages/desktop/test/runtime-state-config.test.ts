@@ -9,7 +9,7 @@ import { GATEWAY_WS_PORT } from '@clawwork/shared';
  *
  * ⚠️ **令牌漂移是最隐蔽的故障**：state 文件被清掉而客户端 config 里还留着旧 token
  * ⇒ WS 连上去 1008 ⇒ 界面上看着就是"网关没起来"，日志里只有一句 1008。
- * 所以三处（state 文件 / config / 进程 env）以 **state 文件为唯一真相源**。
+ * 所以三处（store / state 镜像 / 客户端 config）以 **U 盘 token store 为唯一真相源**。
  *
  * ⚠️ 会话安全：只在 mkdtemp 里建删文件，绝不触碰真实 `%APPDATA%`。
  */
@@ -52,9 +52,11 @@ import {
   ensureClientGatewayEntry,
   ensureStateConfig,
   minimalGatewayConfig,
+  portableStateDirFor,
   stateConfigPath,
   stateDirFor,
 } from '../src/main/runtime/state-config.js';
+import { authStorePath } from '../src/main/runtime/token-store.js';
 
 let tmpRoot: string;
 let userDataDir: string;
@@ -294,6 +296,84 @@ describe('tools.deny —— 摘掉那两个会必然失败的 memory 工具', ()
 });
 
 describe('ensureClientGatewayEntry', () => {
+  it('⭐ 便携版：登录凭证留在 U 盘，OpenClaw 内部 state 写到本机 NTFS 缓存', async () => {
+    const localStateUserDataDir = path.join(tmpRoot, 'local-runtime-cache');
+    const legacyStateDir = stateDirFor(userDataDir);
+    fs.mkdirSync(legacyStateDir, { recursive: true });
+    fs.writeFileSync(
+      stateConfigPath(legacyStateDir),
+      JSON.stringify({ gateway: { auth: { mode: 'token', token: 'legacy-portable-token' } } }),
+    );
+
+    const res = await ensureClientGatewayEntry({ userDataDir, stateUserDataDir: localStateUserDataDir });
+
+    expect(res.token).toBe('legacy-portable-token');
+    expect(res.stateDir).toBe(portableStateDirFor(localStateUserDataDir, 'legacy-portable-token'));
+    expect(path.basename(res.stateDir)).toMatch(/^[a-f0-9]{24}$/u);
+    expect(res.stateDir).not.toContain('legacy-portable-token');
+    expect(res.stateDir).not.toBe(legacyStateDir);
+    expect(JSON.parse(fs.readFileSync(authStorePath(userDataDir), 'utf-8')).token).toBe('legacy-portable-token');
+    expect(JSON.parse(fs.readFileSync(stateConfigPath(res.stateDir), 'utf-8')).gateway.auth.token).toBe(
+      'legacy-portable-token',
+    );
+    expect(fs.existsSync(authStorePath(localStateUserDataDir))).toBe(false);
+  });
+
+  it('⭐ 同一盘符换成另一支 U 盘时，本机 state 按便携身份隔离，不能继承前一支盘的密钥/会话', async () => {
+    const localStateUserDataDir = path.join(tmpRoot, 'local-runtime-cache');
+    const first = await ensureClientGatewayEntry({ userDataDir, stateUserDataDir: localStateUserDataDir });
+
+    // 模拟拔掉第一支盘、同一个 E: 路径插入全新的第二支盘；本机缓存故意保留。
+    fs.rmSync(userDataDir, { recursive: true, force: true });
+    fs.mkdirSync(userDataDir, { recursive: true });
+    const second = await ensureClientGatewayEntry({ userDataDir, stateUserDataDir: localStateUserDataDir });
+
+    expect(second.token).not.toBe(first.token);
+    expect(second.stateDir).not.toBe(first.stateDir);
+    expect(JSON.parse(fs.readFileSync(stateConfigPath(first.stateDir), 'utf-8')).gateway.auth.token).toBe(first.token);
+    expect(JSON.parse(fs.readFileSync(stateConfigPath(second.stateDir), 'utf-8')).gateway.auth.token).toBe(
+      second.token,
+    );
+  });
+
+  it('⭐ U 盘 store 已存在时，它会改回本机 scoped state 里的漂移 token', async () => {
+    const localStateUserDataDir = path.join(tmpRoot, 'local-runtime-cache');
+    const first = await ensureClientGatewayEntry({ userDataDir, stateUserDataDir: localStateUserDataDir });
+    const raw = JSON.parse(fs.readFileSync(stateConfigPath(first.stateDir), 'utf-8'));
+    raw.gateway.auth.token = 'stale-local-token';
+    fs.writeFileSync(stateConfigPath(first.stateDir), JSON.stringify(raw));
+
+    const second = await ensureClientGatewayEntry({ userDataDir, stateUserDataDir: localStateUserDataDir });
+
+    expect(second.stateDir).toBe(first.stateDir);
+    expect(second.token).toBe(first.token);
+    expect(JSON.parse(fs.readFileSync(stateConfigPath(second.stateDir), 'utf-8')).gateway.auth.token).toBe(first.token);
+  });
+
+  it('⭐ U 盘旧 state 缺失时仍接管 U 盘客户端 config 的 local-runtime token', async () => {
+    const localStateUserDataDir = path.join(tmpRoot, 'local-runtime-cache');
+    const { writeConfig } = await import('../src/main/workspace/config.js');
+    writeConfig({
+      workspacePath: '/w',
+      gateways: [
+        {
+          id: LOCAL_GATEWAY_ID,
+          name: 'Local Runtime',
+          url: `ws://127.0.0.1:${GATEWAY_WS_PORT}`,
+          authMode: 'token',
+          token: 'client-config-token',
+        },
+      ],
+      defaultGatewayId: LOCAL_GATEWAY_ID,
+    });
+
+    const res = await ensureClientGatewayEntry({ userDataDir, stateUserDataDir: localStateUserDataDir });
+
+    expect(res.token).toBe('client-config-token');
+    expect(JSON.parse(fs.readFileSync(authStorePath(userDataDir), 'utf-8')).token).toBe('client-config-token');
+    expect(res.stateDir).toBe(portableStateDirFor(localStateUserDataDir, 'client-config-token'));
+  });
+
   it('⭐ 首次：config 里恰好一条 gateway，id 稳定、url 指向本机端口', async () => {
     const res = await ensureClientGatewayEntry({ userDataDir });
 

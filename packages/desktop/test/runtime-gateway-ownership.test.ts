@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   GATEWAY_PORT_OCCUPIED,
+  buildGatewayEnvironment,
   buildGatewayArgs,
   classifyExistingGateway,
   ensureGatewayRunning,
@@ -94,6 +95,52 @@ describe('buildGatewayArgs', () => {
 });
 
 describe('ensureGatewayRunning', () => {
+  it('⭐ 网关子进程不继承宿主模型密钥，但保留运行必需的普通环境变量', () => {
+    const env = buildGatewayEnvironment(
+      {
+        PATH: 'C:\\Windows\\System32',
+        SystemRoot: 'C:\\Windows',
+        TEMP: 'C:\\Temp',
+        HTTP_PROXY: 'http://127.0.0.1:7890',
+        NODE_EXTRA_CA_CERTS: 'C:\\corp\\ca.pem',
+        DEEPSEEK_API_KEY: 'deep-secret',
+        QWEN_API_KEY: 'qwen-secret',
+        DASHSCOPE_API_KEY: 'dash-secret',
+        SEARXNG_BASE_URL: 'http://127.0.0.1:8080',
+        SLACK_WEBHOOK_URL: 'https://hooks.slack.invalid/test',
+        MATTERMOST_URL: 'https://mattermost.invalid',
+        TWILIO_PHONE_NUMBER: '+10000000000',
+        OPENAI_API_KEY: 'openai-secret',
+        GITHUB_TOKEN: 'github-secret',
+        CLAWROUTER_API_KEY: 'product-relay-secret',
+        OPENCLAW_GATEWAY_TOKEN: 'foreign-gateway-secret',
+        NODE_OPTIONS: '--require C:\\foreign\\inject.js',
+      },
+      'C:\\profile\\openclaw-state',
+    );
+
+    expect(env.PATH).toBe('C:\\Windows\\System32');
+    expect(env.SystemRoot).toBe('C:\\Windows');
+    expect(env.TEMP).toBe('C:\\Temp');
+    expect(env.HTTP_PROXY).toBe('http://127.0.0.1:7890');
+    expect(env.NODE_EXTRA_CA_CERTS).toBe('C:\\corp\\ca.pem');
+    expect(env.OPENCLAW_STATE_DIR).toBe('C:\\profile\\openclaw-state');
+    expect(env.OPENCLAW_SUPERVISOR_MODE).toBe('external');
+    expect(env).not.toHaveProperty('DEEPSEEK_API_KEY');
+    expect(env).not.toHaveProperty('QWEN_API_KEY');
+    expect(env).not.toHaveProperty('DASHSCOPE_API_KEY');
+    expect(env).not.toHaveProperty('SEARXNG_BASE_URL');
+    expect(env).not.toHaveProperty('SLACK_WEBHOOK_URL');
+    expect(env).not.toHaveProperty('MATTERMOST_URL');
+    expect(env).not.toHaveProperty('TWILIO_PHONE_NUMBER');
+    expect(env).not.toHaveProperty('OPENCLAW_GATEWAY_TOKEN');
+    expect(env).not.toHaveProperty('NODE_OPTIONS');
+    // 非外置自动安装入口继续透传，避免破坏用户自己的工具/集成与随包 clawrouter。
+    expect(env.OPENAI_API_KEY).toBe('openai-secret');
+    expect(env.GITHUB_TOKEN).toBe('github-secret');
+    expect(env.CLAWROUTER_API_KEY).toBe('product-relay-secret');
+  });
+
   it('A. 端口上没有网关 ⇒ spawn 一次，ownership=spawned', async () => {
     const { opts, spawn } = baseOpts();
     const res = await ensureGatewayRunning(opts);

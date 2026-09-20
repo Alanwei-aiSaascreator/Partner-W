@@ -119,4 +119,17 @@ describe('stopGateway', () => {
     await stopGateway(opts);
     expect(opts.runCommand.mock.calls[0][2].env.OPENCLAW_STATE_DIR).toBe('C:\\profile\\openclaw-state');
   });
+
+  it('优雅停止也使用隔离环境，不能在 stop 阶段又触发外置 provider 自动安装', async () => {
+    const before = process.env.DEEPSEEK_API_KEY;
+    process.env.DEEPSEEK_API_KEY = 'host-secret';
+    try {
+      const opts = stopOpts(makeChild());
+      await stopGateway(opts);
+      expect(opts.runCommand.mock.calls[0][2].env).not.toHaveProperty('DEEPSEEK_API_KEY');
+    } finally {
+      if (before === undefined) delete process.env.DEEPSEEK_API_KEY;
+      else process.env.DEEPSEEK_API_KEY = before;
+    }
+  });
 });
