@@ -597,7 +597,7 @@
     "reconnecting": "Tentative de reconnexion...",
     "reconnectingBanner": "Passerelle « {{name}} » déconnectée. Tentative de reconnexion...",
     "retryNow": "Réessayer maintenant",
-    "unreachableBanner": "Passerelle « {{name}} » injoignable. Tentatives de reconnexion épuisées."
+    "unreachableBanner": "Passerelle « {{name}} » injoignable. La reconnexion automatique est arrêtée. Cliquez sur « Réessayer maintenant » ou sur « Ouvrir les réglages » si le problème persiste."
   },
   "contextMenu": {
     "archive": "Archiver",

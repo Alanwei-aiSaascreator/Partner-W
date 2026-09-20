@@ -597,7 +597,7 @@
     "reconnecting": "正在嘗試重新連線…",
     "reconnectingBanner": "Gateway「{{name}}」已斷線。正在嘗試重新連線…",
     "retryNow": "立即重試",
-    "unreachableBanner": "Gateway「{{name}}」無法連線。重新連線次數已用盡。"
+    "unreachableBanner": "Gateway「{{name}}」連不上，已停止自動重新連線。可點「立即重試」，或到「開啟設定」檢查設定。"
   },
   "contextMenu": {
     "archive": "封存",

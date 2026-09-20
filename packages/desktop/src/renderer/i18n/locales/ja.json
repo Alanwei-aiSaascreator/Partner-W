@@ -597,7 +597,7 @@
     "reconnecting": "再接続を試行中...",
     "reconnectingBanner": "ゲートウェイ「{{name}}」が切断されました。再接続を試行中...",
     "retryNow": "今すぐ再試行",
-    "unreachableBanner": "ゲートウェイ「{{name}}」に到達できません。再接続の試行回数を超えました。"
+    "unreachableBanner": "ゲートウェイ「{{name}}」に到達できません。自動再接続は停止しました。「今すぐ再試行」または「設定を開く」から確認してください。"
   },
   "contextMenu": {
     "archive": "アーカイブ",

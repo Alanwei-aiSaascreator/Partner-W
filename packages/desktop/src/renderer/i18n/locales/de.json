@@ -597,7 +597,7 @@
     "reconnecting": "Verbindung wird wiederhergestellt…",
     "reconnectingBanner": "Gateway \"{{name}}\" getrennt. Verbindung wird wiederhergestellt…",
     "retryNow": "Jetzt erneut versuchen",
-    "unreachableBanner": "Gateway \"{{name}}\" nicht erreichbar. Alle Verbindungsversuche aufgebraucht."
+    "unreachableBanner": "Gateway \"{{name}}\" nicht erreichbar. Automatisches Neuverbinden ist gestoppt. Klicken Sie auf \"Jetzt erneut versuchen\" oder \"Einstellungen oeffnen\", um die Konfiguration zu pruefen."
   },
   "contextMenu": {
     "archive": "Archivieren",

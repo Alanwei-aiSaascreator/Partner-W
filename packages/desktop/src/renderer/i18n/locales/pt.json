@@ -597,7 +597,7 @@
     "reconnecting": "Tentando reconectar...",
     "reconnectingBanner": "Gateway \"{{name}}\" desconectado. Tentando reconectar...",
     "retryNow": "Tentar Agora",
-    "unreachableBanner": "Gateway \"{{name}}\" inacessível. Tentativas de reconexão esgotadas."
+    "unreachableBanner": "Gateway \"{{name}}\" inacessível. A reconexão automática foi interrompida. Clique em \"Tentar Agora\" ou \"Abrir Configurações\" para verificar a configuração."
   },
   "contextMenu": {
     "archive": "Arquivar",

@@ -33,6 +33,39 @@ import { ensureGatewayWindowsSystemTrust } from './tls-trust.js';
 const WS_CLOSE_POLICY_VIOLATION = 1008;
 const WS_HANDSHAKE_TIMEOUT_MS = 10_000;
 
+/**
+ * 我们自己造的**传输层**失败码（不是网关说的）。
+ *
+ * ⚠️ 用途只有一个：区分「网关明确拒绝」（认证 / 配对 / 协议）与「这次连接本身没成」。
+ * 见 `isGatewayRejection`。
+ */
+const CLIENT_TRANSPORT_FAILURE_CODES = new Set([
+  'TIMEOUT',
+  'SEND_FAILED',
+  'GATEWAY_NOT_CONNECTED',
+  'GATEWAY_CONNECTION_CLOSED',
+]);
+
+type HandshakeFailure = Error & { code?: string; details?: Record<string, unknown> };
+
+/**
+ * 这次握手失败，是**网关明确拒绝**，还是**这次连接本身没成**？只有前者该停止重连。
+ *
+ * 停止重连是 `d1abc55e` 的意图（"pairing required, auth denied" 就别再敲了）——那是对的。
+ * 但"这次连接没成"必须照常重连：网关预热慢（首次部署要分钟级）、或事件循环卡一下
+ * （T-a8：端口在听、连接能建、RPC 全超时）都会让**第一次** `connect` 请求 15 秒超时；
+ * 把它当成"服务端拒绝"的代价是客户端**永久**停在"连不上"，用户只能重启应用
+ * （2026-09-20 现场截图：横幅一直「正在尝试重连… (0/10)」+「离线模式 — 只读」
+ * + 准备面板「准备时间比平时更久」）。
+ */
+function isGatewayRejection(err: HandshakeFailure): boolean {
+  // `details` 只有 `handleResponse` 会填 ⇒ 它非空就说明网关真的回了一个 `res.error`
+  // （`PAIRING_REQUIRED` 就是放在 `details.code` 里的形状）。
+  if (err.details && typeof err.details['code'] === 'string') return true;
+  if (typeof err.code !== 'string') return false; // 连码都没有 ⇒ 我们这边的异常，按可重试算
+  return !CLIENT_TRANSPORT_FAILURE_CODES.has(err.code);
+}
+
 type GatewayClientOptions = {
   noReconnect?: boolean;
   onPairingSuccess?: (gatewayId: string) => void;
@@ -172,14 +205,21 @@ export class GatewayClient {
       this.authenticated = false;
       this.serverVersion = undefined;
       this.cleanup();
+      // ⭐ 1008 = 服务端明确拒绝，我们**刻意不重连**（`d1abc55e`）。那就必须把
+      //    "不再自动重连"如实报出去：以前这里一律报 `gaveUp:false`，界面于是**永远**
+      //    显示「正在尝试重连… (attempt/max)」（而且是 `(0/10)` —— 一次都没试过），
+      //    用户看不出"其实已经放弃了"，界面上也**没有任何出路**（只有重启应用）。
+      //    报 `gaveUp:true` 后横幅会换成收尾态：`立即重试` + `打开设置`。
+      const rejected = code === WS_CLOSE_POLICY_VIOLATION;
       sendToWindow(getMainWindow(), 'gateway-status', {
         gatewayId: this.gatewayId,
         connected: false,
         error,
         reconnectAttempt: this.reconnectAttempts,
         maxAttempts: MAX_RECONNECT_ATTEMPTS,
+        gaveUp: rejected,
       });
-      if (code === WS_CLOSE_POLICY_VIOLATION) return;
+      if (rejected) return;
       this.scheduleReconnect();
     });
 
@@ -379,17 +419,30 @@ export class GatewayClient {
           });
         }
       })
-      .catch((err: Error & { details?: Record<string, unknown> }) => {
+      .catch((err: HandshakeFailure) => {
         this.lastError = err.message;
         this.lastErrorCode = (err.details?.code as string) ?? null;
+        const rejected = isGatewayRejection(err);
         getDebugLogger().error({
           domain: 'gateway',
           event: 'gateway.connect.failed',
           gatewayId: this.gatewayId,
           requestId: 'connect-handshake',
           error: { name: err.name, message: err.message, stack: err.stack },
-          data: { errorCode: this.lastErrorCode },
+          data: {
+            errorCode: this.lastErrorCode,
+            transportCode: err.code ?? null,
+            rejected,
+            hint: rejected ? '网关明确拒绝 ⇒ 停止重连（会在状态里报 gaveUp）' : '这次连接没成 ⇒ 照常背退重连',
+          },
         });
+        if (!rejected) {
+          // 超时 / 发不出去 / 连接已断 ⇒ 这是"这次连接没成"，不是"服务端拒绝"。
+          // 关掉走普通断线路径（`close` 处理器会背退重连），否则一次 15 秒超时就把
+          // 客户端永久钉死 —— 而网关只是还在预热（T-a8）。
+          this.ws?.close();
+          return;
+        }
         this.ws?.close(WS_CLOSE_POLICY_VIOLATION, 'auth failed');
       });
   }

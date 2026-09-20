@@ -597,7 +597,7 @@
     "reconnecting": "재연결 시도 중...",
     "reconnectingBanner": "게이트웨이 \"{{name}}\" 연결이 끊어졌습니다. 재연결 시도 중...",
     "retryNow": "지금 재시도",
-    "unreachableBanner": "게이트웨이 \"{{name}}\"에 연결할 수 없습니다. 재연결 시도가 모두 소진되었습니다."
+    "unreachableBanner": "게이트웨이 \"{{name}}\"에 연결할 수 없습니다. 자동 재연결이 중지되었습니다. \"지금 재시도\"를 누르거나 \"설정 열기\"에서 확인하세요."
   },
   "contextMenu": {
     "archive": "보관",
