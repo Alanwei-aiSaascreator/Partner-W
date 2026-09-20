@@ -242,7 +242,19 @@ export interface WorkspaceHealInput {
  */
 export function buildWorkspaceHealCandidates(input: WorkspaceHealInput): WorkspaceHealCandidate[] {
   const rel = input.relPath ? input.relPath.replace(/^[\\/]+/, '') : null;
-  if (!rel) return [];
+  /**
+   * 没记 `relPath` 时的退路（2026-09-20 外部审计实机撞到）：
+   *
+   * 机器上留着**更老版本**写的配置（`workspacePath` 指向一块已不存在的盘、**没有**
+   * `workspaceRelPath` —— 那个字段是 2026-09-18 的 T-U1 才加的），换盘符后原来直接
+   * `return []` ⇒ 弹框让用户手选，而盘上明明躺着 `E:\荣盈魔方工作区\.clawwork-workspace.json`
+   * （我们自己写的标记）。用户随手建个空目录，看到的就是"历史数据没了"。
+   *
+   * ⚠️ 退路**必须窄**，否则就变成"猜"（下面那条 `C:\Users\…` 的测试守的就是这个）：
+   *    只找**我们自己的默认目录名**这一个常量，**且必须有工作区标记**作证。
+   */
+  const relCandidates: string[] = rel ? [rel] : [PORTABLE_WORKSPACE_DIR_NAME];
+  const requireWorkspaceMarker = !rel;
 
   const marker = input.volumeMarker || RUNTIME_MANIFEST_FILE;
   const out: WorkspaceHealCandidate[] = [];
@@ -255,18 +267,26 @@ export function buildWorkspaceHealCandidates(input: WorkspaceHealInput): Workspa
     out.push(candidate);
   };
 
-  /** 佐证：目录里有没有我们的工作区标记 / 盘根有没有运行时 marker。都没有 ⇒ 不认。 */
+  /**
+   * 佐证：目录里有没有我们的工作区标记 / 盘根有没有运行时 marker。都没有 ⇒ 不认。
+   * ⚠️ `requireWorkspaceMarker`（= 没记 relPath 的退路）下**只认工作区标记**：
+   *    那时的目录名只是个常量，盘根 marker 说的是"这块盘上放着运行时"，与"这是谁的
+   *    工作区"无关 —— 单靠它会把别人同名的目录认成用户的工作区。
+   */
   const evidenceOf = (candidate: string, volumeRoot: string): WorkspaceCandidateEvidence | null => {
+    const hasWorkspaceMarker = input.exists(P().join(candidate, WORKSPACE_MARKER_FILE));
+    if (requireWorkspaceMarker) return hasWorkspaceMarker ? 'workspace-marker' : null;
     if (input.exists(P().join(volumeRoot, marker))) return 'volume-marker';
-    if (input.exists(P().join(candidate, WORKSPACE_MARKER_FILE))) return 'workspace-marker';
+    if (hasWorkspaceMarker) return 'workspace-marker';
     return null;
   };
 
   // ① 同盘符
   const volumeRoot = volumeRootOf(input.recordedPath);
   if (volumeRoot) {
-    const candidate = P().join(volumeRoot, rel);
-    if (input.exists(candidate)) {
+    for (const candidateRel of relCandidates) {
+      const candidate = P().join(volumeRoot, candidateRel);
+      if (!input.exists(candidate)) continue;
       const evidence = evidenceOf(candidate, volumeRoot);
       if (evidence) push({ path: candidate, origin: 'same-letter', evidence });
     }
@@ -277,8 +297,9 @@ export function buildWorkspaceHealCandidates(input: WorkspaceHealInput): Workspa
   if (input.runVolumeRoot) {
     const root = normalizeVolumeRoot(input.runVolumeRoot);
     if (root) {
-      const candidate = P().join(root, rel);
-      if (input.exists(candidate)) {
+      for (const candidateRel of relCandidates) {
+        const candidate = P().join(root, candidateRel);
+        if (!input.exists(candidate)) continue;
         const evidence = evidenceOf(candidate, root);
         if (evidence) push({ path: candidate, origin: 'run-volume', evidence });
       }
@@ -289,13 +310,16 @@ export function buildWorkspaceHealCandidates(input: WorkspaceHealInput): Workspa
   for (const drive of input.removableDrives) {
     const root = normalizeVolumeRoot(drive);
     if (!root) continue;
-    const candidate = P().join(root, rel);
-    if (!input.exists(candidate)) continue;
 
-    const evidence = evidenceOf(candidate, root);
-    if (!evidence) continue;
+    for (const candidateRel of relCandidates) {
+      const candidate = P().join(root, candidateRel);
+      if (!input.exists(candidate)) continue;
 
-    push({ path: candidate, origin: 'removable-scan', evidence });
+      const evidence = evidenceOf(candidate, root);
+      if (!evidence) continue;
+
+      push({ path: candidate, origin: 'removable-scan', evidence });
+    }
   }
 
   return out;

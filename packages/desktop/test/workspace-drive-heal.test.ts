@@ -165,6 +165,47 @@ describe('buildWorkspaceHealCandidates —— 候选顺序即优先级', () => {
     });
   });
 
+  /**
+   * ⭐ 老配置没记 `workspaceRelPath` 时的退路（2026-09-20 外部审计实机撞到的那条）。
+   *
+   * 现场：机器上留着**更老版本**写的配置（`workspacePath` 指向一块已经不存在的盘、
+   * **没有** `workspaceRelPath`），U 盘插上去盘符也变了。盘上明明躺着
+   * `E:\荣盈魔方工作区\.clawwork-workspace.json`（我们自己写的标记），
+   * 但 `!rel ⇒ return []` 让自愈一个候选都给不出来 ⇒ 弹框让用户手选 ——
+   * 用户随手建个空目录，看到的就是"历史数据没了"。
+   *
+   * 退路**必须窄**：只找**我们自己的默认目录名**（`荣盈魔方工作区`，是个常量，
+   * 不是从 `C:\Users\…` 反推出来的结构），且**必须有工作区标记**作证。
+   * 这仍然是"找"，不是"猜"（下面那条测试守的就是"别反推路径"）。
+   */
+  it('⭐ 没记相对路径（老配置）+ 盘根默认目录带工作区标记 ⇒ 仍然命中', () => {
+    const list = buildWorkspaceHealCandidates({
+      recordedPath: WIN.join('G:\\', 'runtime', 'workspace'),
+      relPath: null,
+      runVolumeRoot: 'E:\\',
+      removableDrives: ['E:'],
+      // ⚠️ 目录**本身**也要放进 vfs —— 真实文件系统里"标记文件在"蕴含"目录在"，
+      //    但这里的 `exists` 是个集合查询，不蕴含任何东西（第一版就栽在这）。
+      exists: vfs(PORTABLE_WS, WIN.join(PORTABLE_WS, WORKSPACE_MARKER)),
+    });
+
+    expect(candidatePaths(list)).toEqual([PORTABLE_WS]);
+    expect(list[0]).toEqual({ path: PORTABLE_WS, origin: 'run-volume', evidence: 'workspace-marker' });
+  });
+
+  it('⚠️ 退路同样要证据：默认目录名对了、但没有工作区标记 ⇒ 不认', () => {
+    expect(
+      buildWorkspaceHealCandidates({
+        recordedPath: WIN.join('G:\\', 'runtime', 'workspace'),
+        relPath: null,
+        runVolumeRoot: 'E:\\',
+        removableDrives: ['E:'],
+        // 目录在（`exists` 对它是 true）但没有 `.clawwork-workspace.json` ⇒ 不算
+        exists: vfs(PORTABLE_WS, WIN.join('E:\\', MANIFEST)),
+      }),
+    ).toEqual([]);
+  });
+
   it('没记相对路径 ⇒ 一个候选都不给（拿 C:\\Users\\… 反推出来的路径去扫盘是"猜"）', () => {
     expect(
       buildWorkspaceHealCandidates({
