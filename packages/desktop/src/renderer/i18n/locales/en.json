@@ -878,6 +878,80 @@
     "title": "First task complete",
     "viewUsage": "View usage"
   },
+  "gatewaySkill": {
+    "addModelProvider": {
+      "description": "Add and live-prove a model provider with non-interactive config one-liners, without exposing credentials.",
+      "name": "add-model-provider"
+    },
+    "browserAutomation": {
+      "description": "Use when controlling web pages with the OpenClaw browser tool, especially multi-step flows, login checks, tab management, or recovery from stale refs/timeouts.",
+      "name": "browser-automation"
+    },
+    "canvas": {
+      "description": "Present hosted widget documents on a connected macOS panel and control panel visibility or navigation.",
+      "name": "canvas"
+    },
+    "cloudImageBake": {
+      "description": "Bake, select, prove, and safely retire a Cloud Worker image with crabbox and config one-liners.",
+      "name": "cloud-image-bake"
+    },
+    "configureChannel": {
+      "description": "Configure and prove a chat channel with non-interactive one-liners; secrets only as SecretRefs.",
+      "name": "configure-channel"
+    },
+    "controlUi": {
+      "description": "Operate and troubleshoot the OpenClaw Control UI: navigate connected clients, organize sessions, build session dashboards, and handle direct or Tailscale-hosted Gateways.",
+      "name": "control-ui"
+    },
+    "diagnoseGateway": {
+      "description": "Diagnose Gateway, config, secrets, channels, and port failures with read-only one-liners.",
+      "name": "diagnose-gateway"
+    },
+    "diagramMaker": {
+      "description": "Create SVG/HTML or Excalidraw diagrams for concepts, architecture, flows, and whiteboards.",
+      "name": "diagram-maker"
+    },
+    "healthcheck": {
+      "description": "Audit/harden OpenClaw hosts: SSH, firewall, updates, exposure, backups, disk encryption, gateway security.",
+      "name": "healthcheck"
+    },
+    "nodeConnect": {
+      "description": "Diagnose OpenClaw Control UI browser and native Android, iOS, or macOS node connection failures across route, auth, pairing, QR/setup-code, and reconnect states.",
+      "name": "node-connect"
+    },
+    "nodeInspectDebugger": {
+      "description": "Debug Node.js with node inspect, --inspect, breakpoints, CDP, heap, and CPU profiles.",
+      "name": "node-inspect-debugger"
+    },
+    "pythonDebugpy": {
+      "description": "Debug Python with pdb, breakpoint(), post-mortem inspection, and debugpy remote attach.",
+      "name": "python-debugpy"
+    },
+    "skillCreator": {
+      "description": "Author or review AgentSkills: create, repair, validate, or restructure SKILL.md files and bundled resources.",
+      "name": "skill-creator"
+    },
+    "spike": {
+      "description": "Run throwaway prototypes to validate feasibility, compare approaches, and report a verdict.",
+      "name": "spike"
+    },
+    "taskflow": {
+      "description": "Run approval-gated workflows with durable TaskFlow state; distinguish workflow execution from linking real detached tasks.",
+      "name": "taskflow"
+    },
+    "taskflowInboxTriage": {
+      "description": "Preview synthetic inbox routing with a real TaskFlow approval pause, and identify the adapters needed for live triage.",
+      "name": "taskflow-inbox-triage"
+    },
+    "videoFrames": {
+      "description": "Extract frames or short clips from videos using ffmpeg.",
+      "name": "video-frames"
+    },
+    "weather": {
+      "description": "Current weather and forecasts with web_fetch, falling back to wttr.in curl for locations, rain, temperature, travel planning.",
+      "name": "weather"
+    }
+  },
   "goalRouting": {
     "analyzing": "Analyzing your goal",
     "createAssistant": "Create assistant",

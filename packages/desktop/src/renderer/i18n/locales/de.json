@@ -878,6 +878,80 @@
     "title": "First task complete",
     "viewUsage": "View usage"
   },
+  "gatewaySkill": {
+    "addModelProvider": {
+      "description": "Einen Modell-Anbieter mit nicht-interaktiven Konfigurations-Einzeilern hinzufügen und live nachweisen, ohne Zugangsdaten offenzulegen.",
+      "name": "Modell-Anbieter hinzufügen"
+    },
+    "browserAutomation": {
+      "description": "Verwenden, wenn Webseiten mit dem OpenClaw-Browser-Tool gesteuert werden: mehrstufige Abläufe, Login-Prüfungen, Tab-Verwaltung, Wiederherstellung nach veralteten Referenzen oder Zeitüberschreitungen.",
+      "name": "Browser-Automatisierung"
+    },
+    "canvas": {
+      "description": "Gehostete Widget-Dokumente auf einem verbundenen macOS-Panel anzeigen und Sichtbarkeit oder Navigation des Panels steuern.",
+      "name": "Canvas"
+    },
+    "cloudImageBake": {
+      "description": "Ein Cloud-Worker-Image mit crabbox und Konfigurations-Einzeilern backen, auswählen, nachweisen und sicher außer Betrieb nehmen.",
+      "name": "Cloud-Image backen"
+    },
+    "configureChannel": {
+      "description": "Einen Chat-Kanal mit nicht-interaktiven Einzeilern konfigurieren und nachweisen; Secrets nur als SecretRefs.",
+      "name": "Chat-Kanal konfigurieren"
+    },
+    "controlUi": {
+      "description": "Die OpenClaw Control UI bedienen und Fehler suchen: verbundene Clients durchsehen, Sitzungen ordnen, Sitzungs-Dashboards bauen, direkt oder über Tailscale erreichbare Gateways behandeln.",
+      "name": "Control-UI bedienen und Fehler suchen"
+    },
+    "diagnoseGateway": {
+      "description": "Gateway-, Konfigurations-, Secret-, Kanal- und Portfehler mit schreibgeschützten Einzeilern diagnostizieren.",
+      "name": "Gateway diagnostizieren"
+    },
+    "diagramMaker": {
+      "description": "SVG/HTML- oder Excalidraw-Diagramme für Konzepte, Architektur, Abläufe und Whiteboards erstellen.",
+      "name": "Diagramme erstellen"
+    },
+    "healthcheck": {
+      "description": "OpenClaw-Hosts prüfen und härten: SSH, Firewall, Updates, Exposition, Backups, Festplattenverschlüsselung, Gateway-Sicherheit.",
+      "name": "Host-Sicherheitscheck"
+    },
+    "nodeConnect": {
+      "description": "Verbindungsfehler von OpenClaw-Control-UI-Browsern und nativen Android-, iOS- oder macOS-Nodes diagnostizieren: Route, Auth, Pairing, QR-/Setup-Code und Reconnect-Zustände.",
+      "name": "Node-Verbindung diagnostizieren"
+    },
+    "nodeInspectDebugger": {
+      "description": "Node.js mit node inspect, --inspect, Breakpoints, CDP, Heap- und CPU-Profilen debuggen.",
+      "name": "Node.js-Debugging"
+    },
+    "pythonDebugpy": {
+      "description": "Python mit pdb, breakpoint(), Post-mortem-Analyse und debugpy-Remote-Attach debuggen.",
+      "name": "Python-Debugging"
+    },
+    "skillCreator": {
+      "description": "AgentSkills erstellen oder prüfen: SKILL.md und mitgelieferte Ressourcen anlegen, reparieren, validieren oder umbauen.",
+      "name": "Skill-Erstellung"
+    },
+    "spike": {
+      "description": "Wegwerf-Prototypen nutzen, um Machbarkeit zu prüfen, Ansätze zu vergleichen und ein Urteil abzugeben.",
+      "name": "Wegwerf-Prototyp"
+    },
+    "taskflow": {
+      "description": "Genehmigungspflichtige Workflows mit dauerhaftem TaskFlow-Zustand ausführen; Workflow-Ausführung und das Verknüpfen echter eigenständiger Aufgaben unterscheiden.",
+      "name": "Workflow-Ausführung"
+    },
+    "taskflowInboxTriage": {
+      "description": "Synthetisches Posteingangs-Routing mit einer echten TaskFlow-Genehmigungspause proben und die für Live-Triage nötigen Adapter bestimmen.",
+      "name": "Posteingang-Triage"
+    },
+    "videoFrames": {
+      "description": "Mit ffmpeg Frames oder kurze Clips aus Videos extrahieren.",
+      "name": "Video-Frames"
+    },
+    "weather": {
+      "description": "Aktuelles Wetter und Vorhersagen mit web_fetch, mit Rückfall auf wttr.in per curl: Orte, Regen, Temperatur, Reiseplanung.",
+      "name": "Wetter"
+    }
+  },
   "goalRouting": {
     "analyzing": "Analyzing your goal",
     "createAssistant": "Create assistant",

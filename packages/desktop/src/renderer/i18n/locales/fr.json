@@ -878,6 +878,80 @@
     "title": "First task complete",
     "viewUsage": "View usage"
   },
+  "gatewaySkill": {
+    "addModelProvider": {
+      "description": "Ajouter et valider en direct un fournisseur de modèles avec des lignes de configuration non interactives, sans exposer les identifiants.",
+      "name": "Ajouter un fournisseur de modèles"
+    },
+    "browserAutomation": {
+      "description": "À utiliser pour piloter des pages web avec l'outil navigateur d'OpenClaw : parcours multi-étapes, vérifications de connexion, gestion des onglets, reprise après références périmées ou délais dépassés.",
+      "name": "Automatisation du navigateur"
+    },
+    "canvas": {
+      "description": "Présenter des documents widget hébergés sur un panneau macOS connecté et contrôler la visibilité ou la navigation du panneau.",
+      "name": "Canevas"
+    },
+    "cloudImageBake": {
+      "description": "Préparer, sélectionner, valider et retirer en sécurité une image Cloud Worker avec crabbox et des lignes de configuration.",
+      "name": "Préparer une image cloud"
+    },
+    "configureChannel": {
+      "description": "Configurer et valider un canal de discussion avec des lignes non interactives ; secrets uniquement en SecretRefs.",
+      "name": "Configurer un canal de discussion"
+    },
+    "controlUi": {
+      "description": "Utiliser et dépanner l'interface de contrôle OpenClaw : parcourir les clients connectés, organiser les sessions, construire des tableaux de bord de session, gérer les passerelles directes ou hébergées via Tailscale.",
+      "name": "Utiliser et dépanner l'interface de contrôle"
+    },
+    "diagnoseGateway": {
+      "description": "Diagnostiquer les pannes de passerelle, configuration, secrets, canaux et ports avec des lignes en lecture seule.",
+      "name": "Diagnostiquer la passerelle"
+    },
+    "diagramMaker": {
+      "description": "Créer des diagrammes SVG/HTML ou Excalidraw pour des concepts, architectures, flux et tableaux blancs.",
+      "name": "Créer des diagrammes"
+    },
+    "healthcheck": {
+      "description": "Auditer et durcir les hôtes OpenClaw : SSH, pare-feu, mises à jour, exposition, sauvegardes, chiffrement des disques, sécurité de la passerelle.",
+      "name": "Contrôle de sécurité de l'hôte"
+    },
+    "nodeConnect": {
+      "description": "Diagnostiquer les échecs de connexion des navigateurs de l'interface de contrôle OpenClaw et des nœuds natifs Android, iOS ou macOS : route, authentification, appairage, QR/code d'appairage et reconnexion.",
+      "name": "Diagnostiquer la connexion des nœuds"
+    },
+    "nodeInspectDebugger": {
+      "description": "Déboguer Node.js avec node inspect, --inspect, points d'arrêt, CDP, profils de tas et de CPU.",
+      "name": "Débogage Node.js"
+    },
+    "pythonDebugpy": {
+      "description": "Déboguer Python avec pdb, breakpoint(), inspection post-mortem et attachement distant debugpy.",
+      "name": "Débogage Python"
+    },
+    "skillCreator": {
+      "description": "Rédiger ou réviser des AgentSkills : créer, réparer, valider ou restructurer des fichiers SKILL.md et leurs ressources.",
+      "name": "Création de compétences"
+    },
+    "spike": {
+      "description": "Réaliser des prototypes jetables pour valider la faisabilité, comparer les approches et rendre un verdict.",
+      "name": "Prototype jetable"
+    },
+    "taskflow": {
+      "description": "Exécuter des workflows soumis à approbation avec un état TaskFlow durable ; distinguer l'exécution d'un workflow de la liaison de tâches détachées réelles.",
+      "name": "Exécution de workflows"
+    },
+    "taskflowInboxTriage": {
+      "description": "Répéter le routage synthétique de la boîte de réception avec une vraie pause d'approbation TaskFlow, et identifier les adaptateurs nécessaires au triage en direct.",
+      "name": "Triage de la boîte de réception"
+    },
+    "videoFrames": {
+      "description": "Extraire des images ou de courts extraits de vidéos avec ffmpeg.",
+      "name": "Images vidéo"
+    },
+    "weather": {
+      "description": "Météo actuelle et prévisions avec web_fetch, avec repli sur wttr.in via curl : lieux, pluie, température, préparation de voyage.",
+      "name": "Météo"
+    }
+  },
   "goalRouting": {
     "analyzing": "Analyzing your goal",
     "createAssistant": "Create assistant",

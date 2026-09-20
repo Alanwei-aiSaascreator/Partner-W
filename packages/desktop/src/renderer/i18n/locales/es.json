@@ -878,6 +878,80 @@
     "title": "First task complete",
     "viewUsage": "View usage"
   },
+  "gatewaySkill": {
+    "addModelProvider": {
+      "description": "Añadir y validar en vivo un proveedor de modelos con líneas de configuración no interactivas, sin exponer credenciales.",
+      "name": "Añadir proveedor de modelos"
+    },
+    "browserAutomation": {
+      "description": "Úsalo para controlar páginas web con la herramienta de navegador de OpenClaw: flujos de varios pasos, comprobaciones de inicio de sesión, gestión de pestañas y recuperación tras referencias caducadas o tiempos de espera.",
+      "name": "Automatización del navegador"
+    },
+    "canvas": {
+      "description": "Presentar documentos de widget alojados en un panel macOS conectado y controlar la visibilidad o la navegación del panel.",
+      "name": "Lienzo"
+    },
+    "cloudImageBake": {
+      "description": "Preparar, seleccionar, validar y retirar de forma segura una imagen de Cloud Worker con crabbox y líneas de configuración.",
+      "name": "Preparar imagen en la nube"
+    },
+    "configureChannel": {
+      "description": "Configurar y validar un canal de chat con líneas no interactivas; secretos solo como SecretRefs.",
+      "name": "Configurar canal de chat"
+    },
+    "controlUi": {
+      "description": "Usar y diagnosticar la interfaz de control de OpenClaw: explorar clientes conectados, organizar sesiones, crear paneles de sesión y gestionar pasarelas directas o alojadas en Tailscale.",
+      "name": "Usar y diagnosticar la interfaz de control"
+    },
+    "diagnoseGateway": {
+      "description": "Diagnosticar fallos de pasarela, configuración, secretos, canales y puertos con líneas de solo lectura.",
+      "name": "Diagnosticar la pasarela"
+    },
+    "diagramMaker": {
+      "description": "Crear diagramas SVG/HTML o Excalidraw para conceptos, arquitectura, flujos y pizarras.",
+      "name": "Crear diagramas"
+    },
+    "healthcheck": {
+      "description": "Auditar y reforzar hosts de OpenClaw: SSH, cortafuegos, actualizaciones, exposición, copias de seguridad, cifrado de disco y seguridad de la pasarela.",
+      "name": "Revisión de seguridad del host"
+    },
+    "nodeConnect": {
+      "description": "Diagnosticar fallos de conexión de los navegadores de la interfaz de control de OpenClaw y de nodos nativos Android, iOS o macOS: ruta, autenticación, emparejamiento, QR/código de configuración y reconexión.",
+      "name": "Diagnosticar la conexión de nodos"
+    },
+    "nodeInspectDebugger": {
+      "description": "Depurar Node.js con node inspect, --inspect, puntos de interrupción, CDP, perfiles de montón y de CPU.",
+      "name": "Depuración de Node.js"
+    },
+    "pythonDebugpy": {
+      "description": "Depurar Python con pdb, breakpoint(), inspección post-mortem y conexión remota de debugpy.",
+      "name": "Depuración de Python"
+    },
+    "skillCreator": {
+      "description": "Crear o revisar AgentSkills: crear, reparar, validar o reestructurar archivos SKILL.md y sus recursos.",
+      "name": "Creación de habilidades"
+    },
+    "spike": {
+      "description": "Ejecutar prototipos desechables para validar la viabilidad, comparar enfoques y emitir un veredicto.",
+      "name": "Prototipo desechable"
+    },
+    "taskflow": {
+      "description": "Ejecutar flujos con aprobación y estado TaskFlow duradero; distinguir la ejecución del flujo de vincular tareas independientes reales.",
+      "name": "Ejecución de flujos de trabajo"
+    },
+    "taskflowInboxTriage": {
+      "description": "Ensayar el enrutado sintético de la bandeja con una pausa de aprobación real de TaskFlow e identificar los adaptadores necesarios para el triaje en vivo.",
+      "name": "Triaje de la bandeja de entrada"
+    },
+    "videoFrames": {
+      "description": "Extraer fotogramas o clips cortos de vídeos con ffmpeg.",
+      "name": "Fotogramas de vídeo"
+    },
+    "weather": {
+      "description": "Tiempo actual y pronósticos con web_fetch, con reserva a wttr.in por curl: ubicaciones, lluvia, temperatura y planificación de viajes.",
+      "name": "Tiempo"
+    }
+  },
   "goalRouting": {
     "analyzing": "Analyzing your goal",
     "createAssistant": "Create assistant",

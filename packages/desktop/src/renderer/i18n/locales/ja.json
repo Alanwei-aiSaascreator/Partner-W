@@ -878,6 +878,80 @@
     "title": "First task complete",
     "viewUsage": "View usage"
   },
+  "gatewaySkill": {
+    "addModelProvider": {
+      "description": "非対話の設定ワンライナーでモデル プロバイダーを追加して実地検証し、認証情報を露出しません。",
+      "name": "モデル プロバイダーの追加"
+    },
+    "browserAutomation": {
+      "description": "OpenClaw のブラウザツールで Web ページを操作するときに使用：多段階のフロー、ログイン確認、タブ管理、失効した参照やタイムアウトからの復帰。",
+      "name": "ブラウザ自動化"
+    },
+    "canvas": {
+      "description": "接続済みの macOS パネルにホストされたウィジェット文書を表示し、パネルの表示・非表示やナビゲーションを制御します。",
+      "name": "キャンバス"
+    },
+    "cloudImageBake": {
+      "description": "crabbox と設定ワンライナーで Cloud Worker イメージをベイク、選択、検証し、安全に廃止します。",
+      "name": "クラウド イメージのベイク"
+    },
+    "configureChannel": {
+      "description": "非対話のワンライナーでチャット チャネルを設定・検証し、シークレットは SecretRef のみを使います。",
+      "name": "チャット チャネルの設定"
+    },
+    "controlUi": {
+      "description": "OpenClaw コントロール UI の操作と調査：接続済みクライアントの閲覧、セッションの整理、セッション ダッシュボードの作成、直接接続または Tailscale 経由のゲートウェイの扱い。",
+      "name": "コントロール UI の操作とトラブルシューティング"
+    },
+    "diagnoseGateway": {
+      "description": "読み取り専用のワンライナーでゲートウェイ、設定、シークレット、チャネル、ポートの障害を診断します。",
+      "name": "ゲートウェイの診断"
+    },
+    "diagramMaker": {
+      "description": "概念・アーキテクチャ・フロー・ホワイトボード向けに SVG/HTML または Excalidraw の図を作成します。",
+      "name": "図の作成"
+    },
+    "healthcheck": {
+      "description": "OpenClaw ホストを監査・堅牢化：SSH、ファイアウォール、更新、露出、バックアップ、ディスク暗号化、ゲートウェイ セキュリティ。",
+      "name": "ホストのセキュリティ点検"
+    },
+    "nodeConnect": {
+      "description": "OpenClaw コントロール UI のブラウザーおよび Android / iOS / macOS ネイティブ ノードの接続障害を診断：ルート、認証、ペアリング、QR / セットアップ コード、再接続の状態。",
+      "name": "ノード接続の診断"
+    },
+    "nodeInspectDebugger": {
+      "description": "node inspect、--inspect、ブレークポイント、CDP、ヒープ、CPU プロファイルで Node.js をデバッグします。",
+      "name": "Node.js デバッグ"
+    },
+    "pythonDebugpy": {
+      "description": "pdb、breakpoint()、事後検証、debugpy のリモート接続で Python をデバッグします。",
+      "name": "Python デバッグ"
+    },
+    "skillCreator": {
+      "description": "AgentSkill を作成・レビュー：SKILL.md と同梱リソースの作成、修復、検証、再構成。",
+      "name": "スキルの作成"
+    },
+    "spike": {
+      "description": "使い捨てのプロトタイプで実現可能性を検証し、方式を比較して結論を出します。",
+      "name": "使い捨てプロトタイプ"
+    },
+    "taskflow": {
+      "description": "承認を挟むワークフローを耐久性のある TaskFlow 状態で実行し、ワークフローの実行と既存の独立タスクの紐付けを区別します。",
+      "name": "ワークフロー実行"
+    },
+    "taskflowInboxTriage": {
+      "description": "実際の TaskFlow 承認一時停止を使って受信トレイの振り分けを予行し、本番トリアージに必要なアダプターを洗い出します。",
+      "name": "受信トレイのトリアージ"
+    },
+    "videoFrames": {
+      "description": "ffmpeg で動画からフレームや短いクリップを抽出します。",
+      "name": "動画のフレーム抽出"
+    },
+    "weather": {
+      "description": "web_fetch で現在の天気と予報を取得し、取得できない場合は wttr.in の curl にフォールバック：地点、雨、気温、旅行計画。",
+      "name": "天気"
+    }
+  },
   "goalRouting": {
     "analyzing": "Analyzing your goal",
     "createAssistant": "Create assistant",

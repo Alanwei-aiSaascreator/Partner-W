@@ -878,6 +878,80 @@
     "title": "First task complete",
     "viewUsage": "View usage"
   },
+  "gatewaySkill": {
+    "addModelProvider": {
+      "description": "Adicionar e validar ao vivo um provedor de modelos com linhas de configuração não interativas, sem expor credenciais.",
+      "name": "Adicionar provedor de modelos"
+    },
+    "browserAutomation": {
+      "description": "Use ao controlar páginas web com a ferramenta de navegador do OpenClaw: fluxos com várias etapas, verificação de login, gestão de abas e recuperação após referências expiradas ou tempos limite.",
+      "name": "Automação do navegador"
+    },
+    "canvas": {
+      "description": "Apresentar documentos de widget hospedados num painel macOS conectado e controlar a visibilidade ou a navegação do painel.",
+      "name": "Tela"
+    },
+    "cloudImageBake": {
+      "description": "Preparar, selecionar, validar e desativar com segurança uma imagem de Cloud Worker com crabbox e linhas de configuração.",
+      "name": "Preparar imagem na nuvem"
+    },
+    "configureChannel": {
+      "description": "Configurar e validar um canal de chat com linhas não interativas; segredos apenas como SecretRefs.",
+      "name": "Configurar canal de chat"
+    },
+    "controlUi": {
+      "description": "Usar e diagnosticar a interface de controle do OpenClaw: percorrer clientes conectados, organizar sessões, montar painéis de sessão e lidar com gateways diretos ou hospedados via Tailscale.",
+      "name": "Usar e diagnosticar a interface de controle"
+    },
+    "diagnoseGateway": {
+      "description": "Diagnosticar falhas de gateway, configuração, segredos, canais e portas com linhas somente leitura.",
+      "name": "Diagnosticar o gateway"
+    },
+    "diagramMaker": {
+      "description": "Criar diagramas SVG/HTML ou Excalidraw para conceitos, arquitetura, fluxos e quadros brancos.",
+      "name": "Criar diagramas"
+    },
+    "healthcheck": {
+      "description": "Auditar e reforçar hosts do OpenClaw: SSH, firewall, atualizações, exposição, backups, criptografia de disco e segurança do gateway.",
+      "name": "Verificação de segurança do host"
+    },
+    "nodeConnect": {
+      "description": "Diagnosticar falhas de conexão dos navegadores da interface de controle do OpenClaw e de nós nativos Android, iOS ou macOS: rota, autenticação, emparelhamento, QR/código de configuração e reconexão.",
+      "name": "Diagnosticar conexão de nós"
+    },
+    "nodeInspectDebugger": {
+      "description": "Depurar Node.js com node inspect, --inspect, breakpoints, CDP, perfis de heap e de CPU.",
+      "name": "Depuração de Node.js"
+    },
+    "pythonDebugpy": {
+      "description": "Depurar Python com pdb, breakpoint(), inspeção post-mortem e conexão remota do debugpy.",
+      "name": "Depuração de Python"
+    },
+    "skillCreator": {
+      "description": "Criar ou revisar AgentSkills: criar, reparar, validar ou reestruturar arquivos SKILL.md e recursos incluídos.",
+      "name": "Criação de habilidades"
+    },
+    "spike": {
+      "description": "Rodar protótipos descartáveis para validar viabilidade, comparar abordagens e dar um veredito.",
+      "name": "Protótipo descartável"
+    },
+    "taskflow": {
+      "description": "Executar fluxos com aprovação e estado TaskFlow durável; distinguir a execução do fluxo da vinculação de tarefas independentes reais.",
+      "name": "Execução de fluxos de trabalho"
+    },
+    "taskflowInboxTriage": {
+      "description": "Ensaiar o roteamento sintético da caixa de entrada com uma pausa de aprovação real do TaskFlow e identificar os adaptadores necessários para a triagem ao vivo.",
+      "name": "Triagem da caixa de entrada"
+    },
+    "videoFrames": {
+      "description": "Extrair quadros ou clipes curtos de vídeos com ffmpeg.",
+      "name": "Quadros de vídeo"
+    },
+    "weather": {
+      "description": "Clima atual e previsões com web_fetch, com fallback para wttr.in via curl: locais, chuva, temperatura e planejamento de viagem.",
+      "name": "Clima"
+    }
+  },
   "goalRouting": {
     "analyzing": "Analyzing your goal",
     "createAssistant": "Create assistant",

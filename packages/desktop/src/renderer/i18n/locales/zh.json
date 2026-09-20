@@ -878,6 +878,80 @@
     "title": "第一次任务已完成",
     "viewUsage": "查看使用情况"
   },
+  "gatewaySkill": {
+    "addModelProvider": {
+      "description": "用非交互式的配置一行命令接入模型服务商并现场验证，全程不暴露凭据。",
+      "name": "接入模型服务商"
+    },
+    "browserAutomation": {
+      "description": "用 OpenClaw 的浏览器工具操作网页时使用：多步流程、登录检查、标签页管理，以及失效引用或超时后的恢复。",
+      "name": "浏览器自动化"
+    },
+    "canvas": {
+      "description": "在已连接的 macOS 面板上展示托管的组件文档，并控制面板的显隐与导航。",
+      "name": "画布"
+    },
+    "cloudImageBake": {
+      "description": "用 crabbox 与配置一行命令烘焙、选用、验证并安全下线云端 Worker 镜像。",
+      "name": "云端镜像烘焙"
+    },
+    "configureChannel": {
+      "description": "用非交互式一行命令配置并验证聊天渠道；密钥一律用 SecretRef。",
+      "name": "配置消息渠道"
+    },
+    "controlUi": {
+      "description": "操作并排查 OpenClaw 控制台：浏览已连接的客户端、整理会话、搭建会话看板，以及处理直连或经 Tailscale 访问的网关。",
+      "name": "控制台使用与排障"
+    },
+    "diagnoseGateway": {
+      "description": "用只读一行命令诊断网关、配置、密钥、渠道与端口故障。",
+      "name": "网关故障诊断"
+    },
+    "diagramMaker": {
+      "description": "为概念、架构、流程和白板绘制 SVG/HTML 或 Excalidraw 图。",
+      "name": "图表绘制"
+    },
+    "healthcheck": {
+      "description": "审计并加固 OpenClaw 主机：SSH、防火墙、更新、暴露面、备份、磁盘加密、网关安全。",
+      "name": "主机安全体检"
+    },
+    "nodeConnect": {
+      "description": "排查 OpenClaw 控制台浏览器端与 Android / iOS / macOS 原生节点的连接故障：路由、认证、配对、二维码 / 配对码与重连状态。",
+      "name": "节点连接诊断"
+    },
+    "nodeInspectDebugger": {
+      "description": "用 node inspect、--inspect、断点、CDP、堆快照与 CPU 分析调试 Node.js。",
+      "name": "Node.js 调试"
+    },
+    "pythonDebugpy": {
+      "description": "用 pdb、breakpoint()、事后检查与 debugpy 远程附加调试 Python。",
+      "name": "Python 调试"
+    },
+    "skillCreator": {
+      "description": "编写或审阅 AgentSkill：创建、修复、校验或重构 SKILL.md 及其附带资源。",
+      "name": "技能创作"
+    },
+    "spike": {
+      "description": "用一次性原型验证可行性、比较方案，并给出结论。",
+      "name": "快速原型验证"
+    },
+    "taskflow": {
+      "description": "运行需要审批的工作流，并把状态持久保存在 TaskFlow 里；同时区分「真正执行工作流」和「挂接已有的独立任务」。",
+      "name": "工作流编排"
+    },
+    "taskflowInboxTriage": {
+      "description": "用一次真实的 TaskFlow 审批暂停来预演收件箱分流，并找出接入实时分诊所需的适配器。",
+      "name": "收件箱分诊"
+    },
+    "videoFrames": {
+      "description": "用 ffmpeg 从视频里抽帧或截取短片断。",
+      "name": "视频抽帧"
+    },
+    "weather": {
+      "description": "用 web_fetch 获取实时天气与预报，取不到时退回 wttr.in 的 curl：地点、降雨、气温、出行安排。",
+      "name": "天气查询"
+    }
+  },
   "goalRouting": {
     "analyzing": "正在分析你的目标",
     "createAssistant": "创建专属助手",

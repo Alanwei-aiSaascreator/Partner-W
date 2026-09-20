@@ -878,6 +878,80 @@
     "title": "First task complete",
     "viewUsage": "View usage"
   },
+  "gatewaySkill": {
+    "addModelProvider": {
+      "description": "비대화형 설정 한 줄 명령으로 모델 제공자를 추가하고 실제로 검증하며 자격 증명을 노출하지 않습니다.",
+      "name": "모델 제공자 추가"
+    },
+    "browserAutomation": {
+      "description": "OpenClaw 브라우저 도구로 웹 페이지를 조작할 때 사용: 다단계 흐름, 로그인 확인, 탭 관리, 오래된 참조나 시간 초과 복구.",
+      "name": "브라우저 자동화"
+    },
+    "canvas": {
+      "description": "연결된 macOS 패널에 호스팅 위젯 문서를 표시하고 패널 표시 여부와 탐색을 제어합니다.",
+      "name": "캔버스"
+    },
+    "cloudImageBake": {
+      "description": "crabbox와 설정 한 줄 명령으로 Cloud Worker 이미지를 베이크, 선택, 검증하고 안전하게 폐기합니다.",
+      "name": "클라우드 이미지 베이크"
+    },
+    "configureChannel": {
+      "description": "비대화형 한 줄 명령으로 채팅 채널을 설정하고 검증하며 시크릿은 SecretRef만 사용합니다.",
+      "name": "채팅 채널 설정"
+    },
+    "controlUi": {
+      "description": "OpenClaw 컨트롤 UI 운영과 점검: 연결된 클라이언트 탐색, 세션 정리, 세션 대시보드 구성, 직접 또는 Tailscale 경유 게이트웨이 처리.",
+      "name": "컨트롤 UI 운영 및 문제 해결"
+    },
+    "diagnoseGateway": {
+      "description": "읽기 전용 한 줄 명령으로 게이트웨이, 설정, 시크릿, 채널, 포트 장애를 진단합니다.",
+      "name": "게이트웨이 진단"
+    },
+    "diagramMaker": {
+      "description": "개념, 아키텍처, 흐름, 화이트보드용 SVG/HTML 또는 Excalidraw 다이어그램을 만듭니다.",
+      "name": "다이어그램 만들기"
+    },
+    "healthcheck": {
+      "description": "OpenClaw 호스트 감사 및 강화: SSH, 방화벽, 업데이트, 노출, 백업, 디스크 암호화, 게이트웨이 보안.",
+      "name": "호스트 보안 점검"
+    },
+    "nodeConnect": {
+      "description": "OpenClaw 컨트롤 UI 브라우저와 Android / iOS / macOS 네이티브 노드의 연결 실패를 진단: 경로, 인증, 페어링, QR / 설정 코드, 재연결 상태.",
+      "name": "노드 연결 진단"
+    },
+    "nodeInspectDebugger": {
+      "description": "node inspect, --inspect, 중단점, CDP, 힙, CPU 프로파일로 Node.js를 디버깅합니다.",
+      "name": "Node.js 디버깅"
+    },
+    "pythonDebugpy": {
+      "description": "pdb, breakpoint(), 사후 검사, debugpy 원격 연결로 Python을 디버깅합니다.",
+      "name": "Python 디버깅"
+    },
+    "skillCreator": {
+      "description": "AgentSkill 작성 및 검토: SKILL.md와 번들 리소스 생성, 수정, 검증, 재구성.",
+      "name": "스킬 작성"
+    },
+    "spike": {
+      "description": "일회용 프로토타입으로 실현 가능성을 검증하고 방식을 비교해 결론을 냅니다.",
+      "name": "빠른 프로토타입 검증"
+    },
+    "taskflow": {
+      "description": "승인이 필요한 워크플로를 영속적인 TaskFlow 상태로 실행하고, 워크플로 실행과 기존 독립 작업 연결을 구분합니다.",
+      "name": "워크플로 실행"
+    },
+    "taskflowInboxTriage": {
+      "description": "실제 TaskFlow 승인 일시정지로 받은편지함 라우팅을 예행하고 실시간 분류에 필요한 어댑터를 찾습니다.",
+      "name": "받은편지함 분류"
+    },
+    "videoFrames": {
+      "description": "ffmpeg로 동영상에서 프레임이나 짧은 클립을 추출합니다.",
+      "name": "동영상 프레임 추출"
+    },
+    "weather": {
+      "description": "web_fetch로 현재 날씨와 예보를 가져오고, 안 되면 wttr.in curl로 대체: 위치, 비, 기온, 여행 계획.",
+      "name": "날씨"
+    }
+  },
   "goalRouting": {
     "analyzing": "Analyzing your goal",
     "createAssistant": "Create assistant",

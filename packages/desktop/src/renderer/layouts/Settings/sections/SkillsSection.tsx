@@ -22,6 +22,7 @@ import { motion as motionPresets, motionDuration } from '@/styles/design-tokens'
 import { useUiStore } from '@/stores/uiStore';
 import type { SkillStatusEntry, SkillStatusReport, SkillSearchResultEntry, SkillDetailResult } from '@clawwork/shared';
 import { summarizeSkillMissing, getSkillReason } from '@/lib/skill-utils';
+import { gatewaySkillLabel } from '@/lib/gateway-skill-label';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -63,6 +64,8 @@ function SkillConfigDialog({
   const { t } = useTranslation();
   const [envDraft, setEnvDraft] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
+  // 网关自带技能的名字是英文原文（T-a4 尾巴）：认得出才换中文，认不出原样显示。
+  const gatewayLabel = gatewaySkillLabel(skill, t);
 
   useEffect(() => {
     if (open) setEnvDraft({});
@@ -119,7 +122,7 @@ function SkillConfigDialog({
           <DialogHeader>
             <DialogTitle>
               {skill.emoji && <span className="mr-2">{skill.emoji}</span>}
-              {skill.name}
+              {gatewayLabel?.name ?? skill.name}
             </DialogTitle>
             <DialogDescription>{t('settings.skillConfigDialogDesc')}</DialogDescription>
           </DialogHeader>
@@ -188,6 +191,18 @@ function SkillCard({
   const [expanded, setExpanded] = useState(false);
   const [configOpen, setConfigOpen] = useState(false);
 
+  /**
+   * 网关自带技能（`browser-automation` / `python-debugpy` …）的名字与描述都是
+   * **网关的英文原文**（T-a4 尾巴）。名字**和**描述都对得上才换中文；
+   * 认不出来的（我们自己的市场技能、用户装的那些、网关改了文案的）**原样显示** ——
+   * 见 `lib/gateway-skill-label.ts`：宁可又是英文（良性），也不要张冠李戴（恶性）。
+   *
+   * ⚠️ 只改**显示**：`skill.name` / `skill.description` 是网关侧数据，一个字节都不动。
+   */
+  const gatewayLabel = gatewaySkillLabel(skill, t);
+  const displayName = gatewayLabel?.name ?? skill.name;
+  const displayDescription = gatewayLabel?.description ?? skill.description;
+
   const hasConfigurableEnv = skill.missing.env.length > 0;
 
   const sourceLabel = skill.bundled
@@ -210,7 +225,7 @@ function SkillCard({
 
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <span className="type-label truncate text-[var(--text-primary)]">{skill.name}</span>
+            <span className="type-label truncate text-[var(--text-primary)]">{displayName}</span>
             <span
               className={cn(
                 'type-badge rounded-md px-1.5 py-0.5',
@@ -225,7 +240,7 @@ function SkillCard({
               {sourceLabel}
             </span>
           </div>
-          <p className="type-support mt-0.5 text-[var(--text-muted)]">{skill.description}</p>
+          <p className="type-support mt-0.5 text-[var(--text-muted)]">{displayDescription}</p>
         </div>
 
         <div className="flex items-center gap-1 flex-shrink-0 ml-1 pl-3 border-l border-[var(--border-subtle)]">

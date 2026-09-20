@@ -878,6 +878,80 @@
     "title": "第一次任務已完成",
     "viewUsage": "查看使用情況"
   },
+  "gatewaySkill": {
+    "addModelProvider": {
+      "description": "用非互動式的設定一行指令接入模型服務商並現場驗證，全程不暴露憑證。",
+      "name": "接入模型服務商"
+    },
+    "browserAutomation": {
+      "description": "用 OpenClaw 的瀏覽器工具操作網頁時使用：多步流程、登入檢查、分頁管理，以及失效參照或逾時後的復原。",
+      "name": "瀏覽器自動化"
+    },
+    "canvas": {
+      "description": "在已連接的 macOS 面板上展示託管的元件文件，並控制面板的顯示與導覽。",
+      "name": "畫布"
+    },
+    "cloudImageBake": {
+      "description": "用 crabbox 與設定一行指令烘焙、選用、驗證並安全下線雲端 Worker 鏡像。",
+      "name": "雲端鏡像烘焙"
+    },
+    "configureChannel": {
+      "description": "用非互動式一行指令設定並驗證聊天渠道；密鑰一律用 SecretRef。",
+      "name": "設定訊息渠道"
+    },
+    "controlUi": {
+      "description": "操作並排查 OpenClaw 控制台：瀏覽已連接的用戶端、整理工作階段、搭建工作階段看板，以及處理直連或經 Tailscale 存取的閘道。",
+      "name": "控制台使用與排障"
+    },
+    "diagnoseGateway": {
+      "description": "用唯讀一行指令診斷閘道、設定、密鑰、渠道與連接埠故障。",
+      "name": "閘道故障診斷"
+    },
+    "diagramMaker": {
+      "description": "為概念、架構、流程和白板繪製 SVG/HTML 或 Excalidraw 圖。",
+      "name": "圖表繪製"
+    },
+    "healthcheck": {
+      "description": "稽核並加固 OpenClaw 主機：SSH、防火牆、更新、暴露面、備份、磁碟加密、閘道安全。",
+      "name": "主機安全體檢"
+    },
+    "nodeConnect": {
+      "description": "排查 OpenClaw 控制台瀏覽器端與 Android / iOS / macOS 原生節點的連線故障：路由、認證、配對、二維碼 / 配對碼與重連狀態。",
+      "name": "節點連線診斷"
+    },
+    "nodeInspectDebugger": {
+      "description": "用 node inspect、--inspect、中斷點、CDP、堆積快照與 CPU 分析除錯 Node.js。",
+      "name": "Node.js 除錯"
+    },
+    "pythonDebugpy": {
+      "description": "用 pdb、breakpoint()、事後檢查與 debugpy 遠端附加除錯 Python。",
+      "name": "Python 除錯"
+    },
+    "skillCreator": {
+      "description": "撰寫或審閱 AgentSkill：建立、修復、校驗或重構 SKILL.md 及其附帶資源。",
+      "name": "技能創作"
+    },
+    "spike": {
+      "description": "用一次性原型驗證可行性、比較方案，並給出結論。",
+      "name": "快速原型驗證"
+    },
+    "taskflow": {
+      "description": "執行需要審批的工作流，並把狀態持久保存在 TaskFlow 裡；同時區分「真正執行工作流」和「掛接既有的獨立任務」。",
+      "name": "工作流編排"
+    },
+    "taskflowInboxTriage": {
+      "description": "用一次真實的 TaskFlow 審批暫停來預演收件匣分流，並找出接入即時分診所需的轉接器。",
+      "name": "收件箱分診"
+    },
+    "videoFrames": {
+      "description": "用 ffmpeg 從影片裡抽幀或截取短片斷。",
+      "name": "影片抽幀"
+    },
+    "weather": {
+      "description": "用 web_fetch 取得即時天氣與預報，取不到時退回 wttr.in 的 curl：地點、降雨、氣溫、出行安排。",
+      "name": "天氣查詢"
+    }
+  },
   "goalRouting": {
     "analyzing": "正在分析你的目標",
     "createAssistant": "建立專屬助手",
