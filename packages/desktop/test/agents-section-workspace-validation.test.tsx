@@ -178,8 +178,12 @@ describe('AgentsSection 工作空间输入框', () => {
     (globalThis.window as unknown as Window & typeof globalThis & { clawwork: Record<string, unknown> }).clawwork = {
       listAgents: vi.fn().mockResolvedValue({ ok: true, result: { agents: [], defaultId: 'main' } }),
       listAgentFiles: vi.fn().mockResolvedValue({ ok: true, result: { workspace: '/ws', files: [] } }),
-      getAgentFile: vi.fn(),
-      setAgentFile: vi.fn(),
+      // ⚠️ 必须**返回 Promise**：`AgentsSection` 点编辑时会走
+      //    `getAgentFile(...).then(...)`（`AgentsSection.tsx:788`）。桩写成裸 `vi.fn()`
+      //    会返回 `undefined` ⇒ 抛未捕获的 TypeError ⇒ **测试全绿但 `vitest run` 退出码 1**
+      //    （2026-09-20 实测：262 文件 / 2544 条全过，exit=1，就是这一处）。
+      getAgentFile: vi.fn().mockResolvedValue({ ok: false, error: 'not-mocked' }),
+      setAgentFile: vi.fn().mockResolvedValue({ ok: true }),
       getSkillsStatus: vi.fn().mockResolvedValue({ ok: true, result: { skills: [] } }),
       createAgent: vi.fn().mockResolvedValue({ ok: true, result: { agentId: 'agent-9' } }),
       updateAgent: vi.fn().mockResolvedValue({ ok: true }),
