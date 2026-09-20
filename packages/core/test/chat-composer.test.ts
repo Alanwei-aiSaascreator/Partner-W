@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { buildSessionKey } from '@clawwork/shared';
-import type { Message, MessageAttachment } from '@clawwork/shared';
+import type { IpcResult, Message, MessageAttachment } from '@clawwork/shared';
 import { createChatComposer } from '../src/services/chat-composer';
 import type { ChatComposerDeps } from '../src/services/chat-composer';
+import type { ChatAttachment } from '../src/ports/gateway-transport.js';
 import { translateGatewayError } from '../src/services/gateway-error-message.js';
 
 const TASK_ID = 'abc';
@@ -17,7 +18,22 @@ type AddMessageOptions = { persist?: boolean; sessionKey?: string };
  */
 let supportedLevels: string[] | undefined = undefined;
 
-function setup(options: { ensemble?: boolean; model?: string } = {}) {
+/**
+ * `resolveAgentName` 的可注入桩（宿主按目录查名字）。`undefined` = **没注入**（老宿主）。
+ * 这里刻意做成模块级变量而不是 setup 参数：测的是"同一个 composer 在不同目录状态下
+ * 写出什么"，与档位那一组同一个形状。
+ */
+let mentionNameResolver: ((agentId: string) => string | undefined) | undefined;
+
+function setup(
+  options: {
+    ensemble?: boolean;
+    model?: string;
+    performers?: Array<{ agentId: string; agentName: string; sessionKey: string }>;
+    /** 模拟"宿主没接这个 dep"（字段真的不存在，不是"存在但返回 undefined"）。 */
+    withoutNameResolver?: boolean;
+  } = {},
+) {
   const addMessage = vi.fn(
     (
       _taskId: string,
@@ -36,7 +52,16 @@ function setup(options: { ensemble?: boolean; model?: string } = {}) {
     }),
   );
 
-  const sendMessage = vi.fn().mockResolvedValue({ ok: true });
+  // ⚠️ 参数类型必须写出来：不写的话 `mock.calls` 是长度 0 的元组，
+  //    `calls[i][2]` 直接编不过（tsc 报 TS2493）—— 而"发出去的正文"正是要读的载荷。
+  const sendMessage = vi.fn(
+    async (
+      _gatewayId: string,
+      _sessionKey: string,
+      _content: string,
+      _attachments?: ChatAttachment[],
+    ): Promise<IpcResult> => ({ ok: true }),
+  );
   const removeMessage = vi.fn();
   const abortChat = vi.fn().mockResolvedValue({ ok: true });
   const patchSession = vi.fn().mockResolvedValue({ ok: true });
@@ -61,14 +86,9 @@ function setup(options: { ensemble?: boolean; model?: string } = {}) {
     ? {
         taskId: TASK_ID,
         conductorSessionKey: `${SESSION_KEY}:conductor`,
-        performers: [
-          {
-            agentId: 'worker',
-            agentName: 'Worker',
-            sessionKey: `${SESSION_KEY}:worker`,
-            verifiedAt: '2026-09-16T00:00:00.000Z',
-          },
-        ],
+        performers: (
+          options.performers ?? [{ agentId: 'worker', agentName: 'Worker', sessionKey: `${SESSION_KEY}:worker` }]
+        ).map((p) => ({ ...p, verifiedAt: '2026-09-16T00:00:00.000Z' })),
         status: 'active' as const,
         conductorReady: true,
       }
@@ -83,6 +103,7 @@ function setup(options: { ensemble?: boolean; model?: string } = {}) {
       updateTaskMetadata,
     }),
     getSupportedThinkingLevels: () => supportedLevels,
+    resolveAgentName: (_taskId, agentId) => mentionNameResolver?.(agentId),
     getRoomState: () => room,
     getMessageStore: () => ({
       addMessage,
@@ -108,6 +129,8 @@ function setup(options: { ensemble?: boolean; model?: string } = {}) {
     translate: (key: string) => key,
     onError: vi.fn(),
   };
+  // 「没注入」= 字段不存在 —— 与"注入了一个返回 undefined 的"是两条不同的路。
+  if (options.withoutNameResolver) delete deps.resolveAgentName;
 
   const composer = createChatComposer(deps);
 
@@ -524,5 +547,123 @@ describe('任务级模型下发', () => {
     const patched = modelPatches(h.patchSession);
     expect(patched).toContain('deepseek-v4-flash');
     expect(patched, '不要再用任务级的老值覆盖用户刚选的').not.toContain('qwen3.5-27b');
+  });
+});
+
+/**
+ * 用户 `@` 某个 worker 时，composer 会给 conductor 补一句话
+ * （`[User directed message to …: "…"]`，见 `chat-composer.ts` 里那条注释）。
+ *
+ * 2026-09-20 发现：那句话里写的是 **裸 agentId** —— `options.mentions` 是
+ * `useChatSend` 传进来的 `.map((a) => a.agentId)`，`join(', ')` 之后就成了
+ * `[User directed message to rongying-tpl-78b62899: "…"]`。
+ * 名字一直是有的（网关目录里就是「爆款内容教练」，房间快照里也有一份），
+ * 只是没往这句话里送 ⇒ **人和模型看到的是两个名字**。
+ * 这是 T-a7 同一家族的第**四**个面（前三个：消息头、团队页、`@` 选择器）。
+ *
+ * ⚠️ `mentions` **同时**是派活用的载荷（`resolveMentionTargets` 拿它找 sessionKey），
+ *    所以这一刀**只改那句话**：目标与正文一个字节都不许动（下面第一条同时钉住这点）。
+ */
+describe('chat-composer —— 告诉 conductor「用户 @ 了谁」要用名字', () => {
+  const CONDUCTOR_KEY = `${SESSION_KEY}:conductor`;
+
+  afterEach(() => {
+    mentionNameResolver = undefined;
+  });
+
+  /** 发给 conductor 那一句通知（正文里带 `[User directed message`）。 */
+  const conductorNotes = (sendMessage: ReturnType<typeof vi.fn>): string[] =>
+    sendMessage.mock.calls
+      .filter((c) => c[1] === CONDUCTOR_KEY)
+      .map((c) => c[2] as string)
+      .filter((text) => text.startsWith('[User directed message'));
+
+  it('⭐ conductor 收到的是**目录里的名字**，不是裸 agentId（复现原 bug）', async () => {
+    mentionNameResolver = (agentId) => (agentId === 'worker' ? '爆款内容教练' : undefined);
+    const h = setup({ ensemble: true });
+
+    const res = await h.composer.send(TASK_ID, { content: '看看这个', mentions: ['worker'] });
+
+    expect(res.ok).toBe(true);
+    expect(conductorNotes(h.sendMessage)).toEqual(['[User directed message to 爆款内容教练: "看看这个"]']);
+    // 载荷一个字节都不许动：worker 收到的仍然是用户原话，目标仍然是它的 sessionKey。
+    expect(h.sendMessage).toHaveBeenCalledWith('gw-1', `${SESSION_KEY}:worker`, '看看这个', undefined);
+  });
+
+  it('⭐ 目录里查不到（目录没拉到 / agent 被删）⇒ 退回房间快照里的名字', async () => {
+    mentionNameResolver = () => undefined;
+    const h = setup({ ensemble: true });
+
+    await h.composer.send(TASK_ID, { content: '看看这个', mentions: ['worker'] });
+
+    expect(conductorNotes(h.sendMessage)).toEqual(['[User directed message to Worker: "看看这个"]']);
+  });
+
+  it('⚠️ 目录查不到、快照也是空串 ⇒ 退回裸 agentId（不能变成「to :」）', async () => {
+    mentionNameResolver = () => undefined;
+    const h = setup({
+      ensemble: true,
+      performers: [{ agentId: 'worker', agentName: '', sessionKey: `${SESSION_KEY}:worker` }],
+    });
+
+    await h.composer.send(TASK_ID, { content: '看看这个', mentions: ['worker'] });
+
+    expect(conductorNotes(h.sendMessage)).toEqual(['[User directed message to worker: "看看这个"]']);
+  });
+
+  it('⚠️ 查名字时抛错 ⇒ 不炸派活（fail-soft），退回快照名，消息照发', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    mentionNameResolver = () => {
+      throw new Error('catalog exploded');
+    };
+    const h = setup({ ensemble: true });
+
+    const res = await h.composer.send(TASK_ID, { content: '看看这个', mentions: ['worker'] });
+
+    expect(res.ok).toBe(true);
+    expect(h.sendMessage).toHaveBeenCalledWith('gw-1', `${SESSION_KEY}:worker`, '看看这个', undefined);
+    expect(conductorNotes(h.sendMessage)).toEqual(['[User directed message to Worker: "看看这个"]']);
+    expect(h.onError).not.toHaveBeenCalled();
+    // 吞掉但**不静默**：留一条 warn，免得以后有人以为是"目录里就没名字"。
+    expect(warn.mock.calls.flat().join(' ')).toContain('resolveAgentName failed');
+    warn.mockRestore();
+  });
+
+  it('⚠️ 一次 @ 多个 ⇒ 名字按 mentions 的顺序逗号连起来', async () => {
+    const names: Record<string, string> = { worker: '爆款内容教练', 'tpl-2': '深度研究助手' };
+    mentionNameResolver = (agentId) => names[agentId];
+    const h = setup({
+      ensemble: true,
+      performers: [
+        { agentId: 'worker', agentName: 'worker', sessionKey: `${SESSION_KEY}:worker` },
+        { agentId: 'tpl-2', agentName: 'tpl-2', sessionKey: `${SESSION_KEY}:worker2` },
+      ],
+    });
+
+    await h.composer.send(TASK_ID, { content: '一起看', mentions: ['worker', 'tpl-2'] });
+
+    expect(conductorNotes(h.sendMessage)).toEqual(['[User directed message to 爆款内容教练, 深度研究助手: "一起看"]']);
+  });
+
+  it('⚠️ 宿主没注入 resolveAgentName（别的调用方）⇒ 退回快照名，不许崩', async () => {
+    const h = setup({ ensemble: true, withoutNameResolver: true });
+
+    const res = await h.composer.send(TASK_ID, { content: '看看这个', mentions: ['worker'] });
+
+    expect(res.ok).toBe(true);
+    expect(conductorNotes(h.sendMessage)).toEqual(['[User directed message to Worker: "看看这个"]']);
+  });
+
+  it('⚠️ @ 的就是 conductor 自己 ⇒ 不发那句通知（既有行为，别顺手改）', async () => {
+    mentionNameResolver = () => '工头';
+    const h = setup({
+      ensemble: true,
+      performers: [{ agentId: 'boss', agentName: '老板', sessionKey: CONDUCTOR_KEY }],
+    });
+
+    await h.composer.send(TASK_ID, { content: '你看看', mentions: ['boss'] });
+
+    expect(h.sendMessage).toHaveBeenCalledTimes(1);
+    expect(conductorNotes(h.sendMessage)).toEqual([]);
   });
 });

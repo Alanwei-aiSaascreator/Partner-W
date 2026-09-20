@@ -94,6 +94,22 @@ const teamStoreApi = createTeamStore({
   deleteTeam: (id) => window.clawwork.deleteTeam(id),
 });
 
+/**
+ * `agentId` → 展示名（**目录优先**，查不到返回 `undefined`）。
+ *
+ * T-a7 家族每一个"要显示 worker 名字"的面都走这一份：写快照、给 conductor 那句
+ * 「用户 @ 了谁」。规则本体在 `lib/task-agent-name.ts`（两步查找：taskId → 网关 → 目录），
+ * 这里只是把"当前状态"喂给它 —— **不在调用点上重写一遍优先级**。
+ */
+function lookupAgentName(taskId: string, agentId: string): string | undefined {
+  return resolveTaskAgentName({
+    tasks: taskStoreApi.getState().tasks,
+    agentsForGateway: (gwId) => uiStoreApi.getState().agentCatalogByGateway[gwId]?.agents,
+    taskId,
+    agentId,
+  });
+}
+
 const roomStoreApi = createRoomStore({
   createSession: (gwId, params) => window.clawwork.createSession(gwId, params),
   abortChat: (gwId, sk) => getPorts().gateway.abortChat(gwId, sk),
@@ -102,14 +118,8 @@ const roomStoreApi = createRoomStore({
   persistPerformer: (params) => window.clawwork.persistPerformer(params),
   loadRoom: (taskId) => window.clawwork.loadRoom(taskId),
   // 写 `RoomPerformer.agentName` 快照时问一次目录（T-a7 的写入方那一半）：
-  // 问不到就返回 undefined，core 那边降级成裸 agentId。规则见 `lib/task-agent-name.ts`。
-  resolveAgentName: (taskId, agentId) =>
-    resolveTaskAgentName({
-      tasks: taskStoreApi.getState().tasks,
-      agentsForGateway: (gwId) => uiStoreApi.getState().agentCatalogByGateway[gwId]?.agents,
-      taskId,
-      agentId,
-    }),
+  // 问不到就返回 undefined，core 那边降级成裸 agentId。
+  resolveAgentName: lookupAgentName,
 });
 
 export const composerBridge = {
@@ -142,6 +152,8 @@ function getComposer(): ChatComposer {
       },
       getRoomState: (taskId) => roomStoreApi.getState().rooms[taskId],
       setRoomStatus: (taskId, status) => roomStoreApi.getState().setRoomStatus(taskId, status),
+      // 给 conductor 那句「用户 @ 了谁」用的名字（T-a7 第四个面）：同一份目录优先规则。
+      resolveAgentName: lookupAgentName,
       translate: (key, opts) => i18n.t(key, opts),
       onError: (toastMsg) => toast.error(toastMsg.title, { description: toastMsg.description }),
     });

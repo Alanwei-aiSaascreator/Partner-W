@@ -1,3 +1,4 @@
+import { resolvePerformerAgentName } from '@clawwork/shared';
 import type { Message, MessageAttachment, IpcResult, ErrorStage, TaskRoom, RoomStatus } from '@clawwork/shared';
 import type { GatewayTransportPort, ChatAttachment } from '../ports/gateway-transport.js';
 import { buildAppError, formatErrorForUser, formatErrorForToast } from './error-classify.js';
@@ -74,6 +75,15 @@ export interface ChatComposerDeps {
 
   getRoomState?: (taskId: string) => TaskRoom | undefined;
   setRoomStatus?: (taskId: string, status: RoomStatus) => void;
+
+  /**
+   * `agentId` → 展示名（宿主注入 —— core 不认识网关目录，也不该认识）。
+   *
+   * 用在给 conductor 那句「用户 @ 了谁」上（见 `resolveMentionNames`）。
+   * **拿不准就返回 `undefined`**：调用方会退回房间快照里的名字、再退回裸 agentId ——
+   * "取个名字"这件事绝不能影响发消息。
+   */
+  resolveAgentName?: (taskId: string, agentId: string) => string | undefined;
 
   translate: TranslateFn;
   onError?: (toast: { title: string; description: string }) => void;
@@ -155,6 +165,40 @@ function resolveMentionTargets(
     if (performer) targets.push(performer.sessionKey);
   }
   return targets;
+}
+
+/**
+ * 「用户 @ 了谁」那句话里该写哪个名字（给 conductor 的那句通知）。
+ *
+ * 为什么不能直接 `mentions.join(', ')`：`mentions` 里是**裸 agentId**
+ * （`useChatSend` 传的就是 `agentMentions.map((a) => a.agentId)`）⇒ 模型看到的是
+ * `[User directed message to rongying-tpl-78b62899: "…"]`。名字一直是有的
+ * （网关目录里就写着「爆款内容教练」，房间快照里还有一份），只是没往这句话里送 ——
+ * **人和模型看到的是两个名字**。这是 T-a7 同一家族的第**四**个面
+ * （前三个：消息头、团队页、`@` 选择器）。
+ *
+ * 优先级**不在这里重写** —— 交给 shared 的 `resolvePerformerAgentName`
+ * （目录 → 快照 → 裸 id）。宿主注入的 resolver 已经把"目录"那一层封好了。
+ *
+ * fail-soft：查名字**绝不能炸掉派活**（与 `room-store` 的 `snapshotAgentName` 同口径）——
+ * 与档位、模型那几处同一条原则：显示问题不许升级成发不出去。
+ */
+function resolveMentionNames(
+  deps: ChatComposerDeps,
+  taskId: string,
+  performers: TaskRoom['performers'],
+  mentions: string[] | undefined,
+): string[] {
+  return (mentions ?? []).map((agentId) => {
+    const performer = performers.find((p) => p.agentId === agentId);
+    let catalogName: string | undefined;
+    try {
+      catalogName = deps.resolveAgentName?.(taskId, agentId);
+    } catch (err) {
+      console.warn('[chat-composer] resolveAgentName failed:', err);
+    }
+    return resolvePerformerAgentName(performer, catalogName ? { name: catalogName } : undefined);
+  });
 }
 
 export function createChatComposer(deps: ChatComposerDeps) {
@@ -343,7 +387,11 @@ export function createChatComposer(deps: ChatComposerDeps) {
         if (failures.length > 0) partialFailure = failures.join('; ');
 
         if (room && !mentionTargets.includes(room.conductorSessionKey)) {
-          const targetNames = options.mentions?.join(', ') ?? 'performers';
+          // 名字走目录优先（见 `resolveMentionNames`）。
+          // ⚠️ 这里**不再**有 `?? 'performers'` 那个兜底词：走到这一句时 `mentions` 一定非空
+          //    （`mentionAll` 那一支会把 conductor 自己也算进目标 ⇒ 上面的守卫已经返回），
+          //    而 `resolveMentionNames` 最差也会给出裸 agentId ⇒ 名字列表不可能为空。
+          const targetNames = resolveMentionNames(deps, task.id, room.performers, options.mentions).join(', ');
           const preview = options.content.slice(0, 200);
           deps.gateway
             .sendMessage(
