@@ -11,12 +11,20 @@
  * 但那等于**把一条任意的绝对路径交给"删目录"这个动作**。
  * 所以渲染层只传 `{gatewayId, agentId, slug}`，目录由主进程**问网关要**
  *（`skills.status` 自己会报，实测 2026-09-20）。渲染层永远碰不到路径。
+ *
+ * ## 装/卸之后为什么要多打一条 RPC
+ *
+ * 网关对每个 agent 缓存一份技能表，**只动磁盘它看不见**（机制、代码位置与实测见
+ * `cache-refresh.ts` 的注释）。所以装/卸成功之后再通知一下；通知是**尽力而为**的，
+ * 失败只记日志，绝不让装/卸本身变成失败。
  */
 
 import { app, ipcMain } from 'electron';
 import type { IpcResult, OurSkillsListResult } from '@clawwork/shared';
 import { getGatewayClient } from '../ws/index.js';
 import { installBundledSkill, isBundledSkillInstalled, readBundledSkills, removeBundledSkill } from './bundled.js';
+import { notifySkillCacheChange, type SkillCacheClient } from './cache-refresh.js';
+import { getDebugLogger } from '../debug/index.js';
 import { resolveOurSkillsRoot } from './locate.js';
 
 function ipcError(err: unknown): { ok: false; error: string } {
@@ -48,6 +56,32 @@ async function managedSkillsDirOf(gatewayId: string, agentId?: string): Promise<
   } catch {
     return null;
   }
+}
+
+/** 连上的客户端；没连上返回 null（15 秒超时的请求不该白挂一条）。 */
+function liveGatewayClient(gatewayId: string): SkillCacheClient | null {
+  const gw = getGatewayClient(gatewayId);
+  return gw?.isConnected ? gw : null;
+}
+
+/**
+ * 装/卸成功之后通知网关重扫。**不 await**：这是尽力而为的一下，
+ * 让界面等它没有意义（最坏情况下对面不回，`GatewayClient` 要挂满 15 秒超时）。
+ */
+function notifySkillCache(gatewayId: string, slug: string, enabled: boolean): void {
+  void notifySkillCacheChange({
+    client: liveGatewayClient(gatewayId),
+    slug,
+    enabled,
+    onWarn: ({ slug: s, error }) =>
+      getDebugLogger().warn({
+        // `DebugDomain` 是闭集、里面没有 skills ⇒ 归到 gateway（这条 warn 报的就是
+        // 一条网关 RPC 没成），技能这层语义放在 event 名里。
+        domain: 'gateway',
+        event: 'skills.cache-refresh.failed',
+        message: `${s}: ${error instanceof Error ? error.message : String(error)}`,
+      }),
+  });
 }
 
 export function registerSkillsHandlers(): void {
@@ -91,7 +125,9 @@ export function registerSkillsHandlers(): void {
       try {
         const managedDir = await managedSkillsDirOf(payload.gatewayId, payload.agentId);
         if (!managedDir) return { ok: false, error: 'GATEWAY_UNAVAILABLE' };
-        return installBundledSkill({ root: ourSkillsRoot(), managedDir, slug: payload.slug });
+        const result = installBundledSkill({ root: ourSkillsRoot(), managedDir, slug: payload.slug });
+        if (result.ok) notifySkillCache(payload.gatewayId, payload.slug, true);
+        return result;
       } catch (err) {
         return ipcError(err);
       }
@@ -104,7 +140,9 @@ export function registerSkillsHandlers(): void {
       try {
         const managedDir = await managedSkillsDirOf(payload.gatewayId, payload.agentId);
         if (!managedDir) return { ok: false, error: 'GATEWAY_UNAVAILABLE' };
-        return removeBundledSkill({ managedDir, slug: payload.slug });
+        const result = removeBundledSkill({ managedDir, slug: payload.slug });
+        if (result.ok) notifySkillCache(payload.gatewayId, payload.slug, false);
+        return result;
       } catch (err) {
         return ipcError(err);
       }
