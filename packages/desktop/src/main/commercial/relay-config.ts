@@ -289,7 +289,10 @@ function messageOf(error: unknown): string {
 function classifyWriteError(error: unknown): 'hash-conflict' | 'transport' | 'rejected' {
   const text = messageOf(error);
   // 乐观锁：并发写导致快照过期。**重读快照再来就有用**，所以值得重试。
-  if (/hash/i.test(text)) return 'hash-conflict';
+  // OpenClaw 2026.9.3 的真网关不一定带 `hash` 这个词：冷启时预置
+  // 助手与中转配置并发写，它返回的是后半句。把它当 schema 拒绝会让
+  // 模型永久留在“正在准备”，而提示本身已明确要求重读 `config.get`。
+  if (/hash|config changed since last load|re-run config\.get and retry/i.test(text)) return 'hash-conflict';
   if (/ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EPIPE|socket hang up|not connected|timeout/i.test(text)) {
     return 'transport';
   }

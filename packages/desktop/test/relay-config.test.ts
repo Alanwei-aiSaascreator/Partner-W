@@ -430,6 +430,33 @@ describe('applyRelayConfig', () => {
     expect(d.patchConfig).toHaveBeenCalledTimes(2);
   });
 
+  it('⭐ 真网关的 CAS 文案没有 hash 一词：冷启预置助手并发改配置时也必须重读重试', async () => {
+    let calls = 0;
+    const d = deps({
+      getConfig: vi.fn(async () =>
+        calls === 0
+          ? snapshot({}, 'stale')
+          : snapshot(
+              { models: { providers: { [RELAY_PROVIDER_ID]: { baseUrl: RELAY_BASE_URL, apiKey: 'rly_abc' } } } },
+              'fresh',
+            ),
+      ),
+      patchConfig: vi.fn(async () => {
+        calls += 1;
+        if (calls === 1) throw new Error('config changed since last load; re-run config.get and retry');
+        return { ok: true };
+      }),
+    });
+
+    const res = await applyRelayConfig(d, INPUT);
+
+    expect(res.configured).toBe(true);
+    expect(res.errorCode).toBeUndefined();
+    expect(d.patchConfig).toHaveBeenCalledTimes(2);
+    expect(d.getConfig).toHaveBeenCalledTimes(3);
+    expect(d.patchConfig).toHaveBeenNthCalledWith(2, expect.objectContaining({ baseHash: 'fresh' }));
+  });
+
   it('schema 拒绝**不重试** —— 重试无用，只会白等', async () => {
     const d = deps({
       patchConfig: vi.fn(async () => {
