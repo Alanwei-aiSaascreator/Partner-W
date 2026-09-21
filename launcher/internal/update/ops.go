@@ -18,6 +18,7 @@ type Ops interface {
 	Rename(oldPath, newPath string) error
 	RemoveAll(path string) error
 	Exists(path string) (bool, error)
+	MkdirAll(path string) error
 	ReadFile(path string) ([]byte, error)
 	WriteFile(path string, data []byte, perm fs.FileMode) error
 	WriteFileExclusive(path string, data []byte, perm fs.FileMode) error
@@ -45,6 +46,10 @@ func (SystemOps) Rename(oldPath, newPath string) error {
 
 func (SystemOps) RemoveAll(path string) error {
 	return os.RemoveAll(path)
+}
+
+func (SystemOps) MkdirAll(path string) error {
+	return os.MkdirAll(path, 0o755)
 }
 
 func (SystemOps) Exists(path string) (bool, error) {

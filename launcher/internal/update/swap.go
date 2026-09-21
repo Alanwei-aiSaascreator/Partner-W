@@ -70,6 +70,18 @@ func scopedRename(ops Ops, transaction TransactionV1, oldPath, newPath string) e
 	return ops.Rename(oldPath, newPath)
 }
 
+func scopedMkdirAll(ops Ops, transaction TransactionV1, target string) error {
+	if !isInsideOrEqual(transaction.UpdateRoot, target) || compareKey(target) == compareKey(transaction.UpdateRoot) {
+		return fmt.Errorf("%w: %s is not a directory inside the update root", ErrUnsafePath, target)
+	}
+	for _, root := range transactionScope(transaction) {
+		if isInsideOrEqual(root, target) || isInsideOrEqual(target, root) {
+			return ops.MkdirAll(target)
+		}
+	}
+	return fmt.Errorf("%w: %s is outside the transaction scope", ErrUnsafePath, target)
+}
+
 func scopedRemoveAll(ops Ops, transaction TransactionV1, target string) error {
 	if err := assertScopedTarget(transaction, target); err != nil {
 		return err
@@ -164,6 +176,9 @@ func Apply(ctx context.Context, transaction TransactionV1, publicKey ed25519.Pub
 		return fmt.Errorf("%w: current=%v backup=%v", ErrNotReadyToApply, current, backup)
 	}
 
+	if err := scopedMkdirAll(ops, transaction, filepath.Dir(transaction.BackupProgramPath)); err != nil {
+		return err
+	}
 	if err := scopedRename(ops, transaction, transaction.CurrentProgramPath, transaction.BackupProgramPath); err != nil {
 		return err
 	}

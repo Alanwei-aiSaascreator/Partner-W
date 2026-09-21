@@ -124,6 +124,11 @@ func (ops *harnessOps) RemoveAll(path string) error {
 	return err
 }
 
+func (ops *harnessOps) MkdirAll(path string) error {
+	ops.record("mkdir-all", path)
+	return ops.inner.MkdirAll(path)
+}
+
 func (ops *harnessOps) Exists(path string) (bool, error) {
 	return ops.inner.Exists(path)
 }
@@ -184,7 +189,6 @@ func newScenario(t *testing.T) *scenario {
 		filepath.Dir(transaction.ArchivePath),
 		filepath.Dir(transaction.FileManifestPath),
 		filepath.Dir(transaction.HealthPath),
-		filepath.Dir(transaction.BackupProgramPath),
 	} {
 		if err := os.MkdirAll(directory, 0o755); err != nil {
 			t.Fatalf("create %s: %v", directory, err)
