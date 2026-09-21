@@ -124,17 +124,21 @@ export interface RelayBootstrapResult {
    */
   errorCode?: RelayKeyFetchErrorCode;
   /**
-   * 等一等会不会好。
+   * **再试一次是否有意义**（不是"本轮还会不会再试"）。
+   *
+   * ⚠️ 两者刻意分开：退避用尽、或下一次退避会越过总 deadline 时，循环会把
+   * `auth-transient` **如实返回**（本轮不再重试），但它的 `retryable` 仍然是 `true` ——
+   * 因为"这次没成"是**暂时**的，换个时间点（下一次启动、下一次触发）再试就是对的。
+   * 别把 `true` 读成"本函数还会再试"。
    *
    * ⚠️ **每个返回点都必须显式设置**（不是可选字段）：只在被分类的那两条分支上设置，
    * 会留下 `auth-transient` 有时带、有时不带，以及 `runtime-not-ready`（循环**真的会
-   * 重试**它）根本没有这个字段 —— 调用方拿到 `undefined` 只能靠猜。取值以**重试循环
-   * 的真实行为**为准（见 `bootstrapRelayWithRetry`）：
+   * 重试**它）根本没有这个字段 —— 调用方拿到 `undefined` 只能靠猜。
    *
-   * - `true`：只有 `runtime-not-ready`（网关还没连上，轮询）与 `auth-transient`
-   *   （会话/传输暂时问不出来，有界退避）；
-   * - `false`：其余全部 —— 明确没登录 / 没卡 / **确定性拒绝**（卡绑在别的组织 /
-   *   卡失效 / 没下发 key）/ 写失败 / 已经就绪（applied / already-applied）/
+   * - `true`：`runtime-not-ready`（网关还没连上）与 `auth-transient`（会话/传输暂时
+   *   问不出来）—— 这两类对应重试循环里的两条重试路径；
+   * - `false`：其余全部 —— 明确没登录 / 没卡 / **确定性拒绝**（卡绑在别的组织、
+   *   卡失效、没下发 key）/ 写失败 / 已经就绪（applied / already-applied）/
    *   本机没接商业层（not-configured）。重试一万次结果一样，**尤其别为了它再发一次
    *   `activate_license`**。
    */

@@ -244,6 +244,36 @@ describe('fetchRelayKeyForLicense —— 服务端拒绝不再被压成 null', (
     });
   });
 
+  /**
+   * ⭐⭐ 裁决白名单：**只有**迁移 56 / 触发器里故意 raise 的那几个码才算"服务端拒绝了这张卡"。
+   *
+   * 迁移 56 在卡行上 `for update` + `delete … offset` ⇒ 同一张卡的并发本来就会制造锁等待，
+   * 所以 `57014`（statement_timeout）/ `55P03`（lock_not_available）/ `40P01`（deadlock）/
+   * `08006`（connection_failure）/ `53300`（too_many_connections）这些**带 code** 的失败
+   * 恰恰是"再试一次就会好"的那些 —— 被判成终态就是把网络/并发问题说成"这张卡不行"。
+   */
+  it('⭐⭐ 非裁决 SQLSTATE（57014 语句超时 / 53300 连接数满 / 08006 连接失败）⇒ transport 可重试', async () => {
+    const { fetchRelayKeyForLicense } = await import('../src/main/commercial/relay-startup.js');
+    const shapes = [
+      { code: '57014', status: 500, message: 'canceling statement due to statement timeout' },
+      { code: '53300', status: 503, message: 'sorry, too many clients already' },
+      { code: '08006', status: 502, message: 'connection failure' },
+    ];
+
+    for (const shape of shapes) {
+      mocks.rpc.mockResolvedValue({
+        data: null,
+        error: { code: shape.code, message: shape.message },
+        status: shape.status,
+      });
+      await expect(fetchRelayKeyForLicense(LICENSE), `${shape.code} 是"这次没成"，不是"这张卡不行"`).resolves.toEqual({
+        ok: false,
+        errorCode: 'transport',
+        retryable: true,
+      });
+    }
+  });
+
   it('⭐⭐ 真库形状③：fetch failed（连接被拒）⇒ transport 可重试，不是泛化的激活失败', async () => {
     mocks.rpc.mockResolvedValue(SHAPE_FETCH_FAILED);
 
@@ -466,6 +496,56 @@ describe('整条链 —— 永久拒绝在 4 分钟窗口里只发一次 activat
     expect(res.errorCode).toBe('transport');
     expect(res.relayReady).toBe(false);
     expect(gw.patchConfig, '没有 key 就绝不写网关配置').not.toHaveBeenCalled();
+  });
+
+  /**
+   * ⭐ 裁决白名单的**系统级**后果：带 code 的"非裁决"失败不得被渲染成卡的问题。
+   *
+   * 迁移 56 的 `activate_license` 在卡行上 `for update` 并 `delete … offset` ——
+   * 同一张卡的并发会制造锁等待，超时（`57014`）与连接层失败（`53300`/`08006`）都是
+   * **重试一次就会好**的那一类。判成终态等于告诉用户"这张卡不行"。
+   */
+  it('⭐ 库存锁等待超时（57014）不得变成卡的问题', async () => {
+    mocks.rpc.mockResolvedValue({
+      data: null,
+      error: { code: '57014', message: 'canceling statement due to statement timeout' },
+      status: 500,
+    });
+
+    const { ensureRelayConfigured } = await import('../src/main/commercial/relay-bootstrap.js');
+    const { gw, deps } = await realDeps();
+
+    const res = await ensureRelayConfigured(deps);
+
+    expect(res.status, '并发拿不到锁、语句超时 —— 那是"再试一次会好"').not.toBe('entitlement-rejected');
+    expect(res.status).toBe('auth-transient');
+    expect(res.retryable).toBe(true);
+    expect(res.errorCode).toBe('transport');
+    expect(res.relayReady).toBe(false);
+    expect(gw.patchConfig, '没有 key 就绝不写网关配置').not.toHaveBeenCalled();
+  });
+
+  it('⭐ 连接池/连接失败（53300 / 08006）不得变成卡的问题', async () => {
+    const { ensureRelayConfigured } = await import('../src/main/commercial/relay-bootstrap.js');
+
+    for (const shape of [
+      { code: '53300', status: 503, message: 'sorry, too many clients already' },
+      { code: '08006', status: 502, message: 'connection failure' },
+    ]) {
+      mocks.rpc.mockResolvedValue({
+        data: null,
+        error: { code: shape.code, message: shape.message },
+        status: shape.status,
+      });
+      const { gw, deps } = await realDeps();
+
+      const res = await ensureRelayConfigured(deps);
+
+      expect(res.status, `${shape.code} 是连接层失败，不是卡的问题`).not.toBe('entitlement-rejected');
+      expect(res.status).toBe('auth-transient');
+      expect(res.retryable).toBe(true);
+      expect(gw.patchConfig).not.toHaveBeenCalled();
+    }
   });
 
   it('⭐⭐ 真库形状：第一次传输失败、第二次成功 ⇒ 走既有退避并 applied', async () => {

@@ -563,18 +563,22 @@ describe('bootstrapRelayWithRetry —— 暂时问不出来 ≠ 没登录', () =
   function makeRetryHarness(script: AuthCheck[]) {
     let i = 0;
     const sleeps: number[] = [];
+    const clock = advancingClock();
     const made = makeDeps({
       checkAuth: async () => script[Math.min(i++, script.length - 1)] ?? 'authenticated',
     });
     const sleep = async (ms: number): Promise<void> => {
       sleeps.push(ms);
+      // ⚠️ 时间**真的往前走**：deadline 因此被真实评估（既不会真等 172 秒，也不会出现
+      //    冻结时钟那种"永远够不到 deadline"的死循环形状 —— 见 helper 的注释）。
+      await clock.sleep(ms);
     };
     return {
       ...made,
       sleeps,
-      /** 固定时钟 ⇒ 总 deadline 不会提前兜底，能单独看出**退避表**这一层上界。 */
+      /** 断言"退避了几次/各多少"看 `sleeps`；超时预算由真实的 `now` 决定。 */
       run: (over: Partial<RelayBootstrapRunOptions> = {}) =>
-        bootstrapRelayWithRetry(made.deps, { sleep, now: () => 0, ...over }),
+        bootstrapRelayWithRetry(made.deps, { ...clock, sleep, ...over }),
     };
   }
 
@@ -643,10 +647,14 @@ describe('bootstrapRelayWithRetry —— 暂时问不出来 ≠ 没登录', () =
 
   it('⭐ runtime-not-ready 仍然照旧轮询（别把既有行为弄丢）', async () => {
     let calls = 0;
+    const clock = advancingClock();
     const { gateway, patchConfig } = makeGateway();
     const made = makeDeps({ getGateway: () => (calls++ < 2 ? null : gateway) });
-    const res = await bootstrapRelayWithRetry(made.deps, { sleep: async () => {}, now: () => 0 });
+    // ⚠️ 别写 `now: () => 0` + 空 sleep：那样循环**只能**靠桩里的 `calls++ < 2` 终止，
+    //    桩一改就是死循环（这正是把 worker 跑到 OOM 的形状）。
+    const res = await bootstrapRelayWithRetry(made.deps, { ...clock, waitForGatewayMs: 240_000 });
     expect(res.status).toBe('applied');
+    expect(clock.sleep, '轮了两次才等到网关（不是靠 deadline 兜底的）').toHaveBeenCalledTimes(2);
     expect(patchConfig).toHaveBeenCalledTimes(1);
   });
 });
@@ -681,12 +689,16 @@ describe('bootstrapRelayWithRetry —— 暂时问不出来 ≠ 没登录', () =
  * ⇒ 调度器是**单飞**的：跑着的时候再触发只记一个"待补跑"，绝不开第二条。
  */
 describe('createRelayBootstrapScheduler —— 2C：登录后自动补跑', () => {
-  const fast = { sleep: async (): Promise<void> => {}, now: (): number => 0 };
+  /**
+   * 每个用例一份**随 sleep 前进**的时钟（工厂：共享一份会让时间在用例之间累积）。
+   * ⚠️ 别回到固定时钟 + 空 sleep —— 那是「永远够不到 deadline」的死循环形状。
+   */
+  const fast = () => advancingClock();
 
   it('⭐⭐ 启动时没登录 ⇒ unauthenticated 且不写配置；用户登录后**同一个调度器再跑一次** ⇒ applied', async () => {
     let authed = false;
     const made = makeDeps({ checkAuth: async () => (authed ? 'authenticated' : 'unauthenticated') });
-    const sched = createRelayBootstrapScheduler(made.deps, fast);
+    const sched = createRelayBootstrapScheduler(made.deps, fast());
 
     const first = await sched.trigger('startup');
     expect(first.status, '启动时没登录就该如实报没登录').toBe('unauthenticated');
@@ -717,7 +729,7 @@ describe('createRelayBootstrapScheduler —— 2C：登录后自动补跑', () =
         return 'authenticated';
       },
     });
-    const sched = createRelayBootstrapScheduler(made.deps, fast);
+    const sched = createRelayBootstrapScheduler(made.deps, fast());
 
     const first = sched.trigger('startup');
     await Promise.resolve(); // 让它真的进到 checkAuth 里挂住
@@ -735,7 +747,7 @@ describe('createRelayBootstrapScheduler —— 2C：登录后自动补跑', () =
   it('⭐ 负对照：启动时**明确**未登录 ⇒ 只问一次，不会在后台反复 bootstrap', async () => {
     const checkAuth = vi.fn(async () => 'unauthenticated' as AuthCheck);
     const made = makeDeps({ checkAuth });
-    const sched = createRelayBootstrapScheduler(made.deps, fast);
+    const sched = createRelayBootstrapScheduler(made.deps, fast());
 
     const res = await sched.trigger('startup');
     expect(res.status).toBe('unauthenticated');
@@ -746,7 +758,7 @@ describe('createRelayBootstrapScheduler —— 2C：登录后自动补跑', () =
 
   it('⭐ 负对照：已经 applied 之后再触发（等价于普通 TOKEN_REFRESHED 场景）⇒ 幂等命中，**不重写配置**', async () => {
     const made = makeDeps();
-    const sched = createRelayBootstrapScheduler(made.deps, fast);
+    const sched = createRelayBootstrapScheduler(made.deps, fast());
 
     expect((await sched.trigger('startup')).status).toBe('applied');
     expect(made.patchConfig).toHaveBeenCalledTimes(1);

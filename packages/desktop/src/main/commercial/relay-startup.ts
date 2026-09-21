@@ -50,6 +50,32 @@ export function findConnectedGateway(): RelayGatewayHandle | null {
 }
 
 /**
+ * `activate_license` / `check_activation_limit()` **故意**给出的裁决码（= 确定性的服务端判决）。
+ *
+ * 来源（2026-09-21 从 SQL 源自己数出来的，不是照抄清单）：
+ *   · `supabase/migrations/20260921000056_activate_license_bound_org_owner.sql`
+ *     —— `28000` not signed in（:72）/ `P0001`（卡失效 :94,:98、绑错组织 :112、设备被撤销 :176）
+ *     / `P0002`（卡号查不到 :90、没有组织 :125）
+ *   · `20260910000001_init.sql:123` 与 `20260910000003_mvp_closure.sql:427`
+ *     —— `check_activation_limit()` 触发器 `raise … using errcode = 'check_violation'`
+ *     （SQLSTATE **23514**，就是"激活数已达上限"）
+ *   · 同一个函数在 1 / 3 / 11 / 23 号迁移里的历史版本用的是同一组码
+ *     （全仓计数：`P0001`×21、`P0002`×8、`28000`×4、`check_violation`×2；唯一的 `42501`
+ *     属于 `report_usage` 的 service-role 检查，不在取 key 这条路上）
+ *   ⇒ 闭集 = {28000, P0001, P0002, 23514}。**只有这些**才算"服务端真的拒绝了这张卡"。
+ *
+ * ⚠️ 取舍（**有意**）：白名单**之外**一切带 code 的失败都归**可重试** ——
+ *    `PGRST301`（token 过期）、`57014`（statement_timeout）、`55P03`/`40P01`（拿不到行锁、死锁）、
+ *    `08006`/`53300`（连接层失败）、`PGRST002/003/202`（PostgREST 自身的解析/缓存问题）……
+ *    理由：迁移 56 的 `activate_license` 在卡行上 `for update` 并 `delete … offset`，
+ *    **同一张卡的并发**（多端同时启动）本来就会制造锁等待 ⇒ 那些"再试一次就会好"的失败
+ *    不该被说成"这张卡不行"（Task 3/4 会把它渲染成不可重试的 blocked 文案）。
+ *    代价：token 过期（`PGRST301`）也会被当成可重试 —— 可接受，因为每一轮重试都先过
+ *    `checkAuth()`，而且 supabase-js 自己会刷 token。
+ */
+const ACTIVATION_VERDICTS = new Set(['28000', 'P0001', 'P0002', '23514']);
+
+/**
  * 取这张卡的中转 key。
  *
  * ⚠️ 用的是 `activate_license` —— 它对**已知设备是幂等的**（迁移 20260912000011）：
@@ -107,13 +133,17 @@ export async function fetchRelayKeyForLicense(licenseKey: string): Promise<Relay
       // 把它们兜进分类器会落成 `activation_failed` ⇒ 终态 `entitlement-rejected`：用户被告知
       // "这张卡不行"，而其实只是网络抖了一下、**再试一次就会好**。
       //
-      // 判据与 `auth-classify.ts` 的 `status === 0`（"fetch 层就失败了"）同一口径：
-      // **确定性的服务端拒绝一定带 SQLSTATE**（迁移 56 的 P0001/P0002/23514/28000 都带），
-      // 传输类没有码、或 status 为 0；无码的 5xx/HTML 也由 `!error.code` 覆盖。
+      // 判据 = **裁决白名单**（`ACTIVATION_VERDICTS`，来源见它的注释）：
+      //   · 没有码 / `status === 0` ⇒ 压根没问出来（实测的传输形状）；
+      //   · 有码但**不在**白名单里 ⇒ 也不当成"卡的判决" —— `57014`（语句超时）、
+      //     `55P03`/`40P01`（拿不到行锁/死锁）、`08006`/`53300`（连接层）、
+      //     `PGRST301`（token 过期）……这些恰恰是"再试一次会好"的那一类，
+      //     判成终态就是把并发/网络问题说成"这张卡不行"。
+      // 与 `auth-classify.ts` 的 `status === 0`（"fetch 层就失败了"）同一口径。
       //
       // ⚠️ `status` 在**响应**上，不在 `error` 对象里（实测 error 的键只有
       //    `message/details/hint/code`）。
-      if (!error.code || status === 0) {
+      if (!error.code || status === 0 || !ACTIVATION_VERDICTS.has(error.code)) {
         log('relay.bootstrap.activate-rpc-transport-failed', { errorCode: 'transport' });
         return { ok: false, errorCode: 'transport', retryable: true };
       }
