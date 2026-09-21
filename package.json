@@ -46,7 +46,8 @@
     "typecheck:e2e": "pnpm --filter @clawwork/desktop exec tsc --noEmit -p ../../e2e/tsconfig.json",
     "release-notes": "node scripts/generate-release-notes.mjs",
     "check": "pnpm lint && pnpm check:architecture && pnpm check:ci-bot-security && pnpm check:ui-contract && pnpm check:renderer-copy && pnpm check:i18n && pnpm check:udisk-delivery && pnpm check:gateway-probe && pnpm check:dead-code && pnpm format:check && pnpm typecheck && pnpm typecheck:tests && pnpm typecheck:e2e && pnpm test",
-    "udisk:archive": "node scripts/make-udisk-archive.mjs"
+    "udisk:archive": "node scripts/make-udisk-archive.mjs",
+    "build:portable-launcher": "node scripts/build-portable-launcher.mjs"
   },
   "lint-staged": {
     "*.{ts,tsx,mts,cts,js,mjs,cjs}": [
