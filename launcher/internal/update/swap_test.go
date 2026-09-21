@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -55,13 +56,14 @@ func (process *fakeProcess) exit(err error) {
 }
 
 type harnessOps struct {
-	inner   Ops
-	clock   *fakeClock
-	process *fakeProcess
-	alive   map[int]bool
-	records []recordedOp
-	counts  map[string]int
-	faults  []fault
+	inner    Ops
+	clock    *fakeClock
+	process  *fakeProcess
+	alive    map[int]bool
+	records  []recordedOp
+	startEnv []string
+	counts   map[string]int
+	faults   []fault
 }
 
 func newHarnessOps() *harnessOps {
@@ -159,6 +161,7 @@ func (ops *harnessOps) WriteFileExclusive(path string, data []byte, perm os.File
 
 func (ops *harnessOps) StartApp(exePath string, env []string) (Process, error) {
 	ops.record("start-app", exePath)
+	ops.startEnv = env
 	if err := ops.gate("start-app"); err != nil {
 		return nil, err
 	}
@@ -464,6 +467,12 @@ func TestApplySwapsTheTreesAndCommitsAfterHealth(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(instance.transaction.BackupProgramPath, "old.txt")); err != nil {
 		t.Fatalf("the backup must hold the previous tree: %v", err)
+	}
+	if !strings.Contains(strings.Join(instance.ops.startEnv, ";"), TransactionIDEnv+"="+instance.transaction.TransactionID) {
+		t.Fatalf("the launcher must hand the transaction to the app: %v", instance.ops.startEnv)
+	}
+	if !strings.Contains(strings.Join(instance.ops.startEnv, ";"), HealthPathEnv+"="+instance.transaction.HealthPath) {
+		t.Fatalf("the launcher must hand the receipt path to the app: %v", instance.ops.startEnv)
 	}
 	if _, err := os.Stat(instance.transaction.StagedProgramPath); !os.IsNotExist(err) {
 		t.Fatalf("the stage directory must have moved away")

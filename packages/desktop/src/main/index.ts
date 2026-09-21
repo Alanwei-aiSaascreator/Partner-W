@@ -2,6 +2,7 @@ import { app, dialog, shell, BrowserWindow, Menu, ipcMain, globalShortcut, proto
 import { join } from 'path';
 import { electronApp, is } from '@electron-toolkit/utils';
 import { existsSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { nativeTheme } from 'electron';
 import { initAllGateways, destroyAllGateways } from './ws/index.js';
 import { getMainWindow, setMainWindow } from './window-manager.js';
@@ -38,6 +39,12 @@ import { setupAnalytics, teardownAnalytics } from './analytics/setup.js';
 import { initUsageReporter, destroyUsageReporter } from './commercial/usage-reporter.js';
 import { bootstrapCommercialRelay } from './commercial/relay-startup.js';
 import { isInstallingUpdate } from './auto-updater.js';
+import {
+  createPortableHealthCoordinator,
+  expectedProgramPathFor,
+  readPortableHealthEnvironment,
+  writePortableHealthReceipt,
+} from './update/portable-health.js';
 import { initTray, destroyTray } from './tray.js';
 import { initQuickLaunch, destroyQuickLaunch } from './quick-launch.js';
 import { readConfig, updateConfig } from './workspace/config.js';
@@ -297,6 +304,19 @@ if (!gotLock) {
     }
   });
 
+  const portableHealthHandoff = readPortableHealthEnvironment(process.env);
+  const portableHealth = createPortableHealthCoordinator({
+    ...portableHealthHandoff,
+    expectedProgramPath: expectedProgramPathFor(portableHealthHandoff.healthPath),
+    runningProgramPath: dirname(process.execPath),
+    runningVersion: app.getVersion(),
+    writeReceipt: async (receipt) => {
+      const healthPath = portableHealthHandoff.healthPath;
+      if (healthPath === undefined) return;
+      await writePortableHealthReceipt({ healthPath, receipt });
+    },
+  });
+
   app
     .whenReady()
     .then(async () => {
@@ -336,7 +356,7 @@ if (!gotLock) {
       registerSearchHandlers();
       registerDataHandlers();
       registerStatsHandlers();
-      registerUpdateHandlers();
+      registerUpdateHandlers({ onRendererReady: () => portableHealth.markRendererReady() });
       registerDebugHandlers();
       registerVoiceHandlers();
       configureVoicePermissionHandlers();
@@ -369,6 +389,9 @@ if (!gotLock) {
         }
       });
 
+      // 主进程这一侧就绪 = 全部 IPC 已注册。健康回执四个里程碑里的第一个。
+      portableHealth.markMainReady();
+
       // ⚠️ 工作区准备（T-U1）——盘上首启不选盘、盘符变了自愈、数据库打不开给「换目录/重建/退出」
       //    三选一。**任何失败路径都不许在这里 `app.quit()`**：退出只能由用户在对话框里选
       //    （源码契约钉在 `test/workspace-startup-flow.test.ts`）。旧行为是
@@ -388,6 +411,9 @@ if (!gotLock) {
         data: { workspacePath: wsPath, portable: workspace.portable, decision: workspace.decision.kind },
       });
 
+      // 工作区就绪 = 本地库已经打开（`prepareWorkspaceAtStartup` 里建的）。
+      portableHealth.markDatabaseReady();
+
       // ⚠️ 更新缓存的日常维护必须**在工作区就绪之后**做：清理逻辑要靠
       //    `getPortableWorkspaceRoot()` 判断"这一进程是不是盘上运行"，而那个判定
       //    就是上面 `prepareWorkspaceAtStartup()` 写下的（放在 registerUpdateHandlers
@@ -403,6 +429,9 @@ if (!gotLock) {
 
       // 窗口先出来，别像卡死 —— 首次启动要解压 35k 个文件（1–3 分钟）
       createWindow();
+
+      // 窗口已经存在。渲染进程那一侧还要它自己握手（`markRendererReady`）。
+      portableHealth.markWindowReady();
 
       // 资料库运行时（T6b/T6c）：加载本地嵌入模型 + 建服务。
       //

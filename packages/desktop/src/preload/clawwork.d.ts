@@ -545,6 +545,7 @@ export interface ClawWorkAPI {
   ) => Promise<IpcResult>;
 
   getAppVersion: () => Promise<string>;
+  reportPortableUpdateRendererReady: () => void;
   checkForUpdates: () => Promise<UpdateCheckResult>;
   downloadUpdate: () => Promise<{ ok: boolean; error?: string }>;
   cancelUpdateDownload: () => Promise<{ ok: boolean; error?: string }>;

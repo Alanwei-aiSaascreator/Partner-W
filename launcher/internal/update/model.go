@@ -32,6 +32,9 @@ const (
 	BackupDirName      = "backup"
 	LogsDirName        = "logs"
 	LauncherVersionDev = "dev"
+
+	TransactionIDEnv = "MOFANG_PORTABLE_TRANSACTION_ID"
+	HealthPathEnv    = "MOFANG_PORTABLE_HEALTH_PATH"
 )
 
 var (
@@ -109,21 +112,14 @@ func decodeStrict(data []byte, target any) error {
 	return nil
 }
 
-func readStrict(path string, target any, wrap error) error {
+func ReadTransaction(path string) (TransactionV1, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return fmt.Errorf("%w: %v", wrap, err)
+		return TransactionV1{}, fmt.Errorf("%w: %v", ErrInvalidTransaction, err)
 	}
-	if err := decodeStrict(data, target); err != nil {
-		return fmt.Errorf("%w: %v", wrap, err)
-	}
-	return nil
-}
-
-func ReadTransaction(path string) (TransactionV1, error) {
 	var transaction TransactionV1
-	if err := readStrict(path, &transaction, ErrInvalidTransaction); err != nil {
-		return TransactionV1{}, err
+	if err := decodeStrict(data, &transaction); err != nil {
+		return TransactionV1{}, fmt.Errorf("%w: %v", ErrInvalidTransaction, err)
 	}
 	if transaction.SchemaVersion != SchemaVersion {
 		return TransactionV1{}, fmt.Errorf("%w: unsupported schema version %d", ErrInvalidTransaction, transaction.SchemaVersion)

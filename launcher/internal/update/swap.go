@@ -193,7 +193,13 @@ func Apply(ctx context.Context, transaction TransactionV1, publicKey ed25519.Pub
 		return err
 	}
 
-	process, err := ops.StartApp(filepath.Join(transaction.CurrentProgramPath, ProgramExecutableName), nil)
+	process, err := ops.StartApp(
+		filepath.Join(transaction.CurrentProgramPath, ProgramExecutableName),
+		[]string{
+			TransactionIDEnv + "=" + transaction.TransactionID,
+			HealthPathEnv + "=" + transaction.HealthPath,
+		},
+	)
 	if err != nil {
 		return Rollback(ctx, transaction, ops)
 	}

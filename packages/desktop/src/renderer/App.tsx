@@ -86,6 +86,10 @@ export default function App() {
   );
 
   useEffect(() => {
+    window.clawwork.reportPortableUpdateRendererReady();
+  }, []);
+
+  useEffect(() => {
     const navigateHash = () => {
       if (parseBetaRoute(window.location.hash)) setMainView('betaHub');
     };

@@ -203,6 +203,7 @@ function buildApi(): ClawWorkAPI {
     ) => ipcRenderer.invoke('settings:test-gateway', url, auth),
 
     getAppVersion: () => ipcRenderer.invoke('app:get-version'),
+    reportPortableUpdateRendererReady: () => ipcRenderer.send('app:portable-update-renderer-ready'),
     checkForUpdates: () => ipcRenderer.invoke('app:check-for-updates'),
     downloadUpdate: () => ipcRenderer.invoke('app:download-update'),
     cancelUpdateDownload: () => ipcRenderer.invoke('app:cancel-update-download'),

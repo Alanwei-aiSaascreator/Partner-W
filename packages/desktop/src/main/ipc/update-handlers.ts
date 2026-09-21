@@ -43,8 +43,12 @@ function devCheckResult(): UpdateCheckResult {
   };
 }
 
-export function registerUpdateHandlers(): void {
+export function registerUpdateHandlers(options: { onRendererReady?: () => void } = {}): void {
   initAutoUpdater();
+
+  ipcMain.on('app:portable-update-renderer-ready', () => {
+    options.onRendererReady?.();
+  });
 
   ipcMain.handle('app:get-version', (): string => app.getVersion());
 
