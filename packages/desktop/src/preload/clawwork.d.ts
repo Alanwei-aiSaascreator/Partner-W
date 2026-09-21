@@ -44,6 +44,7 @@ import type {
   ImportFilesResult,
   Artifact,
   ArtifactSaveAsResult,
+  RelayBootstrapPublicState,
 } from '@clawwork/shared';
 // 隐私工单状态的**归一化后**形状（snake→camel、字节数字、真布尔）由 core 定义，
 // 这里只引用 —— 渲染层不该再抄一份字段名。
@@ -765,6 +766,22 @@ export interface ClawWorkAPI {
   /** Free-form recharge, in cents. Range is enforced by the RPC (¥1–¥500). */
   commercialRechargeCreateCustom: (amountCents: number) => Promise<IpcResult<RechargeOrderHandle>>;
   commercialRechargeOrder: (orderNo: string) => Promise<IpcResult<RechargeOrderStatus>>;
+
+  /**
+   * 中转 bootstrap 的**公开状态**（无密 DTO，定义在 `@clawwork/shared`）。
+   *
+   * ⚠️ 它只回答"这一轮跑到哪了、是不是确定性地不行了"，**不含**卡密 / relay key /
+   *    token / 原始后端文案 —— 那些只在主进程的调试日志里（且已脱敏）。
+   *
+   * - `commercialRelayBootstrapState()`：**初始读**。bootstrap 在窗口建好之前就跑过
+   *   一轮，那之前的事件没人收，只能靠这次补读；
+   * - `onCommercialRelayBootstrapState(cb)`：**挂上之后**的每次转变（返回退订函数）；
+   * - `commercialRelayBootstrapRetry()`：请求重试。只**排队**（不等这一轮跑完），
+   *   进度跟状态事件走。
+   */
+  commercialRelayBootstrapState: () => Promise<IpcResult<RelayBootstrapPublicState>>;
+  onCommercialRelayBootstrapState: (callback: (state: RelayBootstrapPublicState) => void) => () => void;
+  commercialRelayBootstrapRetry: () => Promise<IpcResult>;
 
   // ── 广场 / 团队（P1）───────────────────────────────────────────────
   // ⚠️ 列表类返回的是**后端原样的行**（snake_case），由 core 的 normalizer 归一；

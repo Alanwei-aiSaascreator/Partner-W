@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { RelayKeyFetchErrorCode, RelayGatewayHandle } from '../src/main/commercial/relay-bootstrap.js';
+import type {
+  RelayKeyFetchErrorCode,
+  RelayGatewayHandle,
+  RelayBootstrapResult,
+} from '../src/main/commercial/relay-bootstrap.js';
+import type { RelayBootstrapPublicPhase } from '@clawwork/shared';
 import { advancingClock } from './helpers/advancing-clock.js';
 
 /**
@@ -80,10 +85,36 @@ const mocks = vi.hoisted(() => ({
   probeAuth: vi.fn(async () => 'authenticated'),
   drain: vi.fn(async () => ({ cleaned: false, pending: false })),
   getCommercialClient: vi.fn(),
+  /** 主窗口替身（`sendToWindow` 要 `isDestroyed()` / `webContents.send`）。null = 窗口还没建。 */
+  mainWindow: null as null | {
+    isDestroyed: () => boolean;
+    webContents: { isDestroyed: () => boolean; send: (channel: string, payload: unknown) => void };
+  },
+  /** 渲染层收到的事件（`webContents.send(channel, payload)` 两次实参都在这里）。 */
+  send: vi.fn(),
 }));
 
 vi.mock('../src/main/commercial/client.js', () => ({
   getCommercialClient: mocks.getCommercialClient,
+}));
+
+/**
+ * 主窗口：**真实的** `sendToWindow` 会读它（窗口没建 ⇒ 直接返回 false、事件丢掉 ——
+ * "初始读"存在的理由就是这条）。
+ */
+vi.mock('../src/main/window-manager.js', () => ({
+  getMainWindow: () => mocks.mainWindow,
+  setMainWindow: vi.fn(),
+}));
+
+/**
+ * 中转目录：端到端用例不该真去打 `api.rongyinghudong.com/relay/v1/catalog`
+ * （网络 + 超时）。只换 `fetchFirstRelayModel`，`applyRelayConfig` / `relayProviderIds`
+ * 仍是真身 —— "写进网关"那一段必须是真的。
+ */
+vi.mock('../src/main/commercial/relay-config.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/main/commercial/relay-config.js')>()),
+  fetchFirstRelayModel: vi.fn(async () => null),
 }));
 
 // 接线层会 import 这些模块的全部真身（ws / auth / cleanup → electron、state-config）。
@@ -616,6 +647,289 @@ describe('整条链 —— 永久拒绝在 4 分钟窗口里只发一次 activat
  * 来源：`license.ts` 的 `ActivationErrorCode`（服务端拒绝的分类结果）+ 本地归类的
  * `transport`；两边都不能是开放集（见 `docs/agent-rules` 的闭集元规则）。
  */
+/**
+ * 中转 bootstrap 的**公开状态** —— 渲染层唯一能看到的那份结论。
+ *
+ * ## 这个文件在守什么（2026-09-21 实机：第二台机器一直"正在准备模型"）
+ *
+ * 主进程早就知道是 `license_bound_elsewhere`（卡绑在另一个组织），但那份知识只活在
+ * `RelayBootstrapResult` 与调试日志里 —— 渲染层读不到、也听不到，只能一直转圈。
+ * 这里钉住三件事：
+ *
+ *   1. **快照留在 store 里**：bootstrap 在 `app.whenReady()` 就跑了，而窗口/渲染层
+ *      是**之后**才挂上来的 —— 那之前发的事件没人收（`sendToWindow` 直接返回 false），
+ *      所以渲染层必须能"初始读"补回来；
+ *   2. **载荷字段是闭集**：`phase` / `errorCode` / `updatedAt`，一个不多 ——
+ *      多一个 `detail` / 原始文案 / 卡密 / relay key 就是把有密的东西送进渲染层；
+ *   3. **可重试 vs 终局**只按 `status` + `errorCode` 的**配对**判，绝不按"有没有出错"判。
+ */
+describe('公开状态 —— 渲染层唯一能看到的那份结论', () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+    mocks.rpc.mockReset();
+    mocks.probeAuth.mockReset();
+    mocks.getCommercialClient.mockReturnValue({ rpc: mocks.rpc, from: mocks.from });
+    mocks.from.mockImplementation((table: string) => {
+      if (table === 'org_members') return tableChain({ data: [{ org_id: 'org-1' }] });
+      return tableChain({
+        data: {
+          license_key: LICENSE,
+          sku: 'USB-标准版',
+          status: 'active',
+          expires_at: null,
+          max_activations: 1,
+          token_quota_micros: 5000,
+          token_used_micros: 0,
+        },
+      });
+    });
+    mocks.rpc.mockResolvedValue({ data: { relayKey: RELAY_KEY }, error: null });
+    mocks.probeAuth.mockResolvedValue('authenticated');
+    mocks.drain.mockResolvedValue({ cleaned: false, pending: false });
+    mocks.getAllGatewayClients.mockReturnValue(connectedGatewayClients());
+    mocks.mainWindow = fakeMainWindow();
+  });
+
+  it('⭐⭐ 窗口挂载前就结束的那次：事件没人收，但**快照留在 store 里**（初始读就是为它存在的）', async () => {
+    // 渲染层还没挂上 = 没有主窗口。启动那次 bootstrap 正是在这个时间窗里跑完的。
+    mocks.mainWindow = null;
+    mocks.rpc.mockResolvedValue({
+      data: null,
+      error: { code: 'P0001', message: BOUND_ELSEWHERE_MESSAGE },
+      status: 400,
+    });
+
+    const { bootstrapCommercialRelay } = await import('../src/main/commercial/relay-startup.js');
+    const { relayBootstrapPublicStateStore } = await import('@clawwork/shared');
+
+    const res = await bootstrapCommercialRelay();
+
+    expect(res.status).toBe('entitlement-rejected');
+    expect(mocks.send, '窗口还没建 ⇒ 事件直接丢掉（这就是那个洞）').not.toHaveBeenCalled();
+    expect(relayBootstrapPublicStateStore.get(), '结论必须留在快照里，否则渲染层只能靠重启碰运气').toEqual({
+      phase: 'blocked',
+      errorCode: 'license_bound_elsewhere',
+      updatedAt: expect.any(Number),
+    });
+  });
+
+  it('⭐⭐ 每次转变都发一条事件，载荷**只有**白名单字段（没有 detail / 卡密 / relay key / 原始文案）', async () => {
+    mocks.rpc.mockResolvedValue({
+      data: null,
+      error: { code: 'P0001', message: BOUND_ELSEWHERE_MESSAGE },
+      status: 400,
+    });
+
+    const { bootstrapCommercialRelay } = await import('../src/main/commercial/relay-startup.js');
+    await bootstrapCommercialRelay();
+
+    const calls = mocks.send.mock.calls.map((call) => call as [string, Record<string, unknown>]);
+
+    expect(calls.map(([channel]) => channel)).toEqual([
+      'commercial:relay-bootstrap-state-changed',
+      'commercial:relay-bootstrap-state-changed',
+    ]);
+    expect(calls.map(([, payload]) => payload.phase)).toEqual(['running', 'blocked']);
+    expect(Object.keys(calls[0]![1]).sort(), 'running 只带相位与时间戳').toEqual(['phase', 'updatedAt']);
+    expect(Object.keys(calls[1]![1]).sort(), 'blocked 带安全码，**也仅此而已**').toEqual([
+      'errorCode',
+      'phase',
+      'updatedAt',
+    ]);
+    expect(calls[1]![1].errorCode).toBe('license_bound_elsewhere');
+
+    const printed = JSON.stringify(calls.map(([, payload]) => payload));
+    for (const forbidden of [LICENSE, RELAY_KEY, BOUND_ELSEWHERE_MESSAGE, 'detail', 'message', 'token']) {
+      expect(printed, `渲染层能看到的东西里不许出现 ${forbidden}`).not.toContain(forbidden);
+    }
+  });
+
+  it('⭐ 成功那一轮：状态走到 ready（写进网关之后才算数）', async () => {
+    const { bootstrapCommercialRelay } = await import('../src/main/commercial/relay-startup.js');
+    const { relayBootstrapPublicStateStore } = await import('@clawwork/shared');
+
+    const res = await bootstrapCommercialRelay();
+
+    expect(res.status).toBe('applied');
+    expect(relayBootstrapPublicStateStore.get()).toMatchObject({ phase: 'ready' });
+    expect(mocks.send.mock.calls.map((call) => (call as [string, { phase: string }])[1].phase)).toEqual([
+      'running',
+      'ready',
+    ]);
+  });
+
+  it('⭐⭐ 手动重试：**立刻**返回（不等这一轮跑完），状态同步就进 running，且复用单飞调度器', async () => {
+    // 让这一轮卡在会话检查上：重试若在等 runner，这里就什么都不会发生
+    mocks.probeAuth.mockImplementation(() => new Promise<never>(() => {}));
+
+    const { retryCommercialRelayBootstrap } = await import('../src/main/commercial/relay-startup.js');
+    const { relayBootstrapPublicStateStore } = await import('@clawwork/shared');
+
+    retryCommercialRelayBootstrap(); // 同步调用 —— 返回值就是"已经排上了"
+
+    expect(relayBootstrapPublicStateStore.get().phase, '重试是排队，不是等这一轮').toBe('running');
+    expect(mocks.probeAuth, '触发即开工').toHaveBeenCalledTimes(1);
+
+    retryCommercialRelayBootstrap();
+    expect(mocks.probeAuth, '第二次触发必须被单飞吸收 —— 不许开出第二条链').toHaveBeenCalledTimes(1);
+    expect(relayBootstrapPublicStateStore.get().phase).toBe('running');
+  });
+
+  it('⭐⭐ 网关还没连上 ⇒ retryable-error:runtime_not_ready（等一等真的会好，不是终局）', async () => {
+    mocks.getAllGatewayClients.mockReturnValue(new Map());
+
+    const { bootstrapCommercialRelay } = await import('../src/main/commercial/relay-startup.js');
+    const { relayBootstrapPublicStateStore } = await import('@clawwork/shared');
+
+    // ⚠️ 窗口 0 毫秒：这一轮立刻收场（真的是"跑完一轮"，不是把 240 秒等出来）
+    const res = await bootstrapCommercialRelay({ waitForGatewayMs: 0 });
+
+    expect(res.status).toBe('runtime-not-ready');
+    expect(relayBootstrapPublicStateStore.get()).toMatchObject({
+      phase: 'retryable-error',
+      errorCode: 'runtime_not_ready',
+    });
+  });
+
+  it('⭐⭐ 会话暂时问不出来 ⇒ retryable-error:auth_unavailable（不是"没登录"、更不是终局）', async () => {
+    mocks.probeAuth.mockResolvedValue('transient');
+
+    const { bootstrapCommercialRelay } = await import('../src/main/commercial/relay-startup.js');
+    const { relayBootstrapPublicStateStore } = await import('@clawwork/shared');
+
+    const res = await bootstrapCommercialRelay({ waitForGatewayMs: 0 });
+
+    expect(res.status).toBe('auth-transient');
+    expect(relayBootstrapPublicStateStore.get()).toMatchObject({
+      phase: 'retryable-error',
+      errorCode: 'auth_unavailable',
+    });
+  });
+
+  it('⭐⭐ 取 key 的网络抖动 ⇒ retryable-error:transport（真库形状：resolve 出 code:"" / status:0）', async () => {
+    mocks.rpc.mockResolvedValue(SHAPE_FETCH_FAILED);
+
+    const { bootstrapCommercialRelay } = await import('../src/main/commercial/relay-startup.js');
+    const { relayBootstrapPublicStateStore } = await import('@clawwork/shared');
+
+    const res = await bootstrapCommercialRelay({ waitForGatewayMs: 0 });
+
+    expect(res.status).toBe('auth-transient');
+    expect(relayBootstrapPublicStateStore.get()).toMatchObject({
+      phase: 'retryable-error',
+      errorCode: 'transport',
+    });
+  });
+
+  it.each(MAPPING_CASES)('⭐ 映射表：%s', async (_label, result, expected) => {
+    const { mapRelayBootstrapPublicPhase } = await import('../src/main/commercial/relay-startup.js');
+
+    // `toEqual` 是**精确**比较：多一个字段（比如顺手带上的 `detail`）就会红。
+    const mapped = mapRelayBootstrapPublicPhase(result);
+    expect(mapped).toEqual(expected);
+    expect(Object.keys(mapped).sort()).toEqual(
+      expected.phase === 'blocked' || expected.phase === 'retryable-error' ? ['errorCode', 'phase'] : ['phase'],
+    );
+  });
+});
+
+/**
+ * 映射表（`bootstrap 结果 → 公开状态`）的用例集。
+ *
+ * ⚠️ 判据一律是 **status + errorCode 的配对**，不是"有没有出错"：
+ * Task 2 的复审结论是"只有 `entitlement-rejected` 是终局" —— 每一个未裁决的
+ * SQLSTATE、每一个没带码的传输失败，现在都落成 `auth-transient` + `retryable:true`。
+ * 把 `auth-transient` 当 blocked，就是把一次网络抖动说成"你的卡不行"。
+ */
+const MAPPING_CASES: Array<[string, RelayBootstrapResult, RelayBootstrapPublicPhase]> = [
+  ['写进去了 ⇒ ready', { status: 'applied', relayReady: true, retryable: false }, { phase: 'ready' }],
+  [
+    '幂等命中（网关已经有中转 provider）⇒ ready',
+    { status: 'already-applied', relayReady: true, retryable: false },
+    { phase: 'ready' },
+  ],
+  [
+    '名下没有可用的卡 ⇒ blocked:license_required（用户该去激活，不是重试）',
+    { status: 'unlicensed', relayReady: false, retryable: false },
+    { phase: 'blocked', errorCode: 'license_required' },
+  ],
+  [
+    '⭐ 卡绑在别的组织 ⇒ blocked 带上**那个码**，不是泛化的"没卡"',
+    { status: 'entitlement-rejected', relayReady: false, retryable: false, errorCode: 'license_bound_elsewhere' },
+    { phase: 'blocked', errorCode: 'license_bound_elsewhere' },
+  ],
+  [
+    '其它确定性裁决码原样透出',
+    { status: 'entitlement-rejected', relayReady: false, retryable: false, errorCode: 'activation_limit_reached' },
+    { phase: 'blocked', errorCode: 'activation_limit_reached' },
+  ],
+  [
+    '裁决却没带码（违约的实现）⇒ 取最保守的那个终局码',
+    { status: 'entitlement-rejected', relayReady: false, retryable: false },
+    { phase: 'blocked', errorCode: 'activation_failed' },
+  ],
+  [
+    '裁决却带 transport（不该发生）⇒ 宁可说成"再试一次"',
+    { status: 'entitlement-rejected', relayReady: false, retryable: false, errorCode: 'transport' },
+    { phase: 'retryable-error', errorCode: 'transport' },
+  ],
+  [
+    '⭐ 会话暂时问不出来 ⇒ retryable-error:auth_unavailable',
+    { status: 'auth-transient', relayReady: false, retryable: true },
+    { phase: 'retryable-error', errorCode: 'auth_unavailable' },
+  ],
+  [
+    '⭐ 取 key 的传输失败 ⇒ retryable-error:transport',
+    { status: 'auth-transient', relayReady: false, retryable: true, errorCode: 'transport' },
+    { phase: 'retryable-error', errorCode: 'transport' },
+  ],
+  [
+    '网关还没连上 ⇒ retryable-error:runtime_not_ready',
+    { status: 'runtime-not-ready', relayReady: false, retryable: true },
+    { phase: 'retryable-error', errorCode: 'runtime_not_ready' },
+  ],
+  [
+    '网关写失败 ⇒ retryable-error:relay_apply_failed',
+    { status: 'failed', relayReady: false, retryable: false },
+    { phase: 'retryable-error', errorCode: 'relay_apply_failed' },
+  ],
+  [
+    '明确没登录 ⇒ idle（界面本来就在登录页，这不是错误）',
+    { status: 'unauthenticated', relayReady: false, retryable: false },
+    { phase: 'idle' },
+  ],
+  [
+    '本机没接商业层 ⇒ idle（纯开发环境，别在登录页旁边挂一条"模型不可用"）',
+    { status: 'not-configured', relayReady: false, retryable: false },
+    { phase: 'idle' },
+  ],
+];
+
+/** 一个"连上的"网关客户端（`findConnectedGateway` 只认 `isConnected`）。 */
+function connectedGatewayClients(): Map<string, unknown> {
+  const gw = makeGateway();
+  return new Map([
+    [
+      'local-runtime',
+      {
+        isConnected: true,
+        getConfig: gw.getConfig,
+        patchConfig: gw.patchConfig,
+        runConfigMutation: gw.gateway.runConfigMutation,
+      },
+    ],
+  ]);
+}
+
+/** 主窗口替身：`sendToWindow` 会读 `isDestroyed()`，发送走 `mocks.send`。 */
+function fakeMainWindow(): NonNullable<typeof mocks.mainWindow> {
+  return {
+    isDestroyed: () => false,
+    webContents: { isDestroyed: () => false, send: mocks.send },
+  };
+}
+
 describe('errorCode 闭集的护栏', () => {
   it('⭐⭐ 闭集字面量清单：增删成员都会**编译失败**，且分类器只会吐出清单里的码', async () => {
     const ALL: Record<RelayKeyFetchErrorCode, true> = {

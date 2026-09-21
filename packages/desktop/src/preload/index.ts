@@ -14,6 +14,7 @@ import type {
   ConfigSetParams,
   ConfigPatchParams,
   Artifact,
+  RelayBootstrapPublicState,
 } from '@clawwork/shared';
 import type { ClawWorkAPI, GatewayServerConfig } from './clawwork';
 
@@ -474,6 +475,27 @@ function buildApi(): ClawWorkAPI {
     commercialRechargeCreateCustom: (amountCents: number) =>
       ipcRenderer.invoke('commercial:recharge-create-custom', amountCents),
     commercialRechargeOrder: (orderNo: string) => ipcRenderer.invoke('commercial:recharge-order', orderNo),
+
+    // ── 中转 bootstrap 公开状态（渲染层唯一能看到的商业结论）────────────────
+    // ⚠️ 只有这三个：读快照、听变化、请求重试。**没有任何**"把卡密/relay key 读出去"
+    //    的口子 —— 公开状态本身就是无密的（`@clawwork/shared` 的 DTO）。
+    //
+    // 分工（别把两者搞混）：
+    //   · `commercialRelayBootstrapState()` 是**初始读** —— bootstrap 在窗口建好之前
+    //     就跑过一轮了，那之前的事件没人收，只能靠这次补读；
+    //   · `onCommercialRelayBootstrapState()` 只覆盖**挂上之后**的转变。
+    commercialRelayBootstrapState: () => ipcRenderer.invoke('commercial:relay-bootstrap-state'),
+    onCommercialRelayBootstrapState: (callback: (state: RelayBootstrapPublicState) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, state: RelayBootstrapPublicState): void => {
+        callback(state);
+      };
+      ipcRenderer.on('commercial:relay-bootstrap-state-changed', listener);
+      return () => {
+        ipcRenderer.removeListener('commercial:relay-bootstrap-state-changed', listener);
+      };
+    },
+    // 只**排队**一次重试，不等它跑完（进度跟上面那条事件走）。
+    commercialRelayBootstrapRetry: () => ipcRenderer.invoke('commercial:relay-bootstrap-retry'),
 
     // ── 广场 / 团队（P1）──────────────────────────────────────────────
     // 频道名与 `main/ipc/community-handlers.ts` 一一对应（那个文件的测试

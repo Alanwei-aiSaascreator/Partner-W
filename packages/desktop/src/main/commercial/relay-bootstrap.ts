@@ -427,14 +427,16 @@ const POLL_MS = 1_000;
 const AUTH_RETRY_BACKOFF_MS = [2_000, 5_000, 15_000, 30_000, 60_000, 60_000];
 
 /**
- * 调度器只认两种触发来源，**刻意做成联合类型**：调用点一眼能看出自己属于哪一种，
+ * 调度器只认这几种触发来源，**刻意做成联合类型**：调用点一眼能看出自己属于哪一种，
  * 也不会有人顺手塞进"收到某个 auth 事件"这种会误伤的来源。
  *
  *   - `startup`    —— `app.whenReady()` 里那一次（全仓唯一的启动调用点）
  *   - `signed-in`  —— 用户**刚刚完成一次交互式登录**（OTP / 密码）
  *   - `activated`  —— 用户**刚刚激活了一张卡**（卡密输入成功；激活那刻网关常常还没连上）
+ *   - `manual`     —— 用户在界面上**点了重试**（`commercial:relay-bootstrap-retry`）。
+ *     与上面三个一样只是**排队**：单飞跑着就记一个补跑，绝不另开一条链。
  */
-export type RelayBootstrapReason = 'startup' | 'signed-in' | 'activated';
+export type RelayBootstrapReason = 'startup' | 'signed-in' | 'activated' | 'manual';
 
 export interface RelayBootstrapScheduler {
   /**

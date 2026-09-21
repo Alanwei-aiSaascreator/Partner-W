@@ -1,5 +1,9 @@
 import { ipcMain } from 'electron';
-import { resolveCommercialCredentials } from '@clawwork/shared';
+import {
+  relayBootstrapPublicStateStore,
+  resetRelayBootstrapPublicState,
+  resolveCommercialCredentials,
+} from '@clawwork/shared';
 import { readConfig, updateConfig } from '../workspace/config.js';
 import { clearCommercialSession, hasLocalSession, resetCommercialClient } from '../commercial/client.js';
 import {
@@ -12,7 +16,11 @@ import {
 } from '../commercial/auth.js';
 import { activateLicense, clearLicense, deviceFingerprint, readLicenseStatus } from '../commercial/license.js';
 import { trackOnSuccess } from '../analytics/reporter.js';
-import { notifyCommercialActivated, notifyCommercialSignedIn } from '../commercial/relay-startup.js';
+import {
+  notifyCommercialActivated,
+  notifyCommercialSignedIn,
+  retryCommercialRelayBootstrap,
+} from '../commercial/relay-startup.js';
 import { buildCommercialAccessCleanupDeps, requestCommercialAccessCleanup } from '../commercial/relay-cleanup.js';
 import { runUsageReport } from '../commercial/usage-reporter.js';
 import {
@@ -66,7 +74,12 @@ export function registerCommercialHandlers(): void {
     //    启动那次 bootstrap 早在"没登录"上收场了，而明确没登录按设计不重试 ——
     //    所以这里必须再调度一次，否则用户不重启客户端就看不到模型（Stage 2C）。
     if (res.ok) {
-      // 每次交互式登录都是账户边界：即使没有先点退出，也不能沿用旧账号的 relay。
+      // 每次交互式登录都是**账户边界**：上一个账号的公开状态（可能正挂着
+      // `license_bound_elsewhere`）对新账号不成立 ⇒ 先清掉。
+      // ⚠️ 必须放在清理**之前**：`requestCommercialAccessCleanup` 会抛（它自己去碰网关），
+      //    而"换账号了"这件事已经成立 —— 旧账号的结论不该因为清理失败而留在界面上。
+      resetRelayBootstrapPublicState();
+      // 即使没有先点退出，也不能沿用旧账号的 relay。
       await requestCommercialAccessCleanup(buildCommercialAccessCleanupDeps());
       notifyCommercialSignedIn();
     }
@@ -76,6 +89,7 @@ export function registerCommercialHandlers(): void {
     const res = await signInWithPassword(String(email ?? ''), String(password ?? ''));
     const tracked = trackOnSuccess(res, 'login_success'); // 同上：先记事件，再跑清理
     if (res.ok) {
+      resetRelayBootstrapPublicState(); // 同上：账户边界，先作废旧账号的公开状态
       await requestCommercialAccessCleanup(buildCommercialAccessCleanupDeps());
       notifyCommercialSignedIn();
     }
@@ -87,6 +101,10 @@ export function registerCommercialHandlers(): void {
       return await signOutCommercial();
     } finally {
       clearCommercialSession();
+      // 公开状态属于**当前账号**，登出即作废。⚠️ 必须在 `finally` 里：上面那句清理
+      // 一旦抛错，写在 try 里的重置就永远不会执行，而用户已经登出了 —— 旧账号的
+      // `blocked` 会留给下一个登录的人看。
+      resetRelayBootstrapPublicState();
     }
   });
   ipcMain.handle('commercial:session', () => readSessionState());
@@ -119,6 +137,36 @@ export function registerCommercialHandlers(): void {
   // 手动触发一次上报，返回本次是否产生了可用结果（0 表示无可报内容/失败）。
   // 定时器那套是兜底，这个入口给「刚花完额度、要立刻刷新顶栏」之类的场景用。
   ipcMain.handle('commercial:usage-report', () => runUsageReport());
+
+  /**
+   * 中转 bootstrap 的**公开状态快照**（渲染层挂载时补读一次）。
+   *
+   * ## 为什么必须有这条读（2026-09-21 实机：第二台机器一直"正在准备模型"）
+   *
+   * bootstrap 在 `app.whenReady()` 里就跑了一轮，而窗口与渲染层是**之后**才挂上来的
+   * —— 那之前发出的状态事件没人收（没有窗口时 `sendToWindow` 直接返回 false）。
+   * 少了这条读，渲染层就永远不知道主进程手里其实已经有
+   * `license_bound_elsewhere` 了。事件只覆盖"挂上之后"的转变。
+   *
+   * ⚠️ 返回的就是那份**无密**的公开状态（`@clawwork/shared` 的 DTO）：只有
+   *    `phase` / `errorCode` / `updatedAt`，没有 `detail`、没有原始 message、
+   *    没有卡密 / relay key / token。
+   */
+  ipcMain.handle('commercial:relay-bootstrap-state', () => ({
+    ok: true,
+    result: relayBootstrapPublicStateStore.get(),
+  }));
+
+  /**
+   * 「手动重试」：**立刻**回一个确认，真正的进度跟公开状态事件走。
+   *
+   * ⚠️ 绝不要 await 它 —— 一轮最长 240 秒（等网关 + 有界退避 + 取 key），把 IPC
+   *    挂住等于把渲染层的按钮按住不放。单飞调度器保证重复点击不会开出第二条链。
+   */
+  ipcMain.handle('commercial:relay-bootstrap-retry', () => {
+    retryCommercialRelayBootstrap();
+    return { ok: true };
+  });
 
   ipcMain.handle('commercial:recharge-skus', () => readRechargeSkus());
   ipcMain.handle('commercial:recharge-create', (_event, sku: string) => createRechargeOrder(String(sku ?? '')));

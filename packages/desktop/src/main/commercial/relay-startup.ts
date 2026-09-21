@@ -7,6 +7,7 @@
  * ⚠️ 本文件里出现的所有 key **都不许进日志**（relay key 是能花钱的凭证）。
  */
 
+import { relayBootstrapPublicStateStore, type RelayBootstrapPublicPhase } from '@clawwork/shared';
 import { getCommercialClient } from './client.js';
 import { probeAuth } from './auth.js';
 import { deviceFingerprint, mapActivationError, readLicenseStatus } from './license.js';
@@ -21,6 +22,8 @@ import type {
   RelayKeyFetchResult,
 } from './relay-bootstrap.js';
 import { getAllGatewayClients } from '../ws/index.js';
+import { sendToWindow } from '../ws/window-utils.js';
+import { getMainWindow } from '../window-manager.js';
 import { getDebugLogger } from '../debug/index.js';
 import { LOCAL_GATEWAY_ID } from '../runtime/state-config.js';
 import { buildCommercialAccessCleanupDeps, drainPendingCommercialAccessCleanup } from './relay-cleanup.js';
@@ -60,8 +63,11 @@ export function findConnectedGateway(): RelayGatewayHandle | null {
  *     —— `check_activation_limit()` 触发器 `raise … using errcode = 'check_violation'`
  *     （SQLSTATE **23514**，就是"激活数已达上限"）
  *   · 同一个函数在 1 / 3 / 11 / 23 号迁移里的历史版本用的是同一组码
- *     （全仓计数：`P0001`×21、`P0002`×8、`28000`×4、`check_violation`×2；唯一的 `42501`
- *     属于 `report_usage` 的 service-role 检查，不在取 key 这条路上）
+ *     ⚠️ 这里原先还写着"全仓计数 `P0001`×21、`P0002`×8、`28000`×4、`check_violation`×2" ——
+ *     那组数字**在本仓库里复现不出来**（`supabase/migrations` 属后端仓库，而且同一个
+ *     函数被反复重建；换成后端仓库去数也不是同一份代码），已删除。判据只靠上面那些
+ *     `文件:行号` 与 SQLSTATE 本身。唯一的 `42501` 属于 `report_usage` 的 service-role
+ *     检查，不在取 key 这条路上
  *   ⇒ 闭集 = {28000, P0001, P0002, 23514}。**只有这些**才算"服务端真的拒绝了这张卡"。
  *
  * ⚠️ 取舍（**有意**）：白名单**之外**一切带 code 的失败都归**可重试** ——
@@ -218,6 +224,113 @@ function getScheduler(opts: { waitForGatewayMs?: number } = {}): RelayBootstrapS
   return scheduler;
 }
 
+/** 公开状态变化的事件通道（preload 按这个名字订阅，见 `preload/index.ts`）。 */
+const RELAY_BOOTSTRAP_STATE_CHANGED_CHANNEL = 'commercial:relay-bootstrap-state-changed';
+
+let rendererBridgeReady = false;
+
+/**
+ * 把公开状态的**每次**转变转发给渲染层。
+ *
+ * ⚠️ store 是进程级单例（`@clawwork/shared`），所以这条桥建**一次**就够。
+ * ⚠️ 窗口还没建时 `sendToWindow` 返回 false，事件**直接丢掉** —— 这不是 bug，
+ *    正是「初始读」（`commercial:relay-bootstrap-state`）存在的理由：快照一直
+ *    留在 store 里，渲染层挂上来之后补读一次就能拿到（启动那一轮往往就发生在
+ *    窗口建好之前）。
+ */
+function ensureRendererBridge(): void {
+  if (rendererBridgeReady) return;
+  rendererBridgeReady = true;
+  relayBootstrapPublicStateStore.subscribe((state) => {
+    sendToWindow(getMainWindow(), RELAY_BOOTSTRAP_STATE_CHANGED_CHANNEL, state);
+  });
+}
+
+/**
+ * 一轮 bootstrap 的**结果** → 渲染层能看的状态。
+ *
+ * ⚠️ 判据一律是 **`status` 与 `errorCode` 的配对**，绝不是"有没有出错"：
+ *    只有 `entitlement-rejected` 是终局（服务端**确定**拒绝了这张卡）；会话暂时
+ *    问不出来、取 key 的网络抖动、网关没连上、配置写失败这四种都是"再试一次可能
+ *    会好"，各自给一个安全码交给渲染层去说人话。把 `auth-transient` 说成
+ *    `blocked` = 把一次网络抖动说成"你的卡不行"（那正是本轮要拆掉的塌缩）。
+ *
+ * `detail` **绝不**上这条线：它可能带原始 message（服务端文案会回显卡密）。
+ */
+export function mapRelayBootstrapPublicPhase(result: RelayBootstrapResult): RelayBootstrapPublicPhase {
+  switch (result.status) {
+    case 'applied':
+    case 'already-applied':
+      return { phase: 'ready' };
+    case 'unlicensed':
+      // 名下（或本地）没有可用的卡 ⇒ 用户要做的是**去激活**，不是"再试一次"。
+      // ⚠️ 与 `entitlement-rejected` 分开：那个是"有卡，但服务端说不行"。
+      return { phase: 'blocked', errorCode: 'license_required' };
+    case 'entitlement-rejected': {
+      const code = result.errorCode;
+      // 不该发生（transport 一律走 auth-transient）；真发生了宁可说成"再试一次"，
+      // 也不要把一次传输抖动说成"你的卡被拒了"。
+      if (code === 'transport') return { phase: 'retryable-error', errorCode: 'transport' };
+      // 裁决却没带码 = 违约的实现：仍然按终局处理，给最保守的那个码。
+      if (!code) return { phase: 'blocked', errorCode: 'activation_failed' };
+      return { phase: 'blocked', errorCode: code };
+    }
+    case 'auth-transient':
+      // 带 transport 码的是"取 key 那一步没问出来"，其余是"会话暂时问不出来"。
+      return {
+        phase: 'retryable-error',
+        errorCode: result.errorCode === 'transport' ? 'transport' : 'auth_unavailable',
+      };
+    case 'runtime-not-ready':
+      return { phase: 'retryable-error', errorCode: 'runtime_not_ready' };
+    case 'failed':
+      // 网关配置没写进去 / 上一个账号的清理被网关拒了 —— 都不是卡的判决。
+      return { phase: 'retryable-error', errorCode: 'relay_apply_failed' };
+    case 'unauthenticated':
+    case 'not-configured':
+      // 这两个都**不是错误**：明确没登录 ⇒ 界面本来就在登录页；没接商业层 ⇒
+      // 纯开发环境。渲染成错误会在登录页旁边挂一条"模型不可用"。
+      return { phase: 'idle' };
+  }
+}
+
+/**
+ * 跑一轮 bootstrap，并把结果翻成公开状态。**永不抛**（调度器自己也不抛）。
+ *
+ * ⚠️ 先宣布 `running` **再**进单飞：渲染层可能正好在这两条状态之间问上来
+ *    （初始读），而"这一轮在跑"本身就是它要渲染的东西。
+ */
+function runRelayBootstrap(
+  reason: RelayBootstrapReason,
+  opts: { waitForGatewayMs?: number } = {},
+): Promise<RelayBootstrapResult> {
+  // 事件桥按需建：模块加载时不建，免得在没有窗口的进程（测试 / 工具）里也去碰窗口管理器。
+  ensureRendererBridge();
+  // 先宣布"在跑"：初始读可能正好问上来，而这一轮确实已经开始了。
+  relayBootstrapPublicStateStore.set({ phase: 'running' });
+
+  let pending: Promise<RelayBootstrapResult>;
+  try {
+    pending = getScheduler(opts).trigger(reason);
+  } catch (error) {
+    // 同步就抛（违约的实现）：状态**绝不能**停在 `running`。
+    relayBootstrapPublicStateStore.set({ phase: 'retryable-error', errorCode: 'relay_apply_failed' });
+    return Promise.reject(error);
+  }
+
+  return pending.then(
+    (result) => {
+      relayBootstrapPublicStateStore.set(mapRelayBootstrapPublicPhase(result));
+      return result;
+    },
+    (error: unknown) => {
+      // 同上：调度器内部不抛，这里只是兜底。
+      relayBootstrapPublicStateStore.set({ phase: 'retryable-error', errorCode: 'relay_apply_failed' });
+      throw error;
+    },
+  );
+}
+
 /**
  * 启动时把商业配置落到网关上。**永不抛**。
  *
@@ -229,7 +342,7 @@ export async function bootstrapCommercialRelay(
   opts: { waitForGatewayMs?: number } = {},
 ): Promise<RelayBootstrapResult> {
   try {
-    return await getScheduler(opts).trigger('startup');
+    return await runRelayBootstrap('startup', opts);
   } catch (error) {
     // 这一层永不抛：启动路径上抛出去就是白屏。
     console.error('[commercial] relay bootstrap 失败（忽略，界面照常）:', error);
@@ -289,10 +402,24 @@ export function notifyCommercialActivated(): void {
   notifyRelayBootstrapNeeded('activated', '激活后补跑 relay bootstrap');
 }
 
+/**
+ * 「用户**点了重试**」—— 让商业 bootstrap 再跑一次（`commercial:relay-bootstrap-retry`）。
+ *
+ * 与上面两个通知是同一个入口、同一个单飞调度器：重试**只是排队**（跑着就记一个补跑），
+ * 不会开出第二条链、也不会绕过退避直接猛打服务端。
+ *
+ * ⚠️ **同步返回**：真正的进度跟公开状态事件走（`commercial:relay-bootstrap-state-changed`），
+ *    渲染层的按钮不该被最长 240 秒的重试窗口挂住。
+ *    能重试的是"暂时"那一类（`retryable-error`）；`blocked` 是**确定性**结论，
+ *    重试一万次也一样 —— 那是界面该换成"去激活 / 换账号"的地方（Task 4）。
+ */
+export function retryCommercialRelayBootstrap(): void {
+  notifyRelayBootstrapNeeded('manual', '手动重试 relay bootstrap');
+}
+
 function notifyRelayBootstrapNeeded(reason: Exclude<RelayBootstrapReason, 'startup'>, label: string): void {
   try {
-    void getScheduler()
-      .trigger(reason)
+    void runRelayBootstrap(reason)
       .then((res) => log('commercial.relay.bootstrap', { ...res, trigger: reason }))
       .catch((error: unknown) => {
         // 调度器内部已经不抛（`bootstrapRelayWithRetry` 永不抛），这里只是兜底。

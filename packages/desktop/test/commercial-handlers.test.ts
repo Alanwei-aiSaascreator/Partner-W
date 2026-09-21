@@ -5,6 +5,11 @@ import {
   stopAnalyticsReporter,
   type AnalyticsReporter,
 } from '../src/main/analytics/reporter.js';
+import {
+  relayBootstrapPublicStateStore,
+  resetRelayBootstrapPublicState,
+  type RelayBootstrapPublicState,
+} from '@clawwork/shared';
 
 /**
  * Stage 2C 的**接线**：两个登录入口成功后必须调度一次 relay bootstrap。
@@ -30,6 +35,7 @@ const mocks = vi.hoisted(() => ({
   signOutCommercial: vi.fn(),
   notifyCommercialSignedIn: vi.fn(),
   notifyCommercialActivated: vi.fn(),
+  retryCommercialRelayBootstrap: vi.fn(),
   activateLicense: vi.fn(),
   requestCommercialAccessCleanup: vi.fn(),
   drainPendingCommercialAccessCleanup: vi.fn(),
@@ -78,6 +84,7 @@ vi.mock('../src/main/commercial/relay-cleanup.js', () => ({
 vi.mock('../src/main/commercial/relay-startup.js', () => ({
   notifyCommercialSignedIn: () => mocks.notifyCommercialSignedIn(),
   notifyCommercialActivated: () => mocks.notifyCommercialActivated(),
+  retryCommercialRelayBootstrap: () => mocks.retryCommercialRelayBootstrap(),
 }));
 
 vi.mock('../src/main/commercial/license.js', () => ({
@@ -269,5 +276,135 @@ describe('激活入口 → 补跑 relay bootstrap（第二道保险）', () => {
     mocks.activateLicense.mockResolvedValue({ ok: false, errorCode: 'invalid_license' });
     await handlerFor('commercial:license-activate')({}, 'BAD-KEY');
     expect(analytics.peek().map((e) => e.event)).toEqual(['license_activated']);
+  });
+});
+
+/**
+ * 中转 bootstrap 的公开状态：**读** / **手动重试** / 两个**账户边界**。
+ *
+ * ## 为什么"初始读"必须存在（2026-09-21 实机）
+ *
+ * bootstrap 在 `app.whenReady()` 里就跑了一轮（登录、激活、重试各自还会再跑），
+ * 而窗口与渲染层是**之后**才挂上来的 —— 那之前发出的状态事件没人收
+ * （`sendToWindow` 在窗口还没建时直接返回 false）。少了这条读，渲染层就会一直
+ * 停在"正在准备模型"，而主进程其实早就拿着 `license_bound_elsewhere` 了。
+ *
+ * ⚠️ 这里读的是**真实的**共享单例（`@clawwork/shared`），不是 relay-startup 的替身：
+ *    "handler 有没有把快照读出来"只有拿真 store 才钉得住。
+ */
+describe('中转 bootstrap 公开状态：初始读 / 手动重试 / 账户边界', () => {
+  beforeEach(() => {
+    mocks.handlers.clear();
+    mocks.verifyLoginOtp.mockReset();
+    mocks.signInWithPassword.mockReset();
+    mocks.signOutCommercial.mockReset();
+    mocks.notifyCommercialSignedIn.mockReset();
+    mocks.retryCommercialRelayBootstrap.mockReset();
+    mocks.requestCommercialAccessCleanup.mockReset();
+    mocks.clearCommercialSession.mockReset();
+    mocks.requestCommercialAccessCleanup.mockResolvedValue({ cleaned: true, pending: false });
+    mocks.signOutCommercial.mockResolvedValue({ ok: true });
+    // 公开状态是**进程级单例**：用例之间必须回到起点，否则上一条的 blocked 会漏给下一条。
+    resetRelayBootstrapPublicState();
+    registerCommercialHandlers();
+  });
+
+  it('⭐⭐ 初始读：窗口挂载前就失败的那一次，渲染层问一句就能拿到（不必等下一次事件）', async () => {
+    // 模拟"启动那一轮在渲染层挂上之前就结束了"：状态早就写进快照，事件没人收。
+    relayBootstrapPublicStateStore.set({ phase: 'blocked', errorCode: 'license_bound_elsewhere' });
+
+    const res = (await handlerFor('commercial:relay-bootstrap-state')({})) as {
+      ok: boolean;
+      result: RelayBootstrapPublicState;
+    };
+
+    expect(res.ok).toBe(true);
+    expect(res.result).toEqual({
+      phase: 'blocked',
+      errorCode: 'license_bound_elsewhere',
+      updatedAt: expect.any(Number),
+    });
+    expect(Object.keys(res.result).sort(), '初始读与事件是同一份载荷 —— 字段同样是闭集').toEqual([
+      'errorCode',
+      'phase',
+      'updatedAt',
+    ]);
+  });
+
+  it('⭐ 初始读读的是**快照**：连着问两次拿到的是同一条（不是每次现造一个 idle）', async () => {
+    relayBootstrapPublicStateStore.set({ phase: 'retryable-error', errorCode: 'runtime_not_ready' });
+
+    const first = await handlerFor('commercial:relay-bootstrap-state')({});
+    const second = await handlerFor('commercial:relay-bootstrap-state')({});
+
+    expect(second).toEqual(first);
+    expect((second as { result: RelayBootstrapPublicState }).result.phase).toBe('retryable-error');
+  });
+
+  it('⭐⭐ 登录成功：补跑之前先把上一个账号的 blocked 清掉（补跑那一刻读到的必须是 idle）', async () => {
+    relayBootstrapPublicStateStore.set({ phase: 'blocked', errorCode: 'license_bound_elsewhere' });
+    let atNotify: RelayBootstrapPublicState | undefined;
+    mocks.notifyCommercialSignedIn.mockImplementation(() => {
+      atNotify = relayBootstrapPublicStateStore.get();
+    });
+    mocks.verifyLoginOtp.mockResolvedValue({ ok: true, result: { userId: 'u-1' } });
+
+    await handlerFor('commercial:verify-otp')({}, '+8613800000000', '123456');
+
+    expect(atNotify, '补跑那一刻陈旧 blocked 还在 ⇒ 界面会拿上一个账号的结论吓刚登录的用户').toMatchObject({
+      phase: 'idle',
+    });
+  });
+
+  it('⭐ 密码登录那条同样清（两条产品入口都覆盖）', async () => {
+    relayBootstrapPublicStateStore.set({ phase: 'blocked', errorCode: 'license_bound_elsewhere' });
+    let atNotify: RelayBootstrapPublicState | undefined;
+    mocks.notifyCommercialSignedIn.mockImplementation(() => {
+      atNotify = relayBootstrapPublicStateStore.get();
+    });
+    mocks.signInWithPassword.mockResolvedValue({ ok: true, result: { userId: 'u-2' } });
+
+    await handlerFor('commercial:sign-in-password')({}, 'a@b.test', 'pw');
+
+    expect(atNotify).toMatchObject({ phase: 'idle' });
+  });
+
+  it('⭐⭐ 登录成功但账户清理抛错：陈旧状态也已经清掉了（清理失败不该把这件事一起吞掉）', async () => {
+    relayBootstrapPublicStateStore.set({ phase: 'blocked', errorCode: 'license_bound_elsewhere' });
+    mocks.verifyLoginOtp.mockResolvedValue({ ok: true, result: { userId: 'u-1' } });
+    mocks.requestCommercialAccessCleanup.mockRejectedValue(new Error('cleanup down'));
+
+    await expect(handlerFor('commercial:verify-otp')({}, '+8613800000000', '123456')).rejects.toThrow('cleanup down');
+
+    expect(relayBootstrapPublicStateStore.get()).toMatchObject({ phase: 'idle' });
+  });
+
+  it('⭐⭐ 登出：账户清理抛错也照样清（状态属于**当前账号**，登出即作废）', async () => {
+    relayBootstrapPublicStateStore.set({ phase: 'blocked', errorCode: 'license_required' });
+    mocks.requestCommercialAccessCleanup.mockRejectedValue(new Error('cleanup down'));
+
+    await expect(handlerFor('commercial:sign-out')({})).rejects.toThrow('cleanup down');
+
+    expect(
+      relayBootstrapPublicStateStore.get(),
+      '旧账号的 blocked 留给下一个人看 = 上一个账号的状态泄漏',
+    ).toMatchObject({ phase: 'idle' });
+    expect(mocks.clearCommercialSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('⭐ 手动重试：**立刻**回 {ok:true}，不等 runner 跑完（进度跟状态事件走）', async () => {
+    // 让 runner 一直挂着：handler 若在等它，这条用例就永远不会返回。
+    let release!: () => void;
+    mocks.retryCommercialRelayBootstrap.mockReturnValue(
+      new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+    );
+
+    const res = await handlerFor('commercial:relay-bootstrap-retry')({});
+
+    expect(res).toEqual({ ok: true });
+    expect(mocks.retryCommercialRelayBootstrap).toHaveBeenCalledTimes(1);
+    release();
   });
 });
