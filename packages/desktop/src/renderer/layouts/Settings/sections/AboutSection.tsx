@@ -11,7 +11,8 @@ import SegmentedControl from '../components/SegmentedControl';
 import { useUiStore } from '@/stores/uiStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { describeUpdateError } from '@/features/internal-beta/update-errors';
-import { updateStatusFromCheck } from '@/lib/update-status';
+import { portablePhaseToUiStatus, updateStatusFromCheck } from '@/lib/update-status';
+import type { PortableUpdatePublicState } from '@clawwork/shared';
 
 const linkClass = cn(
   'type-label flex h-9 items-center justify-center gap-2 rounded-lg px-4 transition-colors',
@@ -19,7 +20,18 @@ const linkClass = cn(
   'hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] active:scale-[0.98]',
 );
 
-type UpdateState = 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'error';
+type UpdateState =
+  | 'idle'
+  | 'checking'
+  | 'available'
+  | 'downloading'
+  | 'downloaded'
+  | 'error'
+  | 'preparing'
+  | 'ready'
+  | 'applying'
+  | 'committed'
+  | 'rolled-back';
 type UpdateChannel = 'stable' | 'beta';
 
 interface VersionInfo {
@@ -35,6 +47,8 @@ const DEV_MODE_TAP_WINDOW_MS = 3000;
 export default function AboutSection() {
   const { t } = useTranslation();
   const [updateState, setUpdateState] = useState<UpdateState>('idle');
+  // 盘上运行时，主进程的签名清单相位是唯一的真相源；已安装路径没有这条链。
+  const [portablePhase, setPortablePhase] = useState<PortableUpdatePublicState | null>(null);
   const [currentVersion, setCurrentVersion] = useState<string | null>(null);
   const [versionInfo, setVersionInfo] = useState<VersionInfo | null>(null);
   const [downloadPercent, setDownloadPercent] = useState(0);
@@ -98,6 +112,18 @@ export default function AboutSection() {
       });
 
     const unsubs: (() => void)[] = [];
+
+    unsubs.push(
+      window.clawwork.onUpdateStateChanged?.((state) => {
+        setPortablePhase(state);
+      }) ?? (() => {}),
+    );
+    void window.clawwork
+      .getUpdateState?.()
+      .then((state) => {
+        if (state) setPortablePhase(state);
+      })
+      .catch(() => {});
 
     unsubs.push(
       window.clawwork.onUpdateDownloadProgress((progress) => {
@@ -218,7 +244,8 @@ export default function AboutSection() {
     [updateChannel, updateSettings, handleCheckForUpdates],
   );
 
-  const isChecking = updateState === 'checking';
+  const displayState: UpdateState = portablePhase === null ? updateState : portablePhaseToUiStatus(portablePhase.phase);
+  const isChecking = displayState === 'checking';
 
   return (
     <div>
@@ -259,7 +286,7 @@ export default function AboutSection() {
           )}
         </div>
 
-        {updateState === 'available' && versionInfo && (
+        {displayState === 'available' && versionInfo && (
           <div className="px-5 py-4">
             <InlineNotice tone="info">
               <div>
@@ -293,7 +320,7 @@ export default function AboutSection() {
           </div>
         )}
 
-        {updateState === 'downloading' && (
+        {displayState === 'downloading' && (
           <div className="px-5 py-4">
             <div className="rounded-lg px-4 py-3 bg-[var(--bg-tertiary)] border border-[var(--border)]">
               <div className="flex items-center justify-between gap-3 mb-2">
@@ -320,7 +347,7 @@ export default function AboutSection() {
           </div>
         )}
 
-        {updateState === 'downloaded' && (
+        {displayState === 'downloaded' && (
           <div className="px-5 py-4">
             <InlineNotice tone="info">
               <div>
@@ -336,7 +363,37 @@ export default function AboutSection() {
           </div>
         )}
 
-        {updateState === 'error' && (
+        {displayState === 'preparing' && (
+          <p className="type-body text-[var(--text-secondary)]">{t('settings.portableUpdate.preparing')}</p>
+        )}
+
+        {displayState === 'ready' && (
+          <div className="space-y-2">
+            <p className="type-body text-[var(--text-secondary)]">
+              {t('settings.portableUpdate.ready', { version: versionInfo?.latestVersion ?? '' })}
+            </p>
+            <div className="flex gap-2">
+              <Button size="sm" onClick={() => void handleInstall()}>
+                {t('settings.portableUpdate.restartNow')}
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setPortablePhase(null)}>
+                {t('settings.portableUpdate.later')}
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {displayState === 'applying' && (
+          <p className="type-body text-[var(--text-secondary)]">{t('settings.portableUpdate.applying')}</p>
+        )}
+
+        {displayState === 'rolled-back' && (
+          <p className="type-body text-[var(--text-secondary)]">
+            {t('settings.portableUpdate.rolledBack', { version: versionInfo?.currentVersion ?? '' })}
+          </p>
+        )}
+
+        {displayState === 'error' && (
           <div className="px-5 py-4">
             <InlineNotice
               tone="error"
@@ -355,7 +412,7 @@ export default function AboutSection() {
         <div className="px-5 py-4 space-y-2">
           {/* 便携形态的"有新版本"卡片上没有下载按钮，得留一个重新检查的入口；
               其余状态各自有按钮（下载/安装/重试），不用重复给。 */}
-          {(updateState === 'idle' || updateState === 'checking' || (portable && updateState === 'available')) && (
+          {(displayState === 'idle' || displayState === 'checking' || (portable && displayState === 'available')) && (
             <Button
               variant="outline"
               size="sm"

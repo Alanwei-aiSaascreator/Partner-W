@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { PortableUpdatePublicState } from '@clawwork/shared';
 import {
   createInternalBetaUpdateService,
   type InternalBetaUpdateApi,
@@ -139,5 +140,85 @@ describe('internal beta update service', () => {
     expect(mock.api.onUpdateDownloadProgress).toHaveBeenCalledTimes(1);
     expect(mock.api.onUpdateDownloaded).toHaveBeenCalledTimes(1);
     expect(mock.api.onUpdateError).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('盘上运行：服务的便携相位', () => {
+  function portableApi() {
+    let listener: ((state: PortableUpdatePublicState) => void) | null = null;
+    const unsubscribe = vi.fn();
+    let current: PortableUpdatePublicState | null = null;
+    const api: InternalBetaUpdateApi = {
+      getAppVersion: vi.fn().mockResolvedValue('0.0.25'),
+      checkForUpdates: vi.fn().mockResolvedValue({
+        hasUpdate: false,
+        currentVersion: '0.0.25',
+        latestVersion: '0.0.25',
+        releaseUrl: '',
+        releaseNotes: null,
+      }),
+      downloadUpdate: vi.fn().mockResolvedValue({ ok: true }),
+      installUpdate: vi.fn().mockResolvedValue({ ok: true }),
+      onUpdateDownloadProgress: vi.fn(() => vi.fn()),
+      onUpdateDownloaded: vi.fn(() => vi.fn()),
+      onUpdateError: vi.fn(() => vi.fn()),
+      getUpdateState: vi.fn(async () => current),
+      onUpdateStateChanged: vi.fn((callback) => {
+        listener = callback;
+        return unsubscribe;
+      }),
+    };
+    return {
+      api,
+      unsubscribe,
+      emit: (state: PortableUpdatePublicState) => {
+        current = state;
+        listener?.(state);
+      },
+    };
+  }
+
+  it('loadVersion 会把主进程那边的相位取回来', async () => {
+    const { api, emit } = portableApi();
+    const service = createInternalBetaUpdateService(api);
+    emit({ phase: 'preparing' as never, currentVersion: '0.0.25', updatedAt: 1 });
+    emit({ phase: 'ready', currentVersion: '0.0.25', targetVersion: '0.0.26', updatedAt: 2 });
+
+    await service.loadVersion();
+
+    expect(service.getState().portable).toMatchObject({ phase: 'ready', targetVersion: '0.0.26' });
+  });
+
+  it('主进程后来改相位时，服务跟着改（订阅而不是轮询）', () => {
+    const { api, emit } = portableApi();
+    const service = createInternalBetaUpdateService(api);
+    const seen: unknown[] = [];
+    service.subscribe((state) => seen.push(state.portable));
+
+    emit({ phase: 'downloading', currentVersion: '0.0.25', transferred: 1, total: 2, updatedAt: 3 });
+
+    expect(service.getState().portable).toMatchObject({ phase: 'downloading', transferred: 1, total: 2 });
+    expect(seen.length).toBeGreaterThan(0);
+  });
+
+  it('dispose 会把便携相位的订阅也退掉', () => {
+    const { api, unsubscribe } = portableApi();
+    const service = createInternalBetaUpdateService(api);
+
+    service.dispose();
+
+    expect(unsubscribe).toHaveBeenCalledTimes(1);
+  });
+
+  it('没有这条链的调用方（已安装路径）不会因为缺方法而炸', () => {
+    const { api } = portableApi();
+    const withoutPortable: InternalBetaUpdateApi = { ...api };
+    delete withoutPortable.getUpdateState;
+    delete withoutPortable.onUpdateStateChanged;
+
+    const service = createInternalBetaUpdateService(withoutPortable);
+
+    expect(service.getState().portable).toBeNull();
+    expect(() => service.dispose()).not.toThrow();
   });
 });

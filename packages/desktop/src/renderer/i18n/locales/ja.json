@@ -1588,6 +1588,14 @@
     "password": "パスワード",
     "passwordPlaceholder": "ゲートウェイパスワード",
     "passwordRequired": "パスワードは必須です",
+    "portableUpdate": {
+      "applying": "更新中です。USB ドライブを抜かないでください。",
+      "later": "あとで",
+      "preparing": "バックグラウンドで更新を準備しています。引き続きご利用いただけます。",
+      "ready": "バージョン {{version}} の準備ができました。再起動すると更新が完了します。",
+      "restartNow": "今すぐ再起動して更新",
+      "rolledBack": "更新は完了しませんでした。バージョン {{version}} に戻しました。データは影響を受けていません。"
+    },
     "portableUpdateHint": "USB（ポータブル）版は自動更新されません。新しいバージョンを入手したら、ドライブ上のプログラムフォルダーを差し替えてください。",
     "pressShortcut": "ショートカットを入力...",
     "privacy": "プライバシーとデータ",

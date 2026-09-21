@@ -1,3 +1,5 @@
+import type { PortableUpdatePhase } from '@clawwork/shared';
+
 /**
  * 「检查更新」的返回值 → 界面该显示的状态（唯一真源）。
  *
@@ -7,17 +9,74 @@
  *    而界面停在 0% 的下载进度上再也不动。
  *    规则只有一句：**主进程说是什么状态，就显示什么状态**。
  *
- * `state` 是可选的：老 preload / 测试桩可能没有这个字段，那时退回 `available`
- * （有新版本 ⇒ 至少可以下载）。
+ * 盘上运行（U 盘形态）走的是另一条链：主进程把签名的整目录包在**后台**下好、
+ * 校验、解压、逐文件核对，全部通过才叫 `ready`。那之前的一切都算「准备中」，
+ * 应用照常用；`ready` 之后才出现「立即重启更新」。
+ *
+ * ⚠️ `ready` **不许**并进 `available`：`available` 的意思是"发现了新版本、还能继续用"，
+ *    `ready` 的意思是"已经验证完毕、重启就会换目录"。把后者显示成前者，用户点下去
+ *    等的是下载、实际发生的是换目录。
  */
-type UpdateUiStatus = 'idle' | 'available' | 'downloading' | 'downloaded';
+export type UpdateUiStatus =
+  | 'idle'
+  | 'available'
+  | 'downloading'
+  | 'preparing'
+  | 'ready'
+  | 'downloaded'
+  | 'applying'
+  | 'committed'
+  | 'rolled-back'
+  | 'error';
+
+type InstalledState = 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'error';
+
+/**
+ * ⚠️ 只列**便携独有**的相位。`idle` / `checking` / `available` / `downloading` / `error`
+ *    两条链都有，不能经这张表走：那会把已安装路径的「检查中 + 已知有新版本」从
+ *    `available` 静默改成 `idle`，安装入口就此消失（0.0.21 实测踩过的同一类毛病）。
+ */
+const PORTABLE_ONLY_PHASES: Partial<Record<PortableUpdatePhase, UpdateUiStatus>> = {
+  'verifying-archive': 'preparing',
+  extracting: 'preparing',
+  'verifying-files': 'preparing',
+  ready: 'ready',
+  applying: 'applying',
+  'awaiting-health': 'applying',
+  committed: 'committed',
+  'rolled-back': 'rolled-back',
+};
+
+const PORTABLE_PHASE_TO_UI: Readonly<Record<PortableUpdatePhase, UpdateUiStatus>> = {
+  idle: 'idle',
+  checking: 'idle',
+  available: 'available',
+  downloading: 'downloading',
+  'verifying-archive': 'preparing',
+  extracting: 'preparing',
+  'verifying-files': 'preparing',
+  ready: 'ready',
+  applying: 'applying',
+  'awaiting-health': 'applying',
+  committed: 'committed',
+  'rolled-back': 'rolled-back',
+  error: 'error',
+};
 
 interface UpdateCheckLike {
   hasUpdate: boolean;
-  state?: 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'error';
+  state?: InstalledState | PortableUpdatePhase;
+}
+
+export function portablePhaseToUiStatus(phase: PortableUpdatePhase): UpdateUiStatus {
+  return PORTABLE_PHASE_TO_UI[phase];
 }
 
 export function updateStatusFromCheck(result: UpdateCheckLike): UpdateUiStatus {
+  const portableOnly =
+    result.state === undefined ? undefined : PORTABLE_ONLY_PHASES[result.state as PortableUpdatePhase];
+  if (portableOnly !== undefined) return portableOnly;
+
   // 已下好/下载中优先于 hasUpdate 判定：主进程那边"有下好的包"和"这次检查报没报
   // 新版本"是两码事（检查也可能返回不了 updateInfo），别让界面因此把安装入口藏起来。
   if (result.state === 'downloaded') return 'downloaded';

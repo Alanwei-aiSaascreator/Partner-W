@@ -1588,6 +1588,14 @@
     "password": "Mot de passe",
     "passwordPlaceholder": "Mot de passe de la passerelle",
     "passwordRequired": "Le mot de passe est requis",
+    "portableUpdate": {
+      "applying": "Mise à jour en cours. Ne débranchez pas la clé USB.",
+      "later": "Plus tard",
+      "preparing": "Préparation de la mise à jour en arrière-plan. Vous pouvez continuer à utiliser l'application.",
+      "ready": "La version {{version}} est prête. Redémarrez pour terminer la mise à jour.",
+      "restartNow": "Redémarrer et mettre à jour",
+      "rolledBack": "La mise à jour n'a pas abouti. La version {{version}} a été restaurée, vos données sont intactes."
+    },
     "portableUpdateHint": "La version portable (USB) ne se met pas à jour automatiquement. Pour mettre à niveau, remplacez le dossier du programme sur la clé par la nouvelle version.",
     "pressShortcut": "Appuyez sur le raccourci...",
     "privacy": "Confidentialité et données",

@@ -1,3 +1,4 @@
+import type { PortableUpdatePublicState } from '@clawwork/shared';
 import { updateStatusFromCheck } from '@/lib/update-status';
 
 export interface InternalBetaUpdateApi {
@@ -18,10 +19,17 @@ export interface InternalBetaUpdateApi {
   onUpdateDownloadProgress: (callback: (progress: { percent: number }) => void) => () => void;
   onUpdateDownloaded: (callback: (info: { version: string }) => void) => () => void;
   onUpdateError: (callback: (error: { message: string }) => void) => () => void;
+  /**
+   * 盘上运行时，主进程那边的整目录更新相位（签名的清单、后台下载、校验、就绪）。
+   * 已安装路径没有这条链，两个方法都可以不实现。
+   */
+  getUpdateState?: () => Promise<PortableUpdatePublicState | null>;
+  onUpdateStateChanged?: (callback: (state: PortableUpdatePublicState) => void) => () => void;
 }
 
 interface VersionSnapshot {
   currentVersion: string | null;
+  portable?: PortableUpdatePublicState | null;
   latestVersion?: string;
   releaseUrl?: string;
   releaseNotes?: string | null;
@@ -31,6 +39,7 @@ export type InternalBetaUpdateState =
   | ({ status: 'idle' | 'checking' } & VersionSnapshot)
   | ({ status: 'available' } & Required<Pick<VersionSnapshot, 'currentVersion' | 'latestVersion' | 'releaseUrl'>> & {
         releaseNotes: string | null;
+        portable?: PortableUpdatePublicState | null;
       })
   | ({ status: 'downloading'; percent: number } & VersionSnapshot)
   | ({ status: 'downloaded' | 'installing' } & VersionSnapshot & { latestVersion: string })
@@ -51,7 +60,7 @@ function errorMessage(error: unknown): string {
 }
 
 export function createInternalBetaUpdateService(api: InternalBetaUpdateApi): InternalBetaUpdateService {
-  let state: InternalBetaUpdateState = { status: 'idle', currentVersion: null };
+  let state: InternalBetaUpdateState = { status: 'idle', currentVersion: null, portable: null };
   const listeners = new Set<(next: InternalBetaUpdateState) => void>();
   const setState = (next: InternalBetaUpdateState) => {
     state = next;
@@ -59,12 +68,17 @@ export function createInternalBetaUpdateService(api: InternalBetaUpdateApi): Int
   };
   const versionSnapshot = (): VersionSnapshot => ({
     currentVersion: state.currentVersion,
+    portable: state.portable ?? null,
     latestVersion: state.latestVersion,
     releaseUrl: state.releaseUrl,
     releaseNotes: state.releaseNotes,
   });
 
-  const unsubs = [
+  const unsubs: Array<() => void> = [];
+  if (api.onUpdateStateChanged) {
+    unsubs.push(api.onUpdateStateChanged((portable) => setState({ ...state, portable })));
+  }
+  unsubs.push(
     api.onUpdateDownloadProgress((progress) => {
       setState({ status: 'downloading', ...versionSnapshot(), percent: Math.max(0, Math.min(100, progress.percent)) });
     }),
@@ -74,7 +88,7 @@ export function createInternalBetaUpdateService(api: InternalBetaUpdateApi): Int
     api.onUpdateError((error) => {
       setState({ status: 'error', ...versionSnapshot(), operation: 'updater', message: error.message });
     }),
-  ];
+  );
 
   return {
     getState: () => state,
@@ -86,7 +100,8 @@ export function createInternalBetaUpdateService(api: InternalBetaUpdateApi): Int
     loadVersion: async () => {
       try {
         const currentVersion = await api.getAppVersion();
-        setState({ ...state, currentVersion });
+        const portable = (await api.getUpdateState?.()) ?? null;
+        setState({ ...state, currentVersion, portable });
       } catch (error) {
         setState({ status: 'error', ...versionSnapshot(), operation: 'check', message: errorMessage(error) });
       }

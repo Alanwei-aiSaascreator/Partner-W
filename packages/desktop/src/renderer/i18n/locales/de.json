@@ -1588,6 +1588,14 @@
     "password": "Passwort",
     "passwordPlaceholder": "Gateway-Passwort",
     "passwordRequired": "Passwort ist erforderlich",
+    "portableUpdate": {
+      "applying": "Aktualisierung läuft. USB-Laufwerk nicht entfernen.",
+      "later": "Später",
+      "preparing": "Die Aktualisierung wird im Hintergrund vorbereitet. Sie können die App weiter verwenden.",
+      "ready": "Version {{version}} ist bereit. Zum Abschließen neu starten.",
+      "restartNow": "Jetzt neu starten und aktualisieren",
+      "rolledBack": "Die Aktualisierung wurde nicht abgeschlossen. Version {{version}} wurde wiederhergestellt, Ihre Daten sind unverändert."
+    },
     "portableUpdateHint": "Die portable USB-Version aktualisiert sich nicht selbst. Ersetzen Sie zum Aktualisieren den Programmordner auf dem Laufwerk durch die neue Version.",
     "pressShortcut": "Tastenkuerzel druecken…",
     "privacy": "Datenschutz & Daten",

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { updateStatusFromCheck } from '../src/renderer/lib/update-status';
+import { portablePhaseToUiStatus, updateStatusFromCheck } from '../src/renderer/lib/update-status';
 
 /**
  * 「检查更新」的返回值 → 界面该显示的状态。
@@ -37,5 +37,37 @@ describe('检查结果 → 界面状态', () => {
 
   it('确实没有新版本、也没有下好的包 ⇒ idle', () => {
     expect(updateStatusFromCheck({ hasUpdate: false, state: 'idle' })).toBe('idle');
+  });
+});
+
+describe('盘上运行（U 盘）的相位映射', () => {
+  it.each([
+    ['verifying-archive', 'preparing'],
+    ['extracting', 'preparing'],
+    ['verifying-files', 'preparing'],
+    ['ready', 'ready'],
+    ['applying', 'applying'],
+    ['awaiting-health', 'applying'],
+    ['committed', 'committed'],
+    ['rolled-back', 'rolled-back'],
+  ] as const)('把 %s 映射成 %s', (phase, expected) => {
+    expect(portablePhaseToUiStatus(phase)).toBe(expected);
+  });
+
+  it('⭐ ready 绝不显示成 available：那是"还能继续用"，这是"重启就换目录"', () => {
+    expect(updateStatusFromCheck({ hasUpdate: true, state: 'ready' })).toBe('ready');
+    expect(updateStatusFromCheck({ hasUpdate: true, state: 'ready' })).not.toBe('available');
+  });
+
+  it('准备中的三个相位都显示成"准备中"，而不是"可下载"', () => {
+    for (const phase of ['verifying-archive', 'extracting', 'verifying-files'] as const) {
+      expect(updateStatusFromCheck({ hasUpdate: true, state: phase })).toBe('preparing');
+    }
+  });
+
+  it('已安装路径的 checking + 有新版本仍然显示成 available（便携那张表不许动它）', () => {
+    expect(updateStatusFromCheck({ hasUpdate: true, state: 'checking' })).toBe('available');
+    expect(updateStatusFromCheck({ hasUpdate: true, state: 'idle' })).toBe('available');
+    expect(updateStatusFromCheck({ hasUpdate: false, state: 'checking' })).toBe('idle');
   });
 });

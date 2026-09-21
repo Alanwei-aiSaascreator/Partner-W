@@ -1588,6 +1588,14 @@
     "password": "Contraseña",
     "passwordPlaceholder": "Contraseña del Gateway",
     "passwordRequired": "La contraseña es obligatoria",
+    "portableUpdate": {
+      "applying": "Actualizando. No extraigas la unidad USB.",
+      "later": "Más tarde",
+      "preparing": "Preparando la actualización en segundo plano. Puedes seguir usando la aplicación.",
+      "ready": "La versión {{version}} está lista. Reinicia para terminar la actualización.",
+      "restartNow": "Reiniciar y actualizar ahora",
+      "rolledBack": "La actualización no se completó. Se restauró la versión {{version}} y tus datos no se han visto afectados."
+    },
     "portableUpdateHint": "La versión portátil (USB) no se actualiza sola. Para actualizar, sustituya la carpeta del programa en la unidad por la nueva versión.",
     "pressShortcut": "Presiona un atajo...",
     "privacy": "Privacidad y datos",
