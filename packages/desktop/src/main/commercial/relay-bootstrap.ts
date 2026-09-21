@@ -35,6 +35,37 @@
 
 import { relayProviderIds, applyRelayConfig, RELAY_PROVIDER_ID } from './relay-config.js';
 import type { AuthCheck } from './auth-classify.js';
+// ⚠️ **type-only**：编译期擦除 ⇒ 运行时**不**加载 license.js，上面那句
+//    「本模块不认识 Supabase / 不认识 electron，可以裸跑单测」仍然成立。
+//    宁可要这一个类型依赖，也不要在这边再写一遍错误码字面量：闭集少一个成员的
+//    后果是「边界层永远产不出那个码」，而 runtime 不报错、lint 也看不见。
+import type { ActivationErrorCode } from './license.js';
+
+/**
+ * 取中转 key 失败原因的**安全错误码**闭集。
+ *
+ * 服务端给出的确定性拒绝直接复用 `license.ts` 的 `ActivationErrorCode`
+ * （唯一那份消息匹配表在那边，本模块**不**复制它的匹配逻辑）；
+ * `transport` 是**本地**归类（网络 / 超时 / 边界违约），不是服务端给的码。
+ */
+export type RelayKeyFetchErrorCode = ActivationErrorCode | 'transport';
+
+/**
+ * `fetchRelayKey` 的返回。
+ *
+ * ⚠️ 刻意**不再是 `string | null`**：那个形状把三件完全不同的事压成同一个
+ * `null` —— ① 服务端**确定性**拒绝（卡绑在别的组织 / 卡失效 / 没下发 key）、
+ * ② 网络超时、③ RPC 成功却没有 key。上层于是只能报"没卡"（`unlicensed`）：
+ * 用户既看不懂、也不会去做对的事，排查的人也拿不到原因。
+ */
+export type RelayKeyFetchResult =
+  | { ok: true; relayKey: string }
+  | {
+      ok: false;
+      errorCode: RelayKeyFetchErrorCode;
+      /** 等一等会不会好。**只有** `transport` 为 true。 */
+      retryable: boolean;
+    };
 
 /**
  * 结果分类。**刻意分得细**：「没登录」「没卡」「网关没连上」「写失败」是四件
@@ -43,8 +74,9 @@ import type { AuthCheck } from './auth-classify.js';
 export type RelayBootstrapStatus =
   | 'not-configured' // 没配 Supabase —— 产品没接商业层（纯净开发环境）
   | 'unauthenticated' // 配了，**明确**没登录（服务端说 401/403）
-  | 'auth-transient' // 会话**暂时问不出来**（超时/网络不通/5xx）—— **可重试**，别当成没登录
+  | 'auth-transient' // 会话/后端**暂时问不出来**（超时/网络不通/5xx）—— **可重试**，别当成没登录
   | 'unlicensed' // 登录了，但名下没有可用 license
+  | 'entitlement-rejected' // 有卡，但服务端/边界**确定性**拒绝（绑在别的组织 / 卡失效 / 没下发 key）—— 等多久都一样
   | 'runtime-not-ready' // 商业侧没问题，是网关还没连上（**可重试**）
   | 'already-applied' // 网关已经有指向中转的 provider —— 幂等命中，什么都没做
   | 'applied' // 这次真的写进去了
@@ -78,6 +110,23 @@ export interface RelayBootstrapResult {
   relayReady: boolean;
   /** 给人看的补充（**绝不含任何密钥**）。 */
   detail?: string;
+  /**
+   * 取中转 key 那一步的**安全错误码**（见 `RelayKeyFetchErrorCode`）。
+   *
+   * ⚠️ 它**不是**服务端的原始 message —— 原始 message 可能回显卡密，
+   * 一律不进结果、不进日志、不进界面。
+   */
+  errorCode?: RelayKeyFetchErrorCode;
+  /**
+   * 等一等会不会好。
+   *
+   * - `true`：传输类（网络 / 超时）—— 交给**既有**的有界退避再试；
+   * - `false`：确定性（卡绑在别的组织 / 卡失效 / 没卡 / 网关拒了补丁）——
+   *   重试一万次结果一样，**尤其别为了它再发一次 `activate_license`**。
+   *
+   * 只有能被归类的那几个分支会带上它（没带 = 由 `status` 自身表达语义）。
+   */
+  retryable?: boolean;
 }
 
 export interface RelayGatewayHandle {
@@ -112,8 +161,14 @@ export interface RelayBootstrapDeps {
   prepareGatewayAccess?: () => Promise<GatewayAccessPrep>;
   /** 读名下 license（账号绑定口径，不依赖设备激活行）。 */
   readLicenseKey: () => Promise<string | null>;
-  /** 取中转 key（幂等：同一设备重复调用返回同一把）。 */
-  fetchRelayKey: (licenseKey: string) => Promise<string | null>;
+  /**
+   * 取中转 key（幂等：同一设备重复调用返回同一把）。
+   *
+   * 返回**结构化结果**，不是 `string | null` —— 见 `RelayKeyFetchResult`。
+   * ⚠️ 实现**不该抛**：网络/超时要在这一层收成 `transport`，否则上层只能靠
+   * catch 去猜，而"猜"出来的结论无法区分"暂时"和"永久"。
+   */
+  fetchRelayKey: (licenseKey: string) => Promise<RelayKeyFetchResult>;
   /** 现在有没有一个**连上的**网关可以写。没有返回 null（⇒ runtime-not-ready）。 */
   getGateway: () => RelayGatewayHandle | null;
   /** 解析一个默认模型 ref；拿不到返回 null（不阻塞）。 */
@@ -191,7 +246,8 @@ export async function ensureRelayConfigured(deps: RelayBootstrapDeps): Promise<R
   }
   if (!licenseKey) {
     log('relay.bootstrap.unlicensed');
-    return { status: 'unlicensed', relayReady: false };
+    // 名下确实没有卡 ⇒ 同样不是"等一等会好"（用户得去激活/兑换）。
+    return { status: 'unlicensed', relayReady: false, retryable: false };
   }
 
   const gateway = deps.getGateway();
@@ -218,17 +274,56 @@ export async function ensureRelayConfigured(deps: RelayBootstrapDeps): Promise<R
     return { status: 'already-applied', relayReady: true };
   }
 
-  let relayKey: string | null = null;
+  let keyResult: RelayKeyFetchResult;
   try {
-    relayKey = await deps.fetchRelayKey(licenseKey);
+    keyResult = await deps.fetchRelayKey(licenseKey);
   } catch (error) {
-    log('relay.bootstrap.relay-key-failed', { message: messageOf(error) });
+    // 边界函数**不该抛**（网络/超时在那边就该收成 transport 结果）。真抛了说明
+    // 注入了一个违约实现 ⇒ 按"暂时问不出来"处理：等一等真的可能好，而把一次
+    // 异常说成"你没卡"正是本轮要拆掉的塌缩。
+    log('relay.bootstrap.relay-key-failed', { errorName: errorNameOf(error), errorCode: 'transport' });
+    keyResult = { ok: false, errorCode: 'transport', retryable: true };
   }
+
+  if (!keyResult.ok) {
+    if (keyResult.errorCode === 'transport') {
+      // 网络 / 超时：**复用既有的 `auth-transient` 有界退避路径**，不新开重试路径。
+      // 语义也合：后端**暂时**问不出来（这正是该状态注释里写的"超时/网络不通"）。
+      log('relay.bootstrap.relay-key-transport', { errorCode: keyResult.errorCode });
+      return {
+        status: 'auth-transient',
+        relayReady: false,
+        errorCode: keyResult.errorCode,
+        retryable: true,
+        detail: 'relay key could not be fetched (transport)',
+      };
+    }
+
+    // 服务端**确定性**拒绝：卡绑在别的组织 / 卡失效 / 激活数满 / 没下发 key。
+    // ⚠️ 两个"不许"：不许说成 `unlicensed`（用户要做的动作完全不同），也不许
+    //    丢进重试窗口（结论不是时间能改的，重试只是再打一次服务端）。
+    log('relay.bootstrap.no-relay-key', { errorCode: keyResult.errorCode });
+    return {
+      status: 'entitlement-rejected',
+      relayReady: false,
+      errorCode: keyResult.errorCode,
+      retryable: false,
+      detail: `relay key not issued (${keyResult.errorCode})`,
+    };
+  }
+
+  const relayKey = keyResult.relayKey;
   if (!relayKey) {
-    // 卡在、账号在，但服务端没给中转凭证（旧卡 / RPC 形状变了）。
-    // 不当成「已就绪」—— 没有 key 就是列不出模型。
-    log('relay.bootstrap.no-relay-key');
-    return { status: 'unlicensed', relayReady: false, detail: 'no relay key issued for this license' };
+    // 类型上 `ok:true` 必带非空 key；空串只可能来自违约的实现。没有 key 就是
+    // 列不出模型 ⇒ 确定性失败，**绝不**报 ready（这正是本任务要钉住的那条）。
+    log('relay.bootstrap.no-relay-key', { errorCode: 'activation_failed' });
+    return {
+      status: 'entitlement-rejected',
+      relayReady: false,
+      errorCode: 'activation_failed',
+      retryable: false,
+      detail: 'relay key issued was empty',
+    };
   }
 
   const apply = (tx: Pick<RelayGatewayHandle, 'getConfig' | 'patchConfig'>) =>
@@ -258,6 +353,16 @@ export async function ensureRelayConfigured(deps: RelayBootstrapDeps): Promise<R
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * 只取异常**类型名**（`TypeError` / `AbortError` / …），**绝不**取 message。
+ *
+ * 用在"说不清是不是敏感"的那几条路径上：异常文案里可能带 URL、`apikey`、卡密，
+ * 而类型名足够定位是哪一类失败（例如 `AbortError` = 超时）。
+ */
+function errorNameOf(error: unknown): string {
+  return error instanceof Error ? error.name : typeof error;
 }
 
 /**
@@ -394,9 +499,15 @@ export interface RelayBootstrapRunOptions {
  *   - `runtime-not-ready`：纯本地探测、**不打服务端** ⇒ 1 秒一次轮询到 deadline
  *   - `auth-transient`：会话暂时问不出来 ⇒ **有界退避**（见 `AUTH_RETRY_BACKOFF_MS`）
  *
- * ⚠️ 其余结论（**明确**没登录 / 没卡 / 写失败）等多久都一样，**一律不重试**。
- *     尤其 `auth-transient` **不能**被当成没登录 —— 那正是 2B 修的 bug：
- *     一次 8 秒网络抖动会让用户整个会话都列不出模型，且无法自愈。
+ * ⚠️ 其余结论（**明确**没登录 / 没卡 / **确定性拒绝** / 写失败）等多久都一样，
+ *     **一律不重试**。尤其：
+ *       - `auth-transient` **不能**被当成没登录 —— 那正是 2B 修的 bug：
+ *         一次 8 秒网络抖动会让用户整个会话都列不出模型，且无法自愈；
+ *       - `entitlement-rejected` **不能**被塞进退避表 —— 它是终局结论（卡的归属
+ *         不是时间能改的），塞进来只会让 4 分钟窗口里反复重发 `activate_license`。
+ *
+ * ⚠️ 传输类失败（取 key 超时）走的是**既有**的 `auth-transient` 分支：本函数
+ *    刻意**不**新增重试路径 —— 新路径意味着新的等待节奏，而要等多久已经有结论了。
  */
 export async function bootstrapRelayWithRetry(
   deps: RelayBootstrapDeps,
@@ -429,6 +540,9 @@ export async function bootstrapRelayWithRetry(
       continue;
     }
 
+    // ⚠️ 其余结论一律**不重试** —— 尤其 `entitlement-rejected`：卡的归属不是时间
+    //    能改的，重试只是再发一次 `activate_license`（窗口里能发几十次）。别把
+    //    它加进上面那个 `auth-transient` 条件里。
     return res;
   }
 }

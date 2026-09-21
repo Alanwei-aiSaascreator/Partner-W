@@ -51,6 +51,12 @@ function tableChain(result: unknown) {
 
 const fromMock = vi.fn();
 
+/**
+ * 服务端的原话（**故意带卡密**）：本轮要保留的是它对应的**码**，
+ * 界面只认 `errorCode`（`ActivationSection` 的 `ERROR_KEYS`），不依赖这段文案。
+ */
+const BOUND_ELSEWHERE_MESSAGE = 'activate_license: license RY-AAAA-BBBB is already bound to another organization';
+
 /** 断言 ok:true；失败时把整个 payload 原样打出来 —— vitest 的属性 diff 会省略字段，不好排查。 */
 function assertOk(res: unknown): void {
   if (!(res as { ok?: boolean } | null)?.ok) {
@@ -189,5 +195,38 @@ describe('activateLicense', () => {
 
     expect(res.ok).toBe(false);
     expect(res.errorCode).toBe('activation_limit_reached');
+  });
+
+  /**
+   * ⭐ 分类器必须是**唯一**一份，而且**被导出**。
+   *
+   * 这是本轮要拆掉那次塌缩的关键一环：取中转 key 的边界（`relay-startup.ts`）
+   * 原先没有任何分类 —— 服务端**确定性**的拒绝（卡已绑到别的组织 / 卡失效）被
+   * 一律压成 `null`，上层于是只能报"没卡"。而激活入口这里早就有一张分得很细的表
+   * （`mapActivationError`），只是它原先**是私有的** ⇒ 边界层用不上，早晚会各自
+   * 再写一份 message 匹配，然后两边开始漂。
+   *
+   * ⇒ 钉两件事：它**被导出**（边界复用它），以及 `P0001 / already bound to another
+   * organization` 这个码经 `activateLicense` **原样送到界面**（界面靠它说"这张卡绑在
+   * 别的账号名下"，而不是泛化成"激活失败"）。
+   */
+  it('⭐⭐ 分类器被导出：relay 取 key 的边界复用同一份，不另写 message 匹配', async () => {
+    const { mapActivationError } = await import('../src/main/commercial/license.js');
+
+    expect(typeof mapActivationError, '未导出 ⇒ 边界层只能自己再写一份匹配，两边必将漂').toBe('function');
+  });
+
+  it('⭐⭐ P0001「已绑到别的组织」⇒ license_bound_elsewhere，并经 activateLicense 原样送到界面', async () => {
+    const { activateLicense, mapActivationError } = await import('../src/main/commercial/license.js');
+
+    expect(mapActivationError({ code: 'P0001', message: BOUND_ELSEWHERE_MESSAGE })).toBe('license_bound_elsewhere');
+
+    rpcMock.mockResolvedValue({ data: null, error: { code: 'P0001', message: BOUND_ELSEWHERE_MESSAGE } });
+    const res = await activateLicense('RY-AAAA-BBBB');
+
+    expect(res.ok).toBe(false);
+    expect(res.errorCode, '泛化成 activation_failed = 把"换个账号/先解绑"这条出口藏起来').toBe(
+      'license_bound_elsewhere',
+    );
   });
 });

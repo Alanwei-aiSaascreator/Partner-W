@@ -134,6 +134,23 @@ export async function readLicenseStatus(): Promise<IpcResult<LicenseStatus>> {
 }
 
 /**
+ * 激活 / 取中转凭证失败原因的**闭集**（安全码：可以进日志、可以进结构化结果、
+ * 界面按它选文案）。
+ *
+ * ⚠️ 这一份码表**有两个调用方**：手动激活（`activateLicense` → IPC → 界面）与
+ * relay 启动时的取 key 边界（`relay-startup.ts` → `RelayBootstrapResult`）。
+ * 两边都必须走下面这**同一个** `mapActivationError()` —— 各写一份 message 匹配，
+ * 两边迟早会漂；而漂了之后"同一个错误，界面说的和日志说的不一样"极难查。
+ */
+export type ActivationErrorCode =
+  | 'license_bound_elsewhere'
+  | 'license_not_found'
+  | 'license_inactive'
+  | 'license_expired'
+  | 'activation_limit_reached'
+  | 'activation_failed';
+
+/**
  * Translates what activate_license() raised into a code the UI can localise.
  *
  * check_activation_limit() runs as a BEFORE INSERT trigger and raises
@@ -141,8 +158,12 @@ export async function readLicenseStatus(): Promise<IpcResult<LicenseStatus>> {
  * SQLSTATE of its own (23514). Everything else shares P0001, which says nothing
  * about which check failed, so those still have to be told apart by the message
  * text the function emits.
+ *
+ * ⚠️ 返回的是**闭集**里的码，不是自由字符串；调用方（含 relay 取 key 的边界）
+ *    只该转述这个码，**不该**把服务端的原始 message 再往下传或写进日志 ——
+ *    `activate_license` 的入参就是卡密，服务端文案里可能回显它。
  */
-function mapActivationError(error: { code?: string; message?: string }): string {
+export function mapActivationError(error: { code?: string; message?: string }): ActivationErrorCode {
   const sqlState = typeof error.code === 'string' ? error.code : '';
   const message = String(error.message ?? '');
 

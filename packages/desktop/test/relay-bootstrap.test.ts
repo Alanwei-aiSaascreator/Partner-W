@@ -11,6 +11,7 @@ import type {
   RelayBootstrapDeps,
   RelayBootstrapRunOptions,
   RelayGatewayHandle,
+  RelayKeyFetchResult,
 } from '../src/main/commercial/relay-bootstrap.js';
 
 /**
@@ -68,7 +69,7 @@ function makeDeps(over: Partial<RelayBootstrapDeps> = {}, initialSnapshot: unkno
     hasCommercialClient: () => true,
     checkAuth: async () => 'authenticated',
     readLicenseKey: async () => LICENSE,
-    fetchRelayKey: vi.fn(async () => RELAY_KEY),
+    fetchRelayKey: vi.fn(async (): Promise<RelayKeyFetchResult> => ({ ok: true, relayKey: RELAY_KEY })),
     getGateway: () => gateway,
     deviceFingerprint: () => 'fp-1',
     ...over,
@@ -111,13 +112,94 @@ describe('ensureRelayConfigured —— 纯净/未配置', () => {
     expect(patchConfig).not.toHaveBeenCalled();
   });
 
-  it('⭐ 有卡但服务端没下发中转 key（旧卡）⇒ **不算就绪**', async () => {
-    const { deps, patchConfig } = makeDeps({ fetchRelayKey: async () => null });
+  it('⭐⭐ 有卡但服务端**确定性**拒绝（没下发 key / 旧卡）⇒ entitlement-rejected，**不是**泛化的 unlicensed', async () => {
+    // ⚠️ 这一条在 2026-09-21 改过：原先断言的是 `unlicensed` —— 那正是本轮修的塌缩。
+    //    「名下没有卡」和「有卡但服务端拒绝给中转凭证」要用户做的事完全不同。
+    const { deps, patchConfig } = makeDeps({
+      fetchRelayKey: async (): Promise<RelayKeyFetchResult> => ({
+        ok: false,
+        errorCode: 'activation_failed',
+        retryable: false,
+      }),
+    });
     const res = await ensureRelayConfigured(deps);
 
-    expect(res.status).toBe('unlicensed');
+    expect(res.status).toBe('entitlement-rejected');
+    expect(res.relayReady).toBe(false);
+    expect(res.errorCode).toBe('activation_failed');
+    expect(res.retryable).toBe(false);
+    expect(patchConfig).not.toHaveBeenCalled();
+  });
+
+  it('⭐⭐ P0001「卡已绑到别的组织」⇒ 安全码一路保留到结果，日志里也看得见', async () => {
+    const log = vi.fn();
+    const { deps, patchConfig } = makeDeps({
+      fetchRelayKey: async (): Promise<RelayKeyFetchResult> => ({
+        ok: false,
+        errorCode: 'license_bound_elsewhere',
+        retryable: false,
+      }),
+      log,
+    });
+    const res = await ensureRelayConfigured(deps);
+
+    expect(res.status).toBe('entitlement-rejected');
+    expect(res.errorCode, '压成 unlicensed 就把"卡绑在别的账号名下"这条信息丢了').toBe('license_bound_elsewhere');
+    expect(res.retryable).toBe(false);
     expect(res.relayReady).toBe(false);
     expect(patchConfig).not.toHaveBeenCalled();
+
+    const printed = JSON.stringify(log.mock.calls);
+    expect(printed, '排查要知道是哪一个安全码').toContain('license_bound_elsewhere');
+    expect(printed).not.toContain(LICENSE);
+    expect(printed).not.toContain(RELAY_KEY);
+  });
+});
+
+/**
+ * ⭐⭐ 确定性拒绝 vs 暂时失败：**重试策略必须分得开**。
+ *
+ * 那个 4 分钟窗口是为「等一等真的会好」的一类准备的（网关没连上 / 会话暂时问不出来）。
+ * 把确定性拒绝放进循环里的代价是具体的：每次都要再发一次 `activate_license`，
+ * 而卡的归属**不是时间能改的** —— 纯打服务端，结论一个字节都不变。
+ */
+describe('bootstrapRelayWithRetry —— 确定性拒绝一次都不重试', () => {
+  it('⭐⭐ 卡被判定绑在别的组织 ⇒ 4 分钟窗口里只问一次，一次 sleep 都没有', async () => {
+    const fetchRelayKey = vi.fn(
+      async (): Promise<RelayKeyFetchResult> => ({
+        ok: false,
+        errorCode: 'license_bound_elsewhere',
+        retryable: false,
+      }),
+    );
+    const sleep = vi.fn(async () => {});
+    const { deps } = makeDeps({ fetchRelayKey });
+
+    const res = await bootstrapRelayWithRetry(deps, { sleep, now: () => 0, waitForGatewayMs: 240_000 });
+
+    expect(res.status).toBe('entitlement-rejected');
+    expect(res.errorCode).toBe('license_bound_elsewhere');
+    expect(res.retryable).toBe(false);
+    expect(fetchRelayKey, '确定性拒绝 ⇒ 整个重试窗口里只该问服务端一次').toHaveBeenCalledTimes(1);
+    expect(sleep, '既不该退避，也不该轮询').not.toHaveBeenCalled();
+  });
+
+  it('⭐⭐ 抛出的网络/超时 ⇒ transport **可重试**：走既有退避，第二次成功就 applied', async () => {
+    let calls = 0;
+    const fetchRelayKey = vi.fn(async (): Promise<RelayKeyFetchResult> => {
+      calls += 1;
+      return calls === 1 ? { ok: false, errorCode: 'transport', retryable: true } : { ok: true, relayKey: RELAY_KEY };
+    });
+    const sleep = vi.fn(async () => {});
+    const { deps, patchConfig } = makeDeps({ fetchRelayKey });
+
+    const res = await bootstrapRelayWithRetry(deps, { sleep, now: () => 0, waitForGatewayMs: 240_000 });
+
+    expect(res.status).toBe('applied');
+    expect(res.relayReady).toBe(true);
+    expect(fetchRelayKey).toHaveBeenCalledTimes(2);
+    expect(sleep, '走的是**既有**的有界退避表（第一档 2s），不是新加一条重试路径').toHaveBeenCalledWith(2_000);
+    expect(patchConfig).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -216,7 +298,7 @@ describe('ensureRelayConfigured —— 应用配置', () => {
   });
 
   it('⭐ 取 key 用的是**账号里那张卡**的 key（幂等：同设备重复取返回同一把）', async () => {
-    const fetchRelayKey = vi.fn(async () => RELAY_KEY);
+    const fetchRelayKey = vi.fn(async (): Promise<RelayKeyFetchResult> => ({ ok: true, relayKey: RELAY_KEY }));
     const { deps } = makeDeps({ fetchRelayKey });
     await ensureRelayConfigured(deps);
 
@@ -226,7 +308,7 @@ describe('ensureRelayConfigured —— 应用配置', () => {
 
 describe('ensureRelayConfigured —— 幂等 & 配置变化', () => {
   it('⭐ 网关已经有指向中转的 provider ⇒ already-applied：**不调服务端、不写配置**', async () => {
-    const fetchRelayKey = vi.fn(async () => RELAY_KEY);
+    const fetchRelayKey = vi.fn(async (): Promise<RelayKeyFetchResult> => ({ ok: true, relayKey: RELAY_KEY }));
     const { deps, patchConfig } = makeDeps({ fetchRelayKey }, alreadyRelay);
 
     const res = await ensureRelayConfigured(deps);
@@ -308,15 +390,33 @@ describe('ensureRelayConfigured —— 写失败 & 韧性', () => {
     expect(res.relayReady).toBe(false);
   });
 
-  it('⭐ 取 key 自己抛 ⇒ 不当成已就绪', async () => {
+  it('⭐⭐ 取 key 自己抛（边界违约）⇒ 当成 transport + 可重试，**不是** unlicensed', async () => {
+    // ⚠️ 这条在 2026-09-21 改过：边界函数（`fetchRelayKeyForLicense`）现在**不抛** ——
+    //    网络/超时都被它收成 `transport` 结果。真抛了说明注入了一个违约的实现，
+    //    那时按"暂时问不出来"处理（等一等会好），而不是把一次异常说成"你没卡"。
     const { deps } = makeDeps({
       fetchRelayKey: async () => {
         throw new Error('rpc exploded');
       },
     });
     const res = await ensureRelayConfigured(deps);
-    expect(res.status).toBe('unlicensed');
+    expect(res.status).toBe('auth-transient');
+    expect(res.errorCode).toBe('transport');
+    expect(res.retryable).toBe(true);
     expect(res.relayReady).toBe(false);
+  });
+
+  it('⭐⭐ ok:true 但 relayKey 是空串（边界违约）⇒ 确定性失败，**绝不** ready', async () => {
+    // 没有 key 就是列不出模型。类型上 `ok:true` 必带非空 key，这一支只是兜底 ——
+    // 但它兜的正是本轮要修的塌缩：**没有 key 绝不等于已就绪**。
+    const { deps, patchConfig } = makeDeps({ fetchRelayKey: async () => ({ ok: true, relayKey: '' }) });
+    const res = await ensureRelayConfigured(deps);
+
+    expect(res.status).toBe('entitlement-rejected');
+    expect(res.errorCode).toBe('activation_failed');
+    expect(res.retryable).toBe(false);
+    expect(res.relayReady).toBe(false);
+    expect(patchConfig).not.toHaveBeenCalled();
   });
 });
 

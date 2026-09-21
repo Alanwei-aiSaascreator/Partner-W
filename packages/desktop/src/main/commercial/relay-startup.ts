@@ -9,7 +9,7 @@
 
 import { getCommercialClient } from './client.js';
 import { probeAuth } from './auth.js';
-import { deviceFingerprint, readLicenseStatus } from './license.js';
+import { deviceFingerprint, mapActivationError, readLicenseStatus } from './license.js';
 import { fetchFirstRelayModel } from './relay-config.js';
 import { createRelayBootstrapScheduler } from './relay-bootstrap.js';
 import type {
@@ -18,6 +18,7 @@ import type {
   RelayBootstrapResult,
   RelayBootstrapScheduler,
   RelayGatewayHandle,
+  RelayKeyFetchResult,
 } from './relay-bootstrap.js';
 import { getAllGatewayClients } from '../ws/index.js';
 import { getDebugLogger } from '../debug/index.js';
@@ -56,21 +57,58 @@ export function findConnectedGateway(): RelayGatewayHandle | null {
  * 而且「relay key 生成一次后固定不变」⇒ 拿到的永远是同一把。
  *
  * 这是**唯一**的取 key 途径：key 只在 RPC 返回里出现（设计上不落客户端磁盘）。
+ *
+ * ## 返回结构化结果，**不再**是 `string | null`
+ *
+ * 那个形状把三件完全不同的事压成同一个 `null`，上层于是只能说"没卡"：
+ *   ① 服务端**确定性**拒绝 —— `P0001`「卡已绑到别的组织」/ `23514` 激活数已达上限…
+ *   ② **抛出的**网络 / 超时 —— 这一类等一等真的会好（`transport` + `retryable`）
+ *   ③ RPC 成功却没有 relay key（旧卡 / 返回形状变了）—— 确定性失败，**不是**成功
+ *
+ * 分类一律走 `license.ts` 的 `mapActivationError()`：**同一张表**，这里不再写一份。
+ *
+ * ## 日志纪律
+ *
+ * 只记 SQLSTATE 与安全码。**不记**原始 message —— `activate_license` 的入参就是
+ * 卡密，服务端文案很可能回显它；异常文案里还可能带 URL / `apikey`。
  */
-export async function fetchRelayKeyForLicense(licenseKey: string): Promise<string | null> {
+export async function fetchRelayKeyForLicense(licenseKey: string): Promise<RelayKeyFetchResult> {
   const supabase = getCommercialClient();
-  if (!supabase) return null;
-
-  const { data, error } = await supabase.rpc('activate_license', {
-    p_license_key: licenseKey,
-    p_device_fingerprint: deviceFingerprint(),
-  });
-  if (error) {
-    // 只记错误码与文案，**不记 key**
-    log('relay.bootstrap.activate-rpc-failed', { code: error.code, message: error.message });
-    return null;
+  if (!supabase) {
+    // 商业层没配上（纯净开发环境，或读取期兜底也拿不到凭据）。这一轮之内不会变，
+    // 所以是确定性失败 —— 别让上层把它当成"等一等会好"。
+    return { ok: false, errorCode: 'activation_failed', retryable: false };
   }
-  return (data as { relayKey?: string | null } | null)?.relayKey ?? null;
+
+  try {
+    const { data, error } = await supabase.rpc('activate_license', {
+      p_license_key: licenseKey,
+      p_device_fingerprint: deviceFingerprint(),
+    });
+
+    if (error) {
+      // `error` 是**服务端答回来的**拒绝 ⇒ 交给唯一那张分类表。安全码与 SQLSTATE
+      // 进日志；原始 message 不进。
+      const errorCode = mapActivationError(error);
+      log('relay.bootstrap.activate-rpc-failed', { sqlState: error.code, errorCode });
+      return { ok: false, errorCode, retryable: false };
+    }
+
+    const relayKey = (data as { relayKey?: string | null } | null)?.relayKey ?? '';
+    if (!relayKey) {
+      // RPC 成功但没下发 key（旧卡 / 返回形状变了）。**绝不**当成成功：上层会拿
+      // 它去写一个空 apiKey 进网关，那比"没配置"更难排查。
+      log('relay.bootstrap.activate-rpc-no-key');
+      return { ok: false, errorCode: 'activation_failed', retryable: false };
+    }
+
+    return { ok: true, relayKey };
+  } catch {
+    // **抛出**（请求被中止 = 超时 / 网络不通 / DNS…）⇒ 可重试那一类。只记安全码，
+    // 不记异常文案（它可能带 URL 与 apikey）。
+    log('relay.bootstrap.activate-rpc-transport-failed', { errorCode: 'transport' });
+    return { ok: false, errorCode: 'transport', retryable: true };
+  }
 }
 
 function log(event: string, data: Record<string, unknown> = {}): void {
