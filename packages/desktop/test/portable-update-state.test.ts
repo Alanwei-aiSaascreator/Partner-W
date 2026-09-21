@@ -73,7 +73,7 @@ describe('portable update layout', () => {
     expect(paths.archivePath).toBe(join(paths.updateRoot, 'download', 'txn-abc', 'package.zip'));
     expect(paths.stagedProgramPath).toBe(join(paths.updateRoot, 'staged', 'txn-abc', 'program'));
     expect(paths.backupProgramPath).toBe(join(paths.updateRoot, 'backup', 'txn-abc'));
-    expect(paths.healthPath).toBe(join(paths.updateRoot, 'staged', 'txn-abc', 'health.json'));
+    expect(paths.healthPath).toBe(join(paths.updateRoot, 'health', 'txn-abc.json'));
     expect(paths.manifestPath).toBe(join(paths.updateRoot, 'staged', 'txn-abc', 'manifest.json'));
     expect(paths.fileManifestPath).toBe(join(paths.updateRoot, 'staged', 'txn-abc', 'portable-files.json'));
   });

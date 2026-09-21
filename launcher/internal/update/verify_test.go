@@ -116,7 +116,7 @@ func validTransaction(root string) TransactionV1 {
 		BackupProgramPath:  filepath.Join(updateRoot, BackupDirName, transactionID),
 		ManifestPath:       filepath.Join(stageRoot, ManifestName),
 		FileManifestPath:   filepath.Join(stageRoot, FileManifestName),
-		HealthPath:         filepath.Join(stageRoot, HealthFileName),
+		HealthPath:         filepath.Join(updateRoot, HealthDirName, transactionID+HealthFileSuffix),
 		UpdatedAt:          1,
 	}
 }

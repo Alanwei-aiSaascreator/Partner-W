@@ -78,7 +78,7 @@ export function resolvePortableTransactionPaths(input: {
     backupProgramPath: join(updateRoot, 'backup', input.transactionId),
     manifestPath: join(stageRoot, 'manifest.json'),
     fileManifestPath: join(stageRoot, 'portable-files.json'),
-    healthPath: join(stageRoot, 'health.json'),
+    healthPath: join(updateRoot, 'health', `${input.transactionId}.json`),
   };
 }
 
@@ -97,7 +97,7 @@ export function assertPortableTransactionPaths(
     ['backupProgramPath', join(updateRoot, 'backup', input.transactionId)],
     ['manifestPath', join(stageRoot, 'manifest.json')],
     ['fileManifestPath', join(stageRoot, 'portable-files.json')],
-    ['healthPath', join(stageRoot, 'health.json')],
+    ['healthPath', join(updateRoot, 'health', `${input.transactionId}.json`)],
   ];
   for (const [key, expectedPath] of expected) {
     if (compareKey(input[key]) !== compareKey(expectedPath)) {

@@ -17,10 +17,12 @@ const (
 	DataDirectoryName      = "\u8363\u76c8\u9b54\u65b9-\u8fd0\u884c\u6570\u636e"
 	WorkspaceDirectoryName = "\u8363\u76c8\u9b54\u65b9\u5de5\u4f5c\u533a"
 	LauncherFileName       = "\u8363\u76c8\u9b54\u65b9\u542f\u52a8\u5668.exe"
+	ProgramExecutableName  = "\u8363\u76c8\u9b54\u65b9.exe"
 
 	StateFileName      = "update-state.json"
 	FileManifestName   = "portable-files.json"
-	HealthFileName     = "health.json"
+	HealthDirName      = "health"
+	HealthFileSuffix   = ".json"
 	ManifestName       = "manifest.json"
 	PackageFileName    = "package.zip"
 	LockFileName       = "update.lock"
@@ -129,10 +131,10 @@ func ReadTransaction(path string) (TransactionV1, error) {
 	return transaction, nil
 }
 
-func ReadFileManifest(path string) (FileManifestV1, error) {
+func DecodeFileManifest(data []byte) (FileManifestV1, error) {
 	var manifest FileManifestV1
-	if err := readStrict(path, &manifest, ErrManifestInvalid); err != nil {
-		return FileManifestV1{}, err
+	if err := decodeStrict(data, &manifest); err != nil {
+		return FileManifestV1{}, fmt.Errorf("%w: %v", ErrManifestInvalid, err)
 	}
 	if manifest.SchemaVersion != SchemaVersion {
 		return FileManifestV1{}, fmt.Errorf("%w: unsupported file manifest schema %d", ErrManifestInvalid, manifest.SchemaVersion)
@@ -140,10 +142,10 @@ func ReadFileManifest(path string) (FileManifestV1, error) {
 	return manifest, nil
 }
 
-func ReadSignedManifest(path string) (SignedManifestV1, error) {
+func DecodeSignedManifest(data []byte) (SignedManifestV1, error) {
 	var manifest SignedManifestV1
-	if err := readStrict(path, &manifest, ErrManifestInvalid); err != nil {
-		return SignedManifestV1{}, err
+	if err := decodeStrict(data, &manifest); err != nil {
+		return SignedManifestV1{}, fmt.Errorf("%w: %v", ErrManifestInvalid, err)
 	}
 	if manifest.SchemaVersion != SchemaVersion {
 		return SignedManifestV1{}, fmt.Errorf("%w: unsupported manifest schema %d", ErrManifestInvalid, manifest.SchemaVersion)
@@ -152,4 +154,20 @@ func ReadSignedManifest(path string) (SignedManifestV1, error) {
 		return SignedManifestV1{}, fmt.Errorf("%w: mandatory updates are not supported", ErrManifestInvalid)
 	}
 	return manifest, nil
+}
+
+func ReadFileManifest(path string) (FileManifestV1, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return FileManifestV1{}, fmt.Errorf("%w: %v", ErrManifestInvalid, err)
+	}
+	return DecodeFileManifest(data)
+}
+
+func ReadSignedManifest(path string) (SignedManifestV1, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return SignedManifestV1{}, fmt.Errorf("%w: %v", ErrManifestInvalid, err)
+	}
+	return DecodeSignedManifest(data)
 }

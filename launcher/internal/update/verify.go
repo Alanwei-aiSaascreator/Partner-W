@@ -184,7 +184,7 @@ func ValidateTransactionPaths(transaction TransactionV1) error {
 		{"backupProgramPath", transaction.BackupProgramPath, filepath.Join(updateRoot, BackupDirName, transaction.TransactionID)},
 		{"manifestPath", transaction.ManifestPath, filepath.Join(stageRoot, ManifestName)},
 		{"fileManifestPath", transaction.FileManifestPath, filepath.Join(stageRoot, FileManifestName)},
-		{"healthPath", transaction.HealthPath, filepath.Join(stageRoot, HealthFileName)},
+		{"healthPath", transaction.HealthPath, filepath.Join(updateRoot, HealthDirName, transaction.TransactionID+HealthFileSuffix)},
 	}
 	for _, item := range expected {
 		if compareKey(item.actual) != compareKey(item.expected) {
