@@ -448,4 +448,58 @@ describe('WelcomeScreen assistant workspace', () => {
     expect(onAssistantChange).toHaveBeenCalledOnce();
     unmount();
   });
+
+  /**
+   * ⭐⭐ 2026-09-21（第二台机器实机）：**欢迎屏是用户第一眼看到的那一屏**。
+   *
+   * 已知失败会把 `conversationReady` 压成 `false`，于是工作台那一格照旧转圈 + 说
+   * 「正在启动 AI 服务」—— 上面一条真话（面板里的「去激活」）与正下方一个转圈**同屏**，
+   * 而下面那句恰恰是本任务要消灭的"它还在准备"。
+   *
+   * ⚠️ 判据是**这一屏自己**（工作台那一格 + 模型那一格）：不许有 spinner、不许出现
+   *    「正在启动」/「正在准备模型」，要出现的是那条已知失败的结论与警示图标。
+   */
+  it('⭐⭐ 已知中转失败时工作台不许转圈、不许说"正在准备"', () => {
+    const failureText = 'startupReadiness.relayOrganizationMismatch';
+    const { container, unmount } = render(
+      <WelcomeScreen
+        onboardingProfile={{ ...onboardingProfile, useCases: [...onboardingProfile.useCases] }}
+        recentPresetIds={[]}
+        onSelectPreset={vi.fn()}
+        onCustomTask={vi.fn()}
+        onAssistantChange={vi.fn()}
+        // 实机的形状：relay 失败 ⇒ `conversationReady = false`（不是"还没准备好"，是**已经有结论**）。
+        conversationReady={false}
+        failureText={failureText}
+      />,
+    );
+
+    expect(container.querySelectorAll('.animate-spin'), '不许转圈').toHaveLength(0);
+    expect(container.textContent, '不许说"正在启动 AI 服务"').not.toContain('startupReadiness.aiStarting');
+    expect(container.textContent, '不许说"正在准备模型…"').not.toContain('chatInput.modelsLoading');
+    expect(container.textContent).toContain(failureText);
+    // 静态警示图标（与面板同一套）：lucide 的三角形警告，不是 spinner。
+    expect(container.querySelectorAll('.lucide-triangle-alert').length, '要有一个警示图标').toBeGreaterThan(0);
+    unmount();
+  });
+
+  it('⭐ 已知失败且目录里没有可用模型时，模型那一格也不许回落"正在准备模型…"', () => {
+    // 换个还没有目录的网关：`defaultModel` 解析不出来 ⇒ 正是那条回落的现场。
+    mocks.selectedGwId = 'gw-3';
+    const { container, unmount } = render(
+      <WelcomeScreen
+        onboardingProfile={{ ...onboardingProfile, useCases: [...onboardingProfile.useCases] }}
+        recentPresetIds={[]}
+        onSelectPreset={vi.fn()}
+        onCustomTask={vi.fn()}
+        onAssistantChange={vi.fn()}
+        conversationReady={false}
+        failureText="startupReadiness.relayOrganizationMismatch"
+      />,
+    );
+
+    expect(container.textContent).not.toContain('chatInput.modelsLoading');
+    expect(container.textContent).toContain('chatInput.modelsUnusable');
+    unmount();
+  });
 });

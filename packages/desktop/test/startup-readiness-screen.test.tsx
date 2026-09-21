@@ -363,12 +363,38 @@ describe('StartupReadinessPanel', () => {
       unmount();
     });
 
+    /**
+     * ⭐ 2026-09-21（复核）：`activation_limit_reached` **单独一档、且不给按钮**。
+     *
+     * 复核实测：激活页今天既没有设备列表也没有解绑入口 ⇒ 对"这张卡名额满了"这个结论，
+     * 「去激活」是个按了没用的按钮（用户进去只能看到同一张卡）。
+     * 与其留一个按了没用的出口，不如**什么都不按**、把那句话说完：
+     * 换一张卡，或联系客服处理。
+     */
+    it('⭐⭐ 名额已满不给「去激活」（按了没用），只把"该怎么办"说清楚', () => {
+      const { container, unmount } = render(
+        <StartupReadinessPanel
+          readiness={withRelayFailure({ kind: 'activation-limit-reached', errorCode: 'activation_limit_reached' })}
+          onRetry={vi.fn()}
+        />,
+      );
+
+      expect(container.textContent).toContain('startupReadiness.relayActivationLimitReached');
+      expect(container.textContent, '没有出口就别给按钮').not.toContain('startupReadiness.openActivation');
+      expect(container.textContent, '确定性失败同样不给重试').not.toContain('startupReadiness.retry');
+      expect(container.querySelectorAll('button')).toHaveLength(0);
+      expect(useUiStore.getState().settingsOpen, '也不许偷偷把设置打开').toBe(false);
+      // 但结论必须还在（不许因为没按钮就把话说没了）。
+      expect(container.textContent).not.toContain('startupReadiness.takingLonger');
+
+      unmount();
+    });
+
     it('⭐⭐ 其余的确定性拒绝也走去激活（不只 `license_required` 一种）', () => {
       const permanent: StartupRelayFailure[] = [
         { kind: 'entitlement-rejected', errorCode: 'license_not_found' },
         { kind: 'entitlement-rejected', errorCode: 'license_inactive' },
         { kind: 'entitlement-rejected', errorCode: 'license_expired' },
-        { kind: 'entitlement-rejected', errorCode: 'activation_limit_reached' },
         { kind: 'entitlement-rejected', errorCode: 'activation_failed' },
       ];
 

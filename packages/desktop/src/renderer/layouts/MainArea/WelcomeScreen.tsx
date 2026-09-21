@@ -25,6 +25,12 @@ interface WelcomeScreenProps {
   onCustomTask: () => void;
   onAssistantChange: () => void;
   conversationReady?: boolean;
+  /**
+   * **已知失败**的本地化结论（`null` / 缺省 = 没有已知失败）。
+   * 由 `deriveStartupReadiness` 已经算出来的东西经 `startupFailureText` 翻出来
+   * —— 这一屏**不重新推断**（重新推断就会各说各的）。
+   */
+  failureText?: string | null;
 }
 
 export default function WelcomeScreen({
@@ -34,6 +40,7 @@ export default function WelcomeScreen({
   onCustomTask,
   onAssistantChange,
   conversationReady = true,
+  failureText = null,
 }: WelcomeScreenProps) {
   const { t } = useTranslation();
   const pendingNewTask = useTaskStore((state) => state.pendingNewTask);
@@ -49,7 +56,9 @@ export default function WelcomeScreen({
   const selectedModelId = pendingNewTask?.gatewayId === selectedGwId ? pendingNewTask.model : undefined;
   const modelLabel = selectedModelId
     ? (resolveModelLabel(selectedModelId, rawModelCatalog) ?? selectedModelId)
-    : (defaultModel?.label ?? t('chatInput.modelsLoading'));
+    : // ⚠️ 已知失败时不许回落"正在准备模型…"：那一步**永远不会**发生（2026-09-21 第二台机器实机）。
+      //    这一格说的是"手上没有能用的模型"，与失败是哪一种无关（所以措辞不许断言目录缺失）。
+      (defaultModel?.label ?? (failureText ? t('chatInput.modelsUnusable') : t('chatInput.modelsLoading')));
   const definition = resolveAssistantWorkspace(effectiveAgentId);
 
   useEffect(() => {
@@ -105,6 +114,7 @@ export default function WelcomeScreen({
           definition={definition}
           modelLabel={modelLabel}
           ready={conversationReady}
+          failureText={failureText}
           recentPresetIds={recentPresetIds}
           onSelectPreset={(preset) => onSelectPreset(preset, t(preset.promptKey))}
           onCustomTask={onCustomTask}

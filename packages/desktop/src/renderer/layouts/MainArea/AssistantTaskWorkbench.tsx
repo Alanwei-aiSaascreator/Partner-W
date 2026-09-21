@@ -1,4 +1,4 @@
-import { Bot, CheckCircle2, FileInput, FileOutput, LoaderCircle, Plus } from 'lucide-react';
+import { Bot, CheckCircle2, FileInput, FileOutput, LoaderCircle, Plus, TriangleAlert } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { AssistantTaskPreset } from '@/lib/assistant-task-presets';
 import type { AssistantWorkspaceDefinition } from '@/lib/preset-agents';
@@ -7,6 +7,11 @@ export interface AssistantTaskWorkbenchProps {
   definition: AssistantWorkspaceDefinition;
   modelLabel: string;
   ready: boolean;
+  /**
+   * **已知失败**的本地化结论（`null` / 缺省 = 没有已知失败，照旧是"还在准备"）。
+   * ⚠️ 判据来自启动就绪度已算出的结论（见 `startupFailureText`），这里不重新推断目录。
+   */
+  failureText?: string | null;
   recentPresetIds: readonly string[];
   onSelectPreset: (preset: AssistantTaskPreset) => void;
   onCustomTask: () => void;
@@ -16,6 +21,7 @@ export default function AssistantTaskWorkbench({
   definition,
   modelLabel,
   ready,
+  failureText = null,
   recentPresetIds,
   onSelectPreset,
   onCustomTask,
@@ -49,14 +55,26 @@ export default function AssistantTaskWorkbench({
             <Bot size={13} aria-hidden="true" />
             {modelLabel}
           </span>
+          {/*
+            ⚠️ 三态，不是两态：**已知失败**时既不许转圈、也不许说"正在启动 AI 服务" ——
+            否则上面那条真话（面板里的「去激活」）与正下方一个转圈同屏，用户看到的
+            仍然是"它还在准备"（2026-09-21 第二台机器实机的形状）。
+          */}
           <span
             role="status"
             aria-live="polite"
             aria-atomic="true"
-            className="inline-flex items-center gap-1.5 rounded-md bg-[var(--bg-tertiary)] px-2.5 py-1.5"
+            className={
+              ready || !failureText
+                ? 'inline-flex items-center gap-1.5 rounded-md bg-[var(--bg-tertiary)] px-2.5 py-1.5'
+                : 'inline-flex items-center gap-1.5 rounded-md bg-[var(--danger-bg)] px-2.5 py-1.5 text-[var(--danger)]'
+            }
           >
             {ready ? (
               <CheckCircle2 size={13} aria-hidden="true" className="text-[var(--accent)]" />
+            ) : failureText ? (
+              // 与面板同一套静态警示（`TriangleAlert` + danger token）：不动 = 没有进度可承诺。
+              <TriangleAlert size={13} aria-hidden="true" />
             ) : (
               <LoaderCircle
                 size={13}
@@ -64,7 +82,7 @@ export default function AssistantTaskWorkbench({
                 className="animate-spin text-[var(--accent)] motion-reduce:animate-none"
               />
             )}
-            {t(ready ? 'startupReadiness.aiReady' : 'startupReadiness.aiStarting')}
+            {ready ? t('startupReadiness.aiReady') : (failureText ?? t('startupReadiness.aiStarting'))}
           </span>
         </div>
       </header>

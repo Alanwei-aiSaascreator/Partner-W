@@ -67,7 +67,7 @@ import StatusTag from '@/components/semantic/StatusTag';
 import WelcomeScreen from './WelcomeScreen';
 import FirstTaskCompletionFlow from './FirstTaskCompletionFlow';
 import type { OnboardingProfile } from '@/lib/user-onboarding';
-import type { StartupReadiness, StartupRetry } from '@/lib/startup-readiness';
+import { startupFailureText, type StartupReadiness, type StartupRetry } from '@/lib/startup-readiness';
 import StartupReadinessPanel from './StartupReadinessPanel';
 import GoalRecommendationPanel from '@/features/goal-routing/GoalRecommendationPanel';
 import { useGoalAnalysis } from '@/features/goal-routing/useGoalAnalysis';
@@ -937,6 +937,9 @@ export function ChatContent({
               onCustomTask={() => requestDraft('', 'assistant-template')}
               onAssistantChange={clearDraftRequest}
               conversationReady={startupReadiness.conversationReady}
+              // ⚠️ 已知失败要一路穿到欢迎屏的工作台：否则"已经有结论"的那一屏上，
+              //    正下方还在转圈 + 说"正在启动 AI 服务"（2026-09-21 第二台机器实机）。
+              failureText={startupFailureText(startupReadiness, t)}
             />
           </div>
         </div>

@@ -208,6 +208,46 @@ describe('deriveStartupReadiness', () => {
     expect(result.isReady).toBe(false);
   });
 
+  /**
+   * ⭐ 2026-09-21（复核）：`activation_limit_reached` 必须**单独一档**。
+   *
+   * 它和其它六个"卡失效"码的出口**不一样**：那些码的出路是"重新激活 / 换一张卡"，
+   * 而这一条是**这张卡的名额满了** —— 复核实测激活页今天没有设备列表、也没有解绑入口，
+   * 所以"去激活"对它是近似死路。混在一档里就等于给用户一个按了没用的按钮。
+   */
+  it('⭐ `activation_limit_reached` 单独一档（名额已满 ≠ 卡失效，出口不同）', () => {
+    const result = deriveStartupReadiness({
+      gatewayId: 'gw-1',
+      gatewayStatus: 'connected',
+      rawModelCatalog: undefined,
+      catalogFailed: false,
+      assistantSnapshot: { ...idleAssistants, phase: 'verifying' },
+      relayState: { phase: 'blocked', errorCode: 'activation_limit_reached', updatedAt: 1 },
+    });
+
+    expect(result.relayFailure).toEqual({ kind: 'activation-limit-reached', errorCode: 'activation_limit_reached' });
+    expect(result.hasError).toBe(true);
+    expect(result.composerBlocked).toBe(false);
+
+    // 对照：其余的确定性码仍然归"卡失效"那一档。
+    for (const errorCode of [
+      'license_not_found',
+      'license_expired',
+      'license_inactive',
+      'activation_failed',
+    ] as const) {
+      const other = deriveStartupReadiness({
+        gatewayId: 'gw-1',
+        gatewayStatus: 'connected',
+        rawModelCatalog: undefined,
+        catalogFailed: false,
+        assistantSnapshot: { ...idleAssistants, phase: 'verifying' },
+        relayState: { phase: 'blocked', errorCode, updatedAt: 1 },
+      });
+      expect(other.relayFailure, `${errorCode} 仍归卡失效`).toEqual({ kind: 'entitlement-rejected', errorCode });
+    }
+  });
+
   it('⭐ 可重试的传输失败同样覆盖"正在加载模型"：出口是"再试一次"', () => {
     const result = deriveStartupReadiness({
       gatewayId: 'gw-1',

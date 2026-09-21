@@ -26,6 +26,7 @@ export type StartupRelayFailureKind =
   | 'activation-required'
   | 'organization-mismatch'
   | 'entitlement-rejected'
+  | 'activation-limit-reached'
   | 'retryable';
 
 export interface StartupRelayFailure {
@@ -45,14 +46,51 @@ export function relayFailureFrom(state: RelayBootstrapPublicState): StartupRelay
   if (state.phase === 'blocked') {
     // `license_required` 是**本地状态**（这台机器上没有可用的卡），出口是去激活；
     // `license_bound_elsewhere` 是服务端的确定性拒绝，出口是激活/换账号；
-    // 其余六个确定性码一起归"这张卡当前不可用"。
+    // `activation_limit_reached` 是**这张卡的名额满了** —— 换卡/找客服，与"卡失效"不同档；
+    // 其余五个确定性码一起归"这张卡已经不能用了"。
     if (state.errorCode === 'license_required') return { kind: 'activation-required', errorCode: state.errorCode };
     if (state.errorCode === 'license_bound_elsewhere') {
       return { kind: 'organization-mismatch', errorCode: state.errorCode };
     }
+    if (state.errorCode === 'activation_limit_reached') {
+      return { kind: 'activation-limit-reached', errorCode: state.errorCode };
+    }
     return { kind: 'entitlement-rejected', errorCode: state.errorCode };
   }
   if (state.phase === 'retryable-error') return { kind: 'retryable', errorCode: state.errorCode };
+  return null;
+}
+
+/**
+ * 已知的中转失败该说哪一句（面板与欢迎屏工作台**共用这一份**）。
+ *
+ * ⚠️ 判据是**出口**（`kind`），不是"有没有出错"：四档要用户去激活/换卡/找客服
+ * （再等、再试都一样），只有一档才值得说"再试一次"。混成一句的结果不是说得不准，
+ * 而是**把用户送去等一件永远不会发生的事**（第二台机器那次实机的形状）。
+ * ⚠️ 同屏两处（面板 + 欢迎屏工作台）必须说**同一句话**：两处不一样，用户只会更糊涂。
+ */
+export function relayFailureText(failure: StartupRelayFailure, t: (key: string) => string): string {
+  if (failure.kind === 'activation-required') return t('startupReadiness.relayActivationRequired');
+  if (failure.kind === 'organization-mismatch') return t('startupReadiness.relayOrganizationMismatch');
+  if (failure.kind === 'entitlement-rejected') return t('startupReadiness.relayEntitlementRejected');
+  if (failure.kind === 'activation-limit-reached') return t('startupReadiness.relayActivationLimitReached');
+  return t('startupReadiness.relayRetryable');
+}
+
+/**
+ * 就绪度里**已知失败**的那句话（`null` = 没有已知失败）。
+ *
+ * 欢迎屏工作台那一格用它：原来 `!ready` 一律转圈 + 说"正在启动 AI 服务"，
+ * 于是一条真话（面板里那句）与正下方一个转圈**同屏** —— 那正是本任务要消灭的画面。
+ * ⚠️ 判据全部取自**已经算好的**就绪度（`relayFailure` 与 AI 相位），不在这里重新推断目录。
+ */
+export function startupFailureText(readiness: StartupReadiness, t: (key: string) => string): string | null {
+  // 中转的失败最具体，也唯一带出口：有它就说它。
+  if (readiness.relayFailure) return relayFailureText(readiness.relayFailure, t);
+  // 目录那两档也是有结论的失败，同样不该被说成"还在准备"。
+  if (readiness.ai.phase === 'catalog-failed') return t('startupReadiness.aiCatalogFailed');
+  if (readiness.ai.phase === 'error') return t('startupReadiness.aiError');
+  // 助手那一档（AI 已就绪、只是助手没装完）不是"模型不可用"，这一格没有话要说。
   return null;
 }
 
@@ -71,7 +109,7 @@ export function relayFailureFrom(state: RelayBootstrapPublicState): StartupRelay
  */
 export function relayModelStatusCopy(failure: StartupRelayFailure, t: (key: string) => string): ModelStatusCopy {
   return {
-    label: t('chatInput.relayUnavailable'),
+    label: t('chatInput.modelsUnusable'),
     detail:
       failure.kind === 'activation-required'
         ? t('chatInput.relayActivationRequiredDetail')
@@ -79,10 +117,12 @@ export function relayModelStatusCopy(failure: StartupRelayFailure, t: (key: stri
           ? t('chatInput.relayOrganizationMismatchDetail')
           : failure.kind === 'entitlement-rejected'
             ? t('chatInput.relayEntitlementRejectedDetail')
-            : // ⚠️ 可重试这一档**不许承诺成功**：`relay_apply_failed` 也可能是确定性的
-              //    清理被拒（见 `main/commercial/relay-startup.ts` 的说明），
-              //    "再试一次"可以，"马上就好"不行。
-              t('chatInput.relayRetryableDetail'),
+            : failure.kind === 'activation-limit-reached'
+              ? t('chatInput.relayActivationLimitReachedDetail')
+              : // ⚠️ 可重试这一档**不许承诺成功**：`relay_apply_failed` 也可能是确定性的
+                //    清理被拒（见 `main/commercial/relay-startup.ts` 的说明），
+                //    "再试一次"可以，"马上就好"不行。
+                t('chatInput.relayRetryableDetail'),
     preparing: false,
   };
 }

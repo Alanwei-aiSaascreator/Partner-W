@@ -3,24 +3,10 @@ import { CheckCircle2, KeyRound, LoaderCircle, RefreshCw, TriangleAlert } from '
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
 import { PRESET_AGENT_DEFINITIONS } from '@/lib/preset-agents';
-import type { StartupReadiness, StartupRelayFailure } from '@/lib/startup-readiness';
+import { relayFailureText, type StartupReadiness } from '@/lib/startup-readiness';
 import { useUiStore } from '@/stores/uiStore';
 
 type Translate = (key: string, values?: Record<string, unknown>) => string;
-
-/**
- * 已知的中转失败该说哪一句。
- *
- * ⚠️ 判据是**出口**（`kind`），不是"有没有出错"：四档里三档要用户去激活/换账号
- * （再等、再试都一样），只有一档才值得说"再试一次"。混成一句的结果不是说得不准，
- * 而是**把用户送去等一件永远不会发生的事**（第二台机器那次实机的形状）。
- */
-function relayFailureText(failure: StartupRelayFailure, t: Translate): string {
-  if (failure.kind === 'activation-required') return t('startupReadiness.relayActivationRequired');
-  if (failure.kind === 'organization-mismatch') return t('startupReadiness.relayOrganizationMismatch');
-  if (failure.kind === 'entitlement-rejected') return t('startupReadiness.relayEntitlementRejected');
-  return t('startupReadiness.relayRetryable');
-}
 
 function currentStatus(readiness: StartupReadiness, t: Translate): string {
   // ⚠️ 已知的中转失败**排在最前面**：它比目录那条推断更具体，也是唯一带出口的一条。
@@ -89,10 +75,15 @@ export default function StartupReadinessPanel({
    */
   const showProgress = hasAssistantProgress || !readiness.hasError;
   // 出口只有两种，而且互斥：确定性失败去激活，不确定的失败才给"重新准备"。
+  // ⚠️ 名额已满（`activation-limit-reached`）**例外：不给按钮**。复核实测激活页今天既没有
+  //    设备列表也没有解绑入口 ⇒ "去激活"对它是近似死路，留一个按了没用的按钮比没有按钮更坏。
+  //    它的出路（换一张卡 / 找客服）由那句文案说清楚。
   const action = relayFailure
     ? relayFailure.kind === 'retryable'
       ? 'retry'
-      : 'activation'
+      : relayFailure.kind === 'activation-limit-reached'
+        ? null
+        : 'activation'
     : readiness.hasError || takingLonger
       ? 'retry'
       : null;

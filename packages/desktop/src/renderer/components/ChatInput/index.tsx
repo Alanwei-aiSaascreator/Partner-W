@@ -939,6 +939,13 @@ export default function ChatInput({
                               </DropdownMenuSubContent>
                             </DropdownMenuSub>
                           ))}
+                          {/*
+                            ⚠️ 判据是"**有明细就渲染** + 不是准备态"，不是"目录恰好是 empty"。
+                            原来 gate 在 `modelAvailability === 'empty'` 上：已知中转失败时
+                            `preparing` 变 false、而目录还在取（实机观察到的形态）⇒ **整块不渲染**，
+                            用户只剩 chip 上一个被截断的标签，看不到"为什么"和"怎么办"
+                            （2026-09-21 复核）。取不到那一档（catalog-failed）也一样漏。
+                          */}
                           {modelIsPreparing ? (
                             <DropdownMenuItem
                               disabled
@@ -959,7 +966,7 @@ export default function ChatInput({
                                 </span>
                               </span>
                             </DropdownMenuItem>
-                          ) : modelAvailability === 'empty' ? (
+                          ) : modelStatusDetail ? (
                             <DropdownMenuItem disabled className="max-w-80 items-start py-3 opacity-100">
                               <span className="flex flex-col gap-1">
                                 <span className="type-body font-medium text-[var(--text-primary)]">
