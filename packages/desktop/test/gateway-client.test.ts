@@ -312,6 +312,168 @@ describe('GatewayClient connection lifecycle', () => {
     await expect(client.setAgentFile('writer', 'SOUL.md', '内容')).resolves.toBe(response);
     expect(sendReq).toHaveBeenCalledTimes(1);
   });
+
+  it('⭐ exFAT agents.update 写后误报时，校验文件并用最新 hash 补写、回读配置', async () => {
+    const { GatewayClient } = await import('../src/main/ws/gateway-client.js');
+    const client = new GatewayClient({
+      id: 'gw-1',
+      name: 'Gateway',
+      url: 'ws://127.0.0.1:18789',
+      auth: { token: 'token' },
+    });
+    clients.push(client);
+
+    const unsafe = Object.assign(new Error('unsafe workspace file "IDENTITY.md"'), { code: 'INVALID_REQUEST' });
+    const conflict = Object.assign(new Error('config changed since last load; re-run config.get and retry'), {
+      code: 'INVALID_REQUEST',
+    });
+    let configReads = 0;
+    let patchWrites = 0;
+    const sendReq = vi.spyOn(client, 'sendReq').mockImplementation(async (method) => {
+      if (method === 'agents.update') throw unsafe;
+      if (method === 'agents.files.get') {
+        return {
+          agentId: 'rongying-content',
+          file: { name: 'IDENTITY.md', missing: false, content: '# IDENTITY.md\n\n- Name: 内容创作\n' },
+        };
+      }
+      if (method === 'config.get') {
+        configReads += 1;
+        if (configReads === 1) {
+          return {
+            hash: 'stale',
+            config: { agents: { entries: { 'rongying-content': { name: 'rongying-content' } } } },
+          };
+        }
+        if (configReads === 2) {
+          return {
+            hash: 'fresh',
+            config: { agents: { entries: { 'rongying-content': { name: 'rongying-content' } } } },
+          };
+        }
+        return {
+          hash: 'applied',
+          config: {
+            agents: {
+              entries: { 'rongying-content': { name: '内容创作', identity: { name: '内容创作' } } },
+            },
+          },
+        };
+      }
+      if (method === 'config.patch') {
+        patchWrites += 1;
+        if (patchWrites === 1) throw conflict;
+        return { ok: true };
+      }
+      throw new Error(`unexpected method: ${method}`);
+    });
+
+    await expect(client.updateAgent({ agentId: 'rongying-content', name: '内容创作' })).resolves.toMatchObject({
+      ok: true,
+      agentId: 'rongying-content',
+    });
+
+    const patchCalls = sendReq.mock.calls.filter(([method]) => method === 'config.patch');
+    expect(patchCalls).toHaveLength(2);
+    expect(patchCalls[0]?.[1]).toMatchObject({ baseHash: 'stale' });
+    expect(patchCalls[1]?.[1]).toMatchObject({ baseHash: 'fresh' });
+    expect(JSON.parse(String((patchCalls[1]?.[1] as { raw?: unknown }).raw))).toEqual({
+      agents: {
+        entries: {
+          'rongying-content': { name: '内容创作', identity: { name: '内容创作' } },
+        },
+      },
+    });
+    expect(configReads).toBe(3);
+  });
+
+  it('agents.update unsafe 后 IDENTITY 名称读回不匹配时保留原错，不补写配置', async () => {
+    const { GatewayClient } = await import('../src/main/ws/gateway-client.js');
+    const client = new GatewayClient({
+      id: 'gw-1',
+      name: 'Gateway',
+      url: 'ws://127.0.0.1:18789',
+      auth: { token: 'token' },
+    });
+    clients.push(client);
+
+    const unsafe = Object.assign(new Error('unsafe workspace file "IDENTITY.md"'), { code: 'INVALID_REQUEST' });
+    const sendReq = vi
+      .spyOn(client, 'sendReq')
+      .mockRejectedValueOnce(unsafe)
+      .mockResolvedValueOnce({
+        agentId: 'rongying-content',
+        file: { name: 'IDENTITY.md', missing: false, content: '# IDENTITY.md\n\n- Name: 另一个名字\n' },
+      });
+
+    await expect(client.updateAgent({ agentId: 'rongying-content', name: '内容创作' })).rejects.toBe(unsafe);
+    expect(sendReq).toHaveBeenCalledTimes(2);
+  });
+
+  it('agents.update 同时改 workspace 时即使报 unsafe 也不走窄补丁', async () => {
+    const { GatewayClient } = await import('../src/main/ws/gateway-client.js');
+    const client = new GatewayClient({
+      id: 'gw-1',
+      name: 'Gateway',
+      url: 'ws://127.0.0.1:18789',
+      auth: { token: 'token' },
+    });
+    clients.push(client);
+
+    const unsafe = Object.assign(new Error('unsafe workspace file "IDENTITY.md"'), { code: 'INVALID_REQUEST' });
+    const sendReq = vi.spyOn(client, 'sendReq').mockRejectedValueOnce(unsafe);
+
+    await expect(
+      client.updateAgent({ agentId: 'rongying-content', name: '内容创作', workspace: 'E:/other' }),
+    ).rejects.toBe(unsafe);
+    expect(sendReq).toHaveBeenCalledTimes(1);
+  });
+
+  it('agents.update 正常成功时原样返回，不读文件也不碰配置', async () => {
+    const { GatewayClient } = await import('../src/main/ws/gateway-client.js');
+    const client = new GatewayClient({
+      id: 'gw-1',
+      name: 'Gateway',
+      url: 'ws://127.0.0.1:18789',
+      auth: { token: 'token' },
+    });
+    clients.push(client);
+
+    const response = { ok: true, agentId: 'rongying-content' };
+    const sendReq = vi.spyOn(client, 'sendReq').mockResolvedValueOnce(response);
+
+    await expect(client.updateAgent({ agentId: 'rongying-content', name: '内容创作' })).resolves.toBe(response);
+    expect(sendReq).toHaveBeenCalledOnce();
+  });
+
+  it('agents.update 的补丁若被 schema 拒绝必须向上抛，不能把半成品报成功', async () => {
+    const { GatewayClient } = await import('../src/main/ws/gateway-client.js');
+    const client = new GatewayClient({
+      id: 'gw-1',
+      name: 'Gateway',
+      url: 'ws://127.0.0.1:18789',
+      auth: { token: 'token' },
+    });
+    clients.push(client);
+
+    const unsafe = Object.assign(new Error('unsafe workspace file "IDENTITY.md"'), { code: 'INVALID_REQUEST' });
+    const rejected = Object.assign(new Error('invalid config: agents.entries'), { code: 'INVALID_REQUEST' });
+    const sendReq = vi
+      .spyOn(client, 'sendReq')
+      .mockRejectedValueOnce(unsafe)
+      .mockResolvedValueOnce({
+        agentId: 'rongying-content',
+        file: { name: 'IDENTITY.md', missing: false, content: '# IDENTITY.md\n\n- Name: 内容创作\n' },
+      })
+      .mockResolvedValueOnce({
+        hash: 'fresh',
+        config: { agents: { entries: { 'rongying-content': { name: 'rongying-content' } } } },
+      })
+      .mockRejectedValueOnce(rejected);
+
+    await expect(client.updateAgent({ agentId: 'rongying-content', name: '内容创作' })).rejects.toBe(rejected);
+    expect(sendReq).toHaveBeenCalledTimes(4);
+  });
 });
 
 /**

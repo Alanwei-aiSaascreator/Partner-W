@@ -83,6 +83,51 @@ function isVerifiedAgentFileWrite(
   return record['name'] === name && record['missing'] === false && record['content'] === content;
 }
 
+const MAX_AGENT_NAME_CONFIG_RETRIES = 3;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isVerifiedAgentIdentityName(payload: Record<string, unknown>, agentId: string, expectedName: string): boolean {
+  if (payload['agentId'] !== agentId) return false;
+  const file = payload['file'];
+  if (!isRecord(file) || file['name'] !== 'IDENTITY.md' || file['missing'] !== false) return false;
+  if (typeof file['content'] !== 'string') return false;
+
+  const nameLine = file['content']
+    .split(/\r?\n/u)
+    .map((line) => /^\s*-\s*Name:\s*(.*?)\s*$/iu.exec(line)?.[1])
+    .find((name): name is string => typeof name === 'string');
+  return nameLine === expectedName;
+}
+
+function readAgentConfigEntry(snapshot: unknown, agentId: string): Record<string, unknown> | null {
+  if (!isRecord(snapshot) || !isRecord(snapshot['config'])) return null;
+  const agents = snapshot['config']['agents'];
+  if (!isRecord(agents) || !isRecord(agents['entries'])) return null;
+  const entry = agents['entries'][agentId];
+  return isRecord(entry) ? entry : null;
+}
+
+function isAgentNameConfigApplied(snapshot: unknown, agentId: string, expectedName: string): boolean {
+  const entry = readAgentConfigEntry(snapshot, agentId);
+  return entry?.['name'] === expectedName && isRecord(entry['identity']) && entry['identity']['name'] === expectedName;
+}
+
+function configHashOf(snapshot: unknown): string | null {
+  if (!isRecord(snapshot)) return null;
+  return typeof snapshot['hash'] === 'string' && snapshot['hash'] ? snapshot['hash'] : null;
+}
+
+function isConfigHashConflict(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error as GatewayRequestFailure).code === 'INVALID_REQUEST' &&
+    /config changed since last load|base hash|re-run config\.get and retry/iu.test(error.message)
+  );
+}
+
 /**
  * 这次握手失败，是**网关明确拒绝**，还是**这次连接本身没成**？只有前者该停止重连。
  *
@@ -764,7 +809,64 @@ export class GatewayClient {
     model?: string;
     avatar?: string;
   }): Promise<Record<string, unknown>> {
-    return this.sendReq('agents.update', params);
+    try {
+      return await this.sendReq('agents.update', params);
+    } catch (error) {
+      const safeName = params.name?.trim();
+      const isNameOnlyUpdate =
+        Boolean(safeName) &&
+        params.workspace === undefined &&
+        params.model === undefined &&
+        params.avatar === undefined;
+      if (!isNameOnlyUpdate || !safeName || !isUnsafeWorkspacePostWriteFailure(error, 'IDENTITY.md')) throw error;
+
+      // OpenClaw 2026.9.3 的 agents.update 顺序是：写 IDENTITY.md → 更新
+      // agents.entries。exFAT 可能在第一步落盘后误报 unsafe，导致第二步从未执行。
+      // 先读回确认写入的确是本次名称，再用最窄 config.patch 补齐等价的两个配置字段；
+      // 任一校验失败仍抛错，让上层回滚，不能把半成品助手标成已安装。
+      let identityReadback: Record<string, unknown>;
+      try {
+        identityReadback = await this.getAgentFile(params.agentId, 'IDENTITY.md');
+      } catch {
+        throw error;
+      }
+      if (!isVerifiedAgentIdentityName(identityReadback, params.agentId, safeName)) throw error;
+
+      for (let attempt = 1; attempt <= MAX_AGENT_NAME_CONFIG_RETRIES; attempt += 1) {
+        const snapshot = await this.getConfig();
+        const baseHash = configHashOf(snapshot);
+        if (!baseHash || !readAgentConfigEntry(snapshot, params.agentId)) throw error;
+
+        try {
+          await this.patchConfig({
+            baseHash,
+            raw: JSON.stringify({
+              agents: {
+                entries: {
+                  [params.agentId]: { name: safeName, identity: { name: safeName } },
+                },
+              },
+            }),
+          });
+        } catch (patchError) {
+          if (isConfigHashConflict(patchError) && attempt < MAX_AGENT_NAME_CONFIG_RETRIES) continue;
+          throw patchError;
+        }
+
+        const verified = await this.getConfig();
+        if (isAgentNameConfigApplied(verified, params.agentId, safeName)) {
+          getDebugLogger().warn({
+            domain: 'gateway',
+            event: 'gateway.agent-update.config-recovered-after-unsafe',
+            gatewayId: this.gatewayId,
+            data: { agentId: params.agentId, attempt, errorCode: error.code },
+          });
+          return { ok: true, agentId: params.agentId };
+        }
+      }
+
+      throw error;
+    }
   }
 
   async deleteAgent(params: { agentId: string; deleteFiles?: boolean }): Promise<Record<string, unknown>> {
