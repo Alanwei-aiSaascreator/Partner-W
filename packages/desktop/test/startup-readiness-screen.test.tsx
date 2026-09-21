@@ -2,8 +2,8 @@
 
 import { act, type ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { describe, expect, it, vi } from 'vitest';
-import type { StartupReadiness } from '../src/renderer/lib/startup-readiness';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { StartupReadiness, StartupRelayFailure } from '../src/renderer/lib/startup-readiness';
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
@@ -15,6 +15,7 @@ vi.mock('react-i18next', () => ({
 
 import StartupReadinessScreen from '../src/renderer/layouts/StartupReadiness';
 import StartupReadinessPanel from '../src/renderer/layouts/MainArea/StartupReadinessPanel';
+import { useUiStore } from '../src/renderer/stores/uiStore';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -32,6 +33,7 @@ const baseReadiness: StartupReadiness = {
   isReady: false,
   hasError: false,
   composerBlocked: true,
+  relayFailure: null,
 };
 
 function render(ui: ReactElement): { container: HTMLDivElement; unmount: () => void } {
@@ -288,5 +290,142 @@ describe('StartupReadinessPanel', () => {
 
     unmount();
     vi.useRealTimers();
+  });
+
+  /**
+   * ⭐⭐ 2026-09-21（第二台机器实机）：**面板才是用户真正看得见的那一面**。
+   *
+   * 主进程早就把结论翻成了安全码，但面板的标题是一条三元链 —— `takingLonger` 在最前面，
+   * 于是 90 秒之后连"这张卡绑在别的组织"都会被替换成"准备时间比平时更久"，
+   * 而那个结论**再等也不会变**：用户被劝着继续等一件永远不会发生的事。
+   */
+  describe('已知的中转失败（第二台机器实机的形状）', () => {
+    const withRelayFailure = (failure: StartupRelayFailure): StartupReadiness => ({
+      ...baseReadiness,
+      ai: { phase: 'error' },
+      hasError: true,
+      composerBlocked: false,
+      relayFailure: failure,
+    });
+
+    beforeEach(() => {
+      useUiStore.setState({ settingsOpen: false, settingsSection: null });
+    });
+
+    it('⭐⭐ 90 秒之后说的仍然是这张卡的事，不是"准备时间比平时更久"', () => {
+      vi.useFakeTimers();
+      const { container, unmount } = render(
+        <StartupReadinessPanel
+          readiness={withRelayFailure({ kind: 'organization-mismatch', errorCode: 'license_bound_elsewhere' })}
+          onRetry={vi.fn()}
+        />,
+      );
+
+      expect(container.textContent).toContain('startupReadiness.relayOrganizationMismatch');
+      // 后端那条判定落成**本地化文案**，不是把安全码或英文原文贴到界面上。
+      expect(container.textContent).not.toContain('license_bound_elsewhere');
+
+      act(() => vi.advanceTimersByTime(90_000));
+      expect(container.textContent, '90 秒后不许换成"等太久了"').toContain(
+        'startupReadiness.relayOrganizationMismatch',
+      );
+      expect(container.textContent).not.toContain('startupReadiness.takingLonger');
+
+      unmount();
+      vi.useRealTimers();
+    });
+
+    /**
+     * ⚠️ 判据是**两类出口互斥**，不是"有没有按钮"：
+     *    确定性拒绝（`blocked`）给「去激活」；只有不确定的失败才给「重新准备」——
+     *    "再试一万次也一样"的那种失败给重试按钮，等于请用户做无用功。
+     */
+    it('⭐⭐ 确定性失败给的是「去激活」（不是再试也没用的「重新准备」），点了落到激活页', () => {
+      const { container, unmount } = render(
+        <StartupReadinessPanel
+          readiness={withRelayFailure({ kind: 'activation-required', errorCode: 'license_required' })}
+          onRetry={vi.fn()}
+        />,
+      );
+
+      expect(container.textContent).toContain('startupReadiness.relayActivationRequired');
+      expect(container.textContent, '确定性失败不该出现重试出口').not.toContain('startupReadiness.retry');
+
+      const activation = [...container.querySelectorAll('button')].find((item) =>
+        item.textContent?.includes('startupReadiness.openActivation'),
+      );
+      expect(activation, '要有一个"去激活"的出口').toBeTruthy();
+
+      act(() => activation?.click());
+      expect(useUiStore.getState().settingsSection, '落到激活那一页').toBe('activation');
+      expect(useUiStore.getState().settingsOpen, '并把设置打开').toBe(true);
+
+      unmount();
+    });
+
+    it('⭐⭐ 其余的确定性拒绝也走去激活（不只 `license_required` 一种）', () => {
+      const permanent: StartupRelayFailure[] = [
+        { kind: 'entitlement-rejected', errorCode: 'license_not_found' },
+        { kind: 'entitlement-rejected', errorCode: 'license_inactive' },
+        { kind: 'entitlement-rejected', errorCode: 'license_expired' },
+        { kind: 'entitlement-rejected', errorCode: 'activation_limit_reached' },
+        { kind: 'entitlement-rejected', errorCode: 'activation_failed' },
+      ];
+
+      for (const failure of permanent) {
+        const { container, unmount } = render(
+          <StartupReadinessPanel readiness={withRelayFailure(failure)} onRetry={vi.fn()} />,
+        );
+        const activation = [...container.querySelectorAll('button')].find((item) =>
+          item.textContent?.includes('startupReadiness.openActivation'),
+        );
+        expect(activation, `${failure.errorCode} 也要给激活出口`).toBeTruthy();
+        expect(container.textContent, `${failure.errorCode} 不该给重试`).not.toContain('startupReadiness.retry');
+        unmount();
+      }
+    });
+
+    /**
+     * ⭐ "错误态还在动"就是"还在准备"的另一种说法。转圈与脉冲都属于**承诺进度**，
+     *    而这里已经**没有**进度可承诺了（结论已经出来）。
+     */
+    it('⭐⭐ 错误态不许转圈、不许脉冲：没有 spinner，没有脉冲进度条', () => {
+      const { container, unmount } = render(
+        <StartupReadinessPanel
+          readiness={withRelayFailure({ kind: 'retryable', errorCode: 'runtime_not_ready' })}
+          onRetry={vi.fn()}
+        />,
+      );
+
+      expect(container.querySelectorAll('.animate-spin'), '不许转圈').toHaveLength(0);
+      expect(container.querySelectorAll('.animate-pulse'), '不许脉冲').toHaveLength(0);
+      expect(container.querySelectorAll('[role="progressbar"]'), '不许再渲染进度条').toHaveLength(0);
+      expect(container.querySelector('section')?.getAttribute('aria-busy'), '错误不是"忙"').toBe('false');
+      // 图标仍要说"出事了"（警告），而不是对勾。
+      expect(container.textContent).toContain('startupReadiness.relayRetryable');
+
+      unmount();
+    });
+
+    it('⭐ 只有可重试的失败才给「重新准备」（而且要能点）', () => {
+      const onRetry = vi.fn(async () => undefined);
+      const { container, unmount } = render(
+        <StartupReadinessPanel
+          readiness={withRelayFailure({ kind: 'retryable', errorCode: 'transport' })}
+          onRetry={onRetry}
+        />,
+      );
+
+      expect(container.textContent).toContain('startupReadiness.relayRetryable');
+      expect(container.textContent, '可重试的失败不该出现激活出口').not.toContain('startupReadiness.openActivation');
+
+      const retry = [...container.querySelectorAll('button')].find((item) =>
+        item.textContent?.includes('startupReadiness.retry'),
+      );
+      act(() => retry?.click());
+      expect(onRetry).toHaveBeenCalledOnce();
+
+      unmount();
+    });
   });
 });

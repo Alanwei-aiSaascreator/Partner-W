@@ -1124,6 +1124,9 @@ export function ChatContent({
         draftRequest={draftRequest}
         onDraftResolved={handleDraftResolved}
         readinessBlocked={startupReadiness.composerBlocked}
+        // 已知的中转失败要送到输入框：否则模型那一格会继续说"正在准备…"（猜的那句），
+        // 而它承诺的那一步永远不会发生（2026-09-21 第二台机器实机）。
+        relayFailure={startupReadiness.relayFailure}
       />
       <ImageLightbox src={lightboxSrc} onClose={closeLightbox} />
       <FilePreviewModal file={previewFile} onClose={closeFilePreview} />

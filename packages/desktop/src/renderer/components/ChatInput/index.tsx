@@ -52,6 +52,7 @@ import VoiceIntroDialog from '../VoiceIntroDialog';
 import { MENTION_ALL_AGENT_ID } from './constants';
 import DraftConflictDialog from './DraftConflictDialog';
 import { modelStatusCopy } from './model-availability';
+import { relayModelStatusCopy, type StartupRelayFailure } from '@/lib/startup-readiness';
 import { composerPlaceholderKey } from '@/lib/gateway-display-phase';
 import { thinkingAlwaysOnKey, thinkingLabelKey, thinkingMenuFor } from './thinking-levels.js';
 import type { DraftPromptRequest, DraftPromptResolution } from './types';
@@ -101,6 +102,12 @@ interface ChatInputProps {
   draftRequest?: DraftPromptRequest | null;
   onDraftResolved?: (request: DraftPromptRequest, resolution: DraftPromptResolution) => void;
   readinessBlocked?: boolean;
+  /**
+   * **已知的**中转失败（`null` / 缺省 = 还没有结论）。
+   * 它覆盖模型那一格按目录推断出来的"正在准备…" —— 那句是**猜**的，而且在失败已经
+   * 确定时它是一句永远不会兑现的承诺（见 `relayModelStatusCopy`）。
+   */
+  relayFailure?: StartupRelayFailure | null;
 }
 
 interface TextSelection {
@@ -137,6 +144,7 @@ export default function ChatInput({
   draftRequest,
   onDraftResolved,
   readinessBlocked = false,
+  relayFailure = null,
 }: ChatInputProps) {
   const { t } = useTranslation();
   const reduced = useReducedMotion();
@@ -568,7 +576,9 @@ export default function ChatInput({
   const voiceTooltip = !isVoiceSupported ? t('voiceInput.unsupportedTooltip') : t('voiceInput.tooltip');
   // 文案分档全部住在 `modelStatusCopy` 里（可单测）：哪一档转圈、哪一档说什么话，
   // 一个地方定；尤其「无需重复操作」**只许**在真加载那一档出现（2026-09-20 报障）。
-  const modelStatus = modelStatusCopy(modelAvailability, t);
+  // ⚠️ 已知的中转失败**压过**目录推断：这时"正在准备模型，准备完会自动显示"是句谎
+  //    （那一步永远不会发生），换成非准备态的文案 + 出口（2026-09-21 第二台机器实机）。
+  const modelStatus = relayFailure ? relayModelStatusCopy(relayFailure, t) : modelStatusCopy(modelAvailability, t);
   const modelIsPreparing = modelStatus?.preparing ?? false;
   const modelStatusLabel = modelStatus?.label ?? null;
   const modelStatusDetail = modelStatus?.detail ?? null;

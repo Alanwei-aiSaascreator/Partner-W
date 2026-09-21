@@ -1,13 +1,30 @@
-import { useEffect, useState } from 'react';
-import { CheckCircle2, LoaderCircle, RefreshCw, TriangleAlert } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+import { CheckCircle2, KeyRound, LoaderCircle, RefreshCw, TriangleAlert } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
 import { PRESET_AGENT_DEFINITIONS } from '@/lib/preset-agents';
-import type { StartupReadiness } from '@/lib/startup-readiness';
+import type { StartupReadiness, StartupRelayFailure } from '@/lib/startup-readiness';
+import { useUiStore } from '@/stores/uiStore';
 
 type Translate = (key: string, values?: Record<string, unknown>) => string;
 
+/**
+ * 已知的中转失败该说哪一句。
+ *
+ * ⚠️ 判据是**出口**（`kind`），不是"有没有出错"：四档里三档要用户去激活/换账号
+ * （再等、再试都一样），只有一档才值得说"再试一次"。混成一句的结果不是说得不准，
+ * 而是**把用户送去等一件永远不会发生的事**（第二台机器那次实机的形状）。
+ */
+function relayFailureText(failure: StartupRelayFailure, t: Translate): string {
+  if (failure.kind === 'activation-required') return t('startupReadiness.relayActivationRequired');
+  if (failure.kind === 'organization-mismatch') return t('startupReadiness.relayOrganizationMismatch');
+  if (failure.kind === 'entitlement-rejected') return t('startupReadiness.relayEntitlementRejected');
+  return t('startupReadiness.relayRetryable');
+}
+
 function currentStatus(readiness: StartupReadiness, t: Translate): string {
+  // ⚠️ 已知的中转失败**排在最前面**：它比目录那条推断更具体，也是唯一带出口的一条。
+  if (readiness.relayFailure) return relayFailureText(readiness.relayFailure, t);
   if (readiness.ai.phase === 'starting') return t('startupReadiness.aiStarting');
   if (readiness.ai.phase === 'loading-models') return t('startupReadiness.aiLoadingModels');
   // 取不到 ≠ 没有模型：这句得说"没能取到"，否则用户会以为自己的账号/网关真的没模型。
@@ -42,7 +59,10 @@ export default function StartupReadinessPanel({
   onRetry: () => Promise<void>;
 }) {
   const { t } = useTranslation();
+  const setSettingsSection = useUiStore((s) => s.setSettingsSection);
+  const setSettingsOpen = useUiStore((s) => s.setSettingsOpen);
   const [takingLonger, setTakingLonger] = useState(false);
+  const relayFailure = readiness.relayFailure;
   const completed = Math.min(readiness.assistants.completed, readiness.assistants.total);
   const hasAssistantProgress = readiness.ai.phase === 'ready' && readiness.assistants.total > 0;
   // ⭐ 2026-09-20（T-a28 实机）：助手没就绪时，**原因**一直躺在 `assistants.error` 里
@@ -51,6 +71,35 @@ export default function StartupReadinessPanel({
   const assistantError = readiness.assistants.phase === 'error' ? readiness.assistants.error : undefined;
   const progressPercent = hasAssistantProgress ? (completed / readiness.assistants.total) * 100 : 0;
   const status = readiness.hasError ? 'error' : readiness.isReady ? 'ready' : 'active';
+  /**
+   * ⚠️ 顺序：**已知的结论优先于"等太久了"**（原来是反的）。
+   *    原来的三元链把 `takingLonger` 放在最前面 ⇒ 90 秒之后连"这张卡绑在别的组织"
+   *    都会被替换成"准备时间比平时更久"，而那个结论**再等也不会变**：
+   *    用户被劝着继续等一件永远不会发生的事（2026-09-21 第二台机器实机）。
+   */
+  const statusText = readiness.hasError
+    ? currentStatus(readiness, t)
+    : takingLonger
+      ? t('startupReadiness.takingLonger')
+      : currentStatus(readiness, t);
+  /**
+   * ⚠️ 不确定的**脉冲**进度条只许在"确实还在准备"时出现 —— 它承诺的是"还在动"。
+   *    已经出结论（失败）时没有进度可承诺：静态那条也不画，什么都不说比画一个假装在走的条诚实。
+   *    （有真实助手进度时照旧画真实百分比：那是事实，不是承诺。）
+   */
+  const showProgress = hasAssistantProgress || !readiness.hasError;
+  // 出口只有两种，而且互斥：确定性失败去激活，不确定的失败才给"重新准备"。
+  const action = relayFailure
+    ? relayFailure.kind === 'retryable'
+      ? 'retry'
+      : 'activation'
+    : readiness.hasError || takingLonger
+      ? 'retry'
+      : null;
+  const openActivationSettings = useCallback(() => {
+    setSettingsSection('activation');
+    setSettingsOpen(true);
+  }, [setSettingsSection, setSettingsOpen]);
 
   useEffect(() => {
     if (readiness.conversationReady) return;
@@ -61,11 +110,17 @@ export default function StartupReadinessPanel({
   return (
     <section
       aria-live="polite"
-      aria-busy={!readiness.isReady}
+      aria-busy={!readiness.isReady && !readiness.hasError}
       className="mx-auto mt-3 w-full max-w-[var(--content-max-width)] rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] px-4 py-3"
     >
       <div className="flex items-center gap-3">
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--accent-dim)] text-[var(--accent)]">
+        <span
+          className={
+            status === 'error'
+              ? 'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--danger-bg)] text-[var(--danger)]'
+              : 'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--accent-dim)] text-[var(--accent)]'
+          }
+        >
           {status === 'error' ? (
             <TriangleAlert size={16} aria-hidden="true" />
           ) : status === 'ready' ? (
@@ -76,44 +131,51 @@ export default function StartupReadinessPanel({
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex items-baseline justify-between gap-3">
-            <h2 className="type-label truncate text-[var(--text-primary)]">
-              {takingLonger ? t('startupReadiness.takingLonger') : currentStatus(readiness, t)}
-            </h2>
+            <h2 className="type-label truncate text-[var(--text-primary)]">{statusText}</h2>
             {hasAssistantProgress && (
               <span className="type-mono-data shrink-0 text-[var(--text-muted)]">
                 {t('startupReadiness.progress', { completed, total: readiness.assistants.total })}
               </span>
             )}
           </div>
-          <div
-            role="progressbar"
-            aria-label={t('startupReadiness.overallProgress')}
-            aria-valuemin={hasAssistantProgress ? 0 : undefined}
-            aria-valuemax={hasAssistantProgress ? readiness.assistants.total : undefined}
-            aria-valuenow={hasAssistantProgress ? completed : undefined}
-            className="mt-2 h-1.5 overflow-hidden rounded-full bg-[var(--bg-tertiary)]"
-          >
+          {showProgress && (
             <div
-              className={
-                hasAssistantProgress
-                  ? 'h-full rounded-full bg-[var(--accent)] transition-[width] duration-200 motion-reduce:transition-none'
-                  : 'h-full w-1/3 rounded-full bg-[var(--accent)] animate-pulse motion-reduce:animate-none'
-              }
-              style={hasAssistantProgress ? { width: `${progressPercent}%` } : undefined}
-            />
-          </div>
+              role="progressbar"
+              aria-label={t('startupReadiness.overallProgress')}
+              aria-valuemin={hasAssistantProgress ? 0 : undefined}
+              aria-valuemax={hasAssistantProgress ? readiness.assistants.total : undefined}
+              aria-valuenow={hasAssistantProgress ? completed : undefined}
+              className="mt-2 h-1.5 overflow-hidden rounded-full bg-[var(--bg-tertiary)]"
+            >
+              <div
+                className={
+                  hasAssistantProgress
+                    ? 'h-full rounded-full bg-[var(--accent)] transition-[width] duration-200 motion-reduce:transition-none'
+                    : 'h-full w-1/3 rounded-full bg-[var(--accent)] animate-pulse motion-reduce:animate-none'
+                }
+                style={hasAssistantProgress ? { width: `${progressPercent}%` } : undefined}
+              />
+            </div>
+          )}
           {assistantError && (
             <p className="type-meta mt-1.5 break-words text-[var(--text-danger)]" data-testid="readiness-reason">
               {assistantError}
             </p>
           )}
         </div>
-        {(readiness.hasError || takingLonger) && (
+        {action === 'retry' ? (
           <Button type="button" variant="outline" size="sm" onClick={onRetry} className="shrink-0">
             <RefreshCw size={14} />
             {t('startupReadiness.retry')}
           </Button>
-        )}
+        ) : action === 'activation' ? (
+          // ⚠️ 确定性失败**不给重试按钮**：那个按钮按下去只会让用户再做一次无用功。
+          //    给的是"去哪儿能解决"——设置里那一页（`setSettingsSection('activation')`）。
+          <Button type="button" variant="outline" size="sm" onClick={openActivationSettings} className="shrink-0">
+            <KeyRound size={14} />
+            {t('startupReadiness.openActivation')}
+          </Button>
+        ) : null}
       </div>
     </section>
   );
