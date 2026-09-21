@@ -8,6 +8,8 @@ import { CancellationToken } from 'builder-util-runtime';
 import { is } from '@electron-toolkit/utils';
 import { getDebugLogger } from './debug/index.js';
 import { getPortableWorkspaceRoot, readConfig } from './workspace/config.js';
+import type { PortableUpdatePhase, PortableUpdatePublicState } from '@clawwork/shared';
+import type { PortableUpdateService } from './update/portable-update-service.js';
 
 type UpdateChannel = 'stable' | 'beta';
 
@@ -18,6 +20,35 @@ export function getUpdateChannel(): UpdateChannel {
 const { autoUpdater } = electronUpdater;
 
 type UpdaterState = 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'error';
+
+export type UpdateState = UpdaterState | PortableUpdatePhase;
+
+let portableService: PortableUpdateService | null = null;
+let portableUnsubscribe: (() => void) | null = null;
+
+export function attachPortableUpdateService(service: PortableUpdateService | null): void {
+  if (portableUnsubscribe !== null) {
+    portableUnsubscribe();
+    portableUnsubscribe = null;
+  }
+  portableService = service;
+  if (service !== null) {
+    portableUnsubscribe = service.subscribe((state) => broadcast('update:state', state));
+  }
+}
+
+export function detachPortableUpdateService(): void {
+  attachPortableUpdateService(null);
+}
+
+export function getPortableUpdateState(): PortableUpdatePublicState | null {
+  return portableService?.getState() ?? null;
+}
+
+export function onPortableUpdateStateChanged(listener: (state: PortableUpdatePublicState) => void): () => void {
+  if (portableService === null) return () => {};
+  return portableService.subscribe(listener);
+}
 
 interface UpdateCheckResult {
   currentVersion: string;
@@ -32,7 +63,7 @@ interface UpdateCheckResult {
    *    「可下载」—— 那正是 2026-09-18 实测的毛病：自动下载已经完成，用户进设置
    *    点一下「检查更新」，界面又变回「下载」，而主进程其实早下好了。
    */
-  state: UpdaterState;
+  state: UpdateState;
   /**
    * 这一进程是「盘上运行」（U 盘形态）。
    *
@@ -54,7 +85,7 @@ type UpdateErrorCode = 'dev-not-supported' | 'network' | 'no-release-metadata' |
  * 该目录同时充当「手动下载」链接的落点。现在目录里没有文件 —— 查不到更新
  * 即是「已是最新」；将来把 latest.yml 与安装包放上去就能启用，不用再改代码。
  */
-const UPDATE_FEED_BASE = 'https://api.rongyinghudong.com/updates/';
+export const UPDATE_FEED_BASE = 'https://api.rongyinghudong.com/updates/';
 
 let initialized = false;
 let state: UpdaterState = 'idle';
@@ -183,6 +214,23 @@ export async function checkForUpdatesViaUpdater(): Promise<UpdateCheckResult> {
   const promise = (async (): Promise<UpdateCheckResult> => {
     const currentVersion = app.getVersion();
     const portable = isPortableModeNow();
+
+    // 盘上运行：签名的整目录清单才是真相源，electron-updater 在这里没有立足点。
+    if (portable && portableService !== null) {
+      const portableState = await portableService.check();
+      const target = portableState.targetVersion ?? currentVersion;
+      latestKnownVersion = target;
+      return {
+        currentVersion,
+        latestVersion: target,
+        hasUpdate: portableState.phase === 'available',
+        releaseUrl: UPDATE_FEED_BASE,
+        releaseNotes: null,
+        state: portableState.phase,
+        portable,
+      };
+    }
+
     autoUpdater.allowPrerelease = getUpdateChannel() === 'beta';
 
     // ⚠️ 状态一律按**判定那一刻的事实**，不能用 `await` 之前的快照：下载完全可能
@@ -261,8 +309,12 @@ export async function checkForUpdatesViaUpdater(): Promise<UpdateCheckResult> {
 }
 
 export async function downloadUpdate(): Promise<{ ok: boolean; error?: string }> {
-  // U 盘形态：要的是新包，不是把包装到本机（见 isPortableModeNow 的说明）
-  if (isPortableModeNow()) return { ok: false, error: 'portable-manual-update' };
+  // U 盘形态：不把包装到本机，改成在后台上传并校验一份完整的程序目录。
+  if (isPortableModeNow()) {
+    if (portableService === null) return { ok: false, error: 'portable-unavailable' };
+    const prepared = await portableService.prepare();
+    return prepared.ok ? { ok: true } : { ok: false, error: prepared.errorCode };
+  }
   // 已经下好了就直接成功 —— 用户多点一次「下载」不该再下一个 239MB。
   // 顺带把事实广播一次：界面可能因为错过了 update:downloaded 而停在 0% 的"下载中"。
   if (state === 'downloaded') {
@@ -295,6 +347,11 @@ export async function downloadUpdate(): Promise<{ ok: boolean; error?: string }>
 }
 
 export function cancelUpdateDownload(): { ok: boolean; error?: string } {
+  if (isPortableModeNow()) {
+    if (portableService === null) return { ok: false, error: 'portable-unavailable' };
+    const cancelled = portableService.cancel();
+    return cancelled.ok ? { ok: true } : { ok: false, error: cancelled.errorCode };
+  }
   if (state !== 'downloading' || !currentDownloadToken) {
     return { ok: false, error: 'no-download-in-progress' };
   }
@@ -305,9 +362,13 @@ export function cancelUpdateDownload(): { ok: boolean; error?: string } {
   return { ok: true };
 }
 
-export function installUpdate(): { ok: boolean; error?: string } {
-  // U 盘形态不安装：装到本机只会在别的盘上多出一份副本，用户要的是"换包"
-  if (isPortableModeNow()) return { ok: false, error: 'portable-manual-update' };
+export async function installUpdate(): Promise<{ ok: boolean; error?: string }> {
+  // U 盘形态不安装到本机：由外置启动器做整目录交换，然后应用正常退出。
+  if (isPortableModeNow()) {
+    if (portableService === null) return { ok: false, error: 'portable-unavailable' };
+    const restarted = await portableService.requestRestart();
+    return restarted.ok ? { ok: true } : { ok: false, error: restarted.errorCode };
+  }
   if (state !== 'downloaded') {
     return { ok: false, error: 'no-downloaded-update' };
   }

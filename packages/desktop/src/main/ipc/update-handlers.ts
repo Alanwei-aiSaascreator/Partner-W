@@ -1,12 +1,31 @@
-import { ipcMain, app } from 'electron';
+import { randomUUID } from 'node:crypto';
+import { spawn } from 'node:child_process';
+import { join } from 'node:path';
+import { app, ipcMain } from 'electron';
+import type { PortableUpdateChannel } from '@clawwork/shared';
 import {
-  initAutoUpdater,
-  isAutoUpdaterAvailable,
+  UPDATE_FEED_BASE,
+  attachPortableUpdateService,
+  cancelUpdateDownload,
   checkForUpdatesViaUpdater,
   downloadUpdate,
+  getPortableUpdateState,
+  getUpdateChannel,
+  initAutoUpdater,
   installUpdate,
-  cancelUpdateDownload,
+  isAutoUpdaterAvailable,
 } from '../auto-updater.js';
+import { getPortableWorkspaceRoot } from '../workspace/config.js';
+import {
+  downloadPortablePackage,
+  extractPortablePackage,
+  verifyPortableProgramTree,
+} from '../update/portable-package.js';
+import { PORTABLE_UPDATE_DIRECTORY_NAME, PortableUpdateStateStore } from '../update/portable-state.js';
+import { createPortableUpdateService } from '../update/portable-update-service.js';
+
+const LAUNCHER_FILE_NAME = '\u8363\u76c8\u9b54\u65b9\u542f\u52a8\u5668.exe';
+const LAUNCHER_PROTOCOL_VERSION = '1.0.0';
 
 interface UpdateCheckResult {
   currentVersion: string;
@@ -14,23 +33,22 @@ interface UpdateCheckResult {
   hasUpdate: boolean;
   releaseUrl: string;
   releaseNotes?: string | null;
-  /** 主进程此刻的更新状态（`downloaded` 时界面必须给安装入口）。 */
-  state: 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'error';
-  /** 盘上运行（U 盘形态）：界面提示"换包"，不给下载/安装按钮。 */
+  state: string;
   portable: boolean;
 }
 
-/**
- * 未打包（dev）时 `autoUpdater` 不可用。
- *
- * 这里原先会去查**上游** GitHub 的 release —— 那既会显示一个本机装不上的版本，
- * 又把上游仓库地址带回了客户端。现在不再请求任何远端：更新源已改到自有 feed
- * （见 auto-updater.ts 的 UPDATE_FEED_BASE），而 dev 构建本来也装不了更新
- * （`app:download-update` 直接返回 dev-not-supported）。
- *
- * ⚠️ `state` / `portable` 必须给全：preload 的 `UpdateCheckResult` 把它们声明成必填，
- *    少给的话 dev 下渲染层拿到 `undefined`（现在靠 falsy 侥幸不出事，但类型在说谎）。
- */
+function buildTimePublicKey(): string {
+  return typeof __MOFANG_UPDATE_PUBLIC_KEY_B64__ === 'string' ? __MOFANG_UPDATE_PUBLIC_KEY_B64__ : '';
+}
+
+function portableChannel(): PortableUpdateChannel {
+  return getUpdateChannel() === 'beta' ? 'internal' : 'stable';
+}
+
+function isPortableUpdateNow(): boolean {
+  return getPortableWorkspaceRoot() !== null;
+}
+
 function devCheckResult(): UpdateCheckResult {
   const currentVersion = app.getVersion();
   return {
@@ -43,8 +61,63 @@ function devCheckResult(): UpdateCheckResult {
   };
 }
 
+let portableInitialized = false;
+
+function ensurePortableUpdateService(): void {
+  if (portableInitialized) return;
+  const root = getPortableWorkspaceRoot();
+  if (root === null) return;
+  portableInitialized = true;
+
+  const channel = portableChannel();
+  const feed = `${UPDATE_FEED_BASE}${channel}/`;
+  const stateStore = new PortableUpdateStateStore({
+    stateFilePath: join(root, PORTABLE_UPDATE_DIRECTORY_NAME, 'update-state.json'),
+  });
+
+  attachPortableUpdateService(
+    createPortableUpdateService({
+      root,
+      currentVersion: app.getVersion(),
+      channel,
+      launcherVersion: LAUNCHER_PROTOCOL_VERSION,
+      publicKeyBase64: buildTimePublicKey(),
+      stateStore,
+      fetchManifest: async () => {
+        const response = await fetch(`${feed}manifest.json`);
+        if (!response.ok) throw new Error(`portable feed responded ${response.status}`);
+        return response.json();
+      },
+      fetchFileManifest: async (manifest) => {
+        const response = await fetch(new URL('portable-files.json', manifest.packageUrl).toString());
+        if (!response.ok) throw new Error(`portable file manifest responded ${response.status}`);
+        return response.json();
+      },
+      downloadPackage: downloadPortablePackage,
+      extractPackage: extractPortablePackage,
+      verifyTree: verifyPortableProgramTree,
+      now: () => Date.now(),
+      createTransactionId: () => randomUUID(),
+      startLauncher: (stateFilePath) =>
+        new Promise<void>((resolve, reject) => {
+          const child = spawn(join(root, LAUNCHER_FILE_NAME), ['--apply', stateFilePath], {
+            detached: true,
+            stdio: 'ignore',
+          });
+          child.once('error', reject);
+          child.once('spawn', () => {
+            child.unref();
+            resolve();
+          });
+        }),
+      quit: () => app.quit(),
+    }),
+  );
+}
+
 export function registerUpdateHandlers(options: { onRendererReady?: () => void } = {}): void {
   initAutoUpdater();
+  ensurePortableUpdateService();
 
   ipcMain.on('app:portable-update-renderer-ready', () => {
     options.onRendererReady?.();
@@ -52,29 +125,32 @@ export function registerUpdateHandlers(options: { onRendererReady?: () => void }
 
   ipcMain.handle('app:get-version', (): string => app.getVersion());
 
+  ipcMain.handle('app:get-update-state', () => getPortableUpdateState());
+
   ipcMain.handle('app:check-for-updates', async (): Promise<UpdateCheckResult> => {
-    if (isAutoUpdaterAvailable()) {
+    ensurePortableUpdateService();
+    if (isPortableUpdateNow() || isAutoUpdaterAvailable()) {
       return checkForUpdatesViaUpdater();
     }
     return devCheckResult();
   });
 
   ipcMain.handle('app:download-update', async (): Promise<{ ok: boolean; error?: string }> => {
-    if (!isAutoUpdaterAvailable()) {
+    if (!isPortableUpdateNow() && !isAutoUpdaterAvailable()) {
       return { ok: false, error: 'dev-not-supported' };
     }
     return downloadUpdate();
   });
 
-  ipcMain.handle('app:install-update', (): { ok: boolean; error?: string } => {
-    if (!isAutoUpdaterAvailable()) {
+  ipcMain.handle('app:install-update', async (): Promise<{ ok: boolean; error?: string }> => {
+    if (!isPortableUpdateNow() && !isAutoUpdaterAvailable()) {
       return { ok: false, error: 'dev-not-supported' };
     }
     return installUpdate();
   });
 
   ipcMain.handle('app:cancel-update-download', (): { ok: boolean; error?: string } => {
-    if (!isAutoUpdaterAvailable()) {
+    if (!isPortableUpdateNow() && !isAutoUpdaterAvailable()) {
       return { ok: false, error: 'dev-not-supported' };
     }
     return cancelUpdateDownload();

@@ -15,6 +15,7 @@ import type {
   ConfigPatchParams,
   Artifact,
   RelayBootstrapPublicState,
+  PortableUpdatePublicState,
 } from '@clawwork/shared';
 import type { ClawWorkAPI, GatewayServerConfig } from './clawwork';
 
@@ -205,6 +206,16 @@ function buildApi(): ClawWorkAPI {
     getAppVersion: () => ipcRenderer.invoke('app:get-version'),
     reportPortableUpdateRendererReady: () => ipcRenderer.send('app:portable-update-renderer-ready'),
     checkForUpdates: () => ipcRenderer.invoke('app:check-for-updates'),
+    getUpdateState: () => ipcRenderer.invoke('app:get-update-state'),
+    onUpdateStateChanged: (callback) => {
+      const listener = (_event: Electron.IpcRendererEvent, state: unknown): void => {
+        callback(state as PortableUpdatePublicState);
+      };
+      ipcRenderer.on('update:state', listener);
+      return () => {
+        ipcRenderer.removeListener('update:state', listener);
+      };
+    },
     downloadUpdate: () => ipcRenderer.invoke('app:download-update'),
     cancelUpdateDownload: () => ipcRenderer.invoke('app:cancel-update-download'),
     installUpdate: () => ipcRenderer.invoke('app:install-update'),

@@ -191,6 +191,8 @@ interface AppSettings {
 
 export type VoicePermissionStatus = 'granted' | 'not-determined' | 'denied' | 'unsupported';
 
+type UpdateState = 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'error' | PortableUpdatePhase;
+
 interface UpdateCheckResult {
   currentVersion: string;
   latestVersion: string;
@@ -198,7 +200,7 @@ interface UpdateCheckResult {
   releaseUrl: string;
   releaseNotes?: string | null;
   /** 主进程此刻的更新状态：自动下载可能已经跑完，界面要照实显示。 */
-  state: 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'error';
+  state: UpdateState;
   /** 盘上运行（U 盘形态）：不自动下载也不安装，界面提示"换包"。 */
   portable: boolean;
 }
@@ -547,6 +549,8 @@ export interface ClawWorkAPI {
   getAppVersion: () => Promise<string>;
   reportPortableUpdateRendererReady: () => void;
   checkForUpdates: () => Promise<UpdateCheckResult>;
+  getUpdateState: () => Promise<PortableUpdatePublicState | null>;
+  onUpdateStateChanged: (callback: (state: PortableUpdatePublicState) => void) => () => void;
   downloadUpdate: () => Promise<{ ok: boolean; error?: string }>;
   cancelUpdateDownload: () => Promise<{ ok: boolean; error?: string }>;
   installUpdate: () => Promise<{ ok: boolean; error?: string }>;

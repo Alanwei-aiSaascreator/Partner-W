@@ -2,6 +2,8 @@ import { mkdirSync, mkdtempSync, readdirSync, rmSync, utimesSync, writeFileSync 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { PortableUpdatePublicState } from '@clawwork/shared';
+import type { PortableUpdateService } from '../src/main/update/portable-update-service.js';
 
 /**
  * 更新机制的主进程状态机（2026-09-18 真机实测 + 双审阅后重做）。
@@ -269,15 +271,100 @@ describe('检查更新：状态与便携形态', () => {
     expect(mocks.downloadUpdate, 'U 盘版自动下 239MB 安装包 = 白下（装也装不到盘上）').not.toHaveBeenCalled();
   });
 
-  it('⭐ 便携形态：下载与安装都被明确拒绝（不能把包装到本机当第二份副本）', async () => {
+  it('⭐ 便携形态：没有整目录服务时，下载与安装明确报不可用（而不是悄悄装到本机）', async () => {
     const { checkForUpdatesViaUpdater, downloadUpdate, installUpdate } = await loadFresh();
     mocks.portableRoot = 'F:\\';
     mocks.checkForUpdates.mockResolvedValue(updateInfo('0.0.22'));
     await checkForUpdatesViaUpdater();
 
-    expect(await downloadUpdate()).toEqual({ ok: false, error: 'portable-manual-update' });
-    expect(installUpdate()).toEqual({ ok: false, error: 'portable-manual-update' });
+    expect(await downloadUpdate()).toEqual({ ok: false, error: 'portable-unavailable' });
+    expect(await installUpdate()).toEqual({ ok: false, error: 'portable-unavailable' });
     expect(mocks.quitAndInstall).not.toHaveBeenCalled();
+  });
+
+  describe('便携路径：整目录更新服务的路由器', () => {
+    function fakeService(overrides: Partial<PortableUpdateService> = {}): PortableUpdateService {
+      const listeners = new Set<(state: PortableUpdatePublicState) => void>();
+      return {
+        getState: () => ({ phase: 'idle', currentVersion: '0.0.21', updatedAt: 1 }),
+        subscribe: (listener) => {
+          listeners.add(listener);
+          return () => listeners.delete(listener);
+        },
+        check: async () => {
+          const state: PortableUpdatePublicState = {
+            phase: 'available',
+            currentVersion: '0.0.21',
+            targetVersion: '0.0.22',
+            updatedAt: 2,
+          };
+          for (const listener of listeners) listener(state);
+          return state;
+        },
+        prepare: async () => ({ ok: true }),
+        cancel: () => ({ ok: true }),
+        requestRestart: async () => ({ ok: true }),
+        ...overrides,
+      };
+    }
+
+    it('检查更新交给服务，相位原样交回界面', async () => {
+      const { checkForUpdatesViaUpdater, attachPortableUpdateService } = await loadFresh();
+      mocks.portableRoot = 'F:\\';
+      const service = fakeService();
+      const check = vi.spyOn(service, 'check');
+      attachPortableUpdateService(service);
+
+      const result = await checkForUpdatesViaUpdater();
+
+      expect(check).toHaveBeenCalledTimes(1);
+      expect(result).toMatchObject({ state: 'available', hasUpdate: true, latestVersion: '0.0.22', portable: true });
+      expect(mocks.checkForUpdates, '盘上形态不走 electron-updater 的检查').not.toHaveBeenCalled();
+    });
+
+    it('下载走 prepare，失败码如实带回界面', async () => {
+      const { downloadUpdate, attachPortableUpdateService } = await loadFresh();
+      mocks.portableRoot = 'F:\\';
+      const service = fakeService({ prepare: async () => ({ ok: false, errorCode: 'disk-space' }) });
+      const prepare = vi.spyOn(service, 'prepare');
+      attachPortableUpdateService(service);
+
+      expect(await downloadUpdate()).toEqual({ ok: false, error: 'disk-space' });
+      expect(prepare).toHaveBeenCalledTimes(1);
+      expect(mocks.downloadUpdate).not.toHaveBeenCalled();
+    });
+
+    it('取消走服务的 cancel', async () => {
+      const { cancelUpdateDownload, attachPortableUpdateService } = await loadFresh();
+      mocks.portableRoot = 'F:\\';
+      const service = fakeService();
+      const cancel = vi.spyOn(service, 'cancel');
+      attachPortableUpdateService(service);
+
+      expect(cancelUpdateDownload()).toEqual({ ok: true });
+      expect(cancel).toHaveBeenCalledTimes(1);
+    });
+
+    it('安装走 requestRestart，绝不调用 quitAndInstall', async () => {
+      const { installUpdate, attachPortableUpdateService } = await loadFresh();
+      mocks.portableRoot = 'F:\\';
+      const service = fakeService({ requestRestart: async () => ({ ok: false, errorCode: 'manifest-invalid' }) });
+      const restart = vi.spyOn(service, 'requestRestart');
+      attachPortableUpdateService(service);
+
+      expect(await installUpdate()).toEqual({ ok: false, error: 'manifest-invalid' });
+      expect(restart).toHaveBeenCalledTimes(1);
+      expect(mocks.quitAndInstall, '便携路径永远不许把控制权交给 electron-updater 的安装器').not.toHaveBeenCalled();
+    });
+
+    it('服务卸载后回到不可用，不残留订阅', async () => {
+      const { downloadUpdate, attachPortableUpdateService } = await loadFresh();
+      mocks.portableRoot = 'F:\\';
+      attachPortableUpdateService(fakeService());
+      attachPortableUpdateService(null);
+
+      expect(await downloadUpdate()).toEqual({ ok: false, error: 'portable-unavailable' });
+    });
   });
 
   it('⭐ 下载由我们自己驱动 ⇒ 「取消下载」才取消得掉（autoDownload 必须是 false）', async () => {
@@ -345,7 +432,7 @@ describe('下载完成之后：状态不许被打回', () => {
     // 不给后面的用例留真计时器尾巴（留了会跨用例开火，把别处的断言打成 2 次调用）。
     vi.useFakeTimers();
     try {
-      expect(installUpdate()).toEqual({ ok: true });
+      expect(await installUpdate()).toEqual({ ok: true });
       await vi.advanceTimersByTimeAsync(16_000);
       expect(mocks.quitAndInstall).toHaveBeenCalledTimes(1);
     } finally {
@@ -367,7 +454,7 @@ describe('下载完成之后：状态不许被打回', () => {
     // 看门狗用假计时器跑：真实计时器下它 15 秒后会开火，把状态改成 error
     vi.useFakeTimers();
     try {
-      expect(installUpdate()).toEqual({ ok: true });
+      expect(await installUpdate()).toEqual({ ok: true });
       expect(isInstallingUpdate()).toBe(true);
       await vi.advanceTimersByTimeAsync(16_000); // INSTALL_WATCHDOG_MS = 15s
       expect(mocks.quitAndInstall).toHaveBeenCalledTimes(1);
