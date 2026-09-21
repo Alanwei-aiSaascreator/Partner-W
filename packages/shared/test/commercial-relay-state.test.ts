@@ -4,6 +4,7 @@ import {
   relayBootstrapPublicStateStore,
   resetRelayBootstrapPublicState,
   type RelayBootstrapBlockedCode,
+  type RelayBootstrapPhase,
   type RelayBootstrapPublicState,
   type RelayBootstrapRetryableCode,
 } from '../src/index.js';
@@ -107,6 +108,35 @@ describe('公开状态的 store', () => {
 
     expect(atNotify[0]).toEqual({ phase: 'ready', updatedAt: 1_001 });
   });
+
+  it('⭐⭐ 一个订阅者抛错：不许打断其余订阅者，也不许把状态写坏', () => {
+    // 主进程那条"转发给渲染层"的桥就是订阅者之一 —— 它抛了（窗口正在销毁、
+    // send 失败…）不该连带把别的订阅者与状态本身一起废掉。
+    const store = createRelayBootstrapPublicStateStore({ now: () => 1_000 });
+    const seen: string[] = [];
+    store.subscribe(() => {
+      throw new Error('subscriber blew up');
+    });
+    store.subscribe((state) => seen.push(state.phase));
+
+    expect(() => store.set({ phase: 'ready' })).not.toThrow();
+    expect(seen, '排在抛错订阅者后面的那个照样要收到').toEqual(['ready']);
+    expect(store.get(), '状态已经写下去了，不许回滚/停在旧值').toEqual({ phase: 'ready', updatedAt: 1_001 });
+  });
+
+  it('🔴 多余字段进不来：显式挑选把 `as` 硬塞的字段挡在门外（结构性保证，不靠类型）', () => {
+    const store = createRelayBootstrapPublicStateStore({ now: () => 1_000 });
+    // 用 `as` 绕过类型（真实世界里正是这么漏的：有人顺手把 result.detail 摊进来）。
+    const smuggled = { phase: 'blocked', errorCode: 'license_bound_elsewhere', detail: 'raw server message' } as {
+      phase: 'blocked';
+      errorCode: 'license_bound_elsewhere';
+    };
+
+    const state = store.set(smuggled);
+
+    expect(Object.keys(state).sort()).toEqual(['errorCode', 'phase', 'updatedAt']);
+    expect(JSON.stringify(state)).not.toContain('detail');
+  });
 });
 
 describe('进程级单例与账户边界重置', () => {
@@ -128,17 +158,33 @@ describe('进程级单例与账户边界重置', () => {
 });
 
 /**
- * 闭集护栏。
+ * 闭集护栏（三个联合各一份字面量）。
  *
- * 这两个联合是**渲染层与主进程之间的契约**（多一个成员 = 界面渲染一句不存在的话；
+ * 这些联合是**渲染层与主进程之间的契约**（多一个成员 = 界面渲染一句不存在的话；
  * 少一个成员 = 某种失败永远说不出来）。字面量清单把两头封住：
  *   · 联合**少**一个成员 ⇒ 这里多一个键 ⇒ 编译失败；
  *   · 联合**多**一个成员 ⇒ 这里少一个键 ⇒ 编译失败。
- * 运行期那半句（写入方只会写清单里的码）由 desktop 的映射用例钉。
+ * 运行期那半句（写入方只会写清单里的相位与码）由 desktop 的映射用例钉。
  *
- * 来源：设计文档的 `RelayBootstrapPublicState` 块。
+ * 📏 来源（**两处**，别写成一处 —— 它们在两份不同的文档里）：
+ *   - `phase` 五个成员 ← 设计文档 "Renderer visibility" 的载荷句
+ *     `docs/superpowers/specs/2026-09-21-multi-org-license-bootstrap-design.md:134-135`；
+ *   - 两个 `errorCode` 联合 ← 计划 Task 3 Step 1 的 DTO
+ *     `docs/superpowers/plans/2026-09-21-multi-org-license-bootstrap-recovery.md:286-304`。
+ *   ⚠️ 设计文档里**没有** `RelayBootstrapPublicState` 这个名字（全仓只有计划 :286 有）。
  */
-describe('errorCode 闭集的护栏', () => {
+describe('闭集的护栏', () => {
+  it('⭐⭐ phase 恰好是这五个（含"带码"的两个分支）', () => {
+    const ALL: Record<RelayBootstrapPhase, true> = {
+      idle: true,
+      running: true,
+      ready: true,
+      blocked: true,
+      'retryable-error': true,
+    };
+    expect(Object.keys(ALL)).toHaveLength(5);
+  });
+
   it('⭐⭐ blocked 的码恰好是这七个', () => {
     const ALL: Record<RelayBootstrapBlockedCode, true> = {
       license_required: true,

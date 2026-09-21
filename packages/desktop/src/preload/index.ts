@@ -484,6 +484,12 @@ function buildApi(): ClawWorkAPI {
     //   · `commercialRelayBootstrapState()` 是**初始读** —— bootstrap 在窗口建好之前
     //     就跑过一轮了，那之前的事件没人收，只能靠这次补读；
     //   · `onCommercialRelayBootstrapState()` 只覆盖**挂上之后**的转变。
+    //
+    // 📏 事件契约（渲染层按它做取舍，别自己发明规则）：
+    //   - **幂等键 = `(phase, errorCode, updatedAt)`**。`updatedAt` 在主进程那边**严格
+    //     单调** ⇒ "两条快照谁更新"永远判得出来（初始读晚到也不许覆盖更新的那条事件）；
+    //   - **内容完全相同的事件可能重复发**（被单飞吸收的那次触发也会把状态推成
+    //     `running`）⇒ "一条事件 ≠ 一次状态转变"，按幂等键去重。
     commercialRelayBootstrapState: () => ipcRenderer.invoke('commercial:relay-bootstrap-state'),
     onCommercialRelayBootstrapState: (callback: (state: RelayBootstrapPublicState) => void) => {
       const listener = (_event: Electron.IpcRendererEvent, state: RelayBootstrapPublicState): void => {

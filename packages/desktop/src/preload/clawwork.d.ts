@@ -775,7 +775,9 @@ export interface ClawWorkAPI {
    *
    * - `commercialRelayBootstrapState()`：**初始读**。bootstrap 在窗口建好之前就跑过
    *   一轮，那之前的事件没人收，只能靠这次补读；
-   * - `onCommercialRelayBootstrapState(cb)`：**挂上之后**的每次转变（返回退订函数）；
+   * - `onCommercialRelayBootstrapState(cb)`：**挂上之后**的每次转变（返回退订函数）。
+   *   幂等键是 `(phase, errorCode, updatedAt)`（`updatedAt` 严格单调）；**内容相同的
+   *   事件可能重复发**，按幂等键去重，别把重复当成"又跑了一轮"；
    * - `commercialRelayBootstrapRetry()`：请求重试。只**排队**（不等这一轮跑完），
    *   进度跟状态事件走。
    */

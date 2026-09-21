@@ -17,13 +17,38 @@
  *   - **读**：`commercial:relay-bootstrap-state`（初始读）与
  *     `commercial:relay-bootstrap-state-changed`（事件）。
  *
+ * ⚠️ **只许主进程按值 import**（`import { relayBootstrapPublicStateStore } from
+ *    '@clawwork/shared'`）；**renderer / preload 只能 `import type`**。
+ *    原因：下面那个"进程级单例"是在**模块初始化**时建出来的，而 `@clawwork/shared`
+ *    的 `package.json` 没有 `sideEffects: false` ⇒ 打包器不能把那句初始化删掉 ——
+ *    渲染层一旦按值 import，就会在自己包里得到一个**谁也没用、但真的存在**的
+ *    "包内单例"，而"进程级"这句话在渲染层根本不成立（每个窗口/上下文各一份）。
+ *    `desktop/test/commercial-preload-surface.test.ts` 会扫源码把这条钉死。
+ *
  * ⚠️ 这一份 DTO 是渲染层**唯一**的来源，字段是**闭集**：`phase` / `errorCode` /
  *    `updatedAt`。**不许**加 `detail`、原始 message、卡密、relay key、token：
  *    `activate_license` 的入参就是卡密（服务端文案很可能回显它），异常文案里还常带
  *    URL 与 apikey。要排查去看主进程的调试日志 —— 那条路有它自己的脱敏纪律。
  *
- * 📏 闭集来源：`docs/superpowers/specs/2026-09-21-multi-org-license-bootstrap-design.md`
- *    的 "RelayBootstrapPublicState" 块（五个 `phase`、两个 `errorCode` 联合）。
+ * ## 事件契约（渲染层按它做取舍）
+ *
+ *   - **幂等键 = `(phase, errorCode, updatedAt)`**。`updatedAt` **严格单调**
+ *     （见 `set`），所以"两条快照谁更新"永远判得出来 —— 晚到的初始读不许覆盖更新的
+ *     那条事件（Task 4 的 `useStartupReadiness` 就按这个键取舍）。
+ *   - **内容完全相同的事件可能重复发**：被单飞吸收的那次触发（跑着的时候又来了一个
+ *     触发）也会把状态推成 `running` 并发一条 —— 也就是"一条事件 ≠ 一次状态转变"。
+ *     渲染层要按幂等键去重，别把重复当成"又跑了一轮"。
+ *
+ * 📏 闭集来源（两段，**分开**标注 —— 它们是两份不同的文档）：
+ *   - `phase` 的五个成员 ← 设计文档 "Renderer visibility" 的载荷句
+ *     `docs/superpowers/specs/2026-09-21-multi-org-license-bootstrap-design.md:134-135`
+ *     （"a bounded phase (`idle`, `running`, `ready`, `blocked`, or `retryable-error`),
+ *     a whitelisted error code, and a timestamp"）；
+ *   - 两个 `errorCode` 联合 ← 实施计划的 Task 3 Step 1 里那份 DTO
+ *     `docs/superpowers/plans/2026-09-21-multi-org-license-bootstrap-recovery.md:286-304`
+ *     （`blocked` 七个成员在 :289-297，`retryable-error` 四个在 :300-304）。
+ *   ⚠️ 设计文档里**没有** `RelayBootstrapPublicState` 这个名字（全仓只有计划 :286 有）——
+ *      别把两份文档的出处写成一处。
  */
 
 /**
@@ -120,8 +145,36 @@ export function createRelayBootstrapPublicStateStore(
       //    取舍**的（晚到的初始读不许覆盖更新的那条事件），时间戳相等就分不出先后 ——
       //    界面可能把已经跑起来的状态又退回那条陈旧的结论上。
       const updatedAt = Math.max(now(), current.updatedAt + 1);
-      current = { ...next, updatedAt };
-      for (const listener of [...listeners]) listener(current);
+
+      // 🔴 **逐分支显式挑选**，绝不写 `{ ...next, updatedAt }`：这一行是整个功能
+      //    "永不泄漏"的**唯一卡口** —— 展开写法会把调用方对象上任何多余字段
+      //    （哪怕是用 `as` 硬塞进来的 `detail` / 原始 message / 卡密）原样带进公开
+      //    状态，再经事件发到渲染层。字段闭集在这里是**结构**保证，不只是类型保证。
+      // ⚠️ 每个分支都把字段**写全**（别图省事把两个带码分支并成一个三元 —— 那样
+      //    `phase` 会宽成 `'blocked' | 'retryable-error'`，配不出任何合法的成员，
+      //    `tsc` 直接报 TS2322；这条我也实测过）。
+      switch (next.phase) {
+        case 'blocked':
+          current = { phase: 'blocked', errorCode: next.errorCode, updatedAt };
+          break;
+        case 'retryable-error':
+          current = { phase: 'retryable-error', errorCode: next.errorCode, updatedAt };
+          break;
+        default:
+          current = { phase: next.phase, updatedAt };
+          break;
+      }
+
+      for (const listener of [...listeners]) {
+        // ⚠️ 一个订阅者抛错不该打断其余的（主进程那条"转发给渲染层"的桥就是订阅者之一）。
+        //    状态**已经**赋值（上一行），所以吞掉异常不会让状态变坏；最坏情况是错过一条
+        //    事件，而渲染层还有"初始读"这条兜底。本模块没有 logger，也不该为此引入一个。
+        try {
+          listener(current);
+        } catch {
+          // 订阅者自己的问题：吞掉，继续通知下一个。
+        }
+      }
       return current;
     },
     subscribe: (listener) => {

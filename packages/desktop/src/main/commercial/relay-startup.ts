@@ -284,7 +284,16 @@ export function mapRelayBootstrapPublicPhase(result: RelayBootstrapResult): Rela
     case 'runtime-not-ready':
       return { phase: 'retryable-error', errorCode: 'runtime_not_ready' };
     case 'failed':
-      // 网关配置没写进去 / 上一个账号的清理被网关拒了 —— 都不是卡的判决。
+      // ⚠️ `failed` **可能是确定性失败**，别把这个码读成"重试就会好"：
+      //    `ensureRelayConfigured` 对"上一个账号的清理被网关**确定性**拒绝 / 回读校验
+      //    没过"**刻意**返回 `{status:'failed', retryable:false}`（注释写着"确定性失败
+      //    不能轮询"—— 轮询只会把网关打到限流）。而 DTO 里**没有**"确定的非-entitlement
+      //    失败"这个相位（`errorCode` 是冻结的闭集，不许新增），所以只能落在
+      //    `retryable-error: relay_apply_failed` —— 这是**最不坏的标签，不是重试承诺**。
+      //    ⚠️ 给 Task 4 的合同：这条码的重试文案**不得承诺成功**（"再试一次"可以，
+      //    "马上就好"不行）；真正该做的是把网关那侧的原因送去排查（调试日志里那条
+      //    `relay.bootstrap.cleanup-rejected`）。这个不精确由 `MAPPING_CASES` 里点名
+      //    "清理被拒"那一行钉住，别让它变成没人知道的偏差。
       return { phase: 'retryable-error', errorCode: 'relay_apply_failed' };
     case 'unauthenticated':
     case 'not-configured':

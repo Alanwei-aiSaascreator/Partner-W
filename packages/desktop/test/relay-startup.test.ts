@@ -663,6 +663,96 @@ describe('整条链 —— 永久拒绝在 4 分钟窗口里只发一次 activat
  *      多一个 `detail` / 原始文案 / 卡密 / relay key 就是把有密的东西送进渲染层；
  *   3. **可重试 vs 终局**只按 `status` + `errorCode` 的**配对**判，绝不按"有没有出错"判。
  */
+/**
+ * 映射表（`bootstrap 结果 → 公开状态`）的用例集。
+ *
+ * ⚠️ 判据一律是 **status + errorCode 的配对**，不是"有没有出错"：
+ * Task 2 的复审结论是"只有 `entitlement-rejected` 是终局" —— 每一个未裁决的
+ * SQLSTATE、每一个没带码的传输失败，现在都落成 `auth-transient` + `retryable:true`。
+ * 把 `auth-transient` 当 blocked，就是把一次网络抖动说成"你的卡不行"。
+ */
+const MAPPING_CASES: Array<[string, RelayBootstrapResult, RelayBootstrapPublicPhase]> = [
+  ['写进去了 ⇒ ready', { status: 'applied', relayReady: true, retryable: false }, { phase: 'ready' }],
+  [
+    '幂等命中（网关已经有中转 provider）⇒ ready',
+    { status: 'already-applied', relayReady: true, retryable: false },
+    { phase: 'ready' },
+  ],
+  [
+    '名下没有可用的卡 ⇒ blocked:license_required（用户该去激活，不是重试）',
+    { status: 'unlicensed', relayReady: false, retryable: false },
+    { phase: 'blocked', errorCode: 'license_required' },
+  ],
+  [
+    '⭐ 卡绑在别的组织 ⇒ blocked 带上**那个码**，不是泛化的"没卡"',
+    { status: 'entitlement-rejected', relayReady: false, retryable: false, errorCode: 'license_bound_elsewhere' },
+    { phase: 'blocked', errorCode: 'license_bound_elsewhere' },
+  ],
+  [
+    '其它确定性裁决码原样透出',
+    { status: 'entitlement-rejected', relayReady: false, retryable: false, errorCode: 'activation_limit_reached' },
+    { phase: 'blocked', errorCode: 'activation_limit_reached' },
+  ],
+  [
+    '裁决却没带码（违约的实现）⇒ 取最保守的那个终局码',
+    { status: 'entitlement-rejected', relayReady: false, retryable: false },
+    { phase: 'blocked', errorCode: 'activation_failed' },
+  ],
+  [
+    '裁决却带 transport（不该发生）⇒ 宁可说成"再试一次"',
+    { status: 'entitlement-rejected', relayReady: false, retryable: false, errorCode: 'transport' },
+    { phase: 'retryable-error', errorCode: 'transport' },
+  ],
+  [
+    '⭐ 会话暂时问不出来 ⇒ retryable-error:auth_unavailable',
+    { status: 'auth-transient', relayReady: false, retryable: true },
+    { phase: 'retryable-error', errorCode: 'auth_unavailable' },
+  ],
+  [
+    '⭐ 取 key 的传输失败 ⇒ retryable-error:transport',
+    { status: 'auth-transient', relayReady: false, retryable: true, errorCode: 'transport' },
+    { phase: 'retryable-error', errorCode: 'transport' },
+  ],
+  [
+    '网关还没连上 ⇒ retryable-error:runtime_not_ready',
+    { status: 'runtime-not-ready', relayReady: false, retryable: true },
+    { phase: 'retryable-error', errorCode: 'runtime_not_ready' },
+  ],
+  [
+    '网关写失败 ⇒ retryable-error:relay_apply_failed',
+    { status: 'failed', relayReady: false, retryable: false },
+    { phase: 'retryable-error', errorCode: 'relay_apply_failed' },
+  ],
+  /**
+   * ⚠️ **点名那个不精确**：`failed` 也可能是**确定性**失败 —— 清理被网关拒 /
+   * 回读校验没过时，`ensureRelayConfigured` **刻意**返回 `retryable:false`
+   * （"确定性失败不能轮询"，轮询只会把网关打到限流）。DTO 里没有"确定的
+   * 非-entitlement 失败"这个相位（`errorCode` 是冻结闭集），所以它落成同一个
+   * `relay_apply_failed` —— 这是**最不坏的标签，不是重试承诺**。
+   * 把这条输入钉出来，是为了让这个偏差**可见**，而不是让 Task 4 以为它一定能重试成功。
+   */
+  [
+    '⚠️ 确定性失败的 failed（清理被网关拒，retryable:false）也落同一个码 —— 标签不精确，但不许被当成重试承诺',
+    {
+      status: 'failed',
+      relayReady: false,
+      retryable: false,
+      detail: 'previous account cleanup was rejected (rejected)',
+    },
+    { phase: 'retryable-error', errorCode: 'relay_apply_failed' },
+  ],
+  [
+    '明确没登录 ⇒ idle（界面本来就在登录页，这不是错误）',
+    { status: 'unauthenticated', relayReady: false, retryable: false },
+    { phase: 'idle' },
+  ],
+  [
+    '本机没接商业层 ⇒ idle（纯开发环境，别在登录页旁边挂一条"模型不可用"）',
+    { status: 'not-configured', relayReady: false, retryable: false },
+    { phase: 'idle' },
+  ],
+];
+
 describe('公开状态 —— 渲染层唯一能看到的那份结论', () => {
   beforeEach(() => {
     vi.resetModules();
@@ -822,6 +912,58 @@ describe('公开状态 —— 渲染层唯一能看到的那份结论', () => {
     });
   });
 
+  it('⭐⭐ 本地没有可用的卡（没存 key）⇒ blocked:license_required（该去激活，不是重试）', async () => {
+    // 卡表读回来是**空**的：这台机器名下没有可用 license（新机器、还没兑换）。
+    mocks.from.mockImplementation((table: string) => {
+      if (table === 'org_members') return tableChain({ data: [{ org_id: 'org-1' }] });
+      return tableChain({ data: null });
+    });
+
+    const { bootstrapCommercialRelay } = await import('../src/main/commercial/relay-startup.js');
+    const { relayBootstrapPublicStateStore } = await import('@clawwork/shared');
+
+    const res = await bootstrapCommercialRelay();
+
+    expect(res.status).toBe('unlicensed');
+    expect(relayBootstrapPublicStateStore.get()).toMatchObject({
+      phase: 'blocked',
+      errorCode: 'license_required',
+    });
+  });
+
+  it('⭐⭐ 终态 blocked 之后来一次新触发（激活）⇒ 必须离开终态：running → ready', async () => {
+    // 第一轮：服务端**确定性**拒绝（卡绑在别的组织）⇒ blocked 是这一轮的终局。
+    mocks.rpc.mockResolvedValue({
+      data: null,
+      error: { code: 'P0001', message: BOUND_ELSEWHERE_MESSAGE },
+      status: 400,
+    });
+
+    const { bootstrapCommercialRelay, notifyCommercialActivated } =
+      await import('../src/main/commercial/relay-startup.js');
+    const { relayBootstrapPublicStateStore } = await import('@clawwork/shared');
+    const seen: string[] = [];
+    relayBootstrapPublicStateStore.subscribe((state) => seen.push(state.phase));
+
+    const first = await bootstrapCommercialRelay();
+    expect(first.status).toBe('entitlement-rejected');
+    expect(relayBootstrapPublicStateStore.get()).toMatchObject({ phase: 'blocked' });
+
+    // 用户换了账号 / 激活了一张新卡 ⇒ 服务端这次把 key 给了。
+    mocks.rpc.mockResolvedValue({ data: { relayKey: RELAY_KEY }, error: null });
+    notifyCommercialActivated();
+
+    await vi.waitFor(() => {
+      expect(relayBootstrapPublicStateStore.get().phase).toBe('ready');
+    });
+    expect(seen, '终态不是"永远不动"：新触发必须先离开 blocked，再走到 ready').toEqual([
+      'running',
+      'blocked',
+      'running',
+      'ready',
+    ]);
+  });
+
   it.each(MAPPING_CASES)('⭐ 映射表：%s', async (_label, result, expected) => {
     const { mapRelayBootstrapPublicPhase } = await import('../src/main/commercial/relay-startup.js');
 
@@ -833,78 +975,6 @@ describe('公开状态 —— 渲染层唯一能看到的那份结论', () => {
     );
   });
 });
-
-/**
- * 映射表（`bootstrap 结果 → 公开状态`）的用例集。
- *
- * ⚠️ 判据一律是 **status + errorCode 的配对**，不是"有没有出错"：
- * Task 2 的复审结论是"只有 `entitlement-rejected` 是终局" —— 每一个未裁决的
- * SQLSTATE、每一个没带码的传输失败，现在都落成 `auth-transient` + `retryable:true`。
- * 把 `auth-transient` 当 blocked，就是把一次网络抖动说成"你的卡不行"。
- */
-const MAPPING_CASES: Array<[string, RelayBootstrapResult, RelayBootstrapPublicPhase]> = [
-  ['写进去了 ⇒ ready', { status: 'applied', relayReady: true, retryable: false }, { phase: 'ready' }],
-  [
-    '幂等命中（网关已经有中转 provider）⇒ ready',
-    { status: 'already-applied', relayReady: true, retryable: false },
-    { phase: 'ready' },
-  ],
-  [
-    '名下没有可用的卡 ⇒ blocked:license_required（用户该去激活，不是重试）',
-    { status: 'unlicensed', relayReady: false, retryable: false },
-    { phase: 'blocked', errorCode: 'license_required' },
-  ],
-  [
-    '⭐ 卡绑在别的组织 ⇒ blocked 带上**那个码**，不是泛化的"没卡"',
-    { status: 'entitlement-rejected', relayReady: false, retryable: false, errorCode: 'license_bound_elsewhere' },
-    { phase: 'blocked', errorCode: 'license_bound_elsewhere' },
-  ],
-  [
-    '其它确定性裁决码原样透出',
-    { status: 'entitlement-rejected', relayReady: false, retryable: false, errorCode: 'activation_limit_reached' },
-    { phase: 'blocked', errorCode: 'activation_limit_reached' },
-  ],
-  [
-    '裁决却没带码（违约的实现）⇒ 取最保守的那个终局码',
-    { status: 'entitlement-rejected', relayReady: false, retryable: false },
-    { phase: 'blocked', errorCode: 'activation_failed' },
-  ],
-  [
-    '裁决却带 transport（不该发生）⇒ 宁可说成"再试一次"',
-    { status: 'entitlement-rejected', relayReady: false, retryable: false, errorCode: 'transport' },
-    { phase: 'retryable-error', errorCode: 'transport' },
-  ],
-  [
-    '⭐ 会话暂时问不出来 ⇒ retryable-error:auth_unavailable',
-    { status: 'auth-transient', relayReady: false, retryable: true },
-    { phase: 'retryable-error', errorCode: 'auth_unavailable' },
-  ],
-  [
-    '⭐ 取 key 的传输失败 ⇒ retryable-error:transport',
-    { status: 'auth-transient', relayReady: false, retryable: true, errorCode: 'transport' },
-    { phase: 'retryable-error', errorCode: 'transport' },
-  ],
-  [
-    '网关还没连上 ⇒ retryable-error:runtime_not_ready',
-    { status: 'runtime-not-ready', relayReady: false, retryable: true },
-    { phase: 'retryable-error', errorCode: 'runtime_not_ready' },
-  ],
-  [
-    '网关写失败 ⇒ retryable-error:relay_apply_failed',
-    { status: 'failed', relayReady: false, retryable: false },
-    { phase: 'retryable-error', errorCode: 'relay_apply_failed' },
-  ],
-  [
-    '明确没登录 ⇒ idle（界面本来就在登录页，这不是错误）',
-    { status: 'unauthenticated', relayReady: false, retryable: false },
-    { phase: 'idle' },
-  ],
-  [
-    '本机没接商业层 ⇒ idle（纯开发环境，别在登录页旁边挂一条"模型不可用"）',
-    { status: 'not-configured', relayReady: false, retryable: false },
-    { phase: 'idle' },
-  ],
-];
 
 /** 一个"连上的"网关客户端（`findConnectedGateway` 只认 `isConnected`）。 */
 function connectedGatewayClients(): Map<string, unknown> {
