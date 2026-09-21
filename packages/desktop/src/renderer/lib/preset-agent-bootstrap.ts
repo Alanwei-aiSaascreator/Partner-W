@@ -79,18 +79,10 @@ export function createPresetAgentBootstrapCoordinator() {
         await deps.refreshAgents();
         const currentAgentIds = deps.readAgentIds();
         missingIds = missingPresetIds(currentAgentIds);
-        if (missingIds.length === 0) {
-          return emit(gatewayId, {
-            phase: 'ready',
-            completed: PRESET_AGENT_IDS.length,
-            total: PRESET_AGENT_IDS.length,
-            missingIds: [],
-          });
-        }
-
         emit(gatewayId, {
           phase: 'installing',
-          completed: PRESET_AGENT_IDS.length - missingIds.length,
+          // 现有 ID 也要验关键文件/名称，不能在检查前先算“已完成”。
+          completed: 0,
           total: PRESET_AGENT_IDS.length,
           currentId: missingIds[0],
           missingIds,
@@ -109,7 +101,11 @@ export function createPresetAgentBootstrapCoordinator() {
 
         await deps.refreshAgents();
         missingIds = missingPresetIds(deps.readAgentIds());
-        if (missingIds.length === 0) {
+        const failedIds = result.failed
+          .map((failure) => failure.id)
+          .filter((id): id is PresetAgentId => PRESET_AGENT_IDS.includes(id as PresetAgentId));
+        const unresolvedIds = [...new Set<PresetAgentId>([...missingIds, ...failedIds])];
+        if (unresolvedIds.length === 0) {
           return emit(gatewayId, {
             phase: 'ready',
             completed: PRESET_AGENT_IDS.length,
@@ -119,13 +115,13 @@ export function createPresetAgentBootstrapCoordinator() {
         }
 
         const failedMessages = result.failed
-          .filter((failure) => missingIds.includes(failure.id as PresetAgentId))
+          .filter((failure) => unresolvedIds.includes(failure.id as PresetAgentId))
           .map((failure) => failure.error);
         return emit(gatewayId, {
           phase: 'error',
-          completed: PRESET_AGENT_IDS.length - missingIds.length,
+          completed: PRESET_AGENT_IDS.length - unresolvedIds.length,
           total: PRESET_AGENT_IDS.length,
-          missingIds,
+          missingIds: unresolvedIds,
           error: failedMessages.join('; ') || 'assistant setup incomplete',
         });
       } catch (error) {

@@ -93,7 +93,20 @@ describe('activateLicense', () => {
       return { ok: true };
     });
     getAllGatewayClientsMock.mockReturnValue(
-      new Map([['gw-1', { id: 'gw-1', isConnected: true, getConfig: getConfigMock, patchConfig: patchConfigMock }]]),
+      new Map([
+        [
+          'gw-1',
+          {
+            id: 'gw-1',
+            isConnected: true,
+            getConfig: getConfigMock,
+            patchConfig: patchConfigMock,
+            runConfigMutation: async <T>(
+              work: (tx: { getConfig: typeof getConfigMock; patchConfig: typeof patchConfigMock }) => Promise<T>,
+            ) => work({ getConfig: getConfigMock, patchConfig: patchConfigMock }),
+          },
+        ],
+      ]),
     );
 
     rpcMock.mockResolvedValue({

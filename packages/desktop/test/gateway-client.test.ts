@@ -106,6 +106,252 @@ describe('GatewayClient connection lifecycle', () => {
     expect(calculateReconnectDelay(MAX_RECONNECT_ATTEMPTS)).toBe(RECONNECT_DELAY_MS * 32);
   });
 
+  it('⭐ 同一个网关的配置写事务严格串行，失败也必须释放后续队列', async () => {
+    const { GatewayClient } = await import('../src/main/ws/gateway-client.js');
+    const client = new GatewayClient({
+      id: 'gw-1',
+      name: 'Gateway',
+      url: 'ws://127.0.0.1:18789',
+      auth: { token: 'token' },
+    });
+    clients.push(client);
+    let releaseFirst = (): void => {};
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const order: string[] = [];
+
+    const first = client.runConfigMutation(async () => {
+      order.push('first:start');
+      await firstGate;
+      order.push('first:end');
+      throw new Error('first failed');
+    });
+    const second = client.runConfigMutation(async () => {
+      order.push('second');
+      return 'recovered';
+    });
+
+    await vi.waitFor(() => expect(order).toEqual(['first:start']));
+    releaseFirst();
+    await expect(first).rejects.toThrow('first failed');
+    await expect(second).resolves.toBe('recovered');
+    expect(order).toEqual(['first:start', 'first:end', 'second']);
+  });
+
+  it('⭐ agents.create/update 必须加入同一条配置写队列，不能穿过 relay 事务', async () => {
+    const { GatewayClient } = await import('../src/main/ws/gateway-client.js');
+    const client = new GatewayClient({
+      id: 'gw-1',
+      name: 'Gateway',
+      url: 'ws://127.0.0.1:18789',
+      auth: { token: 'token' },
+    });
+    clients.push(client);
+    let releaseRelay = (): void => {};
+    const relayGate = new Promise<void>((resolve) => {
+      releaseRelay = resolve;
+    });
+    const sendReq = vi
+      .spyOn(client, 'sendReq')
+      .mockImplementation(async (method) =>
+        method === 'agents.list'
+          ? { agents: [{ id: 'main' }, { id: 'rongying-content' }] }
+          : { agentId: 'rongying-content' },
+      );
+
+    const relay = client.runConfigMutation(async () => relayGate);
+    const create = client.createAgent({ name: 'rongying-content', workspace: 'E:/workspace/rongying-content' });
+    const update = client.updateAgent({ agentId: 'rongying-content', name: '内容创作' });
+    await Promise.resolve();
+    expect(sendReq).not.toHaveBeenCalled();
+
+    releaseRelay();
+    await relay;
+    await expect(create).resolves.toEqual({ agentId: 'rongying-content' });
+    await expect(update).resolves.toEqual({ agentId: 'rongying-content' });
+    expect(sendReq).toHaveBeenCalledTimes(3);
+    expect(sendReq).toHaveBeenNthCalledWith(1, 'agents.create', {
+      name: 'rongying-content',
+      workspace: 'E:/workspace/rongying-content',
+    });
+    expect(sendReq).toHaveBeenNthCalledWith(2, 'agents.list', {}, { timeoutMs: 10_000 });
+    expect(sendReq).toHaveBeenNthCalledWith(3, 'agents.update', {
+      agentId: 'rongying-content',
+      name: '内容创作',
+    });
+  });
+
+  it('⭐⭐ agents.create 返回后必须等 runtime catalog 看见新 ID，才允许紧接 agents.update', async () => {
+    const { GatewayClient } = await import('../src/main/ws/gateway-client.js');
+    const client = new GatewayClient({
+      id: 'gw-1',
+      name: 'Gateway',
+      url: 'ws://127.0.0.1:18789',
+      auth: { token: 'token' },
+    });
+    clients.push(client);
+    let listReads = 0;
+    const sendReq = vi.spyOn(client, 'sendReq').mockImplementation(async (method) => {
+      if (method === 'agents.create') return { agentId: 'rongying-content' };
+      if (method === 'agents.list') {
+        listReads += 1;
+        return listReads === 1
+          ? { agents: [{ id: 'main' }] }
+          : { agents: [{ id: 'main' }, { id: 'rongying-content' }] };
+      }
+      throw new Error(`unexpected method: ${method}`);
+    });
+
+    let settled = false;
+    const create = client
+      .createAgent({ name: 'rongying-content', workspace: 'E:/workspace/rongying-content' })
+      .finally(() => {
+        settled = true;
+      });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(sendReq.mock.calls.map(([method]) => method)).toEqual(['agents.create', 'agents.list']);
+    expect(settled).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(100);
+    await expect(create).resolves.toEqual({ agentId: 'rongying-content' });
+    expect(sendReq.mock.calls.map(([method]) => method)).toEqual(['agents.create', 'agents.list', 'agents.list']);
+  });
+
+  it('⭐ create 已成功后 catalog RPC 失败不能抹掉 agentId，且队列必须释放', async () => {
+    const { GatewayClient } = await import('../src/main/ws/gateway-client.js');
+    const client = new GatewayClient({
+      id: 'gw-1',
+      name: 'Gateway',
+      url: 'ws://127.0.0.1:18789',
+      auth: { token: 'token' },
+    });
+    clients.push(client);
+    const sendReq = vi.spyOn(client, 'sendReq').mockImplementation(async (method) => {
+      if (method === 'agents.create') return { agentId: 'rongying-content' };
+      if (method === 'agents.list') throw new Error('request timeout: agents.list');
+      if (method === 'config.get') return { hash: 'h1', config: {} };
+      throw new Error(`unexpected method: ${method}`);
+    });
+
+    const create = client.createAgent({ name: 'rongying-content', workspace: 'E:/workspace/rongying-content' });
+    const resolved = expect(create).resolves.toMatchObject({
+      agentId: 'rongying-content',
+      visibilityConfirmed: false,
+      visibilityError: expect.stringContaining('request timeout: agents.list'),
+    });
+    await vi.runAllTimersAsync();
+    await resolved;
+    await expect(client.runConfigMutation((tx) => tx.getConfig())).resolves.toEqual({ hash: 'h1', config: {} });
+    expect(sendReq.mock.calls.map(([method]) => method)).toEqual(['agents.create', 'agents.list', 'config.get']);
+  });
+
+  it('⭐ runtime catalog 持续缺 ID 时只按 8.5 秒预算轮询，保留 agentId 且队列仍可用', async () => {
+    const { GatewayClient } = await import('../src/main/ws/gateway-client.js');
+    const client = new GatewayClient({
+      id: 'gw-1',
+      name: 'Gateway',
+      url: 'ws://127.0.0.1:18789',
+      auth: { token: 'token' },
+    });
+    clients.push(client);
+    const sendReq = vi.spyOn(client, 'sendReq').mockImplementation(async (method) => {
+      if (method === 'agents.create') return { agentId: 'rongying-content' };
+      if (method === 'agents.list') return { agents: [{ id: 'main' }] };
+      if (method === 'config.get') return { hash: 'h1', config: {} };
+      throw new Error(`unexpected method: ${method}`);
+    });
+
+    const create = client.createAgent({ name: 'rongying-content', workspace: 'E:/workspace/rongying-content' });
+    const resolved = expect(create).resolves.toMatchObject({
+      agentId: 'rongying-content',
+      visibilityConfirmed: false,
+      visibilityError: expect.stringContaining('visibility timeout'),
+    });
+    await vi.runAllTimersAsync();
+    await resolved;
+    await expect(client.runConfigMutation((tx) => tx.getConfig())).resolves.toEqual({ hash: 'h1', config: {} });
+    expect(sendReq.mock.calls.filter(([method]) => method === 'agents.list')).toHaveLength(10);
+  });
+
+  it('⭐ 8.5 秒预算的最后一次 catalog 读取看见 ID 时仍算成功', async () => {
+    const { GatewayClient } = await import('../src/main/ws/gateway-client.js');
+    const client = new GatewayClient({
+      id: 'gw-1',
+      name: 'Gateway',
+      url: 'ws://127.0.0.1:18789',
+      auth: { token: 'token' },
+    });
+    clients.push(client);
+    let listReads = 0;
+    const sendReq = vi.spyOn(client, 'sendReq').mockImplementation(async (method) => {
+      if (method === 'agents.create') return { agentId: 'rongying-content' };
+      if (method === 'agents.list') {
+        listReads += 1;
+        return {
+          agents: listReads === 10 ? [{ id: 'main' }, { id: 'rongying-content' }] : [{ id: 'main' }],
+        };
+      }
+      throw new Error(`unexpected method: ${method}`);
+    });
+
+    let settled = false;
+    const create = client
+      .createAgent({ name: 'rongying-content', workspace: 'E:/workspace/rongying-content' })
+      .finally(() => {
+        settled = true;
+      });
+    await vi.advanceTimersByTimeAsync(8_499);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(create).resolves.toEqual({ agentId: 'rongying-content' });
+    expect(sendReq.mock.calls.filter(([method]) => method === 'agents.list')).toHaveLength(10);
+  });
+
+  it('⭐ 慢 catalog RPC 也必须受 10 秒总墙钟限制，不能把十轮 15 秒叠成几分钟', async () => {
+    const { GatewayClient } = await import('../src/main/ws/gateway-client.js');
+    const client = new GatewayClient({
+      id: 'gw-1',
+      name: 'Gateway',
+      url: 'ws://127.0.0.1:18789',
+      auth: { token: 'token' },
+    });
+    clients.push(client);
+    let listReads = 0;
+    vi.spyOn(client, 'sendReq').mockImplementation(async (method, _params, meta) => {
+      if (method === 'agents.create') return { agentId: 'rongying-content' };
+      if (method !== 'agents.list') throw new Error(`unexpected method: ${method}`);
+      listReads += 1;
+      const responseMs = 4_000;
+      const timeoutMs = meta?.timeoutMs ?? 15_000;
+      return new Promise<Record<string, unknown>>((resolve, reject) => {
+        setTimeout(
+          () => {
+            if (timeoutMs < responseMs) reject(new Error('request timeout: agents.list'));
+            else resolve({ agents: [{ id: 'main' }] });
+          },
+          Math.min(responseMs, timeoutMs),
+        );
+      });
+    });
+
+    let settled = false;
+    const create = client
+      .createAgent({ name: 'rongying-content', workspace: 'E:/workspace/rongying-content' })
+      .finally(() => {
+        settled = true;
+      });
+    await vi.advanceTimersByTimeAsync(9_999);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(create).resolves.toMatchObject({
+      agentId: 'rongying-content',
+      visibilityConfirmed: false,
+    });
+    expect(listReads).toBe(3);
+  });
+
   it('rejects requests that exceed the 15-second timeout', async () => {
     const { GatewayClient } = await import('../src/main/ws/gateway-client.js');
     const client = new GatewayClient({

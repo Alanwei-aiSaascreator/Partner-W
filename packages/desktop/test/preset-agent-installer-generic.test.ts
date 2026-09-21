@@ -19,6 +19,7 @@ interface Recorder {
   calls: Array<{ fn: string; args: unknown[] }>;
   createAgent: (...args: unknown[]) => Promise<MutationResult>;
   updateAgent: (...args: unknown[]) => Promise<MutationResult>;
+  getAgentFile: (...args: unknown[]) => Promise<MutationResult>;
   setAgentFile: (...args: unknown[]) => Promise<MutationResult>;
   deleteAgent: (...args: unknown[]) => Promise<MutationResult>;
 }
@@ -34,12 +35,19 @@ function makeApi(overrides: Record<string, unknown> = {}): Recorder {
         const params = args[1] as { name: string };
         return { ok: true, result: { agentId: params.name } };
       }
+      if (fn === 'getAgentFile') {
+        return {
+          ok: true,
+          result: { agentId: args[1], file: { name: args[2], missing: false, content: '# existing\n' } },
+        };
+      }
       return { ok: true, result: {} };
     };
   return {
     calls,
     createAgent: rec('createAgent'),
     updateAgent: rec('updateAgent'),
+    getAgentFile: rec('getAgentFile'),
     setAgentFile: rec('setAgentFile'),
     deleteAgent: rec('deleteAgent'),
   };

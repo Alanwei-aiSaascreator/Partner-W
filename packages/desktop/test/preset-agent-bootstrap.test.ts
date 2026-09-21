@@ -24,15 +24,31 @@ function createDeps(agentIds: string[]): {
 }
 
 describe('preset agent bootstrap coordinator', () => {
-  it('finishes after one refresh when all bundled assistants already exist', async () => {
+  it('verifies file completeness even when all bundled assistant IDs already exist', async () => {
     const coordinator = createPresetAgentBootstrapCoordinator();
     const { deps } = createDeps(['main', ...PRESET_AGENT_IDS]);
 
     const snapshot = await coordinator.run('gw-1', deps);
 
     expect(snapshot).toMatchObject({ phase: 'ready', completed: 6, total: 6, missingIds: [] });
-    expect(deps.refreshAgents).toHaveBeenCalledOnce();
-    expect(deps.install).not.toHaveBeenCalled();
+    expect(deps.refreshAgents).toHaveBeenCalledTimes(2);
+    expect(deps.install).toHaveBeenCalledOnce();
+  });
+
+  it('⭐ installer 报半成品失败时，即使 ID 已出现也不能误判 ready', async () => {
+    const coordinator = createPresetAgentBootstrapCoordinator();
+    const { deps } = createDeps(['main', ...PRESET_AGENT_IDS]);
+    vi.mocked(deps.install).mockResolvedValue({
+      installed: [],
+      skipped: PRESET_AGENT_IDS.slice(1),
+      failed: [{ id: PRESET_AGENT_IDS[0], error: 'SOUL.md write failed' }],
+    });
+
+    const snapshot = await coordinator.run('gw-1', deps);
+
+    expect(snapshot.phase).toBe('error');
+    expect(snapshot.missingIds).toContain(PRESET_AGENT_IDS[0]);
+    expect(snapshot.error).toContain('SOUL.md write failed');
   });
 
   it('refreshes before and after installation and trusts the reconciled catalog', async () => {

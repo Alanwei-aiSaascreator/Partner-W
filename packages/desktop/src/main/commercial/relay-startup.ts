@@ -38,6 +38,13 @@ export function findConnectedGateway(): RelayGatewayHandle | null {
   return {
     getConfig: () => picked.getConfig(),
     patchConfig: (params) => picked.patchConfig(params),
+    runConfigMutation: (work) =>
+      picked.runConfigMutation((tx) =>
+        work({
+          getConfig: tx.getConfig,
+          patchConfig: tx.patchConfig,
+        }),
+      ),
   };
 }
 

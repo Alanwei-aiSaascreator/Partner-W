@@ -40,6 +40,13 @@ export function buildCommercialAccessCleanupDeps(): CommercialAccessCleanupDeps 
       return {
         getConfig: () => picked.getConfig(),
         patchConfig: (params) => picked.patchConfig(params),
+        runConfigMutation: (work) =>
+          picked.runConfigMutation((tx) =>
+            work({
+              getConfig: tx.getConfig,
+              patchConfig: tx.patchConfig,
+            }),
+          ),
       };
     },
     log: (event, data = {}) => getDebugLogger().info({ domain: 'commercial', event, data }),
@@ -65,11 +72,13 @@ async function performPendingCleanup(deps: CommercialAccessCleanupDeps): Promise
   const gateway = deps.getGateway();
   if (!gateway) return { cleaned: false, pending: true };
 
-  const result = await removeRelayConfig({
-    getConfig: gateway.getConfig,
-    patchConfig: gateway.patchConfig,
-    log: (event, data) => deps.log?.(event, data),
-  });
+  const remove = (tx: Pick<RelayGatewayHandle, 'getConfig' | 'patchConfig'>) =>
+    removeRelayConfig({
+      getConfig: tx.getConfig,
+      patchConfig: tx.patchConfig,
+      log: (event, data) => deps.log?.(event, data),
+    });
+  const result = await gateway.runConfigMutation(remove);
   if (!result.cleaned) {
     deps.log?.('relay.cleanup-pending', { errorCode: result.errorCode, error: result.error });
     // 把失败原因**透给调用方**：它决定"要不要接着重试"，而这两类必须分开

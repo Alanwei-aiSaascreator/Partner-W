@@ -84,9 +84,16 @@ function isVerifiedAgentFileWrite(
 }
 
 const MAX_AGENT_NAME_CONFIG_RETRIES = 3;
+const AGENT_VISIBILITY_BACKOFF_MS = [100, 200, 400, 800, 1_000, 1_000, 1_500, 1_500, 2_000] as const;
+const AGENT_VISIBILITY_TIMEOUT_MS = 10_000;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isAgentListed(payload: unknown, agentId: string): boolean {
+  if (!isRecord(payload) || !Array.isArray(payload['agents'])) return false;
+  return payload['agents'].some((agent) => isRecord(agent) && agent['id'] === agentId);
 }
 
 function isVerifiedAgentIdentityName(payload: Record<string, unknown>, agentId: string, expectedName: string): boolean {
@@ -151,6 +158,19 @@ type GatewayClientOptions = {
   onPairingSuccess?: (gatewayId: string) => void;
 };
 
+export interface GatewayConfigMutationTx {
+  getConfig: () => Promise<Record<string, unknown>>;
+  setConfig: (params: { raw: string; baseHash?: string }) => Promise<Record<string, unknown>>;
+  patchConfig: (params: {
+    raw: string;
+    baseHash?: string;
+    replacePaths?: string[];
+    sessionKey?: string;
+    note?: string;
+    restartDelayMs?: number;
+  }) => Promise<Record<string, unknown>>;
+}
+
 type PendingReq = {
   resolve: (payload: Record<string, unknown>) => void;
   reject: (err: Error) => void;
@@ -207,6 +227,11 @@ export class GatewayClient {
    */
   private readonly advertisedSurface = createAdvertisedSurface();
   private onPairingSuccess?: (gatewayId: string) => void;
+  /**
+   * OpenClaw 的 config.get/config.patch 与 agents.create/update/delete 共用一份配置。
+   * 把整段事务接到同一条尾链，避免冷启时 relay 和预置助手互相打掉 baseHash。
+   */
+  private configMutationTail: Promise<void> = Promise.resolve();
 
   constructor(config: GatewayClientConfig, opts?: GatewayClientOptions) {
     this.gatewayId = config.id;
@@ -235,6 +260,21 @@ export class GatewayClient {
     if (config.tlsVerify !== undefined) this.tlsVerify = config.tlsVerify !== false;
     this.reconnectAttempts = 0;
     this.connect();
+  }
+
+  runConfigMutation<T>(work: (tx: GatewayConfigMutationTx) => Promise<T>): Promise<T> {
+    const tx: GatewayConfigMutationTx = {
+      getConfig: () => this.sendReq('config.get', {}),
+      setConfig: (params) => this.sendReq('config.set', params),
+      patchConfig: (params) => this.sendReq('config.patch', params),
+    };
+    const operation = this.configMutationTail.then(() => work(tx));
+    // 失败只属于本次调用；队列尾必须恢复为 fulfilled，否则后续写会永久被毒死。
+    this.configMutationTail = operation.then(
+      () => undefined,
+      () => undefined,
+    );
+    return operation;
   }
 
   connect(): void {
@@ -636,7 +676,7 @@ export class GatewayClient {
   sendReq(
     method: string,
     params: Record<string, unknown>,
-    meta?: { requestId?: string; sessionKey?: string; taskId?: string },
+    meta?: { requestId?: string; sessionKey?: string; taskId?: string; timeoutMs?: number },
   ): Promise<Record<string, unknown>> {
     return new Promise((resolve, reject) => {
       if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
@@ -676,6 +716,10 @@ export class GatewayClient {
       const requestId = meta?.requestId ?? randomUUID();
       const frame: GatewayReqFrame = { type: 'req', id, method, params };
       const startedAt = Date.now();
+      const timeoutMs =
+        typeof meta?.timeoutMs === 'number' && Number.isFinite(meta.timeoutMs) && meta.timeoutMs > 0
+          ? Math.min(meta.timeoutMs, REQ_TIMEOUT_MS)
+          : REQ_TIMEOUT_MS;
 
       const timer = setTimeout(() => {
         this.pendingRequests.delete(id);
@@ -694,7 +738,7 @@ export class GatewayClient {
         const timeoutErr = new Error(`request timeout: ${method}`) as Error & { code?: string };
         timeoutErr.code = 'TIMEOUT';
         reject(timeoutErr);
-      }, REQ_TIMEOUT_MS);
+      }, timeoutMs);
 
       this.pendingRequests.set(id, {
         resolve,
@@ -799,7 +843,67 @@ export class GatewayClient {
     emoji?: string;
     avatar?: string;
   }): Promise<Record<string, unknown>> {
-    return this.sendReq('agents.create', params);
+    return this.runConfigMutation(async () => {
+      const result = await this.sendReq('agents.create', params);
+      const agentId = typeof result['agentId'] === 'string' ? result['agentId'] : '';
+      if (agentId) {
+        const visibility = await this.waitForAgentVisibility(agentId);
+        if (!visibility.confirmed) {
+          // agents.create 已经产生持久副作用，后续 watcher 检查失败不能把创建结果
+          // 抹成“失败”。保留 agentId 给编排层继续配置或下一轮幂等修复。
+          getDebugLogger().warn({
+            domain: 'gateway',
+            event: 'gateway.agent-create.visibility-pending',
+            gatewayId: this.gatewayId,
+            data: { agentId, error: visibility.error },
+          });
+          return {
+            ...result,
+            visibilityConfirmed: false,
+            visibilityError: visibility.error,
+          };
+        }
+      }
+      return result;
+    });
+  }
+
+  /**
+   * `agents.create` 的磁盘写完成早于 runtime config watcher；紧接着 update 会误报
+   * `agent not found`。轮询与 update 同源的 `agents.list`，直到新 ID 真正进入运行态。
+   */
+  private async waitForAgentVisibility(agentId: string): Promise<{ confirmed: boolean; error?: string }> {
+    const startedAt = Date.now();
+    let lastError = '';
+    for (let attempt = 0; attempt <= AGENT_VISIBILITY_BACKOFF_MS.length; attempt += 1) {
+      const remainingMs = AGENT_VISIBILITY_TIMEOUT_MS - (Date.now() - startedAt);
+      if (remainingMs <= 0) break;
+      try {
+        if (isAgentListed(await this.sendReq('agents.list', {}, { timeoutMs: remainingMs }), agentId)) {
+          return { confirmed: true };
+        }
+        lastError = 'agent is not present in runtime catalog';
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        // 单次 RPC 自己已有 15 秒超时；transport 失败不再叠十轮，且不能抹掉
+        // 前面已经成功返回的 agents.create/agentId。
+        return {
+          confirmed: false,
+          error: `agent "${agentId}" visibility check failed: ${message}`,
+        };
+      }
+
+      const delayMs = AGENT_VISIBILITY_BACKOFF_MS[attempt];
+      if (delayMs === undefined) break;
+      const remainingAfterRequest = AGENT_VISIBILITY_TIMEOUT_MS - (Date.now() - startedAt);
+      if (remainingAfterRequest <= 0) break;
+      await new Promise<void>((resolve) => setTimeout(resolve, Math.min(delayMs, remainingAfterRequest)));
+    }
+
+    return {
+      confirmed: false,
+      error: `agent "${agentId}" visibility timeout: ${lastError}`,
+    };
   }
 
   async updateAgent(params: {
@@ -809,6 +913,19 @@ export class GatewayClient {
     model?: string;
     avatar?: string;
   }): Promise<Record<string, unknown>> {
+    return this.runConfigMutation((tx) => this.updateAgentWithinConfigMutation(params, tx));
+  }
+
+  private async updateAgentWithinConfigMutation(
+    params: {
+      agentId: string;
+      name?: string;
+      workspace?: string;
+      model?: string;
+      avatar?: string;
+    },
+    tx: GatewayConfigMutationTx,
+  ): Promise<Record<string, unknown>> {
     try {
       return await this.sendReq('agents.update', params);
     } catch (error) {
@@ -833,12 +950,12 @@ export class GatewayClient {
       if (!isVerifiedAgentIdentityName(identityReadback, params.agentId, safeName)) throw error;
 
       for (let attempt = 1; attempt <= MAX_AGENT_NAME_CONFIG_RETRIES; attempt += 1) {
-        const snapshot = await this.getConfig();
+        const snapshot = await tx.getConfig();
         const baseHash = configHashOf(snapshot);
         if (!baseHash || !readAgentConfigEntry(snapshot, params.agentId)) throw error;
 
         try {
-          await this.patchConfig({
+          await tx.patchConfig({
             baseHash,
             raw: JSON.stringify({
               agents: {
@@ -853,7 +970,7 @@ export class GatewayClient {
           throw patchError;
         }
 
-        const verified = await this.getConfig();
+        const verified = await tx.getConfig();
         if (isAgentNameConfigApplied(verified, params.agentId, safeName)) {
           getDebugLogger().warn({
             domain: 'gateway',
@@ -870,7 +987,7 @@ export class GatewayClient {
   }
 
   async deleteAgent(params: { agentId: string; deleteFiles?: boolean }): Promise<Record<string, unknown>> {
-    return this.sendReq('agents.delete', params);
+    return this.runConfigMutation(() => this.sendReq('agents.delete', params));
   }
 
   async listAgentFiles(agentId: string): Promise<Record<string, unknown>> {
@@ -971,7 +1088,7 @@ export class GatewayClient {
   }
 
   async setConfig(params: { raw: string; baseHash?: string }): Promise<Record<string, unknown>> {
-    return this.sendReq('config.set', params);
+    return this.runConfigMutation((tx) => tx.setConfig(params));
   }
 
   async patchConfig(params: {
@@ -982,7 +1099,7 @@ export class GatewayClient {
     note?: string;
     restartDelayMs?: number;
   }): Promise<Record<string, unknown>> {
-    return this.sendReq('config.patch', params);
+    return this.runConfigMutation((tx) => tx.patchConfig(params));
   }
 
   async getConfigSchema(): Promise<Record<string, unknown>> {

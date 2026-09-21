@@ -36,6 +36,7 @@ function makeGateway(initial: unknown = { config: {} }): {
   gateway: RelayGatewayHandle;
   patchConfig: ReturnType<typeof vi.fn>;
   getConfig: ReturnType<typeof vi.fn>;
+  runConfigMutationCall: ReturnType<typeof vi.fn>;
 } {
   let snapshot = initial as { config?: Record<string, unknown>; hash?: string };
   const patchConfig = vi.fn(async ({ raw }: { baseHash: string; raw: string }) => {
@@ -53,11 +54,16 @@ function makeGateway(initial: unknown = { config: {} }): {
     return { ok: true };
   });
   const getConfig = vi.fn(async () => ({ ...snapshot, hash: snapshot.hash ?? 'h1' }));
-  return { gateway: { getConfig, patchConfig }, patchConfig, getConfig };
+  const runConfigMutationCall = vi.fn();
+  const runConfigMutation: RelayGatewayHandle['runConfigMutation'] = async (work) => {
+    runConfigMutationCall();
+    return work({ getConfig, patchConfig });
+  };
+  return { gateway: { getConfig, patchConfig, runConfigMutation }, patchConfig, getConfig, runConfigMutationCall };
 }
 
 function makeDeps(over: Partial<RelayBootstrapDeps> = {}, initialSnapshot: unknown = { config: {} }) {
-  const { gateway, patchConfig, getConfig } = makeGateway(initialSnapshot);
+  const { gateway, patchConfig, getConfig, runConfigMutationCall } = makeGateway(initialSnapshot);
   const deps: RelayBootstrapDeps = {
     hasCommercialClient: () => true,
     checkAuth: async () => 'authenticated',
@@ -67,7 +73,7 @@ function makeDeps(over: Partial<RelayBootstrapDeps> = {}, initialSnapshot: unkno
     deviceFingerprint: () => 'fp-1',
     ...over,
   };
-  return { deps, gateway, patchConfig, getConfig };
+  return { deps, gateway, patchConfig, getConfig, runConfigMutationCall };
 }
 
 /** 网关里已经有一份**指向中转**的 provider（幂等命中用）。 */
@@ -176,10 +182,13 @@ describe('ensureRelayConfigured —— runtime ready ≠ commercial ready', () =
   });
 
   it('⭐ 读配置就抛（连不上）⇒ 也归 runtime-not-ready，别把网络问题说成没授权', async () => {
+    const getConfig = async () => Promise.reject(new Error('not connected'));
+    const patchConfig = async () => ({});
     const { deps } = makeDeps({
       getGateway: () => ({
-        getConfig: async () => Promise.reject(new Error('not connected')),
-        patchConfig: async () => ({}),
+        getConfig,
+        patchConfig,
+        runConfigMutation: (work) => work({ getConfig, patchConfig }),
       }),
     });
     const res = await ensureRelayConfigured(deps);
@@ -191,12 +200,13 @@ describe('ensureRelayConfigured —— runtime ready ≠ commercial ready', () =
 
 describe('ensureRelayConfigured —— 应用配置', () => {
   it('⭐ 已登录 + 有卡 + 网关空 ⇒ 取 key 并写进网关（clawrouter → relay）', async () => {
-    const { deps, patchConfig } = makeDeps();
+    const { deps, patchConfig, runConfigMutationCall } = makeDeps();
     const res = await ensureRelayConfigured(deps);
 
     expect(res.status).toBe('applied');
     expect(res.relayReady).toBe(true);
     expect(patchConfig).toHaveBeenCalledTimes(1);
+    expect(runConfigMutationCall, 'relay 的 get→patch→verify 必须是一笔不可穿透的事务').toHaveBeenCalledOnce();
 
     const patch = JSON.parse(patchConfig.mock.calls[0][0].raw) as {
       models: { providers: Record<string, { baseUrl: string; apiKey: string }> };
@@ -269,9 +279,12 @@ describe('ensureRelayConfigured —— 幂等 & 配置变化', () => {
 
 describe('ensureRelayConfigured —— 写失败 & 韧性', () => {
   it('⭐ 网关拒绝写入 ⇒ failed（relayReady=false），**不抛**', async () => {
+    const getConfig = async () => ({ hash: 'h1', config: {} });
+    const patchConfig = async () => Promise.reject(new Error('schema rejected'));
     const gateway: RelayGatewayHandle = {
-      getConfig: async () => ({ hash: 'h1', config: {} }),
-      patchConfig: async () => Promise.reject(new Error('schema rejected')),
+      getConfig,
+      patchConfig,
+      runConfigMutation: (work) => work({ getConfig, patchConfig }),
     };
     const { deps } = makeDeps({ getGateway: () => gateway });
 

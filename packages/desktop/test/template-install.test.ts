@@ -42,12 +42,19 @@ function makeApi(overrides: Record<string, unknown> = {}) {
         const params = args[1] as { name: string };
         return { ok: true, result: { agentId: params.name } };
       }
+      if (fn === 'getAgentFile') {
+        return {
+          ok: true,
+          result: { agentId: args[1], file: { name: args[2], missing: false, content: '# existing\n' } },
+        };
+      }
       return { ok: true, result: {} };
     };
   return {
     calls,
     createAgent: rec('createAgent'),
     updateAgent: rec('updateAgent'),
+    getAgentFile: rec('getAgentFile'),
     setAgentFile: rec('setAgentFile'),
     deleteAgent: rec('deleteAgent'),
   };

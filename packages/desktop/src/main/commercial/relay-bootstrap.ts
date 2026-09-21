@@ -83,6 +83,13 @@ export interface RelayBootstrapResult {
 export interface RelayGatewayHandle {
   getConfig: () => Promise<unknown>;
   patchConfig: (params: { baseHash: string; raw: string; replacePaths?: string[] }) => Promise<unknown>;
+  /** 把 relay 的 get→patch→verify 作为一笔事务排进该网关的配置写队列。 */
+  runConfigMutation: <T>(
+    work: (tx: {
+      getConfig: () => Promise<unknown>;
+      patchConfig: (params: { baseHash: string; raw: string; replacePaths?: string[] }) => Promise<unknown>;
+    }) => Promise<T>,
+  ) => Promise<T>;
 }
 
 export interface RelayBootstrapDeps {
@@ -224,15 +231,17 @@ export async function ensureRelayConfigured(deps: RelayBootstrapDeps): Promise<R
     return { status: 'unlicensed', relayReady: false, detail: 'no relay key issued for this license' };
   }
 
-  const result = await applyRelayConfig(
-    {
-      getConfig: gateway.getConfig,
-      patchConfig: gateway.patchConfig,
-      resolveDefaultModel: deps.resolveDefaultModel,
-      log: (event, data) => log(event, data),
-    },
-    { relayKey, deviceFingerprint: deps.deviceFingerprint() },
-  );
+  const apply = (tx: Pick<RelayGatewayHandle, 'getConfig' | 'patchConfig'>) =>
+    applyRelayConfig(
+      {
+        getConfig: tx.getConfig,
+        patchConfig: tx.patchConfig,
+        resolveDefaultModel: deps.resolveDefaultModel,
+        log: (event, data) => log(event, data),
+      },
+      { relayKey, deviceFingerprint: deps.deviceFingerprint() },
+    );
+  const result = await gateway.runConfigMutation(apply);
 
   if (result.configured) {
     log('relay.bootstrap.applied', { provider: RELAY_PROVIDER_ID });

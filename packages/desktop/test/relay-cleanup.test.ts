@@ -5,6 +5,7 @@ import {
   requestCommercialAccessCleanup,
   type CommercialAccessCleanupDeps,
 } from '../src/main/commercial/relay-cleanup.js';
+import type { RelayGatewayHandle } from '../src/main/commercial/relay-bootstrap.js';
 import { RELAY_BASE_URL } from '../src/main/commercial/relay-config.js';
 
 function fixture(connected: boolean) {
@@ -27,9 +28,12 @@ function fixture(connected: boolean) {
     }
     return { ok: true };
   });
-  const gateway = {
-    getConfig: vi.fn(async () => ({ hash: 'h1', config: gatewayConfig })),
+  const getConfig = vi.fn(async () => ({ hash: 'h1', config: gatewayConfig }));
+  const runConfigMutation: RelayGatewayHandle['runConfigMutation'] = async (work) => work({ getConfig, patchConfig });
+  const gateway: RelayGatewayHandle = {
+    getConfig,
     patchConfig,
+    runConfigMutation,
   };
   const deps: CommercialAccessCleanupDeps = {
     readCommercialConfig: () => commercial,
@@ -94,9 +98,12 @@ function fixtureWithRealisticGateway(rejectEverything = false) {
     }
     return { ok: true };
   });
-  const gateway = {
-    getConfig: vi.fn(async () => ({ hash: 'h1', config: gatewayConfig })),
+  const getConfig = vi.fn(async () => ({ hash: 'h1', config: gatewayConfig }));
+  const runConfigMutation: RelayGatewayHandle['runConfigMutation'] = async (work) => work({ getConfig, patchConfig });
+  const gateway: RelayGatewayHandle = {
+    getConfig,
     patchConfig,
+    runConfigMutation,
   };
   const deps: CommercialAccessCleanupDeps = {
     readCommercialConfig: () => commercial,

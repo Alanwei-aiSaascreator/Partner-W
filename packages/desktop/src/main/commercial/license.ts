@@ -226,14 +226,16 @@ async function configureRelay(relayKey: string | null): Promise<boolean> {
     return false;
   }
 
-  const result = await applyRelayConfig(
-    {
-      getConfig: () => gateway.getConfig(),
-      patchConfig: (params) => gateway.patchConfig(params),
-      resolveDefaultModel: fetchFirstRelayModel,
-      log: (event, data) => getDebugLogger().info({ domain: 'commercial', event, data }),
-    },
-    { relayKey, deviceFingerprint: deviceFingerprint() },
+  const result = await gateway.runConfigMutation((tx) =>
+    applyRelayConfig(
+      {
+        getConfig: tx.getConfig,
+        patchConfig: tx.patchConfig,
+        resolveDefaultModel: fetchFirstRelayModel,
+        log: (event, data) => getDebugLogger().info({ domain: 'commercial', event, data }),
+      },
+      { relayKey, deviceFingerprint: deviceFingerprint() },
+    ),
   );
 
   if (!result.configured) {

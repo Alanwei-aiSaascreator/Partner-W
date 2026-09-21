@@ -24,13 +24,17 @@ function agentIdsFor(gatewayId: string): string[] {
   return useUiStore.getState().agentCatalogByGateway[gatewayId]?.agents.map((agent) => agent.id) ?? [];
 }
 
-function createBootstrapDeps(gatewayId: string): PresetAgentBootstrapDeps {
+export function createBootstrapDeps(gatewayId: string): PresetAgentBootstrapDeps {
   return {
     refreshAgents: () => fetchAgentsForGateway(gatewayId, { force: true }),
     readAgentIds: () => agentIdsFor(gatewayId),
     install: async (currentAgentIds, onProgress) => {
       const workspaceRoot = await window.clawwork.getWorkspacePath();
       if (!workspaceRoot) throw new Error(i18n.t('presetAgents.workspaceUnavailable'));
+      const presetIds = new Set<string>(PRESET_AGENT_DEFINITIONS.map((definition) => definition.id));
+      const repairAgentIds = (useUiStore.getState().agentCatalogByGateway[gatewayId]?.agents ?? [])
+        .filter((agent) => presetIds.has(agent.id) && (agent.name === agent.id || agent.identity?.name === agent.id))
+        .map((agent) => agent.id);
       const displayNames = Object.fromEntries(
         PRESET_AGENT_DEFINITIONS.map((definition) => [definition.id, i18n.t(definition.displayNameKey)]),
       );
@@ -38,6 +42,9 @@ function createBootstrapDeps(gatewayId: string): PresetAgentBootstrapDeps {
         gatewayId,
         workspaceRoot,
         currentAgentIds,
+        repairAgentIds,
+        verifyExisting: true,
+        preservePartialOnFailure: true,
         displayNames,
         api: window.clawwork,
         onProgress,
