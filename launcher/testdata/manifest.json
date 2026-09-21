@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "channel": "internal",
+  "version": "0.0.26",
+  "minLauncherVersion": "1.0.0",
+  "packageUrl": "https://api.rongyinghudong.com/updates/internal/0.0.26/portable.zip",
+  "packageSize": 4096,
+  "packageSha256": "470024c3f9a7c73be51885239be6443c559f2ca3bfdcce8c91703307f994eac4",
+  "fileManifestSha256": "8634cf77da5ccdc91fcfb466ba7eab64e7e953fbdd1f1e64363ae7daaab75f02",
+  "publishedAt": "2026-09-21T00:00:00.000Z",
+  "mandatory": false,
+  "signature": "cVP1GbmA9u9hEE5HxbwTHWT9Zhu5lr0c7TPpGCOjV+Zu9+4LLfO4UKp7njLAf10BK59Zv3uocIkL/e2K4MGkCA=="
+}
