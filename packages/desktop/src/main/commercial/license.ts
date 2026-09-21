@@ -159,9 +159,16 @@ export type ActivationErrorCode =
  * about which check failed, so those still have to be told apart by the message
  * text the function emits.
  *
- * ⚠️ 返回的是**闭集**里的码，不是自由字符串；调用方（含 relay 取 key 的边界）
- *    只该转述这个码，**不该**把服务端的原始 message 再往下传或写进日志 ——
- *    `activate_license` 的入参就是卡密，服务端文案里可能回显它。
+ * ⚠️ 返回的是**闭集**里的码，不是自由字符串。
+ *
+ * ## 原始 message 的口径（别读成全局承诺）
+ *
+ * - **结构化中继路径**（`relay-startup.ts` 取中转 key）**只**用这个码：原文既不进
+ *   日志、也不进 `RelayBootstrapResult`。`activate_license` 的入参就是卡密，
+ *   服务端文案很可能回显它。
+ * - **手动激活**那条 IPC 路径**刻意**仍把 `String(error.message)` 一起返回给界面
+ *   （`activateLicense` 的 `IpcResult.error`）—— 那是 `90c9853` 特意加的出口：
+ *   用户要看到"为什么"，界面上按 `errorCode` 选文案、不解析这段文本。
  */
 export function mapActivationError(error: { code?: string; message?: string }): ActivationErrorCode {
   const sqlState = typeof error.code === 'string' ? error.code : '';

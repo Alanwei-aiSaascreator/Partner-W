@@ -108,7 +108,13 @@ export interface RelayBootstrapResult {
    * `runtime ready`，模型能不能用要看这个。
    */
   relayReady: boolean;
-  /** 给人看的补充（**绝不含任何密钥**）。 */
+  /**
+   * 给人看的补充。
+   *
+   * 🔴 **必须永远无密**：整个结果会被整份摊进调试日志
+   * （`relay-startup.ts` 的 `notifyRelayBootstrapNeeded` 与 `main/index.ts` 都是
+   * `{...res}`），所以这里只能放安全码与人话，**不许**放 relay key / 卡密 / 原始 message。
+   */
   detail?: string;
   /**
    * 取中转 key 那一步的**安全错误码**（见 `RelayKeyFetchErrorCode`）。
@@ -120,13 +126,19 @@ export interface RelayBootstrapResult {
   /**
    * 等一等会不会好。
    *
-   * - `true`：传输类（网络 / 超时）—— 交给**既有**的有界退避再试；
-   * - `false`：确定性（卡绑在别的组织 / 卡失效 / 没卡 / 网关拒了补丁）——
-   *   重试一万次结果一样，**尤其别为了它再发一次 `activate_license`**。
+   * ⚠️ **每个返回点都必须显式设置**（不是可选字段）：只在被分类的那两条分支上设置，
+   * 会留下 `auth-transient` 有时带、有时不带，以及 `runtime-not-ready`（循环**真的会
+   * 重试**它）根本没有这个字段 —— 调用方拿到 `undefined` 只能靠猜。取值以**重试循环
+   * 的真实行为**为准（见 `bootstrapRelayWithRetry`）：
    *
-   * 只有能被归类的那几个分支会带上它（没带 = 由 `status` 自身表达语义）。
+   * - `true`：只有 `runtime-not-ready`（网关还没连上，轮询）与 `auth-transient`
+   *   （会话/传输暂时问不出来，有界退避）；
+   * - `false`：其余全部 —— 明确没登录 / 没卡 / **确定性拒绝**（卡绑在别的组织 /
+   *   卡失效 / 没下发 key）/ 写失败 / 已经就绪（applied / already-applied）/
+   *   本机没接商业层（not-configured）。重试一万次结果一样，**尤其别为了它再发一次
+   *   `activate_license`**。
    */
-  retryable?: boolean;
+  retryable: boolean;
 }
 
 export interface RelayGatewayHandle {
@@ -190,7 +202,7 @@ export async function ensureRelayConfigured(deps: RelayBootstrapDeps): Promise<R
   if (!deps.hasCommercialClient()) {
     // 纯净开发环境：没有 Supabase 配置 ⇒ 这不是错误，是「没接商业层」。
     log('relay.bootstrap.not-configured');
-    return { status: 'not-configured', relayReady: false };
+    return { status: 'not-configured', relayReady: false, retryable: false };
   }
 
   let auth: AuthCheck;
@@ -205,11 +217,16 @@ export async function ensureRelayConfigured(deps: RelayBootstrapDeps): Promise<R
     // ⚠️ 这一条**不能**说成 unauthenticated：一次 8s 超时不该等价于用户退出登录。
     //    调用方（bootstrapCommercialRelay）会对它做**有界退避重试**。
     log('relay.bootstrap.auth-transient-failure');
-    return { status: 'auth-transient', relayReady: false, detail: 'auth check could not reach the backend' };
+    return {
+      status: 'auth-transient',
+      relayReady: false,
+      retryable: true,
+      detail: 'auth check could not reach the backend',
+    };
   }
   if (auth === 'unauthenticated') {
     log('relay.bootstrap.unauthenticated');
-    return { status: 'unauthenticated', relayReady: false };
+    return { status: 'unauthenticated', relayReady: false, retryable: false };
   }
   log('relay.bootstrap.authenticated');
 
@@ -225,16 +242,27 @@ export async function ensureRelayConfigured(deps: RelayBootstrapDeps): Promise<R
           return {
             status: 'failed',
             relayReady: false,
+            retryable: false,
             detail: `previous account cleanup was rejected (${prepared.errorCode})`,
           };
         }
         // 网关没连上 / 传输抖动：等一等真的会好，交给调用方轮询。
         log('relay.bootstrap.cleanup-pending', { errorCode: prepared.errorCode ?? 'gateway-offline' });
-        return { status: 'runtime-not-ready', relayReady: false, detail: 'previous account cleanup pending' };
+        return {
+          status: 'runtime-not-ready',
+          relayReady: false,
+          retryable: true,
+          detail: 'previous account cleanup pending',
+        };
       }
     } catch (error) {
       log('relay.bootstrap.cleanup-failed', { message: messageOf(error) });
-      return { status: 'runtime-not-ready', relayReady: false, detail: 'previous account cleanup failed' };
+      return {
+        status: 'runtime-not-ready',
+        relayReady: false,
+        retryable: true,
+        detail: 'previous account cleanup failed',
+      };
     }
   }
 
@@ -254,7 +282,7 @@ export async function ensureRelayConfigured(deps: RelayBootstrapDeps): Promise<R
   if (!gateway) {
     // ⚠️ **可重试**：调用方该等网关连上再来，而不是把它当成"没激活"。
     log('relay.bootstrap.runtime-not-ready');
-    return { status: 'runtime-not-ready', relayReady: false };
+    return { status: 'runtime-not-ready', relayReady: false, retryable: true };
   }
 
   // 幂等快路径：网关已经有一个**指向中转**的 provider ⇒ 一个字节都不写，
@@ -266,12 +294,12 @@ export async function ensureRelayConfigured(deps: RelayBootstrapDeps): Promise<R
     snapshot = await gateway.getConfig();
   } catch (error) {
     log('relay.bootstrap.config-read-failed', { message: messageOf(error) });
-    return { status: 'runtime-not-ready', relayReady: false, detail: messageOf(error) };
+    return { status: 'runtime-not-ready', relayReady: false, retryable: true, detail: messageOf(error) };
   }
 
   if (relayProviderIds(snapshot).size > 0) {
     log('relay.bootstrap.already-applied', { provider: RELAY_PROVIDER_ID });
-    return { status: 'already-applied', relayReady: true };
+    return { status: 'already-applied', relayReady: true, retryable: false };
   }
 
   let keyResult: RelayKeyFetchResult;
@@ -340,13 +368,14 @@ export async function ensureRelayConfigured(deps: RelayBootstrapDeps): Promise<R
 
   if (result.configured) {
     log('relay.bootstrap.applied', { provider: RELAY_PROVIDER_ID });
-    return { status: 'applied', relayReady: true };
+    return { status: 'applied', relayReady: true, retryable: false };
   }
 
   log('relay.bootstrap.failed', { errorCode: result.errorCode, error: result.error });
   return {
     status: 'failed',
     relayReady: false,
+    retryable: false,
     detail: `${result.errorCode ?? 'unknown'}: ${result.error ?? ''}`.trim(),
   };
 }
@@ -517,7 +546,7 @@ export async function bootstrapRelayWithRetry(
   const now = opts.now ?? (() => Date.now());
   const waitMs = opts.waitForGatewayMs ?? DEFAULT_WAIT_MS;
 
-  if (!deps.hasCommercialClient()) return { status: 'not-configured', relayReady: false };
+  if (!deps.hasCommercialClient()) return { status: 'not-configured', relayReady: false, retryable: false };
 
   const deadline = now() + waitMs;
   let authRetries = 0;

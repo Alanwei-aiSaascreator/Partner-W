@@ -229,4 +229,18 @@ describe('activateLicense', () => {
       'license_bound_elsewhere',
     );
   });
+
+  /**
+   * ⭐ P0002 那一支的**两个**出口各钉一次。
+   *
+   * P0002 同时盖住「这个用户没有组织」（账号本身坏了）与「卡号查不到」（卡的问题）——
+   * 前者**不能**说成"你的卡不对"，否则用户会拿着好卡反复重试。这是一支三元表达式，
+   * 只断言其中之一等于让它有一半可以悄悄退化。
+   */
+  it('⭐ P0002 的两支：没有组织 ⇒ activation_failed；卡查不到 ⇒ license_not_found', async () => {
+    const { mapActivationError } = await import('../src/main/commercial/license.js');
+
+    expect(mapActivationError({ code: 'P0002', message: 'no organization for user' })).toBe('activation_failed');
+    expect(mapActivationError({ code: 'P0002', message: 'license key not found' })).toBe('license_not_found');
+  });
 });

@@ -10,9 +10,11 @@ import type {
   AuthCheck,
   RelayBootstrapDeps,
   RelayBootstrapRunOptions,
+  RelayBootstrapStatus,
   RelayGatewayHandle,
   RelayKeyFetchResult,
 } from '../src/main/commercial/relay-bootstrap.js';
+import { advancingClock } from './helpers/advancing-clock.js';
 
 /**
  * 启动时的商业配置落地。
@@ -172,16 +174,18 @@ describe('bootstrapRelayWithRetry —— 确定性拒绝一次都不重试', () 
         retryable: false,
       }),
     );
-    const sleep = vi.fn(async () => {});
+    // ⚠️ 时钟**随 sleep 前进**（`test/helpers/advancing-clock.ts`）：冻结时钟 + 空 sleep
+    //    会让 deadline 永远够不到 —— 那既是死循环的形状，也让"4 分钟窗口"根本没被跑到。
+    const clock = advancingClock();
     const { deps } = makeDeps({ fetchRelayKey });
 
-    const res = await bootstrapRelayWithRetry(deps, { sleep, now: () => 0, waitForGatewayMs: 240_000 });
+    const res = await bootstrapRelayWithRetry(deps, { ...clock, waitForGatewayMs: 240_000 });
 
     expect(res.status).toBe('entitlement-rejected');
     expect(res.errorCode).toBe('license_bound_elsewhere');
     expect(res.retryable).toBe(false);
     expect(fetchRelayKey, '确定性拒绝 ⇒ 整个重试窗口里只该问服务端一次').toHaveBeenCalledTimes(1);
-    expect(sleep, '既不该退避，也不该轮询').not.toHaveBeenCalled();
+    expect(clock.sleep, '既不该退避，也不该轮询').not.toHaveBeenCalled();
   });
 
   it('⭐⭐ 抛出的网络/超时 ⇒ transport **可重试**：走既有退避，第二次成功就 applied', async () => {
@@ -190,17 +194,128 @@ describe('bootstrapRelayWithRetry —— 确定性拒绝一次都不重试', () 
       calls += 1;
       return calls === 1 ? { ok: false, errorCode: 'transport', retryable: true } : { ok: true, relayKey: RELAY_KEY };
     });
-    const sleep = vi.fn(async () => {});
+    const clock = advancingClock();
     const { deps, patchConfig } = makeDeps({ fetchRelayKey });
 
-    const res = await bootstrapRelayWithRetry(deps, { sleep, now: () => 0, waitForGatewayMs: 240_000 });
+    const res = await bootstrapRelayWithRetry(deps, { ...clock, waitForGatewayMs: 240_000 });
 
     expect(res.status).toBe('applied');
     expect(res.relayReady).toBe(true);
     expect(fetchRelayKey).toHaveBeenCalledTimes(2);
-    expect(sleep, '走的是**既有**的有界退避表（第一档 2s），不是新加一条重试路径').toHaveBeenCalledWith(2_000);
+    expect(clock.sleep, '走的是**既有**的有界退避表（第一档 2s），不是新加一条重试路径').toHaveBeenCalledWith(2_000);
     expect(patchConfig).toHaveBeenCalledTimes(1);
   });
+});
+
+/**
+ * ⭐⭐ I1：`retryable` 必须是**全量**且**可信任**的字段。
+ *
+ * 只在"被分类"的那两条分支上设置它，会留下两种坏形状：
+ *   - `auth-transient` 有时带、有时不带（取决于哪条路进来的）；
+ *   - `runtime-not-ready` 压根没有这个字段 —— 而它恰恰是**循环真的会重试**的那个。
+ * 调用方拿到 `undefined` 就只能靠猜，而猜错的代价是"把确定性拒绝扔进 4 分钟循环"
+ * （反过来就是"把可恢复的失败当成终局"）。
+ *
+ * 这张表逐状态对拍**三件事**：返回的 `status`、它的 `retryable`、以及循环**实际**
+ * 有没有再试一次（`sleep` 被调用过 = 真的重试了）。
+ *
+ * ⚠️ 每一条用例都刻意做成**形状单一**（每次迭代结论相同）：混形状的场景（先传输失败
+ *    再成功）里"重试过"与"最终可重试"本来就不该一致，那些由上面的循环用例覆盖。
+ */
+describe('retryable 是可信任的全量字段（逐状态对拍循环行为）', () => {
+  const table: Array<{
+    name: string;
+    over?: Partial<RelayBootstrapDeps>;
+    snapshot?: unknown;
+    expected: RelayBootstrapStatus;
+    expectedRetryable: boolean;
+  }> = [
+    {
+      name: 'not-configured（本机没接商业层）',
+      over: { hasCommercialClient: () => false },
+      expected: 'not-configured',
+      expectedRetryable: false,
+    },
+    {
+      name: 'unauthenticated（明确没登录）',
+      over: { checkAuth: async () => 'unauthenticated' },
+      expected: 'unauthenticated',
+      expectedRetryable: false,
+    },
+    {
+      name: 'auth-transient（会话暂时问不出来）',
+      over: { checkAuth: async () => 'transient' },
+      expected: 'auth-transient',
+      expectedRetryable: true,
+    },
+    {
+      name: 'unlicensed（名下没有卡）',
+      over: { readLicenseKey: async () => null },
+      expected: 'unlicensed',
+      expectedRetryable: false,
+    },
+    {
+      name: 'entitlement-rejected（卡被服务端确定性拒绝）',
+      over: {
+        fetchRelayKey: async (): Promise<RelayKeyFetchResult> => ({
+          ok: false,
+          errorCode: 'license_bound_elsewhere',
+          retryable: false,
+        }),
+      },
+      expected: 'entitlement-rejected',
+      expectedRetryable: false,
+    },
+    {
+      name: 'auth-transient（取 key 传输失败）',
+      over: {
+        fetchRelayKey: async (): Promise<RelayKeyFetchResult> => ({
+          ok: false,
+          errorCode: 'transport',
+          retryable: true,
+        }),
+      },
+      expected: 'auth-transient',
+      expectedRetryable: true,
+    },
+    {
+      name: 'runtime-not-ready（网关还没连上）',
+      over: { getGateway: () => null },
+      expected: 'runtime-not-ready',
+      expectedRetryable: true,
+    },
+    {
+      name: 'failed（清理被网关拒 ⇒ 确定性）',
+      over: { prepareGatewayAccess: async (): Promise<GatewayAccessPrep> => ({ ok: false, errorCode: 'rejected' }) },
+      snapshot: alreadyRelay,
+      expected: 'failed',
+      expectedRetryable: false,
+    },
+    { name: 'applied（这次真的写进去了）', expected: 'applied', expectedRetryable: false },
+    {
+      name: 'already-applied（幂等命中）',
+      snapshot: alreadyRelay,
+      expected: 'already-applied',
+      expectedRetryable: false,
+    },
+  ];
+
+  for (const row of table) {
+    it(`⭐ ${row.name} ⇒ retryable=${row.expectedRetryable}，且与循环是否重试一致`, async () => {
+      const clock = advancingClock();
+      const { deps } = makeDeps(row.over ?? {}, row.snapshot ?? { config: {} });
+
+      const res = await bootstrapRelayWithRetry(deps, { ...clock, waitForGatewayMs: 240_000 });
+
+      expect(res.status).toBe(row.expected);
+      expect(res.retryable, 'retryable 必须**总是**被显式设置（undefined 不可接受）').toBe(row.expectedRetryable);
+      const loopRetried = clock.sleep.mock.calls.length > 0;
+      expect(
+        loopRetried,
+        `retryable=${row.expectedRetryable} 与循环的真实行为不一致（sleep 调了 ${clock.sleep.mock.calls.length} 次）`,
+      ).toBe(row.expectedRetryable);
+    });
+  }
 });
 
 describe('ensureRelayConfigured —— runtime ready ≠ commercial ready', () => {

@@ -1,6 +1,6 @@
-import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest';
-import type { ActivationErrorCode } from '../src/main/commercial/license.js';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RelayKeyFetchErrorCode, RelayGatewayHandle } from '../src/main/commercial/relay-bootstrap.js';
+import { advancingClock } from './helpers/advancing-clock.js';
 
 /**
  * `relay-startup` 的**接线层** —— 把 Supabase 的 `activate_license` 接成
@@ -18,18 +18,58 @@ import type { RelayKeyFetchErrorCode, RelayGatewayHandle } from '../src/main/com
  *
  * - **确定性拒绝 = 这一轮的终局**：4 分钟的网关/会话重试窗口里**绝不**再发一次
  *   `activate_license`（它是幂等的，但重试本身在打服务端，且结论不会变）；
- * - **抛出的网络/超时**正相反：`transport` + `retryable`，交给既有退避。
+ * - **传输失败**正相反：`transport` + `retryable`，交给既有退避。
+ *   ⚠️ 传输失败在真库里是 **resolve**（`code === ''` / `status === 0`），不是 throw ——
+ *   判据见下面 `SHAPE_*` 那张实测表；把它兜进分类器会让网络抖动变成"卡被拒绝"。
  *
  * ## 日志纪律
  *
- * 结构化日志里**只能**出现 SQLSTATE 与安全码。原始 message 不进 —— 服务端的文案
- * 可能回显卡密（`activate_license` 的入参就是卡密），异常文案里还可能带 URL 与 token。
+ * 结构化日志里**只能**出现 SQLSTATE 与安全码 —— **本文件覆盖的是结构化中继路径**。
+ * 原始 message 不进：服务端的文案可能回显卡密（`activate_license` 的入参就是卡密），
+ * 异常文案里还可能带 URL 与 token。（手动激活那条 IPC 路径刻意仍把原文给界面看，
+ * 见 `license.ts` 的口径说明 —— 这里别写成全局承诺。）
  */
 
 const LICENSE = 'RY-TEST-0001';
 const RELAY_KEY = 'rly_test_key_should_never_be_logged';
 /** 服务端文案里**故意**带上卡密：这正是「别把原始 message 写进日志」的理由。 */
 const BOUND_ELSEWHERE_MESSAGE = `activate_license: license ${LICENSE} is already bound to another organization`;
+
+/**
+ * ⭐ 真库的形状（2026-09-21 在钉住的 `@supabase/supabase-js@2.116.0` /
+ * `postgrest-js@2.116.0` 上实测，不是推理 —— 探针见报告）。
+ *
+ * `PostgrestBuilder.then` 装了 `.catch`，而 `shouldThrowOnError` 默认 false、
+ * 全仓无人调 `.throwOnError()` ⇒ **fetch 失败 / 超时 / 502 全都是 resolve**，
+ * 只有 `error` 不同：
+ *
+ * | 场景 | 结果 | `error.code` | 响应 `status` |
+ * |---|---|---|---|
+ * | `TypeError: fetch failed`（连接被拒） | resolve | `''` | `0` |
+ * | 被 `AbortSignal.timeout` 中止（生产正是这条路） | resolve | `''` | `0` |
+ * | 代理返回 502 HTML | resolve | **没有这个键** | `502` |
+ * | 400 + JSON `{code:'P0001'}`（对照组） | resolve | `'P0001'` | `400` |
+ *
+ * ⚠️ `status` 在**响应**上，不在 `error` 对象里（实测 `error` 的键只有
+ * `message/details/hint/code`）—— 所以判据要读响应那个 `status`。
+ * ⚠️ 用 `mockRejectedValue` 钉"网络失败"是**真库不会发生的形状**（第一版就栽在这）。
+ */
+const SHAPE_FETCH_FAILED = {
+  data: null,
+  error: { message: 'TypeError: fetch failed', code: '', hint: '', details: '' },
+  status: 0,
+};
+const SHAPE_ABORTED_TIMEOUT = {
+  data: null,
+  error: {
+    message: 'TimeoutError: The operation was aborted due to timeout',
+    code: '',
+    hint: 'Request was aborted',
+    details: '',
+  },
+  status: 0,
+};
+const SHAPE_HTML_502 = { data: null, error: { message: '<html><body>502 Bad Gateway</body></html>' }, status: 502 };
 
 const mocks = vi.hoisted(() => ({
   info: vi.fn(),
@@ -108,6 +148,10 @@ describe('fetchRelayKeyForLicense —— 服务端拒绝不再被压成 null', (
   beforeEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
+    // ⚠️ `clearAllMocks()` **不清** `mockResolvedValueOnce` 那种一次性队列：红着的用例
+    //    如果没把排队的值消费完，剩下的会漏给**下一个**用例（实测：一条按预期红掉的
+    //    用例让后一条"硬抛"用例只被调了一次）。`mockReset()` 会把队列一起清掉。
+    mocks.rpc.mockReset();
     mocks.getCommercialClient.mockReturnValue({ rpc: mocks.rpc, from: mocks.from });
     mocks.from.mockImplementation((table: string) => {
       if (table === 'org_members') return tableChain({ data: [{ org_id: 'org-1' }] });
@@ -141,7 +185,11 @@ describe('fetchRelayKeyForLicense —— 服务端拒绝不再被压成 null', (
   });
 
   it('⭐⭐ 服务端说「卡已绑到别的组织」⇒ { ok:false, errorCode:"license_bound_elsewhere", retryable:false }', async () => {
-    mocks.rpc.mockResolvedValue({ data: null, error: { code: 'P0001', message: BOUND_ELSEWHERE_MESSAGE } });
+    mocks.rpc.mockResolvedValue({
+      data: null,
+      error: { code: 'P0001', message: BOUND_ELSEWHERE_MESSAGE },
+      status: 400,
+    });
 
     const { fetchRelayKeyForLicense } = await import('../src/main/commercial/relay-startup.js');
 
@@ -153,7 +201,7 @@ describe('fetchRelayKeyForLicense —— 服务端拒绝不再被压成 null', (
   });
 
   it('⭐ 其它确定性拒绝走**同一张**分类表（激活数已达上限 = 23514）', async () => {
-    mocks.rpc.mockResolvedValue({ data: null, error: { code: '23514', message: '激活数已达上限' } });
+    mocks.rpc.mockResolvedValue({ data: null, error: { code: '23514', message: '激活数已达上限' }, status: 400 });
 
     const { fetchRelayKeyForLicense } = await import('../src/main/commercial/relay-startup.js');
 
@@ -164,7 +212,53 @@ describe('fetchRelayKeyForLicense —— 服务端拒绝不再被压成 null', (
     });
   });
 
-  it('⭐⭐ 抛出的网络/超时 ⇒ { ok:false, errorCode:"transport", retryable:true }（等一等真的会好）', async () => {
+  /**
+   * ⭐⭐ 真库形状：**完成但失败**的传输尝试。
+   *
+   * postgrest-js 把 fetch 失败/超时**返回**（resolve）成 `code === ''` / `status === 0`，
+   * 而不是抛。这些**不是**"服务端拒绝了这张卡"，而是"这次没问出来" ⇒ 必须可重试。
+   * 判据：**确定性的服务端拒绝一定带 SQLSTATE**（迁移 56 的 P0001/P0002/23514/28000），
+   * 传输类没有码、或 `status === 0`。
+   */
+  it('⭐⭐ 真库形状①：被中止（超时）⇒ resolve 出 code:"" + status:0 ⇒ transport 可重试', async () => {
+    mocks.rpc.mockResolvedValue(SHAPE_ABORTED_TIMEOUT);
+
+    const { fetchRelayKeyForLicense } = await import('../src/main/commercial/relay-startup.js');
+
+    await expect(fetchRelayKeyForLicense(LICENSE)).resolves.toEqual({
+      ok: false,
+      errorCode: 'transport',
+      retryable: true,
+    });
+  });
+
+  it('⭐⭐ 真库形状②：HTML-502（error 里只有 message、**没有** code）⇒ transport 可重试', async () => {
+    mocks.rpc.mockResolvedValue(SHAPE_HTML_502);
+
+    const { fetchRelayKeyForLicense } = await import('../src/main/commercial/relay-startup.js');
+
+    await expect(fetchRelayKeyForLicense(LICENSE)).resolves.toEqual({
+      ok: false,
+      errorCode: 'transport',
+      retryable: true,
+    });
+  });
+
+  it('⭐⭐ 真库形状③：fetch failed（连接被拒）⇒ transport 可重试，不是泛化的激活失败', async () => {
+    mocks.rpc.mockResolvedValue(SHAPE_FETCH_FAILED);
+
+    const { fetchRelayKeyForLicense } = await import('../src/main/commercial/relay-startup.js');
+
+    await expect(fetchRelayKeyForLicense(LICENSE)).resolves.toEqual({
+      ok: false,
+      errorCode: 'transport',
+      retryable: true,
+    });
+  });
+
+  it('⭐ 硬抛（postgrest 之外的层抛，例如同步异常/未来换传输层）⇒ 同样是可重试的 transport', async () => {
+    // ⚠️ 真库里 fetch 失败是 **resolve** 的（见上面三条真库形状用例）。这一条守的是
+    //    `catch` 分支本身：边界函数**不该抛**，但真抛了也不能被压成终态。
     mocks.rpc.mockRejectedValue(new Error('fetch failed: ETIMEDOUT'));
 
     const { fetchRelayKeyForLicense } = await import('../src/main/commercial/relay-startup.js');
@@ -202,16 +296,36 @@ describe('fetchRelayKeyForLicense —— 服务端拒绝不再被压成 null', (
     });
   });
 
-  it('⭐ 没有商业客户端 ⇒ 确定性失败（**不抛**，也不假装成功）', async () => {
+  it('⭐ 边界自己：没有商业客户端时**不编卡的错**（不是 activation_failed）', async () => {
     mocks.getCommercialClient.mockReturnValue(null);
 
     const { fetchRelayKeyForLicense } = await import('../src/main/commercial/relay-startup.js');
+    const res = await fetchRelayKeyForLicense(LICENSE);
 
-    await expect(fetchRelayKeyForLicense(LICENSE)).resolves.toEqual({
-      ok: false,
-      errorCode: 'activation_failed',
-      retryable: false,
-    });
+    // 这一层没有能表达"没配置"的码（也不**新增**公开码）⇒ 归到既有的 transport
+    // （"这次没问出来"），绝不返回 `activation_failed`（那会渲染成"你的卡不行"）。
+    // 生产路径上它不会露头：`hasCommercialClient()` 与这里是同一个判据，
+    // 那道门在前面就已经把它收成 `not-configured`（见下一条）。
+    expect(res).toEqual({ ok: false, errorCode: 'transport', retryable: true });
+  });
+
+  it('⭐⭐ 本地商业后端缺失 ⇒ 系统报 not-configured（**不是**卡的问题，也不是激活失败）', async () => {
+    // ⚠️ 这一条在 2026-09-21 改过：边界原先给这个分支编了个 `activation_failed` ——
+    //    那会被渲染成"激活失败"，拿用户的开卡说事，而真实原因是**这台机器没接商业层**。
+    //    `activate_license` 这一层没有任何码能表达"没配置"（也不该新增公开码）⇒ 语义由
+    //    `ensureRelayConfigured` 开头那道 `hasCommercialClient()` 门表达：`not-configured`。
+    mocks.getCommercialClient.mockReturnValue(null);
+
+    const { bootstrapRelayWithRetry } = await import('../src/main/commercial/relay-bootstrap.js');
+    const { buildRelayBootstrapDeps } = await import('../src/main/commercial/relay-startup.js');
+    const res = await bootstrapRelayWithRetry(
+      { ...buildRelayBootstrapDeps(), resolveDefaultModel: undefined },
+      { ...advancingClock(), waitForGatewayMs: 1_000 },
+    );
+
+    expect(res.status).toBe('not-configured');
+    expect(res.retryable).toBe(false);
+    expect(mocks.rpc, '没接商业层 ⇒ 一个字节都不该往后端发').not.toHaveBeenCalled();
   });
 });
 
@@ -219,6 +333,10 @@ describe('日志卫生 —— SQLSTATE 与安全码进日志，卡密/原始文�
   beforeEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
+    // ⚠️ `clearAllMocks()` **不清** `mockResolvedValueOnce` 那种一次性队列：红着的用例
+    //    如果没把排队的值消费完，剩下的会漏给**下一个**用例（实测：一条按预期红掉的
+    //    用例让后一条"硬抛"用例只被调了一次）。`mockReset()` 会把队列一起清掉。
+    mocks.rpc.mockReset();
     mocks.getCommercialClient.mockReturnValue({ rpc: mocks.rpc, from: mocks.from });
   });
 
@@ -264,6 +382,10 @@ describe('整条链 —— 永久拒绝在 4 分钟窗口里只发一次 activat
   beforeEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
+    // ⚠️ `clearAllMocks()` **不清** `mockResolvedValueOnce` 那种一次性队列：红着的用例
+    //    如果没把排队的值消费完，剩下的会漏给**下一个**用例（实测：一条按预期红掉的
+    //    用例让后一条"硬抛"用例只被调了一次）。`mockReset()` 会把队列一起清掉。
+    mocks.rpc.mockReset();
     mocks.getCommercialClient.mockReturnValue({ rpc: mocks.rpc, from: mocks.from });
     mocks.from.mockImplementation((table: string) => {
       if (table === 'org_members') return tableChain({ data: [{ org_id: 'org-1' }] });
@@ -297,20 +419,11 @@ describe('整条链 —— 永久拒绝在 4 分钟窗口里只发一次 activat
   }
 
   /**
-   * 时钟**随 sleep 前进**。
+   * 时钟**随 sleep 前进**（`test/helpers/advancing-clock.ts`）。
    *
    * ⚠️ 别写 `now: () => 0`：那让 deadline 永远够不到 —— 一旦哪条分支落进
    *    `runtime-not-ready` 轮询，测试就变成真的死循环（第一版把 worker 跑到了 OOM）。
    */
-  function advancingClock() {
-    let t = 0;
-    return {
-      now: () => t,
-      sleep: vi.fn(async (ms: number) => {
-        t += ms;
-      }),
-    };
-  }
 
   it('⭐⭐ 卡被服务端判定「绑在别的组织」⇒ rpc 恰好一次、零 sleep、安全码保留到结果', async () => {
     mocks.rpc.mockResolvedValue({ data: null, error: { code: 'P0001', message: BOUND_ELSEWHERE_MESSAGE } });
@@ -330,7 +443,49 @@ describe('整条链 —— 永久拒绝在 4 分钟窗口里只发一次 activat
     expect(gw.patchConfig, '没有 key 就绝不写网关配置').not.toHaveBeenCalled();
   });
 
-  it('⭐⭐ 第一次超时（抛出）⇒ 走既有退避，第二次成功 ⇒ applied', async () => {
+  /**
+   * ⭐⭐ C1 的核心：**完成但失败**的传输尝试不得变成终态。
+   *
+   * 真库里 fetch 失败/超时是 resolve（`code === ''`、`status === 0`），不是 throw。
+   * 若把它兜进分类器，就会落成 `activation_failed` ⇒ `entitlement-rejected` +
+   * `retryable:false`：用户看到"这张卡不行"，而其实只是网络抖了一下、而且再试一次
+   * 就会好。三条断言把"不得是终态"钉死：既不能是 `entitlement-rejected`，
+   * 也不能 `retryable:false`，还必须落在既有退避会重试的那个状态上。
+   */
+  it('⭐⭐ 完成但失败的传输尝试不得变成终态（不是 entitlement-rejected、也不带 retryable:false）', async () => {
+    mocks.rpc.mockResolvedValue(SHAPE_FETCH_FAILED);
+
+    const { ensureRelayConfigured } = await import('../src/main/commercial/relay-bootstrap.js');
+    const { gw, deps } = await realDeps();
+
+    const res = await ensureRelayConfigured(deps);
+
+    expect(res.status, '一次网络抖动绝不是"卡被拒绝"').not.toBe('entitlement-rejected');
+    expect(res.status).toBe('auth-transient');
+    expect(res.retryable, '可重试这一类必须能被重试循环捞起来').toBe(true);
+    expect(res.errorCode).toBe('transport');
+    expect(res.relayReady).toBe(false);
+    expect(gw.patchConfig, '没有 key 就绝不写网关配置').not.toHaveBeenCalled();
+  });
+
+  it('⭐⭐ 真库形状：第一次传输失败、第二次成功 ⇒ 走既有退避并 applied', async () => {
+    mocks.rpc
+      .mockResolvedValueOnce(SHAPE_ABORTED_TIMEOUT)
+      .mockResolvedValueOnce({ data: { relayKey: RELAY_KEY }, error: null, status: 200 });
+
+    const { bootstrapRelayWithRetry } = await import('../src/main/commercial/relay-bootstrap.js');
+    const { gw, deps } = await realDeps();
+    const clock = advancingClock();
+
+    const res = await bootstrapRelayWithRetry(deps, { ...clock, waitForGatewayMs: 240_000 });
+
+    expect(res.status, '传输类失败一次之后**必须**还能恢复').toBe('applied');
+    expect(mocks.rpc).toHaveBeenCalledTimes(2);
+    expect(clock.sleep, '走既有的有界退避（第一档 2s）').toHaveBeenCalledWith(2_000);
+    expect(gw.patchConfig).toHaveBeenCalledTimes(1);
+  });
+
+  it('⭐⭐ 第一次超时（硬抛）⇒ 走既有退避，第二次成功 ⇒ applied', async () => {
     mocks.rpc
       .mockRejectedValueOnce(new Error('fetch failed: ETIMEDOUT'))
       .mockResolvedValueOnce({ data: { relayKey: RELAY_KEY }, error: null });
@@ -363,27 +518,36 @@ describe('整条链 —— 永久拒绝在 4 分钟窗口里只发一次 activat
 });
 
 /**
- * 编译期护栏（`pnpm typecheck:tests` 会真的跑它）。
+ * errorCode 闭集的护栏。
  *
- * 两份闭集各写了一遍字面量：`license.ts` 的 `ActivationErrorCode` 与 relay 边界的
- * `RelayKeyFetchErrorCode`。少一个成员的后果是「边界层永远产不出那个码」——
- * runtime 不报错、lint 看不见，唯一护栏就是这条编译期断言。
+ * ## 真正在守什么（2026-09-21 更正）
+ *
+ * 第一版这里写的是 `expectTypeOf<ActivationErrorCode>().toExtend<RelayKeyFetchErrorCode>()`，
+ * 并声称它在防"两份闭集漂掉" —— **那是同义反复**：`RelayKeyFetchErrorCode` 就是
+ * `ActivationErrorCode | 'transport'` 派生的，这条断言恒真，删掉成员也不会红
+ * （`relay-bootstrap.ts` 里"宁可要类型依赖"那段注释说的就是这个派生关系）。
+ *
+ * 真正会漂的是**这份字面量清单**：`Record<RelayKeyFetchErrorCode, true>` 要求
+ * 恰好覆盖联合的每一个成员 ——
+ *   · 联合**少**一个成员 ⇒ 这里多一个键 ⇒ 编译失败；
+ *   · 联合**多**一个成员 ⇒ 这里少一个键 ⇒ 编译失败。
+ * 配合运行期那半句（分类器的**每一个**输出都必须落在这份清单里），两头都封住了。
+ *
+ * 来源：`license.ts` 的 `ActivationErrorCode`（服务端拒绝的分类结果）+ 本地归类的
+ * `transport`；两边都不能是开放集（见 `docs/agent-rules` 的闭集元规则）。
  */
 describe('errorCode 闭集的护栏', () => {
-  it('⭐⭐ relay 边界的闭集必须覆盖 license.ts 的分类结果（编译期 + 运行期各钉一次）', async () => {
-    expectTypeOf<ActivationErrorCode>().toExtend<RelayKeyFetchErrorCode>();
+  it('⭐⭐ 闭集字面量清单：增删成员都会**编译失败**，且分类器只会吐出清单里的码', async () => {
+    const ALL: Record<RelayKeyFetchErrorCode, true> = {
+      license_bound_elsewhere: true,
+      license_not_found: true,
+      license_inactive: true,
+      license_expired: true,
+      activation_limit_reached: true,
+      activation_failed: true,
+      transport: true,
+    };
 
-    // 运行期那一半：分类器**只会**吐出这七个码里的一个（词表写成可测常量，
-    // 而不是散在注释里 —— 见 `docs/agent-rules` 里关于闭集清单的那条元规则）。
-    const CODES: RelayKeyFetchErrorCode[] = [
-      'license_bound_elsewhere',
-      'license_not_found',
-      'license_inactive',
-      'license_expired',
-      'activation_limit_reached',
-      'activation_failed',
-      'transport',
-    ];
     const samples: Array<{ code?: string; message?: string }> = [
       { code: '23514', message: '激活数已达上限' },
       { code: 'P0001', message: BOUND_ELSEWHERE_MESSAGE },
@@ -391,12 +555,14 @@ describe('errorCode 闭集的护栏', () => {
       { code: 'P0001', message: 'license expired' },
       { code: 'P0002', message: 'no organization for user' },
       { code: 'P0002', message: 'license not found' },
+      { code: 'P0002', message: 'license key not found' },
       {},
     ];
 
     const { mapActivationError } = await import('../src/main/commercial/license.js');
     for (const sample of samples) {
-      expect(CODES, `分类器吐出了闭集之外的码：${JSON.stringify(sample)}`).toContain(mapActivationError(sample));
+      const code = mapActivationError(sample);
+      expect(ALL[code], `分类器吐出了闭集之外的码：${code}（${JSON.stringify(sample)}）`).toBe(true);
     }
   });
 });

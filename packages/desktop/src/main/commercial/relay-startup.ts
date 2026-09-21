@@ -62,33 +62,64 @@ export function findConnectedGateway(): RelayGatewayHandle | null {
  *
  * 那个形状把三件完全不同的事压成同一个 `null`，上层于是只能说"没卡"：
  *   ① 服务端**确定性**拒绝 —— `P0001`「卡已绑到别的组织」/ `23514` 激活数已达上限…
- *   ② **抛出的**网络 / 超时 —— 这一类等一等真的会好（`transport` + `retryable`）
+ *   ② 传输失败（fetch 失败 / 超时 / 502）—— 这一类等一等真的会好（`transport`）
  *   ③ RPC 成功却没有 relay key（旧卡 / 返回形状变了）—— 确定性失败，**不是**成功
  *
  * 分类一律走 `license.ts` 的 `mapActivationError()`：**同一张表**，这里不再写一份。
  *
- * ## 日志纪律
+ * ## 日志纪律（本函数 = **结构化中继路径**）
  *
  * 只记 SQLSTATE 与安全码。**不记**原始 message —— `activate_license` 的入参就是
  * 卡密，服务端文案很可能回显它；异常文案里还可能带 URL / `apikey`。
+ * ⚠️ 别把这条写成全局承诺：**手动激活**那条 IPC 路径刻意仍把原文返回给界面
+ * （见 `license.ts` 里 `mapActivationError` 的口径说明）—— 那是给用户看的出口，不是日志。
  */
 export async function fetchRelayKeyForLicense(licenseKey: string): Promise<RelayKeyFetchResult> {
   const supabase = getCommercialClient();
   if (!supabase) {
-    // 商业层没配上（纯净开发环境，或读取期兜底也拿不到凭据）。这一轮之内不会变，
-    // 所以是确定性失败 —— 别让上层把它当成"等一等会好"。
-    return { ok: false, errorCode: 'activation_failed', retryable: false };
+    // 商业层没配上（纯净开发环境，或读取期兜底也拿不到凭据）。**这不是用户卡的问题** ——
+    // 绝不能编成 `activation_failed`（那会被渲染成"激活失败"，拿用户的开卡说事）。
+    // 这一层没有任何码能表达"没配置"（也**不新增**公开错误码）⇒ 归到既有的 `transport`
+    // （"这次没问出来"）；真正的 `not-configured` 语义由 `ensureRelayConfigured` 开头那道
+    // `hasCommercialClient()` 门表达 —— 两者判据同源（都是 `getCommercialClient()`），
+    // 所以生产路径上这个值不会露头。
+    return { ok: false, errorCode: 'transport', retryable: true };
   }
 
   try {
-    const { data, error } = await supabase.rpc('activate_license', {
+    const { data, error, status } = await supabase.rpc('activate_license', {
       p_license_key: licenseKey,
       p_device_fingerprint: deviceFingerprint(),
     });
 
     if (error) {
-      // `error` 是**服务端答回来的**拒绝 ⇒ 交给唯一那张分类表。安全码与 SQLSTATE
-      // 进日志；原始 message 不进。
+      // ⚠️ 先分清「服务端拒绝了这张卡」与「这次压根没问出来」—— 判据是 **SQLSTATE**。
+      //
+      // 事实（2026-09-21 在钉住的 `@supabase/supabase-js@2.116.0` / `postgrest-js@2.116.0`
+      // 上实测，不是推理）：`PostgrestBuilder.then` 装了 `.catch`，而 `shouldThrowOnError`
+      // 默认 false、全仓无人调 `.throwOnError()` ⇒ **fetch 失败 / 超时 / 502 都是 resolve，
+      // 不是 throw**，只是 `error` 不同：
+      //   · `TypeError: fetch failed`      ⇒ `error.code === ''`、响应 `status === 0`
+      //   · 被 `AbortSignal.timeout` 中止    ⇒ `error.code === ''`、响应 `status === 0`
+      //     （生产正是这条路：`client.ts` 的 `createTimeoutFetch()`，15 秒）
+      //   · 代理返回 502 HTML               ⇒ error 里**没有** `code` 这个键（只有 message）
+      //
+      // 把它们兜进分类器会落成 `activation_failed` ⇒ 终态 `entitlement-rejected`：用户被告知
+      // "这张卡不行"，而其实只是网络抖了一下、**再试一次就会好**。
+      //
+      // 判据与 `auth-classify.ts` 的 `status === 0`（"fetch 层就失败了"）同一口径：
+      // **确定性的服务端拒绝一定带 SQLSTATE**（迁移 56 的 P0001/P0002/23514/28000 都带），
+      // 传输类没有码、或 status 为 0；无码的 5xx/HTML 也由 `!error.code` 覆盖。
+      //
+      // ⚠️ `status` 在**响应**上，不在 `error` 对象里（实测 error 的键只有
+      //    `message/details/hint/code`）。
+      if (!error.code || status === 0) {
+        log('relay.bootstrap.activate-rpc-transport-failed', { errorCode: 'transport' });
+        return { ok: false, errorCode: 'transport', retryable: true };
+      }
+
+      // 到这里才是**服务端答回来的**确定性拒绝 ⇒ 交给唯一那张分类表。
+      // 安全码与 SQLSTATE 进日志；原始 message 不进。
       const errorCode = mapActivationError(error);
       log('relay.bootstrap.activate-rpc-failed', { sqlState: error.code, errorCode });
       return { ok: false, errorCode, retryable: false };
@@ -104,8 +135,9 @@ export async function fetchRelayKeyForLicense(licenseKey: string): Promise<Relay
 
     return { ok: true, relayKey };
   } catch {
-    // **抛出**（请求被中止 = 超时 / 网络不通 / DNS…）⇒ 可重试那一类。只记安全码，
-    // 不记异常文案（它可能带 URL 与 apikey）。
+    // **硬抛**：真库里 fetch 失败/超时是 resolve 的（见上面的实测说明），但同步异常、
+    // 未来换传输层、或 rpc 之外的层抛出来时仍然走这里 ⇒ 同样归可重试的传输类。
+    // 只记安全码，不记异常文案（它可能带 URL 与 apikey）。
     log('relay.bootstrap.activate-rpc-transport-failed', { errorCode: 'transport' });
     return { ok: false, errorCode: 'transport', retryable: true };
   }
@@ -171,7 +203,12 @@ export async function bootstrapCommercialRelay(
   } catch (error) {
     // 这一层永不抛：启动路径上抛出去就是白屏。
     console.error('[commercial] relay bootstrap 失败（忽略，界面照常）:', error);
-    return { status: 'failed', relayReady: false, detail: error instanceof Error ? error.message : String(error) };
+    return {
+      status: 'failed',
+      relayReady: false,
+      retryable: false,
+      detail: error instanceof Error ? error.message : String(error),
+    };
   }
 }
 
