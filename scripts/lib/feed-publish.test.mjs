@@ -1035,7 +1035,7 @@ test('an existing lock reports the owner it found so a human can confirm it', as
   assert.deepEqual(result.owner, PREVIOUS_RUN);
   assert.deepEqual(
     transport.calls.filter((call) => call[0] === 'readSsh').map((call) => call[1]),
-    [`cat ${OWNER_FILE}`],
+    [`LC_ALL=C cat ${OWNER_FILE}`],
   );
   assertEveryCallCarriesTheTrustAnchor(transport.calls);
 });
@@ -1155,23 +1155,51 @@ test('breaking a lock refuses an empty audit log path', async () => {
   assert.deepEqual(transport.calls, []);
 });
 
-test('the owner record read separates an absent record from a failed read', async () => {
+test('the owner record read tells an absent record, a corrupt record and a failed read apart', async () => {
+  const absent = fakeWriteTransport({
+    readSsh: () => ({ status: 1, stdout: '', stderr: `cat: ${OWNER_FILE}: No such file or directory` }),
+  });
   const unread = fakeWriteTransport({
     readSsh: () => ({ status: 1, stdout: JSON.stringify(PREVIOUS_RUN), stderr: 'permission denied' }),
   });
   const broken = fakeWriteTransport({ readSsh: () => ({ status: 0, stdout: 'not json{', stderr: '' }) });
   const present = fakeWriteTransport({ readSsh: () => readableThisRunOwner() });
+  assert.deepEqual(await readOwnerRecord(lockInput(absent)), {
+    ok: false,
+    status: 'missing',
+    record: null,
+    cause: 'the lock carries no owner record',
+  });
   assert.deepEqual(await readOwnerRecord(lockInput(unread)), {
     ok: false,
+    status: 'transport',
     record: null,
     cause: 'the owner record could not be read',
   });
   assert.deepEqual(await readOwnerRecord(lockInput(broken)), {
     ok: false,
+    status: 'corrupt',
     record: null,
     cause: 'the owner record is not valid JSON',
   });
-  assert.deepEqual(await readOwnerRecord(lockInput(present)), { ok: true, record: THIS_RUN, cause: null });
+  assert.deepEqual(await readOwnerRecord(lockInput(present)), {
+    ok: true,
+    status: 'read',
+    record: THIS_RUN,
+    cause: null,
+  });
+});
+
+test('a read that never reached the owner file is a transport failure even when its text mentions a missing file', async () => {
+  const neverRan = fakeWriteTransport({
+    readSsh: () => ({ status: -1, stdout: '', stderr: 'ssh: No such file or directory' }),
+  });
+  assert.deepEqual(await readOwnerRecord(lockInput(neverRan)), {
+    ok: false,
+    status: 'transport',
+    record: null,
+    cause: 'the owner record could not be read',
+  });
 });
 
 test('a corrupt owner record on the lock is unreadable rather than a crash', async () => {

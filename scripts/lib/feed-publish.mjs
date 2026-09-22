@@ -260,17 +260,26 @@ function isFileExistsFailure(result) {
   return /File exists/iu.test(`${result.stderr ?? ''} ${result.stdout ?? ''}`);
 }
 
+function isMissingOwnerRecord(read) {
+  return read.status > 0 && /No such file or directory/iu.test(`${read.stderr ?? ''} ${read.stdout ?? ''}`);
+}
+
 export async function readOwnerRecord(input) {
   const read = await input.transport.readOnly.sshRun({
     host: input.host,
     knownHostsPath: input.knownHostsPath,
-    script: `cat ${ownerPath(input.channel)}`,
+    script: `LC_ALL=C cat ${ownerPath(input.channel)}`,
   });
-  if (read.status !== 0) return { ok: false, record: null, cause: 'the owner record could not be read' };
+  if (read.status !== 0) {
+    if (isMissingOwnerRecord(read)) {
+      return { ok: false, status: 'missing', record: null, cause: 'the lock carries no owner record' };
+    }
+    return { ok: false, status: 'transport', record: null, cause: 'the owner record could not be read' };
+  }
   try {
-    return { ok: true, record: JSON.parse(String(read.stdout ?? '').trim()), cause: null };
+    return { ok: true, status: 'read', record: JSON.parse(String(read.stdout ?? '').trim()), cause: null };
   } catch {
-    return { ok: false, record: null, cause: 'the owner record is not valid JSON' };
+    return { ok: false, status: 'corrupt', record: null, cause: 'the owner record is not valid JSON' };
   }
 }
 
@@ -425,27 +434,49 @@ export async function breakChannelLock(input) {
   if (typeof input.auditOut !== 'string' || input.auditOut.length === 0) {
     throw new FeedPublishError('breaking a lock requires --audit-out');
   }
+  const removeLock = async () => {
+    const removedOwner = await input.transport.write.sshRun({
+      host: input.host,
+      knownHostsPath: input.knownHostsPath,
+      script: `rm ${ownerPath(input.channel)}`,
+    });
+    const removedLock = await input.transport.write.sshRun({
+      host: input.host,
+      knownHostsPath: input.knownHostsPath,
+      script: `rmdir ${lockPath(input.channel)}`,
+    });
+    if (removedOwner.status !== 0 || removedLock.status !== 0) {
+      throw new FeedPublishError('the remote lock could not be removed');
+    }
+  };
   const read = await readOwnerRecord(input);
+  if (input.ownerRecordUnreadable === true) {
+    if (read.ok === true) {
+      throw new FeedPublishError(
+        'the owner record is readable, so this lock needs --confirm-runid rather than the unreadable record flag',
+      );
+    }
+    await removeLock();
+    return {
+      outcome: 'lock-broken',
+      previousOwner: null,
+      ownerRecordUnreadable: true,
+      ownerRecordStatus: read.status,
+      ownerRecordCause: read.cause,
+      reason: input.reason,
+      operator: input.operator ?? 'unknown',
+    };
+  }
   const owner = read.record;
   if (owner === null) {
-    throw new FeedPublishError('the lock has no readable owner record, so it must be inspected by hand');
+    throw new FeedPublishError(
+      `the lock has no readable owner record (${read.cause}), so it must be inspected by hand; --owner-record-unreadable is the path that records the operator confirming that no previous run is in progress`,
+    );
   }
   if (input.confirmRunid !== owner.runid) {
     throw new FeedPublishError(`--confirm-runid does not match the owner runid ${owner.runid}`);
   }
-  const removedOwner = await input.transport.write.sshRun({
-    host: input.host,
-    knownHostsPath: input.knownHostsPath,
-    script: `rm ${ownerPath(input.channel)}`,
-  });
-  const removedLock = await input.transport.write.sshRun({
-    host: input.host,
-    knownHostsPath: input.knownHostsPath,
-    script: `rmdir ${lockPath(input.channel)}`,
-  });
-  if (removedOwner.status !== 0 || removedLock.status !== 0) {
-    throw new FeedPublishError('the remote lock could not be removed');
-  }
+  await removeLock();
   return {
     outcome: 'lock-broken',
     previousOwner: owner,

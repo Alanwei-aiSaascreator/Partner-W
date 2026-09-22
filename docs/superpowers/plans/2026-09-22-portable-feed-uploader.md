@@ -1420,17 +1420,26 @@ function isFileExistsFailure(result) {
   return /File exists/iu.test(`${result.stderr ?? ''} ${result.stdout ?? ''}`);
 }
 
+function isMissingOwnerRecord(read) {
+  return read.status > 0 && /No such file or directory/iu.test(`${read.stderr ?? ''} ${read.stdout ?? ''}`);
+}
+
 export async function readOwnerRecord(input) {
   const read = await input.transport.readOnly.sshRun({
     host: input.host,
     knownHostsPath: input.knownHostsPath,
-    script: `cat ${ownerPath(input.channel)}`,
+    script: `LC_ALL=C cat ${ownerPath(input.channel)}`,
   });
-  if (read.status !== 0) return { ok: false, record: null, cause: 'the owner record could not be read' };
+  if (read.status !== 0) {
+    if (isMissingOwnerRecord(read)) {
+      return { ok: false, status: 'missing', record: null, cause: 'the lock carries no owner record' };
+    }
+    return { ok: false, status: 'transport', record: null, cause: 'the owner record could not be read' };
+  }
   try {
-    return { ok: true, record: JSON.parse(String(read.stdout ?? '').trim()), cause: null };
+    return { ok: true, status: 'read', record: JSON.parse(String(read.stdout ?? '').trim()), cause: null };
   } catch {
-    return { ok: false, record: null, cause: 'the owner record is not valid JSON' };
+    return { ok: false, status: 'corrupt', record: null, cause: 'the owner record is not valid JSON' };
   }
 }
 
@@ -1585,27 +1594,49 @@ export async function breakChannelLock(input) {
   if (typeof input.auditOut !== 'string' || input.auditOut.length === 0) {
     throw new FeedPublishError('breaking a lock requires --audit-out');
   }
+  const removeLock = async () => {
+    const removedOwner = await input.transport.write.sshRun({
+      host: input.host,
+      knownHostsPath: input.knownHostsPath,
+      script: `rm ${ownerPath(input.channel)}`,
+    });
+    const removedLock = await input.transport.write.sshRun({
+      host: input.host,
+      knownHostsPath: input.knownHostsPath,
+      script: `rmdir ${lockPath(input.channel)}`,
+    });
+    if (removedOwner.status !== 0 || removedLock.status !== 0) {
+      throw new FeedPublishError('the remote lock could not be removed');
+    }
+  };
   const read = await readOwnerRecord(input);
+  if (input.ownerRecordUnreadable === true) {
+    if (read.ok === true) {
+      throw new FeedPublishError(
+        'the owner record is readable, so this lock needs --confirm-runid rather than the unreadable record flag',
+      );
+    }
+    await removeLock();
+    return {
+      outcome: 'lock-broken',
+      previousOwner: null,
+      ownerRecordUnreadable: true,
+      ownerRecordStatus: read.status,
+      ownerRecordCause: read.cause,
+      reason: input.reason,
+      operator: input.operator ?? 'unknown',
+    };
+  }
   const owner = read.record;
   if (owner === null) {
-    throw new FeedPublishError('the lock has no readable owner record, so it must be inspected by hand');
+    throw new FeedPublishError(
+      `the lock has no readable owner record (${read.cause}), so it must be inspected by hand; --owner-record-unreadable is the path that records the operator confirming that no previous run is in progress`,
+    );
   }
   if (input.confirmRunid !== owner.runid) {
     throw new FeedPublishError(`--confirm-runid does not match the owner runid ${owner.runid}`);
   }
-  const removedOwner = await input.transport.write.sshRun({
-    host: input.host,
-    knownHostsPath: input.knownHostsPath,
-    script: `rm ${ownerPath(input.channel)}`,
-  });
-  const removedLock = await input.transport.write.sshRun({
-    host: input.host,
-    knownHostsPath: input.knownHostsPath,
-    script: `rmdir ${lockPath(input.channel)}`,
-  });
-  if (removedOwner.status !== 0 || removedLock.status !== 0) {
-    throw new FeedPublishError('the remote lock could not be removed');
-  }
+  await removeLock();
   return {
     outcome: 'lock-broken',
     previousOwner: owner,
@@ -5500,9 +5531,9 @@ node --test scripts/lib/feed-publish-cli.test.mjs
 
 创建 `scripts/feed-publish.mjs`：
 
-```js
-#!/usr/bin/env node
+创建 `scripts/lib/feed-publish-cli.mjs`（**可直接导入的合成根**：导出 `runCli(argv, dependencies)`，没有顶层副作用）：
 
+```js
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { hostname, tmpdir } from 'node:os';
@@ -5520,23 +5551,29 @@ import {
   runCommit,
   runPreflight,
   verifyLocalArtifacts,
-} from './lib/feed-publish.mjs';
-import { createFeedTransport } from './lib/feed-publish-transport.mjs';
+} from './feed-publish.mjs';
+import { createFeedTransport } from './feed-publish-transport.mjs';
 import {
   assertPathOutsideRepository,
   buildPortableRelease,
   readSigningKeyFile,
   verifyPortableRelease,
-} from './lib/portable-update-release.mjs';
+} from './portable-update-release.mjs';
 
-const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 const USAGE = [
   'Usage: node scripts/feed-publish.mjs <--dry-run|--preflight|--commit|--break-lock|--re-sign-stable> --channel <internal|stable> --version <x.y.z> [--host <host> --known-hosts <path>]',
   '  --dry-run          offline: validate the three artifacts and print the plan',
-  '  --preflight        read only remote checks; never claims to have verified writability',
+  '  --preflight        read only remote checks; never claims to have verified writability;',
+  '                     needs --audit-out, because it records a session level entry',
   '  --commit           publish; needs --package --file-manifest --manifest --audit-out',
   '  --break-lock       needs --reason --audit-out --confirm-runid',
+  '  --owner-record-unreadable',
+  '                     with --break-lock: the lock owner record cannot be read, so there',
+  '                     is no runid to confirm; passing this flag is the operator stating',
+  '                     that the previous run is not in progress. Refused when the record',
+  '                     is readable, where --confirm-runid is required instead',
   '  --re-sign-stable   offline: re-sign the internal release bytes for stable; needs',
   '                     --package --file-manifest --manifest --stable-out, and refuses to',
   '                     overwrite the output; --channel must be stable',
@@ -5564,7 +5601,29 @@ function requireSigningKeyFileFromEnvironment() {
   return value;
 }
 
-async function main(argv) {
+function assertTrustAnchorPath(input) {
+  if (input.knownHostsPath !== null) assertKnownHostsPath(input.knownHostsPath, repositoryRoot);
+}
+
+async function withTransport(createTransport, input, body) {
+  const batchRoot = mkdtempSync(join(tmpdir(), 'mofang-feed-batch-'));
+  const batchFile = join(batchRoot, 'sftp-batch.txt');
+  try {
+    return await body(
+      createTransport({
+        host: input.host,
+        knownHostsPath: input.knownHostsPath,
+        batchFile,
+        writeBatch: (text) => writeFileSync(batchFile, text, { encoding: 'utf8', flag: 'a' }),
+      }),
+    );
+  } finally {
+    rmSync(batchRoot, { recursive: true, force: true });
+  }
+}
+
+export async function runCli(argv, dependencies = {}) {
+  const createTransport = dependencies.createTransport ?? createFeedTransport;
   const mode = argv.includes('--commit')
     ? 'commit'
     : argv.includes('--preflight')
@@ -5589,11 +5648,13 @@ async function main(argv) {
   const needsNetwork = mode !== 'dry-run' && mode !== 're-sign-stable';
   const startedAt = new Date().toISOString();
   const machine = hostname();
+  const runid = randomUUID();
+  const operator = process.env.MOFANG_FEED_OPERATOR ?? 'unknown';
+  const now = () => new Date().toISOString();
 
   let input;
   try {
     input = parsePublishInput({ channel, version: version ?? '0.0.0', host, knownHostsPath, needsNetwork });
-    if (input.knownHostsPath !== null) assertKnownHostsPath(input.knownHostsPath, repositoryRoot);
   } catch (error) {
     console.error(error instanceof FeedPublishError ? error.message : String(error));
     return 1;
@@ -5671,7 +5732,7 @@ async function main(argv) {
           fileManifest: JSON.parse(verified.fileManifestBytes.toString('utf8')),
           fileManifestBytes: verified.fileManifestBytes,
           packagePath: resolvedPackagePath,
-          publishedAt: new Date().toISOString(),
+          publishedAt: now(),
         }),
         signingKeyPem: await readSigningKeyFile(assertPathOutsideRepository(signingKeyFile, repositoryRoot)),
         publicKeyBase64,
@@ -5701,17 +5762,15 @@ async function main(argv) {
     }
   }
 
-  const batchRoot = mkdtempSync(join(tmpdir(), 'mofang-feed-batch-'));
-  const batchFile = join(batchRoot, 'sftp-batch.txt');
-  const transport = createFeedTransport({
-    host: input.host,
-    knownHostsPath: input.knownHostsPath,
-    batchFile,
-    writeBatch: (text) => writeFileSync(batchFile, text, { encoding: 'utf8', flag: 'a' }),
-  });
-
-  try {
-    if (mode === 'preflight') {
+  if (mode === 'preflight') {
+    try {
+      assertTrustAnchorPath(input);
+      if (auditOut === null) throw new FeedPublishError('--audit-out is required');
+    } catch (error) {
+      console.error(error instanceof FeedPublishError ? error.message : String(error));
+      return 1;
+    }
+    return withTransport(createTransport, input, async (transport) => {
       const result = await runPreflight({
         channel: input.channel,
         version: input.version,
@@ -5719,68 +5778,100 @@ async function main(argv) {
         host: input.host,
         knownHostsPath: input.knownHostsPath,
       });
-      console.log(JSON.stringify(result, null, 2));
-      return result.notes.length === 0 ? 0 : 1;
-    }
-
-    if (mode === 'break-lock') {
-      const reason = flag(argv, '--reason');
-      const confirmRunid = flag(argv, '--confirm-runid');
-      if (reason === null) {
-        console.error('--reason is required');
-        return 1;
-      }
-      if (auditOut === null) {
-        console.error('--audit-out is required');
-        return 1;
-      }
-      if (confirmRunid === null) {
-        console.error('--confirm-runid is required');
-        return 1;
-      }
-      const record = await breakChannelLock({
-        channel: input.channel,
-        transport,
-        host: input.host,
-        knownHostsPath: input.knownHostsPath,
-        reason,
-        confirmRunid,
+      const status = result.notes.length === 0 ? 'done' : 'fail';
+      appendAuditStage({
         auditOut,
-        operator: process.env.MOFANG_FEED_OPERATOR ?? 'unknown',
+        repositoryRoot,
+        entry: {
+          stage: 'preflight',
+          status,
+          runid,
+          operator,
+          at: now(),
+          ...(result.notes.length === 0 ? {} : { detail: result.notes.join('; ') }),
+        },
       });
-      appendAuditStage({ auditOut, repositoryRoot, entry: { stage: 'break-lock', ...record } });
-      console.log(JSON.stringify(record, null, 2));
-      return 0;
-    }
-
-    const packagePath = flag(argv, '--package');
-    const fileManifestPath = flag(argv, '--file-manifest');
-    const manifestPath = flag(argv, '--manifest');
-    if (packagePath === null || fileManifestPath === null || manifestPath === null) {
-      console.error('--package, --file-manifest and --manifest are required');
+      console.log(JSON.stringify({ mode, channel: input.channel, version: input.version, runid, result }, null, 2));
+      if (result.notes.length === 0) return 0;
+      console.error(
+        'the read only probe did not come back clean; the preflight result carries no exit status or stderr, so run the ssh probe by hand to see why',
+      );
       return 1;
-    }
-    if (auditOut === null) {
-      console.error('--audit-out is required');
-      return 1;
-    }
+    });
+  }
 
-    const publicKeyBase64 = requirePublicKeyFromEnvironment();
-    const resolvedManifestPath = resolve(manifestPath);
-    const resolvedFileManifestPath = resolve(fileManifestPath);
-    const resolvedPackagePath = resolve(packagePath);
-    const temporaryRoot = mkdtempSync(join(tmpdir(), 'mofang-feed-public-'));
-
+  if (mode === 'break-lock') {
+    const reason = flag(argv, '--reason');
+    const confirmRunid = flag(argv, '--confirm-runid');
+    const ownerRecordUnreadable = argv.includes('--owner-record-unreadable');
     try {
+      if (reason === null) throw new FeedPublishError('--reason is required');
+      if (auditOut === null) throw new FeedPublishError('--audit-out is required');
+      if (ownerRecordUnreadable !== true && confirmRunid === null) {
+        throw new FeedPublishError('--confirm-runid is required');
+      }
+      assertTrustAnchorPath(input);
+    } catch (error) {
+      console.error(error instanceof FeedPublishError ? error.message : String(error));
+      return 1;
+    }
+    return withTransport(createTransport, input, async (transport) => {
+      try {
+        const record = await breakChannelLock({
+          channel: input.channel,
+          transport,
+          host: input.host,
+          knownHostsPath: input.knownHostsPath,
+          reason,
+          confirmRunid,
+          ownerRecordUnreadable,
+          auditOut,
+          operator,
+        });
+        const at = now();
+        appendAuditStage({ auditOut, repositoryRoot, entry: { stage: 'break-lock', ...record, runid, operator, at } });
+        console.log(
+          JSON.stringify({ mode, channel: input.channel, version: input.version, runid, ...record, at }, null, 2),
+        );
+        return 0;
+      } catch (error) {
+        console.error(error instanceof FeedPublishError ? error.message : String(error));
+        return 1;
+      }
+    });
+  }
+
+  const packagePath = flag(argv, '--package');
+  const fileManifestPath = flag(argv, '--file-manifest');
+  const manifestPath = flag(argv, '--manifest');
+  try {
+    if (auditOut === null) throw new FeedPublishError('--audit-out is required');
+    if (packagePath === null || fileManifestPath === null || manifestPath === null) {
+      throw new FeedPublishError('--package, --file-manifest and --manifest are required');
+    }
+    assertTrustAnchorPath(input);
+  } catch (error) {
+    console.error(error instanceof FeedPublishError ? error.message : String(error));
+    return 1;
+  }
+
+  return withTransport(createTransport, input, async (transport) => {
+    const temporaryRoot = mkdtempSync(join(tmpdir(), 'mofang-feed-public-'));
+    try {
+      const publicKeyBase64 = requirePublicKeyFromEnvironment();
+      const resolvedManifestPath = resolve(manifestPath);
+      const resolvedFileManifestPath = resolve(fileManifestPath);
+      const resolvedPackagePath = resolve(packagePath);
       const result = await runCommit({
         channel: input.channel,
         version: input.version,
         host: input.host,
         knownHostsPath: input.knownHostsPath,
-        runid: randomUUID(),
-        operator: process.env.MOFANG_FEED_OPERATOR ?? 'unknown',
+        runid,
+        operator,
         startedAt,
         machine,
+        now,
         packagePath: resolvedPackagePath,
         fileManifestPath: resolvedFileManifestPath,
         manifestPath: resolvedManifestPath,
@@ -5798,15 +5889,24 @@ async function main(argv) {
       if (result.outcome === 'done') return 0;
       if (result.outcome === 'retry') return 3;
       return 1;
+    } catch (error) {
+      console.error(error instanceof FeedPublishError ? error.message : String(error));
+      return 1;
     } finally {
       rmSync(temporaryRoot, { recursive: true, force: true });
     }
-  } finally {
-    rmSync(batchRoot, { recursive: true, force: true });
-  }
+  });
 }
+```
 
-await main(process.argv.slice(2)).then(
+创建 `scripts/feed-publish.mjs`（三行的入口脚本：顶层 `await`，只用 `process.exitCode`，**不得**在 Promise 完成前 `process.exit`）：
+
+```js
+#!/usr/bin/env node
+
+import { runCli } from './lib/feed-publish-cli.mjs';
+
+await runCli(process.argv.slice(2)).then(
   (code) => {
     process.exitCode = code;
   },
@@ -5818,6 +5918,8 @@ await main(process.argv.slice(2)).then(
 ```
 
 **待定的设计决定（在本刀内定，不要拖到 CLI 写完以后）**：探测失败时操作者只看得到 `notes` 里那句 "the read only probe did not succeed" —— **退出码与 stderr 都没有**，虽然 `probe.status` 与 `probe.stderr` 当时**就在 `probe` 里**。想让失败可诊断，只能扩宽 `runPreflight` 的**返回形状**（例如把 `status` 与一行 stderr 摘要带进 `notes`，或新增字段）；**现在定比 CLI 写完之后再定便宜得多**（那时要同时改 CLI 的输出、Task 8 的手册与发布前检查单）。本刀只做决定与记录，**不要**为这件事去改 Task 2 的代码。**必须在本行下方写明"选了哪个"（扩宽返回形状 ／ 维持现状）以及理由** —— 只留一句"待定"不算做完，那会变成一条无人认领的悬空决定。
+
+**决定（Task 7 落，2026-09-23）：选「维持现状」—— `runPreflight` 的返回形状一字不动。** 三条理由，逐条都是本刀实测或本计划已定的边界：① **改它就得改 Task 2 的代码**，而这一行明写"不要为这件事去改 Task 2 的代码"，且 Task 2 的块与它的三条规定用例已经冻结过两轮闸门；② 本刀能给的**可诊断性**不需要动那个契约 —— 探针失败时 CLI **在 stderr 上多说一句**（"the read only probe did not come back clean; the preflight result carries no exit status or stderr, so run the ssh probe by hand to see why"，`scripts/lib/feed-publish-cli.mjs`），把操作员指到该跑的那条命令上，而**不是**假装结果里已经有 `probe.status`；③ `probe.status` / `probe.stderr` 是**只读探测**的结果，它的诊断价值在**真机**上才成立（本计划不许连服务器）⇒ 现在把它接进返回形状，等于为一个**没人能在这里观测**的字段付一次冻结契约的代价。**这一条不是"待定"**：它是一次有理由的取舍；若将来有人要为它扩宽返回形状，代价清单在这里（CLI 输出 + Task 8 手册 + 检查单三处同时动）。**钉子**：`a failed preflight still writes its entry and tells the operator where to look` 断言那句提示**必须出现**（`assert.match(result.stderr, /run the ssh probe by hand/u)`），删掉它那条用例按名变红（读数：变异 `M-R-preflight-hint` 把那三行 `console.error` 删掉 ⇒ `cli 19/20/1`，红的**只有**这一条 —— 见账本第三节）。
 
 **必须遵守：** 顶层 `await`，只用 `process.exitCode`，**不得**在 Promise 完成前 `process.exit`；batch 文件是**仓库外唯一临时文件**（`mkdtempSync`），并在 `finally` 清理，因此并发运行不会互相覆盖；`--break-lock` 的 `--reason` / `--audit-out` / `--confirm-runid` **三角都必填**；`--commit` 分支必须把锁记录的三个注入值一起交给 `runCommit`（`operator` 取 `process.env.MOFANG_FEED_OPERATOR ?? 'unknown'`，与 `--break-lock` 同一来源；`startedAt` 取 CLI 启动时的 `new Date().toISOString()`；`machine` 取 `hostname()`，导入行是 `import { hostname } from 'node:os';`）—— `scripts/lib/` 是纯模块，**不得**出现 `new Date()` 或 `hostname()` / `os.hostname()`，三个值只能由 CLI 注入。⚠️ **`machine` 只有一种写法：`hostname()`**（规定块里 `import { hostname } from 'node:os';` 是解构导入，所以调用端不能写 `os.hostname()`）。照抄散文里的 `os.hostname()` 会在 CLI 启动时以 `ReferenceError: os is not defined` 死掉，而那条路径的守卫测试**只覆盖 `--reason` / `--audit-out` / `--confirm-runid` 与 hosts 文件**，**不会**覆盖它 —— 本计划原先在 Task 4 的接线段与 Task 7 的这段里都误写成 `os.hostname()`，已两处改成 `hostname()`。
 
@@ -5849,7 +5951,7 @@ await main(process.argv.slice(2)).then(
 node --test scripts/lib/feed-publish-cli.test.mjs
 ```
 
-预期：`fail 0`、`pass 7`。
+预期：`fail 0`、`pass 7`。**本刀实测（2026-09-23）**：围栏内那 7 条**全绿**，**测试侧新增 12 条**（落在围栏**之后**，规定块本体一个字节没动 —— 与 Task 6 同一做法），合计 **`ℹ tests 20 / ℹ pass 20 / ℹ fail 0`**。新增的 12 条与各自钉住的接线见 Task 7 账本第一节；**另有两条规定的臂在第一次跑时是红的**，那不是新用例的问题，是**规定文本自身的冲突**（账本第二节）—— 实施时按那一节定下的守卫顺序落地。
 
 - [ ] **Step 5: 行为级变异验证**
 
@@ -5862,6 +5964,8 @@ node --test scripts/lib/feed-publish-cli.test.mjs
 
 恢复后全绿且 `git diff` 为空。
 
+**本刀实测（2026-09-23，六条全跑，读数与红名单见 Task 7 账本第三节）**：第 1–5 条与预期一致（**每条都只红它点名的那一条**，另有第 2、4 条各多红一条别的守卫用例，原因逐条写在账本里）；**第 6 条与预期不符 —— 实测只有 5 条变红**，并且这个差额是**结构性的、不是漏做**：`process.exit(0)` 只截断**异步**的部分，而这 7 条里那两条**只断言 stderr 文案、不看退出码**的用例（re-sign 守卫与 break-lock 守卫）走的是**同步**路径（`runCli` 是 async 函数，但它的守卫在第一个 `await` 之前就 `console.error` 并 return 了）⇒ 它们的文案在退出前**已经**写出来了 ⇒ 不红。**判据因此改为"退出码断言的那 5 条必须红"**，并把"6 条"这个数字当作**已被实测推翻的预期**留在原处（账本第三节给出红名单原文）。⚠️ 这一条同时说明：**只断言文案、不断言退出码的守卫用例，对"进程提前退出"这一类缺陷是瞎的** —— 新增用例一律两条都断言。
+
 - [ ] **Step 6: 扩写门禁命令**
 
 Task 1 Step 7 已经新增了 `check:portable-feed-publish`（当时只列 `scripts/lib/feed-publish.test.mjs` 一个文件；**第二闸门刀已把它扩成两个**，见 Task 1 Step 7 下的 ⚠️）。本步**只改写这个键的值**，**再追加一个** `scripts/feed-publish-cli.test.mjs` 把它凑成三个文件；键名与它在 `check` 链里的位置都不动，**不得**再新增第二条同名脚本、也不得改插入点：
@@ -5871,6 +5975,8 @@ Task 1 Step 7 已经新增了 `check:portable-feed-publish`（当时只列 `scri
 ```
 
 本步新增的这一个文件到这一步才存在，所以 Task 1 Step 7 列不上它：`scripts/lib/feed-publish-cli.test.mjs` 是本 Task 的产物。（`scripts/lib/feed-publish-transport.test.mjs` 是 Task 6 的产物，**已经由第二闸门刀提前接进去了** —— 它在 Task 6 结束时就已经存在、而当时不在任何门禁里。）
+
+**本刀实测（2026-09-23）**：这一行的值**按上面的规定逐字落地**（`package.json:55`，键名与它在 `check` 链里的位置都没动、没有第二条同名脚本）；三个文件一起跑的读数是 **`ℹ tests 211 / ℹ pass 211 / ℹ fail 0`**（**161** feed-publish + **30** transport + **20** cli）。三个套件都**真的**在这条命令里跑：`211 = 161 + 30 + 20` 这个合计数只有在三份都被加载时成立，另见本刀门禁读数一节对日志的三条独立核对（命令行、合计数、只属于各套件的测试名）。
 
 - [ ] **Step 7: 提交**
 
