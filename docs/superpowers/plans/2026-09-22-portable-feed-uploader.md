@@ -112,7 +112,7 @@ node --test scripts/lib/feed-publish-cli.test.mjs
 ```js
 import assert from 'node:assert/strict';
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, test } from 'node:test';
@@ -277,6 +277,7 @@ test('the local verification returns every digest and size the flow needs', asyn
     expectedChannel: 'internal',
     expectedVersion: '1.2.3',
     publicKeyBase64: PUBLIC_KEY_BASE64,
+    verifySignature: () => {},
   });
   assert.equal(result.packageSha256, PACKAGE_SHA256);
   assert.equal(result.packageSize, PACKAGE_BYTES.length);
@@ -630,8 +631,10 @@ export async function verifyLocalArtifacts(input) {
     throw new FeedPublishError('the package url does not point at this channel and version on the fixed public origin');
   }
 
-  const verifier = input.verifySignature ?? (() => {});
-  await verifier({
+  if (typeof input.verifySignature !== 'function') {
+    throw new FeedPublishError('a local signature verifier is required to verify the release manifest');
+  }
+  await input.verifySignature({
     manifestBytes,
     fileManifestBytes,
     packagePath: input.packagePath,
@@ -806,6 +809,7 @@ test('the dry run validates the triple and prints the plan without any transport
     version: '1.2.3',
     ...paths,
     publicKeyBase64: PUBLIC_KEY_BASE64,
+    verifySignature: () => {},
   });
   assert.deepEqual(
     plan.map((entry) => entry.stage),
@@ -828,6 +832,7 @@ test('the dry run follows the channel and the version it was given instead of a 
     version: '1.2.4',
     ...paths,
     publicKeyBase64: PUBLIC_KEY_BASE64,
+    verifySignature: () => {},
   });
   assert.equal(plan.length, PUBLISH_STAGES.length);
 });
@@ -949,18 +954,23 @@ export async function planCommit(input) {
   return PUBLISH_STAGES.map((stage) => ({ stage, status: 'pending' }));
 }
 
-export async function runPreflight(input) {
-  const notes = [];
+async function readDeviceIds(input) {
   const probe = await input.transport.readOnly.sshRun({
     host: input.host,
     knownHostsPath: input.knownHostsPath,
     script: `stat -c '%d' ${STATE_ROOT} ${UPDATE_ROOT}`,
   });
-  const devices = String(probe.stdout ?? '')
+  const ids = String(probe.stdout ?? '')
     .split('\n')
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
-  const sameFileSystem = devices.length === 2 && devices[0] === devices[1];
+  return { status: probe.status, ids };
+}
+
+export async function runPreflight(input) {
+  const notes = [];
+  const probe = await readDeviceIds(input);
+  const sameFileSystem = probe.ids.length === 2 && probe.ids[0] === probe.ids[1];
   if (!sameFileSystem) notes.push('the state root and the update root do not report the same file system');
   if (probe.status !== 0) notes.push('the read only probe did not succeed');
 
@@ -1030,6 +1040,7 @@ import {
   acquireChannelLock,
   breakChannelLock,
   planHashOf,
+  readOwnerRecord,
   releaseChannelLock,
   resolveLockDisposition,
 } from './feed-publish.mjs';
@@ -1403,21 +1414,25 @@ export async function readOwnerRecord(input) {
     knownHostsPath: input.knownHostsPath,
     script: `cat ${ownerPath(input.channel)}`,
   });
-  if (read.status !== 0) return null;
+  if (read.status !== 0) return { ok: false, record: null, cause: 'the owner record could not be read' };
   try {
-    return JSON.parse(String(read.stdout ?? '').trim());
+    return { ok: true, record: JSON.parse(String(read.stdout ?? '').trim()), cause: null };
   } catch {
-    return null;
+    return { ok: false, record: null, cause: 'the owner record is not valid JSON' };
   }
 }
 
-export async function acquireChannelLock(input) {
+function assertCompleteOwnerRecord(owner) {
   for (const field of ['runid', 'operator', 'startedAt', 'planHash', 'machine']) {
-    const value = input.owner?.[field];
+    const value = owner?.[field];
     if (typeof value !== 'string' || value.trim().length === 0) {
       throw new FeedPublishError(`the owner record must carry a non empty ${field}, so no lock is created without one`);
     }
   }
+}
+
+export async function acquireChannelLock(input) {
+  assertCompleteOwnerRecord(input.owner);
   const created = await input.transport.write.sshRun({
     host: input.host,
     knownHostsPath: input.knownHostsPath,
@@ -1435,14 +1450,14 @@ export async function acquireChannelLock(input) {
         owner: null,
       };
     }
-    const owner = await readOwnerRecord(input);
+    const read = await readOwnerRecord(input);
     return {
       state: 'not-acquired',
       acquired: false,
       incident: false,
       requiresExplicitRecovery: true,
       reason: 'the channel is already locked',
-      owner,
+      owner: read.record,
     };
   }
 
@@ -1511,7 +1526,7 @@ export function resolveLockDisposition(input) {
 }
 
 export async function releaseChannelLock(input) {
-  const owner = input.owner ?? (await readOwnerRecord(input));
+  const owner = input.owner ?? (await readOwnerRecord(input)).record;
   const verdict = resolveLockDisposition({
     acquisitionConfirmed: input.acquisitionConfirmed,
     owner,
@@ -1558,7 +1573,8 @@ export async function breakChannelLock(input) {
   if (typeof input.auditOut !== 'string' || input.auditOut.length === 0) {
     throw new FeedPublishError('breaking a lock requires --audit-out');
   }
-  const owner = await readOwnerRecord(input);
+  const read = await readOwnerRecord(input);
+  const owner = read.record;
   if (owner === null) {
     throw new FeedPublishError('the lock has no readable owner record, so it must be inspected by hand');
   }
@@ -1594,6 +1610,8 @@ export async function breakChannelLock(input) {
 1. **`owner.json` 必须携带 §6.6 的五个字段（第二个实现偏离）。** 规定文本的 `acquireChannelLock` **完全不校验** `input.owner`，规定夹具传的是两字段的 `{ runid, planHash }`，Task 4 的获取处也照此传。§6.6（spec 行 319）要求锁内写 `runid`、`operator`、`startedAt`、`planHash`、执行机标识；spec 行 322 要求 `--break-lock` 打印原 owner 的**完整信息**并让操作员确认"前一次运行确实不在进行中"——两字段的记录让这个判断无从做起，`startedAt` 更是**全计划里找不到出处**。实现改为在 `mkdir` **之前**逐字段校验（每个字段都必须 `trim()` 后非空，坏记录**永远不创建锁**）。**规定清单看不见差别**：五个字段检查逐个删掉，**规定的十三条全绿**（它们的 owner 都是完整记录），红的只有本刀新增的**六条**字段用例（五个 `an owner record without a <field> never creates a lock` 加一条 blank；实测：删 `runid` / `operator` / `startedAt` / `planHash` 各只红自己那一条，删 `machine` 红两条）。规定的夹具与三条规定的 acquire 用例因此改用完整的 `OWNER_RECORD`——**规定的 13 条测试名一个都没改**。
 2. **`releaseChannelLock` 不再把两个 §6.6 前提写成字面量（第三个实现偏离）。** 规定文本里 `acquisitionConfirmed: true` 与 `safeToExit: true` 是**字面量**，于是 §6.6 的推论（"本次尚未取得锁时……**不得声称「保留」或「释放」一个并不属于自己的锁**"，spec 行 352）与保留表（"翻转之后失败 ⇒ `incident` ⇒ **保留锁**"，spec 行 333）在这个入口上**无法表达**——Task 4 的 `releaseAndFinish` 正是不传这两个参数调用它的，于是它无条件断言"本次确实取得过锁"且"安全退出"。实现改为把两个输入往下传（`resolveLockDisposition` 内部本来就 fail closed：`!== true` 即拒绝）。规定的三条 release 用例因此各自补上 `acquisitionConfirmed: true, safeToExit: true`——**测试名不变**。**规定清单看不见差别**：把 `acquisitionConfirmed` 还原成字面量 `true` ⇒ 只红本刀新增的 `a release that never confirmed its own acquisition refuses and writes nothing`（69 → 68）；把 `safeToExit` 还原成字面量 ⇒ 只红 `a release that is not safe to exit keeps the lock this run owns`（69 → 68）。
 3. **§6.4 的信任锚现在每条远程调用都被钉住（第四个偏离，改动落在测试夹具与规定用例上）。** 规定夹具只记 `request.script`，所以从七个调用点里删掉 `host:` 或 `knownHostsPath:` **58/58 全绿**（实测）——`knownHostsPath` 是签名闸门之外的另一道信任锚，掉线不报错、只静默失效。实现：假 transport 记下**整个 request**，并用共享助手 `assertEveryCallCarriesTheTrustAnchor(calls)` 在每条走 transport 的测试里断言 `host` 与 `knownHostsPath` 恰好等于 `HOST` / `KNOWN_HOSTS_PATH`；助手**先断言 `calls.length > 0`**（零调用不许空过）。Task 1/2 的 preflight 夹具与三条 preflight 用例一并接上——只修 Task 3 会把同一个洞留在隔壁。**规定清单看不见差别**：删 `readOwnerRecord` 调用里的 `host:` ⇒ 红 13 条（69 → 56），删 `acquireChannelLock` 的 `mkdir` 调用里的 `knownHostsPath:` ⇒ 红 10 条（69 → 59）；两条在修复前都是 58/58 全绿。
+
+⚠️ **代码质量闸门（第十二节）更正本条的第一句：那句话对假 transport 为真，对真实 transport 曾经没有约束力。** 它写着"§6.4 的信任锚**现在每条远程调用都被钉住**"，证据是"删 `host:` ⇒ 13 条红"。但规定的 Task 6 `sshRun(request)` **只读 `request.script`**：`request.host` 与 `request.knownHostsPath` 在那里**从不被读取**，真实控制点是 `createFeedTransport` 工厂闭包里绑一次的那两个值。于是那 13 条红证明的是**调用方把锚点写进了 request**，而不是**真实传输据此选锚** —— 把这两个字段从每个调用点删干净，真实路径上执行的东西**一个字节都不变**。这是本节纪律禁止的"两条契约并存"形状：一条被断言的契约（request 带字段）与一条被执行的契约（工厂闭包）各说各话，而账本把前者的读数当成了后者的安全证明。**落地（只改计划，Task 6 尚未实现）**：Task 6 的 `sshRun` / `sftpUpload` 现在规定用 **`request.host ?? host` / `request.knownHostsPath ?? knownHostsPath`**，并新增一条按名钉住"每次调用可以覆盖默认锚点"的用例（Task 6 步骤 1 最后一条）与一条变异（Task 6 步骤 5 第 8 条）。**这条钉子现在有承载力**：调用方写进 request 的锚点会被真的用上；漏写则退回工厂那份**同一次运行里绑定的**锚点（不会因为漏写而换一台机器、也不会放宽主机键检查）。**真实 transport 必须做的是**：每次 `ssh` / `sftp` 都按 request 给的值（缺省退回工厂值）拼 `UserKnownHostsFile=` 与目标主机，并**永不**放宽 `StrictHostKeyChecking=yes`。
 
 **第二修复刀（代码质量门禁复核，2026-09-22）的四处偏离（第五、第六、第七、第八处；形状同上：规定文本说了什么 / 为什么不行 / 什么变异证明规定清单看不见差别）：**
 
@@ -1800,6 +1818,9 @@ function commitTransport(options = {}) {
           if (options.foreignOwnerFromReVerify === true) {
             return { status: 0, stdout: JSON.stringify({ runid: 'other', planHash: 'other' }), stderr: '' };
           }
+          if (options.ownerReadFailsAfterLock === true && ownerJson !== null) {
+            return { status: 1, stdout: '', stderr: 'connection reset' };
+          }
           return ownerJson === null
             ? { status: 1, stdout: '', stderr: 'no such file' }
             : { status: 0, stdout: ownerJson, stderr: '' };
@@ -1848,6 +1869,9 @@ function commitTransport(options = {}) {
           return { status: 0, stdout: options.sameFileSystem === false ? '100\n200\n' : '100\n100\n', stderr: '' };
         }
         if (request.script.includes('manifest.json') && request.script.includes('.tmp')) {
+          if (options.tempManifestReadStatus !== undefined) {
+            return { status: options.tempManifestReadStatus, stdout: '', stderr: 'sha256sum: Permission denied' };
+          }
           return {
             status: 0,
             stdout: `${options.tempManifestSha ?? 'MISSING'}  ${request.script.split(/\s+/u)[1]}\n`,
@@ -1856,6 +1880,13 @@ function commitTransport(options = {}) {
         }
         if (request.script.includes('manifest.json')) {
           manifestReads += 1;
+          if (options.baselineDigestReadFails === true && manifestReads === 1) {
+            return { status: 1, stdout: '', stderr: 'sha256sum: Permission denied' };
+          }
+          if (options.casDigestReadFails === true && manifestReads > 1) {
+            return { status: 1, stdout: '', stderr: 'sha256sum: Permission denied' };
+          }
+          if (options.firstPublish === true) return { status: 0, stdout: '', stderr: '' };
           if (options.baselineDigestAbsent === true && manifestReads === 1) {
             return { status: 0, stdout: '', stderr: '' };
           }
@@ -1974,6 +2005,7 @@ function commitInput(transport, overrides = {}) {
     startedAt: '2026-09-22T00:00:00.000Z',
     machine: 'builder-01',
     publicKeyBase64: PUBLIC_KEY_BASE64,
+    verifySignature: () => {},
     auditOut: join(auditRoot, 'audit.jsonl'),
     repositoryRoot: makeRoot(),
     temporaryRoot: makeRoot(),
@@ -2053,6 +2085,56 @@ test('the local pre-verification happens before any network write', async () => 
   assert.deepEqual(transport.calls, []);
 });
 
+test('the run refuses to publish without a signature verifier', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths);
+  const input = commitInput(transport, { ...paths, verifySignature: undefined });
+  const result = await runCommit(input);
+  assert.equal(result.outcome, 'fail');
+  assert.match(result.reason, /signature verifier is required/u);
+  assert.equal(result.lockState, 'not-acquired');
+  assert.deepEqual(transport.calls, []);
+  const entries = auditEntriesOf(input.auditOut);
+  assert.equal(entries.at(-1).stage, 'fail');
+});
+
+test('a throwing local verifier stops the run before any remote call', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths);
+  const seen = [];
+  const input = commitInput(transport, {
+    ...paths,
+    verifySignature: () => {
+      seen.push('called');
+      throw new Error('release manifest signature is invalid');
+    },
+  });
+  const result = await runCommit(input);
+  assert.deepEqual(seen, ['called']);
+  assert.equal(result.outcome, 'fail');
+  assert.equal(result.reason, 'release manifest signature is invalid');
+  assert.equal(result.lockState, 'not-acquired');
+  assert.deepEqual(transport.calls, []);
+  const entries = auditEntriesOf(input.auditOut);
+  const preVerify = entries.find((entry) => entry.stage === 'pre-verify');
+  assert.equal(preVerify.status, 'fail');
+  assert.equal(preVerify.detail, 'release manifest signature is invalid');
+  assert.equal(entries.at(-1).stage, 'fail');
+});
+
+test('a run without a temporary root fails before any remote write', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths);
+  const input = commitInput(transport, { ...paths, temporaryRoot: undefined });
+  const result = await runCommit(input);
+  assert.equal(result.outcome, 'fail');
+  assert.match(result.reason, /temporary root/u);
+  assert.equal(result.lockState, 'not-acquired');
+  assert.deepEqual(transport.calls, []);
+  const entries = auditEntriesOf(input.auditOut);
+  assert.equal(entries.at(-1).stage, 'fail');
+});
+
 test('a clean publish walks every stage and releases its own lock', async () => {
   const paths = writeArtifacts();
   const transport = happyTransport(paths);
@@ -2064,6 +2146,26 @@ test('a clean publish walks every stage and releases its own lock', async () => 
     result.stages.map((entry) => entry.status),
     PUBLISH_STAGES.map(() => 'done'),
   );
+});
+
+test('the reveal stage reports that the version went live rather than that the run closed out', async () => {
+  const livePaths = writeArtifacts();
+  const live = happyTransport(livePaths);
+  const liveInput = commitInput(live, { ...livePaths });
+  const published = await runCommit(liveInput);
+  assert.equal(published.outcome, 'done', published.reason);
+  assert.equal(published.stages.find((entry) => entry.stage === 'reveal').status, 'done');
+
+  const blockedPaths = writeArtifacts();
+  const blocked = happyTransport(blockedPaths, { publicPackageBody: Buffer.from('other').toString('binary') });
+  const blockedInput = commitInput(blocked, { ...blockedPaths });
+  const indeterminate = await runCommit(blockedInput);
+  assert.equal(indeterminate.outcome, 'incident');
+  assert.equal(indeterminate.stages.find((entry) => entry.stage === 'reveal').status, 'pending');
+  const entries = auditEntriesOf(blockedInput.auditOut);
+  assert.ok(entries.some((entry) => entry.stage === 'public-verify' && entry.status === 'incident'));
+  assert.ok(entries.some((entry) => entry.stage === 'incident' && entry.reason === indeterminate.reason));
+  assert.equal(entries.at(-1).stage, 'lock-retained');
 });
 
 test('the version directory is committed with a single directory rename', async () => {
@@ -2136,6 +2238,73 @@ test('a cas mismatch is an incident that keeps the lock and never rolls anything
   assert.deepEqual(destructive, []);
 });
 
+test('a remote manifest digest that could not be read is an incident rather than a bypass', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths, { casDigestReadFails: true });
+  const input = commitInput(transport, { ...paths });
+  const result = await runCommit(input);
+  assertEveryCommitCallCarriesTheTrustAnchor(transport);
+  assert.equal(result.outcome, 'incident');
+  assert.equal(result.lockState, 'retained-by-this-run');
+  assert.match(result.reason, /could not be read/u);
+  assert.doesNotMatch(result.reason, /which means a bypass/u);
+  assert.equal(result.stages.find((entry) => entry.stage === 'cas').status, 'incident');
+  assert.equal(result.stages.find((entry) => entry.stage === 'temp-manifest').status, 'pending');
+  const cas = auditEntriesOf(input.auditOut).find((entry) => entry.stage === 'cas');
+  assert.equal(cas.status, 'incident');
+  assert.equal(cas.detail, 'the remote manifest digest could not be read');
+  assert.equal(cas.previousManifestSha256, BASELINE_SHA);
+  assert.equal(cas.observedManifestSha256, null);
+});
+
+test('a first publish proceeds when the manifest digest is absent on both reads', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths, { firstPublish: true });
+  const input = commitInput(transport, { ...paths });
+  const result = await runCommit(input);
+  assertEveryCommitCallCarriesTheTrustAnchor(transport);
+  assert.equal(result.outcome, 'done', result.reason);
+  assert.equal(result.lockState, 'released');
+  const cas = auditEntriesOf(input.auditOut).find((entry) => entry.stage === 'cas');
+  assert.equal(cas.status, 'done');
+  assert.equal(cas.previousManifestSha256, 'absent');
+  assert.equal(cas.observedManifestSha256, 'absent');
+});
+
+test('a manifest digest that cannot be read inside the lock stops the run before anything is committed', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths, { baselineDigestReadFails: true });
+  const input = commitInput(transport, { ...paths });
+  const result = await runCommit(input);
+  assertEveryCommitCallCarriesTheTrustAnchor(transport);
+  assert.equal(result.outcome, 'incident');
+  assert.equal(result.lockState, 'retained-by-this-run');
+  assert.equal(result.stages.find((entry) => entry.stage === 're-verify').status, 'incident');
+  assert.equal(result.stages.find((entry) => entry.stage === 'commit-version').status, 'pending');
+  const renames = transport.calls.filter(
+    (call) => call[0] === 'writeSsh' && String(call[1]).startsWith('mv /opt/rongying/updates-state/staging/'),
+  );
+  assert.deepEqual(renames, []);
+  const reVerify = auditEntriesOf(input.auditOut).find((entry) => entry.stage === 're-verify');
+  assert.equal(reVerify.status, 'incident');
+  assert.equal(reVerify.detail, 'the manifest digest that the CAS baseline needs could not be read');
+});
+
+test('a remote temp manifest digest that could not be read is an incident rather than a mismatch', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths, { tempManifestReadStatus: 1 });
+  const input = commitInput(transport, { ...paths });
+  const result = await runCommit(input);
+  assertEveryCommitCallCarriesTheTrustAnchor(transport);
+  assert.equal(result.outcome, 'incident');
+  assert.equal(result.lockState, 'retained-by-this-run');
+  assert.match(result.reason, /could not be read/u);
+  assert.equal(result.stages.find((entry) => entry.stage === 'flip').status, 'pending');
+  const tempManifest = auditEntriesOf(input.auditOut).find((entry) => entry.stage === 'temp-manifest');
+  assert.equal(tempManifest.detail, 'the uploaded manifest digest could not be read');
+  assert.equal(tempManifest.manifestSha256, manifestShaOf(paths));
+});
+
 test('an indeterminate outcome with the old public sha allows a retry and keeps the lock', async () => {
   const paths = writeArtifacts();
   const transport = happyTransport(paths, { publicManifestBody: BASELINE_BODY });
@@ -2179,11 +2348,17 @@ test('a staging failure is a plain failure and reports that no lock was acquired
 test('a failure after the lock but before the flip releases the lock this run owns', async () => {
   const paths = writeArtifacts();
   const transport = happyTransport(paths, { commitStatus: 1 });
-  const result = await runCommit(commitInput(transport, { ...paths }));
+  const input = commitInput(transport, { ...paths });
+  const result = await runCommit(input);
   assertEveryCommitCallCarriesTheTrustAnchor(transport);
   assert.equal(result.outcome, 'fail');
   assert.equal(result.lockState, 'released');
   assert.equal(result.stages.find((entry) => entry.stage === 'unlock').status, 'done');
+  const entries = auditEntriesOf(input.auditOut);
+  assert.equal(entries.at(-2).stage, 'fail');
+  assert.equal(entries.at(-2).reason, result.reason);
+  assert.equal(entries.at(-1).stage, 'unlock');
+  assert.ok(entries.every((entry) => entry.stage !== 'incident'));
 });
 
 test('the commit never runs when the lock already exists', async () => {
@@ -2283,6 +2458,16 @@ test('the audit log refuses to be written inside the repository', () => {
   );
 });
 
+test('the audit stage append refuses a missing repository root or an empty path', () => {
+  const auditOut = join(makeRoot(), 'audit.jsonl');
+  assert.throws(() => appendAuditStage({ auditOut, entry: { stage: 'open' } }), /repository root is required/u);
+  assert.throws(
+    () => appendAuditStage({ auditOut: '', entry: { stage: 'open' }, repositoryRoot: makeRoot() }),
+    /non empty path/u,
+  );
+  assert.equal(existsSync(auditOut), false);
+});
+
 test('a failed audit write stops the run instead of publishing silently', async () => {
   const paths = writeArtifacts();
   const transport = commitTransport();
@@ -2347,6 +2532,55 @@ test('the public verification fails when the served package differs', async () =
   assert.match(result.reason, /package/u);
 });
 
+function publicVerificationInput(fetches, overrides = {}) {
+  const paths = writeArtifacts();
+  return {
+    channel: 'internal',
+    version: '1.2.3',
+    publicKeyBase64: PUBLIC_KEY_BASE64,
+    verifier: () => {},
+    expectedManifestBytes: readFileSync(paths.manifestPath),
+    expectedPackageSha256: PACKAGE_SHA256,
+    expectedPackageSize: PACKAGE_BYTES.length,
+    expectedFileManifestSha256: FILE_MANIFEST_SHA256,
+    expectedFileManifestSize: FILE_MANIFEST_BYTES.length,
+    temporaryRoot: makeRoot(),
+    transport: {
+      fetchPublic: async (url) => {
+        fetches.push(url);
+        return { status: 200, bodyBytes: new Uint8Array() };
+      },
+    },
+    ...overrides,
+  };
+}
+
+test('the public verification refuses an unsafe channel or version before any fetch', async () => {
+  const fetches = [];
+  await assert.rejects(
+    verifyPublicArtifacts(publicVerificationInput(fetches, { channel: 'internal/x' })),
+    /not safe to interpolate/u,
+  );
+  await assert.rejects(
+    verifyPublicArtifacts(publicVerificationInput(fetches, { version: '1.2.3;id' })),
+    /not a strict semantic version/u,
+  );
+  assert.deepEqual(fetches, []);
+});
+
+test('the public verification refuses a missing temporary root or verifier before any fetch', async () => {
+  const fetches = [];
+  await assert.rejects(
+    verifyPublicArtifacts(publicVerificationInput(fetches, { temporaryRoot: undefined })),
+    /temporary root/u,
+  );
+  await assert.rejects(
+    verifyPublicArtifacts(publicVerificationInput(fetches, { verifier: undefined })),
+    /verifier is required/u,
+  );
+  assert.deepEqual(fetches, []);
+});
+
 test('a staging directory that cannot be created is a plain failure', async () => {
   const paths = writeArtifacts();
   const transport = happyTransport(paths, { stagingCreateStatus: 1 });
@@ -2388,6 +2622,28 @@ test('a lock that fails for any reason other than an existing entry is an incide
     (call) => call[0] === 'writeSsh' && /(?:^|\s)(?:rm|rmdir) /u.test(String(call[1])),
   );
   assert.deepEqual(removals, []);
+});
+
+test('an owner record that cannot be re-read inside the lock window stops the run and touches nothing', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths, { ownerReadFailsAfterLock: true });
+  const input = commitInput(transport, { ...paths });
+  const result = await runCommit(input);
+  assertEveryCommitCallCarriesTheTrustAnchor(transport);
+  assert.equal(result.outcome, 'incident');
+  assert.match(result.reason, /could not be re-read/u);
+  assert.equal(result.lockState, 'retained-by-this-run');
+  assert.equal(result.stages.find((entry) => entry.stage === 're-verify').status, 'incident');
+  assert.equal(result.stages.find((entry) => entry.stage === 'commit-version').status, 'pending');
+  const removals = transport.calls.filter(
+    (call) => call[0] === 'writeSsh' && /(?:^|\s)(?:rm|rmdir) /u.test(String(call[1])),
+  );
+  assert.deepEqual(removals, []);
+  const entries = auditEntriesOf(input.auditOut);
+  const reVerify = entries.find((entry) => entry.stage === 're-verify');
+  assert.equal(reVerify.status, 'incident');
+  assert.equal(reVerify.detail, 'the owner record could not be read');
+  assert.equal(entries.at(-1).stage, 'lock-retained');
 });
 
 test('an owner write that fails after the lock is an incident that keeps the lock', async () => {
@@ -2842,13 +3098,18 @@ test('the audit log keeps the operator and the time as null instead of dropping 
   const paths = writeArtifacts();
   const transport = happyTransport(paths);
   const input = commitInput(transport, { ...paths, operator: undefined, startedAt: undefined });
-  await assert.rejects(runCommit(input), /operator/u);
+  const result = await runCommit(input);
+  assert.equal(result.outcome, 'fail', result.reason);
+  assert.match(result.reason, /operator/u);
+  assert.equal(result.lockState, 'not-acquired');
+  assert.deepEqual(transport.calls, []);
   const entries = auditEntriesOf(input.auditOut);
   assert.ok(entries.length > 0);
   for (const entry of entries) {
     assert.equal(entry.operator, null, entry.stage);
     assert.equal(entry.at, null, entry.stage);
   }
+  assert.equal(entries.at(-1).stage, 'fail');
 });
 
 test('a staging directory that cannot be finalised is a plain failure', async () => {
@@ -2940,9 +3201,13 @@ export function assertNoReservedEvidenceKeys(evidence) {
 }
 
 export function appendAuditStage(input) {
-  if (typeof input.repositoryRoot === 'string' && input.repositoryRoot.length > 0) {
-    assertOutsideRepository(input.auditOut, input.repositoryRoot);
+  if (typeof input.repositoryRoot !== 'string' || input.repositoryRoot.length === 0) {
+    throw new FeedPublishError('the repository root is required, so the audit log can be proven to live outside it');
   }
+  if (typeof input.auditOut !== 'string' || input.auditOut.length === 0) {
+    throw new FeedPublishError('the audit log needs a non empty path');
+  }
+  assertOutsideRepository(input.auditOut, input.repositoryRoot);
   try {
     appendFileSync(input.auditOut, `${JSON.stringify(input.entry)}\n`, 'utf8');
   } catch (error) {
@@ -2966,6 +3231,12 @@ function assertSafeVersion(version) {
     throw new FeedPublishError(
       `the version ${version} is not a strict semantic version, so it is not safe to interpolate into a remote path`,
     );
+  }
+}
+
+function assertTemporaryRoot(temporaryRoot) {
+  if (typeof temporaryRoot !== 'string' || temporaryRoot.length === 0) {
+    throw new FeedPublishError('a temporary root directory is required to write the fetched public artifacts');
   }
 }
 
@@ -3094,10 +3365,17 @@ async function readRemoteFileSha(input, target) {
     knownHostsPath: input.knownHostsPath,
     script: `sha256sum ${target} || true`,
   });
-  return String(result.stdout ?? '').split(/\s+/u)[0] || 'absent';
+  if (result.status !== 0) return { ok: false, sha256: null };
+  return { ok: true, sha256: String(result.stdout ?? '').split(/\s+/u)[0] || 'absent' };
 }
 
 export async function verifyPublicArtifacts(input) {
+  assertSafeChannel(input.channel);
+  assertSafeVersion(input.version);
+  assertTemporaryRoot(input.temporaryRoot);
+  if (typeof input.verifier !== 'function') {
+    throw new FeedPublishError('a public artifact verifier is required to verify the published manifest');
+  }
   const base = `${PUBLIC_BASE_URL}/${input.channel}/${input.version}`;
   const manifestResponse = await input.transport.fetchPublic(`${base}/${PORTABLE_MANIFEST_NAME}`);
   if (manifestResponse.status !== 200) return { ok: false, reason: 'the public manifest is not reachable' };
@@ -3133,8 +3411,7 @@ export async function verifyPublicArtifacts(input) {
   const fileManifestPath = join(input.temporaryRoot, PORTABLE_FILE_MANIFEST_NAME);
   writeFileSync(packagePath, packageBytes);
   writeFileSync(fileManifestPath, fileManifestBytes);
-  const verifier = input.verifier ?? (() => {});
-  await verifier({ manifestBytes, fileManifestBytes, packagePath, publicKeyBase64: input.publicKeyBase64 });
+  await input.verifier({ manifestBytes, fileManifestBytes, packagePath, publicKeyBase64: input.publicKeyBase64 });
 
   return {
     ok: true,
@@ -3153,6 +3430,7 @@ export async function runCommit(input) {
   let acquiredLockState = null;
   let planHash = 'uncomputed';
   let owner = null;
+  let ownerRecord = null;
 
   const atValue = () => (input.now === undefined ? input.startedAt : input.now()) ?? null;
   const baseOf = () => ({ runid, operator: input.operator ?? null, at: atValue() });
@@ -3191,9 +3469,19 @@ export async function runCommit(input) {
     return finish(outcome, reason, lockState);
   };
 
-  const releaseAndFinish = async (failedStage, outcome, reason) => {
+  const reportUnlock = (disposition) => {
+    const unlockStatus = disposition.release ? 'done' : 'retained';
+    stages.find((entry) => entry.stage === 'unlock').status = unlockStatus;
+    appendAuditStage({
+      auditOut: input.auditOut,
+      repositoryRoot: input.repositoryRoot,
+      entry: { stage: 'unlock', status: unlockStatus, ...baseOf(), reason: disposition.reason },
+    });
+  };
+
+  const releaseAndFinish = async (failedStage, reason) => {
     stages.find((entry) => entry.stage === failedStage).status = 'fail';
-    recordOutcome(outcome, reason);
+    recordOutcome('fail', reason);
     const disposition = await releaseChannelLock({
       channel: input.channel,
       transport: input.transport,
@@ -3204,14 +3492,8 @@ export async function runCommit(input) {
       acquisitionConfirmed,
       safeToExit: true,
     });
-    const unlockStatus = disposition.release ? 'done' : 'retained';
-    stages.find((entry) => entry.stage === 'unlock').status = unlockStatus;
-    appendAuditStage({
-      auditOut: input.auditOut,
-      repositoryRoot: input.repositoryRoot,
-      entry: { stage: 'unlock', status: unlockStatus, ...baseOf(), reason: disposition.reason },
-    });
-    return finish(outcome, reason, disposition.state);
+    reportUnlock(disposition);
+    return finish('fail', reason, disposition.state);
   };
 
   try {
@@ -3229,6 +3511,7 @@ export async function runCommit(input) {
     assertSafeChannel(input.channel);
     assertSafeVersion(input.version);
     assertSafeRunid(runid);
+    assertTemporaryRoot(input.temporaryRoot);
     local = await verifyLocalArtifacts({
       packagePath: input.packagePath,
       fileManifestPath: input.fileManifestPath,
@@ -3245,6 +3528,14 @@ export async function runCommit(input) {
       fileManifestSha256: local.fileManifestSha256,
       manifestSha256: local.manifestSha256,
     });
+    ownerRecord = {
+      runid,
+      operator: input.operator,
+      startedAt: input.startedAt,
+      planHash,
+      machine: input.machine,
+    };
+    assertCompleteOwnerRecord(ownerRecord);
   } catch (error) {
     audit('pre-verify', 'fail', error.message);
     recordOutcome('fail', error.message);
@@ -3321,7 +3612,7 @@ export async function runCommit(input) {
   const lock = await acquireChannelLock({
     channel: input.channel,
     transport: input.transport,
-    owner: { runid, operator: input.operator, startedAt: input.startedAt, planHash, machine: input.machine },
+    owner: ownerRecord,
     host: input.host,
     knownHostsPath: input.knownHostsPath,
   });
@@ -3341,14 +3632,27 @@ export async function runCommit(input) {
   }
   audit('lock', 'done');
 
-  const reReadOwner = await readOwnerRecord(input);
+  const reRead = await readOwnerRecord(input);
+  if (reRead.ok !== true) {
+    audit('re-verify', 'incident', reRead.cause);
+    return retainAndFinish('incident', `the lock owner record could not be re-read: ${reRead.cause}`);
+  }
+  const reReadOwner = reRead.record;
   if (reReadOwner !== null && (reReadOwner.runid !== runid || reReadOwner.planHash !== planHash)) {
     owner = reReadOwner;
     audit('re-verify', 'incident', 'the lock owner changed while this run was taking it');
     return retainAndFinish('incident', 'the lock owner changed while this run was taking it');
   }
   owner = reReadOwner ?? owner;
-  const baselineSha = await readRemoteFileSha(input, `${UPDATE_ROOT}/${input.channel}/${PORTABLE_MANIFEST_NAME}`);
+  const baselineRead = await readRemoteFileSha(input, `${UPDATE_ROOT}/${input.channel}/${PORTABLE_MANIFEST_NAME}`);
+  if (baselineRead.ok !== true) {
+    audit('re-verify', 'incident', 'the manifest digest that the CAS baseline needs could not be read');
+    return retainAndFinish(
+      'incident',
+      'the manifest digest could not be read, so this run has no baseline to compare against',
+    );
+  }
+  const baselineSha = baselineRead.sha256;
   const stagingAfterLock = await inspectRemoteDirectory(input, stagingRoot, expectedEntries);
   if (!stagingAfterLock.present || stagingAfterLock.empty || stagingAfterLock.problems.length > 0) {
     audit('re-verify', 'incident', 'the staging bytes changed while the lock was being taken');
@@ -3356,35 +3660,18 @@ export async function runCommit(input) {
   }
   audit('re-verify', 'done');
 
-  const devices = await input.transport.readOnly.sshRun({
-    host: input.host,
-    knownHostsPath: input.knownHostsPath,
-    script: `stat -c '%d' ${STATE_ROOT} ${UPDATE_ROOT}`,
-  });
-  const deviceList = String(devices.stdout ?? '')
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
-  if (devices.status !== 0 || deviceList.length !== 2 || deviceList[0] !== deviceList[1]) {
-    return releaseAndFinish(
-      'commit-version',
-      'fail',
-      'the staging root and the update root are not on the same file system',
-    );
+  const devices = await readDeviceIds(input);
+  if (devices.status !== 0 || devices.ids.length !== 2 || devices.ids[0] !== devices.ids[1]) {
+    return releaseAndFinish('commit-version', 'the staging root and the update root are not on the same file system');
   }
 
   const existing = await inspectRemoteDirectory(input, versionRoot, expectedEntries);
   if (existing.present && existing.empty) {
-    return releaseAndFinish(
-      'commit-version',
-      'fail',
-      'the immutable version directory already exists but is incomplete',
-    );
+    return releaseAndFinish('commit-version', 'the immutable version directory already exists but is incomplete');
   }
   if (existing.present && existing.problems.length > 0) {
     return releaseAndFinish(
       'commit-version',
-      'fail',
       `the immutable version directory already exists and does not match: ${existing.problems.join('; ')}`,
     );
   }
@@ -3397,7 +3684,7 @@ export async function runCommit(input) {
       script: `mv ${stagingRoot} ${versionRoot}`,
     });
     if (committed.status !== 0) {
-      return releaseAndFinish('commit-version', 'fail', 'the version directory was not committed');
+      return releaseAndFinish('commit-version', 'the version directory was not committed');
     }
     audit('commit-version', 'done');
   }
@@ -3416,8 +3703,16 @@ export async function runCommit(input) {
   }
   audit('backup-manifest', 'done', undefined, { previousManifestSha256: baselineSha, backupPath });
 
-  const casSha = await readRemoteFileSha(input, `${UPDATE_ROOT}/${input.channel}/${PORTABLE_MANIFEST_NAME}`);
-  const casEvidence = { previousManifestSha256: baselineSha, observedManifestSha256: casSha };
+  const casRead = await readRemoteFileSha(input, `${UPDATE_ROOT}/${input.channel}/${PORTABLE_MANIFEST_NAME}`);
+  const casEvidence = { previousManifestSha256: baselineSha, observedManifestSha256: casRead.sha256 };
+  if (casRead.ok !== true) {
+    audit('cas', 'incident', 'the remote manifest digest could not be read', casEvidence);
+    return retainAndFinish(
+      'incident',
+      'the remote manifest digest could not be read, so this run cannot tell a bypass from a failed read',
+    );
+  }
+  const casSha = casRead.sha256;
   if (casSha !== baselineSha) {
     audit('cas', 'incident', undefined, casEvidence);
     return retainAndFinish(
@@ -3438,8 +3733,16 @@ export async function runCommit(input) {
     audit('temp-manifest', 'incident', 'the manifest upload failed', manifestEvidence);
     return retainAndFinish('incident', 'the manifest could not be uploaded, so the outcome is uncertain');
   }
-  const remoteTempSha = await readRemoteFileSha(input, tempManifestPath);
+  const tempRead = await readRemoteFileSha(input, tempManifestPath);
+  const remoteTempSha = tempRead.sha256;
   const tempManifestEvidence = { manifestSha256: local.manifestSha256, remoteTempSha256: remoteTempSha };
+  if (tempRead.ok !== true) {
+    audit('temp-manifest', 'incident', 'the uploaded manifest digest could not be read', tempManifestEvidence);
+    return retainAndFinish(
+      'incident',
+      'the uploaded manifest digest could not be read, so this run cannot tell a bad upload from a failed read',
+    );
+  }
   if (remoteTempSha !== local.manifestSha256) {
     audit(
       'temp-manifest',
@@ -3518,13 +3821,7 @@ export async function runCommit(input) {
     acquisitionConfirmed,
     safeToExit: true,
   });
-  const unlockStatus = disposition.release ? 'done' : 'retained';
-  stages.find((entry) => entry.stage === 'unlock').status = unlockStatus;
-  appendAuditStage({
-    auditOut: input.auditOut,
-    repositoryRoot: input.repositoryRoot,
-    entry: { stage: 'unlock', status: unlockStatus, ...baseOf(), reason: disposition.reason },
-  });
+  reportUnlock(disposition);
   if (disposition.release !== true) return finish('incident', disposition.reason, disposition.state);
   return finish('done', 'published', disposition.state);
 }
@@ -3773,6 +4070,8 @@ git commit -m "feat(feed): publish the manifest over sftp and verify it on the p
 | M-32       | `inspectRemoteDirectory` 的返回里 `- digests: digests === null ? null : Object.fromEntries(digests),`（返回不再带远端摘要）                                         | **133 / 2**                 | `a staging entry that is not a regular file is refused`（断言 `remote.digests === null`）+ `the audit log carries the entries and digests the staging directory reported`                                               |
 | 假存活探针 | 把 `audit('commit-version','done');` 插在设备号检查那条 `return releaseAndFinish(…)` **之后**（不可达）                                                             | **133 / 0（但被装置拒收）** | —（装置报 `SURVIVOR_REJECTED … after an unconditional return`；**这一条是装置自身的验证，不是一项变异读数**）                                                                                                           |
 
+⚠️ **代码质量闸门（第十二节）对本表的更正：这 37 条读数缺一整类变异，别把本表当成"每一处新增守卫都有读数"。** 37 条全是"删掉某段判据/接线 ⇒ 套件变红"的形状 —— 没有一条去变异**"把某个透传换成一个静默 no-op"**。`runCommit` 把 `input.verifySignature` 往下传给 `verifyLocalArtifacts` 正是这一类：`verifyLocalArtifacts` 里的 `input.verifySignature ?? (() => {})` 把"漏传"与"传了个空实现"变成同一件事，于是**删掉那一行 ⇒ 137/137 全绿**，没有审计条目、没有报错、没有任何痕迹。第十二节 M-Q1 / M-Q2 给这一类的两条读数（删除 ⇒ 红 46 条；换成 `() => {}` ⇒ 红 2 条，两条都按名）与修法（闸门改成**必须**）。**"37 条读数已覆盖每一处新增守卫"这句话从本表撤掉** —— 它覆盖的是当时被点名的那批守卫，不是这个形状。
+
 **次数：37 条读数**（1 条对照 + 35 条变异 + 1 条假存活探针；其中 M-8、M-f1b 与假存活探针**各单独跑了一次**，其余 34 条一次跑完），**0 条 `EXPECTATION_FAILED`**（每条都在红名单里核对了"必须变红的那条测试"）。**红线之外没有意外**：只有 M-10 / M-11 / M-32 红到 2–3 条，原因是它们动的是被多条审计用例共同依赖的基座（`baseOf`）与返回形状；**没有一条变异只红"别的测试"**。
 
 **四、当前读数（复核刀重测，取代第四节的旧读数）**
@@ -3890,12 +4189,131 @@ git commit -m "feat(feed): publish the manifest over sftp and verify it on the p
 - **规定块边界（本刀同步过的两段）**：Task 4 测试块 = 计划第 1762–2905 行 ⇔ `feed-publish.test.mjs` **1321–2464**（围栏在计划第 1761 / 2906 行）；Task 4 模块块 = 计划第 2921–3530 行 ⇔ `feed-publish.mjs` **444–1053**（围栏在计划第 2920 / 3531 行）。**两对 `diff` 都是 `DIFF_EMPTY`**（脚本按**父提交**的字节在计划里定位那一段、断言只有 1 处命中、断言上下各是一行围栏，再整段替换；替换后**从磁盘重读**、再验一次命中数与围栏）。⚠️ 这四个计划行号是**跑过 `prettier --write` 之后**重测的（`prettier --write` 会把长段落折行；本刀实测它折的是**围栏之后**的段落，两对围栏一个都没动 —— 重测读数仍然是 1761 / 2906 / 2920 / 3531）。
 - **没有连过任何服务器**：本刀的所有读数都来自注入的假 transport，与 Task 4 / 第九节 / 第十节同规格。
 
+### 十二、代码质量闸门（1 Critical + 6 Important + 7 Minor）的落地、读数与账本更正
+
+**这一刀是什么：** Task 4 过代码质量闸门时被记了 **13 条**（1 条 Critical、6 条 Important、7 条 Minor，每条都带复核者的一个实测读数），外加**一条明确不进本刀的结构建议**（进 Task 5，见该任务的"结构项"）。本节给出：① 13 项逐条落地（含 1 项**只改计划**、1 项**只记账**）；② 变异读数（**3 条对照 + 29 条变异**，全部打印 hunk）；③ **本刀跑出来的一个存活变异**（第 30 条读数，属于账本此前没有的类别）；④ 对本账本的**四处更正**；⑤ 规定块与围栏的实测行号；⑥ 当前读数；⑦ 未做/未验。**代码提交 4 个**：`19014deb`（模块 + 测试）、`a57c0adf`（模块 + 测试）、`029a2a2a`（模块 + 测试）、`54d7120b`（模块 + 测试）—— 每次提交后都核对过 `git show HEAD:<file> | sha256sum` **等于**该段变异基线（提交时 `pre-commit` 跑 `eslint --fix` + `prettier --write`，四个提交的 blob 前后都没被改动）。
+
+**一、13 项逐条落地**
+
+1. **【Critical】本地签名验证的透传没有被钉住。** 复核者的读数：删掉 `runCommit` 里那句 `verifySignature: input.verifySignature`（当时在 `:762`，现在在 `feed-publish.mjs:796`）**137/137 全绿**；`verifyLocalArtifacts` 的默认值 `input.verifySignature ?? (() => {})`（当时 `:130`，现在 `:131`）让"漏传"与"传了个空实现"变成同一件事 ⇒ §6.5 步骤 1 的第一项要求可以在**没有一条测试变红、也没有一行日志**的情况下消失。**落地**：`verifyLocalArtifacts:131` 与 `verifyPublicArtifacts:651` 的默认值**换成硬闸门**（不是函数就抛 `FeedPublishError`），并新增两条按名钉住的用例：`the run refuses to publish without a signature verifier`（`feed-publish.test.mjs:1652`，闸门本身）与 `a throwing local verifier stops the run before any remote call`（`:1665`，透传本身：断言验证器**被调用过**、异常消息进了 `reason` 与 `pre-verify` 条目、**零 transport 调用**）。**变异 M-Q1/M-Q2**（见下表）：删除 ⇒ 红 46 条；**换成 `() => {}` ⇒ 红 2 条**（两条都按名）。**"红得只剩一条"这个预期不成立，原因在测量里**：闸门一旦是必须的，共享夹具 `commitInput` 就必须提供验证器，于是"删掉透传"对**每一条**走 `runCommit` 的用例都是 fail-closed ⇒ 红面必然很宽；要"只红一条"就得让闸门可选，而那正是缺陷本身。**精确的那条读数是 M-Q2**（把透传换成静默 no-op），它红的两条都按名，且红在"验证器没被调用/异常消息没进 reason"上。
+2. **【Important】Task 4 与 Task 6 对 §6.4 信任锚的说法互相矛盾。** **只改计划**（Task 6 未实现）：Task 6 的 `sshRun` / `sftpUpload` 现在规定用 `request.host ?? host` / `request.knownHostsPath ?? knownHostsPath`，新增一条按名用例与一条变异；Task 3 第四个偏离下追加更正段，把"§6.4 的信任锚现在每条远程调用都被钉住"降级成"**对假 transport 为真**，并写明真实 transport 必须做什么。理由与反方向取舍见那两段。
+3. **【Important】owner 记录的校验跑在 ~100 MB staging 之后，且没有收口条目。** 复核者的读数：`:269-275` 的五个字段校验只能从 `:844-850` 到达，即 `mkdir -p <staging>` 与两次 `sftpUpload` **之后**；抛出的异常穿出 `runCommit`（由 `feed-publish.test.mjs:2400` 的 `assert.rejects` 钉着）⇒ 审计停在 `pre-verify/done`、**没有终态条目**、返回契约断掉。**落地**：五个字段的循环抽成 `assertCompleteOwnerRecord`（`feed-publish.mjs:276`），`runCommit` 在 `pre-verify` 的 try 里**把 owner 记录先建好再校验**（`:812`，`planHash` 之后、任何远端动作之前），并用它去取锁（`:889`）；**sink 保留自己那次校验**（`:286`，六条 `an owner record without a <field> never creates a lock` 钉着）。用例：`the audit log keeps the operator and the time as null instead of dropping them`（`feed-publish.test.mjs:2661`，原先是 `assert.rejects`）改成断言 **`fail` + 零 transport 调用 + 终态 `fail` 条目 + 每条条目仍带 `operator: null`/`at: null`**。**变异 M-B1**（删入口那次校验）⇒ 红 1 条（就是它）；**M-B2**（删 sink 那次）⇒ 红 7 条（六条字段用例 + `a missing owner record never creates a lock`）。
+4. **【Important】缺 `temporaryRoot` 会把一次**成功**的发布报成 `incident` 并留锁。** 复核者的探针读数：`outcome incident | lockState retained-by-this-run | reason: … The "path" argument must be of type string. Received undefined | flip: done | calls: 26` —— 纯调用方打字错误被归成"远端状态不确定"，还带一句裸 Node 消息、把操作员推向 `--break-lock`。**落地**：新增 `assertTemporaryRoot`（`feed-publish.mjs:511`），**两个汇点各用一次**：`runCommit` 的 `pre-verify` try（`:788`，任何远端写之前 ⇒ `fail` + 终态条目）与 `verifyPublicArtifacts` 的入口（`:649`，不再靠 `join` 抛）；`appendAuditStage` 也补上"路径必须是非空字符串"（`:482`）——**这一条放在 `appendAuditStage` 而不是 `runCommit` 的前置块**，因为 `open` 那条审计写入跑在前置块**之前**：放在前置块里就永远不可能触发，那是一条不可达守卫。用例 `a run without a temporary root fails before any remote write`（`:1689`）+ `the public verification refuses a missing temporary root or verifier before any fetch`（`:2135`）。**变异 M-A7 / M-A8 / M-A10** 各红它自己那条。
+5. **【Important】步骤 5 的 `owner.json` 重读失败被静默容忍。** 复核者的读数：`readOwnerRecord`（当时 `:255-267`）把传输失败 / 文件不存在 / JSON 解析失败**塌成同一个 `null`**，而 `runCommit` 把 `null` 读成"没有外来者，继续走" ⇒ 这是全流程**唯一一条不是 fail-closed 的读**，也是"锁在 `mkdir` 与翻转之间被砸掉再被重取"的**唯一防线**。**落地**：`readOwnerRecord`（`feed-publish.mjs:262`）改成返回 `{ ok, record, cause }`（两种失败的 `cause` 各自可读），步骤 5 的 `!ok` ⇒ `audit('re-verify','incident', cause)` + `retainAndFinish('incident', …)`（`:910-913`，与 `:932-933` 那条分支同形）。**依赖 `null` = "缺席"的三个既有调用点行为不变**：`acquireChannelLock`（`:304`）、`releaseChannelLock`（`:380`）、`breakChannelLock`（`:427`）都只取 `.record`（`!ok` 时它恒为 `null`）——这个不变量由新用例 `the owner record read separates an absent record from a failed read`（`feed-publish.test.mjs:1156`）按名钉住，所以三个调用点**不需要**各自的 `ok ? … : null` 三元式（那只会在今天成为空操作、永远不可能单独失败 ⇒ 按第七节第 2 条的口径不留）。用例 `an owner record that cannot be re-read inside the lock window stops the run and touches nothing`（`:2191`）+ 新夹具臂 `ownerReadFailsAfterLock`。**变异 M-B3 / M-B4 / M-B5 / M-B6** 见下表（M-B4 红 2 条、M-B6 红 16 条，其余各 1 条）。
+6. **【Important】CAS 步骤把"读失败"指控成"有人绕过锁"。** 复核者的读数：`sha256sum ${target} || true` 之后 `String(stdout).split(/\s+/u)[0] || 'absent'` 让**文件不存在**与**命令失败**同为 `'absent'`，于是在 CAS 处 `casSha === 'absent' !== baselineSha` ⇒ 报"the manifest changed after the lock was taken, which means a bypass" —— 一条**假的完整性事故**外加留锁；§6.6 明令这种不匹配**不得降级**，所以假阳性并不便宜。**落地**：`readRemoteFileSha`（`:636`）改成返回 `{ ok, sha256 }`；**三个调用点各自先判 `!ok`**：baseline（`:921` 读、`:922-928` 收口，`re-verify` 阶段，任何版本目录提交之前）、CAS（`:980` 读、`:982-988` 收口，**在等值比较之前**）、temp-manifest（`:1010` 读、`:1013-1019` 收口）。**首发布路径保持可用**：shell 的 `|| true` 让"文件不存在"是**退出码 0 + 空 stdout** ⇒ `ok: true`、`sha256: 'absent'` ⇒ baseline 与 CAS 仍相等。三条新用例（`:1805` / `:1824` / `:1838` / `:1857`）+ 三个夹具臂（`casDigestReadFails` / `baselineDigestReadFails` / `tempManifestReadStatus` / `firstPublish`）。**变异 M-C1 / M-C2 / M-C3 / M-C4 / M-C5** 见下表。⚠️ **本项比复核者点名的两处多做了一处**：`baselineSha` 的读失败**同样**会在 CAS 处变成"bypass"指控（同一个缺陷的另一侧）⇒ 一并修掉并给出读数（M-C2）。
+7. **【Minor】解锁上报块逐字重复两份。** **落地**：抽成 `reportUnlock`（`:746`），两个调用点（失败路径 `releaseAndFinish`、成功路径）都用它。**变异 M-D7a / M-D7b**：删掉阶段标记 ⇒ 红 5 条；删掉审计追加 ⇒ 红 3 条（含 `an owner record replaced before the unlock on the failure path stops the run and deletes nothing`）。
+8. **【Minor】设备号探针写了两遍、两种形状。** **落地**：抽成 `readDeviceIds`（`:181`）返回 `{ status, ids }`，**两处处置各自留在调用点**（`runPreflight` 把失败记成 note、`runCommit` 把失败当致命）—— 这正是两处**应该**不同的地方。**变异 M-D8**（`status: probe.status` ⇒ `status: 0`）⇒ 红 2 条，**两条分别在两个调用点上**（`the preflight records a failed probe instead of reporting all clear` + `a device probe that failed stops the commit even when it printed matching numbers`）⇒ 这一次变异就证明了两处确实都接在这一个 helper 上。
+9. **【Minor】`reveal` 只可能是 `done`。** **选择：记录处置 + 按名钉住，不改语义。** 口径写死为"**`reveal` 表示这一轮把版本真正放出去了**（翻转生效 **且** 公网复验通过），**不**表示这一轮收口"；收口条目是 `recordOutcome` 写的那条，它的 `stage` 就是结果本身（`done`/`fail`/`incident`/`retry`/`blocked`，与 §6.11 的清单一致）。因此失败路径上 `reveal` 停在 `pending` 是**正确**的（那一轮没有把版本放出去），而审计里**仍然**只可能有一条收口。用例 `the reveal stage reports that the version went live rather than that the run closed out`（`feed-publish.test.mjs:1715`）一次断言两边：成功 ⇒ `reveal` 是 `done`；翻转生效但公网复验失败的 `incident` ⇒ `reveal` 仍是 `pending`，同时收口条目仍是 `incident`。**变异 M-D9**（把 `stages[reveal]` 改由 `recordOutcome` 标记，即复核者给的"另一臂"）⇒ 红 1 条（就是它）。
+10. **【Minor】`releaseAndFinish(failedStage, outcome, reason)` 的 `outcome` 是没人用的自由度。** **落地**：**删掉这个参数**（`:756`），四个调用点全部传 `'fail'` 的事实写进函数体（`recordOutcome('fail', reason)`），返回值也写死 `finish('fail', …)`。**变异 M-D10** 见第三节（它是本刀唯一的存活变异，也是本刀新增的一条读数）。
+11. **【Minor】`appendAuditStage` 的仓库边界检查是有条件的。** **落地**：`repositoryRoot` 改成**必须**（`:478`，不是非空字符串就抛），`auditOut` 也必须是非空字符串（`:481`）—— 纯模块里显式抛是唯一一致的选择，**没有**去读 `process.cwd()`。用例 `the audit stage append refuses a missing repository root or an empty path`（`:2025`，两个闸门各断言一次，并断言**没有落盘**）。**变异 M-A9 / M-A10** 各红它自己那条。两处既有调用点（测试里的两条 `appendAuditStage`）本来就都传 `repositoryRoot` ⇒ 无破坏。
+12. **【Minor】`verifyPublicArtifacts` 是导出的，却跳过它自己调用方施加的前置条件。** **落地**：入口处补上 `assertSafeChannel` / `assertSafeVersion` / `assertTemporaryRoot` / `verifier` 四个汇点闸门（`:647-652`），与 `runCommit` 的前置块同源同一批函数；失败在任何 `fetchPublic` 之前。用例 `the public verification refuses an unsafe channel or version before any fetch`（`:2122`）与 `the public verification refuses a missing temporary root or verifier before any fetch`（`:2135`），**两条都断言 `fetchPublic` 一次都没发生**。**变异 M-A4 / M-A5 / M-A6 / M-A7** 各红它自己那条。
+13. **【Minor】CAS 判据的变异读数不在那 37 条里。** **落地（只记账）**：本刀在**当前字节**上重跑并记入第二节 **M-13**：`if (casSha !== baselineSha)` ⇒ `if (false)` ⇒ **149/147/2**，按名变红 `a cas mismatch is an incident that keeps the lock and never rolls anything back` + `a remote manifest whose digest could not be read is logged as absent rather than as a blank` —— **与复核者记的"红 2 条"一致**。这条读数此前只以"分支判据全量重跑"（第十一节第三小节 `:944` 行）的形式存在过，从未进过变异表。
+
+**二、变异读数（对照 3 条 + 变异 29 条，全部打印 hunk）**
+
+装置每条动作：断言锚点恰好匹配 **1** 次 → 取 sha256 基线 → 写入 → 重读确认落盘 → `node --check` → 跑套件 → **打印 hunk（整行）** → 纯插入做可达性检查 → 核对"哪条测试必须按名变红"的红名单 → 逐字节恢复 → 比 sha256 → 断言该文件 `git status` 与变异前**逐字相同**。**装置先自检**：喂一个不存在的锚点（`anchor matches 0` ⇒ 拒收）与一个出现两次的锚点（`anchor matches 2` ⇒ 拒收），两条都**没有写盘、没有跑套件**。**29 条变异全部：锚点 1 次、`node --check` ok、恢复后 sha256 相等、`git status` 未变、红名单核对通过。**
+
+| #      | 变异（hunk：`-` 删 / `+` 加）                                                                                                | 读数                                                 | 按名变红的测试                                                                                                                                                              |
+| ------ | ---------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 对照 1 | `- 'the immutable version directory already matched every byte'` / `+ … all bytes`（没有断言读它）                           | **137 / 0（全绿）**                                  | —（跑在本刀**第一段字节之前**，证明装置不是"改什么都红"）                                                                                                                   |
+| 对照 2 | `- { previousManifestSha256: baselineSha, backupPath }` / `+ { backupPath, previousManifestSha256 }`（同一对键换个书写顺序） | **149 / 0（全绿）**                                  | —（跑在第三段字节上，同上）                                                                                                                                                 |
+| M-Q1   | 删 `verifySignature: input.verifySignature,`（`runCommit`，`:796`）                                                          | **143 / 97 / 46**                                    | 首条 `a throwing local verifier stops the run before any remote call`（**注：这是复核者要求的变异，它并不"只红一条"**）                                                     |
+| M-Q2   | `- verifySignature: input.verifySignature,` / `+ verifySignature: () => {},`（同一处）                                       | **143 / 141 / 2**                                    | `a throwing local verifier stops the run before any remote call` + `the run refuses to publish without a signature verifier`                                                |
+| M-A3   | 删本地验证器闸门（`:130-132`）                                                                                               | **143 / 142 / 1**                                    | `the run refuses to publish without a signature verifier`                                                                                                                   |
+| M-A4   | 删公开验证器闸门（`:650-652`）                                                                                               | **143 / 142 / 1**                                    | `the public verification refuses a missing temporary root or verifier before any fetch`                                                                                     |
+| M-A5   | 删 `assertSafeChannel(input.channel);`（`verifyPublicArtifacts:647`）                                                        | **143 / 142 / 1**                                    | `the public verification refuses an unsafe channel or version before any fetch`                                                                                             |
+| M-A6   | 删 `assertSafeVersion(input.version);`（同处 `:648`）                                                                        | **143 / 142 / 1**                                    | 同上那条                                                                                                                                                                    |
+| M-A7   | 删 `assertTemporaryRoot(input.temporaryRoot);`（同处 `:649`）                                                                | **143 / 142 / 1**                                    | 同上那条（verifier 那半）                                                                                                                                                   |
+| M-A8   | 删 `assertTemporaryRoot(input.temporaryRoot);`（`runCommit:788`）                                                            | **143 / 142 / 1**                                    | `a run without a temporary root fails before any remote write`                                                                                                              |
+| M-A9   | 删 `repositoryRoot` 必须那一段（`:478-480`）                                                                                 | **143 / 142 / 1**                                    | `the audit stage append refuses a missing repository root or an empty path`                                                                                                 |
+| M-A10  | 删 `auditOut` 非空那一段（`:481-483`）                                                                                       | **143 / 142 / 1**                                    | 同上那条                                                                                                                                                                    |
+| M-B1   | 删 `assertCompleteOwnerRecord(ownerRecord);`（`runCommit:812`）                                                              | **145 / 144 / 1**                                    | `the audit log keeps the operator and the time as null instead of dropping them`                                                                                            |
+| M-B2   | 删 `assertCompleteOwnerRecord(input.owner);`（`acquireChannelLock:286`）                                                     | **145 / 138 / 7**                                    | `an owner record without a runid never creates a lock` 领衔（六个字段用例 + 缺失记录）                                                                                      |
+| M-B3   | 删步骤 5 的 `!ok` 分支（`:909-913`）                                                                                         | **145 / 144 / 1**                                    | `an owner record that cannot be re-read inside the lock window stops the run and touches nothing`                                                                           |
+| M-B4   | `- if (read.status !== 0) return { ok: false, … }` / `+ { ok: true, … }`（`readOwnerRecord:268`）                            | **145 / 143 / 2**                                    | `the owner record read separates an absent record from a failed read` + 上一条                                                                                              |
+| M-B5   | JSON 解析失败那一臂 `ok: false` ⇒ `ok: true`（`:272`）                                                                       | **145 / 144 / 1**                                    | `the owner record read separates an absent record from a failed read`                                                                                                       |
+| M-B6   | `- … ?? (await readOwnerRecord(input)).record;` / `+ … ?? (await readOwnerRecord(input));`（`:380`）                         | **145 / 129 / 16**                                   | `release re-reads the owner from the lock when the caller has none` 领衔                                                                                                    |
+| M-C1   | 删 CAS 的 `!ok` 分支（`:982-988`）                                                                                           | **149 / 148 / 1**                                    | `a remote manifest digest that could not be read is an incident rather than a bypass`                                                                                       |
+| M-C2   | 删 baseline 的 `!ok` 分支（`:922-928`）                                                                                      | **149 / 148 / 1**                                    | `a manifest digest that cannot be read inside the lock stops the run before anything is committed`                                                                          |
+| M-C3   | 删 temp-manifest 的 `!ok` 分支（`:1013-1019`）                                                                               | **149 / 148 / 1**                                    | `a remote temp manifest digest that could not be read is an incident rather than a mismatch`                                                                                |
+| M-C4   | `- if (result.status !== 0) return { ok: false, sha256: null };` / `+ { ok: true, … }`（`:642`）                             | **149 / 146 / 3**                                    | M-C1 / M-C2 / M-C3 那三条**一起**红（一个生产端不变量同时喂养三个汇点）                                                                                                     |
+| M-C5   | `- …split(/\s+/u)[0] \|\| 'absent'` / `+ …split(/\s+/u)[0]`（`:643`）                                                        | **149 / 147 / 2**                                    | `a first publish proceeds when the manifest digest is absent on both reads` + `a remote manifest whose digest could not be read is logged as absent rather than as a blank` |
+| M-13   | `- if (casSha !== baselineSha) {` / `+ if (false) {`（`:990`）                                                               | **149 / 147 / 2**                                    | `a cas mismatch is an incident that keeps the lock and never rolls anything back` + 上面那条                                                                                |
+| M-D7a  | 删 `reportUnlock` 里的阶段标记（`:748`）                                                                                     | **150 / 145 / 5**                                    | `a clean publish walks every stage and releases its own lock` 领衔                                                                                                          |
+| M-D7b  | 删 `reportUnlock` 里的 `appendAuditStage({…})`（`:749-753`）                                                                 | **150 / 147 / 3**                                    | `an owner record replaced before the unlock on the failure path stops the run and deletes nothing`                                                                          |
+| M-D8   | `- return { status: probe.status, ids };` / `+ { status: 0, ids };`（`readDeviceIds:191`）                                   | **150 / 148 / 2**                                    | `the preflight records a failed probe instead of reporting all clear` + `a device probe that failed stops the commit even when it printed matching numbers`                 |
+| M-D9   | `+ stages.find((entry) => entry.stage === 'reveal').status = outcome;`（插进 `recordOutcome` 首句后）                        | **150 / 149 / 1**                                    | `the reveal stage reports that the version went live rather than that the run closed out`                                                                                   |
+| M-D10  | `- recordOutcome('fail', reason);` / `+ recordOutcome('incident', reason);`（`releaseAndFinish`）                            | **150 / 150 / 0（存活）** ⇒ 补钉后 **150 / 149 / 1** | 补钉后按名红：`a failure after the lock but before the flip releases the lock this run owns`                                                                                |
+
+**次数：3 条对照 + 29 条变异 = 32 条读数**，其中 M-D10 第一次是**存活读数**（第三节），补钉后重跑得 1 条红；其余 28 条**一次通过**。**红线之外没有意外**：只有 M-Q1（46）、M-B2（7）、M-B6（16）、M-C4（3）、M-D7a（5）、M-D7b（3）、M-C5（2）、M-13（2）、M-Q2（2）、M-A5/M-A6 等多条"一个生产端喂养多个汇点"的变异红到 2 条以上，**没有一条只红"别的测试"**。
+
+**三、本刀跑出来的存活变异（M-D10）：一个此前不在任何清单里的类别**
+
+`releaseAndFinish` 里 `recordOutcome('fail', reason)` 的 `'fail'` 改成 `'incident'` ⇒ 套件 **150/150 全绿**。根因：四条走 `releaseAndFinish` 的路径上，被断言的是**返回值**（`finish('fail', …)` 里那个写死的 `'fail'`），而**审计里的收口条目**没有任何断言读它 —— 于是 §6.11 的"以 `done|fail|incident` 收口"在**分类**上可以静默漂移（审计说 `incident`、返回说 `fail`，两处不一致而套件全绿）。**处置**：在既有用例 `a failure after the lock but before the flip releases the lock this run owns`（`feed-publish.test.mjs:1912`）上补三条断言（`entries.at(-2)` 是 `fail` 且 `reason` 等于返回的 `reason`、`entries.at(-1)` 是 `unlock`、整份日志里**没有** `incident`），M-D10 随即按名变红（1 条）。**这一条与 Critical 1 同类**：都是"被断言的契约与被执行的契约不是同一份"，也都是"删/改之后没有任何红"。**给 Task 5–8 的口径**：动 `recordOutcome` 或任何 `releaseAndFinish` / `retainAndFinish` 的调用点时，收口条目本身也要有一条按名断言。
+
+**四、对本账本的更正（四处）**
+
+1. **第九节"37 条读数"的表头加了一段更正**：那 37 条**缺一整类**（"把透传换成静默 no-op"），并撤回"37 条读数已覆盖每一处新增守卫"这句话。**不是加一条第 38 就完事** —— 缺的是一个形状，所以改的是表头的适用范围，不是行数。
+2. **Task 3 第四个偏离的"§6.4 的信任锚现在每条远程调用都被钉住"降级**（该偏离下新增更正段）：那句话对假 transport 为真、对真实 transport 曾经没有约束力；同时把 Task 6 的真实契约与它的钉子写进去。
+3. **第十一节第三小节的 `:914`/`:944` 那类"分支判据"读数不等于变异读数**：M-13 是 `:944` 那条判据的**变异**读数（149/147/2），现在与其它变异同表；`if (false)` 形式的读数仍然保留在第十一节，两者**不是**同一件事（一个换判据、一个换常量）。
+4. **Task 5 的"结构项"是本刀新增的**（复核者给的建议，本刀不做）：见 Task 5 正文；它引用的证据是本刀实测出来的两处重复（解锁上报两份、设备号探针两份）。
+
+**五、规定块与围栏（本刀实测，取代第十一节第五小节）**
+
+本刀改了**两份文件的字节**，因此**同时改了围栏里的规定块本体**以保持"块 = 文件那一段"。**同步与验证各一个脚本（都跑在仓库外）**：
+
+- **同步**：按**本刀修改前**（`a01422fd`）的字节在计划里**按内容**定位每一段（**不按行号** —— 本刀的正文改动会把后面所有行号整体下移），断言只有 **1 处命中**（否则拒收）、断言上下各是一行围栏，再整段替换。
+- **验证**：替换后从磁盘重读计划，**按测出来的围栏行号**切出内容，与文件的那一段 `git diff --no-index` 比对。⚠️ **第一版验证脚本是同义反复**（它先在计划里"找到"那一段再比同一段 ⇒ 永远相等），重写成"按测出的行号切、再比"；并做了**敏感度探针**（往每段末尾多打一个字节 ⇒ 八条全部 `DIFF_NONEMPTY`，`PROBLEMS: 8`）。
+
+**八对全部 `DIFF_EMPTY`（围栏行号 = 本刀实测；⚠️ 别引用第十一节第五小节那四个行号当现状）**：
+
+| 文件               | 文件行    | 计划围栏行 | 计划内容行 |
+| ------------------ | --------- | ---------- | ---------- |
+| `test.mjs`         | 1–375     | 112        | 113–487    |
+| `feed-publish.mjs` | 1–150     | 504        | 505–654    |
+| `test.mjs`         | 377–564   | 724        | 725–912    |
+| `feed-publish.mjs` | 152–209   | 927        | 928–985    |
+| `test.mjs`         | 566–872   | 1037       | 1038–1344  |
+| `feed-publish.mjs` | 211–454   | 1359       | 1360–1603  |
+| `test.mjs`         | 1344–2730 | 1779       | 1780–3166  |
+| `feed-publish.mjs` | 456–1101  | 3181       | 3182–3827  |
+
+**计划文件本身**：`wc -l` = **4851**（`a01422fd`）⇒ **5308**（本刀，含本节）。**`prettier --write` 会重排表格列宽**（本刀实测：只改表格行的行内空白、**总行数不变** ⇒ 上表八个围栏行号在本刀提交后仍然成立；提交后重跑验证脚本，八条仍全部 `DIFF_EMPTY`）。
+
+**六、当前读数**
+
+- `feed-publish.mjs` **1101** 行、`feed-publish.test.mjs` **2730** 行（`wc -l`）；套件 **150 条**（`node --test` 的 `ℹ tests 150` / `ℹ pass 150` / `ℹ fail 0`），比本刀前 **137** 条多 **13** 条（全部是新增用例：签名闸门 2 + 临时根 1 + 审计路径 1 + 公开验证汇点 2 + owner 读 1 + 步骤 5 重读 1 + 摘要读 4 + reveal 1）。
+- 新增夹具臂 5 个（`ownerReadFailsAfterLock` / `baselineDigestReadFails` / `casDigestReadFails` / `tempManifestReadStatus` / `firstPublish`）、新增测试辅助 1 个（`publicVerificationInput`）、新增模块导出 0 个（`readDeviceIds` / `assertCompleteOwnerRecord` / `assertTemporaryRoot` 都是模块私有的）、新增模块级函数 3 个、`readOwnerRecord` 与 `readRemoteFileSha` 的返回形状变更各 1 处。
+- **规定块边界**：八对围栏的行号与内容区间**全部在第五节的表里**（Task 4 那两对是 `test 1344–2730` ⇔ 计划内容 1780–3166（围栏 1779）与 `mjs 456–1101` ⇔ 计划内容 3182–3827（围栏 3181））。⚠️ **"围栏行号不变"这句话本刀核过是错的**：本刀在偏离第 3 条那里插了一段正文（在 Task 4 两对围栏**之前**），把这两个围栏从 1761 / 2920 推到了 1779 / 3181；同步脚本因此**按内容**而不是按行号定位（见第五节）。
+- **没有连过任何服务器**：本刀的所有读数都来自注入的假 transport，与 Task 4 / 第九节 / 第十节 / 第十一节同规格。
+
+**七、本刀未做 / 未验（不得写成已完成）**
+
+- **没有实现 Task 5 / 6 / 7 / 8**：Task 6 只改了计划文本（信任锚契约）+ 一条新用例 + 一条新变异项；真实 `ssh` / `sftp` / `https` 一行都没有。
+- **没有跑过 `pnpm check` 之外的任何端到端验证**：本刀的验证 = `node --test scripts/lib/feed-publish.test.mjs` + 32 条变异读数 + 一次全仓门禁（读数见提交后的门禁记录）。
+- **`verifyPublicArtifacts` 的四个汇点闸门改变了它对"白名单外的 channel / 非 semver 的 version / 空 temporaryRoot"的**对外行为**（原先会走到 fetch 再失败，现在入口即抛）**：Task 7 的 CLI 必须按同一批前置条件构造输入，否则会看到新的 `FeedPublishError`。
+- **`readOwnerRecord` 的返回形状是对外 API 变更**（它被 `export`）：今天只有本模块与测试用它，Task 7 接 CLI 时不要按旧形状（`T | null`）写。
+- **`verifySignature` 现在是两个入口的必填项**（`verifyLocalArtifacts` 与经过它的 `planCommit`）⇒ Task 7 的 `--dry-run` 也必须注入真验证器，否则 dry-run 会以 `FeedPublishError` 失败；**这是有意的**：dry-run 打印的"计划"必须建立在"签名已验证"之上。
+- **`assertCompleteOwnerRecord` 在 `pre-verify` 与 `acquireChannelLock` 两处重复调用**：**故意保留**（入口负责给出干净的 `fail` + 收口条目，sink 负责"坏记录永远不创建锁"），两处各有一条按名读数（M-B1 / M-B2）；**别把它当冗余删掉**。
+
 ### Task 5: `internal → stable` 重签
 
 **Files:**
 
 - Modify: `scripts/lib/feed-publish.mjs`
 - Modify: `scripts/lib/feed-publish.test.mjs`
+
+- [ ] **Step 0（结构项，**代码质量闸门交给本任务**）：先把 `runCommit` 的锁后尾段抽出来，再做重签**
+
+**这一项不是可选的装饰，也不是"顺手重构"** —— 复核者给的建议原文是：先引入一个 `createPublishRun` 状态对象，再把**锁之后的那一段**（`cas` → `temp-manifest` → `flip` → `public-verify` → 收口 → `unlock`）抽成一个可复用的函数；必要时再把模块拆成 `feed-publish-lock.mjs` / `feed-publish-audit.mjs`。**理由（三条，前两条是本刀实测）**：
+
+1. **本刀的实测证据：这份模块里"同一个动作写两遍"已经发生过三次**，每一次都靠"抽成一个 helper + 一条按名变异"才收住：解锁上报两份（第十一节第三小节 + 第十二节第 7 项）、设备号探针两份（第 8 项）、owner 记录校验两份（第 3 项，这一份是**故意**保留的两层）。**本任务要的正是同一片区域**（CAS + manifest 翻转 + 收口），照现状写就是**第四份**。
+2. **本刀实测：`runCommit` 的状态是五个散落的 `let`**（`acquisitionConfirmed` / `acquiredLockState` / `planHash` / `owner` / `ownerRecord`），它们的读写点分散在 ~250 行里；本刀为了修第 3 项（owner 记录前置校验）必须在 `pre-verify` 里**提前**建好 `ownerRecord`，而为了让 `retainAndFinish` 的语义不漂移又**不能**直接写进 `owner` —— 这个"两个变量长得几乎一样、只差谁能被 retain 读"的形状就是状态没有收在一个对象里的代价。`createPublishRun` 把这一组变成一个对象后，这类改动只动一个地方。
+3. **Task 6 之后 `runCommit` 只会更长**（真实 transport、Task 7 的 CLI 注入、Task 8 的手册）⇒ 现在抽比以后抽便宜，而**重签（本任务）是第一个真正的复用者**：`internal → stable` 要走同一个 CAS + 翻转 + 收口序列。
+
+**约束（与文件地图的关系）**：**如果本任务真的拆了模块**（新增 `feed-publish-lock.mjs` / `feed-publish-audit.mjs` 等），**必须在同一个提交里改"文件地图"一节**（新增行、职责、动作），否则地图会变成一份描述旧形状的历史文件。**只抽函数、不拆文件**则不需要改地图，但要在本节记一句"没拆文件"。
+
+**纪律照旧**：抽出前后 `node --test scripts/lib/feed-publish.test.mjs` 必须 `fail 0` 且**条数不变**（这一步是纯搬运 ⇒ **不负变异**，但若在搬运中动了任何判据，那条判据必须按本计划的通用纪律补一条按名变异）。**⚠️ 本刀的围栏（第五节那八对）会因为本步而再次失效** —— 抽完之后必须重跑第五节的同步 + 验证（按内容定位，别按行号）。
 
 - [ ] **Step 1: 写失败的测试**
 
@@ -4149,6 +4567,40 @@ test('the transport never builds a shell command string', async () => {
     assert.equal(call.options.shell, undefined);
   }
 });
+
+test('a per call host and known hosts file override the pinned defaults', async () => {
+  const fake = makeFake();
+  const transport = makeTransport({ execFile: fake.execFile, writeBatch: () => {} });
+  await transport.readOnly.sshRun({
+    host: 'other.example.invalid',
+    knownHostsPath: '/outside/repo/other_known_hosts',
+    script: 'ls /opt',
+  });
+  await transport.write.sftpUpload({
+    host: 'other.example.invalid',
+    knownHostsPath: '/outside/repo/other_known_hosts',
+    localPath: '/a',
+    remotePath: '/b',
+    resume: false,
+  });
+
+  assert.equal(fake.calls.length, 2);
+  const [sshCall, sftpCall] = fake.calls;
+  assert.equal(sshCall.args[5], 'UserKnownHostsFile=/outside/repo/other_known_hosts');
+  assert.equal(sshCall.args.at(-2), 'other.example.invalid');
+  assert.equal(sshCall.args.at(-1), 'ls /opt');
+  assert.ok(sftpCall.args.includes('-b'));
+  assert.equal(sftpCall.args[5], 'UserKnownHostsFile=/outside/repo/other_known_hosts');
+  assert.equal(sftpCall.args.at(-1), 'other.example.invalid');
+});
+
+test('a call that carries no anchor of its own falls back to the pinned one', async () => {
+  const fake = makeFake();
+  const transport = makeTransport({ execFile: fake.execFile });
+  await transport.readOnly.sshRun({ script: 'ls' });
+  assert.equal(fake.calls[0].args[5], `UserKnownHostsFile=${KNOWN_HOSTS}`);
+  assert.equal(fake.calls[0].args.at(-2), HOST);
+});
 ```
 
 - [ ] **Step 2: 运行测试并确认按测试名失败**
@@ -4226,7 +4678,9 @@ export function createFeedTransport(input) {
       }));
 
   async function sshRun(request) {
-    const result = await runner('ssh', [...pinnedOptions(knownHostsPath), host, request.script], {
+    const callHost = request.host ?? host;
+    const callKnownHostsPath = request.knownHostsPath ?? knownHostsPath;
+    const result = await runner('ssh', [...pinnedOptions(callKnownHostsPath), callHost, request.script], {
       encoding: 'utf8',
       timeout: SSH_TIMEOUT_MS,
       windowsHide: true,
@@ -4245,9 +4699,11 @@ export function createFeedTransport(input) {
     if (typeof batchFile !== 'string' || batchFile.length === 0) {
       throw new FeedTransportError('the sftp batch file path is required');
     }
+    const callHost = request.host ?? host;
+    const callKnownHostsPath = request.knownHostsPath ?? knownHostsPath;
     const command = request.resume === true ? 'reput' : 'put';
     writeBatch(`${command} ${quoteBatchPath(request.localPath)} ${quoteBatchPath(request.remotePath)}\n`);
-    const result = await runner('sftp', [...pinnedOptions(knownHostsPath), '-b', batchFile, host], {
+    const result = await runner('sftp', [...pinnedOptions(callKnownHostsPath), '-b', batchFile, callHost], {
       encoding: 'utf8',
       timeout: SFTP_TIMEOUT_MS,
       windowsHide: true,
@@ -4295,7 +4751,7 @@ export function createFeedTransport(input) {
 node --test scripts/lib/feed-publish-transport.test.mjs
 ```
 
-预期：`fail 0`、`pass 11`。
+预期：`fail 0`、`pass 12`。（原文写的 `pass 11` 比这个围栏里的 `test(` 条数**多算 1 条** —— 代码质量闸门实测：围栏内 `grep -c '^test('` = **10**，本刀新增覆盖两种锚点的 2 条 ⇒ 12。Task 6 实施时以 `node --test` 的真实读数为准。）
 
 - [ ] **Step 5: 行为级变异验证**
 
@@ -4306,6 +4762,7 @@ node --test scripts/lib/feed-publish-transport.test.mjs
 5. 把 `quoteBatchPath` 的空格分支删掉 ⇒ 预期 `the batch path quoting wraps a path with spaces and escapes inner quotes` **按测试名变红**。
 6. 把 `arrayBuffer()` 换成 `text()` 并 `Buffer.from(text, 'utf8')` ⇒ 预期 `the public fetcher returns the raw bytes as a byte array` **按测试名变红**。
 7. 把 `typeof result?.status === 'number' ? result.status : -1` 改成直接用 `result.status` ⇒ 预期 `an undefined exit status is reported as a failure rather than success` **按测试名变红**。
+8. **（代码质量闸门新增，§6.4 的信任锚从"被断言"变成"载重"）** 把 `const callHost = request.host ?? host;` 改成 `const callHost = host;`（以及/或把 `const callKnownHostsPath = request.knownHostsPath ?? knownHostsPath;` 改成 `const callKnownHostsPath = knownHostsPath;`）⇒ 预期 `a per call host and known hosts file override the pinned defaults` **按测试名变红**。**为什么必须有这一条**：Task 4 那 13 条红只证明"调用方把 `host:` 写进了 request"，证明不了"真实传输按它选锚" —— 没有这条读数，账本里那句"§6.4 的信任锚现在每条远程调用都被钉住"就还是一句关于假 transport 的话（见 Task 3 第四个偏离下的更正段）。**反向对照（可选）**：只把 `const callHost = request.host ?? host;` 加在 `sshRun` 里而不加在 `sftpUpload` 里 ⇒ 预期同一条用例**仍然变红**（它两个调用点都断言），因为 sftp 那半边走的是工厂值。
 
 恢复后全绿且 `git diff` 为空。
 
