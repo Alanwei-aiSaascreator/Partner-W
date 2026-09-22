@@ -414,6 +414,13 @@ test('the anchor helper refuses an empty call list rather than passing on zero c
   assert.throws(() => assertEveryCallCarriesTheTrustAnchor([]));
 });
 
+test('the anchor helper names a call that did not record its request', () => {
+  assert.throws(
+    () => assertEveryCallCarriesTheTrustAnchor([['fetchPublic', 'url']]),
+    /the fetchPublic call did not record its request/u,
+  );
+});
+
 async function preflightWithProbe(probe) {
   const transport = fakeReadOnlyTransport({ sshRun: () => probe });
   const result = await runPreflight({
@@ -611,10 +618,32 @@ test('the plan hash binds channel, version and all three artifact digests', () =
   }
 });
 
+test('the lock mkdir is pinned to the C locale so its diagnostics do not move with the host locale', async () => {
+  const transport = fakeWriteTransport();
+  await acquireChannelLock(lockInput(transport));
+  assert.equal(writeScripts(transport)[0], `LC_ALL=C mkdir ${LOCK_DIR}`);
+  assertEveryCallCarriesTheTrustAnchor(transport.calls);
+});
+
+test('the plan hash refuses a field that is not a non empty string', () => {
+  for (const field of ['channel', 'version', 'packageSha256', 'fileManifestSha256', 'manifestSha256']) {
+    for (const value of [undefined, null, '', '   ', 7, {}]) {
+      assert.throws(
+        () => planHashOf({ ...PLAN_INPUT, [field]: value }),
+        FeedPublishError,
+        `${field} = ${String(value)}`,
+      );
+    }
+  }
+  assert.throws(() => planHashOf({}), FeedPublishError);
+  assert.throws(() => planHashOf(undefined), FeedPublishError);
+  assert.equal(typeof planHashOf(PLAN_INPUT), 'string');
+});
+
 test('an existing lock is a determinate not-acquired and never stolen', async () => {
   const transport = fakeWriteTransport({
     writeSsh: (request) =>
-      request.script.startsWith('mkdir ')
+      isLockDirectoryCommand(request)
         ? { status: 1, stdout: '', stderr: "mkdir: cannot create directory '/x': File exists" }
         : { status: 0, stdout: '', stderr: '' },
   });
@@ -634,7 +663,7 @@ test('an existing lock is a determinate not-acquired and never stolen', async ()
 test('an ssh failure while taking the lock is ownership unknown, not not-acquired', async () => {
   const transport = fakeWriteTransport({
     writeSsh: (request) =>
-      request.script.startsWith('mkdir ')
+      isLockDirectoryCommand(request)
         ? { status: -1, stdout: '', stderr: 'connection timed out' }
         : { status: 0, stdout: '', stderr: '' },
   });
@@ -887,6 +916,30 @@ const refusesLockWrites = (transport) =>
 
 const writeScripts = (transport) => transport.calls.filter((call) => call[0] === 'writeSsh').map((call) => call[1]);
 
+const isLockDirectoryCommand = (request) => /(?:^|\s)mkdir \S*\/lock\//u.test(request.script);
+
+const OBSERVED_OPERATOR = { ...OWNER_RECORD, operator: "O'Brien (release engineer)" };
+
+const ownerWriteScript = (owner, path = OWNER_FILE) =>
+  `printf '%s' '${Buffer.from(JSON.stringify(owner), 'utf8').toString('base64')}' | base64 -d > ${path}`;
+
+const ownerPayloadOf = (script) => {
+  const matched = /^printf '%s' '([A-Za-z0-9+/=]+)' \| base64 -d > /u.exec(script);
+  assert.ok(matched !== null, `the owner write did not carry a base64 payload: ${String(script)}`);
+  return JSON.parse(Buffer.from(matched[1], 'base64').toString('utf8'));
+};
+
+test('an owner record with an apostrophe cannot end the shell word it is written into', async () => {
+  const transport = fakeWriteTransport();
+  const result = await acquireChannelLock(lockInput(transport, { owner: OBSERVED_OPERATOR }));
+  assert.equal(result.state, 'retained-by-this-run');
+  assert.equal(result.incident, false);
+  const scripts = writeScripts(transport);
+  assert.deepEqual(scripts, [`LC_ALL=C mkdir ${LOCK_DIR}`, ownerWriteScript(OBSERVED_OPERATOR)]);
+  assert.deepEqual(ownerPayloadOf(scripts[1]), OBSERVED_OPERATOR);
+  assertEveryCallCarriesTheTrustAnchor(transport.calls);
+});
+
 test('a successful acquisition writes the owner record for this run', async () => {
   const transport = fakeWriteTransport();
   const result = await acquireChannelLock(lockInput(transport));
@@ -895,12 +948,13 @@ test('a successful acquisition writes the owner record for this run', async () =
   assert.equal(result.incident, false);
   assert.equal(result.requiresExplicitRecovery, false);
   assert.deepEqual(result.owner, THIS_RUN);
-  assert.deepEqual(writeScripts(transport), [
-    `mkdir ${LOCK_DIR}`,
-    `printf '%s' '${JSON.stringify(THIS_RUN)}' > ${OWNER_FILE}`,
-  ]);
+  assert.deepEqual(writeScripts(transport), [`LC_ALL=C mkdir ${LOCK_DIR}`, ownerWriteScript(THIS_RUN)]);
   for (const field of ['runid', 'operator', 'startedAt', 'planHash', 'machine']) {
-    assert.match(writeScripts(transport)[1], new RegExp(`"${field}":`, 'u'), `the recorded owner must carry ${field}`);
+    assert.match(
+      JSON.stringify(ownerPayloadOf(writeScripts(transport)[1])),
+      new RegExp(`"${field}":`, 'u'),
+      `the recorded owner must carry ${field}`,
+    );
   }
   assertEveryCallCarriesTheTrustAnchor(transport.calls);
 });
@@ -910,8 +964,8 @@ test('the lock lives under the channel it was given rather than a fixed one', as
   const result = await acquireChannelLock(lockInput(transport, { channel: 'stable' }));
   assert.equal(result.state, 'retained-by-this-run');
   assert.deepEqual(writeScripts(transport), [
-    `mkdir ${STATE_ROOT}/lock/stable`,
-    `printf '%s' '${JSON.stringify(THIS_RUN)}' > ${STATE_ROOT}/lock/stable/owner.json`,
+    `LC_ALL=C mkdir ${STATE_ROOT}/lock/stable`,
+    ownerWriteScript(THIS_RUN, `${STATE_ROOT}/lock/stable/owner.json`),
   ]);
   assertEveryCallCarriesTheTrustAnchor(transport.calls);
 });
@@ -919,7 +973,7 @@ test('the lock lives under the channel it was given rather than a fixed one', as
 test('a lock mkdir that fails without an existing entry signal is ownership unknown', async () => {
   const transport = fakeWriteTransport({
     writeSsh: (request) =>
-      request.script.startsWith('mkdir ')
+      isLockDirectoryCommand(request)
         ? { status: 1, stdout: '', stderr: "mkdir: cannot create directory '/x': Permission denied" }
         : { status: 0, stdout: '', stderr: '' },
   });
@@ -934,7 +988,7 @@ test('a lock mkdir that fails without an existing entry signal is ownership unkn
 test('a transport level mkdir failure is ownership unknown even when its output looks like an existing entry', async () => {
   const transport = fakeWriteTransport({
     writeSsh: (request) =>
-      request.script.startsWith('mkdir ')
+      isLockDirectoryCommand(request)
         ? { status: -1, stdout: existingEntryFailure.stdout, stderr: existingEntryFailure.stderr }
         : { status: 0, stdout: '', stderr: '' },
   });
@@ -949,7 +1003,7 @@ test('a transport level mkdir failure is ownership unknown even when its output 
 test('the existing entry signal is read from either stream and without regard to case', async () => {
   const transport = fakeWriteTransport({
     writeSsh: (request) =>
-      request.script.startsWith('mkdir ') ? { status: 1, stdout: 'mkdir: FILE EXISTS', stderr: '' } : { status: 0 },
+      isLockDirectoryCommand(request) ? { status: 1, stdout: 'mkdir: FILE EXISTS', stderr: '' } : { status: 0 },
   });
   const result = await acquireChannelLock(lockInput(transport));
   assert.equal(result.state, 'not-acquired');
@@ -959,7 +1013,7 @@ test('the existing entry signal is read from either stream and without regard to
 test('an existing lock reports the owner it found so a human can confirm it', async () => {
   const transport = fakeWriteTransport({
     readSsh: readablePreviousOwner,
-    writeSsh: (request) => (request.script.startsWith('mkdir ') ? existingEntryFailure : { status: 0 }),
+    writeSsh: (request) => (isLockDirectoryCommand(request) ? existingEntryFailure : { status: 0 }),
   });
   const result = await acquireChannelLock(lockInput(transport));
   assert.equal(result.state, 'not-acquired');
@@ -976,7 +1030,7 @@ test('an existing lock reports the owner it found so a human can confirm it', as
 test('an owner read that exits non-zero is unreadable even when it printed a record', async () => {
   const transport = fakeWriteTransport({
     readSsh: () => ({ status: 1, stdout: JSON.stringify(PREVIOUS_RUN), stderr: 'permission denied' }),
-    writeSsh: (request) => (request.script.startsWith('mkdir ') ? existingEntryFailure : { status: 0 }),
+    writeSsh: (request) => (isLockDirectoryCommand(request) ? existingEntryFailure : { status: 0 }),
   });
   const result = await acquireChannelLock(lockInput(transport));
   assert.equal(result.state, 'not-acquired');
@@ -1188,5 +1242,27 @@ test('a missing owner record never creates a lock', async () => {
       (error) => error instanceof FeedPublishError && /owner record/u.test(error.message),
     );
     assert.equal(transport.calls.length, 0);
+  }
+});
+
+const UNSAFE_CHANNELS = ['../evil', 'internal/x', 'internal; id', '', 'INTERNAL', 'internal lock', 'internal\nx'];
+
+test('a channel that could escape its remote path never reaches a remote call', async () => {
+  for (const channel of UNSAFE_CHANNELS) {
+    const acquiring = fakeWriteTransport();
+    await assert.rejects(acquireChannelLock(lockInput(acquiring, { channel })), FeedPublishError, channel);
+    assert.equal(acquiring.calls.length, 0, channel);
+    const breaking = fakeWriteTransport({ readSsh: readablePreviousOwner });
+    await assert.rejects(breakChannelLock(breakInput(breaking, { channel })), FeedPublishError, channel);
+    assert.equal(breaking.calls.length, 0, channel);
+  }
+});
+
+test('the channel precondition admits every channel the whitelist allows', async () => {
+  for (const channel of CHANNELS) {
+    const transport = fakeWriteTransport();
+    const result = await acquireChannelLock(lockInput(transport, { channel }));
+    assert.equal(result.state, 'retained-by-this-run', channel);
+    assert.equal(transport.calls.length, 2, channel);
   }
 });

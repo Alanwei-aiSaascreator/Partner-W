@@ -199,7 +199,23 @@ export async function runPreflight(input) {
 
 export const LOCK_STATES = Object.freeze(['not-acquired', 'released', 'retained-by-this-run', 'ownership-unknown']);
 
+const CHANNEL_CHARACTERS = [...new Set(CHANNELS.join(''))].join('');
+
+function assertSafeChannel(channel) {
+  if (typeof channel !== 'string' || channel.length === 0) {
+    throw new FeedPublishError('the channel is empty, so it cannot be interpolated into a remote path');
+  }
+  for (const character of channel) {
+    if (!CHANNEL_CHARACTERS.includes(character)) {
+      throw new FeedPublishError(
+        `the channel ${channel} carries ${JSON.stringify(character)}, which no channel in the whitelist uses, so it is not safe to interpolate into a remote path`,
+      );
+    }
+  }
+}
+
 function lockPath(channel) {
+  assertSafeChannel(channel);
   return `${STATE_ROOT}/lock/${channel}`;
 }
 
@@ -208,6 +224,12 @@ function ownerPath(channel) {
 }
 
 export function planHashOf(input) {
+  for (const field of ['channel', 'version', 'packageSha256', 'fileManifestSha256', 'manifestSha256']) {
+    const value = input?.[field];
+    if (typeof value !== 'string' || value.trim().length === 0) {
+      throw new FeedPublishError(`the plan hash needs a non empty ${field}`);
+    }
+  }
   return createHash('sha256')
     .update(
       [input.channel, input.version, input.packageSha256, input.fileManifestSha256, input.manifestSha256].join('\n'),
@@ -244,7 +266,7 @@ export async function acquireChannelLock(input) {
   const created = await input.transport.write.sshRun({
     host: input.host,
     knownHostsPath: input.knownHostsPath,
-    script: `mkdir ${lockPath(input.channel)}`,
+    script: `LC_ALL=C mkdir ${lockPath(input.channel)}`,
   });
 
   if (created.status !== 0) {
@@ -272,7 +294,7 @@ export async function acquireChannelLock(input) {
   const written = await input.transport.write.sshRun({
     host: input.host,
     knownHostsPath: input.knownHostsPath,
-    script: `printf '%s' '${JSON.stringify(input.owner)}' > ${ownerPath(input.channel)}`,
+    script: `printf '%s' '${Buffer.from(JSON.stringify(input.owner), 'utf8').toString('base64')}' | base64 -d > ${ownerPath(input.channel)}`,
   });
   if (written.status !== 0) {
     return {
