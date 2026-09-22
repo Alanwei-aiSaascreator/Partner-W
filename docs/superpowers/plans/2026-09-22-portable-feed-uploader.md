@@ -4613,7 +4613,7 @@ git commit -m "feat(feed): re-sign the manifest for the stable channel"
 **一、最终读数（本刀实测）**
 
 - `feed-publish.mjs` **1153** 行（原 1147）、`feed-publish.test.mjs` **2837** 行（原 2804）；套件 **`ℹ tests 156 / ℹ pass 156 / ℹ fail 0`**（原 154；**+2**：一条守卫按名钉子 + 一条集成钉子）。测试名逐条比过：**154 → 156，只多出那两条，没有一条名字被删或改**。
-- `prettier --write` 对两个代码文件与计划文件都是 `(unchanged)`（本刀的所有新增本来就符合格式）。
+- ⚠️ **本行原先写成"`prettier --write` 对两个代码文件与计划文件都是 `(unchanged)`"，是错的，已按实测改正**：`prettier --write` 对**两个代码文件**是 `(unchanged)`（新增本来就符合格式），但**对计划文件不是** —— 本刀新增的**长段落与表格**会被 prettier 折行/重排，**两对 Task 5 围栏因此下移 2 行**（`4454 / 4485` ⇒ **`4456 / 4487`**、`4499 / 4521` ⇒ **`4501 / 4523`**）。**本节与第二、三、四、五节引用的行号都是 `prettier` 重排之后重测的**；重排后 `prettier --check` 对三个文件全绿（"All matched files use Prettier code style!"）。**教训照旧：行号在 `prettier --write` 之后必须重测；别拿折行前的读数引用。**
 - **门禁读数（本刀实测）**：先 `export PATH="/d/go-toolchain/go/bin:$PATH"`，再跑 `pnpm check`（**不接管道**；重定向到仓库外的日志文件，`rc=$?` 就是那一行的退出码）⇒ **退出码 0**。**非空证据四条**：① 日志 **10144** 行；② 链上第一步的 Go 测试真的跑过（第 3 行 `ok  mofang-compass/portable-launcher/cmd/mofang-launcher  0.117s` —— 少了那个 PATH 导出它会在第一步就死）；③ `check:portable-feed-publish` 那一步的读数就是本刀的 **`ℹ tests 156 / ℹ pass 156 / ℹ fail 0`**（日志第 210–213 行）；④ 链尾 `packages/desktop test` 真的跑到（`Test Files 281 passed (281)`，日志第 10140 行）。全日志里 `✖` / `not ok` / `FAIL` 计数为 **0**。
 
 **二、十对规定块（**当前**边界；上表是 Task 5 当时的读数，已被本刀推动）**
