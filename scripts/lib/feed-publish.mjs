@@ -178,18 +178,23 @@ export async function planCommit(input) {
   return PUBLISH_STAGES.map((stage) => ({ stage, status: 'pending' }));
 }
 
-export async function runPreflight(input) {
-  const notes = [];
+async function readDeviceIds(input) {
   const probe = await input.transport.readOnly.sshRun({
     host: input.host,
     knownHostsPath: input.knownHostsPath,
     script: `stat -c '%d' ${STATE_ROOT} ${UPDATE_ROOT}`,
   });
-  const devices = String(probe.stdout ?? '')
+  const ids = String(probe.stdout ?? '')
     .split('\n')
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
-  const sameFileSystem = devices.length === 2 && devices[0] === devices[1];
+  return { status: probe.status, ids };
+}
+
+export async function runPreflight(input) {
+  const notes = [];
+  const probe = await readDeviceIds(input);
+  const sameFileSystem = probe.ids.length === 2 && probe.ids[0] === probe.ids[1];
   if (!sameFileSystem) notes.push('the state root and the update root do not report the same file system');
   if (probe.status !== 0) notes.push('the read only probe did not succeed');
 
@@ -738,9 +743,19 @@ export async function runCommit(input) {
     return finish(outcome, reason, lockState);
   };
 
-  const releaseAndFinish = async (failedStage, outcome, reason) => {
+  const reportUnlock = (disposition) => {
+    const unlockStatus = disposition.release ? 'done' : 'retained';
+    stages.find((entry) => entry.stage === 'unlock').status = unlockStatus;
+    appendAuditStage({
+      auditOut: input.auditOut,
+      repositoryRoot: input.repositoryRoot,
+      entry: { stage: 'unlock', status: unlockStatus, ...baseOf(), reason: disposition.reason },
+    });
+  };
+
+  const releaseAndFinish = async (failedStage, reason) => {
     stages.find((entry) => entry.stage === failedStage).status = 'fail';
-    recordOutcome(outcome, reason);
+    recordOutcome('fail', reason);
     const disposition = await releaseChannelLock({
       channel: input.channel,
       transport: input.transport,
@@ -751,14 +766,8 @@ export async function runCommit(input) {
       acquisitionConfirmed,
       safeToExit: true,
     });
-    const unlockStatus = disposition.release ? 'done' : 'retained';
-    stages.find((entry) => entry.stage === 'unlock').status = unlockStatus;
-    appendAuditStage({
-      auditOut: input.auditOut,
-      repositoryRoot: input.repositoryRoot,
-      entry: { stage: 'unlock', status: unlockStatus, ...baseOf(), reason: disposition.reason },
-    });
-    return finish(outcome, reason, disposition.state);
+    reportUnlock(disposition);
+    return finish('fail', reason, disposition.state);
   };
 
   try {
@@ -925,35 +934,18 @@ export async function runCommit(input) {
   }
   audit('re-verify', 'done');
 
-  const devices = await input.transport.readOnly.sshRun({
-    host: input.host,
-    knownHostsPath: input.knownHostsPath,
-    script: `stat -c '%d' ${STATE_ROOT} ${UPDATE_ROOT}`,
-  });
-  const deviceList = String(devices.stdout ?? '')
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
-  if (devices.status !== 0 || deviceList.length !== 2 || deviceList[0] !== deviceList[1]) {
-    return releaseAndFinish(
-      'commit-version',
-      'fail',
-      'the staging root and the update root are not on the same file system',
-    );
+  const devices = await readDeviceIds(input);
+  if (devices.status !== 0 || devices.ids.length !== 2 || devices.ids[0] !== devices.ids[1]) {
+    return releaseAndFinish('commit-version', 'the staging root and the update root are not on the same file system');
   }
 
   const existing = await inspectRemoteDirectory(input, versionRoot, expectedEntries);
   if (existing.present && existing.empty) {
-    return releaseAndFinish(
-      'commit-version',
-      'fail',
-      'the immutable version directory already exists but is incomplete',
-    );
+    return releaseAndFinish('commit-version', 'the immutable version directory already exists but is incomplete');
   }
   if (existing.present && existing.problems.length > 0) {
     return releaseAndFinish(
       'commit-version',
-      'fail',
       `the immutable version directory already exists and does not match: ${existing.problems.join('; ')}`,
     );
   }
@@ -966,7 +958,7 @@ export async function runCommit(input) {
       script: `mv ${stagingRoot} ${versionRoot}`,
     });
     if (committed.status !== 0) {
-      return releaseAndFinish('commit-version', 'fail', 'the version directory was not committed');
+      return releaseAndFinish('commit-version', 'the version directory was not committed');
     }
     audit('commit-version', 'done');
   }
@@ -1103,13 +1095,7 @@ export async function runCommit(input) {
     acquisitionConfirmed,
     safeToExit: true,
   });
-  const unlockStatus = disposition.release ? 'done' : 'retained';
-  stages.find((entry) => entry.stage === 'unlock').status = unlockStatus;
-  appendAuditStage({
-    auditOut: input.auditOut,
-    repositoryRoot: input.repositoryRoot,
-    entry: { stage: 'unlock', status: unlockStatus, ...baseOf(), reason: disposition.reason },
-  });
+  reportUnlock(disposition);
   if (disposition.release !== true) return finish('incident', disposition.reason, disposition.state);
   return finish('done', 'published', disposition.state);
 }

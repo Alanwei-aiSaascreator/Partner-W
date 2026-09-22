@@ -1712,6 +1712,26 @@ test('a clean publish walks every stage and releases its own lock', async () => 
   );
 });
 
+test('the reveal stage reports that the version went live rather than that the run closed out', async () => {
+  const livePaths = writeArtifacts();
+  const live = happyTransport(livePaths);
+  const liveInput = commitInput(live, { ...livePaths });
+  const published = await runCommit(liveInput);
+  assert.equal(published.outcome, 'done', published.reason);
+  assert.equal(published.stages.find((entry) => entry.stage === 'reveal').status, 'done');
+
+  const blockedPaths = writeArtifacts();
+  const blocked = happyTransport(blockedPaths, { publicPackageBody: Buffer.from('other').toString('binary') });
+  const blockedInput = commitInput(blocked, { ...blockedPaths });
+  const indeterminate = await runCommit(blockedInput);
+  assert.equal(indeterminate.outcome, 'incident');
+  assert.equal(indeterminate.stages.find((entry) => entry.stage === 'reveal').status, 'pending');
+  const entries = auditEntriesOf(blockedInput.auditOut);
+  assert.ok(entries.some((entry) => entry.stage === 'public-verify' && entry.status === 'incident'));
+  assert.ok(entries.some((entry) => entry.stage === 'incident' && entry.reason === indeterminate.reason));
+  assert.equal(entries.at(-1).stage, 'lock-retained');
+});
+
 test('the version directory is committed with a single directory rename', async () => {
   const paths = writeArtifacts();
   const transport = happyTransport(paths);
@@ -1892,11 +1912,17 @@ test('a staging failure is a plain failure and reports that no lock was acquired
 test('a failure after the lock but before the flip releases the lock this run owns', async () => {
   const paths = writeArtifacts();
   const transport = happyTransport(paths, { commitStatus: 1 });
-  const result = await runCommit(commitInput(transport, { ...paths }));
+  const input = commitInput(transport, { ...paths });
+  const result = await runCommit(input);
   assertEveryCommitCallCarriesTheTrustAnchor(transport);
   assert.equal(result.outcome, 'fail');
   assert.equal(result.lockState, 'released');
   assert.equal(result.stages.find((entry) => entry.stage === 'unlock').status, 'done');
+  const entries = auditEntriesOf(input.auditOut);
+  assert.equal(entries.at(-2).stage, 'fail');
+  assert.equal(entries.at(-2).reason, result.reason);
+  assert.equal(entries.at(-1).stage, 'unlock');
+  assert.ok(entries.every((entry) => entry.stage !== 'incident'));
 });
 
 test('the commit never runs when the lock already exists', async () => {
