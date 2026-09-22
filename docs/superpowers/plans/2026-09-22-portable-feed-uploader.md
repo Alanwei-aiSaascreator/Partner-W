@@ -6077,7 +6077,18 @@ function assertPinnedKnownHostsPath(value) {
 
 **行数框架 = `612f93b8`**；锚点按**文本**匹配、不按行号。**全部 17 条 `RED_BY_NAME`、`EXPECTED_REDS_MISSING` 全为 0、17 次 `RESTORE_SHA256_EQUAL true` + `GIT_STATUS_IDENTICAL true`。**
 
-| #    | 变异（`-` 删 / `+` 加，整行 hunk 见文件 `%TEMP%\t7work\task7.mutations.out.txt`）               | 读数（`pass/tests/fail`）               | 预先写明的红名单                                                                                                                                                                                                                                        | 核对                                                 |
+**每条**变异都打印了**整行 hunk**（装置把"磁盘上真实发生的那次改动"随记录一起写出）；**18 条记录（17 变异 + 1 对照）+ `M-R` 那一次**在仓库外的 `D:\tmp\t7work\task7.mutations.out.txt`（**19 行 JSONL**，每行一条记录，含 `hunk` / `readings` / `red` / `missing` / `extra` / `restoreSha256Equal` / `gitStatusIdentical`；文件 sha256 前 16 位 `75cbac80df6ec4b3`）。**两条代表性 hunk 照抄如下**（其余同形：`-` 是变异前那一行、`+` 是落盘后那一行）：
+
+```
+对照（等价改写，必须留绿）：   - const status = result.notes.length === 0 ? 'done' : 'fail';
+                              + const status = result.notes.length > 0 ? 'fail' : 'done';
+M-N（对记录做变异）：         - const status = result.notes.length === 0 ? 'done' : 'fail';
+                              + const status = 'done';
+```
+
+**`M-R`**（把 preflight 失败时那三行 `console.error` 整段删掉）的读数在本表内、hunk 由同一装置打印（`- console.error(` / `-   'the read only probe did not come back clean; …'` / `- );`），装置同规格。
+
+| #    | 变异（`-` 删 / `+` 加）                                                                         | 读数（`pass/tests/fail`）               | 预先写明的红名单                                                                                                                                                                                                                                        | 核对                                                 |
 | ---- | ----------------------------------------------------------------------------------------------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
 | M-A  | 删 `feed-publish.mjs` 的 `missing` 分支（`if (isMissingOwnerRecord(read)) { return … }`）       | feed-publish `160/161/1`、cli `19/20/1` | 两条：`the owner record read tells an absent record…` + `the unreadable owner path prints three different causes…`                                                                                                                                      | 命中；无第三条                                       |
 | M-B  | `isMissingOwnerRecord` 去掉 `read.status > 0 &&` 那半                                           | feed-publish `160/161/1`                | `a read that never reached the owner file is a transport failure…`                                                                                                                                                                                      | 命中                                                 |
