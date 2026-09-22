@@ -410,6 +410,10 @@ function assertEveryCallCarriesTheTrustAnchor(calls) {
   }
 }
 
+test('the anchor helper refuses an empty call list rather than passing on zero calls', () => {
+  assert.throws(() => assertEveryCallCarriesTheTrustAnchor([]));
+});
+
 async function preflightWithProbe(probe) {
   const transport = fakeReadOnlyTransport({ sshRun: () => probe });
   const result = await runPreflight({
