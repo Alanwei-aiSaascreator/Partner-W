@@ -127,9 +127,9 @@ test('the known hosts file must live outside the repository', () => {
   assert.equal(assertKnownHostsPath(join(tmpdir(), 'known_hosts'), process.cwd()), join(tmpdir(), 'known_hosts'));
 });
 
-test('the local verification returns every digest and size the flow needs', () => {
+test('the local verification returns every digest and size the flow needs', async () => {
   const paths = writeArtifacts();
-  const result = verifyLocalArtifacts({
+  const result = await verifyLocalArtifacts({
     ...paths,
     expectedChannel: 'internal',
     expectedVersion: '1.2.3',
@@ -143,57 +143,59 @@ test('the local verification returns every digest and size the flow needs', () =
   assert.equal(result.packageUrl, `${PUBLIC_BASE_URL}/internal/1.2.3/portable.zip`);
 });
 
-test('the local verification requires the channel and the version explicitly', () => {
-  const paths = writeArtifacts();
-  assert.throws(
-    () => verifyLocalArtifacts({ ...paths, publicKeyBase64: PUBLIC_KEY_BASE64 }),
-    /expectedChannel|expectedVersion/u,
+test('the local verification requires the channel and the version explicitly', async () => {
+  const withoutChannel = writeArtifacts();
+  await assert.rejects(
+    verifyLocalArtifacts({ ...withoutChannel, expectedVersion: '1.2.3', publicKeyBase64: PUBLIC_KEY_BASE64 }),
+    /expectedChannel/u,
+  );
+  const withoutVersion = writeArtifacts();
+  await assert.rejects(
+    verifyLocalArtifacts({ ...withoutVersion, expectedChannel: 'internal', publicKeyBase64: PUBLIC_KEY_BASE64 }),
+    /expectedVersion/u,
   );
 });
 
-test('the local verification rejects a package whose bytes do not match the manifest', () => {
+test('the local verification rejects a package whose bytes do not match the manifest', async () => {
   const paths = writeArtifacts({ packageBytes: Buffer.from('tampered', 'utf8') });
-  assert.throws(
-    () =>
-      verifyLocalArtifacts({
-        ...paths,
-        expectedChannel: 'internal',
-        expectedVersion: '1.2.3',
-        publicKeyBase64: PUBLIC_KEY_BASE64,
-      }),
+  await assert.rejects(
+    verifyLocalArtifacts({
+      ...paths,
+      expectedChannel: 'internal',
+      expectedVersion: '1.2.3',
+      publicKeyBase64: PUBLIC_KEY_BASE64,
+    }),
     /package integrity/u,
   );
 });
 
-test('the local verification rejects a file manifest whose bytes do not match the manifest', () => {
+test('the local verification rejects a file manifest whose bytes do not match the manifest', async () => {
   const paths = writeArtifacts({ fileManifestBytes: Buffer.from('[]', 'utf8') });
-  assert.throws(
-    () =>
-      verifyLocalArtifacts({
-        ...paths,
-        expectedChannel: 'internal',
-        expectedVersion: '1.2.3',
-        publicKeyBase64: PUBLIC_KEY_BASE64,
-      }),
+  await assert.rejects(
+    verifyLocalArtifacts({
+      ...paths,
+      expectedChannel: 'internal',
+      expectedVersion: '1.2.3',
+      publicKeyBase64: PUBLIC_KEY_BASE64,
+    }),
     /file manifest/u,
   );
 });
 
-test('the local verification rejects a manifest for another channel or version', () => {
+test('the local verification rejects a manifest for another channel or version', async () => {
   const otherChannel = writeArtifacts({
     manifestOverrides: {
       channel: 'stable',
       packageUrl: `${PUBLIC_BASE_URL}/stable/1.2.3/portable.zip`,
     },
   });
-  assert.throws(
-    () =>
-      verifyLocalArtifacts({
-        ...otherChannel,
-        expectedChannel: 'internal',
-        expectedVersion: '1.2.3',
-        publicKeyBase64: PUBLIC_KEY_BASE64,
-      }),
+  await assert.rejects(
+    verifyLocalArtifacts({
+      ...otherChannel,
+      expectedChannel: 'internal',
+      expectedVersion: '1.2.3',
+      publicKeyBase64: PUBLIC_KEY_BASE64,
+    }),
     /channel/u,
   );
   const otherVersion = writeArtifacts({
@@ -202,19 +204,18 @@ test('the local verification rejects a manifest for another channel or version',
       packageUrl: `${PUBLIC_BASE_URL}/internal/1.2.4/portable.zip`,
     },
   });
-  assert.throws(
-    () =>
-      verifyLocalArtifacts({
-        ...otherVersion,
-        expectedChannel: 'internal',
-        expectedVersion: '1.2.3',
-        publicKeyBase64: PUBLIC_KEY_BASE64,
-      }),
+  await assert.rejects(
+    verifyLocalArtifacts({
+      ...otherVersion,
+      expectedChannel: 'internal',
+      expectedVersion: '1.2.3',
+      publicKeyBase64: PUBLIC_KEY_BASE64,
+    }),
     /version/u,
   );
 });
 
-test('the local verification rejects a package url that leaves the fixed public origin', () => {
+test('the local verification rejects a package url that leaves the fixed public origin', async () => {
   for (const url of [
     'https://evil.example.invalid/updates/internal/1.2.3/portable.zip',
     'https://user:pass@api.rongyinghudong.com/updates/internal/1.2.3/portable.zip',
@@ -223,42 +224,55 @@ test('the local verification rejects a package url that leaves the fixed public 
     'http://api.rongyinghudong.com/updates/internal/1.2.3/portable.zip',
   ]) {
     const paths = writeArtifacts({ manifestOverrides: { packageUrl: url } });
-    assert.throws(
-      () =>
-        verifyLocalArtifacts({
-          ...paths,
-          expectedChannel: 'internal',
-          expectedVersion: '1.2.3',
-          publicKeyBase64: PUBLIC_KEY_BASE64,
-        }),
+    await assert.rejects(
+      verifyLocalArtifacts({
+        ...paths,
+        expectedChannel: 'internal',
+        expectedVersion: '1.2.3',
+        publicKeyBase64: PUBLIC_KEY_BASE64,
+      }),
       /package url/u,
       `expected ${url} to be rejected`,
     );
   }
 });
 
-test('a throwing signature verifier fails the local verification instead of returning', () => {
+test('a throwing signature verifier fails the local verification instead of returning', async () => {
   const paths = writeArtifacts();
-  assert.throws(
-    () =>
-      verifyLocalArtifacts({
-        ...paths,
-        expectedChannel: 'internal',
-        expectedVersion: '1.2.3',
-        publicKeyBase64: PUBLIC_KEY_BASE64,
-        verifySignature: () => {
-          throw new Error('release manifest signature is invalid');
-        },
-      }),
+  await assert.rejects(
+    verifyLocalArtifacts({
+      ...paths,
+      expectedChannel: 'internal',
+      expectedVersion: '1.2.3',
+      publicKeyBase64: PUBLIC_KEY_BASE64,
+      verifySignature: () => {
+        throw new Error('release manifest signature is invalid');
+      },
+    }),
     /signature is invalid/u,
   );
 });
 
-test('a missing public key is a hard failure rather than a skipped signature check', () => {
+test('a missing public key is a hard failure rather than a skipped signature check', async () => {
   const paths = writeArtifacts();
-  assert.throws(
-    () =>
-      verifyLocalArtifacts({ ...paths, expectedChannel: 'internal', expectedVersion: '1.2.3', publicKeyBase64: '' }),
+  await assert.rejects(
+    verifyLocalArtifacts({ ...paths, expectedChannel: 'internal', expectedVersion: '1.2.3', publicKeyBase64: '' }),
     /public key/u,
+  );
+});
+
+test('the local verification propagates an async verifier rejection', async () => {
+  const paths = writeArtifacts();
+  await assert.rejects(
+    verifyLocalArtifacts({
+      ...paths,
+      expectedChannel: 'internal',
+      expectedVersion: '1.2.3',
+      publicKeyBase64: PUBLIC_KEY_BASE64,
+      verifySignature: async () => {
+        throw new Error('signature rejected by the async verifier');
+      },
+    }),
+    /signature rejected by the async verifier/u,
   );
 });

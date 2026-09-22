@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { resolve, sep } from 'node:path';
+import { isAbsolute, relative, resolve } from 'node:path';
 
 export const UPDATE_ROOT = '/opt/rongying/updates';
 export const STATE_ROOT = '/opt/rongying/updates-state';
@@ -33,6 +33,9 @@ export function parsePublishInput(raw) {
     if (typeof raw.host !== 'string' || raw.host.length === 0) {
       throw new FeedPublishError('the ssh host is required');
     }
+    if (raw.host.startsWith('-') || /\s/u.test(raw.host)) {
+      throw new FeedPublishError('the ssh host must not start with a dash or contain whitespace');
+    }
     if (typeof raw.knownHostsPath !== 'string' || raw.knownHostsPath.length === 0) {
       throw new FeedPublishError('the pinned known hosts file is required');
     }
@@ -48,7 +51,8 @@ export function parsePublishInput(raw) {
 export function assertKnownHostsPath(target, repositoryRoot) {
   const resolved = resolve(target);
   const root = resolve(repositoryRoot);
-  if (resolved === root || resolved.startsWith(`${root}${sep}`)) {
+  const rel = relative(root, resolved);
+  if (rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))) {
     throw new FeedPublishError('the pinned known hosts file must live outside the repository');
   }
   return resolved;
@@ -58,7 +62,7 @@ function sha256(buffer) {
   return createHash('sha256').update(buffer).digest('hex');
 }
 
-export function verifyLocalArtifacts(input) {
+export async function verifyLocalArtifacts(input) {
   if (typeof input.expectedChannel !== 'string' || input.expectedChannel.length === 0) {
     throw new FeedPublishError('an explicit expectedChannel is required');
   }
@@ -117,11 +121,10 @@ export function verifyLocalArtifacts(input) {
   }
 
   const verifier = input.verifySignature ?? (() => {});
-  verifier({
-    manifest,
+  await verifier({
     manifestBytes,
+    fileManifestBytes,
     packagePath: input.packagePath,
-    fileManifestPath: input.fileManifestPath,
     publicKeyBase64: input.publicKeyBase64,
   });
 
