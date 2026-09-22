@@ -81,6 +81,8 @@
 
 **每个新增的守卫与接线都必须有一条测试单独钉住它**，并在同一刀的变异清单里有一条**会按测试名变红**的变异证明它是必要的 —— 尤其是“把参数/回调往下传”这类透传（断了不会报错，只会静默失效）。变异记录的措辞必须**无歧义**：同一段代码有两个 `await` 就写成两条，否则实施者删错一处会得到“变异存活”的假读数，进而误以为护栏有效。
 
+3. **（复核刀加进本节，Task 5–8 直接继承）每一条变异记录都必须打印"磁盘上真实发生的那次改动"（hunk），且任何"存活"读数在有人读过 hunk 之前不算数。** 形状来自本刀的一次实测：一次**纯插入**变异落在 `return` 语句**之后**（不可达代码），套件读数 **133/0 全绿** —— 只看绿/红根本分不出"护栏被删掉了"与"变异压根没生效"。因此装置固定做四件事，**缺一条的读数一律作废**：① `diff` 出改动的那几行并**打印**（`-`/`+` 加三行上下文）——只打印半行片段的装置同样作废（改动落在行中间时，`-`/`+` 必须显示**整行**，否则读者看到的是被截断的假 hunk）；② **纯插入**型变异在记"存活"之前先做**可达性检查**：从插入点向前跳过空白，若前一字符是 `;`，再向前找同层边界（`{` 或 `;`），取那一段语句的首词 —— 是 `return` / `throw` / `continue` / `break` 就判 `SURVIVOR_REJECTED`，**不算有效存活**（保守方向：宁可多拒一条也不放过一条假存活；识别不出形状时记 `reachable-or-unknown`，仍按"存活必须有人读 hunk"办）；③ 每条变异**预先写明"哪条测试必须按名变红"**，跑完核对红名单里有那个名字，没有就报 `EXPECTATION_FAILED`（防止"红了，但红的是别的测试"被记成"钉住了"）；④ 其余装置项不变：锚点恰好匹配 1 次、`node --check` 变异产物、变异前取基线 sha256、恢复后比 sha256 并断言该文件的 `git status` 与变异前**逐字相同**。**给 Task 5–8 的验收口径**：每刀的变异清单不止给 pass/fail 两个数，**必须同时给出 hunk 与红名单核对结果**；一条"存活"读数若没有对应的 hunk 打印，视为**未验证**。
+
 **复核纪律（拿"规定文本"的方式）：** 复核者手里的那份**规定文本**必须取自**被复核提交的父提交**（`git show <base>:<plan-file>`），**绝不能用 HEAD 的那份** —— 实施者会改计划（本刀的所有"实现偏离"就是这么改的），所以 HEAD 的那份已经**悄悄变成了对实现的描述**，拿它去比对等于拿实现给自己的自我描述去验收实现，什么都验不出来。缺的正是"独立规格"这四个字。
 
 **测试运行方式：**
@@ -1802,6 +1804,9 @@ function commitTransport(options = {}) {
             : { status: 0, stdout: ownerJson, stderr: '' };
         }
         if (request.script.includes('-mindepth 1 -maxdepth 1 -printf')) {
+          if (typeof options.listingStatus === 'number' && options.listingStatus !== 0) {
+            return { status: options.listingStatus, stdout: 'find: Permission denied\n', stderr: '' };
+          }
           if (request.script.includes('/staging/')) return { status: 0, stdout: stagingListing, stderr: '' };
           const state = options.versionDirState ?? 'absent';
           if (state === 'absent' || state === 'empty') return { status: 0, stdout: '', stderr: '' };
@@ -1816,6 +1821,9 @@ function commitTransport(options = {}) {
           return { status: 0, stdout: listing, stderr: '' };
         }
         if (request.script.startsWith('if [ -d ')) {
+          if (typeof options.directoryProbeStatus === 'number' && options.directoryProbeStatus !== 0) {
+            return { status: options.directoryProbeStatus, stdout: 'present\n', stderr: 'connection reset' };
+          }
           const state = options.versionDirState ?? 'absent';
           const present = state !== 'absent';
           const insideStaging = request.script.includes('/staging/');
@@ -1823,6 +1831,9 @@ function commitTransport(options = {}) {
           return { status: 0, stdout: 'present\n', stderr: '' };
         }
         if (request.script.includes('sha256sum') && request.script.includes('portable-files.json')) {
+          if (typeof options.digestStatus === 'number' && options.digestStatus !== 0) {
+            return { status: options.digestStatus, stdout: '', stderr: 'sha256sum: Permission denied' };
+          }
           const inStaging = request.script.includes('/staging/');
           if (!inStaging && (options.versionDirState ?? 'absent') === 'absent')
             return { status: 0, stdout: '', stderr: '' };
@@ -1830,6 +1841,9 @@ function commitTransport(options = {}) {
           return { status: 0, stdout: digests(inStaging ? 'staging' : 'version', zipDigest), stderr: '' };
         }
         if (request.script.includes("stat -c '%d'")) {
+          if (typeof options.deviceProbeStatus === 'number' && options.deviceProbeStatus !== 0) {
+            return { status: options.deviceProbeStatus, stdout: '100\n100\n', stderr: 'stat: cannot statx' };
+          }
           return { status: 0, stdout: options.sameFileSystem === false ? '100\n200\n' : '100\n100\n', stderr: '' };
         }
         if (request.script.includes('manifest.json') && request.script.includes('.tmp')) {
@@ -1841,6 +1855,9 @@ function commitTransport(options = {}) {
         }
         if (request.script.includes('manifest.json')) {
           manifestReads += 1;
+          if (options.baselineDigestAbsent === true && manifestReads === 1) {
+            return { status: 0, stdout: '', stderr: '' };
+          }
           const digest = options.casDrift === true && manifestReads > 1 ? THIRD_SHA : BASELINE_SHA;
           return { status: 0, stdout: `${digest}  ${UPDATE_ROOT}/internal/manifest.json\n`, stderr: '' };
         }
@@ -1895,6 +1912,9 @@ function commitTransport(options = {}) {
           /^mv \/opt\/rongying\/updates-state\/staging\//u.test(request.script) &&
           options.commitStatus !== undefined
         ) {
+          if (options.foreignOwnerAfterCommit === true) {
+            ownerJson = JSON.stringify({ runid: 'other', planHash: 'other' });
+          }
           return { status: options.commitStatus, stdout: '', stderr: 'commit refused' };
         }
         if (options.foreignOwnerAfterFlip === true && /^mv -f \S+\.tmp /u.test(request.script)) {
@@ -1917,6 +1937,9 @@ function commitTransport(options = {}) {
       calls.push(['fetchPublic', url]);
       if (options.publicStatus !== undefined && options.publicStatus !== 200) {
         return { status: options.publicStatus, bodyBytes: new Uint8Array() };
+      }
+      if (options.manifestBodyMissing === true && url.endsWith('manifest.json')) {
+        return { status: 200 };
       }
       const body = url.endsWith('manifest.json')
         ? (options.publicManifestBody ?? BASELINE_BODY)
@@ -1956,7 +1979,6 @@ function commitInput(transport, overrides = {}) {
 function assertEveryCommitCallCarriesTheTrustAnchor(transport) {
   const anchor = transport.anchor;
   assert.ok(anchor !== undefined && anchor !== null, 'the commit anchor assertion needs an input that injected a host');
-  assert.ok(transport.calls.length > 0, 'the commit anchor assertion needs at least one recorded call');
   const sshCalls = transport.calls.filter((call) => call[0] === 'readSsh' || call[0] === 'writeSsh');
   assert.ok(sshCalls.length > 0, 'the commit anchor assertion needs at least one recorded ssh call');
   for (const call of sshCalls) {
@@ -2066,21 +2088,29 @@ test('the manifest is uploaded to the final directory and its remote digest is c
 test('a mismatched remote manifest digest stops before the flip', async () => {
   const paths = writeArtifacts();
   const transport = happyTransport(paths, { tempManifestSha: 'F'.repeat(64) });
-  const result = await runCommit(commitInput(transport, { ...paths }));
+  const input = commitInput(transport, { ...paths });
+  const result = await runCommit(input);
   assertEveryCommitCallCarriesTheTrustAnchor(transport);
   assert.equal(result.outcome, 'incident');
   assert.equal(result.lockState, 'retained-by-this-run');
   assert.equal(result.stages.find((entry) => entry.stage === 'flip').status, 'pending');
+  const tempManifest = auditEntriesOf(input.auditOut).find((entry) => entry.stage === 'temp-manifest');
+  assert.equal(tempManifest.manifestSha256, manifestShaOf(paths));
+  assert.equal(tempManifest.remoteTempSha256, 'F'.repeat(64));
 });
 
 test('a manifest upload failure is an incident that keeps the lock', async () => {
   const paths = writeArtifacts();
   const transport = happyTransport(paths, { manifestUploadStatus: 1 });
-  const result = await runCommit(commitInput(transport, { ...paths }));
+  const input = commitInput(transport, { ...paths });
+  const result = await runCommit(input);
   assertEveryCommitCallCarriesTheTrustAnchor(transport);
   assert.equal(result.outcome, 'incident');
   assert.equal(result.lockState, 'retained-by-this-run');
   assert.equal(result.stages.find((entry) => entry.stage === 'flip').status, 'pending');
+  const tempManifest = auditEntriesOf(input.auditOut).find((entry) => entry.stage === 'temp-manifest');
+  assert.equal(tempManifest.manifestSha256, manifestShaOf(paths));
+  assert.equal('remoteTempSha256' in tempManifest, false);
 });
 
 test('a cas mismatch is an incident that keeps the lock and never rolls anything back', async () => {
@@ -2099,20 +2129,31 @@ test('a cas mismatch is an incident that keeps the lock and never rolls anything
 test('an indeterminate outcome with the old public sha allows a retry and keeps the lock', async () => {
   const paths = writeArtifacts();
   const transport = happyTransport(paths, { publicManifestBody: BASELINE_BODY });
-  const result = await runCommit(commitInput(transport, { ...paths }));
+  const input = commitInput(transport, { ...paths });
+  const result = await runCommit(input);
   assertEveryCommitCallCarriesTheTrustAnchor(transport);
   assert.equal(result.outcome, 'retry');
   assert.equal(result.lockState, 'retained-by-this-run');
+  const publicVerify = auditEntriesOf(input.auditOut).find((entry) => entry.stage === 'public-verify');
+  assert.equal(publicVerify.status, 'retry');
+  assert.equal(publicVerify.observedManifestSha256, BASELINE_SHA);
+  assert.equal(publicVerify.previousManifestSha256, BASELINE_SHA);
+  assert.equal(publicVerify.manifestSha256, manifestShaOf(paths));
 });
 
 test('an indeterminate outcome with a third public sha stops and keeps the lock', async () => {
   const paths = writeArtifacts();
   const transport = happyTransport(paths, { publicManifestBody: THIRD_BODY });
-  const result = await runCommit(commitInput(transport, { ...paths }));
+  const input = commitInput(transport, { ...paths });
+  const result = await runCommit(input);
   assertEveryCommitCallCarriesTheTrustAnchor(transport);
   assert.equal(result.outcome, 'incident');
   assert.equal(result.lockState, 'retained-by-this-run');
   assert.match(result.reason, /third/u);
+  const publicVerify = auditEntriesOf(input.auditOut).find((entry) => entry.stage === 'public-verify');
+  assert.equal(publicVerify.observedManifestSha256, THIRD_SHA);
+  assert.equal(publicVerify.previousManifestSha256, BASELINE_SHA);
+  assert.equal(publicVerify.manifestSha256, manifestShaOf(paths));
 });
 
 test('a staging failure is a plain failure and reports that no lock was acquired', async () => {
@@ -2304,11 +2345,15 @@ test('a staging directory that cannot be created is a plain failure', async () =
 test('the public verification is actually run after the flip', async () => {
   const paths = writeArtifacts();
   const transport = happyTransport(paths, { publicPackageBody: Buffer.from('other').toString('binary') });
-  const result = await runCommit(commitInput(transport, { ...paths }));
+  const input = commitInput(transport, { ...paths });
+  const result = await runCommit(input);
   assertEveryCommitCallCarriesTheTrustAnchor(transport);
   assert.equal(result.outcome, 'incident');
   assert.equal(result.lockState, 'retained-by-this-run');
   assert.match(result.reason, /public package integrity/u);
+  const publicVerify = auditEntriesOf(input.auditOut).find((entry) => entry.stage === 'public-verify');
+  assert.equal(publicVerify.detail, 'the public package integrity check failed');
+  assert.equal(publicVerify.observedManifestSha256, manifestShaOf(paths));
 });
 
 test('a lock that fails for any reason other than an existing entry is an incident', async () => {
@@ -2411,6 +2456,10 @@ test('a public verifier that rejects after the flip is an incident that keeps th
   assert.match(result.reason, /signature is invalid/u);
   const entries = auditEntriesOf(input.auditOut);
   assert.ok(entries.every((entry) => entry.stage !== 'unlock' || entry.status !== 'done'));
+  const publicVerify = entries.find((entry) => entry.stage === 'public-verify');
+  assert.equal(publicVerify.manifestSha256, manifestShaOf(paths));
+  assert.equal(publicVerify.observedManifestSha256, manifestShaOf(paths));
+  assert.equal(publicVerify.previousManifestSha256, BASELINE_SHA);
 });
 
 test('every early failure records its outcome in the audit log before it returns', async () => {
@@ -2554,6 +2603,237 @@ test('the real release verifier accepts a canonically signed manifest and reject
     /release manifest signature is invalid/u,
   );
 });
+
+test('an owner record replaced before the unlock on the failure path stops the run and deletes nothing', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths, { commitStatus: 1, foreignOwnerAfterCommit: true });
+  const input = commitInput(transport, { ...paths });
+  const result = await runCommit(input);
+  assertEveryCommitCallCarriesTheTrustAnchor(transport);
+  assert.equal(result.outcome, 'fail');
+  assert.equal(result.reason, 'the version directory was not committed');
+  assert.equal(result.lockState, 'ownership-unknown');
+  assert.equal(result.stages.find((entry) => entry.stage === 'commit-version').status, 'fail');
+  assert.equal(result.stages.find((entry) => entry.stage === 'unlock').status, 'retained');
+  const removals = transport.calls.filter(
+    (call) => call[0] === 'writeSsh' && /(?:^|\s)(?:rm|rmdir) /u.test(String(call[1])),
+  );
+  assert.deepEqual(removals, []);
+  const entries = auditEntriesOf(input.auditOut);
+  assert.ok(entries.some((entry) => entry.stage === 'unlock' && entry.status === 'retained'));
+  assert.ok(entries.every((entry) => entry.stage !== 'unlock' || entry.status !== 'done'));
+});
+
+test('the channel precondition refuses an empty channel by its own reason before any remote write', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths);
+  const result = await runCommit(commitInput(transport, { ...paths, channel: '' }));
+  assert.equal(result.outcome, 'fail');
+  assert.equal(result.reason, 'the channel is empty, so it cannot be interpolated into a remote path');
+  assert.deepEqual(transport.calls, []);
+});
+
+test('a staging entry that is not a regular file is refused', async () => {
+  const paths = writeArtifacts();
+  const stagingListing = `d ${PORTABLE_PACKAGE_NAME} ${PACKAGE_BYTES.length}\nf ${PORTABLE_FILE_MANIFEST_NAME} ${FILE_MANIFEST_BYTES.length}\n`;
+  const transport = happyTransport(paths, { stagingListing });
+  const input = commitInput(transport, { ...paths });
+  const result = await runCommit(input);
+  assertEveryCommitCallCarriesTheTrustAnchor(transport);
+  assert.equal(result.outcome, 'fail');
+  assert.match(result.reason, /is not a regular file/u);
+  const remoteVerify = auditEntriesOf(input.auditOut).find((entry) => entry.stage === 'remote-verify');
+  assert.equal(remoteVerify.status, 'fail');
+  assert.match(remoteVerify.detail, /is not a regular file/u);
+  assert.equal(remoteVerify.remote.entries[0].type, 'd');
+  assert.equal(remoteVerify.remote.digests, null);
+});
+
+test('a staging listing that failed is reported as an empty directory rather than parsed', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths, { listingStatus: 1 });
+  const result = await runCommit(commitInput(transport, { ...paths }));
+  assertEveryCommitCallCarriesTheTrustAnchor(transport);
+  assert.equal(result.outcome, 'fail');
+  assert.equal(result.reason, 'the staging directory is not the exact final file set: the staging directory is empty');
+});
+
+test('a presence probe that failed is not read as a present directory', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths, { directoryProbeStatus: 1 });
+  const result = await runCommit(commitInput(transport, { ...paths }));
+  assertEveryCommitCallCarriesTheTrustAnchor(transport);
+  assert.equal(result.outcome, 'fail');
+  assert.equal(result.lockState, 'not-acquired');
+  assert.equal(result.stages.find((entry) => entry.stage === 'remote-verify').status, 'fail');
+  assert.equal(result.stages.find((entry) => entry.stage === 'lock').status, 'pending');
+});
+
+test('a digest read that failed stops the run instead of throwing out of the commit', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths, { digestStatus: 1 });
+  const result = await runCommit(commitInput(transport, { ...paths }));
+  assertEveryCommitCallCarriesTheTrustAnchor(transport);
+  assert.equal(result.outcome, 'fail');
+  assert.equal(
+    result.reason,
+    'the staging directory is not the exact final file set: the remote digests could not be read',
+  );
+});
+
+test('a remote manifest whose digest could not be read is logged as absent rather than as a blank', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths, { baselineDigestAbsent: true });
+  const input = commitInput(transport, { ...paths });
+  const result = await runCommit(input);
+  assertEveryCommitCallCarriesTheTrustAnchor(transport);
+  assert.equal(result.outcome, 'incident');
+  assert.equal(result.stages.find((entry) => entry.stage === 'cas').status, 'incident');
+  const cas = auditEntriesOf(input.auditOut).find((entry) => entry.stage === 'cas');
+  assert.equal(cas.previousManifestSha256, 'absent');
+  assert.equal(cas.observedManifestSha256, BASELINE_SHA);
+});
+
+test('a device probe that failed stops the commit even when it printed matching numbers', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths, { deviceProbeStatus: 1 });
+  const result = await runCommit(commitInput(transport, { ...paths }));
+  assertEveryCommitCallCarriesTheTrustAnchor(transport);
+  assert.equal(result.outcome, 'fail');
+  assert.match(result.reason, /file system/u);
+  assert.equal(result.lockState, 'released');
+  assert.equal(result.stages.find((entry) => entry.stage === 'commit-version').status, 'fail');
+});
+
+test('a public manifest response without body bytes is an incident rather than a crash', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths, { manifestBodyMissing: true });
+  const input = commitInput(transport, { ...paths });
+  const result = await runCommit(input);
+  assertEveryCommitCallCarriesTheTrustAnchor(transport);
+  assert.equal(result.outcome, 'incident');
+  assert.equal(result.lockState, 'retained-by-this-run');
+  assert.match(result.reason, /public manifest could not be read/u);
+  const publicVerify = auditEntriesOf(input.auditOut).find((entry) => entry.stage === 'public-verify');
+  assert.equal(publicVerify.manifestSha256, manifestShaOf(paths));
+});
+
+test('the audit log carries the operator, the run time and the local digests and sizes', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths);
+  const input = commitInput(transport, { ...paths });
+  const result = await runCommit(input);
+  assert.equal(result.outcome, 'done', result.reason);
+  const entries = auditEntriesOf(input.auditOut);
+  for (const entry of entries) {
+    assert.equal(entry.operator, 'ops', entry.stage);
+    assert.equal(entry.at, '2026-09-22T00:00:00.000Z', entry.stage);
+  }
+  const preVerify = entries.find((entry) => entry.stage === 'pre-verify');
+  assert.deepEqual(preVerify.local, {
+    packageSha256: PACKAGE_SHA256,
+    packageSize: PACKAGE_BYTES.length,
+    fileManifestSha256: FILE_MANIFEST_SHA256,
+    fileManifestSize: FILE_MANIFEST_BYTES.length,
+    manifestSha256: manifestShaOf(paths),
+    manifestSize: readFileSync(paths.manifestPath).length,
+  });
+});
+
+test('the audit log carries the entries and digests the staging directory reported', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths);
+  const input = commitInput(transport, { ...paths });
+  const result = await runCommit(input);
+  assert.equal(result.outcome, 'done', result.reason);
+  const remoteVerify = auditEntriesOf(input.auditOut).find((entry) => entry.stage === 'remote-verify');
+  assert.equal(remoteVerify.status, 'done');
+  assert.equal(remoteVerify.remote.present, true);
+  assert.equal(remoteVerify.remote.empty, false);
+  assert.deepEqual(remoteVerify.remote.entries, [
+    { type: 'f', name: PORTABLE_PACKAGE_NAME, size: PACKAGE_BYTES.length },
+    { type: 'f', name: PORTABLE_FILE_MANIFEST_NAME, size: FILE_MANIFEST_BYTES.length },
+  ]);
+  assert.deepEqual(remoteVerify.remote.digests, {
+    [PORTABLE_PACKAGE_NAME]: PACKAGE_SHA256,
+    [PORTABLE_FILE_MANIFEST_NAME]: FILE_MANIFEST_SHA256,
+  });
+});
+
+test('the audit log carries the previous manifest digest and the backup path', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths);
+  const input = commitInput(transport, { ...paths });
+  const result = await runCommit(input);
+  assert.equal(result.outcome, 'done', result.reason);
+  const entries = auditEntriesOf(input.auditOut);
+  const backup = entries.find((entry) => entry.stage === 'backup-manifest');
+  assert.equal(backup.previousManifestSha256, BASELINE_SHA);
+  assert.equal(backup.backupPath, `${STATE_ROOT}/backup/internal-manifest.json-pre-1.2.3`);
+  const cas = entries.find((entry) => entry.stage === 'cas');
+  assert.equal(cas.previousManifestSha256, BASELINE_SHA);
+  assert.equal(cas.observedManifestSha256, BASELINE_SHA);
+});
+
+test('the audit log carries the new manifest digest at the temp manifest, the flip and the outcome', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths);
+  const input = commitInput(transport, { ...paths });
+  const result = await runCommit(input);
+  assert.equal(result.outcome, 'done', result.reason);
+  const manifestSha = manifestShaOf(paths);
+  const entries = auditEntriesOf(input.auditOut);
+  const tempManifest = entries.find((entry) => entry.stage === 'temp-manifest');
+  assert.equal(tempManifest.manifestSha256, manifestSha);
+  assert.equal(tempManifest.remoteTempSha256, manifestSha);
+  assert.equal(entries.find((entry) => entry.stage === 'flip').manifestSha256, manifestSha);
+  assert.equal(entries.find((entry) => entry.stage === 'done').manifestSha256, manifestSha);
+});
+
+test('the audit log carries the public digests and sizes the verification compared', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths);
+  const input = commitInput(transport, { ...paths });
+  const result = await runCommit(input);
+  assert.equal(result.outcome, 'done', result.reason);
+  const publicVerify = auditEntriesOf(input.auditOut).find((entry) => entry.stage === 'public-verify');
+  assert.deepEqual(publicVerify.public, {
+    ok: true,
+    manifestSha256: manifestShaOf(paths),
+    packageSha256: PACKAGE_SHA256,
+    packageSize: PACKAGE_BYTES.length,
+    fileManifestSha256: FILE_MANIFEST_SHA256,
+    fileManifestSize: FILE_MANIFEST_BYTES.length,
+  });
+});
+
+test('the audit log takes each entry time from the injected clock rather than the run start', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths);
+  const ticks = ['2026-09-22T00:00:01.000Z', '2026-09-22T00:00:02.000Z', '2026-09-22T00:00:03.000Z'];
+  let taken = 0;
+  const input = commitInput(transport, { ...paths, now: () => ticks[Math.min(taken++, ticks.length - 1)] });
+  const result = await runCommit(input);
+  assert.equal(result.outcome, 'done', result.reason);
+  const entries = auditEntriesOf(input.auditOut);
+  assert.equal(entries[0].at, ticks[0]);
+  assert.equal(entries[1].at, ticks[1]);
+  assert.equal(entries[2].at, ticks[2]);
+  assert.equal(entries.at(-1).at, ticks[2]);
+});
+
+test('the audit log keeps the operator and the time as null instead of dropping them', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths);
+  const input = commitInput(transport, { ...paths, operator: undefined, startedAt: undefined });
+  await assert.rejects(runCommit(input), /operator/u);
+  const entries = auditEntriesOf(input.auditOut);
+  assert.ok(entries.length > 0);
+  for (const entry of entries) {
+    assert.equal(entry.operator, null, entry.stage);
+    assert.equal(entry.at, null, entry.stage);
+  }
+});
 ```
 
 - [ ] **Step 2: 运行测试并确认按测试名失败**
@@ -2696,23 +2976,26 @@ function compareDirectoryHashes(hashes, expected) {
 
 async function inspectRemoteDirectory(input, directory, expectedEntries) {
   const exists = await remoteDirectoryExists(input, directory);
-  if (!exists) return { present: false, empty: false, problems: [] };
+  if (!exists) return { present: false, empty: false, problems: [], entries: [], digests: null };
   const entries = await readRemoteDirectory(input, directory);
-  if (entries.length === 0) return { present: true, empty: true, problems: [] };
+  if (entries.length === 0) return { present: true, empty: true, problems: [], entries: [], digests: null };
   const problems = compareDirectoryEntries(entries, expectedEntries);
+  let digests = null;
   if (problems.length === 0) {
-    problems.push(
-      ...compareDirectoryHashes(
-        await readRemoteHashes(
-          input,
-          directory,
-          expectedEntries.map((item) => item.name),
-        ),
-        expectedEntries,
-      ),
+    digests = await readRemoteHashes(
+      input,
+      directory,
+      expectedEntries.map((item) => item.name),
     );
+    problems.push(...compareDirectoryHashes(digests, expectedEntries));
   }
-  return { present: true, empty: false, problems };
+  return {
+    present: true,
+    empty: false,
+    problems,
+    entries,
+    digests: digests === null ? null : Object.fromEntries(digests),
+  };
 }
 
 async function readRemoteFileSha(input, target) {
@@ -2737,7 +3020,8 @@ export async function verifyPublicArtifacts(input) {
   const packageResponse = await input.transport.fetchPublic(`${base}/${PORTABLE_PACKAGE_NAME}`);
   if (packageResponse.status !== 200) return { ok: false, reason: 'the public package is not reachable' };
   const packageBytes = Buffer.from(packageResponse.bodyBytes);
-  if (createHash('sha256').update(packageBytes).digest('hex') !== input.expectedPackageSha256) {
+  const publicPackageSha256 = createHash('sha256').update(packageBytes).digest('hex');
+  if (publicPackageSha256 !== input.expectedPackageSha256) {
     return { ok: false, reason: 'the public package integrity check failed' };
   }
   if (packageBytes.length !== input.expectedPackageSize) {
@@ -2747,7 +3031,8 @@ export async function verifyPublicArtifacts(input) {
   const fileManifestResponse = await input.transport.fetchPublic(`${base}/${PORTABLE_FILE_MANIFEST_NAME}`);
   if (fileManifestResponse.status !== 200) return { ok: false, reason: 'the public file manifest is not reachable' };
   const fileManifestBytes = Buffer.from(fileManifestResponse.bodyBytes);
-  if (createHash('sha256').update(fileManifestBytes).digest('hex') !== input.expectedFileManifestSha256) {
+  const publicFileManifestSha256 = createHash('sha256').update(fileManifestBytes).digest('hex');
+  if (publicFileManifestSha256 !== input.expectedFileManifestSha256) {
     return { ok: false, reason: 'the public file manifest integrity check failed' };
   }
   if (fileManifestBytes.length !== input.expectedFileManifestSize) {
@@ -2761,7 +3046,14 @@ export async function verifyPublicArtifacts(input) {
   const verifier = input.verifier ?? (() => {});
   await verifier({ manifestBytes, fileManifestBytes, packagePath, publicKeyBase64: input.publicKeyBase64 });
 
-  return { ok: true, manifestSha256: createHash('sha256').update(manifestBytes).digest('hex') };
+  return {
+    ok: true,
+    manifestSha256: createHash('sha256').update(manifestBytes).digest('hex'),
+    packageSha256: publicPackageSha256,
+    packageSize: packageBytes.length,
+    fileManifestSha256: publicFileManifestSha256,
+    fileManifestSize: fileManifestBytes.length,
+  };
 }
 
 export async function runCommit(input) {
@@ -2772,22 +3064,25 @@ export async function runCommit(input) {
   let planHash = 'uncomputed';
   let owner = null;
 
-  const audit = (stage, status, detail) => {
+  const atValue = () => (input.now === undefined ? input.startedAt : input.now()) ?? null;
+  const baseOf = () => ({ runid, operator: input.operator ?? null, at: atValue() });
+
+  const audit = (stage, status, detail, evidence) => {
     stages.find((entry) => entry.stage === stage).status = status;
     appendAuditStage({
       auditOut: input.auditOut,
       repositoryRoot: input.repositoryRoot,
-      entry: { stage, status, runid, ...(detail === undefined ? {} : { detail }) },
+      entry: { stage, status, ...baseOf(), ...(detail === undefined ? {} : { detail }), ...(evidence ?? {}) },
     });
   };
 
   const finish = (outcome, reason, lockState) => ({ outcome, reason, lockState, stages, runid, planHash });
 
-  const recordOutcome = (outcome, reason) => {
+  const recordOutcome = (outcome, reason, evidence) => {
     appendAuditStage({
       auditOut: input.auditOut,
       repositoryRoot: input.repositoryRoot,
-      entry: { stage: outcome, reason, runid, planHash },
+      entry: { stage: outcome, reason, ...baseOf(), planHash, ...(evidence ?? {}) },
     });
   };
 
@@ -2799,7 +3094,7 @@ export async function runCommit(input) {
     appendAuditStage({
       auditOut: input.auditOut,
       repositoryRoot: input.repositoryRoot,
-      entry: { stage: 'lock-retained', status: 'retained', runid, reason: disposition.reason },
+      entry: { stage: 'lock-retained', status: 'retained', ...baseOf(), reason: disposition.reason },
     });
     return finish(outcome, reason, lockState);
   };
@@ -2822,7 +3117,7 @@ export async function runCommit(input) {
     appendAuditStage({
       auditOut: input.auditOut,
       repositoryRoot: input.repositoryRoot,
-      entry: { stage: 'unlock', status: unlockStatus, runid, reason: disposition.reason },
+      entry: { stage: 'unlock', status: unlockStatus, ...baseOf(), reason: disposition.reason },
     });
     return finish(outcome, reason, disposition.state);
   };
@@ -2831,7 +3126,7 @@ export async function runCommit(input) {
     appendAuditStage({
       auditOut: input.auditOut,
       repositoryRoot: input.repositoryRoot,
-      entry: { stage: 'open', runid },
+      entry: { stage: 'open', ...baseOf() },
     });
   } catch (error) {
     return finish('fail', error.message, 'not-acquired');
@@ -2863,7 +3158,17 @@ export async function runCommit(input) {
     recordOutcome('fail', error.message);
     return finish('fail', error.message, 'not-acquired');
   }
-  audit('pre-verify', 'done');
+  const localEvidence = {
+    local: {
+      packageSha256: local.packageSha256,
+      packageSize: local.packageSize,
+      fileManifestSha256: local.fileManifestSha256,
+      fileManifestSize: local.fileManifestSize,
+      manifestSha256: local.manifestSha256,
+      manifestSize: local.manifestBytes.length,
+    },
+  };
+  audit('pre-verify', 'done', undefined, localEvidence);
 
   const versionRoot = versionRootOf(input.channel, input.version);
   const stagingRoot = stagingRootOf(input.channel, input.version, planHash);
@@ -2911,14 +3216,15 @@ export async function runCommit(input) {
   audit('stage', 'done');
 
   const staging = await inspectRemoteDirectory(input, stagingRoot, expectedEntries);
+  const stagingEvidence = { remote: staging };
   if (!staging.present || staging.empty || staging.problems.length > 0) {
     const detail = staging.empty ? 'the staging directory is empty' : staging.problems.join('; ');
     const reason = `the staging directory is not the exact final file set: ${detail}`;
-    audit('remote-verify', 'fail', detail);
+    audit('remote-verify', 'fail', detail, stagingEvidence);
     recordOutcome('fail', reason);
     return finish('fail', reason, 'not-acquired');
   }
-  audit('remote-verify', 'done');
+  audit('remote-verify', 'done', undefined, stagingEvidence);
 
   const lock = await acquireChannelLock({
     channel: input.channel,
@@ -3004,29 +3310,32 @@ export async function runCommit(input) {
     audit('commit-version', 'done');
   }
 
+  const backupPath = `${STATE_ROOT}/backup/${input.channel}-manifest.json-pre-${input.version}`;
   const backup = await input.transport.write.sshRun({
     host: input.host,
     knownHostsPath: input.knownHostsPath,
     script: [
       `mkdir -p ${STATE_ROOT}/backup`,
-      `cp ${UPDATE_ROOT}/${input.channel}/${PORTABLE_MANIFEST_NAME} ${STATE_ROOT}/backup/${input.channel}-manifest.json-pre-${input.version} 2>/dev/null || true`,
+      `cp ${UPDATE_ROOT}/${input.channel}/${PORTABLE_MANIFEST_NAME} ${backupPath} 2>/dev/null || true`,
     ].join(' && '),
   });
   if (backup.status !== 0) {
     return retainAndFinish('incident', 'the previous manifest could not be backed up');
   }
-  audit('backup-manifest', 'done');
+  audit('backup-manifest', 'done', undefined, { previousManifestSha256: baselineSha, backupPath });
 
   const casSha = await readRemoteFileSha(input, `${UPDATE_ROOT}/${input.channel}/${PORTABLE_MANIFEST_NAME}`);
+  const casEvidence = { previousManifestSha256: baselineSha, observedManifestSha256: casSha };
   if (casSha !== baselineSha) {
-    audit('cas', 'incident');
+    audit('cas', 'incident', undefined, casEvidence);
     return retainAndFinish(
       'incident',
       'the manifest changed after the lock was taken, which means a bypass; nothing is flipped, rolled back or deleted',
     );
   }
-  audit('cas', 'done');
+  audit('cas', 'done', undefined, casEvidence);
 
+  const manifestEvidence = { manifestSha256: local.manifestSha256 };
   const tempManifestPath = `${UPDATE_ROOT}/${input.channel}/${PORTABLE_MANIFEST_NAME}.${runid}.tmp`;
   const manifestUploaded = await input.transport.write.sftpUpload({
     localPath: input.manifestPath,
@@ -3034,15 +3343,21 @@ export async function runCommit(input) {
     resume: false,
   });
   if (manifestUploaded.status !== 0) {
-    audit('temp-manifest', 'incident', 'the manifest upload failed');
+    audit('temp-manifest', 'incident', 'the manifest upload failed', manifestEvidence);
     return retainAndFinish('incident', 'the manifest could not be uploaded, so the outcome is uncertain');
   }
   const remoteTempSha = await readRemoteFileSha(input, tempManifestPath);
+  const tempManifestEvidence = { manifestSha256: local.manifestSha256, remoteTempSha256: remoteTempSha };
   if (remoteTempSha !== local.manifestSha256) {
-    audit('temp-manifest', 'incident', 'the uploaded manifest digest does not match the local manifest');
+    audit(
+      'temp-manifest',
+      'incident',
+      'the uploaded manifest digest does not match the local manifest',
+      tempManifestEvidence,
+    );
     return retainAndFinish('incident', 'the uploaded manifest does not match the local manifest');
   }
-  audit('temp-manifest', 'done');
+  audit('temp-manifest', 'done', undefined, tempManifestEvidence);
 
   const flipped = await input.transport.write.sshRun({
     host: input.host,
@@ -3050,17 +3365,22 @@ export async function runCommit(input) {
     script: `mv -f ${tempManifestPath} ${UPDATE_ROOT}/${input.channel}/${PORTABLE_MANIFEST_NAME}`,
   });
   if (flipped.status !== 0) {
-    audit('flip', 'incident', 'the atomic flip failed');
+    audit('flip', 'incident', 'the atomic flip failed', manifestEvidence);
     return retainAndFinish('incident', 'the atomic flip failed, so the outcome is uncertain');
   }
-  audit('flip', 'done');
+  audit('flip', 'done', undefined, manifestEvidence);
 
   const observed = await input.transport.fetchPublic(`${PUBLIC_BASE_URL}/${input.channel}/${PORTABLE_MANIFEST_NAME}`);
   if (observed.status !== 200 || observed.bodyBytes === undefined) {
-    audit('public-verify', 'incident', 'the public manifest could not be read');
+    audit('public-verify', 'incident', 'the public manifest could not be read', manifestEvidence);
     return retainAndFinish('incident', 'the public manifest could not be read, so the outcome is uncertain');
   }
   const observedSha = createHash('sha256').update(Buffer.from(observed.bodyBytes)).digest('hex');
+  const observedEvidence = {
+    manifestSha256: local.manifestSha256,
+    observedManifestSha256: observedSha,
+    previousManifestSha256: baselineSha,
+  };
   if (observedSha === local.manifestSha256) {
     let publicCheck;
     try {
@@ -3078,24 +3398,24 @@ export async function runCommit(input) {
         temporaryRoot: input.temporaryRoot,
       });
     } catch (error) {
-      audit('public-verify', 'incident', error.message);
+      audit('public-verify', 'incident', error.message, observedEvidence);
       return retainAndFinish('incident', `the public verification could not be completed: ${error.message}`);
     }
     if (publicCheck.ok !== true) {
-      audit('public-verify', 'incident', publicCheck.reason);
+      audit('public-verify', 'incident', publicCheck.reason, observedEvidence);
       return retainAndFinish('incident', `the public verification failed: ${publicCheck.reason}`);
     }
-    audit('public-verify', 'done');
+    audit('public-verify', 'done', undefined, { public: publicCheck });
     audit('reveal', 'done');
   } else if (observedSha === baselineSha) {
-    audit('public-verify', 'retry');
+    audit('public-verify', 'retry', undefined, observedEvidence);
     return retainAndFinish('retry', 'the flip did not take effect');
   } else {
-    audit('public-verify', 'incident', 'a third manifest digest appeared');
+    audit('public-verify', 'incident', 'a third manifest digest appeared', observedEvidence);
     return retainAndFinish('incident', 'a third manifest digest appeared while flipping');
   }
 
-  recordOutcome('done', 'published');
+  recordOutcome('done', 'published', manifestEvidence);
   const disposition = await releaseChannelLock({
     channel: input.channel,
     transport: input.transport,
@@ -3111,7 +3431,7 @@ export async function runCommit(input) {
   appendAuditStage({
     auditOut: input.auditOut,
     repositoryRoot: input.repositoryRoot,
-    entry: { stage: 'unlock', status: unlockStatus, runid, reason: disposition.reason },
+    entry: { stage: 'unlock', status: unlockStatus, ...baseOf(), reason: disposition.reason },
   });
   if (disposition.release !== true) return finish('incident', disposition.reason, disposition.state);
   return finish('done', 'published', disposition.state);
@@ -3156,7 +3476,7 @@ git commit -m "feat(feed): publish the manifest over sftp and verify it on the p
 
 **本修复刀追加的验收项（Task 4 实施时必须做，否则上面那几处锁上的修复在真路径上仍然是空的）：**
 
-1. **解锁时锁已被别人换掉 ⇒ 拒绝并记 `incident`（§6.6 前提 2 的端到端钉子）。** 这条必须在**接线层**做，不能只调 `releaseChannelLock`：用 `commitTransport` 让**解锁那一刻**读到的 `owner.json` 的 `runid` 与本次运行不同（例如在 `mv -f` 之后把 `ownerJson` 换成一个 `runid: 'other'` 的记录），断言 `runCommit` 以 `incident` 收口、`lockState === 'ownership-unknown'`、**并且一次 `rm`/`rmdir` 都没发**。这条同时证明"两个解锁点确实**没有**传 `owner`"：一旦某个调用点把步骤 5 的旧快照传进去，比对就只看旧快照而放过这次替换，本项即变红。
+1. **解锁时锁已被别人换掉 ⇒ 拒绝并记 `incident`（§6.6 前提 2 的端到端钉子）。** 这条必须在**接线层**做，不能只调 `releaseChannelLock`：用 `commitTransport` 让**解锁那一刻**读到的 `owner.json` 的 `runid` 与本次运行不同（例如在 `mv -f` 之后把 `ownerJson` 换成一个 `runid: 'other'` 的记录），断言 `runCommit` 以 `incident` 收口、`lockState === 'ownership-unknown'`、**并且一次 `rm`/`rmdir` 都没发**。⚠️ **本项原先写着"这条同时证明两个解锁点确实没有传 `owner`"—— 那是错的（复核刀更正）：本刀那个夹具（`foreignOwnerAfterFlip`）只在翻转之后换记录，因此只走到**成功路径**那个解锁点；`releaseAndFinish` 那个调用点**一次都没被覆盖**（复核刀实测：只在 `releaseAndFinish` 处加 `owner,` ⇒ 117/0 全绿）。**两个解锁点各自由一条用例钉住**：① 成功路径 = `an owner record replaced before the unlock stops the run and deletes nothing`；② 失败路径 = `an owner record replaced before the unlock on the failure path stops the run and deletes nothing`（复核刀补，夹具 = `commitStatus: 1` + `foreignOwnerAfterCommit: true`）。**两条都断言"一次 `rm`/`rmdir` 都没发"\*\*，任一把步骤 5 的旧快照传进去 ⇒ 对应的那条变红。
 2. **锁步骤上的确定性配置失败记 `incident`，不是 `blocked`。** Task 3 收窄 `isFileExistsFailure` 之后，**任何非 "File exists" 的非零 `mkdir`**（ENOENT、权限不足、只读文件系统）都会走 `ownership-unknown` ⇒ `incident`。这是**刻意的、安全的方向**：宁可记事故交人工核查，也不要用一句关于远端状态的假话把操作员推向 `--break-lock`。**Task 4 必须有一条用例把这条路径钉住**：夹具让 `mkdir` 返回 `{ status: 1, stderr: 'mkdir: cannot create directory ...: Permission denied' }`，断言 `outcome === 'incident'`、`lockState === 'ownership-unknown'`、`stages` 里 `lock` 是 `incident`，且**后续任何阶段都没跑**（`commit-version` 仍是 `pending`）。
 3. ⚠️ **Task 6 必须抓一条真机的 coreutils 权限失败原文。** 上面这条用例（以及 Task 3 的 `a lock mkdir that fails without an existing entry signal is ownership unknown`）现在断言的 `stderr` 是**手写的字符串**——我们**没有在目标主机上实测过** GNU coreutils 在 EPERM/EACCES 下到底打印什么。Task 6 接上真 transport 后，在目标主机上抓**一次**真实的 `mkdir` 权限失败（例如在一个只读目录里 `mkdir`），把原文写进**计划或断言**里（代码里不写注释），并确认收窄后的谓词不会把它误判成 `not-acquired`。在抓到之前，"权限失败 ⇒ `incident`"这条只是**推断**，不是实测。
 4. **Task 4 的 `commitTransport` 必须与 Task 3 同规格**：`readOnly.sshRun` / `write.sshRun` 记下**整个 request**，并新增一个 Task-4 形状的助手（`fetchPublic` 记的是 URL 不是 request，Task 3 的 `assertEveryCallCarriesTheTrustAnchor` 直接搬过来会在 `call[2]` 上失败）——在每条走 `commitTransport` 的用例末断言 `host` 与 `knownHostsPath` 恰好等于注入值，**零调用不算通过**。
@@ -3176,7 +3496,7 @@ git commit -m "feat(feed): publish the manifest over sftp and verify it on the p
 
 **本刀的提交：** `e98c214c`（`feat(feed): run the thirteen publish stages over the injected transport`）。两份文件的 blob sha256 与下面全部变异运行的基线逐字节相同：`feed-publish.mjs` **`487cc87985c9ff9ae03da2dfd14258a7ab72e3eb07d63099500bfcdde286fb5f`**、`feed-publish.test.mjs` **`c9a296379f5899bdf67a46fd917087ca04fd5f68e7246bd8bfb24c9154c4df19`**（`sha256sum` 读数，提交前后各量一次）。
 
-### 一、本刀在 Task 4 规定块上的偏离（12 处，逐条给"为什么必须改" + 钉住它的测试名 + 变异读数）
+### 一、本刀在 Task 4 规定块上的偏离（12 处 + 复核刀追加 1 处，逐条给"为什么必须改" + 钉住它的测试名 + 变异读数）
 
 1. **规定的测试块引用了 `writeArtifacts` 不返回的 `manifestBytes`（规定块之间自相矛盾）。** Task 4 的测试用 `paths.manifestBytes`（`manifestShaOf`、`happyTransport`、两条 `verifyPublicArtifacts` 用例），而 Task 1 规定的 `writeArtifacts` 只返回三个路径 —— 规定的套件**跑不起来**。**修法**：不扩宽 Task 1 的夹具（那会同时改掉 `test 1-374` 的边界），在 Task 4 自己的块里用 `readFileSync(paths.manifestPath)` 读盘上的字节 —— 那正是 `runCommit` 自己读到的那一份。
 2. **`PORTABLE_PACKAGE_NAME` / `PORTABLE_FILE_MANIFEST_NAME` 没在测试块里导入。** 规定的 import 行少了夹具用到的两个常量 ⇒ 规定的块以 `ReferenceError` 失败。修法：加进同一条 import。
@@ -3189,7 +3509,8 @@ git commit -m "feat(feed): publish the manifest over sftp and verify it on the p
 9. **步骤 5 的 `owner.json` 重读必须比对（§6.6 推论 + 追踪表第 5 行的 `incident`）。** 规定代码 `owner = (await readOwnerRecord(input)) ?? owner;` 会把锁窗口里被换掉的记录**当自己的**。修法：重读到记录且 `runid` / `planHash` 任一不同 ⇒ `audit('re-verify','incident')` + `retainAndFinish('incident', …)`，并把 `owner` 换成那条外来记录（收口状态因此是 `ownership-unknown`，与追踪表"不匹配 ⇒ `ownership-unknown`，不触碰该锁"一致）。**变异 D10**（删掉比对）⇒ **红 1 条**：`an owner record replaced inside the lock window stops the run and touches nothing`。
 10. **`verifyPublicArtifacts` 的拒绝必须收成 `incident`（§6.6"翻转之后失败 ⇒ 不确定 ⇒ 保留锁"）。** 规定的调用是裸 `await`：`input.verifier`（Task 7 会注入真 `verifyPortableRelease`）一抛就**整个 `runCommit` reject** —— 没有 `incident` 条目、没有"保留锁"的语义，只有一次未捕获异常。修法：包 try/catch ⇒ `audit('public-verify','incident', error.message)` + `retainAndFinish('incident', …)`。**变异 D7**（catch 改成 rethrow）⇒ **红 1 条**：`a public verifier that rejects after the flip is an incident that keeps the lock`。
 11. **"是否在仓库外"的三份谓词收敛到最严的那一份（计划"待定的设计决定"，本刀拍板）。** 兄弟模块 `portable-update-release.mjs` 的 `assertPathOutsideRepository` 最严（`..` 必须是**整个路径段**）；Task 1 的 `assertKnownHostsPath` 与本刀的 `assertOutsideRepository` 用 `startsWith('..')` ⇒ 放行 `<仓库根>/..foo`（其实在仓库内）。修法：在 `feed-publish.mjs` 里抽出**一份** `isInsideRepository(target, repositoryRoot)`（判据与兄弟那份同义：`relation === '..' || relation.startsWith('..' + sep)`），两个断言各自只留自己的报错文案；**兄弟模块不动**（它本来就严）⇒ 三份语义一致。**顺带关掉了 `..foo` 这个已接受的角**。副作用：`node:path` 的 import 多了 `sep` ⇒ **Step 3 里那句"本刀不引入 `sep`"随之作废**（它描述的正是被换掉的那份松判据）。**变异 D5**（退回 `startsWith('..')`）⇒ **红 1 条**：`a sibling whose name begins with two dots is still inside the repository`（新用例，两个入口各断言一次）。
-12. **`channel` / `version` / `runid` 的路径安全前置条件挪到任何远端写之前（验收项 7③ + 插值登记表）。** 三条都在 `pre-verify` 的 try 里、`verifyLocalArtifacts` **之前** ⇒ 不过就一个字节都不写。`assertSafeChannel` 复用第六处的判据，`assertSafeVersion` 复用 Task 1 的 `SEMVER_PATTERN`，`assertSafeRunid` 是**本刀自行加的**（计划只点名了 `channel` 与 `version`，但 `runid` 同样被拼进远端路径：`.part-<runid>` 与 `.<runid>.tmp`）。用例两半各断言一次（`a channel that could escape its remote path is refused before any remote write` / `a version that could escape its remote path is refused before any remote write`）。**为什么这两个夹具是有效钉子**：`channel: 'internal/x'` 与 `version: '1.2.3;id'` 都**能通过** `verifyLocalArtifacts`（把 manifest 的 `channel` / `version` / `packageUrl` 同步改成同值即可）⇒ 拦住它们的**只**能是路径安全前置条件；换成非白名单的 `internall` 就测不出东西（`verifyLocalArtifacts` 先拒）。**变异**：D6b（删 `assertSafeVersion`）⇒ **红 1 条**；D6c（删 `assertSafeRunid`）⇒ **红 1 条**；**D6a（删 `assertSafeChannel`）⇒ 117/117 全绿（存活）** —— 这是**刻意保留的冗余**：同一行下面的 `planHashOf` 内部对 `channel` 调的就是同一个 `assertSafeChannel`、报错文案逐字相同 ⇒ 在**当前语句顺序**下这条前置条件**不可单独钉住**。保留它的理由：前置条件不应依赖 `planHashOf` 的内部实现、也不应依赖这两条语句的先后（谁把 `planHashOf` 挪到后面，这一条就是唯一的守卫）。**这是本刀唯一的"存活"变异，别按缺陷报**。
+12. **`channel` / `version` / `runid` 的路径安全前置条件挪到任何远端写之前（验收项 7③ + 插值登记表）。** 三条都在 `pre-verify` 的 try 里、`verifyLocalArtifacts` **之前** ⇒ 不过就一个字节都不写。`assertSafeChannel` 复用第六处的判据，`assertSafeVersion` 复用 Task 1 的 `SEMVER_PATTERN`，`assertSafeRunid` 是**本刀自行加的**（计划只点名了 `channel` 与 `version`，但 `runid` 同样被拼进远端路径：`.part-<runid>` 与 `.<runid>.tmp`）。用例两半各断言一次（`a channel that could escape its remote path is refused before any remote write` / `a version that could escape its remote path is refused before any remote write`）。**为什么这两个夹具是有效钉子**：`channel: 'internal/x'` 与 `version: '1.2.3;id'` 都**能通过** `verifyLocalArtifacts`（把 manifest 的 `channel` / `version` / `packageUrl` 同步改成同值即可）⇒ 拦住它们的**只**能是路径安全前置条件；换成非白名单的 `internall` 就测不出东西（`verifyLocalArtifacts` 先拒）。**变异**：D6b（删 `assertSafeVersion`）⇒ **红 1 条**；D6c（删 `assertSafeRunid`）⇒ **红 1 条**；**D6a（删 `assertSafeChannel(input.channel)`）⇒ 本刀原记"117/117 全绿（存活）、不可单独钉住"，复核刀实测更正为"可钉、且已钉住"：删掉它 ⇒ 红 1 条**（`the channel precondition refuses an empty channel by its own reason before any remote write`）。**为什么原来那句是错的**：两层之间隔着 `verifyLocalArtifacts` —— `channel: ''` 在 `verifyLocalArtifacts` 里被 `expectedChannel` 的非空检查挡住、报 `an explicit expectedChannel is required`；**有守卫时**这一层先拒、报的是 `the channel is empty, so it cannot be interpolated into a remote path`。两层**文案不同** ⇒ 拿文案就能单独钉住这一层（`planHashOf` 那层只会对"非空但不在白名单里"的值现形，与本层不是同一个输入）。**冗余本身保留，理由不变**：前置条件不应依赖 `planHashOf` 的内部实现、也不应依赖这两条语句的先后（谁把 `planHashOf` 挪到后面，这一条就是唯一的守卫）。**账本里"不可单独钉住"这句话从本节撤掉，别再引用它**。
+13. **（复核刀追加的偏离，原刀漏记）规定的 `the local pre-verification happens before any network write` 里那句 `assert.deepEqual(transport.calls, [])` 是一条未声明的加严。** 规定的形状只有 `assert.deepEqual(transport.calls.filter((call) => call[0] !== 'readSsh'), [])`（**放行只读调用**）；本刀在它下面又加了一句 `assert.deepEqual(transport.calls, [])`（**一条调用都不许有**），却**没有记进本清单**，于是"规定块 == 计划原文"这句话在这条用例上是假的（账本缺一项）。**这条加严是对的、保留**：`pre-verify` 在 `runCommit` 里跑在**任何** transport 调用之前，只读调用同样不该出现；弱判据会放过"预验证之前先做一次只读探测"。**它抓的是只读版本**：把 `open` 之后、本地预验证之前的调用改成 `readSsh` 的变异会被它抓住、而那半句规定判据会放行。⚠️ **复核刀没有单独重跑这条只读变异**（本刀的 P1 是把**写**调用插在那里、读数 112/5，两者不是同一条）⇒ 这条加严目前是**声明 + 论证**，不是一条实测读数，别把它写成"已用变异钉住"。
 
 ### 二、计划正文被本刀更正的三条（都是实测读数，不是判断）
 
@@ -3201,60 +3522,64 @@ git commit -m "feat(feed): publish the manifest over sftp and verify it on the p
 
 ### 三、变异清单（本刀最终读数，全部对着提交 `e98c214c` 的字节；每条都先断言锚点恰好匹配 1 次、确认磁盘字节真的变了，跑完**逐字节恢复**并与基线比 sha256）
 
-| #    | 变异                                                                                           | 读数（pass/fail）   | 变红的测试                                                                                                                                                                                                                     |
-| ---- | ---------------------------------------------------------------------------------------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 对照 | 把 `retainAndFinish` 里那句 `'the uploaded manifest does not match the local manifest'` 改文案 | **117 / 0（全绿）** | —（证明装置不是"改什么都红"）                                                                                                                                                                                                  |
-| P1   | 在 `open` 之后、本地预验证之前插入一次远端 `mkdir`                                             | 112 / 5             | `the local pre-verification happens before any network write`、`every early failure records its outcome…`、`a channel that could escape…`、`a version that could escape…`、`a run id that could escape…`（**不是"只红一条"**） |
-| P2   | 删掉 staging `mkdir -p` 的退出码检查                                                           | 116 / 1             | `a staging directory that cannot be created is a plain failure`                                                                                                                                                                |
-| P3   | 单次目录 `mv` ⇒ `mkdir -p` + 两次逐文件 `mv`                                                   | 115 / 2             | `the version directory is committed with a single directory rename`、`a failure after the lock but before the flip releases the lock this run owns`                                                                            |
-| P4   | manifest 的 SFTP 上传 ⇒ `cp <本地路径>`                                                        | 115 / 2             | `the manifest is uploaded to the final directory and its remote digest is checked`、`a manifest upload failure is an incident that keeps the lock`                                                                             |
-| P5   | 删掉远端临时 manifest 的 SHA 比对                                                              | 116 / 1             | `a mismatched remote manifest digest stops before the flip`                                                                                                                                                                    |
-| P6   | 删掉设备号比对                                                                                 | 116 / 1             | `a staging directory and a final directory on different file systems stops the commit`                                                                                                                                         |
-| P7   | "存在但为空"当成不存在                                                                         | 116 / 1             | `an existing version directory that is empty is incomplete and refused`                                                                                                                                                        |
-| P8   | 删掉目录摘要比对（`compareDirectoryHashes` 整段）                                              | 116 / 1             | `an existing version directory with a different digest is refused`                                                                                                                                                             |
-| P9   | 删掉逐阶段审计追加（`audit` 里的 `appendAuditStage`）                                          | 116 / 1             | `every stage is appended to the audit log as it happens`                                                                                                                                                                       |
-| P10  | 把 `appendAuditStage` 的 catch 改成吞掉                                                        | 116 / 1             | `a failed audit write stops the run instead of publishing silently`                                                                                                                                                            |
-| P11  | 步骤 11 的 `verifyPublicArtifacts` 调用 ⇒ `{ ok: true }`                                       | 115 / 2             | `the public verification is actually run after the flip`、`a public verifier that rejects after the flip is an incident that keeps the lock`（**计划预期的红名没红**，见第二节第 3 条）                                        |
-| P12a | 删 `verifyLocalArtifacts` 的 `await`                                                           | 90 / 27             | 首条 `a clean publish walks every stage and releases its own lock`（"漏 await"的正面检查；27 条一起红）                                                                                                                        |
-| P12b | 删 staging `sftpUpload` 的 `await`                                                             | 92 / 25             | 同上族                                                                                                                                                                                                                         |
-| P12c | 删 staging `mkdir -p` 的 `await`                                                               | 90 / 27             | 同上族                                                                                                                                                                                                                         |
-| P12d | 删 `fetchPublic` 的 `await`                                                                    | 107 / 10            | `a clean publish…` 等 10 条                                                                                                                                                                                                    |
-| P12e | 删 `releaseChannelLock`（`releaseAndFinish` 那处）的 `await`                                   | 115 / 2             | `a failure after the lock but before the flip releases the lock this run owns`、`a staging directory and a final directory on different file systems stops the commit`                                                         |
-| D2   | 删掉 `pre-verify` 路径的 `recordOutcome`                                                       | 116 / 1             | `every early failure records its outcome in the audit log before it returns`                                                                                                                                                   |
-| D3   | 删掉 `lock.incident === true` 分支                                                             | 116 / 1             | `an owner write that fails after the lock is an incident that keeps the lock`                                                                                                                                                  |
-| D4   | `retainAndFinish` 的状态退回 `disposition.state`                                               | 116 / 1             | 同一条（`lockState` ⇒ `ownership-unknown`）                                                                                                                                                                                    |
-| D5   | 包含谓词退回 `startsWith('..')`                                                                | 116 / 1             | `a sibling whose name begins with two dots is still inside the repository`                                                                                                                                                     |
-| D6a  | 删掉 `assertSafeChannel(input.channel)`                                                        | **117 / 0（存活）** | 见第一节第 12 条的说明（刻意冗余）                                                                                                                                                                                             |
-| D6b  | 删掉 `assertSafeVersion(input.version)`                                                        | 116 / 1             | `a version that could escape its remote path is refused before any remote write`                                                                                                                                               |
-| D6c  | 删掉 `assertSafeRunid(runid)`                                                                  | 116 / 1             | `a run id that could escape its remote path is refused before any remote write`                                                                                                                                                |
-| D7   | 步骤 11 的 catch 改成 rethrow                                                                  | 116 / 1             | `a public verifier that rejects after the flip is an incident that keeps the lock`                                                                                                                                             |
-| D8   | 夹具退回 `publicManifestBody ?? (…)` 单一 body                                                 | 110 / 7             | 见第一节第 4 条列出的七条                                                                                                                                                                                                      |
-| D9   | 夹具删掉 `transport,`                                                                          | 90 / 27             | `a clean publish…`（30 条 `runCommit` 用例一起红）                                                                                                                                                                             |
-| D10  | 删掉步骤 5 的 owner 比对                                                                       | 116 / 1             | `an owner record replaced inside the lock window stops the run and touches nothing`                                                                                                                                            |
-| D11  | 把一个调用点的 `host: input.host` 改成 `'wrong.invalid'`                                       | 90 / 27             | `a clean publish…`（锚点助手在每条 ssh 调用上抓到，**零调用不算通过**）                                                                                                                                                        |
-| S1   | 只改 `planCommit` 的阶段推导（`slice(1)`）                                                     | 115 / 2             | `the dry run validates the triple…`、`the dry run follows the channel and the version…`                                                                                                                                        |
-| S2   | 只改 `runCommit` 的阶段推导（`slice(1)`）                                                      | 86 / 31             | 首条 `the local pre-verification happens before any network write`                                                                                                                                                             |
+⚠️ **本表是 Task 4 那一刀的记录（对着 `e98c214c` 的字节）。** 复核刀改了两份文件的字节、重跑了 **36 条**读数（含假存活探针与打印 hunk 的加严），**新的表在第九节**；本表里 **D6a 那一格已被推翻**（见该行与第一节第 12 条）。本表其余读数没有被复核刀重跑过 —— 引用时按"`e98c214c` 那一刀的读数"引用，别当成本文件当前字节的读数。
 
-**次数：31 次有效变异运行**（1 次对照必须留绿 + 30 次变异，其中 D6a 是存活读数）+ **7 次作废重跑**。**作废的 7 次与原因（那些读数已废弃，别引用）**：① 锚点不唯一或不存在（D8 第一版把 old/new 写反 ⇒ `ANCHOR_MATCHES 0 REFUSED`）；② 锚点生成器把整段开头吞掉 ⇒ 产物**语法错**（P3/P4/P11/P12e 的第一版：`node --test` 读成加载失败 `tests 1 pass 0 fail 1` —— **这个读数会被误当成"红"**，所以变异记录必须写清 pass/fail 而不是只看退出码）；③ **P1 第二版**：锚点以 `return finish(...)` 结尾、插入落在 `catch` 的 `return` **之后** ⇒ 变成**不可达代码**，读数 **117/117 全绿**（假"存活"）。**这条是装置自身会骗人的形状**：只看"绿/红"分不出"护栏删对了"与"变异没生效" ⇒ 变异装置此后固定做三件事：断言锚点恰好 1 次、`node --check` 变异产物、`diff` 复核插入点（本刀就是这么抓到 ③ 的）。
+| #    | 变异                                                                                           | 读数（pass/fail）   | 变红的测试                                                                                                                                                                                                                                                                                                              |
+| ---- | ---------------------------------------------------------------------------------------------- | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 对照 | 把 `retainAndFinish` 里那句 `'the uploaded manifest does not match the local manifest'` 改文案 | **117 / 0（全绿）** | —（证明装置不是"改什么都红"）                                                                                                                                                                                                                                                                                           |
+| P1   | 在 `open` 之后、本地预验证之前插入一次远端 `mkdir`                                             | 112 / 5             | `the local pre-verification happens before any network write`、`every early failure records its outcome…`、`a channel that could escape…`、`a version that could escape…`、`a run id that could escape…`（**不是"只红一条"**）                                                                                          |
+| P2   | 删掉 staging `mkdir -p` 的退出码检查                                                           | 116 / 1             | `a staging directory that cannot be created is a plain failure`                                                                                                                                                                                                                                                         |
+| P3   | 单次目录 `mv` ⇒ `mkdir -p` + 两次逐文件 `mv`                                                   | 115 / 2             | `the version directory is committed with a single directory rename`、`a failure after the lock but before the flip releases the lock this run owns`                                                                                                                                                                     |
+| P4   | manifest 的 SFTP 上传 ⇒ `cp <本地路径>`                                                        | 115 / 2             | `the manifest is uploaded to the final directory and its remote digest is checked`、`a manifest upload failure is an incident that keeps the lock`                                                                                                                                                                      |
+| P5   | 删掉远端临时 manifest 的 SHA 比对                                                              | 116 / 1             | `a mismatched remote manifest digest stops before the flip`                                                                                                                                                                                                                                                             |
+| P6   | 删掉设备号比对                                                                                 | 116 / 1             | `a staging directory and a final directory on different file systems stops the commit`                                                                                                                                                                                                                                  |
+| P7   | "存在但为空"当成不存在                                                                         | 116 / 1             | `an existing version directory that is empty is incomplete and refused`                                                                                                                                                                                                                                                 |
+| P8   | 删掉目录摘要比对（`compareDirectoryHashes` 整段）                                              | 116 / 1             | `an existing version directory with a different digest is refused`                                                                                                                                                                                                                                                      |
+| P9   | 删掉逐阶段审计追加（`audit` 里的 `appendAuditStage`）                                          | 116 / 1             | `every stage is appended to the audit log as it happens`                                                                                                                                                                                                                                                                |
+| P10  | 把 `appendAuditStage` 的 catch 改成吞掉                                                        | 116 / 1             | `a failed audit write stops the run instead of publishing silently`                                                                                                                                                                                                                                                     |
+| P11  | 步骤 11 的 `verifyPublicArtifacts` 调用 ⇒ `{ ok: true }`                                       | 115 / 2             | `the public verification is actually run after the flip`、`a public verifier that rejects after the flip is an incident that keeps the lock`（**计划预期的红名没红**，见第二节第 3 条）                                                                                                                                 |
+| P12a | 删 `verifyLocalArtifacts` 的 `await`                                                           | 90 / 27             | 首条 `a clean publish walks every stage and releases its own lock`（"漏 await"的正面检查；27 条一起红）                                                                                                                                                                                                                 |
+| P12b | 删 staging `sftpUpload` 的 `await`                                                             | 92 / 25             | 同上族                                                                                                                                                                                                                                                                                                                  |
+| P12c | 删 staging `mkdir -p` 的 `await`                                                               | 90 / 27             | 同上族                                                                                                                                                                                                                                                                                                                  |
+| P12d | 删 `fetchPublic` 的 `await`                                                                    | 107 / 10            | `a clean publish…` 等 10 条                                                                                                                                                                                                                                                                                             |
+| P12e | 删 `releaseChannelLock`（`releaseAndFinish` 那处）的 `await`                                   | 115 / 2             | `a failure after the lock but before the flip releases the lock this run owns`、`a staging directory and a final directory on different file systems stops the commit`                                                                                                                                                  |
+| D2   | 删掉 `pre-verify` 路径的 `recordOutcome`                                                       | 116 / 1             | `every early failure records its outcome in the audit log before it returns`                                                                                                                                                                                                                                            |
+| D3   | 删掉 `lock.incident === true` 分支                                                             | 116 / 1             | `an owner write that fails after the lock is an incident that keeps the lock`                                                                                                                                                                                                                                           |
+| D4   | `retainAndFinish` 的状态退回 `disposition.state`                                               | 116 / 1             | 同一条（`lockState` ⇒ `ownership-unknown`）                                                                                                                                                                                                                                                                             |
+| D5   | 包含谓词退回 `startsWith('..')`                                                                | 116 / 1             | `a sibling whose name begins with two dots is still inside the repository`                                                                                                                                                                                                                                              |
+| D6a  | 删掉 `assertSafeChannel(input.channel)`                                                        | **117 / 0（存活）** | ⚠️ **这一格已被复核刀推翻**：删掉它 ⇒ **红 1 条**（`the channel precondition refuses an empty channel by its own reason before any remote write`，见第九节 M-f2）。当时记"存活"是因为读数只看了绿/红、没读被改动的 hunk 与**报错文案**（两层之间隔着 `verifyLocalArtifacts`，文案不同）⇒ 见第一节第 12 条已更正的说明。 |
+| D6b  | 删掉 `assertSafeVersion(input.version)`                                                        | 116 / 1             | `a version that could escape its remote path is refused before any remote write`                                                                                                                                                                                                                                        |
+| D6c  | 删掉 `assertSafeRunid(runid)`                                                                  | 116 / 1             | `a run id that could escape its remote path is refused before any remote write`                                                                                                                                                                                                                                         |
+| D7   | 步骤 11 的 catch 改成 rethrow                                                                  | 116 / 1             | `a public verifier that rejects after the flip is an incident that keeps the lock`                                                                                                                                                                                                                                      |
+| D8   | 夹具退回 `publicManifestBody ?? (…)` 单一 body                                                 | 110 / 7             | 见第一节第 4 条列出的七条                                                                                                                                                                                                                                                                                               |
+| D9   | 夹具删掉 `transport,`                                                                          | 90 / 27             | `a clean publish…`（30 条 `runCommit` 用例一起红）                                                                                                                                                                                                                                                                      |
+| D10  | 删掉步骤 5 的 owner 比对                                                                       | 116 / 1             | `an owner record replaced inside the lock window stops the run and touches nothing`                                                                                                                                                                                                                                     |
+| D11  | 把一个调用点的 `host: input.host` 改成 `'wrong.invalid'`                                       | 90 / 27             | `a clean publish…`（锚点助手在每条 ssh 调用上抓到，**零调用不算通过**）                                                                                                                                                                                                                                                 |
+| S1   | 只改 `planCommit` 的阶段推导（`slice(1)`）                                                     | 115 / 2             | `the dry run validates the triple…`、`the dry run follows the channel and the version…`                                                                                                                                                                                                                                 |
+| S2   | 只改 `runCommit` 的阶段推导（`slice(1)`）                                                      | 86 / 31             | 首条 `the local pre-verification happens before any network write`                                                                                                                                                                                                                                                      |
+
+**次数：31 次有效变异运行**（1 次对照必须留绿 + 30 次变异，其中 D6a 是存活读数）+ **7 次作废重跑**。**作废的 7 次与原因（那些读数已废弃，别引用）**：① 锚点不唯一或不存在（D8 第一版把 old/new 写反 ⇒ `ANCHOR_MATCHES 0 REFUSED`）；② 锚点生成器把整段开头吞掉 ⇒ 产物**语法错**（P3/P4/P11/P12e 的第一版：`node --test` 读成加载失败 `tests 1 pass 0 fail 1` —— **这个读数会被误当成"红"**，所以变异记录必须写清 pass/fail 而不是只看退出码）；③ **P1 第二版**：锚点以 `return finish(...)` 结尾、插入落在 `catch` 的 `return` **之后** ⇒ 变成**不可达代码**，读数 **117/117 全绿**（假"存活"）。**这条是装置自身会骗人的形状**：只看"绿/红"分不出"护栏删对了"与"变异没生效" ⇒ 变异装置此后固定做三件事：断言锚点恰好 1 次、`node --check` 变异产物、`diff` 复核插入点（本刀就是这么抓到 ③ 的）。⚠️ **复核刀把这条加严成通用纪律第 3 条**（打印 hunk、纯插入的可达性拒绝、红名单核对，见本计划"变异与镜像"一节）：本刀只在**作废重跑**里抓到 ③，**没把它变成装置的一条硬门**，所以同一个形状在复核刀上又出现过一次（插入落在 `return` 之后 ⇒ 133/0 全绿），这次由装置直接拒收。
 
 ### 四、镜像与规定块（本刀实测）
 
+⚠️ **复核刀重测过本节的行号与条数**（两份文件都长了，规定块边界随之下移，见第九节）：**下面第一、二、四条里"本刀"的行号/条数是 Task 4 提交 `e98c214c` 时的读数**，供追溯用；**当前**的规定块边界与套件条数在第九节末尾给出（`test 1321–2395` / `mjs 444–1030`、**133 条**）。
+
 - **八份镜像逐行相等且连续**（检查器同时要求"连续"，不是"每行都能在文件里找到"）：`test 1–374`、`mjs 1–148`、`test 376–561`、`mjs 150–202`、`test 563–868`、`mjs 204–442`、**`test 1321–2117`（Task 4 测试块）**、**`mjs 444–990`（Task 4 模块块）**。三对 `diff`（Task 4 测试块、Task 4 模块块、模块第一份）**全部 `DIFF_EMPTY`**。
 - **边界变化**（因为第一处偏离落在模块第一份镜像**里面**：`assertKnownHostsPath` 9 行 ⇒ 14 行，外加 import 行内容变化）：`mjs 1–144 ⇒ 1–148`、`146–198 ⇒ 150–202`、`200–438 ⇒ 204–442`。`test` 的三份边界**不变**（本刀对测试的改动全部在 1319 行之后）。
-- 规定块的现在内容 = 实际文件的那一段（Task 4 步骤 1 的围栏 ⇒ `test 1321–2117`，步骤 3 的围栏 ⇒ `mjs 444–990`）；**本节的偏离清单就是"规定块与计划原文的差异"的唯一账本**。
+- 规定块的现在内容 = 实际文件的那一段（Task 4 步骤 1 的围栏 ⇒ `test 1321–2117`，步骤 3 的围栏 ⇒ `mjs 444–990`）；**本节的偏离清单就是"规定块与计划原文的差异"的唯一账本**（⚠️ 复核刀改了两份文件的字节，因此**同时改了围栏里的规定块本体**以保持"块 = 文件那一段"，并在第九节追加了本刀的偏离项）。
 - **两份文件的行数读数**：`feed-publish.mjs` 990、`feed-publish.test.mjs` 2117（`wc -l`）；套件 **117 条**（`node --test` 的 `ℹ tests 117` / `ℹ pass 117` / `ℹ fail 0`），比本刀前多 **39** 条。
 
 ### 五、远程脚本插值登记表（验收项 8：每个被拼进远端脚本的值一行）
 
-| 值                                                                                                                | 出现在哪几条远端脚本                                                                                       | 类别                     | 依据的前置条件（本刀实测）                                                                                                                                                                                                                      |
-| ----------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `channel`                                                                                                         | `lockPath` / `versionRootOf` / `stagingRootOf` / `cp` 备份名 / `mv -f` 翻转 / `sha256sum` 与 `find` 的目录 | **(a)** shell 惰性字母表 | `assertSafeChannel`（白名单 `CHANNELS` + 字符集），在 `runCommit` 的 `pre-verify` try 里、**任何远端调用之前**。另外 `planHashOf` 内部对同一值再调一次（见第一节第 12 条：这一层在当前语句顺序下不可单独钉住）                                  |
-| `version`                                                                                                         | `versionRootOf` / `stagingRootOf` / 备份名 `-manifest.json-pre-<version>`                                  | **(a)**                  | `assertSafeVersion` 复用 Task 1 的 `SEMVER_PATTERN`（第三修复刀第 61 条已机械钉住该正则的字符类不含 shell 元字符），同在 `pre-verify` 的 try 里、任何远端调用之前                                                                               |
-| `planHash`                                                                                                        | `stagingRootOf` 的目录段（`.part-<runid>` 与 `.tmp` 所在的那条路径）                                       | **(a)**                  | 由本模块的 `planHashOf` 生成（`createHash('sha256')…digest('hex')`，恒为 64 位十六进制），不是外部输入。**本刀实测**：`planHash` 先赋 `'uncomputed'`，但在它进入任何远端脚本之前一定已被 `planHashOf` 覆盖（赋值在步骤 1 内，`stage` 是步骤 2） |
-| `runid`                                                                                                           | `stagingRoot` 里的 `.part-<runid>`、正式目录里的 `manifest.json.<runid>.tmp`                               | **(a)**                  | `assertSafeRunid`（`/^[A-Za-z0-9._-]+$/u`，**本刀新增**；Task 7 用 `randomUUID()`，落在该字母表内），同在 `pre-verify` 的 try 里、任何远端调用之前                                                                                              |
-| `UPDATE_ROOT` / `STATE_ROOT` / `PORTABLE_PACKAGE_NAME` / `PORTABLE_FILE_MANIFEST_NAME` / `PORTABLE_MANIFEST_NAME` | 几乎每条                                                                                                   | **(a)**                  | 模块级**字面常量**，不由输入派生                                                                                                                                                                                                                |
-| `directory` / `target`（探针与 `sha256sum` 的实参）                                                               | `readRemoteDirectory` / `remoteDirectoryExists` / `readRemoteHashes` / `readRemoteFileSha`                 | 组合值（无独立来源）     | 全部由上面几行拼成（`versionRootOf` / `stagingRootOf` / `${UPDATE_ROOT}/${channel}/${MANIFEST}`）⇒ 被同样的前置条件覆盖                                                                                                                         |
-| `names`（`sha256sum` 的文件名）                                                                                   | `readRemoteHashes`                                                                                         | **(a)**                  | 调用点只传 `expectedEntries` 的两个名字，都来自 `PORTABLE_PACKAGE_NAME` / `PORTABLE_FILE_MANIFEST_NAME` 常量                                                                                                                                    |
+| 值                                                                                                                | 出现在哪几条远端脚本                                                                                       | 类别                     | 依据的前置条件（本刀实测）                                                                                                                                                                                                                                                   |
+| ----------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `channel`                                                                                                         | `lockPath` / `versionRootOf` / `stagingRootOf` / `cp` 备份名 / `mv -f` 翻转 / `sha256sum` 与 `find` 的目录 | **(a)** shell 惰性字母表 | `assertSafeChannel`（白名单 `CHANNELS` + 字符集），在 `runCommit` 的 `pre-verify` try 里、**任何远端调用之前**。另外 `planHashOf` 内部对同一值再调一次（见第一节第 12 条：**这一层可单独钉住、且已被钉住** —— 复核刀的 M-f2 删掉它 ⇒ 红 1 条；原先"不可单独钉住"的说法已撤） |
+| `version`                                                                                                         | `versionRootOf` / `stagingRootOf` / 备份名 `-manifest.json-pre-<version>`                                  | **(a)**                  | `assertSafeVersion` 复用 Task 1 的 `SEMVER_PATTERN`（第三修复刀第 61 条已机械钉住该正则的字符类不含 shell 元字符），同在 `pre-verify` 的 try 里、任何远端调用之前                                                                                                            |
+| `planHash`                                                                                                        | `stagingRootOf` 的目录段（`.part-<runid>` 与 `.tmp` 所在的那条路径）                                       | **(a)**                  | 由本模块的 `planHashOf` 生成（`createHash('sha256')…digest('hex')`，恒为 64 位十六进制），不是外部输入。**本刀实测**：`planHash` 先赋 `'uncomputed'`，但在它进入任何远端脚本之前一定已被 `planHashOf` 覆盖（赋值在步骤 1 内，`stage` 是步骤 2）                              |
+| `runid`                                                                                                           | `stagingRoot` 里的 `.part-<runid>`、正式目录里的 `manifest.json.<runid>.tmp`                               | **(a)**                  | `assertSafeRunid`（`/^[A-Za-z0-9._-]+$/u`，**本刀新增**；Task 7 用 `randomUUID()`，落在该字母表内），同在 `pre-verify` 的 try 里、任何远端调用之前                                                                                                                           |
+| `UPDATE_ROOT` / `STATE_ROOT` / `PORTABLE_PACKAGE_NAME` / `PORTABLE_FILE_MANIFEST_NAME` / `PORTABLE_MANIFEST_NAME` | 几乎每条                                                                                                   | **(a)**                  | 模块级**字面常量**，不由输入派生                                                                                                                                                                                                                                             |
+| `directory` / `target`（探针与 `sha256sum` 的实参）                                                               | `readRemoteDirectory` / `remoteDirectoryExists` / `readRemoteHashes` / `readRemoteFileSha`                 | 组合值（无独立来源）     | 全部由上面几行拼成（`versionRootOf` / `stagingRootOf` / `${UPDATE_ROOT}/${channel}/${MANIFEST}`）⇒ 被同样的前置条件覆盖                                                                                                                                                      |
+| `names`（`sha256sum` 的文件名）                                                                                   | `readRemoteHashes`                                                                                         | **(a)**                  | 调用点只传 `expectedEntries` 的两个名字，都来自 `PORTABLE_PACKAGE_NAME` / `PORTABLE_FILE_MANIFEST_NAME` 常量                                                                                                                                                                 |
 
 **owner 记录不进远端脚本**：`acquireChannelLock` 把 `JSON.stringify(input.owner)` 走 **base64**（第三修复刀第五处偏离）⇒ 类别 **(b)**。**唯一带 `LC_ALL=C` 的远端命令是锁 `mkdir`**（它的诊断文本被 `isFileExistsFailure` 按英文子串匹配）；本刀其余命令按计划第 7 处偏离的结论**一律不加**（解析的是结构化内容，`sort` 的顺序不被消费）。
 
@@ -3271,7 +3596,7 @@ git commit -m "feat(feed): publish the manifest over sftp and verify it on the p
 ### 七、本刀刻意不钉的（别当缺陷再报一遍）
 
 1. `assertEveryCommitCallCarriesTheTrustAnchor` 的**断言文案**：夹具的记录形状（`fetchPublic` 记 URL、`sftpUpload` 记 localPath / remotePath，二者都没有 request）决定了它只对 `readSsh` / `writeSsh` 生效；`the commit anchor helper names a call that did not record its request` 钉的是**文案**（去掉 `assert.ok(request !== undefined, …)` 后未定义的 `request` 仍会在 `request.host` 上抛 —— 与第三修复刀第 56 条同一口径：这是诊断质量守卫，不是静默放行的洞）。
-2. `commitInput` 把锚点存到 `transport.anchor`（而不是让每条用例自己绑 `input`）：目的是"每条走 `commitTransport` 的用例只加一行断言"，断言本身仍然是真的（拿注入值比每一次记录的 request）。**零调用不算通过**由助手自己的 `calls.length > 0` 与 `sshCalls.length > 0` 两条守卫保证，并用 `the commit anchor helper refuses a case that recorded no call` 钉住。
+2. `commitInput` 把锚点存到 `transport.anchor`（而不是让每条用例自己绑 `input`）：目的是"每条走 `commitTransport` 的用例只加一行断言"，断言本身仍然是真的（拿注入值比每一次记录的 request）。**零调用不算通过** ⚠️ **本刀原先写成"由 `calls.length > 0` 与 `sshCalls.length > 0` 两条守卫保证"—— 复核刀实测更正：只有 `sshCalls.length > 0` 一条在承担它。** `calls.length > 0` 被 `sshCalls.length > 0` **严格蕴含**（`calls` 为空 ⇒ `sshCalls` 为空；`calls` 非空但一条 ssh 都没有 ⇒ 仍然被第二条挡住）⇒ 它是一条**永远不可能单独失败**的断言，删掉它**套件全绿**（复核刀读数）。**处置**：**删掉那条冗余断言**（复核刀，见第九节），保留 `sshCalls.length > 0` 承担这个性质，并由 `the commit anchor helper refuses a case that recorded no call` 钉住（`calls: []` 现在是被第二条断言拒的）。
 3. `assertSafeVersion` / `assertSafeRunid` 的**报错文案**（`the version … is not a strict semantic version…` / `the run id … carries a character outside…`）：被测的只有"抛的是 `FeedPublishError`"与"没有远端调用"。
 4. `isInsideRepository` 对**跨盘符**那一臂（Windows 上 `relative` 返回绝对路径 ⇒ 判为仓库外）：与兄弟模块同义，今天没有用例单独钉它（构造跨盘用例要碰真实盘符，收益不抵）。
 5. `lock.incident === true` 分支里 `audit('lock','incident', …)` 的**文案**（直接用 `acquireChannelLock` 给的 `lock.reason`）：被测的是阶段状态与收口结果，不是那句话。
@@ -3283,6 +3608,85 @@ git commit -m "feat(feed): publish the manifest over sftp and verify it on the p
 - `--dry-run` / `--preflight` 的 CLI 形状、`--audit-out` 必填、`--break-lock` 的出口都属于 Task 7；本刀只把 `runCommit` 的形状定下来。
 - **提交时 `pre-commit`（lint-staged）跑过 `eslint --fix` + `prettier --write`**：提交后重新量的两份 blob sha256 与变异基线**逐字节相同**（读数见本节开头），所以上面的变异证据对提交的字节仍然成立。
 - 本刀**没有**在 `RunCommit` 里给 `repositoryRoot` 为空串的情况加守卫（`appendAuditStage` 只在 `repositoryRoot` 是非空字符串时才检查）—— 那是 Task 2 已定的契约，本刀不动。
+- **（复核刀追加）`flip` 失败那条分支没有任何用例覆盖**：夹具没有"翻转 `mv -f` 返回非零"的臂，因此 `audit('flip','incident','the atomic flip failed')` 这条路径**在套件里不可达**。复核刀**故意没有**给这条分支加证据字段 —— 加了就是一条"没有测试能钉住"的接线，正是复核刀要清掉的那种形状。**Task 5–8 若要动这条分支，先补夹具臂与用例再改。**
+- **（复核刀追加）`input.now` 必须由 Task 7 注入真时钟**：`runCommit` 的每条审计条目都取 `at`，来源是 `input.now()`（未注入时回退到注入的 `startedAt`，所以缺省读数不是"没有时间"，而是"整轮同一个时间"）。Task 7 的 CLI 必须传 `now: () => new Date().toISOString()`（那是 CLI 层的事，`scripts/lib/` 里**没有** `new Date()`）。
+
+### 九、复核刀（spec 合规闸门五项）的落地、读数与本账本更正
+
+**这一刀是什么：** Task 4 的三个提交（`e98c214c` 代码 / `139146b8` 账本 / `7d89aade` contracts）过 spec 合规闸门时被记了**五条**，每条都有复核者复现过的实测（不是意见）。本节给出：① 每条的落地；② **每一处新增接线/守卫的钉子与变异读数（34 条，全部打印了 hunk）**；③ 对本账本**三处错误陈述**的更正。代码提交：`3503965a`（模块，blob sha256 `3133378f…`）、`4f5bb3af`（测试，blob sha256 `abcbaca1…`）—— **与变异基线逐字节相同**（提交时 `pre-commit` 跑过 `eslint --fix` + `prettier --write`，两个 blob 都没被改动）。
+
+**一、五条各自的落地**
+
+1. **`releaseAndFinish` 那个解锁调用点原先没被任何用例覆盖（最重要的一条）。** 复核者实测：只在 `releaseAndFinish` 的 `releaseChannelLock({…})` 里加一个 `owner,` ⇒ **117/0 全绿（存活）**；同样的改动加在成功路径那处 ⇒ 116/1。原因：夹具 `foreignOwnerAfterFlip` 只在**翻转之后**换 `ownerJson`，所以只走到成功路径那个解锁点。**落地**：① 新夹具臂 `foreignOwnerAfterCommit`（在**提交版本目录那次 `mv`** 之后换 `owner.json`，与 `commitStatus: 1` 组合 ⇒ 走到 `releaseAndFinish`）；② 新用例 `an owner record replaced before the unlock on the failure path stops the run and deletes nothing`（`feed-publish.test.mjs:2166`），断言 `outcome === 'fail'`、`lockState === 'ownership-unknown'`、`commit-version` 是 `fail`、`unlock` 是 `retained`、**一次 `rm`/`rmdir` 都没发**、审计里没有把 `unlock` 写成 `done` 的条目；③ **验收项 1 的措辞已改**（原话"这条同时证明两个解锁点没有传 `owner`"是假的，见该验收项）。
+2. **`D6a` 的"不可钉住"是错的（本账本第 12 条的说明 + 第三节的 D6a 行 + 第五节 `channel` 行都已更正）。** 实测钉子：`channel: ''` 时两层**报错文案不同**（两层之间隔着 `verifyLocalArtifacts`）⇒ 新用例 `the channel precondition refuses an empty channel by its own reason before any remote write`（`feed-publish.test.mjs:2186`）把 `runCommit` 入口那句 `assertSafeChannel(input.channel)` 单独钉住。**冗余保留，但"不可单独钉住"这句话从账本撤掉。**
+3. **装置纪律加严（本计划"变异与镜像"一节新增第 3 条，Task 5–8 继承）。** 复核者的作废读数 ③ 与本刀**同形**：把 `audit('commit-version','done');` 插在设备号检查里那条 `return releaseAndFinish(…)` **之后** ⇒ 语法合法、磁盘字节真的变了、套件 **133/0 全绿**（不可达代码被当成"存活"）。本刀的装置因此：**打印 hunk**（整行，不是半行片段）、**对纯插入做可达性检查并拒收**（本刀用它复现并拒收了那条假存活，同时用一次真变异验证了拒收会触发）、**预先写明"哪条测试必须按名变红"并核对红名单**。⚠️ 装置自身的第一版 `locateInsertion` **是错的**（对纯插入，`before.slice(offset) === after.slice(offset+n)` 在**任何** `offset ≤ 真插入点` 处都成立 ⇒ 它会返回一个偏前的偏移、于是可达性检查在**它本该拒收的那条**上报了 `reachable-or-unknown`）。**这正是"先验你自己的验证脚本"**：不拿那条已知形状去试装置，就会把"装置没生效"读成"这是真存活"。
+4. **七个守卫 + 一条冗余断言（逐个给处置）：** 复核者逐条实测"删掉 ⇒ 117/0 全绿"，本刀**七个全部选"钉住"**（都便宜，且都是 fail-closed 方向），**第八条（`calls.length > 0`）选"删掉"**（见第七节第 2 条：它被第二条断言严格蕴含，永远不可能单独失败 ⇒ 留着只会在账本里冒充第二条守卫）。七个钉子与它们的变异见下面的表；每条的**处置理由**：这七个都是"远端说了什么都不信"的守卫，删掉它们不会让套件红、只会让**某一条真路径静默地按乐观解释走**（把失败当空目录、把无回应当不存在、把探针失败当目录在），这正是本工具存在的理由（可审计）——所以一律钉住，不记"刻意冗余"。
+5. **审计内容按 §6.11 补全（本刀实现，不是声明）。** 形状见下节。**"时间"必须是注入值**：`scripts/lib/` 里没有 `new Date()`（沿用 `startedAt` 的待遇），新增可选输入 `input.now`（函数）。**没有"带不了"的项**：spec 列出的每一项都有对应的值；唯一**故意不带**的是 `flip` 失败分支（**没有任何夹具臂能到达它**，见第八节末 —— 给它加证据就是加一条钉不住的接线）。
+
+**二、审计条目的形状变化（**这是对外可观察的行为改动，Task 7 的 CLI 与手册要跟上**）**
+
+- 每条条目（`open` / 各阶段 / `lock-retained` / `done|fail|incident|retry|blocked` / `unlock`）现在都带 **`operator`**（来自 `input.operator`，缺失时写 `null` —— 显式写 `null` 而不是让 `JSON.stringify` 静默丢掉这个键）与 **`at`**（来自 `input.now()`，未注入时回退到注入的 `startedAt`，都缺失时也是 `null`）。条目的 `runid` / `planHash` / `reason` / `detail` / `status` 字段名**不变**（既有断言不受影响）。
+- 新增证据字段（都挂在"该值成为事实"的那条上，成功与失败两条都挂）：
+  - `pre-verify` done ⇒ `local`：三个产物的本地 `packageSha256`/`packageSize`/`fileManifestSha256`/`fileManifestSize`/`manifestSha256`/`manifestSize`；
+  - `remote-verify` done **与** fail ⇒ `remote`：远端探针**实际观察到**的 `present`/`empty`/`problems`/`entries`（`type`/`name`/`size`）/`digests`（名字→摘要；读不到时是 `null`，不是 `{}`）；
+  - `backup-manifest` done ⇒ `previousManifestSha256`（旧 manifest 的原始 SHA-256）+ `backupPath`；
+  - `cas` done **与** incident ⇒ `previousManifestSha256` + `observedManifestSha256`；
+  - `temp-manifest`（上传失败 / 摘要不匹配 / done）⇒ `manifestSha256`（新 manifest）+ 后两者再加 `remoteTempSha256`；
+  - `flip` done ⇒ `manifestSha256`；
+  - `public-verify`（读失败 / 验签抛错 / `ok !== true` / retry / third）⇒ `manifestSha256` + `observedManifestSha256` + `previousManifestSha256`；done ⇒ `public`：`verifyPublicArtifacts` **实际比对**的那五个值（`ok`/`manifestSha256`/`packageSha256`/`packageSize`/`fileManifestSha256`/`fileManifestSize`）；
+  - 收口条目 `done` ⇒ `manifestSha256`。
+- **两个"值被算出来又被丢掉"的函数现在把它们返回出来**：`inspectRemoteDirectory`（原先丢弃远端 entries/digests，只回 problems）、`verifyPublicArtifacts`（原先丢弃 `manifestSha256`，只回 `{ok, reason}`）。第三个被点名的值是 `baselineSha`/`casSha`/`remoteTempSha` —— 它们此前只参与比较、从不进日志，现在都进了。
+
+**三、变异清单（复核刀，全部对着 `3503965a` / `4f5bb3af` 的字节）**
+
+装置每条的固定动作：断言锚点恰好匹配 **1** 次 → 变异前取 sha256 基线 → 写入 → 重读确认落盘 → `node --check` → 跑套件 → **打印 hunk** → 纯插入做可达性检查 → **核对"哪条测试必须按名变红"的红名单** → 逐字节恢复 → 比 sha256 → 断言该文件 `git status` 与变异前逐字相同。**34 条全部：锚点 1 次、`node --check` ok、恢复后 sha256 相等、`git status` 未变。**
+
+| #          | 变异（hunk：`-` 删 / `+` 加）                                                                                                                                       | 读数                        | 按名变红的测试                                                                                                                                                                                    |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | --------------------------------------------------------------------------------------------- |
+| 对照       | `- 'the uploaded manifest does not match the local manifest'` / `+ … did not match …`（只改一句报错文案）                                                           | **133 / 0（全绿）**         | —（证明装置不是"改什么都红"）                                                                                                                                                                     |
+| M-f1       | `releaseAndFinish` 的 `releaseChannelLock({…})` 里 `+ owner,`（把步骤 5 的快照传进去）                                                                              | **133 / 1**                 | `an owner record replaced before the unlock on the failure path stops the run and deletes nothing`                                                                                                |
+| M-f2       | `- assertSafeChannel(input.channel);`（`runCommit` 入口那处，保留 `assertSafeVersion`）                                                                             | **133 / 1**                 | `the channel precondition refuses an empty channel by its own reason before any remote write`                                                                                                     |
+| M-1        | `- if (listing.status !== 0) return [];`                                                                                                                            | **133 / 1**                 | `a staging listing that failed is reported as an empty directory rather than parsed`                                                                                                              |
+| M-2        | `- return probe.status === 0 && String(probe.stdout ?? '').trim() === 'present';` / `+ return String(probe.stdout ?? '').trim() === 'present';`                     | **133 / 1**                 | `a presence probe that failed is not read as a present directory`                                                                                                                                 |
+| M-3        | `- if (entry.type !== 'f') problems.push(…)`                                                                                                                        | **133 / 1**                 | `a staging entry that is not a regular file is refused`                                                                                                                                           |
+| M-4        | `- if (hashes === null) return ['the remote digests could not be read'];`                                                                                           | **133 / 1**                 | `a digest read that failed stops the run instead of throwing out of the commit`（没有守卫时 `hashes.get` 抛 `TypeError` ⇒ `runCommit` reject）                                                    |
+| M-5        | `- …split(/\s+/u)[0]                                                                                                                                                |                             | 'absent';`/`+ …split(/\s+/u)[0];`                                                                                                                                                                 | **133 / 1** | `a remote manifest whose digest could not be read is logged as absent rather than as a blank` |
+| M-6        | `- if (devices.status !== 0 \|\| deviceList.length !== 2 …` / `+ if (deviceList.length !== 2 …`（删状态码那一臂）                                                   | **133 / 1**                 | `a device probe that failed stops the commit even when it printed matching numbers`                                                                                                               |
+| M-7        | `- if (observed.status !== 200 \|\| observed.bodyBytes === undefined)` / `+ if (observed.status !== 200)`                                                           | **133 / 1**                 | `a public manifest response without body bytes is an incident rather than a crash`                                                                                                                |
+| M-8        | **对照方向**：把删掉的那条断言**加回去** ⇒ `+ assert.ok(transport.calls.length > 0, '… needs at least one recorded call');`                                         | **133 / 0（全绿）**         | —（**两个方向都不被套件察觉**：删掉全绿、加回也全绿 ⇒ 它不是一条"被钉住的守卫"，处置 = 删除并由 `sshCalls.length > 0` 承担该性质，见第七节第 2 条。**这条是"哪里都没有它的读数"，不是假存活**。） |
+| M-9        | `- audit('pre-verify', 'done', undefined, localEvidence);` / `+ audit('pre-verify', 'done');`                                                                       | **133 / 1**                 | `the audit log carries the operator, the run time and the local digests and sizes`                                                                                                                |
+| M-10       | `baseOf` 里 `- operator: input.operator ?? null, at: atValue()` / `+ at: atValue()`（整条 operator 接线）                                                           | **133 / 2**                 | 上一条 + `the audit log keeps the operator and the time as null instead of dropping them`                                                                                                         |
+| M-11       | `baseOf` 里 `- at: atValue()`（整条 at 接线）                                                                                                                       | **133 / 3**                 | M-9 那条 + `the audit log takes each entry time from the injected clock rather than the run start` + `… as null instead of dropping them`                                                         |
+| M-12       | `- const atValue = () => (input.now === undefined ? input.startedAt : input.now()) ?? null;` / `+ const atValue = () => input.startedAt ?? null;`（无视注入的时钟） | **133 / 1**                 | `the audit log takes each entry time from the injected clock rather than the run start`                                                                                                           |
+| M-13       | `operator: input.operator ?? null` ⇒ `operator: input.operator`（去掉 null 兜底）                                                                                   | **133 / 1**                 | `the audit log keeps the operator and the time as null instead of dropping them`                                                                                                                  |
+| M-14       | `atValue` 去掉 `?? null`                                                                                                                                            | **133 / 1**                 | 同上一条                                                                                                                                                                                          |
+| M-15       | `- audit('remote-verify', 'done', undefined, stagingEvidence);`                                                                                                     | **133 / 1**                 | `the audit log carries the entries and digests the staging directory reported`                                                                                                                    |
+| M-16       | `- audit('remote-verify', 'fail', detail, stagingEvidence);`                                                                                                        | **133 / 1**                 | `a staging entry that is not a regular file is refused`（断言失败那条的 `remote` 证据）                                                                                                           |
+| M-17       | `- audit('backup-manifest', 'done', undefined, { previousManifestSha256: baselineSha, backupPath });`                                                               | **133 / 1**                 | `the audit log carries the previous manifest digest and the backup path`                                                                                                                          |
+| M-18       | `- audit('cas', 'done', undefined, casEvidence);`                                                                                                                   | **133 / 1**                 | 同上一条（同一用例也断言 `cas` done 的两个摘要）                                                                                                                                                  |
+| M-19       | `- audit('cas', 'incident', undefined, casEvidence);`                                                                                                               | **133 / 1**                 | `a remote manifest whose digest could not be read is logged as absent rather than as a blank`                                                                                                     |
+| M-20       | `- audit('temp-manifest', 'incident', 'the manifest upload failed', manifestEvidence);`                                                                             | **133 / 1**                 | `a manifest upload failure is an incident that keeps the lock`                                                                                                                                    |
+| M-21       | `- tempManifestEvidence,`（摘要不匹配那条）                                                                                                                         | **133 / 1**                 | `a mismatched remote manifest digest stops before the flip`                                                                                                                                       |
+| M-22       | `- audit('temp-manifest', 'done', undefined, tempManifestEvidence);`                                                                                                | **133 / 1**                 | `the audit log carries the new manifest digest at the temp manifest, the flip and the outcome`                                                                                                    |
+| M-23       | `- audit('flip', 'done', undefined, manifestEvidence);`                                                                                                             | **133 / 1**                 | 同上一条                                                                                                                                                                                          |
+| M-24       | `- recordOutcome('done', 'published', manifestEvidence);`                                                                                                           | **133 / 1**                 | 同上一条                                                                                                                                                                                          |
+| M-25       | `- audit('public-verify', 'incident', 'the public manifest could not be read', manifestEvidence);`                                                                  | **133 / 1**                 | `a public manifest response without body bytes is an incident rather than a crash`                                                                                                                |
+| M-26       | `- audit('public-verify', 'done', undefined, { public: publicCheck });`                                                                                             | **133 / 1**                 | `the audit log carries the public digests and sizes the verification compared`                                                                                                                    |
+| M-27       | `verifyPublicArtifacts` 的返回退回 `+ return { ok: true, manifestSha256: … };`（丢掉新加的三个值）                                                                  | **133 / 1**                 | 同上一条                                                                                                                                                                                          |
+| M-28       | `- audit('public-verify', 'retry', undefined, observedEvidence);`                                                                                                   | **133 / 1**                 | `an indeterminate outcome with the old public sha allows a retry and keeps the lock`                                                                                                              |
+| M-29       | `- audit('public-verify', 'incident', 'a third manifest digest appeared', observedEvidence);`                                                                       | **133 / 1**                 | `an indeterminate outcome with a third public sha stops and keeps the lock`                                                                                                                       |
+| M-30       | `- audit('public-verify', 'incident', error.message, observedEvidence);`                                                                                            | **133 / 1**                 | `a public verifier that rejects after the flip is an incident that keeps the lock`                                                                                                                |
+| M-31       | `- audit('public-verify', 'incident', publicCheck.reason, observedEvidence);`                                                                                       | **133 / 1**                 | `the public verification is actually run after the flip`                                                                                                                                          |
+| M-32       | `inspectRemoteDirectory` 的返回里 `- digests: digests === null ? null : Object.fromEntries(digests),`（返回不再带远端摘要）                                         | **133 / 2**                 | `a staging entry that is not a regular file is refused`（断言 `remote.digests === null`）+ `the audit log carries the entries and digests the staging directory reported`                         |
+| 假存活探针 | 把 `audit('commit-version','done');` 插在设备号检查那条 `return releaseAndFinish(…)` **之后**（不可达）                                                             | **133 / 0（但被装置拒收）** | —（装置报 `SURVIVOR_REJECTED … after an unconditional return`；**这一条是装置自身的验证，不是一项变异读数**）                                                                                     |
+
+**次数：36 条读数**（1 条对照 + 34 条变异 + 1 条假存活探针；其中 M-8 与假存活探针**各单独跑了一次**，其余 34 条一次跑完），**0 条 `EXPECTATION_FAILED`**（每条都在红名单里核对了"必须变红的那条测试"）。**红线之外没有意外**：只有 M-10 / M-11 / M-32 红到 2–3 条，原因是它们动的是被多条审计用例共同依赖的基座（`baseOf`）与返回形状；**没有一条变异只红"别的测试"**。
+
+**四、当前读数（复核刀重测，取代第四节的旧读数）**
+
+- `feed-publish.mjs` **1030** 行、`feed-publish.test.mjs` **2395** 行（`wc -l`）；套件 **133 条**（`node --test` 的 `ℹ tests 133` / `ℹ pass 133` / `ℹ fail 0`），比本刀前 **117** 条多 **16** 条（**全部**是新增用例：解锁失败路径 1 + 空 channel 前置条件 1 + 七个守卫 7 + 审计内容与形状 7）。
+- **规定块边界（同时是这一刀改过的两段）**：Task 4 测试块 = 计划第 1762–2836 行 ⇔ `feed-publish.test.mjs` **1321–2395**（围栏在计划第 1761 / 2837 行）；Task 4 模块块 = 计划第 2852–3438 行 ⇔ `feed-publish.mjs` **444–1030**（围栏在计划第 2851 / 3439 行）。⚠️ 这四个计划行号是**跑过 `prettier --write` 之后**重测的（prettier 把本节前面一段正文折行 ⇒ 围栏整体下移 2 行 —— 行号会漂，别拿折行前的读数引用）。**两对 `diff` 都是 `DIFF_EMPTY`**（复核刀改文件的同时把围栏里的规定块**一起**改成新的那一段，因此"块 = 文件那一段"仍然成立；这也是为什么本节的偏离清单必须补记第 13 条）。
+- **没有连过任何服务器**：这一刀的所有读数都来自注入的假 transport，与 Task 4 同规格。
 
 ### Task 5: `internal → stable` 重签
 
