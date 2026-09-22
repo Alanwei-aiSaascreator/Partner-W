@@ -223,6 +223,34 @@ test('the offline input does not require a host or known hosts path', () => {
   assert.equal(input.knownHostsPath, null);
 });
 
+test('a host that ssh would read as an option is rejected', () => {
+  assert.throws(
+    () =>
+      parsePublishInput({
+        channel: 'internal',
+        version: '1.2.3',
+        needsNetwork: true,
+        host: '-oProxyCommand=x',
+        knownHostsPath: '/tmp/known_hosts',
+      }),
+    /must not start with a dash/u,
+  );
+});
+
+test('a host containing whitespace is rejected', () => {
+  assert.throws(
+    () =>
+      parsePublishInput({
+        channel: 'internal',
+        version: '1.2.3',
+        needsNetwork: true,
+        host: 'bad host',
+        knownHostsPath: '/tmp/known_hosts',
+      }),
+    /contain whitespace/u,
+  );
+});
+
 test('the known hosts file must live outside the repository', () => {
   assert.throws(() => assertKnownHostsPath(join(process.cwd(), 'known_hosts'), process.cwd()), FeedPublishError);
   assert.equal(assertKnownHostsPath(join(tmpdir(), 'known_hosts'), process.cwd()), join(tmpdir(), 'known_hosts'));
@@ -557,6 +585,9 @@ node --test scripts/lib/feed-publish.test.mjs
 5. 把 `verifier(...)` 调用包进 `try { } catch { }` ⇒ 预期 `a throwing signature verifier fails the local verification instead of returning` **按测试名变红**。
 6. 把 `needsNetwork` 判断删掉、无条件要求 host ⇒ 预期 `the offline input does not require a host or known hosts path` **按测试名变红**。
 7. 把 `await verifier(...)` 的 `await` 删掉 ⇒ 预期 `the local verification propagates an async verifier rejection` **按测试名变红**。
+8. 把 `raw.host.startsWith('-')` 判断删掉 ⇒ 预期 `a host that ssh would read as an option is rejected` **按测试名变红**。
+9. 把 `/\s/u.test(raw.host)` 判断删掉 ⇒ 预期 `a host containing whitespace is rejected` **按测试名变红**。
+   （8 与 9 的夹具必须互斥：dash 那条**不含空白**（`-oProxyCommand=x`）、空白那条**不以 dash 开头**（`bad host`）。否则一个条件会替另一个兜底，单独删掉任一个都不会红 —— 那正是这个文件里刚修过的假绿形状。）
 
 恢复后 `git diff` 为空且全绿。
 
