@@ -2849,3 +2849,37 @@ test('the local verification hands back the file manifest bytes it verified', as
   assert.ok(verified.fileManifestBytes.equals(FILE_MANIFEST_BYTES));
   assert.equal(createHash('sha256').update(verified.fileManifestBytes).digest('hex'), verified.fileManifestSha256);
 });
+
+function identityTaggedTransport(handlers = {}) {
+  const calls = [];
+  const respond = (face) => async (request) => {
+    calls.push({ face, request });
+    return handlers[face] ? handlers[face](request) : { status: 0, stdout: '', stderr: '' };
+  };
+  return {
+    calls,
+    readOnly: { sshRun: respond('readOnly.sshRun') },
+    write: { sshRun: respond('write.sshRun'), sftpUpload: respond('write.sftpUpload') },
+    fetchPublic: async (url) => {
+      calls.push({ face: 'fetchPublic', request: { url } });
+      return { status: 200, bodyBytes: new Uint8Array() };
+    },
+  };
+}
+
+test('the preflight read only promise is pinned by transport identity rather than by a shared tag', async () => {
+  const transport = identityTaggedTransport({
+    'readOnly.sshRun': () => ({ status: 0, stdout: '100\n100\n', stderr: '' }),
+  });
+  const result = await runPreflight({
+    channel: 'internal',
+    version: '1.2.3',
+    transport,
+    host: HOST,
+    knownHostsPath: KNOWN_HOSTS_PATH,
+  });
+  assert.equal(result.sameFileSystem, true);
+  assert.equal(result.writabilityIndicators.verifiedWrite, false);
+  assert.ok(transport.calls.length > 0, 'the identity pin needs at least one recorded call');
+  assert.deepEqual([...new Set(transport.calls.map((call) => call.face))], ['readOnly.sshRun']);
+});

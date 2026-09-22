@@ -4899,7 +4899,7 @@ test('a call that carries no anchor of its own falls back to the pinned one', as
 node --test scripts/lib/feed-publish-transport.test.mjs
 ```
 
-预期：无法解析 `./feed-publish-transport.mjs`。
+预期：无法解析 `./feed-publish-transport.mjs`。**本刀实测（2026-09-23）**：`ERR_MODULE_NOT_FOUND`，读数 **`ℹ tests 1 / ℹ pass 0 / ℹ fail 1`** —— 模块解析失败在 `node --test` 里被记成**一个**失败单元，**不是** 12 条按名变红。⚠️ 别把 `1/0/1` 这种读数当成"全部用例都红了"的证据（Task 4 账本"次数"段那份作废清单第 ② 条记的就是这个形状）。
 
 - [ ] **Step 3: 写最小实现**
 
@@ -5041,7 +5041,7 @@ export function createFeedTransport(input) {
 node --test scripts/lib/feed-publish-transport.test.mjs
 ```
 
-预期：`fail 0`、`pass 12`。（原文写的 `pass 11` 比这个围栏里的 `test(` 条数**多算 1 条** —— 代码质量闸门实测：围栏内 `grep -c '^test('` = **10**，本刀新增覆盖两种锚点的 2 条 ⇒ 12。Task 6 实施时以 `node --test` 的真实读数为准。）
+预期：`fail 0`、`pass 12`。（原文写的 `pass 11` 比这个围栏里的 `test(` 条数**多算 1 条** —— 代码质量闸门实测：围栏内 `grep -c '^test('` = **10**，本刀新增覆盖两种锚点的 2 条 ⇒ 12。Task 6 实施时以 `node --test` 的真实读数为准。）**本刀实测（2026-09-23）**：`ℹ tests 20 / ℹ pass 20 / ℹ fail 0` —— 围栏内那 12 条**全绿**（`grep -c '^test('` 落在围栏切片 1–177 上正好是 **12**），另外**测试侧新增 8 条**（落在围栏**之后**，规定块本体一个字节没动；逐条与各自的覆盖理由见 Task 6 账本第一节）。
 
 - [ ] **Step 5: 行为级变异验证**
 
@@ -5064,6 +5064,8 @@ git commit -m "feat(feed): add the async pinned ssh and sftp transport"
 ```
 
 **验收项（preflight 必须真的是只读）**：Task 2 的 `the preflight only performs read only actions and never claims writability` 实测**证明的比它名字声称的少** —— 它的假 transport 让 `readOnly.sshRun` 与 `write.sshRun` 记**同一个 tag**，所以在只读探测**旁边额外加一个写调用，27/27 依然全绿**。本任务接上**真实** transport 之后，写操作才真的会碰到服务器，因此必须补一条**能分辨 transport 身份**的判据：让假 transport 分别打 `readOnly` / `write` / `fetchPublic` 的 tag，并断言 preflight **只产生了 `readOnly` 的调用**。补之前，"preflight 零副作用"这条对操作员的承诺是没被钉住的。
+
+**✅ 本验收项已在 2026-09-23 关闭（Task 6 第三片，读数见 Task 6 账本第三节）**：新用例 `the preflight read only promise is pinned by transport identity rather than by a shared tag`（`feed-publish.test.mjs:2870`）用一个**按 face 打 tag** 的假 transport（`readOnly.sshRun` / `write.sshRun` / `write.sftpUpload` / `fetchPublic`，形状与真实 transport 的四个面一一对应）断言 preflight 的调用集合**只有** `readOnly.sshRun`。**变异**：在 `readDeviceIds` 的只读探测**旁边插一个写调用** ⇒ 新用例按名变红，而那条规定用例**仍然全绿**（`158 / 157 / 1`）—— 这正是本条说"它证明的比名字少"的实测。**敏感性探针**：把假 transport 的 tag 换回**共享一个名字**、并把期望值同步改成那一个名字，同一个写调用插进去 ⇒ **`158 / 158 / 0` 全绿** ⇒ 承载这条承诺的**正是身份 tag**，不是断言本身。**没有改 Task 2 那条旧用例的假 transport**（那会让一份**已冻结的镜像块**重同步）：新用例的判据**严格更强** —— 它连 `write.sftpUpload` 与 `fetchPublic` 也一起钉住，旧用例只看得见 `readOnly.sshRun` 被调用过。
 
 ---
 
@@ -5096,6 +5098,93 @@ git commit -m "feat(feed): add the async pinned ssh and sftp transport"
 
 - **3 次全部 `RESTORE_SHA256_EQUAL true` + `GIT_STATUS_IDENTICAL true`**（模块基线 `282fde0746d4…`）。
 - 装置形态说明：本刀的备份**落在仓库外**（`%TEMP%` 下的 `t6work/bak/`），不是 Task 5 那套把 `.mutbak` 写在**被变异文件旁边**的做法 —— 后者在中途被打断时会**在仓库里留下一个临时文件**（那条纪律要求临时文件一律在仓库外）。
+- ⚠️ **本刀在这个装置上摔过一次，记下来**：生成变异规格的三个脚本里，有两个的前缀是 `cd <仓库>`（而不是 `cd <仓库外的临时目录>`），于是 `M14/M15/M16-*.json` **被写进了仓库根**（`git status` 里露出来三次 `?? M1x-*.json`）。**发现即清掉**（`git status --porcelain` 现在只剩两个**故意**新增的未跟踪文件），没有进任何提交。**教训与那三条纪律同源**：临时文件一律在仓库外 —— 这条对**变异装置**同样成立，不只是对探针脚本。
+
+#### 一、真实 transport（规定块**逐字节**转写）
+
+**两个文件都不是"照抄"，是**按围栏字节**落盘**：用 `extract-block.mjs`（仓库外）从计划里**取**围栏内容写文件，围栏**不匹配就拒写**。读数：`feed-publish-transport.mjs` **118** 行、`feed-publish-transport.test.mjs` **281** 行；镜像检查器认这两对 —— `mjs 1–118 ⇔ 计划围栏 4908/5027`、`test 1–177 ⇔ 计划围栏 4716/4894`（规定块那 177 行是**连续切片**，两侧 `diff` 为空）。
+
+- **红**：先只落**测试**、把模块挪出仓库跑一次 ⇒ `ERR_MODULE_NOT_FOUND`，`ℹ tests 1 / pass 0 / fail 1`（**一条**失败单元，不是 12 条；别记成"12 条按名变红"）。把模块放回、`sha256 -c` 校验过再跑。
+- **绿**：`ℹ tests 20 / ℹ pass 20 / ℹ fail 0` —— 围栏内 **12** 条（`grep -c '^test('` 落在 1–177 上 = 12）＋**测试侧新增 8 条**（落在围栏**之后**，规定块本体一个字节没动，`mjs` 那侧也没动）。
+- **测试侧新增 8 条与它们各自补的洞**（每条都对应实现里一个**没有夹具到达**的分支 —— 按追踪纪律，"没有夹具到达的分支"是**覆盖缺口**，不是"存活"）：
+  1. `the batch path quoting refuses a path that is not a non empty string` ⇒ `quoteBatchPath` 的非字符串/空串守卫（`:14`）。
+  2. `a transport without a host or a pinned known hosts file is refused before any process starts` ⇒ `createFeedTransport` 的 host 守卫（`:40`，原先只有 knownHostsPath 那一半有夹具）。
+  3. `an sftp upload without a batch writer or a batch file path fails closed` ⇒ 两条 **fail-closed** 守卫（`:79` / `:81`）—— **"缺接线必须失败关闭"**这条纪律在真实 transport 上的落点。
+  4. `a per call batch writer is used instead of the one the factory was given` ⇒ `request.writeBatch ?? input.writeBatch` 的**每次调用**那一半（`:78`）。
+  5. `a runner result without a numeric status is reported as a failure rather than as success` ⇒ `status` 的 `: -1` 兜底（`:71` / `:94`）**以及** `result` 为 `null` 时的 `?.` 与 `?? ''`。⚠️ **这一条不是重复劳动**：规定的 `an undefined exit status is reported as a failure rather than success` 的假 `execFile` **自己就返回 `status: -1`** ⇒ 删掉兜底它照样绿（见第二节 M7）。
+  6. `a public response without a byte reader is reported with an empty body rather than a crash` ⇒ `fetchPublic` 包装里"响应没有 `arrayBuffer`"那条分支（`:112`）。
+  7. `every call carries a finite timeout so a hung remote cannot hold the run` ⇒ `SSH_TIMEOUT_MS` / `SFTP_TIMEOUT_MS` 与 `encoding`（`:67` / `:92`）。
+  8. `the transport exposes the four faces the publish flow calls` ⇒ **接线面**：`feed-publish.mjs` 只按 `readOnly.sshRun` / `write.sshRun` / `write.sftpUpload` / `fetchPublic` 四个面调用（`grep` 实测，见第四节），这条把四个面**逐字**钉住，Task 7 的 CLI 接线才有对照物。
+- **两条默认依赖的不可达是"实测"的，不是"声明"的**（装置：把默认依赖的函数体换成 `throw`，再跑套件）：
+  - **默认 `execFile` runner**（`:49` 的 `nodeExecFile(...)`）：注入 throw 后**套件仍然 `20 / 20 / 0`**（`reached_default false`）；同一次装置里**单独**调用 `createFeedTransport({host,knownHostsPath}).readOnly.sshRun(...)`（**不注入 `execFile`**）⇒ 那个 throw **当场触发**（敏感性：探针是活的）。⇒ **套件里一个 ssh 进程都没起**。
+  - **默认 `publicFetch`**（`:103` 的 `fetch`）：同样注入 throw ⇒ 套件 `20 / 20 / 0`、`reached_default false`；单独调 `fetchPublic(...)` ⇒ throw 触发。⇒ **套件里一次网络访问都没有**。
+  - **这两条同时也是"默认依赖不是空操作"的证据**：`grep -cE '\)\s*=>\s*\{\s*\}'` = **0**（没有 `?? (() => {})` 这类 fail-open 默认值），`grep -c 'shell:'` = **0**。
+- **不变量（提交信息的四条关键点在本节复述）**：远端动作一律 `execFile(command, argvArray, options)`、`options.shell` 从不设置；`BatchMode=yes` 永不交互；`StrictHostKeyChecking=yes` + 固定 `UserKnownHostsFile` 永不自动接受新指纹；二进制一律 `arrayBuffer()`（ZIP 走 `text()` 再拼回去会坏字节）；`fetch` 用 `redirect: 'error'`。
+
+#### 二、变异（transport：**20 条** + 1 条对照；装置同通用纪律第 3 条，hunk 全部打印整行）
+
+| #    | 变异（`mjs` 行号 = 锚点所在行，锚点全部**恰好 1 次**）                                                            | 读数              | 预先写明的红名单                     | 核对                                                          |
+| ---- | ----------------------------------------------------------------------------------------------------------------- | ----------------- | ------------------------------------ | ------------------------------------------------------------- |
+| M1   | `StrictHostKeyChecking=yes` ⇒ `no`（`:29`）                                                                       | **`20 / 18 / 2`** | 规定 3 与规定 4                      | 命中；**没有第三条**                                          |
+| M2   | `runner('ssh', [argv…])` ⇒ 拼成一个字符串 + `shell: true`（`:65`）                                                | **`20 / 16 / 4`** | 规定 3 / 规定 10 / 规定 11 / 规定 12 | 4 条**全部预先写明**；没有第五条                              |
+| M3   | `request.resume === true ? 'reput' : 'put'` ⇒ 恒 `'put'`（`:86`）                                                 | **`20 / 19 / 1`** | 规定 6                               | 命中                                                          |
+| M4   | 删 `quoteBatchPath` 的 CR/LF/NUL 守卫（`:18–19`）                                                                 | **`20 / 19 / 1`** | 规定 1                               | 命中                                                          |
+| M5   | 删 `quoteBatchPath` 的 `!/[\s"]/u.test(value)` 提前返回（`:20`）                                                  | **`20 / 19 / 1`** | 规定 2                               | 命中                                                          |
+| M6   | `arrayBuffer()` ⇒ `text()` + `Buffer.from(...,'utf8')`（`:115`）                                                  | **`20 / 19 / 1`** | 规定 9                               | 命中（成因是 `response.text is not a function` —— 见 M6b）    |
+| M6b  | 同一行改成 `new TextEncoder().encode(String(await response.arrayBuffer()))`（**真的把字节搞坏**，不再靠方法缺失） | **`20 / 19 / 1`** | 规定 9                               | 命中；这条才证明"钉的是**字节**那条路"                        |
+| M7   | `status: typeof result?.status === 'number' ? result.status : -1` ⇒ `result.status`（`:71`）                      | **`20 / 19 / 1`** | 新增 5                               | ⚠️ **命中，但红的是新增那条、不是计划点名的那条**（原因见下） |
+| M8a  | `const callHost = request.host ?? host;`（+ 同一行的 knownHostsPath）⇒ 恒取工厂值（**只改 `sshRun`**，`:63–64`）  | **`20 / 19 / 1`** | 规定 11                              | 命中                                                          |
+| M8b  | `request.writeBatch ?? input.writeBatch` ⇒ `input.writeBatch`（`:78`）                                            | **`20 / 19 / 1`** | 新增 4                               | 命中                                                          |
+| M8c  | **反向对照**：同样的锚点覆盖**只从 `sftpUpload` 里**删掉（`sshRun` 那半保留，`:84–85`）                           | **`20 / 19 / 1`** | 规定 11                              | 命中 ⇒ **两个调用点各自都在消费锚点**                         |
+| M9   | 删 `if (typeof writeBatch !== 'function') throw`（`:79`）                                                         | **`20 / 19 / 1`** | 新增 3                               | 命中                                                          |
+| M10  | 删 batchFile 守卫（`:81–83`）                                                                                     | **`20 / 19 / 1`** | 新增 3                               | 命中                                                          |
+| M11  | 删 host 守卫（`:40`）                                                                                             | **`20 / 19 / 1`** | 新增 2                               | 命中                                                          |
+| M12  | 删 ssh 的 `timeout: SSH_TIMEOUT_MS,`（`:67`）                                                                     | **`20 / 19 / 1`** | 新增 7                               | 命中                                                          |
+| M13  | `readOnly: { sshRun }` ⇒ 多一个键（`:108`）                                                                       | **`20 / 19 / 1`** | 新增 8                               | 命中                                                          |
+| M14  | 删"响应没有 `arrayBuffer`"那条分支（`:112–114`）                                                                  | **`20 / 19 / 1`** | 新增 6                               | 命中                                                          |
+| M15  | 删 `quoteBatchPath` 的非字符串/空串守卫（`:14–16`）                                                               | **`20 / 19 / 1`** | 新增 1                               | 命中                                                          |
+| M16  | 删 `quoteBatchPath` 的内层引号转义 `replaceAll('"', '\\"')`（`:21`）                                              | **`20 / 19 / 1`** | 规定 2                               | 命中                                                          |
+| M17  | **对"记录"的变异**：`stderr: result?.stderr ?? ''` ⇒ `stderr: ''`（`:73`）                                        | **`20 / 19 / 1`** | 规定 8                               | 命中                                                          |
+| 对照 | 等价改写：`resume === true ? 'reput' : 'put'` ⇒ `resume !== true ? 'put' : 'reput'`（`:86`）                      | **`20 / 20 / 0`** | —（证明装置不是"改什么都红"）        | 无红                                                          |
+
+- **21 次全部 `RESTORE_SHA256_EQUAL true` + `GIT_STATUS_IDENTICAL true`**（模块基线 `c7551ab09df3…`）。
+- **M7 是本节最有信息量的一条，也是计划正文的一处错**：计划的 Step 5 第 7 条写"把兜底改成直接用 `result.status` ⇒ 预期 `an undefined exit status is reported as a failure rather than success` 按名变红"。**实测：那条规定用例不会红** —— 它的假 `execFile`（`makeFake({ error })`）**自己返回 `{ status: -1 }`**，所以删掉兜底之后 `result.status` 仍然是 `-1`、断言照样通过。真正变红的是本刀**新加**的那条臂（假 runner 返回**没有** `status` 的结果）。**处置**：照做，但**红名单按实测改写**（写成新增那条），并把这条错记在这里 —— 计划正文那句"预期"对**规定的**假夹具不成立。
+- **M2 的 4 条红也多于计划写的那一条**（计划只点名 `the transport never builds a shell command string`）：把 argv 数组换成拼接字符串会同时改掉 `args` 的形状，所以规定 3 / 11 / 12 也跟着红。**4 条全部预先写明**，核对 `EXPECTED_REDS_MISSING 0`、没有第五条。
+- **M17 是"对记录做变异"在本刀的落点**：transport 自己**不写审计条目**（`grep -c 'audit' scripts/lib/feed-publish-transport.mjs` = **0**），但它返回的 `{status, stdout, stderr}` **就是** Task 4 写进审计的那段文本（例如 `audit('stage','fail', uploaded.stderr ?? 'upload failed')`）⇒ 把 `stderr` 丢掉必须能被看见。实测按名变红。
+
+#### 三、preflight 只读判据（第三片：按 transport 身份钉住）
+
+- **新增用例**：`the preflight read only promise is pinned by transport identity rather than by a shared tag`（`feed-publish.test.mjs:2870`）＋它的假 transport 构造器 `identityTaggedTransport`（`:2853`）。假 transport 的四个面与**真实** transport 返回的四个面一一对应，每次调用记 `{face, request}`，断言是 `[...new Set(faces)]` 恰好 `['readOnly.sshRun']`（外加一条"零调用不算通过"的 `calls.length > 0`）。
+- **变异 P5-M1（本片的正面读数）**：在 `readDeviceIds` 的只读探测**旁边插一个写调用**（`feed-publish.mjs:187` 之后）⇒ **`158 / 157 / 1`**，红的**只有**新用例；那条**规定的** `the preflight only performs read only actions and never claims writability` **仍然全绿**（装置另打了一行 `EXPECTED_GREEN_NAMES_ABSENT 0` 来核对这一点）⇒ 这正是计划正文那句"它证明的比名字声称的少"的实测。
+- **敏感性探针 P5-M2（证明"钉住它的正是身份 tag"）**：同一个写调用插进去，同时把假 transport 的 tag 换回**共享一个名字**（四个面都叫 `sshRun`）、把期望集合与 handler 的键同步改成那一个名字 ⇒ **`158 / 158 / 0` 全绿**。⇒ 若没有按身份打 tag，插进去的写调用**看不见**；**承载这条承诺的是 tag，不是断言**。
+- **本片 3 次装置全部 `RESTORE_SHA256_EQUAL true` + `GIT_STATUS_IDENTICAL true`**（模块基线 `282fde0746d4…`、测试基线 `6c1b4a45ac0d…`）。
+- **为什么没有改 Task 2 那条旧用例的假 transport**：那会重同步一份**已冻结**的镜像块（`test 379–566 ⇔ 计划 727/916`），而收益是负的 —— 新用例的判据**严格更强**（旧用例只看得见 `readOnly.sshRun` 被调用过，新用例把 `write.sftpUpload` 与 `fetchPublic` 也钉住）。
+
+#### 四、Task 6 建的远端命令：插值登记表（每个被拼进去的值一行）
+
+transport 自己**只拼两类字符串**：ssh / sftp 的 **argv 数组元素**，和 sftp **批处理文件的一行**。**没有**任何本地 shell 字符串（`options.shell` 从不设置）。
+
+| 值                                                         | 出现在哪                                                                  | 类别                     | 依据的前置条件（本刀实测）                                                                                                                                                                                                                                                                                                                    |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------- | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `host`（每次调用可覆盖）                                   | `ssh` 的第 2 个操作数、`sftp` 的最后一个操作数（**各自一个 argv 元素**）  | **(a)** shell 惰性字母表 | 上游：`parsePublishInput` 拒绝**以 `-` 开头**的 host（`a host that ssh would read as an option is rejected`）与含空白的 host（Task 1 的两条用例）；transport 这层只再加**非空**守卫（`:40`）。⚠️ **transport 自己不检查前导 `-`** —— 它依赖调用方先过 `parsePublishInput`（Task 7 的 CLI 就是那个调用方），这条**是登记的前置条件，不是遗漏** |
+| `knownHostsPath`（每次调用可覆盖）                         | `UserKnownHostsFile=<path>`（**一个 argv 元素**，被 ssh/sftp 当选项值读） | **(a)** 组合值           | 由 `parsePublishInput` + `assertKnownHostsPath` 保证是**非空字符串且在仓库外**；transport 这层再加非空守卫（`:41`）。**它是本地路径，不进任何远端 shell**                                                                                                                                                                                     |
+| `request.script`（ssh 要执行的远端命令）                   | `ssh` 的最后一个 argv 元素                                                | **(b) 已登记的插值**     | 由 `feed-publish.mjs` 拼出，**它的每个值都在 Task 4 账本第五节的登记表里**（`channel` / `version` / `planHash` / `runid` / 常量 / 组合值；owner 记录走 base64）。transport **一个值都没加**                                                                                                                                                   |
+| `quoteBatchPath(localPath)` / `quoteBatchPath(remotePath)` | `sftp -b` 批处理文件的那一行（`put`/`reput <local> <remote>`）            | **(a)** 由守卫收窄       | `quoteBatchPath` 拒绝非字符串/空串、拒绝 CR/LF/NUL（否则一行会变成两行 ⇒ 注入第二条 sftp 命令），并对含空白或引号的路径加引号 + 转义内层引号（`:13–22`）                                                                                                                                                                                      |
+| `batchFile`（`-b` 的实参）                                 | `sftp` 的一个 argv 元素                                                   | **(a)** 本地临时文件     | 非空字符串守卫（`:81`）；Task 7 的 CLI 用 `mkdtempSync` 建在仓库外                                                                                                                                                                                                                                                                            |
+| `command`（`put` / `reput`）                               | 批处理文件行首                                                            | **(a)** 闭集字面量       | 由 `request.resume === true` 二选一，取值只有两个字面量                                                                                                                                                                                                                                                                                       |
+
+**没有 `LC_ALL=C`**：`ssh` / `sftp` 的**诊断文本不被本模块按子串匹配**（匹配在 `feed-publish.mjs` 的锁 `mkdir` 那一处，属于 Task 3 的决定）；transport 只把 `stderr` 原样上抛。
+
+#### 五、本刀未做 / 未验 / **需要授权的开口项**（不得写成已完成）
+
+- **没有连接、没有修改任何服务器，也没有跑过 `ssh` / `sftp` 的成功路径**：全部读数来自本地 `node --test` 与本地文件比较。**没有生成密钥、没有打包、没有上传。**
+- 🔴 **开口项（需要授权，本刀不能关闭）**：计划的两条真机验收项 —— **①在目标主机上抓一条真实的 GNU coreutils `mkdir` 权限失败原文**（Task 4 账本第三节第 3 条）、**②在目标主机上抓 `locale` 与一条"目录已存在"的 `mkdir` 原始 stderr**（Task 4 账本第三节第 8 条）—— **本刀一条都没做，也不该做**：它们需要**真实主机**与**机主的授权**，而本刀的边界是"实现适配器，不使用适配器"。**登记为开口项，等授权后在真机发布演练里一次抓齐**；在那之前，`isFileExistsFailure` 的匹配文本与"非 C locale ⇒ 谓词失配"这条**仍然是推断而不是实测**（本机那半个读数的证据在 Task 4 账本第 7 处偏离里）。**本刀没有编造任何样例、也没有让任何断言依赖一段想象中的主机输出。**
+- ⚠️ **本刀在装置上出过一次边界事故，如实登记**：为了验证"套件从不真的起 ssh"这条探针的**敏感性**，本刀先用一个 PATH 前置的假 `ssh` 去试 —— 而 Windows 上 `execFile` 不解析 `.cmd`（`ssh.cmd` 被跳过），于是那次"敏感性检查"**真的执行了系统的 `ssh.exe`**（命令是 `execFileSync('ssh', ['probe'])`，主机名 `probe`，退出码 **255**，秒级返回；**没有连接任何服务器、没有读任何密钥、没有发出任何数据**）。**发现后立即改用不依赖 PATH 的装置**（把默认依赖的函数体换成 `throw`，见第一节），那一版才是本账本引用的读数。**教训**：验证器的敏感性检查本身也在"会做真事"的那一侧 —— 要它**不可能**碰到真实资源（换成 `throw` 就是"不可能"，PATH 前置不是）。
+- **真实路径（真机发布演练）未验收**：`--preflight` / `--commit` / `--break-lock` 接上真实 transport 后的行为，本刀一条都没跑（那需要主机、host-key 指纹与授权）。
+- **`--re-sign-stable` 的"拒绝覆盖"臂**仍然不可自动化（要真钥匙），**未验**。
+- **Task 7 / Task 8 未动**：CLI、手册、检查单、门禁表里除本刀那一行之外的全部格子都还是 `待填`。
+
+⚠️ **本刀在这里删掉过一次 `### Task 7` 的标题与它前面的 `---`**（把本节插进去时 `old_string` 把那段分隔一起带走了），**当场发现并原样补回**。**可核对（不是自称）**：本提交对计划文件的 `git diff --stat` 是 **91 处插入、2 处删除**，而那**两处删除**就是上面 Step 2 与 Step 4 的"预期"两行（`git diff -U0` 的两个 `-` 行号 = 4902 / 5044）—— **Task 7 区段里一处删除都没有** ⇒ 标题、段落与它的两个规定块（Step 1 的测试块、Step 3 的代码块）逐字节未动。
 
 ---
 
@@ -5732,19 +5821,20 @@ git commit -m "docs(release): route the feed publishing steps through the upload
 
 **验收读数（逐条如实填写，未执行的写“未验证”）：**
 
-| 项                                | 命令                                                                | 读数 |
-| --------------------------------- | ------------------------------------------------------------------- | ---- |
-| 上传器逻辑（含 13 步 happy path） | `node --test scripts/lib/feed-publish.test.mjs`                     | 待填 |
-| 真实 transport（async）           | `node --test scripts/lib/feed-publish-transport.test.mjs`           | 待填 |
-| CLI 守卫                          | `node --test scripts/lib/feed-publish-cli.test.mjs`                 | 待填 |
-| 未联网取证                        | transport 测试全部走注入的**异步**假 `execFile` / `fetchPublic`     | 待填 |
-| 没有占位分支                      | `grep -n "not wired" scripts/feed-publish.mjs`（预期无输出）        | 待填 |
-| 追踪表逐行核对                    | 13 行全部对得上（见上方自审清单）                                   | 待填 |
-| 手册无真实指纹                    | `grep -nE "[0-9A-F]{32,}" docs/runbooks/portable-update-release.md` | 待填 |
-| 全量门禁                          | `pnpm check`                                                        | 待填 |
+| 项                                | 命令                                                                | 读数                                                                                                                                                                                         |
+| --------------------------------- | ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 上传器逻辑（含 13 步 happy path） | `node --test scripts/lib/feed-publish.test.mjs`                     | **`ℹ tests 158 / pass 158 / fail 0`**（Task 6 读数；Task 5 收尾时是 156，本刀 +2：承前项二的钉子 + preflight 身份钉子）                                                                      |
+| 真实 transport（async）           | `node --test scripts/lib/feed-publish-transport.test.mjs`           | **`ℹ tests 20 / pass 20 / fail 0`**（围栏内 12 + 测试侧新增 8）                                                                                                                              |
+| CLI 守卫                          | `node --test scripts/lib/feed-publish-cli.test.mjs`                 | 待填                                                                                                                                                                                         |
+| 未联网取证                        | transport 测试全部走注入的**异步**假 `execFile` / `fetchPublic`     | **实测**（不是声明）：把两个**默认**依赖的函数体各换成 `throw` 再跑套件 ⇒ 仍是 `20 / 20 / 0`、`reached_default false`；单独调用默认依赖 ⇒ throw 当场触发（探针是活的）。见 Task 6 账本第一节 |
+| 没有占位分支                      | `grep -n "not wired" scripts/feed-publish.mjs`（预期无输出）        | 待填                                                                                                                                                                                         |
+| 追踪表逐行核对                    | 13 行全部对得上（见上方自审清单）                                   | 待填                                                                                                                                                                                         |
+| 手册无真实指纹                    | `grep -nE "[0-9A-F]{32,}" docs/runbooks/portable-update-release.md` | 待填                                                                                                                                                                                         |
+| 全量门禁                          | `pnpm check`                                                        | 待填                                                                                                                                                                                         |
 
 ## 未覆盖与后续（不得写成已完成）
 
+- 🔴 **需要授权才能关闭的两条真机读数（Task 6 于 2026-09-23 登记为开口项，本刀无法执行）**：① **目标主机上一条真实的 `mkdir` 权限失败原文**（Task 4 账本第三节第 3 条）；② **目标主机的 `locale` 与一条"目录已存在"的 `mkdir` 原始 stderr 全文**（Task 4 账本第三节第 8 条）。两者都需要**真实主机 + 机主授权**，而 Task 6 的边界是"实现适配器、不使用适配器" ⇒ **未抓、未编造、没有任何断言依赖想象中的主机输出**。在抓到之前，"权限失败 ⇒ `incident`"与"非 C locale ⇒ 谓词失配"这两条**仍是推断**。
 - **真实网络路径未自动化验证**：transport 与 CLI 都已接上真实 `ssh` / `sftp` / `https`，但**自动测试只覆盖参数守卫与假 transport**。真实路径必须在真机发布演练中验收，并**由用户先提供主机与经带外核对的 host-key 指纹**。
 - **没有上传任何 feed**：没有测试 feed，没有生产 feed，没有改线上 manifest，没有连接或修改服务器。
 - **受限发布账号未建立**：当前接受"首次临时使用 root"这一显式例外。
