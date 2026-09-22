@@ -27,7 +27,7 @@
  *    `荣盈魔方-运行数据` 全 0 命中）—— 也就是说这条规则不会误伤正常交付包，
  *    而漏掉它的代价是"把一份凭据发给每一个客户"。
  */
-export const FORBIDDEN_DIR_NAMES = ['荣盈魔方-运行数据', '荣盈魔方工作区', 'openclaw-state', 'logs'];
+export const FORBIDDEN_DIR_NAMES = ['荣盈魔方-运行数据', '荣盈魔方工作区', '.荣盈魔方更新', 'openclaw-state', 'logs'];
 
 /** 这些文件名（任意层级）承载凭据 —— 出现即拒绝（实测纯净包里同样 0 命中）。 */
 export const SENSITIVE_FILE_NAMES = [

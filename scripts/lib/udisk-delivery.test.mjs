@@ -1,259 +1,161 @@
-/**
- * U 盘交付包机检的测试。跑：node --test scripts/lib/udisk-delivery.test.mjs
- *
- * 用**真实临时目录**（不是假 fs）造一个交付包 —— 判据是文件与文件名，
- * 拿假 fs 测等于把判据本身也一起假掉了。
- *
- * ⚠️ 最后那组"漂移用例"是这组测试里最值钱的：三个常量分别抄自 TS 源码，
- *    源码改了而这里没改 ⇒ 机检会用**过期的判据**给出"可以交付"（假绿）。
- */
-
-import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { afterEach, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import {
   APP_DIR_NAME,
   ASAR_REL,
   auditDelivery,
-  bufferHasString,
   BUNDLED_RUNTIME_MANIFEST_REL,
   EXE_REL,
-  INSTANCE_BUSY_TITLE,
   INSTALLER_DIR_PREFIX,
   LAUNCHER_BAT_NAME,
-  planFixes,
-  readmeProblems,
-  REMOVED_DIR_PREFIX,
+  LAUNCHER_EXE_NAME,
   README_NAME,
   RUN_DATA_DIR_NAME,
-  RUNTIME_MANIFEST_NAME,
-  versionFromFolderName,
+  UPDATE_DIR_NAME,
+  WORKSPACE_DIR_NAME,
 } from './udisk-delivery.mjs';
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-
+const roots = [];
+const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const io = {
-  exists: (p) => fs.existsSync(p),
-  listNames: (dir) => fs.readdirSync(dir),
-  readFile: (p) => {
+  exists: (target) => fs.existsSync(target),
+  listNames: (target) => fs.readdirSync(target),
+  readFile: (target) => {
     try {
-      return fs.readFileSync(p);
+      return fs.readFileSync(target);
     } catch {
       return null;
     }
   },
 };
 
-/** 造一个交付包；`over` 里可以点名"要坏成什么样"。 */
-function makeDelivery(over = {}) {
+afterEach(() => {
+  for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
+});
+
+function makeDelivery(overrides = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'udisk-delivery-'));
-  const write = (rel, data) => {
-    const file = path.join(root, rel);
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, data);
+  roots.push(root);
+  const write = (relativePath, content) => {
+    const target = path.join(root, relativePath);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, content);
   };
 
-  write(EXE_REL, 'stub exe');
-  write(ASAR_REL, Buffer.from(`...const t = "${INSTANCE_BUSY_TITLE}";...`, 'utf8'));
+  write(LAUNCHER_EXE_NAME, Buffer.from('MZlauncher'));
+  write(EXE_REL, 'desktop');
+  write(ASAR_REL, 'asar');
   write(BUNDLED_RUNTIME_MANIFEST_REL, '{}');
   write(
     README_NAME,
-    `怎么打开：双击 ${APP_DIR_NAME}\\荣盈魔方.exe\r\n` +
-      `数据在盘上的 ${RUN_DATA_DIR_NAME}\\ 里\r\n` +
-      '请一直插在同一个 USB 口上（盘符变了，程序和助手就找不到数据了）\r\n',
+    `\u53cc\u51fb ${LAUNCHER_EXE_NAME}\u3002\u6570\u636e\u4fdd\u5b58\u5728 ${RUN_DATA_DIR_NAME}\u3002\u8bf7\u4fdd\u6301\u76d8\u7b26\u4e0d\u53d8\u3002`,
   );
 
-  if (over.bat) write(LAUNCHER_BAT_NAME, '@echo off\r\n');
-  if (over.installer) write(`${INSTALLER_DIR_PREFIX}-装了就不能用便携版/荣盈魔方-0.0.24-win-x64.exe`, 'stub');
-  if (over.staleBuild) write(ASAR_REL, Buffer.from('...app.quit();...', 'utf8'));
-  if (over.escapedBuild) {
-    const escaped = [...INSTANCE_BUSY_TITLE]
-      .map((c) => (c.charCodeAt(0) > 127 ? `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}` : c))
-      .join('');
-    write(ASAR_REL, Buffer.from(`const t = "${escaped}";`, 'utf8'));
+  if (overrides.noLauncher) fs.rmSync(path.join(root, LAUNCHER_EXE_NAME));
+  if (overrides.bat) write(LAUNCHER_BAT_NAME, '@echo off');
+  if (overrides.noRuntime) fs.rmSync(path.join(root, BUNDLED_RUNTIME_MANIFEST_REL));
+  if (overrides.installer) write(`${INSTALLER_DIR_PREFIX}/setup.exe`, 'installer');
+  if (overrides.launcherInsideProgram) write(path.join(APP_DIR_NAME, LAUNCHER_EXE_NAME), 'wrong-place');
+  if (overrides.prepopulated) {
+    write(path.join(RUN_DATA_DIR_NAME, 'state.json'), '{}');
+    write(path.join(WORKSPACE_DIR_NAME, 'task.txt'), 'task');
+    write(path.join(UPDATE_DIR_NAME, 'update-state.json'), '{}');
   }
-  if (over.readme) write(README_NAME, over.readme);
-  if (over.noReadme) fs.rmSync(path.join(root, README_NAME));
-  if (over.noRuntime) fs.rmSync(path.join(root, BUNDLED_RUNTIME_MANIFEST_REL));
-  if (over.noExe) fs.rmSync(path.join(root, EXE_REL));
-
   return root;
 }
 
-const ids = (findings) => findings.map((f) => f.id);
-const errors = (findings) => findings.filter((f) => f.level === 'error');
+const ids = (findings) => findings.map((finding) => finding.id);
+const errors = (findings) => findings.filter((finding) => finding.level === 'error');
 
-test('① 新构建 + 去掉 .bat + 说明已更新 ⇒ 一条 findings 都没有（干净包就该闭嘴）', () => {
+test('clean launcher-enabled delivery satisfies the exact base-package contract', () => {
   const root = makeDelivery();
-  const findings = auditDelivery(io, root);
 
-  assert.deepEqual(errors(findings), [], `不该有错误，实到：${JSON.stringify(ids(findings))}`);
-  // ⚠️ 连 warn 一起断言：只断言 errors 的话，"所有判据都退化成 warn"这种坏法测不出来。
-  assert.deepEqual(findings, [], `干净包不该有任何 findings，实到：${JSON.stringify(ids(findings))}`);
-  fs.rmSync(root, { recursive: true, force: true });
+  assert.deepEqual(auditDelivery(io, root), []);
 });
 
-test('② 新构建但还留着 .bat ⇒ error，且给出"搬出去"的动作', () => {
+test('missing root launcher is a release-blocking error', () => {
+  const root = makeDelivery({ noLauncher: true });
+
+  assert.ok(ids(auditDelivery(io, root)).includes('missing-launcher'));
+});
+
+test('any batch launcher is a release-blocking error', () => {
   const root = makeDelivery({ bat: true });
-  const findings = auditDelivery(io, root);
+  const finding = auditDelivery(io, root).find((entry) => entry.id === 'launcher-bat');
 
-  assert.ok(ids(findings).includes('launcher-bat'));
-  const fix = findings.find((f) => f.id === 'launcher-bat').fix;
-  assert.equal(fix.kind, 'move-out');
-  fs.rmSync(root, { recursive: true, force: true });
+  assert.equal(finding?.level, 'error');
 });
 
-test('③ 老构建（asar 里没有指纹）⇒ warn「不能去掉 .bat」，且不许报 .bat 该删', () => {
-  const root = makeDelivery({ staleBuild: true, bat: true });
-  const findings = auditDelivery(io, root);
+test('delivery CLI rejects a batch file nested inside the program tree', () => {
+  const root = makeDelivery();
+  const nestedBatch = path.join(root, APP_DIR_NAME, 'resources', 'legacy.bat');
+  fs.writeFileSync(nestedBatch, '@echo off');
 
-  assert.ok(ids(findings).includes('stale-build'));
-  assert.ok(!ids(findings).includes('launcher-bat'), '.bat 是老构建的救命稻草，不该建议删掉');
-  // ⚠️ 等级必须是 **warn**：现役版本（0.0.24 就在客户手里）照样要能打压缩包分发，
-  //    判成 error 会把"给现役版本出压缩包"这条正常需求一起堵死。
-  assert.equal(findings.find((f) => f.id === 'stale-build').level, 'warn');
-  assert.deepEqual(errors(findings), [], '老构建 + 带 .bat 的包应当"可发"，不该有 error');
-  fs.rmSync(root, { recursive: true, force: true });
+  const result = spawnSync(process.execPath, [path.join(repositoryRoot, 'scripts', 'udisk-delivery.mjs'), root], {
+    encoding: 'utf8',
+  });
+
+  assert.equal(result.status, 1, result.stdout);
+  assert.match(result.stdout, /legacy\.bat/);
 });
 
-test('④ 老构建 + 没有 .bat ⇒ 额外点名"双击第二份会毫无反应"', () => {
-  const root = makeDelivery({ staleBuild: true });
-  const findings = auditDelivery(io, root);
-
-  assert.ok(ids(findings).includes('no-explainer'));
-  const f = findings.find((x) => x.id === 'no-explainer');
-  assert.match(f.detail, /什么都不会发生/);
-  fs.rmSync(root, { recursive: true, force: true });
-});
-
-test('⑤ 包里的运行时被删掉 ⇒ error（0.0.19"装完完全用不了"那个形状）', () => {
+test('missing bundled runtime is a release-blocking error', () => {
   const root = makeDelivery({ noRuntime: true });
-  const findings = auditDelivery(io, root);
 
-  assert.ok(ids(findings).includes('missing-bundled-runtime'));
-  fs.rmSync(root, { recursive: true, force: true });
+  assert.ok(ids(auditDelivery(io, root)).includes('missing-bundled-runtime'));
 });
 
-test('⑥ 说明还在教用户双击 .bat ⇒ warn，并逐条列出该改什么', () => {
-  const root = makeDelivery({ readme: `怎么打开：双击「${LAUNCHER_BAT_NAME}」\r\n` });
-  const findings = auditDelivery(io, root);
-
-  const stale = findings.find((f) => f.id === 'readme-stale');
-  assert.ok(stale, '应报 readme-stale');
-  assert.equal(stale.level, 'warn');
-  assert.match(stale.detail, /还在教用户双击/);
-  assert.match(stale.detail, /荣盈魔方\.exe/);
-  assert.match(stale.detail, /荣盈魔方-运行数据/);
-  fs.rmSync(root, { recursive: true, force: true });
-});
-
-test('⑦ 同包裹里带着安装包 ⇒ warn（会把用户引向"装到电脑"）', () => {
+test('installer content is rejected instead of being downgraded to a warning', () => {
   const root = makeDelivery({ installer: true });
+  const finding = auditDelivery(io, root).find((entry) => entry.id === 'installer-folder');
+
+  assert.equal(finding?.level, 'error');
+});
+
+test('a launcher inside the replaceable program directory is rejected', () => {
+  const root = makeDelivery({ launcherInsideProgram: true });
+
+  assert.ok(ids(auditDelivery(io, root)).includes('launcher-inside-program'));
+});
+
+test('pre-populated data, workspace, and update directories are rejected', () => {
+  const root = makeDelivery({ prepopulated: true });
   const findings = auditDelivery(io, root);
 
-  assert.equal(findings.find((f) => f.id === 'installer-folder').level, 'warn');
-  fs.rmSync(root, { recursive: true, force: true });
+  assert.ok(ids(findings).includes('prepopulated-data'));
+  assert.ok(ids(findings).includes('prepopulated-workspace'));
+  assert.ok(ids(findings).includes('prepopulated-update'));
+  assert.equal(errors(findings).length, 3);
 });
 
-test('⑧ 缺 exe / 缺 app.asar ⇒ 两条 error（先认清"这是不是交付包"）', () => {
-  const noExe = makeDelivery({ noExe: true });
-  assert.ok(ids(auditDelivery(io, noExe)).includes('missing-exe'));
-  fs.rmSync(noExe, { recursive: true, force: true });
-
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'udisk-empty-'));
-  fs.mkdirSync(path.join(dir, APP_DIR_NAME), { recursive: true });
-  const findings = auditDelivery(io, dir);
-  assert.ok(ids(findings).includes('missing-asar'));
-  assert.ok(!ids(findings).includes('stale-build'), '读不到 asar 时不许下"构建太老"的结论');
-  fs.rmSync(dir, { recursive: true, force: true });
-});
-
-test('⑨ 指纹被转义成 \\uXXXX（换了打包器）也认', () => {
-  const root = makeDelivery({ escapedBuild: true });
-  assert.ok(!ids(auditDelivery(io, root)).includes('stale-build'));
-  fs.rmSync(root, { recursive: true, force: true });
-});
-
-test('⑩ bufferHasString：两个方向都试过（原文 / 转义、大写 / 小写）', () => {
-  assert.equal(bufferHasString(Buffer.from('前缀荣盈魔方已经在运行后缀'), INSTANCE_BUSY_TITLE), true);
-  assert.equal(bufferHasString(Buffer.from('const a = "\\u8363\\u76c8\\u9b54\\u65b9";'), '荣盈魔方'), true);
-  assert.equal(bufferHasString(Buffer.from('const a = "\\u8363\\u76C8\\u9B54\\u65B9";'), '荣盈魔方'), true);
-  assert.equal(bufferHasString(Buffer.from('什么都没写'), INSTANCE_BUSY_TITLE), false);
-  assert.equal(bufferHasString(null, INSTANCE_BUSY_TITLE), false);
-});
-
-test('⑪ planFixes 只动"标记了 fix 的那条"，且搬到交付包**外面**（不会被复制进 U 盘）', () => {
-  const root = makeDelivery({ bat: true, installer: true });
-  const findings = auditDelivery(io, root);
-  const actions = planFixes(findings, root, '20260920-1300');
-
-  assert.equal(actions.length, 1);
-  assert.equal(actions[0].from, path.join(root, LAUNCHER_BAT_NAME));
-  assert.equal(actions[0].to, path.join(root, '..', `${REMOVED_DIR_PREFIX}-20260920-1300`, LAUNCHER_BAT_NAME));
-  assert.ok(!ids(findings).includes('installer-folder') || actions.every((a) => !a.from.includes('装到电脑')));
-  fs.rmSync(root, { recursive: true, force: true });
-});
-
-test('⑫ 说明体检本身：写全了就不报，缺哪条报哪条', () => {
-  assert.deepEqual(
-    readmeProblems(
-      `双击 ${APP_DIR_NAME}\\荣盈魔方.exe，数据在 ${RUN_DATA_DIR_NAME}\\；插在同一个口上别换（换了盘符就变了）`,
-    ),
-    [],
-  );
-  // 旧 .bat 入口 + 没点名 exe + 没写数据落盘 + 没提醒盘符 = 4 条
-  assert.equal(readmeProblems('双击这里启动.bat').length, 4);
-});
-
-/**
- * ⭐ 2026-09-20 T-a28 同族：**「盘符不能变」必须是说明里的一句话**（不是我们心里的默契）。
- *
- * 机制（第三/四轮读随包运行时读出来的）：记进配置的 `workspacePath` 是**绝对路径**，
- * 而随包运行时那侧的链接（`plugin-skills\*`、managed npm 里指向运行时的 link）记的也是
- * **绝对目标** ⇒ 换个 USB 口/换台机器让盘符一变，这些串就集体指空，而网关**只在"检查点过期"
- * 时**才修（普通重启不修）。⇒ 至少要让用户知道"别换"。
- */
-test('⑫b 说明里没提醒「盘符不能变」⇒ 报出来（T-a28 的机制）', () => {
-  const without = `双击 ${APP_DIR_NAME}\\荣盈魔方.exe，数据在 ${RUN_DATA_DIR_NAME}\\`;
-  assert.ok(
-    readmeProblems(without).some((p) => p.includes('盘符')),
-    '缺这条提醒时必须报出来',
+test('assemble CLI copies only launcher, program, and instructions into an empty output', () => {
+  const source = makeDelivery();
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), 'udisk-assembled-'));
+  roots.push(out);
+  const result = spawnSync(
+    process.execPath,
+    [
+      path.join(repositoryRoot, 'scripts', 'assemble-udisk-delivery.mjs'),
+      '--app-dir',
+      path.join(source, APP_DIR_NAME),
+      '--launcher',
+      path.join(source, LAUNCHER_EXE_NAME),
+      '--out',
+      out,
+    ],
+    { encoding: 'utf8' },
   );
 
-  const withCaution = `${without}。请一直插在同一个 USB 口上：盘符一变，程序和助手的路径就对不上了`;
-  assert.deepEqual(readmeProblems(withCaution), []);
-});
-
-test('⑬ 版本号从交付夹名字里取（取不到就说取不到，不许编）', () => {
-  assert.equal(versionFromFolderName('荣盈魔方U盘交付-0.0.24'), '0.0.24');
-  assert.equal(versionFromFolderName('荣盈魔方U盘交付'), null);
-});
-
-// ───────────────────────── 漂移守卫（本文件最值钱的四条） ─────────────────────────
-
-function readRepoFile(rel) {
-  return fs.readFileSync(path.join(ROOT, rel), 'utf8');
-}
-
-test('⑭ 数据目录名与 portable-app-data.ts 一致（否则说明与机检都在念错的路径）', () => {
-  const src = readRepoFile('packages/desktop/src/main/runtime/portable-app-data.ts');
-  assert.match(src, new RegExp(`PORTABLE_APP_DATA_DIR_NAME\\s*=\\s*'${RUN_DATA_DIR_NAME}'`));
-});
-
-test('⑮ 认盘 marker 名与 locate.ts 一致', () => {
-  const src = readRepoFile('packages/desktop/src/main/runtime/locate.ts');
-  assert.match(src, new RegExp(`RUNTIME_MANIFEST_FILE\\s*=\\s*'${RUNTIME_MANIFEST_NAME}'`));
-});
-
-test('⑯ "自解释"指纹在 instance-guard.ts 里真的存在（否则闸门会冤枉所有新构建）', () => {
-  const src = readRepoFile('packages/desktop/src/main/runtime/instance-guard.ts');
-  assert.ok(src.includes(`'${INSTANCE_BUSY_TITLE}'`), `instance-guard.ts 里找不到 '${INSTANCE_BUSY_TITLE}'`);
-});
-
-test('⑰ .bat 名字与交付包里那个一致（改名了要连说明一起改）', () => {
-  assert.equal(LAUNCHER_BAT_NAME, '①双击这里启动.bat');
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  assert.deepEqual(fs.readdirSync(out).sort(), [APP_DIR_NAME, LAUNCHER_EXE_NAME, README_NAME].sort());
+  assert.equal(fs.existsSync(path.join(out, RUN_DATA_DIR_NAME)), false);
+  assert.equal(fs.existsSync(path.join(out, WORKSPACE_DIR_NAME)), false);
+  assert.equal(fs.existsSync(path.join(out, UPDATE_DIR_NAME)), false);
+  assert.deepEqual(auditDelivery(io, out), []);
 });

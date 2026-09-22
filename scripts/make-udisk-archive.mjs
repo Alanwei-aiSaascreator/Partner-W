@@ -38,7 +38,7 @@ import {
   PATH_LENGTH_BUDGET,
   pickTool,
 } from './lib/udisk-archive.mjs';
-import { auditDelivery, LAUNCHER_BAT_NAME, versionFromFolderName } from './lib/udisk-delivery.mjs';
+import { auditDelivery, LAUNCHER_EXE_NAME, versionFromFolderName } from './lib/udisk-delivery.mjs';
 
 const WIN_TAR = 'C:\\Windows\\System32\\tar.exe';
 const WIN_7Z = 'C:\\Program Files\\7-Zip\\7z.exe';
@@ -54,6 +54,18 @@ const USAGE = [
 const io = {
   exists: (p) => fs.existsSync(p),
   listNames: (dir) => fs.readdirSync(dir),
+  walkNames: (root) => {
+    const names = [];
+    const walk = (directory, prefix) => {
+      for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+        const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
+        names.push(relative);
+        if (entry.isDirectory() && !entry.isSymbolicLink()) walk(path.join(directory, entry.name), relative);
+      }
+    };
+    walk(root, '');
+    return names;
+  },
   readFile: (p) => {
     try {
       return fs.readFileSync(p);
@@ -257,16 +269,8 @@ function main(argv) {
   console.log('\n怎么用它铺 U 盘：');
   console.log(` 1) 把 ${path.basename(out)} 发给客户 / 拷到盘里；`);
   console.log(' 2) 客户在 **U 盘根目录** 解压（右键 → 7-Zip → 解压到当前文件夹）');
-  console.log('    → 得到 E:\\荣盈魔方\\ 与 E:\\使用说明.txt（与老交付包同一形态）；');
-  if (contents.includes(LAUNCHER_BAT_NAME)) {
-    // ⚠️ 别在这里无脑写"双击 exe"：老构建抢不到单实例锁时是**静默退出**，
-    //    那样教用户等于教他去撞"双击了没反应"。带 .bat 的包就让用户点 .bat。
-    console.log(` 3) 这一版**还带 ${LAUNCHER_BAT_NAME}**（构建还不自解释，上面已提醒）`);
-    console.log('    ⇒ 告诉客户**双击 ①双击这里启动.bat**；等下一版带上新启动行为、把 .bat 去掉之后，');
-    console.log('      才是双击 E:\\荣盈魔方\\荣盈魔方.exe。');
-  } else {
-    console.log(' 3) 双击 E:\\荣盈魔方\\荣盈魔方.exe 就能用（这个包不带 .bat 了）。');
-  }
+  console.log(`    → 得到 E:\\${LAUNCHER_EXE_NAME}、E:\\荣盈魔方\\ 与 E:\\使用说明.txt；`);
+  console.log(` 3) 双击 E:\\${LAUNCHER_EXE_NAME}。不要直接启动程序目录里的 exe。`);
   console.log('\n好多个 U 盘（自己铺盘时）：在资源管理器里整目录复制，或用');
   console.log('   robocopy "<母盘盘符>:\\" "<目标盘符>:\\" /E /XJ /MT:32');
   console.log('   ⚠️ /XJ 别省（跳过 junction）；⚠️ 别把 荣盈魔方-运行数据\\ 一起复制 —— 那是"这台机器跑过"的数据。');

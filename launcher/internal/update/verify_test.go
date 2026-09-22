@@ -287,6 +287,46 @@ func TestVerifyProgramTreeAcceptsTheExactTree(t *testing.T) {
 	}
 }
 
+func TestExternalReleaseFixtureEndToEnd(t *testing.T) {
+	root := os.Getenv("MOFANG_PORTABLE_FIXTURE_ROOT")
+	if root == "" {
+		root = fixtureRoot
+	}
+	publicKeyText, err := os.ReadFile(filepath.Join(root, fixtureKey))
+	if err != nil {
+		t.Fatalf("read external fixture key: %v", err)
+	}
+	publicKeyDER, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(publicKeyText)))
+	if err != nil {
+		t.Fatalf("decode external fixture key: %v", err)
+	}
+	parsedKey, err := x509.ParsePKIXPublicKey(publicKeyDER)
+	if err != nil {
+		t.Fatalf("parse external fixture key: %v", err)
+	}
+	publicKey, ok := parsedKey.(ed25519.PublicKey)
+	if !ok {
+		t.Fatal("external fixture key is not Ed25519")
+	}
+	manifest, err := ReadSignedManifest(filepath.Join(root, fixtureManifest))
+	if err != nil {
+		t.Fatalf("read external signed manifest: %v", err)
+	}
+	files, err := ReadFileManifest(filepath.Join(root, fixtureFiles))
+	if err != nil {
+		t.Fatalf("read external file manifest: %v", err)
+	}
+	if err := VerifySignedManifest(manifest, publicKey); err != nil {
+		t.Fatalf("verify external signature: %v", err)
+	}
+	if err := VerifyFileManifestHash(manifest, files); err != nil {
+		t.Fatalf("verify external file manifest hash: %v", err)
+	}
+	if err := VerifyProgramTree(filepath.Join(root, fixtureProgram), files); err != nil {
+		t.Fatalf("verify external program tree: %v", err)
+	}
+}
+
 func TestVerifyProgramTreeRejectsExtraFiles(t *testing.T) {
 	files := readFixtureFiles(t)
 	root := stagedProgramTree(t, files)

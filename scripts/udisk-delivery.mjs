@@ -22,6 +22,18 @@ import { auditDelivery, planFixes, versionFromFolderName } from './lib/udisk-del
 const io = {
   exists: (p) => fs.existsSync(p),
   listNames: (dir) => fs.readdirSync(dir),
+  walkNames: (root) => {
+    const names = [];
+    const walk = (directory, prefix) => {
+      for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+        const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
+        names.push(relative);
+        if (entry.isDirectory() && !entry.isSymbolicLink()) walk(path.join(directory, entry.name), relative);
+      }
+    };
+    walk(root, '');
+    return names;
+  },
   readFile: (p) => {
     try {
       return fs.readFileSync(p);
@@ -53,7 +65,7 @@ function report(root, findings, { afterFix } = {}) {
   console.log('');
 
   if (findings.length === 0) {
-    console.log('✅ 这份交付包可以直接发：双击 荣盈魔方\\荣盈魔方.exe 就能用，不需要任何启动器。');
+    console.log('✅ 这份交付包通过机检：用户入口是盘根的 荣盈魔方启动器.exe。');
     return 0;
   }
 

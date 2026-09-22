@@ -23,7 +23,7 @@ import {
   PATH_LENGTH_BUDGET,
   pickTool,
 } from './udisk-archive.mjs';
-import { INSTANCE_BUSY_TITLE, RUNTIME_MANIFEST_NAME } from './udisk-delivery.mjs';
+import { LAUNCHER_EXE_NAME, RUNTIME_MANIFEST_NAME } from './udisk-delivery.mjs';
 
 const WIN_TAR = 'C:\\Windows\\System32\\tar.exe';
 const WIN_7Z = 'C:\\Program Files\\7-Zip\\7z.exe';
@@ -41,12 +41,14 @@ test('① 跑过的交付夹：运行数据目录（任意层级）一律命中'
     '使用说明.txt',
     '荣盈魔方-运行数据/runtime/deployed/x/y.js',
     '荣盈魔方工作区/note.md',
+    '.荣盈魔方更新/update-state.json',
     '荣盈魔方/resources/logs/debug-1.ndjson',
   ]);
 
-  assert.equal(hits.length, 3);
+  assert.equal(hits.length, 4);
   assert.ok(hits.some((h) => h.startsWith('荣盈魔方-运行数据/')));
   assert.ok(hits.some((h) => h.startsWith('荣盈魔方工作区/')));
+  assert.ok(hits.some((h) => h.startsWith('.荣盈魔方更新/')));
   assert.ok(hits.some((h) => h.includes('/logs/')));
 });
 
@@ -63,6 +65,7 @@ test('② 凭据文件（任意层级、含根层）都命中 —— 这一条�
 test('③ 纯净交付包的形状 ⇒ 一个都不命中（不误伤）', () => {
   assert.deepEqual(
     findSensitiveEntries([
+      '荣盈魔方启动器.exe',
       '荣盈魔方/荣盈魔方.exe',
       '荣盈魔方/resources/app.asar',
       '荣盈魔方/resources/runtime/openclaw-runtime-manifest.json',
@@ -129,6 +132,7 @@ test('⑧ 真跑一次（压缩 → 解压 → 对条目与字节）；找不到
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'udisk-arch-'));
   const dir = path.join(base, '交付夹');
   fs.mkdirSync(path.join(dir, '荣盈魔方', 'resources'), { recursive: true });
+  fs.writeFileSync(path.join(dir, LAUNCHER_EXE_NAME), 'launcher-bytes');
   fs.writeFileSync(path.join(dir, '荣盈魔方', '荣盈魔方.exe'), 'exe-bytes');
   fs.writeFileSync(path.join(dir, '荣盈魔方', 'resources', 'app.asar'), 'asar-bytes');
   fs.writeFileSync(path.join(dir, '使用说明.txt'), '双击 荣盈魔方\\荣盈魔方.exe');
@@ -195,12 +199,13 @@ test('⑩ 整条命令行走一遍（体检 → 打包 → 解出来对账）；
     fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
     fs.writeFileSync(path.join(dir, rel), data);
   };
+  write(LAUNCHER_EXE_NAME, 'launcher');
   write(path.join('荣盈魔方', '荣盈魔方.exe'), 'exe');
-  write(path.join('荣盈魔方', 'resources', 'app.asar'), `const t = "${INSTANCE_BUSY_TITLE}";`);
+  write(path.join('荣盈魔方', 'resources', 'app.asar'), 'asar');
   write(path.join('荣盈魔方', 'resources', 'runtime', RUNTIME_MANIFEST_NAME), '{}');
   write(
     '使用说明.txt',
-    `双击 荣盈魔方\\荣盈魔方.exe；数据落在盘上的 荣盈魔方-运行数据\\ 里；` +
+    `双击 ${LAUNCHER_EXE_NAME}；数据落在盘上的 荣盈魔方-运行数据\\ 里；` +
       '请一直插在同一个 USB 口上（盘符变了就找不到数据）\r\n',
   );
 
