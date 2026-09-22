@@ -3443,14 +3443,16 @@ export async function verifyPublicArtifacts(input) {
   };
 }
 
-export async function runCommit(input) {
+function createPublishRun(input) {
   const stages = PUBLISH_STAGES.map((stage) => ({ stage, status: 'pending' }));
   const runid = input.runid;
-  let acquisitionConfirmed = false;
-  let acquiredLockState = null;
-  let planHash = 'uncomputed';
-  let owner = null;
-  let ownerRecord = null;
+  const state = {
+    acquisitionConfirmed: false,
+    acquiredLockState: null,
+    planHash: 'uncomputed',
+    owner: null,
+    ownerRecord: null,
+  };
 
   const atValue = () => (input.now === undefined ? input.startedAt : input.now()) ?? null;
   const baseOf = () => ({ runid, operator: input.operator ?? null, at: atValue() });
@@ -3465,20 +3467,34 @@ export async function runCommit(input) {
     });
   };
 
-  const finish = (outcome, reason, lockState) => ({ outcome, reason, lockState, stages, runid, planHash });
+  const finish = (outcome, reason, lockState) => ({
+    outcome,
+    reason,
+    lockState,
+    stages,
+    runid,
+    planHash: state.planHash,
+  });
 
   const recordOutcome = (outcome, reason, evidence) => {
     assertNoReservedEvidenceKeys(evidence);
     appendAuditStage({
       auditOut: input.auditOut,
       repositoryRoot: input.repositoryRoot,
-      entry: { ...(evidence ?? {}), stage: outcome, reason, ...baseOf(), planHash },
+      entry: { ...(evidence ?? {}), stage: outcome, reason, ...baseOf(), planHash: state.planHash },
     });
   };
 
   const retainAndFinish = (outcome, reason) => {
-    const disposition = resolveLockDisposition({ acquisitionConfirmed, owner, runid, planHash, safeToExit: false });
-    const lockState = owner === null && acquiredLockState !== null ? acquiredLockState : disposition.state;
+    const disposition = resolveLockDisposition({
+      acquisitionConfirmed: state.acquisitionConfirmed,
+      owner: state.owner,
+      runid,
+      planHash: state.planHash,
+      safeToExit: false,
+    });
+    const lockState =
+      state.owner === null && state.acquiredLockState !== null ? state.acquiredLockState : disposition.state;
     stages.find((entry) => entry.stage === 'unlock').status = 'retained';
     recordOutcome(outcome, reason);
     appendAuditStage({
@@ -3506,15 +3522,22 @@ export async function runCommit(input) {
       channel: input.channel,
       transport: input.transport,
       runid,
-      planHash,
+      planHash: state.planHash,
       host: input.host,
       knownHostsPath: input.knownHostsPath,
-      acquisitionConfirmed,
+      acquisitionConfirmed: state.acquisitionConfirmed,
       safeToExit: true,
     });
     reportUnlock(disposition);
     return finish('fail', reason, disposition.state);
   };
+
+  return { state, runid, baseOf, audit, finish, recordOutcome, retainAndFinish, releaseAndFinish, reportUnlock };
+}
+
+export async function runCommit(input) {
+  const { state, runid, baseOf, audit, finish, recordOutcome, retainAndFinish, releaseAndFinish, reportUnlock } =
+    createPublishRun(input);
 
   try {
     appendAuditStage({
@@ -3542,21 +3565,21 @@ export async function runCommit(input) {
       publicKeyBase64: input.publicKeyBase64,
       verifySignature: input.verifySignature,
     });
-    planHash = planHashOf({
+    state.planHash = planHashOf({
       channel: input.channel,
       version: input.version,
       packageSha256: local.packageSha256,
       fileManifestSha256: local.fileManifestSha256,
       manifestSha256: local.manifestSha256,
     });
-    ownerRecord = {
+    state.ownerRecord = {
       runid,
       operator: input.operator,
       startedAt: input.startedAt,
-      planHash,
+      planHash: state.planHash,
       machine: input.machine,
     };
-    assertCompleteOwnerRecord(ownerRecord);
+    assertCompleteOwnerRecord(state.ownerRecord);
   } catch (error) {
     audit('pre-verify', 'fail', error.message);
     recordOutcome('fail', error.message);
@@ -3575,7 +3598,7 @@ export async function runCommit(input) {
   audit('pre-verify', 'done', undefined, localEvidence);
 
   const versionRoot = versionRootOf(input.channel, input.version);
-  const stagingRoot = stagingRootOf(input.channel, input.version, planHash);
+  const stagingRoot = stagingRootOf(input.channel, input.version, state.planHash);
   const expectedEntries = [
     { name: PORTABLE_PACKAGE_NAME, size: local.packageSize, sha256: local.packageSha256 },
     { name: PORTABLE_FILE_MANIFEST_NAME, size: local.fileManifestSize, sha256: local.fileManifestSha256 },
@@ -3633,7 +3656,7 @@ export async function runCommit(input) {
   const lock = await acquireChannelLock({
     channel: input.channel,
     transport: input.transport,
-    owner: ownerRecord,
+    owner: state.ownerRecord,
     host: input.host,
     knownHostsPath: input.knownHostsPath,
   });
@@ -3644,9 +3667,9 @@ export async function runCommit(input) {
     recordOutcome(outcome, lock.reason);
     return finish(outcome, lock.reason, lock.state);
   }
-  acquisitionConfirmed = true;
-  acquiredLockState = lock.state;
-  owner = lock.owner;
+  state.acquisitionConfirmed = true;
+  state.acquiredLockState = lock.state;
+  state.owner = lock.owner;
   if (lock.incident === true) {
     audit('lock', 'incident', lock.reason);
     return retainAndFinish('incident', lock.reason);
@@ -3659,12 +3682,12 @@ export async function runCommit(input) {
     return retainAndFinish('incident', `the lock owner record could not be re-read: ${reRead.cause}`);
   }
   const reReadOwner = reRead.record;
-  if (reReadOwner !== null && (reReadOwner.runid !== runid || reReadOwner.planHash !== planHash)) {
-    owner = reReadOwner;
+  if (reReadOwner !== null && (reReadOwner.runid !== runid || reReadOwner.planHash !== state.planHash)) {
+    state.owner = reReadOwner;
     audit('re-verify', 'incident', 'the lock owner changed while this run was taking it');
     return retainAndFinish('incident', 'the lock owner changed while this run was taking it');
   }
-  owner = reReadOwner ?? owner;
+  state.owner = reReadOwner ?? state.owner;
   const baselineRead = await readRemoteFileSha(input, `${UPDATE_ROOT}/${input.channel}/${PORTABLE_MANIFEST_NAME}`);
   if (baselineRead.ok !== true) {
     audit('re-verify', 'incident', 'the manifest digest that the CAS baseline needs could not be read');
@@ -3836,10 +3859,10 @@ export async function runCommit(input) {
     channel: input.channel,
     transport: input.transport,
     runid,
-    planHash,
+    planHash: state.planHash,
     host: input.host,
     knownHostsPath: input.knownHostsPath,
-    acquisitionConfirmed,
+    acquisitionConfirmed: state.acquisitionConfirmed,
     safeToExit: true,
   });
   reportUnlock(disposition);
@@ -4416,6 +4439,11 @@ git commit -m "feat(feed): publish the manifest over sftp and verify it on the p
 **约束（与文件地图的关系）**：**如果本任务真的拆了模块**（新增 `feed-publish-lock.mjs` / `feed-publish-audit.mjs` 等），**必须在同一个提交里改"文件地图"一节**（新增行、职责、动作），否则地图会变成一份描述旧形状的历史文件。**只抽函数、不拆文件**则不需要改地图，但要在本节记一句"没拆文件"。
 
 **纪律照旧**：抽出前后 `node --test scripts/lib/feed-publish.test.mjs` 必须 `fail 0` 且**条数不变**（这一步是纯搬运 ⇒ **不负变异**，但若在搬运中动了任何判据，那条判据必须按本计划的通用纪律补一条按名变异）。**⚠️ 本刀的围栏（第五节那八对）会因为本步而再次失效** —— 抽完之后必须重跑第五节的同步 + 验证（按内容定位，别按行号）。
+
+**本 Step 0 的实际执行结果（2026-09-23，实测读数；实施者回报，取代上面三条"理由"里被证据推翻的部分）**：**第 1 项做了；第 2 项（锁后尾段抽取）没做，附证据；也没有拆文件** ⇒ 按上一条约束，**"文件地图"一节一个字都没改**。
+
+- **第 1 项（做了）**：新增模块私有 `createPublishRun(input)`（`feed-publish.mjs:706`，**未导出** ⇒ 不新增公开面、不需要单独的钉子用例），把五个散落的 `let` 收成一个 `state` 对象，返回 `{state, runid, baseOf, audit, finish, recordOutcome, retainAndFinish, releaseAndFinish, reportUnlock}`；`runCommit` 变成"工厂 + 解构 + 原来那段流程"。**纯搬运的三条读数**：① 抽出前后都是 `ℹ tests 151 / ℹ pass 151 / ℹ fail 0`；② **151 个测试名逐条比过、一个没改**（`diff` 空）；③ 改动量 **49 增 / 26 删**，`git diff` 里没有一处判据变化（五个 `let` 的所有引用点只是多了 `state.` 前缀，`baseOf` 因为 `open` 条目在 `runCommit` 里被用到而一并暴露）。**搬运中**曾漏改五处引用（`baseOf` / `stagingRootOf` 的 `planHash` / `acquireChannelLock` 的 `owner` / `re-verify` 的 `planHash` / 收尾 `releaseChannelLock` 的两个字段），**被套件按名抓到**（那条中间态的实测读数是 `ℹ tests 151 | ℹ pass 94 | ℹ fail 57`，首位报错为 `baseOf is not defined`）—— 记在这里是因为它说明"纯搬运"并不等于"套件一定绿"，**中间态必须真跑，`node --check` 与 `prettier --check` 都会放它过去**。
+- **第 2 项（没做，附证据）**：**锁后尾段没有被抽出来，因为本任务的实现里没有第二个复用者。** 三条实测证据：① 本任务 Step 1/Step 3 规定的代码（`buildStableManifestInput`）是一个**纯取值构造函数**（15 行、一个 `Object.hasOwn` 守卫、零 I/O、零 transport、**不调用 `runCommit`**），本任务的两条规定用例也只调它 —— 也就是说"重签 = 复用 CAS + 翻转 + 收口"这句**与本任务被规定的代码不符**（**这是本计划的一处自相矛盾，已记入 Task 5 账本**）；② `stable` 复用整条十三步序列靠的是 **`runCommit` 本来就是按 `input.channel` 参数化的**（Task 8 的 runbook 原文就是"用同一上传器 `--channel stable` 执行同样的十三步"），所以抽出来的尾段会有**恰好一个调用点**，那是重命名而不是复用；③ 规格 §6.10 要求 `stable` 的 manifest **单独离线签名** —— 那是操作员动作，不是本模块要跑的第四份序列。**将来 Task 6/7 若要抽，判据应当是"第二个调用点真的出现"，而不是这条理由。**
 
 - [ ] **Step 1: 写失败的测试**
 

@@ -703,14 +703,16 @@ export async function verifyPublicArtifacts(input) {
   };
 }
 
-export async function runCommit(input) {
+function createPublishRun(input) {
   const stages = PUBLISH_STAGES.map((stage) => ({ stage, status: 'pending' }));
   const runid = input.runid;
-  let acquisitionConfirmed = false;
-  let acquiredLockState = null;
-  let planHash = 'uncomputed';
-  let owner = null;
-  let ownerRecord = null;
+  const state = {
+    acquisitionConfirmed: false,
+    acquiredLockState: null,
+    planHash: 'uncomputed',
+    owner: null,
+    ownerRecord: null,
+  };
 
   const atValue = () => (input.now === undefined ? input.startedAt : input.now()) ?? null;
   const baseOf = () => ({ runid, operator: input.operator ?? null, at: atValue() });
@@ -725,20 +727,34 @@ export async function runCommit(input) {
     });
   };
 
-  const finish = (outcome, reason, lockState) => ({ outcome, reason, lockState, stages, runid, planHash });
+  const finish = (outcome, reason, lockState) => ({
+    outcome,
+    reason,
+    lockState,
+    stages,
+    runid,
+    planHash: state.planHash,
+  });
 
   const recordOutcome = (outcome, reason, evidence) => {
     assertNoReservedEvidenceKeys(evidence);
     appendAuditStage({
       auditOut: input.auditOut,
       repositoryRoot: input.repositoryRoot,
-      entry: { ...(evidence ?? {}), stage: outcome, reason, ...baseOf(), planHash },
+      entry: { ...(evidence ?? {}), stage: outcome, reason, ...baseOf(), planHash: state.planHash },
     });
   };
 
   const retainAndFinish = (outcome, reason) => {
-    const disposition = resolveLockDisposition({ acquisitionConfirmed, owner, runid, planHash, safeToExit: false });
-    const lockState = owner === null && acquiredLockState !== null ? acquiredLockState : disposition.state;
+    const disposition = resolveLockDisposition({
+      acquisitionConfirmed: state.acquisitionConfirmed,
+      owner: state.owner,
+      runid,
+      planHash: state.planHash,
+      safeToExit: false,
+    });
+    const lockState =
+      state.owner === null && state.acquiredLockState !== null ? state.acquiredLockState : disposition.state;
     stages.find((entry) => entry.stage === 'unlock').status = 'retained';
     recordOutcome(outcome, reason);
     appendAuditStage({
@@ -766,15 +782,22 @@ export async function runCommit(input) {
       channel: input.channel,
       transport: input.transport,
       runid,
-      planHash,
+      planHash: state.planHash,
       host: input.host,
       knownHostsPath: input.knownHostsPath,
-      acquisitionConfirmed,
+      acquisitionConfirmed: state.acquisitionConfirmed,
       safeToExit: true,
     });
     reportUnlock(disposition);
     return finish('fail', reason, disposition.state);
   };
+
+  return { state, runid, baseOf, audit, finish, recordOutcome, retainAndFinish, releaseAndFinish, reportUnlock };
+}
+
+export async function runCommit(input) {
+  const { state, runid, baseOf, audit, finish, recordOutcome, retainAndFinish, releaseAndFinish, reportUnlock } =
+    createPublishRun(input);
 
   try {
     appendAuditStage({
@@ -802,21 +825,21 @@ export async function runCommit(input) {
       publicKeyBase64: input.publicKeyBase64,
       verifySignature: input.verifySignature,
     });
-    planHash = planHashOf({
+    state.planHash = planHashOf({
       channel: input.channel,
       version: input.version,
       packageSha256: local.packageSha256,
       fileManifestSha256: local.fileManifestSha256,
       manifestSha256: local.manifestSha256,
     });
-    ownerRecord = {
+    state.ownerRecord = {
       runid,
       operator: input.operator,
       startedAt: input.startedAt,
-      planHash,
+      planHash: state.planHash,
       machine: input.machine,
     };
-    assertCompleteOwnerRecord(ownerRecord);
+    assertCompleteOwnerRecord(state.ownerRecord);
   } catch (error) {
     audit('pre-verify', 'fail', error.message);
     recordOutcome('fail', error.message);
@@ -835,7 +858,7 @@ export async function runCommit(input) {
   audit('pre-verify', 'done', undefined, localEvidence);
 
   const versionRoot = versionRootOf(input.channel, input.version);
-  const stagingRoot = stagingRootOf(input.channel, input.version, planHash);
+  const stagingRoot = stagingRootOf(input.channel, input.version, state.planHash);
   const expectedEntries = [
     { name: PORTABLE_PACKAGE_NAME, size: local.packageSize, sha256: local.packageSha256 },
     { name: PORTABLE_FILE_MANIFEST_NAME, size: local.fileManifestSize, sha256: local.fileManifestSha256 },
@@ -893,7 +916,7 @@ export async function runCommit(input) {
   const lock = await acquireChannelLock({
     channel: input.channel,
     transport: input.transport,
-    owner: ownerRecord,
+    owner: state.ownerRecord,
     host: input.host,
     knownHostsPath: input.knownHostsPath,
   });
@@ -904,9 +927,9 @@ export async function runCommit(input) {
     recordOutcome(outcome, lock.reason);
     return finish(outcome, lock.reason, lock.state);
   }
-  acquisitionConfirmed = true;
-  acquiredLockState = lock.state;
-  owner = lock.owner;
+  state.acquisitionConfirmed = true;
+  state.acquiredLockState = lock.state;
+  state.owner = lock.owner;
   if (lock.incident === true) {
     audit('lock', 'incident', lock.reason);
     return retainAndFinish('incident', lock.reason);
@@ -919,12 +942,12 @@ export async function runCommit(input) {
     return retainAndFinish('incident', `the lock owner record could not be re-read: ${reRead.cause}`);
   }
   const reReadOwner = reRead.record;
-  if (reReadOwner !== null && (reReadOwner.runid !== runid || reReadOwner.planHash !== planHash)) {
-    owner = reReadOwner;
+  if (reReadOwner !== null && (reReadOwner.runid !== runid || reReadOwner.planHash !== state.planHash)) {
+    state.owner = reReadOwner;
     audit('re-verify', 'incident', 'the lock owner changed while this run was taking it');
     return retainAndFinish('incident', 'the lock owner changed while this run was taking it');
   }
-  owner = reReadOwner ?? owner;
+  state.owner = reReadOwner ?? state.owner;
   const baselineRead = await readRemoteFileSha(input, `${UPDATE_ROOT}/${input.channel}/${PORTABLE_MANIFEST_NAME}`);
   if (baselineRead.ok !== true) {
     audit('re-verify', 'incident', 'the manifest digest that the CAS baseline needs could not be read');
@@ -1096,10 +1119,10 @@ export async function runCommit(input) {
     channel: input.channel,
     transport: input.transport,
     runid,
-    planHash,
+    planHash: state.planHash,
     host: input.host,
     knownHostsPath: input.knownHostsPath,
-    acquisitionConfirmed,
+    acquisitionConfirmed: state.acquisitionConfirmed,
     safeToExit: true,
   });
   reportUnlock(disposition);
