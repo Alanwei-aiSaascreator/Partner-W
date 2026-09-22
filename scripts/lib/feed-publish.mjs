@@ -1129,3 +1129,19 @@ export async function runCommit(input) {
   if (disposition.release !== true) return finish('incident', disposition.reason, disposition.state);
   return finish('done', 'published', disposition.state);
 }
+
+export function buildStableManifestInput(input) {
+  if (Object.hasOwn(input, 'manifestBytes')) {
+    throw new FeedPublishError('the stable manifest must be signed on its own, never copied from the internal channel');
+  }
+  return {
+    version: input.version,
+    minLauncherVersion: input.minLauncherVersion,
+    channel: 'stable',
+    baseUrl: PUBLIC_BASE_URL,
+    fileManifest: input.fileManifest,
+    fileManifestBytes: input.fileManifestBytes,
+    packagePath: input.packagePath,
+    publishedAt: input.publishedAt,
+  };
+}

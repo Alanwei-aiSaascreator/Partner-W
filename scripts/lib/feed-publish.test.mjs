@@ -2742,3 +2742,63 @@ test('the audit evidence refuses a key that would override the entry it is attac
   assert.doesNotThrow(() => assertNoReservedEvidenceKeys(undefined));
   assert.doesNotThrow(() => assertNoReservedEvidenceKeys({ manifestSha256: 'x', remoteTempSha256: 'y' }));
 });
+
+import { buildStableManifestInput } from './feed-publish.mjs';
+
+test('the stable manifest is re-signed with the stable channel and the stable url', () => {
+  const paths = writeArtifacts();
+  const input = buildStableManifestInput({
+    version: '1.2.3',
+    minLauncherVersion: '1.0.0',
+    fileManifest: FILE_MANIFEST,
+    fileManifestBytes: FILE_MANIFEST_BYTES,
+    packagePath: paths.packagePath,
+    publishedAt: '2026-09-22T00:00:00.000Z',
+  });
+  assert.equal(input.channel, 'stable');
+  assert.equal(input.baseUrl, PUBLIC_BASE_URL);
+  assert.equal(input.version, '1.2.3');
+  assert.equal(input.fileManifestBytes, FILE_MANIFEST_BYTES);
+  assert.equal(input.packagePath, paths.packagePath);
+});
+
+test('the stable input refuses to reuse an internal manifest', () => {
+  assert.throws(
+    () =>
+      buildStableManifestInput({
+        version: '1.2.3',
+        minLauncherVersion: '1.0.0',
+        fileManifest: FILE_MANIFEST,
+        fileManifestBytes: FILE_MANIFEST_BYTES,
+        packagePath: '/tmp/portable.zip',
+        publishedAt: '2026-09-22T00:00:00.000Z',
+        manifestBytes: Buffer.from('reuse-me'),
+      }),
+    /must be signed on its own/u,
+  );
+});
+
+test('the stable input carries every field it was given instead of a default', () => {
+  const paths = writeArtifacts();
+  for (const arm of [
+    { version: '2.3.4', minLauncherVersion: '9.1.0', publishedAt: '2026-01-02T03:04:05.000Z' },
+    { version: '3.4.5', minLauncherVersion: '9.2.0', publishedAt: '2026-02-03T04:05:06.000Z' },
+  ]) {
+    const fileManifest = { ...FILE_MANIFEST, version: arm.version };
+    const fileManifestBytes = Buffer.from(`stable-files-${arm.version}`, 'utf8');
+    const input = buildStableManifestInput({
+      version: arm.version,
+      minLauncherVersion: arm.minLauncherVersion,
+      fileManifest,
+      fileManifestBytes,
+      packagePath: paths.packagePath,
+      publishedAt: arm.publishedAt,
+    });
+    assert.equal(input.version, arm.version);
+    assert.equal(input.minLauncherVersion, arm.minLauncherVersion);
+    assert.equal(input.publishedAt, arm.publishedAt);
+    assert.deepEqual(input.fileManifest, fileManifest);
+    assert.ok(input.fileManifestBytes.equals(fileManifestBytes));
+    assert.equal(input.packagePath, paths.packagePath);
+  }
+});
