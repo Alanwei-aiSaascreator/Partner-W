@@ -328,6 +328,7 @@ test('the local verification hands the verifier bytes rather than paths', async 
   assert.ok(Buffer.isBuffer(context.manifestBytes));
   assert.ok(Buffer.isBuffer(context.fileManifestBytes));
   assert.ok(context.fileManifestBytes.equals(FILE_MANIFEST_BYTES));
+  assert.ok(context.manifestBytes.equals(readFileSync(paths.manifestPath)));
   assert.equal(context.packagePath, paths.packagePath);
   assert.equal(context.publicKeyBase64, PUBLIC_KEY_BASE64);
 });
@@ -344,9 +345,14 @@ test('a well formed network input keeps its host and resolves the known hosts pa
   assert.equal(parsed.knownHostsPath, resolve('/tmp/known_hosts'));
 });
 
-test('the known hosts guard is insensitive to case on windows', { skip: process.platform !== 'win32' }, () => {
+test('the known hosts guard is insensitive to case on windows', { skip: process.platform !== 'win32' }, (t) => {
+  const root = process.cwd();
+  if (root.toUpperCase() === root) {
+    t.skip('the working directory has no lowercase letters to vary');
+    return;
+  }
   assert.throws(
-    () => assertKnownHostsPath(join(process.cwd(), 'known_hosts').toUpperCase(), process.cwd()),
+    () => assertKnownHostsPath(join(root, 'known_hosts').toUpperCase(), root),
     /must live outside the repository/u,
   );
 });
