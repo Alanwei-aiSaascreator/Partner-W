@@ -130,7 +130,7 @@ const CLI_PUBLIC_KEY_BASE64 = cliKeyPair.publicKey.export({ type: 'spki', format
 const CLI_PACKAGE_BYTES = Buffer.from('portable-zip-bytes', 'utf8');
 const OUTSIDE_KNOWN_HOSTS = resolve(osModule.tmpdir(), 'known_hosts');
 
-async function writeSignedTriple() {
+async function writeSignedTriple({ minLauncherVersion = '1.0.0' } = {}) {
   const root = makeCliRoot();
   const packagePath = join(root, 'portable.zip');
   const fileManifestPath = join(root, 'portable-files.json');
@@ -145,7 +145,7 @@ async function writeSignedTriple() {
     baseUrl: 'https://api.rongyinghudong.com/updates',
     channel: 'internal',
     version: '1.2.3',
-    minLauncherVersion: '1.0.0',
+    minLauncherVersion,
     publishedAt: '2026-09-22T00:00:00.000Z',
     signingKeyPem: cliKeyPair.privateKey.export({ type: 'pkcs8', format: 'pem' }),
     publicKeyBase64: CLI_PUBLIC_KEY_BASE64,
@@ -616,4 +616,119 @@ test('breaking a lock refuses an owner record that does not match the confirmati
     harness.calls.filter((call) => call[0] === 'write.sshRun'),
     [],
   );
+});
+
+function stableArgs(triple, stableOut) {
+  return [
+    '--re-sign-stable',
+    '--channel',
+    'stable',
+    '--version',
+    '1.2.3',
+    '--package',
+    triple.packagePath,
+    '--file-manifest',
+    triple.fileManifestPath,
+    '--manifest',
+    triple.manifestPath,
+    '--stable-out',
+    stableOut,
+  ];
+}
+
+function writeSigningKey(root) {
+  const signingKeyPath = join(root, 'signing-key.pem');
+  fsModule.writeFileSync(signingKeyPath, cliKeyPair.privateKey.export({ type: 'pkcs8', format: 'pem' }));
+  return signingKeyPath;
+}
+
+function withReleaseKeys(signingKeyPath, body) {
+  return withEnvironment('MOFANG_UPDATE_PUBLIC_KEY_B64', CLI_PUBLIC_KEY_BASE64, () =>
+    withEnvironment('MOFANG_UPDATE_SIGNING_KEY_FILE', signingKeyPath, body),
+  );
+}
+
+test('the stable re-sign signs the verified internal bytes for the stable channel and the stable url', async () => {
+  const root = makeCliRoot();
+  const triple = await writeSignedTriple({ minLauncherVersion: '7.8.9' });
+  const stableOut = join(root, 'stable-manifest.json');
+  const result = await withReleaseKeys(writeSigningKey(root), () => captureRun(stableArgs(triple, stableOut)));
+  assert.equal(result.code, 0);
+  const printed = printedObject(result.stdout);
+  assert.equal(printed.mode, 're-sign-stable');
+  assert.equal(printed.channel, 'stable');
+  const emitted = fsModule.readFileSync(stableOut);
+  const fileManifestBytes = fsModule.readFileSync(triple.fileManifestPath);
+  assert.equal(printed.stableManifestSha256, cryptoModule.createHash('sha256').update(emitted).digest('hex'));
+  assert.equal(
+    printed.reusedFileManifestSha256,
+    cryptoModule.createHash('sha256').update(fileManifestBytes).digest('hex'),
+  );
+  assert.equal(printed.reusedPackageSha256, cryptoModule.createHash('sha256').update(CLI_PACKAGE_BYTES).digest('hex'));
+  const verified = await releaseModule.verifyPortableRelease({
+    manifestBytes: emitted,
+    fileManifestBytes,
+    packagePath: triple.packagePath,
+    publicKeyBase64: CLI_PUBLIC_KEY_BASE64,
+  });
+  assert.equal(verified.manifest.channel, 'stable');
+  assert.equal(verified.manifest.packageUrl, 'https://api.rongyinghudong.com/updates/stable/1.2.3/portable.zip');
+  assert.equal(verified.manifest.minLauncherVersion, '7.8.9');
+});
+
+test('the stable re-sign refuses to overwrite the manifest it already wrote and leaves the first one byte identical', async () => {
+  const root = makeCliRoot();
+  const triple = await writeSignedTriple();
+  const stableOut = join(root, 'stable-manifest.json');
+  const signingKeyPath = writeSigningKey(root);
+  const first = await withReleaseKeys(signingKeyPath, () => captureRun(stableArgs(triple, stableOut)));
+  assert.equal(first.code, 0);
+  const firstBytes = fsModule.readFileSync(stableOut);
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 15);
+  const second = await withReleaseKeys(signingKeyPath, () => captureRun(stableArgs(triple, stableOut)));
+  assert.equal(second.code, 1);
+  assert.match(second.stderr, /EEXIST/u);
+  assert.deepEqual(fsModule.readFileSync(stableOut), firstBytes);
+});
+
+test('the stable re-sign refuses to run without the signing key file in the environment', async () => {
+  const root = makeCliRoot();
+  const triple = await writeSignedTriple();
+  const stableOut = join(root, 'stable-manifest.json');
+  const result = await withEnvironment('MOFANG_UPDATE_PUBLIC_KEY_B64', CLI_PUBLIC_KEY_BASE64, () =>
+    captureRun(stableArgs(triple, stableOut)),
+  );
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /MOFANG_UPDATE_SIGNING_KEY_FILE is required to sign the stable manifest offline/u);
+  assert.equal(fsModule.existsSync(stableOut), false);
+});
+
+test('the dry run refuses to run without the three artifact paths and prints no plan', async () => {
+  const result = await captureRun(['--dry-run', '--channel', 'internal', '--version', '1.2.3'], {
+    createTransport: refuseConstruction,
+  });
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /--package, --file-manifest and --manifest are required/u);
+  assert.equal(result.stdout.includes('"plan"'), false);
+});
+
+test('the stable re-sign refuses to run without the three artifact paths', async () => {
+  const stableOut = join(makeCliRoot(), 'stable-manifest.json');
+  const result = await captureRun(
+    ['--re-sign-stable', '--channel', 'stable', '--version', '1.2.3', '--stable-out', stableOut],
+    { createTransport: refuseConstruction },
+  );
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /--package, --file-manifest and --manifest are required/u);
+  assert.equal(fsModule.existsSync(stableOut), false);
+});
+
+test('the commit refuses to run without the three artifact paths', async () => {
+  const auditOut = join(makeCliRoot(), 'audit.jsonl');
+  const result = await captureRun(networkArgs('--commit', ['--audit-out', auditOut]), {
+    createTransport: refuseConstruction,
+  });
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /--package, --file-manifest and --manifest are required/u);
+  assert.equal(fsModule.existsSync(auditOut), false);
 });
