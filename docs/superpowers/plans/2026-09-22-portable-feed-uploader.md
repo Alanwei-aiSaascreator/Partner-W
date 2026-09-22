@@ -4538,6 +4538,61 @@ git add scripts/lib/feed-publish.mjs scripts/lib/feed-publish.test.mjs
 git commit -m "feat(feed): re-sign the manifest for the stable channel"
 ```
 
+### Task 5 账本（2026-09-23，本刀实测）
+
+**这一刀是什么：** Step 0（结构项）+ `internal → stable` 重签的规定六步。**代码提交 2 个**：`e35a60ef`（Step 0：`createPublishRun` 状态对象；模块 + 计划）、`f81cf3f9`（重签：`buildStableManifestInput` + 3 条用例；模块 + 测试）。两个提交后都核对过 `git show HEAD:<file> | sha256sum` **等于**那次提交之前工作区实测的 sha256：`e35a60ef` 的模块 `d8dfe26b…`、`f81cf3f9` 的模块 `1b5c87f6…` / 测试 `83db5d67…` ⇒ `pre-commit`（eslint --fix + prettier --write）**一个字节也没改**。
+
+**一、Step 0 的执行结果**：见 Task 5 正文里"本 Step 0 的实际执行结果"那一段 —— 第 1 项做了（纯搬运，151 → 151，151 个测试名逐条比过），**第 2 项没做并附证据**（本任务被规定的实现里没有第二个复用者），**没拆文件** ⇒ 文件地图一字未改。
+
+**二、套件读数**：`ℹ tests 154 / ℹ pass 154 / ℹ fail 0`（本刀前 **151**，本刀 **+3**：规定的 2 条 + 本刀新增的 1 条）。行数：`feed-publish.mjs` **1147**、`feed-publish.test.mjs` **2804**（`wc -l`）。
+
+**三、规定块的同步（现在是十对）**：本刀**新增两对**、**重同步一对**；全部按**内容**定位（断言区域恰好命中 1 次 + 逐行相等**且连续** + 两侧各是一行围栏）：
+
+| 对                          | 计划围栏    | 计划块内容 | ⇔ 文件切片                                                                                                | 行数          |
+| --------------------------- | ----------- | ---------- | --------------------------------------------------------------------------------------------------------- | ------------- |
+| Task 5 测试块（**新**）     | 4452 / 4487 | 4453–4486  | `feed-publish.test.mjs` **2746–2779**                                                                     | 34            |
+| Task 5 模块块（**新**）     | 4501 / 4517 | 4502–4516  | `feed-publish.mjs` **1133–1147**                                                                          | 15            |
+| Task 4 模块块（**重同步**） | 3195 / 3872 | 3196–3871  | `feed-publish.mjs` **456–1131**                                                                           | 676（原 653） |
+| 其余七对（**未动**）        | —           | —          | `test 1–375`、`mjs 1–150`、`test 377–564`、`mjs 152–209`、`test 566–872`、`mjs 211–454`、`test 1344–2744` | —             |
+
+- **两段规定代码块与文件逐字节相同**（`diff` 输出 `DIFF_EMPTY`，两段都跑过）；**敏感性探针**：把计划侧那 15 行里的 `channel: 'stable',` 扰成 `channel: 'stable ',`（一个字节）⇒ `diff` 报 `8c8` 一处差异；恢复后又是 `DIFF_EMPTY`。
+- **镜像检查器自己的敏感性探针（三条读数，本刀实跑）**：① 未扰动的副本 ⇒ `regionHits=1`、两侧围栏为真 ⇒ `DIFF_EMPTY`；② 把计划块里**一个字符**改掉（`baseOf` ⇒ `baseOf2`）⇒ `regionHits=0` ⇒ `DIFF`；③ 从模块切片**中间删掉一行** ⇒ `regionHits=0` ⇒ `DIFF`（这一条专门证明判据是"连续切片"，不是"每行都能在文件里找到"）。②③ 之后都逐字节恢复、比 sha256 相等。⚠️ **探针第一版是无效的**：它把副本放在 bash 的 `/tmp` 下，而 node 把 `/tmp/...` 解析成 `C:\tmp\...`（**bash 的 `/tmp` ≠ node 的 `/tmp`**）⇒ 读的是别的东西；是**对照组（未扰动副本）先报红**才暴露出来的。
+- ⚠️ **账本数字更正**：本计划前几节写的 `test 1–374` / `mjs 1–148` / `test 376–561` / `mjs 150–202` / `test 563–868` / `mjs 204–442` 是**更早提交**上的读数；本刀按内容重测，实际边界是上表那六个数（各差 1–7 行）。这不是本刀改出来的漂移，是**旧读数没跟着文件长**。
+
+**四、RED 的两条读数（规定 Step 2 的形状有一个缺口）**：规定 Step 2 预期"`buildStableManifestInput` 未定义"。**实测**：追加的 `import` 在 ESM 里被提升 ⇒ 整个测试文件**加载失败**，读数是 `ℹ tests 1 / ℹ pass 0 / ℹ fail 1`，错误文本 `SyntaxError: The requested module './feed-publish.mjs' does not provide an export named 'buildStableManifestInput'` —— **没有任何一条用例按名变红**。这正是本计划通用纪律第 3 条警告过的形状（"加载失败会被误当成红"）。**处置**：补一个中间态 —— 先写 `return {}` 的**桩**，读数 `ℹ tests 154 / ℹ pass 151 / ℹ fail 3`，三条新用例**逐条按名变红**（`the stable manifest is re-signed…` / `the stable input refuses to reuse an internal manifest` / `the stable input carries every field…`），然后才写规定的实现。**桩没有进任何提交**（`git log -p` 里没有它）。
+
+**五、变异读数（9 条变异 + 1 条对照）**：装置每条都做：断言锚点恰好 **1** 次 → **变异之前**取 sha256 基线并落盘备份 → 写入并重读确认落盘 → `node --check` → 跑套件 → 打印**整行** hunk（`-`/`+` 带三行上下文）→ 核对红名单 → **逐字节恢复** → 比 sha256 → 断言 `git status --porcelain -- <file>` 与变异前**逐字相同**。
+
+| #    | 变异（hunk：`-` 删 / `+` 加，**整行**）                                                                                     | 读数                | 按名变红的测试                                                                |
+| ---- | --------------------------------------------------------------------------------------------------------------------------- | ------------------- | ----------------------------------------------------------------------------- |
+| 对照 | `- …never copied from the internal channel');` / `+ …never reused from the internal channel');`（只改守卫文案的**后半句**） | **154 / 0（全绿）** | —（证明装置不是"改什么都红"）                                                 |
+| M1   | `- channel: 'stable',` / `+ channel: input.channel,`                                                                        | **153 / 1**         | `the stable manifest is re-signed with the stable channel and the stable url` |
+| M2   | 删掉守卫那**三行**：`if (Object.hasOwn(input, 'manifestBytes')) {` / `throw new FeedPublishError(…);` / `}`                 | **153 / 1**         | `the stable input refuses to reuse an internal manifest`                      |
+| M3   | `- baseUrl: PUBLIC_BASE_URL,` / `+ baseUrl: input.baseUrl,`                                                                 | **153 / 1**         | `the stable manifest is re-signed…`                                           |
+| M4   | `- minLauncherVersion: input.minLauncherVersion,` / `+ minLauncherVersion: '9.1.0',`                                        | **153 / 1**         | `the stable input carries every field it was given instead of a default`      |
+| M5   | `- fileManifest: input.fileManifest,` / `+ fileManifest: [],`                                                               | **153 / 1**         | 同上                                                                          |
+| M6   | `- publishedAt: input.publishedAt,` / `+ publishedAt: '1970-01-01T00:00:00.000Z',`                                          | **153 / 1**         | 同上                                                                          |
+| M7   | `- fileManifestBytes: input.fileManifestBytes,` / `+ fileManifestBytes: Buffer.from([]),`                                   | **152 / 2**         | `…carries every field…` + `the stable manifest is re-signed…`                 |
+| M8   | `- packagePath: input.packagePath,` / `+ packagePath: '/dev/null',`                                                         | **152 / 2**         | `…carries every field…` + `the stable manifest is re-signed…`                 |
+| M9   | `- version: input.version,` / `+ version: '2.3.4',`                                                                         | **152 / 2**         | `…carries every field…` + `the stable manifest is re-signed…`                 |
+
+- **锚点纪律当场抓到两条**：`packagePath: input.packagePath,` 与 `version: input.version,` 的单行锚点在模块里各出现 **4 / 3** 次 ⇒ 装置报 `ANCHOR_COUNTS 4` / `3`、**拒收、没有写盘、没有跑套件**。改成两行锚点（各带上相邻的 `publishedAt` / `minLauncherVersion` 行）后各恰好 1 次。
+- **9 条变异全部 `EXPECTED_REDS_MISSING 0`**（红的正是预先写明的那条），9 次都 `RESTORE_SHA256_EQUAL true`、`GIT_STATUS_IDENTICAL true`。
+- **对照为什么挑这一条**：这条函数里唯一没有断言读的字节就是守卫文案的后半句（测的是 `/must be signed on its own/u`）⇒ 用它既证明装置不是"改什么都红"，也顺带说明"文案后半句没有钉子"（有意的）。
+
+**六、本刀对规定文本的偏离与新增**
+
+- **代码块偏离：无。** 规定 Step 1 / Step 3 的两段围栏与文件**逐字节相同**（第三节的 `DIFF_EMPTY` 与十对镜像）。
+- **测试侧新增（不是偏离规定块，登记备查）**：新用例 1 条 —— `the stable input carries every field it was given instead of a default`（`feed-publish.test.mjs:2781`）。**为什么必须有**：规定的第 1 条用例只断言 8 个返回字段里的 5 个（`channel` / `baseUrl` / `version` / `fileManifestBytes` / `packagePath`），**`minLauncherVersion` / `fileManifest` / `publishedAt` 没有任何断言读它们** ⇒ 少了这条，把这三个字段悄悄丢掉或写成字面量都是**静默**的（M4 / M5 / M6 就是证据）。它用**两条值不同的臂**（`2.3.4` / `3.4.5`），所以写死字面量同样会红（M9）。
+
+**七、本刀发现的一处计划自相矛盾（已按证据处置）**：Task 5 Step 0 的第 3 条理由写"重签（本任务）是第一个真正的复用者：`internal → stable` 要走同一个 CAS + 翻转 + 收口序列"，而**本任务 Step 1 / Step 3 规定的实现里没有 CAS、没有翻转、也没有收口**（`buildStableManifestInput` 是纯取值构造函数）。**处置**：不做锁后尾段抽取，并在 Step 0 那一节写明"将来 Task 6 / 7 若要抽，判据是第二个调用点真的出现"。
+
+**八、本刀未做 / 未验（不得写成已完成）**
+
+- **没有实现 Task 6 / 7 / 8**：真实 `ssh` / `sftp` / `https`、CLI 四种模式、手册一行没动。
+- **没有连过任何服务器**：全部读数来自本地 `node --test`；新增的三条用例是**纯函数**测试，一条 transport 都不碰。
+- **`stable` 的"原字节复用"只钉到"字节内容相等"**（`input.fileManifestBytes.equals(…)`）：真正的"没有重新打包、没有改时间戳"是**发布流程**的属性（Task 8 手册 + 人工），本模块只能拒绝"改字段复用 internal manifest"这一种。**未验**。
+
 ---
 
 ### Task 6: 真实 SSH / SFTP / https transport（**全部 async**）
