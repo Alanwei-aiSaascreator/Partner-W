@@ -2249,6 +2249,12 @@ test('an existing version directory that matches every byte is reused', async ()
   assertEveryCommitCallCarriesTheTrustAnchor(transport);
   assert.equal(result.outcome, 'done', result.reason);
   assert.equal(result.stages.find((entry) => entry.stage === 'commit-version').status, 'done');
+  assert.deepEqual(
+    transport.calls.filter(
+      (call) => call[0] === 'writeSsh' && String(call[1]).startsWith('mv /opt/rongying/updates-state/staging/'),
+    ),
+    [],
+  );
 });
 
 test('every stage is appended to the audit log as it happens', async () => {
@@ -3157,7 +3163,7 @@ export async function runCommit(input) {
     appendAuditStage({
       auditOut: input.auditOut,
       repositoryRoot: input.repositoryRoot,
-      entry: { stage, status, ...baseOf(), ...(detail === undefined ? {} : { detail }), ...(evidence ?? {}) },
+      entry: { ...(evidence ?? {}), stage, status, ...baseOf(), ...(detail === undefined ? {} : { detail }) },
     });
   };
 
@@ -3168,7 +3174,7 @@ export async function runCommit(input) {
     appendAuditStage({
       auditOut: input.auditOut,
       repositoryRoot: input.repositoryRoot,
-      entry: { stage: outcome, reason, ...baseOf(), planHash, ...(evidence ?? {}) },
+      entry: { ...(evidence ?? {}), stage: outcome, reason, ...baseOf(), planHash },
     });
   };
 
@@ -3787,7 +3793,7 @@ git commit -m "feat(feed): publish the manifest over sftp and verify it on the p
    - `feed-publish.mjs:937`（追踪表**步骤 7 `backup-manifest`**）⇒ 夹具臂 `backupStatus` + 用例 `a manifest backup that fails is an incident that keeps the lock before anything is flipped`。**这是三条里后果最重的一条**：备份失败必须 `retainAndFinish('incident')` 并**留住锁**，否则流程会带着**没有任何回滚材料**的状态继续走到 CAS 与翻转。除了结果与锁状态，用例还断言**一条 `mv -f …tmp` 都没发**（把"没有翻转"钉成"远端没有这个动作"，而不是只看返回值）。
    - `feed-publish.mjs:982`（追踪表**步骤 10 `flip`** ⇒ 就是 §6.14 的"步骤 10 的 `mv` 中途"那一行）⇒ 夹具臂 `flipStatus` + 用例 `an atomic flip that failed is an incident that records the manifest digest`。这条分支此前**覆盖率 0 %**，钉住它本身就是目的。
 2. **`flip` 分支的证据参数与账本不符（改账本，不改代码）。** `feed-publish.mjs:983` 的 `audit('flip','incident','the atomic flip failed', manifestEvidence)` **确实带 `manifestEvidence`**（`3503965a` 加上的），而 §九.1 第 5 条说这条分支是"唯一**故意不带**的"、§八末说本刀"**故意没有**给这条分支加证据字段" —— 复核者的原话是"三个状态里最坏的一个"：一个**存在但没人钉**的参数，被账本说成**不存在**。**处置**：参数**保留**（现在有 `flipStatus` 臂走到它了），账本两处都已改成"带 `manifestEvidence`、且被 `M4-flip-argument` 按名钉住"；§九.2 的证据清单里 `flip` 那行也从"done ⇒"改成"**done 与 incident** ⇒"。**没有一处再声称它不存在。**
-3. **证据展开的保留键隐患（新增 fail-closed 守卫）。** `audit` / `recordOutcome` 都把 `evidence` **展开在最后**，所以将来某个叫 `stage` / `status` / `runid` / `planHash` 的证据键会**静默覆盖**条目自己的字段，而当时没有任何东西覆盖这件事。**读代码得到的基座键**（不是猜的）：`audit` 造 `{stage, status, ...baseOf(), detail?}`、`recordOutcome` 造 `{stage, reason, ...baseOf(), planHash}`，而 `baseOf()` 是 `{runid, operator, at}` ⇒ **保留键是一个 8 元的闭集：`stage` / `status` / `reason` / `detail` / `runid` / `planHash` / `operator` / `at`**。新增 `RESERVED_AUDIT_KEYS`（冻结数组）与 `assertNoReservedEvidenceKeys(evidence)`：命中保留键即抛 `FeedPublishError`，报错**点名是哪个键**、并把整个保留集列出来（可操作）。两个展开点各加一行调用。**为什么不用"把展开挪到最前面"这种修法**：那是**不可观测**的重排，钉不住；显式拒绝是 fail-closed 且**可以按名钉住**的。**钉住它的用例**：`the audit evidence refuses a key that would override the entry it is attached to`（8 个保留键逐个 `assert.throws`，外加两个正对照：`undefined` 与非保留键不抛）。**这条守卫的局限见本节第三小节 —— 照实说，不留给下一个读的人去发现。**
+3. **证据展开的保留键隐患（新增 fail-closed 守卫）。** `audit` / `recordOutcome` 都把 `evidence` **展开在最后**，所以将来某个叫 `stage` / `status` / `runid` / `planHash` 的证据键会**静默覆盖**条目自己的字段，而当时没有任何东西覆盖这件事。**读代码得到的基座键**（不是猜的）：`audit` 造 `{stage, status, ...baseOf(), detail?}`、`recordOutcome` 造 `{stage, reason, ...baseOf(), planHash}`，而 `baseOf()` 是 `{runid, operator, at}` ⇒ **保留键是一个 8 元的闭集：`stage` / `status` / `reason` / `detail` / `runid` / `planHash` / `operator` / `at`**。新增 `RESERVED_AUDIT_KEYS`（冻结数组）与 `assertNoReservedEvidenceKeys(evidence)`：命中保留键即抛 `FeedPublishError`，报错**点名是哪个键**、并把整个保留集列出来（可操作）。两个展开点各加一行调用。**为什么当时不选"把展开挪到最前面"这种修法**：那是**不可观测**的重排，钉不住；显式拒绝是 fail-closed 且**可以按名钉住**的。⚠️ **承前项小刀两项都做了（第十一节）**：守卫保留（拒绝被按名钉住），重排**也**落地为**保险** —— 复核者的原则是"**钉不住调用点，就不要去钉探测器，把隐患变成不可能**"。**钉住它的用例**：`the audit evidence refuses a key that would override the entry it is attached to`（8 个保留键逐个 `assert.throws`，外加两个正对照：`undefined` 与非保留键不抛）。**这条守卫的接线局限见本节第三小节（已改写成"守卫被钉住 + 重排作保险"）—— 照实说，不留给下一个读的人去发现。**
 4. **Task 7 的两条前向义务已写成验收项**（写在 Task 7 的验收项清单里，不是只在别处留一句注）：① `input.now` 必须由 Task 7 注入真时钟，否则整轮审计条目共用 `startedAt`；② CLI 的两条会话级条目（`preflight` 与 `break-lock`）**今天规定的文本没有 `at`**，必须补上。
 5. **覆盖状态收成单一声明**（本节第三小节）。复核者指出原先那句声明**既不全**（`finalise` 与 `backup` 哪儿都没声明）**又错**（`flip`）。
 
@@ -3808,12 +3814,11 @@ git commit -m "feat(feed): publish the manifest over sftp and verify it on the p
 
 **口径说明：** 判据不是"读代码觉得有没有测"，而是**把那段 `if (<判据>)` 换成 `if (false)`** 再跑套件 —— 绿 = 套件分辨不出这条分支存在（**接线隐形**），红 = 被钉住。`runCommit` 里带收口动作（`finish` / `retainAndFinish` / `releaseAndFinish`）的**终止性分支共 22 条**（名单由脚本从代码里数出来，不是肉眼数的）。逐条读数：
 
-- **被夹具臂覆盖且套件会红：20 条。** 其中本刀新补的三条是 `stage` 的 finalisation（`:826`）、`backup-manifest`（`:937`）、`flip`（`:982`）。
-- **套件分辨不出的：2 条**（这是本刀**实测**出来的，不是复核者点名的三条）：
-  1. **`feed-publish.mjs:876` —— 步骤 5 `re-verify` 的"staging 字节在取锁期间变了"那条。** 读数：`if (false)` ⇒ **137/0 全绿**。根因：夹具**两次**列 staging 目录都回同一份 `stagingListing`，所以这条判据**没有任何夹具臂能到达**（与复核者点名的三条**同一形状**，只是复核者没点到它）。
-  2. **`feed-publish.mjs:914` —— 步骤 6 `commit-version` 的"版本目录已存在且逐字节相同 ⇒ 复用"那条。** 读数：`if (false)` ⇒ **137/0 全绿**。这条**不一样**：分支**被走到了**（`an existing version directory that matches every byte is reused`，`feed-publish.test.mjs:1804`），但那条用例只断言 `outcome === 'done'` 与阶段状态 —— **不区分"走复用"与"再 `mv` 一次"**。`if (false)` 会让代码多发一次 `mv <staging> <version>`（版本目录已存在时 `mv` 会把它塞成子目录）而仍然报 `done` ⇒ **后果没被任何断言钉住**。
-- **两条都没在本刀修**（本刀的边界是复核者点名的五项，加夹具臂会改掉别的用例的边界）。**这是刻意留白，不是遗漏**：它们是本账本里**仅有的**两条"套件分辨不出"的分支，下一位动 `runCommit` 的人应当先给它们补夹具臂与用例（`:876` 需要夹具能在**两次** staging 列举之间改答案；`:914` 只需要在既有用例上加"没有发过 `mv`"的断言）。
-- **`assertNoReservedEvidenceKeys` 的接线为什么不在上表里：** 它是**唯一一条"守卫有、接线钉不住"**的。两个展开点（`audit` / `recordOutcome`）在 `runCommit` 内部，而**没有任何夹具能往 `evidence` 里注入东西**（所有证据对象都是模块内的字面量，`input` 的字段一个都不进证据键集）⇒ 实测**两条**（hunk 都打印过，都是**删掉一行、且那一行在函数体第一句、可达**，不是"落在无条件 `return` 之后的假存活"）：删掉 `audit` 里那行（`feed-publish.mjs:684`）**137/0 全绿（存活）**、删掉 `recordOutcome` 里那行（`feed-publish.mjs:696`）**137/0 全绿（存活）**。**照实记**：这条守卫的**拒绝本身**被按名钉住（M5），它的**两个调用点**只能靠"这条语句唯一的产出就是那个布尔判定"这个形状 + 人工复核，**没有任何用例能钉**（本次共跑了 22 条分支判据 + 6 条变异，**只有这两条是"存活"且不属于上面那两条分支**）。要真钉住它，得先给 `runCommit` 开一个能注入证据的入口 —— 那是接口改动，不在本刀。
+- **被夹具臂覆盖且套件会红：21 条。** 其中本刀新补的三条是 `stage` 的 finalisation（`:826`）、`backup-manifest`（`:937`）、`flip`（`:982`）；**第 21 条是 `commit-version` 的复用分支（`:914`）—— 由承前项小刀补了一条断言后从"分辨不出"转入本列（第十一节）**。
+- **套件分辨不出的：1 条**（本列原有两条，都是本刀**实测**出来的，不是复核者点名的三条；第二条已由承前项小刀关闭）：
+  1. **`feed-publish.mjs:876` —— 步骤 5 `re-verify` 的"staging 字节在取锁期间变了"那条 —— 与复核者点名的三条同一形状（同样"没有任何夹具臂能到达"），但本刀**选择推迟**，不是它落在本刀边界之外。** 根因（复核者读代码核对过，承前项小刀复读确认）：夹具**两次**列 staging 目录（取锁前、取锁后）都回同一份 `stagingListing`，两次列举之间**没有任何计数器或状态**能让读数不同 ⇒ 这条判据**没有任何夹具臂能到达**。读数（承前项小刀重测，对着本刀提交的字节 `960cbf5d…`）：`if (false)` ⇒ **137/0 全绿**。**下一位动 `runCommit` 的人应当先补它**：需要夹具能在**两次** staging 列举之间改答案（给 staging 列举加一个按次计数的臂）+ 一条按名断言用例。
+  2. ~~**`feed-publish.mjs:914` —— 步骤 6 `commit-version` 的"版本目录已存在且逐字节相同 ⇒ 复用"那条。**~~ **已关闭（承前项小刀）**：见第十一节。历史读数保留如下 —— 当时 `if (false)` ⇒ **137/0 全绿**，因为分支虽**被走到了**（`an existing version directory that matches every byte is reused`，`feed-publish.test.mjs:1804`），那条用例却只断言 `outcome === 'done'` 与阶段状态，**不区分"走复用"与"再 `mv` 一次"**：`if (false)` 会让代码多发一次 `mv <staging> <version>`（版本目录已存在时 `mv` 会把它塞成子目录）而仍然报 `done` ⇒ 后果当时没被任何断言钉住。**关闭方式只需在既有用例上加一条断言（不新增夹具臂 ⇒ 不改任何别的用例的边界），现在 `if (false)` 读数是 137/1，按名变红的正是那条用例。**
+- **`assertNoReservedEvidenceKeys` 的接线为什么不在上表里：** 它是**唯一一条"守卫有、接线钉不住"**的。两个展开点（`audit` / `recordOutcome`）在 `runCommit` 内部，而**没有任何夹具能往 `evidence` 里注入东西**（所有证据对象都是模块内的字面量，`input` 的字段一个都不进证据键集）⇒ 实测**两条**（hunk 都打印过，都是**删掉一行、且那一行在函数体第一句、可达**，不是"落在无条件 `return` 之后的假存活"）：删掉 `audit` 里那行（`feed-publish.mjs:684`）**137/0 全绿（存活）**、删掉 `recordOutcome` 里那行（`feed-publish.mjs:696`）**137/0 全绿（存活）**。**照实记**：这条守卫的**拒绝本身**被按名钉住（M5），它的**两个调用点**只能靠"这条语句唯一的产出就是那个布尔判定"这个形状 + 人工复核，**没有任何用例能钉**（本次共跑了 22 条分支判据 + 6 条变异，**只有这两条是"存活"且不属于上面那两条分支**）。要真钉住它，得先给 `runCommit` 开一个能注入证据的入口 —— 那是接口改动，不在本刀。⚠️ **承前项小刀已按复核者的原则处置（第十一节）：钉不住的调用点不要去钉探测器，改成让隐患不可能发生 —— 守卫**保留**（拒绝仍被按名钉住），另把两个展开点的 `...(evidence ?? {})` 挪到条目字面量**最前**，于是与保留键同名的证据键**覆盖不了** `stage` / `status` / `runid` / `operator` / `at`（守卫被绕过或被删掉也一样覆盖不了）。这次重排**按构造不可观测**，因此**不负变异**，只登记。**
 - **不是失败分支、因而不在上表里的**：`open` 那条审计写入的 `try/catch`（由 `a failed audit write stops the run instead of publishing silently` 钉住）、`releaseChannelLock` 的三个失败分支（由 `a failed owner removal is never reported as released` 等钉住）、`verifyPublicArtifacts` 内部的分支（由第六节三角验证与 `the public verification fails when the served package differs` 钉住）。
 
 **四、当前读数（取代第九节第四小节）**
@@ -3822,6 +3827,68 @@ git commit -m "feat(feed): publish the manifest over sftp and verify it on the p
 - 新增夹具臂 3 个（`finaliseStatus` / `backupStatus` / `flipStatus`）、新增模块导出 1 个（`assertNoReservedEvidenceKeys`）、新增模块级常量 1 个（`RESERVED_AUDIT_KEYS`）、`audit` / `recordOutcome` 各加 1 行调用。
 - **规定块边界（本刀同样改过的两段）**：Task 4 测试块 = 计划第 1762–2899 行 ⇔ `feed-publish.test.mjs` **1321–2458**（围栏在计划第 1761 / 2900 行）；Task 4 模块块 = 计划第 2915–3524 行 ⇔ `feed-publish.mjs` **444–1053**（围栏在计划第 2914 / 3525 行）。**两对 `diff` 都是 `DIFF_EMPTY`**（本刀改文件的同时把围栏里的规定块**一起**换成新的那一段，用的是一段脚本：先按**父提交**的字节在计划里定位那一段、断言只有 1 处命中、并断言上下各是一行围栏，再整段替换）。
 - **没有连过任何服务器**：本刀的所有读数都来自注入的假 transport，与 Task 4 / 第九节同规格。
+- ⚠️ **本节的行号与条数已被第十一节取代**（那两个文件又各多了一段，围栏整体下移）：**当前值见第十一节第五小节**，别引用本节这三个数字当现状（它们仍然准确地描述**本刀当时**的字节）。
+
+### 十一、承前项小刀（复核者交给代码质量闸门的两项）的落地、读数与账本更正
+
+**这一刀是什么：** spec 合规闸门的复核者把两项**故意**留给代码质量闸门（让它在**最终字节**上复核）：① `:914` 复用分支"被走到、但后果没被任何断言钉住"；② 证据展开的保留键隐患"守卫有、接线钉不住"。本节给出：① 两项各自的处置；② 变异读数（对照 1 条 + 变异 1 条 + **22 条分支判据全量重跑**）；③ **三处账本更正**（`:914` 的推迟理由、保留键"钉不住"的结论、`:876` 的措辞）；④ 当前读数与围栏行号（取代第十节第四小节）。代码提交：`939f220d`（测试，文件 sha256 `fcf86500…`）、`91497433`（模块，文件 sha256 `960cbf5d…`）—— **与变异基线逐字节相同**（提交时 `pre-commit` 跑过 `eslint --fix` + `prettier --write`，两个 blob 都没被改动；提交前我先跑过 `prettier --check`，两个文件都已经是 prettier 风格）。
+
+**一、两项的处置**
+
+1. **`:914` 复用分支 —— 在既有用例上补一条断言（不新增夹具臂）。** 复用分支**被走到**（`an existing version directory that matches every byte is reused`，`feed-publish.test.mjs:1804`），但那条用例原来只断言 `outcome === 'done'` 与 `commit-version` 的阶段状态，**分辨不出"走复用"与"再 `mv` 一次"**。新增的断言过滤该轮记录的 ssh 写调用、要求**一条都不匹配** `mv /opt/rongying/updates-state/staging/`（与既有用例 `the version directory is committed with a single directory rename` 用的是**同一条判据**）。**为什么这条断言够用**：把分支关掉时，代码发的正是 `mv <staging> <version>`，而版本目录已存在 ⇒ 那条 `mv` 会把 staging 目录**塞进**版本目录里，脚本前缀与过滤判据逐字相同 ⇒ 断言必红。**没有新增夹具臂 ⇒ 别的用例的边界一个都没动**（这正是第十节把这条推迟的理由不成立的地方，见第三小节）。
+2. **保留键隐患 —— 守卫保留 + 展开点重排（复核者的原则：钉不住调用点，就不要去钉探测器，把隐患变成不可能）。** `assertNoReservedEvidenceKeys`（`feed-publish.mjs:455`）与它的两个调用点（`:684` / `:696`）**一个字没动**（拒绝仍由 `the audit evidence refuses a key that would override the entry it is attached to` 按名钉住），另把 `audit` / `recordOutcome` 里 `...(evidence ?? {})` 从**最后**挪到条目字面量**最前**（`feed-publish.mjs:689` / `:700`）：与保留键同名的证据键现在**只能被覆盖、覆盖不了别人**，`stage` / `status` / `reason` / `detail` / `runid` / `planHash` / `operator` / `at` 永远是条目自己写的值 —— **守卫被绕过、被删掉、或者将来某个调用点忘了调它，后果都不再发生**。这次重排**按构造不可观测**（只有"守卫失效"这一条路径才可能看出差别），因此**不负变异**，只登记。
+
+**二、变异读数（对着 `939f220d` + `91497433` 的字节）**
+
+装置每条动作：断言锚点恰好匹配 **1** 次 → 取 sha256 基线 → 写入 → 重读确认落盘 → `node --check` → 跑套件 → **打印 hunk** → 核对"哪条测试必须按名变红" → 逐字节恢复 → 比 sha256 → 断言该文件的 `git status` 与变异前**逐字相同**。装置**先自检**（"先验你自己的验证脚本"）：喂一个**不存在**的锚点（读数 `ANCHOR_COUNT 0` ⇒ 拒收）与一个**出现两次**的锚点（`assertNoReservedEvidenceKeys(evidence);` ⇒ `ANCHOR_COUNT 2` ⇒ 拒收），两条都 rc=3、**没有写盘、没有跑套件**。基线：模块 `960cbf5d…`、测试 `fcf86500…`。
+
+| #    | 变异（hunk：`-` 删 / `+` 加）                                                                                        | 读数                | 按名变红的测试                                                                                                                                                                                      |
+| ---- | -------------------------------------------------------------------------------------------------------------------- | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 对照 | `- '… already matched every byte'` / `+ '… already matched all bytes'`（只改一句**没有任何断言读它**的审计详情文案） | **137 / 0（全绿）** | —（证明装置不是"改什么都红"）                                                                                                                                                                       |
+| M-A  | `- if (existing.present) {` / `+ if (false) {`（`:914` 那处，即"分支关掉"）                                          | **137 / 1**         | `an existing version directory that matches every byte is reused`（实测 actual 就是那次多余的 `mv /opt/rongying/updates-state/staging/internal/1.2.3/<摘要> /opt/rongying/updates/internal/1.2.3`） |
+
+**三、22 条分支判据全量重跑（覆盖状态以本节为准）**
+
+第十节第三小节那份"20 红 / 2 绿"的名单**全部重跑**了一遍（判据 = 把 `if (<判据>)` 换成 `if (false)`，逐条打印 hunk、逐条恢复并比 sha256；名单由脚本从 `runCommit` 里数出来，**本刀独立重数：22 条**，与第十节一致）。读数：**21 条会红、1 条全绿**。逐条（行号 / 读数 / 按名变红的测试数）：
+
+| 行号  | 读数      | 红几条 | 按名变红的测试（只列本表需要区分的那几条）                                                              |
+| ----- | --------- | ------ | ------------------------------------------------------------------------------------------------------- |
+| :800  | 137/1     | 1      | `a staging directory that cannot be created is a plain failure`                                         |
+| :811  | 137/2     | 2      | `a staging failure is a plain failure and reports that no lock was acquired` 等                         |
+| :826  | 137/1     | 1      | `a staging directory that cannot be finalised is a plain failure`                                       |
+| :835  | 137/6     | 6      | `a staging entry that is not a regular file is refused` 等（前置校验的公共出口）                        |
+| :851  | 137/2     | 2      | `the commit never runs when the lock already exists` 等                                                 |
+| :861  | 137/1     | 1      | `an owner write that fails after the lock is an incident that keeps the lock`                           |
+| :868  | 137/1     | 1      | `an owner record replaced inside the lock window stops the run and touches nothing`                     |
+| :876  | **137/0** | **0**  | **—（唯一一条套件分辨不出的，见第三小节）**                                                             |
+| :891  | 137/2     | 2      | `a device probe that failed stops the commit even when it printed matching numbers` 等                  |
+| :900  | 137/1     | 1      | `an existing version directory that is empty is incomplete and refused`                                 |
+| :907  | 137/2     | 2      | `an existing version directory with an extra entry is refused` 等                                       |
+| :914  | 137/1     | 1      | `an existing version directory that matches every byte is reused`（**本刀新钉住的，就是 M-A**）         |
+| :922  | 137/2     | 2      | `a failure after the lock but before the flip releases the lock this run owns` 等                       |
+| :937  | 137/1     | 1      | `a manifest backup that fails is an incident that keeps the lock before anything is flipped`            |
+| :944  | 137/2     | 2      | `a cas mismatch is an incident that keeps the lock and never rolls anything back` 等                    |
+| :960  | 137/1     | 1      | `a manifest upload failure is an incident that keeps the lock`                                          |
+| :966  | 137/1     | 1      | `a mismatched remote manifest digest stops before the flip`                                             |
+| :982  | 137/1     | 1      | `an atomic flip that failed is an incident that records the manifest digest`                            |
+| :989  | 137/1     | 1      | `a public manifest response without body bytes is an incident rather than a crash`                      |
+| :999  | 137/14    | 14     | 成功路径的公共出口 ⇒ 红面最广（`a clean publish walks every stage and releases its own lock` 等 14 条） |
+| :1019 | 137/1     | 1      | `the public verification is actually run after the flip`                                                |
+| :1051 | 137/2     | 2      | `an owner record replaced before the unlock stops the run and deletes nothing` 等                       |
+
+**第四节的第一条更正（落在这里）**：`:914` 由"分辨不出"转入"会红"（M-A，137/1，按名唯一）；`:876` 仍是唯一"分辨不出"的（137/0）。**没有第三条**："22 条里除了 `:876`，每一条都至少让一条用例按名变红"—— 这是本刀实测的结论，不是判断。
+
+**四、三处账本更正**
+
+1. **`:914` 的推迟理由已撤。** 第十节第三小节原来写着"两条都没在本刀修（本刀的边界是复核者点名的五项，**加夹具臂会改掉别的用例的边界**）"—— 这个理由对 `:914` **不成立**：关闭它只需要在**既有**用例上加一条断言（不新增夹具臂，见第一节第 1 条），而这句话当时把"另一条需要夹具臂的分支"的理由**张冠李戴**到了这条上。现在那一条已删除理由并写成"已关闭"。
+2. **保留键"接线钉不住 ⇒ 只能人工复核"的结论已改成"守卫被钉住 + 重排作保险"。** 第十节第一小节第 3 条与第三小节那两条都改过：不再读成"**做不了**"，而是"**能钉的钉住了（拒绝按名钉住）**，钉不住的**不钉**，改成让隐患**不可能发生**"（复核者的原则）。
+3. **`:876` 的措辞已从"只是复核者没点到它"（隐含"在本刀边界之外"）改成"与复核者点名的三条同一形状，**本刀主动推迟**"。** 根因与下一步都保留：两次 staging 列举回同一份 `stagingListing`，没有任何夹具臂能到达；要钉住它需要夹具能在**两次**列举之间改答案（一个新的按次计数臂）+ 一条按名断言用例。
+
+**五、当前读数（取代第十节第四小节）**
+
+- `feed-publish.mjs` **1053** 行、`feed-publish.test.mjs` **2464** 行（`wc -l`）；套件 **137 条**（`node --test` 的 `ℹ tests 137` / `ℹ pass 137` / `ℹ fail 0`）—— **条数不变**（本刀加的是**断言**，不是用例）。
+- **规定块边界（本刀同步过的两段）**：Task 4 测试块 = 计划第 1762–2905 行 ⇔ `feed-publish.test.mjs` **1321–2464**（围栏在计划第 1761 / 2906 行）；Task 4 模块块 = 计划第 2921–3530 行 ⇔ `feed-publish.mjs` **444–1053**（围栏在计划第 2920 / 3531 行）。**两对 `diff` 都是 `DIFF_EMPTY`**（脚本按**父提交**的字节在计划里定位那一段、断言只有 1 处命中、断言上下各是一行围栏，再整段替换；替换后**从磁盘重读**、再验一次命中数与围栏）。⚠️ 这四个计划行号是**跑过 `prettier --write` 之后**重测的（`prettier --write` 会把长段落折行；本刀实测它折的是**围栏之后**的段落，两对围栏一个都没动 —— 重测读数仍然是 1761 / 2906 / 2920 / 3531）。
+- **没有连过任何服务器**：本刀的所有读数都来自注入的假 transport，与 Task 4 / 第九节 / 第十节同规格。
 
 ### Task 5: `internal → stable` 重签
 
