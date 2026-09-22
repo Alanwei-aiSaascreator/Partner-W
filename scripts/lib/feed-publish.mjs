@@ -260,21 +260,25 @@ export async function readOwnerRecord(input) {
     knownHostsPath: input.knownHostsPath,
     script: `cat ${ownerPath(input.channel)}`,
   });
-  if (read.status !== 0) return null;
+  if (read.status !== 0) return { ok: false, record: null, cause: 'the owner record could not be read' };
   try {
-    return JSON.parse(String(read.stdout ?? '').trim());
+    return { ok: true, record: JSON.parse(String(read.stdout ?? '').trim()), cause: null };
   } catch {
-    return null;
+    return { ok: false, record: null, cause: 'the owner record is not valid JSON' };
   }
 }
 
-export async function acquireChannelLock(input) {
+function assertCompleteOwnerRecord(owner) {
   for (const field of ['runid', 'operator', 'startedAt', 'planHash', 'machine']) {
-    const value = input.owner?.[field];
+    const value = owner?.[field];
     if (typeof value !== 'string' || value.trim().length === 0) {
       throw new FeedPublishError(`the owner record must carry a non empty ${field}, so no lock is created without one`);
     }
   }
+}
+
+export async function acquireChannelLock(input) {
+  assertCompleteOwnerRecord(input.owner);
   const created = await input.transport.write.sshRun({
     host: input.host,
     knownHostsPath: input.knownHostsPath,
@@ -292,14 +296,14 @@ export async function acquireChannelLock(input) {
         owner: null,
       };
     }
-    const owner = await readOwnerRecord(input);
+    const read = await readOwnerRecord(input);
     return {
       state: 'not-acquired',
       acquired: false,
       incident: false,
       requiresExplicitRecovery: true,
       reason: 'the channel is already locked',
-      owner,
+      owner: read.record,
     };
   }
 
@@ -368,7 +372,7 @@ export function resolveLockDisposition(input) {
 }
 
 export async function releaseChannelLock(input) {
-  const owner = input.owner ?? (await readOwnerRecord(input));
+  const owner = input.owner ?? (await readOwnerRecord(input)).record;
   const verdict = resolveLockDisposition({
     acquisitionConfirmed: input.acquisitionConfirmed,
     owner,
@@ -415,7 +419,8 @@ export async function breakChannelLock(input) {
   if (typeof input.auditOut !== 'string' || input.auditOut.length === 0) {
     throw new FeedPublishError('breaking a lock requires --audit-out');
   }
-  const owner = await readOwnerRecord(input);
+  const read = await readOwnerRecord(input);
+  const owner = read.record;
   if (owner === null) {
     throw new FeedPublishError('the lock has no readable owner record, so it must be inspected by hand');
   }
@@ -693,6 +698,7 @@ export async function runCommit(input) {
   let acquiredLockState = null;
   let planHash = 'uncomputed';
   let owner = null;
+  let ownerRecord = null;
 
   const atValue = () => (input.now === undefined ? input.startedAt : input.now()) ?? null;
   const baseOf = () => ({ runid, operator: input.operator ?? null, at: atValue() });
@@ -786,6 +792,14 @@ export async function runCommit(input) {
       fileManifestSha256: local.fileManifestSha256,
       manifestSha256: local.manifestSha256,
     });
+    ownerRecord = {
+      runid,
+      operator: input.operator,
+      startedAt: input.startedAt,
+      planHash,
+      machine: input.machine,
+    };
+    assertCompleteOwnerRecord(ownerRecord);
   } catch (error) {
     audit('pre-verify', 'fail', error.message);
     recordOutcome('fail', error.message);
@@ -862,7 +876,7 @@ export async function runCommit(input) {
   const lock = await acquireChannelLock({
     channel: input.channel,
     transport: input.transport,
-    owner: { runid, operator: input.operator, startedAt: input.startedAt, planHash, machine: input.machine },
+    owner: ownerRecord,
     host: input.host,
     knownHostsPath: input.knownHostsPath,
   });
@@ -882,7 +896,12 @@ export async function runCommit(input) {
   }
   audit('lock', 'done');
 
-  const reReadOwner = await readOwnerRecord(input);
+  const reRead = await readOwnerRecord(input);
+  if (reRead.ok !== true) {
+    audit('re-verify', 'incident', reRead.cause);
+    return retainAndFinish('incident', `the lock owner record could not be re-read: ${reRead.cause}`);
+  }
+  const reReadOwner = reRead.record;
   if (reReadOwner !== null && (reReadOwner.runid !== runid || reReadOwner.planHash !== planHash)) {
     owner = reReadOwner;
     audit('re-verify', 'incident', 'the lock owner changed while this run was taking it');

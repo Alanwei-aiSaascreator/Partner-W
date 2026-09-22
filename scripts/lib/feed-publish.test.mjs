@@ -568,6 +568,7 @@ import {
   acquireChannelLock,
   breakChannelLock,
   planHashOf,
+  readOwnerRecord,
   releaseChannelLock,
   resolveLockDisposition,
 } from './feed-publish.mjs';
@@ -1152,6 +1153,25 @@ test('breaking a lock refuses an empty audit log path', async () => {
   assert.deepEqual(transport.calls, []);
 });
 
+test('the owner record read separates an absent record from a failed read', async () => {
+  const unread = fakeWriteTransport({
+    readSsh: () => ({ status: 1, stdout: JSON.stringify(PREVIOUS_RUN), stderr: 'permission denied' }),
+  });
+  const broken = fakeWriteTransport({ readSsh: () => ({ status: 0, stdout: 'not json{', stderr: '' }) });
+  const present = fakeWriteTransport({ readSsh: () => readableThisRunOwner() });
+  assert.deepEqual(await readOwnerRecord(lockInput(unread)), {
+    ok: false,
+    record: null,
+    cause: 'the owner record could not be read',
+  });
+  assert.deepEqual(await readOwnerRecord(lockInput(broken)), {
+    ok: false,
+    record: null,
+    cause: 'the owner record is not valid JSON',
+  });
+  assert.deepEqual(await readOwnerRecord(lockInput(present)), { ok: true, record: THIS_RUN, cause: null });
+});
+
 test('a corrupt owner record on the lock is unreadable rather than a crash', async () => {
   const transport = fakeWriteTransport({ readSsh: () => ({ status: 0, stdout: 'not json{', stderr: '' }) });
   const verdict = await releaseChannelLock(releaseInput(transport, { owner: null }));
@@ -1361,6 +1381,9 @@ function commitTransport(options = {}) {
         if (request.script.includes('owner.json')) {
           if (options.foreignOwnerFromReVerify === true) {
             return { status: 0, stdout: JSON.stringify({ runid: 'other', planHash: 'other' }), stderr: '' };
+          }
+          if (options.ownerReadFailsAfterLock === true && ownerJson !== null) {
+            return { status: 1, stdout: '', stderr: 'connection reset' };
           }
           return ownerJson === null
             ? { status: 1, stdout: '', stderr: 'no such file' }
@@ -2062,6 +2085,28 @@ test('a lock that fails for any reason other than an existing entry is an incide
   assert.deepEqual(removals, []);
 });
 
+test('an owner record that cannot be re-read inside the lock window stops the run and touches nothing', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths, { ownerReadFailsAfterLock: true });
+  const input = commitInput(transport, { ...paths });
+  const result = await runCommit(input);
+  assertEveryCommitCallCarriesTheTrustAnchor(transport);
+  assert.equal(result.outcome, 'incident');
+  assert.match(result.reason, /could not be re-read/u);
+  assert.equal(result.lockState, 'retained-by-this-run');
+  assert.equal(result.stages.find((entry) => entry.stage === 're-verify').status, 'incident');
+  assert.equal(result.stages.find((entry) => entry.stage === 'commit-version').status, 'pending');
+  const removals = transport.calls.filter(
+    (call) => call[0] === 'writeSsh' && /(?:^|\s)(?:rm|rmdir) /u.test(String(call[1])),
+  );
+  assert.deepEqual(removals, []);
+  const entries = auditEntriesOf(input.auditOut);
+  const reVerify = entries.find((entry) => entry.stage === 're-verify');
+  assert.equal(reVerify.status, 'incident');
+  assert.equal(reVerify.detail, 'the owner record could not be read');
+  assert.equal(entries.at(-1).stage, 'lock-retained');
+});
+
 test('an owner write that fails after the lock is an incident that keeps the lock', async () => {
   const paths = writeArtifacts();
   const transport = happyTransport(paths, { ownerWriteStatus: 1 });
@@ -2514,13 +2559,18 @@ test('the audit log keeps the operator and the time as null instead of dropping 
   const paths = writeArtifacts();
   const transport = happyTransport(paths);
   const input = commitInput(transport, { ...paths, operator: undefined, startedAt: undefined });
-  await assert.rejects(runCommit(input), /operator/u);
+  const result = await runCommit(input);
+  assert.equal(result.outcome, 'fail', result.reason);
+  assert.match(result.reason, /operator/u);
+  assert.equal(result.lockState, 'not-acquired');
+  assert.deepEqual(transport.calls, []);
   const entries = auditEntriesOf(input.auditOut);
   assert.ok(entries.length > 0);
   for (const entry of entries) {
     assert.equal(entry.operator, null, entry.stage);
     assert.equal(entry.at, null, entry.stage);
   }
+  assert.equal(entries.at(-1).stage, 'fail');
 });
 
 test('a staging directory that cannot be finalised is a plain failure', async () => {
