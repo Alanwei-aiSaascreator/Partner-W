@@ -4280,6 +4280,29 @@ git commit -m "feat(feed): publish the manifest over sftp and verify it on the p
 
 **计划文件本身**：`wc -l` = **4851**（`a01422fd`）⇒ **5308**（本刀，含本节）。**`prettier --write` 会重排表格列宽**（本刀实测：只改表格行的行内空白、**总行数不变** ⇒ 上表八个围栏行号在本刀提交后仍然成立；提交后重跑验证脚本，八条仍全部 `DIFF_EMPTY`）。
 
+**本刀对规定块本体的偏离（本刀这一份，唯一清单）**
+
+"规定原文"= `a01422fd` 的那一份（即本刀改之前、当时与文件逐字节相同的那一份）。**每一行都给出了钉住它的读数**（第二节的变异编号）。
+
+| #   | 规定原文（`a01422fd`）                                                                               | 本刀改成                                                                                 | 为什么必须改              | 钉住它的读数                         |
+| --- | ---------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- | ------------------------- | ------------------------------------ |
+| 1   | `verifyLocalArtifacts` 的 `const verifier = input.verifySignature ?? (() => {});`                    | 硬闸门 + `await input.verifySignature({…})`                                              | Critical 1                | M-Q1 / M-Q2 / M-A3                   |
+| 2   | `verifyPublicArtifacts` 的 `const verifier = input.verifier ?? (() => {});`，入口无前置条件          | 入口四个汇点闸门（channel / version / temporaryRoot / verifier）                         | Critical 1 + Minor 12     | M-A4 / M-A5 / M-A6 / M-A7            |
+| 3   | `appendAuditStage` 的 `if (typeof input.repositoryRoot === 'string' && …)`                           | `repositoryRoot` 必须 + `auditOut` 非空                                                  | Minor 11 + Minor 4        | M-A9 / M-A10                         |
+| 4   | `readOwnerRecord` 返回 `T \| null`                                                                   | 返回 `{ ok, record, cause }`；三个锁调用点只取 `.record`                                 | Important 5               | M-B3 / M-B4 / M-B5 / M-B6            |
+| 5   | `acquireChannelLock` 里内联的五字段 `for` 循环                                                       | `assertCompleteOwnerRecord`，入口与 sink 各调一次                                        | Important 3               | M-B1 / M-B2                          |
+| 6   | `runPreflight` 内联的 `stat -c '%d'` 探针；`runCommit` 里另一份同形代码                              | `readDeviceIds` 返回 `{ status, ids }`，两处处置留在调用点                               | Minor 8                   | M-D8（一红两条，两条各在一个调用点） |
+| 7   | `releaseAndFinish(failedStage, outcome, reason)`，四个调用点都传 `'fail'`                            | `releaseAndFinish(failedStage, reason)`，返回值写死 `'fail'`                             | Minor 10                  | M-D10                                |
+| 8   | 两份逐字重复的解锁上报块                                                                             | `reportUnlock(disposition)`                                                              | Minor 7                   | M-D7a / M-D7b                        |
+| 9   | `readRemoteFileSha` 返回 `string` 并以 `\|\| 'absent'` 兜底                                          | 返回 `{ ok, sha256 }`；baseline / CAS / temp-manifest 三处先判 `!ok`                     | Important 6               | M-C1 / M-C2 / M-C3 / M-C4 / M-C5     |
+| 10  | `runCommit` 没有 `temporaryRoot` 前置校验                                                            | `assertTemporaryRoot`（入口 + `verifyPublicArtifacts` 汇点）                             | Important 4               | M-A7 / M-A8                          |
+| 11  | （测试块）Task 1 的 `the local verification returns every digest and size the flow needs` 不传验证器 | 传 `verifySignature: () => {}`                                                           | 同第 1 行（闸门改成必须） | 该用例本身（不传即 `fail`）          |
+| 12  | （测试块）Task 2 的两条 dry-run 用例不传验证器                                                       | 同上（`planCommit` 经 `verifyLocalArtifacts` 继承同一道闸门）                            | 同第 1 行                 | 两条用例本身                         |
+| 13  | （测试块）`the audit log keeps the operator and the time as null…` 断言的是 `assert.rejects`         | 改成断言返回 `fail` + **零 transport 调用** + 终态条目 + 每条条目仍 `operator/at = null` | Important 3               | M-B1                                 |
+| 14  | （测试块）`a failure after the lock but before the flip…` 只断言返回值                               | 加三条审计断言（收口条目是 `fail`、`reason` 相等、整份日志无 `incident`）                | 存活变异 M-D10            | M-D10                                |
+
+**测试侧的新增（不是偏离，登记备查）**：新用例 13 条、新夹具臂 5 个、新测试辅助 1 个、`node:fs` 的 import 多一个 `existsSync`。
+
 **六、当前读数**
 
 - `feed-publish.mjs` **1101** 行、`feed-publish.test.mjs` **2730** 行（`wc -l`）；套件 **150 条**（`node --test` 的 `ℹ tests 150` / `ℹ pass 150` / `ℹ fail 0`），比本刀前 **137** 条多 **13** 条（全部是新增用例：签名闸门 2 + 临时根 1 + 审计路径 1 + 公开验证汇点 2 + owner 读 1 + 步骤 5 重读 1 + 摘要读 4 + reveal 1）。
