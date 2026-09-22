@@ -446,20 +446,20 @@ test('a commit stamps every audit entry with the time it happened', async () => 
   assert.ok(harness.factoryInputs.every((input) => input.host === 'updates.example.invalid'));
 });
 
-test('the batch file the cli hands the factory is the file its writer appends to', async () => {
+test('a commit reaches sftp with one batch file per upload, each holding exactly that upload', async () => {
   const triple = await writeSignedTriple();
   const auditOut = join(makeCliRoot(), 'audit.jsonl');
-  const observed = [];
-  const harness = makeHarness({
-    readSsh: okRead,
-    writeSsh: okWrite,
-    sftpUpload: () => ({ status: 1, stdout: '', stderr: 'upload refused' }),
-    fetchPublic: okFetch,
-    onFactory: (input) => {
-      input.writeBatch('put /a /b\n');
-      observed.push({ batchFile: input.batchFile, content: fsModule.readFileSync(input.batchFile, 'utf8') });
-    },
-  });
+  const batches = [];
+  const createTransport = (input) =>
+    cliModule.createFeedTransport({
+      ...input,
+      execFile: async (command, args) => {
+        if (command !== 'sftp') return { status: 0, stdout: '', stderr: '' };
+        const batchFile = args[args.indexOf('-b') + 1];
+        batches.push({ batchFile, content: fsModule.readFileSync(batchFile, 'utf8') });
+        return { status: 0, stdout: '', stderr: '' };
+      },
+    });
   const result = await withEnvironment('MOFANG_UPDATE_PUBLIC_KEY_B64', CLI_PUBLIC_KEY_BASE64, () =>
     captureRun(
       [
@@ -481,14 +481,30 @@ test('the batch file the cli hands the factory is the file its writer appends to
         '--audit-out',
         auditOut,
       ],
-      { createTransport: harness.createTransport },
+      { createTransport },
     ),
   );
   assert.equal(result.code, 1);
-  assert.equal(observed.length, 1);
-  assert.match(observed[0].batchFile, /sftp-batch\.txt$/u);
-  assert.equal(observed[0].content, 'put /a /b\n');
-  assert.equal(fsModule.existsSync(observed[0].batchFile), false, 'the batch file must be cleaned up in the finally');
+  assert.equal(batches.length, 2, 'the run must reach both staging uploads');
+  const batchLines = batches.map((batch) => batch.content.split('\n').filter((line) => line.length > 0));
+  for (const [index, lines] of batchLines.entries()) {
+    assert.equal(
+      lines.length,
+      1,
+      `the batch file handed to sftp for upload ${index + 1} carries ${lines.length} commands`,
+    );
+  }
+  assert.equal(new Set(batches.map((batch) => batch.batchFile)).size, 2, 'two uploads shared one batch file');
+  assert.equal(batches[0].content.includes('portable.zip.part-'), true);
+  assert.equal(batches[1].content.includes('portable-files.json.part-'), true);
+  assert.equal(
+    batches[0].content.includes('portable-files.json'),
+    false,
+    'the first batch must not replay a later upload',
+  );
+  for (const batch of batches) {
+    assert.equal(fsModule.existsSync(batch.batchFile), false, 'the batch file must be cleaned up in the finally');
+  }
 });
 
 test('breaking a lock writes one session entry that carries the time and the previous owner', async () => {

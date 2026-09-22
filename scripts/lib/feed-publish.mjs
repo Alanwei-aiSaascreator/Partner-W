@@ -563,6 +563,14 @@ function assertVerifier(verifier) {
   }
 }
 
+function assertUploadBatchFactory(createBatch) {
+  if (typeof createBatch !== 'function') {
+    throw new FeedPublishError(
+      'a per upload batch factory is required, because one sftp batch file shared by every upload of a run grows into a cumulative command list that replays the earlier uploads',
+    );
+  }
+}
+
 const RUNID_PATTERN = /^[A-Za-z0-9._-]+$/u;
 
 function assertSafeRunid(runid) {
@@ -859,6 +867,7 @@ export async function runCommit(input) {
     assertSafeRunid(runid);
     assertTemporaryRoot(input.temporaryRoot);
     assertVerifier(input.verifier);
+    assertUploadBatchFactory(input.createBatch);
     local = await verifyLocalArtifacts({
       packagePath: input.packagePath,
       fileManifestPath: input.fileManifestPath,
@@ -918,11 +927,12 @@ export async function runCommit(input) {
     return finish('fail', 'the staging directory could not be created', 'not-acquired');
   }
 
+  const nextUploadBatch = () => input.createBatch();
   for (const item of [
     { localPath: input.packagePath, remotePath: `${stagingRoot}/${PORTABLE_PACKAGE_NAME}.part-${runid}` },
     { localPath: input.fileManifestPath, remotePath: `${stagingRoot}/${PORTABLE_FILE_MANIFEST_NAME}.part-${runid}` },
   ]) {
-    const uploaded = await input.transport.write.sftpUpload({ ...item, resume: true });
+    const uploaded = await input.transport.write.sftpUpload({ ...item, resume: true, ...nextUploadBatch() });
     if (uploaded.status !== 0) {
       audit('stage', 'fail', uploaded.stderr ?? 'upload failed');
       recordOutcome('fail', 'the staging upload failed');
@@ -1075,6 +1085,7 @@ export async function runCommit(input) {
     localPath: input.manifestPath,
     remotePath: tempManifestPath,
     resume: false,
+    ...nextUploadBatch(),
   });
   if (manifestUploaded.status !== 0) {
     audit('temp-manifest', 'incident', 'the manifest upload failed', manifestEvidence);

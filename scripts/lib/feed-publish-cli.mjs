@@ -104,15 +104,22 @@ function assertTrustAnchorPath(input) {
 
 async function withTransport(createTransport, input, body) {
   const batchRoot = mkdtempSync(join(tmpdir(), 'mofang-feed-batch-'));
-  const batchFile = join(batchRoot, 'sftp-batch.txt');
+  let batchSeq = 0;
+  const createBatch = () => {
+    batchSeq += 1;
+    const batchFile = join(batchRoot, `sftp-batch-${batchSeq}.txt`);
+    return {
+      batchFile,
+      writeBatch: (text) => writeFileSync(batchFile, text, { encoding: 'utf8', flag: 'a' }),
+    };
+  };
   try {
     return await body(
       createTransport({
         host: input.host,
         knownHostsPath: input.knownHostsPath,
-        batchFile,
-        writeBatch: (text) => writeFileSync(batchFile, text, { encoding: 'utf8', flag: 'a' }),
       }),
+      createBatch,
     );
   } finally {
     rmSync(batchRoot, { recursive: true, force: true });
@@ -370,7 +377,7 @@ export async function runCli(argv, dependencies = {}) {
     return 1;
   }
 
-  return withTransport(createTransport, input, async (transport) => {
+  return withTransport(createTransport, input, async (transport, createBatch) => {
     const temporaryRoot = mkdtempSync(join(tmpdir(), 'mofang-feed-public-'));
     try {
       const publicKeyBase64 = requirePublicKeyFromEnvironment();
@@ -396,6 +403,7 @@ export async function runCli(argv, dependencies = {}) {
         repositoryRoot,
         temporaryRoot,
         transport,
+        createBatch,
         publicKeyBase64,
         verifySignature: verifyReleaseBytes,
         verifier: verifyReleaseBytes,

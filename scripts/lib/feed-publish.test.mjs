@@ -1385,6 +1385,7 @@ import {
   runCommit,
   verifyPublicArtifacts,
 } from './feed-publish.mjs';
+import { createFeedTransport } from './feed-publish-transport.mjs';
 import { buildPortableRelease, verifyPortableRelease } from './portable-update-release.mjs';
 
 const BASELINE_BODY = '{"baseline":true}\n';
@@ -1592,6 +1593,21 @@ function commitTransport(options = {}) {
   };
 }
 
+function uploadBatchAllocator(root) {
+  const files = [];
+  return {
+    files,
+    createBatch: () => {
+      const batchFile = join(root, `sftp-batch-${files.length + 1}.txt`);
+      files.push(batchFile);
+      return {
+        batchFile,
+        writeBatch: (text) => writeFileSync(batchFile, text, { encoding: 'utf8', flag: 'a' }),
+      };
+    },
+  };
+}
+
 function commitInput(transport, overrides = {}) {
   const auditRoot = makeRoot();
   const paths = writeArtifacts();
@@ -1611,6 +1627,7 @@ function commitInput(transport, overrides = {}) {
     temporaryRoot: makeRoot(),
     verifier: () => {},
     transport,
+    createBatch: uploadBatchAllocator(makeRoot()).createBatch,
     ...paths,
     ...overrides,
   };
@@ -1645,6 +1662,53 @@ function happyTransport(paths, extra = {}) {
     tempManifestSha: manifestShaOf(paths),
     ...extra,
   });
+}
+
+const WRITE_SCRIPT_PATTERNS = [/^mkdir /u, /^LC_ALL=C mkdir /u, /^printf /u, /^rm /u, /^rmdir /u, /^mv /u];
+const READ_SCRIPT_PATTERNS = [/^stat -c /u, /^LC_ALL=C cat /u, /^if \[ -d /u, /^sha256sum /u];
+
+function sshFaceOf(script) {
+  const writes = WRITE_SCRIPT_PATTERNS.filter((pattern) => pattern.test(script)).length;
+  const reads = READ_SCRIPT_PATTERNS.filter((pattern) => pattern.test(script)).length;
+  if (writes + reads !== 1) {
+    throw new Error(`the fixture cannot tell which face would run ${JSON.stringify(script)}`);
+  }
+  return writes === 1 ? 'write' : 'read';
+}
+
+function bodyOf(bytes) {
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+}
+
+function realBatchCommitTransport(paths, extra = {}) {
+  const remote = happyTransport(paths, extra);
+  const capture = { batches: [], faces: [] };
+  const transport = createFeedTransport({
+    host: HOST,
+    knownHostsPath: KNOWN_HOSTS_PATH,
+    execFile: async (command, args, options) => {
+      if (command === 'sftp') {
+        const batchFile = args[args.indexOf('-b') + 1];
+        capture.batches.push({
+          batchFile,
+          host: args.at(-1),
+          content: readFileSync(batchFile, 'utf8'),
+          options,
+        });
+        return { status: 0, stdout: '', stderr: '' };
+      }
+      const script = args.at(-1);
+      const face = sshFaceOf(script);
+      capture.faces.push(face);
+      return face === 'write' ? remote.write.sshRun({ script }) : remote.readOnly.sshRun({ script });
+    },
+    fetchPublic: async (url) => {
+      const response = await remote.fetchPublic(url);
+      if (response.bodyBytes === undefined) return { status: response.status };
+      return { status: response.status, arrayBuffer: async () => bodyOf(response.bodyBytes) };
+    },
+  });
+  return { transport, capture, calls: remote.calls };
 }
 
 test('the commit anchor helper refuses a case that recorded no call', () => {
@@ -1749,6 +1813,19 @@ test('a run without a public verifier fails before any remote write', async () =
   assert.equal(entries.at(-1).stage, 'fail');
 });
 
+test('a run without a per upload batch factory fails before any remote write', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths);
+  const input = commitInput(transport, { ...paths, createBatch: undefined });
+  const result = await runCommit(input);
+  assert.equal(result.outcome, 'fail');
+  assert.match(result.reason, /batch factory/u);
+  assert.equal(result.lockState, 'not-acquired');
+  assert.deepEqual(transport.calls, []);
+  const entries = auditEntriesOf(input.auditOut);
+  assert.equal(entries.at(-1).stage, 'fail');
+});
+
 test('a clean publish walks every stage and releases its own lock', async () => {
   const paths = writeArtifacts();
   const transport = happyTransport(paths);
@@ -1759,6 +1836,45 @@ test('a clean publish walks every stage and releases its own lock', async () => 
   assert.deepEqual(
     result.stages.map((entry) => entry.status),
     PUBLISH_STAGES.map(() => 'done'),
+  );
+});
+
+test('every upload of one run reaches sftp through a batch file that holds exactly its own command', async () => {
+  const paths = writeArtifacts();
+  const run = realBatchCommitTransport(paths);
+  const result = await runCommit(commitInput(run.transport, { ...paths }));
+  assert.equal(result.outcome, 'done', result.reason);
+  assert.equal(run.capture.batches.length, 3, 'the run uploads the package, the file manifest and the manifest');
+  assert.ok(run.capture.faces.length > 0, 'the fixture must have seen the ssh calls it classified');
+  assert.deepEqual([...new Set(run.capture.faces)].sort(), ['read', 'write']);
+  const batchLines = run.capture.batches.map((batch) => batch.content.split('\n').filter((line) => line.length > 0));
+  for (const [index, lines] of batchLines.entries()) {
+    assert.equal(
+      lines.length,
+      1,
+      `the batch file handed to sftp for upload ${index + 1} carries ${lines.length} commands`,
+    );
+  }
+  assert.equal(
+    run.capture.batches.map((batch) => batch.batchFile).length,
+    new Set(run.capture.batches.map((batch) => batch.batchFile)).size,
+    'two uploads shared one batch file',
+  );
+  const stagingRoot = `${STATE_ROOT}/staging/internal/1.2.3/${result.planHash}`;
+  assert.deepEqual(
+    run.capture.batches.map((batch) => batch.host),
+    [HOST, HOST, HOST],
+  );
+  assert.equal(run.capture.batches[0].content.startsWith('reput '), true);
+  assert.equal(run.capture.batches[0].content.includes(`${stagingRoot}/portable.zip.part-r1`), true);
+  assert.equal(run.capture.batches[1].content.startsWith('reput '), true);
+  assert.equal(run.capture.batches[1].content.includes(`${stagingRoot}/portable-files.json.part-r1`), true);
+  assert.equal(run.capture.batches[2].content.startsWith('put '), true);
+  assert.equal(run.capture.batches[2].content.includes(`${UPDATE_ROOT}/internal/manifest.json.r1.tmp`), true);
+  assert.equal(
+    batchLines.reduce((total, lines) => total + lines.length, 0),
+    3,
+    'a shared batch file would replay the earlier uploads as extra commands',
   );
 });
 
