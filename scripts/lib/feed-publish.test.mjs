@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, test } from 'node:test';
@@ -165,6 +165,7 @@ test('the local verification returns every digest and size the flow needs', asyn
     expectedChannel: 'internal',
     expectedVersion: '1.2.3',
     publicKeyBase64: PUBLIC_KEY_BASE64,
+    verifySignature: () => {},
   });
   assert.equal(result.packageSha256, PACKAGE_SHA256);
   assert.equal(result.packageSize, PACKAGE_BYTES.length);
@@ -460,6 +461,7 @@ test('the dry run validates the triple and prints the plan without any transport
     version: '1.2.3',
     ...paths,
     publicKeyBase64: PUBLIC_KEY_BASE64,
+    verifySignature: () => {},
   });
   assert.deepEqual(
     plan.map((entry) => entry.stage),
@@ -482,6 +484,7 @@ test('the dry run follows the channel and the version it was given instead of a 
     version: '1.2.4',
     ...paths,
     publicKeyBase64: PUBLIC_KEY_BASE64,
+    verifySignature: () => {},
   });
   assert.equal(plan.length, PUBLISH_STAGES.length);
 });
@@ -1533,6 +1536,7 @@ function commitInput(transport, overrides = {}) {
     startedAt: '2026-09-22T00:00:00.000Z',
     machine: 'builder-01',
     publicKeyBase64: PUBLIC_KEY_BASE64,
+    verifySignature: () => {},
     auditOut: join(auditRoot, 'audit.jsonl'),
     repositoryRoot: makeRoot(),
     temporaryRoot: makeRoot(),
@@ -1610,6 +1614,56 @@ test('the local pre-verification happens before any network write', async () => 
     [],
   );
   assert.deepEqual(transport.calls, []);
+});
+
+test('the run refuses to publish without a signature verifier', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths);
+  const input = commitInput(transport, { ...paths, verifySignature: undefined });
+  const result = await runCommit(input);
+  assert.equal(result.outcome, 'fail');
+  assert.match(result.reason, /signature verifier is required/u);
+  assert.equal(result.lockState, 'not-acquired');
+  assert.deepEqual(transport.calls, []);
+  const entries = auditEntriesOf(input.auditOut);
+  assert.equal(entries.at(-1).stage, 'fail');
+});
+
+test('a throwing local verifier stops the run before any remote call', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths);
+  const seen = [];
+  const input = commitInput(transport, {
+    ...paths,
+    verifySignature: () => {
+      seen.push('called');
+      throw new Error('release manifest signature is invalid');
+    },
+  });
+  const result = await runCommit(input);
+  assert.deepEqual(seen, ['called']);
+  assert.equal(result.outcome, 'fail');
+  assert.equal(result.reason, 'release manifest signature is invalid');
+  assert.equal(result.lockState, 'not-acquired');
+  assert.deepEqual(transport.calls, []);
+  const entries = auditEntriesOf(input.auditOut);
+  const preVerify = entries.find((entry) => entry.stage === 'pre-verify');
+  assert.equal(preVerify.status, 'fail');
+  assert.equal(preVerify.detail, 'release manifest signature is invalid');
+  assert.equal(entries.at(-1).stage, 'fail');
+});
+
+test('a run without a temporary root fails before any remote write', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths);
+  const input = commitInput(transport, { ...paths, temporaryRoot: undefined });
+  const result = await runCommit(input);
+  assert.equal(result.outcome, 'fail');
+  assert.match(result.reason, /temporary root/u);
+  assert.equal(result.lockState, 'not-acquired');
+  assert.deepEqual(transport.calls, []);
+  const entries = auditEntriesOf(input.auditOut);
+  assert.equal(entries.at(-1).stage, 'fail');
 });
 
 test('a clean publish walks every stage and releases its own lock', async () => {
@@ -1842,6 +1896,16 @@ test('the audit log refuses to be written inside the repository', () => {
   );
 });
 
+test('the audit stage append refuses a missing repository root or an empty path', () => {
+  const auditOut = join(makeRoot(), 'audit.jsonl');
+  assert.throws(() => appendAuditStage({ auditOut, entry: { stage: 'open' } }), /repository root is required/u);
+  assert.throws(
+    () => appendAuditStage({ auditOut: '', entry: { stage: 'open' }, repositoryRoot: makeRoot() }),
+    /non empty path/u,
+  );
+  assert.equal(existsSync(auditOut), false);
+});
+
 test('a failed audit write stops the run instead of publishing silently', async () => {
   const paths = writeArtifacts();
   const transport = commitTransport();
@@ -1904,6 +1968,55 @@ test('the public verification fails when the served package differs', async () =
   });
   assert.equal(result.ok, false);
   assert.match(result.reason, /package/u);
+});
+
+function publicVerificationInput(fetches, overrides = {}) {
+  const paths = writeArtifacts();
+  return {
+    channel: 'internal',
+    version: '1.2.3',
+    publicKeyBase64: PUBLIC_KEY_BASE64,
+    verifier: () => {},
+    expectedManifestBytes: readFileSync(paths.manifestPath),
+    expectedPackageSha256: PACKAGE_SHA256,
+    expectedPackageSize: PACKAGE_BYTES.length,
+    expectedFileManifestSha256: FILE_MANIFEST_SHA256,
+    expectedFileManifestSize: FILE_MANIFEST_BYTES.length,
+    temporaryRoot: makeRoot(),
+    transport: {
+      fetchPublic: async (url) => {
+        fetches.push(url);
+        return { status: 200, bodyBytes: new Uint8Array() };
+      },
+    },
+    ...overrides,
+  };
+}
+
+test('the public verification refuses an unsafe channel or version before any fetch', async () => {
+  const fetches = [];
+  await assert.rejects(
+    verifyPublicArtifacts(publicVerificationInput(fetches, { channel: 'internal/x' })),
+    /not safe to interpolate/u,
+  );
+  await assert.rejects(
+    verifyPublicArtifacts(publicVerificationInput(fetches, { version: '1.2.3;id' })),
+    /not a strict semantic version/u,
+  );
+  assert.deepEqual(fetches, []);
+});
+
+test('the public verification refuses a missing temporary root or verifier before any fetch', async () => {
+  const fetches = [];
+  await assert.rejects(
+    verifyPublicArtifacts(publicVerificationInput(fetches, { temporaryRoot: undefined })),
+    /temporary root/u,
+  );
+  await assert.rejects(
+    verifyPublicArtifacts(publicVerificationInput(fetches, { verifier: undefined })),
+    /verifier is required/u,
+  );
+  assert.deepEqual(fetches, []);
 });
 
 test('a staging directory that cannot be created is a plain failure', async () => {

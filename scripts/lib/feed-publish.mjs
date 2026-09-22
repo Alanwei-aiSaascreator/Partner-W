@@ -127,8 +127,10 @@ export async function verifyLocalArtifacts(input) {
     throw new FeedPublishError('the package url does not point at this channel and version on the fixed public origin');
   }
 
-  const verifier = input.verifySignature ?? (() => {});
-  await verifier({
+  if (typeof input.verifySignature !== 'function') {
+    throw new FeedPublishError('a local signature verifier is required to verify the release manifest');
+  }
+  await input.verifySignature({
     manifestBytes,
     fileManifestBytes,
     packagePath: input.packagePath,
@@ -463,9 +465,13 @@ export function assertNoReservedEvidenceKeys(evidence) {
 }
 
 export function appendAuditStage(input) {
-  if (typeof input.repositoryRoot === 'string' && input.repositoryRoot.length > 0) {
-    assertOutsideRepository(input.auditOut, input.repositoryRoot);
+  if (typeof input.repositoryRoot !== 'string' || input.repositoryRoot.length === 0) {
+    throw new FeedPublishError('the repository root is required, so the audit log can be proven to live outside it');
   }
+  if (typeof input.auditOut !== 'string' || input.auditOut.length === 0) {
+    throw new FeedPublishError('the audit log needs a non empty path');
+  }
+  assertOutsideRepository(input.auditOut, input.repositoryRoot);
   try {
     appendFileSync(input.auditOut, `${JSON.stringify(input.entry)}\n`, 'utf8');
   } catch (error) {
@@ -489,6 +495,12 @@ function assertSafeVersion(version) {
     throw new FeedPublishError(
       `the version ${version} is not a strict semantic version, so it is not safe to interpolate into a remote path`,
     );
+  }
+}
+
+function assertTemporaryRoot(temporaryRoot) {
+  if (typeof temporaryRoot !== 'string' || temporaryRoot.length === 0) {
+    throw new FeedPublishError('a temporary root directory is required to write the fetched public artifacts');
   }
 }
 
@@ -621,6 +633,12 @@ async function readRemoteFileSha(input, target) {
 }
 
 export async function verifyPublicArtifacts(input) {
+  assertSafeChannel(input.channel);
+  assertSafeVersion(input.version);
+  assertTemporaryRoot(input.temporaryRoot);
+  if (typeof input.verifier !== 'function') {
+    throw new FeedPublishError('a public artifact verifier is required to verify the published manifest');
+  }
   const base = `${PUBLIC_BASE_URL}/${input.channel}/${input.version}`;
   const manifestResponse = await input.transport.fetchPublic(`${base}/${PORTABLE_MANIFEST_NAME}`);
   if (manifestResponse.status !== 200) return { ok: false, reason: 'the public manifest is not reachable' };
@@ -656,8 +674,7 @@ export async function verifyPublicArtifacts(input) {
   const fileManifestPath = join(input.temporaryRoot, PORTABLE_FILE_MANIFEST_NAME);
   writeFileSync(packagePath, packageBytes);
   writeFileSync(fileManifestPath, fileManifestBytes);
-  const verifier = input.verifier ?? (() => {});
-  await verifier({ manifestBytes, fileManifestBytes, packagePath, publicKeyBase64: input.publicKeyBase64 });
+  await input.verifier({ manifestBytes, fileManifestBytes, packagePath, publicKeyBase64: input.publicKeyBase64 });
 
   return {
     ok: true,
@@ -752,6 +769,7 @@ export async function runCommit(input) {
     assertSafeChannel(input.channel);
     assertSafeVersion(input.version);
     assertSafeRunid(runid);
+    assertTemporaryRoot(input.temporaryRoot);
     local = await verifyLocalArtifacts({
       packagePath: input.packagePath,
       fileManifestPath: input.fileManifestPath,
