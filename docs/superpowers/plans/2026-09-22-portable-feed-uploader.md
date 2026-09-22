@@ -726,6 +726,11 @@ function fakeReadOnlyTransport(overrides = {}) {
   };
 }
 
+async function preflightWithProbe(probe) {
+  const transport = fakeReadOnlyTransport({ sshRun: () => probe });
+  return runPreflight({ channel: 'internal', version: '1.2.3', transport, host: 'h', knownHostsPath: 'k' });
+}
+
 test('the commit plan lists the thirteen stages in the fixed order', () => {
   assert.deepEqual(PUBLISH_STAGES, [
     'pre-verify',
@@ -742,6 +747,7 @@ test('the commit plan lists the thirteen stages in the fixed order', () => {
     'reveal',
     'unlock',
   ]);
+  assert.ok(Object.isFrozen(PUBLISH_STAGES));
 });
 
 test('the dry run validates the triple and prints the plan without any transport', async () => {
@@ -756,7 +762,25 @@ test('the dry run validates the triple and prints the plan without any transport
     plan.map((entry) => entry.stage),
     [...PUBLISH_STAGES],
   );
-  assert.equal(plan[0].status, 'pending');
+  assert.equal(plan.length, PUBLISH_STAGES.length);
+  assert.ok(plan.every((entry) => entry.status === 'pending'));
+});
+
+test('the dry run follows the channel and the version it was given instead of a default', async () => {
+  const paths = writeArtifacts({
+    manifestOverrides: {
+      channel: 'stable',
+      version: '1.2.4',
+      packageUrl: `${PUBLIC_BASE_URL}/stable/1.2.4/portable.zip`,
+    },
+  });
+  const plan = await planCommit({
+    channel: 'stable',
+    version: '1.2.4',
+    ...paths,
+    publicKeyBase64: PUBLIC_KEY_BASE64,
+  });
+  assert.equal(plan.length, PUBLISH_STAGES.length);
 });
 
 test('the dry run propagates a local verification failure instead of printing a plan', async () => {
@@ -799,6 +823,7 @@ test('the preflight only performs read only actions and never claims writability
   });
   const names = transport.calls.map((call) => call[0]);
   assert.deepEqual([...new Set(names)], ['sshRun']);
+  assert.equal(transport.calls[0][1], `stat -c '%d' ${STATE_ROOT} ${UPDATE_ROOT}`);
   assert.equal(result.sameFileSystem, true);
   assert.equal(result.writabilityIndicators.verifiedWrite, false);
   assert.match(result.writabilityIndicators.note, /indicator/u);
@@ -815,6 +840,19 @@ test('the preflight reports different file systems instead of assuming one', asy
   });
   assert.equal(result.sameFileSystem, false);
   assert.match(result.notes.join(' '), /file system/u);
+
+  const empty = await preflightWithProbe({ status: 0, stdout: '', stderr: '' });
+  assert.equal(empty.sameFileSystem, false);
+  assert.match(empty.notes.join(' '), /file system/u);
+
+  const single = await preflightWithProbe({ status: 0, stdout: '5\n', stderr: '' });
+  assert.equal(single.sameFileSystem, false);
+});
+
+test('the preflight records a failed probe instead of reporting all clear', async () => {
+  const failed = await preflightWithProbe({ status: 1, stdout: '5\n5\n', stderr: 'stat: cannot statx' });
+  assert.equal(failed.sameFileSystem, true);
+  assert.match(failed.notes.join(' '), /did not succeed/u);
 });
 ```
 
@@ -905,6 +943,13 @@ node --test scripts/lib/feed-publish.test.mjs
 7. 把**测试调用处**的 `await runPreflight(` 删掉（拿 Promise 当结果比较） ⇒ 预期 `the preflight reports different file systems instead of assuming one` **按测试名变红**。
    （6 与 7 是两处不同的 `await`。原文只写"`runPreflight` 的 `await`"，实测删函数内部那处时**什么都不红** —— 一条会让人误判"变异存活"的记录。）
 8. 把 `planCommit` 里的 `verifySignature: input.verifySignature` **透传**删掉 ⇒ 预期 `the dry run passes the signature verifier through to the local verification` **按测试名变红**。**这条防的是静默旁路**：透传一断，Task 7 注入的真验证器永远不会被调用，而 `--dry-run` 照样报到"计划已生成"。
+9. 把 `runPreflight` 的 `devices.length === 2` 删掉（只留 `devices[0] === devices[1]`）⇒ 预期 `the preflight reports different file systems instead of assuming one` **按测试名变红**：探测输出为空时两个 `undefined` 相等 ⇒ `sameFileSystem` 变成 `true`、`notes` 变成空数组，Task 7 据此退 **0**（"探测失败"被读成"一切正常"）。
+10. 把 `if (probe.status !== 0) notes.push('the read only probe did not succeed');` **整行**删掉 ⇒ 预期 `the preflight records a failed probe instead of reporting all clear` **按测试名变红**：`{status: 1, stdout: '5\n5\n'}` 会给出 `sameFileSystem: true` 与空 `notes`，任务 7 退 **0**。
+11. 把探测脚本里的 `${STATE_ROOT}` 换成 `${UPDATE_ROOT}`（即 `` `stat -c '%d' ${UPDATE_ROOT} ${UPDATE_ROOT}` ``）⇒ 预期 `the preflight only performs read only actions and never claims writability` **按测试名变红**：两个根被换成同一个根，`sameFileSystem` 永远为真而没人发现。
+12. 把 `PUBLISH_STAGES` 的 `Object.freeze(...)` 删掉（只留数组字面量）⇒ 预期 `the commit plan lists the thirteen stages in the fixed order` **按测试名变红**。
+13. 把 `planCommit` 里的 `expectedChannel: input.channel` 写成字面量 `'internal'`（或把 `expectedVersion: input.version` 写成字面量 `'1.2.3'`）⇒ 预期 `the dry run follows the channel and the version it was given instead of a default` **按测试名变红**：夹具是 `stable` / `1.2.4`，写死默认值就再也验不过 —— 这条专门证明"频道与版本是从参数接进去的"，因为其余用例全走默认值，写死也能全绿。
+14. 把 `planCommit` 传给 `verifyLocalArtifacts` 的三个路径接错任一个（例如 `manifestPath: input.fileManifestPath`）⇒ 预期 `the dry run validates the triple and prints the plan without any transport` 与 `the dry run follows the channel and the version it was given instead of a default` **按测试名变红**。
+15. 把 `planCommit` 返回的计划里**除第一条以外**的 `status` 改成 `'done'`（只留 `plan[0]` 是 `'pending'`）⇒ 预期 `the dry run validates the triple and prints the plan without any transport` **按测试名变红**：`every(... === 'pending')` 是唯一抓得住它的断言，这正是不满足于只看 `plan[0]` 的理由。
 
 恢复后全绿且 `git diff` 为空。
 
@@ -1445,6 +1490,8 @@ git commit -m "feat(feed): own the channel lock honestly, including its failure 
 **每写一个 helper，立刻在 `runCommit` 里接上**；不允许出现"定义了但没接"的 helper。
 
 **`planCommit` 的契约要在本刀显式定下来**：Task 2 的 `planCommit` 丢掉了 `verifyLocalArtifacts` 的返回值，而本刀的 `planHashOf` 需要全部三个摘要 ⇒ 本刀必须二选一并在代码里写实——要么在 Task 4 内部自己重新调一次 `verifyLocalArtifacts` 拿摘要，要么扩宽 `planCommit` 的返回值让它把摘要带出来——不允许两种做法并存，也不允许把 `planCommit` 的契约留成歧义。
+
+**计划的形状只有一处推导、两处使用**：`planCommit` 返回 `PUBLISH_STAGES.map((stage) => ({ stage, status: 'pending' }))`，而本刀 `runCommit` 里的 `stages` 是**同一表达式的第二份拷贝**。两份一旦漂移（`--dry-run` 打印出来的计划与审计日志里的阶段列表不是同一个形状），**没有任何测试会红**。二选一并在代码里写实：要么让 `runCommit` 接收 `planCommit` 产出的计划数组（单点推导），要么把两份推导保持**逐字相同**，并在本刀的变异清单里加一条"只改其中一份 ⇒ 指定测试按测试名变红"把这条接线钉住。不允许留成两份没人看着的拷贝。
 
 - [ ] **Step 1: 写失败的测试（async 假 transport）**
 
@@ -3035,13 +3082,16 @@ async function main(argv) {
       return 1;
     }
     try {
+      const publicKeyBase64 = requirePublicKeyFromEnvironment();
       const plan = await planCommit({
         channel: input.channel,
         version: input.version,
         packagePath: resolve(packagePath),
         fileManifestPath: resolve(fileManifestPath),
         manifestPath: resolve(manifestPath),
-        publicKeyBase64: requirePublicKeyFromEnvironment(),
+        publicKeyBase64,
+        verifySignature: ({ manifestBytes, fileManifestBytes, packagePath }) =>
+          verifyPortableRelease({ manifestBytes, fileManifestBytes, packagePath, publicKeyBase64 }),
       });
       console.log(JSON.stringify({ mode, channel: input.channel, version: input.version, plan }, null, 2));
       console.log('dry run: nothing was written, and no permission, remote directory or host key was verified');
@@ -3165,6 +3215,8 @@ await main(process.argv.slice(2)).then(
 );
 ```
 
+**待定的设计决定（在本刀内定，不要拖到 CLI 写完以后）**：探测失败时操作者只看得到 `notes` 里那句 "the read only probe did not succeed" —— **退出码与 stderr 都没有**，虽然 `probe.status` 与 `probe.stderr` 当时**就在 `probe` 里**。想让失败可诊断，只能扩宽 `runPreflight` 的**返回形状**（例如把 `status` 与一行 stderr 摘要带进 `notes`，或新增字段）；**现在定比 CLI 写完之后再定便宜得多**（那时要同时改 CLI 的输出、Task 8 的手册与发布前检查单）。本刀只做决定与记录，**不要**为这件事去改 Task 2 的代码。
+
 **必须遵守：** 顶层 `await`，只用 `process.exitCode`，**不得**在 Promise 完成前 `process.exit`；batch 文件是**仓库外唯一临时文件**（`mkdtempSync`），并在 `finally` 清理，因此并发运行不会互相覆盖；`--break-lock` 的 `--reason` / `--audit-out` / `--confirm-runid` **三角都必填**。
 
 - [ ] **Step 4: 运行测试并确认通过**
@@ -3203,7 +3255,7 @@ git add scripts/feed-publish.mjs scripts/lib/feed-publish-cli.test.mjs package.j
 git commit -m "feat(feed): wire all four cli modes to the real transport"
 ```
 
-**验收项（签名闸门真的在工作）**：`verifyPortableRelease` 是 **async** 的，注入后必须确认 `verifyLocalArtifacts` 与 `verifyPublicArtifacts` 都 **await** 了它。证明方式不是读代码，而是：注入一个**永远拒绝**的 verifier，确认 `--dry-run` 以 `pre-verify: fail` 收口（而不是未处理的 Promise 拒绝）；再把 `await` 删掉，确认同一条路径**变绿** —— 那就说明闸门是假的。
+**验收项（签名闸门真的在工作）**：`verifyPortableRelease` 是 **async** 的，注入后必须确认 `verifyLocalArtifacts` 与 `verifyPublicArtifacts` 都 **await** 了它。证明方式不是读代码，而是：`--dry-run` 分支在 Step 3 里已经注入真 verifier（`planCommit` 的 `verifySignature` 透传），所以这条**是可观测的** —— 用一个坏签名的 manifest（或注入一个**永远拒绝**的 verifier）跑 `--dry-run`，确认它**以 verifier 的报错信息 reject、退出码 1**，且**一个字节的 plan JSON 都没打印**；再把 `verifyLocalArtifacts` 里那处 `await` 删掉，确认同一条路径**不再以 verifier 的报错收口**（plan JSON 先被打印出来） —— 那就说明闸门是假的。⚠️ **不要把验收判据写成"以 `pre-verify: fail` 收口"**：`planCommit` 只返回 `{stage, status:'pending'}` 数组、**不改写任何阶段状态**，`--dry-run` 上根本观测不到 `pre-verify: fail`（那是 Task 4 的 `runCommit` 才有的形状）。拿一个观测不到的判据当验收，等于没验。
 
 ---
 
