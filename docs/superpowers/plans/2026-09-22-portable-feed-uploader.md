@@ -6786,7 +6786,7 @@ test('the entry script injects a transport factory, so a run with no mode flag p
 
 - **三套用例**：`node --test` 逐套 ⇒ 模块 **`166 / 166 / 0`**（不变）、transport **`31 / 31 / 0`**（不变）、CLI **`42 / 42 / 0`**（`40 ⇒ 42`：组合根行为臂 + `scripts/**` 文风钉）。**合计 `166 / 31 / 42 = 239`**。
 - **`check:portable-update-release`**：`13 / 13 / 0`（改完 `.invalid` 之后；⚠️ **本机跑它必须先把 Go 放进 PATH**，否则那条 `go -C launcher test ./internal/update` 会让 `spawnSync` 的 `status` 变成 `null`、报 `null !== 0` —— **看起来像被我改的夹具弄坏了，其实是环境**）。
-- **全量门禁**：见本节末的读数（`pnpm check` 一次跑完，日志在仓库外，`rc=$?`）。
+- **全量门禁（本刀只跑一次，跑在提交 `b7d3c7ef` 的字节上）**：`export PATH="/d/go-toolchain/go/bin:$PATH"` → `pnpm check`（**不接管道**）→ 重定向到**仓库外**的日志 → `rc=$?` ⇒ **`GATE_EXIT=0`**。**非空证据六条**：① 日志 **10229** 行（上一刀 10227，**+2 = 本轮新增的两条用例**）；② 链上第一步 Go **真的跑过**（`ok  mofang-compass/portable-launcher/cmd/mofang-launcher  0.124s` 与 `internal/update  0.378s` —— 少了那个 PATH 导出它会在第一步就死）；③ `check:portable-feed-publish` 那一步的读数就是 **`ℹ tests 239 / ℹ pass 239 / ℹ fail 0`**（`166 + 31 + 42`，与逐套读数一致）；④ `check:portable-update-release` = **`29 / 29 / 0`**，其中**被本刀改过夹具的那条真的跑过**（`✔ make-portable-update CLI writes and independently verifies all three artifacts (719ms)`）；⑤ 链尾 `packages/desktop test` 真的跑到（`Test Files 281 passed (281)` / `2908 passed | 2 skipped (2910)`）；⑥ 全日志 `✖` / `not ok` / `FAIL` 计数 **0**。**没有把日志写进仓库**（`C:/Users/29315/AppData/Local/Temp/feedfix-probe/gate-16.log`，仓库外）。
 
 ### 八、本刀未做（不得写成已完成）
 
