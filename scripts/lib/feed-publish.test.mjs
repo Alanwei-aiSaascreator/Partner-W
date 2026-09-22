@@ -1577,6 +1577,9 @@ function commitTransport(options = {}) {
     },
     fetchPublic: async (url) => {
       calls.push(['fetchPublic', url]);
+      if (typeof options.publicFetchRejects === 'string' && url.includes('manifest.json')) {
+        throw new Error(options.publicFetchRejects);
+      }
       if (options.publicStatus !== undefined && options.publicStatus !== 200) {
         return { status: options.publicStatus, bodyBytes: new Uint8Array() };
       }
@@ -2355,6 +2358,25 @@ test('a staging directory that cannot be created is a plain failure', async () =
   assert.equal(result.lockState, 'not-acquired');
   assert.match(result.reason, /staging directory could not be created/u);
   assert.equal(result.stages.find((entry) => entry.stage === 'lock').status, 'pending');
+});
+
+test('a public fetch that rejects after the flip is an incident that keeps the lock', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths, { publicFetchRejects: 'the operation was aborted' });
+  const input = commitInput(transport, { ...paths });
+  const result = await runCommit(input);
+  assertEveryCommitCallCarriesTheTrustAnchor(transport);
+  assert.equal(result.outcome, 'incident');
+  assert.equal(result.lockState, 'retained-by-this-run');
+  assert.equal(result.stages.find((entry) => entry.stage === 'flip').status, 'done');
+  assert.equal(result.stages.find((entry) => entry.stage === 'public-verify').status, 'incident');
+  assert.equal(result.stages.find((entry) => entry.stage === 'unlock').status, 'retained');
+  assert.match(result.reason, /the operation was aborted/u);
+  const entries = auditEntriesOf(input.auditOut);
+  assert.equal(entries.at(-1).stage, 'lock-retained');
+  const publicVerify = entries.find((entry) => entry.stage === 'public-verify');
+  assert.equal(publicVerify.status, 'incident');
+  assert.equal(publicVerify.detail, 'the operation was aborted');
 });
 
 test('the public verification is actually run after the flip', async () => {

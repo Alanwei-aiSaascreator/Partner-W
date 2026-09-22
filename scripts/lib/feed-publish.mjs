@@ -1128,7 +1128,14 @@ export async function runCommit(input) {
   }
   audit('flip', 'done', undefined, manifestEvidence);
 
-  const observed = await input.transport.fetchPublic(publicChannelManifestUrl(input.channel));
+  let observed;
+  try {
+    observed = await input.transport.fetchPublic(publicChannelManifestUrl(input.channel));
+  } catch (error) {
+    const cause = error instanceof Error ? error.message : String(error);
+    audit('public-verify', 'incident', cause, manifestEvidence);
+    return retainAndFinish('incident', `the public manifest could not be read: ${cause}`);
+  }
   if (observed.status !== 200 || observed.bodyBytes === undefined) {
     audit('public-verify', 'incident', 'the public manifest could not be read', manifestEvidence);
     return retainAndFinish('incident', 'the public manifest could not be read, so the outcome is uncertain');
