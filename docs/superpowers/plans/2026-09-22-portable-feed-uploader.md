@@ -1763,6 +1763,7 @@ import {
   PORTABLE_FILE_MANIFEST_NAME,
   PORTABLE_PACKAGE_NAME,
   appendAuditStage,
+  assertNoReservedEvidenceKeys,
   runCommit,
   verifyPublicArtifacts,
 } from './feed-publish.mjs';
@@ -1907,6 +1908,15 @@ function commitTransport(options = {}) {
             stdout: '',
             stderr: 'rmdir: failed to remove: Directory not empty',
           };
+        }
+        if (typeof options.finaliseStatus === 'number' && request.script.includes('.part-')) {
+          return { status: options.finaliseStatus, stdout: '', stderr: 'mv: cannot stat: No such file or directory' };
+        }
+        if (typeof options.backupStatus === 'number' && request.script.includes('/backup && cp ')) {
+          return { status: options.backupStatus, stdout: '', stderr: 'cp: cannot create regular file: No space left' };
+        }
+        if (typeof options.flipStatus === 'number' && /^mv -f \S+\.tmp \S+$/u.test(request.script)) {
+          return { status: options.flipStatus, stdout: '', stderr: 'mv: cannot move: Permission denied' };
         }
         if (
           /^mv \/opt\/rongying\/updates-state\/staging\//u.test(request.script) &&
@@ -2834,6 +2844,59 @@ test('the audit log keeps the operator and the time as null instead of dropping 
     assert.equal(entry.at, null, entry.stage);
   }
 });
+
+test('a staging directory that cannot be finalised is a plain failure', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths, { finaliseStatus: 1 });
+  const input = commitInput(transport, { ...paths });
+  const result = await runCommit(input);
+  assertEveryCommitCallCarriesTheTrustAnchor(transport);
+  assert.equal(result.outcome, 'fail');
+  assert.equal(result.lockState, 'not-acquired');
+  assert.match(result.reason, /staging directory could not be finalised/u);
+  assert.equal(result.stages.find((entry) => entry.stage === 'stage').status, 'fail');
+});
+
+test('a manifest backup that fails is an incident that keeps the lock before anything is flipped', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths, { backupStatus: 1 });
+  const input = commitInput(transport, { ...paths });
+  const result = await runCommit(input);
+  assertEveryCommitCallCarriesTheTrustAnchor(transport);
+  assert.equal(result.outcome, 'incident');
+  assert.equal(result.lockState, 'retained-by-this-run');
+  assert.match(result.reason, /previous manifest could not be backed up/u);
+  assert.equal(result.stages.find((entry) => entry.stage === 'flip').status, 'pending');
+  assert.deepEqual(
+    transport.calls.filter((call) => call[0] === 'writeSsh' && /^mv -f \S+\.tmp \S+$/u.test(String(call[1]))),
+    [],
+  );
+});
+
+test('an atomic flip that failed is an incident that records the manifest digest', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths, { flipStatus: 1 });
+  const input = commitInput(transport, { ...paths });
+  const result = await runCommit(input);
+  assertEveryCommitCallCarriesTheTrustAnchor(transport);
+  assert.equal(result.outcome, 'incident');
+  assert.equal(result.lockState, 'retained-by-this-run');
+  assert.equal(result.stages.find((entry) => entry.stage === 'flip').status, 'incident');
+  const flip = auditEntriesOf(input.auditOut).find((entry) => entry.stage === 'flip');
+  assert.equal(flip.manifestSha256, manifestShaOf(paths));
+});
+
+test('the audit evidence refuses a key that would override the entry it is attached to', () => {
+  for (const key of ['stage', 'status', 'reason', 'detail', 'runid', 'planHash', 'operator', 'at']) {
+    assert.throws(
+      () => assertNoReservedEvidenceKeys({ [key]: 'x' }),
+      new RegExp(`reserved key\\(s\\) ${key}`, 'u'),
+      key,
+    );
+  }
+  assert.doesNotThrow(() => assertNoReservedEvidenceKeys(undefined));
+  assert.doesNotThrow(() => assertNoReservedEvidenceKeys({ manifestSha256: 'x', remoteTempSha256: 'y' }));
+});
 ```
 
 - [ ] **Step 2: 运行测试并确认按测试名失败**
@@ -2849,6 +2912,27 @@ node --test scripts/lib/feed-publish.test.mjs
 追加到 `scripts/lib/feed-publish.mjs`（`node:fs` 补 `appendFileSync`、`writeFileSync`；`node:path` 补 `join`，补齐后该 import 行恰好是 `import { isAbsolute, join, relative, resolve } from 'node:path';`，**本刀不引入 `sep`** —— "是否在仓库内"的判据与 Task 1 的 `assertKnownHostsPath` 一样用 `relative` + `isAbsolute`）：
 
 ```js
+const RESERVED_AUDIT_KEYS = Object.freeze([
+  'stage',
+  'status',
+  'reason',
+  'detail',
+  'runid',
+  'planHash',
+  'operator',
+  'at',
+]);
+
+export function assertNoReservedEvidenceKeys(evidence) {
+  if (evidence === undefined || evidence === null) return;
+  const clashing = Object.keys(evidence).filter((key) => RESERVED_AUDIT_KEYS.includes(key));
+  if (clashing.length > 0) {
+    throw new FeedPublishError(
+      `the audit evidence carries the reserved key(s) ${clashing.join(', ')}, which the entry sets itself from ${RESERVED_AUDIT_KEYS.join(', ')}; the spread would silently override it, so rename the evidence key`,
+    );
+  }
+}
+
 export function appendAuditStage(input) {
   if (typeof input.repositoryRoot === 'string' && input.repositoryRoot.length > 0) {
     assertOutsideRepository(input.auditOut, input.repositoryRoot);
@@ -3068,6 +3152,7 @@ export async function runCommit(input) {
   const baseOf = () => ({ runid, operator: input.operator ?? null, at: atValue() });
 
   const audit = (stage, status, detail, evidence) => {
+    assertNoReservedEvidenceKeys(evidence);
     stages.find((entry) => entry.stage === stage).status = status;
     appendAuditStage({
       auditOut: input.auditOut,
@@ -3079,6 +3164,7 @@ export async function runCommit(input) {
   const finish = (outcome, reason, lockState) => ({ outcome, reason, lockState, stages, runid, planHash });
 
   const recordOutcome = (outcome, reason, evidence) => {
+    assertNoReservedEvidenceKeys(evidence);
     appendAuditStage({
       auditOut: input.auditOut,
       repositoryRoot: input.repositoryRoot,
@@ -3608,8 +3694,8 @@ git commit -m "feat(feed): publish the manifest over sftp and verify it on the p
 - `--dry-run` / `--preflight` 的 CLI 形状、`--audit-out` 必填、`--break-lock` 的出口都属于 Task 7；本刀只把 `runCommit` 的形状定下来。
 - **提交时 `pre-commit`（lint-staged）跑过 `eslint --fix` + `prettier --write`**：提交后重新量的两份 blob sha256 与变异基线**逐字节相同**（读数见本节开头），所以上面的变异证据对提交的字节仍然成立。
 - 本刀**没有**在 `RunCommit` 里给 `repositoryRoot` 为空串的情况加守卫（`appendAuditStage` 只在 `repositoryRoot` 是非空字符串时才检查）—— 那是 Task 2 已定的契约，本刀不动。
-- **（复核刀追加）`flip` 失败那条分支没有任何用例覆盖**：夹具没有"翻转 `mv -f` 返回非零"的臂，因此 `audit('flip','incident','the atomic flip failed')` 这条路径**在套件里不可达**。复核刀**故意没有**给这条分支加证据字段 —— 加了就是一条"没有测试能钉住"的接线，正是复核刀要清掉的那种形状。**Task 5–8 若要动这条分支，先补夹具臂与用例再改。**
-- **（复核刀追加）`input.now` 必须由 Task 7 注入真时钟**：`runCommit` 的每条审计条目都取 `at`，来源是 `input.now()`（未注入时回退到注入的 `startedAt`，所以缺省读数不是"没有时间"，而是"整轮同一个时间"）。Task 7 的 CLI 必须传 `now: () => new Date().toISOString()`（那是 CLI 层的事，`scripts/lib/` 里**没有** `new Date()`）。
+- **（复核刀追加，残余项复核刀已关闭）`flip` 失败那条分支被补上了覆盖**：复核刀当时的读数是"夹具没有'翻转 `mv -f` 返回非零'的臂，`audit('flip','incident','the atomic flip failed')` 在套件里不可达"，并据此**故意没有**给这条分支加证据字段（原话："加了就是一条没有测试能钉住的接线"）。⚠️ **这两句都已作废**：残余项复核刀补了夹具臂 `flipStatus` 与用例 `an atomic flip that failed is an incident that records the manifest digest`，那条分支现在**可达且被钉住**；而"故意没有给这条分支加证据字段"**与代码不符** —— `3503965a` 早就给这条 `audit(...)` 传了 `manifestEvidence`，账本这句话把一个**存在但没被钉住**的参数说成了**不存在**（三个状态里最坏的一个，见第十节）。**Task 5–8 若要动这条分支，先看第十节那两条读数。**
+- **（复核刀追加）`input.now` 必须由 Task 7 注入真时钟**：`runCommit` 的每条审计条目都取 `at`，来源是 `input.now()`（未注入时回退到注入的 `startedAt`，所以缺省读数不是"没有时间"，而是"整轮同一个时间"）。Task 7 的 CLI 必须传 `now: () => new Date().toISOString()`（那是 CLI 层的事，`scripts/lib/` 里**没有** `new Date()`；**残余项复核刀更正：这半句过宽** —— `scripts/lib/` 下**另有 2 处** `new Date(`，但都不是读墙上时钟（`gateway-probe.mjs:198` 在一段注释里、`portable-update-release.mjs:426` 是 `new Date(input.publishedAt)` 解析注入值）；**实测** `grep -c "new Date(" scripts/lib/feed-publish.mjs` = **0**，本模块不读墙上时钟这个意思仍然成立）。
 
 ### 九、复核刀（spec 合规闸门五项）的落地、读数与本账本更正
 
@@ -3621,18 +3707,18 @@ git commit -m "feat(feed): publish the manifest over sftp and verify it on the p
 2. **`D6a` 的"不可钉住"是错的（本账本第 12 条的说明 + 第三节的 D6a 行 + 第五节 `channel` 行都已更正）。** 实测钉子：`channel: ''` 时两层**报错文案不同**（两层之间隔着 `verifyLocalArtifacts`）⇒ 新用例 `the channel precondition refuses an empty channel by its own reason before any remote write`（`feed-publish.test.mjs:2186`）把 `runCommit` 入口那句 `assertSafeChannel(input.channel)` 单独钉住。**冗余保留，但"不可单独钉住"这句话从账本撤掉。**
 3. **装置纪律加严（本计划"变异与镜像"一节新增第 3 条，Task 5–8 继承）。** 复核者的作废读数 ③ 与本刀**同形**：把 `audit('commit-version','done');` 插在设备号检查里那条 `return releaseAndFinish(…)` **之后** ⇒ 语法合法、磁盘字节真的变了、套件 **133/0 全绿**（不可达代码被当成"存活"）。本刀的装置因此：**打印 hunk**（整行，不是半行片段）、**对纯插入做可达性检查并拒收**（本刀用它复现并拒收了那条假存活，同时用一次真变异验证了拒收会触发）、**预先写明"哪条测试必须按名变红"并核对红名单**。⚠️ 装置自身的第一版 `locateInsertion` **是错的**（对纯插入，`before.slice(offset) === after.slice(offset+n)` 在**任何** `offset ≤ 真插入点` 处都成立 ⇒ 它会返回一个偏前的偏移、于是可达性检查在**它本该拒收的那条**上报了 `reachable-or-unknown`）。**这正是"先验你自己的验证脚本"**：不拿那条已知形状去试装置，就会把"装置没生效"读成"这是真存活"。
 4. **七个守卫 + 一条冗余断言（逐个给处置）：** 复核者逐条实测"删掉 ⇒ 117/0 全绿"，本刀**七个全部选"钉住"**（都便宜，且都是 fail-closed 方向），**第八条（`calls.length > 0`）选"删掉"**（见第七节第 2 条：它被第二条断言严格蕴含，永远不可能单独失败 ⇒ 留着只会在账本里冒充第二条守卫）。七个钉子与它们的变异见下面的表；每条的**处置理由**：这七个都是"远端说了什么都不信"的守卫，删掉它们不会让套件红、只会让**某一条真路径静默地按乐观解释走**（把失败当空目录、把无回应当不存在、把探针失败当目录在），这正是本工具存在的理由（可审计）——所以一律钉住，不记"刻意冗余"。
-5. **审计内容按 §6.11 补全（本刀实现，不是声明）。** 形状见下节。**"时间"必须是注入值**：`scripts/lib/` 里没有 `new Date()`（沿用 `startedAt` 的待遇），新增可选输入 `input.now`（函数）。**没有"带不了"的项**：spec 列出的每一项都有对应的值；唯一**故意不带**的是 `flip` 失败分支（**没有任何夹具臂能到达它**，见第八节末 —— 给它加证据就是加一条钉不住的接线）。
+5. **审计内容按 §6.11 补全（本刀实现，不是声明）。** 形状见下节。**"时间"必须是注入值**：`scripts/lib/` 里没有 `new Date()`（沿用 `startedAt` 的待遇），新增可选输入 `input.now`（函数）。**没有"带不了"的项**：spec 列出的每一项都有对应的值，包括 `flip` 失败分支 —— 它**带** `manifestEvidence`（`3503965a` 加上的）。⚠️ **本节原先写着"唯一故意不带的是 `flip` 失败分支（没有任何夹具臂能到达它）"，这一句是错的，已撤**：那个参数当时**确实在代码里**，只是**没有任何用例覆盖那条分支**，所以账本说"故意不带"与代码说"带"**互相矛盾**。残余项复核刀补上了夹具臂 `flipStatus` 与用例 `an atomic flip that failed is an incident that records the manifest digest`，该参数现在**既存在、又被钉住**（变异 `M4-flip-argument` 删掉它 ⇒ 那条用例按名变红，读数见第十节）。
 
 **二、审计条目的形状变化**（这是对外可观察的行为改动，Task 7 的 CLI 与手册要跟上）
 
-- 每条条目（`open` / 各阶段 / `lock-retained` / `done|fail|incident|retry|blocked` / `unlock`）现在都带 **`operator`**（来自 `input.operator`，缺失时写 `null` —— 显式写 `null` 而不是让 `JSON.stringify` 静默丢掉这个键）与 **`at`**（来自 `input.now()`，未注入时回退到注入的 `startedAt`，都缺失时也是 `null`）。条目的 `runid` / `planHash` / `reason` / `detail` / `status` 字段名**不变**（既有断言不受影响）。
+- 每条条目（`open` / 各阶段 / `lock-retained` / `done|fail|incident|retry|blocked` / `unlock`）现在都带 **`operator`**（来自 `input.operator`，缺失时写 `null` —— 显式写 `null` 而不是让 `JSON.stringify` 静默丢掉这个键）与 **`at`**（来自 `input.now()`，未注入时回退到注入的 `startedAt`，都缺失时也是 `null`）。条目的 `runid` / `planHash` / `reason` / `detail` / `status` 字段名**不变**（既有断言不受影响）。⚠️ **这份条目名单只覆盖 Task 4 产出的条目**：§6.11 另有一条会话级条目 `preflight`，以及 `break-lock`（CLI 模式），**两条都由 Task 7 写、Task 4 里根本不存在**，所以它们不在这份名单里 —— 但它们**同样受 §6.11 的"时间"要求约束**，而 Task 7 规定的文本今天**没有给它们 `at`**。这条已记成 Task 7 验收项（见 Task 7 的验收项），不在本刀修。
 - 新增证据字段（都挂在"该值成为事实"的那条上，成功与失败两条都挂）：
   - `pre-verify` done ⇒ `local`：三个产物的本地 `packageSha256`/`packageSize`/`fileManifestSha256`/`fileManifestSize`/`manifestSha256`/`manifestSize`；
   - `remote-verify` done **与** fail ⇒ `remote`：远端探针**实际观察到**的 `present`/`empty`/`problems`/`entries`（`type`/`name`/`size`）/`digests`（名字→摘要；读不到时是 `null`，不是 `{}`）；
   - `backup-manifest` done ⇒ `previousManifestSha256`（旧 manifest 的原始 SHA-256）+ `backupPath`；
   - `cas` done **与** incident ⇒ `previousManifestSha256` + `observedManifestSha256`；
   - `temp-manifest`（上传失败 / 摘要不匹配 / done）⇒ `manifestSha256`（新 manifest）+ 后两者再加 `remoteTempSha256`；
-  - `flip` done ⇒ `manifestSha256`；
+  - `flip` done **与** incident ⇒ `manifestSha256`（incident 那条由残余项复核刀的 `flipStatus` 夹具臂 + 变异 `M4-flip-argument` 钉住）；
   - `public-verify`（读失败 / 验签抛错 / `ok !== true` / retry / third）⇒ `manifestSha256` + `observedManifestSha256` + `previousManifestSha256`；done ⇒ `public`：`verifyPublicArtifacts` **实际比对**的那五个值（`ok`/`manifestSha256`/`packageSha256`/`packageSize`/`fileManifestSha256`/`fileManifestSize`）；
   - 收口条目 `done` ⇒ `manifestSha256`。
 - **两个"值被算出来又被丢掉"的函数现在把它们返回出来**：`inspectRemoteDirectory`（原先丢弃远端 entries/digests，只回 problems）、`verifyPublicArtifacts`（原先丢弃 `manifestSha256`，只回 `{ok, reason}`）。第三个被点名的值是 `baselineSha`/`casSha`/`remoteTempSha` —— 它们此前只参与比较、从不进日志，现在都进了。
@@ -3688,6 +3774,54 @@ git commit -m "feat(feed): publish the manifest over sftp and verify it on the p
 - `feed-publish.mjs` **1030** 行、`feed-publish.test.mjs` **2395** 行（`wc -l`）；套件 **133 条**（`node --test` 的 `ℹ tests 133` / `ℹ pass 133` / `ℹ fail 0`），比本刀前 **117** 条多 **16** 条（**全部**是新增用例：解锁失败路径 1 + 空 channel 前置条件 1 + 七个守卫 7 + 审计内容与形状 7）。
 - **规定块边界（同时是这一刀改过的两段）**：Task 4 测试块 = 计划第 1762–2836 行 ⇔ `feed-publish.test.mjs` **1321–2395**（围栏在计划第 1761 / 2837 行）；Task 4 模块块 = 计划第 2852–3438 行 ⇔ `feed-publish.mjs` **444–1030**（围栏在计划第 2851 / 3439 行）。⚠️ 这四个计划行号是**跑过 `prettier --write` 之后**重测的（prettier 把本节前面一段正文折行 ⇒ 围栏整体下移 2 行 —— 行号会漂，别拿折行前的读数引用）。**两对 `diff` 都是 `DIFF_EMPTY`**（复核刀改文件的同时把围栏里的规定块**一起**改成新的那一段，因此"块 = 文件那一段"仍然成立；这也是为什么本节的偏离清单必须补记第 13 条）。
 - **没有连过任何服务器**：这一刀的所有读数都来自注入的假 transport，与 Task 4 同规格。
+- ⚠️ **本节的行号与条数已被残余项复核刀取代**（那两个文件后来又各多了一段，围栏整体下移）：**当前值见第十节第四小节**，别引用本节这三个数字当现状（它们仍然准确地描述**本刀当时**的字节）。
+
+### 十、残余项复核刀（复核者留下的五个残余项）的落地、读数与覆盖状态
+
+**这一刀是什么：** 复核者复现了 14 条变异、确认五条里的四条已关闭，留下**五个残余项**（都是小的、精确指定的）。本节给出：① 五个残余项各自怎么落地；② 每一处新增夹具臂/守卫的钉子与变异读数（**6 条：1 条对照 + 5 条变异**，全部打印 hunk）；③ **两处账本更正**（`flip` 分支的"故意不带"与"没有任何用例覆盖"，两句话都与代码不符）；④ **本刀实测出来的两条"套件分辨不出"的分支**（其中一条**不是**复核者点名的三条之一，另一条是"分支被走到、但后果没被断言"）；⑤ 覆盖状态的**单一声明**（§6.11 / §6.14 的失败分支，哪条有夹具臂、哪条没有）；⑥ 当前读数与围栏行号（取代第九节第四小节）。代码提交：`5bc5ab7e`（模块与测试**同一个提交**；blob sha256 `7930ebfc…` / `1ba06d92…`）—— 与变异基线**逐字节相同**（提交时 `pre-commit` 跑过 `eslint --fix` + `prettier --write`，两个 blob 都没被改动）。
+
+**一、五个残余项各自怎么落地的**
+
+1. **三条没有夹具臂能到达的失败分支（最重要的一条）。** 复核者实测：**删掉**这三段中的任意一段，套件都停在 **133/0 全绿** —— 也就是说那三条分支的**检测**没被测过、接线是隐形的。三处都补了**一条夹具臂 + 一条按名钉住的用例**（`commitTransport` 里新增 `finaliseStatus` / `backupStatus` / `flipStatus`）：
+   - `feed-publish.mjs:826`（追踪表**步骤 2 `stage`** 的第二条写操作：两条 `mv -f` 把 `.part-<runid>` 改成最终名）⇒ 夹具臂 `finaliseStatus` + 用例 `a staging directory that cannot be finalised is a plain failure`；这条分支的结果是 `fail` / `not-acquired`（**锁还没拿**，所以它绝不能去解锁）。
+   - `feed-publish.mjs:937`（追踪表**步骤 7 `backup-manifest`**）⇒ 夹具臂 `backupStatus` + 用例 `a manifest backup that fails is an incident that keeps the lock before anything is flipped`。**这是三条里后果最重的一条**：备份失败必须 `retainAndFinish('incident')` 并**留住锁**，否则流程会带着**没有任何回滚材料**的状态继续走到 CAS 与翻转。除了结果与锁状态，用例还断言**一条 `mv -f …tmp` 都没发**（把"没有翻转"钉成"远端没有这个动作"，而不是只看返回值）。
+   - `feed-publish.mjs:982`（追踪表**步骤 10 `flip`** ⇒ 就是 §6.14 的"步骤 10 的 `mv` 中途"那一行）⇒ 夹具臂 `flipStatus` + 用例 `an atomic flip that failed is an incident that records the manifest digest`。这条分支此前**覆盖率 0 %**，钉住它本身就是目的。
+2. **`flip` 分支的证据参数与账本不符（改账本，不改代码）。** `feed-publish.mjs:983` 的 `audit('flip','incident','the atomic flip failed', manifestEvidence)` **确实带 `manifestEvidence`**（`3503965a` 加上的），而 §九.1 第 5 条说这条分支是"唯一**故意不带**的"、§八末说本刀"**故意没有**给这条分支加证据字段" —— 复核者的原话是"三个状态里最坏的一个"：一个**存在但没人钉**的参数，被账本说成**不存在**。**处置**：参数**保留**（现在有 `flipStatus` 臂走到它了），账本两处都已改成"带 `manifestEvidence`、且被 `M4-flip-argument` 按名钉住"；§九.2 的证据清单里 `flip` 那行也从"done ⇒"改成"**done 与 incident** ⇒"。**没有一处再声称它不存在。**
+3. **证据展开的保留键隐患（新增 fail-closed 守卫）。** `audit` / `recordOutcome` 都把 `evidence` **展开在最后**，所以将来某个叫 `stage` / `status` / `runid` / `planHash` 的证据键会**静默覆盖**条目自己的字段，而当时没有任何东西覆盖这件事。**读代码得到的基座键**（不是猜的）：`audit` 造 `{stage, status, ...baseOf(), detail?}`、`recordOutcome` 造 `{stage, reason, ...baseOf(), planHash}`，而 `baseOf()` 是 `{runid, operator, at}` ⇒ **保留键是一个 8 元的闭集：`stage` / `status` / `reason` / `detail` / `runid` / `planHash` / `operator` / `at`**。新增 `RESERVED_AUDIT_KEYS`（冻结数组）与 `assertNoReservedEvidenceKeys(evidence)`：命中保留键即抛 `FeedPublishError`，报错**点名是哪个键**、并把整个保留集列出来（可操作）。两个展开点各加一行调用。**为什么不用"把展开挪到最前面"这种修法**：那是**不可观测**的重排，钉不住；显式拒绝是 fail-closed 且**可以按名钉住**的。**钉住它的用例**：`the audit evidence refuses a key that would override the entry it is attached to`（8 个保留键逐个 `assert.throws`，外加两个正对照：`undefined` 与非保留键不抛）。**这条守卫的局限见本节第三小节 —— 照实说，不留给下一个读的人去发现。**
+4. **Task 7 的两条前向义务已写成验收项**（写在 Task 7 的验收项清单里，不是只在别处留一句注）：① `input.now` 必须由 Task 7 注入真时钟，否则整轮审计条目共用 `startedAt`；② CLI 的两条会话级条目（`preflight` 与 `break-lock`）**今天规定的文本没有 `at`**，必须补上。
+5. **覆盖状态收成单一声明**（本节第三小节）。复核者指出原先那句声明**既不全**（`finalise` 与 `backup` 哪儿都没声明）**又错**（`flip`）。
+
+**二、变异读数（对照 1 条 + 变异 5 条；全部对着 `5bc5ab7e` 的字节）**
+
+装置每条动作：断言锚点恰好匹配 **1** 次 → 取 sha256 基线 → 写入 → 重读确认落盘 → `node --check` → 跑套件 → **打印 hunk** → 核对"哪条测试必须按名变红"的红名单 → 逐字节恢复 → 比 sha256。**6 条全部：锚点 1 次、`node --check` ok、恢复后 sha256 相等。** 基线：模块 `7930ebfc…`、测试 `1ba06d92…`。**红线之外没有意外**：五条变异**各只红一条**，且都是它自己那条用例。
+
+| #                | 变异（hunk：`-` 删 / `+` 加）                                                                                                          | 读数                | 按名变红的测试                                                                                                                                           |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------- | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 对照             | `- 'the atomic flip failed, so the outcome is uncertain'` / `+ … so the result is uncertain`（只改一句**没有任何断言读它**的报错文案） | **137 / 0（全绿）** | —（证明装置不是"改什么都红"）                                                                                                                            |
+| M1-finalise-分支 | 删掉 `feed-publish.mjs:826-830` 整段（`if (finalised.status !== 0) { audit…; recordOutcome…; return finish(…) }`）                     | **137 / 1**         | `a staging directory that cannot be finalised is a plain failure`（实测 `actual: 'done'` vs `expected: 'fail'`）                                         |
+| M2-backup-分支   | 删掉 `feed-publish.mjs:937-939` 整段（`if (backup.status !== 0) { return retainAndFinish('incident', …) }`）                           | **137 / 1**         | `a manifest backup that fails is an incident that keeps the lock before anything is flipped`（实测 `actual: 'done'` vs `expected: 'incident'`）          |
+| M3-flip-分支     | 删掉 `feed-publish.mjs:982-985` 整段（`if (flipped.status !== 0) { audit…; return retainAndFinish('incident', …) }`）                  | **137 / 1**         | `an atomic flip that failed is an incident that records the manifest digest`（实测 `actual: 'done'` vs `expected: 'incident'`）                          |
+| M4-flip-参数     | `- audit('flip', 'incident', 'the atomic flip failed', manifestEvidence);` / `+ audit('flip', 'incident', 'the atomic flip failed');`  | **137 / 1**         | 同上那条（实测 `actual: undefined` vs `expected: '<本地 manifest sha256>'`——**这条读数就是第二节"账本与代码不符"的钉子**）                               |
+| M5-证据保留键    | 删掉 `assertNoReservedEvidenceKeys` 里的整段检查（`feed-publish.mjs:457-463`）                                                         | **137 / 1**         | `the audit evidence refuses a key that would override the entry it is attached to`（实测 `actual: undefined` vs `expected: /reserved key\(s\) stage/u`） |
+
+**三、覆盖状态（本账本唯一一处；读数是"把分支的判据换成 `if (false)` ⇒ 套件还绿不绿"）**
+
+**口径说明：** 判据不是"读代码觉得有没有测"，而是**把那段 `if (<判据>)` 换成 `if (false)`** 再跑套件 —— 绿 = 套件分辨不出这条分支存在（**接线隐形**），红 = 被钉住。`runCommit` 里带收口动作（`finish` / `retainAndFinish` / `releaseAndFinish`）的**终止性分支共 22 条**（名单由脚本从代码里数出来，不是肉眼数的）。逐条读数：
+
+- **被夹具臂覆盖且套件会红：20 条。** 其中本刀新补的三条是 `stage` 的 finalisation（`:826`）、`backup-manifest`（`:937`）、`flip`（`:982`）。
+- **套件分辨不出的：2 条**（这是本刀**实测**出来的，不是复核者点名的三条）：
+  1. **`feed-publish.mjs:876` —— 步骤 5 `re-verify` 的"staging 字节在取锁期间变了"那条。** 读数：`if (false)` ⇒ **137/0 全绿**。根因：夹具**两次**列 staging 目录都回同一份 `stagingListing`，所以这条判据**没有任何夹具臂能到达**（与复核者点名的三条**同一形状**，只是复核者没点到它）。
+  2. **`feed-publish.mjs:914` —— 步骤 6 `commit-version` 的"版本目录已存在且逐字节相同 ⇒ 复用"那条。** 读数：`if (false)` ⇒ **137/0 全绿**。这条**不一样**：分支**被走到了**（`an existing version directory that matches every byte is reused`，`feed-publish.test.mjs:1804`），但那条用例只断言 `outcome === 'done'` 与阶段状态 —— **不区分"走复用"与"再 `mv` 一次"**。`if (false)` 会让代码多发一次 `mv <staging> <version>`（版本目录已存在时 `mv` 会把它塞成子目录）而仍然报 `done` ⇒ **后果没被任何断言钉住**。
+- **两条都没在本刀修**（本刀的边界是复核者点名的五项，加夹具臂会改掉别的用例的边界）。**这是刻意留白，不是遗漏**：它们是本账本里**仅有的**两条"套件分辨不出"的分支，下一位动 `runCommit` 的人应当先给它们补夹具臂与用例（`:876` 需要夹具能在**两次** staging 列举之间改答案；`:914` 只需要在既有用例上加"没有发过 `mv`"的断言）。
+- **`assertNoReservedEvidenceKeys` 的接线为什么不在上表里：** 它是**唯一一条"守卫有、接线钉不住"**的。两个展开点（`audit` / `recordOutcome`）在 `runCommit` 内部，而**没有任何夹具能往 `evidence` 里注入东西**（所有证据对象都是模块内的字面量，`input` 的字段一个都不进证据键集）⇒ 实测**两条**：删掉 `audit` 里那行调用 **137/0 全绿（存活）**、删掉 `recordOutcome` 里那行 **137/0 全绿（存活）**。**照实记**：这条守卫的**拒绝本身**被按名钉住（M5），它的**两个调用点**只能靠"这条语句唯一的产出就是那个布尔判定"这个形状 + 人工复核，**没有任何用例能钉**（本次共跑了 22 条分支判据 + 6 条变异，**只有这两条是"存活"且不属于上面那两条分支**）。要真钉住它，得先给 `runCommit` 开一个能注入证据的入口 —— 那是接口改动，不在本刀。
+- **不是失败分支、因而不在上表里的**：`open` 那条审计写入的 `try/catch`（由 `a failed audit write stops the run instead of publishing silently` 钉住）、`releaseChannelLock` 的三个失败分支（由 `a failed owner removal is never reported as released` 等钉住）、`verifyPublicArtifacts` 内部的分支（由第六节三角验证与 `the public verification fails when the served package differs` 钉住）。
+
+**四、当前读数（取代第九节第四小节）**
+
+- `feed-publish.mjs` **1053** 行、`feed-publish.test.mjs` **2458** 行（`wc -l`）；套件 **137 条**（`node --test` 的 `ℹ tests 137` / `ℹ pass 137` / `ℹ fail 0`），比本刀前 **133** 条多 **4** 条（三条失败分支各 1 + 保留键拒绝 1）。
+- 新增夹具臂 3 个（`finaliseStatus` / `backupStatus` / `flipStatus`）、新增模块导出 1 个（`assertNoReservedEvidenceKeys`）、新增模块级常量 1 个（`RESERVED_AUDIT_KEYS`）、`audit` / `recordOutcome` 各加 1 行调用。
+- **规定块边界（本刀同样改过的两段）**：Task 4 测试块 = 计划第 1762–2899 行 ⇔ `feed-publish.test.mjs` **1321–2458**（围栏在计划第 1761 / 2900 行）；Task 4 模块块 = 计划第 2915–3524 行 ⇔ `feed-publish.mjs` **444–1053**（围栏在计划第 2914 / 3525 行）。**两对 `diff` 都是 `DIFF_EMPTY`**（本刀改文件的同时把围栏里的规定块**一起**换成新的那一段，用的是一段脚本：先按**父提交**的字节在计划里定位那一段、断言只有 1 处命中、并断言上下各是一行围栏，再整段替换）。
+- **没有连过任何服务器**：本刀的所有读数都来自注入的假 transport，与 Task 4 / 第九节同规格。
 
 ### Task 5: `internal → stable` 重签
 
@@ -4467,6 +4601,11 @@ await main(process.argv.slice(2)).then(
 2. **`readOwnerRecord` 的契约宽化归 Task 7（第二修复刀第三处，别在别的刀里动它）。** 现在它返回 `null` 表示**三种**成因。Task 7 负责把它改成**能区分三者**的形状（例如 `{ status: 'read' | 'missing' | 'transport' | 'corrupt', record }`，或抛 `FeedPublishError` 并带成因），并同步它的**两个消费者**（Task 4 的解锁路径、Task 7 的 `--break-lock` 两条路径）与全部断言。**本刀不改**：动它的返回形状会同时改到 Task 4 与 Task 7 的接线面，属于"先把契约定清楚再改代码"的那一类。
 3. **`auditOut` 必须真的被用掉（第二修复刀"记录不改"第二处）。** `breakChannelLock` 已经**校验**了 `input.auditOut`（非空字符串），但函数体内**一次都没用它** —— 它是在 Task 7 的 CLI 里被接上的（`appendAuditStage({ auditOut, repositoryRoot, entry: { stage: 'break-lock', ...record } })`）。实现 Task 7 时**必须**确认**四种模式的每一条**都把 `--audit-out` 接到某个真实写入点，而不是"传进去、校验过、然后忘掉"。特别是 `--break-lock` 与 `--owner-record-unreadable` **两条都要**写审计行。**验收方式必须是可观测的**：跑一次 `--break-lock`，确认目标路径**真的多了一行**（不是看代码里有没有引用它）。
 4. **把本次运行自己的 owner 记录送到那个状态需要的出口（第二修复刀"记录不改"第三处）。** `owner` 在两个分支里含义不同：owner 写入**成功**时返回 `owner: input.owner`（本次运行自己的记录），owner 写入**失败**时返回 `owner: null` —— 而后者恰恰就是"锁在、记录读不出来"那个状态。于是操作员**拿不到 `--confirm-runid` 需要的那个值**（`runid` 只在**运行方**手里，锁里没有）。Task 7 要在这个状态下**把本次运行自己的 `runid` 与 `planHash` 送到操作员看得见的地方**（CLI 打印 + 审计行），否则"要不要人工拆这把锁"这个判断没有依据。**本条的形状随上面第 2 条一起定**（第 2 条宽化 `readOwnerRecord` 的契约，本条决定谁把运行方自己的记录带出来）—— 两条都在 Task 7，一起改，别分两次动契约。
+5. **必须注入真时钟 `now`（残余项复核刀追加；这条在第八节末只是一句注，本刀把它升成验收项）。** `runCommit` 的**每一条**审计条目都取 `at`，来源是 `input.now()`；**未注入时回退到 `input.startedAt`** ⇒ 缺省读数不是"没有时间"，而是**整轮共用同一个时间戳**，而 §6.11 要求"每个阶段的结果码 + 时间"。Task 7 的 CLI 必须给 `runCommit` 传 `now: () => new Date().toISOString()`。**验收方式必须可观测**：跑一次 `--commit`，读审计文件，断言**至少两条条目的 `at` 不相同**（别只看代码里有没有传 `now`）。⚠️ 这是**CLI 层**的事，别把它挪进模块：**实测** `grep -c "new Date(" scripts/lib/feed-publish.mjs` = **0**（第八节末原话是"`scripts/lib/` 里没有 `new Date()`"，那句话**过宽** —— `scripts/lib/` 下确实还有 2 处 `new Date(`，但都不是读墙上时钟：`gateway-probe.mjs` 那处在一段**注释**里、`portable-update-release.mjs:426` 那处是 `new Date(input.publishedAt)` **解析注入值**；"本模块不读墙上时钟"这个意思仍然成立，本验收项按**实测的那一句**引用）。
+6. **CLI 的两条会话级条目必须带 `at`（残余项复核刀追加）。** §6.11 要求每条条目都记"时间"，而 Task 7 规定的文本今天**两条都没给**：
+   - `preflight`：§6.11 的会话级条目表里明写"（执行过 `--preflight` 时追加 `preflight`）"，但 Task 7 规定的 `preflight` 分支（`if (mode === 'preflight') { … runPreflight … }`）**只打印 JSON、一行审计都不写**，连 `--audit-out` 在该模式下都不必填。
+   - `break-lock`：规定的文本是 `appendAuditStage({ auditOut, repositoryRoot, entry: { stage: 'break-lock', ...record } })`，而 `record`（`breakChannelLock` 的返回值）只有 `outcome` / `previousOwner` / `reason` / `operator` —— **没有 `at`**。
+     **两条都必须补 `at`（同一个 CLI 层时钟，与第 5 条同源）**，并各自断言"这一行真的多了一条**带 `at`** 的审计条目"。⚠️ 这两个条目名**不在**第九节第二小节那份条目名单里 —— 那份名单只覆盖 Task 4 产出的条目（`preflight` / `break-lock` 在 Task 4 里根本不存在），**不要**因为名单里没有就当作不受 §6.11 约束。**修法二选一（本刀只记，不替 Task 7 拍）**：把规定的文本改成带 `at`，或在实现时按本验收项补 —— 但**不得**保持"规定的文本没有 `at`、审计行也不带 `at`"这个状态。
 
 - [ ] **Step 4: 运行测试并确认通过**
 
