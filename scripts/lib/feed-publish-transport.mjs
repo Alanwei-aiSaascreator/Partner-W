@@ -2,6 +2,7 @@ import { execFile as nodeExecFile } from 'node:child_process';
 
 const SSH_TIMEOUT_MS = 60_000;
 const SFTP_TIMEOUT_MS = 600_000;
+const PUBLIC_FETCH_TIMEOUT_MS = 60_000;
 
 export class FeedTransportError extends Error {
   constructor(message) {
@@ -17,7 +18,7 @@ export function quoteBatchPath(value) {
   if (/[\r\n\u0000]/u.test(value)) {
     throw new FeedTransportError('an sftp batch path must not contain a carriage return, a newline or a nul byte');
   }
-  if (!/[\s"]/u.test(value)) return value;
+  if (/^[A-Za-z0-9._/:@+-]+$/u.test(value)) return value;
   return `"${value.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`;
 }
 
@@ -31,7 +32,33 @@ function pinnedOptions(knownHostsPath) {
     `UserKnownHostsFile=${knownHostsPath}`,
     '-o',
     'ConnectTimeout=15',
+    '-o',
+    'GlobalKnownHostsFile=/dev/null',
   ];
+}
+
+function assertTransportAnchor(value, fallback, label) {
+  if (value === undefined || value === null) return fallback;
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new FeedTransportError(`a per call ${label} must be a non empty string`);
+  }
+  if (value.startsWith('-') || /[\s\u0000-\u001f]/u.test(value)) {
+    throw new FeedTransportError(
+      `a per call ${label} must not start with a dash or carry whitespace or control characters`,
+    );
+  }
+  return value;
+}
+
+export function mapExecFileOutcome(error, stdout, stderr) {
+  if (error !== null && error !== undefined) {
+    return {
+      status: typeof error.code === 'number' ? error.code : -1,
+      stdout: String(stdout ?? ''),
+      stderr: String(stderr ?? error.message ?? ''),
+    };
+  }
+  return { status: 0, stdout: String(stdout ?? ''), stderr: String(stderr ?? '') };
 }
 
 export function createFeedTransport(input) {
@@ -47,21 +74,13 @@ export function createFeedTransport(input) {
     ((command, args, options) =>
       new Promise((resolve) => {
         nodeExecFile(command, args, options, (error, stdout, stderr) => {
-          if (error !== null && error !== undefined) {
-            resolve({
-              status: typeof error.code === 'number' ? error.code : -1,
-              stdout: String(stdout ?? ''),
-              stderr: String(stderr ?? error.message ?? ''),
-            });
-            return;
-          }
-          resolve({ status: 0, stdout: String(stdout ?? ''), stderr: String(stderr ?? '') });
+          resolve(mapExecFileOutcome(error, stdout, stderr));
         });
       }));
 
   async function sshRun(request) {
-    const callHost = request.host ?? host;
-    const callKnownHostsPath = request.knownHostsPath ?? knownHostsPath;
+    const callHost = assertTransportAnchor(request.host, host, 'ssh host');
+    const callKnownHostsPath = assertTransportAnchor(request.knownHostsPath, knownHostsPath, 'known hosts file');
     const result = await runner('ssh', [...pinnedOptions(callKnownHostsPath), callHost, request.script], {
       encoding: 'utf8',
       timeout: SSH_TIMEOUT_MS,
@@ -81,8 +100,8 @@ export function createFeedTransport(input) {
     if (typeof batchFile !== 'string' || batchFile.length === 0) {
       throw new FeedTransportError('the sftp batch file path is required');
     }
-    const callHost = request.host ?? host;
-    const callKnownHostsPath = request.knownHostsPath ?? knownHostsPath;
+    const callHost = assertTransportAnchor(request.host, host, 'ssh host');
+    const callKnownHostsPath = assertTransportAnchor(request.knownHostsPath, knownHostsPath, 'known hosts file');
     const command = request.resume === true ? 'reput' : 'put';
     writeBatch(`${command} ${quoteBatchPath(request.localPath)} ${quoteBatchPath(request.remotePath)}\n`);
     const result = await runner('sftp', [...pinnedOptions(callKnownHostsPath), '-b', batchFile, callHost], {
@@ -100,7 +119,10 @@ export function createFeedTransport(input) {
   const publicFetch =
     input.fetchPublic ??
     (async (url) => {
-      const response = await fetch(url, { redirect: 'error' });
+      const response = await fetch(url, {
+        redirect: 'error',
+        signal: AbortSignal.timeout(PUBLIC_FETCH_TIMEOUT_MS),
+      });
       return { status: response.status, arrayBuffer: () => response.arrayBuffer() };
     });
 

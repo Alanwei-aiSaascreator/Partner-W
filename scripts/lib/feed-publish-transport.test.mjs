@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { FeedTransportError, createFeedTransport, quoteBatchPath } from './feed-publish-transport.mjs';
+import {
+  FeedTransportError,
+  createFeedTransport,
+  mapExecFileOutcome,
+  quoteBatchPath,
+} from './feed-publish-transport.mjs';
 
 const KNOWN_HOSTS = '/outside/repo/known_hosts';
 const HOST = 'updates.example.invalid';
@@ -183,10 +188,8 @@ test('the batch path quoting refuses a path that is not a non empty string', () 
 });
 
 test('a transport without a host or a pinned known hosts file is refused before any process starts', () => {
-  const fake = makeFake();
   assert.throws(() => createFeedTransport({ host: '', knownHostsPath: KNOWN_HOSTS }), FeedTransportError);
   assert.throws(() => createFeedTransport({ host: HOST }), FeedTransportError);
-  assert.deepEqual(fake.calls, []);
 });
 
 test('an sftp upload without a batch writer or a batch file path fails closed', async () => {
@@ -259,14 +262,26 @@ test('a public response without a byte reader is reported with an empty body rat
 
 test('every call carries a finite timeout so a hung remote cannot hold the run', async () => {
   const fake = makeFake();
-  const transport = makeTransport({ execFile: fake.execFile, writeBatch: () => {} });
-  await transport.readOnly.sshRun({ script: 'ls' });
-  await transport.write.sftpUpload({ localPath: '/a', remotePath: '/b', resume: false });
+  const records = [];
+  const restore = stubDefaultPublicFetch(records);
+  try {
+    const transport = makeTransport({ execFile: fake.execFile, writeBatch: () => {} });
+    await transport.readOnly.sshRun({ script: 'ls' });
+    await transport.write.sftpUpload({ localPath: '/a', remotePath: '/b', resume: false });
+    await transport.fetchPublic('https://api.rongyinghudong.com/updates/internal/manifest.json');
+  } finally {
+    restore();
+  }
   const [sshCall, sftpCall] = fake.calls;
   assert.equal(sshCall.options.timeout, 60000);
   assert.equal(sftpCall.options.timeout, 600000);
   assert.equal(sshCall.options.encoding, 'utf8');
   assert.equal(sftpCall.options.encoding, 'utf8');
+  const publicCall = records.find((record) => record.url !== undefined);
+  const delays = records.filter((record) => record.timeoutMs !== undefined);
+  assert.equal(delays.length, 1);
+  assert.equal(delays[0].timeoutMs, 60000);
+  assert.equal(publicCall.options.signal instanceof AbortSignal, true);
 });
 
 test('the transport exposes the four faces the publish flow calls', () => {
@@ -278,4 +293,118 @@ test('the transport exposes the four faces the publish flow calls', () => {
   assert.equal(typeof transport.write.sshRun, 'function');
   assert.equal(typeof transport.write.sftpUpload, 'function');
   assert.equal(typeof transport.fetchPublic, 'function');
+});
+
+function stubDefaultPublicFetch(records) {
+  const realFetch = globalThis.fetch;
+  const realTimeout = AbortSignal.timeout;
+  globalThis.fetch = async (url, options) => {
+    records.push({ url, options });
+    return { status: 200, arrayBuffer: async () => new TextEncoder().encode('body').buffer };
+  };
+  AbortSignal.timeout = (ms) => {
+    records.push({ timeoutMs: ms });
+    return realTimeout.call(AbortSignal, ms);
+  };
+  return () => {
+    globalThis.fetch = realFetch;
+    AbortSignal.timeout = realTimeout;
+  };
+}
+
+test('the default public fetcher refuses a redirect instead of following it', async () => {
+  const records = [];
+  const restore = stubDefaultPublicFetch(records);
+  try {
+    await makeTransport({}).fetchPublic('https://api.rongyinghudong.com/updates/internal/manifest.json');
+  } finally {
+    restore();
+  }
+  const calls = records.filter((record) => record.url !== undefined);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, 'https://api.rongyinghudong.com/updates/internal/manifest.json');
+  assert.equal(calls[0].options.redirect, 'error');
+});
+
+test('a per call anchor that could become an option is refused before any process starts', async () => {
+  const fake = makeFake();
+  const transport = makeTransport({ execFile: fake.execFile, writeBatch: () => {} });
+  for (const bad of ['', '-oProxyCommand=calc', 'has space', 'has\ttab', 'has\u0000nul']) {
+    await assert.rejects(transport.readOnly.sshRun({ host: bad, script: 'ls' }), FeedTransportError);
+    await assert.rejects(transport.readOnly.sshRun({ knownHostsPath: bad, script: 'ls' }), FeedTransportError);
+    await assert.rejects(
+      transport.write.sftpUpload({ host: bad, localPath: '/a', remotePath: '/b', resume: false }),
+      FeedTransportError,
+    );
+    await assert.rejects(
+      transport.write.sftpUpload({ knownHostsPath: bad, localPath: '/a', remotePath: '/b', resume: false }),
+      FeedTransportError,
+    );
+  }
+  assert.deepEqual(fake.calls, []);
+});
+
+test('an sftp upload that carries no anchor of its own falls back to the pinned one', async () => {
+  const fake = makeFake();
+  const transport = makeTransport({ execFile: fake.execFile, writeBatch: () => {} });
+  await transport.write.sftpUpload({ localPath: '/a', remotePath: '/b', resume: false });
+  const [call] = fake.calls;
+  assert.equal(call.args[5], `UserKnownHostsFile=${KNOWN_HOSTS}`);
+  assert.equal(call.args.at(-1), HOST);
+});
+
+test('the batch file sftp is pointed at is the one the factory was given', async () => {
+  const fake = makeFake();
+  const writes = [];
+  const transport = makeTransport({ execFile: fake.execFile, writeBatch: (text) => writes.push(text) });
+  await transport.write.sftpUpload({ localPath: '/a', remotePath: '/b', resume: false });
+  const [call] = fake.calls;
+  const at = call.args.indexOf('-b');
+  assert.equal(writes.length, 1);
+  assert.ok(at > 0);
+  assert.equal(call.args[at + 1], '/outside/repo/batch.txt');
+});
+
+test('every pinned call also refuses the global known hosts file', async () => {
+  const fake = makeFake();
+  const transport = makeTransport({ execFile: fake.execFile, writeBatch: () => {} });
+  await transport.readOnly.sshRun({ script: 'ls' });
+  await transport.write.sftpUpload({ localPath: '/a', remotePath: '/b', resume: false });
+  assert.equal(fake.calls.length, 2);
+  for (const call of fake.calls) {
+    assert.ok(call.args.includes('GlobalKnownHostsFile=/dev/null'));
+  }
+});
+
+test('every remote call hides the console window the process would otherwise open', async () => {
+  const fake = makeFake();
+  const transport = makeTransport({ execFile: fake.execFile, writeBatch: () => {} });
+  await transport.readOnly.sshRun({ script: 'ls' });
+  await transport.write.sftpUpload({ localPath: '/a', remotePath: '/b', resume: false });
+  assert.equal(fake.calls.length, 2);
+  for (const call of fake.calls) {
+    assert.equal(call.options.windowsHide, true);
+  }
+});
+
+test('the exec outcome mapping reports a numeric code, a missing code and a success', () => {
+  assert.deepEqual(mapExecFileOutcome(null, 'out', 'err'), { status: 0, stdout: 'out', stderr: 'err' });
+  assert.deepEqual(mapExecFileOutcome({ code: 255 }, '', ''), { status: 255, stdout: '', stderr: '' });
+  assert.deepEqual(mapExecFileOutcome({ code: 'ENOENT', message: 'spawn ssh ENOENT' }), {
+    status: -1,
+    stdout: '',
+    stderr: 'spawn ssh ENOENT',
+  });
+  assert.deepEqual(mapExecFileOutcome({ message: undefined }), { status: -1, stdout: '', stderr: '' });
+});
+
+test('a batch path outside the safe alphabet is quoted so a backslash cannot be read as an escape', () => {
+  const backslash = String.fromCharCode(92);
+  const doubled = backslash.repeat(2);
+  const windowsDrive = `C:${backslash}x.zip`;
+  const windowsDir = `C:${backslash}build dir${backslash}x.zip`;
+  assert.equal(quoteBatchPath(windowsDrive), `"C:${doubled}x.zip"`);
+  assert.equal(quoteBatchPath(windowsDir), `"C:${doubled}build dir${doubled}x.zip"`);
+  assert.equal(quoteBatchPath('/opt/plain'), '/opt/plain');
+  assert.equal(quoteBatchPath('C:/build dir/portable.zip'), '"C:/build dir/portable.zip"');
 });

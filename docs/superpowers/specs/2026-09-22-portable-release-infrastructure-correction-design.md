@@ -292,7 +292,8 @@ toolchain{ go, node, pnpm, os }, trust: "self-declared"
 
 - `BatchMode=yes`，永不交互提示；
 - `StrictHostKeyChecking=yes`，**永不自动接受新指纹**；
-- 使用**仓库外**的固定 known_hosts；
+- 使用**仓库外**的固定 known_hosts，并同时 `GlobalKnownHostsFile=/dev/null`（**不读全局 known_hosts** —— 否则固定的那个不是唯一的信任源）；
+- **每一面网络调用都有有限超时**：`ssh` 60s、`sftp` 10min，**https 公网复验 60s**（`AbortSignal.timeout`）。**理由**：公网复验在**持频道锁**期间执行（§6.5 第 11 步），挂住或慢速吐字节的端点会把 `--commit` 连同频道锁一起挂死 —— 超时只覆盖 ssh/sftp 是不够的；
 - 台账**备案服务器 host-key 指纹**；指纹变化即停止并进入事故流程（可能是真的更换了机器，也可能是中间人）。
 
 ### 6.5 发布时序（固定，不得调换）
