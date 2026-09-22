@@ -34,6 +34,7 @@
     "website": {}
   },
   "ignoreExportsUsedInFile": true,
-  "ignore": ["keynote/**"],
+  "ignoreBinaries": ["go"],
+  "ignore": ["keynote/**", "packages/desktop/src/renderer/features/internal-beta/beta-service.ts"],
   "exclude": ["unlisted"]
 }
