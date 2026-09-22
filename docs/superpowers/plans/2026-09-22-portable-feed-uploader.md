@@ -4557,7 +4557,7 @@ git commit -m "feat(feed): re-sign the manifest for the stable channel"
 
 - **两段规定代码块与文件逐字节相同**（`diff` 输出 `DIFF_EMPTY`，两段都跑过）；**敏感性探针**：把计划侧那 15 行里的 `channel: 'stable',` 扰成 `channel: 'stable ',`（一个字节）⇒ `diff` 报 `8c8` 一处差异；恢复后又是 `DIFF_EMPTY`。
 - **镜像检查器自己的敏感性探针（三条读数，本刀实跑）**：① 未扰动的副本 ⇒ `regionHits=1`、两侧围栏为真 ⇒ `DIFF_EMPTY`；② 把计划块里**一个字符**改掉（`baseOf` ⇒ `baseOf2`）⇒ `regionHits=0` ⇒ `DIFF`；③ 从模块切片**中间删掉一行** ⇒ `regionHits=0` ⇒ `DIFF`（这一条专门证明判据是"连续切片"，不是"每行都能在文件里找到"）。②③ 之后都逐字节恢复、比 sha256 相等。⚠️ **探针第一版是无效的**：它把副本放在 bash 的 `/tmp` 下，而 node 把 `/tmp/...` 解析成 `C:\tmp\...`（**bash 的 `/tmp` ≠ node 的 `/tmp`**）⇒ 读的是别的东西；是**对照组（未扰动副本）先报红**才暴露出来的。
-- ⚠️ **账本数字更正**：本计划前几节写的 `test 1–374` / `mjs 1–148` / `test 376–561` / `mjs 150–202` / `test 563–868` / `mjs 204–442` 是**更早提交**上的读数；本刀按内容重测，实际边界是上表那六个数（各差 1–7 行）。这不是本刀改出来的漂移，是**旧读数没跟着文件长**。
+- ⚠️ **账本数字更正**：本计划前几节写的 `test 1–374` / `mjs 1–148` / `test 376–561` / `mjs 150–202` / `test 563–868` / `mjs 204–442` 是**更早提交**上的读数；本刀按内容重测，实际边界是上表那六个数（**起点差 0–7 行、终点差 1–12 行**）。这不是本刀改出来的漂移，是**旧读数没跟着文件长**。
 
 **四、RED 的两条读数（规定 Step 2 的形状有一个缺口）**：规定 Step 2 预期"`buildStableManifestInput` 未定义"。**实测**：追加的 `import` 在 ESM 里被提升 ⇒ 整个测试文件**加载失败**，读数是 `ℹ tests 1 / ℹ pass 0 / ℹ fail 1`，错误文本 `SyntaxError: The requested module './feed-publish.mjs' does not provide an export named 'buildStableManifestInput'` —— **没有任何一条用例按名变红**。这正是本计划通用纪律第 3 条警告过的形状（"加载失败会被误当成红"）。**处置**：补一个中间态 —— 先写 `return {}` 的**桩**，读数 `ℹ tests 154 / ℹ pass 151 / ℹ fail 3`，三条新用例**逐条按名变红**（`the stable manifest is re-signed…` / `the stable input refuses to reuse an internal manifest` / `the stable input carries every field…`），然后才写规定的实现。**桩没有进任何提交**（`git log -p` 里没有它）。
 
@@ -4592,6 +4592,8 @@ git commit -m "feat(feed): re-sign the manifest for the stable channel"
 - **没有实现 Task 6 / 7 / 8**：真实 `ssh` / `sftp` / `https`、CLI 四种模式、手册一行没动。
 - **没有连过任何服务器**：全部读数来自本地 `node --test`；新增的三条用例是**纯函数**测试，一条 transport 都不碰。
 - **`stable` 的"原字节复用"只钉到"字节内容相等"**（`input.fileManifestBytes.equals(…)`）：真正的"没有重新打包、没有改时间戳"是**发布流程**的属性（Task 8 手册 + 人工），本模块只能拒绝"改字段复用 internal manifest"这一种。**未验**。
+
+**九、门禁读数（本刀实测）**：先 `export PATH="/d/go-toolchain/go/bin:$PATH"`，再跑 `pnpm check`（**不接管道**，重定向到仓库外的日志文件；`rc=$?` 就是那一行的退出码）⇒ **退出码 0**。**非空证据三条**：① 日志 **10143** 行；② 链上第一步的 Go 测试真的跑过（`ok mofang-compass/portable-launcher/cmd/mofang-launcher`）—— 少了那个 PATH 导出，它会在第一步就死；③ 链尾 `packages/desktop test` 真的跑到（`Test Files 281 passed (281)` / `Tests 2908 passed | 2 skipped (2910)`）。其中 `check:portable-feed-publish` 那一步的读数就是本刀的 **`ℹ tests 154 / ℹ pass 154 / ℹ fail 0`**（日志第 208–211 行），`format:check` 也过了（计划文件与两个代码文件都先跑过 `prettier --write`）。
 
 ---
 
