@@ -500,8 +500,8 @@ node --test scripts/lib/feed-publish.test.mjs
 
 ```js
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
-import { isAbsolute, relative, resolve } from 'node:path';
+import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
+import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 export const UPDATE_ROOT = '/opt/rongying/updates';
 export const STATE_ROOT = '/opt/rongying/updates-state';
@@ -549,14 +549,18 @@ export function parsePublishInput(raw) {
   };
 }
 
+function isInsideRepository(target, repositoryRoot) {
+  const relation = relative(resolve(repositoryRoot), resolve(target));
+  if (relation === '') return true;
+  if (isAbsolute(relation)) return false;
+  return relation !== '..' && !relation.startsWith(`..${sep}`);
+}
+
 export function assertKnownHostsPath(target, repositoryRoot) {
-  const resolved = resolve(target);
-  const root = resolve(repositoryRoot);
-  const rel = relative(root, resolved);
-  if (rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))) {
+  if (isInsideRepository(target, repositoryRoot)) {
     throw new FeedPublishError('the pinned known hosts file must live outside the repository');
   }
-  return resolved;
+  return resolve(target);
 }
 
 function sha256(buffer) {
@@ -1608,7 +1612,7 @@ export async function breakChannelLock(input) {
 
    **本刀对这份通则的落地（读数都是本刀量的）：** ① **现存值已按 `script:` 逐行核过**（口径：逐行跟踪围栏状态，取出计划里每一条含 `script:` 的行，再抽出该行的 `${…}` 插值）—— 读数 **`TOTAL_SCRIPT_LINES 23`**：**实现侧 18 行**（Task 2 一处 = `stat -c '%d'`；Task 3 七处 = `cat` / `mkdir`（锁）/ owner 写入 / `rm` ×2 / `rmdir` ×2；Task 4 十处 = `find` / `printf 'present\n'` / `sha256sum` ×2 / staging `mkdir -p` / staging 两条 `mv -f`（数组）/ `stat -c '%d'`（同设备号）/ `mv`（提交版本目录）/ 备份两条（数组）/ 翻转 `mv -f`）+ **测试夹具 5 行**（全是 `'ls /opt'` / `'ls'` / `'rmdir /x'` 这类常量）。18 行里 **16 行**把插值写在 `script:` 同一行上，另 **2 行**是数组形式（`script: [` 后跟 `mv -f …`）。⚠️ **"16 条 `script:`"只覆盖那 16 行**；计划里含 `script:` 的**一共 23 条**（16 + 2 条数组形式 + 5 条夹具），别把 16 当成全部 —— 但那 2 条数组形式**也逐项落在清单里**（`stagingRoot` / `runid` / `PORTABLE_PACKAGE_NAME` / `PORTABLE_FILE_MANIFEST_NAME` / `input.channel`）。**没有第六类插值**：`expectedEntries` 的 `name` 就是两个 `PORTABLE_*` 常量（Task 4 的 `inspectRemoteDirectory` 调用点只喂常量那一份，**不是**文件清单里的 `files[].path`），`readRemoteHashes` 的 `directory` / `names` 与 `readRemoteFileSha` 的 `target` 由 `versionRootOf` / `stagingRootOf` / `${UPDATE_ROOT}/${channel}/…` / `${UPDATE_ROOT}/${channel}/${PORTABLE_MANIFEST_NAME}.${runid}.tmp` 拼出，逐项归入上面五类或常量。② **`version` 的字母表一侧本刀已补上钉子**：新增 `the version the input gate admits carries no shell metacharacter and no newline`（10 个载荷：`; id` / `+;id` / `$(id)` / `|` / 反引号 / 单引号 / 双引号 / 末尾换行 / 中间换行 / 空格），变异（把 build metadata 的字符类 `[0-9A-Za-z-]` 改成 `[0-9A-Za-z;-]`）⇒ **只红这一条**（**78 → 77 / 1**，账本第 61 条）。**插值一侧**（`version` 真的被拼进 `stagingRootOf` / `versionRootOf` / 备份名）**归 Task 4**：本刀已把 `version` 写进验收项 7③，Task 4 补那条用例时把两侧绑在一起。
 
-**第二修复刀新增的测试落在规定块的哪一侧（本刀量过，省得复核时按"计划里没有"再报一遍）：** 规定块是**文件的一段连续镜像**，本刀新增的条目分布如下 —— **在镜像里面**：`the anchor helper names a call that did not record its request`（`feed-publish.test.mjs` 行 417，落在 **Task 2** 那份镜像 376–561 里）、`the lock mkdir is pinned to the C locale so its diagnostics do not move with the host locale`（行 621）、`the plan hash refuses a field that is not a non empty string`（行 628）、具名谓词 `isLockDirectoryCommand`（行 646，都在 **Task 3** 那份镜像 563–861 里）；**在镜像外面**（行 862 以后）：`OBSERVED_OPERATOR`（行 921）、`ownerWriteScript`（行 923）、`ownerPayloadOf`（行 926）、`an owner record with an apostrophe cannot end the shell word it is written into`（行 932）、`UNSAFE_CHANNELS`（行 1248）、`a channel that could escape its remote path never reaches a remote call`（行 1250）、`the channel precondition admits every channel the whitelist allows`（行 1261）—— 这七项只在本账本里按**名字 + 读数**记账。**这与上一刀把它的后续用例（行 833–1192）只写进账本、不写进规定块是同一个约定**，不是本刀的遗漏。**六份镜像的边界线（本刀量过，别猜）：** `feed-publish.test.mjs` 行 1–374 ／ 376–561 ／ 563–861，`feed-publish.mjs` 行 1–144 ／ 146–198 ／ 200–433；本刀用"逐行相等**且连续**"的检查跑过这六份（而不是只查"每行都能在文件里找到"—— 那个更松的判据会放过镜像被从中间撑开的情形，本刀就被它放过一次：`feed-publish.test.mjs` 行 417 的插入把 **Task 2** 那份镜像撑开了 7 行，只有连续判据抓得到，已按 376–561 重新对齐）。 **第三修复刀的两个边界变化与一次口径更正（实测）：** 本刀在 Task 3 镜像**里面**改了一条用例，两份镜像因此变长 —— `feed-publish.test.mjs` **563–861（299 行）⇒ 563–868（306 行）**、`feed-publish.mjs` **200–432（233 行）⇒ 200–438（239 行）**。顺带更正本节原文的「200–433」：文件按 `\n` 切分是 433 段，**最后一段是尾随换行产生的空串**，围栏里装的是 200–432 这 233 行 ⇒ 边界应写作 **200–432**（原文多算了那个空串）。**本节记录的行号在本刀之后整体下移**（本刀实测）：`OBSERVED_OPERATOR` 921→928、`ownerWriteScript` 923→930、`ownerPayloadOf` 926→933、`an owner record with an apostrophe cannot end the shell word it is written into` 932→939、`UNSAFE_CHANNELS` 1248→1255、`a channel that could escape its remote path never reaches a remote call` 1250→1266、`the channel precondition admits every channel the whitelist allows` 1261→1277；本刀新增的两条（都在镜像外）是 `the plan hash refuses a channel outside the whitelist`（行 1286）与 `the version the input gate admits carries no shell metacharacter and no newline`（行 1293）。
+**第二修复刀新增的测试落在规定块的哪一侧（本刀量过，省得复核时按"计划里没有"再报一遍）：** 规定块是**文件的一段连续镜像**，本刀新增的条目分布如下 —— **在镜像里面**：`the anchor helper names a call that did not record its request`（`feed-publish.test.mjs` 行 417，落在 **Task 2** 那份镜像 376–561 里）、`the lock mkdir is pinned to the C locale so its diagnostics do not move with the host locale`（行 621）、`the plan hash refuses a field that is not a non empty string`（行 628）、具名谓词 `isLockDirectoryCommand`（行 646，都在 **Task 3** 那份镜像 563–861 里）；**在镜像外面**（行 862 以后）：`OBSERVED_OPERATOR`（行 921）、`ownerWriteScript`（行 923）、`ownerPayloadOf`（行 926）、`an owner record with an apostrophe cannot end the shell word it is written into`（行 932）、`UNSAFE_CHANNELS`（行 1248）、`a channel that could escape its remote path never reaches a remote call`（行 1250）、`the channel precondition admits every channel the whitelist allows`（行 1261）—— 这七项只在本账本里按**名字 + 读数**记账。**这与上一刀把它的后续用例（行 833–1192）只写进账本、不写进规定块是同一个约定**，不是本刀的遗漏。**六份镜像的边界线（本刀量过，别猜）：** `feed-publish.test.mjs` 行 1–374 ／ 376–561 ／ 563–861，`feed-publish.mjs` 行 1–144 ／ 146–198 ／ 200–433；本刀用"逐行相等**且连续**"的检查跑过这六份（而不是只查"每行都能在文件里找到"—— 那个更松的判据会放过镜像被从中间撑开的情形，本刀就被它放过一次：`feed-publish.test.mjs` 行 417 的插入把 **Task 2** 那份镜像撑开了 7 行，只有连续判据抓得到，已按 376–561 重新对齐）。 **第三修复刀的两个边界变化与一次口径更正（实测）：** 本刀在 Task 3 镜像**里面**改了一条用例，两份镜像因此变长 —— `feed-publish.test.mjs` **563–861（299 行）⇒ 563–868（306 行）**、`feed-publish.mjs` **200–432（233 行）⇒ 200–438（239 行）**。顺带更正本节原文的「200–433」：文件按 `\n` 切分是 433 段，**最后一段是尾随换行产生的空串**，围栏里装的是 200–432 这 233 行 ⇒ 边界应写作 **200–432**（原文多算了那个空串）。**本节记录的行号在本刀之后整体下移**（本刀实测）：`OBSERVED_OPERATOR` 921→928、`ownerWriteScript` 923→930、`ownerPayloadOf` 926→933、`an owner record with an apostrophe cannot end the shell word it is written into` 932→939、`UNSAFE_CHANNELS` 1248→1255、`a channel that could escape its remote path never reaches a remote call` 1250→1266、`the channel precondition admits every channel the whitelist allows` 1261→1277；本刀新增的两条（都在镜像外）是 `the plan hash refuses a channel outside the whitelist`（行 1286）与 `the version the input gate admits carries no shell metacharacter and no newline`（行 1293）。 **Task 4 本刀（第四刀）的镜像边界（实测，取代本节里 module 那三个数）：** `feed-publish.mjs` 行 **1–148 ／ 150–202 ／ 204–442**（本刀第一处偏离落在第一份镜像**里面**：`assertKnownHostsPath` 由 9 行变 14 行 + import 行内容变化 ⇒ 300 之后的 module 边界整体 **+4**）；`feed-publish.test.mjs` 行 **1–374 ／ 376–561 ／ 563–868**（**不变**：本刀对测试的改动全部在行 1319 之后）；本刀另外新增两份镜像 **`test 1321–2117`（Task 4 测试块）与 `mjs 444–990`（Task 4 模块块）**，八份用"逐行相等且连续"的检查一起跑过（读数在第 Task 4 节实施记录的第四节），三对 `diff` 全部为空。
 
 - [ ] **Step 4: 运行测试并确认通过**
 
@@ -1753,7 +1757,14 @@ git commit -m "feat(feed): own the channel lock honestly, including its failure 
 追加到 `scripts/lib/feed-publish.test.mjs`：
 
 ```js
-import { appendAuditStage, runCommit, verifyPublicArtifacts } from './feed-publish.mjs';
+import {
+  PORTABLE_FILE_MANIFEST_NAME,
+  PORTABLE_PACKAGE_NAME,
+  appendAuditStage,
+  runCommit,
+  verifyPublicArtifacts,
+} from './feed-publish.mjs';
+import { buildPortableRelease, verifyPortableRelease } from './portable-update-release.mjs';
 
 const BASELINE_BODY = '{"baseline":true}\n';
 const THIRD_BODY = '{"third":true}\n';
@@ -1761,26 +1772,37 @@ const digestOf = (text) => createHash('sha256').update(Buffer.from(text, 'utf8')
 const BASELINE_SHA = digestOf(BASELINE_BODY);
 const THIRD_SHA = digestOf(THIRD_BODY);
 
+const auditEntriesOf = (auditOut) =>
+  readFileSync(auditOut, 'utf8')
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line));
+
 function commitTransport(options = {}) {
   const calls = [];
   let manifestReads = 0;
   let ownerJson = null;
   const listing = `f ${PORTABLE_PACKAGE_NAME} ${PACKAGE_BYTES.length}\nf ${PORTABLE_FILE_MANIFEST_NAME} ${FILE_MANIFEST_BYTES.length}\n`;
+  const stagingListing = options.stagingListing ?? listing;
   const digests = (directory, zipDigest) =>
     `${zipDigest}  ${directory}/${PORTABLE_PACKAGE_NAME}\n${FILE_MANIFEST_SHA256}  ${directory}/${PORTABLE_FILE_MANIFEST_NAME}\n`;
 
   return {
+    anchor: null,
     calls,
     readOnly: {
       sshRun: async (request) => {
-        calls.push(['readSsh', request.script]);
+        calls.push(['readSsh', request.script, request]);
         if (request.script.includes('owner.json')) {
+          if (options.foreignOwnerFromReVerify === true) {
+            return { status: 0, stdout: JSON.stringify({ runid: 'other', planHash: 'other' }), stderr: '' };
+          }
           return ownerJson === null
             ? { status: 1, stdout: '', stderr: 'no such file' }
             : { status: 0, stdout: ownerJson, stderr: '' };
         }
         if (request.script.includes('-mindepth 1 -maxdepth 1 -printf')) {
-          if (request.script.includes('/staging/')) return { status: 0, stdout: listing, stderr: '' };
+          if (request.script.includes('/staging/')) return { status: 0, stdout: stagingListing, stderr: '' };
           const state = options.versionDirState ?? 'absent';
           if (state === 'absent' || state === 'empty') return { status: 0, stdout: '', stderr: '' };
           if (state === 'extra') return { status: 0, stdout: `${listing}f extra.bin 3\n`, stderr: '' };
@@ -1827,19 +1849,56 @@ function commitTransport(options = {}) {
     },
     write: {
       sshRun: async (request) => {
-        calls.push(['writeSsh', request.script]);
-        if (/(?:^|\s)mkdir \S*\/lock\//u.test(request.script)) {
+        calls.push(['writeSsh', request.script, request]);
+        if (
+          request.script.startsWith('mkdir -p ') &&
+          typeof options.stagingCreateStatus === 'number' &&
+          options.stagingCreateStatus !== 0
+        ) {
+          return {
+            status: options.stagingCreateStatus,
+            stdout: '',
+            stderr: 'mkdir: cannot create directory: Permission denied',
+          };
+        }
+        if (isLockDirectoryCommand(request)) {
+          if (typeof options.lockStatus === 'number' && options.lockStatus !== 0) {
+            return {
+              status: options.lockStatus,
+              stdout: '',
+              stderr: options.lockStderr ?? 'mkdir: cannot create directory: File exists',
+            };
+          }
           return options.lockState === 'exists'
             ? { status: 1, stdout: '', stderr: 'mkdir: cannot create directory: File exists' }
             : { status: 0, stdout: '', stderr: '' };
         }
         const ownerMatch = /printf '%s' '([A-Za-z0-9+/=]+)' \| base64 -d > /u.exec(request.script);
-        if (ownerMatch !== null) ownerJson = Buffer.from(ownerMatch[1], 'base64').toString('utf8');
+        if (ownerMatch !== null) {
+          if (typeof options.ownerWriteStatus === 'number' && options.ownerWriteStatus !== 0) {
+            return { status: options.ownerWriteStatus, stdout: '', stderr: 'read only file system' };
+          }
+          ownerJson = Buffer.from(ownerMatch[1], 'base64').toString('utf8');
+        }
+        if (
+          request.script.startsWith('rmdir ') &&
+          typeof options.lockRemovalStatus === 'number' &&
+          options.lockRemovalStatus !== 0
+        ) {
+          return {
+            status: options.lockRemovalStatus,
+            stdout: '',
+            stderr: 'rmdir: failed to remove: Directory not empty',
+          };
+        }
         if (
           /^mv \/opt\/rongying\/updates-state\/staging\//u.test(request.script) &&
           options.commitStatus !== undefined
         ) {
           return { status: options.commitStatus, stdout: '', stderr: 'commit refused' };
+        }
+        if (options.foreignOwnerAfterFlip === true && /^mv -f \S+\.tmp /u.test(request.script)) {
+          ownerJson = JSON.stringify({ runid: 'other', planHash: 'other' });
         }
         return { status: 0, stdout: '', stderr: '' };
       },
@@ -1859,13 +1918,11 @@ function commitTransport(options = {}) {
       if (options.publicStatus !== undefined && options.publicStatus !== 200) {
         return { status: options.publicStatus, bodyBytes: new Uint8Array() };
       }
-      const body =
-        options.publicManifestBody ??
-        (url.endsWith('manifest.json')
-          ? BASELINE_BODY
-          : url.endsWith('portable.zip')
-            ? PACKAGE_BYTES.toString('binary')
-            : FILE_MANIFEST_BYTES.toString('binary'));
+      const body = url.endsWith('manifest.json')
+        ? (options.publicManifestBody ?? BASELINE_BODY)
+        : url.endsWith('portable.zip')
+          ? (options.publicPackageBody ?? PACKAGE_BYTES.toString('binary'))
+          : (options.publicFileManifestBody ?? FILE_MANIFEST_BYTES.toString('binary'));
       return { status: 200, bodyBytes: Uint8Array.from(Buffer.from(body, 'binary')) };
     },
   };
@@ -1874,7 +1931,7 @@ function commitTransport(options = {}) {
 function commitInput(transport, overrides = {}) {
   const auditRoot = makeRoot();
   const paths = writeArtifacts();
-  return {
+  const input = {
     channel: 'internal',
     version: '1.2.3',
     host: 'example.invalid',
@@ -1888,22 +1945,69 @@ function commitInput(transport, overrides = {}) {
     repositoryRoot: makeRoot(),
     temporaryRoot: makeRoot(),
     verifier: () => {},
+    transport,
     ...paths,
     ...overrides,
   };
+  transport.anchor = { host: input.host, knownHostsPath: input.knownHostsPath };
+  return input;
+}
+
+function assertEveryCommitCallCarriesTheTrustAnchor(transport) {
+  const anchor = transport.anchor;
+  assert.ok(anchor !== undefined && anchor !== null, 'the commit anchor assertion needs an input that injected a host');
+  assert.ok(transport.calls.length > 0, 'the commit anchor assertion needs at least one recorded call');
+  const sshCalls = transport.calls.filter((call) => call[0] === 'readSsh' || call[0] === 'writeSsh');
+  assert.ok(sshCalls.length > 0, 'the commit anchor assertion needs at least one recorded ssh call');
+  for (const call of sshCalls) {
+    const request = call[2];
+    assert.ok(request !== undefined, `the ${String(call[0])} call did not record its request`);
+    assert.equal(request.host, anchor.host, `the ${String(call[0])} call did not carry the injected host`);
+    assert.equal(
+      request.knownHostsPath,
+      anchor.knownHostsPath,
+      `the ${String(call[0])} call did not carry the injected known hosts file`,
+    );
+  }
 }
 
 function manifestShaOf(paths) {
-  return createHash('sha256').update(paths.manifestBytes).digest('hex');
+  return createHash('sha256').update(readFileSync(paths.manifestPath)).digest('hex');
 }
 
 function happyTransport(paths, extra = {}) {
   return commitTransport({
-    publicManifestBody: paths.manifestBytes.toString('binary'),
+    publicManifestBody: readFileSync(paths.manifestPath).toString('binary'),
     tempManifestSha: manifestShaOf(paths),
     ...extra,
   });
 }
+
+test('the commit anchor helper refuses a case that recorded no call', () => {
+  assert.throws(() =>
+    assertEveryCommitCallCarriesTheTrustAnchor({ anchor: { host: 'h', knownHostsPath: 'k' }, calls: [] }),
+  );
+  assert.throws(() =>
+    assertEveryCommitCallCarriesTheTrustAnchor({
+      anchor: null,
+      calls: [['readSsh', 'ls', { host: 'h', knownHostsPath: 'k' }]],
+    }),
+  );
+});
+
+test('the commit anchor helper names a call that did not record its request', () => {
+  assert.throws(
+    () =>
+      assertEveryCommitCallCarriesTheTrustAnchor({
+        anchor: { host: 'h', knownHostsPath: 'k' },
+        calls: [
+          ['fetchPublic', 'https://example.invalid'],
+          ['readSsh', 'ls'],
+        ],
+      }),
+    /the readSsh call did not record its request/u,
+  );
+});
 
 test('the local pre-verification happens before any network write', async () => {
   const transport = commitTransport();
@@ -1914,12 +2018,14 @@ test('the local pre-verification happens before any network write', async () => 
     transport.calls.filter((call) => call[0] !== 'readSsh'),
     [],
   );
+  assert.deepEqual(transport.calls, []);
 });
 
 test('a clean publish walks every stage and releases its own lock', async () => {
   const paths = writeArtifacts();
   const transport = happyTransport(paths);
   const result = await runCommit(commitInput(transport, { ...paths }));
+  assertEveryCommitCallCarriesTheTrustAnchor(transport);
   assert.equal(result.outcome, 'done', result.reason);
   assert.equal(result.lockState, 'released');
   assert.deepEqual(
@@ -1932,6 +2038,7 @@ test('the version directory is committed with a single directory rename', async 
   const paths = writeArtifacts();
   const transport = happyTransport(paths);
   const result = await runCommit(commitInput(transport, { ...paths }));
+  assertEveryCommitCallCarriesTheTrustAnchor(transport);
   assert.equal(result.outcome, 'done', result.reason);
   const renames = transport.calls.filter(
     (call) => call[0] === 'writeSsh' && String(call[1]).startsWith('mv /opt/rongying/updates-state/staging/'),
@@ -1947,6 +2054,7 @@ test('the manifest is uploaded to the final directory and its remote digest is c
   const paths = writeArtifacts();
   const transport = happyTransport(paths);
   const result = await runCommit(commitInput(transport, { ...paths }));
+  assertEveryCommitCallCarriesTheTrustAnchor(transport);
   assert.equal(result.outcome, 'done', result.reason);
   const uploads = transport.calls.filter(
     (call) => call[0] === 'sftpUpload' && String(call[1]).includes('manifest.json'),
@@ -1959,6 +2067,7 @@ test('a mismatched remote manifest digest stops before the flip', async () => {
   const paths = writeArtifacts();
   const transport = happyTransport(paths, { tempManifestSha: 'F'.repeat(64) });
   const result = await runCommit(commitInput(transport, { ...paths }));
+  assertEveryCommitCallCarriesTheTrustAnchor(transport);
   assert.equal(result.outcome, 'incident');
   assert.equal(result.lockState, 'retained-by-this-run');
   assert.equal(result.stages.find((entry) => entry.stage === 'flip').status, 'pending');
@@ -1968,6 +2077,7 @@ test('a manifest upload failure is an incident that keeps the lock', async () =>
   const paths = writeArtifacts();
   const transport = happyTransport(paths, { manifestUploadStatus: 1 });
   const result = await runCommit(commitInput(transport, { ...paths }));
+  assertEveryCommitCallCarriesTheTrustAnchor(transport);
   assert.equal(result.outcome, 'incident');
   assert.equal(result.lockState, 'retained-by-this-run');
   assert.equal(result.stages.find((entry) => entry.stage === 'flip').status, 'pending');
@@ -1977,6 +2087,7 @@ test('a cas mismatch is an incident that keeps the lock and never rolls anything
   const paths = writeArtifacts();
   const transport = happyTransport(paths, { casDrift: true });
   const result = await runCommit(commitInput(transport, { ...paths }));
+  assertEveryCommitCallCarriesTheTrustAnchor(transport);
   assert.equal(result.outcome, 'incident');
   assert.equal(result.lockState, 'retained-by-this-run');
   assert.equal(result.stages.find((entry) => entry.stage === 'cas').status, 'incident');
@@ -1989,6 +2100,7 @@ test('an indeterminate outcome with the old public sha allows a retry and keeps 
   const paths = writeArtifacts();
   const transport = happyTransport(paths, { publicManifestBody: BASELINE_BODY });
   const result = await runCommit(commitInput(transport, { ...paths }));
+  assertEveryCommitCallCarriesTheTrustAnchor(transport);
   assert.equal(result.outcome, 'retry');
   assert.equal(result.lockState, 'retained-by-this-run');
 });
@@ -1997,6 +2109,7 @@ test('an indeterminate outcome with a third public sha stops and keeps the lock'
   const paths = writeArtifacts();
   const transport = happyTransport(paths, { publicManifestBody: THIRD_BODY });
   const result = await runCommit(commitInput(transport, { ...paths }));
+  assertEveryCommitCallCarriesTheTrustAnchor(transport);
   assert.equal(result.outcome, 'incident');
   assert.equal(result.lockState, 'retained-by-this-run');
   assert.match(result.reason, /third/u);
@@ -2006,6 +2119,7 @@ test('a staging failure is a plain failure and reports that no lock was acquired
   const paths = writeArtifacts();
   const transport = commitTransport({ uploadStatus: 1 });
   const result = await runCommit(commitInput(transport, { ...paths }));
+  assertEveryCommitCallCarriesTheTrustAnchor(transport);
   assert.equal(result.outcome, 'fail');
   assert.equal(result.lockState, 'not-acquired');
   assert.equal(result.stages.find((entry) => entry.stage === 'lock').status, 'pending');
@@ -2015,6 +2129,7 @@ test('a failure after the lock but before the flip releases the lock this run ow
   const paths = writeArtifacts();
   const transport = happyTransport(paths, { commitStatus: 1 });
   const result = await runCommit(commitInput(transport, { ...paths }));
+  assertEveryCommitCallCarriesTheTrustAnchor(transport);
   assert.equal(result.outcome, 'fail');
   assert.equal(result.lockState, 'released');
   assert.equal(result.stages.find((entry) => entry.stage === 'unlock').status, 'done');
@@ -2024,6 +2139,7 @@ test('the commit never runs when the lock already exists', async () => {
   const paths = writeArtifacts();
   const transport = happyTransport(paths, { lockState: 'exists' });
   const result = await runCommit(commitInput(transport, { ...paths }));
+  assertEveryCommitCallCarriesTheTrustAnchor(transport);
   assert.equal(result.outcome, 'blocked');
   assert.equal(result.lockState, 'not-acquired');
   assert.equal(result.stages.find((entry) => entry.stage === 'commit-version').status, 'pending');
@@ -2033,6 +2149,7 @@ test('a staging directory and a final directory on different file systems stops 
   const paths = writeArtifacts();
   const transport = happyTransport(paths, { sameFileSystem: false });
   const result = await runCommit(commitInput(transport, { ...paths }));
+  assertEveryCommitCallCarriesTheTrustAnchor(transport);
   assert.equal(result.outcome, 'fail');
   assert.match(result.reason, /file system/u);
   assert.equal(result.lockState, 'released');
@@ -2042,6 +2159,7 @@ test('an existing version directory that is empty is incomplete and refused', as
   const paths = writeArtifacts();
   const transport = happyTransport(paths, { versionDirState: 'empty' });
   const result = await runCommit(commitInput(transport, { ...paths }));
+  assertEveryCommitCallCarriesTheTrustAnchor(transport);
   assert.equal(result.outcome, 'fail');
   assert.match(result.reason, /incomplete/u);
 });
@@ -2050,6 +2168,7 @@ test('an existing version directory with an extra entry is refused', async () =>
   const paths = writeArtifacts();
   const transport = happyTransport(paths, { versionDirState: 'extra' });
   const result = await runCommit(commitInput(transport, { ...paths }));
+  assertEveryCommitCallCarriesTheTrustAnchor(transport);
   assert.equal(result.outcome, 'fail');
   assert.match(result.reason, /unexpected entry/u);
 });
@@ -2058,6 +2177,7 @@ test('an existing version directory with a different size is refused', async () 
   const paths = writeArtifacts();
   const transport = happyTransport(paths, { versionDirState: 'size' });
   const result = await runCommit(commitInput(transport, { ...paths }));
+  assertEveryCommitCallCarriesTheTrustAnchor(transport);
   assert.equal(result.outcome, 'fail');
   assert.match(result.reason, /size/u);
 });
@@ -2066,6 +2186,7 @@ test('an existing version directory with a different digest is refused', async (
   const paths = writeArtifacts();
   const transport = happyTransport(paths, { versionDirState: 'digest' });
   const result = await runCommit(commitInput(transport, { ...paths }));
+  assertEveryCommitCallCarriesTheTrustAnchor(transport);
   assert.equal(result.outcome, 'fail');
   assert.match(result.reason, /digest/u);
 });
@@ -2074,6 +2195,7 @@ test('an existing version directory that matches every byte is reused', async ()
   const paths = writeArtifacts();
   const transport = happyTransport(paths, { versionDirState: 'present' });
   const result = await runCommit(commitInput(transport, { ...paths }));
+  assertEveryCommitCallCarriesTheTrustAnchor(transport);
   assert.equal(result.outcome, 'done', result.reason);
   assert.equal(result.stages.find((entry) => entry.stage === 'commit-version').status, 'done');
 });
@@ -2083,11 +2205,9 @@ test('every stage is appended to the audit log as it happens', async () => {
   const transport = happyTransport(paths);
   const input = commitInput(transport, { ...paths });
   const result = await runCommit(input);
+  assertEveryCommitCallCarriesTheTrustAnchor(transport);
   assert.equal(result.outcome, 'done', result.reason);
-  const stages = readFileSync(input.auditOut, 'utf8')
-    .trim()
-    .split('\n')
-    .map((line) => JSON.parse(line).stage);
+  const stages = auditEntriesOf(input.auditOut).map((entry) => entry.stage);
   assert.equal(stages[0], 'open');
   assert.equal(stages[1], 'pre-verify');
   assert.ok(stages.includes('cas'));
@@ -2124,7 +2244,7 @@ test('the public verification checks the manifest, the signature and both artifa
     version: '1.2.3',
     publicKeyBase64: PUBLIC_KEY_BASE64,
     verifier: () => {},
-    expectedManifestBytes: paths.manifestBytes,
+    expectedManifestBytes: readFileSync(paths.manifestPath),
     expectedPackageSha256: PACKAGE_SHA256,
     expectedPackageSize: PACKAGE_BYTES.length,
     expectedFileManifestSha256: FILE_MANIFEST_SHA256,
@@ -2133,7 +2253,8 @@ test('the public verification checks the manifest, the signature and both artifa
     transport: {
       fetchPublic: async (url) => {
         calls.push(url);
-        if (url.endsWith('manifest.json')) return { status: 200, bodyBytes: Uint8Array.from(paths.manifestBytes) };
+        if (url.endsWith('manifest.json'))
+          return { status: 200, bodyBytes: Uint8Array.from(readFileSync(paths.manifestPath)) };
         if (url.endsWith('portable.zip')) return { status: 200, bodyBytes: Uint8Array.from(PACKAGE_BYTES) };
         return { status: 200, bodyBytes: Uint8Array.from(FILE_MANIFEST_BYTES) };
       },
@@ -2150,7 +2271,7 @@ test('the public verification fails when the served package differs', async () =
     version: '1.2.3',
     publicKeyBase64: PUBLIC_KEY_BASE64,
     verifier: () => {},
-    expectedManifestBytes: paths.manifestBytes,
+    expectedManifestBytes: readFileSync(paths.manifestPath),
     expectedPackageSha256: PACKAGE_SHA256,
     expectedPackageSize: PACKAGE_BYTES.length,
     expectedFileManifestSha256: FILE_MANIFEST_SHA256,
@@ -2158,7 +2279,8 @@ test('the public verification fails when the served package differs', async () =
     temporaryRoot: makeRoot(),
     transport: {
       fetchPublic: async (url) => {
-        if (url.endsWith('manifest.json')) return { status: 200, bodyBytes: Uint8Array.from(paths.manifestBytes) };
+        if (url.endsWith('manifest.json'))
+          return { status: 200, bodyBytes: Uint8Array.from(readFileSync(paths.manifestPath)) };
         if (url.endsWith('portable.zip')) return { status: 200, bodyBytes: Uint8Array.from(Buffer.from('other')) };
         return { status: 200, bodyBytes: Uint8Array.from(FILE_MANIFEST_BYTES) };
       },
@@ -2166,6 +2288,271 @@ test('the public verification fails when the served package differs', async () =
   });
   assert.equal(result.ok, false);
   assert.match(result.reason, /package/u);
+});
+
+test('a staging directory that cannot be created is a plain failure', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths, { stagingCreateStatus: 1 });
+  const result = await runCommit(commitInput(transport, { ...paths }));
+  assertEveryCommitCallCarriesTheTrustAnchor(transport);
+  assert.equal(result.outcome, 'fail');
+  assert.equal(result.lockState, 'not-acquired');
+  assert.match(result.reason, /staging directory could not be created/u);
+  assert.equal(result.stages.find((entry) => entry.stage === 'lock').status, 'pending');
+});
+
+test('the public verification is actually run after the flip', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths, { publicPackageBody: Buffer.from('other').toString('binary') });
+  const result = await runCommit(commitInput(transport, { ...paths }));
+  assertEveryCommitCallCarriesTheTrustAnchor(transport);
+  assert.equal(result.outcome, 'incident');
+  assert.equal(result.lockState, 'retained-by-this-run');
+  assert.match(result.reason, /public package integrity/u);
+});
+
+test('a lock that fails for any reason other than an existing entry is an incident', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths, {
+    lockStatus: 1,
+    lockStderr: 'mkdir: cannot create directory /opt/rongying/updates-state/lock: Permission denied',
+  });
+  const result = await runCommit(commitInput(transport, { ...paths }));
+  assertEveryCommitCallCarriesTheTrustAnchor(transport);
+  assert.equal(result.outcome, 'incident');
+  assert.equal(result.lockState, 'ownership-unknown');
+  assert.equal(result.stages.find((entry) => entry.stage === 'lock').status, 'incident');
+  assert.equal(result.stages.find((entry) => entry.stage === 'commit-version').status, 'pending');
+  const removals = transport.calls.filter(
+    (call) => call[0] === 'writeSsh' && /(?:^|\s)(?:rm|rmdir) /u.test(String(call[1])),
+  );
+  assert.deepEqual(removals, []);
+});
+
+test('an owner write that fails after the lock is an incident that keeps the lock', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths, { ownerWriteStatus: 1 });
+  const input = commitInput(transport, { ...paths });
+  const result = await runCommit(input);
+  assertEveryCommitCallCarriesTheTrustAnchor(transport);
+  assert.equal(result.outcome, 'incident');
+  assert.equal(result.lockState, 'retained-by-this-run');
+  assert.equal(result.stages.find((entry) => entry.stage === 'lock').status, 'incident');
+  assert.equal(result.stages.find((entry) => entry.stage === 'unlock').status, 'retained');
+  assert.equal(result.stages.find((entry) => entry.stage === 'commit-version').status, 'pending');
+  const entries = auditEntriesOf(input.auditOut);
+  assert.equal(entries.at(-1).stage, 'lock-retained');
+  assert.ok(entries.every((entry) => entry.stage !== 'unlock' || entry.status !== 'done'));
+});
+
+test('an owner record replaced before the unlock stops the run and deletes nothing', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths, { foreignOwnerAfterFlip: true });
+  const input = commitInput(transport, { ...paths });
+  const result = await runCommit(input);
+  assertEveryCommitCallCarriesTheTrustAnchor(transport);
+  assert.equal(result.outcome, 'incident');
+  assert.equal(result.lockState, 'ownership-unknown');
+  assert.equal(result.stages.find((entry) => entry.stage === 'flip').status, 'done');
+  assert.equal(result.stages.find((entry) => entry.stage === 'unlock').status, 'retained');
+  const removals = transport.calls.filter(
+    (call) => call[0] === 'writeSsh' && /(?:^|\s)(?:rm|rmdir) /u.test(String(call[1])),
+  );
+  assert.deepEqual(removals, []);
+  const entries = auditEntriesOf(input.auditOut);
+  assert.ok(entries.some((entry) => entry.stage === 'unlock' && entry.status === 'retained'));
+  assert.ok(entries.every((entry) => entry.stage !== 'unlock' || entry.status !== 'done'));
+});
+
+test('an owner record replaced inside the lock window stops the run and touches nothing', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths, { foreignOwnerFromReVerify: true });
+  const input = commitInput(transport, { ...paths });
+  const result = await runCommit(input);
+  assertEveryCommitCallCarriesTheTrustAnchor(transport);
+  assert.equal(result.outcome, 'incident');
+  assert.equal(result.lockState, 'ownership-unknown');
+  assert.equal(result.stages.find((entry) => entry.stage === 'lock').status, 'done');
+  assert.equal(result.stages.find((entry) => entry.stage === 're-verify').status, 'incident');
+  assert.equal(result.stages.find((entry) => entry.stage === 'commit-version').status, 'pending');
+  const removals = transport.calls.filter(
+    (call) => call[0] === 'writeSsh' && /(?:^|\s)(?:rm|rmdir) /u.test(String(call[1])),
+  );
+  assert.deepEqual(removals, []);
+});
+
+test('a lock that cannot be removed after a successful publish is not reported as released', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths, { lockRemovalStatus: 1 });
+  const input = commitInput(transport, { ...paths });
+  const result = await runCommit(input);
+  assertEveryCommitCallCarriesTheTrustAnchor(transport);
+  assert.equal(result.outcome, 'incident');
+  assert.equal(result.lockState, 'retained-by-this-run');
+  assert.notEqual(result.lockState, 'released');
+  assert.equal(result.stages.find((entry) => entry.stage === 'unlock').status, 'retained');
+  const entries = auditEntriesOf(input.auditOut);
+  assert.ok(entries.every((entry) => entry.stage !== 'unlock' || entry.status !== 'done'));
+});
+
+test('a public verifier that rejects after the flip is an incident that keeps the lock', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths);
+  const input = commitInput(transport, {
+    ...paths,
+    verifier: () => {
+      throw new Error('release manifest signature is invalid');
+    },
+  });
+  const result = await runCommit(input);
+  assertEveryCommitCallCarriesTheTrustAnchor(transport);
+  assert.equal(result.outcome, 'incident');
+  assert.equal(result.lockState, 'retained-by-this-run');
+  assert.match(result.reason, /signature is invalid/u);
+  const entries = auditEntriesOf(input.auditOut);
+  assert.ok(entries.every((entry) => entry.stage !== 'unlock' || entry.status !== 'done'));
+});
+
+test('every early failure records its outcome in the audit log before it returns', async () => {
+  const paths = writeArtifacts();
+  const fixtures = [
+    {
+      stage: 'pre-verify',
+      transport: commitTransport(),
+      overrides: { packagePath: join(makeRoot(), 'missing.zip') },
+      outcome: 'fail',
+    },
+    { stage: 'stage', transport: commitTransport({ uploadStatus: 1 }), overrides: {}, outcome: 'fail' },
+    {
+      stage: 'remote-verify',
+      transport: commitTransport({ stagingListing: `f ${PORTABLE_PACKAGE_NAME} 1\n` }),
+      overrides: {},
+      outcome: 'fail',
+    },
+    {
+      stage: 'lock',
+      transport: happyTransport(paths, { lockState: 'exists' }),
+      overrides: { ...paths },
+      outcome: 'blocked',
+    },
+  ];
+  for (const fixture of fixtures) {
+    const input = commitInput(fixture.transport, fixture.overrides);
+    const result = await runCommit(input);
+    assert.equal(result.outcome, fixture.outcome, fixture.stage);
+    if (fixture.stage === 'pre-verify') {
+      assert.deepEqual(fixture.transport.calls, []);
+    } else {
+      assertEveryCommitCallCarriesTheTrustAnchor(fixture.transport);
+    }
+    const entries = auditEntriesOf(input.auditOut);
+    assert.equal(entries.at(-1).stage, fixture.outcome, fixture.stage);
+    assert.equal(entries.at(-1).runid, 'r1', fixture.stage);
+    assert.equal(typeof entries.at(-1).reason, 'string', fixture.stage);
+  }
+});
+
+test('a channel that could escape its remote path is refused before any remote write', async () => {
+  const paths = writeArtifacts({
+    manifestOverrides: { channel: 'internal/x', packageUrl: `${PUBLIC_BASE_URL}/internal/x/1.2.3/portable.zip` },
+  });
+  const transport = happyTransport(paths);
+  const result = await runCommit(commitInput(transport, { ...paths, channel: 'internal/x' }));
+  assert.equal(result.outcome, 'fail');
+  assert.deepEqual(transport.calls, []);
+});
+
+test('a version that could escape its remote path is refused before any remote write', async () => {
+  const paths = writeArtifacts({
+    manifestOverrides: { version: '1.2.3;id', packageUrl: `${PUBLIC_BASE_URL}/internal/1.2.3;id/portable.zip` },
+  });
+  const transport = happyTransport(paths);
+  const result = await runCommit(commitInput(transport, { ...paths, version: '1.2.3;id' }));
+  assert.equal(result.outcome, 'fail');
+  assert.deepEqual(transport.calls, []);
+});
+
+test('a run id that could escape its remote path is refused before any remote write', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths);
+  const result = await runCommit(commitInput(transport, { ...paths, runid: 'r1; id' }));
+  assert.equal(result.outcome, 'fail');
+  assert.deepEqual(transport.calls, []);
+});
+
+test('a sibling whose name begins with two dots is still inside the repository', () => {
+  const root = process.cwd();
+  assert.throws(
+    () => assertKnownHostsPath(join(root, '..foo', 'known_hosts'), root),
+    /must live outside the repository/u,
+  );
+  assert.throws(
+    () =>
+      appendAuditStage({
+        auditOut: join(root, '..foo', 'audit.jsonl'),
+        entry: { stage: 'open' },
+        repositoryRoot: root,
+      }),
+    /must live outside the repository/u,
+  );
+});
+
+test('the real release verifier accepts a canonically signed manifest and rejects an insertion ordered one', async () => {
+  const canonicalFileManifest = {
+    files: [{ path: 'a.txt', sha256: 'a'.repeat(64), size: 1 }],
+    schemaVersion: 1,
+    version: '1.2.3',
+  };
+  const fileManifestBytes = Buffer.from(JSON.stringify(canonicalFileManifest), 'utf8');
+  const packageRoot = makeRoot();
+  const packagePath = join(packageRoot, PORTABLE_PACKAGE_NAME);
+  writeFileSync(packagePath, PACKAGE_BYTES);
+  const built = await buildPortableRelease({
+    baseUrl: PUBLIC_BASE_URL,
+    channel: 'internal',
+    version: '1.2.3',
+    minLauncherVersion: '1.0.0',
+    publishedAt: '2026-09-22T00:00:00.000Z',
+    signingKeyPem: keyPair.privateKey.export({ type: 'pkcs8', format: 'pem' }),
+    publicKeyBase64: PUBLIC_KEY_BASE64,
+    packagePath,
+    fileManifest: canonicalFileManifest,
+    fileManifestBytes,
+  });
+  assert.equal(
+    createHash('sha256').update(built.fileManifestBytes).digest('hex'),
+    createHash('sha256').update(fileManifestBytes).digest('hex'),
+  );
+
+  const serving = (manifestBytes, packageBytes) => ({
+    fetchPublic: async (url) => {
+      if (url.endsWith('manifest.json')) return { status: 200, bodyBytes: Uint8Array.from(manifestBytes) };
+      if (url.endsWith('portable.zip')) return { status: 200, bodyBytes: Uint8Array.from(packageBytes) };
+      return { status: 200, bodyBytes: Uint8Array.from(fileManifestBytes) };
+    },
+  });
+  const publicInput = (manifestBytes, packageBytes, expectedManifestBytes) => ({
+    channel: 'internal',
+    version: '1.2.3',
+    publicKeyBase64: PUBLIC_KEY_BASE64,
+    verifier: verifyPortableRelease,
+    expectedManifestBytes,
+    expectedPackageSha256: createHash('sha256').update(packageBytes).digest('hex'),
+    expectedPackageSize: packageBytes.length,
+    expectedFileManifestSha256: createHash('sha256').update(fileManifestBytes).digest('hex'),
+    expectedFileManifestSize: fileManifestBytes.length,
+    temporaryRoot: makeRoot(),
+    transport: serving(manifestBytes, packageBytes),
+  });
+
+  const accepted = await verifyPublicArtifacts(publicInput(built.manifestBytes, PACKAGE_BYTES, built.manifestBytes));
+  assert.equal(accepted.ok, true, accepted.reason);
+
+  const insertionOrdered = signedManifest();
+  await assert.rejects(
+    verifyPublicArtifacts(publicInput(insertionOrdered, PACKAGE_BYTES, insertionOrdered)),
+    /release manifest signature is invalid/u,
+  );
 });
 ```
 
@@ -2195,13 +2582,34 @@ export function appendAuditStage(input) {
 }
 
 function assertOutsideRepository(target, repositoryRoot) {
-  const resolved = resolve(target);
-  const root = resolve(repositoryRoot);
-  const rel = relative(root, resolved);
-  if (rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))) {
+  if (isInsideRepository(target, repositoryRoot)) {
     throw new FeedPublishError('the audit log must live outside the repository');
   }
-  return resolved;
+  return resolve(target);
+}
+
+function assertSafeVersion(version) {
+  if (typeof version !== 'string' || version.length === 0) {
+    throw new FeedPublishError('the version is empty, so it cannot be interpolated into a remote path');
+  }
+  if (!SEMVER_PATTERN.test(version)) {
+    throw new FeedPublishError(
+      `the version ${version} is not a strict semantic version, so it is not safe to interpolate into a remote path`,
+    );
+  }
+}
+
+const RUNID_PATTERN = /^[A-Za-z0-9._-]+$/u;
+
+function assertSafeRunid(runid) {
+  if (typeof runid !== 'string' || runid.length === 0) {
+    throw new FeedPublishError('the run id is empty, so it cannot be interpolated into a remote path');
+  }
+  if (!RUNID_PATTERN.test(runid)) {
+    throw new FeedPublishError(
+      `the run id ${runid} carries a character outside the shell inert alphabet, so it is not safe to interpolate into a remote path`,
+    );
+  }
 }
 
 function versionRootOf(channel, version) {
@@ -2360,6 +2768,7 @@ export async function runCommit(input) {
   const stages = PUBLISH_STAGES.map((stage) => ({ stage, status: 'pending' }));
   const runid = input.runid;
   let acquisitionConfirmed = false;
+  let acquiredLockState = null;
   let planHash = 'uncomputed';
   let owner = null;
 
@@ -2384,6 +2793,7 @@ export async function runCommit(input) {
 
   const retainAndFinish = (outcome, reason) => {
     const disposition = resolveLockDisposition({ acquisitionConfirmed, owner, runid, planHash, safeToExit: false });
+    const lockState = owner === null && acquiredLockState !== null ? acquiredLockState : disposition.state;
     stages.find((entry) => entry.stage === 'unlock').status = 'retained';
     recordOutcome(outcome, reason);
     appendAuditStage({
@@ -2391,7 +2801,7 @@ export async function runCommit(input) {
       repositoryRoot: input.repositoryRoot,
       entry: { stage: 'lock-retained', status: 'retained', runid, reason: disposition.reason },
     });
-    return finish(outcome, reason, disposition.state);
+    return finish(outcome, reason, lockState);
   };
 
   const releaseAndFinish = async (failedStage, outcome, reason) => {
@@ -2417,10 +2827,21 @@ export async function runCommit(input) {
     return finish(outcome, reason, disposition.state);
   };
 
-  appendAuditStage({ auditOut: input.auditOut, repositoryRoot: input.repositoryRoot, entry: { stage: 'open', runid } });
+  try {
+    appendAuditStage({
+      auditOut: input.auditOut,
+      repositoryRoot: input.repositoryRoot,
+      entry: { stage: 'open', runid },
+    });
+  } catch (error) {
+    return finish('fail', error.message, 'not-acquired');
+  }
 
   let local;
   try {
+    assertSafeChannel(input.channel);
+    assertSafeVersion(input.version);
+    assertSafeRunid(runid);
     local = await verifyLocalArtifacts({
       packagePath: input.packagePath,
       fileManifestPath: input.fileManifestPath,
@@ -2430,17 +2851,18 @@ export async function runCommit(input) {
       publicKeyBase64: input.publicKeyBase64,
       verifySignature: input.verifySignature,
     });
+    planHash = planHashOf({
+      channel: input.channel,
+      version: input.version,
+      packageSha256: local.packageSha256,
+      fileManifestSha256: local.fileManifestSha256,
+      manifestSha256: local.manifestSha256,
+    });
   } catch (error) {
     audit('pre-verify', 'fail', error.message);
+    recordOutcome('fail', error.message);
     return finish('fail', error.message, 'not-acquired');
   }
-  planHash = planHashOf({
-    channel: input.channel,
-    version: input.version,
-    packageSha256: local.packageSha256,
-    fileManifestSha256: local.fileManifestSha256,
-    manifestSha256: local.manifestSha256,
-  });
   audit('pre-verify', 'done');
 
   const versionRoot = versionRootOf(input.channel, input.version);
@@ -2457,6 +2879,7 @@ export async function runCommit(input) {
   });
   if (stagingCreated.status !== 0) {
     audit('stage', 'fail', 'the staging directory could not be created');
+    recordOutcome('fail', 'the staging directory could not be created');
     return finish('fail', 'the staging directory could not be created', 'not-acquired');
   }
 
@@ -2467,6 +2890,7 @@ export async function runCommit(input) {
     const uploaded = await input.transport.write.sftpUpload({ ...item, resume: true });
     if (uploaded.status !== 0) {
       audit('stage', 'fail', uploaded.stderr ?? 'upload failed');
+      recordOutcome('fail', 'the staging upload failed');
       return finish('fail', 'the staging upload failed', 'not-acquired');
     }
   }
@@ -2481,6 +2905,7 @@ export async function runCommit(input) {
   });
   if (finalised.status !== 0) {
     audit('stage', 'fail', 'the staging directory could not be finalised');
+    recordOutcome('fail', 'the staging directory could not be finalised');
     return finish('fail', 'the staging directory could not be finalised', 'not-acquired');
   }
   audit('stage', 'done');
@@ -2488,8 +2913,10 @@ export async function runCommit(input) {
   const staging = await inspectRemoteDirectory(input, stagingRoot, expectedEntries);
   if (!staging.present || staging.empty || staging.problems.length > 0) {
     const detail = staging.empty ? 'the staging directory is empty' : staging.problems.join('; ');
+    const reason = `the staging directory is not the exact final file set: ${detail}`;
     audit('remote-verify', 'fail', detail);
-    return finish('fail', `the staging directory is not the exact final file set: ${detail}`, 'not-acquired');
+    recordOutcome('fail', reason);
+    return finish('fail', reason, 'not-acquired');
   }
   audit('remote-verify', 'done');
 
@@ -2501,14 +2928,28 @@ export async function runCommit(input) {
     knownHostsPath: input.knownHostsPath,
   });
   if (lock.acquired !== true) {
-    audit('lock', lock.state === 'not-acquired' ? 'blocked' : 'incident', lock.reason);
-    return finish(lock.state === 'not-acquired' ? 'blocked' : 'incident', lock.reason, lock.state);
+    const blocked = lock.state === 'not-acquired';
+    const outcome = blocked ? 'blocked' : 'incident';
+    audit('lock', outcome, lock.reason);
+    recordOutcome(outcome, lock.reason);
+    return finish(outcome, lock.reason, lock.state);
   }
   acquisitionConfirmed = true;
+  acquiredLockState = lock.state;
   owner = lock.owner;
+  if (lock.incident === true) {
+    audit('lock', 'incident', lock.reason);
+    return retainAndFinish('incident', lock.reason);
+  }
   audit('lock', 'done');
 
-  owner = (await readOwnerRecord(input)) ?? owner;
+  const reReadOwner = await readOwnerRecord(input);
+  if (reReadOwner !== null && (reReadOwner.runid !== runid || reReadOwner.planHash !== planHash)) {
+    owner = reReadOwner;
+    audit('re-verify', 'incident', 'the lock owner changed while this run was taking it');
+    return retainAndFinish('incident', 'the lock owner changed while this run was taking it');
+  }
+  owner = reReadOwner ?? owner;
   const baselineSha = await readRemoteFileSha(input, `${UPDATE_ROOT}/${input.channel}/${PORTABLE_MANIFEST_NAME}`);
   const stagingAfterLock = await inspectRemoteDirectory(input, stagingRoot, expectedEntries);
   if (!stagingAfterLock.present || stagingAfterLock.empty || stagingAfterLock.problems.length > 0) {
@@ -2621,19 +3062,25 @@ export async function runCommit(input) {
   }
   const observedSha = createHash('sha256').update(Buffer.from(observed.bodyBytes)).digest('hex');
   if (observedSha === local.manifestSha256) {
-    const publicCheck = await verifyPublicArtifacts({
-      channel: input.channel,
-      version: input.version,
-      publicKeyBase64: input.publicKeyBase64,
-      verifier: input.verifier,
-      expectedManifestBytes: local.manifestBytes,
-      expectedPackageSha256: local.packageSha256,
-      expectedPackageSize: local.packageSize,
-      expectedFileManifestSha256: local.fileManifestSha256,
-      expectedFileManifestSize: local.fileManifestSize,
-      transport: input.transport,
-      temporaryRoot: input.temporaryRoot,
-    });
+    let publicCheck;
+    try {
+      publicCheck = await verifyPublicArtifacts({
+        channel: input.channel,
+        version: input.version,
+        publicKeyBase64: input.publicKeyBase64,
+        verifier: input.verifier,
+        expectedManifestBytes: local.manifestBytes,
+        expectedPackageSha256: local.packageSha256,
+        expectedPackageSize: local.packageSize,
+        expectedFileManifestSha256: local.fileManifestSha256,
+        expectedFileManifestSize: local.fileManifestSize,
+        transport: input.transport,
+        temporaryRoot: input.temporaryRoot,
+      });
+    } catch (error) {
+      audit('public-verify', 'incident', error.message);
+      return retainAndFinish('incident', `the public verification could not be completed: ${error.message}`);
+    }
     if (publicCheck.ok !== true) {
       audit('public-verify', 'incident', publicCheck.reason);
       return retainAndFinish('incident', `the public verification failed: ${publicCheck.reason}`);
@@ -2722,6 +3169,118 @@ git commit -m "feat(feed): publish the manifest over sftp and verify it on the p
 **待定的设计决定（在本刀内决定，不要留成第三份拷贝）**：本刀新增的 `assertOutsideRepository` 会是仓库里**第三**个"这个路径是否在仓库外"的判据，三份的语义各差一点：兄弟模块 `scripts/lib/portable-update-release.mjs` 的 `assertPathOutsideRepository` 要求相对关系是 `..` **加一个分隔符**（或正好是 `..`）才算仓库外；Task 1 的 `assertKnownHostsPath` 与本刀这一份则接受**任何以 `..` 开头**的相对关系。差别在 `..foo` 这种名字上：`<仓库根>/..foo` **其实在仓库内**，兄弟那份会拒、这两份会放行。**首选修法是统一到兄弟模块那种更严的形式**（顺带把 `..foo` 这个已知边界一起关掉），而不是新增第三份略有差异的拷贝 —— 修哪一份、还是抽成共享的一份，在**本刀**里定下来，别把三份语义不同的判据留给下一个人。
 
 ---
+
+---
+
+**Task 4 实施记录（本刀实测；套件 78 → 117；`feed-publish.mjs` 438 → 990 行、`feed-publish.test.mjs` 1319 → 2117 行，均为 `wc -l` 读数）**
+
+**本刀的提交：** `e98c214c`（`feat(feed): run the thirteen publish stages over the injected transport`）。两份文件的 blob sha256 与下面全部变异运行的基线逐字节相同：`feed-publish.mjs` **`487cc87985c9ff9ae03da2dfd14258a7ab72e3eb07d63099500bfcdde286fb5f`**、`feed-publish.test.mjs` **`c9a296379f5899bdf67a46fd917087ca04fd5f68e7246bd8bfb24c9154c4df19`**（`sha256sum` 读数，提交前后各量一次）。
+
+### 一、本刀在 Task 4 规定块上的偏离（12 处，逐条给"为什么必须改" + 钉住它的测试名 + 变异读数）
+
+1. **规定的测试块引用了 `writeArtifacts` 不返回的 `manifestBytes`（规定块之间自相矛盾）。** Task 4 的测试用 `paths.manifestBytes`（`manifestShaOf`、`happyTransport`、两条 `verifyPublicArtifacts` 用例），而 Task 1 规定的 `writeArtifacts` 只返回三个路径 —— 规定的套件**跑不起来**。**修法**：不扩宽 Task 1 的夹具（那会同时改掉 `test 1-374` 的边界），在 Task 4 自己的块里用 `readFileSync(paths.manifestPath)` 读盘上的字节 —— 那正是 `runCommit` 自己读到的那一份。
+2. **`PORTABLE_PACKAGE_NAME` / `PORTABLE_FILE_MANIFEST_NAME` 没在测试块里导入。** 规定的 import 行少了夹具用到的两个常量 ⇒ 规定的块以 `ReferenceError` 失败。修法：加进同一条 import。
+3. **`commitInput(transport, …)` 收了 `transport` 却从不放进返回的 input。** `input.transport` 全是 `undefined` ⇒ 30 条 `runCommit` 用例一起抛 `TypeError: Cannot read properties of undefined (reading 'write')`。修法：`transport` 放进 input。**变异 D9**（删掉那一行）⇒ **红 27 条**（`a clean publish walks every stage and releases its own lock` 领衔）。
+4. **夹具的 `options.publicManifestBody ?? (…)` 对每个 URL 都生效。** `happyTransport` 一设它，`portable.zip` 与 `portable-files.json` 的取回也返回 manifest 字节 ⇒ 步骤 11 的包完整性必然失败 ⇒ **规定的 happy path 走不到 `done`**。修法：三个 URL 各取各的 body（新增 `publicPackageBody` / `publicFileManifestBody`）。**变异 D8**（退回 `??` 链）⇒ **红 7 条**。
+5. **`open` 那条审计写入没有被保护（规定块缺一个 try/catch）。** 裸调的 `appendAuditStage` 写失败即抛 ⇒ `runCommit` **reject**，而规定的用例 `a failed audit write stops the run instead of publishing silently` 断言的是**返回** `{outcome:'fail', reason:/audit/}`。修法：只把 `open` 包进 try/catch，失败即 `return finish('fail', error.message, 'not-acquired')`（审计已经坏了，此时再写 `fail` 条目只会再抛一次）。**变异 P10**（catch 改成吞掉）⇒ **红 1 条**。
+6. **四条提前失败路径必须各自写收口条目（计划正文明写的硬规则，规定块里没有）。** 正文要求"每一次 `return finish(...)` 之前都必须先 `recordOutcome(outcome, reason)`"，而规定的四条路径（`pre-verify` / `stage` / `remote-verify` / `lock`）只调了 `audit(...)` ⇒ §6.11"以 `done|fail|incident` 收口"在失败路径上落空。**为什么规定套件看不见**：四条路径的规定用例只断言 `outcome` / `lockState` / 阶段状态，**没有一条读审计尾部** ⇒ 规定清单再全绿也钉不住这条接线。补的用例 `every early failure records its outcome in the audit log before it returns`（四条路径各跑一次）。**变异 D2**（删掉 `pre-verify` 那一次）⇒ **红 1 条**（就是它）。
+7. **锁步骤必须查"两条"退出码（追踪表第 4 行：检查退出码 是（两条都查））。** 规定代码只看 `lock.acquired`（= `mkdir` 的结果），**owner 写入失败被完全忽略**：此时 `acquireChannelLock` 返回 `{state:'retained-by-this-run', incident:true}`，规定代码会**继续发布**（`owner` 为 `null`，一路走到 flip），最后在解锁处以 `ownership-unknown` 收口 —— 正是验收项 5 明令禁止的形状。修法：`lock.incident === true` ⇒ `audit('lock','incident')` + `retainAndFinish('incident', lock.reason)`（`commit-version` 保持 `pending`）。**变异 D3**（删掉该分支）⇒ **红 1 条**：`an owner write that fails after the lock is an incident that keeps the lock`。
+8. **保留路径要报"获取时确认过的那个状态"。** `resolveLockDisposition` 对读不出来的 owner 一律给 `ownership-unknown`（Task 3 的 `a lock owner that is missing or not a record is ownership unknown` 已钉住，本刀不动它），但 `mkdir` 成功已经证明"本次持有" ⇒ §6.6 的 `retained-by-this-run` 才是诚实描述（验收项 5① 也要求它）。修法：`retainAndFinish` 在 `owner === null && acquiredLockState !== null` 时用**获取步骤报的那个状态**（`acquiredLockState` 由 `acquireChannelLock` 的返回值赋值，不是本地新造）。**变异 D4**（退回 `disposition.state`）⇒ **红 1 条**（同一条，`lockState` 变成 `ownership-unknown`）。
+9. **步骤 5 的 `owner.json` 重读必须比对（§6.6 推论 + 追踪表第 5 行的 `incident`）。** 规定代码 `owner = (await readOwnerRecord(input)) ?? owner;` 会把锁窗口里被换掉的记录**当自己的**。修法：重读到记录且 `runid` / `planHash` 任一不同 ⇒ `audit('re-verify','incident')` + `retainAndFinish('incident', …)`，并把 `owner` 换成那条外来记录（收口状态因此是 `ownership-unknown`，与追踪表"不匹配 ⇒ `ownership-unknown`，不触碰该锁"一致）。**变异 D10**（删掉比对）⇒ **红 1 条**：`an owner record replaced inside the lock window stops the run and touches nothing`。
+10. **`verifyPublicArtifacts` 的拒绝必须收成 `incident`（§6.6"翻转之后失败 ⇒ 不确定 ⇒ 保留锁"）。** 规定的调用是裸 `await`：`input.verifier`（Task 7 会注入真 `verifyPortableRelease`）一抛就**整个 `runCommit` reject** —— 没有 `incident` 条目、没有"保留锁"的语义，只有一次未捕获异常。修法：包 try/catch ⇒ `audit('public-verify','incident', error.message)` + `retainAndFinish('incident', …)`。**变异 D7**（catch 改成 rethrow）⇒ **红 1 条**：`a public verifier that rejects after the flip is an incident that keeps the lock`。
+11. **"是否在仓库外"的三份谓词收敛到最严的那一份（计划"待定的设计决定"，本刀拍板）。** 兄弟模块 `portable-update-release.mjs` 的 `assertPathOutsideRepository` 最严（`..` 必须是**整个路径段**）；Task 1 的 `assertKnownHostsPath` 与本刀的 `assertOutsideRepository` 用 `startsWith('..')` ⇒ 放行 `<仓库根>/..foo`（其实在仓库内）。修法：在 `feed-publish.mjs` 里抽出**一份** `isInsideRepository(target, repositoryRoot)`（判据与兄弟那份同义：`relation === '..' || relation.startsWith('..' + sep)`），两个断言各自只留自己的报错文案；**兄弟模块不动**（它本来就严）⇒ 三份语义一致。**顺带关掉了 `..foo` 这个已接受的角**。副作用：`node:path` 的 import 多了 `sep` ⇒ **Step 3 里那句"本刀不引入 `sep`"随之作废**（它描述的正是被换掉的那份松判据）。**变异 D5**（退回 `startsWith('..')`）⇒ **红 1 条**：`a sibling whose name begins with two dots is still inside the repository`（新用例，两个入口各断言一次）。
+12. **`channel` / `version` / `runid` 的路径安全前置条件挪到任何远端写之前（验收项 7③ + 插值登记表）。** 三条都在 `pre-verify` 的 try 里、`verifyLocalArtifacts` **之前** ⇒ 不过就一个字节都不写。`assertSafeChannel` 复用第六处的判据，`assertSafeVersion` 复用 Task 1 的 `SEMVER_PATTERN`，`assertSafeRunid` 是**本刀自行加的**（计划只点名了 `channel` 与 `version`，但 `runid` 同样被拼进远端路径：`.part-<runid>` 与 `.<runid>.tmp`）。用例两半各断言一次（`a channel that could escape its remote path is refused before any remote write` / `a version that could escape its remote path is refused before any remote write`）。**为什么这两个夹具是有效钉子**：`channel: 'internal/x'` 与 `version: '1.2.3;id'` 都**能通过** `verifyLocalArtifacts`（把 manifest 的 `channel` / `version` / `packageUrl` 同步改成同值即可）⇒ 拦住它们的**只**能是路径安全前置条件；换成非白名单的 `internall` 就测不出东西（`verifyLocalArtifacts` 先拒）。**变异**：D6b（删 `assertSafeVersion`）⇒ **红 1 条**；D6c（删 `assertSafeRunid`）⇒ **红 1 条**；**D6a（删 `assertSafeChannel`）⇒ 117/117 全绿（存活）** —— 这是**刻意保留的冗余**：同一行下面的 `planHashOf` 内部对 `channel` 调的就是同一个 `assertSafeChannel`、报错文案逐字相同 ⇒ 在**当前语句顺序**下这条前置条件**不可单独钉住**。保留它的理由：前置条件不应依赖 `planHashOf` 的内部实现、也不应依赖这两条语句的先后（谁把 `planHashOf` 挪到后面，这一条就是唯一的守卫）。**这是本刀唯一的"存活"变异，别按缺陷报**。
+
+### 二、计划正文被本刀更正的三条（都是实测读数，不是判断）
+
+1. **"`runCommit` 里的 `stages` 是同一表达式的第二份拷贝……两份一旦漂移，没有任何测试会红" —— 实测为假。** 两份拷贝**都被按名钉住**：**S1**（只改 `planCommit` 那份）⇒ **红 2 条**（`the dry run validates the triple and prints the plan without any transport`、`the dry run follows the channel and the version it was given instead of a default`）；**S2**（只改 `runCommit` 那份）⇒ **红 31 条**（首条 `the local pre-verification happens before any network write`）。因此本刀**按计划保留两份拷贝**（没有把计划数组传进 `runCommit`），这两次读数就是"它被钉住了"的证据。
+2. **Step 5 第 2 条的"本刀无独立用例覆盖 ⇒ 记'未验证'"已不成立：本刀补了用例。** `a staging directory that cannot be created is a plain failure`（新增 `stagingCreateStatus` 夹具）断言 `outcome === 'fail'`、`lockState === 'not-acquired'`、`reason` 含 `staging directory could not be created`、`lock` 阶段仍 `pending`。**变异 P2**（删掉那三行退出码检查）⇒ **红 1 条**（就是它）。
+3. **Step 5 第 11 条的预期红名不成立。** 原文预期"删掉 `verifyPublicArtifacts` 调用"会让 `the public verification fails when the served package differs` 变红 —— 但那条用例**直接调** `verifyPublicArtifacts`，与 `runCommit` 的调用点无关。**实测 P11**（把调用换成 `{ ok: true }`）⇒ **红 2 条**：`the public verification is actually run after the flip`（本刀补的接线钉子）与 `a public verifier that rejects after the flip is an incident that keeps the lock`；**预期的那条没红**。补的用例就是为了让"步骤 11 真的跑了"这件事有名字。
+
+### 三、变异清单（本刀最终读数，全部对着提交 `e98c214c` 的字节；每条都先断言锚点恰好匹配 1 次、确认磁盘字节真的变了，跑完**逐字节恢复**并与基线比 sha256）
+
+| #    | 变异                                                                                           | 读数（pass/fail）   | 变红的测试                                                                                                                                                                                                                     |
+| ---- | ---------------------------------------------------------------------------------------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 对照 | 把 `retainAndFinish` 里那句 `'the uploaded manifest does not match the local manifest'` 改文案 | **117 / 0（全绿）** | —（证明装置不是"改什么都红"）                                                                                                                                                                                                  |
+| P1   | 在 `open` 之后、本地预验证之前插入一次远端 `mkdir`                                             | 112 / 5             | `the local pre-verification happens before any network write`、`every early failure records its outcome…`、`a channel that could escape…`、`a version that could escape…`、`a run id that could escape…`（**不是"只红一条"**） |
+| P2   | 删掉 staging `mkdir -p` 的退出码检查                                                           | 116 / 1             | `a staging directory that cannot be created is a plain failure`                                                                                                                                                                |
+| P3   | 单次目录 `mv` ⇒ `mkdir -p` + 两次逐文件 `mv`                                                   | 115 / 2             | `the version directory is committed with a single directory rename`、`a failure after the lock but before the flip releases the lock this run owns`                                                                            |
+| P4   | manifest 的 SFTP 上传 ⇒ `cp <本地路径>`                                                        | 115 / 2             | `the manifest is uploaded to the final directory and its remote digest is checked`、`a manifest upload failure is an incident that keeps the lock`                                                                             |
+| P5   | 删掉远端临时 manifest 的 SHA 比对                                                              | 116 / 1             | `a mismatched remote manifest digest stops before the flip`                                                                                                                                                                    |
+| P6   | 删掉设备号比对                                                                                 | 116 / 1             | `a staging directory and a final directory on different file systems stops the commit`                                                                                                                                         |
+| P7   | "存在但为空"当成不存在                                                                         | 116 / 1             | `an existing version directory that is empty is incomplete and refused`                                                                                                                                                        |
+| P8   | 删掉目录摘要比对（`compareDirectoryHashes` 整段）                                              | 116 / 1             | `an existing version directory with a different digest is refused`                                                                                                                                                             |
+| P9   | 删掉逐阶段审计追加（`audit` 里的 `appendAuditStage`）                                          | 116 / 1             | `every stage is appended to the audit log as it happens`                                                                                                                                                                       |
+| P10  | 把 `appendAuditStage` 的 catch 改成吞掉                                                        | 116 / 1             | `a failed audit write stops the run instead of publishing silently`                                                                                                                                                            |
+| P11  | 步骤 11 的 `verifyPublicArtifacts` 调用 ⇒ `{ ok: true }`                                       | 115 / 2             | `the public verification is actually run after the flip`、`a public verifier that rejects after the flip is an incident that keeps the lock`（**计划预期的红名没红**，见第二节第 3 条）                                        |
+| P12a | 删 `verifyLocalArtifacts` 的 `await`                                                           | 90 / 27             | 首条 `a clean publish walks every stage and releases its own lock`（"漏 await"的正面检查；27 条一起红）                                                                                                                        |
+| P12b | 删 staging `sftpUpload` 的 `await`                                                             | 92 / 25             | 同上族                                                                                                                                                                                                                         |
+| P12c | 删 staging `mkdir -p` 的 `await`                                                               | 90 / 27             | 同上族                                                                                                                                                                                                                         |
+| P12d | 删 `fetchPublic` 的 `await`                                                                    | 107 / 10            | `a clean publish…` 等 10 条                                                                                                                                                                                                    |
+| P12e | 删 `releaseChannelLock`（`releaseAndFinish` 那处）的 `await`                                   | 115 / 2             | `a failure after the lock but before the flip releases the lock this run owns`、`a staging directory and a final directory on different file systems stops the commit`                                                         |
+| D2   | 删掉 `pre-verify` 路径的 `recordOutcome`                                                       | 116 / 1             | `every early failure records its outcome in the audit log before it returns`                                                                                                                                                   |
+| D3   | 删掉 `lock.incident === true` 分支                                                             | 116 / 1             | `an owner write that fails after the lock is an incident that keeps the lock`                                                                                                                                                  |
+| D4   | `retainAndFinish` 的状态退回 `disposition.state`                                               | 116 / 1             | 同一条（`lockState` ⇒ `ownership-unknown`）                                                                                                                                                                                    |
+| D5   | 包含谓词退回 `startsWith('..')`                                                                | 116 / 1             | `a sibling whose name begins with two dots is still inside the repository`                                                                                                                                                     |
+| D6a  | 删掉 `assertSafeChannel(input.channel)`                                                        | **117 / 0（存活）** | 见第一节第 12 条的说明（刻意冗余）                                                                                                                                                                                             |
+| D6b  | 删掉 `assertSafeVersion(input.version)`                                                        | 116 / 1             | `a version that could escape its remote path is refused before any remote write`                                                                                                                                               |
+| D6c  | 删掉 `assertSafeRunid(runid)`                                                                  | 116 / 1             | `a run id that could escape its remote path is refused before any remote write`                                                                                                                                                |
+| D7   | 步骤 11 的 catch 改成 rethrow                                                                  | 116 / 1             | `a public verifier that rejects after the flip is an incident that keeps the lock`                                                                                                                                             |
+| D8   | 夹具退回 `publicManifestBody ?? (…)` 单一 body                                                 | 110 / 7             | 见第一节第 4 条列出的七条                                                                                                                                                                                                      |
+| D9   | 夹具删掉 `transport,`                                                                          | 90 / 27             | `a clean publish…`（30 条 `runCommit` 用例一起红）                                                                                                                                                                             |
+| D10  | 删掉步骤 5 的 owner 比对                                                                       | 116 / 1             | `an owner record replaced inside the lock window stops the run and touches nothing`                                                                                                                                            |
+| D11  | 把一个调用点的 `host: input.host` 改成 `'wrong.invalid'`                                       | 90 / 27             | `a clean publish…`（锚点助手在每条 ssh 调用上抓到，**零调用不算通过**）                                                                                                                                                        |
+| S1   | 只改 `planCommit` 的阶段推导（`slice(1)`）                                                     | 115 / 2             | `the dry run validates the triple…`、`the dry run follows the channel and the version…`                                                                                                                                        |
+| S2   | 只改 `runCommit` 的阶段推导（`slice(1)`）                                                      | 86 / 31             | 首条 `the local pre-verification happens before any network write`                                                                                                                                                             |
+
+**次数：31 次有效变异运行**（1 次对照必须留绿 + 30 次变异，其中 D6a 是存活读数）+ **7 次作废重跑**。**作废的 7 次与原因（那些读数已废弃，别引用）**：① 锚点不唯一或不存在（D8 第一版把 old/new 写反 ⇒ `ANCHOR_MATCHES 0 REFUSED`）；② 锚点生成器把整段开头吞掉 ⇒ 产物**语法错**（P3/P4/P11/P12e 的第一版：`node --test` 读成加载失败 `tests 1 pass 0 fail 1` —— **这个读数会被误当成"红"**，所以变异记录必须写清 pass/fail 而不是只看退出码）；③ **P1 第二版**：锚点以 `return finish(...)` 结尾、插入落在 `catch` 的 `return` **之后** ⇒ 变成**不可达代码**，读数 **117/117 全绿**（假"存活"）。**这条是装置自身会骗人的形状**：只看"绿/红"分不出"护栏删对了"与"变异没生效" ⇒ 变异装置此后固定做三件事：断言锚点恰好 1 次、`node --check` 变异产物、`diff` 复核插入点（本刀就是这么抓到 ③ 的）。
+
+### 四、镜像与规定块（本刀实测）
+
+- **八份镜像逐行相等且连续**（检查器同时要求"连续"，不是"每行都能在文件里找到"）：`test 1–374`、`mjs 1–148`、`test 376–561`、`mjs 150–202`、`test 563–868`、`mjs 204–442`、**`test 1321–2117`（Task 4 测试块）**、**`mjs 444–990`（Task 4 模块块）**。三对 `diff`（Task 4 测试块、Task 4 模块块、模块第一份）**全部 `DIFF_EMPTY`**。
+- **边界变化**（因为第一处偏离落在模块第一份镜像**里面**：`assertKnownHostsPath` 9 行 ⇒ 14 行，外加 import 行内容变化）：`mjs 1–144 ⇒ 1–148`、`146–198 ⇒ 150–202`、`200–438 ⇒ 204–442`。`test` 的三份边界**不变**（本刀对测试的改动全部在 1319 行之后）。
+- 规定块的现在内容 = 实际文件的那一段（Task 4 步骤 1 的围栏 ⇒ `test 1321–2117`，步骤 3 的围栏 ⇒ `mjs 444–990`）；**本节的偏离清单就是"规定块与计划原文的差异"的唯一账本**。
+- **两份文件的行数读数**：`feed-publish.mjs` 990、`feed-publish.test.mjs` 2117（`wc -l`）；套件 **117 条**（`node --test` 的 `ℹ tests 117` / `ℹ pass 117` / `ℹ fail 0`），比本刀前多 **39** 条。
+
+### 五、远程脚本插值登记表（验收项 8：每个被拼进远端脚本的值一行）
+
+| 值                                                                                                                | 出现在哪几条远端脚本                                                                                       | 类别                     | 依据的前置条件（本刀实测）                                                                                                                                                                                                                      |
+| ----------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `channel`                                                                                                         | `lockPath` / `versionRootOf` / `stagingRootOf` / `cp` 备份名 / `mv -f` 翻转 / `sha256sum` 与 `find` 的目录 | **(a)** shell 惰性字母表 | `assertSafeChannel`（白名单 `CHANNELS` + 字符集），在 `runCommit` 的 `pre-verify` try 里、**任何远端调用之前**。另外 `planHashOf` 内部对同一值再调一次（见第一节第 12 条：这一层在当前语句顺序下不可单独钉住）                                  |
+| `version`                                                                                                         | `versionRootOf` / `stagingRootOf` / 备份名 `-manifest.json-pre-<version>`                                  | **(a)**                  | `assertSafeVersion` 复用 Task 1 的 `SEMVER_PATTERN`（第三修复刀第 61 条已机械钉住该正则的字符类不含 shell 元字符），同在 `pre-verify` 的 try 里、任何远端调用之前                                                                               |
+| `planHash`                                                                                                        | `stagingRootOf` 的目录段（`.part-<runid>` 与 `.tmp` 所在的那条路径）                                       | **(a)**                  | 由本模块的 `planHashOf` 生成（`createHash('sha256')…digest('hex')`，恒为 64 位十六进制），不是外部输入。**本刀实测**：`planHash` 先赋 `'uncomputed'`，但在它进入任何远端脚本之前一定已被 `planHashOf` 覆盖（赋值在步骤 1 内，`stage` 是步骤 2） |
+| `runid`                                                                                                           | `stagingRoot` 里的 `.part-<runid>`、正式目录里的 `manifest.json.<runid>.tmp`                               | **(a)**                  | `assertSafeRunid`（`/^[A-Za-z0-9._-]+$/u`，**本刀新增**；Task 7 用 `randomUUID()`，落在该字母表内），同在 `pre-verify` 的 try 里、任何远端调用之前                                                                                              |
+| `UPDATE_ROOT` / `STATE_ROOT` / `PORTABLE_PACKAGE_NAME` / `PORTABLE_FILE_MANIFEST_NAME` / `PORTABLE_MANIFEST_NAME` | 几乎每条                                                                                                   | **(a)**                  | 模块级**字面常量**，不由输入派生                                                                                                                                                                                                                |
+| `directory` / `target`（探针与 `sha256sum` 的实参）                                                               | `readRemoteDirectory` / `remoteDirectoryExists` / `readRemoteHashes` / `readRemoteFileSha`                 | 组合值（无独立来源）     | 全部由上面几行拼成（`versionRootOf` / `stagingRootOf` / `${UPDATE_ROOT}/${channel}/${MANIFEST}`）⇒ 被同样的前置条件覆盖                                                                                                                         |
+| `names`（`sha256sum` 的文件名）                                                                                   | `readRemoteHashes`                                                                                         | **(a)**                  | 调用点只传 `expectedEntries` 的两个名字，都来自 `PORTABLE_PACKAGE_NAME` / `PORTABLE_FILE_MANIFEST_NAME` 常量                                                                                                                                    |
+
+**owner 记录不进远端脚本**：`acquireChannelLock` 把 `JSON.stringify(input.owner)` 走 **base64**（第三修复刀第五处偏离）⇒ 类别 **(b)**。**唯一带 `LC_ALL=C` 的远端命令是锁 `mkdir`**（它的诊断文本被 `isFileExistsFailure` 按英文子串匹配）；本刀其余命令按计划第 7 处偏离的结论**一律不加**（解析的是结构化内容，`sort` 的顺序不被消费）。
+
+### 六、真验证器三角验证（验收项"真验证器"，本刀实跑的三条读数）
+
+| 方向                                                                                          | 读数                                                                                                                                                         |
+| --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| A. Task 1 夹具签的 manifest → **夹具口径**验证器（按 `JSON.stringify(payload)` 插入顺序验签） | **ACCEPTED**（夹具自洽）                                                                                                                                     |
+| B. Task 1 夹具签的 manifest → **真** `verifyPortableRelease`                                  | **REJECTED `release manifest signature is invalid`** ⇐ **这就是那个陷阱：看起来像产品 bug，其实是夹具按插入顺序签、真验证器按 `canonicalize()`（排序键）签** |
+| C. `buildPortableRelease` 产出的 manifest → **真** `verifyPortableRelease`                    | **ACCEPTED**                                                                                                                                                 |
+
+**钉子**：新用例 `the real release verifier accepts a canonically signed manifest and rejects an insertion ordered one` 把 B 与 C 两条**钉进套件**（都经过 `verifyPublicArtifacts`，注入真 `verifyPortableRelease`）⇒ 下一个接真验证器的人不会再被这个形状骗一次。**B 的断言是 `/release manifest signature is invalid/u`** —— 真验证器的签名检查排在文件清单与包完整性**之前**，所以拿它指认成因是可靠的。
+
+### 七、本刀刻意不钉的（别当缺陷再报一遍）
+
+1. `assertEveryCommitCallCarriesTheTrustAnchor` 的**断言文案**：夹具的记录形状（`fetchPublic` 记 URL、`sftpUpload` 记 localPath / remotePath，二者都没有 request）决定了它只对 `readSsh` / `writeSsh` 生效；`the commit anchor helper names a call that did not record its request` 钉的是**文案**（去掉 `assert.ok(request !== undefined, …)` 后未定义的 `request` 仍会在 `request.host` 上抛 —— 与第三修复刀第 56 条同一口径：这是诊断质量守卫，不是静默放行的洞）。
+2. `commitInput` 把锚点存到 `transport.anchor`（而不是让每条用例自己绑 `input`）：目的是"每条走 `commitTransport` 的用例只加一行断言"，断言本身仍然是真的（拿注入值比每一次记录的 request）。**零调用不算通过**由助手自己的 `calls.length > 0` 与 `sshCalls.length > 0` 两条守卫保证，并用 `the commit anchor helper refuses a case that recorded no call` 钉住。
+3. `assertSafeVersion` / `assertSafeRunid` 的**报错文案**（`the version … is not a strict semantic version…` / `the run id … carries a character outside…`）：被测的只有"抛的是 `FeedPublishError`"与"没有远端调用"。
+4. `isInsideRepository` 对**跨盘符**那一臂（Windows 上 `relative` 返回绝对路径 ⇒ 判为仓库外）：与兄弟模块同义，今天没有用例单独钉它（构造跨盘用例要碰真实盘符，收益不抵）。
+5. `lock.incident === true` 分支里 `audit('lock','incident', …)` 的**文案**（直接用 `acquireChannelLock` 给的 `lock.reason`）：被测的是阶段状态与收口结果，不是那句话。
+
+### 八、本刀未做 / 未验（不得写成已完成）
+
+- **没有连过任何服务器**：全部远端动作走注入的异步假 transport，一条真实 `ssh` / `sftp` / 网络调用都没有。**Task 6 的真机读数（coreutils 权限失败原文、目标主机 `locale`）仍然欠着** —— 本刀因此**没有**让任何断言依赖 `mkdir` 权限失败的具体文本（夹具里的 `Permission denied` 只用来证明"非 `File exists` 的非零 `mkdir` ⇒ `incident`"这条**分类**，不钉文本）。
+- **没有把真 `verifyPortableRelease` 接到 `runCommit` 的默认路径**：本刀只把它用在**测试**里（第六节）；CLI 的接线在 Task 7。
+- `--dry-run` / `--preflight` 的 CLI 形状、`--audit-out` 必填、`--break-lock` 的出口都属于 Task 7；本刀只把 `runCommit` 的形状定下来。
+- **提交时 `pre-commit`（lint-staged）跑过 `eslint --fix` + `prettier --write`**：提交后重新量的两份 blob sha256 与变异基线**逐字节相同**（读数见本节开头），所以上面的变异证据对提交的字节仍然成立。
+- 本刀**没有**在 `RunCommit` 里给 `repositoryRoot` 为空串的情况加守卫（`appendAuditStage` 只在 `repositoryRoot` 是非空字符串时才检查）—— 那是 Task 2 已定的契约，本刀不动。
 
 ### Task 5: `internal → stable` 重签
 
