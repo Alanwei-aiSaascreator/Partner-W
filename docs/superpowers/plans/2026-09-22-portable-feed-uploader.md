@@ -5966,7 +5966,7 @@ node --test scripts/lib/feed-publish-cli.test.mjs
 
 恢复后全绿且 `git diff` 为空。
 
-**本刀实测（2026-09-23，六条全跑，读数与红名单见 Task 7 账本第三节）**：第 1–5 条与预期一致（**每条都只红它点名的那一条**，另有第 2、4 条各多红一条别的守卫用例，原因逐条写在账本里）；**第 6 条与预期不符 —— 实测只有 5 条变红**，并且这个差额是**结构性的、不是漏做**：`process.exit(0)` 只截断**异步**的部分，而这 7 条里那两条**只断言 stderr 文案、不看退出码**的用例（re-sign 守卫与 break-lock 守卫）走的是**同步**路径（`runCli` 是 async 函数，但它的守卫在第一个 `await` 之前就 `console.error` 并 return 了）⇒ 它们的文案在退出前**已经**写出来了 ⇒ 不红。**判据因此改为"退出码断言的那 5 条必须红"**，并把"6 条"这个数字当作**已被实测推翻的预期**留在原处（账本第三节给出红名单原文）。⚠️ 这一条同时说明：**只断言文案、不断言退出码的守卫用例，对"进程提前退出"这一类缺陷是瞎的** —— 新增用例一律两条都断言。
+**本刀实测（2026-09-23，六条全跑，读数与红名单见 Task 7 账本第三节）**：第 1–5 条与预期一致 —— 五条**都红它点名的那一条**，此外**第 2 条另多红 1 条**（读数 `18/20/2`：邻居臂 `breaking a lock without the unreadable flag still demands a confirmation`）、**第 4 条另多红 2 条**（读数 **`17/20/3`**：`the cli refuses a known hosts file inside the repository` 与 `a commit stamps every audit entry with the time it happened`）。⚠️ **原文写"第 2、4 条各多红一条"，第 4 条实测是两条**（2026-09-23 复量装置输出核对过：那一条 `red` 数组长度 3、`extra` 长度 2）；三处成因逐条写在账本第三节的 S5 表里；**第 6 条与预期不符 —— 实测只有 5 条变红**，并且这个差额是**结构性的、不是漏做**：`process.exit(0)` 只截断**异步**的部分，而这 7 条里那两条**只断言 stderr 文案、不看退出码**的用例（re-sign 守卫与 break-lock 守卫）走的是**同步**路径（`runCli` 是 async 函数，但它的守卫在第一个 `await` 之前就 `console.error` 并 return 了）⇒ 它们的文案在退出前**已经**写出来了 ⇒ 不红。**判据因此改为"退出码断言的那 5 条必须红"**，并把"6 条"这个数字当作**已被实测推翻的预期**留在原处（账本第三节给出红名单原文）。⚠️ 这一条同时说明：**只断言文案、不断言退出码的守卫用例，对"进程提前退出"这一类缺陷是瞎的** —— 新增用例一律两条都断言。
 
 - [ ] **Step 6: 扩写门禁命令**
 
@@ -5987,7 +5987,7 @@ git add scripts/feed-publish.mjs scripts/lib/feed-publish-cli.test.mjs package.j
 git commit -m "feat(feed): wire all five cli modes to the real implementation"
 ```
 
-**验收项（签名闸门真的在工作）**：`verifyPortableRelease` 是 **async** 的，注入后必须确认 `verifyLocalArtifacts` 与 `verifyPublicArtifacts` 都 **await** 了它。证明方式不是读代码，而是：`--dry-run` 分支在 Step 3 里已经注入真 verifier（`planCommit` 的 `verifySignature` 透传），所以这条**是可观测的** —— 把 manifest 的 `signature` 字段**改坏一个字节**跑 `--dry-run`（CLI 分支里 verifier 是写死的，所以"注入一个永远拒绝的 verifier"在 CLI 层面做不到 —— 可执行的路子只有改坏签名），确认它**以 verifier 的报错信息 reject**，且**一个字节的 plan JSON 都没打印**；再把 `verifyLocalArtifacts` 里那处 `await` 删掉，确认同一条路径**先打印出 plan JSON** —— 那就说明闸门是假的。⚠️ **判据是"plan JSON 有没有被打印"（以及 verifier 的报错在不在），不是退出码**：实测**两态都退出 1** —— 诚实的拒绝退出 1，而漏 `await` 那条先打印 plan JSON、再死于未处理的 Promise 拒绝，**也退出 1**。只盯退出码的人会看到两个 1，可能把变异记成"存活"，甚至反过来以为闸门是真的。⚠️ **不要把验收判据写成"以 `pre-verify: fail` 收口"**：`planCommit` 只返回 `{stage, status:'pending'}` 数组、**不改写任何阶段状态**，`--dry-run` 上根本观测不到 `pre-verify: fail`（那是 Task 4 的 `runCommit` 才有的形状）。拿一个观测不到的判据当验收，等于没验。
+**验收项（签名闸门真的在工作）**：`verifyPortableRelease` 是 **async** 的，注入后必须确认 `verifyLocalArtifacts` 与 `verifyPublicArtifacts` 都 **await** 了它。证明方式不是读代码，而是：`--dry-run` 分支在 Step 3 里已经注入真 verifier（`planCommit` 的 `verifySignature` 透传），所以这条**是可观测的** —— 把 manifest 的 `signature` 字段**改坏一个字节**跑 `--dry-run`（CLI 分支里 verifier 是写死的，所以"注入一个永远拒绝的 verifier"在 CLI 层面做不到 —— 可执行的路子只有改坏签名），确认它**以 verifier 的报错信息 reject**，且**一个字节的 plan JSON 都没打印**；再把 `verifyLocalArtifacts` 里那处 `await` 删掉，确认同一条路径**先打印出 plan JSON** —— 那就说明闸门是假的。⚠️ **判据是"plan JSON 有没有被打印"（以及 verifier 的报错在不在），不是退出码**：实测**两态都退出 1** —— 诚实的拒绝退出 1，而漏 `await` 那条先打印 plan JSON、再死于未处理的 Promise 拒绝，**也退出 1**。只盯退出码的人会看到两个 1，可能把变异记成"存活"，甚至反过来以为闸门是真的。⚠️ **2026-09-23 复核者补记（框架 = 提交 `a1585d62`），这条要收窄一半**：**"两态都退出 1" 只对真起进程的那个入口成立**。在**进程内的注入缝**上（测试的 `captureRun` 直接 `await runCli`），漏 `await` 那一态**返回 0** —— 复核者那条 `M-Q` 的细节读数就是 `actual: 0, expected: 1`：`runCli` 把（被当成普通值字符串化的）plan 打印出来、正常返回，未处理的拒绝要到**之后**才发作 ⇒ **只断言退出码的用例会把这一态读成"通过"**。**判据一字不改、也不受影响**：管用的仍然是"plan JSON 有没有被打印"（`assert.equal(result.stdout.includes('"plan"'), false)`）。记这条只为了一件事：**退出码在两个执行面上不相等**，别拿进程内那个 `0` 去反推"闸门是假的"，也别拿进程外那个 `1` 当成"闸门有效"的证据。⚠️ **不要把验收判据写成"以 `pre-verify: fail` 收口"**：`planCommit` 只返回 `{stage, status:'pending'}` 数组、**不改写任何阶段状态**，`--dry-run` 上根本观测不到 `pre-verify: fail`（那是 Task 4 的 `runCommit` 才有的形状）。拿一个观测不到的判据当验收，等于没验。
 
 ---
 
@@ -6034,12 +6034,34 @@ function assertPinnedKnownHostsPath(value) {
 **为什么"已知主机路径"只要求非空、而主机名仍要 `-`/空白/控制字符**（交付说明给的第二条，也是本刀**拒绝了"镜像过去"那一臂**的理由）：
 
 1. **argv 位置决定规则**：`host` 是**独立的 argv 元素**（`-` 开头会被 ssh 当选项、空白会切分元素）；known hosts 路径**嵌在** `UserKnownHostsFile=<路径>` 这**一个**元素里，而且远端动作一律 `execFile(command, argvArray)`、`options.shell` 从不设置（Task 6 第二节的不变量）⇒ `-` 与空白都不可能变成选项、也不可能切分。
-2. **实测证据（决定性的一条）**：把禁用"空白"的规则**镜像到路径上**之后，本计划**自己的两条规定用例当场变红** —— `the known hosts guard is insensitive to case on windows`（`feed-publish.test.mjs:354`）与 `a sibling whose name begins with two dots is still inside the repository`（`:2384`）都用 `process.cwd()` 构造路径，而**本刀所在这份检出的路径就含一个空格**（`D:\Desktop\new project\…`）⇒ 规则会把**本项目自己机器上的常规布局**判为非法。这两条红**不是"要改夹具"**，而是那条规则**本来就不该管路径**的证据。
+2. **实测证据（决定性的一条）**：把禁用"空白"的规则**镜像到路径上**之后，本计划**自己的两条规定用例当场变红** —— `the known hosts guard is insensitive to case on windows`（`feed-publish.test.mjs:354`）与 `a sibling whose name begins with two dots is still inside the repository`（`:2412`）都用 `process.cwd()` 构造路径（**框架 = 提交 `612f93b8` 的字节，本刀按文本匹配复量过**；原文写的 `:2384` 是**父提交** `fae1148c` 的读数 —— 那一刀插入的 28 行全落在这两条之间，所以第一条在两个框架里都是 `:354`、第二条从 `:2384` 漂到 `:2412`），而**本刀所在这份检出的路径就含一个空格**（`D:\Desktop\new project\…`）⇒ 规则会把**本项目自己机器上的常规布局**判为非法。这两条红**不是"要改夹具"**，而是那条规则**本来就不该管路径**的证据。
 3. **A3 自己的理由就是"与 `parsePublishInput` 同口径"**（Task 6 账本第八节 A3 那一格的原话），而 `parsePublishInput` **从来只对 `host` 用这条规则** ⇒ 本刀把口径**按值对齐**，正是把 A3 的理由落实，而不是放宽它。
 4. **两条路都覆盖到了**：工厂值（sftp 回退那条）与覆盖值（ssh 那条）现在**过同一条规则** ⇒ "只检工厂值等于没检"这句（原 Task 6 关键点）**不再成立**，那句话已按实测改写（`plan:5073`）。
-5. **顺带关掉一个"同一运行两个答案"的残余**：`parsePublishInput` 对 `host` 原先只禁 `\s`，而 transport 禁 `\s\u0000-\u001f` ⇒ 带控制字符的主机名会被**上游放行、下游拒绝**。本刀把 `parsePublishInput` 的字符类**提升到 transport 的那一类**（`feed-publish.mjs:36`），两层的"哪些主机名合法"从此**逐字符相同**。**残留（登记）**：`assertKnownHostsAnchor` 那条规则里"非空"是**唯一**约束，因此**带控制字符的 known hosts 路径**在 Task 1 层被放行、在 transport 层也被放行（两层一致 ⇒ 没有"两个答案"），只是 `NUL` 会被 `execFile` 自己在起进程前拒掉（fail-closed）。
+5. **顺带关掉一个"同一运行两个答案"的残余**：`parsePublishInput` 对 `host` 原先只禁 `\s`，而 transport 禁 `\s\u0000-\u001f` ⇒ 带控制字符的主机名会被**上游放行、下游拒绝**。本刀把 `parsePublishInput` 的字符类**提升到 transport 的那一类**（`feed-publish.mjs:36`），两层的"哪些主机名合法"从此**逐字符相同**。**残留（登记）**：`assertKnownHostsAnchor` 那条规则里"非空"是**唯一**约束，因此**带控制字符的 known hosts 路径**在 Task 1 层被放行、在 transport 层也被放行（两层一致 ⇒ 没有"两个答案"），只是 `NUL` 会被 `execFile` 自己在起进程前拒掉（fail-closed）。**另一处同类残留（2026-09-23 由复核者指出，本刀补记）**：`assertPinnedKnownHostsPath` 也**放行 `"` 与 `\`** —— 这两个字符在 **ssh 的 config 解析**里有特殊含义（路径嵌在 `UserKnownHostsFile=<路径>` 这**一个** argv 元素里，ssh 按 config 语法读它的值 ⇒ 引号与转义会被解释）。**不可利用**（三条都已钉住）：① 路径**不经过任何 shell**（远端动作一律 `execFile(command, argvArray)`，`options.shell` 从不设置）；② `StrictHostKeyChecking=yes` **永不放宽**；③ ⇒ 解析偏差最多让 ssh 去用**另一个** known_hosts 文件，而未知主机键在 `yes` 下一律**拒绝**。**方向是 fail-closed，登记为"不整洁"而不是缺陷**。⚠️ 这里的 ssh 语法细节**没有在本计划里实测**（本计划禁止跑 `ssh`），它按复核者的登记原样收录；本刀实测的只有"那两个字符确实被守卫放行"（见本刀账本第四节）。
 
-**② 四条文档行（同一次提交里）**：① 第二闸门账本第五节的标题算术（`plan:5304`）—— 以**表**为唯一可枚举产物：**24 行变异 + 1 行对照 + 1 行探针 = 26 次运行**，标题里的 "22 条" 是 `C7-a`/`C7-b` 两行补跑前的条数（`24 − 2 = 22`，与第 5336 行"重跑全部 22 条"同一时点）、"2 条探针"应记 **1 条**，交付说明里那句 "27 mutations / 28 restores" 与表也对不上；② 门禁日志长度（`plan:5355`）**复量为 10173 行**（`wc -l` 对 `%TEMP%\t7work\gate.log`，提交 `3ff4f705` 那一跑、文件仍在盘上），同一条里"第 10171 行"实测是 **第 10169 行**（`Test Files 281 passed (281)`）—— 两处都比现存文件**多 2**，其余三处引用（第 53 / 240–243 / 415–417 行）逐条命中；③ §一里那条 `reached_default false`（`plan:5164`）**加了 ⚠️ 指针**（第二闸门的桩替换已取代它，别单独引用）；④ **登记 `93b65975` 的提交信息缺 `Co-Authored-By` 尾注**（实测 `grep -c` = 0，相邻 11 个提交各 = 1），**只登记不修**（no-amend 规则绝对）。
+**① 的变异（4 条 + 1 条对照；hunk 与读数由本刀补记）。** Step −1 那四条新臂此前**只以汇总形式**出现在第四节的"先红"那一跑（`tests 190 / pass 186 / fail 4` 记的是**写臂之后、实现之前**，不是这四条变异），而**装置打印出来的 hunk 一条都没落盘**（当时用的 applier 只打印 `REPLACED_1 <file>`）—— 通用纪律 3b 要求每条变异记录都带**整行 hunk**，且"存活"读数在有人读过 hunk 之前不算数。**处置**：用**同一个装置**（`mutate.mjs`，与 Task 7 的 17 条同一份规格）复跑，输出留在仓库外：`D:\tmp\t7work\step-minus-one.mutations.out.txt`（sha256 前 16 位 `3878a0b50305418a`，**7 行 = 5 条 JSON 记录 + 尾部 `MUTATIONS 5` / `NOT_RED_BY_NAME …` 两行**；**框架 = 提交 `a1585d62` 的字节**：两个套件 `161 / 30`）。
+
+| #                      | 变异（`-` 删 / `+` 加；整行 hunk 见记录文件）                                            | 读数（`pass/tests/fail`） | 预先写明的红名单                                                                           | 核对                                                                                                                    |
+| ---------------------- | ---------------------------------------------------------------------------------------- | ------------------------- | ------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
+| T1-factory-host        | 删工厂里的 `assertPinnedHost(host);`（`transport.mjs`）                                  | transport `28/30/2`       | `a factory ssh host that could become an option is refused when the transport is built`    | 命中；**额外 1 条**（`a transport without a host or a pinned known hosts file is refused…`，同一条守卫的邻居臂 ⇒ 良性） |
+| T2-known-hosts-ban     | 把"空白也拒"的规则**镜像回 known hosts 路径**                                            | transport `29/30/1`       | `a known hosts path that carries whitespace reaches ssh as one argument`                   | 命中；没有第二条                                                                                                        |
+| M1-known-hosts-ban     | 把同一条规则**镜像进 `parsePublishInput`**                                               | feed-publish `160/161/1`  | `a known hosts path that carries whitespace is accepted by the input and by the guard`     | 命中；没有第二条                                                                                                        |
+| M2-host-class-narrowed | 主机名字符类收回 `\s`（`feed-publish.mjs`）                                              | feed-publish `160/161/1`  | `a host that carries a control character is rejected by the same class the transport uses` | 命中；没有第二条                                                                                                        |
+| 对照                   | 等价改写：`'the known hosts file must be a non empty string'` ⇒ `'a known hosts file …'` | `161/161/0` + `30/30/0`   | —（必须留绿）                                                                              | 无红 ⇒ **这句文案没有任何断言钉着**（与本节第 ① 条第 5 项"尾巴不钉"同一口径，只是钉的是另一个模块的文案）               |
+
+代表 hunk 两条（其余同形；`-` 是变异前那一行、`+` 是落盘后那一行）：
+
+```
+T1（删工厂主机名守卫）：   - assertPinnedHost(host);
+                              assertPinnedKnownHostsPath(knownHostsPath);     ← 上下文
+M2（主机名字符类收窄）：   - if (raw.host.startsWith('-') || /[\s\u0000-\u001f]/u.test(raw.host)) {
+                          + if (raw.host.startsWith('-') || /\s/u.test(raw.host)) {
+```
+
+- **5 次全部 `RESTORE_SHA256_EQUAL true` + `GIT_STATUS_IDENTICAL true`**（本框架基线：`feed-publish.mjs` `4a4374caf526198a…`、`feed-publish-transport.mjs` `026a21c28e57c124…`）。
+- ⚠️ **复跑与 2026-09-23 那次不是同一个框架**：那次两套是 `160 / 28`（且四条变异的读数**当时根本没落盘**），现在是 `161 / 30`；**红名单逐条相同**，只有计数变。
+
+**② 四条文档行（同一次提交里）**：① 第二闸门账本第五节的标题算术（`plan:5304`）—— 以**表**为唯一可枚举产物：**24 行变异 + 1 行对照 + 1 行探针 = 26 次运行**，标题里的 "22 条" 是 `C7-a`/`C7-b` 两行补跑前的条数（`24 − 2 = 22`，与第 5336 行"重跑全部 22 条"同一时点）、"2 条探针"应记 **1 条**，交付说明里那句 "27 mutations / 28 restores" 与表也对不上；② 门禁日志长度（`plan:5355`）**复量为 10173 行**（`wc -l` 对 `%TEMP%\t7work\gate.log`，提交 `3ff4f705` 那一跑、文件仍在盘上），同一条里"第 10171 行"实测是 **第 10169 行**（`Test Files 281 passed (281)`）—— 两处都比现存文件**多 2**，其余三处引用（第 53 / 240–243 / 415–417 行）逐条命中；③ §一里那条 `reached_default false`（`plan:5164`）**加了 ⚠️ 指针**（第二闸门的桩替换已取代它，别单独引用）；④ **登记 `93b65975` 的提交信息缺 `Co-Authored-By` 尾注**（实测 `grep -c` = 0，相邻 11 个提交各 = 1），**只登记不修**（no-amend 规则绝对）。⚠️ **本节三条以 `plan:NNNN` 引用的"计划自身行号"只在其写作提交的字节里成立**（2026-09-23 本刀复量并登记）：`plan:5304` 在**提交 `3ff4f705`** 的字节里确实是第二闸门账本第五节的标题（那一节的写作提交），而在**当前**字节里它是第二闸门账本的开头一行（同一个标题现在在 `plan:5340`）；`plan:5073` 在当前字节里是**空行**。⇒ **引用计划内部位置时一率先按内容定位**，行号只作旁证；本节这几条**不改数字**（改了就变成"在错误的框架上写正确的数字"）。
 
 **③ 本刀对规定块的其他偏离**（都在第 2 条提交里、都已重同步到计划）：
 
@@ -6079,7 +6101,9 @@ function assertPinnedKnownHostsPath(value) {
 
 **行数框架 = `612f93b8`**；锚点按**文本**匹配、不按行号。**全部 17 条 `RED_BY_NAME`、`EXPECTED_REDS_MISSING` 全为 0、17 次 `RESTORE_SHA256_EQUAL true` + `GIT_STATUS_IDENTICAL true`。**
 
-**每条**变异都打印了**整行 hunk**（装置把"磁盘上真实发生的那次改动"随记录一起写出）；**18 条记录（17 变异 + 1 对照）+ `M-R` 那一次**在仓库外的 `D:\tmp\t7work\task7.mutations.out.txt`（**19 行 JSONL**，每行一条记录，含 `hunk` / `readings` / `red` / `missing` / `extra` / `restoreSha256Equal` / `gitStatusIdentical`；文件 sha256 前 16 位 `75cbac80df6ec4b3`）。**两条代表性 hunk 照抄如下**（其余同形：`-` 是变异前那一行、`+` 是落盘后那一行）：
+**每条**变异都打印了**整行 hunk**（装置把"磁盘上真实发生的那次改动"随记录一起写出）；**18 条 JSON 记录（17 变异 + 1 对照）**在仓库外的 `D:\tmp\t7work\task7.mutations.out.txt`（**20 行** = 18 行 JSONL + 尾部 `MUTATIONS 18` / `NOT_RED_BY_NAME …` 两行；每行一条记录，含 `hunk` / `readings` / `red` / `missing` / `extra` / `restoreSha256Equal` / `gitStatusIdentical`；文件 sha256 前 16 位 `65a9a9d1b76faffc`，**框架 = 本刀的复跑**：CLI 套件 **26** 条，见本刀收尾账本第一节）。**两条代表性 hunk 照抄如下**（其余同形：`-` 是变异前那一行、`+` 是落盘后那一行）：
+
+⚠️ **原文写的是 "19 行 JSONL" 与 "18 条记录（17 变异 + 1 对照）+ `M-R` 那一次" —— 两处都与磁盘上的那份不符**（2026-09-23 复量）：**第一版** `task7.mutations.out.txt` 里实际只有 **17 条 JSON 记录（16 变异 + 1 对照）+ 尾部两行 = 19 行**，缺的正是 **`M-R`** —— 它的 hunk **从来没落盘**（`M-R` 是 03:07 才补进装置规格的，主跑 03:05 就结束了；"装置会打印 hunk" ≠ "每条都打印过"）。本刀把原件另存为 `D:\tmp\t7work\task7.mutations.out.612f93b8-17rec.txt`（sha256 前 16 位 `75cbac80df6ec4b3` —— 与原文引的那个 sha 一致，证明**原件没被改动**，只是被另存），再按**同一装置、同一规格**复跑全部 18 条写成上面那个文件。**复跑同时就是对"记录"做的变异**：18 条的**红名单与下表逐条相同**，`feed-publish` 一列**一个数都没变**，只有 CLI 一列的计数随套件从 20 条涨到 26 条而变（`19/20/1` ⇒ `25/26/1`、`18/20/2` ⇒ `24/26/2`、`20/20/0` ⇒ `26/26/0`）；**M-K 与 M-Q 的两条额外红照旧复现**，`RESTORE_SHA256_EQUAL` / `GIT_STATUS_IDENTICAL` 全部 `true`。
 
 ```
 对照（等价改写，必须留绿）：   - const status = result.notes.length === 0 ? 'done' : 'fail';
@@ -6088,7 +6112,7 @@ M-N（对记录做变异）：         - const status = result.notes.length === 
                               + const status = 'done';
 ```
 
-**`M-R`**（把 preflight 失败时那三行 `console.error` 整段删掉）的读数在本表内、hunk 由同一装置打印（`- console.error(` / `-   'the read only probe did not come back clean; …'` / `- );`），装置同规格。
+**`M-R`**（把 preflight 失败时那三行 `console.error` 整段删掉）的读数在本表内（`cli 19/20/1`），**它的 hunk 现在真的在记录文件里**（复跑那条 `M-R-preflight-hint`：`cli 25/26/1`，逐行 hunk 是 `- console.error(` / `-   'the read only probe did not come back clean; …'` / `- );`）—— 第一版文件里**没有**这一条，见上面那段 ⚠️。装置同规格。
 
 | #    | 变异（`-` 删 / `+` 加）                                                                         | 读数（`pass/tests/fail`）               | 预先写明的红名单                                                                                                                                                                                                                                        | 核对                                                 |
 | ---- | ----------------------------------------------------------------------------------------------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
@@ -6126,19 +6150,19 @@ M-N（对记录做变异）：         - const status = result.notes.length === 
 
 #### 四、先红后绿与镜像（本刀实测）
 
-- 红：**Task 7 规定块落盘时 CLI 与它的测试都还不存在** ⇒ 第一次跑 `node --test scripts/lib/feed-publish-cli.test.mjs` 是 **`ERR_MODULE_NOT_FOUND`（`tests 1 / pass 0 / fail 1`，一条失败单元）**，与 Task 6 同一形状 —— **别把 `1/0/1` 读成"20 条全红"**。Step −1 的两处代码纪律走的是**标准先红**：4 条新臂先写、**4 条全部按名变红**（`tests 190 / pass 186 / fail 4`：161+30 的当时读数 186 + 4），再实现、再全绿。
+- 红：**Task 7 规定块落盘时 CLI 与它的测试都还不存在** ⇒ 第一次跑 `node --test scripts/lib/feed-publish-cli.test.mjs` 是 **`ERR_MODULE_NOT_FOUND`（`tests 1 / pass 0 / fail 1`，一条失败单元）**，与 Task 6 同一形状 —— **别把 `1/0/1` 读成"20 条全红"**。Step −1 的两处代码纪律走的是**标准先红**：4 条新臂先写、**4 条全部按名变红**（`tests 190 / pass 186 / fail 4`），再实现、再全绿。⚠️ **括号里的算术原文写错（2026-09-23 本刀复量）**：原文是"（`tests 190 / pass 186 / fail 4`：161+30 的当时读数 186 + 4）"，而 `161 + 30 = 191 ≠ 186`，且 `161 + 30` 是**本刀之后**的读数。**当时的两个数是 `160 + 30`**（**框架 = 提交 `fae1148c` 的字节**，本刀实测跑过那次检出的两份套件：`feed-publish ℹ tests 160 / pass 160 / fail 0`、`transport ℹ tests 30 / pass 30 / fail 0`）⇒ `186 + 4 = 190` 与它自洽；`186` 这个数本身是**切之前**的 `158 + 28`（**框架 = 提交 `3ff4f705` 的字节**，本刀实测：`158 / 158 / 0` 与 `28 / 28 / 0`，与第五节的"前"列一致）。**别把 161 与 30 一起当成"当时"**：那两项分别是本刀两片之后的值。
 - **镜像：15 对，逐对 `DIFF_EMPTY`，`UNMATCHED_PAIRS 0`。** ⚠️ **本账本写完之后再跑一次检查器会读到 16 对** —— 多的那一对**不是规定块**：本账本第一节为了引用而贴的那段 `assertPinnedHost` / `assertPinnedKnownHostsPath` 代码（```js 围栏）**恰好与 `feed-publish-transport.mjs` 的一段逐字节相同**，于是检查器把它也算成一对。**按切片去重后的对数仍然是 15**；将来引用这个数时写清"含本账本的代码引用与否"。 本刀改了两处规定块并**同提交重同步**：Task 1 模块块（`mjs 1–151`，只多了一处字符类）、Task 3 模块块（`mjs 212–486`，`readOwnerRecord`与`breakChannelLock` 的新形状），另外**新增两对**：`feed-publish-cli.mjs 1–363`（规定块由一段拆成两段：库 + 入口脚本）与 `feed-publish-cli.test.mjs 1–108`（规定测试块）＋ `scripts/feed-publish.mjs 1–13`。**逐对 `diff` 全空**（检查器：按**连续切片\*\*匹配，不是"每行都能找到"，见下）。
 - **敏感性探针两条（都在装置里跑过、都逐字节恢复）**：① **计划侧**改一个字符（库围栏里 `randomUUID` ⇒ `randomUUIDX`）⇒ **`MATCHED_PAIRS 14 / 1 对 MATCHES_0`**（掉的正是那一对），恢复后 sha256 回到 `255263224e821352…`、**`MATCHED_PAIRS 15`**；② **文件侧**从切片**中间**删一行（`feed-publish-transport.mjs` 的 `windowsHide: true,`）⇒ **`14 / 1 对 MATCHES_0`**，恢复后 sha256 回到 `026a21c28e57c124…`、**`15`**。⇒ 检查器对"计划被改"与"文件被改"两个方向都活着。
 - ⚠️ **本刀在检查器上自己踩过一次坑（登记）**：第一版候选文件表里**没有**新文件 `scripts/lib/feed-publish-cli.mjs`，于是那一对永远 `MATCHES_0` —— **看起来像"镜像没同步"**。**发现方式**：直接把围栏切片与文件逐行比，`diff count 0` ⇒ 检查器才是可疑的那一方。**教训与"先验你自己的验证脚本"同源**：`MATCHES_0` 既可能是"真的不同步"，也可能是"检查器不认识这个文件"。
 
 #### 五、套件读数（本刀实测，前 → 后）
 
-| 套件                               | 前              | 后      | 增量说明                                                                                                                                                                                                                                                                                            |
-| ---------------------------------- | --------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `feed-publish.test.mjs`            | **158**         | **161** | +3：`readOwnerRecord` 三成因契约（改写原来那条名不副实的用例并补 `missing` 臂）、`a read that never reached the owner file…`、Task 1 的两条新臂里的 `a host that carries a control character…`（另一条 `a known hosts path that carries whitespace is accepted…` 是**改写**已有的两条臂，不增条数） |
-| `feed-publish-transport.test.mjs`  | **28**          | **30**  | +2：工厂主机名臂、带空白的 known hosts 路径臂（原 A3 那条按值拆成两组）                                                                                                                                                                                                                             |
-| `feed-publish-cli.test.mjs`        | —（文件不存在） | **20**  | 规定的 **7** + 接线 **12** + 一条入口脚本的间接覆盖（7 条里每条都真的起进程）                                                                                                                                                                                                                       |
-| `check:portable-feed-publish` 合计 | **186**         | **211** | 三文件一起跑：**`ℹ tests 211 / ℹ pass 211 / ℹ fail 0`**                                                                                                                                                                                                                                             |
+| 套件                               | 前              | 后      | 增量说明                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| ---------------------------------- | --------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `feed-publish.test.mjs`            | **158**         | **161** | +3：`readOwnerRecord` 三成因契约（改写原来那条名不副实的用例并补 `missing` 臂）、`a read that never reached the owner file…`、Task 1 的两条新臂里的 `a host that carries a control character…`（另一条 `a known hosts path that carries whitespace is accepted…` 是**改写**已有的两条臂，不增条数）                                                                                                                                    |
+| `feed-publish-transport.test.mjs`  | **28**          | **30**  | +2：工厂主机名臂、带空白的 known hosts 路径臂（原 A3 那条按值拆成两组）                                                                                                                                                                                                                                                                                                                                                                |
+| `feed-publish-cli.test.mjs`        | —（文件不存在） | **20**  | 规定的 **7** + 接线 **13**（**框架 = 提交 `612f93b8` 的字节**，逐行数出来的 13 条在 `:278 / :292 / :307 / :315 / :343 / :365 / :371 / :424 / :469 / :500 / :563 / :585 / :597`；本刀新增的 6 条落在文件**末尾**，这 13 个行号不变）。⚠️ 原文写"接线 **12**"、把第 20 条记成"入口脚本的间接覆盖"：**没有第 20 条那样的一条** —— `7 + 13 = 20`，那 7 条规定用例**真的起进程**（`spawnSync`）所以顺带覆盖入口脚本，但它不是**另一条**用例 |
+| `check:portable-feed-publish` 合计 | **186**         | **211** | 三文件一起跑：**`ℹ tests 211 / ℹ pass 211 / ℹ fail 0`**                                                                                                                                                                                                                                                                                                                                                                                |
 
 #### 六、本刀未做 / 未验（不得写成已完成）
 
@@ -6154,6 +6178,97 @@ M-N（对记录做变异）：         - const status = result.notes.length === 
 - **非空证据六条**：① 日志 **10201** 行（`wc -l`，本刀复量；上一刀的 10173 是**另一个文件**，别混读）；② 链上第一步的 Go 测试真的跑过（第 3 行 `ok  	mofang-compass/portable-launcher/cmd/mofang-launcher	0.103s` —— 少了那个 PATH 导出它会在第一步就死）；③ **门禁那一步的命令行（日志第 53 行）就是把三个文件一起列出来的**（`$ node --test scripts/lib/feed-publish.test.mjs scripts/lib/feed-publish-transport.test.mjs scripts/lib/feed-publish-cli.test.mjs`）⇒ **Step 6 的那一行真的在链上**；④ 它的读数是 **`ℹ tests 211 / ℹ pass 211 / ℹ fail 0`**（日志第 265–268 行）= **161 + 30 + 20** —— 这个合计数只有在**三份都被加载**时才成立；另外**逐条测试名**也能各自定位到套件：`the unreadable owner path prints three different causes and this run own record`（只属于 CLI）1 处、`a known hosts path that carries whitespace reaches ssh as one argument`（只属于 transport）1 处；⑤ 链尾 `packages/desktop test` 真的跑到（`Test Files 281 passed (281)`，第 10197 行），`prettier --check .` ⇒ `All matched files use Prettier code style!`（第 442 行）；⑥ 全日志里 `✖` / `not ok` / `FAIL` 计数为 **0**。
 - **日志的处置**：**原样留在仓库外**（`/d/tmp/t7work/gate7.log`），没有进仓库、没有提交（`git status --porcelain` 里不出现它）。
 - ⚠️ **`grep -c 'feed-publish-cli' gate7.log` = 1 是正常的**（就是第 53 行那条命令本身）：测试**名字**里不含文件名 ⇒ 判"跑没跑"要看上面第 ③④ 条，别把那个 1 读成"只跑了一条"。
+
+### Task 7 收尾账本（代码质量闸门第二批，2026-09-23）
+
+**这一刀是什么**：关闭闸门第二批里的**两条实质项（F1 文件地图 / F2 重签正文无钉子）、一条覆盖缺口（F3 三产物守卫）**，并修正**记录侧六类漂移（F4 / F5 / F6）**。**三个提交，全部显式 pathspec、消息末尾带 `Co-Authored-By: Claude Code <noreply@anthropic.com>`、没有 `--amend`、没有重写历史**：
+
+1. **测试** —— `scripts/lib/feed-publish-cli.test.mjs`（6 条新用例）。提交 `a1585d62`（subject `test(feed): pin the stable re-sign and the artifact trio guards`）。
+2. **文件地图 + Task 7 Files 块** —— 计划。提交 `01d09b40`（subject `docs(feed): amend the task 7 file map and files block`）。
+3. **本账本 + F4/F5/F6 的记录修正** —— 本提交（它自己那个哈希不可能写进自己，以 `git log` 为准；门禁读数见第五节）。
+
+**框架**：本节的代码/测试行号与读数都在**提交 `a1585d62` 的字节**上（`feed-publish-cli.test.mjs` **734** 行、`feed-publish-cli.mjs` **363** 行 —— 模块在这一刀里**一个字节都没动**，改的全是测试）；计划自身的位置一律**按内容**引用（理由见 Task 7 账本第一节 ② 末尾那条）。
+
+#### 一、F2：`--re-sign-stable` 的正文从"无人到达"变成端到端被钉住
+
+**闸门的发现**：`feed-publish-cli.mjs:177–226` 没有被任何用例到达 —— `:195` 的 `minLauncherVersion: verified.manifest.minLauncherVersion`、`:205` 的 `writeFileSync(…, { flag: 'wx' })`、`:60–66` 的 `requireSigningKeyFileFromEnvironment` 只有定义没有夹具；账本把覆盖臂登记为"仍不可自动化（要真钥匙）"。
+
+**那个说辞错在哪（本刀实测）**：这条路要的三样东西**夹具本来就有** —— ① 一把 Ed25519 私钥：测试里 `generateKeyPairSync('ed25519')` **进程内生成**；② 私钥文件**在仓库外**：`makeCliRoot()` 落在 `os.tmpdir()` 下，这正是 `assertPathOutsideRepository` 的全部要求（**不需要真钥匙，只要一个不在仓库里的普通文件**）；③ 与私钥匹配的公钥：同一对里导出即可（`buildPortableRelease` 会校验公私钥匹配，所以两把必须同源 —— 但这一对是**生成的**）。⇒ **真正需要生产钥匙的只有"为真 feed 签出一份可发布的 stable manifest"，那是发布动作、不是测试**。**"不可自动化"这句已按此更正**，别再拿它当理由。
+
+**6 条新用例**（全部落在规定围栏**之后**：围栏本体一个字节没动，与 Task 6/7 同一做法）：
+
+| 用例                                                                                                            | 钉住什么                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| --------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `the stable re-sign signs the verified internal bytes for the stable channel and the stable url`                | 端到端：退出 0；打印的三个摘要（`stableManifestSha256` / `reusedFileManifestSha256` / `reusedPackageSha256`）分别等于磁盘上三份产物的 sha256；产物**用公钥验签通过**（`verifyPortableRelease`）；`channel === 'stable'`；`packageUrl === https://api.rongyinghudong.com/updates/stable/1.2.3/portable.zip`；`minLauncherVersion === '7.8.9'` —— 夹具改写成 `7.8.9`（不再是 `1.0.0` 这种"与默认值长得一样"的数）⇒ **只有从验过的 manifest 读**才可能拿到它 |
+| `the stable re-sign refuses to overwrite the manifest it already wrote and leaves the first one byte identical` | 同一 `--stable-out` 第二次调用：退出 1、stderr 含 `EEXIST`、**第一份逐字节没变**（两次之间隔 15ms ⇒ `publishedAt` 不同 ⇒ 若真覆盖，字节必然变）                                                                                                                                                                                                                                                                                                           |
+| `the stable re-sign refuses to run without the signing key file in the environment`                             | 缺 `MOFANG_UPDATE_SIGNING_KEY_FILE` ⇒ 退出 1、报 `… is required to sign the stable manifest offline`、`--stable-out` **没被创建**                                                                                                                                                                                                                                                                                                                         |
+| `the dry run refuses to run without the three artifact paths and prints no plan`                                | 三产物守卫（dry-run 分支）⇒ 退出 1、报 `--package, --file-manifest and --manifest are required`、**一个字节的 plan 都不打印**                                                                                                                                                                                                                                                                                                                             |
+| `the stable re-sign refuses to run without the three artifact paths`                                            | 同一句守卫的 **re-sign** 分支；`--stable-out` 没被创建                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `the commit refuses to run without the three artifact paths`                                                    | 同一句守卫的 **commit** 分支；审计文件没被创建（该守卫排在 `withTransport` 之前 ⇒ **连传输都不建**；用例注入的是会抛的工厂）                                                                                                                                                                                                                                                                                                                              |
+
+**F3 为什么是一条守卫三条臂**：那句文案在三个分支里是**三段独立代码**（两个 `console.error` + `return 1`、一个 `throw`），删掉任何一段只会红对应的那条臂 ⇒ 一条臂盖不住三处（下面 `F3-M1/M2/M3` 逐条证明）。**规定围栏里那 7 条臂一条都没动**（本刀只在文件末尾追加）。
+
+#### 二、本刀的变异（**7 条 + 1 条对照**；装置同通用纪律第 3 条：锚点恰好 1 次、`node --check`、变异**前**取基线 sha256、打印**整行** hunk、跑套件、核对预先写明的红名单、逐字节恢复、比 sha256、`git status --porcelain` 与变异前逐字相同）
+
+**记录文件**：仓库外 `D:\tmp\t7work\gate-closure.mutations.out.txt`（**10 行 = 8 条 JSON 记录 + 尾部 `MUTATIONS 8` / `NOT_RED_BY_NAME …` 两行**；sha256 前 16 位 `3390903f840f50fd`；框架 = `a1585d62`，套件 `feed-publish 161 / cli 26`）。**8 次全部 `RESTORE_SHA256_EQUAL true` + `GIT_STATUS_IDENTICAL true`**（`feed-publish-cli.mjs` 基线 `7176ef0a220761f7…`）。
+
+| #     | 变异（`-` 删 / `+` 加，每条**一个表达式**）                                                                              | 读数（`pass/tests/fail`）                   | 预先写明的红名单                                                                    | 核对                                                                            |
+| ----- | ------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| F2-M1 | `minLauncherVersion: verified.manifest.minLauncherVersion,` ⇒ `minLauncherVersion: '1.0.0',`                             | `feed-publish 161/161/0`、`cli 25/26/1`     | `the stable re-sign signs the verified internal bytes …`                            | 命中；没有第二条                                                                |
+| F2-M2 | `writeFileSync(stableManifestOut, release.manifestBytes, { flag: 'wx' });` ⇒ 去掉 `{ flag: 'wx' }`                       | 同上                                        | `the stable re-sign refuses to overwrite the manifest it already wrote …`           | 命中；没有第二条                                                                |
+| F2-M3 | `process.env.MOFANG_UPDATE_SIGNING_KEY_FILE` ⇒ `…_SIGNING_KEY_PEM`（只改读取点那一行）                                   | `161/161/0`、`cli 24/26/2`                  | 上面那条成功用例                                                                    | 命中；**额外 1 条**：覆盖臂（两次调用都要读钥匙）⇒ **同一条接线的两条臂**，良性 |
+| F2-M4 | `if (typeof value !== 'string' \|\| value.length === 0) {`（**签名钥匙那个读取器**里）⇒ `if (false) {`                   | 同上                                        | `the stable re-sign refuses to run without the signing key file in the environment` | 命中；没有第二条                                                                |
+| F3-M1 | dry-run 分支的三产物守卫 ⇒ `if (false) {`                                                                                | 同上                                        | `the dry run refuses to run without the three artifact paths and prints no plan`    | 命中；没有第二条                                                                |
+| F3-M2 | re-sign 分支的同一守卫 ⇒ `if (false) {`                                                                                  | 同上                                        | `the stable re-sign refuses to run without the three artifact paths`                | 命中；没有第二条                                                                |
+| F3-M3 | commit 分支的同一守卫 ⇒ `if (false) {`（那句 `throw` 留着，条件恒假）                                                    | 同上                                        | `the commit refuses to run without the three artifact paths`                        | 命中；没有第二条                                                                |
+| 对照  | **等价改写**（re-sign 分支）：`a === null \|\| b === null \|\| c === null` ⇒ `!(a !== null && b !== null && c !== null)` | `feed-publish 161/161/0`、**`cli 26/26/0`** | —（证明装置不是"改什么都红"）                                                       | **无红**（控制读数）                                                            |
+
+- **代表 hunk 两条**（其余在记录文件里逐条打印；`-` 是变异前那一行、`+` 是落盘后那一行）：
+
+```
+F2-M1（启动器下限不许重打）： - minLauncherVersion: verified.manifest.minLauncherVersion,
+                             + minLauncherVersion: '1.0.0',
+F2-M2（拒绝覆盖）：           - writeFileSync(stableManifestOut, release.manifestBytes, { flag: 'wx' });
+                             + writeFileSync(stableManifestOut, release.manifestBytes);
+```
+
+- **三处 `if (false) {` 的 hunk 形状相同**（`- if (packagePath === null || …) {` / `+ if (false) {`），区别在上下文行 —— 装置按**锚点带上下文**匹配（三个锚点各带自己分支的邻居行），所以**每条只命中 1 次**（记录里的 `matches: 1` 就是读数）。
+- **"存活"读数一条都没有**：8 条里 7 条 `RED_BY_NAME`、1 条是对照（设计上就该绿）。
+
+#### 三、记录侧的修正（F4 五条 + F5 + F6 两条）
+
+| 项   | 改在哪                                                  | 改了什么（一句）                                                                                                                                                      |
+| ---- | ------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| F4.1 | Task 7 账本第五节（`feed-publish-cli.test.mjs` 那一行） | 接线 **12 ⇒ 13**（逐行数出来的 13 个行号写进表里），并删掉"第 20 条是入口脚本的间接覆盖"这个说不通的分解                                                              |
+| F4.2 | Task 7 账本第四节（先红那一段）                         | 括号里的算术：`161+30 = 191` 不可能等于 `186`；改成**实测**的 `160 + 30`（框架 = `fae1148c`）与切之前的 `158 + 28`（框架 = `3ff4f705`）                               |
+| F4.3 | Task 7 账本第一节 ① 第 2 项                             | `feed-publish.test.mjs:2384` ⇒ **`:2412`**，并写明框架（`612f93b8`）与它为什么漂（父提交 `fae1148c` 的 28 行插入全落在这两条之间）                                    |
+| F4.4 | Task 7 账本第三节（记录文件那一段）                     | "19 行 JSONL / 18 条记录 + M-R 那一次" ⇒ 复量后的真实形状，并**补上 `M-R` 缺 hunk 这件事**与复跑读数                                                                  |
+| F4.5 | Task 7 Step 5 的实测注                                  | "第 2、4 条**各**多红一条" ⇒ 第 2 条多 1 条（`18/20/2`）、**第 4 条多 2 条（`17/20/3`）**                                                                             |
+| F5   | Task 7 账本第一节 ①（新增"① 的变异"那一段 + 表）        | Step −1 的四条变异 + 对照**有了 hunk 与读数**，并指向仓库外的记录文件（路径 + sha256 + 记录条数）                                                                     |
+| F6.1 | Task 7 账本第一节 ① 第 5 项（残留登记）                 | `assertPinnedKnownHostsPath` 放行 `"` 与 `\` —— 登记为**不整洁**（不可利用：无 shell、`StrictHostKeyChecking=yes`；ssh 解析细节**未在本计划实测**，按复核者登记收录） |
+| F6.2 | Task 7 Step 7 的验收项                                  | "两态都退出 1" **只对真起进程的入口成立**；进程内注入缝上漏 `await` 那一态**返回 0**（`M-Q` 的 `actual: 0, expected: 1`），判据（plan JSON 有没有打印）不受影响       |
+
+**F6.1 的那半句是实测的**（另半句不是）：本刀按绝对路径 import `scripts/lib/feed-publish-transport.mjs`，用 `/tmp` 之外的一个**仓库外**字符串调 `createFeedTransport({host:'h', knownHostsPath: …})` ⇒ 带 `"`、带 `\`、带 `\u0001` 的路径**都不抛**（守卫只查"非空"）；同一探针里非字符串与空串**抛**。**没有起任何进程、没有联网**（构造函数只做校验）。
+
+#### 四、镜像、格式与"对记录做变异"
+
+- **十二对镜像在本刀之后逐对复核**：`MATCHED_PAIRS 16`（含本账本第一节里那段与 `feed-publish-transport.mjs` 逐字节相同的引用块 ⇒ 按切片去重是 15）、`UNMATCHED_PAIRS 0`；**本刀改动的两处计划文字都在围栏之外**，围栏本体一个字节没动。
+- **敏感性探针两条**（都逐字节恢复）：① **计划侧**改一个字符 ⇒ `MATCHED_PAIRS 15 / 1 对 MATCHES_0`；② **文件侧**从切片中间删一行 ⇒ 同样 `15 / 1 对 MATCHES_0`；恢复后 sha256 与基线相等、`MATCHED_PAIRS` 回到 16。
+- **`prettier` 在计划上跑过 `--write`**（文件地图那一节新增了一行 ⇒ 列宽变），跑完**重测**：十二对围栏**逐对仍 `DIFF_EMPTY`**、`prettier --check` 干净、`git diff` 只含本刀的改动（含表格重新对齐）。
+- **对"记录"做的变异**（本刀）：① 任务 7 的 18 条**整批复跑** ⇒ 红名单与表**逐条相同**（见 Task 7 账本第三节那段 ⚠️）；② Step −1 的 5 条复跑 ⇒ 与第四节那四条"新臂"的**结论**一致（四条各自按名红、对照无红）。
+
+#### 五、门禁读数
+
+待填（本提交只写读数 ⇒ 见紧跟其后的那一次提交；命令与判据同 Task 7 账本第七节：先 `export PATH="/d/go-toolchain/go/bin:$PATH"`，`pnpm check` **不接管道**、重定向到仓库外、`rc=$?`）。
+
+#### 六、本刀未做 / 未验（不得写成已完成）
+
+1. **没有连过任何服务器**：本刀只跑测试与变异；`--re-sign-stable` 的成功臂用的是**生成出来的** Ed25519 钥匙（进程内），没有生产钥匙、没有 feed、没有上传。
+2. **`readSigningKeyFile` 自己的三条拒绝臂**（缺失 / 非普通文件 / 符号链接）**不在本刀范围**（它们是 `portable-update-release.mjs` 的守卫，归那一个套件）；本刀只钉 CLI 侧的读取与传参。
+3. **Task 8 仍未动**（手册、nginx、发布前检查单）—— 与本刀并行留给 Task 8 的两条要求不变。
+4. **ssh 的 config 解析语义未实测**（F6.1 里那句）：本计划禁止跑 `ssh`；登记的是复核者的说法 + 三条已钉住的事实（无 shell、`StrictHostKeyChecking=yes`、路径不经过 shell）。
+
+---
 
 ### Task 8: 手册、nginx 与发布前检查单
 
