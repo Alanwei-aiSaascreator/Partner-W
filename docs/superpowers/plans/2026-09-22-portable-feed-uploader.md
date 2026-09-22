@@ -76,6 +76,8 @@
 
 **每个新增的守卫与接线都必须有一条测试单独钉住它**，并在同一刀的变异清单里有一条**会按测试名变红**的变异证明它是必要的 —— 尤其是“把参数/回调往下传”这类透传（断了不会报错，只会静默失效）。变异记录的措辞必须**无歧义**：同一段代码有两个 `await` 就写成两条，否则实施者删错一处会得到“变异存活”的假读数，进而误以为护栏有效。
 
+**复核纪律（拿"规定文本"的方式）：** 复核者手里的那份**规定文本**必须取自**被复核提交的父提交**（`git show <base>:<plan-file>`），**绝不能用 HEAD 的那份** —— 实施者会改计划（本刀的所有"实现偏离"就是这么改的），所以 HEAD 的那份已经**悄悄变成了对实现的描述**，拿它去比对等于拿实现给自己的自我描述去验收实现，什么都验不出来。缺的正是"独立规格"这四个字。
+
 **测试运行方式：**
 
 ```bash
@@ -132,6 +134,9 @@ function makeRoot() {
 
 const keyPair = generateKeyPairSync('ed25519');
 const PUBLIC_KEY_BASE64 = keyPair.publicKey.export({ type: 'spki', format: 'der' }).toString('base64');
+
+const HOST = 'publish.example.invalid';
+const KNOWN_HOSTS_PATH = '/etc/mofang/known_hosts';
 
 const PACKAGE_BYTES = Buffer.from('portable-zip-bytes', 'utf8');
 const PACKAGE_SHA256 = createHash('sha256').update(PACKAGE_BYTES).digest('hex');
@@ -711,7 +716,7 @@ function fakeReadOnlyTransport(overrides = {}) {
     calls,
     readOnly: {
       sshRun: async (request) => {
-        calls.push(['sshRun', request.script]);
+        calls.push(['sshRun', request.script, request]);
         return overrides.sshRun ? overrides.sshRun(request) : { status: 0, stdout: '', stderr: '' };
       },
     },
@@ -726,9 +731,31 @@ function fakeReadOnlyTransport(overrides = {}) {
   };
 }
 
+function assertEveryCallCarriesTheTrustAnchor(calls) {
+  assert.ok(calls.length > 0, 'the trust anchor assertion needs at least one recorded call');
+  for (const call of calls) {
+    const request = call[2];
+    assert.ok(request !== undefined, `the ${String(call[0])} call did not record its request`);
+    assert.equal(request.host, HOST, `the ${String(call[0])} call did not carry the pinned host`);
+    assert.equal(
+      request.knownHostsPath,
+      KNOWN_HOSTS_PATH,
+      `the ${String(call[0])} call did not carry the pinned known hosts file`,
+    );
+  }
+}
+
 async function preflightWithProbe(probe) {
   const transport = fakeReadOnlyTransport({ sshRun: () => probe });
-  return runPreflight({ channel: 'internal', version: '1.2.3', transport, host: 'h', knownHostsPath: 'k' });
+  const result = await runPreflight({
+    channel: 'internal',
+    version: '1.2.3',
+    transport,
+    host: HOST,
+    knownHostsPath: KNOWN_HOSTS_PATH,
+  });
+  assertEveryCallCarriesTheTrustAnchor(transport.calls);
+  return result;
 }
 
 test('the commit plan lists the thirteen stages in the fixed order', () => {
@@ -818,12 +845,13 @@ test('the preflight only performs read only actions and never claims writability
     channel: 'internal',
     version: '1.2.3',
     transport,
-    host: 'h',
-    knownHostsPath: 'k',
+    host: HOST,
+    knownHostsPath: KNOWN_HOSTS_PATH,
   });
   const names = transport.calls.map((call) => call[0]);
   assert.deepEqual([...new Set(names)], ['sshRun']);
   assert.equal(transport.calls[0][1], `stat -c '%d' ${STATE_ROOT} ${UPDATE_ROOT}`);
+  assertEveryCallCarriesTheTrustAnchor(transport.calls);
   assert.equal(result.sameFileSystem, true);
   assert.equal(result.writabilityIndicators.verifiedWrite, false);
   assert.match(result.writabilityIndicators.note, /indicator/u);
@@ -835,9 +863,10 @@ test('the preflight reports different file systems instead of assuming one', asy
     channel: 'internal',
     version: '1.2.3',
     transport,
-    host: 'h',
-    knownHostsPath: 'k',
+    host: HOST,
+    knownHostsPath: KNOWN_HOSTS_PATH,
   });
+  assertEveryCallCarriesTheTrustAnchor(transport.calls);
   assert.equal(result.sameFileSystem, false);
   assert.match(result.notes.join(' '), /file system/u);
 
@@ -991,19 +1020,27 @@ const PLAN_INPUT = {
   manifestSha256: 'c'.repeat(64),
 };
 
+const OWNER_RECORD = {
+  runid: 'r1',
+  operator: 'ops',
+  startedAt: '2026-09-22T00:00:00.000Z',
+  planHash: 'p1',
+  machine: 'builder-01',
+};
+
 function fakeWriteTransport(handlers = {}) {
   const calls = [];
   return {
     calls,
     readOnly: {
       sshRun: async (request) => {
-        calls.push(['readSsh', request.script]);
+        calls.push(['readSsh', request.script, request]);
         return handlers.readSsh ? handlers.readSsh(request) : { status: 0, stdout: '', stderr: '' };
       },
     },
     write: {
       sshRun: async (request) => {
-        calls.push(['writeSsh', request.script]);
+        calls.push(['writeSsh', request.script, request]);
         return handlers.writeSsh ? handlers.writeSsh(request) : { status: 0, stdout: '', stderr: '' };
       },
       sftpUpload: async () => ({ status: 0, bytesSent: 1 }),
@@ -1034,13 +1071,14 @@ test('an existing lock is a determinate not-acquired and never stolen', async ()
   const result = await acquireChannelLock({
     channel: 'internal',
     transport,
-    owner: { runid: 'r1', planHash: 'p1' },
-    host: 'h',
-    knownHostsPath: 'k',
+    owner: OWNER_RECORD,
+    host: HOST,
+    knownHostsPath: KNOWN_HOSTS_PATH,
   });
   assert.equal(result.state, 'not-acquired');
   assert.equal(result.requiresExplicitRecovery, true);
   assert.equal(transport.calls.filter((call) => /rm |rmdir/u.test(String(call[1] ?? ''))).length, 0);
+  assertEveryCallCarriesTheTrustAnchor(transport.calls);
 });
 
 test('an ssh failure while taking the lock is ownership unknown, not not-acquired', async () => {
@@ -1053,12 +1091,13 @@ test('an ssh failure while taking the lock is ownership unknown, not not-acquire
   const result = await acquireChannelLock({
     channel: 'internal',
     transport,
-    owner: { runid: 'r1', planHash: 'p1' },
-    host: 'h',
-    knownHostsPath: 'k',
+    owner: OWNER_RECORD,
+    host: HOST,
+    knownHostsPath: KNOWN_HOSTS_PATH,
   });
   assert.equal(result.state, 'ownership-unknown');
   assert.match(result.reason, /cannot confirm/u);
+  assertEveryCallCarriesTheTrustAnchor(transport.calls);
 });
 
 test('a failed owner write is an incident that keeps the lock', async () => {
@@ -1071,16 +1110,17 @@ test('a failed owner write is an incident that keeps the lock', async () => {
   const result = await acquireChannelLock({
     channel: 'internal',
     transport,
-    owner: { runid: 'r1', planHash: 'p1' },
-    host: 'h',
-    knownHostsPath: 'k',
+    owner: OWNER_RECORD,
+    host: HOST,
+    knownHostsPath: KNOWN_HOSTS_PATH,
   });
   assert.equal(result.state, 'retained-by-this-run');
   assert.equal(result.incident, true);
+  assertEveryCallCarriesTheTrustAnchor(transport.calls);
 });
 
 test('release verifies the owner, then removes the owner file, then the lock directory', async () => {
-  const owner = { runid: 'r1', planHash: 'p1' };
+  const owner = OWNER_RECORD;
   const order = [];
   const transport = fakeWriteTransport({
     readSsh: () => ({ status: 0, stdout: JSON.stringify(owner), stderr: '' }),
@@ -1096,15 +1136,18 @@ test('release verifies the owner, then removes the owner file, then the lock dir
     owner,
     runid: 'r1',
     planHash: 'p1',
-    host: 'h',
-    knownHostsPath: 'k',
+    host: HOST,
+    knownHostsPath: KNOWN_HOSTS_PATH,
+    acquisitionConfirmed: true,
+    safeToExit: true,
   });
   assert.equal(verdict.state, 'released');
   assert.deepEqual(order, ['rm-owner', 'rmdir-lock']);
+  assertEveryCallCarriesTheTrustAnchor(transport.calls);
 });
 
 test('a failed owner removal is never reported as released', async () => {
-  const owner = { runid: 'r1', planHash: 'p1' };
+  const owner = OWNER_RECORD;
   const transport = fakeWriteTransport({
     readSsh: () => ({ status: 0, stdout: JSON.stringify(owner), stderr: '' }),
     writeSsh: (request) =>
@@ -1118,11 +1161,14 @@ test('a failed owner removal is never reported as released', async () => {
     owner,
     runid: 'r1',
     planHash: 'p1',
-    host: 'h',
-    knownHostsPath: 'k',
+    host: HOST,
+    knownHostsPath: KNOWN_HOSTS_PATH,
+    acquisitionConfirmed: true,
+    safeToExit: true,
   });
   assert.equal(verdict.state, 'retained-by-this-run');
   assert.equal(verdict.incident, true);
+  assertEveryCallCarriesTheTrustAnchor(transport.calls);
 });
 
 test('release re-reads the owner and refuses when it belongs to another run', async () => {
@@ -1135,11 +1181,14 @@ test('release re-reads the owner and refuses when it belongs to another run', as
     owner: null,
     runid: 'r1',
     planHash: 'p1',
-    host: 'h',
-    knownHostsPath: 'k',
+    host: HOST,
+    knownHostsPath: KNOWN_HOSTS_PATH,
+    acquisitionConfirmed: true,
+    safeToExit: true,
   });
   assert.equal(verdict.state, 'ownership-unknown');
   assert.equal(transport.calls.filter((call) => /rm |rmdir/u.test(String(call[1] ?? ''))).length, 0);
+  assertEveryCallCarriesTheTrustAnchor(transport.calls);
 });
 
 test('a run that holds the lock but cannot close safely keeps it', () => {
@@ -1173,8 +1222,8 @@ test('breaking a lock needs a reason, an audit log and a matching runid', async 
   const base = {
     channel: 'internal',
     transport,
-    host: 'h',
-    knownHostsPath: 'k',
+    host: HOST,
+    knownHostsPath: KNOWN_HOSTS_PATH,
     confirmRunid: 'r0',
     auditOut: '/outside/audit.jsonl',
     operator: 'ops',
@@ -1185,6 +1234,7 @@ test('breaking a lock needs a reason, an audit log and a matching runid', async 
     breakChannelLock({ ...base, reason: 'stopped', confirmRunid: 'wrong' }),
     /does not match the owner/u,
   );
+  assertEveryCallCarriesTheTrustAnchor(transport.calls);
 });
 
 test('breaking a lock records the real previous owner and the operator', async () => {
@@ -1193,8 +1243,8 @@ test('breaking a lock records the real previous owner and the operator', async (
   const record = await breakChannelLock({
     channel: 'internal',
     transport,
-    host: 'h',
-    knownHostsPath: 'k',
+    host: HOST,
+    knownHostsPath: KNOWN_HOSTS_PATH,
     reason: 'operator confirmed the previous run stopped',
     confirmRunid: 'r0',
     auditOut: '/outside/audit.jsonl',
@@ -1203,6 +1253,7 @@ test('breaking a lock records the real previous owner and the operator', async (
   assert.equal(record.outcome, 'lock-broken');
   assert.deepEqual(record.previousOwner, owner);
   assert.equal(record.operator, 'ops');
+  assertEveryCallCarriesTheTrustAnchor(transport.calls);
 });
 
 test('a failed remote deletion is not recorded as lock-broken', async () => {
@@ -1218,8 +1269,8 @@ test('a failed remote deletion is not recorded as lock-broken', async () => {
     breakChannelLock({
       channel: 'internal',
       transport,
-      host: 'h',
-      knownHostsPath: 'k',
+      host: HOST,
+      knownHostsPath: KNOWN_HOSTS_PATH,
       reason: 'stopped',
       confirmRunid: 'r0',
       auditOut: '/outside/audit.jsonl',
@@ -1227,6 +1278,7 @@ test('a failed remote deletion is not recorded as lock-broken', async () => {
     }),
     /could not be removed/u,
   );
+  assertEveryCallCarriesTheTrustAnchor(transport.calls);
 });
 ```
 
@@ -1281,6 +1333,12 @@ export async function readOwnerRecord(input) {
 }
 
 export async function acquireChannelLock(input) {
+  for (const field of ['runid', 'operator', 'startedAt', 'planHash', 'machine']) {
+    const value = input.owner?.[field];
+    if (typeof value !== 'string' || value.trim().length === 0) {
+      throw new FeedPublishError(`the owner record must carry a non empty ${field}, so no lock is created without one`);
+    }
+  }
   const created = await input.transport.write.sshRun({
     host: input.host,
     knownHostsPath: input.knownHostsPath,
@@ -1376,11 +1434,11 @@ export function resolveLockDisposition(input) {
 export async function releaseChannelLock(input) {
   const owner = input.owner ?? (await readOwnerRecord(input));
   const verdict = resolveLockDisposition({
-    acquisitionConfirmed: true,
+    acquisitionConfirmed: input.acquisitionConfirmed,
     owner,
     runid: input.runid,
     planHash: input.planHash,
-    safeToExit: true,
+    safeToExit: input.safeToExit,
   });
   if (verdict.release !== true) return verdict;
 
@@ -1452,6 +1510,12 @@ export async function breakChannelLock(input) {
 
 **实现偏离（已提交于 `3ebe23ec`，别改回宽臂）：** 上面的 `isFileExistsFailure` 只匹配 `File exists`。GNU coreutils 在 EPERM/EACCES 下打印的是 `mkdir: cannot create directory '<path>': Permission denied`，所以 `cannot create directory` 那一臂会把**权限失败**判成 `not-acquired`，理由写成「the channel is already locked」—— 这是一句关于远端状态的**假话**，而且正是这句话把操作者推向 `--break-lock`，也就是去砸一把**不属于自己**的锁。实测：把宽臂加回去，**只**红本刀新增的 `a lock mkdir that fails without an existing entry signal is ownership unknown`，规定的十三条**全绿** ⇒ 规定的那份套件看不见这个差别。计划自带的夹具（`mkdir: cannot create directory '...': File exists`）仍然匹配收窄后的谓词，因为它们含 `File exists`。
 
+**本修复刀的三处偏离（第二、第三、第四处，形状与上面那条相同：规定文本说了什么 / 为什么不行 / 什么变异证明规定清单看不见差别）：**
+
+1. **`owner.json` 必须携带 §6.6 的五个字段（第二个实现偏离）。** 规定文本的 `acquireChannelLock` **完全不校验** `input.owner`，规定夹具传的是两字段的 `{ runid, planHash }`，Task 4 的获取处也照此传。§6.6（spec 行 319）要求锁内写 `runid`、`operator`、`startedAt`、`planHash`、执行机标识；spec 行 322 要求 `--break-lock` 打印原 owner 的**完整信息**并让操作员确认"前一次运行确实不在进行中"——两字段的记录让这个判断无从做起，`startedAt` 更是**全计划里找不到出处**。实现改为在 `mkdir` **之前**逐字段校验（每个字段都必须 `trim()` 后非空，坏记录**永远不创建锁**）。**规定清单看不见差别**：五个字段检查逐个删掉，**规定的十三条全绿**（它们的 owner 都是完整记录），红的只有本刀新增的六条（实测：删 `runid` / `operator` / `startedAt` / `planHash` 各只红自己那一条，删 `machine` 红两条）。规定的夹具与三条规定的 acquire 用例因此改用完整的 `OWNER_RECORD`——**规定的 13 条测试名一个都没改**。
+2. **`releaseChannelLock` 不再把两个 §6.6 前提写成字面量（第三个实现偏离）。** 规定文本里 `acquisitionConfirmed: true` 与 `safeToExit: true` 是**字面量**，于是 §6.6 的推论（"本次尚未取得锁时……**不得声称「保留」或「释放」一个并不属于自己的锁**"，spec 行 352）与保留表（"翻转之后失败 ⇒ `incident` ⇒ **保留锁**"，spec 行 333）在这个入口上**无法表达**——Task 4 的 `releaseAndFinish` 正是不传这两个参数调用它的，于是它无条件断言"本次确实取得过锁"且"安全退出"。实现改为把两个输入往下传（`resolveLockDisposition` 内部本来就 fail closed：`!== true` 即拒绝）。规定的三条 release 用例因此各自补上 `acquisitionConfirmed: true, safeToExit: true`——**测试名不变**。**规定清单看不见差别**：把 `acquisitionConfirmed` 还原成字面量 `true` ⇒ 只红本刀新增的 `a release that never confirmed its own acquisition refuses and writes nothing`（69 → 68）；把 `safeToExit` 还原成字面量 ⇒ 只红 `a release that is not safe to exit keeps the lock this run owns`（69 → 68）。
+3. **§6.4 的信任锚现在每条远程调用都被钉住（第四个偏离，改动落在测试夹具与规定用例上）。** 规定夹具只记 `request.script`，所以从七个调用点里删掉 `host:` 或 `knownHostsPath:` **58/58 全绿**（实测）——`knownHostsPath` 是签名闸门之外的另一道信任锚，掉线不报错、只静默失效。实现：假 transport 记下**整个 request**，并用共享助手 `assertEveryCallCarriesTheTrustAnchor(calls)` 在每条走 transport 的测试里断言 `host` 与 `knownHostsPath` 恰好等于 `HOST` / `KNOWN_HOSTS_PATH`；助手**先断言 `calls.length > 0`**（零调用不许空过）。Task 1/2 的 preflight 夹具与三条 preflight 用例一并接上——只修 Task 3 会把同一个洞留在隔壁。**规定清单看不见差别**：删 `readOwnerRecord` 调用里的 `host:` ⇒ 红 13 条（69 → 56），删 `acquireChannelLock` 的 `mkdir` 调用里的 `knownHostsPath:` ⇒ 红 10 条（69 → 59）；两条在修复前都是 58/58 全绿。
+
 - [ ] **Step 4: 运行测试并确认通过**
 
 ```bash
@@ -1504,6 +1568,31 @@ node --test scripts/lib/feed-publish.test.mjs
 33. 把 owner 写入脚本里的 `JSON.stringify(input.owner)` 改动一个字符（例如末尾多一个空格）⇒ 预期 `a successful acquisition writes the owner record for this run` 与 `the lock lives under the channel it was given rather than a fixed one` **按测试名变红**（两条都逐字断言写脚本）。
 34. 成功分支的结果字段：把 `state` / `acquired` / `incident` / `requiresExplicitRecovery` / `owner` 任一改错（实测把 `acquired: true` 翻成 `false`、把 `owner: input.owner` 改成 `null`、把 `requiresExplicitRecovery: false` 翻成 `true`，三次都）⇒ 预期 `a successful acquisition writes the owner record for this run` **按测试名变红**。`not-acquired` 分支的字段另有钉子：`requiresExplicitRecovery` 由规定的 `an existing lock is a determinate not-acquired and never stolen` 钉住，`incident: false` 由 `an existing lock reports the owner it found so a human can confirm it` 钉住。
 
+**变异次数（第 1–34 条的算术，别再算错）：** 第 1–30 条各一次 = **30**；第 31 条**十处** `await` 各一次 = **10**（"十处"是对的：`readOwnerRecord` 1 处、`acquireChannelLock` 3 处、`releaseChannelLock` 3 处、`breakChannelLock` 3 处）；第 32、33 条各一次 = **2**；第 34 条三次字段翻转 = **3** ⇒ 第一次提交（`3ebe23ec`）**共 45 次变异**，外加 1 次对照变异（把 `not-acquired` 那句没人断言的 `reason` 散文改写一个词，**58/58 全绿**）= **46 次运行**。⚠️ **`3ebe23ec` 的提交信息里 "fifty-one ledger runs" 是错的（多算了 5 次）**；同一段信息里 "the await on each of the five transport calls" 也是错的（是**十处**，不是五处；"十一"这个数字在计划全文里不存在）。**不重写 `3ebe23ec`**，只在此处记账。
+
+**本修复刀追加的变异（第 35–49 条，套件规模 69 条）：**
+
+35. 删掉 `readOwnerRecord` 调用里的 `host: input.host,` ⇒ 实测**红 13 条**（`an existing lock is a determinate not-acquired and never stolen`、`an existing lock reports the owner it found so a human can confirm it`、`an owner read that exits non-zero is unreadable even when it printed a record`、`release re-reads the owner and refuses when it belongs to another run`、`release re-reads the owner from the lock when the caller has none`、`breaking a lock needs a reason, an audit log and a matching runid`、`breaking a lock records the real previous owner and the operator`、`a failed remote deletion is not recorded as lock-broken`、`a break whose lock directory survives is not recorded as lock-broken`、`breaking a lock without a readable owner record is refused`、`breaking a lock removes the owner file before the lock directory and records the reason`、`the existing entry signal is read from either stream and without regard to case`、`a corrupt owner record on the lock is unreadable rather than a crash`），69 → 56 pass / 13 fail。**修复前这条变异 58/58 全绿。**
+36. 删掉 `acquireChannelLock` 的 `mkdir` 调用里的 `knownHostsPath: input.knownHostsPath,` ⇒ 实测**红 10 条**（八条 acquire 用例 + `an existing lock is a determinate not-acquired and never stolen` + `an owner read that exits non-zero is unreadable even when it printed a record`），69 → 59 / 10。**修复前同样 58/58 全绿。**
+    （35 与 36 分别对应 §6.4 的两个信任锚字段；七个调用点其余五处由同一条助手覆盖。）
+37. 把 `readOwnerRecord` 的 `try/catch` 删掉（`status` 为 0 时直接 `return JSON.parse(...)`）⇒ **红 3 条**：`a corrupt owner record on the lock is unreadable rather than a crash`（本刀新增）+ 连带 `an existing lock is a determinate not-acquired and never stolen`、`the existing entry signal is read from either stream and without regard to case`（这两条的默认 `readSsh` 返回空 stdout，同样会撞上 `JSON.parse`；连带红是良性方向），69 → 66 / 3。
+38. 把 `--audit-out` 守卫的 `|| input.auditOut.length === 0` 臂删掉 ⇒ **只红** `breaking a lock refuses an empty audit log path`，69 → 68 / 1。（规定的拒绝用例传的是 `null`/`undefined`，走的是 `typeof` 那一臂 ⇒ 收窄后这条臂原本没人钉。）
+39. 把 `releaseChannelLock` 的 `acquisitionConfirmed: input.acquisitionConfirmed` 还原成字面量 `true` ⇒ **只红** `a release that never confirmed its own acquisition refuses and writes nothing`，69 → 68 / 1。
+40. 把 `releaseChannelLock` 的 `safeToExit: input.safeToExit` 还原成字面量 `true` ⇒ **只红** `a release that is not safe to exit keeps the lock this run owns`，69 → 68 / 1。（39 与 40 是同一个对象字面量里的两个表达式，必须分两次各改一个。）
+41. 删掉 owner 字段清单里的 `'runid'` ⇒ **只红** `an owner record without a runid never creates a lock`，69 → 68 / 1。
+42. 同上，删 `'operator'` ⇒ 只红 `an owner record without an operator never creates a lock`，69 → 68 / 1。
+43. 同上，删 `'startedAt'` ⇒ 只红 `an owner record without a startedAt never creates a lock`，69 → 68 / 1。
+44. 同上，删 `'planHash'` ⇒ 只红 `an owner record without a planHash never creates a lock`，69 → 68 / 1。
+45. 同上，删 `'machine'` ⇒ 红 2 条：`an owner record without a machine never creates a lock` 与 `an owner record with a blank machine never creates a lock`，69 → 67 / 2（两条钉的是同一个字段检查，删掉它两条都放行；连带红是良性方向）。
+    （41–45 必须**分五次各删一个**：一次删多个虽然也会红，但证明不了任何一个字段被绑住。）
+46. 把 `typeof value !== 'string' || value.trim().length === 0` 里的 `.trim()` 删掉 ⇒ **只红** `an owner record with a blank machine never creates a lock`（该夹具刻意用 `'   '`），69 → 68 / 1。
+47. 把 `const value = input.owner?.[field];` 的 `?.` 删掉 ⇒ **只红** `a missing owner record never creates a lock`（`null`/`undefined` owner 会抛 TypeError 而不是 `FeedPublishError`），69 → 68 / 1。
+48. 把逐字段校验**整段移到 `mkdir` 调用之后** ⇒ **红 7 条**（六条 owner 字段用例 + `a missing owner record never creates a lock`），69 → 62 / 7：六条断言的 `transport.calls.length === 0` 正是"坏记录**永远不创建锁**"这条**顺序**保证的钉子。
+49. 把 owner 写入脚本里的 `JSON.stringify(input.owner)` 收成只写 `runid`/`operator`/`planHash` 三个字段 ⇒ 红 2 条：`a successful acquisition writes the owner record for this run` 与 `the lock lives under the channel it was given rather than a fixed one`（两条都逐字断言写脚本），69 → 67 / 2。
+50. **对照变异（必须保持全绿）**：把 `not-acquired` 分支里那句 `reason: 'the channel is already locked',` 改写成 `'a lock is already held on this channel',` ⇒ 实测 **69/69 全绿** ⇒ 这套变异装置不是"改什么都红"。
+
+**本修复刀的变异次数：** 第 35–49 条各一次 = **15 次变异**，外加 1 次对照变异 = **16 次运行** ⇒ Task 3 累计 **60 次变异 + 2 次对照 = 62 次运行**。每一次都先断言锚点**恰好匹配一次**、变异后确认**文件在磁盘上真的变了**、跑完**逐字节恢复**并核对恢复后的 SHA-256 与变异前一致；对照那条是"必须留绿"的那一次。
+
 恢复后全绿且 `git diff` 为空。
 
 - [ ] **Step 6: 提交**
@@ -1514,6 +1603,8 @@ git commit -m "feat(feed): own the channel lock honestly, including its failure 
 ```
 
 **本刀刻意不钉的东西（复核时别当成缺陷再报一遍）：** `isFileExistsFailure` 正则的 `u` 标志（删掉它改不了任何可观察行为 —— 实测 58/58 全绿）；`planHashOf` 的 `'\n'` 连接符（五个字段谁也放不进分隔符，换成任何"字段里不可能出现的分隔符"哈希都一样 —— 钉住的只是**逐字段**的敏感度）；`readOwnerRecord` 对读到 stdout 的 `.trim()`（`JSON.parse` 自己容空白，实测删掉它 58/58 全绿）；`?? 'unknown'` 这个 operator 默认字面量（钉住的是该字段**存在**，不是它的默认文本 —— 实测换成别的字面量 58/58 全绿）；以及所有人类可读的 `reason` 文案 —— 它们是散文，任何地方都不断言，这是**刻意**的（对照：`an owner record that matches the runid but not the plan hash is ownership unknown` 只断言 `reason` 里出现 `planHash`，不比对整句）。
+
+**本修复刀加进这份名单的：** ① owner 校验的报错文案 `the owner record must carry a non empty <field>, so no lock is created without one` —— 散文，被测的只有**字段名**（`/machine/u` 等），整句不断言；② owner 为 `null`/`undefined` 时报的是**清单里第一个**字段（`runid`）——**检查顺序刻意不钉**（`a missing owner record never creates a lock` 只断言抛的是 `FeedPublishError` 且消息含 `owner record`）：顺序不是 §6.6 的要求，只是实现细节；③ `resolveLockDisposition` 对两个前提的 `!== true` 严格性（真值但非 `true`，例如 `'yes'`）——那是既有那一臂的语义，本刀只做透传，测试只覆盖 `false` 与"缺省"两种；④ 助手 `assertEveryCallCarriesTheTrustAnchor` 自己的断言文案。
 
 **仓库事实（省得下次再去查门禁覆盖）：** `eslint.config.mjs` 的 `ignores` 含 `scripts/**` 与 `**/scripts/**`，所以本模块由 `node --test`、prettier `format:check` 与 knip 覆盖，**不被 eslint 覆盖**；"代码里不写注释"与"代码里不出现 CJK"这两条（`docs/agent-rules/frontend.md`）在本模块上因此**靠人工扫**，而不是靠门禁。
 
@@ -1531,6 +1622,12 @@ git commit -m "feat(feed): own the channel lock honestly, including its failure 
 **`planCommit` 的契约要在本刀显式定下来**：Task 2 的 `planCommit` 丢掉了 `verifyLocalArtifacts` 的返回值，而本刀的 `planHashOf` 需要全部三个摘要 ⇒ 本刀必须二选一并在代码里写实——要么在 Task 4 内部自己重新调一次 `verifyLocalArtifacts` 拿摘要，要么扩宽 `planCommit` 的返回值让它把摘要带出来——不允许两种做法并存，也不允许把 `planCommit` 的契约留成歧义。
 
 **计划的形状只有一处推导、两处使用**：`planCommit` 返回 `PUBLISH_STAGES.map((stage) => ({ stage, status: 'pending' }))`，而本刀 `runCommit` 里的 `stages` 是**同一表达式的第二份拷贝**。两份一旦漂移（`--dry-run` 打印出来的计划与审计日志里的阶段列表不是同一个形状），**没有任何测试会红**。二选一并在代码里写实：要么让 `runCommit` 接收 `planCommit` 产出的计划数组（单点推导），要么把两份推导保持**逐字相同**，并在本刀的变异清单里加一条"只改其中一份 ⇒ 指定测试按测试名变红"把这条接线钉住。不允许留成两份没人看着的拷贝。
+
+**owner 记录的三个新字段从哪里来（本刀接线，不许在 `scripts/lib/` 里取系统值）：** §6.6（spec 行 319）要求锁内写全五个字段，而 Task 3 的 `acquireChannelLock` 现在会**逐字段 fail closed**（缺一个就抛 `FeedPublishError`，且**在任何远程调用之前**），所以 `runCommit` 必须把完整记录交给它：`runid` 用本刀的 `randomUUID()`、`planHash` 用 `planHashOf` 的结果，另外三个**由调用方注入**——`operator` 取 CLI 已有的 `MOFANG_FEED_OPERATOR`（Task 7 的 `--break-lock` 分支已经在读它）、`startedAt` 取 CLI 启动时的 `new Date().toISOString()`、`machine` 取 `os.hostname()`。**`scripts/lib/feed-publish.mjs` 是纯模块：不许出现 `new Date()` 或 `os.hostname()`**（否则这两个值在测试里只能靠打桩，接线就不可注入）；因此 **Task 7 的 `runCommit` 调用必须把 `operator` / `startedAt` / `machine` 三个值一起传进来**，否则发布会在锁这一步以 `FeedPublishError` 停下（那是诚实的失败，不是回归）。
+
+**两个解锁点都不传 `owner`（§6.6 前提 2 的落地）：** `releaseAndFinish` 与成功路径的 `releaseChannelLock` 调用都**不传 `owner`**，让 `releaseChannelLock` 里的 `input.owner ?? (await readOwnerRecord(input))` 在**解锁那一刻**重新读 `owner.json`。原因：§6.6（spec 行 345）要求"解锁前**重新读取** `owner.json`"并与本次运行比对；先读一次（步骤 5 那次）再把那个快照传进来，等于把步骤 6 → 步骤 13 这段窗口空着——锁在这个窗口里被撞破并被另一个运行重新拿到时，本次运行会**删掉别人的锁**。传 `owner` 会让 §6.6 的前提 2 成为死代码。
+
+**两处 `safeToExit: true` 为什么是诚实的：** 四个 `releaseAndFinish` 调用点（`commit-version` 的三条失败 + 设备号不一致那一条）与成功路径都在**翻转之前**（成功路径是翻转之后**且公网复验已经通过**），§6.6 的保留表（spec 行 331）说"翻转之前失败且**非 CAS 不匹配** ⇒ 确定 ⇒ `fail` ⇒ **释放锁**"，而"翻转之后失败"那一行要的是**不确定**的结果——这里任何一个 `releaseAndFinish` 调用点都是**已经确定**的失败，没有任何"远端状态可能已被改变"的不确定性，所以 `true` 不是乐观假设而是那张表的结论。`retainAndFinish` 走的仍是 `safeToExit: false`（保留锁），两条路各自被规定的用例钉住。
 
 - [ ] **Step 1: 写失败的测试（async 假 transport）**
 
@@ -2186,11 +2283,12 @@ export async function runCommit(input) {
     const disposition = await releaseChannelLock({
       channel: input.channel,
       transport: input.transport,
-      owner,
       runid,
       planHash,
       host: input.host,
       knownHostsPath: input.knownHostsPath,
+      acquisitionConfirmed,
+      safeToExit: true,
     });
     const unlockStatus = disposition.release ? 'done' : 'retained';
     stages.find((entry) => entry.stage === 'unlock').status = unlockStatus;
@@ -2281,7 +2379,7 @@ export async function runCommit(input) {
   const lock = await acquireChannelLock({
     channel: input.channel,
     transport: input.transport,
-    owner: { runid, planHash },
+    owner: { runid, operator: input.operator, startedAt: input.startedAt, planHash, machine: input.machine },
     host: input.host,
     knownHostsPath: input.knownHostsPath,
   });
@@ -2437,11 +2535,12 @@ export async function runCommit(input) {
   const disposition = await releaseChannelLock({
     channel: input.channel,
     transport: input.transport,
-    owner,
     runid,
     planHash,
     host: input.host,
     knownHostsPath: input.knownHostsPath,
+    acquisitionConfirmed,
+    safeToExit: true,
   });
   const unlockStatus = disposition.release ? 'done' : 'retained';
   stages.find((entry) => entry.stage === 'unlock').status = unlockStatus;
@@ -2488,6 +2587,12 @@ git commit -m "feat(feed): publish the manifest over sftp and verify it on the p
 ```
 
 **验收项（真验证器）**：本任务与 Task 7 是**第一次注入真 `verifyPortableRelease`** 的地方。Task 1 的夹具用的是 `JSON.stringify(payload)`（插入顺序），而真生产者/验证器按 **`canonicalize()`（排序键）** 签 —— 夹具直接喂给真验证器会以 `release manifest signature is invalid` 失败，**看起来像产品 bug**。接真验证器时必须实跑一次三角验证，不要假设。
+
+**本修复刀追加的验收项（Task 4 实施时必须做，否则上面那几处锁上的修复在真路径上仍然是空的）：**
+
+1. **解锁时锁已被别人换掉 ⇒ 拒绝并记 `incident`（§6.6 前提 2 的端到端钉子）。** 这条必须在**接线层**做，不能只调 `releaseChannelLock`：用 `commitTransport` 让**解锁那一刻**读到的 `owner.json` 的 `runid` 与本次运行不同（例如在 `mv -f` 之后把 `ownerJson` 换成一个 `runid: 'other'` 的记录），断言 `runCommit` 以 `incident` 收口、`lockState === 'ownership-unknown'`、**并且一次 `rm`/`rmdir` 都没发**。这条同时证明"两个解锁点确实**没有**传 `owner`"：一旦某个调用点把步骤 5 的旧快照传进去，比对就只看旧快照而放过这次替换，本项即变红。
+2. **锁步骤上的确定性配置失败记 `incident`，不是 `blocked`。** Task 3 收窄 `isFileExistsFailure` 之后，**任何非 "File exists" 的非零 `mkdir`**（ENOENT、权限不足、只读文件系统）都会走 `ownership-unknown` ⇒ `incident`。这是**刻意的、安全的方向**：宁可记事故交人工核查，也不要用一句关于远端状态的假话把操作员推向 `--break-lock`。**Task 4 必须有一条用例把这条路径钉住**：夹具让 `mkdir` 返回 `{ status: 1, stderr: 'mkdir: cannot create directory ...: Permission denied' }`，断言 `outcome === 'incident'`、`lockState === 'ownership-unknown'`、`stages` 里 `lock` 是 `incident`，且**后续任何阶段都没跑**（`commit-version` 仍是 `pending`）。
+3. ⚠️ **Task 6 必须抓一条真机的 coreutils 权限失败原文。** 上面这条用例（以及 Task 3 的 `a lock mkdir that fails without an existing entry signal is ownership unknown`）现在断言的 `stderr` 是**手写的字符串**——我们**没有在目标主机上实测过** GNU coreutils 在 EPERM/EACCES 下到底打印什么。Task 6 接上真 transport 后，在目标主机上抓**一次**真实的 `mkdir` 权限失败（例如在一个只读目录里 `mkdir`），把原文写进**计划或断言**里（代码里不写注释），并确认收窄后的谓词不会把它误判成 `not-acquired`。在抓到之前，"权限失败 ⇒ `incident`"这条只是**推断**，不是实测。
 
 **待定的设计决定（在本刀内决定，不要留成第三份拷贝）**：本刀新增的 `assertOutsideRepository` 会是仓库里**第三**个"这个路径是否在仓库外"的判据，三份的语义各差一点：兄弟模块 `scripts/lib/portable-update-release.mjs` 的 `assertPathOutsideRepository` 要求相对关系是 `..` **加一个分隔符**（或正好是 `..`）才算仓库外；Task 1 的 `assertKnownHostsPath` 与本刀这一份则接受**任何以 `..` 开头**的相对关系。差别在 `..foo` 这种名字上：`<仓库根>/..foo` **其实在仓库内**，兄弟那份会拒、这两份会放行。**首选修法是统一到兄弟模块那种更严的形式**（顺带把 `..foo` 这个已知边界一起关掉），而不是新增第三份略有差异的拷贝 —— 修哪一份、还是抽成共享的一份，在**本刀**里定下来，别把三份语义不同的判据留给下一个人。
 
