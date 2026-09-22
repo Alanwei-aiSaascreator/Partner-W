@@ -35,21 +35,21 @@
 
 每一行都必须能在 `runCommit` 里找到对应代码；**任何 helper 只定义未接入主链 = 缺陷**。
 
-| #   | 阶段              | 输入                                                   | 本地/远端动作                                                                                       | await          | 检查退出码               | 审计阶段名              | 失败结果                                           | 锁状态                                                                          |
-| --- | ----------------- | ------------------------------------------------------ | --------------------------------------------------------------------------------------------------- | -------------- | ------------------------ | ----------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------- |
-| 1   | `pre-verify`      | 三个本地产物路径、`expectedChannel`、`expectedVersion` | 本地：读三产物、验签、比对 channel/version/URL/hash/size                                            | 否（全同步）   | —                        | `pre-verify`            | `fail`                                             | `not-acquired`                                                                  |
-| 2   | `stage`           | `planHash`、staging 路径                               | 远端：`mkdir -p <staging>` → SFTP `reput` 两个 `.part-<runid>` → 远端 `mv -f` 成最终名              | 是             | **是**（每个写操作都查） | `stage`                 | `fail`                                             | `not-acquired`                                                                  |
-| 3   | `remote-verify`   | staging 目录                                           | 远端：`find -printf` + `sha256sum`                                                                  | 是             | **是**                   | `remote-verify`         | `fail`                                             | `not-acquired`                                                                  |
-| 4   | `lock`            | `channel`、`runid`、`planHash`                         | 远端：`mkdir <lock>`，成功后写 `owner.json`                                                         | 是             | **是**（两条都查）       | `lock`                  | 已存在 ⇒ `blocked`；不确定 ⇒ `incident`            | `not-acquired` / `ownership-unknown`                                            |
-| 5   | `re-verify`       | 锁内                                                   | 本地：重读 `owner.json`；远端：读 manifest baseline、重探 staging                                   | 是             | **是**                   | `re-verify`             | `incident`                                         | `retained-by-this-run`                                                          |
-| 6   | `commit-version`  | staging 与最终目录                                     | 远端：`stat -c %d` 比设备号；不存在则**单次目录 `mv`**；存在则整体比对                              | 是             | **是**                   | `commit-version`        | `fail`                                             | `released`                                                                      |
-| 7   | `backup-manifest` | 旧 manifest                                            | 远端：`cp` 到备份路径                                                                               | 是             | **是**                   | `backup-manifest`       | `incident`                                         | `retained-by-this-run`                                                          |
-| 8   | `cas`             | baseline                                               | 远端：重读 manifest SHA                                                                             | 是             | **是**                   | `cas`                   | 不匹配 ⇒ `incident`                                | `retained-by-this-run`                                                          |
-| 9   | `temp-manifest`   | 本地 `manifest.json`                                   | **SFTP 上传**到正式 manifest **同目录**的 `<runid>.tmp`；远端重算 SHA 必须等于本地 `manifestSha256` | 是             | **是**                   | `temp-manifest`         | `incident`                                         | `retained-by-this-run`                                                          |
-| 10  | `flip`            | 临时 manifest                                          | 远端：单次 `mv -f`                                                                                  | 是             | **是**                   | `flip`                  | `incident`                                         | `retained-by-this-run`                                                          |
-| 11  | `public-verify`   | 公网                                                   | 公网：取回 manifest + 两个产物，验签、比 SHA/size/URL；三分                                         | 是             | **是**                   | `public-verify`         | 新 SHA ⇒ 继续；旧 SHA ⇒ `retry`；其它 ⇒ `incident` | `retained-by-this-run`                                                          |
-| 12  | 收口              | —                                                      | 本地：写结果条目 `done` / `retry` / `fail` / `blocked` / `incident`                                 | 否（同步追加） | —                        | 以结果本身为 `stage` 名 | —                                                  | 该条目里**不含**锁状态；锁状态由紧随其后的 `unlock` 或 `lock-retained` 条目承载 |
-| 13  | `unlock`          | `owner.json`                                           | 远端：重读 owner → `rm owner.json` → `rmdir lock`                                                   | 是             | **是**                   | `unlock`                | 任一失败 ⇒ **不得报告 `released`**                 | `released` / `retained-by-this-run`                                             |
+| #   | 阶段              | 输入                                                   | 本地/远端动作                                                                                       | await                | 检查退出码               | 审计阶段名              | 失败结果                                           | 锁状态                                                                          |
+| --- | ----------------- | ------------------------------------------------------ | --------------------------------------------------------------------------------------------------- | -------------------- | ------------------------ | ----------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------- |
+| 1   | `pre-verify`      | 三个本地产物路径、`expectedChannel`、`expectedVersion` | 本地：读三产物、验签、比对 channel/version/URL/hash/size                                            | 是（await verifier） | —                        | `pre-verify`            | `fail`                                             | `not-acquired`                                                                  |
+| 2   | `stage`           | `planHash`、staging 路径                               | 远端：`mkdir -p <staging>` → SFTP `reput` 两个 `.part-<runid>` → 远端 `mv -f` 成最终名              | 是                   | **是**（每个写操作都查） | `stage`                 | `fail`                                             | `not-acquired`                                                                  |
+| 3   | `remote-verify`   | staging 目录                                           | 远端：`find -printf` + `sha256sum`                                                                  | 是                   | **是**                   | `remote-verify`         | `fail`                                             | `not-acquired`                                                                  |
+| 4   | `lock`            | `channel`、`runid`、`planHash`                         | 远端：`mkdir <lock>`，成功后写 `owner.json`                                                         | 是                   | **是**（两条都查）       | `lock`                  | 已存在 ⇒ `blocked`；不确定 ⇒ `incident`            | `not-acquired` / `ownership-unknown`                                            |
+| 5   | `re-verify`       | 锁内                                                   | 本地：重读 `owner.json`；远端：读 manifest baseline、重探 staging                                   | 是                   | **是**                   | `re-verify`             | `incident`                                         | `retained-by-this-run`                                                          |
+| 6   | `commit-version`  | staging 与最终目录                                     | 远端：`stat -c %d` 比设备号；不存在则**单次目录 `mv`**；存在则整体比对                              | 是                   | **是**                   | `commit-version`        | `fail`                                             | `released`                                                                      |
+| 7   | `backup-manifest` | 旧 manifest                                            | 远端：`cp` 到备份路径                                                                               | 是                   | **是**                   | `backup-manifest`       | `incident`                                         | `retained-by-this-run`                                                          |
+| 8   | `cas`             | baseline                                               | 远端：重读 manifest SHA                                                                             | 是                   | **是**                   | `cas`                   | 不匹配 ⇒ `incident`                                | `retained-by-this-run`                                                          |
+| 9   | `temp-manifest`   | 本地 `manifest.json`                                   | **SFTP 上传**到正式 manifest **同目录**的 `<runid>.tmp`；远端重算 SHA 必须等于本地 `manifestSha256` | 是                   | **是**                   | `temp-manifest`         | `incident`                                         | `retained-by-this-run`                                                          |
+| 10  | `flip`            | 临时 manifest                                          | 远端：单次 `mv -f`                                                                                  | 是                   | **是**                   | `flip`                  | `incident`                                         | `retained-by-this-run`                                                          |
+| 11  | `public-verify`   | 公网                                                   | 公网：取回 manifest + 两个产物，验签、比 SHA/size/URL；三分                                         | 是                   | **是**                   | `public-verify`         | 新 SHA ⇒ 继续；旧 SHA ⇒ `retry`；其它 ⇒ `incident` | `retained-by-this-run`                                                          |
+| 12  | 收口              | —                                                      | 本地：写结果条目 `done` / `retry` / `fail` / `blocked` / `incident`                                 | 否（同步追加）       | —                        | 以结果本身为 `stage` 名 | —                                                  | 该条目里**不含**锁状态；锁状态由紧随其后的 `unlock` 或 `lock-retained` 条目承载 |
+| 13  | `unlock`          | `owner.json`                                           | 远端：重读 owner → `rm owner.json` → `rmdir lock`                                                   | 是                   | **是**                   | `unlock`                | 任一失败 ⇒ **不得报告 `released`**                 | `released` / `retained-by-this-run`                                             |
 
 **锁状态取值（四态，取代布尔）：** `not-acquired` / `released` / `retained-by-this-run` / `ownership-unknown`。
 
@@ -90,6 +90,7 @@ node --test scripts/lib/feed-publish-cli.test.mjs
 
 - Create: `scripts/lib/feed-publish.mjs`
 - Test: `scripts/lib/feed-publish.test.mjs`
+- Modify: `package.json`
 
 固定常量（规格 §6.2）：发布根 `/opt/rongying/updates`、状态根 `/opt/rongying/updates-state`、频道白名单 `internal` / `stable`、公网基址 `https://api.rongyinghudong.com/updates`。两个根是常量；主机与 known_hosts 由命令行传入（仓库**不得**内置服务器地址）。**`--host` / `--known-hosts` 只在需要联网的模式下必填**——`--dry-run` 完全离线，因此不要求它们。
 
@@ -227,9 +228,9 @@ test('the known hosts file must live outside the repository', () => {
   assert.equal(assertKnownHostsPath(join(tmpdir(), 'known_hosts'), process.cwd()), join(tmpdir(), 'known_hosts'));
 });
 
-test('the local verification returns every digest and size the flow needs', () => {
+test('the local verification returns every digest and size the flow needs', async () => {
   const paths = writeArtifacts();
-  const result = verifyLocalArtifacts({
+  const result = await verifyLocalArtifacts({
     ...paths,
     expectedChannel: 'internal',
     expectedVersion: '1.2.3',
@@ -243,68 +244,79 @@ test('the local verification returns every digest and size the flow needs', () =
   assert.equal(result.packageUrl, `${PUBLIC_BASE_URL}/internal/1.2.3/portable.zip`);
 });
 
-test('the local verification requires the channel and the version explicitly', () => {
-  const paths = writeArtifacts();
-  assert.throws(
-    () => verifyLocalArtifacts({ ...paths, publicKeyBase64: PUBLIC_KEY_BASE64 }),
-    /expectedChannel|expectedVersion/u,
+test('the local verification requires the channel and the version explicitly', async () => {
+  const withoutChannel = writeArtifacts();
+  await assert.rejects(
+    verifyLocalArtifacts({ ...withoutChannel, expectedVersion: '1.2.3', publicKeyBase64: PUBLIC_KEY_BASE64 }),
+    /expectedChannel/u,
+  );
+  const withoutVersion = writeArtifacts();
+  await assert.rejects(
+    verifyLocalArtifacts({ ...withoutVersion, expectedChannel: 'internal', publicKeyBase64: PUBLIC_KEY_BASE64 }),
+    /expectedVersion/u,
   );
 });
 
-test('the local verification rejects a package whose bytes do not match the manifest', () => {
+test('the local verification rejects a package whose bytes do not match the manifest', async () => {
   const paths = writeArtifacts({ packageBytes: Buffer.from('tampered', 'utf8') });
-  assert.throws(
-    () =>
-      verifyLocalArtifacts({
-        ...paths,
-        expectedChannel: 'internal',
-        expectedVersion: '1.2.3',
-        publicKeyBase64: PUBLIC_KEY_BASE64,
-      }),
+  await assert.rejects(
+    verifyLocalArtifacts({
+      ...paths,
+      expectedChannel: 'internal',
+      expectedVersion: '1.2.3',
+      publicKeyBase64: PUBLIC_KEY_BASE64,
+    }),
     /package integrity/u,
   );
 });
 
-test('the local verification rejects a file manifest whose bytes do not match the manifest', () => {
+test('the local verification rejects a file manifest whose bytes do not match the manifest', async () => {
   const paths = writeArtifacts({ fileManifestBytes: Buffer.from('[]', 'utf8') });
-  assert.throws(
-    () =>
-      verifyLocalArtifacts({
-        ...paths,
-        expectedChannel: 'internal',
-        expectedVersion: '1.2.3',
-        publicKeyBase64: PUBLIC_KEY_BASE64,
-      }),
+  await assert.rejects(
+    verifyLocalArtifacts({
+      ...paths,
+      expectedChannel: 'internal',
+      expectedVersion: '1.2.3',
+      publicKeyBase64: PUBLIC_KEY_BASE64,
+    }),
     /file manifest/u,
   );
 });
 
-test('the local verification rejects a manifest for another channel or version', () => {
-  const otherChannel = writeArtifacts({ manifestOverrides: { channel: 'stable' } });
-  assert.throws(
-    () =>
-      verifyLocalArtifacts({
-        ...otherChannel,
-        expectedChannel: 'internal',
-        expectedVersion: '1.2.3',
-        publicKeyBase64: PUBLIC_KEY_BASE64,
-      }),
+test('the local verification rejects a manifest for another channel or version', async () => {
+  const otherChannel = writeArtifacts({
+    manifestOverrides: {
+      channel: 'stable',
+      packageUrl: `${PUBLIC_BASE_URL}/stable/1.2.3/portable.zip`,
+    },
+  });
+  await assert.rejects(
+    verifyLocalArtifacts({
+      ...otherChannel,
+      expectedChannel: 'internal',
+      expectedVersion: '1.2.3',
+      publicKeyBase64: PUBLIC_KEY_BASE64,
+    }),
     /channel/u,
   );
-  const otherVersion = writeArtifacts({ manifestOverrides: { version: '1.2.4' } });
-  assert.throws(
-    () =>
-      verifyLocalArtifacts({
-        ...otherVersion,
-        expectedChannel: 'internal',
-        expectedVersion: '1.2.3',
-        publicKeyBase64: PUBLIC_KEY_BASE64,
-      }),
+  const otherVersion = writeArtifacts({
+    manifestOverrides: {
+      version: '1.2.4',
+      packageUrl: `${PUBLIC_BASE_URL}/internal/1.2.4/portable.zip`,
+    },
+  });
+  await assert.rejects(
+    verifyLocalArtifacts({
+      ...otherVersion,
+      expectedChannel: 'internal',
+      expectedVersion: '1.2.3',
+      publicKeyBase64: PUBLIC_KEY_BASE64,
+    }),
     /version/u,
   );
 });
 
-test('the local verification rejects a package url that leaves the fixed public origin', () => {
+test('the local verification rejects a package url that leaves the fixed public origin', async () => {
   for (const url of [
     'https://evil.example.invalid/updates/internal/1.2.3/portable.zip',
     'https://user:pass@api.rongyinghudong.com/updates/internal/1.2.3/portable.zip',
@@ -313,48 +325,61 @@ test('the local verification rejects a package url that leaves the fixed public 
     'http://api.rongyinghudong.com/updates/internal/1.2.3/portable.zip',
   ]) {
     const paths = writeArtifacts({ manifestOverrides: { packageUrl: url } });
-    assert.throws(
-      () =>
-        verifyLocalArtifacts({
-          ...paths,
-          expectedChannel: 'internal',
-          expectedVersion: '1.2.3',
-          publicKeyBase64: PUBLIC_KEY_BASE64,
-        }),
+    await assert.rejects(
+      verifyLocalArtifacts({
+        ...paths,
+        expectedChannel: 'internal',
+        expectedVersion: '1.2.3',
+        publicKeyBase64: PUBLIC_KEY_BASE64,
+      }),
       /package url/u,
       `expected ${url} to be rejected`,
     );
   }
 });
 
-test('a throwing signature verifier fails the local verification instead of returning', () => {
+test('a throwing signature verifier fails the local verification instead of returning', async () => {
   const paths = writeArtifacts();
-  assert.throws(
-    () =>
-      verifyLocalArtifacts({
-        ...paths,
-        expectedChannel: 'internal',
-        expectedVersion: '1.2.3',
-        publicKeyBase64: PUBLIC_KEY_BASE64,
-        verifySignature: () => {
-          throw new Error('release manifest signature is invalid');
-        },
-      }),
+  await assert.rejects(
+    verifyLocalArtifacts({
+      ...paths,
+      expectedChannel: 'internal',
+      expectedVersion: '1.2.3',
+      publicKeyBase64: PUBLIC_KEY_BASE64,
+      verifySignature: () => {
+        throw new Error('release manifest signature is invalid');
+      },
+    }),
     /signature is invalid/u,
   );
 });
 
-test('a missing public key is a hard failure rather than a skipped signature check', () => {
+test('a missing public key is a hard failure rather than a skipped signature check', async () => {
   const paths = writeArtifacts();
-  assert.throws(
-    () =>
-      verifyLocalArtifacts({ ...paths, expectedChannel: 'internal', expectedVersion: '1.2.3', publicKeyBase64: '' }),
+  await assert.rejects(
+    verifyLocalArtifacts({ ...paths, expectedChannel: 'internal', expectedVersion: '1.2.3', publicKeyBase64: '' }),
     /public key/u,
+  );
+});
+
+test('the local verification propagates an async verifier rejection', async () => {
+  const paths = writeArtifacts();
+  await assert.rejects(
+    verifyLocalArtifacts({
+      ...paths,
+      expectedChannel: 'internal',
+      expectedVersion: '1.2.3',
+      publicKeyBase64: PUBLIC_KEY_BASE64,
+      verifySignature: async () => {
+        throw new Error('signature rejected by the async verifier');
+      },
+    }),
+    /signature rejected by the async verifier/u,
   );
 });
 ```
 
-最后两条是刻意的：**签名校验器抛错必须往外抛**（不能"抛了还期待函数返回"），**缺公钥必须硬失败**（不能跳过验签）。
+`a throwing signature verifier fails the local verification instead of returning` 与 `a missing public key is a hard failure rather than a skipped signature check` 这两条是刻意的：前者要求**签名校验器抛错必须往外抛**（不能"抛了还期待函数返回"），后者要求**缺公钥必须硬失败**（不能跳过验签）。
 
 - [ ] **Step 2: 运行测试并确认按测试名失败**
 
@@ -371,7 +396,7 @@ node --test scripts/lib/feed-publish.test.mjs
 ```js
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { resolve, sep } from 'node:path';
+import { isAbsolute, relative, resolve } from 'node:path';
 
 export const UPDATE_ROOT = '/opt/rongying/updates';
 export const STATE_ROOT = '/opt/rongying/updates-state';
@@ -404,6 +429,9 @@ export function parsePublishInput(raw) {
     if (typeof raw.host !== 'string' || raw.host.length === 0) {
       throw new FeedPublishError('the ssh host is required');
     }
+    if (raw.host.startsWith('-') || /\s/u.test(raw.host)) {
+      throw new FeedPublishError('the ssh host must not start with a dash or contain whitespace');
+    }
     if (typeof raw.knownHostsPath !== 'string' || raw.knownHostsPath.length === 0) {
       throw new FeedPublishError('the pinned known hosts file is required');
     }
@@ -419,7 +447,8 @@ export function parsePublishInput(raw) {
 export function assertKnownHostsPath(target, repositoryRoot) {
   const resolved = resolve(target);
   const root = resolve(repositoryRoot);
-  if (resolved === root || resolved.startsWith(`${root}${sep}`)) {
+  const rel = relative(root, resolved);
+  if (rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))) {
     throw new FeedPublishError('the pinned known hosts file must live outside the repository');
   }
   return resolved;
@@ -429,7 +458,7 @@ function sha256(buffer) {
   return createHash('sha256').update(buffer).digest('hex');
 }
 
-export function verifyLocalArtifacts(input) {
+export async function verifyLocalArtifacts(input) {
   if (typeof input.expectedChannel !== 'string' || input.expectedChannel.length === 0) {
     throw new FeedPublishError('an explicit expectedChannel is required');
   }
@@ -488,11 +517,10 @@ export function verifyLocalArtifacts(input) {
   }
 
   const verifier = input.verifySignature ?? (() => {});
-  verifier({
-    manifest,
+  await verifier({
     manifestBytes,
+    fileManifestBytes,
     packagePath: input.packagePath,
-    fileManifestPath: input.fileManifestPath,
     publicKeyBase64: input.publicKeyBase64,
   });
 
@@ -509,7 +537,7 @@ export function verifyLocalArtifacts(input) {
 }
 ```
 
-**URL 检查是 origin 级**：`protocol` + `origin` + `pathname` + 无 query / fragment / userinfo。只比 `pathname` 会放过别的域名与 `user:pass@`。
+**URL 检查是 origin 级**：`protocol` + `origin` + `pathname` + 无 query / fragment / userinfo。只比 `pathname` 会放过别的域名与 `user:pass@`。**验签是 async 的**：`verifyLocalArtifacts` 因此是 `async`，调用方必须 `await`；漏掉 `await` 会让拒绝变成未处理的 Promise 拒绝，而函数照常返回成功 —— 那等于这道闸门不存在。
 
 - [ ] **Step 4: 运行测试并确认通过**
 
@@ -522,10 +550,13 @@ node --test scripts/lib/feed-publish.test.mjs
 - [ ] **Step 5: 行为级变异验证**
 
 1. 把 `packageUrl.origin !== expectedUrl.origin` 判断删掉（只留 pathname） ⇒ 预期 `the local verification rejects a package url that leaves the fixed public origin` **按测试名变红**。
-2. 把 `expectedChannel`/`expectedVersion` 的必填检查删掉 ⇒ 预期 `the local verification requires the channel and the version explicitly` **按测试名变红**。
-3. 把 `publicKeyBase64` 的必填检查删掉 ⇒ 预期 `a missing public key is a hard failure rather than a skipped signature check` **按测试名变红**。
-4. 把 `verifier(...)` 调用包进 `try { } catch { }` ⇒ 预期 `a throwing signature verifier fails the local verification instead of returning` **按测试名变红**。
-5. 把 `needsNetwork` 判断删掉、无条件要求 host ⇒ 预期 `the offline input does not require a host or known hosts path` **按测试名变红**。
+2. 把 `expectedChannel` 的必填检查删掉 ⇒ 预期 `the local verification requires the channel and the version explicitly` **按测试名变红**。
+3. 把 `expectedVersion` 的必填检查删掉 ⇒ 预期同一条 **按测试名变红**。
+   （2 与 3 必须**分别**做，一次只删一个守卫：该测试的两个用例各自钉住一个守卫 ⇒ 单独删任一个都必须红。一次删两个虽然也会红，但**证明不了任何一个守卫是必要的** —— 那正是这轮复核抓到的假绿形状。每条删完都要逐字节恢复。）
+4. 把 `publicKeyBase64` 的必填检查删掉 ⇒ 预期 `a missing public key is a hard failure rather than a skipped signature check` **按测试名变红**。
+5. 把 `verifier(...)` 调用包进 `try { } catch { }` ⇒ 预期 `a throwing signature verifier fails the local verification instead of returning` **按测试名变红**。
+6. 把 `needsNetwork` 判断删掉、无条件要求 host ⇒ 预期 `the offline input does not require a host or known hosts path` **按测试名变红**。
+7. 把 `await verifier(...)` 的 `await` 删掉 ⇒ 预期 `the local verification propagates an async verifier rejection` **按测试名变红**。
 
 恢复后 `git diff` 为空且全绿。
 
@@ -533,6 +564,23 @@ node --test scripts/lib/feed-publish.test.mjs
 
 ```bash
 git add scripts/lib/feed-publish.mjs scripts/lib/feed-publish.test.mjs
+git commit -m "feat(feed): verify the release triple before any network write"
+```
+
+- [ ] **Step 7: 把这条测试接进 `pnpm check`**
+
+在根 `package.json` 的 `scripts` 里新增一条，并把它插入 `check` 链（放在 `check:portable-update-release` 之后）：
+
+```json
+"check:portable-feed-publish": "node --test scripts/lib/feed-publish.test.mjs"
+```
+
+此时**只有这一个测试文件存在**，所以命令只列这一个。Task 7 Step 6 会**改写这个键的值**（追加另外两个测试文件），**不会**再新增同名的键、也**不会**改动这里的插入位置。
+
+理由：不接线的话，从 Task 1 到 Task 8 之间**没有任何门禁执行这个测试文件**，“`pnpm check` 绿”对这个模块说明不了任何事。
+
+```bash
+git add package.json scripts/lib/feed-publish.mjs scripts/lib/feed-publish.test.mjs
 git commit -m "feat(feed): verify the release triple before any network write"
 ```
 
@@ -591,9 +639,9 @@ test('the commit plan lists the thirteen stages in the fixed order', () => {
   ]);
 });
 
-test('the dry run validates the triple and prints the plan without any transport', () => {
+test('the dry run validates the triple and prints the plan without any transport', async () => {
   const paths = writeArtifacts();
-  const plan = planCommit({
+  const plan = await planCommit({
     channel: 'internal',
     version: '1.2.3',
     ...paths,
@@ -606,10 +654,10 @@ test('the dry run validates the triple and prints the plan without any transport
   assert.equal(plan[0].status, 'pending');
 });
 
-test('the dry run propagates a local verification failure instead of printing a plan', () => {
+test('the dry run propagates a local verification failure instead of printing a plan', async () => {
   const paths = writeArtifacts({ packageBytes: Buffer.from('tampered', 'utf8') });
-  assert.throws(
-    () => planCommit({ channel: 'internal', version: '1.2.3', ...paths, publicKeyBase64: PUBLIC_KEY_BASE64 }),
+  await assert.rejects(
+    planCommit({ channel: 'internal', version: '1.2.3', ...paths, publicKeyBase64: PUBLIC_KEY_BASE64 }),
     /package integrity/u,
   );
 });
@@ -677,8 +725,8 @@ export const PUBLISH_STAGES = Object.freeze([
   'unlock',
 ]);
 
-export function planCommit(input) {
-  verifyLocalArtifacts({
+export async function planCommit(input) {
+  await verifyLocalArtifacts({
     packagePath: input.packagePath,
     fileManifestPath: input.fileManifestPath,
     manifestPath: input.manifestPath,
@@ -1699,7 +1747,7 @@ node --test scripts/lib/feed-publish.test.mjs
 
 - [ ] **Step 3: 写最小实现**
 
-追加到 `scripts/lib/feed-publish.mjs`（补 `appendFileSync`、`writeFileSync` 从 `node:fs`，`join` 从 `node:path`）：
+追加到 `scripts/lib/feed-publish.mjs`（`node:fs` 补 `appendFileSync`、`writeFileSync`；`node:path` 补 `join`，补齐后该 import 行恰好是 `import { isAbsolute, join, relative, resolve } from 'node:path';`，**本刀不引入 `sep`** —— "是否在仓库内"的判据与 Task 1 的 `assertKnownHostsPath` 一样用 `relative` + `isAbsolute`）：
 
 ```js
 export function appendAuditStage(input) {
@@ -1717,7 +1765,8 @@ export function appendAuditStage(input) {
 function assertOutsideRepository(target, repositoryRoot) {
   const resolved = resolve(target);
   const root = resolve(repositoryRoot);
-  if (resolved === root || resolved.startsWith(`${root}${sep}`)) {
+  const rel = relative(root, resolved);
+  if (rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))) {
     throw new FeedPublishError('the audit log must live outside the repository');
   }
   return resolved;
@@ -1869,7 +1918,7 @@ export async function verifyPublicArtifacts(input) {
   const fileManifestPath = join(input.temporaryRoot, PORTABLE_FILE_MANIFEST_NAME);
   writeFileSync(packagePath, packageBytes);
   writeFileSync(fileManifestPath, fileManifestBytes);
-  input.verifier({ manifestBytes, fileManifestBytes, packagePath, publicKeyBase64: input.publicKeyBase64 });
+  await input.verifier({ manifestBytes, fileManifestBytes, packagePath, publicKeyBase64: input.publicKeyBase64 });
 
   return { ok: true, manifestSha256: createHash('sha256').update(manifestBytes).digest('hex') };
 }
@@ -1943,7 +1992,7 @@ export async function runCommit(input) {
 
   let local;
   try {
-    local = verifyLocalArtifacts({
+    local = await verifyLocalArtifacts({
       packagePath: input.packagePath,
       fileManifestPath: input.fileManifestPath,
       manifestPath: input.manifestPath,
@@ -2223,6 +2272,8 @@ node --test scripts/lib/feed-publish.test.mjs
 git add scripts/lib/feed-publish.mjs scripts/lib/feed-publish.test.mjs
 git commit -m "feat(feed): publish the manifest over sftp and verify it on the public url"
 ```
+
+**验收项（真验证器）**：本任务与 Task 7 是**第一次注入真 `verifyPortableRelease`** 的地方。Task 1 的夹具用的是 `JSON.stringify(payload)`（插入顺序），而真生产者/验证器按 **`canonicalize()`（排序键）** 签 —— 夹具直接喂给真验证器会以 `release manifest signature is invalid` 失败，**看起来像产品 bug**。接真验证器时必须实跑一次三角验证，不要假设。
 
 ---
 
@@ -2660,7 +2711,7 @@ git commit -m "feat(feed): add the async pinned ssh and sftp transport"
 
 - Create: `scripts/feed-publish.mjs`
 - Test: `scripts/lib/feed-publish-cli.test.mjs`
-- Modify: `package.json`
+- Modify: `package.json`（只扩写 Task 1 Step 7 已新增的 `check:portable-feed-publish` 的值，不新增同名键）
 
 - [ ] **Step 1: 写失败的测试**
 
@@ -2852,7 +2903,7 @@ async function main(argv) {
       return 1;
     }
     try {
-      const plan = planCommit({
+      const plan = await planCommit({
         channel: input.channel,
         version: input.version,
         packagePath: resolve(packagePath),
@@ -2954,15 +3005,10 @@ async function main(argv) {
         temporaryRoot,
         transport,
         publicKeyBase64,
-        verifySignature: ({ manifestBytes, fileManifestBytes, packagePath: targetPackage }) =>
-          verifyPortableRelease({
-            manifestBytes,
-            fileManifestBytes,
-            packagePath: targetPackage,
-            publicKeyBase64,
-          }),
-        verifier: ({ manifestBytes, fileManifestBytes, packagePath: targetPackage }) =>
-          verifyPortableRelease({ manifestBytes, fileManifestBytes, packagePath: targetPackage, publicKeyBase64 }),
+        verifySignature: ({ manifestBytes, fileManifestBytes, packagePath }) =>
+          verifyPortableRelease({ manifestBytes, fileManifestBytes, packagePath, publicKeyBase64 }),
+        verifier: ({ manifestBytes, fileManifestBytes, packagePath }) =>
+          verifyPortableRelease({ manifestBytes, fileManifestBytes, packagePath, publicKeyBase64 }),
       });
       console.log(JSON.stringify(result, null, 2));
       if (result.outcome === 'done') return 0;
@@ -3008,15 +3054,15 @@ node --test scripts/lib/feed-publish-cli.test.mjs
 
 恢复后全绿且 `git diff` 为空。
 
-- [ ] **Step 6: 接入门禁**
+- [ ] **Step 6: 扩写门禁命令**
 
-`package.json` 新增：
+Task 1 Step 7 已经新增了 `check:portable-feed-publish`（当时只列 `scripts/lib/feed-publish.test.mjs` 一个文件）。本步**只改写这个键的值**，把它扩成三个文件；键名与它在 `check` 链里的位置都不动，**不得**再新增第二条同名脚本、也不得改插入点：
 
 ```json
 "check:portable-feed-publish": "node --test scripts/lib/feed-publish.test.mjs scripts/lib/feed-publish-transport.test.mjs scripts/lib/feed-publish-cli.test.mjs"
 ```
 
-并插到 `check` 里 `pnpm check:portable-release-assembly` **之后**、`pnpm lint` **之前**。
+新增的两个文件到这一步才存在，所以 Task 1 Step 7 列不上它们：`scripts/lib/feed-publish-transport.test.mjs` 是 Task 6 的产物，`scripts/lib/feed-publish-cli.test.mjs` 是本 Task 的产物。
 
 - [ ] **Step 7: 提交**
 
@@ -3024,6 +3070,8 @@ node --test scripts/lib/feed-publish-cli.test.mjs
 git add scripts/feed-publish.mjs scripts/lib/feed-publish-cli.test.mjs package.json
 git commit -m "feat(feed): wire all four cli modes to the real transport"
 ```
+
+**验收项（签名闸门真的在工作）**：`verifyPortableRelease` 是 **async** 的，注入后必须确认 `verifyLocalArtifacts` 与 `verifyPublicArtifacts` 都 **await** 了它。证明方式不是读代码，而是：注入一个**永远拒绝**的 verifier，确认 `--dry-run` 以 `pre-verify: fail` 收口（而不是未处理的 Promise 拒绝）；再把 `await` 删掉，确认同一条路径**变绿** —— 那就说明闸门是假的。
 
 ---
 
