@@ -2803,7 +2803,7 @@ test('the stable input carries every field it was given instead of a default', (
 test('the reused manifest guard is exported and keeps the module error class', () => {
   assert.equal(typeof assertNotReusedManifest, 'function');
   assert.throws(() => assertNotReusedManifest({ manifestBytes: Buffer.from('reuse-me') }), FeedPublishError);
-  assert.throws(() => assertNotReusedManifest({ manifestBytes: undefined }), FeedPublishError);
+  assert.throws(() => assertNotReusedManifest({ manifestBytes: undefined }), /manifestBytes with no value/u);
   assert.doesNotThrow(() => assertNotReusedManifest({ fileManifest: FILE_MANIFEST }));
 });
 
@@ -2834,4 +2834,18 @@ test('the stable input feeds the real release builder the stable channel and the
   assert.equal(manifest.packageUrl, 'https://api.rongyinghudong.com/updates/stable/1.2.3/portable.zip');
   assert.equal(manifest.fileManifestSha256, createHash('sha256').update(fileManifestBytes).digest('hex'));
   assert.equal(release.fileManifestBytes.equals(fileManifestBytes), true);
+});
+
+test('the local verification hands back the file manifest bytes it verified', async () => {
+  const paths = writeArtifacts();
+  const verified = await verifyLocalArtifacts({
+    ...paths,
+    expectedChannel: 'internal',
+    expectedVersion: '1.2.3',
+    publicKeyBase64: PUBLIC_KEY_BASE64,
+    verifySignature: () => {},
+  });
+  assert.ok(Buffer.isBuffer(verified.fileManifestBytes));
+  assert.ok(verified.fileManifestBytes.equals(FILE_MANIFEST_BYTES));
+  assert.equal(createHash('sha256').update(verified.fileManifestBytes).digest('hex'), verified.fileManifestSha256);
 });

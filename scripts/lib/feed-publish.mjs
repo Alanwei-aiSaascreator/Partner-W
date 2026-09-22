@@ -143,6 +143,7 @@ export async function verifyLocalArtifacts(input) {
     manifestSha256: sha256(manifestBytes),
     packageSha256,
     packageSize: packageBytes.length,
+    fileManifestBytes,
     fileManifestSha256,
     fileManifestSize: fileManifestBytes.length,
     packageUrl: manifest.packageUrl,

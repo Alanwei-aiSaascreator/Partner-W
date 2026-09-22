@@ -649,6 +649,7 @@ export async function verifyLocalArtifacts(input) {
     manifestSha256: sha256(manifestBytes),
     packageSha256,
     packageSize: packageBytes.length,
+    fileManifestBytes,
     fileManifestSha256,
     fileManifestSize: fileManifestBytes.length,
     packageUrl: manifest.packageUrl,
@@ -4648,14 +4649,15 @@ git commit -m "feat(feed): re-sign the manifest for the stable channel"
 
 | #    | 变异（hunk：`-` 删 / `+` 加，**整行**）                                                                                                                                                      | 读数                  | 预先写明的红名单                                         | 核对                                                                                                                            |
 | ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| 对照 | 守卫文案尾巴：`- …manifestBytes with ${carried}`,`/`+ …manifestBytes carrying ${carried}`,`（`mjs:1136`）                                                                                    | **`156 / 0`（全绿）** | —（证明装置不是"改什么都红"）                            | 无红                                                                                                                            |
+| 对照 | 守卫文案尾巴：`- …manifestBytes with ${carried}`,`/`+ …manifestBytes carrying ${carried}`,`（`mjs:1137`）                                                                                    | **`156 / 0`（全绿）** | —（证明装置不是"改什么都红"）                            | 无红                                                                                                                            |
 | M-A1 | `- throw new FeedPublishError(` / `+ throw new Error(`（`mjs:1136`，锚点 1 次）                                                                                                              | **`154 / 2`**         | 两条守卫用例                                             | `EXPECTED_REDS_MISSING 0`；**没有第三条跟着红**                                                                                 |
 | M-A2 | 删掉 `buildStableManifestInput` 里的 `assertNotReusedManifest(input);`（`mjs:1142`，锚点 1 次）                                                                                              | **`155 / 1`**         | `the stable input refuses to reuse an internal manifest` | 命中；无第二条红                                                                                                                |
-| M-C1 | **消费者**契约漂移：`portable-update-release.mjs` `- assertVersion(input.minLauncherVersion, 'minLauncherVersion');` / `+ assertVersion(input.launcherMin, 'minLauncherVersion');`（`:374`） | **`154 / 2`**         | 集成钉子                                                 | 命中；另一条红是**本来就**接 `buildPortableRelease` 的旧用例 `the real release verifier accepts a canonically signed manifest…` |
+| M-C1 | **消费者**契约漂移：`portable-update-release.mjs` `- assertVersion(input.minLauncherVersion, 'minLauncherVersion');` / `+ assertVersion(input.launcherMin, 'minLauncherVersion');`（`:373`） | **`154 / 2`**         | 集成钉子                                                 | 命中；另一条红是**本来就**接 `buildPortableRelease` 的旧用例 `the real release verifier accepts a canonically signed manifest…` |
 | M-C2 | `- channel: 'stable',` / `+ channel: input.channel,`（`mjs:1146`，锚点 1 次）                                                                                                                | **`154 / 2`**         | 集成钉子 + 规定用例 1                                    | 两条都命中                                                                                                                      |
 | M-C3 | `- export const PUBLIC_BASE_URL = 'https://api.rongyinghudong.com/updates';` / `+ …'/update';`（`mjs:8`）                                                                                    | **`154 / 2`**         | 集成钉子                                                 | 命中；另一条红是常量用例 `the roots and the channel whitelist are fixed constants`                                              |
 
 - **6 次全部 `RESTORE_SHA256_EQUAL true` + `GIT_STATUS_IDENTICAL true`**（模块基线 `3b7f2232d86f`；`portable-update-release.mjs` 基线 `a3bef2c6673d`，恢复后 sha256 相等、`git status` 里它**不在**改动列表中）。
+- ⚠️ **上表两处行号差一，2026-09-23 由 Task 6 的 Step −1 按实测改正**（读数见 Task 6 账本第〇节第 4 项）：**M-C1 那格**原写 `:374`，实测 `assertVersion(input.minLauncherVersion, 'minLauncherVersion');` 在 **`portable-update-release.mjs:373`**（`:374` 是下一行的 `if (input.channel !== 'stable' …)`）；**对照那格**原写 `mjs:1136`，实测**被改的那一行**（守卫文案尾巴）是 **`feed-publish.mjs:1137`** —— `:1136` 是 `throw new FeedPublishError(`，那是 **M-A1** 该引的行号，**M-A1 那格本来就没写错、不改**。两处都只改行号，读数一字未动（那两格记的是当时实测的数字）。
 - **红名单核对的口径**：装置打印的红名单里，除测试名外还有 node 自己的汇总行 `failing tests:`；那一行不是测试，**不计入**（读数以 `ℹ pass / ℹ fail` 为准）。
 - **M-C1 是本刀最有信息量的一条**：它证明**集成钉子真的能发现"消费者契约漂移"**（消费者把入参键 `minLauncherVersion` 改名 ⇒ 只有那条**真的把 helper 的产物喂给消费者**的用例和消费者自己的用例会红；**所有对着字面量比对的用例全都绿**）—— 这正是闸门 C 说"现有断言只对字面量"要补的那一层。
 
@@ -4663,7 +4665,7 @@ git commit -m "feat(feed): re-sign the manifest for the stable channel"
 
 - **闸门事实核对（本刀复核，属实）**：本刀之前 `buildStableManifestInput` **零调用者**（`grep` 只在模块自身与测试里出现）；Task 7 规定的 import 表里**没有它**、四种模式**没有一种**会调它；Task 6 的 Files 只有 transport + 它的测试；Task 8 只改手册。而操作员自然会去用的 `scripts/make-portable-update.mjs:63–83` 走的是 **`buildPortableFileManifest` + `createPortableUpdateArchive` 重新打包**那条路 —— 那正是 **§6.10 禁止**的（stable 只能复用原字节）。
 - **处置：给 Task 7 的规定块加第五种模式 `--re-sign-stable`**（离线）。**它的实现就是** `buildPortableRelease({ ...buildStableManifestInput(verifiedLocal), signingKeyPem, publicKeyBase64 })`：先用 `verifyLocalArtifacts({ expectedChannel: 'internal' })` 验过**内部发布的三件产物**（这是"复用原字节"的**唯一证据来源**），再把结果喂给 `buildStableManifestInput`，最后交给**真签名者**。**因此：**`buildStableManifestInput` 有了**排期好的调用者**（Task 7 的第五模式）、`assertNotReusedManifest` 有了**在用的调用者**（`buildStableManifestInput`）⇒ **追踪表那条"任何 helper 只定义未接入主链 = 缺陷"现在是"已满足"，不是"被豁免"**。
-- **本刀对 Task 7 规定块的改动（该块没有镜像对，CLI 文件尚不存在）**：① `--re-sign-stable` 进 mode 分派与 USAGE（`五种模式`）；② `needsNetwork` 改成 `mode !== 'dry-run' && mode !== 're-sign-stable'`；③ 新增离线分支（`--channel` 必须 stable、`--version`/`--package`/`--file-manifest`/`--manifest`/`--stable-out` 必填、产物用 `writeFileSync(..., { flag: 'wx' })` **拒绝覆盖**）；④ 新增两个环境读取器 `requireSigningKeyFileFromEnvironment` / `requireLauncherVersionFromEnvironment`（与既有的 `requirePublicKeyFromEnvironment` 同形）；⑤ Step 1 新增一条 CLI 守卫用例（三条**不需要环境变量**的臂：缺 `--version` / `--channel` 不是 stable / 缺 `--stable-out`），Step 4 的预期 `pass 6` ⇒ **`pass 7`**；⑥ 架构段、文件地图、依赖顺序、Task 7 标题、Step 7 提交消息、Task 5 账本末尾的"未做"一句全部从"四种模式"改成"五种模式"；⑦ 交货验收项第 3 条（`--audit-out` 必须真的被用掉）**显式登记 `--re-sign-stable` 为例外**并写清三条理由（§6.11 是闭集、编新阶段名等于改规格、可追溯性由 `verifyLocalArtifacts` + 打印的三个摘要 + Task 8 手册承载）。
+- **本刀对 Task 7 规定块的改动（该块没有镜像对，CLI 文件尚不存在）**：① `--re-sign-stable` 进 mode 分派与 USAGE（`五种模式`）；② `needsNetwork` 改成 `mode !== 'dry-run' && mode !== 're-sign-stable'`；③ 新增离线分支（`--channel` 必须 stable、`--version`/`--package`/`--file-manifest`/`--manifest`/`--stable-out` 必填、产物用 `writeFileSync(..., { flag: 'wx' })` **拒绝覆盖**）；④ 新增两个环境读取器 `requireSigningKeyFileFromEnvironment` / `requireLauncherVersionFromEnvironment`（与既有的 `requirePublicKeyFromEnvironment` 同形）；⚠️ **2026-09-23 更正：后一个已在 Task 6 的 Step −1 删掉**（理由与读数见 Task 6 账本第〇节第 1 项）—— 本节其余内容仍然成立；⑤ Step 1 新增一条 CLI 守卫用例（三条**不需要环境变量**的臂：缺 `--version` / `--channel` 不是 stable / 缺 `--stable-out`），Step 4 的预期 `pass 6` ⇒ **`pass 7`**；⑥ 架构段、文件地图、依赖顺序、Task 7 标题、Step 7 提交消息、Task 5 账本末尾的"未做"一句全部从"四种模式"改成"五种模式"；⑦ 交货验收项第 3 条（`--audit-out` 必须真的被用掉）**显式登记 `--re-sign-stable` 为例外**并写清三条理由（§6.11 是闭集、编新阶段名等于改规格、可追溯性由 `verifyLocalArtifacts` + 打印的三个摘要 + Task 8 手册承载）。
 - ⚠️ **本刀没有做、也不该做的事**：没有把 `--re-sign-stable` 接进 `make-portable-update.mjs`（那是**重新打包**那条路，改它等于把"重新打包"洗成"重签"）；也**没有**给它编一个新的审计阶段名（见 ⑦）。**覆盖臂不可自动化**（要真钥匙）⇒ 登记为"只在真机离线签名演练里验"。
 
 **六、C（Important）+ D 三条 Minor + 承前六项：逐条落地**
@@ -4671,7 +4673,7 @@ git commit -m "feat(feed): re-sign the manifest for the stable channel"
 - **C（集成钉子）已加**：新用例 `the stable input feeds the real release builder the stable channel and the original bytes`（`test.mjs:2810`）—— 它**结束在 `buildPortableRelease`**，断言**签名载荷**里的 `channel === 'stable'`、`packageUrl === 'https://api.rongyinghudong.com/updates/stable/1.2.3/portable.zip'`（**字面量**，不是常量引用）、`fileManifestSha256` 等于**原字节**的 sha256，以及返回的 `fileManifestBytes` 与原字节逐字节相等（**复用，不是重建**）。
 - **D3（测试读起来像在做 I/O）已修**：`buildStableManifestInput` 是**零 I/O 的纯取值构造函数**（只读 `input.packagePath` 这个**字符串**），所以三条用例里的 `writeArtifacts()` 全部换成字面量 `'/outside/portable.zip'`。
 - **D4（中段 import）已修**：`import { buildStableManifestInput }` 从 `test.mjs:2746`（2700 行测试之后）移进文件头部的既有 import 列表（`test.mjs:8–19`，与 `assertNotReusedManifest` 一起）—— 该列表本来就从这个模块导入。**代价**：镜像第 1 对因此 +2 行（已重同步，见第二节）。
-- **Minor 6（拒绝文案点不出是哪个键）已修**：文案从 `the stable manifest must be signed on its own, never copied from the internal channel` 改成 `the stable manifest must be signed on its own, but the input carries the internal key manifestBytes with ${carried}`，其中 `carried` 按 `input.manifestBytes === undefined` 取 `'no value'` / `'a value'` ⇒ **点名了键、也区分了"有值/值为 undefined"两种形态**（判据仍是 `Object.hasOwn`，fail-closed 不变）。**被钉住的仍然只有前缀** `must be signed on its own`（规定正则没改）；**尾巴照旧刻意不钉**。
+- **Minor 6（拒绝文案点不出是哪个键）已修**：文案从 `the stable manifest must be signed on its own, never copied from the internal channel` 改成 `the stable manifest must be signed on its own, but the input carries the internal key manifestBytes with ${carried}`，其中 `carried` 按 `input.manifestBytes === undefined` 取 `'no value'` / `'a value'` ⇒ **点名了键、也区分了"有值/值为 undefined"两种形态**（判据仍是 `Object.hasOwn`，fail-closed 不变）。**被钉住的仍然只有前缀** `must be signed on its own`（规定正则没改）；`'a value'` 那一臂同样只钉错误类。⚠️ **"尾巴照旧刻意不钉"这句话在 2026-09-23 被 Task 6 的 Step −1 更正一半**（读数见 Task 6 账本第〇节第 3 项）：这里说的"尾巴不钉"只对**整句文案的尾巴**成立；`carried` 的 `'no value'` 那一臂是一个**新分支**，而追踪规则写着"每条新增守卫与接线都必须有测试按名钉住" ⇒ **新分支没有钉子就是缺陷**。现在它有一条按名钉子（`assert.throws(() => assertNotReusedManifest({ manifestBytes: undefined }), /manifestBytes with no value/u)`，`feed-publish.test.mjs:2806-2809`），变异读数 **`157 / 156 / 1`**（只有那条守卫用例红）。
 - **E1（`§七` 的旧数字）已修**：`§七` 那一节现在同时给出**当前读数**（1153 / 2837 / 156 条；`test` 1346–2746 ⇔ 围栏 1781 / 3183；`mjs` 456–1131 ⇔ 围栏 3197 / 3874）与**它写作当时的读数**（1108 / 2744 / 151 条；456–1108 ⇔ 围栏 3195 / 3849），并写明**"同一处边界两种说法"这个矛盾在本刀关闭**。上表（Task 5 账本第三节）也加了指向本节的 ⚠️。
 - **E2（承前第 2 项 / Minor 7）不改数字，附证据 —— 闸门这一条是误报**：闸门说"`起点差 0–7 行` 是错的，实测起点差是 1 / 2 / 1 / 2 / 3 / 7 ⇒ 1–7"。**本刀把两边都重测了一遍**：把 `139146b8` 与 `16fba28c` 两个提交的**计划 + 两个文件**取出，各跑一遍按内容定位的检查器 ⇒ **旧读数在 `139146b8` 上逐条命中**（`test 1–374` / `mjs 1–148` / `test 376–561` / `mjs 150–202` / `test 563–868` / `mjs 204–442`），**新读数在 `16fba28c` 上逐条命中**（上表那六个数）。逐对起点差 = **0 / 0 / 1 / 2 / 3 / 7**（前两对的块都从第 1 行开始 ⇒ 起点差是 **0**），终点差 = **1 / 2 / 3 / 7 / 4 / 12** ⇒ **`起点差 0–7 行、终点差 1–12 行` 是对的**。闸门那个序列（1、2、1、2、3、7）是"前两对的**终点**差 + 后四对的**起点**差"的**混读**。**处置**：把**逐对数字**写进那一行（消除歧义，避免第三次返工），并在那里写明"别再改成 1–7"。
 - **E3（引错纪律条）已修**：`§四` 末尾原先写"本计划**通用纪律第 3 条**警告过的形状"，改**正确引用**为**Task 4 账本"次数"段那份作废清单的第 ② 条**（原文记录 `tests 1 pass 0 fail 1` 那种"加载失败被当成红"的读数），并写明为什么原引用是错的（那个编号项讲的是 hunk / 可达性 / 红名单）。
@@ -4693,7 +4695,7 @@ git commit -m "feat(feed): re-sign the manifest for the stable channel"
 
 - **没有实现 Task 6 / 7 / 8**：`--re-sign-stable` 只写进**规定块**，代码一行未落；transport、手册、检查单同样未动。
 - **没有连过任何服务器**：本刀全部读数来自本地 `node --test` 与本地文件比较。**没有生成任何密钥、没有打包、没有上传。**
-- **`--re-sign-stable` 的"拒绝覆盖"臂不可自动化**（要真钥匙）⇒ **未验**；`MOFANG_UPDATE_SIGNING_KEY_FILE` / `MOFANG_LAUNCHER_VERSION` 缺失时的报错路径同样**未验**（CLI 文件还不存在）。
+- **`--re-sign-stable` 的"拒绝覆盖"臂不可自动化**（要真钥匙）⇒ **未验**；`MOFANG_UPDATE_SIGNING_KEY_FILE` 缺失时的报错路径同样**未验**（CLI 文件还不存在）。⚠️ **2026-09-23 更正**：本句原还点名 `MOFANG_LAUNCHER_VERSION`，那个变量与它的读取器已在 Task 6 的 Step −1 **删掉**（`minLauncherVersion` 改从**验过的 manifest** 读），所以它的"报错路径未验"这一项**不再存在**（见 Task 6 账本第〇节第 1 项）。
 - **M-C 那几条变异里，集成钉子从来没有"单独变红"过**（红名单里总有另一条）：这是**模块已有的钉子很密**的结果，不是集成钉子没价值 —— 它**唯一**能钉住的是"helper 的产物被**真签名者**接受"这一层（M-C1 里它是两条能发现"消费者契约漂移"的用例之一）。**本刀没有为它造出一条"只它红"的变异**，如实登记。
 
 ---
@@ -5065,6 +5067,38 @@ git commit -m "feat(feed): add the async pinned ssh and sftp transport"
 
 ---
 
+### Task 6 账本（2026-09-23，本刀实测）
+
+**本刀切三片，三条提交**（都用**显式 pathspec**、消息末尾都带 `Co-Authored-By: Claude Code <noreply@anthropic.com>`，**没有** `--amend`、没有重写历史）：
+
+1. **承前四项（Step −1）** —— 计划（Task 7 规定块两项 + Task 5 账本两处行号）＋ `feed-publish.mjs`（一行）＋ `feed-publish.test.mjs`（一条按名钉子 + 一条断言）。
+2. **真实 transport** —— `feed-publish-transport.mjs` + 它的测试（规定块**逐字节**转写）。
+3. **preflight 只读承诺按 transport 身份钉住** —— `feed-publish.test.mjs` 一条新用例 + 本账本 + 门禁表。
+
+#### 〇、承前四项（Step −1）
+
+1. **`MOFANG_LAUNCHER_VERSION` 由"重打一遍"改成"读派生值"。** 改法一行：`minLauncherVersion: verified.manifest.minLauncherVersion`。**删掉**：`requireLauncherVersionFromEnvironment()` 整个函数与它在 `--re-sign-stable` 里的调用点（规定块里各一处），以及计划里另外两处会把读者指向一个**已不存在**的读取器的引用（Task 5 账本第六节 ④ 的"新增两个环境读取器"、Task 5 账本第九节末的"`MOFANG_LAUNCHER_VERSION` 缺失时的报错路径同样未验"）—— 前者改成"一个"并加指向本节的 ⚠️，后者删掉那个变量名（`MOFANG_UPDATE_SIGNING_KEY_FILE` 的报错路径仍然未验，保持不变）。**理由（本仓库自己的教条：读派生值，别重打）**：这个模式的**全部目的**是忠实复用那份**已被 `verifyLocalArtifacts` 验过**的内部发布字节，而 `minLauncherVersion` 就**在签名载荷里**（spec §4.2：Go 启动器在交换前按它拒绝）；重打一遍等于给同一份字节留了两个**互相矛盾也没人发现**的启动器下限 —— `buildPortableRelease` 只检查它是**格式合法**的版本串。改后这个值**只**可能来自那份验过的 manifest。**理由已写进计划正文**（Task 7 规定块下方新增的"两项承前修正"段）。
+2. **"验过的字节"与"签名的字节"不再是两次读。** `verifyLocalArtifacts` 的返回值**新增 `fileManifestBytes`**（`feed-publish.mjs:146`，紧挨 `fileManifestSha256`）；`--re-sign-stable` 改成 `const verified = await verifyLocalArtifacts({…})` 并**全部取自 `verified`**（`minLauncherVersion` / `fileManifest` / `fileManifestBytes`），模式自己那句 `readFileSync(resolvedFileManifestPath)` **删掉**。**只回字节、不回解析后的 `fileManifest`**：解析由验过的字节当场得出，把 `JSON.parse` 挪进这个**已冻结**的模块只会多一条失败形态（文件清单不是 JSON 时多一条抛错路径），收益为零。**这正是 `runCommit` 已经在用的形状**（`local.manifestBytes` 直接喂给临时 manifest 的上传，`feed-publish.mjs:855` / `:1091`）。**改了规定块 ⇒ 同一提交重同步镜像**：模块第 1 对 **`mjs 1–150`（围栏 506/657）⇒ `mjs 1–151`（围栏 506/658）**，其余四对模块边界各 **+1**（`153–210` / `212–455` / `457–1132` / `1134–1154`）；测试侧五对内容未动、只有围栏行号随计划下移（`112/490` 不变，`727/916`、`1040/1348`、`1782/3184`、`4457/4488`）。**十对逐对 `diff` 全部 `DIFF_EMPTY`**。
+   - **钉子（测试侧新增，落在所有镜像之外）**：`the local verification hands back the file manifest bytes it verified`（`feed-publish.test.mjs:2839`）断言返回的是 `Buffer`、与磁盘夹具逐字节相等、且**它的 sha256 就是同一返回值里的 `fileManifestSha256`**（即"你拿到的字节就是那个摘要描述的字节"）。
+   - **变异 P4-item2**：删掉 `feed-publish.mjs:146` 的 `fileManifestBytes,`（锚点 1 次）⇒ **`157 / 156 / 1`**，红的**只有**那条新用例（`EXPECTED_REDS_MISSING 0`，**没有第二条**）。
+3. **`carried` 那条新分支不再是无名氏（关闭 Task 5 账本第五节 Minor 6 留下的那个存活项）。** 原先只断言错误类 ⇒ 翻 `'no value'` ⇒ `'a value'` 得 **156/156/0**。**改法**：把那条臂换成断言**文案**：`assert.throws(() => assertNotReusedManifest({ manifestBytes: undefined }), /manifestBytes with no value/u)`（`feed-publish.test.mjs:2806`）。**变异 P4-item3**：`'no value'` ⇒ `'a value'`（锚点 1 次）⇒ **`157 / 156 / 1`**，红的就是 `the reused manifest guard is exported and keeps the module error class`，**没有第二条**。**同时更正当初留下它的那句论证**：Task 5 账本说的"尾巴照旧刻意不钉"是关于**整句文案的尾巴**（`'a value'` 那一臂仍只钉错误类，口径不变）；而本项钉的是一个**新分支的取值** —— 计划自己的追踪规则写着"每条新增守卫与接线都必须有测试按名钉住" ⇒ **新分支没有钉子就是缺陷，不是"刻意不钉"**。这句更正写在 Task 5 账本第五节的 Minor 6 行上。
+4. **账本两处行号差一，已按实测改正。** ① Task 5 账本第三节 M-C1 那格写 `portable-update-release.mjs:374`，实测 `assertVersion(input.minLauncherVersion, 'minLauncherVersion');` 在 **`:373`**（`:374` 是下一行的 `if (input.channel !== 'stable' …)`）；② 同节**对照**那格把守卫文案尾巴记成 `mjs:1136`，实测**被改的那一行**是 **`feed-publish.mjs:1137`**（`:1136` 是 `throw new FeedPublishError(` —— 那是 **M-A1** 该引的行号，**M-A1 那格不改**）。
+
+**〇 的读数**：`feed-publish.mjs` **1154** 行（原 1153）、`feed-publish.test.mjs` **2851** 行（原 2837 —— 新增 14 行、`prettier --write` 把本刀那条多行 `assert.throws` 折回一行又减 3 行 ⇒ 净 **+14**）、套件 **`ℹ tests 157 / ℹ pass 157 / ℹ fail 0`**（原 156；**+1** 条：`the local verification hands back the file manifest bytes it verified`）。**测试名逐条比过：156 → 157，只多出那一条，没有一条名字被删或改。**
+⚠️ **行号在 `prettier --write` 之后重测过一遍**（本刀实测，别再引用折行前的读数）：`prettier --write` 对 `feed-publish.mjs` 是 `(unchanged)`、对 `feed-publish.test.mjs` 与**计划文件**都**有**改动 —— 计划文件 **5716 ⇒ 5753** 行（**本句写作时的读数**；本句自己又占一行 ⇒ 提交前最后一次 `wc -l` 是 **5754**），但**十对镜像的围栏行号一个都没动**（本刀新增/改动的计划文字**全部落在最后一个围栏 4488 之后**），重排后十对仍然 `DIFF_EMPTY`（读数见下）。本刀上面与下面引用的测试行号都是**重排之后**重测的：`feed-publish.test.mjs:2806`（那条按名断言折成一行）与 `:2839`（新用例的 `test(` 行）。**变异读数也全部在重排后的字节上重跑过一遍**（不是"折行前跑过就算"）。
+**〇 的变异（3 条：2 条按名变红 + 1 条对照）**，装置与通用纪律第 3 条同规格（锚点恰好 1 次 → 变异**前**取 sha256 基线、备份落在**仓库外** → 写盘后重读确认 → `node --check` → 打印**整行** hunk → 跑套件 → 核对红名单 → **逐字节恢复** → 比 sha256 → 断言 `git status --porcelain` 与变异前逐字相同）：
+
+| #          | 变异（`-` 删 / `+` 加，**整行**）                                                                          | 读数                  | 预先写明的红名单                     | 核对                                                                             |
+| ---------- | ---------------------------------------------------------------------------------------------------------- | --------------------- | ------------------------------------ | -------------------------------------------------------------------------------- |
+| P4-item3   | `- … === undefined ? 'no value' : 'a value';` / `+ … === undefined ? 'a value' : 'a value';`（`mjs:1135`） | **`157 / 156 / 1`**   | 守卫用例                             | 命中；**没有第二条**（红名单外的只有 node 自己的 `failing tests:` 汇总行，不计） |
+| P4-item2   | `-     fileManifestBytes,`（`mjs:146`，锚点 1 次）                                                         | **`157 / 156 / 1`**   | `the local verification hands back…` | 命中；**没有第二条**                                                             |
+| P4-control | 纯改名：`carried` ⇒ `carriedLabel`（两处，各 1 次）                                                        | **`157 / 0`（全绿）** | —（证明装置不是"改什么都红"）        | 无红                                                                             |
+
+- **3 次全部 `RESTORE_SHA256_EQUAL true` + `GIT_STATUS_IDENTICAL true`**（模块基线 `282fde0746d4…`）。
+- 装置形态说明：本刀的备份**落在仓库外**（`%TEMP%` 下的 `t6work/bak/`），不是 Task 5 那套把 `.mutbak` 写在**被变异文件旁边**的做法 —— 后者在中途被打断时会**在仓库里留下一个临时文件**（那条纪律要求临时文件一律在仓库外）。
+
+---
+
 ### Task 7: CLI（五种模式全接，顶层 await）
 
 **Files:**
@@ -5264,14 +5298,6 @@ function requireSigningKeyFileFromEnvironment() {
   return value;
 }
 
-function requireLauncherVersionFromEnvironment() {
-  const value = process.env.MOFANG_LAUNCHER_VERSION;
-  if (typeof value !== 'string' || value.length === 0) {
-    throw new FeedPublishError('MOFANG_LAUNCHER_VERSION is required to sign the stable manifest offline');
-  }
-  return value;
-}
-
 async function main(argv) {
   const mode = argv.includes('--commit')
     ? 'commit'
@@ -5360,11 +5386,9 @@ async function main(argv) {
     try {
       const publicKeyBase64 = requirePublicKeyFromEnvironment();
       const signingKeyFile = requireSigningKeyFileFromEnvironment();
-      const minLauncherVersion = requireLauncherVersionFromEnvironment();
       const resolvedPackagePath = resolve(packagePath);
       const resolvedFileManifestPath = resolve(fileManifestPath);
-      const fileManifestBytes = readFileSync(resolvedFileManifestPath);
-      await verifyLocalArtifacts({
+      const verified = await verifyLocalArtifacts({
         packagePath: resolvedPackagePath,
         fileManifestPath: resolvedFileManifestPath,
         manifestPath: resolve(manifestPath),
@@ -5377,9 +5401,9 @@ async function main(argv) {
       const release = await buildPortableRelease({
         ...buildStableManifestInput({
           version: input.version,
-          minLauncherVersion,
-          fileManifest: JSON.parse(fileManifestBytes.toString('utf8')),
-          fileManifestBytes,
+          minLauncherVersion: verified.manifest.minLauncherVersion,
+          fileManifest: JSON.parse(verified.fileManifestBytes.toString('utf8')),
+          fileManifestBytes: verified.fileManifestBytes,
           packagePath: resolvedPackagePath,
           publishedAt: new Date().toISOString(),
         }),
@@ -5532,6 +5556,11 @@ await main(process.argv.slice(2)).then(
 **必须遵守：** 顶层 `await`，只用 `process.exitCode`，**不得**在 Promise 完成前 `process.exit`；batch 文件是**仓库外唯一临时文件**（`mkdtempSync`），并在 `finally` 清理，因此并发运行不会互相覆盖；`--break-lock` 的 `--reason` / `--audit-out` / `--confirm-runid` **三角都必填**；`--commit` 分支必须把锁记录的三个注入值一起交给 `runCommit`（`operator` 取 `process.env.MOFANG_FEED_OPERATOR ?? 'unknown'`，与 `--break-lock` 同一来源；`startedAt` 取 CLI 启动时的 `new Date().toISOString()`；`machine` 取 `hostname()`，导入行是 `import { hostname } from 'node:os';`）—— `scripts/lib/` 是纯模块，**不得**出现 `new Date()` 或 `hostname()` / `os.hostname()`，三个值只能由 CLI 注入。⚠️ **`machine` 只有一种写法：`hostname()`**（规定块里 `import { hostname } from 'node:os';` 是解构导入，所以调用端不能写 `os.hostname()`）。照抄散文里的 `os.hostname()` 会在 CLI 启动时以 `ReferenceError: os is not defined` 死掉，而那条路径的守卫测试**只覆盖 `--reason` / `--audit-out` / `--confirm-runid` 与 hosts 文件**，**不会**覆盖它 —— 本计划原先在 Task 4 的接线段与 Task 7 的这段里都误写成 `os.hostname()`，已两处改成 `hostname()`。
 
 **第五种模式 `--re-sign-stable`（2026-09-23 追加，代码质量闸门交办）：** 它**离线**（`needsNetwork` 必须为假，否则会去要 `--host` / `--known-hosts`），只用本地三个产物 + 两把钥匙，把 §6.10 的"stable manifest 必须单独离线签名"落成**一条可执行的路**。三条硬要求：① 它**必须先跑 `verifyLocalArtifacts`（`expectedChannel: 'internal'`）** —— 这是"复用的是**原字节**"这句话的**唯一证据来源**，跳过它这个模式就只剩"照着三个路径写一个新 manifest"；② 它是 `buildStableManifestInput` 的**唯一调用者**（见下方"调用者已排期"），签名走 `buildPortableRelease`，因此 12 个字段的拼接由**真消费者**验收，而不是由本模块自己的断言验收；③ 产物用 `writeFileSync(..., { flag: 'wx' })` 写，**拒绝覆盖**（§6.10 的"签名一次"纪律；这条的**覆盖臂不可自动化** —— 需要真钥匙，登记为"只在真机离线签名演练里验"）。
+
+**两项承前修正（2026-09-23，Task 6 的 Step −1 落在本块上，逐条给理由；读数见 Task 6 账本第〇节）：**
+
+- **`minLauncherVersion` 必须从验过的 manifest 读，不许重打一遍。** 原先它来自 `process.env.MOFANG_LAUNCHER_VERSION`（一个 `requireLauncherVersionFromEnvironment()` 读取器）。**这是本仓库自己的教条（读派生值，别重打）在一处最不该违反的地方违反**：`verifyLocalArtifacts` **已经**返回解析好的 `manifest`，而 `minLauncherVersion` 就在那份**被签名**的载荷里；重打一遍等于允许"**同一份字节**在 stable manifest 里声明一个**不同的启动器下限**"而不被任何人发现 —— `buildPortableRelease` 只检查它是**格式合法**的版本串（`portable-update-release.mjs:373` 的 `assertVersion`），不检查它与内部发布一致；而 spec §4.2 明确 Go 启动器在交换前按它拒绝。**处置**：删掉那个读取器与它的调用点，改一行 `minLauncherVersion: verified.manifest.minLauncherVersion`。
+- **`--re-sign-stable` 用的文件清单字节必须来自返回值，不许再读一次盘。** 原先模式自己 `readFileSync(resolvedFileManifestPath)`，而 `verifyLocalArtifacts` 内部**又读了一遍同一个路径** ⇒ 这个模式"字节复用是验过的"只成立到**第二次读**为止，两次读之间文件被换掉就没人知道。**处置**：`verifyLocalArtifacts` 的返回值新增 `fileManifestBytes`（与它已经返回的 `manifestBytes` 同一形状，也正是 `runCommit` 已经在消费的形状），模式改成 `const verified = await verifyLocalArtifacts({…})` 并**全部取自 `verified`**（含 `JSON.parse(verified.fileManifestBytes…)` 得到的 `fileManifest`）。**只回字节、不回解析后的 `fileManifest`**：解析由验过的字节当场得出，把 `JSON.parse` 挪进这个**已冻结**的模块只会多一条失败形态（文件清单不是 JSON）而收益为零。
 
 **第二修复刀追加的 Task 7 验收项（本刀只写计划，代码在 Task 7 落）：**
 
