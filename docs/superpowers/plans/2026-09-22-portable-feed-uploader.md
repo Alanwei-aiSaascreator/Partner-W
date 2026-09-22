@@ -6804,7 +6804,7 @@ test('the entry script injects a transport factory, so a run with no mode flag p
 
 **矛盾在哪（代码链，逐条实读）**：`retry` 由 `retainAndFinish` 收口（`scripts/lib/feed-publish.mjs:1154` ⇒ `:791`），它调 `resolveLockDisposition` 且 `safeToExit: false` ⇒ 返回 `state: 'retained-by-this-run'`（`:386–393`）⇒ **锁被有意留在服务器上**（用例 `feed-publish-cli.test.mjs:1014` 钉 `lockState === 'retained-by-this-run'`、`:1017` 钉收口行 `stage === 'lock-retained'`）。而手册 `retry` 行写的是"**只有它可以安全重跑** `--commit`" ⇒ 操作员直接重跑，取锁的 `mkdir` 撞 EEXIST（`acquireChannelLock`，`:311–330`）⇒ `not-acquired` ⇒ `runCommit` 收口 `blocked`（`:966–971`）⇒ **退 1**。他于是落到 `blocked` 行，而那一行叫他"不要去拆锁、活着就等它收尾"—— **他会去等一个早已退出 `3` 的运行**。
 
-**第二层（更糟）**：工具当时**没给判据**。`finish` 返回 `{outcome, reason, lockState, stages, runid, planHash}`（`:773–780`），`recordOutcome` 写 `{stage, reason, …}`（`:786–794`）—— **两者都不带 owner 的 runid** ⇒ "那把锁不是你的"是**操作员手里的东西证不了**的断言。
+**第二层（更糟）**：工具当时**没给判据**。`finish` 返回 `{outcome, reason, lockState, stages, runid, planHash}`（`:773–780`），`recordOutcome` 写 `{stage, reason, …}`（`:782–789`）—— **两者都不带 owner 的 runid** ⇒ "那把锁不是你的"是**操作员手里的东西证不了**的断言。
 
 **落地**（手册第 7 步 `:110` / `:112` / `:115`；下面是改后的**原文**，与第 7 步**围栏逐字相同** —— 所以这两行与那句警告在本文件里各出现**两次**：围栏一次、本节引文一次）：
 
@@ -6814,7 +6814,9 @@ test('the entry script injects a transport factory, so a run with no mode flag p
 ⚠️ **`blocked` 与完整性事故 `incident` 都退 `1`，但锁的来源相反**：`incident` 的锁是**本次运行有意保留**的（见上表 `incident` 行）；`blocked` 的锁**本次根本没拿到**。**「那把锁不是你的」不该是一句断言** —— 工具**当场给判据**：拿**你上次那条命令打印的 `runid`** 按 7b 探一次（`--confirm-runid`）。**对得上** ⇒ 那锁是你自己的（例如上一次 `retry` 按设计留下的），释放它安全；**对不上** ⇒ 工具**立即拒绝**并**打印真正的 owner runid**（`--confirm-runid does not match the owner runid <那串 runid>`），**这条拒绝发生在任何写之前**（只读一次远端 `owner.json`，**一条审计行都不写**）⇒ 但**只有确认那次运行确实已经不在进行中之后**才允许走 7b 的恢复路径 —— 否则你会在它写到一半时把它脚下的东西拆掉。
 ```
 
-**判据为什么可当场验证**（三条都在今天 HEAD 的字节上读过）：
+**判据为什么可当场验证**（三条都在今天 HEAD 的字节上逐条读过）：
+
+⚠️ **本节的每一个行号都是重读出来的，不是估的**：`scripts/lib/feed-publish.mjs` 与 `scripts/lib/feed-publish-cli.mjs` 的引用逐条打印核对过；其中**一处初稿写错并已更正** —— `recordOutcome` 最初写成 `:786–794`，复读后是 **`:782–789`**（`:786` 是 `repositoryRoot:` 那一行，`:794` 已经越到 `retainAndFinish` 上面去了）。**登记在这里**，因为它正是"引用行号必须对着代码读一遍"的现成例子（通用纪律"**先验你自己的验证脚本**"的同一条道理：读数要真的读，别推）。
 
 1. `--break-lock` 的 `--confirm-runid` 不匹配时**立即抛错并打印真 owner 的 runid**：`scripts/lib/feed-publish.mjs:487–488`（`--confirm-runid does not match the owner runid ${owner.runid}`）。在它**之前**只有 `readOwnerRecord`（`:463`，一次只读的 `cat`），第一个写操作是 `:490` 的 `removeLock`（`:445–462`）⇒ **拒绝发生在任何写之前**。
 2. **拒绝不写审计行**：`scripts/lib/feed-publish-cli.mjs:345` 的 `appendAuditStage({stage:'break-lock', …})` 在 `breakChannelLock` **返回之后**才执行；catch 里只在 `ownerRecordUnreadable === true` 时写一条（`:348–352`）—— 只读探测走的不是那条 ⇒ **一条审计行都不写**。
@@ -6838,7 +6840,9 @@ test('the entry script injects a transport factory, so a run with no mode flag p
 
 ### 四、N4（Minor）：一句话既高估了一条用例、又抹掉了另一条的强度
 
-原文："**这是唯一一条把"入口接线"钉在行为上的用例**，但它不是唯一见证 —— 那 7 条规定用例也真的 `spawn` 入口"。**前半句被自己的后半句和读数同时否掉**：`spawn` 入口的**既有**用例一共 **8 条**，M-entry 下**全部**变红（红线 9 = 8 + 本轮这条；读数 `cli 33/42/9`）。实测：`feed-publish-cli.test.mjs` 里调用**本地 spawn 助手** `runCli` 的用例正好 **9** 条 —— 既有 `:14 / :24 / :46 / :52 / :58 / :74 / :90 / :854`、本轮新增 `:1127`。
+原文："**这是唯一一条把"入口接线"钉在行为上的用例**，但它不是唯一见证 —— 那 7 条规定用例也真的 `spawn` 入口"。**前半句被自己的后半句和读数同时否掉**：`spawn` 入口的**既有**用例一共 **8 条**，M-entry 下**全部**变红（红线 9 = 8 + 本轮这条）。
+
+**本刀把 M-entry 复量了一次**（不再只是引用 §十六五 的读数）：变异 = `scripts/feed-publish.mjs` 的 `{ createTransport: createFeedTransport }` ⇒ `{}`（**一个表达式**；锚点恰好 **1** 次；改前 sha256 `2eac1ff1…f798`、13 行；hunk 的整行是 `await runCli(process.argv.slice(2), { createTransport: createFeedTransport }).then(` ⇒ `await runCli(process.argv.slice(2), {}).then(`）。读数：`ℹ tests 42 / ℹ pass 33 / ℹ fail 9`，**红线 9 条逐条命中、无多余红**（用 `--test-reporter=tap` 逐条抓名字）：`the cli prints usage when no mode is given`（`:14`）、`the cli refuses a stable re-sign without a version, an output path or a stable channel`（`:24`）、`the cli rejects an unknown channel before touching anything`（`:46`）、`the cli refuses a network mode without a host or known hosts file`（`:52`）、`the cli refuses a commit without an audit log path`（`:58`）、`the cli refuses a known hosts file inside the repository`（`:74`）、`the cli refuses a break lock without a reason, an audit log or a confirmation`（`:90`）、`the usage text documents every exit code the operator can act on`（`:854`）、`the entry script injects a transport factory, so a run with no mode flag prints usage rather than the missing factory error`（`:1127`）。⇒ **既有 8 条 + 本轮 1 条**，与 §十六五 记的 `cli 33/42/9` **逐字相同**；恢复后 sha256 与基线相同、`git status --porcelain` 为空。**静态数也是 9**：`feed-publish-cli.test.mjs` 里调用**本地 spawn 助手** `runCli` 的用例正好 9 条（行号同上）。
 
 落地两句：
 
@@ -6857,7 +6861,7 @@ test('the entry script injects a transport factory, so a run with no mode flag p
 
 - **三套用例（本刀前后逐字相同）**：模块 **`166 / 166 / 0`**、transport **`31 / 31 / 0`**、CLI **`42 / 42 / 0`** ⇒ **`166 / 31 / 42 = 239`**、`fail 0`。本刀**没有碰** `scripts/**` 与任何测试文件（`git diff --stat` 只有两个 `.md`）。
 - **`check:portable-update-release`**：单文件 `13 / 13 / 0`、`package.json:54` 三文件 `29 / 29 / 0`（Go 在 PATH）。
-- **全量门禁**：本刀只跑一次 `pnpm check`（**不接管道**、重定向到**仓库外**的日志、`rc=$?`），跑的是**本节之前那条提交**的字节 —— **读数在下一条只写读数的提交里**（那一条不碰代码，所以对代码的结论仍然成立）。
+- **全量门禁**：本刀只跑一次 `pnpm check`（**不接管道**、重定向到**仓库外**的日志、`rc=$?`），跑的是**提交 `cd4bfca9`** 的字节（本节自己那条只写读数的提交不可能把哈希写进自己，**以 `git log` 为准**）⇒ **`GATE_EXIT=0`**，日志 `C:/Users/29315/AppData/Local/Temp/feedfix-n4/gate-17.log`（仓库外）共 **10228** 行。**非空证据七条**：① 链上第一步 Go **真的跑过**（`ok  mofang-compass/portable-launcher/cmd/mofang-launcher  0.093s`、`internal/update  0.386s` —— 少了那个 PATH 导出它会在第一步就死）；② `check:portable-update-release` = **`29 / 29 / 0`**，且**被上一刀改过夹具的那条真的跑过**（`✔ make-portable-update CLI writes and independently verifies all three artifacts (745.0473ms)`）；③ `check:portable-feed-publish` 那一步的读数就是 **`ℹ tests 239 / ℹ pass 239 / ℹ fail 0`**（`166 + 31 + 42`，与逐套读数一致）；④ `format:check` 过（**本刀改的两个 `.md` 就在这一步里**：`All matched files use Prettier code style!`）；⑤ 链尾 `packages/desktop test` 真的跑到（`Test Files 281 passed (281)` / `2908 passed | 2 skipped (2910)`）；⑥ 全日志 `✖` / `not ok` / `FAIL` 计数 **0**；⑦ 与上一刀那份日志（`feedfix-probe/gate-16.log`）对比：**所有 `ℹ tests/pass/fail` 汇总行逐行相同**、`✔` 行数两边都是 **353** ⇒ 本刀（**零代码改动**）没有挪动任何一条用例的结论。⚠️ **一处如实登记的差异**：本刀日志 **10228** 行，上一刀 **10229** 行；差 **1** 行，我**没有查明**它来自哪里 —— 日志里变的部分包含随机临时目录名与时长，而可对比的不变量（`✔` 数、五组汇总行、`not ok` 计数）两边**完全相同**，所以**不把它归因于本刀**，也**不写成"行数不变"**。**没有把日志写进仓库**。
 
 ### 七、本刀未做（不得写成已完成）
 
