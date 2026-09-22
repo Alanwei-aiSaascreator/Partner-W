@@ -74,6 +74,8 @@
 
 **每刀的通用纪律：** 命名 RED → 按测试名失败 → 最小 GREEN → 行为级变异验证（删关键护栏 ⇒ 指定测试按名变红 ⇒ 逐字节恢复，`git diff` 为空）→ 判据含 `passed > 0` 与 `fail 0` → “跳过”记“未验证” → 完整门禁 `pnpm check` → 显式 pathspec 独立提交，禁止 `git add -A`。
 
+**每个新增的守卫与接线都必须有一条测试单独钉住它**，并在同一刀的变异清单里有一条**会按测试名变红**的变异证明它是必要的 —— 尤其是“把参数/回调往下传”这类透传（断了不会报错，只会静默失效）。变异记录的措辞必须**无歧义**：同一段代码有两个 `await` 就写成两条，否则实施者删错一处会得到“变异存活”的假读数，进而误以为护栏有效。
+
 **测试运行方式：**
 
 ```bash
@@ -765,6 +767,22 @@ test('the dry run propagates a local verification failure instead of printing a 
   );
 });
 
+test('the dry run passes the signature verifier through to the local verification', async () => {
+  const paths = writeArtifacts();
+  await assert.rejects(
+    planCommit({
+      channel: 'internal',
+      version: '1.2.3',
+      ...paths,
+      publicKeyBase64: PUBLIC_KEY_BASE64,
+      verifySignature: async () => {
+        throw new Error('signature rejected through the dry run');
+      },
+    }),
+    /signature rejected through the dry run/u,
+  );
+});
+
 test('the preflight only performs read only actions and never claims writability', async () => {
   const transport = fakeReadOnlyTransport({
     sshRun: (request) =>
@@ -781,6 +799,7 @@ test('the preflight only performs read only actions and never claims writability
   });
   const names = transport.calls.map((call) => call[0]);
   assert.deepEqual([...new Set(names)], ['sshRun']);
+  assert.equal(result.sameFileSystem, true);
   assert.equal(result.writabilityIndicators.verifiedWrite, false);
   assert.match(result.writabilityIndicators.note, /indicator/u);
 });
@@ -882,7 +901,10 @@ node --test scripts/lib/feed-publish.test.mjs
 3. 把 `runPreflight` 的只读探测改成 `await input.transport.write.sftpUpload(...)` ⇒ 预期 `the preflight only performs read only actions and never claims writability` **按测试名变红**。
 4. 把 `writabilityIndicators.verifiedWrite` 改成 `true` ⇒ 预期同一条 **按测试名变红**。
 5. 把 `sameFileSystem` 改成恒 `true` ⇒ 预期 `the preflight reports different file systems instead of assuming one` **按测试名变红**。
-6. 把 `runPreflight` 的 `await` 删掉（拿 Promise 当结果比较） ⇒ 预期同一条 **按测试名变红**——这是"漏 await"的正面检查。
+6. 把 `runPreflight` **函数内部**的 `await`（`const probe = await input.transport.readOnly.sshRun(...)`）删掉 ⇒ 预期 `the preflight only performs read only actions and never claims writability` **按测试名变红**：`probe` 变成 Promise、`devices` 变空 ⇒ `sameFileSystem` 变 `false`，而该测试断言它必须是 `true`。
+7. 把**测试调用处**的 `await runPreflight(` 删掉（拿 Promise 当结果比较） ⇒ 预期 `the preflight reports different file systems instead of assuming one` **按测试名变红**。
+   （6 与 7 是两处不同的 `await`。原文只写"`runPreflight` 的 `await`"，实测删函数内部那处时**什么都不红** —— 一条会让人误判"变异存活"的记录。）
+8. 把 `planCommit` 里的 `verifySignature: input.verifySignature` **透传**删掉 ⇒ 预期 `the dry run passes the signature verifier through to the local verification` **按测试名变红**。**这条防的是静默旁路**：透传一断，Task 7 注入的真验证器永远不会被调用，而 `--dry-run` 照样报到"计划已生成"。
 
 恢复后全绿且 `git diff` 为空。
 
@@ -1421,6 +1443,8 @@ git commit -m "feat(feed): own the channel lock honestly, including its failure 
 - Modify: `scripts/lib/feed-publish.test.mjs`
 
 **每写一个 helper，立刻在 `runCommit` 里接上**；不允许出现"定义了但没接"的 helper。
+
+**`planCommit` 的契约要在本刀显式定下来**：Task 2 的 `planCommit` 丢掉了 `verifyLocalArtifacts` 的返回值，而本刀的 `planHashOf` 需要全部三个摘要 ⇒ 本刀必须二选一并在代码里写实——要么在 Task 4 内部自己重新调一次 `verifyLocalArtifacts` 拿摘要，要么扩宽 `planCommit` 的返回值让它把摘要带出来——不允许两种做法并存，也不允许把 `planCommit` 的契约留成歧义。
 
 - [ ] **Step 1: 写失败的测试（async 假 transport）**
 
