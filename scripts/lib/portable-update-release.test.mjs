@@ -179,7 +179,7 @@ test('buildPortableRelease rejects a public and private key mismatch', async () 
 
 test('buildPortableRelease rejects non-HTTPS package locations', async () => {
   const root = await makeRoot();
-  const input = await makeUnsignedInputs(root, { baseUrl: 'http://updates.example.com' });
+  const input = await makeUnsignedInputs(root, { baseUrl: 'http://updates.example.invalid' });
 
   await assert.rejects(buildPortableRelease(input), /HTTPS/i);
 });
@@ -257,7 +257,7 @@ test('make-portable-update CLI writes and independently verifies all three artif
       '--channel',
       'internal',
       '--base-url',
-      'https://updates.example.com',
+      'https://updates.example.invalid',
       '--out',
       outDir,
     ],

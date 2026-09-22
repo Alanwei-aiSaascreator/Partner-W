@@ -1017,7 +1017,7 @@ test('a commit whose flip did not take effect exits 3 so the operator knows a re
   assert.equal(entries.at(-1).stage, 'lock-retained');
 });
 
-test('the break lock mode needs only the channel, and prints no version it was never given', async () => {
+test('the break lock mode succeeds without a version flag and echoes no version it never read', async () => {
   const auditOut = join(makeCliRoot(), 'audit.jsonl');
   const harness = makeHarness({
     readSsh: () => ({ status: 0, stdout: JSON.stringify({ runid: 'r0', planHash: 'p0' }), stderr: '' }),
@@ -1122,4 +1122,32 @@ test('the cli refuses to run without an injected transport factory instead of re
     /createTransport/u,
     'a network mode must refuse too, and never build the real transport',
   );
+});
+
+test('the entry script injects a transport factory, so a run with no mode flag prints usage rather than the missing factory error', () => {
+  const result = runCli([]);
+  assert.equal(result.status, 2, 'exit 2 is the usage banner; an entry without the factory exits 1 instead');
+  assert.match(result.stdout, /Usage: node scripts\/feed-publish\.mjs/u);
+  assert.doesNotMatch(result.stderr, /createTransport/u);
+});
+
+const feedPublishSources = [
+  join(repositoryRoot, 'scripts', 'feed-publish.mjs'),
+  join(repositoryRoot, 'scripts', 'lib', 'feed-publish-cli.mjs'),
+  join(repositoryRoot, 'scripts', 'lib', 'feed-publish.mjs'),
+  join(repositoryRoot, 'scripts', 'lib', 'feed-publish-transport.mjs'),
+];
+
+test('the four feed publishing sources carry no comment line and no CJK, which the global eslint ignore leaves unpinned', () => {
+  const cjk = /[\u2e80-\u9fff\u3000-\u303f\uff00-\uffef]/u;
+  const comment = /^\s*(\/\/|\/\*|\*)/u;
+  for (const source of feedPublishSources) {
+    fsModule
+      .readFileSync(source, 'utf8')
+      .split('\n')
+      .forEach((line, index) => {
+        assert.doesNotMatch(line, cjk, `${source}:${index + 1} carries CJK`);
+        assert.doesNotMatch(line, comment, `${source}:${index + 1} is a comment`);
+      });
+  }
 });
