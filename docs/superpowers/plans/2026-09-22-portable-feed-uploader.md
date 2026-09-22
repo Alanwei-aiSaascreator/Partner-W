@@ -14,16 +14,17 @@
 
 ## 文件地图
 
-| 文件                                          | 动作 | 职责                                                                                                                                                                              |
-| --------------------------------------------- | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `scripts/lib/feed-publish.mjs`                | 新建 | 常量、输入校验、本地预验证、锁生命周期、远端目录探针、13 步流程编排、CAS、不确定结果三分、逐阶段审计                                                                              |
-| `scripts/lib/feed-publish.test.mjs`           | 新建 | 上述逻辑的单测（**async** 假 transport）                                                                                                                                          |
-| `scripts/lib/feed-publish-transport.mjs`      | 新建 | 真实 SSH / SFTP / https 适配器（argv 数组、BatchMode、StrictHostKeyChecking、固定 known_hosts、batch 引用）                                                                       |
-| `scripts/lib/feed-publish-transport.test.mjs` | 新建 | 注入假 `execFile` / `fetchPublic` 的 transport 单测（**不联网**）                                                                                                                 |
-| `scripts/feed-publish.mjs`                    | 新建 | CLI：五种模式，顶层 `await main`，`process.exitCode`                                                                                                                              |
-| `scripts/lib/feed-publish-cli.test.mjs`       | 新建 | CLI 参数守卫测试                                                                                                                                                                  |
-| `docs/runbooks/portable-update-release.md`    | 修改 | 第 7/9/10 步改为调用上传器；受限账号、nginx、发布前检查单                                                                                                                         |
-| `package.json`                                | 修改 | 新增 `check:portable-feed-publish` 并接入 `check`（**Task 6 第二闸门刀把它扩成两个文件**：`feed-publish.test.mjs` + `feed-publish-transport.test.mjs`；Task 7 Step 6 追加第三个） |
+| 文件                                          | 动作 | 职责                                                                                                                                                                                          |
+| --------------------------------------------- | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `scripts/lib/feed-publish.mjs`                | 新建 | 常量、输入校验、本地预验证、锁生命周期（含 owner 记录三成因）、远端目录探针、13 步流程编排、CAS、不确定结果三分、逐阶段审计、`internal → stable` 重签输入的拼装（`buildStableManifestInput`） |
+| `scripts/lib/feed-publish.test.mjs`           | 新建 | 上述逻辑的单测（**async** 假 transport）                                                                                                                                                      |
+| `scripts/lib/feed-publish-transport.mjs`      | 新建 | 真实 SSH / SFTP / https 适配器（argv 数组、BatchMode、StrictHostKeyChecking、固定 known_hosts、batch 引用）                                                                                   |
+| `scripts/lib/feed-publish-transport.test.mjs` | 新建 | 注入假 `execFile` / `fetchPublic` 的 transport 单测（**不联网**）                                                                                                                             |
+| `scripts/lib/feed-publish-cli.mjs`            | 新建 | CLI 的实现：导出 `runCli(argv, dependencies)`（**无顶层副作用**，可直接 import）、五种模式的分派与参数守卫、注入缝（`createTransport`）、审计接线与退出码映射                                 |
+| `scripts/feed-publish.mjs`                    | 新建 | 三行入口：顶层 `await runCli(...)`，只用 `process.exitCode`（**不得**在 Promise 完成前 `process.exit`）；模式逻辑全在上面那个文件里                                                           |
+| `scripts/lib/feed-publish-cli.test.mjs`       | 新建 | CLI 参数守卫测试                                                                                                                                                                              |
+| `docs/runbooks/portable-update-release.md`    | 修改 | 第 7/9/10 步改为调用上传器；受限账号、nginx、发布前检查单                                                                                                                                     |
+| `package.json`                                | 修改 | 新增 `check:portable-feed-publish` 并接入 `check`（**Task 6 第二闸门刀把它扩成两个文件**：`feed-publish.test.mjs` + `feed-publish-transport.test.mjs`；Task 7 Step 6 追加第三个）             |
 
 **禁止事项（贯穿全计划）：** 不连接、不修改任何服务器；不生成生产密钥；不写入任何真实口令、token 或 host-key 指纹；不把审计日志写进仓库。
 
@@ -5400,7 +5401,8 @@ transport 自己**只拼两类字符串**：ssh / sftp 的 **argv 数组元素**
 
 **Files:**
 
-- Create: `scripts/feed-publish.mjs`
+- Create: `scripts/lib/feed-publish-cli.mjs`（`runCli(argv, dependencies)` 的库：五种模式的实现，**无顶层副作用** —— 测试靠导入它注入假 transport，因此这个文件是**唯一**能让验收读数可观测的形状）
+- Create: `scripts/feed-publish.mjs`（三行入口：顶层 `await runCli(...)`、只用 `process.exitCode`）
 - Test: `scripts/lib/feed-publish-cli.test.mjs`
 - Modify: `package.json`（只扩写 Task 1 Step 7 已新增的 `check:portable-feed-publish` 的值，不新增同名键）
 
