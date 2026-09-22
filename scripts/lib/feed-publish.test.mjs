@@ -87,7 +87,7 @@ test('the roots and the channel whitelist are fixed constants', () => {
 
 test('the input rejects any channel outside the whitelist', () => {
   assert.throws(
-    () => parsePublishInput({ channel: 'beta', version: '1.2.3', host: 'h', knownHostsPath: 'k' }),
+    () => parsePublishInput({ channel: 'beta', version: '1.2.3', host: 'h.invalid', knownHostsPath: 'k' }),
     FeedPublishError,
   );
 });
@@ -95,7 +95,7 @@ test('the input rejects any channel outside the whitelist', () => {
 test('the input rejects an unstrict version', () => {
   for (const version of ['1.2', 'v1.2.3', '01.2.3', 'dev']) {
     assert.throws(
-      () => parsePublishInput({ channel: 'internal', version, host: 'h', knownHostsPath: 'k' }),
+      () => parsePublishInput({ channel: 'internal', version, host: 'h.invalid', knownHostsPath: 'k' }),
       FeedPublishError,
     );
   }
@@ -109,7 +109,13 @@ test('the input rejects a missing host or known hosts path when the mode needs t
   );
   assert.throws(
     () =>
-      parsePublishInput({ channel: 'internal', version: '1.2.3', host: 'h', knownHostsPath: '', needsNetwork: true }),
+      parsePublishInput({
+        channel: 'internal',
+        version: '1.2.3',
+        host: 'h.invalid',
+        knownHostsPath: '',
+        needsNetwork: true,
+      }),
     FeedPublishError,
   );
 });
@@ -344,10 +350,10 @@ test('a well formed network input keeps its host and resolves the known hosts pa
     channel: 'internal',
     version: '1.2.3',
     needsNetwork: true,
-    host: 'release.example.com',
+    host: 'release.example.invalid',
     knownHostsPath: '/tmp/known_hosts',
   });
-  assert.equal(parsed.host, 'release.example.com');
+  assert.equal(parsed.host, 'release.example.invalid');
   assert.equal(parsed.knownHostsPath, resolve('/tmp/known_hosts'));
 });
 
@@ -1643,12 +1649,12 @@ function happyTransport(paths, extra = {}) {
 
 test('the commit anchor helper refuses a case that recorded no call', () => {
   assert.throws(() =>
-    assertEveryCommitCallCarriesTheTrustAnchor({ anchor: { host: 'h', knownHostsPath: 'k' }, calls: [] }),
+    assertEveryCommitCallCarriesTheTrustAnchor({ anchor: { host: 'h.invalid', knownHostsPath: 'k' }, calls: [] }),
   );
   assert.throws(() =>
     assertEveryCommitCallCarriesTheTrustAnchor({
       anchor: null,
-      calls: [['readSsh', 'ls', { host: 'h', knownHostsPath: 'k' }]],
+      calls: [['readSsh', 'ls', { host: 'h.invalid', knownHostsPath: 'k' }]],
     }),
   );
 });
@@ -1657,7 +1663,7 @@ test('the commit anchor helper names a call that did not record its request', ()
   assert.throws(
     () =>
       assertEveryCommitCallCarriesTheTrustAnchor({
-        anchor: { host: 'h', knownHostsPath: 'k' },
+        anchor: { host: 'h.invalid', knownHostsPath: 'k' },
         calls: [
           ['fetchPublic', 'https://example.invalid'],
           ['readSsh', 'ls'],
@@ -2921,7 +2927,7 @@ test('a known hosts path that carries whitespace is accepted by the input and by
     channel: 'internal',
     version: '1.2.3',
     needsNetwork: true,
-    host: 'h',
+    host: 'h.invalid',
     knownHostsPath: spaced,
   });
   assert.equal(input.knownHostsPath, resolve(spaced));

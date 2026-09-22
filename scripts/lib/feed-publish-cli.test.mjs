@@ -63,7 +63,7 @@ test('the cli refuses a commit without an audit log path', () => {
     '--version',
     '1.2.3',
     '--host',
-    'h',
+    'h.invalid',
     '--known-hosts',
     'k',
   ]);
@@ -79,7 +79,7 @@ test('the cli refuses a known hosts file inside the repository', () => {
     '--version',
     '1.2.3',
     '--host',
-    'h',
+    'h.invalid',
     '--known-hosts',
     join(repositoryRoot, 'known_hosts'),
   ]);
@@ -95,7 +95,7 @@ test('the cli refuses a break lock without a reason, an audit log or a confirmat
     '--version',
     '1.2.3',
     '--host',
-    'h',
+    'h.invalid',
     '--known-hosts',
     '/outside/known_hosts',
   ];

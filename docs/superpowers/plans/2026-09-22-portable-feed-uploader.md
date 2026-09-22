@@ -86,7 +86,7 @@
    3b. **（第二闸门刀加进本节，Task 7–8 直接继承）敏感性检查若活在"会做真事"的那一侧，必须让接触变成不可能，而不是不太可能。** 形状来自 Task 6 的一次实测（见该账本第五节那条边界事故）：为了证明"套件从不真的起 ssh"，先用 **PATH 前置的假 `ssh`** 去试 —— 而 Windows 上 `execFile` 不解析 `.cmd`，于是那次"敏感性检查"**真的起了一个 `ssh.exe`**。**PATH 前置是"不太可能"（换个平台、换个扩展名就漏），把依赖的函数体换成 `throw` 才是"不可能"**。⇒ 任何**验证器/探针/敏感性检查**，只要它本身会调用真实资源（网络、进程、密钥、远端），它的隔离手段必须与**被验证的那件事**同强度：**替换依赖**（注入桩、把默认实现换成 `throw`），**不是**改环境（PATH、别名、当前目录）。**并且在登记结论时按可知的口径写**：真起过进程就不能写"没有发出任何数据"之外的更强的话（单标签主机名至多会有本地名字解析尝试）。
 
 4. **（Task 8 刀加进本节，之后直接继承）两条：**
-   - **测试里的主机名一律用 `.invalid`**（RFC 2606 保留、**不能被解析**）。本计划里两次"意外起了真 `ssh`"的事故之所以只是脚注，靠的就是这个夹具名：目标名不可解析 ⇒ 接触在**名字层**就已经不可能。**别把夹具主机名写成任何看起来能解析的东西**（真域名、公司域名、单标签名、`localhost`、字面 IP）——夹具一旦能解析，一次"忘了接线"就会变成一次真的出网。
+   - **测试里的主机名一律用 `.invalid`**（RFC 2606 保留、**不能被解析**）。本计划里两次"意外起了真 `ssh`"的事故之所以只是脚注，靠的就是这个夹具名：目标名不可解析 ⇒ 接触在**名字层**就已经不可能。**别把夹具主机名写成任何看起来能解析的东西**（真域名、公司域名、单标签名、`localhost`、字面 IP）——夹具一旦能解析，一次"忘了接线"就会变成一次真的出网。**唯一的例外是"故意非法的主机串"夹具**（空串、带空白/控制字符、以 `-` 开头的选项注入形状）：它们的作用就是**被守卫拒绝**，本来就到不了 transport；但它们**不得**同时是一个"看起来能解析"的正常名字。⚠️ **这条规则在本刀落地时并不成立**，实测抓到两处：单标签名 `'h'`（会走 DNS 搜索后缀）与 `'release.example.com'`（**能解析**）⇒ 全部改成 `'h.invalid'` / `'release.example.invalid'`（测试文件与镜像围栏同改，`MATCHED_PAIRS` 保持 16）。
    - **注入缝的默认值就是真实现时，"测试忘了接线"会静默落到真实现。** `runCli(argv, dependencies)` 原先把 `dependencies.createTransport` 默认成真工厂，于是漏传依赖不会报错，只会**真的去起 `ssh`**（本计划确实发生过一次）。**修法三件**：① 模块内**不留任何默认值** —— 缺依赖**直接抛错**（抛错是"不可能"，默认值是"很可能没人发现"）；② 真工厂只在**组合根**（`scripts/feed-publish.mjs`）接线，入口仍然只有两条语句；③ **离线臂也要传工厂，并断言它从未被构造** —— 这比"没有输出"强一档：后者在实现悄悄多用一次依赖时照样是绿的。
 
 **复核纪律（拿"规定文本"的方式）：** 复核者手里的那份**规定文本**必须取自**被复核提交的父提交**（`git show <base>:<plan-file>`），**绝不能用 HEAD 的那份** —— 实施者会改计划（本刀的所有"实现偏离"就是这么改的），所以 HEAD 的那份已经**悄悄变成了对实现的描述**，拿它去比对等于拿实现给自己的自我描述去验收实现，什么都验不出来。缺的正是"独立规格"这四个字。
@@ -205,7 +205,7 @@ test('the roots and the channel whitelist are fixed constants', () => {
 
 test('the input rejects any channel outside the whitelist', () => {
   assert.throws(
-    () => parsePublishInput({ channel: 'beta', version: '1.2.3', host: 'h', knownHostsPath: 'k' }),
+    () => parsePublishInput({ channel: 'beta', version: '1.2.3', host: 'h.invalid', knownHostsPath: 'k' }),
     FeedPublishError,
   );
 });
@@ -213,7 +213,7 @@ test('the input rejects any channel outside the whitelist', () => {
 test('the input rejects an unstrict version', () => {
   for (const version of ['1.2', 'v1.2.3', '01.2.3', 'dev']) {
     assert.throws(
-      () => parsePublishInput({ channel: 'internal', version, host: 'h', knownHostsPath: 'k' }),
+      () => parsePublishInput({ channel: 'internal', version, host: 'h.invalid', knownHostsPath: 'k' }),
       FeedPublishError,
     );
   }
@@ -227,7 +227,13 @@ test('the input rejects a missing host or known hosts path when the mode needs t
   );
   assert.throws(
     () =>
-      parsePublishInput({ channel: 'internal', version: '1.2.3', host: 'h', knownHostsPath: '', needsNetwork: true }),
+      parsePublishInput({
+        channel: 'internal',
+        version: '1.2.3',
+        host: 'h.invalid',
+        knownHostsPath: '',
+        needsNetwork: true,
+      }),
     FeedPublishError,
   );
 });
@@ -462,10 +468,10 @@ test('a well formed network input keeps its host and resolves the known hosts pa
     channel: 'internal',
     version: '1.2.3',
     needsNetwork: true,
-    host: 'release.example.com',
+    host: 'release.example.invalid',
     knownHostsPath: '/tmp/known_hosts',
   });
-  assert.equal(parsed.host, 'release.example.com');
+  assert.equal(parsed.host, 'release.example.invalid');
   assert.equal(parsed.knownHostsPath, resolve('/tmp/known_hosts'));
 });
 
@@ -2108,12 +2114,12 @@ function happyTransport(paths, extra = {}) {
 
 test('the commit anchor helper refuses a case that recorded no call', () => {
   assert.throws(() =>
-    assertEveryCommitCallCarriesTheTrustAnchor({ anchor: { host: 'h', knownHostsPath: 'k' }, calls: [] }),
+    assertEveryCommitCallCarriesTheTrustAnchor({ anchor: { host: 'h.invalid', knownHostsPath: 'k' }, calls: [] }),
   );
   assert.throws(() =>
     assertEveryCommitCallCarriesTheTrustAnchor({
       anchor: null,
-      calls: [['readSsh', 'ls', { host: 'h', knownHostsPath: 'k' }]],
+      calls: [['readSsh', 'ls', { host: 'h.invalid', knownHostsPath: 'k' }]],
     }),
   );
 });
@@ -2122,7 +2128,7 @@ test('the commit anchor helper names a call that did not record its request', ()
   assert.throws(
     () =>
       assertEveryCommitCallCarriesTheTrustAnchor({
-        anchor: { host: 'h', knownHostsPath: 'k' },
+        anchor: { host: 'h.invalid', knownHostsPath: 'k' },
         calls: [
           ['fetchPublic', 'https://example.invalid'],
           ['readSsh', 'ls'],
@@ -5496,7 +5502,7 @@ test('the cli refuses a commit without an audit log path', () => {
     '--version',
     '1.2.3',
     '--host',
-    'h',
+    'h.invalid',
     '--known-hosts',
     'k',
   ]);
@@ -5512,7 +5518,7 @@ test('the cli refuses a known hosts file inside the repository', () => {
     '--version',
     '1.2.3',
     '--host',
-    'h',
+    'h.invalid',
     '--known-hosts',
     join(repositoryRoot, 'known_hosts'),
   ]);
@@ -5528,7 +5534,7 @@ test('the cli refuses a break lock without a reason, an audit log or a confirmat
     '--version',
     '1.2.3',
     '--host',
-    'h',
+    'h.invalid',
     '--known-hosts',
     '/outside/known_hosts',
   ];
@@ -6598,6 +6604,8 @@ git commit -m "docs(release): route the feed publishing steps through the upload
 | N3  | 手册把"空输出（0 字节）"写成**第四种成因**，而工具报的是 `ownerRecordStatus: 'corrupt'` + `the owner record is not valid JSON`                                                   | 操作员的"读数 → 动作"对照表与工具输出对不上                          | 围栏改成**四种读法 → 三种状态**的对照表，空输出单独列一行并注明它归到 `corrupt`                                                                                                  |
 
 ⚠️ **N1 的收窄不是删除**：版本若被显式传进来**仍然要过语义化校验**（`banana` 会被拒），`--channel` 守卫原样保留。两条都由用例按名钉住。
+
+**顺带（同刀）**：通用纪律第 4 条那条 `.invalid` 规则**落地时原本不成立** —— 夹具里有两处不合规的主机名（单标签 `'h'` 会走 DNS 搜索后缀；`'release.example.com'` **能解析**）⇒ 本刀把它们统一成 `'h.invalid'` / `'release.example.invalid'`（测试文件与镜像围栏**同改**：`MATCHED_PAIRS` 保持 **16**，模块与 CLI 套件保持 `166 / 0` 与 `40 / 0`）。**故意非法的主机串**夹具（`''` / `'bad host'` / `'-oProxyCommand=x'` / `'badhost'`）**保留**，规则里已写明这个例外。
 
 ⚠️ **本刀新增（围栏与手册同改）**：Task 8 第 9/10 步此前**只有散文、没有命令**。现补上 `--re-sign-stable`（离线签 stable manifest；含 `--stable-out` 用 `wx` **非原子**的残余风险句，以及"这个模式不写审计行 ⇒ 三个摘要要手工进发布记录"）与 stable 的 `--preflight` / `--commit`。`发布前提` 里那句"仓库目前没有通用服务器上传脚本"也改成"只允许用第 7/9/10 步的上传器"，否则同一份手册自相矛盾。
 
