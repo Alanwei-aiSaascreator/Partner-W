@@ -14,17 +14,17 @@
 
 ## 文件地图
 
-| 文件                                          | 动作 | 职责                                                                                                                                                                                          |
-| --------------------------------------------- | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `scripts/lib/feed-publish.mjs`                | 新建 | 常量、输入校验、本地预验证、锁生命周期（含 owner 记录三成因）、远端目录探针、13 步流程编排、CAS、不确定结果三分、逐阶段审计、`internal → stable` 重签输入的拼装（`buildStableManifestInput`） |
-| `scripts/lib/feed-publish.test.mjs`           | 新建 | 上述逻辑的单测（**async** 假 transport）                                                                                                                                                      |
-| `scripts/lib/feed-publish-transport.mjs`      | 新建 | 真实 SSH / SFTP / https 适配器（argv 数组、BatchMode、StrictHostKeyChecking、固定 known_hosts、batch 引用）                                                                                   |
-| `scripts/lib/feed-publish-transport.test.mjs` | 新建 | 注入假 `execFile` / `fetchPublic` 的 transport 单测（**不联网**）                                                                                                                             |
-| `scripts/lib/feed-publish-cli.mjs`            | 新建 | CLI 的实现：导出 `runCli(argv, dependencies)`（**无顶层副作用**，可直接 import）、五种模式的分派与参数守卫、注入缝（`createTransport`）、审计接线与退出码映射                                 |
-| `scripts/feed-publish.mjs`                    | 新建 | **13 行**入口（**两条语句**）：顶层 `await runCli(...)`，只用 `process.exitCode`（**不得**在 Promise 完成前 `process.exit`）；模式逻辑全在上面那个文件里                                      |
-| `scripts/lib/feed-publish-cli.test.mjs`       | 新建 | CLI 参数守卫测试                                                                                                                                                                              |
-| `docs/runbooks/portable-update-release.md`    | 修改 | 第 7/9/10 步改为调用上传器；受限账号、nginx、发布前检查单                                                                                                                                     |
-| `package.json`                                | 修改 | 新增 `check:portable-feed-publish` 并接入 `check`（**Task 6 第二闸门刀把它扩成两个文件**：`feed-publish.test.mjs` + `feed-publish-transport.test.mjs`；Task 7 Step 6 追加第三个）             |
+| 文件                                          | 动作 | 职责                                                                                                                                                                                                                        |
+| --------------------------------------------- | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `scripts/lib/feed-publish.mjs`                | 新建 | 常量、输入校验、本地预验证、锁生命周期（含 owner 记录三成因）、远端目录探针、13 步流程编排、CAS、不确定结果三分、逐阶段审计、`internal → stable` 重签输入的拼装（`buildStableManifestInput`）                               |
+| `scripts/lib/feed-publish.test.mjs`           | 新建 | 上述逻辑的单测（**async** 假 transport）                                                                                                                                                                                    |
+| `scripts/lib/feed-publish-transport.mjs`      | 新建 | 真实 SSH / SFTP / https 适配器（argv 数组、BatchMode、StrictHostKeyChecking、固定 known_hosts、batch 引用）                                                                                                                 |
+| `scripts/lib/feed-publish-transport.test.mjs` | 新建 | 注入假 `execFile` / `fetchPublic` 的 transport 单测（**不联网**）                                                                                                                                                           |
+| `scripts/lib/feed-publish-cli.mjs`            | 新建 | CLI 的实现：导出 `runCli(argv, dependencies)`（**无顶层副作用**，可直接 import）、五种模式的分派与参数守卫、注入缝（`createTransport`，**模块内不留默认值**：缺依赖直接抛错，真工厂只在入口脚本接线）、审计接线与退出码映射 |
+| `scripts/feed-publish.mjs`                    | 新建 | **13 行**入口（**两条语句**）：顶层 `await runCli(...)`，只用 `process.exitCode`（**不得**在 Promise 完成前 `process.exit`）；模式逻辑全在上面那个文件里                                                                    |
+| `scripts/lib/feed-publish-cli.test.mjs`       | 新建 | CLI 参数守卫测试                                                                                                                                                                                                            |
+| `docs/runbooks/portable-update-release.md`    | 修改 | 第 7/9/10 步改为调用上传器；受限账号、nginx、发布前检查单                                                                                                                                                                   |
+| `package.json`                                | 修改 | 新增 `check:portable-feed-publish` 并接入 `check`（**Task 6 第二闸门刀把它扩成两个文件**：`feed-publish.test.mjs` + `feed-publish-transport.test.mjs`；Task 7 Step 6 追加第三个）                                           |
 
 **禁止事项（贯穿全计划）：** 不连接、不修改任何服务器；不生成生产密钥；不写入任何真实口令、token 或 host-key 指纹；不把审计日志写进仓库。
 
@@ -84,6 +84,10 @@
 
 3. **（复核刀加进本节，Task 5–8 直接继承）每一条变异记录都必须打印"磁盘上真实发生的那次改动"（hunk），且任何"存活"读数在有人读过 hunk 之前不算数。** 形状来自本刀的一次实测：一次**纯插入**变异落在 `return` 语句**之后**（不可达代码），套件读数 **133/0 全绿** —— 只看绿/红根本分不出"护栏被删掉了"与"变异压根没生效"。因此装置固定做四件事，**缺一条的读数一律作废**：① `diff` 出改动的那几行并**打印**（`-`/`+` 加三行上下文）——只打印半行片段的装置同样作废（改动落在行中间时，`-`/`+` 必须显示**整行**，否则读者看到的是被截断的假 hunk）；② **纯插入**型变异在记"存活"之前先做**可达性检查**：从插入点向前跳过空白，若前一字符是 `;`，再向前找同层边界（`{` 或 `;`），取那一段语句的首词 —— 是 `return` / `throw` / `continue` / `break` 就判 `SURVIVOR_REJECTED`，**不算有效存活**（保守方向：宁可多拒一条也不放过一条假存活；识别不出形状时记 `reachable-or-unknown`，仍按"存活必须有人读 hunk"办）；③ 每条变异**预先写明"哪条测试必须按名变红"**，跑完核对红名单里有那个名字，没有就报 `EXPECTATION_FAILED`（防止"红了，但红的是别的测试"被记成"钉住了"）；④ 其余装置项不变：锚点恰好匹配 1 次、`node --check` 变异产物、变异前取基线 sha256、恢复后比 sha256 并断言该文件的 `git status` 与变异前**逐字相同**。**给 Task 5–8 的验收口径**：每刀的变异清单不止给 pass/fail 两个数，**必须同时给出 hunk 与红名单核对结果**；一条"存活"读数若没有对应的 hunk 打印，视为**未验证**。
    3b. **（第二闸门刀加进本节，Task 7–8 直接继承）敏感性检查若活在"会做真事"的那一侧，必须让接触变成不可能，而不是不太可能。** 形状来自 Task 6 的一次实测（见该账本第五节那条边界事故）：为了证明"套件从不真的起 ssh"，先用 **PATH 前置的假 `ssh`** 去试 —— 而 Windows 上 `execFile` 不解析 `.cmd`，于是那次"敏感性检查"**真的起了一个 `ssh.exe`**。**PATH 前置是"不太可能"（换个平台、换个扩展名就漏），把依赖的函数体换成 `throw` 才是"不可能"**。⇒ 任何**验证器/探针/敏感性检查**，只要它本身会调用真实资源（网络、进程、密钥、远端），它的隔离手段必须与**被验证的那件事**同强度：**替换依赖**（注入桩、把默认实现换成 `throw`），**不是**改环境（PATH、别名、当前目录）。**并且在登记结论时按可知的口径写**：真起过进程就不能写"没有发出任何数据"之外的更强的话（单标签主机名至多会有本地名字解析尝试）。
+
+4. **（Task 8 刀加进本节，之后直接继承）两条：**
+   - **测试里的主机名一律用 `.invalid`**（RFC 2606 保留、**不能被解析**）。本计划里两次"意外起了真 `ssh`"的事故之所以只是脚注，靠的就是这个夹具名：目标名不可解析 ⇒ 接触在**名字层**就已经不可能。**别把夹具主机名写成任何看起来能解析的东西**（真域名、公司域名、单标签名、`localhost`、字面 IP）——夹具一旦能解析，一次"忘了接线"就会变成一次真的出网。
+   - **注入缝的默认值就是真实现时，"测试忘了接线"会静默落到真实现。** `runCli(argv, dependencies)` 原先把 `dependencies.createTransport` 默认成真工厂，于是漏传依赖不会报错，只会**真的去起 `ssh`**（本计划确实发生过一次）。**修法三件**：① 模块内**不留任何默认值** —— 缺依赖**直接抛错**（抛错是"不可能"，默认值是"很可能没人发现"）；② 真工厂只在**组合根**（`scripts/feed-publish.mjs`）接线，入口仍然只有两条语句；③ **离线臂也要传工厂，并断言它从未被构造** —— 这比"没有输出"强一档：后者在实现悄悄多用一次依赖时照样是绿的。
 
 **复核纪律（拿"规定文本"的方式）：** 复核者手里的那份**规定文本**必须取自**被复核提交的父提交**（`git show <base>:<plan-file>`），**绝不能用 HEAD 的那份** —— 实施者会改计划（本刀的所有"实现偏离"就是这么改的），所以 HEAD 的那份已经**悄悄变成了对实现的描述**，拿它去比对等于拿实现给自己的自我描述去验收实现，什么都验不出来。缺的正是"独立规格"这四个字。
 
@@ -533,8 +537,12 @@ export function parsePublishInput(raw) {
   if (!CHANNELS.includes(raw.channel)) {
     throw new FeedPublishError(`channel must be one of ${CHANNELS.join(', ')}`);
   }
-  if (typeof raw.version !== 'string' || !SEMVER_PATTERN.test(raw.version)) {
-    throw new FeedPublishError(`version must be a strict semantic version, received ${raw.version}`);
+  const versionRequired = raw.versionRequired !== false;
+  const versionGiven = typeof raw.version === 'string';
+  if (versionRequired || versionGiven) {
+    if (!versionGiven || !SEMVER_PATTERN.test(raw.version)) {
+      throw new FeedPublishError(`version must be a strict semantic version, received ${raw.version}`);
+    }
   }
   const needsNetwork = raw.needsNetwork === true;
   if (needsNetwork) {
@@ -550,7 +558,7 @@ export function parsePublishInput(raw) {
   }
   return {
     channel: raw.channel,
-    version: raw.version,
+    version: versionRequired ? raw.version : null,
     host: needsNetwork ? raw.host : null,
     knownHostsPath: needsNetwork ? resolve(raw.knownHostsPath) : null,
   };
@@ -5567,7 +5575,7 @@ import {
   runPreflight,
   verifyLocalArtifacts,
 } from './feed-publish.mjs';
-import { createFeedTransport } from './feed-publish-transport.mjs';
+export { createFeedTransport } from './feed-publish-transport.mjs';
 import {
   assertPathOutsideRepository,
   buildPortableRelease,
@@ -5578,12 +5586,15 @@ import {
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 const USAGE = [
-  'Usage: node scripts/feed-publish.mjs <--dry-run|--preflight|--commit|--break-lock|--re-sign-stable> --channel <internal|stable> --version <x.y.z> [--host <host> --known-hosts <path>]',
+  'Usage: node scripts/feed-publish.mjs <--dry-run|--preflight|--commit|--break-lock|--re-sign-stable> --channel <internal|stable> [--version <x.y.z>] [--host <host> --known-hosts <path>]',
   '  --dry-run          offline: validate the three artifacts and print the plan',
   '  --preflight        read only remote checks; never claims to have verified writability;',
   '                     needs --audit-out, because it records a session level entry',
   '  --commit           publish; needs --package --file-manifest --manifest --audit-out',
-  '  --break-lock       needs --reason --audit-out --confirm-runid',
+  '  --version          required by every mode except --break-lock, whose lock path is keyed by',
+  '                     the channel only, so the mode reads no version and echoes none back',
+  '  --break-lock       needs --channel --reason --audit-out, plus --confirm-runid; use',
+  '                     --owner-record-unreadable (below) when the owner record is unreadable',
   '  --owner-record-unreadable',
   '                     with --break-lock: the lock owner record cannot be read, so there',
   '                     is no runid to confirm; passing this flag is the operator stating',
@@ -5667,7 +5678,12 @@ async function withTransport(createTransport, input, body) {
 }
 
 export async function runCli(argv, dependencies = {}) {
-  const createTransport = dependencies.createTransport ?? createFeedTransport;
+  const createTransport = dependencies.createTransport;
+  if (typeof createTransport !== 'function') {
+    throw new FeedPublishError(
+      'runCli needs a createTransport function; the real transport is wired by the entry point in scripts/feed-publish.mjs, so a caller that forgets it must not reach the network',
+    );
+  }
   const modeFlags = MODE_FLAGS.filter((name) => argv.includes(name));
   if (modeFlags.length > 1) {
     console.error(`only one mode flag may be given, but this command line carries ${modeFlags.join(' and ')}`);
@@ -5685,6 +5701,7 @@ export async function runCli(argv, dependencies = {}) {
   const knownHostsPath = flag(argv, '--known-hosts');
   const auditOut = flag(argv, '--audit-out');
   const needsNetwork = mode !== 'dry-run' && mode !== 're-sign-stable';
+  const versionRequired = mode !== 'break-lock';
   const startedAt = new Date().toISOString();
   const machine = hostname();
   const runid = randomUUID();
@@ -5693,8 +5710,8 @@ export async function runCli(argv, dependencies = {}) {
 
   let input;
   try {
-    if (version === null) throw new FeedPublishError('--version is required');
-    input = parsePublishInput({ channel, version, host, knownHostsPath, needsNetwork });
+    if (versionRequired && version === null) throw new FeedPublishError('--version is required');
+    input = parsePublishInput({ channel, version, host, knownHostsPath, needsNetwork, versionRequired });
   } catch (error) {
     console.error(error instanceof FeedPublishError ? error.message : String(error));
     return 1;
@@ -5884,9 +5901,7 @@ export async function runCli(argv, dependencies = {}) {
         });
         const at = now();
         appendAuditStage({ auditOut, repositoryRoot, entry: { stage: 'break-lock', ...record, runid, operator, at } });
-        console.log(
-          JSON.stringify({ mode, channel: input.channel, version: input.version, runid, ...record, at }, null, 2),
-        );
+        console.log(JSON.stringify({ mode, channel: input.channel, runid, ...record, at }, null, 2));
         return 0;
       } catch (error) {
         const message = error instanceof FeedPublishError ? error.message : String(error);
@@ -5962,9 +5977,9 @@ export async function runCli(argv, dependencies = {}) {
 ```js
 #!/usr/bin/env node
 
-import { runCli } from './lib/feed-publish-cli.mjs';
+import { createFeedTransport, runCli } from './lib/feed-publish-cli.mjs';
 
-await runCli(process.argv.slice(2)).then(
+await runCli(process.argv.slice(2), { createTransport: createFeedTransport }).then(
   (code) => {
     process.exitCode = code;
   },
@@ -5993,6 +6008,7 @@ await runCli(process.argv.slice(2)).then(
 1. **"锁在、但 owner 记录读不出来"必须有一条被确认的 CLI 出口（第二修复刀第三处）。** 现在是死路：`breakChannelLock` 对 `owner === null` 一律抛 `the lock has no readable owner record, so it must be inspected by hand`，而 `readOwnerRecord` 把**三种成因**（transport 失败 / 文件不存在 / 内容不是 JSON）压成同一个裸 `null`，CLI 说不出是哪种、也就无从确认 `--confirm-runid`。**"交给人工检查"单独一句不是可接受的终态指令**：这个仓库有一条硬规定就是**永远不要对 openclaw 状态目录 `rm -rf`**（它是 junction 高发区），而"交给人工"正是把操作员推向那一步。要做两件事：
    - **CLI**：新增一条走**同一套 reason / audit / 确认纪律**的路径 —— `--break-lock --owner-record-unreadable --reason "<文本>"`：仍然必填 `--reason` 与 `--audit-out`，仍然要求操作员**显式声明**"已确认前一次运行不在进行中"（用这个 flag 本身就是那次声明），审计里记 `stage: 'break-lock'` + `ownerRecordUnreadable: true` + 原因 + 执行人；**不要求** `--confirm-runid`（根本没有可确认的 runid —— 这正是这个状态的定义）。删除动作仍是先 `rm owner.json` 再 `rmdir <lock>`，**两次都成功才算成功**，任一次失败按现在的形状抛错、**不得**记录成 `lock-broken`。
    - **手册**（`docs/runbooks/portable-update-release.md`）：给出**确切的状态路径**与**确切的命令**。状态路径是 `/opt/rongying/updates-state/lock/<channel>`，记录文件是它下面的 `owner.json`。人工核查三条精确命令：① `ls -la /opt/rongying/updates-state/lock/<channel>`（看清楚目录里到底有什么、时间戳是多少）；② `cat /opt/rongying/updates-state/lock/<channel>/owner.json`（三种成因各自长什么样：`No such file or directory` = 记录没写成或已被删；非 JSON 文本 = 写坏了；`Permission denied` = 取不到）；③ 确认前一次运行确实不在进行中之后，才走 `node scripts/feed-publish.mjs --break-lock --channel <channel> --owner-record-unreadable --reason "<文本>" --audit-out <仓库外路径> --host <host> --known-hosts <仓库外路径>`。**手册里必须写明"不要 `rm -rf` 这个目录"**，并把 §6.6 的常规 `--break-lock`（owner 可读）与本条并列成两种情况。
+     ⚠️ **上面 ③ 这条命令原先跑不起来（Task 8 刀修，见第十五节 N1）**：`runCli` 当时**对五种模式一律要求 `--version`**，而 `--break-lock` 的路径（`<state>/lock/<频道>`）**从头到尾不读版本** —— 于是这条"3am 恢复路径"会以 `--version is required` 退出 1。**处置**：把守卫按模式收窄（**只有 `--break-lock` 不需要 `--version`**），并让该模式的输出**不再回显版本**（回显一个它没用过的值是凭空造数据）。收窄**不是删除**：版本若被显式传进来仍然要过语义化校验，`--channel` 守卫原样保留。
 2. **`readOwnerRecord` 的契约宽化归 Task 7（第二修复刀第三处，别在别的刀里动它）。** 现在它返回 `null` 表示**三种**成因。Task 7 负责把它改成**能区分三者**的形状（例如 `{ status: 'read' | 'missing' | 'transport' | 'corrupt', record }`，或抛 `FeedPublishError` 并带成因），并同步它的**两个消费者**（Task 4 的解锁路径、Task 7 的 `--break-lock` 两条路径）与全部断言。**本刀不改**：动它的返回形状会同时改到 Task 4 与 Task 7 的接线面，属于"先把契约定清楚再改代码"的那一类。
 3. **`auditOut` 必须真的被用掉（第二修复刀"记录不改"第二处）。** `breakChannelLock` 已经**校验**了 `input.auditOut`（非空字符串），但函数体内**一次都没用它** —— 它是在 Task 7 的 CLI 里被接上的（`appendAuditStage({ auditOut, repositoryRoot, entry: { stage: 'break-lock', ...record } })`）。实现 Task 7 时**必须**确认**接了 `--audit-out` 的那几条模式的每一条**都把 `--audit-out` 接到某个真实写入点，而不是"传进去、校验过、然后忘掉"。特别是 `--break-lock` 与 `--owner-record-unreadable` **两条都要**写审计行。**验收方式必须是可观测的**：跑一次 `--break-lock`，确认目标路径**真的多了一行**（不是看代码里有没有引用它）。⚠️ **`--re-sign-stable` 是本条的一个显式例外**（第五种模式，2026-09-23 由代码质量闸门追加）：它**不接 `--audit-out`、也不写审计行**，因为 §6.11 的阶段名单是**闭集**（十三步 + `preflight` / `break-lock` 两条会话级），而"离线重签"既不是十三步之一、也不是已登记的会话级条目 —— 给它编一个新阶段名等于**改规格**，不在本计划权限内。它的可追溯性由三样东西承载：① 它**强制**先跑 `verifyLocalArtifacts`（字节复用是**验过**的，不是宣称的）；② 命令行打印 `stableManifestSha256` / `reusedFileManifestSha256` / `reusedPackageSha256`；③ Task 8 的手册把它的调用与产物路径写进发布记录。**这是一处已登记的例外，不是遗漏。**
 4. **把本次运行自己的 owner 记录送到那个状态需要的出口（第二修复刀"记录不改"第三处）。** `owner` 在两个分支里含义不同：owner 写入**成功**时返回 `owner: input.owner`（本次运行自己的记录），owner 写入**失败**时返回 `owner: null` —— 而后者恰恰就是"锁在、记录读不出来"那个状态。于是操作员**拿不到 `--confirm-runid` 需要的那个值**（`runid` 只在**运行方**手里，锁里没有）。Task 7 要在这个状态下**把本次运行自己的 `runid` 与 `planHash` 送到操作员看得见的地方**（CLI 打印 + 审计行），否则"要不要人工拆这把锁"这个判断没有依据。**本条的形状随上面第 2 条一起定**（第 2 条宽化 `readOwnerRecord` 的契约，本条决定谁把运行方自己的记录带出来）—— 两条都在 Task 7，一起改，别分两次动契约。

@@ -207,6 +207,15 @@ const refuseConstruction = () => {
   throw new Error('the transport must not be built for this run');
 };
 
+function makeCountingRefusal() {
+  let constructions = 0;
+  const createTransport = () => {
+    constructions += 1;
+    throw new Error('the transport must not be built for this run');
+  };
+  return { createTransport, constructions: () => constructions };
+}
+
 function auditEntriesOf(path) {
   return fsModule
     .readFileSync(path, 'utf8')
@@ -222,22 +231,20 @@ function printedObject(stdout) {
 async function captureRun(argv, dependencies) {
   const out = [];
   const err = [];
-  const stdoutWrite = process.stdout.write;
-  const stderrWrite = process.stderr.write;
-  process.stdout.write = (chunk) => {
-    out.push(String(chunk));
-    return true;
+  const log = console.log;
+  const error = console.error;
+  console.log = (...args) => {
+    out.push(`${args.map(String).join(' ')}\n`);
   };
-  process.stderr.write = (chunk) => {
-    err.push(String(chunk));
-    return true;
+  console.error = (...args) => {
+    err.push(`${args.map(String).join(' ')}\n`);
   };
   try {
     const code = await cliModule.runCli(argv, dependencies);
     return { code, stdout: out.join(''), stderr: err.join('') };
   } finally {
-    process.stdout.write = stdoutWrite;
-    process.stderr.write = stderrWrite;
+    console.log = log;
+    console.error = error;
   }
 }
 
@@ -286,10 +293,12 @@ function offlineArgs(mode, triple, extra) {
 
 test('the dry run prints the plan for a canonically signed triple', async () => {
   const triple = await writeSignedTriple();
+  const factory = makeCountingRefusal();
   const result = await withEnvironment('MOFANG_UPDATE_PUBLIC_KEY_B64', CLI_PUBLIC_KEY_BASE64, () =>
-    captureRun(offlineArgs('--dry-run', triple, [])),
+    captureRun(offlineArgs('--dry-run', triple, []), { createTransport: factory.createTransport }),
   );
   assert.equal(result.code, 0);
+  assert.equal(factory.constructions(), 0, 'an offline mode must not build a transport at all');
   const printed = printedObject(result.stdout);
   assert.equal(printed.mode, 'dry-run');
   assert.equal(printed.channel, 'internal');
@@ -304,10 +313,12 @@ test('the dry run refuses a triple whose manifest signature was corrupted and pr
   const flipped = parsed.signature[0] === 'A' ? 'B' : 'A';
   const corrupted = { ...parsed, signature: `${flipped}${parsed.signature.slice(1)}` };
   fsModule.writeFileSync(triple.manifestPath, Buffer.from(JSON.stringify(corrupted), 'utf8'));
+  const factory = makeCountingRefusal();
   const result = await withEnvironment('MOFANG_UPDATE_PUBLIC_KEY_B64', CLI_PUBLIC_KEY_BASE64, () =>
-    captureRun(offlineArgs('--dry-run', triple, [])),
+    captureRun(offlineArgs('--dry-run', triple, []), { createTransport: factory.createTransport }),
   );
   assert.equal(result.code, 1);
+  assert.equal(factory.constructions(), 0, 'a refused plan must not build a transport either');
   assert.match(result.stderr, /release manifest signature is invalid/u);
   assert.equal(result.stdout.includes('"plan"'), false, 'the plan must not be printed when the gate refuses');
   assert.equal(result.stdout.includes('"stage"'), false);
@@ -315,8 +326,12 @@ test('the dry run refuses a triple whose manifest signature was corrupted and pr
 
 test('the dry run refuses to run without the public key in the environment', async () => {
   const triple = await writeSignedTriple();
-  const result = await captureRun(offlineArgs('--dry-run', triple, []));
+  const factory = makeCountingRefusal();
+  const result = await captureRun(offlineArgs('--dry-run', triple, []), {
+    createTransport: factory.createTransport,
+  });
   assert.equal(result.code, 1);
+  assert.equal(factory.constructions(), 0, 'a refused plan must not build a transport either');
   assert.match(result.stderr, /MOFANG_UPDATE_PUBLIC_KEY_B64 is required/u);
   assert.equal(result.stdout.includes('"plan"'), false);
 });
@@ -673,8 +688,12 @@ test('the stable re-sign signs the verified internal bytes for the stable channe
   const root = makeCliRoot();
   const triple = await writeSignedTriple({ minLauncherVersion: '7.8.9' });
   const stableOut = join(root, 'stable-manifest.json');
-  const result = await withReleaseKeys(writeSigningKey(root), () => captureRun(stableArgs(triple, stableOut)));
+  const factory = makeCountingRefusal();
+  const result = await withReleaseKeys(writeSigningKey(root), () =>
+    captureRun(stableArgs(triple, stableOut), { createTransport: factory.createTransport }),
+  );
   assert.equal(result.code, 0);
+  assert.equal(factory.constructions(), 0, 'the offline re-sign must not build a transport');
   const printed = printedObject(result.stdout);
   assert.equal(printed.mode, 're-sign-stable');
   assert.equal(printed.channel, 'stable');
@@ -702,12 +721,18 @@ test('the stable re-sign refuses to overwrite the manifest it already wrote and 
   const triple = await writeSignedTriple();
   const stableOut = join(root, 'stable-manifest.json');
   const signingKeyPath = writeSigningKey(root);
-  const first = await withReleaseKeys(signingKeyPath, () => captureRun(stableArgs(triple, stableOut)));
+  const factory = makeCountingRefusal();
+  const first = await withReleaseKeys(signingKeyPath, () =>
+    captureRun(stableArgs(triple, stableOut), { createTransport: factory.createTransport }),
+  );
   assert.equal(first.code, 0);
   const firstBytes = fsModule.readFileSync(stableOut);
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 15);
-  const second = await withReleaseKeys(signingKeyPath, () => captureRun(stableArgs(triple, stableOut)));
+  const second = await withReleaseKeys(signingKeyPath, () =>
+    captureRun(stableArgs(triple, stableOut), { createTransport: factory.createTransport }),
+  );
   assert.equal(second.code, 1);
+  assert.equal(factory.constructions(), 0, 'the refused re-sign must not build a transport either');
   assert.match(second.stderr, /already exists; refusing to overwrite a signed manifest/u);
   assert.match(second.stderr, /remove it by hand to re-sign/u);
   assert.deepEqual(fsModule.readFileSync(stableOut), firstBytes);
@@ -717,10 +742,12 @@ test('the stable re-sign refuses to run without the signing key file in the envi
   const root = makeCliRoot();
   const triple = await writeSignedTriple();
   const stableOut = join(root, 'stable-manifest.json');
+  const factory = makeCountingRefusal();
   const result = await withEnvironment('MOFANG_UPDATE_PUBLIC_KEY_B64', CLI_PUBLIC_KEY_BASE64, () =>
-    captureRun(stableArgs(triple, stableOut)),
+    captureRun(stableArgs(triple, stableOut), { createTransport: factory.createTransport }),
   );
   assert.equal(result.code, 1);
+  assert.equal(factory.constructions(), 0, 'the refused re-sign must not build a transport either');
   assert.match(result.stderr, /MOFANG_UPDATE_SIGNING_KEY_FILE is required to sign the stable manifest offline/u);
   assert.equal(fsModule.existsSync(stableOut), false);
 });
@@ -988,4 +1015,111 @@ test('a commit whose flip did not take effect exits 3 so the operator knows a re
   assert.equal(printed.reason, 'the flip did not take effect');
   const entries = auditEntriesOf(auditOut);
   assert.equal(entries.at(-1).stage, 'lock-retained');
+});
+
+test('the break lock mode needs only the channel, and prints no version it was never given', async () => {
+  const auditOut = join(makeCliRoot(), 'audit.jsonl');
+  const harness = makeHarness({
+    readSsh: () => ({ status: 0, stdout: JSON.stringify({ runid: 'r0', planHash: 'p0' }), stderr: '' }),
+    writeSsh: okWrite,
+    sftpUpload: okUpload,
+    fetchPublic: okFetch,
+    onFactory: () => {},
+  });
+  const result = await withEnvironment('MOFANG_FEED_OPERATOR', 'ops', () =>
+    captureRun(
+      [
+        '--break-lock',
+        '--channel',
+        'internal',
+        '--host',
+        'updates.example.invalid',
+        '--known-hosts',
+        OUTSIDE_KNOWN_HOSTS,
+        '--reason',
+        'confirmed idle',
+        '--audit-out',
+        auditOut,
+        '--confirm-runid',
+        'r0',
+      ],
+      { createTransport: harness.createTransport },
+    ),
+  );
+  assert.equal(result.code, 0, result.stderr);
+  const printed = printedObject(result.stdout);
+  assert.equal(printed.mode, 'break-lock');
+  assert.equal(printed.channel, 'internal');
+  assert.equal(
+    'version' in printed,
+    false,
+    'the break lock path never reads a version, so echoing one would be invented',
+  );
+  assert.deepEqual(printed.previousOwner, { runid: 'r0', planHash: 'p0' });
+  const entries = auditEntriesOf(auditOut);
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].stage, 'break-lock');
+  assert.equal('version' in entries[0], false);
+});
+
+test('the break lock mode still refuses a version flag that is not a semantic version', async () => {
+  const result = await captureRun(
+    [
+      '--break-lock',
+      '--channel',
+      'internal',
+      '--host',
+      'updates.example.invalid',
+      '--known-hosts',
+      OUTSIDE_KNOWN_HOSTS,
+      '--version',
+      'banana',
+      '--reason',
+      'confirmed idle',
+      '--audit-out',
+      'a.jsonl',
+      '--confirm-runid',
+      'r0',
+    ],
+    { createTransport: refuseConstruction },
+  );
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /version must be a strict semantic version/u);
+});
+
+test('the break lock mode still refuses a channel that is not in the whitelist', async () => {
+  const result = await captureRun(
+    [
+      '--break-lock',
+      '--channel',
+      'beta',
+      '--host',
+      'updates.example.invalid',
+      '--known-hosts',
+      OUTSIDE_KNOWN_HOSTS,
+      '--reason',
+      'confirmed idle',
+      '--audit-out',
+      'a.jsonl',
+      '--confirm-runid',
+      'r0',
+    ],
+    { createTransport: refuseConstruction },
+  );
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /channel must be one of internal, stable/u);
+});
+
+test('the cli refuses to run without an injected transport factory instead of reaching the real one', async () => {
+  const triple = await writeSignedTriple();
+  await assert.rejects(
+    () => captureRun(offlineArgs('--dry-run', triple, [])),
+    /createTransport/u,
+    'an offline mode must refuse rather than fall through to the real transport',
+  );
+  await assert.rejects(
+    () => captureRun(networkArgs('--break-lock', ['--reason', 'x', '--audit-out', 'a.jsonl', '--confirm-runid', 'r0'])),
+    /createTransport/u,
+    'a network mode must refuse too, and never build the real transport',
+  );
 });

@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
-import { runCli } from './lib/feed-publish-cli.mjs';
+import { createFeedTransport, runCli } from './lib/feed-publish-cli.mjs';
 
-await runCli(process.argv.slice(2)).then(
+await runCli(process.argv.slice(2), { createTransport: createFeedTransport }).then(
   (code) => {
     process.exitCode = code;
   },

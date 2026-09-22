@@ -25,8 +25,12 @@ export function parsePublishInput(raw) {
   if (!CHANNELS.includes(raw.channel)) {
     throw new FeedPublishError(`channel must be one of ${CHANNELS.join(', ')}`);
   }
-  if (typeof raw.version !== 'string' || !SEMVER_PATTERN.test(raw.version)) {
-    throw new FeedPublishError(`version must be a strict semantic version, received ${raw.version}`);
+  const versionRequired = raw.versionRequired !== false;
+  const versionGiven = typeof raw.version === 'string';
+  if (versionRequired || versionGiven) {
+    if (!versionGiven || !SEMVER_PATTERN.test(raw.version)) {
+      throw new FeedPublishError(`version must be a strict semantic version, received ${raw.version}`);
+    }
   }
   const needsNetwork = raw.needsNetwork === true;
   if (needsNetwork) {
@@ -42,7 +46,7 @@ export function parsePublishInput(raw) {
   }
   return {
     channel: raw.channel,
-    version: raw.version,
+    version: versionRequired ? raw.version : null,
     host: needsNetwork ? raw.host : null,
     knownHostsPath: needsNetwork ? resolve(raw.knownHostsPath) : null,
   };

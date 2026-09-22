@@ -17,7 +17,7 @@ import {
   runPreflight,
   verifyLocalArtifacts,
 } from './feed-publish.mjs';
-import { createFeedTransport } from './feed-publish-transport.mjs';
+export { createFeedTransport } from './feed-publish-transport.mjs';
 import {
   assertPathOutsideRepository,
   buildPortableRelease,
@@ -28,12 +28,15 @@ import {
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 const USAGE = [
-  'Usage: node scripts/feed-publish.mjs <--dry-run|--preflight|--commit|--break-lock|--re-sign-stable> --channel <internal|stable> --version <x.y.z> [--host <host> --known-hosts <path>]',
+  'Usage: node scripts/feed-publish.mjs <--dry-run|--preflight|--commit|--break-lock|--re-sign-stable> --channel <internal|stable> [--version <x.y.z>] [--host <host> --known-hosts <path>]',
   '  --dry-run          offline: validate the three artifacts and print the plan',
   '  --preflight        read only remote checks; never claims to have verified writability;',
   '                     needs --audit-out, because it records a session level entry',
   '  --commit           publish; needs --package --file-manifest --manifest --audit-out',
-  '  --break-lock       needs --reason --audit-out --confirm-runid',
+  '  --version          required by every mode except --break-lock, whose lock path is keyed by',
+  '                     the channel only, so the mode reads no version and echoes none back',
+  '  --break-lock       needs --channel --reason --audit-out, plus --confirm-runid; use',
+  '                     --owner-record-unreadable (below) when the owner record is unreadable',
   '  --owner-record-unreadable',
   '                     with --break-lock: the lock owner record cannot be read, so there',
   '                     is no runid to confirm; passing this flag is the operator stating',
@@ -117,7 +120,12 @@ async function withTransport(createTransport, input, body) {
 }
 
 export async function runCli(argv, dependencies = {}) {
-  const createTransport = dependencies.createTransport ?? createFeedTransport;
+  const createTransport = dependencies.createTransport;
+  if (typeof createTransport !== 'function') {
+    throw new FeedPublishError(
+      'runCli needs a createTransport function; the real transport is wired by the entry point in scripts/feed-publish.mjs, so a caller that forgets it must not reach the network',
+    );
+  }
   const modeFlags = MODE_FLAGS.filter((name) => argv.includes(name));
   if (modeFlags.length > 1) {
     console.error(`only one mode flag may be given, but this command line carries ${modeFlags.join(' and ')}`);
@@ -135,6 +143,7 @@ export async function runCli(argv, dependencies = {}) {
   const knownHostsPath = flag(argv, '--known-hosts');
   const auditOut = flag(argv, '--audit-out');
   const needsNetwork = mode !== 'dry-run' && mode !== 're-sign-stable';
+  const versionRequired = mode !== 'break-lock';
   const startedAt = new Date().toISOString();
   const machine = hostname();
   const runid = randomUUID();
@@ -143,8 +152,8 @@ export async function runCli(argv, dependencies = {}) {
 
   let input;
   try {
-    if (version === null) throw new FeedPublishError('--version is required');
-    input = parsePublishInput({ channel, version, host, knownHostsPath, needsNetwork });
+    if (versionRequired && version === null) throw new FeedPublishError('--version is required');
+    input = parsePublishInput({ channel, version, host, knownHostsPath, needsNetwork, versionRequired });
   } catch (error) {
     console.error(error instanceof FeedPublishError ? error.message : String(error));
     return 1;
@@ -334,9 +343,7 @@ export async function runCli(argv, dependencies = {}) {
         });
         const at = now();
         appendAuditStage({ auditOut, repositoryRoot, entry: { stage: 'break-lock', ...record, runid, operator, at } });
-        console.log(
-          JSON.stringify({ mode, channel: input.channel, version: input.version, runid, ...record, at }, null, 2),
-        );
+        console.log(JSON.stringify({ mode, channel: input.channel, runid, ...record, at }, null, 2));
         return 0;
       } catch (error) {
         const message = error instanceof FeedPublishError ? error.message : String(error);

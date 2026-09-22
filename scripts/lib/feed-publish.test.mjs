@@ -2995,3 +2995,24 @@ test('a host that carries a control character is rejected by the same class the 
     /must not start with a dash or contain whitespace/u,
   );
 });
+
+test('a mode that is told it carries no version never gets one back', () => {
+  const parsed = parsePublishInput({
+    channel: 'internal',
+    version: '1.2.3',
+    needsNetwork: true,
+    host: 'updates.example.invalid',
+    knownHostsPath: '/tmp/known_hosts',
+    versionRequired: false,
+  });
+  assert.equal(parsed.version, null, 'the break lock path is version independent, so it must not carry one');
+  assert.equal(parsed.channel, 'internal');
+  assert.equal(parsed.host, 'updates.example.invalid');
+});
+
+test('a version flag that is given to a mode that does not need one is still checked', () => {
+  assert.throws(
+    () => parsePublishInput({ channel: 'internal', version: 'banana', needsNetwork: false, versionRequired: false }),
+    /version must be a strict semantic version/u,
+  );
+});
