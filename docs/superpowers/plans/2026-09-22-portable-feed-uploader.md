@@ -5071,11 +5071,12 @@ git commit -m "feat(feed): add the async pinned ssh and sftp transport"
 
 ### Task 6 账本（2026-09-23，本刀实测）
 
-**本刀切三片，三条提交**（都用**显式 pathspec**、消息末尾都带 `Co-Authored-By: Claude Code <noreply@anthropic.com>`，**没有** `--amend`、没有重写历史）：
+**本刀切三片，四条提交**（都用**显式 pathspec**、消息末尾都带 `Co-Authored-By: Claude Code <noreply@anthropic.com>`，**没有** `--amend`、没有重写历史）：
 
-1. **承前四项（Step −1）** —— 计划（Task 7 规定块两项 + Task 5 账本两处行号）＋ `feed-publish.mjs`（一行）＋ `feed-publish.test.mjs`（一条按名钉子 + 一条断言）。
-2. **真实 transport** —— `feed-publish-transport.mjs` + 它的测试（规定块**逐字节**转写）。
-3. **preflight 只读承诺按 transport 身份钉住** —— `feed-publish.test.mjs` 一条新用例 + 本账本 + 门禁表。
+1. **承前四项（Step −1）** —— 计划（Task 7 规定块两项 + Task 5 账本两处行号）＋ `feed-publish.mjs`（一行）＋ `feed-publish.test.mjs`（一条按名钉子 + 一条断言）。提交 `486da49d`。
+2. **真实 transport** —— `feed-publish-transport.mjs` + 它的测试（规定块**逐字节**转写）。提交 `b6d504f8`。
+3. **preflight 只读承诺按 transport 身份钉住** —— `feed-publish.test.mjs` 一条新用例 + 本账本 + 门禁表。提交 `0e8959cf`。
+4. **计划** —— 只改正本账本里"Task 7 标题被删又补回"那一句引用的两个数字（**本提交**：它自己那个哈希不可能写进自己）。⚠️ **第 3 条提交里那句注解原先引用的两个数字（91 处插入 / 2 处删除）是写作时的读数**：在那之后门禁表又被 `prettier` 整块重排，数字随之变化 ⇒ 本提交把它换成提交 `0e8959cf` 上的实测（**102 处插入 / 12 处删除**）。**这与 Task 5 账本那次 `prettier` 更正同一形状：数字要在它所属的提交上量，别在写作时刻量。**
 
 #### 〇、承前四项（Step −1）
 
@@ -5184,7 +5185,7 @@ transport 自己**只拼两类字符串**：ssh / sftp 的 **argv 数组元素**
 - **`--re-sign-stable` 的"拒绝覆盖"臂**仍然不可自动化（要真钥匙），**未验**。
 - **Task 7 / Task 8 未动**：CLI、手册、检查单、门禁表里除本刀那一行之外的全部格子都还是 `待填`。
 
-⚠️ **本刀在这里删掉过一次 `### Task 7` 的标题与它前面的 `---`**（把本节插进去时 `old_string` 把那段分隔一起带走了），**当场发现并原样补回**。**可核对（不是自称）**：本提交对计划文件的 `git diff --stat` 是 **91 处插入、2 处删除**，而那**两处删除**就是上面 Step 2 与 Step 4 的"预期"两行（`git diff -U0` 的两个 `-` 行号 = 4902 / 5044）—— **Task 7 区段里一处删除都没有** ⇒ 标题、段落与它的两个规定块（Step 1 的测试块、Step 3 的代码块）逐字节未动。
+⚠️ **本刀在这里删掉过一次 `### Task 7` 的标题与它前面的 `---`**（把本节插进去时 `old_string` 把那段分隔一起带走了），**当场发现并原样补回**。**可核对（不是自称，数字全部来自提交 `0e8959cf` 的实测）**：`git show 0e8959cf --stat -- docs/superpowers/plans/2026-09-22-portable-feed-uploader.md` 的读数是 **102 处插入、12 处删除**；该文件的 diff **只有 5 个 hunk**（`-4899` / `-5041` / `-5065` / `-5096` / `-5732`），**Task 7 的标题在旧文件第 5102 行** ⇒ **前 4 个 hunk 全在它之前**（两个"预期"行 + 两段插入），第 5 个是**门禁表**被 `prettier` 整块重排（本刀改了三格 ⇒ 列宽变，表头 + 分隔行 + 8 行数据合计 10 行算作删除再插入）。⇒ **Task 7 区段（旧文件 5102 行到 Task 8 之前）里一处删除都没有**：标题、段落与它的两个规定块（Step 1 的测试块、Step 3 的代码块）逐字节未动。
 
 ---
 
