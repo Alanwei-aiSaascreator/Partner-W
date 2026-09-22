@@ -4606,6 +4606,98 @@ git commit -m "feat(feed): re-sign the manifest for the stable channel"
 
 ---
 
+### Task 5 账本（续）：代码质量闸门四项 + 承前六项的落地（2026-09-23，本刀实测）
+
+**本刀是什么：** 代码质量闸门在 Task 5 上留下 **4 项**（A 守卫的**错误类没有被钉住**／B **`buildStableManifestInput` 没有可达路径**／C 缺少**对真消费者的集成钉子**／D 三条 Minor），工程记录 **1 项**（F）；spec 闸门另有**承前 6 项**（E1–E6）。**本刀的提交是两个**（都用**显式 pathspec**、消息末尾都带 `Co-Authored-By: Claude Code <noreply@anthropic.com>`）：① **代码 + 测试 + 计划**（`cb296f73`，subject `fix(feed): name the reused-manifest guard and pin its error class`）—— 计划与代码在**同一个提交**里，是因为闸门 A 明确要求"改规定块就必须在**同一个提交**里重同步镜像"，而本计划的规定块与账本正文在**同一个文件**里，拆不开（拆就得在提交之间重建一个中间态的计划文件，那会把"逐字节镜像"的核对成本抬高）；② **计划**（本账本所在的提交，只补记 ① 的哈希与 ① 的收尾）。**没有用 `--amend`、没有重写任何历史提交。**
+
+**一、最终读数（本刀实测）**
+
+- `feed-publish.mjs` **1153** 行（原 1147）、`feed-publish.test.mjs` **2837** 行（原 2804）；套件 **`ℹ tests 156 / ℹ pass 156 / ℹ fail 0`**（原 154；**+2**：一条守卫按名钉子 + 一条集成钉子）。测试名逐条比过：**154 → 156，只多出那两条，没有一条名字被删或改**。
+- `prettier --write` 对两个代码文件与计划文件都是 `(unchanged)`（本刀的所有新增本来就符合格式）。
+- **门禁读数（本刀实测）**：先 `export PATH="/d/go-toolchain/go/bin:$PATH"`，再跑 `pnpm check`（**不接管道**；重定向到仓库外的日志文件，`rc=$?` 就是那一行的退出码）⇒ **退出码 0**。**非空证据四条**：① 日志 **10144** 行；② 链上第一步的 Go 测试真的跑过（第 3 行 `ok  mofang-compass/portable-launcher/cmd/mofang-launcher  0.117s` —— 少了那个 PATH 导出它会在第一步就死）；③ `check:portable-feed-publish` 那一步的读数就是本刀的 **`ℹ tests 156 / ℹ pass 156 / ℹ fail 0`**（日志第 210–213 行）；④ 链尾 `packages/desktop test` 真的跑到（`Test Files 281 passed (281)`，日志第 10140 行）。全日志里 `✖` / `not ok` / `FAIL` 计数为 **0**。
+
+**二、十对规定块（**当前**边界；上表是 Task 5 当时的读数，已被本刀推动）**
+
+| 对                                       | 计划围栏    | 计划块内容 | ⇔ 文件切片                        | 行数          |
+| ---------------------------------------- | ----------- | ---------- | --------------------------------- | ------------- |
+| 模块第 1 对                              | 506 / 657   | 507–656    | `feed-publish.mjs` 1–150          | 150           |
+| 模块第 2 对                              | 929 / 988   | 930–987    | `feed-publish.mjs` 152–209        | 58            |
+| 模块第 3 对                              | 1361 / 1606 | 1362–1605  | `feed-publish.mjs` 211–454        | 244           |
+| Task 4 模块块（**未动**）                | 3197 / 3874 | 3198–3873  | `feed-publish.mjs` 456–1131       | 676           |
+| Task 5 模块块（**重同步**）              | 4501 / 4523 | 4502–4522  | `feed-publish.mjs` 1133–1153      | 21（原 15）   |
+| 测试第 1 对（**重同步**，import 多两行） | 112 / 490   | 113–489    | `feed-publish.test.mjs` 1–377     | 377（原 375） |
+| 测试第 2 对（**未动**）                  | 726 / 915   | 727–914    | `feed-publish.test.mjs` 379–566   | 188           |
+| 测试第 3 对（**未动**）                  | 1039 / 1347 | 1040–1346  | `feed-publish.test.mjs` 568–874   | 307           |
+| Task 4 测试块（**未动**）                | 1781 / 3183 | 1782–3182  | `feed-publish.test.mjs` 1346–2746 | 1401          |
+| Task 5 测试块（**重同步**）              | 4456 / 4487 | 4457–4486  | `feed-publish.test.mjs` 2748–2777 | 30（原 34）   |
+
+- **十对逐对 `diff` 全部 `DIFF_EMPTY`**（装置：把计划侧与文件侧各写进仓库外临时文件，跑 `diff -u`，逐对打印；读数 `pairs=10 diff_empty=10 diff_nonempty=0`）。
+- **镜像检查器的敏感性探针三条**（本刀实跑）：① 未扰动 ⇒ `matched=10`、十对 `DIFF_EMPTY`；② 把计划侧 Task 5 模块块里**一个字符**改掉（`channel: 'stable',` ⇒ `channel: 'stable ',`）⇒ `matched=9`，**掉的正好是那一对**（围栏 4501 / 4523 ⇔ `mjs` 1133–1153）；③ 把模块切片**中间**删掉一行（第 700 行，落在 456–1131 里）⇒ `matched=9`，**掉的正好是 Task 4 模块块那一对**（676 行）—— 这条专门证明判据是"**连续**切片"，不是"每行都能在文件里找到"。②③ 都跑在**仓库外的副本**上，仓库里的文件一个字节没动。
+- ⚠️ **探针第 ② 条的第一版打偏了**：锚点 `    channel: 'stable',` 在计划里出现 **2** 次（第 1095 行在镜像第 2 对里、第 4513 行在 Task 5 模块块里），脚本取的是**第一处** ⇒ 掉的是 `test 379–566` 那一对。读数本身仍然证明"改一个字符就掉一对"，但它不是我要的那一对；改成**按行号**指定 4513 之后才落到 Task 5 模块块上。**这条记在这里是因为它与"锚点必须恰好 1 次"是同一类坑，只是这次坑在探针里、不在变异里。**
+
+**三、A（Critical）：守卫的错误类没有被钉住 —— 已修**
+
+- **改动**：把守卫抽成**导出的** `assertNotReusedManifest(input)`（`feed-publish.mjs:1133–1139`），`buildStableManifestInput` 第一行调它（`:1142`）；错误类**保持** `FeedPublishError`。守卫文案同时按闸门意见改成**点名那个键**并**区分两种形态**（见第五节 Minor 6）。
+- **钉子**：新用例 `the reused manifest guard is exported and keeps the module error class`（`test.mjs:2803`）**按名**调 `assertNotReusedManifest`，并断言**两条臂**（`manifestBytes` 有值 / `manifestBytes: undefined`）都抛 `FeedPublishError`、以及没有该键时不抛；规定的那条用例（`test.mjs:2764`）在原来的**消息正则旁边**加了**类断言** `assert.throws(reuse, FeedPublishError)`。
+- **变异 M-A1**（换错误类）：`feed-publish.mjs` `- throw new FeedPublishError(` / `+ throw new Error(`（锚点 1 次）。读数 **`tests 156 / pass 154 / fail 2`**，红的两条是**上面那两条守卫用例**，没有第三条。hunk：`@@ -1133,7 +1133,7 @@` 三行上下文，`-`/`+` 都是整行。
+- ⚠️ **闸门那句"按名钉住的那条用例单独变红"在本刀上做不到，附证据**：闸门同时要求"**把类断言加在消息正则旁边**"（规定用例里）—— 而规定用例是通过**同一个 `throw`**（经 `buildStableManifestInput`）到达守卫的 ⇒ 换错误类必然让**两条**用例一起红。**处置**：两条都**预先写进红名单**并核对（`EXPECTED_REDS_MISSING 0`），且**实测没有第三条跟着红**。**放弃"单独"、保住"按名 + 类都被钉住"**，因为后者才是闸门要的性质。
+
+**四、变异读数（5 条变异 + 1 条对照；装置与本计划通用纪律第 3 条同规格）**
+
+**装置每条都做**：断言锚点恰好 **1** 次（不是就 `REFUSED`、不写盘、不跑套件）→ **变异之前**取 sha256 基线并落盘备份 → 写入并**重读确认落盘** → `node --check` 变异产物 → 跑套件 → 打印**整行 hunk**（`-`/`+` 带三行上下文）→ 核对**红名单**（预先写明哪几条必须红）→ **逐字节恢复** → 比 sha256 → 断言 `git status --porcelain -- <file>` 与变异前**逐字相同**。
+
+| #    | 变异（hunk：`-` 删 / `+` 加，**整行**）                                                                                                                                                      | 读数                  | 预先写明的红名单                                         | 核对                                                                                                                            |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| 对照 | 守卫文案尾巴：`- …manifestBytes with ${carried}`,`/`+ …manifestBytes carrying ${carried}`,`（`mjs:1136`）                                                                                    | **`156 / 0`（全绿）** | —（证明装置不是"改什么都红"）                            | 无红                                                                                                                            |
+| M-A1 | `- throw new FeedPublishError(` / `+ throw new Error(`（`mjs:1136`，锚点 1 次）                                                                                                              | **`154 / 2`**         | 两条守卫用例                                             | `EXPECTED_REDS_MISSING 0`；**没有第三条跟着红**                                                                                 |
+| M-A2 | 删掉 `buildStableManifestInput` 里的 `assertNotReusedManifest(input);`（`mjs:1142`，锚点 1 次）                                                                                              | **`155 / 1`**         | `the stable input refuses to reuse an internal manifest` | 命中；无第二条红                                                                                                                |
+| M-C1 | **消费者**契约漂移：`portable-update-release.mjs` `- assertVersion(input.minLauncherVersion, 'minLauncherVersion');` / `+ assertVersion(input.launcherMin, 'minLauncherVersion');`（`:374`） | **`154 / 2`**         | 集成钉子                                                 | 命中；另一条红是**本来就**接 `buildPortableRelease` 的旧用例 `the real release verifier accepts a canonically signed manifest…` |
+| M-C2 | `- channel: 'stable',` / `+ channel: input.channel,`（`mjs:1146`，锚点 1 次）                                                                                                                | **`154 / 2`**         | 集成钉子 + 规定用例 1                                    | 两条都命中                                                                                                                      |
+| M-C3 | `- export const PUBLIC_BASE_URL = 'https://api.rongyinghudong.com/updates';` / `+ …'/update';`（`mjs:8`）                                                                                    | **`154 / 2`**         | 集成钉子                                                 | 命中；另一条红是常量用例 `the roots and the channel whitelist are fixed constants`                                              |
+
+- **6 次全部 `RESTORE_SHA256_EQUAL true` + `GIT_STATUS_IDENTICAL true`**（模块基线 `3b7f2232d86f`；`portable-update-release.mjs` 基线 `a3bef2c6673d`，恢复后 sha256 相等、`git status` 里它**不在**改动列表中）。
+- **红名单核对的口径**：装置打印的红名单里，除测试名外还有 node 自己的汇总行 `failing tests:`；那一行不是测试，**不计入**（读数以 `ℹ pass / ℹ fail` 为准）。
+- **M-C1 是本刀最有信息量的一条**：它证明**集成钉子真的能发现"消费者契约漂移"**（消费者把入参键 `minLauncherVersion` 改名 ⇒ 只有那条**真的把 helper 的产物喂给消费者**的用例和消费者自己的用例会红；**所有对着字面量比对的用例全都绿**）—— 这正是闸门 C 说"现有断言只对字面量"要补的那一层。
+
+**五、B（Important）：`buildStableManifestInput` 没有可达路径 —— 已修（给它排了调用者）**
+
+- **闸门事实核对（本刀复核，属实）**：本刀之前 `buildStableManifestInput` **零调用者**（`grep` 只在模块自身与测试里出现）；Task 7 规定的 import 表里**没有它**、四种模式**没有一种**会调它；Task 6 的 Files 只有 transport + 它的测试；Task 8 只改手册。而操作员自然会去用的 `scripts/make-portable-update.mjs:63–83` 走的是 **`buildPortableFileManifest` + `createPortableUpdateArchive` 重新打包**那条路 —— 那正是 **§6.10 禁止**的（stable 只能复用原字节）。
+- **处置：给 Task 7 的规定块加第五种模式 `--re-sign-stable`**（离线）。**它的实现就是** `buildPortableRelease({ ...buildStableManifestInput(verifiedLocal), signingKeyPem, publicKeyBase64 })`：先用 `verifyLocalArtifacts({ expectedChannel: 'internal' })` 验过**内部发布的三件产物**（这是"复用原字节"的**唯一证据来源**），再把结果喂给 `buildStableManifestInput`，最后交给**真签名者**。**因此：**`buildStableManifestInput` 有了**排期好的调用者**（Task 7 的第五模式）、`assertNotReusedManifest` 有了**在用的调用者**（`buildStableManifestInput`）⇒ **追踪表那条"任何 helper 只定义未接入主链 = 缺陷"现在是"已满足"，不是"被豁免"**。
+- **本刀对 Task 7 规定块的改动（该块没有镜像对，CLI 文件尚不存在）**：① `--re-sign-stable` 进 mode 分派与 USAGE（`五种模式`）；② `needsNetwork` 改成 `mode !== 'dry-run' && mode !== 're-sign-stable'`；③ 新增离线分支（`--channel` 必须 stable、`--version`/`--package`/`--file-manifest`/`--manifest`/`--stable-out` 必填、产物用 `writeFileSync(..., { flag: 'wx' })` **拒绝覆盖**）；④ 新增两个环境读取器 `requireSigningKeyFileFromEnvironment` / `requireLauncherVersionFromEnvironment`（与既有的 `requirePublicKeyFromEnvironment` 同形）；⑤ Step 1 新增一条 CLI 守卫用例（三条**不需要环境变量**的臂：缺 `--version` / `--channel` 不是 stable / 缺 `--stable-out`），Step 4 的预期 `pass 6` ⇒ **`pass 7`**；⑥ 架构段、文件地图、依赖顺序、Task 7 标题、Step 7 提交消息、Task 5 账本末尾的"未做"一句全部从"四种模式"改成"五种模式"；⑦ 交货验收项第 3 条（`--audit-out` 必须真的被用掉）**显式登记 `--re-sign-stable` 为例外**并写清三条理由（§6.11 是闭集、编新阶段名等于改规格、可追溯性由 `verifyLocalArtifacts` + 打印的三个摘要 + Task 8 手册承载）。
+- ⚠️ **本刀没有做、也不该做的事**：没有把 `--re-sign-stable` 接进 `make-portable-update.mjs`（那是**重新打包**那条路，改它等于把"重新打包"洗成"重签"）；也**没有**给它编一个新的审计阶段名（见 ⑦）。**覆盖臂不可自动化**（要真钥匙）⇒ 登记为"只在真机离线签名演练里验"。
+
+**六、C（Important）+ D 三条 Minor + 承前六项：逐条落地**
+
+- **C（集成钉子）已加**：新用例 `the stable input feeds the real release builder the stable channel and the original bytes`（`test.mjs:2810`）—— 它**结束在 `buildPortableRelease`**，断言**签名载荷**里的 `channel === 'stable'`、`packageUrl === 'https://api.rongyinghudong.com/updates/stable/1.2.3/portable.zip'`（**字面量**，不是常量引用）、`fileManifestSha256` 等于**原字节**的 sha256，以及返回的 `fileManifestBytes` 与原字节逐字节相等（**复用，不是重建**）。
+- **D3（测试读起来像在做 I/O）已修**：`buildStableManifestInput` 是**零 I/O 的纯取值构造函数**（只读 `input.packagePath` 这个**字符串**），所以三条用例里的 `writeArtifacts()` 全部换成字面量 `'/outside/portable.zip'`。
+- **D4（中段 import）已修**：`import { buildStableManifestInput }` 从 `test.mjs:2746`（2700 行测试之后）移进文件头部的既有 import 列表（`test.mjs:8–19`，与 `assertNotReusedManifest` 一起）—— 该列表本来就从这个模块导入。**代价**：镜像第 1 对因此 +2 行（已重同步，见第二节）。
+- **Minor 6（拒绝文案点不出是哪个键）已修**：文案从 `the stable manifest must be signed on its own, never copied from the internal channel` 改成 `the stable manifest must be signed on its own, but the input carries the internal key manifestBytes with ${carried}`，其中 `carried` 按 `input.manifestBytes === undefined` 取 `'no value'` / `'a value'` ⇒ **点名了键、也区分了"有值/值为 undefined"两种形态**（判据仍是 `Object.hasOwn`，fail-closed 不变）。**被钉住的仍然只有前缀** `must be signed on its own`（规定正则没改）；**尾巴照旧刻意不钉**。
+- **E1（`§七` 的旧数字）已修**：`§七` 那一节现在同时给出**当前读数**（1153 / 2837 / 156 条；`test` 1346–2746 ⇔ 围栏 1781 / 3183；`mjs` 456–1131 ⇔ 围栏 3197 / 3874）与**它写作当时的读数**（1108 / 2744 / 151 条；456–1108 ⇔ 围栏 3195 / 3849），并写明**"同一处边界两种说法"这个矛盾在本刀关闭**。上表（Task 5 账本第三节）也加了指向本节的 ⚠️。
+- **E2（承前第 2 项 / Minor 7）不改数字，附证据 —— 闸门这一条是误报**：闸门说"`起点差 0–7 行` 是错的，实测起点差是 1 / 2 / 1 / 2 / 3 / 7 ⇒ 1–7"。**本刀把两边都重测了一遍**：把 `139146b8` 与 `16fba28c` 两个提交的**计划 + 两个文件**取出，各跑一遍按内容定位的检查器 ⇒ **旧读数在 `139146b8` 上逐条命中**（`test 1–374` / `mjs 1–148` / `test 376–561` / `mjs 150–202` / `test 563–868` / `mjs 204–442`），**新读数在 `16fba28c` 上逐条命中**（上表那六个数）。逐对起点差 = **0 / 0 / 1 / 2 / 3 / 7**（前两对的块都从第 1 行开始 ⇒ 起点差是 **0**），终点差 = **1 / 2 / 3 / 7 / 4 / 12** ⇒ **`起点差 0–7 行、终点差 1–12 行` 是对的**。闸门那个序列（1、2、1、2、3、7）是"前两对的**终点**差 + 后四对的**起点**差"的**混读**。**处置**：把**逐对数字**写进那一行（消除歧义，避免第三次返工），并在那里写明"别再改成 1–7"。
+- **E3（引错纪律条）已修**：`§四` 末尾原先写"本计划**通用纪律第 3 条**警告过的形状"，改**正确引用**为**Task 4 账本"次数"段那份作废清单的第 ② 条**（原文记录 `tests 1 pass 0 fail 1` 那种"加载失败被当成红"的读数），并写明为什么原引用是错的（那个编号项讲的是 hunk / 可达性 / 红名单）。
+- **E4（提交信息与账本口径不一致）已处置**：`16fba28c` 的消息把新增的那条测试写成"the one deviation from the prescribed text"，而**账本第六节的登记是"测试侧新增（不是偏离规定块）"**。**本刀以账本为权威**：那条测试属于**测试侧新增**（规定块本体一个字没动，只多了一条用例），`16fba28c` 的消息**用词不准、不改历史**，以本节为准。
+- **E5（调用者已排期 + 自审义务）已记**：见第四节（调用者已排期 ⇒ 追踪表那条规则**已满足**）。**"追踪表自审"（每个 Task 完成后做一次）：本刀对 Task 5 的结论是"没有一行需要重审"，依据是三条实测**：① `runCommit` 里本刀唯一的改动是 Step 0 的**纯搬运**（151 个测试名逐条不变）；② 本刀新增/改动的代码**只有** `assertNotReusedManifest` 与 `buildStableManifestInput` 两个**纯函数**，`runCommit` 一个字节没动；③ Task 7 的第五模式**离线**、不碰 13 步里的任何一步（`needsNetwork` 为假）。**因此那五行判据（对应代码 / await / 退出码 / 阶段名 / 锁状态）逐行沿用 Task 4 账本的读数，本刀不新增任何一行接线。**
+- **E6（守卫文案尾巴未钉）**：已声明（第五节 Minor 6 末句），本刀除抽出按名守卫外**不做**别的。
+
+**七、F（只记录，不改代码）：`state.ownerRecord` / `state.owner` 的成对性**
+
+- **现状**：`feed-publish.mjs` 里 `state.ownerRecord` 与 `state.owner` **并存**（`:711` / `:714` 建对象，`:835`、`:919`、`:930-932`、`:946`、`:950` 读写）。**复核者同意**保留这五个名字**逐字不动**，因为那正是让 Step 0 的搬运**可机械核对**的原因（改名会把"纯搬运"变成"有判据变化的改动"，而账本第 1 项的读数就是靠"151 个测试名不变"才成立的）。
+- **记录两条**：① **改名（`state.requestedOwner` / `state.lockOwner`）必须与"锁后尾段抽取"落在同一个提交里** —— 那对名字**要到那时才出现第二个读者**，在此之前改名只会增加核对成本；② 抽取的**触发条件**按复核者的细化：**第二个调用者可以是测试**（不一定是生产调用点），**最可能出现的位置是 `make-portable-update.mjs` 的重签路径**，而抽取**变得紧急**的时刻是有人给 `state` 加**第六个字段**、或者出现 `state.owner` 的**第四个写入点**。
+
+**八、两处提交信息的更正（不改历史，只登记）**
+
+- `e35a60ef` 的正文里混进了一个 CJK 词（"...runCommit now destructures that API and keeps the same**流程** otherwise."）。**不重写历史**；本提交把它**登记在案**（与上下文无关的杂物本该在提交前被读一遍）。⚠️ **该提交的其余内容仍然成立**：`createPublishRun` 是纯搬运、151 个测试名不变、没有拆文件、文件地图未改（这些读数见 Task 5 账本第 1 项）。
+- `16fba28c` 的用词问题见第五节 E4。
+
+**九、本刀未做 / 未验（不得写成已完成）**
+
+- **没有实现 Task 6 / 7 / 8**：`--re-sign-stable` 只写进**规定块**，代码一行未落；transport、手册、检查单同样未动。
+- **没有连过任何服务器**：本刀全部读数来自本地 `node --test` 与本地文件比较。**没有生成任何密钥、没有打包、没有上传。**
+- **`--re-sign-stable` 的"拒绝覆盖"臂不可自动化**（要真钥匙）⇒ **未验**；`MOFANG_UPDATE_SIGNING_KEY_FILE` / `MOFANG_LAUNCHER_VERSION` 缺失时的报错路径同样**未验**（CLI 文件还不存在）。
+- **M-C 那几条变异里，集成钉子从来没有"单独变红"过**（红名单里总有另一条）：这是**模块已有的钉子很密**的结果，不是集成钉子没价值 —— 它**唯一**能钉住的是"helper 的产物被**真签名者**接受"这一层（M-C1 里它是两条能发现"消费者契约漂移"的用例之一）。**本刀没有为它造出一条"只它红"的变异**，如实登记。
+
+---
+
 ### Task 6: 真实 SSH / SFTP / https transport（**全部 async**）
 
 **Files:**
