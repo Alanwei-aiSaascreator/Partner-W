@@ -4736,7 +4736,7 @@ git commit -m "feat(feed): re-sign the manifest for the stable channel"
 
 - **没有实现 Task 6 / 7 / 8**：`--re-sign-stable` 只写进**规定块**，代码一行未落；transport、手册、检查单同样未动。
 - **没有连过任何服务器**：本刀全部读数来自本地 `node --test` 与本地文件比较。**没有生成任何密钥、没有打包、没有上传。**
-- **`--re-sign-stable` 的"拒绝覆盖"臂不可自动化**（要真钥匙）⇒ **未验**；`MOFANG_UPDATE_SIGNING_KEY_FILE` 缺失时的报错路径同样**未验**（CLI 文件还不存在）。⚠️ **2026-09-23 更正**：本句原还点名 `MOFANG_LAUNCHER_VERSION`，那个变量与它的读取器已在 Task 6 的 Step −1 **删掉**（`minLauncherVersion` 改从**验过的 manifest** 读），所以它的"报错路径未验"这一项**不再存在**（见 Task 6 账本第〇节第 1 项）。
+- **`--re-sign-stable` 的"拒绝覆盖"臂不可自动化**（要真钥匙）⇒ **未验**；`MOFANG_UPDATE_SIGNING_KEY_FILE` 缺失时的报错路径同样**未验**（CLI 文件还不存在）。⚠️ **2026-09-23 更正**：本句原还点名 `MOFANG_LAUNCHER_VERSION`，那个变量与它的读取器已在 Task 6 的 Step −1 **删掉**（`minLauncherVersion` 改从**验过的 manifest** 读），所以它的"报错路径未验"这一项**不再存在**（见 Task 6 账本第〇节第 1 项）。⚠️ **第二条更正（Task 7 收尾账本第一节，本刀实测）**："拒绝覆盖"臂**不是**不可自动化，本刀已把它与"缺 `MOFANG_UPDATE_SIGNING_KEY_FILE` 的报错路径"**两条一起钉住**：夹具本来就有一对**生成出来的** Ed25519 钥匙与一个**仓库外**的临时目录（`makeCliRoot()` ⇒ `os.tmpdir()`），而 `assertPathOutsideRepository` 的全部要求就是"不在仓库里"这一点；真正需要生产钥匙的只有"为**真 feed** 签出一份可发布的 stable manifest"，那是**发布动作、不是测试**。
 - **M-C 那几条变异里，集成钉子从来没有"单独变红"过**（红名单里总有另一条）：这是**模块已有的钉子很密**的结果，不是集成钉子没价值 —— 它**唯一**能钉住的是"helper 的产物被**真签名者**接受"这一层（M-C1 里它是两条能发现"消费者契约漂移"的用例之一）。**本刀没有为它造出一条"只它红"的变异**，如实登记。
 
 ---
@@ -5282,7 +5282,7 @@ transport 自己**只拼两类字符串**：ssh / sftp 的 **argv 数组元素**
 - 🔴 **开口项（需要授权，本刀不能关闭）**：计划的两条真机验收项 —— **①在目标主机上抓一条真实的 GNU coreutils `mkdir` 权限失败原文**（Task 4 账本第三节第 3 条）、**②在目标主机上抓 `locale` 与一条"目录已存在"的 `mkdir` 原始 stderr**（Task 4 账本第三节第 8 条）—— **本刀一条都没做，也不该做**：它们需要**真实主机**与**机主的授权**，而本刀的边界是"实现适配器，不使用适配器"。**登记为开口项，等授权后在真机发布演练里一次抓齐**；在那之前，`isFileExistsFailure` 的匹配文本与"非 C locale ⇒ 谓词失配"这条**仍然是推断而不是实测**（本机那半个读数的证据在 Task 4 账本第 7 处偏离里）。**本刀没有编造任何样例、也没有让任何断言依赖一段想象中的主机输出。**
 - ⚠️ **本刀在装置上出过一次边界事故，如实登记**：为了验证"套件从不真的起 ssh"这条探针的**敏感性**，本刀先用一个 PATH 前置的假 `ssh` 去试 —— 而 Windows 上 `execFile` 不解析 `.cmd`（`ssh.cmd` 被跳过），于是那次"敏感性检查"**真的执行了系统的 `ssh.exe`**（命令是 `execFileSync('ssh', ['probe'])`，主机名 `probe`，退出码 **255**，秒级返回）。**⚠️ 口径更正（第二闸门刀）**：原先写的是"**没有连接任何服务器、没有读任何密钥、没有发出任何数据**"，这比**可知的**强一档 —— 那次真起了一个进程、参数里有一个**单标签主机名**，而单标签名通常会先按 DNS 搜索后缀试一轮，**本机无法排除那些解析尝试**。本刀改成：**没有与任何主机建立连接；至多发生了本地的名字解析尝试**（没有钥匙、没有发出数据这一点不变）。**教训（已提升进本计划"通用纪律"第 3 条）**：**敏感性检查若活在"会做真事"的那一侧，就必须让接触变成不可能，而不是不太可能** —— 换成 `throw` 是"不可能"，PATH 前置不是。
 - **真实路径（真机发布演练）未验收**：`--preflight` / `--commit` / `--break-lock` 接上真实 transport 后的行为，本刀一条都没跑（那需要主机、host-key 指纹与授权）。
-- **`--re-sign-stable` 的"拒绝覆盖"臂**仍然不可自动化（要真钥匙），**未验**。
+- **`--re-sign-stable` 的"拒绝覆盖"臂**仍然不可自动化（要真钥匙），**未验**。⚠️ **2026-09-23 更正（Task 7 收尾账本第一节，本刀实测）**：这条**是**可自动化的，且已被钉住 —— 夹具本来就有一对**生成出来的** Ed25519 钥匙（`generateKeyPairSync('ed25519')`）与一个**仓库外**的临时目录（`makeCliRoot()` ⇒ `os.tmpdir()`），而 `assertPathOutsideRepository` 的全部要求就是"不在仓库里"这一点；真正需要生产钥匙的只有"为**真 feed** 签出一份可发布的 stable manifest"，那是**发布动作、不是测试**。
 - **Task 7 / Task 8 未动**：CLI、手册、检查单、门禁表里除本刀那一行之外的全部格子都还是 `待填`。
 
 #### 六、**提交信息**的两处更正与一处登记（不改历史，只登记）
@@ -5925,7 +5925,7 @@ await runCli(process.argv.slice(2)).then(
 
 **必须遵守：** 顶层 `await`，只用 `process.exitCode`，**不得**在 Promise 完成前 `process.exit`；batch 文件是**仓库外唯一临时文件**（`mkdtempSync`），并在 `finally` 清理，因此并发运行不会互相覆盖；`--break-lock` 的 `--reason` / `--audit-out` / `--confirm-runid` **三角都必填**；`--commit` 分支必须把锁记录的三个注入值一起交给 `runCommit`（`operator` 取 `process.env.MOFANG_FEED_OPERATOR ?? 'unknown'`，与 `--break-lock` 同一来源；`startedAt` 取 CLI 启动时的 `new Date().toISOString()`；`machine` 取 `hostname()`，导入行是 `import { hostname } from 'node:os';`）—— `scripts/lib/` 是纯模块，**不得**出现 `new Date()` 或 `hostname()` / `os.hostname()`，三个值只能由 CLI 注入。⚠️ **`machine` 只有一种写法：`hostname()`**（规定块里 `import { hostname } from 'node:os';` 是解构导入，所以调用端不能写 `os.hostname()`）。照抄散文里的 `os.hostname()` 会在 CLI 启动时以 `ReferenceError: os is not defined` 死掉，而那条路径的守卫测试**只覆盖 `--reason` / `--audit-out` / `--confirm-runid` 与 hosts 文件**，**不会**覆盖它 —— 本计划原先在 Task 4 的接线段与 Task 7 的这段里都误写成 `os.hostname()`，已两处改成 `hostname()`。
 
-**第五种模式 `--re-sign-stable`（2026-09-23 追加，代码质量闸门交办）：** 它**离线**（`needsNetwork` 必须为假，否则会去要 `--host` / `--known-hosts`），只用本地三个产物 + 两把钥匙，把 §6.10 的"stable manifest 必须单独离线签名"落成**一条可执行的路**。三条硬要求：① 它**必须先跑 `verifyLocalArtifacts`（`expectedChannel: 'internal'`）** —— 这是"复用的是**原字节**"这句话的**唯一证据来源**，跳过它这个模式就只剩"照着三个路径写一个新 manifest"；② 它是 `buildStableManifestInput` 的**唯一调用者**（见下方"调用者已排期"），签名走 `buildPortableRelease`，因此 12 个字段的拼接由**真消费者**验收，而不是由本模块自己的断言验收；③ 产物用 `writeFileSync(..., { flag: 'wx' })` 写，**拒绝覆盖**（§6.10 的"签名一次"纪律；这条的**覆盖臂不可自动化** —— 需要真钥匙，登记为"只在真机离线签名演练里验"）。
+**第五种模式 `--re-sign-stable`（2026-09-23 追加，代码质量闸门交办）：** 它**离线**（`needsNetwork` 必须为假，否则会去要 `--host` / `--known-hosts`），只用本地三个产物 + 两把钥匙，把 §6.10 的"stable manifest 必须单独离线签名"落成**一条可执行的路**。三条硬要求：① 它**必须先跑 `verifyLocalArtifacts`（`expectedChannel: 'internal'`）** —— 这是"复用的是**原字节**"这句话的**唯一证据来源**，跳过它这个模式就只剩"照着三个路径写一个新 manifest"；② 它是 `buildStableManifestInput` 的**唯一调用者**（见下方"调用者已排期"），签名走 `buildPortableRelease`，因此 12 个字段的拼接由**真消费者**验收，而不是由本模块自己的断言验收；③ 产物用 `writeFileSync(..., { flag: 'wx' })` 写，**拒绝覆盖**（§6.10 的"签名一次"纪律；这条的**覆盖臂不可自动化** —— 需要真钥匙，登记为"只在真机离线签名演练里验"）。⚠️ **2026-09-23 更正（Task 7 收尾账本第一节，本刀实测）**：那半句是**错的** —— 覆盖臂**可以**自动化，而且已经被钉住（`the stable re-sign refuses to overwrite the manifest it already wrote and leaves the first one byte identical`）：夹具本来就有一对**生成出来的** Ed25519 钥匙（`generateKeyPairSync('ed25519')`）与一个**仓库外**的临时目录（`makeCliRoot()` ⇒ `os.tmpdir()`），`assertPathOutsideRepository` 的全部要求就是"不在仓库里"这一点；真正需要生产钥匙的只有"为**真 feed** 签出一份可发布的 stable manifest"，那是**发布动作、不是测试**。
 
 **两项承前修正（2026-09-23，Task 6 的 Step −1 落在本块上，逐条给理由；读数见 Task 6 账本第〇节）：**
 
@@ -6168,7 +6168,7 @@ M-N（对记录做变异）：         - const status = result.notes.length === 
 
 1. **`dependencies.createTransport ?? createFeedTransport` 这个缺省分支没有被任何用例到达**（覆盖缺口，**不是存活**）：要到达它就必须真的构造生产 transport，而那一步之后 `--preflight`/`--commit` 会去起 `ssh` ⇒ 本计划的禁令不允许。**处置**：所有会走到传输的用例**都注入**假工厂，另有一条用例用**会抛的**工厂（`refuseConstruction`）把"拒绝时连传输都不该建"钉住。**没有"两个答案"**：这条缺省是 fail-closed 的（缺省就是真工厂），不是 fail-open。
 2. **没有连过任何服务器**：远端动作全部走注入的假 transport（`readOnly.sshRun` / `write.sshRun` / `write.sftpUpload` / `fetchPublic` 四个面），一次真实 `ssh` / `sftp` / `https` 都没有。**没有用 PATH 垫片**（Task 6 那次事故的教训照旧）。
-3. **`--re-sign-stable` 的"拒绝覆盖"臂**仍不可自动化（要真钥匙），**未验**（Task 6 账本第五节已登记过）。
+3. **`--re-sign-stable` 的"拒绝覆盖"臂**仍不可自动化（要真钥匙），**未验**（Task 6 账本第五节已登记过）。⚠️ **2026-09-23 更正（Task 7 收尾账本第一节，本刀实测）**：这条**是**可自动化的，且已被钉住 —— 夹具本来就有一对**生成出来的** Ed25519 钥匙（`generateKeyPairSync('ed25519')`）与一个**仓库外**的临时目录（`makeCliRoot()` ⇒ `os.tmpdir()`），而 `assertPathOutsideRepository` 的全部要求就是"不在仓库里"这一点；真正需要生产钥匙的只有"为**真 feed** 签出一份可发布的 stable manifest"，那是**发布动作、不是测试**。
 4. **`--preflight` / `--commit` / `--break-lock` 接上真实 transport 后的行为**（真机发布演练）**一条都没跑** —— 需要主机、host-key 指纹与授权。CLI 的 12 条接线用例验的是**接线**（参数、注入、审计、退出码映射），**不是**远端协议。
 5. **Task 8 未动**：手册、nginx、发布前检查单。本刀为它留了两条明确要求（写在交付说明要落的地方，Task 8 实施时不得漏）：① 手册必须写 `--owner-record-unreadable` 的**确切**状态路径、三条人工核查命令与"**不要 `rm -rf` 这个目录**"，并与常规 `--break-lock` 并列；② 手册要写 `--known-hosts` 允许带空格的路径（本刀把该规则显式收窄到"只禁主机名"）。
 
@@ -6259,7 +6259,11 @@ F2-M2（拒绝覆盖）：           - writeFileSync(stableManifestOut, release.
 
 #### 五、门禁读数
 
-待填（本提交只写读数 ⇒ 见紧跟其后的那一次提交；命令与判据同 Task 7 账本第七节：先 `export PATH="/d/go-toolchain/go/bin:$PATH"`，`pnpm check` **不接管道**、重定向到仓库外、`rc=$?`）。
+- **命令与退出码**：先 `export PATH="/d/go-toolchain/go/bin:$PATH"`，再跑 `pnpm check`（**不接管道**；重定向到仓库外的 `/d/tmp/t7work/gate8.log`，`rc=$?` 留在同目录的 `gate8.rc` 里）⇒ **`GATE_EXIT=0`**。⚠️ **这一跑对着的提交是 `7ab4f999`** —— 本节读数与那三段"不可自动化已更正"的 ⚠️ 指针是**之后再写的**（本提交**没有**再过一次 `pnpm check`；计划文件单独跑过 `prettier --check`，干净）。
+- **非空证据六条**：① 日志 **10204** 行（`wc -l`，本刀复量）；② 链上第一步的 Go 测试真的跑过（第 3 行 `ok  	mofang-compass/portable-launcher/cmd/mofang-launcher	0.190s` —— 少了那个 PATH 导出它会在第一步就死）；③ 门禁链本身（日志第 1 行）含 `check:portable-feed-publish`，而**那一步的命令行（第 53 行）就是把三个文件一起列出来的**（`$ node --test scripts/lib/feed-publish.test.mjs scripts/lib/feed-publish-transport.test.mjs scripts/lib/feed-publish-cli.test.mjs`）；④ 它的读数是 **`ℹ tests 217 / ℹ pass 217 / ℹ fail 0`**（日志第 271–274 行）= **161 + 30 + 26** —— 这个合计数只有在**三份都被加载**时才成立；另外**逐条测试名**也能各自定位到套件：本刀新增的三条（`the stable re-sign signs the verified internal bytes…` / `…refuses to overwrite the manifest it already wrote…` / `the commit refuses to run without the three artifact paths`）各 1 处、只属于 CLI 的 `the unreadable owner path prints three different causes and this run own record` 1 处、只属于 transport 的 `a known hosts path that carries whitespace reaches ssh as one argument` 1 处；⑤ 链尾 `packages/desktop test` 真的跑到（`Test Files 281 passed (281)`，第 10200 行），`prettier --check .` ⇒ `All matched files use Prettier code style!`（第 448 行）；⑥ 全日志里 `✖` / `not ok` / `FAIL` 计数为 **0**（三条各 `grep -c` = 0）。
+- **日志的处置**：**原样留在仓库外**（`/d/tmp/t7work/gate8.log`），没有进仓库、没有提交（`git status --porcelain` 里不出现它）。
+- ⚠️ **`grep -c 'feed-publish-cli' gate8.log` 只有 1 是正常的**（就是第 53 行那条命令本身）：测试**名字**里不含文件名 ⇒ 判"跑没跑"要看上面第 ③④ 条。
+- **`217` 与 Task 7 账本第五节的 `211` 差 6**：正是本刀新增的 6 条 CLI 用例（`161 + 30 + 20 = 211` ⇒ `161 + 30 + 26 = 217`）。
 
 #### 六、本刀未做 / 未验（不得写成已完成）
 
