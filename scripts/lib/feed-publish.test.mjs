@@ -1322,6 +1322,7 @@ import {
   PORTABLE_FILE_MANIFEST_NAME,
   PORTABLE_PACKAGE_NAME,
   appendAuditStage,
+  assertNoReservedEvidenceKeys,
   runCommit,
   verifyPublicArtifacts,
 } from './feed-publish.mjs';
@@ -1466,6 +1467,15 @@ function commitTransport(options = {}) {
             stdout: '',
             stderr: 'rmdir: failed to remove: Directory not empty',
           };
+        }
+        if (typeof options.finaliseStatus === 'number' && request.script.includes('.part-')) {
+          return { status: options.finaliseStatus, stdout: '', stderr: 'mv: cannot stat: No such file or directory' };
+        }
+        if (typeof options.backupStatus === 'number' && request.script.includes('/backup && cp ')) {
+          return { status: options.backupStatus, stdout: '', stderr: 'cp: cannot create regular file: No space left' };
+        }
+        if (typeof options.flipStatus === 'number' && /^mv -f \S+\.tmp \S+$/u.test(request.script)) {
+          return { status: options.flipStatus, stdout: '', stderr: 'mv: cannot move: Permission denied' };
         }
         if (
           /^mv \/opt\/rongying\/updates-state\/staging\//u.test(request.script) &&
@@ -2392,4 +2402,57 @@ test('the audit log keeps the operator and the time as null instead of dropping 
     assert.equal(entry.operator, null, entry.stage);
     assert.equal(entry.at, null, entry.stage);
   }
+});
+
+test('a staging directory that cannot be finalised is a plain failure', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths, { finaliseStatus: 1 });
+  const input = commitInput(transport, { ...paths });
+  const result = await runCommit(input);
+  assertEveryCommitCallCarriesTheTrustAnchor(transport);
+  assert.equal(result.outcome, 'fail');
+  assert.equal(result.lockState, 'not-acquired');
+  assert.match(result.reason, /staging directory could not be finalised/u);
+  assert.equal(result.stages.find((entry) => entry.stage === 'stage').status, 'fail');
+});
+
+test('a manifest backup that fails is an incident that keeps the lock before anything is flipped', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths, { backupStatus: 1 });
+  const input = commitInput(transport, { ...paths });
+  const result = await runCommit(input);
+  assertEveryCommitCallCarriesTheTrustAnchor(transport);
+  assert.equal(result.outcome, 'incident');
+  assert.equal(result.lockState, 'retained-by-this-run');
+  assert.match(result.reason, /previous manifest could not be backed up/u);
+  assert.equal(result.stages.find((entry) => entry.stage === 'flip').status, 'pending');
+  assert.deepEqual(
+    transport.calls.filter((call) => call[0] === 'writeSsh' && /^mv -f \S+\.tmp \S+$/u.test(String(call[1]))),
+    [],
+  );
+});
+
+test('an atomic flip that failed is an incident that records the manifest digest', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths, { flipStatus: 1 });
+  const input = commitInput(transport, { ...paths });
+  const result = await runCommit(input);
+  assertEveryCommitCallCarriesTheTrustAnchor(transport);
+  assert.equal(result.outcome, 'incident');
+  assert.equal(result.lockState, 'retained-by-this-run');
+  assert.equal(result.stages.find((entry) => entry.stage === 'flip').status, 'incident');
+  const flip = auditEntriesOf(input.auditOut).find((entry) => entry.stage === 'flip');
+  assert.equal(flip.manifestSha256, manifestShaOf(paths));
+});
+
+test('the audit evidence refuses a key that would override the entry it is attached to', () => {
+  for (const key of ['stage', 'status', 'reason', 'detail', 'runid', 'planHash', 'operator', 'at']) {
+    assert.throws(
+      () => assertNoReservedEvidenceKeys({ [key]: 'x' }),
+      new RegExp(`reserved key\\(s\\) ${key}`, 'u'),
+      key,
+    );
+  }
+  assert.doesNotThrow(() => assertNoReservedEvidenceKeys(undefined));
+  assert.doesNotThrow(() => assertNoReservedEvidenceKeys({ manifestSha256: 'x', remoteTempSha256: 'y' }));
 });

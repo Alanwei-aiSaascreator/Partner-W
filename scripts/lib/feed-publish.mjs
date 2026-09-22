@@ -441,6 +441,27 @@ export async function breakChannelLock(input) {
   };
 }
 
+const RESERVED_AUDIT_KEYS = Object.freeze([
+  'stage',
+  'status',
+  'reason',
+  'detail',
+  'runid',
+  'planHash',
+  'operator',
+  'at',
+]);
+
+export function assertNoReservedEvidenceKeys(evidence) {
+  if (evidence === undefined || evidence === null) return;
+  const clashing = Object.keys(evidence).filter((key) => RESERVED_AUDIT_KEYS.includes(key));
+  if (clashing.length > 0) {
+    throw new FeedPublishError(
+      `the audit evidence carries the reserved key(s) ${clashing.join(', ')}, which the entry sets itself from ${RESERVED_AUDIT_KEYS.join(', ')}; the spread would silently override it, so rename the evidence key`,
+    );
+  }
+}
+
 export function appendAuditStage(input) {
   if (typeof input.repositoryRoot === 'string' && input.repositoryRoot.length > 0) {
     assertOutsideRepository(input.auditOut, input.repositoryRoot);
@@ -660,6 +681,7 @@ export async function runCommit(input) {
   const baseOf = () => ({ runid, operator: input.operator ?? null, at: atValue() });
 
   const audit = (stage, status, detail, evidence) => {
+    assertNoReservedEvidenceKeys(evidence);
     stages.find((entry) => entry.stage === stage).status = status;
     appendAuditStage({
       auditOut: input.auditOut,
@@ -671,6 +693,7 @@ export async function runCommit(input) {
   const finish = (outcome, reason, lockState) => ({ outcome, reason, lockState, stages, runid, planHash });
 
   const recordOutcome = (outcome, reason, evidence) => {
+    assertNoReservedEvidenceKeys(evidence);
     appendAuditStage({
       auditOut: input.auditOut,
       repositoryRoot: input.repositoryRoot,
