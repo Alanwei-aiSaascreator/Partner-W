@@ -860,13 +860,15 @@ git commit -m "feat(release): record what each launcher build actually produced"
 
 **硬约束（规格 §5.4，不得降级）：** `embeddedKeyFingerprints` 与该启动器版本在密钥台账里登记的集合不一致时**必须硬拒绝**。因此**正式**组装与**正式**交付审计都**必须**提供 `--key-registry`；台账缺失、不可解析、该版本无登记、指纹不一致——**四类全部硬失败**。**不得**默认"没有台账就跳过检查"。
 
-**唯一的旁路是显式的 test-only 模式**：`--test-only`。它必须同时满足
+**没有生产旁路。** 不提供 `--test-only` 之类的开关——一个"临时放行"的旗标最终一定会被用在生产上。自动化测试与 CI 走的是**同一条完整检查**，只是把**台账换成 fixture 台账**：
 
-1. 输出目录的**目录名**以 `_TEST-ONLY-` 开头（否则硬失败）；
-2. 审计记录一条 `warn` 级 `launcher-key-registry-bypassed`；
-3. 控制台打印一行醒目的"本制品不可发布"警告。
+- fixture 台账里的指纹来自 **fixture 公钥**（临时生成的 Ed25519 密钥对），
+- 测试制品用 **fixture 私钥**签名，
+- 因此 `--key-registry <fixture-registry.json>` 能让四类硬检查**全部真实执行**并**全部通过**。
 
-这样开发夹具能跑，而生产绕过没有入口——因为一份名叫 `_TEST-ONLY-…` 的交付包不可能被当成正式包发出去。
+这与规格 §5.7 的"仓库/CI 自动化测试用临时 fixture 钥匙"是同一套口径，不新增例外。
+
+**两条入口都必须接 `--key-registry`：** 正式组装器（`scripts/assemble-udisk-delivery.mjs`）与交付审计 CLI（`scripts/udisk-delivery.mjs`）。**两条入口各自**都要覆盖下面四类 RED/GREEN。
 
 #### 前置：密钥台账模块（Step 0.1 – 0.3）
 
@@ -1152,14 +1154,14 @@ import { inspectPortableExecutable } from './portable-executable.mjs';
 (c) `auditDelivery` 签名扩为三参，并在启动器检查处加入四条规则：
 
 ```js
-export async function auditDelivery(io, root, options = {}) {
+export function auditDelivery(io, root, options = {}) {
 ```
 
 在既有的 `missing-launcher` 检查之后、且**仅当启动器存在**时插入：
 
 ```js
 if (launcherPresent) {
-  const bytes = typeof io.readBinary === 'function' ? await io.readBinary(path.join(root, LAUNCHER_EXE_NAME)) : null;
+  const bytes = typeof io.readBinary === 'function' ? io.readBinary(path.join(root, LAUNCHER_EXE_NAME)) : null;
   if (bytes === null || bytes === undefined) {
     findings.push(
       finding(
@@ -1234,17 +1236,23 @@ export const MINIMUM_LAUNCHER_BYTES = 64 * 1024;
 
 并对 CLI 增加 `--receipt <path>`：读取回执 → `parseReceipt` → 解析失败 ⇒ 新增 `launcher-receipt-missing` 级别错误；成功 ⇒ 计算 EXE 的 SHA-256 与大小，调用 `checkReceipt`，**`errors` 升级为 findings（`level: 'error'`，id `launcher-receipt-invalid`），`warnings` 原样作为 warn findings 传入 `auditDelivery` 的 `options.receiptWarnings`**。
 
-`checkReceipt` 的 `expectedFingerprints` 与 `knownPublicKeysBase64` 来自 `--key-registry <path>`（指向机器可读台账 `docs/portable-update-key-registry.json`）。**该参数在正式路径上是必填的**：
+**审计 CLI 的分工（必须照此结构，别把核心审计改成 async）：**
 
-| 情形                                         | 结果                                                                               |
-| -------------------------------------------- | ---------------------------------------------------------------------------------- |
-| `--key-registry` 缺失                        | **硬失败**：`--key-registry is required unless --test-only is given`               |
-| 台账不可解析 / 字段非法 / 指纹不合法         | **硬失败**（`parseKeyRegistry` 抛 `KeyRegistryError`）                             |
-| 台账里该启动器版本没有 active 登记           | **硬失败**：`the key registry has no active key registered for launcher version …` |
-| 指纹集合不一致                               | **硬失败**（`checkReceipt` 报 error）                                              |
-| 显式 `--test-only` 且 `_TEST-ONLY-` 前缀成立 | 允许缺省，但记 `warn` + 打印不可发布警告                                           |
+- `scripts/udisk-delivery.mjs`（CLI，同步 `main`）负责：读取并解析台账 → 读取并解析回执 → 算 EXE 的 SHA-256/大小 → 调 `checkReceipt` → 把 `errors`/`warnings` **转换成 findings** → **最后调用**（**同步**的）`auditDelivery(io, root, options)`。
+- `scripts/lib/udisk-delivery.mjs`（核心）保持**同步**：它只知道 `options.expectedFingerprints` / `options.knownPublicKeysBase64` / `options.receiptWarnings`，**不读文件、不解析台账、不做 I/O 以外的判断**。
 
-**不得**有任何"没有台账就跳过检查"的路径。台账模板的 `keys` 为空数组，因此**真实组装在密钥仪式完成之前会被正确地挡住**——这是预期行为，不是缺陷。
+因此 `auditDelivery` **不得**改成 `async`，`io.readBinary` 也必须是**同步**的。理由：把台账解析放进核心会让核心依赖 I/O 顺序，而 CLI 是唯一该知道"从哪读"的地方。
+
+| 情形                                 | 结果                                                                               |
+| ------------------------------------ | ---------------------------------------------------------------------------------- |
+| `--key-registry` 缺失                | **硬失败**：`--key-registry is required`                                           |
+| 台账不可解析 / 字段非法 / 指纹不合法 | **硬失败**（`parseKeyRegistry` 抛 `KeyRegistryError`）                             |
+| 台账里该启动器版本没有 active 登记   | **硬失败**：`the key registry has no active key registered for launcher version …` |
+| 指纹集合不一致                       | **硬失败**（`checkReceipt` 报 error）                                              |
+
+**不得**有任何"没有台账就跳过检查"的路径，**也不得**有 `--test-only` 之类的旁路（有旁路就等于迟早被用在生产上）。台账模板的 `keys` 为空数组，因此**真实组装在密钥仪式完成之前会被正确地挡住**——这是预期行为，不是缺陷。
+
+**自动测试怎么跑：** 用 `fixture registry`——由**临时 fixture 密钥对**生成的台账文件（写在 `os.tmpdir()` 下），配合用同一把 fixture 私钥签的制品。四类硬检查在测试里**全部真实执行**：缺台账、不可解析、无登记、指纹不一致，各有 RED/GREEN。
 
 - [ ] **Step 4: 运行测试并确认通过**
 
@@ -1344,9 +1352,11 @@ test('the assemble CLI refuses to run without a key registry', () => {
   assert.match(result.stderr, /--key-registry is required/u);
 });
 
-test('the assemble CLI refuses a test only build whose output directory is not marked', () => {
+test('the assemble CLI refuses a registry that cannot be parsed', () => {
   const root = makeDelivery({ launcherBytes: makePeBytes() });
   const receiptPath = writeMatchingReceipt(root, makePeBytes());
+  const registryPath = path.join(root, 'registry.json');
+  fs.writeFileSync(registryPath, 'not json', 'utf8');
   const out = makeEmptyOutputDir();
   const result = spawnSync(
     process.execPath,
@@ -1358,14 +1368,57 @@ test('the assemble CLI refuses a test only build whose output directory is not m
       path.join(root, LAUNCHER_EXE_NAME),
       '--receipt',
       receiptPath,
-      '--test-only',
+      '--key-registry',
+      registryPath,
       '--out',
       out,
     ],
     { encoding: 'utf8' },
   );
   assert.equal(result.status, 1);
-  assert.match(result.stderr, /_TEST-ONLY-/u);
+  assert.match(result.stderr, /not valid JSON/u);
+});
+
+test('the assemble CLI refuses a registry whose fingerprint set does not match', () => {
+  const root = makeDelivery({ launcherBytes: makePeBytes() });
+  const receiptPath = writeMatchingReceipt(root, makePeBytes());
+  const registryPath = path.join(root, 'registry.json');
+  fs.writeFileSync(
+    registryPath,
+    JSON.stringify({
+      schemaVersion: 1,
+      keys: [
+        {
+          keyId: 'k1',
+          fingerprint: 'F'.repeat(64),
+          publicKeyBase64: PUBLIC_KEY,
+          status: 'active',
+          minLauncherVersion: '1.2.3',
+        },
+      ],
+    }),
+    'utf8',
+  );
+  const out = makeEmptyOutputDir();
+  const result = spawnSync(
+    process.execPath,
+    [
+      path.join(repositoryRoot, 'scripts', 'assemble-udisk-delivery.mjs'),
+      '--app-dir',
+      path.join(root, APP_DIR_NAME),
+      '--launcher',
+      path.join(root, LAUNCHER_EXE_NAME),
+      '--receipt',
+      receiptPath,
+      '--key-registry',
+      registryPath,
+      '--out',
+      out,
+    ],
+    { encoding: 'utf8' },
+  );
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /fingerprint/i);
 });
 
 test('the assemble CLI refuses a registry that has no key for this launcher version', () => {
@@ -1449,15 +1502,8 @@ for (const message of verdict.warnings) console.warn(`WARNING: ${message}`);
 
 ```js
 async function resolveRegisteredFingerprints(input, receipt) {
-  if (input.testOnly === true) {
-    if (!basename(input.outDir).startsWith(TEST_ONLY_DIRECTORY_PREFIX)) {
-      throw new Error(`--test-only requires an output directory whose name starts with ${TEST_ONLY_DIRECTORY_PREFIX}`);
-    }
-    console.warn('WARNING: this delivery bypasses the key registry and must never be published');
-    return receipt.embeddedKeyFingerprints;
-  }
   if (input.keyRegistryPath === null) {
-    throw new Error('--key-registry is required unless --test-only is given');
+    throw new Error('--key-registry is required');
   }
   const registry = parseKeyRegistry(await readFile(input.keyRegistryPath, 'utf8'));
   const registered = fingerprintsForVersion(registry, receipt.launcherVersion);
@@ -1471,18 +1517,18 @@ async function resolveRegisteredFingerprints(input, receipt) {
 顶部补常量与导入（`basename` 来自 `node:path`）：
 
 ```js
-const TEST_ONLY_DIRECTORY_PREFIX = '_TEST-ONLY-';
+const KEY_REGISTRY_REQUIRED_MESSAGE = '--key-registry is required';
 ```
 
 ```js
 import { fingerprintsForVersion, parseKeyRegistry } from './lib/key-registry.mjs';
 ```
 
-(c3) `parseArguments` 增加两个**非必填**旗标（`--key-registry` 在 test-only 下允许缺省，因此不能进必填列表）：
+(c3) `parseArguments` 把 `--key-registry` 加进**必填**列表（与 `--app-dir`/`--launcher`/`--receipt`/`--out` 同等）：
 
 ```js
 function parseArguments(argv) {
-  const names = ['app-dir', 'launcher', 'receipt', 'out'];
+  const names = ['app-dir', 'launcher', 'receipt', 'key-registry', 'out'];
   const values = {};
   for (const name of names) {
     const index = argv.indexOf(`--${name}`);
@@ -1491,14 +1537,12 @@ function parseArguments(argv) {
     }
     values[name] = argv[index + 1];
   }
-  const registryIndex = argv.indexOf('--key-registry');
   return {
     appDir: resolve(values['app-dir']),
     launcher: resolve(values.launcher),
     receiptPath: resolve(values.receipt),
+    keyRegistryPath: resolve(values['key-registry']),
     outDir: resolve(values.out),
-    keyRegistryPath: registryIndex >= 0 && argv[registryIndex + 1] ? resolve(argv[registryIndex + 1]) : null,
-    testOnly: argv.includes('--test-only'),
   };
 }
 ```
@@ -1520,6 +1564,71 @@ const PROGRAM_TREE_VALIDATION_VERSION = '0.0.0';
 
 调用改为 `await buildPortableFileManifest({ programDir: input.appDir, version: PROGRAM_TREE_VALIDATION_VERSION });`，并在上一行注明：这一调用的**唯一目的**是借它校验程序目录（符号链接、受保护目录、路径冲突），返回的文件清单刻意丢弃。
 
+**第二条入口：交付审计 CLI 的四类同款检查。** 追加到同一个测试文件（该 CLI 现在要求 `--receipt` 与 `--key-registry` 都给出）：
+
+```js
+function runAuditCli(root, extraArgs) {
+  return spawnSync(process.execPath, [path.join(repositoryRoot, 'scripts', 'udisk-delivery.mjs'), root, ...extraArgs], {
+    encoding: 'utf8',
+  });
+}
+
+test('the delivery audit CLI refuses to run without a key registry', () => {
+  const root = makeDelivery({ launcherBytes: makePeBytes() });
+  const receiptPath = writeMatchingReceipt(root, makePeBytes());
+  const result = runAuditCli(root, ['--receipt', receiptPath]);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /--key-registry is required/u);
+});
+
+test('the delivery audit CLI refuses a registry that cannot be parsed', () => {
+  const root = makeDelivery({ launcherBytes: makePeBytes() });
+  const receiptPath = writeMatchingReceipt(root, makePeBytes());
+  const registryPath = path.join(root, 'registry.json');
+  fs.writeFileSync(registryPath, 'not json', 'utf8');
+  const result = runAuditCli(root, ['--receipt', receiptPath, '--key-registry', registryPath]);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /not valid JSON/u);
+});
+
+test('the delivery audit CLI refuses a registry with no entry for this launcher version', () => {
+  const root = makeDelivery({ launcherBytes: makePeBytes() });
+  const receiptPath = writeMatchingReceipt(root, makePeBytes());
+  const registryPath = path.join(root, 'registry.json');
+  fs.writeFileSync(registryPath, JSON.stringify({ schemaVersion: 1, keys: [] }), 'utf8');
+  const result = runAuditCli(root, ['--receipt', receiptPath, '--key-registry', registryPath]);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /no active key registered/u);
+});
+
+test('the delivery audit CLI refuses a fingerprint set that does not match', () => {
+  const root = makeDelivery({ launcherBytes: makePeBytes() });
+  const receiptPath = writeMatchingReceipt(root, makePeBytes());
+  const registryPath = path.join(root, 'registry.json');
+  fs.writeFileSync(
+    registryPath,
+    JSON.stringify({
+      schemaVersion: 1,
+      keys: [
+        {
+          keyId: 'k1',
+          fingerprint: 'F'.repeat(64),
+          publicKeyBase64: PUBLIC_KEY,
+          status: 'active',
+          minLauncherVersion: '1.2.3',
+        },
+      ],
+    }),
+    'utf8',
+  );
+  const result = runAuditCli(root, ['--receipt', receiptPath, '--key-registry', registryPath]);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /fingerprint/u);
+});
+```
+
+**审计 CLI 的接线顺序（必须照此，别把核心改 async）：** 同步 `main` 里依次做——解析 `--receipt`/`--key-registry` 参数 → 缺任一即 `exit 1` → 读并 `parseKeyRegistry` → 读并 `parseReceipt` → 算 EXE 的 SHA-256/size → `checkReceipt(...)` → 把 `errors`/`warnings` 转成 findings → **同步调用** `auditDelivery(io, root, options)`。
+
 - [ ] **Step 8: 运行测试并确认通过**
 
 ```bash
@@ -1536,8 +1645,10 @@ node --test scripts/lib/udisk-delivery.test.mjs
 4. 把组装器里 `verdict.errors.length > 0` 的拒绝改成 `console.warn` ⇒ 预期 `the assemble CLI refuses a mismatched build receipt` **按测试名变红**。
 5. 把 `resolveRegisteredFingerprints` 里 `input.keyRegistryPath === null` 的硬失败改成 `return receipt.embeddedKeyFingerprints`（即退回"没有台账就跳过"）⇒ 预期 `the assemble CLI refuses to run without a key registry` **按测试名变红**。
 6. 把 `resolveRegisteredFingerprints` 里 `registered === null` 的硬失败改成 `return receipt.embeddedKeyFingerprints` ⇒ 预期 `the assemble CLI refuses a registry that has no key for this launcher version` **按测试名变红**。
-7. 把 `_TEST-ONLY-` 前缀检查删掉 ⇒ 预期 `the assemble CLI refuses a test only build whose output directory is not marked` **按测试名变红**。
+7. 把 `parseKeyRegistry` 里的 `KeyRegistryError` 抛出改成 `return { schemaVersion: 1, keys: [] }` ⇒ 预期 `the assemble CLI refuses a registry that cannot be parsed` 与 `the delivery audit CLI refuses a registry that cannot be parsed` **按测试名变红**。
 8. 把 `fingerprintsForVersion` 里 `status === 'active'` 过滤删掉 ⇒ 预期 Task 0.5 的 `a retired key is never returned for a new release` **按测试名变红**。
+9. 把审计 CLI 里"把 `checkReceipt` 的 errors 转成 findings"那段删掉（只打日志）⇒ 预期 `the delivery audit CLI refuses a fingerprint set that does not match` **按测试名变红**。
+10. 把 `--key-registry` 从审计 CLI 的必填检查里删掉 ⇒ 预期 `the delivery audit CLI refuses to run without a key registry` **按测试名变红**。
 
 恢复后 `git diff` 为空且全绿。
 
@@ -2462,7 +2573,8 @@ pnpm check
 - **Authenticode 未实现**，只作为残留风险记录在台账与手册里。
 - host-key 指纹**未核对**：台账中该行保持“待核对”，必须由用户或授权运维人员经可信带外渠道完成。
 - **机器可读台账的 `keys` 是空数组**，因此**真实组装在密钥仪式完成之前会被正确硬拒绝**。这是规格 §5.4 要求的行为，不是缺陷；不要为了让组装跑通而放宽台账检查。
-- `--test-only` 是一条**显式**旁路，只用于开发夹具：它要求输出目录名以 `_TEST-ONLY-` 开头并记 `warn`。因此它不构成生产绕过入口——一份叫 `_TEST-ONLY-…` 的交付包不可能被当成正式包发出去。
+- **没有 test-only 旁路**：自动化测试与 CI 用的是 **fixture 台账 + fixture 密钥**，走的是与生产**完全相同**的四类硬检查，只是台账内容不同。因此不存在"为了跑通而放行"的口子。
+- 交付审计 CLI（`scripts/udisk-delivery.mjs`）**新增必填的 `--receipt` 与 `--key-registry`**：前者提供启动器版本与构建声明，后者提供该版本登记的公钥指纹。两者缺一即 `exit 1`。这是一处**行为变更**，既有调用方（人工与脚本）都要跟上。
 - CI 跑通与否**未验证**：本轮不推送远端，`portable-artifacts.yml` 是否能在 GitHub 上真正执行属于未验证项。
 
 相关：`docs/superpowers/specs/2026-09-22-portable-release-infrastructure-correction-design.md`

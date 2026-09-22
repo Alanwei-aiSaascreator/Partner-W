@@ -4,7 +4,7 @@
 
 **Goal:** 让桌面应用读取盘根启动器的**真实**版本与嵌入公钥指纹，让启动器在交换前用自己**编译进去的真实版本**再校验一次 `minLauncherVersion`，删除冒充启动器版本的硬编码常量，并让"启动器不可用"这一状态**上屏**而不是静默消失。
 
-**Architecture:** 启动器新增两个**只读、无副作用**的 CLI 模式（`--describe-json`、`--verify-manifest <path>`）。桌面主进程用 `execFileSync`（带超时、`windowsHide`）调用 `--describe-json`，严格解析后把**真实版本**喂给既有的 `minLauncherVersion` 门禁。Go 侧新增一个与 TypeScript **逐条镜像**的 SemVer 比较器，使两侧判定不会分叉。启动器的 `Apply` 在第一次 rename 之前再校验一次兼容性。
+**Architecture:** 启动器新增两个**只读、无副作用**的 CLI 模式（`--describe-json`、`--verify-manifest <path>`）。桌面主进程用 **`spawnSync`**（带超时、`windowsHide`）调用 `--describe-json`，并经过一个显式的 `normalizeRunOutcome` 适配器把结果统一成 `{ status, stdout, error }`——**不用 `execFileSync`**，因为它在成功时返回 `string`/`Buffer` 而不是结果对象，直接按对象读 `.stdout` 会让真实启动器被永久误判为不兼容。严格解析后把**真实版本**喂给既有的 `minLauncherVersion` 门禁。Go 侧新增一个与 TypeScript **逐条镜像**的 SemVer 比较器，使两侧判定不会分叉。启动器的 `Apply` 在第一次 rename 之前再校验一次兼容性。
 
 **Tech Stack:** Go 1.25（仅标准库）、TypeScript 5.7、Electron 34、Vitest 3、`node:test`、pnpm。
 
@@ -1292,24 +1292,30 @@ import { generateKeyPairSync } from 'node:crypto';
 import { readLauncherDescriptor } from '../src/main/update/launcher-descriptor.js';
 
 const keyPair = generateKeyPairSync('ed25519');
-const PUBLIC_KEY_BASE64 = keyPair.publicKey.export({ type: 'spki', format: 'der' }).toString('base64');
+const PUBLIC_KEY_DER = keyPair.publicKey.export({ type: 'spki', format: 'der' });
+const PUBLIC_KEY_BASE64 = PUBLIC_KEY_DER.toString('base64');
+const FINGERPRINT = createHash('sha256').update(PUBLIC_KEY_DER).digest('hex').toUpperCase();
 
 function describePayload(overrides: Record<string, unknown> = {}): string {
   return JSON.stringify({
     schemaVersion: 1,
     launcherVersion: '1.2.3',
-    embeddedKeys: [{ fingerprint: 'A'.repeat(64), base64: PUBLIC_KEY_BASE64 }],
+    embeddedKeys: [{ fingerprint: FINGERPRINT, base64: PUBLIC_KEY_BASE64 }],
     ...overrides,
   });
 }
 
-function runnerFor(result: { stdout?: string; error?: Error; status?: number | null }) {
+function spawnShape(result: { stdout?: string; error?: Error; status?: number | null }) {
   return vi.fn(() => ({
     stdout: result.stdout ?? '',
     stderr: '',
     status: result.status === undefined ? 0 : result.status,
     error: result.error,
   }));
+}
+
+function runnerFor(result: { stdout?: string; error?: Error; status?: number | null }) {
+  return spawnShape(result);
 }
 
 describe('portable launcher descriptor', () => {
@@ -1320,7 +1326,7 @@ describe('portable launcher descriptor', () => {
       runner: runnerFor({ stdout: describePayload() }),
     });
     expect(result.launcherVersion).toBe('1.2.3');
-    expect(result.keyFingerprints).toEqual(['A'.repeat(64)]);
+    expect(result.keyFingerprints).toEqual([FINGERPRINT]);
   });
 
   it('runs the launcher with the describe flag and no shell', () => {
@@ -1408,6 +1414,64 @@ describe('portable launcher descriptor', () => {
       }),
     ).toThrow(/launcher-incompatible/u);
   });
+
+  it('accepts the string a successful execFileSync style runner returns', () => {
+    const runner = vi.fn(() => describePayload());
+    const result = readLauncherDescriptor({
+      launcherPath: 'C:/drive/launcher.exe',
+      timeoutMs: 5000,
+      runner,
+    });
+    expect(result.launcherVersion).toBe('1.2.3');
+  });
+
+  it('accepts the buffer a successful runner returns', () => {
+    const runner = vi.fn(() => Buffer.from(describePayload(), 'utf8'));
+    const result = readLauncherDescriptor({
+      launcherPath: 'C:/drive/launcher.exe',
+      timeoutMs: 5000,
+      runner,
+    });
+    expect(result.keyFingerprints).toEqual([FINGERPRINT]);
+  });
+
+  it('fails closed when a runner returns something unusable', () => {
+    for (const value of [null, undefined, 42, {}]) {
+      expect(() =>
+        readLauncherDescriptor({
+          launcherPath: 'C:/drive/launcher.exe',
+          timeoutMs: 5000,
+          runner: vi.fn(() => value),
+        }),
+      ).toThrow(/launcher-incompatible/u);
+    }
+  });
+
+  it('fails closed when the fingerprint does not match the embedded public key', () => {
+    expect(() =>
+      readLauncherDescriptor({
+        launcherPath: 'C:/drive/launcher.exe',
+        timeoutMs: 5000,
+        runner: runnerFor({
+          stdout: describePayload({
+            embeddedKeys: [{ fingerprint: 'B'.repeat(64), base64: PUBLIC_KEY_BASE64 }],
+          }),
+        }),
+      }),
+    ).toThrow(/launcher-incompatible/u);
+  });
+
+  it('fails closed when the embedded public key is not a valid spki value', () => {
+    expect(() =>
+      readLauncherDescriptor({
+        launcherPath: 'C:/drive/launcher.exe',
+        timeoutMs: 5000,
+        runner: runnerFor({
+          stdout: describePayload({ embeddedKeys: [{ fingerprint: FINGERPRINT, base64: 'bm90LWEta2V5' }] }),
+        }),
+      }),
+    ).toThrow(/launcher-incompatible/u);
+  });
 });
 ```
 
@@ -1426,11 +1490,14 @@ pnpm --filter @clawwork/desktop exec vitest run test/portable-launcher-descripto
 创建 `packages/desktop/src/main/update/launcher-descriptor.ts`：
 
 ```ts
-import { execFileSync } from 'node:child_process';
+import { Buffer } from 'node:buffer';
+import { spawnSync } from 'node:child_process';
+import { createHash, createPublicKey } from 'node:crypto';
 import { PortableUpdateFailure } from './portable-manifest.js';
 
 const DESCRIBE_SCHEMA_VERSION = 1;
 const FINGERPRINT_PATTERN = /^[0-9A-F]{64}$/u;
+const BASE64_PATTERN = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u;
 const SEMVER_PATTERN =
   /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/u;
 
@@ -1439,36 +1506,55 @@ export interface LauncherDescriptor {
   keyFingerprints: string[];
 }
 
-interface DescriptorRunResult {
-  stdout?: string | null;
-  error?: Error;
-  status?: number | null;
+interface RunOutcome {
+  status: number | null;
+  stdout: string;
+  error: Error | null;
 }
 
-type DescriptorRunner = (command: string, args: string[], options: Record<string, unknown>) => DescriptorRunResult;
+type DescriptorRunner = (command: string, args: string[], options: Record<string, unknown>) => unknown;
+
+export function normalizeRunOutcome(result: unknown): RunOutcome {
+  if (typeof result === 'string') return { status: 0, stdout: result, error: null };
+  if (Buffer.isBuffer(result)) return { status: 0, stdout: result.toString('utf-8'), error: null };
+  if (result === null || typeof result !== 'object') {
+    return { status: null, stdout: '', error: new Error('the launcher runner returned no usable result') };
+  }
+  const record = result as { status?: unknown; stdout?: unknown; error?: unknown };
+  const stdout =
+    typeof record.stdout === 'string'
+      ? record.stdout
+      : Buffer.isBuffer(record.stdout)
+        ? record.stdout.toString('utf-8')
+        : '';
+  return {
+    status: typeof record.status === 'number' ? record.status : null,
+    stdout,
+    error: record.error instanceof Error ? record.error : null,
+  };
+}
 
 export function readLauncherDescriptor(input: {
   launcherPath: string;
   timeoutMs: number;
   runner?: DescriptorRunner;
 }): LauncherDescriptor {
-  const runner = input.runner ?? (execFileSync as unknown as DescriptorRunner);
-  let raw: string;
+  const runner = input.runner ?? (spawnSync as unknown as DescriptorRunner);
+  let outcome: RunOutcome;
   try {
-    const result = runner(input.launcherPath, ['--describe-json'], {
-      encoding: 'utf-8',
-      timeout: input.timeoutMs,
-      windowsHide: true,
-    });
-    if (result.error !== undefined && result.error !== null) throw result.error;
-    if (result.status !== 0 && result.status !== null && result.status !== undefined) {
-      throw new Error(`launcher describe exited with status ${result.status}`);
-    }
-    raw = typeof result.stdout === 'string' ? result.stdout : '';
+    outcome = normalizeRunOutcome(
+      runner(input.launcherPath, ['--describe-json'], {
+        encoding: 'utf-8',
+        timeout: input.timeoutMs,
+        windowsHide: true,
+      }),
+    );
   } catch {
     throw new PortableUpdateFailure('launcher-incompatible');
   }
-  return parseDescriptor(raw);
+  if (outcome.error !== null) throw new PortableUpdateFailure('launcher-incompatible');
+  if (outcome.status !== 0) throw new PortableUpdateFailure('launcher-incompatible');
+  return parseDescriptor(outcome.stdout);
 }
 
 function parseDescriptor(raw: string): LauncherDescriptor {
@@ -1497,11 +1583,31 @@ function parseDescriptor(raw: string): LauncherDescriptor {
     if (typeof entry !== 'object' || entry === null) {
       throw new PortableUpdateFailure('launcher-incompatible');
     }
-    const fingerprint = (entry as Record<string, unknown>).fingerprint;
-    if (typeof fingerprint !== 'string' || !FINGERPRINT_PATTERN.test(fingerprint)) {
+    const key = entry as Record<string, unknown>;
+    if (typeof key.fingerprint !== 'string' || !FINGERPRINT_PATTERN.test(key.fingerprint)) {
       throw new PortableUpdateFailure('launcher-incompatible');
     }
-    keyFingerprints.push(fingerprint);
+    if (typeof key.base64 !== 'string' || !BASE64_PATTERN.test(key.base64)) {
+      throw new PortableUpdateFailure('launcher-incompatible');
+    }
+    const der = Buffer.from(key.base64, 'base64');
+    if (der.toString('base64') !== key.base64) {
+      throw new PortableUpdateFailure('launcher-incompatible');
+    }
+    let parsed: unknown;
+    try {
+      parsed = createPublicKey({ key: der, type: 'spki', format: 'der' });
+    } catch {
+      throw new PortableUpdateFailure('launcher-incompatible');
+    }
+    if (parsed === null || parsed === undefined) {
+      throw new PortableUpdateFailure('launcher-incompatible');
+    }
+    const derived = createHash('sha256').update(der).digest('hex').toUpperCase();
+    if (derived !== key.fingerprint) {
+      throw new PortableUpdateFailure('launcher-incompatible');
+    }
+    keyFingerprints.push(key.fingerprint);
   }
   return { launcherVersion, keyFingerprints };
 }
@@ -1959,7 +2065,7 @@ pnpm --filter @clawwork/desktop exec vitest run test/portable-launcher-describe-
 三种可接受结果，**必须如实记录是哪一种**：
 
 1. Windows 且 `artifacts/荣盈魔方启动器.exe` 存在 ⇒ 预期全部 PASS。
-2. 非 Windows 或二不存在 ⇒ 预期输出包含 `SKIP = UNVERIFIED:` 且该文件被跳过。**这种情况必须记为“未验证”**，不得计入通过。
+2. 非 Windows 或二进制不存在 ⇒ 预期输出包含 `SKIP = UNVERIFIED:` 且该文件被跳过。**跳过必须记为"未验证"，不得计入通过**；并且**发布门禁不认这个跳过**——它认的是 Step 4 那个永不跳过的脚本。
 3. 测试自身崩溃/无法启动 ⇒ 属**脚本错误**，必须修好再继续，不得当成“测试失败”或“通过”。
 
 - [ ] **Step 3: 行为级变异验证（仅在第 1 种结果下执行）**
@@ -1972,7 +2078,96 @@ MOFANG_LAUNCHER_VERSION=9.9.9 MOFANG_UPDATE_PUBLIC_KEY_B64=$(node -e "const{gene
 
 把它临时指向集成测试的路径不现实，因此本步的变异验证在 Plan 2 的 QC 流程里做；**本刀若落在第 2 种结果，写明“变异未验证”**。
 
-- [ ] **Step 4: 提交**
+- [ ] **Step 4: 加一条永不跳过的门禁脚本（发布门禁用它，不用可跳过的测试）**
+
+上面那个 vitest 文件在非 Windows 或没有二进制时会**跳过**——跳过**不能**算通过。因此再加一个**永不跳过**的脚本，它的缺失二进制也是一种失败。
+
+创建 `scripts/check-portable-launcher-describe.mjs`：
+
+```js
+#!/usr/bin/env node
+
+import { existsSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+import { launcherOutputName } from './lib/portable-launcher-build.mjs';
+
+const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const launcherPath = join(repositoryRoot, 'artifacts', launcherOutputName);
+
+if (process.platform !== 'win32') {
+  console.error('the portable launcher describe gate must run on Windows: it reads a windowsgui binary');
+  process.exit(1);
+}
+if (!existsSync(launcherPath)) {
+  console.error(`the portable launcher describe gate needs a built launcher at ${launcherPath}`);
+  console.error('run pnpm build:portable-launcher first; a missing binary is a gate failure, not a skip');
+  process.exit(1);
+}
+
+const { readLauncherDescriptor } = await import('../packages/desktop/dist/main/launcher-descriptor-probe.js');
+
+try {
+  const descriptor = readLauncherDescriptor({ launcherPath, timeoutMs: 10_000 });
+  if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)/u.test(descriptor.launcherVersion)) {
+    console.error(`the launcher reported an unusable version: ${descriptor.launcherVersion}`);
+    process.exit(1);
+  }
+  if (descriptor.keyFingerprints.length === 0) {
+    console.error('the launcher reported no embedded key');
+    process.exit(1);
+  }
+  for (const fingerprint of descriptor.keyFingerprints) {
+    if (!/^[0-9A-F]{64}$/u.test(fingerprint)) {
+      console.error(`the launcher reported an unusable fingerprint: ${fingerprint}`);
+      process.exit(1);
+    }
+  }
+  console.log(`portable launcher describe gate passed for ${descriptor.launcherVersion}`);
+} catch (error) {
+  console.error(`the portable launcher describe gate failed: ${error?.message ?? error}`);
+  process.exit(1);
+}
+```
+
+**关于导入路径（实现前必须先确认）：** 这个脚本要复用 `readLauncherDescriptor`。桌面包是 Electron 应用、源码是 TS，脚本不能直接 import `.ts`。因此**必须在写脚本前先做一次确认**：
+
+```bash
+grep -n '"build"\|"main"\|"exports"' packages/desktop/package.json
+ls packages/desktop/dist 2>/dev/null || echo "no dist yet"
+```
+
+按打印出的真实产物路径改写上面那行 `await import(...)`。**若桌面包没有可被 Node 直接导入的已编译产物**，则退回到**独立实现**：把 `readLauncherDescriptor` 的纯逻辑（`normalizeRunOutcome` + `parseDescriptor`）放进 `packages/shared/src/portable-update.ts` 旁边的一个纯模块，让脚本与桌面主进程**共用同一份**——**不得**在脚本里复制一份解析逻辑。这一处必须在实现时定稿，**不得**留下两个实现。
+
+`package.json` 新增：
+
+```json
+"check:portable-launcher-describe": "node scripts/check-portable-launcher-describe.mjs"
+```
+
+**它在发布门禁里的位置：** Windows PR 检查与发布前置检查都要跑它。把 `pnpm check:portable-launcher-describe` 加进 `.github/workflows/pr-check.yml` 的 `portable-update-windows` job（在 `Verify Windows PE header` 之后），**该 job 已会构建启动器**。把它接进 workflow 的具体改动属于**计划 2 的 Task 5**（workflow 归它管），本刀只交付脚本本身与它的单测。
+
+- [ ] **Step 5: 运行门禁脚本并确认失败是有意义的**
+
+先在没有二进制的情况下确认它**失败而不是跳过**：
+
+```bash
+mv artifacts/荣盈魔方启动器.exe artifacts/荣盈魔方启动器.exe.bak && node scripts/check-portable-launcher-describe.mjs; echo "exit=$?"
+mv artifacts/荣盈魔方启动器.exe.bak artifacts/荣盈魔方启动器.exe
+```
+
+预期：`exit=1`，且 stderr 含 `a missing binary is a gate failure, not a skip`。
+
+再在有二进制时运行：
+
+```bash
+node scripts/check-portable-launcher-describe.mjs
+```
+
+预期：`exit=0` 且打印 `portable launcher describe gate passed for <version>`。
+
+- [ ] **Step 6: 提交**
 
 ```bash
 git add packages/desktop/test/portable-launcher-describe-integration.test.ts
@@ -1999,18 +2194,20 @@ pnpm check
 
 本计划全部完成后的验收读数（**逐条如实填写，未执行的写“未验证”**）：
 
-| 项                | 命令                                                                                                                                                                                                                                                                                                                                     | 读数 |
-| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- |
-| Go 全包测试       | `go -C launcher test ./... -count=1`                                                                                                                                                                                                                                                                                                     | 待填 |
-| 桌面定向 7 个文件 | `pnpm --filter @clawwork/desktop exec vitest run test/portable-launcher-descriptor.test.ts test/portable-update-ipc.test.ts test/portable-update-manifest.test.ts test/portable-update-service.test.ts test/internal-beta-update-errors.test.ts test/portable-update-about.test.tsx test/portable-launcher-describe-integration.test.ts` | 待填 |
-| 集成测试是否真跑  | 看输出里有无 `SKIP = UNVERIFIED:`                                                                                                                                                                                                                                                                                                        | 待填 |
-| 常量已删除        | `grep -rn "LAUNCHER_PROTOCOL_VERSION" packages/ scripts/ launcher/`                                                                                                                                                                                                                                                                      | 待填 |
-| 全量门禁          | `pnpm check`                                                                                                                                                                                                                                                                                                                             | 待填 |
+| 项                             | 命令                                                                                                                                                                                                                                                                                                                                     | 读数 |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- |
+| Go 全包测试                    | `go -C launcher test ./... -count=1`                                                                                                                                                                                                                                                                                                     | 待填 |
+| 桌面定向 7 个文件              | `pnpm --filter @clawwork/desktop exec vitest run test/portable-launcher-descriptor.test.ts test/portable-update-ipc.test.ts test/portable-update-manifest.test.ts test/portable-update-service.test.ts test/internal-beta-update-errors.test.ts test/portable-update-about.test.tsx test/portable-launcher-describe-integration.test.ts` | 待填 |
+| **永不跳过的门禁（发布必跑）** | `node scripts/check-portable-launcher-describe.mjs`                                                                                                                                                                                                                                                                                      | 待填 |
+| 门禁在缺二进制时必须失败       | 临时改名后运行，预期 `exit=1` 且含 `not a skip`                                                                                                                                                                                                                                                                                          | 待填 |
+| 集成测试是否真跑               | 看输出里有无 `SKIP = UNVERIFIED:`（**有 skip ⇒ 该集成证据未验证**）                                                                                                                                                                                                                                                                      | 待填 |
+| 常量已删除                     | `grep -rn "LAUNCHER_PROTOCOL_VERSION" packages/ scripts/ launcher/`                                                                                                                                                                                                                                                                      | 待填 |
+| 全量门禁                       | `pnpm check`                                                                                                                                                                                                                                                                                                                             | 待填 |
 
 ## 未覆盖与后续（不得写成已完成）
 
 - 启动器不可用时**复用** `launcher-incompatible` 这一个既有错误码，没有新增协议错误码。因此界面文案是"启动器缺失或版本太旧"，无法区分"缺失"与"太旧"两种情形。若将来需要区分，需要扩展 `packages/shared/src/portable-update.ts` 的 `PortableUpdateErrorCode` 联合，并同步 `PORTABLE_ERROR_ACTION` / `PORTABLE_ERROR_TEXT` 两个 `Record`（TS 会强制补全）与"四个永久错误码"的既有断言。
-- 若 Task 7 落在“跳过”形态，则 **GUI stdout 捕获在真实二进制上的证据仍属未验证**；规格 §4.1 里的初步实验（`--version` → exit 0、`0.1.0\n`）不能替代 `--describe-json` 的同路径证据。
+- 若 Task 8 的 vitest 落在"跳过"形态，则 **GUI stdout 捕获在真实二进制上的证据仍属未验证**；规格 §4.1 里的初步实验（`--version` → exit 0、`0.1.0\n`）不能替代 `--describe-json` 的同路径证据。**发布门禁必须靠 `scripts/check-portable-launcher-describe.mjs`（永不跳过）关闭这个缺口**，且它必须先在 `.github/workflows/pr-check.yml` 的 Windows job 里跑通（接线属计划 2 的 Task 5）。
 - 本计划**不**生成任何生产密钥，**不**构建客户包，**不**触碰更新源。
 
 相关：`docs/superpowers/specs/2026-09-22-portable-release-infrastructure-correction-design.md`

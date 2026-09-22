@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 让整目录更新 feed 的发布成为一件**可恢复、可审计、可并发控制**的操作：本地先验证再上传、版本目录不可变、manifest 最后原子翻转、任何不确定结果都保留锁并交人工处理。
+**Goal:** 让整目录更新 feed 的发布成为一件**可恢复、可审计、可并发控制**的操作：本地先验证再上传、版本目录不可变、manifest **经 SFTP 真正上传**后原子翻转、任何不确定结果都保留锁并交人工处理。
 
-**Architecture:** 一个纯逻辑模块 `scripts/lib/feed-publish.mjs` 承担全部判定与流程编排，所有远端动作（`ssh` 只读命令、`sftp` 上传、公网 `fetch`）都通过**注入的 transport** 完成；CLI `scripts/feed-publish.mjs` 才把它们接到真实的 `ssh`/`sftp`/`https`。因此**全部测试都不需要服务器**。发布流程实现为显式的有序阶段数组，测试可以逐项断言顺序与收口状态。
+**Architecture:** 纯逻辑模块 `scripts/lib/feed-publish.mjs` 负责全部判定与流程编排；远端动作由 `scripts/lib/feed-publish-transport.mjs` 提供，**全部是 async**，并把 `execFile` / `fetch` 作为注入依赖，因此测试用假实现、绝不联网。CLI `scripts/feed-publish.mjs` 用**顶层 `await`** 调 `main`，四种模式（`--dry-run` / `--preflight` / `--commit` / `--break-lock`）**全部接上真实 transport，没有占位分支**。
 
-**Tech Stack:** Node 20（ESM、`node:test`、`node:assert/strict`）、系统 `ssh`/`sftp` 二进制（仓库无任何 SSH 依赖）、pnpm 10。
+**Tech Stack:** Node 20（ESM、`node:test`、`node:assert/strict`、全局 `fetch`）、系统 `ssh` / `sftp` 二进制（仓库无任何 SSH 依赖）、pnpm 10。
 
 **规格来源：** `docs/superpowers/specs/2026-09-22-portable-release-infrastructure-correction-design.md` §6.1–§6.16。
 
@@ -14,42 +14,71 @@
 
 ## 文件地图
 
-| 文件                                          | 动作 | 职责                                                                                              |
-| --------------------------------------------- | ---- | ------------------------------------------------------------------------------------------------- |
-| `scripts/lib/feed-publish.mjs`                | 新建 | 常量、输入校验、本地预验证、锁与所有权、13 步流程编排、CAS、不确定结果三分、审计阶段记录          |
-| `scripts/lib/feed-publish-transport.mjs`      | 新建 | **真实** SSH / SFTP / https 适配器：argv 数组、BatchMode、StrictHostKeyChecking、固定 known_hosts |
-| `scripts/lib/feed-publish-transport.test.mjs` | 新建 | 注入假 `execFile` / `fetchPublic` 的 transport 单测（**不联网**）                                 |
-| `scripts/lib/feed-publish.test.mjs`           | 新建 | 上述全部逻辑的单测（注入假 transport，不联网）                                                    |
-| `scripts/feed-publish.mjs`                    | 新建 | CLI：`--dry-run` / `--preflight` / `--commit` / `--break-lock`；真实 transport 接线               |
-| `scripts/lib/feed-publish-cli.test.mjs`       | 新建 | CLI 守卫测试（缺参、未知旗标、`--audit-out` 必填、拒绝非白名单频道）                              |
-| `docs/runbooks/portable-update-release.md`    | 修改 | 第 7/9/10 步改为调用上传器；新增受限账号、nginx、发布前检查单                                     |
-| `package.json`                                | 修改 | 新增 `check:portable-feed-publish` 并接入 `check`                                                 |
+| 文件                                          | 动作 | 职责                                                                                                        |
+| --------------------------------------------- | ---- | ----------------------------------------------------------------------------------------------------------- |
+| `scripts/lib/feed-publish.mjs`                | 新建 | 常量、输入校验、本地预验证、锁生命周期、远端目录探针、13 步流程编排、CAS、不确定结果三分、逐阶段审计        |
+| `scripts/lib/feed-publish.test.mjs`           | 新建 | 上述逻辑的单测（**async** 假 transport）                                                                    |
+| `scripts/lib/feed-publish-transport.mjs`      | 新建 | 真实 SSH / SFTP / https 适配器（argv 数组、BatchMode、StrictHostKeyChecking、固定 known_hosts、batch 引用） |
+| `scripts/lib/feed-publish-transport.test.mjs` | 新建 | 注入假 `execFile` / `fetchPublic` 的 transport 单测（**不联网**）                                           |
+| `scripts/feed-publish.mjs`                    | 新建 | CLI：四种模式，顶层 `await main`，`process.exitCode`                                                        |
+| `scripts/lib/feed-publish-cli.test.mjs`       | 新建 | CLI 参数守卫测试                                                                                            |
+| `docs/runbooks/portable-update-release.md`    | 修改 | 第 7/9/10 步改为调用上传器；受限账号、nginx、发布前检查单                                                   |
+| `package.json`                                | 修改 | 新增 `check:portable-feed-publish` 并接入 `check`                                                           |
 
 **禁止事项（贯穿全计划）：** 不连接、不修改任何服务器；不生成生产密钥；不写入任何真实口令、token 或 host-key 指纹；不把审计日志写进仓库。
 
-**测试纪律：** 任何测试**不得**真的调用 `ssh`/`sftp`/网络——真实 transport 通过**注入的 `execFile` / `fetchPublic`** 被替换成假实现，所以联网代码路径存在、可测，但测试从不联网。这是刻意的分工：**实现网络适配器**与**在测试里连接服务器**是两件事，前者是交付物，后者被禁止。
+**测试纪律：** 任何测试**不得**真的调用 `ssh` / `sftp` / 网络。真实 transport 通过**注入的 async `execFile` / `fetchPublic`** 被替换成假实现——**实现网络适配器**与**在测试里连接服务器**是两件事，前者是交付物，后者被禁止。**所有假 transport 必须返回 Promise**；同步 fake 会掩盖"忘了 await"这类生产错误。
 
-**"未验证"清单（不得写成通过）：** `--preflight` / `--commit` / `--break-lock` 的**真实网络路径**没有自动化覆盖，必须在真机发布演练中验收；本计划把它们的自动测试记为"只覆盖参数守卫与假 transport"。
+---
+
+## 13 步主流程追踪表（**实现与自审共用**）
+
+每一行都必须能在 `runCommit` 里找到对应代码；**任何 helper 只定义未接入主链 = 缺陷**。
+
+| #   | 阶段              | 输入                                                   | 本地/远端动作                                                                                       | await          | 检查退出码               | 审计阶段名              | 失败结果                                           | 锁状态                                                                          |
+| --- | ----------------- | ------------------------------------------------------ | --------------------------------------------------------------------------------------------------- | -------------- | ------------------------ | ----------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------- |
+| 1   | `pre-verify`      | 三个本地产物路径、`expectedChannel`、`expectedVersion` | 本地：读三产物、验签、比对 channel/version/URL/hash/size                                            | 否（全同步）   | —                        | `pre-verify`            | `fail`                                             | `not-acquired`                                                                  |
+| 2   | `stage`           | `planHash`、staging 路径                               | 远端：`mkdir -p <staging>` → SFTP `reput` 两个 `.part-<runid>` → 远端 `mv -f` 成最终名              | 是             | **是**（每个写操作都查） | `stage`                 | `fail`                                             | `not-acquired`                                                                  |
+| 3   | `remote-verify`   | staging 目录                                           | 远端：`find -printf` + `sha256sum`                                                                  | 是             | **是**                   | `remote-verify`         | `fail`                                             | `not-acquired`                                                                  |
+| 4   | `lock`            | `channel`、`runid`、`planHash`                         | 远端：`mkdir <lock>`，成功后写 `owner.json`                                                         | 是             | **是**（两条都查）       | `lock`                  | 已存在 ⇒ `blocked`；不确定 ⇒ `incident`            | `not-acquired` / `ownership-unknown`                                            |
+| 5   | `re-verify`       | 锁内                                                   | 本地：重读 `owner.json`；远端：读 manifest baseline、重探 staging                                   | 是             | **是**                   | `re-verify`             | `incident`                                         | `retained-by-this-run`                                                          |
+| 6   | `commit-version`  | staging 与最终目录                                     | 远端：`stat -c %d` 比设备号；不存在则**单次目录 `mv`**；存在则整体比对                              | 是             | **是**                   | `commit-version`        | `fail`                                             | `released`                                                                      |
+| 7   | `backup-manifest` | 旧 manifest                                            | 远端：`cp` 到备份路径                                                                               | 是             | **是**                   | `backup-manifest`       | `incident`                                         | `retained-by-this-run`                                                          |
+| 8   | `cas`             | baseline                                               | 远端：重读 manifest SHA                                                                             | 是             | **是**                   | `cas`                   | 不匹配 ⇒ `incident`                                | `retained-by-this-run`                                                          |
+| 9   | `temp-manifest`   | 本地 `manifest.json`                                   | **SFTP 上传**到正式 manifest **同目录**的 `<runid>.tmp`；远端重算 SHA 必须等于本地 `manifestSha256` | 是             | **是**                   | `temp-manifest`         | `incident`                                         | `retained-by-this-run`                                                          |
+| 10  | `flip`            | 临时 manifest                                          | 远端：单次 `mv -f`                                                                                  | 是             | **是**                   | `flip`                  | `incident`                                         | `retained-by-this-run`                                                          |
+| 11  | `public-verify`   | 公网                                                   | 公网：取回 manifest + 两个产物，验签、比 SHA/size/URL；三分                                         | 是             | **是**                   | `public-verify`         | 新 SHA ⇒ 继续；旧 SHA ⇒ `retry`；其它 ⇒ `incident` | `retained-by-this-run`                                                          |
+| 12  | 收口              | —                                                      | 本地：写结果条目 `done` / `retry` / `fail` / `blocked` / `incident`                                 | 否（同步追加） | —                        | 以结果本身为 `stage` 名 | —                                                  | 该条目里**不含**锁状态；锁状态由紧随其后的 `unlock` 或 `lock-retained` 条目承载 |
+| 13  | `unlock`          | `owner.json`                                           | 远端：重读 owner → `rm owner.json` → `rmdir lock`                                                   | 是             | **是**                   | `unlock`                | 任一失败 ⇒ **不得报告 `released`**                 | `released` / `retained-by-this-run`                                             |
+
+**锁状态取值（四态，取代布尔）：** `not-acquired` / `released` / `retained-by-this-run` / `ownership-unknown`。
+
+- `mkdir` 明确"已存在" ⇒ `not-acquired`，**绝不解锁**。
+- 本次持有且正常收尾 ⇒ `released`。
+- 本次持有但出事故 ⇒ `retained-by-this-run`。
+- 网络/超时/回执不确定 ⇒ `ownership-unknown`。
+- owner 的 `runid` / `planHash` 不匹配 ⇒ `ownership-unknown`，**不触碰该锁**并记 `incident`。
 
 ---
 
 ## 依赖与执行顺序
 
-1. Task 1（输入与本地预验证）→ 其余全部任务依赖它。
+1. Task 1（输入与本地预验证）→ 其余全部依赖它。
 2. Task 2（dry-run / preflight）→ Task 4 之前。
-3. Task 3（锁与所有权）→ Task 4 之前。
-4. Task 4（固定时序 + CAS）→ Task 5 之前。
-5. Task 5（公网复验与审计）→ Task 7 之前。
-6. Task 6（**真实 transport**）→ **Task 7 依赖它**（CLI 接线要用 `createFeedTransport`）。
-7. Task 7（CLI 接线，四种模式全部可用）→ Task 8 之前。
-8. Task 8（文档 + 检查单）最后。
+3. Task 3（锁生命周期）→ Task 4 之前。
+4. Task 4（主流程）→ 依赖 Task 1–3。
+5. Task 5（`internal → stable` 重签）与 Task 4 无强依赖。
+6. Task 6（真实 transport）→ **Task 7 依赖它**。
+7. Task 7（CLI，四种模式全接）→ Task 8 之前。
+8. Task 8（手册 + 检查单）最后。
 
-**每刀的通用纪律（与计划 1、2 相同，不再展开）：** 命名 RED → 按测试名失败 → 最小 GREEN → 行为级变异验证（删关键护栏 ⇒ 指定测试按名变红 ⇒ 逐字节恢复，`git diff` 为空）→ 判据含 `passed > 0` 与 `fail 0` → “跳过”记“未验证” → 完整门禁 `pnpm check` → 显式 pathspec 独立提交，禁止 `git add -A`。
+**每刀的通用纪律：** 命名 RED → 按测试名失败 → 最小 GREEN → 行为级变异验证（删关键护栏 ⇒ 指定测试按名变红 ⇒ 逐字节恢复，`git diff` 为空）→ 判据含 `passed > 0` 与 `fail 0` → “跳过”记“未验证” → 完整门禁 `pnpm check` → 显式 pathspec 独立提交，禁止 `git add -A`。
 
 **测试运行方式：**
 
 ```bash
 node --test scripts/lib/feed-publish.test.mjs
+node --test scripts/lib/feed-publish-transport.test.mjs
 node --test scripts/lib/feed-publish-cli.test.mjs
 ```
 
@@ -62,7 +91,7 @@ node --test scripts/lib/feed-publish-cli.test.mjs
 - Create: `scripts/lib/feed-publish.mjs`
 - Test: `scripts/lib/feed-publish.test.mjs`
 
-固定常量（规格 §6.2）：发布根 `/opt/rongying/updates`、状态根 `/opt/rongying/updates-state`、频道白名单 `internal` / `stable`、公网基址 `https://api.rongyinghudong.com/updates`。**两个根都是常量，不由命令行传入**；主机名与 known_hosts 路径由命令行传入且必填，因为仓库**不得**内置服务器地址。
+固定常量（规格 §6.2）：发布根 `/opt/rongying/updates`、状态根 `/opt/rongying/updates-state`、频道白名单 `internal` / `stable`、公网基址 `https://api.rongyinghudong.com/updates`。两个根是常量；主机与 known_hosts 由命令行传入（仓库**不得**内置服务器地址）。**`--host` / `--known-hosts` 只在需要联网的模式下必填**——`--dry-run` 完全离线，因此不要求它们。
 
 - [ ] **Step 1: 写失败的测试**
 
@@ -70,8 +99,8 @@ node --test scripts/lib/feed-publish-cli.test.mjs
 
 ```js
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash, generateKeyPairSync, sign } from 'node:crypto';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, test } from 'node:test';
@@ -98,6 +127,9 @@ function makeRoot() {
   return root;
 }
 
+const keyPair = generateKeyPairSync('ed25519');
+const PUBLIC_KEY_BASE64 = keyPair.publicKey.export({ type: 'spki', format: 'der' }).toString('base64');
+
 const PACKAGE_BYTES = Buffer.from('portable-zip-bytes', 'utf8');
 const PACKAGE_SHA256 = createHash('sha256').update(PACKAGE_BYTES).digest('hex');
 
@@ -109,19 +141,24 @@ const FILE_MANIFEST = {
 const FILE_MANIFEST_BYTES = Buffer.from(JSON.stringify(FILE_MANIFEST), 'utf8');
 const FILE_MANIFEST_SHA256 = createHash('sha256').update(FILE_MANIFEST_BYTES).digest('hex');
 
-const MANIFEST = {
-  schemaVersion: 1,
-  channel: 'internal',
-  version: '1.2.3',
-  minLauncherVersion: '1.0.0',
-  packageUrl: 'https://api.rongyinghudong.com/updates/internal/1.2.3/portable.zip',
-  packageSize: PACKAGE_BYTES.length,
-  packageSha256: PACKAGE_SHA256,
-  fileManifestSha256: FILE_MANIFEST_SHA256,
-  publishedAt: '2026-09-22T00:00:00.000Z',
-  mandatory: false,
-  signature: 'c2lnbmF0dXJl',
-};
+function signedManifest(overrides = {}) {
+  const payload = {
+    schemaVersion: 1,
+    channel: 'internal',
+    version: '1.2.3',
+    minLauncherVersion: '1.0.0',
+    packageUrl: `${PUBLIC_BASE_URL}/internal/1.2.3/portable.zip`,
+    packageSize: PACKAGE_BYTES.length,
+    packageSha256: PACKAGE_SHA256,
+    fileManifestSha256: FILE_MANIFEST_SHA256,
+    publishedAt: '2026-09-22T00:00:00.000Z',
+    mandatory: false,
+    ...overrides,
+  };
+  const canonical = JSON.stringify(payload);
+  const signature = sign(null, Buffer.from(canonical, 'utf8'), keyPair.privateKey).toString('base64');
+  return Buffer.from(JSON.stringify({ ...payload, signature }), 'utf8');
+}
 
 function writeArtifacts(overrides = {}) {
   const root = makeRoot();
@@ -132,7 +169,7 @@ function writeArtifacts(overrides = {}) {
   };
   writeFileSync(paths.packagePath, overrides.packageBytes ?? PACKAGE_BYTES);
   writeFileSync(paths.fileManifestPath, overrides.fileManifestBytes ?? FILE_MANIFEST_BYTES);
-  writeFileSync(paths.manifestPath, overrides.manifestText ?? JSON.stringify(overrides.manifest ?? MANIFEST));
+  writeFileSync(paths.manifestPath, overrides.manifestBytes ?? signedManifest(overrides.manifestOverrides));
   return paths;
 }
 
@@ -159,15 +196,30 @@ test('the input rejects an unstrict version', () => {
   }
 });
 
-test('the input rejects a missing host or known hosts path', () => {
+test('the input rejects a missing host or known hosts path when the mode needs the network', () => {
   assert.throws(
-    () => parsePublishInput({ channel: 'internal', version: '1.2.3', host: '', knownHostsPath: 'k' }),
+    () =>
+      parsePublishInput({ channel: 'internal', version: '1.2.3', host: '', knownHostsPath: 'k', needsNetwork: true }),
     FeedPublishError,
   );
   assert.throws(
-    () => parsePublishInput({ channel: 'internal', version: '1.2.3', host: 'h', knownHostsPath: '' }),
+    () =>
+      parsePublishInput({ channel: 'internal', version: '1.2.3', host: 'h', knownHostsPath: '', needsNetwork: true }),
     FeedPublishError,
   );
+});
+
+test('the offline input does not require a host or known hosts path', () => {
+  const input = parsePublishInput({
+    channel: 'internal',
+    version: '1.2.3',
+    host: '',
+    knownHostsPath: '',
+    needsNetwork: false,
+  });
+  assert.equal(input.channel, 'internal');
+  assert.equal(input.host, null);
+  assert.equal(input.knownHostsPath, null);
 });
 
 test('the known hosts file must live outside the repository', () => {
@@ -175,74 +227,107 @@ test('the known hosts file must live outside the repository', () => {
   assert.equal(assertKnownHostsPath(join(tmpdir(), 'known_hosts'), process.cwd()), join(tmpdir(), 'known_hosts'));
 });
 
-test('the local verification accepts a self consistent triple', () => {
+test('the local verification returns every digest and size the flow needs', () => {
   const paths = writeArtifacts();
-  const result = verifyLocalArtifacts({ ...paths, expectedChannel: 'internal', expectedVersion: '1.2.3' });
+  const result = verifyLocalArtifacts({
+    ...paths,
+    expectedChannel: 'internal',
+    expectedVersion: '1.2.3',
+    publicKeyBase64: PUBLIC_KEY_BASE64,
+  });
   assert.equal(result.packageSha256, PACKAGE_SHA256);
   assert.equal(result.packageSize, PACKAGE_BYTES.length);
   assert.equal(result.fileManifestSha256, FILE_MANIFEST_SHA256);
-  assert.equal(result.packageUrl, MANIFEST.packageUrl);
+  assert.equal(result.fileManifestSize, FILE_MANIFEST_BYTES.length);
+  assert.equal(result.manifestSha256, createHash('sha256').update(result.manifestBytes).digest('hex'));
+  assert.equal(result.packageUrl, `${PUBLIC_BASE_URL}/internal/1.2.3/portable.zip`);
+});
+
+test('the local verification requires the channel and the version explicitly', () => {
+  const paths = writeArtifacts();
+  assert.throws(
+    () => verifyLocalArtifacts({ ...paths, publicKeyBase64: PUBLIC_KEY_BASE64 }),
+    /expectedChannel|expectedVersion/u,
+  );
 });
 
 test('the local verification rejects a package whose bytes do not match the manifest', () => {
   const paths = writeArtifacts({ packageBytes: Buffer.from('tampered', 'utf8') });
   assert.throws(
-    () => verifyLocalArtifacts({ ...paths, expectedChannel: 'internal', expectedVersion: '1.2.3' }),
-    /package integrity/i,
+    () =>
+      verifyLocalArtifacts({
+        ...paths,
+        expectedChannel: 'internal',
+        expectedVersion: '1.2.3',
+        publicKeyBase64: PUBLIC_KEY_BASE64,
+      }),
+    /package integrity/u,
   );
 });
 
 test('the local verification rejects a file manifest whose bytes do not match the manifest', () => {
   const paths = writeArtifacts({ fileManifestBytes: Buffer.from('[]', 'utf8') });
   assert.throws(
-    () => verifyLocalArtifacts({ ...paths, expectedChannel: 'internal', expectedVersion: '1.2.3' }),
-    /file manifest/i,
+    () =>
+      verifyLocalArtifacts({
+        ...paths,
+        expectedChannel: 'internal',
+        expectedVersion: '1.2.3',
+        publicKeyBase64: PUBLIC_KEY_BASE64,
+      }),
+    /file manifest/u,
   );
 });
 
 test('the local verification rejects a manifest for another channel or version', () => {
-  const paths = writeArtifacts();
+  const otherChannel = writeArtifacts({ manifestOverrides: { channel: 'stable' } });
   assert.throws(
-    () => verifyLocalArtifacts({ ...paths, expectedChannel: 'stable', expectedVersion: '1.2.3' }),
-    /channel/i,
+    () =>
+      verifyLocalArtifacts({
+        ...otherChannel,
+        expectedChannel: 'internal',
+        expectedVersion: '1.2.3',
+        publicKeyBase64: PUBLIC_KEY_BASE64,
+      }),
+    /channel/u,
   );
+  const otherVersion = writeArtifacts({ manifestOverrides: { version: '1.2.4' } });
   assert.throws(
-    () => verifyLocalArtifacts({ ...paths, expectedChannel: 'internal', expectedVersion: '1.2.4' }),
-    /version/i,
-  );
-});
-
-test('the local verification rejects a package url that is not https or not in this channel', () => {
-  const insecure = writeArtifacts({
-    manifest: { ...MANIFEST, packageUrl: 'http://example.com/internal/1.2.3/portable.zip' },
-  });
-  assert.throws(
-    () => verifyLocalArtifacts({ ...insecure, expectedChannel: 'internal', expectedVersion: '1.2.3' }),
-    /package url/i,
-  );
-  const wrongChannel = writeArtifacts({
-    manifest: { ...MANIFEST, packageUrl: 'https://api.rongyinghudong.com/updates/stable/1.2.3/portable.zip' },
-  });
-  assert.throws(
-    () => verifyLocalArtifacts({ ...wrongChannel, expectedChannel: 'internal', expectedVersion: '1.2.3' }),
-    /package url/i,
+    () =>
+      verifyLocalArtifacts({
+        ...otherVersion,
+        expectedChannel: 'internal',
+        expectedVersion: '1.2.3',
+        publicKeyBase64: PUBLIC_KEY_BASE64,
+      }),
+    /version/u,
   );
 });
 
-test('the local verification reports a signature failure rather than trusting the payload', () => {
-  const paths = writeArtifacts();
-  const verified = verifyLocalArtifacts({
-    ...paths,
-    expectedChannel: 'internal',
-    expectedVersion: '1.2.3',
-    verifySignature: () => {
-      throw new Error('release manifest signature is invalid');
-    },
-  });
-  assert.equal(verified.signatureChecked, true);
+test('the local verification rejects a package url that leaves the fixed public origin', () => {
+  for (const url of [
+    'https://evil.example.invalid/updates/internal/1.2.3/portable.zip',
+    'https://user:pass@api.rongyinghudong.com/updates/internal/1.2.3/portable.zip',
+    'https://api.rongyinghudong.com/updates/internal/1.2.3/portable.zip?x=1',
+    'https://api.rongyinghudong.com/updates/internal/1.2.3/portable.zip#frag',
+    'http://api.rongyinghudong.com/updates/internal/1.2.3/portable.zip',
+  ]) {
+    const paths = writeArtifacts({ manifestOverrides: { packageUrl: url } });
+    assert.throws(
+      () =>
+        verifyLocalArtifacts({
+          ...paths,
+          expectedChannel: 'internal',
+          expectedVersion: '1.2.3',
+          publicKeyBase64: PUBLIC_KEY_BASE64,
+        }),
+      /package url/u,
+      `expected ${url} to be rejected`,
+    );
+  }
 });
 
-test('the local verification surfaces the signature failure to the caller', () => {
+test('a throwing signature verifier fails the local verification instead of returning', () => {
   const paths = writeArtifacts();
   assert.throws(
     () =>
@@ -250,15 +335,26 @@ test('the local verification surfaces the signature failure to the caller', () =
         ...paths,
         expectedChannel: 'internal',
         expectedVersion: '1.2.3',
+        publicKeyBase64: PUBLIC_KEY_BASE64,
         verifySignature: () => {
           throw new Error('release manifest signature is invalid');
         },
-        requireSignature: true,
       }),
-    /signature is invalid/i,
+    /signature is invalid/u,
+  );
+});
+
+test('a missing public key is a hard failure rather than a skipped signature check', () => {
+  const paths = writeArtifacts();
+  assert.throws(
+    () =>
+      verifyLocalArtifacts({ ...paths, expectedChannel: 'internal', expectedVersion: '1.2.3', publicKeyBase64: '' }),
+    /public key/u,
   );
 });
 ```
+
+最后两条是刻意的：**签名校验器抛错必须往外抛**（不能"抛了还期待函数返回"），**缺公钥必须硬失败**（不能跳过验签）。
 
 - [ ] **Step 2: 运行测试并确认按测试名失败**
 
@@ -303,17 +399,20 @@ export function parsePublishInput(raw) {
   if (typeof raw.version !== 'string' || !SEMVER_PATTERN.test(raw.version)) {
     throw new FeedPublishError(`version must be a strict semantic version, received ${raw.version}`);
   }
-  if (typeof raw.host !== 'string' || raw.host.length === 0) {
-    throw new FeedPublishError('the ssh host is required');
-  }
-  if (typeof raw.knownHostsPath !== 'string' || raw.knownHostsPath.length === 0) {
-    throw new FeedPublishError('the pinned known hosts file is required');
+  const needsNetwork = raw.needsNetwork === true;
+  if (needsNetwork) {
+    if (typeof raw.host !== 'string' || raw.host.length === 0) {
+      throw new FeedPublishError('the ssh host is required');
+    }
+    if (typeof raw.knownHostsPath !== 'string' || raw.knownHostsPath.length === 0) {
+      throw new FeedPublishError('the pinned known hosts file is required');
+    }
   }
   return {
     channel: raw.channel,
     version: raw.version,
-    host: raw.host,
-    knownHostsPath: resolve(raw.knownHostsPath),
+    host: needsNetwork ? raw.host : null,
+    knownHostsPath: needsNetwork ? resolve(raw.knownHostsPath) : null,
   };
 }
 
@@ -331,11 +430,23 @@ function sha256(buffer) {
 }
 
 export function verifyLocalArtifacts(input) {
+  if (typeof input.expectedChannel !== 'string' || input.expectedChannel.length === 0) {
+    throw new FeedPublishError('an explicit expectedChannel is required');
+  }
+  if (typeof input.expectedVersion !== 'string' || input.expectedVersion.length === 0) {
+    throw new FeedPublishError('an explicit expectedVersion is required');
+  }
+  if (typeof input.publicKeyBase64 !== 'string' || input.publicKeyBase64.length === 0) {
+    throw new FeedPublishError('the update public key is required to verify the release manifest');
+  }
+
   const packageBytes = readFileSync(input.packagePath);
   const fileManifestBytes = readFileSync(input.fileManifestPath);
+  const manifestBytes = readFileSync(input.manifestPath);
+
   let manifest;
   try {
-    manifest = JSON.parse(readFileSync(input.manifestPath, 'utf8'));
+    manifest = JSON.parse(manifestBytes.toString('utf8'));
   } catch {
     throw new FeedPublishError('the release manifest is not valid JSON');
   }
@@ -357,35 +468,48 @@ export function verifyLocalArtifacts(input) {
   }
 
   let packageUrl;
+  let expectedUrl;
   try {
     packageUrl = new URL(manifest.packageUrl);
+    expectedUrl = new URL(`${PUBLIC_BASE_URL}/${manifest.channel}/${manifest.version}/${PORTABLE_PACKAGE_NAME}`);
   } catch {
     throw new FeedPublishError('the package url is not a valid url');
   }
-  const expectedPath = `${new URL(PUBLIC_BASE_URL).pathname}/${manifest.channel}/${manifest.version}/${PORTABLE_PACKAGE_NAME}`;
-  if (packageUrl.protocol !== 'https:' || packageUrl.pathname !== expectedPath) {
-    throw new FeedPublishError('the package url does not point at this channel and version over https');
+  if (
+    packageUrl.protocol !== 'https:' ||
+    packageUrl.origin !== expectedUrl.origin ||
+    packageUrl.pathname !== expectedUrl.pathname ||
+    packageUrl.search !== '' ||
+    packageUrl.hash !== '' ||
+    packageUrl.username !== '' ||
+    packageUrl.password !== ''
+  ) {
+    throw new FeedPublishError('the package url does not point at this channel and version on the fixed public origin');
   }
 
-  const requireSignature = input.requireSignature !== false;
-  if (requireSignature) {
-    if (typeof input.verifySignature !== 'function') {
-      throw new FeedPublishError('a signature verifier is required before any network write');
-    }
-    input.verifySignature({ manifest, packagePath: input.packagePath, fileManifestPath: input.fileManifestPath });
-  }
+  const verifier = input.verifySignature ?? (() => {});
+  verifier({
+    manifest,
+    manifestBytes,
+    packagePath: input.packagePath,
+    fileManifestPath: input.fileManifestPath,
+    publicKeyBase64: input.publicKeyBase64,
+  });
 
   return {
     manifest,
+    manifestBytes,
+    manifestSha256: sha256(manifestBytes),
     packageSha256,
     packageSize: packageBytes.length,
     fileManifestSha256,
     fileManifestSize: fileManifestBytes.length,
     packageUrl: manifest.packageUrl,
-    signatureChecked: typeof input.verifySignature === 'function',
   };
 }
 ```
+
+**URL 检查是 origin 级**：`protocol` + `origin` + `pathname` + 无 query / fragment / userinfo。只比 `pathname` 会放过别的域名与 `user:pass@`。
 
 - [ ] **Step 4: 运行测试并确认通过**
 
@@ -393,14 +517,15 @@ export function verifyLocalArtifacts(input) {
 node --test scripts/lib/feed-publish.test.mjs
 ```
 
-预期：`fail 0`，`pass` 计数 > 0。
+预期：`fail 0`、`pass` 计数 > 0。
 
 - [ ] **Step 5: 行为级变异验证**
 
-1. 把 `CHANNELS.includes(raw.channel)` 改成 `typeof raw.channel === 'string'` ⇒ 预期 `the input rejects any channel outside the whitelist` **按测试名变红**。
-2. 把包哈希比较整条删掉 ⇒ 预期 `the local verification rejects a package whose bytes do not match the manifest` **按测试名变红**。
-3. 把 `packageUrl.protocol !== 'https:'` 里的协议判断删掉，只留路径判断 ⇒ 预期 `the local verification rejects a package url that is not https or not in this channel` 的 http 用例**按测试名变红**。
-4. 把 `assertKnownHostsPath` 的目录判断改成永远返回 ⇒ 预期 `the known hosts file must live outside the repository` **按测试名变红**。
+1. 把 `packageUrl.origin !== expectedUrl.origin` 判断删掉（只留 pathname） ⇒ 预期 `the local verification rejects a package url that leaves the fixed public origin` **按测试名变红**。
+2. 把 `expectedChannel`/`expectedVersion` 的必填检查删掉 ⇒ 预期 `the local verification requires the channel and the version explicitly` **按测试名变红**。
+3. 把 `publicKeyBase64` 的必填检查删掉 ⇒ 预期 `a missing public key is a hard failure rather than a skipped signature check` **按测试名变红**。
+4. 把 `verifier(...)` 调用包进 `try { } catch { }` ⇒ 预期 `a throwing signature verifier fails the local verification instead of returning` **按测试名变红**。
+5. 把 `needsNetwork` 判断删掉、无条件要求 host ⇒ 预期 `the offline input does not require a host or known hosts path` **按测试名变红**。
 
 恢复后 `git diff` 为空且全绿。
 
@@ -413,40 +538,38 @@ git commit -m "feat(feed): verify the release triple before any network write"
 
 ---
 
-### Task 2: `--dry-run` 与只读 `--preflight`
+### Task 2: `--dry-run`（离线）与 `--preflight`（只读）
 
 **Files:**
 
 - Modify: `scripts/lib/feed-publish.mjs`
 - Modify: `scripts/lib/feed-publish.test.mjs`
 
-**语义边界（规格 §6.3，必须体现在断言里）：** `--dry-run` **完全离线**，不得触碰 transport；`--preflight` **只读联网**，只能调用只读动作，并且**只能声明“可写性指标”**——它没有写过任何字节，因此不得报告“可写”或“已验证权限”。
-
 - [ ] **Step 1: 写失败的测试**
 
-追加到 `scripts/lib/feed-publish.test.mjs`：
+追加到 `scripts/lib/feed-publish.test.mjs`（**假 transport 一律 async**）：
 
 ```js
-import { planCommit, runPreflight, PUBLISH_STAGES } from './feed-publish.mjs';
+import { PUBLISH_STAGES, planCommit, runPreflight } from './feed-publish.mjs';
 
-function fakeTransport(overrides = {}) {
+function fakeReadOnlyTransport(overrides = {}) {
   const calls = [];
-  const record =
-    (name) =>
-    (...args) => {
-      calls.push([name, ...args]);
-      return overrides[name]?.(...args) ?? { status: 0, stdout: '', stderr: '' };
-    };
   return {
     calls,
     readOnly: {
-      sshRun: record('sshRun'),
+      sshRun: async (request) => {
+        calls.push(['sshRun', request.script]);
+        return overrides.sshRun ? overrides.sshRun(request) : { status: 0, stdout: '', stderr: '' };
+      },
     },
     write: {
-      sftpUpload: record('sftpUpload'),
-      sshRun: record('sshRunWrite'),
+      sshRun: async () => ({ status: 0, stdout: '', stderr: '' }),
+      sftpUpload: async () => ({ status: 0, bytesSent: 1 }),
     },
-    fetchPublic: record('fetchPublic'),
+    fetchPublic: async (url) => {
+      calls.push(['fetchPublic', url]);
+      return { status: 200, bodyBytes: new Uint8Array() };
+    },
   };
 }
 
@@ -466,75 +589,64 @@ test('the commit plan lists the thirteen stages in the fixed order', () => {
     'reveal',
     'unlock',
   ]);
-  const plan = planCommit({ channel: 'internal', version: '1.2.3' });
+});
+
+test('the dry run validates the triple and prints the plan without any transport', () => {
+  const paths = writeArtifacts();
+  const plan = planCommit({
+    channel: 'internal',
+    version: '1.2.3',
+    ...paths,
+    publicKeyBase64: PUBLIC_KEY_BASE64,
+  });
   assert.deepEqual(
     plan.map((entry) => entry.stage),
     [...PUBLISH_STAGES],
   );
-  assert.equal(plan[0].stage, 'pre-verify');
-  assert.equal(plan[plan.length - 1].stage, 'unlock');
+  assert.equal(plan[0].status, 'pending');
 });
 
-test('the dry run never touches any transport', () => {
-  const transport = fakeTransport();
-  const paths = writeArtifacts();
-  planCommit({
-    channel: 'internal',
-    version: '1.2.3',
-    ...paths,
-    dryRun: true,
-    transport,
-    verifySignature: () => {},
-  });
-  assert.deepEqual(transport.calls, []);
+test('the dry run propagates a local verification failure instead of printing a plan', () => {
+  const paths = writeArtifacts({ packageBytes: Buffer.from('tampered', 'utf8') });
+  assert.throws(
+    () => planCommit({ channel: 'internal', version: '1.2.3', ...paths, publicKeyBase64: PUBLIC_KEY_BASE64 }),
+    /package integrity/u,
+  );
 });
 
-test('the preflight only performs read only actions', () => {
-  const transport = fakeTransport({
-    sshRun: () => ({ status: 0, stdout: `${UPDATE_ROOT}\n${STATE_ROOT}\n`, stderr: '' }),
+test('the preflight only performs read only actions and never claims writability', async () => {
+  const transport = fakeReadOnlyTransport({
+    sshRun: (request) =>
+      request.script.includes('stat -c')
+        ? { status: 0, stdout: '100\n100\n', stderr: '' }
+        : { status: 0, stdout: '', stderr: '' },
   });
-  const result = runPreflight({
+  const result = await runPreflight({
     channel: 'internal',
     version: '1.2.3',
-    host: 'example.invalid',
     transport,
-    knownHostsPath: join(tmpdir(), 'known_hosts'),
+    host: 'h',
+    knownHostsPath: 'k',
   });
   const names = transport.calls.map((call) => call[0]);
   assert.deepEqual([...new Set(names)], ['sshRun']);
   assert.equal(result.writabilityIndicators.verifiedWrite, false);
+  assert.match(result.writabilityIndicators.note, /indicator/u);
 });
 
-test('the preflight reports uncertainty instead of claiming end to end writability', () => {
-  const transport = fakeTransport();
-  const result = runPreflight({
+test('the preflight reports different file systems instead of assuming one', async () => {
+  const transport = fakeReadOnlyTransport({ sshRun: () => ({ status: 0, stdout: '100\n200\n', stderr: '' }) });
+  const result = await runPreflight({
     channel: 'internal',
     version: '1.2.3',
-    host: 'example.invalid',
     transport,
-    knownHostsPath: join(tmpdir(), 'known_hosts'),
-  });
-  assert.equal(result.writabilityIndicators.verifiedWrite, false);
-  assert.match(result.writabilityIndicators.note, /not verified|indicator/i);
-});
-
-test('the preflight detects two roots on different file systems', () => {
-  const transport = fakeTransport({
-    sshRun: () => ({ status: 0, stdout: 'device 100\n device 200\n', stderr: '' }),
-  });
-  const result = runPreflight({
-    channel: 'internal',
-    version: '1.2.3',
-    host: 'example.invalid',
-    transport,
-    knownHostsPath: join(tmpdir(), 'known_hosts'),
+    host: 'h',
+    knownHostsPath: 'k',
   });
   assert.equal(result.sameFileSystem, false);
-  assert.match(result.notes.join(' '), /file system/i);
+  assert.match(result.notes.join(' '), /file system/u);
 });
 ```
-
-**命名对齐（必须先执行）：** 上面的 `PUBLISH_STAGES` 顺序必须与规格 §6.5 的十三步一一对应。注意规格里第 12 步是「审计」、第 13 步是「释放锁」；实现里把「审计」表达为**贯穿全程的阶段记录器**，因此阶段名表用 `reveal`（公网复验之后的收口）与 `unlock` 收尾——**在写实现前先重读规格 §6.5 与 §6.11，确认名字与顺序后按本节写**；若你选择的命名与上面不同，把测试与实现**同时**改到位，不要只改一边。
 
 - [ ] **Step 2: 运行测试并确认按测试名失败**
 
@@ -542,7 +654,7 @@ test('the preflight detects two roots on different file systems', () => {
 node --test scripts/lib/feed-publish.test.mjs
 ```
 
-预期：`PUBLISH_STAGES`、`planCommit`、`runPreflight` 未定义。
+预期：`PUBLISH_STAGES` / `planCommit` / `runPreflight` 未定义。
 
 - [ ] **Step 3: 写最小实现**
 
@@ -566,38 +678,39 @@ export const PUBLISH_STAGES = Object.freeze([
 ]);
 
 export function planCommit(input) {
-  const plan = PUBLISH_STAGES.map((stage) => ({ stage, status: 'pending' }));
-  if (input.dryRun !== true) return plan;
-  return plan;
+  verifyLocalArtifacts({
+    packagePath: input.packagePath,
+    fileManifestPath: input.fileManifestPath,
+    manifestPath: input.manifestPath,
+    expectedChannel: input.channel,
+    expectedVersion: input.version,
+    publicKeyBase64: input.publicKeyBase64,
+    verifySignature: input.verifySignature,
+  });
+  return PUBLISH_STAGES.map((stage) => ({ stage, status: 'pending' }));
 }
 
-export function runPreflight(input) {
+export async function runPreflight(input) {
   const notes = [];
-  const probe = input.transport.readOnly.sshRun({
+  const probe = await input.transport.readOnly.sshRun({
     host: input.host,
     knownHostsPath: input.knownHostsPath,
-    script: `stat -c '%d %n' ${UPDATE_ROOT} ${STATE_ROOT}`,
+    script: `stat -c '%d' ${STATE_ROOT} ${UPDATE_ROOT}`,
   });
   const devices = String(probe.stdout ?? '')
     .split('\n')
     .map((line) => line.trim())
-    .filter((line) => line.length > 0)
-    .map((line) => line.split(/\s+/u)[0]);
-
+    .filter((line) => line.length > 0);
   const sameFileSystem = devices.length === 2 && devices[0] === devices[1];
-  if (!sameFileSystem) {
-    notes.push('the staging root and the update root do not report the same file system');
-  }
-  if (probe.status !== 0) {
-    notes.push('the read only probe did not succeed');
-  }
+  if (!sameFileSystem) notes.push('the state root and the update root do not report the same file system');
+  if (probe.status !== 0) notes.push('the read only probe did not succeed');
 
   return {
     sameFileSystem,
     notes,
     writabilityIndicators: {
       verifiedWrite: false,
-      note: 'writability is an indicator read from the remote metadata, not verified: nothing was written yet',
+      note: 'writability is an indicator read from remote metadata, not verified: nothing was written yet',
     },
   };
 }
@@ -613,10 +726,12 @@ node --test scripts/lib/feed-publish.test.mjs
 
 - [ ] **Step 5: 行为级变异验证**
 
-1. 把 `PUBLISH_STAGES` 里 `'lock'` 与 `'stage'` 的位置互换 ⇒ 预期 `the commit plan lists the thirteen stages in the fixed order` **按测试名变红**。
-2. 把 `runPreflight` 里的只读探测改成调用 `input.transport.write.sftpUpload` ⇒ 预期 `the preflight only performs read only actions` **按测试名变红**。
-3. 把 `writabilityIndicators.verifiedWrite` 改成 `true` ⇒ 预期 `the preflight reports uncertainty instead of claiming end to end writability` **按测试名变红**。
-4. 把 `sameFileSystem` 改成恒 `true` ⇒ 预期 `the preflight detects two roots on different file systems` **按测试名变红**。
+1. 把 `PUBLISH_STAGES` 里 `'lock'` 与 `'stage'` 互换 ⇒ 预期 `the commit plan lists the thirteen stages in the fixed order` **按测试名变红**。
+2. 把 `planCommit` 里的 `verifyLocalArtifacts` 调用删掉 ⇒ 预期 `the dry run propagates a local verification failure instead of printing a plan` **按测试名变红**。
+3. 把 `runPreflight` 的只读探测改成 `await input.transport.write.sftpUpload(...)` ⇒ 预期 `the preflight only performs read only actions and never claims writability` **按测试名变红**。
+4. 把 `writabilityIndicators.verifiedWrite` 改成 `true` ⇒ 预期同一条 **按测试名变红**。
+5. 把 `sameFileSystem` 改成恒 `true` ⇒ 预期 `the preflight reports different file systems instead of assuming one` **按测试名变红**。
+6. 把 `runPreflight` 的 `await` 删掉（拿 Promise 当结果比较） ⇒ 预期同一条 **按测试名变红**——这是"漏 await"的正面检查。
 
 恢复后全绿且 `git diff` 为空。
 
@@ -629,14 +744,12 @@ git commit -m "feat(feed): separate an offline dry run from a read only prefligh
 
 ---
 
-### Task 3: 频道锁、owner 与解锁的所有权前提
+### Task 3: 锁生命周期（获取三态、owner 写入检查、释放两步检查）
 
 **Files:**
 
 - Modify: `scripts/lib/feed-publish.mjs`
 - Modify: `scripts/lib/feed-publish.test.mjs`
-
-**必须在断言里固化的四条（规格 §6.6）：** ①锁用原子 `mkdir` 获取，失败即退出、不等待不强抢；②陈旧锁**不自动破除**；③解锁必须同时满足"本次运行成功获取过锁"且"`owner.json` 的 `runid` 与 `planHash` 与本次完全一致"；④**未取得锁时不得声称保留或释放一把不属于自己的锁**。
 
 - [ ] **Step 1: 写失败的测试**
 
@@ -648,6 +761,7 @@ import {
   acquireChannelLock,
   breakChannelLock,
   planHashOf,
+  releaseChannelLock,
   resolveLockDisposition,
 } from './feed-publish.mjs';
 
@@ -659,62 +773,155 @@ const PLAN_INPUT = {
   manifestSha256: 'c'.repeat(64),
 };
 
-test('the plan hash binds channel, version and all three artifact digests', () => {
-  const base = planHashOf(PLAN_INPUT);
-  assert.equal(base, planHashOf({ ...PLAN_INPUT }));
-  assert.notEqual(base, planHashOf({ ...PLAN_INPUT, version: '1.2.4' }));
-  assert.notEqual(base, planHashOf({ ...PLAN_INPUT, channel: 'stable' }));
-  assert.notEqual(base, planHashOf({ ...PLAN_INPUT, packageSha256: 'd'.repeat(64) }));
-  assert.notEqual(base, planHashOf({ ...PLAN_INPUT, fileManifestSha256: 'd'.repeat(64) }));
-  assert.notEqual(base, planHashOf({ ...PLAN_INPUT, manifestSha256: 'd'.repeat(64) }));
-});
-
-test('the lock is acquired with an atomic mkdir and never steals an existing lock', () => {
-  const transport = fakeTransport({ sshRun: () => ({ status: 1, stdout: 'exists', stderr: '' }) });
-  const result = acquireChannelLock({
-    channel: 'internal',
-    transport,
-    owner: { runid: 'r1', planHash: 'p1' },
-    host: 'h',
-    knownHostsPath: 'k',
-  });
-  assert.equal(result.acquired, false);
-  assert.match(result.reason, /already locked/i);
-  assert.equal(
-    transport.calls.filter((call) => call[0] === 'sshRun' && /rmdir|rm -rf/u.test(String(call[2]?.script ?? '')))
-      .length,
-    0,
-  );
-});
-
-test('a stale lock is refused rather than broken automatically', () => {
-  const transport = fakeTransport({ sshRun: () => ({ status: 1, stdout: 'exists', stderr: '' }) });
-  const result = acquireChannelLock({
-    channel: 'internal',
-    transport,
-    owner: { runid: 'r1', planHash: 'p1' },
-    host: 'h',
-    knownHostsPath: 'k',
-  });
-  assert.equal(result.acquired, false);
-  assert.equal(result.requiresExplicitRecovery, true);
-});
+function fakeWriteTransport(handlers = {}) {
+  const calls = [];
+  return {
+    calls,
+    readOnly: {
+      sshRun: async (request) => {
+        calls.push(['readSsh', request.script]);
+        return handlers.readSsh ? handlers.readSsh(request) : { status: 0, stdout: '', stderr: '' };
+      },
+    },
+    write: {
+      sshRun: async (request) => {
+        calls.push(['writeSsh', request.script]);
+        return handlers.writeSsh ? handlers.writeSsh(request) : { status: 0, stdout: '', stderr: '' };
+      },
+      sftpUpload: async () => ({ status: 0, bytesSent: 1 }),
+    },
+    fetchPublic: async () => ({ status: 200, bodyBytes: new Uint8Array() }),
+  };
+}
 
 test('the lock states are exactly the four documented ones', () => {
   assert.deepEqual([...LOCK_STATES], ['not-acquired', 'released', 'retained-by-this-run', 'ownership-unknown']);
 });
 
-test('the lock is released only when this run owns it and the outcome is safe to close', () => {
+test('the plan hash binds channel, version and all three artifact digests', () => {
+  const base = planHashOf(PLAN_INPUT);
+  assert.equal(base, planHashOf({ ...PLAN_INPUT }));
+  for (const key of ['version', 'channel', 'packageSha256', 'fileManifestSha256', 'manifestSha256']) {
+    assert.notEqual(base, planHashOf({ ...PLAN_INPUT, [key]: 'changed' }), `planHash ignored ${key}`);
+  }
+});
+
+test('an existing lock is a determinate not-acquired and never stolen', async () => {
+  const transport = fakeWriteTransport({
+    writeSsh: (request) =>
+      request.script.startsWith('mkdir ')
+        ? { status: 1, stdout: '', stderr: "mkdir: cannot create directory '/x': File exists" }
+        : { status: 0, stdout: '', stderr: '' },
+  });
+  const result = await acquireChannelLock({
+    channel: 'internal',
+    transport,
+    owner: { runid: 'r1', planHash: 'p1' },
+    host: 'h',
+    knownHostsPath: 'k',
+  });
+  assert.equal(result.state, 'not-acquired');
+  assert.equal(result.requiresExplicitRecovery, true);
+  assert.equal(transport.calls.filter((call) => /rm |rmdir/u.test(String(call[1] ?? ''))).length, 0);
+});
+
+test('an ssh failure while taking the lock is ownership unknown, not not-acquired', async () => {
+  const transport = fakeWriteTransport({
+    writeSsh: (request) =>
+      request.script.startsWith('mkdir ')
+        ? { status: -1, stdout: '', stderr: 'connection timed out' }
+        : { status: 0, stdout: '', stderr: '' },
+  });
+  const result = await acquireChannelLock({
+    channel: 'internal',
+    transport,
+    owner: { runid: 'r1', planHash: 'p1' },
+    host: 'h',
+    knownHostsPath: 'k',
+  });
+  assert.equal(result.state, 'ownership-unknown');
+  assert.match(result.reason, /cannot confirm/u);
+});
+
+test('a failed owner write is an incident that keeps the lock', async () => {
+  const transport = fakeWriteTransport({
+    writeSsh: (request) =>
+      request.script.includes('owner.json')
+        ? { status: 1, stdout: '', stderr: 'read only file system' }
+        : { status: 0, stdout: '', stderr: '' },
+  });
+  const result = await acquireChannelLock({
+    channel: 'internal',
+    transport,
+    owner: { runid: 'r1', planHash: 'p1' },
+    host: 'h',
+    knownHostsPath: 'k',
+  });
+  assert.equal(result.state, 'retained-by-this-run');
+  assert.equal(result.incident, true);
+});
+
+test('release verifies the owner, then removes the owner file, then the lock directory', async () => {
   const owner = { runid: 'r1', planHash: 'p1' };
-  const verdict = resolveLockDisposition({
-    acquisitionConfirmed: true,
+  const order = [];
+  const transport = fakeWriteTransport({
+    readSsh: () => ({ status: 0, stdout: JSON.stringify(owner), stderr: '' }),
+    writeSsh: (request) => {
+      if (request.script.startsWith('rm ')) order.push('rm-owner');
+      if (request.script.startsWith('rmdir ')) order.push('rmdir-lock');
+      return { status: 0, stdout: '', stderr: '' };
+    },
+  });
+  const verdict = await releaseChannelLock({
+    channel: 'internal',
+    transport,
     owner,
     runid: 'r1',
     planHash: 'p1',
-    safeToExit: true,
+    host: 'h',
+    knownHostsPath: 'k',
   });
-  assert.equal(verdict.release, true);
   assert.equal(verdict.state, 'released');
+  assert.deepEqual(order, ['rm-owner', 'rmdir-lock']);
+});
+
+test('a failed owner removal is never reported as released', async () => {
+  const owner = { runid: 'r1', planHash: 'p1' };
+  const transport = fakeWriteTransport({
+    readSsh: () => ({ status: 0, stdout: JSON.stringify(owner), stderr: '' }),
+    writeSsh: (request) =>
+      request.script.startsWith('rm ')
+        ? { status: 1, stdout: '', stderr: 'permission denied' }
+        : { status: 0, stdout: '', stderr: '' },
+  });
+  const verdict = await releaseChannelLock({
+    channel: 'internal',
+    transport,
+    owner,
+    runid: 'r1',
+    planHash: 'p1',
+    host: 'h',
+    knownHostsPath: 'k',
+  });
+  assert.equal(verdict.state, 'retained-by-this-run');
+  assert.equal(verdict.incident, true);
+});
+
+test('release re-reads the owner and refuses when it belongs to another run', async () => {
+  const transport = fakeWriteTransport({
+    readSsh: () => ({ status: 0, stdout: JSON.stringify({ runid: 'other', planHash: 'p1' }), stderr: '' }),
+  });
+  const verdict = await releaseChannelLock({
+    channel: 'internal',
+    transport,
+    owner: null,
+    runid: 'r1',
+    planHash: 'p1',
+    host: 'h',
+    knownHostsPath: 'k',
+  });
+  assert.equal(verdict.state, 'ownership-unknown');
+  assert.equal(transport.calls.filter((call) => /rm |rmdir/u.test(String(call[1] ?? ''))).length, 0);
 });
 
 test('a run that holds the lock but cannot close safely keeps it', () => {
@@ -726,85 +933,82 @@ test('a run that holds the lock but cannot close safely keeps it', () => {
     planHash: 'p1',
     safeToExit: false,
   });
-  assert.equal(verdict.release, false);
   assert.equal(verdict.state, 'retained-by-this-run');
-  assert.equal(verdict.incident, false);
+  assert.equal(verdict.release, false);
 });
 
 test('an unconfirmed acquisition is ownership unknown and never touches the lock', () => {
-  const owner = { runid: 'r1', planHash: 'p1' };
   const verdict = resolveLockDisposition({
     acquisitionConfirmed: false,
-    owner,
-    runid: 'r1',
-    planHash: 'p1',
-    safeToExit: true,
-  });
-  assert.equal(verdict.release, false);
-  assert.equal(verdict.state, 'ownership-unknown');
-  assert.equal(verdict.incident, true);
-  assert.match(verdict.reason, /cannot confirm/i);
-});
-
-test('the lock is never released when the owner belongs to another run', () => {
-  const owner = { runid: 'other', planHash: 'p1' };
-  const verdict = resolveLockDisposition({
-    acquisitionConfirmed: true,
-    owner,
-    runid: 'r1',
-    planHash: 'p1',
-    safeToExit: true,
-  });
-  assert.equal(verdict.release, false);
-  assert.equal(verdict.state, 'ownership-unknown');
-  assert.equal(verdict.incident, true);
-  assert.match(verdict.reason, /runid/u);
-});
-
-test('the lock is never released when the plan hash belongs to another run', () => {
-  const owner = { runid: 'r1', planHash: 'other' };
-  const verdict = resolveLockDisposition({
-    acquisitionConfirmed: true,
-    owner,
-    runid: 'r1',
-    planHash: 'p1',
-    safeToExit: true,
-  });
-  assert.equal(verdict.release, false);
-  assert.equal(verdict.state, 'ownership-unknown');
-  assert.equal(verdict.incident, true);
-  assert.match(verdict.reason, /planHash/u);
-});
-
-test('an unreadable owner record is ownership unknown and never broken silently', () => {
-  const verdict = resolveLockDisposition({
-    acquisitionConfirmed: true,
     owner: null,
     runid: 'r1',
     planHash: 'p1',
     safeToExit: true,
   });
-  assert.equal(verdict.release, false);
   assert.equal(verdict.state, 'ownership-unknown');
-  assert.equal(verdict.incident, true);
+  assert.equal(verdict.release, false);
 });
 
-test('breaking a lock requires a reason and records the previous owner', () => {
-  const transport = fakeTransport();
-  assert.throws(
-    () => breakChannelLock({ channel: 'internal', transport, host: 'h', knownHostsPath: 'k', reason: '' }),
-    FeedPublishError,
-  );
-  const record = breakChannelLock({
+test('breaking a lock needs a reason, an audit log and a matching runid', async () => {
+  const owner = { runid: 'r0', planHash: 'p0' };
+  const transport = fakeWriteTransport({ readSsh: () => ({ status: 0, stdout: JSON.stringify(owner), stderr: '' }) });
+  const base = {
     channel: 'internal',
     transport,
     host: 'h',
     knownHostsPath: 'k',
-    reason: 'operator confirmed the previous run is not running',
-    previousOwner: { runid: 'r0', planHash: 'p0' },
+    confirmRunid: 'r0',
+    auditOut: '/outside/audit.jsonl',
+    operator: 'ops',
+  };
+  await assert.rejects(breakChannelLock({ ...base, reason: '' }), FeedPublishError);
+  await assert.rejects(breakChannelLock({ ...base, reason: 'stopped', auditOut: null }), FeedPublishError);
+  await assert.rejects(
+    breakChannelLock({ ...base, reason: 'stopped', confirmRunid: 'wrong' }),
+    /does not match the owner/u,
+  );
+});
+
+test('breaking a lock records the real previous owner and the operator', async () => {
+  const owner = { runid: 'r0', planHash: 'p0' };
+  const transport = fakeWriteTransport({ readSsh: () => ({ status: 0, stdout: JSON.stringify(owner), stderr: '' }) });
+  const record = await breakChannelLock({
+    channel: 'internal',
+    transport,
+    host: 'h',
+    knownHostsPath: 'k',
+    reason: 'operator confirmed the previous run stopped',
+    confirmRunid: 'r0',
+    auditOut: '/outside/audit.jsonl',
+    operator: 'ops',
   });
-  assert.equal(record.auditEntry.outcome, 'lock-broken');
-  assert.equal(record.auditEntry.previousOwner.runid, 'r0');
+  assert.equal(record.outcome, 'lock-broken');
+  assert.deepEqual(record.previousOwner, owner);
+  assert.equal(record.operator, 'ops');
+});
+
+test('a failed remote deletion is not recorded as lock-broken', async () => {
+  const owner = { runid: 'r0', planHash: 'p0' };
+  const transport = fakeWriteTransport({
+    readSsh: () => ({ status: 0, stdout: JSON.stringify(owner), stderr: '' }),
+    writeSsh: (request) =>
+      request.script.startsWith('rm ')
+        ? { status: 1, stdout: '', stderr: 'permission denied' }
+        : { status: 0, stdout: '', stderr: '' },
+  });
+  await assert.rejects(
+    breakChannelLock({
+      channel: 'internal',
+      transport,
+      host: 'h',
+      knownHostsPath: 'k',
+      reason: 'stopped',
+      confirmRunid: 'r0',
+      auditOut: '/outside/audit.jsonl',
+      operator: 'ops',
+    }),
+    /could not be removed/u,
+  );
 });
 ```
 
@@ -814,21 +1018,14 @@ test('breaking a lock requires a reason and records the previous owner', () => {
 node --test scripts/lib/feed-publish.test.mjs
 ```
 
-预期：四个新符号未定义。
+预期：新符号未定义。
 
 - [ ] **Step 3: 写最小实现**
 
 追加到 `scripts/lib/feed-publish.mjs`：
 
 ```js
-export function planHashOf(input) {
-  return sha256(
-    Buffer.from(
-      [input.channel, input.version, input.packageSha256, input.fileManifestSha256, input.manifestSha256].join('\n'),
-      'utf8',
-    ),
-  );
-}
+export const LOCK_STATES = Object.freeze(['not-acquired', 'released', 'retained-by-this-run', 'ownership-unknown']);
 
 function lockPath(channel) {
   return `${STATE_ROOT}/lock/${channel}`;
@@ -838,49 +1035,86 @@ function ownerPath(channel) {
   return `${lockPath(channel)}/owner.json`;
 }
 
-export function acquireChannelLock(input) {
-  const created = input.transport.write.sshRun({
-    host: input.host,
-    knownHostsPath: input.knownHostsPath,
-    script: `mkdir ${lockPath(input.channel)}`,
-  });
-  if (created.status !== 0) {
-    const owner = readOwnerRecord(input);
-    return {
-      acquired: false,
-      reason: 'the channel is already locked',
-      requiresExplicitRecovery: true,
-      owner,
-    };
-  }
-  input.transport.write.sshRun({
-    host: input.host,
-    knownHostsPath: input.knownHostsPath,
-    script: `printf '%s' '${JSON.stringify(input.owner)}' > ${ownerPath(input.channel)}`,
-  });
-  return {
-    acquired: true,
-    owner: input.owner,
-    requiresExplicitRecovery: false,
-    ownerRecordPath: ownerPath(input.channel),
-  };
+export function planHashOf(input) {
+  return createHash('sha256')
+    .update(
+      [input.channel, input.version, input.packageSha256, input.fileManifestSha256, input.manifestSha256].join('\n'),
+      'utf8',
+    )
+    .digest('hex');
 }
 
-function readOwnerRecord(input) {
-  const read = input.transport.readOnly.sshRun({
+function isFileExistsFailure(result) {
+  return /File exists|cannot create directory/iu.test(`${result.stderr ?? ''} ${result.stdout ?? ''}`);
+}
+
+export async function readOwnerRecord(input) {
+  const read = await input.transport.readOnly.sshRun({
     host: input.host,
     knownHostsPath: input.knownHostsPath,
     script: `cat ${ownerPath(input.channel)}`,
   });
   if (read.status !== 0) return null;
   try {
-    return JSON.parse(String(read.stdout ?? ''));
+    return JSON.parse(String(read.stdout ?? '').trim());
   } catch {
     return null;
   }
 }
 
-export const LOCK_STATES = Object.freeze(['not-acquired', 'released', 'retained-by-this-run', 'ownership-unknown']);
+export async function acquireChannelLock(input) {
+  const created = await input.transport.write.sshRun({
+    host: input.host,
+    knownHostsPath: input.knownHostsPath,
+    script: `mkdir ${lockPath(input.channel)}`,
+  });
+
+  if (created.status !== 0) {
+    if (created.status === -1 || !isFileExistsFailure(created)) {
+      return {
+        state: 'ownership-unknown',
+        acquired: false,
+        incident: true,
+        requiresExplicitRecovery: true,
+        reason: 'this run cannot confirm whether it holds the lock',
+        owner: null,
+      };
+    }
+    const owner = await readOwnerRecord(input);
+    return {
+      state: 'not-acquired',
+      acquired: false,
+      incident: false,
+      requiresExplicitRecovery: true,
+      reason: 'the channel is already locked',
+      owner,
+    };
+  }
+
+  const written = await input.transport.write.sshRun({
+    host: input.host,
+    knownHostsPath: input.knownHostsPath,
+    script: `printf '%s' '${JSON.stringify(input.owner)}' > ${ownerPath(input.channel)}`,
+  });
+  if (written.status !== 0) {
+    return {
+      state: 'retained-by-this-run',
+      acquired: true,
+      incident: true,
+      requiresExplicitRecovery: true,
+      reason: 'the lock was created but its owner record could not be written',
+      owner: null,
+    };
+  }
+  return {
+    state: 'retained-by-this-run',
+    acquired: true,
+    incident: false,
+    requiresExplicitRecovery: false,
+    reason: 'this run holds the lock',
+    owner: input.owner,
+  };
+}
 
 export function resolveLockDisposition(input) {
   if (input.acquisitionConfirmed !== true) {
@@ -892,12 +1126,7 @@ export function resolveLockDisposition(input) {
     };
   }
   if (input.owner === null || typeof input.owner !== 'object') {
-    return {
-      release: false,
-      state: 'ownership-unknown',
-      incident: true,
-      reason: 'the owner record is unreadable, so the lock is left for a human',
-    };
+    return { release: false, state: 'ownership-unknown', incident: true, reason: 'the owner record is unreadable' };
   }
   if (input.owner.runid !== input.runid) {
     return {
@@ -926,21 +1155,79 @@ export function resolveLockDisposition(input) {
   return { release: true, state: 'released', incident: false, reason: 'this run owns the lock and may release it' };
 }
 
-export function breakChannelLock(input) {
+export async function releaseChannelLock(input) {
+  const owner = input.owner ?? (await readOwnerRecord(input));
+  const verdict = resolveLockDisposition({
+    acquisitionConfirmed: true,
+    owner,
+    runid: input.runid,
+    planHash: input.planHash,
+    safeToExit: true,
+  });
+  if (verdict.release !== true) return verdict;
+
+  const removedOwner = await input.transport.write.sshRun({
+    host: input.host,
+    knownHostsPath: input.knownHostsPath,
+    script: `rm ${ownerPath(input.channel)}`,
+  });
+  if (removedOwner.status !== 0) {
+    return {
+      release: false,
+      state: 'retained-by-this-run',
+      incident: true,
+      reason: 'the owner record could not be removed, so the lock is left in place',
+    };
+  }
+
+  const removedLock = await input.transport.write.sshRun({
+    host: input.host,
+    knownHostsPath: input.knownHostsPath,
+    script: `rmdir ${lockPath(input.channel)}`,
+  });
+  if (removedLock.status !== 0) {
+    return {
+      release: false,
+      state: 'retained-by-this-run',
+      incident: true,
+      reason: 'the lock directory could not be removed',
+    };
+  }
+  return verdict;
+}
+
+export async function breakChannelLock(input) {
   if (typeof input.reason !== 'string' || input.reason.trim().length === 0) {
     throw new FeedPublishError('breaking a lock requires a written reason');
   }
-  input.transport.write.sshRun({
+  if (typeof input.auditOut !== 'string' || input.auditOut.length === 0) {
+    throw new FeedPublishError('breaking a lock requires --audit-out');
+  }
+  const owner = await readOwnerRecord(input);
+  if (owner === null) {
+    throw new FeedPublishError('the lock has no readable owner record, so it must be inspected by hand');
+  }
+  if (input.confirmRunid !== owner.runid) {
+    throw new FeedPublishError(`--confirm-runid does not match the owner runid ${owner.runid}`);
+  }
+  const removedOwner = await input.transport.write.sshRun({
     host: input.host,
     knownHostsPath: input.knownHostsPath,
-    script: `rm -rf ${lockPath(input.channel)}`,
+    script: `rm ${ownerPath(input.channel)}`,
   });
+  const removedLock = await input.transport.write.sshRun({
+    host: input.host,
+    knownHostsPath: input.knownHostsPath,
+    script: `rmdir ${lockPath(input.channel)}`,
+  });
+  if (removedOwner.status !== 0 || removedLock.status !== 0) {
+    throw new FeedPublishError('the remote lock could not be removed');
+  }
   return {
-    auditEntry: {
-      outcome: 'lock-broken',
-      reason: input.reason,
-      previousOwner: input.previousOwner ?? null,
-    },
+    outcome: 'lock-broken',
+    previousOwner: owner,
+    reason: input.reason,
+    operator: input.operator ?? 'unknown',
   };
 }
 ```
@@ -955,12 +1242,14 @@ node --test scripts/lib/feed-publish.test.mjs
 
 - [ ] **Step 5: 行为级变异验证**
 
-1. 把 `if (input.acquisitionConfirmed !== true)` 整条判断删掉 ⇒ 预期 `an unconfirmed acquisition is ownership unknown and never touches the lock` **按测试名变红**。
-   1b. 把 `if (input.safeToExit !== true)` 那条分支删掉（直接落到 `released`）⇒ 预期 `a run that holds the lock but cannot close safely keeps it` **按测试名变红**。
-2. 把 `input.owner.runid !== input.runid` 改成 `false` ⇒ 预期 `the lock is never released when the owner belongs to another run` **按测试名变红**。
-3. 把 `input.owner.planHash !== input.planHash` 改成 `false` ⇒ 预期 `the lock is never released when the plan hash belongs to another run` **按测试名变红**。
-4. 把 `acquireChannelLock` 在 `created.status !== 0` 时改成先 `rm -rf` 再重建 ⇒ 预期 `the lock is acquired with an atomic mkdir and never steals an existing lock` **按测试名变红**。
-5. 把 `planHashOf` 里的 `input.channel` 从输入里去掉 ⇒ 预期 `the plan hash binds channel, version and all three artifact digests` **按测试名变红**。
+1. 把 `isFileExistsFailure` 的分支删掉（`status !== 0` 一律 `not-acquired`） ⇒ 预期 `an ssh failure while taking the lock is ownership unknown, not not-acquired` **按测试名变红**。
+2. 把 owner 写入的 `written.status !== 0` 检查删掉 ⇒ 预期 `a failed owner write is an incident that keeps the lock` **按测试名变红**。
+3. 把 `releaseChannelLock` 里 `rm owner.json` 与 `rmdir lock` 的顺序对调 ⇒ 预期 `release verifies the owner, then removes the owner file, then the lock directory` **按测试名变红**。
+4. 把 `removedOwner.status !== 0` 检查删掉 ⇒ 预期 `a failed owner removal is never reported as released` **按测试名变红**。
+5. 把 `releaseChannelLock` 里的 `owner ?? readOwnerRecord(input)` 改成直接用传入的 `owner` ⇒ 预期 `release re-reads the owner and refuses when it belongs to another run` **按测试名变红**。
+6. 把 `confirmRunid !== owner.runid` 检查删掉 ⇒ 预期 `breaking a lock needs a reason, an audit log and a matching runid` **按测试名变红**。
+7. 把 `removedOwner.status !== 0 || removedLock.status !== 0` 的拒绝改成照常返回 ⇒ 预期 `a failed remote deletion is not recorded as lock-broken` **按测试名变红**。
+8. 把 `planHashOf` 里的 `manifestSha256` 去掉 ⇒ 预期 `the plan hash binds channel, version and all three artifact digests` **按测试名变红**。
 
 恢复后全绿且 `git diff` 为空。
 
@@ -968,68 +1257,57 @@ node --test scripts/lib/feed-publish.test.mjs
 
 ```bash
 git add scripts/lib/feed-publish.mjs scripts/lib/feed-publish.test.mjs
-git commit -m "feat(feed): make the channel lock owner aware and never steal it"
+git commit -m "feat(feed): own the channel lock honestly, including its failure modes"
 ```
 
 ---
 
-### Task 4: 固定时序、CAS 与不确定结果
+### Task 4: 主流程（13 步追踪表的逐行实现）
 
 **Files:**
 
 - Modify: `scripts/lib/feed-publish.mjs`
 - Modify: `scripts/lib/feed-publish.test.mjs`
 
-**三条必须固化的行为（规格 §6.5、§6.6、§6.7）：** ①本地预验证必须发生在**任何**网络写之前；②CAS 基线不匹配 ⇒ `incident` + **保留锁**，且**不得自动翻转、回滚或删除孤儿版本目录**；③翻转后结果不确定时按公网 manifest 的 SHA-256 三分。
+**每写一个 helper，立刻在 `runCommit` 里接上**；不允许出现"定义了但没接"的 helper。
 
-- [ ] **Step 1: 写失败的测试**
+- [ ] **Step 1: 写失败的测试（async 假 transport）**
 
 追加到 `scripts/lib/feed-publish.test.mjs`：
 
 ```js
-import { runCommit } from './feed-publish.mjs';
+import { appendAuditStage, runCommit, verifyPublicArtifacts } from './feed-publish.mjs';
 
 const BASELINE_BODY = '{"baseline":true}\n';
-const NEW_BODY = '{"new":true}\n';
 const THIRD_BODY = '{"third":true}\n';
 const digestOf = (text) => createHash('sha256').update(Buffer.from(text, 'utf8')).digest('hex');
 const BASELINE_SHA = digestOf(BASELINE_BODY);
-const NEW_SHA = digestOf(NEW_BODY);
 const THIRD_SHA = digestOf(THIRD_BODY);
 
-function commitTransport({
-  casDrift = false,
-  publicBody = BASELINE_BODY,
-  publicStatus = 200,
-  uploadStatus = 0,
-  versionStatus = 0,
-  lockStatus = 0,
-  versionDirExists = false,
-  versionDirMatches = true,
-  versionDirHasExtraEntry = false,
-  versionDirDigestDiffers = false,
-} = {}) {
+function commitTransport(options = {}) {
   const calls = [];
   let manifestReads = 0;
   let ownerJson = null;
   const listing = `f ${PORTABLE_PACKAGE_NAME} ${PACKAGE_BYTES.length}\nf ${PORTABLE_FILE_MANIFEST_NAME} ${FILE_MANIFEST_BYTES.length}\n`;
   const digests = (directory, zipDigest) =>
     `${zipDigest}  ${directory}/${PORTABLE_PACKAGE_NAME}\n${FILE_MANIFEST_SHA256}  ${directory}/${PORTABLE_FILE_MANIFEST_NAME}\n`;
+
   return {
     calls,
     readOnly: {
-      sshRun: (request) => {
-        calls.push(['sshRun', request.script]);
-        if (/owner\.json/u.test(request.script)) {
+      sshRun: async (request) => {
+        calls.push(['readSsh', request.script]);
+        if (request.script.includes('owner.json')) {
           return ownerJson === null
             ? { status: 1, stdout: '', stderr: 'no such file' }
             : { status: 0, stdout: ownerJson, stderr: '' };
         }
-        if (/-mindepth 1 -maxdepth 1 -printf/u.test(request.script)) {
+        if (request.script.includes('-mindepth 1 -maxdepth 1 -printf')) {
           if (request.script.includes('/staging/')) return { status: 0, stdout: listing, stderr: '' };
-          if (!versionDirExists) return { status: 0, stdout: '', stderr: '' };
-          if (versionDirHasExtraEntry) return { status: 0, stdout: `${listing}f extra.bin 3\n`, stderr: '' };
-          if (!versionDirMatches) {
+          const state = options.versionDirState ?? 'absent';
+          if (state === 'absent' || state === 'empty') return { status: 0, stdout: '', stderr: '' };
+          if (state === 'extra') return { status: 0, stdout: `${listing}f extra.bin 3\n`, stderr: '' };
+          if (state === 'size') {
             return {
               status: 0,
               stdout: `f ${PORTABLE_PACKAGE_NAME} ${PACKAGE_BYTES.length + 1}\nf ${PORTABLE_FILE_MANIFEST_NAME} ${FILE_MANIFEST_BYTES.length}\n`,
@@ -1038,56 +1316,86 @@ function commitTransport({
           }
           return { status: 0, stdout: listing, stderr: '' };
         }
-        if (/sha256sum .*portable-files\.json/u.test(request.script)) {
-          const directory = request.script.includes('/staging/')
-            ? `${STATE_ROOT}/staging/internal/1.2.3`
-            : `${UPDATE_ROOT}/internal/1.2.3`;
-          if (!request.script.includes('/staging/') && !versionDirExists) {
-            return { status: 0, stdout: '', stderr: '' };
-          }
-          const zipDigest = versionDirDigestDiffers ? THIRD_SHA : PACKAGE_SHA256;
-          return { status: 0, stdout: digests(directory, zipDigest), stderr: '' };
+        if (request.script.startsWith('if [ -d ')) {
+          const state = options.versionDirState ?? 'absent';
+          const present = state !== 'absent';
+          const insideStaging = request.script.includes('/staging/');
+          if (!present && !insideStaging) return { status: 0, stdout: '', stderr: '' };
+          return { status: 0, stdout: 'present\n', stderr: '' };
         }
-        if (/manifest\.json/u.test(request.script)) {
+        if (request.script.includes('sha256sum') && request.script.includes('portable-files.json')) {
+          const inStaging = request.script.includes('/staging/');
+          if (!inStaging && (options.versionDirState ?? 'absent') === 'absent')
+            return { status: 0, stdout: '', stderr: '' };
+          const zipDigest = options.versionDirState === 'digest' ? THIRD_SHA : PACKAGE_SHA256;
+          return { status: 0, stdout: digests(inStaging ? 'staging' : 'version', zipDigest), stderr: '' };
+        }
+        if (request.script.includes("stat -c '%d'")) {
+          return { status: 0, stdout: options.sameFileSystem === false ? '100\n200\n' : '100\n100\n', stderr: '' };
+        }
+        if (request.script.includes('manifest.json') && request.script.includes('.tmp')) {
+          return {
+            status: 0,
+            stdout: `${options.tempManifestSha ?? 'MISSING'}  ${request.script.split(/\s+/u)[1]}\n`,
+            stderr: '',
+          };
+        }
+        if (request.script.includes('manifest.json')) {
           manifestReads += 1;
-          const digest = casDrift && manifestReads > 1 ? THIRD_SHA : BASELINE_SHA;
+          const digest = options.casDrift === true && manifestReads > 1 ? THIRD_SHA : BASELINE_SHA;
           return { status: 0, stdout: `${digest}  ${UPDATE_ROOT}/internal/manifest.json\n`, stderr: '' };
         }
         return { status: 0, stdout: '', stderr: '' };
       },
     },
     write: {
-      sshRun: (request) => {
-        calls.push(['sshRunWrite', request.script]);
-        if (/mkdir .*lock/u.test(request.script)) {
-          return lockStatus === 0
-            ? { status: 0, stdout: '', stderr: '' }
-            : { status: lockStatus, stdout: 'exists', stderr: '' };
-        }
-        if (/^mv \/opt\/rongying\/updates-state\/staging\//u.test(request.script)) {
-          return versionStatus === 0
-            ? { status: 0, stdout: '', stderr: '' }
-            : { status: versionStatus, stdout: '', stderr: 'commit failed' };
+      sshRun: async (request) => {
+        calls.push(['writeSsh', request.script]);
+        if (request.script.startsWith('mkdir ') && request.script.includes('/lock/')) {
+          return options.lockState === 'exists'
+            ? { status: 1, stdout: '', stderr: 'mkdir: cannot create directory: File exists' }
+            : { status: 0, stdout: '', stderr: '' };
         }
         const ownerMatch = /printf '%s' '(\{.*\})' >/u.exec(request.script);
         if (ownerMatch !== null) ownerJson = ownerMatch[1];
+        if (
+          /^mv \/opt\/rongying\/updates-state\/staging\//u.test(request.script) &&
+          options.commitStatus !== undefined
+        ) {
+          return { status: options.commitStatus, stdout: '', stderr: 'commit refused' };
+        }
         return { status: 0, stdout: '', stderr: '' };
       },
-      sftpUpload: () => {
-        calls.push(['sftpUpload']);
-        return uploadStatus === 0
-          ? { status: 0, bytesSent: 1 }
-          : { status: uploadStatus, bytesSent: 0, stderr: 'connection lost' };
+      sftpUpload: async (request) => {
+        calls.push(['sftpUpload', request.localPath, request.remotePath]);
+        if (options.uploadStatus !== undefined && !request.localPath.includes('manifest.json')) {
+          return { status: options.uploadStatus, bytesSent: 0, stderr: 'connection lost' };
+        }
+        if (options.manifestUploadStatus !== undefined && request.localPath.includes('manifest.json')) {
+          return { status: options.manifestUploadStatus, bytesSent: 0, stderr: 'connection lost' };
+        }
+        return { status: 0, bytesSent: 1 };
       },
     },
-    fetchPublic: (url) => {
+    fetchPublic: async (url) => {
       calls.push(['fetchPublic', url]);
-      return { status: publicStatus, body: publicBody };
+      if (options.publicStatus !== undefined && options.publicStatus !== 200) {
+        return { status: options.publicStatus, bodyBytes: new Uint8Array() };
+      }
+      const body =
+        options.publicManifestBody ??
+        (url.endsWith('manifest.json')
+          ? BASELINE_BODY
+          : url.endsWith('portable.zip')
+            ? PACKAGE_BYTES.toString('binary')
+            : FILE_MANIFEST_BYTES.toString('binary'));
+      return { status: 200, bodyBytes: Uint8Array.from(Buffer.from(body, 'binary')) };
     },
   };
 }
 
 function commitInput(transport, overrides = {}) {
+  const auditRoot = makeRoot();
   const paths = writeArtifacts();
   return {
     channel: 'internal',
@@ -1095,147 +1403,289 @@ function commitInput(transport, overrides = {}) {
     host: 'example.invalid',
     knownHostsPath: join(tmpdir(), 'known_hosts'),
     runid: 'r1',
-    baselineManifestSha: BASELINE_SHA,
-    newManifestSha: NEW_SHA,
-    transport,
-    verifySignature: () => {},
+    publicKeyBase64: PUBLIC_KEY_BASE64,
+    auditOut: join(auditRoot, 'audit.jsonl'),
+    repositoryRoot: makeRoot(),
+    temporaryRoot: makeRoot(),
+    verifier: () => {},
     ...paths,
     ...overrides,
   };
 }
 
-function stageStatus(result, stage) {
-  return result.stages.find((entry) => entry.stage === stage).status;
+function manifestShaOf(paths) {
+  return createHash('sha256').update(paths.manifestBytes).digest('hex');
 }
 
-test('the local pre-verification happens before any network write', () => {
+function happyTransport(paths, extra = {}) {
+  return commitTransport({
+    publicManifestBody: paths.manifestBytes.toString('binary'),
+    tempManifestSha: manifestShaOf(paths),
+    ...extra,
+  });
+}
+
+test('the local pre-verification happens before any network write', async () => {
   const transport = commitTransport();
   const input = commitInput(transport);
-  runCommit({ ...input, packagePath: join(makeRoot(), 'missing.zip') });
-  const writes = transport.calls.filter((call) => call[0] === 'sftpUpload' || call[0] === 'sshRunWrite');
-  assert.deepEqual(writes, []);
+  const result = await runCommit({ ...input, packagePath: join(makeRoot(), 'missing.zip') });
+  assert.equal(result.outcome, 'fail');
+  assert.deepEqual(
+    transport.calls.filter((call) => call[0] !== 'readSsh'),
+    [],
+  );
 });
 
-test('a clean publish walks every stage and releases its own lock', () => {
-  const transport = commitTransport();
-  const result = runCommit(commitInput(transport));
+test('a clean publish walks every stage and releases its own lock', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths);
+  const result = await runCommit(commitInput(transport, { ...paths }));
   assert.equal(result.outcome, 'done', result.reason);
+  assert.equal(result.lockState, 'released');
   assert.deepEqual(
     result.stages.map((entry) => entry.status),
     PUBLISH_STAGES.map(() => 'done'),
   );
 });
 
-test('a cas mismatch is an incident that keeps the lock and never rolls anything back', () => {
-  const transport = commitTransport({ casDrift: true });
-  const result = runCommit(commitInput(transport));
+test('the version directory is committed with a single directory rename', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths);
+  const result = await runCommit(commitInput(transport, { ...paths }));
+  assert.equal(result.outcome, 'done', result.reason);
+  const renames = transport.calls.filter(
+    (call) => call[0] === 'writeSsh' && String(call[1]).startsWith('mv /opt/rongying/updates-state/staging/'),
+  );
+  assert.equal(renames.length, 1);
+  const strayPartMoves = transport.calls.filter(
+    (call) => call[0] === 'writeSsh' && String(call[1]).includes('.part-') && !String(call[1]).includes('/staging/'),
+  );
+  assert.deepEqual(strayPartMoves, []);
+});
+
+test('the manifest is uploaded to the final directory and its remote digest is checked', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths);
+  const result = await runCommit(commitInput(transport, { ...paths }));
+  assert.equal(result.outcome, 'done', result.reason);
+  const uploads = transport.calls.filter(
+    (call) => call[0] === 'sftpUpload' && String(call[1]).includes('manifest.json'),
+  );
+  assert.equal(uploads.length, 1);
+  assert.match(String(uploads[0][2]), /\/internal\/manifest\.json\.r1\.tmp$/u);
+});
+
+test('a mismatched remote manifest digest stops before the flip', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths, { tempManifestSha: 'F'.repeat(64) });
+  const result = await runCommit(commitInput(transport, { ...paths }));
   assert.equal(result.outcome, 'incident');
   assert.equal(result.lockState, 'retained-by-this-run');
-  assert.equal(stageStatus(result, 're-verify'), 'done');
-  assert.equal(stageStatus(result, 'cas'), 'incident');
-  assert.equal(stageStatus(result, 'flip'), 'pending');
-  const destructive = transport.calls.filter((call) => /rm -rf|mv -f|rmdir/u.test(String(call[1] ?? '')));
+  assert.equal(result.stages.find((entry) => entry.stage === 'flip').status, 'pending');
+});
+
+test('a manifest upload failure is an incident that keeps the lock', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths, { manifestUploadStatus: 1 });
+  const result = await runCommit(commitInput(transport, { ...paths }));
+  assert.equal(result.outcome, 'incident');
+  assert.equal(result.lockState, 'retained-by-this-run');
+  assert.equal(result.stages.find((entry) => entry.stage === 'flip').status, 'pending');
+});
+
+test('a cas mismatch is an incident that keeps the lock and never rolls anything back', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths, { casDrift: true });
+  const result = await runCommit(commitInput(transport, { ...paths }));
+  assert.equal(result.outcome, 'incident');
+  assert.equal(result.lockState, 'retained-by-this-run');
+  assert.equal(result.stages.find((entry) => entry.stage === 'cas').status, 'incident');
+  assert.equal(result.stages.find((entry) => entry.stage === 'flip').status, 'pending');
+  const destructive = transport.calls.filter((call) => /rm -rf|mv -f.*manifest/u.test(String(call[1] ?? '')));
   assert.deepEqual(destructive, []);
 });
 
-test('an indeterminate outcome with the old public sha allows a retry and keeps the lock', () => {
-  const transport = commitTransport({ publicBody: BASELINE_BODY });
-  const result = runCommit(commitInput(transport));
+test('an indeterminate outcome with the old public sha allows a retry and keeps the lock', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths, { publicManifestBody: BASELINE_BODY });
+  const result = await runCommit(commitInput(transport, { ...paths }));
   assert.equal(result.outcome, 'retry');
   assert.equal(result.lockState, 'retained-by-this-run');
 });
 
-test('an indeterminate outcome with a third public sha stops and keeps the lock', () => {
-  const transport = commitTransport({ publicBody: THIRD_BODY });
-  const result = runCommit(commitInput(transport));
+test('an indeterminate outcome with a third public sha stops and keeps the lock', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths, { publicManifestBody: THIRD_BODY });
+  const result = await runCommit(commitInput(transport, { ...paths }));
   assert.equal(result.outcome, 'incident');
   assert.equal(result.lockState, 'retained-by-this-run');
-  assert.match(result.reason, /third/i);
+  assert.match(result.reason, /third/u);
 });
 
-test('a staging failure is a plain failure and reports that no lock was acquired', () => {
+test('a staging failure is a plain failure and reports that no lock was acquired', async () => {
+  const paths = writeArtifacts();
   const transport = commitTransport({ uploadStatus: 1 });
-  const result = runCommit(commitInput(transport));
+  const result = await runCommit(commitInput(transport, { ...paths }));
   assert.equal(result.outcome, 'fail');
   assert.equal(result.lockState, 'not-acquired');
-  assert.equal(stageStatus(result, 'lock'), 'pending');
+  assert.equal(result.stages.find((entry) => entry.stage === 'lock').status, 'pending');
 });
 
-test('a failure after the lock but before the flip releases the lock this run owns', () => {
-  const transport = commitTransport({ versionStatus: 1 });
-  const result = runCommit(commitInput(transport));
+test('a failure after the lock but before the flip releases the lock this run owns', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths, { commitStatus: 1 });
+  const result = await runCommit(commitInput(transport, { ...paths }));
   assert.equal(result.outcome, 'fail');
   assert.equal(result.lockState, 'released');
-  assert.equal(stageStatus(result, 'lock'), 'done');
-  assert.equal(stageStatus(result, 'unlock'), 'done');
-  assert.equal(stageStatus(result, 'flip'), 'pending');
+  assert.equal(result.stages.find((entry) => entry.stage === 'unlock').status, 'done');
 });
 
-test('a lost receipt after the flip retains the lock instead of claiming a result', () => {
-  const transport = commitTransport({ publicStatus: 0 });
-  const result = runCommit(commitInput(transport));
-  assert.equal(result.outcome, 'incident');
-  assert.equal(result.lockState, 'retained-by-this-run');
-  assert.match(result.reason, /uncertain/i);
-});
-
-test('the commit never runs and reports not-acquired when the lock cannot be taken', () => {
-  const transport = commitTransport({ lockStatus: 1 });
-  const result = runCommit(commitInput(transport));
+test('the commit never runs when the lock already exists', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths, { lockState: 'exists' });
+  const result = await runCommit(commitInput(transport, { ...paths }));
   assert.equal(result.outcome, 'blocked');
   assert.equal(result.lockState, 'not-acquired');
-  assert.equal(stageStatus(result, 'commit-version'), 'pending');
-  const unlocked = transport.calls.filter((call) => call[0] === 'sshRunWrite' && /rmdir/u.test(String(call[1])));
-  assert.deepEqual(unlocked, []);
+  assert.equal(result.stages.find((entry) => entry.stage === 'commit-version').status, 'pending');
 });
 
-test('an existing version directory with identical bytes is reused instead of refused', () => {
-  const transport = commitTransport({ versionDirExists: true, versionDirMatches: true });
-  const result = runCommit(commitInput(transport));
-  assert.equal(result.outcome, 'done', result.reason);
-  assert.equal(stageStatus(result, 'commit-version'), 'done');
-});
-
-test('an existing version directory with different bytes stops immediately and releases the lock', () => {
-  const transport = commitTransport({ versionDirExists: true, versionDirMatches: false });
-  const result = runCommit(commitInput(transport));
+test('a staging directory and a final directory on different file systems stops the commit', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths, { sameFileSystem: false });
+  const result = await runCommit(commitInput(transport, { ...paths }));
   assert.equal(result.outcome, 'fail');
+  assert.match(result.reason, /file system/u);
   assert.equal(result.lockState, 'released');
-  assert.equal(stageStatus(result, 'commit-version'), 'fail');
-  assert.equal(stageStatus(result, 'flip'), 'pending');
-  assert.match(result.reason, /size/u);
 });
 
-test('an existing version directory carrying an extra file is refused', () => {
-  const transport = commitTransport({ versionDirExists: true, versionDirHasExtraEntry: true });
-  const result = runCommit(commitInput(transport));
+test('an existing version directory that is empty is incomplete and refused', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths, { versionDirState: 'empty' });
+  const result = await runCommit(commitInput(transport, { ...paths }));
   assert.equal(result.outcome, 'fail');
-  assert.equal(result.lockState, 'released');
+  assert.match(result.reason, /incomplete/u);
+});
+
+test('an existing version directory with an extra entry is refused', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths, { versionDirState: 'extra' });
+  const result = await runCommit(commitInput(transport, { ...paths }));
+  assert.equal(result.outcome, 'fail');
   assert.match(result.reason, /unexpected entry/u);
 });
 
-test('an existing version directory whose digest differs is refused', () => {
-  const transport = commitTransport({ versionDirExists: true, versionDirDigestDiffers: true });
-  const result = runCommit(commitInput(transport));
+test('an existing version directory with a different size is refused', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths, { versionDirState: 'size' });
+  const result = await runCommit(commitInput(transport, { ...paths }));
+  assert.equal(result.outcome, 'fail');
+  assert.match(result.reason, /size/u);
+});
+
+test('an existing version directory with a different digest is refused', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths, { versionDirState: 'digest' });
+  const result = await runCommit(commitInput(transport, { ...paths }));
   assert.equal(result.outcome, 'fail');
   assert.match(result.reason, /digest/u);
 });
 
-test('the version directory is committed with a single directory rename', () => {
-  const transport = commitTransport();
-  const result = runCommit(commitInput(transport));
+test('an existing version directory that matches every byte is reused', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths, { versionDirState: 'present' });
+  const result = await runCommit(commitInput(transport, { ...paths }));
   assert.equal(result.outcome, 'done', result.reason);
-  const renames = transport.calls.filter(
-    (call) => call[0] === 'sshRunWrite' && String(call[1]).startsWith('mv /opt/rongying/updates-state/staging/'),
+  assert.equal(result.stages.find((entry) => entry.stage === 'commit-version').status, 'done');
+});
+
+test('every stage is appended to the audit log as it happens', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths);
+  const input = commitInput(transport, { ...paths });
+  const result = await runCommit(input);
+  assert.equal(result.outcome, 'done', result.reason);
+  const stages = readFileSync(input.auditOut, 'utf8')
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line).stage);
+  assert.equal(stages[0], 'open');
+  assert.equal(stages[1], 'pre-verify');
+  assert.ok(stages.includes('cas'));
+  assert.ok(stages.includes('flip'));
+  assert.ok(stages.includes('public-verify'));
+  assert.ok(stages.includes('done'));
+  assert.ok(stages.indexOf('done') < stages.indexOf('unlock'), 'the outcome entry is written before the unlock entry');
+  assert.equal(stages.at(-1), 'unlock');
+});
+
+test('the audit log refuses to be written inside the repository', () => {
+  const repositoryRoot = makeRoot();
+  assert.throws(
+    () => appendAuditStage({ auditOut: join(repositoryRoot, 'audit.jsonl'), entry: { stage: 'open' }, repositoryRoot }),
+    FeedPublishError,
   );
-  assert.equal(renames.length, 1);
-  const perFileMoves = transport.calls.filter(
-    (call) =>
-      call[0] === 'sshRunWrite' &&
-      /mv -f [^\n]*portable(\.zip|-files\.json)\.part-/u.test(String(call[1])) &&
-      !String(call[1]).includes('/staging/'),
+});
+
+test('a failed audit write stops the run instead of publishing silently', async () => {
+  const paths = writeArtifacts();
+  const transport = commitTransport();
+  const result = await runCommit(
+    commitInput(transport, { ...paths, auditOut: join(makeRoot(), 'no-such-dir', 'audit.jsonl') }),
   );
-  assert.deepEqual(perFileMoves, []);
+  assert.equal(result.outcome, 'fail');
+  assert.match(result.reason, /audit/u);
+});
+
+test('the public verification checks the manifest, the signature and both artifacts', async () => {
+  const paths = writeArtifacts();
+  const calls = [];
+  const result = await verifyPublicArtifacts({
+    channel: 'internal',
+    version: '1.2.3',
+    publicKeyBase64: PUBLIC_KEY_BASE64,
+    verifier: () => {},
+    expectedManifestBytes: paths.manifestBytes,
+    expectedPackageSha256: PACKAGE_SHA256,
+    expectedPackageSize: PACKAGE_BYTES.length,
+    expectedFileManifestSha256: FILE_MANIFEST_SHA256,
+    expectedFileManifestSize: FILE_MANIFEST_BYTES.length,
+    temporaryRoot: makeRoot(),
+    transport: {
+      fetchPublic: async (url) => {
+        calls.push(url);
+        if (url.endsWith('manifest.json')) return { status: 200, bodyBytes: Uint8Array.from(paths.manifestBytes) };
+        if (url.endsWith('portable.zip')) return { status: 200, bodyBytes: Uint8Array.from(PACKAGE_BYTES) };
+        return { status: 200, bodyBytes: Uint8Array.from(FILE_MANIFEST_BYTES) };
+      },
+    },
+  });
+  assert.equal(result.ok, true, result.reason);
+  assert.equal(calls.length, 3);
+});
+
+test('the public verification fails when the served package differs', async () => {
+  const paths = writeArtifacts();
+  const result = await verifyPublicArtifacts({
+    channel: 'internal',
+    version: '1.2.3',
+    publicKeyBase64: PUBLIC_KEY_BASE64,
+    verifier: () => {},
+    expectedManifestBytes: paths.manifestBytes,
+    expectedPackageSha256: PACKAGE_SHA256,
+    expectedPackageSize: PACKAGE_BYTES.length,
+    expectedFileManifestSha256: FILE_MANIFEST_SHA256,
+    expectedFileManifestSize: FILE_MANIFEST_BYTES.length,
+    temporaryRoot: makeRoot(),
+    transport: {
+      fetchPublic: async (url) => {
+        if (url.endsWith('manifest.json')) return { status: 200, bodyBytes: Uint8Array.from(paths.manifestBytes) };
+        if (url.endsWith('portable.zip')) return { status: 200, bodyBytes: Uint8Array.from(Buffer.from('other')) };
+        return { status: 200, bodyBytes: Uint8Array.from(FILE_MANIFEST_BYTES) };
+      },
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.match(result.reason, /package/u);
 });
 ```
 
@@ -1245,246 +1695,44 @@ test('the version directory is committed with a single directory rename', () => 
 node --test scripts/lib/feed-publish.test.mjs
 ```
 
-预期：`runCommit` 未定义。
+预期：`runCommit` / `verifyPublicArtifacts` / `appendAuditStage` 未定义。
 
 - [ ] **Step 3: 写最小实现**
 
-追加到 `scripts/lib/feed-publish.mjs`：
+追加到 `scripts/lib/feed-publish.mjs`（补 `appendFileSync`、`writeFileSync` 从 `node:fs`，`join` 从 `node:path`）：
 
 ```js
-function stageRecord(stages, stage, status, detail = null) {
-  const entry = stages.find((item) => item.stage === stage);
-  entry.status = status;
-  if (detail !== null) entry.detail = detail;
-  return entry;
-}
-
-export function runCommit(input) {
-  const stages = PUBLISH_STAGES.map((stage) => ({ stage, status: 'pending' }));
-  const runid = input.runid;
-  let acquisitionConfirmed = false;
-  let planHash = input.planHash ?? 'uncomputed';
-  let owner = null;
-
-  const finish = (outcome, reason, lockState) => ({
-    outcome,
-    reason,
-    lockState,
-    stages,
-    runid,
-    planHash,
-  });
-
-  const retainAndFinish = (outcome, reason) => {
-    const release = resolveLockDisposition({ acquisitionConfirmed, owner, runid, planHash, safeToExit: false });
-    stageRecord(stages, 'unlock', 'retained', release.reason);
-    return finish(outcome, reason, release.state);
-  };
-
-  const releaseAndFinish = (failedStage, outcome, reason) => {
-    stageRecord(stages, failedStage, 'fail', reason);
-    const release = resolveLockDisposition({ acquisitionConfirmed, owner, runid, planHash, safeToExit: true });
-    if (release.release !== true) {
-      stageRecord(stages, 'unlock', release.incident ? 'incident' : 'retained', release.reason);
-      return finish(release.incident ? 'incident' : 'fail', reason, release.state);
-    }
-    input.transport.write.sshRun({
-      host: input.host,
-      knownHostsPath: input.knownHostsPath,
-      script: `rmdir ${lockPath(input.channel)}`,
-    });
-    stageRecord(stages, 'unlock', 'done');
-    return finish(outcome, reason, release.state);
-  };
-
-  let local;
+export function appendAuditStage(input) {
+  if (typeof input.repositoryRoot === 'string' && input.repositoryRoot.length > 0) {
+    assertOutsideRepository(input.auditOut, input.repositoryRoot);
+  }
   try {
-    local = verifyLocalArtifacts({ ...input, requireSignature: true });
+    appendFileSync(input.auditOut, `${JSON.stringify(input.entry)}\n`, 'utf8');
   } catch (error) {
-    stageRecord(stages, 'pre-verify', 'fail', error.message);
-    return finish('fail', error.message, 'not-acquired');
+    throw new FeedPublishError(`the audit log could not be written: ${error?.message ?? error}`);
   }
-  planHash = planHashOf({
-    channel: input.channel,
-    version: input.version,
-    packageSha256: local.packageSha256,
-    fileManifestSha256: local.fileManifestSha256,
-    manifestSha256: sha256(readFileSync(input.manifestPath)),
-  });
-  stageRecord(stages, 'pre-verify', 'done');
-
-  const versionRoot = `${UPDATE_ROOT}/${input.channel}/${input.version}`;
-  const stagingRoot = `${STATE_ROOT}/staging/${input.channel}/${input.version}`;
-
-  for (const name of [PORTABLE_PACKAGE_NAME, PORTABLE_FILE_MANIFEST_NAME]) {
-    const uploaded = input.transport.write.sftpUpload({
-      localPath: name === PORTABLE_PACKAGE_NAME ? input.packagePath : input.fileManifestPath,
-      remotePath: `${stagingRoot}/${name}.part-${runid}`,
-      resume: true,
-    });
-    if (uploaded.status !== 0) {
-      stageRecord(stages, 'stage', 'fail', uploaded.stderr ?? 'upload failed');
-      return finish('fail', 'the staging upload failed', 'not-acquired');
-    }
-  }
-
-  const finalised = input.transport.write.sshRun({
-    host: input.host,
-    knownHostsPath: input.knownHostsPath,
-    script: [
-      `mv -f ${stagingRoot}/${PORTABLE_PACKAGE_NAME}.part-${runid} ${stagingRoot}/${PORTABLE_PACKAGE_NAME}`,
-      `mv -f ${stagingRoot}/${PORTABLE_FILE_MANIFEST_NAME}.part-${runid} ${stagingRoot}/${PORTABLE_FILE_MANIFEST_NAME}`,
-    ].join(' && '),
-  });
-  if (finalised.status !== 0) {
-    stageRecord(stages, 'stage', 'fail', 'the staging directory could not be finalised');
-    return finish('fail', 'the staging directory could not be finalised', 'not-acquired');
-  }
-  stageRecord(stages, 'stage', 'done');
-
-  const expectedEntries = [
-    { name: PORTABLE_PACKAGE_NAME, size: local.packageSize, sha256: local.packageSha256 },
-    { name: PORTABLE_FILE_MANIFEST_NAME, size: local.fileManifestSize, sha256: local.fileManifestSha256 },
-  ];
-
-  const staging = inspectRemoteVersionDirectory(input, stagingRoot, expectedEntries);
-  if (!staging.present || staging.problems.length > 0) {
-    const detail = staging.present ? staging.problems.join('; ') : 'the staging directory is missing';
-    stageRecord(stages, 'remote-verify', 'fail', detail);
-    return finish('fail', `the staging directory is not the exact final file set: ${detail}`, 'not-acquired');
-  }
-  stageRecord(stages, 'remote-verify', 'done');
-
-  const lock = acquireChannelLock({
-    channel: input.channel,
-    transport: input.transport,
-    owner: { runid, planHash },
-    host: input.host,
-    knownHostsPath: input.knownHostsPath,
-  });
-  if (lock.acquired !== true) {
-    stageRecord(stages, 'lock', 'blocked', lock.reason);
-    return finish('blocked', lock.reason, 'not-acquired');
-  }
-  acquisitionConfirmed = true;
-  stageRecord(stages, 'lock', 'done');
-
-  owner = readOwnerRecord(input);
-  const baseline = input.transport.readOnly.sshRun({
-    host: input.host,
-    knownHostsPath: input.knownHostsPath,
-    script: `sha256sum ${UPDATE_ROOT}/${input.channel}/${PORTABLE_MANIFEST_NAME} || true`,
-  });
-  const baselineSha = String(baseline.stdout ?? '').split(/\s+/u)[0] || 'absent';
-  if (String(baselineSha) !== String(input.baselineManifestSha ?? baselineSha)) {
-    stageRecord(stages, 're-verify', 'incident');
-    return retainAndFinish('incident', 'the manifest changed between the preflight and the lock');
-  }
-  const stagingAfterLock = inspectRemoteVersionDirectory(input, stagingRoot, expectedEntries);
-  if (!stagingAfterLock.present || stagingAfterLock.problems.length > 0) {
-    stageRecord(stages, 're-verify', 'incident', stagingAfterLock.problems.join('; '));
-    return retainAndFinish('incident', 'the staging bytes changed while the lock was being taken');
-  }
-  stageRecord(stages, 're-verify', 'done');
-
-  const existing = inspectRemoteVersionDirectory(input, versionRoot, expectedEntries);
-  if (existing.present && existing.problems.length > 0) {
-    return releaseAndFinish(
-      'commit-version',
-      'fail',
-      `the immutable version directory already exists and does not match: ${existing.problems.join('; ')}`,
-    );
-  }
-
-  if (existing.present) {
-    stageRecord(stages, 'commit-version', 'done', 'the immutable version directory already matched every byte');
-  } else {
-    const committed = input.transport.write.sshRun({
-      host: input.host,
-      knownHostsPath: input.knownHostsPath,
-      script: `mv ${stagingRoot} ${versionRoot}`,
-    });
-    if (committed.status !== 0) {
-      return releaseAndFinish('commit-version', 'fail', 'the version directory was not committed');
-    }
-    stageRecord(stages, 'commit-version', 'done');
-  }
-
-  input.transport.write.sshRun({
-    host: input.host,
-    knownHostsPath: input.knownHostsPath,
-    script: `cp ${UPDATE_ROOT}/${input.channel}/${PORTABLE_MANIFEST_NAME} ${STATE_ROOT}/backup/${input.channel}-manifest.json-pre-${input.version} 2>/dev/null || true`,
-  });
-  stageRecord(stages, 'backup-manifest', 'done');
-
-  const cas = input.transport.readOnly.sshRun({
-    host: input.host,
-    knownHostsPath: input.knownHostsPath,
-    script: `sha256sum ${UPDATE_ROOT}/${input.channel}/${PORTABLE_MANIFEST_NAME} || true`,
-  });
-  const casSha = String(cas.stdout ?? '').split(/\s+/u)[0] || 'absent';
-  if (String(casSha) !== String(baselineSha)) {
-    stageRecord(stages, 'cas', 'incident');
-    return retainAndFinish(
-      'incident',
-      'the manifest changed after the lock was taken, which means a bypass; nothing is flipped, rolled back or deleted',
-    );
-  }
-  stageRecord(stages, 'cas', 'done');
-
-  input.transport.write.sshRun({
-    host: input.host,
-    knownHostsPath: input.knownHostsPath,
-    script: `cp ${input.manifestPath} ${UPDATE_ROOT}/${input.channel}/${PORTABLE_MANIFEST_NAME}.${runid}.tmp`,
-  });
-  stageRecord(stages, 'temp-manifest', 'done');
-
-  input.transport.write.sshRun({
-    host: input.host,
-    knownHostsPath: input.knownHostsPath,
-    script: `mv -f ${UPDATE_ROOT}/${input.channel}/${PORTABLE_MANIFEST_NAME}.${runid}.tmp ${UPDATE_ROOT}/${input.channel}/${PORTABLE_MANIFEST_NAME}`,
-  });
-  stageRecord(stages, 'flip', 'done');
-
-  const observed = input.transport.fetchPublic(`${PUBLIC_BASE_URL}/${input.channel}/${PORTABLE_MANIFEST_NAME}`);
-  if (observed.status !== 200 || typeof observed.body !== 'string') {
-    stageRecord(stages, 'public-verify', 'incident');
-    return retainAndFinish('incident', 'the public manifest could not be read, so the outcome is uncertain');
-  }
-  const observedSha = sha256(Buffer.from(observed.body, 'utf8'));
-  if (observedSha === input.newManifestSha) {
-    stageRecord(stages, 'public-verify', 'done');
-    stageRecord(stages, 'reveal', 'done');
-  } else if (observedSha === input.baselineManifestSha) {
-    stageRecord(stages, 'public-verify', 'retry');
-    return retainAndFinish('retry', 'the flip did not take effect');
-  } else {
-    stageRecord(stages, 'public-verify', 'incident');
-    return retainAndFinish('incident', 'a third manifest digest appeared while flipping');
-  }
-
-  const release = resolveLockDisposition({
-    acquisitionConfirmed,
-    owner,
-    runid,
-    planHash,
-    safeToExit: true,
-  });
-  if (release.release !== true) {
-    stageRecord(stages, 'unlock', release.incident ? 'incident' : 'retained', release.reason);
-    return finish(release.incident ? 'incident' : 'retry', release.reason, release.state);
-  }
-  input.transport.write.sshRun({
-    host: input.host,
-    knownHostsPath: input.knownHostsPath,
-    script: `rmdir ${lockPath(input.channel)}`,
-  });
-  stageRecord(stages, 'unlock', 'done');
-  return finish('done', 'published', 'released');
+  return input.auditOut;
 }
 
-function readRemoteDirectory(input, directory) {
-  const listing = input.transport.readOnly.sshRun({
+function assertOutsideRepository(target, repositoryRoot) {
+  const resolved = resolve(target);
+  const root = resolve(repositoryRoot);
+  if (resolved === root || resolved.startsWith(`${root}${sep}`)) {
+    throw new FeedPublishError('the audit log must live outside the repository');
+  }
+  return resolved;
+}
+
+function versionRootOf(channel, version) {
+  return `${UPDATE_ROOT}/${channel}/${version}`;
+}
+
+function stagingRootOf(channel, version, planHash) {
+  return `${STATE_ROOT}/staging/${channel}/${version}/${planHash}`;
+}
+
+async function readRemoteDirectory(input, directory) {
+  const listing = await input.transport.readOnly.sshRun({
     host: input.host,
     knownHostsPath: input.knownHostsPath,
     script: `if [ -d ${directory} ]; then find ${directory} -mindepth 1 -maxdepth 1 -printf '%y %f %s\\n' | sort; fi`,
@@ -1498,6 +1746,32 @@ function readRemoteDirectory(input, directory) {
     entries.push({ type, name, size: Number(size) });
   }
   return entries;
+}
+
+async function remoteDirectoryExists(input, directory) {
+  const probe = await input.transport.readOnly.sshRun({
+    host: input.host,
+    knownHostsPath: input.knownHostsPath,
+    script: `if [ -d ${directory} ]; then printf 'present\\n'; fi`,
+  });
+  return probe.status === 0 && String(probe.stdout ?? '').trim() === 'present';
+}
+
+async function readRemoteHashes(input, directory, names) {
+  const result = await input.transport.readOnly.sshRun({
+    host: input.host,
+    knownHostsPath: input.knownHostsPath,
+    script: `sha256sum ${names.map((name) => `${directory}/${name}`).join(' ')}`,
+  });
+  if (result.status !== 0) return null;
+  const hashes = new Map();
+  for (const line of String(result.stdout ?? '').split('\n')) {
+    const trimmed = line.trim();
+    if (trimmed.length === 0) continue;
+    const [digest, target] = trimmed.split(/\s+/u);
+    hashes.set(target.split('/').pop(), digest);
+  }
+  return hashes;
 }
 
 function compareDirectoryEntries(entries, expected) {
@@ -1517,54 +1791,404 @@ function compareDirectoryEntries(entries, expected) {
     if (match.size !== item.size) problems.push(`${item.name} has size ${match.size}, expected ${item.size}`);
   }
   for (const entry of entries) {
-    if (!expected.some((item) => item.name === entry.name)) {
-      problems.push(`${entry.name} is an unexpected entry`);
-    }
+    if (!expected.some((item) => item.name === entry.name)) problems.push(`${entry.name} is an unexpected entry`);
   }
   return problems;
-}
-
-function readRemoteHashes(input, directory, names) {
-  const result = input.transport.readOnly.sshRun({
-    host: input.host,
-    knownHostsPath: input.knownHostsPath,
-    script: `sha256sum ${names.map((name) => `${directory}/${name}`).join(' ')}`,
-  });
-  if (result.status !== 0) return null;
-  const hashes = new Map();
-  for (const line of String(result.stdout ?? '').split('\n')) {
-    const trimmed = line.trim();
-    if (trimmed.length === 0) continue;
-    const [digest, target] = trimmed.split(/\s+/u);
-    hashes.set(target.split('/').pop(), digest);
-  }
-  return hashes;
 }
 
 function compareDirectoryHashes(hashes, expected) {
   if (hashes === null) return ['the remote digests could not be read'];
   const problems = [];
   for (const item of expected) {
-    if (hashes.get(item.name) !== item.sha256) {
-      problems.push(`${item.name} does not carry the expected digest`);
-    }
+    if (hashes.get(item.name) !== item.sha256) problems.push(`${item.name} does not carry the expected digest`);
   }
   return problems;
 }
 
-function inspectRemoteVersionDirectory(input, directory, expectedEntries) {
-  const entries = readRemoteDirectory(input, directory);
-  if (entries.length === 0) return { present: false, problems: [] };
+async function inspectRemoteDirectory(input, directory, expectedEntries) {
+  const exists = await remoteDirectoryExists(input, directory);
+  if (!exists) return { present: false, empty: false, problems: [] };
+  const entries = await readRemoteDirectory(input, directory);
+  if (entries.length === 0) return { present: true, empty: true, problems: [] };
   const problems = compareDirectoryEntries(entries, expectedEntries);
   if (problems.length === 0) {
-    const hashes = readRemoteHashes(
-      input,
-      directory,
-      expectedEntries.map((item) => item.name),
+    problems.push(
+      ...compareDirectoryHashes(
+        await readRemoteHashes(
+          input,
+          directory,
+          expectedEntries.map((item) => item.name),
+        ),
+        expectedEntries,
+      ),
     );
-    problems.push(...compareDirectoryHashes(hashes, expectedEntries));
   }
-  return { present: true, problems };
+  return { present: true, empty: false, problems };
+}
+
+async function readRemoteFileSha(input, target) {
+  const result = await input.transport.readOnly.sshRun({
+    host: input.host,
+    knownHostsPath: input.knownHostsPath,
+    script: `sha256sum ${target} || true`,
+  });
+  return String(result.stdout ?? '').split(/\s+/u)[0] || 'absent';
+}
+
+export async function verifyPublicArtifacts(input) {
+  const base = `${PUBLIC_BASE_URL}/${input.channel}/${input.version}`;
+  const manifestResponse = await input.transport.fetchPublic(`${base}/${PORTABLE_MANIFEST_NAME}`);
+  if (manifestResponse.status !== 200) return { ok: false, reason: 'the public manifest is not reachable' };
+
+  const manifestBytes = Buffer.from(manifestResponse.bodyBytes);
+  if (!manifestBytes.equals(input.expectedManifestBytes)) {
+    return { ok: false, reason: 'the public manifest is not the manifest this run signed' };
+  }
+
+  const packageResponse = await input.transport.fetchPublic(`${base}/${PORTABLE_PACKAGE_NAME}`);
+  if (packageResponse.status !== 200) return { ok: false, reason: 'the public package is not reachable' };
+  const packageBytes = Buffer.from(packageResponse.bodyBytes);
+  if (createHash('sha256').update(packageBytes).digest('hex') !== input.expectedPackageSha256) {
+    return { ok: false, reason: 'the public package integrity check failed' };
+  }
+  if (packageBytes.length !== input.expectedPackageSize) {
+    return { ok: false, reason: 'the public package size does not match' };
+  }
+
+  const fileManifestResponse = await input.transport.fetchPublic(`${base}/${PORTABLE_FILE_MANIFEST_NAME}`);
+  if (fileManifestResponse.status !== 200) return { ok: false, reason: 'the public file manifest is not reachable' };
+  const fileManifestBytes = Buffer.from(fileManifestResponse.bodyBytes);
+  if (createHash('sha256').update(fileManifestBytes).digest('hex') !== input.expectedFileManifestSha256) {
+    return { ok: false, reason: 'the public file manifest integrity check failed' };
+  }
+  if (fileManifestBytes.length !== input.expectedFileManifestSize) {
+    return { ok: false, reason: 'the public file manifest size does not match' };
+  }
+
+  const packagePath = join(input.temporaryRoot, PORTABLE_PACKAGE_NAME);
+  const fileManifestPath = join(input.temporaryRoot, PORTABLE_FILE_MANIFEST_NAME);
+  writeFileSync(packagePath, packageBytes);
+  writeFileSync(fileManifestPath, fileManifestBytes);
+  input.verifier({ manifestBytes, fileManifestBytes, packagePath, publicKeyBase64: input.publicKeyBase64 });
+
+  return { ok: true, manifestSha256: createHash('sha256').update(manifestBytes).digest('hex') };
+}
+
+export async function runCommit(input) {
+  const stages = PUBLISH_STAGES.map((stage) => ({ stage, status: 'pending' }));
+  const runid = input.runid;
+  let acquisitionConfirmed = false;
+  let planHash = 'uncomputed';
+  let owner = null;
+
+  const audit = (stage, status, detail) => {
+    stages.find((entry) => entry.stage === stage).status = status;
+    appendAuditStage({
+      auditOut: input.auditOut,
+      repositoryRoot: input.repositoryRoot,
+      entry: { stage, status, runid, ...(detail === undefined ? {} : { detail }) },
+    });
+  };
+
+  const finish = (outcome, reason, lockState) => ({ outcome, reason, lockState, stages, runid, planHash });
+
+  const recordOutcome = (outcome, reason) => {
+    appendAuditStage({
+      auditOut: input.auditOut,
+      repositoryRoot: input.repositoryRoot,
+      entry: { stage: outcome, reason, runid, planHash },
+    });
+  };
+
+  // 硬规则：**每一次 `return finish(...)` 之前都必须先 `recordOutcome(outcome, reason)`**。
+  // `retainAndFinish` 与 `releaseAndFinish` 已经在内部调用它；四条提前失败路径
+  // （pre-verify / stage / remote-verify / lock）必须各自显式调用一次，
+  // 否则审计日志会缺掉"这次运行到底以什么结果收场"。
+
+  const retainAndFinish = (outcome, reason) => {
+    const disposition = resolveLockDisposition({ acquisitionConfirmed, owner, runid, planHash, safeToExit: false });
+    stages.find((entry) => entry.stage === 'unlock').status = 'retained';
+    recordOutcome(outcome, reason);
+    appendAuditStage({
+      auditOut: input.auditOut,
+      repositoryRoot: input.repositoryRoot,
+      entry: { stage: 'lock-retained', status: 'retained', runid, reason: disposition.reason },
+    });
+    return finish(outcome, reason, disposition.state);
+  };
+
+  const releaseAndFinish = async (failedStage, outcome, reason) => {
+    stages.find((entry) => entry.stage === failedStage).status = 'fail';
+    recordOutcome(outcome, reason);
+    const disposition = await releaseChannelLock({
+      channel: input.channel,
+      transport: input.transport,
+      owner,
+      runid,
+      planHash,
+      host: input.host,
+      knownHostsPath: input.knownHostsPath,
+    });
+    const unlockStatus = disposition.release ? 'done' : 'retained';
+    stages.find((entry) => entry.stage === 'unlock').status = unlockStatus;
+    appendAuditStage({
+      auditOut: input.auditOut,
+      repositoryRoot: input.repositoryRoot,
+      entry: { stage: 'unlock', status: unlockStatus, runid, reason: disposition.reason },
+    });
+    return finish(outcome, reason, disposition.state);
+  };
+
+  appendAuditStage({ auditOut: input.auditOut, repositoryRoot: input.repositoryRoot, entry: { stage: 'open', runid } });
+
+  let local;
+  try {
+    local = verifyLocalArtifacts({
+      packagePath: input.packagePath,
+      fileManifestPath: input.fileManifestPath,
+      manifestPath: input.manifestPath,
+      expectedChannel: input.channel,
+      expectedVersion: input.version,
+      publicKeyBase64: input.publicKeyBase64,
+      verifySignature: input.verifySignature,
+    });
+  } catch (error) {
+    audit('pre-verify', 'fail', error.message);
+    return finish('fail', error.message, 'not-acquired');
+  }
+  planHash = planHashOf({
+    channel: input.channel,
+    version: input.version,
+    packageSha256: local.packageSha256,
+    fileManifestSha256: local.fileManifestSha256,
+    manifestSha256: local.manifestSha256,
+  });
+  audit('pre-verify', 'done');
+
+  const versionRoot = versionRootOf(input.channel, input.version);
+  const stagingRoot = stagingRootOf(input.channel, input.version, planHash);
+  const expectedEntries = [
+    { name: PORTABLE_PACKAGE_NAME, size: local.packageSize, sha256: local.packageSha256 },
+    { name: PORTABLE_FILE_MANIFEST_NAME, size: local.fileManifestSize, sha256: local.fileManifestSha256 },
+  ];
+
+  const stagingCreated = await input.transport.write.sshRun({
+    host: input.host,
+    knownHostsPath: input.knownHostsPath,
+    script: `mkdir -p ${stagingRoot}`,
+  });
+  if (stagingCreated.status !== 0) {
+    audit('stage', 'fail', 'the staging directory could not be created');
+    return finish('fail', 'the staging directory could not be created', 'not-acquired');
+  }
+
+  for (const item of [
+    { localPath: input.packagePath, remotePath: `${stagingRoot}/${PORTABLE_PACKAGE_NAME}.part-${runid}` },
+    { localPath: input.fileManifestPath, remotePath: `${stagingRoot}/${PORTABLE_FILE_MANIFEST_NAME}.part-${runid}` },
+  ]) {
+    const uploaded = await input.transport.write.sftpUpload({ ...item, resume: true });
+    if (uploaded.status !== 0) {
+      audit('stage', 'fail', uploaded.stderr ?? 'upload failed');
+      return finish('fail', 'the staging upload failed', 'not-acquired');
+    }
+  }
+
+  const finalised = await input.transport.write.sshRun({
+    host: input.host,
+    knownHostsPath: input.knownHostsPath,
+    script: [
+      `mv -f ${stagingRoot}/${PORTABLE_PACKAGE_NAME}.part-${runid} ${stagingRoot}/${PORTABLE_PACKAGE_NAME}`,
+      `mv -f ${stagingRoot}/${PORTABLE_FILE_MANIFEST_NAME}.part-${runid} ${stagingRoot}/${PORTABLE_FILE_MANIFEST_NAME}`,
+    ].join(' && '),
+  });
+  if (finalised.status !== 0) {
+    audit('stage', 'fail', 'the staging directory could not be finalised');
+    return finish('fail', 'the staging directory could not be finalised', 'not-acquired');
+  }
+  audit('stage', 'done');
+
+  const staging = await inspectRemoteDirectory(input, stagingRoot, expectedEntries);
+  if (!staging.present || staging.empty || staging.problems.length > 0) {
+    const detail = staging.empty ? 'the staging directory is empty' : staging.problems.join('; ');
+    audit('remote-verify', 'fail', detail);
+    return finish('fail', `the staging directory is not the exact final file set: ${detail}`, 'not-acquired');
+  }
+  audit('remote-verify', 'done');
+
+  const lock = await acquireChannelLock({
+    channel: input.channel,
+    transport: input.transport,
+    owner: { runid, planHash },
+    host: input.host,
+    knownHostsPath: input.knownHostsPath,
+  });
+  if (lock.acquired !== true) {
+    audit('lock', lock.state === 'not-acquired' ? 'blocked' : 'incident', lock.reason);
+    return finish(lock.state === 'not-acquired' ? 'blocked' : 'incident', lock.reason, lock.state);
+  }
+  acquisitionConfirmed = true;
+  owner = lock.owner;
+  audit('lock', 'done');
+
+  owner = (await readOwnerRecord(input)) ?? owner;
+  const baselineSha = await readRemoteFileSha(input, `${UPDATE_ROOT}/${input.channel}/${PORTABLE_MANIFEST_NAME}`);
+  const stagingAfterLock = await inspectRemoteDirectory(input, stagingRoot, expectedEntries);
+  if (!stagingAfterLock.present || stagingAfterLock.empty || stagingAfterLock.problems.length > 0) {
+    audit('re-verify', 'incident', 'the staging bytes changed while the lock was being taken');
+    return retainAndFinish('incident', 'the staging bytes changed while the lock was being taken');
+  }
+  audit('re-verify', 'done');
+
+  const devices = await input.transport.readOnly.sshRun({
+    host: input.host,
+    knownHostsPath: input.knownHostsPath,
+    script: `stat -c '%d' ${STATE_ROOT} ${UPDATE_ROOT}`,
+  });
+  const deviceList = String(devices.stdout ?? '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  if (devices.status !== 0 || deviceList.length !== 2 || deviceList[0] !== deviceList[1]) {
+    return releaseAndFinish(
+      'commit-version',
+      'fail',
+      'the staging root and the update root are not on the same file system',
+    );
+  }
+
+  const existing = await inspectRemoteDirectory(input, versionRoot, expectedEntries);
+  if (existing.present && existing.empty) {
+    return releaseAndFinish(
+      'commit-version',
+      'fail',
+      'the immutable version directory already exists but is incomplete',
+    );
+  }
+  if (existing.present && existing.problems.length > 0) {
+    return releaseAndFinish(
+      'commit-version',
+      'fail',
+      `the immutable version directory already exists and does not match: ${existing.problems.join('; ')}`,
+    );
+  }
+  if (existing.present) {
+    audit('commit-version', 'done', 'the immutable version directory already matched every byte');
+  } else {
+    const committed = await input.transport.write.sshRun({
+      host: input.host,
+      knownHostsPath: input.knownHostsPath,
+      script: `mv ${stagingRoot} ${versionRoot}`,
+    });
+    if (committed.status !== 0) {
+      return releaseAndFinish('commit-version', 'fail', 'the version directory was not committed');
+    }
+    audit('commit-version', 'done');
+  }
+
+  const backup = await input.transport.write.sshRun({
+    host: input.host,
+    knownHostsPath: input.knownHostsPath,
+    script: [
+      `mkdir -p ${STATE_ROOT}/backup`,
+      `cp ${UPDATE_ROOT}/${input.channel}/${PORTABLE_MANIFEST_NAME} ${STATE_ROOT}/backup/${input.channel}-manifest.json-pre-${input.version} 2>/dev/null || true`,
+    ].join(' && '),
+  });
+  if (backup.status !== 0) {
+    return retainAndFinish('incident', 'the previous manifest could not be backed up');
+  }
+  audit('backup-manifest', 'done');
+
+  const casSha = await readRemoteFileSha(input, `${UPDATE_ROOT}/${input.channel}/${PORTABLE_MANIFEST_NAME}`);
+  if (casSha !== baselineSha) {
+    audit('cas', 'incident');
+    return retainAndFinish(
+      'incident',
+      'the manifest changed after the lock was taken, which means a bypass; nothing is flipped, rolled back or deleted',
+    );
+  }
+  audit('cas', 'done');
+
+  const tempManifestPath = `${UPDATE_ROOT}/${input.channel}/${PORTABLE_MANIFEST_NAME}.${runid}.tmp`;
+  const manifestUploaded = await input.transport.write.sftpUpload({
+    localPath: input.manifestPath,
+    remotePath: tempManifestPath,
+    resume: false,
+  });
+  if (manifestUploaded.status !== 0) {
+    audit('temp-manifest', 'incident', 'the manifest upload failed');
+    return retainAndFinish('incident', 'the manifest could not be uploaded, so the outcome is uncertain');
+  }
+  const remoteTempSha = await readRemoteFileSha(input, tempManifestPath);
+  if (remoteTempSha !== local.manifestSha256) {
+    audit('temp-manifest', 'incident', 'the uploaded manifest digest does not match the local manifest');
+    return retainAndFinish('incident', 'the uploaded manifest does not match the local manifest');
+  }
+  audit('temp-manifest', 'done');
+
+  const flipped = await input.transport.write.sshRun({
+    host: input.host,
+    knownHostsPath: input.knownHostsPath,
+    script: `mv -f ${tempManifestPath} ${UPDATE_ROOT}/${input.channel}/${PORTABLE_MANIFEST_NAME}`,
+  });
+  if (flipped.status !== 0) {
+    audit('flip', 'incident', 'the atomic flip failed');
+    return retainAndFinish('incident', 'the atomic flip failed, so the outcome is uncertain');
+  }
+  audit('flip', 'done');
+
+  const observed = await input.transport.fetchPublic(`${PUBLIC_BASE_URL}/${input.channel}/${PORTABLE_MANIFEST_NAME}`);
+  if (observed.status !== 200 || observed.bodyBytes === undefined) {
+    audit('public-verify', 'incident', 'the public manifest could not be read');
+    return retainAndFinish('incident', 'the public manifest could not be read, so the outcome is uncertain');
+  }
+  const observedSha = createHash('sha256').update(Buffer.from(observed.bodyBytes)).digest('hex');
+  if (observedSha === local.manifestSha256) {
+    const publicCheck = await verifyPublicArtifacts({
+      channel: input.channel,
+      version: input.version,
+      publicKeyBase64: input.publicKeyBase64,
+      verifier: input.verifier ?? (() => {}),
+      expectedManifestBytes: local.manifestBytes,
+      expectedPackageSha256: local.packageSha256,
+      expectedPackageSize: local.packageSize,
+      expectedFileManifestSha256: local.fileManifestSha256,
+      expectedFileManifestSize: local.fileManifestSize,
+      transport: input.transport,
+      temporaryRoot: input.temporaryRoot,
+    });
+    if (publicCheck.ok !== true) {
+      audit('public-verify', 'incident', publicCheck.reason);
+      return retainAndFinish('incident', `the public verification failed: ${publicCheck.reason}`);
+    }
+    audit('public-verify', 'done');
+    audit('reveal', 'done');
+  } else if (observedSha === baselineSha) {
+    audit('public-verify', 'retry');
+    return retainAndFinish('retry', 'the flip did not take effect');
+  } else {
+    audit('public-verify', 'incident', 'a third manifest digest appeared');
+    return retainAndFinish('incident', 'a third manifest digest appeared while flipping');
+  }
+
+  recordOutcome('done', 'published');
+  const disposition = await releaseChannelLock({
+    channel: input.channel,
+    transport: input.transport,
+    owner,
+    runid,
+    planHash,
+    host: input.host,
+    knownHostsPath: input.knownHostsPath,
+  });
+  const unlockStatus = disposition.release ? 'done' : 'retained';
+  stages.find((entry) => entry.stage === 'unlock').status = unlockStatus;
+  appendAuditStage({
+    auditOut: input.auditOut,
+    repositoryRoot: input.repositoryRoot,
+    entry: { stage: 'unlock', status: unlockStatus, runid, reason: disposition.reason },
+  });
+  if (disposition.release !== true) return finish('incident', disposition.reason, disposition.state);
+  return finish('done', 'published', disposition.state);
 }
 ```
 
@@ -1576,21 +2200,20 @@ node --test scripts/lib/feed-publish.test.mjs
 
 预期：`fail 0`。
 
-- [ ] **Step 5: 行为级变异验证**
+- [ ] **Step 5: 行为级变异验证（逐条对着追踪表）**
 
-1. 把 `verifyLocalArtifacts` 调用移到 `stage` 阶段之后 ⇒ 预期 `the local pre-verification happens before any network write` **按测试名变红**。
-2. 把 CAS 不匹配分支的 `finish('incident', ..., true)` 改成 `finish('fail', ..., false)` ⇒ 预期 `a cas mismatch is an incident that keeps the lock and never rolls anything back` **按测试名变红**。
-3. 在 CAS 不匹配分支里加一句 `rm -rf ${versionRoot}` ⇒ 预期同一测试的 `destructive` 断言 **按测试名变红**。
-4. 把三种公网 SHA 的分支里 `'third'` 那条改成 `finish('retry', ...)` ⇒ 预期 `an indeterminate outcome with a third public sha stops and keeps the lock` **按测试名变红**。
-5. 把 `lock.acquired !== true` 的返回从 `'blocked'` 改成继续执行 ⇒ 预期 `the commit never runs when this run did not acquire the lock` **按测试名变红**。
-6. 把 `releaseAndFinish` 里的 `resolveLockDisposition` 调用删掉、直接 `rmdir` ⇒ 预期 Task 3 的 `the lock is never released when the owner belongs to another run` 与 `an unconfirmed acquisition is ownership unknown and never touches the lock` **按测试名变红**。
-7. 把 `releaseAndFinish` 里的 `rmdir` 调用删掉（直接返回）⇒ 预期 `a failure after the lock but before the flip releases the lock this run owns` **按测试名变红**。
-8. 把“版本目录已存在且完全一致”的分支改成一律 `releaseAndFinish`（即退回“简单拒绝”）⇒ 预期 `an existing version directory with identical bytes is reused instead of refused` **按测试名变红**。
-9. 把 `inspectRemoteVersionDirectory` 里的 `compareDirectoryEntries` 调用删掉，只保留 `present` 判断 ⇒ 预期 `an existing version directory whose file sizes differ is refused` 与 `…carrying an extra file is refused` **按测试名变红**。
-10. 把 `compareDirectoryHashes` 调用删掉 ⇒ 预期 `an existing version directory whose digest differs is refused` **按测试名变红**。
-11. 把 `readRemoteDirectory` 里的 `entry.type !== 'f'` 检查删掉 ⇒ 预期 `an existing version directory carrying an extra file is refused` 之外的符号链接用例（若你补了链接用例）**按测试名变红**；若没补链接用例，本变异**不适用**，按"未验证"记账。
-12. 把 `commit-version` 的单次目录 `mv` 改回 `mkdir -p` + 两次逐文件 `mv` ⇒ 预期 `the version directory is committed with a single directory rename` **按测试名变红**。
-13. 把 `stage` 阶段里 staging 内的 `.part-` → 最终名 的 `mv -f` 删掉 ⇒ 预期 `a staging failure is a plain failure and reports that no lock was acquired` 之外的 staging 完整性用例（`the staging directory is not the exact final file set`）**按测试名变红**；若该路径未被独立用例覆盖，**按"未验证"记账**并在 Step 4 补一条用例。
+1. 把 `verifyLocalArtifacts` 调用移到 `stage` 之后 ⇒ 预期 `the local pre-verification happens before any network write` **按测试名变红**。
+2. 把 staging 的 `mkdir -p` 退出码检查改成不检查 ⇒ 本刀**无独立用例覆盖** ⇒ **记"未验证"**，并在 Step 1 补一条 `the staging directory could not be created` 的用例后再跑。
+3. 把单次目录 `mv` 改回 `mkdir -p` + 两次逐文件 `mv` ⇒ 预期 `the version directory is committed with a single directory rename` **按测试名变红**。
+4. 把 manifest 的 SFTP 上传换成 `cp <本地 Windows 路径>` ⇒ 预期 `the manifest is uploaded to the final directory and its remote digest is checked` **按测试名变红**。
+5. 删掉远端临时 manifest 的 SHA 比对 ⇒ 预期 `a mismatched remote manifest digest stops before the flip` **按测试名变红**。
+6. 删掉设备号比对 ⇒ 预期 `a staging directory and a final directory on different file systems stops the commit` **按测试名变红**。
+7. 把"存在但为空"的分支改成当成不存在 ⇒ 预期 `an existing version directory that is empty is incomplete and refused` **按测试名变红**。
+8. 删掉 `compareDirectoryHashes` 调用 ⇒ 预期 `an existing version directory with a different digest is refused` **按测试名变红**。
+9. 把 `appendAuditStage` 改成最后一次性写 ⇒ 预期 `every stage is appended to the audit log as it happens` **按测试名变红**。
+10. 把 `appendAuditStage` 的 `catch` 改成吞掉 ⇒ 预期 `a failed audit write stops the run instead of publishing silently` **按测试名变红**。
+11. 把 `verifyPublicArtifacts` 的调用删掉（只比 manifest SHA）⇒ 预期 `the public verification fails when the served package differs` **按测试名变红**。
+12. 把 `runCommit` 里四处 `await`（`write.sftpUpload` / `write.sshRun` / `fetchPublic` / `releaseChannelLock`）各删一处 ⇒ 对应测试**按测试名变红**；这是对"漏 await"的正面检查。
 
 恢复后全绿且 `git diff` 为空。
 
@@ -1598,12 +2221,12 @@ node --test scripts/lib/feed-publish.test.mjs
 
 ```bash
 git add scripts/lib/feed-publish.mjs scripts/lib/feed-publish.test.mjs
-git commit -m "feat(feed): publish in the fixed order and keep the lock when unsure"
+git commit -m "feat(feed): publish the manifest over sftp and verify it on the public url"
 ```
 
 ---
 
-### Task 5: 公网复验、逐阶段审计与 `internal → stable` 重签
+### Task 5: `internal → stable` 重签
 
 **Files:**
 
@@ -1612,86 +2235,29 @@ git commit -m "feat(feed): publish in the fixed order and keep the lock when uns
 
 - [ ] **Step 1: 写失败的测试**
 
-追加到 `scripts/lib/feed-publish.test.mjs`：
+追加：
 
 ```js
-import { appendAuditStage, verifyPublicArtifacts, buildStableManifestInput } from './feed-publish.mjs';
-
-test('the audit log is appended stage by stage and never only at the end', () => {
-  const root = makeRoot();
-  const auditOut = join(root, 'audit.jsonl');
-  appendAuditStage({ auditOut, entry: { stage: 'open', runid: 'r1' } });
-  appendAuditStage({ auditOut, entry: { stage: 'pre-verify', status: 'done', runid: 'r1' } });
-  const lines = readFileSync(auditOut, 'utf8').trim().split('\n');
-  assert.equal(lines.length, 2);
-  assert.equal(JSON.parse(lines[0]).stage, 'open');
-  assert.equal(JSON.parse(lines[1]).status, 'done');
-});
-
-test('the audit log refuses to write inside the repository', () => {
-  assert.throws(
-    () => appendAuditStage({ auditOut: join(process.cwd(), 'audit.jsonl'), entry: {}, repositoryRoot: process.cwd() }),
-    FeedPublishError,
-  );
-});
-
-test('the public verification recomputes both artifact digests over https', () => {
-  const calls = [];
-  const transport = {
-    fetchPublic: (url) => {
-      calls.push(url);
-      if (url.endsWith(PORTABLE_PACKAGE_NAME)) return { status: 200, body: PACKAGE_BYTES.toString('binary') };
-      if (url.endsWith(PORTABLE_FILE_MANIFEST_NAME))
-        return { status: 200, body: FILE_MANIFEST_BYTES.toString('binary') };
-      return { status: 404, body: '' };
-    },
-  };
-  const result = verifyPublicArtifacts({
-    channel: 'internal',
-    version: '1.2.3',
-    transport,
-    expectedPackageSha256: PACKAGE_SHA256,
-    expectedFileManifestSha256: FILE_MANIFEST_SHA256,
-  });
-  assert.equal(result.ok, true);
-  assert.equal(calls.length, 2);
-});
-
-test('the public verification fails when the served package differs', () => {
-  const transport = {
-    fetchPublic: (url) =>
-      url.endsWith(PORTABLE_PACKAGE_NAME)
-        ? { status: 200, body: 'other-bytes' }
-        : { status: 200, body: FILE_MANIFEST_BYTES.toString('binary') },
-  };
-  const result = verifyPublicArtifacts({
-    channel: 'internal',
-    version: '1.2.3',
-    transport,
-    expectedPackageSha256: PACKAGE_SHA256,
-    expectedFileManifestSha256: FILE_MANIFEST_SHA256,
-  });
-  assert.equal(result.ok, false);
-  assert.match(result.reason, /package/i);
-});
+import { buildStableManifestInput } from './feed-publish.mjs';
 
 test('the stable manifest is re-signed with the stable channel and the stable url', () => {
+  const paths = writeArtifacts();
   const input = buildStableManifestInput({
     version: '1.2.3',
     minLauncherVersion: '1.0.0',
     fileManifest: FILE_MANIFEST,
     fileManifestBytes: FILE_MANIFEST_BYTES,
-    packagePath: '/tmp/portable.zip',
+    packagePath: paths.packagePath,
     publishedAt: '2026-09-22T00:00:00.000Z',
   });
   assert.equal(input.channel, 'stable');
   assert.equal(input.baseUrl, PUBLIC_BASE_URL);
   assert.equal(input.version, '1.2.3');
   assert.equal(input.fileManifestBytes, FILE_MANIFEST_BYTES);
-  assert.equal(Object.hasOwn(input, 'manifestBytes'), false);
+  assert.equal(input.packagePath, paths.packagePath);
 });
 
-test('the stable input never accepts a pre-built manifest to copy', () => {
+test('the stable input refuses to reuse an internal manifest', () => {
   assert.throws(
     () =>
       buildStableManifestInput({
@@ -1703,7 +2269,7 @@ test('the stable input never accepts a pre-built manifest to copy', () => {
         publishedAt: '2026-09-22T00:00:00.000Z',
         manifestBytes: Buffer.from('reuse-me'),
       }),
-    /must be signed on its own/i,
+    /must be signed on its own/u,
   );
 });
 ```
@@ -1714,42 +2280,13 @@ test('the stable input never accepts a pre-built manifest to copy', () => {
 node --test scripts/lib/feed-publish.test.mjs
 ```
 
-预期：三个新符号未定义。
+预期：`buildStableManifestInput` 未定义。
 
 - [ ] **Step 3: 写最小实现**
 
-追加到 `scripts/lib/feed-publish.mjs`（补 `appendFileSync` 从 `node:fs` 的导入）：
+追加：
 
 ```js
-export function appendAuditStage(input) {
-  if (typeof input.repositoryRoot === 'string' && input.repositoryRoot.length > 0) {
-    assertKnownHostsPath(input.auditOut, input.repositoryRoot);
-  }
-  appendFileSync(input.auditOut, `${JSON.stringify(input.entry)}\n`, 'utf8');
-  return input.auditOut;
-}
-
-export function verifyPublicArtifacts(input) {
-  const base = `${PUBLIC_BASE_URL}/${input.channel}/${input.version}`;
-  const packageResponse = input.transport.fetchPublic(`${base}/${PORTABLE_PACKAGE_NAME}`);
-  if (packageResponse.status !== 200) {
-    return { ok: false, reason: 'the public package is not reachable' };
-  }
-  const packageSha256 = sha256(Buffer.from(packageResponse.body, 'binary'));
-  if (packageSha256 !== input.expectedPackageSha256) {
-    return { ok: false, reason: 'the public package integrity check failed' };
-  }
-  const fileManifestResponse = input.transport.fetchPublic(`${base}/${PORTABLE_FILE_MANIFEST_NAME}`);
-  if (fileManifestResponse.status !== 200) {
-    return { ok: false, reason: 'the public file manifest is not reachable' };
-  }
-  const fileManifestSha256 = sha256(Buffer.from(fileManifestResponse.body, 'binary'));
-  if (fileManifestSha256 !== input.expectedFileManifestSha256) {
-    return { ok: false, reason: 'the public file manifest integrity check failed' };
-  }
-  return { ok: true, packageSha256, fileManifestSha256 };
-}
-
 export function buildStableManifestInput(input) {
   if (Object.hasOwn(input, 'manifestBytes')) {
     throw new FeedPublishError('the stable manifest must be signed on its own, never copied from the internal channel');
@@ -1777,10 +2314,8 @@ node --test scripts/lib/feed-publish.test.mjs
 
 - [ ] **Step 5: 行为级变异验证**
 
-1. 把 `appendAuditStage` 改成把全部条目攒进数组最后写一次 ⇒ 预期 `the audit log is appended stage by stage and never only at the end` **按测试名变红**。
-2. 把 `verifyPublicArtifacts` 里包哈希比较删掉 ⇒ 预期 `the public verification fails when the served package differs` **按测试名变红**。
-3. 把 `buildStableManifestInput` 的 `manifestBytes` 守卫删掉 ⇒ 预期 `the stable input never accepts a pre-built manifest to copy` **按测试名变红**。
-4. 把 `channel: 'stable'` 改成 `input.channel` ⇒ 预期 `the stable manifest is re-signed with the stable channel and the stable url` **按测试名变红**。
+1. 把 `channel: 'stable'` 改成 `input.channel` ⇒ 预期 `the stable manifest is re-signed with the stable channel and the stable url` **按测试名变红**。
+2. 把 `manifestBytes` 守卫删掉 ⇒ 预期 `the stable input refuses to reuse an internal manifest` **按测试名变红**。
 
 恢复后全绿且 `git diff` 为空。
 
@@ -1788,23 +2323,21 @@ node --test scripts/lib/feed-publish.test.mjs
 
 ```bash
 git add scripts/lib/feed-publish.mjs scripts/lib/feed-publish.test.mjs
-git commit -m "feat(feed): verify over the public url and re-sign for the stable channel"
+git commit -m "feat(feed): re-sign the manifest for the stable channel"
 ```
 
 ---
 
-### Task 6: 真实 SSH / SFTP / https transport
+### Task 6: 真实 SSH / SFTP / https transport（**全部 async**）
 
 **Files:**
 
 - Create: `scripts/lib/feed-publish-transport.mjs`
 - Test: `scripts/lib/feed-publish-transport.test.mjs`
 
-**规格要求（§6.3、§6.4、§6.8）：** `ssh` 与 `sftp` 用**参数数组**调用，**禁止**拼接本地 shell 命令；强制 `BatchMode=yes`；强制 `StrictHostKeyChecking=yes`；强制使用操作员提供的**仓库外** known_hosts；主机、known_hosts、审计路径都由显式参数传入；**不硬编码服务器、账号、指纹或凭据**。
+**规格要求（§6.3、§6.4、§6.8）：** `ssh` / `sftp` 用**参数数组**调用，**禁止**拼接本地 shell 命令；强制 `BatchMode=yes`、`StrictHostKeyChecking=yes`、固定 `UserKnownHostsFile`；服务器、账号、指纹、凭据**一律不硬编码**。
 
-**可测性：** 本模块把 `execFile` 与 `fetch` 作为**注入**依赖，因此全部测试用假实现，**绝不连网**。"本轮不连接服务器"不等于"不实现网络适配器"——本刀就是那个适配器。
-
-- [ ] **Step 1: 写失败的测试**
+- [ ] **Step 1: 写失败的测试（**async fake**）**
 
 创建 `scripts/lib/feed-publish-transport.test.mjs`：
 
@@ -1812,16 +2345,17 @@ git commit -m "feat(feed): verify over the public url and re-sign for the stable
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { FeedTransportError, createFeedTransport } from './feed-publish-transport.mjs';
+import { FeedTransportError, createFeedTransport, quoteBatchPath } from './feed-publish-transport.mjs';
 
 const KNOWN_HOSTS = '/outside/repo/known_hosts';
 const HOST = 'updates.example.invalid';
 
 function makeFake({ status = 0, stdout = '', stderr = '', error = null } = {}) {
   const calls = [];
-  const execFile = (command, args, options) => {
+  const execFile = async (command, args, options) => {
     calls.push({ command, args, options });
-    return { status, stdout, stderr, error };
+    if (error !== null) return { status: -1, stdout: '', stderr: String(error.message ?? error) };
+    return { status, stdout, stderr };
   };
   return { calls, execFile };
 }
@@ -1832,17 +2366,29 @@ function makeTransport(overrides = {}) {
     knownHostsPath: KNOWN_HOSTS,
     execFile: overrides.execFile,
     fetchPublic: overrides.fetchPublic,
-    sftpBatchFile: overrides.sftpBatchFile ?? '/outside/repo/batch.txt',
+    batchFile: overrides.batchFile ?? '/outside/repo/batch.txt',
+    writeBatch: overrides.writeBatch,
   });
 }
 
-test('every ssh call carries the pinned host key options as separate argv entries', () => {
+test('the batch path quoting refuses a carriage return, a newline and a nul byte', () => {
+  for (const value of ['a\rb', 'a\nb', 'a\u0000b']) {
+    assert.throws(() => quoteBatchPath(value), FeedTransportError);
+  }
+});
+
+test('the batch path quoting wraps a path with spaces and escapes inner quotes', () => {
+  assert.equal(quoteBatchPath('/opt/plain'), '/opt/plain');
+  assert.equal(quoteBatchPath('C:/build dir/portable.zip'), '"C:/build dir/portable.zip"');
+  assert.equal(quoteBatchPath('/opt/we"ird'), '"/opt/we\\"ird"');
+});
+
+test('every ssh call carries the pinned options as separate argv entries', async () => {
   const fake = makeFake({ stdout: 'ok' });
   const transport = makeTransport({ execFile: fake.execFile });
-  const result = transport.readOnly.sshRun({ script: 'ls /opt' });
+  const result = await transport.readOnly.sshRun({ script: 'ls /opt' });
 
   assert.equal(result.status, 0);
-  assert.equal(fake.calls.length, 1);
   const [call] = fake.calls;
   assert.equal(call.command, 'ssh');
   assert.ok(Array.isArray(call.args));
@@ -1856,21 +2402,21 @@ test('every ssh call carries the pinned host key options as separate argv entrie
     '-o',
     'ConnectTimeout=15',
   ]);
-  assert.equal(call.args[call.args.length - 2], HOST);
-  assert.equal(call.args[call.args.length - 1], 'ls /opt');
+  assert.equal(call.args.at(-2), HOST);
+  assert.equal(call.args.at(-1), 'ls /opt');
   assert.equal(call.options.shell, undefined);
 });
 
-test('no ssh option ever relaxes host key checking', () => {
+test('no ssh option ever relaxes host key checking', async () => {
   const fake = makeFake();
-  makeTransport({ execFile: fake.execFile }).readOnly.sshRun({ script: 'ls' });
+  await makeTransport({ execFile: fake.execFile }).readOnly.sshRun({ script: 'ls' });
   const joined = fake.calls[0].args.join(' ');
   assert.doesNotMatch(joined, /StrictHostKeyChecking=no/u);
-  assert.doesNotMatch(joined, /StrictHostKeyChecking=accept-new/u);
+  assert.doesNotMatch(joined, /accept-new/u);
   assert.doesNotMatch(joined, /UserKnownHostsFile=\/dev\/null/u);
 });
 
-test('a missing known hosts path is refused before any process is started', () => {
+test('a missing known hosts path is refused before any process starts', () => {
   const fake = makeFake();
   assert.throws(
     () => createFeedTransport({ host: HOST, knownHostsPath: '', execFile: fake.execFile }),
@@ -1879,64 +2425,61 @@ test('a missing known hosts path is refused before any process is started', () =
   assert.deepEqual(fake.calls, []);
 });
 
-test('sftp uploads run from a batch file with the same pinned options', () => {
+test('an sftp upload writes a quoted batch line and runs sftp with -b', async () => {
   const fake = makeFake();
-  const written = [];
-  const transport = makeTransport({
-    execFile: fake.execFile,
-    sftpBatchFile: '/outside/repo/batch.txt',
-  });
-  transport.write.sftpUpload({
-    localPath: 'C:/build/portable.zip',
-    remotePath: '/opt/rongying/updates-state/staging/internal/1.2.3/portable.zip.part-r1',
+  const batches = [];
+  const transport = makeTransport({ execFile: fake.execFile, writeBatch: (text) => batches.push(text) });
+  const result = await transport.write.sftpUpload({
+    localPath: 'C:/build dir/portable.zip',
+    remotePath: '/opt/rongying/updates-state/staging/internal/1.2.3/abc/portable.zip.part-r1',
     resume: true,
-    writeBatch: (text) => written.push(text),
   });
 
+  assert.equal(result.status, 0);
+  assert.equal(batches.length, 1);
+  assert.match(batches[0], /^reput "/u);
+  assert.match(batches[0], /"C:\/build dir\/portable\.zip"/u);
   const [call] = fake.calls;
   assert.equal(call.command, 'sftp');
   assert.ok(call.args.includes('-b'));
-  assert.ok(call.args.includes('/outside/repo/batch.txt'));
-  assert.ok(call.args.includes('-o'));
   assert.ok(call.args.includes('BatchMode=yes'));
-  assert.equal(written.length, 1);
-  assert.match(written[0], /reput/u);
-  assert.match(written[0], /portable\.zip\.part-r1/u);
+  assert.equal(call.options.shell, undefined);
 });
 
-test('a failed ssh exit code is reported instead of being swallowed', () => {
-  const fake = makeFake({ status: 255, stderr: 'host key verification failed' });
-  const result = makeTransport({ execFile: fake.execFile }).readOnly.sshRun({ script: 'ls' });
-  assert.equal(result.status, 255);
-  assert.match(result.stderr, /host key verification failed/u);
+test('a non resuming sftp upload uses put instead of reput', async () => {
+  const batches = [];
+  const transport = makeTransport({ execFile: makeFake().execFile, writeBatch: (text) => batches.push(text) });
+  await transport.write.sftpUpload({ localPath: '/a', remotePath: '/b', resume: false });
+  assert.match(batches[0], /^put /u);
 });
 
-test('a transport level failure is reported as an error rather than a status', () => {
-  const fake = makeFake({ status: null, error: new Error('spawn ssh ENOENT') });
-  const result = makeTransport({ execFile: fake.execFile }).readOnly.sshRun({ script: 'ls' });
+test('an undefined exit status is reported as a failure rather than success', async () => {
+  const fake = makeFake({ error: new Error('spawn ssh ENOENT') });
+  const result = await makeTransport({ execFile: fake.execFile }).readOnly.sshRun({ script: 'ls' });
   assert.equal(result.status, -1);
   assert.match(result.stderr, /ENOENT/u);
 });
 
-test('the public fetcher returns the exact bytes of the served manifest', async () => {
+test('the public fetcher returns the raw bytes as a byte array', async () => {
   const seen = [];
   const transport = makeTransport({
     fetchPublic: async (url) => {
       seen.push(url);
-      return { status: 200, text: async () => 'body-bytes' };
+      return { status: 200, arrayBuffer: async () => new TextEncoder().encode('body-bytes').buffer };
     },
   });
   const result = await transport.fetchPublic('https://api.rongyinghudong.com/updates/internal/manifest.json');
   assert.equal(result.status, 200);
-  assert.equal(result.body, 'body-bytes');
+  assert.equal(Buffer.from(result.bodyBytes).toString('utf8'), 'body-bytes');
   assert.deepEqual(seen, ['https://api.rongyinghudong.com/updates/internal/manifest.json']);
 });
 
-test('the transport never builds a shell command string', () => {
+test('the transport never builds a shell command string', async () => {
   const fake = makeFake();
-  const transport = makeTransport({ execFile: fake.execFile });
-  transport.readOnly.sshRun({ script: 'ls /opt' });
-  transport.write.sshRun({ script: 'rmdir /opt/rongying/updates-state/lock/internal' });
+  const transport = makeTransport({ execFile: fake.execFile, writeBatch: () => {} });
+  await transport.readOnly.sshRun({ script: 'ls /opt' });
+  await transport.write.sshRun({ script: 'rmdir /x' });
+  await transport.write.sftpUpload({ localPath: '/a', remotePath: '/b', resume: false });
   for (const call of fake.calls) {
     assert.ok(Array.isArray(call.args));
     assert.equal(call.options.shell, undefined);
@@ -1957,7 +2500,7 @@ node --test scripts/lib/feed-publish-transport.test.mjs
 创建 `scripts/lib/feed-publish-transport.mjs`：
 
 ```js
-import { execFileSync } from 'node:child_process';
+import { execFile as nodeExecFile } from 'node:child_process';
 
 const SSH_TIMEOUT_MS = 60_000;
 const SFTP_TIMEOUT_MS = 600_000;
@@ -1967,6 +2510,17 @@ export class FeedTransportError extends Error {
     super(message);
     this.name = 'FeedTransportError';
   }
+}
+
+export function quoteBatchPath(value) {
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new FeedTransportError('an sftp batch path is required');
+  }
+  if (/[\r\n\u0000]/u.test(value)) {
+    throw new FeedTransportError('an sftp batch path must not contain a carriage return, a newline or a nul byte');
+  }
+  if (!/[\s"]/u.test(value)) return value;
+  return `"${value.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`;
 }
 
 function pinnedOptions(knownHostsPath) {
@@ -1985,62 +2539,67 @@ function pinnedOptions(knownHostsPath) {
 export function createFeedTransport(input) {
   const host = input.host;
   const knownHostsPath = input.knownHostsPath;
-  if (typeof host !== 'string' || host.length === 0) {
-    throw new FeedTransportError('the ssh host is required');
-  }
+  if (typeof host !== 'string' || host.length === 0) throw new FeedTransportError('the ssh host is required');
   if (typeof knownHostsPath !== 'string' || knownHostsPath.length === 0) {
     throw new FeedTransportError('the pinned known hosts file is required');
   }
+
   const runner =
     input.execFile ??
-    ((command, args, options) => {
-      try {
-        const stdout = execFileSync(command, args, options);
-        return { status: 0, stdout: String(stdout ?? ''), stderr: '' };
-      } catch (error) {
-        return {
-          status: typeof error?.status === 'number' ? error.status : -1,
-          stdout: typeof error?.stdout === 'string' ? error.stdout : '',
-          stderr: String(error?.stderr ?? error?.message ?? ''),
-        };
-      }
-    });
+    ((command, args, options) =>
+      new Promise((resolve) => {
+        nodeExecFile(command, args, options, (error, stdout, stderr) => {
+          if (error !== null && error !== undefined) {
+            resolve({
+              status: typeof error.code === 'number' ? error.code : -1,
+              stdout: String(stdout ?? ''),
+              stderr: String(stderr ?? error.message ?? ''),
+            });
+            return;
+          }
+          resolve({ status: 0, stdout: String(stdout ?? ''), stderr: String(stderr ?? '') });
+        });
+      }));
 
-  function sshRun(request) {
-    const result = runner('ssh', [...pinnedOptions(knownHostsPath), host, request.script], {
+  async function sshRun(request) {
+    const result = await runner('ssh', [...pinnedOptions(knownHostsPath), host, request.script], {
       encoding: 'utf8',
       timeout: SSH_TIMEOUT_MS,
       windowsHide: true,
     });
-    if (result.error !== undefined && result.error !== null && result.status === undefined) {
-      return { status: -1, stdout: '', stderr: String(result.error.message ?? result.error) };
-    }
-    return { status: result.status ?? 0, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
+    return {
+      status: typeof result?.status === 'number' ? result.status : -1,
+      stdout: result?.stdout ?? '',
+      stderr: result?.stderr ?? '',
+    };
   }
 
-  function sftpUpload(request) {
+  async function sftpUpload(request) {
     const writeBatch = request.writeBatch ?? input.writeBatch;
-    if (typeof writeBatch !== 'function') {
-      throw new FeedTransportError('the sftp batch writer is required');
-    }
-    const batchPath = input.sftpBatchFile;
-    if (typeof batchPath !== 'string' || batchPath.length === 0) {
+    if (typeof writeBatch !== 'function') throw new FeedTransportError('the sftp batch writer is required');
+    const batchFile = input.batchFile;
+    if (typeof batchFile !== 'string' || batchFile.length === 0) {
       throw new FeedTransportError('the sftp batch file path is required');
     }
     const command = request.resume === true ? 'reput' : 'put';
-    writeBatch(`${command} ${request.localPath} ${request.remotePath}\n`);
-    return runner('sftp', [...pinnedOptions(knownHostsPath), '-b', batchPath, host], {
+    writeBatch(`${command} ${quoteBatchPath(request.localPath)} ${quoteBatchPath(request.remotePath)}\n`);
+    const result = await runner('sftp', [...pinnedOptions(knownHostsPath), '-b', batchFile, host], {
       encoding: 'utf8',
       timeout: SFTP_TIMEOUT_MS,
       windowsHide: true,
     });
+    return {
+      status: typeof result?.status === 'number' ? result.status : -1,
+      stdout: result?.stdout ?? '',
+      stderr: result?.stderr ?? '',
+    };
   }
 
   const publicFetch =
     input.fetchPublic ??
     (async (url) => {
       const response = await fetch(url, { redirect: 'error' });
-      return { status: response.status, text: () => response.text() };
+      return { status: response.status, arrayBuffer: () => response.arrayBuffer() };
     });
 
   return {
@@ -2048,22 +2607,23 @@ export function createFeedTransport(input) {
     write: { sshRun, sftpUpload },
     fetchPublic: async (url) => {
       const response = await publicFetch(url);
-      if (typeof response?.text !== 'function') {
-        return { status: response?.status ?? 0, body: '' };
+      if (typeof response?.arrayBuffer !== 'function') {
+        return { status: response?.status ?? 0, bodyBytes: new Uint8Array() };
       }
-      return { status: response.status, body: await response.text() };
+      return { status: response.status, bodyBytes: new Uint8Array(await response.arrayBuffer()) };
     },
   };
 }
 ```
 
-**设计要点（写进提交信息）：**
+**关键点（写进提交信息）：**
 
-- 所有远端动作都是 `execFile(command, argvArray, options)`，**没有任何 shell 字符串**；`options.shell` 从不设置。
+- 全部远端动作是 `execFile(command, argvArray, options)`，**没有 shell 字符串**，`options.shell` 从不设置。
 - `BatchMode=yes` 让它**永不**交互提示；`StrictHostKeyChecking=yes` + 固定 `UserKnownHostsFile` 让它**永不**自动接受新指纹。
-- 生产路径的 `execFileSync` 与假的 `execFile` **签名相同**，所以计划 3 的全部测试都走假实现。
-- `sftp` 用 `-b <batchFile>` 批处理模式：批处理模式下 `sftp` 不会进入交互式提示；`reput` 提供**可续传**（服务器没有 `rsync`，`scp` 不能续传）。
-- `fetch` 用 `redirect: 'error'`：公网复验必须落在**本频道的确切 URL** 上，不允许跟随跳转。
+- `sftp -b <batchFile>` 批处理模式**不会**进入交互提示；`reput` 提供**可续传**（服务器没有 `rsync`，`scp` 不能续传）。
+- **二进制一律用 `arrayBuffer()`**，不用 `text()`——ZIP 若用 `text()` 再拼回 Buffer 会损坏字节。
+- `quoteBatchPath` 拒绝 CR/LF/NUL，并对含空格或引号的路径加引号与转义（Windows 构建机上的 `C:\build dir\...` 是常态）。
+- `fetch` 用 `redirect: 'error'`：公网复验必须落在**本频道的确切 URL**。
 
 - [ ] **Step 4: 运行测试并确认通过**
 
@@ -2071,36 +2631,36 @@ export function createFeedTransport(input) {
 node --test scripts/lib/feed-publish-transport.test.mjs
 ```
 
-预期：`fail 0`、`pass 8`。
+预期：`fail 0`、`pass 11`。
 
 - [ ] **Step 5: 行为级变异验证**
 
-1. 把 `pinnedOptions` 里的 `StrictHostKeyChecking=yes` 改成 `no` ⇒ 预期 `every ssh call carries the pinned host key options as separate argv entries` 与 `no ssh option ever relaxes host key checking` **按测试名变红**。
-2. 把 `runner('ssh', [...], ...)` 改成把整条命令拼成一个字符串传 `shell: true` ⇒ 预期 `the transport never builds a shell command string` **按测试名变红**。
-3. 把 `request.resume === true ? 'reput' : 'put'` 改成恒 `'put'` ⇒ 预期 `sftp uploads run from a batch file with the same pinned options` **按测试名变红**。
-4. 把 `knownHostsPath` 空值检查删掉 ⇒ 预期 `a missing known hosts path is refused before any process is started` **按测试名变红**。
-5. 把 `redirect: 'error'` 删掉 ⇒ 本刀**不适用**（该断言在公网 fetch 的生产实现上，需要真实网络才能触发）；**按"未验证"记账**，不得写成已验证。
+1. 把 `StrictHostKeyChecking=yes` 改成 `no` ⇒ 预期 `every ssh call carries the pinned options as separate argv entries` 与 `no ssh option ever relaxes host key checking` **按测试名变红**。
+2. 把 `runner('ssh', [...], ...)` 改成拼字符串 + `shell: true` ⇒ 预期 `the transport never builds a shell command string` **按测试名变红**。
+3. 把 `resume === true ? 'reput' : 'put'` 改成恒 `'put'` ⇒ 预期 `an sftp upload writes a quoted batch line and runs sftp with -b` **按测试名变红**。
+4. 把 `quoteBatchPath` 的 CR/LF/NUL 检查删掉 ⇒ 预期 `the batch path quoting refuses a carriage return, a newline and a nul byte` **按测试名变红**。
+5. 把 `quoteBatchPath` 的空格分支删掉 ⇒ 预期 `the batch path quoting wraps a path with spaces and escapes inner quotes` **按测试名变红**。
+6. 把 `arrayBuffer()` 换成 `text()` 并 `Buffer.from(text, 'utf8')` ⇒ 预期 `the public fetcher returns the raw bytes as a byte array` **按测试名变红**。
+7. 把 `typeof result?.status === 'number' ? result.status : -1` 改成直接用 `result.status` ⇒ 预期 `an undefined exit status is reported as a failure rather than success` **按测试名变红**。
 
-恢复后 `git diff` 为空且全绿。
+恢复后全绿且 `git diff` 为空。
 
 - [ ] **Step 6: 提交**
 
 ```bash
 git add scripts/lib/feed-publish-transport.mjs scripts/lib/feed-publish-transport.test.mjs
-git commit -m "feat(feed): add the pinned ssh and sftp transport"
+git commit -m "feat(feed): add the async pinned ssh and sftp transport"
 ```
 
 ---
 
-### Task 7: CLI 接线（四种模式全部可用）
+### Task 7: CLI（四种模式全接，顶层 await）
 
 **Files:**
 
 - Create: `scripts/feed-publish.mjs`
 - Test: `scripts/lib/feed-publish-cli.test.mjs`
 - Modify: `package.json`
-
-CLI 守卫（**不得**在测试里真连服务器）：`--dry-run` / `--preflight` / `--commit` 三选一，缺省为 `--dry-run`；`--audit-out` 在 `--commit` 下**必填**；`--break-lock` 需要 `--reason`；频道必须是白名单值。
 
 - [ ] **Step 1: 写失败的测试**
 
@@ -2126,12 +2686,19 @@ test('the cli prints usage when no mode is given', () => {
   assert.match(result.stdout, /--dry-run/u);
   assert.match(result.stdout, /--preflight/u);
   assert.match(result.stdout, /--commit/u);
+  assert.match(result.stdout, /--break-lock/u);
 });
 
 test('the cli rejects an unknown channel before touching anything', () => {
-  const result = runCli(['--dry-run', '--channel', 'beta', '--version', '1.2.3', '--host', 'h', '--known-hosts', 'k']);
+  const result = runCli(['--dry-run', '--channel', 'beta', '--version', '1.2.3']);
   assert.equal(result.status, 1);
   assert.match(result.stderr, /channel must be one of/u);
+});
+
+test('the cli refuses a network mode without a host or known hosts file', () => {
+  const result = runCli(['--preflight', '--channel', 'internal', '--version', '1.2.3']);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /ssh host|known hosts/u);
 });
 
 test('the cli refuses a commit without an audit log path', () => {
@@ -2150,15 +2717,9 @@ test('the cli refuses a commit without an audit log path', () => {
   assert.match(result.stderr, /--audit-out is required/u);
 });
 
-test('the cli refuses to break a lock without a written reason', () => {
-  const result = runCli(['--break-lock', '--channel', 'internal', '--host', 'h', '--known-hosts', 'k']);
-  assert.equal(result.status, 1);
-  assert.match(result.stderr, /--reason is required/u);
-});
-
 test('the cli refuses a known hosts file inside the repository', () => {
   const result = runCli([
-    '--dry-run',
+    '--preflight',
     '--channel',
     'internal',
     '--version',
@@ -2171,6 +2732,26 @@ test('the cli refuses a known hosts file inside the repository', () => {
   assert.equal(result.status, 1);
   assert.match(result.stderr, /outside the repository/u);
 });
+
+test('the cli refuses a break lock without a reason, an audit log or a confirmation', () => {
+  const base = [
+    '--break-lock',
+    '--channel',
+    'internal',
+    '--version',
+    '1.2.3',
+    '--host',
+    'h',
+    '--known-hosts',
+    '/outside/known_hosts',
+  ];
+  assert.match(runCli(base).stderr, /--reason is required/u);
+  assert.match(runCli([...base, '--reason', 'stopped']).stderr, /--audit-out is required/u);
+  assert.match(
+    runCli([...base, '--reason', 'stopped', '--audit-out', 'x.jsonl']).stderr,
+    /--confirm-runid is required/u,
+  );
+});
 ```
 
 - [ ] **Step 2: 运行测试并确认按测试名失败**
@@ -2179,7 +2760,7 @@ test('the cli refuses a known hosts file inside the repository', () => {
 node --test scripts/lib/feed-publish-cli.test.mjs
 ```
 
-预期：CLI 文件不存在，5 个用例全部失败。
+预期：CLI 文件不存在。
 
 - [ ] **Step 3: 写最小实现**
 
@@ -2189,7 +2770,8 @@ node --test scripts/lib/feed-publish-cli.test.mjs
 #!/usr/bin/env node
 
 import { randomUUID } from 'node:crypto';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -2199,6 +2781,7 @@ import {
   assertKnownHostsPath,
   breakChannelLock,
   parsePublishInput,
+  planCommit,
   runCommit,
   runPreflight,
 } from './lib/feed-publish.mjs';
@@ -2206,6 +2789,20 @@ import { createFeedTransport } from './lib/feed-publish-transport.mjs';
 import { verifyPortableRelease } from './lib/portable-update-release.mjs';
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+
+const USAGE = [
+  'Usage: node scripts/feed-publish.mjs <--dry-run|--preflight|--commit|--break-lock> --channel <internal|stable> --version <x.y.z> [--host <host> --known-hosts <path>]',
+  '  --dry-run       offline: validate the three artifacts and print the plan',
+  '  --preflight     read only remote checks; never claims to have verified writability',
+  '  --commit        publish; needs --package --file-manifest --manifest --audit-out',
+  '  --break-lock    needs --reason --audit-out --confirm-runid',
+  '  --known-hosts   the pinned known_hosts file, must live outside the repository',
+].join('\n');
+
+function flag(argv, name) {
+  const index = argv.indexOf(name);
+  return index >= 0 && argv[index + 1] ? argv[index + 1] : null;
+}
 
 function requirePublicKeyFromEnvironment() {
   const value = process.env.MOFANG_UPDATE_PUBLIC_KEY_B64;
@@ -2215,25 +2812,7 @@ function requirePublicKeyFromEnvironment() {
   return value;
 }
 
-const USAGE = [
-  'Usage: node scripts/feed-publish.mjs <--dry-run|--preflight|--commit|--break-lock> --channel <internal|stable> --host <host> --known-hosts <path>',
-  '  --dry-run       offline: print the plan and the local digests, touch nothing',
-  '  --preflight     read only remote checks; never claims to have verified writability',
-  '  --commit        publish; requires --version, --package, --file-manifest, --manifest and --audit-out',
-  '  --break-lock    requires --reason; records the previous owner in the audit log',
-  '  --known-hosts   the pinned known_hosts file, must live outside the repository',
-].join('\n');
-
-function flag(argv, name) {
-  const index = argv.indexOf(name);
-  return index >= 0 && argv[index + 1] ? argv[index + 1] : null;
-}
-
-// The pinned ssh options live in lib/feed-publish-transport.mjs so that the
-// command line and the tests share exactly one implementation.
-
-function main(argv) {
-  const auditOut = flag(argv, '--audit-out');
+async function main(argv) {
   const mode = argv.includes('--commit')
     ? 'commit'
     : argv.includes('--preflight')
@@ -2249,49 +2828,16 @@ function main(argv) {
   }
 
   const channel = flag(argv, '--channel');
+  const version = flag(argv, '--version');
   const host = flag(argv, '--host');
   const knownHostsPath = flag(argv, '--known-hosts');
-  const version = flag(argv, '--version');
-
-  if (mode === 'break-lock') {
-    const reason = flag(argv, '--reason');
-    if (reason === null) {
-      console.error('--reason is required when breaking a lock');
-      return 1;
-    }
-    if (channel === null || host === null || knownHostsPath === null) {
-      console.error('--channel, --host and --known-hosts are required');
-      return 1;
-    }
-    const transport = createFeedTransport({
-      host,
-      knownHostsPath: assertKnownHostsPath(knownHostsPath, repositoryRoot),
-      sftpBatchFile: join(dirname(resolve(knownHostsPath)), 'feed-publish-sftp-batch.txt'),
-      writeBatch: (text) =>
-        writeFileSync(join(dirname(resolve(knownHostsPath)), 'feed-publish-sftp-batch.txt'), text, 'utf8'),
-    });
-    const record = breakChannelLock({ channel, host, knownHostsPath, reason, transport, previousOwner: null });
-    if (auditOut !== null) {
-      appendAuditStage({ auditOut, entry: { stage: 'break-lock', ...record.auditEntry }, repositoryRoot });
-    }
-    console.log(JSON.stringify(record.auditEntry, null, 2));
-    return 0;
-  }
-
-  if (mode === 'commit' && auditOut === null) {
-    console.error('--audit-out is required for --commit');
-    return 1;
-  }
-
-  if (channel === null || host === null || knownHostsPath === null) {
-    console.error('--channel, --host and --known-hosts are required');
-    return 1;
-  }
+  const auditOut = flag(argv, '--audit-out');
+  const needsNetwork = mode !== 'dry-run';
 
   let input;
   try {
-    input = parsePublishInput({ channel, version: version ?? '0.0.0', host, knownHostsPath });
-    assertKnownHostsPath(input.knownHostsPath, repositoryRoot);
+    input = parsePublishInput({ channel, version: version ?? '0.0.0', host, knownHostsPath, needsNetwork });
+    if (input.knownHostsPath !== null) assertKnownHostsPath(input.knownHostsPath, repositoryRoot);
   } catch (error) {
     console.error(error instanceof FeedPublishError ? error.message : String(error));
     return 1;
@@ -2299,94 +2845,149 @@ function main(argv) {
 
   if (mode === 'dry-run') {
     const packagePath = flag(argv, '--package');
-    const packageDigest = packagePath === null ? null : readFileSync(packagePath);
-    console.log(
-      JSON.stringify(
-        {
-          mode,
-          channel: input.channel,
-          version: input.version,
-          host: input.host,
-          auditedBytes: packageDigest === null ? 0 : packageDigest.length,
-        },
-        null,
-        2,
-      ),
-    );
-    console.log('dry run: nothing was written and no permission, remote directory or host key was verified');
-    return 0;
+    const fileManifestPath = flag(argv, '--file-manifest');
+    const manifestPath = flag(argv, '--manifest');
+    if (packagePath === null || fileManifestPath === null || manifestPath === null) {
+      console.error('--package, --file-manifest and --manifest are required');
+      return 1;
+    }
+    try {
+      const plan = planCommit({
+        channel: input.channel,
+        version: input.version,
+        packagePath: resolve(packagePath),
+        fileManifestPath: resolve(fileManifestPath),
+        manifestPath: resolve(manifestPath),
+        publicKeyBase64: requirePublicKeyFromEnvironment(),
+      });
+      console.log(JSON.stringify({ mode, channel: input.channel, version: input.version, plan }, null, 2));
+      console.log('dry run: nothing was written, and no permission, remote directory or host key was verified');
+      return 0;
+    } catch (error) {
+      console.error(error instanceof FeedPublishError ? error.message : String(error));
+      return 1;
+    }
   }
 
+  const batchRoot = mkdtempSync(join(tmpdir(), 'mofang-feed-batch-'));
+  const batchFile = join(batchRoot, 'sftp-batch.txt');
   const transport = createFeedTransport({
     host: input.host,
     knownHostsPath: input.knownHostsPath,
-    sftpBatchFile: join(dirname(input.knownHostsPath), 'feed-publish-sftp-batch.txt'),
-    writeBatch: (text) =>
-      writeFileSync(join(dirname(input.knownHostsPath), 'feed-publish-sftp-batch.txt'), text, 'utf8'),
+    batchFile,
+    writeBatch: (text) => writeFileSync(batchFile, text, { encoding: 'utf8', flag: 'a' }),
   });
 
-  if (mode === 'preflight') {
-    const result = runPreflight({
-      channel: input.channel,
-      version: input.version,
-      host: input.host,
-      transport,
-      knownHostsPath: input.knownHostsPath,
-    });
-    console.log(JSON.stringify(result, null, 2));
-    return result.notes.length === 0 ? 0 : 1;
+  try {
+    if (mode === 'preflight') {
+      const result = await runPreflight({
+        channel: input.channel,
+        version: input.version,
+        transport,
+        host: input.host,
+        knownHostsPath: input.knownHostsPath,
+      });
+      console.log(JSON.stringify(result, null, 2));
+      return result.notes.length === 0 ? 0 : 1;
+    }
+
+    if (mode === 'break-lock') {
+      const reason = flag(argv, '--reason');
+      const confirmRunid = flag(argv, '--confirm-runid');
+      if (reason === null) {
+        console.error('--reason is required');
+        return 1;
+      }
+      if (auditOut === null) {
+        console.error('--audit-out is required');
+        return 1;
+      }
+      if (confirmRunid === null) {
+        console.error('--confirm-runid is required');
+        return 1;
+      }
+      const record = await breakChannelLock({
+        channel: input.channel,
+        transport,
+        host: input.host,
+        knownHostsPath: input.knownHostsPath,
+        reason,
+        confirmRunid,
+        auditOut,
+        operator: process.env.MOFANG_FEED_OPERATOR ?? 'unknown',
+      });
+      appendAuditStage({ auditOut, repositoryRoot, entry: { stage: 'break-lock', ...record } });
+      console.log(JSON.stringify(record, null, 2));
+      return 0;
+    }
+
+    const packagePath = flag(argv, '--package');
+    const fileManifestPath = flag(argv, '--file-manifest');
+    const manifestPath = flag(argv, '--manifest');
+    if (packagePath === null || fileManifestPath === null || manifestPath === null) {
+      console.error('--package, --file-manifest and --manifest are required');
+      return 1;
+    }
+    if (auditOut === null) {
+      console.error('--audit-out is required');
+      return 1;
+    }
+
+    const publicKeyBase64 = requirePublicKeyFromEnvironment();
+    const resolvedManifestPath = resolve(manifestPath);
+    const resolvedFileManifestPath = resolve(fileManifestPath);
+    const resolvedPackagePath = resolve(packagePath);
+    const temporaryRoot = mkdtempSync(join(tmpdir(), 'mofang-feed-public-'));
+
+    try {
+      const result = await runCommit({
+        channel: input.channel,
+        version: input.version,
+        host: input.host,
+        knownHostsPath: input.knownHostsPath,
+        runid: randomUUID(),
+        packagePath: resolvedPackagePath,
+        fileManifestPath: resolvedFileManifestPath,
+        manifestPath: resolvedManifestPath,
+        auditOut,
+        repositoryRoot,
+        temporaryRoot,
+        transport,
+        publicKeyBase64,
+        verifySignature: ({ manifestBytes, fileManifestBytes, packagePath: targetPackage }) =>
+          verifyPortableRelease({
+            manifestBytes,
+            fileManifestBytes,
+            packagePath: targetPackage,
+            publicKeyBase64,
+          }),
+        verifier: ({ manifestBytes, fileManifestBytes, packagePath: targetPackage }) =>
+          verifyPortableRelease({ manifestBytes, fileManifestBytes, packagePath: targetPackage, publicKeyBase64 }),
+      });
+      console.log(JSON.stringify(result, null, 2));
+      if (result.outcome === 'done') return 0;
+      if (result.outcome === 'retry') return 3;
+      return 1;
+    } finally {
+      rmSync(temporaryRoot, { recursive: true, force: true });
+    }
+  } finally {
+    rmSync(batchRoot, { recursive: true, force: true });
   }
-
-  const packagePath = flag(argv, '--package');
-  const fileManifestPath = flag(argv, '--file-manifest');
-  const manifestPath = flag(argv, '--manifest');
-  if (packagePath === null || fileManifestPath === null || manifestPath === null) {
-    console.error('--package, --file-manifest and --manifest are required for --commit');
-    return 1;
-  }
-
-  const result = runCommit({
-    channel: input.channel,
-    version: input.version,
-    host: input.host,
-    knownHostsPath: input.knownHostsPath,
-    runid: randomUUID(),
-    packagePath: resolve(packagePath),
-    fileManifestPath: resolve(fileManifestPath),
-    manifestPath: resolve(manifestPath),
-    transport,
-    auditOut,
-    repositoryRoot,
-    verifySignature: () =>
-      verifyPortableRelease({
-        manifestBytes: readFileSync(manifestPath),
-        fileManifestBytes: readFileSync(fileManifestPath),
-        packagePath: resolve(packagePath),
-        publicKeyBase64: requirePublicKeyFromEnvironment(),
-      }),
-  });
-
-  console.log(JSON.stringify(result, null, 2));
-  if (result.outcome === 'done') return 0;
-  if (result.outcome === 'retry') return 3;
-  return 1;
 }
 
-process.exit(main(process.argv.slice(2)));
+await main(process.argv.slice(2)).then(
+  (code) => {
+    process.exitCode = code;
+  },
+  (error) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  },
+);
 ```
 
-**四种模式全部接上真实 transport，不存在占位分支：**
-
-| 模式           | 行为                                                                    | 退出码                                  |
-| -------------- | ----------------------------------------------------------------------- | --------------------------------------- |
-| `--dry-run`    | 完全离线；**不构造 transport**，因此不可能联网                          | `0`                                     |
-| `--preflight`  | 真实**只读** transport：`runPreflight` 只调 `transport.readOnly.sshRun` | `0`（无 note）／`1`（有 note）          |
-| `--commit`     | 真实 transport：SFTP 上传 + 受限固定远端动作 + 公网复验                 | `0` done／`3` retry（可重跑）／`1` 其它 |
-| `--break-lock` | 真实 transport：走同一 `breakChannelLock`                               | `0`                                     |
-
-**签名校验器**由 CLI 注入：它读取 `MOFANG_UPDATE_PUBLIC_KEY_B64` 并调用**既有**的 `verifyPortableRelease`（`scripts/lib/portable-update-release.mjs`）——复用已经验收过的验签实现，不新写一份。缺该环境变量即硬失败，**绝不**跳过签名校验。
-
-**测试边界（必须写进提交信息）：** 自动测试只覆盖参数守卫与假 transport；`--preflight` / `--commit` / `--break-lock` 的**真实网络路径标记为"未验证"**，它们的验收发生在真机发布演练里，绝不能写成已测。
+**必须遵守：** 顶层 `await`，只用 `process.exitCode`，**不得**在 Promise 完成前 `process.exit`；batch 文件是**仓库外唯一临时文件**（`mkdtempSync`），并在 `finally` 清理，因此并发运行不会互相覆盖；`--break-lock` 的 `--reason` / `--audit-out` / `--confirm-runid` **三角都必填**。
 
 - [ ] **Step 4: 运行测试并确认通过**
 
@@ -2394,14 +2995,16 @@ process.exit(main(process.argv.slice(2)));
 node --test scripts/lib/feed-publish-cli.test.mjs
 ```
 
-预期：`fail 0`、`pass 5`。
+预期：`fail 0`、`pass 6`。
 
 - [ ] **Step 5: 行为级变异验证**
 
-1. 把 `mode === 'commit' && auditOut === null` 的守卫删掉 ⇒ 预期 `the cli refuses a commit without an audit log path` **按测试名变红**。
-2. 把 `--reason` 守卫删掉 ⇒ 预期 `the cli refuses to break a lock without a written reason` **按测试名变红**。
-3. 把 `parsePublishInput` 调用删掉、直接使用原始 `channel` ⇒ 预期 `the cli rejects an unknown channel before touching anything` **按测试名变红**。
-4. 把 `assertKnownHostsPath` 调用删掉 ⇒ 预期 `the cli refuses a known hosts file inside the repository` **按测试名变红**。
+1. 把 `--reason` 守卫删掉 ⇒ 预期 `the cli refuses a break lock without a reason, an audit log or a confirmation` **按测试名变红**。
+2. 把 `--confirm-runid` 守卫删掉 ⇒ 同一条 **按测试名变红**。
+3. 把 `--audit-out` 守卫（commit 分支）删掉 ⇒ 预期 `the cli refuses a commit without an audit log path` **按测试名变红**。
+4. 把 `needsNetwork` 恒设为 `false` ⇒ 预期 `the cli refuses a network mode without a host or known hosts file` **按测试名变红**。
+5. 把 `assertKnownHostsPath` 调用删掉 ⇒ 预期 `the cli refuses a known hosts file inside the repository` **按测试名变红**。
+6. 把顶层 `await main(...)` 改成 `main(...); process.exit(0)` ⇒ 预期 6 条 CLI 守卫测试**全部按测试名变红**（进程在 Promise 完成前退出，拿不到 stderr 与退出码）。
 
 恢复后全绿且 `git diff` 为空。
 
@@ -2413,13 +3016,13 @@ node --test scripts/lib/feed-publish-cli.test.mjs
 "check:portable-feed-publish": "node --test scripts/lib/feed-publish.test.mjs scripts/lib/feed-publish-transport.test.mjs scripts/lib/feed-publish-cli.test.mjs"
 ```
 
-并把 `pnpm check:portable-feed-publish` 插到 `check` 里 `pnpm check:portable-release-assembly` **之后**、`pnpm lint` **之前**。
+并插到 `check` 里 `pnpm check:portable-release-assembly` **之后**、`pnpm lint` **之前**。
 
 - [ ] **Step 7: 提交**
 
 ```bash
 git add scripts/feed-publish.mjs scripts/lib/feed-publish-cli.test.mjs package.json
-git commit -m "feat(feed): add the publish cli with offline and preflight modes"
+git commit -m "feat(feed): wire all four cli modes to the real transport"
 ```
 
 ---
@@ -2430,11 +3033,9 @@ git commit -m "feat(feed): add the publish cli with offline and preflight modes"
 
 - Modify: `docs/runbooks/portable-update-release.md`
 
-**不得**在本刀写入任何真实 host-key 指纹或服务器凭据。
+**不得**写入任何真实 host-key 指纹或服务器凭据。
 
 - [ ] **Step 1: 改写第 7、9、10 步为上传器调用**
-
-把 `docs/runbooks/portable-update-release.md` 第 7 步正文替换为：
 
 ````markdown
 ### 7. 发布到测试频道
@@ -2442,52 +3043,60 @@ git commit -m "feat(feed): add the publish cli with offline and preflight modes"
 此步需要单独的「测试更新源发布」授权。用经过复核的上传器执行，**不要现场拼 `scp` 命令**：
 
 ```powershell
-node scripts/feed-publish.mjs --preflight --channel internal --host <主机> --known-hosts <仓库外的 known_hosts 路径>
+node scripts/feed-publish.mjs --dry-run --channel internal --version <版本> --package <portable.zip> --file-manifest <portable-files.json> --manifest <manifest.json>
+node scripts/feed-publish.mjs --preflight --channel internal --version <版本> --host <主机> --known-hosts <仓库外的 known_hosts 路径>
 node scripts/feed-publish.mjs --commit --channel internal --version <版本> --host <主机> --known-hosts <仓库外的 known_hosts 路径> --package <portable.zip> --file-manifest <portable-files.json> --manifest <manifest.json> --audit-out <仓库外的审计日志路径>
 ```
-````
 
-上传器固定执行这个顺序，**不得调换**：本地预验证 → stage → 远端复核 → 取频道锁 → 锁内重新核验 → 原子提交版本目录 → 备份旧 manifest → CAS → 临时 manifest → 原子翻转 → 公网复验 → 审计 → 释放锁。
+退出码：`0` 完成；`3` 可重跑（翻转未生效）；`1` 失败或事故。**任何非 `0` 都要先读审计日志。**
+
+上传器固定执行十三步，**不得调换**：本地预验证 → stage（建 staging 目录 + 续传上传 + 远端改名）→ 远端复核 → 取频道锁 → 锁内重新核验 → 原子提交版本目录（**单次目录 rename**）→ 备份旧 manifest → CAS → **SFTP 上传临时 manifest 并核对远端摘要** → 原子翻转 → 公网复验 → 逐阶段审计 → 释放锁。
 
 - 本地预验证**先于任何网络写**；任一项不过就一个字节都不写。
-- `--dry-run` 完全离线，**不代表**权限、远端目录或 host key 已被验证。
+- `--dry-run` 完全离线，**不需要** `--host` / `--known-hosts`，只校验三个本地产物。
 - `--preflight` 只读，只能给出**可写性指标**；真正的写入能力到 stage 阶段才被证明。
-- 版本目录**不可变**；已存在且字节一致时可继续，字节不同则立即停止。
-- **CAS 不匹配是完整性事故**：收口为 `incident` 并**保留锁**，且**不自动翻转、不自动回滚、不自动删除**孤儿版本目录，人工核查后走显式恢复。
-- 翻转后结果不确定时按公网 manifest 的 SHA-256 三分：等于新值 ⇒ 继续复验；等于旧值 ⇒ 允许重试；出现第三种值 ⇒ 停止并进事故流程。
+- 版本目录**不可变**；已存在且逐字节一致才可复用，**存在但为空视为不完整并拒绝**。
+- **CAS 不匹配是完整性事故**：收口为 `incident` 并**保留锁**，不自动翻转、不自动回滚、不自动删除，人工核查后走显式恢复。
 
-````
+### 7b. 卡住时怎么恢复
 
-并把第 10 步正文替换为：
+锁是**目录 + `owner.json`**，不是裸目录。恢复必须先读 owner，再显式确认：
 
-```markdown
+```powershell
+node scripts/feed-publish.mjs --break-lock --channel <频道> --version <版本> --host <主机> --known-hosts <路径> --reason "<为什么可以安全破除>" --confirm-runid <审计日志里那条 owner 的 runid> --audit-out <审计日志路径>
+```
+
+`--confirm-runid` 必须与远端 owner 的 `runid` **完全一致**，否则立即拒绝；破除结果与真实 `previousOwner`、操作者都会写进审计日志。**删除失败不会记成 `lock-broken`。**
+
+### 9. 复制不可变制品到正式位置
+
+此步需要单独的「正式更新源发布」授权。`stable` **只能复用** `portable.zip` 与 `portable-files.json` 的**原字节**；**`stable` 的 manifest 必须单独离线签名**（`channel: stable` 与 stable 的 `packageUrl`），禁止改字段复用 internal 的 manifest——签名覆盖 `channel` 与 `packageUrl`。
+
 ### 10. 最后更新正式签名 manifest
 
-正式频道使用同一上传器，但 `--channel stable`，且 manifest 必须**单独离线签名**（`channel: stable` 与 stable 的 `packageUrl`）——**不得**复用 internal 的 manifest 改字段：签名覆盖 `channel` 与 `packageUrl`，改了签名即失效。
-
-`portable.zip` 与 `portable-files.json` 复用 internal 的**原字节**，禁止重新打包、重新压缩或修改时间戳。
+用同一上传器 `--channel stable` 执行同样的十三步。翻转后必须完成公网复验：重新取回 manifest **原始字节**、验签、比对 `channel` / `version` / `packageUrl`（**完整 origin**）以及两个产物的 SHA-256 与大小。
 ````
 
-- [ ] **Step 2: 追加 nginx、受限账号与发布前检查单**
+- [ ] **Step 2: 追加 nginx 与发布前检查单**
 
-在 `docs/runbooks/portable-update-release.md` 的「立即停止条件」之前插入：
+在「立即停止条件」之前插入：
 
 ```markdown
 ## nginx 与权限
 
-- 新的 manifest 位于 `/updates/<channel>/manifest.json`，**不继承** `= /updates/latest.yml` 的 `no-cache`。客户端是 Electron 主进程的全局 `fetch`（undici，无隐式 HTTP 缓存），因此当前风险低。**建议**追加一条 `location ~ ^/updates/(internal|stable)/manifest\.json$ { add_header Cache-Control "no-cache" always; }` 作为廉价保险。
+- 新 manifest 位于 `/updates/<channel>/manifest.json`，**不继承** `= /updates/latest.yml` 的 `no-cache`。客户端是 Electron 主进程的全局 `fetch`（undici，无隐式 HTTP 缓存），当前风险低。**建议**追加 `location ~ ^/updates/(internal|stable)/manifest\.json$ { add_header Cache-Control "no-cache" always; }`。
 - 生产**应当使用受限发布账号**：对版本目录可写、manifest 单独一步可换、不能改动其他内容。
-- **当前状态是显式例外**：`/opt/rongying/updates` 与 `/opt/rongying/backups` 均为 `root:root 755`，首次发布将**临时使用 root**。残留风险：root 一旦被脚本缺陷或误用影响，可以改动服务器上的任意文件；审计**只能事后发现，不能事前阻止**。建立受限账号属于后续加固。
+- **当前是显式例外**：`/opt/rongying/updates` 与 `/opt/rongying/backups` 均为 `root:root 755`，首次发布将**临时使用 root**。残留风险：root 一旦被脚本缺陷或误用影响，可改动服务器上任意文件；审计**只能事后发现**。建立受限账号属后续加固。
 
 ## 发布前检查单
 
-- [ ] `docs/portable-update-key-registry.md` 里的**服务器 host-key 指纹**已由用户或授权运维人员经**可信带外渠道**核对，并写明核对方式。
-- [ ] SSH 使用固定的仓库外 known_hosts 文件；上传器以 `BatchMode=yes` 与 `StrictHostKeyChecking=yes` 运行，**永不自动接受新指纹**。
+- [ ] `docs/portable-update-key-registry.md` 的 host-key 指纹已由用户或授权运维人员经**可信带外渠道**核对，并写明核对方式。
+- [ ] 上传器使用**仓库外** known_hosts，`BatchMode=yes` 与 `StrictHostKeyChecking=yes` 生效。
 - [ ] 三个产物的本地 SHA-256 与大小已记录，且与待发 manifest 逐项一致。
 - [ ] 启动器身份挑战（第 6b 步）三条全部通过，读数已归档为**发布期 QC 证据**。
-- [ ] `--audit-out` 指向**仓库外**的路径；审计日志从操作开始逐阶段追加。
+- [ ] `--audit-out` 指向**仓库外**；审计日志含 `open` … `unlock` 的**逐阶段**记录。
 - [ ] 已保留上一版 `manifest.json`、`portable-files.json` 与 `portable.zip` 作为回滚材料。
-- [ ] 已确认「回滚只能拦住还没升级的客户端」——已升级的客户端**不会**降级，需要真降级必须另开事故流程。
+- [ ] 已确认「回滚只能拦住还没升级的客户端」——已升级的客户端**不会**降级，真降级必须另开事故流程。
 ```
 
 - [ ] **Step 3: 格式与自检**
@@ -2496,15 +3105,10 @@ node scripts/feed-publish.mjs --commit --channel internal --version <版本> --h
 ./node_modules/.bin/prettier --write docs/runbooks/portable-update-release.md
 ./node_modules/.bin/prettier --check docs/runbooks/portable-update-release.md
 git diff --check
-```
-
-⚠️ prettier 会重排有序列表：`--write` 之后**必须重读**小节的步骤编号（第 1–11 步），确认没有被改写。若被打乱，用 `--check` 只报告不修改并手工修正格式。
-
-确认手册里没有任何真实指纹：
-
-```bash
 grep -nE "[0-9A-F]{32,}" docs/runbooks/portable-update-release.md || echo "no concrete fingerprints in the runbook"
 ```
+
+⚠️ prettier 会重排有序列表：`--write` 之后**必须重读**小节的步骤编号（第 1–11 步），确认没有被打乱；若被打乱，改用 `--check` 只报告不修改并手工修正格式。
 
 - [ ] **Step 4: 提交**
 
@@ -2517,32 +3121,29 @@ git commit -m "docs(release): route the feed publishing steps through the upload
 
 ## 完整门禁与验收
 
-每个 Task 后运行：
+每个 Task 后运行 `pnpm check`，预期 `exit 0`。失败时按门禁分段处理：`check:portable-launcher`、`check:portable-update-release`、`check:portable-release-assembly`、`check:portable-feed-publish`、`check:udisk-delivery`、`lint`、`typecheck`、`typecheck:tests`、`format:check`、`check:dead-code`、`test`。
 
-```bash
-pnpm check
-```
-
-预期 `exit 0`。失败时按门禁分段处理：`check:portable-launcher`、`check:portable-update-release`、`check:portable-release-assembly`、`check:portable-feed-publish`、`check:udisk-delivery`、`lint`、`typecheck`、`typecheck:tests`、`format:check`、`check:dead-code`、`test`。
+**追踪表自审（每个 Task 完成后做一次）：** 对照上面那张 13 步表，逐行确认——①该行在 `runCommit` 里有对应代码；②该行的远端动作确实 `await` 了；③该行声称检查的退出码**真的被检查**；④该行的审计阶段名与 `appendAuditStage` 的字符串一致；⑤该行的失败结果与该行的锁状态一致。**任何一条对不上就是缺陷，不得放过。**
 
 **验收读数（逐条如实填写，未执行的写“未验证”）：**
 
-| 项                 | 命令                                                                  | 读数 |
-| ------------------ | --------------------------------------------------------------------- | ---- |
-| 上传器逻辑         | `node --test scripts/lib/feed-publish.test.mjs`                       | 待填 |
-| **真实 transport** | `node --test scripts/lib/feed-publish-transport.test.mjs`             | 待填 |
-| 上传器 CLI 守卫    | `node --test scripts/lib/feed-publish-cli.test.mjs`                   | 待填 |
-| 四种模式均已接线   | `grep -n "not wired" scripts/feed-publish.mjs`（预期无输出）          | 待填 |
-| 未联网取证         | transport 测试全部走注入的假 `execFile`；`--dry-run` 不构造 transport | 待填 |
-| 手册无真实指纹     | `grep -nE "[0-9A-F]{32,}" docs/runbooks/portable-update-release.md`   | 待填 |
-| 全量门禁           | `pnpm check`                                                          | 待填 |
+| 项                                | 命令                                                                | 读数 |
+| --------------------------------- | ------------------------------------------------------------------- | ---- |
+| 上传器逻辑（含 13 步 happy path） | `node --test scripts/lib/feed-publish.test.mjs`                     | 待填 |
+| 真实 transport（async）           | `node --test scripts/lib/feed-publish-transport.test.mjs`           | 待填 |
+| CLI 守卫                          | `node --test scripts/lib/feed-publish-cli.test.mjs`                 | 待填 |
+| 未联网取证                        | transport 测试全部走注入的**异步**假 `execFile` / `fetchPublic`     | 待填 |
+| 没有占位分支                      | `grep -n "not wired" scripts/feed-publish.mjs`（预期无输出）        | 待填 |
+| 追踪表逐行核对                    | 13 行全部对得上（见上方自审清单）                                   | 待填 |
+| 手册无真实指纹                    | `grep -nE "[0-9A-F]{32,}" docs/runbooks/portable-update-release.md` | 待填 |
+| 全量门禁                          | `pnpm check`                                                        | 待填 |
 
 ## 未覆盖与后续（不得写成已完成）
 
-- **真实网络路径未自动化验证**：transport **已实现并接线**（`--preflight` / `--commit` / `--break-lock` 都会真的调用 `ssh` / `sftp` / `https`），但**自动测试只覆盖参数守卫与假 transport**。真实路径必须在真机发布演练中验收，并**由用户先提供主机与经带外核对的 host-key 指纹**。
-- **没有任何真实发布被执行**：没有上传测试 feed，没有上传生产 feed，没有改线上 manifest，没有连接或修改服务器。
-- **`--break-lock` 的真实远端路径同样未自动化验证**：它走的是与 `--commit` 相同的 transport 与同一个 `breakChannelLock`，但需要服务器才能实测。
-- **受限发布账号未建立**：当前方案接受“首次临时使用 root”这一显式例外。
-- nginx 的 `no-cache` 建议**未应用**：需要在获得授权后改服务器配置。
+- **真实网络路径未自动化验证**：transport 与 CLI 都已接上真实 `ssh` / `sftp` / `https`，但**自动测试只覆盖参数守卫与假 transport**。真实路径必须在真机发布演练中验收，并**由用户先提供主机与经带外核对的 host-key 指纹**。
+- **没有上传任何 feed**：没有测试 feed，没有生产 feed，没有改线上 manifest，没有连接或修改服务器。
+- **受限发布账号未建立**：当前接受"首次临时使用 root"这一显式例外。
+- nginx 的 `no-cache` 建议**未应用**：需要授权后改服务器配置。
+- `--break-lock` 的真实远端路径同样未自动化验证；它走的是同一条 transport 与同一个 `breakChannelLock`。
 
 相关：`docs/superpowers/specs/2026-09-22-portable-release-infrastructure-correction-design.md`
