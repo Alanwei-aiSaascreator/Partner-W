@@ -4191,7 +4191,7 @@ git commit -m "feat(feed): publish the manifest over sftp and verify it on the p
 
 ### 十二、代码质量闸门（1 Critical + 5 Important + 7 Minor）的落地、读数与账本更正
 
-**这一刀是什么：** Task 4 过代码质量闸门时被记了 **13 条**（1 条 Critical、5 条 Important、7 条 Minor，每条都带复核者的一个实测读数），外加**一条明确不进本刀的结构建议**（进 Task 5，见该任务的"结构项"）。本节给出：① 13 项逐条落地（含 1 项**只改计划**、1 项**只记账**）；② 变异读数（**3 条对照 + 29 条变异**，全部打印 hunk）；③ **本刀跑出来的一个存活变异**（第 30 条读数，属于账本此前没有的类别）；④ 对本账本的**四处更正**；⑤ 规定块与围栏的实测行号；⑥ 当前读数；⑦ 未做/未验。**代码提交 4 个**：`19014deb`（模块 + 测试）、`a57c0adf`（模块 + 测试）、`029a2a2a`（模块 + 测试）、`54d7120b`（模块 + 测试）—— 每次提交后都核对过 `git show HEAD:<file> | sha256sum` **等于**该段变异基线（提交时 `pre-commit` 跑 `eslint --fix` + `prettier --write`，四个提交的 blob 前后都没被改动）。
+**这一刀是什么：** Task 4 过代码质量闸门时被记了 **13 条**（1 条 Critical、5 条 Important、7 条 Minor，每条都带复核者的一个实测读数），外加**一条明确不进本刀的结构建议**（进 Task 5，见该任务的"结构项"）。本节给出：① 13 项逐条落地（含 1 项**只改计划**、1 项**只记账**）；② 变异读数（**2 条对照 + 27 条变异**，全部打印 hunk）；③ **本刀跑出来的一个存活变异**（第 30 条读数，属于账本此前没有的类别）；④ 对本账本的**四处更正**；⑤ 规定块与围栏的实测行号；⑥ 当前读数；⑦ 未做/未验。**代码提交 4 个**：`19014deb`（模块 + 测试）、`a57c0adf`（模块 + 测试）、`029a2a2a`（模块 + 测试）、`54d7120b`（模块 + 测试）—— 每次提交后都核对过 `git show HEAD:<file> | sha256sum` **等于**该段变异基线（提交时 `pre-commit` 跑 `eslint --fix` + `prettier --write`，四个提交的 blob 前后都没被改动）。
 
 **一、13 项逐条落地**
 
@@ -4209,9 +4209,9 @@ git commit -m "feat(feed): publish the manifest over sftp and verify it on the p
 12. **【Minor】`verifyPublicArtifacts` 是导出的，却跳过它自己调用方施加的前置条件。** **落地**：入口处补上 `assertSafeChannel` / `assertSafeVersion` / `assertTemporaryRoot` / `verifier` 四个汇点闸门（`:647-652`），与 `runCommit` 的前置块同源同一批函数；失败在任何 `fetchPublic` 之前。用例 `the public verification refuses an unsafe channel or version before any fetch`（`:2122`）与 `the public verification refuses a missing temporary root or verifier before any fetch`（`:2135`），**两条都断言 `fetchPublic` 一次都没发生**。**变异 M-A4 / M-A5 / M-A6 / M-A7** 各红它自己那条。
 13. **【Minor】CAS 判据的变异读数不在那 37 条里。** **落地（只记账）**：本刀在**当前字节**上重跑并记入第二节 **M-13**：`if (casSha !== baselineSha)` ⇒ `if (false)` ⇒ **149/147/2**，按名变红 `a cas mismatch is an incident that keeps the lock and never rolls anything back` + `a remote manifest whose digest could not be read is logged as absent rather than as a blank` —— **与复核者记的"红 2 条"一致**。这条读数此前只以"分支判据全量重跑"（第十一节第三小节 `:944` 行）的形式存在过，从未进过变异表。
 
-**二、变异读数（对照 3 条 + 变异 29 条，全部打印 hunk）**
+**二、变异读数（对照 2 条 + 变异 27 条，全部打印 hunk）**
 
-装置每条动作：断言锚点恰好匹配 **1** 次 → 取 sha256 基线 → 写入 → 重读确认落盘 → `node --check` → 跑套件 → **打印 hunk（整行）** → 纯插入做可达性检查 → 核对"哪条测试必须按名变红"的红名单 → 逐字节恢复 → 比 sha256 → 断言该文件 `git status` 与变异前**逐字相同**。**装置先自检**：喂一个不存在的锚点（`anchor matches 0` ⇒ 拒收）与一个出现两次的锚点（`anchor matches 2` ⇒ 拒收），两条都**没有写盘、没有跑套件**。**29 条变异全部：锚点 1 次、`node --check` ok、恢复后 sha256 相等、`git status` 未变、红名单核对通过。**
+装置每条动作：断言锚点恰好匹配 **1** 次 → 取 sha256 基线 → 写入 → 重读确认落盘 → `node --check` → 跑套件 → **打印 hunk（整行）** → 纯插入做可达性检查 → 核对"哪条测试必须按名变红"的红名单 → 逐字节恢复 → 比 sha256 → 断言该文件 `git status` 与变异前**逐字相同**。**装置先自检**：喂一个不存在的锚点（`anchor matches 0` ⇒ 拒收）与一个出现两次的锚点（`anchor matches 2` ⇒ 拒收），两条都**没有写盘、没有跑套件**。**27 条变异全部：锚点 1 次、`node --check` ok、恢复后 sha256 相等、`git status` 未变、红名单核对通过。**
 
 | #      | 变异（hunk：`-` 删 / `+` 加）                                                                                                | 读数                                                 | 按名变红的测试                                                                                                                                                              |
 | ------ | ---------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -4245,7 +4245,7 @@ git commit -m "feat(feed): publish the manifest over sftp and verify it on the p
 | M-D9   | `+ stages.find((entry) => entry.stage === 'reveal').status = outcome;`（插进 `recordOutcome` 首句后）                        | **150 / 149 / 1**                                    | `the reveal stage reports that the version went live rather than that the run closed out`                                                                                   |
 | M-D10  | `- recordOutcome('fail', reason);` / `+ recordOutcome('incident', reason);`（`releaseAndFinish`）                            | **150 / 150 / 0（存活）** ⇒ 补钉后 **150 / 149 / 1** | 补钉后按名红：`a failure after the lock but before the flip releases the lock this run owns`                                                                                |
 
-**次数：3 条对照 + 29 条变异 = 32 条读数**，其中 M-D10 第一次是**存活读数**（第三节），补钉后重跑得 1 条红；其余 28 条**一次通过**。**红线之外没有意外**：只有 M-Q1（46）、M-B2（7）、M-B6（16）、M-C4（3）、M-D7a（5）、M-D7b（3）、M-C5（2）、M-13（2）、M-Q2（2）、M-A5/M-A6 等多条"一个生产端喂养多个汇点"的变异红到 2 条以上，**没有一条只红"别的测试"**。
+**次数：2 条对照 + 27 条变异 = 29 条读数**（变异实际跑了 **28 次** —— M-D10 第一次是**存活读数**（第三节），补钉后又跑了一次得 1 条红；其余 **26 条一次通过**）。⚠️ 别把"读数"与"运行次数"混用：本节表里 29 行，其中对照 2 行、变异 27 行。**红线之外没有意外**：只有 M-Q1（46）、M-B2（7）、M-B6（16）、M-C4（3）、M-D7a（5）、M-D7b（3）、M-C5（2）、M-13（2）、M-Q2（2）、M-A5/M-A6 等多条"一个生产端喂养多个汇点"的变异红到 2 条以上，**没有一条只红"别的测试"**。
 
 **三、本刀跑出来的存活变异（M-D10）：一个此前不在任何清单里的类别**
 
