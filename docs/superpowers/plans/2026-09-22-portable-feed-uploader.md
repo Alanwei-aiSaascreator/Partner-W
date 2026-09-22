@@ -6363,17 +6363,18 @@ F2-M2（拒绝覆盖）：           - writeFileSync(stableManifestOut, release.
 
 ```powershell
 node scripts/feed-publish.mjs --dry-run --channel internal --version <版本> --package <portable.zip> --file-manifest <portable-files.json> --manifest <manifest.json>
-node scripts/feed-publish.mjs --preflight --channel internal --version <版本> --host <主机> --known-hosts <仓库外的 known_hosts 路径>
+node scripts/feed-publish.mjs --preflight --channel internal --version <版本> --host <主机> --known-hosts <仓库外的 known_hosts 路径> --audit-out <仓库外的审计日志路径>
 node scripts/feed-publish.mjs --commit --channel internal --version <版本> --host <主机> --known-hosts <仓库外的 known_hosts 路径> --package <portable.zip> --file-manifest <portable-files.json> --manifest <manifest.json> --audit-out <仓库外的审计日志路径>
 ```
 
-退出码：`0` 完成；`3` 可重跑（翻转未生效）；`1` 失败或事故。**任何非 `0` 都要先读审计日志。**
+退出码：`0` 完成；`1` 失败、拒绝或事故；`2` 没给模式旗标（工具只打印用法）；`3` 可重跑（翻转未生效 —— **只有这个码**代表 `--commit` 可以安全重跑，其它非零码都可能已经改动过远端状态）。**任何非 `0` 都要先读审计日志。**
 
 上传器固定执行十三步，**不得调换**：本地预验证 → stage（建 staging 目录 + 续传上传 + 远端改名）→ 远端复核 → 取频道锁 → 锁内重新核验 → 原子提交版本目录（**单次目录 rename**）→ 备份旧 manifest → CAS → **SFTP 上传临时 manifest 并核对远端摘要** → 原子翻转 → 公网复验 → 逐阶段审计 → 释放锁。
 
 - 本地预验证**先于任何网络写**；任一项不过就一个字节都不写。
 - `--dry-run` 完全离线，**不需要** `--host` / `--known-hosts`，只校验三个本地产物。
-- `--preflight` 只读，只能给出**可写性指标**；真正的写入能力到 stage 阶段才被证明。
+- `--preflight` 只读，只能给出**可写性指标**；真正的写入能力到 stage 阶段才被证明。⚠️ 它**仍然会写一条会话级审计行**，所以**必须给 `--audit-out`**（缺了会以 `--audit-out is required` 退出 1）。
+- `--host` 不许以 `-` 开头、不许含空白；**`--known-hosts` 的路径可以含空格** —— 路径安全规则**故意比主机规则窄**（主机名进 argv 前要防选项注入，路径是整体参数，工具按参数传递、不拼 shell）。**不要**为了“看起来安全”去改建带有空格的 known_hosts 路径。
 - 版本目录**不可变**；已存在且逐字节一致才可复用，**存在但为空视为不完整并拒绝**。
 - **CAS 不匹配是完整性事故**：收口为 `incident` 并**保留锁**，不自动翻转、不自动回滚、不自动删除，人工核查后走显式恢复。
 
@@ -6382,10 +6383,10 @@ node scripts/feed-publish.mjs --commit --channel internal --version <版本> --h
 锁是**目录 + `owner.json`**，不是裸目录。恢复必须先读 owner，再显式确认：
 
 ```powershell
-node scripts/feed-publish.mjs --break-lock --channel <频道> --version <版本> --host <主机> --known-hosts <路径> --reason "<为什么可以安全破除>" --confirm-runid <审计日志里那条 owner 的 runid> --audit-out <审计日志路径>
+node scripts/feed-publish.mjs --break-lock --channel <频道> --host <主机> --known-hosts <路径> --reason "<为什么可以安全破除>" --confirm-runid <审计日志里那条 owner 的 runid> --audit-out <审计日志路径>
 ```
 
-`--confirm-runid` 必须与远端 owner 的 `runid` **完全一致**，否则立即拒绝；破除结果与真实 `previousOwner`、操作者都会写进审计日志。**删除失败不会记成 `lock-broken`。**
+`--break-lock` **不需要** `--version`：锁路径是 `/opt/rongying/updates-state/lock/<频道>`，与版本无关（工具也不会回显版本）。`--confirm-runid` 必须与远端 owner 的 `runid` **完全一致**，否则立即拒绝；破除结果与真实 `previousOwner`、操作者都会写进审计日志。**删除失败不会记成 `lock-broken`。**
 
 **锁在、但 `owner.json` 读不出来时**（`--confirm-runid` 无从确认 —— 上面那条命令**不适用**）：状态路径是 `/opt/rongying/updates-state/lock/<频道>`，记录文件是它下面的 `owner.json`。**不要 `rm -rf` 这个目录，也不要 `rm` 掉锁目录本身**（状态目录是 junction 高发区，本仓库有硬规定；裸删会留下无法解释的状态）。在发布主机上按顺序做三件事：
 
@@ -6394,21 +6395,51 @@ ls -la /opt/rongying/updates-state/lock/<频道>
 cat /opt/rongying/updates-state/lock/<频道>/owner.json
 ```
 
-第二条的输出分四种，分别意味着不同的事：`No such file or directory` = 记录没写成或已被删；非 JSON 文本 = 写坏了；`Permission denied` = 取不到；**空输出（0 字节）= 文件被创建但载荷没写进去**（owner 写入是 `printf … | base64 -d > owner.json`，重定向**先**创建/清空文件，所以 `base64 -d` 失败、中途被杀、或路径上根本没有 `base64` 都会留下一个 0 字节或半截的文件）。**确认前一次运行确实不在进行中**之后，才走这条专用路径（仍然必填 `--reason` 与 `--audit-out`，并用这个 flag 本身作为"已确认不在进行中"的声明；**不要求** `--confirm-runid`，因为根本没有可确认的 runid）：
+第二条的输出分四种**读法**，分别意味着不同的事（工具把它们归成**三种状态**，报在 `ownerRecordStatus` 里）：
+
+| `cat` 的读数                | 意思                                                                                                          | 工具报的状态                                      |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
+| `No such file or directory` | 记录没写成或已被删                                                                                            | `missing`                                         |
+| 非 JSON 文本                | 写坏了                                                                                                        | `corrupt`                                         |
+| **空输出（0 字节）**        | 文件被创建但载荷没写进去 —— 工具**也**报 `corrupt`（`cat` 成功但内容为空 ⇒ 解析失败），**没有**单独的“空”状态 | `corrupt`（`the owner record is not valid JSON`） |
+| `Permission denied`         | 取不到                                                                                                        | `transport`                                       |
+
+**空输出这一种值得单独认**，因为成因是写入方式：owner 写入是 `printf … | base64 -d > owner.json`，重定向**先**创建/清空文件，所以 `base64 -d` 失败、中途被杀、或路径上根本没有 `base64` 都会留下一个 0 字节或半截的文件。**四种读法 → 三种状态**：判断“该不该拆锁”只需要这三种，所以工具不为此多设一态；但四种读数**下一步动作不同**（前三种可直接走下面这条专用路径；`Permission denied` 往往要先修权限或换个账号再读一次）。
+
+**确认前一次运行确实不在进行中**之后，才走这条专用路径（仍然必填 `--reason` 与 `--audit-out`，并用这个 flag 本身作为“已确认不在进行中”的声明；**不要求** `--confirm-runid`，因为根本没有可确认的 runid）：
 
 ```powershell
 node scripts/feed-publish.mjs --break-lock --channel <频道> --owner-record-unreadable --reason "<为什么可以安全破除>" --host <主机> --known-hosts <路径> --audit-out <审计日志路径>
 ```
 
-审计日志里会记 `stage: break-lock` + `ownerRecordUnreadable: true` + 原因 + 执行人。**「交给人工检查」单独一句不是可接受的终态指令**：没有上面这条路径，操作员面前只剩"自己想办法删掉那个目录"一条路，而那正是本仓库禁止的动作。
+审计日志里会记 `stage: break-lock` + `ownerRecordUnreadable: true` + 原因 + 执行人。**「交给人工检查」单独一句不是可接受的终态指令**：没有上面这条路径，操作员面前只剩“自己想办法删掉那个目录”一条路，而那正是本仓库禁止的动作。
 
 ### 9. 复制不可变制品到正式位置
 
 此步需要单独的「正式更新源发布」授权。`stable` **只能复用** `portable.zip` 与 `portable-files.json` 的**原字节**；**`stable` 的 manifest 必须单独离线签名**（`channel: stable` 与 stable 的 `packageUrl`），禁止改字段复用 internal 的 manifest——签名覆盖 `channel` 与 `packageUrl`。
 
+stable 的 manifest 用上传器的离线模式**当场签**（**不联网**，只用本地产物与仓库外的私钥）：
+
+```powershell
+$env:MOFANG_UPDATE_PUBLIC_KEY_B64 = '<与私钥匹配的 SPKI Base64 公钥>'
+$env:MOFANG_UPDATE_SIGNING_KEY_FILE = '<仓库外的 Ed25519 PKCS#8 PEM>'
+node scripts/feed-publish.mjs --re-sign-stable --channel stable --version <版本> --package <portable.zip> --file-manifest <portable-files.json> --manifest <internal 的 manifest.json> --stable-out <仓库外的 stable manifest 路径>
+```
+
+- `--stable-out` 必须在**仓库外**，且**拒绝覆盖**已有文件；要重签必须先手工删掉旧的那一份。
+- ⚠️ **`--stable-out` 的写入不是原子的**：`wx` 只保证不覆盖 —— 进程写一半被杀会留下**半截文件，而且永久不可覆盖**，恢复 = **手工删掉再重签**。路径由操作员显式给出且在仓库外，所以这个删除不可逆但**可见**；改成“临时名 + rename”会**去掉覆盖拒绝这道守卫本身**，不划算 ⇒ **接受**。
+- 这个模式**不写审计行**（它既不是十三步之一、也不是已登记的会话级条目）⇒ **必须在发布记录里手工写下**：产物路径，以及命令打印的三个摘要 `stableManifestSha256` / `reusedFileManifestSha256` / `reusedPackageSha256`。
+
 ### 10. 最后更新正式签名 manifest
 
-用同一上传器 `--channel stable` 执行同样的十三步。翻转后必须完成公网复验：重新取回 manifest **原始字节**、验签、比对 `channel` / `version` / `packageUrl`（**完整 origin**）以及两个产物的 SHA-256 与大小。
+用同一上传器 `--channel stable` 执行同样的十三步：
+
+```powershell
+node scripts/feed-publish.mjs --preflight --channel stable --version <版本> --host <主机> --known-hosts <仓库外的 known_hosts 路径> --audit-out <仓库外的审计日志路径>
+node scripts/feed-publish.mjs --commit --channel stable --version <版本> --host <主机> --known-hosts <仓库外的 known_hosts 路径> --package <portable.zip> --file-manifest <portable-files.json> --manifest <第 9 步签出来的 stable manifest> --audit-out <仓库外的审计日志路径>
+```
+
+`--package` / `--file-manifest` 给的是**原字节**（internal 的那两个：不许重新打包、不许重新签名、不许改 ZIP 时间戳），`--manifest` 给的是**第 9 步签出来的那一份**。翻转后必须完成公网复验：重新取回 manifest **原始字节**、验签、比对 `channel` / `version` / `packageUrl`（**完整 origin**）以及两个产物的 SHA-256 与大小。
 ````
 
 - [ ] **Step 2: 追加 nginx 与发布前检查单**
