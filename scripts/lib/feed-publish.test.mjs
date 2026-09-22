@@ -1699,6 +1699,20 @@ test('a run without a temporary root fails before any remote write', async () =>
   assert.equal(entries.at(-1).stage, 'fail');
 });
 
+test('a run without a public verifier fails before any remote write', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths);
+  const input = commitInput(transport, { ...paths, verifier: undefined });
+  const result = await runCommit(input);
+  assert.equal(result.outcome, 'fail');
+  assert.match(result.reason, /verifier is required/u);
+  assert.equal(result.lockState, 'not-acquired');
+  assert.deepEqual(transport.calls, []);
+  assert.equal(result.stages.find((entry) => entry.stage === 'lock').status, 'pending');
+  const entries = auditEntriesOf(input.auditOut);
+  assert.equal(entries.at(-1).stage, 'fail');
+});
+
 test('a clean publish walks every stage and releases its own lock', async () => {
   const paths = writeArtifacts();
   const transport = happyTransport(paths);

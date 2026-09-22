@@ -514,6 +514,12 @@ function assertTemporaryRoot(temporaryRoot) {
   }
 }
 
+function assertVerifier(verifier) {
+  if (typeof verifier !== 'function') {
+    throw new FeedPublishError('a public artifact verifier is required to verify the published artifacts');
+  }
+}
+
 const RUNID_PATTERN = /^[A-Za-z0-9._-]+$/u;
 
 function assertSafeRunid(runid) {
@@ -786,6 +792,7 @@ export async function runCommit(input) {
     assertSafeVersion(input.version);
     assertSafeRunid(runid);
     assertTemporaryRoot(input.temporaryRoot);
+    assertVerifier(input.verifier);
     local = await verifyLocalArtifacts({
       packagePath: input.packagePath,
       fileManifestPath: input.fileManifestPath,
