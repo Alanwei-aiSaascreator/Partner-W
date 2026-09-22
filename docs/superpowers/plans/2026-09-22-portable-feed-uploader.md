@@ -4,7 +4,7 @@
 
 **Goal:** 让整目录更新 feed 的发布成为一件**可恢复、可审计、可并发控制**的操作：本地先验证再上传、版本目录不可变、manifest **经 SFTP 真正上传**后原子翻转、任何不确定结果都保留锁并交人工处理。
 
-**Architecture:** 纯逻辑模块 `scripts/lib/feed-publish.mjs` 负责全部判定与流程编排；远端动作由 `scripts/lib/feed-publish-transport.mjs` 提供，**全部是 async**，并把 `execFile` / `fetch` 作为注入依赖，因此测试用假实现、绝不联网。CLI `scripts/feed-publish.mjs` 用**顶层 `await`** 调 `main`，四种模式（`--dry-run` / `--preflight` / `--commit` / `--break-lock`）**全部接上真实 transport，没有占位分支**。
+**Architecture:** 纯逻辑模块 `scripts/lib/feed-publish.mjs` 负责全部判定与流程编排；远端动作由 `scripts/lib/feed-publish-transport.mjs` 提供，**全部是 async**，并把 `execFile` / `fetch` 作为注入依赖，因此测试用假实现、绝不联网。CLI `scripts/feed-publish.mjs` 用**顶层 `await`** 调 `main`，五种模式（`--dry-run` / `--preflight` / `--commit` / `--break-lock` / `--re-sign-stable`）**全部接上真实实现，没有占位分支**；其中 `--dry-run` 与 `--re-sign-stable` **离线**，后三种接真实 transport。
 
 **Tech Stack:** Node 20（ESM、`node:test`、`node:assert/strict`、全局 `fetch`）、系统 `ssh` / `sftp` 二进制（仓库无任何 SSH 依赖）、pnpm 10。
 
@@ -20,7 +20,7 @@
 | `scripts/lib/feed-publish.test.mjs`           | 新建 | 上述逻辑的单测（**async** 假 transport）                                                                    |
 | `scripts/lib/feed-publish-transport.mjs`      | 新建 | 真实 SSH / SFTP / https 适配器（argv 数组、BatchMode、StrictHostKeyChecking、固定 known_hosts、batch 引用） |
 | `scripts/lib/feed-publish-transport.test.mjs` | 新建 | 注入假 `execFile` / `fetchPublic` 的 transport 单测（**不联网**）                                           |
-| `scripts/feed-publish.mjs`                    | 新建 | CLI：四种模式，顶层 `await main`，`process.exitCode`                                                        |
+| `scripts/feed-publish.mjs`                    | 新建 | CLI：五种模式，顶层 `await main`，`process.exitCode`                                                        |
 | `scripts/lib/feed-publish-cli.test.mjs`       | 新建 | CLI 参数守卫测试                                                                                            |
 | `docs/runbooks/portable-update-release.md`    | 修改 | 第 7/9/10 步改为调用上传器；受限账号、nginx、发布前检查单                                                   |
 | `package.json`                                | 修改 | 新增 `check:portable-feed-publish` 并接入 `check`                                                           |
@@ -69,7 +69,7 @@
 4. Task 4（主流程）→ 依赖 Task 1–3。
 5. Task 5（`internal → stable` 重签）与 Task 4 无强依赖。
 6. Task 6（真实 transport）→ **Task 7 依赖它**。
-7. Task 7（CLI，四种模式全接）→ Task 8 之前。
+7. Task 7（CLI，五种模式全接）→ Task 8 之前。
 8. Task 8（手册 + 检查单）最后。
 
 **每刀的通用纪律：** 命名 RED → 按测试名失败 → 最小 GREEN → 行为级变异验证（删关键护栏 ⇒ 指定测试按名变红 ⇒ 逐字节恢复，`git diff` 为空）→ 判据含 `passed > 0` 与 `fail 0` → “跳过”记“未验证” → 完整门禁 `pnpm check` → 显式 pathspec 独立提交，禁止 `git add -A`。
@@ -124,6 +124,8 @@ import {
   STATE_ROOT,
   UPDATE_ROOT,
   assertKnownHostsPath,
+  assertNotReusedManifest,
+  buildStableManifestInput,
   parsePublishInput,
   verifyLocalArtifacts,
 } from './feed-publish.mjs';
@@ -4410,8 +4412,10 @@ git commit -m "feat(feed): publish the manifest over sftp and verify it on the p
 
 **七、当前读数（本刀实测，取代第十二节第六小节）**
 
-- `feed-publish.mjs` **1108** 行、`feed-publish.test.mjs` **2744** 行（`wc -l`）；套件 **151 条**（`ℹ tests 151` / `ℹ pass 151` / `ℹ fail 0`）。
-- **规定块边界（本刀同步过的两段 —— 八对里的后两对）**：Task 4 测试块 = 计划第 1780–3180 行 ⇔ `feed-publish.test.mjs` **1344–2744**（围栏在计划第 1779 / 3181 行）；Task 4 模块块 = 计划第 3196–3848 行 ⇔ `feed-publish.mjs` **456–1108**（围栏在计划第 3195 / 3849 行）。**八对 `diff` 全部 `DIFF_EMPTY`**（同步脚本按**父提交**的字节定位、断言**恰好 1 处命中**、断言上下各是一行围栏，再整段替换；替换后**从磁盘重读**，按"逐行相等**且连续** + 两侧是围栏"再验一遍）。⚠️ 本刀新增的这段正文（本节）在两对围栏**之后**，因此**没有**移动那八个围栏行号。
+⚠️ **这两个数字读数已被 2026-09-23 的代码质量闸门刀重测取代**（每条后面括注的是**本节写作时**的读数，保留追溯用）：下面两行是**当前**读数，重测方法、十对边界表与"为什么会有两种说法"的说明见 Task 5 账本第三节与续账本第一节。⚠️ **本节与 Task 5 账本第三节曾对同一处边界给出两种说法**（本节写 `mjs` 456–1108 / 围栏 3849，账本写 456–1131 / 围栏 3872）—— **该矛盾由本刀关闭**：`mjs` 456–1131 那一侧是 Task 5 的 Step 0 重同步之后的实测值，本节的旧值只是**没跟着走**。
+
+- `feed-publish.mjs` **1153** 行、`feed-publish.test.mjs` **2837** 行（`wc -l`）；套件 **156 条**（`ℹ tests 156` / `ℹ pass 156` / `ℹ fail 0`）。（写作时：1108 / 2744 / **151 条**）
+- **规定块边界（本刀同步过的两段 —— 十对里的后两对）**：Task 4 测试块 = 计划第 1782–3182 行 ⇔ `feed-publish.test.mjs` **1346–2746**（围栏在计划第 1781 / 3183 行）；Task 4 模块块 = 计划第 3198–3873 行 ⇔ `feed-publish.mjs` **456–1131**（围栏在计划第 3197 / 3874 行）。（写作时：计划 1780–3180 ⇔ `test` 1344–2744，围栏 1779 / 3181；计划 3196–3848 ⇔ `mjs` 456–1108，围栏 3195 / 3849）**十对 `diff` 全部 `DIFF_EMPTY`**（同步脚本按**父提交**的字节定位、断言**恰好 1 处命中**、断言上下各是一行围栏，再整段替换；替换后**从磁盘重读**，按"逐行相等**且连续** + 两侧是围栏"再验一遍）。⚠️ 本刀新增的这段正文（本节）在两对围栏**之后**，因此**没有**移动那八个围栏行号。
 - ⚠️ **本刀的第一次同步是错的，而且是被自己的检查器抓住的**：脚本误用了一个没有传进来的字段（`spec.fileEnd`），于是把文件**尾随换行产生的那一个空串**也拼进了围栏 —— 读数正好是 `hits 1`（区域仍然唯一）但**区域后面多出一个空行**，围栏判据报 `DIFF`。**这正是"先验你自己的验证脚本"那条纪律的又一次现场**：只看 `hits` 会以为同步成功。修法 = 把父提交区域与新区域的行号分开传，并从**同步之前**取的备份重来。
 - **没有连过任何服务器**：本刀的所有读数都来自注入的假 transport，与 Task 4 / 第九至十二节同规格。
 
@@ -4450,39 +4454,35 @@ git commit -m "feat(feed): publish the manifest over sftp and verify it on the p
 追加：
 
 ```js
-import { buildStableManifestInput } from './feed-publish.mjs';
-
 test('the stable manifest is re-signed with the stable channel and the stable url', () => {
-  const paths = writeArtifacts();
   const input = buildStableManifestInput({
     version: '1.2.3',
     minLauncherVersion: '1.0.0',
     fileManifest: FILE_MANIFEST,
     fileManifestBytes: FILE_MANIFEST_BYTES,
-    packagePath: paths.packagePath,
+    packagePath: '/outside/portable.zip',
     publishedAt: '2026-09-22T00:00:00.000Z',
   });
   assert.equal(input.channel, 'stable');
   assert.equal(input.baseUrl, PUBLIC_BASE_URL);
   assert.equal(input.version, '1.2.3');
   assert.equal(input.fileManifestBytes, FILE_MANIFEST_BYTES);
-  assert.equal(input.packagePath, paths.packagePath);
+  assert.equal(input.packagePath, '/outside/portable.zip');
 });
 
 test('the stable input refuses to reuse an internal manifest', () => {
-  assert.throws(
-    () =>
-      buildStableManifestInput({
-        version: '1.2.3',
-        minLauncherVersion: '1.0.0',
-        fileManifest: FILE_MANIFEST,
-        fileManifestBytes: FILE_MANIFEST_BYTES,
-        packagePath: '/tmp/portable.zip',
-        publishedAt: '2026-09-22T00:00:00.000Z',
-        manifestBytes: Buffer.from('reuse-me'),
-      }),
-    /must be signed on its own/u,
-  );
+  const reuse = () =>
+    buildStableManifestInput({
+      version: '1.2.3',
+      minLauncherVersion: '1.0.0',
+      fileManifest: FILE_MANIFEST,
+      fileManifestBytes: FILE_MANIFEST_BYTES,
+      packagePath: '/outside/portable.zip',
+      publishedAt: '2026-09-22T00:00:00.000Z',
+      manifestBytes: Buffer.from('reuse-me'),
+    });
+  assert.throws(reuse, FeedPublishError);
+  assert.throws(reuse, /must be signed on its own/u);
 });
 ```
 
@@ -4499,10 +4499,16 @@ node --test scripts/lib/feed-publish.test.mjs
 追加：
 
 ```js
+export function assertNotReusedManifest(input) {
+  if (!Object.hasOwn(input, 'manifestBytes')) return;
+  const carried = input.manifestBytes === undefined ? 'no value' : 'a value';
+  throw new FeedPublishError(
+    `the stable manifest must be signed on its own, but the input carries the internal key manifestBytes with ${carried}`,
+  );
+}
+
 export function buildStableManifestInput(input) {
-  if (Object.hasOwn(input, 'manifestBytes')) {
-    throw new FeedPublishError('the stable manifest must be signed on its own, never copied from the internal channel');
-  }
+  assertNotReusedManifest(input);
   return {
     version: input.version,
     minLauncherVersion: input.minLauncherVersion,
@@ -4555,11 +4561,14 @@ git commit -m "feat(feed): re-sign the manifest for the stable channel"
 | Task 4 模块块（**重同步**） | 3195 / 3872 | 3196–3871  | `feed-publish.mjs` **456–1131**                                                                           | 676（原 653） |
 | 其余七对（**未动**）        | —           | —          | `test 1–375`、`mjs 1–150`、`test 377–564`、`mjs 152–209`、`test 566–872`、`mjs 211–454`、`test 1344–2744` | —             |
 
+⚠️ **上表是本刀（Task 5）当时的读数，行号与文件切片已被 2026-09-23 的代码质量闸门刀再次推动**（本刀改了三对：Task 5 测试块、Task 5 模块块、以及镜像对第 1 对；其余七对**内容**没动，但**行号**因为第 1 对多两行而整体 +2）。**当前**的十对边界表在**续账本第一节**，别拿上表去比对当前文件字节。
+
 - **两段规定代码块与文件逐字节相同**（`diff` 输出 `DIFF_EMPTY`，两段都跑过）；**敏感性探针**：把计划侧那 15 行里的 `channel: 'stable',` 扰成 `channel: 'stable ',`（一个字节）⇒ `diff` 报 `8c8` 一处差异；恢复后又是 `DIFF_EMPTY`。
 - **镜像检查器自己的敏感性探针（三条读数，本刀实跑）**：① 未扰动的副本 ⇒ `regionHits=1`、两侧围栏为真 ⇒ `DIFF_EMPTY`；② 把计划块里**一个字符**改掉（`baseOf` ⇒ `baseOf2`）⇒ `regionHits=0` ⇒ `DIFF`；③ 从模块切片**中间删掉一行** ⇒ `regionHits=0` ⇒ `DIFF`（这一条专门证明判据是"连续切片"，不是"每行都能在文件里找到"）。②③ 之后都逐字节恢复、比 sha256 相等。⚠️ **探针第一版是无效的**：它把副本放在 bash 的 `/tmp` 下，而 node 把 `/tmp/...` 解析成 `C:\tmp\...`（**bash 的 `/tmp` ≠ node 的 `/tmp`**）⇒ 读的是别的东西；是**对照组（未扰动副本）先报红**才暴露出来的。
-- ⚠️ **账本数字更正**：本计划前几节写的 `test 1–374` / `mjs 1–148` / `test 376–561` / `mjs 150–202` / `test 563–868` / `mjs 204–442` 是**更早提交**上的读数；本刀按内容重测，实际边界是上表那六个数（**起点差 0–7 行、终点差 1–12 行**）。这不是本刀改出来的漂移，是**旧读数没跟着文件长**。
+- ⚠️ **账本数字更正**：本计划前几节写的 `test 1–374` / `mjs 1–148` / `test 376–561` / `mjs 150–202` / `test 563–868` / `mjs 204–442` 是**更早提交**上的读数；本刀按内容重测，实际边界是上表那六个数（**起点差 0–7 行**：逐对 **0 / 0 / 1 / 2 / 3 / 7**；**终点差 1–12 行**：逐对 **1 / 2 / 3 / 7 / 4 / 12**）。这不是本刀改出来的漂移，是**旧读数没跟着文件长**。
+- ⚠️ **上面那两组逐对数字是 2026-09-23 由代码质量闸门刀复核过的实测量**（方法：把 `139146b8` 与 `16fba28c` 两个提交的**计划 + 两个文件**各自取出，分别跑一遍"按内容定位、断言恰好命中 1 次"的镜像检查器）。**读数**：旧六个数在 `139146b8` 上逐条命中（`test 1–374` / `mjs 1–148` / `test 376–561` / `mjs 150–202` / `test 563–868` / `mjs 204–442`），上表六个数在 `16fba28c` 上逐条命中 ⇒ 前两对的**起点差是 0**（那两份块都从第 1 行开始，只有终点随文件增长外扩），所以起点差的范围是 **0–7**、不是 1–7。⚠️ 这段加注是因为复核者曾把"起点差"报成 **1–7** —— 那个序列（1、2、1、2、3、7）正好是"前两对的**终点**差（1、2）+ 后四对的**起点**差（1、2、3、7）"拼起来的**混读**；**上表六个数与这里的 0–7 / 1–12 是实测，别再改成 1–7**。
 
-**四、RED 的两条读数（规定 Step 2 的形状有一个缺口）**：规定 Step 2 预期"`buildStableManifestInput` 未定义"。**实测**：追加的 `import` 在 ESM 里被提升 ⇒ 整个测试文件**加载失败**，读数是 `ℹ tests 1 / ℹ pass 0 / ℹ fail 1`，错误文本 `SyntaxError: The requested module './feed-publish.mjs' does not provide an export named 'buildStableManifestInput'` —— **没有任何一条用例按名变红**。这正是本计划通用纪律第 3 条警告过的形状（"加载失败会被误当成红"）。**处置**：补一个中间态 —— 先写 `return {}` 的**桩**，读数 `ℹ tests 154 / ℹ pass 151 / ℹ fail 3`，三条新用例**逐条按名变红**（`the stable manifest is re-signed…` / `the stable input refuses to reuse an internal manifest` / `the stable input carries every field…`），然后才写规定的实现。**桩没有进任何提交**（`git log -p` 里没有它）。
+**四、RED 的两条读数（规定 Step 2 的形状有一个缺口）**：规定 Step 2 预期"`buildStableManifestInput` 未定义"。**实测**：追加的 `import` 在 ESM 里被提升 ⇒ 整个测试文件**加载失败**，读数是 `ℹ tests 1 / ℹ pass 0 / ℹ fail 1`，错误文本 `SyntaxError: The requested module './feed-publish.mjs' does not provide an export named 'buildStableManifestInput'` —— **没有任何一条用例按名变红**。这正是**本计划 Task 4 账本"次数"段那份作废清单的第 ② 条**警告过的形状（原文：`node --test` 读成加载失败 `tests 1 pass 0 fail 1` —— **这个读数会被误当成"红"**，所以变异记录必须写清 pass/fail 而不是只看退出码）。⚠️ **本条原先把出处写成"本计划通用纪律第 3 条"，是错的**：那个编号项讲的是**hunk 打印 / 纯插入的可达性拒绝 / 红名单核对**，与"加载失败被当成红"是两回事。**处置**：补一个中间态 —— 先写 `return {}` 的**桩**，读数 `ℹ tests 154 / ℹ pass 151 / ℹ fail 3`，三条新用例**逐条按名变红**（`the stable manifest is re-signed…` / `the stable input refuses to reuse an internal manifest` / `the stable input carries every field…`），然后才写规定的实现。**桩没有进任何提交**（`git log -p` 里没有它）。
 
 **五、变异读数（9 条变异 + 1 条对照）**：装置每条都做：断言锚点恰好 **1** 次 → **变异之前**取 sha256 基线并落盘备份 → 写入并重读确认落盘 → `node --check` → 跑套件 → 打印**整行** hunk（`-`/`+` 带三行上下文）→ 核对红名单 → **逐字节恢复** → 比 sha256 → 断言 `git status --porcelain -- <file>` 与变异前**逐字相同**。
 
@@ -4589,7 +4598,7 @@ git commit -m "feat(feed): re-sign the manifest for the stable channel"
 
 **八、本刀未做 / 未验（不得写成已完成）**
 
-- **没有实现 Task 6 / 7 / 8**：真实 `ssh` / `sftp` / `https`、CLI 四种模式、手册一行没动。
+- **没有实现 Task 6 / 7 / 8**：真实 `ssh` / `sftp` / `https`、CLI 五种模式、手册一行没动。
 - **没有连过任何服务器**：全部读数来自本地 `node --test`；新增的三条用例是**纯函数**测试，一条 transport 都不碰。
 - **`stable` 的"原字节复用"只钉到"字节内容相等"**（`input.fileManifestBytes.equals(…)`）：真正的"没有重新打包、没有改时间戳"是**发布流程**的属性（Task 8 手册 + 人工），本模块只能拒绝"改字段复用 internal manifest"这一种。**未验**。
 
@@ -4964,7 +4973,7 @@ git commit -m "feat(feed): add the async pinned ssh and sftp transport"
 
 ---
 
-### Task 7: CLI（四种模式全接，顶层 await）
+### Task 7: CLI（五种模式全接，顶层 await）
 
 **Files:**
 
@@ -4997,6 +5006,29 @@ test('the cli prints usage when no mode is given', () => {
   assert.match(result.stdout, /--preflight/u);
   assert.match(result.stdout, /--commit/u);
   assert.match(result.stdout, /--break-lock/u);
+  assert.match(result.stdout, /--re-sign-stable/u);
+});
+
+test('the cli refuses a stable re-sign without a version, an output path or a stable channel', () => {
+  const base = [
+    '--re-sign-stable',
+    '--channel',
+    'stable',
+    '--version',
+    '1.2.3',
+    '--package',
+    'portable.zip',
+    '--file-manifest',
+    'portable-files.json',
+    '--manifest',
+    'manifest.json',
+  ];
+  assert.match(runCli(['--re-sign-stable', '--channel', 'stable']).stderr, /--version is required/u);
+  assert.match(
+    runCli(['--re-sign-stable', '--channel', 'internal', '--version', '1.2.3']).stderr,
+    /--re-sign-stable requires --channel stable/u,
+  );
+  assert.match(runCli(base).stderr, /--stable-out is required/u);
 });
 
 test('the cli rejects an unknown channel before touching anything', () => {
@@ -5079,7 +5111,7 @@ node --test scripts/lib/feed-publish-cli.test.mjs
 ```js
 #!/usr/bin/env node
 
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { hostname, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -5090,23 +5122,33 @@ import {
   appendAuditStage,
   assertKnownHostsPath,
   breakChannelLock,
+  buildStableManifestInput,
   parsePublishInput,
   planCommit,
   runCommit,
   runPreflight,
+  verifyLocalArtifacts,
 } from './lib/feed-publish.mjs';
 import { createFeedTransport } from './lib/feed-publish-transport.mjs';
-import { verifyPortableRelease } from './lib/portable-update-release.mjs';
+import {
+  assertPathOutsideRepository,
+  buildPortableRelease,
+  readSigningKeyFile,
+  verifyPortableRelease,
+} from './lib/portable-update-release.mjs';
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 const USAGE = [
-  'Usage: node scripts/feed-publish.mjs <--dry-run|--preflight|--commit|--break-lock> --channel <internal|stable> --version <x.y.z> [--host <host> --known-hosts <path>]',
-  '  --dry-run       offline: validate the three artifacts and print the plan',
-  '  --preflight     read only remote checks; never claims to have verified writability',
-  '  --commit        publish; needs --package --file-manifest --manifest --audit-out',
-  '  --break-lock    needs --reason --audit-out --confirm-runid',
-  '  --known-hosts   the pinned known_hosts file, must live outside the repository',
+  'Usage: node scripts/feed-publish.mjs <--dry-run|--preflight|--commit|--break-lock|--re-sign-stable> --channel <internal|stable> --version <x.y.z> [--host <host> --known-hosts <path>]',
+  '  --dry-run          offline: validate the three artifacts and print the plan',
+  '  --preflight        read only remote checks; never claims to have verified writability',
+  '  --commit           publish; needs --package --file-manifest --manifest --audit-out',
+  '  --break-lock       needs --reason --audit-out --confirm-runid',
+  '  --re-sign-stable   offline: re-sign the internal release bytes for stable; needs',
+  '                     --package --file-manifest --manifest --stable-out, and refuses to',
+  '                     overwrite the output; --channel must be stable',
+  '  --known-hosts      the pinned known_hosts file, must live outside the repository',
 ].join('\n');
 
 function flag(argv, name) {
@@ -5122,6 +5164,22 @@ function requirePublicKeyFromEnvironment() {
   return value;
 }
 
+function requireSigningKeyFileFromEnvironment() {
+  const value = process.env.MOFANG_UPDATE_SIGNING_KEY_FILE;
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new FeedPublishError('MOFANG_UPDATE_SIGNING_KEY_FILE is required to sign the stable manifest offline');
+  }
+  return value;
+}
+
+function requireLauncherVersionFromEnvironment() {
+  const value = process.env.MOFANG_LAUNCHER_VERSION;
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new FeedPublishError('MOFANG_LAUNCHER_VERSION is required to sign the stable manifest offline');
+  }
+  return value;
+}
+
 async function main(argv) {
   const mode = argv.includes('--commit')
     ? 'commit'
@@ -5129,9 +5187,11 @@ async function main(argv) {
       ? 'preflight'
       : argv.includes('--break-lock')
         ? 'break-lock'
-        : argv.includes('--dry-run')
-          ? 'dry-run'
-          : null;
+        : argv.includes('--re-sign-stable')
+          ? 're-sign-stable'
+          : argv.includes('--dry-run')
+            ? 'dry-run'
+            : null;
   if (mode === null) {
     console.log(USAGE);
     return 2;
@@ -5142,7 +5202,7 @@ async function main(argv) {
   const host = flag(argv, '--host');
   const knownHostsPath = flag(argv, '--known-hosts');
   const auditOut = flag(argv, '--audit-out');
-  const needsNetwork = mode !== 'dry-run';
+  const needsNetwork = mode !== 'dry-run' && mode !== 're-sign-stable';
   const startedAt = new Date().toISOString();
   const machine = hostname();
 
@@ -5177,6 +5237,81 @@ async function main(argv) {
       });
       console.log(JSON.stringify({ mode, channel: input.channel, version: input.version, plan }, null, 2));
       console.log('dry run: nothing was written, and no permission, remote directory or host key was verified');
+      return 0;
+    } catch (error) {
+      console.error(error instanceof FeedPublishError ? error.message : String(error));
+      return 1;
+    }
+  }
+
+  if (mode === 're-sign-stable') {
+    if (input.channel !== 'stable') {
+      console.error('--re-sign-stable requires --channel stable');
+      return 1;
+    }
+    if (version === null) {
+      console.error('--version is required');
+      return 1;
+    }
+    const packagePath = flag(argv, '--package');
+    const fileManifestPath = flag(argv, '--file-manifest');
+    const manifestPath = flag(argv, '--manifest');
+    if (packagePath === null || fileManifestPath === null || manifestPath === null) {
+      console.error('--package, --file-manifest and --manifest are required');
+      return 1;
+    }
+    const stableOut = flag(argv, '--stable-out');
+    if (stableOut === null) {
+      console.error('--stable-out is required');
+      return 1;
+    }
+    try {
+      const publicKeyBase64 = requirePublicKeyFromEnvironment();
+      const signingKeyFile = requireSigningKeyFileFromEnvironment();
+      const minLauncherVersion = requireLauncherVersionFromEnvironment();
+      const resolvedPackagePath = resolve(packagePath);
+      const resolvedFileManifestPath = resolve(fileManifestPath);
+      const fileManifestBytes = readFileSync(resolvedFileManifestPath);
+      await verifyLocalArtifacts({
+        packagePath: resolvedPackagePath,
+        fileManifestPath: resolvedFileManifestPath,
+        manifestPath: resolve(manifestPath),
+        expectedChannel: 'internal',
+        expectedVersion: input.version,
+        publicKeyBase64,
+        verifySignature: ({ manifestBytes, fileManifestBytes, packagePath }) =>
+          verifyPortableRelease({ manifestBytes, fileManifestBytes, packagePath, publicKeyBase64 }),
+      });
+      const release = await buildPortableRelease({
+        ...buildStableManifestInput({
+          version: input.version,
+          minLauncherVersion,
+          fileManifest: JSON.parse(fileManifestBytes.toString('utf8')),
+          fileManifestBytes,
+          packagePath: resolvedPackagePath,
+          publishedAt: new Date().toISOString(),
+        }),
+        signingKeyPem: await readSigningKeyFile(assertPathOutsideRepository(signingKeyFile, repositoryRoot)),
+        publicKeyBase64,
+      });
+      const stableManifestOut = resolve(stableOut);
+      writeFileSync(stableManifestOut, release.manifestBytes, { flag: 'wx' });
+      console.log(
+        JSON.stringify(
+          {
+            mode,
+            channel: 'stable',
+            version: input.version,
+            stableManifestOut,
+            stableManifestSha256: createHash('sha256').update(release.manifestBytes).digest('hex'),
+            reusedFileManifestSha256: createHash('sha256').update(release.fileManifestBytes).digest('hex'),
+            reusedPackageSha256: release.packageSha256,
+          },
+          null,
+          2,
+        ),
+      );
+      console.log('the stable manifest was signed offline from the original bytes, and nothing was uploaded');
       return 0;
     } catch (error) {
       console.error(error instanceof FeedPublishError ? error.message : String(error));
@@ -5304,13 +5439,15 @@ await main(process.argv.slice(2)).then(
 
 **必须遵守：** 顶层 `await`，只用 `process.exitCode`，**不得**在 Promise 完成前 `process.exit`；batch 文件是**仓库外唯一临时文件**（`mkdtempSync`），并在 `finally` 清理，因此并发运行不会互相覆盖；`--break-lock` 的 `--reason` / `--audit-out` / `--confirm-runid` **三角都必填**；`--commit` 分支必须把锁记录的三个注入值一起交给 `runCommit`（`operator` 取 `process.env.MOFANG_FEED_OPERATOR ?? 'unknown'`，与 `--break-lock` 同一来源；`startedAt` 取 CLI 启动时的 `new Date().toISOString()`；`machine` 取 `hostname()`，导入行是 `import { hostname } from 'node:os';`）—— `scripts/lib/` 是纯模块，**不得**出现 `new Date()` 或 `hostname()` / `os.hostname()`，三个值只能由 CLI 注入。⚠️ **`machine` 只有一种写法：`hostname()`**（规定块里 `import { hostname } from 'node:os';` 是解构导入，所以调用端不能写 `os.hostname()`）。照抄散文里的 `os.hostname()` 会在 CLI 启动时以 `ReferenceError: os is not defined` 死掉，而那条路径的守卫测试**只覆盖 `--reason` / `--audit-out` / `--confirm-runid` 与 hosts 文件**，**不会**覆盖它 —— 本计划原先在 Task 4 的接线段与 Task 7 的这段里都误写成 `os.hostname()`，已两处改成 `hostname()`。
 
+**第五种模式 `--re-sign-stable`（2026-09-23 追加，代码质量闸门交办）：** 它**离线**（`needsNetwork` 必须为假，否则会去要 `--host` / `--known-hosts`），只用本地三个产物 + 两把钥匙，把 §6.10 的"stable manifest 必须单独离线签名"落成**一条可执行的路**。三条硬要求：① 它**必须先跑 `verifyLocalArtifacts`（`expectedChannel: 'internal'`）** —— 这是"复用的是**原字节**"这句话的**唯一证据来源**，跳过它这个模式就只剩"照着三个路径写一个新 manifest"；② 它是 `buildStableManifestInput` 的**唯一调用者**（见下方"调用者已排期"），签名走 `buildPortableRelease`，因此 12 个字段的拼接由**真消费者**验收，而不是由本模块自己的断言验收；③ 产物用 `writeFileSync(..., { flag: 'wx' })` 写，**拒绝覆盖**（§6.10 的"签名一次"纪律；这条的**覆盖臂不可自动化** —— 需要真钥匙，登记为"只在真机离线签名演练里验"）。
+
 **第二修复刀追加的 Task 7 验收项（本刀只写计划，代码在 Task 7 落）：**
 
 1. **"锁在、但 owner 记录读不出来"必须有一条被确认的 CLI 出口（第二修复刀第三处）。** 现在是死路：`breakChannelLock` 对 `owner === null` 一律抛 `the lock has no readable owner record, so it must be inspected by hand`，而 `readOwnerRecord` 把**三种成因**（transport 失败 / 文件不存在 / 内容不是 JSON）压成同一个裸 `null`，CLI 说不出是哪种、也就无从确认 `--confirm-runid`。**"交给人工检查"单独一句不是可接受的终态指令**：这个仓库有一条硬规定就是**永远不要对 openclaw 状态目录 `rm -rf`**（它是 junction 高发区），而"交给人工"正是把操作员推向那一步。要做两件事：
    - **CLI**：新增一条走**同一套 reason / audit / 确认纪律**的路径 —— `--break-lock --owner-record-unreadable --reason "<文本>"`：仍然必填 `--reason` 与 `--audit-out`，仍然要求操作员**显式声明**"已确认前一次运行不在进行中"（用这个 flag 本身就是那次声明），审计里记 `stage: 'break-lock'` + `ownerRecordUnreadable: true` + 原因 + 执行人；**不要求** `--confirm-runid`（根本没有可确认的 runid —— 这正是这个状态的定义）。删除动作仍是先 `rm owner.json` 再 `rmdir <lock>`，**两次都成功才算成功**，任一次失败按现在的形状抛错、**不得**记录成 `lock-broken`。
    - **手册**（`docs/runbooks/portable-update-release.md`）：给出**确切的状态路径**与**确切的命令**。状态路径是 `/opt/rongying/updates-state/lock/<channel>`，记录文件是它下面的 `owner.json`。人工核查三条精确命令：① `ls -la /opt/rongying/updates-state/lock/<channel>`（看清楚目录里到底有什么、时间戳是多少）；② `cat /opt/rongying/updates-state/lock/<channel>/owner.json`（三种成因各自长什么样：`No such file or directory` = 记录没写成或已被删；非 JSON 文本 = 写坏了；`Permission denied` = 取不到）；③ 确认前一次运行确实不在进行中之后，才走 `node scripts/feed-publish.mjs --break-lock --channel <channel> --owner-record-unreadable --reason "<文本>" --audit-out <仓库外路径> --host <host> --known-hosts <仓库外路径>`。**手册里必须写明"不要 `rm -rf` 这个目录"**，并把 §6.6 的常规 `--break-lock`（owner 可读）与本条并列成两种情况。
 2. **`readOwnerRecord` 的契约宽化归 Task 7（第二修复刀第三处，别在别的刀里动它）。** 现在它返回 `null` 表示**三种**成因。Task 7 负责把它改成**能区分三者**的形状（例如 `{ status: 'read' | 'missing' | 'transport' | 'corrupt', record }`，或抛 `FeedPublishError` 并带成因），并同步它的**两个消费者**（Task 4 的解锁路径、Task 7 的 `--break-lock` 两条路径）与全部断言。**本刀不改**：动它的返回形状会同时改到 Task 4 与 Task 7 的接线面，属于"先把契约定清楚再改代码"的那一类。
-3. **`auditOut` 必须真的被用掉（第二修复刀"记录不改"第二处）。** `breakChannelLock` 已经**校验**了 `input.auditOut`（非空字符串），但函数体内**一次都没用它** —— 它是在 Task 7 的 CLI 里被接上的（`appendAuditStage({ auditOut, repositoryRoot, entry: { stage: 'break-lock', ...record } })`）。实现 Task 7 时**必须**确认**四种模式的每一条**都把 `--audit-out` 接到某个真实写入点，而不是"传进去、校验过、然后忘掉"。特别是 `--break-lock` 与 `--owner-record-unreadable` **两条都要**写审计行。**验收方式必须是可观测的**：跑一次 `--break-lock`，确认目标路径**真的多了一行**（不是看代码里有没有引用它）。
+3. **`auditOut` 必须真的被用掉（第二修复刀"记录不改"第二处）。** `breakChannelLock` 已经**校验**了 `input.auditOut`（非空字符串），但函数体内**一次都没用它** —— 它是在 Task 7 的 CLI 里被接上的（`appendAuditStage({ auditOut, repositoryRoot, entry: { stage: 'break-lock', ...record } })`）。实现 Task 7 时**必须**确认**接了 `--audit-out` 的那几条模式的每一条**都把 `--audit-out` 接到某个真实写入点，而不是"传进去、校验过、然后忘掉"。特别是 `--break-lock` 与 `--owner-record-unreadable` **两条都要**写审计行。**验收方式必须是可观测的**：跑一次 `--break-lock`，确认目标路径**真的多了一行**（不是看代码里有没有引用它）。⚠️ **`--re-sign-stable` 是本条的一个显式例外**（第五种模式，2026-09-23 由代码质量闸门追加）：它**不接 `--audit-out`、也不写审计行**，因为 §6.11 的阶段名单是**闭集**（十三步 + `preflight` / `break-lock` 两条会话级），而"离线重签"既不是十三步之一、也不是已登记的会话级条目 —— 给它编一个新阶段名等于**改规格**，不在本计划权限内。它的可追溯性由三样东西承载：① 它**强制**先跑 `verifyLocalArtifacts`（字节复用是**验过**的，不是宣称的）；② 命令行打印 `stableManifestSha256` / `reusedFileManifestSha256` / `reusedPackageSha256`；③ Task 8 的手册把它的调用与产物路径写进发布记录。**这是一处已登记的例外，不是遗漏。**
 4. **把本次运行自己的 owner 记录送到那个状态需要的出口（第二修复刀"记录不改"第三处）。** `owner` 在两个分支里含义不同：owner 写入**成功**时返回 `owner: input.owner`（本次运行自己的记录），owner 写入**失败**时返回 `owner: null` —— 而后者恰恰就是"锁在、记录读不出来"那个状态。于是操作员**拿不到 `--confirm-runid` 需要的那个值**（`runid` 只在**运行方**手里，锁里没有）。Task 7 要在这个状态下**把本次运行自己的 `runid` 与 `planHash` 送到操作员看得见的地方**（CLI 打印 + 审计行），否则"要不要人工拆这把锁"这个判断没有依据。**本条的形状随上面第 2 条一起定**（第 2 条宽化 `readOwnerRecord` 的契约，本条决定谁把运行方自己的记录带出来）—— 两条都在 Task 7，一起改，别分两次动契约。
 5. **必须注入真时钟 `now`（残余项复核刀追加；这条在第八节末只是一句注，本刀把它升成验收项）。** `runCommit` 的**每一条**审计条目都取 `at`，来源是 `input.now()`；**未注入时回退到 `input.startedAt`** ⇒ 缺省读数不是"没有时间"，而是**整轮共用同一个时间戳**，而 §6.11 要求"每个阶段的结果码 + 时间"。Task 7 的 CLI 必须给 `runCommit` 传 `now: () => new Date().toISOString()`。**验收方式必须可观测**：跑一次 `--commit`，读审计文件，断言**至少两条条目的 `at` 不相同**（别只看代码里有没有传 `now`）。⚠️ 这是**CLI 层**的事，别把它挪进模块：**实测** `grep -c "new Date(" scripts/lib/feed-publish.mjs` = **0**（第八节末原话是"`scripts/lib/` 里没有 `new Date()`"，那句话**过宽** —— `scripts/lib/` 下确实还有 2 处 `new Date(`，但都不是读墙上时钟：`gateway-probe.mjs` 那处在一段**注释**里、`portable-update-release.mjs:426` 那处是 `new Date(input.publishedAt)` **解析注入值**；"本模块不读墙上时钟"这个意思仍然成立，本验收项按**实测的那一句**引用）。
 6. **CLI 的两条会话级条目必须带 `at`（残余项复核刀追加）。** §6.11 要求每条条目都记"时间"，而 Task 7 规定的文本今天**两条都没给**：
@@ -5325,7 +5462,7 @@ await main(process.argv.slice(2)).then(
 node --test scripts/lib/feed-publish-cli.test.mjs
 ```
 
-预期：`fail 0`、`pass 6`。
+预期：`fail 0`、`pass 7`。
 
 - [ ] **Step 5: 行为级变异验证**
 
@@ -5352,7 +5489,7 @@ Task 1 Step 7 已经新增了 `check:portable-feed-publish`（当时只列 `scri
 
 ```bash
 git add scripts/feed-publish.mjs scripts/lib/feed-publish-cli.test.mjs package.json
-git commit -m "feat(feed): wire all four cli modes to the real transport"
+git commit -m "feat(feed): wire all five cli modes to the real implementation"
 ```
 
 **验收项（签名闸门真的在工作）**：`verifyPortableRelease` 是 **async** 的，注入后必须确认 `verifyLocalArtifacts` 与 `verifyPublicArtifacts` 都 **await** 了它。证明方式不是读代码，而是：`--dry-run` 分支在 Step 3 里已经注入真 verifier（`planCommit` 的 `verifySignature` 透传），所以这条**是可观测的** —— 把 manifest 的 `signature` 字段**改坏一个字节**跑 `--dry-run`（CLI 分支里 verifier 是写死的，所以"注入一个永远拒绝的 verifier"在 CLI 层面做不到 —— 可执行的路子只有改坏签名），确认它**以 verifier 的报错信息 reject**，且**一个字节的 plan JSON 都没打印**；再把 `verifyLocalArtifacts` 里那处 `await` 删掉，确认同一条路径**先打印出 plan JSON** —— 那就说明闸门是假的。⚠️ **判据是"plan JSON 有没有被打印"（以及 verifier 的报错在不在），不是退出码**：实测**两态都退出 1** —— 诚实的拒绝退出 1，而漏 `await` 那条先打印 plan JSON、再死于未处理的 Promise 拒绝，**也退出 1**。只盯退出码的人会看到两个 1，可能把变异记成"存活"，甚至反过来以为闸门是真的。⚠️ **不要把验收判据写成"以 `pre-verify: fail` 收口"**：`planCommit` 只返回 `{stage, status:'pending'}` 数组、**不改写任何阶段状态**，`--dry-run` 上根本观测不到 `pre-verify: fail`（那是 Task 4 的 `runCommit` 才有的形状）。拿一个观测不到的判据当验收，等于没验。

@@ -12,6 +12,8 @@ import {
   STATE_ROOT,
   UPDATE_ROOT,
   assertKnownHostsPath,
+  assertNotReusedManifest,
+  buildStableManifestInput,
   parsePublishInput,
   verifyLocalArtifacts,
 } from './feed-publish.mjs';
@@ -2743,43 +2745,38 @@ test('the audit evidence refuses a key that would override the entry it is attac
   assert.doesNotThrow(() => assertNoReservedEvidenceKeys({ manifestSha256: 'x', remoteTempSha256: 'y' }));
 });
 
-import { buildStableManifestInput } from './feed-publish.mjs';
-
 test('the stable manifest is re-signed with the stable channel and the stable url', () => {
-  const paths = writeArtifacts();
   const input = buildStableManifestInput({
     version: '1.2.3',
     minLauncherVersion: '1.0.0',
     fileManifest: FILE_MANIFEST,
     fileManifestBytes: FILE_MANIFEST_BYTES,
-    packagePath: paths.packagePath,
+    packagePath: '/outside/portable.zip',
     publishedAt: '2026-09-22T00:00:00.000Z',
   });
   assert.equal(input.channel, 'stable');
   assert.equal(input.baseUrl, PUBLIC_BASE_URL);
   assert.equal(input.version, '1.2.3');
   assert.equal(input.fileManifestBytes, FILE_MANIFEST_BYTES);
-  assert.equal(input.packagePath, paths.packagePath);
+  assert.equal(input.packagePath, '/outside/portable.zip');
 });
 
 test('the stable input refuses to reuse an internal manifest', () => {
-  assert.throws(
-    () =>
-      buildStableManifestInput({
-        version: '1.2.3',
-        minLauncherVersion: '1.0.0',
-        fileManifest: FILE_MANIFEST,
-        fileManifestBytes: FILE_MANIFEST_BYTES,
-        packagePath: '/tmp/portable.zip',
-        publishedAt: '2026-09-22T00:00:00.000Z',
-        manifestBytes: Buffer.from('reuse-me'),
-      }),
-    /must be signed on its own/u,
-  );
+  const reuse = () =>
+    buildStableManifestInput({
+      version: '1.2.3',
+      minLauncherVersion: '1.0.0',
+      fileManifest: FILE_MANIFEST,
+      fileManifestBytes: FILE_MANIFEST_BYTES,
+      packagePath: '/outside/portable.zip',
+      publishedAt: '2026-09-22T00:00:00.000Z',
+      manifestBytes: Buffer.from('reuse-me'),
+    });
+  assert.throws(reuse, FeedPublishError);
+  assert.throws(reuse, /must be signed on its own/u);
 });
 
 test('the stable input carries every field it was given instead of a default', () => {
-  const paths = writeArtifacts();
   for (const arm of [
     { version: '2.3.4', minLauncherVersion: '9.1.0', publishedAt: '2026-01-02T03:04:05.000Z' },
     { version: '3.4.5', minLauncherVersion: '9.2.0', publishedAt: '2026-02-03T04:05:06.000Z' },
@@ -2791,7 +2788,7 @@ test('the stable input carries every field it was given instead of a default', (
       minLauncherVersion: arm.minLauncherVersion,
       fileManifest,
       fileManifestBytes,
-      packagePath: paths.packagePath,
+      packagePath: '/outside/portable.zip',
       publishedAt: arm.publishedAt,
     });
     assert.equal(input.version, arm.version);
@@ -2799,6 +2796,42 @@ test('the stable input carries every field it was given instead of a default', (
     assert.equal(input.publishedAt, arm.publishedAt);
     assert.deepEqual(input.fileManifest, fileManifest);
     assert.ok(input.fileManifestBytes.equals(fileManifestBytes));
-    assert.equal(input.packagePath, paths.packagePath);
+    assert.equal(input.packagePath, '/outside/portable.zip');
   }
+});
+
+test('the reused manifest guard is exported and keeps the module error class', () => {
+  assert.equal(typeof assertNotReusedManifest, 'function');
+  assert.throws(() => assertNotReusedManifest({ manifestBytes: Buffer.from('reuse-me') }), FeedPublishError);
+  assert.throws(() => assertNotReusedManifest({ manifestBytes: undefined }), FeedPublishError);
+  assert.doesNotThrow(() => assertNotReusedManifest({ fileManifest: FILE_MANIFEST }));
+});
+
+test('the stable input feeds the real release builder the stable channel and the original bytes', async () => {
+  const canonicalFileManifest = {
+    files: [{ path: 'a.txt', sha256: 'a'.repeat(64), size: 1 }],
+    schemaVersion: 1,
+    version: '1.2.3',
+  };
+  const fileManifestBytes = Buffer.from(JSON.stringify(canonicalFileManifest), 'utf8');
+  const packageRoot = makeRoot();
+  const packagePath = join(packageRoot, PORTABLE_PACKAGE_NAME);
+  writeFileSync(packagePath, PACKAGE_BYTES);
+  const release = await buildPortableRelease({
+    ...buildStableManifestInput({
+      version: '1.2.3',
+      minLauncherVersion: '1.0.0',
+      fileManifest: canonicalFileManifest,
+      fileManifestBytes,
+      packagePath,
+      publishedAt: '2026-09-22T00:00:00.000Z',
+    }),
+    signingKeyPem: keyPair.privateKey.export({ type: 'pkcs8', format: 'pem' }),
+    publicKeyBase64: PUBLIC_KEY_BASE64,
+  });
+  const manifest = JSON.parse(release.manifestBytes.toString('utf8'));
+  assert.equal(manifest.channel, 'stable');
+  assert.equal(manifest.packageUrl, 'https://api.rongyinghudong.com/updates/stable/1.2.3/portable.zip');
+  assert.equal(manifest.fileManifestSha256, createHash('sha256').update(fileManifestBytes).digest('hex'));
+  assert.equal(release.fileManifestBytes.equals(fileManifestBytes), true);
 });

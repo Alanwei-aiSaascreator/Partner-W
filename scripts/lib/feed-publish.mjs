@@ -1130,10 +1130,16 @@ export async function runCommit(input) {
   return finish('done', 'published', disposition.state);
 }
 
+export function assertNotReusedManifest(input) {
+  if (!Object.hasOwn(input, 'manifestBytes')) return;
+  const carried = input.manifestBytes === undefined ? 'no value' : 'a value';
+  throw new FeedPublishError(
+    `the stable manifest must be signed on its own, but the input carries the internal key manifestBytes with ${carried}`,
+  );
+}
+
 export function buildStableManifestInput(input) {
-  if (Object.hasOwn(input, 'manifestBytes')) {
-    throw new FeedPublishError('the stable manifest must be signed on its own, never copied from the internal channel');
-  }
+  assertNotReusedManifest(input);
   return {
     version: input.version,
     minLauncherVersion: input.minLauncherVersion,
