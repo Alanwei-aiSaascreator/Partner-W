@@ -932,10 +932,36 @@ export async function runCommit(input) {
     return finish('fail', 'the staging directory could not be created', 'not-acquired');
   }
 
+  const strayParts = await input.transport.write.sshRun({
+    host: input.host,
+    knownHostsPath: input.knownHostsPath,
+    script: `for f in ${stagingRoot}/${PORTABLE_PACKAGE_NAME}.part-* ${stagingRoot}/${PORTABLE_FILE_MANIFEST_NAME}.part-*; do if [ -e "$f" ]; then printf '%s\\n' "$f"; rm -f "$f"; fi; done`,
+  });
+  if (strayParts.status !== 0) {
+    audit(
+      'stage',
+      'fail',
+      'the staging directory could not be cleared of the partial uploads an earlier run left behind',
+    );
+    recordOutcome(
+      'fail',
+      'the staging directory could not be cleared of the partial uploads an earlier run left behind',
+    );
+    return finish(
+      'fail',
+      'the staging directory could not be cleared of the partial uploads an earlier run left behind',
+      'not-acquired',
+    );
+  }
+  const removedStrayParts = String(strayParts.stdout ?? '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+
   const nextUploadBatch = () => input.createBatch();
   for (const item of [
-    { localPath: input.packagePath, remotePath: `${stagingRoot}/${PORTABLE_PACKAGE_NAME}.part-${runid}` },
-    { localPath: input.fileManifestPath, remotePath: `${stagingRoot}/${PORTABLE_FILE_MANIFEST_NAME}.part-${runid}` },
+    { localPath: input.packagePath, remotePath: `${stagingRoot}/${PORTABLE_PACKAGE_NAME}.part` },
+    { localPath: input.fileManifestPath, remotePath: `${stagingRoot}/${PORTABLE_FILE_MANIFEST_NAME}.part` },
   ]) {
     const uploaded = await input.transport.write.sftpUpload({ ...item, resume: true, ...nextUploadBatch() });
     if (uploaded.status !== 0) {
@@ -949,8 +975,8 @@ export async function runCommit(input) {
     host: input.host,
     knownHostsPath: input.knownHostsPath,
     script: [
-      `mv -f ${stagingRoot}/${PORTABLE_PACKAGE_NAME}.part-${runid} ${stagingRoot}/${PORTABLE_PACKAGE_NAME}`,
-      `mv -f ${stagingRoot}/${PORTABLE_FILE_MANIFEST_NAME}.part-${runid} ${stagingRoot}/${PORTABLE_FILE_MANIFEST_NAME}`,
+      `mv -f ${stagingRoot}/${PORTABLE_PACKAGE_NAME}.part ${stagingRoot}/${PORTABLE_PACKAGE_NAME}`,
+      `mv -f ${stagingRoot}/${PORTABLE_FILE_MANIFEST_NAME}.part ${stagingRoot}/${PORTABLE_FILE_MANIFEST_NAME}`,
     ].join(' && '),
   });
   if (finalised.status !== 0) {
@@ -958,7 +984,7 @@ export async function runCommit(input) {
     recordOutcome('fail', 'the staging directory could not be finalised');
     return finish('fail', 'the staging directory could not be finalised', 'not-acquired');
   }
-  audit('stage', 'done');
+  audit('stage', 'done', undefined, { removedStrayParts });
 
   const staging = await inspectRemoteDirectory(input, stagingRoot, expectedEntries);
   const stagingEvidence = { remote: staging };

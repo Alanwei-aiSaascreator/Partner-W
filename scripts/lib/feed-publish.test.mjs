@@ -1404,6 +1404,7 @@ function commitTransport(options = {}) {
   const calls = [];
   let manifestReads = 0;
   let ownerJson = null;
+  let strayStagingParts = [...(options.staleStagingParts ?? [])];
   const listing = `f ${PORTABLE_PACKAGE_NAME} ${PACKAGE_BYTES.length}\nf ${PORTABLE_FILE_MANIFEST_NAME} ${FILE_MANIFEST_BYTES.length}\n`;
   const stagingListing = options.stagingListing ?? listing;
   const digests = (directory, zipDigest) =>
@@ -1430,7 +1431,10 @@ function commitTransport(options = {}) {
           if (typeof options.listingStatus === 'number' && options.listingStatus !== 0) {
             return { status: options.listingStatus, stdout: 'find: Permission denied\n', stderr: '' };
           }
-          if (request.script.includes('/staging/')) return { status: 0, stdout: stagingListing, stderr: '' };
+          if (request.script.includes('/staging/')) {
+            const leftovers = strayStagingParts.map((name) => `f ${name} 3\n`).join('');
+            return { status: 0, stdout: `${stagingListing}${leftovers}`, stderr: '' };
+          }
           const state = options.versionDirState ?? 'absent';
           if (state === 'absent' || state === 'empty') return { status: 0, stdout: '', stderr: '' };
           if (state === 'extra') return { status: 0, stdout: `${listing}f extra.bin 3\n`, stderr: '' };
@@ -1500,6 +1504,27 @@ function commitTransport(options = {}) {
     write: {
       sshRun: async (request) => {
         calls.push(['writeSsh', request.script, request]);
+        if (request.script.startsWith('for f in ')) {
+          if (typeof options.stalePartCleanupStatus === 'number' && options.stalePartCleanupStatus !== 0) {
+            return {
+              status: options.stalePartCleanupStatus,
+              stdout: '',
+              stderr: 'rm: cannot remove: Permission denied',
+            };
+          }
+          const stagingRoot = /for f in (\S+)\//u.exec(request.script)[1];
+          const globs = [...request.script.matchAll(/(\S+)\*/gu)].map((match) => match[1]);
+          const matched = strayStagingParts.filter(
+            (part) =>
+              request.script.includes('rm -f ') && globs.some((glob) => `${stagingRoot}/${part}`.startsWith(glob)),
+          );
+          strayStagingParts = strayStagingParts.filter((part) => !matched.includes(part));
+          return {
+            status: 0,
+            stdout: matched.map((part) => `${stagingRoot}/${part}\n`).join(''),
+            stderr: '',
+          };
+        }
         if (
           request.script.startsWith('mkdir -p ') &&
           typeof options.stagingCreateStatus === 'number' &&
@@ -1541,7 +1566,11 @@ function commitTransport(options = {}) {
             stderr: 'rmdir: failed to remove: Directory not empty',
           };
         }
-        if (typeof options.finaliseStatus === 'number' && request.script.includes('.part-')) {
+        if (
+          typeof options.finaliseStatus === 'number' &&
+          request.script.startsWith('mv -f ') &&
+          request.script.includes(' && mv -f ')
+        ) {
           return { status: options.finaliseStatus, stdout: '', stderr: 'mv: cannot stat: No such file or directory' };
         }
         if (typeof options.backupStatus === 'number' && request.script.includes('/backup && cp ')) {
@@ -1667,7 +1696,19 @@ function happyTransport(paths, extra = {}) {
   });
 }
 
-const WRITE_SCRIPT_PATTERNS = [/^mkdir /u, /^LC_ALL=C mkdir /u, /^printf /u, /^rm /u, /^rmdir /u, /^mv /u];
+function isLockRemovalCall(call) {
+  return call[0] === 'writeSsh' && /^(?:rm -f |rm |rmdir )\S*(?:owner\.json|\/lock\/\S*)$/u.test(String(call[1]));
+}
+
+const WRITE_SCRIPT_PATTERNS = [
+  /^mkdir /u,
+  /^LC_ALL=C mkdir /u,
+  /^printf /u,
+  /^rm /u,
+  /^rmdir /u,
+  /^mv /u,
+  /^for f in /u,
+];
 const READ_SCRIPT_PATTERNS = [/^stat -c /u, /^LC_ALL=C cat /u, /^if \[ -d /u, /^sha256sum /u];
 
 function sshFaceOf(script) {
@@ -1869,9 +1910,9 @@ test('every upload of one run reaches sftp through a batch file that holds exact
     [HOST, HOST, HOST],
   );
   assert.equal(run.capture.batches[0].content.startsWith('reput '), true);
-  assert.equal(run.capture.batches[0].content.includes(`${stagingRoot}/portable.zip.part-r1`), true);
+  assert.equal(run.capture.batches[0].content.includes(`${stagingRoot}/portable.zip.part`), true);
   assert.equal(run.capture.batches[1].content.startsWith('reput '), true);
-  assert.equal(run.capture.batches[1].content.includes(`${stagingRoot}/portable-files.json.part-r1`), true);
+  assert.equal(run.capture.batches[1].content.includes(`${stagingRoot}/portable-files.json.part`), true);
   assert.equal(run.capture.batches[2].content.startsWith('put '), true);
   assert.equal(run.capture.batches[2].content.includes(`${UPDATE_ROOT}/internal/manifest.json.r1.tmp`), true);
   assert.equal(
@@ -1912,9 +1953,69 @@ test('the version directory is committed with a single directory rename', async 
   );
   assert.equal(renames.length, 1);
   const strayPartMoves = transport.calls.filter(
-    (call) => call[0] === 'writeSsh' && String(call[1]).includes('.part-') && !String(call[1]).includes('/staging/'),
+    (call) => call[0] === 'writeSsh' && String(call[1]).includes('.part') && !String(call[1]).includes('/staging/'),
   );
   assert.deepEqual(strayPartMoves, []);
+});
+
+test('the staging upload target is keyed by the artifact so a re-run resumes what an earlier run left', async () => {
+  const paths = writeArtifacts();
+  const first = happyTransport(paths);
+  const firstResult = await runCommit(commitInput(first, { ...paths, runid: 'r1' }));
+  assert.equal(firstResult.outcome, 'done', firstResult.reason);
+  const second = happyTransport(paths);
+  const secondResult = await runCommit(commitInput(second, { ...paths, runid: 'r2' }));
+  assert.equal(secondResult.outcome, 'done', secondResult.reason);
+  const uploadsOf = (transport) => transport.calls.filter((call) => call[0] === 'sftpUpload').map((call) => call[2]);
+  const firstUploads = uploadsOf(first);
+  const secondUploads = uploadsOf(second);
+  assert.equal(firstUploads.length, 3);
+  assert.equal(secondUploads.length, 3);
+  assert.deepEqual(
+    firstUploads.slice(0, 2),
+    secondUploads.slice(0, 2),
+    'a target that carries this run id can never be resumed by the next run',
+  );
+  for (const remotePath of firstUploads.slice(0, 2)) {
+    assert.match(remotePath, /\.part$/u);
+    assert.equal(remotePath.includes('r1'), false);
+  }
+  assert.notEqual(firstUploads[2], secondUploads[2], 'the temporary manifest name stays run scoped');
+});
+
+test('a partial upload an earlier run left behind is removed and reported instead of blocking the next run', async () => {
+  const paths = writeArtifacts();
+  const leftovers = [`${PORTABLE_PACKAGE_NAME}.part-0f0f0f0f`, `${PORTABLE_FILE_MANIFEST_NAME}.part-0f0f0f0f`];
+  const transport = happyTransport(paths, { staleStagingParts: leftovers });
+  const input = commitInput(transport, { ...paths });
+  const result = await runCommit(input);
+  assert.equal(result.outcome, 'done', result.reason);
+  const stagingRoot = `${STATE_ROOT}/staging/internal/1.2.3/${result.planHash}`;
+  const stage = auditEntriesOf(input.auditOut).find((entry) => entry.stage === 'stage');
+  assert.deepEqual(
+    stage.removedStrayParts,
+    leftovers.map((name) => `${stagingRoot}/${name}`),
+  );
+  const cleanups = transport.calls.filter((call) => call[0] === 'writeSsh' && String(call[1]).startsWith('for f in '));
+  assert.equal(cleanups.length, 1);
+});
+
+test('a staging directory that cannot be cleared of an earlier run partial is a plain failure', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths, {
+    staleStagingParts: [`${PORTABLE_PACKAGE_NAME}.part-0f0f0f0f`],
+    stalePartCleanupStatus: 1,
+  });
+  const input = commitInput(transport, { ...paths });
+  const result = await runCommit(input);
+  assert.equal(result.outcome, 'fail');
+  assert.equal(result.lockState, 'not-acquired');
+  assert.match(result.reason, /partial uploads/u);
+  assert.deepEqual(
+    transport.calls.filter((call) => call[0] === 'sftpUpload'),
+    [],
+    'nothing is uploaded while an earlier run partial is still in the way',
+  );
 });
 
 test('the manifest is uploaded to the final directory and its remote digest is checked', async () => {
@@ -2405,9 +2506,7 @@ test('a lock that fails for any reason other than an existing entry is an incide
   assert.equal(result.lockState, 'ownership-unknown');
   assert.equal(result.stages.find((entry) => entry.stage === 'lock').status, 'incident');
   assert.equal(result.stages.find((entry) => entry.stage === 'commit-version').status, 'pending');
-  const removals = transport.calls.filter(
-    (call) => call[0] === 'writeSsh' && /(?:^|\s)(?:rm|rmdir) /u.test(String(call[1])),
-  );
+  const removals = transport.calls.filter(isLockRemovalCall);
   assert.deepEqual(removals, []);
 });
 
@@ -2422,9 +2521,7 @@ test('an owner record that cannot be re-read inside the lock window stops the ru
   assert.equal(result.lockState, 'retained-by-this-run');
   assert.equal(result.stages.find((entry) => entry.stage === 're-verify').status, 'incident');
   assert.equal(result.stages.find((entry) => entry.stage === 'commit-version').status, 'pending');
-  const removals = transport.calls.filter(
-    (call) => call[0] === 'writeSsh' && /(?:^|\s)(?:rm|rmdir) /u.test(String(call[1])),
-  );
+  const removals = transport.calls.filter(isLockRemovalCall);
   assert.deepEqual(removals, []);
   const entries = auditEntriesOf(input.auditOut);
   const reVerify = entries.find((entry) => entry.stage === 're-verify');
@@ -2459,9 +2556,7 @@ test('an owner record replaced before the unlock stops the run and deletes nothi
   assert.equal(result.lockState, 'ownership-unknown');
   assert.equal(result.stages.find((entry) => entry.stage === 'flip').status, 'done');
   assert.equal(result.stages.find((entry) => entry.stage === 'unlock').status, 'retained');
-  const removals = transport.calls.filter(
-    (call) => call[0] === 'writeSsh' && /(?:^|\s)(?:rm|rmdir) /u.test(String(call[1])),
-  );
+  const removals = transport.calls.filter(isLockRemovalCall);
   assert.deepEqual(removals, []);
   const entries = auditEntriesOf(input.auditOut);
   assert.ok(entries.some((entry) => entry.stage === 'unlock' && entry.status === 'retained'));
@@ -2479,9 +2574,7 @@ test('an owner record replaced inside the lock window stops the run and touches 
   assert.equal(result.stages.find((entry) => entry.stage === 'lock').status, 'done');
   assert.equal(result.stages.find((entry) => entry.stage === 're-verify').status, 'incident');
   assert.equal(result.stages.find((entry) => entry.stage === 'commit-version').status, 'pending');
-  const removals = transport.calls.filter(
-    (call) => call[0] === 'writeSsh' && /(?:^|\s)(?:rm|rmdir) /u.test(String(call[1])),
-  );
+  const removals = transport.calls.filter(isLockRemovalCall);
   assert.deepEqual(removals, []);
 });
 
@@ -2674,9 +2767,7 @@ test('an owner record replaced before the unlock on the failure path stops the r
   assert.equal(result.lockState, 'ownership-unknown');
   assert.equal(result.stages.find((entry) => entry.stage === 'commit-version').status, 'fail');
   assert.equal(result.stages.find((entry) => entry.stage === 'unlock').status, 'retained');
-  const removals = transport.calls.filter(
-    (call) => call[0] === 'writeSsh' && /(?:^|\s)(?:rm|rmdir) /u.test(String(call[1])),
-  );
+  const removals = transport.calls.filter(isLockRemovalCall);
   assert.deepEqual(removals, []);
   const entries = auditEntriesOf(input.auditOut);
   assert.ok(entries.some((entry) => entry.stage === 'unlock' && entry.status === 'retained'));

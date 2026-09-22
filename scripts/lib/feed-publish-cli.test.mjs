@@ -495,8 +495,8 @@ test('a commit reaches sftp with one batch file per upload, each holding exactly
     );
   }
   assert.equal(new Set(batches.map((batch) => batch.batchFile)).size, 2, 'two uploads shared one batch file');
-  assert.equal(batches[0].content.includes('portable.zip.part-'), true);
-  assert.equal(batches[1].content.includes('portable-files.json.part-'), true);
+  assert.equal(batches[0].content.trimEnd().endsWith('portable.zip.part'), true);
+  assert.equal(batches[1].content.trimEnd().endsWith('portable-files.json.part'), true);
   assert.equal(
     batches[0].content.includes('portable-files.json'),
     false,
