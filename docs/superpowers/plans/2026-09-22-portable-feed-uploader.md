@@ -5303,7 +5303,7 @@ transport 自己**只拼两类字符串**：ssh / sftp 的 **argv 数组元素**
 - ⚠️ **本刀在装置上出过一次边界事故，如实登记**：为了验证"套件从不真的起 ssh"这条探针的**敏感性**，本刀先用一个 PATH 前置的假 `ssh` 去试 —— 而 Windows 上 `execFile` 不解析 `.cmd`（`ssh.cmd` 被跳过），于是那次"敏感性检查"**真的执行了系统的 `ssh.exe`**（命令是 `execFileSync('ssh', ['probe'])`，主机名 `probe`，退出码 **255**，秒级返回）。**⚠️ 口径更正（第二闸门刀）**：原先写的是"**没有连接任何服务器、没有读任何密钥、没有发出任何数据**"，这比**可知的**强一档 —— 那次真起了一个进程、参数里有一个**单标签主机名**，而单标签名通常会先按 DNS 搜索后缀试一轮，**本机无法排除那些解析尝试**。本刀改成：**没有与任何主机建立连接；至多发生了本地的名字解析尝试**（没有钥匙、没有发出数据这一点不变）。**教训（已提升进本计划"通用纪律"第 3 条）**：**敏感性检查若活在"会做真事"的那一侧，就必须让接触变成不可能，而不是不太可能** —— 换成 `throw` 是"不可能"，PATH 前置不是。
 - **真实路径（真机发布演练）未验收**：`--preflight` / `--commit` / `--break-lock` 接上真实 transport 后的行为，本刀一条都没跑（那需要主机、host-key 指纹与授权）。
 - **`--re-sign-stable` 的"拒绝覆盖"臂**仍然不可自动化（要真钥匙），**未验**。⚠️ **2026-09-23 更正（Task 7 收尾账本第一节，本刀实测）**：这条**是**可自动化的，且已被钉住 —— 夹具本来就有一对**生成出来的** Ed25519 钥匙（`generateKeyPairSync('ed25519')`）与一个**仓库外**的临时目录（`makeCliRoot()` ⇒ `os.tmpdir()`），而 `assertPathOutsideRepository` 的全部要求就是"不在仓库里"这一点；真正需要生产钥匙的只有"为**真 feed** 签出一份可发布的 stable manifest"，那是**发布动作、不是测试**。
-- **Task 7 / Task 8 未动**：CLI、手册、检查单、门禁表里除本刀那一行之外的全部格子都还是 `待填`。
+- **Task 7 / Task 8 未动**：CLI、手册、检查单、门禁表里除本刀那一行之外的全部格子都还是 `待填`。（**后续刀已填**：门禁表见 Task 7 账本与第十五节；手册与检查单见 `cc3749d9`。）
 
 #### 六、**提交信息**的两处更正与一处登记（不改历史，只登记）
 
@@ -6492,16 +6492,16 @@ git commit -m "docs(release): route the feed publishing steps through the upload
 
 **验收读数（逐条如实填写，未执行的写“未验证”）：**
 
-| 项                                | 命令                                                                | 读数                                                                                                                                                                                                                                                                                                                                                                                                        |
-| --------------------------------- | ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 上传器逻辑（含 13 步 happy path） | `node --test scripts/lib/feed-publish.test.mjs`                     | **`ℹ tests 158 / pass 158 / fail 0`**（Task 6 读数；Task 5 收尾时是 156，本刀 +2：承前项二的钉子 + preflight 身份钉子）                                                                                                                                                                                                                                                                                     |
-| 真实 transport（async）           | `node --test scripts/lib/feed-publish-transport.test.mjs`           | **`ℹ tests 28 / pass 28 / fail 0`**（围栏内 12 + 测试侧新增 **16**；第二闸门刀 20 ⇒ 28，见 Task 6 账本第八节）**并且这一行现在真的在 `check:portable-feed-publish` 链上**（两文件中间态）                                                                                                                                                                                                                   |
-| CLI 守卫                          | `node --test scripts/lib/feed-publish-cli.test.mjs`                 | 待填                                                                                                                                                                                                                                                                                                                                                                                                        |
-| 未联网取证                        | transport 测试全部走注入的**异步**假 `execFile` / `fetchPublic`     | **实测**（不是声明）：把**默认 `execFile`** 的函数体换成 `throw` 再跑套件 ⇒ 仍是 `28 / 28 / 0`、`reached_default false`；单独调用默认依赖 ⇒ throw 当场触发（探针是活的）。⚠️ **默认 `publicFetch` 那一半的读数已变**：第二闸门刀新增的两条臂**桩掉 `globalThis.fetch`** ⇒ 它现在**被夹具到达**，「套件里一次网络访问都没有」由**桩替换**（让它不可能）承载，不再由「不可达」承载（Task 6 账本第八节第九条） |
-| 没有占位分支                      | `grep -n "not wired" scripts/feed-publish.mjs`（预期无输出）        | 待填                                                                                                                                                                                                                                                                                                                                                                                                        |
-| 追踪表逐行核对                    | 13 行全部对得上（见上方自审清单）                                   | 待填                                                                                                                                                                                                                                                                                                                                                                                                        |
-| 手册无真实指纹                    | `grep -nE "[0-9A-F]{32,}" docs/runbooks/portable-update-release.md` | 待填                                                                                                                                                                                                                                                                                                                                                                                                        |
-| 全量门禁                          | `pnpm check`                                                        | 待填                                                                                                                                                                                                                                                                                                                                                                                                        |
+| 项                                | 命令                                                                | 读数                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| --------------------------------- | ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 上传器逻辑（含 13 步 happy path） | `node --test scripts/lib/feed-publish.test.mjs`                     | **`ℹ tests 158 / pass 158 / fail 0`**（Task 6 读数；Task 5 收尾时是 156，本刀 +2：承前项二的钉子 + preflight 身份钉子）                                                                                                                                                                                                                                                                                                                            |
+| 真实 transport（async）           | `node --test scripts/lib/feed-publish-transport.test.mjs`           | **`ℹ tests 28 / pass 28 / fail 0`**（围栏内 12 + 测试侧新增 **16**；第二闸门刀 20 ⇒ 28，见 Task 6 账本第八节）**并且这一行现在真的在 `check:portable-feed-publish` 链上**（两文件中间态）                                                                                                                                                                                                                                                          |
+| CLI 守卫                          | `node --test scripts/lib/feed-publish-cli.test.mjs`                 | **`ℹ tests 40 / ℹ pass 40 / ℹ fail 0`**（36 ⇒ 40，Task 8 刀读数）：围栏内 7 条 + 测试侧 33 条；本刀新增 **4** 条（`the break lock mode needs only the channel…` / `…still refuses a version flag that is not a semantic version` / `…still refuses a channel that is not in the whitelist` / `the cli refuses to run without an injected transport factory…`），另外给 **6 处离线臂**（dry-run ×3、re-sign-stable ×3）补上"工厂**从未被构造**"断言 |
+| 未联网取证                        | transport 测试全部走注入的**异步**假 `execFile` / `fetchPublic`     | **实测**（不是声明）：把**默认 `execFile`** 的函数体换成 `throw` 再跑套件 ⇒ 仍是 `28 / 28 / 0`、`reached_default false`；单独调用默认依赖 ⇒ throw 当场触发（探针是活的）。⚠️ **默认 `publicFetch` 那一半的读数已变**：第二闸门刀新增的两条臂**桩掉 `globalThis.fetch`** ⇒ 它现在**被夹具到达**，「套件里一次网络访问都没有」由**桩替换**（让它不可能）承载，不再由「不可达」承载（Task 6 账本第八节第九条）                                        |
+| 没有占位分支                      | `grep -n "not wired" scripts/feed-publish.mjs`（预期无输出）        | **无输出**（Task 8 刀复跑；入口是 13 行 / 两条语句）                                                                                                                                                                                                                                                                                                                                                                                               |
+| 追踪表逐行核对                    | 13 行全部对得上（见上方自审清单）                                   | **本刀只做机械核对**：13 个阶段名（`pre-verify` … `unlock`）在 `scripts/lib/feed-publish.mjs` 里各出现 ≥1 次、且与 `PUBLISH_STAGES` 逐字相同。**逐行人工核对沿用 Task 4/6 账本，本刀未重做**（不得读成"重新审过一遍"）                                                                                                                                                                                                                             |
+| 手册无真实指纹                    | `grep -nE "[0-9A-F]{32,}" docs/runbooks/portable-update-release.md` | **无输出**（Task 8 刀复跑，含新增的 7b/9/10 三节）                                                                                                                                                                                                                                                                                                                                                                                                 |
+| 全量门禁                          | `pnpm check`                                                        | **`exit 0`**（Task 8 刀实跑；日志 10224 行：`feed-publish` 三个文件 **`237 / 237 / 0`**、`eslint . --max-warnings 0` 过、`knip` 过、`All matched files use Prettier code style!`、四个 tsc 段过、desktop `2908 passed / 2 skipped`）                                                                                                                                                                                                               |
 
 ## 未覆盖与后续（不得写成已完成）
 
@@ -6577,5 +6577,69 @@ git commit -m "docs(release): route the feed publishing steps through the upload
 - **没有测/生产 feed、没有连服务器**：`--preflight` / `--commit` / `--break-lock` 接真实 transport 的行为仍未跑（需要主机与授权）。
 - ⚠️ **一次意外（登记）**：重试臂的第一版没有把假 transport 包进 harness ⇒ `dependencies.createTransport` 为 `undefined`，`createFeedTransport` 兜底**真起了 `ssh`**（目标 `updates.example.invalid`，不可解析 ⇒ **未建立任何连接、未写入任何字节、未改动任何远端状态**）。已改为 `makeRetryHarness` 并加 `factoryInputs.length === 1` 断言。**形态值得单独记一条**：注入缝没接上时模块会**静默落到真工厂**，"测试"因此可能真的出网。
 - `--stable-out` 的写入**不是原子的**：`wx` 只保证不覆盖；进程写一半被杀会留下**半截文件且永久不可覆盖**（恢复 = 手工删掉）。**接受**：路径由操作员显式给出且在仓库外，删除不可逆但可见；改成"临时名 + rename"会**去掉覆盖拒绝这道守卫本身**。
+
+---
+
+## 第十五节 Task 8 刀：三处围栏缺陷、注入缝与手册（2026-09-23）
+
+**这一刀是什么**：Task 8（手册 + nginx + 检查单）本身，加上**它自己围栏里的三处缺陷**与**一处注入缝**。两个提交，全部显式 pathspec、消息末尾带 `Co-Authored-By: Claude Code <noreply@anthropic.com>`、没有 `--amend`、没有重写历史：
+
+1. **`706bfc18`** `fix(feed): scope the version guard and stop defaulting the transport factory` —— 代码（`feed-publish.mjs` / `feed-publish-cli.mjs` / `scripts/feed-publish.mjs` / 两个测试文件）+ 三处围栏同提交重同步 + 通用纪律第 4 条 + 文件地图 + Task 7 验收项 1 的更正。
+2. **`cc3749d9`** `docs(release): route the feed publishing steps through the uploader` —— `docs/runbooks/portable-update-release.md` + Task 8 围栏更正。
+
+**三套用例**：`164 / 31 / 36` ⇒ **`166 / 31 / 40` = 237**（模块 +2、CLI +4）。`pnpm check` **exit 0**。
+
+### 一、三处围栏缺陷
+
+| #   | 缺陷                                                                                                                                                                             | 为什么按文档执行会失败                                               | 修法                                                                                                                                                                             |
+| --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| N1  | `feed-publish-cli.mjs` 对**五种模式一律要求 `--version`**，而本计划在 Task 7 验收项 1（`plan:6006`）与 Task 8 围栏 7b 给出的**两条 unreadable-owner 恢复命令都不带 `--version`** | 退出 1 `--version is required` —— 正是这条特性存在的意义的"3am 路径" | `parsePublishInput` 新增 `versionRequired`（缺省 `true`）；CLI 传 `mode !== 'break-lock'`；该模式**不再回显版本**（回显一个没用过的值 = 凭空造数据）；`USAGE` 与两条计划命令同步 |
+| N2  | Task 8 第 7 步的 `--preflight` 命令**漏了 `--audit-out`**                                                                                                                        | round 1 已把它变成必填 ⇒ 退出 1 `--audit-out is required`            | 围栏补上；并把围栏里**每一条**命令都对当前 CLI 实跑（见第四节）                                                                                                                  |
+| N3  | 手册把"空输出（0 字节）"写成**第四种成因**，而工具报的是 `ownerRecordStatus: 'corrupt'` + `the owner record is not valid JSON`                                                   | 操作员的"读数 → 动作"对照表与工具输出对不上                          | 围栏改成**四种读法 → 三种状态**的对照表，空输出单独列一行并注明它归到 `corrupt`                                                                                                  |
+
+⚠️ **N1 的收窄不是删除**：版本若被显式传进来**仍然要过语义化校验**（`banana` 会被拒），`--channel` 守卫原样保留。两条都由用例按名钉住。
+
+⚠️ **本刀新增（围栏与手册同改）**：Task 8 第 9/10 步此前**只有散文、没有命令**。现补上 `--re-sign-stable`（离线签 stable manifest；含 `--stable-out` 用 `wx` **非原子**的残余风险句，以及"这个模式不写审计行 ⇒ 三个摘要要手工进发布记录"）与 stable 的 `--preflight` / `--commit`。`发布前提` 里那句"仓库目前没有通用服务器上传脚本"也改成"只允许用第 7/9/10 步的上传器"，否则同一份手册自相矛盾。
+
+### 二、注入缝（决定 c）：默认值就是真实现 = 静默出网
+
+`runCli` 原先 `dependencies.createTransport ?? createFeedTransport` ⇒ **测试忘了接线不会报错，只会真的去起 `ssh`**（本计划确实发生过一次，见第十四节第四节）。**修法三件**：① 模块内**不留默认值**，`dependencies.createTransport` 不是函数就**抛错**；② 真工厂只在**组合根**接线（`scripts/feed-publish.mjs`，仍是 **13 行 / 两条语句**，CLI 模块用 `export { createFeedTransport } from …` 把它交给入口）；③ 六处**离线臂**（dry-run ×3、re-sign-stable ×3）改为传**会计数的拒绝工厂**，并断言**从未被构造** —— 这比"没有输出"强一档。
+
+⚠️ **测试装置同刀修正（登记）**：`captureRun` 原先替换 `process.stdout.write`，于是**把 node:test 自己的报告流也捕了进去**（实测抓到 V8 序列化的报告记录，`JSON.parse` 当场抛 `Unexpected token`）。改成**只替换 `console.log` / `console.error`**（CLI 的两个出口就这两个）。这条**不是生产守卫**，它的证据是那次原始 dump 与下面 M6 的读数，而不是某条按名变红的用例。
+
+### 三、变异（5 条 + 1 条对照 + 1 条装置回退）
+
+装置同通用纪律第 3 条：锚点恰好 1 次 → 变异**前**取基线 sha256、备份落仓库外 → 写盘后重读确认 → `node --check` → 打印**整行** hunk → 跑三套 → 核对**预先写明**的红名单 → 逐字节恢复 → 比 sha256 → `git status --porcelain` 与变异前逐字相同。**7 条全部 `restoreSha256Equal true` + `gitStatusIdentical true`。**
+
+| #   | 变异（一个表达式）                                                                             | 预先写明的红名单                        | 读数                                                                                                                                                                                                                                                                       |
+| --- | ---------------------------------------------------------------------------------------------- | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| M1  | `feed-publish-cli.mjs`：`const versionRequired = mode !== 'break-lock';` ⇒ `= true;`           | break-lock 的两条新用例                 | `module 166/166/0`、`transport 31/31/0`、`cli 38/40/2` ⇒ **两条逐条命中，无多余红**                                                                                                                                                                                        |
+| M2  | `feed-publish.mjs`：`const versionRequired = raw.versionRequired !== false;` ⇒ `= true;`       | 模块"+不再带版本" + CLI break-lock 那条 | `module 165/166/1`、`cli 39/40/1` ⇒ 命中                                                                                                                                                                                                                                   |
+| M3  | `feed-publish-cli.mjs`：`if (typeof createTransport !== 'function') {` ⇒ `if (false) {`        | 缺工厂要抛错那条                        | `cli 39/40/1` ⇒ 命中                                                                                                                                                                                                                                                       |
+| M4  | `feed-publish.mjs`：`version: versionRequired ? raw.version : null,` ⇒ `version: raw.version,` | 模块"+不再带版本"那条                   | `module 165/166/1`、`cli 40/40/0` ⇒ 命中                                                                                                                                                                                                                                   |
+| M5  | **对照（必须留绿）**：`mode !== 'break-lock'` ⇒ `!(mode === 'break-lock')`                     | —                                       | `166 / 31 / 40` **全绿**、红名单为空 ⇒ 装置对语义等价改动不敏感                                                                                                                                                                                                            |
+| M6  | **装置回退（不是生产代码）**：`captureRun` 换回 `process.stdout.write`                         | break-lock 那条                         | **3/3 次红**，但红的是**测试文件本身**（名字报成 `scripts\libeed-publish-cli.test.mjs`），读数 `cli 7/8/1` —— 报告流被吞掉后整个文件**只跑了 8 条**。登记为 `EXPECTATION_FAILED`：红得比预登记**更重**（不是某条用例红了，是用例集**塌了**），但它**不能**用来钉某一条用例 |
+
+### 四、围栏命令逐条实跑（N2 的验收）
+
+把 Task 8 围栏里的 **8 条** `node scripts/feed-publish.mjs …` 逐条抽出（占位符换成真夹具路径、主机一律 `updates.example.invalid`），在**进程内**用注入的假 transport 跑 `runCli`（**不联网、不起 `ssh`**）：
+
+- 围栏命令集与手册命令集**逐字相同**（`fence-vs-runbook command sets identical = true`）；
+- **8 条一条都没被参数守卫拒绝**（`flagGuardRefusal = none`）；
+- 两条**离线**命令（`--dry-run`、`--re-sign-stable`）**真的退出 0**；
+- 那条 **`--owner-record-unreadable` 恢复命令（不带 `--version`）退出 0** ⇒ **N1 修好了**（修之前它会以 `--version is required` 退出 1）；
+- 三条网络命令在 `factoryConstructed = 1` 之后停在我的**假** transport 答不上来的阶段（`--commit` 那两条）。**它们证明的是"命令行被 CLI 接受"**，不是十三步走通 —— 那个只有真机演练能验。
+
+### 五、镜像与同步（本刀实测）
+
+`MATCHED_PAIRS 16 / UNMATCHED_PAIRS 0`（与改动前**同一个数**）。新范围：`feed-publish.mjs 1–159`（原 1–155）、`feed-publish-cli.mjs 1–414`（原 1–407）、`scripts/feed-publish.mjs 1–13`（行数不变、内容一行变）。Task 8 围栏的四个小节（7 / 7b / 9 / 10）与手册对应小节**逐行相同**（`IDENTICAL=True`；第 10 节唯一差异是手册在下一节前多一个空行）。
+
+⚠️ **重同步装置自己出过一次事故（登记）**：它在**一次运行里做两处 splice**，第二处用的是**未更新的行号** ⇒ 把 CLI 围栏的**开头四行**（空行 + 标题 + 空行 + ` ```js `）吃掉了，`MATCHED_PAIRS` 掉到 **14**、`feed-publish-cli.mjs` 变 `NO_SLICE`、入口围栏被误配成"围栏内的内容"。**处置**：按 `git show HEAD:` 的原文逐行补回那四行、删掉尾部重复的四行 ⇒ 回到 16/0。**教训**：镜像重同步装置**一次只许处理一处**，或者每次 splice 之后**重算索引**；这也是"镜像检查必须按连续切片断言"（通用纪律第 2 条）又一次救场。
+
+### 六、本刀未做（不得写成已完成）
+
+- **没有连服务器、没有真实 feed、没有真机演练**：`--preflight` / `--commit` / `--break-lock` 接真实 transport 的行为仍未验（需要主机与授权）。
+- **nginx 的 `no-cache` 建议仍未应用**（需要授权改服务器配置）；**受限发布账号仍未建立**（当前接受"首次临时使用 root"这一显式例外）。
+- **手册的 `--owner-record-unreadable` 路径没有真机读数**：`ls` / `cat` 的四种读数与三种状态的对照是**按代码与文档写的**，不是在一台真锁上读出来的。
 
 相关：`docs/superpowers/specs/2026-09-22-portable-release-infrastructure-correction-design.md`
