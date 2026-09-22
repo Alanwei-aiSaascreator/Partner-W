@@ -568,23 +568,26 @@ function compareDirectoryHashes(hashes, expected) {
 
 async function inspectRemoteDirectory(input, directory, expectedEntries) {
   const exists = await remoteDirectoryExists(input, directory);
-  if (!exists) return { present: false, empty: false, problems: [] };
+  if (!exists) return { present: false, empty: false, problems: [], entries: [], digests: null };
   const entries = await readRemoteDirectory(input, directory);
-  if (entries.length === 0) return { present: true, empty: true, problems: [] };
+  if (entries.length === 0) return { present: true, empty: true, problems: [], entries: [], digests: null };
   const problems = compareDirectoryEntries(entries, expectedEntries);
+  let digests = null;
   if (problems.length === 0) {
-    problems.push(
-      ...compareDirectoryHashes(
-        await readRemoteHashes(
-          input,
-          directory,
-          expectedEntries.map((item) => item.name),
-        ),
-        expectedEntries,
-      ),
+    digests = await readRemoteHashes(
+      input,
+      directory,
+      expectedEntries.map((item) => item.name),
     );
+    problems.push(...compareDirectoryHashes(digests, expectedEntries));
   }
-  return { present: true, empty: false, problems };
+  return {
+    present: true,
+    empty: false,
+    problems,
+    entries,
+    digests: digests === null ? null : Object.fromEntries(digests),
+  };
 }
 
 async function readRemoteFileSha(input, target) {
@@ -609,7 +612,8 @@ export async function verifyPublicArtifacts(input) {
   const packageResponse = await input.transport.fetchPublic(`${base}/${PORTABLE_PACKAGE_NAME}`);
   if (packageResponse.status !== 200) return { ok: false, reason: 'the public package is not reachable' };
   const packageBytes = Buffer.from(packageResponse.bodyBytes);
-  if (createHash('sha256').update(packageBytes).digest('hex') !== input.expectedPackageSha256) {
+  const publicPackageSha256 = createHash('sha256').update(packageBytes).digest('hex');
+  if (publicPackageSha256 !== input.expectedPackageSha256) {
     return { ok: false, reason: 'the public package integrity check failed' };
   }
   if (packageBytes.length !== input.expectedPackageSize) {
@@ -619,7 +623,8 @@ export async function verifyPublicArtifacts(input) {
   const fileManifestResponse = await input.transport.fetchPublic(`${base}/${PORTABLE_FILE_MANIFEST_NAME}`);
   if (fileManifestResponse.status !== 200) return { ok: false, reason: 'the public file manifest is not reachable' };
   const fileManifestBytes = Buffer.from(fileManifestResponse.bodyBytes);
-  if (createHash('sha256').update(fileManifestBytes).digest('hex') !== input.expectedFileManifestSha256) {
+  const publicFileManifestSha256 = createHash('sha256').update(fileManifestBytes).digest('hex');
+  if (publicFileManifestSha256 !== input.expectedFileManifestSha256) {
     return { ok: false, reason: 'the public file manifest integrity check failed' };
   }
   if (fileManifestBytes.length !== input.expectedFileManifestSize) {
@@ -633,7 +638,14 @@ export async function verifyPublicArtifacts(input) {
   const verifier = input.verifier ?? (() => {});
   await verifier({ manifestBytes, fileManifestBytes, packagePath, publicKeyBase64: input.publicKeyBase64 });
 
-  return { ok: true, manifestSha256: createHash('sha256').update(manifestBytes).digest('hex') };
+  return {
+    ok: true,
+    manifestSha256: createHash('sha256').update(manifestBytes).digest('hex'),
+    packageSha256: publicPackageSha256,
+    packageSize: packageBytes.length,
+    fileManifestSha256: publicFileManifestSha256,
+    fileManifestSize: fileManifestBytes.length,
+  };
 }
 
 export async function runCommit(input) {
@@ -644,22 +656,25 @@ export async function runCommit(input) {
   let planHash = 'uncomputed';
   let owner = null;
 
-  const audit = (stage, status, detail) => {
+  const atValue = () => (input.now === undefined ? input.startedAt : input.now()) ?? null;
+  const baseOf = () => ({ runid, operator: input.operator ?? null, at: atValue() });
+
+  const audit = (stage, status, detail, evidence) => {
     stages.find((entry) => entry.stage === stage).status = status;
     appendAuditStage({
       auditOut: input.auditOut,
       repositoryRoot: input.repositoryRoot,
-      entry: { stage, status, runid, ...(detail === undefined ? {} : { detail }) },
+      entry: { stage, status, ...baseOf(), ...(detail === undefined ? {} : { detail }), ...(evidence ?? {}) },
     });
   };
 
   const finish = (outcome, reason, lockState) => ({ outcome, reason, lockState, stages, runid, planHash });
 
-  const recordOutcome = (outcome, reason) => {
+  const recordOutcome = (outcome, reason, evidence) => {
     appendAuditStage({
       auditOut: input.auditOut,
       repositoryRoot: input.repositoryRoot,
-      entry: { stage: outcome, reason, runid, planHash },
+      entry: { stage: outcome, reason, ...baseOf(), planHash, ...(evidence ?? {}) },
     });
   };
 
@@ -671,7 +686,7 @@ export async function runCommit(input) {
     appendAuditStage({
       auditOut: input.auditOut,
       repositoryRoot: input.repositoryRoot,
-      entry: { stage: 'lock-retained', status: 'retained', runid, reason: disposition.reason },
+      entry: { stage: 'lock-retained', status: 'retained', ...baseOf(), reason: disposition.reason },
     });
     return finish(outcome, reason, lockState);
   };
@@ -694,7 +709,7 @@ export async function runCommit(input) {
     appendAuditStage({
       auditOut: input.auditOut,
       repositoryRoot: input.repositoryRoot,
-      entry: { stage: 'unlock', status: unlockStatus, runid, reason: disposition.reason },
+      entry: { stage: 'unlock', status: unlockStatus, ...baseOf(), reason: disposition.reason },
     });
     return finish(outcome, reason, disposition.state);
   };
@@ -703,7 +718,7 @@ export async function runCommit(input) {
     appendAuditStage({
       auditOut: input.auditOut,
       repositoryRoot: input.repositoryRoot,
-      entry: { stage: 'open', runid },
+      entry: { stage: 'open', ...baseOf() },
     });
   } catch (error) {
     return finish('fail', error.message, 'not-acquired');
@@ -735,7 +750,17 @@ export async function runCommit(input) {
     recordOutcome('fail', error.message);
     return finish('fail', error.message, 'not-acquired');
   }
-  audit('pre-verify', 'done');
+  const localEvidence = {
+    local: {
+      packageSha256: local.packageSha256,
+      packageSize: local.packageSize,
+      fileManifestSha256: local.fileManifestSha256,
+      fileManifestSize: local.fileManifestSize,
+      manifestSha256: local.manifestSha256,
+      manifestSize: local.manifestBytes.length,
+    },
+  };
+  audit('pre-verify', 'done', undefined, localEvidence);
 
   const versionRoot = versionRootOf(input.channel, input.version);
   const stagingRoot = stagingRootOf(input.channel, input.version, planHash);
@@ -783,14 +808,15 @@ export async function runCommit(input) {
   audit('stage', 'done');
 
   const staging = await inspectRemoteDirectory(input, stagingRoot, expectedEntries);
+  const stagingEvidence = { remote: staging };
   if (!staging.present || staging.empty || staging.problems.length > 0) {
     const detail = staging.empty ? 'the staging directory is empty' : staging.problems.join('; ');
     const reason = `the staging directory is not the exact final file set: ${detail}`;
-    audit('remote-verify', 'fail', detail);
+    audit('remote-verify', 'fail', detail, stagingEvidence);
     recordOutcome('fail', reason);
     return finish('fail', reason, 'not-acquired');
   }
-  audit('remote-verify', 'done');
+  audit('remote-verify', 'done', undefined, stagingEvidence);
 
   const lock = await acquireChannelLock({
     channel: input.channel,
@@ -876,29 +902,32 @@ export async function runCommit(input) {
     audit('commit-version', 'done');
   }
 
+  const backupPath = `${STATE_ROOT}/backup/${input.channel}-manifest.json-pre-${input.version}`;
   const backup = await input.transport.write.sshRun({
     host: input.host,
     knownHostsPath: input.knownHostsPath,
     script: [
       `mkdir -p ${STATE_ROOT}/backup`,
-      `cp ${UPDATE_ROOT}/${input.channel}/${PORTABLE_MANIFEST_NAME} ${STATE_ROOT}/backup/${input.channel}-manifest.json-pre-${input.version} 2>/dev/null || true`,
+      `cp ${UPDATE_ROOT}/${input.channel}/${PORTABLE_MANIFEST_NAME} ${backupPath} 2>/dev/null || true`,
     ].join(' && '),
   });
   if (backup.status !== 0) {
     return retainAndFinish('incident', 'the previous manifest could not be backed up');
   }
-  audit('backup-manifest', 'done');
+  audit('backup-manifest', 'done', undefined, { previousManifestSha256: baselineSha, backupPath });
 
   const casSha = await readRemoteFileSha(input, `${UPDATE_ROOT}/${input.channel}/${PORTABLE_MANIFEST_NAME}`);
+  const casEvidence = { previousManifestSha256: baselineSha, observedManifestSha256: casSha };
   if (casSha !== baselineSha) {
-    audit('cas', 'incident');
+    audit('cas', 'incident', undefined, casEvidence);
     return retainAndFinish(
       'incident',
       'the manifest changed after the lock was taken, which means a bypass; nothing is flipped, rolled back or deleted',
     );
   }
-  audit('cas', 'done');
+  audit('cas', 'done', undefined, casEvidence);
 
+  const manifestEvidence = { manifestSha256: local.manifestSha256 };
   const tempManifestPath = `${UPDATE_ROOT}/${input.channel}/${PORTABLE_MANIFEST_NAME}.${runid}.tmp`;
   const manifestUploaded = await input.transport.write.sftpUpload({
     localPath: input.manifestPath,
@@ -906,15 +935,21 @@ export async function runCommit(input) {
     resume: false,
   });
   if (manifestUploaded.status !== 0) {
-    audit('temp-manifest', 'incident', 'the manifest upload failed');
+    audit('temp-manifest', 'incident', 'the manifest upload failed', manifestEvidence);
     return retainAndFinish('incident', 'the manifest could not be uploaded, so the outcome is uncertain');
   }
   const remoteTempSha = await readRemoteFileSha(input, tempManifestPath);
+  const tempManifestEvidence = { manifestSha256: local.manifestSha256, remoteTempSha256: remoteTempSha };
   if (remoteTempSha !== local.manifestSha256) {
-    audit('temp-manifest', 'incident', 'the uploaded manifest digest does not match the local manifest');
+    audit(
+      'temp-manifest',
+      'incident',
+      'the uploaded manifest digest does not match the local manifest',
+      tempManifestEvidence,
+    );
     return retainAndFinish('incident', 'the uploaded manifest does not match the local manifest');
   }
-  audit('temp-manifest', 'done');
+  audit('temp-manifest', 'done', undefined, tempManifestEvidence);
 
   const flipped = await input.transport.write.sshRun({
     host: input.host,
@@ -922,17 +957,22 @@ export async function runCommit(input) {
     script: `mv -f ${tempManifestPath} ${UPDATE_ROOT}/${input.channel}/${PORTABLE_MANIFEST_NAME}`,
   });
   if (flipped.status !== 0) {
-    audit('flip', 'incident', 'the atomic flip failed');
+    audit('flip', 'incident', 'the atomic flip failed', manifestEvidence);
     return retainAndFinish('incident', 'the atomic flip failed, so the outcome is uncertain');
   }
-  audit('flip', 'done');
+  audit('flip', 'done', undefined, manifestEvidence);
 
   const observed = await input.transport.fetchPublic(`${PUBLIC_BASE_URL}/${input.channel}/${PORTABLE_MANIFEST_NAME}`);
   if (observed.status !== 200 || observed.bodyBytes === undefined) {
-    audit('public-verify', 'incident', 'the public manifest could not be read');
+    audit('public-verify', 'incident', 'the public manifest could not be read', manifestEvidence);
     return retainAndFinish('incident', 'the public manifest could not be read, so the outcome is uncertain');
   }
   const observedSha = createHash('sha256').update(Buffer.from(observed.bodyBytes)).digest('hex');
+  const observedEvidence = {
+    manifestSha256: local.manifestSha256,
+    observedManifestSha256: observedSha,
+    previousManifestSha256: baselineSha,
+  };
   if (observedSha === local.manifestSha256) {
     let publicCheck;
     try {
@@ -950,24 +990,24 @@ export async function runCommit(input) {
         temporaryRoot: input.temporaryRoot,
       });
     } catch (error) {
-      audit('public-verify', 'incident', error.message);
+      audit('public-verify', 'incident', error.message, observedEvidence);
       return retainAndFinish('incident', `the public verification could not be completed: ${error.message}`);
     }
     if (publicCheck.ok !== true) {
-      audit('public-verify', 'incident', publicCheck.reason);
+      audit('public-verify', 'incident', publicCheck.reason, observedEvidence);
       return retainAndFinish('incident', `the public verification failed: ${publicCheck.reason}`);
     }
-    audit('public-verify', 'done');
+    audit('public-verify', 'done', undefined, { public: publicCheck });
     audit('reveal', 'done');
   } else if (observedSha === baselineSha) {
-    audit('public-verify', 'retry');
+    audit('public-verify', 'retry', undefined, observedEvidence);
     return retainAndFinish('retry', 'the flip did not take effect');
   } else {
-    audit('public-verify', 'incident', 'a third manifest digest appeared');
+    audit('public-verify', 'incident', 'a third manifest digest appeared', observedEvidence);
     return retainAndFinish('incident', 'a third manifest digest appeared while flipping');
   }
 
-  recordOutcome('done', 'published');
+  recordOutcome('done', 'published', manifestEvidence);
   const disposition = await releaseChannelLock({
     channel: input.channel,
     transport: input.transport,
@@ -983,7 +1023,7 @@ export async function runCommit(input) {
   appendAuditStage({
     auditOut: input.auditOut,
     repositoryRoot: input.repositoryRoot,
-    entry: { stage: 'unlock', status: unlockStatus, runid, reason: disposition.reason },
+    entry: { stage: 'unlock', status: unlockStatus, ...baseOf(), reason: disposition.reason },
   });
   if (disposition.release !== true) return finish('incident', disposition.reason, disposition.state);
   return finish('done', 'published', disposition.state);
