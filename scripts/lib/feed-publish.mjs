@@ -686,7 +686,7 @@ export async function runCommit(input) {
     appendAuditStage({
       auditOut: input.auditOut,
       repositoryRoot: input.repositoryRoot,
-      entry: { stage, status, ...baseOf(), ...(detail === undefined ? {} : { detail }), ...(evidence ?? {}) },
+      entry: { ...(evidence ?? {}), stage, status, ...baseOf(), ...(detail === undefined ? {} : { detail }) },
     });
   };
 
@@ -697,7 +697,7 @@ export async function runCommit(input) {
     appendAuditStage({
       auditOut: input.auditOut,
       repositoryRoot: input.repositoryRoot,
-      entry: { stage: outcome, reason, ...baseOf(), planHash, ...(evidence ?? {}) },
+      entry: { ...(evidence ?? {}), stage: outcome, reason, ...baseOf(), planHash },
     });
   };
 
