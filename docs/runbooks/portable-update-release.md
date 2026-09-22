@@ -15,6 +15,9 @@
   - `MOFANG_UPDATE_PUBLIC_KEY_B64`
   - `MOFANG_UPDATE_SIGNING_KEY_PEM`
   - `MOFANG_UPDATE_FEED_UPLOAD_TOKEN`
+- 上传器在**发布 shell** 里要两个环境变量，**每开一个新 shell 都要重设**（第 3/5 步设过的不会自己跟到第 7/9/10 步）：
+  - `MOFANG_FEED_OPERATOR='<本执行人>'`：**凡是会写审计行的模式都必须设** —— `--preflight` / `--commit` / `--break-lock`（两条恢复路径都算）。不设时工具按 `unknown` 落账，"谁在什么时候破了这把锁"就没有答案。
+  - `MOFANG_UPDATE_PUBLIC_KEY_B64='<与私钥匹配的 SPKI Base64 公钥>'`：**除 `--preflight` 与 `--break-lock` 之外的每一种模式都要**（`--dry-run` / `--commit` / `--re-sign-stable`，见第 3/5/9 步）；`--re-sign-stable` 还要 `MOFANG_UPDATE_SIGNING_KEY_FILE`。
 - 私钥只允许写入系统临时目录，不得进入仓库、日志、客户包或长期制品。
 - 发布服务必须支持“先传不可变版本目录，最后原子替换频道 manifest”。服务器发布**只允许用第 7、9、10 步的 `scripts/feed-publish.mjs`**（它已经过复核）；工具缺失或未经复核时，停在第 8 步，不得现场拼 `scp` / `ssh` 命令。
 
@@ -90,12 +93,30 @@ Get-FileHash '<输出目录>\portable.zip' -Algorithm SHA256
 此步需要单独的「测试更新源发布」授权。用经过复核的上传器执行，**不要现场拼 `scp` 命令**：
 
 ```powershell
+$env:MOFANG_UPDATE_PUBLIC_KEY_B64 = '<与私钥匹配的 SPKI Base64 公钥>'
+$env:MOFANG_FEED_OPERATOR = '<本执行人>'
 node scripts/feed-publish.mjs --dry-run --channel internal --version <版本> --package <portable.zip> --file-manifest <portable-files.json> --manifest <manifest.json>
 node scripts/feed-publish.mjs --preflight --channel internal --version <版本> --host <主机> --known-hosts <仓库外的 known_hosts 路径> --audit-out <仓库外的审计日志路径>
 node scripts/feed-publish.mjs --commit --channel internal --version <版本> --host <主机> --known-hosts <仓库外的 known_hosts 路径> --package <portable.zip> --file-manifest <portable-files.json> --manifest <manifest.json> --audit-out <仓库外的审计日志路径>
 ```
 
-退出码：`0` 完成；`1` 失败、拒绝或事故；`2` 没给模式旗标（工具只打印用法）；`3` 可重跑（翻转未生效 —— **只有这个码**代表 `--commit` 可以安全重跑，其它非零码都可能已经改动过远端状态）。**任何非 `0` 都要先读审计日志。**
+退出码：`0` 完成；`1` 失败、拒绝、**被别人占着锁**或事故；`2` 没给模式旗标（工具只打印用法）；`3` 可重跑（翻转未生效 —— **只有这个码**代表 `--commit` 可以安全重跑，其它非零码都可能已经改动过远端状态）。
+
+**读结果先看 `outcome`，不要只看退出码**：`1` **同时**代表 `fail` / `blocked` / `incident` 三种结论，而它们的下一步动作相反。
+
+| `outcome`（命令打印的 JSON 里那个字段） | 意思                                                                        | 下一步                                                                              |
+| --------------------------------------- | --------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `done`                                  | 十三步走完、公网复验通过、锁已释放                                          | 退出码 `0`，继续第 8 步                                                             |
+| `retry`                                 | 翻转没生效（公网还是旧 manifest），远端状态**确定**                         | 退出码 `3`，**只有它可以安全重跑** `--commit`                                       |
+| `fail`                                  | 翻转**之前**失败，远端状态确定                                              | 退出码 `1`，读审计日志看停在哪一阶段，修掉成因再重跑                                |
+| `blocked`                               | 这个频道**已经有锁**，本次**没拿到锁**（`lockState: not-acquired`）         | 退出码 `1`，**不要去拆锁**：先确认那次运行确实**已经死了**，才走 7b；活着就等它收尾 |
+| `incident`                              | 结果**不确定**（翻转后失败、上传后核对不上、CAS 不匹配…），**锁被有意保留** | 退出码 `1`，停下来人工核查，再按 7b 的专用路径恢复                                  |
+
+⚠️ **`blocked` 就是"另一个运行正持着这个频道的锁"，那把锁不是你的**：它和完整性事故 `incident` 都退 `1`，但**只有确认那次运行确实已经不在进行中之后**才允许走 7b 的恢复路径 —— 否则你会在它写到一半时把它脚下的东西拆掉。
+
+**结论在哪：** 命令打印的 JSON 的 `outcome` 字段，以及审计日志里**收口那一行的 `stage`**（同一个词，例如 `{"stage":"blocked","reason":"the channel is already locked"}`）。**别拿审计日志最后一行当结论**：最后一行是 `unlock`（`status` 为 `done` 或 `retained`）或 `lock-retained`，它只说**锁**怎么了；各阶段行上的 `status` 只说**那一步**的结果。
+
+**凡是给了 `--audit-out` 的模式（`--preflight` / `--commit` / `--break-lock`），任何非 `0` 都要先读审计日志**；`--dry-run` 与 `--re-sign-stable` **不写审计行**（`--dry-run` 连 `--audit-out` 都不接），它们的失败原因只看 stderr。
 
 上传器固定执行十三步，**不得调换**：本地预验证 → stage（建 staging 目录 + 续传上传 + 远端改名）→ 远端复核 → 取频道锁 → 锁内重新核验 → 原子提交版本目录（**单次目录 rename**）→ 备份旧 manifest → CAS → **SFTP 上传临时 manifest 并核对远端摘要** → 原子翻转 → 公网复验 → 逐阶段审计 → 释放锁。
 
@@ -111,12 +132,13 @@ node scripts/feed-publish.mjs --commit --channel internal --version <版本> --h
 锁是**目录 + `owner.json`**，不是裸目录。恢复必须先读 owner，再显式确认：
 
 ```powershell
+$env:MOFANG_FEED_OPERATOR = '<本执行人>'
 node scripts/feed-publish.mjs --break-lock --channel <频道> --host <主机> --known-hosts <路径> --reason "<为什么可以安全破除>" --confirm-runid <审计日志里那条 owner 的 runid> --audit-out <审计日志路径>
 ```
 
 `--break-lock` **不需要** `--version`：锁路径是 `/opt/rongying/updates-state/lock/<频道>`，与版本无关（工具也不会回显版本）。`--confirm-runid` 必须与远端 owner 的 `runid` **完全一致**，否则立即拒绝；破除结果与真实 `previousOwner`、操作者都会写进审计日志。**删除失败不会记成 `lock-broken`。**
 
-**锁在、但 `owner.json` 读不出来时**（`--confirm-runid` 无从确认 —— 上面那条命令**不适用**）：状态路径是 `/opt/rongying/updates-state/lock/<频道>`，记录文件是它下面的 `owner.json`。**不要 `rm -rf` 这个目录，也不要 `rm` 掉锁目录本身**（状态目录是 junction 高发区，本仓库有硬规定；裸删会留下无法解释的状态）。在发布主机上按顺序做三件事：
+**锁在、但 `owner.json` 读不出来时**（`--confirm-runid` 无从确认 —— 上面那条命令**不适用**）：状态路径是 `/opt/rongying/updates-state/lock/<频道>`，记录文件是它下面的 `owner.json`。**不要 `rm -rf` 这个目录，也不要 `rm` 掉锁目录本身**（状态目录是 junction 高发区，本仓库有硬规定；裸删会留下无法解释的状态）。用你平时的登录账号与密钥登到发布主机上（**本手册从不要求你手写 `ssh` 命令**），按顺序做**两件事**：
 
 ```bash
 ls -la /opt/rongying/updates-state/lock/<频道>
@@ -137,6 +159,7 @@ cat /opt/rongying/updates-state/lock/<频道>/owner.json
 **确认前一次运行确实不在进行中**之后，才走这条专用路径（仍然必填 `--reason` 与 `--audit-out`，并用这个 flag 本身作为“已确认不在进行中”的声明；**不要求** `--confirm-runid`，因为根本没有可确认的 runid）：
 
 ```powershell
+$env:MOFANG_FEED_OPERATOR = '<本执行人>'
 node scripts/feed-publish.mjs --break-lock --channel <频道> --owner-record-unreadable --reason "<为什么可以安全破除>" --host <主机> --known-hosts <路径> --audit-out <审计日志路径>
 ```
 
@@ -146,9 +169,11 @@ node scripts/feed-publish.mjs --break-lock --channel <频道> --owner-record-unr
 
 严格执行 [U 盘整目录更新真盘验收](./portable-update-real-disk-acceptance.md)。exFAT、NTFS、两台干净 Windows 电脑、登录、付费模型和真实对话都通过前，不得进入正式频道。
 
-### 9. 复制不可变制品到正式位置
+### 9. 离线签出 stable 的 manifest（这一步不搬制品）
 
 此步需要单独的「正式更新源发布」授权。`stable` **只能复用** `portable.zip` 与 `portable-files.json` 的**原字节**；**`stable` 的 manifest 必须单独离线签名**（`channel: stable` 与 stable 的 `packageUrl`），禁止改字段复用 internal 的 manifest——签名覆盖 `channel` 与 `packageUrl`。
+
+⚠️ **这一步不复制、不上传任何东西**（本节标题过去写作“复制不可变制品到正式位置”，会让人去找一条并不存在的命令）：制品由**第 10 步的 `--commit`** 放上去，用的还是 internal 那两个文件的**原字节**。这里只做一件事：**离线**签出 stable 的 manifest。
 
 stable 的 manifest 用上传器的离线模式**当场签**（**不联网**，只用本地产物与仓库外的私钥）：
 
@@ -167,6 +192,8 @@ node scripts/feed-publish.mjs --re-sign-stable --channel stable --version <版�
 用同一上传器 `--channel stable` 执行同样的十三步：
 
 ```powershell
+$env:MOFANG_UPDATE_PUBLIC_KEY_B64 = '<与私钥匹配的 SPKI Base64 公钥>'
+$env:MOFANG_FEED_OPERATOR = '<本执行人>'
 node scripts/feed-publish.mjs --preflight --channel stable --version <版本> --host <主机> --known-hosts <仓库外的 known_hosts 路径> --audit-out <仓库外的审计日志路径>
 node scripts/feed-publish.mjs --commit --channel stable --version <版本> --host <主机> --known-hosts <仓库外的 known_hosts 路径> --package <portable.zip> --file-manifest <portable-files.json> --manifest <第 9 步签出来的 stable manifest> --audit-out <仓库外的审计日志路径>
 ```
@@ -185,11 +212,12 @@ node scripts/feed-publish.mjs --commit --channel stable --version <版本> --hos
 
 ## 发布前检查单
 
-- [ ] `docs/portable-update-key-registry.md` 的 host-key 指纹已由用户或授权运维人员经**可信带外渠道**核对，并写明核对方式。
+- [ ] `docs/portable-update-key-registry.md` 的 host-key 指纹已由用户或授权运维人员经**可信带外渠道**核对，并写明核对方式。（本项依赖《2026-09-22-portable-release-assembly-and-ci》Task 6 落地的密钥登记册；未落地前记「未验证」）
 - [ ] 上传器使用**仓库外** known_hosts，`BatchMode=yes` 与 `StrictHostKeyChecking=yes` 生效。
 - [ ] 三个产物的本地 SHA-256 与大小已记录，且与待发 manifest 逐项一致。
-- [ ] 启动器身份挑战（第 6b 步）三条全部通过，读数已归档为**发布期 QC 证据**。
+- [ ] 启动器身份挑战（第 6b 步）三条全部通过，读数已归档为**发布期 QC 证据**。（本项依赖《2026-09-22-portable-release-assembly-and-ci》Task 6 落地的第 6b 步；未落地前记「未验证」）
 - [ ] `--audit-out` 指向**仓库外**；审计日志含 `open` … `unlock` 的**逐阶段**记录。
+- [ ] 审计行里的 `operator` 是本执行人，不是 `unknown`（会写审计行的模式都设了 `MOFANG_FEED_OPERATOR`，见「发布前提」）。
 - [ ] 已保留上一版 `manifest.json`、`portable-files.json` 与 `portable.zip` 作为回滚材料。
 - [ ] 已确认「回滚只能拦住还没升级的客户端」——已升级的客户端**不会**降级，真降级必须另开事故流程。
 

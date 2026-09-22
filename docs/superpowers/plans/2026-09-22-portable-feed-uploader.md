@@ -86,7 +86,8 @@
    3b. **（第二闸门刀加进本节，Task 7–8 直接继承）敏感性检查若活在"会做真事"的那一侧，必须让接触变成不可能，而不是不太可能。** 形状来自 Task 6 的一次实测（见该账本第五节那条边界事故）：为了证明"套件从不真的起 ssh"，先用 **PATH 前置的假 `ssh`** 去试 —— 而 Windows 上 `execFile` 不解析 `.cmd`，于是那次"敏感性检查"**真的起了一个 `ssh.exe`**。**PATH 前置是"不太可能"（换个平台、换个扩展名就漏），把依赖的函数体换成 `throw` 才是"不可能"**。⇒ 任何**验证器/探针/敏感性检查**，只要它本身会调用真实资源（网络、进程、密钥、远端），它的隔离手段必须与**被验证的那件事**同强度：**替换依赖**（注入桩、把默认实现换成 `throw`），**不是**改环境（PATH、别名、当前目录）。**并且在登记结论时按可知的口径写**：真起过进程就不能写"没有发出任何数据"之外的更强的话（单标签主机名至多会有本地名字解析尝试）。
 
 4. **（Task 8 刀加进本节，之后直接继承）两条：**
-   - **测试里的主机名一律用 `.invalid`**（RFC 2606 保留、**不能被解析**）。本计划里两次"意外起了真 `ssh`"的事故之所以只是脚注，靠的就是这个夹具名：目标名不可解析 ⇒ 接触在**名字层**就已经不可能。**别把夹具主机名写成任何看起来能解析的东西**（真域名、公司域名、单标签名、`localhost`、字面 IP）——夹具一旦能解析，一次"忘了接线"就会变成一次真的出网。**唯一的例外是"故意非法的主机串"夹具**（空串、带空白/控制字符、以 `-` 开头的选项注入形状）：它们的作用就是**被守卫拒绝**，本来就到不了 transport；但它们**不得**同时是一个"看起来能解析"的正常名字。⚠️ **这条规则在本刀落地时并不成立**，实测抓到两处：单标签名 `'h'`（会走 DNS 搜索后缀）与 `'release.example.com'`（**能解析**）⇒ 全部改成 `'h.invalid'` / `'release.example.invalid'`（测试文件与镜像围栏同改，`MATCHED_PAIRS` 保持 16）。
+   - **测试里的主机名一律用 `.invalid`**（RFC 2606 保留、**不能被解析**）。本计划里两次"意外起了真 `ssh`"的事故之所以只是脚注，靠的就是这个夹具名：目标名不可解析 ⇒ 接触在**名字层**就已经不可能。**别把夹具主机名写成任何看起来能解析的东西**（真域名、公司域名、单标签名、`localhost`、字面 IP）——夹具一旦能解析，一次"忘了接线"就会变成一次真的出网。**唯一的例外是"故意非法的主机串"夹具**（空串、带空白/控制字符、以 `-` 开头的选项注入形状）：它们的作用就是**被守卫拒绝**，本来就到不了 transport；但它们**不得**同时是一个"看起来能解析"的正常名字。⚠️ **这条规则在本刀落地时并不成立**，实测抓到两处：单标签名 `'h'`（会走 DNS 搜索后缀）与 `'release.example.com'`（**能解析**）⇒ 全部改成 `'h.invalid'` / `'release.example.invalid'`（测试文件与镜像围栏同改，`MATCHED_PAIRS` 保持 16）。**2026-09-23 修复刀把规则补成真的（不是给它加限定词）**：又抓到两处 —— `scripts/lib/portable-update-release.test.mjs:182 / :260` 的 `updates.example.com`（**能解析**）⇒ 统一成 `updates.example.invalid`；两处都是**输入**，没有任何断言依赖那个字面量（改完 `check:portable-update-release` 仍 `13 / 13 / 0`，且它给的是 `--base-url` 与 `buildPortableRelease` 的 `baseUrl`，从不出网）。**唯一一处显式豁免（写在规则里，不靠"没人看见"）**：`scripts/lib/udisk-diagnose.test.mjs:586` 的 `ws://127.0.0.1:18789` —— 它是**数据夹具里的一条本机 URL**（`gateways[].url`），不是"会被交给 transport 的主机名"，且那个模块里**没有任何 loopback 专属逻辑**；改它需要它自己的理由，所以在这里豁免，而不是把规则悄悄放宽。⇒ 规则现在的语义范围是：**"会被交给 transport / 网络调用的夹具主机名不得可解析"**；数据里出现的其它字符串按各自模块的性质单独判定。
+   - **`scripts/**` 的文风规则（不写注释、不写 CJK）此前没有任何自动执行**：`eslint.config.mjs:8`把`scripts/**`与`**/scripts/**` 整片 ignore ⇒ 规则只活在文档里。**2026-09-23 修复刀**用 CLI 套件里的一条用例钉住它（读四个 feed 发布源，逐行断言"无注释行、无 CJK"），**不\*\*去放宽 eslint 的爆炸半径；两条变异（H1 插入注释行、H2 插入 CJK 串）各证明这条钉子真的会红。
    - **注入缝的默认值就是真实现时，"测试忘了接线"会静默落到真实现。** `runCli(argv, dependencies)` 原先把 `dependencies.createTransport` 默认成真工厂，于是漏传依赖不会报错，只会**真的去起 `ssh`**（本计划确实发生过一次）。**修法三件**：① 模块内**不留任何默认值** —— 缺依赖**直接抛错**（抛错是"不可能"，默认值是"很可能没人发现"）；② 真工厂只在**组合根**（`scripts/feed-publish.mjs`）接线，入口仍然只有两条语句；③ **离线臂也要传工厂，并断言它从未被构造** —— 这比"没有输出"强一档：后者在实现悄悄多用一次依赖时照样是绿的。
 
 **复核纪律（拿"规定文本"的方式）：** 复核者手里的那份**规定文本**必须取自**被复核提交的父提交**（`git show <base>:<plan-file>`），**绝不能用 HEAD 的那份** —— 实施者会改计划（本刀的所有"实现偏离"就是这么改的），所以 HEAD 的那份已经**悄悄变成了对实现的描述**，拿它去比对等于拿实现给自己的自我描述去验收实现，什么都验不出来。缺的正是"独立规格"这四个字。
@@ -6368,12 +6369,30 @@ F2-M2（拒绝覆盖）：           - writeFileSync(stableManifestOut, release.
 此步需要单独的「测试更新源发布」授权。用经过复核的上传器执行，**不要现场拼 `scp` 命令**：
 
 ```powershell
+$env:MOFANG_UPDATE_PUBLIC_KEY_B64 = '<与私钥匹配的 SPKI Base64 公钥>'
+$env:MOFANG_FEED_OPERATOR = '<本执行人>'
 node scripts/feed-publish.mjs --dry-run --channel internal --version <版本> --package <portable.zip> --file-manifest <portable-files.json> --manifest <manifest.json>
 node scripts/feed-publish.mjs --preflight --channel internal --version <版本> --host <主机> --known-hosts <仓库外的 known_hosts 路径> --audit-out <仓库外的审计日志路径>
 node scripts/feed-publish.mjs --commit --channel internal --version <版本> --host <主机> --known-hosts <仓库外的 known_hosts 路径> --package <portable.zip> --file-manifest <portable-files.json> --manifest <manifest.json> --audit-out <仓库外的审计日志路径>
 ```
 
-退出码：`0` 完成；`1` 失败、拒绝或事故；`2` 没给模式旗标（工具只打印用法）；`3` 可重跑（翻转未生效 —— **只有这个码**代表 `--commit` 可以安全重跑，其它非零码都可能已经改动过远端状态）。**任何非 `0` 都要先读审计日志。**
+退出码：`0` 完成；`1` 失败、拒绝、**被别人占着锁**或事故；`2` 没给模式旗标（工具只打印用法）；`3` 可重跑（翻转未生效 —— **只有这个码**代表 `--commit` 可以安全重跑，其它非零码都可能已经改动过远端状态）。
+
+**读结果先看 `outcome`，不要只看退出码**：`1` **同时**代表 `fail` / `blocked` / `incident` 三种结论，而它们的下一步动作相反。
+
+| `outcome`（命令打印的 JSON 里那个字段） | 意思                                                                        | 下一步                                                                              |
+| --------------------------------------- | --------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `done`                                  | 十三步走完、公网复验通过、锁已释放                                          | 退出码 `0`，继续第 8 步                                                             |
+| `retry`                                 | 翻转没生效（公网还是旧 manifest），远端状态**确定**                         | 退出码 `3`，**只有它可以安全重跑** `--commit`                                       |
+| `fail`                                  | 翻转**之前**失败，远端状态确定                                              | 退出码 `1`，读审计日志看停在哪一阶段，修掉成因再重跑                                |
+| `blocked`                               | 这个频道**已经有锁**，本次**没拿到锁**（`lockState: not-acquired`）         | 退出码 `1`，**不要去拆锁**：先确认那次运行确实**已经死了**，才走 7b；活着就等它收尾 |
+| `incident`                              | 结果**不确定**（翻转后失败、上传后核对不上、CAS 不匹配…），**锁被有意保留** | 退出码 `1`，停下来人工核查，再按 7b 的专用路径恢复                                  |
+
+⚠️ **`blocked` 就是"另一个运行正持着这个频道的锁"，那把锁不是你的**：它和完整性事故 `incident` 都退 `1`，但**只有确认那次运行确实已经不在进行中之后**才允许走 7b 的恢复路径 —— 否则你会在它写到一半时把它脚下的东西拆掉。
+
+**结论在哪：** 命令打印的 JSON 的 `outcome` 字段，以及审计日志里**收口那一行的 `stage`**（同一个词，例如 `{"stage":"blocked","reason":"the channel is already locked"}`）。**别拿审计日志最后一行当结论**：最后一行是 `unlock`（`status` 为 `done` 或 `retained`）或 `lock-retained`，它只说**锁**怎么了；各阶段行上的 `status` 只说**那一步**的结果。
+
+**凡是给了 `--audit-out` 的模式（`--preflight` / `--commit` / `--break-lock`），任何非 `0` 都要先读审计日志**；`--dry-run` 与 `--re-sign-stable` **不写审计行**（`--dry-run` 连 `--audit-out` 都不接），它们的失败原因只看 stderr。
 
 上传器固定执行十三步，**不得调换**：本地预验证 → stage（建 staging 目录 + 续传上传 + 远端改名）→ 远端复核 → 取频道锁 → 锁内重新核验 → 原子提交版本目录（**单次目录 rename**）→ 备份旧 manifest → CAS → **SFTP 上传临时 manifest 并核对远端摘要** → 原子翻转 → 公网复验 → 逐阶段审计 → 释放锁。
 
@@ -6389,12 +6408,13 @@ node scripts/feed-publish.mjs --commit --channel internal --version <版本> --h
 锁是**目录 + `owner.json`**，不是裸目录。恢复必须先读 owner，再显式确认：
 
 ```powershell
+$env:MOFANG_FEED_OPERATOR = '<本执行人>'
 node scripts/feed-publish.mjs --break-lock --channel <频道> --host <主机> --known-hosts <路径> --reason "<为什么可以安全破除>" --confirm-runid <审计日志里那条 owner 的 runid> --audit-out <审计日志路径>
 ```
 
 `--break-lock` **不需要** `--version`：锁路径是 `/opt/rongying/updates-state/lock/<频道>`，与版本无关（工具也不会回显版本）。`--confirm-runid` 必须与远端 owner 的 `runid` **完全一致**，否则立即拒绝；破除结果与真实 `previousOwner`、操作者都会写进审计日志。**删除失败不会记成 `lock-broken`。**
 
-**锁在、但 `owner.json` 读不出来时**（`--confirm-runid` 无从确认 —— 上面那条命令**不适用**）：状态路径是 `/opt/rongying/updates-state/lock/<频道>`，记录文件是它下面的 `owner.json`。**不要 `rm -rf` 这个目录，也不要 `rm` 掉锁目录本身**（状态目录是 junction 高发区，本仓库有硬规定；裸删会留下无法解释的状态）。在发布主机上按顺序做三件事：
+**锁在、但 `owner.json` 读不出来时**（`--confirm-runid` 无从确认 —— 上面那条命令**不适用**）：状态路径是 `/opt/rongying/updates-state/lock/<频道>`，记录文件是它下面的 `owner.json`。**不要 `rm -rf` 这个目录，也不要 `rm` 掉锁目录本身**（状态目录是 junction 高发区，本仓库有硬规定；裸删会留下无法解释的状态）。用你平时的登录账号与密钥登到发布主机上（**本手册从不要求你手写 `ssh` 命令**），按顺序做**两件事**：
 
 ```bash
 ls -la /opt/rongying/updates-state/lock/<频道>
@@ -6415,14 +6435,17 @@ cat /opt/rongying/updates-state/lock/<频道>/owner.json
 **确认前一次运行确实不在进行中**之后，才走这条专用路径（仍然必填 `--reason` 与 `--audit-out`，并用这个 flag 本身作为“已确认不在进行中”的声明；**不要求** `--confirm-runid`，因为根本没有可确认的 runid）：
 
 ```powershell
+$env:MOFANG_FEED_OPERATOR = '<本执行人>'
 node scripts/feed-publish.mjs --break-lock --channel <频道> --owner-record-unreadable --reason "<为什么可以安全破除>" --host <主机> --known-hosts <路径> --audit-out <审计日志路径>
 ```
 
 审计日志里会记 `stage: break-lock` + `ownerRecordUnreadable: true` + 原因 + 执行人。**「交给人工检查」单独一句不是可接受的终态指令**：没有上面这条路径，操作员面前只剩“自己想办法删掉那个目录”一条路，而那正是本仓库禁止的动作。
 
-### 9. 复制不可变制品到正式位置
+### 9. 离线签出 stable 的 manifest（这一步不搬制品）
 
 此步需要单独的「正式更新源发布」授权。`stable` **只能复用** `portable.zip` 与 `portable-files.json` 的**原字节**；**`stable` 的 manifest 必须单独离线签名**（`channel: stable` 与 stable 的 `packageUrl`），禁止改字段复用 internal 的 manifest——签名覆盖 `channel` 与 `packageUrl`。
+
+⚠️ **这一步不复制、不上传任何东西**（本节标题过去写作“复制不可变制品到正式位置”，会让人去找一条并不存在的命令）：制品由**第 10 步的 `--commit`** 放上去，用的还是 internal 那两个文件的**原字节**。这里只做一件事：**离线**签出 stable 的 manifest。
 
 stable 的 manifest 用上传器的离线模式**当场签**（**不联网**，只用本地产物与仓库外的私钥）：
 
@@ -6441,6 +6464,8 @@ node scripts/feed-publish.mjs --re-sign-stable --channel stable --version <版�
 用同一上传器 `--channel stable` 执行同样的十三步：
 
 ```powershell
+$env:MOFANG_UPDATE_PUBLIC_KEY_B64 = '<与私钥匹配的 SPKI Base64 公钥>'
+$env:MOFANG_FEED_OPERATOR = '<本执行人>'
 node scripts/feed-publish.mjs --preflight --channel stable --version <版本> --host <主机> --known-hosts <仓库外的 known_hosts 路径> --audit-out <仓库外的审计日志路径>
 node scripts/feed-publish.mjs --commit --channel stable --version <版本> --host <主机> --known-hosts <仓库外的 known_hosts 路径> --package <portable.zip> --file-manifest <portable-files.json> --manifest <第 9 步签出来的 stable manifest> --audit-out <仓库外的审计日志路径>
 ```
@@ -6461,11 +6486,12 @@ node scripts/feed-publish.mjs --commit --channel stable --version <版本> --hos
 
 ## 发布前检查单
 
-- [ ] `docs/portable-update-key-registry.md` 的 host-key 指纹已由用户或授权运维人员经**可信带外渠道**核对，并写明核对方式。
+- [ ] `docs/portable-update-key-registry.md` 的 host-key 指纹已由用户或授权运维人员经**可信带外渠道**核对，并写明核对方式。（本项依赖《2026-09-22-portable-release-assembly-and-ci》Task 6 落地的密钥登记册；未落地前记「未验证」）
 - [ ] 上传器使用**仓库外** known_hosts，`BatchMode=yes` 与 `StrictHostKeyChecking=yes` 生效。
 - [ ] 三个产物的本地 SHA-256 与大小已记录，且与待发 manifest 逐项一致。
-- [ ] 启动器身份挑战（第 6b 步）三条全部通过，读数已归档为**发布期 QC 证据**。
+- [ ] 启动器身份挑战（第 6b 步）三条全部通过，读数已归档为**发布期 QC 证据**。（本项依赖《2026-09-22-portable-release-assembly-and-ci》Task 6 落地的第 6b 步；未落地前记「未验证」）
 - [ ] `--audit-out` 指向**仓库外**；审计日志含 `open` … `unlock` 的**逐阶段**记录。
+- [ ] 审计行里的 `operator` 是本执行人，不是 `unknown`（会写审计行的模式都设了 `MOFANG_FEED_OPERATOR`，见「发布前提」）。
 - [ ] 已保留上一版 `manifest.json`、`portable-files.json` 与 `portable.zip` 作为回滚材料。
 - [ ] 已确认「回滚只能拦住还没升级的客户端」——已升级的客户端**不会**降级，真降级必须另开事故流程。
 ```
@@ -6588,12 +6614,14 @@ git commit -m "docs(release): route the feed publishing steps through the upload
 
 ## 第十五节 Task 8 刀：三处围栏缺陷、注入缝与手册（2026-09-23）
 
-**这一刀是什么**：Task 8（手册 + nginx + 检查单）本身，加上**它自己围栏里的三处缺陷**与**一处注入缝**。**四个提交**，全部显式 pathspec、消息末尾带 `Co-Authored-By: Claude Code <noreply@anthropic.com>`、没有 `--amend`、没有重写历史：
+**这一刀是什么**：Task 8（手册 + nginx + 检查单）本身，加上**它自己围栏里的三处缺陷**与**一处注入缝**。**六个提交**（⚠️ **2026-09-23 更正**：本节初稿写"四个"，漏了下面第 5、6 两条**只碰账本与帧注**的提交 ⇒ 谁要按"这一刀"去 `git checkout 63af981d` 读本账本，读到的是**半成品帧**，不是定稿；`git log --oneline 706bfc18~1..c3bcf130` 给出的就是这六个），全部显式 pathspec、消息末尾带 `Co-Authored-By: Claude Code <noreply@anthropic.com>`、没有 `--amend`、没有重写历史：
 
 1. **`706bfc18`** `fix(feed): scope the version guard and stop defaulting the transport factory` —— 代码（`feed-publish.mjs` / `feed-publish-cli.mjs` / `scripts/feed-publish.mjs` / 两个测试文件）+ 三处围栏同提交重同步 + 通用纪律第 4 条 + 文件地图 + Task 7 验收项 1 的更正。
 2. **`cc3749d9`** `docs(release): route the feed publishing steps through the uploader` —— `docs/runbooks/portable-update-release.md` + Task 8 围栏更正。
 3. **`63af981d`** `docs(feed): record the task 8 cut, its three fence defects and the seam` —— 本节（第十五节）+ 门禁表五格。
 4. **`3711aa3c`** `test(feed): keep every live fixture host under .invalid` —— 第 4 条纪律里那条规则的**落地修正**（见第一节末）。
+5. **`dd662aef`** `docs(feed): bring the task 8 ledger to the final frame` —— 只改本账本（帧注与行号）。
+6. **`c3bcf130`** `docs(feed): name the task 8 gate frame without claiming the tip` —— 只改本账本的帧注（HEAD）。
 
 **三套用例**：`164 / 31 / 36` ⇒ **`166 / 31 / 40` = 237**（模块 +2、CLI +4）。`pnpm check` **exit 0**（在**代码齐活的那一刀（C4，`3711aa3c`）**的字节上复跑；**其后本刀只剩纯文档提交**，每次提交后 `prettier --check`、`git diff --check`、镜像检查都复跑过，读数不变：日志 10227 行、`feed-publish` 三文件 `237 / 237 / 0`、`✖`/`not ok`/`FAIL` 计数 0）。
 
@@ -6605,9 +6633,9 @@ git commit -m "docs(release): route the feed publishing steps through the upload
 | N2  | Task 8 第 7 步的 `--preflight` 命令**漏了 `--audit-out`**                                                                                                                        | round 1 已把它变成必填 ⇒ 退出 1 `--audit-out is required`            | 围栏补上；并把围栏里**每一条**命令都对当前 CLI 实跑（见第四节）                                                                                                                  |
 | N3  | 手册把"空输出（0 字节）"写成**第四种成因**，而工具报的是 `ownerRecordStatus: 'corrupt'` + `the owner record is not valid JSON`                                                   | 操作员的"读数 → 动作"对照表与工具输出对不上                          | 围栏改成**四种读法 → 三种状态**的对照表，空输出单独列一行并注明它归到 `corrupt`                                                                                                  |
 
-⚠️ **N1 的收窄不是删除**：版本若被显式传进来**仍然要过语义化校验**（`banana` 会被拒），`--channel` 守卫原样保留。两条都由用例按名钉住。
+⚠️ **N1 的收窄不是删除**：版本若被显式传进来**仍然要过语义化校验**（`banana` 会被拒），`--channel` 守卫原样保留。两条都由用例按名钉住 —— **`|| versionGiven` 这一半的变异读数见第三节 M7**（本节初稿只有"钉住"这句话、没有变异行 ⇒ 按本计划自己的规则"没有变异行 = 未验证"，**2026-09-23 修复刀补上**）。
 
-**顺带（同刀）**：通用纪律第 4 条那条 `.invalid` 规则**落地时原本不成立** —— 夹具里有两处不合规的主机名（单标签 `'h'` 会走 DNS 搜索后缀；`'release.example.com'` **能解析**）⇒ 本刀把它们统一成 `'h.invalid'` / `'release.example.invalid'`（测试文件与镜像围栏**同改**：`MATCHED_PAIRS` 保持 **16**，模块与 CLI 套件保持 `166 / 0` 与 `40 / 0`）。**故意非法的主机串**夹具（`''` / `'bad host'` / `'-oProxyCommand=x'` / `'badhost'`）**保留**，规则里已写明这个例外。
+**顺带（同刀）**：通用纪律第 4 条那条 `.invalid` 规则**落地时原本不成立** —— 夹具里有两处不合规的主机名（单标签 `'h'` 会走 DNS 搜索后缀；`'release.example.com'` **能解析**）⇒ 本刀把它们统一成 `'h.invalid'` / `'release.example.invalid'`（测试文件与镜像围栏**同改**：`MATCHED_PAIRS` 保持 **16**，模块与 CLI 套件保持 `166 / 0` 与 `40 / 0`）。**故意非法的主机串**夹具（`''` / `'bad host'` / `'-oProxyCommand=x'` / `'bad\u0001host'`）**保留**，规则里已写明这个例外。⚠️ **2026-09-23 更正（Minor）**：本行初稿把这最后一条写成 `'badhost'` —— **转义层被吃掉了一道**：原文里是 `U+0001` 控制字符（`feed-publish.test.mjs:2998` 的 `'bad\u0001host'`），而在计划里它渲染成一个**单标签、看起来能解析**的名字，正好违反本规则本身。已按转义写回。
 
 ⚠️ **本刀新增（围栏与手册同改）**：Task 8 第 9/10 步此前**只有散文、没有命令**。现补上 `--re-sign-stable`（离线签 stable manifest；含 `--stable-out` 用 `wx` **非原子**的残余风险句，以及"这个模式不写审计行 ⇒ 三个摘要要手工进发布记录"）与 stable 的 `--preflight` / `--commit`。`发布前提` 里那句"仓库目前没有通用服务器上传脚本"也改成"只允许用第 7/9/10 步的上传器"，否则同一份手册自相矛盾。
 
@@ -6619,16 +6647,17 @@ git commit -m "docs(release): route the feed publishing steps through the upload
 
 ### 三、变异（5 条 + 1 条对照 + 1 条装置回退）
 
-装置同通用纪律第 3 条：锚点恰好 1 次 → 变异**前**取基线 sha256、备份落仓库外 → 写盘后重读确认 → `node --check` → 打印**整行** hunk → 跑三套 → 核对**预先写明**的红名单 → 逐字节恢复 → 比 sha256 → `git status --porcelain` 与变异前逐字相同。**7 条全部 `restoreSha256Equal true` + `gitStatusIdentical true`。M1–M5 在 C4 `3711aa3c` 的字节上**复跑过一次**，读数与第一次逐字相同；M6 的三次读数见下表。**
+装置同通用纪律第 3 条：锚点恰好 1 次 → 变异**前**取基线 sha256、备份落仓库外 → 写盘后重读确认 → `node --check` → 打印**整行** hunk → 跑三套 → 核对**预先写明**的红名单 → 逐字节恢复 → 比 sha256 → `git status --porcelain` 与变异前逐字相同。**7 条全部 `restoreSha256Equal true` + `gitStatusIdentical true`。M1–M5 在 C4 `3711aa3c` 的字节上**复跑过一次**，读数与第一次逐字相同；M6 的三次读数见下表。\*\***（2026-09-23 修复刀往本表追加了一行 **M7** —— N1 的 `|| versionGiven` 那一半此前**只有「两条都由用例按名钉住」这句断言、没有变异行**；M7 与 M1 一起在本轮复量过，读数在各自行里。）\*\*
 
-| #   | 变异（一个表达式）                                                                             | 预先写明的红名单                        | 读数                                                                                                                                                                                                                                                                       |
-| --- | ---------------------------------------------------------------------------------------------- | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| M1  | `feed-publish-cli.mjs`：`const versionRequired = mode !== 'break-lock';` ⇒ `= true;`           | break-lock 的两条新用例                 | `module 166/166/0`、`transport 31/31/0`、`cli 38/40/2` ⇒ **两条逐条命中，无多余红**                                                                                                                                                                                        |
-| M2  | `feed-publish.mjs`：`const versionRequired = raw.versionRequired !== false;` ⇒ `= true;`       | 模块"+不再带版本" + CLI break-lock 那条 | `module 165/166/1`、`cli 39/40/1` ⇒ 命中                                                                                                                                                                                                                                   |
-| M3  | `feed-publish-cli.mjs`：`if (typeof createTransport !== 'function') {` ⇒ `if (false) {`        | 缺工厂要抛错那条                        | `cli 39/40/1` ⇒ 命中                                                                                                                                                                                                                                                       |
-| M4  | `feed-publish.mjs`：`version: versionRequired ? raw.version : null,` ⇒ `version: raw.version,` | 模块"+不再带版本"那条                   | `module 165/166/1`、`cli 40/40/0` ⇒ 命中                                                                                                                                                                                                                                   |
-| M5  | **对照（必须留绿）**：`mode !== 'break-lock'` ⇒ `!(mode === 'break-lock')`                     | —                                       | `166 / 31 / 40` **全绿**、红名单为空 ⇒ 装置对语义等价改动不敏感                                                                                                                                                                                                            |
-| M6  | **装置回退（不是生产代码）**：`captureRun` 换回 `process.stdout.write`                         | break-lock 那条                         | **3/3 次红**，但红的是**测试文件本身**（名字报成 `scripts\libeed-publish-cli.test.mjs`），读数 `cli 7/8/1` —— 报告流被吞掉后整个文件**只跑了 8 条**。登记为 `EXPECTATION_FAILED`：红得比预登记**更重**（不是某条用例红了，是用例集**塌了**），但它**不能**用来钉某一条用例 |
+| #   | 变异（一个表达式）                                                                             | 预先写明的红名单                                                                                                                                                                                                                                                                                                                                                                                          | 读数                                                                                                                                                                                                                                                                       |
+| --- | ---------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | --- | ------------------------------------------- |
+| M1  | `feed-publish-cli.mjs`：`const versionRequired = mode !== 'break-lock';` ⇒ `= true;`           | `the break lock mode succeeds without a version flag and echoes no version it never read`（当时叫 `…needs only the channel, and prints no version it was never given` ⇒ 2026-09-23 按 Minor 2 改名）＋ `the break lock mode still refuses a channel that is not in the whitelist`（**按名**；⛔ **不包括** `…still refuses a version flag that is not a semantic version` —— 那条**留绿**，它属于另一半） | `module 166/166/0`、`transport 31/31/0`、`cli 38/40/2` ⇒ **两条逐条命中，无多余红**。2026-09-23 在新帧上复量：`cli 40/42/2`，红的**仍是同样两条**（套件 +2 = 本轮新增的两条用例）                                                                                          |
+| M2  | `feed-publish.mjs`：`const versionRequired = raw.versionRequired !== false;` ⇒ `= true;`       | 模块"+不再带版本" + CLI break-lock 那条                                                                                                                                                                                                                                                                                                                                                                   | `module 165/166/1`、`cli 39/40/1` ⇒ 命中                                                                                                                                                                                                                                   |
+| M3  | `feed-publish-cli.mjs`：`if (typeof createTransport !== 'function') {` ⇒ `if (false) {`        | 缺工厂要抛错那条                                                                                                                                                                                                                                                                                                                                                                                          | `cli 39/40/1` ⇒ 命中                                                                                                                                                                                                                                                       |
+| M4  | `feed-publish.mjs`：`version: versionRequired ? raw.version : null,` ⇒ `version: raw.version,` | 模块"+不再带版本"那条                                                                                                                                                                                                                                                                                                                                                                                     | `module 165/166/1`、`cli 40/40/0` ⇒ 命中                                                                                                                                                                                                                                   |
+| M5  | **对照（必须留绿）**：`mode !== 'break-lock'` ⇒ `!(mode === 'break-lock')`                     | —                                                                                                                                                                                                                                                                                                                                                                                                         | `166 / 31 / 40` **全绿**、红名单为空 ⇒ 装置对语义等价改动不敏感                                                                                                                                                                                                            |
+| M7  | `feed-publish.mjs`：`if (versionRequired                                                       |                                                                                                                                                                                                                                                                                                                                                                                                           | versionGiven) {`⇒`if (versionRequired) {`（**2026-09-23 修复刀补的记录**：N1 收窄的**另一半**；基线＝恢复 sha256 `83f2e2c0bda4f93dba33e29f24cb12d6256d493132a7ef9b057629afaa005785`）                                                                                      | `a version flag that is given to a mode that does not need one is still checked`（模块）＋ `the break lock mode still refuses a version flag that is not a semantic version`（CLI） | `module 165/166/1`、`transport 31/31/0`、`cli 41/42/1` ⇒ **两条逐条命中、无多余红**；hunk 打印的整行是 `- if (versionRequired |     | versionGiven) {`/`+ if (versionRequired) {` |
+| M6  | **装置回退（不是生产代码）**：`captureRun` 换回 `process.stdout.write`                         | break-lock 那条                                                                                                                                                                                                                                                                                                                                                                                           | **3/3 次红**，但红的是**测试文件本身**（名字报成 `scripts\libeed-publish-cli.test.mjs`），读数 `cli 7/8/1` —— 报告流被吞掉后整个文件**只跑了 8 条**。登记为 `EXPECTATION_FAILED`：红得比预登记**更重**（不是某条用例红了，是用例集**塌了**），但它**不能**用来钉某一条用例 |
 
 ### 四、围栏命令逐条实跑（N2 的验收）
 
@@ -6653,3 +6682,115 @@ git commit -m "docs(release): route the feed publishing steps through the upload
 - **手册的 `--owner-record-unreadable` 路径没有真机读数**：`ls` / `cat` 的四种读数与三种状态的对照是**按代码与文档写的**，不是在一台真锁上读出来的。
 
 相关：`docs/superpowers/specs/2026-09-22-portable-release-infrastructure-correction-design.md`
+
+---
+
+## 第十六节 Task 8 代码质量闸门修复刀（2026-09-23）
+
+**这一刀是什么**：代码质量闸门在 Task 8 上留下 **5 条 Important（I1–I5）、10 条 Minor 与 1 条"建议采纳"**。**几乎全是文档** —— 交付物是手册 `docs/runbooks/portable-update-release.md`，读者是**凌晨三点决定要不要拆锁的操作员**。**框架 = 本节写完之后的字节**（手册也在这一帧里；本节自己那条只写读数的提交，其哈希不可能写进它自己，以 `git log` 为准）。
+
+**改了四个文件**：手册主体、本计划（本节 + 四处历史更正 + 通用纪律第 4 条 + 变异表 M1/M7）、`scripts/lib/feed-publish-cli.test.mjs`（+2 条用例、1 条改名）、`scripts/lib/portable-update-release.test.mjs`（两处夹具主机名）。**三套用例**：`166 / 31 / 40` ⇒ **`166 / 31 / 42` = 239**（CLI +2）。
+
+### 一、五条 Important
+
+**I1 —— 每条审计行的 `operator` 都是字面量 `unknown`。** 手册**承诺**过操作者会进审计日志（当时 `:117`：破除结果与真实 `previousOwner`、操作者都会写进审计日志），而全篇**没有任何一步**让操作员设 `MOFANG_FEED_OPERATOR`（`feed-publish-cli.mjs:150` 读它，缺省 `'unknown'`）⇒ "谁破了这把锁"整条线索是空的，且**没人会怀疑**。落地三处：
+
+1. `发布前提`（手册 `:18–20`）：「`MOFANG_FEED_OPERATOR='<本执行人>'`：**凡是会写审计行的模式都必须设** —— `--preflight` / `--commit` / `--break-lock`（两条恢复路径都算）。不设时工具按 `unknown` 落账，"谁在什么时候破了这把锁"就没有答案。」**并点名它适用于哪些模式**。
+2. 第 7 步（手册 `:96–97`）、7b 的两条恢复路径（`:135`、`:162`）、第 10 步（`:195–196`）的 `powershell` 块首行各加 `$env:MOFANG_FEED_OPERATOR = '<本执行人>'` —— 这四处**都要写审计行**；新开一个 shell 时它们各自都要重设一遍。
+3. 检查单新增一条（手册 `:220`）：「审计行里的 `operator` 是本执行人，不是 `unknown`（会写审计行的模式都设了 `MOFANG_FEED_OPERATOR`，见「发布前提」）。」
+
+**I2 —— 退出码 `1` 把 `blocked` 与 `incident` 混在一起，而手册只说"读审计日志"。** 工具是**五态**（`done` / `retry` / `fail` / `blocked` / `incident`，`feed-publish.mjs:773–808` 与 `:968–971`），只有 `done`→0、`retry`→3 被退出码区分 ⇒ **`blocked`（别人正持锁）与真完整性事故都退 `1`**；而手册全篇**没有出现过 `blocked`**，也没说判据在哪个字段 ⇒ 它给了操作员一把 `--break-lock` 锤子，却从没说**什么时候不该挥**。落地（手册第 7 步，`:103–119`）：
+
+- 退出码那行补上"**被别人占着锁**"；新增一句"**读结果先看 `outcome`，不要只看退出码**：`1` **同时**代表 `fail` / `blocked` / `incident` 三种结论，而它们的下一步动作相反"；
+- **五行的 `outcome` 表**（`done` / `retry` / `fail` / `blocked` / `incident` ⇒ 意思 + 下一步），`blocked` 那行写"退出码 `1`，**不要去拆锁**：先确认那次运行确实**已经死了**，才走 7b；活着就等它收尾"；
+- 那句警告按复核者要求**用原话落进手册**：「⚠️ **`blocked` 就是"另一个运行正持着这个频道的锁"，那把锁不是你的**：它和完整性事故 `incident` 都退 `1`，但**只有确认那次运行确实已经不在进行中之后**才允许走 7b 的恢复路径 —— 否则你会在它写到一半时把它脚下的东西拆掉。」
+- **Minor 3 同处落地**：原来那句"任何非 `0` 都要先读审计日志"**对 `--dry-run` 是假的**（那条命令行里根本没有 `--audit-out`）、对 `--re-sign-stable` 也是假的（它不写审计行）⇒ 收窄成"**凡是给了 `--audit-out` 的模式（`--preflight` / `--commit` / `--break-lock`）**…"。
+
+⚠️ **"判据在哪"这句话本刀按实测改写过一次（复核者原话不成立）**：复核者写的是"JSON 的 `outcome` 与**最后一行的 `status`**"。第四节那次实测显示：`blocked` 的收口行是 `{"stage":"blocked","reason":"the channel is already locked","runid":…,"operator":…,"at":…,"planHash":…}` —— **没有 `status` 字段**；`retry` 与 `incident` 的**最后一行**是 `lock-retained`，它的 `status` 是 `retained`。⇒ 手册因此写成「**结论在哪：** 命令打印的 JSON 的 `outcome` 字段，以及审计日志里**收口那一行的 `stage`**」，并显式加了"**别拿审计日志最后一行当结论**：最后一行是 `unlock`（`status` 为 `done` 或 `retained`）或 `lock-retained`，它只说**锁**怎么了"。
+
+**I3 —— 检查单里有两项指向这棵树里不存在的制品。** ① `docs/portable-update-key-registry.md`（**实测：任何提交里都不存在** —— `git log --oneline --all -- docs/portable-update-key-registry.md` 无输出、工作树里也没有）；② "第 6b 步"（本手册**没有** 6b —— 它由**兄弟计划** `docs/superpowers/plans/2026-09-22-portable-release-assembly-and-ci.md` 的 Task 6 **落进同一本手册**，那个登记册文件也归它）。这两项正好是检查单的**第 1 与第 4 项**，也就是压力下最容易盲勾的两项。落地：**就地标注**依赖与出口，不替兄弟计划干活（手册 `:215`、`:218`），附加句为「（本项依赖《2026-09-22-portable-release-assembly-and-ci》Task 6 落地的**密钥登记册**／**第 6b 步**；未落地前记「未验证」）」。
+
+**I4 —— 账本声称的钉子没有变异行。** `plan` 上写"N1 的收窄由两条用例按名钉住"，而 `|| versionGiven` 那一半**在变异表里没有行** —— 按本计划自己的规则"**没有变异行 = 未验证**"。落地：复跑该变异并补上 **M7 行**（读数与 hunk 见第五节，写入 §十五 的变异表）。**顺带更正** §十五 里那句"两条都由用例按名钉住"（现在指向 M7）。
+
+**I5 —— 第 7 / 10 步没有给出 `MOFANG_UPDATE_PUBLIC_KEY_B64`。** `feed-publish-cli.mjs` 在 `:171`（`--dry-run`）、`:216`（`--re-sign-stable`）、`:376`（`--commit`）读它；第 9 步给了、第 7 / 10 步没给 ⇒ 连续 shell 里能被第 5 步的残留救下，而**凌晨三点在新 shell 里重跑第 10 步，第一条命令就退 1**（`MOFANG_UPDATE_PUBLIC_KEY_B64 is required to verify the release manifest`，实测见第四节）。落地：第 7 步（`:96`）与第 10 步（`:195`）各加 `$env:MOFANG_UPDATE_PUBLIC_KEY_B64 = '<与私钥匹配的 SPKI Base64 公钥>'`；并在 `发布前提`（`:20`）**把适用范围写成真的**：**除 `--preflight` 与 `--break-lock` 之外每一种模式都要**（复核者给的括注"除 `--preflight`/`--re-sign-stable`"**是错的** —— `--re-sign-stable` 恰恰要它，`feed-publish-cli.mjs:216`），`--re-sign-stable` 还要 `MOFANG_UPDATE_SIGNING_KEY_FILE`。
+
+### 二、十条 Minor（逐条）
+
+| #   | 问题                                                                                                        | 落地                                                                                                                                                                                                                                                                                                                                                  |
+| --- | ----------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | §十五 M1 行的红名单写成"break-lock 的两条新用例"（**没有按名**，而 break-lock 有三条 CLI 用例）             | M1 行改成**两条具体名字**，并显式写出**第三条留绿、属于另一半**；顺带给出在新帧上的复量读数（见第五节）                                                                                                                                                                                                                                               |
+| 2   | `feed-publish-cli.test.mjs` 那条用例名读起来像 `--host`/`--reason`/`--audit-out`/`--confirm-runid` 都不必要 | 改名成 `the break lock mode succeeds without a version flag and echoes no version it never read`（**断言只证明"不需要 `--version`、也不回显版本"**，新名字不再承诺更多）                                                                                                                                                                              |
+| 3   | "任何非 `0` 都要先读审计日志"对 `--dry-run` / `--re-sign-stable` 是假的                                     | 收窄到"给了 `--audit-out` 的模式"，并写明那两个模式的失败只看 stderr（见 I2）                                                                                                                                                                                                                                                                         |
+| 4   | "按顺序做**三件事**"后面只有两条命令                                                                        | 改成"按顺序做**两件事**"                                                                                                                                                                                                                                                                                                                              |
+| 5   | 第 9 步标题仍是「复制不可变制品到正式位置」，而这一步**不复制任何东西**                                     | 标题改成「**离线签出 stable 的 manifest（这一步不搬制品）**」，并加一句"这一步不复制、不上传任何东西…制品由**第 10 步的 `--commit`** 放上去"                                                                                                                                                                                                          |
+| 6   | 7b 说"在发布主机上"，而全篇禁止现场拼 `ssh`                                                                 | 补一句"用你平时的登录账号与密钥登到发布主机上（**本手册从不要求你手写 `ssh` 命令**）"                                                                                                                                                                                                                                                                 |
+| 7   | §十五 的提交清单写"四个提交"，实际是**六个**（`dd662aef` / `c3bcf130` 漏了）                                | 改成六个并列出后两条 —— 否则按"这一刀"去 `git checkout 63af981d` 读本账本，读到的是**半成品帧**                                                                                                                                                                                                                                                       |
+| 8   | 控制字符夹具在计划里渲染成 `'badhost'`（读成**单标签、可解析**的名字，正好违反那条规则）                    | 改成按转义写 `'bad\u0001host'`（实际字节是 `feed-publish.test.mjs:2998` 的 `U+0001`）；本文件现在**一个裸控制字符都没有**                                                                                                                                                                                                                             |
+| 9   | `.invalid` 规则**没有语义范围限定**，且树里还有两处违规                                                     | **把规则补成真的**：`portable-update-release.test.mjs:182 / :260` 的 `updates.example.com`（**能解析**）⇒ `updates.example.invalid`；**显式豁免** `udisk-diagnose.test.mjs:586` 的 `ws://127.0.0.1:18789`（数据夹具里的本机 URL、该模块无 loopback 逻辑），规则语义收成"**会被交给 transport / 网络调用的夹具主机名不得可解析**"（见通用纪律第 4 条） |
+| 10  | `scripts/**` 的两条文风规则（无注释、无 CJK）**没有任何自动执行**（`eslint.config.mjs:8` 整片 ignore）      | 用一条 CLI 用例钉住（读四个 feed 发布源、逐行断言），**不**放宽 eslint 的爆炸半径；两条变异 H1/H2 各证明它会红（见第五节）                                                                                                                                                                                                                            |
+
+### 三、采纳的建议：组合根的行为臂（记录项）
+
+**记录项是"组合根 `scripts/feed-publish.mjs` 只有镜像（围栏 1–13 ⇔ 文件）在钉，没有行为钉子"。** 缝改完之后"入口忘接线"会**响亮地失败**，所以现在钉它很便宜。新用例（`feed-publish-cli.test.mjs` 末尾）：
+
+```js
+test('the entry script injects a transport factory, so a run with no mode flag prints usage rather than the missing factory error', () => {
+  const result = runCli([]);
+  assert.equal(result.status, 2, 'exit 2 is the usage banner; an entry without the factory exits 1 instead');
+  assert.match(result.stdout, /Usage: node scripts\/feed-publish\.mjs/u);
+  assert.doesNotMatch(result.stderr, /createTransport/u);
+});
+```
+
+**它证明的**：入口把**一个函数**注进了缝（`runCli` 的守卫因此放行）⇒ 无模式旗标时走**用法横幅 + 退 2**，而不是"缺工厂"的退 1。**它不证明**：那个函数就是真工厂（无模式旗标时 transport 根本不会被构造；要证身份得真起 `ssh`，被本计划禁止）。⇒ 名字按能证明的写，**不写"wires the real transport factory"**。变异 M-entry 见第五节（红名单 **9** 条：本轮这条 + 7 条规定的 spawn 用例 + `the usage text documents every exit code the operator can act on`；**这是唯一一条把"入口接线"钉在行为上的用例**，但它不是唯一见证 —— 那 7 条规定用例也真的 `spawn` 入口）。
+
+### 四、实测：`outcome` 的判据与"哪个模式要哪个环境变量"
+
+本刀在仓库外写了一次性探测器（注入假 transport、**不联网、不起 `ssh`**；主机名 `updates.example.invalid`），三态读数：
+
+| 态         | 退出码 | 打印的 `outcome` / `lockState`      | 审计日志最后三行（节选）                                                                                                                                               |
+| ---------- | ------ | ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `blocked`  | `1`    | `blocked` / `not-acquired`          | `{"stage":"lock","status":"blocked",…,"detail":"the channel is already locked"}` ⇒ `{"stage":"blocked","reason":"the channel is already locked",…}`（**无 `status`**） |
+| `retry`    | `3`    | `retry` / `retained-by-this-run`    | `{"stage":"retry","reason":"the flip did not take effect",…}` ⇒ `{"stage":"lock-retained","status":"retained",…}`                                                      |
+| `incident` | `1`    | `incident` / `retained-by-this-run` | `{"stage":"incident","reason":"the public verification failed: …",…}` ⇒ `{"stage":"lock-retained","status":"retained",…}`                                              |
+
+⇒ **结论**：判据在打印 JSON 的 `outcome`，以及审计日志里**收口那一行的 `stage`**；**最后一行的 `status` 会说反**（`retained` 不是结论）。`done` 与 `fail` 的收尾都可能是 `unlock`（`status` 为 `done` 或 `retained`，`feed-publish.mjs:811–836`）。
+
+**环境变量范围（同一探测器的失败读数）**：清空环境跑 `--commit` ⇒ `MOFANG_UPDATE_PUBLIC_KEY_B64 is required to verify the release manifest`（正是 I5 说的一轮往返）；代码侧的完整依据是三个调用点（`:171` / `:216` / `:376`），`--preflight` 与 `--break-lock` **一次都不读**。
+
+### 五、变异（本轮 5 条 + 1 条对照）
+
+装置同通用纪律第 3 条（锚点恰好 1 次 → 变异**前**取基线 sha256、备份落仓库外 → 写盘后重读 + `node --check` → 打印**整行** hunk → 跑三套 → 核对**预先写明**的红名单 → 逐字节恢复 → 比 sha256 → `git status --porcelain` 与变异前逐字相同）。**5 条全部 `restoreSha256Equal true` + `gitStatusIdentical true`。**
+
+| #                        | 变异（一个表达式）                                                                                           | 预先写明的红名单                                                                                                                                                                    | 读数                                                                                                                                                                                                                        |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **M7**                   | `feed-publish.mjs`：`if (versionRequired \|\| versionGiven) {` ⇒ `if (versionRequired) {`（= I4 缺的那一行） | `a version flag that is given to a mode that does not need one is still checked`（模块）＋ `the break lock mode still refuses a version flag that is not a semantic version`（CLI） | `module 165/166/1`、`transport 31/31/0`、`cli 41/42/1` ⇒ **两条逐条命中、无多余红**；基线＝恢复 `83f2e2c0…785`                                                                                                              |
+| **M-entry**              | `scripts/feed-publish.mjs`：`…slice(2), { createTransport: createFeedTransport })` ⇒ `…slice(2), {})`        | 先登记 8 条（本轮那条 + 7 条规定 spawn 用例）                                                                                                                                       | 第一次读数 **9 红 ⇒ `EXPECTATION_FAILED`（多一条）**：多出来的是 `the usage text documents every exit code the operator can act on`（也 `spawn` 入口）⇒ **把红名单补成 9 条后复跑：9/9 命中、无多余红**，`cli 33/42/9`      |
+| **H1**                   | `feed-publish-transport.mjs`：在首行 import 之后**插入一行注释**                                             | `the four feed publishing sources carry no comment line and no CJK, …`                                                                                                              | `cli 41/42/1` ⇒ 命中、无多余红                                                                                                                                                                                              |
+| **H2**                   | 同位置**插入一行 CJK 字符串字面量**（`export const hygieneProbe = '探针';`）                                 | 同上                                                                                                                                                                                | `cli 41/42/1` ⇒ 命中、无多余红                                                                                                                                                                                              |
+| **C1（对照，必须留绿）** | `feed-publish-cli.mjs`：`mode !== 'break-lock'` ⇒ `!(mode === 'break-lock')`                                 | —                                                                                                                                                                                   | `166 / 31 / 42` **全绿**、红名单为空 ⇒ 装置对语义等价改动不敏感                                                                                                                                                             |
+| **M1（复量）**           | `feed-publish-cli.mjs`：`const versionRequired = mode !== 'break-lock';` ⇒ `= true;`                         | 本次把三条 break-lock 用例**全部**登记（用于验证"哪两条真的红"）                                                                                                                    | `cli 40/42/2` ⇒ 红的正是 **改名后的那条**与 `the break lock mode still refuses a channel that is not in the whitelist`；`…still refuses a version flag that is not a semantic version` **留绿**（⇒ Minor 1 的红名单按此写） |
+
+⚠️ **M-entry 的第一次读数是 `EXPECTATION_FAILED`，不是"命中"**：它比预登记**多**红了一条 —— 说明"哪几条用例真的 `spawn` 入口"这件事**比我以为的多一条**；补登后复跑才对上。**这条按原样登记，不改写成一次干净的第一读数。**
+
+### 六、镜像与同步（本刀实测）
+
+**围栏与手册的四个小节（7 / 7b / 9 / 10）逐行相同**，且这次是**程序化 splice**（把手册的新小节按连续切片写回围栏，再让 `prettier --write` 收口）：
+
+- **最终读数**：`### 7.` **IDENTICAL（39/39）**、`### 7b.` **IDENTICAL（38/38）**、`### 9.` **IDENTICAL（18/18）**、`### 10.` **IDENTICAL（12/12）**；`## nginx 与权限 + ## 发布前检查单` 也 **IDENTICAL（16/16）**。
+- **第 10 节与检查单各有一处"尾随空行"差异**（手册在下一节前多一个空行）—— 这是**上一刀就登记过的**同一处差异，检查器按 `fenceTail` 显式忽略末尾空行并把这个数打出来（`trailing blank lines ignored: 1`），**不是静默放过**。
+- **对照（在 HEAD 字节上跑同一个检查器）**：五处**全部 IDENTICAL** ⇒ 检查器认得出"上一刀的帧本来就是对上的"，不是把什么都报红。
+- **敏感性探针两条**（都在仓库外的副本上做，仓库里的文件一个字节没动）：① 在围栏第 7 节里**改一个字符**（`--dry-run --channel` ⇒ `--dry-run  --channel`）⇒ **恰好那一节 `DIFFERENT`，其余四节仍 `IDENTICAL`**；② 从第 7b 节的切片**中间删掉一行** ⇒ **恰好那一节 `DIFFERENT`（35/36）** ⇒ 判据是**连续切片**，不是"每行都能在文件里找到"。⚠️ **探针第一版是无效的**：`plan-HEAD.md` 的 `String.replace` 没命中（目标串写错）⇒ 副本与原文逐字节相同、当然全绿；是那句 `changed: false` 的自检把它抓出来的（**先验你自己的验证脚本**）。
+
+### 七、门禁与本刀的读数
+
+- **三套用例**：`node --test` 逐套 ⇒ 模块 **`166 / 166 / 0`**（不变）、transport **`31 / 31 / 0`**（不变）、CLI **`42 / 42 / 0`**（`40 ⇒ 42`：组合根行为臂 + `scripts/**` 文风钉）。**合计 `166 / 31 / 42 = 239`**。
+- **`check:portable-update-release`**：`13 / 13 / 0`（改完 `.invalid` 之后；⚠️ **本机跑它必须先把 Go 放进 PATH**，否则那条 `go -C launcher test ./internal/update` 会让 `spawnSync` 的 `status` 变成 `null`、报 `null !== 0` —— **看起来像被我改的夹具弄坏了，其实是环境**）。
+- **全量门禁**：见本节末的读数（`pnpm check` 一次跑完，日志在仓库外，`rc=$?`）。
+
+### 八、本刀未做（不得写成已完成）
+
+- **没有连服务器、没有真实 feed、没有真机演练**：`--preflight` / `--commit` / `--break-lock` 接真实 transport 的行为仍未验（需要主机与授权）。
+- **`blocked` 那一格没有在真锁上读过**：第四节的三种读数来自注入的假 transport（主机名 `updates.example.invalid`），**不是**一台真服务器上的真锁。
+- I3 标注的那两项**仍然是「未验证」**：密钥登记册与第 6b 步都由**兄弟计划** `2026-09-22-portable-release-assembly-and-ci` 的 Task 6 落地，**本刀不越界去做**。
+- 手册里 `--owner-record-unreadable` 路径的 `ls` / `cat` 四种读数仍**没有真机读数**（沿用 §十五 第六节的登记）。
