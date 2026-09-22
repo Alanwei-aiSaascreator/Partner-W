@@ -6507,7 +6507,7 @@ git commit -m "docs(release): route the feed publishing steps through the upload
 | 没有占位分支                      | `grep -n "not wired" scripts/feed-publish.mjs`（预期无输出）        | **无输出**（Task 8 刀复跑；入口是 13 行 / 两条语句）                                                                                                                                                                                                                                                                                                                                                                                               |
 | 追踪表逐行核对                    | 13 行全部对得上（见上方自审清单）                                   | **本刀只做机械核对**：13 个阶段名（`pre-verify` … `unlock`）在 `scripts/lib/feed-publish.mjs` 里各出现 ≥1 次、且与 `PUBLISH_STAGES` 逐字相同。**逐行人工核对沿用 Task 4/6 账本，本刀未重做**（不得读成"重新审过一遍"）                                                                                                                                                                                                                             |
 | 手册无真实指纹                    | `grep -nE "[0-9A-F]{32,}" docs/runbooks/portable-update-release.md` | **无输出**（Task 8 刀复跑，含新增的 7b/9/10 三节）                                                                                                                                                                                                                                                                                                                                                                                                 |
-| 全量门禁                          | `pnpm check`                                                        | **`exit 0`**（Task 8 刀实跑；日志 10224 行：`feed-publish` 三个文件 **`237 / 237 / 0`**、`eslint . --max-warnings 0` 过、`knip` 过、`All matched files use Prettier code style!`、四个 tsc 段过、desktop `2908 passed / 2 skipped`）                                                                                                                                                                                                               |
+| 全量门禁                          | `pnpm check`                                                        | **`exit 0`**（Task 8 刀在**最终提交 `3711aa3c`** 上实跑；日志 10227 行：`feed-publish` 三个文件 **`237 / 237 / 0`**、`eslint . --max-warnings 0` 过、`knip` 过、`All matched files use Prettier code style!`、四个 tsc 段过、desktop `2908 passed / 2 skipped`）                                                                                                                                                                                   |
 
 ## 未覆盖与后续（不得写成已完成）
 
@@ -6588,12 +6588,14 @@ git commit -m "docs(release): route the feed publishing steps through the upload
 
 ## 第十五节 Task 8 刀：三处围栏缺陷、注入缝与手册（2026-09-23）
 
-**这一刀是什么**：Task 8（手册 + nginx + 检查单）本身，加上**它自己围栏里的三处缺陷**与**一处注入缝**。两个提交，全部显式 pathspec、消息末尾带 `Co-Authored-By: Claude Code <noreply@anthropic.com>`、没有 `--amend`、没有重写历史：
+**这一刀是什么**：Task 8（手册 + nginx + 检查单）本身，加上**它自己围栏里的三处缺陷**与**一处注入缝**。**四个提交**，全部显式 pathspec、消息末尾带 `Co-Authored-By: Claude Code <noreply@anthropic.com>`、没有 `--amend`、没有重写历史：
 
 1. **`706bfc18`** `fix(feed): scope the version guard and stop defaulting the transport factory` —— 代码（`feed-publish.mjs` / `feed-publish-cli.mjs` / `scripts/feed-publish.mjs` / 两个测试文件）+ 三处围栏同提交重同步 + 通用纪律第 4 条 + 文件地图 + Task 7 验收项 1 的更正。
 2. **`cc3749d9`** `docs(release): route the feed publishing steps through the uploader` —— `docs/runbooks/portable-update-release.md` + Task 8 围栏更正。
+3. **`63af981d`** `docs(feed): record the task 8 cut, its three fence defects and the seam` —— 本节（第十五节）+ 门禁表五格。
+4. **`3711aa3c`** `test(feed): keep every live fixture host under .invalid` —— 第 4 条纪律里那条规则的**落地修正**（见第一节末）。
 
-**三套用例**：`164 / 31 / 36` ⇒ **`166 / 31 / 40` = 237**（模块 +2、CLI +4）。`pnpm check` **exit 0**。
+**三套用例**：`164 / 31 / 36` ⇒ **`166 / 31 / 40` = 237**（模块 +2、CLI +4）。`pnpm check` **exit 0**（**在最终提交 `3711aa3c` 的字节上复跑**：日志 10227 行、`feed-publish` 三文件 `237 / 237 / 0`、`✖`/`not ok`/`FAIL` 计数 0）。
 
 ### 一、三处围栏缺陷
 
@@ -6617,7 +6619,7 @@ git commit -m "docs(release): route the feed publishing steps through the upload
 
 ### 三、变异（5 条 + 1 条对照 + 1 条装置回退）
 
-装置同通用纪律第 3 条：锚点恰好 1 次 → 变异**前**取基线 sha256、备份落仓库外 → 写盘后重读确认 → `node --check` → 打印**整行** hunk → 跑三套 → 核对**预先写明**的红名单 → 逐字节恢复 → 比 sha256 → `git status --porcelain` 与变异前逐字相同。**7 条全部 `restoreSha256Equal true` + `gitStatusIdentical true`。**
+装置同通用纪律第 3 条：锚点恰好 1 次 → 变异**前**取基线 sha256、备份落仓库外 → 写盘后重读确认 → `node --check` → 打印**整行** hunk → 跑三套 → 核对**预先写明**的红名单 → 逐字节恢复 → 比 sha256 → `git status --porcelain` 与变异前逐字相同。**7 条全部 `restoreSha256Equal true` + `gitStatusIdentical true`。M1–M5 在最终提交 `3711aa3c` 的字节上**复跑过一次**，读数与第一次逐字相同；M6 的三次读数见下表。**
 
 | #   | 变异（一个表达式）                                                                             | 预先写明的红名单                        | 读数                                                                                                                                                                                                                                                                       |
 | --- | ---------------------------------------------------------------------------------------------- | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
