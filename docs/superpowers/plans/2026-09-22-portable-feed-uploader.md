@@ -5344,11 +5344,18 @@ transport 自己**只拼两类字符串**：ssh / sftp 的 **argv 数组元素**
 "check:portable-feed-publish": "node --test scripts/lib/feed-publish.test.mjs scripts/lib/feed-publish-transport.test.mjs"
 ```
 
-并把 **Task 1 Step 7** 的围栏与说明、**Task 7 Step 6** 的措辞一起改（后者现在只**追加一个**文件）。**门禁实测**见下文第九节（`grep -c 'feed-publish-transport' gate.log` 必须 **> 0** —— 这正是第七节那条 ⚠️「排期中的缺口」的**关闭读数**）。
+并把 **Task 1 Step 7** 的围栏与说明、**Task 7 Step 6** 的措辞一起改（后者现在只**追加一个**文件）。**门禁实测**见本节**第十小节**（`grep -c 'feed-publish-transport' gate.log` 必须 **> 0** —— 这正是第七节那条 ⚠️「排期中的缺口」的**关闭读数**）。
 
 **八、本刀对"记录"做的变异（不是代码）**：`B2-M2` / `B2-M3` / 探针 `P-B2` 是**对断言**的变异；`FM-1` / `FM-2` / `WM` / `GM` 把四条**原先只写在提交信息里**的不变量变成**被钉住的**；`BM2` 是**对旧账本里 M5 那一行的重测**（读数不同是因为**套件变大了**，不是结论变了 —— 那一行的框架标注见第二节）。**本节引用的每一个数字都在本刀跑过的装置输出里。**
 
 **九、本刀未做 / 未验（不得写成已完成）**：① **默认 runner 的 promise 那三行（`:74–77`）仍无夹具到达** —— 本刀只把映射抽出来测了，**没有**为那三行造假 `nodeExecFile`（那需要模块化 `node:child_process` 的导入，收益不抵改动）；② **默认 `publicFetch` 现在**被夹具到达了**（本刀新增的两条臂桩掉 `globalThis.fetch`）⇒ 第一节那条「默认 `publicFetch` 不可达（`reached_default false`）」的读数**在本刀之后不再成立**：**"套件里一次网络访问都没有"这条事实现在由**桩替换**承载**（把 `globalThis.fetch` 换成桩 = 让它**不可能**，而不是"不可达"）。**没有重跑那条可达性探针**，所以**别把 `reached_default false` 当作当前读数引用**；③ **sftp 批处理语法的一手依据仍未取得**（第二节），**没有跑过真实的 ssh / sftp / https 路径**；④ **两文件门禁是中间态**，三文件是 Task 7 Step 6；⑤ **Task 7 / Task 8 未动\*\*。
+
+**十、门禁读数（本刀实测）**：先 `export PATH="/d/go-toolchain/go/bin:$PATH"`，再跑 `pnpm check`（**不接管道**；重定向到仓库外的 `%TEMP%\t7work\gate.log`，`rc=$?` 就是那一行的退出码）⇒ **`GATE_EXIT=0`**。
+
+- **非空证据六条**：① 日志 **10175** 行；② 链上第一步的 Go 测试真的跑过（第 3 行 `ok mofang-compass/portable-launcher/cmd/mofang-launcher 0.107s` —— 少了那个 PATH 导出它会在第一步就死）；③ **门禁那一步的命令行（日志第 53 行）就是把两个文件一起列出来的**（`$ node --test scripts/lib/feed-publish.test.mjs scripts/lib/feed-publish-transport.test.mjs`）；④ 它的读数是 **`ℹ tests 186 / ℹ pass 186 / ℹ fail 0`**（第 240–243 行）= 158 + 28 —— **两个套件都真的跑了**：日志里既有**只属于 transport** 的名字（`the batch path quoting refuses a carriage return, …`、`the transport exposes the four faces the publish flow calls`、`every remote call hides the console window …`，共 3 处命中），也有**只属于 `feed-publish`** 的名字（`the preflight read only promise is pinned by transport identity rather than by a shared tag`，1 处命中）；⑤ 链尾 `packages/desktop test` 真的跑到（`Test Files 281 passed (281)`，第 10171 行），`prettier --check .` ⇒ `All matched files use Prettier code style!`（第 415–417 行）；⑥ 全日志里 `✖` / `not ok` / `FAIL` 计数为 **0**。这一跑对着的提交是 `3ff4f705`。
+- **D 的缺口关闭读数**：`grep -c 'feed-publish-transport' gate.log` = **1**（就是第 53 行那条命令本身；**本刀之前是 0**）⇒ 28 条 transport 测试**现在在 `pnpm check` 链上**。⚠️ **这个数只有 1 是正常的**：测试**名字**里不含文件名，所以别把它读成"只跑了一条" —— 判"跑没跑"要看上面第 ③④ 条（命令行 + `186` 这个合计数 + 只属于各套件的名字）。
+- **十二对镜像在这一跑之后复核过**：`matched=12`、`diff` **十二对全空**（装置见第二节；两份敏感性探针 —— 计划侧改一个字符、文件侧从切片中间删一行 —— 都让**恰好那一对**掉出匹配）。
+- **本刀的两个功能提交**：`93b65975`（B2：谓词形式的断言）与 `3ff4f705`（transport 代码 + 测试 + 计划镜像 + 规格 §6.4 + 两文件门禁）。**本提交只写读数**，所以它自己那个哈希**不可能写进它自己**（与 Task 5 账本第四片同一形状，以 `git log` 为准）。
 
 ---
 
