@@ -235,6 +235,12 @@ export async function readOwnerRecord(input) {
 }
 
 export async function acquireChannelLock(input) {
+  for (const field of ['runid', 'operator', 'startedAt', 'planHash', 'machine']) {
+    const value = input.owner?.[field];
+    if (typeof value !== 'string' || value.trim().length === 0) {
+      throw new FeedPublishError(`the owner record must carry a non empty ${field}, so no lock is created without one`);
+    }
+  }
   const created = await input.transport.write.sshRun({
     host: input.host,
     knownHostsPath: input.knownHostsPath,
@@ -330,11 +336,11 @@ export function resolveLockDisposition(input) {
 export async function releaseChannelLock(input) {
   const owner = input.owner ?? (await readOwnerRecord(input));
   const verdict = resolveLockDisposition({
-    acquisitionConfirmed: true,
+    acquisitionConfirmed: input.acquisitionConfirmed,
     owner,
     runid: input.runid,
     planHash: input.planHash,
-    safeToExit: true,
+    safeToExit: input.safeToExit,
   });
   if (verdict.release !== true) return verdict;
 

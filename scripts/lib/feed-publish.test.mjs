@@ -30,6 +30,9 @@ function makeRoot() {
 const keyPair = generateKeyPairSync('ed25519');
 const PUBLIC_KEY_BASE64 = keyPair.publicKey.export({ type: 'spki', format: 'der' }).toString('base64');
 
+const HOST = 'publish.example.invalid';
+const KNOWN_HOSTS_PATH = '/etc/mofang/known_hosts';
+
 const PACKAGE_BYTES = Buffer.from('portable-zip-bytes', 'utf8');
 const PACKAGE_SHA256 = createHash('sha256').update(PACKAGE_BYTES).digest('hex');
 
@@ -378,7 +381,7 @@ function fakeReadOnlyTransport(overrides = {}) {
     calls,
     readOnly: {
       sshRun: async (request) => {
-        calls.push(['sshRun', request.script]);
+        calls.push(['sshRun', request.script, request]);
         return overrides.sshRun ? overrides.sshRun(request) : { status: 0, stdout: '', stderr: '' };
       },
     },
@@ -393,9 +396,31 @@ function fakeReadOnlyTransport(overrides = {}) {
   };
 }
 
+function assertEveryCallCarriesTheTrustAnchor(calls) {
+  assert.ok(calls.length > 0, 'the trust anchor assertion needs at least one recorded call');
+  for (const call of calls) {
+    const request = call[2];
+    assert.ok(request !== undefined, `the ${String(call[0])} call did not record its request`);
+    assert.equal(request.host, HOST, `the ${String(call[0])} call did not carry the pinned host`);
+    assert.equal(
+      request.knownHostsPath,
+      KNOWN_HOSTS_PATH,
+      `the ${String(call[0])} call did not carry the pinned known hosts file`,
+    );
+  }
+}
+
 async function preflightWithProbe(probe) {
   const transport = fakeReadOnlyTransport({ sshRun: () => probe });
-  return runPreflight({ channel: 'internal', version: '1.2.3', transport, host: 'h', knownHostsPath: 'k' });
+  const result = await runPreflight({
+    channel: 'internal',
+    version: '1.2.3',
+    transport,
+    host: HOST,
+    knownHostsPath: KNOWN_HOSTS_PATH,
+  });
+  assertEveryCallCarriesTheTrustAnchor(transport.calls);
+  return result;
 }
 
 test('the commit plan lists the thirteen stages in the fixed order', () => {
@@ -485,12 +510,13 @@ test('the preflight only performs read only actions and never claims writability
     channel: 'internal',
     version: '1.2.3',
     transport,
-    host: 'h',
-    knownHostsPath: 'k',
+    host: HOST,
+    knownHostsPath: KNOWN_HOSTS_PATH,
   });
   const names = transport.calls.map((call) => call[0]);
   assert.deepEqual([...new Set(names)], ['sshRun']);
   assert.equal(transport.calls[0][1], `stat -c '%d' ${STATE_ROOT} ${UPDATE_ROOT}`);
+  assertEveryCallCarriesTheTrustAnchor(transport.calls);
   assert.equal(result.sameFileSystem, true);
   assert.equal(result.writabilityIndicators.verifiedWrite, false);
   assert.match(result.writabilityIndicators.note, /indicator/u);
@@ -502,9 +528,10 @@ test('the preflight reports different file systems instead of assuming one', asy
     channel: 'internal',
     version: '1.2.3',
     transport,
-    host: 'h',
-    knownHostsPath: 'k',
+    host: HOST,
+    knownHostsPath: KNOWN_HOSTS_PATH,
   });
+  assertEveryCallCarriesTheTrustAnchor(transport.calls);
   assert.equal(result.sameFileSystem, false);
   assert.match(result.notes.join(' '), /file system/u);
 
@@ -539,19 +566,27 @@ const PLAN_INPUT = {
   manifestSha256: 'c'.repeat(64),
 };
 
+const OWNER_RECORD = {
+  runid: 'r1',
+  operator: 'ops',
+  startedAt: '2026-09-22T00:00:00.000Z',
+  planHash: 'p1',
+  machine: 'builder-01',
+};
+
 function fakeWriteTransport(handlers = {}) {
   const calls = [];
   return {
     calls,
     readOnly: {
       sshRun: async (request) => {
-        calls.push(['readSsh', request.script]);
+        calls.push(['readSsh', request.script, request]);
         return handlers.readSsh ? handlers.readSsh(request) : { status: 0, stdout: '', stderr: '' };
       },
     },
     write: {
       sshRun: async (request) => {
-        calls.push(['writeSsh', request.script]);
+        calls.push(['writeSsh', request.script, request]);
         return handlers.writeSsh ? handlers.writeSsh(request) : { status: 0, stdout: '', stderr: '' };
       },
       sftpUpload: async () => ({ status: 0, bytesSent: 1 }),
@@ -582,13 +617,14 @@ test('an existing lock is a determinate not-acquired and never stolen', async ()
   const result = await acquireChannelLock({
     channel: 'internal',
     transport,
-    owner: { runid: 'r1', planHash: 'p1' },
-    host: 'h',
-    knownHostsPath: 'k',
+    owner: OWNER_RECORD,
+    host: HOST,
+    knownHostsPath: KNOWN_HOSTS_PATH,
   });
   assert.equal(result.state, 'not-acquired');
   assert.equal(result.requiresExplicitRecovery, true);
   assert.equal(transport.calls.filter((call) => /rm |rmdir/u.test(String(call[1] ?? ''))).length, 0);
+  assertEveryCallCarriesTheTrustAnchor(transport.calls);
 });
 
 test('an ssh failure while taking the lock is ownership unknown, not not-acquired', async () => {
@@ -601,12 +637,13 @@ test('an ssh failure while taking the lock is ownership unknown, not not-acquire
   const result = await acquireChannelLock({
     channel: 'internal',
     transport,
-    owner: { runid: 'r1', planHash: 'p1' },
-    host: 'h',
-    knownHostsPath: 'k',
+    owner: OWNER_RECORD,
+    host: HOST,
+    knownHostsPath: KNOWN_HOSTS_PATH,
   });
   assert.equal(result.state, 'ownership-unknown');
   assert.match(result.reason, /cannot confirm/u);
+  assertEveryCallCarriesTheTrustAnchor(transport.calls);
 });
 
 test('a failed owner write is an incident that keeps the lock', async () => {
@@ -619,16 +656,17 @@ test('a failed owner write is an incident that keeps the lock', async () => {
   const result = await acquireChannelLock({
     channel: 'internal',
     transport,
-    owner: { runid: 'r1', planHash: 'p1' },
-    host: 'h',
-    knownHostsPath: 'k',
+    owner: OWNER_RECORD,
+    host: HOST,
+    knownHostsPath: KNOWN_HOSTS_PATH,
   });
   assert.equal(result.state, 'retained-by-this-run');
   assert.equal(result.incident, true);
+  assertEveryCallCarriesTheTrustAnchor(transport.calls);
 });
 
 test('release verifies the owner, then removes the owner file, then the lock directory', async () => {
-  const owner = { runid: 'r1', planHash: 'p1' };
+  const owner = OWNER_RECORD;
   const order = [];
   const transport = fakeWriteTransport({
     readSsh: () => ({ status: 0, stdout: JSON.stringify(owner), stderr: '' }),
@@ -644,15 +682,18 @@ test('release verifies the owner, then removes the owner file, then the lock dir
     owner,
     runid: 'r1',
     planHash: 'p1',
-    host: 'h',
-    knownHostsPath: 'k',
+    host: HOST,
+    knownHostsPath: KNOWN_HOSTS_PATH,
+    acquisitionConfirmed: true,
+    safeToExit: true,
   });
   assert.equal(verdict.state, 'released');
   assert.deepEqual(order, ['rm-owner', 'rmdir-lock']);
+  assertEveryCallCarriesTheTrustAnchor(transport.calls);
 });
 
 test('a failed owner removal is never reported as released', async () => {
-  const owner = { runid: 'r1', planHash: 'p1' };
+  const owner = OWNER_RECORD;
   const transport = fakeWriteTransport({
     readSsh: () => ({ status: 0, stdout: JSON.stringify(owner), stderr: '' }),
     writeSsh: (request) =>
@@ -666,11 +707,14 @@ test('a failed owner removal is never reported as released', async () => {
     owner,
     runid: 'r1',
     planHash: 'p1',
-    host: 'h',
-    knownHostsPath: 'k',
+    host: HOST,
+    knownHostsPath: KNOWN_HOSTS_PATH,
+    acquisitionConfirmed: true,
+    safeToExit: true,
   });
   assert.equal(verdict.state, 'retained-by-this-run');
   assert.equal(verdict.incident, true);
+  assertEveryCallCarriesTheTrustAnchor(transport.calls);
 });
 
 test('release re-reads the owner and refuses when it belongs to another run', async () => {
@@ -683,11 +727,14 @@ test('release re-reads the owner and refuses when it belongs to another run', as
     owner: null,
     runid: 'r1',
     planHash: 'p1',
-    host: 'h',
-    knownHostsPath: 'k',
+    host: HOST,
+    knownHostsPath: KNOWN_HOSTS_PATH,
+    acquisitionConfirmed: true,
+    safeToExit: true,
   });
   assert.equal(verdict.state, 'ownership-unknown');
   assert.equal(transport.calls.filter((call) => /rm |rmdir/u.test(String(call[1] ?? ''))).length, 0);
+  assertEveryCallCarriesTheTrustAnchor(transport.calls);
 });
 
 test('a run that holds the lock but cannot close safely keeps it', () => {
@@ -721,8 +768,8 @@ test('breaking a lock needs a reason, an audit log and a matching runid', async 
   const base = {
     channel: 'internal',
     transport,
-    host: 'h',
-    knownHostsPath: 'k',
+    host: HOST,
+    knownHostsPath: KNOWN_HOSTS_PATH,
     confirmRunid: 'r0',
     auditOut: '/outside/audit.jsonl',
     operator: 'ops',
@@ -733,6 +780,7 @@ test('breaking a lock needs a reason, an audit log and a matching runid', async 
     breakChannelLock({ ...base, reason: 'stopped', confirmRunid: 'wrong' }),
     /does not match the owner/u,
   );
+  assertEveryCallCarriesTheTrustAnchor(transport.calls);
 });
 
 test('breaking a lock records the real previous owner and the operator', async () => {
@@ -741,8 +789,8 @@ test('breaking a lock records the real previous owner and the operator', async (
   const record = await breakChannelLock({
     channel: 'internal',
     transport,
-    host: 'h',
-    knownHostsPath: 'k',
+    host: HOST,
+    knownHostsPath: KNOWN_HOSTS_PATH,
     reason: 'operator confirmed the previous run stopped',
     confirmRunid: 'r0',
     auditOut: '/outside/audit.jsonl',
@@ -751,6 +799,7 @@ test('breaking a lock records the real previous owner and the operator', async (
   assert.equal(record.outcome, 'lock-broken');
   assert.deepEqual(record.previousOwner, owner);
   assert.equal(record.operator, 'ops');
+  assertEveryCallCarriesTheTrustAnchor(transport.calls);
 });
 
 test('a failed remote deletion is not recorded as lock-broken', async () => {
@@ -766,8 +815,8 @@ test('a failed remote deletion is not recorded as lock-broken', async () => {
     breakChannelLock({
       channel: 'internal',
       transport,
-      host: 'h',
-      knownHostsPath: 'k',
+      host: HOST,
+      knownHostsPath: KNOWN_HOSTS_PATH,
       reason: 'stopped',
       confirmRunid: 'r0',
       auditOut: '/outside/audit.jsonl',
@@ -775,6 +824,7 @@ test('a failed remote deletion is not recorded as lock-broken', async () => {
     }),
     /could not be removed/u,
   );
+  assertEveryCallCarriesTheTrustAnchor(transport.calls);
 });
 
 test('the lock states are frozen so no run can add a fifth one', () => {
@@ -784,7 +834,7 @@ test('the lock states are frozen so no run can add a fifth one', () => {
 
 const LOCK_DIR = `${STATE_ROOT}/lock/internal`;
 const OWNER_FILE = `${LOCK_DIR}/owner.json`;
-const THIS_RUN = { runid: 'r1', planHash: 'p1' };
+const THIS_RUN = OWNER_RECORD;
 const PREVIOUS_RUN = { runid: 'r0', planHash: 'p0' };
 const OTHER_RUN_REASON = 'operator confirmed the previous run is not running';
 
@@ -792,8 +842,8 @@ const lockInput = (transport, overrides = {}) => ({
   channel: 'internal',
   transport,
   owner: THIS_RUN,
-  host: 'h',
-  knownHostsPath: 'k',
+  host: HOST,
+  knownHostsPath: KNOWN_HOSTS_PATH,
   ...overrides,
 });
 
@@ -803,16 +853,18 @@ const releaseInput = (transport, overrides = {}) => ({
   owner: THIS_RUN,
   runid: 'r1',
   planHash: 'p1',
-  host: 'h',
-  knownHostsPath: 'k',
+  host: HOST,
+  knownHostsPath: KNOWN_HOSTS_PATH,
+  acquisitionConfirmed: true,
+  safeToExit: true,
   ...overrides,
 });
 
 const breakInput = (transport, overrides = {}) => ({
   channel: 'internal',
   transport,
-  host: 'h',
-  knownHostsPath: 'k',
+  host: HOST,
+  knownHostsPath: KNOWN_HOSTS_PATH,
   reason: OTHER_RUN_REASON,
   confirmRunid: 'r0',
   auditOut: '/outside/repo/audit.jsonl',
@@ -843,6 +895,10 @@ test('a successful acquisition writes the owner record for this run', async () =
     `mkdir ${LOCK_DIR}`,
     `printf '%s' '${JSON.stringify(THIS_RUN)}' > ${OWNER_FILE}`,
   ]);
+  for (const field of ['runid', 'operator', 'startedAt', 'planHash', 'machine']) {
+    assert.match(writeScripts(transport)[1], new RegExp(`"${field}":`, 'u'), `the recorded owner must carry ${field}`);
+  }
+  assertEveryCallCarriesTheTrustAnchor(transport.calls);
 });
 
 test('the lock lives under the channel it was given rather than a fixed one', async () => {
@@ -853,6 +909,7 @@ test('the lock lives under the channel it was given rather than a fixed one', as
     `mkdir ${STATE_ROOT}/lock/stable`,
     `printf '%s' '${JSON.stringify(THIS_RUN)}' > ${STATE_ROOT}/lock/stable/owner.json`,
   ]);
+  assertEveryCallCarriesTheTrustAnchor(transport.calls);
 });
 
 test('a lock mkdir that fails without an existing entry signal is ownership unknown', async () => {
@@ -867,6 +924,7 @@ test('a lock mkdir that fails without an existing entry signal is ownership unkn
   assert.equal(result.incident, true);
   assert.match(result.reason, /cannot confirm/u);
   assert.ok(refusesLockWrites(transport));
+  assertEveryCallCarriesTheTrustAnchor(transport.calls);
 });
 
 test('a transport level mkdir failure is ownership unknown even when its output looks like an existing entry', async () => {
@@ -881,6 +939,7 @@ test('a transport level mkdir failure is ownership unknown even when its output 
   assert.equal(result.acquired, false);
   assert.equal(result.requiresExplicitRecovery, true);
   assert.ok(refusesLockWrites(transport));
+  assertEveryCallCarriesTheTrustAnchor(transport.calls);
 });
 
 test('the existing entry signal is read from either stream and without regard to case', async () => {
@@ -890,6 +949,7 @@ test('the existing entry signal is read from either stream and without regard to
   });
   const result = await acquireChannelLock(lockInput(transport));
   assert.equal(result.state, 'not-acquired');
+  assertEveryCallCarriesTheTrustAnchor(transport.calls);
 });
 
 test('an existing lock reports the owner it found so a human can confirm it', async () => {
@@ -906,6 +966,7 @@ test('an existing lock reports the owner it found so a human can confirm it', as
     transport.calls.filter((call) => call[0] === 'readSsh').map((call) => call[1]),
     [`cat ${OWNER_FILE}`],
   );
+  assertEveryCallCarriesTheTrustAnchor(transport.calls);
 });
 
 test('an owner read that exits non-zero is unreadable even when it printed a record', async () => {
@@ -916,6 +977,7 @@ test('an owner read that exits non-zero is unreadable even when it printed a rec
   const result = await acquireChannelLock(lockInput(transport));
   assert.equal(result.state, 'not-acquired');
   assert.equal(result.owner, null);
+  assertEveryCallCarriesTheTrustAnchor(transport.calls);
 });
 
 test('a lock owner that is missing or not a record is ownership unknown', () => {
@@ -953,6 +1015,7 @@ test('release re-reads the owner from the lock when the caller has none', async 
   const verdict = await releaseChannelLock(releaseInput(transport, { owner: undefined }));
   assert.equal(verdict.state, 'released');
   assert.deepEqual(writeScripts(transport), [`rm ${OWNER_FILE}`, `rmdir ${LOCK_DIR}`]);
+  assertEveryCallCarriesTheTrustAnchor(transport.calls);
 });
 
 test('release that removed the owner file but not the lock directory is not released', async () => {
@@ -968,6 +1031,7 @@ test('release that removed the owner file but not the lock directory is not rele
   assert.equal(verdict.release, false);
   assert.equal(verdict.incident, true);
   assert.match(verdict.reason, /lock directory/u);
+  assertEveryCallCarriesTheTrustAnchor(transport.calls);
 });
 
 test('breaking a lock removes the owner file before the lock directory and records the reason', async () => {
@@ -982,6 +1046,7 @@ test('breaking a lock removes the owner file before the lock directory and recor
   const record = await breakChannelLock(breakInput(transport));
   assert.deepEqual(order, [`rm ${OWNER_FILE}`, `rmdir ${LOCK_DIR}`]);
   assert.equal(record.reason, OTHER_RUN_REASON);
+  assertEveryCallCarriesTheTrustAnchor(transport.calls);
 });
 
 test('a break whose lock directory survives is not recorded as lock-broken', async () => {
@@ -993,6 +1058,7 @@ test('a break whose lock directory survives is not recorded as lock-broken', asy
         : { status: 0 },
   });
   await assert.rejects(breakChannelLock(breakInput(transport)), /could not be removed/u);
+  assertEveryCallCarriesTheTrustAnchor(transport.calls);
 });
 
 test('breaking a lock without a readable owner record is refused', async () => {
@@ -1001,6 +1067,7 @@ test('breaking a lock without a readable owner record is refused', async () => {
   });
   await assert.rejects(breakChannelLock(breakInput(transport)), /no readable owner record/u);
   assert.deepEqual(writeScripts(transport), []);
+  assertEveryCallCarriesTheTrustAnchor(transport.calls);
 });
 
 test('breaking a lock refuses a reason that is not a written string', async () => {
@@ -1009,4 +1076,113 @@ test('breaking a lock refuses a reason that is not a written string', async () =
   await assert.rejects(breakChannelLock(breakInput(transport, { reason: 42 })), FeedPublishError);
   await assert.rejects(breakChannelLock(breakInput(transport, { auditOut: undefined })), FeedPublishError);
   assert.deepEqual(writeScripts(transport), []);
+});
+
+test('breaking a lock refuses an empty audit log path', async () => {
+  const transport = fakeWriteTransport({ readSsh: readablePreviousOwner });
+  await assert.rejects(breakChannelLock(breakInput(transport, { auditOut: '' })), FeedPublishError);
+  assert.deepEqual(transport.calls, []);
+});
+
+test('a corrupt owner record on the lock is unreadable rather than a crash', async () => {
+  const transport = fakeWriteTransport({ readSsh: () => ({ status: 0, stdout: 'not json{', stderr: '' }) });
+  const verdict = await releaseChannelLock(releaseInput(transport, { owner: null }));
+  assert.equal(verdict.release, false);
+  assert.equal(verdict.state, 'ownership-unknown');
+  assert.deepEqual(writeScripts(transport), []);
+  assertEveryCallCarriesTheTrustAnchor(transport.calls);
+});
+
+test('a release that never confirmed its own acquisition refuses and writes nothing', async () => {
+  const absent = releaseInput(fakeWriteTransport({ readSsh: readableThisRunOwner }));
+  delete absent.acquisitionConfirmed;
+  const absentVerdict = await releaseChannelLock(absent);
+  assert.equal(absentVerdict.release, false);
+  assert.equal(absentVerdict.state, 'ownership-unknown');
+  assert.deepEqual(absent.transport.calls, []);
+
+  const deniedTransport = fakeWriteTransport({ readSsh: readableThisRunOwner });
+  const deniedVerdict = await releaseChannelLock(releaseInput(deniedTransport, { acquisitionConfirmed: false }));
+  assert.equal(deniedVerdict.release, false);
+  assert.equal(deniedVerdict.state, 'ownership-unknown');
+  assert.deepEqual(deniedTransport.calls, []);
+});
+
+test('a release that is not safe to exit keeps the lock this run owns', async () => {
+  const transport = fakeWriteTransport({ readSsh: readableThisRunOwner });
+  const verdict = await releaseChannelLock(releaseInput(transport, { safeToExit: false }));
+  assert.equal(verdict.release, false);
+  assert.equal(verdict.state, 'retained-by-this-run');
+  assert.deepEqual(transport.calls, []);
+});
+
+const withoutOwnerField = (field) => {
+  const owner = { ...OWNER_RECORD };
+  delete owner[field];
+  return owner;
+};
+
+test('an owner record without a runid never creates a lock', async () => {
+  const transport = fakeWriteTransport();
+  await assert.rejects(
+    acquireChannelLock(lockInput(transport, { owner: withoutOwnerField('runid') })),
+    (error) => error instanceof FeedPublishError && /runid/u.test(error.message),
+  );
+  assert.equal(transport.calls.length, 0);
+});
+
+test('an owner record without an operator never creates a lock', async () => {
+  const transport = fakeWriteTransport();
+  await assert.rejects(
+    acquireChannelLock(lockInput(transport, { owner: withoutOwnerField('operator') })),
+    (error) => error instanceof FeedPublishError && /operator/u.test(error.message),
+  );
+  assert.equal(transport.calls.length, 0);
+});
+
+test('an owner record without a startedAt never creates a lock', async () => {
+  const transport = fakeWriteTransport();
+  await assert.rejects(
+    acquireChannelLock(lockInput(transport, { owner: withoutOwnerField('startedAt') })),
+    (error) => error instanceof FeedPublishError && /startedAt/u.test(error.message),
+  );
+  assert.equal(transport.calls.length, 0);
+});
+
+test('an owner record without a planHash never creates a lock', async () => {
+  const transport = fakeWriteTransport();
+  await assert.rejects(
+    acquireChannelLock(lockInput(transport, { owner: withoutOwnerField('planHash') })),
+    (error) => error instanceof FeedPublishError && /planHash/u.test(error.message),
+  );
+  assert.equal(transport.calls.length, 0);
+});
+
+test('an owner record without a machine never creates a lock', async () => {
+  const transport = fakeWriteTransport();
+  await assert.rejects(
+    acquireChannelLock(lockInput(transport, { owner: withoutOwnerField('machine') })),
+    (error) => error instanceof FeedPublishError && /machine/u.test(error.message),
+  );
+  assert.equal(transport.calls.length, 0);
+});
+
+test('an owner record with a blank machine never creates a lock', async () => {
+  const transport = fakeWriteTransport();
+  await assert.rejects(
+    acquireChannelLock(lockInput(transport, { owner: { ...OWNER_RECORD, machine: '   ' } })),
+    (error) => error instanceof FeedPublishError && /machine/u.test(error.message),
+  );
+  assert.equal(transport.calls.length, 0);
+});
+
+test('a missing owner record never creates a lock', async () => {
+  for (const owner of [null, undefined]) {
+    const transport = fakeWriteTransport();
+    await assert.rejects(
+      acquireChannelLock(lockInput(transport, { owner })),
+      (error) => error instanceof FeedPublishError && /owner record/u.test(error.message),
+    );
+    assert.equal(transport.calls.length, 0);
+  }
 });
