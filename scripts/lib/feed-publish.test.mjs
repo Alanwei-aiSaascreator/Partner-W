@@ -1363,6 +1363,9 @@ function commitTransport(options = {}) {
             : { status: 0, stdout: ownerJson, stderr: '' };
         }
         if (request.script.includes('-mindepth 1 -maxdepth 1 -printf')) {
+          if (typeof options.listingStatus === 'number' && options.listingStatus !== 0) {
+            return { status: options.listingStatus, stdout: 'find: Permission denied\n', stderr: '' };
+          }
           if (request.script.includes('/staging/')) return { status: 0, stdout: stagingListing, stderr: '' };
           const state = options.versionDirState ?? 'absent';
           if (state === 'absent' || state === 'empty') return { status: 0, stdout: '', stderr: '' };
@@ -1377,6 +1380,9 @@ function commitTransport(options = {}) {
           return { status: 0, stdout: listing, stderr: '' };
         }
         if (request.script.startsWith('if [ -d ')) {
+          if (typeof options.directoryProbeStatus === 'number' && options.directoryProbeStatus !== 0) {
+            return { status: options.directoryProbeStatus, stdout: 'present\n', stderr: 'connection reset' };
+          }
           const state = options.versionDirState ?? 'absent';
           const present = state !== 'absent';
           const insideStaging = request.script.includes('/staging/');
@@ -1384,6 +1390,9 @@ function commitTransport(options = {}) {
           return { status: 0, stdout: 'present\n', stderr: '' };
         }
         if (request.script.includes('sha256sum') && request.script.includes('portable-files.json')) {
+          if (typeof options.digestStatus === 'number' && options.digestStatus !== 0) {
+            return { status: options.digestStatus, stdout: '', stderr: 'sha256sum: Permission denied' };
+          }
           const inStaging = request.script.includes('/staging/');
           if (!inStaging && (options.versionDirState ?? 'absent') === 'absent')
             return { status: 0, stdout: '', stderr: '' };
@@ -1391,6 +1400,9 @@ function commitTransport(options = {}) {
           return { status: 0, stdout: digests(inStaging ? 'staging' : 'version', zipDigest), stderr: '' };
         }
         if (request.script.includes("stat -c '%d'")) {
+          if (typeof options.deviceProbeStatus === 'number' && options.deviceProbeStatus !== 0) {
+            return { status: options.deviceProbeStatus, stdout: '100\n100\n', stderr: 'stat: cannot statx' };
+          }
           return { status: 0, stdout: options.sameFileSystem === false ? '100\n200\n' : '100\n100\n', stderr: '' };
         }
         if (request.script.includes('manifest.json') && request.script.includes('.tmp')) {
@@ -1402,6 +1414,9 @@ function commitTransport(options = {}) {
         }
         if (request.script.includes('manifest.json')) {
           manifestReads += 1;
+          if (options.baselineDigestAbsent === true && manifestReads === 1) {
+            return { status: 0, stdout: '', stderr: '' };
+          }
           const digest = options.casDrift === true && manifestReads > 1 ? THIRD_SHA : BASELINE_SHA;
           return { status: 0, stdout: `${digest}  ${UPDATE_ROOT}/internal/manifest.json\n`, stderr: '' };
         }
@@ -1456,6 +1471,9 @@ function commitTransport(options = {}) {
           /^mv \/opt\/rongying\/updates-state\/staging\//u.test(request.script) &&
           options.commitStatus !== undefined
         ) {
+          if (options.foreignOwnerAfterCommit === true) {
+            ownerJson = JSON.stringify({ runid: 'other', planHash: 'other' });
+          }
           return { status: options.commitStatus, stdout: '', stderr: 'commit refused' };
         }
         if (options.foreignOwnerAfterFlip === true && /^mv -f \S+\.tmp /u.test(request.script)) {
@@ -1478,6 +1496,9 @@ function commitTransport(options = {}) {
       calls.push(['fetchPublic', url]);
       if (options.publicStatus !== undefined && options.publicStatus !== 200) {
         return { status: options.publicStatus, bodyBytes: new Uint8Array() };
+      }
+      if (options.manifestBodyMissing === true && url.endsWith('manifest.json')) {
+        return { status: 200 };
       }
       const body = url.endsWith('manifest.json')
         ? (options.publicManifestBody ?? BASELINE_BODY)
@@ -1517,7 +1538,6 @@ function commitInput(transport, overrides = {}) {
 function assertEveryCommitCallCarriesTheTrustAnchor(transport) {
   const anchor = transport.anchor;
   assert.ok(anchor !== undefined && anchor !== null, 'the commit anchor assertion needs an input that injected a host');
-  assert.ok(transport.calls.length > 0, 'the commit anchor assertion needs at least one recorded call');
   const sshCalls = transport.calls.filter((call) => call[0] === 'readSsh' || call[0] === 'writeSsh');
   assert.ok(sshCalls.length > 0, 'the commit anchor assertion needs at least one recorded ssh call');
   for (const call of sshCalls) {
@@ -1627,21 +1647,29 @@ test('the manifest is uploaded to the final directory and its remote digest is c
 test('a mismatched remote manifest digest stops before the flip', async () => {
   const paths = writeArtifacts();
   const transport = happyTransport(paths, { tempManifestSha: 'F'.repeat(64) });
-  const result = await runCommit(commitInput(transport, { ...paths }));
+  const input = commitInput(transport, { ...paths });
+  const result = await runCommit(input);
   assertEveryCommitCallCarriesTheTrustAnchor(transport);
   assert.equal(result.outcome, 'incident');
   assert.equal(result.lockState, 'retained-by-this-run');
   assert.equal(result.stages.find((entry) => entry.stage === 'flip').status, 'pending');
+  const tempManifest = auditEntriesOf(input.auditOut).find((entry) => entry.stage === 'temp-manifest');
+  assert.equal(tempManifest.manifestSha256, manifestShaOf(paths));
+  assert.equal(tempManifest.remoteTempSha256, 'F'.repeat(64));
 });
 
 test('a manifest upload failure is an incident that keeps the lock', async () => {
   const paths = writeArtifacts();
   const transport = happyTransport(paths, { manifestUploadStatus: 1 });
-  const result = await runCommit(commitInput(transport, { ...paths }));
+  const input = commitInput(transport, { ...paths });
+  const result = await runCommit(input);
   assertEveryCommitCallCarriesTheTrustAnchor(transport);
   assert.equal(result.outcome, 'incident');
   assert.equal(result.lockState, 'retained-by-this-run');
   assert.equal(result.stages.find((entry) => entry.stage === 'flip').status, 'pending');
+  const tempManifest = auditEntriesOf(input.auditOut).find((entry) => entry.stage === 'temp-manifest');
+  assert.equal(tempManifest.manifestSha256, manifestShaOf(paths));
+  assert.equal('remoteTempSha256' in tempManifest, false);
 });
 
 test('a cas mismatch is an incident that keeps the lock and never rolls anything back', async () => {
@@ -1660,20 +1688,31 @@ test('a cas mismatch is an incident that keeps the lock and never rolls anything
 test('an indeterminate outcome with the old public sha allows a retry and keeps the lock', async () => {
   const paths = writeArtifacts();
   const transport = happyTransport(paths, { publicManifestBody: BASELINE_BODY });
-  const result = await runCommit(commitInput(transport, { ...paths }));
+  const input = commitInput(transport, { ...paths });
+  const result = await runCommit(input);
   assertEveryCommitCallCarriesTheTrustAnchor(transport);
   assert.equal(result.outcome, 'retry');
   assert.equal(result.lockState, 'retained-by-this-run');
+  const publicVerify = auditEntriesOf(input.auditOut).find((entry) => entry.stage === 'public-verify');
+  assert.equal(publicVerify.status, 'retry');
+  assert.equal(publicVerify.observedManifestSha256, BASELINE_SHA);
+  assert.equal(publicVerify.previousManifestSha256, BASELINE_SHA);
+  assert.equal(publicVerify.manifestSha256, manifestShaOf(paths));
 });
 
 test('an indeterminate outcome with a third public sha stops and keeps the lock', async () => {
   const paths = writeArtifacts();
   const transport = happyTransport(paths, { publicManifestBody: THIRD_BODY });
-  const result = await runCommit(commitInput(transport, { ...paths }));
+  const input = commitInput(transport, { ...paths });
+  const result = await runCommit(input);
   assertEveryCommitCallCarriesTheTrustAnchor(transport);
   assert.equal(result.outcome, 'incident');
   assert.equal(result.lockState, 'retained-by-this-run');
   assert.match(result.reason, /third/u);
+  const publicVerify = auditEntriesOf(input.auditOut).find((entry) => entry.stage === 'public-verify');
+  assert.equal(publicVerify.observedManifestSha256, THIRD_SHA);
+  assert.equal(publicVerify.previousManifestSha256, BASELINE_SHA);
+  assert.equal(publicVerify.manifestSha256, manifestShaOf(paths));
 });
 
 test('a staging failure is a plain failure and reports that no lock was acquired', async () => {
@@ -1865,11 +1904,15 @@ test('a staging directory that cannot be created is a plain failure', async () =
 test('the public verification is actually run after the flip', async () => {
   const paths = writeArtifacts();
   const transport = happyTransport(paths, { publicPackageBody: Buffer.from('other').toString('binary') });
-  const result = await runCommit(commitInput(transport, { ...paths }));
+  const input = commitInput(transport, { ...paths });
+  const result = await runCommit(input);
   assertEveryCommitCallCarriesTheTrustAnchor(transport);
   assert.equal(result.outcome, 'incident');
   assert.equal(result.lockState, 'retained-by-this-run');
   assert.match(result.reason, /public package integrity/u);
+  const publicVerify = auditEntriesOf(input.auditOut).find((entry) => entry.stage === 'public-verify');
+  assert.equal(publicVerify.detail, 'the public package integrity check failed');
+  assert.equal(publicVerify.observedManifestSha256, manifestShaOf(paths));
 });
 
 test('a lock that fails for any reason other than an existing entry is an incident', async () => {
@@ -1972,6 +2015,10 @@ test('a public verifier that rejects after the flip is an incident that keeps th
   assert.match(result.reason, /signature is invalid/u);
   const entries = auditEntriesOf(input.auditOut);
   assert.ok(entries.every((entry) => entry.stage !== 'unlock' || entry.status !== 'done'));
+  const publicVerify = entries.find((entry) => entry.stage === 'public-verify');
+  assert.equal(publicVerify.manifestSha256, manifestShaOf(paths));
+  assert.equal(publicVerify.observedManifestSha256, manifestShaOf(paths));
+  assert.equal(publicVerify.previousManifestSha256, BASELINE_SHA);
 });
 
 test('every early failure records its outcome in the audit log before it returns', async () => {
@@ -2114,4 +2161,235 @@ test('the real release verifier accepts a canonically signed manifest and reject
     verifyPublicArtifacts(publicInput(insertionOrdered, PACKAGE_BYTES, insertionOrdered)),
     /release manifest signature is invalid/u,
   );
+});
+
+test('an owner record replaced before the unlock on the failure path stops the run and deletes nothing', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths, { commitStatus: 1, foreignOwnerAfterCommit: true });
+  const input = commitInput(transport, { ...paths });
+  const result = await runCommit(input);
+  assertEveryCommitCallCarriesTheTrustAnchor(transport);
+  assert.equal(result.outcome, 'fail');
+  assert.equal(result.reason, 'the version directory was not committed');
+  assert.equal(result.lockState, 'ownership-unknown');
+  assert.equal(result.stages.find((entry) => entry.stage === 'commit-version').status, 'fail');
+  assert.equal(result.stages.find((entry) => entry.stage === 'unlock').status, 'retained');
+  const removals = transport.calls.filter(
+    (call) => call[0] === 'writeSsh' && /(?:^|\s)(?:rm|rmdir) /u.test(String(call[1])),
+  );
+  assert.deepEqual(removals, []);
+  const entries = auditEntriesOf(input.auditOut);
+  assert.ok(entries.some((entry) => entry.stage === 'unlock' && entry.status === 'retained'));
+  assert.ok(entries.every((entry) => entry.stage !== 'unlock' || entry.status !== 'done'));
+});
+
+test('the channel precondition refuses an empty channel by its own reason before any remote write', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths);
+  const result = await runCommit(commitInput(transport, { ...paths, channel: '' }));
+  assert.equal(result.outcome, 'fail');
+  assert.equal(result.reason, 'the channel is empty, so it cannot be interpolated into a remote path');
+  assert.deepEqual(transport.calls, []);
+});
+
+test('a staging entry that is not a regular file is refused', async () => {
+  const paths = writeArtifacts();
+  const stagingListing = `d ${PORTABLE_PACKAGE_NAME} ${PACKAGE_BYTES.length}\nf ${PORTABLE_FILE_MANIFEST_NAME} ${FILE_MANIFEST_BYTES.length}\n`;
+  const transport = happyTransport(paths, { stagingListing });
+  const input = commitInput(transport, { ...paths });
+  const result = await runCommit(input);
+  assertEveryCommitCallCarriesTheTrustAnchor(transport);
+  assert.equal(result.outcome, 'fail');
+  assert.match(result.reason, /is not a regular file/u);
+  const remoteVerify = auditEntriesOf(input.auditOut).find((entry) => entry.stage === 'remote-verify');
+  assert.equal(remoteVerify.status, 'fail');
+  assert.match(remoteVerify.detail, /is not a regular file/u);
+  assert.equal(remoteVerify.remote.entries[0].type, 'd');
+  assert.equal(remoteVerify.remote.digests, null);
+});
+
+test('a staging listing that failed is reported as an empty directory rather than parsed', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths, { listingStatus: 1 });
+  const result = await runCommit(commitInput(transport, { ...paths }));
+  assertEveryCommitCallCarriesTheTrustAnchor(transport);
+  assert.equal(result.outcome, 'fail');
+  assert.equal(result.reason, 'the staging directory is not the exact final file set: the staging directory is empty');
+});
+
+test('a presence probe that failed is not read as a present directory', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths, { directoryProbeStatus: 1 });
+  const result = await runCommit(commitInput(transport, { ...paths }));
+  assertEveryCommitCallCarriesTheTrustAnchor(transport);
+  assert.equal(result.outcome, 'fail');
+  assert.equal(result.lockState, 'not-acquired');
+  assert.equal(result.stages.find((entry) => entry.stage === 'remote-verify').status, 'fail');
+  assert.equal(result.stages.find((entry) => entry.stage === 'lock').status, 'pending');
+});
+
+test('a digest read that failed stops the run instead of throwing out of the commit', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths, { digestStatus: 1 });
+  const result = await runCommit(commitInput(transport, { ...paths }));
+  assertEveryCommitCallCarriesTheTrustAnchor(transport);
+  assert.equal(result.outcome, 'fail');
+  assert.equal(
+    result.reason,
+    'the staging directory is not the exact final file set: the remote digests could not be read',
+  );
+});
+
+test('a remote manifest whose digest could not be read is logged as absent rather than as a blank', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths, { baselineDigestAbsent: true });
+  const input = commitInput(transport, { ...paths });
+  const result = await runCommit(input);
+  assertEveryCommitCallCarriesTheTrustAnchor(transport);
+  assert.equal(result.outcome, 'incident');
+  assert.equal(result.stages.find((entry) => entry.stage === 'cas').status, 'incident');
+  const cas = auditEntriesOf(input.auditOut).find((entry) => entry.stage === 'cas');
+  assert.equal(cas.previousManifestSha256, 'absent');
+  assert.equal(cas.observedManifestSha256, BASELINE_SHA);
+});
+
+test('a device probe that failed stops the commit even when it printed matching numbers', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths, { deviceProbeStatus: 1 });
+  const result = await runCommit(commitInput(transport, { ...paths }));
+  assertEveryCommitCallCarriesTheTrustAnchor(transport);
+  assert.equal(result.outcome, 'fail');
+  assert.match(result.reason, /file system/u);
+  assert.equal(result.lockState, 'released');
+  assert.equal(result.stages.find((entry) => entry.stage === 'commit-version').status, 'fail');
+});
+
+test('a public manifest response without body bytes is an incident rather than a crash', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths, { manifestBodyMissing: true });
+  const input = commitInput(transport, { ...paths });
+  const result = await runCommit(input);
+  assertEveryCommitCallCarriesTheTrustAnchor(transport);
+  assert.equal(result.outcome, 'incident');
+  assert.equal(result.lockState, 'retained-by-this-run');
+  assert.match(result.reason, /public manifest could not be read/u);
+  const publicVerify = auditEntriesOf(input.auditOut).find((entry) => entry.stage === 'public-verify');
+  assert.equal(publicVerify.manifestSha256, manifestShaOf(paths));
+});
+
+test('the audit log carries the operator, the run time and the local digests and sizes', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths);
+  const input = commitInput(transport, { ...paths });
+  const result = await runCommit(input);
+  assert.equal(result.outcome, 'done', result.reason);
+  const entries = auditEntriesOf(input.auditOut);
+  for (const entry of entries) {
+    assert.equal(entry.operator, 'ops', entry.stage);
+    assert.equal(entry.at, '2026-09-22T00:00:00.000Z', entry.stage);
+  }
+  const preVerify = entries.find((entry) => entry.stage === 'pre-verify');
+  assert.deepEqual(preVerify.local, {
+    packageSha256: PACKAGE_SHA256,
+    packageSize: PACKAGE_BYTES.length,
+    fileManifestSha256: FILE_MANIFEST_SHA256,
+    fileManifestSize: FILE_MANIFEST_BYTES.length,
+    manifestSha256: manifestShaOf(paths),
+    manifestSize: readFileSync(paths.manifestPath).length,
+  });
+});
+
+test('the audit log carries the entries and digests the staging directory reported', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths);
+  const input = commitInput(transport, { ...paths });
+  const result = await runCommit(input);
+  assert.equal(result.outcome, 'done', result.reason);
+  const remoteVerify = auditEntriesOf(input.auditOut).find((entry) => entry.stage === 'remote-verify');
+  assert.equal(remoteVerify.status, 'done');
+  assert.equal(remoteVerify.remote.present, true);
+  assert.equal(remoteVerify.remote.empty, false);
+  assert.deepEqual(remoteVerify.remote.entries, [
+    { type: 'f', name: PORTABLE_PACKAGE_NAME, size: PACKAGE_BYTES.length },
+    { type: 'f', name: PORTABLE_FILE_MANIFEST_NAME, size: FILE_MANIFEST_BYTES.length },
+  ]);
+  assert.deepEqual(remoteVerify.remote.digests, {
+    [PORTABLE_PACKAGE_NAME]: PACKAGE_SHA256,
+    [PORTABLE_FILE_MANIFEST_NAME]: FILE_MANIFEST_SHA256,
+  });
+});
+
+test('the audit log carries the previous manifest digest and the backup path', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths);
+  const input = commitInput(transport, { ...paths });
+  const result = await runCommit(input);
+  assert.equal(result.outcome, 'done', result.reason);
+  const entries = auditEntriesOf(input.auditOut);
+  const backup = entries.find((entry) => entry.stage === 'backup-manifest');
+  assert.equal(backup.previousManifestSha256, BASELINE_SHA);
+  assert.equal(backup.backupPath, `${STATE_ROOT}/backup/internal-manifest.json-pre-1.2.3`);
+  const cas = entries.find((entry) => entry.stage === 'cas');
+  assert.equal(cas.previousManifestSha256, BASELINE_SHA);
+  assert.equal(cas.observedManifestSha256, BASELINE_SHA);
+});
+
+test('the audit log carries the new manifest digest at the temp manifest, the flip and the outcome', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths);
+  const input = commitInput(transport, { ...paths });
+  const result = await runCommit(input);
+  assert.equal(result.outcome, 'done', result.reason);
+  const manifestSha = manifestShaOf(paths);
+  const entries = auditEntriesOf(input.auditOut);
+  const tempManifest = entries.find((entry) => entry.stage === 'temp-manifest');
+  assert.equal(tempManifest.manifestSha256, manifestSha);
+  assert.equal(tempManifest.remoteTempSha256, manifestSha);
+  assert.equal(entries.find((entry) => entry.stage === 'flip').manifestSha256, manifestSha);
+  assert.equal(entries.find((entry) => entry.stage === 'done').manifestSha256, manifestSha);
+});
+
+test('the audit log carries the public digests and sizes the verification compared', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths);
+  const input = commitInput(transport, { ...paths });
+  const result = await runCommit(input);
+  assert.equal(result.outcome, 'done', result.reason);
+  const publicVerify = auditEntriesOf(input.auditOut).find((entry) => entry.stage === 'public-verify');
+  assert.deepEqual(publicVerify.public, {
+    ok: true,
+    manifestSha256: manifestShaOf(paths),
+    packageSha256: PACKAGE_SHA256,
+    packageSize: PACKAGE_BYTES.length,
+    fileManifestSha256: FILE_MANIFEST_SHA256,
+    fileManifestSize: FILE_MANIFEST_BYTES.length,
+  });
+});
+
+test('the audit log takes each entry time from the injected clock rather than the run start', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths);
+  const ticks = ['2026-09-22T00:00:01.000Z', '2026-09-22T00:00:02.000Z', '2026-09-22T00:00:03.000Z'];
+  let taken = 0;
+  const input = commitInput(transport, { ...paths, now: () => ticks[Math.min(taken++, ticks.length - 1)] });
+  const result = await runCommit(input);
+  assert.equal(result.outcome, 'done', result.reason);
+  const entries = auditEntriesOf(input.auditOut);
+  assert.equal(entries[0].at, ticks[0]);
+  assert.equal(entries[1].at, ticks[1]);
+  assert.equal(entries[2].at, ticks[2]);
+  assert.equal(entries.at(-1).at, ticks[2]);
+});
+
+test('the audit log keeps the operator and the time as null instead of dropping them', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths);
+  const input = commitInput(transport, { ...paths, operator: undefined, startedAt: undefined });
+  await assert.rejects(runCommit(input), /operator/u);
+  const entries = auditEntriesOf(input.auditOut);
+  assert.ok(entries.length > 0);
+  for (const entry of entries) {
+    assert.equal(entry.operator, null, entry.stage);
+    assert.equal(entry.at, null, entry.stage);
+  }
 });
