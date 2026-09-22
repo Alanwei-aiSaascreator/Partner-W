@@ -142,3 +142,57 @@ export async function verifyLocalArtifacts(input) {
     packageUrl: manifest.packageUrl,
   };
 }
+
+export const PUBLISH_STAGES = Object.freeze([
+  'pre-verify',
+  'stage',
+  'remote-verify',
+  'lock',
+  're-verify',
+  'commit-version',
+  'backup-manifest',
+  'cas',
+  'temp-manifest',
+  'flip',
+  'public-verify',
+  'reveal',
+  'unlock',
+]);
+
+export async function planCommit(input) {
+  await verifyLocalArtifacts({
+    packagePath: input.packagePath,
+    fileManifestPath: input.fileManifestPath,
+    manifestPath: input.manifestPath,
+    expectedChannel: input.channel,
+    expectedVersion: input.version,
+    publicKeyBase64: input.publicKeyBase64,
+    verifySignature: input.verifySignature,
+  });
+  return PUBLISH_STAGES.map((stage) => ({ stage, status: 'pending' }));
+}
+
+export async function runPreflight(input) {
+  const notes = [];
+  const probe = await input.transport.readOnly.sshRun({
+    host: input.host,
+    knownHostsPath: input.knownHostsPath,
+    script: `stat -c '%d' ${STATE_ROOT} ${UPDATE_ROOT}`,
+  });
+  const devices = String(probe.stdout ?? '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  const sameFileSystem = devices.length === 2 && devices[0] === devices[1];
+  if (!sameFileSystem) notes.push('the state root and the update root do not report the same file system');
+  if (probe.status !== 0) notes.push('the read only probe did not succeed');
+
+  return {
+    sameFileSystem,
+    notes,
+    writabilityIndicators: {
+      verifiedWrite: false,
+      note: 'writability is an indicator read from remote metadata, not verified: nothing was written yet',
+    },
+  };
+}

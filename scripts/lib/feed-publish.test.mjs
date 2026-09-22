@@ -369,3 +369,100 @@ test('a manifest that is not a JSON object is rejected', async () => {
     /is not a JSON object/u,
   );
 });
+
+import { PUBLISH_STAGES, planCommit, runPreflight } from './feed-publish.mjs';
+
+function fakeReadOnlyTransport(overrides = {}) {
+  const calls = [];
+  return {
+    calls,
+    readOnly: {
+      sshRun: async (request) => {
+        calls.push(['sshRun', request.script]);
+        return overrides.sshRun ? overrides.sshRun(request) : { status: 0, stdout: '', stderr: '' };
+      },
+    },
+    write: {
+      sshRun: async () => ({ status: 0, stdout: '', stderr: '' }),
+      sftpUpload: async () => ({ status: 0, bytesSent: 1 }),
+    },
+    fetchPublic: async (url) => {
+      calls.push(['fetchPublic', url]);
+      return { status: 200, bodyBytes: new Uint8Array() };
+    },
+  };
+}
+
+test('the commit plan lists the thirteen stages in the fixed order', () => {
+  assert.deepEqual(PUBLISH_STAGES, [
+    'pre-verify',
+    'stage',
+    'remote-verify',
+    'lock',
+    're-verify',
+    'commit-version',
+    'backup-manifest',
+    'cas',
+    'temp-manifest',
+    'flip',
+    'public-verify',
+    'reveal',
+    'unlock',
+  ]);
+});
+
+test('the dry run validates the triple and prints the plan without any transport', async () => {
+  const paths = writeArtifacts();
+  const plan = await planCommit({
+    channel: 'internal',
+    version: '1.2.3',
+    ...paths,
+    publicKeyBase64: PUBLIC_KEY_BASE64,
+  });
+  assert.deepEqual(
+    plan.map((entry) => entry.stage),
+    [...PUBLISH_STAGES],
+  );
+  assert.equal(plan[0].status, 'pending');
+});
+
+test('the dry run propagates a local verification failure instead of printing a plan', async () => {
+  const paths = writeArtifacts({ packageBytes: Buffer.from('tampered', 'utf8') });
+  await assert.rejects(
+    planCommit({ channel: 'internal', version: '1.2.3', ...paths, publicKeyBase64: PUBLIC_KEY_BASE64 }),
+    /package integrity/u,
+  );
+});
+
+test('the preflight only performs read only actions and never claims writability', async () => {
+  const transport = fakeReadOnlyTransport({
+    sshRun: (request) =>
+      request.script.includes('stat -c')
+        ? { status: 0, stdout: '100\n100\n', stderr: '' }
+        : { status: 0, stdout: '', stderr: '' },
+  });
+  const result = await runPreflight({
+    channel: 'internal',
+    version: '1.2.3',
+    transport,
+    host: 'h',
+    knownHostsPath: 'k',
+  });
+  const names = transport.calls.map((call) => call[0]);
+  assert.deepEqual([...new Set(names)], ['sshRun']);
+  assert.equal(result.writabilityIndicators.verifiedWrite, false);
+  assert.match(result.writabilityIndicators.note, /indicator/u);
+});
+
+test('the preflight reports different file systems instead of assuming one', async () => {
+  const transport = fakeReadOnlyTransport({ sshRun: () => ({ status: 0, stdout: '100\n200\n', stderr: '' }) });
+  const result = await runPreflight({
+    channel: 'internal',
+    version: '1.2.3',
+    transport,
+    host: 'h',
+    knownHostsPath: 'k',
+  });
+  assert.equal(result.sameFileSystem, false);
+  assert.match(result.notes.join(' '), /file system/u);
+});
