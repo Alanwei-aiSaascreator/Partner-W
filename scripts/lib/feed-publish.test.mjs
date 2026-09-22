@@ -180,7 +180,12 @@ test('the local verification rejects a file manifest whose bytes do not match th
 });
 
 test('the local verification rejects a manifest for another channel or version', () => {
-  const otherChannel = writeArtifacts({ manifestOverrides: { channel: 'stable' } });
+  const otherChannel = writeArtifacts({
+    manifestOverrides: {
+      channel: 'stable',
+      packageUrl: `${PUBLIC_BASE_URL}/stable/1.2.3/portable.zip`,
+    },
+  });
   assert.throws(
     () =>
       verifyLocalArtifacts({
@@ -191,7 +196,12 @@ test('the local verification rejects a manifest for another channel or version',
       }),
     /channel/u,
   );
-  const otherVersion = writeArtifacts({ manifestOverrides: { version: '1.2.4' } });
+  const otherVersion = writeArtifacts({
+    manifestOverrides: {
+      version: '1.2.4',
+      packageUrl: `${PUBLIC_BASE_URL}/internal/1.2.4/portable.zip`,
+    },
+  });
   assert.throws(
     () =>
       verifyLocalArtifacts({
