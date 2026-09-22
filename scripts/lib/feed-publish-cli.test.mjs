@@ -107,12 +107,12 @@ test('the cli refuses a break lock without a reason, an audit log or a confirmat
   );
 });
 
-const cliModule = await import('./feed-publish-cli.mjs');
-const releaseModule = await import('./portable-update-release.mjs');
-const cryptoModule = await import('node:crypto');
-const fsModule = await import('node:fs');
-const osModule = await import('node:os');
-const { afterEach } = await import('node:test');
+import * as cliModule from './feed-publish-cli.mjs';
+import * as releaseModule from './portable-update-release.mjs';
+import * as cryptoModule from 'node:crypto';
+import * as fsModule from 'node:fs';
+import * as osModule from 'node:os';
+import { afterEach } from 'node:test';
 
 const cliRoots = [];
 afterEach(() => {
@@ -194,6 +194,15 @@ const okRead = () => ({ status: 0, stdout: '', stderr: '' });
 const okWrite = () => ({ status: 0, stdout: '', stderr: '' });
 const okUpload = () => ({ status: 0, stdout: '', stderr: '' });
 const okFetch = () => ({ status: 200, bodyBytes: new Uint8Array() });
+
+const removeSemantics = (ownerRecordAbsent) => {
+  return (request) => {
+    const removal = /^(rm -f|rm) (\S+)$/u.exec(String(request.script ?? ''));
+    if (removal === null || removal[1] === 'rm -f' || ownerRecordAbsent !== true) return okWrite();
+    return { status: 1, stdout: '', stderr: `rm: cannot remove '${removal[2]}': No such file or directory` };
+  };
+};
+
 const refuseConstruction = () => {
   throw new Error('the transport must not be built for this run');
 };
@@ -418,6 +427,7 @@ test('a commit stamps every audit entry with the time it happened', async () => 
   const printed = printedObject(result.stdout);
   assert.equal(printed.runid, entries[0].runid);
   assert.equal(printed.planHash.length, 64);
+  assert.ok(harness.factoryInputs.length > 0, 'an empty array would make the assertion below vacuous');
   assert.ok(harness.factoryInputs.every((input) => input.host === 'updates.example.invalid'));
 });
 
@@ -502,6 +512,7 @@ test('the unreadable owner path prints three different causes and this run own r
     {
       cause: 'the lock carries no owner record',
       status: 'missing',
+      absentOwnerRecord: true,
       readSsh: () => ({ status: 1, stdout: '', stderr: 'cat: /opt/x/owner.json: No such file or directory' }),
     },
     {
@@ -520,7 +531,7 @@ test('the unreadable owner path prints three different causes and this run own r
     const auditOut = join(makeCliRoot(), 'audit.jsonl');
     const harness = makeHarness({
       readSsh: item.readSsh,
-      writeSsh: okWrite,
+      writeSsh: removeSemantics(item.absentOwnerRecord),
       sftpUpload: okUpload,
       fetchPublic: okFetch,
       onFactory: () => {},
@@ -555,6 +566,10 @@ test('the unreadable owner path prints three different causes and this run own r
     assert.equal(entries[0].runid, printed.runid);
     assert.equal(entries[0].operator, 'ops');
     assert.equal(Number.isNaN(Date.parse(entries[0].at)), false);
+    const removals = harness.calls.filter((call) => call[0] === 'write.sshRun').map((call) => call[1]);
+    assert.equal(removals.length, 2, 'the break must remove the owner record and then the lock directory');
+    assert.match(removals[0], /^rm -f \S+\/owner\.json$/u);
+    assert.match(removals[1], /^rmdir \S+$/u);
     printedCauses.push(printed.ownerRecordCause);
   }
   assert.equal(new Set(printedCauses).size, 3, `the three causes must print differently: ${printedCauses.join(' | ')}`);
@@ -575,7 +590,13 @@ test('the unreadable owner flag is refused when the owner record is readable', a
   );
   assert.equal(result.code, 1);
   assert.match(result.stderr, /needs --confirm-runid/u);
-  assert.equal(fsModule.existsSync(auditOut), false);
+  const entries = auditEntriesOf(auditOut);
+  assert.equal(entries.length, 1, 'a refused declaration must still leave a trace');
+  assert.equal(entries[0].stage, 'break-lock');
+  assert.equal(entries[0].status, 'fail');
+  assert.equal(entries[0].reason, 'confirmed idle');
+  assert.equal(entries[0].operator, 'unknown');
+  assert.match(entries[0].detail, /needs --confirm-runid/u);
   assert.deepEqual(
     harness.calls.filter((call) => call[0] === 'write.sshRun'),
     [],
@@ -687,7 +708,8 @@ test('the stable re-sign refuses to overwrite the manifest it already wrote and 
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 15);
   const second = await withReleaseKeys(signingKeyPath, () => captureRun(stableArgs(triple, stableOut)));
   assert.equal(second.code, 1);
-  assert.match(second.stderr, /EEXIST/u);
+  assert.match(second.stderr, /already exists; refusing to overwrite a signed manifest/u);
+  assert.match(second.stderr, /remove it by hand to re-sign/u);
   assert.deepEqual(fsModule.readFileSync(stableOut), firstBytes);
 });
 
@@ -731,4 +753,239 @@ test('the commit refuses to run without the three artifact paths', async () => {
   assert.equal(result.code, 1);
   assert.match(result.stderr, /--package, --file-manifest and --manifest are required/u);
   assert.equal(fsModule.existsSync(auditOut), false);
+});
+
+function explicitArgs(mode, knownHostsPath, extra) {
+  return [
+    mode,
+    '--channel',
+    'internal',
+    '--version',
+    '1.2.3',
+    '--host',
+    'updates.example.invalid',
+    '--known-hosts',
+    knownHostsPath,
+    ...extra,
+  ];
+}
+
+test('the commit mode refuses a known hosts file inside the repository before it builds a transport', async () => {
+  const auditOut = join(makeCliRoot(), 'audit.jsonl');
+  const result = await captureRun(
+    explicitArgs('--commit', join(repositoryRoot, 'known_hosts'), [
+      '--package',
+      'p.zip',
+      '--file-manifest',
+      'f.json',
+      '--manifest',
+      'm.json',
+      '--audit-out',
+      auditOut,
+    ]),
+    { createTransport: refuseConstruction },
+  );
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /outside the repository/u);
+  assert.equal(fsModule.existsSync(auditOut), false);
+});
+
+test('the break lock mode refuses a known hosts file inside the repository before it builds a transport', async () => {
+  const auditOut = join(makeCliRoot(), 'audit.jsonl');
+  const result = await captureRun(
+    explicitArgs('--break-lock', join(repositoryRoot, 'known_hosts'), [
+      '--reason',
+      'stopped',
+      '--audit-out',
+      auditOut,
+      '--confirm-runid',
+      'r0',
+    ]),
+    { createTransport: refuseConstruction },
+  );
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /outside the repository/u);
+  assert.equal(fsModule.existsSync(auditOut), false);
+});
+
+test('a command line carrying two mode flags is refused instead of letting the destructive one win', async () => {
+  for (const pair of [
+    ['--dry-run', '--commit'],
+    ['--dry-run', '--break-lock'],
+    ['--preflight', '--break-lock'],
+  ]) {
+    const result = await captureRun([...pair, '--channel', 'internal', '--version', '1.2.3'], {
+      createTransport: refuseConstruction,
+    });
+    assert.equal(result.code, 1, pair.join(' '));
+    assert.match(result.stderr, /only one mode flag may be given/u, pair.join(' '));
+    assert.ok(result.stderr.includes(pair[0]) && result.stderr.includes(pair[1]), pair.join(' '));
+    assert.equal(result.stdout.includes('"plan"'), false, pair.join(' '));
+  }
+});
+
+test('the usage text documents every exit code the operator can act on', () => {
+  const result = runCli([]);
+  assert.equal(result.status, 2);
+  assert.match(result.stdout, /Exit codes: 0 the run finished, 1 it refused or failed, 2 no mode flag/u);
+  assert.match(result.stdout, /3 the flip did not take effect/u);
+  assert.match(result.stdout, /only code that means a --commit is safe to/u);
+});
+
+test('the cli refuses a version flag that is missing rather than inventing one', async () => {
+  const result = await captureRun(
+    ['--dry-run', '--channel', 'internal', '--package', 'p.zip', '--file-manifest', 'f.json', '--manifest', 'm.json'],
+    { createTransport: refuseConstruction },
+  );
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /--version is required/u);
+  assert.doesNotMatch(result.stderr, /semantic version/u);
+  assert.equal(result.stdout.includes('"plan"'), false);
+});
+
+test('a reason flag whose value is another flag is refused rather than audited as the reason', async () => {
+  const result = await captureRun(
+    networkArgs('--break-lock', ['--reason', '--owner-record-unreadable', '--audit-out', 'x.jsonl']),
+    { createTransport: refuseConstruction },
+  );
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /--reason is required/u);
+});
+
+test('the stable re-sign refuses an output path inside the repository', async () => {
+  const triple = await writeSignedTriple();
+  const inside = join(repositoryRoot, 'stable-manifest.json');
+  const result = await captureRun(stableArgs(triple, inside), { createTransport: refuseConstruction });
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /--stable-out must live outside the repository/u);
+  assert.equal(fsModule.existsSync(inside), false);
+});
+
+test('a preflight whose probe throws still leaves a failed session entry', async () => {
+  const auditOut = join(makeCliRoot(), 'audit.jsonl');
+  const harness = makeHarness({
+    readSsh: () => {
+      throw new Error('the probe transport died');
+    },
+    writeSsh: okWrite,
+    sftpUpload: okUpload,
+    fetchPublic: okFetch,
+    onFactory: () => {},
+  });
+  const result = await captureRun(networkArgs('--preflight', ['--audit-out', auditOut]), {
+    createTransport: harness.createTransport,
+  });
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /the probe transport died/u);
+  const entries = auditEntriesOf(auditOut);
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].stage, 'preflight');
+  assert.equal(entries[0].status, 'fail');
+  assert.match(entries[0].detail, /the probe transport died/u);
+  assert.equal(Number.isNaN(Date.parse(entries[0].at)), false);
+});
+
+test('a break that fails to remove the lock directory still records the operators declaration', async () => {
+  const auditOut = join(makeCliRoot(), 'audit.jsonl');
+  const harness = makeHarness({
+    readSsh: () => ({ status: 1, stdout: '', stderr: 'cat: /opt/x/owner.json: No such file or directory' }),
+    writeSsh: (request) =>
+      request.script.startsWith('rmdir ')
+        ? { status: 1, stdout: '', stderr: 'rmdir: failed to remove: Permission denied' }
+        : removeSemantics(true)(request),
+    sftpUpload: okUpload,
+    fetchPublic: okFetch,
+    onFactory: () => {},
+  });
+  const result = await captureRun(
+    networkArgs('--break-lock', ['--reason', 'confirmed idle', '--audit-out', auditOut, '--owner-record-unreadable']),
+    { createTransport: harness.createTransport },
+  );
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /the lock directory could not be removed/u);
+  const entries = auditEntriesOf(auditOut);
+  assert.equal(entries.length, 1, 'a failed break must leave a trace');
+  assert.equal(entries[0].stage, 'break-lock');
+  assert.equal(entries[0].status, 'fail');
+  assert.equal(entries[0].reason, 'confirmed idle');
+  assert.match(entries[0].detail, /the lock directory could not be removed/u);
+});
+
+const RETRY_PUBLIC_BODY = '{"baseline":true}\n';
+const retryPublicSha = cryptoModule.createHash('sha256').update(Buffer.from(RETRY_PUBLIC_BODY, 'utf8')).digest('hex');
+
+function makeRetryHarness(paths) {
+  const digest = (buffer) => cryptoModule.createHash('sha256').update(buffer).digest('hex');
+  const packageBytes = fsModule.readFileSync(paths.packagePath);
+  const fileManifestBytes = fsModule.readFileSync(paths.fileManifestPath);
+  const manifestSha = digest(fsModule.readFileSync(paths.manifestPath));
+  const listing = `f portable.zip ${packageBytes.length}\nf portable-files.json ${fileManifestBytes.length}\n`;
+  let ownerJson = null;
+  return makeHarness({
+    readSsh: (request) => {
+      const script = request.script;
+      if (script.includes('owner.json')) {
+        return ownerJson === null
+          ? { status: 1, stdout: '', stderr: 'cat: owner.json: No such file or directory' }
+          : { status: 0, stdout: ownerJson, stderr: '' };
+      }
+      if (script.includes("stat -c '%d'")) return { status: 0, stdout: '100\n100\n', stderr: '' };
+      if (script.includes('-printf')) {
+        return { status: 0, stdout: script.includes('/staging/') ? listing : '', stderr: '' };
+      }
+      if (script.startsWith('if [ -d ')) {
+        return { status: 0, stdout: script.includes('/staging/') ? 'present\n' : '', stderr: '' };
+      }
+      if (script.includes('sha256sum') && script.includes('/staging/')) {
+        const directory = script.split(/\s+/u)[1].replace(/\/[^/]+$/u, '');
+        return {
+          status: 0,
+          stdout: `${digest(packageBytes)}  ${directory}/portable.zip\n${digest(fileManifestBytes)}  ${directory}/portable-files.json\n`,
+          stderr: '',
+        };
+      }
+      if (script.includes('sha256sum') && script.includes('manifest.json')) {
+        const observed = script.includes('.tmp') ? manifestSha : retryPublicSha;
+        return { status: 0, stdout: `${observed}  ${script.split(/\s+/u)[1]}\n`, stderr: '' };
+      }
+      return { status: 0, stdout: '', stderr: '' };
+    },
+    writeSsh: (request) => {
+      const ownerMatch = /printf '%s' '([A-Za-z0-9+/=]+)' \| base64 -d > /u.exec(request.script);
+      if (ownerMatch !== null) ownerJson = Buffer.from(ownerMatch[1], 'base64').toString('utf8');
+      return { status: 0, stdout: '', stderr: '' };
+    },
+    sftpUpload: () => ({ status: 0, bytesSent: 1 }),
+    fetchPublic: () => ({ status: 200, bodyBytes: Uint8Array.from(Buffer.from(RETRY_PUBLIC_BODY, 'utf8')) }),
+    onFactory: () => {},
+  });
+}
+
+test('a commit whose flip did not take effect exits 3 so the operator knows a re-run is safe', async () => {
+  const triple = await writeSignedTriple();
+  const auditOut = join(makeCliRoot(), 'audit.jsonl');
+  const harness = makeRetryHarness(triple);
+  const result = await withEnvironment('MOFANG_UPDATE_PUBLIC_KEY_B64', CLI_PUBLIC_KEY_BASE64, () =>
+    captureRun(
+      explicitArgs('--commit', OUTSIDE_KNOWN_HOSTS, [
+        '--package',
+        triple.packagePath,
+        '--file-manifest',
+        triple.fileManifestPath,
+        '--manifest',
+        triple.manifestPath,
+        '--audit-out',
+        auditOut,
+      ]),
+      { createTransport: harness.createTransport },
+    ),
+  );
+  assert.equal(harness.factoryInputs.length, 1, 'the injected factory must be the only transport this run built');
+  assert.equal(result.code, 3, 'exit 3 is the only code that means a commit is safe to re-run');
+  const printed = printedObject(result.stdout);
+  assert.equal(printed.outcome, 'retry');
+  assert.equal(printed.lockState, 'retained-by-this-run');
+  assert.equal(printed.reason, 'the flip did not take effect');
+  const entries = auditEntriesOf(auditOut);
+  assert.equal(entries.at(-1).stage, 'lock-retained');
 });

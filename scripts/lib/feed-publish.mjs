@@ -55,11 +55,15 @@ function isInsideRepository(target, repositoryRoot) {
   return relation !== '..' && !relation.startsWith(`..${sep}`);
 }
 
-export function assertKnownHostsPath(target, repositoryRoot) {
+export function assertOutsideRepositoryPath(target, label, repositoryRoot) {
   if (isInsideRepository(target, repositoryRoot)) {
-    throw new FeedPublishError('the pinned known hosts file must live outside the repository');
+    throw new FeedPublishError(`${label} must live outside the repository`);
   }
   return resolve(target);
+}
+
+export function assertKnownHostsPath(target, repositoryRoot) {
+  return assertOutsideRepositoryPath(target, 'the pinned known hosts file', repositoryRoot);
 }
 
 function sha256(buffer) {
@@ -434,19 +438,22 @@ export async function breakChannelLock(input) {
   if (typeof input.auditOut !== 'string' || input.auditOut.length === 0) {
     throw new FeedPublishError('breaking a lock requires --audit-out');
   }
-  const removeLock = async () => {
+  const removeLock = async ({ ownerRecordExpected }) => {
     const removedOwner = await input.transport.write.sshRun({
       host: input.host,
       knownHostsPath: input.knownHostsPath,
-      script: `rm ${ownerPath(input.channel)}`,
+      script: `${ownerRecordExpected ? 'rm' : 'rm -f'} ${ownerPath(input.channel)}`,
     });
     const removedLock = await input.transport.write.sshRun({
       host: input.host,
       knownHostsPath: input.knownHostsPath,
       script: `rmdir ${lockPath(input.channel)}`,
     });
-    if (removedOwner.status !== 0 || removedLock.status !== 0) {
-      throw new FeedPublishError('the remote lock could not be removed');
+    if (ownerRecordExpected === true && removedOwner.status !== 0) {
+      throw new FeedPublishError('the owner record could not be removed');
+    }
+    if (removedLock.status !== 0) {
+      throw new FeedPublishError('the lock directory could not be removed');
     }
   };
   const read = await readOwnerRecord(input);
@@ -456,7 +463,7 @@ export async function breakChannelLock(input) {
         'the owner record is readable, so this lock needs --confirm-runid rather than the unreadable record flag',
       );
     }
-    await removeLock();
+    await removeLock({ ownerRecordExpected: false });
     return {
       outcome: 'lock-broken',
       previousOwner: null,
@@ -476,7 +483,7 @@ export async function breakChannelLock(input) {
   if (input.confirmRunid !== owner.runid) {
     throw new FeedPublishError(`--confirm-runid does not match the owner runid ${owner.runid}`);
   }
-  await removeLock();
+  await removeLock({ ownerRecordExpected: true });
   return {
     outcome: 'lock-broken',
     previousOwner: owner,

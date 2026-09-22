@@ -219,22 +219,47 @@ test('an sftp upload without a batch writer or a batch file path fails closed', 
   assert.deepEqual(fake.calls, []);
 });
 
-test('a per call batch writer is used instead of the one the factory was given', async () => {
+test('a per call batch writer and its batch file are used together instead of the factory pair', async () => {
   const factoryWrites = [];
   const callWrites = [];
+  const fake = makeFake();
   const transport = makeTransport({
-    execFile: makeFake().execFile,
+    execFile: fake.execFile,
     writeBatch: (text) => factoryWrites.push(text),
   });
   await transport.write.sftpUpload({
     localPath: '/a',
     remotePath: '/b',
     resume: false,
+    batchFile: '/outside/repo/call-batch.txt',
     writeBatch: (text) => callWrites.push(text),
   });
   assert.deepEqual(factoryWrites, []);
   assert.equal(callWrites.length, 1);
   assert.match(callWrites[0], /^put /u);
+  assert.equal(fake.calls[0].args.at(-2), '/outside/repo/call-batch.txt');
+});
+
+test('a per call batch writer without its own batch file is refused rather than writing to a file sftp never reads', async () => {
+  const factoryWrites = [];
+  const callWrites = [];
+  const fake = makeFake();
+  const transport = makeTransport({
+    execFile: fake.execFile,
+    writeBatch: (text) => factoryWrites.push(text),
+  });
+  await assert.rejects(
+    transport.write.sftpUpload({
+      localPath: '/a',
+      remotePath: '/b',
+      resume: false,
+      writeBatch: (text) => callWrites.push(text),
+    }),
+    FeedTransportError,
+  );
+  assert.deepEqual(factoryWrites, []);
+  assert.deepEqual(callWrites, []);
+  assert.deepEqual(fake.calls, []);
 });
 
 test('a runner result without a numeric status is reported as a failure rather than as success', async () => {

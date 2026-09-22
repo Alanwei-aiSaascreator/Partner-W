@@ -563,11 +563,15 @@ function isInsideRepository(target, repositoryRoot) {
   return relation !== '..' && !relation.startsWith(`..${sep}`);
 }
 
-export function assertKnownHostsPath(target, repositoryRoot) {
+export function assertOutsideRepositoryPath(target, label, repositoryRoot) {
   if (isInsideRepository(target, repositoryRoot)) {
-    throw new FeedPublishError('the pinned known hosts file must live outside the repository');
+    throw new FeedPublishError(`${label} must live outside the repository`);
   }
   return resolve(target);
+}
+
+export function assertKnownHostsPath(target, repositoryRoot) {
+  return assertOutsideRepositoryPath(target, 'the pinned known hosts file', repositoryRoot);
 }
 
 function sha256(buffer) {
@@ -1595,19 +1599,22 @@ export async function breakChannelLock(input) {
   if (typeof input.auditOut !== 'string' || input.auditOut.length === 0) {
     throw new FeedPublishError('breaking a lock requires --audit-out');
   }
-  const removeLock = async () => {
+  const removeLock = async ({ ownerRecordExpected }) => {
     const removedOwner = await input.transport.write.sshRun({
       host: input.host,
       knownHostsPath: input.knownHostsPath,
-      script: `rm ${ownerPath(input.channel)}`,
+      script: `${ownerRecordExpected ? 'rm' : 'rm -f'} ${ownerPath(input.channel)}`,
     });
     const removedLock = await input.transport.write.sshRun({
       host: input.host,
       knownHostsPath: input.knownHostsPath,
       script: `rmdir ${lockPath(input.channel)}`,
     });
-    if (removedOwner.status !== 0 || removedLock.status !== 0) {
-      throw new FeedPublishError('the remote lock could not be removed');
+    if (ownerRecordExpected === true && removedOwner.status !== 0) {
+      throw new FeedPublishError('the owner record could not be removed');
+    }
+    if (removedLock.status !== 0) {
+      throw new FeedPublishError('the lock directory could not be removed');
     }
   };
   const read = await readOwnerRecord(input);
@@ -1617,7 +1624,7 @@ export async function breakChannelLock(input) {
         'the owner record is readable, so this lock needs --confirm-runid rather than the unreadable record flag',
       );
     }
-    await removeLock();
+    await removeLock({ ownerRecordExpected: false });
     return {
       outcome: 'lock-broken',
       previousOwner: null,
@@ -1637,7 +1644,7 @@ export async function breakChannelLock(input) {
   if (input.confirmRunid !== owner.runid) {
     throw new FeedPublishError(`--confirm-runid does not match the owner runid ${owner.runid}`);
   }
-  await removeLock();
+  await removeLock({ ownerRecordExpected: true });
   return {
     outcome: 'lock-broken',
     previousOwner: owner,
@@ -5050,9 +5057,14 @@ export function createFeedTransport(input) {
   }
 
   async function sftpUpload(request) {
+    if ((request.writeBatch === undefined) !== (request.batchFile === undefined)) {
+      throw new FeedTransportError(
+        'a per call sftp writer and its batch file must be overridden together, or the writer appends to a file that the sftp batch never reads',
+      );
+    }
     const writeBatch = request.writeBatch ?? input.writeBatch;
     if (typeof writeBatch !== 'function') throw new FeedTransportError('the sftp batch writer is required');
-    const batchFile = input.batchFile;
+    const batchFile = request.batchFile ?? input.batchFile;
     if (typeof batchFile !== 'string' || batchFile.length === 0) {
       throw new FeedTransportError('the sftp batch file path is required');
     }
@@ -5537,7 +5549,7 @@ node --test scripts/lib/feed-publish-cli.test.mjs
 
 ```js
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { hostname, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -5546,6 +5558,7 @@ import {
   FeedPublishError,
   appendAuditStage,
   assertKnownHostsPath,
+  assertOutsideRepositoryPath,
   breakChannelLock,
   buildStableManifestInput,
   parsePublishInput,
@@ -5580,11 +5593,40 @@ const USAGE = [
   '                     --package --file-manifest --manifest --stable-out, and refuses to',
   '                     overwrite the output; --channel must be stable',
   '  --known-hosts      the pinned known_hosts file, must live outside the repository',
+  'Exactly one mode flag may be given; a command line that carries two is refused rather than',
+  'resolved by priority, because --dry-run is the safest mode and must never lose to --commit.',
+  'Exit codes: 0 the run finished, 1 it refused or failed, 2 no mode flag was given,',
+  '  3 the flip did not take effect, which is the only code that means a --commit is safe to',
+  '  re-run; every other failure may still have changed the remote state, so read the audit log.',
 ].join('\n');
+
+const MODE_FLAGS = Object.freeze(['--dry-run', '--preflight', '--commit', '--break-lock', '--re-sign-stable']);
 
 function flag(argv, name) {
   const index = argv.indexOf(name);
-  return index >= 0 && argv[index + 1] ? argv[index + 1] : null;
+  const value = index >= 0 ? argv[index + 1] : undefined;
+  if (typeof value !== 'string' || value.length === 0 || value.startsWith('--')) return null;
+  return value;
+}
+
+function appendFailedSession(input) {
+  try {
+    appendAuditStage({
+      auditOut: input.auditOut,
+      repositoryRoot,
+      entry: {
+        stage: input.stage,
+        status: 'fail',
+        runid: input.runid,
+        operator: input.operator,
+        at: input.at,
+        ...(input.reason === undefined ? {} : { reason: input.reason }),
+        detail: input.detail,
+      },
+    });
+  } catch {
+    console.error(`the failed ${input.stage} session entry could not be recorded either`);
+  }
 }
 
 function requirePublicKeyFromEnvironment() {
@@ -5626,17 +5668,12 @@ async function withTransport(createTransport, input, body) {
 
 export async function runCli(argv, dependencies = {}) {
   const createTransport = dependencies.createTransport ?? createFeedTransport;
-  const mode = argv.includes('--commit')
-    ? 'commit'
-    : argv.includes('--preflight')
-      ? 'preflight'
-      : argv.includes('--break-lock')
-        ? 'break-lock'
-        : argv.includes('--re-sign-stable')
-          ? 're-sign-stable'
-          : argv.includes('--dry-run')
-            ? 'dry-run'
-            : null;
+  const modeFlags = MODE_FLAGS.filter((name) => argv.includes(name));
+  if (modeFlags.length > 1) {
+    console.error(`only one mode flag may be given, but this command line carries ${modeFlags.join(' and ')}`);
+    return 1;
+  }
+  const mode = modeFlags.length === 1 ? modeFlags[0].slice(2) : null;
   if (mode === null) {
     console.log(USAGE);
     return 2;
@@ -5656,7 +5693,8 @@ export async function runCli(argv, dependencies = {}) {
 
   let input;
   try {
-    input = parsePublishInput({ channel, version: version ?? '0.0.0', host, knownHostsPath, needsNetwork });
+    if (version === null) throw new FeedPublishError('--version is required');
+    input = parsePublishInput({ channel, version, host, knownHostsPath, needsNetwork });
   } catch (error) {
     console.error(error instanceof FeedPublishError ? error.message : String(error));
     return 1;
@@ -5696,10 +5734,6 @@ export async function runCli(argv, dependencies = {}) {
       console.error('--re-sign-stable requires --channel stable');
       return 1;
     }
-    if (version === null) {
-      console.error('--version is required');
-      return 1;
-    }
     const packagePath = flag(argv, '--package');
     const fileManifestPath = flag(argv, '--file-manifest');
     const manifestPath = flag(argv, '--manifest');
@@ -5710,6 +5744,13 @@ export async function runCli(argv, dependencies = {}) {
     const stableOut = flag(argv, '--stable-out');
     if (stableOut === null) {
       console.error('--stable-out is required');
+      return 1;
+    }
+    let resolvedStableOut;
+    try {
+      resolvedStableOut = assertOutsideRepositoryPath(stableOut, '--stable-out', repositoryRoot);
+    } catch (error) {
+      console.error(error instanceof FeedPublishError ? error.message : String(error));
       return 1;
     }
     try {
@@ -5739,15 +5780,19 @@ export async function runCli(argv, dependencies = {}) {
         signingKeyPem: await readSigningKeyFile(assertPathOutsideRepository(signingKeyFile, repositoryRoot)),
         publicKeyBase64,
       });
-      const stableManifestOut = resolve(stableOut);
-      writeFileSync(stableManifestOut, release.manifestBytes, { flag: 'wx' });
+      if (existsSync(resolvedStableOut)) {
+        throw new FeedPublishError(
+          `${resolvedStableOut} already exists; refusing to overwrite a signed manifest, so remove it by hand to re-sign`,
+        );
+      }
+      writeFileSync(resolvedStableOut, release.manifestBytes, { flag: 'wx' });
       console.log(
         JSON.stringify(
           {
             mode,
             channel: 'stable',
             version: input.version,
-            stableManifestOut,
+            stableManifestOut: resolvedStableOut,
             stableManifestSha256: createHash('sha256').update(release.manifestBytes).digest('hex'),
             reusedFileManifestSha256: createHash('sha256').update(release.fileManifestBytes).digest('hex'),
             reusedPackageSha256: release.packageSha256,
@@ -5773,32 +5818,39 @@ export async function runCli(argv, dependencies = {}) {
       return 1;
     }
     return withTransport(createTransport, input, async (transport) => {
-      const result = await runPreflight({
-        channel: input.channel,
-        version: input.version,
-        transport,
-        host: input.host,
-        knownHostsPath: input.knownHostsPath,
-      });
-      const status = result.notes.length === 0 ? 'done' : 'fail';
-      appendAuditStage({
-        auditOut,
-        repositoryRoot,
-        entry: {
-          stage: 'preflight',
-          status,
-          runid,
-          operator,
-          at: now(),
-          ...(result.notes.length === 0 ? {} : { detail: result.notes.join('; ') }),
-        },
-      });
-      console.log(JSON.stringify({ mode, channel: input.channel, version: input.version, runid, result }, null, 2));
-      if (result.notes.length === 0) return 0;
-      console.error(
-        'the read only probe did not come back clean; the preflight result carries no exit status or stderr, so run the ssh probe by hand to see why',
-      );
-      return 1;
+      try {
+        const result = await runPreflight({
+          channel: input.channel,
+          version: input.version,
+          transport,
+          host: input.host,
+          knownHostsPath: input.knownHostsPath,
+        });
+        const status = result.notes.length === 0 ? 'done' : 'fail';
+        appendAuditStage({
+          auditOut,
+          repositoryRoot,
+          entry: {
+            stage: 'preflight',
+            status,
+            runid,
+            operator,
+            at: now(),
+            ...(result.notes.length === 0 ? {} : { detail: result.notes.join('; ') }),
+          },
+        });
+        console.log(JSON.stringify({ mode, channel: input.channel, version: input.version, runid, result }, null, 2));
+        if (result.notes.length === 0) return 0;
+        console.error(
+          'the read only probe did not come back clean; the preflight result carries no exit status or stderr, so run the ssh probe by hand to see why',
+        );
+        return 1;
+      } catch (error) {
+        const message = error instanceof FeedPublishError ? error.message : String(error);
+        appendFailedSession({ auditOut, stage: 'preflight', runid, operator, at: now(), detail: message });
+        console.error(message);
+        return 1;
+      }
     });
   }
 
@@ -5837,7 +5889,11 @@ export async function runCli(argv, dependencies = {}) {
         );
         return 0;
       } catch (error) {
-        console.error(error instanceof FeedPublishError ? error.message : String(error));
+        const message = error instanceof FeedPublishError ? error.message : String(error);
+        if (ownerRecordUnreadable === true) {
+          appendFailedSession({ auditOut, stage: 'break-lock', runid, operator, at: now(), reason, detail: message });
+        }
+        console.error(message);
         return 1;
       }
     });
@@ -5864,6 +5920,8 @@ export async function runCli(argv, dependencies = {}) {
       const resolvedManifestPath = resolve(manifestPath);
       const resolvedFileManifestPath = resolve(fileManifestPath);
       const resolvedPackagePath = resolve(packagePath);
+      const verifyReleaseBytes = ({ manifestBytes, fileManifestBytes, packagePath }) =>
+        verifyPortableRelease({ manifestBytes, fileManifestBytes, packagePath, publicKeyBase64 });
       const result = await runCommit({
         channel: input.channel,
         version: input.version,
@@ -5882,10 +5940,8 @@ export async function runCli(argv, dependencies = {}) {
         temporaryRoot,
         transport,
         publicKeyBase64,
-        verifySignature: ({ manifestBytes, fileManifestBytes, packagePath }) =>
-          verifyPortableRelease({ manifestBytes, fileManifestBytes, packagePath, publicKeyBase64 }),
-        verifier: ({ manifestBytes, fileManifestBytes, packagePath }) =>
-          verifyPortableRelease({ manifestBytes, fileManifestBytes, packagePath, publicKeyBase64 }),
+        verifySignature: verifyReleaseBytes,
+        verifier: verifyReleaseBytes,
       });
       console.log(JSON.stringify(result, null, 2));
       if (result.outcome === 'done') return 0;

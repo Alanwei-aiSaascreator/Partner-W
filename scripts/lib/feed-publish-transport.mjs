@@ -96,9 +96,14 @@ export function createFeedTransport(input) {
   }
 
   async function sftpUpload(request) {
+    if ((request.writeBatch === undefined) !== (request.batchFile === undefined)) {
+      throw new FeedTransportError(
+        'a per call sftp writer and its batch file must be overridden together, or the writer appends to a file that the sftp batch never reads',
+      );
+    }
     const writeBatch = request.writeBatch ?? input.writeBatch;
     if (typeof writeBatch !== 'function') throw new FeedTransportError('the sftp batch writer is required');
-    const batchFile = input.batchFile;
+    const batchFile = request.batchFile ?? input.batchFile;
     if (typeof batchFile !== 'string' || batchFile.length === 0) {
       throw new FeedTransportError('the sftp batch file path is required');
     }

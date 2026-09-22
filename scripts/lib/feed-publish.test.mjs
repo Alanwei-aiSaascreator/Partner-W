@@ -2928,6 +2928,60 @@ test('a known hosts path that carries whitespace is accepted by the input and by
   assert.equal(assertKnownHostsPath(spaced, process.cwd()), spaced);
 });
 
+const absentOwnerRead = () => ({ status: 1, stdout: '', stderr: `cat: ${OWNER_FILE}: No such file or directory` });
+
+const realRemovalSemantics = (absent) => {
+  return (request = {}) => {
+    const removal = /^(rm -f|rm) (\S+)$/u.exec(String(request.script ?? ''));
+    if (removal === null || removal[1] === 'rm -f') return { status: 0, stdout: '', stderr: '' };
+    if (!absent.includes(removal[2])) return { status: 0, stdout: '', stderr: '' };
+    return { status: 1, stdout: '', stderr: `rm: cannot remove '${removal[2]}': No such file or directory` };
+  };
+};
+
+const breakWithAbsentOwner = (overrides = {}) =>
+  fakeWriteTransport({
+    readSsh: absentOwnerRead,
+    writeSsh: realRemovalSemantics([OWNER_FILE]),
+    ...overrides,
+  });
+
+test('an absent owner record is removed with force so only the lock directory has to go', async () => {
+  const transport = breakWithAbsentOwner();
+  const record = await breakChannelLock(breakInput(transport, { ownerRecordUnreadable: true }));
+  assert.equal(record.ownerRecordStatus, 'missing');
+  assert.equal(record.previousOwner, null);
+  assert.deepEqual(writeScripts(transport), [`rm -f ${OWNER_FILE}`, `rmdir ${LOCK_DIR}`]);
+  assertEveryCallCarriesTheTrustAnchor(transport.calls);
+});
+
+test('an unreadable break that cannot remove the lock directory names the lock directory', async () => {
+  const transport = breakWithAbsentOwner({
+    writeSsh: (request) =>
+      request.script.startsWith('rmdir ')
+        ? { status: 1, stdout: '', stderr: 'rmdir: failed to remove: Permission denied' }
+        : realRemovalSemantics([OWNER_FILE])(request),
+  });
+  await assert.rejects(breakChannelLock(breakInput(transport, { ownerRecordUnreadable: true })), {
+    name: 'FeedPublishError',
+    message: 'the lock directory could not be removed',
+  });
+  assertEveryCallCarriesTheTrustAnchor(transport.calls);
+});
+
+test('a break that cannot remove the owner record names the owner record', async () => {
+  const transport = fakeWriteTransport({
+    readSsh: readablePreviousOwner,
+    writeSsh: (request) =>
+      /^rm /u.test(request.script) ? { status: 1, stdout: '', stderr: 'rm: cannot remove' } : { status: 0 },
+  });
+  await assert.rejects(breakChannelLock(breakInput(transport)), {
+    name: 'FeedPublishError',
+    message: 'the owner record could not be removed',
+  });
+  assertEveryCallCarriesTheTrustAnchor(transport.calls);
+});
+
 test('a host that carries a control character is rejected by the same class the transport uses', () => {
   assert.throws(
     () =>
