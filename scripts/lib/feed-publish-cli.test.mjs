@@ -128,6 +128,13 @@ function makeCliRoot() {
 const cliKeyPair = cryptoModule.generateKeyPairSync('ed25519');
 const CLI_PUBLIC_KEY_BASE64 = cliKeyPair.publicKey.export({ type: 'spki', format: 'der' }).toString('base64');
 const CLI_PACKAGE_BYTES = Buffer.from('portable-zip-bytes', 'utf8');
+const FOREIGN_OWNER_RECORD = {
+  runid: 'r0',
+  operator: 'ops',
+  startedAt: '2026-09-22T00:00:00.000Z',
+  planHash: 'p0',
+  machine: 'builder-01',
+};
 const OUTSIDE_KNOWN_HOSTS = resolve(osModule.tmpdir(), 'known_hosts');
 
 async function writeSignedTriple({ minLauncherVersion = '1.0.0' } = {}) {
@@ -305,6 +312,35 @@ test('the dry run prints the plan for a canonically signed triple', async () => 
   assert.equal(printed.version, '1.2.3');
   assert.equal(printed.plan.length, 13);
   assert.equal(printed.plan[0].stage, 'pre-verify');
+});
+
+test('the dry run prints the local digests, the target paths and the verified plan hash', async () => {
+  const triple = await writeSignedTriple();
+  const factory = makeCountingRefusal();
+  const result = await withEnvironment('MOFANG_UPDATE_PUBLIC_KEY_B64', CLI_PUBLIC_KEY_BASE64, () =>
+    captureRun(offlineArgs('--dry-run', triple, []), { createTransport: factory.createTransport }),
+  );
+  assert.equal(result.code, 0);
+  assert.equal(factory.constructions(), 0);
+  const printed = printedObject(result.stdout);
+  const sha256Of = (bytes) => cryptoModule.createHash('sha256').update(bytes).digest('hex');
+  assert.equal(printed.local.packageSha256, sha256Of(CLI_PACKAGE_BYTES));
+  assert.equal(printed.local.packageSize, CLI_PACKAGE_BYTES.length);
+  assert.equal(printed.local.fileManifestSha256, sha256Of(fsModule.readFileSync(triple.fileManifestPath)));
+  assert.equal(printed.local.fileManifestSize, fsModule.readFileSync(triple.fileManifestPath).length);
+  assert.equal(printed.local.manifestSha256, sha256Of(triple.manifestBytes));
+  assert.equal(printed.local.manifestSize, triple.manifestBytes.length);
+  assert.equal(printed.local.packageUrl, 'https://api.rongyinghudong.com/updates/internal/1.2.3/portable.zip');
+  assert.equal(printed.targets.versionRoot, '/opt/rongying/updates/internal/1.2.3');
+  assert.equal(printed.targets.stagingRoot, `/opt/rongying/updates-state/staging/internal/1.2.3/${printed.planHash}`);
+  assert.deepEqual(printed.targets.stagingParts, [
+    `${printed.targets.stagingRoot}/portable.zip.part`,
+    `${printed.targets.stagingRoot}/portable-files.json.part`,
+  ]);
+  assert.equal(printed.targets.channelManifest, '/opt/rongying/updates/internal/manifest.json');
+  assert.equal(printed.targets.tempManifest, `/opt/rongying/updates/internal/manifest.json.${printed.runid}.tmp`);
+  assert.equal(printed.planHash.length, 64);
+  assert.equal(printed.plan.length, 13);
 });
 
 test('the dry run refuses a triple whose manifest signature was corrupted and prints no plan', async () => {
@@ -510,7 +546,7 @@ test('a commit reaches sftp with one batch file per upload, each holding exactly
 test('breaking a lock writes one session entry that carries the time and the previous owner', async () => {
   const auditOut = join(makeCliRoot(), 'audit.jsonl');
   const harness = makeHarness({
-    readSsh: () => ({ status: 0, stdout: JSON.stringify({ runid: 'r0', planHash: 'p0' }), stderr: '' }),
+    readSsh: () => ({ status: 0, stdout: JSON.stringify(FOREIGN_OWNER_RECORD), stderr: '' }),
     writeSsh: okWrite,
     sftpUpload: okUpload,
     fetchPublic: okFetch,
@@ -528,7 +564,7 @@ test('breaking a lock writes one session entry that carries the time and the pre
   const entries = auditEntriesOf(auditOut);
   assert.equal(entries.length, 1);
   assert.equal(entries[0].stage, 'break-lock');
-  assert.deepEqual(entries[0].previousOwner, { runid: 'r0', planHash: 'p0' });
+  assert.deepEqual(entries[0].previousOwner, FOREIGN_OWNER_RECORD);
   assert.equal(entries[0].reason, 'stuck since friday');
   assert.equal(entries[0].operator, 'tester');
   assert.equal(Number.isNaN(Date.parse(entries[0].at)), false);
@@ -544,12 +580,20 @@ test('the unreadable owner path prints three different causes and this run own r
       cause: 'the lock carries no owner record',
       status: 'missing',
       absentOwnerRecord: true,
-      readSsh: () => ({ status: 1, stdout: '', stderr: 'cat: /opt/x/owner.json: No such file or directory' }),
+      readSsh: () => ({
+        status: 1,
+        stdout: '',
+        stderr: 'cat: /opt/rongying/updates-state/lock/internal/owner.json: No such file or directory',
+      }),
     },
     {
       cause: 'the owner record could not be read',
       status: 'transport',
-      readSsh: () => ({ status: 1, stdout: '', stderr: 'cat: /opt/x/owner.json: Permission denied' }),
+      readSsh: () => ({
+        status: 1,
+        stdout: '',
+        stderr: 'cat: /opt/rongying/updates-state/lock/internal/owner.json: Permission denied',
+      }),
     },
     {
       cause: 'the owner record is not valid JSON',
@@ -609,7 +653,7 @@ test('the unreadable owner path prints three different causes and this run own r
 test('the unreadable owner flag is refused when the owner record is readable', async () => {
   const auditOut = join(makeCliRoot(), 'audit.jsonl');
   const harness = makeHarness({
-    readSsh: () => ({ status: 0, stdout: JSON.stringify({ runid: 'r0', planHash: 'p0' }), stderr: '' }),
+    readSsh: () => ({ status: 0, stdout: JSON.stringify(FOREIGN_OWNER_RECORD), stderr: '' }),
     writeSsh: okWrite,
     sftpUpload: okUpload,
     fetchPublic: okFetch,
@@ -649,7 +693,7 @@ test('breaking a lock without the unreadable flag still demands a confirmation',
 test('breaking a lock refuses an owner record that does not match the confirmation', async () => {
   const auditOut = join(makeCliRoot(), 'audit.jsonl');
   const harness = makeHarness({
-    readSsh: () => ({ status: 0, stdout: JSON.stringify({ runid: 'r0', planHash: 'p0' }), stderr: '' }),
+    readSsh: () => ({ status: 0, stdout: JSON.stringify(FOREIGN_OWNER_RECORD), stderr: '' }),
     writeSsh: okWrite,
     sftpUpload: okUpload,
     fetchPublic: okFetch,
@@ -931,7 +975,11 @@ test('a preflight whose probe throws still leaves a failed session entry', async
 test('a break that fails to remove the lock directory still records the operators declaration', async () => {
   const auditOut = join(makeCliRoot(), 'audit.jsonl');
   const harness = makeHarness({
-    readSsh: () => ({ status: 1, stdout: '', stderr: 'cat: /opt/x/owner.json: No such file or directory' }),
+    readSsh: () => ({
+      status: 1,
+      stdout: '',
+      stderr: 'cat: /opt/rongying/updates-state/lock/internal/owner.json: No such file or directory',
+    }),
     writeSsh: (request) =>
       request.script.startsWith('rmdir ')
         ? { status: 1, stdout: '', stderr: 'rmdir: failed to remove: Permission denied' }
@@ -996,6 +1044,10 @@ function makeRetryHarness(paths) {
     writeSsh: (request) => {
       const ownerMatch = /printf '%s' '([A-Za-z0-9+/=]+)' \| base64 -d > /u.exec(request.script);
       if (ownerMatch !== null) ownerJson = Buffer.from(ownerMatch[1], 'base64').toString('utf8');
+      if (request.script.includes('/backup && cp ') && request.script.includes('sha256sum ')) {
+        const target = String(request.script).trim().split(/\s+/u).pop();
+        return { status: 0, stdout: `${retryPublicSha}  ${target}\n`, stderr: '' };
+      }
       return { status: 0, stdout: '', stderr: '' };
     },
     sftpUpload: () => ({ status: 0, bytesSent: 1 }),
@@ -1036,7 +1088,7 @@ test('a commit whose flip did not take effect exits 3 so the operator knows a re
 test('the break lock mode succeeds without a version flag and echoes no version it never read', async () => {
   const auditOut = join(makeCliRoot(), 'audit.jsonl');
   const harness = makeHarness({
-    readSsh: () => ({ status: 0, stdout: JSON.stringify({ runid: 'r0', planHash: 'p0' }), stderr: '' }),
+    readSsh: () => ({ status: 0, stdout: JSON.stringify(FOREIGN_OWNER_RECORD), stderr: '' }),
     writeSsh: okWrite,
     sftpUpload: okUpload,
     fetchPublic: okFetch,
@@ -1071,7 +1123,7 @@ test('the break lock mode succeeds without a version flag and echoes no version 
     false,
     'the break lock path never reads a version, so echoing one would be invented',
   );
-  assert.deepEqual(printed.previousOwner, { runid: 'r0', planHash: 'p0' });
+  assert.deepEqual(printed.previousOwner, FOREIGN_OWNER_RECORD);
   const entries = auditEntriesOf(auditOut);
   assert.equal(entries.length, 1);
   assert.equal(entries[0].stage, 'break-lock');

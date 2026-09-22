@@ -13,6 +13,7 @@ import {
   buildStableManifestInput,
   parsePublishInput,
   planCommit,
+  planTargets,
   runCommit,
   runPreflight,
   verifyLocalArtifacts,
@@ -44,13 +45,18 @@ const USAGE = [
   '                     is readable, where --confirm-runid is required instead',
   '  --re-sign-stable   offline: re-sign the internal release bytes for stable; needs',
   '                     --package --file-manifest --manifest --stable-out, and refuses to',
-  '                     overwrite the output; --channel must be stable',
+  '                     overwrite the output; --channel must be stable. This is the only mode',
+  '                     that reads the signing key file, so "the uploader never reads the',
+  '                     private key" holds per mode: --commit itself still never reads one',
   '  --known-hosts      the pinned known_hosts file, must live outside the repository',
   'Exactly one mode flag may be given; a command line that carries two is refused rather than',
   'resolved by priority, because --dry-run is the safest mode and must never lose to --commit.',
   'Exit codes: 0 the run finished, 1 it refused or failed, 2 no mode flag was given,',
   '  3 the flip did not take effect, which is the only code that means a --commit is safe to',
-  '  re-run; every other failure may still have changed the remote state, so read the audit log.',
+  '  re-run. It is safe for the remote state, not for an immediate re-run: a run that exits 3',
+  '  keeps its own channel lock, so the next --commit is refused as blocked until the lock is',
+  '  released with --break-lock --confirm-runid <the runid that run printed>. Every other',
+  '  failure may still have changed the remote state, so read the audit log.',
 ].join('\n');
 
 const MODE_FLAGS = Object.freeze(['--dry-run', '--preflight', '--commit', '--break-lock', '--re-sign-stable']);
@@ -176,18 +182,71 @@ export async function runCli(argv, dependencies = {}) {
     }
     try {
       const publicKeyBase64 = requirePublicKeyFromEnvironment();
+      const resolvedPackagePath = resolve(packagePath);
+      const resolvedFileManifestPath = resolve(fileManifestPath);
+      const resolvedManifestPath = resolve(manifestPath);
+      const verifyReleaseBytes = ({ manifestBytes, fileManifestBytes, packagePath: target }) =>
+        verifyPortableRelease({ manifestBytes, fileManifestBytes, packagePath: target, publicKeyBase64 });
+      const verified = await verifyLocalArtifacts({
+        packagePath: resolvedPackagePath,
+        fileManifestPath: resolvedFileManifestPath,
+        manifestPath: resolvedManifestPath,
+        expectedChannel: input.channel,
+        expectedVersion: input.version,
+        publicKeyBase64,
+        verifySignature: verifyReleaseBytes,
+      });
       const plan = await planCommit({
         channel: input.channel,
         version: input.version,
-        packagePath: resolve(packagePath),
-        fileManifestPath: resolve(fileManifestPath),
-        manifestPath: resolve(manifestPath),
+        packagePath: resolvedPackagePath,
+        fileManifestPath: resolvedFileManifestPath,
+        manifestPath: resolvedManifestPath,
         publicKeyBase64,
-        verifySignature: ({ manifestBytes, fileManifestBytes, packagePath }) =>
-          verifyPortableRelease({ manifestBytes, fileManifestBytes, packagePath, publicKeyBase64 }),
+        verifySignature: verifyReleaseBytes,
       });
-      console.log(JSON.stringify({ mode, channel: input.channel, version: input.version, plan }, null, 2));
+      const targets = planTargets({
+        channel: input.channel,
+        version: input.version,
+        runid,
+        packageSha256: verified.packageSha256,
+        fileManifestSha256: verified.fileManifestSha256,
+        manifestSha256: verified.manifestSha256,
+      });
+      console.log(
+        JSON.stringify(
+          {
+            mode,
+            channel: input.channel,
+            version: input.version,
+            runid,
+            planHash: targets.planHash,
+            local: {
+              packageSha256: verified.packageSha256,
+              packageSize: verified.packageSize,
+              fileManifestSha256: verified.fileManifestSha256,
+              fileManifestSize: verified.fileManifestSize,
+              manifestSha256: verified.manifestSha256,
+              manifestSize: verified.manifestBytes.length,
+              packageUrl: verified.packageUrl,
+            },
+            targets: {
+              versionRoot: targets.versionRoot,
+              stagingRoot: targets.stagingRoot,
+              stagingParts: [targets.stagingParts.package, targets.stagingParts.fileManifest],
+              channelManifest: targets.channelManifest,
+              tempManifest: targets.tempManifest,
+            },
+            plan,
+          },
+          null,
+          2,
+        ),
+      );
       console.log('dry run: nothing was written, and no permission, remote directory or host key was verified');
+      console.log(
+        'the backup path is not printed because it carries the digest of the manifest already on the server, which only a networked mode can read',
+      );
       return 0;
     } catch (error) {
       console.error(error instanceof FeedPublishError ? error.message : String(error));

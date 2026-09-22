@@ -39,9 +39,9 @@ const PACKAGE_BYTES = Buffer.from('portable-zip-bytes', 'utf8');
 const PACKAGE_SHA256 = createHash('sha256').update(PACKAGE_BYTES).digest('hex');
 
 const FILE_MANIFEST = {
+  files: [{ path: 'a.txt', sha256: 'a'.repeat(64), size: 1 }],
   schemaVersion: 1,
   version: '1.2.3',
-  files: [{ path: 'a.txt', size: 1, sha256: 'a'.repeat(64) }],
 };
 const FILE_MANIFEST_BYTES = Buffer.from(JSON.stringify(FILE_MANIFEST), 'utf8');
 const FILE_MANIFEST_SHA256 = createHash('sha256').update(FILE_MANIFEST_BYTES).digest('hex');
@@ -1405,6 +1405,7 @@ function commitTransport(options = {}) {
   let manifestReads = 0;
   let ownerJson = null;
   let strayStagingParts = [...(options.staleStagingParts ?? [])];
+  const baselineDigest = options.baselineSha ?? BASELINE_SHA;
   const listing = `f ${PORTABLE_PACKAGE_NAME} ${PACKAGE_BYTES.length}\nf ${PORTABLE_FILE_MANIFEST_NAME} ${FILE_MANIFEST_BYTES.length}\n`;
   const stagingListing = options.stagingListing ?? listing;
   const digests = (directory, zipDigest) =>
@@ -1495,7 +1496,7 @@ function commitTransport(options = {}) {
           if (options.baselineDigestAbsent === true && manifestReads === 1) {
             return { status: 0, stdout: '', stderr: '' };
           }
-          const digest = options.casDrift === true && manifestReads > 1 ? THIRD_SHA : BASELINE_SHA;
+          const digest = options.casDrift === true && manifestReads > 1 ? THIRD_SHA : baselineDigest;
           return { status: 0, stdout: `${digest}  ${UPDATE_ROOT}/internal/manifest.json\n`, stderr: '' };
         }
         return { status: 0, stdout: '', stderr: '' };
@@ -1575,6 +1576,10 @@ function commitTransport(options = {}) {
         }
         if (typeof options.backupStatus === 'number' && request.script.includes('/backup && cp ')) {
           return { status: options.backupStatus, stdout: '', stderr: 'cp: cannot create regular file: No space left' };
+        }
+        if (request.script.includes('/backup && cp ') && request.script.includes('sha256sum ')) {
+          const target = String(request.script).trim().split(/\s+/u).pop();
+          return { status: 0, stdout: `${options.backupCopySha ?? baselineDigest}  ${target}\n`, stderr: '' };
         }
         if (typeof options.flipStatus === 'number' && /^mv -f \S+\.tmp \S+$/u.test(request.script)) {
           return { status: options.flipStatus, stdout: '', stderr: 'mv: cannot move: Permission denied' };
@@ -2799,13 +2804,20 @@ test('a staging entry that is not a regular file is refused', async () => {
   assert.equal(remoteVerify.remote.digests, null);
 });
 
-test('a staging listing that failed is reported as an empty directory rather than parsed', async () => {
+test('a staging listing that failed is reported as unlistable rather than as an empty directory', async () => {
   const paths = writeArtifacts();
   const transport = happyTransport(paths, { listingStatus: 1 });
-  const result = await runCommit(commitInput(transport, { ...paths }));
+  const input = commitInput(transport, { ...paths });
+  const result = await runCommit(input);
   assertEveryCommitCallCarriesTheTrustAnchor(transport);
   assert.equal(result.outcome, 'fail');
-  assert.equal(result.reason, 'the staging directory is not the exact final file set: the staging directory is empty');
+  assert.equal(
+    result.reason,
+    'the staging directory is not the exact final file set: the remote directory could not be listed',
+  );
+  const remoteVerify = auditEntriesOf(input.auditOut).find((entry) => entry.stage === 'remote-verify');
+  assert.equal(remoteVerify.remote.unlistable, true);
+  assert.equal(remoteVerify.remote.empty, false);
 });
 
 test('a presence probe that failed is not read as a present directory', async () => {
@@ -2919,10 +2931,48 @@ test('the audit log carries the previous manifest digest and the backup path', a
   const entries = auditEntriesOf(input.auditOut);
   const backup = entries.find((entry) => entry.stage === 'backup-manifest');
   assert.equal(backup.previousManifestSha256, BASELINE_SHA);
-  assert.equal(backup.backupPath, `${STATE_ROOT}/backup/internal-manifest.json-pre-1.2.3`);
+  assert.equal(backup.backupPath, `${STATE_ROOT}/backup/internal-manifest.json-pre-1.2.3-${BASELINE_SHA}`);
+  assert.equal(backup.copiedManifestSha256, BASELINE_SHA);
   const cas = entries.find((entry) => entry.stage === 'cas');
   assert.equal(cas.previousManifestSha256, BASELINE_SHA);
   assert.equal(cas.observedManifestSha256, BASELINE_SHA);
+});
+
+test('a backup copy that carries other bytes than the baseline is an incident', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths, { backupCopySha: 'F'.repeat(64) });
+  const input = commitInput(transport, { ...paths });
+  const result = await runCommit(input);
+  assert.equal(result.outcome, 'incident');
+  assert.equal(result.lockState, 'retained-by-this-run');
+  assert.match(result.reason, /does not carry the bytes this run read/u);
+  assert.equal(result.stages.find((entry) => entry.stage === 'flip').status, 'pending');
+  const backup = auditEntriesOf(input.auditOut).find((entry) => entry.stage === 'backup-manifest');
+  assert.equal(backup.status, 'incident');
+  assert.equal(backup.previousManifestSha256, BASELINE_SHA);
+  assert.equal(backup.copiedManifestSha256, 'F'.repeat(64));
+});
+
+test('a re-run of the same version does not overwrite the rollback copy of the previous manifest', async () => {
+  const paths = writeArtifacts();
+  const first = happyTransport(paths);
+  const firstInput = commitInput(first, { ...paths, runid: 'r1' });
+  assert.equal((await runCommit(firstInput)).outcome, 'done');
+  const publishedSha = manifestShaOf(paths);
+  const second = happyTransport(paths, { baselineSha: publishedSha });
+  const secondInput = commitInput(second, { ...paths, runid: 'r2' });
+  assert.equal((await runCommit(secondInput)).outcome, 'done', 'the second run must be an idempotent re-run');
+  const backupOf = (input) => auditEntriesOf(input.auditOut).find((entry) => entry.stage === 'backup-manifest');
+  const firstBackup = backupOf(firstInput);
+  const secondBackup = backupOf(secondInput);
+  assert.equal(firstBackup.previousManifestSha256, BASELINE_SHA);
+  assert.equal(secondBackup.previousManifestSha256, publishedSha);
+  assert.notEqual(
+    firstBackup.backupPath,
+    secondBackup.backupPath,
+    'a version keyed name would overwrite the previous manifest rollback copy',
+  );
+  assert.equal(secondBackup.backupPath.endsWith(publishedSha), true);
 });
 
 test('the audit log carries the new manifest digest at the temp manifest, the flip and the outcome', async () => {

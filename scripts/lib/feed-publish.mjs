@@ -597,13 +597,39 @@ function stagingRootOf(channel, version, planHash) {
   return `${STATE_ROOT}/staging/${channel}/${version}/${planHash}`;
 }
 
+export function planTargets(input) {
+  assertSafeChannel(input.channel);
+  assertSafeVersion(input.version);
+  assertSafeRunid(input.runid);
+  const planHash = planHashOf({
+    channel: input.channel,
+    version: input.version,
+    packageSha256: input.packageSha256,
+    fileManifestSha256: input.fileManifestSha256,
+    manifestSha256: input.manifestSha256,
+  });
+  const versionRoot = versionRootOf(input.channel, input.version);
+  const stagingRoot = stagingRootOf(input.channel, input.version, planHash);
+  return {
+    planHash,
+    versionRoot,
+    stagingRoot,
+    channelManifest: `${UPDATE_ROOT}/${input.channel}/${PORTABLE_MANIFEST_NAME}`,
+    tempManifest: `${UPDATE_ROOT}/${input.channel}/${PORTABLE_MANIFEST_NAME}.${input.runid}.tmp`,
+    stagingParts: {
+      package: `${stagingRoot}/${PORTABLE_PACKAGE_NAME}.part`,
+      fileManifest: `${stagingRoot}/${PORTABLE_FILE_MANIFEST_NAME}.part`,
+    },
+  };
+}
+
 async function readRemoteDirectory(input, directory) {
   const listing = await input.transport.readOnly.sshRun({
     host: input.host,
     knownHostsPath: input.knownHostsPath,
     script: `if [ -d ${directory} ]; then find ${directory} -mindepth 1 -maxdepth 1 -printf '%y %f %s\\n' | sort; fi`,
   });
-  if (listing.status !== 0) return [];
+  if (listing.status !== 0) return null;
   const entries = [];
   for (const line of String(listing.stdout ?? '').split('\n')) {
     const trimmed = line.trim();
@@ -673,9 +699,23 @@ function compareDirectoryHashes(hashes, expected) {
 
 async function inspectRemoteDirectory(input, directory, expectedEntries) {
   const exists = await remoteDirectoryExists(input, directory);
-  if (!exists) return { present: false, empty: false, problems: [], entries: [], digests: null };
+  if (!exists) {
+    return { present: false, empty: false, unlistable: false, problems: [], entries: [], digests: null };
+  }
   const entries = await readRemoteDirectory(input, directory);
-  if (entries.length === 0) return { present: true, empty: true, problems: [], entries: [], digests: null };
+  if (entries === null) {
+    return {
+      present: true,
+      empty: false,
+      unlistable: true,
+      problems: ['the remote directory could not be listed'],
+      entries: [],
+      digests: null,
+    };
+  }
+  if (entries.length === 0) {
+    return { present: true, empty: true, unlistable: false, problems: [], entries: [], digests: null };
+  }
   const problems = compareDirectoryEntries(entries, expectedEntries);
   let digests = null;
   if (problems.length === 0) {
@@ -689,6 +729,7 @@ async function inspectRemoteDirectory(input, directory, expectedEntries) {
   return {
     present: true,
     empty: false,
+    unlistable: false,
     problems,
     entries,
     digests: digests === null ? null : Object.fromEntries(digests),
@@ -866,6 +907,7 @@ export async function runCommit(input) {
   }
 
   let local;
+  let targets;
   try {
     assertSafeChannel(input.channel);
     assertSafeVersion(input.version);
@@ -882,13 +924,15 @@ export async function runCommit(input) {
       publicKeyBase64: input.publicKeyBase64,
       verifySignature: input.verifySignature,
     });
-    state.planHash = planHashOf({
+    targets = planTargets({
       channel: input.channel,
       version: input.version,
+      runid,
       packageSha256: local.packageSha256,
       fileManifestSha256: local.fileManifestSha256,
       manifestSha256: local.manifestSha256,
     });
+    state.planHash = targets.planHash;
     state.ownerRecord = {
       runid,
       operator: input.operator,
@@ -914,8 +958,8 @@ export async function runCommit(input) {
   };
   audit('pre-verify', 'done', undefined, localEvidence);
 
-  const versionRoot = versionRootOf(input.channel, input.version);
-  const stagingRoot = stagingRootOf(input.channel, input.version, state.planHash);
+  const versionRoot = targets.versionRoot;
+  const stagingRoot = targets.stagingRoot;
   const expectedEntries = [
     { name: PORTABLE_PACKAGE_NAME, size: local.packageSize, sha256: local.packageSha256 },
     { name: PORTABLE_FILE_MANIFEST_NAME, size: local.fileManifestSize, sha256: local.fileManifestSha256 },
@@ -960,8 +1004,8 @@ export async function runCommit(input) {
 
   const nextUploadBatch = () => input.createBatch();
   for (const item of [
-    { localPath: input.packagePath, remotePath: `${stagingRoot}/${PORTABLE_PACKAGE_NAME}.part` },
-    { localPath: input.fileManifestPath, remotePath: `${stagingRoot}/${PORTABLE_FILE_MANIFEST_NAME}.part` },
+    { localPath: input.packagePath, remotePath: targets.stagingParts.package },
+    { localPath: input.fileManifestPath, remotePath: targets.stagingParts.fileManifest },
   ]) {
     const uploaded = await input.transport.write.sftpUpload({ ...item, resume: true, ...nextUploadBatch() });
     if (uploaded.status !== 0) {
@@ -1032,7 +1076,7 @@ export async function runCommit(input) {
     return retainAndFinish('incident', 'the lock owner changed while this run was taking it');
   }
   state.owner = reReadOwner ?? state.owner;
-  const baselineRead = await readRemoteFileSha(input, `${UPDATE_ROOT}/${input.channel}/${PORTABLE_MANIFEST_NAME}`);
+  const baselineRead = await readRemoteFileSha(input, targets.channelManifest);
   if (baselineRead.ok !== true) {
     audit('re-verify', 'incident', 'the manifest digest that the CAS baseline needs could not be read');
     return retainAndFinish(
@@ -1077,21 +1121,33 @@ export async function runCommit(input) {
     audit('commit-version', 'done');
   }
 
-  const backupPath = `${STATE_ROOT}/backup/${input.channel}-manifest.json-pre-${input.version}`;
+  const backupPath = `${STATE_ROOT}/backup/${input.channel}-manifest.json-pre-${input.version}-${baselineSha}`;
   const backup = await input.transport.write.sshRun({
     host: input.host,
     knownHostsPath: input.knownHostsPath,
-    script: [
-      `mkdir -p ${STATE_ROOT}/backup`,
-      `cp ${UPDATE_ROOT}/${input.channel}/${PORTABLE_MANIFEST_NAME} ${backupPath} 2>/dev/null || true`,
-    ].join(' && '),
+    script:
+      baselineSha === 'absent'
+        ? `mkdir -p ${STATE_ROOT}/backup`
+        : [
+            `mkdir -p ${STATE_ROOT}/backup`,
+            `cp ${targets.channelManifest} ${backupPath}`,
+            `sha256sum ${backupPath}`,
+          ].join(' && '),
   });
+  const copiedManifestSha256 =
+    baselineSha === 'absent' ? 'absent' : String(backup.stdout ?? '').split(/\s+/u)[0] || 'unreadable';
+  const backupEvidence = { previousManifestSha256: baselineSha, backupPath, copiedManifestSha256 };
   if (backup.status !== 0) {
+    audit('backup-manifest', 'incident', 'the previous manifest could not be backed up', backupEvidence);
     return retainAndFinish('incident', 'the previous manifest could not be backed up');
   }
-  audit('backup-manifest', 'done', undefined, { previousManifestSha256: baselineSha, backupPath });
+  if (copiedManifestSha256 !== baselineSha) {
+    audit('backup-manifest', 'incident', 'the copy does not carry the baseline bytes', backupEvidence);
+    return retainAndFinish('incident', 'the backup does not carry the bytes this run read as its baseline');
+  }
+  audit('backup-manifest', 'done', undefined, backupEvidence);
 
-  const casRead = await readRemoteFileSha(input, `${UPDATE_ROOT}/${input.channel}/${PORTABLE_MANIFEST_NAME}`);
+  const casRead = await readRemoteFileSha(input, targets.channelManifest);
   const casEvidence = { previousManifestSha256: baselineSha, observedManifestSha256: casRead.sha256 };
   if (casRead.ok !== true) {
     audit('cas', 'incident', 'the remote manifest digest could not be read', casEvidence);
@@ -1111,7 +1167,7 @@ export async function runCommit(input) {
   audit('cas', 'done', undefined, casEvidence);
 
   const manifestEvidence = { manifestSha256: local.manifestSha256 };
-  const tempManifestPath = `${UPDATE_ROOT}/${input.channel}/${PORTABLE_MANIFEST_NAME}.${runid}.tmp`;
+  const tempManifestPath = targets.tempManifest;
   const manifestUploaded = await input.transport.write.sftpUpload({
     localPath: input.manifestPath,
     remotePath: tempManifestPath,
@@ -1146,7 +1202,7 @@ export async function runCommit(input) {
   const flipped = await input.transport.write.sshRun({
     host: input.host,
     knownHostsPath: input.knownHostsPath,
-    script: `mv -f ${tempManifestPath} ${UPDATE_ROOT}/${input.channel}/${PORTABLE_MANIFEST_NAME}`,
+    script: `mv -f ${tempManifestPath} ${targets.channelManifest}`,
   });
   if (flipped.status !== 0) {
     audit('flip', 'incident', 'the atomic flip failed', manifestEvidence);

@@ -158,9 +158,9 @@ const PACKAGE_BYTES = Buffer.from('portable-zip-bytes', 'utf8');
 const PACKAGE_SHA256 = createHash('sha256').update(PACKAGE_BYTES).digest('hex');
 
 const FILE_MANIFEST = {
+  files: [{ path: 'a.txt', sha256: 'a'.repeat(64), size: 1 }],
   schemaVersion: 1,
   version: '1.2.3',
-  files: [{ path: 'a.txt', size: 1, sha256: 'a'.repeat(64) }],
 };
 const FILE_MANIFEST_BYTES = Buffer.from(JSON.stringify(FILE_MANIFEST), 'utf8');
 const FILE_MANIFEST_SHA256 = createHash('sha256').update(FILE_MANIFEST_BYTES).digest('hex');
@@ -1871,6 +1871,7 @@ function commitTransport(options = {}) {
   let manifestReads = 0;
   let ownerJson = null;
   let strayStagingParts = [...(options.staleStagingParts ?? [])];
+  const baselineDigest = options.baselineSha ?? BASELINE_SHA;
   const listing = `f ${PORTABLE_PACKAGE_NAME} ${PACKAGE_BYTES.length}\nf ${PORTABLE_FILE_MANIFEST_NAME} ${FILE_MANIFEST_BYTES.length}\n`;
   const stagingListing = options.stagingListing ?? listing;
   const digests = (directory, zipDigest) =>
@@ -1961,7 +1962,7 @@ function commitTransport(options = {}) {
           if (options.baselineDigestAbsent === true && manifestReads === 1) {
             return { status: 0, stdout: '', stderr: '' };
           }
-          const digest = options.casDrift === true && manifestReads > 1 ? THIRD_SHA : BASELINE_SHA;
+          const digest = options.casDrift === true && manifestReads > 1 ? THIRD_SHA : baselineDigest;
           return { status: 0, stdout: `${digest}  ${UPDATE_ROOT}/internal/manifest.json\n`, stderr: '' };
         }
         return { status: 0, stdout: '', stderr: '' };
@@ -2041,6 +2042,10 @@ function commitTransport(options = {}) {
         }
         if (typeof options.backupStatus === 'number' && request.script.includes('/backup && cp ')) {
           return { status: options.backupStatus, stdout: '', stderr: 'cp: cannot create regular file: No space left' };
+        }
+        if (request.script.includes('/backup && cp ') && request.script.includes('sha256sum ')) {
+          const target = String(request.script).trim().split(/\s+/u).pop();
+          return { status: 0, stdout: `${options.backupCopySha ?? baselineDigest}  ${target}\n`, stderr: '' };
         }
         if (typeof options.flipStatus === 'number' && /^mv -f \S+\.tmp \S+$/u.test(request.script)) {
           return { status: options.flipStatus, stdout: '', stderr: 'mv: cannot move: Permission denied' };
@@ -3265,13 +3270,20 @@ test('a staging entry that is not a regular file is refused', async () => {
   assert.equal(remoteVerify.remote.digests, null);
 });
 
-test('a staging listing that failed is reported as an empty directory rather than parsed', async () => {
+test('a staging listing that failed is reported as unlistable rather than as an empty directory', async () => {
   const paths = writeArtifacts();
   const transport = happyTransport(paths, { listingStatus: 1 });
-  const result = await runCommit(commitInput(transport, { ...paths }));
+  const input = commitInput(transport, { ...paths });
+  const result = await runCommit(input);
   assertEveryCommitCallCarriesTheTrustAnchor(transport);
   assert.equal(result.outcome, 'fail');
-  assert.equal(result.reason, 'the staging directory is not the exact final file set: the staging directory is empty');
+  assert.equal(
+    result.reason,
+    'the staging directory is not the exact final file set: the remote directory could not be listed',
+  );
+  const remoteVerify = auditEntriesOf(input.auditOut).find((entry) => entry.stage === 'remote-verify');
+  assert.equal(remoteVerify.remote.unlistable, true);
+  assert.equal(remoteVerify.remote.empty, false);
 });
 
 test('a presence probe that failed is not read as a present directory', async () => {
@@ -3385,10 +3397,48 @@ test('the audit log carries the previous manifest digest and the backup path', a
   const entries = auditEntriesOf(input.auditOut);
   const backup = entries.find((entry) => entry.stage === 'backup-manifest');
   assert.equal(backup.previousManifestSha256, BASELINE_SHA);
-  assert.equal(backup.backupPath, `${STATE_ROOT}/backup/internal-manifest.json-pre-1.2.3`);
+  assert.equal(backup.backupPath, `${STATE_ROOT}/backup/internal-manifest.json-pre-1.2.3-${BASELINE_SHA}`);
+  assert.equal(backup.copiedManifestSha256, BASELINE_SHA);
   const cas = entries.find((entry) => entry.stage === 'cas');
   assert.equal(cas.previousManifestSha256, BASELINE_SHA);
   assert.equal(cas.observedManifestSha256, BASELINE_SHA);
+});
+
+test('a backup copy that carries other bytes than the baseline is an incident', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths, { backupCopySha: 'F'.repeat(64) });
+  const input = commitInput(transport, { ...paths });
+  const result = await runCommit(input);
+  assert.equal(result.outcome, 'incident');
+  assert.equal(result.lockState, 'retained-by-this-run');
+  assert.match(result.reason, /does not carry the bytes this run read/u);
+  assert.equal(result.stages.find((entry) => entry.stage === 'flip').status, 'pending');
+  const backup = auditEntriesOf(input.auditOut).find((entry) => entry.stage === 'backup-manifest');
+  assert.equal(backup.status, 'incident');
+  assert.equal(backup.previousManifestSha256, BASELINE_SHA);
+  assert.equal(backup.copiedManifestSha256, 'F'.repeat(64));
+});
+
+test('a re-run of the same version does not overwrite the rollback copy of the previous manifest', async () => {
+  const paths = writeArtifacts();
+  const first = happyTransport(paths);
+  const firstInput = commitInput(first, { ...paths, runid: 'r1' });
+  assert.equal((await runCommit(firstInput)).outcome, 'done');
+  const publishedSha = manifestShaOf(paths);
+  const second = happyTransport(paths, { baselineSha: publishedSha });
+  const secondInput = commitInput(second, { ...paths, runid: 'r2' });
+  assert.equal((await runCommit(secondInput)).outcome, 'done', 'the second run must be an idempotent re-run');
+  const backupOf = (input) => auditEntriesOf(input.auditOut).find((entry) => entry.stage === 'backup-manifest');
+  const firstBackup = backupOf(firstInput);
+  const secondBackup = backupOf(secondInput);
+  assert.equal(firstBackup.previousManifestSha256, BASELINE_SHA);
+  assert.equal(secondBackup.previousManifestSha256, publishedSha);
+  assert.notEqual(
+    firstBackup.backupPath,
+    secondBackup.backupPath,
+    'a version keyed name would overwrite the previous manifest rollback copy',
+  );
+  assert.equal(secondBackup.backupPath.endsWith(publishedSha), true);
 });
 
 test('the audit log carries the new manifest digest at the temp manifest, the flip and the outcome', async () => {
@@ -3624,13 +3674,39 @@ function stagingRootOf(channel, version, planHash) {
   return `${STATE_ROOT}/staging/${channel}/${version}/${planHash}`;
 }
 
+export function planTargets(input) {
+  assertSafeChannel(input.channel);
+  assertSafeVersion(input.version);
+  assertSafeRunid(input.runid);
+  const planHash = planHashOf({
+    channel: input.channel,
+    version: input.version,
+    packageSha256: input.packageSha256,
+    fileManifestSha256: input.fileManifestSha256,
+    manifestSha256: input.manifestSha256,
+  });
+  const versionRoot = versionRootOf(input.channel, input.version);
+  const stagingRoot = stagingRootOf(input.channel, input.version, planHash);
+  return {
+    planHash,
+    versionRoot,
+    stagingRoot,
+    channelManifest: `${UPDATE_ROOT}/${input.channel}/${PORTABLE_MANIFEST_NAME}`,
+    tempManifest: `${UPDATE_ROOT}/${input.channel}/${PORTABLE_MANIFEST_NAME}.${input.runid}.tmp`,
+    stagingParts: {
+      package: `${stagingRoot}/${PORTABLE_PACKAGE_NAME}.part`,
+      fileManifest: `${stagingRoot}/${PORTABLE_FILE_MANIFEST_NAME}.part`,
+    },
+  };
+}
+
 async function readRemoteDirectory(input, directory) {
   const listing = await input.transport.readOnly.sshRun({
     host: input.host,
     knownHostsPath: input.knownHostsPath,
     script: `if [ -d ${directory} ]; then find ${directory} -mindepth 1 -maxdepth 1 -printf '%y %f %s\\n' | sort; fi`,
   });
-  if (listing.status !== 0) return [];
+  if (listing.status !== 0) return null;
   const entries = [];
   for (const line of String(listing.stdout ?? '').split('\n')) {
     const trimmed = line.trim();
@@ -3700,9 +3776,23 @@ function compareDirectoryHashes(hashes, expected) {
 
 async function inspectRemoteDirectory(input, directory, expectedEntries) {
   const exists = await remoteDirectoryExists(input, directory);
-  if (!exists) return { present: false, empty: false, problems: [], entries: [], digests: null };
+  if (!exists) {
+    return { present: false, empty: false, unlistable: false, problems: [], entries: [], digests: null };
+  }
   const entries = await readRemoteDirectory(input, directory);
-  if (entries.length === 0) return { present: true, empty: true, problems: [], entries: [], digests: null };
+  if (entries === null) {
+    return {
+      present: true,
+      empty: false,
+      unlistable: true,
+      problems: ['the remote directory could not be listed'],
+      entries: [],
+      digests: null,
+    };
+  }
+  if (entries.length === 0) {
+    return { present: true, empty: true, unlistable: false, problems: [], entries: [], digests: null };
+  }
   const problems = compareDirectoryEntries(entries, expectedEntries);
   let digests = null;
   if (problems.length === 0) {
@@ -3716,6 +3806,7 @@ async function inspectRemoteDirectory(input, directory, expectedEntries) {
   return {
     present: true,
     empty: false,
+    unlistable: false,
     problems,
     entries,
     digests: digests === null ? null : Object.fromEntries(digests),
@@ -3893,6 +3984,7 @@ export async function runCommit(input) {
   }
 
   let local;
+  let targets;
   try {
     assertSafeChannel(input.channel);
     assertSafeVersion(input.version);
@@ -3909,13 +4001,15 @@ export async function runCommit(input) {
       publicKeyBase64: input.publicKeyBase64,
       verifySignature: input.verifySignature,
     });
-    state.planHash = planHashOf({
+    targets = planTargets({
       channel: input.channel,
       version: input.version,
+      runid,
       packageSha256: local.packageSha256,
       fileManifestSha256: local.fileManifestSha256,
       manifestSha256: local.manifestSha256,
     });
+    state.planHash = targets.planHash;
     state.ownerRecord = {
       runid,
       operator: input.operator,
@@ -3941,8 +4035,8 @@ export async function runCommit(input) {
   };
   audit('pre-verify', 'done', undefined, localEvidence);
 
-  const versionRoot = versionRootOf(input.channel, input.version);
-  const stagingRoot = stagingRootOf(input.channel, input.version, state.planHash);
+  const versionRoot = targets.versionRoot;
+  const stagingRoot = targets.stagingRoot;
   const expectedEntries = [
     { name: PORTABLE_PACKAGE_NAME, size: local.packageSize, sha256: local.packageSha256 },
     { name: PORTABLE_FILE_MANIFEST_NAME, size: local.fileManifestSize, sha256: local.fileManifestSha256 },
@@ -3987,8 +4081,8 @@ export async function runCommit(input) {
 
   const nextUploadBatch = () => input.createBatch();
   for (const item of [
-    { localPath: input.packagePath, remotePath: `${stagingRoot}/${PORTABLE_PACKAGE_NAME}.part` },
-    { localPath: input.fileManifestPath, remotePath: `${stagingRoot}/${PORTABLE_FILE_MANIFEST_NAME}.part` },
+    { localPath: input.packagePath, remotePath: targets.stagingParts.package },
+    { localPath: input.fileManifestPath, remotePath: targets.stagingParts.fileManifest },
   ]) {
     const uploaded = await input.transport.write.sftpUpload({ ...item, resume: true, ...nextUploadBatch() });
     if (uploaded.status !== 0) {
@@ -4059,7 +4153,7 @@ export async function runCommit(input) {
     return retainAndFinish('incident', 'the lock owner changed while this run was taking it');
   }
   state.owner = reReadOwner ?? state.owner;
-  const baselineRead = await readRemoteFileSha(input, `${UPDATE_ROOT}/${input.channel}/${PORTABLE_MANIFEST_NAME}`);
+  const baselineRead = await readRemoteFileSha(input, targets.channelManifest);
   if (baselineRead.ok !== true) {
     audit('re-verify', 'incident', 'the manifest digest that the CAS baseline needs could not be read');
     return retainAndFinish(
@@ -4104,21 +4198,33 @@ export async function runCommit(input) {
     audit('commit-version', 'done');
   }
 
-  const backupPath = `${STATE_ROOT}/backup/${input.channel}-manifest.json-pre-${input.version}`;
+  const backupPath = `${STATE_ROOT}/backup/${input.channel}-manifest.json-pre-${input.version}-${baselineSha}`;
   const backup = await input.transport.write.sshRun({
     host: input.host,
     knownHostsPath: input.knownHostsPath,
-    script: [
-      `mkdir -p ${STATE_ROOT}/backup`,
-      `cp ${UPDATE_ROOT}/${input.channel}/${PORTABLE_MANIFEST_NAME} ${backupPath} 2>/dev/null || true`,
-    ].join(' && '),
+    script:
+      baselineSha === 'absent'
+        ? `mkdir -p ${STATE_ROOT}/backup`
+        : [
+            `mkdir -p ${STATE_ROOT}/backup`,
+            `cp ${targets.channelManifest} ${backupPath}`,
+            `sha256sum ${backupPath}`,
+          ].join(' && '),
   });
+  const copiedManifestSha256 =
+    baselineSha === 'absent' ? 'absent' : String(backup.stdout ?? '').split(/\s+/u)[0] || 'unreadable';
+  const backupEvidence = { previousManifestSha256: baselineSha, backupPath, copiedManifestSha256 };
   if (backup.status !== 0) {
+    audit('backup-manifest', 'incident', 'the previous manifest could not be backed up', backupEvidence);
     return retainAndFinish('incident', 'the previous manifest could not be backed up');
   }
-  audit('backup-manifest', 'done', undefined, { previousManifestSha256: baselineSha, backupPath });
+  if (copiedManifestSha256 !== baselineSha) {
+    audit('backup-manifest', 'incident', 'the copy does not carry the baseline bytes', backupEvidence);
+    return retainAndFinish('incident', 'the backup does not carry the bytes this run read as its baseline');
+  }
+  audit('backup-manifest', 'done', undefined, backupEvidence);
 
-  const casRead = await readRemoteFileSha(input, `${UPDATE_ROOT}/${input.channel}/${PORTABLE_MANIFEST_NAME}`);
+  const casRead = await readRemoteFileSha(input, targets.channelManifest);
   const casEvidence = { previousManifestSha256: baselineSha, observedManifestSha256: casRead.sha256 };
   if (casRead.ok !== true) {
     audit('cas', 'incident', 'the remote manifest digest could not be read', casEvidence);
@@ -4138,7 +4244,7 @@ export async function runCommit(input) {
   audit('cas', 'done', undefined, casEvidence);
 
   const manifestEvidence = { manifestSha256: local.manifestSha256 };
-  const tempManifestPath = `${UPDATE_ROOT}/${input.channel}/${PORTABLE_MANIFEST_NAME}.${runid}.tmp`;
+  const tempManifestPath = targets.tempManifest;
   const manifestUploaded = await input.transport.write.sftpUpload({
     localPath: input.manifestPath,
     remotePath: tempManifestPath,
@@ -4173,7 +4279,7 @@ export async function runCommit(input) {
   const flipped = await input.transport.write.sshRun({
     host: input.host,
     knownHostsPath: input.knownHostsPath,
-    script: `mv -f ${tempManifestPath} ${UPDATE_ROOT}/${input.channel}/${PORTABLE_MANIFEST_NAME}`,
+    script: `mv -f ${tempManifestPath} ${targets.channelManifest}`,
   });
   if (flipped.status !== 0) {
     audit('flip', 'incident', 'the atomic flip failed', manifestEvidence);
@@ -4626,7 +4732,7 @@ git commit -m "feat(feed): publish the manifest over sftp and verify it on the p
 6. **【Important】CAS 步骤把"读失败"指控成"有人绕过锁"。** 复核者的读数：`sha256sum ${target} || true` 之后 `String(stdout).split(/\s+/u)[0] || 'absent'` 让**文件不存在**与**命令失败**同为 `'absent'`，于是在 CAS 处 `casSha === 'absent' !== baselineSha` ⇒ 报"the manifest changed after the lock was taken, which means a bypass" —— 一条**假的完整性事故**外加留锁；§6.6 明令这种不匹配**不得降级**，所以假阳性并不便宜。**落地**：`readRemoteFileSha`（`:636`）改成返回 `{ ok, sha256 }`；**三个调用点各自先判 `!ok`**：baseline（`:921` 读、`:922-928` 收口，`re-verify` 阶段，任何版本目录提交之前）、CAS（`:980` 读、`:982-988` 收口，**在等值比较之前**）、temp-manifest（`:1010` 读、`:1013-1019` 收口）。**首发布路径保持可用**：shell 的 `|| true` 让"文件不存在"是**退出码 0 + 空 stdout** ⇒ `ok: true`、`sha256: 'absent'` ⇒ baseline 与 CAS 仍相等。三条新用例（`:1805` / `:1824` / `:1838` / `:1857`）+ 三个夹具臂（`casDigestReadFails` / `baselineDigestReadFails` / `tempManifestReadStatus` / `firstPublish`）。**变异 M-C1 / M-C2 / M-C3 / M-C4 / M-C5** 见下表。⚠️ **本项比复核者点名的两处多做了一处**：`baselineSha` 的读失败**同样**会在 CAS 处变成"bypass"指控（同一个缺陷的另一侧）⇒ 一并修掉并给出读数（M-C2）。
 7. **【Minor】解锁上报块逐字重复两份。** **落地**：抽成 `reportUnlock`（`:746`），两个调用点（失败路径 `releaseAndFinish`、成功路径）都用它。**变异 M-D7a / M-D7b**：删掉阶段标记 ⇒ 红 5 条；删掉审计追加 ⇒ 红 3 条（含 `an owner record replaced before the unlock on the failure path stops the run and deletes nothing`）。
 8. **【Minor】设备号探针写了两遍、两种形状。** **落地**：抽成 `readDeviceIds`（`:181`）返回 `{ status, ids }`，**两处处置各自留在调用点**（`runPreflight` 把失败记成 note、`runCommit` 把失败当致命）—— 这正是两处**应该**不同的地方。**变异 M-D8**（`status: probe.status` ⇒ `status: 0`）⇒ 红 2 条，**两条分别在两个调用点上**（`the preflight records a failed probe instead of reporting all clear` + `a device probe that failed stops the commit even when it printed matching numbers`）⇒ 这一次变异就证明了两处确实都接在这一个 helper 上。
-9. **【Minor】`reveal` 只可能是 `done`。** **选择：记录处置 + 按名钉住，不改语义。** 口径写死为"**`reveal` 表示这一轮把版本真正放出去了**（翻转生效 **且** 公网复验通过），**不**表示这一轮收口"；收口条目是 `recordOutcome` 写的那条，它的 `stage` 就是结果本身（`done`/`fail`/`incident`/`retry`/`blocked`，与 §6.11 的清单一致）。因此失败路径上 `reveal` 停在 `pending` 是**正确**的（那一轮没有把版本放出去），而审计里**仍然**只可能有一条收口。用例 `the reveal stage reports that the version went live rather than that the run closed out`（`feed-publish.test.mjs:1715`）一次断言两边：成功 ⇒ `reveal` 是 `done`；翻转生效但公网复验失败的 `incident` ⇒ `reveal` 仍是 `pending`，同时收口条目仍是 `incident`。**变异 M-D9**（把 `stages[reveal]` 改由 `recordOutcome` 标记，即复核者给的"另一臂"）⇒ 红 1 条（就是它）。
+9. **【Minor】`reveal` 只可能是 `done`。** **选择：记录处置 + 按名钉住，不改语义。** 口径写死为"**`reveal` 表示这一轮把版本真正放出去了**（翻转生效 **且** 公网复验通过），**不**表示这一轮收口"；收口条目是 `recordOutcome` 写的那条，它的 `stage` 就是结果本身（`done`/`fail`/`incident`/`retry`/`blocked`）。⚠️ **2026-09-23 更正（第十八节 C 组第 2 条）：原文在这句后面写着「与 §6.11 的清单一致」，那句是假的** —— §6.11 的收口词只有三个（`done` / `fail` / `incident`），`retry` 与 `blocked` 是本工具**多出来**的两个词。审计里五个词的**事实**不变（它就是这么写的），变的是**那句声称**；口径以本节这条更正为准，手册第 7 节也补了「十三步 ≠ 审计里的全部阶段名」与 `reveal` 的解释。因此失败路径上 `reveal` 停在 `pending` 是**正确**的（那一轮没有把版本放出去），而审计里**仍然**只可能有一条收口。用例 `the reveal stage reports that the version went live rather than that the run closed out`（`feed-publish.test.mjs:1715`）一次断言两边：成功 ⇒ `reveal` 是 `done`；翻转生效但公网复验失败的 `incident` ⇒ `reveal` 仍是 `pending`，同时收口条目仍是 `incident`。**变异 M-D9**（把 `stages[reveal]` 改由 `recordOutcome` 标记，即复核者给的"另一臂"）⇒ 红 1 条（就是它）。
 10. **【Minor】`releaseAndFinish(failedStage, outcome, reason)` 的 `outcome` 是没人用的自由度。** **落地**：**删掉这个参数**（`:756`），四个调用点全部传 `'fail'` 的事实写进函数体（`recordOutcome('fail', reason)`），返回值也写死 `finish('fail', …)`。**变异 M-D10** 见第三节（它是本刀唯一的存活变异，也是本刀新增的一条读数）。
 11. **【Minor】`appendAuditStage` 的仓库边界检查是有条件的。** **落地**：`repositoryRoot` 改成**必须**（`:478`，不是非空字符串就抛），`auditOut` 也必须是非空字符串（`:481`）—— 纯模块里显式抛是唯一一致的选择，**没有**去读 `process.cwd()`。用例 `the audit stage append refuses a missing repository root or an empty path`（`:2025`，两个闸门各断言一次，并断言**没有落盘**）。**变异 M-A9 / M-A10** 各红它自己那条。两处既有调用点（测试里的两条 `appendAuditStage`）本来就都传 `repositoryRoot` ⇒ 无破坏。
 12. **【Minor】`verifyPublicArtifacts` 是导出的，却跳过它自己调用方施加的前置条件。** **落地**：入口处补上 `assertSafeChannel` / `assertSafeVersion` / `assertTemporaryRoot` / `verifier` 四个汇点闸门（`:647-652`），与 `runCommit` 的前置块同源同一批函数；失败在任何 `fetchPublic` 之前。用例 `the public verification refuses an unsafe channel or version before any fetch`（`:2122`）与 `the public verification refuses a missing temporary root or verifier before any fetch`（`:2135`），**两条都断言 `fetchPublic` 一次都没发生**。**变异 M-A4 / M-A5 / M-A6 / M-A7** 各红它自己那条。
@@ -4767,7 +4873,7 @@ git commit -m "feat(feed): publish the manifest over sftp and verify it on the p
 **三、两条残余项披露（本刀只登记、不改代码）**
 
 1. **`readOwnerRecord` 的 `cause` 被三个锁调用点丢掉（`feed-publish.mjs:304` / `:380` / `:427`），`breakChannelLock` 仍对三种成因只报同一句话。** 本刀实测（读代码，两个读数）：`cause` 的取值只有**两句**（`:268` 的 `the owner record could not be read` 与 `:272` 的 `the owner record is not valid JSON`）—— `cat` 的非零退出把"文件不存在"与"取不到"合成**同一句**，所以是"三种成因、两句文案"；模块里**唯一**消费 `cause` 的调用点是步骤 5 的重读（`:918-919`）。**这不是洞**：判据是 `owner === null` 一律拒绝拆锁（fail-closed），代价只在**文案**。**它的归宿是 Task 7**（`--owner-record-unreadable` 那条路正是 `cause` 该起作用的地方），已写成 Task 7 验收项第 7 条（`:5235`）。
-2. **`readRemoteDirectory` 是最后一处把"读失败"塌成一个值的读（`feed-publish.mjs:550`：`if (listing.status !== 0) return [];`）。** 于是 `inspectRemoteDirectory:622` 把"列不出来"与"目录是空的"合成 `empty: true`，`runCommit:884-886` 再把它写成 `the staging directory is not the exact final file set: the staging directory is empty`。**处置：披露、不改。** 两条路的收口都是 `finish('fail', …, 'not-acquired')`（`:889`，在任何写与取锁之前），差别只在**文案稍微不准确**；将来若要收口，形状应当与 `readRemoteFileSha` 一致（返回 `{ ok, … }`），而不是在调用点猜。
+2. **`readRemoteDirectory` 是最后一处把"读失败"塌成一个值的读（`feed-publish.mjs:550`：`if (listing.status !== 0) return [];`）。** 于是 `inspectRemoteDirectory:622` 把"列不出来"与"目录是空的"合成 `empty: true`，`runCommit:884-886` 再把它写成 `the staging directory is not the exact final file set: the staging directory is empty`。**处置（2026-09-23 由第十八节 C 组第 6 条取代）：已修，不再披露。** 原文的"披露、不改"成立的前提是"差别只在文案稍微不准确"——**这句话错在**它把**读不到**说成了**读到了空**：那是"读存在当读状态"的同一个坑，操作员按 `is empty` 去删一个其实只是权限不对的目录，正是本仓库禁止的动作。现在 `readRemoteDirectory` 失败时返回 `null`，`inspectRemoteDirectory` 用 `unlistable: true` + `problems: ['the remote directory could not be listed']` 把两条路分开，用例名也从 `…reported as an empty directory…` 改成 `…reported as unlistable rather than as an empty directory`。**形状**与原文建议的方向一致（不塌成一个值），只是走的是 `unlistable` 而不是 `{ ok, … }`。
 
 **四、`:1612` 的撤销（只改计划文本）**
 
@@ -5891,6 +5997,7 @@ import {
   buildStableManifestInput,
   parsePublishInput,
   planCommit,
+  planTargets,
   runCommit,
   runPreflight,
   verifyLocalArtifacts,
@@ -5922,13 +6029,18 @@ const USAGE = [
   '                     is readable, where --confirm-runid is required instead',
   '  --re-sign-stable   offline: re-sign the internal release bytes for stable; needs',
   '                     --package --file-manifest --manifest --stable-out, and refuses to',
-  '                     overwrite the output; --channel must be stable',
+  '                     overwrite the output; --channel must be stable. This is the only mode',
+  '                     that reads the signing key file, so "the uploader never reads the',
+  '                     private key" holds per mode: --commit itself still never reads one',
   '  --known-hosts      the pinned known_hosts file, must live outside the repository',
   'Exactly one mode flag may be given; a command line that carries two is refused rather than',
   'resolved by priority, because --dry-run is the safest mode and must never lose to --commit.',
   'Exit codes: 0 the run finished, 1 it refused or failed, 2 no mode flag was given,',
   '  3 the flip did not take effect, which is the only code that means a --commit is safe to',
-  '  re-run; every other failure may still have changed the remote state, so read the audit log.',
+  '  re-run. It is safe for the remote state, not for an immediate re-run: a run that exits 3',
+  '  keeps its own channel lock, so the next --commit is refused as blocked until the lock is',
+  '  released with --break-lock --confirm-runid <the runid that run printed>. Every other',
+  '  failure may still have changed the remote state, so read the audit log.',
 ].join('\n');
 
 const MODE_FLAGS = Object.freeze(['--dry-run', '--preflight', '--commit', '--break-lock', '--re-sign-stable']);
@@ -6054,18 +6166,71 @@ export async function runCli(argv, dependencies = {}) {
     }
     try {
       const publicKeyBase64 = requirePublicKeyFromEnvironment();
+      const resolvedPackagePath = resolve(packagePath);
+      const resolvedFileManifestPath = resolve(fileManifestPath);
+      const resolvedManifestPath = resolve(manifestPath);
+      const verifyReleaseBytes = ({ manifestBytes, fileManifestBytes, packagePath: target }) =>
+        verifyPortableRelease({ manifestBytes, fileManifestBytes, packagePath: target, publicKeyBase64 });
+      const verified = await verifyLocalArtifacts({
+        packagePath: resolvedPackagePath,
+        fileManifestPath: resolvedFileManifestPath,
+        manifestPath: resolvedManifestPath,
+        expectedChannel: input.channel,
+        expectedVersion: input.version,
+        publicKeyBase64,
+        verifySignature: verifyReleaseBytes,
+      });
       const plan = await planCommit({
         channel: input.channel,
         version: input.version,
-        packagePath: resolve(packagePath),
-        fileManifestPath: resolve(fileManifestPath),
-        manifestPath: resolve(manifestPath),
+        packagePath: resolvedPackagePath,
+        fileManifestPath: resolvedFileManifestPath,
+        manifestPath: resolvedManifestPath,
         publicKeyBase64,
-        verifySignature: ({ manifestBytes, fileManifestBytes, packagePath }) =>
-          verifyPortableRelease({ manifestBytes, fileManifestBytes, packagePath, publicKeyBase64 }),
+        verifySignature: verifyReleaseBytes,
       });
-      console.log(JSON.stringify({ mode, channel: input.channel, version: input.version, plan }, null, 2));
+      const targets = planTargets({
+        channel: input.channel,
+        version: input.version,
+        runid,
+        packageSha256: verified.packageSha256,
+        fileManifestSha256: verified.fileManifestSha256,
+        manifestSha256: verified.manifestSha256,
+      });
+      console.log(
+        JSON.stringify(
+          {
+            mode,
+            channel: input.channel,
+            version: input.version,
+            runid,
+            planHash: targets.planHash,
+            local: {
+              packageSha256: verified.packageSha256,
+              packageSize: verified.packageSize,
+              fileManifestSha256: verified.fileManifestSha256,
+              fileManifestSize: verified.fileManifestSize,
+              manifestSha256: verified.manifestSha256,
+              manifestSize: verified.manifestBytes.length,
+              packageUrl: verified.packageUrl,
+            },
+            targets: {
+              versionRoot: targets.versionRoot,
+              stagingRoot: targets.stagingRoot,
+              stagingParts: [targets.stagingParts.package, targets.stagingParts.fileManifest],
+              channelManifest: targets.channelManifest,
+              tempManifest: targets.tempManifest,
+            },
+            plan,
+          },
+          null,
+          2,
+        ),
+      );
       console.log('dry run: nothing was written, and no permission, remote directory or host key was verified');
+      console.log(
+        'the backup path is not printed because it carries the digest of the manifest already on the server, which only a networked mode can read',
+      );
       return 0;
     } catch (error) {
       console.error(error instanceof FeedPublishError ? error.message : String(error));
@@ -6701,13 +6866,13 @@ node scripts/feed-publish.mjs --commit --channel internal --version <版本> --h
 
 **读结果先看 `outcome`，不要只看退出码**：`1` **同时**代表 `fail` / `blocked` / `incident` 三种结论，而它们的下一步动作相反。
 
-| `outcome`（命令打印的 JSON 里那个字段） | 意思                                                                                                                      | 下一步                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `done`                                  | 十三步走完、公网复验通过、锁已释放                                                                                        | 退出码 `0`，继续第 8 步                                                                                                                                                                                                                                                                                                                                                                                                  |
-| `retry`                                 | 翻转没生效（公网还是旧 manifest），远端状态**确定**；⚠️ **锁按设计留在这台运行名下**（`lockState: retained-by-this-run`） | 退出码 `3`，**只有它可以安全重跑** `--commit` —— 但**直接重跑会先撞上自己留下的锁**（取锁的 `mkdir` 遇 EEXIST ⇒ `not-acquired` ⇒ 收口 `blocked`、退 `1`）⇒ **先按 7b 释放它**：`--confirm-runid` 填**本次打印的 `runid`**（本条已经退出 `3`，所以它可证不在进行中），释放成功再重跑 `--commit`                                                                                                                           |
-| `fail`                                  | 翻转**之前**失败，远端状态确定                                                                                            | 退出码 `1`，读审计日志看停在哪一阶段，修掉成因再重跑                                                                                                                                                                                                                                                                                                                                                                     |
-| `blocked`                               | 这个频道**已经有锁**，本次**没拿到锁**（`lockState: not-acquired`）                                                       | 退出码 `1`，**先别拆锁**：持锁的很可能就是**你自己上一次的 `retry`**（它按设计留着锁退出 `3`）⇒ 先用 7b **探**一次，`--confirm-runid` 填**你上次那条命令打印的 `runid`**：**对得上** ⇒ 那是你自己的锁，命令当场报 `lock-broken`，再重跑；**对不上** ⇒ 工具**当场拒绝并打印真正的 owner runid**，且**拒绝发生在任何写之前**（只读一次远端记录、不写审计行）⇒ 拿那个 runid 去认人，确认对方**确实已经不在进行中**，才走 7b |
-| `incident`                              | 结果**不确定**（翻转后失败、上传后核对不上、CAS 不匹配…），**锁被有意保留**                                               | 退出码 `1`，停下来人工核查，再按 7b 恢复 —— **先分清哪条**：owner 记录**读得出来** ⇒ 走 7b 第一条命令，`--confirm-runid` 填**本次打印的 `runid`**（与 `retry` 同一条路）；**读不出来** ⇒ 才走 `--owner-record-unreadable` 那条专用路径                                                                                                                                                                                   |
+| `outcome`（命令打印的 JSON 里那个字段） | 意思                                                                                                                      | 下一步                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `done`                                  | 十三步走完、公网复验通过、锁已释放                                                                                        | 退出码 `0`，继续第 8 步                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `retry`                                 | 翻转没生效（公网还是旧 manifest），远端状态**确定**；⚠️ **锁按设计留在这台运行名下**（`lockState: retained-by-this-run`） | 退出码 `3`，**只有它可以安全重跑** `--commit` —— 但**直接重跑会先撞上自己留下的锁**（取锁的 `mkdir` 遇 EEXIST ⇒ `not-acquired` ⇒ 收口 `blocked`、退 `1`）⇒ **先按 7b 释放它**：`--confirm-runid` 填**本次打印的 `runid`**（本条已经退出 `3`，所以它可证不在进行中），释放成功再重跑 `--commit`                                                                                                                                                                                                                                                                              |
+| `fail`                                  | 翻转**之前**失败，远端状态确定                                                                                            | 退出码 `1`，读审计日志看停在哪一阶段，修掉成因再重跑                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `blocked`                               | 这个频道**已经有锁**，本次**没拿到锁**（`lockState: not-acquired`）                                                       | 退出码 `1`，**先别拆锁**：持锁的很可能就是**你自己上一次的 `retry`**（它按设计留着锁退出 `3`）⇒ 先用 7b **探**一次，`--confirm-runid` 填**你上次那条命令打印的 `runid`**：**对得上** ⇒ 那是你自己的锁，命令当场报 `lock-broken`，再重跑；**对不上** ⇒ 工具**当场拒绝并打印真正的 owner runid**，且**拒绝发生在任何写之前**（只读一次远端记录、不写审计行）⇒ 拿那个 runid 去认人，确认对方**确实已经不在进行中**，才走 7b                                                                                                                                                    |
+| `incident`                              | 结果**不确定**（翻转后失败、上传后核对不上、CAS 不匹配…），**锁被有意保留**                                               | 退出码 `1`，停下来人工核查，再按 7b 恢复 —— **先读命令打印的 `lockState`，再决定「这锁是不是本次留下的」**（别凭印象）：`retained-by-this-run` ⇒ 本次确实取到过锁并有意保留它，走 7b 第一条命令、`--confirm-runid` 填**本次打印的 `runid`**（与 `retry` 同一条路）；`ownership-unknown` ⇒ 本次**无法确认**自己是否拥有那把锁（取锁的回执丢了，或记录里的 `runid`/`planHash` 不是本次的）⇒ **不得声称保留**，先按下面的办法查清 owner 再说。**再分清 owner 记录读不读得出来**：**读得出来** ⇒ 走 7b 第一条命令；**读不出来** ⇒ 才走 `--owner-record-unreadable` 那条专用路径 |
 
 ⚠️ **`blocked` 与完整性事故 `incident` 都退 `1`，但锁的来源相反**：`incident` 的锁是**本次运行有意保留**的（见上表 `incident` 行）；`blocked` 的锁**本次根本没拿到**。**「那把锁不是你的」不该是一句断言** —— 工具**当场给判据**：拿**你上次那条命令打印的 `runid`** 按 7b 探一次（`--confirm-runid`）。**对得上** ⇒ 那锁是你自己的（例如上一次 `retry` 按设计留下的），释放它安全；**对不上** ⇒ 工具**立即拒绝**并**打印真正的 owner runid**（`--confirm-runid does not match the owner runid <那串 runid>`），**这条拒绝发生在任何写之前**（只读一次远端 `owner.json`，**一条审计行都不写**）⇒ 但**只有确认那次运行确实已经不在进行中之后**才允许走 7b 的恢复路径 —— 否则你会在它写到一半时把它脚下的东西拆掉。
 
@@ -6717,9 +6882,13 @@ node scripts/feed-publish.mjs --commit --channel internal --version <版本> --h
 
 上传器固定执行十三步，**不得调换**：本地预验证 → stage（建 staging 目录 + 续传上传 + 远端改名）→ 远端复核 → 取频道锁 → 锁内重新核验 → 原子提交版本目录（**单次目录 rename**）→ 备份旧 manifest → CAS → **SFTP 上传临时 manifest 并核对远端摘要** → 原子翻转 → 公网复验 → 逐阶段审计 → 释放锁。
 
+⚠️ **这十三步是流程，不是审计日志里的全部阶段名。** 审计日志另有两个条目：会话级的 `open`（整轮开始）与 **`reveal`**。`reveal` 的口径写死为「**这一轮把版本真正放出去了**」（翻转生效 **且** 公网复验通过），**不是**「这一轮收口」—— 收口是紧随其后的那条 `done` / `fail` / `incident` / `retry` / `blocked` 条目，它的 `stage` 就是结论本身。所以失败路径上 `reveal` 停在 `pending` 是**正确**的（那一轮确实没把版本放出去）。⚠️ 结论只有 **3 个**（§6.11 的 `done` / `fail` / `incident`），而工具会写 **5 个**：`retry`（翻转没生效、可重跑）与 `blocked`（频道已有锁、本次没取到锁）是本工具**多出来**的两个收口词，不是 §6.11 的原文 —— 读日志时按上表那五行读，别只认那三个。
+
 - 本地预验证**先于任何网络写**；任一项不过就一个字节都不写。
-- `--dry-run` 完全离线，**不需要** `--host` / `--known-hosts`，只校验三个本地产物。
+- `--dry-run` 完全离线，**不需要** `--host` / `--known-hosts`，只校验三个本地产物。它把**这一次发布将要写入的本地产物摘要与目标路径**都打出来：`local`（三个产物的 SHA-256 与大小、`packageUrl`）、`targets`（版本目录、staging 目录、两个 `.part` 上传目标、频道 manifest、临时 manifest 路径）、`planHash`（`channel + version + 三产物哈希`），以及十三步计划。**唯一的例外是备份路径**：它的文件名带着**服务器上现存 manifest 的摘要**，那是联网才读得到的事实，所以 `--dry-run` 打不出来（命令会打印一行说明）。
 - `--preflight` 只读，只能给出**可写性指标**；真正的写入能力到 stage 阶段才被证明。⚠️ 它**仍然会写一条会话级审计行**，所以**必须给 `--audit-out`**（缺了会以 `--audit-out is required` 退出 1）。
+- ⚠️ **`--preflight` 今天只核两条**（工具实测）：① `stat -c '%d'` 比较**状态根与发布根的设备号**（§6.8 的「同一文件系统」前提）；② 探测本身是否成功（失败则 `notes` 非空、退出 `1`）。**§6.3 那张表里其余各项没有实现**：host key 是否匹配、远端目录是否存在及其属主与权限位、有效账号、磁盘余量、锁是否空闲、目标版本目录是否已存在及其字节状态 —— 这些**要操作员自己核**（见「发布前检查单」）。**这是有意收窄、不是遗漏**：这些项都要新增**只读远端探测**，而一套没在目标主机上真跑过的探测比「说清它没核」更危险；口径是**不许把没验过的探测写进 3am 路径**。真正的写入能力仍然要到 stage 阶段才被证明。
+- **staging 目录**在状态根下、公网读不到：`/opt/rongying/updates-state/staging/<频道>/<版本>/<planHash>/`（`planHash` = `channel + version + 三产物哈希`，所以只有**同一版本 + 同样字节**才落在同一个目录里）。发布中途断掉后**直接重跑 `--commit` 就可以**：上传目标按**产物**命名（`portable.zip.part`、`portable-files.json.part`），`reput` 会从上次的断点续传；上一次运行留下的**带 runid 后缀**的半截文件由 stage 步骤自动清掉、并在审计的 `stage` 条目里点名（`removedStrayParts`），**清不掉就当场 `fail` 停住、一个字节都不上传**。版本目录**不可变**：它只可能有 `portable.zip` 与 `portable-files.json` 两个文件，多一个、少一个、大小或摘要不对都拒。
 - `--host` 不许以 `-` 开头、不许含空白；**`--known-hosts` 的路径可以含空格** —— 路径安全规则**故意比主机规则窄**（主机名进 argv 前要防选项注入，路径是整体参数，工具按参数传递、不拼 shell）。**不要**为了“看起来安全”去改建带有空格的 known_hosts 路径。
 - 版本目录**不可变**；已存在且逐字节一致才可复用，**存在但为空视为不完整并拒绝**。
 - **CAS 不匹配是完整性事故**：收口为 `incident` 并**保留锁**，不自动翻转、不自动回滚、不自动删除，人工核查后走显式恢复。
@@ -6809,6 +6978,7 @@ node scripts/feed-publish.mjs --commit --channel stable --version <版本> --hos
 
 - [ ] `docs/portable-update-key-registry.md` 的 host-key 指纹已由用户或授权运维人员经**可信带外渠道**核对，并写明核对方式。（本项依赖《2026-09-22-portable-release-assembly-and-ci》Task 6 落地的密钥登记册；未落地前记「未验证」）
 - [ ] 上传器使用**仓库外** known_hosts，`BatchMode=yes` 与 `StrictHostKeyChecking=yes` 生效。
+- [ ] §6.3 里 **`--preflight` 没有实现**的那几项已由操作员**手工核过**：host key 指纹与仓库外 known_hosts 一致、`<update-root>` 与 `<state-root>` 存在且属主与权限位正确、当前账号有效、两个根所在挂载点磁盘余量足够、频道锁空闲、目标版本目录是否已存在及其字节状态。（工具只核设备号与探测成功与否，见第 7 步的手册口径。）
 - [ ] 三个产物的本地 SHA-256 与大小已记录，且与待发 manifest 逐项一致。
 - [ ] 启动器身份挑战（第 6b 步）三条全部通过，读数已归档为**发布期 QC 证据**。（本项依赖《2026-09-22-portable-release-assembly-and-ci》Task 6 落地的第 6b 步；未落地前记「未验证」）
 - [ ] `--audit-out` 指向**仓库外**；审计日志含 `open` … `unlock` 的**逐阶段**记录。
@@ -7189,3 +7359,127 @@ test('the entry script injects a transport factory, so a run with no mode flag p
 - **没有连服务器、没有真实 feed、没有真机演练** ⇒ `retry` ⇒（按 7b 释放锁）⇒ 重跑 `--commit` **这条路仍未被真机证过**：本节只从代码与用例证明"直接重跑会退 `blocked`"，以及"`--confirm-runid` 不匹配会先拒绝、且不写审计行"。
 - **`blocked` 那一格仍然没有在真锁上读过**：`blocked` 的判据与"探测"行为都来自代码与注入的假 transport（沿用 §十六四 / §十六八 的登记）。
 - N2 的"裸控制字符 = 0"只在**本计划这一个文件**上量过（这正是那句话的射程），其它文件**未扫**。
+
+## 第十八节 整实现复核刀：C1、C2、I1–I3 与八条 minor（2026-09-23）
+
+**这一刀是什么：** 前十七刀每一刀只看自己那一片；这是**第一次把八件交付合起来看**的复核，报出 **2 条 Critical**（C1 / C2）、**3 条 Important**（I1–I3）与 **8 条 minor**。两条 Critical 都是**按构造对既有夹具不可见**的缺陷，所以本刀的重点不是「改对」，而是**写出会抓到它们的那条用例**。
+
+**五个提交**（全部显式 pathspec、消息末尾带 `Co-Authored-By: Claude Code <noreply@anthropic.com>`、没有 `--amend`）：
+
+1. **`d298055e`** `fix(feed): give every upload of a run its own sftp batch file` —— C1。`feed-publish.mjs` / `feed-publish-cli.mjs` / 两个测试文件 / 本计划（四处围栏同提交重同步）。
+2. **`976a8a58`** `fix(feed): read the published manifest from the channel root` —— C2。
+3. **`951c13db`** `fix(feed): keep a rejected post-flip public fetch inside the flow` —— I1。
+4. **`924a9008`** `fix(feed): make the staging upload resumable and stop orphans from blocking` —— I3。
+5. **收尾提交**：I2 + minor 1–8 —— `feed-publish.mjs`（`planTargets` 单点推导 + 备份材料 + `unlistable`）、`feed-publish-cli.mjs`（`--dry-run` 加宽 + `USAGE` 两条）、两个测试文件、本计划、本手册。
+
+三套用例：**239（166 / 31 / 42）⇒ 249（175 / 31 / 43）**；下面逐条给读数。
+
+### 一、C1（Critical）：每次 SFTP 调用都重放这一轮之前排进同一个批文件的全部命令
+
+**缺陷：** CLI 每轮建**一个**批文件、**以追加方式打开**（`feed-publish-cli.mjs:107,114`），把它**一次**交给 transport 工厂（`:108-115`）；而 transport 每执行一次 `sftpUpload` 就 `sftp -b <那个文件>`（`feed-publish-transport.mjs:113-118`）。于是这个文件是**累积**的：第 1 次调用 = 1 行，第 2 次 = 2 行，第 3 次 = 3 行。两个 staging 上传打到 `${stagingRoot}/<name>.part-<runid>`（`feed-publish.mjs:921-931`，当时的行号），随后在 staging 内改名；版本目录由 `mv ${stagingRoot} ${versionRoot}` 提交（`:1028-1032`）；**manifest 上传在那之后**（`:1073-1082`）。所以**首次发布**的第三次 `sftp -b` 文件里有三行，**第一行的父目录已经被那次 rename 搬走了** —— 而 `sftp -b` 遇到错误会中止批处理 ⇒ 第 3 行那条 `put` 根本没跑 ⇒ `temp-manifest` 事故 + 保留锁 + 退出 1，**发生在版本目录已提交、旧 manifest 已备份之后**。
+
+**为什么一直是绿的：** CLI 测试只**写了一次**批文件（`feed-publish-cli.test.mjs:449-492` 那条 `the batch file the cli hands the factory is the file its writer appends to`）—— 它把**缺陷的形状**（一个共享的、追加打开的批文件）当成了**契约**钉住；其余每套用例都换成自己的假 transport，根本没有第二个 `sftpUpload`。
+
+**修法（三层）：** ① 流程每**一次**上传都向 `input.createBatch()` 要一对**新的** `{ batchFile, writeBatch }`，并**通过 transport 早就暴露、而此前没有任何生产调用者使用的 per-call 缝**（`request.batchFile` / `request.writeBatch`，`feed-publish-transport.mjs:99-107`）传下去；② CLI 不再把**任何一个**共享文件交给工厂，改为把**分配器**交给流程（`withTransport` 的 `body(transport, createBatch)`）；③ 缺分配器时 `runCommit` 在 `pre-verify` 里**拒绝**（`assertUploadBatchFactory`，「任何远端写之前」）。
+
+**两条按构造抓它的用例（都是组合出来的，不是钉修复形状）：**
+
+- `every upload of one run reaches sftp through a batch file that holds exactly its own command`（模块套件）：用**真 transport** 套在假的 ssh/sftp runner 上跑完一轮 happy path，runner 每次从 `sftp -b` 的**操作数**里读**那个文件的内容**，断言 3 个上传各自只有 **1** 行、3 个文件**互不相同**、总行数**恰好 3**（共享文件的读数会是 1+2+3=6）。
+- `a commit reaches sftp with one batch file per upload, each holding exactly that upload`（CLI 套件）：同样的判据，但走 **CLI + 真 transport**（**替换掉**那条把缺陷钉成契约的旧用例），覆盖「CLI 的分配器真的每调用一次」。
+
+**变异读数（先注册的红名就是上面两条的名字）：**
+
+| 变异                                                                                                          | 读数                                                                          |
+| ------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| **M-C1a**：`const nextUploadBatch = () => input.createBatch();` 改成先算一次、之后共享同一个 pair（模块套件） | **168 / 167 / 1** ⇒ 红的**只有** `every upload of one run …`                  |
+| **M-C1a（同一变异，CLI 套件）**                                                                               | **42 / 41 / 1** ⇒ 红的**只有** `a commit reaches sftp with one batch file …`  |
+| **M-C1b**：把 CLI 的分配器**还原成原缺陷本身**（一个 `sftp-batch.txt`、追加打开）                             | **42 / 41 / 1** ⇒ 红的**只有** CLI 那一条                                     |
+| **M-C1c**：删掉 `assertUploadBatchFactory(input.createBatch);`                                                | **168 / 167 / 1** ⇒ 红的**只有** `a run without a per upload batch factory …` |
+
+### 二、C2（Critical）：公网复验读的是一个工具从不发布的 manifest URL
+
+**缺陷：** `verifyPublicArtifacts` 拼 `base = ${PUBLIC_BASE_URL}/${channel}/${version}`（`feed-publish.mjs:702`）并取 `${base}/manifest.json`（`:703`）；而工具**只**把 manifest 写到 `${UPDATE_ROOT}/${channel}/manifest.json`（临时名 → 原子翻转，`:1073`、`:1104-1108`），版本目录被断言**只**含 `portable.zip` 与 `portable-files.json`（`:905-908`、`:1015-1024`）。客户端读的是**频道根**（`packages/desktop/src/main/ipc/update-handlers.ts:73,87`），规格 §6.1 I1 与 §6.13 同口径。于是版本目录下的 manifest 是 404 ⇒ `public-verify` 事故 + 保留锁 + 退出 1，**在一次成功的翻转之后** ⇒ 工具对真实 feed **永远打不出 `done`**。那一轮自己还**不自洽**：`:1115` 已经取过**正确**的频道 manifest 并比对过，然后把它交给一个去取**另一个 URL** 的函数当「那个 manifest」。
+
+**为什么一直是绿的：** **每一套**用例的假 fetch 都按 `url.endsWith('manifest.json')` 取 body ⇒ 两个 URL 拿到同一份字节，谁也没断言**绝对 URL**。
+
+**修法：** `verifyPublicArtifacts` 改取**频道根** manifest，两个产物仍留在版本目录；频道根 URL 收成**一个** helper（`publicChannelManifestUrl`），翻转后的观察取用与完整复验**共用同一个 URL 表达式**，不再靠「两处恰好写成一样」。
+
+**抓它的用例：** `the public verification reads the manifest from the channel root and both artifacts from the version directory`（模块套件）—— 夹具**只**认那三个**绝对 URL**、其它一律 404，然后断言 `calls` 与那三条 URL **逐字相等**。
+
+**变异 M-C2**（把 manifest 的取用点改回 `${base}` 下的那份）⇒ **169 / 168 / 1**：红的**只有**它，**三条按后缀取 body 的旧用例仍然全绿** —— 这正是它此前不可见的原因。
+
+### 三、I1（Important）：翻转之后被拒的公网 fetch 逃出流程
+
+`feed-publish.mjs:1115` 那句 `await input.transport.fetchPublic(...)` **不在任何 try/catch 里**；真 transport 的默认 fetch 在超时 / 重定向 / TLS / DNS 失败时**拒绝**（`feed-publish-transport.mjs:129-132`，`AbortSignal.timeout(60_000)` —— §6.4 引入这个超时正是为了一个挂住的端点）。拒绝会一路传到 CLI 的 catch ⇒ 退出 1，而那轮审计的**最后一行是 `flip: done`**：**没有收口、没有 incident、没有 `lock-retained` 行**。**修法**：把它挪进流程的处理（`audit('public-verify','incident',…)` + `retainAndFinish`，与两个邻居同形）。**用例** `a public fetch that rejects after the flip is an incident that keeps the lock` 完整断言收口形状（`incident` / `retained-by-this-run` / flip done / public-verify incident / unlock retained / 最后一行 `lock-retained` / detail 带那句拒绝）。**变异 M-I1**（把那对 try/catch 拆回裸 `await`）⇒ **170 / 169 / 1**，红的就是它。
+
+### 四、I2（Important）：`--dry-run` 加宽（按名钉住），`--preflight` 的缩减**声明**给操作员
+
+**这是本刀唯一的取舍条目，两条路选了不同的那一条，理由写在这里：**
+
+- **`--dry-run`：选「加宽」。** §6.3 的表要求它打印「步骤、本地哈希与大小、目标路径、manifest 前后摘要」。**加宽不需要任何新的远端语义** —— 这些值在 `verifyLocalArtifacts` 里已经算完、而且是**验过签名之后**的。为此新增 `planTargets`（`feed-publish.mjs`）把「这一轮会碰到的每个路径」做成**单点推导**：`runCommit` 与 `--dry-run` **调同一个函数**，所以打印出来的路径**不可能**与真正执行的路径漂移（代码里不再有第二份 `${UPDATE_ROOT}/${channel}/manifest.json` 拼接）。`--dry-run` 现在多打 `local`（三产物摘要与大小 + `packageUrl`）、`targets`（版本目录、staging 目录、两个 `.part`、频道 manifest、临时 manifest）、`planHash`。**唯一打不出来的是备份路径**：它按 minor 4 的修法**带服务器上现存 manifest 的摘要**，那是联网事实 ⇒ 命令额外打印一行说明（不假装）。
+- **`--preflight`：选「声明缩减」。** §6.3 承诺的其余各项（host key 匹配、目录存在 / 属主 / 权限、有效账号、磁盘余量、锁是否空闲、目标版本目录状态）**都要新增只读远端探测**；而本刀的纪律是**不许对着服务器跑** ⇒ 现在写进去的探测会是一批**从没在目标主机上跑过**的 3am 代码。**取舍：先如实缩小承诺**，把缩减写在**操作员读的地方**（手册第 7 节列出工具**实际**只核的两条，并在检查单加一条「其余各项由操作员手工核过」），而不是让手册继续替工具宣称能力。**若将来要收口**，代价清单是同一处：`runPreflight` + CLI 输出 + 手册第 7 节 + 检查单。
+
+**钉子**：`the dry run prints the local digests, the target paths and the verified plan hash`（CLI 套件）逐项断言 `local.*`（与夹具字节**现算**的 SHA-256 对比）、`targets.*`（绝对路径、staging 目录由 `planHash` 拼出、两个 `.part`、临时 manifest 带 `runid`）、`planHash.length === 64`、`plan.length === 13`。**变异**：**M-I2**（`manifestSha256` 改成 `verified.fileManifestSha256`）⇒ **cli 43 / 42 / 1**，红的就是它；**M-I2b**（`tempManifest` 去掉 `runid`）⇒ **cli 43 / 42 / 1** **+** **模块 173 / 170 / 3**（三条按名红）⇒ 打印的路径与执行的路径确实是**同一个推导**。
+
+### 五、I3（Important）：staging 续传从来不会续传；它的残留**永久**堵住重跑
+
+**两半：** ① 两个上传目标每轮带**新的 `randomUUID`**（`feed-publish-cli.mjs:149`、`feed-publish.mjs:922-923`）⇒ `resume: true` 的 `reput` **永远找不到**上一轮的半截文件 ⇒ §6.8/§6.14 的「重跑续传」**按构造不可达**。② 中断的上传会在 staging 叶里留下 `<name>.part-<旧runid>`，而 `compareDirectoryEntries` 拒收任何「没被告诉过要期待」的条目（`:630-650`）⇒ **此后每一次同版本 + 同字节的重跑都在 `remote-verify` 上以「the directory holds 3 entries, expected 2」停住**，永远进行不下去。
+
+**修法（选「清理」而不是「忽略」）：** ① 上传目标改成**按产物**命名（`<name>.part`）—— 这才让 `reput` 真的能续传；② stage 步骤先**清掉**旧 runid 后缀的半截文件，并把清掉的**名字**写进 `stage` 条目的 `removedStrayParts`；清不掉就当场 `fail`、**一个字节都不上传**。**为什么不选「ignore-and-report」**：staging 叶在第 6 步会被 `mv` **整个搬进不可变的版本目录**，所以只让**列表**忽略的条目**仍然会被提交进去** —— 那会把「版本目录恰好两个文件」从**检查**降级成**愿望**。清掉是唯一不给版本目录留垃圾的做法。
+
+**三条用例：** `the staging upload target is keyed by the artifact so a re-run resumes what an earlier run left`（**两轮、不同 runid**，断言两次的 staging 目标**逐字相同**、且不含 runid；临时 manifest 名**仍然带 runid**）；`a partial upload an earlier run left behind is removed and reported instead of blocking the next run`（夹具**按因果**模拟：残留只在「清理命令真的执行了删除」之后才从 staging 列表里消失 ⇒ 删掉清理就回到 3 个条目 ⇒ 那一轮会失败）；`a staging directory that cannot be cleared of an earlier run partial is a plain failure`。**变异**：**M-I3a**（目标改回带 runid）⇒ **173 / 172 / 1**；**M-I3b**（去掉命令里的 `rm -f`）⇒ **173 / 172 / 1**；**M-I3c**（`if (strayParts.status !== 0)` ⇒ `if (false)`）⇒ **173 / 172 / 1**。
+
+### 六、minor 逐条（1–8）
+
+1. **手册步号（已改）：** 手册「发布前提」原写「停在第 8 步」，而 §8.1 要求「**完成第 6 步后停止，不得进入第 7 步**」—— 按原文执行是**不可跟随的**（第 7 步就是上传）。现改为 §8.1 的口径，并**就地登记**这次更正。本计划此前**没有**记过这条偏差。
+2. **§6.11 的三个收口词与本工具的五个（已改声称）：** 见本节末「账本更正」第 1 条；手册第 7 节同时补了「十三步 ≠ 审计里的全部阶段名」与 `reveal` 的解释（`reveal` = 这一轮把版本真正放出去了，**不是**收口）。
+3. **`USAGE` 的退出码 3（已改）：** 原文说「只有它代表 `--commit` 可以安全重跑」，**没说**这一轮按设计**留着自己的锁** ⇒ 立刻重跑先撞 `blocked`。`USAGE` 现在写明：重跑前先用 `--break-lock --confirm-runid <那一轮打印的 runid>` 释放它。
+4. **备份材料比 §6.15 假设的弱（三处都改）：** ① 备份名**只按频道 + 版本** ⇒ 一次幂等的重跑会**用翻转后的 manifest 覆盖回滚材料** ⇒ 现在名字**带上基线摘要**（`…-pre-<版本>-<旧 manifest 的 SHA-256>`，首发布是 `-absent`）；② 那句 `cp … || true` **除「源不存在」以外的任何失败都报 done**、且**没有任何存在性检查** ⇒ 现在 `cp` 之后**当场 `sha256sum` 备份文件**并与基线比，不等即 `incident`；③ 审计记的 `previousManifestSha256` 是**声称**而不是**实际抄到的字节**的摘要 ⇒ 现在另记 `copiedManifestSha256`（就是那次 `sha256sum` 的读数）。**用例**：`a backup copy that carries other bytes than the baseline is an incident`（**M-I4b** ⇒ 红 1 条）；`a re-run of the same version does not overwrite the rollback copy of the previous manifest`（**M-I4a** ⇒ 红 2 条）。⚠️ 这条用例顺带**修掉夹具的一个假值**：原来的假 transport 在「第二轮」里仍然回答**首发布之前**那个 manifest 摘要，而真实服务器此时服务的是**上一轮翻上去**的那一份 ⇒ 新增 `baselineSha` 夹具臂。
+5. **`inspectRemoteDirectory` 把「存在但列不出来」当成空（已改）：** `readRemoteDirectory` 失败时返回 `[]` ⇒ `inspectRemoteDirectory` 把它写成 `empty: true`、`runCommit` 再写成「the staging directory is empty」。**收口是保守的、文案是错的**（与「读存在当读状态」同一形状：操作员会按「目录是空的」去删一个其实只是权限不对的目录）。现在失败返回 `null`、用 `unlistable: true` + `problems: ['the remote directory could not be listed']` 分开两条路；用例名从 `…reported as an empty directory…` 改成 `…reported as unlistable rather than as an empty directory…`。**变异 M-I5**（`return null` ⇒ `return []`）⇒ **173 / 172 / 1**。
+6. **手册的 incident 行不告诉操作员读 `lockState`（已改）：** 那一行的「下一步」现在**先读 `lockState`** 再决定「这锁是不是本次留下的」（`retained-by-this-run` ⇒ 本次确实取到锁并有意保留；`ownership-unknown` ⇒ 本次**无法确认**自己是否拥有那把锁，**不得声称保留**），然后才是「owner 记录读不读得出来」。
+7. **三处潜在夹具不一致（都改）：** ① CLI 的 break-lock 夹具用**两字段** `{runid, planHash}` 记录，而 `acquireChannelLock` **要求五个字段** ⇒ 桩答了一个**真实系统产生不出来的值**；现在四处都换成完整的 `FOREIGN_OWNER_RECORD`（五字段），两处 `previousOwner` 断言同步。② owner 读取的 stderr 夹具写 `cat: /opt/x/owner.json`，真实路径是 `/opt/rongying/updates-state/lock/<频道>/owner.json` ⇒ 三处改成**真实路径**。③ 两套套件里「同形状」的文件清单夹具**序列化出不同字节**（键序）⇒ 现在两套都用**规范序**（`files` / `schemaVersion` / `version`，即 `portable-update-release.mjs` 的 `canonicalize` 排序后的顺序）；这对模块套件是**加强**：它的夹具此前**不是**规范字节，而真生成器**强制**规范字节。
+8. **`--re-sign-stable` 要读私钥（已声明）：** §6.2 的「上传器绝不读私钥」**只在**「每个模式」的意义上成立。这在本计划里已登记为模式增补；本刀顺手把它写进 `USAGE`（操作员读得到的地方），并写明 `--commit` 自己仍然不读私钥。
+
+### 七、变异与对照的总读数（本刀 14 条 + 1 条对照）
+
+**装置**（仓库外 `mutate.mjs`）：锚点**必须恰好命中 1 次**（否则拒绝执行）、打印**整行 hunk**、跑**指定的一套**用例、收尾**逐字节还原**（`RESTORE_SHA256_EQUAL true`）并比对 `git status --porcelain`（`GIT_STATUS_IDENTICAL true`）。**14 条变异 + 1 条对照的还原读数全部是 `true` + `true`。**
+
+| #        | 变异                                                                          | 读数                                        |
+| -------- | ----------------------------------------------------------------------------- | ------------------------------------------- |
+| 1        | M-C1a 模块套件                                                                | 168 / 167 / 1                               |
+| 2        | M-C1a CLI 套件                                                                | 42 / 41 / 1                                 |
+| 3        | M-C1b（还原成共享追加文件）                                                   | 42 / 41 / 1                                 |
+| 4        | M-C1c（删 pre-verify 守卫）                                                   | 168 / 167 / 1                               |
+| 5        | M-C2（manifest 取用点回到版本目录）                                           | 169 / 168 / 1                               |
+| 6        | M-I1（拆掉 try/catch）                                                        | 170 / 169 / 1                               |
+| 7        | M-I3a（目标带 runid）                                                         | 173 / 172 / 1                               |
+| 8        | M-I3b（去掉 `rm -f`）                                                         | 173 / 172 / 1                               |
+| 9        | M-I3c（无视清理失败）                                                         | 173 / 172 / 1                               |
+| 10       | M-I5（`return null` ⇒ `return []`）                                           | 173 / 172 / 1                               |
+| 11       | M-I4a（备份名去掉基线摘要）                                                   | 175 / 173 / 2                               |
+| 12       | M-I4b（无视抄错字节）                                                         | 175 / 174 / 1                               |
+| 13       | M-I2（`--dry-run` 打错摘要）                                                  | cli 43 / 42 / 1                             |
+| 14       | M-I2b（临时 manifest 名去掉 runid）                                           | cli 43 / 42 / 1 **+** 模块 173 / 170 / 3    |
+| **对照** | **M-CTRL**：`versionRootOf(...)` ⇒ 展开成同一根路径的等价写法（**必须留绿**） | 模块 **175 / 175 / 0**、CLI **43 / 43 / 0** |
+
+（每行读数都取自**该变异运行时的**套件规模；套件在本刀内从 166/31/42 涨到 175/31/43，所以同一张表里的分母不同，**不是笔误**。）
+
+### 八、镜像与手册同步（本刀实测）
+
+- **代码围栏**：装置（仓库外 `mirror-check.mjs`）把计划里每个围栏内容当成**连续切片**在七个 `.mjs` 里找。本刀每一片提交后都跑一次，**全部 `MATCHED 17 / UNMATCHED 41 / AMBIGUOUS 0`**（与改动前**同一个数**；那 41 个 UNMATCHED 是 Bash 命令、JSON 片段、变异表这种**本来就不镜像源文件**的围栏）。重同步用**定向装置**（`resync3.mjs`：从**旧切片**取首 2 行与末 N 行作锚点、要求**唯一命中**、并抽查 25% / 50% / 75% 三行仍在切片内），**每次打印 `old=… new=…` 与切片首末行**再落盘。条目级：模块 `499–1185 ⇒ 499–1279`（本刀四次改动叠加）、CLI `1–414 ⇒ 1–481`、`feed-publish.test.mjs 1–383`（内容变、长度不变）、`1380–2789 ⇒ 1380–3094`。
+- **手册围栏**：装置（仓库外 `runbook-mirror4.mjs`）按**围栏块**定位，对六个小节逐行比对 ⇒ 重同步后 **6/6 `IDENTICAL`**（`### 7.` 42 行、`### 7b.` 37、`### 9.` 17、`### 10.` 12、`## nginx 与权限` 5、`## 发布前检查单` 11）。⚠️ **第一次比对报出的三处「差异」里，只有两处是真的**：第三处是 `### 10.` 的**尾随空行**（手册那一段末尾比围栏多一个空行）—— 装置按「忽略尾随空行后再比」重跑，确认**只有** `### 7.` 与检查单是内容差异 ⇒ **登记、不重同步**（照抄会把空行塞进围栏里）。
+- **格式**：`prettier --check` 对本刀改过的四个 `.mjs`、两个 `.md` 全部 `All matched files use Prettier code style!`（`scripts/**` 仍然**零注释、零 CJK**；`scripts/feed-publish.mjs` 仍然 **13 行**）。
+
+### 九、账本更正（本刀发现的旧陈述）
+
+1. **`reveal` 那条里的「与 §6.11 的清单一致」是假的**（本节第六节第 2 条对应处已就地更正）：§6.11 的收口词只有三个（`done` / `fail` / `incident`），而工具写五个（多 `retry` / `blocked`）。审计里的**事实**不变，变的是那句**声称**。
+2. **「`readRemoteDirectory` … 处置：披露、不改」已被取代**（该处已就地更正）：原文的前提「差别只在文案稍微不准确」**错在**它把**读不到**说成了**读到了空**。
+
+### 十、本刀未做（不得写成已完成）
+
+- **没有连服务器、没有真实 feed、没有真机演练**：C1 / C2 / I1 / I3 的证明全部来自**注入式夹具 + 真 transport 套假的 `execFile`**。真 `ssh` / `sftp` / `https` 一次都没跑。
+- **`sftp` 的 `reput` 语义仍未在真机验过**（续传的前提）：`reput` 在远端文件**不存在**时的行为、以及 Windows 构建机上批处理路径的转义，都还是**假设**（沿用 Task 6 的开放集登记）。
+- **`--preflight` 的缩减是声明、不是收口**：§6.3 里缺的六项**没有**实现，手工核的出口在手册的检查单里。
+- **`reveal` 与五个收口词**只改了**声称**与手册口径，**没有**改语义。
+- **夹具粒度的一条边界**：I3 的清理夹具按**命令出现 + 删除动作存在**建模（`for f in …` 且含 `rm -f`），**不是**一个完整的 shell glob 解释器 ⇒ 「把 glob 改成另一个仍能匹配的写法」这类变异它看不见。本刀**没有**跑那条变异，也不声称它可见。
+- **一条未收口的观察（登记、未改）**：`backup-manifest` 失败走 `retainAndFinish('incident', …)`，而 §6.6 的表把「翻转**之前**失败且非 CAS 不匹配」判为**确定** ⇒ 那张表要求 `fail` + **释放锁**。这条**不在**本次复核的清单里，**没有**动它（动它就要同时改这里与手册），但**分类与锁处置在这一步上与 §6.6 对不上**这件事属实。
