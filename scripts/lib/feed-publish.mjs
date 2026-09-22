@@ -196,3 +196,209 @@ export async function runPreflight(input) {
     },
   };
 }
+
+export const LOCK_STATES = Object.freeze(['not-acquired', 'released', 'retained-by-this-run', 'ownership-unknown']);
+
+function lockPath(channel) {
+  return `${STATE_ROOT}/lock/${channel}`;
+}
+
+function ownerPath(channel) {
+  return `${lockPath(channel)}/owner.json`;
+}
+
+export function planHashOf(input) {
+  return createHash('sha256')
+    .update(
+      [input.channel, input.version, input.packageSha256, input.fileManifestSha256, input.manifestSha256].join('\n'),
+      'utf8',
+    )
+    .digest('hex');
+}
+
+function isFileExistsFailure(result) {
+  return /File exists/iu.test(`${result.stderr ?? ''} ${result.stdout ?? ''}`);
+}
+
+export async function readOwnerRecord(input) {
+  const read = await input.transport.readOnly.sshRun({
+    host: input.host,
+    knownHostsPath: input.knownHostsPath,
+    script: `cat ${ownerPath(input.channel)}`,
+  });
+  if (read.status !== 0) return null;
+  try {
+    return JSON.parse(String(read.stdout ?? '').trim());
+  } catch {
+    return null;
+  }
+}
+
+export async function acquireChannelLock(input) {
+  const created = await input.transport.write.sshRun({
+    host: input.host,
+    knownHostsPath: input.knownHostsPath,
+    script: `mkdir ${lockPath(input.channel)}`,
+  });
+
+  if (created.status !== 0) {
+    if (created.status === -1 || !isFileExistsFailure(created)) {
+      return {
+        state: 'ownership-unknown',
+        acquired: false,
+        incident: true,
+        requiresExplicitRecovery: true,
+        reason: 'this run cannot confirm whether it holds the lock',
+        owner: null,
+      };
+    }
+    const owner = await readOwnerRecord(input);
+    return {
+      state: 'not-acquired',
+      acquired: false,
+      incident: false,
+      requiresExplicitRecovery: true,
+      reason: 'the channel is already locked',
+      owner,
+    };
+  }
+
+  const written = await input.transport.write.sshRun({
+    host: input.host,
+    knownHostsPath: input.knownHostsPath,
+    script: `printf '%s' '${JSON.stringify(input.owner)}' > ${ownerPath(input.channel)}`,
+  });
+  if (written.status !== 0) {
+    return {
+      state: 'retained-by-this-run',
+      acquired: true,
+      incident: true,
+      requiresExplicitRecovery: true,
+      reason: 'the lock was created but its owner record could not be written',
+      owner: null,
+    };
+  }
+  return {
+    state: 'retained-by-this-run',
+    acquired: true,
+    incident: false,
+    requiresExplicitRecovery: false,
+    reason: 'this run holds the lock',
+    owner: input.owner,
+  };
+}
+
+export function resolveLockDisposition(input) {
+  if (input.acquisitionConfirmed !== true) {
+    return {
+      release: false,
+      state: 'ownership-unknown',
+      incident: true,
+      reason: 'this run cannot confirm whether it ever held the lock, so it must not touch one',
+    };
+  }
+  if (input.owner === null || typeof input.owner !== 'object') {
+    return { release: false, state: 'ownership-unknown', incident: true, reason: 'the owner record is unreadable' };
+  }
+  if (input.owner.runid !== input.runid) {
+    return {
+      release: false,
+      state: 'ownership-unknown',
+      incident: true,
+      reason: `the lock belongs to runid ${input.owner.runid}`,
+    };
+  }
+  if (input.owner.planHash !== input.planHash) {
+    return {
+      release: false,
+      state: 'ownership-unknown',
+      incident: true,
+      reason: 'the lock planHash does not match this run',
+    };
+  }
+  if (input.safeToExit !== true) {
+    return {
+      release: false,
+      state: 'retained-by-this-run',
+      incident: false,
+      reason: 'this run holds the lock but the outcome is not safe to close',
+    };
+  }
+  return { release: true, state: 'released', incident: false, reason: 'this run owns the lock and may release it' };
+}
+
+export async function releaseChannelLock(input) {
+  const owner = input.owner ?? (await readOwnerRecord(input));
+  const verdict = resolveLockDisposition({
+    acquisitionConfirmed: true,
+    owner,
+    runid: input.runid,
+    planHash: input.planHash,
+    safeToExit: true,
+  });
+  if (verdict.release !== true) return verdict;
+
+  const removedOwner = await input.transport.write.sshRun({
+    host: input.host,
+    knownHostsPath: input.knownHostsPath,
+    script: `rm ${ownerPath(input.channel)}`,
+  });
+  if (removedOwner.status !== 0) {
+    return {
+      release: false,
+      state: 'retained-by-this-run',
+      incident: true,
+      reason: 'the owner record could not be removed, so the lock is left in place',
+    };
+  }
+
+  const removedLock = await input.transport.write.sshRun({
+    host: input.host,
+    knownHostsPath: input.knownHostsPath,
+    script: `rmdir ${lockPath(input.channel)}`,
+  });
+  if (removedLock.status !== 0) {
+    return {
+      release: false,
+      state: 'retained-by-this-run',
+      incident: true,
+      reason: 'the lock directory could not be removed',
+    };
+  }
+  return verdict;
+}
+
+export async function breakChannelLock(input) {
+  if (typeof input.reason !== 'string' || input.reason.trim().length === 0) {
+    throw new FeedPublishError('breaking a lock requires a written reason');
+  }
+  if (typeof input.auditOut !== 'string' || input.auditOut.length === 0) {
+    throw new FeedPublishError('breaking a lock requires --audit-out');
+  }
+  const owner = await readOwnerRecord(input);
+  if (owner === null) {
+    throw new FeedPublishError('the lock has no readable owner record, so it must be inspected by hand');
+  }
+  if (input.confirmRunid !== owner.runid) {
+    throw new FeedPublishError(`--confirm-runid does not match the owner runid ${owner.runid}`);
+  }
+  const removedOwner = await input.transport.write.sshRun({
+    host: input.host,
+    knownHostsPath: input.knownHostsPath,
+    script: `rm ${ownerPath(input.channel)}`,
+  });
+  const removedLock = await input.transport.write.sshRun({
+    host: input.host,
+    knownHostsPath: input.knownHostsPath,
+    script: `rmdir ${lockPath(input.channel)}`,
+  });
+  if (removedOwner.status !== 0 || removedLock.status !== 0) {
+    throw new FeedPublishError('the remote lock could not be removed');
+  }
+  return {
+    outcome: 'lock-broken',
+    previousOwner: owner,
+    reason: input.reason,
+    operator: input.operator ?? 'unknown',
+  };
+}
