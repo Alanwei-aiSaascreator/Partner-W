@@ -1808,6 +1808,12 @@ test('an existing version directory that matches every byte is reused', async ()
   assertEveryCommitCallCarriesTheTrustAnchor(transport);
   assert.equal(result.outcome, 'done', result.reason);
   assert.equal(result.stages.find((entry) => entry.stage === 'commit-version').status, 'done');
+  assert.deepEqual(
+    transport.calls.filter(
+      (call) => call[0] === 'writeSsh' && String(call[1]).startsWith('mv /opt/rongying/updates-state/staging/'),
+    ),
+    [],
+  );
 });
 
 test('every stage is appended to the audit log as it happens', async () => {
