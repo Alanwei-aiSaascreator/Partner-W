@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
-import { isAbsolute, relative, resolve } from 'node:path';
+import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
+import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 export const UPDATE_ROOT = '/opt/rongying/updates';
 export const STATE_ROOT = '/opt/rongying/updates-state';
@@ -48,14 +48,18 @@ export function parsePublishInput(raw) {
   };
 }
 
+function isInsideRepository(target, repositoryRoot) {
+  const relation = relative(resolve(repositoryRoot), resolve(target));
+  if (relation === '') return true;
+  if (isAbsolute(relation)) return false;
+  return relation !== '..' && !relation.startsWith(`..${sep}`);
+}
+
 export function assertKnownHostsPath(target, repositoryRoot) {
-  const resolved = resolve(target);
-  const root = resolve(repositoryRoot);
-  const rel = relative(root, resolved);
-  if (rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))) {
+  if (isInsideRepository(target, repositoryRoot)) {
     throw new FeedPublishError('the pinned known hosts file must live outside the repository');
   }
-  return resolved;
+  return resolve(target);
 }
 
 function sha256(buffer) {
@@ -435,4 +439,552 @@ export async function breakChannelLock(input) {
     reason: input.reason,
     operator: input.operator ?? 'unknown',
   };
+}
+
+export function appendAuditStage(input) {
+  if (typeof input.repositoryRoot === 'string' && input.repositoryRoot.length > 0) {
+    assertOutsideRepository(input.auditOut, input.repositoryRoot);
+  }
+  try {
+    appendFileSync(input.auditOut, `${JSON.stringify(input.entry)}\n`, 'utf8');
+  } catch (error) {
+    throw new FeedPublishError(`the audit log could not be written: ${error?.message ?? error}`);
+  }
+  return input.auditOut;
+}
+
+function assertOutsideRepository(target, repositoryRoot) {
+  if (isInsideRepository(target, repositoryRoot)) {
+    throw new FeedPublishError('the audit log must live outside the repository');
+  }
+  return resolve(target);
+}
+
+function assertSafeVersion(version) {
+  if (typeof version !== 'string' || version.length === 0) {
+    throw new FeedPublishError('the version is empty, so it cannot be interpolated into a remote path');
+  }
+  if (!SEMVER_PATTERN.test(version)) {
+    throw new FeedPublishError(
+      `the version ${version} is not a strict semantic version, so it is not safe to interpolate into a remote path`,
+    );
+  }
+}
+
+const RUNID_PATTERN = /^[A-Za-z0-9._-]+$/u;
+
+function assertSafeRunid(runid) {
+  if (typeof runid !== 'string' || runid.length === 0) {
+    throw new FeedPublishError('the run id is empty, so it cannot be interpolated into a remote path');
+  }
+  if (!RUNID_PATTERN.test(runid)) {
+    throw new FeedPublishError(
+      `the run id ${runid} carries a character outside the shell inert alphabet, so it is not safe to interpolate into a remote path`,
+    );
+  }
+}
+
+function versionRootOf(channel, version) {
+  return `${UPDATE_ROOT}/${channel}/${version}`;
+}
+
+function stagingRootOf(channel, version, planHash) {
+  return `${STATE_ROOT}/staging/${channel}/${version}/${planHash}`;
+}
+
+async function readRemoteDirectory(input, directory) {
+  const listing = await input.transport.readOnly.sshRun({
+    host: input.host,
+    knownHostsPath: input.knownHostsPath,
+    script: `if [ -d ${directory} ]; then find ${directory} -mindepth 1 -maxdepth 1 -printf '%y %f %s\\n' | sort; fi`,
+  });
+  if (listing.status !== 0) return [];
+  const entries = [];
+  for (const line of String(listing.stdout ?? '').split('\n')) {
+    const trimmed = line.trim();
+    if (trimmed.length === 0) continue;
+    const [type, name, size] = trimmed.split(/\s+/u);
+    entries.push({ type, name, size: Number(size) });
+  }
+  return entries;
+}
+
+async function remoteDirectoryExists(input, directory) {
+  const probe = await input.transport.readOnly.sshRun({
+    host: input.host,
+    knownHostsPath: input.knownHostsPath,
+    script: `if [ -d ${directory} ]; then printf 'present\\n'; fi`,
+  });
+  return probe.status === 0 && String(probe.stdout ?? '').trim() === 'present';
+}
+
+async function readRemoteHashes(input, directory, names) {
+  const result = await input.transport.readOnly.sshRun({
+    host: input.host,
+    knownHostsPath: input.knownHostsPath,
+    script: `sha256sum ${names.map((name) => `${directory}/${name}`).join(' ')}`,
+  });
+  if (result.status !== 0) return null;
+  const hashes = new Map();
+  for (const line of String(result.stdout ?? '').split('\n')) {
+    const trimmed = line.trim();
+    if (trimmed.length === 0) continue;
+    const [digest, target] = trimmed.split(/\s+/u);
+    hashes.set(target.split('/').pop(), digest);
+  }
+  return hashes;
+}
+
+function compareDirectoryEntries(entries, expected) {
+  const problems = [];
+  if (entries.length !== expected.length) {
+    problems.push(`the directory holds ${entries.length} entries, expected ${expected.length}`);
+  }
+  for (const entry of entries) {
+    if (entry.type !== 'f') problems.push(`${entry.name} is not a regular file (type ${entry.type})`);
+  }
+  for (const item of expected) {
+    const match = entries.find((entry) => entry.name === item.name);
+    if (match === undefined) {
+      problems.push(`${item.name} is missing`);
+      continue;
+    }
+    if (match.size !== item.size) problems.push(`${item.name} has size ${match.size}, expected ${item.size}`);
+  }
+  for (const entry of entries) {
+    if (!expected.some((item) => item.name === entry.name)) problems.push(`${entry.name} is an unexpected entry`);
+  }
+  return problems;
+}
+
+function compareDirectoryHashes(hashes, expected) {
+  if (hashes === null) return ['the remote digests could not be read'];
+  const problems = [];
+  for (const item of expected) {
+    if (hashes.get(item.name) !== item.sha256) problems.push(`${item.name} does not carry the expected digest`);
+  }
+  return problems;
+}
+
+async function inspectRemoteDirectory(input, directory, expectedEntries) {
+  const exists = await remoteDirectoryExists(input, directory);
+  if (!exists) return { present: false, empty: false, problems: [] };
+  const entries = await readRemoteDirectory(input, directory);
+  if (entries.length === 0) return { present: true, empty: true, problems: [] };
+  const problems = compareDirectoryEntries(entries, expectedEntries);
+  if (problems.length === 0) {
+    problems.push(
+      ...compareDirectoryHashes(
+        await readRemoteHashes(
+          input,
+          directory,
+          expectedEntries.map((item) => item.name),
+        ),
+        expectedEntries,
+      ),
+    );
+  }
+  return { present: true, empty: false, problems };
+}
+
+async function readRemoteFileSha(input, target) {
+  const result = await input.transport.readOnly.sshRun({
+    host: input.host,
+    knownHostsPath: input.knownHostsPath,
+    script: `sha256sum ${target} || true`,
+  });
+  return String(result.stdout ?? '').split(/\s+/u)[0] || 'absent';
+}
+
+export async function verifyPublicArtifacts(input) {
+  const base = `${PUBLIC_BASE_URL}/${input.channel}/${input.version}`;
+  const manifestResponse = await input.transport.fetchPublic(`${base}/${PORTABLE_MANIFEST_NAME}`);
+  if (manifestResponse.status !== 200) return { ok: false, reason: 'the public manifest is not reachable' };
+
+  const manifestBytes = Buffer.from(manifestResponse.bodyBytes);
+  if (!manifestBytes.equals(input.expectedManifestBytes)) {
+    return { ok: false, reason: 'the public manifest is not the manifest this run signed' };
+  }
+
+  const packageResponse = await input.transport.fetchPublic(`${base}/${PORTABLE_PACKAGE_NAME}`);
+  if (packageResponse.status !== 200) return { ok: false, reason: 'the public package is not reachable' };
+  const packageBytes = Buffer.from(packageResponse.bodyBytes);
+  if (createHash('sha256').update(packageBytes).digest('hex') !== input.expectedPackageSha256) {
+    return { ok: false, reason: 'the public package integrity check failed' };
+  }
+  if (packageBytes.length !== input.expectedPackageSize) {
+    return { ok: false, reason: 'the public package size does not match' };
+  }
+
+  const fileManifestResponse = await input.transport.fetchPublic(`${base}/${PORTABLE_FILE_MANIFEST_NAME}`);
+  if (fileManifestResponse.status !== 200) return { ok: false, reason: 'the public file manifest is not reachable' };
+  const fileManifestBytes = Buffer.from(fileManifestResponse.bodyBytes);
+  if (createHash('sha256').update(fileManifestBytes).digest('hex') !== input.expectedFileManifestSha256) {
+    return { ok: false, reason: 'the public file manifest integrity check failed' };
+  }
+  if (fileManifestBytes.length !== input.expectedFileManifestSize) {
+    return { ok: false, reason: 'the public file manifest size does not match' };
+  }
+
+  const packagePath = join(input.temporaryRoot, PORTABLE_PACKAGE_NAME);
+  const fileManifestPath = join(input.temporaryRoot, PORTABLE_FILE_MANIFEST_NAME);
+  writeFileSync(packagePath, packageBytes);
+  writeFileSync(fileManifestPath, fileManifestBytes);
+  const verifier = input.verifier ?? (() => {});
+  await verifier({ manifestBytes, fileManifestBytes, packagePath, publicKeyBase64: input.publicKeyBase64 });
+
+  return { ok: true, manifestSha256: createHash('sha256').update(manifestBytes).digest('hex') };
+}
+
+export async function runCommit(input) {
+  const stages = PUBLISH_STAGES.map((stage) => ({ stage, status: 'pending' }));
+  const runid = input.runid;
+  let acquisitionConfirmed = false;
+  let acquiredLockState = null;
+  let planHash = 'uncomputed';
+  let owner = null;
+
+  const audit = (stage, status, detail) => {
+    stages.find((entry) => entry.stage === stage).status = status;
+    appendAuditStage({
+      auditOut: input.auditOut,
+      repositoryRoot: input.repositoryRoot,
+      entry: { stage, status, runid, ...(detail === undefined ? {} : { detail }) },
+    });
+  };
+
+  const finish = (outcome, reason, lockState) => ({ outcome, reason, lockState, stages, runid, planHash });
+
+  const recordOutcome = (outcome, reason) => {
+    appendAuditStage({
+      auditOut: input.auditOut,
+      repositoryRoot: input.repositoryRoot,
+      entry: { stage: outcome, reason, runid, planHash },
+    });
+  };
+
+  const retainAndFinish = (outcome, reason) => {
+    const disposition = resolveLockDisposition({ acquisitionConfirmed, owner, runid, planHash, safeToExit: false });
+    const lockState = owner === null && acquiredLockState !== null ? acquiredLockState : disposition.state;
+    stages.find((entry) => entry.stage === 'unlock').status = 'retained';
+    recordOutcome(outcome, reason);
+    appendAuditStage({
+      auditOut: input.auditOut,
+      repositoryRoot: input.repositoryRoot,
+      entry: { stage: 'lock-retained', status: 'retained', runid, reason: disposition.reason },
+    });
+    return finish(outcome, reason, lockState);
+  };
+
+  const releaseAndFinish = async (failedStage, outcome, reason) => {
+    stages.find((entry) => entry.stage === failedStage).status = 'fail';
+    recordOutcome(outcome, reason);
+    const disposition = await releaseChannelLock({
+      channel: input.channel,
+      transport: input.transport,
+      runid,
+      planHash,
+      host: input.host,
+      knownHostsPath: input.knownHostsPath,
+      acquisitionConfirmed,
+      safeToExit: true,
+    });
+    const unlockStatus = disposition.release ? 'done' : 'retained';
+    stages.find((entry) => entry.stage === 'unlock').status = unlockStatus;
+    appendAuditStage({
+      auditOut: input.auditOut,
+      repositoryRoot: input.repositoryRoot,
+      entry: { stage: 'unlock', status: unlockStatus, runid, reason: disposition.reason },
+    });
+    return finish(outcome, reason, disposition.state);
+  };
+
+  try {
+    appendAuditStage({
+      auditOut: input.auditOut,
+      repositoryRoot: input.repositoryRoot,
+      entry: { stage: 'open', runid },
+    });
+  } catch (error) {
+    return finish('fail', error.message, 'not-acquired');
+  }
+
+  let local;
+  try {
+    assertSafeChannel(input.channel);
+    assertSafeVersion(input.version);
+    assertSafeRunid(runid);
+    local = await verifyLocalArtifacts({
+      packagePath: input.packagePath,
+      fileManifestPath: input.fileManifestPath,
+      manifestPath: input.manifestPath,
+      expectedChannel: input.channel,
+      expectedVersion: input.version,
+      publicKeyBase64: input.publicKeyBase64,
+      verifySignature: input.verifySignature,
+    });
+    planHash = planHashOf({
+      channel: input.channel,
+      version: input.version,
+      packageSha256: local.packageSha256,
+      fileManifestSha256: local.fileManifestSha256,
+      manifestSha256: local.manifestSha256,
+    });
+  } catch (error) {
+    audit('pre-verify', 'fail', error.message);
+    recordOutcome('fail', error.message);
+    return finish('fail', error.message, 'not-acquired');
+  }
+  audit('pre-verify', 'done');
+
+  const versionRoot = versionRootOf(input.channel, input.version);
+  const stagingRoot = stagingRootOf(input.channel, input.version, planHash);
+  const expectedEntries = [
+    { name: PORTABLE_PACKAGE_NAME, size: local.packageSize, sha256: local.packageSha256 },
+    { name: PORTABLE_FILE_MANIFEST_NAME, size: local.fileManifestSize, sha256: local.fileManifestSha256 },
+  ];
+
+  const stagingCreated = await input.transport.write.sshRun({
+    host: input.host,
+    knownHostsPath: input.knownHostsPath,
+    script: `mkdir -p ${stagingRoot}`,
+  });
+  if (stagingCreated.status !== 0) {
+    audit('stage', 'fail', 'the staging directory could not be created');
+    recordOutcome('fail', 'the staging directory could not be created');
+    return finish('fail', 'the staging directory could not be created', 'not-acquired');
+  }
+
+  for (const item of [
+    { localPath: input.packagePath, remotePath: `${stagingRoot}/${PORTABLE_PACKAGE_NAME}.part-${runid}` },
+    { localPath: input.fileManifestPath, remotePath: `${stagingRoot}/${PORTABLE_FILE_MANIFEST_NAME}.part-${runid}` },
+  ]) {
+    const uploaded = await input.transport.write.sftpUpload({ ...item, resume: true });
+    if (uploaded.status !== 0) {
+      audit('stage', 'fail', uploaded.stderr ?? 'upload failed');
+      recordOutcome('fail', 'the staging upload failed');
+      return finish('fail', 'the staging upload failed', 'not-acquired');
+    }
+  }
+
+  const finalised = await input.transport.write.sshRun({
+    host: input.host,
+    knownHostsPath: input.knownHostsPath,
+    script: [
+      `mv -f ${stagingRoot}/${PORTABLE_PACKAGE_NAME}.part-${runid} ${stagingRoot}/${PORTABLE_PACKAGE_NAME}`,
+      `mv -f ${stagingRoot}/${PORTABLE_FILE_MANIFEST_NAME}.part-${runid} ${stagingRoot}/${PORTABLE_FILE_MANIFEST_NAME}`,
+    ].join(' && '),
+  });
+  if (finalised.status !== 0) {
+    audit('stage', 'fail', 'the staging directory could not be finalised');
+    recordOutcome('fail', 'the staging directory could not be finalised');
+    return finish('fail', 'the staging directory could not be finalised', 'not-acquired');
+  }
+  audit('stage', 'done');
+
+  const staging = await inspectRemoteDirectory(input, stagingRoot, expectedEntries);
+  if (!staging.present || staging.empty || staging.problems.length > 0) {
+    const detail = staging.empty ? 'the staging directory is empty' : staging.problems.join('; ');
+    const reason = `the staging directory is not the exact final file set: ${detail}`;
+    audit('remote-verify', 'fail', detail);
+    recordOutcome('fail', reason);
+    return finish('fail', reason, 'not-acquired');
+  }
+  audit('remote-verify', 'done');
+
+  const lock = await acquireChannelLock({
+    channel: input.channel,
+    transport: input.transport,
+    owner: { runid, operator: input.operator, startedAt: input.startedAt, planHash, machine: input.machine },
+    host: input.host,
+    knownHostsPath: input.knownHostsPath,
+  });
+  if (lock.acquired !== true) {
+    const blocked = lock.state === 'not-acquired';
+    const outcome = blocked ? 'blocked' : 'incident';
+    audit('lock', outcome, lock.reason);
+    recordOutcome(outcome, lock.reason);
+    return finish(outcome, lock.reason, lock.state);
+  }
+  acquisitionConfirmed = true;
+  acquiredLockState = lock.state;
+  owner = lock.owner;
+  if (lock.incident === true) {
+    audit('lock', 'incident', lock.reason);
+    return retainAndFinish('incident', lock.reason);
+  }
+  audit('lock', 'done');
+
+  const reReadOwner = await readOwnerRecord(input);
+  if (reReadOwner !== null && (reReadOwner.runid !== runid || reReadOwner.planHash !== planHash)) {
+    owner = reReadOwner;
+    audit('re-verify', 'incident', 'the lock owner changed while this run was taking it');
+    return retainAndFinish('incident', 'the lock owner changed while this run was taking it');
+  }
+  owner = reReadOwner ?? owner;
+  const baselineSha = await readRemoteFileSha(input, `${UPDATE_ROOT}/${input.channel}/${PORTABLE_MANIFEST_NAME}`);
+  const stagingAfterLock = await inspectRemoteDirectory(input, stagingRoot, expectedEntries);
+  if (!stagingAfterLock.present || stagingAfterLock.empty || stagingAfterLock.problems.length > 0) {
+    audit('re-verify', 'incident', 'the staging bytes changed while the lock was being taken');
+    return retainAndFinish('incident', 'the staging bytes changed while the lock was being taken');
+  }
+  audit('re-verify', 'done');
+
+  const devices = await input.transport.readOnly.sshRun({
+    host: input.host,
+    knownHostsPath: input.knownHostsPath,
+    script: `stat -c '%d' ${STATE_ROOT} ${UPDATE_ROOT}`,
+  });
+  const deviceList = String(devices.stdout ?? '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  if (devices.status !== 0 || deviceList.length !== 2 || deviceList[0] !== deviceList[1]) {
+    return releaseAndFinish(
+      'commit-version',
+      'fail',
+      'the staging root and the update root are not on the same file system',
+    );
+  }
+
+  const existing = await inspectRemoteDirectory(input, versionRoot, expectedEntries);
+  if (existing.present && existing.empty) {
+    return releaseAndFinish(
+      'commit-version',
+      'fail',
+      'the immutable version directory already exists but is incomplete',
+    );
+  }
+  if (existing.present && existing.problems.length > 0) {
+    return releaseAndFinish(
+      'commit-version',
+      'fail',
+      `the immutable version directory already exists and does not match: ${existing.problems.join('; ')}`,
+    );
+  }
+  if (existing.present) {
+    audit('commit-version', 'done', 'the immutable version directory already matched every byte');
+  } else {
+    const committed = await input.transport.write.sshRun({
+      host: input.host,
+      knownHostsPath: input.knownHostsPath,
+      script: `mv ${stagingRoot} ${versionRoot}`,
+    });
+    if (committed.status !== 0) {
+      return releaseAndFinish('commit-version', 'fail', 'the version directory was not committed');
+    }
+    audit('commit-version', 'done');
+  }
+
+  const backup = await input.transport.write.sshRun({
+    host: input.host,
+    knownHostsPath: input.knownHostsPath,
+    script: [
+      `mkdir -p ${STATE_ROOT}/backup`,
+      `cp ${UPDATE_ROOT}/${input.channel}/${PORTABLE_MANIFEST_NAME} ${STATE_ROOT}/backup/${input.channel}-manifest.json-pre-${input.version} 2>/dev/null || true`,
+    ].join(' && '),
+  });
+  if (backup.status !== 0) {
+    return retainAndFinish('incident', 'the previous manifest could not be backed up');
+  }
+  audit('backup-manifest', 'done');
+
+  const casSha = await readRemoteFileSha(input, `${UPDATE_ROOT}/${input.channel}/${PORTABLE_MANIFEST_NAME}`);
+  if (casSha !== baselineSha) {
+    audit('cas', 'incident');
+    return retainAndFinish(
+      'incident',
+      'the manifest changed after the lock was taken, which means a bypass; nothing is flipped, rolled back or deleted',
+    );
+  }
+  audit('cas', 'done');
+
+  const tempManifestPath = `${UPDATE_ROOT}/${input.channel}/${PORTABLE_MANIFEST_NAME}.${runid}.tmp`;
+  const manifestUploaded = await input.transport.write.sftpUpload({
+    localPath: input.manifestPath,
+    remotePath: tempManifestPath,
+    resume: false,
+  });
+  if (manifestUploaded.status !== 0) {
+    audit('temp-manifest', 'incident', 'the manifest upload failed');
+    return retainAndFinish('incident', 'the manifest could not be uploaded, so the outcome is uncertain');
+  }
+  const remoteTempSha = await readRemoteFileSha(input, tempManifestPath);
+  if (remoteTempSha !== local.manifestSha256) {
+    audit('temp-manifest', 'incident', 'the uploaded manifest digest does not match the local manifest');
+    return retainAndFinish('incident', 'the uploaded manifest does not match the local manifest');
+  }
+  audit('temp-manifest', 'done');
+
+  const flipped = await input.transport.write.sshRun({
+    host: input.host,
+    knownHostsPath: input.knownHostsPath,
+    script: `mv -f ${tempManifestPath} ${UPDATE_ROOT}/${input.channel}/${PORTABLE_MANIFEST_NAME}`,
+  });
+  if (flipped.status !== 0) {
+    audit('flip', 'incident', 'the atomic flip failed');
+    return retainAndFinish('incident', 'the atomic flip failed, so the outcome is uncertain');
+  }
+  audit('flip', 'done');
+
+  const observed = await input.transport.fetchPublic(`${PUBLIC_BASE_URL}/${input.channel}/${PORTABLE_MANIFEST_NAME}`);
+  if (observed.status !== 200 || observed.bodyBytes === undefined) {
+    audit('public-verify', 'incident', 'the public manifest could not be read');
+    return retainAndFinish('incident', 'the public manifest could not be read, so the outcome is uncertain');
+  }
+  const observedSha = createHash('sha256').update(Buffer.from(observed.bodyBytes)).digest('hex');
+  if (observedSha === local.manifestSha256) {
+    let publicCheck;
+    try {
+      publicCheck = await verifyPublicArtifacts({
+        channel: input.channel,
+        version: input.version,
+        publicKeyBase64: input.publicKeyBase64,
+        verifier: input.verifier,
+        expectedManifestBytes: local.manifestBytes,
+        expectedPackageSha256: local.packageSha256,
+        expectedPackageSize: local.packageSize,
+        expectedFileManifestSha256: local.fileManifestSha256,
+        expectedFileManifestSize: local.fileManifestSize,
+        transport: input.transport,
+        temporaryRoot: input.temporaryRoot,
+      });
+    } catch (error) {
+      audit('public-verify', 'incident', error.message);
+      return retainAndFinish('incident', `the public verification could not be completed: ${error.message}`);
+    }
+    if (publicCheck.ok !== true) {
+      audit('public-verify', 'incident', publicCheck.reason);
+      return retainAndFinish('incident', `the public verification failed: ${publicCheck.reason}`);
+    }
+    audit('public-verify', 'done');
+    audit('reveal', 'done');
+  } else if (observedSha === baselineSha) {
+    audit('public-verify', 'retry');
+    return retainAndFinish('retry', 'the flip did not take effect');
+  } else {
+    audit('public-verify', 'incident', 'a third manifest digest appeared');
+    return retainAndFinish('incident', 'a third manifest digest appeared while flipping');
+  }
+
+  recordOutcome('done', 'published');
+  const disposition = await releaseChannelLock({
+    channel: input.channel,
+    transport: input.transport,
+    runid,
+    planHash,
+    host: input.host,
+    knownHostsPath: input.knownHostsPath,
+    acquisitionConfirmed,
+    safeToExit: true,
+  });
+  const unlockStatus = disposition.release ? 'done' : 'retained';
+  stages.find((entry) => entry.stage === 'unlock').status = unlockStatus;
+  appendAuditStage({
+    auditOut: input.auditOut,
+    repositoryRoot: input.repositoryRoot,
+    entry: { stage: 'unlock', status: unlockStatus, runid, reason: disposition.reason },
+  });
+  if (disposition.release !== true) return finish('incident', disposition.reason, disposition.state);
+  return finish('done', 'published', disposition.state);
 }
