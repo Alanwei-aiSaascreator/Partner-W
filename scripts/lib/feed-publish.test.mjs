@@ -613,8 +613,15 @@ test('the lock states are exactly the four documented ones', () => {
 test('the plan hash binds channel, version and all three artifact digests', () => {
   const base = planHashOf(PLAN_INPUT);
   assert.equal(base, planHashOf({ ...PLAN_INPUT }));
+  const other = {
+    channel: 'stable',
+    version: '1.2.4',
+    packageSha256: 'changed',
+    fileManifestSha256: 'changed',
+    manifestSha256: 'changed',
+  };
   for (const key of ['version', 'channel', 'packageSha256', 'fileManifestSha256', 'manifestSha256']) {
-    assert.notEqual(base, planHashOf({ ...PLAN_INPUT, [key]: 'changed' }), `planHash ignored ${key}`);
+    assert.notEqual(base, planHashOf({ ...PLAN_INPUT, [key]: other[key] }), `planHash ignored ${key}`);
   }
 });
 
@@ -1245,7 +1252,16 @@ test('a missing owner record never creates a lock', async () => {
   }
 });
 
-const UNSAFE_CHANNELS = ['../evil', 'internal/x', 'internal; id', '', 'INTERNAL', 'internal lock', 'internal\nx'];
+const UNSAFE_CHANNELS = [
+  '../evil',
+  'internal/x',
+  'internal; id',
+  '',
+  'INTERNAL',
+  'internal lock',
+  'internal\nx',
+  'internall',
+];
 
 test('a channel that could escape its remote path never reaches a remote call', async () => {
   for (const channel of UNSAFE_CHANNELS) {
@@ -1264,5 +1280,40 @@ test('the channel precondition admits every channel the whitelist allows', async
     const result = await acquireChannelLock(lockInput(transport, { channel }));
     assert.equal(result.state, 'retained-by-this-run', channel);
     assert.equal(transport.calls.length, 2, channel);
+  }
+});
+
+test('the plan hash refuses a channel outside the whitelist', () => {
+  assert.throws(() => planHashOf({ ...PLAN_INPUT, channel: 'internall' }), FeedPublishError);
+  for (const channel of CHANNELS) {
+    assert.equal(typeof planHashOf({ ...PLAN_INPUT, channel }), 'string', channel);
+  }
+});
+
+test('the version the input gate admits carries no shell metacharacter and no newline', () => {
+  const admitted = parsePublishInput({
+    channel: 'internal',
+    version: '1.2.3',
+    host: HOST,
+    knownHostsPath: KNOWN_HOSTS_PATH,
+  });
+  assert.equal(admitted.version, '1.2.3');
+  for (const version of [
+    '1.2.3; id',
+    '1.2.3+;id',
+    '1.2.3$(id)',
+    '1.2.3|x',
+    '1.2.3`id`',
+    "1.2.3'",
+    '1.2.3"',
+    '1.2.3\n',
+    '1.2.3\n1.2.3',
+    '1.2.3 1.2.3',
+  ]) {
+    assert.throws(
+      () => parsePublishInput({ channel: 'internal', version, host: HOST, knownHostsPath: KNOWN_HOSTS_PATH }),
+      FeedPublishError,
+      version,
+    );
   }
 });

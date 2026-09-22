@@ -205,6 +205,11 @@ function assertSafeChannel(channel) {
   if (typeof channel !== 'string' || channel.length === 0) {
     throw new FeedPublishError('the channel is empty, so it cannot be interpolated into a remote path');
   }
+  if (!CHANNELS.includes(channel)) {
+    throw new FeedPublishError(
+      `the channel ${channel} is not one of ${CHANNELS.join(', ')}, so it is not safe to interpolate into a remote path`,
+    );
+  }
   for (const character of channel) {
     if (!CHANNEL_CHARACTERS.includes(character)) {
       throw new FeedPublishError(
@@ -230,6 +235,7 @@ export function planHashOf(input) {
       throw new FeedPublishError(`the plan hash needs a non empty ${field}`);
     }
   }
+  assertSafeChannel(input.channel);
   return createHash('sha256')
     .update(
       [input.channel, input.version, input.packageSha256, input.fileManifestSha256, input.manifestSha256].join('\n'),
