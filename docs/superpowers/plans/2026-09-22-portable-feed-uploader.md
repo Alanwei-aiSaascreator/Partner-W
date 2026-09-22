@@ -5185,6 +5185,12 @@ transport 自己**只拼两类字符串**：ssh / sftp 的 **argv 数组元素**
 - **`--re-sign-stable` 的"拒绝覆盖"臂**仍然不可自动化（要真钥匙），**未验**。
 - **Task 7 / Task 8 未动**：CLI、手册、检查单、门禁表里除本刀那一行之外的全部格子都还是 `待填`。
 
+#### 六、门禁读数（本刀实测）与一件**排期中的缺口**
+
+- **命令与退出码**：先 `export PATH="/d/go-toolchain/go/bin:$PATH"`，再跑 `pnpm check`（**不接管道**；重定向到仓库外的 `%TEMP%\t6work\gate.log`，`rc=$?`）⇒ **`GATE_EXIT=0`**。这一跑对着的提交是 `44695aa1`。
+- **非空证据四条**：① 日志 **10145** 行；② 链上第一步的 Go 测试真的跑过（第 3 行 `ok  	mofang-compass/portable-launcher/cmd/mofang-launcher	0.104s` —— 少了那个 PATH 导出它会在第一步就死）；③ `check:portable-feed-publish` 那一步的读数就是本刀的 **`ℹ tests 158 / ℹ pass 158 / ℹ fail 0`**（日志第 212–215 行；逐条测试名里能看到本刀的两条新用例）；④ 链尾 `packages/desktop test` 真的跑到（`Test Files 281 passed (281)`，第 10141 行），且 `All matched files use Prettier code style!`（第 389 行）。**全日志里 `✖` / `not ok` / `FAIL` 计数为 0。**
+- ⚠️ **排期中的缺口（既不是遗漏，也不是"已完成"）**：`check:portable-feed-publish` 今天**仍然只跑 `scripts/lib/feed-publish.test.mjs` 一个文件** ⇒ **本刀新建的 20 条 transport 测试还没有进门禁**。把它扩成三个文件是 **Task 7 Step 6** 的规定动作（那时三个文件才都存在）。**实测证据**：`grep -c 'feed-publish-transport' gate.log` = **0**。⇒ 在那之前，transport 套件的绿**只在本刀的 `node --test` 读数里**，不在 `pnpm check` 里。**本刀没有越权改 `package.json`**：那一键的规定文本同时点名 `feed-publish-cli.test.mjs`，而它在 Task 7 才存在，提前改会让门禁当场红。
+
 ⚠️ **本刀在这里删掉过一次 `### Task 7` 的标题与它前面的 `---`**（把本节插进去时 `old_string` 把那段分隔一起带走了），**当场发现并原样补回**。**可核对（不是自称，数字全部来自提交 `0e8959cf` 的实测）**：`git show 0e8959cf --stat -- docs/superpowers/plans/2026-09-22-portable-feed-uploader.md` 的读数是 **102 处插入、12 处删除**；该文件的 diff **只有 5 个 hunk**（`-4899` / `-5041` / `-5065` / `-5096` / `-5732`），**Task 7 的标题在旧文件第 5102 行** ⇒ **前 4 个 hunk 全在它之前**（两个"预期"行 + 两段插入），第 5 个是**门禁表**被 `prettier` 整块重排（本刀改了三格 ⇒ 列宽变，表头 + 分隔行 + 8 行数据合计 10 行算作删除再插入）。⇒ **Task 7 区段（旧文件 5102 行到 Task 8 之前）里一处删除都没有**：标题、段落与它的两个规定块（Step 1 的测试块、Step 3 的代码块）逐字节未动。
 
 ---
