@@ -2803,7 +2803,10 @@ test('the stable input carries every field it was given instead of a default', (
 test('the reused manifest guard is exported and keeps the module error class', () => {
   assert.equal(typeof assertNotReusedManifest, 'function');
   assert.throws(() => assertNotReusedManifest({ manifestBytes: Buffer.from('reuse-me') }), FeedPublishError);
-  assert.throws(() => assertNotReusedManifest({ manifestBytes: undefined }), /manifestBytes with no value/u);
+  assert.throws(
+    () => assertNotReusedManifest({ manifestBytes: undefined }),
+    (error) => error instanceof FeedPublishError && /manifestBytes with no value/u.test(error.message),
+  );
   assert.doesNotThrow(() => assertNotReusedManifest({ fileManifest: FILE_MANIFEST }));
 });
 
