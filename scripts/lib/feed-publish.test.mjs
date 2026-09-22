@@ -2236,6 +2236,41 @@ test('the public verification checks the manifest, the signature and both artifa
   assert.equal(calls.length, 3);
 });
 
+test('the public verification reads the manifest from the channel root and both artifacts from the version directory', async () => {
+  const paths = writeArtifacts();
+  const calls = [];
+  const result = await verifyPublicArtifacts({
+    channel: 'internal',
+    version: '1.2.3',
+    publicKeyBase64: PUBLIC_KEY_BASE64,
+    verifier: () => {},
+    expectedManifestBytes: readFileSync(paths.manifestPath),
+    expectedPackageSha256: PACKAGE_SHA256,
+    expectedPackageSize: PACKAGE_BYTES.length,
+    expectedFileManifestSha256: FILE_MANIFEST_SHA256,
+    expectedFileManifestSize: FILE_MANIFEST_BYTES.length,
+    temporaryRoot: makeRoot(),
+    transport: {
+      fetchPublic: async (url) => {
+        calls.push(url);
+        const served = new Map([
+          [`${PUBLIC_BASE_URL}/internal/manifest.json`, Uint8Array.from(readFileSync(paths.manifestPath))],
+          [`${PUBLIC_BASE_URL}/internal/1.2.3/portable.zip`, Uint8Array.from(PACKAGE_BYTES)],
+          [`${PUBLIC_BASE_URL}/internal/1.2.3/portable-files.json`, Uint8Array.from(FILE_MANIFEST_BYTES)],
+        ]);
+        if (!served.has(url)) return { status: 404, bodyBytes: new Uint8Array() };
+        return { status: 200, bodyBytes: served.get(url) };
+      },
+    },
+  });
+  assert.equal(result.ok, true, result.reason);
+  assert.deepEqual(calls, [
+    `${PUBLIC_BASE_URL}/internal/manifest.json`,
+    `${PUBLIC_BASE_URL}/internal/1.2.3/portable.zip`,
+    `${PUBLIC_BASE_URL}/internal/1.2.3/portable-files.json`,
+  ]);
+});
+
 test('the public verification fails when the served package differs', async () => {
   const paths = writeArtifacts();
   const result = await verifyPublicArtifacts({

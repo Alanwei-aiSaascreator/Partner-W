@@ -588,6 +588,11 @@ function versionRootOf(channel, version) {
   return `${UPDATE_ROOT}/${channel}/${version}`;
 }
 
+function publicChannelManifestUrl(channel) {
+  assertSafeChannel(channel);
+  return `${PUBLIC_BASE_URL}/${channel}/${PORTABLE_MANIFEST_NAME}`;
+}
+
 function stagingRootOf(channel, version, planHash) {
   return `${STATE_ROOT}/staging/${channel}/${version}/${planHash}`;
 }
@@ -708,7 +713,7 @@ export async function verifyPublicArtifacts(input) {
     throw new FeedPublishError('a public artifact verifier is required to verify the published manifest');
   }
   const base = `${PUBLIC_BASE_URL}/${input.channel}/${input.version}`;
-  const manifestResponse = await input.transport.fetchPublic(`${base}/${PORTABLE_MANIFEST_NAME}`);
+  const manifestResponse = await input.transport.fetchPublic(publicChannelManifestUrl(input.channel));
   if (manifestResponse.status !== 200) return { ok: false, reason: 'the public manifest is not reachable' };
 
   const manifestBytes = Buffer.from(manifestResponse.bodyBytes);
@@ -1123,7 +1128,7 @@ export async function runCommit(input) {
   }
   audit('flip', 'done', undefined, manifestEvidence);
 
-  const observed = await input.transport.fetchPublic(`${PUBLIC_BASE_URL}/${input.channel}/${PORTABLE_MANIFEST_NAME}`);
+  const observed = await input.transport.fetchPublic(publicChannelManifestUrl(input.channel));
   if (observed.status !== 200 || observed.bodyBytes === undefined) {
     audit('public-verify', 'incident', 'the public manifest could not be read', manifestEvidence);
     return retainAndFinish('incident', 'the public manifest could not be read, so the outcome is uncertain');
