@@ -434,6 +434,22 @@ test('the dry run propagates a local verification failure instead of printing a 
   );
 });
 
+test('the dry run passes the signature verifier through to the local verification', async () => {
+  const paths = writeArtifacts();
+  await assert.rejects(
+    planCommit({
+      channel: 'internal',
+      version: '1.2.3',
+      ...paths,
+      publicKeyBase64: PUBLIC_KEY_BASE64,
+      verifySignature: async () => {
+        throw new Error('signature rejected through the dry run');
+      },
+    }),
+    /signature rejected through the dry run/u,
+  );
+});
+
 test('the preflight only performs read only actions and never claims writability', async () => {
   const transport = fakeReadOnlyTransport({
     sshRun: (request) =>
@@ -450,6 +466,7 @@ test('the preflight only performs read only actions and never claims writability
   });
   const names = transport.calls.map((call) => call[0]);
   assert.deepEqual([...new Set(names)], ['sshRun']);
+  assert.equal(result.sameFileSystem, true);
   assert.equal(result.writabilityIndicators.verifiedWrite, false);
   assert.match(result.writabilityIndicators.note, /indicator/u);
 });
