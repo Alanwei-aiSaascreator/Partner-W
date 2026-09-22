@@ -122,6 +122,34 @@ test('the offline input does not require a host or known hosts path', () => {
   assert.equal(input.knownHostsPath, null);
 });
 
+test('a host that ssh would read as an option is rejected', () => {
+  assert.throws(
+    () =>
+      parsePublishInput({
+        channel: 'internal',
+        version: '1.2.3',
+        needsNetwork: true,
+        host: '-oProxyCommand=x',
+        knownHostsPath: '/tmp/known_hosts',
+      }),
+    /must not start with a dash/u,
+  );
+});
+
+test('a host containing whitespace is rejected', () => {
+  assert.throws(
+    () =>
+      parsePublishInput({
+        channel: 'internal',
+        version: '1.2.3',
+        needsNetwork: true,
+        host: 'bad host',
+        knownHostsPath: '/tmp/known_hosts',
+      }),
+    /contain whitespace/u,
+  );
+});
+
 test('the known hosts file must live outside the repository', () => {
   assert.throws(() => assertKnownHostsPath(join(process.cwd(), 'known_hosts'), process.cwd()), FeedPublishError);
   assert.equal(assertKnownHostsPath(join(tmpdir(), 'known_hosts'), process.cwd()), join(tmpdir(), 'known_hosts'));
