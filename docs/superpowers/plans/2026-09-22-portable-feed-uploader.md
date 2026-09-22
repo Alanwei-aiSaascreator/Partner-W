@@ -103,7 +103,7 @@ import assert from 'node:assert/strict';
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { afterEach, test } from 'node:test';
 
 import {
@@ -405,6 +405,65 @@ test('the local verification propagates an async verifier rejection', async () =
     /signature rejected by the async verifier/u,
   );
 });
+
+test('the local verification hands the verifier bytes rather than paths', async () => {
+  const paths = writeArtifacts();
+  const received = [];
+  await verifyLocalArtifacts({
+    ...paths,
+    expectedChannel: 'internal',
+    expectedVersion: '1.2.3',
+    publicKeyBase64: PUBLIC_KEY_BASE64,
+    verifySignature: async (context) => {
+      received.push(context);
+    },
+  });
+  assert.equal(received.length, 1);
+  const [context] = received;
+  assert.deepEqual(Object.keys(context).sort(), [
+    'fileManifestBytes',
+    'manifestBytes',
+    'packagePath',
+    'publicKeyBase64',
+  ]);
+  assert.ok(Buffer.isBuffer(context.manifestBytes));
+  assert.ok(Buffer.isBuffer(context.fileManifestBytes));
+  assert.ok(context.fileManifestBytes.equals(FILE_MANIFEST_BYTES));
+  assert.equal(context.packagePath, paths.packagePath);
+  assert.equal(context.publicKeyBase64, PUBLIC_KEY_BASE64);
+});
+
+test('a well formed network input keeps its host and resolves the known hosts path', () => {
+  const parsed = parsePublishInput({
+    channel: 'internal',
+    version: '1.2.3',
+    needsNetwork: true,
+    host: 'release.example.com',
+    knownHostsPath: '/tmp/known_hosts',
+  });
+  assert.equal(parsed.host, 'release.example.com');
+  assert.equal(parsed.knownHostsPath, resolve('/tmp/known_hosts'));
+});
+
+test('the known hosts guard is insensitive to case on windows', { skip: process.platform !== 'win32' }, () => {
+  assert.throws(
+    () => assertKnownHostsPath(join(process.cwd(), 'known_hosts').toUpperCase(), process.cwd()),
+    /must live outside the repository/u,
+  );
+});
+
+test('a manifest that is not a JSON object is rejected', async () => {
+  const paths = writeArtifacts({ manifestBytes: Buffer.from('null', 'utf8') });
+  await assert.rejects(
+    verifyLocalArtifacts({
+      ...paths,
+      expectedChannel: 'internal',
+      expectedVersion: '1.2.3',
+      publicKeyBase64: PUBLIC_KEY_BASE64,
+    }),
+    /is not a JSON object/u,
+  );
+});
 ```
 
 `a throwing signature verifier fails the local verification instead of returning` 与 `a missing public key is a hard failure rather than a skipped signature check` 这两条是刻意的：前者要求**签名校验器抛错必须往外抛**（不能"抛了还期待函数返回"），后者要求**缺公钥必须硬失败**（不能跳过验签）。
@@ -507,6 +566,9 @@ export async function verifyLocalArtifacts(input) {
   } catch {
     throw new FeedPublishError('the release manifest is not valid JSON');
   }
+  if (typeof manifest !== 'object' || manifest === null || Array.isArray(manifest)) {
+    throw new FeedPublishError('the release manifest is not a JSON object');
+  }
 
   if (manifest.channel !== input.expectedChannel) {
     throw new FeedPublishError(`the manifest channel ${manifest.channel} does not match the requested channel`);
@@ -565,7 +627,7 @@ export async function verifyLocalArtifacts(input) {
 }
 ```
 
-**URL 检查是 origin 级**：`protocol` + `origin` + `pathname` + 无 query / fragment / userinfo。只比 `pathname` 会放过别的域名与 `user:pass@`。**验签是 async 的**：`verifyLocalArtifacts` 因此是 `async`，调用方必须 `await`；漏掉 `await` 会让拒绝变成未处理的 Promise 拒绝，而函数照常返回成功 —— 那等于这道闸门不存在。
+**URL 检查是 origin 级**：`protocol` + `origin` + `pathname` + 无 query / fragment / userinfo。只比 `pathname` 会放过别的域名与 `user:pass@`。**验签是 async 的**：`verifyLocalArtifacts` 因此是 `async`，调用方必须 `await`；漏掉 `await` 会让拒绝变成未处理的 Promise 拒绝，而函数照常返回成功 —— 那等于这道闸门不存在。**产物在这里哈希一次、又在注入的验证器内部再哈希一次，是刻意的**：本地这道闸门必须能独立成立（不依赖验证器是否真读了文件、也不依赖验证器是否被注入），验证器里的第二次校验是它自己的一部分；不要为了"省一次哈希"把那一次删掉。同理，验证器收到的是**字节**而不是路径 —— 收到路径的验证器可以绕开本次运行已经读过的那些字节，`fileManifestBytes` 一旦换回 `fileManifestPath`，本地产物与签名就不再绑定在同一份字节上。
 
 - [ ] **Step 4: 运行测试并确认通过**
 
@@ -588,6 +650,10 @@ node --test scripts/lib/feed-publish.test.mjs
 8. 把 `raw.host.startsWith('-')` 判断删掉 ⇒ 预期 `a host that ssh would read as an option is rejected` **按测试名变红**。
 9. 把 `/\s/u.test(raw.host)` 判断删掉 ⇒ 预期 `a host containing whitespace is rejected` **按测试名变红**。
    （8 与 9 的夹具必须互斥：dash 那条**不含空白**（`-oProxyCommand=x`）、空白那条**不以 dash 开头**（`bad host`）。否则一个条件会替另一个兜底，单独删掉任一个都不会红 —— 那正是这个文件里刚修过的假绿形状。）
+10. 把 verifier 上下文的 `fileManifestBytes` 换回 `fileManifestPath: input.fileManifestPath` ⇒ 预期 `the local verification hands the verifier bytes rather than paths` **按测试名变红**。**这条是回滚上一轮 Critical 修复的等价变异**：它今天不会红，因为没有任何测试断言过 verifier 收到了什么。
+11. 把 `assertKnownHostsPath` 换回 `startsWith`/`sep` 形式 ⇒ 预期 `the known hosts guard is insensitive to case on windows` **按测试名变红**（非 Windows 平台上该测试被 skip ⇒ 记「未验证」，不得记「通过」）。
+12. 把 host 判断整体换成 `if (true)`（拒绝一切 host）⇒ 预期 `a well formed network input keeps its host and resolves the known hosts path` **按测试名变红**。
+13. 把非对象 manifest 的守卫删掉 ⇒ 预期 `a manifest that is not a JSON object is rejected` **按测试名变红**。
 
 恢复后 `git diff` 为空且全绿。
 
@@ -1949,7 +2015,8 @@ export async function verifyPublicArtifacts(input) {
   const fileManifestPath = join(input.temporaryRoot, PORTABLE_FILE_MANIFEST_NAME);
   writeFileSync(packagePath, packageBytes);
   writeFileSync(fileManifestPath, fileManifestBytes);
-  await input.verifier({ manifestBytes, fileManifestBytes, packagePath, publicKeyBase64: input.publicKeyBase64 });
+  const verifier = input.verifier ?? (() => {});
+  await verifier({ manifestBytes, fileManifestBytes, packagePath, publicKeyBase64: input.publicKeyBase64 });
 
   return { ok: true, manifestSha256: createHash('sha256').update(manifestBytes).digest('hex') };
 }
@@ -2227,7 +2294,7 @@ export async function runCommit(input) {
       channel: input.channel,
       version: input.version,
       publicKeyBase64: input.publicKeyBase64,
-      verifier: input.verifier ?? (() => {}),
+      verifier: input.verifier,
       expectedManifestBytes: local.manifestBytes,
       expectedPackageSha256: local.packageSha256,
       expectedPackageSize: local.packageSize,
@@ -2305,6 +2372,10 @@ git commit -m "feat(feed): publish the manifest over sftp and verify it on the p
 ```
 
 **验收项（真验证器）**：本任务与 Task 7 是**第一次注入真 `verifyPortableRelease`** 的地方。Task 1 的夹具用的是 `JSON.stringify(payload)`（插入顺序），而真生产者/验证器按 **`canonicalize()`（排序键）** 签 —— 夹具直接喂给真验证器会以 `release manifest signature is invalid` 失败，**看起来像产品 bug**。接真验证器时必须实跑一次三角验证，不要假设。
+
+---
+
+**待定的设计决定（在本刀内决定，不要留成第三份拷贝）**：本刀新增的 `assertOutsideRepository` 会是仓库里**第三**个"这个路径是否在仓库外"的判据，三份的语义各差一点：兄弟模块 `scripts/lib/portable-update-release.mjs` 的 `assertPathOutsideRepository` 要求相对关系是 `..` **加一个分隔符**（或正好是 `..`）才算仓库外；Task 1 的 `assertKnownHostsPath` 与本刀这一份则接受**任何以 `..` 开头**的相对关系。差别在 `..foo` 这种名字上：`<仓库根>/..foo` **其实在仓库内**，兄弟那份会拒、这两份会放行。**首选修法是统一到兄弟模块那种更严的形式**（顺带把 `..foo` 这个已知边界一起关掉），而不是新增第三份略有差异的拷贝 —— 修哪一份、还是抽成共享的一份，在**本刀**里定下来，别把三份语义不同的判据留给下一个人。
 
 ---
 
