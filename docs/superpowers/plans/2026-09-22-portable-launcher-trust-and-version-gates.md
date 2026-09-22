@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 让桌面应用读取盘根启动器的**真实**版本与嵌入公钥指纹，让启动器在交换前用自己**编译进去的真实版本**再校验一次 `minLauncherVersion`，并删除冒充启动器版本的硬编码常量。
+**Goal:** 让桌面应用读取盘根启动器的**真实**版本与嵌入公钥指纹，让启动器在交换前用自己**编译进去的真实版本**再校验一次 `minLauncherVersion`，删除冒充启动器版本的硬编码常量，并让"启动器不可用"这一状态**上屏**而不是静默消失。
 
 **Architecture:** 启动器新增两个**只读、无副作用**的 CLI 模式（`--describe-json`、`--verify-manifest <path>`）。桌面主进程用 `execFileSync`（带超时、`windowsHide`）调用 `--describe-json`，严格解析后把**真实版本**喂给既有的 `minLauncherVersion` 门禁。Go 侧新增一个与 TypeScript **逐条镜像**的 SemVer 比较器，使两侧判定不会分叉。启动器的 `Apply` 在第一次 rename 之前再校验一次兼容性。
 
@@ -14,24 +14,29 @@
 
 ## 文件地图
 
-| 文件                                                                   | 动作 | 职责                                                                                        |
-| ---------------------------------------------------------------------- | ---- | ------------------------------------------------------------------------------------------- |
-| `launcher/internal/update/semver.go`                                   | 新建 | 严格 SemVer 解析与比较，语义与 `packages/desktop/src/main/update/portable-manifest.ts` 一致 |
-| `launcher/internal/update/semver_test.go`                              | 新建 | 上表的单元测试，含与 TS 同源的用例表                                                        |
-| `launcher/internal/update/describe.go`                                 | 新建 | `--describe-json` 的载荷结构、公钥指纹、序列化                                              |
-| `launcher/internal/update/describe_test.go`                            | 新建 | 指纹与载荷的单元测试                                                                        |
-| `launcher/cmd/mofang-launcher/main.go`                                 | 修改 | 新增 `modeDescribe` / `modeVerifyManifest`、`invocation.path`、退出码 `exitVerifyFailed`    |
-| `launcher/cmd/mofang-launcher/describe_test.go`                        | 新建 | 两个新模式的端到端（进程内 `run`）测试与副作用断言                                          |
-| `launcher/internal/update/verify.go`                                   | 修改 | 新增 `CheckLauncherCompatibility`                                                           |
-| `launcher/internal/update/verify_test.go`                              | 修改 | 兼容性校验的单元测试                                                                        |
-| `launcher/internal/update/swap.go`                                     | 修改 | `Apply` 增加 `launcherVersion` 参数并在首次 rename 前校验                                   |
-| `launcher/internal/update/swap_test.go`                                | 修改 | `Apply` 调用点补参数 + 拒绝交换的测试                                                       |
-| `launcher/cmd/mofang-launcher/main_test.go`                            | 修改 | `Apply` 调用点补参数                                                                        |
-| `packages/desktop/src/main/update/launcher-descriptor.ts`              | 新建 | 调用 `--describe-json`、严格解析、fail-closed                                               |
-| `packages/desktop/test/portable-launcher-descriptor.test.ts`           | 新建 | 用注入的 runner 覆盖全部失败形态                                                            |
-| `packages/desktop/src/main/ipc/update-handlers.ts`                     | 修改 | 删除 `LAUNCHER_PROTOCOL_VERSION`，改为探测真实版本                                          |
-| `packages/desktop/test/portable-update-ipc.test.ts`                    | 修改 | 断言接线形态与 fail-closed                                                                  |
-| `packages/desktop/test/portable-launcher-describe-integration.test.ts` | 新建 | 真实 Windows GUI 二进制的 stdout 捕获集成测试                                               |
+| 文件                                                                    | 动作 | 职责                                                                                        |
+| ----------------------------------------------------------------------- | ---- | ------------------------------------------------------------------------------------------- |
+| `launcher/internal/update/semver.go`                                    | 新建 | 严格 SemVer 解析与比较，语义与 `packages/desktop/src/main/update/portable-manifest.ts` 一致 |
+| `launcher/internal/update/semver_test.go`                               | 新建 | 上表的单元测试，含与 TS 同源的用例表                                                        |
+| `launcher/internal/update/describe.go`                                  | 新建 | `--describe-json` 的载荷结构、公钥指纹、序列化                                              |
+| `launcher/internal/update/describe_test.go`                             | 新建 | 指纹与载荷的单元测试                                                                        |
+| `launcher/cmd/mofang-launcher/main.go`                                  | 修改 | 新增 `modeDescribe` / `modeVerifyManifest`、`invocation.path`、退出码 `exitVerifyFailed`    |
+| `launcher/cmd/mofang-launcher/describe_test.go`                         | 新建 | 两个新模式的端到端（进程内 `run`）测试与副作用断言                                          |
+| `launcher/internal/update/verify.go`                                    | 修改 | 新增 `CheckLauncherCompatibility`                                                           |
+| `launcher/internal/update/verify_test.go`                               | 修改 | 兼容性校验的单元测试                                                                        |
+| `launcher/internal/update/swap.go`                                      | 修改 | `Apply` 增加 `launcherVersion` 参数并在首次 rename 前校验                                   |
+| `launcher/internal/update/swap_test.go`                                 | 修改 | `Apply` 调用点补参数 + 拒绝交换的测试                                                       |
+| `launcher/cmd/mofang-launcher/main_test.go`                             | 修改 | `Apply` 调用点补参数                                                                        |
+| `packages/desktop/src/main/update/launcher-descriptor.ts`               | 新建 | 调用 `--describe-json`、严格解析、fail-closed                                               |
+| `packages/desktop/test/portable-launcher-descriptor.test.ts`            | 新建 | 用注入的 runner 覆盖全部失败形态                                                            |
+| `packages/desktop/src/main/ipc/update-handlers.ts`                      | 修改 | 删除 `LAUNCHER_PROTOCOL_VERSION`，改为探测真实版本；探测失败时以 `unavailable` 挂载服务     |
+| `packages/desktop/src/main/update/portable-update-service.ts`           | 修改 | 新增 `unavailable` 依赖：用已有的 `permanentError` 机制表达"启动器不可用"                   |
+| `packages/desktop/src/renderer/features/internal-beta/update-errors.ts` | 修改 | `launcher-incompatible` 文案覆盖"缺失或版本太旧"两种情形                                    |
+| `packages/desktop/test/portable-update-ipc.test.ts`                     | 修改 | 断言接线形态与 fail-closed（**断言错误上屏**，不是静默消失）                                |
+| `packages/desktop/test/portable-update-service.test.ts`                 | 修改 | `unavailable` 前置条件的服务层测试                                                          |
+| `packages/desktop/test/internal-beta-update-errors.test.ts`             | 修改 | 文案与动作的契约测试                                                                        |
+| `packages/desktop/test/portable-update-about.test.tsx`                  | 修改 | UI 契约：错误态必须显示可操作原因，且不显示需要 ready 的按钮                                |
+| `packages/desktop/test/portable-launcher-describe-integration.test.ts`  | 新建 | 真实 Windows GUI 二进制的 stdout 捕获集成测试                                               |
 
 **knip 约束（务必遵守）：** `knip.json` 里 `packages/desktop` 的 `project` 只含 `src/**/*.{ts,tsx}`，测试目录不在其中。因此 `launcher-descriptor.ts` 的**每一个导出都必须被生产代码引用**（`update-handlers.ts`），否则 `pnpm check:dead-code` 会红。不要为了让测试方便而额外导出。
 
@@ -40,11 +45,12 @@
 ## 依赖与执行顺序
 
 1. Task 1（SemVer）→ Task 4 依赖它。
-2. Task 2（`--describe-json`）→ Task 5、Task 7 依赖它。
+2. Task 2（`--describe-json`）→ Task 5、Task 8 依赖它。
 3. Task 3（`--verify-manifest`）与 Task 2 共用 `main.go` 的模式分发，必须在其后。
-4. Task 5（TS 模块）→ Task 6 依赖它。
-5. Task 4（Go 侧交换前校验）与 Task 2/3 无依赖，可在 Task 3 之后任意位置执行。
-6. Task 7 必须最后，它需要真实二进制。
+4. Task 5（TS 读取模块）→ Task 7 依赖它（接线要用它取真实版本）。
+5. Task 6（服务层 `unavailable` 前置条件）与 Task 5 无依赖，可在 Task 5 之后任意位置执行；但**必须在 Task 7 之前**，因为 Task 7 会传入 `unavailable`。
+6. Task 4（Go 侧交换前校验）与 Task 2/3 无依赖，可在 Task 3 之后任意位置执行。
+7. Task 8 必须最后，它需要真实二进制。
 
 **每刀的通用纪律（每个 Task 都适用，不再重复展开）：**
 
@@ -1529,7 +1535,196 @@ git commit -m "feat(update): read the real launcher version from the drive"
 
 ---
 
-### Task 6: TS — 接线并删除 `LAUNCHER_PROTOCOL_VERSION`
+### Task 6: TS — 让"启动器不可用"上屏，而不是静默消失
+
+**Files:**
+
+- Modify: `packages/desktop/src/main/update/portable-update-service.ts`
+- Modify: `packages/desktop/src/renderer/features/internal-beta/update-errors.ts`
+- Modify: `packages/desktop/test/portable-update-service.test.ts`
+- Modify: `packages/desktop/test/internal-beta-update-errors.test.ts`
+- Modify: `packages/desktop/test/portable-update-about.test.tsx`
+
+**行为要求（本项目刚修过"错误必须上屏"）：** 启动器缺失、不可执行、超时、输出非法或不兼容时——
+
+- 登录与聊天**照常可用**（更新链路不应拖累主流程）；
+- 自动更新 **fail-closed**（不做任何下载或交换）；
+- 但必须通过**既有公开状态 / IPC / UI** 显示出明确、可操作的更新不可用原因；
+- **不允许**回到"永远加载中"或"静默消失"。
+
+实现路径（复用既有机制，不新造协议）：服务内部已有 `permanentError` 与 `PERMANENT_ERROR_CODES`，`check()` / `prepare()` 依赖它短路。因此新增一个 deps 字段 `unavailable` 并**用它初始化 `phase` / `errorCode` / `permanentError`** 即可，不需要新的状态机。
+
+- [ ] **Step 1: 确认短路机制真实存在**
+
+```bash
+grep -n "permanentError" packages/desktop/src/main/update/portable-update-service.ts
+grep -n "PORTABLE_ERROR_TEXT\|PORTABLE_ERROR_ACTION" packages/desktop/src/renderer/features/internal-beta/update-errors.ts
+```
+
+判据：`check()` 与 `prepare()` 里确实存在基于 `permanentError` 的提前返回。**若不存在**，本刀改为在 `check()`/`prepare()` 开头补一条 `if (permanentError !== null) return ...`，其余断言不变。
+
+- [ ] **Step 2: 写失败的测试（服务层）**
+
+追加到 `packages/desktop/test/portable-update-service.test.ts`：
+
+```ts
+describe('portable update service with an unusable launcher', () => {
+  it('reports the launcher failure through the public state instead of disappearing', () => {
+    const harness = makeHarness({ unavailable: { errorCode: 'launcher-incompatible' } });
+    const state = harness.service.getState();
+    expect(state.phase).toBe('error');
+    expect(state.errorCode).toBe('launcher-incompatible');
+    expect(state.currentVersion).toBe(harness.currentVersion);
+  });
+
+  it('refuses to prepare while the launcher is unusable', async () => {
+    const harness = makeHarness({ unavailable: { errorCode: 'launcher-incompatible' } });
+    const result = await harness.service.prepare();
+    expect(result).toEqual({ ok: false, errorCode: 'launcher-incompatible' });
+    expect(harness.downloadPackage).not.toHaveBeenCalled();
+  });
+
+  it('does not check the feed while the launcher is unusable', async () => {
+    const harness = makeHarness({ unavailable: { errorCode: 'launcher-incompatible' } });
+    const state = await harness.service.check();
+    expect(state.phase).toBe('error');
+    expect(state.errorCode).toBe('launcher-incompatible');
+    expect(harness.fetchManifest).not.toHaveBeenCalled();
+  });
+
+  it('still notifies subscribers so the panel can react', () => {
+    const harness = makeHarness({ unavailable: { errorCode: 'launcher-incompatible' } });
+    const seen: string[] = [];
+    harness.service.subscribe((state) => seen.push(`${state.phase}:${state.errorCode ?? ''}`));
+    expect(seen).toEqual([]);
+    expect(harness.service.getState().errorCode).toBe('launcher-incompatible');
+  });
+});
+```
+
+**命名对齐（必须先执行）：** 上面的 `makeHarness({...})`、`harness.service`、`harness.currentVersion`、`harness.downloadPackage`、`harness.fetchManifest` 取自该文件既有的 `makeHarness()`（它返回一个 `Harness`，暴露各 `vi.fn()`）。先运行：
+
+```bash
+sed -n '60,132p' packages/desktop/test/portable-update-service.test.ts
+```
+
+按打印出的真实字段名替换（既有 harness 若只接受位置参数，就改成接受一个可选的覆盖对象），断言与结构不变。
+
+- [ ] **Step 3: 运行测试并确认按测试名失败**
+
+```bash
+pnpm --filter @clawwork/desktop exec vitest run test/portable-update-service.test.ts
+```
+
+预期：4 个新用例失败（`unavailable` 不被识别，初始相位仍是 `idle`）。
+
+- [ ] **Step 4: 写最小实现**
+
+`packages/desktop/src/main/update/portable-update-service.ts`：
+
+(a) `PortableUpdateServiceDeps` 增加一个字段（放在 `launcherVersion` 之后）：
+
+```ts
+  unavailable?: { errorCode: PortableUpdateErrorCode } | null;
+```
+
+(b) `createPortableUpdateService` 的局部状态初始化改为受 `deps.unavailable` 驱动：
+
+```ts
+let phase: PortableUpdatePhase = deps.unavailable ? 'error' : 'idle';
+let errorCode: PortableUpdateErrorCode | undefined = deps.unavailable?.errorCode;
+let permanentError: PortableUpdateErrorCode | null = deps.unavailable?.errorCode ?? null;
+```
+
+其余行不动。**不要**新造状态字段、不要新造错误码（规格裁决：复用既有的 `launcher-incompatible`）。
+
+- [ ] **Step 5: 运行测试并确认通过**
+
+```bash
+pnpm --filter @clawwork/desktop exec vitest run test/portable-update-service.test.ts
+```
+
+预期：新增 4 个用例通过，既有用例全部仍然通过。
+
+- [ ] **Step 6: 写失败的测试（文案与 UI 契约）**
+
+(a) `packages/desktop/test/internal-beta-update-errors.test.ts` 追加：
+
+```ts
+it('tells the user a missing or outdated launcher needs a new delivery package', () => {
+  expect(portableErrorAction('launcher-incompatible')).toBe('replace-package');
+  expect(portableErrorMessage('launcher-incompatible')).toContain('启动器');
+  expect(portableErrorMessage('launcher-incompatible')).toContain('完整交付包');
+  expect(portableErrorMessage('launcher-incompatible')).not.toMatch(/[A-Za-z]{4,}/u);
+});
+```
+
+**命名对齐：** 先运行 `grep -n "^export function\|^import" packages/desktop/src/renderer/features/internal-beta/update-errors.ts`，用打印出的真实导出名替换 `portableErrorAction` / `portableErrorMessage`。
+
+(b) `packages/desktop/test/portable-update-about.test.tsx` 追加：
+
+```tsx
+it('shows an actionable reason when the launcher cannot be used', () => {
+  renderAbout({ phase: 'error', errorCode: 'launcher-incompatible' });
+  expect(screen.getByText(/启动器/)).toBeTruthy();
+  expect(screen.getByText(/完整交付包/)).toBeTruthy();
+  expect(screen.queryByText(/立即重启更新/)).toBeNull();
+});
+```
+
+**命名对齐：** 该文件用的是中文测试名与既有的渲染辅助。先运行 `sed -n '1,60p' packages/desktop/test/portable-update-about.test.tsx`，用打印出的真实渲染辅助与查询方式替换 `renderAbout(...)`；断言不变（**必须断言"界面上出现了原因"且"没有出现需要 ready 才该出现的按钮"**）。
+
+- [ ] **Step 7: 运行测试并确认按测试名失败**
+
+```bash
+pnpm --filter @clawwork/desktop exec vitest run test/internal-beta-update-errors.test.ts test/portable-update-about.test.tsx
+```
+
+预期：两条新用例失败（现有文案只提"版本太旧"，不含"启动器缺失"语义；UI 用例的查询尚未有对应渲染路径）。
+
+- [ ] **Step 8: 写最小实现**
+
+`packages/desktop/src/renderer/features/internal-beta/update-errors.ts`：把
+
+```ts
+  'launcher-incompatible': '启动器版本太旧，装不了这份更新。请获取新的完整交付包。',
+```
+
+改为
+
+```ts
+  'launcher-incompatible': '启动器缺失或版本太旧，装不了这份更新。请获取新的完整交付包。',
+```
+
+文案规则不变：只给中文、不含英文原文、不含 URL 或版本号片段；动作仍是 `replace-package`（**不得**新增"忽略并继续"这类动作）。
+
+- [ ] **Step 9: 运行测试并确认通过**
+
+```bash
+pnpm --filter @clawwork/desktop exec vitest run test/portable-update-service.test.ts test/internal-beta-update-errors.test.ts test/portable-update-about.test.tsx
+```
+
+预期：全部通过，`fail 0`。
+
+- [ ] **Step 10: 行为级变异验证**
+
+1. 把 `phase` 的初始化改回 `'idle'` ⇒ 预期 `reports the launcher failure through the public state instead of disappearing` **按测试名变红**。
+2. 把 `permanentError` 的初始化改回 `null` ⇒ 预期 `refuses to prepare while the launcher is unusable` 与 `does not check the feed while the launcher is unusable` **按测试名变红**。
+3. 把文案改回"启动器版本太旧"（去掉"缺失"）⇒ 预期 UI 契约用例 **按测试名变红**。
+4. 在 UI 里为 `error` 相位也渲染「立即重启更新」⇒ 预期 `shows an actionable reason when the launcher cannot be used` 的 `queryByText` 断言 **按测试名变红**。
+
+恢复后 `git diff` 为空且全绿。
+
+- [ ] **Step 11: 提交**
+
+```bash
+git add packages/desktop/src/main/update/portable-update-service.ts packages/desktop/src/renderer/features/internal-beta/update-errors.ts packages/desktop/test/portable-update-service.test.ts packages/desktop/test/internal-beta-update-errors.test.ts packages/desktop/test/portable-update-about.test.tsx
+git commit -m "fix(update): surface an unusable launcher instead of hiding it"
+```
+
+---
+
+### Task 7: TS — 接线并删除 `LAUNCHER_PROTOCOL_VERSION`
 
 **Files:**
 
@@ -1541,7 +1736,7 @@ git commit -m "feat(update): read the real launcher version from the drive"
 追加到 `packages/desktop/test/portable-update-ipc.test.ts`（沿用该文件既有的 `vi.hoisted` 桩：`getPortableWorkspaceRoot` 已被桩成 `mocks.portableRoot`；在同一个 `vi.hoisted` 块里新增一个 launcher 描述桩，并把它接进 `../src/main/update/launcher-descriptor.js` 的 mock）：
 
 ```ts
-it('refuses to attach the portable service when the launcher cannot be described', async () => {
+it('reports the launcher failure through the update state instead of hiding it', async () => {
   mocks.portableRoot = 'E:\\';
   mocks.launcherDescriptor.mockImplementation(() => {
     throw new Error('launcher is unusable');
@@ -1549,7 +1744,8 @@ it('refuses to attach the portable service when the launcher cannot be described
   const { registerUpdateHandlers } = await import('../src/main/ipc/update-handlers.js');
   registerUpdateHandlers();
   const state = await handle('app:get-update-state');
-  expect(state.portable).toBe(false);
+  expect(state.phase).toBe('error');
+  expect(state.errorCode).toBe('launcher-incompatible');
 });
 
 it('attaches the portable service with the version the launcher really reports', async () => {
@@ -1600,20 +1796,23 @@ import { readLauncherDescriptor } from '../update/launcher-descriptor.js';
 
 ```ts
 let launcherVersion: string;
+let unavailable: { errorCode: PortableUpdateErrorCode } | null = null;
 try {
   launcherVersion = readLauncherDescriptor({
     launcherPath: join(root, LAUNCHER_FILE_NAME),
     timeoutMs: 5000,
   }).launcherVersion;
 } catch {
-  portableInitialized = true;
-  return;
+  launcherVersion = '0.0.0';
+  unavailable = { errorCode: 'launcher-incompatible' };
 }
 ```
 
-(d) 把 `launcherVersion: LAUNCHER_PROTOCOL_VERSION,` 改成 `launcherVersion,`。
+(d) 把 `launcherVersion: LAUNCHER_PROTOCOL_VERSION,` 改成 `launcherVersion,`，并在 `createPortableUpdateService({...})` 的依赖对象里加入 `unavailable,`。
 
-**行为说明（必须写进提交信息，不得省略）：** 探测失败时**不挂载**便携更新服务，因此界面不会出现便携更新状态——这是 fail-closed（不会更新），代价是用户看不到一句专门的提示。§5.7 的 `launcher-incompatible` 文案仍会在“能描述启动器、但启动器版本低于 `minLauncherVersion`”时正常出现。
+注意 `launcherVersion` 在探测失败时取 `'0.0.0'` **只作为占位**：此时 `unavailable` 已让服务进入永久错误态，`check()` 与 `prepare()` 都不会走到版本比较那一步，因此这个占位值不会被任何门禁使用。**不得**把它当成"兼容"的信号。
+
+**行为说明（必须写进提交信息，不得省略）：** 探测失败时**仍然挂载**便携更新服务，但服务处于 `phase: 'error'` + `errorCode: 'launcher-incompatible'` 的永久错误态——界面因此能看到一句可操作的原因，而自动更新 fail-closed。登录与聊天链路不依赖该服务，不受影响。
 
 - [ ] **Step 4: 运行测试并确认通过**
 
@@ -1635,7 +1834,7 @@ pnpm --filter @clawwork/desktop exec vitest run
 
 - [ ] **Step 5: 行为级变异验证**
 
-1. 把 `catch { portableInitialized = true; return; }` 改成 `catch { launcherVersion = '1.0.0'; }` ⇒ 预期 `refuses to attach the portable service when the launcher cannot be described` **按测试名变红**（这正是被删掉的假版本源的行为，本刀的存在理由）。
+1. 把 `unavailable = { errorCode: 'launcher-incompatible' }` 删掉，只留 `launcherVersion = '0.0.0'` ⇒ 预期 `reports the launcher failure through the update state instead of hiding it` **按测试名变红**（这正是被删掉的"静默隐藏"行为，本刀的存在理由）。
 2. 把 `launcherVersion,` 改回常量 `'1.0.0'` ⇒ 预期 `attaches the portable service with the version the launcher really reports` **按测试名变红**。
 
 恢复后 `git diff` 为空且全绿。
@@ -1659,7 +1858,7 @@ git commit -m "fix(update): read the launcher version instead of assuming one"
 
 ---
 
-### Task 7: 集成 — Windows GUI 子系统下的 stdout 真实捕获
+### Task 8: 集成 — Windows GUI 子系统下的 stdout 真实捕获
 
 **Files:**
 
@@ -1800,17 +1999,17 @@ pnpm check
 
 本计划全部完成后的验收读数（**逐条如实填写，未执行的写“未验证”**）：
 
-| 项                | 命令                                                                                                                                                                                                                   | 读数 |
-| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- |
-| Go 全包测试       | `go -C launcher test ./... -count=1`                                                                                                                                                                                   | 待填 |
-| 桌面定向 4 个文件 | `pnpm --filter @clawwork/desktop exec vitest run test/portable-launcher-descriptor.test.ts test/portable-update-ipc.test.ts test/portable-update-manifest.test.ts test/portable-launcher-describe-integration.test.ts` | 待填 |
-| 集成测试是否真跑  | 看输出里有无 `SKIP = UNVERIFIED:`                                                                                                                                                                                      | 待填 |
-| 常量已删除        | `grep -rn "LAUNCHER_PROTOCOL_VERSION" packages/ scripts/ launcher/`                                                                                                                                                    | 待填 |
-| 全量门禁          | `pnpm check`                                                                                                                                                                                                           | 待填 |
+| 项                | 命令                                                                                                                                                                                                                                                                                                                                     | 读数 |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- |
+| Go 全包测试       | `go -C launcher test ./... -count=1`                                                                                                                                                                                                                                                                                                     | 待填 |
+| 桌面定向 7 个文件 | `pnpm --filter @clawwork/desktop exec vitest run test/portable-launcher-descriptor.test.ts test/portable-update-ipc.test.ts test/portable-update-manifest.test.ts test/portable-update-service.test.ts test/internal-beta-update-errors.test.ts test/portable-update-about.test.tsx test/portable-launcher-describe-integration.test.ts` | 待填 |
+| 集成测试是否真跑  | 看输出里有无 `SKIP = UNVERIFIED:`                                                                                                                                                                                                                                                                                                        | 待填 |
+| 常量已删除        | `grep -rn "LAUNCHER_PROTOCOL_VERSION" packages/ scripts/ launcher/`                                                                                                                                                                                                                                                                      | 待填 |
+| 全量门禁          | `pnpm check`                                                                                                                                                                                                                                                                                                                             | 待填 |
 
 ## 未覆盖与后续（不得写成已完成）
 
-- 探测失败时**没有**专门的界面提示（服务直接不挂载）。要显示文案需扩展 `portable-update-service.ts` 的前置条件表达，属于另一切片。
+- 启动器不可用时**复用** `launcher-incompatible` 这一个既有错误码，没有新增协议错误码。因此界面文案是"启动器缺失或版本太旧"，无法区分"缺失"与"太旧"两种情形。若将来需要区分，需要扩展 `packages/shared/src/portable-update.ts` 的 `PortableUpdateErrorCode` 联合，并同步 `PORTABLE_ERROR_ACTION` / `PORTABLE_ERROR_TEXT` 两个 `Record`（TS 会强制补全）与"四个永久错误码"的既有断言。
 - 若 Task 7 落在“跳过”形态，则 **GUI stdout 捕获在真实二进制上的证据仍属未验证**；规格 §4.1 里的初步实验（`--version` → exit 0、`0.1.0\n`）不能替代 `--describe-json` 的同路径证据。
 - 本计划**不**生成任何生产密钥，**不**构建客户包，**不**触碰更新源。
 

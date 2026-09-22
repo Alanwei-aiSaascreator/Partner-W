@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 让启动器构建产出**带指纹的回执**、让组装器与交付审计**拒绝配错**，把 CI 从生产签名彻底解耦，并删掉那个从不被消费的假密钥门禁。
+**Goal:** 让启动器构建产出**带指纹的回执**、让组装器与交付审计**按密钥台账硬拒绝配错**，把 CI 从生产签名彻底解耦，并删掉那个从不被消费的假密钥门禁。
 
 **Architecture:** 新增一个纯函数模块 `scripts/lib/portable-executable.mjs`（PE 结构检查）与一个回执模块 `scripts/lib/launcher-receipt.mjs`（生成 + 校验，硬拒绝与警告分级）。构建脚本产出 `<out>/launcher-build-receipt.json`；组装器与验收审计都从**外部**通过 `--receipt` 读取它。CI 侧把 portable 制品 job 从上游多平台 `release.yml` 拆成独立 workflow，只产出 **unsigned** 制品，绝不持有生产私钥。
 
@@ -14,46 +14,56 @@
 
 ## 文件地图
 
-| 文件                                                                  | 动作 | 职责                                                           |
-| --------------------------------------------------------------------- | ---- | -------------------------------------------------------------- |
-| `scripts/lib/portable-executable.mjs`                                 | 新建 | 纯函数：校验 `MZ` / `PE\0\0` / AMD64 / PE32+ / GUI 子系统      |
-| `scripts/lib/portable-executable.test.mjs`                            | 新建 | 上述检查的单元测试（含逐字节构造的假 PE）                      |
-| `scripts/lib/launcher-receipt.mjs`                                    | 新建 | 回执的生成、解析、硬拒绝与警告分级                             |
-| `scripts/lib/launcher-receipt.test.mjs`                               | 新建 | 回执规则的单测                                                 |
-| `scripts/lib/portable-launcher-build.mjs`                             | 修改 | 用 PE 检查器替换两字节判断；产出回执                           |
-| `scripts/build-portable-launcher.mjs`                                 | 修改 | 新增 `--out` 与 `--receipt`                                    |
-| `scripts/lib/portable-launcher-build.test.mjs`                        | 修改 | `--out` 与回执的行为断言                                       |
-| `scripts/assemble-udisk-delivery.mjs`                                 | 修改 | 新增必填 `--receipt`；空目录检查移到最前；硬拒绝/警告分级      |
-| `scripts/lib/udisk-delivery.test.mjs`                                 | 修改 | 组装器与审计的新规则                                           |
-| `scripts/lib/udisk-delivery.mjs`                                      | 修改 | 新增 `warning()` 与四条启动器规则                              |
-| `scripts/udisk-delivery.mjs`                                          | 修改 | 新增 `--receipt`；IO 适配器补二进制读取                        |
-| `scripts/lib/portable-launcher-challenge.mjs`                         | 新建 | 发布期 QC 挑战的判定逻辑与负向样本生成                         |
-| `scripts/portable-launcher-challenge.mjs`                             | 新建 | 挑战 CLI                                                       |
-| `scripts/lib/portable-launcher-challenge.test.mjs`                    | 新建 | 判定逻辑与 CLI 守卫的单测                                      |
-| `scripts/make-portable-unsigned-artifacts.mjs`                        | 新建 | 只产出 unsigned 的 ZIP 与文件清单（CI 用）                     |
-| `scripts/lib/portable-unsigned-artifacts.test.mjs`                    | 新建 | 上者的单测                                                     |
-| `.github/workflows/portable-artifacts.yml`                            | 新建 | 独立的制品 workflow（`workflow_dispatch`）                     |
-| `.github/workflows/release.yml`                                       | 修改 | 删除 portable job 与三密钥门禁，改为上游语义说明               |
-| `scripts/lib/portable-update-ci.test.mjs`                             | 修改 | 断言新形态；删掉假门禁断言                                     |
-| `docs/runbooks/portable-launcher-signing-ceremony.md`                 | 新建 | 生产密钥仪式：加密卷、NTFS ACL、临时目录、用后删除、不承诺擦除 |
-| `docs/portable-update-key-registry.md`                                | 新建 | 公钥与指纹台账（**模板，不含任何值**）                         |
-| `docs/runbooks/portable-update-release.md`                            | 修改 | 第 19 行纠正；新增组装/QC/残留风险引用                         |
-| `docs/superpowers/plans/2026-09-21-portable-full-directory-update.md` | 修改 | 删除 `MOFANG_UPDATE_FEED_UPLOAD_TOKEN` 条目                    |
-| `docs/status/2026-09-15-demo-bug-fix-log.md`                          | 修改 | **追加**带日期的后记，不改写历史                               |
-| `package.json`                                                        | 修改 | 新增 `check:portable-release-assembly` 并接入 `check`          |
+| 文件                                                                  | 动作 | 职责                                                                            |
+| --------------------------------------------------------------------- | ---- | ------------------------------------------------------------------------------- |
+| `scripts/lib/key-registry.mjs`                                        | 新建 | 机器可读密钥台账的解析、按版本查登记、指纹比对（统一走 `normalizeFingerprint`） |
+| `scripts/lib/key-registry.test.mjs`                                   | 新建 | 台账规则的单测                                                                  |
+| `docs/portable-update-key-registry.json`                              | 新建 | 机器可读台账**模板**（`keys` 为空数组，**不含任何真实值**）                     |
+| `scripts/lib/portable-executable.mjs`                                 | 新建 | 纯函数：校验 `MZ` / `PE\0\0` / AMD64 / PE32+ / GUI 子系统                       |
+| `scripts/lib/portable-executable.test.mjs`                            | 新建 | 上述检查的单元测试（含逐字节构造的假 PE）                                       |
+| `scripts/lib/launcher-receipt.mjs`                                    | 新建 | 回执的生成、解析、硬拒绝与警告分级；公开指纹的规范化                            |
+| `scripts/lib/launcher-receipt.test.mjs`                               | 新建 | 回执规则的单测                                                                  |
+| `scripts/lib/portable-launcher-build.mjs`                             | 修改 | 用 PE 检查器替换两字节判断；产出回执                                            |
+| `scripts/build-portable-launcher.mjs`                                 | 修改 | 新增 `--out` 与 `--receipt`                                                     |
+| `scripts/lib/portable-launcher-build.test.mjs`                        | 修改 | `--out` 与回执的行为断言                                                        |
+| `scripts/assemble-udisk-delivery.mjs`                                 | 修改 | 新增必填 `--receipt`；空目录检查移到最前；硬拒绝/警告分级                       |
+| `scripts/lib/udisk-delivery.test.mjs`                                 | 修改 | 组装器与审计的新规则                                                            |
+| `scripts/lib/udisk-delivery.mjs`                                      | 修改 | 新增 `warning()` 与四条启动器规则                                               |
+| `scripts/udisk-delivery.mjs`                                          | 修改 | 新增 `--receipt`；IO 适配器补二进制读取                                         |
+| `scripts/lib/portable-launcher-challenge.mjs`                         | 新建 | 发布期 QC 挑战的判定逻辑与负向样本生成                                          |
+| `scripts/portable-launcher-challenge.mjs`                             | 新建 | 挑战 CLI                                                                        |
+| `scripts/lib/portable-launcher-challenge.test.mjs`                    | 新建 | 判定逻辑与 CLI 守卫的单测                                                       |
+| `scripts/make-portable-unsigned-artifacts.mjs`                        | 新建 | 只产出 unsigned 的 ZIP 与文件清单（CI 用）                                      |
+| `scripts/lib/portable-unsigned-artifacts.test.mjs`                    | 新建 | 上者的单测                                                                      |
+| `.github/workflows/portable-artifacts.yml`                            | 新建 | 独立的制品 workflow（`workflow_dispatch`）                                      |
+| `.github/workflows/release.yml`                                       | 修改 | 删除 portable job 与三密钥门禁，改为上游语义说明                                |
+| `scripts/lib/portable-update-ci.test.mjs`                             | 修改 | 断言新形态；删掉假门禁断言                                                      |
+| `docs/runbooks/portable-launcher-signing-ceremony.md`                 | 新建 | 生产密钥仪式：加密卷、NTFS ACL、临时目录、用后删除、不承诺擦除                  |
+| `docs/portable-update-key-registry.md`                                | 新建 | 公钥与指纹台账（**模板，不含任何值**）                                          |
+| `docs/runbooks/portable-update-release.md`                            | 修改 | 第 19 行纠正；新增组装/QC/残留风险引用                                          |
+| `docs/superpowers/plans/2026-09-21-portable-full-directory-update.md` | 修改 | 删除 `MOFANG_UPDATE_FEED_UPLOAD_TOKEN` 条目                                     |
+| `docs/status/2026-09-15-demo-bug-fix-log.md`                          | 修改 | **追加**带日期的后记，不改写历史                                                |
+| `package.json`                                                        | 修改 | 新增 `check:portable-release-assembly` 并接入 `check`                           |
 
 **禁止事项（贯穿全计划）：** 不生成任何真实生产密钥；不写入任何真实指纹、token、口令或服务器地址凭据；不构建客户候选包；不推送远端；不连接或修改服务器。
+
+**指纹格式（已裁决，不再作为未决项）：**
+
+- **机器线格式**：64 字符、**无分隔符**、大写 hex。
+- **台账与手册**：允许按每 4 字符一组加空格**展示**。
+- **比较规则**：先去掉全部空白，再按 `/^[0-9A-F]{64}$/` 严格校验；两种写法必须比中。
+- 因此 `scripts/lib/launcher-receipt.mjs` 与 `scripts/lib/key-registry.mjs` 都必须通过同一个 `normalizeFingerprint()`，**不得**各自手写比较。
 
 ---
 
 ## 依赖与执行顺序
 
 1. Task 1（PE 检查器）→ Task 2、Task 3 依赖它。
-2. Task 2（回执）→ Task 3、Task 4 依赖它。
-3. Task 3（组装器 + 审计）→ Task 6 的文档引用了它的规则名，必须在其后。
+2. Task 2（回执 + `normalizeFingerprint`）→ **Task 3 的台账模块依赖 `normalizeFingerprint`**，因此 Task 3 不能早于 Task 2。
+3. Task 3（台账模块 + 组装器 + 审计）→ Task 6 的文档引用了它的规则名与台账文件名，必须在其后。
 4. Task 4（QC 挑战）→ Task 5 的 workflow 会调用它，必须在其后。
 5. Task 5（CI）→ Task 6 之前。
-6. Task 6（文档）最后。
+6. Task 6（文档 + 台账模板）最后。
 
 **每刀的通用纪律（与计划 1 相同，不再展开）：** 命名 RED → 按测试名失败 → 最小 GREEN → 行为级变异验证（删关键护栏 ⇒ 指定测试按名变红 ⇒ 逐字节恢复，`git diff` 为空）→ 判据含 `passed > 0` → “跳过”记“未验证” → 完整门禁 `pnpm check` → 显式 pathspec 独立提交，禁止 `git add -A`。
 
@@ -377,6 +387,42 @@ test('the builder stamps the self declared trust marker and never a signing key'
   assert.equal(receipt.receiptVersion, 1);
   assert.equal(Object.hasOwn(receipt, 'signingKeyFingerprint'), false);
 });
+
+test('a fingerprint is normalised to 64 uppercase hex characters without separators', () => {
+  const grouped = 'AAAA BBBB CCCC DDDD EEEE FFFF 0000 1111 2222 3333 4444 5555 6666 7777 8888 9999';
+  assert.equal(normalizeFingerprint(grouped), 'AAAABBBBCCCCDDDDEEEEFFFF0000111122223333444455556666777788889999');
+  assert.equal(normalizeFingerprint(''), null);
+  assert.equal(normalizeFingerprint('Z'.repeat(64)), null);
+  assert.equal(normalizeFingerprint('A'.repeat(63)), null);
+  assert.equal(normalizeFingerprint(undefined), null);
+});
+
+test('a grouped ledger fingerprint compares equal to the compact wire format', () => {
+  const compact = 'A'.repeat(64);
+  const grouped = `${'A'.repeat(4)} `.repeat(15) + 'AAAA';
+  const result = checkReceipt({
+    receipt: makeReceipt({ embeddedKeyFingerprints: [compact] }),
+    exeSha256: EXE_SHA256,
+    exeSize: EXE.length,
+    expectedFingerprints: [grouped],
+    now: NOW,
+    maxAgeMs: 7 * 24 * 60 * 60 * 1000,
+  });
+  assert.deepEqual(result.errors, []);
+});
+
+test('a fingerprint that is not strict uppercase hex is a hard error', () => {
+  const result = checkReceipt({
+    receipt: makeReceipt({ embeddedKeyFingerprints: ['abc'] }),
+    exeSha256: EXE_SHA256,
+    exeSize: EXE.length,
+    expectedFingerprints: ['abc'],
+    now: NOW,
+    maxAgeMs: 7 * 24 * 60 * 60 * 1000,
+  });
+  assert.equal(result.errors.length, 1);
+  assert.match(result.errors[0], /fingerprint/i);
+});
 ```
 
 - [ ] **Step 2: 运行测试并确认按测试名失败**
@@ -470,8 +516,20 @@ export function parseReceipt(text) {
   return payload;
 }
 
-function sortedFingerprints(values) {
-  return [...values].sort().join(',');
+export function normalizeFingerprint(value) {
+  if (typeof value !== 'string') return null;
+  const compact = value.replace(/\s+/gu, '').toUpperCase();
+  return /^[0-9A-F]{64}$/u.test(compact) ? compact : null;
+}
+
+function canonicalFingerprints(values) {
+  const normalised = [];
+  for (const value of values) {
+    const compact = normalizeFingerprint(value);
+    if (compact === null) return null;
+    normalised.push(compact);
+  }
+  return [...normalised].sort().join(',');
 }
 
 export function checkReceipt(input) {
@@ -488,7 +546,11 @@ export function checkReceipt(input) {
   if (receipt.commitDirty === true) {
     errors.push('the build receipt was produced from a working tree with uncommitted changes');
   }
-  if (sortedFingerprints(receipt.embeddedKeyFingerprints) !== sortedFingerprints(input.expectedFingerprints)) {
+  const embedded = canonicalFingerprints(receipt.embeddedKeyFingerprints);
+  const expected = canonicalFingerprints(input.expectedFingerprints);
+  if (embedded === null || expected === null) {
+    errors.push('a key fingerprint is not 64 uppercase hex characters');
+  } else if (embedded !== expected) {
     errors.push('the embedded key fingerprints do not match the registered keys for this launcher version');
   }
 
@@ -784,14 +846,214 @@ git commit -m "feat(release): record what each launcher build actually produced"
 
 ---
 
-### Task 3: 组装器与交付审计的硬拒绝 / 警告分级
+### Task 3: 组装器与交付审计的硬拒绝 / 警告分级（**台账驱动**）
 
 **Files:**
 
+- Create: `scripts/lib/key-registry.mjs`
+- Create: `scripts/lib/key-registry.test.mjs`
+- Create: `docs/portable-update-key-registry.json`
 - Modify: `scripts/assemble-udisk-delivery.mjs`
 - Modify: `scripts/lib/udisk-delivery.mjs`
 - Modify: `scripts/udisk-delivery.mjs`
 - Modify: `scripts/lib/udisk-delivery.test.mjs`
+
+**硬约束（规格 §5.4，不得降级）：** `embeddedKeyFingerprints` 与该启动器版本在密钥台账里登记的集合不一致时**必须硬拒绝**。因此**正式**组装与**正式**交付审计都**必须**提供 `--key-registry`；台账缺失、不可解析、该版本无登记、指纹不一致——**四类全部硬失败**。**不得**默认"没有台账就跳过检查"。
+
+**唯一的旁路是显式的 test-only 模式**：`--test-only`。它必须同时满足
+
+1. 输出目录的**目录名**以 `_TEST-ONLY-` 开头（否则硬失败）；
+2. 审计记录一条 `warn` 级 `launcher-key-registry-bypassed`；
+3. 控制台打印一行醒目的"本制品不可发布"警告。
+
+这样开发夹具能跑，而生产绕过没有入口——因为一份名叫 `_TEST-ONLY-…` 的交付包不可能被当成正式包发出去。
+
+#### 前置：密钥台账模块（Step 0.1 – 0.3）
+
+- [ ] **Step 0.1: 写失败的测试**
+
+创建 `scripts/lib/key-registry.test.mjs`：
+
+```js
+import assert from 'node:assert/strict';
+import test from 'node:test';
+
+import { KeyRegistryError, fingerprintsForVersion, parseKeyRegistry } from './key-registry.mjs';
+
+const COMPACT = 'A'.repeat(64);
+const GROUPED = `${'A'.repeat(4)} `.repeat(15) + 'AAAA';
+
+function registryText(keys) {
+  return JSON.stringify({ schemaVersion: 1, keys });
+}
+
+test('an empty registry parses but registers nothing', () => {
+  const registry = parseKeyRegistry(registryText([]));
+  assert.deepEqual(registry.keys, []);
+  assert.equal(fingerprintsForVersion(registry, '1.2.3'), null);
+});
+
+test('a registry entry is found by its launcher version range', () => {
+  const registry = parseKeyRegistry(
+    registryText([
+      { keyId: 'k1', fingerprint: COMPACT, publicKeyBase64: 'abc', status: 'active', minLauncherVersion: '1.0.0' },
+    ]),
+  );
+  assert.deepEqual(fingerprintsForVersion(registry, '1.2.3'), [COMPACT]);
+  assert.equal(fingerprintsForVersion(registry, '0.9.0'), null);
+});
+
+test('a grouped fingerprint is normalised so the ledger may use 4 character groups', () => {
+  const registry = parseKeyRegistry(
+    registryText([
+      { keyId: 'k1', fingerprint: GROUPED, publicKeyBase64: 'abc', status: 'active', minLauncherVersion: '1.0.0' },
+    ]),
+  );
+  assert.deepEqual(fingerprintsForVersion(registry, '1.2.3'), [COMPACT]);
+});
+
+test('an unusable fingerprint is rejected when parsing', () => {
+  assert.throws(
+    () =>
+      parseKeyRegistry(
+        registryText([
+          { keyId: 'k1', fingerprint: 'nope', publicKeyBase64: 'abc', status: 'active', minLauncherVersion: '1.0.0' },
+        ]),
+      ),
+    KeyRegistryError,
+  );
+});
+
+test('a retired key is never returned for a new release', () => {
+  const registry = parseKeyRegistry(
+    registryText([
+      { keyId: 'k1', fingerprint: COMPACT, publicKeyBase64: 'abc', status: 'retired', minLauncherVersion: '1.0.0' },
+    ]),
+  );
+  assert.equal(fingerprintsForVersion(registry, '1.2.3'), null);
+});
+
+test('a malformed registry is rejected', () => {
+  for (const text of ['not json', '{}', '{"schemaVersion":2,"keys":[]}', '{"schemaVersion":1,"keys":{}}']) {
+    assert.throws(() => parseKeyRegistry(text), KeyRegistryError);
+  }
+});
+
+test('an unknown field in the registry is rejected', () => {
+  assert.throws(() => parseKeyRegistry(JSON.stringify({ schemaVersion: 1, keys: [], extra: true })), KeyRegistryError);
+});
+```
+
+- [ ] **Step 0.2: 运行测试并确认按测试名失败**
+
+```bash
+node --test scripts/lib/key-registry.test.mjs
+```
+
+预期：无法解析 `./key-registry.mjs`。
+
+- [ ] **Step 0.3: 写最小实现**
+
+创建 `scripts/lib/key-registry.mjs`：
+
+```js
+import { normalizeFingerprint } from './launcher-receipt.mjs';
+
+const REGISTRY_VERSION = 1;
+const STATUSES = Object.freeze(['active', 'retired']);
+const REGISTRY_FIELDS = ['schemaVersion', 'keys'];
+const KEY_FIELDS = ['keyId', 'fingerprint', 'publicKeyBase64', 'status', 'minLauncherVersion'];
+
+export class KeyRegistryError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'KeyRegistryError';
+  }
+}
+
+function assertOnlyFields(record, allowed, label) {
+  for (const field of Object.keys(record)) {
+    if (!allowed.includes(field)) throw new KeyRegistryError(`${label} carries the unknown field ${field}`);
+  }
+}
+
+export function parseKeyRegistry(text) {
+  let payload;
+  try {
+    payload = JSON.parse(text);
+  } catch {
+    throw new KeyRegistryError('the key registry is not valid JSON');
+  }
+  if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
+    throw new KeyRegistryError('the key registry is not an object');
+  }
+  assertOnlyFields(payload, REGISTRY_FIELDS, 'the key registry');
+  if (payload.schemaVersion !== REGISTRY_VERSION) {
+    throw new KeyRegistryError(`unsupported key registry version ${payload.schemaVersion}`);
+  }
+  if (!Array.isArray(payload.keys)) {
+    throw new KeyRegistryError('the key registry must carry a keys array');
+  }
+  const keys = [];
+  for (const entry of payload.keys) {
+    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {
+      throw new KeyRegistryError('a key registry entry is not an object');
+    }
+    assertOnlyFields(entry, KEY_FIELDS, 'a key registry entry');
+    for (const field of KEY_FIELDS) {
+      if (!Object.hasOwn(entry, field)) throw new KeyRegistryError(`a key registry entry is missing ${field}`);
+    }
+    const fingerprint = normalizeFingerprint(entry.fingerprint);
+    if (fingerprint === null) {
+      throw new KeyRegistryError('a key registry entry does not carry 64 uppercase hex characters as its fingerprint');
+    }
+    if (!STATUSES.includes(entry.status)) {
+      throw new KeyRegistryError(`a key registry entry uses the unknown status ${entry.status}`);
+    }
+    keys.push({
+      keyId: entry.keyId,
+      fingerprint,
+      publicKeyBase64: entry.publicKeyBase64,
+      status: entry.status,
+      minLauncherVersion: entry.minLauncherVersion,
+    });
+  }
+  return { schemaVersion: REGISTRY_VERSION, keys };
+}
+
+export function fingerprintsForVersion(registry, launcherVersion) {
+  const match = registry.keys.filter(
+    (entry) => entry.status === 'active' && entry.minLauncherVersion === launcherVersion,
+  );
+  if (match.length === 0) return null;
+  return match.map((entry) => entry.fingerprint);
+}
+```
+
+**说明：** `fingerprintsForVersion` 按"该启动器版本"精确匹配 `minLauncherVersion`，因为回执里的 `launcherVersion` 就是构建启动器时用的版本。若实际登记需要区间语义，先在 Step 0.1 里把测试改成区间用例再改实现——**不要**两边不一致。
+
+- [ ] **Step 0.4: 运行测试并确认通过**
+
+```bash
+node --test scripts/lib/key-registry.test.mjs
+```
+
+预期：`fail 0`、`pass 7`。
+
+- [ ] **Step 0.5: 行为级变异验证**
+
+1. 把 `entry.status === 'active'` 过滤删掉 ⇒ 预期 `a retired key is never returned for a new release` **按测试名变红**。
+2. 把 `normalizeFingerprint(entry.fingerprint)` 换成直接用 `entry.fingerprint` ⇒ 预期 `an unusable fingerprint is rejected when parsing` 与 `a grouped fingerprint is normalised so the ledger may use 4 character groups` **按测试名变红**。
+3. 把 `assertOnlyFields(payload, ...)` 调用删掉 ⇒ 预期 `an unknown field in the registry is rejected` **按测试名变红**。
+
+恢复后 `git diff` 为空且全绿。
+
+- [ ] **Step 0.6: 提交**
+
+```bash
+git add scripts/lib/key-registry.mjs scripts/lib/key-registry.test.mjs
+git commit -m "feat(release): read the registered keys from the machine readable registry"
+```
 
 - [ ] **Step 1: 写失败的测试**
 
@@ -972,7 +1234,17 @@ export const MINIMUM_LAUNCHER_BYTES = 64 * 1024;
 
 并对 CLI 增加 `--receipt <path>`：读取回执 → `parseReceipt` → 解析失败 ⇒ 新增 `launcher-receipt-missing` 级别错误；成功 ⇒ 计算 EXE 的 SHA-256 与大小，调用 `checkReceipt`，**`errors` 升级为 findings（`level: 'error'`，id `launcher-receipt-invalid`），`warnings` 原样作为 warn findings 传入 `auditDelivery` 的 `options.receiptWarnings`**。
 
-`checkReceipt` 的 `expectedFingerprints` 与 `knownPublicKeysBase64` 来自新增 CLI 参数 `--key-registry <path>`（指向 `docs/portable-update-key-registry.md` 旁的机器可读台账；本轮台账只放模板，因此该参数**可选**；缺失时跳过指纹比对并把这件事作为 `warn` 记一条，id `launcher-key-registry-missing`）。
+`checkReceipt` 的 `expectedFingerprints` 与 `knownPublicKeysBase64` 来自 `--key-registry <path>`（指向机器可读台账 `docs/portable-update-key-registry.json`）。**该参数在正式路径上是必填的**：
+
+| 情形                                         | 结果                                                                               |
+| -------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `--key-registry` 缺失                        | **硬失败**：`--key-registry is required unless --test-only is given`               |
+| 台账不可解析 / 字段非法 / 指纹不合法         | **硬失败**（`parseKeyRegistry` 抛 `KeyRegistryError`）                             |
+| 台账里该启动器版本没有 active 登记           | **硬失败**：`the key registry has no active key registered for launcher version …` |
+| 指纹集合不一致                               | **硬失败**（`checkReceipt` 报 error）                                              |
+| 显式 `--test-only` 且 `_TEST-ONLY-` 前缀成立 | 允许缺省，但记 `warn` + 打印不可发布警告                                           |
+
+**不得**有任何"没有台账就跳过检查"的路径。台账模板的 `keys` 为空数组，因此**真实组装在密钥仪式完成之前会被正确地挡住**——这是预期行为，不是缺陷。
 
 - [ ] **Step 4: 运行测试并确认通过**
 
@@ -1048,7 +1320,83 @@ test('the assemble CLI refuses a mismatched build receipt', () => {
   assert.equal(result.status, 1);
   assert.match(result.stderr, /hash does not match/i);
 });
+
+test('the assemble CLI refuses to run without a key registry', () => {
+  const root = makeDelivery({ launcherBytes: makePeBytes() });
+  const receiptPath = writeMatchingReceipt(root, makePeBytes());
+  const out = makeEmptyOutputDir();
+  const result = spawnSync(
+    process.execPath,
+    [
+      path.join(repositoryRoot, 'scripts', 'assemble-udisk-delivery.mjs'),
+      '--app-dir',
+      path.join(root, APP_DIR_NAME),
+      '--launcher',
+      path.join(root, LAUNCHER_EXE_NAME),
+      '--receipt',
+      receiptPath,
+      '--out',
+      out,
+    ],
+    { encoding: 'utf8' },
+  );
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /--key-registry is required/u);
+});
+
+test('the assemble CLI refuses a test only build whose output directory is not marked', () => {
+  const root = makeDelivery({ launcherBytes: makePeBytes() });
+  const receiptPath = writeMatchingReceipt(root, makePeBytes());
+  const out = makeEmptyOutputDir();
+  const result = spawnSync(
+    process.execPath,
+    [
+      path.join(repositoryRoot, 'scripts', 'assemble-udisk-delivery.mjs'),
+      '--app-dir',
+      path.join(root, APP_DIR_NAME),
+      '--launcher',
+      path.join(root, LAUNCHER_EXE_NAME),
+      '--receipt',
+      receiptPath,
+      '--test-only',
+      '--out',
+      out,
+    ],
+    { encoding: 'utf8' },
+  );
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /_TEST-ONLY-/u);
+});
+
+test('the assemble CLI refuses a registry that has no key for this launcher version', () => {
+  const root = makeDelivery({ launcherBytes: makePeBytes() });
+  const receiptPath = writeMatchingReceipt(root, makePeBytes());
+  const registryPath = path.join(root, 'registry.json');
+  fs.writeFileSync(registryPath, JSON.stringify({ schemaVersion: 1, keys: [] }), 'utf8');
+  const out = makeEmptyOutputDir();
+  const result = spawnSync(
+    process.execPath,
+    [
+      path.join(repositoryRoot, 'scripts', 'assemble-udisk-delivery.mjs'),
+      '--app-dir',
+      path.join(root, APP_DIR_NAME),
+      '--launcher',
+      path.join(root, LAUNCHER_EXE_NAME),
+      '--receipt',
+      receiptPath,
+      '--key-registry',
+      registryPath,
+      '--out',
+      out,
+    ],
+    { encoding: 'utf8' },
+  );
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /no active key registered/u);
+});
 ```
+
+**命名对齐：** 上面的 `writeMatchingReceipt(root, bytes)` 与 `makeEmptyOutputDir()` 需要按该文件既有的夹具风格补两个小辅助：前者生成一份 `exeSha256`/`exeSize` 与给定字节**完全匹配**的回执（复用 Task 2 的回执字段表），后者用 `fs.mkdtempSync` + `fs.rmdirSync` 造一个"存在但为空"的输出目录。先把它们加进夹具区，再运行测试。
 
 - [ ] **Step 6: 运行测试并确认按测试名失败**
 
@@ -1084,7 +1432,7 @@ const verdict = checkReceipt({
   receipt,
   exeSha256: createHash('sha256').update(launcherBytes).digest('hex'),
   exeSize: launcherBytes.length,
-  expectedFingerprints: receipt.embeddedKeyFingerprints,
+  expectedFingerprints: await resolveRegisteredFingerprints(input, receipt),
   outDir: dirname(input.launcher),
   now: Date.now(),
   maxAgeMs: RECEIPT_MAX_AGE_MS,
@@ -1096,6 +1444,64 @@ for (const message of verdict.warnings) console.warn(`WARNING: ${message}`);
 ```
 
 （`RECEIPT_MAX_AGE_MS` 定义为 `7 * 24 * 60 * 60 * 1000`，并在文件里注明这是提醒窗口而非安全属性——留一行注释即可，`scripts/` 允许注释。）
+
+(c2) 新增本刀的核心函数——**期望指纹只能来自台账**，不能来自回执自身（拿回执比回执等于什么都没验）：
+
+```js
+async function resolveRegisteredFingerprints(input, receipt) {
+  if (input.testOnly === true) {
+    if (!basename(input.outDir).startsWith(TEST_ONLY_DIRECTORY_PREFIX)) {
+      throw new Error(`--test-only requires an output directory whose name starts with ${TEST_ONLY_DIRECTORY_PREFIX}`);
+    }
+    console.warn('WARNING: this delivery bypasses the key registry and must never be published');
+    return receipt.embeddedKeyFingerprints;
+  }
+  if (input.keyRegistryPath === null) {
+    throw new Error('--key-registry is required unless --test-only is given');
+  }
+  const registry = parseKeyRegistry(await readFile(input.keyRegistryPath, 'utf8'));
+  const registered = fingerprintsForVersion(registry, receipt.launcherVersion);
+  if (registered === null) {
+    throw new Error(`the key registry has no active key registered for launcher version ${receipt.launcherVersion}`);
+  }
+  return registered;
+}
+```
+
+顶部补常量与导入（`basename` 来自 `node:path`）：
+
+```js
+const TEST_ONLY_DIRECTORY_PREFIX = '_TEST-ONLY-';
+```
+
+```js
+import { fingerprintsForVersion, parseKeyRegistry } from './lib/key-registry.mjs';
+```
+
+(c3) `parseArguments` 增加两个**非必填**旗标（`--key-registry` 在 test-only 下允许缺省，因此不能进必填列表）：
+
+```js
+function parseArguments(argv) {
+  const names = ['app-dir', 'launcher', 'receipt', 'out'];
+  const values = {};
+  for (const name of names) {
+    const index = argv.indexOf(`--${name}`);
+    if (index < 0 || !argv[index + 1] || argv[index + 1].startsWith('--')) {
+      throw new Error(`--${name} is required`);
+    }
+    values[name] = argv[index + 1];
+  }
+  const registryIndex = argv.indexOf('--key-registry');
+  return {
+    appDir: resolve(values['app-dir']),
+    launcher: resolve(values.launcher),
+    receiptPath: resolve(values.receipt),
+    outDir: resolve(values.out),
+    keyRegistryPath: registryIndex >= 0 && argv[registryIndex + 1] ? resolve(argv[registryIndex + 1]) : null,
+    testOnly: argv.includes('--test-only'),
+  };
+}
+```
 
 (d) 把启动器的两字节检查换成 PE 检查器：
 
@@ -1128,6 +1534,10 @@ node --test scripts/lib/udisk-delivery.test.mjs
 2. 删掉 `launcher-key-mismatch` 的“必须出现”分支 ⇒ 预期 `a launcher missing the registered public key is a release-blocking error` **按测试名变红**。
 3. 把 `warning()` 返回的 `level` 改成 `'error'` ⇒ 预期 `warnings do not make the delivery fail` **按测试名变红**。
 4. 把组装器里 `verdict.errors.length > 0` 的拒绝改成 `console.warn` ⇒ 预期 `the assemble CLI refuses a mismatched build receipt` **按测试名变红**。
+5. 把 `resolveRegisteredFingerprints` 里 `input.keyRegistryPath === null` 的硬失败改成 `return receipt.embeddedKeyFingerprints`（即退回"没有台账就跳过"）⇒ 预期 `the assemble CLI refuses to run without a key registry` **按测试名变红**。
+6. 把 `resolveRegisteredFingerprints` 里 `registered === null` 的硬失败改成 `return receipt.embeddedKeyFingerprints` ⇒ 预期 `the assemble CLI refuses a registry that has no key for this launcher version` **按测试名变红**。
+7. 把 `_TEST-ONLY-` 前缀检查删掉 ⇒ 预期 `the assemble CLI refuses a test only build whose output directory is not marked` **按测试名变红**。
+8. 把 `fingerprintsForVersion` 里 `status === 'active'` 过滤删掉 ⇒ 预期 Task 0.5 的 `a retired key is never returned for a new release` **按测试名变红**。
 
 恢复后 `git diff` 为空且全绿。
 
@@ -1136,7 +1546,7 @@ node --test scripts/lib/udisk-delivery.test.mjs
 修改 `package.json`：新增
 
 ```json
-"check:portable-release-assembly": "node --test scripts/lib/portable-executable.test.mjs scripts/lib/launcher-receipt.test.mjs scripts/lib/portable-launcher-challenge.test.mjs scripts/lib/portable-unsigned-artifacts.test.mjs"
+"check:portable-release-assembly": "node --test scripts/lib/portable-executable.test.mjs scripts/lib/launcher-receipt.test.mjs scripts/lib/key-registry.test.mjs scripts/lib/portable-launcher-challenge.test.mjs scripts/lib/portable-unsigned-artifacts.test.mjs"
 ```
 
 并把 `pnpm check:portable-release-assembly` 插到 `check` 里 `pnpm check:portable-update-release` **之后**、`pnpm lint` **之前**。
@@ -1923,6 +2333,26 @@ git commit -m "ci(release): build unsigned portable artifacts without production
 - 2026-09-22：建立台账骨架（模板）。本轮未生成任何真实密钥。
 ```
 
+- [ ] **Step 3b: 创建机器可读台账模板**
+
+创建 `docs/portable-update-key-registry.json`：
+
+```json
+{
+  "schemaVersion": 1,
+  "keys": []
+}
+```
+
+**这是模板，不是可用的台账。** `keys` 为空数组意味着：任何**真实**组装与**真实**交付审计都会因为"该启动器版本没有 active 登记"而**硬失败**——这正是规格 §5.4 要求的行为。台账内容只能在**获授权的离线签名仪式**之后，由 `docs/runbooks/portable-launcher-signing-ceremony.md` 记录的公钥与指纹填进去。
+
+在 `docs/portable-update-key-registry.md` 里加一行说明两者的关系：
+
+```markdown
+> 机器可读台账是 `docs/portable-update-key-registry.json`（组装器与审计读取它）；本文件是它的**人类可读对照**。
+> 两者必须一致，且**都只含公开信息**。`keys` 为空时，正式组装会被正确拒绝。
+```
+
 - [ ] **Step 4: 修正计划书里的假门禁**
 
 `docs/superpowers/plans/2026-09-21-portable-full-directory-update.md:998` 所在的三个名字代码块：删掉 `MOFANG_UPDATE_FEED_UPLOAD_TOKEN` 一行，并在该代码块下方注明：该密钥从未被任何脚本消费，已在 2026-09-22 的 CI 纠偏中删除；生产签名改为离线流程。
@@ -2031,6 +2461,8 @@ pnpm check
 - **没有构建客户候选包、没有触碰更新源、没有连接服务器**。
 - **Authenticode 未实现**，只作为残留风险记录在台账与手册里。
 - host-key 指纹**未核对**：台账中该行保持“待核对”，必须由用户或授权运维人员经可信带外渠道完成。
+- **机器可读台账的 `keys` 是空数组**，因此**真实组装在密钥仪式完成之前会被正确硬拒绝**。这是规格 §5.4 要求的行为，不是缺陷；不要为了让组装跑通而放宽台账检查。
+- `--test-only` 是一条**显式**旁路，只用于开发夹具：它要求输出目录名以 `_TEST-ONLY-` 开头并记 `warn`。因此它不构成生产绕过入口——一份叫 `_TEST-ONLY-…` 的交付包不可能被当成正式包发出去。
 - CI 跑通与否**未验证**：本轮不推送远端，`portable-artifacts.yml` 是否能在 GitHub 上真正执行属于未验证项。
 
 相关：`docs/superpowers/specs/2026-09-22-portable-release-infrastructure-correction-design.md`
