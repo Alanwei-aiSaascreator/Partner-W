@@ -1609,7 +1609,7 @@ export async function breakChannelLock(input) {
 
 1. **`owner.json` 必须携带 §6.6 的五个字段（第二个实现偏离）。** 规定文本的 `acquireChannelLock` **完全不校验** `input.owner`，规定夹具传的是两字段的 `{ runid, planHash }`，Task 4 的获取处也照此传。§6.6（spec 行 319）要求锁内写 `runid`、`operator`、`startedAt`、`planHash`、执行机标识；spec 行 322 要求 `--break-lock` 打印原 owner 的**完整信息**并让操作员确认"前一次运行确实不在进行中"——两字段的记录让这个判断无从做起，`startedAt` 更是**全计划里找不到出处**。实现改为在 `mkdir` **之前**逐字段校验（每个字段都必须 `trim()` 后非空，坏记录**永远不创建锁**）。**规定清单看不见差别**：五个字段检查逐个删掉，**规定的十三条全绿**（它们的 owner 都是完整记录），红的只有本刀新增的**六条**字段用例（五个 `an owner record without a <field> never creates a lock` 加一条 blank；实测：删 `runid` / `operator` / `startedAt` / `planHash` 各只红自己那一条，删 `machine` 红两条）。规定的夹具与三条规定的 acquire 用例因此改用完整的 `OWNER_RECORD`——**规定的 13 条测试名一个都没改**。
 2. **`releaseChannelLock` 不再把两个 §6.6 前提写成字面量（第三个实现偏离）。** 规定文本里 `acquisitionConfirmed: true` 与 `safeToExit: true` 是**字面量**，于是 §6.6 的推论（"本次尚未取得锁时……**不得声称「保留」或「释放」一个并不属于自己的锁**"，spec 行 352）与保留表（"翻转之后失败 ⇒ `incident` ⇒ **保留锁**"，spec 行 333）在这个入口上**无法表达**——Task 4 的 `releaseAndFinish` 正是不传这两个参数调用它的，于是它无条件断言"本次确实取得过锁"且"安全退出"。实现改为把两个输入往下传（`resolveLockDisposition` 内部本来就 fail closed：`!== true` 即拒绝）。规定的三条 release 用例因此各自补上 `acquisitionConfirmed: true, safeToExit: true`——**测试名不变**。**规定清单看不见差别**：把 `acquisitionConfirmed` 还原成字面量 `true` ⇒ 只红本刀新增的 `a release that never confirmed its own acquisition refuses and writes nothing`（69 → 68）；把 `safeToExit` 还原成字面量 ⇒ 只红 `a release that is not safe to exit keeps the lock this run owns`（69 → 68）。
-3. **§6.4 的信任锚现在每条远程调用都被钉住（第四个偏离，改动落在测试夹具与规定用例上）。** 规定夹具只记 `request.script`，所以从七个调用点里删掉 `host:` 或 `knownHostsPath:` **58/58 全绿**（实测）——`knownHostsPath` 是签名闸门之外的另一道信任锚，掉线不报错、只静默失效。实现：假 transport 记下**整个 request**，并用共享助手 `assertEveryCallCarriesTheTrustAnchor(calls)` 在每条走 transport 的测试里断言 `host` 与 `knownHostsPath` 恰好等于 `HOST` / `KNOWN_HOSTS_PATH`；助手**先断言 `calls.length > 0`**（零调用不许空过）。Task 1/2 的 preflight 夹具与三条 preflight 用例一并接上——只修 Task 3 会把同一个洞留在隔壁。**规定清单看不见差别**：删 `readOwnerRecord` 调用里的 `host:` ⇒ 红 13 条（69 → 56），删 `acquireChannelLock` 的 `mkdir` 调用里的 `knownHostsPath:` ⇒ 红 10 条（69 → 59）；两条在修复前都是 58/58 全绿。
+3. ~~**§6.4 的信任锚现在每条远程调用都被钉住**~~（**这句已撤销，不要单独引用：它对假 transport 为真，对真实 transport 曾经没有约束力 —— 见本条下面的更正段**）**§6.4 的信任锚被写进了每条远程调用的 request（第四个偏离，改动落在测试夹具与规定用例上）。** 规定夹具只记 `request.script`，所以从七个调用点里删掉 `host:` 或 `knownHostsPath:` **58/58 全绿**（实测）——`knownHostsPath` 是签名闸门之外的另一道信任锚，掉线不报错、只静默失效。实现：假 transport 记下**整个 request**，并用共享助手 `assertEveryCallCarriesTheTrustAnchor(calls)` 在每条走 transport 的测试里断言 `host` 与 `knownHostsPath` 恰好等于 `HOST` / `KNOWN_HOSTS_PATH`；助手**先断言 `calls.length > 0`**（零调用不许空过）。Task 1/2 的 preflight 夹具与三条 preflight 用例一并接上——只修 Task 3 会把同一个洞留在隔壁。**规定清单看不见差别**：删 `readOwnerRecord` 调用里的 `host:` ⇒ 红 13 条（69 → 56），删 `acquireChannelLock` 的 `mkdir` 调用里的 `knownHostsPath:` ⇒ 红 10 条（69 → 59）；两条在修复前都是 58/58 全绿。
 
 ⚠️ **代码质量闸门（第十二节）更正本条的第一句：那句话对假 transport 为真，对真实 transport 曾经没有约束力。** 它写着"§6.4 的信任锚**现在每条远程调用都被钉住**"，证据是"删 `host:` ⇒ 13 条红"。但规定的 Task 6 `sshRun(request)` **只读 `request.script`**：`request.host` 与 `request.knownHostsPath` 在那里**从不被读取**，真实控制点是 `createFeedTransport` 工厂闭包里绑一次的那两个值。于是那 13 条红证明的是**调用方把锚点写进了 request**，而不是**真实传输据此选锚** —— 把这两个字段从每个调用点删干净，真实路径上执行的东西**一个字节都不变**。这是本节纪律禁止的"两条契约并存"形状：一条被断言的契约（request 带字段）与一条被执行的契约（工厂闭包）各说各话，而账本把前者的读数当成了后者的安全证明。**落地（只改计划，Task 6 尚未实现）**：Task 6 的 `sshRun` / `sftpUpload` 现在规定用 **`request.host ?? host` / `request.knownHostsPath ?? knownHostsPath`**，并新增一条按名钉住"每次调用可以覆盖默认锚点"的用例（Task 6 步骤 1 最后一条）与一条变异（Task 6 步骤 5 第 8 条）。**这条钉子现在有承载力**：调用方写进 request 的锚点会被真的用上；漏写则退回工厂那份**同一次运行里绑定的**锚点（不会因为漏写而换一台机器、也不会放宽主机键检查）。**真实 transport 必须做的是**：每次 `ssh` / `sftp` 都按 request 给的值（缺省退回工厂值）拼 `UserKnownHostsFile=` 与目标主机，并**永不**放宽 `StrictHostKeyChecking=yes`。
 
@@ -2131,6 +2131,20 @@ test('a run without a temporary root fails before any remote write', async () =>
   assert.match(result.reason, /temporary root/u);
   assert.equal(result.lockState, 'not-acquired');
   assert.deepEqual(transport.calls, []);
+  const entries = auditEntriesOf(input.auditOut);
+  assert.equal(entries.at(-1).stage, 'fail');
+});
+
+test('a run without a public verifier fails before any remote write', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths);
+  const input = commitInput(transport, { ...paths, verifier: undefined });
+  const result = await runCommit(input);
+  assert.equal(result.outcome, 'fail');
+  assert.match(result.reason, /verifier is required/u);
+  assert.equal(result.lockState, 'not-acquired');
+  assert.deepEqual(transport.calls, []);
+  assert.equal(result.stages.find((entry) => entry.stage === 'lock').status, 'pending');
   const entries = auditEntriesOf(input.auditOut);
   assert.equal(entries.at(-1).stage, 'fail');
 });
@@ -3240,6 +3254,12 @@ function assertTemporaryRoot(temporaryRoot) {
   }
 }
 
+function assertVerifier(verifier) {
+  if (typeof verifier !== 'function') {
+    throw new FeedPublishError('a public artifact verifier is required to verify the published artifacts');
+  }
+}
+
 const RUNID_PATTERN = /^[A-Za-z0-9._-]+$/u;
 
 function assertSafeRunid(runid) {
@@ -3512,6 +3532,7 @@ export async function runCommit(input) {
     assertSafeVersion(input.version);
     assertSafeRunid(runid);
     assertTemporaryRoot(input.temporaryRoot);
+    assertVerifier(input.verifier);
     local = await verifyLocalArtifacts({
       packagePath: input.packagePath,
       fileManifestPath: input.fileManifestPath,
@@ -4318,6 +4339,64 @@ git commit -m "feat(feed): publish the manifest over sftp and verify it on the p
 - **`readOwnerRecord` 的返回形状是对外 API 变更**（它被 `export`）：今天只有本模块与测试用它，Task 7 接 CLI 时不要按旧形状（`T | null`）写。
 - **`verifySignature` 现在是两个入口的必填项**（`verifyLocalArtifacts` 与经过它的 `planCommit`）⇒ Task 7 的 `--dry-run` 也必须注入真验证器，否则 dry-run 会以 `FeedPublishError` 失败；**这是有意的**：dry-run 打印的"计划"必须建立在"签名已验证"之上。
 - **`assertCompleteOwnerRecord` 在 `pre-verify` 与 `acquireChannelLock` 两处重复调用**：**故意保留**（入口负责给出干净的 `fail` + 收口条目，sink 负责"坏记录永远不创建锁"），两处各有一条按名读数（M-B1 / M-B2）；**别把它当冗余删掉**。
+
+### 十三、Task 4 收尾小刀（复核者交办的四处）的落地、读数与账本更正
+
+**这一刀是什么：** Task 4 的最后一刀，四件事：① **公开验证器的闸门提到任何远端写之前**（复核者的探针：缺 `input.verifier` 的那次发布**在线上成功**、`flip: done`、**26 次 transport 调用**，然后才报 `incident` + `lockState: retained-by-this-run` —— 一次**确定的失败**被报成**不确定的事故**并留锁，把操作员推向 `--break-lock`；与刚修好的 `temporaryRoot` 是同一形状）；② `:1612` 那句被撤销的话**就地划掉**（原先只有下一条更正它，而表格行可以被单独引用 —— 划掉之后，单独引用它也带着撤销）；③ **两条残余项披露**（`cause` 被三个锁调用点丢掉；`readRemoteDirectory` 是最后一处把失败塌成值的读）；④ 复核者问"删除读数的红数是**套件**的属性、不是接线的属性"这句原则要不要补进账本 —— **核对结论：账本已经有**（`:4094` 与 `:4219`，本刀**未改一个字**，见第五节）。**代码提交 1 个**：`c0d72905`（模块 + 测试，blob sha256 `e860836c…` / `afde8f6a…`，与变异基线**逐字节相同** —— 提交时 `pre-commit` 跑过 `eslint --fix` + `prettier --write`，两个 blob 都没被改动）。
+
+**一、公开验证器的闸门提到任何远端写之前（本刀唯一一处代码改动）**
+
+- **`feed-publish.mjs:517-521` 新增模块私有 `assertVerifier(verifier)`**（不是函数即抛 `FeedPublishError('a public artifact verifier is required to verify the published artifacts')`）；**`:795` 在 `runCommit` 的 `pre-verify` try 里调用一次**，紧接 `assertTemporaryRoot`（`:794`）。因此缺公开验证器 ⇒ `fail` + 终态条目 + **零 transport 调用 + 锁一个字节都没动**。
+- **汇点闸门原样保留（`:655-658`）**：它是"`verifyPublicArtifacts` 入口四个汇点闸门"的一部分，有按名用例（`the public verification refuses a missing temporary root or verifier before any fetch`，`feed-publish.test.mjs:2149`），并保护**直接调用** `verifyPublicArtifacts` 的人。本刀**没有**把它改成调用 `assertVerifier` —— 那会把两处文案并成一处、并动到一条已被钉住的路径；今天两处文案独立、各自被钉住。
+- **修复前 / 修复后**：修复前 —— 缺 `input.verifier` 的发布**在线上成功**（复核者的 `flip: done` + 26 次 transport 调用；本刀复现到的是它的后果形状：那条新用例在修复前以 `actual: 'incident'` vs `expected: 'fail'` 变红）之后才以 `outcome: incident` + `lockState: retained-by-this-run` 收口；修复后 —— `outcome: fail`、`reason` 就是那句 `FeedPublishError`、`lockState: not-acquired`、**零 transport 调用**、`lock` 阶段仍是 `pending`。与本地签名闸门对齐（那条同样 `fail` + 零传输）。
+
+**二、新增用例与变异读数**
+
+- 新用例 **`a run without a public verifier fails before any remote write`**（`feed-publish.test.mjs:1702`），与 `a run without a temporary root fails before any remote write`（`:1689`）并排；断言六件：`outcome === 'fail'`、`reason` 匹配 `/verifier is required/u`、`lockState === 'not-acquired'`、**零 transport 调用**、`lock` 阶段仍是 `pending`、日志最后一条是终态条目（`stage === 'fail'`）。
+- 套件 **151 条**（`ℹ tests 151` / `ℹ pass 151` / `ℹ fail 0`），比本刀前 **150** 条多 **1** 条。
+
+| #                | 变异（hunk：`-` 删 / `+` 加）                                                                                              | 读数                | 按名变红的测试                                                                                                     |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| 对照             | `- 'the manifest upload failed'` / `+ 'the manifest upload did not succeed'`（只改一句**没有任何断言读它**的审计详情文案） | **151 / 0（全绿）** | —（证明装置不是"改什么都红"）                                                                                      |
+| M-verifier-hoist | 删掉 `feed-publish.mjs:795` 整行 `assertVerifier(input.verifier);`                                                         | **151 / 1**         | `a run without a public verifier fails before any remote write`（实测 `actual: 'incident'` vs `expected: 'fail'`） |
+
+装置每条动作：断言锚点恰好匹配 **1** 次 → **变异之前**取 sha256 基线并在盘上落一份备份 → 写入 → 重读确认落盘 → `node --check` → 跑套件 → **打印 hunk（整行 + 三行上下文）** → 核对红名单 → **逐字节恢复** → 比 sha256 → 断言该文件的 `git status` 与变异前**逐字相同**。**装置先自检**：喂**不存在**的锚点（`ANCHOR_COUNT 0`）与**出现两次**的锚点（`assertTemporaryRoot(input.temporaryRoot);` ⇒ `ANCHOR_COUNT 2`），两条都 rc=3、**没有写盘、没有跑套件**。基线：模块 `e860836c…`、测试 `afde8f6a…`；两条读数恢复后 sha256 都相等。⚠️ **`node --test` 把同一个失败名打印两次**（进度行 + 汇总行）—— 去重后是 **1 条**，不是两条。
+
+**三、两条残余项披露（本刀只登记、不改代码）**
+
+1. **`readOwnerRecord` 的 `cause` 被三个锁调用点丢掉（`feed-publish.mjs:304` / `:380` / `:427`），`breakChannelLock` 仍对三种成因只报同一句话。** 本刀实测（读代码，两个读数）：`cause` 的取值只有**两句**（`:268` 的 `the owner record could not be read` 与 `:272` 的 `the owner record is not valid JSON`）—— `cat` 的非零退出把"文件不存在"与"取不到"合成**同一句**，所以是"三种成因、两句文案"；模块里**唯一**消费 `cause` 的调用点是步骤 5 的重读（`:918-919`）。**这不是洞**：判据是 `owner === null` 一律拒绝拆锁（fail-closed），代价只在**文案**。**它的归宿是 Task 7**（`--owner-record-unreadable` 那条路正是 `cause` 该起作用的地方），已写成 Task 7 验收项第 7 条（`:5235`）。
+2. **`readRemoteDirectory` 是最后一处把"读失败"塌成一个值的读（`feed-publish.mjs:550`：`if (listing.status !== 0) return [];`）。** 于是 `inspectRemoteDirectory:622` 把"列不出来"与"目录是空的"合成 `empty: true`，`runCommit:884-886` 再把它写成 `the staging directory is not the exact final file set: the staging directory is empty`。**处置：披露、不改。** 两条路的收口都是 `finish('fail', …, 'not-acquired')`（`:889`，在任何写与取锁之前），差别只在**文案稍微不准确**；将来若要收口，形状应当与 `readRemoteFileSha` 一致（返回 `{ ok, … }`），而不是在调用点猜。
+
+**四、`:1612` 的撤销（只改计划文本）**
+
+- 原文第一句"§6.4 的信任锚现在每条远程调用都被钉住"**已就地划掉**（`~~…~~`），同一行接上"**这句已撤销，不要单独引用：它对假 transport 为真，对真实 transport 曾经没有约束力 —— 见本条下面的更正段**"，随后才是更正后的说法（"锚点被写进了每条远程调用的 request"）。**下一条的更正段（`:1614`）一字未动** —— 撤销与更正并存。**为什么必须动它**：原来只有下一行更正它，而这条偏离的第一个短语在别处被引用时（`:4220` / `:4278`）都以"降级"的形式出现；问题不在那些引用，而在**第一句本身仍可被抽出来单独引用**。现在抽出来也带着撤销。
+
+**五、复核者的那条原则：账本已经有（核对结论，未改一个字）**
+
+- 复核者要的是"**两条读数 + 各自证明了什么**"：**删除读数**（M-Q1：删掉 `runCommit` 的 `verifySignature: input.verifySignature` 透传 ⇒ **红 46 条**）与**判别性读数**（M-Q2：把透传换成静默 `() => {}` ⇒ **红 2 条**，两条都按名）。**核对结果：两条都在**（`:4219`），而且"各自证明了什么"也写着 —— `:4094`（37 条读数表下的更正）与 `:4219`（第十二节第 1 条）写明：闸门一旦是必须的，共享夹具 `commitInput` 就必须提供验证器 ⇒ **"删掉透传"对每一条走 `runCommit` 的用例都是 fail-closed，红面必然很宽**（红数是**套件**的属性 —— 有多少条测试会走到那道闸门 —— 而不是接线的属性）；要"只红一条"就得让闸门可选，而那正是缺陷本身；**判别性的那条是 M-Q2**，红在"**调用方自己的验证器是否真的被跑到**"上。**结论：不需要新增句子，本刀在这里一个字都没改。**
+
+**六、本刀对规定块本体的偏离（本刀这一份，唯一清单）**
+
+"规定原文" = `7a11520b` 的那一份（本刀改之前、当时与文件逐字节相同的那一份）。
+
+| #   | 规定原文（`7a11520b`）                                                                                   | 本刀改成                                                                                                | 为什么必须改        | 钉住它的读数     |
+| --- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- | ------------------- | ---------------- |
+| 15  | `runCommit` 的 `pre-verify` try 里只有 `assertTemporaryRoot(input.temporaryRoot);`，没有公开验证器的闸门 | 同一处加一行 `assertVerifier(input.verifier);`（`:795`），并新增模块私有 `assertVerifier`（`:517-521`） | 复核者交办的第 ① 项 | M-verifier-hoist |
+
+**测试侧的新增（不是偏离，登记备查）**：新用例 1 条（`a run without a public verifier fails before any remote write`，`feed-publish.test.mjs:1702`）。
+
+**七、当前读数（本刀实测，取代第十二节第六小节）**
+
+- `feed-publish.mjs` **1108** 行、`feed-publish.test.mjs` **2744** 行（`wc -l`）；套件 **151 条**（`ℹ tests 151` / `ℹ pass 151` / `ℹ fail 0`）。
+- **规定块边界（本刀同步过的两段 —— 八对里的后两对）**：Task 4 测试块 = 计划第 1780–3180 行 ⇔ `feed-publish.test.mjs` **1344–2744**（围栏在计划第 1779 / 3181 行）；Task 4 模块块 = 计划第 3196–3848 行 ⇔ `feed-publish.mjs` **456–1108**（围栏在计划第 3195 / 3849 行）。**八对 `diff` 全部 `DIFF_EMPTY`**（同步脚本按**父提交**的字节定位、断言**恰好 1 处命中**、断言上下各是一行围栏，再整段替换；替换后**从磁盘重读**，按"逐行相等**且连续** + 两侧是围栏"再验一遍）。⚠️ 本刀新增的这段正文（本节）在两对围栏**之后**，因此**没有**移动那八个围栏行号。
+- ⚠️ **本刀的第一次同步是错的，而且是被自己的检查器抓住的**：脚本误用了一个没有传进来的字段（`spec.fileEnd`），于是把文件**尾随换行产生的那一个空串**也拼进了围栏 —— 读数正好是 `hits 1`（区域仍然唯一）但**区域后面多出一个空行**，围栏判据报 `DIFF`。**这正是"先验你自己的验证脚本"那条纪律的又一次现场**：只看 `hits` 会以为同步成功。修法 = 把父提交区域与新区域的行号分开传，并从**同步之前**取的备份重来。
+- **没有连过任何服务器**：本刀的所有读数都来自注入的假 transport，与 Task 4 / 第九至十二节同规格。
+
+**八、本刀未做 / 未验（不得写成已完成）**
+
+- **没有实现 Task 5 / 6 / 7 / 8**：第三节第 1 条（`cause`）**只写成 Task 7 验收项**，代码一行没动。
+- **复核者那句"`flip: done` + 26 次 transport 调用"本刀没有复现**：本刀复现的是它的**后果形状**（修复前那条用例以 `actual: 'incident'` 变红）。别把 26 当成本刀的实测值引用。
+- **`readRemoteDirectory` 的塌值按第三节第 2 条披露、未改**；**`:1612` 只改计划文本，代码与测试都没动**。
 
 ### Task 5: `internal → stable` 重签
 
@@ -5153,6 +5232,7 @@ await main(process.argv.slice(2)).then(
    - `preflight`：§6.11 的会话级条目表里明写"（执行过 `--preflight` 时追加 `preflight`）"，但 Task 7 规定的 `preflight` 分支（`if (mode === 'preflight') { … runPreflight … }`）**只打印 JSON、一行审计都不写**，连 `--audit-out` 在该模式下都不必填。
    - `break-lock`：规定的文本是 `appendAuditStage({ auditOut, repositoryRoot, entry: { stage: 'break-lock', ...record } })`，而 `record`（`breakChannelLock` 的返回值）只有 `outcome` / `previousOwner` / `reason` / `operator` —— **没有 `at`**。
      **两条都必须补 `at`（同一个 CLI 层时钟，与第 5 条同源）**，并各自断言"这一行真的多了一条**带 `at`** 的审计条目"。⚠️ 这两个条目名**不在**第九节第二小节那份条目名单里 —— 那份名单只覆盖 Task 4 产出的条目（`preflight` / `break-lock` 在 Task 4 里根本不存在），**不要**因为名单里没有就当作不受 §6.11 约束。**修法二选一（本刀只记，不替 Task 7 拍）**：把规定的文本改成带 `at`，或在实现时按本验收项补 —— 但**不得**保持"规定的文本没有 `at`、审计行也不带 `at`"这个状态。
+7. **`readOwnerRecord` 的 `cause` 必须在 `--owner-record-unreadable` 这条路上被用起来（Task 4 收尾小刀追加，读数见第十三节第 3 条）。** `readOwnerRecord` 现在**会**返回 `cause`，但**三个锁调用点（`feed-publish.mjs:304` / `:380` / `:427`）都只取 `.record`、把 `cause` 丢掉** —— 于是 `breakChannelLock` 对**三种成因**仍然只报同一句 `the lock has no readable owner record, so it must be inspected by hand`。**本刀实测（读代码，两个读数）**：`cause` 的取值只有**两句**（`:268` 的 `the owner record could not be read` 与 `:272` 的 `the owner record is not valid JSON`）—— `cat` 的非零退出把"文件不存在"与"取不到"合成**同一句**，所以"三种成因、两句文案"而不是三句；模块里唯一消费 `cause` 的调用点是 `runCommit` 的步骤 5 重读（`:918-919`）。**这不是漏洞**：判据是 `owner === null` 一律拒绝拆锁，fail-closed，`cause` 只影响**文案**。但本项第 1 条那条 `--owner-record-unreadable` 路径**正是 `cause` 该起作用的地方** —— 操作员要据此判断该人工核查什么（记录没写成 / 写坏了 / 取不到），三者的动作不同。Task 7 落地时必须把 `cause` 带进 CLI 的输出与 `stage: 'break-lock'` 那条审计行；**验收方式必须是可观测的**：让假 transport 分别造出这三种成因，确认打印出来的**不再是同一句话**。**本刀只登记、不改代码。**
 
 - [ ] **Step 4: 运行测试并确认通过**
 
