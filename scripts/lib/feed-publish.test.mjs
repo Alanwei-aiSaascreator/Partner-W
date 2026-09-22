@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { afterEach, test } from 'node:test';
 
 import {
@@ -302,5 +302,64 @@ test('the local verification propagates an async verifier rejection', async () =
       },
     }),
     /signature rejected by the async verifier/u,
+  );
+});
+
+test('the local verification hands the verifier bytes rather than paths', async () => {
+  const paths = writeArtifacts();
+  const received = [];
+  await verifyLocalArtifacts({
+    ...paths,
+    expectedChannel: 'internal',
+    expectedVersion: '1.2.3',
+    publicKeyBase64: PUBLIC_KEY_BASE64,
+    verifySignature: async (context) => {
+      received.push(context);
+    },
+  });
+  assert.equal(received.length, 1);
+  const [context] = received;
+  assert.deepEqual(Object.keys(context).sort(), [
+    'fileManifestBytes',
+    'manifestBytes',
+    'packagePath',
+    'publicKeyBase64',
+  ]);
+  assert.ok(Buffer.isBuffer(context.manifestBytes));
+  assert.ok(Buffer.isBuffer(context.fileManifestBytes));
+  assert.ok(context.fileManifestBytes.equals(FILE_MANIFEST_BYTES));
+  assert.equal(context.packagePath, paths.packagePath);
+  assert.equal(context.publicKeyBase64, PUBLIC_KEY_BASE64);
+});
+
+test('a well formed network input keeps its host and resolves the known hosts path', () => {
+  const parsed = parsePublishInput({
+    channel: 'internal',
+    version: '1.2.3',
+    needsNetwork: true,
+    host: 'release.example.com',
+    knownHostsPath: '/tmp/known_hosts',
+  });
+  assert.equal(parsed.host, 'release.example.com');
+  assert.equal(parsed.knownHostsPath, resolve('/tmp/known_hosts'));
+});
+
+test('the known hosts guard is insensitive to case on windows', { skip: process.platform !== 'win32' }, () => {
+  assert.throws(
+    () => assertKnownHostsPath(join(process.cwd(), 'known_hosts').toUpperCase(), process.cwd()),
+    /must live outside the repository/u,
+  );
+});
+
+test('a manifest that is not a JSON object is rejected', async () => {
+  const paths = writeArtifacts({ manifestBytes: Buffer.from('null', 'utf8') });
+  await assert.rejects(
+    verifyLocalArtifacts({
+      ...paths,
+      expectedChannel: 'internal',
+      expectedVersion: '1.2.3',
+      publicKeyBase64: PUBLIC_KEY_BASE64,
+    }),
+    /is not a JSON object/u,
   );
 });

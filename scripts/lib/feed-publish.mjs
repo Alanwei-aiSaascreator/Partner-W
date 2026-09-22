@@ -83,6 +83,9 @@ export async function verifyLocalArtifacts(input) {
   } catch {
     throw new FeedPublishError('the release manifest is not valid JSON');
   }
+  if (typeof manifest !== 'object' || manifest === null || Array.isArray(manifest)) {
+    throw new FeedPublishError('the release manifest is not a JSON object');
+  }
 
   if (manifest.channel !== input.expectedChannel) {
     throw new FeedPublishError(`the manifest channel ${manifest.channel} does not match the requested channel`);
