@@ -2886,3 +2886,30 @@ test('the preflight read only promise is pinned by transport identity rather tha
   assert.ok(transport.calls.length > 0, 'the identity pin needs at least one recorded call');
   assert.deepEqual([...new Set(transport.calls.map((call) => call.face))], ['readOnly.sshRun']);
 });
+
+test('a known hosts path that carries whitespace is accepted by the input and by the guard', () => {
+  const spaced = join(tmpdir(), 'known hosts');
+  const input = parsePublishInput({
+    channel: 'internal',
+    version: '1.2.3',
+    needsNetwork: true,
+    host: 'h',
+    knownHostsPath: spaced,
+  });
+  assert.equal(input.knownHostsPath, resolve(spaced));
+  assert.equal(assertKnownHostsPath(spaced, process.cwd()), spaced);
+});
+
+test('a host that carries a control character is rejected by the same class the transport uses', () => {
+  assert.throws(
+    () =>
+      parsePublishInput({
+        channel: 'internal',
+        version: '1.2.3',
+        needsNetwork: true,
+        host: 'bad\u0001host',
+        knownHostsPath: '/tmp/known_hosts',
+      }),
+    /must not start with a dash or contain whitespace/u,
+  );
+});

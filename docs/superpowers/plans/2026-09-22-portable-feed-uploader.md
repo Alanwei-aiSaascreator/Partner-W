@@ -540,7 +540,7 @@ export function parsePublishInput(raw) {
     if (typeof raw.host !== 'string' || raw.host.length === 0) {
       throw new FeedPublishError('the ssh host is required');
     }
-    if (raw.host.startsWith('-') || /\s/u.test(raw.host)) {
+    if (raw.host.startsWith('-') || /[\s\u0000-\u001f]/u.test(raw.host)) {
       throw new FeedPublishError('the ssh host must not start with a dash or contain whitespace');
     }
     if (typeof raw.knownHostsPath !== 'string' || raw.knownHostsPath.length === 0) {
@@ -4959,15 +4959,19 @@ function pinnedOptions(knownHostsPath) {
   ];
 }
 
-function assertTransportAnchor(value, fallback, label) {
-  if (value === undefined || value === null) return fallback;
+function assertPinnedHost(value) {
   if (typeof value !== 'string' || value.length === 0) {
-    throw new FeedTransportError(`a per call ${label} must be a non empty string`);
+    throw new FeedTransportError('the ssh host must be a non empty string');
   }
   if (value.startsWith('-') || /[\s\u0000-\u001f]/u.test(value)) {
-    throw new FeedTransportError(
-      `a per call ${label} must not start with a dash or carry whitespace or control characters`,
-    );
+    throw new FeedTransportError('the ssh host must not start with a dash or carry whitespace or control characters');
+  }
+  return value;
+}
+
+function assertPinnedKnownHostsPath(value) {
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new FeedTransportError('the known hosts file must be a non empty string');
   }
   return value;
 }
@@ -4986,10 +4990,8 @@ export function mapExecFileOutcome(error, stdout, stderr) {
 export function createFeedTransport(input) {
   const host = input.host;
   const knownHostsPath = input.knownHostsPath;
-  if (typeof host !== 'string' || host.length === 0) throw new FeedTransportError('the ssh host is required');
-  if (typeof knownHostsPath !== 'string' || knownHostsPath.length === 0) {
-    throw new FeedTransportError('the pinned known hosts file is required');
-  }
+  assertPinnedHost(host);
+  assertPinnedKnownHostsPath(knownHostsPath);
 
   const runner =
     input.execFile ??
@@ -5001,8 +5003,8 @@ export function createFeedTransport(input) {
       }));
 
   async function sshRun(request) {
-    const callHost = assertTransportAnchor(request.host, host, 'ssh host');
-    const callKnownHostsPath = assertTransportAnchor(request.knownHostsPath, knownHostsPath, 'known hosts file');
+    const callHost = assertPinnedHost(request.host ?? host);
+    const callKnownHostsPath = assertPinnedKnownHostsPath(request.knownHostsPath ?? knownHostsPath);
     const result = await runner('ssh', [...pinnedOptions(callKnownHostsPath), callHost, request.script], {
       encoding: 'utf8',
       timeout: SSH_TIMEOUT_MS,
@@ -5022,8 +5024,8 @@ export function createFeedTransport(input) {
     if (typeof batchFile !== 'string' || batchFile.length === 0) {
       throw new FeedTransportError('the sftp batch file path is required');
     }
-    const callHost = assertTransportAnchor(request.host, host, 'ssh host');
-    const callKnownHostsPath = assertTransportAnchor(request.knownHostsPath, knownHostsPath, 'known hosts file');
+    const callHost = assertPinnedHost(request.host ?? host);
+    const callKnownHostsPath = assertPinnedKnownHostsPath(request.knownHostsPath ?? knownHostsPath);
     const command = request.resume === true ? 'reput' : 'put';
     writeBatch(`${command} ${quoteBatchPath(request.localPath)} ${quoteBatchPath(request.remotePath)}\n`);
     const result = await runner('sftp', [...pinnedOptions(callKnownHostsPath), '-b', batchFile, callHost], {
@@ -5068,7 +5070,7 @@ export function createFeedTransport(input) {
 - `BatchMode=yes` 让它**永不**交互提示；`StrictHostKeyChecking=yes` + 固定 `UserKnownHostsFile` + `GlobalKnownHostsFile=/dev/null` 让它**永不**自动接受新指纹，也**不**从全局 known_hosts 读第二个信任源。
 - `sftp -b <batchFile>` 批处理模式**不会**进入交互提示；`reput` 提供**可续传**（服务器没有 `rsync`，`scp` 不能续传）。
 - **二进制一律用 `arrayBuffer()`**，不用 `text()`——ZIP 若用 `text()` 再拼回 Buffer 会损坏字节。
-- **每次调用的覆盖值必须过一遍与 `parsePublishInput` 同口径的守卫**（非空、不以 `-` 开头、无空白与控制字符）。覆盖值是**生产路径上真正生效**的那个值（两个生产调用点都不带锚点 ⇒ 走回退，见 Task 6 账本第八节），只检工厂值等于没检。
+- **每一个真正会被执行的值都必须过一遍「与它自己那一层同口径」的守卫**（⚠️ **Task 7 更正本条的措辞**：原文写的是"覆盖值必须过一遍与 `parsePublishInput` 同口径的守卫（非空、不以 `-` 开头、无空白与控制字符）" —— 那句话把一个**只对主机名成立的规则**套到了 known hosts 路径上，而 `parsePublishInput` 从来只对 `host` 用这条规则）。现在的口径**按值分**：**`ssh host`**（工厂值与每次调用的覆盖值都过同一条）——非空、不以 `-` 开头、无空白与控制字符（它是**独立的 argv 元素**，`-` 开头会被 ssh 读成选项、空白会把元素切开）；**known hosts 路径**——只要求非空（它**嵌在** `UserKnownHostsFile=<路径>` 这一个元素里，`-` 与空白都不可能变成选项或切分，而且路径带空格在本项目自己的机器上是常态：本节所在这份检出的路径就含空格）；"在不在仓库外"由 `assertKnownHostsPath` 单独管。**两条路径的生效值都覆盖到了**：两个生产 sftp 调用点不带锚点 ⇒ 走**工厂值**（工厂值现在过同一条规则），ssh 的调用点带覆盖 ⇒ 走**覆盖值**（也过同一条规则）—— 因此"只检工厂值等于没检"这句话**不再成立**，也不再需要按方向分别论证。
 - `quoteBatchPath` 拒绝 CR/LF/NUL，并**按安全字符白名单**决定是否加引号：**只有整串都落在白名单内才原样传**，其余一律加引号并把 `\` 与 `"` 转义（保守规则；Windows 构建机上的 `C:\build dir\...` 是常态，白名单外的字符不赌解析器怎么读）。
 - `fetch` 用 `redirect: 'error'`：公网复验必须落在**本频道的确切 URL**；**https 这一面同样带有限超时**（`AbortSignal.timeout(60000)`）—— 公网复验在 `runCommit` **持频道锁**期间执行，挂住或慢速吐字节的端点会把 `--commit` 连同锁一起挂死（`unlock` 永远等不到）。
 - 三条进程调用都带 `windowsHide: true`，**不弹控制台窗口**。
@@ -5162,6 +5164,7 @@ git commit -m "feat(feed): add the async pinned ssh and sftp transport"
 - **两条默认依赖的不可达是"实测"的，不是"声明"的**（装置：把默认依赖的函数体换成 `throw`，再跑套件）：
   - **默认 `execFile` runner**（`:49` 的 `nodeExecFile(...)`）：注入 throw 后**套件仍然 `20 / 20 / 0`**（`reached_default false`）；同一次装置里**单独**调用 `createFeedTransport({host,knownHostsPath}).readOnly.sshRun(...)`（**不注入 `execFile`**）⇒ 那个 throw **当场触发**（敏感性：探针是活的）。⇒ **套件里一个 ssh 进程都没起**。
   - **默认 `publicFetch`**（`:103` 的 `fetch`）：同样注入 throw ⇒ 套件 `20 / 20 / 0`、`reached_default false`；单独调 `fetchPublic(...)` ⇒ throw 触发。⇒ **套件里一次网络访问都没有**。
+    ⚠️ **这条读数已被本账本第九节第 ② 条与验收表取代，别单独引用它**（Task 7 加的指针，2026-09-23）：第二闸门刀新增了两条**桩掉 `globalThis.fetch`** 的夹具臂，默认 `publicFetch` **现在会被夹具到达** ⇒ `reached_default false` 不再是当前读数；"套件里一次网络访问都没有"这条事实现在由**桩替换**承载（让接触**不可能**），不是由"不可达"承载。
   - **这两条同时也是"默认依赖不是空操作"的证据**：`grep -cE '\)\s*=>\s*\{\s*\}'` = **0**（没有 `?? (() => {})` 这类 fail-open 默认值），`grep -c 'shell:'` = **0**。
 - **不变量（提交信息的四条关键点在本节复述）**：远端动作一律 `execFile(command, argvArray, options)`、`options.shell` 从不设置；`BatchMode=yes` 永不交互；`StrictHostKeyChecking=yes` + 固定 `UserKnownHostsFile` 永不自动接受新指纹；二进制一律 `arrayBuffer()`（ZIP 走 `text()` 再拼回去会坏字节）；`fetch` 用 `redirect: 'error'`。
 
@@ -5236,8 +5239,8 @@ transport 自己**只拼两类字符串**：ssh / sftp 的 **argv 数组元素**
 **第二闸门刀对 §四 的三处更正（实测，不改历史）：**
 
 1. `request.script` 那一格原写「**(b) 已登记的插值**」，**标签是错的**：本计划定义 **(b) = base64**（只给 owner 记录那条用，见 4020 行的说明），而 `request.script` 的每个组成值在 Task 4 账本第五节的表里都落在 **(a)** ⇒ 已改成「**(a) 由上游登记表逐值覆盖**」。**类别名照抄前先回查定义**：标签写错会让读者以为这条插值走的是另一条通道。
-2. `host` 那一格写着「⚠️ **transport 自己不检查前导 `-`** —— 它依赖调用方先过 `parsePublishInput`」：**这条现在是错的**。第二闸门刀 A3 让 transport 对**每次调用的覆盖值**也过一遍同口径守卫（非空、不以 `-` 开头、无空白与控制字符，`feed-publish-transport.mjs:40–46`）⇒ 从「依赖调用方」变成「两层都有」，且新守卫有按名变异（第八节 A3-M1 / A3-M2）。
-3. `knownHostsPath` 那一格写着「transport 这层再加非空守卫（`:41`）」：同样从「只检工厂值」扩到「工厂值 **+** 每次调用的覆盖值」。
+2. `host` 那一格写着「⚠️ **transport 自己不检查前导 `-`** —— 它依赖调用方先过 `parsePublishInput`」：**这条现在是错的**。第二闸门刀 A3 让 transport 对**每次调用的覆盖值**也过一遍同口径守卫（非空、不以 `-` 开头、无空白与控制字符，`feed-publish-transport.mjs:40–46`）⇒ 从「依赖调用方」变成「两层都有」，且新守卫有按名变异（第八节 A3-M1 / A3-M2）。⚠️ **Task 7 再更正一处**：`host` 这条规则**保持原样**，但 A3 当时把它**一并套到了 known hosts 路径上**（见下面第 3 条与 Task 7 账本第一节），因此"同口径"现在应读成"**每个值与自己那一层同口径**"。
+3. `knownHostsPath` 那一格写着「transport 这层再加非空守卫（`:41`）」：同样从「只检工厂值」扩到「工厂值 **+** 每次调用的覆盖值」。⚠️ **Task 7 更正（2026-09-23）**：这一格的两个方向**都不再是"非空"就够**也不该是"空白也拒" —— 见 Task 7 账本第一节：`assertTransportAnchor` 被拆成 `assertPinnedHost`（非空 + `-`/空白/控制字符）与 `assertPinnedKnownHostsPath`（**只**非空），**工厂值与每次调用的覆盖值各自过同一条**，`request.host ?? host` / `request.knownHostsPath ?? knownHostsPath` 成为唯一取值形状。
 
 **登记（不是缺陷）：`createFeedTransport` 今天没有任何生产调用方。** `grep` 实测：引用只出现在它自己的模块（`feed-publish-transport.mjs:64`）与它的测试里；`scripts/feed-publish.mjs` 这个 CLI 还不存在。这与 Task 5 给 `buildStableManifestInput` 的登记**同一形状** —— **计划里的调用方在 Task 7**（CLI 五种模式）。在那之前，`the transport exposes the four faces the publish flow calls` 那四条钉子是按**计划文本**钉的，不是按**真实调用方**钉的。
 
@@ -5250,11 +5253,12 @@ transport 自己**只拼两类字符串**：ssh / sftp 的 **argv 数组元素**
 - **`--re-sign-stable` 的"拒绝覆盖"臂**仍然不可自动化（要真钥匙），**未验**。
 - **Task 7 / Task 8 未动**：CLI、手册、检查单、门禁表里除本刀那一行之外的全部格子都还是 `待填`。
 
-#### 六、两处**提交信息**的更正（不改历史，只登记）
+#### 六、**提交信息**的两处更正与一处登记（不改历史，只登记）
 
 - `b6d504f8` 的正文把变异总数写成 "Seventeen mutations were run"、把单红数写成 "sixteen"。**实测：本刀在 transport 上跑了 20 条变异**（`m1` / `m2` / `m3` / `m4` / `M5` / `M6` / `M6b` / `M7` / `M8a` / `M8b` / `M8c` / `M9` / `M10` / `M11` / `M12` / `M13` / `M14` / `M15` / `M16` / `M17`），其中 **18 条各只红一条**、`M1` 红 2 条、`M2` 红 4 条（**全部预先写明并核对过**），另有 **1 条绿对照**。**本节的表（20 行 + 1 行对照）是权威**。
 - `b6d504f8` 的正文写「Both the host and the known hosts file can be overridden per call, **because the publish flow passes its trust anchor on every call** and a transport that ignored it would make that pin meaningless」。**实测：对 sftp 这半句是错的** —— 两个**生产** sftp 调用点（`feed-publish.mjs:883` 的 `{ ...item, resume: true }` 与 `:1032` 的 `{ localPath, remotePath, resume: false }`）**一个锚点都不传**，所以 sftp 走的是**回退值**；只有 ssh 的调用点每次都显式传 `host` / `knownHostsPath`。⇒ 「覆盖必须被消费」这条理由对 sftp 不成立，**sftp 那侧真正载重的是回退** —— 第二闸门刀因此补了**回退方向**的钉子与变异（第八节 A2：`an sftp upload that carries no anchor of its own falls back to the pinned one` + `BM-1` + `AM-1`）。**不重写任何历史提交**，口径以本账本为准（与本节前两条同一做法）。
 - `0e8959cf` 的正文把绿色控制写成 "the thirteen green controls"。**实测：本刀的绿色控制是 3 次**（Step −1 的纯改名对照、transport 的等价改写对照、preflight 的共享 tag 敏感性探针）；另有 **2 次"把默认依赖换成 `throw`"的可达性探针**，它们的读数不是绿/红而是 `reached_default false` + `SENSITIVITY … sees_marker true`，**不是**绿色控制。**不重写任何历史提交**，口径以本账本为准（与 Task 5 账本第八节同一做法）。
+- ⚠️ **登记一处漏掉的尾注（Task 7 补记，2026-09-23）：`93b65975` 的提交信息没有 `Co-Authored-By: Claude Code` 这一行。** 实测 `git log -1 --format=%B 93b65975 | grep -c 'Co-Authored-By: Claude Code'` = **0**，而它前后相邻的 11 个提交各 = **1**（`cc8b1f68` / `3ff4f705` / `a6e7f9fe` / `01bcd0b5` / `44695aa1` / `0e8959cf` / `b6d504f8` / `486da49d` / `60e05c0c` / `a839d970` / `a5e05c08`）。**只登记、不修**：本计划的 no-amend 规则是绝对的（不许 `--amend`、不许重写历史），所以这一条改变不了任何交付字节，它的作用是让"尾注缺失"这件事有一个可查的出处、而不是在后续某次复核里被当成新发现。
 
 #### 七、门禁读数（本刀实测）与一件**排期中的缺口**
 
@@ -5277,16 +5281,16 @@ transport 自己**只拼两类字符串**：ssh / sftp 的 **argv 数组元素**
 
 **一、代码面（A1–A6 与 B3）**
 
-| 项        | 改了什么（新框架行号）                                                                                                                                                                                     | 钉住它的测试                                                                                                                                                                                             | 变异 ⇒ 读数                                                                                                     |
-| --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| **A1**    | 新增 `PUBLIC_FETCH_TIMEOUT_MS = 60_000`（`:5`）；默认 `fetch` 从 `{ redirect: 'error' }` 变成 `{ redirect: 'error', signal: AbortSignal.timeout(PUBLIC_FETCH_TIMEOUT_MS) }`（`:122–125`）                  | `every call carries a finite timeout so a hung remote cannot hold the run`（**扩到 https 这一面**：桩掉 `globalThis.fetch` 与 `AbortSignal.timeout`，断言公网面也拿到 `60000` 且拿到的是 `AbortSignal`） | `FM-1` ⇒ **`28 / 27 / 1`**（只红那条）                                                                          |
-| **C8(i)** | `redirect: 'error'`（`:123`）由「不变量」变成「被钉住」                                                                                                                                                    | `the default public fetcher refuses a redirect instead of following it`                                                                                                                                  | `FM-2` ⇒ **`28 / 27 / 1`**                                                                                      |
-| **C8(i)** | `windowsHide: true`（`:87` / `:110`）同样被钉住                                                                                                                                                            | `every remote call hides the console window the process would otherwise open`                                                                                                                            | `WM` ⇒ **`28 / 27 / 1`**                                                                                        |
-| **A3**    | 新增 `assertTransportAnchor(value, fallback, label)`（`:40–51`）：**缺省 ⇒ 回退**；非空；不以 `-` 开头；无空白与控制字符 —— 与 `parsePublishInput` 同口径。**两个调用点都改走它**（`:82–83` / `:103–104`） | `a per call anchor that could become an option is refused before any process starts`（含「一个进程都没起」的 `fake.calls` 判据 —— 这条**不是**空断言，见第五节）                                         | `A3-M1`（删 `-`/空白那条 ⇒ `:45`）⇒ **`28 / 27 / 1`**；`A3-M2`（删非空那条 ⇒ `:42–44`）⇒ **`28 / 27 / 1`**      |
-| **A4**    | `-b` 的**操作数**被钉住（`:107`）                                                                                                                                                                          | `the batch file sftp is pointed at is the one the factory was given`                                                                                                                                     | `DM`（操作数写死成 `/outside/repo/stale-batch.txt`）⇒ **`28 / 27 / 1`**                                         |
-| **A5**    | `pinnedOptions` **末尾**追加 `-o GlobalKnownHostsFile=/dev/null`（`:35–36`）                                                                                                                               | `every pinned call also refuses the global known hosts file`                                                                                                                                             | `GM`（值换成 `/etc/ssh/ssh_known_hosts`）⇒ **`28 / 27 / 1`**                                                    |
-| **A6**    | 默认 runner 的映射抽成**导出**函数 `mapExecFileOutcome`（`:53–61`），调用点 `:77`；**promise 那三行（`:74–77`）仍未覆盖**（登记，不写成已完成）                                                            | `the exec outcome mapping reports a numeric code, a missing code and a success`                                                                                                                          | `A6-M1`（`: -1` ⇒ `: 0`，`:56`）⇒ **`28 / 27 / 1`**；`A6-M2`（删 `?? error.message`，`:58`）⇒ **`28 / 27 / 1`** |
-| **B3**    | `quoteBatchPath` 改成**保守规则**：只有整串匹配 `^[A-Za-z0-9._/:@+-]+$` 才原样传，其余一律加引号 + 转义（`:21`）                                                                                           | `a batch path outside the safe alphabet is quoted so a backslash cannot be read as an escape`（两条反斜杠夹具）                                                                                          | `BM`（白名单放进反斜杠）⇒ **`28 / 27 / 1`**                                                                     |
+| 项        | 改了什么（新框架行号）                                                                                                                                                                                                                                                                                              | 钉住它的测试                                                                                                                                                                                             | 变异 ⇒ 读数                                                                                                     |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| **A1**    | 新增 `PUBLIC_FETCH_TIMEOUT_MS = 60_000`（`:5`）；默认 `fetch` 从 `{ redirect: 'error' }` 变成 `{ redirect: 'error', signal: AbortSignal.timeout(PUBLIC_FETCH_TIMEOUT_MS) }`（`:122–125`）                                                                                                                           | `every call carries a finite timeout so a hung remote cannot hold the run`（**扩到 https 这一面**：桩掉 `globalThis.fetch` 与 `AbortSignal.timeout`，断言公网面也拿到 `60000` 且拿到的是 `AbortSignal`） | `FM-1` ⇒ **`28 / 27 / 1`**（只红那条）                                                                          |
+| **C8(i)** | `redirect: 'error'`（`:123`）由「不变量」变成「被钉住」                                                                                                                                                                                                                                                             | `the default public fetcher refuses a redirect instead of following it`                                                                                                                                  | `FM-2` ⇒ **`28 / 27 / 1`**                                                                                      |
+| **C8(i)** | `windowsHide: true`（`:87` / `:110`）同样被钉住                                                                                                                                                                                                                                                                     | `every remote call hides the console window the process would otherwise open`                                                                                                                            | `WM` ⇒ **`28 / 27 / 1`**                                                                                        |
+| **A3**    | 新增 `assertTransportAnchor(value, fallback, label)`（`:40–51`）：**缺省 ⇒ 回退**；非空；不以 `-` 开头；无空白与控制字符 —— 与 `parsePublishInput` 同口径。**两个调用点都改走它**（`:82–83` / `:103–104`） ⚠️ **Task 7 已按"每值同口径"重写这处（见 Task 7 账本第一节）：本表这一格是当时的读数，别当当前形状引用** | `a per call anchor that could become an option is refused before any process starts`（含「一个进程都没起」的 `fake.calls` 判据 —— 这条**不是**空断言，见第五节）                                         | `A3-M1`（删 `-`/空白那条 ⇒ `:45`）⇒ **`28 / 27 / 1`**；`A3-M2`（删非空那条 ⇒ `:42–44`）⇒ **`28 / 27 / 1`**      |
+| **A4**    | `-b` 的**操作数**被钉住（`:107`）                                                                                                                                                                                                                                                                                   | `the batch file sftp is pointed at is the one the factory was given`                                                                                                                                     | `DM`（操作数写死成 `/outside/repo/stale-batch.txt`）⇒ **`28 / 27 / 1`**                                         |
+| **A5**    | `pinnedOptions` **末尾**追加 `-o GlobalKnownHostsFile=/dev/null`（`:35–36`）                                                                                                                                                                                                                                        | `every pinned call also refuses the global known hosts file`                                                                                                                                             | `GM`（值换成 `/etc/ssh/ssh_known_hosts`）⇒ **`28 / 27 / 1`**                                                    |
+| **A6**    | 默认 runner 的映射抽成**导出**函数 `mapExecFileOutcome`（`:53–61`），调用点 `:77`；**promise 那三行（`:74–77`）仍未覆盖**（登记，不写成已完成）                                                                                                                                                                     | `the exec outcome mapping reports a numeric code, a missing code and a success`                                                                                                                          | `A6-M1`（`: -1` ⇒ `: 0`，`:56`）⇒ **`28 / 27 / 1`**；`A6-M2`（删 `?? error.message`，`:58`）⇒ **`28 / 27 / 1`** |
+| **B3**    | `quoteBatchPath` 改成**保守规则**：只有整串匹配 `^[A-Za-z0-9._/:@+-]+$` 才原样传，其余一律加引号 + 转义（`:21`）                                                                                                                                                                                                    | `a batch path outside the safe alphabet is quoted so a backslash cannot be read as an escape`（两条反斜杠夹具）                                                                                          | `BM`（白名单放进反斜杠）⇒ **`28 / 27 / 1`**                                                                     |
 
 **A6 的抽取是逐字节搬运**：`mapExecFileOutcome` 的三处表达式（`:56` / `:57` / `:58`）与 `:60` 的 `return` 与抽取前**一字不差** —— 这是纯搬运（按 Task 5 第五节的规矩**不负变异**），但**新加的钉子本身**有两条按名变异（`A6-M1` / `A6-M2`）。
 
@@ -5302,6 +5306,8 @@ transport 自己**只拼两类字符串**：ssh / sftp 的 **argv 数组元素**
 4. **B2：`assert.throws` 的谓词形式。** `feed-publish.test.mjs:2805` 那条原先是 `assert.throws(fn, /manifestBytes with no value/u)` —— 只匹配**文案**，而测试名声称"keeps the module error class"。改成谓词 `(error) => error instanceof FeedPublishError && /…/u.test(error.message)`。**两条读数**：`B2-M3`（在 `carried` 之后插一条：无值那一支改抛 `TypeError`、**文案一字不改**）⇒ **`158 / 157 / 1`**（红的就是那条守卫用例）；**敏感性探针 `P-B2`**（同一条插入 **+** 把断言换回**只看文案**的老形式）⇒ **`158 / 158 / 0` 全绿** ⇒ **老形式对"分支的错误类"是瞎的**，承载这条钉子的是**谓词**。⚠️ **本刀的第一次探针设计是错的**（`P-B2` 的第一版把整条 `throw` 的类降级 ⇒ 那条臂的**第一条**断言本来就断言 `FeedPublishError`，因此"老形式也红"——**它证明不了新形式的增量**）；改成**只换无值那一支**才对。另：`B2-M1`（把这条 `throw` 的类整体降级）⇒ **`158 / 156 / 2`**（红：那条守卫用例 + `the stable input refuses to reuse an internal manifest`），`B2-M2`（`'no value'` ⇒ `'a value'`）⇒ **`158 / 157 / 1`**。
 
 **五、本刀在新框架上的变异（22 条 + 1 条控制 + 2 条探针，装置同通用纪律第 3 条：打印整行 hunk、锚点恰好 1 次、`node --check`、变异前取基线 sha256、恢复后比 sha256 且 `git status` 逐字相同）**
+
+⚠️ **条数以本节的表为唯一可枚举产物：表里是 24 行变异 + 1 行对照 + 1 行探针 = 26 次运行。**（Task 7 复量并更正，2026-09-23）标题里的 "22 条" 是 **`C7-a` / `C7-b` 两行补跑之前**的条数 —— 这两行的读数在第六节、是主表跑完之后才补的（`24 − 2 = 22`，与第 5336 行那句"重跑全部 22 条"同一时点）；"2 条探针"应记 **1 条**（只有 `P-B2`，`B2-M3` 是变异行）。交付说明里那句 "27 mutations / 28 restores" 与这张表也对不上（表是 24 + 1 + 1），**以表为准**。
 
 | #         | 变异（新框架行号；每条**一个表达式**）                                                     | 读数                | 预先写明的红名单                                                          | 核对                   |
 | --------- | ------------------------------------------------------------------------------------------ | ------------------- | ------------------------------------------------------------------------- | ---------------------- | ----------------------------- | ---- |
@@ -5352,7 +5358,7 @@ transport 自己**只拼两类字符串**：ssh / sftp 的 **argv 数组元素**
 
 **十、门禁读数（本刀实测）**：先 `export PATH="/d/go-toolchain/go/bin:$PATH"`，再跑 `pnpm check`（**不接管道**；重定向到仓库外的 `%TEMP%\t7work\gate.log`，`rc=$?` 就是那一行的退出码）⇒ **`GATE_EXIT=0`**。
 
-- **非空证据六条**：① 日志 **10175** 行；② 链上第一步的 Go 测试真的跑过（第 3 行 `ok mofang-compass/portable-launcher/cmd/mofang-launcher 0.107s` —— 少了那个 PATH 导出它会在第一步就死）；③ **门禁那一步的命令行（日志第 53 行）就是把两个文件一起列出来的**（`$ node --test scripts/lib/feed-publish.test.mjs scripts/lib/feed-publish-transport.test.mjs`）；④ 它的读数是 **`ℹ tests 186 / ℹ pass 186 / ℹ fail 0`**（第 240–243 行）= 158 + 28 —— **两个套件都真的跑了**：日志里既有**只属于 transport** 的名字（`the batch path quoting refuses a carriage return, …`、`the transport exposes the four faces the publish flow calls`、`every remote call hides the console window …`，共 3 处命中），也有**只属于 `feed-publish`** 的名字（`the preflight read only promise is pinned by transport identity rather than by a shared tag`，1 处命中）；⑤ 链尾 `packages/desktop test` 真的跑到（`Test Files 281 passed (281)`，第 10171 行），`prettier --check .` ⇒ `All matched files use Prettier code style!`（第 415–417 行）；⑥ 全日志里 `✖` / `not ok` / `FAIL` 计数为 **0**。这一跑对着的提交是 `3ff4f705`。
+- **非空证据六条**：① 日志 **10173** 行（⚠️ **Task 7 复量的更正**：现存的这份日志就是本行引用的那一跑 —— 提交 `3ff4f705`、文件 `%TEMP%\t7work\gate.log`，**仍在盘上**；`wc -l` = **10173**，而原文写的 **10175** 与同一条里"第 10171 行"都比这一份**多 2**：`packages/desktop test: Test Files 281 passed (281)` 实测在**第 10169 行**，其余三处引用（第 53 / 240–243 / 415–417 行）逐条命中 ⇒ 记 10175 的那一份日志多两行头部，**长度以现存文件的 `wc -l` 为准**）；② 链上第一步的 Go 测试真的跑过（第 3 行 `ok mofang-compass/portable-launcher/cmd/mofang-launcher 0.107s` —— 少了那个 PATH 导出它会在第一步就死）；③ **门禁那一步的命令行（日志第 53 行）就是把两个文件一起列出来的**（`$ node --test scripts/lib/feed-publish.test.mjs scripts/lib/feed-publish-transport.test.mjs`）；④ 它的读数是 **`ℹ tests 186 / ℹ pass 186 / ℹ fail 0`**（第 240–243 行）= 158 + 28 —— **两个套件都真的跑了**：日志里既有**只属于 transport** 的名字（`the batch path quoting refuses a carriage return, …`、`the transport exposes the four faces the publish flow calls`、`every remote call hides the console window …`，共 3 处命中），也有**只属于 `feed-publish`** 的名字（`the preflight read only promise is pinned by transport identity rather than by a shared tag`，1 处命中）；⑤ 链尾 `packages/desktop test` 真的跑到（`Test Files 281 passed (281)`，第 10171 行），`prettier --check .` ⇒ `All matched files use Prettier code style!`（第 415–417 行）；⑥ 全日志里 `✖` / `not ok` / `FAIL` 计数为 **0**。这一跑对着的提交是 `3ff4f705`。
 - **D 的缺口关闭读数**：`grep -c 'feed-publish-transport' gate.log` = **1**（就是第 53 行那条命令本身；**本刀之前是 0**）⇒ 28 条 transport 测试**现在在 `pnpm check` 链上**。⚠️ **这个数只有 1 是正常的**：测试**名字**里不含文件名，所以别把它读成"只跑了一条" —— 判"跑没跑"要看上面第 ③④ 条（命令行 + `186` 这个合计数 + 只属于各套件的名字）。
 - **十二对镜像在这一跑之后复核过**：`matched=12`、`diff` **十二对全空**（装置见第二节；两份敏感性探针 —— 计划侧改一个字符、文件侧从切片中间删一行 —— 都让**恰好那一对**掉出匹配）。
 - **本刀的两个功能提交**：`93b65975`（B2：谓词形式的断言）与 `3ff4f705`（transport 代码 + 测试 + 计划镜像 + 规格 §6.4 + 两文件门禁）。**本提交只写读数**，所以它自己那个哈希**不可能写进它自己**（与 Task 5 账本第四片同一形状，以 `git log` 为准）。

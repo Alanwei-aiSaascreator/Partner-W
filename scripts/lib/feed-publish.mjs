@@ -33,7 +33,7 @@ export function parsePublishInput(raw) {
     if (typeof raw.host !== 'string' || raw.host.length === 0) {
       throw new FeedPublishError('the ssh host is required');
     }
-    if (raw.host.startsWith('-') || /\s/u.test(raw.host)) {
+    if (raw.host.startsWith('-') || /[\s\u0000-\u001f]/u.test(raw.host)) {
       throw new FeedPublishError('the ssh host must not start with a dash or contain whitespace');
     }
     if (typeof raw.knownHostsPath !== 'string' || raw.knownHostsPath.length === 0) {

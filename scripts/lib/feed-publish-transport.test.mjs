@@ -331,11 +331,13 @@ test('a per call anchor that could become an option is refused before any proces
   const transport = makeTransport({ execFile: fake.execFile, writeBatch: () => {} });
   for (const bad of ['', '-oProxyCommand=calc', 'has space', 'has\ttab', 'has\u0000nul']) {
     await assert.rejects(transport.readOnly.sshRun({ host: bad, script: 'ls' }), FeedTransportError);
-    await assert.rejects(transport.readOnly.sshRun({ knownHostsPath: bad, script: 'ls' }), FeedTransportError);
     await assert.rejects(
       transport.write.sftpUpload({ host: bad, localPath: '/a', remotePath: '/b', resume: false }),
       FeedTransportError,
     );
+  }
+  for (const bad of ['', 7]) {
+    await assert.rejects(transport.readOnly.sshRun({ knownHostsPath: bad, script: 'ls' }), FeedTransportError);
     await assert.rejects(
       transport.write.sftpUpload({ knownHostsPath: bad, localPath: '/a', remotePath: '/b', resume: false }),
       FeedTransportError,
@@ -407,4 +409,24 @@ test('a batch path outside the safe alphabet is quoted so a backslash cannot be 
   assert.equal(quoteBatchPath(windowsDir), `"C:${doubled}build dir${doubled}x.zip"`);
   assert.equal(quoteBatchPath('/opt/plain'), '/opt/plain');
   assert.equal(quoteBatchPath('C:/build dir/portable.zip'), '"C:/build dir/portable.zip"');
+});
+
+test('a factory ssh host that could become an option is refused when the transport is built', () => {
+  for (const host of ['-oProxyCommand=calc', 'bad host', 'bad\thost', 'bad\u0000host']) {
+    assert.throws(() => createFeedTransport({ host, knownHostsPath: KNOWN_HOSTS }), FeedTransportError);
+  }
+});
+
+test('a known hosts path that carries whitespace reaches ssh as one argument', async () => {
+  const fake = makeFake();
+  const transport = createFeedTransport({
+    host: HOST,
+    knownHostsPath: '/outside/repo/known hosts',
+    execFile: fake.execFile,
+    writeBatch: () => {},
+  });
+  await transport.readOnly.sshRun({ script: 'ls' });
+  assert.equal(fake.calls.length, 1);
+  assert.equal(fake.calls[0].args[5], 'UserKnownHostsFile=/outside/repo/known hosts');
+  assert.equal(fake.calls[0].args.at(-2), HOST);
 });

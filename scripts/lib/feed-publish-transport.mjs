@@ -37,15 +37,19 @@ function pinnedOptions(knownHostsPath) {
   ];
 }
 
-function assertTransportAnchor(value, fallback, label) {
-  if (value === undefined || value === null) return fallback;
+function assertPinnedHost(value) {
   if (typeof value !== 'string' || value.length === 0) {
-    throw new FeedTransportError(`a per call ${label} must be a non empty string`);
+    throw new FeedTransportError('the ssh host must be a non empty string');
   }
   if (value.startsWith('-') || /[\s\u0000-\u001f]/u.test(value)) {
-    throw new FeedTransportError(
-      `a per call ${label} must not start with a dash or carry whitespace or control characters`,
-    );
+    throw new FeedTransportError('the ssh host must not start with a dash or carry whitespace or control characters');
+  }
+  return value;
+}
+
+function assertPinnedKnownHostsPath(value) {
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new FeedTransportError('the known hosts file must be a non empty string');
   }
   return value;
 }
@@ -64,10 +68,8 @@ export function mapExecFileOutcome(error, stdout, stderr) {
 export function createFeedTransport(input) {
   const host = input.host;
   const knownHostsPath = input.knownHostsPath;
-  if (typeof host !== 'string' || host.length === 0) throw new FeedTransportError('the ssh host is required');
-  if (typeof knownHostsPath !== 'string' || knownHostsPath.length === 0) {
-    throw new FeedTransportError('the pinned known hosts file is required');
-  }
+  assertPinnedHost(host);
+  assertPinnedKnownHostsPath(knownHostsPath);
 
   const runner =
     input.execFile ??
@@ -79,8 +81,8 @@ export function createFeedTransport(input) {
       }));
 
   async function sshRun(request) {
-    const callHost = assertTransportAnchor(request.host, host, 'ssh host');
-    const callKnownHostsPath = assertTransportAnchor(request.knownHostsPath, knownHostsPath, 'known hosts file');
+    const callHost = assertPinnedHost(request.host ?? host);
+    const callKnownHostsPath = assertPinnedKnownHostsPath(request.knownHostsPath ?? knownHostsPath);
     const result = await runner('ssh', [...pinnedOptions(callKnownHostsPath), callHost, request.script], {
       encoding: 'utf8',
       timeout: SSH_TIMEOUT_MS,
@@ -100,8 +102,8 @@ export function createFeedTransport(input) {
     if (typeof batchFile !== 'string' || batchFile.length === 0) {
       throw new FeedTransportError('the sftp batch file path is required');
     }
-    const callHost = assertTransportAnchor(request.host, host, 'ssh host');
-    const callKnownHostsPath = assertTransportAnchor(request.knownHostsPath, knownHostsPath, 'known hosts file');
+    const callHost = assertPinnedHost(request.host ?? host);
+    const callKnownHostsPath = assertPinnedKnownHostsPath(request.knownHostsPath ?? knownHostsPath);
     const command = request.resume === true ? 'reput' : 'put';
     writeBatch(`${command} ${quoteBatchPath(request.localPath)} ${quoteBatchPath(request.remotePath)}\n`);
     const result = await runner('sftp', [...pinnedOptions(callKnownHostsPath), '-b', batchFile, callHost], {
