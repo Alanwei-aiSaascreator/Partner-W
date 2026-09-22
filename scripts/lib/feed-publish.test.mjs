@@ -393,6 +393,11 @@ function fakeReadOnlyTransport(overrides = {}) {
   };
 }
 
+async function preflightWithProbe(probe) {
+  const transport = fakeReadOnlyTransport({ sshRun: () => probe });
+  return runPreflight({ channel: 'internal', version: '1.2.3', transport, host: 'h', knownHostsPath: 'k' });
+}
+
 test('the commit plan lists the thirteen stages in the fixed order', () => {
   assert.deepEqual(PUBLISH_STAGES, [
     'pre-verify',
@@ -409,6 +414,7 @@ test('the commit plan lists the thirteen stages in the fixed order', () => {
     'reveal',
     'unlock',
   ]);
+  assert.ok(Object.isFrozen(PUBLISH_STAGES));
 });
 
 test('the dry run validates the triple and prints the plan without any transport', async () => {
@@ -423,7 +429,25 @@ test('the dry run validates the triple and prints the plan without any transport
     plan.map((entry) => entry.stage),
     [...PUBLISH_STAGES],
   );
-  assert.equal(plan[0].status, 'pending');
+  assert.equal(plan.length, PUBLISH_STAGES.length);
+  assert.ok(plan.every((entry) => entry.status === 'pending'));
+});
+
+test('the dry run follows the channel and the version it was given instead of a default', async () => {
+  const paths = writeArtifacts({
+    manifestOverrides: {
+      channel: 'stable',
+      version: '1.2.4',
+      packageUrl: `${PUBLIC_BASE_URL}/stable/1.2.4/portable.zip`,
+    },
+  });
+  const plan = await planCommit({
+    channel: 'stable',
+    version: '1.2.4',
+    ...paths,
+    publicKeyBase64: PUBLIC_KEY_BASE64,
+  });
+  assert.equal(plan.length, PUBLISH_STAGES.length);
 });
 
 test('the dry run propagates a local verification failure instead of printing a plan', async () => {
@@ -466,6 +490,7 @@ test('the preflight only performs read only actions and never claims writability
   });
   const names = transport.calls.map((call) => call[0]);
   assert.deepEqual([...new Set(names)], ['sshRun']);
+  assert.equal(transport.calls[0][1], `stat -c '%d' ${STATE_ROOT} ${UPDATE_ROOT}`);
   assert.equal(result.sameFileSystem, true);
   assert.equal(result.writabilityIndicators.verifiedWrite, false);
   assert.match(result.writabilityIndicators.note, /indicator/u);
@@ -482,4 +507,17 @@ test('the preflight reports different file systems instead of assuming one', asy
   });
   assert.equal(result.sameFileSystem, false);
   assert.match(result.notes.join(' '), /file system/u);
+
+  const empty = await preflightWithProbe({ status: 0, stdout: '', stderr: '' });
+  assert.equal(empty.sameFileSystem, false);
+  assert.match(empty.notes.join(' '), /file system/u);
+
+  const single = await preflightWithProbe({ status: 0, stdout: '5\n', stderr: '' });
+  assert.equal(single.sameFileSystem, false);
+});
+
+test('the preflight records a failed probe instead of reporting all clear', async () => {
+  const failed = await preflightWithProbe({ status: 1, stdout: '5\n5\n', stderr: 'stat: cannot statx' });
+  assert.equal(failed.sameFileSystem, true);
+  assert.match(failed.notes.join(' '), /did not succeed/u);
 });
