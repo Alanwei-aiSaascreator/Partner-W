@@ -4608,7 +4608,7 @@ git commit -m "feat(feed): re-sign the manifest for the stable channel"
 
 ### Task 5 账本（续）：代码质量闸门四项 + 承前六项的落地（2026-09-23，本刀实测）
 
-**本刀是什么：** 代码质量闸门在 Task 5 上留下 **4 项**（A 守卫的**错误类没有被钉住**／B **`buildStableManifestInput` 没有可达路径**／C 缺少**对真消费者的集成钉子**／D 三条 Minor），工程记录 **1 项**（F）；spec 闸门另有**承前 6 项**（E1–E6）。**本刀的提交是两个**（都用**显式 pathspec**、消息末尾都带 `Co-Authored-By: Claude Code <noreply@anthropic.com>`）：① **代码 + 测试 + 计划**（`cb296f73`，subject `fix(feed): name the reused-manifest guard and pin its error class`）—— 计划与代码在**同一个提交**里，是因为闸门 A 明确要求"改规定块就必须在**同一个提交**里重同步镜像"，而本计划的规定块与账本正文在**同一个文件**里，拆不开（拆就得在提交之间重建一个中间态的计划文件，那会把"逐字节镜像"的核对成本抬高）；② **计划**（本账本所在的提交，只补记 ① 的哈希与 ① 的收尾）。**没有用 `--amend`、没有重写任何历史提交。**
+**本刀是什么：** 代码质量闸门在 Task 5 上留下 **4 项**（A 守卫的**错误类没有被钉住**／B **`buildStableManifestInput` 没有可达路径**／C 缺少**对真消费者的集成钉子**／D 三条 Minor），工程记录 **1 项**（F）；spec 闸门另有**承前 6 项**（E1–E6）。**本刀的提交是四个**（都用**显式 pathspec**、消息末尾都带 `Co-Authored-By: Claude Code <noreply@anthropic.com>`）：① **代码 + 测试 + 计划**（`cb296f73`，subject `fix(feed): name the reused-manifest guard and pin its error class`）—— 计划与代码在**同一个提交**里，是因为闸门 A 明确要求"改规定块就必须在**同一个提交**里重同步镜像"，而本计划的规定块与账本正文在**同一个文件**里，拆不开（拆就得在提交之间重建一个中间态的计划文件，那会把"逐字节镜像"的核对成本抬高）；② **计划**：本账本（`a5e05c08`，subject `docs(feed): schedule the stable re-sign cli and close the gate findings`）；③ **计划**：只改正本账本里"`prettier` 没动计划"那一句错话（`a839d970`）；④ **计划**：把这份提交清单从"两个"改成实际的四个（**本提交**，因为它自己那个哈希不可能写进自己）。**没有用 `--amend`、没有重写任何历史提交。**
 
 **一、最终读数（本刀实测）**
 
