@@ -6657,7 +6657,7 @@ git commit -m "docs(release): route the feed publishing steps through the upload
 | M4  | `feed-publish.mjs`：`version: versionRequired ? raw.version : null,` ⇒ `version: raw.version,` | 模块"+不再带版本"那条                                                                                                                                                                                                                                                                                                                                                                                     | `module 165/166/1`、`cli 40/40/0` ⇒ 命中                                                                                                                                                                                                                                         |
 | M5  | **对照（必须留绿）**：`mode !== 'break-lock'` ⇒ `!(mode === 'break-lock')`                     | —                                                                                                                                                                                                                                                                                                                                                                                                         | `166 / 31 / 40` **全绿**、红名单为空 ⇒ 装置对语义等价改动不敏感                                                                                                                                                                                                                  |
 | M7  | `feed-publish.mjs`：`if (versionRequired                                                       |                                                                                                                                                                                                                                                                                                                                                                                                           | versionGiven) {`⇒`if (versionRequired) {`（**2026-09-23 修复刀补的记录**：N1 收窄的**另一半**；基线＝恢复 sha256 `83f2e2c0bda4f93dba33e29f24cb12d6256d493132a7ef9b057629afaa005785`。⚠️ **编号只是本节的**：Task 4 与 Task 6 的账本里各有一条**同名**的 M7，与这条**互不相干**） | `a version flag that is given to a mode that does not need one is still checked`（模块）＋ `the break lock mode still refuses a version flag that is not a semantic version`（CLI） | `module 165/166/1`、`transport 31/31/0`、`cli 41/42/1` ⇒ **两条逐条命中、无多余红**；hunk 打印的整行是 `- if (versionRequired |     | versionGiven) {`/`+ if (versionRequired) {` |
-| M6  | **装置回退（不是生产代码）**：`captureRun` 换回 `process.stdout.write`                         | break-lock 那条                                                                                                                                                                                                                                                                                                                                                                                           | **3/3 次红**，但红的是**测试文件本身**（名字报成 `scripts\libeed-publish-cli.test.mjs`），读数 `cli 7/8/1` —— 报告流被吞掉后整个文件**只跑了 8 条**。登记为 `EXPECTATION_FAILED`：红得比预登记**更重**（不是某条用例红了，是用例集**塌了**），但它**不能**用来钉某一条用例       |
+| M6  | **装置回退（不是生产代码）**：`captureRun` 换回 `process.stdout.write`                         | break-lock 那条                                                                                                                                                                                                                                                                                                                                                                                           | **3/3 次红**，但红的是**测试文件本身**（名字报成 `scripts\lib\u000ceed-publish-cli.test.mjs`），读数 `cli 7/8/1` —— 报告流被吞掉后整个文件**只跑了 8 条**。登记为 `EXPECTATION_FAILED`：红得比预登记**更重**（不是某条用例红了，是用例集**塌了**），但它**不能**用来钉某一条用例 |
 
 ### 四、围栏命令逐条实跑（N2 的验收）
 
@@ -6705,6 +6705,7 @@ git commit -m "docs(release): route the feed publishing steps through the upload
 - **五行的 `outcome` 表**（`done` / `retry` / `fail` / `blocked` / `incident` ⇒ 意思 + 下一步），`blocked` 那行写"退出码 `1`，**不要去拆锁**：先确认那次运行确实**已经死了**，才走 7b；活着就等它收尾"；
 - 那句警告按复核者要求**用原话落进手册**：「⚠️ **`blocked` 就是"另一个运行正持着这个频道的锁"，那把锁不是你的**：它和完整性事故 `incident` 都退 `1`，但**只有确认那次运行确实已经不在进行中之后**才允许走 7b 的恢复路径 —— 否则你会在它写到一半时把它脚下的东西拆掉。」
 - **Minor 3 同处落地**：原来那句"任何非 `0` 都要先读审计日志"**对 `--dry-run` 是假的**（那条命令行里根本没有 `--audit-out`）、对 `--re-sign-stable` 也是假的（它不写审计行）⇒ 收窄成"**凡是给了 `--audit-out` 的模式（`--preflight` / `--commit` / `--break-lock`）**…"。
+- ⚠️ **上面第 2、3 条引用的是本刀当时落进手册的原文；它在收尾刀（第十七节 N1）里被改写过了** —— `blocked` 那行与那句警告现在给的是**可当场验证的判据**（7b 探测 + `--confirm-runid`），不再以"那把锁不是你的"作为断言。**读这两条时以第十七节为准**。
 
 ⚠️ **"判据在哪"这句话本刀按实测改写过一次（复核者原话不成立）**：复核者写的是"JSON 的 `outcome` 与**最后一行的 `status`**"。第四节那次实测显示：`blocked` 的收口行是 `{"stage":"blocked","reason":"the channel is already locked","runid":…,"operator":…,"at":…,"planHash":…}` —— **没有 `status` 字段**；`retry` 与 `incident` 的**最后一行**是 `lock-retained`，它的 `status` 是 `retained`。⇒ 手册因此写成「**结论在哪：** 命令打印的 JSON 的 `outcome` 字段，以及审计日志里**收口那一行的 `stage`**」，并显式加了"**别拿审计日志最后一行当结论**：最后一行是 `unlock`（`status` 为 `done` 或 `retained`）或 `lock-retained`，它只说**锁**怎么了"。
 
@@ -6742,7 +6743,7 @@ test('the entry script injects a transport factory, so a run with no mode flag p
 });
 ```
 
-**它证明的**：入口把**一个函数**注进了缝（`runCli` 的守卫因此放行）⇒ 无模式旗标时走**用法横幅 + 退 2**，而不是"缺工厂"的退 1。**它不证明**：那个函数就是真工厂（无模式旗标时 transport 根本不会被构造；要证身份得真起 `ssh`，被本计划禁止）。⇒ 名字按能证明的写，**不写"wires the real transport factory"**。变异 M-entry 见第五节（红名单 **9** 条：本轮这条 + 7 条规定的 spawn 用例 + `the usage text documents every exit code the operator can act on`；**这是唯一一条把"入口接线"钉在行为上的用例**，但它不是唯一见证 —— 那 7 条规定用例也真的 `spawn` 入口）。
+**它证明的**：入口把**一个函数**注进了缝（`runCli` 的守卫因此放行）⇒ 无模式旗标时走**用法横幅 + 退 2**，而不是"缺工厂"的退 1。**它不证明**：那个函数就是真工厂（无模式旗标时 transport 根本不会被构造；要证身份得真起 `ssh`，被本计划禁止）。⇒ 名字按能证明的写，**不写"wires the real transport factory"**。变异 M-entry 见第五节（红名单 **9** 条：本轮这条 + 7 条规定的 spawn 用例 + `the usage text documents every exit code the operator can act on`）。**它钉住的部分**：它是本轮**唯一一条为接线新写**的用例，也是**唯一一条钉住失败形状**的 —— 断言的是"用法横幅 + 退 2"而不是"缺工厂"的退 1（`assert.doesNotMatch(result.stderr, /createTransport/u)`）。**它不是唯一见证**：`spawn` 入口的**既有**用例一共 **8 条**（那 7 条规定的 + 上面那条 `usage text`），M-entry 下**全部**变红，红线才凑成 **9**（实测：`feed-publish-cli.test.mjs` 里调用本地 spawn 助手的用例正好 9 条 = 既有 `:14 / :24 / :46 / :52 / :58 / :74 / :90 / :854` 与本轮新增的 `:1127`）⇒ 说它"**是唯一一条**把「入口接线」钉在行为上的用例"**与本句自己的后半截、以及那张读数都矛盾**。真正的强度是另一件事：`feed-publish-cli.test.mjs:14`（`the cli prints usage when no mode is given`）**本来就在 `spawn` 入口**，但在缝之前它**什么都没钉住**（当时 `runCli` 是 `dependencies.createTransport ?? createFeedTransport`，入口忘了接线也照样退 2 通过）—— **是这一刀的缝把它变成接线守卫的**。
 
 ### 四、实测：`outcome` 的判据与"哪个模式要哪个环境变量"
 
@@ -6785,7 +6786,7 @@ test('the entry script injects a transport factory, so a run with no mode flag p
 ### 七、门禁与本刀的读数
 
 - **三套用例**：`node --test` 逐套 ⇒ 模块 **`166 / 166 / 0`**（不变）、transport **`31 / 31 / 0`**（不变）、CLI **`42 / 42 / 0`**（`40 ⇒ 42`：组合根行为臂 + `scripts/**` 文风钉）。**合计 `166 / 31 / 42 = 239`**。
-- **`check:portable-update-release`**：`13 / 13 / 0`（改完 `.invalid` 之后；⚠️ **本机跑它必须先把 Go 放进 PATH**，否则那条 `go -C launcher test ./internal/update` 会让 `spawnSync` 的 `status` 变成 `null`、报 `null !== 0` —— **看起来像被我改的夹具弄坏了，其实是环境**）。
+- **`check:portable-update-release` 的单文件读数**（边界写全：`node --test scripts/lib/portable-update-release.test.mjs`，也就是 `package.json:54` 那条命令里的**一个**文件）：`13 / 13 / 0`（改完 `.invalid` 之后；⚠️ **本机跑它必须先把 Go 放进 PATH**，否则那条 `go -C launcher test ./internal/update` 会让 `spawnSync` 的 `status` 变成 `null`、报 `null !== 0` —— **看起来像被我改的夹具弄坏了，其实是环境**）。⚠️ **它和本节第 ④ 条的 `29 / 29 / 0` 不矛盾**：`13` = 这一个文件**单独**跑；`29` = `package.json:54` 那条命令的**三个文件**（`portable-launcher-build` + `portable-update-release` + `portable-update-ci`）—— 两个数都是真的，差别只在**边界**（本行过去没写边界，容易被读成自相矛盾）。
 - **全量门禁（本刀只跑一次，跑在提交 `b7d3c7ef` 的字节上）**：`export PATH="/d/go-toolchain/go/bin:$PATH"` → `pnpm check`（**不接管道**）→ 重定向到**仓库外**的日志 → `rc=$?` ⇒ **`GATE_EXIT=0`**。**非空证据六条**：① 日志 **10229** 行（上一刀 10227，**+2 = 本轮新增的两条用例**）；② 链上第一步 Go **真的跑过**（`ok  mofang-compass/portable-launcher/cmd/mofang-launcher  0.124s` 与 `internal/update  0.378s` —— 少了那个 PATH 导出它会在第一步就死）；③ `check:portable-feed-publish` 那一步的读数就是 **`ℹ tests 239 / ℹ pass 239 / ℹ fail 0`**（`166 + 31 + 42`，与逐套读数一致）；④ `check:portable-update-release` = **`29 / 29 / 0`**，其中**被本刀改过夹具的那条真的跑过**（`✔ make-portable-update CLI writes and independently verifies all three artifacts (719ms)`）；⑤ 链尾 `packages/desktop test` 真的跑到（`Test Files 281 passed (281)` / `2908 passed | 2 skipped (2910)`）；⑥ 全日志 `✖` / `not ok` / `FAIL` 计数 **0**。**没有把日志写进仓库**（`C:/Users/29315/AppData/Local/Temp/feedfix-probe/gate-16.log`，仓库外）。
 
 ### 八、本刀未做（不得写成已完成）
@@ -6794,3 +6795,72 @@ test('the entry script injects a transport factory, so a run with no mode flag p
 - **`blocked` 那一格没有在真锁上读过**：第四节的三种读数来自注入的假 transport（主机名 `updates.example.invalid`），**不是**一台真服务器上的真锁。
 - I3 标注的那两项**仍然是「未验证」**：密钥登记册与第 6b 步都由**兄弟计划** `2026-09-22-portable-release-assembly-and-ci` 的 Task 6 落地，**本刀不越界去做**。
 - 手册里 `--owner-record-unreadable` 路径的 `ls` / `cat` 四种读数仍**没有真机读数**（沿用 §十五 第六节的登记）。
+
+## 第十七节 收尾刀：N1–N4（2026-09-23）
+
+**这一刀是什么**：Task 8 的**最后一轮**，四条**全是文档** —— N1（Important：`retry` 行与 `blocked` 行互相矛盾，且"那把锁不是你的"是一句操作员**证不了**的断言）、N2 / N3 / N4（三条 Minor）。**没有一行生产代码**；`scripts/feed-publish.mjs` 仍是 **13 行 / 两条语句** ⇒ 三套用例读数**逐字不变**。
+
+### 一、N1（Important）：`retry` 行把操作员引去等一个已经退出的运行
+
+**矛盾在哪（代码链，逐条实读）**：`retry` 由 `retainAndFinish` 收口（`scripts/lib/feed-publish.mjs:1154` ⇒ `:791`），它调 `resolveLockDisposition` 且 `safeToExit: false` ⇒ 返回 `state: 'retained-by-this-run'`（`:386–393`）⇒ **锁被有意留在服务器上**（用例 `feed-publish-cli.test.mjs:1014` 钉 `lockState === 'retained-by-this-run'`、`:1017` 钉收口行 `stage === 'lock-retained'`）。而手册 `retry` 行写的是"**只有它可以安全重跑** `--commit`" ⇒ 操作员直接重跑，取锁的 `mkdir` 撞 EEXIST（`acquireChannelLock`，`:311–330`）⇒ `not-acquired` ⇒ `runCommit` 收口 `blocked`（`:966–971`）⇒ **退 1**。他于是落到 `blocked` 行，而那一行叫他"不要去拆锁、活着就等它收尾"—— **他会去等一个早已退出 `3` 的运行**。
+
+**第二层（更糟）**：工具当时**没给判据**。`finish` 返回 `{outcome, reason, lockState, stages, runid, planHash}`（`:773–780`），`recordOutcome` 写 `{stage, reason, …}`（`:786–794`）—— **两者都不带 owner 的 runid** ⇒ "那把锁不是你的"是**操作员手里的东西证不了**的断言。
+
+**落地**（手册第 7 步 `:110` / `:112` / `:115`；下面是改后的**原文**，与第 7 步**围栏逐字相同** —— 所以这两行与那句警告在本文件里各出现**两次**：围栏一次、本节引文一次）：
+
+```text
+| `retry`                                 | 翻转没生效（公网还是旧 manifest），远端状态**确定**；⚠️ **锁按设计留在这台运行名下**（`lockState: retained-by-this-run`） | 退出码 `3`，**只有它可以安全重跑** `--commit` —— 但**直接重跑会先撞上自己留下的锁**（取锁的 `mkdir` 遇 EEXIST ⇒ `not-acquired` ⇒ 收口 `blocked`、退 `1`）⇒ **先按 7b 释放它**：`--confirm-runid` 填**本次打印的 `runid`**（本条已经退出 `3`，所以它可证不在进行中），释放成功再重跑 `--commit`                                                                                                                           |
+| `blocked`                               | 这个频道**已经有锁**，本次**没拿到锁**（`lockState: not-acquired`）                                                       | 退出码 `1`，**先别拆锁**：持锁的很可能就是**你自己上一次的 `retry`**（它按设计留着锁退出 `3`）⇒ 先用 7b **探**一次，`--confirm-runid` 填**你上次那条命令打印的 `runid`**：**对得上** ⇒ 那是你自己的锁，命令当场报 `lock-broken`，再重跑；**对不上** ⇒ 工具**当场拒绝并打印真正的 owner runid**，且**拒绝发生在任何写之前**（只读一次远端记录、不写审计行）⇒ 拿那个 runid 去认人，确认对方**确实已经不在进行中**，才走 7b |
+⚠️ **`blocked` 与完整性事故 `incident` 都退 `1`，但锁的来源相反**：`incident` 的锁是**本次运行有意保留**的（见上表 `incident` 行）；`blocked` 的锁**本次根本没拿到**。**「那把锁不是你的」不该是一句断言** —— 工具**当场给判据**：拿**你上次那条命令打印的 `runid`** 按 7b 探一次（`--confirm-runid`）。**对得上** ⇒ 那锁是你自己的（例如上一次 `retry` 按设计留下的），释放它安全；**对不上** ⇒ 工具**立即拒绝**并**打印真正的 owner runid**（`--confirm-runid does not match the owner runid <那串 runid>`），**这条拒绝发生在任何写之前**（只读一次远端 `owner.json`，**一条审计行都不写**）⇒ 但**只有确认那次运行确实已经不在进行中之后**才允许走 7b 的恢复路径 —— 否则你会在它写到一半时把它脚下的东西拆掉。
+```
+
+**判据为什么可当场验证**（三条都在今天 HEAD 的字节上读过）：
+
+1. `--break-lock` 的 `--confirm-runid` 不匹配时**立即抛错并打印真 owner 的 runid**：`scripts/lib/feed-publish.mjs:487–488`（`--confirm-runid does not match the owner runid ${owner.runid}`）。在它**之前**只有 `readOwnerRecord`（`:463`，一次只读的 `cat`），第一个写操作是 `:490` 的 `removeLock`（`:445–462`）⇒ **拒绝发生在任何写之前**。
+2. **拒绝不写审计行**：`scripts/lib/feed-publish-cli.mjs:345` 的 `appendAuditStage({stage:'break-lock', …})` 在 `breakChannelLock` **返回之后**才执行；catch 里只在 `ownerRecordUnreadable === true` 时写一条（`:348–352`）—— 只读探测走的不是那条 ⇒ **一条审计行都不写**。
+3. **操作员拿得到自己的 runid**：`--commit` 打印的就是 `finish` 的返回值（`scripts/lib/feed-publish-cli.mjs:403`），里面带 `runid` ⇒ `retry` 那条命令的 stdout 里**已经有** 7b 需要的 `--confirm-runid`。
+
+⚠️ **探测不是"完全离线"**：它要连 `--host`、读一次远端 `owner.json`（只读）。手册因此写的是"只读一次远端记录、不写审计行"，**没有**写成"不联网"。
+
+### 二、N2（Minor）：一个裸 `U+000C` 活了下来，而"一个都没有"这句话是假的
+
+读数（**同一命令**，逐帧跑在 `git show <sha>:<路径>` **落盘后**再读的文件上；数的是**裸控制字符**，不含 `\n` / `\t`）：`303bfddf` ⇒ **0**、`c3bcf130` ⇒ **2**（`U+0001` × 1 + `U+000C` × 1）、`HEAD 70268eed` ⇒ **1**（`U+000C` × 1 —— `feed-publish.test.mjs` 那个 `U+0001` 已被 Minor 8 转义）。⇒ Minor 8 落地的句子"本文件现在**一个裸控制字符都没有**"**可测地不成立**。
+
+落地：把 `plan:6660`（M6 行引文里的 `scripts\lib<U+000C>eed-publish-cli.test.mjs`）按**转义**写成 `` `scripts\lib\u000ceed-publish-cli.test.mjs` ``（与 Minor 8 对 `U+0001` 的处理同一形状）。改后读数 **0** ⇒ 那句话现在**真的**成立（不是把句子改软，是把事实改对）。改写时按纪律做：锚点**恰好 1 次**、改前 sha256 `a4ed10d3…4f7b`、打印**整行** hunk、改后 sha256 `c51a9068…4052`、重读确认裸控制字符 0。
+
+⚠️ **测量本身踩过一次坑（登记）**：第一次用 `git show <sha>:<路径> | node`（走管道）读数，`303bfddf` 得到 **718345** 字节，而 `git show > 文件` 再读是 **718327** 字节 —— 管道上多出 18 字节。**控制字符计数不受影响**（`0x0C` 不会出现在 UTF-8 多字节序列里），但**字节数不能**用管道那条路读 ⇒ 本节一律用**落盘再读**。
+
+### 三、N3（Minor）：同一个命令名背着两个读数
+
+`check:portable-update-release` 在 §十六七 里出现两次：`13 / 13 / 0`（该节第 2 条）与门禁日志里的 `29 / 29 / 0`（同节第 ④ 条）。**两个都是真的**：`13` 是 `portable-update-release.test.mjs` **单文件**（`node --test` 只跑它一个、Go 在 PATH），`29` 是 `package.json:54` 那条命令的**三个文件**（`portable-launcher-build` + `portable-update-release` + `portable-update-ci`）。落地：把第一条**按文件标注**（本计划对其它边界的既有写法），并显式写出"两个数不矛盾，差别只在**边界**"。
+
+本机实测（Go 在 PATH）：单文件 `ℹ tests 13 / ℹ pass 13 / ℹ fail 0`；三文件 `ℹ tests 29 / ℹ pass 29 / ℹ fail 0`。
+
+### 四、N4（Minor）：一句话既高估了一条用例、又抹掉了另一条的强度
+
+原文："**这是唯一一条把"入口接线"钉在行为上的用例**，但它不是唯一见证 —— 那 7 条规定用例也真的 `spawn` 入口"。**前半句被自己的后半句和读数同时否掉**：`spawn` 入口的**既有**用例一共 **8 条**，M-entry 下**全部**变红（红线 9 = 8 + 本轮这条；读数 `cli 33/42/9`）。实测：`feed-publish-cli.test.mjs` 里调用**本地 spawn 助手** `runCli` 的用例正好 **9** 条 —— 既有 `:14 / :24 / :46 / :52 / :58 / :74 / :90 / :854`、本轮新增 `:1127`。
+
+落地两句：
+
+- **改成能证明的**：它是本轮**唯一一条为接线新写**的用例，也是**唯一一条钉住失败形状**的（用法横幅 + 退 2，而不是"缺工厂"的退 1；`assert.doesNotMatch(result.stderr, /createTransport/u)`）。
+- **补上复核者指出的真正强度**：`feed-publish-cli.test.mjs:14`（`the cli prints usage when no mode is given`）**本来就在 `spawn` 入口**，但在缝之前它**什么都没钉住** —— 当时 `runCli` 是 `dependencies.createTransport ?? createFeedTransport`（`706bfc18^:scripts/lib/feed-publish-cli.mjs:120`），入口忘了接线也照样退 2 ⇒ **是这一刀的缝把它变成接线守卫的**。
+
+### 五、镜像与同步（本刀实测）
+
+装置：仓库外的 `fence-mirror.mjs`（按**连续切片**逐行比对，末尾空行显式计数后忽略）。**先验装置再读结论**：① 在围栏第 7 节里把一个字符改成两个空格 ⇒ **恰好第 7 节 `DIFFERENT`、其余四节 `IDENTICAL`**；② 从第 7b 节中间删掉一行 ⇒ **恰好第 7b 节 `DIFFERENT`（36/37，首个差异 index 9）** ⇒ 判据是**连续切片**，既不是"每行都能在某处找到"，也不是把什么都报红。
+
+最终读数：`### 7.` **IDENTICAL（38/38，raw 39/39）**、`### 7b.` **IDENTICAL（37/37，raw 38/38）**、`### 9.` **IDENTICAL（17/17，raw 18/18）**、`### 10.` **IDENTICAL（12/12，raw 12/13）**、`## nginx 与权限 + ## 发布前检查单` **IDENTICAL（16/16，raw 16/17）**。⇒ 与 §十六六 的五个数**逐节对上**（那一节报的 `39/38/18/12/16` 就是这里的 `raw` 一栏），尾随空行差仍然是那**两处**（第 10 节、检查单），照旧显式计数、**不是静默放过**。
+
+⚠️ **重同步装置本刀第一次运行就出过事故（登记，同类第二次）**：5 处 splice 放在**同一次运行**里 —— (a) 第 10 节把手册的**尾随空行**也搬进了围栏（`12 ⇒ 13`、凭空多一个空行）；(b) `nginx + 检查单` 那一处按"下一个 `## ` 标题"截断，**只搬了 6 行**（`## nginx 与权限` 到 `## 发布前检查单` 之前）⇒ **把检查单整段删掉**。**两处都是打印出来的"替换行数"当场暴露的**（`12 → 13`、`16 → 6`）。处置：从仓库外的备份 `plan.before-splice.md`（sha256 `79ea24b3dc90a1bd879d011dd42ea1312ae449fc228d58cf7660740f46220c6d`）**逐字节回滚**、修装置（尾随空行按**旧切片的形状**保留；尾部那处显式截到 `## 立即停止条件`）、重跑 ⇒ 逐节 IDENTICAL。**教训**：splice 装置必须**打印新切片长度并与旧长度逐个核对** —— §十六六 那次是"一次跑两处"，这次是"一次跑五处"，同一个坑；两次都靠**读数**而不是"应该没事"发现。
+
+### 六、门禁与本刀的读数
+
+- **三套用例（本刀前后逐字相同）**：模块 **`166 / 166 / 0`**、transport **`31 / 31 / 0`**、CLI **`42 / 42 / 0`** ⇒ **`166 / 31 / 42 = 239`**、`fail 0`。本刀**没有碰** `scripts/**` 与任何测试文件（`git diff --stat` 只有两个 `.md`）。
+- **`check:portable-update-release`**：单文件 `13 / 13 / 0`、`package.json:54` 三文件 `29 / 29 / 0`（Go 在 PATH）。
+- **全量门禁**：本刀只跑一次 `pnpm check`（**不接管道**、重定向到**仓库外**的日志、`rc=$?`），跑的是**本节之前那条提交**的字节 —— **读数在下一条只写读数的提交里**（那一条不碰代码，所以对代码的结论仍然成立）。
+
+### 七、本刀未做（不得写成已完成）
+
+- **没有连服务器、没有真实 feed、没有真机演练** ⇒ `retry` ⇒（按 7b 释放锁）⇒ 重跑 `--commit` **这条路仍未被真机证过**：本节只从代码与用例证明"直接重跑会退 `blocked`"，以及"`--confirm-runid` 不匹配会先拒绝、且不写审计行"。
+- **`blocked` 那一格仍然没有在真锁上读过**：`blocked` 的判据与"探测"行为都来自代码与注入的假 transport（沿用 §十六四 / §十六八 的登记）。
+- N2 的"裸控制字符 = 0"只在**本计划这一个文件**上量过（这正是那句话的射程），其它文件**未扫**。
