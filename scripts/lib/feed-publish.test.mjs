@@ -1433,6 +1433,9 @@ function commitTransport(options = {}) {
           return { status: 0, stdout: options.sameFileSystem === false ? '100\n200\n' : '100\n100\n', stderr: '' };
         }
         if (request.script.includes('manifest.json') && request.script.includes('.tmp')) {
+          if (options.tempManifestReadStatus !== undefined) {
+            return { status: options.tempManifestReadStatus, stdout: '', stderr: 'sha256sum: Permission denied' };
+          }
           return {
             status: 0,
             stdout: `${options.tempManifestSha ?? 'MISSING'}  ${request.script.split(/\s+/u)[1]}\n`,
@@ -1441,6 +1444,13 @@ function commitTransport(options = {}) {
         }
         if (request.script.includes('manifest.json')) {
           manifestReads += 1;
+          if (options.baselineDigestReadFails === true && manifestReads === 1) {
+            return { status: 1, stdout: '', stderr: 'sha256sum: Permission denied' };
+          }
+          if (options.casDigestReadFails === true && manifestReads > 1) {
+            return { status: 1, stdout: '', stderr: 'sha256sum: Permission denied' };
+          }
+          if (options.firstPublish === true) return { status: 0, stdout: '', stderr: '' };
           if (options.baselineDigestAbsent === true && manifestReads === 1) {
             return { status: 0, stdout: '', stderr: '' };
           }
@@ -1770,6 +1780,73 @@ test('a cas mismatch is an incident that keeps the lock and never rolls anything
   assert.equal(result.stages.find((entry) => entry.stage === 'flip').status, 'pending');
   const destructive = transport.calls.filter((call) => /rm -rf|mv -f.*manifest/u.test(String(call[1] ?? '')));
   assert.deepEqual(destructive, []);
+});
+
+test('a remote manifest digest that could not be read is an incident rather than a bypass', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths, { casDigestReadFails: true });
+  const input = commitInput(transport, { ...paths });
+  const result = await runCommit(input);
+  assertEveryCommitCallCarriesTheTrustAnchor(transport);
+  assert.equal(result.outcome, 'incident');
+  assert.equal(result.lockState, 'retained-by-this-run');
+  assert.match(result.reason, /could not be read/u);
+  assert.doesNotMatch(result.reason, /which means a bypass/u);
+  assert.equal(result.stages.find((entry) => entry.stage === 'cas').status, 'incident');
+  assert.equal(result.stages.find((entry) => entry.stage === 'temp-manifest').status, 'pending');
+  const cas = auditEntriesOf(input.auditOut).find((entry) => entry.stage === 'cas');
+  assert.equal(cas.status, 'incident');
+  assert.equal(cas.detail, 'the remote manifest digest could not be read');
+  assert.equal(cas.previousManifestSha256, BASELINE_SHA);
+  assert.equal(cas.observedManifestSha256, null);
+});
+
+test('a first publish proceeds when the manifest digest is absent on both reads', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths, { firstPublish: true });
+  const input = commitInput(transport, { ...paths });
+  const result = await runCommit(input);
+  assertEveryCommitCallCarriesTheTrustAnchor(transport);
+  assert.equal(result.outcome, 'done', result.reason);
+  assert.equal(result.lockState, 'released');
+  const cas = auditEntriesOf(input.auditOut).find((entry) => entry.stage === 'cas');
+  assert.equal(cas.status, 'done');
+  assert.equal(cas.previousManifestSha256, 'absent');
+  assert.equal(cas.observedManifestSha256, 'absent');
+});
+
+test('a manifest digest that cannot be read inside the lock stops the run before anything is committed', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths, { baselineDigestReadFails: true });
+  const input = commitInput(transport, { ...paths });
+  const result = await runCommit(input);
+  assertEveryCommitCallCarriesTheTrustAnchor(transport);
+  assert.equal(result.outcome, 'incident');
+  assert.equal(result.lockState, 'retained-by-this-run');
+  assert.equal(result.stages.find((entry) => entry.stage === 're-verify').status, 'incident');
+  assert.equal(result.stages.find((entry) => entry.stage === 'commit-version').status, 'pending');
+  const renames = transport.calls.filter(
+    (call) => call[0] === 'writeSsh' && String(call[1]).startsWith('mv /opt/rongying/updates-state/staging/'),
+  );
+  assert.deepEqual(renames, []);
+  const reVerify = auditEntriesOf(input.auditOut).find((entry) => entry.stage === 're-verify');
+  assert.equal(reVerify.status, 'incident');
+  assert.equal(reVerify.detail, 'the manifest digest that the CAS baseline needs could not be read');
+});
+
+test('a remote temp manifest digest that could not be read is an incident rather than a mismatch', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths, { tempManifestReadStatus: 1 });
+  const input = commitInput(transport, { ...paths });
+  const result = await runCommit(input);
+  assertEveryCommitCallCarriesTheTrustAnchor(transport);
+  assert.equal(result.outcome, 'incident');
+  assert.equal(result.lockState, 'retained-by-this-run');
+  assert.match(result.reason, /could not be read/u);
+  assert.equal(result.stages.find((entry) => entry.stage === 'flip').status, 'pending');
+  const tempManifest = auditEntriesOf(input.auditOut).find((entry) => entry.stage === 'temp-manifest');
+  assert.equal(tempManifest.detail, 'the uploaded manifest digest could not be read');
+  assert.equal(tempManifest.manifestSha256, manifestShaOf(paths));
 });
 
 test('an indeterminate outcome with the old public sha allows a retry and keeps the lock', async () => {

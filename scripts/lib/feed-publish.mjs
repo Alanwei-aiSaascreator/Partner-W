@@ -634,7 +634,8 @@ async function readRemoteFileSha(input, target) {
     knownHostsPath: input.knownHostsPath,
     script: `sha256sum ${target} || true`,
   });
-  return String(result.stdout ?? '').split(/\s+/u)[0] || 'absent';
+  if (result.status !== 0) return { ok: false, sha256: null };
+  return { ok: true, sha256: String(result.stdout ?? '').split(/\s+/u)[0] || 'absent' };
 }
 
 export async function verifyPublicArtifacts(input) {
@@ -908,7 +909,15 @@ export async function runCommit(input) {
     return retainAndFinish('incident', 'the lock owner changed while this run was taking it');
   }
   owner = reReadOwner ?? owner;
-  const baselineSha = await readRemoteFileSha(input, `${UPDATE_ROOT}/${input.channel}/${PORTABLE_MANIFEST_NAME}`);
+  const baselineRead = await readRemoteFileSha(input, `${UPDATE_ROOT}/${input.channel}/${PORTABLE_MANIFEST_NAME}`);
+  if (baselineRead.ok !== true) {
+    audit('re-verify', 'incident', 'the manifest digest that the CAS baseline needs could not be read');
+    return retainAndFinish(
+      'incident',
+      'the manifest digest could not be read, so this run has no baseline to compare against',
+    );
+  }
+  const baselineSha = baselineRead.sha256;
   const stagingAfterLock = await inspectRemoteDirectory(input, stagingRoot, expectedEntries);
   if (!stagingAfterLock.present || stagingAfterLock.empty || stagingAfterLock.problems.length > 0) {
     audit('re-verify', 'incident', 'the staging bytes changed while the lock was being taken');
@@ -976,8 +985,16 @@ export async function runCommit(input) {
   }
   audit('backup-manifest', 'done', undefined, { previousManifestSha256: baselineSha, backupPath });
 
-  const casSha = await readRemoteFileSha(input, `${UPDATE_ROOT}/${input.channel}/${PORTABLE_MANIFEST_NAME}`);
-  const casEvidence = { previousManifestSha256: baselineSha, observedManifestSha256: casSha };
+  const casRead = await readRemoteFileSha(input, `${UPDATE_ROOT}/${input.channel}/${PORTABLE_MANIFEST_NAME}`);
+  const casEvidence = { previousManifestSha256: baselineSha, observedManifestSha256: casRead.sha256 };
+  if (casRead.ok !== true) {
+    audit('cas', 'incident', 'the remote manifest digest could not be read', casEvidence);
+    return retainAndFinish(
+      'incident',
+      'the remote manifest digest could not be read, so this run cannot tell a bypass from a failed read',
+    );
+  }
+  const casSha = casRead.sha256;
   if (casSha !== baselineSha) {
     audit('cas', 'incident', undefined, casEvidence);
     return retainAndFinish(
@@ -998,8 +1015,16 @@ export async function runCommit(input) {
     audit('temp-manifest', 'incident', 'the manifest upload failed', manifestEvidence);
     return retainAndFinish('incident', 'the manifest could not be uploaded, so the outcome is uncertain');
   }
-  const remoteTempSha = await readRemoteFileSha(input, tempManifestPath);
+  const tempRead = await readRemoteFileSha(input, tempManifestPath);
+  const remoteTempSha = tempRead.sha256;
   const tempManifestEvidence = { manifestSha256: local.manifestSha256, remoteTempSha256: remoteTempSha };
+  if (tempRead.ok !== true) {
+    audit('temp-manifest', 'incident', 'the uploaded manifest digest could not be read', tempManifestEvidence);
+    return retainAndFinish(
+      'incident',
+      'the uploaded manifest digest could not be read, so this run cannot tell a bad upload from a failed read',
+    );
+  }
   if (remoteTempSha !== local.manifestSha256) {
     audit(
       'temp-manifest',
