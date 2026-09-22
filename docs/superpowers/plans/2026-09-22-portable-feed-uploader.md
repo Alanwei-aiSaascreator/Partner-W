@@ -749,6 +749,13 @@ test('the anchor helper refuses an empty call list rather than passing on zero c
   assert.throws(() => assertEveryCallCarriesTheTrustAnchor([]));
 });
 
+test('the anchor helper names a call that did not record its request', () => {
+  assert.throws(
+    () => assertEveryCallCarriesTheTrustAnchor([['fetchPublic', 'url']]),
+    /the fetchPublic call did not record its request/u,
+  );
+});
+
 async function preflightWithProbe(probe) {
   const transport = fakeReadOnlyTransport({ sshRun: () => probe });
   const result = await runPreflight({
@@ -1065,10 +1072,32 @@ test('the plan hash binds channel, version and all three artifact digests', () =
   }
 });
 
+test('the lock mkdir is pinned to the C locale so its diagnostics do not move with the host locale', async () => {
+  const transport = fakeWriteTransport();
+  await acquireChannelLock(lockInput(transport));
+  assert.equal(writeScripts(transport)[0], `LC_ALL=C mkdir ${LOCK_DIR}`);
+  assertEveryCallCarriesTheTrustAnchor(transport.calls);
+});
+
+test('the plan hash refuses a field that is not a non empty string', () => {
+  for (const field of ['channel', 'version', 'packageSha256', 'fileManifestSha256', 'manifestSha256']) {
+    for (const value of [undefined, null, '', '   ', 7, {}]) {
+      assert.throws(
+        () => planHashOf({ ...PLAN_INPUT, [field]: value }),
+        FeedPublishError,
+        `${field} = ${String(value)}`,
+      );
+    }
+  }
+  assert.throws(() => planHashOf({}), FeedPublishError);
+  assert.throws(() => planHashOf(undefined), FeedPublishError);
+  assert.equal(typeof planHashOf(PLAN_INPUT), 'string');
+});
+
 test('an existing lock is a determinate not-acquired and never stolen', async () => {
   const transport = fakeWriteTransport({
     writeSsh: (request) =>
-      request.script.startsWith('mkdir ')
+      isLockDirectoryCommand(request)
         ? { status: 1, stdout: '', stderr: "mkdir: cannot create directory '/x': File exists" }
         : { status: 0, stdout: '', stderr: '' },
   });
@@ -1088,7 +1117,7 @@ test('an existing lock is a determinate not-acquired and never stolen', async ()
 test('an ssh failure while taking the lock is ownership unknown, not not-acquired', async () => {
   const transport = fakeWriteTransport({
     writeSsh: (request) =>
-      request.script.startsWith('mkdir ')
+      isLockDirectoryCommand(request)
         ? { status: -1, stdout: '', stderr: 'connection timed out' }
         : { status: 0, stdout: '', stderr: '' },
   });
@@ -1301,7 +1330,23 @@ node --test scripts/lib/feed-publish.test.mjs
 ```js
 export const LOCK_STATES = Object.freeze(['not-acquired', 'released', 'retained-by-this-run', 'ownership-unknown']);
 
+const CHANNEL_CHARACTERS = [...new Set(CHANNELS.join(''))].join('');
+
+function assertSafeChannel(channel) {
+  if (typeof channel !== 'string' || channel.length === 0) {
+    throw new FeedPublishError('the channel is empty, so it cannot be interpolated into a remote path');
+  }
+  for (const character of channel) {
+    if (!CHANNEL_CHARACTERS.includes(character)) {
+      throw new FeedPublishError(
+        `the channel ${channel} carries ${JSON.stringify(character)}, which no channel in the whitelist uses, so it is not safe to interpolate into a remote path`,
+      );
+    }
+  }
+}
+
 function lockPath(channel) {
+  assertSafeChannel(channel);
   return `${STATE_ROOT}/lock/${channel}`;
 }
 
@@ -1310,6 +1355,12 @@ function ownerPath(channel) {
 }
 
 export function planHashOf(input) {
+  for (const field of ['channel', 'version', 'packageSha256', 'fileManifestSha256', 'manifestSha256']) {
+    const value = input?.[field];
+    if (typeof value !== 'string' || value.trim().length === 0) {
+      throw new FeedPublishError(`the plan hash needs a non empty ${field}`);
+    }
+  }
   return createHash('sha256')
     .update(
       [input.channel, input.version, input.packageSha256, input.fileManifestSha256, input.manifestSha256].join('\n'),
@@ -1346,7 +1397,7 @@ export async function acquireChannelLock(input) {
   const created = await input.transport.write.sshRun({
     host: input.host,
     knownHostsPath: input.knownHostsPath,
-    script: `mkdir ${lockPath(input.channel)}`,
+    script: `LC_ALL=C mkdir ${lockPath(input.channel)}`,
   });
 
   if (created.status !== 0) {
@@ -1374,7 +1425,7 @@ export async function acquireChannelLock(input) {
   const written = await input.transport.write.sshRun({
     host: input.host,
     knownHostsPath: input.knownHostsPath,
-    script: `printf '%s' '${JSON.stringify(input.owner)}' > ${ownerPath(input.channel)}`,
+    script: `printf '%s' '${Buffer.from(JSON.stringify(input.owner), 'utf8').toString('base64')}' | base64 -d > ${ownerPath(input.channel)}`,
   });
   if (written.status !== 0) {
     return {
@@ -1520,6 +1571,18 @@ export async function breakChannelLock(input) {
 2. **`releaseChannelLock` 不再把两个 §6.6 前提写成字面量（第三个实现偏离）。** 规定文本里 `acquisitionConfirmed: true` 与 `safeToExit: true` 是**字面量**，于是 §6.6 的推论（"本次尚未取得锁时……**不得声称「保留」或「释放」一个并不属于自己的锁**"，spec 行 352）与保留表（"翻转之后失败 ⇒ `incident` ⇒ **保留锁**"，spec 行 333）在这个入口上**无法表达**——Task 4 的 `releaseAndFinish` 正是不传这两个参数调用它的，于是它无条件断言"本次确实取得过锁"且"安全退出"。实现改为把两个输入往下传（`resolveLockDisposition` 内部本来就 fail closed：`!== true` 即拒绝）。规定的三条 release 用例因此各自补上 `acquisitionConfirmed: true, safeToExit: true`——**测试名不变**。**规定清单看不见差别**：把 `acquisitionConfirmed` 还原成字面量 `true` ⇒ 只红本刀新增的 `a release that never confirmed its own acquisition refuses and writes nothing`（69 → 68）；把 `safeToExit` 还原成字面量 ⇒ 只红 `a release that is not safe to exit keeps the lock this run owns`（69 → 68）。
 3. **§6.4 的信任锚现在每条远程调用都被钉住（第四个偏离，改动落在测试夹具与规定用例上）。** 规定夹具只记 `request.script`，所以从七个调用点里删掉 `host:` 或 `knownHostsPath:` **58/58 全绿**（实测）——`knownHostsPath` 是签名闸门之外的另一道信任锚，掉线不报错、只静默失效。实现：假 transport 记下**整个 request**，并用共享助手 `assertEveryCallCarriesTheTrustAnchor(calls)` 在每条走 transport 的测试里断言 `host` 与 `knownHostsPath` 恰好等于 `HOST` / `KNOWN_HOSTS_PATH`；助手**先断言 `calls.length > 0`**（零调用不许空过）。Task 1/2 的 preflight 夹具与三条 preflight 用例一并接上——只修 Task 3 会把同一个洞留在隔壁。**规定清单看不见差别**：删 `readOwnerRecord` 调用里的 `host:` ⇒ 红 13 条（69 → 56），删 `acquireChannelLock` 的 `mkdir` 调用里的 `knownHostsPath:` ⇒ 红 10 条（69 → 59）；两条在修复前都是 58/58 全绿。
 
+**第二修复刀（代码质量门禁复核，2026-09-22）的四处偏离（第五、第六、第七、第八处；形状同上：规定文本说了什么 / 为什么不行 / 什么变异证明规定清单看不见差别）：**
+
+5. **owner 写入不再把记录直接拼进 shell 单引号串，改成 base64 载荷（第五处，`scripts/lib/feed-publish.mjs` 的 owner 写入）。** 规定文本是 `printf '%s' '${JSON.stringify(input.owner)}' > owner.json`：`JSON.stringify` 会转义 `"` 却**从不转义 `'`**，而上面第一条偏离新增的五字段校验只要求 `trim()` 后非空 —— 于是 `operator`（Task 7 从 `MOFANG_FEED_OPERATOR` 取，CI 显示名或 git author 都是合法值）里一个撇号就能**结束那个单引号串**，后面的内容变成 shell 源码。**实测（真 bash，仓库外临时目录，只跑 `touch PWNED`，不碰网络）：** 拿本模块**真实生成**的那条脚本去跑，`operator: "x'; touch PWNED; echo '"` ⇒ `touch PWNED` **在"发布主机"上被执行**（读数 `MARKER_EXISTS true`），模块仍以 `incident: false` 报"本次持有锁"，而落盘的 `owner.json` 只剩尾巴（`","startedAt":…,"machine":"builder-01"}`）—— **既损坏又不报错**；`operator: "O'Brien"`（现实值）⇒ 单引号串未闭合，**根本不写 `owner.json`**（读数 `OWNER_FILE_BYTES ABSENT`），却报 `incident: true`。实现改为 `printf '%s' '<base64>' | base64 -d > …`，载荷由 `Buffer.from(JSON.stringify(input.owner), 'utf8').toString('base64')` 生成：base64 字母表是 shell 安全的，记录里**没有任何字节能离开它所在的 shell 词**（同一形状的修复在另一条线上已经用过一次）。**规定清单看不见差别（两条实测）：** ① 把 HEAD 模块 + HEAD 套件（70 条）的 `OWNER_RECORD.operator` 夹具值换成 `"x'; touch PWNED; echo '"`（**只改这一处夹具，别的都不动**）⇒ **70/70 全绿** —— 整套规定用例对着一个 shell 注入载荷全绿，因为它们既不执行生成的脚本、也不检查它的引号边界；② 把本刀的实现变异回规定的 `printf '%s' '${JSON.stringify(...)}'` 形式 ⇒ **红 3 条**（`an owner record with an apostrophe cannot end the shell word it is written into` + `a successful acquisition writes the owner record for this run` + `the lock lives under the channel it was given rather than a fixed one`；76 → 73）。**②不是"只红一条"，别按那个口径记**：后两条是规定的"逐字断言写脚本"用例，本刀**必须**把它们更新成 base64 形式，于是它们也钉住了这个修复 —— 是覆盖更宽，不是缺陷。**这条修复还牵动规定的下游**：Task 4 的 `commitTransport` 夹具里那段 `/printf '%s' '(\{.*\})' >/u.exec(request.script)`（从脚本里还原 owner 记录）已同步改为 base64 解码 —— 不改的话 Task 4 那条"解锁时锁被别人换掉"的验收项**永远读不到 owner 记录**，会静默失效（夹具里 `ownerJson` 恒为 `null`，`cat owner.json` 返回空，断言看起来"通过"）。
+
+6. **`channel` 在拼进远端路径之前先过一道本地的字符集前置条件（第六处，`lockPath`）。** 规定文本只靠 Task 1 的 `parsePublishInput` 白名单，而那是**两个文件之外**的一道门；`lockPath` / `ownerPath` 把 `channel` 拼进 `mkdir` / `rm` / `rmdir` / `cat` 的路径里。**不发明比计划更窄的集合**：Task 1 的白名单是 `CHANNELS = ['internal', 'stable']`（`parsePublishInput` 只做 `CHANNELS.includes(raw.channel)`），两个值用到的字符**只有小写 ASCII 字母** ⇒ 实现从白名单**推导**字符集 —— `const CHANNEL_CHARACTERS = [...new Set(CHANNELS.join(''))].join('')` —— 并要求 `channel` 的每个字符都在其中；同一条推导**自动**覆盖将来加进白名单的新字符，所以不会比计划窄。前置条件挂在 `lockPath` 这个**唯一咽喉**上（`ownerPath` 经它拼），因此 `acquireChannelLock` / `releaseChannelLock` / `breakChannelLock` / `readOwnerRecord` 四个入口**一起**被挡住，而不只是 acquire —— 只挡 acquire 会把 `rm` / `rmdir` 留成裸的。**规定清单看不见差别：** 去掉这道前置条件 ⇒ **只红** `a channel that could escape its remote path never reaches a remote call`（76 → 75）；该条对七个恶意 channel（`../evil` / `internal/x` / `internal; id` / 空串 / `INTERNAL` / `internal lock` / `internal\nx`）各断言一遍 acquire 与 break 都抛 `FeedPublishError` **且 `transport.calls.length === 0`**。**"不比计划窄"是被机械钉住的**：`the channel precondition admits every channel the whitelist allows` 遍历 `CHANNELS` 断言每个都放行、且发出恰好两次调用；去掉前置条件时它**保持绿** —— 正说明它钉的是"不许更窄"，而不是"必须拦住"。
+
+7. **锁的 `mkdir` 前面加 `LC_ALL=C`（第七处，`acquireChannelLock`）。** `isFileExistsFailure` 是**对英文报错文本做子串匹配**（`/File exists/iu`），而 GNU coreutils 的报错由 gettext 按 `LC_MESSAGES` 翻译：会话 locale 不是 `C` 时这条常规争用会**匹配不上**，于是每次都走 `ownership-unknown` + `incident` + `requiresExplicitRecovery`，把"别人正持锁"这条**常规路径**报成完整性事故。**本机量到的边界（记清楚，别把推断说成实测）：** 本机 `locale -a` 装了 zh_CN / fr_FR / de_DE / ja_JP 等（实测这四个地区各 3–4 个变体，共 **14** 项），但 `/usr/share/locale` **根本不存在**（`ls` 报 `No such file or directory`，`/usr/share/locale/*/LC_MESSAGES/coreutils.mo` 计数为 **0**）—— 也就是**没有任何消息目录**，所以换 locale **只改引号样式、不改被匹配的子串**：实测 `LC_ALL=C mkdir /tmp` ⇒ `mkdir: cannot create directory '/tmp': File exists`，`LC_ALL=zh_CN.UTF-8 mkdir /tmp` ⇒ `mkdir: cannot create directory ‘/tmp’: File exists` —— 引号从 `'` 变成 `‘’`，而 `File exists` **仍在**。**因此"非 C locale ⇒ 谓词失配"这条在本机没有复现出来**，它是对"目标主机装了消息目录（例如语言包）"的推断；Task 6 的真机 locale 探针就是去证实或推翻它。`LC_ALL=C` 本身是**只紧不松**的方向：它只会让远端输出**更**接近规定夹具里那份英文原文。**规定清单看不见差别：** 去掉 `LC_ALL=C ` ⇒ 红 4 条（`the lock mkdir is pinned to the C locale so its diagnostics do not move with the host locale` + 上面第 5 处里那三条逐字断言整条脚本的用例；76 → 72）—— 前缀被钉在四处而不是一处。**这条修复牵出的规定夹具改动：** 规定夹具用 `request.script.startsWith('mkdir ')` 判断"这条是锁的 `mkdir`"，加上前缀后**七处**全部失配。实测：直接加前缀 ⇒ 红 **11** 条，其中 7 条只是夹具没匹配上、于是"`mkdir` 成功"走错分支，与断言本身无关。实现把那七处换成一个按命令形状判断的具名谓词 `isLockDirectoryCommand(request)`（`/(?:^|\s)mkdir \S*\/lock\//u`）——它对前缀**免疫**，所以再去掉 `LC_ALL=C ` 时剩下的红**正好**是钉住前缀的那 4 条。Task 4 的 `commitTransport` 里同一形状的 `request.script.startsWith('mkdir ') && request.script.includes('/lock/')` 已同步改成同一个谓词（不改的话 Task 4 的锁夹具在加了前缀后全部失配，锁步骤会"成功"从而走错分支）。
+
+8. **`planHashOf` 对五个输入字段先做前置条件（第八处）。** 规定文本直接读 `input.channel` 等五个字段：`planHashOf({})` 会**平静地返回一个格式完好的哈希**（五个 `undefined` 用 `'\n'` 连起来一样能哈希），而调用方 `runCommit` 把它的结果当作锁的 `planHash` 与 staging 目录名的一部分 —— 不变量（字段都是非空字符串）住在**另一个函数**里，依赖它的却是这一个。实现改为逐字段 fail closed（`typeof !== 'string'` 或 `trim()` 后为空即抛 `FeedPublishError`，风格与 owner 五字段检查一致），并用 `input?.` 兜住 `null` / `undefined`。**`'\n'` 连接符本身保持不变**（它在计划的"刻意不钉"名单上，本次只**补上碰撞证据**，见下文）。**规定清单看不见差别：** 去掉这段前置条件 ⇒ **只红** `the plan hash refuses a field that is not a non empty string`（76 → 75）；该条对五个字段各喂 `undefined` / `null` / 空串 / 全空白 / 数字 / 对象六种坏值，并额外断言 `planHashOf({})` 与 `planHashOf(undefined)` 都抛、而正常输入返回字符串。
+
+**第二修复刀新增的测试落在规定块的哪一侧（本刀量过，省得复核时按"计划里没有"再报一遍）：** 规定块是**文件的一段连续镜像**，本刀新增的条目分布如下 —— **在镜像里面**：`the anchor helper names a call that did not record its request`（`feed-publish.test.mjs` 行 417，落在 **Task 2** 那份镜像 376–561 里）、`the lock mkdir is pinned to the C locale so its diagnostics do not move with the host locale`（行 621）、`the plan hash refuses a field that is not a non empty string`（行 628）、具名谓词 `isLockDirectoryCommand`（行 646，都在 **Task 3** 那份镜像 563–861 里）；**在镜像外面**（行 862 以后）：`OBSERVED_OPERATOR`（行 921）、`ownerWriteScript`（行 923）、`ownerPayloadOf`（行 926）、`an owner record with an apostrophe cannot end the shell word it is written into`（行 932）、`UNSAFE_CHANNELS`（行 1248）、`a channel that could escape its remote path never reaches a remote call`（行 1250）、`the channel precondition admits every channel the whitelist allows`（行 1261）—— 这七项只在本账本里按**名字 + 读数**记账。**这与上一刀把它的后续用例（行 833–1192）只写进账本、不写进规定块是同一个约定**，不是本刀的遗漏。**六份镜像的边界线（本刀量过，别猜）：** `feed-publish.test.mjs` 行 1–374 ／ 376–561 ／ 563–861，`feed-publish.mjs` 行 1–144 ／ 146–198 ／ 200–433；本刀用"逐行相等**且连续**"的检查跑过这六份（而不是只查"每行都能在文件里找到"—— 那个更松的判据会放过镜像被从中间撑开的情形，本刀就被它放过一次：`feed-publish.test.mjs` 行 417 的插入把 **Task 2** 那份镜像撑开了 7 行，只有连续判据抓得到，已按 376–561 重新对齐）。
+
 - [ ] **Step 4: 运行测试并确认通过**
 
 ```bash
@@ -1597,7 +1660,15 @@ node --test scripts/lib/feed-publish.test.mjs
 50. **对照变异（必须保持全绿）**：把 `not-acquired` 分支里那句 `reason: 'the channel is already locked',` 改写成 `'a lock is already held on this channel',` ⇒ 实测 **70/70 全绿** ⇒ 这套变异装置不是"改什么都红"。
 51. 删掉助手里的 `assert.ok(calls.length > 0, 'the trust anchor assertion needs at least one recorded call');`（非空守卫）⇒ **只红**本刀新增的 `the anchor helper refuses an empty call list rather than passing on zero calls`，实测 **70 → 69 / 1**。**为什么必须单钉它**：这是全刀唯一一条没人钉的守卫 —— **加钉子之前**（69 条套件的状态）实测 27 次助手调用**没有一次**拿到空调用表（带桩副本读数 `__ANCHOR_EMPTY_CALL_LIST_N__ 0`），所以那个状态下删掉它**不会红任何一条**，它存在的意义是挡住**将来**那条把 `calls` 传空的用例。而它在**变异空间里有牙**：第 5 条那次变异（删 `??` 重读）实测正好让**两条**用例的调用表变空（`release re-reads the owner and refuses when it belongs to another run` 与 `a corrupt owner record on the lock is unreadable rather than a crash`），两条都停在守卫这句上 —— 守卫的**行为**因此是"有牙且已钉"，只有它的**文案**留在「刻意不钉」名单里。**这份读数的口径（实测，别再估）**：套件里 36 条用例构造假 transport（共 40 次构造），其中 25 条至少发过一次调用、这 25 条全部接了助手；另外 11 条刻意零调用。**助手调用次数与空表次数按世代各记一份**：69 条套件时 27 次调用 / 25 条用例 / 空表 0 次；70 条（加钉子之后）时 28 次调用 / 26 条用例 / 空表 1 次 —— 那一次空调用就是这条新钉子自己（它刻意传空数组），其余 25 条的读数一个都没变。⚠️ **提交 `c323c495` 的信息里那句 "three tests end with an empty call list … and all three die on this guard" 不准确**（实测只有两条停在守卫上，第三条没走到助手），按本计划对 `3ebe23ec` 的同一条纪律处理：不重写那个提交，只在此处记账。
 
-**本修复刀的变异次数：** 第 35–49 条各一次 = **15 次变异**，第 51 条 = **1 次**，外加 1 次对照变异（第 50 条）= **17 次运行** ⇒ Task 3 累计 **61 次变异 + 2 次对照 = 63 次运行**。（第 5 条在 69 条套件上的**重跑**是**测量**，不是新变异，不计入次数。）每一次都先断言锚点**恰好匹配一次**、变异后确认**文件在磁盘上真的变了**、跑完**逐字节恢复**并核对恢复后的 SHA-256 与变异前一致；对照那条是"必须留绿"的那一次。
+52. **（第二修复刀）** 把 owner 写入变异回规定的 `printf '%s' '${JSON.stringify(input.owner)}' > …` 形式 ⇒ 实测 **红 3 条**：`an owner record with an apostrophe cannot end the shell word it is written into`、`a successful acquisition writes the owner record for this run`、`the lock lives under the channel it was given rather than a fixed one`，**76 → 73 / 3**。**为什么不是"只红一条"、以及"规定清单看不见差别"的 70/70 实测**，口径写在第 5 处偏离里 —— 别按"只红一条"记。
+53. **（第二修复刀）** 删掉 `lockPath` 里的 `assertSafeChannel(channel);` ⇒ 实测 **只红** `a channel that could escape its remote path never reaches a remote call`，**76 → 75 / 1**；`the channel precondition admits every channel the whitelist allows` **保持绿**（它钉的是"不比计划窄"，不是"必须拦住"）。
+54. **（第二修复刀）** 把锁 `mkdir` 的 `LC_ALL=C ` 前缀删掉 ⇒ 实测 **红 4 条**：`the lock mkdir is pinned to the C locale so its diagnostics do not move with the host locale`、`an owner record with an apostrophe cannot end the shell word it is written into`、`a successful acquisition writes the owner record for this run`、`the lock lives under the channel it was given rather than a fixed one`，**76 → 72 / 4**。前缀被钉在**四处**（三条逐字断言整条脚本 + 那条具名用例）。⚠️ 用 `isLockDirectoryCommand` 换掉 `startsWith('mkdir ')` **之前**，同一个变异红 **11** 条，多出的 7 条只是夹具失配（详见第 7 处偏离）—— 别把 11 当成本刀的红数。
+55. **（第二修复刀）** 删掉 `planHashOf` 里那五行前置条件 ⇒ 实测 **只红** `the plan hash refuses a field that is not a non empty string`，**76 → 75 / 1**。
+56. **（第二修复刀）** 删掉 `assertEveryCallCarriesTheTrustAnchor` 里的 `assert.ok(request !== undefined, …)`（这是**给一个长久携带的未钉守卫补钉子**，不是新增守卫）⇒ 实测 **只红** `the anchor helper names a call that did not record its request`，**76 → 75 / 1**。**红法要说准：** 不是"断言自己失败"，而是 `assert.throws(…, /the fetchPublic call did not record its request/u)` 报 **"The input did not match the regular expression … Input: TypeError: Cannot read properties of undefined (reading 'host')"** —— 去掉守卫后未定义的 `request` **仍然会抛**（在 `request.host` 上）。所以这条守卫是**诊断/文案质量**守卫，**不是**静默放行的洞（前一版复核把它按"未钉的静默通道"记过一次，口径在此更正）。这条测试钉的是它的**报错文案**，不是"拦住一次静默通过"。
+57. **对照变异（必须保持全绿，第二修复刀的那一次）**：把 `not-acquired` 分支里那句 `reason: 'the channel is already locked',` 改写成 `'a lock is already held on this channel',` ⇒ 实测 **76/76 全绿**（`# pass 76 / # fail 0`）⇒ 这套变异装置不是"改什么都红"。
+58. **（第二修复刀，灵敏度探针）** 把 `CHANNEL_CHARACTERS` 的推导（`[...new Set(CHANNELS.join(''))].join('')`）换成写死的 `'abcdefghijklmnopqrstuvwxyz'` ⇒ 实测 **76/76 全绿** ⇒ 字符集的**取值来源**确实没被钉住（钉住的是它与白名单**同宽**：一端遍历 `CHANNELS`、一端拦七个恶意串）。这条是**故意的**，记在「刻意不钉」清单第 ⑥ 项里。**它是本刀的第二次对照变异性质**（预期留绿并且确实留绿），因此也计入"对照"次数而不是"变异"次数。
+
+**本修复刀的变异次数：** 第 35–49 条各一次 = **15 次变异**，第 51 条 = **1 次**，外加 1 次对照变异（第 50 条）= **17 次运行** ⇒ Task 3 累计 **61 次变异 + 2 次对照 = 63 次运行**。 **第二修复刀追加：** 第 52–56 条各一次 = **5 次变异**，外加 2 次对照变异（第 57、58 条）= **7 次运行** ⇒ Task 3 累计 **66 次变异 + 4 次对照 = 70 次运行**。另有**一次不计入次数的测量**（它是"规定套件的灵敏度"读数，不是对当前代码的变异）：HEAD 模块 + HEAD 套件、只把 `OWNER_RECORD.operator` 夹具值换成注入载荷 ⇒ **70/70 全绿**。（第 5 条在 69 条套件上的**重跑**是**测量**，不是新变异，不计入次数。）每一次都先断言锚点**恰好匹配一次**、变异后确认**文件在磁盘上真的变了**、跑完**逐字节恢复**并核对恢复后的 SHA-256 与变异前一致；对照那条是"必须留绿"的那一次。
 
 恢复后全绿且 `git diff` 为空。
 
@@ -1608,9 +1679,11 @@ git add scripts/lib/feed-publish.mjs scripts/lib/feed-publish.test.mjs
 git commit -m "feat(feed): own the channel lock honestly, including its failure modes"
 ```
 
-**本刀刻意不钉的东西（复核时别当成缺陷再报一遍）：** `isFileExistsFailure` 正则的 `u` 标志（删掉它改不了任何可观察行为 —— 实测 58/58 全绿）；`planHashOf` 的 `'\n'` 连接符（五个字段谁也放不进分隔符，换成任何"字段里不可能出现的分隔符"哈希都一样 —— 钉住的只是**逐字段**的敏感度）；`readOwnerRecord` 对读到 stdout 的 `.trim()`（`JSON.parse` 自己容空白，实测删掉它 58/58 全绿）；`?? 'unknown'` 这个 operator 默认字面量（钉住的是该字段**存在**，不是它的默认文本 —— 实测换成别的字面量 58/58 全绿）；以及所有人类可读的 `reason` 文案 —— 它们是散文，任何地方都不断言，这是**刻意**的（对照：`an owner record that matches the runid but not the plan hash is ownership unknown` 只断言 `reason` 里出现 `planHash`，不比对整句）。 **第 1–34 条（含第 5 条里的 `58 → 57`）与「刻意不钉」清单里的 `58/58` 都是 58 条套件时代的读数**；套件在修复刀涨到 69 条后，这些**计数**必须重跑才有效（名字级的预测不受影响）。
+**本刀刻意不钉的东西（复核时别当成缺陷再报一遍）：** `isFileExistsFailure` 正则的 `u` 标志（删掉它改不了任何可观察行为 —— 实测 58/58 全绿）；`planHashOf` 的 `'\n'` 连接符本身（**这条的旧理由已被推翻，只保留结论，且附上证据**：旧理由写的是"五个字段谁也放不进分隔符"，而字段只要求 `trim()` 后非空、**可以含换行**，所以那句话是**假的**。复核者给出的碰撞实例，本刀照录：`channel='internal\n1.2.3', version='x'` 与 `channel='internal', version='1.2.3\nx'` 两个输入的哈希**完全相同** —— `'\n'` 连接在字段边界上是**歧义**的。**本刀复现过（不是转述）**：三个摘要固定为 `'a'` / `'b'` / `'c'` 时，两个输入都得到 `d3d0b28f49ee2ce52eac80bb5b2b831fee3101706a986e817b05416aa6fe263c`（`COLLISION true`）。仍然不换分隔符、也不改写成长度前缀或逐字段分别哈希的绑定，理由是**接线路径上撞不到**：`channel` 被第六处的字符集前置条件限成白名单字符（不含换行，含换行会被拒），`version` 被 Task 1 的严格 SemVer 正则限死（`SEMVER_PATTERN` 不含换行），另外三个摘要是 `sha256` 的十六进制。**这是一条"有证据、有边界说明"的记录，不是"不可能被触发的不变量"** —— 本刀第八处的前置条件只保证五个字段是**非空字符串**，**不**保证它们不含换行；谁以后把换行放进 `channel` 或 `version`，谁就得自己负责。钉住的仍然只是**逐字段**的敏感度：`the plan hash binds channel, version and all three artifact digests` 对五个字段各改一次值并断言哈希都变）；`readOwnerRecord` 对读到 stdout 的 `.trim()`（`JSON.parse` 自己容空白，实测删掉它 58/58 全绿）；`?? 'unknown'` 这个 operator 默认字面量（钉住的是该字段**存在**，不是它的默认文本 —— 实测换成别的字面量 58/58 全绿）；以及所有人类可读的 `reason` 文案 —— 它们是散文，任何地方都不断言，这是**刻意**的（对照：`an owner record that matches the runid but not the plan hash is ownership unknown` 只断言 `reason` 里出现 `planHash`，不比对整句）。 **第 1–34 条（含第 5 条里的 `58 → 57`）与「刻意不钉」清单里的 `58/58` 都是 58 条套件时代的读数**；套件在修复刀涨到 69 条后，这些**计数**必须重跑才有效（名字级的预测不受影响）。
 
 **本修复刀加进这份名单的：** ① owner 校验的报错文案 `the owner record must carry a non empty <field>, so no lock is created without one` —— 散文，被测的只有**字段名**（`/machine/u` 等），整句不断言；② owner 为 `null`/`undefined` 时报的是**清单里第一个**字段（`runid`）——**检查顺序刻意不钉**（`a missing owner record never creates a lock` 只断言抛的是 `FeedPublishError` 且消息含 `owner record`）：顺序不是 §6.6 的要求，只是实现细节；③ `resolveLockDisposition` 对两个前提的 `!== true` 严格性（真值但非 `true`，例如 `'yes'`）——那是既有那一臂的语义，本刀只做透传，测试只覆盖 `false` 与"缺省"两种；④ 助手 `assertEveryCallCarriesTheTrustAnchor` 自己的**断言文案** —— **只剩文案**：该助手的**非空守卫**（`calls.length > 0`，零调用不许空过）本刀已用 `the anchor helper refuses an empty call list rather than passing on zero calls` **钉住**（第 51 条），因此它**不在**这份"刻意不钉"名单里。
+
+**第二修复刀加进这份名单的：** ⑤ `assertSafeChannel` 的两条报错文案（`the channel is empty, so it cannot be interpolated into a remote path` 与 `the channel … carries … which no channel in the whitelist uses …`）—— 散文，被测的只有"抛的是 `FeedPublishError`"与"调用表为空"，整句与 `JSON.stringify(character)` 那截转义**都不断言**；⑥ 第六处字符集判据的**取值来源**（`[...new Set(CHANNELS.join(''))].join('')`）—— 钉住的不是这份推导本身，而是它的**两端**：`the channel precondition admits every channel the whitelist allows` 遍历 `CHANNELS`（不许更窄），`a channel that could escape its remote path never reaches a remote call` 拦住七个恶意串（不许更松）；**实测（第 58 条）：** 把推导换成**写死的** `'abcdefghijklmnopqrstuvwxyz'` ⇒ **76/76 全绿** —— 也就是"怎么从白名单导出字符集"是**刻意不钉**的实现细节，钉住的是它与白名单**同宽**（一端遍历 `CHANNELS` 不许更窄、一端拦住七个恶意串不许更松）。
 
 **仓库事实（省得下次再去查门禁覆盖）：** `eslint.config.mjs` 的 `ignores` 含 `scripts/**` 与 `**/scripts/**`，所以本模块由 `node --test`、prettier `format:check` 与 knip 覆盖，**不被 eslint 覆盖**；"代码里不写注释"与"代码里不出现 CJK"这两条（`docs/agent-rules/frontend.md`）在本模块上因此**靠人工扫**，而不是靠门禁。
 
@@ -1629,7 +1702,7 @@ git commit -m "feat(feed): own the channel lock honestly, including its failure 
 
 **计划的形状只有一处推导、两处使用**：`planCommit` 返回 `PUBLISH_STAGES.map((stage) => ({ stage, status: 'pending' }))`，而本刀 `runCommit` 里的 `stages` 是**同一表达式的第二份拷贝**。两份一旦漂移（`--dry-run` 打印出来的计划与审计日志里的阶段列表不是同一个形状），**没有任何测试会红**。二选一并在代码里写实：要么让 `runCommit` 接收 `planCommit` 产出的计划数组（单点推导），要么把两份推导保持**逐字相同**，并在本刀的变异清单里加一条"只改其中一份 ⇒ 指定测试按测试名变红"把这条接线钉住。不允许留成两份没人看着的拷贝。
 
-**owner 记录的三个新字段从哪里来（本刀接线，不许在 `scripts/lib/` 里取系统值）：** §6.6（spec 行 319）要求锁内写全五个字段，而 Task 3 的 `acquireChannelLock` 现在会**逐字段 fail closed**（缺一个就抛 `FeedPublishError`，且**在任何远程调用之前**），所以 `runCommit` 必须把完整记录交给它：`runid` 用本刀的 `randomUUID()`、`planHash` 用 `planHashOf` 的结果，另外三个**由调用方注入**——`operator` 取 CLI 已有的 `MOFANG_FEED_OPERATOR`（Task 7 的 `--break-lock` 分支已经在读它）、`startedAt` 取 CLI 启动时的 `new Date().toISOString()`、`machine` 取 `os.hostname()`。**`scripts/lib/feed-publish.mjs` 是纯模块：不许出现 `new Date()` 或 `os.hostname()`**（否则这两个值在测试里只能靠打桩，接线就不可注入）；因此 **Task 7 的 `runCommit` 调用必须把 `operator` / `startedAt` / `machine` 三个值一起传进来**，否则发布会在锁这一步以 `FeedPublishError` 停下（那是诚实的失败，不是回归）。**同一条要求也落在本刀规定的测试夹具上**：`commitInput` 必须显式带上 `operator: 'ops'` / `startedAt: '2026-09-22T00:00:00.000Z'` / `machine: 'builder-01'`（假值，与 Task 3 的 `OWNER_RECORD` 同形，**不得**在测试里调 `new Date()` 或 `os.hostname()`），否则规定的那批 `runCommit` 用例会在锁这一步**全部**抛 `FeedPublishError` —— 五字段校验是在**任何远程调用之前** fail closed 的，夹具缺一个字段就没有一条 `runCommit` 用例能走到第二步。
+**owner 记录的三个新字段从哪里来（本刀接线，不许在 `scripts/lib/` 里取系统值）：** §6.6（spec 行 319）要求锁内写全五个字段，而 Task 3 的 `acquireChannelLock` 现在会**逐字段 fail closed**（缺一个就抛 `FeedPublishError`，且**在任何远程调用之前**），所以 `runCommit` 必须把完整记录交给它：`runid` 用本刀的 `randomUUID()`、`planHash` 用 `planHashOf` 的结果，另外三个**由调用方注入**——`operator` 取 CLI 已有的 `MOFANG_FEED_OPERATOR`（Task 7 的 `--break-lock` 分支已经在读它）、`startedAt` 取 CLI 启动时的 `new Date().toISOString()`、`machine` 取 `hostname()`（**不是 `os.hostname()`** —— 见 Task 7 那段的警告；照抄 `os.hostname()` 会 `ReferenceError`）。**`scripts/lib/feed-publish.mjs` 是纯模块：不许出现 `new Date()` 或 `hostname()` / `os.hostname()`**（否则这两个值在测试里只能靠打桩，接线就不可注入）；因此 **Task 7 的 `runCommit` 调用必须把 `operator` / `startedAt` / `machine` 三个值一起传进来**，否则发布会在锁这一步以 `FeedPublishError` 停下（那是诚实的失败，不是回归）。**同一条要求也落在本刀规定的测试夹具上**：`commitInput` 必须显式带上 `operator: 'ops'` / `startedAt: '2026-09-22T00:00:00.000Z'` / `machine: 'builder-01'`（假值，与 Task 3 的 `OWNER_RECORD` 同形，**不得**在测试里调 `new Date()` 或 `os.hostname()`），否则规定的那批 `runCommit` 用例会在锁这一步**全部**抛 `FeedPublishError` —— 五字段校验是在**任何远程调用之前** fail closed 的，夹具缺一个字段就没有一条 `runCommit` 用例能走到第二步。
 
 **两个解锁点都不传 `owner`（§6.6 前提 2 的落地）：** `releaseAndFinish` 与成功路径的 `releaseChannelLock` 调用都**不传 `owner`**，让 `releaseChannelLock` 里的 `input.owner ?? (await readOwnerRecord(input))` 在**解锁那一刻**重新读 `owner.json`。原因：§6.6（spec 行 345）要求"解锁前**重新读取** `owner.json`"并与本次运行比对；先读一次（步骤 5 那次）再把那个快照传进来，等于把步骤 6 → 步骤 13 这段窗口空着——锁在这个窗口里被撞破并被另一个运行重新拿到时，本次运行会**删掉别人的锁**。传 `owner` 会让 §6.6 的前提 2 成为死代码。
 
@@ -1715,13 +1788,13 @@ function commitTransport(options = {}) {
     write: {
       sshRun: async (request) => {
         calls.push(['writeSsh', request.script]);
-        if (request.script.startsWith('mkdir ') && request.script.includes('/lock/')) {
+        if (/(?:^|\s)mkdir \S*\/lock\//u.test(request.script)) {
           return options.lockState === 'exists'
             ? { status: 1, stdout: '', stderr: 'mkdir: cannot create directory: File exists' }
             : { status: 0, stdout: '', stderr: '' };
         }
-        const ownerMatch = /printf '%s' '(\{.*\})' >/u.exec(request.script);
-        if (ownerMatch !== null) ownerJson = ownerMatch[1];
+        const ownerMatch = /printf '%s' '([A-Za-z0-9+/=]+)' \| base64 -d > /u.exec(request.script);
+        if (ownerMatch !== null) ownerJson = Buffer.from(ownerMatch[1], 'base64').toString('utf8');
         if (
           /^mv \/opt\/rongying\/updates-state\/staging\//u.test(request.script) &&
           options.commitStatus !== undefined
@@ -2269,11 +2342,6 @@ export async function runCommit(input) {
     });
   };
 
-  // 硬规则：**每一次 `return finish(...)` 之前都必须先 `recordOutcome(outcome, reason)`**。
-  // `retainAndFinish` 与 `releaseAndFinish` 已经在内部调用它；四条提前失败路径
-  // （pre-verify / stage / remote-verify / lock）必须各自显式调用一次，
-  // 否则审计日志会缺掉"这次运行到底以什么结果收场"。
-
   const retainAndFinish = (outcome, reason) => {
     const disposition = resolveLockDisposition({ acquisitionConfirmed, owner, runid, planHash, safeToExit: false });
     stages.find((entry) => entry.stage === 'unlock').status = 'retained';
@@ -2563,6 +2631,8 @@ export async function runCommit(input) {
 }
 ```
 
+**硬规则（原先以四条 `//` 中文注释写在上面那个代码块里，已从代码块里删除）：** 每一次 `return finish(...)` 之前**都必须先** `recordOutcome(outcome, reason)` —— `retainAndFinish` 与 `releaseAndFinish` 已经在内部调用它，四条提前失败路径（`pre-verify` / `stage` / `remote-verify` / `lock`）必须各自显式调用一次，否则审计日志会缺掉"这次运行到底以什么结果收场"这一行。⚠️ **为什么把它从代码块搬到计划正文**：`eslint.config.mjs` 的 `ignores` 含 `scripts/**`，所以"代码里不写注释"与"代码里不出现 CJK"这两条（`docs/agent-rules/frontend.md`）在本模块上**不被门禁覆盖、只能人工扫**，而这段注释**正好同时违反两条**。Task 4 写 `scripts/lib/feed-publish.mjs` 时**不得**把这四条注释搬回去 —— 规则留在**计划**里，不留在线代码里。**Task 4–7 区域的全部 `js` 围栏已按这两条扫过**，读数 **`TOTAL_CJK_COMMENT_LINES 0`**（扫描口径：逐行跟踪 ```围栏状态，只看`js` 围栏内、`//` 之后出现 CJK 的行；修复前同一扫描读到**这一处 4 行**）。两个代码文件同一口径的读数：`scripts/lib/feed-publish.mjs`CJK 0 行 /`//` 注释 0 行，`scripts/lib/feed-publish.test.mjs`CJK 0 行 /`//` 注释 0 行。
+
 - [ ] **Step 4: 运行测试并确认通过**
 
 ```bash
@@ -2603,6 +2673,11 @@ git commit -m "feat(feed): publish the manifest over sftp and verify it on the p
 2. **锁步骤上的确定性配置失败记 `incident`，不是 `blocked`。** Task 3 收窄 `isFileExistsFailure` 之后，**任何非 "File exists" 的非零 `mkdir`**（ENOENT、权限不足、只读文件系统）都会走 `ownership-unknown` ⇒ `incident`。这是**刻意的、安全的方向**：宁可记事故交人工核查，也不要用一句关于远端状态的假话把操作员推向 `--break-lock`。**Task 4 必须有一条用例把这条路径钉住**：夹具让 `mkdir` 返回 `{ status: 1, stderr: 'mkdir: cannot create directory ...: Permission denied' }`，断言 `outcome === 'incident'`、`lockState === 'ownership-unknown'`、`stages` 里 `lock` 是 `incident`，且**后续任何阶段都没跑**（`commit-version` 仍是 `pending`）。
 3. ⚠️ **Task 6 必须抓一条真机的 coreutils 权限失败原文。** 上面这条用例（以及 Task 3 的 `a lock mkdir that fails without an existing entry signal is ownership unknown`）现在断言的 `stderr` 是**手写的字符串**——我们**没有在目标主机上实测过** GNU coreutils 在 EPERM/EACCES 下到底打印什么。Task 6 接上真 transport 后，在目标主机上抓**一次**真实的 `mkdir` 权限失败（例如在一个只读目录里 `mkdir`），把原文写进**计划或断言**里（代码里不写注释），并确认收窄后的谓词不会把它误判成 `not-acquired`。在抓到之前，"权限失败 ⇒ `incident`"这条只是**推断**，不是实测。
 4. **Task 4 的 `commitTransport` 必须与 Task 3 同规格**：`readOnly.sshRun` / `write.sshRun` 记下**整个 request**，并新增一个 Task-4 形状的助手（`fetchPublic` 记的是 URL 不是 request，Task 3 的 `assertEveryCallCarriesTheTrustAnchor` 直接搬过来会在 `call[2]` 上失败）——在每条走 `commitTransport` 的用例末断言 `host` 与 `knownHostsPath` 恰好等于注入值，**零调用不算通过**。
+
+5. **"锁在、但 owner 记录读不出来"这条状态必须收成 `incident`，而且审计里绝不能看起来像正常收尾（第二修复刀第三处，计划决定）。** 两个位置会造出这个状态：`acquireChannelLock` 的 owner 写入失败（`state: 'retained-by-this-run'` + `incident: true`）与 `releaseChannelLock` 的"删了 owner、`rmdir` 失败"。此时 `breakChannelLock` 只能抛 `… must be inspected by hand`，而 `readOwnerRecord` 对**三种不同成因**（transport 失败 / 文件不存在 / 内容不是 JSON）一律返回裸 `null`，CLI 说不出是哪种。**Task 4 要钉两条**：① `retainAndFinish` 走到它时 `outcome === 'incident'` 且 `lockState` 是**正确的那一个**（`retained-by-this-run`，不是 `released`、也不是拿 `ownership-unknown` 兜底顶替）；② 审计里**不得**出现一条把 `unlock` 写成 `done` 的条目 —— §6.11 说"最后一条是 `unlock`"才代表正常收尾，这个状态恰恰不能看起来像正常收尾。夹具做法：让 owner 写入返回非零（锁步骤）或让 `rmdir` 返回非零（解锁步骤），然后断言审计行序列。**出口本身（CLI 形状 + 手册里的具体命令）由 Task 7 落，见 Task 7 的验收项**；本刀只把形状写进计划，**不动 `readOwnerRecord` 的契约**（它的消费者是 Task 4 与 Task 7）。
+6. **`unlock` 审计行只能在两次远端删除都成功之后生成（第二修复刀"记录不改"第一处）。** `resolveLockDisposition` 在**任何东西被释放之前**就已经把 `state: 'released'` 铸好了；今天这条不可达（计划的接线只用 `safeToExit: false` 调它），但 §6.11 让审计里的 `unlock` 行成为**承重**结构 —— 一旦 Task 4 的某个调用点传了 `safeToExit: true`，而 `rm` / `rmdir` 之一失败，`releaseChannelLock` 会返回**另一个**对象（两个失败分支各自造了 `release: false` 的新对象），但 `resolveLockDisposition` 自己那份"已释放"的 verdict **仍然存在且可以被别处拿去用**。**Task 4 要有一条用例**：让 `rmdir` 在"本次持有锁且安全退出"的路径上失败，断言审计里那条 `unlock` **不是** `done`（是 `retained`）、且 `lockState` 不是 `released`。**为什么现在不改代码**：改 `resolveLockDisposition` 的返回形状会同时动到 Task 7 的 CLI 输出与 §6.11 的阶段表，属于 Task 4 的接线面；本刀只把它记成验收项，避免"顺手改"造成两处契约并存。
+7. **Task 4 自己的远端命令与夹具要跟上第二修复刀的两条结论（计划决定，照录，别默默改）。** ① **locale：本刀逐个量过 Task 4 会解析输出的其余远程命令** —— `stat -c '%d'`（Task 2 的 preflight）、`sha256sum`、`find -printf '%y %f %s\n'`、`printf 'present\n'`、`cat owner.json` —— 在 `LC_ALL=C` 与 `LC_ALL=fr_FR.UTF-8` 下输出**逐字节相同**（实测），因为它们解析的是**结构化内容**（十进制数、十六进制、`%y` 类型字符、字面量字符串），不是**报错文本**；只有 `mkdir` 那一条是被**按英文报错文本子串匹配**的，所以只有它需要 `LC_ALL=C`。`sort` 的**排序规则**确实随 `LC_COLLATE` 变，但消费者 `compareDirectoryEntries` 用的是集合成员判断（`.some((item) => item.name === entry.name)`），**不消费顺序** ⇒ 也不需要。**结论：Task 4 规定的远程命令一律不加 `LC_ALL=C`**（这是决定，不是遗漏）。② **夹具按命令形状判断**：`commitTransport` 里 `request.script.startsWith('mkdir ') && request.script.includes('/lock/')` 已同步改成 `isLockDirectoryCommand` 同款谓词；从脚本还原 owner 记录那处已同步改 base64 解码。③ **Task 4 自己的路径拼接不在第六处的保护范围内**：`versionRootOf` / `stagingRootOf` / `${UPDATE_ROOT}/${input.channel}/…` / `${STATE_ROOT}/backup/${input.channel}-…` 都在**锁步骤之前**（stage 是第 2 步、lock 是第 4 步）就拿到 `channel`，而 `assertSafeChannel` 只挂在 `lockPath` 上。**接线路径上撞不到**（Task 7 的 CLI 先过 `parsePublishInput` 的 `CHANNELS.includes` 白名单），所以这不是活缺陷；但**直接调 `runCommit` 的路径**会先按恶意 `channel` 建 staging 目录、到锁这一步才被拦。**Task 4 必须把路径安全前置条件挪到 `pre-verify` 之后、任何远端写之前**（复用本刀第八处的非空检查 + 第六处的字符集判据），并补一条用例：非白名单 `channel` 时 `stage` 阶段**不发任何写调用**。
+8. ⚠️ **Task 6 还必须抓一条真机的 locale 读数（本刀新增，因为本机那半个读数不成立）。** 第 7 处偏离记了一个**没能在本机复现**的推断：`isFileExistsFailure` 匹配英文 `File exists`，而 GNU coreutils 的报错按 `LC_MESSAGES` 翻译 ⇒ 若目标主机装了消息目录且会话 locale 不是 `C`，这条匹配会失效、把"别人正持锁"这条常规争用报成 `incident`。本机 `locale -a` 有 zh_CN / zh_CN.utf8 / fr_FR / de_DE / ja_JP 等（这四个地区共 14 个变体，实测），但 `/usr/share/locale` **根本不存在**（`/usr/share/locale/*/LC_MESSAGES/coreutils.mo` 计数为 0），所以换 locale **只改引号样式**（`'` → `‘’`）、被匹配的 `File exists` 仍在 ⇒ **推断未被证实**。Task 6 接上真 transport 后**必须**在目标主机上抓两条读数：① `locale`（或 `printf '%s\n' "$LC_ALL" "$LANG"`）确认会话 locale 的实际值；② 在目标主机上对一个**已存在的目录**跑一次 `mkdir`，抄下**原始 stderr 全文**（照抄，不是转述），确认其中含 `File exists`、并与 `isFileExistsFailure` 的正则对得上。把原文写进计划或断言（代码里不写注释）。**收口口径**：抓到的原文**不含** `File exists` ⇒ `LC_ALL=C` 这条修复**必需**，本条由"推断"升级为"实测"；**含** ⇒ 记下"在目标主机的 locale（写明具体值）下该谓词成立"，**`LC_ALL=C` 照样保留**（它只紧不松，且挡住将来装语言包或换 locale）。
 
 **待定的设计决定（在本刀内决定，不要留成第三份拷贝）**：本刀新增的 `assertOutsideRepository` 会是仓库里**第三**个"这个路径是否在仓库外"的判据，三份的语义各差一点：兄弟模块 `scripts/lib/portable-update-release.mjs` 的 `assertPathOutsideRepository` 要求相对关系是 `..` **加一个分隔符**（或正好是 `..`）才算仓库外；Task 1 的 `assertKnownHostsPath` 与本刀这一份则接受**任何以 `..` 开头**的相对关系。差别在 `..foo` 这种名字上：`<仓库根>/..foo` **其实在仓库内**，兄弟那份会拒、这两份会放行。**首选修法是统一到兄弟模块那种更严的形式**（顺带把 `..foo` 这个已知边界一起关掉），而不是新增第三份略有差异的拷贝 —— 修哪一份、还是抽成共享的一份，在**本刀**里定下来，别把三份语义不同的判据留给下一个人。
 
@@ -3376,7 +3451,16 @@ await main(process.argv.slice(2)).then(
 
 **待定的设计决定（在本刀内定，不要拖到 CLI 写完以后）**：探测失败时操作者只看得到 `notes` 里那句 "the read only probe did not succeed" —— **退出码与 stderr 都没有**，虽然 `probe.status` 与 `probe.stderr` 当时**就在 `probe` 里**。想让失败可诊断，只能扩宽 `runPreflight` 的**返回形状**（例如把 `status` 与一行 stderr 摘要带进 `notes`，或新增字段）；**现在定比 CLI 写完之后再定便宜得多**（那时要同时改 CLI 的输出、Task 8 的手册与发布前检查单）。本刀只做决定与记录，**不要**为这件事去改 Task 2 的代码。**必须在本行下方写明"选了哪个"（扩宽返回形状 ／ 维持现状）以及理由** —— 只留一句"待定"不算做完，那会变成一条无人认领的悬空决定。
 
-**必须遵守：** 顶层 `await`，只用 `process.exitCode`，**不得**在 Promise 完成前 `process.exit`；batch 文件是**仓库外唯一临时文件**（`mkdtempSync`），并在 `finally` 清理，因此并发运行不会互相覆盖；`--break-lock` 的 `--reason` / `--audit-out` / `--confirm-runid` **三角都必填**；`--commit` 分支必须把锁记录的三个注入值一起交给 `runCommit`（`operator` 取 `process.env.MOFANG_FEED_OPERATOR ?? 'unknown'`，与 `--break-lock` 同一来源；`startedAt` 取 CLI 启动时的 `new Date().toISOString()`；`machine` 取 `os.hostname()`，`import { hostname } from 'node:os'`）—— `scripts/lib/` 是纯模块，**不得**出现 `new Date()` 或 `os.hostname()`，三个值只能由 CLI 注入。
+**必须遵守：** 顶层 `await`，只用 `process.exitCode`，**不得**在 Promise 完成前 `process.exit`；batch 文件是**仓库外唯一临时文件**（`mkdtempSync`），并在 `finally` 清理，因此并发运行不会互相覆盖；`--break-lock` 的 `--reason` / `--audit-out` / `--confirm-runid` **三角都必填**；`--commit` 分支必须把锁记录的三个注入值一起交给 `runCommit`（`operator` 取 `process.env.MOFANG_FEED_OPERATOR ?? 'unknown'`，与 `--break-lock` 同一来源；`startedAt` 取 CLI 启动时的 `new Date().toISOString()`；`machine` 取 `hostname()`，导入行是 `import { hostname } from 'node:os';`）—— `scripts/lib/` 是纯模块，**不得**出现 `new Date()` 或 `hostname()` / `os.hostname()`，三个值只能由 CLI 注入。⚠️ **`machine` 只有一种写法：`hostname()`**（规定块里 `import { hostname } from 'node:os';` 是解构导入，所以调用端不能写 `os.hostname()`）。照抄散文里的 `os.hostname()` 会在 CLI 启动时以 `ReferenceError: os is not defined` 死掉，而那条路径的守卫测试**只覆盖 `--reason` / `--audit-out` / `--confirm-runid` 与 hosts 文件**，**不会**覆盖它 —— 本计划原先在 Task 4 的接线段与 Task 7 的这段里都误写成 `os.hostname()`，已两处改成 `hostname()`。
+
+**第二修复刀追加的 Task 7 验收项（本刀只写计划，代码在 Task 7 落）：**
+
+1. **"锁在、但 owner 记录读不出来"必须有一条被确认的 CLI 出口（第二修复刀第三处）。** 现在是死路：`breakChannelLock` 对 `owner === null` 一律抛 `the lock has no readable owner record, so it must be inspected by hand`，而 `readOwnerRecord` 把**三种成因**（transport 失败 / 文件不存在 / 内容不是 JSON）压成同一个裸 `null`，CLI 说不出是哪种、也就无从确认 `--confirm-runid`。**"交给人工检查"单独一句不是可接受的终态指令**：这个仓库有一条硬规定就是**永远不要对 openclaw 状态目录 `rm -rf`**（它是 junction 高发区），而"交给人工"正是把操作员推向那一步。要做两件事：
+   - **CLI**：新增一条走**同一套 reason / audit / 确认纪律**的路径 —— `--break-lock --owner-record-unreadable --reason "<文本>"`：仍然必填 `--reason` 与 `--audit-out`，仍然要求操作员**显式声明**"已确认前一次运行不在进行中"（用这个 flag 本身就是那次声明），审计里记 `stage: 'break-lock'` + `ownerRecordUnreadable: true` + 原因 + 执行人；**不要求** `--confirm-runid`（根本没有可确认的 runid —— 这正是这个状态的定义）。删除动作仍是先 `rm owner.json` 再 `rmdir <lock>`，**两次都成功才算成功**，任一次失败按现在的形状抛错、**不得**记录成 `lock-broken`。
+   - **手册**（`docs/runbooks/portable-update-release.md`）：给出**确切的状态路径**与**确切的命令**。状态路径是 `/opt/rongying/updates-state/lock/<channel>`，记录文件是它下面的 `owner.json`。人工核查三条精确命令：① `ls -la /opt/rongying/updates-state/lock/<channel>`（看清楚目录里到底有什么、时间戳是多少）；② `cat /opt/rongying/updates-state/lock/<channel>/owner.json`（三种成因各自长什么样：`No such file or directory` = 记录没写成或已被删；非 JSON 文本 = 写坏了；`Permission denied` = 取不到）；③ 确认前一次运行确实不在进行中之后，才走 `node scripts/feed-publish.mjs --break-lock --channel <channel> --owner-record-unreadable --reason "<文本>" --audit-out <仓库外路径> --host <host> --known-hosts <仓库外路径>`。**手册里必须写明"不要 `rm -rf` 这个目录"**，并把 §6.6 的常规 `--break-lock`（owner 可读）与本条并列成两种情况。
+2. **`readOwnerRecord` 的契约宽化归 Task 7（第二修复刀第三处，别在别的刀里动它）。** 现在它返回 `null` 表示**三种**成因。Task 7 负责把它改成**能区分三者**的形状（例如 `{ status: 'read' | 'missing' | 'transport' | 'corrupt', record }`，或抛 `FeedPublishError` 并带成因），并同步它的**两个消费者**（Task 4 的解锁路径、Task 7 的 `--break-lock` 两条路径）与全部断言。**本刀不改**：动它的返回形状会同时改到 Task 4 与 Task 7 的接线面，属于"先把契约定清楚再改代码"的那一类。
+3. **`auditOut` 必须真的被用掉（第二修复刀"记录不改"第二处）。** `breakChannelLock` 已经**校验**了 `input.auditOut`（非空字符串），但函数体内**一次都没用它** —— 它是在 Task 7 的 CLI 里被接上的（`appendAuditStage({ auditOut, repositoryRoot, entry: { stage: 'break-lock', ...record } })`）。实现 Task 7 时**必须**确认**四种模式的每一条**都把 `--audit-out` 接到某个真实写入点，而不是"传进去、校验过、然后忘掉"。特别是 `--break-lock` 与 `--owner-record-unreadable` **两条都要**写审计行。**验收方式必须是可观测的**：跑一次 `--break-lock`，确认目标路径**真的多了一行**（不是看代码里有没有引用它）。
+4. **把本次运行自己的 owner 记录送到那个状态需要的出口（第二修复刀"记录不改"第三处）。** `owner` 在两个分支里含义不同：owner 写入**成功**时返回 `owner: input.owner`（本次运行自己的记录），owner 写入**失败**时返回 `owner: null` —— 而后者恰恰就是"锁在、记录读不出来"那个状态。于是操作员**拿不到 `--confirm-runid` 需要的那个值**（`runid` 只在**运行方**手里，锁里没有）。Task 7 要在这个状态下**把本次运行自己的 `runid` 与 `planHash` 送到操作员看得见的地方**（CLI 打印 + 审计行），否则"要不要人工拆这把锁"这个判断没有依据。**本条的形状随上面第 2 条一起定**（第 2 条宽化 `readOwnerRecord` 的契约，本条决定谁把运行方自己的记录带出来）—— 两条都在 Task 7，一起改，别分两次动契约。
 
 - [ ] **Step 4: 运行测试并确认通过**
 
@@ -3458,6 +3542,21 @@ node scripts/feed-publish.mjs --break-lock --channel <频道> --version <版本>
 ```
 
 `--confirm-runid` 必须与远端 owner 的 `runid` **完全一致**，否则立即拒绝；破除结果与真实 `previousOwner`、操作者都会写进审计日志。**删除失败不会记成 `lock-broken`。**
+
+**锁在、但 `owner.json` 读不出来时**（`--confirm-runid` 无从确认 —— 上面那条命令**不适用**）：状态路径是 `/opt/rongying/updates-state/lock/<频道>`，记录文件是它下面的 `owner.json`。**不要 `rm -rf` 这个目录，也不要 `rm` 掉锁目录本身**（状态目录是 junction 高发区，本仓库有硬规定；裸删会留下无法解释的状态）。在发布主机上按顺序做三件事：
+
+```bash
+ls -la /opt/rongying/updates-state/lock/<频道>
+cat /opt/rongying/updates-state/lock/<频道>/owner.json
+```
+
+第二条的输出分三种，分别意味着不同的事：`No such file or directory` = 记录没写成或已被删；非 JSON 文本 = 写坏了；`Permission denied` = 取不到。**确认前一次运行确实不在进行中**之后，才走这条专用路径（仍然必填 `--reason` 与 `--audit-out`，并用这个 flag 本身作为"已确认不在进行中"的声明；**不要求** `--confirm-runid`，因为根本没有可确认的 runid）：
+
+```powershell
+node scripts/feed-publish.mjs --break-lock --channel <频道> --owner-record-unreadable --reason "<为什么可以安全破除>" --host <主机> --known-hosts <路径> --audit-out <审计日志路径>
+```
+
+审计日志里会记 `stage: break-lock` + `ownerRecordUnreadable: true` + 原因 + 执行人。**「交给人工检查」单独一句不是可接受的终态指令**：没有上面这条路径，操作员面前只剩"自己想办法删掉那个目录"一条路，而那正是本仓库禁止的动作。
 
 ### 9. 复制不可变制品到正式位置
 
