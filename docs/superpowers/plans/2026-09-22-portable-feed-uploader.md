@@ -5185,7 +5185,12 @@ transport 自己**只拼两类字符串**：ssh / sftp 的 **argv 数组元素**
 - **`--re-sign-stable` 的"拒绝覆盖"臂**仍然不可自动化（要真钥匙），**未验**。
 - **Task 7 / Task 8 未动**：CLI、手册、检查单、门禁表里除本刀那一行之外的全部格子都还是 `待填`。
 
-#### 六、门禁读数（本刀实测）与一件**排期中的缺口**
+#### 六、两处**提交信息**的更正（不改历史，只登记）
+
+- `b6d504f8` 的正文把变异总数写成 "Seventeen mutations were run"、把单红数写成 "sixteen"。**实测：本刀在 transport 上跑了 20 条变异**（`m1` / `m2` / `m3` / `m4` / `M5` / `M6` / `M6b` / `M7` / `M8a` / `M8b` / `M8c` / `M9` / `M10` / `M11` / `M12` / `M13` / `M14` / `M15` / `M16` / `M17`），其中 **18 条各只红一条**、`M1` 红 2 条、`M2` 红 4 条（**全部预先写明并核对过**），另有 **1 条绿对照**。**本节的表（20 行 + 1 行对照）是权威**。
+- `0e8959cf` 的正文把绿色控制写成 "the thirteen green controls"。**实测：本刀的绿色控制是 3 次**（Step −1 的纯改名对照、transport 的等价改写对照、preflight 的共享 tag 敏感性探针）；另有 **2 次"把默认依赖换成 `throw`"的可达性探针**，它们的读数不是绿/红而是 `reached_default false` + `SENSITIVITY … sees_marker true`，**不是**绿色控制。**不重写任何历史提交**，口径以本账本为准（与 Task 5 账本第八节同一做法）。
+
+#### 七、门禁读数（本刀实测）与一件**排期中的缺口**
 
 - **命令与退出码**：先 `export PATH="/d/go-toolchain/go/bin:$PATH"`，再跑 `pnpm check`（**不接管道**；重定向到仓库外的 `%TEMP%\t6work\gate.log`，`rc=$?`）⇒ **`GATE_EXIT=0`**。这一跑对着的提交是 `44695aa1`。
 - **非空证据四条**：① 日志 **10145** 行；② 链上第一步的 Go 测试真的跑过（第 3 行 `ok  	mofang-compass/portable-launcher/cmd/mofang-launcher	0.104s` —— 少了那个 PATH 导出它会在第一步就死）；③ `check:portable-feed-publish` 那一步的读数就是本刀的 **`ℹ tests 158 / ℹ pass 158 / ℹ fail 0`**（日志第 212–215 行；逐条测试名里能看到本刀的两条新用例）；④ 链尾 `packages/desktop test` 真的跑到（`Test Files 281 passed (281)`，第 10141 行），且 `All matched files use Prettier code style!`（第 389 行）。**全日志里 `✖` / `not ok` / `FAIL` 计数为 0。**
