@@ -58,6 +58,7 @@ describe('portable release tooling integration', () => {
           MOFANG_UPDATE_SIGNING_KEY_FILE: keyFile,
           MOFANG_UPDATE_PUBLIC_KEY_B64: publicKeyBase64,
           MOFANG_LAUNCHER_VERSION: '1.0.0',
+          MOFANG_MIN_LAUNCHER_VERSION: '1.0.0',
         },
       },
     );
@@ -70,6 +71,9 @@ describe('portable release tooling integration', () => {
       archivePath: join(outDir, 'portable.zip'),
       temporaryRoot: join(root, 'staged'),
       fileManifest,
+      // 这条用例关心的是"签名包能被真解压并逐文件验过"，不是空间门禁：
+      // 给一个肯定放得下的预算（空间行为有它自己的按名测试，见 portable-update-package.test.ts）。
+      requiredFreeBytes: 1,
     });
     await expect(
       verifyPortableProgramTree({ programRoot: extracted.programRoot, fileManifest }),

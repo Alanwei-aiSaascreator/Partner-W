@@ -7,13 +7,37 @@ import {
   type PortableUpdateManifestV1,
 } from '@clawwork/shared';
 
+/**
+ * 失败自带的**可展示数字**。目前只有空间这一类用得上：用户要能看见
+ * "还差多少"，否则「空间不足」只能是一句让人无从下手的空话。
+ * 这些值会经 `publish('error', …)` 原样出现在公开状态里（见 `portable-update-service.ts`），
+ * 所以这里**只放字节数**，不放路径/URL/令牌（那条红线有测试钉住）。
+ */
+export interface PortableUpdateFailureDetail {
+  requiredBytes?: number;
+  availableBytes?: number;
+}
+
 export class PortableUpdateFailure extends Error {
   readonly code: PortableUpdateErrorCode;
+  /**
+   * 只有**确实带数字**的失败才有这个属性（比如空间类）。
+   *
+   * ⚠️ 两处都是为了**不改动失败对象的既有形状**（`Object.keys` = `['code','name']`），
+   *    仓库里有一条按名测试专门钉它（`portable-update-manifest.test.ts` 的
+   *    `expectFailure`），它挡的是"失败里夹带路径/令牌"这类泄漏 ——
+   *    不该为了加两个字节数把它放宽：
+   *      1. `declare` = **只声明类型、不产生运行时字段**。写成普通字段声明
+   *         （哪怕不给初值）在 ES2022 类字段语义下照样会发出一个 `undefined` 自有属性。
+   *      2. 构造器里"有才设"，而不是无条件 `this.detail = detail`。
+   */
+  declare readonly detail?: PortableUpdateFailureDetail;
 
-  constructor(code: PortableUpdateErrorCode) {
+  constructor(code: PortableUpdateErrorCode, detail?: PortableUpdateFailureDetail) {
     super(code);
     this.name = 'PortableUpdateFailure';
     this.code = code;
+    if (detail !== undefined) this.detail = detail;
   }
 }
 

@@ -70,6 +70,14 @@ export interface PortableUpdatePublicState {
   total?: number;
   percent?: number;
   errorCode?: PortableUpdateErrorCode;
+  /**
+   * 「空间不足」时的两个数字（字节）。有它们，文案才能说"还差多少"，
+   * 而不是只丢一句"空间不足"让用户自己猜要清出多少。
+   * ⚠️ 只放字节数：这个结构会原样过 IPC 到渲染进程，**不许**塞路径/URL/令牌
+   * （`portable-update-service.test.ts` 有一条"只发布脱敏字段"的测试钉着）。
+   */
+  requiredBytes?: number;
+  availableBytes?: number;
   updatedAt: number;
 }
 
@@ -283,5 +291,7 @@ export function toPortableUpdatePublicState(input: PortableUpdatePublicState): P
   if (input.total !== undefined) output.total = input.total;
   if (input.percent !== undefined) output.percent = input.percent;
   if (input.errorCode !== undefined) output.errorCode = input.errorCode;
+  if (input.requiredBytes !== undefined) output.requiredBytes = input.requiredBytes;
+  if (input.availableBytes !== undefined) output.availableBytes = input.availableBytes;
   return output;
 }

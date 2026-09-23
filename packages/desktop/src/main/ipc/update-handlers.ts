@@ -21,9 +21,14 @@ import { probeLauncherVersion } from '../update/launcher-version.js';
 import {
   downloadPortablePackage,
   extractPortablePackage,
+  measureProgramTreeBytes,
   verifyPortableProgramTree,
 } from '../update/portable-package.js';
-import { PORTABLE_UPDATE_DIRECTORY_NAME, PortableUpdateStateStore } from '../update/portable-state.js';
+import {
+  PORTABLE_PROGRAM_DIRECTORY_NAME,
+  PORTABLE_UPDATE_DIRECTORY_NAME,
+  PortableUpdateStateStore,
+} from '../update/portable-state.js';
 import { createPortableUpdateService } from '../update/portable-update-service.js';
 
 const LAUNCHER_FILE_NAME = '\u8363\u76c8\u9b54\u65b9\u542f\u52a8\u5668.exe';
@@ -108,6 +113,8 @@ async function initializePortableUpdateService(root: string): Promise<void> {
       downloadPackage: downloadPortablePackage,
       extractPackage: extractPortablePackage,
       verifyTree: verifyPortableProgramTree,
+      // 空间预算的第三项：换目录之前，现有程序目录一直占着这块盘。
+      measureProgramSize: () => measureProgramTreeBytes(join(root, PORTABLE_PROGRAM_DIRECTORY_NAME)),
       now: () => Date.now(),
       createTransactionId: () => randomUUID(),
       startLauncher: (stateFilePath) =>

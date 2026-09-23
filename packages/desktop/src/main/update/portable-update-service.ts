@@ -13,6 +13,7 @@ import {
   type PortableUpdatePublicState,
 } from '@clawwork/shared';
 import { PortableUpdateFailure, verifyAndDecidePortableUpdate } from './portable-manifest.js';
+import { calculatePortableSpaceBudget, sumExpandedBytes } from './portable-package.js';
 import {
   resolvePortableTransactionPaths,
   type PortableUpdateStateStore,
@@ -58,6 +59,7 @@ export interface PortableUpdateServiceDeps {
     destinationPart: string;
     expectedSize: number;
     expectedSha256: string;
+    requiredFreeBytes: number;
     signal: AbortSignal;
     onProgress: (transferred: number, total: number) => void;
   }) => Promise<void>;
@@ -65,7 +67,13 @@ export interface PortableUpdateServiceDeps {
     archivePath: string;
     temporaryRoot: string;
     fileManifest: PortableUpdateFileManifestV1;
+    requiredFreeBytes: number;
   }) => Promise<{ programRoot: string }>;
+  /**
+   * 盘上现有程序目录的体积（空间预算的一项）。
+   * 注入点：真实实现是走一遍 `<盘根>\荣盈魔方\` 累加文件大小。
+   */
+  measureProgramSize: () => Promise<number>;
   verifyTree: (input: { programRoot: string; fileManifest: PortableUpdateFileManifestV1 }) => Promise<void>;
   now: () => number;
   createTransactionId: () => string;
@@ -79,6 +87,8 @@ interface StatePatch {
   total?: number;
   percent?: number;
   errorCode?: PortableUpdateErrorCode;
+  requiredBytes?: number;
+  availableBytes?: number;
 }
 
 function toErrorCode(error: unknown): PortableUpdateErrorCode {
@@ -94,6 +104,8 @@ export function createPortableUpdateService(deps: PortableUpdateServiceDeps): Po
   let total: number | undefined;
   let percent: number | undefined;
   let errorCode: PortableUpdateErrorCode | undefined;
+  let requiredBytes: number | undefined;
+  let availableBytes: number | undefined;
   let manifest: PortableUpdateManifestV1 | null = null;
   let permanentError: PortableUpdateErrorCode | null = null;
   let readyTransaction: PortableUpdateTransactionV1 | null = null;
@@ -110,6 +122,8 @@ export function createPortableUpdateService(deps: PortableUpdateServiceDeps): Po
       ...(total === undefined ? {} : { total }),
       ...(percent === undefined ? {} : { percent }),
       ...(errorCode === undefined ? {} : { errorCode }),
+      ...(requiredBytes === undefined ? {} : { requiredBytes }),
+      ...(availableBytes === undefined ? {} : { availableBytes }),
     });
   }
 
@@ -121,6 +135,8 @@ export function createPortableUpdateService(deps: PortableUpdateServiceDeps): Po
     total = patch.total;
     percent = patch.percent;
     errorCode = patch.errorCode;
+    requiredBytes = patch.requiredBytes;
+    availableBytes = patch.availableBytes;
     const state = getState();
     for (const listener of listeners) listener(state);
   }
@@ -142,6 +158,20 @@ export function createPortableUpdateService(deps: PortableUpdateServiceDeps): Po
     abortController = controller;
 
     try {
+      // ⚠️ 文件清单**要提前到下载之前取**：空间预算必须按"解压后"的体积算，而那个体积
+      //    只能从这份清单（每个 entry 的 size 之和）得到。顺带好处是清单坏了会在花掉
+      //    一次大下载之前就失败。这一步**不发相位**（界面停在 available），
+      //    失败时下面统一 `publish('error')`。
+      const fileManifest = await loadFileManifest(current);
+      const expandedSize = sumExpandedBytes(fileManifest);
+      // 现有程序目录的体积：换目录之前它一直占着，必须算进"还需要多少"。
+      const currentProgramSize = await deps.measureProgramSize();
+      const downloadBudget = await calculatePortableSpaceBudget({
+        packageSize: current.packageSize,
+        expandedSize,
+        currentProgramSize,
+      });
+
       publish('downloading', {
         targetVersion: current.version,
         transferred: 0,
@@ -153,6 +183,7 @@ export function createPortableUpdateService(deps: PortableUpdateServiceDeps): Po
         destinationPart: paths.archivePath,
         expectedSize: current.packageSize,
         expectedSha256: current.packageSha256,
+        requiredFreeBytes: downloadBudget,
         signal: controller.signal,
         onProgress: (nextTransferred, nextTotal) => {
           publish('downloading', {
@@ -165,13 +196,20 @@ export function createPortableUpdateService(deps: PortableUpdateServiceDeps): Po
       });
 
       publish('verifying-archive', { targetVersion: current.version });
-      const fileManifest = await loadFileManifest(current);
+
+      // 解压那一刻：包已经在盘上占着，现有程序目录也还在 —— 只需要**额外**的展开体积 + 余量。
+      const extractBudget = await calculatePortableSpaceBudget({
+        packageSize: 0,
+        expandedSize,
+        currentProgramSize: 0,
+      });
 
       publish('extracting', { targetVersion: current.version });
       const extracted = await deps.extractPackage({
         archivePath: paths.archivePath,
         temporaryRoot: dirname(paths.stagedProgramPath),
         fileManifest,
+        requiredFreeBytes: extractBudget,
       });
 
       publish('verifying-files', { targetVersion: current.version });
@@ -192,7 +230,14 @@ export function createPortableUpdateService(deps: PortableUpdateServiceDeps): Po
     } catch (error) {
       const code = toErrorCode(error);
       if (PERMANENT_ERROR_CODES.includes(code)) permanentError = code;
-      publish('error', { errorCode: code });
+      // 空间类失败带着"还差多少"上来（`PortableUpdateFailure.detail`），
+      // 原样放进公开状态，界面才说得出数字。
+      const detail = error instanceof PortableUpdateFailure ? error.detail : undefined;
+      publish('error', {
+        errorCode: code,
+        ...(detail?.requiredBytes === undefined ? {} : { requiredBytes: detail.requiredBytes }),
+        ...(detail?.availableBytes === undefined ? {} : { availableBytes: detail.availableBytes }),
+      });
       return { ok: false, errorCode: code };
     } finally {
       abortController = null;

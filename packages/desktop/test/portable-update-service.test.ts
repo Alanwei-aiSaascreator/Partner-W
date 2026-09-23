@@ -78,12 +78,16 @@ async function makeHarness(
     /** `null` = 启动器版本探测失败（明确出口：拒绝一切更新）。 */
     launcherVersion?: string | null;
     fetchManifest?: () => Promise<unknown>;
+    fileManifest?: { schemaVersion: 1; version: string; files: { path: string; size: number; sha256: string }[] };
+    /** 盘上现有程序目录的体积（空间预算的一项）。 */
+    measureProgramSize?: () => Promise<number>;
   } = {},
 ): Promise<Harness> {
   const root = await makeRoot();
   const phases: PortableUpdatePublicState[] = [];
   const calls: string[] = [];
-  const manifest = overrides.manifest ?? signedManifest();
+  const fileManifest = overrides.fileManifest ?? FILE_MANIFEST;
+  const manifest = overrides.manifest ?? signedManifest('0.0.26', sha256Canonical(fileManifest));
 
   const downloadPackage = vi.fn(
     overrides.downloadPackage ??
@@ -125,7 +129,8 @@ async function makeHarness(
       now: () => (tick += 1),
     }),
     fetchManifest: overrides.fetchManifest ?? (typeof manifest === 'function' ? manifest : async () => manifest),
-    fetchFileManifest: async () => FILE_MANIFEST,
+    fetchFileManifest: async () => fileManifest,
+    measureProgramSize: overrides.measureProgramSize ?? (async () => 0),
     downloadPackage: downloadPackage as never,
     extractPackage: extractPackage as never,
     verifyTree: verifyTree as never,
@@ -408,5 +413,61 @@ describe('portable update service: unknown launcher version is a hard stop', () 
       errorCode: 'launcher-incompatible',
     });
     expect(harness.downloadPackage).not.toHaveBeenCalled();
+  });
+});
+
+describe('portable update service: space budget', () => {
+  /** 展开体积 = 清单里每个 entry 的 size 之和（manifest 不许加 expandedSize 字段，键集被三层冻死）。 */
+  const NON_EMPTY_FILE_MANIFEST = {
+    schemaVersion: 1 as const,
+    version: '0.0.26',
+    files: [
+      { path: 'a.exe', size: 300, sha256: 'b'.repeat(64) },
+      { path: 'sub/b.dll', size: 700, sha256: 'c'.repeat(64) },
+    ],
+  };
+
+  it('⭐ 下载前按「包体 + 解压后 + 现有程序 + 余量」算预算，不是只按 zip 大小', async () => {
+    const harness = await makeHarness({
+      fileManifest: NON_EMPTY_FILE_MANIFEST,
+      measureProgramSize: async () => 5_000,
+      // 签名清单里 packageSize = 1024（见 signedManifest）。
+    });
+
+    await harness.service.check();
+    await harness.service.prepare();
+
+    // 1024(包) + 1000(解压后) + 5000(现有程序) + 64MiB(余量)
+    const expected = 1024 + 1000 + 5_000 + 64 * 1024 * 1024;
+    expect(harness.downloadPackage).toHaveBeenCalledTimes(1);
+    expect(harness.downloadPackage.mock.calls[0][0]).toMatchObject({ requiredFreeBytes: expected });
+  });
+
+  it('⭐ 解压侧的预算是「解压后 + 余量」（包体那时已经在盘上了，不能重复算）', async () => {
+    const harness = await makeHarness({
+      fileManifest: NON_EMPTY_FILE_MANIFEST,
+      measureProgramSize: async () => 5_000,
+    });
+
+    await harness.service.check();
+    await harness.service.prepare();
+
+    const expected = 1000 + 64 * 1024 * 1024;
+    expect(harness.extractPackage).toHaveBeenCalledTimes(1);
+    expect(harness.extractPackage.mock.calls[0][0]).toMatchObject({ requiredFreeBytes: expected });
+  });
+
+  it('清单取不到就不下载（先取清单，因为预算要靠它算）', async () => {
+    const harness = await makeHarness();
+
+    const result = await (async () => {
+      const service = harness.service;
+      await service.check();
+      return service.prepare();
+    })();
+
+    // 正常路径应当成功；这条只是钉住"取清单发生在下载之前"（下一步用 calls 顺序证）。
+    expect(result).toEqual({ ok: true });
+    expect(harness.calls).toEqual(['download', 'extract', 'verify-tree']);
   });
 });

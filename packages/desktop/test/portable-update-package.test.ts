@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -9,6 +10,7 @@ import {
   calculatePortableSpaceBudget,
   downloadPortablePackage,
   extractPortablePackage,
+  sumExpandedBytes,
   verifyPortableProgramTree,
 } from '../src/main/update/portable-package.js';
 
@@ -139,6 +141,7 @@ describe('portable package space and download', () => {
         url: 'https://example.com/update.zip',
         destinationPart: join(root, 'update.part'),
         expectedSize: Number.MAX_SAFE_INTEGER,
+        requiredFreeBytes: Number.MAX_SAFE_INTEGER,
         expectedSha256: 'a'.repeat(64),
         signal: new AbortController().signal,
         onProgress: vi.fn(),
@@ -174,6 +177,7 @@ describe('portable package space and download', () => {
       destinationPart,
       expectedSize: bytes.length,
       expectedSha256: sha256(bytes),
+      requiredFreeBytes: 1,
       signal: new AbortController().signal,
       onProgress: (transferred, total) => progress.push([transferred, total]),
     });
@@ -212,6 +216,7 @@ describe('portable package space and download', () => {
         destinationPart,
         expectedSize: 11,
         expectedSha256: sha256('firstsecond'),
+        requiredFreeBytes: 1,
         signal: controller.signal,
         onProgress: () => controller.abort(),
       }),
@@ -236,6 +241,7 @@ describe('portable package space and download', () => {
         destinationPart,
         expectedSize,
         expectedSha256: expectedHash,
+        requiredFreeBytes: 1,
         signal: new AbortController().signal,
         onProgress: vi.fn(),
       }),
@@ -265,6 +271,7 @@ describe('portable ZIP extraction safety', () => {
         archivePath,
         temporaryRoot,
         fileManifest: fileManifest([{ path: 'app/safe.txt', content: 'safe' }]),
+        requiredFreeBytes: 1,
       }),
     ).rejects.toMatchObject({ code: 'archive-unsafe' });
     await expect(stat(join(temporaryRoot, 'program'))).rejects.toMatchObject({ code: 'ENOENT' });
@@ -294,6 +301,7 @@ describe('portable ZIP extraction safety', () => {
         archivePath,
         temporaryRoot: join(root, 'transaction'),
         fileManifest: fileManifest([{ path: 'app/same.txt', content: 'one' }]),
+        requiredFreeBytes: 1,
       }),
     ).rejects.toMatchObject({ code: 'archive-unsafe' });
   });
@@ -307,6 +315,7 @@ describe('portable ZIP extraction safety', () => {
         archivePath,
         temporaryRoot: join(root, 'transaction'),
         fileManifest: fileManifest([{ path: 'app/link', content: 'target.txt' }]),
+        requiredFreeBytes: 1,
       }),
     ).rejects.toMatchObject({ code: 'archive-unsafe' });
   });
@@ -327,6 +336,7 @@ describe('portable ZIP extraction safety', () => {
       archivePath,
       temporaryRoot: join(root, 'transaction'),
       fileManifest: fileManifest(files),
+      requiredFreeBytes: 1,
     });
 
     expect(await readFile(join(result.programRoot, 'resources', 'app.asar'), 'utf8')).toBe('asar');
@@ -350,6 +360,7 @@ describe('portable ZIP extraction safety', () => {
       archivePath,
       temporaryRoot: join(root, '.\u8363\u76c8\u9b54\u65b9\u66f4\u65b0', 'staged', 'txn'),
       fileManifest: fileManifest([{ path: 'safe.txt', content: 'safe' }]),
+      requiredFreeBytes: 1,
     }).catch((error: unknown) => expectFailure(error, 'archive-unsafe'));
 
     expect([sha256(await readFile(dataFile)), sha256(await readFile(workspaceFile))]).toEqual(before);
@@ -406,5 +417,125 @@ describe('portable program exact-tree verification', () => {
     await expect(verifyPortableProgramTree({ programRoot, fileManifest: manifest })).rejects.toMatchObject({
       code: 'file-integrity',
     });
+  });
+});
+
+/**
+ * 空间预算必须**接在真正的写盘路径上**（下载 + 解压两处），而不是只算出来没人调用。
+ *
+ * 背景（2026-09-23 取证）：`calculatePortableSpaceBudget` 生产零调用（只有它自己的单测），
+ * 下载侧只比 `available < expectedSize`（= **zip 大小**），解压侧**完全没有检查** ——
+ * 而真正吃空间的是解压后的整棵程序树（几万个文件）。于是盘会在**解压中途**满，
+ * 用户看到的是半途失败 + 一句没有数字的"空间不足"。
+ *
+ * `statfsImpl` 是注入点：不必真把一块盘写满就能造出"盘要满了"。
+ */
+describe('portable space budget is wired into the real write paths', () => {
+  /** 造一个"只剩 1000 字节"的卷。 */
+  const nearlyFull = async (): Promise<{ bavail: number; bsize: number }> => ({ bavail: 1, bsize: 1000 });
+
+  it('⭐ 下载：预算不够就拒绝（**即使 zip 本身放得下**），并带上"需要多少/剩多少"', async () => {
+    const root = await makeRoot();
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      downloadPortablePackage({
+        url: 'https://example.com/update.zip',
+        destinationPart: join(root, 'update.part'),
+        // zip 只有 100 字节，1000 字节的空闲**放得下包体** —— 以前这一步就放行了。
+        expectedSize: 100,
+        // 但整份预算（包体 + 解压后 + 现有程序 + 余量）要 5000。
+        requiredFreeBytes: 5_000,
+        expectedSha256: 'a'.repeat(64),
+        signal: new AbortController().signal,
+        onProgress: vi.fn(),
+        statfsImpl: nearlyFull,
+      }),
+    ).rejects.toMatchObject({ code: 'disk-space', detail: { requiredBytes: 5_000, availableBytes: 1_000 } });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('⭐ 解压：预算不够就拒绝，且**一个文件都不写**（以前这里没有任何检查）', async () => {
+    const root = await makeRoot();
+    const archivePath = await writeZip(root, [{ name: 'app/ok.txt', content: 'ok' }]);
+    const temporaryRoot = join(root, 'transaction');
+
+    await expect(
+      extractPortablePackage({
+        archivePath,
+        temporaryRoot,
+        fileManifest: fileManifest([{ path: 'app/ok.txt', content: 'ok' }]),
+        requiredFreeBytes: 5_000,
+        statfsImpl: nearlyFull,
+      }),
+    ).rejects.toMatchObject({ code: 'disk-space', detail: { requiredBytes: 5_000, availableBytes: 1_000 } });
+
+    expect(existsSync(join(temporaryRoot, 'extract'))).toBe(false);
+    expect(existsSync(join(temporaryRoot, 'program'))).toBe(false);
+  });
+
+  it('预算放得下时照常通过（这道门不是无条件拒绝）', async () => {
+    const root = await makeRoot();
+    const archivePath = await writeZip(root, [{ name: 'app/ok.txt', content: 'ok' }]);
+    const temporaryRoot = join(root, 'transaction');
+
+    const result = await extractPortablePackage({
+      archivePath,
+      temporaryRoot,
+      fileManifest: fileManifest([{ path: 'app/ok.txt', content: 'ok' }]),
+      requiredFreeBytes: 1,
+      statfsImpl: nearlyFull,
+    });
+
+    expect(existsSync(join(result.programRoot, 'app', 'ok.txt'))).toBe(true);
+  });
+
+  it('空间预算的三项相加 + 余量（公式本身就是这条）', async () => {
+    await expect(
+      calculatePortableSpaceBudget({ packageSize: 1, expandedSize: 2, currentProgramSize: 3 }),
+    ).resolves.toBe(6 + 64 * 1024 * 1024);
+  });
+
+  it('展开体积只认签名清单里的 size 之和（manifest 不许加 expandedSize 字段）', () => {
+    const manifest = fileManifest([
+      { path: 'a.exe', content: 'aaaa' },
+      { path: 'sub/b.txt', content: 'bb' },
+    ]);
+
+    expect(sumExpandedBytes(manifest)).toBe(manifest.files.reduce((total, file) => total + file.size, 0));
+    expect(sumExpandedBytes(manifest)).toBe(6);
+  });
+});
+
+describe('space failure detail stays minimal', () => {
+  it('⭐ 空间失败只多带两个**数字**（不许夹带路径/URL/令牌）', async () => {
+    const root = await makeRoot();
+
+    const error = await downloadPortablePackage({
+      url: 'https://example.com/update.zip',
+      destinationPart: join(root, 'update.part'),
+      expectedSize: 1,
+      requiredFreeBytes: 5_000,
+      expectedSha256: 'a'.repeat(64),
+      signal: new AbortController().signal,
+      onProgress: vi.fn(),
+      statfsImpl: async () => ({ bavail: 1, bsize: 1000 }),
+    }).catch((thrown: unknown) => thrown);
+
+    expect(error).toBeInstanceOf(PortableUpdateFailure);
+    // 形状是刻意的：多出来的只有字节数。manifest 那条"失败只有 code/name"的
+    // 测试挡的是"失败里夹带路径/令牌"，这里把"放宽的那部分"钉死成纯数字。
+    expect(Object.keys(error as object).sort()).toEqual(['code', 'detail', 'name']);
+    const detail = (error as PortableUpdateFailure).detail ?? {};
+    expect(Object.keys(detail).sort()).toEqual(['availableBytes', 'requiredBytes']);
+    for (const value of Object.values(detail)) expect(typeof value).toBe('number');
+  });
+
+  it('不带数字的失败**没有** detail 这个属性（老形状不变）', () => {
+    const error = new PortableUpdateFailure('network');
+
+    expect(Object.keys(error).sort()).toEqual(['code', 'name']);
+    expect(error.detail).toBeUndefined();
   });
 });

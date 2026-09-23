@@ -176,19 +176,57 @@ export async function calculatePortableSpaceBudget(input: {
   return input.packageSize + input.expandedSize + input.currentProgramSize + SPACE_HEADROOM_BYTES;
 }
 
+/**
+ * 解压后会占多大 —— **只能用签名过的 `portable-files.json` 算**：
+ * manifest 的键集被三层冻死（TS 精确键集 + Go `DisallowUnknownFields` + 签名负载逐键枚举），
+ * 加一个 `expandedSize` 会让**已出厂的启动器**验签失败。
+ * 每个 entry 都带 `size`，把它们加起来就是展开体积（目录不在清单里，只算文件）。
+ */
+export function sumExpandedBytes(fileManifest: PortableUpdateFileManifestV1): number {
+  let total = 0;
+  for (const file of fileManifest.files) total += file.size;
+  return total;
+}
+
+/** 注入点：默认 `fs/promises` 的 `statfs`；单测用来造"盘快满了"，不必真写满一块盘。 */
+export type StatfsLike = (target: string) => Promise<{ bavail: number; bsize: number }>;
+
+async function assertFreeBytes(input: {
+  target: string;
+  requiredFreeBytes: number;
+  statfsImpl: StatfsLike;
+}): Promise<void> {
+  const space = await input.statfsImpl(input.target);
+  const available = space.bavail * space.bsize;
+  if (!Number.isSafeInteger(input.requiredFreeBytes) || available < input.requiredFreeBytes) {
+    throw new PortableUpdateFailure('disk-space', {
+      requiredBytes: input.requiredFreeBytes,
+      availableBytes: available,
+    });
+  }
+}
+
 export async function downloadPortablePackage(input: {
   url: string;
   destinationPart: string;
   expectedSize: number;
   expectedSha256: string;
+  /**
+   * 下载前必须空闲的字节数 = `calculatePortableSpaceBudget(...)`。
+   * ⚠️ **不是** `expectedSize`：以前这里只比 zip 的大小，而解压后的整棵程序树
+   * （几万个文件）才是真正吃空间的那部分，盘会在解压中途才满。
+   */
+  requiredFreeBytes: number;
   signal: AbortSignal;
   onProgress: (transferred: number, total: number) => void;
+  /** 注入点（单测造磁盘满）。 */
+  statfsImpl?: StatfsLike;
 }): Promise<void> {
-  const space = await statfs(dirname(input.destinationPart));
-  const available = space.bavail * space.bsize;
-  if (!Number.isSafeInteger(input.expectedSize) || available < input.expectedSize) {
-    throw new PortableUpdateFailure('disk-space');
-  }
+  await assertFreeBytes({
+    target: dirname(input.destinationPart),
+    requiredFreeBytes: input.requiredFreeBytes,
+    statfsImpl: input.statfsImpl ?? statfs,
+  });
 
   let handle;
   try {
@@ -238,6 +276,43 @@ export async function downloadPortablePackage(input: {
   }
 }
 
+/**
+ * 走一遍盘上现有程序目录，累加**文件**大小（目录本身不占数据块）。
+ *
+ * 用处：空间预算里的 `currentProgramSize` —— 换目录之前现有程序一直占着那块盘。
+ * 目录不存在（首装/被清理过）按 0 算：那不是错误，只是没东西可算。
+ */
+export async function measureProgramTreeBytes(programRoot: string): Promise<number> {
+  let total = 0;
+
+  async function walk(directory: string): Promise<void> {
+    let items;
+    try {
+      items = await readdir(directory, { withFileTypes: true });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException | null)?.code === 'ENOENT') return;
+      throw mapFileSystemFailure(error);
+    }
+    for (const item of items) {
+      const absolutePath = join(directory, item.name);
+      if (item.isDirectory()) {
+        await walk(absolutePath);
+        continue;
+      }
+      if (!item.isFile()) continue;
+      try {
+        total += (await stat(absolutePath)).size;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException | null)?.code === 'ENOENT') continue;
+        throw mapFileSystemFailure(error);
+      }
+    }
+  }
+
+  await walk(programRoot);
+  return total;
+}
+
 export async function verifyPortableProgramTree(input: {
   programRoot: string;
   fileManifest: PortableUpdateFileManifestV1;
@@ -274,9 +349,29 @@ export async function extractPortablePackage(input: {
   archivePath: string;
   temporaryRoot: string;
   fileManifest: PortableUpdateFileManifestV1;
+  /**
+   * 解压前必须**额外**空闲的字节数（= 展开体积 + 余量）。
+   * 这里**不含**包体与现有程序目录：包那一刻已经躺在同一块盘上（已经占掉了），
+   * 现有程序目录也还在原处、要等启动器最后才换 —— 把它们算进"还需要多少"会重复计数。
+   */
+  requiredFreeBytes: number;
+  /** 注入点（单测造磁盘满）。 */
+  statfsImpl?: StatfsLike;
 }): Promise<{ programRoot: string }> {
   const extractRoot = join(input.temporaryRoot, 'extract');
   const programRoot = join(input.temporaryRoot, 'program');
+
+  // 写盘**之前**先看一眼：这道检查以前完全不存在。
+  // 之后写盘途中的 ENOSPC 由 `mapFileSystemFailure` 兜（映射成同一个 disk-space），
+  // 所以这里是"早失败 + 带得上数字"，不是唯一一道。
+  // ⚠️ 先 mkdir 再 statfs：事务目录此刻可能还不存在，`statfs` 一个不存在的路径会
+  //    抛 ENOENT（那不是"空间不足"，也不是这份包的问题）——先建出来，量的才是真卷。
+  await mkdir(input.temporaryRoot, { recursive: true });
+  await assertFreeBytes({
+    target: input.temporaryRoot,
+    requiredFreeBytes: input.requiredFreeBytes,
+    statfsImpl: input.statfsImpl ?? statfs,
+  });
 
   const zipfile = await openZipFile(input.archivePath);
   try {
