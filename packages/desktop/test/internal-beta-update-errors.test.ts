@@ -9,6 +9,38 @@ import {
 import type { PortableUpdateErrorCode, PortableUpdatePublicState } from '@clawwork/shared';
 
 /**
+ * 闭集必须标来源（2026-09-24）：这份 Record 的**类型**就是判据 —— 联合里新增一个错误码
+ * 而不在这里列出，`typecheck:tests` 会直接失败。
+ *
+ * 旧写法是**手写 17 个字符串**，漏掉 `update-not-published` 与 `launcher-unavailable`
+ * 却照样全绿（那两个码另有专测，所以没红）—— 正是「清单不更新」那种假绿形状。
+ */
+const ALL_ERROR_CODES: Record<PortableUpdateErrorCode, true> = {
+  network: true,
+  'feed-response': true,
+  'update-not-published': true,
+  'signature-invalid': true,
+  'manifest-invalid': true,
+  'unsupported-policy': true,
+  'launcher-incompatible': true,
+  'launcher-unavailable': true,
+  'disk-space': true,
+  'volume-readonly': true,
+  'filesystem-error': true,
+  'package-integrity': true,
+  'archive-unsafe': true,
+  'file-integrity': true,
+  'file-in-use': true,
+  'launcher-start-failed': true,
+  'health-timeout': true,
+  'rollback-failed': true,
+  cancelled: true,
+  unknown: true,
+};
+
+const ALL_ERROR_CODES_LIST = Object.keys(ALL_ERROR_CODES) as PortableUpdateErrorCode[];
+
+/**
  * 内测中心的更新面板以前直接把 electron-updater 的 `err.message` 摆在界面上，
  * 用户看到的是 `HttpError: 404 ...` 这种英文堆栈。
  *
@@ -120,26 +152,7 @@ describe('盘上运行的错误码 → 用户动作', () => {
   });
 
   it('每个错误码都有中文、都不许把英文原文带出去', () => {
-    const codes: PortableUpdateErrorCode[] = [
-      'network',
-      'feed-response',
-      'signature-invalid',
-      'manifest-invalid',
-      'unsupported-policy',
-      'launcher-incompatible',
-      'disk-space',
-      'volume-readonly',
-      'package-integrity',
-      'archive-unsafe',
-      'file-integrity',
-      'file-in-use',
-      'launcher-start-failed',
-      'health-timeout',
-      'rollback-failed',
-      'cancelled',
-      'unknown',
-    ];
-    for (const code of codes) {
+    for (const code of ALL_ERROR_CODES_LIST) {
       const text = describePortableError(code);
       expect(text.length).toBeGreaterThan(0);
       expect(text).not.toContain(code);
@@ -360,5 +373,47 @@ describe('describeUpdateErrorFromState', () => {
 
     expect(text).toContain('空间不足');
     expect(text).not.toContain('GiB');
+  });
+});
+
+describe('失败文案的闭集性质（2026-09-24 审核补钉）', () => {
+  it('⭐ 每个码的文案两两不同：不许两个不同故障说同一句话', () => {
+    const seen = new Map<string, PortableUpdateErrorCode>();
+    for (const code of ALL_ERROR_CODES_LIST) {
+      const text = describePortableError(code);
+      const clash = seen.get(text);
+      expect(clash, `${code} 与 ${clash} 的文案一模一样：${text}`).toBeUndefined();
+      seen.set(text, code);
+    }
+  });
+
+  it('⭐ 签名 / 启动器太旧 / 空间不足 / 网络 / 未发布 —— 五类各有自己的文案与下一步', () => {
+    const named: PortableUpdateErrorCode[] = [
+      'signature-invalid',
+      'launcher-incompatible',
+      'disk-space',
+      'network',
+      'update-not-published',
+    ];
+    const texts = named.map((code) => describePortableError(code));
+    expect(new Set(texts).size).toBe(named.length);
+
+    // 未发布**不是故障**：不许出现"失败/出错"，也不许让用户反复重试
+    expect(classifyPortableError('update-not-published').category).toBe('no-update');
+    expect(describePortableError('update-not-published')).toContain('暂无更新');
+
+    // 空间不足的下一步是腾空间；签名与启动器太旧都是"换包"且**不可重试**
+    expect(portableErrorAction('disk-space')).toBe('free-space');
+    expect(portableErrorAction('signature-invalid')).toBe('replace-package');
+    expect(portableErrorAction('launcher-incompatible')).toBe('replace-package');
+    expect(classifyPortableError('signature-invalid').retryable).toBe(false);
+    expect(classifyPortableError('launcher-incompatible').retryable).toBe(false);
+
+    // 网络是可重试的
+    expect(portableErrorAction('network')).toBe('retry');
+    expect(classifyPortableError('network').category).toBe('network');
+
+    // 启动器太旧必须指向"新的完整基础包"，而不是泛泛的"重试"
+    expect(describePortableError('launcher-incompatible')).toContain('基础包');
   });
 });
