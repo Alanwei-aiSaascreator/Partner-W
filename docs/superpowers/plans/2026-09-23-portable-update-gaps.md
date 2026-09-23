@@ -663,3 +663,61 @@ C:\Users\29315\AppData\Local\Temp\mofang-udisk-0.0.27\
 
 **没有做**：上传（internal/stable 都没碰）、生产更新源、NSIS 安装器（本次只要 `--dir`）、代码签名（无证书，已跳过）、
 真机 U 盘、（真正的）0.0.28 更新。
+
+## 16. 重建：改回规范构建口径，交付夹与 0.0.26 逐项对齐（2026-09-23 深夜，用户「补齐，重建」后）
+
+用户那句「补齐，重建」是**两件事、两个仓库**：补齐 = 后端 relay catalog
+（提交 `fe4776d`，已推 Gitee，**未部署**）；重建 = 本节。
+§15 那次构建用的是 `--dir`，**口径不对** —— 这一节是它的更正，也**取代**它那份交付夹。
+
+**为什么 `--dir` 不算数**：0.0.26 交付夹的 app 目录来自 `pnpm build:win`（含 nsis 目标），
+它比 `--dir` 多留两件文件在 app 目录里 —— `resources/app-update.yml`（111 B）与
+`resources/elevate.exe`（107520 B）。`--dir` 那版两件都没有，于是与 0.0.26 差 2 个文件（194 vs 196）。
+这两件不是噪音：`app-update.yml` 是 electron-updater 的输入，而且**我们自己的代码在读它**
+（`auto-updater.ts` 的 `updaterCacheDir()` 读 `updaterCacheDirName` 算更新缓存目录；
+读不到就兜底返回 `null`，**不抛**）。盘上运行根本不走那条路（`checkForUpdatesViaUpdater()`
+在便携分支直接进我们自己的清单），但交付夹的形状应当与 0.0.26 可比 ⇒ 按规范口径重打。
+
+**重建读数**
+
+```
+$ export MOFANG_UPDATE_PUBLIC_KEY_B64='MCowBQYDK2VwAyEACBeiQuFzi8RoEWwaqRiEgC9jiPVX5kvtf8ai8kt2wQA='
+$ pnpm build:win     → BUILDWIN_RC=0
+  产出：dist/荣盈魔方-0.0.27-win-x64.exe（NSIS 安装器，+ latest.yml/blockmap；都不进交付夹）+ win-unpacked/
+$ MOFANG_LAUNCHER_VERSION=0.0.27 pnpm build:portable-launcher → artifacts/荣盈魔方启动器.exe 4,400,128 B
+$ pnpm udisk:assemble -- --app-dir packages/desktop/dist/win-unpacked \
+    --launcher artifacts/荣盈魔方启动器.exe --out <新的空 temp>   → ASSEMBLE_RC=0
+```
+
+- 两次构建（`--dir` 与 `build:win`）的 **`app.asar` 逐字节相同**：
+  sha256 `f093ac25b80d59ead94f15fbff6e1b415828579197234f1e23551d4f3d7168da`
+  ⇒ 口径差异**只在附属文件**，不在程序内容里。
+- 新 `resources/app-update.yml` 与 0.0.26 那份**逐字节相同**（feed 仍指 `https://api.rongyinghudong.com/updates/`）。
+- 交付夹 vs 0.0.26 的**差集：196 vs 196、无增无减**，只有两处内容不同 ——
+  `荣盈魔方/resources/app.asar`（103,231,026 → 103,270,778 B）与 `使用说明.txt`。
+
+**说明书**：装配器自带的是通用短模板（825 B，没有变更日志/签名提示/充值未验证提示）；
+0.0.26 那份 4340 B 是**版本专属、装配后另写**的，仓库里没有。
+本次按同一形状另写了 0.0.27 版（**5232 B**，UTF-8 BOM + CRLF，与 0.0.26 同格式），审计判据
+`readmeProblems()` = **0 条**。变更日志只写有据可查的：本分支五刀（六类分类 / 空间数值 /
+崩溃恢复 / 启动器版本门 / 构建期公钥闸门）、`09d770cf` 的"分步"文案（出货 asar 内**命中 2**）、
+服务端输出上限**已上线的那部分**（不把未部署的补齐算进去）、联网搜索（`83c40616`，只
+qwen-plus / qwen-turbo）。
+⚠️ 说明书仍**不在仓库里**（与 0.0.26 同处理）⇒ 下一版要再写一遍；要固化得单独拍。
+
+**独立复验（不看装配器自己的结论 —— 自己驱动 `auditDelivery()`）**
+
+| 读数         | 值                                                                                                                                |
+| ------------ | --------------------------------------------------------------------------------------------------------------------------------- |
+| 交付夹审计   | **0 findings**                                                                                                                    |
+| 交付夹       | **196 文件 / 818,465,802 B = 0.762 GiB**（0.0.26 = 196 文件 / 0.76 GiB）                                                          |
+| 启动器       | `--version` = `0.0.27`、`MZ`、sha256 `1e7ae931c6e7fc6304f08200bc7fa314d2a6321230df75e9a4eeea22c470d2c0`（与 `artifacts/` 同一份） |
+| 交付夹 asar  | sha256 `f093ac25…68da`（与 dist 相同）；公钥 2 命中；`enable_search` 在；`分步` 在；`当前频道暂无更新` 在                         |
+| `resources/` | app-update.yml / app.asar / app.asar.unpacked / elevate.exe / icon.png / kb-model / our-skills / runtime（与 0.0.26 逐项同）      |
+
+**位置**：`C:\Users\29315\AppData\Local\Temp\mofang-udisk-0.0.27-final\`（仍在临时目录；
+落正式位置要用户拍）。
+⚠️ §15 里那个 `…\mofang-udisk-0.0.27\`（194 文件）**已被本节取代**，不要再发那一份。
+
+**仍未闭合**：§15 的两条（信任根待确认、签名私钥不在本机）**一条都没变**；新增一条 ——
+后端 `fe4776d`（补齐 4 个模型的输出上限）**已提交并推 Gitee，未部署**，部署要单独一句授权。
