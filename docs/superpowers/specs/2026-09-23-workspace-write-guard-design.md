@@ -99,6 +99,12 @@
 - **`askFallback` 无法由我们的配置钉住**（不在 `tools.exec` schema 里，写了整份配置非法 ⇒ 见 §2.1）：
   它留在**审批存储**那一侧、默认 deny。将来若要显式钉死（防止某台机器的存储里被改成 `full`），
   必须走审批存储的接口，且**先在真运行时验一次**。
+- **运行时的 `.last-good` 回滚可能把闸门吞掉**（复核者 Minor 7，**本机无法证伪**）：回滚判据含
+  `missing-meta-vs-last-good` 一类，而 `openclaw.json.last-good` 若还是**旧版**（无闸门）⇒ 回滚后闸门**静默消失**。
+  ⇒ 手工验收里加了一步：真机跑一轮后**读一眼** state 里 `openclaw.json` 的 `tools` 段。
+- **`deny` 里的非字符串条目被静默丢弃**（复核者 Minor 6）：是 sanitize 不是传播（比原样写出非法形态好），
+  代价是"用户手写的条目被无声删掉、日志里一句话都没有"。登记。
+- **§6 的行号基于基线 `608882ff`**（改动后已位移）。
 
 ## 5. 验收
 
@@ -117,6 +123,13 @@
 `tools.fs.workspaceOnly: true` / `tools.exec.mode: "ask"` / `tools.elevated.enabled: false`
 **三条原样读回**；同一次探针**抓到** `askFallback` 会让整份配置被判非法（见 §2.1）。
 ⚠️ 这证明的是"**运行时认得这些键**"，**不是**"行为上真的拦住了" —— 后者是下面那条。
+
+**另两次探针（2026-09-23 补，复核者 Minor 5 要求）**：
+① **合并后的 legacy 输出形态**（`{strictInlineEval:true, mode:"ask"}`，无 `security`/`ask`）被**接受**；
+② **混合形态**（`mode` 与 `security`/`ask` 并存）被**拒绝** ——
+`mode cannot be combined with security or ask in the same exec object`（并点名 `tools.exec.mode`）
+⇒ **F8 从"文档说"升级为"实测"**。⚠️ 校验器是运行时自己的 CLI；网关启动走同一份 schema 属**同源推断**，
+未单独实跑网关。
 
 **行为级 —— 未做**：
 

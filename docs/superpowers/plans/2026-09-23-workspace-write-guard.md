@@ -153,7 +153,7 @@ export function readExecMode(raw: unknown): string | null {
   const exec = tools.exec;
   if (!isRecord(exec)) return null;
   const mode = exec.mode;
-  return typeof mode === 'string' && mode.length > 0 ? mode : null;
+  return typeof mode === 'string' ? mode : null; // 修复轮：删掉 `&& mode.length > 0`（空操作）
 }
 
 /** 从（任意的）配置里挖出 `tools.elevated.enabled`；不是布尔则 null。 */
@@ -195,9 +195,12 @@ export function mergeToolsDefaults(existing: Record<string, unknown> | null): Re
 
   // ⚠️ 写 `mode` 时**必须**移除旧写法：运行时会拒绝"混合策略"（mode + security/ask 并存）。
   //    `mode:"ask"` 与 `security:"allowlist" + ask:"on-miss"` 等价，所以移除是无损的。
-  const execRest: Record<string, unknown> = { ...execSection };
-  delete execRest.security;
-  delete execRest.ask;
+  const execRest: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(execSection)) {
+    if (key === 'security' || key === 'ask') continue;
+    if (STALE_EXEC_KEYS.includes(key)) continue; // 修复轮加的：运行时不认的键
+    execRest[key] = value;
+  }
 
   return {
     ...tools,
@@ -216,6 +219,9 @@ cd packages/desktop && ./node_modules/.bin/vitest run test/runtime-state-config.
 ```
 
 Expected: PASS（这一轮**只有**新增那条 + 改过的整对象断言会变绿；其余原样）。
+
+> ⚠️ **修复轮又加了两个符号**：`STALE_EXEC_KEYS` 与 `hasStaleExecKeys`（提前返回的判据也得认它们）。
+> 这一块的谓词清单**以文末「复核修复轮」那张表为准**。
 
 - [x] **Step 5: 提交**
 
@@ -712,3 +718,50 @@ OPENCLAW_STATE_DIR="$STATE" node "$CLI" config get tools --json
 4. 关掉 App，等一个用户自建的定时任务（没有就跳过）⇒ 需要 shell 的任务**被拒并给出原因**（Task 1 登记的行为变化）。
 
 **判据**：第 2 步的"桌面没有新文件"**必须用文件管理器亲眼确认**，不能只信助手的自述。
+
+5. 真机跑完一轮后，读一眼 state 里的 `openclaw.json` 的 `tools` 段，确认三个闸门**还在**（防 `.last-good` 回滚把闸门吞掉，见设计 §4）。
+
+### 复核修复轮（2026-09-23，spec 合规 + 代码质量两道门）
+
+**两道门的结论**：规格合规 = **合规**（8 条逐条 ✅，5 条变异读数逐条复算一致）；代码质量 = **需修**（3 Important + 4 Minor，无 Critical）。
+
+**改了什么（全部是修复，不是新增功能）**：
+
+| 发现                                                                                                                                           | 处置                                                                                                                     | 落点                       |
+| ---------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ | -------------------------- |
+| **Important 1**：提前返回只看三个闸门的**值** ⇒ 文件里若留着运行时不认的键（如 `askFallback`）会**永远**走提前返回，自愈路径被堵死、网关起不来 | **两处都改**：合并里删 `STALE_EXEC_KEYS` + 提前返回加 `!hasStaleExecKeys(existing)`；新增一条按名测试                    | `state-config.ts` + 测试   |
+| **Important 2**：幂等那条**恒真**（字节在"每次都重写"的世界里也相同；`created` 恒 false）                                                      | 改成**观察写盘**：给 `writeJsonAtomic` 加探针（代理真实现），断言"第一跑写 1 次（证明钉子活着）→ 清计数 → 第二跑写 0 次" | 测试文件                   |
+| **Important 3**：`elevated` 闸门**没有变异**                                                                                                   | 补 **M5**                                                                                                                | 本账本                     |
+| Minor 4：`readExecMode` 里 `mode.length > 0` 是**空操作**                                                                                      | 删掉那个子句                                                                                                             | `state-config.ts`          |
+| Minor 5：F8"混合策略会被拒"**只有文档引用**                                                                                                    | **补两次探针**（见 Task 8 静态级）：合并后的 legacy 形态**被接受**、混合形态**被拒**（点名 `tools.exec.mode`）           | 设计文档 §5.2 + 代码注释   |
+| Minor 6：`deny` 里的非字符串被静默丢弃                                                                                                         | 登记（sanitize 而非传播）                                                                                                | 设计文档 §4                |
+| Minor 7：`.last-good` 回滚可能把闸门**静默吞掉**（本机无法证伪）                                                                               | 登记 + 手工验收加第 5 步                                                                                                 | 设计文档 §4 + 上方手工步骤 |
+| Minor 2：设计 §6 行号是**基线**行号                                                                                                            | 就地标注                                                                                                                 | 设计文档 §4                |
+
+**第三纪元读数（修复轮之后，套件 36 条）**：
+
+| 时点                   | 实跑读数                                                                           |
+| ---------------------- | ---------------------------------------------------------------------------------- |
+| 新增两条测试（实现前） | `2 failed \| 34 passed (36)` —— 红：`askFallback 清掉那条`、`幂等（写盘计数）那条` |
+| 修复后                 | `36 passed (36)`                                                                   |
+
+⭐ **一次"我自己量错"的实录**：幂等那条第一次跑出 `expected 1 to be +0`，**看起来**像"第二跑也写了盘"
+（= 提前返回没生效）。实际是**计数没在两跑之间清零**：`1` 是第一跑那次写盘。加了诊断断言
+（四个谓词全真）之后才定位到是**测量本身**错。⇒ 与"空读数"同族：**先怀疑量具**。
+
+**第三纪元变异（7 条 + 1 对照，装置同前，全部 `RESTORE_SHA256_EQUAL=true`）**：
+
+| #      | 变异                                                      | 实跑读数                | 红名单要点                                                                               |
+| ------ | --------------------------------------------------------- | ----------------------- | ---------------------------------------------------------------------------------------- |
+| M1     | `workspaceOnly: true` ⇒ `false`                           | `5 failed \| 31 passed` | 快照/闸门首跑/存量/always-ensure ＋ **幂等**（值错 ⇒ 每次启动都重写 ⇒ 新测试**非空转**） |
+| M2     | 删 `hasToolGuard(existing) &&`                            | `4 failed \| 32 passed` | 存量/其它键/always-ensure/legacy                                                         |
+| M3     | 删 `if (key === 'security' \|\| key === 'ask') continue;` | `1 failed \| 35 passed` | 只有 legacy 那条                                                                         |
+| M4     | `mode` `'ask'` ⇒ `'full'`                                 | `8 failed \| 28 passed` | 六条闸门用例 + 快照 + 幂等                                                               |
+| **M5** | `elevated.enabled` `false` ⇒ `true`                       | `5 failed \| 31 passed` | 快照/闸门首跑/存量/always-ensure + 幂等                                                  |
+| **M6** | 删 `!hasStaleExecKeys(existing) &&`                       | `1 failed \| 35 passed` | 只有 `askFallback` 那条                                                                  |
+| **M7** | 删合并里的 `STALE_EXEC_KEYS` 删除                         | `1 failed \| 35 passed` | 只有 `askFallback` 那条                                                                  |
+| M-CTRL | 等价重写（`Set` 展开 ⇒ `Array.from`）                     | `36 passed`（0 红）     | —                                                                                        |
+
+⚠️ **M3 的口径变了**：第二纪元是"两行一起删"，本轮改成**单行删**（spec 复核者单独复跑过两行各一次，
+都只红 legacy 那条）。**旧纪元读数**：Task 2–5 那张表里的 `(30)` / `(31)` 是**时点读数**（实现前/中途），
+套件已长到 36 ⇒ **不可回放**，只作过程留痕。

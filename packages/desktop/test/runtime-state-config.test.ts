@@ -44,9 +44,31 @@ vi.mock('electron', () => ({
   },
 }));
 
+/**
+ * `writeJsonAtomic` 的探针：用来钉住"已经一致 ⇒ **一个字节都不写**"这条契约。
+ *
+ * ⚠️ 工厂必须**代理真实现**（`...actual` + 委托）：这个模块也被 `updateConfig` 用，
+ *    换掉真实现会把别的用例静默改掉。
+ * ⚠️ 用它的那条用例必须**先证明钉子活着**（第一跑断言调用次数），否则"第二跑没写"
+ *    在探针失效时会**恒真**。
+ */
+const jsonFileMock = vi.hoisted(() => ({
+  writeJsonAtomic: vi.fn<(target: string, value: unknown) => void>(),
+}));
+
+vi.mock('../src/main/util/json-file.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/main/util/json-file.js')>();
+  jsonFileMock.writeJsonAtomic.mockImplementation(actual.writeJsonAtomic);
+  return { ...actual, writeJsonAtomic: jsonFileMock.writeJsonAtomic };
+});
+
 import { CONFIG_FILE_NAME } from '@clawwork/shared';
 import {
   LOCAL_GATEWAY_ID,
+  hasMemoryToolsDenied,
+  hasStaleExecKeys,
+  hasToolGuard,
+  readMemorySearchProvider,
   STATE_CONFIG_FILE,
   STATE_DIR_NAME,
   ensureClientGatewayEntry,
@@ -413,13 +435,59 @@ describe('红线：工具闸门（写不出工作区 + 工作区外先问）', (
     expect(raw.tools.exec.ask).toBeUndefined();
   });
 
-  it('幂等：连跑两次，文件字节不变', () => {
-    const first = ensureStateConfig(userDataDir);
-    const bytes = fs.readFileSync(first.configPath, 'utf-8');
+  it('文件里带着运行时**不认的** askFallback ⇒ 跑一次就清掉（提前返回不能把它锁死）', () => {
+    // 实测：`tools.exec.askFallback` 不在 openclaw.json 的 schema 里 ⇒ 整份配置被判非法、网关起不来。
+    // 若提前返回只看三个闸门的值，带着这个键的文件会**永远**走提前返回 ⇒ 自愈路径被堵死。
+    const stateDir = stateDirFor(userDataDir);
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(
+      stateConfigPath(stateDir),
+      JSON.stringify({
+        gateway: { auth: { mode: 'token', token: 'existing-token' } },
+        memory: { search: { provider: 'none' } },
+        tools: {
+          deny: ['memory_search', 'memory_get'],
+          fs: { workspaceOnly: true },
+          exec: { mode: 'ask', askFallback: 'deny' },
+          elevated: { enabled: false },
+        },
+      }),
+    );
 
+    ensureStateConfig(userDataDir);
+
+    const raw = JSON.parse(fs.readFileSync(stateConfigPath(stateDir), 'utf-8'));
+    expect(raw.tools.exec.askFallback).toBeUndefined();
+    expect(raw.tools.exec.mode).toBe('ask');
+  });
+
+  it('幂等：第二跑对这份文件**一次写盘都没有**（字节相同区分不了"提前返回"与"每次重写"）', () => {
+    // ⚠️ 这条的钉子是**写盘调用**，不是字节：把合并重算一遍会得到逐字节相同的文件，
+    //    所以"字节不变"在"每次都重写"的世界里同样成立（复核者实测过：重建后的字节与磁盘相同），
+    //    而 `created === false` 只看文件在不在盘上、恒为真。
+    const writesTo = (target: string): number =>
+      jsonFileMock.writeJsonAtomic.mock.calls.filter(([p]) => p === target).length;
+
+    jsonFileMock.writeJsonAtomic.mockClear();
+    const first = ensureStateConfig(userDataDir);
+    expect(writesTo(first.configPath)).toBe(1); // ← 先证明钉子活着（否则下面那条恒真）
+
+    const bytes = fs.readFileSync(first.configPath, 'utf-8');
+    const afterFirst = JSON.parse(bytes);
+    // 诊断：四个谓词各自是什么读数（提前返回要**全真**才成立）
+    expect({
+      memoryProvider: readMemorySearchProvider(afterFirst) !== null,
+      deny: hasMemoryToolsDenied(afterFirst),
+      guard: hasToolGuard(afterFirst),
+      noStale: !hasStaleExecKeys(afterFirst),
+    }).toEqual({ memoryProvider: true, deny: true, guard: true, noStale: true });
+    // ⚠️ 计数是累积的：第二跑之前**必须**清一次，否则读到的还是第一跑那次写盘
+    //    （第一版就是这么读错的：把"1"当成了"第二跑也写了"）。
+    jsonFileMock.writeJsonAtomic.mockClear();
     const second = ensureStateConfig(userDataDir);
 
     expect(second.created).toBe(false);
+    expect(writesTo(first.configPath)).toBe(0);
     expect(fs.readFileSync(first.configPath, 'utf-8')).toBe(bytes);
   });
 });
