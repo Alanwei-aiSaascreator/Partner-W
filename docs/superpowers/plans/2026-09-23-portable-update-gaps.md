@@ -376,11 +376,19 @@ $ pnpm check
    代码侧只保证两侧内嵌同一把、且都必须是非空 Ed25519 SPKI。
 6. **0.0.27 基础包本身没有构建、没有装配、没有真机换盘**。
    "0.0.27 → 0.0.28 自动升级"这条验收链**一次都没跑过**（需要打包 + 更新源，两道都越界）。
-7. **空间预算的"数字上屏"没做**：`requiredBytes`/`availableBytes` 已进公开状态、
-   分类文案也会插值，但**没有任何面板把它们画出来**（`describePortableError` /
-   `portableErrorAction` 在今天的产品代码里**零渲染消费者** —— 这是既有状态，不是我引入的）。
-   About 面板只经由 `describeUpdateError` 间接触达分类文案，而那条路**不传**这两个数字。
-   ⇒ 用户暂时看不到"还差多少 GiB"。这是 UI 改动，不在本清单范围内。
+7. ~~**空间预算的"数字上屏"没做**~~ ⇒ ✅ **2026-09-23 已做，提交 `ec62b749`**。
+   原来的读数比上面写的更差：两个面板都只把 `message` 字符串递进翻译层、**从没传过那两个数字**；
+   而盘上那条链的失败是**发布出来的状态**（不抛异常到渲染进程）⇒ `errorMessage` 压根没被设过，
+   关于页实际渲染出来的是「更新失败：」后面**空着**（红测第一次的读数字符串就是
+   `…settings.updateError:settings.checkForUpdates…`，冒号后为空）。
+   现在：新增渲染侧**唯一入口** `describeUpdateErrorFromState(raw, operation, portable)` ——
+   **相位是 error 且错误码认得出 ⇒ 以公开状态为准**（带两个数字）；认不出 / 没状态则退回老路，
+   与 `asPortableErrorCode` 同一口径。关于页改成存**原始报错 + 操作**、渲染时才翻译
+   （以前存翻译结果，等于把公开状态挡在门外）；内测中心同样走这条缝。
+   读数：桌面端 3000 → **3007 passed / 2 skipped / 0 failed**（新增 5 条单测 + 关于页 1 条 + 内测中心 1 条）；
+   两处渲染点各自的变异（把 `portable` 位置换成 `null`）**只红自己那条**
+   （关于页 1 failed | 8 passed；内测中心 1 failed | 7 passed），还原逐字节相同（sha256）、`pnpm check` **RC=0**。
+   ⚠️ 仍未上屏的：安装态（electron-updater）那条链**本来就没有字节数**（那里没有空间预算逻辑），不是漏。
 8. **public feed 现在不可用**（`stable/manifest.json`、`internal/manifest.json` 都 404，
    `latest.yml` 还指向 0.0.23）。我**没有**把它描述成可用；`update-not-published` 这条分类
    就是照这个事实写的。
