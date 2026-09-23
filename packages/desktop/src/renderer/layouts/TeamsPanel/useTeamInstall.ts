@@ -15,6 +15,54 @@ import type { TeamInfo, AgentDraft } from './types';
 
 type InstallStatus = 'idle' | 'installing' | 'done' | 'error';
 
+/**
+ * 装完团队后**强刷助手目录**。
+ *
+ * 为什么非刷不可（2026-09-22 复核的"层 3"，实机 3 次点击可复现）：
+ * 新建的 agent 只进了网关，**客户端那份目录还是陈旧的** ⇒ 用户点「发起对话」时
+ * `useGatewaySelector` 发现 id 不在目录里，就把它**静默换成 `main`**（全程没有任何提示），
+ * 用户看到的是主罗盘。**重启就好了**（启动那次会强刷）——这正是它长期没被当成 bug 的原因。
+ *
+ * ⚠️ **动态 import 只买到"加载期解耦"**（照 `MarketPanel/useTemplateInstall.ts` 的先例）：不装团队的
+ *    importer 不必加载这条重链。⚠️ **但走到 `done` 时整条链照样会被加载**，代价只是从"模块加载失败"
+ *    挪进了 catch —— 既有 `test/use-team-install-workspace.test.tsx` 正是这样吞掉一个
+ *    `TypeError: deps.gateway.listAgents is not a function`（该例 ~70ms → ~470ms）。
+ *    （要它还回原耗时，让那个用例照本文件测试的做法 mock `@/hooks/useGatewayDispatcherSetup`。）
+ * ⚠️ **失败不许影响"装完了"**：目录最多是陈旧的（重启会补），别让一次刷新失败把成功报成失败。
+ */
+async function refreshAgentCatalog(gatewayId: string): Promise<void> {
+  try {
+    const { fetchAgentsForGateway } = await import('@/hooks/useGatewayDispatcherSetup');
+    await fetchAgentsForGateway(gatewayId, { force: true });
+  } catch (err) {
+    console.error('[teams] 刷新助手目录失败（安装本身已完成）:', err);
+  }
+}
+
+/**
+ * 安装收尾三步：**先刷新目录 → 再报"装完了" → 再 `onDone`**。
+ *
+ * ⚠️ 为什么抽成函数：这三步的**顺序**是承重的（报早一步，用户就能在目录还陈旧时点进团队 ⇒
+ *    又是"静默换成 main"）。抽成可注入的缝之后，顺序能用普通 spy 确定性地钉住。
+ *    （**更正**：一度以为"在组件测试里读不到飞行中的 `installStatus`" ⇒ 已证伪 —— **读得到**，
+ *    只是必须在 `act` 作用域**结束之后**读；`runInstall` 那条用例就是这么钉住调用点的。）
+ *
+ * ⚠️ **隐含契约：注入的 `refresh` 不许抛**。容错住在 `refreshAgentCatalog` 的 catch 里，**不在这里** ——
+ *    一个会抛的 `refresh` 会把异常一路冒到 `runInstall` 的 catch，正好变成"装完了被报成装失败"。
+ * ⚠️ 调用点（`runInstall` 的 `done` 分支）只许调用本函数：**内联重排现在测试能红了**（`runInstall` 那条
+ *    用例在 flush 之后读状态），保持这个形状只是更省事、更不容易写歪。
+ */
+export async function finishTeamInstall(input: {
+  gatewayId: string;
+  setStatus: (status: InstallStatus) => void;
+  onDone?: (() => void) | undefined;
+  refresh?: (gatewayId: string) => Promise<void>;
+}): Promise<void> {
+  await (input.refresh ?? refreshAgentCatalog)(input.gatewayId);
+  input.setStatus('done');
+  input.onDone?.();
+}
+
 export function useTeamInstall(onDone?: () => void) {
   const [installStatus, setInstallStatus] = useState<InstallStatus>('idle');
   const [installEvents, setInstallEvents] = useState<InstallEvent[]>([]);
@@ -179,8 +227,12 @@ export function useTeamInstall(onDone?: () => void) {
             return;
           }
           if (event.type === 'done') {
-            setInstallStatus('done');
-            onDone?.();
+            // ⚠️ 三步的顺序是承重的，见 `finishTeamInstall` 的说明（目录陈旧 ⇒ 紧接着的
+            //    「发起对话」会被静默换成 main）。
+            // ⚠️⚠️ **收尾三步只许出现在 `finishTeamInstall` 里**。把它内联回这里并提前
+            //    调一次 `setInstallStatus('done')`，现在**会被 `runInstall` 那条用例红掉**
+            //    （它在 `act` 作用域之后读状态）；保持走缝只是更省事，不是"测试看不见"。
+            await finishTeamInstall({ gatewayId: teamInfo.gatewayId, setStatus: setInstallStatus, onDone });
             return;
           }
         }
