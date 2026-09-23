@@ -77,8 +77,23 @@
 
 **门禁**（`export PATH="/d/go-toolchain/go/bin:$PATH"`；重定向取 RC，**不用管道**）：
 
-- 第一次（提交 `74ec54af`，顺序测试之前）：`GATE_EXIT=0`；`packages/desktop` **282 files / 2911 passed + 2 skipped (2913)**。
-- 第二次（提交 `a6d11fc5`，最终）：`GATE_EXIT=0`；`packages/desktop` **282 files / 2912 passed + 2 skipped (2914)**。
+- 第一次（提交 `74ec54af`）：`GATE_EXIT=0`；`packages/desktop` **282 files / 2911 passed + 2 skipped (2913)**。
+- 第二次（提交 `a6d11fc5`）：`GATE_EXIT=0`；`packages/desktop` **282 files / 2912 passed + 2 skipped (2914)**。
+- 第三次（提交 `a93ea419`）：**`GATE_EXIT=1`** —— 见下。
+- 第四次（提交见 `git log`）：⏳ 跑完回填。
+
+### ⭐ 第三次门禁红了，红在 `typecheck:tests`（"聚焦全绿 ≠ 门禁会绿"的实例）
+
+```
+test/use-team-install-refresh.test.tsx(150,9): error TS2322:
+  Type 'Promise<void>' is not assignable to type 'Promise<undefined>'.
+```
+
+hoisted mock 写的是 `async () => undefined`（⇒ `Promise<undefined>`），而 deferred 那条用例给它 `new Promise<void>`。
+**vitest 不做类型检查**（esbuild 只剥类型）⇒ 聚焦测试 + 7 条变异全绿，**只有全量门禁的 `typecheck:tests` 抓得到**。
+修法：把 mock 按**真实签名**标注 `vi.fn<(gatewayId: string, options?: { force?: boolean }) => Promise<void>>(...)`。
+
+⇒ 纪律：**"聚焦测试全绿"不能替代全量门禁** —— 本刀这条缺陷只有 `pnpm check` 能发现。
 
 ## 登记（本刀没做/没验）
 

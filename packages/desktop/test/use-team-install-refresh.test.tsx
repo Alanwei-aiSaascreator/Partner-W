@@ -20,7 +20,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  * 本项目在别处正是这么栽的。
  */
 
-const refreshMock = vi.hoisted(() => ({ fetchAgentsForGateway: vi.fn(async () => undefined) }));
+const refreshMock = vi.hoisted(() => ({
+  // ⚠️ 按**真实签名**标注（`Promise<void>`）：写成 `async () => undefined` 会得到 `Promise<undefined>`，
+  //    而 vitest 不做类型检查 ⇒ 只有 `typecheck:tests` 会红（本刀实测栽过一次）。
+  fetchAgentsForGateway: vi.fn<(gatewayId: string, options?: { force?: boolean }) => Promise<void>>(
+    async () => undefined,
+  ),
+}));
 
 vi.mock('@/hooks/useGatewayDispatcherSetup', () => ({
   fetchAgentsForGateway: refreshMock.fetchAgentsForGateway,
