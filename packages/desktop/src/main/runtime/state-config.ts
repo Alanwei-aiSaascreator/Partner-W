@@ -192,16 +192,126 @@ export function hasMemoryToolsDenied(raw: unknown): boolean {
 }
 
 /**
- * 工具段合并（纯函数）：把这两个名字**并进** deny，其余一概不动。
+ * 红线闸门的确切值。三个键在运行时 2026.9.3 的默认值**都不设防**（实测，见设计文档 §1）：
+ * `tools.fs.workspaceOnly` 默认 false、`exec` 默认 `security:"full" + ask:"off"`、`elevated` 未关。
+ *
+ * ⚠️ `exec.mode` 是**规范键**；旧写法 `security`/`ask` 与它**不能并存**（混合策略会被运行时拒绝），
+ *    所以 `mergeToolsDefaults` 在写 `mode` 时必须把同对象的 `security`/`ask` 移掉。
+ *
+ * ⚠️⚠️ **不要往这里加 `askFallback`**：实测（2026-09-23，真运行时 CLI）它**不在
+ *    `tools.exec` 的 schema 里**，写进去会让**整份配置被判非法**：
+ *    `config get tools` ⇒ `cli_error: OpenClaw config is invalid` + `Unrecognized key: "askFallback"`。
+ *    审批通道不可达时的默认行为本来就是 **deny**（文档 + 实现），所以不写它 = 用默认值，语义不变。
+ *    （那个键属于**审批存储**那一侧，不是 openclaw.json 的 tools 段。）
+ */
+export const TOOL_GUARD_FS_WORKSPACE_ONLY = true;
+export const TOOL_GUARD_EXEC_MODE = 'ask';
+export const TOOL_GUARD_ELEVATED_ENABLED = false;
+
+/** 从（任意的）配置里挖出 `tools.fs.workspaceOnly`；不是布尔则 null。 */
+export function readFsWorkspaceOnly(raw: unknown): boolean | null {
+  if (!isRecord(raw)) return null;
+  const tools = raw.tools;
+  if (!isRecord(tools)) return null;
+  const fsSection = tools.fs;
+  if (!isRecord(fsSection)) return null;
+  const value = fsSection.workspaceOnly;
+  return typeof value === 'boolean' ? value : null;
+}
+
+/** 从（任意的）配置里挖出 `tools.exec.mode`；不是字符串则 null。 */
+export function readExecMode(raw: unknown): string | null {
+  if (!isRecord(raw)) return null;
+  const tools = raw.tools;
+  if (!isRecord(tools)) return null;
+  const exec = tools.exec;
+  if (!isRecord(exec)) return null;
+  const mode = exec.mode;
+  return typeof mode === 'string' ? mode : null;
+}
+
+/** 从（任意的）配置里挖出 `tools.elevated.enabled`；不是布尔则 null。 */
+export function readElevatedEnabled(raw: unknown): boolean | null {
+  if (!isRecord(raw)) return null;
+  const tools = raw.tools;
+  if (!isRecord(tools)) return null;
+  const elevated = tools.elevated;
+  if (!isRecord(elevated)) return null;
+  const enabled = elevated.enabled;
+  return typeof enabled === 'boolean' ? enabled : null;
+}
+
+/** 三个闸门是不是都已经是红线值（提前返回的判据之一）。 */
+export function hasToolGuard(raw: unknown): boolean {
+  return (
+    readFsWorkspaceOnly(raw) === TOOL_GUARD_FS_WORKSPACE_ONLY &&
+    readExecMode(raw) === TOOL_GUARD_EXEC_MODE &&
+    readElevatedEnabled(raw) === TOOL_GUARD_ELEVATED_ENABLED
+  );
+}
+
+/**
+ * 运行时**不认**、留在文件里就会让**整份配置被判非法**的 exec 键（实测）。
+ *
+ * `askFallback` 不在 `openclaw.json` 的 `tools.exec` schema 里（它属于**审批存储**那一侧）：
+ * `config get tools` ⇒ `Unrecognized key: "askFallback"` ⇒ 网关起不来。
+ *
+ * ⚠️ 为什么要有这个谓词：提前返回若只看三个闸门的**值**，一个带着这种键的文件会**永远**
+ * 走提前返回 ⇒ 永远不重写 ⇒ **自愈路径被堵死**。这个客户端**从未**写过它
+ * （只有未发布的本分支提交 `2b2c5517` 写过一版），但合并与判据两处都要认它。
+ */
+export const STALE_EXEC_KEYS: readonly string[] = ['askFallback'];
+
+/** `tools.exec` 里还有没有"运行时不认"的键。 */
+export function hasStaleExecKeys(raw: unknown): boolean {
+  if (!isRecord(raw)) return false;
+  const tools = raw.tools;
+  if (!isRecord(tools)) return false;
+  const exec = tools.exec;
+  if (!isRecord(exec)) return false;
+  return STALE_EXEC_KEYS.some((key) => Object.hasOwn(exec, key));
+}
+
+/**
+ * 工具段合并（纯函数）：把这两个名字**并进** deny + **红线三闸门**（确保并保留）。
  *
  * 为什么是并集而不是"没有才补"：用户/将来版本可能已经 deny 了别的东西，
  * 整段覆盖会把他的设置抹掉；而这两个名字必须确保在里面，所以只能并。
  * 幂等由 `Set` 保证 —— 连跑多次不会重复追加。
+ *
+ * ⚠️ 三个闸门同上：**确保**而不是"没有才补"。红线是产品决定、不是用户偏好 ——
+ *    用户设过 `workspaceOnly:false` 也会被改回 true（设计文档 §2.1）。
  */
 export function mergeToolsDefaults(existing: Record<string, unknown> | null): Record<string, unknown> {
   const tools = existing && isRecord(existing.tools) ? existing.tools : {};
   const deny = readToolsDeny(existing) ?? [];
-  return { ...tools, deny: [...new Set([...deny, ...MEMORY_TOOLS_DENIED])] };
+  const fsSection = isRecord(tools.fs) ? tools.fs : {};
+  const execSection = isRecord(tools.exec) ? tools.exec : {};
+  const elevatedSection = isRecord(tools.elevated) ? tools.elevated : {};
+
+  // ⚠️ 写 `mode` 时不要把旧写法留在同一个对象里：
+  //    - `security`/`ask` 与 `mode` 并存会被**运行时自己的配置校验拒绝**（**实测**，2026-09-23：
+  //      `config get tools` ⇒ `mode cannot be combined with security or ask in the same exec object`，
+  //      并点名 `tools.exec.mode`）⇒ 这里是**必须删**，不是顺手清理。
+  //      `mode:"ask"` 与 `security:"allowlist" + ask:"on-miss"` 等价，所以删除无损；
+  //      合并后的形态单独喂给运行时读回过（`{strictInlineEval:true, mode:"ask"}` 被接受）。
+  //    - `STALE_EXEC_KEYS`（如 `askFallback`）是**运行时不认**的键 —— 实测会让整份配置非法，
+  //      必须从这里删掉，**而且**提前返回的判据也得认它（见 `hasStaleExecKeys`），否则锁死。
+  const execRest: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(execSection)) {
+    if (key === 'security' || key === 'ask') continue;
+    if (STALE_EXEC_KEYS.includes(key)) continue;
+    execRest[key] = value;
+  }
+
+  return {
+    ...tools,
+    deny: [...new Set([...deny, ...MEMORY_TOOLS_DENIED])],
+    fs: { ...fsSection, workspaceOnly: TOOL_GUARD_FS_WORKSPACE_ONLY },
+    // ⚠️ 只写 `mode`：**不要**加 `askFallback`（见上面常量处的实测）。
+    exec: { ...execRest, mode: TOOL_GUARD_EXEC_MODE },
+    elevated: { ...elevatedSection, enabled: TOOL_GUARD_ELEVATED_ENABLED },
+  };
 }
 
 /** 从（任意的）已有配置里挖出 token；没有则 null。 */
@@ -287,14 +397,17 @@ export function ensureStateConfig(
   // ⚠️ "一致"必须**含**记忆默认值：这条提前返回是存量用户的必经之路（他们的 token
   //    本来就是对的），只看 token 的话 `memory.search.provider` 永远补不上 ——
   //    那正是"对用户机器无效"的那一版修法。token 对 + 记忆段已设 ⇒ 才真的不写。
-  // ⚠️ "一致"必须**同时**含记忆默认值与工具 deny：这条提前返回是存量用户每次启动的
-  //    必经之路（他们的 token 本来就是对的）。漏掉任一项 ⇒ 对用户那台机器完全无效，
-  //    症状原样还在（memory 那条当初就是这么栽的）。
+  // ⚠️ "一致"必须**同时**含记忆默认值、工具 deny、**红线闸门**，以及"没有运行时不认的键"：
+  //    这条提前返回是存量用户每次启动的必经之路（他们的 token 本来就是对的）。漏掉任一项 ⇒
+  //    对用户那台机器完全无效，症状原样还在（memory 那条当初就是这么栽的）；
+  //    而漏掉最后一项更糟 —— 非法键会被**永久**锁在文件里，连自愈的机会都没有。
   if (
     existingToken === store.token &&
     existing &&
     readMemorySearchProvider(existing) !== null &&
     hasMemoryToolsDenied(existing) &&
+    hasToolGuard(existing) &&
+    !hasStaleExecKeys(existing) &&
     (!splitState || hasPortableBootstrapDisabled(existing))
   ) {
     return { token: store.token, created: false, configPath, stateDir };

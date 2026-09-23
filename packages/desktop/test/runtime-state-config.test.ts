@@ -44,9 +44,31 @@ vi.mock('electron', () => ({
   },
 }));
 
+/**
+ * `writeJsonAtomic` 的探针：用来钉住"已经一致 ⇒ **一个字节都不写**"这条契约。
+ *
+ * ⚠️ 工厂必须**代理真实现**（`...actual` + 委托）：这个模块也被 `updateConfig` 用，
+ *    换掉真实现会把别的用例静默改掉。
+ * ⚠️ 用它的那条用例必须**先证明钉子活着**（第一跑断言调用次数），否则"第二跑没写"
+ *    在探针失效时会**恒真**。
+ */
+const jsonFileMock = vi.hoisted(() => ({
+  writeJsonAtomic: vi.fn<(target: string, value: unknown) => void>(),
+}));
+
+vi.mock('../src/main/util/json-file.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/main/util/json-file.js')>();
+  jsonFileMock.writeJsonAtomic.mockImplementation(actual.writeJsonAtomic);
+  return { ...actual, writeJsonAtomic: jsonFileMock.writeJsonAtomic };
+});
+
 import { CONFIG_FILE_NAME } from '@clawwork/shared';
 import {
   LOCAL_GATEWAY_ID,
+  hasMemoryToolsDenied,
+  hasStaleExecKeys,
+  hasToolGuard,
+  readMemorySearchProvider,
   STATE_CONFIG_FILE,
   STATE_DIR_NAME,
   ensureClientGatewayEntry,
@@ -99,7 +121,12 @@ describe('ensureStateConfig', () => {
     expect(raw).toEqual({
       gateway: { auth: { mode: 'token', token: res.token } },
       memory: { search: { provider: 'none' } },
-      tools: { deny: ['memory_search', 'memory_get'] },
+      tools: {
+        deny: ['memory_search', 'memory_get'],
+        fs: { workspaceOnly: true },
+        exec: { mode: 'ask' },
+        elevated: { enabled: false },
+      },
     });
     expect(res.token).toMatch(/^[A-Za-z0-9_-]{43}$/); // 32 字节 → 43 个 base64url 字符
   });
@@ -292,6 +319,176 @@ describe('tools.deny —— 摘掉那两个会必然失败的 memory 工具', ()
     const raw = JSON.parse(fs.readFileSync(stateConfigPath(stateDir), 'utf-8'));
     expect(raw.tools.deny).toEqual(['memory_search', 'memory_get']);
     expect(raw.tools.deny.filter((n: string) => n === 'memory_search')).toHaveLength(1);
+  });
+});
+
+describe('红线：工具闸门（写不出工作区 + 工作区外先问）', () => {
+  /**
+   * 用户 2026-09-22 拍的红线：中间产物落工作区/临时目录，绝不落桌面；外面写必须先问。
+   * 运行时的三个闸门在 2026.9.3 实测**默认都不设防**：
+   *   - tools.fs.workspaceOnly 默认 false（且它是 FsToolsConfig 的唯一子键，读写一起锁）
+   *   - tools.exec 默认 security:"full" + ask:"off"（等于无审批）
+   *   - tools.elevated 未关
+   */
+  it('首跑就带上三个闸门，且不写 legacy security/ask', () => {
+    const res = ensureStateConfig(userDataDir);
+    const raw = JSON.parse(fs.readFileSync(res.configPath, 'utf-8'));
+
+    expect(raw.tools.fs).toEqual({ workspaceOnly: true });
+    expect(raw.tools.exec).toEqual({ mode: 'ask' });
+    expect(raw.tools.elevated).toEqual({ enabled: false });
+  });
+
+  it('⭐ 存量用户（token/memory/deny 都早就对了）也必须补上 —— 提前返回不能漏了它', () => {
+    // 与 memory / deny 那两条同源的坑：这条提前返回是**存量用户每次启动的必经之路**。
+    // 判据里漏了闸门 ⇒ token 本来就对的用户（包括用户那块 U 盘）**永远拿不到**。
+    const stateDir = stateDirFor(userDataDir);
+    fs.mkdirSync(stateDir, { recursive: true });
+    const first = ensureStateConfig(userDataDir);
+
+    // 模拟"这一版修复之前写下的文件"：token 对、memory 与 deny 都设过，但没有闸门
+    const cfg = JSON.parse(fs.readFileSync(stateConfigPath(stateDir), 'utf-8'));
+    delete cfg.tools.fs;
+    delete cfg.tools.exec;
+    delete cfg.tools.elevated;
+    fs.writeFileSync(stateConfigPath(stateDir), JSON.stringify(cfg));
+
+    ensureStateConfig(userDataDir);
+
+    const raw = JSON.parse(fs.readFileSync(stateConfigPath(stateDir), 'utf-8'));
+    expect(raw.gateway.auth.token).toBe(first.token); // token 不许漂
+    expect(raw.tools.fs).toEqual({ workspaceOnly: true });
+    expect(raw.tools.exec.mode).toBe('ask');
+    expect(raw.tools.elevated.enabled).toBe(false);
+  });
+
+  it('用户自己的其它 tools/exec 键不被覆盖', () => {
+    const stateDir = stateDirFor(userDataDir);
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(
+      stateConfigPath(stateDir),
+      JSON.stringify({
+        gateway: { auth: { mode: 'token', token: 'existing-token' } },
+        memory: { search: { provider: 'none' } },
+        tools: {
+          deny: ['some_other_tool', 'memory_search', 'memory_get'],
+          profile: 'coding',
+          exec: { strictInlineEval: true },
+        },
+      }),
+    );
+
+    ensureStateConfig(userDataDir);
+
+    const raw = JSON.parse(fs.readFileSync(stateConfigPath(stateDir), 'utf-8'));
+    expect(raw.tools.deny).toContain('some_other_tool');
+    expect(raw.tools.profile).toBe('coding');
+    expect(raw.tools.exec.strictInlineEval).toBe(true);
+    expect(raw.tools.exec.mode).toBe('ask');
+  });
+
+  it('用户显式设过 false/"full" ⇒ 被改回红线值（always-ensure，不是 only-fill）', () => {
+    const stateDir = stateDirFor(userDataDir);
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(
+      stateConfigPath(stateDir),
+      JSON.stringify({
+        gateway: { auth: { mode: 'token', token: 'existing-token' } },
+        memory: { search: { provider: 'none' } },
+        tools: {
+          deny: ['memory_search', 'memory_get'],
+          fs: { workspaceOnly: false },
+          exec: { mode: 'full' },
+          elevated: { enabled: true },
+        },
+      }),
+    );
+
+    ensureStateConfig(userDataDir);
+
+    const raw = JSON.parse(fs.readFileSync(stateConfigPath(stateDir), 'utf-8'));
+    expect(raw.tools.fs.workspaceOnly).toBe(true);
+    expect(raw.tools.exec.mode).toBe('ask');
+    expect(raw.tools.elevated.enabled).toBe(false);
+  });
+
+  it('已有 legacy security/ask ⇒ 写 mode 时移除它们（混合策略会被运行时拒绝）', () => {
+    const stateDir = stateDirFor(userDataDir);
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(
+      stateConfigPath(stateDir),
+      JSON.stringify({
+        gateway: { auth: { mode: 'token', token: 'existing-token' } },
+        memory: { search: { provider: 'none' } },
+        tools: {
+          deny: ['memory_search', 'memory_get'],
+          exec: { security: 'full', ask: 'off', strictInlineEval: true },
+        },
+      }),
+    );
+
+    ensureStateConfig(userDataDir);
+
+    const raw = JSON.parse(fs.readFileSync(stateConfigPath(stateDir), 'utf-8'));
+    expect(raw.tools.exec).toEqual({ strictInlineEval: true, mode: 'ask' });
+    expect(raw.tools.exec.security).toBeUndefined();
+    expect(raw.tools.exec.ask).toBeUndefined();
+  });
+
+  it('文件里带着运行时**不认的** askFallback ⇒ 跑一次就清掉（提前返回不能把它锁死）', () => {
+    // 实测：`tools.exec.askFallback` 不在 openclaw.json 的 schema 里 ⇒ 整份配置被判非法、网关起不来。
+    // 若提前返回只看三个闸门的值，带着这个键的文件会**永远**走提前返回 ⇒ 自愈路径被堵死。
+    const stateDir = stateDirFor(userDataDir);
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(
+      stateConfigPath(stateDir),
+      JSON.stringify({
+        gateway: { auth: { mode: 'token', token: 'existing-token' } },
+        memory: { search: { provider: 'none' } },
+        tools: {
+          deny: ['memory_search', 'memory_get'],
+          fs: { workspaceOnly: true },
+          exec: { mode: 'ask', askFallback: 'deny' },
+          elevated: { enabled: false },
+        },
+      }),
+    );
+
+    ensureStateConfig(userDataDir);
+
+    const raw = JSON.parse(fs.readFileSync(stateConfigPath(stateDir), 'utf-8'));
+    expect(raw.tools.exec.askFallback).toBeUndefined();
+    expect(raw.tools.exec.mode).toBe('ask');
+  });
+
+  it('幂等：第二跑对这份文件**一次写盘都没有**（字节相同区分不了"提前返回"与"每次重写"）', () => {
+    // ⚠️ 这条的钉子是**写盘调用**，不是字节：把合并重算一遍会得到逐字节相同的文件，
+    //    所以"字节不变"在"每次都重写"的世界里同样成立（复核者实测过：重建后的字节与磁盘相同），
+    //    而 `created === false` 只看文件在不在盘上、恒为真。
+    const writesTo = (target: string): number =>
+      jsonFileMock.writeJsonAtomic.mock.calls.filter(([p]) => p === target).length;
+
+    jsonFileMock.writeJsonAtomic.mockClear();
+    const first = ensureStateConfig(userDataDir);
+    expect(writesTo(first.configPath)).toBe(1); // ← 先证明钉子活着（否则下面那条恒真）
+
+    const bytes = fs.readFileSync(first.configPath, 'utf-8');
+    const afterFirst = JSON.parse(bytes);
+    // 诊断：四个谓词各自是什么读数（提前返回要**全真**才成立）
+    expect({
+      memoryProvider: readMemorySearchProvider(afterFirst) !== null,
+      deny: hasMemoryToolsDenied(afterFirst),
+      guard: hasToolGuard(afterFirst),
+      noStale: !hasStaleExecKeys(afterFirst),
+    }).toEqual({ memoryProvider: true, deny: true, guard: true, noStale: true });
+    // ⚠️ 计数是累积的：第二跑之前**必须**清一次，否则读到的还是第一跑那次写盘
+    //    （第一版就是这么读错的：把"1"当成了"第二跑也写了"）。
+    jsonFileMock.writeJsonAtomic.mockClear();
+    const second = ensureStateConfig(userDataDir);
+
+    expect(second.created).toBe(false);
+    expect(writesTo(first.configPath)).toBe(0);
+    expect(fs.readFileSync(first.configPath, 'utf-8')).toBe(bytes);
   });
 });
 
