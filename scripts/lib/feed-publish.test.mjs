@@ -14,7 +14,11 @@ import {
   assertKnownHostsPath,
   assertNotReusedManifest,
   buildStableManifestInput,
+  channelRootProblems,
+  classifyControlledDirectoryProbe,
   classifyStagingTargetProbe,
+  controlledDirectoryProbeScript,
+  decideControlledDirectory,
   decideStagingUpload,
   parsePublishInput,
   stagingTargetProbeScript,
@@ -1432,12 +1436,28 @@ function commitTransport(options = {}) {
             : { status: 0, stdout: ownerJson, stderr: '' };
         }
         if (request.script.startsWith('if [ -L ')) {
-          const answer =
-            typeof options.stagingProbe === 'function' ? options.stagingProbe(request.script) : options.stagingProbe;
+          const isStagingTarget = request.script.includes('.part');
+          const source = isStagingTarget ? options.stagingProbe : options.controlledDirProbe;
+          const fallback = isStagingTarget ? 'absent' : 'directory root root 755 64771';
+          const answer = typeof source === 'function' ? source(request.script) : source;
           if (answer !== undefined && typeof answer === 'object' && answer !== null) return answer;
-          return { status: 0, stdout: `${answer ?? 'absent'}\n`, stderr: '' };
+          return { status: 0, stdout: `${answer ?? fallback}\n`, stderr: '' };
         }
         if (request.script.includes('-mindepth 1 -maxdepth 1 -printf')) {
+          const targetBase = String(/if \[ -d (\S+) \]/u.exec(request.script)?.[1] ?? '')
+            .split('/')
+            .pop();
+          if (CHANNELS.includes(targetBase)) {
+            if (options.channelRootListingFails === true) {
+              return { status: 1, stdout: '', stderr: 'find: Permission denied' };
+            }
+            const entries = options.channelRootEntries ?? [];
+            return {
+              status: 0,
+              stdout: entries.map((entry) => `${entry.type} ${entry.name} 3\n`).join(''),
+              stderr: '',
+            };
+          }
           if (typeof options.listingStatus === 'number' && options.listingStatus !== 0) {
             return { status: options.listingStatus, stdout: 'find: Permission denied\n', stderr: '' };
           }
@@ -3533,4 +3553,283 @@ test('the stage audit row records which upload command each artifact used and wh
       ['portable-files.json', 'put', 'absent', 0],
     ],
   );
+});
+
+// ---------------------------------------------------------------------------
+// 首次频道发布：受控目录自举 + 预检（2026-09-24 首次真实发布暴露的缺陷）
+//
+// 真实事故：`commit-version` 就是 `mv <staging> <versionRoot>`，而它的父目录
+// `/opt/rongying/updates/<channel>` 在**首次发布**时不存在 ⇒ rename 落不下去。
+// 频道锁的叶目录同理（锁用的是裸 `mkdir`，故意不 `-p`，好让 EEXIST 可判）。
+// 因此工具必须自己建立它拥有的受控目录，并在已存在时**验证**它。
+// ---------------------------------------------------------------------------
+
+const dirProbeOf = (stdout, status = 0, stderr = '') => ({ status, stdout, stderr });
+
+test('the controlled directory probe affirms one of five answers and names the path it looked at', () => {
+  const script = controlledDirectoryProbeScript('/opt/x/lock');
+  assert.equal(script.includes('/opt/x/lock'), true);
+  assert.equal(
+    script.startsWith('if [ -L '),
+    true,
+    'a symlink must be classified before a follow-up test can see it as a directory',
+  );
+  for (const token of ['symlink', 'directory', 'file', 'other', 'absent']) {
+    assert.equal(script.includes(token), true, token);
+  }
+  assert.equal(script.includes('stat -c'), true, 'an existing directory must report owner, group, mode and device');
+});
+
+test('the classifier carries owner, group, mode and device for an existing directory', () => {
+  const probe = classifyControlledDirectoryProbe(dirProbeOf('directory root root 755 64771\n'));
+  assert.equal(probe.kind, 'directory');
+  assert.equal(probe.owner, 'root');
+  assert.equal(probe.group, 'root');
+  assert.equal(probe.mode, '755');
+  assert.equal(probe.device, '64771');
+});
+
+test('the classifier refuses a controlled directory answer it cannot parse instead of guessing', () => {
+  const answers = [
+    '',
+    'directory',
+    'directory root root 755',
+    'directory root root 755 64771 extra',
+    'directory root root 8x 64771',
+    'Directory root root 755 64771',
+  ];
+  for (const answer of answers) {
+    assert.equal(
+      classifyControlledDirectoryProbe(dirProbeOf(`${answer}\n`)).kind,
+      'unreadable',
+      JSON.stringify(answer),
+    );
+  }
+});
+
+test('an absent controlled directory is created by the tool', () => {
+  const decision = decideControlledDirectory({ probe: { kind: 'absent' }, path: '/opt/x/lock' });
+  assert.equal(decision.create, true);
+  assert.equal(decision.refused, undefined);
+});
+
+test('an existing controlled directory is accepted and its owner, mode and device are carried forward', () => {
+  const probe = classifyControlledDirectoryProbe(dirProbeOf('directory root root 755 64771\n'));
+  const decision = decideControlledDirectory({ probe, path: '/opt/x/lock' });
+  assert.equal(decision.ok, true);
+  assert.equal(decision.create, undefined);
+  assert.equal(decision.mode, '755');
+  assert.equal(decision.device, '64771');
+});
+
+test('a controlled path that is a symlink, a plain file or anything else is refused with a runnable hint', () => {
+  for (const answer of ['symlink', 'file', 'other']) {
+    const probe = classifyControlledDirectoryProbe(dirProbeOf(`${answer}\n`));
+    assert.equal(probe.kind, answer === 'file' ? 'file' : answer, answer);
+    const decision = decideControlledDirectory({ probe, path: '/opt/x/lock' });
+    assert.equal(decision.create, undefined, answer);
+    assert.equal(decision.ok, undefined, answer);
+    assert.equal(typeof decision.refused, 'string', answer);
+    assert.equal(decision.refused.includes('/opt/x/lock'), true, 'the refusal must name the exact path');
+    assert.equal(typeof decision.hint, 'string', answer);
+    assert.match(decision.hint, /install -d/u, 'the hint must be a command the operator can run');
+    assert.equal(decision.hint.includes('/opt/x/lock'), true, answer);
+  }
+});
+
+test('an unreadable controlled directory probe is refused rather than created over', () => {
+  const probe = classifyControlledDirectoryProbe(dirProbeOf('', 255, 'Permission denied'));
+  const decision = decideControlledDirectory({ probe, path: '/opt/x/lock' });
+  assert.equal(typeof decision.refused, 'string');
+  assert.match(decision.hint, /install -d/u);
+});
+
+test('the channel root content check allows only the manifest, its temporary and version directories', () => {
+  const allowed = [
+    { type: 'f', name: 'manifest.json' },
+    { type: 'd', name: '0.0.28' },
+    { type: 'd', name: '0.0.27' },
+    { type: 'f', name: 'manifest.json.9f1c.tmp' },
+  ];
+  assert.deepEqual(channelRootProblems(allowed), []);
+});
+
+test('the channel root content check reports foreign files, foreign directories and symlinks', () => {
+  const problems = channelRootProblems([
+    { type: 'f', name: 'jd30-A-yunyang.mp4' },
+    { type: 'd', name: 'v3-b2754fe8' },
+    { type: 'l', name: 'linked' },
+    { type: 'f', name: 'manifest.json.bak' },
+  ]);
+  const joined = problems.join('; ');
+  assert.equal(problems.length, 4, joined);
+  assert.match(joined, /jd30-A-yunyang\.mp4/u);
+  assert.match(joined, /v3-b2754fe8/u);
+  assert.match(joined, /linked/u);
+  assert.match(joined, /manifest\.json\.bak/u);
+});
+
+test('a first publish creates the controlled directories it needs instead of asking the operator to', async () => {
+  const paths = writeArtifacts();
+  const needsCreation = (script) => script.includes(`${UPDATE_ROOT}/internal`) || script.includes(`${STATE_ROOT}/lock`);
+  const transport = happyTransport(paths, {
+    controlledDirProbe: (script) => {
+      const probedPath = /^if \[ -L (\S+) \]/u.exec(script)?.[1] ?? '';
+      if (!needsCreation(probedPath)) return 'directory root root 755 64771';
+      const alreadyCreated = transport.calls.some(
+        (call) => call[0] === 'writeSsh' && String(call[1]) === `LC_ALL=C mkdir -p ${probedPath}`,
+      );
+      return alreadyCreated ? 'directory root root 755 64771' : 'absent';
+    },
+  });
+  const input = commitInput(transport, { ...paths });
+  const result = await runCommit(input);
+  assert.equal(result.outcome, 'done', result.reason);
+  const writeScripts = transport.calls.filter((call) => call[0] === 'writeSsh').map((call) => String(call[1]));
+  assert.equal(
+    writeScripts.includes(`LC_ALL=C mkdir -p ${UPDATE_ROOT}/internal`),
+    true,
+    'the tool must create the channel root itself',
+  );
+  assert.equal(
+    writeScripts.includes(`LC_ALL=C mkdir -p ${STATE_ROOT}/lock`),
+    true,
+    'the tool must create the lock leaf itself',
+  );
+  const stage = auditEntriesOf(input.auditOut).find((row) => row.stage === 'stage' && row.status === 'done');
+  const channel = stage.controlledDirectories.find((entry) => entry.path === `${UPDATE_ROOT}/internal`);
+  assert.equal(channel.created, true);
+  assert.equal(channel.mode, '755');
+  assert.equal(channel.owner, 'root');
+});
+
+test('a channel root that is a plain file or a symlink is refused with a runnable fix', async () => {
+  for (const answer of ['file', 'symlink']) {
+    const paths = writeArtifacts();
+    const transport = happyTransport(paths, {
+      controlledDirProbe: (script) =>
+        script.includes(`${UPDATE_ROOT}/internal`) ? answer : 'directory root root 755 64771',
+    });
+    const input = commitInput(transport, { ...paths });
+    const result = await runCommit(input);
+    assert.equal(result.outcome, 'fail', answer);
+    assert.equal(result.lockState, 'not-acquired', answer);
+    assert.equal(result.reason.includes(`${UPDATE_ROOT}/internal`), true, answer);
+    const row = auditEntriesOf(input.auditOut).find((entry) => entry.stage === 'stage' && entry.status === 'fail');
+    assert.match(row.detail, /install -d/u, `${answer}: the audit row must carry the exact fix`);
+    assert.equal(
+      transport.calls.some((call) => call[0] === 'sftpUpload'),
+      false,
+      answer,
+    );
+  }
+});
+
+test('a channel root that holds something this tool does not own is refused by name', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths, {
+    channelRootEntries: [
+      { type: 'f', name: 'jd30-A-yunyang.mp4' },
+      { type: 'd', name: '0.0.27' },
+    ],
+  });
+  const input = commitInput(transport, { ...paths });
+  const result = await runCommit(input);
+  assert.equal(result.outcome, 'fail');
+  assert.equal(result.reason.includes('jd30-A-yunyang.mp4'), true);
+  assert.equal(
+    transport.calls.some((call) => call[0] === 'sftpUpload'),
+    false,
+  );
+});
+
+test('a channel root that already holds the manifests and version directories this tool owns is accepted', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths, {
+    channelRootEntries: [
+      { type: 'f', name: 'manifest.json' },
+      { type: 'd', name: '0.0.27' },
+      { type: 'f', name: 'manifest.json.9f1c.tmp' },
+    ],
+  });
+  const result = await runCommit(commitInput(transport, { ...paths }));
+  assert.equal(result.outcome, 'done', result.reason);
+});
+
+test('the preflight reports each root with its owner, mode and device without faulting an absent channel root', async () => {
+  const transport = fakeReadOnlyTransport({
+    sshRun: (request) => {
+      if (request.script.startsWith('stat -c ')) return { status: 0, stdout: '64771\n64771\n', stderr: '' };
+      if (request.script.includes(`${UPDATE_ROOT}/internal`)) return { status: 0, stdout: 'absent\n', stderr: '' };
+      return { status: 0, stdout: 'directory root root 755 64771\n', stderr: '' };
+    },
+  });
+  const result = await runPreflight({
+    channel: 'internal',
+    version: '1.2.3',
+    transport,
+    host: HOST,
+    knownHostsPath: KNOWN_HOSTS_PATH,
+  });
+  assert.equal(result.sameFileSystem, true);
+  assert.equal(result.roots.stateRoot.kind, 'directory');
+  assert.equal(result.roots.stateRoot.owner, 'root');
+  assert.equal(result.roots.stateRoot.mode, '755');
+  assert.equal(result.roots.updateRoot.device, '64771');
+  assert.equal(result.roots.channelRoot.kind, 'absent');
+  assert.deepEqual(result.notes, [], 'an absent channel root is the normal first publish state, not a note');
+});
+
+test('the preflight notes a root that is not a directory', async () => {
+  const transport = fakeReadOnlyTransport({
+    sshRun: (request) => {
+      if (request.script.startsWith('stat -c ')) return { status: 0, stdout: '64771\n64771\n', stderr: '' };
+      if (request.script.includes(`${STATE_ROOT}`) && !request.script.includes('/lock')) {
+        return { status: 0, stdout: 'file\n', stderr: '' };
+      }
+      return { status: 0, stdout: 'directory root root 755 64771\n', stderr: '' };
+    },
+  });
+  const result = await runPreflight({
+    channel: 'internal',
+    version: '1.2.3',
+    transport,
+    host: HOST,
+    knownHostsPath: KNOWN_HOSTS_PATH,
+  });
+  assert.equal(result.roots.stateRoot.kind, 'file');
+  assert.equal(
+    result.notes.some((note) => note.includes(STATE_ROOT)),
+    true,
+  );
+});
+
+test('a channel root that could not be listed is refused rather than assumed empty', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths, { channelRootListingFails: true });
+  const result = await runCommit(commitInput(transport, { ...paths }));
+  assert.equal(result.outcome, 'fail');
+  assert.match(result.reason, /could not be listed/u);
+  assert.equal(
+    transport.calls.some((call) => call[0] === 'sftpUpload'),
+    false,
+  );
+});
+
+test('a controlled directory that was created but does not verify is refused', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths, {
+    controlledDirProbe: (script) =>
+      script.includes(`${UPDATE_ROOT}/internal`) ? 'absent' : 'directory root root 755 64771',
+  });
+  const input = commitInput(transport, { ...paths });
+  const result = await runCommit(input);
+  assert.equal(result.outcome, 'fail');
+  assert.match(result.reason, /could not be verified/u);
+  assert.equal(
+    transport.calls.some((call) => call[0] === 'sftpUpload'),
+    false,
+  );
+  const row = auditEntriesOf(input.auditOut).find((entry) => entry.stage === 'stage' && entry.status === 'fail');
+  assert.match(row.detail, /install -d/u);
 });

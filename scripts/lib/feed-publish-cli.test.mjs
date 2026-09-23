@@ -375,7 +375,10 @@ test('the dry run refuses to run without the public key in the environment', asy
 test('a preflight writes one session entry that carries the time it ran', async () => {
   const auditOut = join(makeCliRoot(), 'audit.jsonl');
   const harness = makeHarness({
-    readSsh: () => ({ status: 0, stdout: '100\n100\n', stderr: '' }),
+    readSsh: (request) =>
+      request.script.startsWith('stat -c ')
+        ? { status: 0, stdout: '100\n100\n', stderr: '' }
+        : { status: 0, stdout: 'directory root root 755 100\n', stderr: '' },
     writeSsh: okWrite,
     sftpUpload: okUpload,
     fetchPublic: okFetch,
@@ -394,10 +397,12 @@ test('a preflight writes one session entry that carries the time it ran', async 
   const printed = printedObject(result.stdout);
   assert.equal(entries[0].runid, printed.runid);
   assert.equal(printed.result.sameFileSystem, true);
-  assert.deepEqual(
-    harness.calls.map((call) => call[0]),
-    ['readOnly.sshRun'],
+  assert.equal(
+    harness.calls.every((call) => call[0] === 'readOnly.sshRun'),
+    true,
+    'a preflight must never reach the write face',
   );
+  assert.equal(harness.calls.length, 4, 'one device probe plus one probe per root');
 });
 
 test('a failed preflight still writes its entry and tells the operator where to look', async () => {
@@ -493,7 +498,11 @@ test('a commit reaches sftp with one batch file per upload, each holding exactly
         if (command !== 'sftp') {
           const script = args[args.length - 1];
           if (typeof script === 'string' && script.startsWith('if [ -L ')) {
-            return { status: 0, stdout: 'absent\n', stderr: '' };
+            return {
+              status: 0,
+              stdout: script.includes('.part') ? 'absent\n' : 'directory root root 755 64771\n',
+              stderr: '',
+            };
           }
           return { status: 0, stdout: '', stderr: '' };
         }
@@ -1030,7 +1039,13 @@ function makeRetryHarness(paths) {
       if (script.includes('-printf')) {
         return { status: 0, stdout: script.includes('/staging/') ? listing : '', stderr: '' };
       }
-      if (script.startsWith('if [ -L ')) return { status: 0, stdout: 'absent\n', stderr: '' };
+      if (script.startsWith('if [ -L ')) {
+        return {
+          status: 0,
+          stdout: script.includes('.part') ? 'absent\n' : 'directory root root 755 64771\n',
+          stderr: '',
+        };
+      }
       if (script.startsWith('if [ -d ')) {
         return { status: 0, stdout: script.includes('/staging/') ? 'present\n' : '', stderr: '' };
       }

@@ -207,8 +207,30 @@ export async function runPreflight(input) {
   if (!sameFileSystem) notes.push('the state root and the update root do not report the same file system');
   if (probe.status !== 0) notes.push('the read only probe did not succeed');
 
+  const roots = {};
+  for (const [label, rootPath, required] of [
+    ['stateRoot', STATE_ROOT, true],
+    ['updateRoot', UPDATE_ROOT, true],
+    ['channelRoot', `${UPDATE_ROOT}/${input.channel}`, false],
+  ]) {
+    const verdict = await readControlledDirectory(input, rootPath);
+    roots[label] = {
+      path: rootPath,
+      kind: verdict.kind,
+      owner: verdict.owner ?? null,
+      group: verdict.group ?? null,
+      mode: verdict.mode ?? null,
+      device: verdict.device ?? null,
+      detail: verdict.detail ?? null,
+    };
+    if (required && verdict.kind !== 'directory') {
+      notes.push(`${rootPath} is ${verdict.kind === 'unreadable' ? 'unreadable' : verdict.kind}`);
+    }
+  }
+
   return {
     sameFileSystem,
+    roots,
     notes,
     writabilityIndicators: {
       verifiedWrite: false,
@@ -667,6 +689,132 @@ async function probeStagingTarget(input, remotePath) {
   return classifyStagingTargetProbe(probe);
 }
 
+export function controlledDirectoryProbeScript(remotePath) {
+  return [
+    `if [ -L ${remotePath} ]; then printf 'symlink\\n'`,
+    `elif [ -d ${remotePath} ]; then printf 'directory %s\\n' "$(LC_ALL=C stat -c '%U %G %a %d' ${remotePath})"`,
+    `elif [ -f ${remotePath} ]; then printf 'file\\n'`,
+    `elif [ -e ${remotePath} ]; then printf 'other\\n'`,
+    `else printf 'absent\\n'`,
+    'fi',
+  ].join('; ');
+}
+
+export function classifyControlledDirectoryProbe(result) {
+  if (result?.status !== 0) {
+    const detail = String(result?.stderr ?? '').trim() || String(result?.stdout ?? '').trim();
+    return {
+      kind: 'unreadable',
+      detail: `the probe exited ${result?.status ?? 'without a status'}${detail.length > 0 ? `: ${detail}` : ''}`,
+    };
+  }
+  const answer = String(result.stdout ?? '').trim();
+  if (answer === 'absent') return { kind: 'absent' };
+  if (answer === 'symlink' || answer === 'file' || answer === 'other') {
+    return { kind: answer, detail: `the path is a ${answer}` };
+  }
+  const fields = /^directory (\S+) (\S+) ([0-7]+) ([0-9]+)$/u.exec(answer);
+  if (fields !== null) {
+    return { kind: 'directory', owner: fields[1], group: fields[2], mode: fields[3], device: fields[4] };
+  }
+  return { kind: 'unreadable', detail: `the probe answered ${JSON.stringify(answer)}` };
+}
+
+export function decideControlledDirectory({ probe, path }) {
+  if (probe?.kind === 'absent') {
+    return { create: true, reason: 'the controlled directory does not exist yet, so the tool creates it' };
+  }
+  if (probe?.kind === 'directory') {
+    return {
+      ok: true,
+      owner: probe.owner,
+      group: probe.group,
+      mode: probe.mode,
+      device: probe.device,
+      reason: 'the controlled directory already exists and is a real directory',
+    };
+  }
+  const hint =
+    probe?.kind === 'unreadable'
+      ? `install -d -o root -g root -m 755 ${path}   # if the parent denies access, grant the publishing account write access to it`
+      : `mv ${path} ${path}.unexpected && install -d -o root -g root -m 755 ${path}`;
+  return {
+    refused: `the controlled directory ${path} could not be trusted: ${probe?.detail ?? 'the probe returned no verdict'}`,
+    hint,
+  };
+}
+
+export function channelRootProblems(entries) {
+  const problems = [];
+  for (const entry of entries ?? []) {
+    const name = String(entry?.name ?? '');
+    const type = String(entry?.type ?? '');
+    if (type === 'f' && name === PORTABLE_MANIFEST_NAME) continue;
+    if (type === 'f' && /^manifest\.json\.[A-Za-z0-9._-]+\.tmp$/u.test(name)) continue;
+    if (type === 'd' && /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u.test(name)) continue;
+    const what = type === 'd' ? 'a directory' : type === 'l' ? 'a symlink' : 'an entry';
+    problems.push(`the channel root carries ${what} ${name} that this tool does not own`);
+  }
+  return problems;
+}
+
+async function readControlledDirectory(input, path) {
+  const probe = await input.transport.readOnly.sshRun({
+    host: input.host,
+    knownHostsPath: input.knownHostsPath,
+    script: controlledDirectoryProbeScript(path),
+  });
+  return classifyControlledDirectoryProbe(probe);
+}
+
+async function ensureControlledDirectory(input, path) {
+  const probe = await readControlledDirectory(input, path);
+  const decision = decideControlledDirectory({ probe, path });
+  if (typeof decision.refused === 'string') {
+    return { ok: false, refusal: decision.refused, hint: decision.hint };
+  }
+  if (decision.create !== true) {
+    return {
+      ok: true,
+      created: false,
+      owner: decision.owner,
+      group: decision.group,
+      mode: decision.mode,
+      device: decision.device,
+    };
+  }
+  const created = await input.transport.write.sshRun({
+    host: input.host,
+    knownHostsPath: input.knownHostsPath,
+    script: `LC_ALL=C mkdir -p ${path}`,
+  });
+  if (created.status !== 0) {
+    const detail = String(created.stderr ?? '').trim() || String(created.stdout ?? '').trim();
+    return {
+      ok: false,
+      refusal: `the controlled directory ${path} could not be created${detail.length > 0 ? `: ${detail}` : ''}`,
+      hint: `install -d -o root -g root -m 755 ${path}   # if the parent denies access, grant the publishing account write access to it`,
+    };
+  }
+  const verified = await readControlledDirectory(input, path);
+  const verdict = decideControlledDirectory({ probe: verified, path });
+  if (verdict.ok !== true) {
+    return {
+      ok: false,
+      refusal: `the controlled directory ${path} was created but could not be verified: ${verified.detail ?? verified.kind}`,
+      hint: `install -d -o root -g root -m 755 ${path}`,
+    };
+  }
+  return {
+    ok: true,
+    created: true,
+    owner: verdict.owner,
+    group: verdict.group,
+    mode: verdict.mode,
+    device: verdict.device,
+  };
+}
+
 export function planTargets(input) {
   assertSafeChannel(input.channel);
   assertSafeVersion(input.version);
@@ -1035,6 +1183,38 @@ export async function runCommit(input) {
     { name: PORTABLE_FILE_MANIFEST_NAME, size: local.fileManifestSize, sha256: local.fileManifestSha256 },
   ];
 
+  const controlledDirs = [];
+  for (const controlledPath of [`${STATE_ROOT}/lock`, `${STATE_ROOT}/staging`, `${UPDATE_ROOT}/${input.channel}`]) {
+    const ensured = await ensureControlledDirectory(input, controlledPath);
+    if (ensured.ok !== true) {
+      audit('stage', 'fail', `${ensured.refusal} | fix: ${ensured.hint}`);
+      recordOutcome('fail', ensured.refusal);
+      return finish('fail', ensured.refusal, 'not-acquired');
+    }
+    controlledDirs.push({
+      path: controlledPath,
+      created: ensured.created === true,
+      owner: ensured.owner,
+      group: ensured.group,
+      mode: ensured.mode,
+      device: ensured.device,
+    });
+  }
+  const channelEntries = await readRemoteDirectory(input, `${UPDATE_ROOT}/${input.channel}`);
+  if (channelEntries === null) {
+    const reason = `the channel root ${UPDATE_ROOT}/${input.channel} could not be listed`;
+    audit('stage', 'fail', reason);
+    recordOutcome('fail', reason);
+    return finish('fail', reason, 'not-acquired');
+  }
+  const channelProblems = channelRootProblems(channelEntries);
+  if (channelProblems.length > 0) {
+    const reason = `the channel root ${UPDATE_ROOT}/${input.channel} is not this tool's to publish into: ${channelProblems.join('; ')}`;
+    audit('stage', 'fail', reason);
+    recordOutcome('fail', reason);
+    return finish('fail', reason, 'not-acquired');
+  }
+
   const stagingCreated = await input.transport.write.sshRun({
     host: input.host,
     knownHostsPath: input.knownHostsPath,
@@ -1128,7 +1308,11 @@ export async function runCommit(input) {
     recordOutcome('fail', 'the staging directory could not be finalised');
     return finish('fail', 'the staging directory could not be finalised', 'not-acquired');
   }
-  audit('stage', 'done', undefined, { removedStrayParts, uploads: uploadEvidence });
+  audit('stage', 'done', undefined, {
+    removedStrayParts,
+    uploads: uploadEvidence,
+    controlledDirectories: controlledDirs,
+  });
 
   const staging = await inspectRemoteDirectory(input, stagingRoot, expectedEntries);
   const stagingEvidence = { remote: staging };
@@ -1222,6 +1406,11 @@ export async function runCommit(input) {
   }
 
   const backupPath = `${STATE_ROOT}/backup/${input.channel}-manifest.json-pre-${input.version}-${baselineSha}`;
+  const backupEnsured = await ensureControlledDirectory(input, `${STATE_ROOT}/backup`);
+  if (backupEnsured.ok !== true) {
+    return releaseAndFinish('backup-manifest', `${backupEnsured.refusal} | fix: ${backupEnsured.hint}`);
+  }
+
   const backup = await input.transport.write.sshRun({
     host: input.host,
     knownHostsPath: input.knownHostsPath,
