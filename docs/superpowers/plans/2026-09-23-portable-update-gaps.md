@@ -493,3 +493,36 @@ against Node 26"）。**重写它们会换掉你已核实的 8 个 SHA** —— 
 写成了"本机不可能全绿"，还写进了 7 个提交。
 正确的做法是：门禁报红时，先问"**产品自己是怎么准备这个原生的**"（读 `postinstall`），
 而不是自己另造一条准备路径。
+
+## 12. 合并态独立复验（`a67d872f`，2026-09-23 二轮）
+
+本账本的 §11 是我这条线的终值（`3890628c`）。此后分支上又落了**四个不是我提交的**改动
+（并行的更新线接着我的提交往下做）：`2e1c1888`、`db9b64d7`、`ec62b749`、`a67d872f`。
+
+**我做的独立复验**：在 `a67d872f` 上重跑整道门禁（不是引用他们的读数）。
+
+```
+$ export PATH="/d/go-toolchain/go/bin:$PATH"
+$ pnpm check
+PNPM_CHECK_RC=0
+```
+
+| 步骤                                                                                  | 读数                                                                                             |
+| ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `go -C launcher test`                                                                 | ok                                                                                               |
+| `check:portable-update-release`                                                       | `tests 39 / pass 39 / fail 0`                                                                    |
+| `check:portable-feed-publish`                                                         | `tests 249 / pass 249 / fail 0`                                                                  |
+| `check:i18n` / `check:udisk-delivery` / `check:gateway-probe`                         | `8` / `48` / `25`，全 pass                                                                       |
+| lint / architecture / ci-bot-security / ui-contract / renderer-copy / knip / prettier | 通过                                                                                             |
+| `typecheck` / `typecheck:tests` / `typecheck:e2e`                                     | exit 0                                                                                           |
+| `pnpm -r test`                                                                        | shared `124`、core `655`、pwa `61`、**desktop `283 files / 3007 passed / 2 skipped / 0 failed`** |
+
+**我复核了他们改我的两处**（只读）：
+
+- `2e1c1888`：纯注释/文档，抓的是**我留下的真问题** —— `0c26dbac`（②）的 docblock 里
+  "发布侧门槛取同一个 `MOFANG_LAUNCHER_VERSION`"在我自己的 `0aa532e2`（新增⑤）拆变量后
+  **就不再成立**，还引了已变成注释的 `make-portable-update.mjs:55`。没有放松任何断言。
+- `ec62b749`：新增渲染侧**唯一入口** `describeUpdateErrorFromState(raw, operation, portable)`，
+  分层为 `FromState`（相位 error 且码认得出 ⇒ 以公开状态为准，带两个数字）→
+  `describeUpdateError`（整串错误码）→ `describePortableError`，共用我加的 `asPortableErrorCode`
+  与同一张分类表。**没有与我的实现重复**，也没有第二套判据。
