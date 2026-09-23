@@ -3963,3 +3963,25 @@ test('a body that throws while it is being streamed is refused rather than repor
   assert.equal(result.ok, false, 'a stream that dies mid body must never be reported as verified');
   assert.match(result.reason, /did not finish within/u);
 });
+
+test('the stray cleanup leaves the resume target alone so a partial upload still resumes', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths, {
+    staleStagingParts: ['portable.zip.part-r9'],
+    stagingProbe: (script) => (script.includes('.zip.part') ? 'file 7' : 'file 1'),
+  });
+  const input = commitInput(transport, { ...paths });
+  const result = await runCommit(input);
+  assert.equal(result.outcome, 'done', result.reason);
+  const stage = auditEntriesOf(input.auditOut).find((row) => row.stage === 'stage' && row.status === 'done');
+  assert.equal(stage.removedStrayParts.length, 1, 'the runid suffixed stray must be removed and reported');
+  assert.equal(stage.removedStrayParts[0].endsWith('portable.zip.part-r9'), true);
+  const stagingUploads = transport.calls.filter(
+    (call) => call[0] === 'sftpUpload' && String(call[2]).includes('/staging/'),
+  );
+  assert.deepEqual(
+    stagingUploads.map((call) => call[3]),
+    [true, true],
+    'the cleanup glob must not have eaten the resume target',
+  );
+});
