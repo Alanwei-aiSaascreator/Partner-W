@@ -38,14 +38,24 @@ function BreakdownTile({
   label,
   entries,
   emptyText,
+  scope,
 }: {
   label: string;
   entries: DashboardBreakdownEntry[];
   emptyText: string;
+  /** 口径标记（"本机"/"账号"）—— 与 `SectionHeader` 同一个样式；不标的格子会被当成另一个口径。 */
+  scope?: string;
 }) {
   return (
     <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] p-5">
-      <div className="type-label mb-4 text-[var(--text-secondary)]">{label}</div>
+      <div className="mb-4 flex items-baseline gap-2">
+        <div className="type-label text-[var(--text-secondary)]">{label}</div>
+        {scope ? (
+          <span className="type-meta rounded border border-[var(--border-subtle)] px-1.5 py-0.5 text-[var(--text-muted)]">
+            {scope}
+          </span>
+        ) : null}
+      </div>
       {entries.length === 0 ? (
         <div className="type-support text-[var(--text-muted)]">{emptyText}</div>
       ) : (
@@ -228,6 +238,9 @@ export default function Dashboard() {
               label={t('dashboard.topAgents')}
               entries={agentEntries}
               emptyText={data ? t('dashboard.noAssistantData') : t('dashboard.unavailable')}
+              // ⚠️ 这张来自**本机**聚合（`data.breakdowns.agents`，按盘）⇒ 必须标口径，
+              //    否则与旁边那张"账号"卡并排时会读成同一口径（换号后就"描述两个人"）。
+              scope={t('dashboard.localScope')}
             />
             <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] p-5">
               <div className="type-label text-[var(--text-secondary)]">{t('dashboard.accountBalance')}</div>
@@ -262,8 +275,11 @@ export default function Dashboard() {
                 </div>
               )}
               <div className="mt-5 border-t border-[var(--border-subtle)] pt-4 type-support text-[var(--text-muted)]">
-                {t('dashboard.totalMessages')} {data ? data.totalMessages.toLocaleString() : placeholder} ·{' '}
-                {t('dashboard.totalArtifacts')} {data ? data.totalArtifacts.toLocaleString() : placeholder}
+                {/* ⚠️ 这两个数是**本机（这块盘）**的，而这张卡讲的是**账号**积分 ⇒ 必须自己带口径，
+                    否则同一张卡上下两半是两个人的数（换号后最明显）。 */}
+                {t('dashboard.localScope')} · {t('dashboard.totalMessages')}{' '}
+                {data ? data.totalMessages.toLocaleString() : placeholder} · {t('dashboard.totalArtifacts')}{' '}
+                {data ? data.totalArtifacts.toLocaleString() : placeholder}
               </div>
             </div>
           </div>
