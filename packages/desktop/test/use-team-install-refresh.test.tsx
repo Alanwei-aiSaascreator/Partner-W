@@ -208,10 +208,9 @@ describe('useTeamInstall 装完刷新助手目录', () => {
 
 describe('finishTeamInstall 的收尾顺序（与 React 时序无关的确定性断言）', () => {
   it('⭐ 先刷新 → 再报 done → 再 onDone', async () => {
-    // ⚠️ 为什么不放在组件测试里：React 的 `act` 会把状态更新攒到作用域结束 ⇒
-    //    "刷新还挂着时 installStatus 是多少"在组件测试里**读不到**（本项目实测两次：
-    //    effect 记顺序被批处理骗过、飞行中直接读被批处理骗过）。把三步注入进来之后，
-    //    顺序就是普通 spy 的顺序，确定性地钉得住。
+    // ⚠️ 为什么单独立一条缝测试：注入之后顺序就是普通 spy 的顺序，最省事也最抗时序。
+    //    （**更正**：曾经的理由"组件测试里读不到飞行中的状态"**已被证伪** —— 读得到，只要在
+    //    `act` 作用域结束之后读；上面那条 `runInstall` 用例正是这么钉住调用点的。）
     const order: string[] = [];
 
     await finishTeamInstall({

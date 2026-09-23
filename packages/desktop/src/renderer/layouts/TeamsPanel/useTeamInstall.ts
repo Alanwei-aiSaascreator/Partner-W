@@ -43,14 +43,14 @@ async function refreshAgentCatalog(gatewayId: string): Promise<void> {
  * 安装收尾三步：**先刷新目录 → 再报"装完了" → 再 `onDone`**。
  *
  * ⚠️ 为什么抽成函数：这三步的**顺序**是承重的（报早一步，用户就能在目录还陈旧时点进团队 ⇒
- *    又是"静默换成 main"），而 React 的状态更新会被 `act` 攒到作用域结束才落 ——
- *    在组件测试里**读不到飞行中的 `installStatus`**（实测两次：effect 记顺序、飞行中直接读，都被批处理骗过）。
- *    注入 `refresh`/`setStatus`/`onDone` 之后，顺序可以用普通 spy 确定性地钉住。
+ *    又是"静默换成 main"）。抽成可注入的缝之后，顺序能用普通 spy 确定性地钉住。
+ *    （**更正**：一度以为"在组件测试里读不到飞行中的 `installStatus`" ⇒ 已证伪 —— **读得到**，
+ *    只是必须在 `act` 作用域**结束之后**读；`runInstall` 那条用例就是这么钉住调用点的。）
  *
  * ⚠️ **隐含契约：注入的 `refresh` 不许抛**。容错住在 `refreshAgentCatalog` 的 catch 里，**不在这里** ——
  *    一个会抛的 `refresh` 会把异常一路冒到 `runInstall` 的 catch，正好变成"装完了被报成装失败"。
- * ⚠️ 调用点（`runInstall` 的 `done` 分支）**只许调用本函数**，不许把三步内联回去：内联后测试看不见
- *    （React 批处理），详见那边注释。
+ * ⚠️ 调用点（`runInstall` 的 `done` 分支）只许调用本函数：**内联重排现在测试能红了**（`runInstall` 那条
+ *    用例在 flush 之后读状态），保持这个形状只是更省事、更不容易写歪。
  */
 export async function finishTeamInstall(input: {
   gatewayId: string;
@@ -229,9 +229,9 @@ export function useTeamInstall(onDone?: () => void) {
           if (event.type === 'done') {
             // ⚠️ 三步的顺序是承重的，见 `finishTeamInstall` 的说明（目录陈旧 ⇒ 紧接着的
             //    「发起对话」会被静默换成 main）。
-            // ⚠️⚠️ **收尾三步只许出现在 `finishTeamInstall` 里**：把它内联回这里、或在这里提前
-            //    调一次 `setInstallStatus('done')`，测试**看不见**（React 批处理让飞行中的状态读不到，
-            //    复核者实测过：内联重排 ⇒ 全套全绿）。顺序的守卫长在缝上，靠这条约定把它留住。
+            // ⚠️⚠️ **收尾三步只许出现在 `finishTeamInstall` 里**。把它内联回这里并提前
+            //    调一次 `setInstallStatus('done')`，现在**会被 `runInstall` 那条用例红掉**
+            //    （它在 `act` 作用域之后读状态）；保持走缝只是更省事，不是"测试看不见"。
             await finishTeamInstall({ gatewayId: teamInfo.gatewayId, setStatus: setInstallStatus, onDone });
             return;
           }
