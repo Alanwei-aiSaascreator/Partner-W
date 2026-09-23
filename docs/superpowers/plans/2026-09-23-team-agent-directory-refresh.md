@@ -105,7 +105,7 @@
 - 第三次（提交 `a93ea419`）：**`GATE_EXIT=1`** —— 见下。
 - 第四次（提交 `2a5fb780`）：`GATE_EXIT=0`；`packages/desktop` **282 files / 2914 passed + 2 skipped (2916)**。
 - 第五次（提交 `c8ebee31`）：`GATE_EXIT=0`；`packages/desktop` **282 files / 2914 passed + 2 skipped (2916)**。
-- 第六次及之后（补 P1/P2 钉子与注释修正）：⏳ 最终读数见 `git log` 与本节末尾。
+- 第五次之后的第六、七次（补 P1/P2 钉子与注释修正）都是 `GATE_EXIT=0`；**最终一次（提交 `d8f039a7`）**：`packages/desktop` **282 files / 2914 passed + 2 skipped (2916)**。
 
 ### ⭐ 第三次门禁红了，红在 `typecheck:tests`（"聚焦全绿 ≠ 门禁会绿"的实例）
 
