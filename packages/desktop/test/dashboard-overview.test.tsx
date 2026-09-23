@@ -117,30 +117,34 @@ describe('Dashboard overview', () => {
     mocks.refreshCommercial.mockClear();
   });
 
-  it('⭐ 每个数字都标出它是「本机（这块盘）」还是「账号」—— 换号后这页不许同时描述两个人', () => {
+  it('⭐ 每个数字都带口径，且**标签必须挨着它标的那个数字**（本机=这块盘 / 账号=服务端账本）', () => {
     const { container, unmount } = render(<Dashboard />);
     // ⚠️ 要连 `<span>` 一起查：`SectionHeader` 的标题是 span（只查 div 会取到 undefined）。
-    const divs = [...container.querySelectorAll('div, span')];
-    // ⚠️ 断言必须钉**位置**：`textContent` 里"包含某个口径 key"会因为页面别处也有而假绿。
-    const byExactText = (text: string): HTMLElement | undefined =>
-      divs.find((el) => el.textContent === text) as HTMLElement | undefined;
-    // ⚠️ 取**最深**的那个（文档序里祖先在前）——`find` 会拿到包裹整页的祖先节点，
-    //    那种节点的 textContent 天然包含别处的口径 key ⇒ 断言会假绿。
-    const byContaining = (text: string): HTMLElement | undefined =>
-      divs.filter((el) => el.textContent?.includes(text)).at(-1) as HTMLElement | undefined;
+    const nodes = [...container.querySelectorAll('div, span')];
+    // ⚠️ 两个定位都取**最深**的那个（文档序里祖先在前）：`find` 会拿到**包裹整页的根节点**，
+    //    它天然包含别处的口径 key（提示磁贴无条件渲染 localScope）⇒ 断言会假绿。实测过。
+    const deepestContaining = (text: string): HTMLElement | undefined =>
+      nodes.filter((el) => el.textContent?.includes(text)).at(-1) as HTMLElement | undefined;
+    const deepestExact = (text: string): HTMLElement | undefined =>
+      nodes.filter((el) => el.textContent === text).at(-1) as HTMLElement | undefined;
 
-    // ① 「账户积分」卡底部那行是**本机**数字（消息/文件数）⇒ 自己必须带本机口径
-    //    （它坐在一张"账号"的卡里，不标就是"同一张卡描述两个人"）。
-    const totalsLine = byContaining('dashboard.totalMessages');
+    // ① 「账户积分」卡底部那行是**本机**数字（消息/文件数）⇒ 自己必须带本机口径，
+    //    且**数字还在**（标签/口径都在而数字被换掉，也属于"这行不再说明问题"）。
+    const totalsLine = deepestContaining('dashboard.totalMessages');
+    expect(totalsLine?.children.length).toBe(0); // ← 钉住上面那个"取最深"的定位本身（根节点是有子节点的）
     expect(totalsLine?.textContent).toContain('dashboard.localScope');
+    expect(totalsLine?.textContent).toContain('36');
+    expect(totalsLine?.textContent).toContain('3');
 
-    // ② 「助手排行」来自本机聚合（`data.breakdowns.agents`）⇒ 那张卡要标本机。
-    const topAgentsLabel = byExactText('dashboard.topAgents');
-    expect(topAgentsLabel?.parentElement?.textContent).toContain('dashboard.localScope');
+    // ② 「助手排行」来自本机聚合（`data.breakdowns.agents`）⇒ 口径标签必须是标题的**下一个兄弟**。
+    //    ⚠️ 不能用 `parentElement` + 包含：标签不渲染时标题与 wrapper 文本相同 ⇒ 命中 wrapper，
+    //    父节点变成**整张卡**，"卡里出现过这个串"就绿了（复核者用 MG 变异实测过这条假绿）。
+    const topAgentsLabel = deepestExact('dashboard.topAgents');
+    expect(topAgentsLabel?.nextElementSibling?.textContent).toBe('dashboard.localScope');
 
     // ③ 反向：账号口径的板块**不许**被顺手改成"本机"（否则修法把它改错方向也全绿）。
-    const modelUsageLabel = byExactText('dashboard.modelUsage');
-    expect(modelUsageLabel?.parentElement?.textContent).toContain('dashboard.accountScope');
+    const modelUsageLabel = deepestExact('dashboard.modelUsage');
+    expect(modelUsageLabel?.nextElementSibling?.textContent).toBe('dashboard.accountScope');
 
     unmount();
   });
