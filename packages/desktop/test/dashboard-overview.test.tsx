@@ -117,6 +117,34 @@ describe('Dashboard overview', () => {
     mocks.refreshCommercial.mockClear();
   });
 
+  it('⭐ 每个数字都标出它是「本机（这块盘）」还是「账号」—— 换号后这页不许同时描述两个人', () => {
+    const { container, unmount } = render(<Dashboard />);
+    // ⚠️ 要连 `<span>` 一起查：`SectionHeader` 的标题是 span（只查 div 会取到 undefined）。
+    const divs = [...container.querySelectorAll('div, span')];
+    // ⚠️ 断言必须钉**位置**：`textContent` 里"包含某个口径 key"会因为页面别处也有而假绿。
+    const byExactText = (text: string): HTMLElement | undefined =>
+      divs.find((el) => el.textContent === text) as HTMLElement | undefined;
+    // ⚠️ 取**最深**的那个（文档序里祖先在前）——`find` 会拿到包裹整页的祖先节点，
+    //    那种节点的 textContent 天然包含别处的口径 key ⇒ 断言会假绿。
+    const byContaining = (text: string): HTMLElement | undefined =>
+      divs.filter((el) => el.textContent?.includes(text)).at(-1) as HTMLElement | undefined;
+
+    // ① 「账户积分」卡底部那行是**本机**数字（消息/文件数）⇒ 自己必须带本机口径
+    //    （它坐在一张"账号"的卡里，不标就是"同一张卡描述两个人"）。
+    const totalsLine = byContaining('dashboard.totalMessages');
+    expect(totalsLine?.textContent).toContain('dashboard.localScope');
+
+    // ② 「助手排行」来自本机聚合（`data.breakdowns.agents`）⇒ 那张卡要标本机。
+    const topAgentsLabel = byExactText('dashboard.topAgents');
+    expect(topAgentsLabel?.parentElement?.textContent).toContain('dashboard.localScope');
+
+    // ③ 反向：账号口径的板块**不许**被顺手改成"本机"（否则修法把它改错方向也全绿）。
+    const modelUsageLabel = byExactText('dashboard.modelUsage');
+    expect(modelUsageLabel?.parentElement?.textContent).toContain('dashboard.accountScope');
+
+    unmount();
+  });
+
   it('puts understandable account and assistant information before technical detail', () => {
     const { container, unmount } = render(<Dashboard />);
 
