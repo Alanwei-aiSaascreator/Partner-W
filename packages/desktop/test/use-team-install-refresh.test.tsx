@@ -26,7 +26,7 @@ vi.mock('@/hooks/useGatewayDispatcherSetup', () => ({
   fetchAgentsForGateway: refreshMock.fetchAgentsForGateway,
 }));
 
-import { useTeamInstall } from '../src/renderer/layouts/TeamsPanel/useTeamInstall';
+import { finishTeamInstall, useTeamInstall } from '../src/renderer/layouts/TeamsPanel/useTeamInstall';
 import type { AgentDraft, TeamInfo } from '../src/renderer/layouts/TeamsPanel/types';
 
 const teamInfo: TeamInfo = {
@@ -140,18 +140,66 @@ describe('useTeamInstall 装完刷新助手目录', () => {
     expect(api?.installEvents.some((e) => e.type === 'error')).toBe(false);
   });
 
-  it('⭐ 刷新**完**了才报"装完了"（`await` 的顺序有含义：紧接着点「发起对话」不能被陈旧目录撞上）', async () => {
-    // 钉的是**副作用顺序**，不是计时：刷新尚未结束（`refresh:end` 还没推）时，
-    // `onDone` 不许先响 —— 改成 `void refreshAgentCatalog(...)`（调用还在、只是不等）这条会红。
-    refreshMock.fetchAgentsForGateway.mockImplementationOnce(async () => {
-      orderLog.push('refresh:start');
-      await Promise.resolve();
-      orderLog.push('refresh:end');
+  it('⭐ `await runInstall(...)` 必须**等到刷新结束**才返回（`void` 化 ⇒ 这条红）', async () => {
+    // ⚠️ 踩过两次的坑：**副作用顺序**区分不出 `void`（`onDone`/`setStatus` 本来就都在刷新 resolve 之后，
+    //    `void` 只是让**调用方**不再等）⇒ 判据只能是"`runInstall` 在刷新结束前不许 resolve"。
+    //    React 的状态也读不了（`act` 会把更新攒到作用域结束），所以这条**完全靠 promise**，确定性。
+    let release!: () => void;
+    refreshMock.fetchAgentsForGateway.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          release = () => resolve();
+        }),
+    );
+
+    await mount();
+    let finished = false;
+    await act(async () => {
+      const pending = api!.runInstall(teamInfo, makeAgents()).then(() => {
+        finished = true;
+      });
+      for (let i = 0; i < 50 && refreshMock.fetchAgentsForGateway.mock.calls.length === 0; i += 1) {
+        await Promise.resolve();
+      }
+      expect(refreshMock.fetchAgentsForGateway).toHaveBeenCalledTimes(1);
+      expect(finished).toBe(false); // ← 刷新还挂着 ⇒ `runInstall` 不许已经返回
+
+      release();
+      await pending;
     });
 
+    expect(finished).toBe(true);
+  });
+
+  it('生成器报 error（落库失败 ⇒ core 先 rollback）⇒ **不刷**目录（这条走的是 error 分支，不是预检）', async () => {
+    // ⚠️ 与第 2 条的区别：第 2 条死在 `installTeam` **启动之前**（工作区预检），
+    // 这条才真的走到 `event.type === 'error'` 那个分支。
+    clawwork.persistTeam.mockResolvedValue({ ok: false, error: 'db is locked' });
     await mount();
     await run();
 
-    expect(orderLog).toEqual(['refresh:start', 'refresh:end', 'onDone']);
+    expect(api?.installStatus).toBe('error');
+    expect(refreshMock.fetchAgentsForGateway).not.toHaveBeenCalled();
+  });
+});
+
+describe('finishTeamInstall 的收尾顺序（与 React 时序无关的确定性断言）', () => {
+  it('⭐ 先刷新 → 再报 done → 再 onDone', async () => {
+    // ⚠️ 为什么不放在组件测试里：React 的 `act` 会把状态更新攒到作用域结束 ⇒
+    //    "刷新还挂着时 installStatus 是多少"在组件测试里**读不到**（本项目实测两次：
+    //    effect 记顺序被批处理骗过、飞行中直接读被批处理骗过）。把三步注入进来之后，
+    //    顺序就是普通 spy 的顺序，确定性地钉得住。
+    const order: string[] = [];
+
+    await finishTeamInstall({
+      gatewayId: 'gw-1',
+      refresh: async (gatewayId) => {
+        order.push(`refresh:${gatewayId}`);
+      },
+      setStatus: (status) => order.push(`status:${status}`),
+      onDone: () => order.push('onDone'),
+    });
+
+    expect(order).toEqual(['refresh:gw-1', 'status:done', 'onDone']);
   });
 });

@@ -37,6 +37,25 @@ async function refreshAgentCatalog(gatewayId: string): Promise<void> {
   }
 }
 
+/**
+ * 安装收尾三步：**先刷新目录 → 再报"装完了" → 再 `onDone`**。
+ *
+ * ⚠️ 为什么抽成函数：这三步的**顺序**是承重的（报早一步，用户就能在目录还陈旧时点进团队 ⇒
+ *    又是"静默换成 main"），而 React 的状态更新会被 `act` 攒到作用域结束才落 ——
+ *    在组件测试里**读不到飞行中的 `installStatus`**（实测两次：effect 记顺序、飞行中直接读，都被批处理骗过）。
+ *    注入 `refresh`/`setStatus`/`onDone` 之后，顺序可以用普通 spy 确定性地钉住。
+ */
+export async function finishTeamInstall(input: {
+  gatewayId: string;
+  setStatus: (status: InstallStatus) => void;
+  onDone?: (() => void) | undefined;
+  refresh?: (gatewayId: string) => Promise<void>;
+}): Promise<void> {
+  await (input.refresh ?? refreshAgentCatalog)(input.gatewayId);
+  input.setStatus('done');
+  input.onDone?.();
+}
+
 export function useTeamInstall(onDone?: () => void) {
   const [installStatus, setInstallStatus] = useState<InstallStatus>('idle');
   const [installEvents, setInstallEvents] = useState<InstallEvent[]>([]);
@@ -201,11 +220,9 @@ export function useTeamInstall(onDone?: () => void) {
             return;
           }
           if (event.type === 'done') {
-            // ⚠️ 必须在报"装完了"**之前**刷（见 `refreshAgentCatalog` 的说明）：
-            //    目录一陈旧，紧接着的「发起对话」就会被静默换成 main。
-            await refreshAgentCatalog(teamInfo.gatewayId);
-            setInstallStatus('done');
-            onDone?.();
+            // ⚠️ 三步的顺序是承重的，见 `finishTeamInstall` 的说明（目录陈旧 ⇒ 紧接着的
+            //    「发起对话」会被静默换成 main）。
+            await finishTeamInstall({ gatewayId: teamInfo.gatewayId, setStatus: setInstallStatus, onDone });
             return;
           }
         }
