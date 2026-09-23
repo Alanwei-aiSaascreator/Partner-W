@@ -17,11 +17,12 @@
 
 - 工作树干净，发布 tag 与 `packages/desktop/package.json` 版本一致。
 - Go 版本由 `launcher/go.mod` 固定；`go`、Node.js 20、pnpm 10 都在 PATH。
-- GitHub 环境 `portable-update-production` 已启用审批保护。
-- 受保护环境中同时存在：
-  - `MOFANG_UPDATE_PUBLIC_KEY_B64`
-  - `MOFANG_UPDATE_SIGNING_KEY_PEM`
-  - `MOFANG_UPDATE_FEED_UPLOAD_TOKEN`
+- ⚠️ **下面两条只属于自动路径**（`release.yml` 那条，今天没有可跑它的仓库）。**走手工路径不需要 GitHub 环境**，也不需要在 GitHub 上放任何密钥 —— 手工路径要的私钥/公钥都在**仓库外的文件与发布 shell** 里（见第 1/3/5 步与下一条）。留在原处只是为了让将来启用自动路径的人看得到它们：
+  - GitHub 环境 `portable-update-production` 已启用审批保护。
+  - 受保护环境中同时存在：
+    - `MOFANG_UPDATE_PUBLIC_KEY_B64`
+    - `MOFANG_UPDATE_SIGNING_KEY_PEM`
+    - `MOFANG_UPDATE_FEED_UPLOAD_TOKEN`
 - 上传器在**发布 shell** 里要两个环境变量，**每开一个新 shell 都要重设**（第 3/5 步设过的不会自己跟到第 7/9/10 步）：
   - `MOFANG_FEED_OPERATOR='<本执行人>'`：**凡是会写审计行的模式都必须设** —— `--preflight` / `--commit` / `--break-lock`（两条恢复路径都算）。不设时工具按 `unknown` 落账，"谁在什么时候破了这把锁"就没有答案。
   - `MOFANG_UPDATE_PUBLIC_KEY_B64='<与私钥匹配的 SPKI Base64 公钥>'`：**除 `--preflight` 与 `--break-lock` 之外的每一种模式都要**（`--dry-run` / `--commit` / `--re-sign-stable`，见第 3/5/9 步）；`--re-sign-stable` 还要 `MOFANG_UPDATE_SIGNING_KEY_FILE`。
