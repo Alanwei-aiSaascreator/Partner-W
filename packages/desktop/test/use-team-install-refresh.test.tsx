@@ -146,10 +146,12 @@ describe('useTeamInstall 装完刷新助手目录', () => {
     expect(api?.installEvents.some((e) => e.type === 'error')).toBe(false);
   });
 
-  it('⭐ `await runInstall(...)` 必须**等到刷新结束**才返回（`void` 化 ⇒ 这条红）', async () => {
-    // ⚠️ 踩过两次的坑：**副作用顺序**区分不出 `void`（`onDone`/`setStatus` 本来就都在刷新 resolve 之后，
-    //    `void` 只是让**调用方**不再等）⇒ 判据只能是"`runInstall` 在刷新结束前不许 resolve"。
-    //    React 的状态也读不了（`act` 会把更新攒到作用域结束），所以这条**完全靠 promise**，确定性。
+  it('⭐ 刷新还挂着时：`runInstall` 不许返回、状态不许是"装完了"（`void` 化与调用点内联重排都会红）', async () => {
+    // ⚠️ 这条钉**两件事**，缺一不可：
+    //    ① `runInstall` 在刷新结束前不许 resolve（`void` 化 ⇒ 红）；
+    //    ② 那一刻 `installStatus` 必须还是 `installing`（调用点内联重排 ⇒ 红）。
+    // ⚠️ ②**必须在 `act` 作用域结束之后读**：作用域里读不到（从没发生过 flush）——本刀为此白试过两次，
+    //    还一度写下"调用点这一侧不可观测"的错误结论（复核者用探针证伪）。
     let release!: () => void;
     refreshMock.fetchAgentsForGateway.mockImplementationOnce(
       () =>
@@ -160,23 +162,34 @@ describe('useTeamInstall 装完刷新助手目录', () => {
 
     await mount();
     let finished = false;
+    let pending!: Promise<void>;
     await act(async () => {
-      const pending = api!.runInstall(teamInfo, makeAgents()).then(() => {
+      pending = api!.runInstall(teamInfo, makeAgents()).then(() => {
         finished = true;
       });
       for (let i = 0; i < 50 && refreshMock.fetchAgentsForGateway.mock.calls.length === 0; i += 1) {
         await Promise.resolve();
       }
       expect(refreshMock.fetchAgentsForGateway).toHaveBeenCalledTimes(1);
-      expect(finished).toBe(false); // ← 刷新还挂着 ⇒ `runInstall` 不许已经返回
+      expect(finished).toBe(false); // ← 刷新还挂着 ⇒ `runInstall` 不许已经返回（这条钉 `void` 化）
       // ⚠️ 收尾三步一步都不许发生（复核者 P1 实测：调用点删掉 `onDone` 透传时全套全绿 ⇒
-      //    这条断言就是它的钉子）。顺序守卫只长在缝里，这里钉的是"调用点确实还在走那个缝"。
+      //    这条断言就是它的钉子）。
       expect(orderLog).toEqual([]);
+    });
 
+    // ⚠️⚠️ 上面那个 `act` 作用域**已结束 = React 的 flush 点**，而刷新仍被我们握着 ⇒
+    //     状态必须还是 `installing`。**必须在这个位置读**：放在作用域**里面**读是读不到的
+    //     （本刀为此白试过两次 —— 那个读在同一作用域里，从头到尾没发生过 flush；而 effect
+    //     记顺序也区分不了），当时的结论"调用点这一侧不可观测"是**错的**（复核者用探针证伪）。
+    expect(api?.installStatus).toBe('installing');
+    expect(finished).toBe(false);
+
+    await act(async () => {
       release();
       await pending;
     });
 
+    expect(api?.installStatus).toBe('done');
     expect(finished).toBe(true);
     expect(orderLog).toEqual(['onDone']);
   });
