@@ -339,6 +339,89 @@ describe('红线：工具闸门（写不出工作区 + 工作区外先问）', (
     expect(raw.tools.exec.mode).toBe('ask');
     expect(raw.tools.elevated.enabled).toBe(false);
   });
+
+  it('用户自己的其它 tools/exec 键不被覆盖', () => {
+    const stateDir = stateDirFor(userDataDir);
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(
+      stateConfigPath(stateDir),
+      JSON.stringify({
+        gateway: { auth: { mode: 'token', token: 'existing-token' } },
+        memory: { search: { provider: 'none' } },
+        tools: {
+          deny: ['some_other_tool', 'memory_search', 'memory_get'],
+          profile: 'coding',
+          exec: { strictInlineEval: true },
+        },
+      }),
+    );
+
+    ensureStateConfig(userDataDir);
+
+    const raw = JSON.parse(fs.readFileSync(stateConfigPath(stateDir), 'utf-8'));
+    expect(raw.tools.deny).toContain('some_other_tool');
+    expect(raw.tools.profile).toBe('coding');
+    expect(raw.tools.exec.strictInlineEval).toBe(true);
+    expect(raw.tools.exec.mode).toBe('ask');
+  });
+
+  it('用户显式设过 false/"full" ⇒ 被改回红线值（always-ensure，不是 only-fill）', () => {
+    const stateDir = stateDirFor(userDataDir);
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(
+      stateConfigPath(stateDir),
+      JSON.stringify({
+        gateway: { auth: { mode: 'token', token: 'existing-token' } },
+        memory: { search: { provider: 'none' } },
+        tools: {
+          deny: ['memory_search', 'memory_get'],
+          fs: { workspaceOnly: false },
+          exec: { mode: 'full' },
+          elevated: { enabled: true },
+        },
+      }),
+    );
+
+    ensureStateConfig(userDataDir);
+
+    const raw = JSON.parse(fs.readFileSync(stateConfigPath(stateDir), 'utf-8'));
+    expect(raw.tools.fs.workspaceOnly).toBe(true);
+    expect(raw.tools.exec.mode).toBe('ask');
+    expect(raw.tools.elevated.enabled).toBe(false);
+  });
+
+  it('已有 legacy security/ask ⇒ 写 mode 时移除它们（混合策略会被运行时拒绝）', () => {
+    const stateDir = stateDirFor(userDataDir);
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(
+      stateConfigPath(stateDir),
+      JSON.stringify({
+        gateway: { auth: { mode: 'token', token: 'existing-token' } },
+        memory: { search: { provider: 'none' } },
+        tools: {
+          deny: ['memory_search', 'memory_get'],
+          exec: { security: 'full', ask: 'off', strictInlineEval: true },
+        },
+      }),
+    );
+
+    ensureStateConfig(userDataDir);
+
+    const raw = JSON.parse(fs.readFileSync(stateConfigPath(stateDir), 'utf-8'));
+    expect(raw.tools.exec).toEqual({ strictInlineEval: true, mode: 'ask', askFallback: 'deny' });
+    expect(raw.tools.exec.security).toBeUndefined();
+    expect(raw.tools.exec.ask).toBeUndefined();
+  });
+
+  it('幂等：连跑两次，文件字节不变', () => {
+    const first = ensureStateConfig(userDataDir);
+    const bytes = fs.readFileSync(first.configPath, 'utf-8');
+
+    const second = ensureStateConfig(userDataDir);
+
+    expect(second.created).toBe(false);
+    expect(fs.readFileSync(first.configPath, 'utf-8')).toBe(bytes);
+  });
 });
 
 describe('ensureClientGatewayEntry', () => {
