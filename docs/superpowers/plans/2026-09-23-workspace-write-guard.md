@@ -34,7 +34,7 @@ cron / heartbeat / 后台任务都属于"没有交互面"⇒ 这些路径里的 
 
 **Files:** 只读，不改任何文件。
 
-- [ ] **Step 1: 盘客户端侧的非交互运行入口**
+- [x] **Step 1: 盘客户端侧的非交互运行入口**
 
 ```bash
 cd "/d/Desktop/new project/mofang-compass/mofang-compass-desktop/.worktrees/fix-local-credential-exposure"
@@ -42,7 +42,7 @@ grep -rn "heartbeat\|cron\|schedule" packages/desktop/src/main --include=*.ts | 
 grep -rn "heartbeat\|cron" packages/desktop/src/renderer --include=*.ts --include=*.tsx | head -20
 ```
 
-- [ ] **Step 2: 盘运行时侧——这些入口能不能调 exec**
+- [x] **Step 2: 盘运行时侧——这些入口能不能调 exec**
 
 在随包运行时的文档里查 heartbeat / cron 回合的工具策略（是否本来就禁用 exec / 或走"无审批面"分支）：
 
@@ -52,11 +52,11 @@ grep -rn "cannot wait for interactive exec approval\|initiating-platform-disable
 grep -rn "heartbeat" "$R/docs" | grep -i "tool\|exec\|permission" | head -10
 ```
 
-- [ ] **Step 3: 把结论写成本计划的账本段落**
+- [x] **Step 3: 把结论写成本计划的账本段落**
 
 在**本文件末尾**追加一节 `## 账本（Task 1 前置调查）`，写清：① 客户端有哪些非交互入口；② 它们会不会调 exec；③ 有没有产品关键路径依赖 `exec` 在无审批面时的自动放行；④ 结论二选一：**「无依赖，按计划继续」** 或 **「有依赖 ⇒ 停下来重新决策」**（后者要写清依赖是什么、影响哪一档）。
 
-- [ ] **Step 4: 提交**
+- [x] **Step 4: 提交**
 
 ```bash
 git add docs/superpowers/plans/2026-09-23-workspace-write-guard.md
@@ -591,3 +591,35 @@ OPENCLAW_STATE_DIR="$PROBE/state" node "$R/openclaw.mjs" config get tools.elevat
 ## 账本
 
 （各 Task 落地后把名字级读数写在这里；**没有实跑读数的数字不许写**。）
+
+### Task 1 前置调查：产品里有没有依赖"非交互 exec"的路径（2026-09-23）
+
+**① 客户端有哪些非交互入口**
+
+- **cron 是用户能力，不是产品内部机制**：客户端只做 IPC 透传（`main/ipc/ws-handlers.ts:905-933` 的
+  `ws:cron-list/status/add/update/remove/run/runs` → `main/ws/gateway-client.ts:1148-1174` 的 `cron.*`）。
+  **全客户端搜不到任何"自己建 cron 任务"的调用点**（除透传层外 `cronAdd|cron.add` 0 命中）。
+- 客户端里那个 `heartbeat` 是 **WS 健康探针**（`gateway-client.ts:1203-1213`，每 N 秒发 `health` 请求），
+  **不是**运行时的 agent heartbeat。
+- 但客户端**确实**往运行时配置里写了 `agents.defaults.heartbeat`（本机真实 state 文件里就有）
+  ⇒ 运行时的 agent 心跳回合在这个产品里是存在的。
+
+**②③ 它们会不会调 exec / 有没有关键路径依赖"无审批面自动放行"**
+
+运行时文档给出了决定性的路由规则（`docs/tools/exec-approvals.md:518-527`）：
+
+- 自动化的审批卡**只投给"已连接的审批客户端"**（Control UI / macOS·iOS·Android / 声明 `approvals` 或
+  `exec-approvals` 能力的 API 客户端）；
+- **有审批面连着 ⇒ 定时运行像交互运行一样等着裁决**（automations 单飞，一个 job 同时最多一张卡）；
+- **没有审批面 ⇒ 立即拒绝**，并在运行的错误里说明怎么修（fail-closed）；
+- 自动化里点"始终允许"**不写全局白名单**，而是铸一张**绑定到该 agent + 该 automation 的 scoped standing grant**。
+
+⇒ **结论：「无依赖，按计划继续」**。理由：① 产品内部**没有**自动建任务/自动跑 shell 的通路；
+② App 开着时用户自建的定时任务**照样能等到审批卡**，不会静默失败；③ App 关着时被拒 —— 这是红线的
+fail-closed 语义、不是回归；④"始终允许"能按 job 预授权，用户有自助路径。
+
+**④ 要登记的行为变化（不是缺陷，但必须写进交付说明）**
+
+- 用户自建的**定时任务在 App 关闭时**若需要跑 shell，会**被拒并给出原因**（今天是能跑的）。
+- 运行时 agent 心跳回合里的 shell 同理。
+  ⇒ 登记为**后续文案/手册项**（不是本期的代码任务）。
