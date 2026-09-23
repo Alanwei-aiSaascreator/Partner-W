@@ -802,6 +802,6 @@ OPENCLAW_STATE_DIR="$STATE" node "$CLI" config get tools --json
 
 ### 交付形态（2026-09-23，用户决定）
 
-**先留着**：分支 `fix/workspace-escape-guard` @ `ba7cc344`（11 提交）**不合、不推、不清理 worktree**；
+**先留着**：分支 `fix/workspace-escape-guard` @ `1f8ac642`（12 提交）**不合、不推、不清理 worktree**；
 `fix/local-credential-exposure` 指针仍在 `608882ff`。0.0.27 开工时再合。
 （本仓没有 master，整合目标就是那条发布线；上传器那条线也是同样的做法。）
