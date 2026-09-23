@@ -721,3 +721,63 @@ qwen-plus / qwen-turbo）。
 
 **仍未闭合**：§15 的两条（信任根待确认、签名私钥不在本机）**一条都没变**；新增一条 ——
 后端 `fe4776d`（补齐 4 个模型的输出上限）**已提交并推 Gitee，未部署**，部署要单独一句授权。
+
+## 17. 0.0.28 便携更新包：构建 + 签名（2026-09-23 深夜，用户拍「做最小 0.0.28」后）
+
+用户在三选一里选了**最小 0.0.28**：基线仍是本分支，只 bump 版本号 + 构建 + 签 **internal** 更新包；
+**不碰 feed、不发布、不打包基础包**。这一节取代 §15 末尾那句「（真正的）0.0.28 更新」。
+
+**版本提交 `6e716a65`**（本分支，`7bf7c5aa` 之上；只改 `packages/desktop/package.json` 一行 → `0.0.28`）。
+`pnpm check` **RC=0**（desktop 283 文件 / 3012 passed / 2 skipped），`git diff --check` RC=0。
+
+**构建位 = `D:\p4-rel`**（短路径喂 NSIS；该工作树当时在 `83c40616`，与本分支尖端**只差本节之前那份文档**：
+`git diff --stat 83c40616 7bf7c5aa` = 1 file，且 `-- packages/` 为空 ⇒ 代码等价）。
+⚠️ **命令是 `pnpm --filter @clawwork/desktop build:win`**：`build:win` 定义在 **`packages/desktop/package.json`**，
+**根 `package.json` 没有这个名字**（根只有 `build` / `build:portable-launcher`）—— 只写 `pnpm build:win`
+会 `Command "build:win" not found`（本节实测撞过一次，白跑一轮）。该脚本 =
+`require-update-public-key.cjs --require-env && electron-vite build && electron-builder --win --x64`
+（**没有 `--dir`** ⇒ 出 nsis 目标，才有 `app-update.yml` + `elevate.exe`）。`BUILDWIN_RC=0`。
+构建前把上一轮的 `dist/win-unpacked`（= 0.0.27 出货那份，asar 103,270,778 B 对得上）**改名到
+`win-unpacked-prev-0.0.27`**，免得文件清单走到陈旧文件上。
+
+**程序目录对齐（独立驱动，不看工具自述）**：新 `win-unpacked` 与 0.0.27 交付夹的 `荣盈魔方/`
+**同为 194 文件、集合完全相同**，逐文件 sha256 比 ⇒ **只有两件内容不同**：
+
+| 文件                 | 0.0.27        | 0.0.28         | 说明                        |
+| -------------------- | ------------- | -------------- | --------------------------- |
+| `resources/app.asar` | 103,270,778 B | 同尺寸、哈希变 | 只差版本字符串（等长）      |
+| `荣盈魔方.exe`       | 190,558,208 B | 同尺寸、哈希变 | 内嵌 asar 完整性 + 版本资源 |
+
+出货 asar 读数：`0.0.28` **2 命中**、`0.0.27` **0 命中**、内嵌更新公钥 **2 命中**。
+
+**签名**（`make-portable-update.mjs`，`SIGN_RC=0`）：`MOFANG_MIN_LAUNCHER_VERSION=0.0.27`
+（**不是 0.0.28** —— 便携更新不换启动器，盘上那把是 0.0.27）、
+`MOFANG_UPDATE_SIGNING_KEY_FILE=D:/mofang-update-keys/mofang-update-signing-key.pem`、
+公钥 `…CBeiQuFzi8…`。产物落
+`C:\Users\29315\AppData\Local\Temp\mofang-update-0.0.28\`：
+
+```
+portable.zip          398,563,032 B   sha256 cb906b3197db7651c996eeb62ee370b64b06025ea0056545f144ffaaaf165d03
+portable-files.json        29,123 B   194 条
+manifest.json                 529 B
+```
+
+**独立复核（我自己的规范化器 + 自己的 Ed25519 校验；公钥从出货启动器二进制里当场取，不读记录文件）**：
+
+- `launcher_key_candidates` **恰好 1 个**，指纹 `DB3F22C46767C4EF…`（= keyId `mofang-update-2026A`）；
+- 清单键 = **10 个签名字段 + `signature`**，无多余无缺失；
+- `version=0.0.28` · `channel=internal` · **`minLauncherVersion=0.0.27`** · `schemaVersion=1` · `mandatory=false`；
+- `packageSize` / `packageSha256` 与磁盘上的 zip **逐个相符**；`packageUrl` = 预期的 internal URL；
+- `fileManifestSha256` 由**重新规范化**后的文件清单重算后相符；194 条里**无**启动器、说明书、更新状态目录、数据目录；
+- 规范化载荷 426 B，**签名对启动器内嵌那把公钥验过**；
+- 结论 `VERDICT=INDEPENDENT_VERIFY_OK`（fails=0）。
+
+**门禁**：`check:portable-update-release` **39/39 RC=0** ·
+`packages/desktop/test/portable-update-release-integration.test.ts` **1 passed RC=0** ·
+`go -C launcher test ./...` **两个包都 ok RC=0**。
+
+**客户端侧那道门的判据**（本人复核，不是转述）：`portable-manifest.ts:165`
+`if (compareSemanticVersions(input.launcherVersion, manifest.minLauncherVersion) < 0)`
+⇒ **相等即通过**，所以盘上 0.0.27 的启动器会接受这份 0.0.28 更新。
+
+**没有做**：feed 上传（internal/stable 都没碰）、生产更新源、NSIS 基础包、真盘验收、代码签名（无证书）。
