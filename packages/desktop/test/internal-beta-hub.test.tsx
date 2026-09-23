@@ -11,6 +11,7 @@ vi.mock('react-i18next', () => ({
 
 import InternalBetaHub from '../src/renderer/features/internal-beta/InternalBetaHub';
 import { BETA_MODULES, useBetaStore, type BetaModule } from '../src/renderer/features/internal-beta/beta-store';
+import type { PortableUpdatePublicState } from '@clawwork/shared';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -21,6 +22,10 @@ import { BETA_MODULES, useBetaStore, type BetaModule } from '../src/renderer/fea
  */
 const REAL_IPC_MODULES = ['updates'];
 const SIMULATED_MODULES = BETA_MODULES.filter((module) => !REAL_IPC_MODULES.includes(module.id));
+
+/** 更新链的两个回调由测试自己触发：盘上失败是**发布出来的状态**，不抛异常到渲染进程。 */
+let portableStateListener: ((state: PortableUpdatePublicState) => void) | null = null;
+let updateErrorListener: ((error: { message: string }) => void) | null = null;
 
 function render(ui: ReactElement): { container: HTMLDivElement; unmount: () => void } {
   const container = document.createElement('div');
@@ -47,6 +52,8 @@ describe('InternalBetaHub', () => {
     vi.unstubAllEnvs();
     localStorage.clear();
     window.history.replaceState(null, '', '#/');
+    portableStateListener = null;
+    updateErrorListener = null;
     act(() => useBetaStore.getState().resetDemo());
     (window as unknown as { clawwork: Record<string, unknown> }).clawwork = {
       getAppVersion: vi.fn().mockResolvedValue('1.0.0'),
@@ -61,7 +68,15 @@ describe('InternalBetaHub', () => {
       installUpdate: vi.fn().mockResolvedValue({ ok: true }),
       onUpdateDownloadProgress: vi.fn(() => vi.fn()),
       onUpdateDownloaded: vi.fn(() => vi.fn()),
-      onUpdateError: vi.fn(() => vi.fn()),
+      onUpdateError: vi.fn((listener: (error: { message: string }) => void) => {
+        updateErrorListener = listener;
+        return vi.fn();
+      }),
+      getUpdateState: vi.fn(async () => null),
+      onUpdateStateChanged: vi.fn((listener: (state: PortableUpdatePublicState) => void) => {
+        portableStateListener = listener;
+        return vi.fn();
+      }),
     };
   });
 
@@ -92,6 +107,31 @@ describe('InternalBetaHub', () => {
     expect(window.clawwork.checkForUpdates).toHaveBeenCalledTimes(1);
     expect(container.textContent).toContain('1.1.0');
     expect(container.textContent).not.toContain('内测模拟升级');
+    unmount();
+  });
+
+  it('⭐ 盘上空间不足：也说得出「还差多少」（公开状态优先于那句 errorMessage）', async () => {
+    useBetaStore.getState().setActiveModule('updates');
+    const { container, unmount } = render(<InternalBetaHub />);
+    act(() => container.querySelector<HTMLElement>('[data-module="updates"]')?.click());
+    await flushAsync();
+
+    act(() => {
+      portableStateListener?.({
+        phase: 'error',
+        currentVersion: '0.0.27',
+        targetVersion: '0.0.28',
+        errorCode: 'disk-space',
+        requiredBytes: 5 * 1024 ** 3,
+        availableBytes: 1024 ** 3,
+        updatedAt: 1,
+      });
+    });
+    act(() => updateErrorListener?.({ message: 'Download failed' }));
+    await flushAsync();
+
+    expect(container.textContent).toContain('还差 4.0 GiB');
+    expect(container.textContent).not.toContain('Download failed');
     unmount();
   });
 

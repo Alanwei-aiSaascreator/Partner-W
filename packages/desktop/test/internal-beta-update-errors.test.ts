@@ -3,9 +3,10 @@ import {
   classifyPortableError,
   describePortableError,
   describeUpdateError,
+  describeUpdateErrorFromState,
   portableErrorAction,
 } from '../src/renderer/features/internal-beta/update-errors';
-import type { PortableUpdateErrorCode } from '@clawwork/shared';
+import type { PortableUpdateErrorCode, PortableUpdatePublicState } from '@clawwork/shared';
 
 /**
  * 内测中心的更新面板以前直接把 electron-updater 的 `err.message` 摆在界面上，
@@ -297,5 +298,67 @@ describe('盘上那条链的错误码会走到分类文案（不是落到通用�
     expect(describeUpdateError('HttpError: 404 Not Found - GET https://x/latest.yml', 'check')).toContain(
       '更新服务还没有提供更新清单',
     );
+  });
+});
+
+/**
+ * 渲染侧**唯一入口**：主进程的公开状态 → 一句人话。
+ *
+ * 为什么需要它（2026-09-23）：`describePortableError` 一直带得出"还差多少 GiB"，
+ * 但两个面板都不传那两个数字 ⇒ 用户看到的永远是那句不带数字的"空间不足"。
+ * 而数字**一直在公开状态里**（`requiredBytes` / `availableBytes`）。
+ */
+describe('describeUpdateErrorFromState', () => {
+  const withState = (state: Partial<PortableUpdatePublicState>): PortableUpdatePublicState => ({
+    phase: 'error',
+    currentVersion: '0.0.25',
+    updatedAt: 1,
+    ...state,
+  });
+
+  it('⭐ 空间不足：要说出「还差多少」，而不是只丢一句"空间不足"', () => {
+    const text = describeUpdateErrorFromState(
+      undefined,
+      'download',
+      withState({ errorCode: 'disk-space', requiredBytes: 5 * 1024 ** 3, availableBytes: 1024 ** 3 }),
+    );
+
+    expect(text).toContain('还差 4.0 GiB');
+  });
+
+  it('公开状态认得出错误码时以它为准（不是那句过时或缺席的 errorMessage）', () => {
+    const text = describeUpdateErrorFromState(
+      'Download failed',
+      'download',
+      withState({ errorCode: 'launcher-incompatible' }),
+    );
+
+    expect(text).not.toContain('Download failed');
+    expect(text).toContain('启动器版本太旧');
+  });
+
+  it('相位不是 error 时不抢话：退回按 errorMessage 那条老路', () => {
+    const text = describeUpdateErrorFromState('ENOTFOUND updates.example.com', 'check', {
+      phase: 'available',
+      currentVersion: '0.0.25',
+      errorCode: 'disk-space',
+      requiredBytes: 5 * 1024 ** 3,
+      availableBytes: 0,
+      updatedAt: 1,
+    });
+
+    expect(text).toContain('连不上更新服务器');
+    expect(text).not.toContain('GiB');
+  });
+
+  it('没有公开状态（安装态）时退回老路', () => {
+    expect(describeUpdateErrorFromState('ENOTFOUND updates.example.com', 'check', null)).toContain('连不上更新服务器');
+  });
+
+  it('有错误码但没有数字 ⇒ 退回不带数字的那句，绝不编一个数出来', () => {
+    const text = describeUpdateErrorFromState(undefined, 'download', withState({ errorCode: 'disk-space' }));
+
+    expect(text).toContain('空间不足');
+    expect(text).not.toContain('GiB');
   });
 });

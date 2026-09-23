@@ -15,7 +15,7 @@ import WindowTitlebar from '@/components/semantic/WindowTitlebar';
 import { Button } from '@/components/ui/button';
 import { BETA_MODULES, useBetaStore, type BetaModule } from './beta-store';
 import { betaRoute, parseBetaRoute } from './beta-route';
-import { describeUpdateError } from './update-errors';
+import { describeUpdateErrorFromState } from './update-errors';
 import { createInternalBetaUpdateService, type InternalBetaUpdateState } from './update-service';
 
 /**
@@ -237,7 +237,8 @@ function UpdatesModule() {
           {/* ⚠️ 不能直接渲染 `update.message`：那是 electron-updater 的英文原文
               （`HttpError: 404 … latest.yml`）。翻译层见 update-errors.ts。 */}
           <p className="type-body mt-3 text-[var(--text-secondary)]">
-            {describeUpdateError(update.message, update.operation)}
+            {/* 公开状态优先：盘上形态的失败原因与"还差多少"都在它里面（见 update-errors.ts） */}
+            {describeUpdateErrorFromState(update.message, update.operation, update.portable)}
           </p>
         </Card>
       )}

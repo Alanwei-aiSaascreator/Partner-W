@@ -10,7 +10,7 @@ import InlineNotice from '@/components/semantic/InlineNotice';
 import SegmentedControl from '../components/SegmentedControl';
 import { useUiStore } from '@/stores/uiStore';
 import { useSettingsStore } from '@/stores/settingsStore';
-import { describeUpdateError } from '@/features/internal-beta/update-errors';
+import { describeUpdateErrorFromState, type UpdateOperation } from '@/features/internal-beta/update-errors';
 import { portablePhaseToUiStatus, updateStatusFromCheck } from '@/lib/update-status';
 import type { PortableUpdatePublicState } from '@clawwork/shared';
 
@@ -52,7 +52,14 @@ export default function AboutSection() {
   const [currentVersion, setCurrentVersion] = useState<string | null>(null);
   const [versionInfo, setVersionInfo] = useState<VersionInfo | null>(null);
   const [downloadPercent, setDownloadPercent] = useState(0);
-  const [errorMessage, setErrorMessage] = useState('');
+  /**
+   * 存**原始报错 + 操作**，不存翻译好的句子。
+   *
+   * 为什么（2026-09-23）：盘上形态的失败原因与"还差多少 GiB"都在主进程的公开状态里，
+   * 翻译必须等渲染时拿得到 `portablePhase` 才算得对。以前这里存的是翻译结果 ⇒
+   * 空间不足时界面上只有「更新失败：」后面**空的**（`errorMessage` 那条链压根没被设过）。
+   */
+  const [errorInfo, setErrorInfo] = useState<{ raw: string; operation: UpdateOperation } | null>(null);
   const [deviceId, setDeviceId] = useState<string | null>(null);
   /** 盘上运行（U 盘形态）：不自动下载、不安装，改为提示"换包"。 */
   const [portable, setPortable] = useState(false);
@@ -143,7 +150,7 @@ export default function AboutSection() {
       window.clawwork.onUpdateError((err) => {
         setUpdateState('error');
         // electron-updater 的原文是英文堆栈，翻译层见 update-errors.ts
-        setErrorMessage(describeUpdateError(err.message, 'updater'));
+        setErrorInfo({ raw: err.message, operation: 'updater' });
       }),
     );
 
@@ -172,7 +179,7 @@ export default function AboutSection() {
         // downloaded 与 downloading 两个（见 auto-updater.ts 的 holdUpdate），
         // 界面照抄 —— 否则下载中点一次检查失败，进度条和「取消下载」会一起消失。
         setUpdateState((prev) => (prev === 'downloaded' || prev === 'downloading' ? prev : 'error'));
-        setErrorMessage(describeUpdateError(raw, 'check'));
+        setErrorInfo({ raw, operation: 'check' });
         window.clawwork.reportDebugEvent?.({
           domain: 'renderer',
           event: 'about.update-check.mount-failed',
@@ -187,7 +194,7 @@ export default function AboutSection() {
 
   const handleCheckForUpdates = useCallback(async () => {
     setUpdateState('checking');
-    setErrorMessage('');
+    setErrorInfo(null);
     try {
       const result = await window.clawwork.checkForUpdates();
       setVersionInfo({
@@ -203,7 +210,7 @@ export default function AboutSection() {
       if (status === 'idle') toast.success(t('settings.alreadyLatest'));
     } catch (err: unknown) {
       setUpdateState('error');
-      setErrorMessage(describeUpdateError(err instanceof Error ? err.message : String(err), 'check'));
+      setErrorInfo({ raw: err instanceof Error ? err.message : String(err), operation: 'check' });
     }
   }, [t]);
 
@@ -213,7 +220,7 @@ export default function AboutSection() {
     const result = await window.clawwork.downloadUpdate();
     if (!result.ok && result.error !== 'cancelled') {
       setUpdateState('error');
-      setErrorMessage(describeUpdateError(result.error, 'download'));
+      setErrorInfo({ raw: result.error ?? '', operation: 'download' });
     }
   }, []);
 
@@ -231,7 +238,7 @@ export default function AboutSection() {
     const result = await window.clawwork.installUpdate();
     if (!result.ok) {
       setUpdateState('error');
-      setErrorMessage(describeUpdateError(result.error, 'install'));
+      setErrorInfo({ raw: result.error ?? '', operation: 'install' });
     }
   }, []);
 
@@ -404,7 +411,10 @@ export default function AboutSection() {
                 </Button>
               }
             >
-              {t('settings.updateError', { message: errorMessage })}
+              {/* 翻译放在渲染时：盘上形态的失败原因与"还差多少"都在 `portablePhase` 里 */}
+              {t('settings.updateError', {
+                message: describeUpdateErrorFromState(errorInfo?.raw, errorInfo?.operation ?? 'updater', portablePhase),
+              })}
             </InlineNotice>
           </div>
         )}

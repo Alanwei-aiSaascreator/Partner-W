@@ -26,8 +26,14 @@ const claw = vi.hoisted(() => {
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
+    // ⚠️ `message` 也要能看见：`settings.updateError` 的人话在 `message` 里，
+    //    桩把它抹掉，这条链就只能断言"渲染了 key"，断言不到"用户看到什么"（2026-09-23）。
     t: (key: string, params?: Record<string, unknown>) =>
-      params?.version === undefined ? key : `${key}:${String(params.version)}`,
+      params?.version !== undefined
+        ? `${key}:${String(params.version)}`
+        : params?.message !== undefined
+          ? `${key}:${String(params.message)}`
+          : key,
   }),
   // ⚠️ 这个桩不能省：import 链会走到真实的 i18n 初始化，它要 `i18n.use(initReactI18next)`。
   initReactI18next: { type: '3rdParty', init: vi.fn() },
@@ -90,12 +96,31 @@ describe('设置 → 关于：盘上运行的更新状态', () => {
     container.remove();
   });
 
-  async function renderWith(phase: PortableUpdatePublicState['phase']): Promise<void> {
-    claw.getUpdateState.mockResolvedValue(portableState(phase));
+  async function renderWithState(state: PortableUpdatePublicState): Promise<void> {
+    claw.getUpdateState.mockResolvedValue(state);
     await act(async () => {
       root.render(<AboutSection />);
     });
   }
+
+  async function renderWith(phase: PortableUpdatePublicState['phase']): Promise<void> {
+    await renderWithState(portableState(phase));
+  }
+
+  it('⭐ 空间不足要说得出「还差多少」——数字来自公开状态，缺席的 errorMessage 不许赢', async () => {
+    await renderWithState({
+      phase: 'error',
+      currentVersion: '0.0.25',
+      targetVersion: '0.0.26',
+      errorCode: 'disk-space',
+      requiredBytes: 5 * 1024 ** 3,
+      availableBytes: 1024 ** 3,
+      updatedAt: 1,
+    });
+
+    expect(container.textContent).toContain('settings.updateError');
+    expect(container.textContent).toContain('还差 4.0 GiB');
+  });
 
   it('⭐ 只有 ready 才出现「立即重启更新」', async () => {
     await renderWith('ready');

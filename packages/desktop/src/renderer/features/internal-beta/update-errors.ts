@@ -12,9 +12,9 @@
  *   - 只做展示，不改任何更新行为。
  */
 
-import type { PortableUpdateErrorCode } from '@clawwork/shared';
+import type { PortableUpdateErrorCode, PortableUpdatePublicState } from '@clawwork/shared';
 
-type UpdateOperation = 'check' | 'download' | 'install' | 'updater';
+export type UpdateOperation = 'check' | 'download' | 'install' | 'updater';
 
 /**
  * 盘上运行的错误 → 界面**该给用户的下一个动作**。
@@ -270,4 +270,31 @@ export function describeUpdateError(
     default:
       return `${OPERATION_LABEL[operation]}没完成，请稍后重试。`;
   }
+}
+
+/**
+ * 渲染侧**唯一入口**：主进程的公开状态 + 原始报错 → 一句人话。
+ *
+ * 为什么要有它（2026-09-23）：`describePortableError` 早就能带出"还差多少 GiB"，
+ * 但两个面板都只把 `message` 字符串递给 `describeUpdateError`，**从没传过那两个数字**
+ * ⇒ 用户看到的永远是那句不带数字的"空间不足"。关于页的实测读数更糟：
+ * 便携链失败时 `errorMessage` 根本没被设过，界面上只剩一个空的错误框。
+ * 数字一直躺在公开状态里（`requiredBytes` / `availableBytes`），只是没人取。
+ *
+ * 判据只有一条：**相位是 error 且状态里带着一个我们认得的错误码 ⇒ 以状态为准**。
+ * 比 `errorMessage` 可靠 —— 后者可能来自另一次操作、也可能压根没有：盘上那条链的失败是
+ * **发布出来的状态**，不抛异常到渲染进程。
+ * 认不出的错误码不算数（退回按原文分类那条路），与 `asPortableErrorCode` 同一口径。
+ */
+export function describeUpdateErrorFromState(
+  raw: string | undefined,
+  operation: UpdateOperation,
+  portable?: PortableUpdatePublicState | null,
+): string {
+  const detail = portable
+    ? { requiredBytes: portable.requiredBytes, availableBytes: portable.availableBytes }
+    : undefined;
+  const code = portable?.phase === 'error' ? asPortableErrorCode(portable.errorCode ?? '') : null;
+  if (code !== null) return describePortableError(code, detail);
+  return describeUpdateError(raw, operation, detail);
 }
