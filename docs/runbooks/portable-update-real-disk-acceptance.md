@@ -1,5 +1,62 @@
 # U 盘整目录更新真盘验收
 
+## 本次实例：0.0.27 基础包 → 0.0.28（internal 频道）—— 2026-09-24 整理
+
+下面各节是所有验收共用的矩阵；**这一节是"值已经填好"的那一份**，值取自 2026-09-24 的实测读数。
+
+### ⚠️ 第 0 步（不做这步，后面什么都看不到）：把频道切成 `beta`
+
+客户端**默认走 `stable`**，`internal` 只在频道为 `beta` 时才会被读：
+
+- `packages/desktop/src/main/ipc/update-handlers.ts:52` —— `portableChannel()` = `getUpdateChannel() === 'beta' ? 'internal' : 'stable'`
+- `packages/desktop/src/main/auto-updater.ts:18` —— `getUpdateChannel()` = 配置里的 `updateChannel === 'beta' ? 'beta' : 'stable'`
+- 界面**能设**：设置 → 关于 → 「更新频道」（`AboutSection` 的 `settings.updateChannel`）
+
+⇒ **不切频道的话，界面上永远是"当前频道暂无更新"**（因为 `stable` 上确实还没有 0.0.28）。这不是缺陷。
+频道值写在 `clawwork-config.json`；**便携运行的 `userData` 跟着盘走**（`runtime/portable-app-data.ts` 的既定行为）
+⇒ **预期"切一次、整盘记住、换电脑也跟着走"**。⚠️ 这条**没有在真盘上验过**（需要 U 盘），验收时**当作待确认项**记下来。
+
+### 起点（盘上的现状）
+
+- 盘根 `荣盈魔方启动器.exe` 版本必须是 **0.0.27**（`--version` 探测；**整目录更新从不更换启动器**）。
+- 盘上客户端版本 **0.0.27**；`荣盈魔方-运行数据` / `荣盈魔方工作区` / `.荣盈魔方更新` 都在同一块盘上。
+
+### 目标（要升到的东西，值都是实测）
+
+| 项                   | 值                                                                                                                                                              |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 频道 / 版本          | `internal` / `0.0.28`                                                                                                                                           |
+| 清单                 | `https://api.rongyinghudong.com/updates/internal/manifest.json`（529 B · `132f448efc6169946c5552d4143f19bc87995d138fdb782c1f28365cd5d79c21`）                   |
+| 包                   | `https://api.rongyinghudong.com/updates/internal/0.0.28/portable.zip`（**398,563,032 B** · `cb906b3197db7651c996eeb62ee370b64b06025ea0056545f144ffaaaf165d03`） |
+| 文件清单             | `…/internal/0.0.28/portable-files.json`（29,123 B · `b9b0ad4e0d75fcb7961d220bd663e9486dd0ef56c9b4297325cfce58ef047cac`）                                        |
+| 签名                 | Ed25519 · keyId `mofang-update-2026A` · 指纹 `DB3F22C46767C4EF23000A0C838B4674D6A9D322935F3DA3DFD28A1557654AB1`                                                 |
+| `minLauncherVersion` | **0.0.27**（**相等即通过** —— 盘上那把正是 0.0.27）                                                                                                             |
+
+交换后关键文件的预期摘要（取自**签过名**的 `portable-files.json`，共 194 条）：
+
+| 文件                       | 大小        | SHA-256                                                            |
+| -------------------------- | ----------- | ------------------------------------------------------------------ |
+| `resources/app.asar`       | 103,270,778 | `d416735f5b19bbe6174516de52b698534b61462a01b9e6da5faa6d30b59a9125` |
+| `荣盈魔方.exe`             | 190,558,208 | `d33dc1e01defe6d5145e590576bf4bb588e5461d738ae6e2d876d0ce373510d4` |
+| `resources/elevate.exe`    | 107,520     | `9b1fbf0c11c520ae714af8aa9af12cfd48503eedecd7398d8992ee94d1b4dc37` |
+| `resources/app-update.yml` | 111         | `501a4cc98565a5a714e6b4f1cb427fa3f6a4c574c2275badb95e0fa496195d14` |
+
+### 这一轮**必须**出现的读数（否则是缺陷，不是"环境问题"）
+
+- [ ] 频道切成 `beta` 后，检查更新**能取出 internal 清单** ⇒ 出现 0.0.28。（仍是"当前频道暂无更新" ⇒ 先确认频道真的切了，再查 `/updates/internal/manifest.json` 的公网可达性。）
+- [ ] **不出现** `launcher-incompatible`（盘上 0.0.27 与门槛 0.0.27 相等 ⇒ 必须通过）。
+- [ ] 下载量与界面显示都是 **398,563,032 B**。
+- [ ] 交换后 `荣盈魔方\resources\app.asar` 摘要 = 上表 `d416735f…`（与签过名的清单一致）。
+- [ ] 关于页显示 **0.0.28**。
+- [ ] 更新前后 `荣盈魔方-运行数据` 与 `荣盈魔方工作区` 的逐文件哈希**不变**。
+
+### 回滚材料与边界
+
+- **盘内回滚**由启动器按事务状态自动完成（本验收要单独跑"健康回执超时"那一项）。
+- **服务端**：本次是频道**首次**发布 ⇒ 当时服务器上没有旧 manifest，审计记 `previousManifestSha256: "absent"`，
+  `backup/` 下**可能没有** `pre-0.0.28` 备份 —— 这是**记录**，不是遗漏。
+- ⛔ 验收期间**不得**改 manifest、**不得**动 `latest.yml`、**不得**发 stable。
+
 ## 记录信息
 
 - [ ] 候选版本、Git 提交号、启动器版本已记录。
