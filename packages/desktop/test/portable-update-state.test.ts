@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   PORTABLE_PROGRAM_DIRECTORY_NAME,
@@ -9,6 +9,7 @@ import {
   PortableUpdateStateStore,
   assertPortableTransactionPaths,
   recoverPortablePrepare,
+  recoverPortablePrepareAtStartup,
   resolvePortableTransactionPaths,
   type PortableUpdateTransactionV1,
 } from '../src/main/update/portable-state.js';
@@ -310,5 +311,105 @@ describe('portable state redaction', () => {
     const raw = await readFile(join(root, PORTABLE_UPDATE_DIRECTORY_NAME, 'update-state.json'), 'utf8');
     expect(JSON.parse(raw)).toMatchObject({ transactionId: 'txn-1' });
     expect(raw).not.toContain('signature');
+  });
+});
+
+/**
+ * 启动时的崩溃恢复：`recoverPortablePrepare` 以前**生产零调用**（只有它自己的单测）。
+ *
+ * 取证：`recoverPortablePrepare` 只处理四个 PREPARE 相位
+ * （`downloading` / `verifying-archive` / `extracting` / `verifying-files`）；
+ * `applying` / `awaiting-health` 那一段由启动器自己 `Recover`（`swap.go:92`）负责。
+ * 客户端这一侧一旦在下载/解压中途被断电或强杀，就会留下
+ * `.荣盈魔方更新/download/<txn>/` 与 `.荣盈魔方更新/staged/<txn>/` 两坨**永远不回收**的垃圾
+ * （一个几百 MB 的包 + 一棵解压了一半的树），而下次更新用的是新 transactionId。
+ */
+describe('recoverPortablePrepareAtStartup', () => {
+  it('⭐ 崩在 PREPARE 相位 ⇒ 清掉残留，且状态文件一并消失', async () => {
+    const root = await makeRoot();
+    const store = makeStore(root);
+    const paths = resolvePaths(root);
+    await mkdir(dirname(paths.archivePath), { recursive: true });
+    await writeFile(paths.archivePath, 'partial');
+    await mkdir(join(dirname(paths.stagedProgramPath), 'program'), { recursive: true });
+    await writeFile(join(dirname(paths.stagedProgramPath), 'program', 'app.txt'), 'half');
+    await store.write(makeTransaction(root));
+
+    const result = await recoverPortablePrepareAtStartup({ portableRoot: root });
+
+    expect(result).toEqual({ kind: 'discarded', transactionId: 'txn-1' });
+    await expect(store.read()).resolves.toBeNull();
+    await expect(stat(dirname(paths.archivePath))).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(stat(dirname(paths.stagedProgramPath))).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('⭐ 不是盘上运行（portableRoot=null）⇒ 一律不动手（别去删本机的任何东西）', async () => {
+    const root = await makeRoot();
+    const store = makeStore(root);
+    const paths = resolvePaths(root);
+    await mkdir(join(dirname(paths.stagedProgramPath), 'program'), { recursive: true });
+    await writeFile(join(dirname(paths.stagedProgramPath), 'program', 'app.txt'), 'half');
+    await store.write(makeTransaction(root));
+
+    const result = await recoverPortablePrepareAtStartup({ portableRoot: null });
+
+    expect(result).toEqual({ kind: 'skipped-not-portable' });
+    // 残留原样留着：不是便携态就没有"该不该删"的判断依据，宁可不删。
+    await expect(stat(join(dirname(paths.stagedProgramPath), 'program', 'app.txt'))).resolves.toBeDefined();
+    await expect(store.read()).resolves.toMatchObject({ phase: 'downloading' });
+  });
+
+  it('没有残留状态 ⇒ nothing-to-recover（不是错误）', async () => {
+    const root = await makeRoot();
+
+    await expect(recoverPortablePrepareAtStartup({ portableRoot: root })).resolves.toEqual({
+      kind: 'nothing-to-recover',
+    });
+  });
+
+  it('⭐ 状态是 ready ⇒ 留着不动（启动器还要用它换目录）', async () => {
+    const root = await makeRoot();
+    const store = makeStore(root);
+    const paths = resolvePaths(root);
+    await mkdir(join(dirname(paths.stagedProgramPath), 'program'), { recursive: true });
+    await writeFile(join(dirname(paths.stagedProgramPath), 'program', 'app.txt'), 'verified');
+    await store.write({ ...makeTransaction(root), phase: 'ready' });
+
+    const result = await recoverPortablePrepareAtStartup({ portableRoot: root });
+
+    expect(result).toEqual({ kind: 'nothing-to-recover' });
+    await expect(store.read()).resolves.toMatchObject({ phase: 'ready' });
+    await expect(stat(join(dirname(paths.stagedProgramPath), 'program', 'app.txt'))).resolves.toBeDefined();
+  });
+
+  it('状态文件坏了 ⇒ nothing-to-recover（不抛，交给日志）', async () => {
+    const root = await makeRoot();
+    await mkdir(join(root, PORTABLE_UPDATE_DIRECTORY_NAME), { recursive: true });
+    await writeFile(join(root, PORTABLE_UPDATE_DIRECTORY_NAME, 'update-state.json'), '{not json');
+
+    await expect(recoverPortablePrepareAtStartup({ portableRoot: root })).resolves.toEqual({
+      kind: 'nothing-to-recover',
+    });
+  });
+
+  it('⭐ 清理本身失败 ⇒ 吞成 failed + 原因（绝不抛：不许拦住启动，也不许静默）', async () => {
+    const root = await makeRoot();
+    const store = makeStore(root);
+    await store.write(makeTransaction(root));
+    const explodingStore = {
+      read: () => store.read(),
+      discard: async () => {
+        throw new Error('EBUSY: staged tree is locked');
+      },
+      stateFilePath: store.stateFilePath,
+    } as unknown as PortableUpdateStateStore;
+
+    const result = await recoverPortablePrepareAtStartup({
+      portableRoot: root,
+      storeFactory: () => explodingStore,
+    });
+
+    expect(result).toMatchObject({ kind: 'failed' });
+    expect((result as { reason: string }).reason).toContain('EBUSY');
   });
 });

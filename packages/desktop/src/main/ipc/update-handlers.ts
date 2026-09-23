@@ -26,8 +26,8 @@ import {
 } from '../update/portable-package.js';
 import {
   PORTABLE_PROGRAM_DIRECTORY_NAME,
-  PORTABLE_UPDATE_DIRECTORY_NAME,
   PortableUpdateStateStore,
+  portableUpdateStateFilePath,
 } from '../update/portable-state.js';
 import { createPortableUpdateService } from '../update/portable-update-service.js';
 
@@ -73,7 +73,8 @@ async function initializePortableUpdateService(root: string): Promise<void> {
   const channel = portableChannel();
   const feed = `${UPDATE_FEED_BASE}${channel}/`;
   const stateStore = new PortableUpdateStateStore({
-    stateFilePath: join(root, PORTABLE_UPDATE_DIRECTORY_NAME, 'update-state.json'),
+    // 路径走唯一那个算法：启动恢复读的必须是同一个文件（两处各拼一次迟早会漂）。
+    stateFilePath: portableUpdateStateFilePath(root),
   });
 
   // ⚠️ 在 `createPortableUpdateService` **之前**问盘上启动器要真版本。

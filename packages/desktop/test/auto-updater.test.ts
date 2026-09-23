@@ -494,3 +494,59 @@ describe('下载完成之后：状态不许被打回', () => {
     expect(mocks.downloadUpdate, '新版本要重新下（差分下载，不会全量重来）').toHaveBeenCalledTimes(1);
   });
 });
+
+/**
+ * 崩溃恢复**必须真的挂在启动序列上**。
+ *
+ * 这一条才是原缺陷的形状：`recoverPortablePrepare` 当年**生产零调用** ——
+ * 逻辑写好了、单测也有、就是没人调。所以只测那个函数不够，必须证明
+ * `runUpdaterStartupHousekeeping()`（`main/index.ts:422` 在工作区就绪后调它）
+ * 真的把它带起来了。
+ */
+describe('启动序列里的崩溃恢复（生产装配点）', () => {
+  it('⭐ runUpdaterStartupHousekeeping 清掉崩在下载/解压中途的残留，并留下一条日志', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'mofang-auto-updater-recovery-'));
+    tempRoots.push(root);
+    const { PortableUpdateStateStore, resolvePortableTransactionPaths, PORTABLE_UPDATE_DIRECTORY_NAME } =
+      await import('../src/main/update/portable-state.js');
+    const paths = resolvePortableTransactionPaths({ root, transactionId: 'txn-crash' });
+    mkdirSync(join(root, PORTABLE_UPDATE_DIRECTORY_NAME, 'staged', 'txn-crash', 'program'), { recursive: true });
+    writeFileSync(join(root, PORTABLE_UPDATE_DIRECTORY_NAME, 'staged', 'txn-crash', 'program', 'app.txt'), 'half');
+    const store = new PortableUpdateStateStore({
+      stateFilePath: join(root, PORTABLE_UPDATE_DIRECTORY_NAME, 'update-state.json'),
+    });
+    await store.write({
+      schemaVersion: 1,
+      transactionId: 'txn-crash',
+      phase: 'extracting',
+      currentVersion: '0.0.25',
+      targetVersion: '0.0.26',
+      channel: 'internal',
+      ...paths,
+      updatedAt: 1,
+    });
+
+    mocks.portableRoot = root;
+    mocks.logs.length = 0;
+    await loadFresh();
+    mod.runUpdaterStartupHousekeeping();
+
+    // 恢复是 fire-and-forget（启动路径不 await），所以等它落定。
+    // ⚠️ 判据是 `staged/<txn>` 这一层：`discard` 删的是**这个事务**的目录，
+    //    上层的 `staged/` 会留着（空目录，无害）。
+    await vi.waitFor(() => {
+      expect(() => readdirSync(join(root, PORTABLE_UPDATE_DIRECTORY_NAME, 'staged', 'txn-crash'))).toThrow();
+    });
+    expect(mocks.logs.map((entry) => entry.event)).toContain('portable.prepare-recovery.discarded');
+  });
+
+  it('非便携态（portableRoot=null）⇒ 恢复什么都不做，也不写日志', async () => {
+    mocks.portableRoot = null;
+    mocks.logs.length = 0;
+    await loadFresh();
+    mod.runUpdaterStartupHousekeeping();
+
+    expect(mocks.logs.map((entry) => entry.event)).not.toContain('portable.prepare-recovery.discarded');
+    expect(mocks.logs.map((entry) => entry.event)).not.toContain('portable.prepare-recovery.failed');
+  });
+});

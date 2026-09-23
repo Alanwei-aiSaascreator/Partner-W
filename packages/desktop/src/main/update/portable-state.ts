@@ -245,10 +245,72 @@ export class PortableUpdateStateStore {
   }
 }
 
+/**
+ * 只处理四个 **PREPARE** 相位。`applying` / `awaiting-health` 那一段由启动器自己
+ * `Recover`（`launcher/internal/update/swap.go:92`）负责，这里**不能**碰：
+ * `ready` 的事务是"已经验完、就等重启换目录"的成果，删掉等于把用户的下载白扔。
+ *
+ * @returns 真的清掉了才 `true`（相位不在清单里 ⇒ `false`，什么都没动）。
+ */
 export async function recoverPortablePrepare(input: {
   store: PortableUpdateStateStore;
   transaction: PortableUpdateTransactionV1;
-}): Promise<void> {
-  if (!PREPARE_PHASES.includes(input.transaction.phase)) return;
+}): Promise<boolean> {
+  if (!PREPARE_PHASES.includes(input.transaction.phase)) return false;
   await input.store.discard(input.transaction);
+  return true;
+}
+
+/** 更新状态文件名（`<盘根>\.荣盈魔方更新\update-state.json`）。 */
+export const PORTABLE_UPDATE_STATE_FILE_NAME = 'update-state.json';
+
+/**
+ * 状态文件的**唯一**算法。以前这个拼接在 `ipc/update-handlers.ts` 里又写了一遍 ——
+ * 装配服务与启动恢复必须指同一个文件，两处各拼一次迟早会漂。
+ */
+export function portableUpdateStateFilePath(root: string): string {
+  return join(root, PORTABLE_UPDATE_DIRECTORY_NAME, PORTABLE_UPDATE_STATE_FILE_NAME);
+}
+
+export type PortablePrepareRecoveryResult =
+  | { kind: 'skipped-not-portable' }
+  | { kind: 'nothing-to-recover' }
+  | { kind: 'discarded'; transactionId: string }
+  | { kind: 'failed'; reason: string };
+
+/**
+ * 启动时的崩溃恢复：把上一次**在下载/解压中途**死掉留下的垃圾清掉。
+ *
+ * 为什么需要它（2026-09-23 取证）：`recoverPortablePrepare` **生产零调用** ——
+ * 只有它自己的单测引用了它。于是客户端在 PREPARE 阶段被断电/强杀时，
+ * `.荣盈魔方更新/download/<txn>/`（几百 MB 的包）与 `staged/<txn>/`（解压了一半的树）
+ * 会**永远留着**：下次更新用的是新的 transactionId，没有任何东西会回收它们。
+ *
+ * 两条硬约束：
+ *  1. **非便携态一律不动手**（`portableRoot === null` ⇒ 直接跳过）。没有"这是不是盘上运行"
+ *     的判断依据时，宁可不删 —— 本机共享目录里可能有另一个副本正等着用的东西。
+ *  2. **绝不抛**：启动序列不能被它拦住。失败收成 `{ kind: 'failed', reason }`，
+ *     由调用方写进调试日志（吞掉，但不静默）。
+ */
+export async function recoverPortablePrepareAtStartup(input: {
+  portableRoot: string | null;
+  /** 注入点：单测用来造"清理本身失败"。 */
+  storeFactory?: (stateFilePath: string) => PortableUpdateStateStore;
+}): Promise<PortablePrepareRecoveryResult> {
+  if (input.portableRoot === null) return { kind: 'skipped-not-portable' };
+
+  const stateFilePath = portableUpdateStateFilePath(input.portableRoot);
+  const store =
+    input.storeFactory === undefined
+      ? new PortableUpdateStateStore({ stateFilePath })
+      : input.storeFactory(stateFilePath);
+
+  try {
+    const transaction = await store.read();
+    if (transaction === null) return { kind: 'nothing-to-recover' };
+    const discarded = await recoverPortablePrepare({ store, transaction });
+    return discarded ? { kind: 'discarded', transactionId: transaction.transactionId } : { kind: 'nothing-to-recover' };
+  } catch (error) {
+    return { kind: 'failed', reason: (error as Error | null)?.message ?? String(error) };
+  }
 }

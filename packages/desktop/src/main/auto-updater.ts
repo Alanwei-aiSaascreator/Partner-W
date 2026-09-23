@@ -9,6 +9,7 @@ import { is } from '@electron-toolkit/utils';
 import { getDebugLogger } from './debug/index.js';
 import { getPortableWorkspaceRoot, readConfig } from './workspace/config.js';
 import type { PortableUpdatePhase, PortableUpdatePublicState } from '@clawwork/shared';
+import { recoverPortablePrepareAtStartup } from './update/portable-state.js';
 import type { PortableUpdateService } from './update/portable-update-service.js';
 
 type UpdateChannel = 'stable' | 'beta';
@@ -206,6 +207,38 @@ export function initAutoUpdater(): void {
 export function runUpdaterStartupHousekeeping(): void {
   verifyPreviousInstall();
   cleanupStalePendingInstallers();
+  // 崩溃恢复：上一次在下载/解压中途死掉留下的残留（几百 MB 的包 + 解压了一半的树）
+  // 没有任何别的东西会回收它 —— `recoverPortablePrepare` 以前生产零调用。
+  // 不 await（这是同步的启动路径），失败收成日志，绝不拦启动。
+  void recoverInterruptedPortablePrepare();
+}
+
+/**
+ * 与上面那两条清理**同源**：都靠 `getPortableWorkspaceRoot()` 分辨"这一进程是不是盘上运行"，
+ * 所以也必须在 `prepareWorkspaceAtStartup()` 之后调用（本函数由
+ * `runUpdaterStartupHousekeeping()` 带出来，位置天然满足）。
+ *
+ * 非便携态由 `recoverPortablePrepareAtStartup` 自己跳过；这里只负责把结果/原因落日志。
+ */
+async function recoverInterruptedPortablePrepare(): Promise<void> {
+  const result = await recoverPortablePrepareAtStartup({ portableRoot: getPortableWorkspaceRoot() });
+
+  if (result.kind === 'discarded') {
+    getDebugLogger().info({
+      domain: 'updater',
+      event: 'portable.prepare-recovery.discarded',
+      data: { transactionId: result.transactionId },
+    });
+    return;
+  }
+  if (result.kind === 'failed') {
+    // 吞掉但**不静默**：清不掉就留一条能查的记录，启动照常继续。
+    getDebugLogger().warn({
+      domain: 'updater',
+      event: 'portable.prepare-recovery.failed',
+      message: result.reason,
+    });
+  }
 }
 
 export async function checkForUpdatesViaUpdater(): Promise<UpdateCheckResult> {
