@@ -276,6 +276,13 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # ⚠️ 这一条是**门禁要求**，不是可选的：`build` 脚本的前置与 `beforePack` 钩子
+      #    都会拒绝一个**不含更新公钥**的应用（`scripts/require-update-public-key.cjs`）。
+      #    冒烟构建不需要真钥匙，所以这里现生成一把一次性的 —— 发布用的真钥匙只在
+      #    受保护的 release 环境里（见 release.yml 的 `Require all portable release secrets`）。
+      - name: Generate ephemeral update public key
+        run: node -e "const {generateKeyPairSync}=require('node:crypto'); const {appendFileSync}=require('node:fs'); const {publicKey}=generateKeyPairSync('ed25519'); appendFileSync(process.env.GITHUB_ENV, 'MOFANG_UPDATE_PUBLIC_KEY_B64=' + publicKey.export({type:'spki',format:'der'}).toString('base64') + '\n');"
+
       - name: Build Electron app
         run: pnpm --filter @clawwork/desktop build
 

@@ -165,8 +165,13 @@ describe('与 electron-builder.yml 的一致性（真配置，不是合成配置
     expect(path.resolve(projectDir, from)).toBe(path.join(REPO_ROOT, 'runtime-out'));
   });
 
-  it('门禁真的挂上了（beforePack 指到这个脚本）', () => {
-    expect(yml).toContain('beforePack: ./scripts/require-bundled-runtime.cjs');
+  it('门禁真的挂上了（beforePack 指到组合钩子，组合钩子再指到这个脚本）', () => {
+    // electron-builder 只接受一个 beforePack，所以中间隔了一层组合钩子
+    // （`scripts/before-pack.cjs`）。这里两步都查：只查组合钩子存在、
+    // 不查它是否真的 require 本脚本的话，把本脚本从组合钩子里摘掉也不会红。
+    expect(yml).toContain('beforePack: ./scripts/before-pack.cjs');
+    const combiner = fs.readFileSync(path.join(REPO_ROOT, 'packages/desktop/scripts/before-pack.cjs'), 'utf-8');
+    expect(combiner).toContain("require('./require-bundled-runtime.cjs')");
     expect(fs.existsSync(path.join(REPO_ROOT, 'packages/desktop/scripts/require-bundled-runtime.cjs'))).toBe(true);
   });
 

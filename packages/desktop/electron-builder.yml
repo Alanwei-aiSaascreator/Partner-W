@@ -55,7 +55,9 @@ extraResources:
   # ⚠️ `to:` 必须与 `locate.ts` 的 `OUR_SKILLS_DIR_NAME` 一字不差，靠上面那个测试钉住。
   - from: our-skills
     to: our-skills
-beforePack: ./scripts/require-bundled-runtime.cjs
+# ⚠️ electron-builder 只接受**一个** beforePack ⇒ 这里是组合钩子，
+#    两道门禁（随包运行时 / 内嵌更新公钥）各自的判定在各自那个文件里。
+beforePack: ./scripts/before-pack.cjs
 
 # 原生二进制**不能**从 app.asar 里加载（`LoadLibrary` 读不了 asar 虚拟路径）。
 # better-sqlite3 / win-ca 由 electron-builder 自动解包；onnxruntime-node 是**自己按路径
