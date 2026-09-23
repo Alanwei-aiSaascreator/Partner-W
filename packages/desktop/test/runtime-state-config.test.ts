@@ -99,7 +99,12 @@ describe('ensureStateConfig', () => {
     expect(raw).toEqual({
       gateway: { auth: { mode: 'token', token: res.token } },
       memory: { search: { provider: 'none' } },
-      tools: { deny: ['memory_search', 'memory_get'] },
+      tools: {
+        deny: ['memory_search', 'memory_get'],
+        fs: { workspaceOnly: true },
+        exec: { mode: 'ask', askFallback: 'deny' },
+        elevated: { enabled: false },
+      },
     });
     expect(res.token).toMatch(/^[A-Za-z0-9_-]{43}$/); // 32 字节 → 43 个 base64url 字符
   });
@@ -292,6 +297,24 @@ describe('tools.deny —— 摘掉那两个会必然失败的 memory 工具', ()
     const raw = JSON.parse(fs.readFileSync(stateConfigPath(stateDir), 'utf-8'));
     expect(raw.tools.deny).toEqual(['memory_search', 'memory_get']);
     expect(raw.tools.deny.filter((n: string) => n === 'memory_search')).toHaveLength(1);
+  });
+});
+
+describe('红线：工具闸门（写不出工作区 + 工作区外先问）', () => {
+  /**
+   * 用户 2026-09-22 拍的红线：中间产物落工作区/临时目录，绝不落桌面；外面写必须先问。
+   * 运行时的三个闸门在 2026.9.3 实测**默认都不设防**：
+   *   - tools.fs.workspaceOnly 默认 false（且它是 FsToolsConfig 的唯一子键，读写一起锁）
+   *   - tools.exec 默认 security:"full" + ask:"off"（等于无审批）
+   *   - tools.elevated 未关
+   */
+  it('首跑就带上三个闸门，且不写 legacy security/ask', () => {
+    const res = ensureStateConfig(userDataDir);
+    const raw = JSON.parse(fs.readFileSync(res.configPath, 'utf-8'));
+
+    expect(raw.tools.fs).toEqual({ workspaceOnly: true });
+    expect(raw.tools.exec).toEqual({ mode: 'ask', askFallback: 'deny' });
+    expect(raw.tools.elevated).toEqual({ enabled: false });
   });
 });
 

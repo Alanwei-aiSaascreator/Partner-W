@@ -192,16 +192,89 @@ export function hasMemoryToolsDenied(raw: unknown): boolean {
 }
 
 /**
- * 工具段合并（纯函数）：把这两个名字**并进** deny，其余一概不动。
+ * 红线闸门的确切值。三个键在运行时 2026.9.3 的默认值**都不设防**（实测，见设计文档 §1）：
+ * `tools.fs.workspaceOnly` 默认 false、`exec` 默认 `security:"full" + ask:"off"`、`elevated` 未关。
+ *
+ * ⚠️ `exec.mode` 是**规范键**；旧写法 `security`/`ask` 与它**不能并存**（混合策略会被运行时拒绝），
+ *    所以 `mergeToolsDefaults` 在写 `mode` 时必须把同对象的 `security`/`ask` 移掉。
+ */
+export const TOOL_GUARD_FS_WORKSPACE_ONLY = true;
+export const TOOL_GUARD_EXEC_MODE = 'ask';
+export const TOOL_GUARD_EXEC_ASK_FALLBACK = 'deny';
+export const TOOL_GUARD_ELEVATED_ENABLED = false;
+
+/** 从（任意的）配置里挖出 `tools.fs.workspaceOnly`；不是布尔则 null。 */
+export function readFsWorkspaceOnly(raw: unknown): boolean | null {
+  if (!isRecord(raw)) return null;
+  const tools = raw.tools;
+  if (!isRecord(tools)) return null;
+  const fsSection = tools.fs;
+  if (!isRecord(fsSection)) return null;
+  const value = fsSection.workspaceOnly;
+  return typeof value === 'boolean' ? value : null;
+}
+
+/** 从（任意的）配置里挖出 `tools.exec.mode`；不是字符串则 null。 */
+export function readExecMode(raw: unknown): string | null {
+  if (!isRecord(raw)) return null;
+  const tools = raw.tools;
+  if (!isRecord(tools)) return null;
+  const exec = tools.exec;
+  if (!isRecord(exec)) return null;
+  const mode = exec.mode;
+  return typeof mode === 'string' && mode.length > 0 ? mode : null;
+}
+
+/** 从（任意的）配置里挖出 `tools.elevated.enabled`；不是布尔则 null。 */
+export function readElevatedEnabled(raw: unknown): boolean | null {
+  if (!isRecord(raw)) return null;
+  const tools = raw.tools;
+  if (!isRecord(tools)) return null;
+  const elevated = tools.elevated;
+  if (!isRecord(elevated)) return null;
+  const enabled = elevated.enabled;
+  return typeof enabled === 'boolean' ? enabled : null;
+}
+
+/** 三个闸门是不是都已经是红线值（提前返回的判据之一）。 */
+export function hasToolGuard(raw: unknown): boolean {
+  return (
+    readFsWorkspaceOnly(raw) === TOOL_GUARD_FS_WORKSPACE_ONLY &&
+    readExecMode(raw) === TOOL_GUARD_EXEC_MODE &&
+    readElevatedEnabled(raw) === TOOL_GUARD_ELEVATED_ENABLED
+  );
+}
+
+/**
+ * 工具段合并（纯函数）：把这两个名字**并进** deny + **红线三闸门**（确保并保留）。
  *
  * 为什么是并集而不是"没有才补"：用户/将来版本可能已经 deny 了别的东西，
  * 整段覆盖会把他的设置抹掉；而这两个名字必须确保在里面，所以只能并。
  * 幂等由 `Set` 保证 —— 连跑多次不会重复追加。
+ *
+ * ⚠️ 三个闸门同上：**确保**而不是"没有才补"。红线是产品决定、不是用户偏好 ——
+ *    用户设过 `workspaceOnly:false` 也会被改回 true（设计文档 §2.1）。
  */
 export function mergeToolsDefaults(existing: Record<string, unknown> | null): Record<string, unknown> {
   const tools = existing && isRecord(existing.tools) ? existing.tools : {};
   const deny = readToolsDeny(existing) ?? [];
-  return { ...tools, deny: [...new Set([...deny, ...MEMORY_TOOLS_DENIED])] };
+  const fsSection = isRecord(tools.fs) ? tools.fs : {};
+  const execSection = isRecord(tools.exec) ? tools.exec : {};
+  const elevatedSection = isRecord(tools.elevated) ? tools.elevated : {};
+
+  // ⚠️ 写 `mode` 时**必须**移除旧写法：运行时会拒绝"混合策略"（mode + security/ask 并存）。
+  //    `mode:"ask"` 与 `security:"allowlist" + ask:"on-miss"` 等价，所以移除是无损的。
+  const execRest: Record<string, unknown> = { ...execSection };
+  delete execRest.security;
+  delete execRest.ask;
+
+  return {
+    ...tools,
+    deny: [...new Set([...deny, ...MEMORY_TOOLS_DENIED])],
+    fs: { ...fsSection, workspaceOnly: TOOL_GUARD_FS_WORKSPACE_ONLY },
+    exec: { ...execRest, mode: TOOL_GUARD_EXEC_MODE, askFallback: TOOL_GUARD_EXEC_ASK_FALLBACK },
+    elevated: { ...elevatedSection, enabled: TOOL_GUARD_ELEVATED_ENABLED },
+  };
 }
 
 /** 从（任意的）已有配置里挖出 token；没有则 null。 */
