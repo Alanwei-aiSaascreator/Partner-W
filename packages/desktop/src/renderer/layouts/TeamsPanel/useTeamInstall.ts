@@ -222,6 +222,9 @@ export function useTeamInstall(onDone?: () => void) {
           if (event.type === 'done') {
             // ⚠️ 三步的顺序是承重的，见 `finishTeamInstall` 的说明（目录陈旧 ⇒ 紧接着的
             //    「发起对话」会被静默换成 main）。
+            // ⚠️⚠️ **收尾三步只许出现在 `finishTeamInstall` 里**：把它内联回这里、或在这里提前
+            //    调一次 `setInstallStatus('done')`，测试**看不见**（React 批处理让飞行中的状态读不到，
+            //    复核者实测过：内联重排 ⇒ 全套全绿）。顺序的守卫长在缝上，靠这条约定把它留住。
             await finishTeamInstall({ gatewayId: teamInfo.gatewayId, setStatus: setInstallStatus, onDone });
             return;
           }

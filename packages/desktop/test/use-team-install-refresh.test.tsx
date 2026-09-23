@@ -169,12 +169,16 @@ describe('useTeamInstall 装完刷新助手目录', () => {
       }
       expect(refreshMock.fetchAgentsForGateway).toHaveBeenCalledTimes(1);
       expect(finished).toBe(false); // ← 刷新还挂着 ⇒ `runInstall` 不许已经返回
+      // ⚠️ 收尾三步一步都不许发生（复核者 P1 实测：调用点删掉 `onDone` 透传时全套全绿 ⇒
+      //    这条断言就是它的钉子）。顺序守卫只长在缝里，这里钉的是"调用点确实还在走那个缝"。
+      expect(orderLog).toEqual([]);
 
       release();
       await pending;
     });
 
     expect(finished).toBe(true);
+    expect(orderLog).toEqual(['onDone']);
   });
 
   it('生成器报 error（落库失败 ⇒ core 先 rollback）⇒ **不刷**目录（这条走的是 error 分支，不是预检）', async () => {
