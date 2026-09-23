@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto';
-import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
+import { once } from 'node:events';
+import { appendFileSync, createWriteStream, readFileSync, writeFileSync } from 'node:fs';
+import { finished } from 'node:stream/promises';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 export const UPDATE_ROOT = '/opt/rongying/updates';
@@ -10,6 +12,17 @@ export const PUBLIC_BASE_URL = 'https://api.rongyinghudong.com/updates';
 export const PORTABLE_PACKAGE_NAME = 'portable.zip';
 export const PORTABLE_FILE_MANIFEST_NAME = 'portable-files.json';
 export const PORTABLE_MANIFEST_NAME = 'manifest.json';
+
+export const PUBLIC_HEADER_TIMEOUT_MS = 60_000;
+export const PUBLIC_BODY_MIN_RATE_BYTES_PER_SECOND = 256 * 1024;
+export const PUBLIC_BODY_BUFFER_MS = 30_000;
+export const PUBLIC_BODY_MAX_TIMEOUT_MS = 30 * 60_000;
+
+export function publicBodyTimeoutMs(expectedSize) {
+  const size = Number.isFinite(expectedSize) && expectedSize > 0 ? expectedSize : 0;
+  const transferMs = Math.ceil((size / PUBLIC_BODY_MIN_RATE_BYTES_PER_SECOND) * 1000);
+  return Math.min(PUBLIC_BODY_MAX_TIMEOUT_MS, Math.max(PUBLIC_BODY_BUFFER_MS, transferMs + PUBLIC_BODY_BUFFER_MS));
+}
 
 const SEMVER_PATTERN =
   /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/u;
@@ -964,6 +977,83 @@ async function readRemoteFileSha(input, target) {
   return { ok: true, sha256: String(result.stdout ?? '').split(/\s+/u)[0] || 'absent' };
 }
 
+async function readPublicArtifact(input, { url, name, expectedSize, destinationPath }) {
+  const streamSource = input.transport.fetchPublicStream;
+  let streamed;
+  try {
+    streamed =
+      typeof streamSource === 'function'
+        ? await streamSource.call(input.transport, url, {
+            headerTimeoutMs: PUBLIC_HEADER_TIMEOUT_MS,
+            bodyTimeoutMs: publicBodyTimeoutMs(expectedSize),
+          })
+        : adaptByteResponse(await input.transport.fetchPublic(url));
+  } catch (error) {
+    return { ok: false, reason: `${name} could not be fetched: ${error?.message ?? error}` };
+  }
+  if (streamed?.status !== 200) return { ok: false, reason: `${name} is not reachable` };
+
+  const declared =
+    streamed.contentLength === null || streamed.contentLength === undefined ? null : Number(streamed.contentLength);
+  if (declared !== null && Number.isFinite(declared) && declared !== expectedSize) {
+    await disposeOf(streamed);
+    return {
+      ok: false,
+      reason: `${name} announced a content length of ${declared} bytes but this release is ${expectedSize} bytes`,
+    };
+  }
+
+  const hash = createHash('sha256');
+  const collected = destinationPath === undefined ? [] : null;
+  const sink = destinationPath === undefined ? null : createWriteStream(destinationPath);
+  sink?.on('error', () => {});
+  let received = 0;
+  try {
+    for await (const chunk of streamed.body ?? []) {
+      const bytes = Buffer.from(chunk);
+      hash.update(bytes);
+      received += bytes.length;
+      if (sink === null) {
+        collected.push(bytes);
+      } else if (!sink.write(bytes)) {
+        await once(sink, 'drain');
+      }
+    }
+    if (sink !== null) {
+      sink.end();
+      await finished(sink);
+    }
+  } catch (error) {
+    sink?.destroy(new Error('the public artifact read failed'));
+    return { ok: false, reason: `${name} could not be read: ${error?.message ?? error}` };
+  } finally {
+    await disposeOf(streamed);
+  }
+
+  if (received !== expectedSize) {
+    return { ok: false, reason: `${name} delivered ${received} bytes but this release is ${expectedSize} bytes` };
+  }
+  return {
+    ok: true,
+    sha256: hash.digest('hex'),
+    bytes: received,
+    bodyBytes: collected === null ? null : Buffer.concat(collected),
+  };
+}
+
+function adaptByteResponse(response) {
+  if (response === undefined || response === null) return { status: 0, contentLength: null, body: [] };
+  return {
+    status: response.status ?? 0,
+    contentLength: null,
+    body: [response.bodyBytes ?? new Uint8Array()],
+  };
+}
+
+async function disposeOf(streamed) {
+  if (typeof streamed?.dispose === 'function') streamed.dispose();
+}
+
 export async function verifyPublicArtifacts(input) {
   assertSafeChannel(input.channel);
   assertSafeVersion(input.version);
@@ -972,48 +1062,51 @@ export async function verifyPublicArtifacts(input) {
     throw new FeedPublishError('a public artifact verifier is required to verify the published manifest');
   }
   const base = `${PUBLIC_BASE_URL}/${input.channel}/${input.version}`;
-  const manifestResponse = await input.transport.fetchPublic(publicChannelManifestUrl(input.channel));
-  if (manifestResponse.status !== 200) return { ok: false, reason: 'the public manifest is not reachable' };
 
-  const manifestBytes = Buffer.from(manifestResponse.bodyBytes);
+  const manifestRead = await readPublicArtifact(input, {
+    url: publicChannelManifestUrl(input.channel),
+    name: 'the public manifest',
+    expectedSize: input.expectedManifestBytes.length,
+  });
+  if (manifestRead.ok !== true) return { ok: false, reason: manifestRead.reason };
+  const manifestBytes = manifestRead.bodyBytes;
   if (!manifestBytes.equals(input.expectedManifestBytes)) {
     return { ok: false, reason: 'the public manifest is not the manifest this run signed' };
   }
 
-  const packageResponse = await input.transport.fetchPublic(`${base}/${PORTABLE_PACKAGE_NAME}`);
-  if (packageResponse.status !== 200) return { ok: false, reason: 'the public package is not reachable' };
-  const packageBytes = Buffer.from(packageResponse.bodyBytes);
-  const publicPackageSha256 = createHash('sha256').update(packageBytes).digest('hex');
-  if (publicPackageSha256 !== input.expectedPackageSha256) {
+  const packagePath = join(input.temporaryRoot, PORTABLE_PACKAGE_NAME);
+  const packageRead = await readPublicArtifact(input, {
+    url: `${base}/${PORTABLE_PACKAGE_NAME}`,
+    name: 'the public package',
+    expectedSize: input.expectedPackageSize,
+    destinationPath: packagePath,
+  });
+  if (packageRead.ok !== true) return { ok: false, reason: packageRead.reason };
+  if (packageRead.sha256 !== input.expectedPackageSha256) {
     return { ok: false, reason: 'the public package integrity check failed' };
   }
-  if (packageBytes.length !== input.expectedPackageSize) {
-    return { ok: false, reason: 'the public package size does not match' };
-  }
 
-  const fileManifestResponse = await input.transport.fetchPublic(`${base}/${PORTABLE_FILE_MANIFEST_NAME}`);
-  if (fileManifestResponse.status !== 200) return { ok: false, reason: 'the public file manifest is not reachable' };
-  const fileManifestBytes = Buffer.from(fileManifestResponse.bodyBytes);
-  const publicFileManifestSha256 = createHash('sha256').update(fileManifestBytes).digest('hex');
-  if (publicFileManifestSha256 !== input.expectedFileManifestSha256) {
+  const fileManifestRead = await readPublicArtifact(input, {
+    url: `${base}/${PORTABLE_FILE_MANIFEST_NAME}`,
+    name: 'the public file manifest',
+    expectedSize: input.expectedFileManifestSize,
+  });
+  if (fileManifestRead.ok !== true) return { ok: false, reason: fileManifestRead.reason };
+  const fileManifestBytes = fileManifestRead.bodyBytes;
+  if (fileManifestRead.sha256 !== input.expectedFileManifestSha256) {
     return { ok: false, reason: 'the public file manifest integrity check failed' };
   }
-  if (fileManifestBytes.length !== input.expectedFileManifestSize) {
-    return { ok: false, reason: 'the public file manifest size does not match' };
-  }
 
-  const packagePath = join(input.temporaryRoot, PORTABLE_PACKAGE_NAME);
   const fileManifestPath = join(input.temporaryRoot, PORTABLE_FILE_MANIFEST_NAME);
-  writeFileSync(packagePath, packageBytes);
   writeFileSync(fileManifestPath, fileManifestBytes);
   await input.verifier({ manifestBytes, fileManifestBytes, packagePath, publicKeyBase64: input.publicKeyBase64 });
 
   return {
     ok: true,
     manifestSha256: createHash('sha256').update(manifestBytes).digest('hex'),
-    packageSha256: publicPackageSha256,
-    packageSize: packageBytes.length,
-    fileManifestSha256: publicFileManifestSha256,
+    packageSha256: packageRead.sha256,
+    packageSize: packageRead.bytes,
+    fileManifestSha256: fileManifestRead.sha256,
     fileManifestSize: fileManifestBytes.length,
   };
 }

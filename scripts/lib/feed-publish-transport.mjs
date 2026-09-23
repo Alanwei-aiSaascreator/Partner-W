@@ -133,6 +133,46 @@ export function createFeedTransport(input) {
       return { status: response.status, arrayBuffer: () => response.arrayBuffer() };
     });
 
+  const defaultFetchStream =
+    input.fetchPublicStream ??
+    (async (url, budgets = {}) => {
+      const headerTimeoutMs = budgets.headerTimeoutMs ?? PUBLIC_FETCH_TIMEOUT_MS;
+      const bodyTimeoutMs = budgets.bodyTimeoutMs ?? PUBLIC_FETCH_TIMEOUT_MS;
+      const controller = new AbortController();
+      const headerTimer = setTimeout(
+        () => controller.abort(new Error(`the public fetch did not answer within ${headerTimeoutMs} ms`)),
+        headerTimeoutMs,
+      );
+      let response;
+      try {
+        response = await fetch(url, { redirect: 'error', signal: controller.signal });
+      } finally {
+        clearTimeout(headerTimer);
+      }
+      const bodyTimer = setTimeout(
+        () => controller.abort(new Error(`the public body did not finish within ${bodyTimeoutMs} ms`)),
+        bodyTimeoutMs,
+      );
+      return {
+        status: response.status,
+        contentLength: response.headers.get('content-length'),
+        body: response.body,
+        dispose: () => clearTimeout(bodyTimer),
+      };
+    });
+
+  const fetchPublicStream = async (url, budgets) => {
+    if (input.fetchPublicStream === undefined && input.fetchPublic !== undefined) {
+      const response = await input.fetchPublic(url);
+      let bytes = response?.bodyBytes;
+      if (bytes === undefined && typeof response?.arrayBuffer === 'function') {
+        bytes = new Uint8Array(await response.arrayBuffer());
+      }
+      return { status: response?.status ?? 0, contentLength: null, body: [bytes ?? new Uint8Array()] };
+    }
+    return defaultFetchStream(url, budgets);
+  };
+
   return {
     readOnly: { sshRun },
     write: { sshRun, sftpUpload },
@@ -143,5 +183,6 @@ export function createFeedTransport(input) {
       }
       return { status: response.status, bodyBytes: new Uint8Array(await response.arrayBuffer()) };
     },
+    fetchPublicStream,
   };
 }

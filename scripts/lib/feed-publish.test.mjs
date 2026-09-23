@@ -1387,8 +1387,10 @@ test('the version the input gate admits carries no shell metacharacter and no ne
 import {
   PORTABLE_FILE_MANIFEST_NAME,
   PORTABLE_PACKAGE_NAME,
+  PUBLIC_BODY_MAX_TIMEOUT_MS,
   appendAuditStage,
   assertNoReservedEvidenceKeys,
+  publicBodyTimeoutMs,
   runCommit,
   verifyPublicArtifacts,
 } from './feed-publish.mjs';
@@ -2526,9 +2528,11 @@ test('the public verification is actually run after the flip', async () => {
   assertEveryCommitCallCarriesTheTrustAnchor(transport);
   assert.equal(result.outcome, 'incident');
   assert.equal(result.lockState, 'retained-by-this-run');
-  assert.match(result.reason, /public package integrity/u);
+  const tampered = Buffer.from('other');
+  const sizeReason = `the public package delivered ${tampered.length} bytes but this release is ${PACKAGE_BYTES.length} bytes`;
+  assert.match(result.reason, new RegExp(sizeReason, 'u'), 'a shorter public body is named by size before the digest');
   const publicVerify = auditEntriesOf(input.auditOut).find((entry) => entry.stage === 'public-verify');
-  assert.equal(publicVerify.detail, 'the public package integrity check failed');
+  assert.equal(publicVerify.detail, sizeReason);
   assert.equal(publicVerify.observedManifestSha256, manifestShaOf(paths));
 });
 
@@ -3832,4 +3836,130 @@ test('a controlled directory that was created but does not verify is refused', a
   );
   const row = auditEntriesOf(input.auditOut).find((entry) => entry.stage === 'stage' && entry.status === 'fail');
   assert.match(row.detail, /install -d/u);
+});
+
+// ---------------------------------------------------------------------------
+// 大制品 public-verify 的固定 60 秒超时（2026-09-24 首次真实发布暴露的缺陷）
+//
+// 真实事故：翻转已经成功，`public-verify` 却要在 60 秒常量内把 400MB 包从公网
+// 拉回来核；实测这条线路约 0.47–2.3 MB/s ⇒ 必然超时 ⇒ 发布成功却以 incident
+// 收尾并保留锁。修法：请求头超时与下载体超时分开，体超时按**制品大小 + 保守
+// 最低速率 + 缓冲**计算，且边下边算 sha256，下完才允许声明成功。
+// ---------------------------------------------------------------------------
+
+test('the public body budget is sized from the artifact rather than a fixed constant', () => {
+  assert.equal(publicBodyTimeoutMs(529) >= 30_000, true, 'a tiny manifest must still fail fast');
+  assert.equal(publicBodyTimeoutMs(529) <= 60_000, true);
+  assert.equal(publicBodyTimeoutMs(398563032) > 20 * 60_000, true, 'a 400MB package needs minutes, not seconds');
+  assert.equal(publicBodyTimeoutMs(398563032) <= PUBLIC_BODY_MAX_TIMEOUT_MS, true);
+  assert.equal(publicBodyTimeoutMs(400 * 1024 * 1024 * 1024), PUBLIC_BODY_MAX_TIMEOUT_MS, 'the cap must hold');
+});
+
+test('the budget of a 400MB package covers the transfer rate the first publish actually saw', () => {
+  const observedRateBytesPerSecond = 0.47 * 1024 * 1024;
+  const observedDurationMs = (398563032 / observedRateBytesPerSecond) * 1000;
+  assert.equal(
+    publicBodyTimeoutMs(398563032) > observedDurationMs,
+    true,
+    'the budget must cover a 400MB transfer at the rate the incident was measured at',
+  );
+});
+
+test('the body budget grows with the artifact so a size cannot buy unlimited time', () => {
+  assert.equal(publicBodyTimeoutMs(4 * 1024 * 1024) > publicBodyTimeoutMs(1024 * 1024), true);
+});
+
+function streamVerificationInput({ zipChunks, zipLength, failWith, seen } = {}) {
+  const paths = writeArtifacts();
+  const zip = PACKAGE_BYTES;
+  const chunks = zipChunks ?? [zip];
+  return {
+    channel: 'internal',
+    version: '1.2.3',
+    publicKeyBase64: PUBLIC_KEY_BASE64,
+    verifier: () => {},
+    expectedManifestBytes: readFileSync(paths.manifestPath),
+    expectedPackageSha256: PACKAGE_SHA256,
+    expectedPackageSize: zip.length,
+    expectedFileManifestSha256: FILE_MANIFEST_SHA256,
+    expectedFileManifestSize: FILE_MANIFEST_BYTES.length,
+    temporaryRoot: makeRoot(),
+    transport: {
+      fetchPublicStream: async (url, budgets) => {
+        seen?.push({ url, budgets });
+        if (failWith !== undefined && url.endsWith(PORTABLE_PACKAGE_NAME)) throw failWith;
+        if (url.endsWith('manifest.json')) {
+          return { status: 200, contentLength: null, body: [Uint8Array.from(readFileSync(paths.manifestPath))] };
+        }
+        if (url.endsWith(PORTABLE_PACKAGE_NAME)) {
+          return {
+            status: 200,
+            contentLength: zipLength === undefined ? zip.length : zipLength,
+            body: chunks,
+          };
+        }
+        return { status: 200, contentLength: null, body: [Uint8Array.from(FILE_MANIFEST_BYTES)] };
+      },
+    },
+  };
+}
+
+test('the public verification streams the package in chunks and asks for a body budget sized from it', async () => {
+  const seen = [];
+  const split = [PACKAGE_BYTES.subarray(0, 3), PACKAGE_BYTES.subarray(3)];
+  const input = streamVerificationInput({ zipChunks: split, seen });
+  const result = await verifyPublicArtifacts(input);
+  assert.equal(result.ok, true, result.reason);
+  const zipCall = seen.find((call) => call.url.endsWith(PORTABLE_PACKAGE_NAME));
+  assert.equal(zipCall.budgets.bodyTimeoutMs, publicBodyTimeoutMs(PACKAGE_BYTES.length));
+  assert.equal(zipCall.budgets.headerTimeoutMs > 0, true, 'the header budget stays separate');
+  const streamedPackage = readFileSync(join(input.temporaryRoot, PORTABLE_PACKAGE_NAME));
+  assert.equal(streamedPackage.equals(PACKAGE_BYTES), true, 'the streamed package must land on disk for the verifier');
+});
+
+test('the public verification still succeeds when the server sends no content length', async () => {
+  const result = await verifyPublicArtifacts(streamVerificationInput({ zipLength: null }));
+  assert.equal(result.ok, true, result.reason);
+});
+
+test('a content length that disagrees with this release is refused and both numbers are named', async () => {
+  const result = await verifyPublicArtifacts(streamVerificationInput({ zipLength: PACKAGE_BYTES.length + 1 }));
+  assert.equal(result.ok, false);
+  assert.match(result.reason, /content length/u);
+  assert.equal(result.reason.includes(String(PACKAGE_BYTES.length + 1)), true);
+  assert.equal(result.reason.includes(String(PACKAGE_BYTES.length)), true);
+});
+
+test('a body that stops short of the announced size is refused rather than hashed', async () => {
+  const result = await verifyPublicArtifacts(streamVerificationInput({ zipChunks: [PACKAGE_BYTES.subarray(0, 2)] }));
+  assert.equal(result.ok, false);
+  assert.match(result.reason, /2/u);
+});
+
+test('a body that aborts mid transfer is refused and the abort reason is surfaced', async () => {
+  const result = await verifyPublicArtifacts(
+    streamVerificationInput({ failWith: new Error('the public body did not finish within 1000 ms') }),
+  );
+  assert.equal(result.ok, false);
+  assert.match(result.reason, /did not finish within/u);
+});
+
+test('a fully delivered body whose digest differs is still refused', async () => {
+  const tampered = Uint8Array.from(PACKAGE_BYTES);
+  tampered[0] = tampered[0] ^ 0xff;
+  const result = await verifyPublicArtifacts(streamVerificationInput({ zipChunks: [tampered] }));
+  assert.equal(result.ok, false);
+  assert.match(result.reason, /integrity/u);
+});
+
+test('a body that throws while it is being streamed is refused rather than reported as complete', async () => {
+  async function* failingBody(first) {
+    yield first;
+    throw new Error('the public body did not finish within 1000 ms');
+  }
+  const result = await verifyPublicArtifacts(
+    streamVerificationInput({ zipChunks: failingBody(PACKAGE_BYTES.subarray(0, 3)) }),
+  );
+  assert.equal(result.ok, false, 'a stream that dies mid body must never be reported as verified');
+  assert.match(result.reason, /did not finish within/u);
 });

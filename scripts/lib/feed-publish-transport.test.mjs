@@ -309,15 +309,16 @@ test('every call carries a finite timeout so a hung remote cannot hold the run',
   assert.equal(publicCall.options.signal instanceof AbortSignal, true);
 });
 
-test('the transport exposes the four faces the publish flow calls', () => {
+test('the transport exposes the five faces the publish flow calls', () => {
   const transport = makeTransport({ execFile: makeFake().execFile });
-  assert.deepEqual(Object.keys(transport).sort(), ['fetchPublic', 'readOnly', 'write']);
+  assert.deepEqual(Object.keys(transport).sort(), ['fetchPublic', 'fetchPublicStream', 'readOnly', 'write']);
   assert.deepEqual(Object.keys(transport.readOnly), ['sshRun']);
   assert.deepEqual(Object.keys(transport.write).sort(), ['sftpUpload', 'sshRun']);
   assert.equal(typeof transport.readOnly.sshRun, 'function');
   assert.equal(typeof transport.write.sshRun, 'function');
   assert.equal(typeof transport.write.sftpUpload, 'function');
   assert.equal(typeof transport.fetchPublic, 'function');
+  assert.equal(typeof transport.fetchPublicStream, 'function');
 });
 
 function stubDefaultPublicFetch(records) {
