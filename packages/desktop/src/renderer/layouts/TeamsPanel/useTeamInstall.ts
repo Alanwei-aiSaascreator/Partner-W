@@ -15,6 +15,28 @@ import type { TeamInfo, AgentDraft } from './types';
 
 type InstallStatus = 'idle' | 'installing' | 'done' | 'error';
 
+/**
+ * 装完团队后**强刷助手目录**。
+ *
+ * 为什么非刷不可（2026-09-22 复核的"层 3"，实机 3 次点击可复现）：
+ * 新建的 agent 只进了网关，**客户端那份目录还是陈旧的** ⇒ 用户点「发起对话」时
+ * `useGatewaySelector` 发现 id 不在目录里，就把它**静默换成 `main`**（全程没有任何提示），
+ * 用户看到的是主罗盘。**重启就好了**（启动那次会强刷）——这正是它长期没被当成 bug 的原因。
+ *
+ * ⚠️ **动态 import 是刻意的**（照 `MarketPanel/useTemplateInstall.ts` 的先例）：这条链会一路拉到
+ *    网关 dispatcher（很重），而"装完刷新目录"是低频动作；静态引入会让任何 import 本模块的
+ *    页面/测试都被迫加载整条网关链（那边实测过：两个只 mock 了 core/platform 的既有测试直接加载失败）。
+ * ⚠️ **失败不许影响"装完了"**：目录最多是陈旧的（重启会补），别让一次刷新失败把成功报成失败。
+ */
+async function refreshAgentCatalog(gatewayId: string): Promise<void> {
+  try {
+    const { fetchAgentsForGateway } = await import('@/hooks/useGatewayDispatcherSetup');
+    await fetchAgentsForGateway(gatewayId, { force: true });
+  } catch (err) {
+    console.error('[teams] 刷新助手目录失败（安装本身已完成）:', err);
+  }
+}
+
 export function useTeamInstall(onDone?: () => void) {
   const [installStatus, setInstallStatus] = useState<InstallStatus>('idle');
   const [installEvents, setInstallEvents] = useState<InstallEvent[]>([]);
@@ -179,6 +201,9 @@ export function useTeamInstall(onDone?: () => void) {
             return;
           }
           if (event.type === 'done') {
+            // ⚠️ 必须在报"装完了"**之前**刷（见 `refreshAgentCatalog` 的说明）：
+            //    目录一陈旧，紧接着的「发起对话」就会被静默换成 main。
+            await refreshAgentCatalog(teamInfo.gatewayId);
             setInstallStatus('done');
             onDone?.();
             return;
