@@ -67,3 +67,43 @@ describe('describeGatewayError —— 界面用的统一入口', () => {
     expect(describeGatewayError('   ', '发送失败')).toBe('发送失败');
   });
 });
+
+/**
+ * 一次运行整体失败（0.0.26 用户实测，2026-09-23）。
+ *
+ * 现场原文（客户端调试日志 `renderer.agent.lifecycle.error`）：
+ *   `⚠️ Agent run failed (model: clawrouter/deepseek-v4-flash).`
+ * 紧跟一条 `⚠️ Agent couldn't generate a response. Note: some tool actions may have
+ * already been executed — please verify before retrying.`
+ *
+ * 根因（逐层取证见 `services/relay/src/catalog.ts` 的注释）：模型单次要吐出的内容
+ * 撞上**输出上限**，工具调用被切在半路，openclaw 判 `Provider returned an incomplete
+ * or malformed tool call` 并把**整轮**作废。原文只说"失败了"，用户看不出该做什么 ——
+ * 反复重试同一句只会再失败一次（还会再花一次钱）。
+ */
+describe('运行整体失败的出口（截断的工具调用）', () => {
+  it('⭐ `Agent run failed` ⇒ 说清"分步做"，而不是让用户反复重试', () => {
+    const raw = '⚠️ Agent run failed (model: clawrouter/deepseek-v4-flash).';
+    const text = translateGatewayError(raw);
+
+    expect(text).toBeTruthy();
+    expect(text).toContain('分步');
+    // 不许把 openclaw 的英文原文或内部模型 id 摆到用户脸上
+    expect(text).not.toContain('Agent run failed');
+    expect(text).not.toContain('clawrouter/');
+  });
+
+  it('⭐ "可能有工具已经跑过了"那条也要给人话（它同样带英文原文）', () => {
+    const raw =
+      "⚠️ Agent couldn't generate a response. Note: some tool actions may have already been executed — please verify before retrying.";
+    const text = translateGatewayError(raw);
+
+    expect(text).toBeTruthy();
+    expect(text).toContain('确认');
+    expect(text).not.toContain('tool actions');
+  });
+
+  it('认不出来的一律仍然返回 null（这条纪律不许因为新规则而松）', () => {
+    expect(translateGatewayError('some brand-new gateway failure mode')).toBeNull();
+  });
+});

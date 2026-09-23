@@ -63,7 +63,43 @@ function translateQuestionFailure(raw: string): string | null {
   return describeQuestionFailure(raw, [], '') || null;
 }
 
-const TRANSLATORS = [translateThinkingLevelUnsupported, translateModelNotFound, translateQuestionFailure];
+/**
+ * 一次运行**整体失败**（openclaw 的 `⚠️ Agent run failed (model: …).`）。
+ *
+ * 为什么值得单独给一句：原文只说"失败了"，用户唯一的反应是**重试同一句** ——
+ * 而常见原因之一恰恰是"同一句还会再失败一次"（0.0.26 用户实测，2026-09-23：
+ * 模型一次要吐出的内容撞上输出上限、工具调用被切在半路，openclaw 判
+ * `Provider returned an incomplete or malformed tool call` 并把整轮作废；
+ * 上游那一端的修复见 `services/relay/src/catalog.ts` 的 `MAX_OUTPUT_TOKENS_BY_MODEL`）。
+ *
+ * ⚠️ **不许把它写成"就是输出上限"**：`Agent run failed` 是 openclaw 的**通用**包装，
+ *    网络、上游异常、工具失败都可能落到这里，而这个字段里**没有原因**。
+ *    所以只给"常见原因 + 该怎么做"，不下断言 —— 与本文第一条纪律一致
+ *    （宁可少说，也不给一句错的中文）。
+ */
+function translateAgentRunFailed(raw: string): string | null {
+  if (!/agent run failed/i.test(raw)) return null;
+  return '这次没能完成。常见原因之一是：模型一次要写的内容太长（超过单次输出上限）被截断了 —— 如果是这种，请让它分步做，例如先只要大纲或脚本骨架，再逐段补内容。已经跑过的工具动作可能已经生效，重试前请先确认结果。';
+}
+
+/**
+ * 与 `Agent run failed` 成对出现的那条（"没能产出回复"）。
+ *
+ * 原文同样带英文且信息量为零；这一句真正的价值是**提醒用户先看已执行的动作**，
+ * 所以中文版必须把这一点说出来，不能只翻成"没生成回复"。
+ */
+function translateAgentNoResponse(raw: string): string | null {
+  if (!/agent couldn't generate a response|couldn't generate a response/i.test(raw)) return null;
+  return '模型这次没有产出回复（可能是被截断或上游异常）。已经跑过的工具动作可能已经生效，重试前请先确认结果。';
+}
+
+const TRANSLATORS = [
+  translateThinkingLevelUnsupported,
+  translateModelNotFound,
+  translateQuestionFailure,
+  translateAgentRunFailed,
+  translateAgentNoResponse,
+];
 
 /** 命中已知错误返回中文；认不出来返回 null（调用方应回退到网关原文）。 */
 export function translateGatewayError(raw: string | undefined): string | null {
