@@ -18,7 +18,8 @@
 | 新增④ | `dec5ca84`            | 失败出口**分类**（六类 + 可重试性 + 下一步），新增三个错误码                                                   |
 | ⑥     | （只登记不改，见 §7） | 频道名 `beta → internal` 与 `allowPrerelease` 不可达：**判为不是缺陷**                                         |
 
-门禁总读数见 §9。**未做/未验清单见 §10 —— 那一节是这份账本里最该看的。**
+门禁总读数见 §9，**终值见 §11（§9 的读数已被它取代 —— 那条根因是错的）**。
+**未做/未验清单见 §10 —— 那一节是这份账本里最该看的。**
 
 ## 1. ⑤ 死代码 `portable-swap.ts`（`21e4c559`）
 
@@ -357,10 +358,10 @@ $ pnpm check
 
 ## 10. 未做 / 未验清单（**明说，不默认成立**）
 
-1. **`pnpm check` 在本机不可能全绿**：`better-sqlite3@12.6.2` 与 Node 26 源级不兼容
-   （`error C2039: "This": 不是 "v8::PropertyCallbackInfo<v8::Value>" 的成员`），
-   本机只有 Node v26.3.1（ABI 147），主检出里的绑定是 ABI 132 且本机没有匹配的 Node。
-   ⇒ 那 3 个文件**必然**红，且**在我改任何代码之前就红**。我没有用"跳过/排除"绕过它。
+1. ~~**`pnpm check` 在本机不可能全绿**~~ ⇒ ⛔ **这条根因是错的，见 §11**：真因是我自己的
+   `pnpm install --ignore-scripts` 跳过了后置的 `electron-builder install-app-deps`，
+   原生模块从没按 **Electron 的 ABI** 编过。跑一条 `install-app-deps` 后全门禁 **RC=0**、
+   桌面端 **3000 passed / 0 failed**。Node 26 不是障碍，也不需要换成 Node 20。
 2. **没有任何真机验证**：全部读数来自单测 / 纯函数门禁 / 假注入（`statfs`、`startLauncher`）。
    U 盘便携态、真实 `荣盈魔方启动器.exe --version` 探测、真实解压、真实换目录**一次都没跑过**。
    ⇒ ② 的"探测真实启动器"目前只有注入桩 + 一次"用 node 冒充启动器"的真 spawn 测试。
@@ -387,7 +388,7 @@ $ pnpm check
 10. ⑧ 的 `launcher-unavailable` 复用而非新增了 UI 动作（`replace-package`），
     因此**没有**动 i18n 文案体系；如果将来要求单独文案，那是一次独立的改动。
 
-### 9.1 门禁终值（最后一次运行，含本账本）
+### 9.1 门禁终值（**已被 §11 取代 —— 那是错的读数**）
 
 ```
 $ export PATH="/d/go-toolchain/go/bin:$PATH"
@@ -417,3 +418,70 @@ PNPM_CHECK_RC=1
 依次打出来，末尾那个数字属于**最后跑的 bundle**。我第一轮读到的 `tests 249`
 属于 `check:portable-feed-publish`，不是 portable-update-release 那个 bundle；
 只看 tail 会把它当成后者的读数。⇒ 数测试总量要**按 bundle 定位**，别读 tail。
+
+## 11. ⛔ 更正：上面那条"环境性失败"的根因是错的（2026-09-23 晚）
+
+**我先前说的**：那 3 个红文件（`artifact-reconcile` / `context-source-service` /
+`db-context-sources`）因 `better-sqlite3@12.6.2` **编不过 Node 26** 而加载不到原生绑定，
+"本机不可能全绿"。
+
+**真相**：**是我自己的安装方式自伤。** 我为了绕开一次 `better-sqlite3` 编译失败，
+用了 `pnpm install --frozen-lockfile --ignore-scripts` —— 那会跳过仓库自己的
+`packages/desktop` 后置脚本 `postinstall: electron-builder install-app-deps`，
+于是原生模块**从未按 Electron 的 ABI 编译**。
+
+而这条链的绑定**必须是 Electron 的 ABI**：那 3 个文件会 **fork Electron** 去探数据库
+（`ELECTRON_RUN_AS_NODE="1"`，见 asar 包装器），所以加载绑定的是 Electron 34（ABI 132），
+不是跑测试的那个 Node。绑定缺席 ⇒ 子进程退出 1 ⇒ `ERR_DLOPEN_FAILED`。
+我先前用"在 Node 26 下 `require('better-sqlite3')` 报 ABI 147 vs 132"当证据 ——
+**那个诊断本身就对错了对象**：它测的是"Node 能不能加载 Electron 的绑定"，
+而真正要回答的是"Electron 能不能加载"。
+
+**一条命令就修好**：
+
+```
+$ cd packages/desktop && ./node_modules/.bin/electron-builder install-app-deps
+  • completed installing native dependencies        (RC=0)
+```
+
+修完后那 3 个文件：`Test Files 3 passed (3) / Tests 23 passed (23)`。
+
+**全门禁终值（RC=0，取代 §9.1）**
+
+| 步骤                                                                          | 读数                                                                                                  |
+| ----------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `check:portable-launcher`（Go）                                               | ok（`cmd/mofang-launcher`、`internal/update`）                                                        |
+| `check:portable-update-release`（4 文件）                                     | `tests 39 / pass 39 / fail 0`                                                                         |
+| `check:portable-feed-publish`（3 文件）                                       | `tests 249 / pass 249 / fail 0`                                                                       |
+| `lint` / `architecture` / `ci-bot-security` / `ui-contract` / `renderer-copy` | 通过（exit 0）                                                                                        |
+| `check:i18n`                                                                  | `tests 8 / pass 8`                                                                                    |
+| `check:udisk-delivery`                                                        | `tests 48 / pass 48`                                                                                  |
+| `check:gateway-probe`                                                         | `tests 25 / pass 25`                                                                                  |
+| `check:dead-code`（knip） / `format:check`（prettier）                        | 通过                                                                                                  |
+| `typecheck` / `typecheck:tests` / `typecheck:e2e`                             | 三步 exit 0                                                                                           |
+| `pnpm -r test`                                                                | shared `124 passed`、core `655 passed`、pwa `61 passed`、**desktop `3000 passed / 2 skipped (3002)`** |
+
+```
+$ export PATH="/d/go-toolchain/go/bin:$PATH"
+$ pnpm check
+PNPM_CHECK_RC=0
+```
+
+**为什么没有改提交信息**：错根因写在 `21e4c559` / `02cd290c` / `0c26dbac` / `0aa532e2` /
+`08f3e162` / `f64a2def` / `dec5ca84` 七个提交的正文里（"better-sqlite3 cannot compile
+against Node 26"）。**重写它们会换掉你已核实的 8 个 SHA** —— 代价大于收益。
+⇒ **本文件的 §11 是这条的正确性基准**；提交正文里那句话按本条更正读。
+
+**另一件要说清的事**：我为了做"CI 一致的 Node 20"这一步，下载了
+`node-v20.20.2-win-x64` 到**系统临时目录**（`%TEMP%\node20\`，不在仓库里）。
+事后证明**不需要**：真因与 Node 版本无关。那份解压件留在临时目录，未使用、未进仓库。
+
+**教训（归到已有的那类）**：这是「先验你自己的验证脚本」家族的又一例 ——
+**把"我的环境自伤"读成了"产品的环境限制"**。具体形状：
+① 我用 `--ignore-scripts` 省事 ⇒ 跳过一个**必需的**后置步骤；
+② 出红之后我用**另一个工具**（裸 `node-gyp` + 裸 `require`）去诊断，
+而它测的不是产品真正用的那条路（fork Electron）；
+③ 两次读数都"自洽"（ABI 数字确实不匹配），于是我把一个**可修的环境问题**
+写成了"本机不可能全绿"，还写进了 7 个提交。
+正确的做法是：门禁报红时，先问"**产品自己是怎么准备这个原生的**"（读 `postinstall`），
+而不是自己另造一条准备路径。
