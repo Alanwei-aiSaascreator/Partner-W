@@ -570,3 +570,30 @@ PNPM_CHECK_RC=0
 **已做**：给 `fix/portable-update-gaps` 配上推送追踪（配置式，
 `branch.<name>.remote/merge`；`git push --dry-run` → `Everything up-to-date` 证明裸 `push` 已有依据）。
 **未做**（等用户再拍）：改通配 refspec、推那 3 个未推分支（推别人的线需其同意）。
+
+## 14. 尖端全门禁（`31ca93cb`）——把"绿在旧 SHA"升级成"绿在尖端"
+
+§11 的绿是在 `3890628c`、§12 的复验是在 `a67d872f`。此后分支上还有**三个文档提交**
+（`54f93be8`、`627b6107`，以及并行线的 `31ca93cb`），**它们都没被全门禁覆盖过**。
+其中两个动过 runbook 第 5 步附近，而 `update-source-consistency.test.mjs`
+**会解析第 5 步那段文本**（`/### 5\.[\s\S]*?(?=\n### 6\.)/`，断言含 `MOFANG_MIN_LAUNCHER_VERSION`
+且不含 `$env:MOFANG_LAUNCHER_VERSION`）⇒ 文档改动**不是**门禁的免疫区，必须在尖端复跑。
+
+```
+$ export PATH="/d/go-toolchain/go/bin:$PATH"
+$ pnpm check
+PNPM_CHECK_RC=0
+```
+
+| 步骤                                                                                  | 读数                                                                                             |
+| ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `go -C launcher test`                                                                 | ok                                                                                               |
+| `check:portable-update-release`（4 文件，含一致性门禁）                               | `tests 39 / pass 39 / fail 0`                                                                    |
+| `check:portable-feed-publish`                                                         | `tests 249 / pass 249 / fail 0`                                                                  |
+| `check:i18n` / `check:udisk-delivery` / `check:gateway-probe`                         | `8` / `48` / `25`，全 pass                                                                       |
+| lint / architecture / ci-bot-security / ui-contract / renderer-copy / knip / prettier | 通过                                                                                             |
+| `typecheck` / `typecheck:tests` / `typecheck:e2e`                                     | exit 0                                                                                           |
+| `pnpm -r test`                                                                        | shared `124`、core `655`、pwa `61`、**desktop `283 files / 3007 passed / 2 skipped / 0 failed`** |
+
+⇒ **代码与文档阶段的结论现在可以写成"尖端全绿"**（`31ca93cb`，RC=0），
+不再是"绿在某个更早的 SHA 上"。
