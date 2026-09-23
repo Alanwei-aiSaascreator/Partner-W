@@ -15,11 +15,20 @@ import { parseSemanticVersion } from './portable-manifest.js';
  * `-X main.version=<MOFANG_LAUNCHER_VERSION>` 注入
  * （`scripts/lib/portable-launcher-build.mjs:49`）。
  *
- * 换成真值以后这道门才**真的**在办事，而且方向是对的：发布侧
- * `scripts/make-portable-update.mjs:55` 把 `minLauncherVersion` 也设成**同一个**
- * `MOFANG_LAUNCHER_VERSION`（release.yml:217 的 `RELEASE_TAG#v`），
- * 所以"盘上启动器比清单要求的旧 ⇒ `launcher-incompatible`"意味着
- * 那份更新确实装不上，而该错误码对应的补救（换一份新的完整交付包）也正是对的。
+ * 换成真值以后这道门才**真的**在办事，而且方向是对的："盘上启动器比清单要求的旧
+ * ⇒ `launcher-incompatible`"意味着那份更新确实装不上，而该错误码对应的补救
+ * （换一份新的完整交付包）也正是对的。
+ *
+ * ⚠️ 门槛的**来源**在 2026-09-23 的变量纠偏（`0aa532e2`）里被拆成两个量、两个名字：
+ *   · 门槛 = `manifest.minLauncherVersion` ← `MOFANG_MIN_LAUNCHER_VERSION`
+ *     （**无默认值**，缺失即硬失败；`scripts/make-portable-update.mjs` 的
+ *     `requireMinLauncherVersion()`），语义 = **最老的那个还能装这份更新的启动器**，
+ *     通常就是当前基础包里那把；
+ *   · `MOFANG_LAUNCHER_VERSION` 只表示**本次构建的启动器自己的版本**
+ *     （release.yml 的 `${RELEASE_TAG#v}`）——它**不再**决定门槛。
+ * 两者曾共用一个名字，后果很具体：便携更新**从不更换启动器**（只能人工换基础包），
+ * 于是 0.0.28 那次会把门槛写成 0.0.28、而盘上那把是 0.0.27
+ * ⇒ 0.0.27 → 0.0.28 被 `launcher-incompatible` 挡死，且报错与真因对不上。
  * 硬编码的 '1.0.0' 之所以一直"没事"，只是因为它恰好 >= 真实版本而被蒙过去。
  *
  * ⚠️ 探测失败**不许静默退回某个版本号** —— 那正是这个洞本身。

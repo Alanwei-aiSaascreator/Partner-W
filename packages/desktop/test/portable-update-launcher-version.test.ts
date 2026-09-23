@@ -20,9 +20,11 @@ import {
  * `-X main.version=<MOFANG_LAUNCHER_VERSION>` 注入
  * （`scripts/lib/portable-launcher-build.mjs:49`）。
  *
- * 比"更准"更要紧的一点：发布侧 `scripts/make-portable-update.mjs:55` 把
- * `minLauncherVersion` 也设成**同一个** `MOFANG_LAUNCHER_VERSION`，
- * 所以两侧本来就是同一条版本线 —— 硬编码的 '1.0.0' 只是恰好 >= 真实版本而"过关"。
+ * 比"更准"更要紧的一点：门槛**不**来自"本次发布版本"。以前两者共用一个变量
+ * （都取 `RELEASE_TAG#v`），而便携更新**从不更换启动器** ⇒ 门槛每次发版都被抬到
+ * 本次版本，上一版基础包永远升不上来（2026-09-23 变量纠偏 `0aa532e2` 已拆开：
+ * 门槛取 `MOFANG_MIN_LAUNCHER_VERSION`，**无默认值**、缺失硬失败）。
+ * 硬编码的 '1.0.0' 只是恰好 >= 真实版本而"过关"。
  * 换成真值以后：盘上启动器比清单要求的旧 ⇒ 真的判 `launcher-incompatible`
  * （正确的补救就是那个错误码对应的"换新交付包"）。
  *
