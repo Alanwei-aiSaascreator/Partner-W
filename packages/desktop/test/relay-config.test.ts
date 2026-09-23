@@ -119,7 +119,11 @@ describe('buildRelayPatch', () => {
         defaultModel: 'clawrouter/bailian/deepseek-v4-flash',
       });
 
-      expect((patch as never as { agents?: unknown }).agents).toBeUndefined();
+      // ⚠️ 判据收窄到 `model`（原先是"整个 agents 不出现"）：
+      //    `agents.defaults` 现在还带**联网那张按模型的表**（见文件末尾那组），
+      //    所以"整个 agents 不存在"不再成立 —— 但这条测的**本意**是"不许动 primary"，
+      //    收窄后反而更准：联网表在不在，与"有没有重设用户偏好"是两件事。
+      expect((patch as never as { agents: { defaults: { model?: unknown } } }).agents.defaults.model).toBeUndefined();
     });
 
     it('没解析到模型时不写（宁可让用户自己选，也不写一个猜的 ref）', () => {
@@ -130,7 +134,7 @@ describe('buildRelayPatch', () => {
         defaultModel: null,
       });
 
-      expect((patch as never as { agents?: unknown }).agents).toBeUndefined();
+      expect((patch as never as { agents: { defaults: { model?: unknown } } }).agents.defaults.model).toBeUndefined();
     });
   });
 });
@@ -503,5 +507,65 @@ describe('applyRelayConfig', () => {
     // patchConfig 的入参里必然有 key（那是要写进去的东西），但**日志**里不能有。
     const logged = JSON.stringify(events);
     expect(logged).not.toContain('rly_abc');
+  });
+});
+
+/**
+ * 联网：百炼内置 `enable_search`。
+ *
+ * 通道（读随包运行时确认，`dist/extra-params-*.mjs`）：配置里**只有**
+ * `params.extra_body` 会被 `Object.assign` 合并进真正发出去的 payload
+ * （且必须是普通对象，否则 warn + 忽略）⇒ 裸写 `params.enable_search` 会被**静默丢弃**。
+ * 挂点是**按模型**的：`agents.defaults.models["clawrouter/<model>"].params.extra_body`。
+ *
+ * ⚠️ 只给**支持它的模型**开：对不支持的模型（deepseek / glm / kimi / doubao …）
+ *    百炼是**直接报错** `This model does not support enable_search.`，不是忽略 ——
+ *    所以"全局开"会把不支持的模型全打挂。
+ */
+describe('联网：按模型注入 enable_search', () => {
+  const agentsDefaults = (patch: unknown): { models?: Record<string, unknown>; model?: unknown } =>
+    (patch as { agents: { defaults: Record<string, unknown> } }).agents.defaults;
+
+  it('⭐ 支持的模型（qwen-turbo / qwen-plus）带上 params.extra_body.enable_search', () => {
+    const patch = buildRelayPatch({ relayKey: 'rly_abc', deviceFingerprint: 'fp' });
+
+    const models = agentsDefaults(patch).models as Record<string, { params: Record<string, unknown> }>;
+    expect(models['clawrouter/qwen-turbo'].params).toEqual({ extra_body: { enable_search: true } });
+    expect(models['clawrouter/qwen-plus'].params).toEqual({ extra_body: { enable_search: true } });
+  });
+
+  it('⭐ 只列支持的那几个 —— 多一个都会让上游 400', () => {
+    const patch = buildRelayPatch({ relayKey: 'rly_abc', deviceFingerprint: 'fp' });
+
+    expect(Object.keys(agentsDefaults(patch).models ?? {}).sort()).toEqual([
+      'clawrouter/qwen-plus',
+      'clawrouter/qwen-turbo',
+    ]);
+  });
+
+  it('⭐ 形状必须是 params.extra_body（裸 params.enable_search 会被静默丢掉）', () => {
+    const patch = buildRelayPatch({ relayKey: 'rly_abc', deviceFingerprint: 'fp' });
+
+    const entry = (agentsDefaults(patch).models as Record<string, { params: Record<string, unknown> }>)[
+      'clawrouter/qwen-turbo'
+    ];
+    expect(entry.params).not.toHaveProperty('enable_search');
+    expect(entry.params.extra_body).toEqual({ enable_search: true });
+  });
+
+  it('缺 relayKey 时连这张表都不写（宁可不写，也不写半个配置）', () => {
+    expect(buildRelayPatch({ relayKey: null, deviceFingerprint: 'fp' })).toBeNull();
+  });
+
+  it('与默认模型互不干扰：primary 已设置时，仍然写联网表而不碰 primary', () => {
+    const patch = buildRelayPatch({
+      relayKey: 'rly_abc',
+      deviceFingerprint: 'fp',
+      existingConfig: snapshot({ agents: { defaults: { model: { primary: 'deepseek/deepseek-v4-flash' } } } }),
+      defaultModel: 'clawrouter/bailian/deepseek-v4-flash',
+    });
+
+    expect(agentsDefaults(patch).model).toBeUndefined();
+    expect(Object.keys(agentsDefaults(patch).models ?? {})).toContain('clawrouter/qwen-turbo');
   });
 });

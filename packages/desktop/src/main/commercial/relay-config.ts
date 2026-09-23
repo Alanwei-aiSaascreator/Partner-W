@@ -83,6 +83,40 @@ function configOf(snapshot: unknown): Record<string, unknown> | undefined {
  * 逐条决定（官方文档 `docs/providers/clawrouter.md`）。写死会把「按模型选传输」
  * 压成「整个 provider 一个传输」。测试里有反向断言盯着这条，别加。
  */
+/**
+ * 百炼内置联网搜索（`enable_search`）—— **只有这几个模型能开**。
+ *
+ * 为什么必须是一张**白名单**而不是"全开"：对不支持的模型传这个参数，百炼是
+ * **直接报错** `This model does not support enable_search.`（不是忽略），
+ * 全开等于把 deepseek / glm / kimi / doubao 那些模型一起打挂。
+ * 依据：官方能力表 + 我们自己的目录逐条核过（能支持的是 qwen-max/plus/turbo 一系）。
+ *
+ * ⚠️ 三个**真代价**（2026-09-19 查实，别忘）：
+ *   1. 成本 ≈ **200 倍输入 token**（网页内容会拼进 prompt，按模型标准价计费）；
+ *   2. **15 RPS 限流按阿里云主账号维度**，超限**静默不搜** —— 我们所有用户共用
+ *      一个账号 ⇒ 有人会悄悄搜不到，而日志里一切正常；
+ *   3. 兼容模式**拿不到来源/角标**，也**无法判断是否真的搜了** ⇒ 界面不能显示"已联网"。
+ */
+const ENABLE_SEARCH_MODEL_IDS = ['qwen-turbo', 'qwen-plus'] as const;
+
+/**
+ * 按模型注入联网开关。
+ *
+ * 挂点与形状都是**读随包运行时定的**（`dist/extra-params-*.mjs`）：
+ *   · 只有 `params.extra_body` 会被 `Object.assign(payloadObj, extraBody)` 合并进
+ *     真正发出去的 payload；**裸写 `params.enable_search` 会被静默丢弃**
+ *     （它不在通用 `params` 的转发范围内，而且丢了没有任何报错）；
+ *   · 表按 `clawrouter/<模型 id>` 键控（ref 是**两段**，见本文件顶部那段说明）。
+ */
+function enableSearchModelEntries(): Record<string, { params: { extra_body: { enable_search: true } } }> {
+  return Object.fromEntries(
+    ENABLE_SEARCH_MODEL_IDS.map((id) => [
+      `${RELAY_PROVIDER_ID}/${id}`,
+      { params: { extra_body: { enable_search: true } } },
+    ]),
+  );
+}
+
 export function buildRelayPatch(input: RelayPatchInput): RelayConfigPatch | null {
   // 没有 key 就不写：写一个空 apiKey 会让网关去调一个必然 401 的地址，
   // 用户看到的是一堆失败的模型调用，比「没配置」更难排查。
@@ -121,9 +155,12 @@ export function buildRelayPatch(input: RelayPatchInput): RelayConfigPatch | null
   // 激活是「新增能力」，不该是「重设用户偏好」——用户已经选过的模型不动。
   const primary = (config?.agents as { defaults?: { model?: { primary?: unknown } } } | undefined)?.defaults?.model
     ?.primary;
+
+  const agentsDefaults: Record<string, unknown> = { models: enableSearchModelEntries() };
   if (!primary && input.defaultModel) {
-    patch.agents = { defaults: { model: { primary: input.defaultModel } } };
+    agentsDefaults.model = { primary: input.defaultModel };
   }
+  patch.agents = { defaults: agentsDefaults };
 
   return patch;
 }
