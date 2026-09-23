@@ -32,7 +32,7 @@
 {
   "tools": {
     "fs": { "workspaceOnly": true },
-    "exec": { "mode": "ask", "askFallback": "deny" },
+    "exec": { "mode": "ask" },
     "elevated": { "enabled": false }
   }
 }
@@ -46,9 +46,11 @@
 - **always-ensure，不是 only-fill**：用户若显式设过 `workspaceOnly:false` / `mode:"full"`，会被**改回**红线值。
   理由：这是产品红线、不是偏好项。这条语义必须有按名测试钉住；将来若要开放成设置项，改的就是这里。
 - **不写 legacy**：只写 `exec.mode`，不写 `security`/`ask`（F8）。
-- `askFallback` 显式钉 `deny`（F7 的默认本来就是 deny）。写出来是把 fail-closed **显式化**，
-  防止某台机器上的旧 approvals 配置把它放宽；⚠️ 若该键在本版本的 `tools.exec` 下不被识别，
-  效果退化为"用默认值 deny"——**等价**，但要在实现时实测一次（别把"写了"当成"生效了"）。
+- ⚠️⚠️ **不写 `askFallback`**。设计初稿要写它（把 fail-closed 显式化），**静态探针实测证明那是错的**：
+  该键**不在 `openclaw.json` 的 `tools.exec` schema 里**，写进去会让**整份配置被判非法** ——
+  `config get tools` ⇒ `cli_error: OpenClaw config is invalid` + `Unrecognized key: "askFallback"`。
+  审批通道不可达时默认就是 deny（F7），所以**不写 = 用默认值、语义不变**。
+  该键属于**审批存储**那一侧，不是 `openclaw.json` 的 `tools` 段。
 
 ### 2.2 存量用户路径（最容易漏的一刀）
 
@@ -94,6 +96,9 @@
 - 本闸门只管 **fs 三工具 + exec**；`sftp` 等其它工具链不在内。
 - 本设计**不解释**那次桌面文件到底是 fs 还是 shell 写的（等真盘取证）；因此按"两条都堵"取最大交集。
 - `workspaceOnly` 下附件（media cache）与技能路径是否仍可读写：**未验**，见 §5.2。
+- **`askFallback` 无法由我们的配置钉住**（不在 `tools.exec` schema 里，写了整份配置非法 ⇒ 见 §2.1）：
+  它留在**审批存储**那一侧、默认 deny。将来若要显式钉死（防止某台机器的存储里被改成 `full`），
+  必须走审批存储的接口，且**先在真运行时验一次**。
 
 ## 5. 验收
 
@@ -106,12 +111,19 @@
 5. 用户显式 `workspaceOnly:false` / `exec.mode:"full"` ⇒ 被改回红线值（always-ensure 语义）。
 6. 以上每一条都要配**一条实跑的变异读数**（删合并 / 删提前返回判据 / `true`→`false` / 混写 legacy ⇒ 各自按名变红）。
 
-### 5.2 真运行时（唯一真证据；先做可行性探针，再决定进 CI 还是手工）
+### 5.2 真运行时（唯一真证据；分两级）
+
+**静态级 —— ✅ 已做（2026-09-23，真运行时 CLI）**：把合并后的配置写进临时 state，让运行时自己读回 ⇒
+`tools.fs.workspaceOnly: true` / `tools.exec.mode: "ask"` / `tools.elevated.enabled: false`
+**三条原样读回**；同一次探针**抓到** `askFallback` 会让整份配置被判非法（见 §2.1）。
+⚠️ 这证明的是"**运行时认得这些键**"，**不是**"行为上真的拦住了" —— 后者是下面那条。
+
+**行为级 —— 未做**：
 
 - 让真网关的 agent `write` 到 `%USERPROFILE%\Desktop\<probe>` ⇒ **被拒**。
 - 让 agent 跑一条 shell 命令 ⇒ **出现审批请求**；断开审批通道 ⇒ **被拒**（fail-closed）。
-- 同一次探针里顺带验 §4 最后一条（附件/media 在 `workspaceOnly` 下仍可读）。
-- 探针不可自动化 ⇒ 退化为"配置断言 + 手册里的手工验收步骤"，并**明说不算证据**。
+- 同一次探针里顺带验 §4 的未验项（附件/media 在 `workspaceOnly` 下是否仍可读；`askFallback` 在审批存储里的实际取值）。
+- 跑不通 ⇒ 把手工验收步骤写进计划账本，并**明说不算证据**。
 
 ## 6. 落点
 

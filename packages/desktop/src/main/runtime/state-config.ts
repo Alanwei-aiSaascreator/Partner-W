@@ -197,10 +197,15 @@ export function hasMemoryToolsDenied(raw: unknown): boolean {
  *
  * ⚠️ `exec.mode` 是**规范键**；旧写法 `security`/`ask` 与它**不能并存**（混合策略会被运行时拒绝），
  *    所以 `mergeToolsDefaults` 在写 `mode` 时必须把同对象的 `security`/`ask` 移掉。
+ *
+ * ⚠️⚠️ **不要往这里加 `askFallback`**：实测（2026-09-23，真运行时 CLI）它**不在
+ *    `tools.exec` 的 schema 里**，写进去会让**整份配置被判非法**：
+ *    `config get tools` ⇒ `cli_error: OpenClaw config is invalid` + `Unrecognized key: "askFallback"`。
+ *    审批通道不可达时的默认行为本来就是 **deny**（文档 + 实现），所以不写它 = 用默认值，语义不变。
+ *    （那个键属于**审批存储**那一侧，不是 openclaw.json 的 tools 段。）
  */
 export const TOOL_GUARD_FS_WORKSPACE_ONLY = true;
 export const TOOL_GUARD_EXEC_MODE = 'ask';
-export const TOOL_GUARD_EXEC_ASK_FALLBACK = 'deny';
 export const TOOL_GUARD_ELEVATED_ENABLED = false;
 
 /** 从（任意的）配置里挖出 `tools.fs.workspaceOnly`；不是布尔则 null。 */
@@ -272,7 +277,8 @@ export function mergeToolsDefaults(existing: Record<string, unknown> | null): Re
     ...tools,
     deny: [...new Set([...deny, ...MEMORY_TOOLS_DENIED])],
     fs: { ...fsSection, workspaceOnly: TOOL_GUARD_FS_WORKSPACE_ONLY },
-    exec: { ...execRest, mode: TOOL_GUARD_EXEC_MODE, askFallback: TOOL_GUARD_EXEC_ASK_FALLBACK },
+    // ⚠️ 只写 `mode`：**不要**加 `askFallback`（见上面常量处的实测）。
+    exec: { ...execRest, mode: TOOL_GUARD_EXEC_MODE },
     elevated: { ...elevatedSection, enabled: TOOL_GUARD_ELEVATED_ENABLED },
   };
 }

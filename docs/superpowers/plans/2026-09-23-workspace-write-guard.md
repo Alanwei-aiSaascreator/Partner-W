@@ -72,7 +72,7 @@ git commit -m "docs(security): record the preflight on non-interactive exec path
 - Modify: `packages/desktop/src/main/runtime/state-config.ts`（`mergeToolsDefaults` 在 `:201`；新增常量与谓词挨着 `readToolsDeny` 放，`:176-205` 那一带）
 - Test: `packages/desktop/test/runtime-state-config.test.ts`（新增 describe 块；**并把 `:99-103` 那条整对象断言补全**）
 
-- [ ] **Step 1: 写会红的测试**
+- [x] **Step 1: 写会红的测试**
 
 在 `runtime-state-config.test.ts` 里（`tools.deny` 那个 describe 之后）新增：
 
@@ -90,7 +90,7 @@ describe('红线：工具闸门（写不出工作区 + 工作区外先问）', (
     const raw = JSON.parse(fs.readFileSync(res.configPath, 'utf-8'));
 
     expect(raw.tools.fs).toEqual({ workspaceOnly: true });
-    expect(raw.tools.exec).toEqual({ mode: 'ask', askFallback: 'deny' });
+    expect(raw.tools.exec).toEqual({ mode: 'ask' });
     expect(raw.tools.elevated).toEqual({ enabled: false });
   });
 });
@@ -105,13 +105,13 @@ expect(raw).toEqual({
   tools: {
     deny: ['memory_search', 'memory_get'],
     fs: { workspaceOnly: true },
-    exec: { mode: 'ask', askFallback: 'deny' },
+    exec: { mode: 'ask' },
     elevated: { enabled: false },
   },
 });
 ```
 
-- [ ] **Step 2: 实跑，确认它红**
+- [x] **Step 2: 实跑，确认它红**
 
 ```bash
 cd packages/desktop && ./node_modules/.bin/vitest run test/runtime-state-config.test.ts
@@ -119,7 +119,7 @@ cd packages/desktop && ./node_modules/.bin/vitest run test/runtime-state-config.
 
 Expected: FAIL —— 首跑那条报 `raw.tools.fs` 是 `undefined`；整对象断言那条也会红。
 
-- [ ] **Step 3: 最小实现**
+- [x] **Step 3: 最小实现**
 
 在 `state-config.ts` 的 `readToolsDeny`/`hasMemoryToolsDenied` 一带加常量与谓词（**放在 `mergeToolsDefaults` 之前**）：
 
@@ -132,7 +132,6 @@ Expected: FAIL —— 首跑那条报 `raw.tools.fs` 是 `undefined`；整对象
  */
 export const TOOL_GUARD_FS_WORKSPACE_ONLY = true;
 export const TOOL_GUARD_EXEC_MODE = 'ask';
-export const TOOL_GUARD_EXEC_ASK_FALLBACK = 'deny';
 export const TOOL_GUARD_ELEVATED_ENABLED = false;
 
 /** 从（任意的）配置里挖出 `tools.fs.workspaceOnly`；不是布尔则 null。 */
@@ -204,13 +203,13 @@ export function mergeToolsDefaults(existing: Record<string, unknown> | null): Re
     ...tools,
     deny: [...new Set([...deny, ...MEMORY_TOOLS_DENIED])],
     fs: { ...fsSection, workspaceOnly: TOOL_GUARD_FS_WORKSPACE_ONLY },
-    exec: { ...execRest, mode: TOOL_GUARD_EXEC_MODE, askFallback: TOOL_GUARD_EXEC_ASK_FALLBACK },
+    exec: { ...execRest, mode: TOOL_GUARD_EXEC_MODE },
     elevated: { ...elevatedSection, enabled: TOOL_GUARD_ELEVATED_ENABLED },
   };
 }
 ```
 
-- [ ] **Step 4: 实跑，确认全绿**
+- [x] **Step 4: 实跑，确认全绿**
 
 ```bash
 cd packages/desktop && ./node_modules/.bin/vitest run test/runtime-state-config.test.ts
@@ -218,7 +217,7 @@ cd packages/desktop && ./node_modules/.bin/vitest run test/runtime-state-config.
 
 Expected: PASS（这一轮**只有**新增那条 + 改过的整对象断言会变绿；其余原样）。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add packages/desktop/src/main/runtime/state-config.ts packages/desktop/test/runtime-state-config.test.ts
@@ -234,7 +233,7 @@ git commit -m "feat(security): write the workspace write guard into the runtime 
 - Modify: `packages/desktop/src/main/runtime/state-config.ts:293-301`（提前返回条件）
 - Test: `packages/desktop/test/runtime-state-config.test.ts`
 
-- [ ] **Step 1: 写会红的测试**
+- [x] **Step 1: 写会红的测试**
 
 ```ts
 it('⭐ 存量用户（token/memory/deny 都早就对了）也必须补上 —— 提前返回不能漏了它', () => {
@@ -261,7 +260,7 @@ it('⭐ 存量用户（token/memory/deny 都早就对了）也必须补上 —�
 });
 ```
 
-- [ ] **Step 2: 实跑，确认它红**
+- [x] **Step 2: 实跑，确认它红**
 
 ```bash
 cd packages/desktop && ./node_modules/.bin/vitest run test/runtime-state-config.test.ts -t "存量用户"
@@ -269,7 +268,7 @@ cd packages/desktop && ./node_modules/.bin/vitest run test/runtime-state-config.
 
 Expected: FAIL —— `raw.tools.fs` 是 `undefined`（提前返回跳过了写盘）。
 
-- [ ] **Step 3: 最小实现**
+- [x] **Step 3: 最小实现**
 
 在提前返回条件里加一项（`state-config.ts:293-301`）：
 
@@ -286,7 +285,7 @@ if (
 }
 ```
 
-- [ ] **Step 4: 实跑，确认全绿**
+- [x] **Step 4: 实跑，确认全绿**
 
 ```bash
 cd packages/desktop && ./node_modules/.bin/vitest run test/runtime-state-config.test.ts
@@ -294,7 +293,7 @@ cd packages/desktop && ./node_modules/.bin/vitest run test/runtime-state-config.
 
 Expected: PASS。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add packages/desktop/src/main/runtime/state-config.ts packages/desktop/test/runtime-state-config.test.ts
@@ -307,7 +306,7 @@ git commit -m "fix(security): let existing installs receive the workspace write 
 
 **Files:** Test: `packages/desktop/test/runtime-state-config.test.ts`（同一个 describe 块内）
 
-- [ ] **Step 1: 写四条测试**
+- [x] **Step 1: 写四条测试**
 
 ```ts
 it('用户自己的其它 tools/exec 键不被覆盖', () => {
@@ -375,7 +374,7 @@ it('已有 legacy security/ask ⇒ 写 mode 时移除它们（混合策略会被
   ensureStateConfig(userDataDir);
 
   const raw = JSON.parse(fs.readFileSync(stateConfigPath(stateDir), 'utf-8'));
-  expect(raw.tools.exec).toEqual({ strictInlineEval: true, mode: 'ask', askFallback: 'deny' });
+  expect(raw.tools.exec).toEqual({ strictInlineEval: true, mode: 'ask' });
   expect(raw.tools.exec.security).toBeUndefined();
   expect(raw.tools.exec.ask).toBeUndefined();
 });
@@ -391,7 +390,7 @@ it('幂等：连跑两次，文件字节不变', () => {
 });
 ```
 
-- [ ] **Step 2: 实跑四条**
+- [x] **Step 2: 实跑四条**
 
 ```bash
 cd packages/desktop && ./node_modules/.bin/vitest run test/runtime-state-config.test.ts
@@ -399,7 +398,7 @@ cd packages/desktop && ./node_modules/.bin/vitest run test/runtime-state-config.
 
 Expected: 全绿。**若"用户显式 false 被改回"那条红** ⇒ 说明合并写成了 only-fill（`??` 而不是覆盖），按 Task 2 的实现改回来。
 
-- [ ] **Step 3: 提交**
+- [x] **Step 3: 提交**
 
 ```bash
 git add packages/desktop/test/runtime-state-config.test.ts
@@ -412,7 +411,7 @@ git commit -m "test(security): pin preserve, override, legacy and idempotence fo
 
 **Files:** 临时装置落仓库外（`$TEMP/guard-mutate.mjs`），**不进仓库**。
 
-- [ ] **Step 1: 写装置（落仓库外）**
+- [x] **Step 1: 写装置（落仓库外）**
 
 `$TEMP/guard-mutate.mjs`：
 
@@ -468,7 +467,7 @@ SC=packages/desktop/src/main/runtime/state-config.ts
 node "$TEMP/guard-mutate.mjs" "$SC" 'workspaceOnly: TOOL_GUARD_FS_WORKSPACE_ONLY' 'workspaceOnly: false'
 ```
 
-- [ ] **Step 2: 实跑五条，逐条记录读数**
+- [x] **Step 2: 实跑五条，逐条记录读数**
 
 | #      | 变异（锚点）                                                                                   | 预期红（按测试名）                                       |
 | ------ | ---------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
@@ -480,7 +479,7 @@ node "$TEMP/guard-mutate.mjs" "$SC" 'workspaceOnly: TOOL_GUARD_FS_WORKSPACE_ONLY
 
 **每条都要写"实跑读数"，不许照抄上表**；读数与预期不符 ⇒ 先查装置（锚点是否唯一、是否真的还原），再查代码。
 
-- [ ] **Step 3: 确认工作树干净**
+- [x] **Step 3: 确认工作树干净**
 
 ```bash
 git status --short   # 必须是空的
@@ -513,7 +512,7 @@ Expected: `GATE_EXIT=0`。⚠️ **别用管道**；失败要先分清是"环境
 
 **Files:** 只读。
 
-- [ ] **Step 1: 审批弹窗**
+- [x] **Step 1: 审批弹窗**
 
 ```bash
 cd "/d/Desktop/new project/mofang-compass/mofang-compass-desktop/.worktrees/fix-local-credential-exposure"
@@ -524,7 +523,7 @@ grep -rn "approval\." packages/desktop/src/renderer/i18n 2>/dev/null | head -10
 要看：显示的是命令什么部分（`commandPreview`?）、有没有"允许一次 / 始终允许 / 拒绝"三档、拒绝是否可达。
 **把看到的三点写进账本**（命令摘要字段名、三档是否存在、文案 key）。
 
-- [ ] **Step 2: 导出出口**
+- [x] **Step 2: 导出出口**
 
 ```bash
 grep -rn "artifact:copy\|copyArtifactToDestination\|另存\|save-as\|saveAs" packages/desktop/src/renderer --include=*.ts --include=*.tsx | head -15
@@ -541,7 +540,7 @@ grep -rn "artifact:copy\|copyArtifactToDestination\|另存\|save-as\|saveAs" pac
 
 **Files:** 探针落仓库外（`$TEMP/guard-probe/`）。
 
-- [ ] **Step 1（静态，便宜且决定性）：运行时**自己**读出这三个键**
+- [x] **Step 1（静态，便宜且决定性）：运行时**自己**读出这三个键**
 
 用真运行时的 CLI 对着"我们合并出来的那份配置"读回键值。这一步能抓到两类单测抓不到的事：
 配置被运行时**拒绝**（键不存在 / 格式不对），或**写进去的键不是它认的那个**（例如 `askFallback` 不被识别）。
@@ -558,6 +557,10 @@ OPENCLAW_STATE_DIR="$PROBE/state" node "$R/openclaw.mjs" config get tools.elevat
 
 （入口文件名以 `$R` 下实际存在的 CLI 入口为准；先 `ls "$R" | grep -i "mjs\|bin"` 确认。）
 **判据：** 三条都能读出我们写的值；`tools.exec` 里 `askFallback` 若读不出来 ⇒ 在设计文档 §2.1 把那句"显式钉"改成"依赖默认值"，并写明实测。
+
+**✅ 实际结果（2026-09-23 实跑，见账本）：** 三条闸门**原样读回**；而 `askFallback` **比预判更糟** ——
+不是"读不出来"，是**整份配置被判非法**（`Unrecognized key: "askFallback"`）⇒ 已从实现里**移除**，
+设计文档 §2.1/§4 同步改过。入口是 `openclaw.mjs`（实测）；⚠️ 给 node.exe 传路径要用 `cygpath -w`。
 
 - [ ] **Step 2（行为，贵）：桩模型 + 真网关，写桌面必须被拒**
 
@@ -582,7 +585,7 @@ OPENCLAW_STATE_DIR="$PROBE/state" node "$R/openclaw.mjs" config get tools.elevat
 
 ### Task 9: 收口
 
-- [ ] **Step 1: 更新设计文档的状态段**（§4/§5.2 的"未验"逐条改成"已验 + 读数"或保留"未验"）
+- [x] **Step 1: 更新设计文档的状态段**（§4/§5.2 的"未验"逐条改成"已验 + 读数"或保留"未验"）
 - [ ] **Step 2: 更新记忆**：`no-writes-outside-the-workspace`（状态：已拍未实施 ⇒ 已实施 + 提交号）、`resume-here`
 - [ ] **Step 3: 向用户汇报**：三条闸门的确切值、存量用户判据、变异读数、探针结论（含"未验"的部分要明说）
 
@@ -623,3 +626,68 @@ fail-closed 语义、不是回归；④"始终允许"能按 job 预授权，用�
 - 用户自建的**定时任务在 App 关闭时**若需要跑 shell，会**被拒并给出原因**（今天是能跑的）。
 - 运行时 agent 心跳回合里的 shell 同理。
   ⇒ 登记为**后续文案/手册项**（不是本期的代码任务）。
+
+### Task 2–5 落地与读数（2026-09-23）
+
+**测试名字级读数**（跑法：`cd packages/desktop && ./node_modules/.bin/vitest run test/runtime-state-config.test.ts`）
+
+| 时点                           | 实跑读数                                  | 红名单（按名）                                                                                           |
+| ------------------------------ | ----------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| Task 2 Step 2（实现前）        | `2 failed \| 28 passed (30)`              | `首跑：建 openclaw.json，token 是 32 字节的 base64url`；`首跑就带上三个闸门，且不写 legacy security/ask` |
+| Task 2 Step 4（实现后）        | `30 passed (30)`                          | —                                                                                                        |
+| Task 3 Step 2（`-t 存量用户`） | `1 failed \| 2 passed \| 28 skipped (31)` | `⭐ 存量用户（token/memory/deny 都早就对了）也必须补上`（另两条同名过滤命中的是 memory/deny 那两条，绿） |
+| Task 3 Step 4                  | `31 passed (31)`                          | —                                                                                                        |
+| Task 4                         | `35 passed (35)`                          | —（+4 条）                                                                                               |
+
+**变异读数（第二纪元：`askFallback` 移除之后）** —— 装置 `$TEMP/guard-mutate.mjs`，每条都 `RESTORE_SHA256_EQUAL=true`：
+
+| #      | 变异                                                         | 实跑读数                     | 与计划的差                                                                   |
+| ------ | ------------------------------------------------------------ | ---------------------------- | ---------------------------------------------------------------------------- |
+| M1     | `workspaceOnly: true` ⇒ `false`                              | `4 failed \| 31 passed (35)` | 计划写 3 条 ⇒ 实测 4 条（整对象快照那条也钉着它）                            |
+| M2     | 删提前返回里的 `hasToolGuard(existing) &&`                   | `4 failed \| 31 passed (35)` | 计划写"只有存量那条" ⇒ 实测 4 条（那三条的夹具**也是**"已经一致"的存量配置） |
+| M3     | 删 `delete execRest.security/ask` 两行                       | `1 failed \| 34 passed (35)` | 与计划一致（只有 legacy 那条）                                               |
+| M4     | `mode` `'ask'` ⇒ `'full'`                                    | `6 failed \| 29 passed (35)` | 计划写 2 条 ⇒ 实测 6 条                                                      |
+| M-CTRL | `[...new Set(...)]` ⇒ `Array.from(new Set(...))`（等价重写） | `35 passed`（0 红）          | 与计划一致 ⇒ 上面那批红是真信号                                              |
+
+**⚠️ M4 的第一次读数是"空"（本刀最值得记的一次）**：移除 `askFallback` 后那一行变成
+`exec: { ...execRest, mode: TOOL_GUARD_EXEC_MODE },` ⇒ 旧锚点 `mode: TOOL_GUARD_EXEC_MODE,`
+**不再是文件里的子串** ⇒ 装置拒跑（`ANCHOR_HITS=0`），而我把 stderr 重定向掉了 ⇒ 看到的是**空读数**。
+⭐ **空读数与"变异存活"长得一模一样** ⇒ 纪律：装置拒跑必须在**可见通道**留痕；拿到空读数先查装置，别当结论。
+
+**装置自身的一处修正**：读汇总前先剥 ANSI（`Tests` 后面插着颜色码 ⇒ `/Tests\s+\d/` 匹配不到，
+读数会变成空串）。计划里的草稿没有这一步。
+
+### Task 6 门禁读数
+
+⬜ 已启动（`pnpm check`，`export PATH="/d/go-toolchain/go/bin:$PATH"`，重定向取 RC）—— **读数待回填**。
+
+### Task 7 客户端配套确认（只读，✅）
+
+- **审批弹窗**（`src/renderer/components/ApprovalDialog.tsx`）：显示 **`request.command`（完整命令）** + `cwd` + `host`；
+  三档**都在**（`deny`＝危险按钮 / `allow-always` / `allow-once`）；120 秒倒计时 + 进度条；模态（禁 outside-click 与 Esc）；
+  多条排队时显示剩余条数。文案 key 前缀 `approval.*`。
+- **T7-F1（登记，非本期修）**：弹窗**无条件**渲染"始终允许"，**从不读**运行时给的
+  `allowedDecisions` / `unavailableDecisions`（载荷里**有**这两个字段）⇒ 在 `ask:"always"` 或一次性场景下
+  运行时会把它放进 unavailable 集，用户仍能看到并点它（点了不生效）。**不是本刀引入的**，
+  但本刀让这个弹窗出现得更频繁 ⇒ 登记。
+- **导出出口存在且端到端接好**：`ArtifactCard.tsx:135-143`（"另存为"）→ preload `artifact:save-as`
+  （`preload/index.ts:162`）→ main `artifact-handlers.ts:109` → `dialog.showSaveDialog`（**用户显式选落点**）
+  → `copyArtifactToDestination`。⇒ 硬闸不会让用户拿不到产物。
+
+### Task 8 静态级探针（✅ 已做，2026-09-23）
+
+命令（真运行时 CLI、临时 state、**无服务器、无端口**）：
+
+```bash
+R=".../node_modules/openclaw"
+CLI="$(cygpath -w "$R/openclaw.mjs")"           # ⚠️ 给 node.exe 传路径必须 cygpath -w，POSIX 路径会 MODULE_NOT_FOUND
+STATE="$(cygpath -w "$TEMP/guard-probe/state")"
+OPENCLAW_STATE_DIR="$STATE" node "$CLI" config get tools --json
+```
+
+读数：`tools.fs` ⇒ `{"workspaceOnly":true}`、`tools.exec` ⇒ `{"mode":"ask"}`、
+`tools.elevated` ⇒ `{"enabled":false}` —— **三条原样读回**；
+带 `askFallback` 的那版 ⇒ `cli_error: OpenClaw config is invalid` + `Unrecognized key: "askFallback"`。
+
+⚠️ 本探针的 state 文件是**手写**成"测试钉住的那份合并输出"的字节（不是拿客户端代码生成的）。
+它证明的是"**运行时认得这三个键、且不拒收**"，**不是**行为上真的拦住了 —— 行为级（Task 8 Step 2）**仍未做**。

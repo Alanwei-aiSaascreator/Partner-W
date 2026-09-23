@@ -102,7 +102,7 @@ describe('ensureStateConfig', () => {
       tools: {
         deny: ['memory_search', 'memory_get'],
         fs: { workspaceOnly: true },
-        exec: { mode: 'ask', askFallback: 'deny' },
+        exec: { mode: 'ask' },
         elevated: { enabled: false },
       },
     });
@@ -313,7 +313,7 @@ describe('红线：工具闸门（写不出工作区 + 工作区外先问）', (
     const raw = JSON.parse(fs.readFileSync(res.configPath, 'utf-8'));
 
     expect(raw.tools.fs).toEqual({ workspaceOnly: true });
-    expect(raw.tools.exec).toEqual({ mode: 'ask', askFallback: 'deny' });
+    expect(raw.tools.exec).toEqual({ mode: 'ask' });
     expect(raw.tools.elevated).toEqual({ enabled: false });
   });
 
@@ -408,7 +408,7 @@ describe('红线：工具闸门（写不出工作区 + 工作区外先问）', (
     ensureStateConfig(userDataDir);
 
     const raw = JSON.parse(fs.readFileSync(stateConfigPath(stateDir), 'utf-8'));
-    expect(raw.tools.exec).toEqual({ strictInlineEval: true, mode: 'ask', askFallback: 'deny' });
+    expect(raw.tools.exec).toEqual({ strictInlineEval: true, mode: 'ask' });
     expect(raw.tools.exec.security).toBeUndefined();
     expect(raw.tools.exec.ask).toBeUndefined();
   });
