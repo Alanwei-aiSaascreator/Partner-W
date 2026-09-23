@@ -316,6 +316,29 @@ describe('红线：工具闸门（写不出工作区 + 工作区外先问）', (
     expect(raw.tools.exec).toEqual({ mode: 'ask', askFallback: 'deny' });
     expect(raw.tools.elevated).toEqual({ enabled: false });
   });
+
+  it('⭐ 存量用户（token/memory/deny 都早就对了）也必须补上 —— 提前返回不能漏了它', () => {
+    // 与 memory / deny 那两条同源的坑：这条提前返回是**存量用户每次启动的必经之路**。
+    // 判据里漏了闸门 ⇒ token 本来就对的用户（包括用户那块 U 盘）**永远拿不到**。
+    const stateDir = stateDirFor(userDataDir);
+    fs.mkdirSync(stateDir, { recursive: true });
+    const first = ensureStateConfig(userDataDir);
+
+    // 模拟"这一版修复之前写下的文件"：token 对、memory 与 deny 都设过，但没有闸门
+    const cfg = JSON.parse(fs.readFileSync(stateConfigPath(stateDir), 'utf-8'));
+    delete cfg.tools.fs;
+    delete cfg.tools.exec;
+    delete cfg.tools.elevated;
+    fs.writeFileSync(stateConfigPath(stateDir), JSON.stringify(cfg));
+
+    ensureStateConfig(userDataDir);
+
+    const raw = JSON.parse(fs.readFileSync(stateConfigPath(stateDir), 'utf-8'));
+    expect(raw.gateway.auth.token).toBe(first.token); // token 不许漂
+    expect(raw.tools.fs).toEqual({ workspaceOnly: true });
+    expect(raw.tools.exec.mode).toBe('ask');
+    expect(raw.tools.elevated.enabled).toBe(false);
+  });
 });
 
 describe('ensureClientGatewayEntry', () => {

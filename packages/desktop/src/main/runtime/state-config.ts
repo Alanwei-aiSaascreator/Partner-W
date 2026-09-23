@@ -360,14 +360,15 @@ export function ensureStateConfig(
   // ⚠️ "一致"必须**含**记忆默认值：这条提前返回是存量用户的必经之路（他们的 token
   //    本来就是对的），只看 token 的话 `memory.search.provider` 永远补不上 ——
   //    那正是"对用户机器无效"的那一版修法。token 对 + 记忆段已设 ⇒ 才真的不写。
-  // ⚠️ "一致"必须**同时**含记忆默认值与工具 deny：这条提前返回是存量用户每次启动的
-  //    必经之路（他们的 token 本来就是对的）。漏掉任一项 ⇒ 对用户那台机器完全无效，
-  //    症状原样还在（memory 那条当初就是这么栽的）。
+  // ⚠️ "一致"必须**同时**含记忆默认值、工具 deny 与**红线闸门**：这条提前返回是存量用户
+  //    每次启动的必经之路（他们的 token 本来就是对的）。漏掉任一项 ⇒ 对用户那台机器
+  //    完全无效，症状原样还在（memory 那条当初就是这么栽的）。
   if (
     existingToken === store.token &&
     existing &&
     readMemorySearchProvider(existing) !== null &&
     hasMemoryToolsDenied(existing) &&
+    hasToolGuard(existing) &&
     (!splitState || hasPortableBootstrapDisabled(existing))
   ) {
     return { token: store.token, created: false, configPath, stateDir };
