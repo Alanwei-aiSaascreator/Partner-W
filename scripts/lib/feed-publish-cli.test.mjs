@@ -490,7 +490,13 @@ test('a commit reaches sftp with one batch file per upload, each holding exactly
     cliModule.createFeedTransport({
       ...input,
       execFile: async (command, args) => {
-        if (command !== 'sftp') return { status: 0, stdout: '', stderr: '' };
+        if (command !== 'sftp') {
+          const script = args[args.length - 1];
+          if (typeof script === 'string' && script.startsWith('if [ -L ')) {
+            return { status: 0, stdout: 'absent\n', stderr: '' };
+          }
+          return { status: 0, stdout: '', stderr: '' };
+        }
         const batchFile = args[args.indexOf('-b') + 1];
         batches.push({ batchFile, content: fsModule.readFileSync(batchFile, 'utf8') });
         return { status: 0, stdout: '', stderr: '' };
@@ -1024,6 +1030,7 @@ function makeRetryHarness(paths) {
       if (script.includes('-printf')) {
         return { status: 0, stdout: script.includes('/staging/') ? listing : '', stderr: '' };
       }
+      if (script.startsWith('if [ -L ')) return { status: 0, stdout: 'absent\n', stderr: '' };
       if (script.startsWith('if [ -d ')) {
         return { status: 0, stdout: script.includes('/staging/') ? 'present\n' : '', stderr: '' };
       }

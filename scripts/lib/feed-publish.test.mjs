@@ -14,7 +14,10 @@ import {
   assertKnownHostsPath,
   assertNotReusedManifest,
   buildStableManifestInput,
+  classifyStagingTargetProbe,
+  decideStagingUpload,
   parsePublishInput,
+  stagingTargetProbeScript,
   verifyLocalArtifacts,
 } from './feed-publish.mjs';
 
@@ -1428,6 +1431,12 @@ function commitTransport(options = {}) {
             ? { status: 1, stdout: '', stderr: 'no such file' }
             : { status: 0, stdout: ownerJson, stderr: '' };
         }
+        if (request.script.startsWith('if [ -L ')) {
+          const answer =
+            typeof options.stagingProbe === 'function' ? options.stagingProbe(request.script) : options.stagingProbe;
+          if (answer !== undefined && typeof answer === 'object' && answer !== null) return answer;
+          return { status: 0, stdout: `${answer ?? 'absent'}\n`, stderr: '' };
+        }
         if (request.script.includes('-mindepth 1 -maxdepth 1 -printf')) {
           if (typeof options.listingStatus === 'number' && options.listingStatus !== 0) {
             return { status: options.listingStatus, stdout: 'find: Permission denied\n', stderr: '' };
@@ -1599,7 +1608,7 @@ function commitTransport(options = {}) {
         return { status: 0, stdout: '', stderr: '' };
       },
       sftpUpload: async (request) => {
-        calls.push(['sftpUpload', request.localPath, request.remotePath]);
+        calls.push(['sftpUpload', request.localPath, request.remotePath, request.resume === true]);
         if (options.uploadStatus !== undefined && !request.localPath.includes('manifest.json')) {
           return { status: options.uploadStatus, bytesSent: 0, stderr: 'connection lost' };
         }
@@ -1714,7 +1723,7 @@ const WRITE_SCRIPT_PATTERNS = [
   /^mv /u,
   /^for f in /u,
 ];
-const READ_SCRIPT_PATTERNS = [/^stat -c /u, /^LC_ALL=C cat /u, /^if \[ -d /u, /^sha256sum /u];
+const READ_SCRIPT_PATTERNS = [/^stat -c /u, /^LC_ALL=C cat /u, /^if \[ -d /u, /^if \[ -L /u, /^sha256sum /u];
 
 function sshFaceOf(script) {
   const writes = WRITE_SCRIPT_PATTERNS.filter((pattern) => pattern.test(script)).length;
@@ -1914,9 +1923,13 @@ test('every upload of one run reaches sftp through a batch file that holds exact
     run.capture.batches.map((batch) => batch.host),
     [HOST, HOST, HOST],
   );
-  assert.equal(run.capture.batches[0].content.startsWith('reput '), true);
+  assert.equal(
+    run.capture.batches[0].content.startsWith('put '),
+    true,
+    'a first upload must not ask sftp to resume a target that does not exist yet',
+  );
   assert.equal(run.capture.batches[0].content.includes(`${stagingRoot}/portable.zip.part`), true);
-  assert.equal(run.capture.batches[1].content.startsWith('reput '), true);
+  assert.equal(run.capture.batches[1].content.startsWith('put '), true);
   assert.equal(run.capture.batches[1].content.includes(`${stagingRoot}/portable-files.json.part`), true);
   assert.equal(run.capture.batches[2].content.startsWith('put '), true);
   assert.equal(run.capture.batches[2].content.includes(`${UPDATE_ROOT}/internal/manifest.json.r1.tmp`), true);
@@ -3334,5 +3347,190 @@ test('a version flag that is given to a mode that does not need one is still che
   assert.throws(
     () => parsePublishInput({ channel: 'internal', version: 'banana', needsNetwork: false, versionRequired: false }),
     /version must be a strict semantic version/u,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// 首次上传必须是 put（2026-09-24 首次真实发布暴露的缺陷）
+//
+// 真实事故：`sftpUpload({resume:true})` 在任何情况下都发 `reput`，而 sftp 的
+// `reput` 对**不存在的远端文件**会报 `stat remote: No such file or directory`
+// 并以非零码退出；`sftp -b` 批量模式遇错即中止 ⇒ **首次发布必然失败**。
+// 修法：上传前先**正面探测**远端目标，再决定 put / reput / 拒绝。
+// ---------------------------------------------------------------------------
+
+const probeOf = (stdout, status = 0, stderr = '') => ({ status, stdout, stderr });
+
+test('the staging probe script asks the remote shell to affirm a missing target before anything else', () => {
+  const script = stagingTargetProbeScript('/opt/x/portable.zip.part');
+  assert.equal(script.includes('/opt/x/portable.zip.part'), true);
+  assert.equal(
+    script.startsWith('if [ -L '),
+    true,
+    'a symlink must be classified before a follow-up test can see it as a file',
+  );
+  assert.equal(/printf '?absent/u.test(script), true, 'the probe must have an explicit absent answer');
+});
+
+test('an affirmed absent remote part is a first upload and uses put', () => {
+  const probe = classifyStagingTargetProbe(probeOf('absent\n'));
+  assert.equal(probe.kind, 'absent');
+  const decision = decideStagingUpload({ probe, localSize: 100 });
+  assert.equal(decision.upload, 'full');
+  assert.equal(decision.resume, false, 'a first upload must not ask sftp to resume');
+});
+
+test('a shorter remote part resumes with reput instead of re-uploading the whole artifact', () => {
+  const probe = classifyStagingTargetProbe(probeOf('file 40\n'));
+  assert.deepEqual({ kind: probe.kind, size: probe.size }, { kind: 'file', size: 40 });
+  const decision = decideStagingUpload({ probe, localSize: 100 });
+  assert.equal(decision.upload, 'resume');
+  assert.equal(decision.resume, true);
+});
+
+test('a zero byte remote part counts as resumable rather than absent', () => {
+  const probe = classifyStagingTargetProbe(probeOf('file 0\n'));
+  assert.equal(probe.kind, 'file');
+  assert.equal(probe.size, 0);
+  assert.equal(decideStagingUpload({ probe, localSize: 100 }).resume, true);
+});
+
+test('a remote part already the full size is re-uploaded in full because reput refuses an equal size', () => {
+  const probe = classifyStagingTargetProbe(probeOf('file 100\n'));
+  const decision = decideStagingUpload({ probe, localSize: 100 });
+  assert.equal(decision.upload, 'full');
+  assert.equal(decision.resume, false, 'reput aborts on "destination file same size or larger"');
+});
+
+test('a remote part larger than the local artifact is refused rather than resumed', () => {
+  const probe = classifyStagingTargetProbe(probeOf('file 101\n'));
+  const decision = decideStagingUpload({ probe, localSize: 100 });
+  assert.equal(typeof decision.refused, 'string');
+  assert.match(decision.refused, /larger/u);
+  assert.equal(decision.upload, undefined, 'a refusal must not carry an upload instruction');
+});
+
+test('a remote target that is not a regular file is refused instead of uploaded over', () => {
+  for (const answer of ['symlink', 'directory', 'other']) {
+    const probe = classifyStagingTargetProbe(probeOf(`${answer}\n`));
+    assert.equal(probe.kind, 'unusable', answer);
+    const decision = decideStagingUpload({ probe, localSize: 100 });
+    assert.equal(typeof decision.refused, 'string', answer);
+    assert.equal(decision.resume, undefined, answer);
+  }
+});
+
+test('a probe that failed is refused rather than read as an absent remote part', () => {
+  const probe = classifyStagingTargetProbe(probeOf('', 255, 'Permission denied'));
+  assert.equal(probe.kind, 'unreadable');
+  assert.equal(typeof decideStagingUpload({ probe, localSize: 100 }).refused, 'string');
+});
+
+test('a probe answer outside the known vocabulary is refused rather than guessed', () => {
+  for (const answer of ['', 'file ', 'file abc', 'FILE 3', 'absent-ish', 'file 3 extra', 'file -1']) {
+    const probe = classifyStagingTargetProbe(probeOf(`${answer}\n`));
+    assert.equal(probe.kind, 'unreadable', JSON.stringify(answer));
+    const decision = decideStagingUpload({ probe, localSize: 100 });
+    assert.equal(typeof decision.refused, 'string', JSON.stringify(answer));
+    assert.equal(decision.upload, undefined, JSON.stringify(answer));
+  }
+});
+
+test('a first run uploads both staging parts with put because the probe affirmed they are absent', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths, { stagingProbe: 'absent' });
+  const result = await runCommit(commitInput(transport, { ...paths }));
+  assert.equal(result.outcome, 'done', result.reason);
+  const stagingUploads = transport.calls.filter(
+    (call) => call[0] === 'sftpUpload' && String(call[2]).includes('/staging/'),
+  );
+  assert.equal(stagingUploads.length, 2);
+  assert.deepEqual(
+    stagingUploads.map((call) => call[3]),
+    [false, false],
+    'a first upload must never ask sftp to resume',
+  );
+});
+
+test('a partial part left by an earlier run is resumed with reput', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths, {
+    stagingProbe: (script) => (script.includes('.zip.part') ? 'file 7' : 'file 1'),
+  });
+  const result = await runCommit(commitInput(transport, { ...paths }));
+  assert.equal(result.outcome, 'done', result.reason);
+  const stagingUploads = transport.calls.filter(
+    (call) => call[0] === 'sftpUpload' && String(call[2]).includes('/staging/'),
+  );
+  assert.deepEqual(
+    stagingUploads.map((call) => call[3]),
+    [true, true],
+    'a shorter remote part must resume rather than re-upload',
+  );
+});
+
+test('a zero byte remote part is resumed rather than treated as a first upload', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths, { stagingProbe: 'file 0' });
+  const result = await runCommit(commitInput(transport, { ...paths }));
+  assert.equal(result.outcome, 'done', result.reason);
+  const stagingUploads = transport.calls.filter(
+    (call) => call[0] === 'sftpUpload' && String(call[2]).includes('/staging/'),
+  );
+  assert.deepEqual(
+    stagingUploads.map((call) => call[3]),
+    [true, true],
+  );
+});
+
+test('a remote part larger than the local artifact stops the run before any upload', async () => {
+  const paths = writeArtifacts();
+  const transport = commitTransport({ stagingProbe: 'file 999999999' });
+  const result = await runCommit(commitInput(transport, { ...paths }));
+  assert.equal(result.outcome, 'fail');
+  assert.equal(result.lockState, 'not-acquired');
+  assert.match(result.reason, /refused/u);
+  assert.match(result.reason, /larger/u);
+  assert.equal(transport.calls.filter((call) => call[0] === 'sftpUpload').length, 0);
+});
+
+test('a staging target that is not a regular file is refused before any upload', async () => {
+  for (const answer of ['directory', 'symlink', 'other']) {
+    const paths = writeArtifacts();
+    const transport = commitTransport({ stagingProbe: answer });
+    const result = await runCommit(commitInput(transport, { ...paths }));
+    assert.equal(result.outcome, 'fail', answer);
+    assert.match(result.reason, /refused/u, answer);
+    assert.equal(transport.calls.filter((call) => call[0] === 'sftpUpload').length, 0, answer);
+  }
+});
+
+test('a staging probe that failed is refused instead of read as a first upload', async () => {
+  const paths = writeArtifacts();
+  const transport = commitTransport({
+    stagingProbe: () => ({ status: 255, stdout: '', stderr: 'Permission denied' }),
+  });
+  const result = await runCommit(commitInput(transport, { ...paths }));
+  assert.equal(result.outcome, 'fail');
+  assert.match(result.reason, /refused/u);
+  assert.equal(transport.calls.filter((call) => call[0] === 'sftpUpload').length, 0);
+});
+
+test('the stage audit row records which upload command each artifact used and what the probe saw', async () => {
+  const paths = writeArtifacts();
+  const transport = happyTransport(paths, {
+    stagingProbe: (script) => (script.includes('.zip.part') ? 'file 7' : 'absent'),
+  });
+  const input = commitInput(transport, { ...paths });
+  const result = await runCommit(input);
+  assert.equal(result.outcome, 'done', result.reason);
+  const stage = auditEntriesOf(input.auditOut).find((row) => row.stage === 'stage' && row.status === 'done');
+  assert.ok(stage !== undefined, 'the stage row must be present');
+  assert.deepEqual(
+    stage.uploads.map((entry) => [entry.name, entry.command, entry.probe, entry.remoteBytesBefore]),
+    [
+      ['portable.zip', 'reput', 'file', 7],
+      ['portable-files.json', 'put', 'absent', 0],
+    ],
   );
 });

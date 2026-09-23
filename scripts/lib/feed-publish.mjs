@@ -597,6 +597,76 @@ function stagingRootOf(channel, version, planHash) {
   return `${STATE_ROOT}/staging/${channel}/${version}/${planHash}`;
 }
 
+export function stagingTargetProbeScript(remotePath) {
+  return [
+    `if [ -L ${remotePath} ]; then printf 'symlink\\n'`,
+    `elif [ -d ${remotePath} ]; then printf 'directory\\n'`,
+    `elif [ -f ${remotePath} ]; then printf 'file %s\\n' "$(LC_ALL=C stat -c '%s' ${remotePath})"`,
+    `elif [ -e ${remotePath} ]; then printf 'other\\n'`,
+    `else printf 'absent\\n'`,
+    'fi',
+  ].join('; ');
+}
+
+export function classifyStagingTargetProbe(result) {
+  if (result?.status !== 0) {
+    const detail = String(result?.stderr ?? '').trim() || String(result?.stdout ?? '').trim();
+    return {
+      kind: 'unreadable',
+      detail: `the probe exited ${result?.status ?? 'without a status'}${detail.length > 0 ? `: ${detail}` : ''}`,
+    };
+  }
+  const answer = String(result.stdout ?? '').trim();
+  if (answer === 'absent') return { kind: 'absent' };
+  if (answer === 'symlink' || answer === 'directory' || answer === 'other') {
+    return { kind: 'unusable', detail: `the remote part is a ${answer}` };
+  }
+  const file = /^file ([0-9]+)$/u.exec(answer);
+  if (file !== null) return { kind: 'file', size: Number(file[1]) };
+  return { kind: 'unreadable', detail: `the probe answered ${JSON.stringify(answer)}` };
+}
+
+export function decideStagingUpload({ probe, localSize }) {
+  if (probe?.kind === 'absent') {
+    return { upload: 'full', resume: false, reason: 'the remote part does not exist yet, so this is a first upload' };
+  }
+  if (probe?.kind !== 'file') {
+    return {
+      refused: `the remote part could not be trusted: ${probe?.detail ?? 'the probe returned no verdict'}`,
+    };
+  }
+  if (probe.size > localSize) {
+    return {
+      refused:
+        `the remote part is larger than the local artifact (${probe.size} > ${localSize}), ` +
+        'so resuming it could not produce this artifact',
+    };
+  }
+  if (probe.size === localSize) {
+    return {
+      upload: 'full',
+      resume: false,
+      reason:
+        'the remote part already has the full size and sftp refuses to resume an equal size target, ' +
+        'so it is uploaded in full',
+    };
+  }
+  return {
+    upload: 'resume',
+    resume: true,
+    reason: `resuming the remote part from ${probe.size} of ${localSize} bytes`,
+  };
+}
+
+async function probeStagingTarget(input, remotePath) {
+  const probe = await input.transport.readOnly.sshRun({
+    host: input.host,
+    knownHostsPath: input.knownHostsPath,
+    script: stagingTargetProbeScript(remotePath),
+  });
+  return classifyStagingTargetProbe(probe);
+}
+
 export function planTargets(input) {
   assertSafeChannel(input.channel);
   assertSafeVersion(input.version);
@@ -1003,11 +1073,41 @@ export async function runCommit(input) {
     .filter((line) => line.length > 0);
 
   const nextUploadBatch = () => input.createBatch();
+  const uploadEvidence = [];
   for (const item of [
-    { localPath: input.packagePath, remotePath: targets.stagingParts.package },
-    { localPath: input.fileManifestPath, remotePath: targets.stagingParts.fileManifest },
+    {
+      localPath: input.packagePath,
+      remotePath: targets.stagingParts.package,
+      localSize: local.packageSize,
+      name: PORTABLE_PACKAGE_NAME,
+    },
+    {
+      localPath: input.fileManifestPath,
+      remotePath: targets.stagingParts.fileManifest,
+      localSize: local.fileManifestSize,
+      name: PORTABLE_FILE_MANIFEST_NAME,
+    },
   ]) {
-    const uploaded = await input.transport.write.sftpUpload({ ...item, resume: true, ...nextUploadBatch() });
+    const probe = await probeStagingTarget(input, item.remotePath);
+    const decision = decideStagingUpload({ probe, localSize: item.localSize });
+    if (typeof decision.refused === 'string') {
+      const reason = `the staging upload of ${item.name} was refused: ${decision.refused}`;
+      audit('stage', 'fail', reason);
+      recordOutcome('fail', reason);
+      return finish('fail', reason, 'not-acquired');
+    }
+    uploadEvidence.push({
+      name: item.name,
+      command: decision.upload === 'resume' ? 'reput' : 'put',
+      probe: probe.kind,
+      remoteBytesBefore: probe.kind === 'file' ? probe.size : 0,
+    });
+    const uploaded = await input.transport.write.sftpUpload({
+      localPath: item.localPath,
+      remotePath: item.remotePath,
+      resume: decision.resume,
+      ...nextUploadBatch(),
+    });
     if (uploaded.status !== 0) {
       audit('stage', 'fail', uploaded.stderr ?? 'upload failed');
       recordOutcome('fail', 'the staging upload failed');
@@ -1028,7 +1128,7 @@ export async function runCommit(input) {
     recordOutcome('fail', 'the staging directory could not be finalised');
     return finish('fail', 'the staging directory could not be finalised', 'not-acquired');
   }
-  audit('stage', 'done', undefined, { removedStrayParts });
+  audit('stage', 'done', undefined, { removedStrayParts, uploads: uploadEvidence });
 
   const staging = await inspectRemoteDirectory(input, stagingRoot, expectedEntries);
   const stagingEvidence = { remote: staging };
