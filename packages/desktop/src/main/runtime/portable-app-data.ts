@@ -45,8 +45,10 @@ import { RUNTIME_MANIFEST_FILE } from './locate.js';
  *
  * ⚠️ **故意不放进** `荣盈魔方工作区\`：那里是用户的资料，会被文件索引/搜索扫到，
  *    而这里装的是 Chromium 缓存（上万个小文件）、日志与身份/登录配置。
- * ⚠️ **故意不放进** `荣盈魔方\`（程序目录）：便携版更新就是把这个目录整个换掉
- *    （`update/portable-swap.ts`），数据放进去会被连带替换掉。
+ * ⚠️ **故意不放进** `荣盈魔方\`（程序目录）：便携版更新就是把这个目录整个换掉，
+ *    数据放进去会被连带替换掉。换目录的真身在**随包启动器**里
+ *    （`launcher/internal/update/swap.go`）——客户端侧不参与这次目录交换，
+ *    原来那个 `update/portable-swap.ts` 是单文件时代的死代码，已于 2026-09-23 删除。
  */
 export const PORTABLE_APP_DATA_DIR_NAME = '荣盈魔方-运行数据';
 
