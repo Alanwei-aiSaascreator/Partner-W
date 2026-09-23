@@ -271,6 +271,8 @@ test('make-portable-update CLI writes and independently verifies all three artif
         MOFANG_UPDATE_SIGNING_KEY_FILE: keyFile,
         MOFANG_UPDATE_PUBLIC_KEY_B64: keys.publicKeyBase64,
         MOFANG_LAUNCHER_VERSION: '1.0.0',
+        // manifest 的门槛走**另一个**变量（见文件末尾那组测试的说明）。
+        MOFANG_MIN_LAUNCHER_VERSION: '1.0.0',
       },
     },
   );
@@ -304,4 +306,110 @@ test('make-portable-update CLI writes and independently verifies all three artif
   );
   assert.equal(goResult.status, 0, `${goResult.stdout}\n${goResult.stderr}`);
   assert.match(goResult.stdout, /--- PASS: TestExternalReleaseFixtureEndToEnd/);
+});
+
+/**
+ * `MOFANG_LAUNCHER_VERSION` 以前同时承载**两个不同的量**：
+ *   · 第 3 步（`pnpm build:portable-launcher`）= **启动器自己的版本**（ldflags 注入）；
+ *   · 第 5 步（`pnpm update:portable-package`）= manifest 的 `minLauncherVersion`。
+ * 同一个名字两个含义，于是 0.0.28 那次会把 min 写成 0.0.28 —— 而**盘上那把启动器
+ * 是 0.0.27**（便携更新**从来不换启动器**：`荣盈魔方启动器.exe` 在
+ * `portable-package.ts` 的 FORBIDDEN_SIBLINGS 里，只由人工基础包更换）。
+ * 结果就是 0.0.27 → 0.0.28 的自动升级被 `launcher-incompatible` 挡死。
+ * ⇒ 两个语义拆成两个变量，各自缺失即硬失败，且不许有默认值。
+ */
+function runPortableUpdateCli(
+  root,
+  { programDir, outDir, keyFile, publicKeyBase64, minLauncherVersion, launcherVersion },
+) {
+  const env = {
+    PATH: process.env.PATH,
+    SystemRoot: process.env.SystemRoot,
+    TEMP: process.env.TEMP,
+    TMP: process.env.TMP,
+    MOFANG_UPDATE_SIGNING_KEY_FILE: keyFile,
+    MOFANG_UPDATE_PUBLIC_KEY_B64: publicKeyBase64,
+  };
+  if (minLauncherVersion !== undefined) env.MOFANG_MIN_LAUNCHER_VERSION = minLauncherVersion;
+  if (launcherVersion !== undefined) env.MOFANG_LAUNCHER_VERSION = launcherVersion;
+  return spawnSync(
+    process.execPath,
+    [
+      join(repositoryRoot, 'scripts', 'make-portable-update.mjs'),
+      '--program-dir',
+      programDir,
+      '--version',
+      '0.0.26',
+      '--channel',
+      'internal',
+      '--base-url',
+      'https://updates.example.invalid',
+      '--out',
+      outDir,
+    ],
+    { encoding: 'utf8', env },
+  );
+}
+
+async function cliFixture(root) {
+  const programDir = await writeProgram(root);
+  const keys = keyPair();
+  const keyFile = join(root, 'signing-key.pem');
+  await writeFile(keyFile, keys.signingKeyPem, { mode: 0o600 });
+  return { programDir, keys, keyFile };
+}
+
+test('the CLI refuses to sign when MOFANG_MIN_LAUNCHER_VERSION is missing', async () => {
+  const root = await makeRoot();
+  const { programDir, keys, keyFile } = await cliFixture(root);
+
+  const result = runPortableUpdateCli(root, {
+    programDir,
+    outDir: join(root, 'release'),
+    keyFile,
+    publicKeyBase64: keys.publicKeyBase64,
+    // 只给"启动器自己的版本"：以前这一个变量就够签包了，这正是要断掉的路。
+    launcherVersion: '0.0.28',
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.match(`${result.stdout}\n${result.stderr}`, /MOFANG_MIN_LAUNCHER_VERSION/);
+});
+
+test('the manifest minimum comes from MOFANG_MIN_LAUNCHER_VERSION, not from MOFANG_LAUNCHER_VERSION', async () => {
+  const root = await makeRoot();
+  const { programDir, keys, keyFile } = await cliFixture(root);
+  const outDir = join(root, 'release');
+
+  const result = runPortableUpdateCli(root, {
+    programDir,
+    outDir,
+    keyFile,
+    publicKeyBase64: keys.publicKeyBase64,
+    // 两个量故意不同：0.0.27 的基础包启动器 + 本次要发的 0.0.28。
+    minLauncherVersion: '0.0.27',
+    launcherVersion: '0.0.28',
+  });
+
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  const manifest = JSON.parse(await readFile(join(outDir, 'manifest.json'), 'utf8'));
+  assert.equal(manifest.minLauncherVersion, '0.0.27');
+  assert.equal(manifest.version, '0.0.26');
+});
+
+test('the CLI refuses a minimum newer than the launcher this release ships', async () => {
+  const root = await makeRoot();
+  const { programDir, keys, keyFile } = await cliFixture(root);
+
+  const result = runPortableUpdateCli(root, {
+    programDir,
+    outDir: join(root, 'release'),
+    keyFile,
+    publicKeyBase64: keys.publicKeyBase64,
+    minLauncherVersion: '0.0.29',
+    launcherVersion: '0.0.28',
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.match(`${result.stdout}\n${result.stderr}`, /0\.0\.29/);
 });

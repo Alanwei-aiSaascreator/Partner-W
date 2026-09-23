@@ -9,6 +9,7 @@ import {
   assertPathOutsideRepository,
   buildPortableFileManifest,
   buildPortableRelease,
+  compareSemanticVersions,
   createPortableUpdateArchive,
   readSigningKeyFile,
   verifyPortableRelease,
@@ -45,6 +46,34 @@ async function assertEmptyOutput(outDir) {
   }
 }
 
+/**
+ * manifest 的 `minLauncherVersion` = **最老的那个还能装这份更新的启动器**。
+ *
+ * ⚠️ 它**不是**"本次发布的版本"，也**不是** `MOFANG_LAUNCHER_VERSION`
+ * （那个量是"我们现在构建的这把启动器自己的版本"）。两者以前共用一个变量名，
+ * 后果很具体：便携更新**从来不换启动器**（`荣盈魔方启动器.exe` 在
+ * `portable-update-release.mjs` 的 FORBIDDEN_NAMES 里，只能靠人工换基础包），
+ * 所以 0.0.28 那次会把门槛写成 0.0.28，而盘上那把是 0.0.27
+ * ⇒ 0.0.27 → 0.0.28 的自动升级直接被 `launcher-incompatible` 挡死。
+ * 所以这里**没有默认值**：缺了就硬失败，绝不静默签出一份装不上的包。
+ */
+function requireMinLauncherVersion(env) {
+  const raw = env.MOFANG_MIN_LAUNCHER_VERSION;
+  if (typeof raw !== 'string' || raw.trim().length === 0) {
+    throw new Error(
+      [
+        'MOFANG_MIN_LAUNCHER_VERSION is required (no default, deliberately).',
+        '  它 = 最老的那个还能装这份更新的启动器版本，通常就是**当前基础包里那把启动器**的版本。',
+        '  ⚠️ 不要填本次发布版本，也不要复用 MOFANG_LAUNCHER_VERSION —',
+        '     那个量是"我们这次构建的启动器自己的版本"，两者含义不同。',
+        '     便携更新不换启动器：填成本次版本会让上一版基础包的盘永远升不上来。',
+      ].join('\n'),
+    );
+  }
+  const value = raw.trim();
+  return value;
+}
+
 async function main() {
   const input = parseArguments(process.argv.slice(2));
   await assertEmptyOutput(input.outDir);
@@ -52,8 +81,21 @@ async function main() {
   if (!keyFile) throw new Error('MOFANG_UPDATE_SIGNING_KEY_FILE is required');
   const publicKeyBase64 = process.env.MOFANG_UPDATE_PUBLIC_KEY_B64;
   if (!publicKeyBase64) throw new Error('MOFANG_UPDATE_PUBLIC_KEY_B64 is required');
-  const minLauncherVersion = process.env.MOFANG_LAUNCHER_VERSION;
-  if (!minLauncherVersion) throw new Error('MOFANG_LAUNCHER_VERSION is required');
+  const minLauncherVersion = requireMinLauncherVersion(process.env);
+
+  // 一致性校验（能收敛的收敛不了，就断言两侧取值自洽）：
+  // 门槛比"本次要发的启动器"还新，永远是个错误 —— 那等于要求一个还不存在的启动器。
+  const shippedLauncherVersion = process.env.MOFANG_LAUNCHER_VERSION;
+  if (
+    typeof shippedLauncherVersion === 'string' &&
+    shippedLauncherVersion.trim().length > 0 &&
+    compareSemanticVersions(minLauncherVersion, shippedLauncherVersion.trim()) > 0
+  ) {
+    throw new Error(
+      `minLauncherVersion (${minLauncherVersion}) is newer than the launcher this release ships ` +
+        `(MOFANG_LAUNCHER_VERSION=${shippedLauncherVersion.trim()}); no drive can satisfy that.`,
+    );
+  }
 
   const safeKeyFile = assertPathOutsideRepository(keyFile, repositoryRoot);
   const signingKeyPem = await readSigningKeyFile(safeKeyFile);

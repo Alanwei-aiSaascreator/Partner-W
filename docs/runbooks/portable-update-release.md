@@ -19,6 +19,10 @@
   - `MOFANG_FEED_OPERATOR='<本执行人>'`：**凡是会写审计行的模式都必须设** —— `--preflight` / `--commit` / `--break-lock`（两条恢复路径都算）。不设时工具按 `unknown` 落账，"谁在什么时候破了这把锁"就没有答案。
   - `MOFANG_UPDATE_PUBLIC_KEY_B64='<与私钥匹配的 SPKI Base64 公钥>'`：**除 `--preflight` 与 `--break-lock` 之外的每一种模式都要**（`--dry-run` / `--commit` / `--re-sign-stable`，见第 3/5/9 步）；`--re-sign-stable` 还要 `MOFANG_UPDATE_SIGNING_KEY_FILE`。
 - 私钥只允许写入系统临时目录，不得进入仓库、日志、客户包或长期制品。
+- **两个版本变量含义不同，别混用**（2026-09-23 拆开；以前是同一个变量名，见第 5 步的纠正表）：
+  - `MOFANG_LAUNCHER_VERSION`：**本次构建的启动器自己的版本**（第 3 步；ldflags 注入）。
+  - `MOFANG_MIN_LAUNCHER_VERSION`：manifest 的 `minLauncherVersion` = **最老的那个还能装这份更新的启动器**（第 5 步）。CI 侧由 `release.yml` 的 `portable-update-release` job 显式提供（仓库变量 `vars.MOFANG_MIN_LAUNCHER_VERSION`），本地则由发布 shell 显式 export。
+  - 两者**都没有默认值**：缺失即硬失败，绝不静默签出一份装不上的包。门槛比"本次要发的启动器"还新也会硬失败。
 - 发布服务必须支持“先传不可变版本目录，最后原子替换频道 manifest”。服务器发布**只允许用第 7、9、10 步的 `scripts/feed-publish.mjs`**（它已经过复核）；工具缺失或未经复核时，**完成第 6 步后停止，不得进入第 7 步**，不得现场拼 `scp` / `ssh` 命令。⚠️ 这里过去写作「停在第 8 步」，**步号是错的**（第 7 步就是上传；停在第 8 步意味着一件没做的事已经做过）。口径与规格 §8.1 一致：**停在第 7 步之前**。
 
 ## 11 步发布顺序
@@ -28,9 +32,15 @@
 仅在已获得“打包候选版”授权后执行：
 
 ```powershell
+$env:MOFANG_UPDATE_PUBLIC_KEY_B64 = '<与私钥匹配的 SPKI Base64 公钥>'
 pnpm --filter @clawwork/desktop build
 pnpm --filter @clawwork/desktop exec electron-builder --win --x64 --dir --publish never
 ```
+
+⚠️ **公钥现在是构建前置**（2026-09-23 起）：`build` 与 `electron-builder` 的
+`beforePack` 都会拒绝一个**不含更新公钥**的应用（`scripts/require-update-public-key.cjs`），
+不再像以前那样静默注入空串、打出一个"检查更新永远失败且报成 signature-invalid"的包。
+所以这一格必须先把公钥设好 —— 与第 3 步用的是**同一把**（两侧各自内嵌、各自独立验签）。
 
 预期目录是 `packages/desktop/dist/win-unpacked`。不要把安装器、运行数据或旧 `.bat` 混入该目录。
 
@@ -55,6 +65,10 @@ pnpm build:portable-launcher
 
 确认 `artifacts/荣盈魔方启动器.exe` 前两字节是 `MZ`。公钥必须和后续签名私钥属于同一密钥对。
 
+⚠️ 这里的 `MOFANG_LAUNCHER_VERSION` **只是"这把启动器自己的版本"**，它**不再**决定
+第 5 步 manifest 的 `minLauncherVersion`（那是另一个变量，见第 5 步的纠正表）。
+两侧缺失都是硬失败，没有默认值。
+
 ### 4. 组装并审计一次性基础包
 
 仅首次迁移到外置启动器、或基础包布局变化时执行：
@@ -71,9 +85,31 @@ pnpm check:udisk-delivery
 ```powershell
 $env:MOFANG_UPDATE_SIGNING_KEY_FILE = '<仓库外的 Ed25519 PKCS#8 PEM>'
 $env:MOFANG_UPDATE_PUBLIC_KEY_B64 = '<与私钥匹配的 SPKI Base64 公钥>'
-$env:MOFANG_LAUNCHER_VERSION = '<最低可接收此更新的启动器版本>'
+$env:MOFANG_MIN_LAUNCHER_VERSION = '<最老的那个还能装这份更新的启动器版本>'
 pnpm update:portable-package -- --program-dir packages/desktop/dist/win-unpacked --version '<版本>' --channel internal --base-url 'https://api.rongyinghudong.com/updates' --out '<新的空目录>'
 ```
+
+⚠️ **这一格以前写的是 `MOFANG_LAUNCHER_VERSION`，那是错的**（2026-09-23 纠正）。同一个
+变量名当时承载两个不同的量：第 3 步的"**本次构建的启动器自己的版本**"与本步骤的
+"**manifest 的 `minLauncherVersion`**"。后果很具体：`MOFANG_LAUNCHER_VERSION` 在
+release.yml 里是 `${RELEASE_TAG#v}`，于是 0.0.28 那次会把门槛写成 `0.0.28`，
+而**盘上那把启动器永远是上一版** —— 便携更新**从不更换启动器**
+（`荣盈魔方启动器.exe` 在 `portable-update-release.mjs` 的 `FORBIDDEN_NAMES` 里，
+只由人工基础包更换）⇒ `0.0.27` 的盘自动升级到 `0.0.28` 会被
+`launcher-incompatible` 直接挡死。
+
+怎么定这个值：
+
+|                                         | 含义                                                                                                       | 取什么                                                                |
+| --------------------------------------- | ---------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `MOFANG_LAUNCHER_VERSION`（第 3 步）    | 我们现在**构建的这把启动器**自己的版本（ldflags `-X main.version`），也是客户端 `--version` 探测到的那个值 | 本次 tag（`v0.0.28` → `0.0.28`）                                      |
+| `MOFANG_MIN_LAUNCHER_VERSION`（本步骤） | 这份更新**最低要求**的启动器版本 —— 比它旧的盘装不了                                                       | **当前基础包里那把启动器的版本**（例：基础包是 0.0.27 ⇒ 填 `0.0.27`） |
+
+验收目标就是这条链：**0.0.27 的人工基础包换一次盘之后，能自动升到 0.0.28**
+（含 U 盘便携态）。填成"本次发布版本"会让这条链断在第一步。
+
+两个变量**都没有默认值**：缺了或填错方向（门槛比本次要发的启动器还新）都会**硬失败**，
+不会静默签出一份装不上的包（`scripts/make-portable-update.mjs`）。
 
 输出必须正好有 `portable.zip`、`portable-files.json`、`manifest.json`。工具拒绝覆盖现有输出。
 

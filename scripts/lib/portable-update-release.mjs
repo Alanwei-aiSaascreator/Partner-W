@@ -79,6 +79,57 @@ function assertVersion(value, label) {
   }
 }
 
+function splitVersion(value) {
+  const match = SEMVER_PATTERN.exec(value);
+  if (!match) throw new PortableReleaseError(`${value} is not a strict semantic version`);
+  return {
+    major: Number(match[1]),
+    minor: Number(match[2]),
+    patch: Number(match[3]),
+    prerelease: match[4] === undefined ? [] : match[4].split('.'),
+  };
+}
+
+function comparePrerelease(left, right) {
+  if (left.length === 0 && right.length === 0) return 0;
+  // 有预发布段的**低于**没有的（SemVer §11）。发布链上的两侧通常都没有，
+  // 但缺了这一条会让 `0.0.28-rc.1` 被判成"比 0.0.28 新"。
+  if (left.length === 0) return 1;
+  if (right.length === 0) return -1;
+  for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
+    const a = left[index];
+    const b = right[index];
+    if (a === undefined) return -1;
+    if (b === undefined) return 1;
+    if (a === b) continue;
+    const aNumeric = /^\d+$/.test(a);
+    const bNumeric = /^\d+$/.test(b);
+    if (aNumeric && bNumeric) return Number(a) < Number(b) ? -1 : 1;
+    if (aNumeric !== bNumeric) return aNumeric ? -1 : 1;
+    return a < b ? -1 : 1;
+  }
+  return 0;
+}
+
+/**
+ * 与客户端 `portable-manifest.ts` 的 `compareSemanticVersions` 同语义。
+ *
+ * 为什么发布侧也需要它：`minLauncherVersion` 以前是从 `MOFANG_LAUNCHER_VERSION`
+ * 读的（那个变量同时是"启动器自己的版本"），于是每次发版都会把门槛抬到本次版本 ——
+ * 而便携更新**从来不换启动器**（`荣盈魔方启动器.exe` 在 FORBIDDEN_NAMES 里，
+ * 只能靠人工基础包更换）⇒ 盘上那把永远是上一版，升级必然被
+ * `launcher-incompatible` 挡死。拆出独立变量之后，再加这条"门槛不许比本次要发的
+ * 启动器还新"的校验，把"填成本次发布版本"这类错误在签包前拦下来。
+ */
+export function compareSemanticVersions(left, right) {
+  const a = splitVersion(left);
+  const b = splitVersion(right);
+  for (const key of ['major', 'minor', 'patch']) {
+    if (a[key] !== b[key]) return a[key] < b[key] ? -1 : 1;
+  }
+  return comparePrerelease(a.prerelease, b.prerelease);
+}
+
 function assertSafeRelativePath(relativePath) {
   const segments = relativePath.split('/');
   if (

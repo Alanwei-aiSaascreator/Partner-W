@@ -80,6 +80,14 @@ jobs:
     env:
       RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
       IS_PRERELEASE: ${{ needs.prepare-release.outputs.is_prerelease }}
+      # ⚠️ 这一条以前**缺失**，是真缺陷（2026-09-23 取证）：本 job 的
+      #    `Build Electron app`（`pnpm --filter @clawwork/desktop build`）与随后的
+      #    electron-builder 都没有这个变量 ⇒ `electron.vite.config.ts` 静默注入**空串**
+      #    ⇒ 发出去的安装器里没有公钥，而运行期只会报 `signature-invalid`
+      #    （"签名无效"，与真因对不上）。只有隔壁 `portable-update-release` job 设了它。
+      #    现在已经补上，并且 `scripts/require-update-public-key.cjs` 会在构建期
+      #    与打包期各挡一道：缺了就是**硬失败**，不再静默出一个空公钥包。
+      MOFANG_UPDATE_PUBLIC_KEY_B64: ${{ secrets.MOFANG_UPDATE_PUBLIC_KEY_B64 }}
     defaults:
       run:
         shell: bash
@@ -201,9 +209,16 @@ jobs:
           MOFANG_UPDATE_PUBLIC_KEY_B64: ${{ secrets.MOFANG_UPDATE_PUBLIC_KEY_B64 }}
           MOFANG_UPDATE_SIGNING_KEY_PEM: ${{ secrets.MOFANG_UPDATE_SIGNING_KEY_PEM }}
           MOFANG_UPDATE_FEED_UPLOAD_TOKEN: ${{ secrets.MOFANG_UPDATE_FEED_UPLOAD_TOKEN }}
+          # ⚠️ 这是**仓库变量**（vars.*），不是密钥：它是个版本号，不是秘密。
+          #    语义 = manifest 的 minLauncherVersion = **最老的那个还能装这份更新的启动器**，
+          #    通常 = 当前基础包里那把启动器的版本（例：基础包 0.0.27 ⇒ 填 0.0.27）。
+          #    ⛔ 不要用 ${RELEASE_TAG#v} 顶替它：那会让门槛每次发版都抬到本次版本，
+          #    而便携更新**从不更换启动器** ⇒ 上一版基础包的盘永远升不上来。
+          #    两侧都没有默认值：这里缺失即硬失败，`make-portable-update.mjs` 也会再挡一道。
+          MOFANG_MIN_LAUNCHER_VERSION: ${{ vars.MOFANG_MIN_LAUNCHER_VERSION }}
         run: |
           missing=0
-          for name in MOFANG_UPDATE_PUBLIC_KEY_B64 MOFANG_UPDATE_SIGNING_KEY_PEM MOFANG_UPDATE_FEED_UPLOAD_TOKEN; do
+          for name in MOFANG_UPDATE_PUBLIC_KEY_B64 MOFANG_UPDATE_SIGNING_KEY_PEM MOFANG_UPDATE_FEED_UPLOAD_TOKEN MOFANG_MIN_LAUNCHER_VERSION; do
             if [ -z "${!name}" ]; then
               echo "::error::Missing protected release secret: $name"
               missing=1
@@ -215,6 +230,7 @@ jobs:
           echo "MOFANG_PORTABLE_RELEASE_ENABLED=true" >> "$GITHUB_ENV"
           echo "MOFANG_UPDATE_PUBLIC_KEY_B64=$MOFANG_UPDATE_PUBLIC_KEY_B64" >> "$GITHUB_ENV"
           echo "MOFANG_LAUNCHER_VERSION=${RELEASE_TAG#v}" >> "$GITHUB_ENV"
+          echo "MOFANG_MIN_LAUNCHER_VERSION=$MOFANG_MIN_LAUNCHER_VERSION" >> "$GITHUB_ENV"
           if [ "$IS_PRERELEASE" = "true" ]; then
             echo "MOFANG_UPDATE_CHANNEL=internal" >> "$GITHUB_ENV"
           else
