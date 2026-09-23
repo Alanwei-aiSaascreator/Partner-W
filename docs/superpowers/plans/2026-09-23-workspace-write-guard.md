@@ -582,7 +582,7 @@ OPENCLAW_STATE_DIR="$PROBE/state" node "$R/openclaw.mjs" config get tools.elevat
 ⚠️ 硬边界：只用临时 profile + 桩模型；**不许**连生产 relay、不许写真实 `%APPDATA%`/`openclaw-state`、
 不许动用户桌面上任何**既存**文件（探针只断言它自己命名的那个不存在）。
 
-- [ ] **Step 3: 结论写回**
+- [x] **Step 3: 结论写回**
 
 - 跑通 ⇒ 设计文档 §5.2 写"已验 + 读数"；e2e 固化**登记为后续**（不阻塞本次交付）。
 - 跑不通 ⇒ 保留"**未验**"，把手工验收步骤写进账本，**明说这不算证据**；不许把静态那步的读数冒充行为证据。
@@ -592,8 +592,8 @@ OPENCLAW_STATE_DIR="$PROBE/state" node "$R/openclaw.mjs" config get tools.elevat
 ### Task 9: 收口
 
 - [x] **Step 1: 更新设计文档的状态段**（§4/§5.2 的"未验"逐条改成"已验 + 读数"或保留"未验"）
-- [ ] **Step 2: 更新记忆**：`no-writes-outside-the-workspace`（状态：已拍未实施 ⇒ 已实施 + 提交号）、`resume-here`
-- [ ] **Step 3: 向用户汇报**：三条闸门的确切值、存量用户判据、变异读数、探针结论（含"未验"的部分要明说）
+- [x] **Step 2: 更新记忆**：`no-writes-outside-the-workspace`（状态：已拍未实施 ⇒ 已实施 + 提交号）、`resume-here`
+- [x] **Step 3: 向用户汇报**：三条闸门的确切值、存量用户判据、变异读数、探针结论（含"未验"的部分要明说）
 
 ---
 
@@ -799,3 +799,9 @@ OPENCLAW_STATE_DIR="$STATE" node "$CLI" config get tools --json
 
 ⚠️ **本节与设计文档的最后一轮改动发生在第二次门禁之后**，且**全是 `.md`** ⇒ 只过了 `prettier --check`，
 未重跑全量门禁（代码字节自 `24c7f229` 起未再变动）。
+
+### 交付形态（2026-09-23，用户决定）
+
+**先留着**：分支 `fix/workspace-escape-guard` @ `ba7cc344`（11 提交）**不合、不推、不清理 worktree**；
+`fix/local-credential-exposure` 指针仍在 `608882ff`。0.0.27 开工时再合。
+（本仓没有 master，整合目标就是那条发布线；上传器那条线也是同样的做法。）
