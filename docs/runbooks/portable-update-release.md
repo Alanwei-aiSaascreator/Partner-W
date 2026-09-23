@@ -19,6 +19,7 @@
   - `MOFANG_FEED_OPERATOR='<本执行人>'`：**凡是会写审计行的模式都必须设** —— `--preflight` / `--commit` / `--break-lock`（两条恢复路径都算）。不设时工具按 `unknown` 落账，"谁在什么时候破了这把锁"就没有答案。
   - `MOFANG_UPDATE_PUBLIC_KEY_B64='<与私钥匹配的 SPKI Base64 公钥>'`：**除 `--preflight` 与 `--break-lock` 之外的每一种模式都要**（`--dry-run` / `--commit` / `--re-sign-stable`，见第 3/5/9 步）；`--re-sign-stable` 还要 `MOFANG_UPDATE_SIGNING_KEY_FILE`。
 - 私钥只允许写入系统临时目录，不得进入仓库、日志、客户包或长期制品。
+- ⚠️ **`MOFANG_UPDATE_PUBLIC_KEY_B64` 必须对 `release` job 可见** —— 只放在受保护环境里**不够**：`release`（`release.yml:54`，mac/win/linux 四平台矩阵）**没有声明 `environment`**，所以只挂在 `portable-update-production` 上的密钥对它不可见。而 2026-09-23 起客户端构建与打包都把公钥当**前置**（`scripts/require-update-public-key.cjs --require-env`；实测空值 RC=1 并点名变量与后果、真值 RC=0）⇒ 若密钥只存在于环境里，`release` 的四个构建会全部硬失败，而 `portable-update-release` 依赖 `release`，整条流水线一步也走不到（失败方向是响的，但会卡在发版当天）。公钥是公开量（内嵌在每个安装器里），放**仓库级**不增加暴露面 —— 建议同名存成仓库级密钥。⚠️ 当前实际存储范围**无法从仓库判断**，发版前请在 GitHub 设置里核对一次。
 - **两个版本变量含义不同，别混用**（2026-09-23 拆开；以前是同一个变量名，见第 5 步的纠正表）：
   - `MOFANG_LAUNCHER_VERSION`：**本次构建的启动器自己的版本**（第 3 步；ldflags 注入）。
   - `MOFANG_MIN_LAUNCHER_VERSION`：manifest 的 `minLauncherVersion` = **最老的那个还能装这份更新的启动器**（第 5 步）。CI 侧由 `release.yml` 的 `portable-update-release` job 显式提供（仓库变量 `vars.MOFANG_MIN_LAUNCHER_VERSION`），本地则由发布 shell 显式 export。
