@@ -9,6 +9,7 @@ import { PortableUpdateFailure } from '../src/main/update/portable-manifest.js';
 import {
   calculatePortableSpaceBudget,
   downloadPortablePackage,
+  mapFileSystemFailure,
   extractPortablePackage,
   sumExpandedBytes,
   verifyPortableProgramTree,
@@ -537,5 +538,47 @@ describe('space failure detail stays minimal', () => {
 
     expect(Object.keys(error).sort()).toEqual(['code', 'name']);
     expect(error.detail).toBeUndefined();
+  });
+});
+
+/**
+ * 底层 fs 失败 → **用户看得懂的那一类**。
+ *
+ * 兜底以前是 `archive-unsafe`（"更新包里有不安全的内容"）—— 那是在**冤枉这份包**：
+ * 写失败、exFAT 命名限制、半途断电的残留都会落到兜底，而用户该做的事
+ * （重试一次 / 换台电脑试）与"包被人动过手脚"完全不同。
+ */
+describe('filesystem failures are classified, not blamed on the package', () => {
+  const errno = (code: string): Error => Object.assign(new Error(code), { code });
+
+  it.each([
+    ['ENOSPC', 'disk-space'],
+    ['EROFS', 'volume-readonly'],
+    ['EACCES', 'volume-readonly'],
+    ['EPERM', 'volume-readonly'],
+    ['EBUSY', 'file-in-use'],
+  ])('%s ⇒ %s（这些是**有名字的**几类）', (code, expected) => {
+    expect(mapFileSystemFailure(errno(code))).toMatchObject({ code: expected });
+  });
+
+  it.each([['EISDIR'], ['EEXIST'], ['EINVAL'], ['ENAMETOOLONG'], ['EPIPE'], ['UNKNOWN']])(
+    '⭐ %s ⇒ filesystem-error（**不是** archive-unsafe：别把写失败说成"包不安全"）',
+    (code) => {
+      const failure = mapFileSystemFailure(errno(code));
+
+      expect(failure).toMatchObject({ code: 'filesystem-error' });
+      expect(failure.code).not.toBe('archive-unsafe');
+      expect(failure.code).not.toBe('disk-space');
+    },
+  );
+
+  it('已经是 PortableUpdateFailure 的原样透传（不重复归类）', () => {
+    const original = new PortableUpdateFailure('signature-invalid');
+
+    expect(mapFileSystemFailure(original)).toBe(original);
+  });
+
+  it('没有 code 的异常也走 filesystem-error（兜底有名字，别丢成 unknown）', () => {
+    expect(mapFileSystemFailure(new Error('boom'))).toMatchObject({ code: 'filesystem-error' });
   });
 });

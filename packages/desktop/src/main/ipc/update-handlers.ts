@@ -18,6 +18,7 @@ import {
 import { getPortableWorkspaceRoot } from '../workspace/config.js';
 import { getDebugLogger } from '../debug/index.js';
 import { probeLauncherVersion } from '../update/launcher-version.js';
+import { PortableUpdateFailure } from '../update/portable-manifest.js';
 import {
   downloadPortablePackage,
   extractPortablePackage,
@@ -103,7 +104,10 @@ async function initializePortableUpdateService(root: string): Promise<void> {
       stateStore,
       fetchManifest: async () => {
         const response = await fetch(`${feed}manifest.json`);
-        if (!response.ok) throw new Error(`portable feed responded ${response.status}`);
+        // 404 = **这个频道还没有发布任何 manifest**（每次发版之前的正常状态，不是故障）。
+        // 报成一个用户无事可做的错误会误导人；交给服务落回 idle，由文案说"当前频道暂无更新"。
+        if (response.status === 404) throw new PortableUpdateFailure('update-not-published');
+        if (!response.ok) throw new PortableUpdateFailure('feed-response');
         return response.json();
       },
       fetchFileManifest: async (manifest) => {

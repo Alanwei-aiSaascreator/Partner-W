@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  classifyPortableError,
   describePortableError,
   describeUpdateError,
   portableErrorAction,
@@ -50,7 +51,12 @@ describe('describeUpdateError', () => {
   });
 
   it('用户主动取消 ⇒ 不是错误', () => {
-    expect(describeUpdateError('cancelled', 'download')).toBe('已取消更新。');
+    const text = describeUpdateError('cancelled', 'download');
+
+    // `cancelled` 现在按**分类表**给文案（"已取消更新，当前版本可以继续使用。"）——
+    // 它依旧是"这不是错误"的语气，只是把"还能继续用"说明白了。
+    expect(text).toContain('已取消更新');
+    expect(text).not.toMatch(/失败|出错|错误/);
   });
 
   it('⭐ 盘上形态没有整目录服务时，说清"重开一次"，而不是"下载没完成，请稍后重试"', () => {
@@ -145,5 +151,151 @@ describe('盘上运行的错误码 → 用户动作', () => {
 
     expect(text).toContain('不要拔出');
     expect(text).toContain('技术支持');
+  });
+});
+
+/**
+ * 失败出口必须**说清是哪一类**，并说明"能不能重试、下一步做什么"。
+ *
+ * 为什么单独要这一组（2026-09-23）：以前的出口只说一个错误码，而用户真正需要的是
+ * 三件不同的事，混在一起会给出**错误建议**：
+ *   · 源上还没有这个版本（manifest 404）—— **不是错误**，说"当前频道暂无更新"；
+ *   · 连不上/超时 —— 可以重试，说"稍后再试"；
+ *   · 签名/清单不可信 —— **不可重试**，说"重新获取完整交付包"；
+ *   · 空间不足 —— 可重试，但要先知道**还差多少**；
+ *   · 启动器不兼容 / 不是同一个信任根 —— 要**更换基础包**（便携更新从不换启动器）；
+ *   · 磁盘/文件系统问题（写失败、exFAT 限制）—— 与"空间不足"**分开**。
+ */
+describe('便携更新失败的分类（类别 / 可重试 / 下一步）', () => {
+  const expectations: Array<[PortableUpdateErrorCode, string, boolean, string]> = [
+    // [错误码, 类别, 可重试, 下一步动作]
+    ['network', 'network', true, 'retry'],
+    ['feed-response', 'network', true, 'retry'],
+    ['update-not-published', 'no-update', true, 'retry'],
+    ['signature-invalid', 'untrusted', false, 'replace-package'],
+    ['manifest-invalid', 'untrusted', false, 'replace-package'],
+    ['unsupported-policy', 'untrusted', false, 'replace-package'],
+    ['disk-space', 'space', true, 'free-space'],
+    ['launcher-incompatible', 'launcher', false, 'replace-package'],
+    ['launcher-unavailable', 'launcher', false, 'replace-package'],
+    ['volume-readonly', 'filesystem', true, 'contact-support'],
+    ['filesystem-error', 'filesystem', true, 'retry'],
+    ['file-in-use', 'filesystem', true, 'retry'],
+    // 自动恢复都失败了 ⇒ 手动重试反而更危险（文案就是"别拔盘、别删文件、找支持"）。
+    ['rollback-failed', 'filesystem', false, 'contact-support'],
+  ];
+
+  it.each(expectations)('%s ⇒ 类别 %s / 可重试=%s / 下一步 %s', (code, category, retryable, action) => {
+    const info = classifyPortableError(code);
+
+    expect(info.category).toBe(category);
+    expect(info.retryable).toBe(retryable);
+    expect(info.action).toBe(action);
+  });
+
+  it('⭐ "源上还没有这个版本"**不是错误**，文案是"当前频道暂无更新"', () => {
+    const info = classifyPortableError('update-not-published');
+
+    expect(info.category).toBe('no-update');
+    expect(info.text).toContain('当前频道暂无更新');
+  });
+
+  it('⭐ 空间不足要说得出"还差多少"（只给一句"空间不足"等于没说）', () => {
+    const text = describePortableError('disk-space', { requiredBytes: 5 * 1024 ** 3, availableBytes: 1 * 1024 ** 3 });
+
+    expect(text).toContain('4.0 GiB'); // 还差 4 GiB
+    expect(text).toContain('1.0 GiB'); // 现在剩 1 GiB
+  });
+
+  it('拿不到数字时退回不带数字的那句（不许因此崩或留空）', () => {
+    const text = describePortableError('disk-space');
+
+    expect(text.length).toBeGreaterThan(0);
+    expect(text).not.toContain('undefined');
+    expect(text).not.toContain('NaN');
+  });
+
+  it('⭐ "启动器不是配套的那把"指向更换基础包（不是让用户重试）', () => {
+    const info = classifyPortableError('launcher-unavailable');
+
+    expect(info.retryable).toBe(false);
+    expect(info.text).toContain('基础包');
+  });
+
+  it('⭐ 磁盘/文件系统问题与"空间不足"是两个出口（别混成一句话）', () => {
+    const space = classifyPortableError('disk-space');
+    const filesystem = classifyPortableError('filesystem-error');
+
+    expect(space.category).not.toBe(filesystem.category);
+    expect(space.text).not.toBe(filesystem.text);
+  });
+
+  it('每个错误码都有类别/重试性/动作/中文文案（新增错误码忘了归类会在这里红）', () => {
+    const codes: PortableUpdateErrorCode[] = [
+      'network',
+      'feed-response',
+      'signature-invalid',
+      'manifest-invalid',
+      'unsupported-policy',
+      'launcher-incompatible',
+      'launcher-unavailable',
+      'update-not-published',
+      'disk-space',
+      'volume-readonly',
+      'filesystem-error',
+      'package-integrity',
+      'archive-unsafe',
+      'file-integrity',
+      'file-in-use',
+      'launcher-start-failed',
+      'health-timeout',
+      'rollback-failed',
+      'cancelled',
+      'unknown',
+    ];
+
+    for (const code of codes) {
+      const info = classifyPortableError(code);
+      expect(info.category, code).toBeTruthy();
+      expect(typeof info.retryable, code).toBe('boolean');
+      expect(info.action, code).toBeTruthy();
+      expect(info.text.length, code).toBeGreaterThan(0);
+      expect(info.text, `${code} 不许把英文原文/URL 带出去`).not.toMatch(/https?:|Error:|undefined/);
+    }
+  });
+});
+
+describe('盘上那条链的错误码会走到分类文案（不是落到通用兜底）', () => {
+  it('⭐ 错误码原样进来时给出该类的文案，而不是"请稍后重试"', () => {
+    expect(describeUpdateError('disk-space', 'download')).toContain('空间不足');
+    expect(describeUpdateError('launcher-unavailable', 'download')).toContain('基础包');
+    expect(describeUpdateError('update-not-published', 'check')).toContain('当前频道暂无更新');
+  });
+
+  it('⭐ 不该重试的那类**不许**被建议重试（这是分类的全部意义）', () => {
+    const untrusted = describeUpdateError('signature-invalid', 'download');
+    const launcher = describeUpdateError('launcher-unavailable', 'install');
+
+    for (const text of [untrusted, launcher]) {
+      expect(text).not.toContain('稍后重试');
+      expect(text).not.toContain('重试即可');
+    }
+    expect(untrusted).toContain('完整的交付包');
+  });
+
+  it('带数字时空间那句说得更具体', () => {
+    const text = describeUpdateError('disk-space', 'download', {
+      requiredBytes: 2 * 1024 ** 3,
+      availableBytes: 1024 ** 3,
+    });
+
+    expect(text).toContain('2.0 GiB');
+    expect(text).toContain('1.0 GiB');
+  });
+
+  it('electron-updater 的英文原文照旧走原来那条（新分支只认整串错误码）', () => {
+    expect(describeUpdateError('HttpError: 404 Not Found - GET https://x/latest.yml', 'check')).toContain(
+      '更新服务还没有提供更新清单',
+    );
   });
 });

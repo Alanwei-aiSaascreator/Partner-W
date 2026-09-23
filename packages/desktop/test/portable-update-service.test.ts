@@ -366,7 +366,7 @@ describe('portable update service public state', () => {
 });
 
 describe('portable update service: unknown launcher version is a hard stop', () => {
-  it('⭐ launcherVersion=null ⇒ 拒绝一切更新（launcher-incompatible），且**根本不去取清单**', async () => {
+  it('⭐ launcherVersion=null ⇒ 拒绝一切更新（launcher-unavailable），且**根本不去取清单**', async () => {
     // 以前客户端把硬编码的 '1.0.0' 当启动器版本 —— 等于拿一个编出来的数字去过
     // `minLauncherVersion` 这道门。探测失败以后**不许**退回任何版本号：那会让
     // 服务继续比一个假数字，正是这个洞本身。出口 = 拒绝（用户得到的补救是对的：
@@ -376,7 +376,7 @@ describe('portable update service: unknown launcher version is a hard stop', () 
 
     const state = await harness.service.check();
 
-    expect(state).toMatchObject({ phase: 'error', errorCode: 'launcher-incompatible' });
+    expect(state).toMatchObject({ phase: 'error', errorCode: 'launcher-unavailable' });
     expect(fetchManifest).not.toHaveBeenCalled();
     expect(harness.downloadPackage).not.toHaveBeenCalled();
   });
@@ -386,7 +386,7 @@ describe('portable update service: unknown launcher version is a hard stop', () 
 
     await expect(harness.service.prepare()).resolves.toEqual({
       ok: false,
-      errorCode: 'launcher-incompatible',
+      errorCode: 'launcher-unavailable',
     });
     expect(harness.downloadPackage).not.toHaveBeenCalled();
   });
@@ -410,6 +410,8 @@ describe('portable update service: unknown launcher version is a hard stop', () 
 
     await expect(harness.service.check()).resolves.toMatchObject({
       phase: 'error',
+      // ⚠️ 这一条是**比出来的**"太旧"（0.0.20 < 清单要求的 0.0.27），
+      //    与"根本没认出配套启动器"（launcher-unavailable）是两回事。
       errorCode: 'launcher-incompatible',
     });
     expect(harness.downloadPackage).not.toHaveBeenCalled();
@@ -469,5 +471,52 @@ describe('portable update service: space budget', () => {
     // 正常路径应当成功；这条只是钉住"取清单发生在下载之前"（下一步用 calls 顺序证）。
     expect(result).toEqual({ ok: true });
     expect(harness.calls).toEqual(['download', 'extract', 'verify-tree']);
+  });
+});
+
+/**
+ * 「源上还没有这个版本」**不是错误** —— 它是每次发版之前的正常状态。
+ * 以前 manifest 404 会归成一个用户无事可做的错误，界面于是报红；
+ * 现在落回 idle，文案说"当前频道暂无更新"。
+ */
+describe('portable update service: 源上还没有这个版本', () => {
+  it('⭐ manifest 404 ⇒ idle（不是 error），而且下次 check 还能再看见更新', async () => {
+    let attempt = 0;
+    const harness = await makeHarness({
+      fetchManifest: async () => {
+        attempt += 1;
+        if (attempt === 1) throw new PortableUpdateFailure('update-not-published');
+        return signedManifest();
+      },
+    });
+
+    await expect(harness.service.check()).resolves.toMatchObject({ phase: 'idle' });
+    // 不是 permanent：新版本一发布，下一次 check 就该能看见。
+    await expect(harness.service.check()).resolves.toMatchObject({ phase: 'available', targetVersion: '0.0.26' });
+  });
+
+  it('404 之后 prepare 不会假装成功（没有可装的东西）', async () => {
+    const harness = await makeHarness({
+      fetchManifest: async () => {
+        throw new PortableUpdateFailure('update-not-published');
+      },
+    });
+    await harness.service.check();
+
+    await expect(harness.service.prepare()).resolves.toMatchObject({ ok: false });
+    expect(harness.downloadPackage).not.toHaveBeenCalled();
+  });
+
+  it('⭐ 认不出配套启动器 ⇒ launcher-unavailable，且**不可重试**（换完整基础包）', async () => {
+    const fetchManifest = vi.fn(async () => signedManifest());
+    const harness = await makeHarness({ launcherVersion: null, fetchManifest });
+
+    await expect(harness.service.check()).resolves.toMatchObject({
+      phase: 'error',
+      errorCode: 'launcher-unavailable',
+    });
+    // 永久失败：再点一次也不会变，而且根本不该去问源。
+    await expect(harness.service.prepare()).resolves.toEqual({ ok: false, errorCode: 'launcher-unavailable' });
+    expect(fetchManifest).not.toHaveBeenCalled();
   });
 });

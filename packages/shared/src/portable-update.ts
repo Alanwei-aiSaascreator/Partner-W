@@ -17,15 +17,31 @@ export type PortableUpdatePhase =
   | 'rolled-back'
   | 'error';
 
+/**
+ * 失败出口的**类别**。判据与"能不能重试、下一步做什么"在
+ * `renderer/features/internal-beta/update-errors.ts` 那张表里一一对应，
+ * 并有按名测试逐类钉住（`internal-beta-update-errors.test.ts`）。
+ * 分成这几类的理由：它们给用户的**建议不一样**，混在一起就会给出错误建议。
+ */
 export type PortableUpdateErrorCode =
+  /** 连不上/超时/源返回了非预期状态 —— 可以重试。 */
   | 'network'
   | 'feed-response'
+  /** 源上**还没有**这个版本（manifest 404 / 频道不存在）—— 不是错误。 */
+  | 'update-not-published'
+  /** 签名/清单不可信 —— **不可重试**，要重新获取完整交付包。 */
   | 'signature-invalid'
   | 'manifest-invalid'
   | 'unsupported-policy'
+  /** 启动器版本太旧（真值来自 `--version` 探测）。 */
   | 'launcher-incompatible'
+  /** 盘上认不出配套的启动器（探测失败：不是我们的、缺失、只换了客户端）。 */
+  | 'launcher-unavailable'
+  /** 空间不足（带 requiredBytes/availableBytes）。 */
   | 'disk-space'
+  /** 磁盘/文件系统层面的问题（写失败、只读、exFAT 限制）—— 与空间不足分开。 */
   | 'volume-readonly'
+  | 'filesystem-error'
   | 'package-integrity'
   | 'archive-unsafe'
   | 'file-integrity'

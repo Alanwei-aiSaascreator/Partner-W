@@ -25,6 +25,8 @@ const PERMANENT_ERROR_CODES: readonly PortableUpdateErrorCode[] = [
   'manifest-invalid',
   'unsupported-policy',
   'launcher-incompatible',
+  // 认不出配套的启动器 ⇒ 这一轮里再点多少次都一样（换完整基础包才是出路）。
+  'launcher-unavailable',
 ];
 
 export type PortableUpdatePrepareResult = { ok: true } | { ok: false; errorCode: PortableUpdateErrorCode };
@@ -256,8 +258,12 @@ export function createPortableUpdateService(deps: PortableUpdateServiceDeps): Po
     const launcherVersion = deps.launcherVersion;
     if (launcherVersion === null) {
       manifest = null;
-      permanentError = 'launcher-incompatible';
-      publish('error', { errorCode: 'launcher-incompatible' });
+      // ⚠️ 代码是 `launcher-unavailable` 而**不是** `launcher-incompatible`：
+      //    "版本太旧"是比出来的结论，而这里是**根本没认出配套的启动器**
+      //    （缺失/不是我们的/只换了客户端留下旧启动器）。两者给用户的补救相同
+      //    （换完整基础包），但谎报成"版本太旧"会把人引向错误的排查方向。
+      permanentError = 'launcher-unavailable';
+      publish('error', { errorCode: 'launcher-unavailable' });
       return getState();
     }
 
@@ -280,6 +286,14 @@ export function createPortableUpdateService(deps: PortableUpdateServiceDeps): Po
     } catch (error) {
       manifest = null;
       const code = toErrorCode(error);
+      // 「源上还没有这个版本」**不是错误**：它是每次发版之前的正常状态
+      // （频道 manifest 还没传上去）。以前它被归成 `feed-response` 之类，
+      // 界面于是报一个用户无事可做的错误；现在落回 idle，由文案说"当前频道暂无更新"。
+      // ⚠️ 也不设 permanentError：新版本一发出来，下一次 check 就该能看见。
+      if (code === 'update-not-published') {
+        publish('idle');
+        return getState();
+      }
       if (PERMANENT_ERROR_CODES.includes(code)) permanentError = code;
       publish('error', { errorCode: code });
     }

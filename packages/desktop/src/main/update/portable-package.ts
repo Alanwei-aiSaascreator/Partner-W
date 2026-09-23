@@ -130,7 +130,16 @@ async function writeEntries(zipfile: ZipFile, entries: ValidatedEntry[], extract
   }
 }
 
-function mapFileSystemFailure(error: unknown): PortableUpdateFailure {
+/**
+ * 把底层 fs 错误映射成**用户看得懂的那一类**。
+ *
+ * ⚠️ 兜底以前是 `unsafeArchive()`（`archive-unsafe`）—— 那是在**冤枉这份包**：
+ *    写失败、exFAT 命名限制、半途断电留下的残留都会落到这里，而用户看到的会是
+ *    "更新包里有不安全的内容"。于是他要做的（重试一次 / 换台电脑试）与真正该做的
+ *    （去查那块盘）完全对不上。现在兜底是 `filesystem-error`，
+ *    **与"空间不足"分开**：清空间解决不了写失败。
+ */
+export function mapFileSystemFailure(error: unknown): PortableUpdateFailure {
   if (error instanceof PortableUpdateFailure) return error;
   const code = (error as NodeJS.ErrnoException | null)?.code;
   if (code === 'ENOSPC') return new PortableUpdateFailure('disk-space');
@@ -138,7 +147,7 @@ function mapFileSystemFailure(error: unknown): PortableUpdateFailure {
     return new PortableUpdateFailure('volume-readonly');
   }
   if (code === 'EBUSY') return new PortableUpdateFailure('file-in-use');
-  return unsafeArchive();
+  return new PortableUpdateFailure('filesystem-error');
 }
 
 async function hashFile(absolutePath: string): Promise<string> {
