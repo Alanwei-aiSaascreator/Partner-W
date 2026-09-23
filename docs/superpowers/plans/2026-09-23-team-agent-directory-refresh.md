@@ -60,7 +60,10 @@
 ⚠️ **M1 第一次拒跑**（`ANCHOR_HITS=0`）：我把含 `\n` 的锚点用单引号传进 bash ⇒ 那是**字面反斜杠 n**，
 不是换行。装置照规矩拒绝执行（这正是它该做的），换掉 `\n` 后才是真读数。
 
-**门禁**：见下（`pnpm check`，重定向取 RC，不用管道）。
+**门禁**（`export PATH="/d/go-toolchain/go/bin:$PATH"`；重定向取 RC，**不用管道**）：
+
+- 第一次（提交 `74ec54af`，顺序测试之前）：`GATE_EXIT=0`；`packages/desktop` **282 files / 2911 passed + 2 skipped (2913)**。
+- 第二次（提交 `a6d11fc5`，最终）：`GATE_EXIT=0`；`packages/desktop` **282 files / 2912 passed + 2 skipped (2914)**。
 
 ## 登记（本刀没做/没验）
 
