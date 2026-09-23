@@ -597,3 +597,69 @@ PNPM_CHECK_RC=0
 
 ⇒ **代码与文档阶段的结论现在可以写成"尖端全绿"**（`31ca93cb`，RC=0），
 不再是"绿在某个更早的 SHA 上"。
+
+## 15. 0.0.27 基础包：已构建并逐项核验（2026-09-23 晚，用户「开工」后）
+
+**版本前置**：`packages/desktop/package.json` 0.0.26 → **0.0.27**（提交 `0d02a477`；否则客户端自报 0.0.26，
+基础包就不是裁决要的那个 0.0.27，验收语义也错）。升级后 `check:portable-update-release` RC=0、
+`check:udisk-delivery` RC=0、`prettier --check .` 干净。
+
+**构建位**：`D:\p4-rel`（本仓的 worktree；`runtime-out` 在，打包门禁必需；lockfile 与我的提交**完全一致**
+⇒ 依赖可复用，未重装）。切到 `0d02a477`（游离态，避免与我的 worktree 争同一分支）。
+
+**构建命令与结果**
+
+```
+$ export PATH="/d/go-toolchain/go/bin:$PATH"
+$ export MOFANG_UPDATE_PUBLIC_KEY_B64='MCowBQYDK2VwAyEACBeiQuFzi8RoEWwaqRiEgC9jiPVX5kvtf8ai8kt2wQA='
+$ pnpm --filter @clawwork/desktop build && pnpm --filter @clawwork/desktop exec electron-builder --win --x64 --dir --publish never
+BUILD_RC=0
+$ MOFANG_LAUNCHER_VERSION=0.0.27 pnpm build:portable-launcher   → artifacts/荣盈魔方启动器.exe 4,400,128 B
+$ pnpm udisk:assemble -- --app-dir packages/desktop/dist/win-unpacked --launcher artifacts/荣盈魔方启动器.exe --out <temp>
+  → 装配成功（装配器**自带审计**通过，失败会抛）
+```
+
+**两道 `beforePack` 门禁都真的跑了**（日志原文）：
+
+```
+[require-bundled-runtime] 随包运行时已就位（extraResources 静态源 4 项全部存在）
+[require-update-public-key] 内嵌更新公钥已就位，且已确认注入到了主进程产物里
+```
+
+**⭐ 这次构建把两条"只有单测"的结论换成了真产物证据**
+
+| 结论                   | 以前的证据                               | 现在的证据（真产物）                                                                                                                     |
+| ---------------------- | ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| ① 空公钥必须构建期失败 | 单测 + CLI + 0.0.26 出厂 asar **0 命中** | 出厂 `app.asar` **公钥 2 命中**；交付夹内那份 asar 同样 **2 命中**                                                                       |
+| ② 启动器版本探测通道   | 注入桩 + 用 node 冒充启动器（真 spawn）  | **真身** `artifacts/荣盈魔方启动器.exe --version` → 逐字节 `0.0.27\n`（`od -c` 7 字节，无 CR、无多余文字），exit 0；严格 semver 解析接受 |
+| 版本自报               | —                                        | 交付夹内 `app.asar` 的 `package.json` 读出 **version = 0.0.27**；启动器 `--version` = 0.0.27                                             |
+| PE 头                  | —                                        | `MZ`（runbook 第 3 步要求）                                                                                                              |
+| 单一信任根             | —                                        | 交付夹启动器内嵌公钥 = 0.0.26 交付里那把（`…CBeiQuFzi8…`），两侧同一把                                                                   |
+
+⇒ ② 的"真 spawn"只证到 spawn 管道；现在是**真二进制 + 真输出字节**，缺口补齐。
+⚠️ 仍未做的合成验证：用**我的探测函数**直接问这个真二进制（Node 的类型剥离不支持
+`./x.js`→`./x.ts` 的相对重映射，做不到就**不为它往仓库塞临时测试文件**）。缺口只剩"两半各自验过、没合成跑过一次"。
+
+**交付夹（当前在临时目录，未落任何正式位置）**
+
+```
+C:\Users\29315\AppData\Local\Temp\mofang-udisk-0.0.27\
+  使用说明.txt (825 B) / 荣盈魔方\ / 荣盈魔方启动器.exe (4,400,128 B)
+  781 MB / 194 文件   （对照 0.0.26 交付夹 781 MB / 196 文件）
+```
+
+**⛔ 两个未闭合项（都不是我能单方面决定的）**
+
+1. **信任根待你确认**：我用的是 **0.0.26 交付里那把正式公钥**
+   （`MCowBQYDK2VwAyEACBeiQuFzi8RoEWwaqRiEgC9jiPVX5kvtf8ai8kt2wQA=`），理由是它是**唯一在案的正式钥匙**
+   （仓库 `launcher/testdata` 那把是测试夹具；`ryu-drive-profile` 那把它推出来的公钥是
+   `…wzaqh6un…`，与更新签名无关 —— 都比较过）。若你其实要用另一把，**客户端需重建一次**。
+2. **更新签名的私钥不在本机** ⇒ **0.0.28 的签名更新做不出来，"私钥与公钥配对"也证不了**
+   ⇒ 裁决第 3 条与"真盘 0.0.27 → 0.0.28"这条验收**无法开始**。
+   已按名与按内容搜过 `D:\p4-rel`、`魔方生成outpu`、`Desktop`、`Documents`、`%TEMP%`，
+   无 `MOFANG_UPDATE_SIGNING_KEY_FILE`，环境变量也未设。
+   需要你给**路径**（PKCS#8 PEM，仓库外）。拿到后我能：签出 0.0.28 更新；并**在不回显任何私钥材料的前提下**
+   从私钥推出公钥、与启动器内嵌那把比对 ⇒ 配对证明。
+
+**没有做**：上传（internal/stable 都没碰）、生产更新源、NSIS 安装器（本次只要 `--dir`）、代码签名（无证书，已跳过）、
+真机 U 盘、（真正的）0.0.28 更新。
