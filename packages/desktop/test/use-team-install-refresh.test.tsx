@@ -60,15 +60,18 @@ let clawwork: ClawworkMock;
 let api: ReturnType<typeof useTeamInstall> | null = null;
 let container: HTMLDivElement;
 let root: Root;
+/** 副作用顺序账（刷新 vs `onDone`）——用来钉"先刷完再报成功"。 */
+let orderLog: string[] = [];
 
 function Harness() {
-  api = useTeamInstall();
+  api = useTeamInstall(() => orderLog.push('onDone'));
   return null;
 }
 
 beforeEach(() => {
   (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   refreshMock.fetchAgentsForGateway.mockClear();
+  orderLog = [];
   clawwork = {
     getTeamWorkspacePath: vi.fn(async () => 'D:\\ws\\开发团队'),
     createAgent: vi.fn(async (_gw: string, params: { name: string }) => ({
@@ -135,5 +138,20 @@ describe('useTeamInstall 装完刷新助手目录', () => {
 
     expect(api?.installStatus).toBe('done');
     expect(api?.installEvents.some((e) => e.type === 'error')).toBe(false);
+  });
+
+  it('⭐ 刷新**完**了才报"装完了"（`await` 的顺序有含义：紧接着点「发起对话」不能被陈旧目录撞上）', async () => {
+    // 钉的是**副作用顺序**，不是计时：刷新尚未结束（`refresh:end` 还没推）时，
+    // `onDone` 不许先响 —— 改成 `void refreshAgentCatalog(...)`（调用还在、只是不等）这条会红。
+    refreshMock.fetchAgentsForGateway.mockImplementationOnce(async () => {
+      orderLog.push('refresh:start');
+      await Promise.resolve();
+      orderLog.push('refresh:end');
+    });
+
+    await mount();
+    await run();
+
+    expect(orderLog).toEqual(['refresh:start', 'refresh:end', 'onDone']);
   });
 });

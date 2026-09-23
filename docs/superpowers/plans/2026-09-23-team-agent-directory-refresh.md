@@ -43,16 +43,19 @@
 
 **测试名字级读数**（`cd packages/desktop && ./node_modules/.bin/vitest run test/use-team-install-refresh.test.tsx`）：
 实现前 `1 failed | 2 passed (3)`（红：`⭐ 装完团队 ⇒ 强刷一次目录`，报文 `expected "spy" to be called 1 times, but got 0 times`）；
-实现后 `3 passed`。加上既有工作区守卫文件：`2 files / 6 passed`。
+实现后 `3 passed`；补了顺序那条之后 **`4 passed (4)`**。加上既有工作区守卫文件：`2 files / 7 passed`。
 
 **变异读数**（装置 `$TEMP/guard-mutate.mjs`，全部 `RESTORE_SHA256_EQUAL=true`）：
 
-| #      | 变异                                 | 实跑读数                   | 红名单                |
-| ------ | ------------------------------------ | -------------------------- | --------------------- |
-| M1     | 删 `await refreshAgentCatalog(...)`  | `1 failed \| 2 passed (3)` | ⭐ 强刷那条           |
-| M2     | `{ force: true }` ⇒ 默认（不强刷）   | `1 failed \| 2 passed (3)` | ⭐ 强刷那条           |
-| M3     | 刷新失败改为 `throw err`（去掉容错） | `1 failed \| 2 passed (3)` | ⭐ 失败不许变成装失败 |
-| M-CTRL | 只改日志文案（等价）                 | `3 passed`（0 红）         | —                     |
+| #      | 变异                                                                | 实跑读数                   | 红名单                                |
+| ------ | ------------------------------------------------------------------- | -------------------------- | ------------------------------------- |
+| M1     | 删 `await refreshAgentCatalog(...)`                                 | `1 failed \| 2 passed (3)` | ⭐ 强刷那条                           |
+| M2     | `{ force: true }` ⇒ 默认（不强刷）                                  | `1 failed \| 2 passed (3)` | ⭐ 强刷那条                           |
+| M3     | 刷新失败改为 `throw err`（去掉容错）                                | `1 failed \| 2 passed (3)` | ⭐ 失败不许变成装失败                 |
+| **M4** | `await refreshAgentCatalog(...)` ⇒ `void`（调用还在、只是**不等**） | `1 failed \| 3 passed (4)` | **只有** ⭐ 顺序那条 ⇒ 这条测试非空转 |
+| M-CTRL | 只改日志文案（等价）                                                | `3 passed`（0 红）         | —                                     |
+
+⚠️ **M4 的由来**：规格复核者发现"先 `await` 再报成功"这半句**没有任何测试钉住**（它自己跑 `await`⇒`void` 得到 **0 红**）⇒ 补了顺序那条用例 + 这条变异，现在它按名点住。
 
 ⚠️ **M1 第一次拒跑**（`ANCHOR_HITS=0`）：我把含 `\n` 的锚点用单引号传进 bash ⇒ 那是**字面反斜杠 n**，
 不是换行。装置照规矩拒绝执行（这正是它该做的），换掉 `\n` 后才是真读数。
@@ -65,3 +68,19 @@
   要不要说出来 = 决定 D1（未拍）。
 - **`runUpdate` 不刷**（理由见上）；若将来它开始创建 agent，这条接线要一起加。
 - **本刀只证明"装完会强刷"**（三个环各自的钉子），**没有**跑真机三击复现 —— 真机验收留给插盘那次。
+- **"刷新"没有正典，而且有四种写法**（规格复核者偏差 3）：`force:true` 三处 + `Settings/sections/AgentsSection.tsx:682-689`
+  直连 `listAgents` IPC + `setAgentCatalogForGateway`。**没有哪份文档说哪条是正典** ⇒ 将来接线的人可能选错，
+  而**选错不报错、只静默陈旧**（本刀这类的症状）。登记。
+- **一条"靠约定"的软边**：`components/AgentBuilderDialog/index.tsx:103` 的 `onCreated` 是**可选** props，
+  刷新全靠调用方（`AgentsSection.tsx:1250`）记得传 —— 新增不传的调用方会静默复现同族缺陷。登记。
+
+### 覆盖面（规格复核者穷举，供后人省一次考古）
+
+渲染层能建 agent 的原语只有 **3 个** `window.clawwork.createAgent` 调用点
+（`useTeamInstall.ts`、`lib/agent-builder.ts`、`lib/preset-agent-installer.ts`）；把全部入口映射到这三条上之后：
+
+- **团队侧没有第二个入口**：`installTeam` 全仓只有 `useTeamInstall.ts:185` 一个调用点；
+  `TeamBuilderDialog` / `CreateTeamWizard` / `useTeamHubInstall` 全部经过 `runInstall` ⇒ **继承本刀的刷新**。
+- **非团队侧无一漏刷**：预置助手（装前/装后各一次）、市场模板、设置里新建、`MainArea` 目标路由建助手 —— 都有刷新。
+- **装失败 ⇒ 不刷是安全的**：core 的三条 `error` 出口都先 rollback（`team-installer.ts:247/:254/:278`），
+  报 error 时不会留下新 agent；而"部分成功"（有的 agent 建失败只是 warning）仍走 `done` ⇒ **覆盖到了**。
