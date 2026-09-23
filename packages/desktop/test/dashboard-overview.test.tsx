@@ -129,12 +129,14 @@ describe('Dashboard overview', () => {
       nodes.filter((el) => el.textContent === text).at(-1) as HTMLElement | undefined;
 
     // ① 「账户积分」卡底部那行是**本机**数字（消息/文件数）⇒ 自己必须带本机口径，
-    //    且**数字还在**（标签/口径都在而数字被换掉，也属于"这行不再说明问题"）。
+    //    且**每个数都跟在自己的标签后面**。⚠️ 只查"这一行里出现过 36 / 3"会被两种退化骗过（复核者实测）：
+    //    ① 两个数**对调**（MQ1 ⇒ 全绿，而 DOM 真的变成"消息数显示文件数"）
+    //    ② 清掉文件数后，剩下的 `3` 被 `36` 里的那个数字满足（MQ3 ⇒ 全绿）。
     const totalsLine = deepestContaining('dashboard.totalMessages');
     expect(totalsLine?.children.length).toBe(0); // ← 钉住上面那个"取最深"的定位本身（根节点是有子节点的）
-    expect(totalsLine?.textContent).toContain('dashboard.localScope');
-    expect(totalsLine?.textContent).toContain('36');
-    expect(totalsLine?.textContent).toContain('3');
+    expect(totalsLine?.textContent).toBe(
+      'dashboard.localScope · dashboard.totalMessages 36 · dashboard.totalArtifacts 3',
+    );
 
     // ② 「助手排行」来自本机聚合（`data.breakdowns.agents`）⇒ 口径标签必须是标题的**下一个兄弟**。
     //    ⚠️ 不能用 `parentElement` + 包含：标签不渲染时标题与 wrapper 文本相同 ⇒ 命中 wrapper，
@@ -145,6 +147,11 @@ describe('Dashboard overview', () => {
     // ③ 反向：账号口径的板块**不许**被顺手改成"本机"（否则修法把它改错方向也全绿）。
     const modelUsageLabel = deepestExact('dashboard.modelUsage');
     expect(modelUsageLabel?.nextElementSibling?.textContent).toBe('dashboard.accountScope');
+
+    // ③b 反向的**另一半**：「最近 30 天」同样是**账号**口径 ⇒ **摘掉**它也是错的。
+    //    ⚠️ 只钉「模型消耗」会漏掉这里（复核者 MQ2：摘掉 ⇒ 全绿）。
+    const last30dLabel = deepestExact('dashboard.last30dSection');
+    expect(last30dLabel?.nextElementSibling?.textContent).toBe('dashboard.accountScope');
 
     unmount();
   });
