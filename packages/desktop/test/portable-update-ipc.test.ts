@@ -62,6 +62,14 @@ vi.mock('../src/main/debug/index.js', () => ({
   }),
 }));
 
+// 装配盘上更新服务时会先问一次启动器版本（`--version`）。这里给个立刻返回的桩：
+// 不然单测会去真 spawn 一个不存在的 exe（慢、且依赖文件系统），
+// 而"探测到底怎么工作"由 `portable-update-launcher-version.test.ts` 负责。
+vi.mock('../src/main/update/launcher-version.js', () => ({
+  LAUNCHER_VERSION_ARGUMENT: '--version',
+  probeLauncherVersion: async () => ({ kind: 'version', version: '0.0.21' }),
+}));
+
 async function loadHandlers() {
   vi.resetModules();
   return import('../src/main/ipc/update-handlers.js');
@@ -106,6 +114,12 @@ describe('portable update IPC', () => {
     mocks.portableRoot = 'F:\\';
     const { registerUpdateHandlers } = await loadHandlers();
     registerUpdateHandlers();
+
+    // ⚠️ 装配现在是**异步**的：里面多了一次启动器版本探测（`--version`）。
+    //    这里只等它落定，断言的内容与以前一字不差。
+    await vi.waitFor(() => {
+      expect(mocks.handlers.get('app:get-update-state')?.()).not.toBeNull();
+    });
 
     const state = (await mocks.handlers.get('app:get-update-state')?.()) as Record<string, unknown> | null;
 

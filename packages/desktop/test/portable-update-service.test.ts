@@ -61,12 +61,23 @@ interface Harness {
   quit: ReturnType<typeof vi.fn>;
 }
 
+/** 在签名清单的基础上换掉任意字段（签名重算，否则会先被签名校验挡掉、测不到想要的判定）。 */
+function signedManifestWith(overrides: Record<string, unknown>): Record<string, unknown> {
+  const { signature: _discarded, ...payload } = signedManifest();
+  const merged = { ...payload, ...overrides };
+  const signature = sign(null, Buffer.from(canonicalizeJson(merged), 'utf8'), privateKey).toString('base64');
+  return { ...merged, signature };
+}
+
 async function makeHarness(
   overrides: {
     manifest?: Record<string, unknown> | (() => Promise<unknown>);
     downloadPackage?: (input: { signal: AbortSignal; onProgress: (t: number, total: number) => void }) => Promise<void>;
     extractPackage?: () => Promise<{ programRoot: string }>;
     verifyTree?: () => Promise<void>;
+    /** `null` = 启动器版本探测失败（明确出口：拒绝一切更新）。 */
+    launcherVersion?: string | null;
+    fetchManifest?: () => Promise<unknown>;
   } = {},
 ): Promise<Harness> {
   const root = await makeRoot();
@@ -107,13 +118,13 @@ async function makeHarness(
     root,
     currentVersion: '0.0.25',
     channel: 'internal',
-    launcherVersion: '1.0.0',
+    launcherVersion: overrides.launcherVersion === undefined ? '1.0.0' : overrides.launcherVersion,
     publicKeyBase64: PUBLIC_KEY_BASE64,
     stateStore: new PortableUpdateStateStore({
       stateFilePath: join(root, '.state', 'update-state.json'),
       now: () => (tick += 1),
     }),
-    fetchManifest: typeof manifest === 'function' ? manifest : async () => manifest,
+    fetchManifest: overrides.fetchManifest ?? (typeof manifest === 'function' ? manifest : async () => manifest),
     fetchFileManifest: async () => FILE_MANIFEST,
     downloadPackage: downloadPackage as never,
     extractPackage: extractPackage as never,
@@ -346,5 +357,56 @@ describe('portable update service public state', () => {
         expect(key).not.toMatch(/token|password|key|path|url|signature/i);
       }
     }
+  });
+});
+
+describe('portable update service: unknown launcher version is a hard stop', () => {
+  it('⭐ launcherVersion=null ⇒ 拒绝一切更新（launcher-incompatible），且**根本不去取清单**', async () => {
+    // 以前客户端把硬编码的 '1.0.0' 当启动器版本 —— 等于拿一个编出来的数字去过
+    // `minLauncherVersion` 这道门。探测失败以后**不许**退回任何版本号：那会让
+    // 服务继续比一个假数字，正是这个洞本身。出口 = 拒绝（用户得到的补救是对的：
+    // 换一份新的完整交付包）。
+    const fetchManifest = vi.fn(async () => signedManifest());
+    const harness = await makeHarness({ launcherVersion: null, fetchManifest });
+
+    const state = await harness.service.check();
+
+    expect(state).toMatchObject({ phase: 'error', errorCode: 'launcher-incompatible' });
+    expect(fetchManifest).not.toHaveBeenCalled();
+    expect(harness.downloadPackage).not.toHaveBeenCalled();
+  });
+
+  it('launcherVersion=null ⇒ prepare 立刻拒绝，不下载', async () => {
+    const harness = await makeHarness({ launcherVersion: null });
+
+    await expect(harness.service.prepare()).resolves.toEqual({
+      ok: false,
+      errorCode: 'launcher-incompatible',
+    });
+    expect(harness.downloadPackage).not.toHaveBeenCalled();
+  });
+
+  it('⭐ 真版本比清单要求的新 ⇒ 放行（硬编码 1.0.0 时代这条会因假数字而误判）', async () => {
+    // 真实场景：盘上启动器 1.2.0、清单要求 >= 1.1.0。用真值 ⇒ available；
+    // 若仍拿编出来的 '1.0.0' 去比，这条会被误判成 launcher-incompatible。
+    const harness = await makeHarness({
+      launcherVersion: '1.2.0',
+      manifest: signedManifestWith({ minLauncherVersion: '1.1.0' }),
+    });
+
+    await expect(harness.service.check()).resolves.toMatchObject({ phase: 'available', targetVersion: '0.0.26' });
+  });
+
+  it('⭐ 真版本比清单要求的旧 ⇒ 判 launcher-incompatible（这道门现在是真的）', async () => {
+    const harness = await makeHarness({
+      launcherVersion: '0.0.20',
+      manifest: signedManifestWith({ minLauncherVersion: '0.0.27' }),
+    });
+
+    await expect(harness.service.check()).resolves.toMatchObject({
+      phase: 'error',
+      errorCode: 'launcher-incompatible',
+    });
+    expect(harness.downloadPackage).not.toHaveBeenCalled();
   });
 });

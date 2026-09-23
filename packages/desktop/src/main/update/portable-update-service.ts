@@ -41,7 +41,14 @@ export interface PortableUpdateServiceDeps {
   root: string;
   currentVersion: string;
   channel: PortableUpdateChannel;
-  launcherVersion: string;
+  /**
+   * 盘上启动器的**真实版本**（`launcher-version.ts` 探测 `--version` 所得）。
+   *
+   * `null` = 探测失败。此时服务**拒绝一切更新**（`launcher-incompatible`）
+   * 并且**不去取清单** —— 绝不退回某个编出来的版本号：那正是
+   * "`minLauncherVersion` 是假门"这个洞本身。
+   */
+  launcherVersion: string | null;
   publicKeyBase64: string;
   stateStore: PortableUpdateStateStore;
   fetchManifest: () => Promise<unknown>;
@@ -195,6 +202,20 @@ export function createPortableUpdateService(deps: PortableUpdateServiceDeps): Po
   async function check(): Promise<PortableUpdatePublicState> {
     permanentError = null;
     publish('checking');
+
+    // ⚠️ 启动器版本探测失败 = **不取清单、直接拒绝**。
+    //    以前这里拿的是硬编码的 '1.0.0'，与盘上那个 exe 毫无关系 ⇒
+    //    `minLauncherVersion` 那道门从来没真的比过。现在探测不到就不许编一个出来：
+    //    宁可拒绝（补救是"换新交付包"，与 launcher-incompatible 的文案一致），
+    //    也不拿假版本号放一份**可能装不上**的更新过去。
+    const launcherVersion = deps.launcherVersion;
+    if (launcherVersion === null) {
+      manifest = null;
+      permanentError = 'launcher-incompatible';
+      publish('error', { errorCode: 'launcher-incompatible' });
+      return getState();
+    }
+
     try {
       const raw = await deps.fetchManifest();
       const decision = verifyAndDecidePortableUpdate({
@@ -202,7 +223,7 @@ export function createPortableUpdateService(deps: PortableUpdateServiceDeps): Po
         publicKeyBase64: deps.publicKeyBase64,
         currentVersion: deps.currentVersion,
         currentChannel: deps.channel,
-        launcherVersion: deps.launcherVersion,
+        launcherVersion,
       });
       if (decision.kind === 'available') {
         manifest = decision.manifest;

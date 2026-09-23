@@ -39,7 +39,11 @@ function decodeBase64(value: string): Buffer {
   return decoded;
 }
 
-function parseSemanticVersion(value: string): SemanticVersion {
+/**
+ * ⚠️ 导出是给 `launcher-version.ts` 用的（探测盘上启动器 `--version` 的返回值）。
+ * 让"清单认什么版本"与"探测认什么版本"共用同一份定义，两边就不会漂移成两套判据。
+ */
+export function parseSemanticVersion(value: string): SemanticVersion {
   const match = SEMVER_PATTERN.exec(value);
   if (!match) throw new PortableUpdateFailure('manifest-invalid');
   return {
