@@ -158,9 +158,18 @@ test/portable-update-launcher-version.test.ts(69,30): error TS2493:
 | 启动器版本   | `MOFANG_LAUNCHER_VERSION`（ldflags）、release tag、客户端探测                                                                                               | **已收敛**：ldflags 与探测读同一把 exe 的同一行；manifest 门槛已拆走                                          |
 | 状态文件路径 | `update-handlers.ts` 拼过一次、启动恢复也要拼                                                                                                               | **已收敛**到 `portableUpdateStateFilePath()`（见 §6）                                                         |
 
-⚠️ **`release.yml` 需要仓库变量 `vars.MOFANG_MIN_LAUNCHER_VERSION`**（值是"当前基础包里那把启动器"，
-0.0.27 基础包 ⇒ `0.0.27`）。**这是我加的、需要你确认的一处配置**：变量不存在时该 job 会硬失败，
-报 `Missing protected release secret: MOFANG_MIN_LAUNCHER_VERSION`（响亮且可操作）。
+⚠️ **`release.yml` 那处改动只在 GitHub Actions 路径下才有意义**（2026-09-23 晚按用户裁决更正）：
+我在 `portable-update-release` job 里为 `MOFANG_MIN_LAUNCHER_VERSION` 接了仓库变量
+`vars.MOFANG_MIN_LAUNCHER_VERSION`（值 = 当前基础包里那把启动器，0.0.27 基础包 ⇒ `0.0.27`），
+缺了该 job 会硬失败并点名变量。
+
+**但用户已拍「走手工发布」（方案 A）** ⇒ 这条**不是**前置：
+
+- 手工路径（本手册 11 步）在发布 shell 里 `$env:MOFANG_MIN_LAUNCHER_VERSION='0.0.27'` 即可，**不需要建任何 GitHub 变量**；
+- 而 GitHub Actions 那条路**今天跑不了** —— 本项目代码只在 **Gitee**（`origin` = `diguade/mofang-compass-desktop`），
+  GitHub 上只配了**别人的公开上游**当 `upstream`（`clawwork-ai/clawwork`，public、非 fork、无本项目代码）；
+  在那个仓上建变量既无权限、也会把发布指向别人的仓库。
+- ⇒ 我先前把它写成"需要你在 GitHub 上建"是**多余的**（见 §13）。runbook 的「适用范围」已加上两条路径的划定。
 
 **读数**
 
@@ -367,11 +376,11 @@ $ pnpm check
    ⇒ ② 的"探测真实启动器"目前只有注入桩 + 一次"用 node 冒充启动器"的真 spawn 测试。
 3. **`launcher-version.ts` 的真 spawn 只测到"能拿到 stdout 且严格 semver 拒掉 `v26.…`"**；
    没有用**真正的启动器二进制**跑过 `--version`（那要打包，越界）。
-4. **`release.yml` 的两处配置需要你确认**：
-   - `MOFANG_UPDATE_PUBLIC_KEY_B64` 在 `release` job 是否可见（**仓库级** vs
-     只挂在 `portable-update-production` 环境）。环境级 ⇒ 该 job 会硬失败并报
-     `MOFANG_UPDATE_PUBLIC_KEY_B64 is not set`。**我无法从仓库判断**，故标 UNVERIFIED。
-   - 仓库变量 `vars.MOFANG_MIN_LAUNCHER_VERSION` **尚不存在**，需要建（值 = 当前基础包里那把启动器）。
+4. ~~**`release.yml` 的两处配置需要你确认**~~ ⇒ ⛔ **2026-09-23 晚按用户裁决（走手工发布）作废，
+   两条都已不构成前置**，见 §13：
+   - `MOFANG_UPDATE_PUBLIC_KEY_B64` 在 `release` job 的可见性（仓库级 vs 环境级）—— **只在 GitHub Actions
+     路径下才是问题**；手工路径在发布 shell 里 export 即可（我确实无法从仓库判断存储范围，这条 UNVERIFIED 保持）。
+   - `vars.MOFANG_MIN_LAUNCHER_VERSION` —— 同上，手工路径不读它。
 5. **公钥/私钥配对没有被证明**：裁决要求"证明私钥与该公钥配对"，我**没有做**（需要真密钥，越界）。
    代码侧只保证两侧内嵌同一把、且都必须是非空 Ed25519 SPKI。
 6. **0.0.27 基础包本身没有构建、没有装配、没有真机换盘**。
@@ -526,3 +535,38 @@ PNPM_CHECK_RC=0
   分层为 `FromState`（相位 error 且码认得出 ⇒ 以公开状态为准，带两个数字）→
   `describeUpdateError`（整串错误码）→ `describePortableError`，共用我加的 `asPortableErrorCode`
   与同一张分类表。**没有与我的实现重复**，也没有第二套判据。
+
+## 13. 发布路径裁决（方案 A）+ GitHub/Gitee 盘查（2026-09-23 晚）
+
+**用户裁决：走方案 A —— 手工发布 + Gitee，不建任何 GitHub 变量/仓库。**
+⇒ §4 与 §10 第 4 条里"需要你在 GitHub 上建仓库变量"的说法**作废**：只有 GitHub Actions 那条路才读它，
+而那条路今天跑不了。手工路径的全部要求是发布 shell 里的 `export`。
+
+**盘查读数（只读，绕全局代理）**
+
+| 远端                                                  | 是什么                                                                      | 有本项目代码吗                                                                                  |
+| ----------------------------------------------------- | --------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `upstream` = `github.com/clawwork-ai/clawwork`        | **别人的公开上游产品仓**（`gh api` 实测 `fork=false`、`visibility=public`） | **没有**。只有上游自己的分支（`copilot/*`、`dependabot/*`、`fix/issue-*`、`fix/3xx-*`、`main`） |
+| `origin` = `gitee.com/diguade/mofang-compass-desktop` | 本项目代码的唯一来源                                                        | 全部在这                                                                                        |
+
+在用户 GitHub 账号（`Digua520`）下按 `mofang|clawwork|compass|rongying` 搜过 **100 个仓库**：**无本项目仓**。
+⇒ **两边不重叠、不会互相打架**（商业代码也没外流到公开仓）；代价是 GitHub 上没有任何备份位。
+
+**Gitee 侧逐分支对平**
+
+| 分支                                      | 本地       | Gitee      | 实情                                                 |
+| ----------------------------------------- | ---------- | ---------- | ---------------------------------------------------- |
+| `main`                                    | `2906e773` | 一致       | ✓                                                    |
+| `fix/portable-update-gaps`                | `54f93be8` | 一致       | ✓                                                    |
+| `fix/stats-scope-labels` / `build-0.0.23` | —          | 一致       | ✓                                                    |
+| `fix/local-credential-exposure`           | `c7a4a4fe` | `0bec688b` | **领先 1 条**（`c7a4a4fe docs(memory)`），**非分叉** |
+| `feat/local-file-artifact-loop`           | `92c1f482` | —          | **未推**                                             |
+| `backup/internal-beta-ui-20260916`        | `e2433c83` | —          | **未推**（备份分支，可能故意）                       |
+
+**⚠️ 配置层隐患（比上面三条更值得修，未修）**：`remote.origin.fetch` 只写了**三条显式 refspec**
+（`main` + `feat/demo-main-path` + `feat/stage3b-demo-polish`），**没有通配**
+⇒ `git fetch origin` 不会为其它分支建远端引用 ⇒ `git status` / `git branch -vv` 对大部分分支
+**不显示追踪关系**，看起来像"没推"。这很可能是我先前误判"哪些分支未推"的来源之一。
+**已做**：给 `fix/portable-update-gaps` 配上推送追踪（配置式，
+`branch.<name>.remote/merge`；`git push --dry-run` → `Everything up-to-date` 证明裸 `push` 已有依据）。
+**未做**（等用户再拍）：改通配 refspec、推那 3 个未推分支（推别人的线需其同意）。

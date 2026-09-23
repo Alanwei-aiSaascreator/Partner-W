@@ -6,6 +6,13 @@
 
 代码合并、客户包打包、测试源发布、正式源发布是四个独立授权点。没有当次明确授权时，只能运行测试和临时目录夹具，不得创建客户候选包，不得改测试或正式更新源。
 
+### 两条发布路径，别把其中一条的前提当成两条都要（2026-09-23 用户已拍「走手工」）
+
+- **主线 = 本手册这 11 步手工流程**（本机 PowerShell + `scripts/feed-publish.mjs`）。它**不依赖 GitHub Actions**，需要的只是发布 shell 里的那几个环境变量（见「发布前提」）。
+- **另一条 = `.github/workflows/release.yml` 的自动流水线**。它需要仓库级的密钥与变量（见下），**但今天没有可跑它的仓库**：本项目的代码只在 **Gitee**（`origin` = `diguade/mofang-compass-desktop`），GitHub 上只配了**别人的公开上游**当 `upstream`（拉基线用），没有任何本项目的仓库 ⇒ 那条流水线**当前不可用**。
+  ⇒ 因此下面凡是提到「仓库级密钥 / `vars.MOFANG_MIN_LAUNCHER_VERSION` / `release` job 可见性」的条目，**只在那条自动路径下才是前置**；**走手工路径不需要建任何 GitHub 变量或密钥**，在发布 shell 里 `export` 就是全部要求。
+  ⇒ 若将来要启用手工之外的自动路径，先建一个**本项目的** GitHub 仓库（商业源码进第三方托管，需单独授权），再把那些密钥/变量设在**那个**仓库上；设在 `upstream` 上既无权限、也会把发布指向别人的仓库。
+
 ## 发布前提
 
 - 工作树干净，发布 tag 与 `packages/desktop/package.json` 版本一致。
@@ -22,7 +29,7 @@
 - ⚠️ **`MOFANG_UPDATE_PUBLIC_KEY_B64` 必须对 `release` job 可见** —— 只放在受保护环境里**不够**：`release`（`release.yml:54`，mac/win/linux 四平台矩阵）**没有声明 `environment`**，所以只挂在 `portable-update-production` 上的密钥对它不可见。而 2026-09-23 起客户端构建与打包都把公钥当**前置**（`scripts/require-update-public-key.cjs --require-env`；实测空值 RC=1 并点名变量与后果、真值 RC=0）⇒ 若密钥只存在于环境里，`release` 的四个构建会全部硬失败，而 `portable-update-release` 依赖 `release`，整条流水线一步也走不到（失败方向是响的，但会卡在发版当天）。公钥是公开量（内嵌在每个安装器里），放**仓库级**不增加暴露面 —— 建议同名存成仓库级密钥。⚠️ 当前实际存储范围**无法从仓库判断**，发版前请在 GitHub 设置里核对一次。
 - **两个版本变量含义不同，别混用**（2026-09-23 拆开；以前是同一个变量名，见第 5 步的纠正表）：
   - `MOFANG_LAUNCHER_VERSION`：**本次构建的启动器自己的版本**（第 3 步；ldflags 注入）。
-  - `MOFANG_MIN_LAUNCHER_VERSION`：manifest 的 `minLauncherVersion` = **最老的那个还能装这份更新的启动器**（第 5 步）。CI 侧由 `release.yml` 的 `portable-update-release` job 显式提供（仓库变量 `vars.MOFANG_MIN_LAUNCHER_VERSION`），本地则由发布 shell 显式 export。
+  - `MOFANG_MIN_LAUNCHER_VERSION`：manifest 的 `minLauncherVersion` = **最老的那个还能装这份更新的启动器**（第 5 步）。**手工路径**由发布 shell 显式 export（本手册第 5 步就是这一行）；若将来走 `release.yml` 自动路径，才需要仓库变量 `vars.MOFANG_MIN_LAUNCHER_VERSION` —— 那是另一条路的前提，不是本手册的。
   - 两者**都没有默认值**：缺失即硬失败，绝不静默签出一份装不上的包。门槛比"本次要发的启动器"还新也会硬失败。
 - 发布服务必须支持“先传不可变版本目录，最后原子替换频道 manifest”。服务器发布**只允许用第 7、9、10 步的 `scripts/feed-publish.mjs`**（它已经过复核）；工具缺失或未经复核时，**完成第 6 步后停止，不得进入第 7 步**，不得现场拼 `scp` / `ssh` 命令。⚠️ 这里过去写作「停在第 8 步」，**步号是错的**（第 7 步就是上传；停在第 8 步意味着一件没做的事已经做过）。口径与规格 §8.1 一致：**停在第 7 步之前**。
 
