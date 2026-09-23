@@ -30,7 +30,7 @@ git worktree add .worktrees/<主题> -b fix/<主题> fix/local-credential-exposu
 ```
 
 - `.worktrees/` 已被 `.gitignore` 覆盖 ⇒ 工作树本身永远不会被误提交。
-- 主线当前指针 **608882ff**（已推 Gitee）。
+- 快照时的主线指针是 **608882ff**；本文件由它之后的 `bbb4b8a7` 引入（即地图写的就是那一刻）。
 
 ## 3. 分支全表（本地 / Gitee）
 
