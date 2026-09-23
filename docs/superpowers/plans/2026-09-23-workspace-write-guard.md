@@ -489,7 +489,7 @@ git status --short   # 必须是空的
 
 ### Task 6: 门禁 + 提交（若有源码改动回来）
 
-- [ ] **Step 1: 跑门禁**
+- [x] **Step 1: 跑门禁**
 
 ```bash
 export PATH="/d/go-toolchain/go/bin:$PATH"
@@ -499,7 +499,7 @@ pnpm check > "$TEMP/guard-gate.txt" 2>&1 ; rc=$? ; echo "GATE_EXIT=$rc"
 
 Expected: `GATE_EXIT=0`。⚠️ **别用管道**；失败要先分清是"环境"（Go 不在 PATH）还是"代码回归"。
 
-- [ ] **Step 2: 写账本**
+- [x] **Step 2: 写账本**
 
 在本文件末尾追加 `## 账本（Task 2–6 落地与读数）`：每条测试的**名字**、每条变异的**实跑读数**、门禁的 `GATE_EXIT`。数字必须来自当场跑出来的输出。
 
@@ -659,7 +659,10 @@ fail-closed 语义、不是回归；④"始终允许"能按 job 预授权，用�
 
 ### Task 6 门禁读数
 
-⬜ 已启动（`pnpm check`，`export PATH="/d/go-toolchain/go/bin:$PATH"`，重定向取 RC）—— **读数待回填**。
+✅ **`GATE_EXIT=0`**（`export PATH="/d/go-toolchain/go/bin:$PATH"`；`pnpm check > "$TEMP/guard-gate2.txt" 2>&1` 后取 `rc`，**没用管道**）。
+纪元：**`b0027449`（`askFallback` 已移除之后）**，工作树干净。全链（launcher → update-release → feed-publish → lint → architecture →
+ci-bot-security → ui-contract → renderer-copy → i18n → udisk-delivery → gateway-probe → dead-code → **format:check ✅** →
+typecheck ×3 → test）走完；`packages/desktop`：**281 files / 2914 passed + 2 skipped (2916)**。
 
 ### Task 7 客户端配套确认（只读，✅）
 
@@ -691,3 +694,21 @@ OPENCLAW_STATE_DIR="$STATE" node "$CLI" config get tools --json
 
 ⚠️ 本探针的 state 文件是**手写**成"测试钉住的那份合并输出"的字节（不是拿客户端代码生成的）。
 它证明的是"**运行时认得这三个键、且不拒收**"，**不是**行为上真的拦住了 —— 行为级（Task 8 Step 2）**仍未做**。
+
+### Task 8 行为级（⬜ 未做 —— 附手工验收步骤）
+
+**为什么没做**：行为级 = "桩模型 + 真网关 + 驱动一回合"，要在临时 profile 里布一套 ~936MB 运行时、
+再挂一个兼容 OpenAI 的本地桩端点；本刀**时间盒内没做完**，而**不许**用生产 relay 去跑（成本 + 越界）。
+⇒ 按计划退化：**明说这段不算证据**，给出可执行的手工步骤。
+
+**手工验收（真机 + 内测账号）**：
+
+1. 装 0.0.27 内测包、登录、随便聊一句确认网关起来了。
+2. 让助手"在桌面创建一个 hello.txt"。
+   - 预期 A：**桌面没有新文件**；预期 B：助手说明它写不出去（或改在工作区里做）。
+3. 让助手跑一条命令（例如"用命令行看下现在几点"）。
+   - 预期：**弹审批卡**（命令内容 + 允许一次 / 始终允许 / 拒绝）；点**拒绝** ⇒ 命令不执行。
+   - 反向：点**允许一次** ⇒ 命令执行。⚠️ 这条反向必须做 —— 否则分不清"闸门开着"与"审批通道根本没通"。
+4. 关掉 App，等一个用户自建的定时任务（没有就跳过）⇒ 需要 shell 的任务**被拒并给出原因**（Task 1 登记的行为变化）。
+
+**判据**：第 2 步的"桌面没有新文件"**必须用文件管理器亲眼确认**，不能只信助手的自述。
