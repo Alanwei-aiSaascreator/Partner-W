@@ -24,14 +24,17 @@
    * ⚠️ 动态 import **照 `useTemplateInstall` 的先例**：静态引入会把整条网关链拖进每个 importer
      （那边注释里记着实测：两个只 mock 了 core/platform 的既有测试会直接加载失败）。
    * ⚠️ 失败**不许**把"装完了"变成"装失败"：目录最多陈旧，重启会补。
-2. `runInstall` 收到 `done` 事件时**先 `await refreshAgentCatalog(...)`、再 `setInstallStatus('done')`**。
+2. `runInstall` 收到 `done` 事件时调 **`finishTeamInstall`**（收尾三步的**唯一出口**）：
+   **先 `await` 刷新 → 再 `setInstallStatus('done')` → 再 `onDone`**。
    - 顺序有含义：报"装完了"之前目录必须已新鲜，否则紧接着的「发起对话」照样会撞上陈旧目录。
+   - ⚠️ 三步**只许出现在 `finishTeamInstall` 里** —— 内联回调用点后测试看不见（见下「已知边界 P2」）。
+   - ⚠️ 该缝的**隐含契约：注入的 `refresh` 不许抛**（容错住在 `refreshAgentCatalog` 的 catch 里，不在缝里）。
 
 **刻意不做**：`runUpdate` 不加（它要求每个 agent 都已有 `existingAgentId` ⇒ 不会产生新目录项）；
 层 2 的静默替换、D1/D2/D4 全部未动；核心安装器（`core/team-installer.ts`）不加 `refreshAgents` 注入点
 （渲染层一处接线就够，且不必动 core 的公开形状）。
 
-## 链子三个环各自的钉子（这是"用户可见症状已修"的完整论证）
+## 链子各环各自的钉子（这是"用户可见症状已修"的完整论证）
 
 | 环                                      | 谁钉住                                                                                                                                                       |
 | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -77,7 +80,7 @@
 | **M6**  | `error` 分支里也加一行刷新                         | `1 failed \| 5 passed (6)` | **只有** ⭐ 生成器报 error ⇒ 不刷（走的是 error 分支，非预检） |
 | M-CTRL  | 只改日志文案（等价）                               | `6 passed`（0 红）         | —                                                              |
 
-⚠️ **时代标注**：M1–M3 的 `(3)`/`(4)` 是第一/二纪元读数（修复轮之前）；本表最终行都是第三纪元（套件 6 条）。
+⚠️ **时代标注**：本表全部是第三纪元（套件 6 条）读数；第一/二纪元的阶段读数见 `git log` 里各提交时的测试条数（3 → 4）。
 ⚠️ **M4' 与 M5' 各钉一半**：`void` 改的是"调用方等不等"，重排改的是"刷新与报成功的先后" —— **两个变异各自只红一条**，所以两条测试都不空转。
 
 ⚠️ **M1 第一次拒跑**（`ANCHOR_HITS=0`）：我把含 `\n` 的锚点用单引号传进 bash ⇒ 那是**字面反斜杠 n**，
@@ -88,7 +91,7 @@
 - 第一次（提交 `74ec54af`）：`GATE_EXIT=0`；`packages/desktop` **282 files / 2911 passed + 2 skipped (2913)**。
 - 第二次（提交 `a6d11fc5`）：`GATE_EXIT=0`；`packages/desktop` **282 files / 2912 passed + 2 skipped (2914)**。
 - 第三次（提交 `a93ea419`）：**`GATE_EXIT=1`** —— 见下。
-- 第四次（提交 `2a5fb780`）：`GATE_EXIT=0`（修掉类型错之后）。
+- 第四次（提交 `2a5fb780`）：`GATE_EXIT=0`；`packages/desktop` **282 files / 2914 passed + 2 skipped (2916)**。
 - 第五次（提交见 `git log`，补 P1 钉子 + 注释之后）：⏳ 跑完回填。
 
 ### ⭐ 第三次门禁红了，红在 `typecheck:tests`（"聚焦全绿 ≠ 门禁会绿"的实例）
@@ -115,6 +118,14 @@ hoisted mock 写的是 `async () => undefined`（⇒ `Promise<undefined>`），�
   而**选错不报错、只静默陈旧**（本刀这类的症状）。登记。
 - **一条"靠约定"的软边**：`components/AgentBuilderDialog/index.tsx:103` 的 `onCreated` 是**可选** props，
   刷新全靠调用方（`AgentsSection.tsx:1250`）记得传 —— 新增不传的调用方会静默复现同族缺陷。登记。
+- **动态 import 的真实收益（规格复核者要求改口径，已改）**：它只买"**加载期**解耦"（不装团队的 importer 不必加载那条重链）；
+  **走到 `done` 时整条链照样会加载**，代价只是从"模块加载失败"挪进 catch —— 既有 `use-team-install-workspace.test.tsx`
+  正是这样吞掉一个 `TypeError`（~70ms → ~470ms）。要恢复原耗时，让该用例 mock `@/hooks/useGatewayDispatcherSetup`
+  （照本刀测试的做法）。登记。
+- **复核者对我这个变异装置的两条提醒（都是假绿入口，供后人）**：
+  ① 装置的**第 4 个参数（测试文件）有默认值** `test/runtime-state-config.test.ts` ⇒ **漏传会去跑一个无关套件**、很可能报"全绿"；
+  ② 测试文件路径写成了**仓库根相对**（而装置 `cwd: 'packages/desktop'`）⇒ `MUTATION_RC=1` + `READING=(空)` + `RED=(空)`，
+  **看起来像"变异被杀"，其实是 "No test files found"** ⇒ 有效读数必须**同时**有非空 `READING`（failed 数非零）与非空 `RED`。
 
 ### 覆盖面（规格复核者穷举，供后人省一次考古）
 
@@ -161,7 +172,7 @@ hoisted mock 写的是 `async () => undefined`（⇒ `Promise<undefined>`），�
   （**重启自愈**）。触发条件窄，登记。
 - **M3**：`done` 现在被一次网关往返顶住（最坏 `REQ_TIMEOUT_MS = 15s`），期间向导只有一个禁用按钮 —— **不是回归**
   （前面几步本来就是同一量级），但代价要记下来。
-- **M4**：`runUpdate` 的"不会创建 agent"守卫在 `CreateTeamWizard.tsx:145`（`agents.every(existingAgentId)`），
+- **M4**：`runUpdate` 的"不会创建 agent"守卫在 `CreateTeamWizard.tsx:144`（`agents.every(existingAgentId)`；`:145` 才是那次调用），
   **不在 hook 里**；hook 内部用的是 `a.existingAgentId!`。将来出现第二个调用方要同时看这两处。
 - **M5（已就地修）**：账本里 M-CTRL 的版本戳、以及"链子"表缺顺序那一环，本轮都已补齐。
 - **动态 import 的真实代价（复核者实测）**：既有用例 `use-team-install-workspace.test.tsx` 现在也会**加载整条网关链**

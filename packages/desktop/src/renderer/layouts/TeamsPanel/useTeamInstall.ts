@@ -23,9 +23,11 @@ type InstallStatus = 'idle' | 'installing' | 'done' | 'error';
  * `useGatewaySelector` 发现 id 不在目录里，就把它**静默换成 `main`**（全程没有任何提示），
  * 用户看到的是主罗盘。**重启就好了**（启动那次会强刷）——这正是它长期没被当成 bug 的原因。
  *
- * ⚠️ **动态 import 是刻意的**（照 `MarketPanel/useTemplateInstall.ts` 的先例）：这条链会一路拉到
- *    网关 dispatcher（很重），而"装完刷新目录"是低频动作；静态引入会让任何 import 本模块的
- *    页面/测试都被迫加载整条网关链（那边实测过：两个只 mock 了 core/platform 的既有测试直接加载失败）。
+ * ⚠️ **动态 import 只买到"加载期解耦"**（照 `MarketPanel/useTemplateInstall.ts` 的先例）：不装团队的
+ *    importer 不必加载这条重链。⚠️ **但走到 `done` 时整条链照样会被加载**，代价只是从"模块加载失败"
+ *    挪进了 catch —— 既有 `test/use-team-install-workspace.test.tsx` 正是这样吞掉一个
+ *    `TypeError: deps.gateway.listAgents is not a function`（该例 ~70ms → ~470ms）。
+ *    （要它还回原耗时，让那个用例照本文件测试的做法 mock `@/hooks/useGatewayDispatcherSetup`。）
  * ⚠️ **失败不许影响"装完了"**：目录最多是陈旧的（重启会补），别让一次刷新失败把成功报成失败。
  */
 async function refreshAgentCatalog(gatewayId: string): Promise<void> {
@@ -44,6 +46,11 @@ async function refreshAgentCatalog(gatewayId: string): Promise<void> {
  *    又是"静默换成 main"），而 React 的状态更新会被 `act` 攒到作用域结束才落 ——
  *    在组件测试里**读不到飞行中的 `installStatus`**（实测两次：effect 记顺序、飞行中直接读，都被批处理骗过）。
  *    注入 `refresh`/`setStatus`/`onDone` 之后，顺序可以用普通 spy 确定性地钉住。
+ *
+ * ⚠️ **隐含契约：注入的 `refresh` 不许抛**。容错住在 `refreshAgentCatalog` 的 catch 里，**不在这里** ——
+ *    一个会抛的 `refresh` 会把异常一路冒到 `runInstall` 的 catch，正好变成"装完了被报成装失败"。
+ * ⚠️ 调用点（`runInstall` 的 `done` 分支）**只许调用本函数**，不许把三步内联回去：内联后测试看不见
+ *    （React 批处理），详见那边注释。
  */
 export async function finishTeamInstall(input: {
   gatewayId: string;
