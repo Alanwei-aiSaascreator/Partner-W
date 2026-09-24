@@ -5,7 +5,20 @@ import reactHooks from 'eslint-plugin-react-hooks';
 import eslintConfigPrettier from 'eslint-config-prettier';
 
 export default tseslint.config(
-  { ignores: ['**/dist/**', '**/out/**', '**/coverage/**', '.claude/**', 'scripts/**', '**/scripts/**'] },
+  {
+    ignores: [
+      '**/dist/**',
+      '**/out/**',
+      '**/coverage/**',
+      '.claude/**',
+      'scripts/**',
+      '**/scripts/**',
+      // 打包垫片：这些文件是**打进 asar 之后由别的模块 require 的**（CommonJS、
+      // 内容要跟上游 v2 的原文逐字一致），不是本仓的源码模块。内容由
+      // `packages/desktop/test/readable-stream-shim-packaging-gate.test.ts` 钉住。
+      'packages/desktop/packaging-shims/**',
+    ],
+  },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {

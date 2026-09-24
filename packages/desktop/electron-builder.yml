@@ -69,6 +69,18 @@ asarUnpack:
 files:
   - 'out/**/*'
   - 'node_modules/**/*'
+  # ⭐ 打包垫片：把 `readable-stream/passthrough` 这个入口补回顶层那份 readable-stream@3。
+  #
+  #   为什么：`exceljs` → `archiver` → `archiver-utils` → `lazystream` 在**模块顶层**
+  #   `require('readable-stream/passthrough')`；`lazystream` 要的是 v2（v2 有这个根级入口），
+  #   而 v3 **删掉了它**。开发树没事（pnpm 给 lazystream 配了旁边的 v2），
+  #   但 electron-builder 把 pnpm 的树**压平**、那份 v2 没了 ⇒ 解析到顶层 v3 ⇒ MODULE_NOT_FOUND
+  #   ⇒ **打包态里 `require('exceljs')` 直接抛错，一个 .xlsx 都产不出来**（2026-09-25 实测）。
+  #
+  #   垫片内容与 v2 原文逐字相同（见 `packaging-shims/readable-stream/passthrough.js` 的说明）；
+  #   `test/readable-stream-shim-packaging-gate.test.ts` 钉住这条映射与那个文件。
+  - from: packaging-shims/readable-stream
+    to: node_modules/readable-stream
   # ⚠️ 排掉工作区软链（`@clawwork/core` / `@clawwork/shared` → `packages/*`）。
   #    理由有两条，第二条是**必须**：
   #    ① 它们被 `electron-vite.config.ts` 的 `externalizeDepsPlugin({ exclude: [...] })`
@@ -112,6 +124,10 @@ mac:
     - '!../core/**'
     - '!../shared/**'
     - '!**/onnxruntime-web/**'
+    # 见顶层 files 里的说明：exceljs 在打包态会因为 lazystream 找不到
+    # `readable-stream/passthrough` 而**整个加载失败**。平台级 files 会覆盖顶层，所以这里也要写。
+    - from: packaging-shims/readable-stream
+      to: node_modules/readable-stream
     - 'package.json'
     - '!**/onnxruntime-node/bin/napi-v6/linux/**'
     - '!**/onnxruntime-node/bin/napi-v6/win32/**'
@@ -137,6 +153,10 @@ win:
     - '!../core/**'
     - '!../shared/**'
     - '!**/onnxruntime-web/**'
+    # 见顶层 files 里的说明：exceljs 在打包态会因为 lazystream 找不到
+    # `readable-stream/passthrough` 而**整个加载失败**。平台级 files 会覆盖顶层，所以这里也要写。
+    - from: packaging-shims/readable-stream
+      to: node_modules/readable-stream
     - 'package.json'
     - '!**/onnxruntime-node/bin/napi-v6/darwin/**'
     - '!**/onnxruntime-node/bin/napi-v6/linux/**'
@@ -163,6 +183,10 @@ linux:
     - '!../core/**'
     - '!../shared/**'
     - '!**/onnxruntime-web/**'
+    # 见顶层 files 里的说明：exceljs 在打包态会因为 lazystream 找不到
+    # `readable-stream/passthrough` 而**整个加载失败**。平台级 files 会覆盖顶层，所以这里也要写。
+    - from: packaging-shims/readable-stream
+      to: node_modules/readable-stream
     - 'package.json'
     - '!**/onnxruntime-node/bin/napi-v6/darwin/**'
     - '!**/onnxruntime-node/bin/napi-v6/win32/**'

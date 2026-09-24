@@ -19,11 +19,10 @@ import { DOCGEN_LIMITS } from '../src/main/docgen/request.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_DIR = path.resolve(HERE, '..');
-const SKILL_PATH = path.join(
-  resolveOurSkillsRoot({ isPackaged: false, appPath: PROJECT_DIR }),
-  'document-deck',
-  'SKILL.md',
-);
+/** ⚠️ `resolveOurSkillsRoot` 可能给 undefined（解析不到就明说，别拿 undefined 去拼路径）。 */
+const OUR_SKILLS_ROOT = resolveOurSkillsRoot({ isPackaged: false, appPath: PROJECT_DIR });
+if (!OUR_SKILLS_ROOT) throw new Error('解析不到随包技能根目录 —— 这个测试就失去意义了');
+const SKILL_PATH = path.join(OUR_SKILLS_ROOT, 'document-deck', 'SKILL.md');
 const text = fs.readFileSync(SKILL_PATH, 'utf-8').replace(/\r\n/g, '\n');
 
 describe('document-deck 技能：三种格式都教到了', () => {
