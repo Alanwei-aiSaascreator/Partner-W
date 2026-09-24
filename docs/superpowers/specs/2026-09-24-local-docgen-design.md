@@ -172,4 +172,14 @@
      **306 个依赖装在 asar 里**，其中 `ws`、`yauzl` 这类**纯 JS 依赖就是从 asar 里 require** 的
      （生产一直这么跑）。`pptxgenjs` 是纯 JS、无原生依赖、不在运行时读自己的数据文件 ⇒ 同一条路。
      探针对照：`pptxgenjs` 在 0.0.27 那份列表里**是找不到的**（那时还没加）⇒ 这个列表会判否，不是恒真。
-     仍要在下一次打包后**点一次**才算证完。
+   - ✅ **2026-09-24 已实测**（打包产物 `D:\p4-rel`，`build:win` RC=0，asar 106,900,734 字节，
+     比 0.0.27 的 103,270,778 大 ~3.6 MB）：`pptxgenjs@4.0.1` 在 asar 里、**无原生依赖**，
+     运行期依赖（`https`/`image-size`/`jszip` + 传递的 `pako`/`lie`/`setImmediate`…）也都在；
+     唯一"缺"的 `@types/node` 是**纯类型依赖**、本就不该随包。
+     ⭐ 而且**把 asar 里那份抠出来真跑了一次**：生成 44,760 字节、含 `ppt/presentation.xml`。
+     ⚠️ 剩下的唯一不确定是 **Electron 的 asar 透明读**（纯 JS 依赖读 asar 内文件）——
+     这一点由先例兜底：出货包里 306 个依赖（含 `ws`/`yauzl`）生产上就是从 asar require 的。
+     要彻底坐实，需在真机上启动一次打包产物（**尚未做**）。
+     ⚠️ 顺带记一个工具坑：Windows 上 `@electron/asar` 的 `extractFile` 要**反斜杠**相对路径、
+     **不带前导分隔符**；用正斜杠它报 `... was not found in this archive`，
+     看起来像"打包漏了这个库"（我第一次就误判了）。
