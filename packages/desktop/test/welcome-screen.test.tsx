@@ -12,7 +12,7 @@ const mocks = vi.hoisted(() => ({
   setSelectedAgentId: vi.fn(),
   setSelectedGwId: vi.fn(),
   setSelectedAgent: vi.fn(),
-  selectorOptions: undefined as { initialGatewayId?: string; initialAgentId?: string } | undefined,
+  setMainView: vi.fn(),
   selectedGwId: 'gw-1',
   pendingNewTask: null as { gatewayId?: string; agentId?: string; model?: string; tags?: string[] } | null,
   gatewayState: { agentCatalog: [{ id: 'main' }] as Array<{ id: string }> },
@@ -33,7 +33,11 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('react-i18next', () => ({
-  useTranslation: () => ({ t: (key: string) => key }),
+  // 带插值时把取值也显示出来（`key({"agentId":"…"})`），否则「提示里点名了哪个助手」
+  // 这类断言就只能绑到 key 上、绑不住**值**。
+  useTranslation: () => ({
+    t: (key: string, options?: Record<string, unknown>) => (options ? `${key}(${JSON.stringify(options)})` : key),
+  }),
   initReactI18next: { type: '3rdParty', init: vi.fn() },
 }));
 
@@ -41,41 +45,45 @@ vi.mock('framer-motion', () => ({
   motion: { div: 'div' },
 }));
 
-vi.mock('../src/renderer/platform', () => ({
-  useTaskStore: Object.assign(
-    <T,>(selector: (state: { pendingNewTask: typeof mocks.pendingNewTask }) => T) =>
-      selector({ pendingNewTask: mocks.pendingNewTask }),
-    {
-      getState: () => ({
-        pendingNewTask: mocks.pendingNewTask,
-        setPending: mocks.setPending,
-        updatePending: mocks.updatePending,
-      }),
+vi.mock('../src/renderer/platform', () => {
+  /**
+   * ⭐ 2026-09-24：这里**不再伪造 `useGatewaySelector`**（旧夹具把「未知 id 静默换成
+   * `main`」写死在假 hook 里，于是那一刀永远测不出自己的缺陷）。现在跑的是**真 hook**，
+   * 这个假 store 只负责把它读得到的东西喂对：
+   * - `gatewayInfoMap` 只放**当前**那个网关 —— 于是「选中的网关不在列表里」这条
+   *   回落路径与真实现一致（有用例依赖它换到 gw-2）；
+   * - `agentCatalogByGateway[当前网关]` 的 `undefined` 与否，就是真 hook 判「目录加载了没」的依据。
+   */
+  const uiState = () => ({
+    modelCatalogByGateway: mocks.modelCatalogByGateway,
+    setSelectedAgent: mocks.setSelectedAgent,
+    setMainView: mocks.setMainView,
+    gatewayInfoMap: { [mocks.selectedGwId]: { id: mocks.selectedGwId } },
+    defaultGatewayId: mocks.selectedGwId,
+    agentCatalogByGateway: {
+      [mocks.selectedGwId]: { agents: mocks.gatewayState.agentCatalog, defaultId: 'main' },
     },
-  ),
-  useUiStore: <T,>(
-    selector: (state: {
-      modelCatalogByGateway: typeof mocks.modelCatalogByGateway;
-      setSelectedAgent: typeof mocks.setSelectedAgent;
-    }) => T,
-  ) => selector({ modelCatalogByGateway: mocks.modelCatalogByGateway, setSelectedAgent: mocks.setSelectedAgent }),
-}));
+  });
 
-vi.mock('../src/renderer/hooks/useGatewaySelector', () => ({
-  useGatewaySelector: (options: { initialGatewayId?: string; initialAgentId?: string }) => {
-    mocks.selectorOptions = options;
-    const effectiveAgentId = mocks.gatewayState.agentCatalog.some((agent) => agent.id === options.initialAgentId)
-      ? options.initialAgentId!
-      : 'main';
-    return {
-      gateways: [],
-      selectedGwId: mocks.selectedGwId,
-      setSelectedGwId: mocks.setSelectedGwId,
-      agentCatalog: mocks.gatewayState.agentCatalog,
-      effectiveAgentId,
-      setSelectedAgentId: mocks.setSelectedAgentId,
-    };
-  },
+  return {
+    useTaskStore: Object.assign(
+      <T,>(selector: (state: { pendingNewTask: typeof mocks.pendingNewTask }) => T) =>
+        selector({ pendingNewTask: mocks.pendingNewTask }),
+      {
+        getState: () => ({
+          pendingNewTask: mocks.pendingNewTask,
+          setPending: mocks.setPending,
+          updatePending: mocks.updatePending,
+        }),
+      },
+    ),
+    useUiStore: <T,>(selector: (state: ReturnType<typeof uiState>) => T) => selector(uiState()),
+  };
+});
+
+// 真 hook 会在选中的网关上拉一次目录；测试里掐掉那一跳（被测的不是网络）。
+vi.mock('@/hooks/useGatewayBootstrap', () => ({
+  fetchAgentsForGateway: vi.fn(async () => undefined),
 }));
 
 vi.mock('../src/renderer/components/AgentIcon', () => ({
@@ -119,7 +127,6 @@ describe('WelcomeScreen assistant workspace', () => {
     mocks.pendingNewTask = null;
     mocks.selectedGwId = 'gw-1';
     mocks.gatewayState.agentCatalog = [{ id: 'main' }];
-    mocks.selectorOptions = undefined;
   });
 
   it('opens the assistant recommended by the completed purpose and keeps its model on the pending task', () => {
@@ -134,7 +141,6 @@ describe('WelcomeScreen assistant workspace', () => {
       />,
     );
 
-    expect(mocks.selectorOptions?.initialAgentId).toBe('rongying-video');
     expect(container.textContent).toContain('presetAgents.roles.video');
     expect(container.textContent).toContain('assistantWorkspaces.video.description');
     expect(mocks.setSelectedAgent).toHaveBeenCalledWith('gw-1', 'rongying-video');
@@ -151,7 +157,7 @@ describe('WelcomeScreen assistant workspace', () => {
     const onSelectPreset = vi.fn();
     const { container, unmount } = render(
       <WelcomeScreen
-        onboardingProfile={{ ...onboardingProfile, useCases: [...onboardingProfile.useCases] }}
+        onboardingProfile={{ ...onboardingProfile, useCases: [] }}
         recentPresetIds={[]}
         onSelectPreset={onSelectPreset}
         onCustomTask={vi.fn()}
@@ -299,7 +305,7 @@ describe('WelcomeScreen assistant workspace', () => {
   it('uses the destination gateway default label before stale pending state is normalized', () => {
     const ui = () => (
       <WelcomeScreen
-        onboardingProfile={{ ...onboardingProfile, useCases: [...onboardingProfile.useCases] }}
+        onboardingProfile={{ ...onboardingProfile, useCases: [] }}
         recentPresetIds={[]}
         onSelectPreset={vi.fn()}
         onCustomTask={vi.fn()}
@@ -463,7 +469,7 @@ describe('WelcomeScreen assistant workspace', () => {
     const failureText = 'startupReadiness.relayOrganizationMismatch';
     const { container, unmount } = render(
       <WelcomeScreen
-        onboardingProfile={{ ...onboardingProfile, useCases: [...onboardingProfile.useCases] }}
+        onboardingProfile={{ ...onboardingProfile, useCases: [] }}
         recentPresetIds={[]}
         onSelectPreset={vi.fn()}
         onCustomTask={vi.fn()}
@@ -488,7 +494,7 @@ describe('WelcomeScreen assistant workspace', () => {
     mocks.selectedGwId = 'gw-3';
     const { container, unmount } = render(
       <WelcomeScreen
-        onboardingProfile={{ ...onboardingProfile, useCases: [...onboardingProfile.useCases] }}
+        onboardingProfile={{ ...onboardingProfile, useCases: [] }}
         recentPresetIds={[]}
         onSelectPreset={vi.fn()}
         onCustomTask={vi.fn()}
@@ -500,6 +506,46 @@ describe('WelcomeScreen assistant workspace', () => {
 
     expect(container.textContent).not.toContain('chatInput.modelsLoading');
     expect(container.textContent).toContain('chatInput.modelsUnusable');
+    unmount();
+  });
+
+  /**
+   * ⭐⭐ 2026-09-24（层 2 的核心用例）：**不伪造 hook**，跑真 hook + 真 store。
+   *
+   * 目录里只有 `main`，pending 点名一个不存在的 `team-agent-x`（团队「发起对话」三次点击
+   * 可复现的现场）。旧行为把它静默换成 `main`、再把替换结果**写回 pending**，用户看到的
+   * 就是「点了却跳到主罗盘」且全程无提示。
+   *
+   * 判据全部是**用户可见的结果**，不是内部字段。
+   */
+  it('⭐ 请求的助手不在目录里时：如实说明、不冒充所选助手、pending 不被改写', () => {
+    mocks.pendingNewTask = { gatewayId: 'gw-1', agentId: 'team-agent-x' };
+    const { container, unmount } = render(
+      <WelcomeScreen
+        onboardingProfile={{ ...onboardingProfile, useCases: [] }}
+        recentPresetIds={[]}
+        onSelectPreset={vi.fn()}
+        onCustomTask={vi.fn()}
+        onAssistantChange={vi.fn()}
+      />,
+    );
+
+    // 1) 如实说明，而且**点名**是哪一个助手
+    expect(container.textContent, '提示要出现').toContain('agent.missingTitle');
+    expect(container.textContent, '提示里要点名').toContain('team-agent-x');
+    // 2) 罗盘助手**没有**被当成所选助手静默呈现（工作台那一屏不该出现）
+    expect(container.textContent, '不许冒充罗盘工作台').not.toContain('assistantWorkspaces.compass.description');
+    expect(container.textContent, '不许出现罗盘工作台的起始任务').not.toContain(
+      'assistantWorkspaces.compass.starters.1.prompt',
+    );
+    // 3) pending 没有被改写成替换后的 id（旧行为正是这一步把"用户的选择"改掉的）
+    expect(mocks.setPending, '不许把 pending 改写成别的助手').not.toHaveBeenCalled();
+    expect(mocks.updatePending).not.toHaveBeenCalled();
+    // 4) 落的是**通用欢迎屏**，不是空白
+    expect(container.textContent).toContain('mainArea.welcomeTitle');
+    // 5) 两条出口都在（措辞里给出下一步，不是干说一句坏消息）
+    expect(container.textContent).toContain('agent.missingSwitch');
+    expect(container.textContent).toContain('agent.missingOpenTeams');
     unmount();
   });
 });

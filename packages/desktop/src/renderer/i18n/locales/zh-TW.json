@@ -45,6 +45,10 @@
     "title": "啟用授權"
   },
   "agent": {
+    "missingBody": "它可能只裝在另一台電腦上。換一個助手就能繼續，或者去團隊頁看看。",
+    "missingOpenTeams": "去團隊頁",
+    "missingSwitch": "切換到「{{assistant}}」",
+    "missingTitle": "「{{agentId}}」這個助手不在本機",
     "modelFallback": "已切換至模型：{{model}}"
   },
   "approval": {

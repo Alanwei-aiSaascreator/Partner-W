@@ -3,6 +3,7 @@ import { ChevronRight } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
 import AgentIcon from '@/components/AgentIcon';
+import AgentMissingNotice from '@/components/AgentMissingNotice';
 import GatewayInstanceSelector from '@/components/GatewayInstanceSelector';
 import { useGatewaySelector } from '@/hooks/useGatewaySelector';
 import { resolveCommercialDefaultModel } from '@/lib/commercial-default-model';
@@ -45,12 +46,20 @@ export default function WelcomeScreen({
   const { t } = useTranslation();
   const pendingNewTask = useTaskStore((state) => state.pendingNewTask);
   const setSelectedAgent = useUiStore((state) => state.setSelectedAgent);
+  const setMainView = useUiStore((state) => state.setMainView);
   const preferredAgentId = resolveProfileAssistantId(onboardingProfile, ['main', ...PRESET_AGENT_IDS], 'main');
-  const { gateways, selectedGwId, setSelectedGwId, agentCatalog, effectiveAgentId, setSelectedAgentId } =
-    useGatewaySelector({
-      initialGatewayId: pendingNewTask?.gatewayId,
-      initialAgentId: pendingNewTask?.agentId ?? preferredAgentId,
-    });
+  const {
+    gateways,
+    selectedGwId,
+    setSelectedGwId,
+    agentCatalog,
+    effectiveAgentId,
+    missingRequestedAgentId,
+    setSelectedAgentId,
+  } = useGatewaySelector({
+    initialGatewayId: pendingNewTask?.gatewayId,
+    initialAgentId: pendingNewTask?.agentId ?? preferredAgentId,
+  });
   const rawModelCatalog = useUiStore((state) => (selectedGwId ? state.modelCatalogByGateway[selectedGwId] : undefined));
   const defaultModel = resolveCommercialDefaultModel(relayModelsFrom(rawModelCatalog ?? []));
   const selectedModelId = pendingNewTask?.gatewayId === selectedGwId ? pendingNewTask.model : undefined;
@@ -121,6 +130,16 @@ export default function WelcomeScreen({
         />
       ) : (
         <section className="mx-auto flex w-full max-w-[var(--content-max-width)] flex-col items-center px-2 py-5 text-center">
+          {/* ⭐ 点名要的助手不在本机 ⇒ **不冒充**成别的助手：这一屏就是通用欢迎屏，
+              上面如实说清，并给两条走得通的出口（2026-09-24）。 */}
+          {missingRequestedAgentId ? (
+            <AgentMissingNotice
+              agentId={missingRequestedAgentId}
+              onSwitchAssistant={() => handleSelectAgent('main')}
+              onOpenTeams={() => setMainView('teams')}
+              className="mb-4 w-full text-left"
+            />
+          ) : null}
           <h1 className="type-page-title text-[var(--text-primary)]">{t('mainArea.welcomeTitle')}</h1>
           <p className="type-body mt-2 max-w-xl text-[var(--text-secondary)]">{t('mainArea.welcomeSubtitle')}</p>
         </section>

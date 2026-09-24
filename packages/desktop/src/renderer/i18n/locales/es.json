@@ -45,6 +45,10 @@
     "title": "License activation"
   },
   "agent": {
+    "missingBody": "Puede que solo esté instalado en otro equipo. Elige otro asistente para continuar o abre la página de equipos.",
+    "missingOpenTeams": "Abrir equipos",
+    "missingSwitch": "Cambiar a {{assistant}}",
+    "missingTitle": "«{{agentId}}» no está en este equipo",
     "modelFallback": "Se cambió al modelo: {{model}}"
   },
   "approval": {

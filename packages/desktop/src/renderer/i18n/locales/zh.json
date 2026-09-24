@@ -45,6 +45,10 @@
     "title": "激活授权"
   },
   "agent": {
+    "missingBody": "它可能只装在另一台电脑上。换一个助手就能继续，或者去团队页看看。",
+    "missingOpenTeams": "去团队页",
+    "missingSwitch": "切换到「{{assistant}}」",
+    "missingTitle": "「{{agentId}}」这个助手不在本机",
     "modelFallback": "已切换至模型: {{model}}"
   },
   "approval": {

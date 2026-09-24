@@ -45,6 +45,10 @@
     "title": "License activation"
   },
   "agent": {
+    "missingBody": "It may only be installed on another computer. Pick another assistant to continue, or check the teams page.",
+    "missingOpenTeams": "Open teams",
+    "missingSwitch": "Switch to {{assistant}}",
+    "missingTitle": "\"{{agentId}}\" is not on this machine",
     "modelFallback": "Switched to model: {{model}}"
   },
   "approval": {

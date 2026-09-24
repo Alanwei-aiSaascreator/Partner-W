@@ -45,6 +45,10 @@
     "title": "License activation"
   },
   "agent": {
+    "missingBody": "別のパソコンにのみインストールされている可能性があります。別のアシスタントを選ぶか、チームページを開いてください。",
+    "missingOpenTeams": "チームを開く",
+    "missingSwitch": "「{{assistant}}」に切り替える",
+    "missingTitle": "「{{agentId}}」はこのパソコンにありません",
     "modelFallback": "モデルを切り替えました: {{model}}"
   },
   "approval": {
