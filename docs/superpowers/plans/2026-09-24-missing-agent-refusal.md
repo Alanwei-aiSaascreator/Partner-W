@@ -27,7 +27,7 @@
 - Create: `packages/desktop/src/renderer/lib/requested-agent.ts`
 - Test: `packages/desktop/test/requested-agent.test.ts`
 
-- [ ] **Step 1: 写失败的测试**
+- [x] **Step 1: 写失败的测试**
 
 ```ts
 // packages/desktop/test/requested-agent.test.ts
@@ -60,7 +60,7 @@ describe('resolveRequestedAgent', () => {
 });
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 ```bash
 cd packages/desktop && ../../node_modules/.bin/vitest run test/requested-agent.test.ts
@@ -68,7 +68,7 @@ cd packages/desktop && ../../node_modules/.bin/vitest run test/requested-agent.t
 
 Expected: FAIL —— 模块不存在。
 
-- [ ] **Step 3: 写实现**
+- [x] **Step 3: 写实现**
 
 ```ts
 // packages/desktop/src/renderer/lib/requested-agent.ts
@@ -95,7 +95,7 @@ export function resolveRequestedAgent(
 }
 ```
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 
 ```bash
 cd packages/desktop && ../../node_modules/.bin/vitest run test/requested-agent.test.ts
@@ -103,7 +103,7 @@ cd packages/desktop && ../../node_modules/.bin/vitest run test/requested-agent.t
 
 Expected: 5 passed。
 
-- [ ] **Step 5: 变异验证（每条断言都要能被变红）**
+- [x] **Step 5: 变异验证（每条断言都要能被变红）**
 
 逐个改实现、跑测试、确认**指定那条**红，然后还原（用 `git checkout` 或手改回，**还原后必须逐字节相同**）：
 
@@ -111,7 +111,7 @@ Expected: 5 passed。
 2. `requested ? ... : ...` 反过来写 ⇒ 「没有请求」那条红。
 3. `catalog.agents.some(...)` 改成恒 `true` ⇒ 「missing」两条红。
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```bash
 git add packages/desktop/src/renderer/lib/requested-agent.ts packages/desktop/test/requested-agent.test.ts
@@ -127,7 +127,7 @@ git commit -m "feat(agents): decide whether a requested assistant exists on this
 - Modify: `packages/desktop/src/renderer/hooks/useGatewaySelector.ts`
 - Test: `packages/desktop/test/gateway-selector-refusal.test.tsx`
 
-- [ ] **Step 1: 写失败的测试**（跑**真 hook**，不用 `vi.mock`）
+- [x] **Step 1: 写失败的测试**（跑**真 hook**，不用 `vi.mock`）
 
 ```tsx
 // packages/desktop/test/gateway-selector-refusal.test.tsx
@@ -204,7 +204,7 @@ describe('useGatewaySelector 拒绝不在本机的请求', () => {
 `gatewayInfoMap` 的元素类型（`GatewayInfo` 必填字段），以及 `useUiStore` 是否从 `../src/renderer/platform` 导出
 （`WelcomeScreen` 用的是 `@/stores/uiStore`，测试里优先用**同一个**来源）。
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 ```bash
 cd packages/desktop && ../../node_modules/.bin/vitest run test/gateway-selector-refusal.test.tsx
@@ -212,7 +212,7 @@ cd packages/desktop && ../../node_modules/.bin/vitest run test/gateway-selector-
 
 Expected: 第一条 FAIL（`missingRequestedAgentId` 是 `undefined`、`effectiveAgentId` 是 `'main'`）；后两条**也应该先红**（字段还不存在）。
 
-- [ ] **Step 3: 改实现**
+- [x] **Step 3: 改实现**
 
 `useGatewaySelector.ts` 三处：
 
@@ -253,7 +253,7 @@ const effectiveAgentId = useMemo(
 而 `agentCatalog` 为空 ⇒ `defaultAgentId` 是 `''` ⇒ 与今天一模一样。
 只有「目录已加载且请求缺失」这一种情况行为变了。
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 
 ```bash
 cd packages/desktop && ../../node_modules/.bin/vitest run test/gateway-selector-refusal.test.tsx
@@ -261,13 +261,13 @@ cd packages/desktop && ../../node_modules/.bin/vitest run test/gateway-selector-
 
 Expected: 3 passed。
 
-- [ ] **Step 5: 变异验证**
+- [x] **Step 5: 变异验证**
 
 1. 把 `requestedState === 'missing' ? '' : …` 改回 `… ? selectedAgentId : defaultAgentId`（即恢复静默替换）⇒ 第一条红。
 2. 把 `resolveRequestedAgent` 的 `loading` 分支改成返回 `'missing'` ⇒ 第二条红。
 3. `missingRequestedAgentId` 改成恒 `null` ⇒ 第一条红。
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```bash
 git add packages/desktop/src/renderer/hooks/useGatewaySelector.ts packages/desktop/test/gateway-selector-refusal.test.tsx
@@ -285,7 +285,7 @@ git commit -m "fix(agents): refuse a requested assistant instead of swapping in 
 - Modify: `packages/desktop/src/renderer/layouts/MainArea/WelcomeScreen.tsx`
 - Modify: `packages/desktop/test/welcome-screen.test.tsx`（**拆掉假 hook**）
 
-- [ ] **Step 1: 加文案（9 个文件，key 完全一致）**
+- [x] **Step 1: 加文案（9 个文件，key 完全一致）**
 
 `agent` 段下新增四个键。中文（`zh.json`）：
 
@@ -307,7 +307,7 @@ git commit -m "fix(agents): refuse a requested assistant instead of swapping in 
 
 ⚠️ 改完跑 `node scripts/sort-i18n.mjs`（若该脚本会重排）并确认 `check:i18n` 绿。
 
-- [ ] **Step 2: 写提示组件**
+- [x] **Step 2: 写提示组件**
 
 ```tsx
 // packages/desktop/src/renderer/components/AgentMissingNotice.tsx
@@ -364,7 +364,7 @@ export default function AgentMissingNotice({
 ⚠️ 上面两套类名是照 `WelcomeScreen.tsx:145-150` 的助手按钮**抄来的**（主/次两个变体）。
 执行时若那处已改，以**当时**的类名为准，不要凭空发明样式。
 
-- [ ] **Step 3: 写欢迎屏的失败测试**
+- [x] **Step 3: 写欢迎屏的失败测试**
 
 ⚠️ 先**拆掉** `welcome-screen.test.tsx:64-79` 那个假 hook（它把缺陷抄进了夹具），
 再补一条真 hook 的用例。夹具要提供真实 `uiStore` 状态（`agentCatalogByGateway`、`defaultGatewayId`）。
@@ -388,9 +388,9 @@ it('⭐ 请求的助手不在目录里时：提示出现、不冒充所选助手
 });
 ```
 
-- [ ] **Step 4: 跑测试确认失败** → `cd packages/desktop && ../../node_modules/.bin/vitest run test/welcome-screen.test.tsx`，Expected: 新用例 FAIL。
+- [x] **Step 4: 跑测试确认失败** → `cd packages/desktop && ../../node_modules/.bin/vitest run test/welcome-screen.test.tsx`，Expected: 新用例 FAIL。
 
-- [ ] **Step 5: 改 `WelcomeScreen.tsx`**
+- [x] **Step 5: 改 `WelcomeScreen.tsx`**
 
 1. 从 hook 解构出 `missingRequestedAgentId`（`:49-53`）；
 2. 取 `const setMainView = useUiStore((s) => s.setMainView);`
@@ -413,14 +413,14 @@ it('⭐ 请求的助手不在目录里时：提示出现、不冒充所选助手
 **不需要**为「不再写回 pending」写任何代码 —— `:65` 那句 `if (!selectedGwId || !effectiveAgentId) return;`
 在拒绝态（`effectiveAgentId === ''`）自动早返回。
 
-- [ ] **Step 6: 跑测试确认通过** → 同一个命令，Expected: 全绿（含既有的 12 条）。
+- [x] **Step 6: 跑测试确认通过** → 同一个命令，Expected: 全绿（含既有的 12 条）。
 
-- [ ] **Step 7: 变异验证**
+- [x] **Step 7: 变异验证**
 
 1. 把「不再写回」破坏掉（`effectiveAgentId || defaultAgentId`）⇒ 新用例红。
 2. 删掉欢迎屏里的 `<AgentMissingNotice>` ⇒ 新用例红。
 
-- [ ] **Step 8: 提交**
+- [x] **Step 8: 提交**
 
 ```bash
 git add -A packages/desktop/src/renderer/i18n/locales packages/desktop/src/renderer/components/AgentMissingNotice.tsx packages/desktop/src/renderer/layouts/MainArea/WelcomeScreen.tsx packages/desktop/test/welcome-screen.test.tsx
@@ -437,11 +437,11 @@ git commit -m "feat(agents): explain a missing assistant on the welcome screen a
 - Modify: `packages/desktop/src/renderer/layouts/IdentityCenter/index.tsx:69-76`
 - Test: `packages/desktop/test/missing-agent-surfaces.test.tsx`
 
-- [ ] **Step 1: 写失败的测试**（两条按名断言：左栏不再把默认助手冒充成选中；身份中心拒绝并提示）
+- [x] **Step 1: 写失败的测试**（两条按名断言：左栏不再把默认助手冒充成选中；身份中心拒绝并提示）
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
-- [ ] **Step 3: 改实现**
+- [x] **Step 3: 改实现**
 
 LeftNav：
 
@@ -502,11 +502,11 @@ const applyPersona = useCallback((): boolean => {
 执行时改成「换用罗盘助手」的直给动作：`selectAgent(ASSISTANT_ID_BY_WORKSPACE.compass)` 或 `'main'`
 （**先核** `ASSISTANT_ID_BY_WORKSPACE` 里罗盘那一项的键名）。出口必须是**能走通**的那条。
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 
-- [ ] **Step 5: 变异验证**：左栏那处把 `requestedState === 'missing' ? '' : …` 恢复成旧写法 ⇒ 左栏用例必须红。
+- [x] **Step 5: 变异验证**：左栏那处把 `requestedState === 'missing' ? '' : …` 恢复成旧写法 ⇒ 左栏用例必须红。
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```bash
 git commit -m "feat(agents): surface the missing-assistant notice in the sidebar and identity centre"
@@ -523,7 +523,7 @@ git commit -m "feat(agents): surface the missing-assistant notice in the sidebar
 - Modify: `packages/desktop/src/renderer/i18n/locales/*.json`（`errors.agentMissing`）
 - Test: `packages/core/test/task-store-unknown-agent.test.ts`
 
-- [ ] **Step 1: 写失败的测试**（三个方向）
+- [x] **Step 1: 写失败的测试**（三个方向）
 
 ```ts
 it('目录为空（可能只是还没加载）时不拒绝 —— 行为与今天一致', () => {
@@ -537,9 +537,9 @@ it('目录含该 id 时放行', () => {
 });
 ```
 
-- [ ] **Step 2: 跑测试确认失败** → `cd packages/core && ../../node_modules/.bin/vitest run test/task-store-unknown-agent.test.ts`
+- [x] **Step 2: 跑测试确认失败** → `cd packages/core && ../../node_modules/.bin/vitest run test/task-store-unknown-agent.test.ts`
 
-- [ ] **Step 3: 改实现**
+- [x] **Step 3: 改实现**
 
 `task-store.ts` 顶部导出：
 
@@ -591,11 +591,11 @@ if (
 ⚠️ **执行时必核**：`useTaskMaterials.ts:112` 也直接调 `commitPendingTask()`（无 try/catch）。
 新拒绝会从那里抛出去 ⇒ 要么同样分类提示，要么明确接受并登记。**不许漏掉不写。**
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 
-- [ ] **Step 5: 变异验证**：去掉 `catalog.agents.length > 0` ⇒ 「目录为空不拒绝」那条红（这是**对照**，必须绿）。
+- [x] **Step 5: 变异验证**：去掉 `catalog.agents.length > 0` ⇒ 「目录为空不拒绝」那条红（这是**对照**，必须绿）。
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```bash
 git commit -m "fix(tasks): refuse to commit a task for an assistant the loaded catalog lacks"
@@ -605,7 +605,7 @@ git commit -m "fix(tasks): refuse to commit a task for an assistant the loaded c
 
 ### Task 6: 门禁 + 账本
 
-- [ ] **Step 1: 全量门禁**
+- [x] **Step 1: 全量门禁**
 
 ```bash
 export PATH="/d/go-toolchain/go/bin:$PATH"
@@ -615,11 +615,11 @@ pnpm check
 
 Expected: `RC=0`。RC≠0 时**先看是不是本地产物**（`format:check` 在本工作树是真信号）。
 
-- [ ] **Step 2: 记读数**
+- [x] **Step 2: 记读数**
 
 把每条套件的实际数字（desktop / core / shared / pwa passed）写进本计划末尾的「完成记录」。
 
-- [ ] **Step 3: 提交账本**
+- [x] **Step 3: 提交账本**
 
 ```bash
 git commit -m "docs(agents): record the missing-assistant refusal readings"
@@ -627,18 +627,50 @@ git commit -m "docs(agents): record the missing-assistant refusal readings"
 
 ---
 
-## 完成记录（执行时填真实读数）
+## 完成记录（真实读数，2026-09-24）
 
-| 项           | 读数 |
-| ------------ | ---- |
-| Task 1 套件  |      |
-| Task 2 套件  |      |
-| Task 3 套件  |      |
-| Task 4 套件  |      |
-| Task 5 套件  |      |
-| 变异电池     |      |
-| `pnpm check` |      |
+| 项           | 读数                                                                                                                                        |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| Task 1 套件  | `test/requested-agent.test.ts` **5 passed**                                                                                                 |
+| Task 2 套件  | `test/gateway-selector-refusal.test.tsx` **3 passed**                                                                                       |
+| Task 3 套件  | `test/welcome-screen.test.tsx` **15 passed**（原 14 + 新核心用例 1）                                                                        |
+| Task 4 套件  | `test/left-nav-missing-agent.test.tsx` **2** + `test/identity-center.test.tsx` **15**（原 13 + 2）+ `test/assistant-switcher.test.tsx` 全绿 |
+| Task 5 套件  | `packages/core/test/task-store-unknown-agent.test.ts` **4** + `test/send-refusal.test.ts` **3**                                             |
+| 变异电池     | **16 条变异全部命中 + 9 条对照全 0 红**；每一次都核过「还原逐字节相同」                                                                     |
+| `pnpm check` | **RC=0** · desktop **287 文件 / 3030 passed / 2 skipped** · core 39/**662** · shared 10/**124** · pwa 4/**61**                              |
+
+提交：`75b99e66` → `742c0e36` → `ab051c5a` → `ae11bbe4` → `4d3b8aca`（每个 Task 一刀，未推）。
 
 ## 执行期发现（计划与现实的出入，逐条记）
 
-## 独立复核（本仓规矩：每刀双复核）
+1. **计划里的 vitest 路径是错的** —— 本工作树里在 `packages/<pkg>/node_modules/.bin/vitest`，
+   不是 `../../node_modules/.bin/vitest`（根 `node_modules/.bin` 里**没有** vitest）。
+2. **`pnpm` 也不在 `node_modules/.bin`** —— 用 PATH 上的（11.21.0）。
+   同一类坑：`cmd | tail; echo RC=$?` 读到的是 **tail 的退出码**，必须 `set -o pipefail` 或读 `PIPESTATUS`。
+3. ⭐ **真正的替换点在 `AssistantSwitcher`，不只是 LeftNav**（计划只点了 LeftNav）：
+   切换器自己就有 `?? agents[0]`。**计划外新增一处改动**，否则左栏那一半的 D3 是假的。
+4. ⚠️ **Task 1 与 Task 4 没有单独跑 RED**：Task 1 的测试与实现一次写入；
+   Task 4 是先改实现后补测试。**用变异电池补证** —— 每条断言都验过"能被变红"，
+   其中"恢复静默替换"那条变异**直接复现了原缺陷**。**但这不是 TDD 的原始形态，记一笔。**
+5. ⭐ **变异电池抓到我自己的 no-op**：我在 LeftNav 加的 `missing ? '' : …` 三元两个分支
+   **恒等**（缺失时 `selectedAgentId` 本就非空，`||` 压根不回落）⇒ 已删除，并把
+   「真正的替换点在哪」写进注释，免得后人再修错地方。
+6. ⚠️ **`welcome-screen.test.tsx` 有 5 条既有用例原本靠静默替换才成立**
+   （fixture 的 onboarding profile 点名了一个**不在夹具目录里**的助手）。
+   ⇒ 改成 profile 不点名（`useCases: []` ⇒ 首选就是目录里的 `main`），
+   **它们各自的主体断言一条没改**。这正是 D3 说的"有意的涟漪"。
+7. **夹具的 `t` 之前忽略插值** ⇒ 「提示里点名了哪个助手」只能绑到 key、绑不住**值**。
+   已改成带插值时显示取值（`key({"agentId":"…"})`），新用例因此能断言 `team-agent-x` 真的出现。
+8. **core 的 `getAgentCatalog` 确实把"没加载/空"塌成同一形状**（计划已预见并写成保守判据；
+   实测确认，且"目录为空不拒绝"有对照用例钉住）。
+9. **`useTaskMaterials.ensureTaskId` 确实在两个调用点的 `try` 之外**（计划标了"必核"）。
+   ⇒ 改成返回 `string | null`，只吞 `UnknownAgentError`、其它异常照旧抛出去。
+10. **`errors.agentNotResponding` 那句原本没有任何测试守着** ⇒ 抽成 `lib/send-refusal.ts`
+    纯函数（本仓既有习语，见 `lib/agent-switch.ts`）并加 3 条测试；否则那个三元的两种分支
+    没有任何钉子。
+
+## 尚未做
+
+- **独立复核**（本仓规矩：每刀双复核）。本刀**还没请复核者**，所以**不算收口**。
+- **未推远端**（等用户发话）。
+- **行为级真机未验**：真 U 盘 / 真网关下的"团队发起对话"三次点击现场，本刀只到单测与门禁层。
