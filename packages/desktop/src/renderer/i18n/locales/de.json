@@ -612,6 +612,7 @@
     "disconnected": "Getrennt",
     "disconnectedBanner": "Gateway \"{{name}}\" getrennt.",
     "exhausted": "Alle Verbindungsversuche aufgebraucht.",
+    "gatewayDisappeared": "Das Gateway „{{name}}“ ist nicht mehr auf diesem Rechner (Datenträger entfernt oder Gateway gelöscht). Es wurde zu einem verfügbaren Gateway gewechselt.",
     "gatewayDown": "Gateway nicht erreichbar",
     "lostConnection": "Gateway-Verbindung getrennt",
     "noGateway": "Kein Gateway konfiguriert. Verbinden Sie sich mit einem OpenClaw-Server, um zu beginnen.",

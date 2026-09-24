@@ -612,6 +612,7 @@
     "disconnected": "已斷線",
     "disconnectedBanner": "Gateway「{{name}}」已斷線。",
     "exhausted": "重新連線次數已用盡。",
+    "gatewayDisappeared": "閘道「{{name}}」已不在本機（U 盤被拔掉或閘道被移除），已切到可用的閘道。",
     "gatewayDown": "Gateway 無回應",
     "lostConnection": "Gateway 已斷線",
     "noGateway": "尚未設定 Gateway。請連線至 OpenClaw 伺服器以開始。",

@@ -61,6 +61,7 @@ import TasksPanel from '@/layouts/TasksPanel';
 import KnowledgeBase from '@/layouts/KnowledgeBase';
 import { useUsageStore } from '@/stores/usageStore';
 import { useQuotaRefreshOnTurnEnd } from '@/hooks/useQuotaRefreshOnTurnEnd';
+import { useGatewayDisappearanceNotice } from '@/lib/gateway-disappearance';
 import DataTable, { type DataTableColumn } from '@/components/data-display/DataTable';
 import EmptyState from '@/components/semantic/EmptyState';
 import StatusTag from '@/components/semantic/StatusTag';
@@ -1288,6 +1289,10 @@ export default function MainArea({
   // 一轮对话结束后把额度拉新（否则发完消息顶栏数字不动，看着像没扣费）。
   // 挂在 MainArea 而不是 ChatHeader：后者带 key、切任务会重挂，会多触发。
   useQuotaRefreshOnTurnEnd();
+
+  // 网关从本机消失时给一条说明（`useGatewaySelector` 那边是**静默**换掉的）。
+  // 挂在这里 = 只有进了工作区才报：用户在登录页/引导页时被切走，等回来时这句就没意义了。
+  useGatewayDisappearanceNotice();
 
   return (
     <div className="flex flex-col h-full">

@@ -612,6 +612,7 @@
     "disconnected": "연결 끊김",
     "disconnectedBanner": "게이트웨이 \"{{name}}\" 연결이 끊어졌습니다.",
     "exhausted": "재연결 시도가 모두 소진되었습니다.",
+    "gatewayDisappeared": "게이트웨이 \"{{name}}\"이(가) 이 컴퓨터에 없습니다(디스크가 제거되었거나 게이트웨이가 삭제됨). 사용 가능한 게이트웨이로 전환했습니다.",
     "gatewayDown": "게이트웨이 중단",
     "lostConnection": "게이트웨이 연결이 끊어졌습니다",
     "noGateway": "구성된 게이트웨이가 없습니다. OpenClaw 서버에 연결하여 시작하세요.",

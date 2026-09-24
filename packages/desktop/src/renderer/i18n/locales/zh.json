@@ -612,6 +612,7 @@
     "disconnected": "未连接",
     "disconnectedBanner": "网关“{{name}}”已断开。",
     "exhausted": "重连尝试已耗尽。",
+    "gatewayDisappeared": "网关“{{name}}”已不在本机（U 盘被拔掉或网关被移除），已切到可用的网关。",
     "gatewayDown": "Gateway 断开",
     "lostConnection": "Gateway 连接断开",
     "noGateway": "未配置网关，连接 OpenClaw 服务器以开始使用。",

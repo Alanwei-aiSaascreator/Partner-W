@@ -97,3 +97,92 @@
 
 ⇒ 结论：P3.1 的两条路（① 已上线的百炼 `enable_search` / ② 官方 MCP 新管道）**差别是"零开发"与"新管道"**，而不是"改配置"。
 ⇒ P3.2 的验证第一步必然包含"开 provider + 加模型目录行"，不是"打开一个开关"。
+
+---
+
+## 6. 第二次只读核实（2026-09-25，两个独立只读调查）—— **上一节有三条要更正**
+
+### 6.1 运行时**支持** MCP，而且支持得很完整（上一节"未核"那条已核）
+
+**证据来源**：直接读**出厂归档**本身（`runtime-out/win32-x64/openclaw-runtime-2026.9.3.7z`，
+`7z l` 35047 files）+ 三份已解包的 2026.9.3 副本（**逐文件比对字节数与归档一致**后才引用行号）。
+⚠️ 顺带更正一个事实：`runtime-out/openclaw-runtime/` **只有 `manifest.json`**，运行时不在那儿解包。
+
+| 事实                                     | 证据                                                                                                                                                          |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 配置 schema 里 **有** `mcp` 键           | `node_modules/openclaw/dist/zod-schema-CTg_faEc.mjs:1501`（`mcp: McpConfigSchema`）、`:771-777`（`McpConfigSchema`：`sessionIdleTtlMs` / `servers` / `apps`） |
+| `mcp.servers` 是"名字 ⇒ server 定义"的表 | 同文件 `:750-761`（`createMcpServersSchema(serverNameSchema)` + `record(serverNameSchema, McpServerSchema)`）                                                 |
+| 三种传输齐全                             | 同文件 `:642-660`：`transport` 值域 `stdio` / `sse` / `streamable-http`，另有 `command`/`args`/`env`/`cwd`/`url`/`headers`/超时/`toolFilter`/OAuth            |
+| 真实 MCP 客户端（官方 SDK）              | `dist/mcp-stdio-client-IofhKHm5.mjs:1-3`（`@modelcontextprotocol/sdk`）、`dist/mcp-transport-BKeHDnWN.mjs`、`dist/mcp-config-DpU_NS0i.mjs`                    |
+| CLI 与文档                               | `dist/mcp-cli-BkyGxMkT.mjs`（`mcp add/configure/list/login/set`）、`docs/cli/mcp.md`（53KB）、Control UI `/settings/mcp`                                      |
+| **出厂归档里确实带着**                   | 归档内 `openclaw/dist` 里 mcp 相关文件 **65 个**（含上面那几个，逐个列过）；打包脚本 `scripts/pack-runtime.mjs:266-269` 只剪 skills，**不剪 MCP**             |
+
+⇒ 上一节那句「运行时是否支持 MCP **不得据此推断**」**现在有结论了：支持**。
+
+### 6.2 客户端侧**不需要新写管道**（上一节"要新写管道"这条要更正）
+
+| 事实                                                                        | 证据                                                                                                                               |
+| --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| 客户端源码里 MCP 相关 **0 命中**（476 个源文件）                            | `grep -ril mcp packages/{desktop,core,shared}/src` ⇒ 0。（老记录这一半**成立**）                                                   |
+| 但 `config.patch` 是**裸透传、三层都没有键白名单**                          | 类型 `packages/shared/src/types.ts:706-712`（只有 `raw: string`）→ WS `gateway-client.ts:1094-1103` → IPC `ws-handlers.ts:738-743` |
+| 已有"往非白名单键写自有配置"的先例                                          | `src/main/commercial/relay-config.ts:120-163`（写 `models.providers.*` / `agents.defaults.models`）                                |
+| 能不能落，由**网关的 zod schema** 决定 —— 而它**有** `mcp: McpConfigSchema` | 见 6.1                                                                                                                             |
+
+⇒ **结论更正**：走官方 MCP 不是"新写一条管道"，而是**用现成的 `config.patch` 写一个 `mcp.servers` 配置**
+（外加 UI/文案/开关）。剩下没验的只有**端到端那一下**（真写进去并回读成功）与
+**百炼官方 MCP server 的定义**（URL/token —— 三个仓库里都没查到；`docs/superpowers/specs/2026-09-19-联网搜索-design.md:5`
+说"探针跑通"，但那份产物不在工作树里）。另有一条没核：`commands.mcp` 默认 `false`（`dist/schema-C9vBoeg0.mjs:126`）
+对 `mcp.servers` 的消费有没有影响。
+
+### 6.3 百炼 `enable_search` 的接线点在**桌面仓**（不在后端仓）
+
+| 事实                                                | 证据                                                                                                                                                                                                                                                 |
+| --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `services/relay/src/` 里 `enable_search` **0 命中** | 全量 grep；relay 只做透传（`upstream.ts:63-89`：除 `stream_options` 外不删字段）                                                                                                                                                                     |
+| 接线点 = 桌面端 `relay-config.ts`                   | `ENABLE_SEARCH_MODEL_IDS = ['qwen-turbo','qwen-plus']`（`:86-100`，**硬编码白名单**）；`:102-118` 形状是 `params.extra_body.enable_search`（**裸写 `params.enable_search` 会被静默丢弃**）；`:159-165` **无条件**并进每条 patch（没有 feature flag） |
+| 白名单与 catalog 的关系                             | 键控前缀是 catalog 的 provider id（`clawrouter/<模型 id>`）；模型集合是**硬编码**的，不从 `/v1/catalog` 动态读                                                                                                                                       |
+
+⇒ 所以"关掉/打开联网"今天**没有开关** —— 每一轮都在开（对那两个模型）。
+
+### 6.4 目录：13 款从哪来 / 有没有图像模型
+
+| 事实                                                                                           | 证据                                                                                                                                                                         |
+| ---------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 目录**不是硬编码**，从 Postgres `public.pricing_rules` 读出来拼                                | `services/relay/src/index.ts:122-131`（`loadPricingRules`）→ `:156-169`（`/v1/catalog`）→ `catalog.ts:127-210`（`buildCatalog`）                                             |
+| 「13 款」的权威出处                                                                            | 迁移 `supabase/migrations/20260912000022_retire_19_models.sql:2,113-117,133-137`（保留清单 + `v_models <> 13` 自检）；价格证据 `docs/pricing-evidence-2026-09-12.md:141-166` |
+| 显示名就是模型 id                                                                              | `catalog.ts:180-183`（`displayName: model`）                                                                                                                                 |
+| **没有任何图像/视频模型**（逐个串 grep 过 30+ 个关键词：wanx/kling/即梦/cogvideo/flux/sora/…） | 命中只有三类且都不是模型：第三方 agent 提示词目录（`open-source-agent-references/`）、产品文案模板（迁移 54/55）、以及 `catalog.ts:117-118` 的一句注释                       |
+| relay **只有 chat 一条生成通道**                                                               | 4 条路由（`index.ts:156,188,211,225`）；上游恒拼 `/chat/completions`（`upstream.ts:79-90`）；`capabilities` 恒为 `['llm.chat']`（`catalog.ts:184`）                          |
+
+### 6.5 ⭐ 计费：按张/按秒**没有任何承载位**（这条最要紧）
+
+| 层         | 现状                                                                                                          | 证据                                                          |
+| ---------- | ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| 单位       | 1 元 = 100 积分 = 100 分 = 1e8 微积分；价格列单位是「分 / 百万 token」                                        | 迁移 23 头注释、`20260910000003_mvp_closure.sql:26,33`        |
+| 计价公式   | **唯一**自变量是三个累计 token 量                                                                             | `20260921000057_report_usage_v3_license_identity.sql:247-256` |
+| 账本表     | `usage_reported_totals(cum_input, cum_output, cum_cached, …)`、`usage_records(input/output/cached_tokens, …)` | `20260910000003:42-61`、`20260910000002:22-34`                |
+| RPC 形参   | 只有 `p_cum_input / p_cum_output / p_cum_cached`                                                              | `services/relay/src/ledger.ts:113-127`                        |
+| 价目列     | 三个都是 `*_per_mtok_cents`                                                                                   | `20260910000003:21-31`                                        |
+| 目录能力位 | 写死 `['llm.chat']`，**没有模态列**                                                                           | `catalog.ts:184`                                              |
+
+⇒ 「按张计费」缺的不是金额单位（账本本来就是纯金额），而是**"量 → 金额"那一段输入**：
+要么给 ledger 加"张数/秒数"这类维度 + 价目表加对应列，要么在 relay 侧换算成等效金额再进现有口径。
+
+### 6.6 ⚠️ 上游 usage 归一化会把"只有张数"的返回**静默吃掉**
+
+`extractUsage`（`services/relay/src/upstream.ts:14-35`）只认 OpenAI 风格
+`prompt_tokens` / `completion_tokens` / `prompt_tokens_details.cached_tokens`，非数字或非正一律归 0；
+三个值全 0 ⇒ relay **静默早退**（`index.ts:495-526`：不发计费 RPC、不写 `usage_records`，
+只补一条 `log_billing_usage_zero_before_rpc` 诊断）⇒ 表现是
+**「模型调用成功、余额不动、账上哪儿都查不到」**。
+
+⇒ 图像/视频模型那种"没有 token、只有张数"的返回**走现有口径必然落进这条静默路**。
+这条必须在接图像模型**之前**先解决（否则就是白白送出去的调用）。
+
+### 6.7 现在能回答"要用户拍"的那几条
+
+- **P3.1**：不是"零开发 vs 新管道"，而是 **①（已上线、每轮都对两个模型开着、无开关）**
+  vs **②（用现成 `config.patch` 写 `mcp.servers` + 一个开关 + 文案；缺的是百炼官方 MCP server 的
+  URL/token 与一次端到端写入验证）**。两张卡各自要付的代价因此要重新算。
+- **P3.2**：真要做，**清单是 13 处**（DB 价目行 / 上游凭据 / catalog 显示名与输出上限 / 能力位 /
+  请求通道 / **计费维度** / **usage 归一化** / 客户端家族分组…），而**不是加一条目录行**。

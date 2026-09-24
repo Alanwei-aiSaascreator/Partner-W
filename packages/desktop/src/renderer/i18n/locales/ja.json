@@ -612,6 +612,7 @@
     "disconnected": "切断",
     "disconnectedBanner": "ゲートウェイ「{{name}}」が切断されました。",
     "exhausted": "再接続の試行回数を超えました。",
+    "gatewayDisappeared": "ゲートウェイ「{{name}}」はこのマシンに存在しません（ディスクが抜かれたか、ゲートウェイが削除されました）。利用可能なゲートウェイに切り替えました。",
     "gatewayDown": "ゲートウェイダウン",
     "lostConnection": "ゲートウェイが切断されました",
     "noGateway": "ゲートウェイが設定されていません。OpenClaw サーバーに接続して開始してください。",

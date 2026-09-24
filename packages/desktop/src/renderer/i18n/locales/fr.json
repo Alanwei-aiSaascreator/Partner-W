@@ -612,6 +612,7 @@
     "disconnected": "Déconnecté",
     "disconnectedBanner": "Passerelle « {{name}} » déconnectée.",
     "exhausted": "Tentatives de reconnexion épuisées.",
+    "gatewayDisappeared": "La passerelle « {{name}} » n'est plus sur cette machine (disque retiré ou passerelle supprimée). Bascule vers une passerelle disponible.",
     "gatewayDown": "Passerelle hors service",
     "lostConnection": "Passerelle déconnectée",
     "noGateway": "Aucune passerelle configurée. Connectez-vous à un serveur OpenClaw pour commencer.",

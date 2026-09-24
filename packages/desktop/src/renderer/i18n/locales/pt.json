@@ -612,6 +612,7 @@
     "disconnected": "Desconectado",
     "disconnectedBanner": "Gateway \"{{name}}\" desconectado.",
     "exhausted": "Tentativas de reconexão esgotadas.",
+    "gatewayDisappeared": "O gateway \"{{name}}\" não está mais nesta máquina (o disco pode ter sido removido ou o gateway foi excluído). Alternado para um gateway disponível.",
     "gatewayDown": "Gateway indisponível",
     "lostConnection": "Gateway desconectado",
     "noGateway": "Nenhum gateway configurado. Conecte-se a um servidor OpenClaw para começar.",
