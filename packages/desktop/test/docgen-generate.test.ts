@@ -6,7 +6,7 @@ import yauzl from 'yauzl';
 import { extractCodeBlocksFromMarkdown } from '../src/main/artifact/extract';
 
 /**
- * 「助手出内容、客户端排版」这条链的端到端那一层：**消息 → 真 .pptx → 产物**。
+ * 「助手出内容、客户端排版」这条链的端到端那一层：**消息 → 真文件 → 产物**（三种格式）。
  *
  * 走的是客户端既有的产物通道（`saveArtifactFromBuffer`：写任务目录 + 写库），
  * 所以不需要新 UI 也不需要新事件 —— 用户在下一条消息的产物里就能看到它。
@@ -23,7 +23,7 @@ vi.mock('../src/main/artifact/save.js', () => ({
   detectMimeType: () => 'application/octet-stream',
 }));
 
-const { deckFileNameFor, generateDecksFromMessage } = await import('../src/main/docgen/generate.js');
+const { documentFileNameFor, generateDocumentsFromMessage } = await import('../src/main/docgen/generate.js');
 
 function unzipNames(buffer: Buffer): Promise<string[]> {
   return new Promise((resolve, reject) => {
@@ -41,16 +41,28 @@ function unzipNames(buffer: Buffer): Promise<string[]> {
   });
 }
 
-function deckBlock(body: unknown | string): string {
+function docgenBlock(body: unknown | string): string {
   const json = typeof body === 'string' ? body : JSON.stringify(body);
-  return ['好的，我来做这份演示。', '', '```docgen', json, '```', '', '已经放到你的产物里了。'].join('\n');
+  return ['好的，我来做。', '', '```docgen', json, '```', '', '已经放到你的产物里了。'].join('\n');
 }
 
-const REQUEST = {
+const PPTX = {
   kind: 'pptx',
   title: '内测汇报',
   subtitle: '2026-09-24',
   slides: [{ title: '本周进展', bullets: ['方案已出'] }],
+};
+
+const DOCX = {
+  kind: 'docx',
+  title: '内测报告',
+  sections: [{ heading: '一、背景', paragraphs: ['本轮补齐了三种格式。'], bullets: ['要点'] }],
+};
+
+const XLSX = {
+  kind: 'xlsx',
+  title: '九月台账',
+  sheets: [{ name: '汇总', rows: [['产品', 1200]] }],
 };
 
 let workspacePath = '';
@@ -71,9 +83,13 @@ beforeEach(() => {
 });
 afterEach(() => rmSync(workspacePath, { recursive: true, force: true }));
 
-describe('extractDocgenBlocks（经 generateDecksFromMessage 间接验）', () => {
+function savedParams(index: number): { fileName: string; buffer: Buffer; sourceKey?: string } {
+  return mocks.saveArtifactFromBuffer.mock.calls[index]?.[0] as { fileName: string; buffer: Buffer };
+}
+
+describe('extractDocgenBlocks（经 generateDocumentsFromMessage 间接验）', () => {
   it('没有 docgen 块 ⇒ 什么都不做（普通回复不该触发文件生成）', async () => {
-    const result = await generateDecksFromMessage({
+    const result = await generateDocumentsFromMessage({
       workspacePath,
       taskId,
       messageId,
@@ -84,35 +100,74 @@ describe('extractDocgenBlocks（经 generateDecksFromMessage 间接验）', () =
   });
 
   it('⭐ 有 docgen 块 ⇒ 生成真 pptx 并交给产物通道', async () => {
-    const result = await generateDecksFromMessage({ workspacePath, taskId, messageId, content: deckBlock(REQUEST) });
+    const result = await generateDocumentsFromMessage({
+      workspacePath,
+      taskId,
+      messageId,
+      content: docgenBlock(PPTX),
+    });
 
     expect(result.saved).toHaveLength(1);
     expect(result.failed).toEqual([]);
-    const params = mocks.saveArtifactFromBuffer.mock.calls[0]?.[0] as { fileName: string; buffer: Buffer };
-    expect(params.fileName).toBe('内测汇报.pptx');
-    const names = await unzipNames(params.buffer);
-    expect(names, '产出的不是合法 pptx').toContain('ppt/presentation.xml');
+    expect(savedParams(0).fileName).toBe('内测汇报.pptx');
+    expect(await unzipNames(savedParams(0).buffer), '产出的不是合法 pptx').toContain('ppt/presentation.xml');
+  });
+
+  it('⭐ docx 块 ⇒ 生成真 docx（扩展名与容器都对）', async () => {
+    const result = await generateDocumentsFromMessage({
+      workspacePath,
+      taskId,
+      messageId,
+      content: docgenBlock(DOCX),
+    });
+    expect(result.failed).toEqual([]);
+    expect(savedParams(0).fileName).toBe('内测报告.docx');
+    expect(await unzipNames(savedParams(0).buffer)).toContain('word/document.xml');
+  });
+
+  it('⭐ xlsx 块 ⇒ 生成真 xlsx（扩展名与容器都对）', async () => {
+    const result = await generateDocumentsFromMessage({
+      workspacePath,
+      taskId,
+      messageId,
+      content: docgenBlock(XLSX),
+    });
+    expect(result.failed).toEqual([]);
+    expect(savedParams(0).fileName).toBe('九月台账.xlsx');
+    expect(await unzipNames(savedParams(0).buffer)).toContain('xl/workbook.xml');
+  });
+
+  it('⭐ 一段回复里三种格式混着来 ⇒ 三份都出得来，各是各的扩展名', async () => {
+    const content = [docgenBlock(PPTX), '', docgenBlock(DOCX), '', docgenBlock(XLSX)].join('\n');
+    const result = await generateDocumentsFromMessage({ workspacePath, taskId, messageId, content });
+    expect(result.failed).toEqual([]);
+    expect(result.saved).toHaveLength(3);
+    expect([savedParams(0).fileName, savedParams(1).fileName, savedParams(2).fileName]).toEqual([
+      '内测汇报.pptx',
+      '内测报告.docx',
+      '九月台账.xlsx',
+    ]);
   });
 
   it('围栏语言必须**恰好**是 docgen —— `json` 的块不算', async () => {
-    const content = ['```json', JSON.stringify(REQUEST), '```'].join('\n');
-    const result = await generateDecksFromMessage({ workspacePath, taskId, messageId, content });
+    const content = ['```json', JSON.stringify(PPTX), '```'].join('\n');
+    const result = await generateDocumentsFromMessage({ workspacePath, taskId, messageId, content });
     expect(result.saved).toEqual([]);
     expect(mocks.saveArtifactFromBuffer).not.toHaveBeenCalled();
   });
 
   it('大小写与尾随空格容忍（模型会写 ```Docgen ）', async () => {
-    const content = ['```Docgen ', JSON.stringify(REQUEST), '```'].join('\n');
-    const result = await generateDecksFromMessage({ workspacePath, taskId, messageId, content });
+    const content = ['```Docgen ', JSON.stringify(PPTX), '```'].join('\n');
+    const result = await generateDocumentsFromMessage({ workspacePath, taskId, messageId, content });
     expect(result.saved).toHaveLength(1);
   });
 
   it('JSON 坏了 ⇒ 记账、不抛、不存文件', async () => {
-    const result = await generateDecksFromMessage({
+    const result = await generateDocumentsFromMessage({
       workspacePath,
       taskId,
       messageId,
-      content: deckBlock('{ 不是 json'),
+      content: docgenBlock('{ 不是 json'),
     });
     expect(result.saved).toEqual([]);
     expect(result.failed).toHaveLength(1);
@@ -120,71 +175,124 @@ describe('extractDocgenBlocks（经 generateDecksFromMessage 间接验）', () =
   });
 
   it('schema 不合法（缺 slides）⇒ 记账', async () => {
-    const result = await generateDecksFromMessage({
+    const result = await generateDocumentsFromMessage({
       workspacePath,
       taskId,
       messageId,
-      content: deckBlock({ kind: 'pptx', title: 't' }),
+      content: docgenBlock({ kind: 'pptx', title: 't' }),
     });
     expect(result.failed).toHaveLength(1);
     expect(mocks.saveArtifactFromBuffer).not.toHaveBeenCalled();
   });
 
+  it('不认识的 kind（pdf）⇒ 记账，而不是硬猜一个格式', async () => {
+    const result = await generateDocumentsFromMessage({
+      workspacePath,
+      taskId,
+      messageId,
+      content: docgenBlock({ kind: 'pdf', title: 't', slides: [] }),
+    });
+    expect(result.saved).toEqual([]);
+    expect(result.failed).toHaveLength(1);
+  });
+
   it('两份块 ⇒ 存两份，且一份坏不影响另一份', async () => {
-    const content = [deckBlock(REQUEST), '', deckBlock('{ 坏的'), '', deckBlock({ ...REQUEST, title: '第二份' })].join(
+    const content = [docgenBlock(PPTX), '', docgenBlock('{ 坏的'), '', docgenBlock({ ...PPTX, title: '第二份' })].join(
       '\n',
     );
-    const result = await generateDecksFromMessage({ workspacePath, taskId, messageId, content });
+    const result = await generateDocumentsFromMessage({ workspacePath, taskId, messageId, content });
     expect(result.saved).toHaveLength(2);
     expect(result.failed).toHaveLength(1);
   });
 
   it('产物通道失败 ⇒ 记账，不抛（消息收尾路径上不能炸）', async () => {
     mocks.saveArtifactFromBuffer.mockRejectedValueOnce(new Error('disk full'));
-    const result = await generateDecksFromMessage({ workspacePath, taskId, messageId, content: deckBlock(REQUEST) });
+    const result = await generateDocumentsFromMessage({
+      workspacePath,
+      taskId,
+      messageId,
+      content: docgenBlock(PPTX),
+    });
     expect(result.saved).toEqual([]);
     expect(result.failed).toEqual(['disk full']);
   });
 
-  it('重放同一段内容时带 sourceKey（产物通道按它去重，不会存出第二份）', async () => {
-    await generateDecksFromMessage({ workspacePath, taskId, messageId, content: deckBlock(REQUEST) });
-    const params = mocks.saveArtifactFromBuffer.mock.calls[0]?.[0] as { sourceKey?: string };
-    expect(params.sourceKey).toMatch(/^docgen:/);
+  it('⭐ sourceKey 认得出"同一份内容"（产物通道按它去重，重放不会存出第二份）', async () => {
+    await generateDocumentsFromMessage({ workspacePath, taskId, messageId, content: docgenBlock(PPTX) });
+    await generateDocumentsFromMessage({ workspacePath, taskId, messageId, content: docgenBlock(PPTX) });
+    const first = savedParams(0).sourceKey ?? '';
+    expect(first).toMatch(/^docgen:/);
+    expect(savedParams(1).sourceKey, '同样的内容两次，去重键应当相同').toBe(first);
+  });
+
+  it('⭐ 内容不同 ⇒ 去重键不同（原来只带"标题+页数"，两份不同内容会互相顶掉）', async () => {
+    await generateDocumentsFromMessage({ workspacePath, taskId, messageId, content: docgenBlock(PPTX) });
+    await generateDocumentsFromMessage({
+      workspacePath,
+      taskId,
+      messageId,
+      content: docgenBlock({ ...PPTX, slides: [{ title: '本周进展', bullets: ['改了一个字'] }] }),
+    });
+    expect(savedParams(1).sourceKey).not.toBe(savedParams(0).sourceKey);
+  });
+
+  it('⭐ 不同 kind 的同名内容 ⇒ 去重键不同（pptx 不该顶掉 docx）', async () => {
+    await generateDocumentsFromMessage({ workspacePath, taskId, messageId, content: docgenBlock(PPTX) });
+    await generateDocumentsFromMessage({
+      workspacePath,
+      taskId,
+      messageId,
+      content: docgenBlock({ kind: 'docx', title: '内测汇报', sections: [{ paragraphs: ['x'] }] }),
+    });
+    expect(savedParams(0).sourceKey).toContain('pptx');
+    expect(savedParams(1).sourceKey).toContain('docx');
   });
 });
 
-describe('deckFileNameFor', () => {
-  it('用标题做文件名；去掉 Windows 不允许的字符', () => {
-    expect(deckFileNameFor('内测汇报')).toBe('内测汇报.pptx');
-    expect(deckFileNameFor('A/B: C*D?')).toBe('A B C D.pptx');
+describe('documentFileNameFor', () => {
+  it('用标题做文件名，扩展名跟着 kind 走', () => {
+    expect(documentFileNameFor('内测汇报', 'pptx')).toBe('内测汇报.pptx');
+    expect(documentFileNameFor('内测汇报', 'docx')).toBe('内测汇报.docx');
+    expect(documentFileNameFor('内测汇报', 'xlsx')).toBe('内测汇报.xlsx');
   });
 
-  it('标题里的**空格与连字符要保留**（别把它们也当非法字符吃掉）', () => {
-    expect(deckFileNameFor('内测汇报 - 第一期')).toBe('内测汇报 - 第一期.pptx');
+  it('去掉 Windows 不允许的字符，但**保留空格与连字符**', () => {
+    expect(documentFileNameFor('A/B: C*D?', 'docx')).toBe('A B C D.docx');
+    expect(documentFileNameFor('内测汇报 - 第一期', 'pptx')).toBe('内测汇报 - 第一期.pptx');
   });
 
-  it('空标题/全是非法字符 ⇒ 退回稳定名字', () => {
-    expect(deckFileNameFor('   ')).toBe('演示文稿.pptx');
-    expect(deckFileNameFor('///')).toBe('演示文稿.pptx');
+  it('空标题/全是非法字符 ⇒ 退回该格式的稳定名字', () => {
+    expect(documentFileNameFor('   ', 'pptx')).toBe('演示文稿.pptx');
+    expect(documentFileNameFor('///', 'docx')).toBe('文档.docx');
+    expect(documentFileNameFor('', 'xlsx')).toBe('表格.xlsx');
   });
 
-  it('超长标题被截断（Windows 路径长度）', () => {
-    // 主名截到 60，加上 `.pptx` 一共 65
-    const name = deckFileNameFor('长'.repeat(200));
-    expect(name.endsWith('.pptx')).toBe(true);
-    expect(name.length).toBeLessThanOrEqual(65);
+  it('超长标题被截断（Windows 路径长度）—— 三种格式一样长', () => {
+    for (const [kind, suffix] of [
+      ['pptx', '.pptx'],
+      ['docx', '.docx'],
+      ['xlsx', '.xlsx'],
+    ] as const) {
+      const name = documentFileNameFor('长'.repeat(200), kind);
+      expect(name.endsWith(suffix), kind).toBe(true);
+      expect(name.length, kind).toBeLessThanOrEqual(65);
+    }
   });
 });
 
 describe('docgen 块不会被当成代码产物（否则用户会看到一份 JSON 噪音）', () => {
-  it('extractCodeBlocksFromMarkdown 跳过 docgen 围栏', () => {
+  it('extractCodeBlocksFromMarkdown 跳过 docgen 围栏（三种 kind 都跳）', () => {
     const content = [
       '```docgen',
-      JSON.stringify({
-        kind: 'pptx',
-        title: 't',
-        slides: [{ title: 'a', bullets: ['b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l'] }],
-      }),
+      JSON.stringify(PPTX),
+      '```',
+      '',
+      '```docgen',
+      JSON.stringify(DOCX),
+      '```',
+      '',
+      '```docgen',
+      JSON.stringify(XLSX),
       '```',
       '',
       // ⚠️ 这一段必须有**扩展名**（或超过 10 行）：既有的抽取规则会跳过

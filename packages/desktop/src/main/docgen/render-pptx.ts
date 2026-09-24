@@ -1,8 +1,8 @@
 import PptxGenJS from 'pptxgenjs';
-import type { DocgenRequest } from './request.js';
+import type { DocgenPptxRequest } from './request.js';
 
 /**
- * 把校验过的请求渲染成 pptx 字节。
+ * 把校验过的 pptx 请求渲染成 pptx 字节。
  *
  * ⚠️ 这一层是**唯一**碰 pptxgenjs 的地方：`request.ts` 只做校验（可穷举测试），
  * 这里只做排版（用"解包看结构 + 文字真的在"来验，见 `test/docgen-render.test.ts`）。
@@ -24,7 +24,7 @@ const COLOR_BODY = '374151';
 const COLOR_MUTED = '6B7280';
 const COLOR_ACCENT = '2563EB';
 
-export async function renderPptx(request: DocgenRequest): Promise<Buffer> {
+export async function renderPptx(request: DocgenPptxRequest): Promise<Buffer> {
   const pptx = new PptxGenJS();
   pptx.layout = LAYOUT;
   pptx.title = request.title;

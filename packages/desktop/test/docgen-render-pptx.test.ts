@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import yauzl from 'yauzl';
 import { parseDocgenRequest } from '../src/main/docgen/request';
-import { renderPptx } from '../src/main/docgen/render';
+import { renderPptx } from '../src/main/docgen/render-pptx';
 
 /**
  * 渲染层：**解包看结构 + 文字真的在**，不看"有没有报错"。
@@ -52,6 +52,7 @@ const REQUEST = {
 async function renderValid(): Promise<Map<string, Buffer>> {
   const parsed = parseDocgenRequest(REQUEST);
   if (!parsed.ok) throw new Error(`夹具本身不合法：${parsed.error}`);
+  if (parsed.request.kind !== 'pptx') throw new Error('夹具 kind 不对');
   return unzip(await renderPptx(parsed.request));
 }
 
@@ -105,6 +106,7 @@ describe('renderPptx —— 解包验证', () => {
       ],
     });
     if (!parsed.ok) throw new Error(parsed.error);
+    if (parsed.request.kind !== 'pptx') throw new Error('夹具 kind 不对');
     const files = await unzip(await renderPptx(parsed.request));
     const all = [...files.values()].map((buf) => buf.toString('utf8')).join('\n');
     expect(all, '没要求备注，却出现了备注文字').not.toContain('这页讲三件事');

@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { DOCGEN_LIMITS, parseDocgenRequest, presentationPathFor } from '../src/main/docgen/request';
+import { DOCGEN_KINDS, DOCGEN_LIMITS, parseDocgenRequest, presentationPathFor } from '../src/main/docgen/request';
 
 /**
- * 文档生成请求的**校验**。
+ * 文档生成请求的**校验**（P1 的 pptx 那一支；docx / xlsx 各有自己的文件）。
  *
  * 为什么这一层要单独钉：它下游是"往用户工作区里写文件"。**猜一个能跑的形状**
  * 会让用户拿到一份内容不对的 PPT —— 比直接失败更糟。所以认不出来一律返回错误。
@@ -18,15 +18,21 @@ const valid = {
   ],
 };
 
+/** 夹具走"合法"路径 —— 不合法时直接抛，避免测试自己悄悄走岔。 */
+function deckOf(raw: unknown) {
+  const result = parseDocgenRequest(raw);
+  if (!result.ok) throw new Error(`夹具本该合法：${result.error}`);
+  if (result.request.kind !== 'pptx') throw new Error(`kind 应当是 pptx，实际是 ${result.request.kind}`);
+  return result.request;
+}
+
 describe('parseDocgenRequest', () => {
   it('正常请求 ⇒ 逐字保留', () => {
-    const result = parseDocgenRequest(valid);
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.request.title).toBe('内测汇报');
-    expect(result.request.subtitle).toBe('2026-09-24');
-    expect(result.request.slides).toHaveLength(2);
-    expect(result.request.slides[0]?.bullets).toEqual(['文档生成能力：方案已出', '文件导入提示：已修']);
+    const request = deckOf(valid);
+    expect(request.title).toBe('内测汇报');
+    expect(request.subtitle).toBe('2026-09-24');
+    expect(request.slides).toHaveLength(2);
+    expect(request.slides[0]?.bullets).toEqual(['文档生成能力：方案已出', '文件导入提示：已修']);
   });
 
   it('不是对象 / 是数组 ⇒ 拒（别拿数组当对象用）', () => {
@@ -35,12 +41,24 @@ describe('parseDocgenRequest', () => {
     }
   });
 
-  it('kind 缺失或不是 pptx ⇒ 拒，且错误里说清只支持什么', () => {
+  it('kind 缺失 / 不认识 ⇒ 拒，且错误里说清支持哪三种（P2 起 docx、xlsx 也是合法的）', () => {
     const missing = parseDocgenRequest({ ...valid, kind: undefined });
     expect(missing.ok).toBe(false);
-    const wrong = parseDocgenRequest({ ...valid, kind: 'docx' });
+    if (!missing.ok) expect(missing.error).toContain('kind is required');
+
+    const wrong = parseDocgenRequest({ ...valid, kind: 'pdf' });
     expect(wrong.ok).toBe(false);
-    if (!wrong.ok) expect(wrong.error).toContain('pptx');
+    if (!wrong.ok) {
+      for (const kind of DOCGEN_KINDS) expect(wrong.error, `错误里应当列出 ${kind}`).toContain(kind);
+    }
+  });
+
+  it('docx / xlsx 不再是"不认识的 kind"（但拿 pptx 的形状写它们会被各自的 schema 拒）', () => {
+    for (const kind of ['docx', 'xlsx'] as const) {
+      const result = parseDocgenRequest({ ...valid, kind });
+      expect(result.ok, kind).toBe(false);
+      if (!result.ok) expect(result.error, kind).not.toContain('unsupported kind');
+    }
   });
 
   it('title 缺失/空白 ⇒ 拒', () => {
@@ -78,27 +96,21 @@ describe('parseDocgenRequest', () => {
   });
 
   it('要点里的空串/纯空白被丢掉（不是报错）—— 模型偶尔会补空行，为此整份失败不值得', () => {
-    const result = parseDocgenRequest({ ...valid, slides: [{ title: 't', bullets: ['a', '', '   ', 'b'] }] });
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.request.slides[0]?.bullets).toEqual(['a', 'b']);
+    const request = deckOf({ ...valid, slides: [{ title: 't', bullets: ['a', '', '   ', 'b'] }] });
+    expect(request.slides[0]?.bullets).toEqual(['a', 'b']);
   });
 
   it('bullets 缺省 = 空数组（纯标题页合法）', () => {
-    const result = parseDocgenRequest({ ...valid, slides: [{ title: '分隔页' }] });
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.request.slides[0]?.bullets).toEqual([]);
+    const request = deckOf({ ...valid, slides: [{ title: '分隔页' }] });
+    expect(request.slides[0]?.bullets).toEqual([]);
   });
 
   it('notes 可选；给了就带出来，空白当没给', () => {
-    const withNotes = parseDocgenRequest({ ...valid, slides: [{ title: 't', bullets: [], notes: '讲者备注' }] });
-    expect(withNotes.ok).toBe(true);
-    if (withNotes.ok) expect(withNotes.request.slides[0]?.notes).toBe('讲者备注');
+    const withNotes = deckOf({ ...valid, slides: [{ title: 't', bullets: [], notes: '讲者备注' }] });
+    expect(withNotes.slides[0]?.notes).toBe('讲者备注');
 
-    const blank = parseDocgenRequest({ ...valid, slides: [{ title: 't', bullets: [], notes: '  ' }] });
-    expect(blank.ok).toBe(true);
-    if (blank.ok) expect(blank.request.slides[0]?.notes).toBeUndefined();
+    const blank = deckOf({ ...valid, slides: [{ title: 't', bullets: [], notes: '  ' }] });
+    expect(blank.slides[0]?.notes).toBeUndefined();
   });
 
   it('notes 过长 ⇒ 拒', () => {
@@ -108,9 +120,8 @@ describe('parseDocgenRequest', () => {
   });
 
   it('subtitle 缺省 ⇒ 返回体里就没有这个键（不是空串）', () => {
-    const result = parseDocgenRequest({ ...valid, subtitle: undefined });
-    expect(result.ok).toBe(true);
-    if (result.ok) expect('subtitle' in result.request).toBe(false);
+    const request = deckOf({ ...valid, subtitle: undefined });
+    expect('subtitle' in request).toBe(false);
   });
 });
 

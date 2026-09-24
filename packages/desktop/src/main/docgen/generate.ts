@@ -1,18 +1,22 @@
+import { createHash } from 'node:crypto';
 import type { Artifact } from '@clawwork/shared';
 import { getDebugLogger } from '../debug/index.js';
 import { saveArtifactFromBuffer } from '../artifact/save.js';
 import { extractDocgenBlocks } from './blocks.js';
-import { renderPptx } from './render.js';
+import { DOCGEN_OUTPUT_BY_KIND, type DocgenKind, type DocgenRequest } from './request.js';
+import { renderDocument } from './render.js';
 
 /**
- * 消息里有 ```` ```docgen ```` 块 ⇒ 渲染成真文件并**走客户端现成的产物通道**存下来。
+ * 消息里有 ```` ```docgen ```` 块 ⇒ 渲染成真文件（pptx / docx / xlsx）并
+ * **走客户端现成的产物通道**存下来。
  *
  * 落盘位置、DB 记录、界面通知全部交给 `saveArtifactFromBuffer`（它写进任务目录、
  * 写 `artifacts` 表、返回 Artifact 给调用方推 `artifact:saved`）——
- * 这样"生成的 PPT 能被用户找到"不需要任何新 UI、新表、新事件。
+ * 这样"生成的文件能被用户找到"不需要任何新 UI、新表、新事件。
+ * 三种格式共用这一条路，区别只在 `renderDocument` 里那一层分发。
  *
  * 三条刻意的行为：
- *  - **一份失败不影响另一份**：多页/多份请求里坏了一份，其余的照做。
+ *  - **一份失败不影响另一份**：多份请求里坏了一份，其余的照做。
  *  - **不抛**：调用方在消息收尾路径上（`ipc/data-handlers.ts`），抛出去会连带影响
  *    产物登记与"消息已完成"的记账。所以这里把错误收成 `failed` 并记日志。
  *  - **不重复存**：同一段内容在重放/重试里被处理两次时，`saveArtifactFromBuffer`
@@ -24,24 +28,42 @@ export interface DocgenGenerateResult {
   failed: string[];
 }
 
+/** 文件名主名的上限（Windows 路径长度）。扩展名另算，所以三种格式的总长一致。 */
+const MAX_STEM_CHARS = 60;
+
 /**
- * 文件名：用请求标题，去掉 Windows 不允许的字符与控制字符；留空则退回一个稳定的名字。
+ * 文件名：用请求标题，去掉 Windows 不允许的字符与控制字符；留空则退回该格式的稳定名字。
+ * 扩展名**只**由 `DOCGEN_OUTPUT_BY_KIND` 给（别在这里写死 `.docx`：那是契约层的事）。
  *
- * ⚠️ 控制字符**不要写进字符类**（`[\u0000-\u001f]` 这种写法一旦被某层解释成真字节，
- *    文件里就会出现真的 NUL，grep 直接把它当二进制，而正则也变成只匹配那两个码点）。
- *    这里改成逐字符判断，绕开所有转义层。
+ * ⚠️ 控制字符**不要直接写进正则字符类**：把控制字符以字面量形式写出来时，
+ *    只要中间有一层把它解释成真字节，代码文件里就会出现真的 NUL ——
+ *    grep 会直接把整个文件当二进制，那条正则也变成只匹配那两个码点。
+ *    这里改成逐字符判断（`charCodeAt`），绕开所有转义层。
  */
-export function deckFileNameFor(title: string): string {
+export function documentFileNameFor(title: string, kind: DocgenKind): string {
   const withoutControls = [...title].map((ch) => (ch.charCodeAt(0) < 0x20 ? ' ' : ch)).join('');
   const cleaned = withoutControls
     .replace(/[\\/:*?"<>|]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
-    .slice(0, 60);
-  return `${cleaned || '演示文稿'}.pptx`;
+    .slice(0, MAX_STEM_CHARS);
+  const { extension, fallbackStem } = DOCGEN_OUTPUT_BY_KIND[kind];
+  return `${cleaned || fallbackStem}${extension}`;
 }
 
-export async function generateDecksFromMessage(input: {
+/**
+ * 去重键：**kind + 内容哈希**。
+ *
+ * 原来只带「标题 + 页数/节数」—— 两份标题相同、条数相同但内容不同的文档会算出同一个键，
+ * 后者被 `saveArtifactFromBuffer` 的唯一约束**静默丢掉**（用户只看到一份）。
+ * 哈希用的是**校验后的请求**（键序由解析器决定，稳定），重放同一段内容仍然得到同一个键。
+ */
+function sourceKeyFor(request: DocgenRequest): string {
+  const digest = createHash('sha256').update(JSON.stringify(request)).digest('hex').slice(0, 16);
+  return `docgen:${request.kind}:${digest}`;
+}
+
+export async function generateDocumentsFromMessage(input: {
   workspacePath: string;
   taskId: string;
   messageId: string;
@@ -63,22 +85,21 @@ export async function generateDecksFromMessage(input: {
 
   for (const request of requests) {
     try {
-      const buffer = await renderPptx(request);
+      const buffer = await renderDocument(request);
       const artifact = await saveArtifactFromBuffer({
         workspacePath: input.workspacePath,
         taskId: input.taskId,
         messageId: input.messageId,
-        fileName: deckFileNameFor(request.title),
+        fileName: documentFileNameFor(request.title, request.kind),
         buffer,
         artifactType: 'file',
-        // 同一段内容重放时不要存出第二份（唯一约束是 message_id + source_key）。
-        sourceKey: `docgen:${request.title}:${request.slides.length}`,
+        sourceKey: sourceKeyFor(request),
       });
       result.saved.push(artifact);
       getDebugLogger().info({
         domain: 'artifact',
         event: 'docgen.saved',
-        data: { taskId: input.taskId, name: artifact.name, size: artifact.size },
+        data: { taskId: input.taskId, name: artifact.name, size: artifact.size, kind: request.kind },
       });
     } catch (error) {
       const message = (error as Error).message;
@@ -86,7 +107,7 @@ export async function generateDecksFromMessage(input: {
       getDebugLogger().warn({
         domain: 'artifact',
         event: 'docgen.save-failed',
-        data: { taskId: input.taskId, error: message },
+        data: { taskId: input.taskId, kind: request.kind, error: message },
       });
     }
   }
