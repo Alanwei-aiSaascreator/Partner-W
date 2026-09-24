@@ -42,6 +42,9 @@ const ToolCallCard = memo(function ToolCallCard({ toolCall, defaultOpen, label }
     return `${(elapsed / 1000).toFixed(1)}s`;
   }, [toolCall.completedAt, toolCall.startedAt]);
 
+  /** 失败原因：**运行时给的原文**，空/纯空白一律当没有（不渲染空行，也不编一句话顶上）。 */
+  const errorText = toolCall.status === 'error' ? toolCall.result?.trim() : '';
+
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
       <div
@@ -65,15 +68,36 @@ const ToolCallCard = memo(function ToolCallCard({ toolCall, defaultOpen, label }
             >
               {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
               <StatusIcon status={toolCall.status} />
-              <span className="min-w-0 flex-1 truncate text-left">
-                {label ? <span className="type-label text-[var(--text-secondary)]">{label} · </span> : null}
-                {/*
-                  ⭐ 优先显示网关拼好的 `title`（形如「memory_search 游戏 爆款 创作 内容」）——
-                  这才是用户要的"做了什么操作"。只有工具名（`name`）时说明拿不到 item 流，退回原名。
-                */}
-                <span className="type-mono-data text-[var(--text-muted)]" title={toolCall.title}>
-                  {toolCall.title ?? toolCall.name}
+              <span className="min-w-0 flex-1 text-left">
+                <span className="flex min-w-0 items-center gap-2">
+                  {label ? <span className="type-label text-[var(--text-secondary)]">{label} · </span> : null}
+                  {/*
+                    ⭐ 优先显示网关拼好的 `title`（形如「memory_search 游戏 爆款 创作 内容」）——
+                    这才是用户要的"做了什么操作"。只有工具名（`name`）时说明拿不到 item 流，退回原名。
+                  */}
+                  <span className="type-mono-data truncate text-[var(--text-muted)]" title={toolCall.title}>
+                    {toolCall.title ?? toolCall.name}
+                  </span>
                 </span>
+                {/*
+                  ⭐ 2026-09-24：失败时**把原因摊在行上**。同事的真机截图里，
+                  这一行只有一个红叉 + 工具名 —— 用户唯一能得出的结论是"无法操作"。
+                  而原因本来就在 `result` 里（运行时自己的原文：审批路径是 dispatcher 拼的
+                  `explanation`，工具结果路径是 `extractToolResultText(...) ?? meta`）。
+                  ⚠️ 这里**不翻译、不补话**：原文照登，行上截断、`title` 与展开区都能看全。
+                     与 `gateway-error-message.ts` 的规矩一致 —— 认不出来的宁可给英文，
+                     也不要给一句编出来的中文（那会把用户指错方向）。
+                  ⚠️ 只有 `error` 才摊：成功的调用一闪就过，每行都拖一段正文等于把折叠废掉。
+                */}
+                {errorText ? (
+                  <span
+                    data-testid="tool-call-error"
+                    className="type-support mt-0.5 block truncate text-[var(--danger)]"
+                    title={errorText}
+                  >
+                    {errorText}
+                  </span>
+                ) : null}
               </span>
               {/*
                 ⭐ A2：**说一句**「等待批准」—— 光换图标不够（用户得知道
