@@ -56,6 +56,14 @@
    ② 或者它本来该被路由到（`5e103c2e` 漏接了一处）——那就把它接回 App.tsx。
    在拍之前**两者都不动**（本轮只记录）。
 
+   ✅ **已经加的守卫**（2026-09-25）：`test/layouts-reachability.test.ts` ——
+   解析模块说明符，逐个检查 `src/renderer/layouts/*` 有没有被产品代码 import；
+   已知的这一条进 `KNOWN_UNRENDERED` 记账（**必须写原因**，理由太短直接红）。
+   同类守卫实测：`knip` 抓不到这一类（它把测试的 import 算作"被使用"）。
+   ⚠️ 这条守卫的量法**自己错过一次**：第一版搜字符串 `layouts/FileBrowser`，
+   把 `import FileBrowser from '../FileBrowser'`（相对路径）误判成"没人用" ——
+   现在真解析路径，并配了一条对照（必须是 `>= 17` 个认得出引用方 + FileBrowser 必须认得出）。
+
 2. ℹ️ 探测写在**工作区根**：fs-safe 校验的是工作区里那些身份文件所在的卷，同一次安装里
    它们同卷。写在根上顺带把"这块盘能不能写"也量了（`unwritable` 那一档）。
 
