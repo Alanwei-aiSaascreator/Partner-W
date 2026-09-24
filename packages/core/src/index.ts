@@ -104,6 +104,7 @@ export { findRetryTarget } from './services/retry-turn.js';
 export type { RetryTarget } from './services/retry-turn.js';
 
 export { describeGatewayError, translateGatewayError } from './services/gateway-error-message.js';
+export { describeSendRefusal } from './services/send-refusal-message.js';
 export { describeCommunityError } from './services/community-error-message.js';
 export { normalizeFeed, normalizeTeamInfo, nextFeedCursor } from './services/community-service.js';
 export {

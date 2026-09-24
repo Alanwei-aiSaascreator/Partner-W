@@ -548,4 +548,27 @@ describe('WelcomeScreen assistant workspace', () => {
     expect(container.textContent).toContain('agent.missingOpenTeams');
     unmount();
   });
+
+  /**
+   * ⚠️ 2026-09-24（独立复核 M-2）：罗盘自己也不在目录里时，"换用罗盘助手"是个**死胡同按钮** ——
+   * 一边说"不在本机"、一边给一个指向同样不存在的助手的出口。那时只留"去团队页"。
+   */
+  it('⭐ 罗盘自己也不在目录里 ⇒ 不给"换用罗盘助手"这个出口，只留团队页', () => {
+    mocks.gatewayState.agentCatalog = [{ id: 'some-other-agent' }];
+    mocks.pendingNewTask = { gatewayId: 'gw-1', agentId: 'team-agent-x' };
+    const { container, unmount } = render(
+      <WelcomeScreen
+        onboardingProfile={{ ...onboardingProfile, useCases: [] }}
+        recentPresetIds={[]}
+        onSelectPreset={vi.fn()}
+        onCustomTask={vi.fn()}
+        onAssistantChange={vi.fn()}
+      />,
+    );
+
+    expect(container.textContent).toContain('agent.missingTitle');
+    expect(container.textContent, '罗盘不在就别给这个出口').not.toContain('agent.missingSwitch');
+    expect(container.textContent, '去团队页恒可用').toContain('agent.missingOpenTeams');
+    unmount();
+  });
 });

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { UnknownAgentError } from '@clawwork/core';
+import { describeSendRefusal, UnknownAgentError } from '@clawwork/core';
 import type { FileIndexEntry, ImportedTaskFile, TaskContextSource } from '@clawwork/shared';
 import { toast } from '@/lib/toast';
 import { useTaskStore } from '../../stores/taskStore';
@@ -123,7 +123,7 @@ export function useTaskMaterials(taskIdOverride?: string | null) {
       created = useTaskStore.getState().commitPendingTask();
     } catch (error) {
       if (!(error instanceof UnknownAgentError)) throw error;
-      toast.error(t('errors.agentMissing'));
+      toast.error(describeSendRefusal(error, t));
       return null;
     }
     previousRequestedTaskIdRef.current = created.id;

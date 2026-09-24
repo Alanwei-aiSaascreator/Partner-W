@@ -99,6 +99,7 @@ vi.mock('../src/renderer/platform', () => ({
     selector ? selector(mocks.roomState) : mocks.roomState,
 }));
 
+import { UnknownAgentError } from '@clawwork/core';
 import { useChatSend } from '../src/renderer/components/ChatInput/useChatSend';
 import type { ImportedMaterialFile, TaskContextFile } from '../src/renderer/components/ChatInput/useTaskMaterials';
 import { useCommercialStore } from '../src/renderer/stores/commercialStore';
@@ -232,6 +233,9 @@ describe('useChatSend abort flow', () => {
     mocks.applySlashCommand.mockClear();
     mocks.send.mockClear();
     mocks.toastWarning.mockClear();
+    // ⚠️ 必须重置实现，不只是清调用：`commitPendingTask` 有测试会装"抛错"的实现，
+    //    不重置就**泄漏给后面所有用例**（2026-09-24 我自己踩了一次：4 条无关用例跟着红）。
+    mocks.taskState.commitPendingTask.mockReset();
     mocks.taskState.activeTaskId = 'task-1';
     mocks.taskState.tasks = [mocks.taskState.tasks.find((task) => task.id === 'task-1')!];
     Object.assign(window, {
@@ -622,7 +626,6 @@ describe('useChatSend abort flow', () => {
     vi.mocked(window.clawwork.readInboxFileForSend).mockReturnValueOnce(
       new Promise((resolve) => (resolveRead = resolve)) as never,
     );
-    mocks.taskState.tasks = [];
     mocks.taskState.activeTaskId = null;
     mocks.taskState.pendingNewTask = { gatewayId: 'gw-1', model: 'deepseek-v4-flash' } as never;
     mocks.taskState.commitPendingTask.mockReturnValue(firstTask);
@@ -644,6 +647,55 @@ describe('useChatSend abort flow', () => {
     expect(window.clawwork.readInboxFileForSend).toHaveBeenCalledTimes(1);
     expect(mocks.send).toHaveBeenCalledTimes(1);
     view.unmount();
+  });
+
+  /**
+   * ⭐ 2026-09-24（独立复核 I-3）：这条分支原来**没有任何测试绑住** ——
+   * 把 `describeSendRefusal` 换回固定那句「助手无响应」，整套照样全绿，而用户看到的是错话。
+   *
+   * 判据是**用户可见的结果**：说的是哪句话，以及"拒绝之后一个字都没发出去"。
+   */
+  it('⭐ 待发任务点名了一个不在本机的助手 ⇒ 说「不在本机」，且一个字都不发', async () => {
+    mocks.toastError.mockClear();
+    mocks.taskState.activeTaskId = null;
+    mocks.taskState.pendingNewTask = { gatewayId: 'gw-1', agentId: 'team-agent-x' } as never;
+    mocks.taskState.commitPendingTask.mockImplementationOnce(() => {
+      throw new UnknownAgentError('team-agent-x');
+    });
+    const { container, unmount } = render(<Harness initialValue="你好" />);
+    const sendButton = [...container.querySelectorAll('button')].find((b) => b.textContent === 'send');
+
+    await act(async () => {
+      (sendButton as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+
+    // ⚠️ 断言只看**第一个参数**：toast 那层会再带一个 `{duration}` 之类的选项对象，
+    //    用 `toHaveBeenCalledWith(key)` 会因为多一个参数而假红（我第一版就这么写错了）。
+    expect(mocks.toastError, '只该提示一次').toHaveBeenCalledTimes(1);
+    expect(mocks.toastError.mock.calls[0]?.[0], '不许压成「助手无响应」').toBe('errors.agentMissing');
+    expect(mocks.send, '拒绝之后一个字都不该发出去').not.toHaveBeenCalled();
+    unmount();
+  });
+
+  it('⚠️ 对照：待发任务被别的错拒掉时仍是「助手无响应」（既有行为，别顺手改）', async () => {
+    mocks.toastError.mockClear();
+    mocks.taskState.activeTaskId = null;
+    mocks.taskState.pendingNewTask = { gatewayId: 'gw-1', agentId: 'main' } as never;
+    mocks.taskState.commitPendingTask.mockImplementationOnce(() => {
+      throw new Error('boom');
+    });
+    const { container, unmount } = render(<Harness initialValue="你好" />);
+    const sendButton = [...container.querySelectorAll('button')].find((b) => b.textContent === 'send');
+
+    await act(async () => {
+      (sendButton as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+
+    expect(mocks.toastError).toHaveBeenCalledTimes(1);
+    expect(mocks.toastError.mock.calls[0]?.[0]).toBe('errors.agentNotResponding');
+    unmount();
   });
 });
 

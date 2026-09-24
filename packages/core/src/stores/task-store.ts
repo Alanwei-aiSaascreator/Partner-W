@@ -152,7 +152,15 @@ export interface TaskStoreDeps {
   patchSession: (gatewayId: string, sessionKey: string, patch: Record<string, unknown>) => Promise<IpcResult>;
   getDeviceId: () => Promise<string>;
   getDefaultGatewayId: () => string | null;
-  getAgentCatalog: (gatewayId: string) => { agents: unknown[]; defaultId: string | null };
+  /**
+   * 网关的助手目录；**没加载到就返回 `undefined`**（不是"空目录"）。
+   *
+   * ⚠️ 这两者**必须**分得开（2026-09-24 独立复核 I-2）：渲染层的判据把"条目存在但为空"
+   * 当成"已加载 ⇒ 请求的助手不在本机"，而 store 这边原来拿到的形状把两者塌成同一个
+   * `{agents: [], defaultId: null}`，于是**同一个状态两边给出相反结论**，fail-closed
+   * 在那条窄路上漏着。返回 `undefined` 之后，拒绝判据可以写成精确版（见 `commitPendingTask`）。
+   */
+  getAgentCatalog: (gatewayId: string) => { agents: { id: string }[]; defaultId: string | null } | undefined;
   onTaskCreated?: () => void;
 }
 
@@ -168,7 +176,7 @@ export function createTaskStore(deps: TaskStoreDeps) {
     startNewTask: (opts?) => {
       const resolvedGatewayId = opts?.gatewayId ?? deps.getDefaultGatewayId() ?? '';
       const catalog = deps.getAgentCatalog(resolvedGatewayId);
-      const resolvedAgentId = opts?.agentId || catalog.defaultId || '';
+      const resolvedAgentId = opts?.agentId || catalog?.defaultId || '';
       set({
         activeTaskId: null,
         pendingNewTask: { ...opts, gatewayId: resolvedGatewayId, agentId: resolvedAgentId },
@@ -180,16 +188,14 @@ export function createTaskStore(deps: TaskStoreDeps) {
       const pending = get().pendingNewTask;
       const gwId = pending?.gatewayId ?? deps.getDefaultGatewayId() ?? '';
       const catalog = deps.getAgentCatalog(gwId);
-      const agId = pending?.agentId || catalog.defaultId;
+      const agId = pending?.agentId || catalog?.defaultId;
       if (!agId) throw new Error('no agent available — gateway catalog not loaded');
       // ⭐ 点名要的助手不在**已加载**的目录里 ⇒ 拒绝建任务（fail closed）。
       //    界面上「拒绝并说明」之后，发送侧不能还留着一个能走到幽灵助手的口子。
+      //    ⚠️ `catalog` 为 `undefined`（**没加载**）时**不拒** —— 否则"目录还没回来就发送"
+      //    会被误伤；只有"确已加载"才敢下判断（`undefined` 与"空"是两个状态，见 dep 的注释）。
       const requestedAgentId = pending?.agentId ?? '';
-      if (
-        requestedAgentId &&
-        catalog.agents.length > 0 &&
-        !catalog.agents.some((agent) => (agent as { id?: unknown }).id === requestedAgentId)
-      ) {
+      if (requestedAgentId && catalog && !catalog.agents.some((agent) => agent.id === requestedAgentId)) {
         throw new UnknownAgentError(requestedAgentId);
       }
       const task = get().createTask({
@@ -220,7 +226,7 @@ export function createTaskStore(deps: TaskStoreDeps) {
     createTask: (opts) => {
       const resolvedGatewayId = opts?.gatewayId ?? deps.getDefaultGatewayId() ?? '';
       const catalog = deps.getAgentCatalog(resolvedGatewayId);
-      const resolvedAgentId = opts?.agentId || catalog.defaultId;
+      const resolvedAgentId = opts?.agentId || catalog?.defaultId;
       if (!resolvedAgentId) throw new Error('no agent available — gateway catalog not loaded');
       const id = crypto.randomUUID();
       const now = new Date().toISOString();

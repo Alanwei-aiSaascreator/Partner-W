@@ -5,7 +5,11 @@ import { createRoot, type Root } from 'react-dom/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('react-i18next', () => ({
-  useTranslation: () => ({ t: (key: string) => key }),
+  // ⚠️ 带插值时把取值也显示出来 —— 只回 key 的话 `toContain('agent.missingTitle')`
+  //    对**任何** agentId 都成立，绑不住"点名了哪一个"（2026-09-24 独立复核 M-8）。
+  useTranslation: () => ({
+    t: (key: string, options?: Record<string, unknown>) => (options ? `${key}(${JSON.stringify(options)})` : key),
+  }),
   initReactI18next: { type: '3rdParty', init: vi.fn() },
 }));
 
@@ -83,6 +87,7 @@ describe('LeftNav 不拿默认助手冒充当前助手', () => {
     const { container, unmount } = renderLeftNav();
 
     expect(container.textContent, '要如实说明').toContain('agent.missingTitle');
+    expect(container.textContent, '提示里要点名是哪一个').toContain('team-agent-x');
 
     const trigger = container.querySelector('[data-testid="assistant-switcher"]');
     expect(trigger?.textContent, '不许把罗盘冒充成当前助手').not.toContain('mainArea.compassAssistant');
@@ -99,6 +104,21 @@ describe('LeftNav 不拿默认助手冒充当前助手', () => {
     expect(container.querySelector('[data-testid="assistant-switcher"]')?.textContent).toContain(
       'mainArea.compassAssistant',
     );
+    unmount();
+  });
+
+  /**
+   * ⭐ 2026-09-24（独立复核 M-7）：`LeftNav` 的注释声称"「新建任务」把它原样交给待发任务"，
+   * 但只绑住了一半（切换器那半有测试）。把 `agentId` 单独换成默认助手，左栏就会
+   * 一边说"不在本机"、一边把新建任务派给罗盘，而整套照样全绿。
+   */
+  it('⭐ 拒绝态下点「新建任务」：交给待发任务的是**原样的 id**，不是默认助手', () => {
+    useUiStore.setState({ selectedAgentByGateway: { 'gw-1': 'team-agent-x' } });
+    const { container, unmount } = renderLeftNav();
+
+    act(() => (container.querySelector('[data-action="new-task"]') as HTMLElement).click());
+
+    expect(useTaskStore.getState().pendingNewTask?.agentId, '不许换成默认助手').toBe('team-agent-x');
     unmount();
   });
 });

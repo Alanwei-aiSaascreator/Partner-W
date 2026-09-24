@@ -60,6 +60,9 @@ export default function WelcomeScreen({
   } = useGatewaySelector({
     initialGatewayId: pendingNewTask?.gatewayId,
     initialAgentId: pendingNewTask?.agentId ?? preferredAgentId,
+    // ⭐ **只有待发任务点名的助手才算"请求"**；`preferredAgentId` 是画像的**推荐**，
+    //    它不参与拒绝 —— 否则新机器上"正在安装"的预置助手会被说成"不在本机"（独立复核 I-1）。
+    requestedAgentId: pendingNewTask?.agentId,
   });
   const rawModelCatalog = useUiStore((state) => (selectedGwId ? state.modelCatalogByGateway[selectedGwId] : undefined));
   const defaultModel = resolveCommercialDefaultModel(relayModelsFrom(rawModelCatalog ?? []));
@@ -136,7 +139,14 @@ export default function WelcomeScreen({
           {missingRequestedAgentId ? (
             <AgentMissingNotice
               agentId={missingRequestedAgentId}
-              onSwitchAssistant={() => handleSelectAgent(ASSISTANT_ID_BY_WORKSPACE.compass)}
+              // ⚠️ 罗盘自己也不在目录里时**不渲染这个按钮** —— 否则一边说"不在本机"、
+              //    一边给一个指向同样不存在的助手的出口（2026-09-24 独立复核 M-2）。
+              //    拒绝态必然意味着**目录已加载**，所以这里的 `some` 判据是有效的。
+              onSwitchAssistant={
+                agentCatalog.some((agent) => agent.id === ASSISTANT_ID_BY_WORKSPACE.compass)
+                  ? () => handleSelectAgent(ASSISTANT_ID_BY_WORKSPACE.compass)
+                  : undefined
+              }
               onOpenTeams={() => setMainView('teams')}
               className="mb-4 w-full text-left"
             />

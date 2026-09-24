@@ -8,6 +8,15 @@ import { resolveRequestedAgent } from '@/lib/requested-agent';
 interface UseGatewaySelectorOptions {
   initialGatewayId?: string;
   initialAgentId?: string;
+  /**
+   * ⭐ 用户/调用方**点名要的**那个助手 —— 只有它会被"拒绝并说明"。
+   *
+   * ⚠️ 与 `initialAgentId` 是**两件事**，别合并：
+   * `initialAgentId` 是"先选中哪个"（可以有推荐/默认的成分），而推荐不是用户点的。
+   * 把它们混在一起会造出**误报**：新机器上引导画像推荐的预置助手正在装、目录里还没出现，
+   * 界面就会说「这个助手不在本机」—— 而它几十秒后就装好了（2026-09-24 独立复核 I-1）。
+   */
+  requestedAgentId?: string;
 }
 
 interface UseGatewaySelectorResult {
@@ -58,8 +67,21 @@ export function useGatewaySelector(options: UseGatewaySelectorOptions = {}): Use
    * ⚠️ `loading` 那一路**必须**保持老行为：目录还没拉回来时 `agentCatalog` 是空的、
    *    `defaultAgentId` 也是 `''`，所以这里返回的同样是 `''`，与今天一字不差 —— 不引入闪烁。
    */
-  const requestedState = useMemo(() => resolveRequestedAgent(selectedAgentId, gwAgents), [gwAgents, selectedAgentId]);
-  const missingRequestedAgentId = requestedState === 'missing' ? selectedAgentId : null;
+  /**
+   * ⚠️ 请求还要**属于当前这个网关**才判（2026-09-24 独立复核 M-6）。
+   *
+   * 请求自带网关（`initialGatewayId`，来自待发任务的 `gatewayId`），而上面那条回落会在
+   * 网关列表变化时**把 `selectedGwId` 换掉**。两者不一致时拿新网关的目录去判旧网关的请求，
+   * 会把「不在**这个**网关上」说成「不在**本机**」。
+   *
+   * 判不了就不判（记 `loading`）—— 与"目录没加载"同一条纪律：**宁可不说，不说错话**。
+   */
+  const requestGatewayMatches = !options.initialGatewayId || options.initialGatewayId === selectedGwId;
+  const requestedState = useMemo(
+    () => (requestGatewayMatches ? resolveRequestedAgent(options.requestedAgentId, gwAgents) : 'loading'),
+    [gwAgents, options.requestedAgentId, requestGatewayMatches],
+  );
+  const missingRequestedAgentId = requestedState === 'missing' ? (options.requestedAgentId ?? null) : null;
   const effectiveAgentId = useMemo(
     () =>
       requestedState === 'missing'

@@ -82,7 +82,8 @@ const taskStoreApi = createTaskStore({
   getDefaultGatewayId: () => uiStoreApi.getState().defaultGatewayId,
   getAgentCatalog: (gatewayId) => {
     const entry = uiStoreApi.getState().agentCatalogByGateway[gatewayId];
-    return entry ? { agents: entry.agents, defaultId: entry.defaultId } : { agents: [], defaultId: null };
+    // ⚠️ 没加载 ⇒ **`undefined`**，不是"空目录"：这两者 core 必须分得开（见 `TaskStoreDeps`）。
+    return entry ? { agents: entry.agents, defaultId: entry.defaultId } : undefined;
   },
   onTaskCreated: () => uiStoreApi.getState().setMainView('chat'),
 });

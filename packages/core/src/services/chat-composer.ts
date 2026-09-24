@@ -4,6 +4,7 @@ import type { GatewayTransportPort, ChatAttachment } from '../ports/gateway-tran
 import { buildAppError, formatErrorForUser, formatErrorForToast } from './error-classify.js';
 import type { TranslateFn } from './error-classify.js';
 import { runManualCompaction } from './compaction-announce.js';
+import { describeSendRefusal } from './send-refusal-message.js';
 
 interface TaskRef {
   id: string;
@@ -206,14 +207,20 @@ export function createChatComposer(deps: ChatComposerDeps) {
   const sessionToTask = new Map<string, string>();
   const pendingResponseSessions = new Map<string, Set<string>>();
 
-  function resolveTask(taskId?: string): TaskRef | null {
+  /**
+   * ⚠️ 2026-09-24：**别把拒绝的原因吞掉**。这里原来是一个裸的 `catch { return null }`，
+   *    调用方（`send`）于是只能一律报「助手无响应」—— 而「点名要的助手不在本机」是另一回事
+   *    （有确定的下一步：换一个助手）。独立复核指出这条 PWA 路径上两句话被压成了一句。
+   *    现在把异常原样带出去，由 `describeSendRefusal` 选话。
+   */
+  function resolveTask(taskId?: string): { task: TaskRef | null; error?: unknown } {
     if (taskId) {
-      return deps.getTaskStore().tasks.find((t) => t.id === taskId) ?? null;
+      return { task: deps.getTaskStore().tasks.find((t) => t.id === taskId) ?? null };
     }
     try {
-      return deps.getTaskStore().commitPendingTask();
-    } catch {
-      return null;
+      return { task: deps.getTaskStore().commitPendingTask() };
+    } catch (error) {
+      return { task: null, error };
     }
   }
 
@@ -259,11 +266,11 @@ export function createChatComposer(deps: ChatComposerDeps) {
     taskId: string | undefined,
     options: SendOptions,
   ): Promise<{ ok: boolean; taskId?: string; partialFailure?: string }> {
-    const task = resolveTask(taskId);
+    const { task, error: resolveError } = resolveTask(taskId);
     if (!task) {
       deps.onError?.({
         title: deps.translate('errors.stage.send'),
-        description: deps.translate('errors.agentNotResponding'),
+        description: describeSendRefusal(resolveError, deps.translate),
       });
       return { ok: false };
     }

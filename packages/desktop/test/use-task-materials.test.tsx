@@ -31,6 +31,7 @@ vi.mock('../src/renderer/stores/taskStore', () => ({
   ),
 }));
 
+import { UnknownAgentError } from '@clawwork/core';
 import { useTaskMaterials } from '../src/renderer/components/ChatInput/useTaskMaterials';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -225,6 +226,33 @@ describe('useTaskMaterials', () => {
     await act(async () => void (await (buttons[2] as HTMLButtonElement).click()));
     expect(mocks.commitPendingTask).toHaveBeenCalledTimes(1);
     expect(mocks.grantTaskContextFolder).toHaveBeenCalledWith('task-created');
+    view.unmount();
+  });
+
+  /**
+   * ⭐ 2026-09-24（独立复核 I-3）：这条分支原来没有任何测试绑住。
+   *
+   * `ensureTaskId()` 在**两个调用点的 try 之外**被调，所以 core 新加的拒绝如果不在里面接住，
+   * 会逃成 unhandled rejection。判据是用户可见的结果：**如实说"不在本机"**，
+   * 且**一个原生选择器都不打开**（打开就等于一边说不在本机、一边又派了新任务）。
+   */
+  it.each(['import', 'grant'] as const)('⭐ 待发任务的助手不在本机 ⇒ 如实说明，且不打开 %s 选择器', async (action) => {
+    mocks.activeTaskId = null;
+    mocks.toastError.mockClear();
+    mocks.importTaskFiles.mockClear();
+    mocks.grantTaskContextFolder.mockClear();
+    mocks.commitPendingTask.mockImplementationOnce(() => {
+      throw new UnknownAgentError('team-agent-x');
+    });
+    const view = render(<Harness taskId={null} />);
+    const buttons = view.container.querySelectorAll('button');
+
+    const index = action === 'import' ? 0 : 2;
+    await act(async () => void (await (buttons[index] as HTMLButtonElement).click()));
+
+    expect(mocks.toastError.mock.calls[0]?.[0], '要如实说"不在本机"').toBe('errors.agentMissing');
+    expect(mocks.importTaskFiles, '不许打开导入选择器').not.toHaveBeenCalled();
+    expect(mocks.grantTaskContextFolder, '不许打开文件夹选择器').not.toHaveBeenCalled();
     view.unmount();
   });
 

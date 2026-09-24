@@ -26,8 +26,13 @@ import type {
   FileReadResult,
 } from '@clawwork/shared';
 import type { PendingNewTask } from '@clawwork/core';
-import { deriveSessionActivity, describeGatewayError, extractDescription, getTaskSessionKeys } from '@clawwork/core';
-import { sendRefusalCopyKey } from '@/lib/send-refusal';
+import {
+  deriveSessionActivity,
+  describeGatewayError,
+  describeSendRefusal,
+  extractDescription,
+  getTaskSessionKeys,
+} from '@clawwork/core';
 import { useTaskStore } from '../../stores/taskStore';
 import { useMessageStore } from '../../stores/messageStore';
 import { useUiStore } from '../../stores/uiStore';
@@ -272,8 +277,8 @@ export function useChatSend(opts: UseChatSendOpts) {
         } catch (error) {
           // ⭐ 2026-09-24：**点名要的助手不在本机**与「助手无响应」是两回事 ——
           //    前者有确定的下一步（换一个助手），后者只能重试。压成同一句会误导用户。
-          //    规则抽在 `lib/send-refusal.ts`（纯函数、有测试按名钉住）。
-          toast.error(t(sendRefusalCopyKey(error)));
+          //    规则收在 core 的 `describeSendRefusal` 一处（三条调用方共用）。
+          toast.error(describeSendRefusal(error, t));
           return;
         }
       }

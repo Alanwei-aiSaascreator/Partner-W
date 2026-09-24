@@ -55,6 +55,10 @@ export function resolveRequestedAgent(
 | 目录已加载 · 请求在里面                   | `ok`          |                        |
 | 目录已加载 · 请求非空且不在里面           | **`missing`** | 拒绝                   |
 
+⚠️ **2026-09-24 补充（独立复核 M-6）**：请求还带有**自己的网关**，而 `useGatewaySelector`
+在网关列表变化时会内部回落换网关。两者不一致时拿新网关的目录去判旧网关的请求，会把
+「不在**这个**网关上」说成「不在**本机**」⇒ 判据前置一条**网关一致性闸门**，不一致时记 `loading`
+（判不了就不判）—— 与下面第一行同一条纪律。
 第一行是硬要求，守 `IdentityCenter/index.tsx:66-67` 那条既有注释：目录还没拉回来就断言
 「这个助手不在目录里」会**误报失败**。判据收在纯函数里，是为了三处消费者共用一份实现、且能直接单测。
 
@@ -66,6 +70,10 @@ export function resolveRequestedAgent(
 **不引入新闪烁的论证**：目录未加载时 `defaultAgentId = gwAgents?.defaultId ?? agentCatalog[0]?.id ?? ''` 本来就是 `''`，
 而 `effectiveAgentId` 今天在这条路上也返回 `''` ⇒ 行为一字不变。变更只影响「目录已加载且请求缺失」这一种情况。
 
+⚠️ **2026-09-24 补充（独立复核 I-1）**：hook 多收一个 `requestedAgentId` —— **只有它参与拒绝**。
+`initialAgentId` 是"先选中哪个"（可以含引导画像的**推荐**）；把推荐也当成"用户点名要的"会造出
+**误报**：新机器上预置助手正在装、目录里还没出现的那几十秒，界面会说「这个助手不在本机」，
+而它马上就好。
 `effectiveAgentId` 的消费者只有 `WelcomeScreen.tsx`（`:49`、`:62`、`:65`、`:79`、`:147`）一处，
 其余四家（`LeftNav`、`TasksPanel`、`useTemplateInstall`、`useSelectAgent`）只取 `selectedGwId` / `agentCatalog` / `defaultAgentId`。
 
@@ -80,6 +88,8 @@ export function resolveRequestedAgent(
 | LeftNav 切换器           | `uiStore.selectedAgentByGateway[gw]` | 提示；切换器**没有任何一项是高亮态**（`selectedAgentId` 传 `''`），不再把默认助手冒充成「当前选中」 |
 | 身份中心「应用此画像」   | `useSelectAgent` 的目标              | 提示（有了「已加载」闸门就能安全地查目录）                                                          |
 
+⚠️ **2026-09-24 补充（独立复核 M-2）**：「换用罗盘助手」这条出口**只在罗盘确实在目录里时**渲染 ——
+否则一边说"不在本机"、一边给一个指向同样不存在的助手的死胡同按钮。
 三处都用 §3.1 那个纯函数判定 ⇒ 一份规则、三个调用点。
 
 通用欢迎屏不是新造的东西：`WelcomeScreen.tsx:122-127` 在 `resolveAssistantWorkspace(...)` 返回 undefined 时就渲染它，
@@ -98,13 +108,20 @@ export function resolveRequestedAgent(
 effect 直接早返回 ⇒ **不再把 pending 改写成 `main`**，`MainArea:933` 的 `key` 也就不变、**不重挂载**。
 先前记录的「提示会被自己销毁」的二阶效应随之消失，所以提示可以就地渲染，不必绕 toast。
 
-### 3.6 发送洞堵在 core（保守形式）
+### 3.6 发送洞堵在 core（原为"保守形式"，已精确化）
 
 **洞**：拒绝之后 `pendingNewTask.agentId` 仍指向那个不存在的助手，而
 `useChatSend.ts:267-275` 在无活动任务时直接 `commitPendingTask()`，
 `task-store.ts:161-166` 只校验 `agentId` 非空 ⇒ 会建出一个指向幽灵助手的任务。
 
-**为什么必须保守**：`platform/index.ts:83-86` 与 `pwa/stores/index.ts:84-87` 的 `getAgentCatalog`
+> ⚠️ **2026-09-24 独立复核后被推翻（I-2）**：下面这段"必须保守"是**权宜之计**，因为当时
+> `getAgentCatalog` 把"没加载"与"空"塌成同一形状。复核指出这让**渲染层与 core 对同一状态给出
+> 相反结论**（界面说"不在本机"、发送侧却不拒）。现在 `getAgentCatalog` 的返回类型加了 `| undefined`
+> （desktop 与 pwa 两个适配点各一行），判据写成**精确版**：
+> `requestedAgentId && catalog && !catalog.agents.some(a => a.id === requestedAgentId)` ⇒ 拒绝。
+> 下面这段保留为历史，**不要再按它写代码**。
+
+**（历史）为什么当时必须保守**：**为什么必须保守**：`platform/index.ts:83-86` 与 `pwa/stores/index.ts:84-87` 的 `getAgentCatalog`
 把「目录没加载」与「目录为空」**塌成同一个形状** `{agents: [], defaultId: null}` —— core 里分不出这两者。
 所以判据写成：
 
@@ -128,6 +145,8 @@ pending.agentId 非空  且  catalog.agents.length > 0  且  catalog 里没有�
 - **D4 不做**：团队详情里「点成员单独聊」。登记为已知限制。
 - **D5 不在本刀内**：见 §6，它需要先做一次运行时核查。
 - 不动 `stable` / `latest.yml` / `/updates` 下其他文件；不发版、不打包、不换密钥。
+- ✅ **2026-09-24 修订**：网关回落那条 effect **加了一条判据**（网关一致性闸门，见 §3.1 补充）——
+  复核 M-6 指出不改就会误报。仍然**不重构**它的其余部分。
 - 不重构 `useGatewaySelector` 的其余部分（网关回落那条 `:47-55` 与本次无关）。
 
 ## 5. 测试计划

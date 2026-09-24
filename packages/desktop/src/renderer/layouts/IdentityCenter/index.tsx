@@ -69,8 +69,10 @@ export default function IdentityCenter() {
    * 「我的助手」切换器**同一条路**：改选择 + 改待发任务 + 离开旧会话 + 回到对话）。
    *
    * ⚠️ 没有网关时**如实报错**，不假装成功（本项目栽过"把不确定说成确定"）。
-   * ⚠️ **不做**"这个助手在不在目录里"的检查：六个预设助手由 `useStartupReadiness`
-   *    在进首页前装好（`preset-agent-installer`），目录还没拉回来时会误报失败。
+   * ⭐ 2026-09-24 起**会**查"这个助手在不在目录里"，但**只在目录已加载时**查
+   *    （见下方 `resolveRequestedAgent` 那段）。原来这里写的是"**不做**这个检查"，
+   *    理由是"目录还没拉回来时会误报失败"—— 那条理由依然成立，只是现在由 `loading`
+   *    这一态把它挡住了，所以检查本身不再危险。别再照旧注释把这处检查删掉。
    */
   const applyPersona = useCallback((): boolean => {
     if (!gatewayId) {
@@ -206,7 +208,12 @@ export default function IdentityCenter() {
               <div className="px-4 pb-3">
                 <AgentMissingNotice
                   agentId={missingAgentId}
-                  onSwitchAssistant={switchToCompass}
+                  // ⚠️ 罗盘自己也不在目录里时不给这个出口（同 `WelcomeScreen`，复核 M-2）。
+                  onSwitchAssistant={
+                    catalogEntry?.agents.some((agent) => agent.id === ASSISTANT_ID_BY_WORKSPACE.compass)
+                      ? switchToCompass
+                      : undefined
+                  }
                   onOpenTeams={() => setMainView('teams')}
                 />
               </div>

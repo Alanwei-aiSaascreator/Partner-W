@@ -5,6 +5,7 @@ import { createChatComposer } from '../src/services/chat-composer';
 import type { ChatComposerDeps } from '../src/services/chat-composer';
 import type { ChatAttachment } from '../src/ports/gateway-transport.js';
 import { translateGatewayError } from '../src/services/gateway-error-message.js';
+import { UnknownAgentError } from '../src/stores/task-store.js';
 
 const TASK_ID = 'abc';
 const SESSION_KEY = buildSessionKey(TASK_ID);
@@ -32,6 +33,8 @@ function setup(
     performers?: Array<{ agentId: string; agentName: string; sessionKey: string }>;
     /** 模拟"宿主没接这个 dep"（字段真的不存在，不是"存在但返回 undefined"）。 */
     withoutNameResolver?: boolean;
+    /** 让 `commitPendingTask` 抛出这个错误（模拟"点名要的助手不在本机"这类拒绝）。 */
+    pendingTaskRejection?: unknown;
   } = {},
 ) {
   const addMessage = vi.fn(
@@ -98,7 +101,10 @@ function setup(
     gateway: { sendMessage, abortChat, patchSession },
     getTaskStore: () => ({
       tasks: [task],
-      commitPendingTask: () => task,
+      commitPendingTask: () => {
+        if (options.pendingTaskRejection !== undefined) throw options.pendingTaskRejection;
+        return task;
+      },
       updateTaskTitle: vi.fn(),
       updateTaskMetadata,
     }),
@@ -665,5 +671,39 @@ describe('chat-composer —— 告诉 conductor「用户 @ 了谁」要用名字
 
     expect(h.sendMessage).toHaveBeenCalledTimes(1);
     expect(conductorNotes(h.sendMessage)).toEqual([]);
+  });
+});
+
+/**
+ * ⭐ 2026-09-24（独立复核 Important #1）：**这条 PWA 路径上两句话曾被压成一句。**
+ *
+ * `resolveTask` 原来是一个裸的 `catch { return null }`，于是「点名要的助手不在本机」
+ * 被报成「助手无响应」—— 而前者有确定的下一步（换一个助手），后者只能重试。
+ */
+describe('chat-composer —— 待发任务被拒时说的是哪句话', () => {
+  it('⭐ 助手不在本机 ⇒ 说「不在本机」，不许压成「无响应」', async () => {
+    const h = setup({ pendingTaskRejection: new UnknownAgentError('team-agent-x') });
+
+    const result = await h.composer.send(undefined, { content: 'hi' });
+
+    expect(result).toEqual({ ok: false });
+    expect(h.onError).toHaveBeenCalledWith(expect.objectContaining({ description: 'errors.agentMissing' }));
+    expect(h.sendMessage, '拒绝之后一个字都不该发出去').not.toHaveBeenCalled();
+  });
+
+  it('⚠️ 对照：其它错误仍然说「无响应」（既有行为，别顺手改）', async () => {
+    const h = setup({ pendingTaskRejection: new Error('boom') });
+
+    await h.composer.send(undefined, { content: 'hi' });
+
+    expect(h.onError).toHaveBeenCalledWith(expect.objectContaining({ description: 'errors.agentNotResponding' }));
+  });
+
+  it('⚠️ 对照：找不到指定任务时也是「无响应」（不是"不在本机"）', async () => {
+    const h = setup();
+
+    await h.composer.send('不存在的任务', { content: 'hi' });
+
+    expect(h.onError).toHaveBeenCalledWith(expect.objectContaining({ description: 'errors.agentNotResponding' }));
   });
 });

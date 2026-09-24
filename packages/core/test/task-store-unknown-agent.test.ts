@@ -1,8 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createTaskStore, UnknownAgentError } from '../src/stores/task-store';
 
-/** `getAgentCatalog` 的返回值决定一切：目录**有没有内容**就是「加载了没」的判据。 */
-function setup(catalog: { agents: { id: string }[]; defaultId: string | null }) {
+/**
+ * `getAgentCatalog` 的返回值决定一切：**`undefined` = 目录没加载**，对象 = 已加载
+ * （`agents` 可能为空 —— 那是"网关上一个助手都没有"，也是一种**已加载**）。
+ *
+ * ⚠️ 桩**必须用上自己的入参**：写死 `() => catalog` 的话，"读错了网关的目录"这种变异
+ * 照样全绿（2026-09-24 独立复核 M-4）。
+ */
+function setup(catalog: { agents: { id: string }[]; defaultId: string | null } | undefined) {
   const persistTask = vi.fn(async () => ({ ok: true as const }));
   const store = createTaskStore({
     persistTask,
@@ -12,7 +18,7 @@ function setup(catalog: { agents: { id: string }[]; defaultId: string | null }) 
     patchSession: vi.fn(async () => ({ ok: true as const })),
     getDeviceId: vi.fn(async () => 'device-1'),
     getDefaultGatewayId: () => 'gw-1',
-    getAgentCatalog: () => catalog,
+    getAgentCatalog: (gatewayId) => (gatewayId === 'gw-1' ? catalog : undefined),
   });
   return { store, persistTask };
 }
@@ -29,9 +35,27 @@ function setup(catalog: { agents: { id: string }[]; defaultId: string | null }) 
  * （确已加载）时才敢拒绝。中间那条用例就是这个对照。
  */
 describe('commitPendingTask 拒绝不在已加载目录里的助手', () => {
-  it('目录为空（可能只是还没加载）⇒ 不拒绝，与今天行为一致', () => {
-    const { store } = setup({ agents: [], defaultId: null });
+  it('目录**没加载**（`undefined`）⇒ 不拒绝，与今天行为一致', () => {
+    const { store } = setup(undefined);
     store.getState().startNewTask({ agentId: 'team-agent-x' });
+
+    const task = store.getState().commitPendingTask();
+
+    expect(task.agentId).toBe('team-agent-x');
+  });
+
+  it('⭐ 目录已加载但**为空** ⇒ 也拒（与渲染层判据一致，不再"两边相反"）', () => {
+    const { store, persistTask } = setup({ agents: [], defaultId: null });
+    store.getState().startNewTask({ agentId: 'team-agent-x' });
+
+    expect(() => store.getState().commitPendingTask()).toThrow(UnknownAgentError);
+    expect(store.getState().tasks).toHaveLength(0);
+    expect(persistTask).not.toHaveBeenCalled();
+  });
+
+  it('⭐ 读的是**这个**网关的目录：别的网关的目录取不到 ⇒ 按"没加载"处理，不拒', () => {
+    const { store } = setup({ agents: [{ id: 'main' }], defaultId: 'main' });
+    store.getState().startNewTask({ gatewayId: 'gw-2', agentId: 'team-agent-x' });
 
     const task = store.getState().commitPendingTask();
 
