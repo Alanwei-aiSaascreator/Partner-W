@@ -11,8 +11,10 @@ import { motionDuration } from '@/styles/design-tokens';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import ToolbarButton from '@/components/semantic/ToolbarButton';
 import AssistantSwitcher from './AssistantSwitcher';
+import AgentMissingNotice from '@/components/AgentMissingNotice';
 import { useGatewaySelector } from '@/hooks/useGatewaySelector';
 import { useSelectAgent } from '@/hooks/useSelectAgent';
+import { resolveRequestedAgent } from '@/lib/requested-agent';
 import NavMenu from './NavMenu';
 
 interface LeftNavProps {
@@ -90,7 +92,27 @@ export default function LeftNav({ onOpenAssistantSettings, onOpenSettings }: Lef
   };
 
   const { selectedGwId, agentCatalog, defaultAgentId } = useGatewaySelector();
+  const agentCatalogEntry = useUiStore((s) => s.agentCatalogByGateway[selectedGwId]);
   const selectedAgentId = useUiStore((s) => s.selectedAgentByGateway[selectedGwId] ?? '');
+  /**
+   * ⭐ 2026-09-24：持久选择不在目录里时**不拿默认助手冒充**（与欢迎屏同一条判据）。
+   *
+   * 旧写法 `selectedAgentId || defaultAgentId || …` 会把默认助手显示成「当前选中」，
+   * 用户从那两个口进去（新建任务 / 切换器）时用的也是它 —— 静默换人，与欢迎屏同一个病。
+   * 目录还没拉回来时 `resolveRequestedAgent` 判 `loading`，走老路（不误报）。
+   */
+  const requestedState = resolveRequestedAgent(selectedAgentId, agentCatalogEntry);
+  /**
+   * ⭐ 2026-09-24：**静默替换不在这条表达式里，在 `AssistantSwitcher` 的 `?? agents[0]`。**
+   *
+   * 记一笔免得后人"修"错地方（我自己就先在这里加过一个 `missing ? '' : …` 的三元，
+   * 变异电池证明它是 **no-op** —— 缺失时 `selectedAgentId` 本身就非空，`||` 压根不回落，
+   * 两个分支结果恒等，于是把它删了）。
+   *
+   * 下游拿到的就是这个**原样的 id**：切换器靠它落进中性格子（非空但找不到 ⇒ `current`
+   * 为 `undefined`），「新建任务」把它原样交给待发任务 ⇒ 欢迎屏会**再次**走同一条拒绝
+   * 路径并给出出口。全程没有一处换成别人。
+   */
   const currentAgentId = selectedAgentId || defaultAgentId || agentCatalog[0]?.id || '';
 
   // ⚠️ 切助手的四步**不在这里**，在 `useSelectAgent` —— 身份中心的「应用此画像」
@@ -168,12 +190,18 @@ export default function LeftNav({ onOpenAssistantSettings, onOpenSettings }: Lef
           onOpenSettings={onOpenSettings}
           hasUpdate={hasUpdate}
           assistantSlot={
-            <AssistantSwitcher
-              agents={agentCatalog}
-              selectedAgentId={currentAgentId}
-              onSelect={handleSelectAgent}
-              onAddAssistant={onOpenAssistantSettings}
-            />
+            <>
+              <AssistantSwitcher
+                agents={agentCatalog}
+                selectedAgentId={currentAgentId}
+                onSelect={handleSelectAgent}
+                onAddAssistant={onOpenAssistantSettings}
+              />
+              {/* 这一列太窄，只放说明不放按钮 —— 出口在欢迎屏那边（团队页入口就在本列导航里）。 */}
+              {requestedState === 'missing' ? (
+                <AgentMissingNotice agentId={selectedAgentId} className="mx-3 mt-1" />
+              ) : null}
+            </>
           }
         />
       </div>

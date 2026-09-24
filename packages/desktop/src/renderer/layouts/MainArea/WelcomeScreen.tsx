@@ -9,6 +9,7 @@ import { useGatewaySelector } from '@/hooks/useGatewaySelector';
 import { resolveCommercialDefaultModel } from '@/lib/commercial-default-model';
 import { resolveModelLabel } from '@/lib/model-display';
 import { PRESET_AGENT_IDS, resolveAssistantWorkspace, resolveProfileAssistantId } from '@/lib/preset-agents';
+import { ASSISTANT_ID_BY_WORKSPACE } from '@/lib/assistant-task-presets';
 import type { OnboardingProfile } from '@/lib/user-onboarding';
 import { cn } from '@/lib/utils';
 import { useTaskStore } from '@/stores/taskStore';
@@ -135,7 +136,7 @@ export default function WelcomeScreen({
           {missingRequestedAgentId ? (
             <AgentMissingNotice
               agentId={missingRequestedAgentId}
-              onSwitchAssistant={() => handleSelectAgent('main')}
+              onSwitchAssistant={() => handleSelectAgent(ASSISTANT_ID_BY_WORKSPACE.compass)}
               onOpenTeams={() => setMainView('teams')}
               className="mb-4 w-full text-left"
             />

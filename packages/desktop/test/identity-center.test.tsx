@@ -233,4 +233,46 @@ describe('IdentityCenter — 按钮真的干活', () => {
     expect(toastSpy.error).toHaveBeenCalledWith('identity.needTag');
     unmount();
   });
+
+  /**
+   * ⭐⭐ 2026-09-24（D3：三处都发 —— 身份中心这一处）。
+   *
+   * 目录**已加载**且推荐角色（`rongying-office`）不在里面 ⇒ 如实说明。
+   * ⚠️ 两条"不能省"的负断言：不许静默换人、**不许假装成功**（否则用户会同时看到
+   * 「这个助手不在本机」和「已应用『高效办公』」两句互相打架的话）。
+   */
+  it('⭐ 目录已加载但推荐角色不在里面 ⇒ 如实说明、不静默换人、不假装成功', () => {
+    useUiStore.setState({
+      defaultGatewayId: 'gw-1',
+      agentCatalogByGateway: { 'gw-1': { agents: [{ id: 'main' } as never], defaultId: 'main' } },
+    });
+    const { container, unmount } = render(<IdentityCenter />);
+
+    click(container.querySelector('[data-action="apply"]'));
+
+    expect(selectAgentSpy, '不许静默换人').not.toHaveBeenCalled();
+    expect(toastSpy.success, '不许假装成功').not.toHaveBeenCalled();
+    expect(container.textContent, '要如实说明').toContain('agent.missingTitle');
+
+    // 出口：直接切到罗盘助手（不是再走一次 `applyPersona` —— 那条路在原地打转）
+    const exit = [...container.querySelectorAll('button')].find((b) => b.textContent?.includes('agent.missingSwitch'));
+    click(exit ?? null);
+    expect(selectAgentSpy, '出口要真的走得通').toHaveBeenCalledWith('main');
+    unmount();
+  });
+
+  /**
+   * ⚠️ 对照：目录**还没拉回来**时不许误报 —— 否则「正在拉目录」会被说成「不在本机」，
+   * 就是用新的误报换掉旧的静默（`IdentityCenter` 文件头那条注释的要求）。
+   */
+  it('⭐ 目录还没拉回来时走老路：照常切，且不许说"不在本机"', () => {
+    useUiStore.setState({ defaultGatewayId: 'gw-1', agentCatalogByGateway: {} });
+    const { container, unmount } = render(<IdentityCenter />);
+
+    click(container.querySelector('[data-action="apply"]'));
+
+    expect(selectAgentSpy).toHaveBeenCalledWith('rongying-office');
+    expect(container.textContent, '目录未加载时不许判缺失').not.toContain('agent.missingTitle');
+    unmount();
+  });
 });

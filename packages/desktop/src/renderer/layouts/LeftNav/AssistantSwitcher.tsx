@@ -37,7 +37,16 @@ export default function AssistantSwitcher({
   onAddAssistant,
 }: AssistantSwitcherProps) {
   const { t } = useTranslation();
-  const current = agents.find((a) => a.id === selectedAgentId) ?? agents[0];
+  /**
+   * ⚠️ 2026-09-24：`selectedAgentId` **非空但不在目录里**时**不许**拿 `agents[0]` 顶上 ——
+   * 那会把别的助手显示成「当前助手」，而用户点的是另一个（与欢迎屏同一个病，
+   * 也就是 [[team-agent-404-405-brief]] 里的层 2）。
+   *
+   * 区分两种"找不到"：**空串 = 没有选择**（退回第一个是对的）；**非空且找不到 = 拒绝**
+   * （下面的中性格子 + `leftNav.myAssistants` 文案本来就有，正好是诚实的落点），
+   * 说明由 `LeftNav` 紧跟其后渲染的 `AgentMissingNotice` 给出。
+   */
+  const current = agents.find((a) => a.id === selectedAgentId) ?? (selectedAgentId ? undefined : agents[0]);
   const currentLabel = current ? agentLabel(current, t) : t('leftNav.myAssistants');
 
   return (

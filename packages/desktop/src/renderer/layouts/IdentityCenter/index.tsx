@@ -6,6 +6,8 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { toast } from '@/lib/toast';
 import { useUiStore } from '@/stores/uiStore';
 import { useSelectAgent } from '@/hooks/useSelectAgent';
+import AgentMissingNotice from '@/components/AgentMissingNotice';
+import { resolveRequestedAgent } from '@/lib/requested-agent';
 import { ASSISTANT_ID_BY_WORKSPACE } from '@/lib/assistant-task-presets';
 import {
   IDENTITY_DEFAULT_TAGS,
@@ -54,6 +56,10 @@ export default function IdentityCenter() {
   const gatewayId = useUiStore((s) => s.defaultGatewayId);
   const selectAgent = useSelectAgent();
   const [selected, setSelected] = useState<IdentityTagId[]>(IDENTITY_DEFAULT_TAGS);
+  /** 目录**已加载**但点名的助手不在里面时，提示里要显示的 id（`null` = 没有这回事）。 */
+  const [missingAgentId, setMissingAgentId] = useState<string | null>(null);
+  const catalogEntry = useUiStore((s) => (gatewayId ? s.agentCatalogByGateway[gatewayId] : undefined));
+  const setMainView = useUiStore((s) => s.setMainView);
 
   const roleLabel = t('identity.roleValue');
   const officeAssistantId = ASSISTANT_ID_BY_WORKSPACE.office;
@@ -71,9 +77,26 @@ export default function IdentityCenter() {
       toast.error(t('identity.applyFailed'));
       return false;
     }
+    // ⭐ 2026-09-24：目录**已加载**且点名要的助手不在里面 ⇒ 如实说明，**不静默换人**。
+    //    目录还没拉回来时这个判据返回 `loading`（不是 missing），走原路 —— 那条既有注释
+    //    （怕误报失败）依然成立。
+    if (resolveRequestedAgent(officeAssistantId, catalogEntry) === 'missing') {
+      setMissingAgentId(officeAssistantId);
+      return false;
+    }
+    setMissingAgentId(null);
     selectAgent(officeAssistantId);
     return true;
-  }, [gatewayId, officeAssistantId, selectAgent, t]);
+  }, [catalogEntry, gatewayId, officeAssistantId, selectAgent, t]);
+
+  /**
+   * 提示里的出口：直接切到罗盘助手。
+   * ⚠️ 不是再调一次 `applyPersona` —— 那条路在 missing 态会原地打转（同一个判据又会命中）。
+   */
+  const switchToCompass = useCallback(() => {
+    setMissingAgentId(null);
+    selectAgent(ASSISTANT_ID_BY_WORKSPACE.compass);
+  }, [selectAgent]);
 
   const onApply = useCallback(() => {
     if (selected.length === 0) {
@@ -178,6 +201,16 @@ export default function IdentityCenter() {
                 </div>
               </div>
             </div>
+
+            {missingAgentId ? (
+              <div className="px-4 pb-3">
+                <AgentMissingNotice
+                  agentId={missingAgentId}
+                  onSwitchAssistant={switchToCompass}
+                  onOpenTeams={() => setMainView('teams')}
+                />
+              </div>
+            ) : null}
 
             <div className="flex items-center gap-2 border-t border-[var(--border)] px-4 py-2">
               <Button
