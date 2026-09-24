@@ -1,0 +1,102 @@
+import { closeSync, lstatSync, openSync, unlinkSync, writeSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { join } from 'node:path';
+import type { WorkspaceFsIdentity, WorkspaceFsIdentityState } from '@clawwork/shared';
+
+/**
+ * 量一量**工作区所在的文件系统**能不能支撑助手读写身份文件。
+ *
+ * ## 为什么需要（2026-09-24 真机定位，2026-09-25 落地）
+ *
+ * 同事那块盘上「几个助手失败」，日志里是 114 条一模一样的
+ * `unsafe workspace file "IDENTITY.md"`。根因不在我们、也不在运行时坏了：
+ * 随包运行时的 `@openclaw/fs-safe` 对"零身份"是 **fail-closed** ——
+ *
+ * > A zero Windows device or inode is **unknown**, not proof that a pathname still
+ * > names the object we created. Cleanup must fail closed…
+ *
+ * 而 **FAT32 上 `dev` 恒为 0** ⇒ 凡走"变更/清理守卫"的路径必定失败 ⇒ 助手全废。
+ * 实测三档：**FAT32 `dev=0` 必坏 / exFAT `dev≠0` 可用 / NTFS `dev≠0` 可用**。
+ *
+ * 客户端原来**认这个错**（`ws/gateway-client.ts` 写过回读缓解），但那条缓解的前提是
+ * "其实写成功了、只是身份校验误报"，而 FAT32 上**回读也失败** ⇒ 缓解一次都没生效。
+ * 用户看到的是「助手失败」，没有任何线索指向"换块盘"。这个探测就是把那条线索拿出来。
+ *
+ * ## 判据是量出来的，不是猜的
+ *
+ * 在**真实的工作区目录**里建一个探测文件、`lstat(bigint)` 看 `dev`/`ino`，然后删掉。
+ * 不按盘符、不看卷标、不问 `DriveType`：那些都是"像不像 FAT32"，
+ * 而 fs-safe 判的是**这两个数**。
+ *
+ * ⚠️ **两次探测**：Windows 在杀毒/索引器争用下会偶发返回零值（`sameFileIdentity`
+ *    那条容忍零值的注释说的就是它）。所以只有**两次都零**才下结论；
+ *    一次零一次不零 ⇒ `unknown`（不下结论、不上屏），宁可什么都不说也别冤枉一块好盘。
+ */
+
+/** 探测次数：1 次会被偶发零值骗到，2 次就够（再多也没意义，它们是同一瞬间的两份快照）。 */
+const PROBE_COUNT = 2;
+
+interface StatLike {
+  dev: bigint;
+  ino: bigint;
+}
+
+export interface WorkspaceFsIdentityDeps {
+  /** 注入用（测试里模拟"这个卷上 dev/ino 恒为零"）。缺省 = `fs.lstatSync(..., { bigint: true })`。 */
+  stat?: (filePath: string) => StatLike;
+  /** 探测文件的前缀，带上就带上了 —— 探测失败时它是唯一能看出是谁留下的线索。 */
+  probePrefix?: string;
+}
+
+function defaultStat(filePath: string): StatLike {
+  const stats = lstatSync(filePath, { bigint: true });
+  return { dev: stats.dev, ino: stats.ino };
+}
+
+/** 零 = fs-safe 会 fail-closed 的那一侧（**任一为零**就算）。 */
+function isZeroIdentity(identity: StatLike): boolean {
+  return identity.dev === 0n || identity.ino === 0n;
+}
+
+export function probeWorkspaceFsIdentity(dir: string, deps: WorkspaceFsIdentityDeps = {}): WorkspaceFsIdentity {
+  const stat = deps.stat ?? defaultStat;
+  const prefix = deps.probePrefix ?? '.rongying-fs-probe-';
+  const samples: StatLike[] = [];
+
+  for (let i = 0; i < PROBE_COUNT; i += 1) {
+    const filePath = join(dir, `${prefix}${randomUUID()}`);
+    try {
+      const fd = openSync(filePath, 'w');
+      try {
+        writeSync(fd, 'probe');
+      } finally {
+        closeSync(fd);
+      }
+      samples.push(stat(filePath));
+    } catch (error) {
+      return { state: 'unwritable', dev: null, ino: null, error: (error as Error).message };
+    } finally {
+      try {
+        unlinkSync(filePath);
+      } catch {
+        /* 删不掉也要把结论给出来；留下的探测文件没有内容、名字带前缀，可辨认 */
+      }
+    }
+  }
+
+  const first = samples[0];
+  const last = samples[samples.length - 1];
+  if (!first || !last) return { state: 'unknown', dev: null, ino: null };
+
+  const asResult = (state: WorkspaceFsIdentityState): WorkspaceFsIdentity => ({
+    state,
+    dev: first.dev.toString(),
+    ino: first.ino.toString(),
+  });
+
+  if (isZeroIdentity(first) !== isZeroIdentity(last)) {
+    // 一次零一次不零：偶发零值的典型形状（争用），不下结论。
+    return asResult('unknown');
+  }
+  return asResult(isZeroIdentity(first) ? 'unsupported-identity' : 'ok');
+}

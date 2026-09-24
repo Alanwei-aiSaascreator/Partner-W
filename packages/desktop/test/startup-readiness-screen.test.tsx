@@ -454,4 +454,93 @@ describe('StartupReadinessPanel', () => {
       unmount();
     });
   });
+
+  /**
+   * 助手失败时的**文件系统**那一档（2026-09-25，FAT32 真机形状）。
+   *
+   * 真机上六个预置助手全报 `unsafe workspace file`，而面板只会说「助手失败：某某某」——
+   * 用户唯一有效的动作（把工作区换到 exFAT/NTFS 的盘）从界面上看不出来，
+   * 而"重新准备"在那块盘上按一百次也不会好。
+   */
+  describe('助手失败 + 文件系统障碍', () => {
+    beforeEach(() => {
+      useUiStore.setState({ settingsOpen: false, settingsSection: null });
+    });
+
+    const withBlocker = (blocker: 'workspace-filesystem-unsupported' | 'workspace-unwritable'): StartupReadiness => ({
+      ...baseReadiness,
+      ai: { phase: 'ready' },
+      assistants: {
+        phase: 'error',
+        completed: 0,
+        total: 6,
+        missingIds: ['rongying-content'],
+        error: 'unsafe workspace file "IDENTITY.md"',
+      },
+      hasError: true,
+      composerBlocked: false,
+      assistantBlocker: blocker,
+    });
+
+    it('⭐⭐ 说的是那句能行动的话，出口是「换工作区」而不是按了没用的「重新准备」', () => {
+      const { container, unmount } = render(
+        <StartupReadinessPanel readiness={withBlocker('workspace-filesystem-unsupported')} onRetry={vi.fn()} />,
+      );
+
+      expect(container.textContent).toContain('startupReadiness.workspaceFilesystemUnsupported');
+      expect(container.textContent, '这块盘上再"重新准备"一百次也一样').not.toContain('startupReadiness.retry');
+
+      const change = [...container.querySelectorAll('button')].find((item) =>
+        item.textContent?.includes('startupReadiness.openWorkspaceSettings'),
+      );
+      expect(change, '要有一个"换工作区"的出口').toBeTruthy();
+
+      act(() => change?.click());
+      expect(useUiStore.getState().settingsSection, '落到系统那一页（工作区在那儿改）').toBe('system');
+      expect(useUiStore.getState().settingsOpen).toBe(true);
+
+      unmount();
+    });
+
+    it('⭐ 不可写那一档说的是另一句（出口同样是换地方，但原因不同）', () => {
+      const { container, unmount } = render(
+        <StartupReadinessPanel readiness={withBlocker('workspace-unwritable')} onRetry={vi.fn()} />,
+      );
+      expect(container.textContent).toContain('startupReadiness.workspaceUnwritable');
+      expect(container.textContent).not.toContain('startupReadiness.workspaceFilesystemUnsupported');
+      unmount();
+    });
+
+    it('⭐ 原因原文仍然照旧显示（那是证据，两档都不许吞）', () => {
+      const { container, unmount } = render(
+        <StartupReadinessPanel readiness={withBlocker('workspace-filesystem-unsupported')} onRetry={vi.fn()} />,
+      );
+      expect(container.querySelector('[data-testid="readiness-reason"]')?.textContent).toContain(
+        'unsafe workspace file',
+      );
+      unmount();
+    });
+
+    it('⭐ 负对照：只是助手失败、没有障碍 ⇒ 照旧通用那句 + 「重新准备」（别乱指文件系统）', () => {
+      const onRetry = vi.fn(async () => undefined);
+      const { container, unmount } = render(
+        <StartupReadinessPanel
+          readiness={{ ...withBlocker('workspace-filesystem-unsupported'), assistantBlocker: null }}
+          onRetry={onRetry}
+        />,
+      );
+
+      expect(container.textContent).toContain('startupReadiness.assistantsError');
+      expect(container.textContent).not.toContain('startupReadiness.workspaceFilesystemUnsupported');
+      expect(container.textContent).not.toContain('startupReadiness.openWorkspaceSettings');
+
+      const retry = [...container.querySelectorAll('button')].find((item) =>
+        item.textContent?.includes('startupReadiness.retry'),
+      );
+      act(() => retry?.click());
+      expect(onRetry).toHaveBeenCalledOnce();
+
+      unmount();
+    });
+  });
 });

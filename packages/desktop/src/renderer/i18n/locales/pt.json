@@ -1804,6 +1804,7 @@
     "keepOpen": "Mantenha o aplicativo aberto. Não é necessário repetir nenhuma ação.",
     "notAnInstall": "Não é uma instalação: nada é gravado no sistema e nenhum atalho é criado. Na primeira inicialização, o ambiente de execução é preparado num cache local para continuar a funcionar depois de remover o USB.",
     "openActivation": "Abrir ativação",
+    "openWorkspaceSettings": "Trocar de espaço de trabalho",
     "overallProgress": "Overall progress",
     "progress": "{{completed}} / {{total}}",
     "relayActivationLimitReached": "Esta ativação atingiu o limite de dispositivos. Use outro cartão ou fale com o suporte.",
@@ -1813,7 +1814,9 @@
     "relayRetryable": "O serviço comercial ainda não está pronto. Você pode tentar de novo.",
     "retry": "Preparar novamente",
     "takingLonger": "This is taking longer than usual. You can retry without leaving the workspace.",
-    "title": "Preparando o Rongying Cube"
+    "title": "Preparando o Rongying Cube",
+    "workspaceFilesystemUnsupported": "O disco do espaço de trabalho não é compatível: os assistentes precisam ler e gravar ali os próprios arquivos de identidade, e essa etapa sempre falha neste sistema de arquivos. Mova o espaço de trabalho para um disco exFAT ou NTFS (ou outra pasta) e prepare novamente.",
+    "workspaceUnwritable": "O espaço de trabalho não permite gravação: os assistentes precisam ler e gravar ali os próprios arquivos de identidade, mas nem um arquivo de teste pode ser criado. Verifique se o disco é somente leitura ou está cheio, ou escolha outra pasta."
   },
   "tasksPanel": {
     "count": "{{count}} no total",

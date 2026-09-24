@@ -11,6 +11,7 @@ import {
   ensureDeviceId,
 } from '../workspace/config.js';
 import { initWorkspace, migrateWorkspace } from '../workspace/init.js';
+import { probeWorkspaceFsIdentity } from '../workspace/fs-identity.js';
 import { workspaceLocationPatch } from '../workspace/portable.js';
 import { refreshRemovableDrives } from '../workspace/removable-drives.js';
 import { reinitDatabase, closeDatabase, getSqlite } from '../db/index.js';
@@ -124,6 +125,19 @@ export function registerWorkspaceHandlers(): void {
 
   ipcMain.handle('workspace:get-device-id', () => {
     return ensureDeviceId();
+  });
+
+  /**
+   * 工作区所在文件系统的身份（FAT32 上 `dev = 0` ⇒ 助手读写身份文件必失败）。
+   *
+   * ⚠️ 探测在**工作区根**做：fs-safe 校验的是工作区里那些身份文件所在的卷，
+   *    而同一次安装里它们都在同一个卷上（助手目录是工作区的子目录）。
+   *    没有工作区 ⇒ `unknown`（**不是** ok：没量到就不许说"没问题"）。
+   */
+  ipcMain.handle('workspace:fs-identity', () => {
+    const workspacePath = getWorkspacePath();
+    if (!workspacePath) return { state: 'unknown', dev: null, ino: null };
+    return probeWorkspaceFsIdentity(workspacePath);
   });
 
   ipcMain.handle('workspace:team-path', (_event, slug: string) => {

@@ -1804,6 +1804,7 @@
     "keepOpen": "Lassen Sie die App geöffnet. Sie müssen nichts erneut ausführen.",
     "notAnInstall": "Keine Installation: Es wird nichts ins System geschrieben und keine Desktop-Verknüpfung erstellt. Beim ersten Start wird die Laufzeitumgebung in einen lokalen Cache entpackt, damit sie nach dem Abziehen des USB-Sticks weiterläuft.",
     "openActivation": "Aktivierung öffnen",
+    "openWorkspaceSettings": "Arbeitsbereich wechseln",
     "overallProgress": "Overall progress",
     "progress": "{{completed}} / {{total}}",
     "relayActivationLimitReached": "Diese Aktivierung hat ihr Gerätelimit erreicht. Verwenden Sie eine andere Karte oder wenden Sie sich an den Support.",
@@ -1813,7 +1814,9 @@
     "relayRetryable": "Der Geschäftsdienst ist noch nicht bereit. Sie können es erneut versuchen.",
     "retry": "Erneut vorbereiten",
     "takingLonger": "This is taking longer than usual. You can retry without leaving the workspace.",
-    "title": "Rongying Cube wird vorbereitet"
+    "title": "Rongying Cube wird vorbereitet",
+    "workspaceFilesystemUnsupported": "Der Datenträger des Arbeitsbereichs wird nicht unterstützt: Assistenten müssen dort ihre Identitätsdateien lesen und schreiben, und dieser Schritt schlägt auf diesem Dateisystem immer fehl. Verschieben Sie den Arbeitsbereich auf einen exFAT- oder NTFS-Datenträger (oder einen anderen Ordner) und starten Sie die Vorbereitung erneut.",
+    "workspaceUnwritable": "Der Arbeitsbereich ist nicht beschreibbar: Assistenten müssen dort ihre Identitätsdateien lesen und schreiben, aber es lässt sich nicht einmal eine Testdatei anlegen. Prüfen Sie, ob der Datenträger schreibgeschützt oder voll ist, oder wählen Sie einen anderen Ordner."
   },
   "tasksPanel": {
     "count": "{{count}} insgesamt",

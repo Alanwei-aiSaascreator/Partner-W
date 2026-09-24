@@ -4,6 +4,7 @@ import type {
   RelayBootstrapBlockedCode,
   RelayBootstrapPublicState,
   RelayBootstrapRetryableCode,
+  WorkspaceFsIdentity,
 } from '@clawwork/shared';
 import { deriveModelAvailability } from '@/components/ChatInput/model-availability';
 import type { ModelStatusCopy } from '@/components/ChatInput/model-availability';
@@ -28,6 +29,25 @@ export type StartupRelayFailureKind =
   | 'entitlement-rejected'
   | 'activation-limit-reached'
   | 'retryable';
+
+/**
+ * 助手失败时**已知的**硬障碍（`null` = 没有结论）。
+ *
+ * 为什么单独一档：真机上（FAT32 的盘）六个预置助手全报 `unsafe workspace file`，
+ * 而界面上只有一句「助手失败」+ 助手名 —— 用户**无从知道要换一块盘**。
+ * 这两种障碍**重试一万次也不会变**，出口是"换个工作区/换块盘"，与"再试一次"相反。
+ *
+ * ⚠️ 判据是**两个独立信号都对上**：助手确实失败了 **且** 文件系统探测量到了问题。
+ *    只有前者 ⇒ 说不出所以然（照旧走通用那句）；只有后者 ⇒ 探测可能是错的，不许冤枉好盘。
+ */
+export type StartupAssistantBlocker = 'workspace-filesystem-unsupported' | 'workspace-unwritable';
+
+/** 已知障碍该说的那句话（面板与欢迎屏共用同一份）。 */
+export function startupBlockerText(blocker: StartupAssistantBlocker | null, t: (key: string) => string): string | null {
+  if (blocker === 'workspace-filesystem-unsupported') return t('startupReadiness.workspaceFilesystemUnsupported');
+  if (blocker === 'workspace-unwritable') return t('startupReadiness.workspaceUnwritable');
+  return null;
+}
 
 export interface StartupRelayFailure {
   kind: StartupRelayFailureKind;
@@ -90,6 +110,10 @@ export function startupFailureText(readiness: StartupReadiness, t: (key: string)
   // 目录那两档也是有结论的失败，同样不该被说成"还在准备"。
   if (readiness.ai.phase === 'catalog-failed') return t('startupReadiness.aiCatalogFailed');
   if (readiness.ai.phase === 'error') return t('startupReadiness.aiError');
+  // ⭐ 助手的失败里，**文件系统**那一档是有结论的（重试不会变），必须说出来 ——
+  //    否则用户按面板上那句"重新准备"再点一百次，也还是六个助手全失败。
+  const blocker = startupBlockerText(readiness.assistantBlocker ?? null, t);
+  if (blocker) return blocker;
   // 助手那一档（AI 已就绪、只是助手没装完）不是"模型不可用"，这一格没有话要说。
   return null;
 }
@@ -148,6 +172,11 @@ export interface StartupReadiness {
    *    消费方一律按真值判断即可；`deriveStartupReadiness` 这条唯一的产出路径**永远**会赋值。
    */
   relayFailure?: StartupRelayFailure | null;
+  /**
+   * 助手失败时的**已知硬障碍**（`null` / 缺省 = 没有结论）。
+   * 见 `StartupAssistantBlocker`：两个独立信号都对上才敢说。
+   */
+  assistantBlocker?: StartupAssistantBlocker | null;
 }
 
 interface StartupReadinessInput {
@@ -158,6 +187,8 @@ interface StartupReadinessInput {
   assistantSnapshot: PresetAgentBootstrapSnapshot;
   /** 中转 bootstrap 的公开状态。缺省 = 还没读到（与 `idle` 同义：**不是**失败）。 */
   relayState?: RelayBootstrapPublicState | undefined;
+  /** 工作区所在文件系统的探测结果。缺省 / `null` = 还没探测（**不是**"没问题"）。 */
+  workspaceFsIdentity?: WorkspaceFsIdentity | null | undefined;
 }
 
 export function deriveStartupReadiness({
@@ -167,6 +198,7 @@ export function deriveStartupReadiness({
   catalogFailed,
   assistantSnapshot,
   relayState,
+  workspaceFsIdentity,
 }: StartupReadinessInput): StartupReadiness {
   const modelAvailability = deriveModelAvailability({
     gatewayId,
@@ -211,6 +243,18 @@ export function deriveStartupReadiness({
   //    就是同一形状的复发 —— 用户又被锁在输入框外，这次连"出错了"都看不到。
   const composerBlocked = !relayFailure && (aiPhase === 'starting' || aiPhase === 'loading-models');
 
+  // ⭐ 助手的失败里，"这块文件系统不支持"是一条**有结论**的失败：重试不会变、换盘才会好。
+  //    两个独立信号必须都对上：①助手真的失败了；②探测量到了零身份/不可写。
+  //    只有 ②（助手没事）时**不下结论** —— 探测可能是错的，别的盘上冤枉一次代价很大。
+  const assistantBlocker: StartupAssistantBlocker | null =
+    assistantPhase !== 'error'
+      ? null
+      : workspaceFsIdentity?.state === 'unsupported-identity'
+        ? 'workspace-filesystem-unsupported'
+        : workspaceFsIdentity?.state === 'unwritable'
+          ? 'workspace-unwritable'
+          : null;
+
   return {
     gatewayId,
     ai: { phase: aiPhase },
@@ -221,5 +265,6 @@ export function deriveStartupReadiness({
     isReady,
     hasError: aiPhase === 'error' || aiPhase === 'catalog-failed' || assistantPhase === 'error',
     relayFailure,
+    assistantBlocker,
   };
 }

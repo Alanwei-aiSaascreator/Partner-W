@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
-import { CheckCircle2, KeyRound, LoaderCircle, RefreshCw, TriangleAlert } from 'lucide-react';
+import { CheckCircle2, FolderOpen, KeyRound, LoaderCircle, RefreshCw, TriangleAlert } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
 import { PRESET_AGENT_DEFINITIONS } from '@/lib/preset-agents';
-import { relayFailureText, type StartupReadiness } from '@/lib/startup-readiness';
+import { relayFailureText, startupBlockerText, type StartupReadiness } from '@/lib/startup-readiness';
 import { useUiStore } from '@/stores/uiStore';
 
 type Translate = (key: string, values?: Record<string, unknown>) => string;
@@ -20,6 +20,10 @@ function currentStatus(readiness: StartupReadiness, t: Translate): string {
   const assistants = readiness.assistants;
   if (assistants.phase === 'waiting') return t('startupReadiness.assistantsWaiting');
   if (assistants.phase === 'verifying') return t('startupReadiness.assistantsVerifying');
+  // ⭐ 助手失败 + 已知硬障碍（文件系统不支持 / 工作区不可写）⇒ 说那句**能行动**的话。
+  //    它比"助手失败：某某某"具体，而且是重试不会变的那一类（出口是换盘/换目录）。
+  const blocker = startupBlockerText(readiness.assistantBlocker ?? null, t);
+  if (blocker) return blocker;
   if (assistants.phase === 'installing') {
     const definition = PRESET_AGENT_DEFINITIONS.find((item) => item.id === assistants.currentId);
     return t('startupReadiness.assistantsInstalling', {
@@ -84,11 +88,19 @@ export default function StartupReadinessPanel({
       : relayFailure.kind === 'activation-limit-reached'
         ? null
         : 'activation'
-    : readiness.hasError || takingLonger
-      ? 'retry'
-      : null;
+    : // ⭐ 已知的文件系统障碍：出口是**换工作区**（设置 → 系统），不是"重新准备"。
+      //    那块盘上再点一百次"重新准备"还是六个助手全失败 —— 给一个按了有用的按钮。
+      readiness.assistantBlocker
+      ? 'workspace'
+      : readiness.hasError || takingLonger
+        ? 'retry'
+        : null;
   const openActivationSettings = useCallback(() => {
     setSettingsSection('activation');
+    setSettingsOpen(true);
+  }, [setSettingsSection, setSettingsOpen]);
+  const openSystemSettings = useCallback(() => {
+    setSettingsSection('system');
     setSettingsOpen(true);
   }, [setSettingsSection, setSettingsOpen]);
 
@@ -165,6 +177,12 @@ export default function StartupReadinessPanel({
           <Button type="button" variant="outline" size="sm" onClick={openActivationSettings} className="shrink-0">
             <KeyRound size={14} />
             {t('startupReadiness.openActivation')}
+          </Button>
+        ) : action === 'workspace' ? (
+          // 同上：文件系统不支持 / 工作区不可写，都是"换个地方"才好的事。
+          <Button type="button" variant="outline" size="sm" onClick={openSystemSettings} className="shrink-0">
+            <FolderOpen size={14} />
+            {t('startupReadiness.openWorkspaceSettings')}
           </Button>
         ) : null}
       </div>

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { ModelCatalogEntry } from '@clawwork/shared';
-import { deriveStartupReadiness } from '../src/renderer/lib/startup-readiness';
+import type { ModelCatalogEntry, WorkspaceFsIdentity } from '@clawwork/shared';
+import { deriveStartupReadiness, startupBlockerText, startupFailureText } from '../src/renderer/lib/startup-readiness';
 import type { PresetAgentBootstrapSnapshot } from '../src/renderer/lib/preset-agent-bootstrap';
 
 const idleAssistants: PresetAgentBootstrapSnapshot = {
@@ -362,5 +362,101 @@ describe('deriveStartupReadiness', () => {
     expect(missing.relayFailure).toBeNull();
     expect(missing.ai.phase).toBe('loading-models');
     expect(missing.hasError).toBe(false);
+  });
+});
+
+/**
+ * 助手失败时**到底该怪什么**（2026-09-25）。
+ *
+ * 真机形状：FAT32 的盘上六个预置助手全报 `unsafe workspace file`，界面只有一句"助手失败"，
+ * 用户无从知道要换块盘。判据要**两个独立信号都对上**才敢说：
+ * ①助手**确实**失败了（`assistants.phase === 'error'`）；②那次文件系统探测量到零身份/不可写。
+ * 只有 ①：说不出所以然（照旧给通用那句）；只有 ②：不许冤枉一块好盘（探测可能是错的）。
+ */
+describe('deriveStartupReadiness —— 助手失败时的文件系统判据', () => {
+  const failedAssistants: PresetAgentBootstrapSnapshot = {
+    phase: 'error',
+    completed: 0,
+    total: 6,
+    missingIds: ['rongying-content'],
+    error: 'unsafe workspace file "IDENTITY.md"',
+  };
+
+  function deriveWith(identity: WorkspaceFsIdentity | null, assistantSnapshot = failedAssistants) {
+    return deriveStartupReadiness({
+      gatewayId: 'gw-1',
+      gatewayStatus: 'connected',
+      rawModelCatalog: [relayModel],
+      catalogFailed: false,
+      assistantSnapshot,
+      workspaceFsIdentity: identity,
+    });
+  }
+
+  it('⭐ 助手失败 + 零身份 ⇒ 判 workspace-filesystem-unsupported（FAT32 那条）', () => {
+    expect(deriveWith({ state: 'unsupported-identity', dev: '0', ino: '851386624' }).assistantBlocker).toBe(
+      'workspace-filesystem-unsupported',
+    );
+  });
+
+  it('⭐ 助手失败 + 探测建不出文件 ⇒ 判 workspace-unwritable（只读盘/没权限）', () => {
+    expect(deriveWith({ state: 'unwritable', dev: null, ino: null }).assistantBlocker).toBe('workspace-unwritable');
+  });
+
+  it('⭐ 负对照：文件系统正常但助手仍然失败 ⇒ **不许**怪文件系统', () => {
+    expect(deriveWith({ state: 'ok', dev: '1611287400', ino: '4785074606070117' }).assistantBlocker).toBeNull();
+  });
+
+  it('⭐ 负对照：量到零身份但助手**没失败** ⇒ 不下结论（探测可能是错的，别冤枉一块好盘）', () => {
+    expect(
+      deriveWith({ state: 'unsupported-identity', dev: '0', ino: '1' }, readyAssistants).assistantBlocker,
+    ).toBeNull();
+  });
+
+  it('unknown / 还没探测（null / 缺省）⇒ 不下结论', () => {
+    expect(deriveWith({ state: 'unknown', dev: null, ino: null }).assistantBlocker).toBeNull();
+    expect(deriveWith(null).assistantBlocker).toBeNull();
+    expect(
+      deriveStartupReadiness({
+        gatewayId: 'gw-1',
+        gatewayStatus: 'connected',
+        rawModelCatalog: [relayModel],
+        catalogFailed: false,
+        assistantSnapshot: failedAssistants,
+      }).assistantBlocker,
+    ).toBeNull();
+  });
+});
+
+describe('startupBlockerText / startupFailureText —— 说给用户的话', () => {
+  const t = (key: string) => key;
+
+  it('两档各说各的话（文件系统不支持 vs 不可写，出口不同）', () => {
+    expect(startupBlockerText('workspace-filesystem-unsupported', t)).toBe(
+      'startupReadiness.workspaceFilesystemUnsupported',
+    );
+    expect(startupBlockerText('workspace-unwritable', t)).toBe('startupReadiness.workspaceUnwritable');
+  });
+
+  it('没有 blocker ⇒ null（不许多说一句）', () => {
+    expect(startupBlockerText(null, t)).toBeNull();
+  });
+
+  it('⭐ 欢迎屏那一格（startupFailureText）也要说这句 —— 用户最先看到的是它', () => {
+    const readiness = deriveStartupReadiness({
+      gatewayId: 'gw-1',
+      gatewayStatus: 'connected',
+      rawModelCatalog: [relayModel],
+      catalogFailed: false,
+      assistantSnapshot: {
+        phase: 'error',
+        completed: 0,
+        total: 6,
+        missingIds: ['rongying-content'],
+        error: 'unsafe workspace file "IDENTITY.md"',
+      },
+      workspaceFsIdentity: { state: 'unsupported-identity', dev: '0', ino: '851386624' },
+    });
+    expect(startupFailureText(readiness, t)).toBe('startupReadiness.workspaceFilesystemUnsupported');
   });
 });

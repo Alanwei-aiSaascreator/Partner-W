@@ -1804,6 +1804,7 @@
     "keepOpen": "Gardez l’application ouverte. Aucune action répétée n’est nécessaire.",
     "notAnInstall": "Ce n'est pas une installation : rien n'est écrit dans le système et aucun raccourci n'est créé. Au premier lancement, l'environnement d'exécution est préparé dans un cache local pour continuer à fonctionner après avoir retiré la clé USB.",
     "openActivation": "Ouvrir l’activation",
+    "openWorkspaceSettings": "Changer d'espace de travail",
     "overallProgress": "Overall progress",
     "progress": "{{completed}} / {{total}}",
     "relayActivationLimitReached": "Cette activation a atteint sa limite d’appareils. Utilisez une autre carte ou contactez le support.",
@@ -1813,7 +1814,9 @@
     "relayRetryable": "Le service commercial n’est pas encore prêt. Vous pouvez réessayer.",
     "retry": "Préparer à nouveau",
     "takingLonger": "This is taking longer than usual. You can retry without leaving the workspace.",
-    "title": "Préparation de Rongying Cube"
+    "title": "Préparation de Rongying Cube",
+    "workspaceFilesystemUnsupported": "Le disque de l'espace de travail n'est pas pris en charge : les assistants doivent y lire et écrire leurs fichiers d'identité, et cette étape échoue toujours sur ce système de fichiers. Déplacez l'espace de travail vers un disque exFAT ou NTFS (ou un autre dossier), puis relancez la préparation.",
+    "workspaceUnwritable": "L'espace de travail n'est pas accessible en écriture : les assistants doivent y lire et écrire leurs fichiers d'identité, mais même un fichier de test ne peut pas être créé. Vérifiez si le disque est en lecture seule ou plein, ou choisissez un autre dossier."
   },
   "tasksPanel": {
     "count": "{{count}} au total",

@@ -1804,6 +1804,7 @@
     "keepOpen": "Keep the app open. No repeated action is needed.",
     "notAnInstall": "Not an installation: nothing is written into the system and no desktop shortcut is created. On first launch the runtime is prepared into a local cache so it still works after you unplug the USB drive.",
     "openActivation": "Open activation",
+    "openWorkspaceSettings": "Change workspace",
     "overallProgress": "Overall progress",
     "progress": "{{completed}} / {{total}}",
     "relayActivationLimitReached": "This activation has reached its device limit. Use a different card or contact support.",
@@ -1813,7 +1814,9 @@
     "relayRetryable": "The commercial service is not ready yet. You can try again.",
     "retry": "Prepare again",
     "takingLonger": "This is taking longer than usual. You can retry without leaving the workspace.",
-    "title": "Preparing Rongying Cube"
+    "title": "Preparing Rongying Cube",
+    "workspaceFilesystemUnsupported": "The disk holding your workspace is not supported: assistants must read and write their own identity files there, and that step always fails on this filesystem. Move the workspace to an exFAT or NTFS disk (or another folder), then prepare again.",
+    "workspaceUnwritable": "The workspace is not writable: assistants must read and write their own identity files there, but not even a probe file can be created. Check whether the disk is read-only or full, or pick another folder."
   },
   "tasksPanel": {
     "count": "{{count}} total",

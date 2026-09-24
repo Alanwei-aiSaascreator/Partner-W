@@ -1804,6 +1804,7 @@
     "keepOpen": "アプリを開いたままお待ちください。操作を繰り返す必要はありません。",
     "notAnInstall": "これはインストールではありません。システムには何も書き込まれず、デスクトップにショートカットも作成されません。初回起動時に実行環境をローカルキャッシュに準備するため、USB メモリを抜いても続けて使えます。",
     "openActivation": "認証を開く",
+    "openWorkspaceSettings": "ワークスペースを変更",
     "overallProgress": "Overall progress",
     "progress": "{{completed}} / {{total}}",
     "relayActivationLimitReached": "この認証は端末数の上限に達しています。別のカードをご利用いただくか、サポートにお問い合わせください。",
@@ -1813,7 +1814,9 @@
     "relayRetryable": "商用サービスの準備がまだ整っていません。もう一度お試しいただけます。",
     "retry": "もう一度準備する",
     "takingLonger": "This is taking longer than usual. You can retry without leaving the workspace.",
-    "title": "Rongying Cube を準備しています"
+    "title": "Rongying Cube を準備しています",
+    "workspaceFilesystemUnsupported": "ワークスペースのあるディスクは未対応です：アシスタントはそこに自分の識別ファイルを読み書きする必要があり、このファイルシステムでは必ず失敗します。ワークスペースを exFAT または NTFS のディスク（または別のフォルダー）に移して、もう一度準備してください。",
+    "workspaceUnwritable": "ワークスペースに書き込めません：アシスタントはそこに自分の識別ファイルを読み書きする必要がありますが、確認用ファイルすら作成できません。ディスクが読み取り専用か、容量がいっぱいでないか確認するか、別のフォルダーを選んでください。"
   },
   "tasksPanel": {
     "count": "全 {{count}} 件",

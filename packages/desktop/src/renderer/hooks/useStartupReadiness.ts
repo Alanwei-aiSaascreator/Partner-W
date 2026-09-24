@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { RelayBootstrapPublicState } from '@clawwork/shared';
+import type { RelayBootstrapPublicState, WorkspaceFsIdentity } from '@clawwork/shared';
 import i18n from '@/i18n';
 import { fetchAgentsForGateway, reinitializeGatewayBootstrap } from '@/hooks/useGatewayDispatcherSetup';
 import {
@@ -69,6 +69,13 @@ export function useStartupReadiness(enabled: boolean) {
   );
   const [assistantSnapshot, setAssistantSnapshot] = useState<PresetAgentBootstrapSnapshot>(emptyAssistantSnapshot);
   const [relayState, setRelayState] = useState<RelayBootstrapPublicState | null>(null);
+  /**
+   * 工作区所在文件系统的探测结果（FAT32 上 `dev=0` ⇒ 助手读写身份文件必失败）。
+   *
+   * ⚠️ **失败/读不到一律当"没有结论"**（`null`），绝不折算成"文件系统有问题"：
+   *    这条结论会把用户劝去换盘，说错一次代价很大。判据见 `deriveStartupReadiness`。
+   */
+  const [workspaceFsIdentity, setWorkspaceFsIdentity] = useState<WorkspaceFsIdentity | null>(null);
   // 请求重试那一刻手头那条快照的时间戳：只有**比它更新**的结论才算这一轮的答复。
   const [relayRetryFrom, setRelayRetryFrom] = useState<number | null>(null);
 
@@ -145,11 +152,29 @@ export function useStartupReadiness(enabled: boolean) {
     }
   }, [gatewayId]);
 
+  /**
+   * 量一次工作区所在文件系统（探测文件建完就删，不留东西）。
+   *
+   * 为什么值得单开一路：FAT32 的盘上六个助手**必定**失败，而失败原因在界面上长成一句
+   * 「助手失败」—— 用户唯一能做的动作（换块 exFAT/NTFS 的盘）从界面上看不出来。
+   * 探测量的是 fs-safe 判的**那两个数**（`dev`/`ino`），不是盘符或卷标。
+   */
+  const probeWorkspaceFilesystem = useCallback(async () => {
+    try {
+      const result = await window.clawwork.probeWorkspaceFsIdentity();
+      setWorkspaceFsIdentity(result ?? null);
+    } catch {
+      // 探测自己坏了 = 没有结论（**不是**"文件系统有问题"）。
+      setWorkspaceFsIdentity(null);
+    }
+  }, []);
+
   useEffect(() => {
     if (!enabled || !gatewayId || gatewayStatus !== 'connected') return;
     void runAssistantBootstrap();
     void ensureOurSkills();
-  }, [enabled, gatewayId, gatewayStatus, runAssistantBootstrap, ensureOurSkills]);
+    void probeWorkspaceFilesystem();
+  }, [enabled, gatewayId, gatewayStatus, runAssistantBootstrap, ensureOurSkills, probeWorkspaceFilesystem]);
 
   const readiness = deriveStartupReadiness({
     gatewayId,
@@ -158,6 +183,7 @@ export function useStartupReadiness(enabled: boolean) {
     catalogFailed,
     assistantSnapshot,
     relayState: relayState ?? undefined,
+    workspaceFsIdentity,
   });
 
   /**
@@ -193,6 +219,9 @@ export function useStartupReadiness(enabled: boolean) {
       return;
     }
     if (gatewayId) presetAgentBootstrapCoordinator.reset(gatewayId);
+    // 重试也要重新量一次：用户完全可能在这期间**把工作区换到另一块盘**，
+    // 而结论是按旧盘下的（换盘正是这条失败唯一的出路）。
+    void probeWorkspaceFilesystem();
     if (readiness.ai.phase === 'ready' && gatewayStatus === 'connected') {
       await runAssistantBootstrap();
       return;
@@ -201,7 +230,15 @@ export function useStartupReadiness(enabled: boolean) {
     if (gatewayId && useUiStore.getState().gatewayStatusMap[gatewayId] === 'connected') {
       await runAssistantBootstrap();
     }
-  }, [gatewayId, gatewayStatus, readiness.ai.phase, readiness.relayFailure, relayState, runAssistantBootstrap]);
+  }, [
+    gatewayId,
+    gatewayStatus,
+    readiness.ai.phase,
+    readiness.relayFailure,
+    relayState,
+    runAssistantBootstrap,
+    probeWorkspaceFilesystem,
+  ]);
 
   return { ...readiness, retry };
 }

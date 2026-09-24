@@ -180,6 +180,8 @@ function buildApi(): ClawWorkAPI {
     openWorkspaceFolder: () => ipcRenderer.invoke('workspace:open-folder'),
     isWorkspaceConfigured: () => ipcRenderer.invoke('workspace:is-configured') as Promise<boolean>,
     getWorkspacePath: () => ipcRenderer.invoke('workspace:get-path') as Promise<string | null>,
+    // 量工作区所在文件系统的身份（FAT32 上 dev=0 ⇒ 助手读写身份文件必失败）。
+    probeWorkspaceFsIdentity: () => ipcRenderer.invoke('workspace:fs-identity'),
     getDefaultWorkspacePath: () => ipcRenderer.invoke('workspace:get-default') as Promise<string>,
     getTeamWorkspacePath: (slug: string) => ipcRenderer.invoke('workspace:team-path', slug) as Promise<string>,
     browseWorkspace: () => ipcRenderer.invoke('workspace:browse') as Promise<string | null>,

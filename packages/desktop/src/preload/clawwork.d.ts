@@ -45,6 +45,7 @@ import type {
   Artifact,
   ArtifactSaveAsResult,
   RelayBootstrapPublicState,
+  WorkspaceFsIdentity,
 } from '@clawwork/shared';
 // 隐私工单状态的**归一化后**形状（snake→camel、字节数字、真布尔）由 core 定义，
 // 这里只引用 —— 渲染层不该再抄一份字段名。
@@ -523,6 +524,13 @@ export interface ClawWorkAPI {
   openWorkspaceFolder: () => Promise<void>;
   isWorkspaceConfigured: () => Promise<boolean>;
   getWorkspacePath: () => Promise<string | null>;
+  /**
+   * 量工作区所在文件系统的身份（`dev`/`ino` 是否为零）。
+   *
+   * 用途见 `main/workspace/fs-identity.ts`：FAT32 上 `dev=0` 会让随包运行时的
+   * 文件身份守卫 fail-closed，**六个预置助手全部失败**，而界面上只有一句"助手失败"。
+   */
+  probeWorkspaceFsIdentity: () => Promise<WorkspaceFsIdentity>;
   getDefaultWorkspacePath: () => Promise<string>;
   getTeamWorkspacePath: (slug: string) => Promise<string>;
   browseWorkspace: () => Promise<string | null>;
