@@ -5,7 +5,13 @@ import { createRoot, type Root } from 'react-dom/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
-  t: (key: string) => key,
+  /**
+   * ⚠️ **不是恒等桩**：把传进来的 options 也透出来。
+   *    恒等的话，"到底有没有把文件名/个数交给 t" 这类断言整类失效 ——
+   *    2026-09-24 在层 2 上实测栽过一次（漏掉外层 `t(...)` 而测试全绿）。
+   */
+  t: (key: string, options?: Record<string, unknown>) =>
+    options?.fileName ? `${key}<${options.fileName}>` : options?.count !== undefined ? `${key}#${options.count}` : key,
   activeTaskId: 'task-1' as string | null,
   commitPendingTask: vi.fn(() => ({ id: 'task-created' })),
   importTaskFiles: vi.fn(),
@@ -15,12 +21,13 @@ const mocks = vi.hoisted(() => ({
   revokeTaskContextSource: vi.fn(),
   listTaskContextFiles: vi.fn(),
   toastError: vi.fn(),
+  toastWarning: vi.fn(),
 }));
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: mocks.t }),
 }));
-vi.mock('../src/renderer/lib/toast', () => ({ toast: { error: mocks.toastError, warning: vi.fn() } }));
+vi.mock('../src/renderer/lib/toast', () => ({ toast: { error: mocks.toastError, warning: mocks.toastWarning } }));
 
 vi.mock('../src/renderer/stores/taskStore', () => ({
   useTaskStore: Object.assign(
@@ -116,6 +123,7 @@ describe('useTaskMaterials', () => {
     mocks.revokeTaskContextSource.mockReset();
     mocks.listTaskContextFiles.mockReset();
     mocks.toastError.mockReset();
+    mocks.toastWarning.mockReset();
     Object.assign(window, {
       clawwork: {
         importTaskFiles: mocks.importTaskFiles,
@@ -501,4 +509,53 @@ describe('useTaskMaterials', () => {
       view.unmount();
     },
   );
+
+  /**
+   * ⭐ 2026-09-24：被拒的文件必须说清**是哪个、为什么**。
+   *
+   * 同事的真机反馈是「添加文件或内容添加不上 → 无法操作」，而截图里只有
+   * `⚠ 有 1 个文件未能添加` —— 因为界面只用了 `rejected.length`，把数据里现成的
+   * `fileName` 与 `reason` 一起丢了。
+   *
+   * 这条钉的是**接线**：纯函数自己的测试证明不了"调用点有没有把说明传进 toast"。
+   */
+  it('被拒的文件要在 toast 里带上文件名与原因（不是只说"有 N 个未能添加"）', async () => {
+    mocks.listTaskContextSources.mockResolvedValue({ ok: true, result: [] });
+    mocks.listImportedTaskFiles.mockResolvedValue({ ok: true, result: [] });
+    mocks.importTaskFiles.mockResolvedValue({
+      ok: true,
+      result: {
+        imported: [],
+        rejected: [{ fileName: '五家户外店主营品类统计.xlsx', reason: 'too-large' }],
+      },
+    });
+
+    const view = render(<Harness taskId="task-1" immediateAction="import" />);
+    await act(async () => void (await Promise.resolve()));
+
+    expect(mocks.toastWarning, '确实弹了提示').toHaveBeenCalled();
+    const [message, data] = mocks.toastWarning.mock.calls[0] as [string, { description?: string }];
+    expect(message, '标题仍报个数').toBe('chatInput.importFilesPartiallyRejected#1');
+    expect(String(data?.description), '要说清是哪个文件').toContain('五家户外店主营品类统计.xlsx');
+    expect(String(data?.description), '也要说清为什么').toContain('chatInput.importRejected.tooLarge');
+    view.unmount();
+  });
+
+  it('没有被拒的文件 ⇒ 不弹这个提示（别造噪音）', async () => {
+    mocks.listTaskContextSources.mockResolvedValue({ ok: true, result: [] });
+    mocks.listImportedTaskFiles.mockResolvedValue({ ok: true, result: [] });
+    mocks.importTaskFiles.mockResolvedValue({
+      ok: true,
+      result: {
+        imported: [{ fileName: 'ok.txt', localPath: 'tasks/task-1/inbox/ok.txt', mimeType: 'text/plain', size: 1 }],
+        rejected: [],
+      },
+    });
+
+    const view = render(<Harness taskId="task-1" immediateAction="import" />);
+    await act(async () => void (await Promise.resolve()));
+
+    expect(mocks.toastWarning).not.toHaveBeenCalled();
+    view.unmount();
+  });
 });

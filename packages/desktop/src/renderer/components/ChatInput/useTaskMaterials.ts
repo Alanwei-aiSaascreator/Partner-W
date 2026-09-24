@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { describeSendRefusal, UnknownAgentError } from '@clawwork/core';
 import type { FileIndexEntry, ImportedTaskFile, TaskContextSource } from '@clawwork/shared';
 import { toast } from '@/lib/toast';
+import { describeImportRejections } from '@/lib/import-rejection-copy';
 import { useTaskStore } from '../../stores/taskStore';
 
 export type ImportedMaterialFile = ImportedTaskFile & { taskId: string; availability: 'available' | 'missing' };
@@ -152,7 +153,11 @@ export function useTaskMaterials(taskIdOverride?: string | null) {
         return next;
       });
       if (result.result.rejected.length > 0) {
-        toast.warning(t('chatInput.importFilesPartiallyRejected', { count: result.result.rejected.length }));
+        // ⚠️ 别只说"有 N 个没能添加"：`rejected` 里带着**文件名与原因**，
+        //    丢掉它们，用户就只能得出"无法操作"（2026-09-24 同事的真机反馈）。
+        toast.warning(t('chatInput.importFilesPartiallyRejected', { count: result.result.rejected.length }), {
+          description: describeImportRejections(result.result.rejected, t),
+        });
       }
       return imported;
     } catch (error) {

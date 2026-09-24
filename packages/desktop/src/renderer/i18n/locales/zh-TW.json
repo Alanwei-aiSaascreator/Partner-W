@@ -399,6 +399,14 @@
     "grantFolderFailed": "新增資料夾失敗",
     "importFilesFailed": "新增檔案失敗",
     "importFilesPartiallyRejected": "有 {{count}} 個檔案未能新增",
+    "importRejected": {
+      "copyFailed": "{{fileName}} 複製失敗，未能加入",
+      "more": "另有 {{count}} 個檔案未能加入",
+      "publishUnavailable": "{{fileName}} 暫時無法放入工作區，未能加入",
+      "tooLarge": "{{fileName}} 超過 100MB 上限，未能加入",
+      "unavailable": "{{fileName}} 讀不到（檔案可能已被移動或刪除），未能加入",
+      "unsupported": "{{fileName}} 的類型不支援，未能加入"
+    },
     "materialLimitExceeded": "每次最多新增 {{count}} 個材料，總計不超過 {{size}} MB",
     "materialMissing": "無法使用",
     "materials": "任務材料",

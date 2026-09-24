@@ -399,6 +399,14 @@
     "grantFolderFailed": "フォルダを追加できませんでした",
     "importFilesFailed": "ファイルを追加できませんでした",
     "importFilesPartiallyRejected": "{{count}} 件のファイルを追加できませんでした",
+    "importRejected": {
+      "copyFailed": "{{fileName}}: copy failed, not added",
+      "more": "{{count}} more file(s) could not be added",
+      "publishUnavailable": "{{fileName}}: temporarily cannot be placed in the workspace, not added",
+      "tooLarge": "{{fileName}}: over the 100MB limit, not added",
+      "unavailable": "{{fileName}}: could not be read (moved or deleted?), not added",
+      "unsupported": "{{fileName}}: file type not supported, not added"
+    },
     "materialLimitExceeded": "Add up to {{count}} materials totaling {{size}} MB per message",
     "materialMissing": "利用不可",
     "materials": "タスク資料",
