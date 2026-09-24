@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { PRESET_AGENT_DEFINITIONS } from '../src/renderer/lib/preset-agents';
+import { PRESET_AGENT_DEFINITIONS, stampPresetPrompt } from '../src/renderer/lib/preset-agents';
 import { createPresetAgentBootstrapCoordinator } from '../src/renderer/lib/preset-agent-bootstrap';
 import { useUiStore } from '../src/renderer/stores/uiStore';
 import { createBootstrapDeps } from '../src/renderer/hooks/useStartupReadiness';
@@ -126,7 +126,9 @@ describe('startup preset-agent production wiring', () => {
       gatewayId,
       'rongying-content',
       'SOUL.md',
-      PRESET_AGENT_DEFINITIONS[0].soulMd,
+      // ⚠️ 写入方现在会盖**版本标记**（`<!-- mofang-prompt:… -->`），
+      //    所以这里断言"盖章后的内容"，不是定义里的原文。
+      stampPresetPrompt(PRESET_AGENT_DEFINITIONS[0].soulMd),
     );
     expect(api.deleteAgent).not.toHaveBeenCalled();
 

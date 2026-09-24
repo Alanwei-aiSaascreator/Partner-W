@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, type Mocked } from 'vitest';
-import { PRESET_AGENT_DEFINITIONS } from '../src/renderer/lib/preset-agents';
+import { PRESET_AGENT_DEFINITIONS, stampPresetPrompt } from '../src/renderer/lib/preset-agents';
 import { installPresetAgentPack, type PresetAgentInstallerApi } from '../src/renderer/lib/preset-agent-installer';
 
 function createApi(): Mocked<PresetAgentInstallerApi> {
@@ -80,14 +80,14 @@ describe('installPresetAgentPack', () => {
       'gw-1',
       'rongying-video',
       'IDENTITY.md',
-      PRESET_AGENT_DEFINITIONS[1].identityMd,
+      stampPresetPrompt(PRESET_AGENT_DEFINITIONS[1].identityMd),
     );
     expect(api.setAgentFile).toHaveBeenNthCalledWith(
       2,
       'gw-1',
       'rongying-video',
       'SOUL.md',
-      PRESET_AGENT_DEFINITIONS[1].soulMd,
+      stampPresetPrompt(PRESET_AGENT_DEFINITIONS[1].soulMd),
     );
     expect(api.getAgentFile).toHaveBeenCalledTimes(2);
   });
@@ -145,7 +145,7 @@ describe('installPresetAgentPack', () => {
       'gw-1',
       'rongying-content',
       'SOUL.md',
-      PRESET_AGENT_DEFINITIONS[0].soulMd,
+      stampPresetPrompt(PRESET_AGENT_DEFINITIONS[0].soulMd),
     );
   });
 

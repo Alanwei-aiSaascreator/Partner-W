@@ -1,4 +1,4 @@
-import { PRESET_AGENT_DEFINITIONS } from '@/lib/preset-agents';
+import { PRESET_AGENT_DEFINITIONS, stampPresetPrompt } from '@/lib/preset-agents';
 import type { AgentInstallDefinition } from '@clawwork/core';
 
 interface MutationResult {
@@ -169,13 +169,28 @@ export async function installPresetAgentPack({
         if (!updateResult.ok) throw new Error(resultError(updateResult, 'agent name update failed'));
       }
 
+      // ⚠️ 只有**内置的六个预置助手**才盖版本标记。标记的含义是"这份文件是我们写的、
+      //    并且是我们这一版写的" —— 市场模板的内容来自数据库（`rongying-tpl-*`），
+      //    用户还会自己改，盖我们的版本号会让将来那套"是我们的旧版本 ⇒ 可升级"
+      //    的判据把**用户改过的模板**也认成我们的。判断按 id 白名单，不做例外。
+      const isBuiltInPreset = PRESET_AGENT_DEFINITIONS.some((preset) => preset.id === definition.id);
+      const stamp = (text: string) => (isBuiltInPreset ? stampPresetPrompt(text) : text);
+
       if (!identityComplete) {
-        const identityResult = await api.setAgentFile(gatewayId, createdAgentId, 'IDENTITY.md', definition.identityMd);
+        // 为什么必须盖章：这两个文件是运行时**每轮全文注入**的提示词，而安装器只在
+        // 文件缺失时才写 ⇒ 没有标记就永远无法安全地升级已有盘
+        // （分不清"我们写的旧版本"和"用户自己改过的"）。见 `preset-agents.ts` 的长注释。
+        const identityResult = await api.setAgentFile(
+          gatewayId,
+          createdAgentId,
+          'IDENTITY.md',
+          stamp(definition.identityMd),
+        );
         if (!identityResult.ok) throw new Error(resultError(identityResult, 'IDENTITY.md write failed'));
       }
 
       if (!soulComplete) {
-        const soulResult = await api.setAgentFile(gatewayId, createdAgentId, 'SOUL.md', definition.soulMd);
+        const soulResult = await api.setAgentFile(gatewayId, createdAgentId, 'SOUL.md', stamp(definition.soulMd));
         if (!soulResult.ok) throw new Error(resultError(soulResult, 'SOUL.md write failed'));
       }
 
