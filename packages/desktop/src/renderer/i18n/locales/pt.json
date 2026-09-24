@@ -838,6 +838,7 @@
     "resetSessionTitle": "Redefinir Sessão"
   },
   "errors": {
+    "agentMissing": "Esse assistente não está neste computador. Escolha outro e envie de novo.",
     "agentNotResponding": "O agente não está respondendo — ele pode estar indisponível ou mal configurado no servidor. Tente um agente diferente.",
     "boundaryTitle": "Algo deu errado",
     "conductorInitFailed": "Falha ao inicializar o coordenador da equipe",

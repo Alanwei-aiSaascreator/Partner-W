@@ -838,6 +838,7 @@
     "resetSessionTitle": "重置会话"
   },
   "errors": {
+    "agentMissing": "这个助手不在本机，换一个助手再发送。",
     "agentNotResponding": "Agent 未响应 — 可能不可用或服务端配置有误，请尝试其他 Agent",
     "boundaryTitle": "应用出现异常",
     "conductorInitFailed": "团队协调者初始化失败",

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { UnknownAgentError } from '@clawwork/core';
 import type { FileIndexEntry, ImportedTaskFile, TaskContextSource } from '@clawwork/shared';
 import { toast } from '@/lib/toast';
 import { useTaskStore } from '../../stores/taskStore';
@@ -106,19 +107,35 @@ export function useTaskMaterials(taskIdOverride?: string | null) {
 
   const resolveCurrentTaskId = useCallback(() => identityRef.current, []);
 
-  const ensureTaskId = useCallback(() => {
+  /**
+   * 拿（必要时先建）当前任务 id。**拒绝时返回 `null`**。
+   *
+   * ⚠️ 2026-09-24：`commitPendingTask` 现在会在「点名要的助手不在已加载的目录里」时拒绝
+   * （见 core 的 `UnknownAgentError`）。这个函数在**两个调用点的 try 之外**被调，不在这里
+   * 接住的话会逃成 unhandled rejection ⇒ 如实提示并返回 `null`，由调用点早退。
+   * ⚠️ 只吞这一种：其它异常**照旧抛出去**，不改变既有行为。
+   */
+  const ensureTaskId = useCallback((): string | null => {
     const current = resolveCurrentTaskId();
     if (current) return current;
-    const created = useTaskStore.getState().commitPendingTask();
+    let created: { id: string };
+    try {
+      created = useTaskStore.getState().commitPendingTask();
+    } catch (error) {
+      if (!(error instanceof UnknownAgentError)) throw error;
+      toast.error(t('errors.agentMissing'));
+      return null;
+    }
     previousRequestedTaskIdRef.current = created.id;
     identityRef.current = created.id;
     generationRef.current += 1;
     setTaskId(created.id);
     return created.id;
-  }, [resolveCurrentTaskId]);
+  }, [resolveCurrentTaskId, t]);
 
   const importFiles = useCallback(async () => {
     const targetTaskId = ensureTaskId();
+    if (!targetTaskId) return [];
     const generation = generationRef.current;
     try {
       const result = await window.clawwork.importTaskFiles(targetTaskId);
@@ -149,6 +166,7 @@ export function useTaskMaterials(taskIdOverride?: string | null) {
 
   const grantFolder = useCallback(async () => {
     const targetTaskId = ensureTaskId();
+    if (!targetTaskId) return null;
     const generation = generationRef.current;
     try {
       const result = await window.clawwork.grantTaskContextFolder(targetTaskId);

@@ -838,6 +838,7 @@
     "resetSessionTitle": "세션 초기화"
   },
   "errors": {
+    "agentMissing": "해당 어시스턴트는 이 컴퓨터에 없습니다. 다른 어시스턴트를 선택해 다시 보내세요.",
     "agentNotResponding": "에이전트가 응답하지 않습니다 — 서버에서 사용할 수 없거나 잘못 구성되었을 수 있습니다. 다른 에이전트를 시도해 보세요.",
     "boundaryTitle": "오류가 발생했습니다",
     "conductorInitFailed": "팀 코디네이터 초기화에 실패했습니다",

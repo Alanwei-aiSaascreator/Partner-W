@@ -838,6 +838,7 @@
     "resetSessionTitle": "Reiniciar sesión"
   },
   "errors": {
+    "agentMissing": "Ese asistente no está en este equipo. Elige otro y vuelve a enviar.",
     "agentNotResponding": "El agente no responde — puede estar no disponible o mal configurado en el servidor. Prueba con otro agente.",
     "boundaryTitle": "Algo salió mal",
     "conductorInitFailed": "Error al inicializar el coordinador del equipo",

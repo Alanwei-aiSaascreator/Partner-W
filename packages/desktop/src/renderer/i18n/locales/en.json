@@ -838,6 +838,7 @@
     "resetSessionTitle": "Reset Session"
   },
   "errors": {
+    "agentMissing": "That assistant is not on this machine. Pick another one and send again.",
     "agentNotResponding": "Agent is not responding — it may be unavailable or misconfigured on the server. Try a different agent.",
     "boundaryTitle": "Something went wrong",
     "conductorInitFailed": "Failed to initialize team coordinator",

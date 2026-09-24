@@ -838,6 +838,7 @@
     "resetSessionTitle": "Réinitialiser la session"
   },
   "errors": {
+    "agentMissing": "Cet assistant n’est pas sur cet ordinateur. Choisissez-en un autre et renvoyez.",
     "agentNotResponding": "L'agent ne répond pas — il est peut-être indisponible ou mal configuré sur le serveur. Essayez un autre agent.",
     "boundaryTitle": "Une erreur est survenue",
     "conductorInitFailed": "Échec de l'initialisation du coordinateur d'équipe",

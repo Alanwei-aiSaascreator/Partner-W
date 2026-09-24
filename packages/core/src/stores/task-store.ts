@@ -2,6 +2,24 @@ import { createStore } from 'zustand/vanilla';
 import { buildSessionKey } from '@clawwork/shared';
 import type { Task, TaskStatus, IpcResult } from '@clawwork/shared';
 
+/**
+ * 点名要的助手**不在已加载的目录里**（2026-09-24）。
+ *
+ * 与"网关没连上"「助手没响应」是两回事，界面要分开措辞、各给自己的下一步。
+ *
+ * ⚠️ 判据刻意保守：`getAgentCatalog` 把「目录还没加载」与「目录为空」塌成同一个形状
+ * `{agents: [], defaultId: null}`，store 里分不出这两者 ⇒ 只有 `agents.length > 0`
+ * （确已加载）时才敢拒绝，否则「目录还没回来就发送」会被误伤。
+ */
+export class UnknownAgentError extends Error {
+  readonly code = 'unknown-agent';
+
+  constructor(readonly agentId: string) {
+    super(`unknown agent: ${agentId}`);
+    this.name = 'UnknownAgentError';
+  }
+}
+
 export interface PendingNewTask {
   gatewayId: string;
   agentId: string;
@@ -164,6 +182,16 @@ export function createTaskStore(deps: TaskStoreDeps) {
       const catalog = deps.getAgentCatalog(gwId);
       const agId = pending?.agentId || catalog.defaultId;
       if (!agId) throw new Error('no agent available — gateway catalog not loaded');
+      // ⭐ 点名要的助手不在**已加载**的目录里 ⇒ 拒绝建任务（fail closed）。
+      //    界面上「拒绝并说明」之后，发送侧不能还留着一个能走到幽灵助手的口子。
+      const requestedAgentId = pending?.agentId ?? '';
+      if (
+        requestedAgentId &&
+        catalog.agents.length > 0 &&
+        !catalog.agents.some((agent) => (agent as { id?: unknown }).id === requestedAgentId)
+      ) {
+        throw new UnknownAgentError(requestedAgentId);
+      }
       const task = get().createTask({
         gatewayId: gwId,
         agentId: agId,

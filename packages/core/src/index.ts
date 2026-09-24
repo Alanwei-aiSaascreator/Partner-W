@@ -59,7 +59,7 @@ export {
 } from './stores/message-store.js';
 export type { MessageState, MessageStoreDeps, ActiveTurn } from './stores/message-store.js';
 
-export { createTaskStore } from './stores/task-store.js';
+export { createTaskStore, UnknownAgentError } from './stores/task-store.js';
 export type { TaskState, TaskStoreDeps, PendingNewTask } from './stores/task-store.js';
 
 export { createRoomStore } from './stores/room-store.js';

@@ -838,6 +838,7 @@
     "resetSessionTitle": "Sitzung zuruecksetzen"
   },
   "errors": {
+    "agentMissing": "Dieser Assistent ist auf diesem Computer nicht vorhanden. Wähle einen anderen und sende erneut.",
     "agentNotResponding": "Agent antwortet nicht — moeglicherweise ist er nicht verfuegbar oder auf dem Server falsch konfiguriert. Versuchen Sie einen anderen Agent.",
     "boundaryTitle": "Etwas ist schiefgelaufen",
     "conductorInitFailed": "Team-Koordinator konnte nicht initialisiert werden",

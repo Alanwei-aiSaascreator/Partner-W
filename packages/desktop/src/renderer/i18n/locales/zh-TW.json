@@ -838,6 +838,7 @@
     "resetSessionTitle": "重設工作階段"
   },
   "errors": {
+    "agentMissing": "這個助手不在本機，換一個助手再傳送。",
     "agentNotResponding": "代理無回應 — 可能無法使用或伺服器端設定有誤。請嘗試其他代理。",
     "boundaryTitle": "發生錯誤",
     "conductorInitFailed": "團隊協調者初始化失敗",
