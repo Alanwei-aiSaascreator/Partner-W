@@ -69,6 +69,9 @@ describe('describeSendRefusal 的 key 在两个包里都齐全', () => {
         const [namespace, leaf] = key.split('.');
         expect(json[namespace ?? '']?.[leaf ?? ''], `${pkg}/${file} 缺 ${key}`).toBeTruthy();
       }
+      // ⚠️ 只绑"在不在"是不够的：某份语言里把两句**贴成同一句**（复制粘贴事故）时上面照样全绿。
+      //    这里绑住"两句不同"（复核 B 建议；它另外手工核过全部 18 份，措辞都对）。
+      expect(json.errors?.agentMissing, `${pkg}/${file} 的两句文案必须不同`).not.toBe(json.errors?.agentNotResponding);
     }
   });
 });

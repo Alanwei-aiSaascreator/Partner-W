@@ -36,7 +36,8 @@ export const SEND_REFUSAL_COPY = {
 export type SendRefusalCopyKey = (typeof SEND_REFUSAL_COPY)[keyof typeof SEND_REFUSAL_COPY];
 
 export function describeSendRefusal(error: unknown, t: TranslateFn): string {
-  // 显式标成 `SendRefusalCopyKey`：返回值必须来自上面那张表 —— 抄一个字面量就编不过。
+  // 显式标成 `SendRefusalCopyKey`：**表里没有的** key 走这个变量就编不过
+  //（表里已有的字面量抄一遍仍能编过 —— 这个标注挡的是"新加一条分支却忘了进表"，复核 B 指出别把它说大）。
   const key: SendRefusalCopyKey =
     error instanceof UnknownAgentError ? SEND_REFUSAL_COPY.agentMissing : SEND_REFUSAL_COPY.notResponding;
   return t(key);
