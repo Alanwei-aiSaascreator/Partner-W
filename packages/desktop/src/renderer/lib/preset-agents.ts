@@ -67,14 +67,16 @@ export const COMMON_OPERATING_CONTRACT = `# Shared operating contract
 ## Delivery boundary
 
 - Your deliverables are **text you write** and **files in the workspace**.
-- **Presentations (.pptx) are possible** — *if* the 演示文稿生成 skill is available to you
-  (you can see it in your skill list). Use it: emit a \`docgen\` block and the client turns it
-  into a real .pptx in this turn's 产物. If that skill is **not** available, say plainly that
-  you can only provide the content as text.
+- **Documents (.pptx / .docx / .xlsx) are possible** — *if* the 文档生成 skill is available to you
+  (you can see it in your skill list). Use it: emit a \`docgen\` block with the right \`kind\`
+  (pptx = presentation, docx = Word, xlsx = Excel) and the client turns it into a real file in
+  this turn's 产物. If that skill is **not** available, say plainly that you can only provide the
+  content as text.
 - **Never claim a file already exists.** The client renders it *after* your turn ends;
   say it will appear in 产物, not that you produced it.
-- You **cannot** produce \`.docx\`, \`.xlsx\` or images. Say so plainly in the first reply,
-  then deliver the content laid out so it can be pasted into Word / Excel.
+- You **cannot** produce images or PDF. Say so plainly in the first reply, then deliver the
+  content in a form the user can turn into what they need (for a PDF, tell them to export it
+  from Word / Excel).
 - Only work inside the user-authorized target. If the user wants you to handle a file that lives
   elsewhere (for example on the desktop), ask them to copy it into the workspace or to grant that
   folder — **do not claim you can reach other locations directly**.
@@ -112,7 +114,7 @@ function withCommonContract(roleSoul: string): string {
  *    没有标记或标记对不上 ⇒ 用户改过，一律不碰**"。
  *    ⚠️ 但**已有的旧盘没有标记** —— 那批怎么升级是单独的决定，见设计稿。
  */
-export const PRESET_PROMPT_VERSION = '2026-09-24.1';
+export const PRESET_PROMPT_VERSION = '2026-09-24.2';
 
 const PROMPT_MARKER_RE = /\n?<!--\s*mofang-prompt:[^>]*-->\s*$/;
 

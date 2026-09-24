@@ -215,10 +215,11 @@ export default function MarkdownContent({
                 const code = flattenTextContent(children).replace(/\n$/, '');
                 const lang = extractLang(children);
                 /**
-                 * ⭐ `docgen` 块**不是代码**，是"请生成一份演示文稿"的请求
-                 * （内容 schema 见 `main/docgen/request.ts`）。把原始 JSON 摊给用户看
-                 * 既是噪音、又像是让他去编辑它。这里换成一行卡片：
-                 * 真正的东西是客户端渲染出来的 .pptx，它出现在右侧「产物」里。
+                 * ⭐ `docgen` 块**不是代码**，是"请生成一份文件"的请求
+                 * （pptx / docx / xlsx 三种，schema 见 `main/docgen/request.ts`）。
+                 * 把原始 JSON 摊给用户看既是噪音、又像是让他去编辑它。
+                 * 这里换成一行卡片：真正的东西是客户端渲染出来的文件，
+                 * 它出现在右侧「产物」里。
                  */
                 if (lang.toLowerCase() === 'docgen') {
                   return (

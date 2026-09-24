@@ -19,17 +19,23 @@ import {
  * 没有标记就永远分不清"我们写的旧版本"和"用户自己改过的"。
  */
 describe('交付边界（COMMON_OPERATING_CONTRACT）', () => {
-  it('docx / xlsx / 图片仍然做不到，且要求"第一句就说明"', () => {
-    expect(COMMON_OPERATING_CONTRACT).toContain('.docx');
-    expect(COMMON_OPERATING_CONTRACT).toContain('.xlsx');
-    expect(COMMON_OPERATING_CONTRACT).toMatch(/cannot\*{0,2} produce/i);
+  it('⭐ 三种文档（pptx / docx / xlsx）都是**有条件**的可能：技能可见才承诺', () => {
+    for (const ext of ['.pptx', '.docx', '.xlsx']) {
+      expect(COMMON_OPERATING_CONTRACT, ext).toContain(ext);
+    }
+    expect(COMMON_OPERATING_CONTRACT).toMatch(/docgen/i);
+    expect(COMMON_OPERATING_CONTRACT, '技能不可见时的口径').toMatch(/skill is \*\*not\*\* available/i);
+  });
+
+  it('⭐ 拿不出手的仍然拿不出手：图片（与 PDF）要一口回绝，且"第一句就说明"', () => {
+    expect(COMMON_OPERATING_CONTRACT).toMatch(/cannot\*{0,2} produce images/i);
+    expect(COMMON_OPERATING_CONTRACT).toMatch(/pdf/i);
     expect(COMMON_OPERATING_CONTRACT).toMatch(/say so plainly in the first reply/i);
   });
 
-  it('⭐ pptx 是**有条件**的可能：只在技能可见时走 docgen 块（看不到就别承诺）', () => {
-    expect(COMMON_OPERATING_CONTRACT).toContain('.pptx');
-    expect(COMMON_OPERATING_CONTRACT).toMatch(/docgen/i);
-    expect(COMMON_OPERATING_CONTRACT, '技能不可见时的口径').toMatch(/skill is \*\*not\*\* available/i);
+  it('⭐ 别把三种文档写成"已经能了"——边界句必须挂着技能这个前提', () => {
+    // 反面判据：老的"docx / xlsx 做不到"那句必须已经删掉（否则模型会照旧拒绝 Word）
+    expect(COMMON_OPERATING_CONTRACT).not.toMatch(/cannot[\s\S]{0,40}produce[\s\S]{0,20}\.docx/i);
   });
 
   it('⭐ 不许说"文件已经存在" —— 客户端是在这一轮**结束后**才渲染的（说早了就是假话）', () => {
