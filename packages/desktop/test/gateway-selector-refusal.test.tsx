@@ -140,6 +140,10 @@ describe('useGatewaySelector 拒绝不在本机的请求', () => {
 
     expect(captured?.selectedGwId).toBe('gw-2');
     expect(captured?.missingRequestedAgentId, '属于旧网关的选择不许拿新网关的目录来判').toBeNull();
+    // ⚠️ 这里**刻意不**断言 `effectiveAgentId`：它落回**当前网关**的默认助手，
+    //    而那半边是**既有行为**（由 `welcome-screen.test.tsx` 的 "uses the destination gateway
+    //    default label before stale pending state is normalized" 钉住）。复核建议把它也压成
+    //    空串，实测会让那条既有用例红，且"网关本身没了"时用户会更糟 —— 已登记为待拍（见账本）。
     view.unmount();
   });
 });

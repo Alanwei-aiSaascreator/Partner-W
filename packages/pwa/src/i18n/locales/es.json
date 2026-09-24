@@ -43,6 +43,7 @@
     "title": "Panel de navegación"
   },
   "errors": {
+    "agentMissing": "Ese asistente no está en este equipo. Elige otro y vuelve a enviar.",
     "agentNotResponding": "El agente no responde",
     "failed": "Fallido",
     "requestFailed": "Solicitud fallida",

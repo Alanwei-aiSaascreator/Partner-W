@@ -30,9 +30,12 @@ function setup(catalog: { agents: { id: string }[]; defaultId: string | null } |
  * `useChatSend` 在无活动任务时直接 `commitPendingTask()`，这里只校验"非空"
  * ⇒ 会建出一个指向幽灵助手的任务。
  *
- * ⚠️ 判据**必须保守**：`getAgentCatalog` 把「目录没加载」与「目录为空」塌成同一个形状
- * `{agents: [], defaultId: null}`，core 里分不出这两者 ⇒ 只有 `agents.length > 0`
- * （确已加载）时才敢拒绝。中间那条用例就是这个对照。
+ * ⚠️ 判据的**两态必须分得开**：`undefined` = 目录没加载（**不拒**），对象 = 已加载
+ * （`agents` 可能为空 —— 那是"网关上一个助手都没有"，**要拒**）。中间那两条用例就是这个对照。
+ *
+ * ⚠️ 这里**曾经**写的是"判据必须保守，只有 `agents.length > 0` 才敢拒绝"—— 那是在
+ * `getAgentCatalog` 把两种情形塌成同一形状时的权宜之计，2026-09-24 复核 I-2 之后已经推翻，
+ * **别再照那句话写代码**（spec §3.6 也把这个推理标成了历史）。
  */
 describe('commitPendingTask 拒绝不在已加载目录里的助手', () => {
   it('目录**没加载**（`undefined`）⇒ 不拒绝，与今天行为一致', () => {

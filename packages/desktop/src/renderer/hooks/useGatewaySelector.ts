@@ -73,13 +73,25 @@ export function useGatewaySelector(options: UseGatewaySelectorOptions = {}): Use
    * 请求自带网关（`initialGatewayId`，来自待发任务的 `gatewayId`），而上面那条回落会在
    * 网关列表变化时**把 `selectedGwId` 换掉**。两者不一致时拿新网关的目录去判旧网关的请求，
    * 会把「不在**这个**网关上」说成「不在**本机**」。
-   *
-   * 判不了就不判（记 `loading`）—— 与"目录没加载"同一条纪律：**宁可不说，不说错话**。
    */
   const requestGatewayMatches = !options.initialGatewayId || options.initialGatewayId === selectedGwId;
+  /**
+   * 请求属于**别的网关**时**不判**（`loading`）—— 因为拿新网关的目录去判它必然误报。
+   *
+   * ⚠️ 这里**只关掉"说"**，**不关掉"代言"**：`effectiveAgentId` 仍会落回**当前网关**的默认助手，
+   *    写回 effect 于是把待发任务归一到这个网关。这是**既有且被测试钉住的**行为
+   *    （`welcome-screen.test.tsx` 的 "uses the destination gateway default label before stale
+   *    pending state is normalized"），**不要顺手改成空串** —— 我按复核建议试过，那条用例当场红：
+   *    待发任务的**网关本身**已经消失时，它点名的助手在那个网关上无从谈起，"不替它选"只会
+   *    让用户既没有助手、又把待发任务留在一个死网关上。
+   *
+   * ⚠️ 但复核指出的那一面是真的：用户**明确选过**的助手会被静默换掉、且没有任何提示。
+   *    那是"网关没了"这个更上层的事件的通知缺口，**属于另一件事**，已登记（见账本的"待拍"一节）。
+   */
+  const requestDeferred = Boolean(options.requestedAgentId) && !requestGatewayMatches;
   const requestedState = useMemo(
-    () => (requestGatewayMatches ? resolveRequestedAgent(options.requestedAgentId, gwAgents) : 'loading'),
-    [gwAgents, options.requestedAgentId, requestGatewayMatches],
+    () => (requestDeferred ? 'loading' : resolveRequestedAgent(options.requestedAgentId, gwAgents)),
+    [gwAgents, options.requestedAgentId, requestDeferred],
   );
   const missingRequestedAgentId = requestedState === 'missing' ? (options.requestedAgentId ?? null) : null;
   const effectiveAgentId = useMemo(

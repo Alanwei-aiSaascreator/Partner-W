@@ -43,6 +43,7 @@
     "title": "導航選單"
   },
   "errors": {
+    "agentMissing": "這個助手不在本機，換一個助手再傳送。",
     "agentNotResponding": "Agent 未回應 — 可能不可用或伺服器配置有誤，請嘗試其他 Agent",
     "failed": "失敗",
     "requestFailed": "請求出錯",

@@ -262,6 +262,28 @@ describe('IdentityCenter — 按钮真的干活', () => {
   });
 
   /**
+   * ⭐ 2026-09-24（复核复验 N-2）：罗盘**也不在目录里**时不给"换用罗盘助手"这个出口 ——
+   * 否则一边说"不在本机"、一边给一个指向同样不存在的助手的死胡同按钮。
+   * 上一轮的 M-2 只给「欢迎屏」那条加了测试，身份中心这条分支出于同一形状却没被钉住。
+   */
+  it('⭐ 罗盘自己也不在目录里 ⇒ 只留"去团队页"，不给切换出口', () => {
+    useUiStore.setState({
+      defaultGatewayId: 'gw-1',
+      agentCatalogByGateway: {
+        'gw-1': { agents: [{ id: 'some-other-agent' } as never], defaultId: 'some-other-agent' },
+      },
+    });
+    const { container, unmount } = render(<IdentityCenter />);
+
+    click(container.querySelector('[data-action="apply"]'));
+
+    expect(container.textContent).toContain('agent.missingTitle');
+    expect(container.textContent, '罗盘不在就别给这个出口').not.toContain('agent.missingSwitch');
+    expect(container.textContent, '去团队页恒可用').toContain('agent.missingOpenTeams');
+    unmount();
+  });
+
+  /**
    * ⚠️ 对照：目录**还没拉回来**时不许误报 —— 否则「正在拉目录」会被说成「不在本机」，
    * 就是用新的误报换掉旧的静默（`IdentityCenter` 文件头那条注释的要求）。
    */

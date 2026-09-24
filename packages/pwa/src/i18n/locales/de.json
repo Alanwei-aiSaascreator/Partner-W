@@ -43,6 +43,7 @@
     "title": "Navigationsmenü"
   },
   "errors": {
+    "agentMissing": "Dieser Assistent ist auf diesem Computer nicht vorhanden. Wähle einen anderen und sende erneut.",
     "agentNotResponding": "Agent antwortet nicht",
     "failed": "Fehlgeschlagen",
     "requestFailed": "Anfrage fehlgeschlagen",

@@ -43,6 +43,7 @@
     "title": "탐색 메뉴"
   },
   "errors": {
+    "agentMissing": "해당 어시스턴트는 이 컴퓨터에 없습니다. 다른 어시스턴트를 선택해 다시 보내세요.",
     "agentNotResponding": "Agent가 응답하지 않습니다",
     "failed": "실패",
     "requestFailed": "요청 실패",

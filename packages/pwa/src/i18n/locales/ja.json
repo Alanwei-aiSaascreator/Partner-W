@@ -43,6 +43,7 @@
     "title": "ナビゲーションメニュー"
   },
   "errors": {
+    "agentMissing": "そのアシスタントはこのパソコンにありません。別のアシスタントを選んで送信してください。",
     "agentNotResponding": "Agentが応答しません — 利用不可またはサーバー設定に問題がある可能性があります",
     "failed": "失敗",
     "requestFailed": "リクエスト失敗",

@@ -43,6 +43,7 @@
     "title": "导航菜单"
   },
   "errors": {
+    "agentMissing": "这个助手不在本机，换一个助手再发送。",
     "agentNotResponding": "Agent 未响应 — 可能不可用或服务端配置有误，请尝试其他 Agent",
     "failed": "失败",
     "requestFailed": "请求出错",

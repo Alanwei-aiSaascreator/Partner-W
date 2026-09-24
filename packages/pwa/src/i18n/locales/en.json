@@ -43,6 +43,7 @@
     "title": "Navigation drawer"
   },
   "errors": {
+    "agentMissing": "That assistant is not on this machine. Pick another one and send again.",
     "agentNotResponding": "Agent is not responding - it may be unavailable or misconfigured on the server. Try a different agent.",
     "failed": "failed",
     "requestFailed": "Request failed",

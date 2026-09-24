@@ -43,6 +43,7 @@
     "title": "Volet de navigation"
   },
   "errors": {
+    "agentMissing": "Cet assistant n’est pas sur cet ordinateur. Choisissez-en un autre et renvoyez.",
     "agentNotResponding": "L'agent ne répond pas - il est peut-être indisponible ou mal configuré sur le serveur. Essayez un autre agent.",
     "failed": "échoué",
     "requestFailed": "Échec de la requête",

@@ -550,6 +550,34 @@ describe('WelcomeScreen assistant workspace', () => {
   });
 
   /**
+   * ⭐⭐ 2026-09-24（复核**复验**指出 I-1 只绑住了 hook、没绑住**接线**）。
+   *
+   * 变异：把 `requestedAgentId` 从 `pendingNewTask?.agentId` 改回"也带推荐"
+   * （`?? preferredAgentId`），83 条测试**全绿**——而那是真的回归：没有待发任务时，
+   * 推荐就又被当成"用户点名要的"，新机器装预置助手期间照样误报。
+   *
+   * 这条用例从**屏幕**上钉住接线：画像推荐 video、目录里还没有 video、pending 为空
+   * ⇒ **不许**出现任何"不在本机"的提示。
+   */
+  it('⭐⭐ 只有画像推荐（用户没点名）时，屏幕上不许出现"不在本机"', () => {
+    mocks.gatewayState.agentCatalog = [{ id: 'main' }];
+    mocks.pendingNewTask = null;
+    const { container, unmount } = render(
+      <WelcomeScreen
+        onboardingProfile={{ ...onboardingProfile, useCases: [...onboardingProfile.useCases] }}
+        recentPresetIds={[]}
+        onSelectPreset={vi.fn()}
+        onCustomTask={vi.fn()}
+        onAssistantChange={vi.fn()}
+      />,
+    );
+
+    expect(container.textContent, '推荐缺失不是"用户要的助手不在本机"').not.toContain('agent.missingTitle');
+    expect(container.textContent, '也不许给"去团队页"那种错出口').not.toContain('agent.missingOpenTeams');
+    unmount();
+  });
+
+  /**
    * ⚠️ 2026-09-24（独立复核 M-2）：罗盘自己也不在目录里时，"换用罗盘助手"是个**死胡同按钮** ——
    * 一边说"不在本机"、一边给一个指向同样不存在的助手的出口。那时只留"去团队页"。
    */

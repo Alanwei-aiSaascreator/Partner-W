@@ -43,6 +43,7 @@
     "title": "Painel de navegação"
   },
   "errors": {
+    "agentMissing": "Esse assistente não está neste computador. Escolha outro e envie de novo.",
     "agentNotResponding": "Agente não está respondendo",
     "failed": "Falhou",
     "requestFailed": "Falha na solicitação",
