@@ -186,3 +186,68 @@
   URL/token 与一次端到端写入验证）**。两张卡各自要付的代价因此要重新算。
 - **P3.2**：真要做，**清单是 13 处**（DB 价目行 / 上游凭据 / catalog 显示名与输出上限 / 能力位 /
   请求通道 / **计费维度** / **usage 归一化** / 客户端家族分组…），而**不是加一条目录行**。
+
+---
+
+## 7. 记忆系统（P3.3）：**运行时复核已做**（2026-09-25 第三个只读调查）
+
+这一节回答的就是当初卡住设计的那句"**设计待随包运行时复核回来**"。
+证据：出厂归档 + 三处 2026.9.3 解包副本（**9 个关键 dist 文件逐字节与归档比对一致**后才引用行号）。
+⚠️ 顺带更正一条工具事实：那份 `.7z` **其实是 ZIP 格式**（7z 自己报 `Type = zip`），内部路径用反斜杠。
+
+### 7.1 ⭐ 每轮注入的就是这 **6 个**文件（顺序即 prompt 顺序）
+
+`AGENTS.md` → `SOUL.md` → `IDENTITY.md` → **`USER.md`** → `BOOTSTRAP.md` → **`MEMORY.md`**
+
+- 单一真源：`dist/workspace-BlPhQlqk.mjs:200-207`（`WORKSPACE_BOOTSTRAP_FILENAMES`）+ `:61-67`（名字常量）。
+- `TOOLS.md` / `HEARTBEAT.md` **已退役**（doctor 有迁移），`PERSONA.md` **零命中** ——
+  与记忆里那条"助手提示词只由 6 个硬编码文件注入、不能自造 `PERSONA.md`"**一致**。
+- 默认**每轮**注入（`contextInjection` 默认 `always`），但按 session 裁剪：
+  subagent 只给 `AGENTS.md`；cron 给前 4 个；group/channel **丢掉根 `MEMORY.md`**。
+- `USER.md` / `MEMORY.md` **缺文件时整条跳过**（不产生 `[MISSING]`）；另外 4 个缺失会注入 `[MISSING]`。
+- **预算是字符数、不是行数**：单文件默认 20,000 字符、总计 60,000、**`USER.md` 单独 4,000**；
+  截断策略是**保头部 75% + 尾部 25%**（中段被吃掉），单文件硬上限 2 MiB。
+
+### 7.2 ⚠️ **`MEMORY.md` 运行时会自己写**（这条直接决定我们放哪）
+
+dreaming 流水线会把"提升"的条目**追加进 `MEMORY.md`**（`dist/short-term-promotion-B0SqAuOW.mjs:1321`）。
+**`USER.md` 运行时不会自动追加**（只有工作区初始化播种 + memory 导入通道）。
+⇒ **我们自建记忆的第一层应该落在 `USER.md`**（放 `MEMORY.md` 会和 dream 流水线抢同一个文件）。
+⇒ 而且它的 **4,000 字符上限是平台强制的** —— 正好把设计里那条"第一层**必须有上限**"从"靠自觉"变成"硬约束"。
+
+### 7.3 运行时自带的那套记忆：**落在 state dir**（正是我们要避开的）
+
+- 键：`memory.search.enabled`（全局）/ `agents.entries.*.memory.search.*`（per-agent）；**默认 `true`**。
+- 存储：索引在 `<state-dir>/agents/<agentId>/agent/openclaw-agent.sqlite`，
+  插件状态（dreaming 短期库、文件 provenance）在 `<state-dir>/state/openclaw.sqlite`
+  ⇒ **换台电脑插同一块盘 = 当场失忆**，与"记忆必须随盘走"直接冲突。
+- 工具：`memory_search` / `memory_get`（另有非 core 的 `intent`）；**能用 `tools.deny` 关掉**
+  （它们是已知 core tool id ⇒ 不会触发"unknown entries"告警）。
+- 它索引的**源文件**正是工作区里的 `MEMORY.md` / `USER.md` / `memory/*.md`。
+- ⛔ 老记忆里"宣传一个关掉的能力"那条**在代码里确实成立**：工具描述**无条件**宣传四个 corpus
+  （含默认关的 `wiki`/`sessions`），调 `corpus=sessions` 会返回 `disabled: true` + 一句 action 提示。
+
+### 7.4 写这些文件的**正规通道**
+
+- `agents.files.set`（scope `operator.admin`，**覆盖写**）。
+- ⭐ **有文件名白名单，白名单就是上面那 6 个名字**（精确大小写）⇒
+  **写 `USER.md` / `MEMORY.md` 合法**，写 `user.md` 会被拒（`unsupported file`）。
+  证据：`dist/agents-Cvmqx4x8.mjs:54`（`ALLOWED_FILE_NAMES = new Set(WORKSPACE_BOOTSTRAP_FILENAMES)`）+ `:62-67`。
+- ⇒ 我们不需要新的写通道：客户端已有的 `setAgentFile` 就能写 `USER.md`。
+
+### 7.5 `tools.deny` 的形状（若要把运行时记忆关掉）
+
+`deny: string[]`（工具名，**大小写不敏感、支持 `*`**）；同层还有 `allow` / `alsoAllow` / `profile` /
+`byProvider` / `toolsBySender`；**全局 `tools.deny` 与 per-agent `agents.entries.*.tools.deny` 都有**，
+且是**分层叠加**；**deny 永远先判**（命中即拒）。
+⚠️ 同层 `allow` 与 `alsoAllow` **不能并存**（配置校验直接报错）。
+
+### 7.6 这一节产生的**新决定点**（要用户拍）
+
+1. ⭐ **自建记忆的第一层落 `USER.md`**（因为 `MEMORY.md` 会被 dream 流水线写）—— 认可吗？
+   预算按 **≤3,000 字符**留 1,000 给平台/后续（超了会被静默截断成"保头 75%"）。
+2. ⭐ **要不要 `tools.deny: ['memory_search','memory_get']`**？
+   运行时那套**默认是开的**，但索引落在 state dir（换机失忆）。
+   ⇒ 建议：**我们自建的写入口上线前不动它**（现在 deny 等于把一个能用的能力拿掉），
+   上线时一起 deny（避免模型依赖一个不会随盘走的记忆）。**这条要拍**。
+3. 第二层（决定/口径/工作习惯）仍然按已拍：**落工作区库 + 混合召回**，不进网关 state。
