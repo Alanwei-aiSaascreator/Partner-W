@@ -18,6 +18,26 @@ import type { TranslateFn } from './error-classify.js';
  * ⚠️ 只在这两种之间选：`commitPendingTask` 的拒绝目前只有 `UnknownAgentError` 一种，
  *    其它异常照旧走「无响应」那句（维持既有行为，不是新判断）。
  */
+/**
+ * 这条规则**可能**返回的 key，映射成常量表 —— 让"有哪些 key"只有**一处**定义。
+ *
+ * ⚠️ 为什么不是直接写字面量（2026-09-24，两位复核者都点到）：`check:i18n` 的提取正则看不见
+ *    表达式里的 key，所以齐备性得靠一条测试补；而那条测试如果**手抄**一份 key 清单，
+ *    就成了仓库栽过的"清单不更新"形状 —— 加第三种错误时两处都发现不了。
+ *    现在测试直接遍历这张表，加一项就自动被盖住。
+ */
+export const SEND_REFUSAL_COPY = {
+  /** 点名要的助手不在**已加载**的目录里（`UnknownAgentError`）。 */
+  agentMissing: 'errors.agentMissing',
+  /** 其余一切（临时性），下一步是重试。 */
+  notResponding: 'errors.agentNotResponding',
+} as const;
+
+export type SendRefusalCopyKey = (typeof SEND_REFUSAL_COPY)[keyof typeof SEND_REFUSAL_COPY];
+
 export function describeSendRefusal(error: unknown, t: TranslateFn): string {
-  return t(error instanceof UnknownAgentError ? 'errors.agentMissing' : 'errors.agentNotResponding');
+  // 显式标成 `SendRefusalCopyKey`：返回值必须来自上面那张表 —— 抄一个字面量就编不过。
+  const key: SendRefusalCopyKey =
+    error instanceof UnknownAgentError ? SEND_REFUSAL_COPY.agentMissing : SEND_REFUSAL_COPY.notResponding;
+  return t(key);
 }
