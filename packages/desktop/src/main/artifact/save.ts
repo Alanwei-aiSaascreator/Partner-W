@@ -5,7 +5,7 @@ import type { Artifact } from '@clawwork/shared';
 import { getDb } from '../db/index.js';
 import { artifacts } from '../db/schema.js';
 import { ensureTaskDir } from '../workspace/init.js';
-import { uniqueFileName } from '../workspace/safe-name.js';
+import { uniqueFileNameIn } from '../workspace/safe-name.js';
 
 const MIME_MAP: Record<string, string> = {
   '.png': 'image/png',
@@ -41,8 +41,15 @@ function detectMimeType(fileName: string): string {
   return MIME_MAP[ext] ?? 'application/octet-stream';
 }
 
+/**
+ * 产物最终叫什么、落在哪。
+ *
+ * ⭐ 2026-09-25：**撞名才改名**（`uniqueFileNameIn`）—— 原来无条件拼 `-<8位随机>`，
+ * 于是助手生成的那份报告在产物面板里叫 `内测汇报-3f9c2a1b.pptx`。
+ * "同一任务目录里永不覆盖"这条不变式不变：目录里已有同名文件时照样退到带后缀的名字。
+ */
 function resolveArtifactDestination(taskDir: string, fileName: string): { destPath: string; finalName: string } {
-  const finalName = uniqueFileName(fileName);
+  const finalName = uniqueFileNameIn(taskDir, fileName);
   const resolvedTaskDir = resolve(taskDir);
   const destPath = resolve(taskDir, finalName);
 

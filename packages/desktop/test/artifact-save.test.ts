@@ -5,6 +5,9 @@ vi.mock('fs', () => ({
   statSync: vi.fn(),
   unlinkSync: vi.fn(),
   writeFileSync: vi.fn(),
+  // 2026-09-25：产物落盘现在会先看"目录里有没有同名"（不撞就用干净名字）。
+  // 这个 mock 里一律"没有" ⇒ 走干净名字那条路；这些用例断言的是 DB/复制/删除，不看名字。
+  existsSync: vi.fn(() => false),
 }));
 
 vi.mock('crypto', () => ({
