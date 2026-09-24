@@ -22,7 +22,13 @@
 import { app, ipcMain } from 'electron';
 import type { IpcResult, OurSkillsListResult } from '@clawwork/shared';
 import { getGatewayClient } from '../ws/index.js';
-import { installBundledSkill, isBundledSkillInstalled, readBundledSkills, removeBundledSkill } from './bundled.js';
+import {
+  installBundledSkill,
+  isBundledSkillInstalled,
+  missingBundledSkills,
+  readBundledSkills,
+  removeBundledSkill,
+} from './bundled.js';
 import { notifySkillCacheChange, type SkillCacheClient } from './cache-refresh.js';
 import { getDebugLogger } from '../debug/index.js';
 import { resolveOurSkillsRoot } from './locate.js';
@@ -128,6 +134,43 @@ export function registerSkillsHandlers(): void {
         const result = installBundledSkill({ root: ourSkillsRoot(), managedDir, slug: payload.slug });
         if (result.ok) notifySkillCache(payload.gatewayId, payload.slug, true);
         return result;
+      } catch (err) {
+        return ipcError(err);
+      }
+    },
+  );
+
+  /**
+   * ⭐ 开机自装：把**还没装**的随包技能补进 managed 目录（2026-09-24）。
+   *
+   * 为什么需要它：随包技能原来只在用户点「安装」时才进目录 ⇒ "随包内置"对新盘等于没发生，
+   * 助手看不到技能就用不上。语义是"缺了就补"，**不动已装的**（不想在升级时静默覆盖别人盘上的东西）。
+   *
+   * ⚠️ 永远返回 `ok:true`（只要拿到目录）：这是**尽力而为**的启动步骤，
+   *    装不上不该让调用方把它当失败处理，更不该挡住启动 —— 结果里带上明细供日志与排障用。
+   */
+  ipcMain.handle(
+    'skills:our-ensure',
+    async (_event, payload: { gatewayId: string; agentId?: string } = { gatewayId: '' }) => {
+      try {
+        const managedDir = await managedSkillsDirOf(payload.gatewayId, payload.agentId);
+        if (!managedDir) return { ok: false, error: 'GATEWAY_UNAVAILABLE' };
+
+        const missing = missingBundledSkills(readBundledSkills(ourSkillsRoot()), (slug) =>
+          isBundledSkillInstalled(managedDir, slug),
+        );
+        const installed: string[] = [];
+        const failed: Array<{ slug: string; error: string }> = [];
+        for (const skill of missing) {
+          const result = installBundledSkill({ root: ourSkillsRoot(), managedDir, slug: skill.slug });
+          if (result.ok) {
+            installed.push(skill.slug);
+            notifySkillCache(payload.gatewayId, skill.slug, true);
+          } else {
+            failed.push({ slug: skill.slug, error: result.error ?? 'install failed' });
+          }
+        }
+        return { ok: true, result: { installed, failed } };
       } catch (err) {
         return ipcError(err);
       }

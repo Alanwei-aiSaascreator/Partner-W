@@ -80,6 +80,9 @@ function buildApi(): ClawWorkAPI {
       ipcRenderer.invoke('skills:our-list', { gatewayId, agentId }),
     installOurSkill: (gatewayId: string, slug: string, agentId?: string) =>
       ipcRenderer.invoke('skills:our-install', { gatewayId, agentId, slug }),
+    // 开机自装：把还没装的随包技能补上（缺了就补，不动已装的）。
+    ensureOurSkills: (gatewayId: string, agentId?: string) =>
+      ipcRenderer.invoke('skills:our-ensure', { gatewayId, agentId }),
     removeOurSkill: (gatewayId: string, slug: string, agentId?: string) =>
       ipcRenderer.invoke('skills:our-remove', { gatewayId, agentId, slug }),
     getConfig: (gatewayId: string) => ipcRenderer.invoke('ws:config-get', { gatewayId }),

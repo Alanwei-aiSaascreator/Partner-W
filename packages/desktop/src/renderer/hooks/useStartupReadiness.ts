@@ -124,10 +124,32 @@ export function useStartupReadiness(enabled: boolean) {
     await presetAgentBootstrapCoordinator.run(gatewayId, createBootstrapDeps(gatewayId));
   }, [gatewayId]);
 
+  /**
+   * 随包技能自装（2026-09-24）：**缺了就补**，不动已装的。
+   *
+   * 为什么和助手安装同一个时机：两者都是"这个网关上该有的东西齐不齐"，
+   * 而且都必须等网关连上（安装目录是**问网关要**的，不本地猜 —— 见 `skills/handlers.ts`）。
+   *
+   * ⚠️ **尽力而为**：失败只吞掉，不进 readiness 的结论、不挡启动。
+   *    技能装不上最坏是"这个能力用不了"，不该让用户卡在准备页。
+   */
+  const ensureOurSkills = useCallback(async () => {
+    if (!gatewayId) return;
+    try {
+      const result = await window.clawwork.ensureOurSkills(gatewayId);
+      if (result.ok && result.result && result.result.failed.length > 0) {
+        console.warn('[skills] 随包技能自装部分失败', result.result.failed);
+      }
+    } catch (error) {
+      console.warn('[skills] 随包技能自装失败', error);
+    }
+  }, [gatewayId]);
+
   useEffect(() => {
     if (!enabled || !gatewayId || gatewayStatus !== 'connected') return;
     void runAssistantBootstrap();
-  }, [enabled, gatewayId, gatewayStatus, runAssistantBootstrap]);
+    void ensureOurSkills();
+  }, [enabled, gatewayId, gatewayStatus, runAssistantBootstrap, ensureOurSkills]);
 
   const readiness = deriveStartupReadiness({
     gatewayId,

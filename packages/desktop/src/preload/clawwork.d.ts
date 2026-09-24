@@ -434,6 +434,14 @@ export interface ClawWorkAPI {
   /** 「我们自己的技能」—— 随包目录（T-a2）。`installed` 靠主进程问网关要的目录判定。 */
   listOurSkills: (gatewayId?: string, agentId?: string) => Promise<IpcResult<OurSkillsListResult>>;
   installOurSkill: (gatewayId: string, slug: string, agentId?: string) => Promise<IpcResult>;
+  /**
+   * 开机自装随包技能：**缺了就补**，不动已装的。
+   * 尽力而为 —— 失败只记日志，不挡启动（见 main/skills/handlers.ts 的注释）。
+   */
+  ensureOurSkills: (
+    gatewayId: string,
+    agentId?: string,
+  ) => Promise<IpcResult<{ installed: string[]; failed: Array<{ slug: string; error: string }> }>>;
   removeOurSkill: (gatewayId: string, slug: string, agentId?: string) => Promise<IpcResult>;
   getConfig: (gatewayId: string) => Promise<IpcResult<ConfigSnapshot>>;
   setConfig: (gatewayId: string, params: ConfigSetParams) => Promise<IpcResult<ConfigSetResult>>;

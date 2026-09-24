@@ -192,6 +192,25 @@ export function isBundledSkillInstalled(managedDir: string | undefined, slug: un
   return dir ? fs.existsSync(path.join(dir, 'SKILL.md')) : false;
 }
 
+/**
+ * 挑出**还没装**的随包技能（纯函数：判据由调用方传进来，便于测试）。
+ *
+ * 用于开机自装（2026-09-24）：随包技能原来**只在用户点「安装」时**才进 managed 目录，
+ * 于是"随包内置"对新盘等于没发生 —— 助手看不到技能就用不上
+ * （例如「演示文稿生成」：看不到它，助手只会说"只能给文字稿"）。
+ *
+ * ⚠️ 语义刻意是"**缺了就补**"，不是"每次覆盖"：
+ *   · 已经装了的**不动**；
+ *   · 我们的 SKILL.md 更新了怎么办，是**另一个决定**（不该在这里顺手做，
+ *     否则一次升级会静默覆盖别人盘上的一切）。
+ */
+export function missingBundledSkills(
+  skills: readonly BundledSkill[],
+  isInstalled: (slug: string) => boolean,
+): BundledSkill[] {
+  return skills.filter((skill) => !isInstalled(skill.slug));
+}
+
 export interface InstallResult {
   ok: boolean;
   error?: string;
