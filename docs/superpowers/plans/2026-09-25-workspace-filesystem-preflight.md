@@ -37,10 +37,25 @@
 
 ## 执行期发现
 
-1. ⚠️ **`layouts/StartupReadiness/index.tsx`（整屏门禁）在产品里已经没人引用** ——
+1. 🔴 **`layouts/StartupReadiness/index.tsx`（整屏门禁）在产品里已经没人引用** ——
    只有测试在 import 它（面板 + 欢迎屏才是现在的路径）。
-   这是**第三例**"被测试养着的死代码"（前两例：`presentationPathFor`、产物名随机后缀那条线）。
-   本轮**没删**（不在这一刀范围），登记为待清理。
+   **证据**：`git log -S"layouts/StartupReadiness" -- packages/desktop/src/renderer/App.tsx`
+   ⇒ 是 `5e103c2e`（"feat(startup): prepare ai inside workspace"，即 B 方案那次重构）
+   **把 import 从 App.tsx 拿掉的**，组件本身被留在原地。
+
+   ⚠️ 后果比"死代码"更值钱：**它承载的四条文案在产品里一个字都不显示**
+   （`startupReadiness.title` / `description` / **`notAnInstall`** / `keepOpen` —— 全库只有这一个文件用它们）。
+   其中 `notAnInstall`（"这不是安装：程序不写进系统，也不创建桌面图标…"）是 `dd84e0b1`
+   为**同事的真反馈**（"双击 exe 装到电脑"）专门加的；`keepOpen`（"请保持应用开启"）同理。
+   而它的测试**仍然全绿** —— 断言的是一个**用户看不到的界面**，
+   这正是"测试养着死代码、还给出假信心"的形状（本仓第三例，前两例：`presentationPathFor`、
+   产物名那条线）。
+
+   **待用户拍**（两条路，别自己选）：
+   ① 把那几句（尤其 `notAnInstall`）搬到**活着的面**（面板/欢迎屏）上，再删掉这个组件与其测试；
+   ② 或者它本来该被路由到（`5e103c2e` 漏接了一处）——那就把它接回 App.tsx。
+   在拍之前**两者都不动**（本轮只记录）。
+
 2. ℹ️ 探测写在**工作区根**：fs-safe 校验的是工作区里那些身份文件所在的卷，同一次安装里
    它们同卷。写在根上顺带把"这块盘能不能写"也量了（`unwritable` 那一档）。
 
