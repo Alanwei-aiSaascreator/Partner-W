@@ -24,6 +24,16 @@ const MIME_MAP: Record<string, string> = {
   '.css': 'text/css',
   '.txt': 'text/plain',
   '.pdf': 'application/pdf',
+  // ⚠️ Office 那几个必须和 `artifact/reconcile.ts` 的表**一致**：那边有 .pptx，
+  //    这边原来没有 ⇒ 同一份 pptx 走不同路径进产物会得到两种 MIME
+  //    （这边落成 application/octet-stream，界面就没法当文档处理）。
+  '.doc': 'application/msword',
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  '.xls': 'application/vnd.ms-excel',
+  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  '.ppt': 'application/vnd.ms-powerpoint',
+  '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  '.zip': 'application/zip',
 };
 
 function detectMimeType(fileName: string): string {

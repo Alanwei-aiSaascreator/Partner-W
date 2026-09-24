@@ -5,6 +5,7 @@ import { getDb, isDbReady } from '../db/index.js';
 import { tasks, messages, artifacts, taskRooms, taskRoomSessions, teams, teamAgents } from '../db/schema.js';
 import { autoExtractArtifacts } from '../artifact/auto-extract.js';
 import { captureTaskArtifactBaseline, reconcileTaskArtifacts, type ArtifactBaseline } from '../artifact/reconcile.js';
+import { generateDecksFromMessage } from '../docgen/generate.js';
 import type { MessageAttachment } from '@clawwork/shared';
 import { getWorkspacePath } from '../workspace/config.js';
 import { getGatewayClient } from '../ws/index.js';
@@ -308,6 +309,24 @@ function finalizeAssistantArtifacts(input: {
       });
     } catch (error) {
       console.error('[auto-extract]', error);
+    }
+    try {
+      // ⭐ 文档生成：助手在回复里给出 ```` ```docgen ```` 块（内容 schema 见
+      //    `main/docgen/request.ts`），这里渲染成真 pptx 并**走现成的产物通道**存下来
+      //    （`saveArtifactFromBuffer` 会写进任务目录 + 写库），然后把事件推给界面。
+      //    放在 autoExtract 之前：产物先落库，后面的抽取与 reconcile 就不会重复登记。
+      //    内部自己吞异常（一份坏请求不影响其它），这里再包一层只是防它自己坏掉。
+      const decks = await generateDecksFromMessage({
+        workspacePath: input.workspacePath,
+        taskId: input.taskId,
+        messageId: input.messageId,
+        content: input.content,
+      });
+      for (const artifact of decks.saved) {
+        for (const win of BrowserWindow.getAllWindows()) win.webContents.send('artifact:saved', artifact);
+      }
+    } catch (error) {
+      console.error('[docgen]', error);
     }
     try {
       if (isArtifactRunCanceled(run) || !run.baseline) return;

@@ -53,15 +53,21 @@ export function extractImagesFromMarkdown(content: string): ExtractedImage[] {
 }
 
 export function extractCodeBlocksFromMarkdown(content: string): ExtractedCodeBlock[] {
-  return [...content.matchAll(/^```(\S*)\n([\s\S]*?)\n```/gm)]
-    .map(([, lang, body]) => {
-      const lineCount = body.split('\n').length;
-      const hasDot = lang.includes('.');
-      if (lineCount <= 10 && !hasDot) return null;
-      const fileName = hasDot
-        ? sanitizeExtractedFileName(lang)
-        : `snippet-${createHash('sha1').update(body).digest('hex').slice(0, 6)}.${LANG_EXT[lang.toLowerCase()] ?? 'txt'}`;
-      return { language: lang, content: body, fileName, lineCount };
-    })
-    .filter((b): b is ExtractedCodeBlock => b !== null);
+  return (
+    [...content.matchAll(/^```(\S*)\n([\s\S]*?)\n```/gm)]
+      // ⚠️ `docgen` 块**不是**代码产物：它是"请生成一份 PPT"的请求，由 `main/docgen/`
+      //    渲染成真文件后**单独**走 `saveArtifactFromBuffer` 存。不排除的话，
+      //    用户在产物里会同时看到那份 PPT 和一段 JSON 噪音。
+      .filter(([, lang]) => lang.trim().toLowerCase() !== 'docgen')
+      .map(([, lang, body]) => {
+        const lineCount = body.split('\n').length;
+        const hasDot = lang.includes('.');
+        if (lineCount <= 10 && !hasDot) return null;
+        const fileName = hasDot
+          ? sanitizeExtractedFileName(lang)
+          : `snippet-${createHash('sha1').update(body).digest('hex').slice(0, 6)}.${LANG_EXT[lang.toLowerCase()] ?? 'txt'}`;
+        return { language: lang, content: body, fileName, lineCount };
+      })
+      .filter((b): b is ExtractedCodeBlock => b !== null)
+  );
 }

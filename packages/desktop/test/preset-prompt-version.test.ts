@@ -19,20 +19,22 @@ import {
  * 没有标记就永远分不清"我们写的旧版本"和"用户自己改过的"。
  */
 describe('交付边界（COMMON_OPERATING_CONTRACT）', () => {
-  it('明说产不出二进制办公文件（ppt/docx/xlsx/图片）', () => {
-    expect(COMMON_OPERATING_CONTRACT).toContain('.pptx');
+  it('docx / xlsx / 图片仍然做不到，且要求"第一句就说明"', () => {
     expect(COMMON_OPERATING_CONTRACT).toContain('.docx');
     expect(COMMON_OPERATING_CONTRACT).toContain('.xlsx');
-    expect(COMMON_OPERATING_CONTRACT).toMatch(/cannot produce binary office files/i);
-  });
-
-  it('禁止许诺 —— 这是这条边界的**目的**（同事那次就是被许诺坑的）', () => {
-    expect(COMMON_OPERATING_CONTRACT).toMatch(/Never promise to produce such a file/i);
-    expect(COMMON_OPERATING_CONTRACT).toMatch(/never claim you already did/i);
-  });
-
-  it('要求"第一句就说明"，而不是先答应再交不出东西', () => {
+    expect(COMMON_OPERATING_CONTRACT).toMatch(/cannot\*{0,2} produce/i);
     expect(COMMON_OPERATING_CONTRACT).toMatch(/say so plainly in the first reply/i);
+  });
+
+  it('⭐ pptx 是**有条件**的可能：只在技能可见时走 docgen 块（看不到就别承诺）', () => {
+    expect(COMMON_OPERATING_CONTRACT).toContain('.pptx');
+    expect(COMMON_OPERATING_CONTRACT).toMatch(/docgen/i);
+    expect(COMMON_OPERATING_CONTRACT, '技能不可见时的口径').toMatch(/skill is \*\*not\*\* available/i);
+  });
+
+  it('⭐ 不许说"文件已经存在" —— 客户端是在这一轮**结束后**才渲染的（说早了就是假话）', () => {
+    expect(COMMON_OPERATING_CONTRACT).toMatch(/Never claim a file already exists/i);
+    expect(COMMON_OPERATING_CONTRACT).toMatch(/after\*{0,2} your turn ends/i);
   });
 
   it('工作区之外（例如桌面）不许声称能直接拿到', () => {

@@ -482,6 +482,7 @@
     "copied": "Copiado",
     "copyCode": "Copiar código",
     "copyMessage": "Copiar mensagem",
+    "docgenBlock": "Presentation content (the .pptx appears in 产物 on the right)",
     "retryHint": "Reenviar a mensagem anterior — será cobrado novamente",
     "thinkingProcess": "Processo de raciocínio",
     "toolCallSummary": "{{count}} chamadas de ferramenta executadas",

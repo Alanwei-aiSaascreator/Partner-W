@@ -482,6 +482,7 @@
     "copied": "복사됨",
     "copyCode": "코드 복사",
     "copyMessage": "메시지 복사",
+    "docgenBlock": "Presentation content (the .pptx appears in 产物 on the right)",
     "retryHint": "이전 메시지를 다시 보냅니다 (요금이 한 번 더 차감됩니다)",
     "thinkingProcess": "사고 과정",
     "toolCallSummary": "{{count}}개 도구 호출 실행됨",

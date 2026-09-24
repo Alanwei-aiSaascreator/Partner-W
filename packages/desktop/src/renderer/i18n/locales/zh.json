@@ -482,6 +482,7 @@
     "copied": "已复制",
     "copyCode": "复制代码",
     "copyMessage": "复制消息",
+    "docgenBlock": "演示文稿内容（成品见右侧「产物」）",
     "retryHint": "重发上一条消息，会再扣一次积分",
     "thinkingProcess": "思考过程",
     "toolCallSummary": "执行了 {{count}} 个工具调用",

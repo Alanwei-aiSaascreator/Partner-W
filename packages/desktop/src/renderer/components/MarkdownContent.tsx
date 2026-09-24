@@ -2,7 +2,7 @@ import { isValidElement, type ReactNode, useEffect, useState, type ComponentProp
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
-import { Check, Copy, Save, Loader2 } from 'lucide-react';
+import { Check, Copy, Save, Loader2, Presentation } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -214,6 +214,23 @@ export default function MarkdownContent({
               pre: ({ children }: ComponentPropsWithoutRef<'pre'>) => {
                 const code = flattenTextContent(children).replace(/\n$/, '');
                 const lang = extractLang(children);
+                /**
+                 * ⭐ `docgen` 块**不是代码**，是"请生成一份演示文稿"的请求
+                 * （内容 schema 见 `main/docgen/request.ts`）。把原始 JSON 摊给用户看
+                 * 既是噪音、又像是让他去编辑它。这里换成一行卡片：
+                 * 真正的东西是客户端渲染出来的 .pptx，它出现在右侧「产物」里。
+                 */
+                if (lang.toLowerCase() === 'docgen') {
+                  return (
+                    <div
+                      data-testid="docgen-block"
+                      className="my-1.5 flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-2 text-[var(--text-secondary)]"
+                    >
+                      <Presentation size={14} className="shrink-0 text-[var(--accent)]" />
+                      <span className="type-support">{t('chatMessage.docgenBlock')}</span>
+                    </div>
+                  );
+                }
                 return (
                   <div className="group/code relative max-w-full">
                     {lang && (
