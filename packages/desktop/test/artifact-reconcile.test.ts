@@ -89,11 +89,25 @@ describe('artifact reconciliation', () => {
         localPath: 'task-1/总结.docx',
         mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
       }),
+      // ⭐ A 方案的 spike 2：**生成的 .pptx 会被登记成产物**（类型 file、PPTX 的 MIME）。
+      //    这条是「助手做不出 PPT」那件事补完后的落点 —— 文件写进任务目录就会被列出来，
+      //    不需要新 UI（见 docs/superpowers/specs/2026-09-24-local-docgen-design.md §2）。
+      expect.objectContaining({
+        name: '汇报.pptx',
+        type: 'file',
+        localPath: 'task-1/汇报.pptx',
+        mimeType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      }),
     ]);
     expect(result.first.skipped).toEqual(expect.arrayContaining(['.secret.txt', 'draft.tmp', 'empty.pdf', 'inbox']));
     expect(result.second.saved).toEqual([]);
-    expect(result.second.existing).toEqual([expect.objectContaining({ localPath: 'task-1/总结.docx' })]);
-    expect(result.count).toEqual({ count: 1 });
+    expect(result.second.existing).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ localPath: 'task-1/总结.docx' }),
+        expect.objectContaining({ localPath: 'task-1/汇报.pptx' }),
+      ]),
+    );
+    expect(result.count).toEqual({ count: 2 });
   });
 
   it('does not register a file that existed unchanged in the run baseline', () => {

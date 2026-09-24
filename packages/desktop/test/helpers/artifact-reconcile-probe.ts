@@ -59,6 +59,10 @@ async function main(): Promise<Record<string, unknown>> {
   if (scenario === 'lifecycle') {
     const baseline = await captureTaskArtifactBaseline({ workspacePath, taskId: 'task-1' });
     writeFileSync(join(workspacePath, 'task-1', '总结.docx'), 'document');
+    // ⭐ 2026-09-24（A 方案的 spike 2）：将来的 pptx 就长在任务目录里，
+    // 这里显式验它会被登记成产物、类型是 file、MIME 是 PPTX 那一串 ——
+    // 别只靠"docx 能行，pptx 同表"推断。
+    writeFileSync(join(workspacePath, 'task-1', '汇报.pptx'), 'deck');
     writeFileSync(join(workspacePath, 'task-1', '.secret.txt'), 'secret');
     writeFileSync(join(workspacePath, 'task-1', 'draft.tmp'), 'temp');
     writeFileSync(join(workspacePath, 'task-1', 'empty.pdf'), '');
