@@ -347,7 +347,15 @@ export interface CommercialAccountOverview {
 }
 
 export interface CommercialLicenseSummary {
-  /** Whether *this device* holds a non-revoked activation. */
+  /**
+   * 账号**拥有**这张卡 —— 不是"本设备在册"。
+   *
+   * 这两个含义曾经混为一谈：早先它还要求本机在 `license_activations` 里有一行，
+   * 于是重装/换机的人被自己的卡锁在门外，而防的是另一回事（见迁移 20260911000008）。
+   * 现在只看归属：这个账号的计费组织里有生效的卡 ⇒ `true`。
+   * ⚠️ 因此 `activated === true` **不等于**"能用"：卡可能已停用或过期，
+   *    消费侧还要看 `status` / `expiresAt`（见 renderer 的 `evaluateCommercialSendAccess`）。
+   */
   activated: boolean;
   licenseKey: string | null;
   sku: string | null;

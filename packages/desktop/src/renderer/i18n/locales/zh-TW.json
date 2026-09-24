@@ -39,6 +39,7 @@
     "errorNotConfigured": "商業後端未設定",
     "errorNotFound": "找不到該授權碼，請檢查是否輸入有誤",
     "placeholder": "授權碼",
+    "replaceCard": "換一張卡",
     "submit": "啟用",
     "subtitle": "輸入 U 盤隨附的授權碼以綁定到目前帳戶",
     "success": "啟用成功",

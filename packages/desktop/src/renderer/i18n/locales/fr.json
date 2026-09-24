@@ -39,6 +39,7 @@
     "errorNotConfigured": "Commercial backend is not configured",
     "errorNotFound": "That license key was not found, please check for typos",
     "placeholder": "License key",
+    "replaceCard": "Replace card",
     "submit": "Activate",
     "subtitle": "Enter the license key from your USB drive to bind it to this account",
     "success": "Activation succeeded",

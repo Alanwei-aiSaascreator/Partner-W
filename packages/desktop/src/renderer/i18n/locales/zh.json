@@ -39,6 +39,7 @@
     "errorNotConfigured": "商业后端未配置",
     "errorNotFound": "未找到该授权码，请检查是否输入有误",
     "placeholder": "授权码",
+    "replaceCard": "换一张卡",
     "submit": "激活",
     "subtitle": "输入 U 盘随附的授权码以绑定到当前账户",
     "success": "激活成功",

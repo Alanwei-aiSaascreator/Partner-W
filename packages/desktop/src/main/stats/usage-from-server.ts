@@ -31,6 +31,7 @@
 import type { DashboardModelUsage } from '@clawwork/shared';
 import { getCommercialClient } from '../commercial/client.js';
 import { readSessionState } from '../commercial/auth.js';
+import { selectOwnerOrg } from '../commercial/owner-org.js';
 
 const QUERY_TIMEOUT_MS = 8_000;
 const WINDOW_DAYS = 30;
@@ -256,8 +257,10 @@ export async function readServerUsage(): Promise<ServerUsage | null> {
     const state = session.result;
     if (!state.signedIn) return null;
 
-    // 与 auth.ts 一致：只取第一个 org（多组织是罕见路径，且有别处依赖同一口径）
-    const org = state.orgs[0];
+    // 与 auth.ts / license.ts 一致：走同一个选择器（最早加入的 owner 组织）。
+    // 以前这里写的是 `state.orgs[0]`，而那份列表既没排序也没筛角色 ——
+    // 「第一个」不确定，且可能是用户只是 member 的组织，统计会显示成别人的账。
+    const org = selectOwnerOrg(state.orgs);
     if (!org) return null;
 
     const since = isoDaysAgo(WINDOW_DAYS);

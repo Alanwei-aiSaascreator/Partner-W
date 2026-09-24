@@ -30,7 +30,19 @@ vi.mock('electron', () => ({
 vi.mock('../src/main/commercial/client.js', () => ({
   getCommercialClient: () => ({
     auth: { getUser: () => mocks.getUser() },
-    from: () => ({ select: () => mocks.orgsSelect() }),
+    // ⚠️ 查询链是 `select().order().order()`（2026-09-24 加了 order：
+    //    选计费组织要靠 `joined_at` 的先后）。替身必须跟着长出来 ——
+    //    少了 `order` 会抛 TypeError，被 `readSessionState` 的 catch 吞成
+    //    `ok:false`，表现成"两条用例莫名其妙红了"，而不是报一句缺方法。
+    from: () => ({
+      select: () => {
+        const pending = mocks.orgsSelect();
+        const node: Record<string, unknown> = { order: () => node };
+        node.then = (onFulfilled: (v: unknown) => unknown, onRejected?: (e: unknown) => unknown) =>
+          (pending as Promise<unknown>).then(onFulfilled, onRejected);
+        return node;
+      },
+    }),
   }),
   resetCommercialClient: () => {},
 }));
@@ -61,15 +73,25 @@ describe('readSessionState —— 一定会收场', () => {
     expect(res.result?.orgs).toEqual([]);
   });
 
-  it('团队正常返回 ⇒ 照常填进 orgs（正常路径不许被超时改动弄坏）', async () => {
+  it('团队正常返回 ⇒ 照常填进 orgs（含 joined_at —— 选计费组织要靠它）', async () => {
     mocks.getUser.mockResolvedValue({ data: { user: USER }, error: null });
     mocks.orgsSelect.mockResolvedValue({
-      data: [{ role: 'owner', organizations: { id: 'o-1', name: '团队', slug: 't', plan: 'pro' } }],
+      data: [
+        {
+          role: 'owner',
+          joined_at: '2026-01-02T03:04:05Z',
+          organizations: { id: 'o-1', name: '团队', slug: 't', plan: 'pro' },
+        },
+      ],
     });
 
     const res = await readSessionState();
 
-    expect(res.result?.orgs).toEqual([{ id: 'o-1', name: '团队', slug: 't', plan: 'pro', role: 'owner' }]);
+    // ⚠️ `joinedAt` 必须在断言里：忘了从行里把它带出来时，
+    //    `owner-org.ts` 会把该组织当成"加入时间未知"排到最后 —— 静默选错组织。
+    expect(res.result?.orgs).toEqual([
+      { id: 'o-1', name: '团队', slug: 't', plan: 'pro', role: 'owner', joinedAt: '2026-01-02T03:04:05Z' },
+    ]);
   });
 
   it('鉴权那步挂住 ⇒ 收场为未登录（现状不变，回归保护）', async () => {

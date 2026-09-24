@@ -24,6 +24,14 @@ export default function ActivationSection() {
   const [key, setKey] = useState('');
   const [busy, setBusy] = useState(false);
   const [errorKey, setErrorKey] = useState('');
+  /**
+   * 已绑定状态下要不要摊开输入框。
+   *
+   * ⚠️ 「已绑定」**不是**死路：这是全 App 唯一的激活入口（登录页、引导页都没有），
+   *    以前这里一 `return` 就把输入框整个删掉，于是"卡绑在别人组织上/想换一张"
+   *    的用户**无处可输**。现在提示照留，但旁边永远有一条换卡的路。
+   */
+  const [showReplace, setShowReplace] = useState(false);
 
   const licence = overview?.license ?? null;
 
@@ -40,6 +48,7 @@ export default function ActivationSection() {
       }
       toast.success(t('activation.success'));
       setKey('');
+      setShowReplace(false);
       await load();
       await window.clawwork.commercialUsageReport();
     } catch {
@@ -52,13 +61,18 @@ export default function ActivationSection() {
   const inputClass =
     'w-full rounded-lg border border-[var(--border)] bg-[var(--bg-input)] px-4 py-2.5 type-body text-[var(--text-primary)] placeholder:text-[var(--text-muted)] outline-none transition-colors focus:border-[var(--accent)] disabled:opacity-60';
 
-  if (licence?.activated) {
+  if (licence?.activated && !showReplace) {
     return (
       <div className="space-y-5">
         <h3 className="type-section-title text-[var(--text-primary)]">{t('settings.activation')}</h3>
         <SettingGroup title={t('activation.bound')}>
-          <div className="px-5 py-4">
+          <div className="space-y-3 px-5 py-4">
             <InlineNotice tone="info">{t('activation.boundDesc', { sku: licence.sku ?? '-' })}</InlineNotice>
+            {/* ⚠️ 这条不能删：没有它，已绑定的用户就**没有任何地方**能再输一次卡。 */}
+            <Button variant="outline" onClick={() => setShowReplace(true)} className="gap-1.5">
+              <KeyRound size={14} />
+              {t('activation.replaceCard')}
+            </Button>
           </div>
         </SettingGroup>
       </div>
@@ -71,6 +85,10 @@ export default function ActivationSection() {
 
       <SettingGroup title={t('activation.title')} subtitle={t('activation.subtitle')}>
         <div className="space-y-3 px-5 py-4">
+          {/* 从「已绑定」摊开输入框时，别让当前绑的是哪张卡消失。 */}
+          {licence?.activated ? (
+            <InlineNotice tone="info">{t('activation.boundDesc', { sku: licence.sku ?? '-' })}</InlineNotice>
+          ) : null}
           <input
             className={inputClass}
             value={key}

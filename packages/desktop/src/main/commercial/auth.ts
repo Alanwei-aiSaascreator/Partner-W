@@ -8,6 +8,7 @@ import {
   type OtpVerifyFailure,
 } from './auth-classify.js';
 import { getDebugLogger } from '../debug/index.js';
+import { selectOwnerOrg } from './owner-org.js';
 
 export interface CommercialProfile {
   userId: string;
@@ -23,6 +24,12 @@ export interface CommercialOrg {
   slug: string;
   plan: string;
   role: string;
+  /**
+   * `org_members.joined_at`。**必须带出来**：选计费组织靠的就是它，
+   * 没有它就只能退化成"取数组第一个"，而那正是不确定的那一个（见 `owner-org.ts`）。
+   * 缺失时为 `null`，选组织时按"未知排最后"处理。
+   */
+  joinedAt: string | null;
 }
 
 export interface CommercialSessionState {
@@ -363,8 +370,15 @@ export async function readSessionState(): Promise<IpcResult<CommercialSessionSta
     //    之后它就会露出来（界面永远停在加载页）⇒ 必须补上。
     //    超时后仍然报 `signedIn: true`：登录已被 `getUser()` 确认过，只是团队没读出来 ——
     //    说成"未登录"会把已登录的人扔回登录页，那是另一种撒谎。
+    // ⚠️ 必须自己 order：PostgREST 不给顺序保证，而下游选计费组织要靠 `joined_at`
+    //    与 `org_id` 的先后（与 `activate_license` 的 ORDER BY 逐字一致）。
+    //    少了 order，同一份数据两次读出来的 `orgs[0]` 都可能不同。
     const membershipsResult = await withTimeoutOrNull(
-      supabase.from('org_members').select('role, organizations(id, name, slug, plan)'),
+      supabase
+        .from('org_members')
+        .select('role, joined_at, organizations(id, name, slug, plan)')
+        .order('joined_at', { ascending: true })
+        .order('org_id', { ascending: true }),
       'org_members.select',
     );
     const memberships = membershipsResult?.data;
@@ -384,6 +398,7 @@ export async function readSessionState(): Promise<IpcResult<CommercialSessionSta
         slug: org.slug,
         plan: org.plan,
         role: String(row.role ?? 'member'),
+        joinedAt: row.joined_at ? String(row.joined_at) : null,
       });
     }
 
@@ -437,7 +452,13 @@ export async function readAccountOverview(): Promise<IpcResult<CommercialAccount
       return { ok: false, error: 'Not signed in', errorCode: 'not_signed_in' };
     }
 
-    const org = session.orgs[0] ?? null;
+    // ⚠️ 2026-09-24 修：以前这里是 `session.orgs[0]`，而 `readSessionState` 当时
+    //    既没 order 也没 role 过滤 ⇒ 取到的是**任意的**一个所属组织，可能是
+    //    用户只是 member 的组织。后果：界面把那个组织的卡显示成
+    //    「当前账户已绑定 {sku}」，用户既用不了、又因为激活页那时不渲染输入框而换不掉。
+    //    现在统一走 `selectOwnerOrg`（最早加入的 **owner** 组织，与服务端
+    //    `activate_license` / `license.ts` 的 `firstOwnerOrg()` 同一口径）。
+    const org = selectOwnerOrg(session.orgs);
 
     let license: CommercialLicenseSummary | null = null;
     if (org) {

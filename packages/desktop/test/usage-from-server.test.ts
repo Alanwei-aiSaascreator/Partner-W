@@ -23,6 +23,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const fromMock = vi.fn();
 const getUserMock = vi.fn();
 
+/**
+ * 会话里的组织列表**可变**：组织选择那一条要换不同的列表来读，
+ * 而 `vi.mock` 的工厂是提升的，所以必须经 `vi.hoisted` 传进去。
+ */
+const hoisted = vi.hoisted(() => ({
+  orgs: [{ id: 'org-1', name: 'org', slug: 'org', plan: 'pro', role: 'owner', joinedAt: '2026-01-01T00:00:00Z' }],
+}));
+
+/** 记录查询打在了哪个 org_id 上 —— 只看返回值的话，"选错组织但恰好也拿得到数" 会漏过。 */
+const eqCalls: Array<[string, unknown]> = [];
+
 vi.mock('../src/main/commercial/client.js', () => ({
   getCommercialClient: () => ({ from: fromMock, auth: { getUser: getUserMock } }),
 }));
@@ -33,7 +44,7 @@ vi.mock('../src/main/commercial/auth.js', () => ({
     result: {
       signedIn: true,
       profile: { userId: 'u1', email: null, phone: null, nickname: null, avatar: null },
-      orgs: [{ id: 'org-1', name: 'org', slug: 'org', plan: 'pro', role: 'owner' }],
+      orgs: hoisted.orgs,
     },
   }),
 }));
@@ -45,7 +56,10 @@ function tableChain(result: { data: unknown; error: unknown }) {
   const chain: Record<string, unknown> = {};
   const self = () => chain;
   chain.select = self;
-  chain.eq = self;
+  chain.eq = (column: string, value: unknown) => {
+    eqCalls.push([column, value]);
+    return chain;
+  };
   chain.gte = self;
   chain.limit = self;
   chain.maybeSingle = async () => result;
@@ -115,6 +129,13 @@ const V2_TIER = {
 
 beforeEach(() => {
   fromMock.mockReset();
+  // ⚠️ 这两行是**防串台**：组织列表与 eq 记录都是模块级的，
+  //    不重置的话，下面的组织选择用例会把列表留给后面的用例
+  //    （2026-09-24 在 use-chat-send 上栽过一次同样的坑）。
+  hoisted.orgs = [
+    { id: 'org-1', name: 'org', slug: 'org', plan: 'pro', role: 'owner', joinedAt: '2026-01-01T00:00:00Z' },
+  ];
+  eqCalls.length = 0;
 });
 
 describe('readServerUsage', () => {
@@ -405,5 +426,36 @@ describe('readServerUsage —— M4 透明计费口径', () => {
 
     const m = (await readServerUsage())!.models[0];
     expect(m.costMicros).toBe(5352960 + 12345);
+  });
+
+  /**
+   * ⭐ 2026-09-24：统计也要取**计费组织**（最早加入的 owner 组织），
+   * 与 `auth.ts` / `license.ts` 同一口径。
+   *
+   * 以前这里是 `state.orgs[0]`，而那份列表既没排序也没筛角色 ⇒
+   * 一个 user 早先以 member 身份加入过别人的组织时，
+   * 统计页显示的就是**别人组织的用量**。
+   */
+  it('取的是本账号的 owner 组织，不是列表里的第一个（member 组织排在前面也不行）', async () => {
+    hoisted.orgs = [
+      { id: 'org-member', name: 'm', slug: 'm', plan: 'pro', role: 'member', joinedAt: '2026-01-01T00:00:00Z' },
+      { id: 'org-owner', name: 'o', slug: 'o', plan: 'pro', role: 'owner', joinedAt: '2026-06-01T00:00:00Z' },
+    ];
+    mockTables([row({ day: '2026-09-10', actual_cost_micros: 1 })], []);
+
+    await readServerUsage();
+
+    const queriedOrgs = eqCalls.filter(([column]) => column === 'org_id').map(([, value]) => value);
+    expect(queriedOrgs, '两个视图都必须打在本账号的 owner 组织上').toEqual(['org-owner', 'org-owner']);
+    expect(queriedOrgs).not.toContain('org-member');
+  });
+
+  it('没有 owner 组织 ⇒ 不查任何组织（降级成「暂无数据」，不拿别人的账顶上）', async () => {
+    hoisted.orgs = [
+      { id: 'org-member', name: 'm', slug: 'm', plan: 'pro', role: 'member', joinedAt: '2026-01-01T00:00:00Z' },
+    ];
+
+    expect(await readServerUsage()).toBeNull();
+    expect(eqCalls).toEqual([]);
   });
 });
