@@ -31,6 +31,7 @@ import { motionDuration, motionEase } from '@/styles/design-tokens';
 import { loadOnboardingProfile, saveOnboardingProfile, type OnboardingProfile } from '@/lib/user-onboarding';
 import { AUTH_CHECK_FALLBACK_MS, resolveAppEntryScreen, runAuthBootstrap } from '@/lib/app-entry-flow';
 import { parseBetaRoute } from '@/features/internal-beta/beta-route';
+import { useGatewayDisappearanceNotice } from '@/lib/gateway-disappearance';
 
 function AppToaster({ themeMode }: { themeMode: Theme }) {
   return (
@@ -99,6 +100,10 @@ export default function App() {
   }, [setMainView]);
 
   useGatewayBootstrap();
+  // 网关从本机消失时给一条说明（`useGatewaySelector` 那边是**静默**换掉的）。
+  // ⚠️ 挂在 App 而不是 MainArea：打开设置会卸载 MainArea（`settingsOpen ? <Settings/> : <MainArea/>`），
+  //    那期间的"消失"就会被漏掉，且回来时基准重置 ⇒ 一句都不报。
+  useGatewayDisappearanceNotice();
   const startupReadiness = useStartupReadiness(ready);
   useWorkspaceRefresh();
   useUpdateCheck();

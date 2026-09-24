@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 
+import fs from 'node:fs';
+import path from 'node:path';
 import { act, type ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -134,5 +136,21 @@ describe('useGatewayDisappearanceNotice —— 说给用户', () => {
     act(() => setGateways({ a: { id: 'a', name: '甲盘' }, b: { id: 'b', name: '乙盘' } }));
     expect(mocks.warning).not.toHaveBeenCalled();
     unmount();
+  });
+
+  /**
+   * ⭐ 挂载位置也是**行为的一部分**（2026-09-25 我自己先挂错了）。
+   *
+   * `App.tsx` 是 `settingsOpen ? <Settings/> : <MainArea/>` ⇒ **打开设置会卸载 MainArea**。
+   * 挂在那儿的话：那段时间的"消失"漏掉，而且回来时 hook 重挂、`previousRef` 重置
+   * ⇒ 一句都不会报（一个静默的漏报，测试全绿）。
+   */
+  it('⭐ 挂在 App（全程在挂），不是挂在 MainArea（开设置就卸载）', () => {
+    const renderer = path.resolve(__dirname, '..', 'src', 'renderer');
+    const app = fs.readFileSync(path.join(renderer, 'App.tsx'), 'utf8');
+    const mainArea = fs.readFileSync(path.join(renderer, 'layouts', 'MainArea', 'index.tsx'), 'utf8');
+
+    expect(app, 'App.tsx 必须挂这个 hook').toContain('useGatewayDisappearanceNotice()');
+    expect(mainArea, 'MainArea 会被设置页卸载，不能挂在这儿').not.toContain('useGatewayDisappearanceNotice()');
   });
 });

@@ -61,7 +61,6 @@ import TasksPanel from '@/layouts/TasksPanel';
 import KnowledgeBase from '@/layouts/KnowledgeBase';
 import { useUsageStore } from '@/stores/usageStore';
 import { useQuotaRefreshOnTurnEnd } from '@/hooks/useQuotaRefreshOnTurnEnd';
-import { useGatewayDisappearanceNotice } from '@/lib/gateway-disappearance';
 import DataTable, { type DataTableColumn } from '@/components/data-display/DataTable';
 import EmptyState from '@/components/semantic/EmptyState';
 import StatusTag from '@/components/semantic/StatusTag';
@@ -1290,9 +1289,9 @@ export default function MainArea({
   // 挂在 MainArea 而不是 ChatHeader：后者带 key、切任务会重挂，会多触发。
   useQuotaRefreshOnTurnEnd();
 
-  // 网关从本机消失时给一条说明（`useGatewaySelector` 那边是**静默**换掉的）。
-  // 挂在这里 = 只有进了工作区才报：用户在登录页/引导页时被切走，等回来时这句就没意义了。
-  useGatewayDisappearanceNotice();
+  // ⚠️ 「网关消失」那条说明**不挂在这里**（我一开始挂这儿，错了）：打开设置会**卸载 MainArea**
+  //    （`App.tsx` 是 `settingsOpen ? <Settings/> : <MainArea/>`）⇒ 那期间的消失会被漏掉，
+  //    回来时 hook 重挂、基准重置 ⇒ 一句都不会报。它挂在 `App.tsx`（全程在挂）。
 
   return (
     <div className="flex flex-col h-full">
