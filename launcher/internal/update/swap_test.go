@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -56,14 +57,15 @@ func (process *fakeProcess) exit(err error) {
 }
 
 type harnessOps struct {
-	inner    Ops
-	clock    *fakeClock
-	process  *fakeProcess
-	alive    map[int]bool
-	records  []recordedOp
-	startEnv []string
-	counts   map[string]int
-	faults   []fault
+	inner      Ops
+	clock      *fakeClock
+	process    *fakeProcess
+	alive      map[int]bool
+	records    []recordedOp
+	startEnv   []string
+	counts     map[string]int
+	faults     []fault
+	lockFaults []lockFault
 }
 
 func newHarnessOps() *harnessOps {
@@ -104,7 +106,11 @@ func (ops *harnessOps) gateAfter(operation string) error {
 
 func (ops *harnessOps) Rename(oldPath, newPath string) error {
 	ops.record("rename", oldPath, newPath)
+	attempt := ops.counts["rename"] + 1
 	if err := ops.gate("rename"); err != nil {
+		return err
+	}
+	if err := ops.lockGate(attempt, oldPath, newPath); err != nil {
 		return err
 	}
 	err := ops.inner.Rename(oldPath, newPath)
@@ -112,6 +118,38 @@ func (ops *harnessOps) Rename(oldPath, newPath string) error {
 		err = ops.gateAfter("rename")
 	}
 	return err
+}
+
+// lockFault makes rename attempts fail the way Windows does while something
+// still holds the tree. errno decides which message the error carries; the
+// retry policy keys off the number, not the text.
+//
+// contains limits the fault to renames touching that path (empty means any):
+// the transaction write is itself an atomic rename, so counting attempts alone
+// would aim at the wrong call. last <= 0 means "every attempt from first on".
+type lockFault struct {
+	contains string
+	first    int
+	last     int
+	errno    int
+}
+
+func (ops *harnessOps) lockGate(attempt int, oldPath, newPath string) error {
+	for _, injected := range ops.lockFaults {
+		if injected.contains != "" &&
+			!strings.Contains(oldPath, injected.contains) &&
+			!strings.Contains(newPath, injected.contains) {
+			continue
+		}
+		last := injected.last
+		if last <= 0 {
+			last = 1 << 30
+		}
+		if attempt >= injected.first && attempt <= last {
+			return &os.LinkError{Op: "rename", Old: oldPath, New: newPath, Err: syscall.Errno(injected.errno)}
+		}
+	}
+	return nil
 }
 
 func (ops *harnessOps) RemoveAll(path string) error {

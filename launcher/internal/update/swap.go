@@ -70,6 +70,21 @@ func scopedRename(ops Ops, transaction TransactionV1, oldPath, newPath string) e
 	return ops.Rename(oldPath, newPath)
 }
 
+// scopedRenameWithRetry is the same rename for the moves that happen while
+// another process may still hold the tree. The launcher is spawned by the app
+// it is replacing and the app is still exiting, so on a real disk the first
+// attempt fails with a lock error and the whole update used to be refused
+// there. See renameWithRetry for which errors are worth waiting on.
+func scopedRenameWithRetry(ops Ops, transaction TransactionV1, oldPath, newPath string) error {
+	if err := assertScopedTarget(transaction, oldPath); err != nil {
+		return err
+	}
+	if err := assertScopedTarget(transaction, newPath); err != nil {
+		return err
+	}
+	return renameWithRetry(ops, oldPath, newPath)
+}
+
 func scopedMkdirAll(ops Ops, transaction TransactionV1, target string) error {
 	if !isInsideOrEqual(transaction.UpdateRoot, target) || compareKey(target) == compareKey(transaction.UpdateRoot) {
 		return fmt.Errorf("%w: %s is not a directory inside the update root", ErrUnsafePath, target)
@@ -179,11 +194,11 @@ func Apply(ctx context.Context, transaction TransactionV1, publicKey ed25519.Pub
 	if err := scopedMkdirAll(ops, transaction, filepath.Dir(transaction.BackupProgramPath)); err != nil {
 		return err
 	}
-	if err := scopedRename(ops, transaction, transaction.CurrentProgramPath, transaction.BackupProgramPath); err != nil {
+	if err := scopedRenameWithRetry(ops, transaction, transaction.CurrentProgramPath, transaction.BackupProgramPath); err != nil {
 		return err
 	}
-	if err := scopedRename(ops, transaction, transaction.StagedProgramPath, transaction.CurrentProgramPath); err != nil {
-		_ = scopedRename(ops, transaction, transaction.BackupProgramPath, transaction.CurrentProgramPath)
+	if err := scopedRenameWithRetry(ops, transaction, transaction.StagedProgramPath, transaction.CurrentProgramPath); err != nil {
+		_ = scopedRenameWithRetry(ops, transaction, transaction.BackupProgramPath, transaction.CurrentProgramPath)
 		return err
 	}
 
@@ -259,7 +274,7 @@ func Rollback(_ context.Context, transaction TransactionV1, ops Ops) error {
 			return err
 		}
 	}
-	if err := scopedRename(ops, transaction, transaction.BackupProgramPath, transaction.CurrentProgramPath); err != nil {
+	if err := scopedRenameWithRetry(ops, transaction, transaction.BackupProgramPath, transaction.CurrentProgramPath); err != nil {
 		return err
 	}
 	if err := scopedRemoveAll(ops, transaction, filepath.Dir(transaction.StagedProgramPath)); err != nil {
