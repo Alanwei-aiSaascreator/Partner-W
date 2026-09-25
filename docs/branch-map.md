@@ -48,20 +48,24 @@ git worktree add .worktrees/<主题> -b fix/<主题> fix/local-credential-exposu
 
 ⚠️ **只有本地、Gitee 上没有的**：`backup/internal-beta-ui-20260916`、`feat/local-file-artifact-loop`（后者的工作树就是开发线所在处）。要留给别人就得推。
 
-## 4. 发版相关（版本线：0.0.26 已冻结 · 0.0.27 → 0.0.28 已出 · **当前在做 0.0.29**）
+## 4. 发版相关（版本线：0.0.26 已冻结 · 当前 **0.0.34 已发 internal**）
 
 - **0.0.26 已冻结**：标签 `udisk-0.0.26` → `871675be`（annotated，已推 Gitee）；
   交付夹 `D:\Desktop\魔方生成outpu\荣盈魔方U盘交付-0.0.26\`（196 文件 / 781 MB）。
-- **0.0.27 基础包**与 **0.0.28 更新包**都已出：
-  - 0.0.28 候选产物固化在 `D:\Desktop\魔方生成outpu\0.0.28-internal-candidate\`（**回滚材料，别删别动**）；
-  - 已发到**测试频道 internal**（`/updates/internal/manifest.json` → 0.0.28）；
-    **`stable` 与 `beta` 目录都还是 404**，`/updates/latest.yml` 仍指 0.0.23。
+- **当前在测试频道 internal 上的是 `0.0.34`**（2026-09-26 发布，`integration/p0` @ `93f08b20`）：
+  - 候选产物（含 `PROVENANCE.md` / `SHA256SUMS.txt`）= `D:\Desktop\魔方生成outpu\0.0.34-internal-candidate\`；
+  - 线上 `/updates/internal/manifest.json` 的 sha256 = `68c4c341…`，与候选目录里那份**逐字节相同**；
+  - `minLauncherVersion = 0.0.28`（= 盘上那把启动器，`--version` 当场跑过）；
+  - 前面的 `0.0.28 / 0.0.29 / 0.0.30 / 0.0.31 / 0.0.32 / 0.0.33` 候选目录都还在，**回滚材料，别删别动**。
+  - **`stable` 与 `beta` 目录仍然 404**，`/updates/latest.yml` 仍指 0.0.23（那是**装机版**的更新源，与便携链无关）。
 - ⚠️ **便携态的可见性**：客户端默认频道是 `stable`，而 internal 只在**频道设成 `beta`** 时可见
   （`packages/desktop/src/main/ipc/update-handlers.ts`：`beta → internal`，其余 → `stable`）。
   所以"发了 internal"≠"盘上立刻能看到"。
+- ⚠️ **发布用的 SSH 是 `root@47.119.120.28`**（`--host` 要带 `root@`）。
+  只写 IP 会退化成 `29315@` ⇒ `Permission denied (publickey)`。
 - **当前版本号在 `packages/desktop/package.json`**（唯一一处；根 `package.json` 没有 `version`）。
   ⛔ 发新版必须**升号**：`portable-manifest.ts` 的判据是 `compareSemanticVersions(manifest.version, currentVersion) <= 0`
-  ⇒ **同版本号不算更新**，用 0.0.28 覆盖 0.0.28 谁都不动。
+  ⇒ **同版本号不算更新**，用 0.0.34 覆盖 0.0.34 谁都不动。
 - **构建必须从 `D:\p4-rel` 这种短路径检出跑**（worktree 路径 >260 字符 ⇒ NSIS 必挂；
   且 worktree 没有 `runtime-out` ⇒ `beforePack` 硬失败），且**要 `build:win` 不是 `--dir`**
   （`--dir` 少 `resources/app-update.yml` 与 `resources/elevate.exe`，而前者正是更新检查要读的）。
