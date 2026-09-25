@@ -48,13 +48,24 @@ git worktree add .worktrees/<主题> -b fix/<主题> fix/local-credential-exposu
 
 ⚠️ **只有本地、Gitee 上没有的**：`backup/internal-beta-ui-20260916`、`feat/local-file-artifact-loop`（后者的工作树就是开发线所在处）。要留给别人就得推。
 
-## 4. 0.0.26 已冻结（发版相关）
+## 4. 发版相关（版本线：0.0.26 已冻结 · 0.0.27 → 0.0.28 已出 · **当前在做 0.0.29**）
 
-- **标签 `udisk-0.0.26` → `871675be`**（annotated，已推 Gitee）；`871675be` = 版本号提交，且是**主线的祖先**。
-- **构建检出**：`D:\p4-rel`（detached HEAD @ `871675be`）——**产物冻结，不许再构建、不许改**。
-- **交付夹**：`D:\Desktop\魔方生成outpu\荣盈魔方U盘交付-0.0.26\`（196 文件 / 781 MB）。
-- **下一版是 0.0.27**（源码里的版本号暂时留在 0.0.26，未动）。
-- 构建必须从 `D:\p4-rel` 这种**短路径检出**跑（worktree 路径 >260 字符 ⇒ NSIS 必挂；且 worktree 没有 `runtime-out` ⇒ `beforePack` 硬失败）。
+- **0.0.26 已冻结**：标签 `udisk-0.0.26` → `871675be`（annotated，已推 Gitee）；
+  交付夹 `D:\Desktop\魔方生成outpu\荣盈魔方U盘交付-0.0.26\`（196 文件 / 781 MB）。
+- **0.0.27 基础包**与 **0.0.28 更新包**都已出：
+  - 0.0.28 候选产物固化在 `D:\Desktop\魔方生成outpu\0.0.28-internal-candidate\`（**回滚材料，别删别动**）；
+  - 已发到**测试频道 internal**（`/updates/internal/manifest.json` → 0.0.28）；
+    **`stable` 与 `beta` 目录都还是 404**，`/updates/latest.yml` 仍指 0.0.23。
+- ⚠️ **便携态的可见性**：客户端默认频道是 `stable`，而 internal 只在**频道设成 `beta`** 时可见
+  （`packages/desktop/src/main/ipc/update-handlers.ts`：`beta → internal`，其余 → `stable`）。
+  所以"发了 internal"≠"盘上立刻能看到"。
+- **当前版本号在 `packages/desktop/package.json`**（唯一一处；根 `package.json` 没有 `version`）。
+  ⛔ 发新版必须**升号**：`portable-manifest.ts` 的判据是 `compareSemanticVersions(manifest.version, currentVersion) <= 0`
+  ⇒ **同版本号不算更新**，用 0.0.28 覆盖 0.0.28 谁都不动。
+- **构建必须从 `D:\p4-rel` 这种短路径检出跑**（worktree 路径 >260 字符 ⇒ NSIS 必挂；
+  且 worktree 没有 `runtime-out` ⇒ `beforePack` 硬失败），且**要 `build:win` 不是 `--dir`**
+  （`--dir` 少 `resources/app-update.yml` 与 `resources/elevate.exe`，而前者正是更新检查要读的）。
+  详见 `docs/runbooks/portable-update-release.md` 第 1 步。
 - 另有几个裸检出 `D:\mfbuild`、`D:\mfr025b/c/d`：**只用于构建，别在里面提交**。
 
 ## 5. 本机推拉的三条硬规矩

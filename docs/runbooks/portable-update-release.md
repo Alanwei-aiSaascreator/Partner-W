@@ -42,16 +42,28 @@
 
 ```powershell
 $env:MOFANG_UPDATE_PUBLIC_KEY_B64 = '<与私钥匹配的 SPKI Base64 公钥>'
-pnpm --filter @clawwork/desktop build
-pnpm --filter @clawwork/desktop exec electron-builder --win --x64 --dir --publish never
+pnpm --filter @clawwork/desktop build:win
 ```
 
+⚠️ **必须 `build:win`（含 nsis 目标），不能只跑 `electron-builder --dir`**（2026-09-25 更正）。
+`--dir` 出的 `win-unpacked` **少两件文件**：`resources/app-update.yml`(111 B) 与
+`resources/elevate.exe`(107520 B) —— 而 `app-update.yml` 正是**更新检查要读的那份**。
+`--dir` 不算"更快的同一种包"，它**是另一种包**（两次构建的 `app.asar` 逐字节相同，差别只在这两件）。
+本文件早先那版写的就是 `--dir`，0.0.27 / 0.0.28 实际出货用的是 `build:win`；
+差异证据见 `docs/superpowers/plans/2026-09-23-portable-update-gaps.md` 的 §16。
+
+⚠️ **在哪构建**：必须在**短路径检出**（`D:\p4-rel`）里跑 —— 内层 worktree 路径 >260 字符 ⇒
+**NSIS 那一步必挂**。该检出还要有 `runtime-out/`（含 `kb-model/bge-small-zh-v1.5/`）与 `our-skills/`，
+否则 `beforePack` 的 `require-bundled-runtime` 直接拒（从 worktree 构建时要先 `mklink /J` 过去）。
+
 ⚠️ **公钥现在是构建前置**（2026-09-23 起）：`build` 与 `electron-builder` 的
-`beforePack` 都会拒绝一个**不含更新公钥**的应用（`scripts/require-update-public-key.cjs`），
+`beforePack` 都会拒绝一个**不含更新公钥**的应用（`packages/desktop/scripts/require-update-public-key.cjs`），
 不再像以前那样静默注入空串、打出一个"检查更新永远失败且报成 signature-invalid"的包。
 所以这一格必须先把公钥设好 —— 与第 3 步用的是**同一把**（两侧各自内嵌、各自独立验签）。
 
 预期目录是 `packages/desktop/dist/win-unpacked`。不要把安装器、运行数据或旧 `.bat` 混入该目录。
+**构建完先自己核一遍产物**（别只看命令退出码）：`resources/` 里那两件文件在不在、
+`out/main/index.js` 里有没有那把公钥、`afterPack` 的密钥扫描过没过。
 
 ### 2. 运行全部门禁
 
