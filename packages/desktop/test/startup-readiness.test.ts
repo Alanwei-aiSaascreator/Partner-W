@@ -1,6 +1,12 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { ModelCatalogEntry, WorkspaceFsIdentity } from '@clawwork/shared';
-import { deriveStartupReadiness, startupBlockerText, startupFailureText } from '../src/renderer/lib/startup-readiness';
+import {
+  deriveStartupReadiness,
+  gatewayFailureText,
+  startupBlockerText,
+  startupFailureText,
+} from '../src/renderer/lib/startup-readiness';
 import type { PresetAgentBootstrapSnapshot } from '../src/renderer/lib/preset-agent-bootstrap';
 
 const idleAssistants: PresetAgentBootstrapSnapshot = {
@@ -619,5 +625,81 @@ describe('本机运行时起不来：把「为什么」如实说出来，连上�
     expect(result.ai.phase).toBe('error');
     expect(result.relayFailure).toBeTruthy();
     expect(result.ai.failureReason).toBeNull();
+  });
+});
+
+/**
+ * ⭐ C2：**四类失败各自说得出话**。
+ *
+ * 原来只有一句笼统的「暂时没有可用模型」—— 端口被别的程序占着、凭据被拒、
+ * 我们自己的子进程早退、等就绪等满超时，用户看到的是**同一句话**，
+ * 而它们该做的事完全不同（关掉那个程序 / 查凭据 / 重新准备 / 等或重试）。
+ */
+describe('网关失败：四类各自说得出话，说不清的交给通用那句', () => {
+  const key = (k: string) => k;
+  /** 真的 zh 文案（`startupReadiness` 那一层）。 */
+  const readZh = (): Record<string, string> =>
+    (
+      JSON.parse(readFileSync(new URL('../src/renderer/i18n/locales/zh.json', import.meta.url), 'utf8')) as {
+        startupReadiness: Record<string, string>;
+      }
+    ).startupReadiness;
+  const strip = (fullKey: string | null): string => (fullKey ?? '').replace('startupReadiness.', '');
+  const withReason = (reason: 'port-occupied' | 'auth-rejected' | 'process-exited' | 'ready-timeout' | 'unknown') =>
+    deriveStartupReadiness({
+      gatewayId: 'gw-1',
+      gatewayStatus: 'disconnected',
+      rawModelCatalog: undefined,
+      catalogFailed: false,
+      assistantSnapshot: idleAssistants,
+      runtimeBootstrapFailure: reason,
+    });
+
+  it('端口被占 ⇒ 说得出是"被别的程序占用"', () => {
+    expect(gatewayFailureText(withReason('port-occupied'), key)).toBe('startupReadiness.gatewayPortOccupied');
+  });
+
+  it('凭据被拒 ⇒ 说得出是"网关拒绝了这次连接"', () => {
+    expect(gatewayFailureText(withReason('auth-rejected'), key)).toBe('startupReadiness.gatewayAuthRejected');
+  });
+
+  it('子进程早退 / 等就绪超时 ⇒ 各自一句', () => {
+    expect(gatewayFailureText(withReason('process-exited'), key)).toBe('startupReadiness.gatewayProcessExited');
+    expect(gatewayFailureText(withReason('ready-timeout'), key)).toBe('startupReadiness.gatewayReadyTimeout');
+  });
+
+  it('⭐ `unknown` **不冒充**具体原因：交给通用那句', () => {
+    expect(gatewayFailureText(withReason('unknown'), key)).toBeNull();
+  });
+
+  it('⭐ 没有结论时也不编（还没失败就没有失败的话）', () => {
+    const clean = deriveStartupReadiness({
+      gatewayId: 'gw-1',
+      gatewayStatus: 'connecting',
+      rawModelCatalog: undefined,
+      catalogFailed: false,
+      assistantSnapshot: idleAssistants,
+    });
+    expect(gatewayFailureText(clean, key)).toBeNull();
+  });
+
+  it('⭐⭐ 四句中文**两两不同**（抄错一句就会两处一模一样）', () => {
+    // 用**真文案**而不是 key：key 天然互不相同，那样这条就白测了。
+    const zh = readZh();
+    // ⚠️ 返回的是**带前缀**的 key，查表前要去掉前缀（第一版就是栽在这里）。
+    const texts = (['port-occupied', 'auth-rejected', 'process-exited', 'ready-timeout'] as const).map(
+      (reason) => zh[strip(gatewayFailureText(withReason(reason), key))],
+    );
+    expect(texts.every((text) => typeof text === 'string' && text.length > 0)).toBe(true);
+    expect(new Set(texts).size, '四句话必须互不相同').toBe(4);
+  });
+
+  it('⭐⭐ 被拒那句**不许带凭据类字样**（它要过 IPC、上界面、进截图）', () => {
+    const zh = readZh();
+    const text = zh[strip(gatewayFailureText(withReason('auth-rejected'), key))];
+    expect(typeof text).toBe('string');
+    for (const forbidden of ['token', 'Token', 'TOKEN', '密钥', '卡密', '手机号', '验证码']) {
+      expect(text).not.toContain(forbidden);
+    }
   });
 });

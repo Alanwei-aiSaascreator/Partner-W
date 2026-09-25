@@ -40,6 +40,22 @@ export default function TeamsPanel() {
 
   const teams = useMemo(() => Object.values(teamsMap), [teamsMap]);
 
+  /**
+   * ⭐ C3：哪些团队**要进的那个助手不在本机**。
+   *
+   * ⚠️ 判据与 `handleStartChat` 用的是**同一个** `decideTeamChatEntry` ——
+   *    两处各判一次就迟早只改一处（卡片说"能聊"、点下去却被拒，那种自相矛盾最伤信任）。
+   * ⚠️ 目录还没拉回来时它是 `loading`，**不算缺装** —— 那时卡片不该报"需要安装"。
+   */
+  const teamsNeedingInstall = useMemo(() => {
+    const ids = new Set<string>();
+    for (const team of teams) {
+      const decision = decideTeamChatEntry({ agents: team.agents, catalog: agentCatalogByGateway[team.gatewayId] });
+      if (decision.kind === 'agent-missing') ids.add(team.id);
+    }
+    return ids;
+  }, [teams, agentCatalogByGateway]);
+
   useEffect(() => {
     loadTeams();
   }, [loadTeams]);
@@ -187,6 +203,7 @@ export default function TeamsPanel() {
                     <TeamCard
                       key={team.id}
                       team={team}
+                      needsInstall={teamsNeedingInstall.has(team.id)}
                       onSelect={() => setSelectedTeamId(team.id)}
                       onStartChat={() => handleStartChat(team.id)}
                       onEdit={() => handleEdit(team.id)}

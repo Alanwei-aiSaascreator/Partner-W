@@ -1793,6 +1793,10 @@
   "startupReadiness": {
     "aiCatalogFailed": "沒能取到模型列表",
     "aiError": "暫時沒有可用模型",
+    "gatewayPortOccupied": "18789 端口被其他程序占用，本应用不会关闭它。请先关掉占用它的程序，再重新准备。",
+    "gatewayAuthRejected": "网关拒绝了这次连接。请检查激活状态，或换一张卡后重新准备。",
+    "gatewayProcessExited": "AI 服务启动后很快就退出了。可以重新准备再试一次。",
+    "gatewayReadyTimeout": "等 AI 服务就绪超时了。这台机器上它没能起来，可以重新准备再试一次。",
     "aiLoadingModels": "正在準備可用模型",
     "aiReady": "模型已準備好",
     "aiStarting": "正在啟動 AI 服務",
@@ -1874,6 +1878,7 @@
     "noAgents": "暫無可用 Agent",
 
     "agentNotInstalled": "这个团队的助手还没装到本机，先把它装上再开始对话。",
+    "needsInstall": "需要安装",
     "position": {
       "challenger": "質疑者",
       "expert": "領域專家",

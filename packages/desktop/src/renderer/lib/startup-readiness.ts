@@ -99,6 +99,26 @@ export function relayFailureText(failure: StartupRelayFailure, t: (key: string) 
 }
 
 /**
+ * **网关起不来**时那句**具体**的话（`null` = 没有具体结论，交给通用那句）。
+ *
+ * ⭐ C2：原来四类失败共用一句「暂时没有可用模型」，可它们该做的事完全不同 ——
+ * 端口被别的程序占着（去关掉它）、凭据被拒（去查激活/网关）、我们自己子进程早退
+ * （重新准备多半有用）、等就绪等满超时（这台机器上它起不来）。
+ *
+ * ⚠️ `unknown` **一律返回 `null`**：它就是"说不清"，返回一句具体的话等于替它编。
+ *    调用方接着落到 `startupReadiness.aiError`（笼统但**不假**）。
+ * ⚠️ 被拒那句**不许出现任何凭据类字样**：这句要过 IPC、上界面、进截图。
+ */
+export function gatewayFailureText(readiness: StartupReadiness, t: (key: string) => string): string | null {
+  const reason = readiness.ai.failureReason ?? null;
+  if (reason === 'port-occupied') return t('startupReadiness.gatewayPortOccupied');
+  if (reason === 'auth-rejected') return t('startupReadiness.gatewayAuthRejected');
+  if (reason === 'process-exited') return t('startupReadiness.gatewayProcessExited');
+  if (reason === 'ready-timeout') return t('startupReadiness.gatewayReadyTimeout');
+  return null;
+}
+
+/**
  * 就绪度里**已知失败**的那句话（`null` = 没有已知失败）。
  *
  * 欢迎屏工作台那一格用它：原来 `!ready` 一律转圈 + 说"正在启动 AI 服务"，
@@ -110,6 +130,9 @@ export function startupFailureText(readiness: StartupReadiness, t: (key: string)
   if (readiness.relayFailure) return relayFailureText(readiness.relayFailure, t);
   // 目录那两档也是有结论的失败，同样不该被说成"还在准备"。
   if (readiness.ai.phase === 'catalog-failed') return t('startupReadiness.aiCatalogFailed');
+  // ⭐ 网关**说得出是哪一类**时，那句比通用的具体得多（C2）。
+  const gatewayFailure = gatewayFailureText(readiness, t);
+  if (gatewayFailure) return gatewayFailure;
   if (readiness.ai.phase === 'error') return t('startupReadiness.aiError');
   // ⭐ 助手的失败里，**文件系统**那一档是有结论的（重试不会变），必须说出来 ——
   //    否则用户按面板上那句"重新准备"再点一百次，也还是六个助手全失败。

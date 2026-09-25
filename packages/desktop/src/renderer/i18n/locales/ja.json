@@ -1793,6 +1793,10 @@
   "startupReadiness": {
     "aiCatalogFailed": "モデル一覧を取得できませんでした",
     "aiError": "現在利用できるモデルがありません",
+    "gatewayPortOccupied": "Port 18789 is held by another program. This app will not close it - close that program, then prepare again.",
+    "gatewayAuthRejected": "The gateway rejected this connection. Check the activation state, or use another card and prepare again.",
+    "gatewayProcessExited": "The AI service started and then exited. Prepare again to retry.",
+    "gatewayReadyTimeout": "Timed out waiting for the AI service to become ready. It did not come up on this machine - prepare again to retry.",
     "aiLoadingModels": "利用可能なモデルを準備しています",
     "aiReady": "モデルの準備ができました",
     "aiStarting": "AIサービスを起動しています",
@@ -1874,6 +1878,7 @@
     "noAgents": "利用可能なエージェントがありません",
 
     "agentNotInstalled": "This team's assistant is not installed on this machine yet. Install it before starting a chat.",
+    "needsInstall": "Install required",
     "position": {
       "challenger": "反論役",
       "expert": "専門家",

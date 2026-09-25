@@ -1793,6 +1793,10 @@
   "startupReadiness": {
     "aiCatalogFailed": "Não foi possível obter a lista de modelos",
     "aiError": "Nenhum modelo está disponível no momento",
+    "gatewayPortOccupied": "Port 18789 is held by another program. This app will not close it - close that program, then prepare again.",
+    "gatewayAuthRejected": "The gateway rejected this connection. Check the activation state, or use another card and prepare again.",
+    "gatewayProcessExited": "The AI service started and then exited. Prepare again to retry.",
+    "gatewayReadyTimeout": "Timed out waiting for the AI service to become ready. It did not come up on this machine - prepare again to retry.",
     "aiLoadingModels": "Preparando os modelos disponíveis",
     "aiReady": "Os modelos estão prontos",
     "aiStarting": "Iniciando o serviço de IA",
@@ -1874,6 +1878,7 @@
     "noAgents": "Nenhum agente disponível",
 
     "agentNotInstalled": "This team's assistant is not installed on this machine yet. Install it before starting a chat.",
+    "needsInstall": "Install required",
     "position": {
       "challenger": "Questionador",
       "expert": "Especialista",

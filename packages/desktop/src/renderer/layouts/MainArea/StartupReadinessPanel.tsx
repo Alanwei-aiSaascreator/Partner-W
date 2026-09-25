@@ -3,7 +3,12 @@ import { CheckCircle2, FolderOpen, KeyRound, LoaderCircle, RefreshCw, TriangleAl
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
 import { PRESET_AGENT_DEFINITIONS } from '@/lib/preset-agents';
-import { relayFailureText, startupBlockerText, type StartupReadiness } from '@/lib/startup-readiness';
+import {
+  gatewayFailureText,
+  relayFailureText,
+  startupBlockerText,
+  type StartupReadiness,
+} from '@/lib/startup-readiness';
 import { formatElapsed } from '@/lib/waiting-copy';
 import { useUiStore } from '@/stores/uiStore';
 
@@ -16,6 +21,10 @@ function currentStatus(readiness: StartupReadiness, t: Translate): string {
   if (readiness.ai.phase === 'loading-models') return t('startupReadiness.aiLoadingModels');
   // 取不到 ≠ 没有模型：这句得说"没能取到"，否则用户会以为自己的账号/网关真的没模型。
   if (readiness.ai.phase === 'catalog-failed') return t('startupReadiness.aiCatalogFailed');
+  // ⭐ 网关**说得出是哪一类**时用它那句（C2）：它比"暂时没有可用模型"具体得多，
+  //    而且四类各自指向不同的下一步。说不清（`unknown`）时它会返回 null，落到通用那句。
+  const gatewayFailure = gatewayFailureText(readiness, t);
+  if (gatewayFailure) return gatewayFailure;
   if (readiness.ai.phase === 'error') return t('startupReadiness.aiError');
 
   const assistants = readiness.assistants;
