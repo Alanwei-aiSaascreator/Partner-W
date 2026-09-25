@@ -3,7 +3,7 @@ import { motion } from 'framer-motion';
 import { ExternalLink, Loader2, Copy, Check, X } from 'lucide-react';
 import hljs from 'highlight.js';
 import { useTranslation } from 'react-i18next';
-import type { Artifact } from '@clawwork/shared';
+import type { Artifact, ArtifactPreview } from '@clawwork/shared';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { motion as motionPresets } from '@/styles/design-tokens';
@@ -97,19 +97,57 @@ export default function FilePreview({ artifact, onNavigateToTask, onClose }: Fil
   const title = getArtifactLabel(artifact, t);
   const isCode = encoding === 'utf-8' && !isMarkdown(artifact.name) && !isImage(artifact.mimeType);
 
+  const [preview, setPreview] = useState<ArtifactPreview | null>(null);
+
+  /**
+   * PDF 的 blob URL（提到这一层是为了让它**不经过 ScrollArea** —— 见下面渲染处的说明）。
+   *
+   * ⚠️ 用 blob URL 而不是 `file://`：渲染层是沙箱化的，直接指文件路径会被挡；
+   *    而 blob URL 交给 **Chromium 自带的阅读器**（实测：不会触发下载 ⇒ 是内嵌渲染）。
+   * ⚠️ 每次换预览都要 `revokeObjectURL`，否则几十兆的字节会一直挂在内存里。
+   */
+  const [pdfUrl, setPdfUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (preview?.kind !== 'pdf') {
+      setPdfUrl(null);
+      return;
+    }
+    const bytes = Uint8Array.from(atob(preview.dataBase64), (c) => c.charCodeAt(0));
+    const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
+    setPdfUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [preview]);
+
   useEffect(() => {
     setLoading(true);
     setError(null);
     setContent(null);
-    window.clawwork.readArtifactFile(artifact.id, artifact.taskId).then((res) => {
-      if (res.ok && res.result) {
-        const r = res.result as { content: string; encoding: string };
-        setContent(r.content);
-        setEncoding(r.encoding as 'utf-8' | 'base64');
-      } else {
-        setError(res.error ?? 'failed to read file');
+    setPreview(null);
+
+    const readPlain = () => {
+      window.clawwork.readArtifactFile(artifact.id, artifact.taskId).then((res) => {
+        if (res.ok && res.result) {
+          const r = res.result as { content: string; encoding: string };
+          setContent(r.content);
+          setEncoding(r.encoding as 'utf-8' | 'base64');
+        } else {
+          setError(res.error ?? 'failed to read file');
+        }
+        setLoading(false);
+      });
+    };
+
+    // ⭐ **先问富预览**：主进程认得 .docx/.xlsx/.pptx/.pdf 就把它读成能渲染的形状；
+    //    认不出会回 `unsupported`，那时再走老路（读文本/图片）。
+    //    ⚠️ 认不认得**只由主进程一处判**（`previewKindFor`）—— 渲染层再写一份扩展名清单，
+    //       两份迟早只改一处，而症状是功能对某种格式**静默不生效**。
+    window.clawwork.previewArtifact(artifact.id, artifact.taskId).then((res) => {
+      if (res.ok && res.result && res.result.kind !== 'unsupported') {
+        setPreview(res.result);
+        setLoading(false);
+        return;
       }
-      setLoading(false);
+      readPlain();
     });
   }, [artifact.id, artifact.taskId]);
 
@@ -144,23 +182,33 @@ export default function FilePreview({ artifact, onNavigateToTask, onClose }: Fil
         </div>
       </header>
 
-      <ScrollArea className="flex-1">
-        {loading && (
-          <div className="flex items-center justify-center py-16">
-            <Loader2 size={20} className="animate-spin text-[var(--text-muted)]" />
-          </div>
-        )}
-        {error && <p className="type-support px-4 py-8 text-center text-[var(--danger)]">{error}</p>}
-        {!loading && !error && content !== null && (
-          <PreviewContent
-            content={content}
-            encoding={encoding}
-            mimeType={artifact.mimeType}
-            name={artifact.name}
-            alt={title}
-          />
-        )}
-      </ScrollArea>
+      {/* ⭐ PDF **不放进 ScrollArea**：它自带滚动（Chromium 阅读器），套在滚动容器里会变成
+          嵌套滚动 —— 滚轮滚谁全看指针在哪，很难用。所以整块换成"占满剩余高度"的容器，
+          高度由外层 flex 给（`min-h-0` 是让它在 flex 里能真的收缩），**不写任何任意值**。 */}
+      {pdfUrl ? (
+        <div className="min-h-0 flex-1">
+          <iframe title={t('filePreview.pdfTitle')} src={pdfUrl} className="h-full w-full border-0" />
+        </div>
+      ) : (
+        <ScrollArea className="flex-1">
+          {loading && (
+            <div className="flex items-center justify-center py-16">
+              <Loader2 size={20} className="animate-spin text-[var(--text-muted)]" />
+            </div>
+          )}
+          {error && <p className="type-support px-4 py-8 text-center text-[var(--danger)]">{error}</p>}
+          {!loading && !error && preview !== null && <RichPreview preview={preview} />}
+          {!loading && !error && content !== null && (
+            <PreviewContent
+              content={content}
+              encoding={encoding}
+              mimeType={artifact.mimeType}
+              name={artifact.name}
+              alt={title}
+            />
+          )}
+        </ScrollArea>
+      )}
 
       <div className="flex-shrink-0 border-t border-[var(--border)] px-4 py-2.5">
         <Button
@@ -242,5 +290,99 @@ function PreviewContent({
     <p className="type-support px-4 py-8 text-center text-[var(--text-muted)]">
       {t('filePreview.cannotPreview')} ({mimeType})
     </p>
+  );
+}
+
+/**
+ * ⭐ **富预览**：把 `.docx` / `.xlsx` / `.pptx` / `.pdf` 直接画出来。
+ *
+ * 为什么要有它：我们自己就能生成前三种（docgen），而这块组件以前只认图片 / Markdown / 代码
+ * ⇒ **用户做完一份东西，在应用里看不见它**，只能导出去用 Office 开。
+ *
+ * ⚠️ docx / pptx 是**文字大纲**，不是像素级还原（那要引渲染库，而这个仓库加依赖有前科）。
+ *    界面上**如实标出来**，不许让用户以为"我的文档就这么简陋"。
+ */
+function TruncatedNote() {
+  const { t } = useTranslation();
+  return (
+    <p className="type-meta mt-2 text-[var(--text-muted)]" data-testid="preview-truncated">
+      {t('filePreview.truncated')}
+    </p>
+  );
+}
+
+function RichPreview({ preview }: { preview: ArtifactPreview }) {
+  const { t } = useTranslation();
+
+  if (preview.kind === 'sheet') {
+    return (
+      <div className="space-y-4 p-4">
+        {preview.sheets.map((sheet) => (
+          <section key={sheet.name}>
+            <h4 className="type-label mb-1.5 text-[var(--text-secondary)]">{sheet.name}</h4>
+            <div className="overflow-x-auto">
+              <table className="type-meta border-collapse">
+                <tbody>
+                  {sheet.rows.map((row, r) => (
+                    <tr key={r}>
+                      {row.map((cell, c) => (
+                        <td
+                          key={c}
+                          className="whitespace-pre-wrap border border-[var(--border)] px-2 py-1 align-top text-[var(--text-primary)]"
+                        >
+                          {cell}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        ))}
+        {preview.truncated && <TruncatedNote />}
+      </div>
+    );
+  }
+
+  if (preview.kind === 'docx') {
+    return (
+      <div className="space-y-2 p-4">
+        {preview.paragraphs.map((line, i) => (
+          <p key={i} className="type-body whitespace-pre-wrap text-[var(--text-primary)]">
+            {line}
+          </p>
+        ))}
+        {preview.truncated && <TruncatedNote />}
+      </div>
+    );
+  }
+
+  if (preview.kind === 'pptx') {
+    return (
+      <div className="space-y-4 p-4">
+        {preview.slides.map((slide) => (
+          <section key={slide.index} className="rounded-lg border border-[var(--border)] p-3">
+            <h4 className="type-meta mb-1.5 text-[var(--text-muted)]">
+              {t('filePreview.slideLabel', { index: slide.index })}
+            </h4>
+            {slide.lines.length === 0 ? (
+              <p className="type-meta text-[var(--text-muted)]">{t('filePreview.slideEmpty')}</p>
+            ) : (
+              slide.lines.map((line, i) => (
+                <p key={i} className="type-body whitespace-pre-wrap text-[var(--text-primary)]">
+                  {line}
+                </p>
+              ))
+            )}
+          </section>
+        ))}
+        {preview.truncated && <TruncatedNote />}
+      </div>
+    );
+  }
+
+  return (
+    <p className="type-support px-4 py-8 text-center text-[var(--text-muted)]">{t('filePreview.cannotPreview')}</p>
   );
 }

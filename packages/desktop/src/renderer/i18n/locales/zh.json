@@ -894,7 +894,11 @@
     "goToSource": "跳转到源消息",
     "goToSourceShort": "跳转到源消息",
     "openInEditor": "在编辑器中打开",
-    "revealInFolder": "在访达中显示"
+    "pdfTitle": "PDF 预览",
+    "revealInFolder": "在访达中显示",
+    "slideEmpty": "（这一页没有文字）",
+    "slideLabel": "第 {{index}} 页",
+    "truncated": "内容较长，这里只显示了前面一部分。"
   },
   "firstTaskCompletion": {
     "continue": "继续完善",
@@ -1606,13 +1610,13 @@
     "passwordRequired": "密码不能为空",
     "portableUpdate": {
       "applying": "正在更新，请勿拔出 U 盘。",
+      "cancel": "取消",
+      "downloadAndPrepare": "下载并准备更新",
       "later": "稍后",
       "preparing": "正在后台准备更新，你可以继续使用荣盈魔方。",
       "ready": "版本 {{version}} 已准备好，重启后完成更新。",
       "restartNow": "立即重启更新",
-      "rolledBack": "更新未完成，已恢复到版本 {{version}}，现有数据未受影响。",
-      "downloadAndPrepare": "下载并准备更新",
-      "cancel": "取消"
+      "rolledBack": "更新未完成，已恢复到版本 {{version}}，现有数据未受影响。"
     },
     "portableUpdateHint": "U 盘版不自动更新：拿到新版本后，用新的「荣盈魔方」文件夹替换盘上那份即可。",
     "pressShortcut": "按下快捷键...",
@@ -1793,10 +1797,6 @@
   "startupReadiness": {
     "aiCatalogFailed": "没能取到模型列表",
     "aiError": "暂时没有可用模型",
-    "gatewayPortOccupied": "18789 端口被其他程序占用，本应用不会关闭它。请先关掉占用它的程序，再重新准备。",
-    "gatewayAuthRejected": "网关拒绝了这次连接。请检查激活状态，或换一张卡后重新准备。",
-    "gatewayProcessExited": "AI 服务启动后很快就退出了。可以重新准备再试一次。",
-    "gatewayReadyTimeout": "等 AI 服务就绪超时了。这台机器上它没能起来，可以重新准备再试一次。",
     "aiLoadingModels": "正在准备可用模型",
     "aiReady": "模型已准备好",
     "aiStarting": "正在启动 AI 服务",
@@ -1808,6 +1808,11 @@
     "assistantsVerifying": "正在检查内置助手",
     "assistantsWaiting": "等待 AI 服务启动",
     "description": "首次启动通常需要约 1 分钟，准备完成后会自动进入首页。",
+    "elapsed": "已等 {{time}}",
+    "gatewayAuthRejected": "网关拒绝了这次连接。请检查激活状态，或换一张卡后重新准备。",
+    "gatewayPortOccupied": "18789 端口被其他程序占用，本应用不会关闭它。请先关掉占用它的程序，再重新准备。",
+    "gatewayProcessExited": "AI 服务启动后很快就退出了。可以重新准备再试一次。",
+    "gatewayReadyTimeout": "等 AI 服务就绪超时了。这台机器上它没能起来，可以重新准备再试一次。",
     "keepOpen": "请保持应用开启，无需重复操作。",
     "notAnInstall": "这不是安装：程序不写进系统，也不创建桌面图标。首次启动会把运行环境准备到本机缓存，拔掉 U 盘后仍可继续用。",
     "openActivation": "去激活",
@@ -1821,7 +1826,6 @@
     "relayRetryable": "商业服务还没准备好，你可以再试一次",
     "retry": "重新准备",
     "takingLonger": "准备时间比平时更久，你可以留在工作台内重新尝试。",
-    "elapsed": "已等 {{time}}",
     "title": "正在准备荣盈魔方",
     "workspaceFilesystemUnsupported": "工作区所在的盘不支持：助手要在里面读写自己的身份文件，而在这块盘上这一步必然失败。请把工作区换到 exFAT 或 NTFS 的盘（或另一个文件夹），再重新准备。",
     "workspaceUnwritable": "工作区不可写：助手要在里面读写自己的身份文件，现在连一个探测文件都建不出来。请检查这块盘是不是只读、是不是满了，或换一个文件夹。"
@@ -1851,6 +1855,7 @@
     "viewArtifacts": "查看成果"
   },
   "teams": {
+    "agentNotInstalled": "这个团队的助手还没装到本机，先把它装上再开始对话。",
     "confirmDeleteDesc": "确定删除「{{name}}」？此操作将移除团队配置。Agent 将保留在 Gateway 上，可在设置中管理。",
     "confirmDeleteTitle": "删除团队",
     "createTeam": "创建团队",
@@ -1875,10 +1880,8 @@
     "gateway": "网关",
     "memberCount": "{{count}} 位成员",
     "namePlaceholder": "输入团队名称",
-    "noAgents": "暂无可用 Agent",
-
-    "agentNotInstalled": "这个团队的助手还没装到本机，先把它装上再开始对话。",
     "needsInstall": "需要安装",
+    "noAgents": "暂无可用 Agent",
     "position": {
       "challenger": "质疑者",
       "expert": "领域专家",

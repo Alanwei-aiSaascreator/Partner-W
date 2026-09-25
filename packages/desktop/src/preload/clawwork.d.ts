@@ -44,6 +44,7 @@ import type {
   ImportFilesResult,
   Artifact,
   ArtifactSaveAsResult,
+  ArtifactPreview,
   GatewayFailureReason,
   RuntimeBootstrapStatus,
   RelayBootstrapPublicState,
@@ -501,6 +502,12 @@ export interface ClawWorkAPI {
   listArtifacts: (taskId?: string) => Promise<IpcResult<Artifact[]>>;
   getArtifact: (id: string) => Promise<IpcResult<Artifact>>;
   readArtifactFile: (artifactId: string, taskId?: string) => Promise<IpcResult>;
+  /**
+   * 富预览：`.docx` / `.xlsx` / `.pptx` / `.pdf` 读成界面能直接渲染的形状。
+   *
+   * ⚠️ 形状与主进程的 `ArtifactPreview` **必须一致**（IPC 是运行时边界，两边各写一份类型）。
+   */
+  previewArtifact: (artifactId: string, taskId?: string) => Promise<IpcResult<ArtifactPreview>>;
   readArtifactThumbnail: (
     artifactId: string,
     taskId?: string,

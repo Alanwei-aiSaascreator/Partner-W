@@ -163,6 +163,9 @@ function buildApi(): ClawWorkAPI {
       ipcRenderer.invoke('artifact:read-file', { artifactId, taskId }),
     readArtifactThumbnail: (artifactId: string, taskId?: string, size?: number) =>
       ipcRenderer.invoke('artifact:thumbnail', { artifactId, taskId, size }),
+    //   ⭐ 富预览：我们自己产的 .docx/.xlsx/.pptx 在应用里能看（PDF 也走这条）
+    previewArtifact: (artifactId: string, taskId?: string) =>
+      ipcRenderer.invoke('artifact:preview', { artifactId, taskId }),
     onArtifactSaved: (callback: (artifact: Artifact) => void) => {
       const listener = (_event: Electron.IpcRendererEvent, artifact: Artifact): void => {
         callback(artifact);

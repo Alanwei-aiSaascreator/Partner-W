@@ -894,7 +894,11 @@
     "goToSource": "Ir para a mensagem de origem",
     "goToSourceShort": "Ir para Origem",
     "openInEditor": "Abrir no Editor",
-    "revealInFolder": "Mostrar no Finder"
+    "pdfTitle": "PDF preview",
+    "revealInFolder": "Mostrar no Finder",
+    "slideEmpty": "(no text on this slide)",
+    "slideLabel": "Slide {{index}}",
+    "truncated": "This is long, so only the beginning is shown."
   },
   "firstTaskCompletion": {
     "continue": "Refine result",
@@ -1606,13 +1610,13 @@
     "passwordRequired": "A senha é obrigatória",
     "portableUpdate": {
       "applying": "Atualizando. Não remova o drive USB.",
+      "cancel": "Cancelar",
+      "downloadAndPrepare": "Baixar e preparar",
       "later": "Mais tarde",
       "preparing": "Preparando a atualização em segundo plano. Você pode continuar usando o aplicativo.",
       "ready": "A versão {{version}} está pronta. Reinicie para concluir a atualização.",
       "restartNow": "Reiniciar e atualizar agora",
-      "rolledBack": "A atualização não foi concluída. A versão {{version}} foi restaurada e seus dados não foram afetados.",
-      "downloadAndPrepare": "Baixar e preparar",
-      "cancel": "Cancelar"
+      "rolledBack": "A atualização não foi concluída. A versão {{version}} foi restaurada e seus dados não foram afetados."
     },
     "portableUpdateHint": "A versão portátil (USB) não se atualiza sozinha. Para atualizar, substitua a pasta do programa na unidade pela nova versão.",
     "pressShortcut": "Pressione o atalho...",
@@ -1793,10 +1797,6 @@
   "startupReadiness": {
     "aiCatalogFailed": "Não foi possível obter a lista de modelos",
     "aiError": "Nenhum modelo está disponível no momento",
-    "gatewayPortOccupied": "Port 18789 is held by another program. This app will not close it - close that program, then prepare again.",
-    "gatewayAuthRejected": "The gateway rejected this connection. Check the activation state, or use another card and prepare again.",
-    "gatewayProcessExited": "The AI service started and then exited. Prepare again to retry.",
-    "gatewayReadyTimeout": "Timed out waiting for the AI service to become ready. It did not come up on this machine - prepare again to retry.",
     "aiLoadingModels": "Preparando os modelos disponíveis",
     "aiReady": "Os modelos estão prontos",
     "aiStarting": "Iniciando o serviço de IA",
@@ -1808,6 +1808,11 @@
     "assistantsVerifying": "Verificando os assistentes incluídos",
     "assistantsWaiting": "Aguardando o serviço de IA",
     "description": "A primeira inicialização costuma levar cerca de um minuto. A página inicial abrirá automaticamente ao terminar.",
+    "elapsed": "Waiting {{time}}",
+    "gatewayAuthRejected": "The gateway rejected this connection. Check the activation state, or use another card and prepare again.",
+    "gatewayPortOccupied": "Port 18789 is held by another program. This app will not close it - close that program, then prepare again.",
+    "gatewayProcessExited": "The AI service started and then exited. Prepare again to retry.",
+    "gatewayReadyTimeout": "Timed out waiting for the AI service to become ready. It did not come up on this machine - prepare again to retry.",
     "keepOpen": "Mantenha o aplicativo aberto. Não é necessário repetir nenhuma ação.",
     "notAnInstall": "Não é uma instalação: nada é gravado no sistema e nenhum atalho é criado. Na primeira inicialização, o ambiente de execução é preparado num cache local para continuar a funcionar depois de remover o USB.",
     "openActivation": "Abrir ativação",
@@ -1821,7 +1826,6 @@
     "relayRetryable": "O serviço comercial ainda não está pronto. Você pode tentar de novo.",
     "retry": "Preparar novamente",
     "takingLonger": "This is taking longer than usual. You can retry without leaving the workspace.",
-    "elapsed": "Waiting {{time}}",
     "title": "Preparando o Rongying Cube",
     "workspaceFilesystemUnsupported": "O disco do espaço de trabalho não é compatível: os assistentes precisam ler e gravar ali os próprios arquivos de identidade, e essa etapa sempre falha neste sistema de arquivos. Mova o espaço de trabalho para um disco exFAT ou NTFS (ou outra pasta) e prepare novamente.",
     "workspaceUnwritable": "O espaço de trabalho não permite gravação: os assistentes precisam ler e gravar ali os próprios arquivos de identidade, mas nem um arquivo de teste pode ser criado. Verifique se o disco é somente leitura ou está cheio, ou escolha outra pasta."
@@ -1851,6 +1855,7 @@
     "viewArtifacts": "View artifacts"
   },
   "teams": {
+    "agentNotInstalled": "This team's assistant is not installed on this machine yet. Install it before starting a chat.",
     "confirmDeleteDesc": "Excluir \"{{name}}\"? A configuração da equipe será removida. Os agentes permanecerão no Gateway e podem ser gerenciados em Configurações.",
     "confirmDeleteTitle": "Excluir equipe",
     "createTeam": "Criar equipe",
@@ -1875,10 +1880,8 @@
     "gateway": "Gateway",
     "memberCount": "{{count}} membros",
     "namePlaceholder": "Nome da equipe",
-    "noAgents": "Nenhum agente disponível",
-
-    "agentNotInstalled": "This team's assistant is not installed on this machine yet. Install it before starting a chat.",
     "needsInstall": "Install required",
+    "noAgents": "Nenhum agente disponível",
     "position": {
       "challenger": "Questionador",
       "expert": "Especialista",

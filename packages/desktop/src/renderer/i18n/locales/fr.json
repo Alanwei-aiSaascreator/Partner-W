@@ -894,7 +894,11 @@
     "goToSource": "Aller au message source",
     "goToSourceShort": "Voir la source",
     "openInEditor": "Ouvrir dans l'éditeur",
-    "revealInFolder": "Afficher dans le Finder"
+    "pdfTitle": "PDF preview",
+    "revealInFolder": "Afficher dans le Finder",
+    "slideEmpty": "(no text on this slide)",
+    "slideLabel": "Slide {{index}}",
+    "truncated": "This is long, so only the beginning is shown."
   },
   "firstTaskCompletion": {
     "continue": "Refine result",
@@ -1606,13 +1610,13 @@
     "passwordRequired": "Le mot de passe est requis",
     "portableUpdate": {
       "applying": "Mise à jour en cours. Ne débranchez pas la clé USB.",
+      "cancel": "Annuler",
+      "downloadAndPrepare": "Télécharger et préparer",
       "later": "Plus tard",
       "preparing": "Préparation de la mise à jour en arrière-plan. Vous pouvez continuer à utiliser l'application.",
       "ready": "La version {{version}} est prête. Redémarrez pour terminer la mise à jour.",
       "restartNow": "Redémarrer et mettre à jour",
-      "rolledBack": "La mise à jour n'a pas abouti. La version {{version}} a été restaurée, vos données sont intactes.",
-      "downloadAndPrepare": "Télécharger et préparer",
-      "cancel": "Annuler"
+      "rolledBack": "La mise à jour n'a pas abouti. La version {{version}} a été restaurée, vos données sont intactes."
     },
     "portableUpdateHint": "La version portable (USB) ne se met pas à jour automatiquement. Pour mettre à niveau, remplacez le dossier du programme sur la clé par la nouvelle version.",
     "pressShortcut": "Appuyez sur le raccourci...",
@@ -1793,10 +1797,6 @@
   "startupReadiness": {
     "aiCatalogFailed": "Impossible d’obtenir la liste des modèles",
     "aiError": "Aucun modèle n’est disponible pour le moment",
-    "gatewayPortOccupied": "Port 18789 is held by another program. This app will not close it - close that program, then prepare again.",
-    "gatewayAuthRejected": "The gateway rejected this connection. Check the activation state, or use another card and prepare again.",
-    "gatewayProcessExited": "The AI service started and then exited. Prepare again to retry.",
-    "gatewayReadyTimeout": "Timed out waiting for the AI service to become ready. It did not come up on this machine - prepare again to retry.",
     "aiLoadingModels": "Préparation des modèles disponibles",
     "aiReady": "Les modèles sont prêts",
     "aiStarting": "Démarrage du service IA",
@@ -1808,6 +1808,11 @@
     "assistantsVerifying": "Vérification des assistants inclus",
     "assistantsWaiting": "En attente du service IA",
     "description": "Le premier démarrage prend généralement environ une minute. L’accueil s’ouvrira automatiquement ensuite.",
+    "elapsed": "Waiting {{time}}",
+    "gatewayAuthRejected": "The gateway rejected this connection. Check the activation state, or use another card and prepare again.",
+    "gatewayPortOccupied": "Port 18789 is held by another program. This app will not close it - close that program, then prepare again.",
+    "gatewayProcessExited": "The AI service started and then exited. Prepare again to retry.",
+    "gatewayReadyTimeout": "Timed out waiting for the AI service to become ready. It did not come up on this machine - prepare again to retry.",
     "keepOpen": "Gardez l’application ouverte. Aucune action répétée n’est nécessaire.",
     "notAnInstall": "Ce n'est pas une installation : rien n'est écrit dans le système et aucun raccourci n'est créé. Au premier lancement, l'environnement d'exécution est préparé dans un cache local pour continuer à fonctionner après avoir retiré la clé USB.",
     "openActivation": "Ouvrir l’activation",
@@ -1821,7 +1826,6 @@
     "relayRetryable": "Le service commercial n’est pas encore prêt. Vous pouvez réessayer.",
     "retry": "Préparer à nouveau",
     "takingLonger": "This is taking longer than usual. You can retry without leaving the workspace.",
-    "elapsed": "Waiting {{time}}",
     "title": "Préparation de Rongying Cube",
     "workspaceFilesystemUnsupported": "Le disque de l'espace de travail n'est pas pris en charge : les assistants doivent y lire et écrire leurs fichiers d'identité, et cette étape échoue toujours sur ce système de fichiers. Déplacez l'espace de travail vers un disque exFAT ou NTFS (ou un autre dossier), puis relancez la préparation.",
     "workspaceUnwritable": "L'espace de travail n'est pas accessible en écriture : les assistants doivent y lire et écrire leurs fichiers d'identité, mais même un fichier de test ne peut pas être créé. Vérifiez si le disque est en lecture seule ou plein, ou choisissez un autre dossier."
@@ -1851,6 +1855,7 @@
     "viewArtifacts": "View artifacts"
   },
   "teams": {
+    "agentNotInstalled": "This team's assistant is not installed on this machine yet. Install it before starting a chat.",
     "confirmDeleteDesc": "Supprimer « {{name}} » ? Cela retire la configuration de l'équipe. Les agents resteront sur la Passerelle et pourront être gérés dans les Réglages.",
     "confirmDeleteTitle": "Supprimer l'équipe",
     "createTeam": "Créer une équipe",
@@ -1875,10 +1880,8 @@
     "gateway": "Passerelle",
     "memberCount": "{{count}} membres",
     "namePlaceholder": "Saisissez le nom de l'équipe",
-    "noAgents": "Aucun agent disponible",
-
-    "agentNotInstalled": "This team's assistant is not installed on this machine yet. Install it before starting a chat.",
     "needsInstall": "Install required",
+    "noAgents": "Aucun agent disponible",
     "position": {
       "challenger": "Contradicteur",
       "expert": "Expert",

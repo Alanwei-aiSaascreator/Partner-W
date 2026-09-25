@@ -9,11 +9,9 @@
  */
 
 import ExcelJS from 'exceljs';
+import type { SheetPreview } from '@clawwork/shared';
 
-export interface SheetPreview {
-  name: string;
-  rows: string[][];
-}
+export type { SheetPreview };
 
 export interface SheetPreviewResult {
   sheets: SheetPreview[];
@@ -79,7 +77,10 @@ export async function readSheetPreview(
 
   const workbook = new ExcelJS.Workbook();
   try {
-    await workbook.xlsx.load(new Uint8Array(buffer));
+    // ⚠️ 转换是**必需**的：exceljs 的类型签名用的是它自己那份旧 `Buffer`，
+    //    而我们这边的 `@types/node` 已经把 `Buffer` 泛型化了（`Buffer<ArrayBufferLike>`）。
+    //    两者在运行时是同一个东西，只是类型版本不同 —— 不是真的不兼容。
+    await workbook.xlsx.load(buffer as unknown as Parameters<typeof workbook.xlsx.load>[0]);
   } catch (err) {
     // ⚠️ 抛**我们自己的**错（带一句人话），别把 exceljs 的原话透出去 ——
     //    那里面可能带文件路径，而这句话要上界面。

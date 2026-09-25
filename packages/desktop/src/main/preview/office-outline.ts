@@ -9,6 +9,7 @@
  * 依赖：只用 `node:zlib`（经由 `zip-entry`），零新依赖。
  */
 
+import type { PptxSlidePreview } from '@clawwork/shared';
 import { listZipEntries, readZipEntry } from './zip-entry.js';
 
 /** 上限：一份几十页的文档全铺出来会卡。 */
@@ -31,10 +32,6 @@ export function decodeXmlEntities(text: string): string {
       // &amp; 放最后：先解它会把 `&amp;lt;` 变成 `<`（那是不对的，它本来就该显示 `&lt;`）
       .replace(/&amp;/g, '&')
   );
-}
-
-function escapeRe(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 /**
@@ -77,11 +74,7 @@ export async function readDocxOutline(buffer: Buffer): Promise<DocxOutline> {
   };
 }
 
-export interface PptxSlide {
-  /** **页码从 1 开始**，按文件的真实页序（不是文件名字典序）。 */
-  index: number;
-  lines: string[];
-}
+export type PptxSlide = PptxSlidePreview;
 
 export interface PptxOutline {
   slides: PptxSlide[];

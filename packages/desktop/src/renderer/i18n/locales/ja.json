@@ -894,7 +894,11 @@
     "goToSource": "元のメッセージへ移動",
     "goToSourceShort": "元のメッセージ",
     "openInEditor": "エディターで開く",
-    "revealInFolder": "Finder で表示"
+    "pdfTitle": "PDF preview",
+    "revealInFolder": "Finder で表示",
+    "slideEmpty": "(no text on this slide)",
+    "slideLabel": "Slide {{index}}",
+    "truncated": "This is long, so only the beginning is shown."
   },
   "firstTaskCompletion": {
     "continue": "Refine result",
@@ -1606,13 +1610,13 @@
     "passwordRequired": "パスワードは必須です",
     "portableUpdate": {
       "applying": "更新中です。USB ドライブを抜かないでください。",
+      "cancel": "キャンセル",
+      "downloadAndPrepare": "ダウンロードして準備",
       "later": "あとで",
       "preparing": "バックグラウンドで更新を準備しています。引き続きご利用いただけます。",
       "ready": "バージョン {{version}} の準備ができました。再起動すると更新が完了します。",
       "restartNow": "今すぐ再起動して更新",
-      "rolledBack": "更新は完了しませんでした。バージョン {{version}} に戻しました。データは影響を受けていません。",
-      "downloadAndPrepare": "ダウンロードして準備",
-      "cancel": "キャンセル"
+      "rolledBack": "更新は完了しませんでした。バージョン {{version}} に戻しました。データは影響を受けていません。"
     },
     "portableUpdateHint": "USB（ポータブル）版は自動更新されません。新しいバージョンを入手したら、ドライブ上のプログラムフォルダーを差し替えてください。",
     "pressShortcut": "ショートカットを入力...",
@@ -1793,10 +1797,6 @@
   "startupReadiness": {
     "aiCatalogFailed": "モデル一覧を取得できませんでした",
     "aiError": "現在利用できるモデルがありません",
-    "gatewayPortOccupied": "Port 18789 is held by another program. This app will not close it - close that program, then prepare again.",
-    "gatewayAuthRejected": "The gateway rejected this connection. Check the activation state, or use another card and prepare again.",
-    "gatewayProcessExited": "The AI service started and then exited. Prepare again to retry.",
-    "gatewayReadyTimeout": "Timed out waiting for the AI service to become ready. It did not come up on this machine - prepare again to retry.",
     "aiLoadingModels": "利用可能なモデルを準備しています",
     "aiReady": "モデルの準備ができました",
     "aiStarting": "AIサービスを起動しています",
@@ -1808,6 +1808,11 @@
     "assistantsVerifying": "内蔵アシスタントを確認しています",
     "assistantsWaiting": "AIサービスの起動を待っています",
     "description": "初回起動には通常約1分かかります。準備が完了すると自動でホームを開きます。",
+    "elapsed": "Waiting {{time}}",
+    "gatewayAuthRejected": "The gateway rejected this connection. Check the activation state, or use another card and prepare again.",
+    "gatewayPortOccupied": "Port 18789 is held by another program. This app will not close it - close that program, then prepare again.",
+    "gatewayProcessExited": "The AI service started and then exited. Prepare again to retry.",
+    "gatewayReadyTimeout": "Timed out waiting for the AI service to become ready. It did not come up on this machine - prepare again to retry.",
     "keepOpen": "アプリを開いたままお待ちください。操作を繰り返す必要はありません。",
     "notAnInstall": "これはインストールではありません。システムには何も書き込まれず、デスクトップにショートカットも作成されません。初回起動時に実行環境をローカルキャッシュに準備するため、USB メモリを抜いても続けて使えます。",
     "openActivation": "認証を開く",
@@ -1821,7 +1826,6 @@
     "relayRetryable": "商用サービスの準備がまだ整っていません。もう一度お試しいただけます。",
     "retry": "もう一度準備する",
     "takingLonger": "This is taking longer than usual. You can retry without leaving the workspace.",
-    "elapsed": "Waiting {{time}}",
     "title": "Rongying Cube を準備しています",
     "workspaceFilesystemUnsupported": "ワークスペースのあるディスクは未対応です：アシスタントはそこに自分の識別ファイルを読み書きする必要があり、このファイルシステムでは必ず失敗します。ワークスペースを exFAT または NTFS のディスク（または別のフォルダー）に移して、もう一度準備してください。",
     "workspaceUnwritable": "ワークスペースに書き込めません：アシスタントはそこに自分の識別ファイルを読み書きする必要がありますが、確認用ファイルすら作成できません。ディスクが読み取り専用か、容量がいっぱいでないか確認するか、別のフォルダーを選んでください。"
@@ -1851,6 +1855,7 @@
     "viewArtifacts": "View artifacts"
   },
   "teams": {
+    "agentNotInstalled": "This team's assistant is not installed on this machine yet. Install it before starting a chat.",
     "confirmDeleteDesc": "「{{name}}」を削除しますか？チーム設定が削除されます。エージェントは Gateway に残り、設定から管理できます。",
     "confirmDeleteTitle": "チームを削除",
     "createTeam": "チームを作成",
@@ -1875,10 +1880,8 @@
     "gateway": "ゲートウェイ",
     "memberCount": "{{count}} メンバー",
     "namePlaceholder": "チーム名を入力",
-    "noAgents": "利用可能なエージェントがありません",
-
-    "agentNotInstalled": "This team's assistant is not installed on this machine yet. Install it before starting a chat.",
     "needsInstall": "Install required",
+    "noAgents": "利用可能なエージェントがありません",
     "position": {
       "challenger": "反論役",
       "expert": "専門家",

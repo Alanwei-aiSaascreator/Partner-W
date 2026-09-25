@@ -894,7 +894,11 @@
     "goToSource": "Go to source message",
     "goToSourceShort": "Go to Source",
     "openInEditor": "Open in Editor",
-    "revealInFolder": "Reveal in Finder"
+    "pdfTitle": "PDF preview",
+    "revealInFolder": "Reveal in Finder",
+    "slideEmpty": "(no text on this slide)",
+    "slideLabel": "Slide {{index}}",
+    "truncated": "This is long, so only the beginning is shown."
   },
   "firstTaskCompletion": {
     "continue": "Refine result",
@@ -1606,13 +1610,13 @@
     "passwordRequired": "Password is required",
     "portableUpdate": {
       "applying": "Updating. Do not unplug the USB drive.",
+      "cancel": "Cancel",
+      "downloadAndPrepare": "Download and prepare",
       "later": "Later",
       "preparing": "Preparing the update in the background. You can keep using the app.",
       "ready": "Version {{version}} is ready. Restart to finish updating.",
       "restartNow": "Restart and update now",
-      "rolledBack": "The update did not finish. Version {{version}} has been restored and your data is untouched.",
-      "downloadAndPrepare": "Download and prepare",
-      "cancel": "Cancel"
+      "rolledBack": "The update did not finish. Version {{version}} has been restored and your data is untouched."
     },
     "portableUpdateHint": "This portable USB copy does not update itself. To upgrade, replace the program folder on the drive with the new version.",
     "pressShortcut": "Press shortcut...",
@@ -1793,10 +1797,6 @@
   "startupReadiness": {
     "aiCatalogFailed": "Could not get the model list",
     "aiError": "No models are available right now",
-    "gatewayPortOccupied": "Port 18789 is held by another program. This app will not close it - close that program, then prepare again.",
-    "gatewayAuthRejected": "The gateway rejected this connection. Check the activation state, or use another card and prepare again.",
-    "gatewayProcessExited": "The AI service started and then exited. Prepare again to retry.",
-    "gatewayReadyTimeout": "Timed out waiting for the AI service to become ready. It did not come up on this machine - prepare again to retry.",
     "aiLoadingModels": "Preparing available models",
     "aiReady": "Models are ready",
     "aiStarting": "Starting the AI service",
@@ -1808,6 +1808,11 @@
     "assistantsVerifying": "Checking bundled assistants",
     "assistantsWaiting": "Waiting for the AI service",
     "description": "First launch usually takes about a minute. Home opens automatically when preparation finishes.",
+    "elapsed": "Waiting {{time}}",
+    "gatewayAuthRejected": "The gateway rejected this connection. Check the activation state, or use another card and prepare again.",
+    "gatewayPortOccupied": "Port 18789 is held by another program. This app will not close it - close that program, then prepare again.",
+    "gatewayProcessExited": "The AI service started and then exited. Prepare again to retry.",
+    "gatewayReadyTimeout": "Timed out waiting for the AI service to become ready. It did not come up on this machine - prepare again to retry.",
     "keepOpen": "Keep the app open. No repeated action is needed.",
     "notAnInstall": "Not an installation: nothing is written into the system and no desktop shortcut is created. On first launch the runtime is prepared into a local cache so it still works after you unplug the USB drive.",
     "openActivation": "Open activation",
@@ -1821,7 +1826,6 @@
     "relayRetryable": "The commercial service is not ready yet. You can try again.",
     "retry": "Prepare again",
     "takingLonger": "This is taking longer than usual. You can retry without leaving the workspace.",
-    "elapsed": "Waiting {{time}}",
     "title": "Preparing Rongying Cube",
     "workspaceFilesystemUnsupported": "The disk holding your workspace is not supported: assistants must read and write their own identity files there, and that step always fails on this filesystem. Move the workspace to an exFAT or NTFS disk (or another folder), then prepare again.",
     "workspaceUnwritable": "The workspace is not writable: assistants must read and write their own identity files there, but not even a probe file can be created. Check whether the disk is read-only or full, or pick another folder."
@@ -1851,6 +1855,7 @@
     "viewArtifacts": "View artifacts"
   },
   "teams": {
+    "agentNotInstalled": "This team's assistant is not installed on this machine yet. Install it before starting a chat.",
     "confirmDeleteDesc": "Delete \"{{name}}\"? This removes the team configuration. Agents will remain on the Gateway and can be managed in Settings.",
     "confirmDeleteTitle": "Delete Team",
     "createTeam": "Create Team",
@@ -1875,10 +1880,8 @@
     "gateway": "Gateway",
     "memberCount": "{{count}} members",
     "namePlaceholder": "Enter team name",
-    "noAgents": "No agents available",
-
-    "agentNotInstalled": "This team's assistant is not installed on this machine yet. Install it before starting a chat.",
     "needsInstall": "Install required",
+    "noAgents": "No agents available",
     "position": {
       "challenger": "Challenger",
       "expert": "Domain expert",

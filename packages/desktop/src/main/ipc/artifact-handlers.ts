@@ -13,6 +13,7 @@ import { safeFetch } from '../net/safe-fetch.js';
 import { getArtifactAvailability } from '../artifact/reconcile.js';
 import { copyArtifactToDestination, inspectArtifactFile, readVerifiedArtifactFile } from '../artifact/access.js';
 import { trackOnSuccess } from '../analytics/reporter.js';
+import { buildArtifactPreview, previewKindFor } from '../preview/build-preview.js';
 
 interface SaveParams {
   taskId: string;
@@ -23,6 +24,14 @@ interface SaveParams {
 }
 
 const MAX_THUMBNAIL_SOURCE_BYTES = 10 * 1024 * 1024;
+/**
+ * 预览能读多大的源文件。
+ *
+ * ⚠️ 上限是**为了 IPC**：预览要把内容（PDF 还要 base64）从主进程搬到渲染进程，
+ *    几十兆的文件搬过去会让界面卡住。超了就**如实说"太大，用系统程序打开"**，
+ *    不许假装读过。
+ */
+const MAX_PREVIEW_SOURCE_BYTES = 40 * 1024 * 1024;
 
 function resizeThumbnailImage(image: NativeImage, size: number): NativeImage {
   const { width, height } = image.getSize();
@@ -137,6 +146,35 @@ export function registerArtifactHandlers(): void {
       const buffer = await readVerifiedArtifactFile(workspacePath, artifact.localPath);
       const content = buffer.toString(encoding);
       return { ok: true, result: { content, encoding } };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'unknown error';
+      return { ok: false, error: msg };
+    }
+  });
+
+  /**
+   * **富预览**：把"我们能生成的那些文件"读成界面能直接渲染的形状。
+   *
+   * 为什么需要它：我们自己就产 `.docx` / `.xlsx` / `.pptx`（docgen），而 `FilePreview`
+   * 只认图片 / Markdown / 代码 ⇒ **用户做完一份东西，在应用里看不见它**，只能导出去用 Office 开。
+   *
+   * ⚠️ 读**全在主进程**：`exceljs` 本来就跑在这儿（打包态那套传递依赖的坑也是在这儿修的，
+   *    见 [[pnpm-flattening-drops-nested-deps]]），渲染进程再引一遍等于在新位置重踩一遍。
+   * ⚠️ 一律**只读**、**不落临时文件**（红线：不许写到工作区外面）。
+   */
+  ipcMain.handle('artifact:preview', async (_event, params: { artifactId: string; taskId?: string }) => {
+    const workspacePath = getWorkspacePath();
+    if (!workspacePath) return { ok: false, error: 'workspace not configured' };
+    try {
+      const artifact = loadArtifactForAction(params.artifactId, params.taskId);
+      if (!artifact) return { ok: false, error: 'artifact not found' };
+      // ⚠️ **先问认不认得出，再决定读不读**：认不出就直接回 `unsupported`，
+      //    否则每张 5 MB 的 PNG 都要被读进内存再丢掉。
+      if (previewKindFor(artifact.name) === null) return { ok: true, result: { kind: 'unsupported' } };
+      const buffer = await readVerifiedArtifactFile(workspacePath, artifact.localPath, {
+        maxBytes: MAX_PREVIEW_SOURCE_BYTES,
+      });
+      return { ok: true, result: await buildArtifactPreview(artifact.name, buffer) };
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'unknown error';
       return { ok: false, error: msg };
