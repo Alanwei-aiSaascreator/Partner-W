@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { probeStartupz, waitForGatewayReady } from '../src/main/runtime/gateway-process.js';
 import type { StartupzProbe } from '../src/main/runtime/gateway-process.js';
+import { BOOTSTRAP_PROCESS_EXITED, BOOTSTRAP_READY_TIMEOUT } from '../src/main/runtime/bootstrap-retry.js';
 
 /**
  * 探活与等就绪。
@@ -244,5 +245,47 @@ describe('waitForGatewayReady', () => {
     await expect(p).rejects.toThrow();
     expect(sleeps[0]).toBe(500);
     expect(t).toBeGreaterThanOrEqual(180_000);
+  });
+});
+
+/**
+ * 等就绪的两类失败必须**按码**分开 —— bootstrap 的重试策略就靠这个码做白名单。
+ *
+ * ⚠️ 为什么单列两条：`runtime-bootstrap-retry.test.ts` 用的是**喂进去的**码，
+ *    它证明的是"策略对不对"；**没有任何一条证明运行时真的产出这两个码**。
+ *    而这一层是真正的接缝：码写错/写反，策略再对也会把"等满 180 秒"当成可重试。
+ */
+describe('等就绪的两类失败按码分开（策略的白名单依赖它）', () => {
+  it('子进程在就绪前退出 ⇒ runtime.gateway-process-exited（**可重试**的那一类）', async () => {
+    await expect(
+      waitForGatewayReady({
+        probe: async () => ({ reachable: false }),
+        authenticate: async () => false,
+        sleep: async () => {},
+        hasExited: () => true,
+      }),
+    ).rejects.toMatchObject({ code: 'runtime.gateway-process-exited' });
+
+    // 字面量也要钉住：它是跨模块的契约（策略按它做白名单）
+    expect(BOOTSTRAP_PROCESS_EXITED).toBe('runtime.gateway-process-exited');
+  });
+
+  it('等满 readiness timeout ⇒ runtime.gateway-ready-timeout（⛔ 终态，不许再试）', async () => {
+    let clock = 0;
+    await expect(
+      waitForGatewayReady({
+        probe: async () => ({ reachable: false }),
+        authenticate: async () => false,
+        sleep: async () => {
+          clock += 1_000;
+        },
+        hasExited: () => false,
+        intervalMs: 1_000,
+        timeoutMs: 3_000,
+        now: () => clock,
+      }),
+    ).rejects.toMatchObject({ code: 'runtime.gateway-ready-timeout' });
+
+    expect(BOOTSTRAP_READY_TIMEOUT).toBe('runtime.gateway-ready-timeout');
   });
 });

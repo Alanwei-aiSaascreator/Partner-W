@@ -44,6 +44,8 @@ import type {
   ImportFilesResult,
   Artifact,
   ArtifactSaveAsResult,
+  GatewayFailureReason,
+  RuntimeBootstrapStatus,
   RelayBootstrapPublicState,
   WorkspaceFsIdentity,
 } from '@clawwork/shared';
@@ -73,7 +75,18 @@ interface GatewayStatusEvent {
   reconnectAttempt?: number;
   maxAttempts?: number;
   gaveUp?: boolean;
+  /** 有结论时的公开原因（闭集）；缺席 = **还没有结论**，不是"没问题"。 */
+  reason?: GatewayFailureReason;
 }
+
+/**
+ * 本机运行时（我们**自己**那个网关）起没起来，以及起不来时的**公开**原因。
+ *
+ * ⚠️ 与 `GatewayStatusEvent` 是两层事：那是"连上了没有"，这是"我们自己的网关进程
+ *    有没有起来"。端口被**别的**程序占着时往往连 WS 都没建起来，从连接层读不到。
+ * ⚠️ `reason` 是**闭集**：原始错误、Token、地址、堆栈一律**不进**这条通道。
+ */
+type RuntimeStatusEvent = RuntimeBootstrapStatus;
 
 interface DebugEvent {
   ts: string;
@@ -456,6 +469,9 @@ export interface ClawWorkAPI {
 
   onGatewayEvent: (callback: (data: GatewayEvent) => void) => () => void;
   onGatewayStatus: (callback: (status: GatewayStatusEvent) => void) => () => void;
+  /** 初始读（渲染层挂载时补读一次）：`null` = 还没有结论，**不是**"没问题"。 */
+  runtimeStatus: () => Promise<RuntimeStatusEvent | null>;
+  onRuntimeStatus: (callback: (status: RuntimeStatusEvent) => void) => () => void;
   onDebugEvent: (callback: (event: DebugEvent) => void) => () => void;
   exportDebugBundle: (filter?: {
     gatewayId?: string;

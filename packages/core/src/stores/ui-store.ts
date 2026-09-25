@@ -1,5 +1,24 @@
 import { createStore } from 'zustand/vanilla';
-import type { AgentInfo, CommandEntry, ModelCatalogEntry, SkillStatusReport, ToolsCatalog } from '@clawwork/shared';
+import type {
+  AgentInfo,
+  CommandEntry,
+  GatewayFailureReason,
+  ModelCatalogEntry,
+  SkillStatusReport,
+  ToolsCatalog,
+} from '@clawwork/shared';
+
+/**
+ * 一个网关的重连状况（`ui-store.gatewayReconnectInfo[gatewayId]`）。
+ *
+ * `reason` 缺席 = **还没有结论**（普通断线、还在重连）—— 不是"没问题"。
+ */
+export interface GatewayReconnectInfo {
+  attempt: number;
+  max: number;
+  gaveUp: boolean;
+  reason?: GatewayFailureReason | undefined;
+}
 
 export type MainView =
   | 'chat'
@@ -97,8 +116,23 @@ export interface UiState {
   gatewayVersionMap: Record<string, string>;
   setGatewayVersion: (gatewayId: string, version: string | undefined) => void;
 
-  gatewayReconnectInfo: Record<string, { attempt: number; max: number; gaveUp: boolean }>;
-  setGatewayReconnectInfo: (gatewayId: string, info: { attempt: number; max: number; gaveUp: boolean } | null) => void;
+  /**
+   * ⚠️ `reason`（有结论时的公开原因）**跟着重连信息一起存**：它描述的就是
+   *    "这个网关连得怎么样"，与 `attempt` / `gaveUp` 是同一件事的不同侧面。
+   *    缺席 = 还没有结论（普通断线、还在重连）—— 不是"没问题"。
+   */
+  gatewayReconnectInfo: Record<string, GatewayReconnectInfo>;
+  setGatewayReconnectInfo: (gatewayId: string, info: GatewayReconnectInfo | null) => void;
+
+  /**
+   * 本机运行时（我们**自己**那个网关）起不来的公开原因（`null` = 没有这个结论）。
+   *
+   * ⚠️ 与 `gatewayReconnectInfo` 是两层事：那是"连上了没有"，这是"我们自己的网关
+   *    进程压根没起来"。后者发生时往往连 WS 都没建起来，从连接层一个字都读不到 ——
+   *    所以必须有这条独立的路，界面才说得出"18789 被别的程序占用"这类结论。
+   */
+  runtimeBootstrapFailure: GatewayFailureReason | null;
+  setRuntimeBootstrapFailure: (reason: GatewayFailureReason | null) => void;
 
   gatewaysLoaded: boolean;
   setGatewaysLoaded: (loaded: boolean) => void;
@@ -310,6 +344,9 @@ export function createUiStore(deps: UiStoreDeps) {
         }
         return { gatewayReconnectInfo: { ...s.gatewayReconnectInfo, [gatewayId]: info } };
       }),
+
+    runtimeBootstrapFailure: null,
+    setRuntimeBootstrapFailure: (reason) => set({ runtimeBootstrapFailure: reason }),
 
     gatewaysLoaded: false,
     setGatewaysLoaded: (loaded) => set({ gatewaysLoaded: loaded }),

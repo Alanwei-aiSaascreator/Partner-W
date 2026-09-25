@@ -94,6 +94,7 @@ function getDispatcher(): GatewayDispatcher {
         useUiStore.getState().setGatewayStatusByGateway(gatewayId, status),
       setGatewayVersion: (gatewayId, version) => useUiStore.getState().setGatewayVersion(gatewayId, version),
       setGatewayReconnectInfo: (gatewayId, info) => useUiStore.getState().setGatewayReconnectInfo(gatewayId, info),
+      setRuntimeBootstrapFailure: (reason) => useUiStore.getState().setRuntimeBootstrapFailure(reason),
       setDefaultGatewayId: (id) => useUiStore.getState().setDefaultGatewayId(id),
       setGatewayInfoMap: (map) => useUiStore.getState().setGatewayInfoMap(map),
       setGatewaysLoaded: (loaded) => useUiStore.getState().setGatewaysLoaded(loaded),

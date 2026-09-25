@@ -16,6 +16,7 @@ import type {
   Artifact,
   RelayBootstrapPublicState,
   PortableUpdatePublicState,
+  RuntimeBootstrapStatus,
 } from '@clawwork/shared';
 import type { ClawWorkAPI, GatewayServerConfig } from './clawwork';
 
@@ -110,6 +111,19 @@ function buildApi(): ClawWorkAPI {
       ipcRenderer.on('gateway-status', listener);
       return () => {
         ipcRenderer.removeListener('gateway-status', listener);
+      };
+    },
+    //   ⭐ 初始读：这条结论往往在窗口挂上来之前就产生了，那次推送没人收。
+    //     与 relay 公开状态同一个形状（见 `main/ipc/commercial-handlers.ts`）。
+    //     ⚠️ 返回 `null` = 还没有结论（**不是**"没问题"）。
+    runtimeStatus: () => ipcRenderer.invoke('runtime:bootstrap-status'),
+    onRuntimeStatus: (callback) => {
+      const listener = (_event: Electron.IpcRendererEvent, status: unknown): void => {
+        callback(status as RuntimeBootstrapStatus);
+      };
+      ipcRenderer.on('runtime-status', listener);
+      return () => {
+        ipcRenderer.removeListener('runtime-status', listener);
       };
     },
     onDebugEvent: (callback) => {

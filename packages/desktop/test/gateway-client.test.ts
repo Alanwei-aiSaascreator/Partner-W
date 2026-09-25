@@ -885,6 +885,45 @@ describe('断线之后不许无声停摆：服务端拒绝 vs 这次连接没成
     client.reconnect();
     expect(websocketMock.instances.length).toBe(2);
   });
+
+  /**
+   * ⭐ "被拒绝"要说得出是**哪一类**拒绝：光有 `gaveUp` 只能让界面说"连不上"，
+   *    说不出"是网关不认我们" —— 而这两句话让用户做的事完全不同。
+   *
+   * ⚠️ 判据是**闭集里的值**（`GatewayFailureReason`），不是那句错误原文：
+   *    `error` 里有网关给的原话，它要留在日志里，不许上界面。
+   */
+  it('⭐ 网关明确拒绝 ⇒ 状态里带上"哪一类拒绝"（闭集值，不是错误原文）', async () => {
+    const client = await makeClient();
+    const { socket, frameId } = connectAndChallenge(client);
+
+    socket.emit(
+      'message',
+      JSON.stringify({
+        type: 'res',
+        id: frameId,
+        ok: false,
+        error: { code: 'INVALID_REQUEST', message: 'auth denied' },
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(lastStatus()['gaveUp']).toBe(true);
+    expect(lastStatus()['reason']).toBe('auth-rejected');
+    // 原文照旧只留在 error 里（它进日志，不进"原因"那个字段）
+    expect(lastStatus()['reason']).not.toContain('auth denied');
+  });
+
+  it('对照：普通断线**不**给原因（还没有结论，不许猜）', async () => {
+    const client = await makeClient();
+    const { socket } = connectAndChallenge(client);
+
+    socket.close(1006, 'abnormal');
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(lastStatus()['gaveUp']).not.toBe(true);
+    expect(lastStatus()['reason']).toBeUndefined();
+  });
 });
 
 /**

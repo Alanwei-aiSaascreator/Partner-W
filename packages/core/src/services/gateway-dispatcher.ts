@@ -1,5 +1,6 @@
 import { parseTaskIdFromSessionKey, isSubagentSession, isSystemSession } from '@clawwork/shared';
 import type {
+  GatewayFailureReason,
   ToolCall,
   ToolCallStatus,
   ModelListResponse,
@@ -24,7 +25,8 @@ import type { TranslateFn } from './error-classify.js';
 import { autoTitleIfNeeded } from './auto-title.js';
 import { announceCompaction, currentCompactionEpisode } from './compaction-announce.js';
 import type { MessageState } from '../stores/message-store.js';
-import type { GatewayTransportPort, GatewayStatusEvent } from '../ports/gateway-transport.js';
+import type { GatewayReconnectInfo } from '../stores/ui-store.js';
+import type { GatewayTransportPort, GatewayStatusEvent, RuntimeStatusEvent } from '../ports/gateway-transport.js';
 
 type AgentEventStream = 'lifecycle' | 'tool' | 'assistant' | 'thinking' | 'error' | 'compaction';
 
@@ -267,7 +269,14 @@ export interface GatewayDispatcherDeps {
 
   setGatewayStatusByGateway: (gatewayId: string, status: 'connected' | 'connecting' | 'disconnected') => void;
   setGatewayVersion: (gatewayId: string, version: string | undefined) => void;
-  setGatewayReconnectInfo: (gatewayId: string, info: { attempt: number; max: number; gaveUp: boolean } | null) => void;
+  setGatewayReconnectInfo: (gatewayId: string, info: GatewayReconnectInfo | null) => void;
+  /**
+   * 本机运行时起不来的**公开原因**（`null` = 清掉这个结论）。
+   *
+   * ⚠️ 可选：不是每个宿主都有"本机运行时"这件事（pwa / 出厂形态）。
+   *    缺了它只影响界面上"说不说得清是哪一类失败"。
+   */
+  setRuntimeBootstrapFailure?: ((reason: GatewayFailureReason | null) => void) | undefined;
   setDefaultGatewayId: (id: string | null) => void;
   setGatewayInfoMap: (map: Record<string, { id: string; name: string; color?: string }>) => void;
   setGatewaysLoaded: (loaded: boolean) => void;
@@ -2002,6 +2011,9 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
         attempt: s.reconnectAttempt,
         max: s.maxAttempts,
         gaveUp: s.gaveUp ?? false,
+        // ⚠️ 缺席就**别填**（`undefined` 与"没有结论"同义）：替它编一个 unknown
+        //    会让界面把"还在重连"说成"出错了"。
+        reason: s.reason,
       });
     } else if (s.connected) {
       deps.setGatewayReconnectInfo(s.gatewayId, null);
@@ -2030,8 +2042,42 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
     }
   }
 
+  /**
+   * 本机运行时起不来的**结论**（公开原因），只写那一个字段。
+   *
+   * ⚠️ **刻意不动**网关状态与重连信息：那是"连上了没有"这一层的事，
+   *    而这条讲的是"我们自己的网关进程压根没起来"—— 两者可以各自独立地成立。
+   *    混进同一格就会出现"连接正常却显示端口被占"这种自相矛盾的界面。
+   */
+  function handleRuntimeStatus(status: RuntimeStatusEvent): void {
+    deps.setRuntimeBootstrapFailure?.(status.ok ? null : status.reason);
+  }
+
   function startGatewayStatus(): () => void {
-    return deps.gateway.onGatewayStatus(handleGatewayStatus);
+    const removeStatus = deps.gateway.onGatewayStatus(handleGatewayStatus);
+    // ⚠️ 可选订阅，且**必须各订各的**：出厂形态 / pwa 没有"本机运行时"这条通道，
+    //    缺了它不能让网关状态一起不订（那样连"连上了没有"都读不到了）。
+    const removeRuntime = deps.gateway.onRuntimeStatus?.(handleRuntimeStatus);
+    // ⭐ **初始读**：这条结论往往在窗口挂上来之前就产生了，那次推送没人收 ——
+    //    少了这一次补读，界面就只会一直"正在准备模型"（与 relay 公开状态同一个理由，
+    //    见 `main/ipc/commercial-handlers.ts`）。
+    //    ⚠️ `null` = 还没有结论：**不写 store**（不许把"没结论"说成"出错了"）。
+    void deps.gateway
+      .runtimeStatus?.()
+      .then((status) => {
+        if (status) handleRuntimeStatus(status);
+      })
+      .catch(() => {
+        // 读不到就当"没有结论"（界面照旧显示准备中），但**留一条遥测**：
+        // 真机上"界面一直转圈"时，得能分清是"补读也读不到"还是"压根没有这条通道"。
+        // ⚠️ 不带原始 message：它是 IPC 层来的，内容不受我们控制（同 `GatewayFailureReason`
+        //    那条纪律），具体原因在主进程日志里。
+        debugEvent('renderer.runtime_status.read_failed', {});
+      });
+    return () => {
+      removeStatus();
+      removeRuntime?.();
+    };
   }
 
   function reset(): void {

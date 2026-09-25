@@ -67,6 +67,15 @@ export function useStartupReadiness(enabled: boolean) {
   const catalogFailed = useUiStore((state) =>
     state.defaultGatewayId ? state.modelCatalogFailureByGateway[state.defaultGatewayId] === true : false,
   );
+  // ⭐ 连接层对这个网关的重连信息（含 `gaveUp`）：没有它，"连接被明确拒绝"会被推导成
+  //    "正在准备模型"，而那个状态**永远不会自己好**（2026-09-25 真日志：6 分钟还在转圈）。
+  const gatewayReconnect = useUiStore((state) =>
+    state.defaultGatewayId ? state.gatewayReconnectInfo?.[state.defaultGatewayId] : undefined,
+  );
+  // ⭐ 本机运行时（18789 那个网关）**起不来**的公开原因。这条与上面那条是两层事：
+  //    端口被**别的**程序占着时连 WS 都没建起来，从连接层一个字都读不到。
+  //    没有它，界面只会显示"正在准备模型"一直转（2026-09-25 真日志：六分钟）。
+  const runtimeBootstrapFailure = useUiStore((state) => state.runtimeBootstrapFailure);
   const [assistantSnapshot, setAssistantSnapshot] = useState<PresetAgentBootstrapSnapshot>(emptyAssistantSnapshot);
   const [relayState, setRelayState] = useState<RelayBootstrapPublicState | null>(null);
   /**
@@ -184,6 +193,8 @@ export function useStartupReadiness(enabled: boolean) {
     assistantSnapshot,
     relayState: relayState ?? undefined,
     workspaceFsIdentity,
+    gatewayReconnect,
+    runtimeBootstrapFailure,
   });
 
   /**

@@ -6,6 +6,7 @@ import { dirname } from 'node:path';
 import { nativeTheme } from 'electron';
 import { initAllGateways, destroyAllGateways } from './ws/index.js';
 import { getMainWindow, setMainWindow } from './window-manager.js';
+import { sendToWindow } from './ws/window-utils.js';
 import { initDebugLogger, getDebugLogger } from './debug/index.js';
 import { registerWsHandlers } from './ipc/ws-handlers.js';
 import { registerArtifactHandlers } from './ipc/artifact-handlers.js';
@@ -61,6 +62,8 @@ import {
   recordInstanceOwner,
 } from './runtime/instance-guard.js';
 import { bootstrapLocalGatewayRuntime, GATEWAY_PORT_OCCUPIED, shutdownLocalGatewayRuntime } from './runtime/index.js';
+import { bootstrapWithRetry } from './runtime/bootstrap-retry.js';
+import { getRuntimeBootstrapStatus, publishRuntimeBootstrapStatus } from './runtime/bootstrap-status.js';
 import { removableDrives } from './workspace/removable-drives.js';
 import { GATEWAY_WS_PORT } from '@clawwork/shared';
 
@@ -382,6 +385,17 @@ if (!gotLock) {
         Menu.setApplicationMenu(buildAppMenu(devModeEnabled));
       });
 
+      /**
+       * 本机运行时起不来的**初始读**（渲染层挂载时补读一次）。
+       *
+       * ⚠️ 与 relay 公开状态是同一个形状的同一个理由（见 `commercial-handlers.ts`）：
+       *    bootstrap 在 `app.whenReady()` 里就跑，窗口与渲染层是**之后**才挂上来的 ——
+       *    那之前发出的推送没人收。少了这条读，界面就只会一直"正在准备模型"。
+       * ⚠️ 返回 `null` = **还没有结论**，与"没问题"是两回事：界面按"没结论"处理
+       *    （继续显示准备中），不许把它说成出错。
+       */
+      ipcMain.handle('runtime:bootstrap-status', () => getRuntimeBootstrapStatus());
+
       ipcMain.on('ui:set-window-button-visibility', (_event, visible: boolean) => {
         if (process.platform === 'darwin') {
           const win = getMainWindow();
@@ -460,19 +474,31 @@ if (!gotLock) {
       // ⚠️ 拉起本机运行时（定位 → 部署 → 起网关 → 等就绪）。**这一步永不抛**：
       // 失败只是"网关没起来"，界面照常出，让 ConnectionBanner 说真话；
       // 上一轮留下的、或用户自己的网关可能还活着，下面 initAllGateways() 照样要去连它。
-      const runtimeResult = await bootstrapLocalGatewayRuntime({
-        userDataDir: app.getPath('userData'),
-        runtimeCacheUserDataDir,
-        // OpenClaw state 不能落 exFAT，也不能嵌在运行时的 64 位 scope 下：其日志/插件
-        // 子树很深，Windows 路径预算会被吃光。token 派生的短目录仍会隔离不同 U 盘。
-        stateCacheUserDataDir: localUserDataDir,
-        deps: {
-          log: (event, data) => {
-            const entry = { domain: 'gateway' as const, event, data };
-            if (event === 'runtime.bootstrap.failed') getDebugLogger().error(entry);
-            else getDebugLogger().info(entry);
-          },
-        },
+      const runtimeResult = await bootstrapWithRetry({
+        attempt: () =>
+          bootstrapLocalGatewayRuntime({
+            userDataDir: app.getPath('userData'),
+            runtimeCacheUserDataDir,
+            // OpenClaw state 不能落 exFAT，也不能嵌在运行时的 64 位 scope 下：其日志/插件
+            // 子树很深，Windows 路径预算会被吃光。token 派生的短目录仍会隔离不同 U 盘。
+            stateCacheUserDataDir: localUserDataDir,
+            deps: {
+              log: (event, data) => {
+                const entry = { domain: 'gateway' as const, event, data };
+                if (event === 'runtime.bootstrap.failed') getDebugLogger().error(entry);
+                else getDebugLogger().info(entry);
+              },
+            },
+          }),
+        sleep: (ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
+        // ⭐ 只在**可重试**的那一类上退避（我们自己的网关还没就绪）。
+        //    端口被**别人的**网关占用是终态 —— 见 `runtime/bootstrap-retry.ts` 的白名单。
+        onRetry: ({ attempt, delayMs, reason }) =>
+          getDebugLogger().info({
+            domain: 'gateway',
+            event: 'runtime.bootstrap.retry',
+            data: { attempt, delayMs, reason },
+          }),
       });
       if (!runtimeResult.ok) {
         // ⚠️ 盘上那份与"装到电脑"那份的应用数据现在是**分开**的（各自一个单实例锁），
@@ -493,6 +519,15 @@ if (!gotLock) {
           };
           void (win ? dialog.showMessageBox(win, options) : dialog.showMessageBox(options));
         }
+        // ⭐ 光弹一次窗是不够的：用户点掉之后界面上**什么都不剩**，只会显示
+        //    "正在准备模型"一直转（2026-09-25 真日志：六分钟）。所以这条结论要
+        //    留在主进程里、并推给渲染层 —— 界面才说得出是哪一类失败。
+        //    ⚠️ 只发 `{ ok, code }`，`runtimeResult.reason`（给人看的那条描述，
+        //    带路径/端口）**不进** IPC：见 `runtime/bootstrap-status.ts`。
+        //    ⚠️ 推可能丢（窗口还没挂上来）—— 渲染层挂上来后会用
+        //    `runtime:bootstrap-status` 补读一次，所以这里推失败不是 bug。
+        publishRuntimeBootstrapStatus(runtimeResult);
+        sendToWindow(getMainWindow(), 'runtime-status', getRuntimeBootstrapStatus());
       }
 
       initAllGateways();

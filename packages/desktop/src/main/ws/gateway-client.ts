@@ -5,6 +5,7 @@ import {
   HEARTBEAT_INTERVAL_MS,
   RECONNECT_DELAY_MS,
   MAX_RECONNECT_ATTEMPTS,
+  gatewayFailureReasonFrom,
   parseTaskIdFromSessionKey,
   summarizePayload,
 } from '@clawwork/shared';
@@ -334,6 +335,12 @@ export class GatewayClient {
       //    用户看不出"其实已经放弃了"，界面上也**没有任何出路**（只有重启应用）。
       //    报 `gaveUp:true` 后横幅会换成收尾态：`立即重试` + `打开设置`。
       const rejected = code === WS_CLOSE_POLICY_VIOLATION;
+      // ⭐ 光说"放弃了"不够：界面得说得出**是哪一类**拒绝 —— "网关不认我们"和
+      //    "连不上"要用户做的事完全不同（前者去查凭据/配对，后者等一等就好）。
+      //    ⚠️ 只在**有结论**时才给（`rejected`）：普通断线（1006 之类）还没有结论，
+      //    给了就是猜。值走 `@clawwork/shared` 的**闭集** —— 上面那句 `error` 原文
+      //    留在原地，它进日志，**不进**这个字段。
+      const failureReason = rejected ? gatewayFailureReasonFrom({ closeCode: code }) : undefined;
       sendToWindow(getMainWindow(), 'gateway-status', {
         gatewayId: this.gatewayId,
         connected: false,
@@ -341,6 +348,7 @@ export class GatewayClient {
         reconnectAttempt: this.reconnectAttempts,
         maxAttempts: MAX_RECONNECT_ATTEMPTS,
         gaveUp: rejected,
+        reason: failureReason,
       });
       if (rejected) return;
       this.scheduleReconnect();
