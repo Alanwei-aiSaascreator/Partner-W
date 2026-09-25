@@ -1869,6 +1869,8 @@
     "memberCount": "{{count}} 位成員",
     "namePlaceholder": "輸入團隊名稱",
     "noAgents": "暫無可用 Agent",
+
+    "agentNotInstalled": "这个团队的助手还没装到本机，先把它装上再开始对话。",
     "position": {
       "challenger": "質疑者",
       "expert": "領域專家",

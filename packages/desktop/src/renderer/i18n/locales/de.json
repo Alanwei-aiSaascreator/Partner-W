@@ -1869,6 +1869,8 @@
     "memberCount": "{{count}} Mitglieder",
     "namePlaceholder": "Teamname eingeben",
     "noAgents": "Keine Agenten verfügbar",
+
+    "agentNotInstalled": "This team's assistant is not installed on this machine yet. Install it before starting a chat.",
     "position": {
       "challenger": "Gegenposition",
       "expert": "Fachexperte",

@@ -1869,6 +1869,8 @@
     "memberCount": "{{count}} メンバー",
     "namePlaceholder": "チーム名を入力",
     "noAgents": "利用可能なエージェントがありません",
+
+    "agentNotInstalled": "This team's assistant is not installed on this machine yet. Install it before starting a chat.",
     "position": {
       "challenger": "反論役",
       "expert": "専門家",

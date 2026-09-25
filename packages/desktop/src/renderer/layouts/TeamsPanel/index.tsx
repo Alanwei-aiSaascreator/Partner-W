@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { useTeamStore } from '@/stores/teamStore';
 import { useTaskStore, useUiStore } from '@/platform';
+import { decideTeamChatEntry } from '@/lib/team-chat-entry';
 import TeamCard from './TeamCard';
 import TeamDetailView from './TeamDetailView';
 import TeamHubDetailView from './TeamHubDetailView';
@@ -26,6 +27,9 @@ export default function TeamsPanel() {
   const startNewTask = useTaskStore((s) => s.startNewTask);
   const setMainView = useUiStore((s) => s.setMainView);
   const defaultGatewayId = useUiStore((s) => s.defaultGatewayId);
+  // ⭐ "这个团队的助手装在这台机器上吗"要拿**那个团队所属网关**的目录来判
+  //    （团队自己带 `gatewayId`，与当前默认网关未必是同一个）。
+  const agentCatalogByGateway = useUiStore((s) => s.agentCatalogByGateway);
   const [activeTab, setActiveTab] = useState<'myTeams' | 'hub'>('myTeams');
   const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
   const [wizardOpen, setWizardOpen] = useState(false);
@@ -43,17 +47,31 @@ export default function TeamsPanel() {
   const handleStartChat = useCallback(
     (teamId: string) => {
       const team = teamsMap[teamId];
-      if (!team || team.agents.length === 0) {
+      if (!team) {
         toast.error(t('teams.noAgents'));
         return;
       }
-      const manager = team.agents.find((a) => a.isManager);
-      const agentId = manager?.agentId ?? team.agents[0].agentId;
+      // ⭐ 团队是**跟着盘**走的，助手是不是装在这台机器上是另一回事（换台机器插同一块盘，
+      //    花名册在、助手不在）。判据收在 `decideTeamChatEntry` 里，它同时管着
+      //    "目录还没拉回来时**不许**判缺失"那条（否则会误报，让人去装一个已经装好的助手）。
+      const decision = decideTeamChatEntry({
+        agents: team.agents,
+        catalog: agentCatalogByGateway[team.gatewayId],
+      });
+      if (decision.kind !== 'start') {
+        // ⚠️ **不跳进会话**：跳过去那一屏才会说"这个助手不在本机"，
+        //    用户白跳一趟还要自己退回来。当面说清楚。
+        // ⚠️ 用 `teams.agentNotInstalled` 而**不是** `agentMissing`：后者已经存在，
+        //    属于聊天输入那条路，说的是"换一个助手再发送"—— 而这里要说的是
+        //    "**装上它**"。两条路的下一步不一样，文案不许互相借用。
+        toast.error(t(decision.kind === 'agent-missing' ? 'teams.agentNotInstalled' : 'teams.noAgents'));
+        return;
+      }
       const needsEnsemble = team.agents.length >= 2;
-      startNewTask({ gatewayId: team.gatewayId, agentId, ensemble: needsEnsemble, teamId });
+      startNewTask({ gatewayId: team.gatewayId, agentId: decision.agentId, ensemble: needsEnsemble, teamId });
       setMainView('chat');
     },
-    [teamsMap, startNewTask, setMainView, t],
+    [teamsMap, agentCatalogByGateway, startNewTask, setMainView, t],
   );
 
   const handleEdit = useCallback(

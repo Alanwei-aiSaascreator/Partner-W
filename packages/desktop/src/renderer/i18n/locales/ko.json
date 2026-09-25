@@ -1869,6 +1869,8 @@
     "memberCount": "{{count}}명",
     "namePlaceholder": "팀 이름 입력",
     "noAgents": "사용 가능한 에이전트가 없습니다",
+
+    "agentNotInstalled": "This team's assistant is not installed on this machine yet. Install it before starting a chat.",
     "position": {
       "challenger": "반론자",
       "expert": "전문가",
