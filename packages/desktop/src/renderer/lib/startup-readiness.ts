@@ -189,6 +189,16 @@ interface StartupReadinessInput {
   relayState?: RelayBootstrapPublicState | undefined;
   /** 工作区所在文件系统的探测结果。缺省 / `null` = 还没探测（**不是**"没问题"）。 */
   workspaceFsIdentity?: WorkspaceFsIdentity | null | undefined;
+  /**
+   * 连接层对**这个网关**的重连信息（`ui-store.gatewayReconnectInfo[gatewayId]`）。
+   * 缺省 / `null` = 还没连过（**不是**失败）。
+   *
+   * ⚠️ 为什么推导必须看它：没有它时，判据只有"连上了没有" ⇒ 连接层**已经放弃**
+   *    （`gaveUp`，附带给出了 `AUTH_TOKEN_MISMATCH` 这类结论）也照样是"正在准备模型"，
+   *    而那个状态**永远不会自己好**（2026-09-25 真日志：1.8 秒判定端口被占、
+   *    2.8 秒连接被拒，界面到 6 分钟后还在转圈）。
+   */
+  gatewayReconnect?: { attempt: number; max: number; gaveUp: boolean } | null | undefined;
 }
 
 export function deriveStartupReadiness({
@@ -199,6 +209,7 @@ export function deriveStartupReadiness({
   assistantSnapshot,
   relayState,
   workspaceFsIdentity,
+  gatewayReconnect,
 }: StartupReadinessInput): StartupReadiness {
   const modelAvailability = deriveModelAvailability({
     gatewayId,
@@ -225,7 +236,11 @@ export function deriveStartupReadiness({
   //    `idle`（从没跑过 / 已登出）、`running`（这一轮在跑）、`ready`（配置已落）
   //    **都不改变**目录推断 —— 否则"还没有结论"会被说成"已经出错了"。
   const relayFailure = relayState ? relayFailureFrom(relayState) : null;
-  const aiPhase: StartupAiPhase = relayFailure ? 'error' : inferredPhase;
+  // ⭐ 连接层**已经放弃**（`gaveUp`）也是一条结论：再转圈就是让用户等一件**不会发生**的事。
+  //    真日志（2026-09-25）：1.8 秒就判定端口被占、2.8 秒连接被明确拒绝并给出 `gaveUp`，
+  //    而界面到六分钟后还在「正在准备模型」。同一条纪律：**知道的**压过**猜的**。
+  const gatewayGaveUp = gatewayReconnect?.gaveUp === true;
+  const aiPhase: StartupAiPhase = relayFailure || gatewayGaveUp ? 'error' : inferredPhase;
   const assistantPhase: StartupAssistantPhase =
     !gatewayId || gatewayStatus !== 'connected'
       ? 'waiting'
@@ -241,6 +256,9 @@ export function deriveStartupReadiness({
   //    一旦有了结论（取到了 / 确实没有模型 / 取不到 / 中转失败），等待就没有意义了，必须给出口。
   //    ⚠️ 已知的中转失败**也是结论**（而且是最该给出口的那一种）：把它算成"还在准备"
   //    就是同一形状的复发 —— 用户又被锁在输入框外，这次连"出错了"都看不到。
+  // ⚠️ 这里**不**再单独判 `gaveUp`：上面那一档已经把相位变成 `error`，本式自然为假。
+  //    我原先加过一个 `!gatewayGaveUp`，变异电池判定它是**等价变异**（删掉也全绿）⇒ 删掉：
+  //    不可被测试证伪的守卫只是噪音（同 [[stale-green-tests]] 那条教训）。
   const composerBlocked = !relayFailure && (aiPhase === 'starting' || aiPhase === 'loading-models');
 
   // ⭐ 助手的失败里，"这块文件系统不支持"是一条**有结论**的失败：重试不会变、换盘才会好。

@@ -67,6 +67,11 @@ export function useStartupReadiness(enabled: boolean) {
   const catalogFailed = useUiStore((state) =>
     state.defaultGatewayId ? state.modelCatalogFailureByGateway[state.defaultGatewayId] === true : false,
   );
+  // ⭐ 连接层对这个网关的重连信息（含 `gaveUp`）：没有它，"连接被明确拒绝"会被推导成
+  //    "正在准备模型"，而那个状态**永远不会自己好**（2026-09-25 真日志：6 分钟还在转圈）。
+  const gatewayReconnect = useUiStore((state) =>
+    state.defaultGatewayId ? state.gatewayReconnectInfo?.[state.defaultGatewayId] : undefined,
+  );
   const [assistantSnapshot, setAssistantSnapshot] = useState<PresetAgentBootstrapSnapshot>(emptyAssistantSnapshot);
   const [relayState, setRelayState] = useState<RelayBootstrapPublicState | null>(null);
   /**
@@ -184,6 +189,7 @@ export function useStartupReadiness(enabled: boolean) {
     assistantSnapshot,
     relayState: relayState ?? undefined,
     workspaceFsIdentity,
+    gatewayReconnect,
   });
 
   /**

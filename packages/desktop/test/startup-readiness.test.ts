@@ -460,3 +460,44 @@ describe('startupBlockerText / startupFailureText —— 说给用户的话', ()
     expect(startupFailureText(readiness, t)).toBe('startupReadiness.workspaceFilesystemUnsupported');
   });
 });
+
+describe('连接层已经放弃时，不许再说"正在准备模型"', () => {
+  const base = {
+    gatewayId: 'gw-1',
+    gatewayStatus: 'disconnected' as const,
+    rawModelCatalog: undefined,
+    catalogFailed: false,
+    assistantSnapshot: idleAssistants,
+  };
+
+  it('gaveUp 的连接是**有结论的失败**，不是"正在准备"', () => {
+    const result = deriveStartupReadiness({
+      ...base,
+      gatewayReconnect: { attempt: 10, max: 10, gaveUp: true },
+    });
+
+    // 判据是"不许是准备相位"：这是用户报"一直准备模型"的那一格
+    expect(result.ai.phase).not.toBe('starting');
+    expect(result.ai.phase).not.toBe('loading-models');
+    // 有结论就必须给出口：不能永远锁着输入框，也要让界面说得出"出错了"
+    expect(result.composerBlocked).toBe(false);
+    expect(result.hasError).toBe(true);
+  });
+
+  it('对照：还没放弃（第 3/10 次）时，照旧是"正在准备"', () => {
+    const result = deriveStartupReadiness({
+      ...base,
+      gatewayReconnect: { attempt: 3, max: 10, gaveUp: false },
+    });
+
+    expect(result.ai.phase).toBe('starting');
+    expect(result.composerBlocked).toBe(true);
+  });
+
+  it('对照：没有重连信息（从没连过）时，照旧是"正在准备"', () => {
+    const result = deriveStartupReadiness({ ...base });
+
+    expect(result.ai.phase).toBe('starting');
+    expect(result.composerBlocked).toBe(true);
+  });
+});
