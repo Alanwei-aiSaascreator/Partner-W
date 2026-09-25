@@ -501,3 +501,80 @@ describe('连接层已经放弃时，不许再说"正在准备模型"', () => {
     expect(result.composerBlocked).toBe(true);
   });
 });
+
+/**
+ * 本机运行时（18789 那个网关）起不来时，界面得说得出**是哪一类**失败。
+ *
+ * 判据只有一条：**知道的**要如实说出来，且只说得出闭集里的那个值；
+ * 不知道的一律 `null`（界面自己编文案 = 猜）。而**连上了就必须清掉** ——
+ * 否则会出现反向的假话：明明好了，界面上还挂着"18789 被别的东西占用"。
+ */
+describe('本机运行时起不来：把「为什么」如实说出来，连上了就闭嘴', () => {
+  const base = {
+    gatewayId: 'gw-1',
+    gatewayStatus: 'disconnected' as const,
+    rawModelCatalog: undefined,
+    catalogFailed: false,
+    assistantSnapshot: idleAssistants,
+  };
+
+  it('18789 被别的程序占用 ⇒ 有结论的失败，且说得出是哪一类', () => {
+    const result = deriveStartupReadiness({ ...base, runtimeBootstrapFailure: 'port-occupied' });
+
+    expect(result.ai.phase).toBe('error');
+    expect(result.ai.failureReason).toBe('port-occupied');
+    // 有结论就必须给出口：不能锁着输入框，也不能继续转圈
+    expect(result.composerBlocked).toBe(false);
+    expect(result.hasError).toBe(true);
+  });
+
+  it('等就绪超时与子进程早退各自说得出是哪一类，而且都给了出口', () => {
+    const timedOut = deriveStartupReadiness({ ...base, runtimeBootstrapFailure: 'ready-timeout' });
+    const exited = deriveStartupReadiness({ ...base, runtimeBootstrapFailure: 'process-exited' });
+
+    expect(timedOut.ai.failureReason).toBe('ready-timeout');
+    expect(exited.ai.failureReason).toBe('process-exited');
+    // ⚠️ 只断言 reason 是不够的：一个"说出了原因、却还把输入框锁着"的实现会溜过去，
+    //    而那正是用户最受不了的形状（看得见原因，一个字打不出去）。两个都钉。
+    for (const result of [timedOut, exited]) {
+      expect(result.ai.phase).toBe('error');
+      expect(result.composerBlocked).toBe(false);
+    }
+  });
+
+  it('⭐ 连上了就不许再说"坏着"：启动那一刻被占过，后来自己起来了也要清掉', () => {
+    const result = deriveStartupReadiness({
+      ...base,
+      gatewayStatus: 'connected',
+      rawModelCatalog: [relayModel],
+      assistantSnapshot: readyAssistants,
+      // 启动那一刻确实撞过端口 —— 但不能因为**曾经**坏过就一直挂着一句假话
+      runtimeBootstrapFailure: 'port-occupied',
+    });
+
+    expect(result.ai.phase).toBe('ready');
+    expect(result.ai.failureReason).toBeNull();
+  });
+
+  it('没有失败信号 ⇒ null（不知道就说不知道，界面不许自己编）', () => {
+    expect(deriveStartupReadiness({ ...base }).ai.failureReason).toBeNull();
+  });
+
+  it('对照：还在起的时候不给失败原因（那时候确实还没结论）', () => {
+    const result = deriveStartupReadiness({ ...base, gatewayStatus: 'connecting' });
+
+    expect(result.ai.phase).toBe('starting');
+    expect(result.ai.failureReason).toBeNull();
+  });
+
+  it('中转失败是**另一件事**：它不冒充"本机运行时起不来"', () => {
+    const result = deriveStartupReadiness({
+      ...base,
+      relayState: { phase: 'blocked', errorCode: 'license_bound_elsewhere', updatedAt: 3 },
+    });
+
+    expect(result.ai.phase).toBe('error');
+    expect(result.relayFailure).toBeTruthy();
+    expect(result.ai.failureReason).toBeNull();
+  });
+});

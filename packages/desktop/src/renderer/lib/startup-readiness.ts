@@ -1,5 +1,6 @@
 import type { GatewayConnectionStatus } from '@clawwork/core';
 import type {
+  GatewayFailureReason,
   ModelCatalogEntry,
   RelayBootstrapBlockedCode,
   RelayBootstrapPublicState,
@@ -153,7 +154,18 @@ export function relayModelStatusCopy(failure: StartupRelayFailure, t: (key: stri
 
 export interface StartupReadiness {
   gatewayId: string | null | undefined;
-  ai: { phase: StartupAiPhase };
+  ai: {
+    phase: StartupAiPhase;
+    /**
+     * 本机运行时**起不来**时的公开原因（`null` = 没有这个结论）。
+     *
+     * ⚠️ 与 `relayFailure` 是**两件事**，别互相冒充：那是"中转/账号配置"的结论，
+     *    这是"18789 那个网关根本没起来"的结论。两者可以同时有值。
+     * ⚠️ 与 `relayFailure` 一样，可选是给**手写的就绪度样例**（各处的测试夹具）留的：
+     *    缺席与 `null` 同义，消费方一律按真值判断；唯一的产出路径**永远**会赋值。
+     */
+    failureReason?: GatewayFailureReason | null;
+  };
   assistants: Omit<PresetAgentBootstrapSnapshot, 'phase'> & { phase: StartupAssistantPhase };
   workspaceAvailable: boolean;
   conversationReady: boolean;
@@ -199,6 +211,15 @@ interface StartupReadinessInput {
    *    2.8 秒连接被拒，界面到 6 分钟后还在转圈）。
    */
   gatewayReconnect?: { attempt: number; max: number; gaveUp: boolean } | null | undefined;
+  /**
+   * 主进程报来的"本机运行时起不来"的公开原因（`ui-store.runtimeBootstrapFailure`）。
+   * 缺省 / `null` = **没有这个结论**（不是"没问题"）。
+   *
+   * ⚠️ 与 `gatewayReconnect` 分开是因为它们是**两个层**的结论：那是"连了但被拒/放弃了"，
+   *    这是"我们自己的网关压根没起来"（端口被别人占着 / 等就绪超时 / 子进程早退）——
+   *    后者发生时往往**连 WS 都没建起来**，从连接层一个字都读不到。
+   */
+  runtimeBootstrapFailure?: GatewayFailureReason | null | undefined;
 }
 
 export function deriveStartupReadiness({
@@ -210,6 +231,7 @@ export function deriveStartupReadiness({
   relayState,
   workspaceFsIdentity,
   gatewayReconnect,
+  runtimeBootstrapFailure,
 }: StartupReadinessInput): StartupReadiness {
   const modelAvailability = deriveModelAvailability({
     gatewayId,
@@ -240,7 +262,15 @@ export function deriveStartupReadiness({
   //    真日志（2026-09-25）：1.8 秒就判定端口被占、2.8 秒连接被明确拒绝并给出 `gaveUp`，
   //    而界面到六分钟后还在「正在准备模型」。同一条纪律：**知道的**压过**猜的**。
   const gatewayGaveUp = gatewayReconnect?.gaveUp === true;
-  const aiPhase: StartupAiPhase = relayFailure || gatewayGaveUp ? 'error' : inferredPhase;
+  // ⭐ 本机运行时**起不来**（端口被别人占着 / 等就绪超时 / 子进程早退）也是一条结论 ——
+  //    而且是最该给出口的那一类：这条路上连 WS 都没建起来，连接层一个字都读不到，
+  //    于是界面只会显示"正在准备模型"，一直到用户放弃（2026-09-25 真日志：六分钟）。
+  // ⚠️ 但**连上了就不算**：用户可能自己把网关起起来了，或者这一份连的是别的网关 ——
+  //    那时候继续挂着"18789 被占用"就是**反向的假话**（明明好了还说坏着）。
+  //    所以清理判据是"当前连上了"，不是"曾经失败过"。
+  const bootstrapFailure: GatewayFailureReason | null =
+    gatewayStatus === 'connected' ? null : (runtimeBootstrapFailure ?? null);
+  const aiPhase: StartupAiPhase = relayFailure || gatewayGaveUp || bootstrapFailure !== null ? 'error' : inferredPhase;
   const assistantPhase: StartupAssistantPhase =
     !gatewayId || gatewayStatus !== 'connected'
       ? 'waiting'
@@ -275,7 +305,7 @@ export function deriveStartupReadiness({
 
   return {
     gatewayId,
-    ai: { phase: aiPhase },
+    ai: { phase: aiPhase, failureReason: bootstrapFailure },
     assistants,
     workspaceAvailable: true,
     conversationReady,

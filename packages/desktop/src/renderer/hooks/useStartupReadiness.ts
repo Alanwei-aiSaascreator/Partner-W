@@ -72,6 +72,10 @@ export function useStartupReadiness(enabled: boolean) {
   const gatewayReconnect = useUiStore((state) =>
     state.defaultGatewayId ? state.gatewayReconnectInfo?.[state.defaultGatewayId] : undefined,
   );
+  // ⭐ 本机运行时（18789 那个网关）**起不来**的公开原因。这条与上面那条是两层事：
+  //    端口被**别的**程序占着时连 WS 都没建起来，从连接层一个字都读不到。
+  //    没有它，界面只会显示"正在准备模型"一直转（2026-09-25 真日志：六分钟）。
+  const runtimeBootstrapFailure = useUiStore((state) => state.runtimeBootstrapFailure);
   const [assistantSnapshot, setAssistantSnapshot] = useState<PresetAgentBootstrapSnapshot>(emptyAssistantSnapshot);
   const [relayState, setRelayState] = useState<RelayBootstrapPublicState | null>(null);
   /**
@@ -190,6 +194,7 @@ export function useStartupReadiness(enabled: boolean) {
     relayState: relayState ?? undefined,
     workspaceFsIdentity,
     gatewayReconnect,
+    runtimeBootstrapFailure,
   });
 
   /**

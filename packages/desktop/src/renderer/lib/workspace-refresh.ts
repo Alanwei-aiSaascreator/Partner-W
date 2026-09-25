@@ -58,6 +58,9 @@ export async function refreshRendererAfterWorkspaceChange(): Promise<void> {
     gatewayEverConnected: {},
     gatewayVersionMap: {},
     gatewayReconnectInfo: {},
+    // ⚠️ **刻意不清** `runtimeBootstrapFailure`：它讲的是**这台机器此刻**的事
+    //    （我们自己的网关进程起没起来、18789 是不是被别的程序占着），与账号无关 ——
+    //    换个账号登录，端口照样被占着。清掉它就是把一条真实结论抹成"没结论"。
     gatewaysLoaded: false,
     defaultGatewayId: null,
     gatewayInfoMap: {},

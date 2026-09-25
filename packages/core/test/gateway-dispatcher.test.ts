@@ -14,7 +14,7 @@ import {
   WIRED_APPROVAL_EVENTS,
   type GatewayDispatcherDeps,
 } from '../src/services/gateway-dispatcher.js';
-import type { GatewayEvent, GatewayStatusEvent } from '../src/ports/gateway-transport.js';
+import type { GatewayEvent, GatewayStatusEvent, RuntimeStatusEvent } from '../src/ports/gateway-transport.js';
 import type { ChatEventPayload } from '../src/protocol/types.js';
 
 type EventListener = (data: GatewayEvent) => void;
@@ -31,6 +31,7 @@ const DEDUP_FALLBACK_WINDOW_MS = 2000;
 function createHarness() {
   let listener: EventListener | null = null;
   let statusListener: ((status: GatewayStatusEvent) => void) | null = null;
+  let runtimeStatusListener: ((status: RuntimeStatusEvent) => void) | null = null;
 
   const systemMessages: Array<{ taskId: string; content: string; sessionKey?: string }> = [];
   const toasts: Array<{ type: string; title: string; description?: string }> = [];
@@ -94,6 +95,12 @@ function createHarness() {
           statusListener = null;
         };
       },
+      onRuntimeStatus: (cb: (status: RuntimeStatusEvent) => void) => {
+        runtimeStatusListener = cb;
+        return () => {
+          runtimeStatusListener = null;
+        };
+      },
       gatewayStatus: async () => ({}),
       listGateways: async () => [],
       listModels: async () => ({ ok: true, result: {} }),
@@ -121,6 +128,7 @@ function createHarness() {
     setGatewayStatusByGateway: vi.fn(),
     setGatewayVersion: vi.fn(),
     setGatewayReconnectInfo: vi.fn(),
+    setRuntimeBootstrapFailure: vi.fn(),
     setDefaultGatewayId: vi.fn(),
     setGatewayInfoMap: vi.fn(),
     setGatewaysLoaded: vi.fn(),
@@ -154,7 +162,11 @@ function createHarness() {
     statusListener?.(status);
   }
 
-  return { emit, emitStatus, dispatcher, deps, systemMessages, toasts, messageStore };
+  function emitRuntimeStatus(status: RuntimeStatusEvent) {
+    runtimeStatusListener?.(status);
+  }
+
+  return { emit, emitStatus, emitRuntimeStatus, dispatcher, deps, systemMessages, toasts, messageStore };
 }
 
 function emitChatError(
@@ -3643,5 +3655,93 @@ describe('压缩：判据要严（变异验证抓出来的缺口）', () => {
     h.emit('sessions.changed', { sessionKey: TASK.sessionKey, reason: 'compact' });
 
     expect(h.systemMessages, '缺字段 ⇒ 证不出"压了" ⇒ 不报').toHaveLength(0);
+  });
+});
+
+/**
+ * 本机运行时（18789 那个网关）起不来时，主进程会把**公开原因**发过来。
+ *
+ * 这条通道必须与网关状态**分开**：它说的是"我们自己的网关压根没起来"，
+ * 而那条路上往往连 WS 都没建起来 —— 从连接层一个字都读不到。
+ * 落进 store 之后，推导层（`deriveStartupReadiness`）才说得出是哪一类失败。
+ *
+ * ⚠️ 它**只**写那一个字段：不是网关状态、不是重连信息，别污染那两条链。
+ */
+describe('本机运行时起不来：只把公开原因落进 store', () => {
+  it('失败 ⇒ 写 store 的是闭集里的那个值', () => {
+    const h = createHarness();
+    h.dispatcher.startGatewayStatus();
+
+    h.emitRuntimeStatus({ ok: false, reason: 'port-occupied' });
+
+    expect(h.deps.setRuntimeBootstrapFailure).toHaveBeenCalledWith('port-occupied');
+  });
+
+  it('起来了 ⇒ 清掉（不能留着上一轮的失败）', () => {
+    const h = createHarness();
+    h.dispatcher.startGatewayStatus();
+
+    h.emitRuntimeStatus({ ok: true });
+
+    expect(h.deps.setRuntimeBootstrapFailure).toHaveBeenCalledWith(null);
+  });
+
+  it('不碰网关状态与重连信息（那是另一个维度的事）', () => {
+    const h = createHarness();
+    h.dispatcher.startGatewayStatus();
+
+    h.emitRuntimeStatus({ ok: false, reason: 'ready-timeout' });
+
+    expect(h.deps.setGatewayStatusByGateway).not.toHaveBeenCalled();
+    expect(h.deps.setGatewayReconnectInfo).not.toHaveBeenCalled();
+    expect(h.deps.setGatewayVersion).not.toHaveBeenCalled();
+  });
+
+  it('⭐ 挂上来时补读一次：这条结论往往在窗口就绪之前就产生了，那次推送没人收', async () => {
+    const h = createHarness();
+    h.deps.gateway.runtimeStatus = vi.fn(async () => ({ ok: false, reason: 'port-occupied' }) as const);
+
+    h.dispatcher.startGatewayStatus();
+
+    await vi.waitFor(() => expect(h.deps.setRuntimeBootstrapFailure).toHaveBeenCalledWith('port-occupied'));
+  });
+
+  it('补读拿到"还没有结论"⇒ 一个字都不写（没结论 ≠ 出错了）', async () => {
+    const h = createHarness();
+    h.deps.gateway.runtimeStatus = vi.fn(async () => null);
+
+    h.dispatcher.startGatewayStatus();
+    await Promise.resolve();
+
+    expect(h.deps.setRuntimeBootstrapFailure).not.toHaveBeenCalled();
+  });
+
+  it('补读这条路自己坏了（IPC 抛）⇒ 只当没有结论 + 留一条遥测，不写 store', async () => {
+    const h = createHarness();
+    h.deps.gateway.runtimeStatus = vi.fn(async () => {
+      throw new Error('ipc exploded');
+    });
+
+    expect(() => h.dispatcher.startGatewayStatus()).not.toThrow();
+    // ⭐ 判据落在**遥测**上，不落在"没抛"上：抛是异步发生的，`not.toThrow` 证明不了
+    //    catch 在不在（变异电池实测：删掉 catch 那条断言照样绿）。
+    await vi.waitFor(() =>
+      expect(h.deps.reportDebugEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ event: 'renderer.runtime_status.read_failed' }),
+      ),
+    );
+    expect(h.deps.setRuntimeBootstrapFailure).not.toHaveBeenCalled();
+    // 遥测里不带原始 message（IPC 层来的东西内容不受控）
+    expect(JSON.stringify(vi.mocked(h.deps.reportDebugEvent).mock.calls)).not.toContain('ipc exploded');
+  });
+
+  it('⭐ 没有这条通道的形态（pwa / 出厂）也不炸：它比渲染层可选', () => {
+    const h = createHarness();
+    h.deps.gateway.onRuntimeStatus = undefined;
+
+    expect(() => h.dispatcher.startGatewayStatus()).not.toThrow();
+    // 网关状态那条链照常：不能因为少一条通道就整组不订阅
+    h.emitStatus({ gatewayId: 'gw-1', connected: true });
+    expect(h.deps.setGatewayStatusByGateway).toHaveBeenCalledWith('gw-1', 'connected');
   });
 });

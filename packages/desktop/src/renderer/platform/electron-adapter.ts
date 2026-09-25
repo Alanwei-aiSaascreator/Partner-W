@@ -31,6 +31,7 @@ export function createElectronPorts(): PlatformPorts {
       deleteSession: api.deleteSession,
       onGatewayEvent: api.onGatewayEvent,
       onGatewayStatus: api.onGatewayStatus,
+      onRuntimeStatus: api.onRuntimeStatus,
     },
     settings: {
       getSettings: api.getSettings,

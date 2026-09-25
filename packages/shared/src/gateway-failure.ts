@@ -20,6 +20,16 @@ export type GatewayFailureReason =
   /** 说不清就是说不清 —— **不猜**。 */
   | 'unknown';
 
+/**
+ * 「本机运行时（我们**自己**那个网关）起没起来」——**能过 IPC 的那一部分**。
+ *
+ * ⚠️ 与"网关状态"（连上了没有）是两层事：端口被**别的**程序占着时，往往连 WS 都
+ *    没建起来 —— 从连接层一个字都读不到，界面只能一直显示"正在准备模型"。
+ * ⚠️ 定义在 shared 是**故意的**：这个形状要跨三道边界（主进程 → IPC → 渲染层），
+ *    每一层各写一遍就会漂移。
+ */
+export type RuntimeBootstrapStatus = { ok: true } | { ok: false; reason: GatewayFailureReason };
+
 /** 闭集本体（测试按它断言"多一个值都要先想清楚界面上说什么"）。 */
 export const GATEWAY_FAILURE_REASONS = [
   'port-occupied',

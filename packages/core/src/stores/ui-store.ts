@@ -1,5 +1,12 @@
 import { createStore } from 'zustand/vanilla';
-import type { AgentInfo, CommandEntry, ModelCatalogEntry, SkillStatusReport, ToolsCatalog } from '@clawwork/shared';
+import type {
+  AgentInfo,
+  CommandEntry,
+  GatewayFailureReason,
+  ModelCatalogEntry,
+  SkillStatusReport,
+  ToolsCatalog,
+} from '@clawwork/shared';
 
 export type MainView =
   | 'chat'
@@ -99,6 +106,16 @@ export interface UiState {
 
   gatewayReconnectInfo: Record<string, { attempt: number; max: number; gaveUp: boolean }>;
   setGatewayReconnectInfo: (gatewayId: string, info: { attempt: number; max: number; gaveUp: boolean } | null) => void;
+
+  /**
+   * 本机运行时（我们**自己**那个网关）起不来的公开原因（`null` = 没有这个结论）。
+   *
+   * ⚠️ 与 `gatewayReconnectInfo` 是两层事：那是"连上了没有"，这是"我们自己的网关
+   *    进程压根没起来"。后者发生时往往连 WS 都没建起来，从连接层一个字都读不到 ——
+   *    所以必须有这条独立的路，界面才说得出"18789 被别的程序占用"这类结论。
+   */
+  runtimeBootstrapFailure: GatewayFailureReason | null;
+  setRuntimeBootstrapFailure: (reason: GatewayFailureReason | null) => void;
 
   gatewaysLoaded: boolean;
   setGatewaysLoaded: (loaded: boolean) => void;
@@ -310,6 +327,9 @@ export function createUiStore(deps: UiStoreDeps) {
         }
         return { gatewayReconnectInfo: { ...s.gatewayReconnectInfo, [gatewayId]: info } };
       }),
+
+    runtimeBootstrapFailure: null,
+    setRuntimeBootstrapFailure: (reason) => set({ runtimeBootstrapFailure: reason }),
 
     gatewaysLoaded: false,
     setGatewaysLoaded: (loaded) => set({ gatewaysLoaded: loaded }),

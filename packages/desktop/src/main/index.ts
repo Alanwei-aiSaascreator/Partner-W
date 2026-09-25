@@ -6,6 +6,7 @@ import { dirname } from 'node:path';
 import { nativeTheme } from 'electron';
 import { initAllGateways, destroyAllGateways } from './ws/index.js';
 import { getMainWindow, setMainWindow } from './window-manager.js';
+import { sendToWindow } from './ws/window-utils.js';
 import { initDebugLogger, getDebugLogger } from './debug/index.js';
 import { registerWsHandlers } from './ipc/ws-handlers.js';
 import { registerArtifactHandlers } from './ipc/artifact-handlers.js';
@@ -62,6 +63,7 @@ import {
 } from './runtime/instance-guard.js';
 import { bootstrapLocalGatewayRuntime, GATEWAY_PORT_OCCUPIED, shutdownLocalGatewayRuntime } from './runtime/index.js';
 import { bootstrapWithRetry } from './runtime/bootstrap-retry.js';
+import { getRuntimeBootstrapStatus, publishRuntimeBootstrapStatus } from './runtime/bootstrap-status.js';
 import { removableDrives } from './workspace/removable-drives.js';
 import { GATEWAY_WS_PORT } from '@clawwork/shared';
 
@@ -383,6 +385,17 @@ if (!gotLock) {
         Menu.setApplicationMenu(buildAppMenu(devModeEnabled));
       });
 
+      /**
+       * 本机运行时起不来的**初始读**（渲染层挂载时补读一次）。
+       *
+       * ⚠️ 与 relay 公开状态是同一个形状的同一个理由（见 `commercial-handlers.ts`）：
+       *    bootstrap 在 `app.whenReady()` 里就跑，窗口与渲染层是**之后**才挂上来的 ——
+       *    那之前发出的推送没人收。少了这条读，界面就只会一直"正在准备模型"。
+       * ⚠️ 返回 `null` = **还没有结论**，与"没问题"是两回事：界面按"没结论"处理
+       *    （继续显示准备中），不许把它说成出错。
+       */
+      ipcMain.handle('runtime:bootstrap-status', () => getRuntimeBootstrapStatus());
+
       ipcMain.on('ui:set-window-button-visibility', (_event, visible: boolean) => {
         if (process.platform === 'darwin') {
           const win = getMainWindow();
@@ -506,6 +519,15 @@ if (!gotLock) {
           };
           void (win ? dialog.showMessageBox(win, options) : dialog.showMessageBox(options));
         }
+        // ⭐ 光弹一次窗是不够的：用户点掉之后界面上**什么都不剩**，只会显示
+        //    "正在准备模型"一直转（2026-09-25 真日志：六分钟）。所以这条结论要
+        //    留在主进程里、并推给渲染层 —— 界面才说得出是哪一类失败。
+        //    ⚠️ 只发 `{ ok, code }`，`runtimeResult.reason`（给人看的那条描述，
+        //    带路径/端口）**不进** IPC：见 `runtime/bootstrap-status.ts`。
+        //    ⚠️ 推可能丢（窗口还没挂上来）—— 渲染层挂上来后会用
+        //    `runtime:bootstrap-status` 补读一次，所以这里推失败不是 bug。
+        publishRuntimeBootstrapStatus(runtimeResult);
+        sendToWindow(getMainWindow(), 'runtime-status', getRuntimeBootstrapStatus());
       }
 
       initAllGateways();
