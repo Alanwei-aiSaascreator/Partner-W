@@ -128,3 +128,50 @@ export function visibleTasksForAgent<T extends VisibleTaskLike>(tasks: readonly 
     (task) => task.status !== 'archived' && (!currentAgentId || resolveTaskAgentId(task) === currentAgentId),
   );
 }
+
+/** 「回到哪次对话」判定所需的字段。 */
+interface RestorableTaskLike extends AgentOwnedTaskLike {
+  id: string;
+  status: string;
+  updatedAt: string;
+}
+
+/**
+ * 切回某个助手时，主区该回到**哪一次对话**；它还没有对话 ⇒ `null`（界面据此回欢迎屏）。
+ *
+ * ## 为什么要有它（同事真机反馈 ②「来回切换管家内容会丢失（不知道在哪里找到）」）
+ *
+ * 2026-09-25 真机复核**定性**：内容**没丢**（任务全在「最近任务」里，跨助手全量），
+ * 丢的是**回去的路** —— 切换助手那个 hook（`hooks/useSelectAgent.ts`）原来无条件
+ * `setActiveTask(null)`，于是切回来是一片欢迎屏，用户只能自己再去翻「最近任务」。
+ *
+ * 归属判定**复用 `resolveTaskAgentId`**（显式 `agentId` 优先，否则从 `session_key` 推断）：
+ * 库里读回来的任务 `agentId` 是 `undefined`，只看 `agentId` 会一条都匹配不上
+ * —— 与上面那条 `visibleTasksForAgent` 是**同一个坑**。
+ *
+ * ## ⚠️ 两条刻意的取舍（改之前先读完）
+ *
+ * 1. **只按时间，不按置顶 —— 别改用 `compareTasksForSidebar`。**
+ *    这里问的是"我上次跟它说到哪了"，是**时间**问题；置顶是"这条我想随手够得着"，
+ *    是**收藏**问题。两者混在一起会出怪事：刚跟它聊完 A、切走再切回，
+ *    却因为 B 是置顶而撞进 B。
+ * 2. **`agentId` 为空串 ⇒ `null`**（"没指定助手"不等于"谁都要"）。这与
+ *    `visibleTasksForAgent('')` 的"全都露脸"**故意不同**：那个是"不过滤"，
+ *    这个是"不知道回哪儿"，只能回欢迎屏。
+ *
+ * 归档的不算（归档等于说"别再自动撞开它"）。
+ */
+export function mostRecentTaskIdForAgent<T extends RestorableTaskLike>(
+  tasks: readonly T[],
+  agentId: string,
+): string | null {
+  if (!agentId) return null;
+
+  let newest: T | null = null;
+  for (const task of tasks) {
+    if (task.status === 'archived') continue;
+    if (resolveTaskAgentId(task) !== agentId) continue;
+    if (!newest || task.updatedAt.localeCompare(newest.updatedAt) > 0) newest = task;
+  }
+  return newest ? newest.id : null;
+}
