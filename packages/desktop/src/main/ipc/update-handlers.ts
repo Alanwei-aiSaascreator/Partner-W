@@ -22,7 +22,9 @@ import { PortableUpdateFailure } from '../update/portable-manifest.js';
 import {
   downloadPortablePackage,
   extractPortablePackage,
+  fetchFeedResponse,
   measureProgramTreeBytes,
+  readFeedJson,
   verifyPortableProgramTree,
 } from '../update/portable-package.js';
 import {
@@ -103,17 +105,18 @@ async function initializePortableUpdateService(root: string): Promise<void> {
       publicKeyBase64: buildTimePublicKey(),
       stateStore,
       fetchManifest: async () => {
-        const response = await fetch(`${feed}manifest.json`);
+        const response = await fetchFeedResponse(`${feed}manifest.json`);
         // 404 = **这个频道还没有发布任何 manifest**（每次发版之前的正常状态，不是故障）。
         // 报成一个用户无事可做的错误会误导人；交给服务落回 idle，由文案说"当前频道暂无更新"。
         if (response.status === 404) throw new PortableUpdateFailure('update-not-published');
         if (!response.ok) throw new PortableUpdateFailure('feed-response');
-        return response.json();
+        return readFeedJson(response);
       },
       fetchFileManifest: async (manifest) => {
-        const response = await fetch(new URL('portable-files.json', manifest.packageUrl).toString());
-        if (!response.ok) throw new Error(`portable file manifest responded ${response.status}`);
-        return response.json();
+        const response = await fetchFeedResponse(new URL('portable-files.json', manifest.packageUrl).toString());
+        // ⚠️ 以前这里是 `throw new Error(...)`（普通 Error）⇒ 服务只能报 `unknown`。
+        if (!response.ok) throw new PortableUpdateFailure('feed-response');
+        return readFeedJson(response);
       },
       downloadPackage: downloadPortablePackage,
       extractPackage: extractPortablePackage,

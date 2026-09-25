@@ -4,6 +4,17 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { canonicalizeJson, type PortableUpdatePublicState } from '@clawwork/shared';
+
+/**
+ * 盘上日志的桩：便携更新这条路**以前一条都不写**（2026-09-25 真机排障实测），
+ * 于是装配态失败只能靠挂调试器猜。这里钉住"失败必须留下一行能查的"。
+ */
+const debug = vi.hoisted(() => ({ lines: [] as Array<Record<string, unknown>> }));
+vi.mock('../src/main/debug/index.js', () => {
+  const push = (line: Record<string, unknown>) => debug.lines.push(line);
+  return { getDebugLogger: () => ({ info: push, warn: push, error: push, debug: push }) };
+});
+
 import { PortableUpdateFailure } from '../src/main/update/portable-manifest.js';
 import { PortableUpdateStateStore } from '../src/main/update/portable-state.js';
 import { createPortableUpdateService } from '../src/main/update/portable-update-service.js';
@@ -518,5 +529,50 @@ describe('portable update service: 源上还没有这个版本', () => {
     // 永久失败：再点一次也不会变，而且根本不该去问源。
     await expect(harness.service.prepare()).resolves.toEqual({ ok: false, errorCode: 'launcher-unavailable' });
     expect(fetchManifest).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * ⭐ 2026-09-25 真机验收的第三个发现：**这条路一条日志都不写**。
+ *
+ * 盘上 0.0.28 点下载永远失败、界面只有"未知错误"，而 `debug-*.ndjson` 里
+ * `updater` 域**一条都没有** —— 现场根本没法诊断（我最后是挂 Node 调试器
+ * 才把根因捞出来的）。失败必须留下**能查的**一行：归类后的 code 给用户，
+ * 原始 message 给排查的人。
+ */
+describe('failures leave a line in the debug log', () => {
+  it('⭐ prepare 失败 ⇒ `portable.prepare.failed`，带归类后的 code', async () => {
+    debug.lines.length = 0;
+    const h = await makeHarness({
+      downloadPackage: async () => {
+        throw new PortableUpdateFailure('filesystem-error');
+      },
+    });
+    await h.service.check();
+
+    const result = await h.service.prepare();
+
+    expect(result).toMatchObject({ ok: false, errorCode: 'filesystem-error' });
+    expect(debug.lines.find((line) => line.event === 'portable.prepare.failed')).toMatchObject({
+      domain: 'updater',
+      data: { code: 'filesystem-error' },
+    });
+  });
+
+  it('⭐ check 失败 ⇒ `portable.check.failed`，带归类后的 code', async () => {
+    debug.lines.length = 0;
+    const h = await makeHarness({
+      fetchManifest: async () => {
+        throw new PortableUpdateFailure('network');
+      },
+    });
+
+    const state = await h.service.check();
+
+    expect(state.phase).toBe('error');
+    expect(debug.lines.find((line) => line.event === 'portable.check.failed')).toMatchObject({
+      domain: 'updater',
+      data: { code: 'network' },
+    });
   });
 });

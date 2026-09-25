@@ -19,6 +19,7 @@ import {
   type PortableUpdateStateStore,
   type PortableUpdateTransactionV1,
 } from './portable-state.js';
+import { getDebugLogger } from '../debug/index.js';
 
 const PERMANENT_ERROR_CODES: readonly PortableUpdateErrorCode[] = [
   'signature-invalid',
@@ -232,6 +233,15 @@ export function createPortableUpdateService(deps: PortableUpdateServiceDeps): Po
     } catch (error) {
       const code = toErrorCode(error);
       if (PERMANENT_ERROR_CODES.includes(code)) permanentError = code;
+      // ⚠️ 这条路**以前一个字都不写**（2026-09-25 真机排障实测：盘上日志里 `updater` 域
+      //    0 条），于是装配态失败只能靠挂调试器猜。失败必须留下**能查的**一行：
+      //    归类后的 code 给用户，原始 message 给排查的人。
+      getDebugLogger().warn({
+        domain: 'updater',
+        event: 'portable.prepare.failed',
+        message: error instanceof Error ? error.message : String(error),
+        data: { code, targetVersion: current.version },
+      });
       // 空间类失败带着"还差多少"上来（`PortableUpdateFailure.detail`），
       // 原样放进公开状态，界面才说得出数字。
       const detail = error instanceof PortableUpdateFailure ? error.detail : undefined;
@@ -295,6 +305,13 @@ export function createPortableUpdateService(deps: PortableUpdateServiceDeps): Po
         return getState();
       }
       if (PERMANENT_ERROR_CODES.includes(code)) permanentError = code;
+      // 同 `runPrepare`：失败要留一行能查的（这条路以前完全静默）。
+      getDebugLogger().warn({
+        domain: 'updater',
+        event: 'portable.check.failed',
+        message: error instanceof Error ? error.message : String(error),
+        data: { code },
+      });
       publish('error', { errorCode: code });
     }
     return getState();

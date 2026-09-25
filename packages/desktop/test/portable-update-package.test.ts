@@ -9,7 +9,9 @@ import { PortableUpdateFailure } from '../src/main/update/portable-manifest.js';
 import {
   calculatePortableSpaceBudget,
   downloadPortablePackage,
+  fetchFeedResponse,
   mapFileSystemFailure,
+  readFeedJson,
   extractPortablePackage,
   sumExpandedBytes,
   verifyPortableProgramTree,
@@ -188,6 +190,82 @@ describe('portable package space and download', () => {
       [8, bytes.length],
       [bytes.length, bytes.length],
     ]);
+  });
+
+  /**
+   * ⭐ 2026-09-25 真机验收抓到的**发版阻断级**缺陷：盘上 0.0.28 永远升不上来。
+   *
+   * 真机上的目标路径是 `<盘根>\.荣盈魔方更新\<事务 id>\download\portable.zip`，
+   * 而**这个目录树此刻还不存在**（全新的一块盘上，`.荣盈魔方更新` 都没建过）。
+   * `fs.statfs` 一个不存在的路径在 Windows 上抛 ENOENT ⇒ 空间检查先炸 ⇒
+   * **连 zip 都不去取**，用户看到的是"未知错误"。
+   *
+   * 为什么以前没抓住：上面那条用例的 `destinationPart` 是 `join(root, 'update.part')`，
+   * **父目录（临时根）总是存在的** —— 夹具把缺陷绕过去了。
+   * 隔壁 `extractPortablePackage` 早就踩过并修了（先 `mkdir` 再 `statfs`），下载这条路漏了。
+   */
+  it('⭐ 目标的父目录**还没建**时也要能下（真机上事务目录正是现建的）', async () => {
+    const root = await makeRoot();
+    const destinationPart = join(root, '.荣盈魔方更新', 'tx-1', 'download', 'portable.zip');
+    const bytes = Buffer.from('portable-update-payload');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue(bytes);
+                controller.close();
+              },
+            }),
+            { status: 200 },
+          ),
+      ),
+    );
+
+    await downloadPortablePackage({
+      url: 'https://example.com/update.zip',
+      destinationPart,
+      expectedSize: bytes.length,
+      expectedSha256: sha256(bytes),
+      requiredFreeBytes: 1,
+      signal: new AbortController().signal,
+      onProgress: vi.fn(),
+      // ⚠️ 故意**不注入** `statfsImpl`：走真的 `fs.statfs` —— 真机炸的就是这一步。
+    });
+
+    expect(await readFile(destinationPart)).toEqual(bytes);
+  });
+
+  /**
+   * ⭐ 同一天的第二个发现：`statfs` 自己失败时是**裸抛**的。
+   *
+   * 它是普通 `Error`（不是 `PortableUpdateFailure`）⇒ 服务那边 `toErrorCode`
+   * 只能给 `unknown` ⇒ 用户看到"未知错误"，**没有任何下一步**。
+   * 量不出空间就如实说"这块盘读不了"，别丢成不知道什么错。
+   */
+  it('⭐ statfs 自己失败 ⇒ 归类成盘的问题（不许裸抛成"未知错误"）', async () => {
+    const root = await makeRoot();
+    const statfsFails = async (): Promise<{ bavail: number; bsize: number }> => {
+      const error = new Error("ENOENT: no such file or directory, statfs 'X'") as NodeJS.ErrnoException;
+      error.code = 'ENOENT';
+      throw error;
+    };
+    vi.stubGlobal('fetch', vi.fn());
+
+    await expect(
+      downloadPortablePackage({
+        url: 'https://example.com/update.zip',
+        destinationPart: join(root, 'update.part'),
+        expectedSize: 1,
+        expectedSha256: 'a'.repeat(64),
+        requiredFreeBytes: 1,
+        signal: new AbortController().signal,
+        onProgress: vi.fn(),
+        statfsImpl: statfsFails,
+      }),
+    ).rejects.toMatchObject({ code: 'filesystem-error' });
   });
 
   it('cancels a streaming download and removes the partial file', async () => {
@@ -580,5 +658,43 @@ describe('filesystem failures are classified, not blamed on the package', () => 
 
   it('没有 code 的异常也走 filesystem-error（兜底有名字，别丢成 unknown）', () => {
     expect(mapFileSystemFailure(new Error('boom'))).toMatchObject({ code: 'filesystem-error' });
+  });
+});
+
+/**
+ * ⭐ 2026-09-25 真机验收的第二个发现：**feed 请求失败也没归类**。
+ *
+ * 三条路都会掉进 `unknown`（用户看到"未知错误"、没有任何下一步）：
+ * - 连不上时 undici 抛的是 `TypeError: fetch failed`（真因在 `.cause` 里）；
+ * - `response.json()` 碰到非 JSON 正文抛 `SyntaxError`（网关塞回来的 HTML、被截断的正文）；
+ * - `fetchFileManifest` 那句"非 2xx"抛的是**普通 `Error`**。
+ *
+ * 而 `network`（"连不上/超时 —— **可以重试**"）与 `feed-response` 这两个码
+ * **本来就在词表里**、文案也齐 —— 缺的只是把失败**贴上名字**。
+ */
+describe('feed failures are classified too', () => {
+  it('⭐ 连不上/超时（undici 的 `TypeError: fetch failed`）⇒ network（可重试）', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new TypeError('fetch failed');
+      }),
+    );
+
+    await expect(fetchFeedResponse('https://example.com/updates/internal/manifest.json')).rejects.toMatchObject({
+      code: 'network',
+    });
+  });
+
+  it('⭐ 正文不是 JSON ⇒ feed-response（不是 unknown）', async () => {
+    const response = new Response('<html>502 Bad Gateway</html>', { status: 200 });
+
+    await expect(readFeedJson(response)).rejects.toMatchObject({ code: 'feed-response' });
+  });
+
+  it('正常 JSON 照常返回（这两层不是无条件拒绝）', async () => {
+    const response = new Response('{"ok":true}', { status: 200 });
+
+    await expect(readFeedJson(response)).resolves.toEqual({ ok: true });
   });
 });

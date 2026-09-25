@@ -150,6 +150,39 @@ export function mapFileSystemFailure(error: unknown): PortableUpdateFailure {
   return new PortableUpdateFailure('filesystem-error');
 }
 
+/**
+ * 取一次 feed 资源，**把"连不上"归类**。
+ *
+ * `fetch` 失败时抛的是 undici 的 `TypeError: fetch failed`（真因在 `.cause` 里）——
+ * 它既不是 `PortableUpdateFailure`，也不是我们代码里造的 `Error`，
+ * 服务那边 `toErrorCode` 只能给 `unknown` ⇒ 用户看到"未知错误"、**没有任何下一步**。
+ * 而词表里本来就有 `network`（"连不上/超时 —— **可以重试**"）。
+ *
+ * ⚠️ 2026-09-25 真机验收：盘上 0.0.28 走这条路时先炸在空间检查（见 `downloadPortablePackage`），
+ * 修掉之后**这一层**就是下一个会裸奔的地方 —— 所以这里一并钉住。
+ */
+export async function fetchFeedResponse(url: string): Promise<Response> {
+  try {
+    return await fetch(url);
+  } catch {
+    throw new PortableUpdateFailure('network');
+  }
+}
+
+/**
+ * 读一次 feed 的 JSON 正文：**非 JSON ⇒ `feed-response`**。
+ *
+ * 网关塞回来的 HTML 错误页、被截断的正文都会让 `response.json()` 抛 `SyntaxError`
+ * —— 同样不是 `PortableUpdateFailure` ⇒ 同样会掉进 `unknown`。
+ */
+export async function readFeedJson(response: Response): Promise<unknown> {
+  try {
+    return await response.json();
+  } catch {
+    throw new PortableUpdateFailure('feed-response');
+  }
+}
+
 async function hashFile(absolutePath: string): Promise<string> {
   const hash = createHash('sha256');
   await pipeline(createReadStream(absolutePath), hash);
@@ -205,7 +238,16 @@ async function assertFreeBytes(input: {
   requiredFreeBytes: number;
   statfsImpl: StatfsLike;
 }): Promise<void> {
-  const space = await input.statfsImpl(input.target);
+  let space: { bavail: number; bsize: number };
+  try {
+    space = await input.statfsImpl(input.target);
+  } catch (error) {
+    // ⚠️ `statfs` **自己**失败不是"空间不足"：量不出来就说这块盘读不了。
+    //    裸抛的话它是个普通 `Error`，服务那边 `toErrorCode` 只能给 `unknown`
+    //    ⇒ 用户看到的是"未知错误"、**没有任何下一步**（2026-09-25 真机验收实测：
+    //    `statfs` 一个还没建出来的事务目录 ⇒ ENOENT ⇒ 报成 unknown）。
+    throw mapFileSystemFailure(error);
+  }
   const available = space.bavail * space.bsize;
   if (!Number.isSafeInteger(input.requiredFreeBytes) || available < input.requiredFreeBytes) {
     throw new PortableUpdateFailure('disk-space', {
@@ -231,6 +273,13 @@ export async function downloadPortablePackage(input: {
   /** 注入点（单测造磁盘满）。 */
   statfsImpl?: StatfsLike;
 }): Promise<void> {
+  // ⚠️ **先 mkdir 再 statfs**（2026-09-25 真机验收抓到的发版阻断级缺陷）。
+  //    真机上的目标是 `<盘根>\.荣盈魔方更新\<事务 id>\download\portable.zip`，
+  //    而全新的一块盘上**这棵树还不存在**；`fs.statfs` 一个不存在的路径在 Windows 上
+  //    抛 ENOENT ⇒ 空间检查先炸 ⇒ **连 zip 都不去取**，用户看到"未知错误"。
+  //    ⇒ 盘上的 0.0.28 **永远升不上来**（下载动作是盘上那个版本在跑，签名/频道/版本号全都无关）。
+  //    隔壁 `extractPortablePackage` 早就踩过并修了（那里注释写着同一个坑），下载这条路漏了。
+  await mkdir(dirname(input.destinationPart), { recursive: true });
   await assertFreeBytes({
     target: dirname(input.destinationPart),
     requiredFreeBytes: input.requiredFreeBytes,
