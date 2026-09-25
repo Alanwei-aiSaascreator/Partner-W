@@ -24,12 +24,13 @@ describe('gatewayFailureReasonFrom', () => {
     expect(gatewayFailureReasonFrom({ bootstrapCode: 'runtime.gateway-ready-timeout' })).toBe('ready-timeout');
   });
 
-  it('认证被拒（WS 错误码）⇒ auth-rejected', () => {
-    expect(gatewayFailureReasonFrom({ wsErrorCode: 'AUTH_TOKEN_MISMATCH' })).toBe('auth-rejected');
-  });
-
   it('认证被拒（关闭码 1008）⇒ auth-rejected', () => {
     expect(gatewayFailureReasonFrom({ closeCode: 1008 })).toBe('auth-rejected');
+  });
+
+  it('⭐ 别的关闭码一律不猜（1006 是"连接掉了"，不是"被拒绝"）', () => {
+    expect(gatewayFailureReasonFrom({ closeCode: 1006 })).toBe('unknown');
+    expect(gatewayFailureReasonFrom({ closeCode: 1000 })).toBe('unknown');
   });
 
   it('什么都不知道 ⇒ unknown（**不猜**）', () => {
@@ -52,8 +53,7 @@ describe('gatewayFailureReasonFrom', () => {
     for (const input of hostile) {
       for (const reason of [
         gatewayFailureReasonFrom({ bootstrapCode: input }),
-        gatewayFailureReasonFrom({ wsErrorCode: input }),
-        gatewayFailureReasonFrom({ bootstrapCode: input, wsErrorCode: input, closeCode: 1006 }),
+        gatewayFailureReasonFrom({ bootstrapCode: input, closeCode: 1006 }),
       ]) {
         expect(GATEWAY_FAILURE_REASONS).toContain(reason as GatewayFailureReason);
       }
@@ -66,10 +66,11 @@ describe('gatewayFailureReasonFrom', () => {
     );
   });
 
-  it('判定优先级：中转码 > WS 码 > 关闭码（更具体的那条赢）', () => {
-    expect(
-      gatewayFailureReasonFrom({ bootstrapCode: 'runtime.gateway-port-occupied', wsErrorCode: 'AUTH_TOKEN_MISMATCH' }),
-    ).toBe('port-occupied');
-    expect(gatewayFailureReasonFrom({ wsErrorCode: 'AUTH_TOKEN_MISMATCH', closeCode: 1008 })).toBe('auth-rejected');
+  it('判定优先级：中转码 > 关闭码（更具体的那条赢）', () => {
+    // 两个信号同时在场时，"我们自己的网关没起来"比"连接被拒"更接近根因
+    expect(gatewayFailureReasonFrom({ bootstrapCode: 'runtime.gateway-port-occupied', closeCode: 1008 })).toBe(
+      'port-occupied',
+    );
+    expect(gatewayFailureReasonFrom({ bootstrapCode: 'runtime.something-new', closeCode: 1008 })).toBe('auth-rejected');
   });
 });

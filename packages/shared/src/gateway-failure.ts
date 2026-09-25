@@ -46,22 +46,29 @@ const FROM_BOOTSTRAP_CODE: Readonly<Record<string, GatewayFailureReason>> = {
   'runtime.gateway-ready-timeout': 'ready-timeout',
 };
 
-const AUTH_REJECTED_WS_ERROR_CODE = 'AUTH_TOKEN_MISMATCH';
-/** 1008 = 服务端明确拒绝（WebSocket policy violation）。 */
+/**
+ * 1008 = 服务端明确拒绝（WebSocket policy violation）。
+ *
+ * ⚠️ 这是**认证被拒在我们这边的真实信号**，而且它是**唯一**一个：网关回
+ *    `res.error` ⇒ `isGatewayRejection` 判真 ⇒ 客户端主动
+ *    `ws.close(1008, 'auth failed')`（见 `main/ws/gateway-client.ts`）。
+ *    我原先还认过一个叫 `AUTH_TOKEN_MISMATCH` 的错误码 —— 查下来**仓库里没有
+ *    任何地方产生它**（客户端、网关入口、测试都没有），是我想象的协议码。
+ *    认一个不存在的码看着无害，其实是**把猜测写进了判据**：真到那天，它只会让
+ *    "认错了类别"变得无声无息。删掉，宁可落 `unknown`。
+ */
 const POLICY_VIOLATION_CLOSE_CODE = 1008;
 
 export interface GatewayFailureSignals {
   /** 中转 bootstrap 的失败码（`runtime.*`）。不认识 ⇒ 不猜。 */
   bootstrapCode?: string | undefined;
-  /** WS 层看到的错误码（如 `AUTH_TOKEN_MISMATCH`）。 */
-  wsErrorCode?: string | null | undefined;
   /** WS 关闭码（1008 = 明确拒绝）。 */
   closeCode?: number | undefined;
 }
 
 /**
  * 信号 → 公开原因。判定优先级：**更具体的那条赢**
- * （中转码 > WS 错误码 > 关闭码），其余一律 `unknown`。
+ * （中转码 > 关闭码），其余一律 `unknown`。
  *
  * ⚠️ 白名单，不是黑名单：将来多一个中转码，这里**不会**自动把它说成某一类 ——
  * 它只会落 `unknown`，直到有人明确写清那一类在界面上该说什么。
@@ -71,7 +78,6 @@ export function gatewayFailureReasonFrom(input: GatewayFailureSignals): GatewayF
     const mapped = FROM_BOOTSTRAP_CODE[input.bootstrapCode];
     if (mapped !== undefined) return mapped;
   }
-  if (input.wsErrorCode === AUTH_REJECTED_WS_ERROR_CODE) return 'auth-rejected';
   if (input.closeCode === POLICY_VIOLATION_CLOSE_CODE) return 'auth-rejected';
   return 'unknown';
 }
