@@ -1,4 +1,10 @@
-import type { CommandsListParams, IpcResult, MessageAttachment, RuntimeBootstrapStatus } from '@clawwork/shared';
+import type {
+  CommandsListParams,
+  GatewayFailureReason,
+  IpcResult,
+  MessageAttachment,
+  RuntimeBootstrapStatus,
+} from '@clawwork/shared';
 
 export interface GatewayEvent {
   event: string;
@@ -15,6 +21,14 @@ export interface GatewayStatusEvent {
   reconnectAttempt?: number;
   maxAttempts?: number;
   gaveUp?: boolean;
+  /**
+   * **有结论**时的公开原因（闭集，见 `@clawwork/shared`）。
+   *
+   * ⚠️ 缺席 = **还没有结论**（普通断线、还在重连），不是"没问题"：
+   *    界面按"还没结论"处理，不许替它编一个。
+   * ⚠️ 与 `error` 是两件事：那是给人看的原文（进日志），这是给界面选文案的闭集值。
+   */
+  reason?: GatewayFailureReason | undefined;
 }
 
 /**

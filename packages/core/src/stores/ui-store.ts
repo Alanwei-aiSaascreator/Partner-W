@@ -8,6 +8,18 @@ import type {
   ToolsCatalog,
 } from '@clawwork/shared';
 
+/**
+ * 一个网关的重连状况（`ui-store.gatewayReconnectInfo[gatewayId]`）。
+ *
+ * `reason` 缺席 = **还没有结论**（普通断线、还在重连）—— 不是"没问题"。
+ */
+export interface GatewayReconnectInfo {
+  attempt: number;
+  max: number;
+  gaveUp: boolean;
+  reason?: GatewayFailureReason | undefined;
+}
+
 export type MainView =
   | 'chat'
   /** 最近任务 —— 全量任务列表（搜索 / 状态筛选 / 跨助手）。
@@ -104,8 +116,13 @@ export interface UiState {
   gatewayVersionMap: Record<string, string>;
   setGatewayVersion: (gatewayId: string, version: string | undefined) => void;
 
-  gatewayReconnectInfo: Record<string, { attempt: number; max: number; gaveUp: boolean }>;
-  setGatewayReconnectInfo: (gatewayId: string, info: { attempt: number; max: number; gaveUp: boolean } | null) => void;
+  /**
+   * ⚠️ `reason`（有结论时的公开原因）**跟着重连信息一起存**：它描述的就是
+   *    "这个网关连得怎么样"，与 `attempt` / `gaveUp` 是同一件事的不同侧面。
+   *    缺席 = 还没有结论（普通断线、还在重连）—— 不是"没问题"。
+   */
+  gatewayReconnectInfo: Record<string, GatewayReconnectInfo>;
+  setGatewayReconnectInfo: (gatewayId: string, info: GatewayReconnectInfo | null) => void;
 
   /**
    * 本机运行时（我们**自己**那个网关）起不来的公开原因（`null` = 没有这个结论）。

@@ -3745,3 +3745,64 @@ describe('本机运行时起不来：只把公开原因落进 store', () => {
     expect(h.deps.setGatewayStatusByGateway).toHaveBeenCalledWith('gw-1', 'connected');
   });
 });
+
+/**
+ * 网关**明确拒绝**时（回了 `res.error` ⇒ 客户端以 1008 关闭），界面上要说得出
+ * 是哪一类拒绝 —— 光有 `gaveUp` 只能说"连不上"。
+ *
+ * ⚠️ 这条原因跟的是**重连信息**（它本来就描述"这个网关连得怎么样"），
+ *    而不是 `runtimeBootstrapFailure`（那是"我们自己的网关压根没起来"）。
+ */
+describe('网关明确拒绝：把"哪一类"一起存下来', () => {
+  it('状态里给了原因 ⇒ 存进重连信息（不是只存 attempt/max）', () => {
+    const h = createHarness();
+    h.dispatcher.startGatewayStatus();
+
+    h.emitStatus({
+      gatewayId: 'gw-1',
+      connected: false,
+      error: 'auth denied',
+      reconnectAttempt: 10,
+      maxAttempts: 10,
+      gaveUp: true,
+      reason: 'auth-rejected',
+    });
+
+    expect(h.deps.setGatewayReconnectInfo).toHaveBeenCalledWith('gw-1', {
+      attempt: 10,
+      max: 10,
+      gaveUp: true,
+      reason: 'auth-rejected',
+    });
+  });
+
+  it('对照：没给原因时存的那份也没有原因（不替它编一个）', () => {
+    const h = createHarness();
+    h.dispatcher.startGatewayStatus();
+
+    h.emitStatus({ gatewayId: 'gw-1', connected: false, reconnectAttempt: 3, maxAttempts: 10, gaveUp: false });
+
+    expect(h.deps.setGatewayReconnectInfo).toHaveBeenCalledWith('gw-1', {
+      attempt: 3,
+      max: 10,
+      gaveUp: false,
+    });
+  });
+
+  it('连上了 ⇒ 照旧整条清掉（原因跟着重连信息一起消失）', () => {
+    const h = createHarness();
+    h.dispatcher.startGatewayStatus();
+
+    h.emitStatus({
+      gatewayId: 'gw-1',
+      connected: false,
+      reconnectAttempt: 10,
+      maxAttempts: 10,
+      gaveUp: true,
+      reason: 'auth-rejected',
+    });
+    h.emitStatus({ gatewayId: 'gw-1', connected: true });
+
+    expect(h.deps.setGatewayReconnectInfo).toHaveBeenLastCalledWith('gw-1', null);
+  });
+});

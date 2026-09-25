@@ -567,6 +567,49 @@ describe('本机运行时起不来：把「为什么」如实说出来，连上�
     expect(result.ai.failureReason).toBeNull();
   });
 
+  it('⭐ 连上了但网关不认我们（gaveUp + 原因）⇒ 说得出是"被拒绝"', () => {
+    const result = deriveStartupReadiness({
+      ...base,
+      gatewayReconnect: { attempt: 10, max: 10, gaveUp: true, reason: 'auth-rejected' },
+    });
+
+    expect(result.ai.phase).toBe('error');
+    expect(result.ai.failureReason).toBe('auth-rejected');
+    expect(result.composerBlocked).toBe(false);
+  });
+
+  it('gaveUp 但说不出哪一类（没有原因）⇒ 仍然是有结论的失败，只是原因是 null', () => {
+    const result = deriveStartupReadiness({
+      ...base,
+      gatewayReconnect: { attempt: 10, max: 10, gaveUp: true },
+    });
+
+    // ⚠️ 这两件事必须分开：**"有没有结论"**（phase）与**"说得出是哪一类"**（reason）。
+    //    把 reason 的有无当成"有没有结论"，就会让说不出原因的那一类重新转圈。
+    expect(result.ai.phase).toBe('error');
+    expect(result.ai.failureReason).toBeNull();
+  });
+
+  it('⭐ 还没放弃时，连接层那个原因**不**上界面（还在重连，没有结论）', () => {
+    const result = deriveStartupReadiness({
+      ...base,
+      gatewayReconnect: { attempt: 3, max: 10, gaveUp: false, reason: 'auth-rejected' },
+    });
+
+    expect(result.ai.phase).toBe('starting');
+    expect(result.ai.failureReason).toBeNull();
+  });
+
+  it('⭐ 两处都有原因时：本机运行时没起来赢（它更接近根因）', () => {
+    const result = deriveStartupReadiness({
+      ...base,
+      runtimeBootstrapFailure: 'port-occupied',
+      gatewayReconnect: { attempt: 10, max: 10, gaveUp: true, reason: 'auth-rejected' },
+    });
+
+    expect(result.ai.failureReason).toBe('port-occupied');
+  });
+
   it('中转失败是**另一件事**：它不冒充"本机运行时起不来"', () => {
     const result = deriveStartupReadiness({
       ...base,

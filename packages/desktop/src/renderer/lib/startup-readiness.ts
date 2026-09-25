@@ -210,7 +210,10 @@ interface StartupReadinessInput {
    *    而那个状态**永远不会自己好**（2026-09-25 真日志：1.8 秒判定端口被占、
    *    2.8 秒连接被拒，界面到 6 分钟后还在转圈）。
    */
-  gatewayReconnect?: { attempt: number; max: number; gaveUp: boolean } | null | undefined;
+  gatewayReconnect?:
+    | { attempt: number; max: number; gaveUp: boolean; reason?: GatewayFailureReason }
+    | null
+    | undefined;
   /**
    * 主进程报来的"本机运行时起不来"的公开原因（`ui-store.runtimeBootstrapFailure`）。
    * 缺省 / `null` = **没有这个结论**（不是"没问题"）。
@@ -268,8 +271,14 @@ export function deriveStartupReadiness({
   // ⚠️ 但**连上了就不算**：用户可能自己把网关起起来了，或者这一份连的是别的网关 ——
   //    那时候继续挂着"18789 被占用"就是**反向的假话**（明明好了还说坏着）。
   //    所以清理判据是"当前连上了"，不是"曾经失败过"。
+  //    第二条来源是**连接层**：网关回了 `res.error` ⇒ 客户端以 1008 关闭并报了
+  //    `gaveUp` + 一个公开原因（"是网关不认我们"）。那条路上我们自己的网关是**起来了**的，
+  //    所以它完全不经过 `runtimeBootstrapFailure`。
+  //    优先级：本机运行时没起来 > 连上了但被拒 —— 前者更接近根因。
   const bootstrapFailure: GatewayFailureReason | null =
-    gatewayStatus === 'connected' ? null : (runtimeBootstrapFailure ?? null);
+    gatewayStatus === 'connected'
+      ? null
+      : (runtimeBootstrapFailure ?? (gatewayGaveUp ? (gatewayReconnect?.reason ?? null) : null));
   const aiPhase: StartupAiPhase = relayFailure || gatewayGaveUp || bootstrapFailure !== null ? 'error' : inferredPhase;
   const assistantPhase: StartupAssistantPhase =
     !gatewayId || gatewayStatus !== 'connected'

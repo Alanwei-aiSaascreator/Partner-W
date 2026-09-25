@@ -25,6 +25,7 @@ import type { TranslateFn } from './error-classify.js';
 import { autoTitleIfNeeded } from './auto-title.js';
 import { announceCompaction, currentCompactionEpisode } from './compaction-announce.js';
 import type { MessageState } from '../stores/message-store.js';
+import type { GatewayReconnectInfo } from '../stores/ui-store.js';
 import type { GatewayTransportPort, GatewayStatusEvent, RuntimeStatusEvent } from '../ports/gateway-transport.js';
 
 type AgentEventStream = 'lifecycle' | 'tool' | 'assistant' | 'thinking' | 'error' | 'compaction';
@@ -268,7 +269,7 @@ export interface GatewayDispatcherDeps {
 
   setGatewayStatusByGateway: (gatewayId: string, status: 'connected' | 'connecting' | 'disconnected') => void;
   setGatewayVersion: (gatewayId: string, version: string | undefined) => void;
-  setGatewayReconnectInfo: (gatewayId: string, info: { attempt: number; max: number; gaveUp: boolean } | null) => void;
+  setGatewayReconnectInfo: (gatewayId: string, info: GatewayReconnectInfo | null) => void;
   /**
    * 本机运行时起不来的**公开原因**（`null` = 清掉这个结论）。
    *
@@ -2010,6 +2011,9 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
         attempt: s.reconnectAttempt,
         max: s.maxAttempts,
         gaveUp: s.gaveUp ?? false,
+        // ⚠️ 缺席就**别填**（`undefined` 与"没有结论"同义）：替它编一个 unknown
+        //    会让界面把"还在重连"说成"出错了"。
+        reason: s.reason,
       });
     } else if (s.connected) {
       deps.setGatewayReconnectInfo(s.gatewayId, null);

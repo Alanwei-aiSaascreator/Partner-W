@@ -44,6 +44,7 @@ import type {
   ImportFilesResult,
   Artifact,
   ArtifactSaveAsResult,
+  GatewayFailureReason,
   RuntimeBootstrapStatus,
   RelayBootstrapPublicState,
   WorkspaceFsIdentity,
@@ -74,6 +75,8 @@ interface GatewayStatusEvent {
   reconnectAttempt?: number;
   maxAttempts?: number;
   gaveUp?: boolean;
+  /** 有结论时的公开原因（闭集）；缺席 = **还没有结论**，不是"没问题"。 */
+  reason?: GatewayFailureReason;
 }
 
 /**
