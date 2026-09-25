@@ -10,3 +10,4 @@ export * from './growth.js';
 export * from './analytics-events.js';
 export * from './portable-update.js';
 export * from './workspace-fs.js';
+export * from './gateway-failure.js';
