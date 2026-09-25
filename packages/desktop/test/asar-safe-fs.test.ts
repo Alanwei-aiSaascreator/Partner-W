@@ -23,7 +23,15 @@ describe('asar 安全的 fs：拿到 original-fs 就用它', () => {
 
   it('⭐ 拿得到 original-fs ⇒ 用它（这才是 Electron 里正确的那个 fs）', () => {
     const fake = {
-      promises: { mkdir: vi.fn(), readdir: vi.fn(), stat: vi.fn(), rm: vi.fn(), rename: vi.fn(), open: vi.fn() },
+      promises: {
+        mkdir: vi.fn(),
+        readdir: vi.fn(),
+        stat: vi.fn(),
+        rm: vi.fn(),
+        rename: vi.fn(),
+        open: vi.fn(),
+        writeFile: vi.fn(),
+      },
       createWriteStream: vi.fn(),
       createReadStream: vi.fn(),
     };
@@ -38,6 +46,8 @@ describe('asar 安全的 fs：拿到 original-fs 就用它', () => {
     // ⚠️ 校验时逐文件算哈希走的是 createReadStream —— 读 `app.asar` 也会被拦，
     //    所以它**必须**和写那条用同一份 fs。
     expect(fs.createReadStream).toBe(fake.createReadStream);
+    // 两份清单也是写盘（暂存目录），同样走这一份。
+    expect(fs.promises.writeFile).toBe(fake.promises.writeFile);
   });
 
   it('拿不到（纯 Node / 单测）⇒ 回落 node:fs，行为一致', () => {

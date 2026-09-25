@@ -78,6 +78,20 @@ export interface PortableUpdateServiceDeps {
    */
   measureProgramSize: () => Promise<number>;
   verifyTree: (input: { programRoot: string; fileManifest: PortableUpdateFileManifestV1 }) => Promise<void>;
+  /**
+   * 把**已经取到的**两份清单按规范 JSON 落到暂存目录
+   * （`staged/<事务>/manifest.json` 与 `portable-files.json`）——
+   * 盘上启动器 `Apply` 的第一步就是读它们验签。
+   *
+   * ⚠️ 少了这一步，事务会指向两个**从不存在的**文件 ⇒ 启动器每次都判 `manifest-invalid`
+   * ⇒ **更新永远卡在「应用」**。这就是 2026-09-25 真机验收抓到的第三堵墙：
+   * 路径算出来了、也写进事务了，**却从来没人把文件放进去**。
+   */
+  writeStagedManifests: (input: {
+    paths: { manifestPath: string; fileManifestPath: string };
+    manifest: PortableUpdateManifestV1;
+    fileManifest: PortableUpdateFileManifestV1;
+  }) => Promise<void>;
   now: () => number;
   createTransactionId: () => string;
   startLauncher: (stateFilePath: string) => Promise<void>;
@@ -217,6 +231,12 @@ export function createPortableUpdateService(deps: PortableUpdateServiceDeps): Po
 
       publish('verifying-files', { targetVersion: current.version });
       await deps.verifyTree({ programRoot: extracted.programRoot, fileManifest });
+
+      // ⚠️ **必须在写事务之前**：事务一旦落成 `ready`，就代表"**一切都就位**"，
+      //    而启动器 `Apply` 的第一步正是读 `staged/<事务>/` 下这两份清单验签。
+      //    反过来写的话，崩在中间会留下一份 `ready` 但缺清单的事务 ——
+      //    那正是真机上把更新永远卡在「应用」的那种状态。
+      await deps.writeStagedManifests({ paths, manifest: current, fileManifest });
 
       readyTransaction = await deps.stateStore.write({
         schemaVersion: 1,

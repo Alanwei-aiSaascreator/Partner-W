@@ -1,4 +1,5 @@
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -92,6 +93,12 @@ async function makeHarness(
     fileManifest?: { schemaVersion: 1; version: string; files: { path: string; size: number; sha256: string }[] };
     /** 盘上现有程序目录的体积（空间预算的一项）。 */
     measureProgramSize?: () => Promise<number>;
+    /** 把两份清单落到暂存目录（启动器拿它们验签）。 */
+    writeStagedManifests?: (input: {
+      paths: { manifestPath: string; fileManifestPath: string };
+      manifest: { version: string };
+      fileManifest: unknown;
+    }) => Promise<void>;
   } = {},
 ): Promise<Harness> {
   const root = await makeRoot();
@@ -145,6 +152,7 @@ async function makeHarness(
     downloadPackage: downloadPackage as never,
     extractPackage: extractPackage as never,
     verifyTree: verifyTree as never,
+    writeStagedManifests: (overrides.writeStagedManifests ?? (async () => {})) as never,
     now: () => (tick += 1),
     createTransactionId: () => 'txn-fixed',
     startLauncher: startLauncher as never,
@@ -574,5 +582,64 @@ describe('failures leave a line in the debug log', () => {
       domain: 'updater',
       data: { code: 'network' },
     });
+  });
+});
+
+/**
+ * ⭐ 2026-09-25 真机验收的**第三堵墙**：更新卡在「应用」那一步。
+ *
+ * `resolvePortableTransactionPaths` 算出了 `staged/<事务>/manifest.json` 与
+ * `staged/<事务>/portable-files.json` 两条路径、**也把它们写进了事务记录**，
+ * 但客户端**从来不把这两份文件拷进去** ⇒ 启动器一校验就失败：
+ * `portable update: manifest is invalid: open …\staged\<事务>\manifest.json: 系统找不到指定的文件`
+ * ⇒ **每一块盘的每一次更新都会卡在最后一步**。
+ *
+ * 真实编号靠前台手跑启动器拿到（`荣盈魔方启动器.exe --apply <状态文件>`）——
+ * 应用拉起它时是 `detached + stdio:'ignore'`，失败弹的是**模态错误框**，
+ * 所以从外面看是"卡死"（0 CPU / 0 I/O）。
+ */
+describe('staged manifests reach the transaction directory', () => {
+  const stateFileOf = (root: string): string => join(root, '.state', 'update-state.json');
+
+  it('⭐ 事务写下去**之前**，两份清单已经落到暂存目录（`ready` 才等于"一切都就位"）', async () => {
+    const seen: Array<{ txFileExists: boolean; input: Record<string, unknown> }> = [];
+    // 闭包在 `prepare()` 里才跑，那时 `harness` 已经赋值 —— 所以 const 就行。
+    const harness = await makeHarness({
+      writeStagedManifests: async (input) => {
+        seen.push({ txFileExists: existsSync(stateFileOf(harness.root)), input: input as Record<string, unknown> });
+      },
+    });
+    await harness.service.check();
+
+    await expect(harness.service.prepare()).resolves.toEqual({ ok: true });
+
+    expect(seen).toHaveLength(1);
+    // ⭐ 顺序：清单先落，事务后写 —— 反过来的话，崩在中间会留下一份"ready 但缺文件"的事务，
+    //    而那正是真机上把更新永远卡死的那种状态。
+    expect(seen[0].txFileExists).toBe(false);
+    const input = seen[0].input as {
+      paths: { manifestPath: string; fileManifestPath: string };
+      manifest: { version: string };
+      fileManifest: unknown;
+    };
+    expect(input.paths.manifestPath.endsWith(join('staged', 'txn-fixed', 'manifest.json'))).toBe(true);
+    expect(input.paths.fileManifestPath.endsWith(join('staged', 'txn-fixed', 'portable-files.json'))).toBe(true);
+    expect(input.manifest.version).toBe('0.0.26');
+    expect(input.fileManifest).toEqual(FILE_MANIFEST);
+  });
+
+  it('准备失败时不写清单（不留半截东西）', async () => {
+    const writeStagedManifests = vi.fn(async () => {});
+    const harness = await makeHarness({
+      writeStagedManifests,
+      verifyTree: async () => {
+        throw new PortableUpdateFailure('file-integrity');
+      },
+    });
+    await harness.service.check();
+
+    await expect(harness.service.prepare()).resolves.toMatchObject({ ok: false, errorCode: 'file-integrity' });
+
+    expect(writeStagedManifests).not.toHaveBeenCalled();
   });
 });

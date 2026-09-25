@@ -41,6 +41,8 @@ export interface AsarSafeFs {
     rm: typeof nodeFsPromises.rm;
     rename: typeof nodeFsPromises.rename;
     open: typeof nodeFsPromises.open;
+    /** 把两份清单写进暂存目录（启动器拿它们验签）。 */
+    writeFile: typeof nodeFsPromises.writeFile;
   };
   createWriteStream: typeof nodeFs.createWriteStream;
   /** ⚠️ 校验时逐文件算哈希走的就是它 —— **读** `app.asar` 同样会被 asar 层拦。 */
@@ -97,6 +99,7 @@ export function createAsarSafeFs(
       rm: promises.rm,
       rename: promises.rename,
       open: promises.open,
+      writeFile: promises.writeFile,
     },
     createWriteStream: source.createWriteStream as typeof nodeFs.createWriteStream,
     createReadStream: source.createReadStream as typeof nodeFs.createReadStream,

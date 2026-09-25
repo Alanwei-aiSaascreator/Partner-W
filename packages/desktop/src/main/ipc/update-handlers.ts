@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { app, ipcMain } from 'electron';
-import type { PortableUpdateChannel } from '@clawwork/shared';
+import { canonicalizeJson, type PortableUpdateChannel } from '@clawwork/shared';
 import {
   UPDATE_FEED_BASE,
   attachPortableUpdateService,
@@ -18,6 +18,7 @@ import {
 import { getPortableWorkspaceRoot } from '../workspace/config.js';
 import { getDebugLogger } from '../debug/index.js';
 import { probeLauncherVersion } from '../update/launcher-version.js';
+import { asarSafeFs } from '../update/asar-safe-fs.js';
 import { PortableUpdateFailure } from '../update/portable-manifest.js';
 import {
   downloadPortablePackage,
@@ -121,6 +122,14 @@ async function initializePortableUpdateService(root: string): Promise<void> {
       downloadPackage: downloadPortablePackage,
       extractPackage: extractPortablePackage,
       verifyTree: verifyPortableProgramTree,
+      // 启动器 `Apply` 的第一步就是读 `staged/<事务>/` 下这两份清单验签；
+      // 它们会重新规范化再验，所以这里给**规范 JSON** 就行（发布出去的本来就是规范形式）。
+      // ⚠️ 以前**没人写这两份** ⇒ 事务指向两个不存在的文件 ⇒ 更新永远卡在「应用」。
+      writeStagedManifests: async ({ paths, manifest, fileManifest }) => {
+        await asarSafeFs.promises.mkdir(dirname(paths.manifestPath), { recursive: true });
+        await asarSafeFs.promises.writeFile(paths.manifestPath, canonicalizeJson(manifest), 'utf8');
+        await asarSafeFs.promises.writeFile(paths.fileManifestPath, canonicalizeJson(fileManifest), 'utf8');
+      },
       // 空间预算的第三项：换目录之前，现有程序目录一直占着这块盘。
       measureProgramSize: () => measureProgramTreeBytes(join(root, PORTABLE_PROGRAM_DIRECTORY_NAME)),
       now: () => Date.now(),
