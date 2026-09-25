@@ -61,6 +61,7 @@ import {
   recordInstanceOwner,
 } from './runtime/instance-guard.js';
 import { bootstrapLocalGatewayRuntime, GATEWAY_PORT_OCCUPIED, shutdownLocalGatewayRuntime } from './runtime/index.js';
+import { bootstrapWithRetry } from './runtime/bootstrap-retry.js';
 import { removableDrives } from './workspace/removable-drives.js';
 import { GATEWAY_WS_PORT } from '@clawwork/shared';
 
@@ -460,19 +461,31 @@ if (!gotLock) {
       // ⚠️ 拉起本机运行时（定位 → 部署 → 起网关 → 等就绪）。**这一步永不抛**：
       // 失败只是"网关没起来"，界面照常出，让 ConnectionBanner 说真话；
       // 上一轮留下的、或用户自己的网关可能还活着，下面 initAllGateways() 照样要去连它。
-      const runtimeResult = await bootstrapLocalGatewayRuntime({
-        userDataDir: app.getPath('userData'),
-        runtimeCacheUserDataDir,
-        // OpenClaw state 不能落 exFAT，也不能嵌在运行时的 64 位 scope 下：其日志/插件
-        // 子树很深，Windows 路径预算会被吃光。token 派生的短目录仍会隔离不同 U 盘。
-        stateCacheUserDataDir: localUserDataDir,
-        deps: {
-          log: (event, data) => {
-            const entry = { domain: 'gateway' as const, event, data };
-            if (event === 'runtime.bootstrap.failed') getDebugLogger().error(entry);
-            else getDebugLogger().info(entry);
-          },
-        },
+      const runtimeResult = await bootstrapWithRetry({
+        attempt: () =>
+          bootstrapLocalGatewayRuntime({
+            userDataDir: app.getPath('userData'),
+            runtimeCacheUserDataDir,
+            // OpenClaw state 不能落 exFAT，也不能嵌在运行时的 64 位 scope 下：其日志/插件
+            // 子树很深，Windows 路径预算会被吃光。token 派生的短目录仍会隔离不同 U 盘。
+            stateCacheUserDataDir: localUserDataDir,
+            deps: {
+              log: (event, data) => {
+                const entry = { domain: 'gateway' as const, event, data };
+                if (event === 'runtime.bootstrap.failed') getDebugLogger().error(entry);
+                else getDebugLogger().info(entry);
+              },
+            },
+          }),
+        sleep: (ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
+        // ⭐ 只在**可重试**的那一类上退避（我们自己的网关还没就绪）。
+        //    端口被**别人的**网关占用是终态 —— 见 `runtime/bootstrap-retry.ts` 的白名单。
+        onRetry: ({ attempt, delayMs, reason }) =>
+          getDebugLogger().info({
+            domain: 'gateway',
+            event: 'runtime.bootstrap.retry',
+            data: { attempt, delayMs, reason },
+          }),
       });
       if (!runtimeResult.ok) {
         // ⚠️ 盘上那份与"装到电脑"那份的应用数据现在是**分开**的（各自一个单实例锁），

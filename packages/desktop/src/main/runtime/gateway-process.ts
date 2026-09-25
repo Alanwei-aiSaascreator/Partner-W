@@ -34,9 +34,24 @@ import type { ChildProcess } from 'node:child_process';
 import WebSocket from 'ws';
 import { getDebugLogger } from '../debug/index.js';
 import { attachGatewayOutputStreams, gatewayOutputDigest } from './gateway-output.js';
+import { BOOTSTRAP_NOT_READY } from './bootstrap-retry.js';
 
 /** 端口被**别人**的网关占着（或占着的那个不可信）。 */
 export const GATEWAY_PORT_OCCUPIED = 'runtime.gateway-port-occupied';
+
+/**
+ * 我们**自己的**网关还没就绪（进程早退 / 等不到探测通过）。
+ *
+ * 这是**唯一可重试**的一类失败 —— 白名单在 `bootstrap-retry.ts`，
+ * 判据是**码**而不是文案（改文案不该改行为）。
+ */
+export class GatewayNotReadyError extends Error {
+  readonly code = BOOTSTRAP_NOT_READY;
+  constructor(message: string) {
+    super(message);
+    this.name = 'GatewayNotReadyError';
+  }
+}
 
 export class GatewayPortOccupiedError extends Error {
   readonly code = GATEWAY_PORT_OCCUPIED;
@@ -289,7 +304,9 @@ export async function waitForGatewayReady(opts: {
 
   for (;;) {
     if (hasExited()) {
-      throw new Error(`网关进程在就绪之前就退出了（最后一次探测：${last}）`);
+      // ⚠️ 带码：这是**可重试**的一类（我们自己的网关还没起来），
+      //    判据在 `bootstrap-retry.ts` 的白名单里 —— 没有码就一律当终态。
+      throw new GatewayNotReadyError(`网关进程在就绪之前就退出了（最后一次探测：${last}）`);
     }
 
     let result: StartupzProbe;
@@ -315,7 +332,8 @@ export async function waitForGatewayReady(opts: {
     }
 
     if (now() >= deadline) {
-      throw new Error(`等待网关就绪超时（${Math.round(timeoutMs / 1000)}s，最后一次探测：${last}）`);
+      // 同上一处：这是"我们自己的网关还没就绪"，属于可重试的那一类。
+      throw new GatewayNotReadyError(`等待网关就绪超时（${Math.round(timeoutMs / 1000)}s，最后一次探测：${last}）`);
     }
     await sleep(intervalMs);
   }
