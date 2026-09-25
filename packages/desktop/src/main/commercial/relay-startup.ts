@@ -11,7 +11,8 @@ import { relayBootstrapPublicStateStore, type RelayBootstrapPublicPhase } from '
 import { getCommercialClient } from './client.js';
 import { probeAuth } from './auth.js';
 import { deviceFingerprint, mapActivationError, readLicenseStatus } from './license.js';
-import { fetchFirstRelayModel } from './relay-config.js';
+import { webSearchEnabled, fetchFirstRelayModel } from './relay-config.js';
+import { readConfig } from '../workspace/config.js';
 import { createRelayBootstrapScheduler } from './relay-bootstrap.js';
 import type {
   RelayBootstrapDeps,
@@ -188,6 +189,9 @@ function log(event: string, data: Record<string, unknown> = {}): void {
 export function buildRelayBootstrapDeps(): RelayBootstrapDeps {
   return {
     hasCommercialClient: () => getCommercialClient() !== null,
+    // ⭐ 联网开关**在这里读一次**（deps 是每个进程建一次的）：读全局配置的活儿留在
+    //    最外层，被调用的那个函数保持可单测。
+    webSearchEnabled: () => webSearchEnabled(readConfig()),
     // 三态，不是布尔 —— 「没登录」和「暂时问不出来」必须分开（见 auth-classify.ts）。
     checkAuth: () => probeAuth(),
     prepareGatewayAccess: async () => {

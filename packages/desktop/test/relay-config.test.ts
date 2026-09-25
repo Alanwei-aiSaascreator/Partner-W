@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  webSearchEnabled,
   RELAY_BASE_URL,
   RELAY_PROVIDER_ID,
   applyRelayConfig,
@@ -567,5 +568,67 @@ describe('联网：按模型注入 enable_search', () => {
 
     expect(agentsDefaults(patch).model).toBeUndefined();
     expect(Object.keys(agentsDefaults(patch).models ?? {})).toContain('clawrouter/qwen-turbo');
+  });
+});
+
+/**
+ * ⭐ **联网开关**（设置里那一行）。
+ *
+ * 为什么要有它：这个能力以前是"对 qwen-turbo / qwen-plus 一直开着"——
+ * 用户既看不见、也关不掉，而它的成本大约是**输入 token 的 200 倍**。
+ * 现在的做法是**让它开着但看得见、随手能关**。
+ *
+ * ⚠️ 缺省（不传）必须是**开**：老盘升级上来没有这个字段，
+ *    按关处理等于"升一次级静默拿走一个功能"。
+ */
+describe('联网开关：关掉之后不再注入，缺省仍然开着', () => {
+  const agentsDefaults = (patch: unknown): { models?: Record<string, unknown> } =>
+    (patch as { agents: { defaults: Record<string, unknown> } }).agents.defaults;
+
+  it('⭐ webSearch: false ⇒ 一个模型都不带 enable_search', () => {
+    const patch = buildRelayPatch({ relayKey: 'rly_abc', deviceFingerprint: 'fp', webSearch: false });
+
+    expect(agentsDefaults(patch).models).toEqual({});
+  });
+
+  it('⭐ 关掉时是**空表**，不是写一个 false 进去（少一个出错面）', () => {
+    const patch = buildRelayPatch({ relayKey: 'rly_abc', deviceFingerprint: 'fp', webSearch: false });
+
+    expect(JSON.stringify(patch)).not.toContain('enable_search');
+  });
+
+  it('webSearch: true ⇒ 照旧注入（显式打开）', () => {
+    const patch = buildRelayPatch({ relayKey: 'rly_abc', deviceFingerprint: 'fp', webSearch: true });
+
+    expect(Object.keys(agentsDefaults(patch).models ?? {}).sort()).toEqual([
+      'clawrouter/qwen-plus',
+      'clawrouter/qwen-turbo',
+    ]);
+  });
+
+  it('⭐ 对照：**不传** webSearch ⇒ 按开处理（老盘升级上来行为不变）', () => {
+    const patch = buildRelayPatch({ relayKey: 'rly_abc', deviceFingerprint: 'fp' });
+
+    expect(Object.keys(agentsDefaults(patch).models ?? {})).toHaveLength(2);
+  });
+
+  it('⭐⭐ 只有**显式 false** 才算关（undefined / null / 空对象都算开）', () => {
+    // 这条是这一整块的判据：写错成 `=== true` 会让所有老盘静默失去联网
+    expect(webSearchEnabled(undefined)).toBe(true);
+    expect(webSearchEnabled(null)).toBe(true);
+    expect(webSearchEnabled({})).toBe(true);
+    expect(webSearchEnabled({ webSearch: true })).toBe(true);
+    expect(webSearchEnabled({ webSearch: false })).toBe(false);
+  });
+
+  it('开关关掉不影响别的部分（默认模型照旧写得进去）', () => {
+    const patch = buildRelayPatch({
+      relayKey: 'rly_abc',
+      deviceFingerprint: 'fp',
+      webSearch: false,
+      defaultModel: 'clawrouter/deepseek-v4-flash',
+    });
+
+    expect(JSON.stringify(patch)).toContain('deepseek-v4-flash');
   });
 });

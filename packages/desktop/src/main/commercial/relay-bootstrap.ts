@@ -161,6 +161,13 @@ export interface RelayBootstrapDeps {
   /** 商业层配好了没（Supabase url + anon key 都在）。 */
   hasCommercialClient: () => boolean;
   /**
+   * 联网搜索开关（设置里那一行）。
+   *
+   * ⚠️ 可选，缺省按**开**：这是一个老盘升级上来行为不变的判据，
+   *    写成必填会让每个测试夹具都要补一次，而那些夹具**根本不关心**这件事。
+   */
+  webSearchEnabled?: () => boolean;
+  /**
    * 本地会话还有效吗（**会真的问服务端**）。
    *
    * ⚠️ 返回**三态**而不是 boolean —— 「没登录」和「暂时问不出来」必须分开，
@@ -366,7 +373,7 @@ export async function ensureRelayConfigured(deps: RelayBootstrapDeps): Promise<R
         resolveDefaultModel: deps.resolveDefaultModel,
         log: (event, data) => log(event, data),
       },
-      { relayKey, deviceFingerprint: deps.deviceFingerprint() },
+      { relayKey, deviceFingerprint: deps.deviceFingerprint(), webSearch: deps.webSearchEnabled?.() ?? true },
     );
   const result = await gateway.runConfigMutation(apply);
 

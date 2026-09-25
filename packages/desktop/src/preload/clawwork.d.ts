@@ -202,6 +202,13 @@ interface AppSettings {
   devMode?: boolean;
   teamHubRegistries?: Array<{ id: string; url: string; isOfficial: boolean }>;
   updateChannel?: 'stable' | 'beta';
+  /**
+   * 联网搜索开关。
+   *
+   * ⚠️ 缺省 = **开**（与主进程的 `webSearchEnabled` 一致）：老盘升级上来没有这个字段，
+   *    按关处理等于"升一次级静默拿走一个功能"。
+   */
+  webSearch?: boolean;
 }
 
 export type VoicePermissionStatus = 'granted' | 'not-determined' | 'denied' | 'unsupported';

@@ -99,6 +99,27 @@ export default function GeneralSection() {
     [notifications?.approvalRequest, notifications?.gatewayDisconnect, notifications?.taskComplete],
   );
 
+  /**
+   * ⭐ 联网搜索开关。
+   *
+   * ⚠️ 改完**要重新应用一次中转配置**：这个开关是写进**网关配置**里的
+   *    （按模型注入 `params.extra_body.enable_search`），不是在客户端这边判断的，
+   *    所以光存下来不生效。用现成的重启入口（它只排队，不会卡住界面）。
+   */
+  const webSearchSetting = useSettingsStore((s) => s.settings?.webSearch);
+  // ⚠️ 缺省按**开**：老盘升级上来没有这个字段，按关处理等于静默拿走一个功能
+  const webSearch = webSearchSetting !== false;
+  const handleWebSearchToggle = useCallback(
+    (value: boolean) => {
+      void updateSettings({ webSearch: value })
+        .then(() => window.clawwork.commercialRelayBootstrapRetry())
+        .catch((err: unknown) => {
+          console.error('[GeneralSection] updateSettings failed:', err);
+        });
+    },
+    [updateSettings],
+  );
+
   const handleNotificationToggle = useCallback(
     (key: 'taskComplete' | 'approvalRequest' | 'gatewayDisconnect', value: boolean) => {
       const next = { ...notifyState, [key]: value };
@@ -216,6 +237,15 @@ export default function GeneralSection() {
                 { value: 'BracketRight' as const, label: `${modKey} ]` },
               ]}
             />
+          </SettingRow>
+        </SettingGroup>
+      </div>
+
+      <div>
+        <h3 className="type-section-title mb-4 text-[var(--text-primary)]">{t('settings.webSearchSection')}</h3>
+        <SettingGroup>
+          <SettingRow label={t('settings.webSearch')} description={t('settings.webSearchHint')}>
+            <Toggle checked={webSearch} onChange={handleWebSearchToggle} ariaLabel={t('settings.webSearch')} />
           </SettingRow>
         </SettingGroup>
       </div>

@@ -81,6 +81,13 @@ export interface AppConfig {
   devMode?: boolean;
   teamHubRegistries?: TeamHubRegistryConfig[];
   updateChannel?: 'stable' | 'beta';
+  /**
+   * 联网搜索开关（设置里那一行）。
+   *
+   * ⚠️ **缺省 = 开**（见 `relay-config.ts` 的 `webSearchEnabled`）：这个能力本来就存在，
+   *    把缺省改成关等于"升一次级静默拿走一个功能"。用户要关随时能关。
+   */
+  webSearch?: boolean;
   commercial?: CommercialConfig;
 }
 

@@ -68,6 +68,13 @@ export interface RelayPatchInput {
   existingConfig?: unknown;
   /** 解析出来的默认模型 ref；仅当 `agents.defaults.model.primary` 未设置时才用。 */
   defaultModel?: string | null;
+  /**
+   * 联网搜索开关（用户在设置里能改）。
+   *
+   * ⚠️ 缺省 = **开**（见 `webSearchEnabled`）：这个功能本来就存在，
+   *    默认改关等于升级一次就静默拿走一个能力。
+   */
+  webSearch?: boolean;
 }
 
 export type RelayConfigPatch = Record<string, unknown>;
@@ -108,13 +115,30 @@ const ENABLE_SEARCH_MODEL_IDS = ['qwen-turbo', 'qwen-plus'] as const;
  *     （它不在通用 `params` 的转发范围内，而且丢了没有任何报错）；
  *   · 表按 `clawrouter/<模型 id>` 键控（ref 是**两段**，见本文件顶部那段说明）。
  */
-function enableSearchModelEntries(): Record<string, { params: { extra_body: { enable_search: true } } }> {
+function enableSearchModelEntries(
+  enabled: boolean,
+): Record<string, { params: { extra_body: { enable_search: true } } }> {
+  // ⭐ 关掉时返回**空表**（而不是"写一个 false"）：百炼那边认的是"有没有这个参数"，
+  //    写 `enable_search: false` 是另一回事（它会照 false 处理，但少写更干净、也少一个出错面）。
+  if (!enabled) return {};
   return Object.fromEntries(
     ENABLE_SEARCH_MODEL_IDS.map((id) => [
       `${RELAY_PROVIDER_ID}/${id}`,
       { params: { extra_body: { enable_search: true } } },
     ]),
   );
+}
+
+/**
+ * 联网开关**默认是开的**。
+ *
+ * ⚠️ 为什么默认开而不是关：这个功能已经存在，默认关等于**把它从用户手里拿走** ——
+ *    而这一轮要修的恰恰是"功能有、够不着"。现在的做法是**让它开着但看得见**：
+ *    设置里有一行明说它在联网、只有哪两款模型能用、以及成本大约高多少，随手能关。
+ * ⚠️ 缺省（老盘上没有这个字段）**按开**处理：否则升级一次就静默改了所有人的行为。
+ */
+export function webSearchEnabled(config?: { webSearch?: boolean } | null): boolean {
+  return config?.webSearch !== false;
 }
 
 export function buildRelayPatch(input: RelayPatchInput): RelayConfigPatch | null {
@@ -156,7 +180,7 @@ export function buildRelayPatch(input: RelayPatchInput): RelayConfigPatch | null
   const primary = (config?.agents as { defaults?: { model?: { primary?: unknown } } } | undefined)?.defaults?.model
     ?.primary;
 
-  const agentsDefaults: Record<string, unknown> = { models: enableSearchModelEntries() };
+  const agentsDefaults: Record<string, unknown> = { models: enableSearchModelEntries(input.webSearch !== false) };
   if (!primary && input.defaultModel) {
     agentsDefaults.model = { primary: input.defaultModel };
   }
@@ -433,7 +457,7 @@ function providerApplied(snapshot: unknown): boolean {
  */
 export async function applyRelayConfig(
   deps: ApplyRelayConfigDeps,
-  input: { relayKey: string | null | undefined; deviceFingerprint: string },
+  input: { relayKey: string | null | undefined; deviceFingerprint: string; webSearch?: boolean },
 ): Promise<ApplyRelayResult> {
   const warnings: string[] = [];
   const log = deps.log ?? ((): void => {});
@@ -467,6 +491,8 @@ export async function applyRelayConfig(
       return { ok: false, configured: false, errorCode: 'transport', error: 'config snapshot has no hash', warnings };
     }
 
+    // ⭐ 联网开关由**调用方**传（不在这个函数里读全局配置）：读全局会让它没法单测，
+    //    而它的测试恰恰是"写没写进去"这件事的主要防线。
     const patch = buildRelayPatch({ ...input, existingConfig: snapshot, defaultModel });
     if (!patch) {
       return { ok: false, configured: false, errorCode: 'no-key', error: 'no relay key', warnings };
