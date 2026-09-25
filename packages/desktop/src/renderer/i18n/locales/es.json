@@ -1817,6 +1817,7 @@
     "relayRetryable": "El servicio comercial aún no está listo. Puedes intentarlo de nuevo.",
     "retry": "Preparar de nuevo",
     "takingLonger": "This is taking longer than usual. You can retry without leaving the workspace.",
+    "elapsed": "Waiting {{time}}",
     "title": "Preparando Rongying Cube",
     "workspaceFilesystemUnsupported": "El disco del espacio de trabajo no es compatible: los asistentes deben leer y escribir allí sus archivos de identidad, y ese paso siempre falla en este sistema de archivos. Mueve el espacio de trabajo a un disco exFAT o NTFS (u otra carpeta) y vuelve a prepararlo.",
     "workspaceUnwritable": "El espacio de trabajo no admite escritura: los asistentes deben leer y escribir allí sus archivos de identidad, pero ni siquiera se puede crear un archivo de prueba. Comprueba si el disco es de solo lectura o está lleno, o elige otra carpeta."

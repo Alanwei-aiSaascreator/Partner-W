@@ -1817,6 +1817,7 @@
     "relayRetryable": "O serviço comercial ainda não está pronto. Você pode tentar de novo.",
     "retry": "Preparar novamente",
     "takingLonger": "This is taking longer than usual. You can retry without leaving the workspace.",
+    "elapsed": "Waiting {{time}}",
     "title": "Preparando o Rongying Cube",
     "workspaceFilesystemUnsupported": "O disco do espaço de trabalho não é compatível: os assistentes precisam ler e gravar ali os próprios arquivos de identidade, e essa etapa sempre falha neste sistema de arquivos. Mova o espaço de trabalho para um disco exFAT ou NTFS (ou outra pasta) e prepare novamente.",
     "workspaceUnwritable": "O espaço de trabalho não permite gravação: os assistentes precisam ler e gravar ali os próprios arquivos de identidade, mas nem um arquivo de teste pode ser criado. Verifique se o disco é somente leitura ou está cheio, ou escolha outra pasta."

@@ -1817,6 +1817,7 @@
     "relayRetryable": "Der Geschäftsdienst ist noch nicht bereit. Sie können es erneut versuchen.",
     "retry": "Erneut vorbereiten",
     "takingLonger": "This is taking longer than usual. You can retry without leaving the workspace.",
+    "elapsed": "Waiting {{time}}",
     "title": "Rongying Cube wird vorbereitet",
     "workspaceFilesystemUnsupported": "Der Datenträger des Arbeitsbereichs wird nicht unterstützt: Assistenten müssen dort ihre Identitätsdateien lesen und schreiben, und dieser Schritt schlägt auf diesem Dateisystem immer fehl. Verschieben Sie den Arbeitsbereich auf einen exFAT- oder NTFS-Datenträger (oder einen anderen Ordner) und starten Sie die Vorbereitung erneut.",
     "workspaceUnwritable": "Der Arbeitsbereich ist nicht beschreibbar: Assistenten müssen dort ihre Identitätsdateien lesen und schreiben, aber es lässt sich nicht einmal eine Testdatei anlegen. Prüfen Sie, ob der Datenträger schreibgeschützt oder voll ist, oder wählen Sie einen anderen Ordner."

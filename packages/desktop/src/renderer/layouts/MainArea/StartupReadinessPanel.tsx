@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { CheckCircle2, FolderOpen, KeyRound, LoaderCircle, RefreshCw, TriangleAlert } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
 import { PRESET_AGENT_DEFINITIONS } from '@/lib/preset-agents';
 import { relayFailureText, startupBlockerText, type StartupReadiness } from '@/lib/startup-readiness';
+import { formatElapsed } from '@/lib/waiting-copy';
 import { useUiStore } from '@/stores/uiStore';
 
 type Translate = (key: string, values?: Record<string, unknown>) => string;
@@ -110,6 +111,28 @@ export default function StartupReadinessPanel({
     return () => window.clearTimeout(timer);
   }, [readiness.conversationReady]);
 
+  /**
+   * ⭐ 那个"一直在走的秒数"。
+   *
+   * ⚠️ 为什么必须有：用户骂"卡住"多半不是因为真的卡住，而是因为**看不出它是否还在动** ——
+   *    一句不动的文案配一条脉冲的进度条，等待与假死在观感上没有区别
+   *    （2026-09-25 真日志：六分钟里这块面板**一个字都没变**）。
+   *    聊天活动条早就用了同一个手法（`waiting-copy.ts` 头注释），这里接的是同一条推理。
+   * ⚠️ **只在"还在准备"时报时**：已经有结论（失败 / 就绪）时秒数只是噪音，
+   *    而且会让人以为"再等等也许就好了"——那正是这一整轮要消灭的形状。
+   * ⚠️ 它量的是**这块面板从出现到现在**（不是"从进程启动"）：渲染层拿不到更早的时间戳，
+   *    把话说成从开机算起就是编。两者相差通常只有几秒。
+   */
+  const showElapsed = !readiness.hasError && !readiness.conversationReady;
+  const [now, setNow] = useState(() => Date.now());
+  const startedAtRef = useRef(now);
+  useEffect(() => {
+    if (!showElapsed) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [showElapsed]);
+  const elapsedMs = Math.max(0, now - startedAtRef.current);
+
   return (
     <section
       aria-live="polite"
@@ -135,6 +158,17 @@ export default function StartupReadinessPanel({
         <div className="min-w-0 flex-1">
           <div className="flex items-baseline justify-between gap-3">
             <h2 className="type-label truncate text-[var(--text-primary)]">{statusText}</h2>
+            {showElapsed && (
+              <span
+                className="type-mono-data shrink-0 text-[var(--text-muted)]"
+                data-testid="readiness-elapsed"
+                // ⚠️ 不设 `aria-live`：每秒变一次的数字会被读屏器念成噪音。
+                //    状态文案那句（外面那个 `aria-live="polite"` 的 section）才是给耳朵的。
+                aria-hidden="true"
+              >
+                {t('startupReadiness.elapsed', { time: formatElapsed(elapsedMs) })}
+              </span>
+            )}
             {hasAssistantProgress && (
               <span className="type-mono-data shrink-0 text-[var(--text-muted)]">
                 {t('startupReadiness.progress', { completed, total: readiness.assistants.total })}

@@ -2,7 +2,7 @@
 
 import { act, type ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { StartupReadiness, StartupRelayFailure } from '../src/renderer/lib/startup-readiness';
 
 vi.mock('react-i18next', () => ({
@@ -290,6 +290,76 @@ describe('StartupReadinessPanel', () => {
 
     unmount();
     vi.useRealTimers();
+  });
+
+  /**
+   * ⭐⭐ C1（2026-09-25）：**"已经等了多久"必须看得见**。
+   *
+   * 用户骂"卡住"多半不是因为真的卡住，而是因为**看不出它是否还在动**：一句不动的文案
+   * 配一条脉冲的进度条，等待与假死在观感上没有区别（2026-09-25 真日志：六分钟里
+   * 面板上**一个字都没变**）。一个**持续在变的秒数**比任何 spinner 都更能证明"它没死"
+   * —— 同一个推理早就用在聊天活动条上了（`waiting-copy.ts` 与 `formatElapsed`），
+   * 这里只是把它接到启动面板上。
+   */
+  describe('还在准备时，看得见"等了多久"', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('⭐ 数字真的在走（等待与假死的区别就在这里）', () => {
+      const { container, unmount } = render(<StartupReadinessPanel readiness={baseReadiness} onRetry={vi.fn()} />);
+
+      expect(container.textContent).toContain('startupReadiness.elapsed');
+      expect(container.textContent, '一开始就要有数，不能等一秒才出现').toContain('0.0s');
+
+      act(() => vi.advanceTimersByTime(5_000));
+
+      expect(container.textContent).toContain('5.0s');
+      expect(container.textContent).not.toContain('0.0s');
+      unmount();
+    });
+
+    it('⭐ 90 秒后"比平时更久"与秒数**同时**在（不是把秒数换成那句话）', () => {
+      const { container, unmount } = render(<StartupReadinessPanel readiness={baseReadiness} onRetry={vi.fn()} />);
+
+      act(() => vi.advanceTimersByTime(91_000));
+
+      expect(container.textContent).toContain('startupReadiness.takingLonger');
+      // 那句是"结论"，秒数是"还在动"的证据 —— 两者回答的不是同一个问题
+      expect(container.textContent).toContain('91.0s');
+      unmount();
+    });
+
+    it('对照：已经有结论（失败）之后不再报时间 —— 那时候秒数只是噪音', () => {
+      const failed: StartupReadiness = {
+        ...baseReadiness,
+        ai: { phase: 'catalog-failed' },
+        hasError: true,
+        composerBlocked: false,
+      };
+      const { container, unmount } = render(<StartupReadinessPanel readiness={failed} onRetry={vi.fn()} />);
+
+      expect(container.textContent).not.toContain('startupReadiness.elapsed');
+      unmount();
+    });
+
+    it('对照：就绪之后也不报（那时候"等了多久"没有意义）', () => {
+      const ready: StartupReadiness = {
+        ...baseReadiness,
+        ai: { phase: 'ready' },
+        assistants: { ...baseReadiness.assistants, phase: 'ready', completed: 6 },
+        conversationReady: true,
+        isReady: true,
+        composerBlocked: false,
+      };
+      const { container, unmount } = render(<StartupReadinessPanel readiness={ready} onRetry={vi.fn()} />);
+
+      expect(container.textContent).not.toContain('startupReadiness.elapsed');
+      unmount();
+    });
   });
 
   /**
