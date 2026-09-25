@@ -34,22 +34,37 @@ import type { ChildProcess } from 'node:child_process';
 import WebSocket from 'ws';
 import { getDebugLogger } from '../debug/index.js';
 import { attachGatewayOutputStreams, gatewayOutputDigest } from './gateway-output.js';
-import { BOOTSTRAP_NOT_READY } from './bootstrap-retry.js';
+import { BOOTSTRAP_PROCESS_EXITED, BOOTSTRAP_READY_TIMEOUT } from './bootstrap-retry.js';
 
 /** 端口被**别人**的网关占着（或占着的那个不可信）。 */
 export const GATEWAY_PORT_OCCUPIED = 'runtime.gateway-port-occupied';
 
 /**
- * 我们**自己的**网关还没就绪（进程早退 / 等不到探测通过）。
+ * 我们自己的网关**子进程很快就退出了**。
  *
  * 这是**唯一可重试**的一类失败 —— 白名单在 `bootstrap-retry.ts`，
  * 判据是**码**而不是文案（改文案不该改行为）。
+ * 为什么它可以重试：它**快**（毫秒~秒级），再来一次的成本可忽略。
  */
-export class GatewayNotReadyError extends Error {
-  readonly code = BOOTSTRAP_NOT_READY;
+export class GatewayProcessExitedError extends Error {
+  readonly code = BOOTSTRAP_PROCESS_EXITED;
   constructor(message: string) {
     super(message);
-    this.name = 'GatewayNotReadyError';
+    this.name = 'GatewayProcessExitedError';
+  }
+}
+
+/**
+ * 等网关就绪**等满了 180 秒**。⛔ **终态，绝不再试**。
+ *
+ * ⚠️ 必须与"早退"分开：两者看起来都是"网关没起来"，但代价差两个数量级 ——
+ *    一次 180 秒，重试三次就是**九分钟**的等待（2026-09-25 复核抓到的洞）。
+ */
+export class GatewayReadyTimeoutError extends Error {
+  readonly code = BOOTSTRAP_READY_TIMEOUT;
+  constructor(message: string) {
+    super(message);
+    this.name = 'GatewayReadyTimeoutError';
   }
 }
 
@@ -304,9 +319,8 @@ export async function waitForGatewayReady(opts: {
 
   for (;;) {
     if (hasExited()) {
-      // ⚠️ 带码：这是**可重试**的一类（我们自己的网关还没起来），
-      //    判据在 `bootstrap-retry.ts` 的白名单里 —— 没有码就一律当终态。
-      throw new GatewayNotReadyError(`网关进程在就绪之前就退出了（最后一次探测：${last}）`);
+      // ⚠️ 带码：**可重试**的一类（子进程早退、代价小），白名单见 `bootstrap-retry.ts`。
+      throw new GatewayProcessExitedError(`网关进程在就绪之前就退出了（最后一次探测：${last}）`);
     }
 
     let result: StartupzProbe;
@@ -332,8 +346,8 @@ export async function waitForGatewayReady(opts: {
     }
 
     if (now() >= deadline) {
-      // 同上一处：这是"我们自己的网关还没就绪"，属于可重试的那一类。
-      throw new GatewayNotReadyError(`等待网关就绪超时（${Math.round(timeoutMs / 1000)}s，最后一次探测：${last}）`);
+      // ⚠️ 另一类：**等满 180 秒**。这是终态 —— 再试一次就是再让用户等三分钟。
+      throw new GatewayReadyTimeoutError(`等待网关就绪超时（${Math.round(timeoutMs / 1000)}s，最后一次探测：${last}）`);
     }
     await sleep(intervalMs);
   }
