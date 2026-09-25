@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { portablePhaseToUiStatus, updateStatusFromCheck } from '../src/renderer/lib/update-status';
+import {
+  installAllowedForStatus,
+  portablePhaseToUiStatus,
+  updateStatusFromCheck,
+} from '../src/renderer/lib/update-status';
 
 /**
  * 「检查更新」的返回值 → 界面该显示的状态。
@@ -69,5 +73,33 @@ describe('盘上运行（U 盘）的相位映射', () => {
     expect(updateStatusFromCheck({ hasUpdate: true, state: 'checking' })).toBe('available');
     expect(updateStatusFromCheck({ hasUpdate: true, state: 'idle' })).toBe('available');
     expect(updateStatusFromCheck({ hasUpdate: false, state: 'checking' })).toBe('idle');
+  });
+});
+
+describe('installAllowedForStatus：只有"已经准备好"才允许换目录', () => {
+  it('盘上形态：ready 才允许', () => {
+    expect(installAllowedForStatus('ready')).toBe(true);
+  });
+
+  it('装机版：downloaded 才允许', () => {
+    expect(installAllowedForStatus('downloaded')).toBe(true);
+  });
+
+  it('⭐ 其余相位一律不许 —— 含一切失败相位与"还在准备"', () => {
+    const forbidden = [
+      'idle',
+      'checking',
+      'available',
+      'downloading',
+      'preparing',
+      'applying',
+      'committed',
+      'rolled-back',
+      'error',
+    ] as const;
+
+    for (const status of forbidden) {
+      expect(installAllowedForStatus(status), `${status} 不该允许换目录`).toBe(false);
+    }
   });
 });

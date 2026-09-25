@@ -1610,7 +1610,9 @@
       "preparing": "Preparing the update in the background. You can keep using the app.",
       "ready": "Version {{version}} is ready. Restart to finish updating.",
       "restartNow": "Restart and update now",
-      "rolledBack": "The update did not finish. Version {{version}} has been restored and your data is untouched."
+      "rolledBack": "The update did not finish. Version {{version}} has been restored and your data is untouched.",
+      "downloadAndPrepare": "Download and prepare",
+      "cancel": "Cancel"
     },
     "portableUpdateHint": "This portable USB copy does not update itself. To upgrade, replace the program folder on the drive with the new version.",
     "pressShortcut": "Press shortcut...",

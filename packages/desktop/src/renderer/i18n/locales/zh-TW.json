@@ -1610,7 +1610,9 @@
       "preparing": "正在背景準備更新，你可以繼續使用榮盈魔方。",
       "ready": "版本 {{version}} 已準備好，重新啟動後完成更新。",
       "restartNow": "立即重新啟動更新",
-      "rolledBack": "更新未完成，已還原到版本 {{version}}，現有資料未受影響。"
+      "rolledBack": "更新未完成，已還原到版本 {{version}}，現有資料未受影響。",
+      "downloadAndPrepare": "下載並準備更新",
+      "cancel": "取消"
     },
     "portableUpdateHint": "U 盤版不自動更新：拿到新版本後，用新的「榮盈魔方」資料夾替換盤上那份即可。",
     "pressShortcut": "按下快捷鍵…",

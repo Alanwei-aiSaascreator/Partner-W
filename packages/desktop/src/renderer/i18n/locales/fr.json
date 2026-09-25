@@ -1610,7 +1610,9 @@
       "preparing": "Préparation de la mise à jour en arrière-plan. Vous pouvez continuer à utiliser l'application.",
       "ready": "La version {{version}} est prête. Redémarrez pour terminer la mise à jour.",
       "restartNow": "Redémarrer et mettre à jour",
-      "rolledBack": "La mise à jour n'a pas abouti. La version {{version}} a été restaurée, vos données sont intactes."
+      "rolledBack": "La mise à jour n'a pas abouti. La version {{version}} a été restaurée, vos données sont intactes.",
+      "downloadAndPrepare": "Télécharger et préparer",
+      "cancel": "Annuler"
     },
     "portableUpdateHint": "La version portable (USB) ne se met pas à jour automatiquement. Pour mettre à niveau, remplacez le dossier du programme sur la clé par la nouvelle version.",
     "pressShortcut": "Appuyez sur le raccourci...",

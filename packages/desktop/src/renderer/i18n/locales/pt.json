@@ -1610,7 +1610,9 @@
       "preparing": "Preparando a atualização em segundo plano. Você pode continuar usando o aplicativo.",
       "ready": "A versão {{version}} está pronta. Reinicie para concluir a atualização.",
       "restartNow": "Reiniciar e atualizar agora",
-      "rolledBack": "A atualização não foi concluída. A versão {{version}} foi restaurada e seus dados não foram afetados."
+      "rolledBack": "A atualização não foi concluída. A versão {{version}} foi restaurada e seus dados não foram afetados.",
+      "downloadAndPrepare": "Baixar e preparar",
+      "cancel": "Cancelar"
     },
     "portableUpdateHint": "A versão portátil (USB) não se atualiza sozinha. Para atualizar, substitua a pasta do programa na unidade pela nova versão.",
     "pressShortcut": "Pressione o atalho...",

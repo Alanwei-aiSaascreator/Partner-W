@@ -11,7 +11,7 @@ import SegmentedControl from '../components/SegmentedControl';
 import { useUiStore } from '@/stores/uiStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { describeUpdateErrorFromState, type UpdateOperation } from '@/features/internal-beta/update-errors';
-import { portablePhaseToUiStatus, updateStatusFromCheck } from '@/lib/update-status';
+import { installAllowedForStatus, portablePhaseToUiStatus, updateStatusFromCheck } from '@/lib/update-status';
 import type { PortableUpdatePublicState } from '@clawwork/shared';
 
 const linkClass = cn(
@@ -72,6 +72,14 @@ export default function AboutSection() {
   const updateSettings = useSettingsStore((s) => s.updateSettings);
   const tapCountRef = useRef(0);
   const tapTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  /**
+   * 当前显示状态的一份**回调可读**副本。
+   *
+   * ⚠️ 为什么不能只靠渲染条件：渲染条件决定"按钮在不在"，而命令的**许可**必须单独成立 ——
+   *    「立即重启更新」一旦被点到就把换目录交给启动器，那是**有副作用**的动作；
+   *    双击、或被别处状态驱动着触到同一个 handler，都不该真的发出去。
+   */
+  const displayStateRef = useRef<UpdateState>('idle');
 
   useEffect(() => {
     if (!settingsLoaded) loadSettings().catch(() => {});
@@ -215,6 +223,9 @@ export default function AboutSection() {
   }, [t]);
 
   const handleDownload = useCallback(async () => {
+    // ⚠️ 双击保护：下载/准备期间再点一次，不该再发一条命令。
+    //    （盘上形态的入口按钮在这个相位本来就不渲染，但 handler 不能靠渲染兜底。）
+    if (displayStateRef.current === 'downloading' || displayStateRef.current === 'preparing') return;
     setUpdateState('downloading');
     setDownloadPercent(0);
     const result = await window.clawwork.downloadUpdate();
@@ -233,6 +244,10 @@ export default function AboutSection() {
   }, []);
 
   const handleInstall = useCallback(async () => {
+    // ⚠️ **只有"已经准备好"才允许换目录**：盘上形态要等 `ready`（下载、验签、解压、
+    //    逐文件核对全过），装机版要等 `downloaded`。其余相位（含一切失败相位）
+    //    一律**不发出**这条命令 —— 渲染条件不等于命令许可，双击/程序化触发都在这道闸下。
+    if (!installAllowedForStatus(displayStateRef.current)) return;
     // 成功的话应用会直接退出并重启，走不到下一句；失败必须说出来 ——
     // 原来这里把返回值丢掉，点了没反应用户只会以为"按钮坏了"。
     const result = await window.clawwork.installUpdate();
@@ -253,6 +268,11 @@ export default function AboutSection() {
 
   const displayState: UpdateState = portablePhase === null ? updateState : portablePhaseToUiStatus(portablePhase.phase);
   const isChecking = displayState === 'checking';
+  // ⚠️ 百分比**按形态分源**：盘上那条链的百分比在公开状态里（`portablePhase.percent`，
+  //    由便携服务逐次 publish），装机版那条走 `onUpdateDownloadProgress` 事件。
+  //    混用会让盘上用户盯着一个永远 0% 的进度条。
+  const shownPercent = portable ? (portablePhase?.percent ?? 0) : downloadPercent;
+  displayStateRef.current = displayState;
 
   return (
     <div>
@@ -301,9 +321,13 @@ export default function AboutSection() {
                   {t('settings.newVersionAvailable', { version: versionInfo.latestVersion })}
                 </p>
                 {portable ? (
-                  // U 盘版：主进程既不下载也不安装（装到本机只会多出一份副本，
-                  // 盘上那份还是旧的）⇒ 这里给一句能照做的指引，而不是一个点了没用的按钮。
-                  <p className="type-support text-[var(--text-muted)]">{t('settings.portableUpdateHint')}</p>
+                  // U 盘版：主进程**会**下载、校验、解压到暂存目录，全部通过才叫 `ready`；
+                  // 换目录那一步由盘上的启动器做。以前这里只给一句"用新文件夹替换"的指引，
+                  // 而那句在便携更新服务做好之后就**过时了** —— 用户于是没有可达的入口。
+                  <Button variant="default" size="sm" onClick={() => void handleDownload()} className="gap-1.5">
+                    <Download size={14} />
+                    {t('settings.portableUpdate.downloadAndPrepare')}
+                  </Button>
                 ) : (
                   <div className="flex items-center gap-2">
                     <Button variant="default" size="sm" onClick={handleDownload} className="gap-1.5">
@@ -332,7 +356,7 @@ export default function AboutSection() {
             <div className="rounded-lg px-4 py-3 bg-[var(--bg-tertiary)] border border-[var(--border)]">
               <div className="flex items-center justify-between gap-3 mb-2">
                 <p className="type-body text-[var(--text-secondary)]">
-                  {t('settings.downloadProgress', { percent: downloadPercent })}
+                  {t('settings.downloadProgress', { percent: shownPercent })}
                 </p>
                 <Button
                   variant="ghost"
@@ -347,7 +371,7 @@ export default function AboutSection() {
               <div className="h-2 rounded-full bg-[var(--bg-hover)] overflow-hidden">
                 <div
                   className="h-full rounded-full bg-[var(--accent)] transition-all duration-300"
-                  style={{ width: `${downloadPercent}%` }}
+                  style={{ width: `${shownPercent}%` }}
                 />
               </div>
             </div>
@@ -371,7 +395,16 @@ export default function AboutSection() {
         )}
 
         {displayState === 'preparing' && (
-          <p className="type-body text-[var(--text-secondary)]">{t('settings.portableUpdate.preparing')}</p>
+          <div className="space-y-2">
+            <p className="type-body text-[var(--text-secondary)]">
+              {t('settings.portableUpdate.preparing')}
+              {/* 校验/解压也有真实百分比 ⇒ 一并显示，别让用户盯着不动的界面 */}
+              {shownPercent > 0 ? ` ${t('settings.downloadProgress', { percent: shownPercent })}` : ''}
+            </p>
+            <Button variant="ghost" size="sm" onClick={handleCancelDownload}>
+              {t('settings.portableUpdate.cancel')}
+            </Button>
+          </div>
         )}
 
         {displayState === 'ready' && (
@@ -416,6 +449,15 @@ export default function AboutSection() {
                 message: describeUpdateErrorFromState(errorInfo?.raw, errorInfo?.operation ?? 'updater', portablePhase),
               })}
             </InlineNotice>
+            {/* ⭐ 出错之后**入口还得在**：否则用户只有"检查更新"这一条路，
+                而他要的明明是"再试一次下载"。⚠️ 这里只给下载入口 ——
+                失败之后**绝不允许**出现任何通往换目录的按钮。 */}
+            {portable && (
+              <Button variant="outline" size="sm" onClick={() => void handleDownload()} className="mt-2 gap-1.5">
+                <Download size={14} />
+                {t('settings.portableUpdate.downloadAndPrepare')}
+              </Button>
+            )}
           </div>
         )}
 

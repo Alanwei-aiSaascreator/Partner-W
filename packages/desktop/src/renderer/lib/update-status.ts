@@ -17,6 +17,21 @@ import type { PortableUpdatePhase } from '@clawwork/shared';
  *    `ready` 的意思是"已经验证完毕、重启就会换目录"。把后者显示成前者，用户点下去
  *    等的是下载、实际发生的是换目录。
  */
+/**
+ * 这个显示状态**允不允许**真的去换目录（调 `installUpdate` / 请求重启）。
+ *
+ * ⚠️ 单独抽成纯函数、而不是写在按钮的渲染条件里：渲染条件决定"按钮在不在"，
+ *    而"换目录"是有副作用的动作 —— 双击、或被别处状态驱动着触到同一个 handler，
+ *    都不该真的发出去。抽出来才**可证伪**（写在 JSX 里的话，删掉也全绿）。
+ */
+export function installAllowedForStatus(status: UpdateUiStatus | 'checking'): boolean {
+  // ⚠️ 入参比 `UpdateUiStatus` 多一个 `'checking'`：那是设置页组件**本地**联合里
+  //    才有的相位（"正在检查"），它同样不许换目录 —— 收窄入参会让调用点编不过。
+  // 盘上形态：下载、验签、解压、逐文件核对全过才叫 `ready`。
+  // 装机版：`downloaded` 才是"包已经下好"，其余（含一切失败相位）都不许。
+  return status === 'ready' || status === 'downloaded';
+}
+
 export type UpdateUiStatus =
   | 'idle'
   | 'available'
