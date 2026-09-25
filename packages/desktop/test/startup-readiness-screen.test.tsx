@@ -13,7 +13,6 @@ vi.mock('react-i18next', () => ({
   initReactI18next: { type: '3rdParty', init: vi.fn() },
 }));
 
-import StartupReadinessScreen from '../src/renderer/layouts/StartupReadiness';
 import StartupReadinessPanel from '../src/renderer/layouts/MainArea/StartupReadinessPanel';
 import { useUiStore } from '../src/renderer/stores/uiStore';
 
@@ -49,160 +48,6 @@ function render(ui: ReactElement): { container: HTMLDivElement; unmount: () => v
     },
   };
 }
-
-describe('StartupReadinessScreen', () => {
-  it('explains AI startup and exposes a busy state', () => {
-    const { container, unmount } = render(<StartupReadinessScreen readiness={baseReadiness} onRetry={vi.fn()} />);
-
-    expect(container.firstElementChild?.getAttribute('aria-busy')).toBe('true');
-    expect(container.textContent).toContain('startupReadiness.aiStarting');
-    expect(container.textContent).toContain('startupReadiness.assistantsWaiting');
-    unmount();
-  });
-
-  /**
-   * ⭐⭐ C（2026-09-19，明天出 U 盘内测版）：**必须说清"这不是安装"**。
-   *
-   * 实测的误解来源：U 盘版首次启动会**把运行环境解压到本机缓存**（约 2–3 分钟，
-   * 设计如此 —— 为了拔盘后还能继续用），那个进度界面**看起来就是在装软件**。
-   * 同事确实这么反馈过（"双击 exe 装到电脑"）。
-   *
-   * ⇒ 这句要写死在这儿：**程序不写进系统、不创建桌面图标、不出现在「程序和功能」里**。
-   */
-  it('⭐⭐ 说清「这不是安装」（否则首启那 2–3 分钟会被当成在装软件）', () => {
-    const { container, unmount } = render(<StartupReadinessScreen readiness={baseReadiness} onRetry={vi.fn()} />);
-
-    expect(container.textContent, '首启界面必须有一句"这不是安装"').toContain('startupReadiness.notAnInstall');
-    unmount();
-  });
-
-  it('⭐ 那句在**错误态**也要在，而且要**看得见**（那时用户最容易怀疑"装坏了"）', () => {
-    // ⚠️ 断言**可见性**，不只是"在不在 DOM 里"：`hidden` / `display:none` 都不会把文字
-    //    从 `textContent` 里去掉 ⇒ 只断 textContent 的话，"把它藏起来"这种改法**抓不住**。
-    //    （变异验证实测过：加 `hidden={!isReady}` 时，只断 textContent 是全绿的。）
-    const readiness: StartupReadiness = { ...baseReadiness, ai: { phase: 'error' }, hasError: true };
-    const { container, unmount } = render(<StartupReadinessScreen readiness={readiness} onRetry={vi.fn()} />);
-
-    const line = container.querySelector<HTMLElement>('[data-testid="not-an-install"]');
-    expect(line, '错误态也必须有这句').not.toBeNull();
-    expect(line!.hidden, '不许把它藏起来').toBe(false);
-    expect(line!.style.display, '也不许用 CSS 藏').not.toBe('none');
-    expect(line!.textContent).toContain('startupReadiness.notAnInstall');
-    unmount();
-  });
-
-  it('renders the real assistant count and current localized role', () => {
-    const readiness: StartupReadiness = {
-      ...baseReadiness,
-      ai: { phase: 'ready' },
-      assistants: {
-        phase: 'installing',
-        completed: 2,
-        total: 6,
-        currentId: 'rongying-office',
-        missingIds: ['rongying-office'],
-      },
-    };
-    const { container, unmount } = render(<StartupReadinessScreen readiness={readiness} onRetry={vi.fn()} />);
-    const progress = container.querySelector('[role="progressbar"]');
-
-    expect(progress?.getAttribute('aria-valuenow')).toBe('2');
-    expect(progress?.getAttribute('aria-valuemax')).toBe('6');
-    expect(container.textContent).toContain('presetAgents.roles.office');
-    unmount();
-  });
-
-  it('names missing roles and retries after a failure', () => {
-    const onRetry = vi.fn();
-    const readiness: StartupReadiness = {
-      ...baseReadiness,
-      ai: { phase: 'ready' },
-      assistants: {
-        phase: 'error',
-        completed: 4,
-        total: 6,
-        missingIds: ['rongying-research', 'rongying-family'],
-        error: 'write denied',
-      },
-      hasError: true,
-    };
-    const { container, unmount } = render(<StartupReadinessScreen readiness={readiness} onRetry={onRetry} />);
-
-    expect(container.textContent).toContain('presetAgents.roles.research');
-    expect(container.textContent).toContain('presetAgents.roles.family');
-    const button = container.querySelector('button');
-    act(() => button?.click());
-    expect(onRetry).toHaveBeenCalledOnce();
-    unmount();
-  });
-
-  /**
-   * ⭐⭐ 2026-09-20 U 盘交付实机（T-a28）：**「这些助手尚未完成：… 0 / 6」说不出"为什么"**。
-   *
-   * `preset-agent-bootstrap` 在**抛错**（`refreshAgents` 失败等）和**全部失败**两种情况下
-   * 填的 `missingIds` 都是"全部 6 个" ⇒ 两种截然不同的原因，在界面上**长得一模一样**；
-   * 而它其实**把原因放进了 `snapshot.error`**（`Failed to create agent "X": <网关原文>`），
-   * 门禁屏与工作台面板**都从来没渲染过这个字段**。
-   * ⇒ 同事那边"一些助手安装失败了"我们看到的就是一个 0 / 6，没有可定位的原文。
-   *
-   * ⚠️ 断言**原文出现在屏幕上**（`textContent` + 没被 `hidden`），不是"某个 state 变了"。
-   */
-  it('⭐⭐ 助手没就绪时要说出**原因原文**（不只是"0 / 6"）', () => {
-    const readiness: StartupReadiness = {
-      ...baseReadiness,
-      ai: { phase: 'ready' },
-      assistants: {
-        phase: 'error',
-        completed: 0,
-        total: 6,
-        missingIds: ['rongying-office'],
-        error: 'Failed to create agent "rongying-office": gateway not connected',
-      },
-      hasError: true,
-    };
-    const { container, unmount } = render(<StartupReadinessScreen readiness={readiness} onRetry={vi.fn()} />);
-
-    expect(container.textContent).toContain('Failed to create agent "rongying-office": gateway not connected');
-    const reason = container.querySelector<HTMLElement>('[data-testid="readiness-reason"]');
-    expect(reason, '原因要有一个能定位的节点').not.toBeNull();
-    expect(reason!.hidden, '不许把它藏起来').toBe(false);
-    unmount();
-  });
-
-  it('没有原因原文时不许编一句（节点照着不渲染）', () => {
-    const readiness: StartupReadiness = {
-      ...baseReadiness,
-      ai: { phase: 'ready' },
-      assistants: { phase: 'error', completed: 0, total: 6, missingIds: ['rongying-office'] },
-      hasError: true,
-    };
-    const { container, unmount } = render(<StartupReadinessScreen readiness={readiness} onRetry={vi.fn()} />);
-
-    expect(container.querySelector('[data-testid="readiness-reason"]')).toBeNull();
-    expect(container.textContent).toContain('startupReadiness.assistantsError');
-    unmount();
-  });
-
-  it('uses explicit ready copy for completed capability rows', () => {
-    const readiness: StartupReadiness = {
-      ...baseReadiness,
-      ai: { phase: 'ready' },
-      assistants: {
-        phase: 'ready',
-        completed: 6,
-        total: 6,
-        missingIds: [],
-      },
-      isReady: true,
-    };
-    const { container, unmount } = render(<StartupReadinessScreen readiness={readiness} onRetry={vi.fn()} />);
-
-    expect(container.textContent).toContain('startupReadiness.aiReady');
-    expect(container.textContent).toContain('startupReadiness.assistantsReady');
-    expect(container.querySelectorAll('svg').length).toBeGreaterThan(0);
-    unmount();
-  });
-});
 
 describe('StartupReadinessPanel', () => {
   /**
@@ -622,10 +467,14 @@ describe('StartupReadinessPanel', () => {
  * **看起来就是在装软件** —— 实测有同事因此反馈"双击 exe 装到电脑"。
  * 这句话以前只活在一个**没人渲染**的整屏里，用户一个字都看不到。
  *
- * ⚠️ 判据两条，缺一不可：**盘上运行** 且 **还在准备**。装机版对它说是假话
- * （装机版确实写进系统、确实出现在「程序和功能」里）。
+ * ⚠️ 判据两条**各有各的理由**，别抄成一个：
+ *    ① 盘上运行：装机版对它说是假话（装机版确实写进系统、确实出现在「程序和功能」里）。
+ *    ② 准备还没结束（`!isReady`）：结束了就没什么可解释的。
+ *    ⚠️ ② **不含"失败"**。早先一版把它挂在"还在准备"（`showElapsed`）上，而那个条件是
+ *    为了"结论出来之后秒数只是噪音"—— 两件事的理由不同，抄过来就把**最需要这句话的时刻
+ *    （启动失败，用户以为"我装了什么东西把电脑搞坏了"）**正好排除掉了。下面有一条专门守着它。
  */
-describe('「这不是安装」：只在盘上运行 + 还在准备时说', () => {
+describe('「这不是安装」：只在盘上运行 + 准备没结束时说', () => {
   const NOT_AN_INSTALL = 'startupReadiness.notAnInstall';
 
   function stubPortable(value: boolean | (() => Promise<boolean>)): void {
@@ -634,29 +483,30 @@ describe('「这不是安装」：只在盘上运行 + 还在准备时说', () =
     };
   }
 
-  it('⭐ 盘上运行 + 还在准备 ⇒ 那句话在', async () => {
-    stubPortable(true);
-    const { container, unmount } = render(<StartupReadinessPanel readiness={baseReadiness} onRetry={vi.fn()} />);
+  async function waitForPortableAnswer(): Promise<void> {
     await act(async () => {
       await Promise.resolve();
     });
+  }
+
+  it('⭐ 盘上运行 + 还在准备 ⇒ 那句话在', async () => {
+    stubPortable(true);
+    const { container, unmount } = render(<StartupReadinessPanel readiness={baseReadiness} onRetry={vi.fn()} />);
+    await waitForPortableAnswer();
 
     expect(container.textContent).toContain(NOT_AN_INSTALL);
     unmount();
   });
 
-  it('⭐ 对照：**装机版**不许说这句（对它来说那是假话）', async () => {
-    stubPortable(false);
-    const { container, unmount } = render(<StartupReadinessPanel readiness={baseReadiness} onRetry={vi.fn()} />);
-    await act(async () => {
-      await Promise.resolve();
-    });
-
-    expect(container.textContent).not.toContain(NOT_AN_INSTALL);
-    unmount();
-  });
-
-  it('对照：盘上运行但**已经有结论**（失败/就绪）也不说 —— 那时不再像安装', async () => {
+  /**
+   * ⭐⭐ 从那个已删的整屏里**特意搬过来**的一条（原文：那句在错误态也要在，
+   * 因为"那时用户最容易怀疑装坏了"）。
+   *
+   * ⚠️ 断言的是**可见性**，不只是"在不在 DOM 里"：`hidden` / `display:none` 都不会把文字
+   *    从 `textContent` 里去掉 ⇒ 只断 textContent 的话，"把它藏起来"这种改法**抓不住**
+   *    （原来的整屏测试就为这条做过变异验证）。
+   */
+  it('⭐⭐ 启动**失败**时更要留着它 —— 那是用户最怀疑"装坏了"的时刻', async () => {
     stubPortable(true);
     const failed: StartupReadiness = {
       ...baseReadiness,
@@ -665,9 +515,37 @@ describe('「这不是安装」：只在盘上运行 + 还在准备时说', () =
       ai: { phase: 'error' },
     };
     const { container, unmount } = render(<StartupReadinessPanel readiness={failed} onRetry={vi.fn()} />);
-    await act(async () => {
-      await Promise.resolve();
-    });
+    await waitForPortableAnswer();
+
+    const line = container.querySelector<HTMLElement>('[data-testid="not-an-install"]');
+    expect(line, '失败态也必须有这句').not.toBeNull();
+    expect(line!.hidden, '不许把它藏起来').toBe(false);
+    expect(line!.style.display, '也不许用 CSS 藏').not.toBe('none');
+    expect(line!.textContent).toContain(NOT_AN_INSTALL);
+    unmount();
+  });
+
+  it('⭐ 对照：**装机版**不许说这句（对它来说那是假话）', async () => {
+    stubPortable(false);
+    const { container, unmount } = render(<StartupReadinessPanel readiness={baseReadiness} onRetry={vi.fn()} />);
+    await waitForPortableAnswer();
+
+    expect(container.textContent).not.toContain(NOT_AN_INSTALL);
+    unmount();
+  });
+
+  it('对照：盘上运行但**已经就绪** ⇒ 不说（准备结束了，没什么可解释的）', async () => {
+    stubPortable(true);
+    const ready: StartupReadiness = {
+      ...baseReadiness,
+      ai: { phase: 'ready' },
+      assistants: { ...baseReadiness.assistants, phase: 'ready', completed: 6 },
+      conversationReady: true,
+      isReady: true,
+      composerBlocked: false,
+    };
+    const { container, unmount } = render(<StartupReadinessPanel readiness={ready} onRetry={vi.fn()} />);
+    await waitForPortableAnswer();
 
     expect(container.textContent).not.toContain(NOT_AN_INSTALL);
     unmount();
@@ -678,11 +556,66 @@ describe('「这不是安装」：只在盘上运行 + 还在准备时说', () =
       throw new Error('boom');
     });
     const { container, unmount } = render(<StartupReadinessPanel readiness={baseReadiness} onRetry={vi.fn()} />);
-    await act(async () => {
-      await Promise.resolve();
-    });
+    await waitForPortableAnswer();
 
     expect(container.textContent).not.toContain(NOT_AN_INSTALL);
     unmount();
+  });
+});
+
+/**
+ * ⭐⭐ 两条从已删整屏搬来的断言（2026-09-26）。
+ *
+ * 那个整屏（`layouts/StartupReadiness`）没人渲染，所以它断言的东西**用户看不到**；
+ * 但它断言的两件事本身是对的，而**面板这一面此前没被钉住**：AI 服务就绪、助手还在排队时
+ * 说什么，以及全部就绪时说什么 —— 面板的 `currentStatus` 是一条三元链，认不得的相位
+ * **不报错、只静默落到底部那句 `aiReady`**，所以"能不能走到底部"必须有一条。
+ */
+describe('状态文案的底部两档（从已删整屏搬来）', () => {
+  it('ai 就绪、助手还在等 ⇒ 说"等待 AI 服务启动"，不许直接说"模型已准备好"就完事', () => {
+    const readiness: StartupReadiness = {
+      ...baseReadiness,
+      ai: { phase: 'ready' },
+      assistants: { ...baseReadiness.assistants, phase: 'waiting' },
+    };
+    const { container, unmount } = render(<StartupReadinessPanel readiness={readiness} onRetry={vi.fn()} />);
+
+    expect(container.textContent).toContain('startupReadiness.assistantsWaiting');
+    unmount();
+  });
+
+  it('全部就绪 ⇒ 说"模型已准备好"', () => {
+    const readiness: StartupReadiness = {
+      ...baseReadiness,
+      ai: { phase: 'ready' },
+      assistants: { ...baseReadiness.assistants, phase: 'ready', completed: 6 },
+      isReady: true,
+      composerBlocked: false,
+    };
+    const { container, unmount } = render(<StartupReadinessPanel readiness={readiness} onRetry={vi.fn()} />);
+
+    expect(container.textContent).toContain('startupReadiness.aiReady');
+    unmount();
+  });
+
+  /**
+   * ⭐ 「请保持应用开启」—— 从已删整屏搬过来的**唯一一条出口没被别的话覆盖**的文案：
+   *    等待那 2–3 分钟里用户会做的两件事恰好是"把窗口关掉"和"再点一次重新准备"。
+   * ⚠️ 只在**还在准备**时说：已经失败时"保持开启"没有意义（该看的是原因和出口）。
+   */
+  it('⭐ 还在准备 ⇒ 说"请保持应用开启"；已经失败 ⇒ 不说', () => {
+    const { container, unmount } = render(<StartupReadinessPanel readiness={baseReadiness} onRetry={vi.fn()} />);
+    expect(container.textContent).toContain('startupReadiness.keepOpen');
+    unmount();
+
+    const failed: StartupReadiness = {
+      ...baseReadiness,
+      ai: { phase: 'error' },
+      hasError: true,
+      composerBlocked: false,
+    };
+    const second = render(<StartupReadinessPanel readiness={failed} onRetry={vi.fn()} />);
+    expect(second.container.textContent).not.toContain('startupReadiness.keepOpen');
+    second.unmount();
   });
 });

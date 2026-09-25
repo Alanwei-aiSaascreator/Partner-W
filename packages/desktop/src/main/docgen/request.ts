@@ -32,8 +32,6 @@
  *  - 表格里违反 Excel 硬限制的（表名 >31 字、重复、含 `[]:*?/\`）要拒 ——
  *    否则用户打开时看到的是「文件需要修复」，而那是**我们**生成的文件。
  */
-import { join } from 'node:path';
-
 /** 支持的三种格式。加第四种时：这里 + `DOCGEN_OUTPUT_BY_KIND` + 渲染层分发。 */
 export const DOCGEN_KINDS = ['pptx', 'docx', 'xlsx'] as const;
 export type DocgenKind = (typeof DOCGEN_KINDS)[number];
@@ -50,9 +48,6 @@ export const DOCGEN_OUTPUT_BY_KIND: Readonly<Record<DocgenKind, { extension: str
     docx: { extension: '.docx', fallbackStem: '文档' },
     xlsx: { extension: '.xlsx', fallbackStem: '表格' },
   });
-
-/** 请求文件的后缀（遗留：文件通道用的，见文件末尾 `presentationPathFor`）。 */
-export const DOCGEN_REQUEST_SUFFIX = '.docgen.json';
 
 export interface DocgenSlide {
   /** 页标题。 */
@@ -447,36 +442,4 @@ export function parseDocgenRequest(raw: unknown): DocgenParseResult {
     case 'xlsx':
       return parseXlsx(input, title.title);
   }
-}
-
-/**
- * 请求文件路径 ⇒ 产物文件路径。
- *
- * ⚠️ **这是"文件通道"的遗留**（P1 最初想让助手写请求文件、客户端扫目录，
- * 后来发现助手沙箱与任务目录是兄弟目录、写不过去，改走消息里的 `docgen` 块；
- * 见设计稿 §9）。**产品里没有任何地方调用它**，只有测试在养着它，而且它只认 pptx。
- * P2 不动它（删不删是单独的决定），但**不要**照它的形状加 docx/xlsx ——
- * 现在的契约是 `parseDocgenRequest` 那条路。
- *
- * 约定（曾经的）：请求文件是 `.<名字>.docgen.json`，产物是 `<名字>.pptx`。
- *
- * ⚠️ **前导点不是装饰**：产物扫描会跳过点文件（`artifact/reconcile.ts:190`
- * 的 `name.startsWith('.')`，实测 `.secret.txt` 就被跳过）⇒ 这样用户不会在
- * 产物面板里看到一份 `.docgen.json` 噪音，只看到那份 pptx。
- */
-export function presentationPathFor(requestFileName: string): string | null {
-  if (!requestFileName.toLowerCase().endsWith(DOCGEN_REQUEST_SUFFIX)) return null;
-  const withoutSuffix = requestFileName.slice(0, -DOCGEN_REQUEST_SUFFIX.length);
-
-  // ⚠️ 允许**普通子目录**（助手常会先建个 `output/`），但拒绝任何能越界的写法：
-  //    `..`、以及隐藏目录（产物扫描本来就会跳过点开头的东西，藏进 `.x/` 的请求
-  //    即使生成了用户也看不见）。这个返回值会被拿去 join 后**写文件**，所以宁可严。
-  const segments = withoutSuffix.split(/[\\/]+/).filter((part) => part !== '');
-  const base = segments.pop();
-  if (!base) return null;
-  const stem = base.replace(/^\.+/, '').trim();
-  if (!stem || stem === '.' || stem === '..') return null;
-  if (segments.some((part) => part === '.' || part === '..' || part.startsWith('.'))) return null;
-
-  return join(...segments, `${stem}.pptx`);
 }

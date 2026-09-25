@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DOCGEN_KINDS, DOCGEN_LIMITS, parseDocgenRequest, presentationPathFor } from '../src/main/docgen/request';
+import { DOCGEN_KINDS, DOCGEN_LIMITS, parseDocgenRequest } from '../src/main/docgen/request';
 
 /**
  * 文档生成请求的**校验**（P1 的 pptx 那一支；docx / xlsx 各有自己的文件）。
@@ -122,22 +122,5 @@ describe('parseDocgenRequest', () => {
   it('subtitle 缺省 ⇒ 返回体里就没有这个键（不是空串）', () => {
     const request = deckOf({ ...valid, subtitle: undefined });
     expect('subtitle' in request).toBe(false);
-  });
-});
-
-describe('presentationPathFor —— 请求名 ⇒ 产物名', () => {
-  it('点前缀的请求 ⇒ 干净的名字（前导点不进产物名）', () => {
-    expect(presentationPathFor('.汇报.docgen.json')).toBe('汇报.pptx');
-    expect(presentationPathFor('..汇报.docgen.json')).toBe('汇报.pptx');
-  });
-
-  it('大小写不敏感（Windows 上助手可能写成大写）', () => {
-    expect(presentationPathFor('.deck.DOCGEN.JSON')).toBe('deck.pptx');
-  });
-
-  it('后缀不对 / 只有点 / 带路径分隔符 ⇒ null（不生成）', () => {
-    for (const name of ['汇报.pptx', '.docgen.json', '   .docgen.json', '.a/b.docgen.json', '.a\\b.docgen.json']) {
-      expect(presentationPathFor(name), name).toBeNull();
-    }
   });
 });

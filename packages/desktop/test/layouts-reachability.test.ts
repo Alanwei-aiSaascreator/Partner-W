@@ -15,6 +15,9 @@ import { describe, expect, it } from 'vitest';
  * - 它承载的四条文案（**「这不是安装」** 等，其中那条是同事真反馈加上的）**一个字都不显示**；
  * - 而它的测试**一直全绿** —— 断言的是一个用户看不到的界面。
  *
+ * ⭐ 2026-09-26：它**已经删掉**了（文案分头搬走，见下面 `KNOWN_UNRENDERED` 的注释）。
+ *    这条守卫留着：下一块"没人渲染的界面"照样会被它拦下。
+ *
  * `knip`（`pnpm check:dead-code`）**抓不到这一类**：它把测试文件的 import 算作"被使用"
  * （本仓早就记过这条：`check:dead-code` 抓不到"被测试养着的死代码"）。
  * 所以这里自己看一眼：**布局目录**（用户可见的顶层界面）有没有人渲染。
@@ -38,11 +41,17 @@ const LAYOUTS = path.join(RENDERER, 'layouts');
  *
  * ⚠️ 往这里加东西不是"让测试变绿"的手段：它是**记账**。
  *    新加一条 = 承认界面上多了一块用户看不到的东西。
+ *
+ * ⭐ 2026-09-26：**现在是空的** —— 唯一那条 `StartupReadiness`（自 `5e103c2e` 起
+ *    没人渲染）已经删掉，文案按"哪句还有出口没说"分头处理：
+ *    「这不是安装」搬进了工作台面板（并在这一版**扩大到失败态**）、
+ *    「请保持应用开启」同上；`title` / `description` / `aiTitle` / `assistantsTitle` /
+ *    `assistantsReady` 五条被面板里**更具体**的状态句取代（面板说的是当前相位，
+ *    而不是一句笼统的"正在准备"），随组件一起删了。
+ *    删的理由不是"看着像没人用"，是**它本来就没人渲染**：留着的唯一效果是
+ *    四条文案一个字都不显示、而测试全绿。
  */
-const KNOWN_UNRENDERED: Record<string, string> = {
-  StartupReadiness:
-    '自 5e103c2e 起没人渲染（面板 + 欢迎屏接管了它）。文案去向（搬走还是接回去）待用户拍，见 docs/superpowers/plans/2026-09-25-workspace-filesystem-preflight.md 的「执行期发现」第 1 条',
-};
+const KNOWN_UNRENDERED: Record<string, string> = {};
 
 function sourceFiles(): string[] {
   const out: string[] = [];
@@ -106,10 +115,13 @@ describe('layouts 可达性：每个界面都得有人渲染', () => {
     ).toEqual([]);
   });
 
-  it('对照：已知记账项之外的 17 个都认得出引用方（扫描器坏掉时这里先红）', () => {
+  it('对照：18 个 layout 都认得出引用方（扫描器坏掉时这里先红）', () => {
     const importers = importersByLayout();
     const referenced = [...importers.entries()].filter(([, list]) => list.length > 0);
-    expect(referenced.length, '扫描器认出的"被引用 layout"数量').toBeGreaterThanOrEqual(17);
+    // ⚠️ 这个数**等于当前的 layout 总数**（`layouts/` 下 18 个目录），不是随手写的下限：
+    //    它是"扫描器还认得出引用"的对照 —— 扫描器一旦坏掉（比如把 `@/` 解析弄丢），
+    //    这个数会掉到 0，而上面那条"没有没人 import 的 layout"会**因此更绿**。
+    expect(referenced.length, '扫描器认出的"被引用 layout"数量').toBeGreaterThanOrEqual(18);
   });
 
   it('⭐ 对照：相对路径的 import 也算数（`../FileBrowser` 那种 —— 第一版量法就栽在这里）', () => {

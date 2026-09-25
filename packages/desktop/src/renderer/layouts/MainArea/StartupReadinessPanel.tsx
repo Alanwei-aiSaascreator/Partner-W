@@ -142,8 +142,14 @@ export default function StartupReadinessPanel({
    * "双击 exe 装到电脑"。而这句话以前只活在一个**没人渲染**的整屏里
    * （[[tests-keep-dead-code-alive]]），用户一个字都看不到。
    *
-   * ⚠️ 只在"盘上运行"时显示：装机版**确实**写进系统、**确实**出现在「程序和功能」里，
-   *    对它说这句就是假话。
+   * ⚠️ 两个条件，各自独立的理由 —— 别再把它们抄成一个：
+   *    ① **盘上运行**才说：装机版**确实**写进系统、**确实**出现在「程序和功能」里，
+   *       对它说这句就是假话。
+   *    ② **准备还没结束**才说：准备结束了就没什么可解释的。
+   *       ⚠️ 注意这里**不含"失败"** —— 早先一版把它挂在"还在准备"（`showElapsed`）上，
+   *       而那个条件的理由是"结论出来之后秒数只是噪音"，跟这句话**不是同一个理由**。
+   *       照抄的结果是：**恰恰在用户最怀疑"我是不是装了什么东西把电脑搞坏了"的时候
+   *       （启动失败），这句话不见了** —— 而它在那时为真、也正是用户需要的那句。
    */
   const [portable, setPortable] = useState(false);
   useEffect(() => {
@@ -154,7 +160,16 @@ export default function StartupReadinessPanel({
       .then((value) => setPortable(value === true))
       .catch(() => setPortable(false));
   }, []);
-  const showNotAnInstall = portable && showElapsed;
+  const showNotAnInstall = portable && !readiness.isReady;
+  /**
+   * 「请保持应用开启，无需重复操作。」
+   *
+   * ⚠️ 这句是从那个**没人渲染的整屏**里搬过来的（`layouts/StartupReadiness` 已删除）——
+   *    它是那个组件里四条文案**唯一**还有出口没说、值得留下的一条：等待那 2–3 分钟里
+   *    用户会做的两件事恰好是"把窗口关掉"和"再点一次重新准备"。
+   * ⚠️ 只在**还在准备**时说：已经失败时"保持开启"没有意义（这时该看的是原因和出口）。
+   */
+  const showKeepOpen = showElapsed;
   const [now, setNow] = useState(() => Date.now());
   const startedAtRef = useRef(now);
   useEffect(() => {
@@ -233,6 +248,11 @@ export default function StartupReadinessPanel({
           {showNotAnInstall && (
             <p className="type-meta mt-1.5 text-[var(--text-muted)]" data-testid="not-an-install">
               {t('startupReadiness.notAnInstall')}
+            </p>
+          )}
+          {showKeepOpen && (
+            <p className="type-meta mt-1.5 text-[var(--text-muted)]" data-testid="keep-open">
+              {t('startupReadiness.keepOpen')}
             </p>
           )}
         </div>
