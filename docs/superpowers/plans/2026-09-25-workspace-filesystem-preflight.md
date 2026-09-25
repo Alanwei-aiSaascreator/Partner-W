@@ -56,6 +56,21 @@
    ② 或者它本来该被路由到（`5e103c2e` 漏接了一处）——那就把它接回 App.tsx。
    在拍之前**两者都不动**（本轮只记录）。
 
+   🔎 **两条路的代价差（2026-09-25 只读复核，两个独立代理交叉核对过）—— ①明显更划算**：
+   - **两个组件不是同一份东西的两个版本**：A（`layouts/StartupReadiness/index.tsx`，179 行）
+     是**整屏门禁**（logo + 标题栏拖拽条 + 双卡 `grid-cols-5` + 页脚），props 只有
+     `{ readiness, onRetry }`；B（`layouts/MainArea/StartupReadinessPanel.tsx`，191 行）
+     是**内联横幅**（`rounded-xl border px-4 py-3`，一行），且读的是 A 的**超集**
+     （多 `relayFailure` / `assistantBlocker` / `conversationReady`，还有 90 秒 `takingLonger` 计时），
+     另有一个把出口分到设置页的 `action` 状态机。**两者除 `Button` 与图标外不共享任何代码。**
+   - ⇒ **②"接回去"= 让一个更老的、只有两种状态的界面与更全的 B 同时上屏**（重复且更差）。
+     ①（搬文案、删 A）才是顺着 `5e103c2e` 的方向走。
+   - ⚠️ **确认过：今天没有任何活着的面说这几句**（欢迎屏只用
+     `mainArea.welcomeTitle / welcomeSubtitle / currentAssistant / compassAssistant`，
+     没有一句讲"这不是安装 / 请保持开启"）⇒ ①恢复的是**真信息**，不是"补一句好听的话"。
+   - 活着的渲染点只有一个：`layouts/MainArea/index.tsx:915`
+     （`{!startupReadiness.isReady && <StartupReadinessPanel … />}`）。
+
    ✅ **已经加的守卫**（2026-09-25）：`test/layouts-reachability.test.ts` ——
    解析模块说明符，逐个检查 `src/renderer/layouts/*` 有没有被产品代码 import；
    已知的这一条进 `KNOWN_UNRENDERED` 记账（**必须写原因**，理由太短直接红）。

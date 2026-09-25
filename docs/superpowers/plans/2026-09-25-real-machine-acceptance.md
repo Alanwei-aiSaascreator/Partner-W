@@ -3,6 +3,12 @@
 **盘**：一块**空白的 FAT32 可移动盘（58.6 GB，E:）**，用户插上后交给我测（"你来操作，你来测试"）。
 **被测物**：本分支 `d663c1ae` 的打包产物（`electron-builder --win --dir`，
 asar sha256 `8939dd59636d7533…`，与后来拷到盘上的那一份**逐字相同**）。
+
+⭐ **收尾复核（写完这份记录之后做的，别删）**：`git diff d663c1ae..HEAD` 只有**这一份文档**
+自己（+112 行）⇒ 被测的那棵树与当前尖端**源码逐字相同**；两边 asar 的 sha256 **都是**
+`8939dd59636d7533…`（盘上 `E:\荣盈魔方\resources\app.asar` 与工作树
+`packages/desktop/dist/win-unpacked/resources/app.asar`，各算一遍）。
+**⇒ 本节全部读数对当前尖端仍然成立**，不只是对 `d663c1ae` 那天的那棵树。
 **方法**：把交付骨架（0.0.27 的启动器 + 运行时 + 说明书）拷到盘上、**把程序目录换成今晚这份构建**，
 再用**打包态 E2E 那套做法**驱动（临时 profile + CDP），全程没有真机凭据上盘。
 
@@ -100,8 +106,37 @@ agents.files.get → ❌      ← 共 12 条，全部 INVALID_REQUEST + unsafe w
 ⚠️ **最重要的一句**：③④ 的修复**只在仓库里** —— 盘上（0.0.27）都还没有，
 所以同事**再测一遍看到的还是老样子**。要让它们到用户手上，**必须发一版新的（升 0.0.29）**。
 
-②的修法（待用户拍）：切回某个助手时**回到它最近那次对话**（而不是一片欢迎屏）；
-或在切换处/欢迎屏加一句"上次的对话在「最近任务」里"。
+### ②的机理（2026-09-25 只读调查，两个独立代理交叉核对过）
+
+**一行无条件清空，没有"按助手记住上次对话"这回事**：
+
+- 主区显哪段对话由**一个**变量决定：`activeTaskId`（`packages/core/src/stores/task-store.ts:35`）。
+  它的判据就一行 —— `packages/desktop/src/renderer/layouts/MainArea/index.tsx:854`：
+  `showWelcome = !activeTask || (messages.length === 0 && !hasRenderableActiveTurn)`。
+- 切换助手是**唯一**的入口 `useSelectAgent`（`packages/desktop/src/renderer/hooks/useSelectAgent.ts:34-42`），
+  里面 `:38` 就是 `setActiveTask(null)` —— **不看新旧助手是谁、也没有任何 per-assistant 记忆**
+  （全库 grep `activeTaskByAgent|lastConversation|lastShownConversation` ⇒ 0 命中；
+  唯一按助手存的状态是"网关→助手"映射，**不存任务 id**）。
+- ⚠️ **这不是漏写，是写死的**：`packages/desktop/test/use-select-agent.test.tsx:69`
+  那条测试名字就叫「⭐ 四步都做了：改选择 / 改待发任务 / **离开旧会话** / 回到对话」，
+  并在 `:76` 断言 `activeTaskId` 为 `null`。**动它就等于退役一条有意为之的测试。**
+
+**好消息：回去的路完全现成，代价很小。** 点「最近任务」里那行调用的就是
+`TaskRow.open()`（`layouts/TasksPanel/TaskRow.tsx:76-80`）＝ `setActiveTask(task.id)`；
+而且消息**开机就全量预热过**（`packages/core/src/services/session-sync.ts:216-261` 对
+`tasks` 里每个任务都 `bulkLoad`），切回**不需要重新拉**。另有现成解析器
+`resolveTaskAgentId`（`lib/task-sort.ts:112-114` ＝ `task.agentId || parseAgentIdFromSessionKey(sessionKey)`）
+—— 因为 **`tasks` 表没有 `agent_id` 列**（`main/db/index.ts:31-48`），
+重启后 `task.agentId` 是 `undefined`，**助手归属只能从 `session_key` 推**。
+
+**两条路（待用户拍）**：
+
+- **① 切回去时恢复该助手最近那次对话**（推荐）：改 `useSelectAgent` 那一处 ——
+  用 `resolveTaskAgentId` 过滤出该助手的任务、取最近的、`setActiveTask(它的 id)`（没有才 `null`）。
+  代价：**改一处 + 退役/改写上面那条测试**。风险点：`最近任务` 面板**不按助手过滤**
+  （`lib/task-panel.ts:28-37` 只过滤状态与标题），所以面板里本来就混着别的助手的任务 ——
+  这本身可能是同事"不知道在哪找到"的另一半原因，要不要一起收紧，**也请一并拍**。
+- **② 只加一句提示**：欢迎屏上说"上次的对话在「最近任务」里"。零行为变更、纯文案，但**没解决**"要自己找"。
 
 ## 四、待你拍（本次验收新产生的）
 

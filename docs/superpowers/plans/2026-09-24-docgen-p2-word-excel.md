@@ -154,6 +154,17 @@
 7. ℹ️ `request.ts` 里的 `presentationPathFor` 是**文件通道的遗留**（P1 改走消息后就没用了），
    只有测试在养着它（`knip` 抓不到"被测试养着的死代码"）。本轮**没动**，已在源码注释里写明。
    要不要删是单独的决定。
+   🔎 **2026-09-25 只读复核（一个独立代理全库交叉核对）—— 可以直接删，清单是这几处**：
+   - 定义 `request.ts:452-482`（**只有它认 pptx**，写死扩展名，没有 `kind` 形参）；
+     伴生常量 `DOCGEN_REQUEST_SUFFIX = '.docgen.json'`（`request.ts:54-55`）**只被它自己用**。
+   - 全库唯一 import 在 `test/docgen-request.test.ts:2`，用它的只有
+     `describe('presentationPathFor —— 请求名 ⇒ 产物名')`（`:128-143`，3 条）⇒ 一并删。
+   - ⭐ **强证据**：`packages/desktop/out/main/index.js` 与 `dist/.../app.asar` 里
+     grep `presentationPathFor` **0 命中**（同一次搜 `parseDocgenRequest` **在**，说明搜得到）
+     ⇒ **打包产物里本来就没有它**，删它对出货零影响。
+   - 它承载的安全检查（路径穿越、点文件拒绝）**没有丢**：现在归
+     `documentFileNameFor`（`generate.ts:43`，扩展名只由 `DOCGEN_OUTPUT_BY_KIND` 给）
+     ＋ `artifact/save.ts` / `artifact/reconcile.ts` 那条线。
 
 ### 🔴 打包实测抓到的真缺陷（P2 最值钱的一条）
 
