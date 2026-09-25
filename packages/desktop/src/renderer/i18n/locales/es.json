@@ -1633,7 +1633,6 @@
       "restartNow": "Reiniciar y actualizar ahora",
       "rolledBack": "La actualización no se completó. Se restauró la versión {{version}} y tus datos no se han visto afectados."
     },
-    "portableUpdateHint": "La versión portátil (USB) no se actualiza sola. Para actualizar, sustituya la carpeta del programa en la unidad por la nueva versión.",
     "pressShortcut": "Presiona un atajo...",
     "privacy": "Privacidad y datos",
     "quickLaunch": "Inicio rápido",

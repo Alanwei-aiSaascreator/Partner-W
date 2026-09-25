@@ -197,6 +197,8 @@ function buildApi(): ClawWorkAPI {
     openWorkspaceFolder: () => ipcRenderer.invoke('workspace:open-folder'),
     isWorkspaceConfigured: () => ipcRenderer.invoke('workspace:is-configured') as Promise<boolean>,
     getWorkspacePath: () => ipcRenderer.invoke('workspace:get-path') as Promise<string | null>,
+    //   ⭐ 这一进程是不是盘上运行（U 盘形态）：界面上有一句只对盘上版成立的说明要按它显示
+    isPortableWorkspace: () => ipcRenderer.invoke('workspace:is-portable') as Promise<boolean>,
     // 量工作区所在文件系统的身份（FAT32 上 dev=0 ⇒ 助手读写身份文件必失败）。
     probeWorkspaceFsIdentity: () => ipcRenderer.invoke('workspace:fs-identity'),
     getDefaultWorkspacePath: () => ipcRenderer.invoke('workspace:get-default') as Promise<string>,

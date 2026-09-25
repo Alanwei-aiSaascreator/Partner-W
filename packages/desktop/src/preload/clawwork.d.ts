@@ -554,6 +554,8 @@ export interface ClawWorkAPI {
   openWorkspaceFolder: () => Promise<void>;
   isWorkspaceConfigured: () => Promise<boolean>;
   getWorkspacePath: () => Promise<string | null>;
+  /** 这一进程是不是**盘上运行**（U 盘形态）。只读、现问现答。 */
+  isPortableWorkspace: () => Promise<boolean>;
   /**
    * 量工作区所在文件系统的身份（`dev`/`ino` 是否为零）。
    *

@@ -1633,7 +1633,6 @@
       "restartNow": "立即重启更新",
       "rolledBack": "更新未完成，已恢复到版本 {{version}}，现有数据未受影响。"
     },
-    "portableUpdateHint": "U 盘版不自动更新：拿到新版本后，用新的「荣盈魔方」文件夹替换盘上那份即可。",
     "pressShortcut": "按下快捷键...",
     "privacy": "隐私与数据",
     "quickLaunch": "快速启动",

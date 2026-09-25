@@ -1633,7 +1633,6 @@
       "restartNow": "立即重新啟動更新",
       "rolledBack": "更新未完成，已還原到版本 {{version}}，現有資料未受影響。"
     },
-    "portableUpdateHint": "U 盤版不自動更新：拿到新版本後，用新的「榮盈魔方」資料夾替換盤上那份即可。",
     "pressShortcut": "按下快捷鍵…",
     "privacy": "隱私與資料",
     "quickLaunch": "快速啟動",

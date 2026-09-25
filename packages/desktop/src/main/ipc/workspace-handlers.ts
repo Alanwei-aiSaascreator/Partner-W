@@ -73,6 +73,15 @@ export function registerWorkspaceHandlers(): void {
   ipcMain.handle('workspace:is-configured', isWorkspaceConfigured);
   ipcMain.handle('workspace:get-path', getWorkspacePath);
   ipcMain.handle('workspace:get-default', getDefaultWorkspacePath);
+  /**
+   * 这一进程是不是**盘上运行**（U 盘形态）。
+   *
+   * ⭐ 为什么要单独给一条：界面上有一句**只对盘上版成立**的说明
+   *    （「这不是安装…拔掉 U 盘后仍可继续用」）。以前那句话活在一个**没人渲染**的
+   *    整屏里（[[tests-keep-dead-code-alive]]），用户一个字都看不到。
+   * ⚠️ 现问现答、不缓存：判定依赖启动次序（见 auto-updater 里那段说明）。
+   */
+  ipcMain.handle('workspace:is-portable', () => getPortableWorkspaceRoot() !== null);
 
   ipcMain.handle('workspace:browse', async () => {
     const win = BrowserWindow.getAllWindows()[0];

@@ -614,3 +614,75 @@ describe('StartupReadinessPanel', () => {
     });
   });
 });
+
+/**
+ * ⭐ 「这不是安装」——**只对盘上运行成立**的那句说明。
+ *
+ * 背景：U 盘版首次启动会把运行环境准备到本机缓存（2–3 分钟），那个进度界面
+ * **看起来就是在装软件** —— 实测有同事因此反馈"双击 exe 装到电脑"。
+ * 这句话以前只活在一个**没人渲染**的整屏里，用户一个字都看不到。
+ *
+ * ⚠️ 判据两条，缺一不可：**盘上运行** 且 **还在准备**。装机版对它说是假话
+ * （装机版确实写进系统、确实出现在「程序和功能」里）。
+ */
+describe('「这不是安装」：只在盘上运行 + 还在准备时说', () => {
+  const NOT_AN_INSTALL = 'startupReadiness.notAnInstall';
+
+  function stubPortable(value: boolean | (() => Promise<boolean>)): void {
+    (globalThis.window as unknown as { clawwork: Record<string, unknown> }).clawwork = {
+      isPortableWorkspace: typeof value === 'function' ? value : async () => value,
+    };
+  }
+
+  it('⭐ 盘上运行 + 还在准备 ⇒ 那句话在', async () => {
+    stubPortable(true);
+    const { container, unmount } = render(<StartupReadinessPanel readiness={baseReadiness} onRetry={vi.fn()} />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain(NOT_AN_INSTALL);
+    unmount();
+  });
+
+  it('⭐ 对照：**装机版**不许说这句（对它来说那是假话）', async () => {
+    stubPortable(false);
+    const { container, unmount } = render(<StartupReadinessPanel readiness={baseReadiness} onRetry={vi.fn()} />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).not.toContain(NOT_AN_INSTALL);
+    unmount();
+  });
+
+  it('对照：盘上运行但**已经有结论**（失败/就绪）也不说 —— 那时不再像安装', async () => {
+    stubPortable(true);
+    const failed: StartupReadiness = {
+      ...baseReadiness,
+      hasError: true,
+      composerBlocked: false,
+      ai: { phase: 'error' },
+    };
+    const { container, unmount } = render(<StartupReadinessPanel readiness={failed} onRetry={vi.fn()} />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).not.toContain(NOT_AN_INSTALL);
+    unmount();
+  });
+
+  it('对照：问不出来（IPC 抛）⇒ 当"不是盘上"处理，不显示（宁可少说也不说错）', async () => {
+    stubPortable(async () => {
+      throw new Error('boom');
+    });
+    const { container, unmount } = render(<StartupReadinessPanel readiness={baseReadiness} onRetry={vi.fn()} />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).not.toContain(NOT_AN_INSTALL);
+    unmount();
+  });
+});

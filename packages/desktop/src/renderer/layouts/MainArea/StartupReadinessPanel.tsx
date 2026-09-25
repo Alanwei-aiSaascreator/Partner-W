@@ -133,6 +133,28 @@ export default function StartupReadinessPanel({
    *    把话说成从开机算起就是编。两者相差通常只有几秒。
    */
   const showElapsed = !readiness.hasError && !readiness.conversationReady;
+
+  /**
+   * ⭐ 「这不是安装」——**只对盘上运行成立**的那句说明。
+   *
+   * 为什么要在这里说：U 盘版首次启动会把运行环境准备到**本机缓存**（约 2–3 分钟，设计如此，
+   * 为的是拔盘后还能继续用），那个进度界面**看起来就是在装软件** —— 实测有同事因此反馈
+   * "双击 exe 装到电脑"。而这句话以前只活在一个**没人渲染**的整屏里
+   * （[[tests-keep-dead-code-alive]]），用户一个字都看不到。
+   *
+   * ⚠️ 只在"盘上运行"时显示：装机版**确实**写进系统、**确实**出现在「程序和功能」里，
+   *    对它说这句就是假话。
+   */
+  const [portable, setPortable] = useState(false);
+  useEffect(() => {
+    // ⚠️ **可选调用**（`?.`）：这个方法比有些宿主新，缺了不许把整块面板带崩
+    //    —— 这一版刚写出来时就是硬调，几十条老用例当场全红。
+    // ⚠️ 问不出来一律当**不是**盘上运行：宁可少说一句，也不许对装机版说这句假话。
+    void Promise.resolve(window.clawwork?.isPortableWorkspace?.())
+      .then((value) => setPortable(value === true))
+      .catch(() => setPortable(false));
+  }, []);
+  const showNotAnInstall = portable && showElapsed;
   const [now, setNow] = useState(() => Date.now());
   const startedAtRef = useRef(now);
   useEffect(() => {
@@ -206,6 +228,11 @@ export default function StartupReadinessPanel({
           {assistantError && (
             <p className="type-meta mt-1.5 break-words text-[var(--text-danger)]" data-testid="readiness-reason">
               {assistantError}
+            </p>
+          )}
+          {showNotAnInstall && (
+            <p className="type-meta mt-1.5 text-[var(--text-muted)]" data-testid="not-an-install">
+              {t('startupReadiness.notAnInstall')}
             </p>
           )}
         </div>
