@@ -33,7 +33,15 @@ export const BOOTSTRAP_READY_TIMEOUT = 'runtime.gateway-ready-timeout';
 /** 最多试几次（含第一次）。 */
 export const BOOTSTRAP_MAX_ATTEMPTS = 3;
 
-/** 重试等待的**总预算**（真实墙钟）：所有尝试 + 所有等待加起来也不许超过它。 */
+/**
+ * 重试的**总预算**（真实墙钟）。
+ *
+ * ⚠️ 它的准确含义是：**已经花掉的时间 + 下一次等待会超过它 ⇒ 不再发起下一次尝试**。
+ *    它**不是**"单次等待的上限"、更**不能中断正在跑的那一次** ——
+ *    单次 `waitForGatewayReady` 等多久由**它自己的** `timeoutMs`（180 秒）决定，
+ *    外层只能决定"还要不要再发起一次"。把这两件事混为一谈，
+ *    就会以为"外层 30 秒能把 180 秒的等待砍掉"—— 那是错的。
+ */
 export const BOOTSTRAP_TOTAL_BUDGET_MS = 30_000;
 
 /**
@@ -67,6 +75,11 @@ export interface BootstrapRetryInput<T extends { ok: boolean } & BootstrapFailur
  *
  * ⚠️ 预算按**真实墙钟**算：`attempt` 自己耗掉的时间（比如等就绪那 180 秒）计入
  *    `spent` —— 否则"三次尝试"可以在用户看来变成九分钟。
+ *
+ * ⚠️ 但也**别把预算说成"单次等待的上限"**：它管的是"还要不要再发起一次"。
+ *    正在跑的那一次尝试由它自己的超时决定（`waitForGatewayReady` 的 180 秒），
+ *    外层**没有**中断它的能力。所以一次 180 秒的尝试只能"之后不再发起"，
+ *    不能"被 30 秒砍短"。
  *
  * 返回值永远是最后一次尝试的结果（与单次调用形状相同）。
  */
