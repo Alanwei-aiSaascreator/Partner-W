@@ -1,13 +1,27 @@
 import { createHash } from 'node:crypto';
-import { createReadStream, createWriteStream } from 'node:fs';
-import { mkdir, open, readdir, rename, rm, stat, statfs } from 'node:fs/promises';
+// ⚠️ `statfs` 走 `node:fs/promises` 就够（量的是卷根，路径里没有 `.asar`）；
+//    其余**全部**走 asar 安全的那份 —— 见下面那段与 `asar-safe-fs.ts`。
+import { statfs } from 'node:fs/promises';
 import { dirname, join, win32 } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import type { Readable } from 'node:stream';
 import yauzl from 'yauzl';
 import type { Entry, ZipFile } from 'yauzl';
 import type { PortableUpdateFileManifestV1 } from '@clawwork/shared';
+import { asarSafeFs } from './asar-safe-fs.js';
 import { PortableUpdateFailure } from './portable-manifest.js';
+
+/**
+ * ⚠️ **解压与校验这条路必须用 asar 安全的那份 fs**（2026-09-25 真机验收，发版阻断级）。
+ *
+ * Electron 的 `fs` 会把路径里的 `.asar` 段当成"只读的虚拟归档"，而我们的包里**就有**
+ * `resources/app.asar` 与整棵 `resources/app.asar.unpacked/` ⇒ 解压写到那一步必炸
+ * （真机原始报错 `failed to initialize archive` / `Invalid package …\resources\app.asar`）。
+ * 纯 Node（单测、我的排障脚本）没有那个补丁，所以本地怎么跑都是好的。
+ * 细节与为什么不用 `process.noAsar` 见 `asar-safe-fs.ts`。
+ */
+const { mkdir, open, readdir, rename, rm, stat } = asarSafeFs.promises;
+const { createReadStream, createWriteStream } = asarSafeFs;
 
 const SPACE_HEADROOM_BYTES = 64 * 1024 * 1024;
 const UNIX_TYPE_MASK = 0xf000;
