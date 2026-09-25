@@ -136,6 +136,18 @@ func run(args []string, deps dependencies) int {
 	}
 
 	root := filepath.Dir(deps.launcherPath)
+
+	// Whoever started the launcher decided its working directory, and the app
+	// is normally started from the program directory this launcher is about to
+	// move. Windows refuses to rename the calling process's own working
+	// directory — measured with a probe: Win32 32 while sitting inside, a clean
+	// rename once out — and waiting cannot clear that, so the wait added for
+	// the app's shutdown would only burn its whole budget. Everything below
+	// works in absolute paths, so stepping out costs nothing.
+	if chdirErr := os.Chdir(root); chdirErr != nil {
+		deps.logf("leaving the inherited working directory failed: %v", chdirErr)
+	}
+
 	statePath := parsed.statePath
 	explicitState := statePath != ""
 	if !explicitState {

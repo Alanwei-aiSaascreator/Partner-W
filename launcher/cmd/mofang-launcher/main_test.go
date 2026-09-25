@@ -18,7 +18,19 @@ import (
 	"mofang-compass/portable-launcher/internal/update"
 )
 
-const fixtureRoot = "../../testdata"
+// fixtureRoot is resolved once, absolutely: a test may change the process
+// working directory — the launcher under test does exactly that, see
+// workdir_test.go — and a relative fixture path would then point at nothing.
+var (
+	fixtureRoot = func() string {
+		absolute, err := filepath.Abs("../../testdata")
+		if err != nil {
+			panic(err)
+		}
+		return absolute
+	}()
+	launcherRoot = filepath.Join(fixtureRoot, "..")
+)
 
 const modeUnused invocationMode = -1
 
@@ -109,6 +121,10 @@ type harness struct {
 func newHarness(t *testing.T) *harness {
 	t.Helper()
 	root := t.TempDir()
+	// The launcher moves its own working directory, and that is process-wide:
+	// give every test its own and let testing restore it, so one test cannot
+	// leave the next one standing in a deleted directory.
+	t.Chdir(root)
 	publicKeyText, err := os.ReadFile(filepath.Join(fixtureRoot, "public-key.der.b64"))
 	if err != nil {
 		t.Fatalf("read the fixture public key: %v", err)
@@ -117,7 +133,7 @@ func newHarness(t *testing.T) *harness {
 	if err != nil {
 		t.Fatalf("decode the fixture public key: %v", err)
 	}
-	localeBytes, err := os.ReadFile("../../locales/zh-CN.json")
+	localeBytes, err := os.ReadFile(filepath.Join(launcherRoot, "locales", "zh-CN.json"))
 	if err != nil {
 		t.Fatalf("read the locale file: %v", err)
 	}
