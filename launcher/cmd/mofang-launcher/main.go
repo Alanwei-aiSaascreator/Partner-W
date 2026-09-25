@@ -181,8 +181,26 @@ func run(args []string, deps dependencies) int {
 	}
 	deps.logf("reconciled the disk state: %s", recovery)
 
-	if parsed.mode == modeApply && transaction.Phase == "ready" {
-		return applyTransaction(deps, transaction)
+	if transaction.Phase == "ready" {
+		if parsed.mode == modeApply {
+			return applyTransaction(deps, transaction)
+		}
+		// A launcher started by hand is the second chance for an update the
+		// app handed over but could not finish: the app spawns the launcher
+		// and quits, and on a real disk the swap loses that race. Applying it
+		// here is what makes a single click enough.
+		//
+		// Only a transaction that is ready *and* whose directories match is
+		// trusted; anything else is a state the app was in the middle of, and
+		// swapping trees on the strength of a half-written record is not a
+		// thing this launcher gets to guess at.
+		if recovery == update.RecoveryReady {
+			if code := applyTransaction(deps, transaction); code == exitOK {
+				return code
+			}
+			// A refused update must never cost the user the program.
+			deps.logf("the deferred update was refused, starting what is on the disk")
+		}
 	}
 	return launchProgram(deps, root)
 }

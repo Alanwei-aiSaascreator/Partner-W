@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -35,6 +36,9 @@ type fakeOps struct {
 	startErr error
 	alive    map[int]bool
 	now      time.Time
+	// lockRenames makes the next renames fail the way Windows does while
+	// something still holds the tree; 1<<30 means "for the whole call".
+	lockRenames int
 }
 
 func newFakeOps() *fakeOps {
@@ -45,7 +49,13 @@ func newFakeOps() *fakeOps {
 	}
 }
 
-func (ops *fakeOps) Rename(oldPath, newPath string) error { return ops.inner.Rename(oldPath, newPath) }
+func (ops *fakeOps) Rename(oldPath, newPath string) error {
+	if ops.lockRenames > 0 {
+		ops.lockRenames--
+		return &os.LinkError{Op: "rename", Old: oldPath, New: newPath, Err: syscall.Errno(32)}
+	}
+	return ops.inner.Rename(oldPath, newPath)
+}
 func (ops *fakeOps) RemoveAll(path string) error          { return ops.inner.RemoveAll(path) }
 func (ops *fakeOps) Exists(path string) (bool, error)     { return ops.inner.Exists(path) }
 func (ops *fakeOps) MkdirAll(path string) error           { return ops.inner.MkdirAll(path) }
