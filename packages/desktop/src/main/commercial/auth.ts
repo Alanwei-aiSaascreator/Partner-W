@@ -9,6 +9,7 @@ import {
 } from './auth-classify.js';
 import { getDebugLogger } from '../debug/index.js';
 import { selectOwnerOrg } from './owner-org.js';
+import { logAbandoned, watchAbandoned } from './request-timeout.js';
 
 export interface CommercialProfile {
   userId: string;
@@ -96,11 +97,21 @@ const NETWORK_TIMEOUT_MS = 8000;
 
 /** Accepts PromiseLike so Supabase's thenable query builders can be raced directly. */
 function withTimeout<T>(work: PromiseLike<T>, fallback: T, label: string): Promise<T> {
+  const startedAt = Date.now();
+  /**
+   * ⚠️ 只 `Promise.resolve` **一次**，之后都观察这**同一个** promise。
+   *    Supabase 的查询构造器是**惰性 thenable** —— 每调一次 `.then()` 就发一次请求。
+   *    观测若自己再包一层，实机会变成"每个超时都多打一个请求"，正好加重要查的那个病。
+   */
+  const pending = Promise.resolve(work);
   return Promise.race([
-    Promise.resolve(work),
+    pending,
     new Promise<T>((resolve) =>
       setTimeout(() => {
         console.error(`[commercial] ${label} timed out after ${NETWORK_TIMEOUT_MS}ms`);
+        // ⭐ 我们不等了，但**继续看它到底回没回** —— 8 秒超时的根因至今没坐实，
+        //    而"慢"与"卡住"这两种情况，只有这条日志能分开（见 `request-timeout.ts`）。
+        void watchAbandoned(pending, label, startedAt).then(logAbandoned);
         resolve(fallback);
       }, NETWORK_TIMEOUT_MS),
     ),
@@ -115,11 +126,15 @@ function withTimeout<T>(work: PromiseLike<T>, fallback: T, label: string): Promi
  * no license".
  */
 function withTimeoutOrNull<T>(work: PromiseLike<T>, label: string): Promise<T | null> {
+  const startedAt = Date.now();
+  // 同上：只 `Promise.resolve` 一次（惰性 thenable 每 `.then` 一次就发一次请求）。
+  const pending = Promise.resolve(work);
   return Promise.race([
-    Promise.resolve(work),
+    pending,
     new Promise<null>((resolve) =>
       setTimeout(() => {
         console.error(`[commercial] ${label} timed out after ${NETWORK_TIMEOUT_MS}ms`);
+        void watchAbandoned(pending, label, startedAt).then(logAbandoned);
         resolve(null);
       }, NETWORK_TIMEOUT_MS),
     ),

@@ -70,6 +70,82 @@ export interface CreateTimeoutFetchOptions {
   timeoutMs?: number;
 }
 
+/** 一条被放弃的请求最终怎么了。 */
+export interface AbandonedOutcome {
+  /** 调用点标签（`auth.getUser` / `licenses.read` …）—— 用来认出是哪一路。 */
+  label: string;
+  /** 从**发起**到最终落定的毫秒数（含我们已经不等的那段）。 */
+  elapsedMs: number;
+  /**
+   * - `settled`：它其实回来了（后端/网络就是慢）；
+   * - `aborted`：直到被中止都没回来（被卡住、或排在某个锁后面）；
+   * - `failed`：回来了，但是个错（网络断、服务端拒绝…）。
+   */
+  outcome: 'settled' | 'aborted' | 'failed';
+}
+
+/**
+ * 记下"我们不等了之后，那条请求**到底怎么样了**"。
+ *
+ * ## 为什么单独有这一层
+ *
+ * 8 秒超时的**根因至今没坐实**。已有的日志只有
+ * `[commercial] <label> timed out after 8000ms` —— 它说的是**我们不等了**，
+ * 完全没说那条请求本身怎么了。而这正是分出两种根因的关键，两者的修法完全不同：
+ *
+ * | 放弃之后 | 说明 | 该往哪修 |
+ * | --- | --- | --- |
+ * | 几秒后**成功**返回 | 后端/网络就是慢 | 调超时、加退避、别在启动高峰打 |
+ * | 直到被中止都**没回来** | 请求被卡住/排在锁后面 | 查会话刷新锁、查主进程停摆 |
+ *
+ * ⚠️ **只观测，不改行为**：不重试、不改超时、不碰调用方的返回值。
+ *    它唯一的作用是让**下一次复发**留下能分辨这两种情况的证据。
+ * ⚠️ 不 `await` 它，调用方照旧立刻拿到自己的 fallback（观测绝不能拖慢路径）。
+ *
+ * @param startedAt 请求**发起**的时刻（`Date.now()`），用来算真实总耗时。
+ * @param now 取当前时间（测试注入；默认 `Date.now`）。
+ */
+export function watchAbandoned<T>(
+  work: PromiseLike<T>,
+  label: string,
+  startedAt: number,
+  now: () => number = Date.now,
+): Promise<AbandonedOutcome> {
+  return Promise.resolve(work).then(
+    () => ({ label, elapsedMs: Math.max(0, now() - startedAt), outcome: 'settled' as const }),
+    (error: unknown) => ({
+      label,
+      elapsedMs: Math.max(0, now() - startedAt),
+      outcome: isAbort(error) ? ('aborted' as const) : ('failed' as const),
+    }),
+  );
+}
+
+/**
+ * 中止的两种名字都要认。
+ *
+ * ⚠️ 我们自己用的是 `AbortSignal.timeout()`，它抛的是 **`TimeoutError`**；
+ *    调用方自己 `controller.abort()` 抛的才是 `AbortError`。只认一个就会把
+ *    "收尸收掉的"记成"它自己失败了" —— 那正好把要分辨的两件事记反。
+ */
+function isAbort(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+  const name = (error as { name?: unknown }).name;
+  return name === 'AbortError' || name === 'TimeoutError';
+}
+
+/**
+ * 把观测写进日志。
+ *
+ * ⚠️⚠️ **只写标签、耗时、结论三样** —— 一个字的错误原文都不许进。
+ *    实机里这些错误的 `message` 会带上**完整私有 URL**（`https://<ref>.supabase.co/…`）、
+ *    查询串里的**手机号**、甚至验证码。这条日志是给人看/给客服要的，
+ *    不能成为泄漏面（客户端日志本来就是交出去排障的东西）。
+ */
+export function logAbandoned(outcome: AbandonedOutcome, write: (line: string) => void = console.error): void {
+  write(`[commercial] ${outcome.label} we gave up, then: ${outcome.outcome} at ${outcome.elapsedMs}ms`);
+}
+
 /**
  * 造一个"会自我了断"的 fetch：超时后**中止**请求，而不是留着它挂在那里。
  *

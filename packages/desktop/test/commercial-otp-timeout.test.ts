@@ -139,6 +139,52 @@ describe('登录验证码两个调用的 8 秒上限', () => {
     });
   });
 
+  /**
+   * ⭐⭐ **接线**测试（2026-09-26）：超时之后要继续看着那条请求，并记下它到底回没回。
+   *
+   * 8 秒超时的**根因至今没坐实**，而每次复发日志里只有"我们不等了"——
+   * 没说的是那条请求本身怎么了。"几秒后其实回来了"（后端慢）与"直到被中止都没回来"
+   * （卡住/排队）是两种根因、两种修法，只有这条观测能分开。
+   *
+   * ⚠️ 这一条守的是**接线**：观测模块写好了但没人调用，是这个仓库反复出过的缝
+   *    （`request-timeout.ts` 自己的 docblock 就记着"模块写好但忘了接"）。
+   *    ⇒ 断言的是"从**公开的** `sendLoginOtp` 走一遍，日志里真的出现了那条观测"。
+   */
+  it('⭐⭐ 超时之后**继续看着**：9 秒才回来的请求要记成 settled（不是"卡住"）', async () => {
+    const errors: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((line: unknown) => {
+      errors.push(String(line));
+    });
+    try {
+      mocks.client = replyingClient(
+        // 9 秒才回包：8 秒时我们已经不等它了，但它**确实回了** ⇒ 这就是"后端慢"那一档。
+        () =>
+          new Promise((resolve) => {
+            setTimeout(() => resolve({ data: {}, error: null }), 9_000);
+          }),
+        async () => ({ data: {}, error: null }),
+      );
+
+      const pending = sendLoginOtp('+8613800138000');
+      await vi.advanceTimersByTimeAsync(8_000);
+      await expect(pending).resolves.toMatchObject({ ok: false, errorCode: 'otp_send_unreachable' });
+
+      // ⚠️ 8 秒这一刻**只有"我们不等了"那句**：请求还没回来，没什么可记的
+      //    （观测那条要等它**真的落定**才有内容 —— 这是设计，不是缺口）。
+      expect(errors.some((line) => line.includes('otp.send timed out'))).toBe(true);
+      expect(errors.some((line) => line.includes('we gave up, then:'))).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(1_000);
+      const later = errors.filter((line) => line.includes('we gave up, then:'));
+      expect(later, '超时之后必须留下"它后来怎么样了"的证据 —— 根因至今没坐实，全靠这条分辨').toHaveLength(1);
+      expect(later[0], '9 秒时它回来了 ⇒ 要记成 settled').toContain('settled');
+      expect(later[0], '耗时记的是**从发起到落定**（不是从超时算起）').toContain('at 9000ms');
+      expect(later[0]).toContain('otp.send');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it('服务端**明确**回话（限流 / 校验失败）仍走原分类，不被超时兜底吃成"没问出来"', async () => {
     mocks.client = replyingClient(
       async () => ({ data: {}, error: { status: 429, message: 'rate limit' } }),
