@@ -17,6 +17,7 @@ import {
   computerAccessApplied,
   normalizeComputerAccessTier,
   permissionModeForTier,
+  rememberPermissionMode,
 } from '@/lib/computer-access-runtime';
 import { toast } from '@/lib/toast';
 import type { ComputerAccessTier } from '@clawwork/core';
@@ -75,7 +76,7 @@ export default function ComputerAccessSection() {
           return false;
         }
         // ⚠️ **成功了才记账**（与发送链同一条规矩：失败记账 = 下次不补 = 永久哑掉）。
-        computerAccessApplied.set(active.sessionKey, mode);
+        rememberPermissionMode(computerAccessApplied, active.sessionKey, mode);
       }
 
       const result = await updateSettings({ computerAccess: next });

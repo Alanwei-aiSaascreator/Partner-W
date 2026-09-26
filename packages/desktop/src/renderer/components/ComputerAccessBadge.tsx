@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Zap } from 'lucide-react';
 import { findPermissionMode, isFullAccessMode } from '@/lib/session-permission-mode';
+import { computerAccessRevision, subscribeComputerAccessRevision } from '@/lib/computer-access-runtime';
 
 /**
  * 「全权」徽章 —— 当前这个任务的会话**真的**是全权时才显示。
@@ -28,6 +29,17 @@ export default function ComputerAccessBadge({
   const { t } = useTranslation();
   const [fullAccess, setFullAccess] = useState(false);
 
+  /**
+   * ⚠️ 修订号进依赖数组，是**真机验收抓出来的那一刀**：只在会话键变化时重读不够 ——
+   *    在任务里打开全权、或发一条消息让发送链补一刀，会话**已经**是全权了，
+   *    而那一刻会话键没变 ⇒ 徽章一直不出现（真机形状：发完消息看不见，切走再切回来才有）。
+   */
+  const revision = useSyncExternalStore(
+    subscribeComputerAccessRevision,
+    computerAccessRevision,
+    computerAccessRevision,
+  );
+
   useEffect(() => {
     if (!gatewayId || !sessionKey) {
       setFullAccess(false);
@@ -48,7 +60,7 @@ export default function ComputerAccessBadge({
     return () => {
       cancelled = true;
     };
-  }, [gatewayId, sessionKey]);
+  }, [gatewayId, sessionKey, revision]);
 
   if (!fullAccess) return null;
 

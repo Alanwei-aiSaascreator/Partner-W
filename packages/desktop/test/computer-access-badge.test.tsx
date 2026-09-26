@@ -4,6 +4,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import ComputerAccessBadge from '../src/renderer/components/ComputerAccessBadge';
+import { rememberPermissionMode } from '../src/renderer/lib/computer-access-runtime';
 
 /**
  * 档位徽章：**读回来的真值**决定显示什么。
@@ -119,6 +120,38 @@ describe('ComputerAccessBadge', () => {
     listSessions.mockResolvedValue({ ok: true, result: [{ key: 'k', permissionMode: 'full' }] });
     const { container, unmount } = await mount('local-runtime', 'k');
     expect(badge(container)).not.toBeNull();
+    unmount();
+  });
+});
+
+/**
+ * ⭐ 这一组是**真机验收逼出来的**（2026-09-26）：
+ *    在任务里打开全权、或者发一条消息让发送链补一刀之后，那个会话**已经**是全权，
+ *    而徽章**不出现** —— 它只在会话键变化时重读一次，而全权是在它挂载**之后**才生效的。
+ *    真机上的形状：发完消息看不到徽章，切走再切回来才看得见。
+ */
+describe('ComputerAccessBadge × 档位变化后要自己重读', () => {
+  beforeEach(() => {
+    document.body.innerHTML = '';
+    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  });
+
+  it('⭐ 挂载时不是全权，之后我们把它设成全权 ⇒ 徽章自己出现（不用换会话、不用重挂）', async () => {
+    const listSessions = vi.fn().mockResolvedValue({ ok: true, result: { sessions: [{ key: 'k' }] } });
+    (globalThis.window as unknown as { clawwork: Record<string, unknown> }).clawwork = { listSessions };
+
+    const { container, unmount } = render(<ComputerAccessBadge gatewayId="local-runtime" sessionKey="k" />);
+    await flushAsync();
+    expect(badge(container), '一开始还没设过 ⇒ 不该有徽章').toBeNull();
+
+    // 模拟"发送链补了一刀"：会话在后端变成 full，同时记账 + 通知
+    listSessions.mockResolvedValue({ ok: true, result: { sessions: [{ key: 'k', permissionMode: 'full' }] } });
+    await act(async () => {
+      rememberPermissionMode(new Map(), 'k', 'full');
+    });
+    await flushAsync();
+
+    expect(badge(container), '补刀之后徽章必须出现').not.toBeNull();
     unmount();
   });
 });

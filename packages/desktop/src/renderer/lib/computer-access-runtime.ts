@@ -46,6 +46,47 @@ export function permissionModeForTier(tier: ComputerAccessTier): AppliedPermissi
  */
 export const computerAccessApplied = new Map<string, AppliedPermissionMode>();
 
+/**
+ * 「我们刚改过档位」的修订号 —— 让**徽章**能听见。
+ *
+ * ⚠️ 为什么需要它（2026-09-26 真机验收抓到的真 bug）：
+ *    在任务里打开全权（或发一条消息触发发送链补刀）之后，那个会话**已经**是全权，
+ *    而徽章**不出现** —— 因为它的重读只在**会话键变化**时触发，而全权是在它挂载
+ *    **之后**才生效的。切走再切回来才看得见。
+ *    徽章是「看得见」这条判据的承载者，看不见就等于没做。
+ */
+let revision = 0;
+const revisionListeners = new Set<() => void>();
+
+/** 给 `useSyncExternalStore` 用的快照读法。 */
+export function computerAccessRevision(): number {
+  return revision;
+}
+
+/** 订阅修订号变化；返回退订函数。 */
+export function subscribeComputerAccessRevision(listener: () => void): () => void {
+  revisionListeners.add(listener);
+  return () => {
+    revisionListeners.delete(listener);
+  };
+}
+
+/**
+ * 记下"我们把某个会话设成了什么"，并**通知界面重读**。
+ *
+ * ⚠️ 所有写入方都必须走这里（发送链补刀 + 设置页开关），别再直接 `.set()` ——
+ *    直接 set 的后果就是徽章不刷新，也就是这次真机抓到的那条。
+ */
+export function rememberPermissionMode(
+  applied: Map<string, AppliedPermissionMode>,
+  sessionKey: string,
+  mode: AppliedPermissionMode,
+): void {
+  applied.set(sessionKey, mode);
+  revision += 1;
+  for (const listener of revisionListeners) listener();
+}
+
 /** composer 要的那个可选 dep。宿主按 `readTier` 现读设置（不缓存快照）。 */
 export function createComputerAccessDep(deps: {
   /** 读设置里那个原始值（**故意是 `unknown`**：脏值要在这里被挡掉，不是在上游假定干净）。 */
@@ -56,7 +97,7 @@ export function createComputerAccessDep(deps: {
     tier: () => normalizeComputerAccessTier(deps.readTier()),
     applied: () => deps.applied,
     remember: (sessionKey, mode) => {
-      deps.applied.set(sessionKey, mode);
+      rememberPermissionMode(deps.applied, sessionKey, mode);
     },
   };
 }

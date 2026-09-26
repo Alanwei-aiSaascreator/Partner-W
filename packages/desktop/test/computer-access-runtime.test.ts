@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  computerAccessRevision,
   createComputerAccessDep,
   normalizeComputerAccessTier,
   permissionModeForTier,
+  rememberPermissionMode,
+  subscribeComputerAccessRevision,
 } from '../src/renderer/lib/computer-access-runtime';
 import type { AppliedPermissionMode } from '@clawwork/core';
 
@@ -70,5 +73,59 @@ describe('createComputerAccessDep', () => {
     expect(map.get('agent:main:x')).toBe('full');
     d.remember('agent:main:x', 'guarded');
     expect(map.get('agent:main:x')).toBe('guarded');
+  });
+});
+
+/**
+ * 修订号：**"我们刚改过档位"这件事要能被界面听见**。
+ *
+ * ⚠️ 这一条是真机验收逼出来的：在任务里打开全权（或发一条消息触发补刀）之后，
+ *    当前会话**已经**是全权，而徽章**不出现** —— 因为它只在会话键变化时重读一次，
+ *    而全权是在它挂载**之后**才生效的。切走再切回来才看得见。
+ *    ⇒ 徽章是"看得见"这条判据的承载者，看不见就等于没做。
+ */
+describe('computerAccess 修订号（订阅）', () => {
+  it('初始能读到当前修订号', () => {
+    expect(typeof computerAccessRevision()).toBe('number');
+  });
+
+  it('rememberPermissionMode 写入 + 让订阅者收到通知', () => {
+    const map = new Map<string, AppliedPermissionMode>();
+    const seen: number[] = [];
+    const unsubscribe = subscribeComputerAccessRevision(() => seen.push(computerAccessRevision()));
+
+    rememberPermissionMode(map, 'agent:main:x', 'full');
+
+    expect(map.get('agent:main:x')).toBe('full');
+    expect(seen.length, '订阅者该被叫一次').toBe(1);
+    unsubscribe();
+  });
+
+  it('退订之后不再收到通知', () => {
+    const map = new Map<string, AppliedPermissionMode>();
+    let calls = 0;
+    const unsubscribe = subscribeComputerAccessRevision(() => {
+      calls += 1;
+    });
+    unsubscribe();
+
+    rememberPermissionMode(map, 'agent:main:x', 'guarded');
+
+    expect(calls).toBe(0);
+  });
+
+  it('createComputerAccessDep 的 remember 也走同一条通知（发送链补刀后徽章要立刻能重读）', () => {
+    const map = new Map<string, AppliedPermissionMode>();
+    const dep = createComputerAccessDep({ readTier: () => 'full', applied: map });
+    let calls = 0;
+    const unsubscribe = subscribeComputerAccessRevision(() => {
+      calls += 1;
+    });
+
+    dep.remember('agent:main:x', 'full');
+
+    expect(map.get('agent:main:x')).toBe('full');
+    expect(calls).toBe(1);
+    unsubscribe();
   });
 });

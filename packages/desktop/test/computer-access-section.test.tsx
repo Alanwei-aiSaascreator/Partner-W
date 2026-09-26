@@ -5,7 +5,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { create } from 'zustand';
 import { resetSettingsStore } from '../src/renderer/stores/settingsStore';
-import { computerAccessApplied } from '../src/renderer/lib/computer-access-runtime';
+import { computerAccessApplied, computerAccessRevision } from '../src/renderer/lib/computer-access-runtime';
 
 /**
  * 设置页「电脑操控权限」那一块。
@@ -179,6 +179,7 @@ describe('设置页「电脑操控权限」', () => {
 
   it('判据 3：勾选 + 确认 ⇒ 真的切当前会话为 full，并把设置落成 full', async () => {
     const { container, unmount } = await mountWithSetting(undefined);
+    const revisionBefore = computerAccessRevision();
     await clickAsync(switchEl(container));
 
     click(ackEl(container));
@@ -188,6 +189,8 @@ describe('设置页「电脑操控权限」', () => {
     expect(patchSession).toHaveBeenCalledWith('local-runtime', TASK.sessionKey, { permissionMode: 'full' });
     expect(updateSettings).toHaveBeenCalledWith({ computerAccess: 'full' });
     expect(computerAccessApplied.get(TASK.sessionKey)).toBe('full');
+    // ⭐ 开关也必须**通知界面重读**：不通知的话徽章要等切走再切回来才出现（真机抓到过）。
+    expect(computerAccessRevision(), '开关那一刻修订号必须前进').toBeGreaterThan(revisionBefore);
     unmount();
   });
 
