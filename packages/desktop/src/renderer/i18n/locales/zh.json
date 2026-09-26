@@ -1420,6 +1420,9 @@
     "artifacts": "产物",
     "context": "上下文",
     "contextUsage": "上下文",
+    "historyArtifacts": "历史产物",
+    "historyMore": "还有 {{count}} 条，去「文件」里看",
+    "historyUnknownTask": "已删除的会话",
     "toolCount": "{{count}} 个工具"
   },
   "search": {

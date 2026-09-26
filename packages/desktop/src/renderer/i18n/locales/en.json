@@ -1420,6 +1420,9 @@
     "artifacts": "Artifacts",
     "context": "Context",
     "contextUsage": "Context",
+    "historyArtifacts": "History",
+    "historyMore": "{{count}} more — see Files",
+    "historyUnknownTask": "Deleted conversation",
     "toolCount": "{{count}} tools"
   },
   "search": {

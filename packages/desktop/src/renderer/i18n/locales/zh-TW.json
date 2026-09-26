@@ -1420,6 +1420,9 @@
     "artifacts": "產出檔案",
     "context": "上下文",
     "contextUsage": "上下文",
+    "historyArtifacts": "歷史產物",
+    "historyMore": "還有 {{count}} 條，去「檔案」裡看",
+    "historyUnknownTask": "已刪除的對話",
     "toolCount": "{{count}} 個工具"
   },
   "search": {

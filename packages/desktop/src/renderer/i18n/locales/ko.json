@@ -1420,6 +1420,9 @@
     "artifacts": "산출물",
     "context": "컨텍스트",
     "contextUsage": "컨텍스트",
+    "historyArtifacts": "기록",
+    "historyMore": "{{count}}개 더 있음 — 「파일」에서 확인",
+    "historyUnknownTask": "삭제된 대화",
     "toolCount": "{{count}}개 도구"
   },
   "search": {

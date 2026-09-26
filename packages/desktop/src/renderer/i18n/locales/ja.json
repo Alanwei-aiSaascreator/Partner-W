@@ -1420,6 +1420,9 @@
     "artifacts": "成果物",
     "context": "コンテキスト",
     "contextUsage": "コンテキスト",
+    "historyArtifacts": "履歴",
+    "historyMore": "あと {{count}} 件（「ファイル」で確認）",
+    "historyUnknownTask": "削除済みの会話",
     "toolCount": "{{count}} ツール"
   },
   "search": {

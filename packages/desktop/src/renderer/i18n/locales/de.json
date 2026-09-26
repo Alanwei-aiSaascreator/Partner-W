@@ -1420,6 +1420,9 @@
     "artifacts": "Artefakte",
     "context": "Kontext",
     "contextUsage": "Kontext",
+    "historyArtifacts": "Verlauf",
+    "historyMore": "{{count}} weitere — siehe Dateien",
+    "historyUnknownTask": "Gelöschte Unterhaltung",
     "toolCount": "{{count}} Tools"
   },
   "search": {
