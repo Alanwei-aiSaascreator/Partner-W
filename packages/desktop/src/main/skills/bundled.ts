@@ -34,6 +34,13 @@ export interface BundledSkill {
   emoji?: string;
   /** 网关侧用的稳定键（`metadata.openclaw.skillKey`）。契约：**必须等于 slug**。 */
   skillKey?: string;
+  /**
+   * SKILL.md 的**原文**（读不出来时是 `undefined`）。
+   *
+   * 加它只有一个用途：**比对已装内容是否陈旧**（见 `staleBundledSkills`）。
+   * 读那份文件本来就要读全文去解析 frontmatter，多留一个字段是白拿。
+   */
+  content?: string;
 }
 
 export interface ParsedFrontmatter {
@@ -141,8 +148,10 @@ export function readBundledSkills(root: string | undefined): BundledSkill[] {
     .map((e) => {
       const file = path.join(root, e.name, 'SKILL.md');
       let parsed: ParsedFrontmatter | null = null;
+      let content: string | undefined;
       try {
-        parsed = parseOurSkillFrontmatter(fs.readFileSync(file, 'utf-8'));
+        content = fs.readFileSync(file, 'utf-8');
+        parsed = parseOurSkillFrontmatter(content);
       } catch {
         /* 没有 SKILL.md / 读不动 —— 字段留空，交给内容闸报 */
       }
@@ -152,6 +161,7 @@ export function readBundledSkills(root: string | undefined): BundledSkill[] {
         description: parsed?.description,
         emoji: parsed?.emoji,
         skillKey: parsed?.skillKey,
+        content,
       };
     })
     .sort((a, b) => a.slug.localeCompare(b.slug));
@@ -209,6 +219,56 @@ export function missingBundledSkills(
   isInstalled: (slug: string) => boolean,
 ): BundledSkill[] {
   return skills.filter((skill) => !isInstalled(skill.slug));
+}
+
+/**
+ * 行尾归一：CRLF 与 LF 是**同一份内容**。
+ *
+ * ⚠️ 不加这一条，本仓库在 Windows 上会**常态化误报"陈旧"**（git 的 autocrlf
+ * 把工作区文件写成 CRLF，而随包的那份可能是 LF）—— 一次误报 = 一次多余的覆盖写。
+ */
+function normalizeLineEndings(content: string): string {
+  return content.replace(/\r\n/g, '\n');
+}
+
+/**
+ * 读**已装**的那份 SKILL.md 原文；没装（或读不动）回 `null`。
+ *
+ * ⚠️ `null` 的语义是"**不是陈旧，是缺失**" —— 缺失那条路归 `missingBundledSkills` 管。
+ *    两条路刻意分开：混在一起的话，"没装"会被当成"旧了"，而两种动作的边界
+ *    （要不要覆盖用户盘上的东西）本来就不一样。
+ */
+export function readInstalledSkillContent(managedDir: string | undefined, slug: string): string | null {
+  if (!managedDir) return null;
+  const dir = resolveInstallDir(managedDir, slug);
+  if (!dir) return null;
+  try {
+    return fs.readFileSync(path.join(dir, 'SKILL.md'), 'utf-8');
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 挑出**已装、但内容与随包不一致**的那些（纯函数）。
+ *
+ * ⚠️ 这是"我们的 SKILL.md 更新了怎么办"那个**另一个决定**（`missingBundledSkills`
+ *    的注释里点名的那个）。2026-09-26 真机：老盘升级后助手照旧按旧契约说
+ *    "PDF 做不到" —— 因为随包技能在磁盘这一层从来没被升级过（只有"缺了才补"）。
+ *
+ * ⚠️ 它的后果是**覆盖用户 managed 目录里那一份**。所以判据必须**精确**：
+ *    只比内容、行尾归一，不做任何"差不多就算旧"的模糊判断。
+ */
+export function staleBundledSkills(
+  skills: readonly BundledSkill[],
+  readInstalled: (slug: string) => string | null,
+): BundledSkill[] {
+  return skills.filter((skill) => {
+    if (typeof skill.content !== 'string') return false;
+    const installed = readInstalled(skill.slug);
+    if (installed === null) return false;
+    return normalizeLineEndings(installed) !== normalizeLineEndings(skill.content);
+  });
 }
 
 export interface InstallResult {

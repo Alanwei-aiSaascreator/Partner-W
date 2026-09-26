@@ -27,7 +27,9 @@ import {
   isBundledSkillInstalled,
   missingBundledSkills,
   readBundledSkills,
+  readInstalledSkillContent,
   removeBundledSkill,
+  staleBundledSkills,
 } from './bundled.js';
 import { notifySkillCacheChange, type SkillCacheClient } from './cache-refresh.js';
 import { getDebugLogger } from '../debug/index.js';
@@ -74,11 +76,12 @@ function liveGatewayClient(gatewayId: string): SkillCacheClient | null {
  * 装/卸成功之后通知网关重扫。**不 await**：这是尽力而为的一下，
  * 让界面等它没有意义（最坏情况下对面不回，`GatewayClient` 要挂满 15 秒超时）。
  */
-function notifySkillCache(gatewayId: string, slug: string, enabled: boolean): void {
+function notifySkillCache(gatewayId: string, slug: string, enabled: boolean, force = false): void {
   void notifySkillCacheChange({
     client: liveGatewayClient(gatewayId),
     slug,
     enabled,
+    force,
     onWarn: ({ slug: s, error }) =>
       getDebugLogger().warn({
         // `DebugDomain` 是闭集、里面没有 skills ⇒ 归到 gateway（这条 warn 报的就是
@@ -156,10 +159,14 @@ export function registerSkillsHandlers(): void {
         const managedDir = await managedSkillsDirOf(payload.gatewayId, payload.agentId);
         if (!managedDir) return { ok: false, error: 'GATEWAY_UNAVAILABLE' };
 
-        const missing = missingBundledSkills(readBundledSkills(ourSkillsRoot()), (slug) =>
-          isBundledSkillInstalled(managedDir, slug),
-        );
+        const skills = readBundledSkills(ourSkillsRoot());
+        const missing = missingBundledSkills(skills, (slug) => isBundledSkillInstalled(managedDir, slug));
+        // ⭐ 第二层：**已装但内容旧了**。`missingBundledSkills` 只管"缺了才补"，
+        //    而老盘的技能**不缺** —— 不处理它，随包技能更新对已发出的盘等于没发生
+        //    （真机：助手照旧按旧契约说"PDF 做不到"）。
+        const stale = staleBundledSkills(skills, (slug) => readInstalledSkillContent(managedDir, slug));
         const installed: string[] = [];
+        const upgraded: string[] = [];
         const failed: Array<{ slug: string; error: string }> = [];
         for (const skill of missing) {
           const result = installBundledSkill({ root: ourSkillsRoot(), managedDir, slug: skill.slug });
@@ -170,7 +177,19 @@ export function registerSkillsHandlers(): void {
             failed.push({ slug: skill.slug, error: result.error ?? 'install failed' });
           }
         }
-        return { ok: true, result: { installed, failed } };
+        for (const skill of stale) {
+          const result = installBundledSkill({ root: ourSkillsRoot(), managedDir, slug: skill.slug });
+          if (result.ok) {
+            upgraded.push(skill.slug);
+            // ⚠️ **force**：内容升级时 `{enabled:true}` 对已经 true 的那条**不是变更**，
+            //    网关那边 `changedPaths.length === 0` 直接 return ⇒ 缓存不 bump ⇒
+            //    盘上换了、运行时照旧用旧的。force 让它变两次（false → true）。
+            notifySkillCache(payload.gatewayId, skill.slug, true, true);
+          } else {
+            failed.push({ slug: skill.slug, error: result.error ?? 'upgrade failed' });
+          }
+        }
+        return { ok: true, result: { installed, upgraded, failed } };
       } catch (err) {
         return ipcError(err);
       }

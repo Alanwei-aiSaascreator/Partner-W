@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   installBundledSkill,
   isBundledSkillInstalled,
+  staleBundledSkills,
   isContainedPath,
   isSafeSlug,
   parseOurSkillFrontmatter,
@@ -260,5 +261,61 @@ describe('装 / 卸', () => {
     writeSkill(root, 'meeting-minutes', { name: '甲', description: '一' });
     const res = installBundledSkill({ root, managedDir: undefined, slug: 'meeting-minutes' });
     expect(res.ok).toBe(false);
+  });
+});
+
+/**
+ * ⭐ 「老盘拿不到新技能」的第二层：**磁盘上的内容旧了**。
+ *
+ * `missingBundledSkills` 只管"**缺了才补**"，它自己那段注释也写明了
+ * "我们的 SKILL.md 更新了怎么办，是**另一个决定**"。这里补的就是那个决定 ——
+ * 判据只有一条：**随包内容与已装内容不一致**。
+ *
+ * 真机形状（2026-09-26，盘 E: 0.0.35）：技能文件手工换成了新版（含 PDF 段），
+ * 而助手照旧「环境限制…没法直接生成 PDF」——因为磁盘这一层根本没被升级过。
+ */
+describe('staleBundledSkills —— 已装但内容旧了的那些', () => {
+  const bundled = (slug: string, content: string) => ({ slug, name: slug, description: '', content }) as never;
+
+  it('内容一致 ⇒ 不算旧（不动它）', () => {
+    const skills = [bundled('a', '同样的正文')];
+    expect(staleBundledSkills(skills, () => '同样的正文')).toEqual([]);
+  });
+
+  it('内容不一致 ⇒ 算旧', () => {
+    const skills = [bundled('a', '新正文')];
+    expect(staleBundledSkills(skills, () => '旧正文').map((s) => s.slug)).toEqual(['a']);
+  });
+
+  it('**没装**的不算旧（那是 missingBundledSkills 的事，两条路各管各的）', () => {
+    const skills = [bundled('a', '新正文')];
+    expect(staleBundledSkills(skills, () => null)).toEqual([]);
+  });
+
+  it('⚠️ 行尾差异不算旧：CRLF 与 LF 是同一份内容（本仓库 Windows 上真的会不一样）', () => {
+    const skills = [bundled('a', '第一行\n第二行')];
+    expect(staleBundledSkills(skills, () => '第一行\r\n第二行')).toEqual([]);
+  });
+
+  it('只挑旧的那些，新的不碰', () => {
+    const skills = [bundled('a', '同'), bundled('b', '新'), bundled('c', '同')];
+    const installed: Record<string, string | null> = { a: '同', b: '旧', c: '同' };
+    expect(staleBundledSkills(skills, (slug) => installed[slug] ?? null).map((s) => s.slug)).toEqual(['b']);
+  });
+
+  /**
+   * ⚠️ 这一条是**变异测试逼出来的**（S4 逃逸）：`content` 读不出来时若判成"陈旧"，
+   *    后果是**拿一份坏的/空的源去覆盖盘上好的那份** —— 比"没升级"糟得多。
+   *    宁可不升级，也不能用读不出来的内容覆盖。
+   */
+  it('随包 content 缺失（SKILL.md 读不出来）⇒ **不算旧**，绝不用坏源覆盖好盘', () => {
+    const skills = [{ slug: 'a', name: 'a', description: '' } as never];
+    expect(staleBundledSkills(skills, () => '盘上是好的')).toEqual([]);
+  });
+
+  it('没装的不混进来（半装状态：a 旧、b 缺）', () => {
+    const skills = [bundled('a', '新'), bundled('b', '新')];
+    const installed: Record<string, string | null> = { a: '旧', b: null };
+    expect(staleBundledSkills(skills, (slug) => installed[slug] ?? null).map((s) => s.slug)).toEqual(['a']);
   });
 });

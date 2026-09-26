@@ -45,6 +45,7 @@ const mocks = vi.hoisted(() => ({
   removeBundledSkill: vi.fn(),
   readBundledSkills: vi.fn(() => []),
   isBundledSkillInstalled: vi.fn(() => false),
+  readInstalledSkillContent: vi.fn<(dir: unknown, slug: string) => string | null>(() => null),
   warn: vi.fn(),
 }));
 
@@ -61,11 +62,15 @@ vi.mock('../src/main/ws/index.js', () => ({
   getGatewayClient: mocks.getGatewayClient,
 }));
 
-vi.mock('../src/main/skills/bundled.js', () => ({
+vi.mock('../src/main/skills/bundled.js', async (importOriginal) => ({
+  // ⚠️ 只桩 **IO 那几件**，`staleBundledSkills` / `readInstalledSkillContent` 用**真的**：
+  //    这两个正是要被测的逻辑，桩掉它们等于没测（"每个零件都测过、拼起来没测过"）。
+  ...(await importOriginal<typeof import('../src/main/skills/bundled.js')>()),
   installBundledSkill: mocks.installBundledSkill,
   removeBundledSkill: mocks.removeBundledSkill,
   readBundledSkills: mocks.readBundledSkills,
   isBundledSkillInstalled: mocks.isBundledSkillInstalled,
+  readInstalledSkillContent: mocks.readInstalledSkillContent,
 }));
 
 vi.mock('../src/main/skills/locate.js', () => ({
@@ -198,5 +203,137 @@ describe('skills:our-install / skills:our-remove 成功之后会通知网关', (
     const res = await invoke('skills:our-install', { gatewayId: 'gw-1', agentId: 'a-1', slug: 'copy-variants' });
     expect(res).toEqual({ ok: true });
     expect(mocks.updateSkill).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * ⭐ 补上那个**已知缺口**（这个模块自己的注释里就写着）：
+ *   「重复装同一个技能（内容升级）写进去的值没变 ⇒ 不 bump」。
+ *
+ * 真机形状（2026-09-26，盘 E: 0.0.35）：技能**内容升级**之后，助手照旧按旧契约
+ * 说"PDF 做不到"。装的那一下 `{enabled:true}` 对已经 `true` 的那条**不是变更**，
+ * 网关那边 `changedPaths.length === 0` 直接 return ⇒ 缓存不 bump。
+ *
+ * 修法用**已经被实测过的那条机制**（值必须真的变）：`force` 时先写 `false` 再写 `true`
+ * ⇒ 两次都是真变更 ⇒ 一定 bump。顺序不能反（先 false 后 true 才能停在"已启用"）。
+ */
+describe('内容升级：强制 bump（值必须真的变两次）', () => {
+  beforeEach(() => {
+    mocks.updateSkill.mockClear();
+    mocks.updateSkill.mockImplementation(async () => ({}));
+  });
+
+  it('force ⇒ 先 false 后 true，两次调用', async () => {
+    const outcome = await notifySkillCacheChange({
+      client: { updateSkill: mocks.updateSkill },
+      slug: 'document-deck',
+      enabled: true,
+      force: true,
+    });
+
+    expect(outcome).toBe('ok');
+    expect(mocks.updateSkill.mock.calls.map((c) => (c[0] as { enabled: boolean }).enabled)).toEqual([false, true]);
+    expect(mocks.updateSkill.mock.calls.every((c) => (c[0] as { skillKey: string }).skillKey === 'document-deck')).toBe(
+      true,
+    );
+  });
+
+  it('⚠️ 顺序不许反：最后落定的必须是 enabled', async () => {
+    await notifySkillCacheChange({
+      client: { updateSkill: mocks.updateSkill },
+      slug: 'x',
+      enabled: true,
+      force: true,
+    });
+    // ⚠️ 必须**同时**钉住"两次"与"最后是 true"：只断言最后一个是 true 的话，
+    //    没实现 force 时它照样通过（一次 `{enabled:true}` 也叫"最后是 true"）
+    //    —— 这条测试第一版就是这么空过的，变异测试前先自己抓住。
+    expect(mocks.updateSkill, 'force 必须是两次（false → true）').toHaveBeenCalledTimes(2);
+    const last = mocks.updateSkill.mock.calls.at(-1)?.[0] as { enabled: boolean };
+    expect(last.enabled).toBe(true);
+  });
+
+  it('不传 force ⇒ 还是一刀（普通装/卸不该多打一次）', async () => {
+    await notifySkillCacheChange({ client: { updateSkill: mocks.updateSkill }, slug: 'x', enabled: true });
+    expect(mocks.updateSkill).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * ⭐ 「老盘拿不到新技能」两层里的**磁盘那一层**：随包内容与已装内容不一致 ⇒ 升级。
+ *
+ * 真机形状（2026-09-26，盘 E: 0.0.35）：技能文件在磁盘上已经是新版（含 PDF 段），
+ * 而助手照旧说「环境限制…没法直接生成 PDF」——`missingBundledSkills` 只管"缺了才补"，
+ * 老盘的技能**不缺**，于是永远不会被升级。
+ *
+ * 这条同时钉住两件事：**装了**（覆盖磁盘）+ **force bump 了**（否则运行时还拿着旧缓存）。
+ */
+describe('开机自装 × 内容升级', () => {
+  beforeEach(() => {
+    mocks.handleMap.clear();
+    mocks.installBundledSkill.mockReset();
+    mocks.installBundledSkill.mockReturnValue({ ok: true });
+    mocks.readBundledSkills.mockReset();
+    mocks.isBundledSkillInstalled.mockReset();
+    mocks.readInstalledSkillContent.mockReset();
+    mocks.updateSkill.mockReset();
+    mocks.updateSkill.mockImplementation(async () => ({}));
+    mocks.getGatewayClient.mockReset();
+    // ⚠️ `managedSkillsDirOf` 要 `isConnected` + `getSkillsStatus`，少一个就**静默**
+    //    返回 null ⇒ 处理器直接 `{ok:false, GATEWAY_UNAVAILABLE}`，而测试会以为
+    //    "装没发生"是产品行为（第一版就是这么空过的）。
+    mocks.getGatewayClient.mockReturnValue({
+      isConnected: true,
+      updateSkill: mocks.updateSkill,
+      getSkillsStatus: mocks.getSkillsStatus,
+    });
+    mocks.getSkillsStatus.mockResolvedValue({ managedSkillsDir: 'C:/managed-skills' });
+  });
+
+  const runEnsure = async () => {
+    const { registerSkillsHandlers } = await import('../src/main/skills/handlers.js');
+    registerSkillsHandlers();
+    const handler = mocks.handleMap.get('skills:our-ensure');
+    return (await handler?.({}, { gatewayId: 'local-runtime' })) as {
+      ok: boolean;
+      result?: { installed?: string[]; upgraded?: string[] };
+    };
+  };
+
+  it('内容一致 ⇒ 不升级、不重复装', async () => {
+    mocks.readBundledSkills.mockReturnValue([{ slug: 'a', content: '同一份' }]);
+    mocks.isBundledSkillInstalled.mockReturnValue(true);
+    mocks.readInstalledSkillContent.mockReturnValue('同一份');
+
+    const res = await runEnsure();
+
+    expect(res.result?.upgraded).toEqual([]);
+    expect(mocks.installBundledSkill, '一致就不该动盘').not.toHaveBeenCalled();
+    expect(mocks.updateSkill, '也不该发通知').not.toHaveBeenCalled();
+  });
+
+  it('⭐ 内容不一致 ⇒ 覆盖安装 + 强制 bump（false → true）', async () => {
+    mocks.readBundledSkills.mockReturnValue([{ slug: 'document-deck', content: '新正文含 PDF 段' }]);
+    mocks.isBundledSkillInstalled.mockReturnValue(true);
+    mocks.readInstalledSkillContent.mockReturnValue('旧正文只有三种格式');
+
+    const res = await runEnsure();
+
+    expect(res.result?.upgraded).toEqual(['document-deck']);
+    expect(mocks.installBundledSkill).toHaveBeenCalledTimes(1);
+    const enabledCalls = mocks.updateSkill.mock.calls.map((c) => (c[0] as { enabled: boolean }).enabled);
+    expect(enabledCalls, '内容升级必须强制 bump（值要真的变）').toEqual([false, true]);
+  });
+
+  it('没装的不算升级（那是 missing 那条路）', async () => {
+    mocks.readBundledSkills.mockReturnValue([{ slug: 'a', content: '正文' }]);
+    mocks.isBundledSkillInstalled.mockReturnValue(false);
+    mocks.readInstalledSkillContent.mockReturnValue(null);
+
+    await runEnsure();
+
+    expect(mocks.installBundledSkill, '缺了要装（missing 那条路）').toHaveBeenCalledTimes(1);
+    const enabledCalls = mocks.updateSkill.mock.calls.map((c) => (c[0] as { enabled: boolean }).enabled);
+    expect(enabledCalls, '缺了那条路只打一刀').toEqual([true]);
   });
 });
