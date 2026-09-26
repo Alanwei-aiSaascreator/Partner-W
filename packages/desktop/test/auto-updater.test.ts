@@ -532,12 +532,25 @@ describe('启动序列里的崩溃恢复（生产装配点）', () => {
     mod.runUpdaterStartupHousekeeping();
 
     // 恢复是 fire-and-forget（启动路径不 await），所以等它落定。
-    // ⚠️ 判据是 `staged/<txn>` 这一层：`discard` 删的是**这个事务**的目录，
-    //    上层的 `staged/` 会留着（空目录，无害）。
-    await vi.waitFor(() => {
-      expect(() => readdirSync(join(root, PORTABLE_UPDATE_DIRECTORY_NAME, 'staged', 'txn-crash'))).toThrow();
-    });
-    expect(mocks.logs.map((entry) => entry.event)).toContain('portable.prepare-recovery.discarded');
+    //
+    // ⚠️ **等的是日志，不是目录**（2026-09-27 修的一条真竞态）。
+    //    代码里的顺序是「先 discard、后写日志」，所以"日志出现了"蕴含"目录已经删了"；
+    //    反过来不成立 —— 原来等的是目录，于是紧接着断言日志时它**可能还没写**。
+    //    单跑几乎不会撞上，满负载整仓跑时撞得上（实测：`expected [] to include`）。
+    //    而且这一条不落定，它的日志会晚到**下一条测试**里（下一条会清空同一个共享 mock），
+    //    症状变成下一条报 `expected [Array(1)] to not include` —— 两条红同一个根因。
+    //
+    // ⚠️ 显式给足超时：`vi.waitFor` 默认 1s，在满负载的整仓跑里不够。
+    await vi.waitFor(
+      () => {
+        expect(mocks.logs.map((entry) => entry.event)).toContain('portable.prepare-recovery.discarded');
+      },
+      { timeout: 15_000 },
+    );
+
+    // 判据是 `staged/<txn>` 这一层：`discard` 删的是**这个事务**的目录，
+    // 上层的 `staged/` 会留着（空目录，无害）。
+    expect(() => readdirSync(join(root, PORTABLE_UPDATE_DIRECTORY_NAME, 'staged', 'txn-crash'))).toThrow();
   });
 
   it('非便携态（portableRoot=null）⇒ 恢复什么都不做，也不写日志', async () => {
