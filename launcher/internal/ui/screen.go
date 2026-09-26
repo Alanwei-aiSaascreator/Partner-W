@@ -13,6 +13,8 @@ type Messages struct {
 	LaunchFailedDetail     string `json:"launchFailedDetail"`
 	ApplyFailed            string `json:"applyFailed"`
 	ApplyFailedDetail      string `json:"applyFailedDetail"`
+	RolledBack             string `json:"rolledBack"`
+	RolledBackDetail       string `json:"rolledBackDetail"`
 	RollbackFailed         string `json:"rollbackFailed"`
 	RollbackFailedDetail   string `json:"rollbackFailedDetail"`
 	LockHeld               string `json:"lockHeld"`

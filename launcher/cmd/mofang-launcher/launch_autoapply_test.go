@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"mofang-compass/portable-launcher/internal/update"
@@ -133,5 +134,56 @@ func TestLaunchStartsTheProgramWhenTheAutoApplyCannotWait(t *testing.T) {
 	}
 	if phase := phaseOf(t, harness, transaction); phase != "ready" {
 		t.Fatalf("phase = %s, want ready: the next attempt must still find it", phase)
+	}
+}
+
+// A rollback is invisible from the outside: the program starts, nothing on
+// screen differs from a plain launch, and the user is left believing the update
+// went in — they only find out when they look for something the new version was
+// supposed to bring. Recover reports "restored" at exactly the moment the
+// launcher knows, so that is where it has to speak up.
+func TestLaunchTellsTheUserWhenAnUpdateWasRolledBack(t *testing.T) {
+	harness := newHarness(t)
+	transaction := harness.transaction()
+	// Only a backup remains: the previous attempt lost the current tree before
+	// it could put anything in its place. Recover restores it and reports
+	// "restored"; that is the shape a real rolled-back disk is left in.
+	harness.writeFile(t, filepath.Join(transaction.BackupProgramPath, "old.txt"), "old")
+	harness.writeFile(t, filepath.Join(transaction.BackupProgramPath, update.ProgramExecutableName), "program executable")
+	harness.writeState(t, transaction)
+
+	if code := run(nil, harness.dependencies()); code != exitOK {
+		t.Fatalf("exit code = %d, want %d: a rollback must not cost the user the program", code, exitOK)
+	}
+
+	// The recovery itself must still happen — the notice is added on top of it,
+	// not instead of it.
+	mustExist(t, filepath.Join(harness.root, update.ProgramDirectoryName, "old.txt"))
+	mustNotExist(t, transaction.BackupProgramPath)
+	if len(harness.ops.started) != 1 {
+		t.Fatalf("the restored program must start exactly once, started %v", harness.ops.started)
+	}
+	if len(harness.screen.errors) != 1 {
+		t.Fatalf("the user must be told the update was rolled back, got %v", harness.screen.errors)
+	}
+	if !strings.HasPrefix(harness.screen.errors[0], harness.messages.RolledBack) {
+		t.Fatalf("got %q, want the rolled-back notice", harness.screen.errors[0])
+	}
+}
+
+// The opposite direction, pinned so the notice cannot become noise: a launch
+// that had nothing to recover must stay silent.
+func TestLaunchStaysSilentWhenThereWasNothingToRollBack(t *testing.T) {
+	harness := newHarness(t)
+	transaction := harness.transaction()
+	harness.installCurrentProgram(t)
+	harness.writeState(t, transaction)
+
+	if code := run(nil, harness.dependencies()); code != exitOK {
+		t.Fatalf("exit code = %d, want %d", code, exitOK)
+	}
+
+	if len(harness.screen.errors) != 0 || len(harness.screen.shown) != 0 {
+		t.Fatalf("an ordinary launch must not warn about an update: %v %v", harness.screen.errors, harness.screen.shown)
 	}
 }

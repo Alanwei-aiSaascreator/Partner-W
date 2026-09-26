@@ -193,6 +193,18 @@ func run(args []string, deps dependencies) int {
 	}
 	deps.logf("reconciled the disk state: %s", recovery)
 
+	// A restore is the one moment the launcher knows an update did not go in.
+	// From the outside it is invisible — the program starts either way and
+	// nothing on screen differs from an ordinary launch — so without this the
+	// user believes the update took and only finds out when something the new
+	// version was supposed to bring is missing.
+	//
+	// This is the path a killed or powered-off update leaves behind: the app
+	// never got to report the failure itself, so nobody has told the user yet.
+	if recovery == update.RecoveryRestored {
+		deps.screen.Error(deps.messages.RolledBack, deps.messages.RolledBackDetail)
+	}
+
 	if transaction.Phase == "ready" {
 		if parsed.mode == modeApply {
 			return applyTransaction(deps, transaction)

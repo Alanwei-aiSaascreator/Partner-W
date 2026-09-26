@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"syscall"
 	"testing"
@@ -280,6 +281,22 @@ func (harness *harness) writeState(t *testing.T, transaction update.TransactionV
 
 func (harness *harness) stagePath(transaction update.TransactionV1) string {
 	return filepath.Join(transaction.UpdateRoot, update.StateFileName)
+}
+
+// A message lives in three places — the struct, the JSON and the embedded file
+// — and a key missing from the JSON is silently an empty string, so the user
+// would get a blank dialog with no way to tell whether it meant anything.
+// Nothing else would notice: the launcher still starts, the tag still parses.
+func TestEveryLauncherMessageHasCopy(t *testing.T) {
+	harness := newHarness(t)
+	value := reflect.ValueOf(harness.messages)
+	messageType := value.Type()
+	for index := 0; index < value.NumField(); index++ {
+		if value.Field(index).String() == "" {
+			field := messageType.Field(index)
+			t.Errorf("locales/zh-CN.json is missing copy for %s (key %q)", field.Name, field.Tag.Get("json"))
+		}
+	}
 }
 
 func TestParseInvocationAcceptsOnlyTheDocumentedArguments(t *testing.T) {
