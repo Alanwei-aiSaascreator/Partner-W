@@ -179,6 +179,9 @@ describe('设置页「电脑操控权限」', () => {
 
   it('判据 3：勾选 + 确认 ⇒ 真的切当前会话为 full，并把设置落成 full', async () => {
     const { container, unmount } = await mountWithSetting(undefined);
+    // ⚠️ 夹具要**真的**有别的会话记着 full —— 不然"打开时也去收网"那条变异
+    //    扫的是一个空集合，看起来毫无差别（它就是靠这个活下来的）。
+    computerAccessApplied.set('agent:main:old-a', { mode: 'full', gatewayId: 'local-runtime' });
     const revisionBefore = computerAccessRevision();
     await clickAsync(switchEl(container));
 
@@ -187,8 +190,15 @@ describe('设置页「电脑操控权限」', () => {
     await clickAsync(confirmEl(container));
 
     expect(patchSession).toHaveBeenCalledWith('local-runtime', TASK.sessionKey, { permissionMode: 'full' });
+    // ⚠️ **打开时一个 guarded 都不许发**：收网只在关掉时跑。
+    //    没有这一条时，"开着的时候也去收"那条变异会活下来（开启时记账是空的，
+    //    它扫了个寂寞，看起来毫无差别）。
+    expect(
+      patchSession.mock.calls.filter((c) => (c[2] as Record<string, unknown>)?.permissionMode === 'guarded'),
+      '打开不该收回任何会话',
+    ).toEqual([]);
     expect(updateSettings).toHaveBeenCalledWith({ computerAccess: 'full' });
-    expect(computerAccessApplied.get(TASK.sessionKey)).toBe('full');
+    expect(computerAccessApplied.get(TASK.sessionKey)?.mode).toBe('full');
     // ⭐ 开关也必须**通知界面重读**：不通知的话徽章要等切走再切回来才出现（真机抓到过）。
     expect(computerAccessRevision(), '开关那一刻修订号必须前进').toBeGreaterThan(revisionBefore);
     unmount();
@@ -230,6 +240,32 @@ describe('设置页「电脑操控权限」', () => {
 
     expect(updateSettings).not.toHaveBeenCalled();
     expect(toastError).toHaveBeenCalled();
+    unmount();
+  });
+
+  /**
+   * ⭐ 关掉全权要**收干净**（不只当前任务）。
+   *
+   * 补的是个真缺口：在任务 A 开了全权、切到 B 关掉开关 —— **A 还是全权**。
+   * 徽章会如实显示它，但用户的理解是"我把这个功能关了"，不是"我关掉了其中一个任务"。
+   *
+   * ⚠️ 只收**我们设过的**（记账里有的）：别的路径（团队/对比/定时任务）开的全权
+   *    不归这个开关管。
+   */
+  it('⭐ 关掉全权时把之前设过的其它会话一并收回（记账里有 full 的都收）', async () => {
+    const { container, unmount } = await mountWithSetting('full');
+    computerAccessApplied.set('agent:main:old-a', { mode: 'full', gatewayId: 'local-runtime' });
+    computerAccessApplied.set('agent:main:old-b', { mode: 'full', gatewayId: 'local-runtime' });
+    computerAccessApplied.set('agent:main:untouched', { mode: 'guarded', gatewayId: 'local-runtime' });
+
+    await clickAsync(switchEl(container));
+
+    const guardedKeys = patchSession.mock.calls
+      .filter((c) => (c[2] as Record<string, unknown>)?.permissionMode === 'guarded')
+      .map((c) => c[1] as string)
+      .sort();
+    expect(guardedKeys).toEqual([TASK.sessionKey, 'agent:main:old-a', 'agent:main:old-b'].sort());
+    expect(computerAccessApplied.get('agent:main:old-a')?.mode, '收完要更新记账').toBe('guarded');
     unmount();
   });
 });

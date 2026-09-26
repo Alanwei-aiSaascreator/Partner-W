@@ -1,5 +1,11 @@
 import { DEFAULT_COMPUTER_ACCESS_TIER } from '@clawwork/core';
-import type { AppliedPermissionMode, ChatComposerDeps, ComputerAccessTier } from '@clawwork/core';
+import type {
+  AppliedPermissionMap,
+  AppliedPermissionMode,
+  AppliedPermissionRecord,
+  ChatComposerDeps,
+  ComputerAccessTier,
+} from '@clawwork/core';
 
 /**
  * 桌面端那一层：把「设置里那一个字符串」翻译成 composer 认识的档位。
@@ -44,7 +50,7 @@ export function permissionModeForTier(tier: ComputerAccessTier): AppliedPermissi
  * ⚠️ 它只用来给发送链省掉重复补刀，**不是"当前档位的真相"**。
  *    真相以 `sessions.list` 读回来的 `permissionMode` 为准（界面上的徽章读的就是它）。
  */
-export const computerAccessApplied = new Map<string, AppliedPermissionMode>();
+export const computerAccessApplied = new Map<string, AppliedPermissionRecord>();
 
 /**
  * 「我们刚改过档位」的修订号 —— 让**徽章**能听见。
@@ -78,26 +84,46 @@ export function subscribeComputerAccessRevision(listener: () => void): () => voi
  *    直接 set 的后果就是徽章不刷新，也就是这次真机抓到的那条。
  */
 export function rememberPermissionMode(
-  applied: Map<string, AppliedPermissionMode>,
+  applied: Map<string, AppliedPermissionRecord>,
   sessionKey: string,
   mode: AppliedPermissionMode,
+  gatewayId: string,
 ): void {
-  applied.set(sessionKey, mode);
+  applied.set(sessionKey, { mode, gatewayId });
   revision += 1;
   for (const listener of revisionListeners) listener();
+}
+
+/**
+ * 关掉全权时要**收回哪些会话**（纯函数）。
+ *
+ * ⚠️ 只收回**我们设过的那些**（记账里记着 `'full'` 的）：不认识的会话一律不碰 ——
+ *    团队 / 对比 / 定时任务那些路径开的全权不归这个开关管。
+ *
+ * 为什么不能只收当前任务（补的是一个真缺口）：在任务 A 开了全权、切到 B 关掉，
+ * A 仍然是全权。徽章会如实显示它，但**用户的理解是"我把这个功能关了"**。
+ */
+export function sessionsToRevoke(applied: AppliedPermissionMap, except?: string | null): string[] {
+  const out: string[] = [];
+  for (const [sessionKey, record] of applied) {
+    if (record.mode !== 'full') continue;
+    if (except && sessionKey === except) continue;
+    out.push(sessionKey);
+  }
+  return out;
 }
 
 /** composer 要的那个可选 dep。宿主按 `readTier` 现读设置（不缓存快照）。 */
 export function createComputerAccessDep(deps: {
   /** 读设置里那个原始值（**故意是 `unknown`**：脏值要在这里被挡掉，不是在上游假定干净）。 */
   readTier: () => unknown;
-  applied: Map<string, AppliedPermissionMode>;
+  applied: Map<string, AppliedPermissionRecord>;
 }): NonNullable<ChatComposerDeps['computerAccess']> {
   return {
     tier: () => normalizeComputerAccessTier(deps.readTier()),
     applied: () => deps.applied,
-    remember: (sessionKey, mode) => {
-      rememberPermissionMode(deps.applied, sessionKey, mode);
+    remember: (sessionKey, record) => {
+      rememberPermissionMode(deps.applied, sessionKey, record.mode, record.gatewayId);
     },
   };
 }

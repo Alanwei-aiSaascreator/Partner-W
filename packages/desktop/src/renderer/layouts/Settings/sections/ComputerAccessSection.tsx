@@ -18,6 +18,7 @@ import {
   normalizeComputerAccessTier,
   permissionModeForTier,
   rememberPermissionMode,
+  sessionsToRevoke,
 } from '@/lib/computer-access-runtime';
 import { toast } from '@/lib/toast';
 import type { ComputerAccessTier } from '@clawwork/core';
@@ -76,7 +77,32 @@ export default function ComputerAccessSection() {
           return false;
         }
         // ⚠️ **成功了才记账**（与发送链同一条规矩：失败记账 = 下次不补 = 永久哑掉）。
-        rememberPermissionMode(computerAccessApplied, active.sessionKey, mode);
+        rememberPermissionMode(computerAccessApplied, active.sessionKey, mode, active.gatewayId);
+      }
+
+      /**
+       * ⭐ 关掉全权时**收干净**（不只当前任务）。
+       *
+       * 补的缺口：在任务 A 开了全权、切到 B 关掉开关 —— A 还是全权。徽章会如实显示，
+       * 但用户的理解是"我把这个功能关了"。
+       *
+       * ⚠️ 只收**我们设过的那些**（记账里有 `'full'` 的）：别的路径开的全权不归这个开关管。
+       * ⚠️ **尽力而为**：某一个收不回来不该拦住其余和"落设置" —— 但那一条会**如实报错**，
+       *    否则界面会显示"已关闭"而某个任务其实还开着。
+       */
+      if (next === 'safe') {
+        // ⚠️ 网关从**记账里**取，不从任务列表反查 —— 任务可能已经被删/切走了，
+        //    反查会在最需要收回的时候查不到。
+        for (const sessionKey of sessionsToRevoke(computerAccessApplied, active?.sessionKey)) {
+          const gatewayId = computerAccessApplied.get(sessionKey)?.gatewayId;
+          if (!gatewayId) continue;
+          const res = await window.clawwork.patchSession(gatewayId, sessionKey, { permissionMode: 'guarded' });
+          if (res?.ok) {
+            rememberPermissionMode(computerAccessApplied, sessionKey, 'guarded', gatewayId);
+          } else {
+            console.warn('[computerAccess] revoke failed:', sessionKey, res?.error);
+          }
+        }
       }
 
       const result = await updateSettings({ computerAccess: next });

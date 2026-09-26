@@ -6,7 +6,7 @@ import type { TranslateFn } from './error-classify.js';
 import { runManualCompaction } from './compaction-announce.js';
 import { describeSendRefusal } from './send-refusal-message.js';
 import { decidePermissionPatch } from './computer-access.js';
-import type { AppliedPermissionMap, AppliedPermissionMode, ComputerAccessTier } from './computer-access.js';
+import type { AppliedPermissionMap, AppliedPermissionRecord, ComputerAccessTier } from './computer-access.js';
 
 interface TaskRef {
   id: string;
@@ -86,7 +86,7 @@ export interface ChatComposerDeps {
     tier: () => ComputerAccessTier;
     applied: () => AppliedPermissionMap;
     /** ⚠️ **只在 patch 成功之后**才该被调用（失败记账 = 下次不补 = 永久哑掉）。 */
-    remember: (sessionKey: string, mode: AppliedPermissionMode) => void;
+    remember: (sessionKey: string, record: AppliedPermissionRecord) => void;
   };
 
   getRoomState?: (taskId: string) => TaskRoom | undefined;
@@ -388,8 +388,9 @@ export function createChatComposer(deps: ChatComposerDeps) {
               permissionMode: mode,
             });
             // ⚠️ **成功了才记账**：失败还记账 ⇒ 下次不补 ⇒ 永久哑掉（有测试按名钉住）。
-            if (permissionRes?.ok) deps.computerAccess.remember(task.sessionKey, mode);
-            else console.warn('[chat-composer] permission patch failed:', mode, permissionRes?.error);
+            if (permissionRes?.ok) {
+              deps.computerAccess.remember(task.sessionKey, { mode, gatewayId: task.gatewayId });
+            } else console.warn('[chat-composer] permission patch failed:', mode, permissionRes?.error);
           }
         }
       }

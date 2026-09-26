@@ -5,9 +5,10 @@ import {
   normalizeComputerAccessTier,
   permissionModeForTier,
   rememberPermissionMode,
+  sessionsToRevoke,
   subscribeComputerAccessRevision,
 } from '../src/renderer/lib/computer-access-runtime';
-import type { AppliedPermissionMode } from '@clawwork/core';
+import type { AppliedPermissionRecord } from '@clawwork/core';
 
 /**
  * 桌面端那一层：把「设置里的一个字符串」翻译成 composer 认识的档位。
@@ -51,7 +52,7 @@ describe('permissionModeForTier', () => {
 });
 
 describe('createComputerAccessDep', () => {
-  const dep = (tier: unknown, applied = new Map<string, AppliedPermissionMode>()) =>
+  const dep = (tier: unknown, applied = new Map<string, AppliedPermissionRecord>()) =>
     createComputerAccessDep({ readTier: () => tier, applied });
 
   it('tier() 走 fail-closed（设置坏掉 ⇒ safe）', () => {
@@ -61,18 +62,18 @@ describe('createComputerAccessDep', () => {
   });
 
   it('applied() 就是宿主那份记账（同一个引用，不是拷贝）', () => {
-    const map = new Map<string, AppliedPermissionMode>();
+    const map = new Map<string, AppliedPermissionRecord>();
     const d = dep('full', map);
     expect(d.applied()).toBe(map);
   });
 
-  it('remember() 把模式写进宿主那份记账', () => {
-    const map = new Map<string, AppliedPermissionMode>();
+  it('remember() 把模式**与网关**一起写进宿主那份记账', () => {
+    const map = new Map<string, AppliedPermissionRecord>();
     const d = dep('full', map);
-    d.remember('agent:main:x', 'full');
-    expect(map.get('agent:main:x')).toBe('full');
-    d.remember('agent:main:x', 'guarded');
-    expect(map.get('agent:main:x')).toBe('guarded');
+    d.remember('agent:main:x', { mode: 'full', gatewayId: 'gw-1' });
+    expect(map.get('agent:main:x')).toEqual({ mode: 'full', gatewayId: 'gw-1' });
+    d.remember('agent:main:x', { mode: 'guarded', gatewayId: 'gw-1' });
+    expect(map.get('agent:main:x')?.mode).toBe('guarded');
   });
 });
 
@@ -90,42 +91,80 @@ describe('computerAccess 修订号（订阅）', () => {
   });
 
   it('rememberPermissionMode 写入 + 让订阅者收到通知', () => {
-    const map = new Map<string, AppliedPermissionMode>();
+    const map = new Map<string, AppliedPermissionRecord>();
     const seen: number[] = [];
     const unsubscribe = subscribeComputerAccessRevision(() => seen.push(computerAccessRevision()));
 
-    rememberPermissionMode(map, 'agent:main:x', 'full');
+    rememberPermissionMode(map, 'agent:main:x', 'full', 'gw-1');
 
-    expect(map.get('agent:main:x')).toBe('full');
+    expect(map.get('agent:main:x')?.mode).toBe('full');
     expect(seen.length, '订阅者该被叫一次').toBe(1);
     unsubscribe();
   });
 
   it('退订之后不再收到通知', () => {
-    const map = new Map<string, AppliedPermissionMode>();
+    const map = new Map<string, AppliedPermissionRecord>();
     let calls = 0;
     const unsubscribe = subscribeComputerAccessRevision(() => {
       calls += 1;
     });
     unsubscribe();
 
-    rememberPermissionMode(map, 'agent:main:x', 'guarded');
+    rememberPermissionMode(map, 'agent:main:x', 'guarded', 'gw-1');
 
     expect(calls).toBe(0);
   });
 
   it('createComputerAccessDep 的 remember 也走同一条通知（发送链补刀后徽章要立刻能重读）', () => {
-    const map = new Map<string, AppliedPermissionMode>();
+    const map = new Map<string, AppliedPermissionRecord>();
     const dep = createComputerAccessDep({ readTier: () => 'full', applied: map });
     let calls = 0;
     const unsubscribe = subscribeComputerAccessRevision(() => {
       calls += 1;
     });
 
-    dep.remember('agent:main:x', 'full');
+    dep.remember('agent:main:x', { mode: 'full', gatewayId: 'gw-1' });
 
-    expect(map.get('agent:main:x')).toBe('full');
+    expect(map.get('agent:main:x')?.mode).toBe('full');
     expect(calls).toBe(1);
     unsubscribe();
+  });
+});
+
+/**
+ * ⭐ 关掉全权时**要收干净**：不只当前任务，还有我们之前设过全权的那些。
+ *
+ * 缺口（0.0.36 账本 §七-3 登记过）：开关只改当前任务 ⇒ 在任务 A 开了全权、
+ * 切到 B 关掉，**A 仍然是全权**。徽章会如实显示，但那不叫"关了" ——
+ * 用户的理解是"我把这个功能关了"，而不是"我关掉了其中一个任务"。
+ *
+ * ⚠️ 只收回**我们设过的那些**（记账里有的）：不认识的会话一律不碰 ——
+ *    别的路径（团队/对比/定时任务）开的全权不归这个开关管。
+ */
+describe('sessionsToRevoke —— 关开关时要收哪些会话', () => {
+  it('收回记账里所有 full 的会话', () => {
+    const applied = new Map<string, AppliedPermissionRecord>([
+      ['a', { mode: 'full', gatewayId: 'gw-1' }],
+      ['b', { mode: 'full', gatewayId: 'gw-1' }],
+      ['c', { mode: 'guarded', gatewayId: 'gw-1' }],
+    ]);
+    expect(sessionsToRevoke(applied).sort()).toEqual(['a', 'b']);
+  });
+
+  it('记账里没有 full ⇒ 一个都不收（没开过就别动）', () => {
+    const applied = new Map<string, AppliedPermissionRecord>([['c', { mode: 'guarded', gatewayId: 'gw-1' }]]);
+    expect(sessionsToRevoke(applied)).toEqual([]);
+  });
+
+  it('可以排掉一个（刚要单独处理的那个，免得打两次）', () => {
+    const applied = new Map<string, AppliedPermissionRecord>([
+      ['a', { mode: 'full', gatewayId: 'gw-1' }],
+      ['b', { mode: 'full', gatewayId: 'gw-1' }],
+    ]);
+    expect(sessionsToRevoke(applied, 'a')).toEqual(['b']);
+  });
+
+  it('空记账 ⇒ 空（不抛）', () => {
+    expect(sessionsToRevoke(new Map())).toEqual([]);
   });
 });

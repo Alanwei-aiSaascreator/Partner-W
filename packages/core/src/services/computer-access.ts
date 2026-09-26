@@ -36,13 +36,24 @@ export const DEFAULT_COMPUTER_ACCESS_TIER: ComputerAccessTier = 'safe';
 export type AppliedPermissionMode = 'full' | 'guarded';
 
 /**
- * 本进程**亲手设过**的会话模式记账（会话键 → 设成了什么）。
+ * 一条记账：我们把某个会话设成了什么模式、**在哪个网关上**。
+ *
+ * ⚠️ 网关必须一起记：关掉全权时要把之前设过的会话一并收回，而那时**手上不一定有
+ *    当前任务**（用户可能已经切走或删了任务）。靠任务列表反查网关是条会断的路。
+ */
+export interface AppliedPermissionRecord {
+  mode: AppliedPermissionMode;
+  gatewayId: string;
+}
+
+/**
+ * 本进程**亲手设过**的会话模式记账（会话键 → 设成了什么 + 在哪个网关）。
  *
  * ⚠️ 它存在的唯一理由是**省掉重复补刀**，不是"当前档位的真相"。
  *    真相永远以 `sessions.list` 读回来的 `permissionMode` 为准（spec §2.4）——
  *    拿这张表当真相就会在"用户在别处改过/换了台机器"时骗人。
  */
-export type AppliedPermissionMap = ReadonlyMap<string, AppliedPermissionMode>;
+export type AppliedPermissionMap = ReadonlyMap<string, AppliedPermissionRecord>;
 
 /**
  * 这次发送前该不该补一刀权限？回 `null` = **什么都不发**。
@@ -56,7 +67,7 @@ export function decidePermissionPatch(params: {
   applied: AppliedPermissionMap;
 }): AppliedPermissionMode | null {
   const { tier, sessionKey, applied } = params;
-  const previous = applied.get(sessionKey);
+  const previous = applied.get(sessionKey)?.mode;
 
   if (tier === 'full') {
     // 已经记过 full ⇒ 安静（补刀只补一次）。

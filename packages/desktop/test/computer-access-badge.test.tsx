@@ -147,7 +147,7 @@ describe('ComputerAccessBadge × 档位变化后要自己重读', () => {
     // 模拟"发送链补了一刀"：会话在后端变成 full，同时记账 + 通知
     listSessions.mockResolvedValue({ ok: true, result: { sessions: [{ key: 'k', permissionMode: 'full' }] } });
     await act(async () => {
-      rememberPermissionMode(new Map(), 'k', 'full');
+      rememberPermissionMode(new Map(), 'k', 'full', 'local-runtime');
     });
     await flushAsync();
 

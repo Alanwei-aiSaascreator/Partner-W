@@ -713,7 +713,9 @@ describe('feed failures are classified too', () => {
  */
 describe('feed 与包下载都不许走 HTTP 缓存', () => {
   it('⭐ 抓清单带 cache: no-store', async () => {
-    const fetchMock = vi.fn(async () => new Response('{}', { status: 200 }));
+    // ⚠️ 参数类型要写出来：`vi.fn(async () => …)` 的 `calls` 是长度 0 的元组，
+    //    下面 `calls[0][1]` 直接编不过（TS2493）—— 仓库里同款坑记过两次。
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => new Response('{}', { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
 
     await fetchFeedResponse('https://example.com/updates/internal/manifest.json');
@@ -724,7 +726,9 @@ describe('feed 与包下载都不许走 HTTP 缓存', () => {
 
   it('⭐ 下包也带 cache: no-store', async () => {
     const root = await makeRoot();
-    const fetchMock = vi.fn(async () => new Response(Buffer.from('not-the-right-bytes'), { status: 200 }));
+    const fetchMock = vi.fn(
+      async (_url: string, _init?: RequestInit) => new Response(Buffer.from('not-the-right-bytes'), { status: 200 }),
+    );
     vi.stubGlobal('fetch', fetchMock);
 
     await expect(

@@ -43,7 +43,8 @@ const mocks = vi.hoisted(() => ({
   getGatewayClient: vi.fn(),
   installBundledSkill: vi.fn(),
   removeBundledSkill: vi.fn(),
-  readBundledSkills: vi.fn(() => []),
+  // ⚠️ 返回类型必须写出来：不写就是 `never[]`，`mockReturnValue([{slug, content}])` 编不过。
+  readBundledSkills: vi.fn<() => Array<{ slug: string; content?: string }>>(() => []),
   isBundledSkillInstalled: vi.fn(() => false),
   readInstalledSkillContent: vi.fn<(dir: unknown, slug: string) => string | null>(() => null),
   warn: vi.fn(),
