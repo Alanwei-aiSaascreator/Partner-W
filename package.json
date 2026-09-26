@@ -52,7 +52,8 @@
     "update:portable-package": "node scripts/make-portable-update.mjs",
     "check:portable-launcher": "go -C launcher test ./... -count=1",
     "check:portable-update-release": "node --test scripts/lib/portable-launcher-build.test.mjs scripts/lib/portable-update-release.test.mjs scripts/lib/portable-update-ci.test.mjs scripts/lib/update-source-consistency.test.mjs",
-    "check:portable-feed-publish": "node --test scripts/lib/feed-publish.test.mjs scripts/lib/feed-publish-transport.test.mjs scripts/lib/feed-publish-cli.test.mjs"
+    "check:portable-feed-publish": "node --test scripts/lib/feed-publish.test.mjs scripts/lib/feed-publish-transport.test.mjs scripts/lib/feed-publish-cli.test.mjs",
+    "check:runtime-image-contract": "node scripts/check-runtime-image-contract.mjs"
   },
   "lint-staged": {
     "*.{ts,tsx,mts,cts,js,mjs,cjs}": [
