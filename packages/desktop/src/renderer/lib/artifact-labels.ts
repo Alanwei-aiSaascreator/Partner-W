@@ -22,6 +22,12 @@ function getArtifactLabelKey(artifact: Pick<Artifact, 'type' | 'mimeType' | 'nam
   if (artifact.type === 'link') return 'artifactKinds.link';
   if (artifact.type === 'structured_data') return 'artifactKinds.data';
   if (artifact.mimeType === 'text/markdown' || name.endsWith('.md')) return 'artifactKinds.markdown';
+  // ⚠️ **必须排在下面那条 `text/` 泛匹配之前**：`text/html` 也以 `text/` 开头，
+  //    排在它后面就永远轮不到 —— 这正是"列表里显示成「文本文件」"的根因。
+  //    而 0.0.35 起 `.html` 是**真渲染**的（沙箱 iframe），标签说它是文本 = 界面自我否定。
+  if (artifact.mimeType === 'text/html' || name.endsWith('.html') || name.endsWith('.htm')) {
+    return 'artifactKinds.html';
+  }
   if (artifact.mimeType.startsWith('text/') || name.endsWith('.txt')) return 'artifactKinds.text';
   return 'artifactKinds.file';
 }
