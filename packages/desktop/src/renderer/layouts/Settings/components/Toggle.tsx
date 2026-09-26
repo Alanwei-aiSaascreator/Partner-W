@@ -5,11 +5,17 @@ export default function Toggle({
   onChange,
   ariaLabel,
   size = 'md',
+  dataAction,
+  disabled = false,
 }: {
   checked: boolean;
   onChange: (v: boolean) => void;
   ariaLabel?: string;
   size?: 'sm' | 'md';
+  /** 给测试/自动化用的稳定选点（本仓库惯例：文案会随语言变，选点不能）。 */
+  dataAction?: string;
+  /** 忙的时候不许再点（切换是两次网络往返，连点会打架）。 */
+  disabled?: boolean;
 }) {
   const isSmall = size === 'sm';
   return (
@@ -18,6 +24,8 @@ export default function Toggle({
       role="switch"
       aria-checked={checked}
       aria-label={ariaLabel}
+      data-action={dataAction}
+      disabled={disabled}
       onClick={() => onChange(!checked)}
       className={cn(
         'relative inline-flex flex-shrink-0 cursor-pointer rounded-full p-0.5 transition-colors duration-200',

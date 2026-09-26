@@ -12,6 +12,7 @@ import SystemSection from './sections/SystemSection';
 import GatewaysSection from './sections/GatewaysSection';
 import AgentsSection from './sections/AgentsSection';
 import SkillsSection from './sections/SkillsSection';
+import ComputerAccessSection from './sections/ComputerAccessSection';
 import PrivacySection from './sections/PrivacySection';
 import MemorySection from './sections/MemorySection';
 import AboutSection from './sections/AboutSection';
@@ -26,6 +27,7 @@ const SECTION_COMPONENTS: Record<SettingsSection, ComponentType> = {
   agents: AgentsSection,
   skills: SkillsSection,
   memory: MemorySection,
+  computerAccess: ComputerAccessSection,
   privacy: PrivacySection,
   about: AboutSection,
 };
