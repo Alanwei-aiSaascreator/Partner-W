@@ -229,6 +229,28 @@ func run(args []string, deps dependencies) int {
 	return launchProgram(deps, root)
 }
 
+// launcherDependencies is what the launcher runs with, split out of main so a
+// test can drive the real wiring rather than a copy of it. The log sink is why
+// that matters: the launcher is started with its output discarded, so a sink
+// that was written but never attached behaves exactly like a working one right
+// up until the moment somebody needs to read it.
+func launcherDependencies(executable string, messages ui.Messages, publicKey ed25519.PublicKey) dependencies {
+	toFile := logFileSink(filepath.Join(filepath.Dir(executable), update.UpdateDirectoryName, launcherLogName))
+	return dependencies{
+		ops:          update.SystemOps{},
+		screen:       ui.NewScreen(),
+		messages:     messages,
+		publicKey:    publicKey,
+		version:      version,
+		launcherPath: executable,
+		output:       os.Stdout,
+		logf: func(format string, args ...any) {
+			fmt.Fprintf(os.Stderr, "portable launcher: "+format+"\n", args...)
+			toFile(format, args...)
+		},
+	}
+}
+
 func main() {
 	executable, err := os.Executable()
 	if err != nil {
@@ -244,16 +266,5 @@ func main() {
 	if keyErr != nil {
 		fmt.Fprintln(os.Stderr, "portable launcher:", keyErr)
 	}
-	os.Exit(run(os.Args[1:], dependencies{
-		ops:          update.SystemOps{},
-		screen:       ui.NewScreen(),
-		messages:     messages,
-		publicKey:    publicKey,
-		version:      version,
-		launcherPath: executable,
-		output:       os.Stdout,
-		logf: func(format string, args ...any) {
-			fmt.Fprintf(os.Stderr, "portable launcher: "+format+"\n", args...)
-		},
-	}))
+	os.Exit(run(os.Args[1:], launcherDependencies(executable, messages, publicKey)))
 }
