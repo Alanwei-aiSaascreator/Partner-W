@@ -390,6 +390,7 @@
     "addFiles": "Dateien hinzufügen",
     "addFolder": "Ordner hinzufügen",
     "addMaterials": "Aufgabenmaterial hinzufügen",
+    "aiDisclaimer": "Inhalte werden von KI erzeugt. Bitte prüfen Sie wichtige Informationen.",
     "aiServiceStarting": "KI-Dienst wird gestartet…",
     "aiServiceStartingDetail": "Der erste Start kann etwa eine Minute dauern. Bitte warten Sie.",
     "attachmentSaveFailed": "Anhang {{fileName}} konnte nicht gespeichert werden",

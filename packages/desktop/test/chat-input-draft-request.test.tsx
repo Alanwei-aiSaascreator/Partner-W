@@ -461,3 +461,37 @@ describe('ChatInput draft requests', () => {
     view.unmount();
   });
 });
+
+/**
+ * 「内容由 AI 生成」那行小字（2026-09-27）。
+ *
+ * 判据是**它在输入框下面真的渲染出来了**，而且用的是**比正文更小的字**：
+ *  - 只断言"这个 key 在词表里"是不够的 —— 键齐备但没人渲染，用户一个字都看不到
+ *    （本仓栽过：整屏门禁没人渲染而测试全绿）；
+ *  - 只断言"有一段文字"也不够 —— 它得是**小字**，否则就是往输入框下面塞了一句正文。
+ */
+describe('输入框下面的 AI 生成提示', () => {
+  it('⭐ 渲染出来了', () => {
+    const view = renderChatInput();
+    expect(view.container.textContent).toContain('chatInput.aiDisclaimer');
+    view.unmount();
+  });
+
+  it('⭐ 用的是 type-support（比正文小一号），不是正文', () => {
+    const view = renderChatInput();
+    const line = [...view.container.querySelectorAll('p')].find((el) =>
+      el.textContent?.includes('chatInput.aiDisclaimer'),
+    );
+
+    expect(line, '那行提示应当是一个 <p>').toBeTruthy();
+    expect(line?.className).toContain('type-support');
+    expect(line?.className, '正文档会把提示变成一句话').not.toContain('type-body');
+    view.unmount();
+  });
+
+  it('负对照：找不到的字必须读不到（否则上面的 toContain 可能恒真）', () => {
+    const view = renderChatInput();
+    expect(view.container.textContent).not.toContain('这段字压根不存在');
+    view.unmount();
+  });
+});

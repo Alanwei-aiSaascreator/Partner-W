@@ -390,6 +390,7 @@
     "addFiles": "ファイルを追加",
     "addFolder": "フォルダを追加",
     "addMaterials": "タスク資料を追加",
+    "aiDisclaimer": "AI が生成した内容です。重要な情報は必ず確認してください。",
     "aiServiceStarting": "AI サービスを起動しています…",
     "aiServiceStartingDetail": "初回起動には約 1 分かかる場合があります。しばらくお待ちください。",
     "attachmentSaveFailed": "添付ファイル {{fileName}} の保存に失敗しました",

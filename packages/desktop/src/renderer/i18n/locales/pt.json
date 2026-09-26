@@ -390,6 +390,7 @@
     "addFiles": "Adicionar arquivos",
     "addFolder": "Adicionar pasta",
     "addMaterials": "Adicionar materiais da tarefa",
+    "aiDisclaimer": "Conteúdo gerado por IA. Verifique as informações importantes.",
     "aiServiceStarting": "Iniciando o serviço de IA…",
     "aiServiceStartingDetail": "A primeira inicialização pode levar cerca de um minuto. Aguarde.",
     "attachmentSaveFailed": "Falha ao salvar o anexo {{fileName}}",

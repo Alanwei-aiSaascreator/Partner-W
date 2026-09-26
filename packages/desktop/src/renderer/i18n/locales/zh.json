@@ -390,6 +390,7 @@
     "addFiles": "添加文件",
     "addFolder": "添加文件夹",
     "addMaterials": "添加任务材料",
+    "aiDisclaimer": "内容由 AI 生成，请核实重要信息",
     "aiServiceStarting": "正在启动 AI 服务…",
     "aiServiceStartingDetail": "首次启动可能需要约 1 分钟，请稍候。",
     "attachmentSaveFailed": "保存附件 {{fileName}} 失败",

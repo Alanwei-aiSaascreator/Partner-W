@@ -390,6 +390,7 @@
     "addFiles": "Agregar archivos",
     "addFolder": "Agregar carpeta",
     "addMaterials": "Agregar materiales de la tarea",
+    "aiDisclaimer": "Contenido generado por IA. Verifica la información importante.",
     "aiServiceStarting": "Iniciando el servicio de IA…",
     "aiServiceStartingDetail": "El primer inicio puede tardar alrededor de un minuto. Espera un momento.",
     "attachmentSaveFailed": "No se pudo guardar el adjunto {{fileName}}",
