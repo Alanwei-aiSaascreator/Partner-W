@@ -127,7 +127,10 @@ describe('buildPdfHtml', () => {
 
 describe('renderPdf', () => {
   it('⭐ 把 HTML 交给打印器，拿回它的 buffer（打印那一步可注入）', async () => {
-    const print = vi.fn(async () => Buffer.from('%PDF-1.4 假的可交付'));
+    // ⚠️ 参数类型必须写出来：不写的话 `mock.calls` 是长度 0 的元组，
+    //    下面 `calls[0][0]` 直接编不过（tsc 报 TS2493）—— 而"交给打印器的 HTML"
+    //    正是这一条要读的载荷。同款坑见 `chat-composer.test.ts` 的注释。
+    const print = vi.fn(async (_html: string) => Buffer.from('%PDF-1.4 假的可交付'));
 
     const buffer = await renderPdf(
       { kind: 'pdf', title: '周报', sections: [{ paragraphs: ['正文'], bullets: [] }] },

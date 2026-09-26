@@ -56,7 +56,7 @@ export default function ComputerAccessBadge({
     <span
       data-field="computer-access-badge"
       title={t('computerAccess.badgeTitle')}
-      className="inline-flex items-center gap-1 rounded-md bg-[var(--warning-bg,var(--bg-tertiary))] px-2 py-1 type-badge text-[var(--warning,var(--accent))]"
+      className="inline-flex items-center gap-1 rounded-md bg-[var(--bg-warning)] px-2 py-1 type-badge text-[var(--warning)]"
     >
       <Zap size={13} aria-hidden="true" />
       {t('computerAccess.stateOn')}

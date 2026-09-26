@@ -200,7 +200,7 @@ export default function FilePreview({ artifact, onNavigateToTask, onClose }: Fil
             title={t('filePreview.htmlTitle')}
             srcDoc={htmlDoc}
             sandbox=""
-            className="h-full w-full border-0 bg-white"
+            className="h-full w-full border-0 bg-[var(--document-canvas)]"
           />
         </div>
       ) : pdfUrl ? (
