@@ -185,15 +185,20 @@ describe('extractDocgenBlocks（经 generateDocumentsFromMessage 间接验）', 
     expect(mocks.saveArtifactFromBuffer).not.toHaveBeenCalled();
   });
 
-  it('不认识的 kind（pdf）⇒ 记账，而不是硬猜一个格式', async () => {
+  // ⚠️ 2026-09-26：这条原来拿 `pdf` 当"不认识的 kind" —— 而 pdf 从这一版起**认得**了，
+  //    于是它走了真渲染路径、报的是"缺 sections"。换成一个真的不存在的 kind，
+  //    这条测的才是它本来要测的东西（认不出 ⇒ 记账，而不是硬猜一个格式）。
+  it('不认识的 kind（csv）⇒ 记账，而不是硬猜一个格式', async () => {
     const result = await generateDocumentsFromMessage({
       workspacePath,
       taskId,
       messageId,
-      content: docgenBlock({ kind: 'pdf', title: 't', slides: [] }),
+      content: docgenBlock({ kind: 'csv', title: 't', rows: [] }),
     });
     expect(result.saved).toEqual([]);
     expect(result.failed).toHaveLength(1);
+    // `failed` 是**错误文案数组**（不是对象）；错误里要列出支持的格式，助手才知道该改成什么
+    expect(result.failed[0], '错误里要列出支持的格式').toContain('pptx');
   });
 
   it('两份块 ⇒ 存两份，且一份坏不影响另一份', async () => {

@@ -41,12 +41,15 @@ describe('parseDocgenRequest', () => {
     }
   });
 
-  it('kind 缺失 / 不认识 ⇒ 拒，且错误里说清支持哪三种（P2 起 docx、xlsx 也是合法的）', () => {
+  // ⚠️ 2026-09-26：这条原来拿 `pdf` 当"不认识的 kind"，而 pdf 从这一版起**认得**了
+  //    ⇒ 它不再走这条路。换成一个真的不存在的 kind，并保留"错误里要列全支持的格式"
+  //    这条判据（它按 `DOCGEN_KINDS` 逐个数，以后再加第五种也自动跟上）。
+  it('kind 缺失 / 不认识 ⇒ 拒，且错误里说清支持哪几种（P2 起 docx、xlsx，本版起 pdf 也是合法的）', () => {
     const missing = parseDocgenRequest({ ...valid, kind: undefined });
     expect(missing.ok).toBe(false);
     if (!missing.ok) expect(missing.error).toContain('kind is required');
 
-    const wrong = parseDocgenRequest({ ...valid, kind: 'pdf' });
+    const wrong = parseDocgenRequest({ ...valid, kind: 'csv' });
     expect(wrong.ok).toBe(false);
     if (!wrong.ok) {
       for (const kind of DOCGEN_KINDS) expect(wrong.error, `错误里应当列出 ${kind}`).toContain(kind);
