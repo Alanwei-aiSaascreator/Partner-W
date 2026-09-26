@@ -61,11 +61,13 @@ export const SLIDE_TITLE = Object.freeze({ x: 0.6, y: 0.45, w: 9, h: 0.9, pt: 26
  */
 export const SLIDE_TITLE_RULE = Object.freeze({ x: 0.6, y: 1.28, w: 1.2, h: 0.045 });
 
-/** 封面标题下面那条短装饰线。封面上唯一在标题与副标题之间的元素，也就是标题的下边界。 */
+/**
+ * 封面标题下面那条短装饰线。封面上唯一在标题与副标题之间的元素，也就是标题的下边界。
+ *
+ * ⚠️ 这里的 `y` **不是**画上去才有的数字：`COVER_SUBTITLE` 的上边界、以及
+ *    `findPptxLayoutProblem` 判"封面标题装不装得下"都读它。改了它 = 改了判定。
+ */
 export const COVER_RULE = Object.freeze({ x: 0.6, y: 3.5, w: 1.6, h: 0.06 });
-
-/** 幻灯片尺寸（英寸）—— 就是 pptxgenjs 的 `LAYOUT_16x9`。 */
-export const SLIDE_SIZE = Object.freeze({ w: 10, h: 5.625 });
 
 /**
  * 页脚那一行：**左边演示标题、右边页码**。
