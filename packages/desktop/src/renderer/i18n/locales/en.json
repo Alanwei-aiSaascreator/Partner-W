@@ -606,6 +606,7 @@
   },
   "computerAccess": {
     "applyFailed": "Not applied: {{reason}}",
+    "badgeTitle": "Full access is on for this task: the assistant can operate the whole computer",
     "consentAcknowledge": "I understand the consequences above and consent to grant this on this computer",
     "consentBullet1": "Read and modify files outside its workspace (Desktop, Downloads, other drives, …)",
     "consentBullet2": "Run commands without asking for your approval each time",

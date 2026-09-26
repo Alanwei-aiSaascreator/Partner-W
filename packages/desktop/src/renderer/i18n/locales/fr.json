@@ -606,6 +606,7 @@
   },
   "computerAccess": {
     "applyFailed": "Non appliqué : {{reason}}",
+    "badgeTitle": "Accès complet activé pour cette tâche : l'assistant peut piloter tout l'ordinateur",
     "consentAcknowledge": "Je comprends les conséquences ci-dessus et j'accepte de l'accorder sur cet ordinateur",
     "consentBullet1": "Lire et modifier des fichiers hors de son espace de travail (Bureau, Téléchargements, autres disques…)",
     "consentBullet2": "Exécuter des commandes sans demander votre accord à chaque fois",

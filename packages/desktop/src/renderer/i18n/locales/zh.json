@@ -606,6 +606,7 @@
   },
   "computerAccess": {
     "applyFailed": "没有生效：{{reason}}",
+    "badgeTitle": "这个任务已打开「全权」：助手能操作整台电脑",
     "consentAcknowledge": "我已了解上面的后果，并同意在这台电脑上授权",
     "consentBullet1": "读取和修改工作区以外的文件（桌面、下载、其它磁盘等）",
     "consentBullet2": "运行命令，并且不再逐条征求你的同意",

@@ -63,6 +63,7 @@ import { useAttachments } from './useAttachments';
 import { useMentionPicker } from './useMentionPicker';
 import { useSlashAutocomplete } from './useSlashAutocomplete';
 import TaskMaterials from './TaskMaterials';
+import ComputerAccessBadge from '@/components/ComputerAccessBadge';
 import { buildMentionAgents } from './mention-agents';
 import { useTaskMaterials } from './useTaskMaterials';
 import { formatContextWindow } from './utils';
@@ -879,6 +880,8 @@ export default function ChatInput({
                     </DropdownMenu>
 
                     <div className="flex items-center">
+                      {/* 「全权」徽章：读的是**网关回来的真值**（见 ComputerAccessBadge 的注释）。 */}
+                      <ComputerAccessBadge gatewayId={activeTaskGatewayId} sessionKey={activeTask?.sessionKey} />
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <ToolbarButton

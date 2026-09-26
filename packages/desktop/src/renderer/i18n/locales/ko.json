@@ -606,6 +606,7 @@
   },
   "computerAccess": {
     "applyFailed": "적용되지 않았습니다: {{reason}}",
+    "badgeTitle": "이 작업은 전체 권한이 켜져 있습니다: 어시스턴트가 컴퓨터 전체를 조작할 수 있습니다",
     "consentAcknowledge": "위 결과를 이해했으며 이 컴퓨터에서 권한을 부여하는 데 동의합니다",
     "consentBullet1": "작업 공간 밖의 파일(바탕 화면, 다운로드, 다른 드라이브 등) 읽기 및 수정",
     "consentBullet2": "명령을 매번 승인받지 않고 실행",

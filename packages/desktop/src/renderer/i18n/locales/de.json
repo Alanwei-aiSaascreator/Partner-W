@@ -606,6 +606,7 @@
   },
   "computerAccess": {
     "applyFailed": "Nicht angewendet: {{reason}}",
+    "badgeTitle": "Für diese Aufgabe ist Vollzugriff aktiv: Der Assistent kann den ganzen Computer bedienen",
     "consentAcknowledge": "Ich verstehe die oben genannten Folgen und stimme dieser Freigabe auf diesem Computer zu",
     "consentBullet1": "Dateien außerhalb des Arbeitsbereichs lesen und ändern (Desktop, Downloads, andere Laufwerke …)",
     "consentBullet2": "Befehle ausführen, ohne jedes Mal nachzufragen",

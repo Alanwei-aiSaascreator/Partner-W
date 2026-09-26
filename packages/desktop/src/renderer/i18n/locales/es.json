@@ -606,6 +606,7 @@
   },
   "computerAccess": {
     "applyFailed": "No se aplicó: {{reason}}",
+    "badgeTitle": "Acceso total activado en esta tarea: el asistente puede operar todo el equipo",
     "consentAcknowledge": "Entiendo las consecuencias anteriores y acepto concederlo en este equipo",
     "consentBullet1": "Leer y modificar archivos fuera de su espacio de trabajo (Escritorio, Descargas, otras unidades…)",
     "consentBullet2": "Ejecutar comandos sin pedir tu aprobación cada vez",
