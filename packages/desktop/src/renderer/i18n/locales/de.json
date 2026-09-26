@@ -893,6 +893,7 @@
     "close": "Vorschau schliessen",
     "goToSource": "Zur Quellnachricht springen",
     "goToSourceShort": "Zur Quelle",
+    "htmlTitle": "HTML-Vorschau",
     "openInEditor": "Im Editor oeffnen",
     "pdfTitle": "PDF preview",
     "revealInFolder": "Im Finder anzeigen",
@@ -1022,46 +1023,18 @@
     "applyFailed": "Kein Gateway verbunden – Übernahme nicht möglich",
     "cardHint": "Wählen Sie ein Identitäts-Tag, erstellen Sie geführt Ihre Persona und übernehmen Sie empfohlene Rolle und Skills mit einem Klick.",
     "cardTitle": "Persona generieren",
-    "direction": "Fokus: {{value}}",
-    "directionValue": "Datenanalyse",
-    "footerHint": "Beim Szenariowechsel ändern sich Standard-Skills und Tonalität dieser Identität. Die Rolle bleibt gleich; Änderungen gelten nach dem Speichern.",
     "group": {
-      "ecommerce": {
-        "desc": "Produktauswahl, Listings und Review",
-        "name": "E-Commerce"
-      },
-      "educator": {
-        "desc": "Unterricht, Folien und Lernanalyse",
-        "name": "Lehrkräfte"
-      },
-      "engineer": {
-        "desc": "Code-Review, Doku und Debugging",
-        "name": "Entwickler"
-      },
-      "legal": {
-        "desc": "Vertragsprüfung und Klauselrisiken",
-        "name": "Recht & Compliance"
-      }
+      "ecommerce": {},
+      "educator": {},
+      "engineer": {},
+      "legal": {}
     },
     "needTag": "Mindestens ein Tag auswählen",
-    "otherGroups": "Weitere Zielgruppen",
-    "personaDesc": "Eine Fachkraft, die Berichte, Dokumente, Meetings und Daten parallel managt – strukturiert und ergebnisorientiert.",
-    "personaTag": "Bürofachkraft",
     "reselect": "Neu wählen",
     "roleLabel": "Empfohlene Rolle",
-    "roleValue": "Effizientes Büro",
     "save": "Diese Identität speichern und anwenden",
-    "savedToast": "Identität gespeichert und übernommen",
     "shuffle": "Tag wechseln",
-    "skill": {
-      "dataAssistant": "Datenassistent",
-      "dataViz": "Diagramm-Assistent",
-      "docManager": "Dokumentenverwaltung",
-      "mailExpert": "E-Mail-Experte",
-      "meetingSecretary": "Meeting-Sekretariat",
-      "officeDoc": "Office-Dokumente",
-      "toolbox": "Effizienz-Toolbox"
-    },
+    "skill": {},
     "skillsLabel": "Empfohlene Skills",
     "subtitle": "Wählen Sie Ihre Zielgruppe – die KI empfiehlt passende Rollen, Skill-Sets und Tonalität. Jederzeit wechselbar.",
     "tag": {

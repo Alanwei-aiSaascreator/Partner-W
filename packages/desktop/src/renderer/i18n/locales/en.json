@@ -893,6 +893,7 @@
     "close": "Close preview",
     "goToSource": "Go to source message",
     "goToSourceShort": "Go to Source",
+    "htmlTitle": "HTML preview",
     "openInEditor": "Open in Editor",
     "pdfTitle": "PDF preview",
     "revealInFolder": "Reveal in Finder",
@@ -1022,46 +1023,18 @@
     "applyFailed": "Gateway not connected — cannot apply yet",
     "cardHint": "Pick an identity tag, follow the guide to build your persona, then apply the recommended role and skills in one click.",
     "cardTitle": "Persona generation",
-    "direction": "Focus: {{value}}",
-    "directionValue": "Data analysis",
-    "footerHint": "Switching scenarios replaces the default skill set and tone preview for this identity. The role stays the same; changes apply after saving.",
     "group": {
-      "ecommerce": {
-        "desc": "Product picks, listings and reviews",
-        "name": "E-commerce ops"
-      },
-      "educator": {
-        "desc": "Lesson prep, slides and student analysis",
-        "name": "Educator"
-      },
-      "engineer": {
-        "desc": "Code review, docs and debugging",
-        "name": "Software engineer"
-      },
-      "legal": {
-        "desc": "Contract review and clause risk",
-        "name": "Legal & compliance"
-      }
+      "ecommerce": {},
+      "educator": {},
+      "engineer": {},
+      "legal": {}
     },
     "needTag": "Pick at least one tag",
-    "otherGroups": "Other audience groups",
-    "personaDesc": "A professional juggling reports, documents, meetings and data — values structure and output.",
-    "personaTag": "Office professional",
     "reselect": "Choose again",
     "roleLabel": "Recommended role",
-    "roleValue": "Efficient office",
     "save": "Save and apply this identity",
-    "savedToast": "Identity saved and applied",
     "shuffle": "Shuffle tag",
-    "skill": {
-      "dataAssistant": "Data assistant",
-      "dataViz": "Chart assistant",
-      "docManager": "Document manager",
-      "mailExpert": "Email expert",
-      "meetingSecretary": "Meeting secretary",
-      "officeDoc": "Office doc generator",
-      "toolbox": "Productivity toolbox"
-    },
+    "skill": {},
     "skillsLabel": "Recommended skills",
     "subtitle": "Pick your audience group. Roles, skills and tone are recommended for that identity — switch any time.",
     "tag": {

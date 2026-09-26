@@ -893,6 +893,7 @@
     "close": "Fermer l'aperçu",
     "goToSource": "Aller au message source",
     "goToSourceShort": "Voir la source",
+    "htmlTitle": "Aperçu HTML",
     "openInEditor": "Ouvrir dans l'éditeur",
     "pdfTitle": "PDF preview",
     "revealInFolder": "Afficher dans le Finder",
@@ -1022,46 +1023,18 @@
     "applyFailed": "Passerelle non connectée — application impossible",
     "cardHint": "Choisissez une étiquette d’identité, suivez le guide pour créer votre persona, puis appliquez le rôle et les compétences recommandés en un clic.",
     "cardTitle": "Générer le persona",
-    "direction": "Axe : {{value}}",
-    "directionValue": "Analyse de données",
-    "footerHint": "Changer de scénario remplace les compétences et la tonalité par défaut de cette identité. Le rôle reste inchangé ; application après enregistrement.",
     "group": {
-      "ecommerce": {
-        "desc": "Sélection, fiches et bilan",
-        "name": "E-commerce"
-      },
-      "educator": {
-        "desc": "Préparation, supports et analyse",
-        "name": "Enseignants"
-      },
-      "engineer": {
-        "desc": "Revue de code, docs et débogage",
-        "name": "Ingénieur logiciel"
-      },
-      "legal": {
-        "desc": "Revue de contrats et risques",
-        "name": "Juridique et conformité"
-      }
+      "ecommerce": {},
+      "educator": {},
+      "engineer": {},
+      "legal": {}
     },
     "needTag": "Choisissez au moins une étiquette",
-    "otherGroups": "Autres audiences",
-    "personaDesc": "Un professionnel qui mène de front rapports, documents, réunions et données : structuré et orienté résultats.",
-    "personaTag": "Professionnel de bureau",
     "reselect": "Choisir à nouveau",
     "roleLabel": "Rôle recommandé",
-    "roleValue": "Bureau efficace",
     "save": "Enregistrer et appliquer cette identité",
-    "savedToast": "Identité enregistrée et appliquée",
     "shuffle": "Changer d’étiquette",
-    "skill": {
-      "dataAssistant": "Assistant données",
-      "dataViz": "Assistant graphiques",
-      "docManager": "Gestion de documents",
-      "mailExpert": "Expert e-mail",
-      "meetingSecretary": "Secrétaire de réunion",
-      "officeDoc": "Génération de documents",
-      "toolbox": "Boîte à outils"
-    },
+    "skill": {},
     "skillsLabel": "Compétences recommandées",
     "subtitle": "Choisissez votre audience : l’IA recommande rôles, compétences et tonalité pour cette identité. Modifiable à tout moment.",
     "tag": {

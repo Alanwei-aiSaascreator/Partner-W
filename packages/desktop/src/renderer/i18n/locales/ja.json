@@ -893,6 +893,7 @@
     "close": "プレビューを閉じる",
     "goToSource": "元のメッセージへ移動",
     "goToSourceShort": "元のメッセージ",
+    "htmlTitle": "HTML プレビュー",
     "openInEditor": "エディターで開く",
     "pdfTitle": "PDF preview",
     "revealInFolder": "Finder で表示",
@@ -1022,46 +1023,18 @@
     "applyFailed": "ゲートウェイに接続していないため適用できません",
     "cardHint": "アイデンティティタグを選ぶと、ガイドに沿って専用ペルソナを生成し、推奨の役割とスキルをワンクリックで適用できます。",
     "cardTitle": "ペルソナ生成",
-    "direction": "分析方向：{{value}}",
-    "directionValue": "データ分析",
-    "footerHint": "シーンを切り替えると、このアイデンティティの既定スキル構成と話し方プレビューが変わります。役割は変わりません。保存後に反映されます。",
     "group": {
-      "ecommerce": {
-        "desc": "商品選定・詳細ページ・振り返り",
-        "name": "EC 運営"
-      },
-      "educator": {
-        "desc": "授業準備・スライド・学情分析",
-        "name": "教育関係者"
-      },
-      "engineer": {
-        "desc": "コードレビュー・文書・障害対応",
-        "name": "エンジニア"
-      },
-      "legal": {
-        "desc": "契約審査と条項リスク",
-        "name": "法務・コンプライアンス"
-      }
+      "ecommerce": {},
+      "educator": {},
+      "engineer": {},
+      "legal": {}
     },
     "needTag": "タグを1つ以上選んでください",
-    "otherGroups": "その他の客群",
-    "personaDesc": "報告・資料・会議・データを並行してこなすビジネスパーソン。筋道と成果を重視。",
-    "personaTag": "ビジネスパーソン",
     "reselect": "選び直す",
     "roleLabel": "推奨の役割",
-    "roleValue": "効率オフィス",
     "save": "このアイデンティティ設定を保存して適用",
-    "savedToast": "アイデンティティを保存して適用しました",
     "shuffle": "タグを変える",
-    "skill": {
-      "dataAssistant": "データアシスタント",
-      "dataViz": "グラフ作成",
-      "docManager": "ドキュメント管理",
-      "mailExpert": "メール専門",
-      "meetingSecretary": "議事録秘書",
-      "officeDoc": "オフィス文書生成",
-      "toolbox": "効率ツール箱"
-    },
+    "skill": {},
     "skillsLabel": "推奨スキル",
     "subtitle": "客群を選ぶと、AI がそのアイデンティティに合わせて役割・スキル構成・話し方を提案します。いつでも切替可能。",
     "tag": {

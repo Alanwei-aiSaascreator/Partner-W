@@ -8,49 +8,43 @@ import { useUiStore } from '@/stores/uiStore';
 import { useSelectAgent } from '@/hooks/useSelectAgent';
 import AgentMissingNotice from '@/components/AgentMissingNotice';
 import { resolveRequestedAgent } from '@/lib/requested-agent';
-import { ASSISTANT_ID_BY_WORKSPACE } from '@/lib/assistant-task-presets';
+import { PRESET_AGENT_IDS, resolveAssistantWorkspace } from '@/lib/preset-agents';
 import {
   IDENTITY_DEFAULT_TAGS,
   IDENTITY_PERSONA_TAGS,
+  USER_MD_MAX_CHARS,
+  buildIdentityBlock,
+  mergeIdentityIntoUserMd,
   nextTagSelection,
   type IdentityTagId,
 } from '@/lib/identity-persona';
 
-/** 标签选择的落盘位置（本机、不上云 —— 与引导问卷一样用 localStorage）。 */
-export const IDENTITY_STORAGE_KEY = 'cw:identity-tags';
-
-/** 推荐技能（**展示用** —— 见文件头"刻意没做的"）。 */
-export const IDENTITY_SKILL_IDS = [
-  'docManager',
-  'officeDoc',
-  'dataAssistant',
-  'dataViz',
-  'meetingSecretary',
-  'toolbox',
-  'mailExpert',
-] as const;
-
 /**
  * 身份中心。
  *
- * ## 这一版做了什么（2026-09-19 第二刀）
+ * ## v2（2026-09-26）：把"展示"换成**真的**
  *
- * 第一版是**纯排版**（按钮没有 `onClick`，用户反馈「功能用不了」）。这一刀把它接上：
+ * 用户真机反馈「身份中心里面改不了，重新选择、换标签这些点击没反应」。
+ * 真机复现（CDP 真实鼠标事件，盘上 0.0.34）的结论是：**不是事件坏了** ——
+ * 五个标签、重新选择、换一个标签、应用、保存**全都真的执行**；
+ * 坏的是**页面承诺的事一件都没发生**：
  *
- * | 按钮 | 现在真的做什么 |
- * | --- | --- |
- * | 标签 | 点击切换选中（多选） |
- * | 重新选择 | 清空全部选中 |
- * | 换一个标签 | 按环轮换一格（纯函数 `nextTagSelection`，可单测） |
- * | 应用此画像 | **真的切到「高效办公」助手**（`setSelectedAgent`）+ 提示 |
- * | 保存并应用此身份配置 | 上面那步 + 把标签选择存进 localStorage |
+ * | 页面元素 | v1（被反馈的那版） | v2（现在） |
+ * | --- | --- | --- |
+ * | 客群 | 四张**死卡**（`cursor:auto`、没有 onClick，名字还是设计稿编的） | **真实助手**七个，点一下真的切（`useSelectAgent`） |
+ * | 画像正文 | **常量**，点什么都不变 | 随（客群 + 标签）**实时变** |
+ * | 推荐技能 | 七个**网关里不存在**的技能名 | 该助手**真实能做的四件事**（`resolveAssistantTaskPresets`） |
+ * | 保存 | 只写 localStorage（用户看不见任何变化） | **合并写进每个助手的 `USER.md`**（运行时每轮都读它） |
+ * | 应用 | 写死切「高效办公」 | 切**当前选中的客群** |
  *
- * ⚠️ **这一版刻意没做的**（都要先定口径，见 `docs/superpowers/specs/2026-09-19-身份中心-design.md`）：
- * - **推荐技能那排仍是展示** —— 那 7 个技能在网关里**不存在**，而客户端**没有写技能的通道**
- * - **没有新立一份「画像」** —— 产品里已有一份（引导问卷 + 设置→账户的「工作画像」），
- *   再立一份会打架；这里只存了**标签选择**
- * - 「其它客群」四张卡仍是展示（没有对应的助手 / 内容）
+ * ⚠️ 教训写在这里：`identity-center.test.tsx` v1 有 16 条全绿，而它测的是
+ *    「按钮有没有 handler」；**jsdom 测得到 handler，测不到"点了以后世界有没有变化"**。
+ *    v2 的断言改成"点下去看得见什么"，并单独钉了一条"画像正文跟着变"。
  */
+
+/** 页面上的客群顺序：罗盘打头，其余按预置清单的顺序。 */
+const IDENTITY_AGENT_IDS: readonly string[] = ['main', ...PRESET_AGENT_IDS];
+
 export default function IdentityCenter() {
   const { t } = useTranslation();
   const gatewayId = useUiStore((s) => s.defaultGatewayId);
@@ -60,36 +54,42 @@ export default function IdentityCenter() {
   const [missingAgentId, setMissingAgentId] = useState<string | null>(null);
   const catalogEntry = useUiStore((s) => (gatewayId ? s.agentCatalogByGateway[gatewayId] : undefined));
   const setMainView = useUiStore((s) => s.setMainView);
-
-  const roleLabel = t('identity.roleValue');
-  const officeAssistantId = ASSISTANT_ID_BY_WORKSPACE.office;
+  const selectedAgentByGateway = useUiStore((s) => s.selectedAgentByGateway);
 
   /**
-   * 「应用」= 把推荐角色**真的切成当前助手**（走 `useSelectAgent`，与左侧
+   * 当前客群 = 应用里**正在用的那个助手**（与左侧「我的助手」同一份状态）。
+   * 不另立一份"我在这一页选了谁" —— 两份必然漂移，而漂移的表现就是
+   * "这一页说电商运营、左边写罗盘助手"。
+   */
+  const currentAgentId =
+    (gatewayId ? selectedAgentByGateway[gatewayId] : undefined) || catalogEntry?.defaultId || 'main';
+  const workspace = resolveAssistantWorkspace(currentAgentId) ?? resolveAssistantWorkspace('main')!;
+
+  const tagLabels = selected.map((id) => t(`identity.tag.${id}`));
+  const groupLabel = t(workspace.titleKey);
+  const personaLine = `${t(workspace.descriptionKey)}｜${tagLabels.length > 0 ? tagLabels.join('、') : '—'}`;
+
+  /**
+   * 「应用」= 把当前客群**真的切成当前助手**（走 `useSelectAgent`，与左侧
    * 「我的助手」切换器**同一条路**：改选择 + 改待发任务 + 离开旧会话 + 回到对话）。
    *
    * ⚠️ 没有网关时**如实报错**，不假装成功（本项目栽过"把不确定说成确定"）。
-   * ⭐ 2026-09-24 起**会**查"这个助手在不在目录里"，但**只在目录已加载时**查
-   *    （见下方 `resolveRequestedAgent` 那段）。原来这里写的是"**不做**这个检查"，
-   *    理由是"目录还没拉回来时会误报失败"—— 那条理由依然成立，只是现在由 `loading`
-   *    这一态把它挡住了，所以检查本身不再危险。别再照旧注释把这处检查删掉。
+   * ⭐ 查"这个助手在不在目录里"**只在目录已加载时**做（`resolveRequestedAgent` 返回
+   *    `loading` 时不判缺失）—— 目录还没拉回来就判缺失是用误报换静默。
    */
   const applyPersona = useCallback((): boolean => {
     if (!gatewayId) {
       toast.error(t('identity.applyFailed'));
       return false;
     }
-    // ⭐ 2026-09-24：目录**已加载**且点名要的助手不在里面 ⇒ 如实说明，**不静默换人**。
-    //    目录还没拉回来时这个判据返回 `loading`（不是 missing），走原路 —— 那条既有注释
-    //    （怕误报失败）依然成立。
-    if (resolveRequestedAgent(officeAssistantId, catalogEntry) === 'missing') {
-      setMissingAgentId(officeAssistantId);
+    if (resolveRequestedAgent(currentAgentId, catalogEntry) === 'missing') {
+      setMissingAgentId(currentAgentId);
       return false;
     }
     setMissingAgentId(null);
-    selectAgent(officeAssistantId);
+    selectAgent(currentAgentId);
     return true;
-  }, [catalogEntry, gatewayId, officeAssistantId, selectAgent, t]);
+  }, [catalogEntry, gatewayId, currentAgentId, selectAgent, t]);
 
   /**
    * 提示里的出口：直接切到罗盘助手。
@@ -97,35 +97,86 @@ export default function IdentityCenter() {
    */
   const switchToCompass = useCallback(() => {
     setMissingAgentId(null);
-    selectAgent(ASSISTANT_ID_BY_WORKSPACE.compass);
+    selectAgent('main');
   }, [selectAgent]);
+
+  /** 点客群卡：真的切，但**留在这一页**（用户是在挑，不是在开新任务）。 */
+  const chooseGroup = useCallback(
+    (agentId: string) => {
+      selectAgent(agentId);
+      // ⚠️ 顺序有意：`useSelectAgent` 的最后一步会把主区切到对话页。
+      //    这一页是"选择器"，选完把用户甩进对话页等于让他重新找路。
+      //    **不能改成只调 `setSelectedAgent`** —— 那个 hook 的四步是一个整体
+      //    （少了 `setPending` 就会出现"下一条消息发给上一个助手"的老毛病）。
+      setMainView('identity');
+    },
+    [selectAgent, setMainView],
+  );
 
   const onApply = useCallback(() => {
     if (selected.length === 0) {
       toast.error(t('identity.needTag'));
       return;
     }
-    if (applyPersona()) toast.success(t('identity.appliedToast', { role: roleLabel }));
-  }, [selected.length, applyPersona, roleLabel, t]);
+    if (applyPersona()) toast.success(t('identity.appliedToast', { role: groupLabel }));
+  }, [selected.length, applyPersona, groupLabel, t]);
 
+  const toggleTag = (id: IdentityTagId) =>
+    setSelected((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+
+  /**
+   * 「保存并应用」= 切助手 + **把身份写进每个助手的记忆**（`USER.md`）。
+   *
+   * ⚠️ 每个助手**各读各的、各写各的**：记忆页那种"读第一个、写给全部"在这里会把
+   *    别的助手自己写的记忆冲掉 —— 那是不可逆的损坏，不是省一次调用。
+   * ⚠️ 写在前、切在后：切助手会把主区切走（页面卸载），先写才不会半途而废。
+   * ⚠️ 部分失败/超限**如实报**（几个没写成、超了上限），**不许**报"已保存"。
+   */
   const onSave = useCallback(() => {
     if (selected.length === 0) {
       toast.error(t('identity.needTag'));
       return;
     }
-    if (!applyPersona()) return;
-    try {
-      window.localStorage.setItem(IDENTITY_STORAGE_KEY, JSON.stringify(selected));
-    } catch {
-      /* 存不进就算了 —— 应用那一步已经生效，不该因为存储报错把它说成失败 */
+    if (!gatewayId) {
+      toast.error(t('identity.applyFailed'));
+      return;
     }
-    toast.success(t('identity.savedToast'));
-  }, [selected, applyPersona, t]);
+    const agents = catalogEntry?.agents ?? [];
+    if (agents.length === 0) {
+      toast.error(t('settings.memoryNoAgents'));
+      return;
+    }
+    const block = buildIdentityBlock({ groupLabel, tagLabels });
 
-  const toggleTag = (id: IdentityTagId) =>
-    setSelected((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+    void (async () => {
+      let failed = 0;
+      let overLimit = 0;
+      for (const agent of agents) {
+        const read = await window.clawwork.getAgentFile(gatewayId, agent.id, 'USER.md');
+        const existing = read.ok && read.result ? String((read.result as { content?: unknown }).content ?? '') : '';
+        const merged = mergeIdentityIntoUserMd(existing, block);
+        if (!merged.ok) {
+          overLimit += 1;
+          failed += 1;
+          continue;
+        }
+        const write = await window.clawwork.setAgentFile(gatewayId, agent.id, 'USER.md', merged.content);
+        if (!write.ok) failed += 1;
+      }
 
-  const otherGroups = ['educator', 'legal', 'ecommerce', 'engineer'] as const;
+      applyPersona();
+
+      if (overLimit === agents.length) {
+        toast.error(t('settings.memoryTooLong', { max: USER_MD_MAX_CHARS }));
+        return;
+      }
+      if (failed > 0) {
+        toast.error(t('settings.memorySavePartial', { failed, total: agents.length }));
+        return;
+      }
+      toast.success(t('settings.memorySaved', { count: agents.length }));
+    })();
+  }, [selected.length, tagLabels, groupLabel, gatewayId, catalogEntry, applyPersona, t]);
 
   return (
     <div data-testid="identity-center" className="flex h-full flex-col overflow-hidden">
@@ -133,6 +184,39 @@ export default function IdentityCenter() {
         <div className="px-5 py-4">
           <h1 className="type-page-title text-[var(--text-primary)]">{t('identity.title')}</h1>
           <p className="type-support mt-1 text-[var(--text-muted)]">{t('identity.subtitle')}</p>
+
+          {/* ── 客群（= 真实助手）：点一下真的换 ── */}
+          <div className="mt-3 grid grid-cols-4 gap-2.5">
+            {IDENTITY_AGENT_IDS.map((agentId) => {
+              const ws = resolveAssistantWorkspace(agentId);
+              if (!ws) return null;
+              const on = agentId === currentAgentId;
+              return (
+                <button
+                  key={agentId}
+                  type="button"
+                  data-group={agentId}
+                  data-selected={on ? 'true' : 'false'}
+                  aria-pressed={on}
+                  onClick={() => chooseGroup(agentId)}
+                  className={
+                    'glow-focus rounded-[10px] border px-3 py-2.5 text-left transition-colors ' +
+                    (on
+                      ? 'border-[var(--accent)] bg-[var(--accent-dim)]'
+                      : 'border-[var(--border)] bg-[var(--bg-elevated)] hover:bg-[var(--bg-hover)]')
+                  }
+                >
+                  <p className="type-body font-semibold text-[var(--text-primary)]">
+                    <span aria-hidden="true" className="mr-1.5">
+                      {ws.emoji}
+                    </span>
+                    {t(ws.titleKey)}
+                  </p>
+                  <p className="type-support mt-1 text-[var(--text-muted)]">{t(ws.descriptionKey)}</p>
+                </button>
+              );
+            })}
+          </div>
 
           {/* ── 画像生成卡片 ── */}
           <section className="mt-3 rounded-[10px] border border-[var(--border)] bg-[var(--bg-elevated)] shadow-[var(--elev-1)]">
@@ -143,17 +227,11 @@ export default function IdentityCenter() {
               </div>
               <p className="type-support mt-1 text-[var(--text-muted)]">{t('identity.cardHint')}</p>
 
-              <div className="mt-2 flex flex-wrap items-center gap-2">
-                <span className="type-badge inline-flex items-center gap-1.5 rounded-md bg-[var(--accent-dim)] px-2.5 py-1 text-[var(--accent)]">
-                  <UserRound className="size-3.5" />
-                  {t('identity.personaTag')}
-                </span>
-                <span className="type-badge inline-flex items-center gap-1.5 rounded-md bg-[var(--bg-tertiary)] px-2.5 py-1 text-[var(--text-secondary)]">
-                  {t('identity.direction', { value: t('identity.directionValue') })}
-                </span>
-              </div>
-
-              <p className="type-body mt-2 text-[var(--text-secondary)]">{t('identity.personaDesc')}</p>
+              {/* ⭐ 画像正文**随选区实时变** —— 上一版这里是常量，用户点了标签以为"没反应" */}
+              <p className="type-body mt-2 text-[var(--text-secondary)]" data-field="persona">
+                <UserRound className="mr-1 inline size-3.5 align-[-2px] text-[var(--accent)]" />
+                {personaLine}
+              </p>
 
               <p className="type-support mt-3 text-[var(--text-muted)]">{t('identity.tagsLabel')}</p>
               <div className="mt-1.5 flex flex-wrap gap-1.5">
@@ -184,19 +262,20 @@ export default function IdentityCenter() {
                 <div>
                   <p className="type-support text-[var(--text-muted)]">{t('identity.roleLabel')}</p>
                   <p className="type-body mt-1 font-semibold text-[var(--text-primary)]" data-field="role">
-                    {roleLabel}
+                    {groupLabel}
                   </p>
                 </div>
                 <div className="col-span-3">
                   <p className="type-support text-[var(--text-muted)]">{t('identity.skillsLabel')}</p>
-                  {/* ⚠️ 这一排**仍是展示**：那 7 个技能在网关里不存在，客户端也没有写技能的通道。 */}
+                  {/* ⭐ 这一排是**这个助手真实能做的四件事**（来自预置任务的标题），
+                      不再是上一版那七个网关里根本不存在的技能名。 */}
                   <div className="mt-1 flex flex-wrap gap-1.5" data-field="skills">
-                    {IDENTITY_SKILL_IDS.map((key) => (
+                    {workspace.starters.map((starter) => (
                       <span
-                        key={key}
+                        key={starter.id}
                         className="type-badge inline-flex items-center rounded-md bg-[var(--bg-tertiary)] px-2.5 py-1 text-[var(--text-secondary)]"
                       >
-                        {t(`identity.skill.${key}`)}
+                        {t(starter.titleKey)}
                       </span>
                     ))}
                   </div>
@@ -210,9 +289,7 @@ export default function IdentityCenter() {
                   agentId={missingAgentId}
                   // ⚠️ 罗盘自己也不在目录里时不给这个出口（同 `WelcomeScreen`，复核 M-2）。
                   onSwitchAssistant={
-                    catalogEntry?.agents.some((agent) => agent.id === ASSISTANT_ID_BY_WORKSPACE.compass)
-                      ? switchToCompass
-                      : undefined
+                    catalogEntry?.agents.some((agent) => agent.id === 'main') ? switchToCompass : undefined
                   }
                   onOpenTeams={() => setMainView('teams')}
                 />
@@ -246,27 +323,12 @@ export default function IdentityCenter() {
               </Button>
             </div>
           </section>
-
-          {/* ── 其它客群（仍是展示：没有对应的助手与内容） ── */}
-          <p className="type-body mt-4 font-semibold text-[var(--text-primary)]">{t('identity.otherGroups')}</p>
-          <div className="mt-2 grid grid-cols-4 gap-2.5">
-            {otherGroups.map((key) => (
-              <div
-                key={key}
-                data-group={key}
-                className="rounded-[10px] border border-[var(--border)] bg-[var(--bg-elevated)] px-3 py-2.5 shadow-[var(--elev-1)]"
-              >
-                <p className="type-body font-semibold text-[var(--text-primary)]">{t(`identity.group.${key}.name`)}</p>
-                <p className="type-support mt-1 text-[var(--text-muted)]">{t(`identity.group.${key}.desc`)}</p>
-              </div>
-            ))}
-          </div>
         </div>
       </ScrollArea>
 
       {/* ── 固定底栏 ── */}
       <div className="flex flex-none items-center gap-3 border-t border-[var(--border)] bg-[var(--bg-secondary)] px-5 py-2">
-        <span className="type-support flex-1 text-[var(--text-muted)]">{t('identity.footerHint')}</span>
+        <span className="type-support flex-1 text-[var(--text-muted)]">{t('settings.memoryAboutYouHint')}</span>
         <Button size="sm" className="type-support" data-action="save" onClick={onSave}>
           {t('identity.save')}
         </Button>

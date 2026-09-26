@@ -893,6 +893,7 @@
     "close": "关闭预览",
     "goToSource": "跳转到源消息",
     "goToSourceShort": "跳转到源消息",
+    "htmlTitle": "HTML 预览",
     "openInEditor": "在编辑器中打开",
     "pdfTitle": "PDF 预览",
     "revealInFolder": "在访达中显示",
@@ -1022,46 +1023,18 @@
     "applyFailed": "还没连上网关，暂时应用不了",
     "cardHint": "选一个身份标签，跟着引导生成你的专属人群画像，一键应用推荐角色与技能。",
     "cardTitle": "画像生成",
-    "direction": "分析方向：{{value}}",
-    "directionValue": "数据分析",
-    "footerHint": "切换场景会更换当前身份下的默认技能组合与话术预览，角色保持不变，保存后生效。",
     "group": {
-      "ecommerce": {
-        "desc": "选品、详情页与数据复盘",
-        "name": "电商运营"
-      },
-      "educator": {
-        "desc": "备课、课件与学情分析",
-        "name": "教育工作者"
-      },
-      "engineer": {
-        "desc": "代码审查、文档与排障",
-        "name": "研发工程师"
-      },
-      "legal": {
-        "desc": "合同审阅与条款风险提示",
-        "name": "法务合规"
-      }
+      "ecommerce": {},
+      "educator": {},
+      "engineer": {},
+      "legal": {}
     },
     "needTag": "请至少选一个标签",
-    "otherGroups": "其它客群",
-    "personaDesc": "高效职场人汇报、文档、会议、数据多线并行，讲究条理与产出。",
-    "personaTag": "职场人",
     "reselect": "重新选择",
     "roleLabel": "推荐角色",
-    "roleValue": "高效办公",
     "save": "保存并应用此身份配置",
-    "savedToast": "身份配置已保存并应用",
     "shuffle": "换一个标签",
-    "skill": {
-      "dataAssistant": "数据助手",
-      "dataViz": "数据可视化助手",
-      "docManager": "文档管家",
-      "mailExpert": "邮件专家",
-      "meetingSecretary": "会议秘书",
-      "officeDoc": "办公文档生成",
-      "toolbox": "效率工具箱"
-    },
+    "skill": {},
     "skillsLabel": "推荐技能",
     "subtitle": "选择你的客群，AI 将按身份为你推荐角色、技能组合与话术基调，随时可切换。",
     "tag": {

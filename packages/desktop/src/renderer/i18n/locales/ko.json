@@ -893,6 +893,7 @@
     "close": "미리보기 닫기",
     "goToSource": "원본 메시지로 이동",
     "goToSourceShort": "원본으로 이동",
+    "htmlTitle": "HTML 미리보기",
     "openInEditor": "편집기에서 열기",
     "pdfTitle": "PDF preview",
     "revealInFolder": "Finder에서 표시",
@@ -1022,46 +1023,18 @@
     "applyFailed": "게이트웨이가 연결되지 않아 적용할 수 없습니다",
     "cardHint": "아이덴티티 태그를 고르면 안내에 따라 전용 페르소나를 만들고, 추천 역할과 스킬을 한 번에 적용합니다.",
     "cardTitle": "페르소나 생성",
-    "direction": "분석 방향: {{value}}",
-    "directionValue": "데이터 분석",
-    "footerHint": "시나리오를 바꾸면 이 아이덴티티의 기본 스킬 구성과 말투 미리보기가 바뀝니다. 역할은 그대로이며 저장 후 적용됩니다.",
     "group": {
-      "ecommerce": {
-        "desc": "상품 선정·상세 페이지·회고",
-        "name": "이커머스 운영"
-      },
-      "educator": {
-        "desc": "수업 준비·슬라이드·학습 분석",
-        "name": "교육자"
-      },
-      "engineer": {
-        "desc": "코드 리뷰·문서·장애 대응",
-        "name": "개발 엔지니어"
-      },
-      "legal": {
-        "desc": "계약 검토와 조항 리스크",
-        "name": "법무·컴플라이언스"
-      }
+      "ecommerce": {},
+      "educator": {},
+      "engineer": {},
+      "legal": {}
     },
     "needTag": "태그를 하나 이상 선택하세요",
-    "otherGroups": "다른 고객군",
-    "personaDesc": "보고서·문서·회의·데이터를 동시에 다루는 직장인. 체계와 성과를 중시합니다.",
-    "personaTag": "직장인",
     "reselect": "다시 선택",
     "roleLabel": "추천 역할",
-    "roleValue": "효율 오피스",
     "save": "이 아이덴티티 설정 저장 및 적용",
-    "savedToast": "아이덴티티를 저장하고 적용했습니다",
     "shuffle": "태그 바꾸기",
-    "skill": {
-      "dataAssistant": "데이터 도우미",
-      "dataViz": "차트 도우미",
-      "docManager": "문서 관리자",
-      "mailExpert": "메일 전문가",
-      "meetingSecretary": "회의 비서",
-      "officeDoc": "오피스 문서 생성",
-      "toolbox": "효율 도구함"
-    },
+    "skill": {},
     "skillsLabel": "추천 스킬",
     "subtitle": "고객군을 선택하면 AI가 그 아이덴티티에 맞춰 역할·스킬 구성·말투를 추천합니다. 언제든 전환할 수 있습니다.",
     "tag": {

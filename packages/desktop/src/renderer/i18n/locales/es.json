@@ -893,6 +893,7 @@
     "close": "Cerrar vista previa",
     "goToSource": "Ir al mensaje de origen",
     "goToSourceShort": "Ir al origen",
+    "htmlTitle": "Vista previa de HTML",
     "openInEditor": "Abrir en editor",
     "pdfTitle": "PDF preview",
     "revealInFolder": "Mostrar en Finder",
@@ -1022,46 +1023,18 @@
     "applyFailed": "Sin conexión con la pasarela: no se puede aplicar",
     "cardHint": "Elige una etiqueta de identidad, sigue la guía para crear tu persona y aplica el rol y las habilidades recomendadas con un clic.",
     "cardTitle": "Generar persona",
-    "direction": "Enfoque: {{value}}",
-    "directionValue": "Análisis de datos",
-    "footerHint": "Al cambiar de escenario se reemplazan las habilidades y el tono de esta identidad. El rol no cambia; se aplica al guardar.",
     "group": {
-      "ecommerce": {
-        "desc": "Selección, fichas y análisis",
-        "name": "E-commerce"
-      },
-      "educator": {
-        "desc": "Preparación, diapositivas y análisis",
-        "name": "Docentes"
-      },
-      "engineer": {
-        "desc": "Revisión de código, docs y depuración",
-        "name": "Ingeniero de software"
-      },
-      "legal": {
-        "desc": "Revisión de contratos y riesgos",
-        "name": "Legal y cumplimiento"
-      }
+      "ecommerce": {},
+      "educator": {},
+      "engineer": {},
+      "legal": {}
     },
     "needTag": "Elige al menos una etiqueta",
-    "otherGroups": "Otros grupos",
-    "personaDesc": "Un profesional que compagina informes, documentos, reuniones y datos: valora el orden y los resultados.",
-    "personaTag": "Profesional de oficina",
     "reselect": "Elegir de nuevo",
     "roleLabel": "Rol recomendado",
-    "roleValue": "Oficina eficiente",
     "save": "Guardar y aplicar esta identidad",
-    "savedToast": "Identidad guardada y aplicada",
     "shuffle": "Cambiar etiqueta",
-    "skill": {
-      "dataAssistant": "Asistente de datos",
-      "dataViz": "Asistente de gráficos",
-      "docManager": "Gestor de documentos",
-      "mailExpert": "Experto en correo",
-      "meetingSecretary": "Secretario de reuniones",
-      "officeDoc": "Generador de documentos",
-      "toolbox": "Caja de herramientas"
-    },
+    "skill": {},
     "skillsLabel": "Habilidades recomendadas",
     "subtitle": "Elige tu grupo de usuarios: la IA recomendará roles, habilidades y tono para esa identidad. Puedes cambiarla cuando quieras.",
     "tag": {

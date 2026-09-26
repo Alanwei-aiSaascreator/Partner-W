@@ -4,16 +4,21 @@ import { act, type ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+// ⚠️ `t` 也是桩，但要**记下参数** —— 否则"几个助手没写成""上限多少"这些数字
+//    在断言里全靠猜（本仓栽过"存在性断言绑不住值"）。
 vi.mock('react-i18next', () => ({
-  useTranslation: () => ({ t: (key: string) => key }),
+  useTranslation: () => ({ t: tSpy }),
   initReactI18next: { type: '3rdParty', init: vi.fn() },
 }));
 
 // ⚠️ `vi.mock` 的工厂会被提升到文件最上面 ⇒ 里面引用的变量**必须**用 `vi.hoisted`
 //    造，否则是 "Cannot access 'toastSpy' before initialization"。
-const { toastSpy, selectAgentSpy } = vi.hoisted(() => ({
+const { toastSpy, selectAgentSpy, getAgentFileSpy, setAgentFileSpy, tSpy } = vi.hoisted(() => ({
   toastSpy: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
   selectAgentSpy: vi.fn(),
+  getAgentFileSpy: vi.fn(),
+  setAgentFileSpy: vi.fn(),
+  tSpy: vi.fn((key: string, _params?: unknown) => key),
 }));
 
 vi.mock('@/lib/toast', () => ({ toast: toastSpy }));
@@ -24,7 +29,8 @@ vi.mock('@/lib/toast', () => ({ toast: toastSpy }));
  */
 vi.mock('@/hooks/useSelectAgent', () => ({ useSelectAgent: () => selectAgentSpy }));
 
-import IdentityCenter, { IDENTITY_STORAGE_KEY } from '../src/renderer/layouts/IdentityCenter';
+import IdentityCenter from '../src/renderer/layouts/IdentityCenter';
+import { IDENTITY_BLOCK_START } from '../src/renderer/lib/identity-persona';
 import { useUiStore } from '../src/renderer/stores/uiStore';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -51,22 +57,62 @@ function click(el: Element | null): void {
   });
 }
 
+/** 等异步的保存流程落定（每个助手两轮 await，助手数量不定 ⇒ 多转几圈）。 */
+async function flush(): Promise<void> {
+  await act(async () => {
+    for (let i = 0; i < 40; i += 1) await Promise.resolve();
+  });
+}
+
 const selectedTagIds = (container: HTMLElement): string[] =>
   [...container.querySelectorAll('[data-tag][data-selected="true"]')].map((el) => el.getAttribute('data-tag') ?? '');
+
+const personaText = (container: HTMLElement): string =>
+  container.querySelector('[data-field="persona"]')?.textContent ?? '';
+
+/** 一份最小可用的助手目录：罗盘 + 电商运营（其余助手按需在用例里补）。 */
+const catalog = (agents: string[]) => ({
+  agents: agents.map((id) => ({ id }) as never),
+  defaultId: agents[0] ?? '',
+});
 
 beforeEach(() => {
   vi.clearAllMocks();
   window.localStorage.clear();
-  useUiStore.setState({ defaultGatewayId: 'gw-1' });
+  /**
+   * ⚠️ 桩要忠实于真身：真 `useSelectAgent` 的**第一步**就是
+   * `setSelectedAgent(gatewayId, agentId)`（见 `hooks/useSelectAgent.ts`），
+   * 而这一页的"当前客群"读的正是 store 里那个值。桩成空操作 ⇒ 点了卡片页面上什么都不变
+   * ——那是**夹具**在骗人，不是组件坏了（第一版这 7 条就是这么假红的）。
+   */
+  selectAgentSpy.mockImplementation((agentId: string) => {
+    if (useUiStore.getState().defaultGatewayId) {
+      useUiStore.getState().setSelectedAgent('gw-1', agentId);
+    }
+  });
+  getAgentFileSpy.mockResolvedValue({ ok: true, result: { content: '' } });
+  setAgentFileSpy.mockResolvedValue({ ok: true });
+  Object.assign(window, {
+    clawwork: { getAgentFile: getAgentFileSpy, setAgentFile: setAgentFileSpy },
+  });
+  useUiStore.setState({
+    defaultGatewayId: 'gw-1',
+    mainView: 'identity',
+    agentCatalogByGateway: { 'gw-1': catalog(['main', 'rongying-ecommerce', 'rongying-office']) },
+    selectedAgentByGateway: { 'gw-1': 'main' },
+  });
 });
 
 /**
- * 身份中心（2026-09-19 第二刀）。
+ * 身份中心 v2（2026-09-26）。
  *
- * 第一刀只有排版，用户反馈「功能用不了」—— 因为按钮**压根没有 `onClick`**。
- * 这一刀把每个按钮接上，所以这里的断言从"版式不变量"升级成"按下去发生了什么事"。
+ * 为什么要改：用户真机反馈「身份中心里面改不了，重新选择、换标签这些点击没反应」。
+ * 真机复现（CDP 真实鼠标事件）的结论是 —— **不是事件坏了**：五个标签、重新选择、
+ * 换一个标签、应用、保存**全都真的执行**；坏的是**页面承诺的事一件都没发生**：
+ * 客群卡是死的（`cursor:auto`、无 onClick）、推荐技能是编的、画像文案是常量。
  *
- * ⚠️ 有一条**仍然是排版**：推荐技能那排是死的（见组件文件头"刻意没做的"）。
+ * ⇒ 所以这里的断言从"有没有 handler"升级成"**点下去世界有没有变**"，
+ *   尤其是那四条 ⭐：客群能换、画像会变、保存真的写进助手记忆、超限如实拒绝。
  */
 describe('IdentityCenter — 版式不变量', () => {
   it('渲染标题、卡片标题与底部固定栏', () => {
@@ -76,7 +122,6 @@ describe('IdentityCenter — 版式不变量', () => {
     expect(container.querySelector('[data-testid="identity-center"]')).toBeTruthy();
     expect(text).toContain('identity.title');
     expect(text).toContain('identity.cardTitle');
-    expect(text).toContain('identity.footerHint');
     expect(text).toContain('identity.save');
     unmount();
   });
@@ -87,48 +132,43 @@ describe('IdentityCenter — 版式不变量', () => {
 
     expect(tags).toHaveLength(5);
     expect(selectedTagIds(container)).toEqual(['goalOriented', 'efficiency', 'logical', 'reporting']);
-    // 没选中的那个必须显式标 false（而不是缺属性 —— 缺属性会让上面的 filter 也数不出来）
     const unselected = [...tags].filter((el) => el.getAttribute('data-selected') === 'false');
     expect(unselected.map((el) => el.getAttribute('data-tag'))).toEqual(['timeManagement']);
     unmount();
   });
 
-  it('推荐技能：7 个，且都渲染出文案（⚠️ 这一排仍是展示，点不动）', () => {
+  it('⭐ 客群卡是**真实助手**（7 个），不是设计稿上编出来的角色', () => {
+    useUiStore.setState({
+      defaultGatewayId: 'gw-1',
+      agentCatalogByGateway: { 'gw-1': catalog(['main']) },
+    });
     const { container, unmount } = render(<IdentityCenter />);
-    const skills = container.querySelector('[data-field="skills"]');
+    const groups = [...container.querySelectorAll('[data-group]')].map((el) => el.getAttribute('data-group'));
 
-    expect(skills).toBeTruthy();
-    expect(skills!.children).toHaveLength(7);
-    expect(skills!.textContent).toContain('identity.skill.docManager');
-    expect(skills!.textContent).toContain('identity.skill.mailExpert');
-    unmount();
-  });
-
-  it('推荐角色：只渲染一个角色的值', () => {
-    const { container, unmount } = render(<IdentityCenter />);
-    const role = container.querySelector('[data-field="role"]');
-
-    expect(role).toBeTruthy();
-    expect(role!.textContent).toBe('identity.roleValue');
-    unmount();
-  });
-
-  it('其它客群：4 个，每个都有名字与说明', () => {
-    const { container, unmount } = render(<IdentityCenter />);
-    const groups = container.querySelectorAll('[data-group]');
-
-    expect(groups).toHaveLength(4);
-    expect([...groups].map((el) => el.getAttribute('data-group'))).toEqual([
-      'educator',
-      'legal',
-      'ecommerce',
-      'engineer',
+    expect(groups).toEqual([
+      'main',
+      'rongying-content',
+      'rongying-video',
+      'rongying-office',
+      'rongying-ecommerce',
+      'rongying-research',
+      'rongying-family',
     ]);
-    for (const key of ['educator', 'legal', 'ecommerce', 'engineer']) {
-      const g = container.querySelector(`[data-group="${key}"]`);
-      expect(g!.textContent).toContain(`identity.group.${key}.name`);
-      expect(g!.textContent).toContain(`identity.group.${key}.desc`);
-    }
+    // 客群卡必须是**能点的按钮**（真机上死卡的形状是 div + cursor:auto）
+    expect(container.querySelector('[data-group="main"]')?.tagName).toBe('BUTTON');
+    unmount();
+  });
+
+  it('推荐角色与推荐技能来自**当前选区**（不是写死的"高效办公"）', () => {
+    const { container, unmount } = render(<IdentityCenter />);
+    expect(container.querySelector('[data-field="role"]')?.textContent).toBe('mainArea.compassAssistant');
+
+    click(container.querySelector('[data-group="rongying-ecommerce"]'));
+
+    expect(container.querySelector('[data-field="role"]')?.textContent).toBe('presetAgents.roles.ecommerce');
+    const skills = container.querySelector('[data-field="skills"]');
+    expect(skills?.children).toHaveLength(4);
+    expect(skills?.textContent).toContain('assistantWorkspaces.ecommerce.starters.1.title');
     unmount();
   });
 });
@@ -157,143 +197,192 @@ describe('IdentityCenter — 按钮真的干活', () => {
   it('⭐「换一个标签」整体轮换一格（不是随机 —— 连点两次结果可预期）', () => {
     const { container, unmount } = render(<IdentityCenter />);
 
-    // ⚠️ 断言按**界面顺序**（DOM 里标签的先后），不是选中集合的插入顺序
     click(container.querySelector('[data-action="shuffle"]'));
     expect(selectedTagIds(container)).toEqual(['efficiency', 'logical', 'reporting', 'timeManagement']);
 
-    // 再点一次：整体又挪一格 ⇒ 'goalOriented' 绕回环尾、重新被选上
     click(container.querySelector('[data-action="shuffle"]'));
     expect(selectedTagIds(container)).toEqual(['goalOriented', 'logical', 'reporting', 'timeManagement']);
     unmount();
   });
 
-  it('⭐「应用此画像」真的切到推荐角色（rongying-office）并报成功', () => {
+  /**
+   * ⭐⭐ 这一条就是用户反馈的形状：**点下去必须看得见变化**。
+   * 上一版五个标签点下去只改自己的高亮，画像正文一个字不变 —— 用户的原话是"没反应"。
+   */
+  it('⭐ 点标签 ⇒ 画像正文跟着变（不是只改自己的高亮）', () => {
+    const { container, unmount } = render(<IdentityCenter />);
+    const before = personaText(container);
+    expect(before).not.toBe('');
+
+    click(container.querySelector('[data-tag="timeManagement"]'));
+    const afterAdd = personaText(container);
+    expect(afterAdd, '选中一个标签后正文必须变').not.toBe(before);
+
+    click(container.querySelector('[data-action="reset"]'));
+    const afterReset = personaText(container);
+    expect(afterReset, '清空标签后正文必须再变一次').not.toBe(afterAdd);
+    unmount();
+  });
+
+  it('⭐ 换客群 ⇒ 画像、推荐角色、推荐技能一起变', () => {
+    const { container, unmount } = render(<IdentityCenter />);
+    const before = personaText(container);
+
+    click(container.querySelector('[data-group="rongying-office"]'));
+
+    expect(personaText(container)).not.toBe(before);
+    expect(container.querySelector('[data-field="role"]')?.textContent).toBe('presetAgents.roles.office');
+    unmount();
+  });
+
+  it('⭐ 点客群卡真的切助手，且**留在身份中心**（不是把用户甩进对话页）', () => {
     const { container, unmount } = render(<IdentityCenter />);
 
+    click(container.querySelector('[data-group="rongying-ecommerce"]'));
+
+    expect(selectAgentSpy).toHaveBeenCalledWith('rongying-ecommerce');
+    expect(useUiStore.getState().mainView, '选完要留在这一页').toBe('identity');
+    // ⚠️ 而且必须落在 store 里 —— 左侧「我的助手」与这一页读的是同一份状态
+    expect(useUiStore.getState().selectedAgentByGateway['gw-1']).toBe('rongying-ecommerce');
+    unmount();
+  });
+
+  it('⭐「应用此画像」切到**当前选中的客群**（不再写死高效办公）并报成功', () => {
+    const { container, unmount } = render(<IdentityCenter />);
+
+    click(container.querySelector('[data-group="rongying-ecommerce"]'));
+    selectAgentSpy.mockClear();
     click(container.querySelector('[data-action="apply"]'));
 
-    expect(selectAgentSpy).toHaveBeenCalledTimes(1);
-    expect(selectAgentSpy).toHaveBeenCalledWith('rongying-office');
+    expect(selectAgentSpy).toHaveBeenCalledWith('rongying-ecommerce');
     expect(toastSpy.success).toHaveBeenCalledWith('identity.appliedToast');
     unmount();
   });
 
-  it('⚠️ 一个标签都没选就点「应用」⇒ 不切助手，如实报错', () => {
+  it('⚠️ 一个标签都没选就点「应用」⇒ 不切助手、不写记忆，如实报错', async () => {
     const { container, unmount } = render(<IdentityCenter />);
 
     click(container.querySelector('[data-action="reset"]'));
     click(container.querySelector('[data-action="apply"]'));
+    await flush();
 
     expect(selectAgentSpy).not.toHaveBeenCalled();
+    expect(setAgentFileSpy).not.toHaveBeenCalled();
     expect(toastSpy.error).toHaveBeenCalledWith('identity.needTag');
     expect(toastSpy.success).not.toHaveBeenCalled();
     unmount();
   });
 
-  it('⚠️ 没有网关 ⇒ 不切助手，如实报错（不假装成功）', () => {
+  it('⚠️ 没有网关 ⇒ 不切助手、不写记忆，如实报错（不假装成功）', async () => {
     useUiStore.setState({ defaultGatewayId: null });
     const { container, unmount } = render(<IdentityCenter />);
 
     click(container.querySelector('[data-action="apply"]'));
+    await flush();
 
     expect(selectAgentSpy).not.toHaveBeenCalled();
+    expect(setAgentFileSpy).not.toHaveBeenCalled();
     expect(toastSpy.error).toHaveBeenCalledWith('identity.applyFailed');
-    // ⚠️ 这条不能省：少了它，"报错之后还接着说已应用"的写法照样全绿 ——
-    //    用户会同时看到「还没连上网关」和「已应用『高效办公』」两句互相打架的话。
-    expect(toastSpy.success).not.toHaveBeenCalled();
     unmount();
   });
 
-  it('⭐「保存并应用」= 应用 + 把标签选择落盘', () => {
+  /**
+   * ⭐⭐ 保存 = 把身份**写进助手的记忆**（`USER.md`，运行时每轮都读它）。
+   * 这是"保存"唯一真实的效果 —— 上一版只写 localStorage，用户看不见任何变化。
+   */
+  it('⭐「保存并应用」把身份块合并写进每个助手的 USER.md，且不覆盖已有记忆', async () => {
+    getAgentFileSpy.mockResolvedValue({ ok: true, result: { content: '用户自己写的：喜欢短句' } });
     const { container, unmount } = render(<IdentityCenter />);
 
     click(container.querySelector('[data-tag="timeManagement"]'));
     click(container.querySelector('[data-action="save"]'));
+    await flush();
 
-    expect(selectAgentSpy).toHaveBeenCalledWith('rongying-office');
-    expect(JSON.parse(window.localStorage.getItem(IDENTITY_STORAGE_KEY) ?? 'null')).toEqual([
-      'goalOriented',
-      'efficiency',
-      'logical',
-      'reporting',
-      'timeManagement',
-    ]);
-    expect(toastSpy.success).toHaveBeenCalledWith('identity.savedToast');
+    expect(selectAgentSpy).toHaveBeenCalledWith('main');
+    // 三个助手各读各的、各写各的（读别人的再写过去会把别人的记忆冲掉）
+    expect(getAgentFileSpy).toHaveBeenCalledTimes(3);
+    expect(setAgentFileSpy).toHaveBeenCalledTimes(3);
+
+    const written = setAgentFileSpy.mock.calls[0]?.[3] as string;
+    expect(written).toContain('用户自己写的：喜欢短句');
+    expect(written).toContain(IDENTITY_BLOCK_START);
+    expect(written).toContain('identity.tag.timeManagement');
+    expect(tSpy, '数字要被绑住：三个助手都写成了').toHaveBeenCalledWith('settings.memorySaved', { count: 3 });
+    expect(toastSpy.success).toHaveBeenCalledWith('settings.memorySaved');
     unmount();
   });
 
-  it('⚠️ 没选标签就点「保存」⇒ 既不落盘也不切助手', () => {
+  it('⚠️ 部分助手写失败 ⇒ 说清几个没写成，不许报"已保存"', async () => {
+    setAgentFileSpy
+      .mockResolvedValueOnce({ ok: true })
+      .mockResolvedValueOnce({ ok: false, error: 'boom' })
+      .mockResolvedValueOnce({ ok: false, error: 'boom' });
     const { container, unmount } = render(<IdentityCenter />);
 
-    click(container.querySelector('[data-action="reset"]'));
     click(container.querySelector('[data-action="save"]'));
+    await flush();
 
-    expect(selectAgentSpy).not.toHaveBeenCalled();
-    expect(window.localStorage.getItem(IDENTITY_STORAGE_KEY)).toBeNull();
-    expect(toastSpy.error).toHaveBeenCalledWith('identity.needTag');
+    expect(tSpy, '要说清几个没写成').toHaveBeenCalledWith('settings.memorySavePartial', { failed: 2, total: 3 });
+    expect(toastSpy.error).toHaveBeenCalledWith('settings.memorySavePartial');
+    expect(toastSpy.success).not.toHaveBeenCalled();
     unmount();
   });
 
-  /**
-   * ⭐⭐ 2026-09-24（D3：三处都发 —— 身份中心这一处）。
-   *
-   * 目录**已加载**且推荐角色（`rongying-office`）不在里面 ⇒ 如实说明。
-   * ⚠️ 两条"不能省"的负断言：不许静默换人、**不许假装成功**（否则用户会同时看到
-   * 「这个助手不在本机」和「已应用『高效办公』」两句互相打架的话）。
-   */
-  it('⭐ 目录已加载但推荐角色不在里面 ⇒ 如实说明、不静默换人、不假装成功', () => {
+  it('⚠️ 合并后会超出 USER.md 上限 ⇒ 一个字都不写，如实报上限', async () => {
+    getAgentFileSpy.mockResolvedValue({ ok: true, result: { content: 'x'.repeat(3990) } });
+    const { container, unmount } = render(<IdentityCenter />);
+
+    click(container.querySelector('[data-action="save"]'));
+    await flush();
+
+    expect(setAgentFileSpy).not.toHaveBeenCalled();
+    expect(tSpy, '上限的数字要被绑住').toHaveBeenCalledWith('settings.memoryTooLong', { max: 4000 });
+    expect(toastSpy.error).toHaveBeenCalledWith('settings.memoryTooLong');
+    unmount();
+  });
+
+  it('⚠️ 盘上一个助手都没有 ⇒ 不写、如实说', async () => {
+    useUiStore.setState({ defaultGatewayId: 'gw-1', agentCatalogByGateway: { 'gw-1': catalog([]) } });
+    const { container, unmount } = render(<IdentityCenter />);
+
+    click(container.querySelector('[data-action="save"]'));
+    await flush();
+
+    expect(setAgentFileSpy).not.toHaveBeenCalled();
+    expect(toastSpy.error).toHaveBeenCalledWith('settings.memoryNoAgents');
+    unmount();
+  });
+
+  it('⭐ 目录已加载但当前客群不在里面 ⇒ 如实说明、不静默换人、不假装成功', async () => {
     useUiStore.setState({
       defaultGatewayId: 'gw-1',
-      agentCatalogByGateway: { 'gw-1': { agents: [{ id: 'main' } as never], defaultId: 'main' } },
+      mainView: 'identity',
+      agentCatalogByGateway: { 'gw-1': catalog(['main']) },
+      selectedAgentByGateway: { 'gw-1': 'rongying-ecommerce' },
     });
     const { container, unmount } = render(<IdentityCenter />);
 
     click(container.querySelector('[data-action="apply"]'));
+    await flush();
 
     expect(selectAgentSpy, '不许静默换人').not.toHaveBeenCalled();
     expect(toastSpy.success, '不许假装成功').not.toHaveBeenCalled();
     expect(container.textContent, '要如实说明').toContain('agent.missingTitle');
-
-    // 出口：直接切到罗盘助手（不是再走一次 `applyPersona` —— 那条路在原地打转）
-    const exit = [...container.querySelectorAll('button')].find((b) => b.textContent?.includes('agent.missingSwitch'));
-    click(exit ?? null);
-    expect(selectAgentSpy, '出口要真的走得通').toHaveBeenCalledWith('main');
     unmount();
   });
 
-  /**
-   * ⭐ 2026-09-24（复核复验 N-2）：罗盘**也不在目录里**时不给"换用罗盘助手"这个出口 ——
-   * 否则一边说"不在本机"、一边给一个指向同样不存在的助手的死胡同按钮。
-   * 上一轮的 M-2 只给「欢迎屏」那条加了测试，身份中心这条分支出于同一形状却没被钉住。
-   */
-  it('⭐ 罗盘自己也不在目录里 ⇒ 只留"去团队页"，不给切换出口', () => {
+  it('⭐ 目录还没拉回来时走老路：照常切，且不许说"不在本机"', async () => {
     useUiStore.setState({
       defaultGatewayId: 'gw-1',
-      agentCatalogByGateway: {
-        'gw-1': { agents: [{ id: 'some-other-agent' } as never], defaultId: 'some-other-agent' },
-      },
+      agentCatalogByGateway: {},
+      selectedAgentByGateway: { 'gw-1': 'main' },
     });
     const { container, unmount } = render(<IdentityCenter />);
 
     click(container.querySelector('[data-action="apply"]'));
+    await flush();
 
-    expect(container.textContent).toContain('agent.missingTitle');
-    expect(container.textContent, '罗盘不在就别给这个出口').not.toContain('agent.missingSwitch');
-    expect(container.textContent, '去团队页恒可用').toContain('agent.missingOpenTeams');
-    unmount();
-  });
-
-  /**
-   * ⚠️ 对照：目录**还没拉回来**时不许误报 —— 否则「正在拉目录」会被说成「不在本机」，
-   * 就是用新的误报换掉旧的静默（`IdentityCenter` 文件头那条注释的要求）。
-   */
-  it('⭐ 目录还没拉回来时走老路：照常切，且不许说"不在本机"', () => {
-    useUiStore.setState({ defaultGatewayId: 'gw-1', agentCatalogByGateway: {} });
-    const { container, unmount } = render(<IdentityCenter />);
-
-    click(container.querySelector('[data-action="apply"]'));
-
-    expect(selectAgentSpy).toHaveBeenCalledWith('rongying-office');
+    expect(selectAgentSpy).toHaveBeenCalledWith('main');
     expect(container.textContent, '目录未加载时不许判缺失').not.toContain('agent.missingTitle');
     unmount();
   });
