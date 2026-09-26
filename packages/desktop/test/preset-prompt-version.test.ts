@@ -19,17 +19,16 @@ import {
  * 没有标记就永远分不清"我们写的旧版本"和"用户自己改过的"。
  */
 describe('交付边界（COMMON_OPERATING_CONTRACT）', () => {
-  it('⭐ 三种文档（pptx / docx / xlsx）都是**有条件**的可能：技能可见才承诺', () => {
-    for (const ext of ['.pptx', '.docx', '.xlsx']) {
+  it('⭐ 四种文档（pptx / docx / xlsx / pdf）都是**有条件**的可能：技能可见才承诺', () => {
+    for (const ext of ['.pptx', '.docx', '.xlsx', '.pdf']) {
       expect(COMMON_OPERATING_CONTRACT, ext).toContain(ext);
     }
     expect(COMMON_OPERATING_CONTRACT).toMatch(/docgen/i);
     expect(COMMON_OPERATING_CONTRACT, '技能不可见时的口径').toMatch(/skill is \*\*not\*\* available/i);
   });
 
-  it('⭐ 拿不出手的仍然拿不出手：图片（与 PDF）要一口回绝，且"第一句就说明"', () => {
+  it('⭐ 拿不出手的仍然拿不出手：**图片**要一口回绝，且"第一句就说明"', () => {
     expect(COMMON_OPERATING_CONTRACT).toMatch(/cannot\*{0,2} produce images/i);
-    expect(COMMON_OPERATING_CONTRACT).toMatch(/pdf/i);
     expect(COMMON_OPERATING_CONTRACT).toMatch(/say so plainly in the first reply/i);
   });
 

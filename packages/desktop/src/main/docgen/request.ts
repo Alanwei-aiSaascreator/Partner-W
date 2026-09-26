@@ -32,8 +32,8 @@
  *  - 表格里违反 Excel 硬限制的（表名 >31 字、重复、含 `[]:*?/\`）要拒 ——
  *    否则用户打开时看到的是「文件需要修复」，而那是**我们**生成的文件。
  */
-/** 支持的三种格式。加第四种时：这里 + `DOCGEN_OUTPUT_BY_KIND` + 渲染层分发。 */
-export const DOCGEN_KINDS = ['pptx', 'docx', 'xlsx'] as const;
+/** 支持的四种格式。加第五种时：这里 + `DOCGEN_OUTPUT_BY_KIND` + 渲染层分发。 */
+export const DOCGEN_KINDS = ['pptx', 'docx', 'xlsx', 'pdf'] as const;
 export type DocgenKind = (typeof DOCGEN_KINDS)[number];
 
 /**
@@ -47,6 +47,7 @@ export const DOCGEN_OUTPUT_BY_KIND: Readonly<Record<DocgenKind, { extension: str
     pptx: { extension: '.pptx', fallbackStem: '演示文稿' },
     docx: { extension: '.docx', fallbackStem: '文档' },
     xlsx: { extension: '.xlsx', fallbackStem: '表格' },
+    pdf: { extension: '.pdf', fallbackStem: '文档' },
   });
 
 export interface DocgenSlide {
@@ -83,6 +84,19 @@ export interface DocgenDocxRequest {
   sections: DocgenSection[];
 }
 
+/**
+ * PDF：**与 docx 同构**（标题 + 小节）。
+ *
+ * ⚠️ 刻意不做成"助手直接写 HTML"：那等于把"外来 HTML 进打印窗口"变成常规路径，
+ *    而越界时"整份拒"的判据也没法定义。结构化内容 + 我们自己的模板，模板是唯一真源。
+ */
+export interface DocgenPdfRequest {
+  kind: 'pdf';
+  /** 文档标题（封面抬头 + 文件名）。 */
+  title: string;
+  sections: DocgenSection[];
+}
+
 /** 单元格：文本 / 数字 / 布尔。**数字保持数字**，否则用户在 Excel 里没法求和。 */
 export type DocgenCell = string | number | boolean;
 
@@ -100,7 +114,7 @@ export interface DocgenXlsxRequest {
   sheets: DocgenSheet[];
 }
 
-export type DocgenRequest = DocgenPptxRequest | DocgenDocxRequest | DocgenXlsxRequest;
+export type DocgenRequest = DocgenPptxRequest | DocgenDocxRequest | DocgenXlsxRequest | DocgenPdfRequest;
 
 export type DocgenParseResult = { ok: true; request: DocgenRequest } | { ok: false; error: string };
 
@@ -248,7 +262,13 @@ function parsePptx(input: Record<string, unknown>, title: string): DocgenParseRe
   return { ok: true, request: subtitle ? { kind: 'pptx', title, subtitle, slides } : { kind: 'pptx', title, slides } };
 }
 
-function parseDocx(input: Record<string, unknown>, title: string): DocgenParseResult {
+/**
+ * `sections` 形状的校验（docx 与 pdf **共用一份**）。
+ *
+ * ⚠️ 共用的理由：两种格式的内容模型就是同一个（小标题/段落/要点），
+ *    各写一份必然漂移 —— 而漂移的表现是"同一份内容，存成 Word 能过、存成 PDF 报错"。
+ */
+function parseSections(input: Record<string, unknown>, title: string, kind: 'docx' | 'pdf'): DocgenParseResult {
   const rawSections = input.sections;
   if (!Array.isArray(rawSections)) return { ok: false, error: 'sections must be an array' };
   if (rawSections.length === 0) return { ok: false, error: 'sections must not be empty' };
@@ -295,9 +315,11 @@ function parseDocx(input: Record<string, unknown>, title: string): DocgenParseRe
     );
   }
 
-  // 全是空小节 ⇒ 会渲染出一份空白 Word。宁可整份失败（日志里有原因、助手能重发）。
+  // 全是空小节 ⇒ 会渲染出一份空白文档。宁可整份失败（日志里有原因、助手能重发）。
   if (!hasContent) return { ok: false, error: 'sections have no content' };
-  return { ok: true, request: { kind: 'docx', title, sections } };
+  return kind === 'pdf'
+    ? { ok: true, request: { kind: 'pdf', title, sections } }
+    : { ok: true, request: { kind: 'docx', title, sections } };
 }
 
 function parseSheetName(raw: unknown, where: string): { ok: true; name: string } | { ok: false; error: string } {
@@ -438,7 +460,9 @@ export function parseDocgenRequest(raw: unknown): DocgenParseResult {
     case 'pptx':
       return parsePptx(input, title.title);
     case 'docx':
-      return parseDocx(input, title.title);
+      return parseSections(input, title.title, 'docx');
+    case 'pdf':
+      return parseSections(input, title.title, 'pdf');
     case 'xlsx':
       return parseXlsx(input, title.title);
   }

@@ -25,11 +25,16 @@ if (!OUR_SKILLS_ROOT) throw new Error('解析不到随包技能根目录 —— 
 const SKILL_PATH = path.join(OUR_SKILLS_ROOT, 'document-deck', 'SKILL.md');
 const text = fs.readFileSync(SKILL_PATH, 'utf-8').replace(/\r\n/g, '\n');
 
-describe('document-deck 技能：三种格式都教到了', () => {
-  it('三种 kind 的 JSON 示例都在（少一种，那种格式就用不出来）', () => {
-    for (const kind of ['pptx', 'docx', 'xlsx']) {
+describe('document-deck 技能：四种格式都教到了', () => {
+  it('四种 kind 的 JSON 示例都在（少一种，那种格式就用不出来）', () => {
+    for (const kind of ['pptx', 'docx', 'xlsx', 'pdf']) {
       expect(text, `正文里没有 "kind": "${kind}" 的示例`).toContain(`"kind": "${kind}"`);
     }
+  });
+
+  it('⭐ 旧的"PDF 做不到"口径必须已经删干净（否则助手照旧拒绝）', () => {
+    expect(text).not.toMatch(/要\s*\*{0,2}PDF\*{0,2}\s*、?\s*要\*{0,2}图片[^\n]*这两种做不到/);
+    expect(text, '图片仍然做不到，这条不能顺手删了').toMatch(/图片/);
   });
 
   it('每种格式的内容字段都写着（助手照字段名写请求）', () => {

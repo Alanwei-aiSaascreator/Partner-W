@@ -1,5 +1,6 @@
 import type { DocgenRequest } from './request.js';
 import { renderDocx } from './render-docx.js';
+import { renderPdf } from './render-pdf.js';
 import { renderPptx } from './render-pptx.js';
 import { renderXlsx } from './render-xlsx.js';
 
@@ -25,6 +26,8 @@ export async function renderDocument(request: DocgenRequest): Promise<Buffer> {
       return renderDocx(request);
     case 'xlsx':
       return renderXlsx(request);
+    case 'pdf':
+      return renderPdf(request);
     default: {
       // 编译期护栏：`DOCGEN_KINDS` 加了新成员而这里没接，`request` 就不是 `never`，
       // 这行会在 typecheck 阶段报错 ⇒ 提交前就发现，而不是等用户收到一份空文件。
