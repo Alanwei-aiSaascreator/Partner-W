@@ -205,7 +205,10 @@ async function main() {
     const imageCalls = seen.filter((s) => s.url?.endsWith(IMAGE_PATH));
     try {
       assert(okRun.code === 0, `image generate 应当成功，实际退出码 ${okRun.code}`);
-      assert(imageCalls.length === 1, `应当正好有一次 ${IMAGE_PATH}，实际 ${imageCalls.length} 次（收到：${seen.map((s) => s.url).join(', ')}）`);
+      assert(
+        imageCalls.length === 1,
+        `应当正好有一次 ${IMAGE_PATH}，实际 ${imageCalls.length} 次（收到：${seen.map((s) => s.url).join(', ')}）`,
+      );
       const call = imageCalls[0];
       assert(
         call.headers.authorization === `Bearer ${RELAY_KEY}`,
@@ -280,10 +283,7 @@ async function main() {
     });
     try {
       assert(denied.code !== 0, '不开 allowPrivateNetwork 时本机地址应当被拒（否则那条闸门是假的）');
-      assert(
-        seen.length === before,
-        '被拒的那次**一个请求都不该发出去** —— 发出去了说明拒绝发生在太晚的地方',
-      );
+      assert(seen.length === before, '被拒的那次**一个请求都不该发出去** —— 发出去了说明拒绝发生在太晚的地方');
       console.log('[contract] ✅ 反向对照：本机地址未被放行（闸门是真的）');
     } catch (error) {
       failures.push(`反向对照：${error.message}`);
