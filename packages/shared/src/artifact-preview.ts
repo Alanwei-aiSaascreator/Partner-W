@@ -27,5 +27,15 @@ export type ArtifactPreview =
   | { kind: 'pptx'; slides: PptxSlidePreview[]; truncated: boolean }
   /** PDF：字节交给渲染层，由 Chromium 自带的阅读器渲染（已实测：不会触发下载）。 */
   | { kind: 'pdf'; dataBase64: string }
+  /**
+   * HTML：渲染层用 `<iframe sandbox srcdoc>` 画出来。
+   *
+   * ⚠️ 这是唯一一种**内容本身可执行**的预览，所以两处封堵缺一不可：
+   *    主进程**注入 CSP**（`default-src 'none'`，禁脚本/禁外联，见 `build-preview.ts`），
+   *    渲染层给 iframe `sandbox`（**不给** `allow-scripts`/`allow-same-origin`）。
+   *    为什么非要两道：CSP 是内容层的锁，sandbox 是容器层的锁 ——
+   *    少了 sandbox，同源 iframe 能摸到父窗口上的 `window.clawwork`（整台应用的 API）。
+   */
+  | { kind: 'html'; html: string }
   /** 认不出/不支持：界面照旧给"用系统程序打开"。 */
   | { kind: 'unsupported' };

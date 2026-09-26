@@ -118,6 +118,9 @@ export default function FilePreview({ artifact, onNavigateToTask, onClose }: Fil
     return () => URL.revokeObjectURL(url);
   }, [preview]);
 
+  /** HTML：**直接从预览状态派生**，不需要 blob（走 `srcDoc`）—— 少一份生命周期要管。 */
+  const htmlDoc = preview?.kind === 'html' ? preview.html : null;
+
   useEffect(() => {
     setLoading(true);
     setError(null);
@@ -184,8 +187,23 @@ export default function FilePreview({ artifact, onNavigateToTask, onClose }: Fil
 
       {/* ⭐ PDF **不放进 ScrollArea**：它自带滚动（Chromium 阅读器），套在滚动容器里会变成
           嵌套滚动 —— 滚轮滚谁全看指针在哪，很难用。所以整块换成"占满剩余高度"的容器，
-          高度由外层 flex 给（`min-h-0` 是让它在 flex 里能真的收缩），**不写任何任意值**。 */}
-      {pdfUrl ? (
+          高度由外层 flex 给（`min-h-0` 是让它在 flex 里能真的收缩），**不写任何任意值**。
+
+          ⭐ HTML 同理（它也是自带滚动的整篇文档），但**封堵比 PDF 严得多**：
+          `sandbox=""` 是不给任何权限（**尤其没有 `allow-scripts` / `allow-same-origin`**）——
+          少了后者，iframe 里的脚本能摸到父窗口上的 `window.clawwork`（= 整台应用的 API）。
+          主进程那边还注了一道 CSP（禁脚本/禁外联），两道锁缺一不可，见 `build-preview.ts`。
+          ⚠️ 用 `srcDoc` 而不是拼进 `src`：内容不经 URL 解析，也不会把内容当文件路径去读。 */}
+      {htmlDoc !== null ? (
+        <div className="min-h-0 flex-1">
+          <iframe
+            title={t('filePreview.htmlTitle')}
+            srcDoc={htmlDoc}
+            sandbox=""
+            className="h-full w-full border-0 bg-white"
+          />
+        </div>
+      ) : pdfUrl ? (
         <div className="min-h-0 flex-1">
           <iframe title={t('filePreview.pdfTitle')} src={pdfUrl} className="h-full w-full border-0" />
         </div>
