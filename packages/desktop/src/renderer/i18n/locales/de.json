@@ -873,14 +873,18 @@
     "resetSessionTitle": "Sitzung zuruecksetzen"
   },
   "docgen": {
+    "coverSubtitleMultiline": "Der Untertitel der Präsentation enthält einen Zeilenumbruch, daher wurde sie nicht erstellt. Schreiben Sie ihn in einer Zeile.",
     "coverSubtitleOverflow": "Der Untertitel der Präsentation ist zu lang, daher wurde sie nicht erstellt. Kürzen Sie ihn auf höchstens {{maxChars}} Zeichen.",
+    "coverTitleMultiline": "Der Titel der Präsentation enthält einen Zeilenumbruch, daher wurde sie nicht erstellt. Schreiben Sie den Titel in einer Zeile; für Absätze verwenden Sie mehrere Folien.",
     "coverTitleOverflow": "Der Titel der Präsentation ist zu lang, daher wurde sie nicht erstellt. Kürzen Sie ihn auf höchstens {{maxChars}} Zeichen.",
     "failedTitle": "Einige Dateien wurden nicht erstellt",
     "moreFailures": "{{rest}} weitere wurden ebenfalls nicht erstellt.",
     "pageOverflow": "Folie {{page}} enthält zu viel Inhalt, daher wurde die Präsentation nicht erstellt. Teilen Sie sie auf mehrere Folien auf oder verschieben Sie die Details in die Notizen.",
     "pageTitleOverflow": "Der Titel von Folie {{page}} ist zu lang, daher wurde die Präsentation nicht erstellt. Kürzen Sie ihn auf höchstens {{maxChars}} Zeichen.",
     "renderFailed": "Eine Datei konnte nicht erstellt werden.",
-    "requestInvalid": "Eine Datei hatte ein ungültiges Inhaltsformat und wurde nicht erstellt. Lassen Sie den Assistenten sie erneut ausgeben."
+    "requestInvalid": "Eine Datei hatte ein ungültiges Inhaltsformat und wurde nicht erstellt. Lassen Sie den Assistenten sie erneut ausgeben.",
+    "slideBulletMultiline": "Aufzählungspunkt {{bullet}} auf Folie {{page}} enthält einen Zeilenumbruch, daher wurde die Präsentation nicht erstellt. Halten Sie jeden Punkt in einer Zeile; für Absätze verwenden Sie mehrere Punkte oder eine neue Folie.",
+    "slideTitleMultiline": "Der Titel von Folie {{page}} enthält einen Zeilenumbruch, daher wurde die Präsentation nicht erstellt. Schreiben Sie den Titel in einer Zeile."
   },
   "errors": {
     "agentMissing": "Dieser Assistent ist auf diesem Computer nicht vorhanden. Wähle einen anderen und sende erneut.",

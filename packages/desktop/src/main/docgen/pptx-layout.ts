@@ -183,7 +183,23 @@ export type PptxLayoutProblem =
   | { code: 'slide-body-overflow'; page: number }
   | { code: 'slide-title-overflow'; page: number; maxChars: number }
   | { code: 'cover-title-overflow'; maxChars: number }
-  | { code: 'cover-subtitle-overflow'; maxChars: number };
+  | { code: 'cover-subtitle-overflow'; maxChars: number }
+  /**
+   * 文字里带了换行。
+   *
+   * ⚠️ 这不是洁癖，是上面那套估高模型的**必需前提**：`wrappedLines` 按"半角宽 ÷
+   *    每行容量"算这一段会折几行，而 PptxGenJS 对我们的文本是**真换行** ——
+   *    `"甲\n乙"` 在文件里就是两行。于是估高会**少算整一行**，
+   *    "装不下就拒"这道保护被绕过，结果照样产出一份糊出画面的文件。
+   *
+   * 为什么是**拒**而不是压扁：压扁会改掉用户的字。助手本来可能是想写两段，
+   * 压扁后变成一句读不通的长句，而用户与助手都不知道发生了什么。
+   * 拒掉把选择权交回去 —— 要分段就拆页 / 拆成多条要点。
+   */
+  | { code: 'cover-title-multiline' }
+  | { code: 'cover-subtitle-multiline' }
+  | { code: 'slide-title-multiline'; page: number }
+  | { code: 'slide-bullet-multiline'; page: number; bullet: number };
 
 /**
  * 排不下时抛的错。**带着可判定的 `problem`**，不是一句人话字符串 ——
@@ -203,6 +219,19 @@ export class PptxLayoutError extends Error {
 function maxFullWidthChars(box: { w: number }, sizePt: number, availablePt: number): number {
   const lines = Math.floor(availablePt / (sizePt * LINE_SPACING));
   return Math.max(0, Math.floor((lines * halfUnitsPerLine(box.w - BOX_INSET_W, sizePt)) / 2));
+}
+
+/**
+ * 这段文字里有没有换行。
+ *
+ * 用 `/[\r\n]/` 一次覆盖三种形式（`\n` / `\r\n` / `\r`）—— 模型产出里三种都出现过
+ * （CRLF 来自 Windows 剪贴板与 `\r\n` 结尾的文件）。
+ *
+ * ⚠️ **只认 CR/LF，不认制表符与全角空格**：那两种会被渲染成空白，不是换行，
+ *    拦掉它们会把正常内容也拒了。
+ */
+function hasLineBreak(text: string): boolean {
+  return /[\r\n]/.test(text);
 }
 
 /** 这段文字在这个字号下，是否装得进"框顶端 → 下边界"这段高度。 */
@@ -229,6 +258,13 @@ function fitsAbove(text: string, sizePt: number, box: { w: number }, limitY: num
  *    （本项目就是这么验的，见 `docs/` 里的 PPT 记录）。
  */
 export function findPptxLayoutProblem(request: DocgenPptxRequest): PptxLayoutProblem | null {
+  // ── 内嵌换行：**必须排在所有估高判定之前** ──────────────────────────────
+  // 估高模型假定"一段 = 若干折行"，而真换行会让实际行数比估出来的多。
+  // 顺序反了的话，助手会拿到一条"内容过多，请拆页"的提示、照着改完**还是失败** ——
+  // 因为它真正该做的是去掉那个换行。
+  if (hasLineBreak(request.title)) return { code: 'cover-title-multiline' };
+  if (request.subtitle && hasLineBreak(request.subtitle)) return { code: 'cover-subtitle-multiline' };
+
   const coverTitleLimit = COVER_RULE.y;
   if (!fitsAbove(request.title, COVER_TITLE.pt, COVER_TITLE, coverTitleLimit, COVER_TITLE.y)) {
     return {
@@ -250,6 +286,11 @@ export function findPptxLayoutProblem(request: DocgenPptxRequest): PptxLayoutPro
 
   for (const [index, slide] of request.slides.entries()) {
     const page = index + 1;
+    if (hasLineBreak(slide.title)) return { code: 'slide-title-multiline', page };
+    // 逐条查：提示里要能说出"第几页第几条"，助手才知道改哪一条。
+    const bullet = slide.bullets.findIndex(hasLineBreak);
+    if (bullet !== -1) return { code: 'slide-bullet-multiline', page, bullet: bullet + 1 };
+
     const titleLimit = SLIDE_TITLE_RULE.y;
     if (!fitsAbove(slide.title, SLIDE_TITLE.pt, SLIDE_TITLE, titleLimit, SLIDE_TITLE.y)) {
       return {

@@ -873,14 +873,18 @@
     "resetSessionTitle": "重設工作階段"
   },
   "docgen": {
+    "coverSubtitleMultiline": "簡報的副標題裡有換行，沒有生成。請把它寫成一行。",
     "coverSubtitleOverflow": "簡報的副標題過長，沒有生成。請把它縮短到 {{maxChars}} 字以內。",
+    "coverTitleMultiline": "簡報的標題裡有換行，沒有生成。請把標題寫成一行；需要分段就拆成多頁。",
     "coverTitleOverflow": "簡報的標題過長，沒有生成。請把它縮短到 {{maxChars}} 字以內。",
     "failedTitle": "有檔案沒生成",
     "moreFailures": "另有 {{rest}} 份也沒有生成。",
     "pageOverflow": "簡報第 {{page}} 頁內容過多，沒有生成。請把它拆成多頁，或把細節寫進講者備忘稿。",
     "pageTitleOverflow": "簡報第 {{page}} 頁的標題過長，沒有生成。請把它縮短到 {{maxChars}} 字以內。",
     "renderFailed": "有一份檔案沒能生成。",
-    "requestInvalid": "有一份檔案的內容格式不對，沒有生成。可以請助理重新輸出一次。"
+    "requestInvalid": "有一份檔案的內容格式不對，沒有生成。可以請助理重新輸出一次。",
+    "slideBulletMultiline": "簡報第 {{page}} 頁第 {{bullet}} 條要點裡有換行，沒有生成。請把每條要點寫成一行；需要分段就拆成多條要點或另起一頁。",
+    "slideTitleMultiline": "簡報第 {{page}} 頁的標題裡有換行，沒有生成。請把標題寫成一行。"
   },
   "errors": {
     "agentMissing": "這個助手不在本機，換一個助手再傳送。",

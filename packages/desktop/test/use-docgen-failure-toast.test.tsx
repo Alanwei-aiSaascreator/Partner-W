@@ -10,10 +10,24 @@ import type { DocgenFailure } from '@clawwork/shared';
 /**
  * 「有文件没生成」这条提示的**整条界面链**。
  *
- * 为什么不能只测那个纯函数：这一族的 bug 长得是"handler 写了、页面没反应"
- * （本项目栽过一次：16 条测试全绿而用户说"点了没反应"）。所以这里真的**挂一个宿主
- * 组件**、把 IPC 事件推给它、再断言 toast 真的带着正确文案出现了 —— 测的是
- * "挂上之后世界会不会变"，不是"函数返回什么"。
+ * ## 为什么挂真组件，而不是只测那个纯函数
+ *
+ * 这一族的 bug 长得是"handler 写了、页面没反应"（本项目栽过一次：16 条测试全绿
+ * 而用户说"点了没反应"）。所以这里真的**挂一个宿主组件**、把 IPC 事件推给它、
+ * 再断言 toast 真的带着正确文案出现了 —— 测的是"挂上之后世界会不会变"，
+ * 不是"函数返回什么"。
+ *
+ * ## 为什么生产代码里是 `switch` 而不是「码 → key」的映射表
+ *
+ * （这条说明**故意放在测试里**：`src/renderer/**` 有"生产代码不写注释"的规矩。）
+ *
+ * 映射表要写成 `t(KEYS[failure.code])` 或 `` t(`docgen.${code}`) `` —— 两种写法
+ * **都逃得过 i18n 门禁**：计算出来的 key 不在「代码里的字面量 key」集合里，
+ * 于是"这个键没人用过"与"这个键根本不存在"两个方向同时失明；拼错的键也不报错，
+ * 运行期只是把裸键名渲染到 toast 上。
+ * 而 `switch` 有**穷尽性**：`DocgenFailure` 加了新成员，生产代码编译期就报错。
+ * 下面每条 `expect(...).toBe('docgen.xxx({...})')` 同时钉住**选了哪个 key**与
+ * **带了哪几个参数** —— 只断言"key 存在"是绑不住值的。
  */
 
 const mocks = vi.hoisted(() => ({ error: vi.fn(), warning: vi.fn(), success: vi.fn(), plain: vi.fn() }));
@@ -73,6 +87,30 @@ describe('docgenFailureMessage —— 每种原因说**具体**的话，不说"�
     expect(docgenFailureMessage(COVER_SUBTITLE_OVERFLOW, t)).toBe('docgen.coverSubtitleOverflow({"maxChars":18})');
   });
 
+  it('封面标题里有换行 ⇒ 说清是封面标题、并说"写一行 / 拆页"', () => {
+    expect(docgenFailureMessage({ code: 'presentation-cover-title-multiline', format: 'pptx' }, t)).toBe(
+      'docgen.coverTitleMultiline',
+    );
+  });
+
+  it('封面副标题里有换行 ⇒ 走自己那条（不与封面标题混成一句）', () => {
+    expect(docgenFailureMessage({ code: 'presentation-cover-subtitle-multiline', format: 'pptx' }, t)).toBe(
+      'docgen.coverSubtitleMultiline',
+    );
+  });
+
+  it('页标题里有换行 ⇒ 说第几页', () => {
+    expect(docgenFailureMessage({ code: 'presentation-slide-title-multiline', format: 'pptx', page: 2 }, t)).toBe(
+      'docgen.slideTitleMultiline({"page":2})',
+    );
+  });
+
+  it('要点里有换行 ⇒ 说第几页第几条（助手才知道改哪一条）', () => {
+    expect(
+      docgenFailureMessage({ code: 'presentation-slide-bullet-multiline', format: 'pptx', page: 3, bullet: 4 }, t),
+    ).toBe('docgen.slideBulletMultiline({"page":3,"bullet":4})');
+  });
+
   it('内容本身不合法 ⇒ 让用户重新出一份（而不是报一句内部错）', () => {
     expect(docgenFailureMessage({ code: 'request-invalid' }, t)).toBe('docgen.requestInvalid');
   });
@@ -97,7 +135,7 @@ describe('docgenFailureToastBody —— 一次只讲第一处，其余只报数'
   });
 });
 
-describe('真实语言包：这 8 个 key 九种语言都得有（缺一个就是界面上的裸键）', () => {
+describe('真实语言包：这些 key 九种语言都得有（缺一个就是界面上的裸键）', () => {
   const LOCALES = ['de', 'en', 'es', 'fr', 'ja', 'ko', 'pt', 'zh-TW', 'zh'];
   const KEYS = [
     'failedTitle',
@@ -105,6 +143,10 @@ describe('真实语言包：这 8 个 key 九种语言都得有（缺一个就�
     'pageTitleOverflow',
     'coverTitleOverflow',
     'coverSubtitleOverflow',
+    'coverTitleMultiline',
+    'coverSubtitleMultiline',
+    'slideTitleMultiline',
+    'slideBulletMultiline',
     'requestInvalid',
     'renderFailed',
     'moreFailures',

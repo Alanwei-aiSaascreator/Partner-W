@@ -873,14 +873,18 @@
     "resetSessionTitle": "Reiniciar sesión"
   },
   "docgen": {
+    "coverSubtitleMultiline": "El subtítulo de la presentación contiene un salto de línea, así que no se creó. Escríbelo en una sola línea.",
     "coverSubtitleOverflow": "El subtítulo de la presentación es demasiado largo, así que no se creó. Acórtalo a {{maxChars}} caracteres como máximo.",
+    "coverTitleMultiline": "El título de la presentación contiene un salto de línea, así que no se creó. Escribe el título en una sola línea; para varios párrafos, usa varias diapositivas.",
     "coverTitleOverflow": "El título de la presentación es demasiado largo, así que no se creó. Acórtalo a {{maxChars}} caracteres como máximo.",
     "failedTitle": "Algunos archivos no se crearon",
     "moreFailures": "Otros {{rest}} tampoco se crearon.",
     "pageOverflow": "La diapositiva {{page}} tiene demasiado contenido, así que la presentación no se creó. Divídela en varias diapositivas o mueve los detalles a las notas del orador.",
     "pageTitleOverflow": "El título de la diapositiva {{page}} es demasiado largo, así que la presentación no se creó. Acórtalo a {{maxChars}} caracteres como máximo.",
     "renderFailed": "Un archivo no se pudo crear.",
-    "requestInvalid": "Un archivo tenía el contenido mal formado y no se creó. Pídele al asistente que lo genere de nuevo."
+    "requestInvalid": "Un archivo tenía el contenido mal formado y no se creó. Pídele al asistente que lo genere de nuevo.",
+    "slideBulletMultiline": "El punto {{bullet}} de la diapositiva {{page}} contiene un salto de línea, así que la presentación no se creó. Mantén cada punto en una sola línea; para varios párrafos, usa varios puntos u otra diapositiva.",
+    "slideTitleMultiline": "El título de la diapositiva {{page}} contiene un salto de línea, así que la presentación no se creó. Escribe el título en una sola línea."
   },
   "errors": {
     "agentMissing": "Ese asistente no está en este equipo. Elige otro y vuelve a enviar.",

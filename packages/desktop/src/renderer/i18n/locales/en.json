@@ -873,14 +873,18 @@
     "resetSessionTitle": "Reset Session"
   },
   "docgen": {
+    "coverSubtitleMultiline": "The presentation subtitle contains a line break, so it was not created. Write it on one line.",
     "coverSubtitleOverflow": "The presentation subtitle is too long, so it was not created. Shorten it to {{maxChars}} characters or fewer.",
+    "coverTitleMultiline": "The presentation title contains a line break, so it was not created. Write the title on one line; if you need two paragraphs, use two slides.",
     "coverTitleOverflow": "The presentation title is too long, so it was not created. Shorten it to {{maxChars}} characters or fewer.",
     "failedTitle": "Some files were not created",
     "moreFailures": "{{rest}} more were not created either.",
     "pageOverflow": "Slide {{page}} has too much content, so the presentation was not created. Split it across slides, or move the details into the speaker notes.",
     "pageTitleOverflow": "The title of slide {{page}} is too long, so the presentation was not created. Shorten it to {{maxChars}} characters or fewer.",
     "renderFailed": "One file could not be created.",
-    "requestInvalid": "One file had malformed content and was not created. Ask the assistant to output it again."
+    "requestInvalid": "One file had malformed content and was not created. Ask the assistant to output it again.",
+    "slideBulletMultiline": "Bullet {{bullet}} on slide {{page}} contains a line break, so the presentation was not created. Keep each bullet on one line; split it into separate bullets or a new slide if you need paragraphs.",
+    "slideTitleMultiline": "The title of slide {{page}} contains a line break, so the presentation was not created. Write the title on one line."
   },
   "errors": {
     "agentMissing": "That assistant is not on this machine. Pick another one and send again.",

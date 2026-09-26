@@ -56,6 +56,19 @@ function failureFromRenderError(error: unknown, format: DocgenFormat): DocgenFai
         return { code: 'presentation-cover-title-overflow', format, maxChars: problem.maxChars };
       case 'cover-subtitle-overflow':
         return { code: 'presentation-cover-subtitle-overflow', format, maxChars: problem.maxChars };
+      case 'cover-title-multiline':
+        return { code: 'presentation-cover-title-multiline', format };
+      case 'cover-subtitle-multiline':
+        return { code: 'presentation-cover-subtitle-multiline', format };
+      case 'slide-title-multiline':
+        return { code: 'presentation-slide-title-multiline', format, page: problem.page };
+      case 'slide-bullet-multiline':
+        return {
+          code: 'presentation-slide-bullet-multiline',
+          format,
+          page: problem.page,
+          bullet: problem.bullet,
+        };
     }
   }
   return { code: 'render-failed', format };

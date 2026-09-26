@@ -865,6 +865,40 @@ describe('assistant artifact reconciliation boundary', () => {
     expect(calls[0][1]).toEqual([{ code: 'request-invalid' }, { code: 'request-invalid' }]);
   });
 
+  it('⭐ 换行被拒 ⇒ 推的是**带位置的结构化原因**（界面才说得出"第几页第几条"）', async () => {
+    const { beginArtifactRun, registerDataHandlers } = await import('../src/main/ipc/data-handlers.js');
+    registerDataHandlers();
+    beginArtifactRun('C:\\trusted-workspace', 'task-1', 'session-task-1');
+    selectGetMock.mockReturnValueOnce({ id: 'assistant-persisted' }).mockReturnValueOnce({ gid: 'gateway-1' });
+
+    handleMap.get('data:create-message')!(
+      {},
+      {
+        id: 'assistant-incoming',
+        taskId: 'task-1',
+        role: 'assistant',
+        content: [
+          '好的。',
+          '',
+          '```docgen',
+          JSON.stringify({
+            kind: 'pptx',
+            title: '内测汇报',
+            slides: [{ title: '本月完成', bullets: ['第一条\r\n第二条'] }],
+          }),
+          '```',
+        ].join('\n'),
+        timestamp: '2026-09-16T00:00:02.000Z',
+        sessionKey: 'session-task-1',
+      },
+    );
+    await flushJobs();
+
+    const calls = webContentsSendMock.mock.calls.filter((call) => call[0] === 'docgen:failed');
+    expect(calls, '一次消息只推一次').toHaveLength(1);
+    expect(calls[0][1]).toEqual([{ code: 'presentation-slide-bullet-multiline', format: 'pptx', page: 1, bullet: 1 }]);
+  });
+
   it('负对照：普通回复（没有 docgen 块）**一次都不该推** docgen:failed', async () => {
     const { beginArtifactRun, registerDataHandlers } = await import('../src/main/ipc/data-handlers.js');
     registerDataHandlers();

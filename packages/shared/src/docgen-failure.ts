@@ -42,6 +42,21 @@ export type DocgenFailure =
   /** 演示文稿的封面副标题过长。 */
   | { code: 'presentation-cover-subtitle-overflow'; format: DocgenFormat; maxChars: number }
   /**
+   * 演示文稿里有文字**带了换行**（`\n` / `\r\n` / `\r`）。
+   *
+   * 为什么这是失败而不是"我们替它压扁"：压扁会改掉用户的字 —— 助手本来可能想写两段，
+   * 压扁后变成一句读不通的长句，而用户与助手都不知道发生了什么。
+   * 另外，版面判定是按"一段会折几行"估高的，真换行会让估高少算，保护就被绕过去了。
+   *
+   * ⚠️ 四种字段各有独立的码，不是"一个码 + 字段名"：文案里**位置**那句话完全不同
+   *    （封面标题 / 副标题 / 第 N 页标题 / 第 N 页第 M 条要点），
+   *    拆开之后界面那个 `switch` 是平的、穷尽的，每个参数都必然存在。
+   */
+  | { code: 'presentation-cover-title-multiline'; format: DocgenFormat }
+  | { code: 'presentation-cover-subtitle-multiline'; format: DocgenFormat }
+  | { code: 'presentation-slide-title-multiline'; format: DocgenFormat; page: number }
+  | { code: 'presentation-slide-bullet-multiline'; format: DocgenFormat; page: number; bullet: number }
+  /**
    * 这一份的内容本身就不合规（JSON 非法、字段与 `kind` 对不上……）。
    *
    * ⚠️ **没有 `format`**：请求还没解析出来就失败了，我们并不知道它本来想做成什么。

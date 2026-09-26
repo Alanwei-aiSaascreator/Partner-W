@@ -228,3 +228,102 @@ describe('estimateBodyHeightPt —— 模型自身的口径', () => {
     expect(two - one).toBeCloseTo(18 * LINE_SPACING + 3, 5);
   });
 });
+
+/**
+ * 内嵌换行：**必须拒绝，不许压扁、不许静默替换**。
+ *
+ * ## 这是一条真会被绕过的洞（不是洁癖）
+ *
+ * 上面那套版面判定把一段文字按"半角宽 ÷ 每行容量"算行数 —— 那是**估算一行会被怎么折**。
+ * 但 PptxGenJS 对我们的文本是**真实换行**：`"第一行\n第二行"` 在文件里就是两行。
+ * 于是估高会**少算一行**，而"装不下就拒"这道保护就被绕过去了 ——
+ * 结果是**照样产出一份糊出画面的文件**，正是这一版要根治的那个症状。
+ *
+ * ## 为什么是拒，而不是把 `\n` 换成空格
+ *
+ * 压扁会**改变用户的文字**：助手本来可能是想写两段，压扁后变成一句读不通的长句，
+ * 而用户与助手都不知道发生了什么。拒掉则把选择权交回去 ——
+ * 要分段就拆页 / 拆成多条要点，要一行就自己删掉换行。**一次也别替用户改字。**
+ *
+ * 三种换行形式都要拦：模型产出里 `\r\n` 与裸 `\r` 都出现过（Windows 剪贴板、CRLF 文件）。
+ */
+
+const BREAKS = [
+  ['LF', '\n'],
+  ['CRLF', '\r\n'],
+  ['CR', '\r'],
+] as const;
+
+describe('findPptxLayoutProblem —— 内嵌换行：四类字段 × 三种换行，一个都不能漏', () => {
+  for (const [name, br] of BREAKS) {
+    it(`封面标题里有 ${name} ⇒ 拒，并指出是封面标题`, () => {
+      const deck = deckOf([{ title: '第一页', bullets: [] }], `第一行${br}第二行`);
+      expect(findPptxLayoutProblem(deck)).toEqual({ code: 'cover-title-multiline' });
+    });
+
+    it(`封面副标题里有 ${name} ⇒ 拒，并指出是副标题`, () => {
+      const deck: DocgenPptxRequest = {
+        ...deckOf([{ title: '第一页', bullets: [] }]),
+        subtitle: `上${br}下`,
+      };
+      expect(findPptxLayoutProblem(deck)).toEqual({ code: 'cover-subtitle-multiline' });
+    });
+
+    it(`页标题里有 ${name} ⇒ 拒，并指出是第几页`, () => {
+      expect(findPptxLayoutProblem(pageWith(`上半句${br}下半句`))).toEqual({
+        code: 'slide-title-multiline',
+        page: 1,
+      });
+    });
+
+    it(`要点里有 ${name} ⇒ 拒，并指出第几页第几条`, () => {
+      expect(findPptxLayoutProblem(pageWith('正常标题', ['正常一条', `前半${br}后半`]))).toEqual({
+        code: 'slide-bullet-multiline',
+        page: 1,
+        bullet: 2,
+      });
+    });
+  }
+
+  it('`\\r\\n` 只报一次（不是"两个换行"）', () => {
+    const deck = deckOf([{ title: '第一页', bullets: [] }], '上\r\n下');
+    expect(findPptxLayoutProblem(deck)).toEqual({ code: 'cover-title-multiline' });
+  });
+
+  it('第 2 页的换行报第 2 页（页号口径与超量失败一致）', () => {
+    const deck = deckOf([
+      { title: '正常', bullets: ['一条'] },
+      { title: '正常二', bullets: ['另一条\r\n带换行'] },
+    ]);
+    expect(findPptxLayoutProblem(deck)).toEqual({ code: 'slide-bullet-multiline', page: 2, bullet: 1 });
+  });
+
+  it('换行判定**先于**超量判定（否则用户按提示去拆页，还是失败）', () => {
+    const maxBullet = '内'.repeat(300);
+    const bullets = Array.from({ length: 12 }, () => maxBullet);
+    bullets[3] = `第一段\r\n${maxBullet}`;
+    const bulletsWith = (): DocgenPptxRequest => pageWith('本周进展', [...bullets]);
+    expect(findPptxLayoutProblem(bulletsWith())).toEqual({
+      code: 'slide-bullet-multiline',
+      page: 1,
+      bullet: 4,
+    });
+  });
+
+  it('负对照：**正常的中文与中英混排**仍然通过（不能把这条判得过宽）', () => {
+    const deck: DocgenPptxRequest = {
+      kind: 'pptx',
+      title: 'Q3 复盘与 1.0.1 计划',
+      subtitle: '2026-09-26 · Product Team',
+      slides: [
+        { title: '本周完成（P0 两条）', bullets: ['PPT 版面保护已落地', 'relay 侧文生图已就绪'] },
+        { title: '指标', bullets: ['周活 1,240（环比 +8%）', '留存 38% / 平均时长 21 分钟'] },
+      ],
+    };
+    expect(findPptxLayoutProblem(deck)).toBeNull();
+  });
+
+  it('负对照：制表符与全角空格**不算**换行（别把"看着像空白"都拦掉）', () => {
+    expect(findPptxLayoutProblem(pageWith('标题', ['甲乙\t丙　丁']))).toBeNull();
+  });
+});

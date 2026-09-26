@@ -402,3 +402,78 @@ describe('docgen 块不会被当成代码产物（否则用户会看到一份 JS
     expect(blocks.map((b) => b.language)).toEqual(['app.ts']);
   });
 });
+
+/**
+ * 内嵌换行走**整条生成链**：不落文件 + 留下一条可翻译的原因。
+ *
+ * 上面那组（`docgen-pptx-layout`）测的是判定本身；这一组测的是**判定有没有被接上** ——
+ * 本项目栽过"模块写好了却没接线"，所以两层都要有。
+ */
+describe('内嵌换行：一行都不许静默压扁，也就不许有产物', () => {
+  const slideWith = (field: 'title' | 'bullet', text: string): unknown => ({
+    kind: 'pptx',
+    title: '内测汇报',
+    slides: [{ title: field === 'title' ? text : '正常标题', bullets: field === 'bullet' ? [text] : ['正常一条'] }],
+  });
+
+  it('页标题里有 \\n ⇒ 报结构化原因，且**没调用过产物通道**', async () => {
+    const result = await generateDocumentsFromMessage({
+      workspacePath,
+      taskId,
+      messageId,
+      content: docgenBlock(slideWith('title', '上半句\n下半句')),
+    });
+
+    expect(result.saved).toEqual([]);
+    expect(result.failed).toEqual([{ code: 'presentation-slide-title-multiline', format: 'pptx', page: 1 }]);
+    expect(mocks.saveArtifactFromBuffer, '被拒的内容不许有产物 —— 不是"存了再删"').not.toHaveBeenCalled();
+  });
+
+  it('要点里有 \\r\\n ⇒ 报"第几页第几条"', async () => {
+    const result = await generateDocumentsFromMessage({
+      workspacePath,
+      taskId,
+      messageId,
+      content: docgenBlock(slideWith('bullet', '前半\r\n后半')),
+    });
+
+    expect(result.saved).toEqual([]);
+    expect(result.failed).toEqual([
+      { code: 'presentation-slide-bullet-multiline', format: 'pptx', page: 1, bullet: 1 },
+    ]);
+    expect(mocks.saveArtifactFromBuffer).not.toHaveBeenCalled();
+  });
+
+  it('⭐ 好坏混合：好的那份照样出，坏的那份单独失败且没有产物', async () => {
+    const content = [
+      docgenBlock({ ...PPTX, title: '好的那份' }),
+      '',
+      docgenBlock(slideWith('bullet', '带\n换行')),
+      '',
+      docgenBlock({ ...DOCX, title: '好的另一份' }),
+    ].join('\n');
+
+    const result = await generateDocumentsFromMessage({ workspacePath, taskId, messageId, content });
+
+    expect(result.saved.map((a) => a.name)).toEqual(['好的那份.pptx', '好的另一份.docx']);
+    expect(result.failed).toEqual([
+      { code: 'presentation-slide-bullet-multiline', format: 'pptx', page: 1, bullet: 1 },
+    ]);
+    expect(mocks.saveArtifactFromBuffer).toHaveBeenCalledTimes(2);
+  });
+
+  it('负对照：正常的中英混排照旧生成（这条不能被判得过宽）', async () => {
+    const result = await generateDocumentsFromMessage({
+      workspacePath,
+      taskId,
+      messageId,
+      content: docgenBlock({
+        kind: 'pptx',
+        title: 'Q3 复盘与 1.0.1 计划',
+        slides: [{ title: '指标（环比）', bullets: ['周活 1,240（+8%）', '留存 38%'] }],
+      }),
+    });
+    expect(result.failed).toEqual([]);
+    expect(result.saved).toHaveLength(1);
+  });
+});

@@ -873,14 +873,18 @@
     "resetSessionTitle": "Redefinir Sessão"
   },
   "docgen": {
+    "coverSubtitleMultiline": "O subtítulo da apresentação contém uma quebra de linha, então ela não foi criada. Escreva-o em uma única linha.",
     "coverSubtitleOverflow": "O subtítulo da apresentação é longo demais, então ela não foi criada. Encurte para no máximo {{maxChars}} caracteres.",
+    "coverTitleMultiline": "O título da apresentação contém uma quebra de linha, então ela não foi criada. Escreva o título em uma única linha; para vários parágrafos, use vários slides.",
     "coverTitleOverflow": "O título da apresentação é longo demais, então ela não foi criada. Encurte para no máximo {{maxChars}} caracteres.",
     "failedTitle": "Alguns arquivos não foram criados",
     "moreFailures": "Outros {{rest}} também não foram criados.",
     "pageOverflow": "O slide {{page}} tem conteúdo demais, então a apresentação não foi criada. Divida em vários slides ou mova os detalhes para as notas do apresentador.",
     "pageTitleOverflow": "O título do slide {{page}} é longo demais, então a apresentação não foi criada. Encurte para no máximo {{maxChars}} caracteres.",
     "renderFailed": "Um arquivo não pôde ser criado.",
-    "requestInvalid": "Um arquivo tinha conteúdo malformado e não foi criado. Peça ao assistente para gerar novamente."
+    "requestInvalid": "Um arquivo tinha conteúdo malformado e não foi criado. Peça ao assistente para gerar novamente.",
+    "slideBulletMultiline": "O item {{bullet}} do slide {{page}} contém uma quebra de linha, então a apresentação não foi criada. Mantenha cada item em uma única linha; para vários parágrafos, use mais itens ou outro slide.",
+    "slideTitleMultiline": "O título do slide {{page}} contém uma quebra de linha, então a apresentação não foi criada. Escreva o título em uma única linha."
   },
   "errors": {
     "agentMissing": "Esse assistente não está neste computador. Escolha outro e envie de novo.",
