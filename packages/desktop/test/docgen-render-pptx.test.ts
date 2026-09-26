@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import yauzl from 'yauzl';
+import { bodyFontSizePt } from '../src/main/docgen/pptx-layout';
 import { parseDocgenRequest } from '../src/main/docgen/request';
 import { renderPptx } from '../src/main/docgen/render-pptx';
 
@@ -122,5 +123,39 @@ describe('renderPptx —— 解包验证', () => {
     const files = await renderValid();
     const slide2 = files.get('ppt/slides/slide2.xml')?.toString('utf8') ?? '';
     expect(slide2).not.toContain('这段字压根不存在');
+  });
+});
+
+describe('renderPptx —— 正文字号真的由内容量决定', () => {
+  /**
+   * 这一组钉的是**接线**，不是算法：`pptx-layout.ts` 里那个函数自己测过了，
+   * 但"模块写好了却没接上"是这类加固最容易掉的缝（本项目栽过）。
+   * 所以这里从**生成出来的 XML** 里把字号读回来，跟那个函数算的比。
+   *
+   * DrawingML 的字号是 `sz="1800"`（百分之一磅）。
+   */
+  async function bodySizes(bullets: string[]): Promise<number[]> {
+    const parsed = parseDocgenRequest({ kind: 'pptx', title: 't', slides: [{ title: '内容页', bullets }] });
+    if (!parsed.ok) throw new Error(`夹具不合法：${parsed.error}`);
+    if (parsed.request.kind !== 'pptx') throw new Error('夹具 kind 不对');
+    const files = await unzip(await renderPptx(parsed.request));
+    // 第 1 张是封面，内容页是第 2 张
+    const xml = files.get('ppt/slides/slide2.xml')?.toString('utf8') ?? '';
+    return [...xml.matchAll(/sz="(\d+)"/g)].map((match) => Number(match[1]) / 100);
+  }
+
+  it('短内容：正文仍是 18pt（正常篇幅的观感不因这一刀改变）', async () => {
+    const sizes = await bodySizes(['文档生成能力：方案已出', '文件导入提示：已修']);
+    expect(sizes).toContain(18);
+  });
+
+  it('12 条要点：XML 里的正文号 == 算出来的号（且不再是 18）', async () => {
+    const bullets = Array.from({ length: 12 }, (_, i) => `第 ${i + 1} 条要点，简短一句`);
+    const sizes = await bodySizes(bullets);
+    const expected = bodyFontSizePt(bullets);
+    expect(expected).toBeLessThan(18);
+    expect(sizes, '标题仍应是 26pt').toContain(26);
+    expect(sizes, '正文必须用算出来的字号').toContain(expected);
+    expect(sizes, '正文不该还是写死的 18pt').not.toContain(18);
   });
 });

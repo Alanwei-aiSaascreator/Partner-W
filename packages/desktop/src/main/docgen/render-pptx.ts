@@ -1,4 +1,5 @@
 import PptxGenJS from 'pptxgenjs';
+import { BODY_BOX, LINE_SPACING, bodyFontSizePt } from './pptx-layout.js';
 import type { DocgenPptxRequest } from './request.js';
 
 /**
@@ -71,9 +72,20 @@ export async function renderPptx(request: DocgenPptxRequest): Promise<Buffer> {
     page.addShape('rect', { x: 0.6, y: 1.28, w: 1.2, h: 0.045, fill: { color: COLOR_ACCENT } });
 
     if (slide.bullets.length > 0) {
+      // 字号由内容量算出来 —— 写死 18pt 会让 12 条要点压到标题上（`pptx-layout.ts`
+      // 里有真渲染的实测记录）。框的取值也从那里来，两处只留一份。
       page.addText(
         slide.bullets.map((text) => ({ text, options: { bullet: true } })),
-        { x: 0.85, y: 1.6, w: 8.4, h: 3.2, fontSize: 18, color: COLOR_BODY, fontFace: FONT, lineSpacingMultiple: 1.3 },
+        {
+          x: BODY_BOX.x,
+          y: BODY_BOX.y,
+          w: BODY_BOX.w,
+          h: BODY_BOX.h,
+          fontSize: bodyFontSizePt(slide.bullets),
+          color: COLOR_BODY,
+          fontFace: FONT,
+          lineSpacingMultiple: LINE_SPACING,
+        },
       );
     }
     if (slide.notes) page.addNotes(slide.notes);
