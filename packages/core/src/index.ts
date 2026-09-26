@@ -154,6 +154,8 @@ export type { GatewayDispatcherDeps } from './services/gateway-dispatcher.js';
 
 export { createChatComposer } from './services/chat-composer.js';
 export type { ChatComposerDeps, ChatComposer, SendOptions } from './services/chat-composer.js';
+export { DEFAULT_COMPUTER_ACCESS_TIER, decidePermissionPatch } from './services/computer-access.js';
+export type { AppliedPermissionMap, AppliedPermissionMode, ComputerAccessTier } from './services/computer-access.js';
 
 export { createSystemSessionService } from './services/system-session-service.js';
 export type { SystemSessionServiceDeps, SystemSessionService } from './services/system-session-service.js';

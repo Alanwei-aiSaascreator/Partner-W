@@ -25,6 +25,15 @@ export function registerSettingsHandlers(): void {
       ) {
         return { ok: false, error: 'unsupported language code' };
       }
+      // 「电脑操控权限」两档：只收这两个字面量。写进别的东西 ⇒ 读取侧会把它当安全档，
+      // 但**这里就拒掉**更好 —— 悄悄存下一个永远不会生效的值，等于让用户以为他开了。
+      if (
+        partial.computerAccess !== undefined &&
+        partial.computerAccess !== 'safe' &&
+        partial.computerAccess !== 'full'
+      ) {
+        return { ok: false, error: 'unsupported computer access tier' };
+      }
       const config = updateConfig(partial);
       return { ok: true, config };
     },

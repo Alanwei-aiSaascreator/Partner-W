@@ -25,7 +25,8 @@ import { resolveTaskAgentName } from '@/lib/task-agent-name';
 import { createElectronPorts } from './electron-adapter';
 import i18n from '../i18n';
 import { thinkingLevelsFor } from '../components/ChatInput/thinking-levels';
-import { syncSettingsUpdate } from '../stores/settingsStore';
+import { syncSettingsUpdate, useSettingsStore } from '../stores/settingsStore';
+import { computerAccessApplied, createComputerAccessDep } from '../lib/computer-access-runtime';
 
 let _ports: PlatformPorts | null = null;
 
@@ -155,6 +156,12 @@ function getComposer(): ChatComposer {
       setRoomStatus: (taskId, status) => roomStoreApi.getState().setRoomStatus(taskId, status),
       // 给 conductor 那句「用户 @ 了谁」用的名字（T-a7 第四个面）：同一份目录优先规则。
       resolveAgentName: lookupAgentName,
+      // 「电脑操控权限」两档（spec §2.5）。**现读设置**、不缓存快照：
+      // 用户在设置里一关，下一条消息就该按新档位走。
+      computerAccess: createComputerAccessDep({
+        readTier: () => useSettingsStore.getState().settings?.computerAccess,
+        applied: computerAccessApplied,
+      }),
       translate: (key, opts) => i18n.t(key, opts),
       onError: (toastMsg) => toast.error(toastMsg.title, { description: toastMsg.description }),
     });

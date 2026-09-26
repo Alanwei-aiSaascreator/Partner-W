@@ -209,6 +209,13 @@ interface AppSettings {
    *    按关处理等于"升一次级静默拿走一个功能"。
    */
   webSearch?: boolean;
+  /**
+   * 「电脑操控权限」两档：`'safe'`（缺省）/ `'full'`。
+   *
+   * ⚠️ **缺省 = 安全档**（与主进程 `AppConfig` 一致，方向与 `webSearch` **相反**）：
+   *    这个字段缺了必须是"更窄"的那一档，不能是"更宽"的。
+   */
+  computerAccess?: 'safe' | 'full';
 }
 
 export type VoicePermissionStatus = 'granted' | 'not-determined' | 'denied' | 'unsupported';

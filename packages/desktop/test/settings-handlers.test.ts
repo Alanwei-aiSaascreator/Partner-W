@@ -251,4 +251,48 @@ describe('registerSettingsHandlers', () => {
       tlsVerify: false,
     });
   });
+  /**
+   * 「电脑操控权限」两档的写入校验。
+   *
+   * ⚠️ 这里挡的是**"悄悄存下一个永远不会生效的值"**：读取侧认不出的一律当安全档，
+   *    所以存进 `'yolo'` 的后果不是"开了个危险档"，而是**用户以为他开了、其实没开**
+   *    —— 同样是界面在说谎，同样要挡住。
+   */
+  describe('settings:update × 电脑操控权限', () => {
+    it("收下 'full' 并原样落到配置", async () => {
+      const { registerSettingsHandlers } = await import('../src/main/ipc/settings-handlers.js');
+      const { updateConfig } = await import('../src/main/workspace/config.js');
+      registerSettingsHandlers();
+
+      const handler = handleMap.get('settings:update');
+      const result = handler?.({}, { computerAccess: 'full' }) as { ok: boolean };
+
+      expect(result.ok).toBe(true);
+      expect(updateConfig).toHaveBeenCalledWith({ computerAccess: 'full' });
+    });
+
+    it("收下 'safe'", async () => {
+      const { registerSettingsHandlers } = await import('../src/main/ipc/settings-handlers.js');
+      const { updateConfig } = await import('../src/main/workspace/config.js');
+      registerSettingsHandlers();
+
+      const handler = handleMap.get('settings:update');
+      const result = handler?.({}, { computerAccess: 'safe' }) as { ok: boolean };
+
+      expect(result.ok).toBe(true);
+      expect(updateConfig).toHaveBeenCalledWith({ computerAccess: 'safe' });
+    });
+
+    it.each([['yolo'], ['FULL'], [''], [true], [1], [null]])('拒绝认不出的档位：%p（且**不写配置**）', async (bad) => {
+      const { registerSettingsHandlers } = await import('../src/main/ipc/settings-handlers.js');
+      const { updateConfig } = await import('../src/main/workspace/config.js');
+      registerSettingsHandlers();
+
+      const handler = handleMap.get('settings:update');
+      const result = handler?.({}, { computerAccess: bad }) as { ok: boolean; error?: string };
+
+      expect(result.ok).toBe(false);
+      expect(updateConfig, '被拒的写入一个字都不许落盘').not.toHaveBeenCalled();
+    });
+  });
 });

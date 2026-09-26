@@ -82,6 +82,18 @@ export interface AppConfig {
   teamHubRegistries?: TeamHubRegistryConfig[];
   updateChannel?: 'stable' | 'beta';
   /**
+   * 「电脑操控权限」两档（spec `2026-09-26-computer-access-two-tiers-design.md`）。
+   *
+   * ⚠️ **缺省 = `'safe'`**（助手只在自己工作区里读写、跑命令要问）。这是产品的安全底线，
+   *    缺省绝不许是 `'full'`。读取侧还有一道 fail-closed（`normalizeComputerAccessTier`：
+   *    认不出的一律安全档），两道合起来保证"配置坏了"不会变成"放开整台电脑"。
+   *
+   * ⚠️ 这里存的只是**用户意愿**；真正决定助手能碰什么的是**网关侧的会话权限模式**，
+   *    且切 `'full'` 在网关那边要 `operator.admin`（`method-scopes-*.mjs`）。
+   *    所以这个字段被手改成 `'full'` 也**不会**凭空获得权限。
+   */
+  computerAccess?: 'safe' | 'full';
+  /**
    * 联网搜索开关（设置里那一行）。
    *
    * ⚠️ **缺省 = 开**（见 `relay-config.ts` 的 `webSearchEnabled`）：这个能力本来就存在，
