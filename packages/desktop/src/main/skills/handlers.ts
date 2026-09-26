@@ -29,8 +29,10 @@ import {
   readBundledSkills,
   readInstalledSkillContent,
   removeBundledSkill,
+  skillContentSha,
   staleBundledSkills,
 } from './bundled.js';
+import { readConfig, updateConfig } from '../workspace/config.js';
 import { notifySkillCacheChange, type SkillCacheClient } from './cache-refresh.js';
 import { getDebugLogger } from '../debug/index.js';
 import { resolveOurSkillsRoot } from './locate.js';
@@ -160,18 +162,27 @@ export function registerSkillsHandlers(): void {
         if (!managedDir) return { ok: false, error: 'GATEWAY_UNAVAILABLE' };
 
         const skills = readBundledSkills(ourSkillsRoot());
+        const records = readConfig()?.bundledSkillRecords?.[managedDir] ?? {};
+        const readInstalled = (slug: string) => readInstalledSkillContent(managedDir, slug);
+
         const missing = missingBundledSkills(skills, (slug) => isBundledSkillInstalled(managedDir, slug));
-        // ⭐ 第二层：**已装但内容旧了**。`missingBundledSkills` 只管"缺了才补"，
+        // ⭐ 第二层：**已装、但被我们自己放旧了**。`missingBundledSkills` 只管"缺了才补"，
         //    而老盘的技能**不缺** —— 不处理它，随包技能更新对已发出的盘等于没发生
         //    （真机：助手照旧按旧契约说"PDF 做不到"）。
-        const stale = staleBundledSkills(skills, (slug) => readInstalledSkillContent(managedDir, slug));
+        //    判据三条全中才升，缺一不动（见 `staleBundledSkills` 的注释）——
+        //    特别是"盘上那份必须还是我们装下去的那份"，否则就是有人改过，不许碰。
+        const stale = staleBundledSkills(skills, readInstalled, (slug) => records[slug] ?? null);
+
         const installed: string[] = [];
         const upgraded: string[] = [];
         const failed: Array<{ slug: string; error: string }> = [];
+        const nextRecords: Record<string, string> = { ...records };
+
         for (const skill of missing) {
           const result = installBundledSkill({ root: ourSkillsRoot(), managedDir, slug: skill.slug });
           if (result.ok) {
             installed.push(skill.slug);
+            if (typeof skill.content === 'string') nextRecords[skill.slug] = skillContentSha(skill.content);
             notifySkillCache(payload.gatewayId, skill.slug, true);
           } else {
             failed.push({ slug: skill.slug, error: result.error ?? 'install failed' });
@@ -181,6 +192,7 @@ export function registerSkillsHandlers(): void {
           const result = installBundledSkill({ root: ourSkillsRoot(), managedDir, slug: skill.slug });
           if (result.ok) {
             upgraded.push(skill.slug);
+            if (typeof skill.content === 'string') nextRecords[skill.slug] = skillContentSha(skill.content);
             // ⚠️ **force**：内容升级时 `{enabled:true}` 对已经 true 的那条**不是变更**，
             //    网关那边 `changedPaths.length === 0` 直接 return ⇒ 缓存不 bump ⇒
             //    盘上换了、运行时照旧用旧的。force 让它变两次（false → true）。
@@ -189,6 +201,24 @@ export function registerSkillsHandlers(): void {
             failed.push({ slug: skill.slug, error: result.error ?? 'upgrade failed' });
           }
         }
+
+        // ⭐ **认领**：盘上那份与随包**一致**、但我们还没有记账的（老盘第一次跑这一版）
+        //   ⇒ 补记一笔。不补的话下一版随包更新时"没有记账 ⇒ 不动"，老盘永远升不上来。
+        //   ⚠️ 只认领**内容一致**的那些：不一致的说明不是我们装的，不记、不碰。
+        for (const skill of skills) {
+          if (nextRecords[skill.slug]) continue;
+          if (typeof skill.content !== 'string') continue;
+          const onDisk = readInstalled(skill.slug);
+          if (onDisk === null) continue;
+          if (skillContentSha(onDisk) === skillContentSha(skill.content)) {
+            nextRecords[skill.slug] = skillContentSha(skill.content);
+          }
+        }
+
+        if (Object.keys(nextRecords).length > 0) {
+          updateConfig({ bundledSkillRecords: { ...readConfig()?.bundledSkillRecords, [managedDir]: nextRecords } });
+        }
+
         return { ok: true, result: { installed, upgraded, failed } };
       } catch (err) {
         return ipcError(err);

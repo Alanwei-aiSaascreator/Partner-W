@@ -23,6 +23,7 @@
  *    真正的权威仍是运行时自己的加载器：dev 实机装一次、查 `skills.status` 才算数。
  */
 
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -250,24 +251,50 @@ export function readInstalledSkillContent(managedDir: string | undefined, slug: 
 }
 
 /**
- * 挑出**已装、但内容与随包不一致**的那些（纯函数）。
+ * 内容的指纹（行尾归一之后算）——**"我们上次装下去的是哪一份"**。
+ *
+ * 用它是为了把两件长得很像、后果却相反的事分开：
+ *   · **我们自己把它放旧了**（随包更新了，盘上还是上一版）⇒ 该升级；
+ *   · **别人改过它**（用户或运行时动过）⇒ 一个字节都不许碰。
+ * 只比内容分不出这两者，所以必须记一笔"上次装的是哪一份"。
+ */
+export function skillContentSha(content: string): string {
+  return createHash('sha256').update(normalizeLineEndings(content)).digest('hex');
+}
+
+/**
+ * 挑出**该升级**的那些（纯函数）。
  *
  * ⚠️ 这是"我们的 SKILL.md 更新了怎么办"那个**另一个决定**（`missingBundledSkills`
  *    的注释里点名的那个）。2026-09-26 真机：老盘升级后助手照旧按旧契约说
  *    "PDF 做不到" —— 因为随包技能在磁盘这一层从来没被升级过（只有"缺了才补"）。
  *
- * ⚠️ 它的后果是**覆盖用户 managed 目录里那一份**。所以判据必须**精确**：
- *    只比内容、行尾归一，不做任何"差不多就算旧"的模糊判断。
+ * ⚠️ 它的后果是**覆盖用户 managed 目录里那一份**，所以判据必须三条全中：
+ *    ① 已装（没装是 `missingBundledSkills` 的事）；
+ *    ② **盘上那份正是我们上次装下去的那份**（指纹对得上）—— 对不上说明有人改过，
+ *       **不碰**。这条是本函数存在的全部理由：只比内容的话，"用户改过"会被
+ *       当成"我们放旧了"，于是每次开机都把他的修改冲掉；
+ *    ③ 随包那份与装下去那份**不同**（真的更新了）。
+ *    三条缺一 ⇒ 不动。
+ *
+ * ⚠️ **没有记账**（老盘第一次跑这一版）时按**不动**处理 —— 保守方向。
+ *    宁可这次不升级，也不能拿不准就覆盖。
  */
 export function staleBundledSkills(
   skills: readonly BundledSkill[],
   readInstalled: (slug: string) => string | null,
+  readRecordedSha: (slug: string) => string | null,
 ): BundledSkill[] {
   return skills.filter((skill) => {
     if (typeof skill.content !== 'string') return false;
     const installed = readInstalled(skill.slug);
     if (installed === null) return false;
-    return normalizeLineEndings(installed) !== normalizeLineEndings(skill.content);
+    const recorded = readRecordedSha(skill.slug);
+    if (recorded === null) return false;
+    // ② 盘上那份已经不是我们装的了 ⇒ 有人改过，不碰
+    if (skillContentSha(installed) !== recorded) return false;
+    // ③ 随包那份和装下去那份一样 ⇒ 没什么可升的
+    return skillContentSha(skill.content) !== recorded;
   });
 }
 

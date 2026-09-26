@@ -38,6 +38,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   handleMap: new Map<string, (...args: unknown[]) => unknown>(),
+  // ⚠️ 新机制要读写 `bundledSkillRecords`（内容指纹记账）⇒ 配置桩成**内存**的，
+  //    否则 `updateConfig` 抛 ENOENT、整条处理器被打回 `ok:false`，
+  //    而测试只会看到"upgraded 是 undefined"这种看不出因果的形状。
+  configState: { value: {} as Record<string, unknown> },
   updateSkill: vi.fn<(params: unknown) => Promise<unknown>>(async () => ({})),
   getSkillsStatus: vi.fn(async () => ({ managedSkillsDir: 'C:/managed-skills' })),
   getGatewayClient: vi.fn(),
@@ -48,6 +52,14 @@ const mocks = vi.hoisted(() => ({
   isBundledSkillInstalled: vi.fn(() => false),
   readInstalledSkillContent: vi.fn<(dir: unknown, slug: string) => string | null>(() => null),
   warn: vi.fn(),
+}));
+
+vi.mock('../src/main/workspace/config.js', () => ({
+  readConfig: () => mocks.configState.value,
+  updateConfig: (partial: Record<string, unknown>) => {
+    mocks.configState.value = { ...mocks.configState.value, ...partial };
+    return mocks.configState.value;
+  },
 }));
 
 vi.mock('electron', () => ({
@@ -84,6 +96,7 @@ vi.mock('../src/main/debug/index.js', () => ({
 
 import { notifySkillCacheChange } from '../src/main/skills/cache-refresh.js';
 import { registerSkillsHandlers } from '../src/main/skills/handlers.js';
+import { skillContentSha } from '../src/main/skills/bundled.js';
 
 /** 一个连上的网关客户端替身。`updateSkill` 的**载荷形状**是本切片的核心断言。 */
 function connectedClient() {
@@ -289,6 +302,7 @@ describe('开机自装 × 内容升级', () => {
       getSkillsStatus: mocks.getSkillsStatus,
     });
     mocks.getSkillsStatus.mockResolvedValue({ managedSkillsDir: 'C:/managed-skills' });
+    mocks.configState.value = {};
   });
 
   const runEnsure = async () => {
@@ -313,10 +327,15 @@ describe('开机自装 × 内容升级', () => {
     expect(mocks.updateSkill, '也不该发通知').not.toHaveBeenCalled();
   });
 
-  it('⭐ 内容不一致 ⇒ 覆盖安装 + 强制 bump（false → true）', async () => {
+  it('⭐ 我们自己把它放旧了 ⇒ 覆盖安装 + 强制 bump（false → true）', async () => {
     mocks.readBundledSkills.mockReturnValue([{ slug: 'document-deck', content: '新正文含 PDF 段' }]);
     mocks.isBundledSkillInstalled.mockReturnValue(true);
     mocks.readInstalledSkillContent.mockReturnValue('旧正文只有三种格式');
+    // ⚠️ **记账是判据的一部分**：盘上那份必须"还是我们装下去的那份"才敢升级。
+    //    没有这一笔时（老盘第一次跑这一版）按**不动**处理 —— 保守方向。
+    mocks.configState.value = {
+      bundledSkillRecords: { 'C:/managed-skills': { 'document-deck': skillContentSha('旧正文只有三种格式') } },
+    };
 
     const res = await runEnsure();
 

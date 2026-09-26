@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   installBundledSkill,
   isBundledSkillInstalled,
+  skillContentSha,
   staleBundledSkills,
   isContainedPath,
   isSafeSlug,
@@ -274,48 +275,118 @@ describe('装 / 卸', () => {
  * 真机形状（2026-09-26，盘 E: 0.0.35）：技能文件手工换成了新版（含 PDF 段），
  * 而助手照旧「环境限制…没法直接生成 PDF」——因为磁盘这一层根本没被升级过。
  */
-describe('staleBundledSkills —— 已装但内容旧了的那些', () => {
-  const bundled = (slug: string, content: string) => ({ slug, name: slug, description: '', content }) as never;
+/**
+ * ⚠️ 行尾用**字符码**拼，不写转义序列 —— 往这个文件里写 `\r\n` 这类东西已经栽过三次
+ *    （`\` 穿过多层工具后变成真实控制字符，文件当场编不过）。
+ */
+const LF_CHAR = String.fromCharCode(10);
+const CR_CHAR = String.fromCharCode(13);
 
-  it('内容一致 ⇒ 不算旧（不动它）', () => {
-    const skills = [bundled('a', '同样的正文')];
-    expect(staleBundledSkills(skills, () => '同样的正文')).toEqual([]);
+describe('staleBundledSkills —— 该升级的那些（判据三条全中）', () => {
+  const bundled = (slug: string, content: string) => ({ slug, name: slug, description: '', content }) as never;
+  const sha = (c: string) => skillContentSha(c);
+
+  it('① 已装 ② 盘上那份正是我们装的 ③ 随包更新了 ⇒ 升级', () => {
+    const skills = [bundled('a', '新版正文')];
+    expect(
+      staleBundledSkills(
+        skills,
+        () => '旧版正文',
+        () => sha('旧版正文'),
+      ).map((s) => s.slug),
+    ).toEqual(['a']);
   });
 
-  it('内容不一致 ⇒ 算旧', () => {
-    const skills = [bundled('a', '新正文')];
-    expect(staleBundledSkills(skills, () => '旧正文').map((s) => s.slug)).toEqual(['a']);
+  /**
+   * ⭐⭐ **这条是整件事存在的理由。**
+   *
+   * 只比内容的话，"用户/运行时改过"会被当成"我们放旧了"，于是**每次开机都把他的修改冲掉**
+   * —— 正是 `missingBundledSkills` 的注释里点名警告过的那个后果。
+   * 所以判据里必须有"盘上那份**还是我们装下去的那份**"这一条（指纹对得上）。
+   */
+  it('⭐⭐ 别人改过（盘上那份不是我们装的）⇒ 一个字节都不碰', () => {
+    const skills = [bundled('a', '新版正文')];
+    expect(
+      staleBundledSkills(
+        skills,
+        () => '用户或运行时改过的内容',
+        () => sha('旧版正文'),
+      ),
+    ).toEqual([]);
+  });
+
+  it('随包那份与装下去那份一样 ⇒ 没什么可升的', () => {
+    const skills = [bundled('a', '同一份')];
+    expect(
+      staleBundledSkills(
+        skills,
+        () => '同一份',
+        () => sha('同一份'),
+      ),
+    ).toEqual([]);
+  });
+
+  it('⚠️ 没有记账（老盘第一次跑这一版）⇒ 不动（保守方向）', () => {
+    const skills = [bundled('a', '新版正文')];
+    expect(
+      staleBundledSkills(
+        skills,
+        () => '旧版正文',
+        () => null,
+      ),
+    ).toEqual([]);
   });
 
   it('**没装**的不算旧（那是 missingBundledSkills 的事，两条路各管各的）', () => {
     const skills = [bundled('a', '新正文')];
-    expect(staleBundledSkills(skills, () => null)).toEqual([]);
+    expect(
+      staleBundledSkills(
+        skills,
+        () => null,
+        () => sha('旧版正文'),
+      ),
+    ).toEqual([]);
   });
 
-  it('⚠️ 行尾差异不算旧：CRLF 与 LF 是同一份内容（本仓库 Windows 上真的会不一样）', () => {
-    const skills = [bundled('a', '第一行\n第二行')];
-    expect(staleBundledSkills(skills, () => '第一行\r\n第二行')).toEqual([]);
+  it('⚠️ 行尾差异不算内容不同：CRLF 与 LF 是同一份（本仓库 Windows 上真的会不一样）', () => {
+    const lf = '第一行' + LF_CHAR + '第二行';
+    const crlf = '第一行' + CR_CHAR + LF_CHAR + '第二行';
+    expect(skillContentSha(crlf)).toBe(skillContentSha(lf));
+    expect(
+      staleBundledSkills(
+        [bundled('a', lf)],
+        () => crlf,
+        () => skillContentSha(lf),
+      ),
+    ).toEqual([]);
   });
 
-  it('只挑旧的那些，新的不碰', () => {
-    const skills = [bundled('a', '同'), bundled('b', '新'), bundled('c', '同')];
-    const installed: Record<string, string | null> = { a: '同', b: '旧', c: '同' };
-    expect(staleBundledSkills(skills, (slug) => installed[slug] ?? null).map((s) => s.slug)).toEqual(['b']);
-  });
-
-  /**
-   * ⚠️ 这一条是**变异测试逼出来的**（S4 逃逸）：`content` 读不出来时若判成"陈旧"，
-   *    后果是**拿一份坏的/空的源去覆盖盘上好的那份** —— 比"没升级"糟得多。
-   *    宁可不升级，也不能用读不出来的内容覆盖。
-   */
   it('随包 content 缺失（SKILL.md 读不出来）⇒ **不算旧**，绝不用坏源覆盖好盘', () => {
     const skills = [{ slug: 'a', name: 'a', description: '' } as never];
-    expect(staleBundledSkills(skills, () => '盘上是好的')).toEqual([]);
+    expect(
+      staleBundledSkills(
+        skills,
+        () => '盘上是好的',
+        () => sha('盘上是好的'),
+      ),
+    ).toEqual([]);
   });
 
-  it('没装的不混进来（半装状态：a 旧、b 缺）', () => {
-    const skills = [bundled('a', '新'), bundled('b', '新')];
-    const installed: Record<string, string | null> = { a: '旧', b: null };
-    expect(staleBundledSkills(skills, (slug) => installed[slug] ?? null).map((s) => s.slug)).toEqual(['a']);
+  it('只挑该升的那些，别的两样都不动（半装状态也各归各的）', () => {
+    const skills = [bundled('a', '同'), bundled('b', '新'), bundled('c', '同'), bundled('d', '新')];
+    const onDisk: Record<string, string | null> = { a: '同', b: '旧', c: '改过', d: null };
+    const recorded: Record<string, string | null> = {
+      a: sha('同'),
+      b: sha('旧'),
+      c: sha('原来那份'),
+      d: sha('旧'),
+    };
+    expect(
+      staleBundledSkills(
+        skills,
+        (slug) => onDisk[slug] ?? null,
+        (slug) => recorded[slug] ?? null,
+      ).map((s) => s.slug),
+    ).toEqual(['b']);
   });
 });

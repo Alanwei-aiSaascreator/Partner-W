@@ -3,7 +3,7 @@ import { buildSessionKey } from '@clawwork/shared';
 import type { IpcResult, Message, MessageAttachment } from '@clawwork/shared';
 import { createChatComposer } from '../src/services/chat-composer';
 import type { ChatComposerDeps } from '../src/services/chat-composer';
-import type { AppliedPermissionMode, ComputerAccessTier } from '../src/services/computer-access.js';
+import type { AppliedPermissionRecord, ComputerAccessTier } from '../src/services/computer-access.js';
 import type { ChatAttachment } from '../src/ports/gateway-transport.js';
 import { translateGatewayError } from '../src/services/gateway-error-message.js';
 import { UnknownAgentError } from '../src/stores/task-store.js';
@@ -41,7 +41,7 @@ function setup(
      * ⚠️ **不传 = dep 字段真的不存在**（= 老宿主 / 没开这个功能），
      *    与"传了但档位是 safe"必须走同一条行为路径 —— 有测试按这个钉。
      */
-    computerAccess?: { tier: ComputerAccessTier; applied: Map<string, AppliedPermissionMode> };
+    computerAccess?: { tier: ComputerAccessTier; applied: Map<string, AppliedPermissionRecord> };
   } = {},
 ) {
   const addMessage = vi.fn(
@@ -149,8 +149,8 @@ function setup(
     deps.computerAccess = {
       tier: () => ca.tier,
       applied: () => ca.applied,
-      remember: (sessionKey, mode) => {
-        ca.applied.set(sessionKey, mode);
+      remember: (sessionKey, record) => {
+        ca.applied.set(sessionKey, record);
       },
     };
   }
@@ -766,16 +766,16 @@ describe('chat-composer × 电脑操控权限两档', () => {
   });
 
   it('规则③：补成功之后记账 ⇒ 第二次发送不再补', async () => {
-    const applied = new Map<string, AppliedPermissionMode>();
+    const applied = new Map<string, AppliedPermissionRecord>();
     const h = setup({ computerAccess: { tier: 'full', applied } });
     await h.composer.send(TASK_ID, { content: '一' });
     await h.composer.send(TASK_ID, { content: '二' });
     expect(h.permissionPatches()).toEqual([{ sessionKey: SESSION_KEY, mode: 'full' }]);
-    expect(applied.get(SESSION_KEY)).toBe('full');
+    expect(applied.get(SESSION_KEY)?.mode).toBe('full');
   });
 
   it('⚠️ 规则③的边界：补刀**失败**就不许记账（否则永久哑掉）', async () => {
-    const applied = new Map<string, AppliedPermissionMode>();
+    const applied = new Map<string, AppliedPermissionRecord>();
     const h = setup({ computerAccess: { tier: 'full', applied } });
     // 第一刀（model 那条链）会先发一次 patch —— 让它成功，只让"权限那一刀"失败。
     h.patchSession.mockImplementation(async (_g: string, _k: string, patch: Record<string, unknown>) =>
@@ -788,14 +788,14 @@ describe('chat-composer × 电脑操控权限两档', () => {
   });
 
   it('判据 5：从全权切回安全 ⇒ 下一次发送补 {permissionMode:"guarded"} 收回', async () => {
-    const applied = new Map<string, AppliedPermissionMode>([['OTHER', 'full']]);
+    const applied = new Map<string, AppliedPermissionRecord>([['OTHER', { mode: 'full', gatewayId: 'gw-1' }]]);
     const h = setup({ computerAccess: { tier: 'safe', applied } });
-    applied.set(SESSION_KEY, 'full');
+    applied.set(SESSION_KEY, { mode: 'full', gatewayId: 'gw-1' });
     await h.composer.send(TASK_ID, { content: 'hi' });
     expect(h.permissionPatches()).toEqual([{ sessionKey: SESSION_KEY, mode: 'guarded' }]);
     // ⚠️ 收回之后记账**必须跟着变成 guarded**：还留着 'full' 的话，下次发送会
     //    以为"还是全权"而不再收回（账本说的与世上发生的不一致）。
-    expect(applied.get(SESSION_KEY)).toBe('guarded');
+    expect(applied.get(SESSION_KEY)?.mode).toBe('guarded');
   });
 
   it('§2.6：权限那一刀失败**不许拦住发送**（尽力而为，不是硬门）', async () => {

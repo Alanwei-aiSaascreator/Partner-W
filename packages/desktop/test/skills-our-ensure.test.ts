@@ -16,6 +16,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   handlers: new Map<string, (...args: unknown[]) => unknown>(),
   skillsStatus: vi.fn(),
+  // ⚠️ 新机制要读写 `bundledSkillRecords`（内容指纹记账）⇒ 配置必须桩成**内存**的。
+  //    否则 `updateConfig` 会往一个不存在的目录写、抛 ENOENT，整条处理器被打回
+  //    `ok:false` —— 而测试只会看到"结果里什么都没有"，看不出因果。
+  configState: { value: {} as Record<string, unknown> },
+}));
+
+vi.mock('../src/main/workspace/config.js', () => ({
+  readConfig: () => mocks.configState.value,
+  updateConfig: (partial: Record<string, unknown>) => {
+    mocks.configState.value = { ...mocks.configState.value, ...partial };
+    return mocks.configState.value;
+  },
 }));
 
 vi.mock('electron', () => ({

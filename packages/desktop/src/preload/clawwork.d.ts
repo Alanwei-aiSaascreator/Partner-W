@@ -216,6 +216,8 @@ interface AppSettings {
    *    这个字段缺了必须是"更窄"的那一档，不能是"更宽"的。
    */
   computerAccess?: 'safe' | 'full';
+  /** 随包技能的内容指纹记账（见主进程 `AppConfig.bundledSkillRecords`）。 */
+  bundledSkillRecords?: Record<string, Record<string, string>>;
 }
 
 export type VoicePermissionStatus = 'granted' | 'not-determined' | 'denied' | 'unsupported';

@@ -94,6 +94,16 @@ export interface AppConfig {
    */
   computerAccess?: 'safe' | 'full';
   /**
+   * 随包技能**装下去时的内容指纹**：`managedDir → slug → sha256(内容)`。
+   *
+   * 干什么用：把"**我们自己把它放旧了**"与"**别人改过它**"分开。只比内容分不出这两者，
+   * 而后者一个字节都不许碰（用户/运行时改过的技能）。开机自装靠它判断该不该升级。
+   *
+   * ⚠️ 记在**我们自己的配置**里，不往网关的技能目录塞文件 —— 那棵树里多出来的东西
+   *    会不会被当成技能，是我们控制不了的事。
+   */
+  bundledSkillRecords?: Record<string, Record<string, string>>;
+  /**
    * 联网搜索开关（设置里那一行）。
    *
    * ⚠️ **缺省 = 开**（见 `relay-config.ts` 的 `webSearchEnabled`）：这个能力本来就存在，

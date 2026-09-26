@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_COMPUTER_ACCESS_TIER,
   decidePermissionPatch,
-  type AppliedPermissionMode,
+  type AppliedPermissionRecord,
 } from '../src/services/computer-access.js';
 
 /**
@@ -16,7 +16,7 @@ import {
  * ⚠️ 这里断言的是**精确串**（`'full'` / `'guarded'` / `null`），不是 `toContain`
  *    —— 本项目栽过"存在性断言绑不住值"的当（见 memory: stale-green-tests）。
  */
-const applied = (...pairs: Array<[string, AppliedPermissionMode]>) => new Map<string, AppliedPermissionMode>(pairs);
+const applied = (...pairs: Array<[string, AppliedPermissionRecord]>) => new Map<string, AppliedPermissionRecord>(pairs);
 
 describe('DEFAULT_COMPUTER_ACCESS_TIER', () => {
   it('默认必须是安全档', () => {
@@ -31,17 +31,17 @@ describe('decidePermissionPatch', () => {
     });
 
     it('别的会话记过账，不影响这个会话', () => {
-      const map = applied(['agent:main:other', 'full']);
+      const map = applied(['agent:main:other', { mode: 'full', gatewayId: 'gw-1' }]);
       expect(decidePermissionPatch({ tier: 'safe', sessionKey: 'agent:main:a', applied: map })).toBeNull();
     });
 
     it('本会话原本就是我们设的 guarded ⇒ 不重复补刀', () => {
-      const map = applied(['agent:main:a', 'guarded']);
+      const map = applied(['agent:main:a', { mode: 'guarded', gatewayId: 'gw-1' }]);
       expect(decidePermissionPatch({ tier: 'safe', sessionKey: 'agent:main:a', applied: map })).toBeNull();
     });
 
     it('本会话被我们开过全权 ⇒ 关掉时要真的收回（判据 5）', () => {
-      const map = applied(['agent:main:a', 'full']);
+      const map = applied(['agent:main:a', { mode: 'full', gatewayId: 'gw-1' }]);
       expect(decidePermissionPatch({ tier: 'safe', sessionKey: 'agent:main:a', applied: map })).toBe('guarded');
     });
   });
@@ -52,26 +52,26 @@ describe('decidePermissionPatch', () => {
     });
 
     it('已经记过 full ⇒ 不重复补刀', () => {
-      const map = applied(['agent:main:a', 'full']);
+      const map = applied(['agent:main:a', { mode: 'full', gatewayId: 'gw-1' }]);
       expect(decidePermissionPatch({ tier: 'full', sessionKey: 'agent:main:a', applied: map })).toBeNull();
     });
 
     it('记过的是 guarded（刚被关过）⇒ 再打开要重新补 full', () => {
-      const map = applied(['agent:main:a', 'guarded']);
+      const map = applied(['agent:main:a', { mode: 'guarded', gatewayId: 'gw-1' }]);
       expect(decidePermissionPatch({ tier: 'full', sessionKey: 'agent:main:a', applied: map })).toBe('full');
     });
 
     it('别的会话记过 full，这个会话没记过 ⇒ 这个会话仍要补', () => {
-      const map = applied(['agent:main:other', 'full']);
+      const map = applied(['agent:main:other', { mode: 'full', gatewayId: 'gw-1' }]);
       expect(decidePermissionPatch({ tier: 'full', sessionKey: 'agent:main:a', applied: map })).toBe('full');
     });
   });
 
   it('全权↔安全来回切：每次翻转都恰好补一刀，之后安静', () => {
-    const map = new Map<string, AppliedPermissionMode>();
+    const map = new Map<string, AppliedPermissionRecord>();
     const step = (tier: 'safe' | 'full') => {
       const p = decidePermissionPatch({ tier, sessionKey: 'k', applied: map });
-      if (p) map.set('k', p);
+      if (p) map.set('k', { mode: p, gatewayId: 'gw-1' });
       return p;
     };
     expect(step('full')).toBe('full');
