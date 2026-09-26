@@ -908,7 +908,7 @@
     "typeFiles": "Dateien",
     "typeImages": "Bilder",
     "typeOther": "Andere",
-    "workspaceAccessDescription": "Assistants view this workspace and files you add by default. Before accessing another computer location, using a computer tool, or saving a file elsewhere, the assistant explains the action and asks for your confirmation.",
+    "workspaceAccessDescription": "Standardmäßig werden nur die aktuelle Aufgabe und die von Ihnen hinzugefügten Dateien verwendet; vor Zugriffen anderswo wird gefragt. Unter „Einstellungen → Computer-Zugriff\" lässt sich Vollzugriff aktivieren.",
     "workspaceAccessTitle": "Data available now"
   },
   "filePreview": {

@@ -908,7 +908,7 @@
     "typeFiles": "Archivos",
     "typeImages": "Imágenes",
     "typeOther": "Otros",
-    "workspaceAccessDescription": "Assistants view this workspace and files you add by default. Before accessing another computer location, using a computer tool, or saving a file elsewhere, the assistant explains the action and asks for your confirmation.",
+    "workspaceAccessDescription": "Por defecto solo usa la tarea actual y los archivos que añades, y pregunta antes de acceder a otro sitio; puedes cambiar a acceso total en Ajustes → Acceso al equipo.",
     "workspaceAccessTitle": "Data available now"
   },
   "filePreview": {

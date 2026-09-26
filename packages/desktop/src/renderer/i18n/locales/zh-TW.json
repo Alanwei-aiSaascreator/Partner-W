@@ -908,7 +908,7 @@
     "typeFiles": "檔案",
     "typeImages": "圖片",
     "typeOther": "其他",
-    "workspaceAccessDescription": "只使用目前任務和你加入的檔案；存取其他位置前會先徵求確認。",
+    "workspaceAccessDescription": "預設只使用目前任務和你加入的檔案，存取其他位置前會徵求確認；在「設定 → 電腦操控權限」裡可以改為全權。",
     "workspaceAccessTitle": "目前可存取的資料"
   },
   "filePreview": {
