@@ -32,6 +32,7 @@ vi.mock('@/hooks/useSelectAgent', () => ({ useSelectAgent: () => selectAgentSpy 
 import IdentityCenter from '../src/renderer/layouts/IdentityCenter';
 import { IDENTITY_BLOCK_START } from '../src/renderer/lib/identity-persona';
 import { useUiStore } from '../src/renderer/stores/uiStore';
+import { useTaskStore } from '../src/renderer/stores/taskStore';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -384,6 +385,65 @@ describe('IdentityCenter — 按钮真的干活', () => {
 
     expect(selectAgentSpy).toHaveBeenCalledWith('main');
     expect(container.textContent, '目录未加载时不许判缺失').not.toContain('agent.missingTitle');
+    unmount();
+  });
+});
+
+/**
+ * ⭐ 客群卡与「新建任务」打通（0.0.35 账本 §六-3）。
+ *
+ * 原来这一页只能**切助手**，开不了任务 —— 用户挑好了助手，还得自己回左侧点一次
+ * 「新任务」才用得上。
+ *
+ * ⚠️ 但**卡片本身仍然只切不甩人**（见 `chooseGroup` 的注释：用户是在挑，不是在开任务）。
+ *    所以出口是卡片**下方**一个明确按钮，而不是把点击行为改掉 ——
+ *    两条判据必须同时成立：点卡片**不**开任务；点那个按钮**真的**开。
+ */
+describe('客群卡 × 新建任务', () => {
+  beforeEach(() => {
+    // ⚠️ **任务 store 要自己清**：外层的 beforeEach 只重置了 uiStore，
+    //    而这一组的用例之间通过 `pendingNewTask` 串了状态 —— 第二条用例第一次跑
+    //    就是这么被上一条污染的（失败长得像产品 bug，其实是我夹具没隔离）。
+    useTaskStore.setState({ pendingNewTask: null, activeTaskId: null });
+  });
+
+  it('⭐ 卡片下方那个按钮真的开了新任务，且待发任务带的是当前助手', () => {
+    const { container, unmount } = render(<IdentityCenter />);
+
+    click(container.querySelector('[data-group="rongying-ecommerce"]'));
+    expect(useTaskStore.getState().pendingNewTask, '点卡片本身不该开任务').toBeNull();
+    // ⚠️ 前置断言：**先确认此刻停在身份中心** —— 没有它，下面那句 `toBe('chat')`
+    //    会被"初始就是 chat"满足（变异 I3 第一版就是这么活下来的）。
+    expect(useUiStore.getState().mainView, '点之前该停在身份中心').toBe('identity');
+
+    click(container.querySelector('[data-action="new-task-with-agent"]'));
+
+    const pending = useTaskStore.getState().pendingNewTask;
+    expect(pending?.agentId, '待发任务要带这个助手').toBe('rongying-ecommerce');
+    expect(pending?.gatewayId).toBe('gw-1');
+    expect(useTaskStore.getState().activeTaskId, '开新任务要离开旧会话').toBeNull();
+    expect(useUiStore.getState().mainView, '开任务就该进对话页了').toBe('chat');
+    unmount();
+  });
+
+  it('⚠️ 没有网关 ⇒ 如实报错，且**不**留下一个开不出来的任务', () => {
+    useUiStore.setState({ defaultGatewayId: null });
+    const { container, unmount } = render(<IdentityCenter />);
+
+    click(container.querySelector('[data-action="new-task-with-agent"]'));
+
+    expect(toastSpy.error).toHaveBeenCalledWith('identity.applyFailed');
+    expect(useTaskStore.getState().pendingNewTask, '开不出来就别留个假的').toBeNull();
+    unmount();
+  });
+
+  it('⚠️ 对照：点卡片**仍然**只切、留在这一页（别顺手把上一版的取舍推翻）', () => {
+    const { container, unmount } = render(<IdentityCenter />);
+
+    click(container.querySelector('[data-group="rongying-ecommerce"]'));
+
+    expect(useTaskStore.getState().pendingNewTask).toBeNull();
+    expect(useUiStore.getState().mainView).toBe('identity');
     unmount();
   });
 });

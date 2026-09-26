@@ -1060,6 +1060,7 @@
     "shuffle": "태그 바꾸기",
     "skill": {},
     "skillsLabel": "추천 스킬",
+    "startTask": "{{role}}(으)로 새 작업 시작",
     "subtitle": "고객군을 선택하면 AI가 그 아이덴티티에 맞춰 역할·스킬 구성·말투를 추천합니다. 언제든 전환할 수 있습니다.",
     "tag": {
       "efficiency": "효율 중시",

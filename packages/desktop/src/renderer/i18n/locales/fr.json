@@ -1060,6 +1060,7 @@
     "shuffle": "Changer d’étiquette",
     "skill": {},
     "skillsLabel": "Compétences recommandées",
+    "startTask": "Démarrer une nouvelle tâche avec {{role}}",
     "subtitle": "Choisissez votre audience : l’IA recommande rôles, compétences et tonalité pour cette identité. Modifiable à tout moment.",
     "tag": {
       "efficiency": "Efficace",

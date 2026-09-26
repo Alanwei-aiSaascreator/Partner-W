@@ -1060,6 +1060,7 @@
     "shuffle": "Trocar etiqueta",
     "skill": {},
     "skillsLabel": "Habilidades recomendadas",
+    "startTask": "Iniciar uma nova tarefa com {{role}}",
     "subtitle": "Escolha seu público: a IA recomenda papéis, habilidades e tom para essa identidade. Pode trocar quando quiser.",
     "tag": {
       "efficiency": "Eficiente",

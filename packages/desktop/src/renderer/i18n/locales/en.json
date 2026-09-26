@@ -1060,6 +1060,7 @@
     "shuffle": "Shuffle tag",
     "skill": {},
     "skillsLabel": "Recommended skills",
+    "startTask": "Start a new task with {{role}}",
     "subtitle": "Pick your audience group. Roles, skills and tone are recommended for that identity — switch any time.",
     "tag": {
       "efficiency": "Efficiency-minded",

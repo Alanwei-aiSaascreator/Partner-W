@@ -1060,6 +1060,7 @@
     "shuffle": "換一個標籤",
     "skill": {},
     "skillsLabel": "推薦技能",
+    "startTask": "用「{{role}}」開個新任務",
     "subtitle": "選擇你的客群，AI 將依身分為你推薦角色、技能組合與話術基調，隨時可切換。",
     "tag": {
       "efficiency": "注重效率",

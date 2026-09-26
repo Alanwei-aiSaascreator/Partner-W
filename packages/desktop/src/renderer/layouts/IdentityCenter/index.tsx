@@ -1,10 +1,11 @@
 import { useCallback, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Check, RotateCcw, Sparkles, UserRound } from 'lucide-react';
+import { Check, RotateCcw, Sparkles, SquarePen, UserRound } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { toast } from '@/lib/toast';
 import { useUiStore } from '@/stores/uiStore';
+import { useTaskStore } from '@/stores/taskStore';
 import { useSelectAgent } from '@/hooks/useSelectAgent';
 import AgentMissingNotice from '@/components/AgentMissingNotice';
 import { resolveRequestedAgent } from '@/lib/requested-agent';
@@ -77,6 +78,8 @@ export default function IdentityCenter() {
    * ⭐ 查"这个助手在不在目录里"**只在目录已加载时**做（`resolveRequestedAgent` 返回
    *    `loading` 时不判缺失）—— 目录还没拉回来就判缺失是用误报换静默。
    */
+  const startNewTask = useTaskStore((s) => s.startNewTask);
+
   const applyPersona = useCallback((): boolean => {
     if (!gatewayId) {
       toast.error(t('identity.applyFailed'));
@@ -112,6 +115,26 @@ export default function IdentityCenter() {
     },
     [selectAgent, setMainView],
   );
+
+  /**
+   * ⭐ 用当前客群**开一个新任务**（0.0.35 账本 §六-3：客群卡与「新建任务」打通）。
+   *
+   * ⚠️ 与 `chooseGroup` 的分工**刻意分开**：点卡片是"我在挑"，只切不甩人；
+   *    这个出口是"就它了，开工" —— 两件事都发生，但由**两个不同的动作**触发。
+   *    （把点击行为直接改成"切+开任务"会把上一版那条取舍推翻：用户是在挑，不是在开任务。）
+   *
+   * ⚠️ 没网关时**如实报错**，不假装成功（与 `applyPersona` 同一条规矩）。
+   */
+  const startTaskWithAgent = useCallback(() => {
+    if (!gatewayId) {
+      toast.error(t('identity.applyFailed'));
+      return;
+    }
+    // ⚠️ **不自己切视图**：`startNewTask` 内部已经通过平台的 `onTaskCreated`
+    //    把主区切到对话页了（`platform/index.ts:89`）。这里再调一次 `setMainView('chat')`
+    //    是冗余的 —— 变异测试把那条删掉之后**测试照样全绿**，正是它在说明这件事。
+    startNewTask({ gatewayId, agentId: currentAgentId });
+  }, [currentAgentId, gatewayId, startNewTask, t]);
 
   const onApply = useCallback(() => {
     if (selected.length === 0) {
@@ -216,6 +239,15 @@ export default function IdentityCenter() {
                 </button>
               );
             })}
+          </div>
+
+          {/* ⭐ 挑完助手的**出口**：开一个新任务用上它。
+              ⚠️ 与卡片本身的点击分开两次动作（见 `startTaskWithAgent` 的注释）。 */}
+          <div className="mt-2.5 flex items-center gap-2">
+            <Button size="sm" className="type-support" data-action="new-task-with-agent" onClick={startTaskWithAgent}>
+              <SquarePen />
+              {t('identity.startTask', { role: groupLabel })}
+            </Button>
           </div>
 
           {/* ── 画像生成卡片 ── */}

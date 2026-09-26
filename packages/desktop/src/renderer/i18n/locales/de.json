@@ -1060,6 +1060,7 @@
     "shuffle": "Tag wechseln",
     "skill": {},
     "skillsLabel": "Empfohlene Skills",
+    "startTask": "Neue Aufgabe mit {{role}} starten",
     "subtitle": "Wählen Sie Ihre Zielgruppe – die KI empfiehlt passende Rollen, Skill-Sets und Tonalität. Jederzeit wechselbar.",
     "tag": {
       "efficiency": "Effizient",
