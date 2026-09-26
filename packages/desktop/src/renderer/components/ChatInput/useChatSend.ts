@@ -33,6 +33,7 @@ import {
   extractDescription,
   getTaskSessionKeys,
 } from '@clawwork/core';
+import { buildArtifactsIndex } from '../../lib/artifact-index';
 import { useTaskStore } from '../../stores/taskStore';
 import { useMessageStore } from '../../stores/messageStore';
 import { useUiStore } from '../../stores/uiStore';
@@ -99,6 +100,7 @@ export function useChatSend(opts: UseChatSendOpts) {
   const { t } = useTranslation();
 
   const activeTask = useTaskStore((s) => s.tasks.find((tt) => tt.id === s.activeTaskId));
+  const tasks = useTaskStore((s) => s.tasks);
   const commitPendingTask = useTaskStore((s) => s.commitPendingTask);
   const updateTaskMetadata = useTaskStore((s) => s.updateTaskMetadata);
   const pendingNewTask = useTaskStore((s) => s.pendingNewTask);
@@ -442,6 +444,32 @@ export function useChatSend(opts: UseChatSendOpts) {
         let finalContent = content || '';
         const extraAttachments: { mimeType: string; fileName: string; content: string }[] = [];
 
+        /**
+         * ⭐ **首轮**给助手一份"这块盘上之前产出过什么"的索引（2026-09-26）。
+         *
+         * 为什么只给首轮：它是一份**会话级的背景**，不是每轮都要重讲一遍的东西 ——
+         * 每轮都塞等于把一个固定开销乘上轮数（而且是白烧的 token）。
+         * 判据用 `pendingNewTask`（= 这一轮在开一个新会话），与"切换助手后会重新挂一个待发任务"
+         * 那条既有语义一致：换助手再说话，也算这一轮重新交代一次背景。
+         * ⚠️ 只给索引不给内容（要内容得用户 `@`）；失败**不挡发送**。
+         */
+        if (pendingNewTask) {
+          try {
+            const all = await window.clawwork.listArtifacts();
+            if (all.ok && all.result) {
+              const taskTitles = new Map(tasks.map((task) => [task.id, task.title]));
+              const index = buildArtifactsIndex(all.result, taskTitles, {
+                now: Date.now(),
+                excludeTaskId: activeTask?.id ?? null,
+                unknownTaskLabel: t('rightPanel.historyUnknownTask'),
+              });
+              if (index) finalContent = `${index}\n\n${finalContent}`;
+            }
+          } catch {
+            // 锦上添花的东西，拿不到就不加 —— 不能因为少一份索引就把用户的消息卡住
+          }
+        }
+
         if (taskMentions.length > 0) {
           let taskContextSize = 0;
           const blocks = await Promise.all(
@@ -697,6 +725,9 @@ export function useChatSend(opts: UseChatSendOpts) {
     }
   }, [
     activeTask,
+    // ⚠️ 首轮产物索引要用这两样（`pendingNewTask` 判"是不是新会话"、`tasks` 查来源会话标题）
+    pendingNewTask,
+    tasks,
     commitPendingTask,
     addMessage,
     setProcessing,
