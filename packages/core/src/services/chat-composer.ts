@@ -5,6 +5,8 @@ import { buildAppError, formatErrorForUser, formatErrorForToast } from './error-
 import type { TranslateFn } from './error-classify.js';
 import { runManualCompaction } from './compaction-announce.js';
 import { describeSendRefusal } from './send-refusal-message.js';
+import { decidePermissionPatch } from './computer-access.js';
+import type { AppliedPermissionMap, AppliedPermissionMode, ComputerAccessTier } from './computer-access.js';
 
 interface TaskRef {
   id: string;
@@ -73,6 +75,19 @@ export interface ChatComposerDeps {
    * 数据源与 `thinking-levels.ts` 的 `thinkingLevelsFor` 是同一份。
    */
   getSupportedThinkingLevels?: (gatewayId: string, modelId: string) => string[] | undefined;
+  /**
+   * 「电脑操控权限」两档（spec `2026-09-26-computer-access-two-tiers-design.md`）。
+   *
+   * ⚠️ **不注入 = 这个功能不存在**：发送链上一次 `permissionMode` 都不会发，
+   *    与 0.0.35 的行为**逐字节相同**。老宿主（如 pwa）没接这条 dep 是**合法状态**，
+   *    不是"忘了接"—— 所以这里用可选字段而不是必填。
+   */
+  computerAccess?: {
+    tier: () => ComputerAccessTier;
+    applied: () => AppliedPermissionMap;
+    /** ⚠️ **只在 patch 成功之后**才该被调用（失败记账 = 下次不补 = 永久哑掉）。 */
+    remember: (sessionKey: string, mode: AppliedPermissionMode) => void;
+  };
 
   getRoomState?: (taskId: string) => TaskRoom | undefined;
   setRoomStatus?: (taskId: string, status: RoomStatus) => void;
@@ -358,6 +373,24 @@ export function createChatComposer(deps: ChatComposerDeps) {
             return { ok: false, taskId: task.id };
           }
           deps.getTaskStore().updateTaskMetadata(task.id, { thinkingLevel });
+        }
+        // 「电脑操控权限」两档：开着的档位必须在你说得上话的每个会话里都成立（spec §2.5）。
+        // ⚠️ **尽力而为**：失败只 warn、绝不拦住发送（同上面 `task.model` 那条的成例）——
+        //    "因为一次权限补刀失败把用户的消息卡住"是更坏的失败。
+        if (deps.computerAccess) {
+          const mode = decidePermissionPatch({
+            tier: deps.computerAccess.tier(),
+            sessionKey: task.sessionKey,
+            applied: deps.computerAccess.applied(),
+          });
+          if (mode) {
+            const permissionRes = await deps.gateway.patchSession(task.gatewayId, task.sessionKey, {
+              permissionMode: mode,
+            });
+            // ⚠️ **成功了才记账**：失败还记账 ⇒ 下次不补 ⇒ 永久哑掉（有测试按名钉住）。
+            if (permissionRes?.ok) deps.computerAccess.remember(task.sessionKey, mode);
+            else console.warn('[chat-composer] permission patch failed:', mode, permissionRes?.error);
+          }
         }
       }
 

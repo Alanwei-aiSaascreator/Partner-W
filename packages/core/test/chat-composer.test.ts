@@ -3,6 +3,7 @@ import { buildSessionKey } from '@clawwork/shared';
 import type { IpcResult, Message, MessageAttachment } from '@clawwork/shared';
 import { createChatComposer } from '../src/services/chat-composer';
 import type { ChatComposerDeps } from '../src/services/chat-composer';
+import type { AppliedPermissionMode, ComputerAccessTier } from '../src/services/computer-access.js';
 import type { ChatAttachment } from '../src/ports/gateway-transport.js';
 import { translateGatewayError } from '../src/services/gateway-error-message.js';
 import { UnknownAgentError } from '../src/stores/task-store.js';
@@ -35,6 +36,12 @@ function setup(
     withoutNameResolver?: boolean;
     /** 让 `commitPendingTask` 抛出这个错误（模拟"点名要的助手不在本机"这类拒绝）。 */
     pendingTaskRejection?: unknown;
+    /**
+     * 「电脑操控权限」两档的宿主桩。
+     * ⚠️ **不传 = dep 字段真的不存在**（= 老宿主 / 没开这个功能），
+     *    与"传了但档位是 safe"必须走同一条行为路径 —— 有测试按这个钉。
+     */
+    computerAccess?: { tier: ComputerAccessTier; applied: Map<string, AppliedPermissionMode> };
   } = {},
 ) {
   const addMessage = vi.fn(
@@ -137,11 +144,35 @@ function setup(
   };
   // 「没注入」= 字段不存在 —— 与"注入了一个返回 undefined 的"是两条不同的路。
   if (options.withoutNameResolver) delete deps.resolveAgentName;
+  if (options.computerAccess) {
+    const ca = options.computerAccess;
+    deps.computerAccess = {
+      tier: () => ca.tier,
+      applied: () => ca.applied,
+      remember: (sessionKey, mode) => {
+        ca.applied.set(sessionKey, mode);
+      },
+    };
+  }
 
   const composer = createChatComposer(deps);
 
   function systemOptions(): (AddMessageOptions | undefined)[] {
     return addMessage.mock.calls.filter((c) => c[1] === 'system').map((c) => c[4]);
+  }
+
+  /**
+   * 只挑出**带 `permissionMode` 的** patch 调用。
+   * ⚠️ 判据是"载荷里有没有这个键"，不是"调了几次 patchSession" ——
+   *    model / thinkingLevel 也在同一条链上发 patch，数次数会被它们污染。
+   */
+  function permissionPatches(): Array<{ sessionKey: string; mode: unknown }> {
+    return patchSession.mock.calls
+      .filter((c) => (c[2] as Record<string, unknown>)?.permissionMode !== undefined)
+      .map((c) => ({
+        sessionKey: c[1] as string,
+        mode: (c[2] as Record<string, unknown>).permissionMode,
+      }));
   }
 
   return {
@@ -152,6 +183,7 @@ function setup(
     compactSession,
     resetSession,
     patchSession,
+    permissionPatches,
     updateTaskMetadata,
     persistMessage,
     removeMessage,
@@ -705,5 +737,82 @@ describe('chat-composer —— 待发任务被拒时说的是哪句话', () => {
     await h.composer.send('不存在的任务', { content: 'hi' });
 
     expect(h.onError).toHaveBeenCalledWith(expect.objectContaining({ description: 'errors.agentNotResponding' }));
+  });
+});
+
+/**
+ * 「电脑操控权限」两档在**发送链**上的行为（spec §2.5 / §2.6）。
+ *
+ * ⭐ 这一组的判据全部是**精确载荷**（`{permissionMode:'full'}` / 一次都不发），
+ *    不是"patchSession 被调过" —— 后者会被 model / thinkingLevel 那两刀满足。
+ */
+describe('chat-composer × 电脑操控权限两档', () => {
+  it('判据 1：宿主没接这个 dep ⇒ 一次都不发 permissionMode', async () => {
+    const h = setup();
+    await h.composer.send(TASK_ID, { content: 'hi' });
+    expect(h.permissionPatches()).toEqual([]);
+  });
+
+  it('判据 1：接了但档位是安全、且没记过账 ⇒ 一次都不发', async () => {
+    const h = setup({ computerAccess: { tier: 'safe', applied: new Map() } });
+    await h.composer.send(TASK_ID, { content: 'hi' });
+    expect(h.permissionPatches()).toEqual([]);
+  });
+
+  it('判据 3：全权档 ⇒ 发送时对这一条会话补 {permissionMode:"full"}', async () => {
+    const h = setup({ computerAccess: { tier: 'full', applied: new Map() } });
+    await h.composer.send(TASK_ID, { content: 'hi' });
+    expect(h.permissionPatches()).toEqual([{ sessionKey: SESSION_KEY, mode: 'full' }]);
+  });
+
+  it('规则③：补成功之后记账 ⇒ 第二次发送不再补', async () => {
+    const applied = new Map<string, AppliedPermissionMode>();
+    const h = setup({ computerAccess: { tier: 'full', applied } });
+    await h.composer.send(TASK_ID, { content: '一' });
+    await h.composer.send(TASK_ID, { content: '二' });
+    expect(h.permissionPatches()).toEqual([{ sessionKey: SESSION_KEY, mode: 'full' }]);
+    expect(applied.get(SESSION_KEY)).toBe('full');
+  });
+
+  it('⚠️ 规则③的边界：补刀**失败**就不许记账（否则永久哑掉）', async () => {
+    const applied = new Map<string, AppliedPermissionMode>();
+    const h = setup({ computerAccess: { tier: 'full', applied } });
+    // 第一刀（model 那条链）会先发一次 patch —— 让它成功，只让"权限那一刀"失败。
+    h.patchSession.mockImplementation(async (_g: string, _k: string, patch: Record<string, unknown>) =>
+      patch.permissionMode !== undefined ? { ok: false, error: 'nope' } : { ok: true },
+    );
+    await h.composer.send(TASK_ID, { content: '一' });
+    expect(applied.has(SESSION_KEY), '失败不许记账').toBe(false);
+    await h.composer.send(TASK_ID, { content: '二' });
+    expect(h.permissionPatches().length, '下次还得再补').toBe(2);
+  });
+
+  it('判据 5：从全权切回安全 ⇒ 下一次发送补 {permissionMode:"guarded"} 收回', async () => {
+    const applied = new Map<string, AppliedPermissionMode>([['OTHER', 'full']]);
+    const h = setup({ computerAccess: { tier: 'safe', applied } });
+    applied.set(SESSION_KEY, 'full');
+    await h.composer.send(TASK_ID, { content: 'hi' });
+    expect(h.permissionPatches()).toEqual([{ sessionKey: SESSION_KEY, mode: 'guarded' }]);
+    // ⚠️ 收回之后记账**必须跟着变成 guarded**：还留着 'full' 的话，下次发送会
+    //    以为"还是全权"而不再收回（账本说的与世上发生的不一致）。
+    expect(applied.get(SESSION_KEY)).toBe('guarded');
+  });
+
+  it('§2.6：权限那一刀失败**不许拦住发送**（尽力而为，不是硬门）', async () => {
+    const h = setup({ computerAccess: { tier: 'full', applied: new Map() } });
+    h.patchSession.mockImplementation(async (_g: string, _k: string, patch: Record<string, unknown>) =>
+      patch.permissionMode !== undefined ? { ok: false, error: 'nope' } : { ok: true },
+    );
+    await h.composer.send(TASK_ID, { content: 'hi' });
+    expect(h.sendMessage).toHaveBeenCalled();
+  });
+
+  it('@群发时不碰权限（与 model/thinkingLevel 同一条豁免规则）', async () => {
+    const h = setup({
+      ensemble: true,
+      computerAccess: { tier: 'full', applied: new Map() },
+    });
+    await h.composer.send(TASK_ID, { content: 'hi', mentions: ['worker'], mentionsOnly: true } as never);
+    expect(h.permissionPatches()).toEqual([]);
   });
 });
