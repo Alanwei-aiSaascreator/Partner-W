@@ -33,6 +33,24 @@
 /** 正文框（英寸）。与 `render-pptx.ts` 里的实际取值是同一份，改这里就是改那里。 */
 export const BODY_BOX = Object.freeze({ x: 0.85, y: 1.6, w: 8.4, h: 3.2 });
 
+/** 幻灯片尺寸（英寸）—— 就是 pptxgenjs 的 `LAYOUT_16x9`。 */
+export const SLIDE_SIZE = Object.freeze({ w: 10, h: 5.625 });
+
+/**
+ * 页脚那一行：**左边演示标题、右边页码**。
+ *
+ * 分两处放而不是居中合成一句，是为了页码**右对齐** —— 页码会从 9 变到 10，
+ * 居中的话每翻一页都在挪位置。左框留宽、右框贴右边界，两边互不打扰。
+ */
+export const FOOTER_BOX = Object.freeze({ x: 0.6, y: 5.02, w: 6.0, h: 0.32 });
+export const PAGE_NUMBER_BOX = Object.freeze({ x: 8.0, y: 5.02, w: 1.4, h: 0.32 });
+
+/** 页脚与页码的字号。比正文最小号（`MIN_BODY_PT`）还小 —— 它们不该跟内容抢视线。 */
+export const CHROME_PT = 9;
+
+/** 封面底部那条满幅色带（x=0、宽=整幅）。封面上唯一的"设计感"来源。 */
+export const COVER_BAND = Object.freeze({ x: 0, y: 5.325, w: 10, h: 0.3 });
+
 /** 内容装得下时用的字号 —— 与 P1 的观感一致，正常篇幅的版式不会因此改变。 */
 export const MAX_BODY_PT = 18;
 

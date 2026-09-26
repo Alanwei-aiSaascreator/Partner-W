@@ -1,5 +1,13 @@
 import PptxGenJS from 'pptxgenjs';
-import { BODY_BOX, LINE_SPACING, bodyFontSizePt } from './pptx-layout.js';
+import {
+  BODY_BOX,
+  CHROME_PT,
+  COVER_BAND,
+  FOOTER_BOX,
+  LINE_SPACING,
+  PAGE_NUMBER_BOX,
+  bodyFontSizePt,
+} from './pptx-layout.js';
 import type { DocgenPptxRequest } from './request.js';
 
 /**
@@ -55,9 +63,21 @@ export async function renderPptx(request: DocgenPptxRequest): Promise<Buffer> {
       fontFace: FONT,
     });
   }
+  // 满幅色带。封面本来只有一块白底加两行字，加这一条是为了让它**看起来被设计过**，
+  // 而不是 Word 文档截了个图。刻意只加这一处 —— 封面越素，内容页越显专业。
+  cover.addShape('rect', {
+    x: COVER_BAND.x,
+    y: COVER_BAND.y,
+    w: COVER_BAND.w,
+    h: COVER_BAND.h,
+    fill: { color: COLOR_ACCENT },
+  });
 
   // ── 内容页 ────────────────────────────────────────────────────────────
-  for (const slide of request.slides) {
+  // 页码按**含封面**的总数编，与 PowerPoint 自己的编号一致 —— 否则有人说"第 3 页"，
+  // 我们对不上。封面不显示页码，但占一个号。
+  const totalPages = request.slides.length + 1;
+  for (const [index, slide] of request.slides.entries()) {
     const page = pptx.addSlide();
     page.addText(slide.title, {
       x: 0.6,
@@ -88,6 +108,28 @@ export async function renderPptx(request: DocgenPptxRequest): Promise<Buffer> {
         },
       );
     }
+    // 页脚：左演示标题、右页码。分两处放是为了页码**右对齐** ——
+    // 页码会从 9 变到 10，居中会让它每翻一页挪一下。
+    page.addText(request.title, {
+      x: FOOTER_BOX.x,
+      y: FOOTER_BOX.y,
+      w: FOOTER_BOX.w,
+      h: FOOTER_BOX.h,
+      fontSize: CHROME_PT,
+      color: COLOR_MUTED,
+      fontFace: FONT,
+    });
+    page.addText(`${index + 2} / ${totalPages}`, {
+      x: PAGE_NUMBER_BOX.x,
+      y: PAGE_NUMBER_BOX.y,
+      w: PAGE_NUMBER_BOX.w,
+      h: PAGE_NUMBER_BOX.h,
+      fontSize: CHROME_PT,
+      color: COLOR_MUTED,
+      fontFace: FONT,
+      align: 'right',
+    });
+
     if (slide.notes) page.addNotes(slide.notes);
   }
 
