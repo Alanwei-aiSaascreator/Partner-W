@@ -140,6 +140,113 @@ describe('buildRelayPatch', () => {
   });
 });
 
+/**
+ * 文生图的**最小接线**（2026-09-27）。
+ *
+ * 复用随包运行时自带的 `openai` 图像 provider，不写插件：把它的 baseUrl 指到我们 relay
+ * 的 OpenAI 形状适配端点，再用 `agents.defaults.mediaModels.image.primary` 选中模型。
+ *
+ * ⚠️ 路径与形状是**从运行时代码里读出来的**，不是从文档推的（本仓栽过一次：
+ *    往配置里写一个 schema 不认的键会让**整份配置被判非法**）。
+ *    运行时里的依据：`doctor-config-flow` 自己就在写
+ *    `agents.defaults.mediaModels.image = { primary: 'google/gemini-3-pro-image-preview' }`。
+ */
+describe('图片：内置 openai provider 的最小接线', () => {
+  const providersOf = (patch: unknown): Record<string, Record<string, unknown>> =>
+    (patch as { models: { providers: Record<string, Record<string, unknown>> } }).models.providers;
+  // ⚠️ 容缺：这条路径**正常就会缺字段**（"什么都没写"是很多用例的预期结果）。
+  //    写成直接点下去的话，用例失败时报的是 TypeError，而不是"它到底写了什么"。
+  const imagePrimaryOf = (patch: unknown): unknown =>
+    (patch as { agents?: { defaults?: { mediaModels?: { image?: { primary?: unknown } } } } })?.agents?.defaults
+      ?.mediaModels?.image?.primary;
+
+  it('⭐ 写入 openai 的 baseUrl（带 /v1）、同一个 relay key、同一个设备头', () => {
+    const patch = buildRelayPatch({ relayKey: 'rly_abc', deviceFingerprint: 'fp123' });
+    const provider = providersOf(patch).openai;
+
+    // ⚠️ `/v1` 不能少：OpenAI 形状的客户端自己在后面接 `/images/generations`，
+    //    少一段的请求会打到 `/relay/images/generations` —— 404，而且不解释。
+    expect(provider.baseUrl).toBe(`${RELAY_BASE_URL}/v1`);
+    expect(provider.apiKey).toBe('rly_abc');
+    expect(provider.headers).toEqual({ 'X-ClawRouter-Project-Id': 'fp123' });
+  });
+
+  it('⭐ 选中 openai/qwen-image-1（ref 是两段：provider/model）', () => {
+    const patch = buildRelayPatch({ relayKey: 'rly_abc', deviceFingerprint: 'fp' });
+    expect(imagePrimaryOf(patch)).toBe('openai/qwen-image-1');
+  });
+
+  it('⭐ 绝不动聊天：默认模型与 catalog 注入保持原样', () => {
+    const patch = buildRelayPatch({
+      relayKey: 'rly_abc',
+      deviceFingerprint: 'fp',
+      existingConfig: snapshot({
+        agents: { defaults: { model: { primary: 'clawrouter/deepseek-v4-flash' } } },
+      }),
+    });
+    const defaults = (patch as { agents: { defaults: Record<string, unknown> } }).agents.defaults;
+
+    expect(defaults.model).toBeUndefined();
+    expect(imagePrimaryOf(patch)).toBe('openai/qwen-image-1');
+    expect(providersOf(patch)[RELAY_PROVIDER_ID].baseUrl).toBe(RELAY_BASE_URL);
+  });
+
+  it('⭐ 用户已经配了**别的**图像模型 ⇒ 一个字都不动（与"不重设模型偏好"同一条规矩）', () => {
+    const patch = buildRelayPatch({
+      relayKey: 'rly_abc',
+      deviceFingerprint: 'fp',
+      existingConfig: snapshot({
+        agents: { defaults: { mediaModels: { image: { primary: 'google/gemini-3-pro-image-preview' } } } },
+      }),
+    });
+    expect(imagePrimaryOf(patch)).toBeUndefined();
+  });
+
+  it('已经指向我们的 ⇒ 覆盖成当前那一个（内测期模型换了要跟着换）', () => {
+    const patch = buildRelayPatch({
+      relayKey: 'rly_abc',
+      deviceFingerprint: 'fp',
+      existingConfig: snapshot({ agents: { defaults: { mediaModels: { image: { primary: 'openai/老模型' } } } } }),
+    });
+    expect(imagePrimaryOf(patch)).toBe('openai/qwen-image-1');
+  });
+
+  it('没有 relayKey ⇒ 整条 patch 为 null（也就不写图片配置）', () => {
+    expect(buildRelayPatch({ relayKey: null, deviceFingerprint: 'fp' })).toBeNull();
+  });
+
+  it('⭐ 注销时**同时**清掉 openai provider 与图像模型指向（少一个的后果很具体）', () => {
+    // 少了后半句：provider 没了、`mediaModels.image.primary` 还指着 `openai/qwen-image-1`，
+    // 网关会去找一个**不存在**的 provider —— 而本仓栽过一次"配置整体被判非法"。
+    const removal = buildRelayRemovalPatch(
+      snapshot({
+        models: { providers: { clawrouter: { baseUrl: RELAY_BASE_URL }, openai: { baseUrl: `${RELAY_BASE_URL}/v1` } } },
+        agents: { defaults: { mediaModels: { image: { primary: 'openai/qwen-image-1' } } } },
+      }),
+    );
+
+    expect(removal).not.toBeNull();
+    const providers = (removal!.patch.models as { providers: Record<string, unknown> }).providers;
+    expect(providers.clawrouter).toBeNull();
+    expect(providers.openai).toBeNull();
+    expect(
+      (removal!.patch.agents as { defaults: { mediaModels: { image: { primary: unknown } } } }).defaults.mediaModels
+        .image.primary,
+    ).toBeNull();
+  });
+
+  it('⭐ 图像模型指向**别家**时，注销不许碰它', () => {
+    const removal = buildRelayRemovalPatch(
+      snapshot({
+        models: { providers: { clawrouter: { baseUrl: RELAY_BASE_URL } } },
+        agents: { defaults: { mediaModels: { image: { primary: 'google/gemini-3-pro-image-preview' } } } },
+      }),
+    );
+    const agents = (removal?.patch.agents as { defaults?: Record<string, unknown> } | undefined)?.defaults;
+    expect(agents?.mediaModels).toBeUndefined();
+  });
+});
+
 describe('fetchFirstRelayModel', () => {
   // ref 是**两段**：clawrouter / <catalog 里的 model id>。
   // catalog 里的 provider id（bailian）**不进 ref**。

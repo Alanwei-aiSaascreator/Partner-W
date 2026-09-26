@@ -61,6 +61,35 @@ export function relayProviderIds(configSnapshot: unknown): Set<string> {
 /** 中转服务在网关配置里的 provider 名。插件声明的 `providers` 也是这个名字。 */
 export const RELAY_PROVIDER_ID = 'clawrouter';
 
+/**
+ * 图片那条路走**内置的 `openai` 图像 provider**（而不是自造插件）。
+ *
+ * 为什么复用而不是写插件：随包运行时自带的 `openai` provider 就是说 OpenAI 形状的，
+ * 而我们 relay 已经有了一条同形状的严格适配端点（`/v1/images/generations`）。
+ * 于是这里只需要**把它的 baseUrl 指到我们**，一个字的新插件都不用写。
+ *
+ * ⚠️ 代价：`models.providers.openai` 一旦配置，"openai 这个 provider 被配置了"对
+ *    运行时就是全局事实 —— 也就是**聊天**若有人选 `openai/...` 的模型也会打到我们 relay。
+ *    我们的 catalog 只发 `clawrouter/*`，所以正常路径不会走到；这里记一笔是为了
+ *    下次有人改 catalog 时能想起这件事。
+ */
+export const OPENAI_IMAGE_PROVIDER_ID = 'openai';
+
+/** 我们这个内测能力**只**提供这一个图像模型（服务端 allowlist 也是它）。 */
+export const OPENAI_IMAGE_MODEL_ID = 'qwen-image-1';
+
+/** 模型 ref = `<provider>/<model id>`（两段，与 `clawrouter/<id>` 同一规则）。 */
+export const OPENAI_IMAGE_MODEL_REF = `${OPENAI_IMAGE_PROVIDER_ID}/${OPENAI_IMAGE_MODEL_ID}`;
+
+/**
+ * 图片那条的 baseUrl：**要带 `/v1`**。
+ *
+ * OpenAI 形状的客户端会自己在后面接 `/images/generations`，所以给到 `/relay/v1`
+ * 才拼得出 `/relay/v1/images/generations`（nginx 再把 `/relay` 剥掉转给 relay）。
+ * 少一段的表现是请求打到 `/relay/images/generations` —— 404，而且不解释。
+ */
+export const RELAY_IMAGE_BASE_URL = `${RELAY_BASE_URL}/v1`;
+
 export interface RelayPatchInput {
   relayKey: string | null | undefined;
   deviceFingerprint: string;
@@ -160,6 +189,12 @@ export function buildRelayPatch(input: RelayPatchInput): RelayConfigPatch | null
           apiKey: input.relayKey,
           headers,
         },
+        // 图片：同一个 relay key、同一个设备头，只是形状是 OpenAI 那条。
+        [OPENAI_IMAGE_PROVIDER_ID]: {
+          baseUrl: RELAY_IMAGE_BASE_URL,
+          apiKey: input.relayKey,
+          headers,
+        },
       },
     },
   };
@@ -184,6 +219,26 @@ export function buildRelayPatch(input: RelayPatchInput): RelayConfigPatch | null
   if (!primary && input.defaultModel) {
     agentsDefaults.model = { primary: input.defaultModel };
   }
+
+  // ⭐ 图片模型：**只在"没有"或"本来就是我们的"时写**。
+  //
+  // ⚠️ 为什么不无条件写：网上那台运行时自带一次 doctor 迁移，会把旧的 nano-banana 技能
+  //    搬到 `agents.defaults.mediaModels.image.primary = google/gemini-3-pro-image-preview`。
+  //    无条件覆盖 = 把用户手上**本来能用**的图像能力换成我们的内测能力，
+  //    而且是在他没同意的情况下。这与"不重设用户的模型偏好"是同一条规矩。
+  const imagePrimary = (
+    config?.agents as { defaults?: { mediaModels?: { image?: { primary?: unknown } } } } | undefined
+  )?.defaults?.mediaModels?.image?.primary;
+  const imageIsOurs = typeof imagePrimary === 'string' && imagePrimary.startsWith(`${OPENAI_IMAGE_PROVIDER_ID}/`);
+  if (imagePrimary === undefined || imageIsOurs) {
+    agentsDefaults.mediaModels = { image: { primary: OPENAI_IMAGE_MODEL_REF } };
+  } else {
+    console.warn(
+      '[relay-config] agents.defaults.mediaModels.image.primary 已被设置为别的模型，保持不动：',
+      imagePrimary,
+    );
+  }
+
   patch.agents = { defaults: agentsDefaults };
 
   return patch;
@@ -222,6 +277,12 @@ function collectBaseArrayPaths(base: unknown, path: string): string[] {
  * `config.get` 会脱敏所有密钥，所以这里绝不能把完整快照通过 `config.set`
  * 写回；只对确认指向荣盈中转地址的 provider 发 `null` 删除。
  */
+/** 这个模型 ref 是不是指向我们这个 relay（provider 段落在 `providerIds` 里，或就叫 clawrouter）。 */
+function pointsAtRelay(modelRef: string, providerIds: Set<string>): boolean {
+  const providerName = modelRef.split('/', 1)[0];
+  return providerIds.has(providerName) || providerName === RELAY_PROVIDER_ID;
+}
+
 export function buildRelayRemovalPatch(configSnapshot: unknown): RelayRemovalPatch | null {
   const config = configOf(configSnapshot);
   if (!config) return null;
@@ -255,13 +316,37 @@ export function buildRelayRemovalPatch(configSnapshot: unknown): RelayRemovalPat
     }
   }
 
-  const primary = (config.agents as { defaults?: { model?: { primary?: unknown } } } | undefined)?.defaults?.model
+  /**
+   * `agents.defaults` 底下**所有**指向我们这个 relay 的模型 ref 都要清掉。
+   *
+   * ⚠️ 少了图片那一条的后果很具体：注销（或换卡）之后 `models.providers.openai`
+   *    被清掉了，而 `mediaModels.image.primary` 还指着 `openai/qwen-image-1` ——
+   *    网关会去找一个**已经不存在**的 provider。轻则图片能力报一个看不懂的错，
+   *    重则整份配置被判非法（本仓栽过一次：写进一个 schema 不认的值会让配置整体失效）。
+   */
+  const agentDefaultsForRemoval = (config.agents as { defaults?: Record<string, unknown> } | undefined)?.defaults;
+  const agentsRemoval: Record<string, unknown> = {};
+
+  const primary = (agentDefaultsForRemoval?.model as { primary?: unknown } | undefined)?.primary;
+  if (typeof primary === 'string' && pointsAtRelay(primary, providerIds)) {
+    agentsRemoval.model = { primary: null };
+  }
+
+  const imagePrimary = (agentDefaultsForRemoval?.mediaModels as { image?: { primary?: unknown } } | undefined)?.image
     ?.primary;
-  if (typeof primary === 'string') {
-    const providerName = primary.split('/', 1)[0];
-    if (providerIds.has(providerName) || providerName === RELAY_PROVIDER_ID) {
-      patch.agents = { defaults: { model: { primary: null } } };
-    }
+  if (typeof imagePrimary === 'string' && pointsAtRelay(imagePrimary, providerIds)) {
+    agentsRemoval.mediaModels = { image: { primary: null } };
+  }
+
+  if (agentsRemoval.mediaModels) {
+    // 与 `models.providers.<id>` 同款：把被删子树里的数组路径全部报备，
+    // 否则网关会以"破坏性补丁"为由**拒掉整条 patch**（不是拒这一段）。
+    const image = (agentDefaultsForRemoval?.mediaModels as { image?: unknown } | undefined)?.image;
+    replacePaths.push(...collectBaseArrayPaths(image, 'agents.defaults.mediaModels.image'));
+  }
+
+  if (Object.keys(agentsRemoval).length > 0) {
+    patch.agents = { defaults: agentsRemoval };
   }
 
   return Object.keys(patch).length > 0 ? { patch, replacePaths } : null;
