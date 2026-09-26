@@ -90,6 +90,50 @@ export const OPENAI_IMAGE_MODEL_REF = `${OPENAI_IMAGE_PROVIDER_ID}/${OPENAI_IMAG
  */
 export const RELAY_IMAGE_BASE_URL = `${RELAY_BASE_URL}/v1`;
 
+/**
+ * 图片接线**总闸**。默认 **false** —— 不写 `models.providers.openai`、不写 `mediaModels.image`。
+ *
+ * ⚠️ 为什么默认必须是关的，而不是"先写好、服务端以后再说"：
+ *    写进去之后，运行时就会认为 `openai` 这个 provider **已配置**，于是真的会去打我们的 relay。
+ *    而 relay 侧 `MEDIA_IMAGE_ENABLED` 还没开 ⇒ 拿到 503 ⇒
+ *    用户看到的是一个**存在但总是失败**的能力 —— 那比"没有这个能力"难查得多，
+ *    而且它出现在"不该有图片入口"的内测包上。
+ *
+ * ⚠️ 翻成 true 之前必须**同时**满足：
+ *    ① 服务端 `MEDIA_IMAGE_ENABLED=1` 且该卡在 `MEDIA_IMAGE_ENTITLED_LICENSES` 里；
+ *    ② 已经跑过一次**真实供应商**的单图 smoke 并且拿到了图。
+ *    两条缺一不可 —— 只做①就翻，等于让用户去撞一个没人验过的上游接口。
+ */
+export const IMAGE_GENERATION_WIRED = false;
+
+/**
+ * 这份 openai 图片配置**是不是我们的**。
+ *
+ * ⚠️ 判据必须是**两条同时成立**，缺一不可：
+ *    ① `mediaModels.image.primary` **精确等于**我们的模型 ref；
+ *    ② `models.providers.openai.baseUrl` **精确等于**我们 relay 的 `/v1` 地址。
+ *
+ * ⚠️ 只按 `openai/` **前缀**判断是不够的（这是一版修掉的真缺陷）：
+ *    用户自己配的 `openai/gpt-image-1` 同样带这个前缀，会被我们**覆盖**成 qwen-image-1 ——
+ *    那是把用户手上本来能用的能力换成一个内测能力，而且他没同意。
+ *
+ * ⚠️ 刻意**不引入新的所有权标记键**：往 provider 子树里塞一个运行时 schema 不认的键，
+ *    会让**整份配置被判非法**（本仓栽过一次同类事故，见 `docs/agent-rules`）。
+ *    上面这两条值本身就是等价证据 —— 只有我们写过，才会同时是这两个值。
+ */
+export function ownsOpenAIImageConfig(configSnapshot: unknown): boolean {
+  const config = configOf(configSnapshot);
+  if (!config) return false;
+
+  const defaults = (config.agents as { defaults?: Record<string, unknown> } | undefined)?.defaults;
+  const primary = (defaults?.mediaModels as { image?: { primary?: unknown } } | undefined)?.image?.primary;
+  if (primary !== OPENAI_IMAGE_MODEL_REF) return false;
+
+  const providers = (config.models as { providers?: Record<string, unknown> } | undefined)?.providers;
+  const baseUrl = (providers?.openai as { baseUrl?: unknown } | undefined)?.baseUrl;
+  return typeof baseUrl === 'string' && normalizeBaseUrl(baseUrl) === normalizeBaseUrl(RELAY_IMAGE_BASE_URL);
+}
+
 export interface RelayPatchInput {
   relayKey: string | null | undefined;
   deviceFingerprint: string;
@@ -104,6 +148,13 @@ export interface RelayPatchInput {
    *    默认改关等于升级一次就静默拿走一个能力。
    */
   webSearch?: boolean;
+  /**
+   * 图片能力是否接线。**缺省 = 关**（见 `IMAGE_GENERATION_WIRED`）。
+   *
+   * 做成显式入参而不是直接用常量，是为了让测试能真的把两条路都走一遍 ——
+   * 而"默认关"这条行为本身由常量兜底。
+   */
+  imageGenerationWired?: boolean;
 }
 
 export type RelayConfigPatch = Record<string, unknown>;
@@ -181,25 +232,44 @@ export function buildRelayPatch(input: RelayPatchInput): RelayConfigPatch | null
     headers['X-ClawRouter-Project-Id'] = input.deviceFingerprint;
   }
 
-  const patch: RelayConfigPatch = {
-    models: {
-      providers: {
-        [RELAY_PROVIDER_ID]: {
-          baseUrl: RELAY_BASE_URL,
-          apiKey: input.relayKey,
-          headers,
-        },
-        // 图片：同一个 relay key、同一个设备头，只是形状是 OpenAI 那条。
-        [OPENAI_IMAGE_PROVIDER_ID]: {
-          baseUrl: RELAY_IMAGE_BASE_URL,
-          apiKey: input.relayKey,
-          headers,
-        },
-      },
+  const config = configOf(input.existingConfig);
+
+  /**
+   * 图片那一整块能不能动。**两条同时成立**才动：
+   *   ① 总闸打开（`IMAGE_GENERATION_WIRED` / 显式入参）；
+   *   ② 用户手上**没有**一份"不是我们的" openai provider。
+   *
+   * ⚠️ ② 不能省：只判总闸的话，一个配了 `openai.baseUrl = https://api.openai.com/v1`
+   *    的用户，其 baseUrl 会被我们**改写成 relay 的地址** ——
+   *    他的 `openai/gpt-image-1` 从此打到我们这边，而且他不会知道发生过什么。
+   */
+  const acceptsOurImageConfig = ((): boolean => {
+    const hasOpenAiProvider =
+      (config?.models as { providers?: Record<string, unknown> } | undefined)?.providers?.openai !== undefined;
+    if (!hasOpenAiProvider) return true;
+    return ownsOpenAIImageConfig(input.existingConfig);
+  })();
+  const wired = (input.imageGenerationWired ?? IMAGE_GENERATION_WIRED) && acceptsOurImageConfig;
+
+  const providers: Record<string, unknown> = {
+    [RELAY_PROVIDER_ID]: {
+      baseUrl: RELAY_BASE_URL,
+      apiKey: input.relayKey,
+      headers,
     },
   };
 
-  const config = configOf(input.existingConfig);
+  // 图片：**默认不写**（见 `IMAGE_GENERATION_WIRED`）。只在允许时补这一条 ——
+  // 同一个 relay key、同一个设备头，只是形状是 OpenAI 那条。
+  if (wired) {
+    providers[OPENAI_IMAGE_PROVIDER_ID] = {
+      baseUrl: RELAY_IMAGE_BASE_URL,
+      apiKey: input.relayKey,
+      headers,
+    };
+  }
+
+  const patch: RelayConfigPatch = { models: { providers } };
 
   // `plugins.allow`：官方文档说「若配置里设了它，必须把 clawrouter 加进名单」。
   // ⚠️ **只在它本来就存在时补名** —— 凭空创建一份 allow 名单会把其他插件
@@ -229,14 +299,8 @@ export function buildRelayPatch(input: RelayPatchInput): RelayConfigPatch | null
   const imagePrimary = (
     config?.agents as { defaults?: { mediaModels?: { image?: { primary?: unknown } } } } | undefined
   )?.defaults?.mediaModels?.image?.primary;
-  const imageIsOurs = typeof imagePrimary === 'string' && imagePrimary.startsWith(`${OPENAI_IMAGE_PROVIDER_ID}/`);
-  if (imagePrimary === undefined || imageIsOurs) {
+  if (wired && (imagePrimary === undefined || ownsOpenAIImageConfig(input.existingConfig))) {
     agentsDefaults.mediaModels = { image: { primary: OPENAI_IMAGE_MODEL_REF } };
-  } else {
-    console.warn(
-      '[relay-config] agents.defaults.mediaModels.image.primary 已被设置为别的模型，保持不动：',
-      imagePrimary,
-    );
   }
 
   patch.agents = { defaults: agentsDefaults };
@@ -332,9 +396,9 @@ export function buildRelayRemovalPatch(configSnapshot: unknown): RelayRemovalPat
     agentsRemoval.model = { primary: null };
   }
 
-  const imagePrimary = (agentDefaultsForRemoval?.mediaModels as { image?: { primary?: unknown } } | undefined)?.image
-    ?.primary;
-  if (typeof imagePrimary === 'string' && pointsAtRelay(imagePrimary, providerIds)) {
+  // ⚠️ 判据与写入侧**同一个函数**（`ownsOpenAIImageConfig`）：两条都成立才清。
+  //    用"前缀是 `openai/`"或"指向 relay"这类放宽的判据，会把**用户自己**的图片模型一起清掉。
+  if (ownsOpenAIImageConfig(configSnapshot)) {
     agentsRemoval.mediaModels = { image: { primary: null } };
   }
 

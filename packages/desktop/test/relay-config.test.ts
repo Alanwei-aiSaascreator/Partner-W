@@ -151,7 +151,26 @@ describe('buildRelayPatch', () => {
  *    运行时里的依据：`doctor-config-flow` 自己就在写
  *    `agents.defaults.mediaModels.image = { primary: 'google/gemini-3-pro-image-preview' }`。
  */
-describe('图片：内置 openai provider 的最小接线', () => {
+/**
+ * 图片：内置 openai provider 的接线 —— **默认不写**，且只动**我们自己的**那一份。
+ *
+ * （`src/renderer/**` 有"生产代码不写注释"的规矩，所以设计说明放这里。）
+ *
+ * ## 两条各自独立、都缺不得的规矩
+ *
+ * ① **默认 false**：没有明确证据表明服务端图片能力已启用时，一个键都不写。
+ *    「先写好开关、服务端以后再说」在这里是**有害**的：写进去之后运行时会认为
+ *    "openai provider 已配置"，于是真的会去打我们的 relay，拿到 503 ——
+ *    用户看到的是一个**存在但总是失败**的能力，比"没有这个能力"难查得多。
+ *
+ * ② **严格所有权**：只有「模型 ref 精确等于我们的」**且**「baseUrl 精确等于我们 relay 的 /v1」
+ *    时才允许改或清。只按 `openai/` 前缀判断是不够的 ——
+ *    用户自己配的 `openai/gpt-image-1` 也带这个前缀，会被我们**覆盖成 qwen-image-1**，
+ *    那是把用户手上本来能用的能力换成了一个内测能力，而且他没同意。
+ *
+ * 聊天那一侧（`agents.defaults.model`、catalog 注入、clawrouter）**逐字不动**。
+ */
+describe('图片：内置 openai provider 的接线（默认关 + 严格所有权）', () => {
   const providersOf = (patch: unknown): Record<string, Record<string, unknown>> =>
     (patch as { models: { providers: Record<string, Record<string, unknown>> } }).models.providers;
   // ⚠️ 容缺：这条路径**正常就会缺字段**（"什么都没写"是很多用例的预期结果）。
@@ -159,42 +178,86 @@ describe('图片：内置 openai provider 的最小接线', () => {
   const imagePrimaryOf = (patch: unknown): unknown =>
     (patch as { agents?: { defaults?: { mediaModels?: { image?: { primary?: unknown } } } } })?.agents?.defaults
       ?.mediaModels?.image?.primary;
+  const openaiProviderOf = (patch: unknown): Record<string, unknown> | undefined => providersOf(patch).openai;
 
-  it('⭐ 写入 openai 的 baseUrl（带 /v1）、同一个 relay key、同一个设备头', () => {
-    const patch = buildRelayPatch({ relayKey: 'rly_abc', deviceFingerprint: 'fp123' });
-    const provider = providersOf(patch).openai;
-
-    // ⚠️ `/v1` 不能少：OpenAI 形状的客户端自己在后面接 `/images/generations`，
-    //    少一段的请求会打到 `/relay/images/generations` —— 404，而且不解释。
-    expect(provider.baseUrl).toBe(`${RELAY_BASE_URL}/v1`);
-    expect(provider.apiKey).toBe('rly_abc');
-    expect(provider.headers).toEqual({ 'X-ClawRouter-Project-Id': 'fp123' });
-  });
-
-  it('⭐ 选中 openai/qwen-image-1（ref 是两段：provider/model）', () => {
-    const patch = buildRelayPatch({ relayKey: 'rly_abc', deviceFingerprint: 'fp' });
-    expect(imagePrimaryOf(patch)).toBe('openai/qwen-image-1');
-  });
-
-  it('⭐ 绝不动聊天：默认模型与 catalog 注入保持原样', () => {
-    const patch = buildRelayPatch({
-      relayKey: 'rly_abc',
-      deviceFingerprint: 'fp',
-      existingConfig: snapshot({
-        agents: { defaults: { model: { primary: 'clawrouter/deepseek-v4-flash' } } },
-      }),
+  /** 一份"我们已经写过"的配置：两个键都是我们写的值。 */
+  const ourOwned = (): unknown =>
+    snapshot({
+      models: { providers: { clawrouter: { baseUrl: RELAY_BASE_URL }, openai: { baseUrl: `${RELAY_BASE_URL}/v1` } } },
+      agents: { defaults: { mediaModels: { image: { primary: 'openai/qwen-image-1' } } } },
     });
-    const defaults = (patch as { agents: { defaults: Record<string, unknown> } }).agents.defaults;
 
-    expect(defaults.model).toBeUndefined();
-    expect(imagePrimaryOf(patch)).toBe('openai/qwen-image-1');
+  // ── ① 默认不写 ────────────────────────────────────────────────────────
+
+  it('⭐ 默认（没给接线证据）⇒ openai provider 与 mediaModels **一个都不写**', () => {
+    const patch = buildRelayPatch({ relayKey: 'rly_abc', deviceFingerprint: 'fp' });
+
+    expect(openaiProviderOf(patch), '默认不该写 openai provider').toBeUndefined();
+    expect(imagePrimaryOf(patch), '默认不该写 mediaModels').toBeUndefined();
+    // 聊天那条照旧要写 —— 默认关的只是图片
     expect(providersOf(patch)[RELAY_PROVIDER_ID].baseUrl).toBe(RELAY_BASE_URL);
   });
 
-  it('⭐ 用户已经配了**别的**图像模型 ⇒ 一个字都不动（与"不重设模型偏好"同一条规矩）', () => {
+  it('⭐ 显式给 false 也一样不写（开关是白的，不是"没传就真"）', () => {
+    const patch = buildRelayPatch({ relayKey: 'rly_abc', deviceFingerprint: 'fp', imageGenerationWired: false });
+    expect(openaiProviderOf(patch)).toBeUndefined();
+    expect(imagePrimaryOf(patch)).toBeUndefined();
+  });
+
+  it('没有 relayKey ⇒ 整条 patch 为 null（也就不写图片配置）', () => {
+    expect(buildRelayPatch({ relayKey: null, deviceFingerprint: 'fp', imageGenerationWired: true })).toBeNull();
+  });
+
+  // ── ② 接线打开之后写什么 ──────────────────────────────────────────────
+
+  it('接线打开 + 配置是干净的 ⇒ 写入 baseUrl（带 /v1）、同一个 relay key、同一个设备头', () => {
+    const patch = buildRelayPatch({ relayKey: 'rly_abc', deviceFingerprint: 'fp123', imageGenerationWired: true });
+    const provider = openaiProviderOf(patch);
+
+    // ⚠️ `/v1` 不能少：OpenAI 形状的客户端自己在后面接 `/images/generations`，
+    //    少一段的请求会打到 `/relay/images/generations` —— 404，而且不解释。
+    //    （运行时合同测试实测过：它**不会**自己补这一段。）
+    expect(provider?.baseUrl).toBe(`${RELAY_BASE_URL}/v1`);
+    expect(provider?.apiKey).toBe('rly_abc');
+    expect(provider?.headers).toEqual({ 'X-ClawRouter-Project-Id': 'fp123' });
+    expect(imagePrimaryOf(patch)).toBe('openai/qwen-image-1');
+  });
+
+  it('⭐⭐ 用户自己配的 `openai/别的模型` + 第三方 baseUrl ⇒ **一个字都不动**', () => {
+    // 这条是这一版修掉的真缺陷：原来只按 `openai/` 前缀判断"这是我们的"，
+    // 于是用户手上的 gpt-image-1 会被**覆盖**成 qwen-image-1。
     const patch = buildRelayPatch({
       relayKey: 'rly_abc',
       deviceFingerprint: 'fp',
+      imageGenerationWired: true,
+      existingConfig: snapshot({
+        models: { providers: { openai: { baseUrl: 'https://api.openai.com/v1', apiKey: 'user-key' } } },
+        agents: { defaults: { mediaModels: { image: { primary: 'openai/gpt-image-1' } } } },
+      }),
+    });
+
+    expect(openaiProviderOf(patch), '不许覆盖用户的第三方 baseUrl').toBeUndefined();
+    expect(imagePrimaryOf(patch), '不许把用户的图片模型换成我们的').toBeUndefined();
+  });
+
+  it('⭐ baseUrl 是我们的、但模型不是我们的 ⇒ 仍然不动（所有权要**两条同时**成立）', () => {
+    const patch = buildRelayPatch({
+      relayKey: 'rly_abc',
+      deviceFingerprint: 'fp',
+      imageGenerationWired: true,
+      existingConfig: snapshot({
+        models: { providers: { openai: { baseUrl: `${RELAY_BASE_URL}/v1` } } },
+        agents: { defaults: { mediaModels: { image: { primary: 'openai/用户自己挑的' } } } },
+      }),
+    });
+    expect(imagePrimaryOf(patch)).toBeUndefined();
+  });
+
+  it('⭐ 用户用的是**别的 provider** 的图片模型 ⇒ 不动', () => {
+    const patch = buildRelayPatch({
+      relayKey: 'rly_abc',
+      deviceFingerprint: 'fp',
+      imageGenerationWired: true,
       existingConfig: snapshot({
         agents: { defaults: { mediaModels: { image: { primary: 'google/gemini-3-pro-image-preview' } } } },
       }),
@@ -202,28 +265,45 @@ describe('图片：内置 openai provider 的最小接线', () => {
     expect(imagePrimaryOf(patch)).toBeUndefined();
   });
 
-  it('已经指向我们的 ⇒ 覆盖成当前那一个（内测期模型换了要跟着换）', () => {
+  it('配置本来就是我们的 ⇒ 可以更新（内测期模型换了要跟着换）', () => {
     const patch = buildRelayPatch({
       relayKey: 'rly_abc',
       deviceFingerprint: 'fp',
-      existingConfig: snapshot({ agents: { defaults: { mediaModels: { image: { primary: 'openai/老模型' } } } } }),
+      imageGenerationWired: true,
+      existingConfig: ourOwned(),
     });
     expect(imagePrimaryOf(patch)).toBe('openai/qwen-image-1');
+    expect(openaiProviderOf(patch)?.apiKey).toBe('rly_abc');
   });
 
-  it('没有 relayKey ⇒ 整条 patch 为 null（也就不写图片配置）', () => {
-    expect(buildRelayPatch({ relayKey: null, deviceFingerprint: 'fp' })).toBeNull();
+  // ── ③ 绝不动聊天 ──────────────────────────────────────────────────────
+
+  it('⭐⭐ 聊天那一侧**逐字不变**：默认模型、catalog 注入、clawrouter 都不受影响', () => {
+    const patch = buildRelayPatch({
+      relayKey: 'rly_abc',
+      deviceFingerprint: 'fp',
+      imageGenerationWired: true,
+      existingConfig: snapshot({
+        agents: { defaults: { model: { primary: 'clawrouter/deepseek-v4-flash' } } },
+        models: { providers: { openai: { baseUrl: 'https://api.openai.com/v1' } } },
+      }),
+    });
+    const defaults = (patch as { agents: { defaults: Record<string, unknown> } }).agents.defaults;
+
+    expect(defaults.model, '不改用户的聊天默认模型').toBeUndefined();
+    expect(providersOf(patch)[RELAY_PROVIDER_ID].baseUrl).toBe(RELAY_BASE_URL);
+    expect(defaults.models).toEqual({
+      'clawrouter/qwen-turbo': { params: { extra_body: { enable_search: true } } },
+      'clawrouter/qwen-plus': { params: { extra_body: { enable_search: true } } },
+    });
   });
+
+  // ── ④ 注销 / 换卡：只清我们自己的 ─────────────────────────────────────
 
   it('⭐ 注销时**同时**清掉 openai provider 与图像模型指向（少一个的后果很具体）', () => {
     // 少了后半句：provider 没了、`mediaModels.image.primary` 还指着 `openai/qwen-image-1`，
     // 网关会去找一个**不存在**的 provider —— 而本仓栽过一次"配置整体被判非法"。
-    const removal = buildRelayRemovalPatch(
-      snapshot({
-        models: { providers: { clawrouter: { baseUrl: RELAY_BASE_URL }, openai: { baseUrl: `${RELAY_BASE_URL}/v1` } } },
-        agents: { defaults: { mediaModels: { image: { primary: 'openai/qwen-image-1' } } } },
-      }),
-    );
+    const removal = buildRelayRemovalPatch(ourOwned());
 
     expect(removal).not.toBeNull();
     const providers = (removal!.patch.models as { providers: Record<string, unknown> }).providers;
@@ -235,7 +315,28 @@ describe('图片：内置 openai provider 的最小接线', () => {
     ).toBeNull();
   });
 
-  it('⭐ 图像模型指向**别家**时，注销不许碰它', () => {
+  it('⭐⭐ 注销时，用户自己那份 openai 配置**一个字节都不许动**', () => {
+    // 用户既有 openai 聊天配置、又有自己的图片模型 —— 清卡不该把它们连根拔掉。
+    const removal = buildRelayRemovalPatch(
+      snapshot({
+        models: {
+          providers: {
+            clawrouter: { baseUrl: RELAY_BASE_URL },
+            openai: { baseUrl: 'https://api.openai.com/v1', apiKey: 'user-key' },
+          },
+        },
+        agents: { defaults: { mediaModels: { image: { primary: 'openai/gpt-image-1' } } } },
+      }),
+    );
+    const providers = (removal?.patch.models as { providers: Record<string, unknown> } | undefined)?.providers;
+    const agents = (removal?.patch.agents as { defaults?: Record<string, unknown> } | undefined)?.defaults;
+
+    expect(providers?.openai, '别家的 openai provider 不该被清').toBeUndefined();
+    expect(providers?.clawrouter, 'clawrouter 是我们的，要清').toBeNull();
+    expect(agents?.mediaModels, '别家的图片模型不该被清').toBeUndefined();
+  });
+
+  it('⭐ 图像模型指向别家、baseUrl 是别家 ⇒ 注销不许碰它（同一条所有权判据）', () => {
     const removal = buildRelayRemovalPatch(
       snapshot({
         models: { providers: { clawrouter: { baseUrl: RELAY_BASE_URL } } },
