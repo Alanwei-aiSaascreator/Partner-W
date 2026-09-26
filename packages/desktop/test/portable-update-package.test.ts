@@ -698,3 +698,48 @@ describe('feed failures are classified too', () => {
     await expect(readFeedJson(response)).resolves.toEqual({ ok: true });
   });
 });
+
+/**
+ * ⭐ 抓清单时**不许走 HTTP 缓存**。
+ *
+ * 真机读数（2026-09-26 之前就记过）：同一个进程里重复点「检查更新」，
+ * **服务器访问日志里零请求**，却报「已是最新版本」——而重启进程后立刻就能看到新版。
+ * 根因：清单响应只有 `ETag`/`Last-Modified`、**没有 `Cache-Control`**，
+ * 而主进程的 `fetch` 走 Chromium 缓存 ⇒ 启发式新鲜度把旧清单继续当新鲜用。
+ *
+ * ⚠️ 判据只能落在**传给 `fetch` 的选项**上：这条修复的全部内容就是那个选项，
+ *    没有别的可观察差异。而"包下载"那一处同样要紧 —— 406 MB 落进 HTTP 缓存
+ *    既占地方，取到旧的又只能靠 sha256 事后炸出来（清单这一处则是**静默**用旧的）。
+ */
+describe('feed 与包下载都不许走 HTTP 缓存', () => {
+  it('⭐ 抓清单带 cache: no-store', async () => {
+    const fetchMock = vi.fn(async () => new Response('{}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await fetchFeedResponse('https://example.com/updates/internal/manifest.json');
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ cache: 'no-store' });
+  });
+
+  it('⭐ 下包也带 cache: no-store', async () => {
+    const root = await makeRoot();
+    const fetchMock = vi.fn(async () => new Response(Buffer.from('not-the-right-bytes'), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      downloadPortablePackage({
+        url: 'https://example.com/update.zip',
+        destinationPart: join(root, 'update.part'),
+        expectedSize: 20,
+        requiredFreeBytes: 0,
+        expectedSha256: 'a'.repeat(64),
+        signal: new AbortController().signal,
+        onProgress: vi.fn(),
+      }),
+    ).rejects.toMatchObject({ code: 'package-integrity' });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ cache: 'no-store' });
+  });
+});

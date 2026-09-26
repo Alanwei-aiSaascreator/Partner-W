@@ -177,7 +177,11 @@ export function mapFileSystemFailure(error: unknown): PortableUpdateFailure {
  */
 export async function fetchFeedResponse(url: string): Promise<Response> {
   try {
-    return await fetch(url);
+    // ⚠️ **`cache: 'no-store'` 不是优化，是修 bug**：清单响应只有 `ETag`/`Last-Modified`、
+    //    没有 `Cache-Control`，而主进程的 `fetch` 走 Chromium 缓存 ⇒ 启发式新鲜度会把
+    //    **旧清单继续当新鲜用**。真机形状：同一个进程里重复点「检查更新」，
+    //    服务器访问日志里**零请求**，却报「已是最新版本」；重启进程立刻就能看到新版。
+    return await fetch(url, { cache: 'no-store' });
   } catch {
     throw new PortableUpdateFailure('network');
   }
@@ -312,7 +316,9 @@ export async function downloadPortablePackage(input: {
   let failure: PortableUpdateFailure | null = null;
 
   try {
-    const response = await fetch(input.url, { signal: input.signal });
+    // 同一类问题：406 MB 不该落进 HTTP 缓存。清单那处错了是**静默**用旧的；
+    // 这处错了至少会被 sha256 事后炸出来 —— 但两份都不该进缓存。
+    const response = await fetch(input.url, { signal: input.signal, cache: 'no-store' });
     if (!response.ok || response.body === null) {
       throw new PortableUpdateFailure('network');
     }
