@@ -819,6 +819,74 @@ describe('assistant artifact reconciliation boundary', () => {
     expect(reconcileTaskArtifactsMock).not.toHaveBeenCalled();
   });
 
+  it('⭐ 有文件没生成时推一次 docgen:failed —— 用户不该只看到"我做好了"', async () => {
+    const { beginArtifactRun, registerDataHandlers } = await import('../src/main/ipc/data-handlers.js');
+    registerDataHandlers();
+    beginArtifactRun('C:\\trusted-workspace', 'task-1', 'session-task-1');
+    selectGetMock.mockReturnValueOnce({ id: 'assistant-persisted' }).mockReturnValueOnce({ gid: 'gateway-1' });
+
+    handleMap.get('data:create-message')!(
+      {},
+      {
+        id: 'assistant-incoming',
+        taskId: 'task-1',
+        role: 'assistant',
+        content: ['好的。', '', '```docgen', '{ 不是 json', '```', '', '已经放好了。'].join('\n'),
+        timestamp: '2026-09-16T00:00:02.000Z',
+        sessionKey: 'session-task-1',
+      },
+    );
+    await flushJobs();
+
+    expect(webContentsSendMock).toHaveBeenCalledWith('docgen:failed', [{ code: 'request-invalid' }]);
+  });
+
+  it('两份都坏也只推**一次**（一次会话一条提示，不是每份弹一个）', async () => {
+    const { beginArtifactRun, registerDataHandlers } = await import('../src/main/ipc/data-handlers.js');
+    registerDataHandlers();
+    beginArtifactRun('C:\\trusted-workspace', 'task-1', 'session-task-1');
+    selectGetMock.mockReturnValueOnce({ id: 'assistant-persisted' }).mockReturnValueOnce({ gid: 'gateway-1' });
+
+    handleMap.get('data:create-message')!(
+      {},
+      {
+        id: 'assistant-incoming',
+        taskId: 'task-1',
+        role: 'assistant',
+        content: ['```docgen', '{ 坏的', '```', '', '```docgen', '{ 也坏的', '```'].join('\n'),
+        timestamp: '2026-09-16T00:00:02.000Z',
+        sessionKey: 'session-task-1',
+      },
+    );
+    await flushJobs();
+
+    const calls = webContentsSendMock.mock.calls.filter((call) => call[0] === 'docgen:failed');
+    expect(calls).toHaveLength(1);
+    expect(calls[0][1]).toEqual([{ code: 'request-invalid' }, { code: 'request-invalid' }]);
+  });
+
+  it('负对照：普通回复（没有 docgen 块）**一次都不该推** docgen:failed', async () => {
+    const { beginArtifactRun, registerDataHandlers } = await import('../src/main/ipc/data-handlers.js');
+    registerDataHandlers();
+    beginArtifactRun('C:\\trusted-workspace', 'task-1', 'session-task-1');
+    selectGetMock.mockReturnValueOnce({ id: 'assistant-persisted' }).mockReturnValueOnce({ gid: 'gateway-1' });
+
+    handleMap.get('data:create-message')!(
+      {},
+      {
+        id: 'assistant-incoming',
+        taskId: 'task-1',
+        role: 'assistant',
+        content: '今天天气不错。',
+        timestamp: '2026-09-16T00:00:02.000Z',
+        sessionKey: 'session-task-1',
+      },
+    );
+    await flushJobs();
+
+    expect(webContentsSendMock.mock.calls.filter((call) => call[0] === 'docgen:failed')).toHaveLength(0);
+  });
+
   it('clears every artifact run for a deleted task', async () => {
     const { beginArtifactRun, registerDataHandlers } = await import('../src/main/ipc/data-handlers.js');
     registerDataHandlers();

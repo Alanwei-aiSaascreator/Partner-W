@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto';
-import type { Artifact } from '@clawwork/shared';
+import type { Artifact, DocgenFailure, DocgenFormat } from '@clawwork/shared';
 import { getDebugLogger } from '../debug/index.js';
 import { saveArtifactFromBuffer } from '../artifact/save.js';
 import { extractDocgenBlocks } from './blocks.js';
+import { PptxLayoutError } from './pptx-layout.js';
 import { DOCGEN_OUTPUT_BY_KIND, type DocgenKind, type DocgenRequest } from './request.js';
 import { renderDocument } from './render.js';
 
@@ -21,11 +22,43 @@ import { renderDocument } from './render.js';
  *    产物登记与"消息已完成"的记账。所以这里把错误收成 `failed` 并记日志。
  *  - **不重复存**：同一段内容在重放/重试里被处理两次时，`saveArtifactFromBuffer`
  *    的 `sourceKey` 去重会挡住（见 `artifact/save.ts` 的唯一约束）。
+ *
+ * ⚠️ `failed` 是**结构化**的（`DocgenFailure`），不是一串给日志看的英文句子 ——
+ *    调用方要把它推给界面、由界面按九种语言各翻一份（见 `shared/docgen-failure.ts`）。
  */
 
 export interface DocgenGenerateResult {
   saved: Artifact[];
-  failed: string[];
+  failed: DocgenFailure[];
+}
+
+/**
+ * 把渲染层抛出来的错**归类**成界面能翻译的码。
+ *
+ * 认不出来的就落到 `render-failed`：那是我们自己的意外，不该假装知道原因，
+ * 也不该把 `error.message` 透给用户（那是英文内部话，用户看不懂，助手也拿不到）。
+ * 原始文本进调试日志（下面 `docgen.save-failed`），排障时照样查得到。
+ */
+function failureFromRenderError(error: unknown, format: DocgenFormat): DocgenFailure {
+  if (error instanceof PptxLayoutError) {
+    const problem = error.problem;
+    switch (problem.code) {
+      case 'slide-body-overflow':
+        return { code: 'presentation-page-overflow', format, page: problem.page };
+      case 'slide-title-overflow':
+        return {
+          code: 'presentation-page-title-overflow',
+          format,
+          page: problem.page,
+          maxChars: problem.maxChars,
+        };
+      case 'cover-title-overflow':
+        return { code: 'presentation-cover-title-overflow', format, maxChars: problem.maxChars };
+      case 'cover-subtitle-overflow':
+        return { code: 'presentation-cover-subtitle-overflow', format, maxChars: problem.maxChars };
+    }
+  }
+  return { code: 'render-failed', format };
 }
 
 /** 文件名主名的上限（Windows 路径长度）。扩展名另算，所以三种格式的总长一致。 */
@@ -71,7 +104,8 @@ export async function generateDocumentsFromMessage(input: {
 }): Promise<DocgenGenerateResult> {
   const result: DocgenGenerateResult = { saved: [], failed: [] };
   const { requests, errors } = extractDocgenBlocks(input.content);
-  result.failed.push(...errors);
+  // 解析阶段失败**说不出格式**（请求还没成形，硬填一个就是编事实）。
+  result.failed.push(...errors.map((): DocgenFailure => ({ code: 'request-invalid' })));
   if (requests.length === 0) {
     if (errors.length > 0) {
       getDebugLogger().warn({
@@ -103,7 +137,7 @@ export async function generateDocumentsFromMessage(input: {
       });
     } catch (error) {
       const message = (error as Error).message;
-      result.failed.push(message);
+      result.failed.push(failureFromRenderError(error, request.kind));
       getDebugLogger().warn({
         domain: 'artifact',
         event: 'docgen.save-failed',

@@ -6,7 +6,10 @@ import {
   MIN_BODY_PT,
   bodyFontSizePt,
   estimateBodyHeightPt,
+  estimateTextHeightPt,
+  findPptxLayoutProblem,
 } from '../src/main/docgen/pptx-layout';
+import type { DocgenPptxRequest } from '../src/main/docgen/request';
 
 /**
  * 正文字号是**算出来的**，不是写死的。
@@ -72,12 +75,13 @@ describe('bodyFontSizePt —— 现实体量必须装得下', () => {
   });
 });
 
-describe('bodyFontSizePt —— 已知装不下的极限（如实钉住，不假装修好了）', () => {
-  // 12 条 × 300 字 = 3600 字压一页。就算缩到 8pt 也要 400pt 高，而框只有 230pt
+describe('bodyFontSizePt —— 已知装不下的极限', () => {
+  // 12 条 × 300 字 = 3600 字压一页。就算缩到下限也要几百 pt，而框只有 230pt
   // —— 那不是"字号没算对"，是**内容本身就超过一页**。
-  // 真正的解法是按内容自动分页（schema 的 slides 与页是 1:1，那是一次契约改动），
-  // 不在这一刀里。这条测试的作用是：让这个缺口**显式存在**，而不是悄悄糊过去。
-  it('12 条 × 300 字一页装不下，字号停在下限而不是无限缩下去', () => {
+  // 2026-09-26 之前这里只是"钉住缺口"：字号停在下限，然后**照样生成一份糊出画面的 PPT**。
+  // 现在同样的体量必须**被拒**（见下面 `findPptxLayoutProblem`），所以这条只剩
+  // "下限是下限"这一个断言 —— 真正的不再糊弄由 `findPptxLayoutProblem` 那组保证。
+  it('12 条 × 300 字在下限下仍装不下（这正是要被判失败的那种体量）', () => {
     const bullets = Array.from({ length: 12 }, (_, i) => maxBullet(`要点${i + 1}`));
     expect(bodyFontSizePt(bullets)).toBe(MIN_BODY_PT);
     expect(estimateBodyHeightPt(bullets, MIN_BODY_PT)).toBeGreaterThan(BODY_BOX.h * 72);
@@ -86,6 +90,125 @@ describe('bodyFontSizePt —— 已知装不下的极限（如实钉住，不假
   it('下限本身是"还看得见"，不是能一直缩', () => {
     expect(MIN_BODY_PT).toBeGreaterThanOrEqual(10);
     expect(MIN_BODY_PT).toBeLessThan(MAX_BODY_PT);
+  });
+});
+
+/** 一页只有标题的页 —— 用来单独试标题的判定，不让正文干扰。 */
+const pageWith = (title: string, bullets: string[] = []): DocgenPptxRequest => ({
+  kind: 'pptx',
+  title: '内测汇报',
+  slides: [{ title, bullets }],
+});
+
+const deckOf = (slides: DocgenPptxRequest['slides'], title = '内测汇报'): DocgenPptxRequest => ({
+  kind: 'pptx',
+  title,
+  slides,
+});
+
+describe('findPptxLayoutProblem —— 装不下就必须**说出来**，不能糊过去', () => {
+  it('12 条 × 300 字（一页 3600 字）：判"内容过多"，并指出是第几页', () => {
+    const bullets = Array.from({ length: 12 }, (_, i) => maxBullet(`要点${i + 1}`));
+    expect(findPptxLayoutProblem(pageWith('本周进展', bullets))).toEqual({
+      code: 'slide-body-overflow',
+      page: 1,
+    });
+  });
+
+  it('页号按 slides 数组从 1 数（封面不算）—— 助手照着改的就是 slides[N-1]', () => {
+    const bullets = Array.from({ length: 12 }, (_, i) => maxBullet(`要点${i + 1}`));
+    const deck = deckOf([
+      { title: '正常页', bullets: ['一条'] },
+      { title: '正常页二', bullets: ['一条'] },
+      { title: '这页塞爆了', bullets },
+    ]);
+    expect(findPptxLayoutProblem(deck)).toEqual({ code: 'slide-body-overflow', page: 3 });
+  });
+
+  it('120 字中文页标题：判"标题过长"', () => {
+    expect(findPptxLayoutProblem(pageWith('标'.repeat(120)))).toMatchObject({
+      code: 'slide-title-overflow',
+      page: 1,
+    });
+  });
+
+  it('120 字中文封面标题：判封面标题过长', () => {
+    expect(findPptxLayoutProblem(deckOf([{ title: '第一页', bullets: ['一条'] }], '标'.repeat(120)))).toMatchObject({
+      code: 'cover-title-overflow',
+    });
+  });
+
+  it('超长副标题也判（副标题同样是排出来的，不会自己换行到天荒地老）', () => {
+    const deck: DocgenPptxRequest = {
+      ...deckOf([{ title: '第一页', bullets: ['一条'] }]),
+      subtitle: '副'.repeat(200),
+    };
+    expect(findPptxLayoutProblem(deck)).toMatchObject({ code: 'cover-subtitle-overflow' });
+  });
+
+  it('一份正常的中文汇报：判无问题（不能把正常内容也拦下来）', () => {
+    const deck = deckOf([
+      { title: '本月完成情况', bullets: ['文档生成能力已落地', '文件导入提示已修'] },
+      { title: '关键指标', bullets: ['周活 1,240', '留存 38%', '平均时长 21 分钟'] },
+      { title: '问题与风险', bullets: ['更新链上偶发启动器卡死'] },
+      { title: '下一步计划', bullets: ['PPT 主题与配色', '真盘验收'] },
+      { title: '需要支持', bullets: ['一台干净的测试机'] },
+    ]);
+    expect(findPptxLayoutProblem(deck)).toBeNull();
+  });
+
+  it('纯标题页（没有要点）不判失败 —— 分隔页是合法的', () => {
+    expect(findPptxLayoutProblem(pageWith('第二部分：下一步计划'))).toBeNull();
+  });
+
+  it('多处都有问题时，报**第一处**（封面优先，然后按页序）—— 一次让助手改一件事', () => {
+    const bullets = Array.from({ length: 12 }, (_, i) => maxBullet(`要点${i + 1}`));
+    const deck = deckOf(
+      [
+        { title: '正常页', bullets: ['一条'] },
+        { title: '标'.repeat(120), bullets },
+      ],
+      '标'.repeat(120),
+    );
+    expect(findPptxLayoutProblem(deck)).toMatchObject({ code: 'cover-title-overflow' });
+  });
+});
+
+describe('findPptxLayoutProblem —— 报出来的 maxChars 必须是**真的**能用', () => {
+  // 「标题请控制在 N 字以内」如果 N 是随口写的，用户照着改还是失败 —— 提示就成了假话。
+  // 所以两头都钉：maxChars 字**必须**通过，maxChars+1 字**必须**不通过。
+  const len = (n: number): DocgenPptxRequest => pageWith('标'.repeat(n));
+
+  it('页标题：maxChars 通过、再多一个字就不通过', () => {
+    const problem = findPptxLayoutProblem(len(120));
+    if (problem?.code !== 'slide-title-overflow') throw new Error('夹具没被判成标题过长');
+    expect(problem.maxChars).toBeGreaterThan(0);
+    expect(findPptxLayoutProblem(len(problem.maxChars))).toBeNull();
+    expect(findPptxLayoutProblem(len(problem.maxChars + 1))).toMatchObject({ code: 'slide-title-overflow' });
+  });
+
+  it('封面标题：maxChars 通过、再多一个字就不通过', () => {
+    const problem = findPptxLayoutProblem(deckOf([{ title: '第一页', bullets: [] }], '标'.repeat(120)));
+    if (problem?.code !== 'cover-title-overflow') throw new Error('夹具没被判成封面标题过长');
+    const coverWith = (title: string): DocgenPptxRequest => deckOf([{ title: '第一页', bullets: [] }], title);
+    expect(findPptxLayoutProblem(coverWith('标'.repeat(problem.maxChars)))).toBeNull();
+    expect(findPptxLayoutProblem(coverWith('标'.repeat(problem.maxChars + 1)))).toMatchObject({
+      code: 'cover-title-overflow',
+    });
+  });
+});
+
+describe('estimateTextHeightPt —— 标题类文字的估高（与正文同一套口径）', () => {
+  it('空串不占高度', () => {
+    expect(estimateTextHeightPt('', 26, BODY_BOX)).toBe(0);
+  });
+
+  it('字越多越高，且长到一定程度会换行（不是永远算一行）', () => {
+    const short = estimateTextHeightPt('短标题', 26, BODY_BOX);
+    const long = estimateTextHeightPt('长'.repeat(120), 26, BODY_BOX);
+    const oneLine = 26 * LINE_SPACING;
+    expect(short).toBeCloseTo(oneLine, 5);
+    expect(long).toBeGreaterThan(oneLine);
   });
 });
 

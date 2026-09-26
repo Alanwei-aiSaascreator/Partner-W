@@ -68,7 +68,12 @@ vi.mock('../src/main/debug/index.js', () => ({
 }));
 
 // 用**真的**会话键谓词，不要 mock 成恒 true —— 否则过滤这一层就没被测到。
-vi.mock('@clawwork/shared', () => ({
+// ⚠️ **部分** mock（`importOriginal` 铺底），不是整包替换：这个文件只关心那三个
+//    会话键helper。整包替换的话，任何**别的**共享导出被主进程代码新引用一次
+//    （2026-09-26：`docgen/request.ts` 开始用 `DOCGEN_FORMATS`），这个测试就会在
+//    "collect" 阶段炸成一句和本文件毫无关系的报错 —— 一个没人会想到来这里改的假红。
+vi.mock('@clawwork/shared', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@clawwork/shared')>()),
   isClawWorkSession: vi.fn((key: string, deviceId?: string) => {
     const m = key.match(/^agent:([^:]+):clawwork:([^:]+):task:(.+)$/);
     return m !== null && (!deviceId || m[2] === deviceId);

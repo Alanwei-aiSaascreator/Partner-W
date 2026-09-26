@@ -872,6 +872,16 @@
     "resetSessionDesc": "将清除服务器上的对话上下文，本地消息记录也会被清空。任务本身保留。",
     "resetSessionTitle": "重置会话"
   },
+  "docgen": {
+    "coverSubtitleOverflow": "演示文稿的副标题过长，没有生成。请把它缩短到 {{maxChars}} 字以内。",
+    "coverTitleOverflow": "演示文稿的标题过长，没有生成。请把它缩短到 {{maxChars}} 字以内。",
+    "failedTitle": "有文件没生成",
+    "moreFailures": "另有 {{rest}} 份也没有生成。",
+    "pageOverflow": "演示文稿第 {{page}} 页内容过多，没有生成。请把它拆成多页，或把细节写进讲者备注。",
+    "pageTitleOverflow": "演示文稿第 {{page}} 页的标题过长，没有生成。请把它缩短到 {{maxChars}} 字以内。",
+    "renderFailed": "有一份文件没能生成。",
+    "requestInvalid": "有一份文件的内容格式不对，没有生成。可以让助手重新输出一次。"
+  },
   "errors": {
     "agentMissing": "这个助手不在本机，换一个助手再发送。",
     "agentNotResponding": "Agent 未响应 — 可能不可用或服务端配置有误，请尝试其他 Agent",

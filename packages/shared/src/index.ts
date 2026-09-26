@@ -12,3 +12,4 @@ export * from './portable-update.js';
 export * from './workspace-fs.js';
 export * from './gateway-failure.js';
 export * from './artifact-preview.js';
+export * from './docgen-failure.js';

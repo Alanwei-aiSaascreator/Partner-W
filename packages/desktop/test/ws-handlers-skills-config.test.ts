@@ -65,7 +65,10 @@ vi.mock('../src/main/ipc/data-handlers.js', () => ({
   cancelArtifactRunsForSession: cancelArtifactRunsForSessionMock,
 }));
 
-vi.mock('@clawwork/shared', () => ({
+// ⚠️ **部分** mock（`importOriginal` 铺底）：整包替换会让"主进程代码新引用了某个
+//    共享导出"变成这个文件里一句莫名其妙的 collect 报错（同 `sync-sessions-content`）。
+vi.mock('@clawwork/shared', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@clawwork/shared')>()),
   isClawWorkSession: vi.fn(() => true),
   parseTaskIdFromSessionKey: vi.fn(() => 'task-1'),
   parseAgentIdFromSessionKey: vi.fn(() => 'main'),

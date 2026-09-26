@@ -872,6 +872,16 @@
     "resetSessionDesc": "這將清除伺服器上的對話上下文。本機訊息紀錄將被清除。任務本身會保留。",
     "resetSessionTitle": "重設工作階段"
   },
+  "docgen": {
+    "coverSubtitleOverflow": "簡報的副標題過長，沒有生成。請把它縮短到 {{maxChars}} 字以內。",
+    "coverTitleOverflow": "簡報的標題過長，沒有生成。請把它縮短到 {{maxChars}} 字以內。",
+    "failedTitle": "有檔案沒生成",
+    "moreFailures": "另有 {{rest}} 份也沒有生成。",
+    "pageOverflow": "簡報第 {{page}} 頁內容過多，沒有生成。請把它拆成多頁，或把細節寫進講者備忘稿。",
+    "pageTitleOverflow": "簡報第 {{page}} 頁的標題過長，沒有生成。請把它縮短到 {{maxChars}} 字以內。",
+    "renderFailed": "有一份檔案沒能生成。",
+    "requestInvalid": "有一份檔案的內容格式不對，沒有生成。可以請助理重新輸出一次。"
+  },
   "errors": {
     "agentMissing": "這個助手不在本機，換一個助手再傳送。",
     "agentNotResponding": "代理無回應 — 可能無法使用或伺服器端設定有誤。請嘗試其他代理。",

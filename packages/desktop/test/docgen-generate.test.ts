@@ -196,9 +196,7 @@ describe('extractDocgenBlocks（经 generateDocumentsFromMessage 间接验）', 
       content: docgenBlock({ kind: 'csv', title: 't', rows: [] }),
     });
     expect(result.saved).toEqual([]);
-    expect(result.failed).toHaveLength(1);
-    // `failed` 是**错误文案数组**（不是对象）；错误里要列出支持的格式，助手才知道该改成什么
-    expect(result.failed[0], '错误里要列出支持的格式').toContain('pptx');
+    expect(result.failed).toEqual([{ code: 'request-invalid' }]);
   });
 
   it('两份块 ⇒ 存两份，且一份坏不影响另一份', async () => {
@@ -219,7 +217,7 @@ describe('extractDocgenBlocks（经 generateDocumentsFromMessage 间接验）', 
       content: docgenBlock(PPTX),
     });
     expect(result.saved).toEqual([]);
-    expect(result.failed).toEqual(['disk full']);
+    expect(result.failed).toEqual([{ code: 'render-failed', format: 'pptx' }]);
   });
 
   it('⭐ sourceKey 认得出"同一份内容"（产物通道按它去重，重放不会存出第二份）', async () => {
@@ -251,6 +249,100 @@ describe('extractDocgenBlocks（经 generateDocumentsFromMessage 间接验）', 
     });
     expect(savedParams(0).sourceKey).toContain('pptx');
     expect(savedParams(1).sourceKey).toContain('docx');
+  });
+});
+
+describe('排不下的内容：**不落文件**，并留下一条能被界面翻译出来的原因', () => {
+  const maxBullet = (): string => '内'.repeat(300);
+
+  const overflowingDeck = (slideCount = 1): unknown => ({
+    kind: 'pptx',
+    title: '内测汇报',
+    slides: Array.from({ length: slideCount }, (_, i) => ({
+      title: `第 ${i + 1} 部分`,
+      bullets: Array.from({ length: 12 }, () => maxBullet()),
+    })),
+  });
+
+  it('一页 3600 字 ⇒ 报"内容过多"并带上第几页；**没调用过产物通道**', async () => {
+    const result = await generateDocumentsFromMessage({
+      workspacePath,
+      taskId,
+      messageId,
+      content: docgenBlock(overflowingDeck()),
+    });
+    expect(result.saved).toEqual([]);
+    expect(result.failed).toEqual([{ code: 'presentation-page-overflow', format: 'pptx', page: 1 }]);
+    expect(mocks.saveArtifactFromBuffer, '排不下就不能产出文件').not.toHaveBeenCalled();
+  });
+
+  it('页号是**改起来最省事**的那个口径：slides 里从 1 数（封面不算）', async () => {
+    // 前两页正常、第三页爆掉 —— 这样"page"到底数的是 3 还是 2 才有区分度。
+    // （如果三页都爆，page=1 无论按哪种口径都对，这条就白写了。）
+    const result = await generateDocumentsFromMessage({
+      workspacePath,
+      taskId,
+      messageId,
+      content: docgenBlock({
+        kind: 'pptx',
+        title: '内测汇报',
+        slides: [
+          { title: '第一页', bullets: ['一条'] },
+          { title: '第二页', bullets: ['一条'] },
+          { title: '第三页', bullets: Array.from({ length: 12 }, () => maxBullet()) },
+        ],
+      }),
+    });
+    expect(result.failed).toEqual([{ code: 'presentation-page-overflow', format: 'pptx', page: 3 }]);
+  });
+
+  it('页标题过长 ⇒ 报"标题过长"，并带上**真的能放下的字数**', async () => {
+    const result = await generateDocumentsFromMessage({
+      workspacePath,
+      taskId,
+      messageId,
+      content: docgenBlock({ kind: 'pptx', title: '内测汇报', slides: [{ title: '标'.repeat(120), bullets: [] }] }),
+    });
+    expect(result.saved).toEqual([]);
+    const failure = result.failed[0];
+    // 显式收窄到那一条：`maxChars` 只在这个 variant 上存在，靠 `toMatchObject` 是收窄不了的
+    if (failure?.code !== 'presentation-page-title-overflow') throw new Error(`没被判成标题过长：${failure?.code}`);
+    expect(failure).toMatchObject({ format: 'pptx', page: 1 });
+    expect(failure.maxChars, '提示里那句"控制在 N 字以内"必须是个真数').toBeGreaterThan(0);
+    expect(mocks.saveArtifactFromBuffer).not.toHaveBeenCalled();
+  });
+
+  it('⭐ 好坏混合：好文件照样保存，坏的那份单独失败且**没有产物**', async () => {
+    const content = [
+      docgenBlock({ ...PPTX, title: '好的那份' }),
+      '',
+      docgenBlock(overflowingDeck()),
+      '',
+      docgenBlock({ ...DOCX, title: '好的另一份' }),
+    ].join('\n');
+    const result = await generateDocumentsFromMessage({ workspacePath, taskId, messageId, content });
+
+    expect(result.saved.map((a) => a.name)).toEqual(['好的那份.pptx', '好的另一份.docx']);
+    expect(result.failed).toEqual([{ code: 'presentation-page-overflow', format: 'pptx', page: 1 }]);
+    // 坏的那份**从来没进过产物通道** —— 不是"存了再删"
+    expect(mocks.saveArtifactFromBuffer).toHaveBeenCalledTimes(2);
+    const names = mocks.saveArtifactFromBuffer.mock.calls.map((call) => (call[0] as { fileName: string }).fileName);
+    expect(names).not.toContain('内测汇报.pptx');
+  });
+
+  it('docx / xlsx 不受 pptx 那套版面判定影响（判定只活在 pptx 上）', async () => {
+    const result = await generateDocumentsFromMessage({
+      workspacePath,
+      taskId,
+      messageId,
+      content: docgenBlock({
+        kind: 'xlsx',
+        title: '台账',
+        sheets: [{ name: '汇总', rows: Array.from({ length: 300 }, (_, i) => ['内'.repeat(900), i]) }],
+      }),
+    });
+    expect(result.failed).toEqual([]);
+    expect(result.saved).toHaveLength(1);
   });
 });
 

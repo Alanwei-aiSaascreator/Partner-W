@@ -17,6 +17,7 @@ import type {
   CronRunsParams,
   CronStatusResult,
   ClawDashboardData,
+  DocgenFailure,
   SkillInstallParams,
   SkillInstallResult,
   SkillSearchParams,
@@ -530,6 +531,13 @@ export interface ClawWorkAPI {
     size?: number,
   ) => Promise<IpcResult<{ dataUrl: string }>>;
   onArtifactSaved: (callback: (artifact: Artifact) => void) => () => void;
+  /**
+   * 助手在回复里给了 ```` ```docgen ```` 块，但有一份没能变成文件。
+   *
+   * 形状与 shared 的 `DocgenFailure` **必须一致**（IPC 是运行时边界，两边各写一份类型）。
+   * 一次消息只推一次，可能带多条。
+   */
+  onDocgenFailed: (callback: (failures: DocgenFailure[]) => void) => () => void;
   saveCodeBlock: (params: {
     taskId: string;
     messageId: string;

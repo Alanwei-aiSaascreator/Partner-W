@@ -872,6 +872,16 @@
     "resetSessionDesc": "서버의 대화 컨텍스트가 지워집니다. 로컬 메시지 기록도 삭제됩니다. 작업 자체는 유지됩니다.",
     "resetSessionTitle": "세션 초기화"
   },
+  "docgen": {
+    "coverSubtitleOverflow": "프레젠테이션 부제목이 너무 길어 만들지 않았습니다. {{maxChars}}자 이내로 줄여 주세요.",
+    "coverTitleOverflow": "프레젠테이션 제목이 너무 길어 만들지 않았습니다. {{maxChars}}자 이내로 줄여 주세요.",
+    "failedTitle": "생성되지 않은 파일이 있습니다",
+    "moreFailures": "그 외 {{rest}}개도 생성되지 않았습니다.",
+    "pageOverflow": "슬라이드 {{page}}의 내용이 너무 많아 프레젠테이션을 만들지 않았습니다. 여러 페이지로 나누거나 세부 내용을 발표자 노트로 옮겨 주세요.",
+    "pageTitleOverflow": "슬라이드 {{page}}의 제목이 너무 길어 프레젠테이션을 만들지 않았습니다. {{maxChars}}자 이내로 줄여 주세요.",
+    "renderFailed": "만들지 못한 파일이 하나 있습니다.",
+    "requestInvalid": "내용 형식이 올바르지 않은 파일이 있어 만들지 않았습니다. 어시스턴트에게 다시 출력하도록 요청해 주세요."
+  },
   "errors": {
     "agentMissing": "해당 어시스턴트는 이 컴퓨터에 없습니다. 다른 어시스턴트를 선택해 다시 보내세요.",
     "agentNotResponding": "에이전트가 응답하지 않습니다 — 서버에서 사용할 수 없거나 잘못 구성되었을 수 있습니다. 다른 에이전트를 시도해 보세요.",

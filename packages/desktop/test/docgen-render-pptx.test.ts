@@ -159,3 +159,68 @@ describe('renderPptx —— 正文字号真的由内容量决定', () => {
     expect(sizes, '正文不该还是写死的 18pt').not.toContain(18);
   });
 });
+
+describe('renderPptx —— 排不下就**不产出文件**，而不是产出一份糊出画面的', () => {
+  /** 恰好顶到契约上限的一条要点（300 字）—— 多一个字会被契约层先拒，就不是在验排版了。 */
+  const maxBullet = (): string => '内'.repeat(300);
+
+  /** 一页 3600 字：缩到下限也装不下。 */
+  const overflowing = (): ReturnType<typeof parseDocgenRequest> =>
+    parseDocgenRequest({
+      kind: 'pptx',
+      title: '内测汇报',
+      slides: [{ title: '本周进展', bullets: Array.from({ length: 12 }, () => maxBullet()) }],
+    });
+
+  function pptxOf(parsed: ReturnType<typeof parseDocgenRequest>) {
+    if (!parsed.ok) throw new Error(`夹具不合法：${parsed.error}`);
+    if (parsed.request.kind !== 'pptx') throw new Error('夹具 kind 不对');
+    return parsed.request;
+  }
+
+  it('装不下时 throw（不是返回一份 0 页 / 空白 PPT）', async () => {
+    await expect(renderPptx(pptxOf(overflowing()))).rejects.toThrow();
+  });
+
+  it('throw 出来的错误**带着可判定的原因**，不是一句人话字符串', async () => {
+    await expect(renderPptx(pptxOf(overflowing()))).rejects.toMatchObject({
+      problem: { code: 'slide-body-overflow', page: 1 },
+    });
+  });
+
+  it('判定发生在**写任何一页之前** —— 一份都不许落半成品', async () => {
+    // 封面本身没问题，坏的是第 3 页。如果实现是"边写边判"，前两页就已经进了 pptx 对象，
+    // 哪怕最后 throw，也可能有人图省事把半成品 write 出去。这里用输出流从根上排除：
+    // 一旦 throw，就不可能拿到任何字节。
+    let bytes: Buffer | null = null;
+    try {
+      bytes = await renderPptx(
+        pptxOf(
+          parseDocgenRequest({
+            kind: 'pptx',
+            title: '内测汇报',
+            slides: [
+              { title: '第一页', bullets: ['一条'] },
+              { title: '第二页', bullets: ['一条'] },
+              { title: '第三页', bullets: Array.from({ length: 12 }, () => maxBullet()) },
+            ],
+          }),
+        ),
+      );
+    } catch {
+      bytes = null;
+    }
+    expect(bytes, '失败时不该产出任何字节').toBeNull();
+  });
+
+  it('标题过长同样在渲染层被拒（判定不能只活在界面那一侧）', async () => {
+    const parsed = parseDocgenRequest({
+      kind: 'pptx',
+      title: '标'.repeat(120),
+      slides: [{ title: '第一页', bullets: ['一条'] }],
+    });
+    await expect(renderPptx(pptxOf(parsed))).rejects.toMatchObject({
+      problem: { code: 'cover-title-overflow' },
+    });
+  });
+});

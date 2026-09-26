@@ -872,6 +872,16 @@
     "resetSessionDesc": "Cette action effacera le contexte de la conversation sur le serveur. L'historique local des messages sera effacé. La tâche elle-même sera conservée.",
     "resetSessionTitle": "Réinitialiser la session"
   },
+  "docgen": {
+    "coverSubtitleOverflow": "Le sous-titre de la présentation est trop long : elle n'a pas été créée. Raccourcissez-le à {{maxChars}} caractères maximum.",
+    "coverTitleOverflow": "Le titre de la présentation est trop long : elle n'a pas été créée. Raccourcissez-le à {{maxChars}} caractères maximum.",
+    "failedTitle": "Certains fichiers n'ont pas été créés",
+    "moreFailures": "{{rest}} autres n'ont pas été créés non plus.",
+    "pageOverflow": "La diapositive {{page}} contient trop de contenu : la présentation n'a pas été créée. Répartissez-le sur plusieurs diapositives ou déplacez les détails dans les notes du présentateur.",
+    "pageTitleOverflow": "Le titre de la diapositive {{page}} est trop long : la présentation n'a pas été créée. Raccourcissez-le à {{maxChars}} caractères maximum.",
+    "renderFailed": "Un fichier n'a pas pu être créé.",
+    "requestInvalid": "Un fichier avait un contenu mal formé et n'a pas été créé. Demandez à l'assistant de le produire à nouveau."
+  },
   "errors": {
     "agentMissing": "Cet assistant n’est pas sur cet ordinateur. Choisissez-en un autre et renvoyez.",
     "agentNotResponding": "L'agent ne répond pas — il est peut-être indisponible ou mal configuré sur le serveur. Essayez un autre agent.",

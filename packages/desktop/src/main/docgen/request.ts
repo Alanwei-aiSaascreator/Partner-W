@@ -1,3 +1,5 @@
+import { DOCGEN_FORMATS, type DocgenFormat } from '@clawwork/shared';
+
 /**
  * 文档生成的**请求契约**（助手写、客户端读）。
  *
@@ -32,9 +34,15 @@
  *  - 表格里违反 Excel 硬限制的（表名 >31 字、重复、含 `[]:*?/\`）要拒 ——
  *    否则用户打开时看到的是「文件需要修复」，而那是**我们**生成的文件。
  */
-/** 支持的四种格式。加第五种时：这里 + `DOCGEN_OUTPUT_BY_KIND` + 渲染层分发。 */
-export const DOCGEN_KINDS = ['pptx', 'docx', 'xlsx', 'pdf'] as const;
-export type DocgenKind = (typeof DOCGEN_KINDS)[number];
+/**
+ * 支持的四种格式。加第五种时：这里 + `DOCGEN_OUTPUT_BY_KIND` + 渲染层分发。
+ *
+ * ⚠️ **不在这里另写一份字面量**：格式集合的真源是 shared 的 `DOCGEN_FORMATS`
+ *    （理由见 `docgen-failure.ts` —— 那个集合要跨 IPC 边界）。在这里抄一份，
+ *    就会出现"契约层认第五种格式、界面报不出它的名字"这种两边各自漂移的错。
+ */
+export const DOCGEN_KINDS = DOCGEN_FORMATS;
+export type DocgenKind = DocgenFormat;
 
 /**
  * kind ⇒ 产物的扩展名与"标题空了用什么名字"。

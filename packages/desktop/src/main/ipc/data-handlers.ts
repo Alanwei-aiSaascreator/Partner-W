@@ -325,6 +325,13 @@ function finalizeAssistantArtifacts(input: {
       for (const artifact of documents.saved) {
         for (const win of BrowserWindow.getAllWindows()) win.webContents.send('artifact:saved', artifact);
       }
+      // ⭐ 没生成出来的那一份也要说。原来这里只把 `failed` 收进局部变量就丢掉 ——
+      //    界面上一个字都没有，于是"排不下所以拒了"和"我们坏了"在用户眼里长得一样，
+      //    而两者都长得像"它说做好了，但产物里什么都没有"。
+      //    **一次消息只推一次**：九个失败弹九个 toast 是另一种坏体验。
+      if (documents.failed.length > 0) {
+        for (const win of BrowserWindow.getAllWindows()) win.webContents.send('docgen:failed', documents.failed);
+      }
     } catch (error) {
       console.error('[docgen]', error);
     }

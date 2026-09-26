@@ -25,6 +25,7 @@ import { useModuleOpenTracking } from './hooks/useModuleOpenTracking';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { useSettingsBootstrap } from './hooks/useSettingsBootstrap';
 import { useStartupReadiness } from './hooks/useStartupReadiness';
+import { useDocgenFailureToast } from './hooks/useDocgenFailureToast';
 import { cn } from '@/lib/utils';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { motionDuration, motionEase } from '@/styles/design-tokens';
@@ -107,6 +108,9 @@ export default function App() {
   const startupReadiness = useStartupReadiness(ready);
   useWorkspaceRefresh();
   useUpdateCheck();
+  // 挂 App 而不是 MainArea：打开设置会卸载 MainArea，那期间文件生成失败就会被漏掉，
+  // 而"漏掉一条失败提示"的表现恰好和"什么都没发生"一模一样。
+  useDocgenFailureToast();
   useTraySync();
   useSettingsBootstrap(ready);
   useModuleOpenTracking();

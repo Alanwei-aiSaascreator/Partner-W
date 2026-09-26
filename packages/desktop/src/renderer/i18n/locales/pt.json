@@ -872,6 +872,16 @@
     "resetSessionDesc": "Isso limpará o contexto da conversa no servidor. O histórico local de mensagens será apagado. A tarefa em si será mantida.",
     "resetSessionTitle": "Redefinir Sessão"
   },
+  "docgen": {
+    "coverSubtitleOverflow": "O subtítulo da apresentação é longo demais, então ela não foi criada. Encurte para no máximo {{maxChars}} caracteres.",
+    "coverTitleOverflow": "O título da apresentação é longo demais, então ela não foi criada. Encurte para no máximo {{maxChars}} caracteres.",
+    "failedTitle": "Alguns arquivos não foram criados",
+    "moreFailures": "Outros {{rest}} também não foram criados.",
+    "pageOverflow": "O slide {{page}} tem conteúdo demais, então a apresentação não foi criada. Divida em vários slides ou mova os detalhes para as notas do apresentador.",
+    "pageTitleOverflow": "O título do slide {{page}} é longo demais, então a apresentação não foi criada. Encurte para no máximo {{maxChars}} caracteres.",
+    "renderFailed": "Um arquivo não pôde ser criado.",
+    "requestInvalid": "Um arquivo tinha conteúdo malformado e não foi criado. Peça ao assistente para gerar novamente."
+  },
   "errors": {
     "agentMissing": "Esse assistente não está neste computador. Escolha outro e envie de novo.",
     "agentNotResponding": "O agente não está respondendo — ele pode estar indisponível ou mal configurado no servidor. Tente um agente diferente.",
