@@ -1,6 +1,6 @@
 {
   "name": "@clawwork/desktop",
-  "version": "0.0.36",
+  "version": "1.0.0",
   "private": true,
   "description": "OpenClaw desktop client with structured task management",
   "type": "module",
