@@ -8,7 +8,6 @@ import { fillTemplateDeck, PptxTemplateError } from '../src/main/docgen/pptx-tem
 import { resolvePptxTemplatesRoot } from '../src/main/docgen/pptx-template/locate';
 import { parseTemplateDeck } from '../src/main/docgen/pptx-template/parse';
 import { listZipEntries, readZipEntry } from '../src/main/preview/zip-entry';
-import type { TemplateDeckSpec } from '../src/main/docgen/pptx-template/parse';
 
 /**
  * 填充：**真生成一份 pptx，再真读回来**。
