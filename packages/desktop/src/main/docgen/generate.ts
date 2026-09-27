@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import type { Artifact, DocgenFailure, DocgenFormat } from '@clawwork/shared';
 import { getDebugLogger } from '../debug/index.js';
 import { saveArtifactFromBuffer } from '../artifact/save.js';
+import { documentFileStem } from '../util/document-file-name.js';
 import { extractDocgenBlocks } from './blocks.js';
 import { PptxLayoutError } from './pptx-layout.js';
 import { DOCGEN_OUTPUT_BY_KIND, type DocgenKind, type DocgenRequest } from './request.js';
@@ -74,27 +75,15 @@ function failureFromRenderError(error: unknown, format: DocgenFormat): DocgenFai
   return { code: 'render-failed', format };
 }
 
-/** 文件名主名的上限（Windows 路径长度）。扩展名另算，所以三种格式的总长一致。 */
-const MAX_STEM_CHARS = 60;
-
 /**
  * 文件名：用请求标题，去掉 Windows 不允许的字符与控制字符；留空则退回该格式的稳定名字。
  * 扩展名**只**由 `DOCGEN_OUTPUT_BY_KIND` 给（别在这里写死 `.docx`：那是契约层的事）。
  *
- * ⚠️ 控制字符**不要直接写进正则字符类**：把控制字符以字面量形式写出来时，
- *    只要中间有一层把它解释成真字节，代码文件里就会出现真的 NUL ——
- *    grep 会直接把整个文件当二进制，那条正则也变成只匹配那两个码点。
- *    这里改成逐字符判断（`charCodeAt`），绕开所有转义层。
+ * ⚠️ 主名那段的规则在 `util/document-file-name.ts`（htmlgen 也要用同一份）。
  */
 export function documentFileNameFor(title: string, kind: DocgenKind): string {
-  const withoutControls = [...title].map((ch) => (ch.charCodeAt(0) < 0x20 ? ' ' : ch)).join('');
-  const cleaned = withoutControls
-    .replace(/[\\/:*?"<>|]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, MAX_STEM_CHARS);
   const { extension, fallbackStem } = DOCGEN_OUTPUT_BY_KIND[kind];
-  return `${cleaned || fallbackStem}${extension}`;
+  return `${documentFileStem(title, fallbackStem)}${extension}`;
 }
 
 /**

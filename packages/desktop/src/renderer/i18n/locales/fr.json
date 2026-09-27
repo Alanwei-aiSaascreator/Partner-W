@@ -393,6 +393,7 @@
     "aiDisclaimer": "Contenu généré par IA. Veuillez vérifier les informations importantes.",
     "aiServiceStarting": "Démarrage du service IA…",
     "aiServiceStartingDetail": "Le premier démarrage peut prendre environ une minute. Veuillez patienter.",
+    "artifactTooLarge": "{{name}} est trop volumineux pour être joint comme contexte.",
     "attachmentSaveFailed": "Échec de l'enregistrement de la pièce jointe {{fileName}}",
     "attachmentTooLarge": "{{fileName}} dépasse la limite de 100 Mo",
     "compacting": "Compression du contexte…",
@@ -938,6 +939,7 @@
     "revealInFolder": "Afficher dans le Finder",
     "slideEmpty": "(no text on this slide)",
     "slideLabel": "Slide {{index}}",
+    "tooLargeToRead": "Ce fichier fait {{size}} : trop volumineux pour être affiché ici. Ouvrez-le avec une application système.",
     "truncated": "This is long, so only the beginning is shown."
   },
   "firstTaskCompletion": {
@@ -1055,6 +1057,29 @@
     "title": "Croissance",
     "toNext": "{{value}} avant le niveau suivant",
     "totalEarned": "{{value}} cumulés"
+  },
+  "htmlgen": {
+    "blockInvalid": "Le bloc htmlgen de la réponse n'a pas passé la validation, donc cette page n'a pas été créée. Demandez à l'assistant de la réécrire au format documenté.",
+    "contentTooThin": "Le contenu est trop maigre : « {{template}} » repose sur {{needs}}, et ce contenu n'en a pas. Demandez à l'assistant de le compléter.",
+    "failedTitle": "Une page n'a pas été créée",
+    "moreFailures": "{{rest}} autres n'ont pas été créées non plus.",
+    "outputTooLarge": "Ce contenu dépasse {{maxMb}} Mo, rien n'a été créé. Demandez à l'assistant de le réduire ou de le découper en plusieurs pages.",
+    "renderFailed": "Cette page n'a pas pu être créée.",
+    "section": {
+      "actions": "des actions",
+      "metrics": "des indicateurs",
+      "narrative": "du texte",
+      "table": "un tableau"
+    },
+    "template": {
+      "brief": "rapport",
+      "data": "page de données",
+      "plan": "plan de projet",
+      "proposal": "page de proposition",
+      "research": "note de recherche"
+    },
+    "unknownTemplate": "Mise en page inconnue « {{template}} », rien n'a été créé. Demandez à l'assistant d'utiliser l'une de celles-ci : {{allowed}}.",
+    "unsupportedField": "Le contenu comporte un champ que le protocole n'accepte pas (« {{field}} »), rien n'a été créé. L'assistant ne fournit que le contenu, la mise en page est la nôtre : demandez-lui de supprimer ce champ et de réessayer."
   },
   "identity": {
     "appliedToast": "« {{role}} » appliqué",

@@ -12,6 +12,11 @@ import { searchArtifacts } from '../db/search.js';
 import { safeFetch } from '../net/safe-fetch.js';
 import { getArtifactAvailability } from '../artifact/reconcile.js';
 import { copyArtifactToDestination, inspectArtifactFile, readVerifiedArtifactFile } from '../artifact/access.js';
+import {
+  ArtifactTooLargeError,
+  MAX_PLAIN_BINARY_SOURCE_BYTES,
+  MAX_PLAIN_TEXT_SOURCE_BYTES,
+} from '../artifact/too-large.js';
 import { trackOnSuccess } from '../analytics/reporter.js';
 import { buildArtifactPreview, previewKindFor } from '../preview/build-preview.js';
 
@@ -136,14 +141,32 @@ export function registerArtifactHandlers(): void {
     }
   });
 
+  /**
+   * **朴素读法**：整份读出来给界面（文本进高亮 / 图片进 `<img>`）。
+   *
+   * ⚠️ 它现在是 `artifact:preview` 的**兜底**：富预览认不出（或 HTML 超了
+   *    `MAX_HTML_PREVIEW_BYTES`）就掉到这里。所以上限**必须**在这条路上也判 ——
+   *    否则"太大所以不给富预览"会变成"太大所以整份进高亮"，比不给预览还糟。
+   *
+   * ⚠️ 超限回的是 `{ tooLarge, size }` 而**不是** `{ ok: false }`：
+   *    文件是好的，是我们不肯搬 —— 这两件事在界面上要说两句不同的话。
+   */
   ipcMain.handle('artifact:read-file', async (_event, params: { artifactId: string; taskId?: string }) => {
     const workspacePath = getWorkspacePath();
     if (!workspacePath) return { ok: false, error: 'workspace not configured' };
     try {
       const artifact = loadArtifactForAction(params.artifactId, params.taskId);
       if (!artifact) return { ok: false, error: 'artifact not found' };
-      const encoding = isTextFile(artifact.localPath) ? 'utf-8' : 'base64';
-      const buffer = await readVerifiedArtifactFile(workspacePath, artifact.localPath);
+      const isText = isTextFile(artifact.localPath);
+      const encoding = isText ? 'utf-8' : 'base64';
+      const maxBytes = isText ? MAX_PLAIN_TEXT_SOURCE_BYTES : MAX_PLAIN_BINARY_SOURCE_BYTES;
+      let buffer: Buffer;
+      try {
+        buffer = await readVerifiedArtifactFile(workspacePath, artifact.localPath, { maxBytes });
+      } catch (err) {
+        if (err instanceof ArtifactTooLargeError) return { ok: true, result: { tooLarge: true, size: err.size } };
+        throw err;
+      }
       const content = buffer.toString(encoding);
       return { ok: true, result: { content, encoding } };
     } catch (err) {

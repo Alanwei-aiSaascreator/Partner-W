@@ -4,6 +4,7 @@ import { lstat, open, realpath, rename, stat, unlink, type FileHandle } from 'no
 import type { BigIntStats } from 'node:fs';
 import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import type { ArtifactAvailability } from '@clawwork/shared';
+import { ArtifactTooLargeError } from './too-large.js';
 
 export interface ArtifactFileInspection {
   availability: ArtifactAvailability;
@@ -116,7 +117,11 @@ async function openVerifiedArtifactFile(
     ) {
       throw new Error('artifact unsafe');
     }
-    if (hooks.maxBytes !== undefined && snapshot.size > hooks.maxBytes) throw new Error('artifact too large');
+    // ⚠️ 抛**带类型的**错（不是一句字符串）：调用方要按它回一个结构化结果给界面。
+    //    比字符串判的失效方向是"界面又把整份文件读进内存"，没有任何报错。
+    if (hooks.maxBytes !== undefined && snapshot.size > hooks.maxBytes) {
+      throw new ArtifactTooLargeError(snapshot.size);
+    }
     await hooks.afterSourceOpen?.();
     return { absolutePath: canonical, handle, snapshot };
   } catch (error) {

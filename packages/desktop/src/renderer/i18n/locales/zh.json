@@ -393,6 +393,7 @@
     "aiDisclaimer": "内容由 AI 生成，请核实重要信息",
     "aiServiceStarting": "正在启动 AI 服务…",
     "aiServiceStartingDetail": "首次启动可能需要约 1 分钟，请稍候。",
+    "artifactTooLarge": "{{name}} 太大，没法作为上下文带上。",
     "attachmentSaveFailed": "保存附件 {{fileName}} 失败",
     "attachmentTooLarge": "{{fileName}} 超出 100MB 上限",
     "compacting": "正在压缩上下文…",
@@ -938,6 +939,7 @@
     "revealInFolder": "在访达中显示",
     "slideEmpty": "（这一页没有文字）",
     "slideLabel": "第 {{index}} 页",
+    "tooLargeToRead": "这份文件有 {{size}}，太大，没法在这里显示。请用系统程序打开。",
     "truncated": "内容较长，这里只显示了前面一部分。"
   },
   "firstTaskCompletion": {
@@ -1055,6 +1057,29 @@
     "title": "成长中心",
     "toNext": "距离下一级还需 {{value}}",
     "totalEarned": "累计获得 {{value}}"
+  },
+  "htmlgen": {
+    "blockInvalid": "回复里那个要生成网页的块（htmlgen）没通过校验，这一份没生成。让助手照技能里的格式重写一次。",
+    "contentTooThin": "内容太薄，没生成：「{{template}}」这个版式要的是{{needs}}，这份内容里没有。让助手补上再来一次。",
+    "failedTitle": "网页没生成",
+    "moreFailures": "另有 {{rest}} 份也没生成。",
+    "outputTooLarge": "这份内容排出来超过 {{maxMb}} MB，没生成。让助手精简一些，或拆成几份分别输出。",
+    "renderFailed": "这一份网页没生成出来。",
+    "section": {
+      "actions": "行动项",
+      "metrics": "数据指标",
+      "narrative": "正文",
+      "table": "表格"
+    },
+    "template": {
+      "brief": "网页报告",
+      "data": "数据页",
+      "plan": "项目计划",
+      "proposal": "方案页",
+      "research": "调研简报"
+    },
+    "unknownTemplate": "不认识的版式「{{template}}」，没生成。让助手换成这几种之一：{{allowed}}。",
+    "unsupportedField": "内容里带了协议不接受的字段「{{field}}」，没生成。助手只提供内容、版式由客户端定 —— 让它把这个字段删掉再输出一次。"
   },
   "identity": {
     "appliedToast": "已应用「{{role}}」",

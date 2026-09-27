@@ -17,13 +17,8 @@
  *    （红线：只落工作区/临时目录 —— 这里干脆一个字节都不落）。
  */
 import { BrowserWindow } from 'electron';
+import { escapeHtml } from '../util/html-escape.js';
 import type { DocgenPdfRequest } from './request.js';
-
-/** HTML 转义：内容来自助手，必须当成**数据**而不是标记。 */
-export function escapeHtml(text: string): string {
-  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
-
 /**
  * 把请求渲染成一份**自带全部样式、不引用任何外部资源**的 HTML。
  *

@@ -92,6 +92,13 @@ export default function FilePreview({ artifact, onNavigateToTask, onClose }: Fil
   const [encoding, setEncoding] = useState<'utf-8' | 'base64'>('utf-8');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * 文件太大、我们**不肯整份搬进界面**时的字节数（`null` = 没这回事）。
+   *
+   * ⚠️ 这不是错误：文件是好的，只是几十兆的内容一进 `hljs.highlight` 就是**卡死**
+   *    （那是同步的）。如实说"有多大、请用系统程序打开"，不是白屏也不是一句英文内部话。
+   */
+  const [tooLarge, setTooLarge] = useState<number | null>(null);
 
   const ext = extFromName(artifact.name);
   const title = getArtifactLabel(artifact, t);
@@ -126,13 +133,20 @@ export default function FilePreview({ artifact, onNavigateToTask, onClose }: Fil
     setError(null);
     setContent(null);
     setPreview(null);
+    setTooLarge(null);
 
     const readPlain = () => {
       window.clawwork.readArtifactFile(artifact.id, artifact.taskId).then((res) => {
-        if (res.ok && res.result) {
-          const r = res.result as { content: string; encoding: string };
-          setContent(r.content);
-          setEncoding(r.encoding as 'utf-8' | 'base64');
+        const r = res.ok ? res.result : undefined;
+        if (r) {
+          // ⚠️ 先判 `tooLarge`：这一支**没有 `content`**，当成"内容为空"喂给高亮
+          //    会渲染出一块空白，而用户以为文件本来就是空的。
+          if ('tooLarge' in r) {
+            setTooLarge(r.size);
+          } else {
+            setContent(r.content);
+            setEncoding(r.encoding);
+          }
         } else {
           setError(res.error ?? 'failed to read file');
         }
@@ -215,6 +229,13 @@ export default function FilePreview({ artifact, onNavigateToTask, onClose }: Fil
             </div>
           )}
           {error && <p className="type-support px-4 py-8 text-center text-[var(--danger)]">{error}</p>}
+          {/* ⚠️ 不是错误、也不是"这种格式看不了"：文件是好的，只是太大。
+              说清楚**有多大**，用户才知道下一步是"用系统程序打开"还是"这份文件不该在这看"。 */}
+          {!loading && !error && tooLarge !== null && (
+            <p className="type-support px-4 py-8 text-center text-[var(--text-muted)]" data-testid="preview-too-large">
+              {t('filePreview.tooLargeToRead', { size: formatFileSize(tooLarge) })}
+            </p>
+          )}
           {!loading && !error && preview !== null && <RichPreview preview={preview} />}
           {!loading && !error && content !== null && (
             <PreviewContent

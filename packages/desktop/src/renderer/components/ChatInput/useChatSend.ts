@@ -509,8 +509,14 @@ export function useChatSend(opts: UseChatSendOpts) {
 
           for (const { artifact: a, res } of readResults) {
             if (!res.ok || !res.result) continue;
-            const read = res.result as { content: string; encoding: string };
-
+            const read = res.result;
+            // ⚠️ 太大的产物**没有 `content`**：不判这一支的话，它会当成"空文件"
+            //    被塞进 `<file>` 块发出去（模型收到一个空的 path=… 标签，
+            //    用户以为自己把这份文件带上去了）。这里如实说一句，别静默丢。
+            if ('tooLarge' in read) {
+              toast.error(t('chatInput.artifactTooLarge', { name: a.name }));
+              continue;
+            }
             if (read.encoding === 'utf-8') {
               const blockSize = new TextEncoder().encode(read.content).length;
               totalTextSize += blockSize;

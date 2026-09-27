@@ -393,6 +393,7 @@
     "aiDisclaimer": "AI が生成した内容です。重要な情報は必ず確認してください。",
     "aiServiceStarting": "AI サービスを起動しています…",
     "aiServiceStartingDetail": "初回起動には約 1 分かかる場合があります。しばらくお待ちください。",
+    "artifactTooLarge": "{{name}} は大きすぎるため、コンテキストとして添付できません。",
     "attachmentSaveFailed": "添付ファイル {{fileName}} の保存に失敗しました",
     "attachmentTooLarge": "{{fileName}} が 100MB の上限を超えています",
     "compacting": "コンテキストを圧縮しています…",
@@ -938,6 +939,7 @@
     "revealInFolder": "Finder で表示",
     "slideEmpty": "(no text on this slide)",
     "slideLabel": "Slide {{index}}",
+    "tooLargeToRead": "このファイルは {{size}} あり、大きすぎるためここに表示できません。システムのアプリで開いてください。",
     "truncated": "This is long, so only the beginning is shown."
   },
   "firstTaskCompletion": {
@@ -1055,6 +1057,29 @@
     "title": "成長センター",
     "toNext": "次のレベルまで {{value}}",
     "totalEarned": "累計 {{value}} 獲得"
+  },
+  "htmlgen": {
+    "blockInvalid": "返信内の htmlgen ブロックが検証を通らなかったため、このページは生成されませんでした。スキルに書かれた形式どおり書き直すようアシスタントに伝えてください。",
+    "contentTooThin": "内容が薄すぎるため生成されませんでした。「{{template}}」は{{needs}}が要るレイアウトで、この内容にはありません。補って再出力するよう伝えてください。",
+    "failedTitle": "ページを生成できませんでした",
+    "moreFailures": "他に {{rest}} 件も生成されませんでした。",
+    "outputTooLarge": "この内容は {{maxMb}} MB を超えるため生成されませんでした。内容を削るか、複数ページに分けるように伝えてください。",
+    "renderFailed": "このページは生成できませんでした。",
+    "section": {
+      "actions": "アクション項目",
+      "metrics": "指標",
+      "narrative": "本文",
+      "table": "表"
+    },
+    "template": {
+      "brief": "レポート",
+      "data": "データページ",
+      "plan": "プロジェクト計画",
+      "proposal": "提案ページ",
+      "research": "調査ブリーフ"
+    },
+    "unknownTemplate": "不明なレイアウト「{{template}}」のため生成されませんでした。次のいずれかを使うようアシスタントに伝えてください: {{allowed}}",
+    "unsupportedField": "プロトコルが受け付けないフィールド「{{field}}」が含まれていたため生成されませんでした。アシスタントが出せるのは内容だけで、レイアウトはこちら側です。そのフィールドを削って再出力するよう伝えてください。"
   },
   "identity": {
     "appliedToast": "「{{role}}」を適用しました",

@@ -15,6 +15,7 @@ import type {
   ConfigPatchParams,
   Artifact,
   DocgenFailure,
+  HtmlgenFailure,
   RelayBootstrapPublicState,
   PortableUpdatePublicState,
   RuntimeBootstrapStatus,
@@ -183,6 +184,15 @@ function buildApi(): ClawWorkAPI {
       ipcRenderer.on('docgen:failed', listener);
       return () => {
         ipcRenderer.removeListener('docgen:failed', listener);
+      };
+    },
+    onHtmlgenFailed: (callback: (failures: HtmlgenFailure[]) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, failures: HtmlgenFailure[]): void => {
+        callback(failures);
+      };
+      ipcRenderer.on('htmlgen:failed', listener);
+      return () => {
+        ipcRenderer.removeListener('htmlgen:failed', listener);
       };
     },
     saveCodeBlock: (params) => ipcRenderer.invoke('artifact:save-content', params),

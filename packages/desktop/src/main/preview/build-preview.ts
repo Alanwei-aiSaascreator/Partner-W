@@ -6,6 +6,7 @@
  */
 
 import type { ArtifactPreview } from '@clawwork/shared';
+import { HTML_PREVIEW_CSP } from './html-csp.js';
 import { readDocxOutline, readPptxOutline } from './office-outline.js';
 import { readSheetPreview } from './sheet-preview.js';
 
@@ -42,17 +43,6 @@ export function previewKindFor(name: string): ArtifactPreviewKind | null {
  * 用户仍然看得到源码，不会得到一个空白的框。
  */
 export const MAX_HTML_PREVIEW_BYTES = 4 * 1024 * 1024;
-
-/**
- * 给 HTML 预览注入的 CSP。**`default-src 'none'` 一句话禁掉了脚本、外链、表单、框架** ——
- * 只放行内联样式与 `data:` 图片（够看排版，不够把用户的浏览器变成跳板）。
- *
- * ⚠️ 为什么这一道不能省（渲染层已经给了 `sandbox`）：sandbox 是**容器**层的锁，
- *    CSP 是**内容**层的锁。哪天有人为了"让图表动起来"把 `allow-scripts` 松掉，
- *    还有这一道拦着外联；反过来哪天 CSP 被改坏，sandbox 仍然挡住脚本。
- */
-const HTML_PREVIEW_CSP =
-  "default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; base-uri 'none'; form-action 'none'";
 
 /**
  * 把 CSP 塞进 `<head>` 的**最前面**。

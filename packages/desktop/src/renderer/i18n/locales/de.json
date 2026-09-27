@@ -393,6 +393,7 @@
     "aiDisclaimer": "Inhalte werden von KI erzeugt. Bitte prüfen Sie wichtige Informationen.",
     "aiServiceStarting": "KI-Dienst wird gestartet…",
     "aiServiceStartingDetail": "Der erste Start kann etwa eine Minute dauern. Bitte warten Sie.",
+    "artifactTooLarge": "{{name}} ist zu groß, um als Kontext angehängt zu werden.",
     "attachmentSaveFailed": "Anhang {{fileName}} konnte nicht gespeichert werden",
     "attachmentTooLarge": "{{fileName}} ueberschreitet das 100-MB-Limit",
     "compacting": "Kontext wird komprimiert…",
@@ -938,6 +939,7 @@
     "revealInFolder": "Im Finder anzeigen",
     "slideEmpty": "(no text on this slide)",
     "slideLabel": "Slide {{index}}",
+    "tooLargeToRead": "Diese Datei ist {{size}} groß und kann hier nicht angezeigt werden. Bitte mit einem Systemprogramm öffnen.",
     "truncated": "This is long, so only the beginning is shown."
   },
   "firstTaskCompletion": {
@@ -1055,6 +1057,29 @@
     "title": "Wachstum",
     "toNext": "{{value}} bis zur nächsten Stufe",
     "totalEarned": "insgesamt {{value}} gesammelt"
+  },
+  "htmlgen": {
+    "blockInvalid": "Der htmlgen-Block in der Antwort hat die Prüfung nicht bestanden, daher wurde diese Seite nicht erstellt. Bitten Sie den Assistenten, sie im dokumentierten Format neu auszugeben.",
+    "contentTooThin": "Der Inhalt ist zu dünn, daher nichts erstellt: „{{template}}“ lebt von {{needs}}, und dieser Inhalt hat davon nichts. Bitten Sie den Assistenten, das zu ergänzen.",
+    "failedTitle": "Seite wurde nicht erstellt",
+    "moreFailures": "{{rest}} weitere wurden ebenfalls nicht erstellt.",
+    "outputTooLarge": "Dieser Inhalt ergibt mehr als {{maxMb}} MB, daher nichts erstellt. Bitten Sie den Assistenten zu kürzen oder auf mehrere Seiten aufzuteilen.",
+    "renderFailed": "Diese Seite konnte nicht erstellt werden.",
+    "section": {
+      "actions": "Maßnahmen",
+      "metrics": "Kennzahlen",
+      "narrative": "Fließtext",
+      "table": "eine Tabelle"
+    },
+    "template": {
+      "brief": "Bericht",
+      "data": "Datenseite",
+      "plan": "Projektplan",
+      "proposal": "Konzeptseite",
+      "research": "Recherche-Brief"
+    },
+    "unknownTemplate": "Unbekanntes Layout „{{template}}“, daher nichts erstellt. Bitten Sie den Assistenten, eines davon zu verwenden: {{allowed}}.",
+    "unsupportedField": "Der Inhalt enthält ein Feld, das das Protokoll nicht akzeptiert („{{field}}“), daher nichts erstellt. Der Assistent liefert nur Inhalte, das Layout kommt von uns – bitten Sie ihn, das Feld zu entfernen und erneut auszugeben."
   },
   "identity": {
     "appliedToast": "„{{role}}“ übernommen",

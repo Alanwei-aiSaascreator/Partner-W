@@ -1,5 +1,6 @@
 import type {
   IpcResult as SharedIpcResult,
+  ArtifactFileReadResult,
   LikeToggleResult,
   JoinTeamResult,
   ChatAttachment as SharedChatAttachment,
@@ -18,6 +19,7 @@ import type {
   CronStatusResult,
   ClawDashboardData,
   DocgenFailure,
+  HtmlgenFailure,
   SkillInstallParams,
   SkillInstallResult,
   SkillSearchParams,
@@ -518,7 +520,14 @@ export interface ClawWorkAPI {
   }) => Promise<IpcResult>;
   listArtifacts: (taskId?: string) => Promise<IpcResult<Artifact[]>>;
   getArtifact: (id: string) => Promise<IpcResult<Artifact>>;
-  readArtifactFile: (artifactId: string, taskId?: string) => Promise<IpcResult>;
+  /**
+   * 朴素读法：整份读出来给界面。
+   *
+   * ⚠️ 结果里**可能是 `{ tooLarge, size }`**（文件是好的，只是超过我们能整份搬进内存的上限）。
+   *    调用方必须判这一支 —— 当成"内容为空"发出去比报错难查得多。
+   *    上限定在主进程（`artifact-handlers.ts` 的 `MAX_PLAIN_*_SOURCE_BYTES`）。
+   */
+  readArtifactFile: (artifactId: string, taskId?: string) => Promise<IpcResult<ArtifactFileReadResult>>;
   /**
    * 富预览：`.docx` / `.xlsx` / `.pptx` / `.pdf` 读成界面能直接渲染的形状。
    *
@@ -538,6 +547,14 @@ export interface ClawWorkAPI {
    * 一次消息只推一次，可能带多条。
    */
   onDocgenFailed: (callback: (failures: DocgenFailure[]) => void) => () => void;
+  /**
+   * 助手在回复里给了 ```` ```htmlgen ```` 块，但有一份网页没能生成出来。
+   *
+   * 形状与 shared 的 `HtmlgenFailure` **必须一致**（IPC 是运行时边界，两边各写一份类型）。
+   * 一次消息只推一次，可能带多条 —— 与 `onDocgenFailed` 分开两条通道，
+   * 因为两边的失败原因与文案完全不相干（"PPT 某页装不下" vs "版式不认识"）。
+   */
+  onHtmlgenFailed: (callback: (failures: HtmlgenFailure[]) => void) => () => void;
   saveCodeBlock: (params: {
     taskId: string;
     messageId: string;

@@ -6,6 +6,7 @@ import { tasks, messages, artifacts, taskRooms, taskRoomSessions, teams, teamAge
 import { autoExtractArtifacts } from '../artifact/auto-extract.js';
 import { captureTaskArtifactBaseline, reconcileTaskArtifacts, type ArtifactBaseline } from '../artifact/reconcile.js';
 import { generateDocumentsFromMessage } from '../docgen/generate.js';
+import { generateHtmlPagesFromMessage } from '../htmlgen/generate.js';
 import type { MessageAttachment } from '@clawwork/shared';
 import { getWorkspacePath } from '../workspace/config.js';
 import { getGatewayClient } from '../ws/index.js';
@@ -334,6 +335,25 @@ function finalizeAssistantArtifacts(input: {
       }
     } catch (error) {
       console.error('[docgen]', error);
+    }
+    try {
+      // ⭐ 网页生成：助手给出 ```` ```htmlgen ```` 块（结构化内容，**不是** HTML 源码，
+      //    schema 见 `main/htmlgen/request.ts`），这里排成一份离线自包含的 .html 并走
+      //    同一条产物通道存下来。与 docgen 各管各的：一条坏了不影响另一条。
+      const pages = await generateHtmlPagesFromMessage({
+        workspacePath: input.workspacePath,
+        taskId: input.taskId,
+        messageId: input.messageId,
+        content: input.content,
+      });
+      for (const artifact of pages.saved) {
+        for (const win of BrowserWindow.getAllWindows()) win.webContents.send('artifact:saved', artifact);
+      }
+      if (pages.failed.length > 0) {
+        for (const win of BrowserWindow.getAllWindows()) win.webContents.send('htmlgen:failed', pages.failed);
+      }
+    } catch (error) {
+      console.error('[htmlgen]', error);
     }
     try {
       if (isArtifactRunCanceled(run) || !run.baseline) return;
