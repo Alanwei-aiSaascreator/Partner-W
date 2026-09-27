@@ -10,6 +10,7 @@ import {
   BOUNTY_STATUSES,
   type Bounty,
   type BountyStatus,
+  type DailyTask,
   type GrowthEntry,
   type GrowthSummary,
 } from '@clawwork/shared';
@@ -54,6 +55,29 @@ export function normalizeGrowthHistory(raw: unknown): GrowthEntry[] {
       refId: str(row.ref_id),
       note: str(row.note),
       createdAt: str(row.created_at),
+    }));
+}
+
+/**
+ * 每日任务（迁移 065 的 `daily_task_list()`）。
+ *
+ * ⭐ 没有 `task` 键的行**丢掉** —— 任务是按键去词表和派发动作的，
+ *    留一行没键的只会给界面一个点不动的空气按钮。
+ *
+ * ⭐⭐ `done` / `claimed` 用**严格 true**：这两个布尔是"能不能领"的唯一依据，
+ *    宽松判真会让**没做过的事显示成能领**，点下去后端回 `task_not_done`，
+ *    用户看到的是"点了没反应"。漏判只是让人多点一次，方向安全得多。
+ */
+export function normalizeDailyTasks(raw: unknown): DailyTask[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((item) => record(item))
+    .filter((row) => typeof row.task === 'string' && row.task !== '')
+    .map((row) => ({
+      task: String(row.task),
+      reward: num(row.reward),
+      done: bool(row.done),
+      claimed: bool(row.claimed),
     }));
 }
 

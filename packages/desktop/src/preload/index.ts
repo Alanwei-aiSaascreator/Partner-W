@@ -635,6 +635,8 @@ function buildApi(): ClawWorkAPI {
     growthCheckIn: () => ipcRenderer.invoke('growth:check-in'),
     growthHistory: (params?: { limit?: number; before?: string | null }) =>
       ipcRenderer.invoke('growth:history', params),
+    growthDailyTaskList: () => ipcRenderer.invoke('growth:task-list'),
+    growthDailyTaskClaim: (params: { task: string }) => ipcRenderer.invoke('growth:task-claim', params),
     bountyList: (params?: { status?: string | null }) => ipcRenderer.invoke('bounty:list', params),
     bountyCreate: (params: { title: string; description: string; reward: number }) =>
       ipcRenderer.invoke('bounty:create', params),

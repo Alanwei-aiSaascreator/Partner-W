@@ -63,7 +63,7 @@ describe('growth / bounty IPC handlers', () => {
     stopAnalyticsReporter();
   });
 
-  it('注册了 11 个通道', () => {
+  it('注册了 13 个通道', () => {
     expect([...mocks.handlers.keys()].sort()).toEqual([
       'bounty:accept',
       'bounty:cancel',
@@ -76,6 +76,8 @@ describe('growth / bounty IPC handlers', () => {
       'growth:check-in',
       'growth:history',
       'growth:summary',
+      'growth:task-claim',
+      'growth:task-list',
     ]);
   });
 
@@ -164,6 +166,69 @@ describe('growth / bounty IPC handlers', () => {
     mocks.rpc.mockResolvedValueOnce({ data: null, error: { message: 'not_authenticated' } });
     await call('growth:check-in');
 
+    expect(analytics.peek()).toEqual([]);
+  });
+
+  it('每日任务（迁移 065）：list 传空参、claim 参数改名', async () => {
+    mocks.rpc.mockResolvedValueOnce({
+      data: [{ task: 'publish', reward: 10, done: true, claimed: false }],
+      error: null,
+    });
+    await expect(call('growth:task-list')).resolves.toMatchObject({ ok: true });
+    expect(mocks.rpc).toHaveBeenCalledWith('daily_task_list', {});
+
+    mocks.rpc.mockResolvedValueOnce({
+      data: [{ balance: 30, total_earned: 30, level: 1, checked_in_today: false, awarded: 10 }],
+      error: null,
+    });
+    await expect(call('growth:task-claim', { task: 'publish' })).resolves.toMatchObject({
+      ok: true,
+      result: { awarded: 10 },
+    });
+    expect(mocks.rpc).toHaveBeenCalledWith('daily_task_claim', { p_task: 'publish' });
+  });
+
+  it('每日任务：两个码原样传出去（中文由 core 的 describeGrowthError 翻）', async () => {
+    mocks.rpc.mockResolvedValueOnce({ data: null, error: { message: 'task_not_done' } });
+    await expect(call('growth:task-claim', { task: 'publish' })).resolves.toEqual({
+      ok: false,
+      errorCode: 'task_not_done',
+    });
+
+    mocks.rpc.mockResolvedValueOnce({ data: null, error: { message: 'invalid_task' } });
+    await expect(call('growth:task-claim', { task: 'nope' })).resolves.toEqual({
+      ok: false,
+      errorCode: 'invalid_task',
+    });
+  });
+
+  /**
+   * ⭐ 没传 task ⇒ 传空串，由**服务端**判 `invalid_task`。
+   *
+   * 客户端不自己猜哪些键合法 —— 目录的唯一一份在服务端（`daily_task_catalog()`），
+   * 在客户端再抄一遍就是第二份真相，迟早和那边漂开。
+   */
+  it('每日任务：没传 task ⇒ 空串，判定交给服务端', async () => {
+    mocks.rpc.mockResolvedValueOnce({ data: null, error: { message: 'invalid_task' } });
+    await expect(call('growth:task-claim')).resolves.toEqual({ ok: false, errorCode: 'invalid_task' });
+    expect(mocks.rpc).toHaveBeenCalledWith('daily_task_claim', { p_task: '' });
+  });
+
+  /**
+   * ⭐ **每日任务刻意不上报埋点** —— 这条钉住的是**决定**，不是实现细节。
+   *
+   * 事件名是**服务端 CHECK 的闭集**（迁移 48），加一个名字要：改那条 CHECK（= 再推一条迁移）
+   * + 改 `ANALYTICS_EVENTS` + 加调用，三处缺一不可。而领奖本身已经在服务端落了
+   * `growth_entries (reason='daily_task')` —— 那才是权威、可查、带 user_id 的记录。
+   *
+   * ⇒ 谁要改这条测试，先想清楚是不是也准备推那条迁移。
+   */
+  it('⭐ 每日任务：领奖**不上报埋点**（事件名是服务端闭集，理由见代码注释）', async () => {
+    mocks.rpc.mockResolvedValueOnce({
+      data: [{ balance: 30, total_earned: 30, level: 1, checked_in_today: false, awarded: 10 }],
+      error: null,
+    });
+    await call('growth:task-claim', { task: 'publish' });
     expect(analytics.peek()).toEqual([]);
   });
 

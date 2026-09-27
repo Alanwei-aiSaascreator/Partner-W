@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next';
-import { ArrowDownLeft, ArrowUpRight, Gift, Lock, Sparkles } from 'lucide-react';
+import { ArrowDownLeft, ArrowUpRight, Check, Circle, Gift, Lock, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import EmptyState from '@/components/semantic/EmptyState';
@@ -25,7 +25,7 @@ import { useGrowth } from './useGrowth';
  */
 export default function GrowthPanel() {
   const { t } = useTranslation();
-  const { summary, history, myBounties, loading, error, busy, checkIn } = useGrowth();
+  const { summary, history, myBounties, dailyTasks, loading, error, busy, checkIn, claimTask } = useGrowth();
 
   /**
    * 每级所需成长值。
@@ -102,6 +102,74 @@ export default function GrowthPanel() {
           {summary.checkedInToday ? t('growth.checkedIn') : t('growth.checkIn')}
         </Button>
       </SectionCard>
+
+      {/**
+       * 每日任务（迁移 065）。
+       *
+       * ⭐ 三种状态**在界面上必须分得开** —— 这是整个特性的用户侧全部体验：
+       *   · `todo`    没做过 ⇒ 灰点 + "未完成"，**不给按钮**
+       *   · `ready`   做完了没领 ⇒ 高亮 + 「领取」
+       *   · `claimed` 今天领过了 ⇒ 打勾 + "已领取"
+       *
+       * 🔴 `todo` **不画按钮**：点了后端会回 `task_not_done`（防白送那道闸），
+       *    界面上表现成"点了没反应"。正确做法是根本不给点。
+       *
+       * ⭐ 一条任务都没有就**整块不出现**：不留空盒子，也就不必为此新加一句文案
+       *    （服务端目录是空的、或这一路拿不到，表现都该是"今天没任务"）。
+       */}
+      {dailyTasks.length > 0 ? (
+        <SectionCard title={t('growth.dailyTasks')}>
+          <div data-field="daily-tasks" className="space-y-1.5">
+            {dailyTasks.map((task) => {
+              const state = task.claimed ? 'claimed' : task.done ? 'ready' : 'todo';
+              return (
+                <div
+                  key={task.task}
+                  data-task={task.task}
+                  data-task-state={state}
+                  className="flex items-center gap-2.5"
+                >
+                  <span
+                    className={cn(
+                      'flex size-6 shrink-0 items-center justify-center rounded-full',
+                      state === 'ready'
+                        ? 'bg-[var(--accent-soft)] text-[var(--accent)]'
+                        : 'bg-[var(--bg-tertiary)] text-[var(--text-muted)]',
+                    )}
+                    aria-hidden="true"
+                  >
+                    {state === 'claimed' ? <Check className="size-3.5" /> : <Circle className="size-3.5" />}
+                  </span>
+                  <span
+                    className={cn(
+                      'type-body min-w-0 flex-1 truncate',
+                      state === 'ready' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]',
+                    )}
+                  >
+                    {t(`growth.task_${task.task}`, { defaultValue: task.task })}
+                  </span>
+                  <span className="type-support shrink-0 tabular-nums text-[var(--text-muted)]">+{task.reward}</span>
+                  {state === 'ready' ? (
+                    <Button
+                      className="shrink-0"
+                      data-action="claim-task"
+                      data-task={task.task}
+                      disabled={busy}
+                      onClick={() => void claimTask(task.task)}
+                    >
+                      {t('growth.taskClaim')}
+                    </Button>
+                  ) : (
+                    <span className="type-support w-14 shrink-0 text-right text-[var(--text-muted)]">
+                      {state === 'claimed' ? t('growth.taskClaimed') : t('growth.taskTodo')}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </SectionCard>
+      ) : null}
 
       <SectionCard title={t('growth.badges')} subtitle={t('growth.noBadges')}>
         <div className="flex flex-wrap gap-2">

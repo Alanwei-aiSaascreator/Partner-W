@@ -936,6 +936,9 @@ export interface ClawWorkAPI {
   growthSummary: () => Promise<IpcResult<unknown>>;
   growthCheckIn: () => Promise<IpcResult<unknown>>;
   growthHistory: (params?: { limit?: number; before?: string | null }) => Promise<IpcResult<unknown[]>>;
+  /** 每日任务（迁移 065）：`done` 决定画不画领取按钮，能不能领以 claim 的返回为准。 */
+  growthDailyTaskList: () => Promise<IpcResult<unknown[]>>;
+  growthDailyTaskClaim: (params: { task: string }) => Promise<IpcResult<unknown>>;
   bountyList: (params?: { status?: string | null }) => Promise<IpcResult<unknown[]>>;
   bountyCreate: (params: { title: string; description: string; reward: number }) => Promise<IpcResult<unknown>>;
   bountyClaim: (id: string) => Promise<IpcResult<null>>;

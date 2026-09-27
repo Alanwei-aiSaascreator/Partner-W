@@ -116,7 +116,12 @@ export {
 } from './services/agent-template-service.js';
 export type { AgentInstallDefinition } from './services/agent-template-service.js';
 export { describeTemplateError } from './services/agent-template-error-message.js';
-export { normalizeGrowthSummary, normalizeGrowthHistory, normalizeBounties } from './services/growth-service.js';
+export {
+  normalizeGrowthSummary,
+  normalizeGrowthHistory,
+  normalizeBounties,
+  normalizeDailyTasks,
+} from './services/growth-service.js';
 export { describeGrowthError } from './services/growth-error-message.js';
 export { normalizePrivacyState, DELETION_REQUEST_NOTE } from './services/privacy-service.js';
 export type {

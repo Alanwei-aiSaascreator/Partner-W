@@ -35,6 +35,13 @@ vi.mock('react-i18next', () => ({
         'bounty.status_claimed': '进行中',
         'growth.reason_check_in': '每日签到',
         'growth.reason_bounty_escrow': '发布悬赏托管',
+        'growth.dailyTasks': '今日任务',
+        'growth.task_publish': '发布一个悬赏',
+        'growth.task_submit': '交付一个悬赏',
+        'growth.task_accept': '验收一个悬赏',
+        'growth.taskClaim': '领取',
+        'growth.taskClaimed': '已领取',
+        'growth.taskTodo': '未完成',
       };
       const raw = table[key] ?? key;
       return raw.replace(/\{\{(\w+)\}\}/g, (_m, name: string) => String(values?.[name] ?? ''));
@@ -284,6 +291,153 @@ describe('GrowthPanel', () => {
       const view = await render();
       expect(view.container.querySelector('[data-field="error"]')).toBeNull();
       expect(view.container.textContent).toContain('240');
+      view.unmount();
+    });
+  });
+
+  /**
+   * ⭐ **每日任务**（迁移 065，2026-09-27）。
+   *
+   * 成长值原先只有两条来路：每日签到（固定 +20）和悬赏（大进大出）。
+   * 悬赏那条对**新手**是空的 —— 手里没有可发的、也没人发给他领，
+   * 于是"成长中心"整个是静的。每日任务补的是这一段：
+   * 把**今天本来就要做的动作**（发悬赏 / 交付 / 验收）接上成长值。
+   *
+   * ⚠️ 服务端的目录是唯一的一份（`daily_task_catalog()`），客户端**不硬编码清单**：
+   *    任务文案走 `growth.task_<键>`，服务端加一个任务界面照样显示得出来。
+   */
+  describe('每日任务', () => {
+    const taskRow = (over: Record<string, unknown> = {}) => ({
+      task: 'publish',
+      reward: 10,
+      done: false,
+      claimed: false,
+      ...over,
+    });
+
+    /**
+     * 两个入口一起造。
+     *
+     * ⚠️ 只造 `growthDailyTaskList` 是不够的：`claim` 那条漏了的话，
+     *    点按钮会 `TypeError`（不是断言失败，是**测的东西根本没跑**）——
+     *    本文件第一版就是这么写的，红在 "undefined is not a spy"。
+     */
+    function withTasks(rows: unknown[]): void {
+      Object.assign(window.clawwork, {
+        growthDailyTaskList: vi.fn(async () => ({ ok: true, result: rows })),
+        growthDailyTaskClaim: vi.fn(async () => ({ ok: true, result: { awarded: 10 } })),
+      });
+    }
+
+    /**
+     * ⭐⭐ 三种状态**必须在界面上分得开**，而且"能不能领"只看 `done && !claimed`。
+     *
+     * 这是整个特性的用户侧全部体验：合成一个布尔会让用户看到
+     * "完成了但按钮点不动"，却不知道为什么。
+     */
+    it('⭐⭐ 三态分得开：未完成 / 可领 / 已领', async () => {
+      withTasks([
+        taskRow({ task: 'publish', done: false }),
+        taskRow({ task: 'submit', done: true, claimed: false }),
+        taskRow({ task: 'accept', done: true, claimed: true }),
+      ]);
+      const view = await render();
+
+      const state = (task: string) =>
+        view.container.querySelector(`[data-task="${task}"]`)?.getAttribute('data-task-state');
+
+      expect(state('publish')).toBe('todo');
+      expect(state('submit')).toBe('ready');
+      expect(state('accept')).toBe('claimed');
+      view.unmount();
+    });
+
+    /**
+     * 🔴 **只有 ready 才有领取按钮。**
+     *
+     * 给 `todo` 也画一个按钮的话，用户点下去后端会回 `task_not_done`
+     * （迁移 065 里防白送的那道闸）—— 界面上表现成"点了没反应"，
+     * 而正确做法是**根本不给点**。
+     */
+    it('⭐🔴 只有「做完了没领」那颗才有领取按钮', async () => {
+      withTasks([
+        taskRow({ task: 'publish', done: false }),
+        taskRow({ task: 'submit', done: true, claimed: false }),
+        taskRow({ task: 'accept', done: true, claimed: true }),
+      ]);
+      const view = await render();
+
+      expect(
+        view.container.querySelectorAll('button[data-action="claim-task"]').length,
+        '领取按钮的条数应当恰好等于 status=ready 的任务数',
+      ).toBe(1);
+      expect(view.container.querySelector('button[data-action="claim-task"]')?.getAttribute('data-task')).toBe(
+        'submit',
+      );
+      view.unmount();
+    });
+
+    it('任务文案按服务端的键走 i18n（清单外的键退回键名，不渲染成空）', async () => {
+      withTasks([taskRow({ task: 'publish' }), taskRow({ task: 'future_task' })]);
+      const view = await render();
+
+      expect(view.container.textContent).toContain('发布一个悬赏');
+      expect(view.container.textContent).toContain('future_task');
+      view.unmount();
+    });
+
+    it('点领取 ⇒ 调后端并刷新（余额/等级要跟着变）', async () => {
+      withTasks([taskRow({ task: 'publish', done: true, claimed: false })]);
+      const view = await render();
+
+      const before = (window.clawwork.growthSummary as ReturnType<typeof vi.fn>).mock.calls.length;
+      await act(async () => {
+        (view.container.querySelector('button[data-action="claim-task"]') as HTMLButtonElement).click();
+      });
+
+      expect(window.clawwork.growthDailyTaskClaim).toHaveBeenCalledWith({ task: 'publish' });
+      expect(
+        (window.clawwork.growthSummary as ReturnType<typeof vi.fn>).mock.calls.length,
+        '领完必须重拉成长值 —— 否则领了 10 分余额还是旧的',
+      ).toBeGreaterThan(before);
+      view.unmount();
+    });
+
+    it('★ 领取失败 ⇒ 中文原因，不出现机器码', async () => {
+      withTasks([taskRow({ task: 'publish', done: true, claimed: false })]);
+      Object.assign(window.clawwork, {
+        growthDailyTaskClaim: vi.fn(async () => ({ ok: false, errorCode: 'task_not_done' })),
+      });
+      const view = await render();
+      await act(async () => {
+        (view.container.querySelector('button[data-action="claim-task"]') as HTMLButtonElement).click();
+      });
+
+      const { toast } = await import('sonner');
+      await vi.waitFor(() =>
+        expect(toast.error).toHaveBeenCalledWith('这件事今天还没做过 —— 做完再来领。', expect.anything()),
+      );
+      expect(view.container.textContent).not.toContain('task_not_done');
+      view.unmount();
+    });
+
+    /**
+     * ⭐ 旧预加载里没有 `growthDailyTaskList` ⇒ 直接调会 TypeError。
+     *    那是夹具/版本差异，不该把**成长主卡片**一起打成错误态（主数据是好的）。
+     *    ⚠️ 这条其实是**默认夹具**：文件顶上的 beforeEach 就没造这个入口。
+     */
+    it('⭐ 这一路拿不到（旧预加载）⇒ 不把整页打成错误态，整块不出现', async () => {
+      const view = await render();
+      expect(view.container.querySelector('[data-field="error"]')).toBeNull();
+      expect(view.container.textContent).toContain('240');
+      expect(view.container.querySelector('[data-field="daily-tasks"]')).toBeNull();
+      view.unmount();
+    });
+
+    it('一条任务都没有 ⇒ 整块不出现（不留一个空盒子）', async () => {
+      withTasks([]);
+      const view = await render();
+      expect(view.container.querySelector('[data-field="daily-tasks"]')).toBeNull();
       view.unmount();
     });
   });

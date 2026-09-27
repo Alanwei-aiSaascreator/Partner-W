@@ -64,6 +64,22 @@ export function registerGrowthHandlers(): void {
     callRpc('growth_history', { p_limit: payload?.limit ?? 50, p_before: payload?.before ?? null }, rows),
   );
 
+  // ── 每日任务（迁移 065）───────────────────────────────────────────
+  //
+  // "今天做过某类动作吗"由**服务端**判定（读 `bounty_events`，append-only + 服务端写），
+  // 这一层只搬参数、收敛异常。⚠️ 客户端的 `done` 只用来决定**画不画按钮**，
+  // 能不能领一律以 `daily_task_claim` 的返回为准 —— 界面状态改了不算数。
+  ipcMain.handle('growth:task-list', () => callRpc('daily_task_list', {}, rows));
+
+  ipcMain.handle('growth:task-claim', (_e, payload: { task?: string }) =>
+    // ⚠️ **刻意不上报埋点**：事件名是**服务端 CHECK 的闭集**（迁移 48），加一个名字要连带
+    //    再推一条迁移；而领奖本身已经在服务端落了一行
+    //    `growth_entries (reason='daily_task')` —— 那才是权威、可查、带 user_id 的记录，
+    //    分析侧直接读它，比客户端自觉上报可靠。
+    //    ⚠️ 与之相对，签到那条走 `daily_check_in` 是因为它**早就**在闭集里了。
+    callRpc('daily_task_claim', { p_task: payload?.task ?? '' }, firstRow),
+  );
+
   // ── 悬赏 ────────────────────────────────────────────────────────
   ipcMain.handle('bounty:list', (_e, payload?: { status?: string | null }) =>
     callRpc('bounty_list', { p_status: payload?.status ?? null }, rows),

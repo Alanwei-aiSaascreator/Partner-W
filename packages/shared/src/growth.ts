@@ -19,6 +19,24 @@ export interface GrowthSummary {
   badges: string[];
 }
 
+/**
+ * 每日任务（迁移 065）。
+ *
+ * ⚠️ `task` 是**服务端目录里的键**（`daily_task_catalog()` 的 `task` 列），
+ *    客户端**不硬编码清单** —— 服务端加一个任务，界面照样显示得出来
+ *    （文案走 `growth.task_<键>`，没有就退回键名，与徽章 / 明细原因同一套兜底）。
+ *
+ * ⚠️ `done` 与 `claimed` **必须分得开**，三者对应三种界面状态：
+ *    `done=false` ⇒ 还没做（灰的）；`done=true && claimed=false` ⇒ 可以领（高亮）；
+ *    `claimed=true` ⇒ 今天领过了（打勾）。合成一个布尔会让用户看到"完成了但点不动"。
+ */
+export interface DailyTask {
+  task: string;
+  reward: number;
+  done: boolean;
+  claimed: boolean;
+}
+
 export interface GrowthEntry {
   id: string;
   amount: number;
