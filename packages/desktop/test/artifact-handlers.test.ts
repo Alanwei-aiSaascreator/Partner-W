@@ -46,6 +46,13 @@ vi.mock('../src/main/db/index.js', () => ({
   getSqlite: vi.fn(() => null),
 }));
 
+/**
+ * 网关客户端。**必须 mock**：真实的那个会拉进整个 `gateway-client.ts`（`ws` + electron），
+ * 而这一组用例只关心"助手工作区解析成什么"，不关心 RPC 怎么发。
+ */
+const getGatewayClientMock = vi.fn((): unknown => null);
+vi.mock('../src/main/ws/index.js', () => ({ getGatewayClient: getGatewayClientMock }));
+
 vi.mock('../src/main/workspace/config.js', () => ({
   getWorkspacePath: vi.fn(() => '/workspace'),
 }));
@@ -355,5 +362,57 @@ describe('artifact handlers', () => {
       { taskId: 'task-1', messageId: 'm1', url: 'https://x.test/a.png' },
     );
     expect(analytics.peek().map((e) => e.event)).toEqual(['artifact_saved', 'artifact_saved']);
+  });
+
+  /**
+   * ⭐ **第二个根的读面**（2026-09-27）。
+   *
+   * 现场：助手用 exec 在它自己的工作区里生成 pptx / html，产物面板却是空的
+   * （真机 `.clawwork.db` 实测 `COUNT(*) = 0`）。
+   *
+   * 「扫到并登记」只是前半程 —— 读面（打开 / 跳转 / 预览 / 另存为）也必须按
+   * **它自己的根**解析。否则那一行的 availability 会被算成 `unsafe`，
+   * 而 `ArtifactCard` 是**三个按钮全部**看 availability ⇒ 卡片在手但一个都点不动。
+   */
+  it('⭐ root:agent 的产物按**助手工作区**解析，不是应用工作区', async () => {
+    allMock
+      // ① loadArtifactForAction 取到的那一行 —— root 是 agent
+      .mockReturnValueOnce([
+        { id: 'agent-1', taskId: 'task-1', name: 'deck.pptx', localPath: 'deck.pptx', root: 'agent' },
+      ])
+      // ② agentWorkspaceForTask 查任务拿 gatewayId + sessionKey
+      .mockReturnValueOnce([{ gatewayId: 'gw-1', sessionKey: 'agent:main:clawwork:task-1' }]);
+    getGatewayClientMock.mockReturnValueOnce({
+      listAgentFiles: async () => ({ agentId: 'main', workspace: '/agent-ws', files: [] }),
+    });
+    inspectArtifactFileMock.mockResolvedValue({
+      availability: 'available',
+      absolutePath: '/agent-ws/deck.pptx',
+    });
+
+    const { registerArtifactHandlers } = await import('../src/main/ipc/artifact-handlers.js');
+    registerArtifactHandlers();
+    await handleMap.get('artifact:open-file')?.({}, { artifactId: 'agent-1' });
+
+    // ⭐ 判据是**根**：必须拿 /agent-ws 去解析，而不是 /workspace
+    expect(inspectArtifactFileMock).toHaveBeenCalledWith('/agent-ws', 'deck.pptx');
+  });
+
+  it('root 缺省（老行）⇒ 仍然按应用工作区解析 —— 老行为一字不改', async () => {
+    allMock.mockReturnValueOnce([
+      { id: 'old-1', taskId: 'task-1', name: 'report.pdf', localPath: 'task-1/report.pdf' },
+    ]);
+    inspectArtifactFileMock.mockResolvedValue({
+      availability: 'available',
+      absolutePath: '/workspace/task-1/report.pdf',
+    });
+
+    const { registerArtifactHandlers } = await import('../src/main/ipc/artifact-handlers.js');
+    registerArtifactHandlers();
+    await handleMap.get('artifact:open-file')?.({}, { artifactId: 'old-1' });
+
+    expect(inspectArtifactFileMock).toHaveBeenCalledWith('/workspace', 'task-1/report.pdf');
+    // 老行**不该**去问助手工作区（一次网关调用都不发）
+    expect(getGatewayClientMock).not.toHaveBeenCalled();
   });
 });
