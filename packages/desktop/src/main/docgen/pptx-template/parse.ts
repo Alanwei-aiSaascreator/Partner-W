@@ -23,7 +23,7 @@
  */
 
 import type { DocgenFailure } from '@clawwork/shared';
-import { findPptxTemplate, PPTX_TEMPLATE_IDS, PPTX_TEMPLATE_SET_ID, type PptxTemplateSpec } from './catalog.js';
+import { findPptxTemplate, PPTX_TEMPLATE_SET_ID, type PptxTemplateSpec } from './catalog.js';
 
 /** 一页：用哪个模板 + 每个占位符写什么（已归一化，**含全部占位符**，缺的补空串）。 */
 export interface TemplateSlideSpec {
@@ -76,7 +76,10 @@ function failureFor(
  * 如果先报缺失，它会以为要补一个，而真正的问题是那个拼错的键。
  * 先报未知键，它一眼就看到自己写错了什么。
  */
-function parseSlide(raw: unknown, page: number): { ok: true; slide: TemplateSlideSpec } | { ok: false; failure: DocgenFailure } {
+function parseSlide(
+  raw: unknown,
+  page: number,
+): { ok: true; slide: TemplateSlideSpec } | { ok: false; failure: DocgenFailure } {
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
     return { ok: false, failure: { code: 'request-invalid' } };
   }
@@ -156,16 +159,4 @@ export function parseTemplateDeck(input: unknown): ParseTemplateDeckResult {
   }
 
   return { ok: true, deck: { slides } };
-}
-
-/** 给技能文档与错误提示用：这套模板都有哪些页。 */
-export function describePptxTemplates(): string {
-  return PPTX_TEMPLATE_IDS.map((id) => {
-    const spec = findPptxTemplate(id);
-    if (!spec) return '';
-    const tokens = Object.keys(spec.tokens).join(', ');
-    return `- ${id}：${spec.purpose}\n  可用字段：${tokens}`;
-  })
-    .filter(Boolean)
-    .join('\n');
 }

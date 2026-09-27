@@ -57,16 +57,16 @@ metadata: { 'openclaw': { 'emoji': '📄', 'skillKey': 'document-deck' } }
 
 **八种模板页**（`templateId` 只能从这八个里挑，别的会被拒）：
 
-| `templateId` | 用途 | 可以填的字段 |
-| --- | --- | --- |
-| `cover` | 封面 | `cover_title`(必填) `cover_subtitle` `date` `author` |
-| `section` | 章节页 | `section_title`(必填) `section_summary` `section_context` |
-| `insight` | 观点页（一个结论 + 三条证据） | `slide_title`(必填) `slide_subtitle` `takeaway` `evidence_1..3` |
-| `comparison` | 左右对比 | `slide_title`(必填) `slide_subtitle` `left_title` `right_title` `left_item_1..3` `right_item_1..3` |
-| `metrics` | 三个关键指标 | `slide_title`(必填) `slide_subtitle` `value_1..3` `label_1..3` `note_1..3` `source_or_note` |
-| `timeline` | 最多五步的时间线 | `slide_title`(必填) `slide_subtitle` `step_1..5_title` `step_1..5_desc` |
-| `actions` | 谁在什么时候做什么（最多四条） | `slide_title`(必填) `slide_subtitle` `action_1..4` `owner_1..4` `due_1..4` |
-| `closing` | 结尾页 | `closing_title`(必填) `closing_message` `contact_or_next_step` |
+| `templateId` | 用途                           | 可以填的字段                                                                                       |
+| ------------ | ------------------------------ | -------------------------------------------------------------------------------------------------- |
+| `cover`      | 封面                           | `cover_title`(必填) `cover_subtitle` `date` `author`                                               |
+| `section`    | 章节页                         | `section_title`(必填) `section_summary` `section_context`                                          |
+| `insight`    | 观点页（一个结论 + 三条证据）  | `slide_title`(必填) `slide_subtitle` `takeaway` `evidence_1..3`                                    |
+| `comparison` | 左右对比                       | `slide_title`(必填) `slide_subtitle` `left_title` `right_title` `left_item_1..3` `right_item_1..3` |
+| `metrics`    | 三个关键指标                   | `slide_title`(必填) `slide_subtitle` `value_1..3` `label_1..3` `note_1..3` `source_or_note`        |
+| `timeline`   | 最多五步的时间线               | `slide_title`(必填) `slide_subtitle` `step_1..5_title` `step_1..5_desc`                            |
+| `actions`    | 谁在什么时候做什么（最多四条） | `slide_title`(必填) `slide_subtitle` `action_1..4` `owner_1..4` `due_1..4`                         |
+| `closing`    | 结尾页                         | `closing_title`(必填) `closing_message` `contact_or_next_step`                                     |
 
 **四条硬规矩**（违反了会被拒，而且会告诉你错在哪一页哪个字段）：
 

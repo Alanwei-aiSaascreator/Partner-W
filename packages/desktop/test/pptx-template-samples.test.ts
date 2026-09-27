@@ -220,7 +220,10 @@ const SAMPLES: Sample[] = [
     deck: {
       template: 'business-deck-v4',
       slides: [
-        { templateId: 'cover', data: { cover_title: '客户端 1.0.1 进度汇报', cover_subtitle: '当前状态与风险', date: '2026-09-27' } },
+        {
+          templateId: 'cover',
+          data: { cover_title: '客户端 1.0.1 进度汇报', cover_subtitle: '当前状态与风险', date: '2026-09-27' },
+        },
         {
           templateId: 'timeline',
           data: {
@@ -451,7 +454,16 @@ describe('六套固定样稿', () => {
 
     expect(built).toHaveLength(6);
     // 八种模板页一个都不能漏 —— 只造漂亮的封面是验不出问题的
-    expect([...covered].sort()).toEqual(['actions', 'closing', 'comparison', 'cover', 'insight', 'metrics', 'section', 'timeline']);
+    expect([...covered].sort()).toEqual([
+      'actions',
+      'closing',
+      'comparison',
+      'cover',
+      'insight',
+      'metrics',
+      'section',
+      'timeline',
+    ]);
   });
 
   it('每份的页数与请求一致，且**一个 {{占位符}} 都不剩**', () => {
@@ -496,8 +508,11 @@ describe('六套固定样稿', () => {
     });
     writeFileSync(
       join(EXPORT_DIR, 'SAMPLES.json'),
-      JSON.stringify({ generatedAt: new Date().toISOString(), templatesRoot: TEMPLATES_ROOT, samples: records }, null, 2) +
-        '\n',
+      JSON.stringify(
+        { generatedAt: new Date().toISOString(), templatesRoot: TEMPLATES_ROOT, samples: records },
+        null,
+        2,
+      ) + '\n',
     );
     expect(records.every((r) => r.sha256.length === 64)).toBe(true);
   });

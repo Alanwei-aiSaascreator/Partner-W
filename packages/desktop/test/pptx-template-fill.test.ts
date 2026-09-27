@@ -33,7 +33,12 @@ afterEach(() => {
 async function fill(input: unknown, name = 'deck.pptx'): Promise<{ path: string; buffer: Buffer }> {
   const parsed = parseTemplateDeck(input);
   if (!parsed.ok) throw new Error(`parse 失败：${JSON.stringify(parsed.failure)}`);
-  const path = await fillTemplateDeck({ deck: parsed.deck, templatesRoot: TEMPLATES_ROOT, outputDir: outDir, outputName: name });
+  const path = await fillTemplateDeck({
+    deck: parsed.deck,
+    templatesRoot: TEMPLATES_ROOT,
+    outputDir: outDir,
+    outputName: name,
+  });
   const { readFileSync } = await import('node:fs');
   return { path, buffer: readFileSync(path) };
 }
@@ -56,7 +61,9 @@ describe('fillTemplateDeck —— 真生成真读回', () => {
 
   it('内容真的写进去了（读回来能看到那几个字，中文不乱码）', async () => {
     const { buffer } = await fill({
-      slides: [{ templateId: 'cover', data: { cover_title: '九月经营简报', cover_subtitle: '私域增长', date: '2026-09-27' } }],
+      slides: [
+        { templateId: 'cover', data: { cover_title: '九月经营简报', cover_subtitle: '私域增长', date: '2026-09-27' } },
+      ],
     });
     const all = slideTexts(buffer).join('\n');
     expect(all).toContain('九月经营简报');
@@ -93,7 +100,12 @@ describe('fillTemplateDeck —— 真生成真读回', () => {
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) return;
     await expect(
-      fillTemplateDeck({ deck: parsed.deck, templatesRoot: join(outDir, 'nope'), outputDir: outDir, outputName: 'x.pptx' }),
+      fillTemplateDeck({
+        deck: parsed.deck,
+        templatesRoot: join(outDir, 'nope'),
+        outputDir: outDir,
+        outputName: 'x.pptx',
+      }),
     ).rejects.toBeInstanceOf(PptxTemplateError);
   });
 });

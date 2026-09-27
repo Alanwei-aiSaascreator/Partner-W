@@ -117,7 +117,9 @@ describe('pptx 模板资产的不变量（换文件时必须重新满足）', ()
   });
 
   it('② 没有备注页 / 备注母版（复制页之后它们的反向引用会错位）', () => {
-    const notes = listZipEntries(buffer).filter((n) => n.startsWith('ppt/notesSlides/') || n.startsWith('ppt/notesMasters/'));
+    const notes = listZipEntries(buffer).filter(
+      (n) => n.startsWith('ppt/notesSlides/') || n.startsWith('ppt/notesMasters/'),
+    );
     expect(notes).toEqual([]);
   });
 

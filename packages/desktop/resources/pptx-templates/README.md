@@ -5,10 +5,10 @@
 
 ## 文件
 
-| 文件 | 用途 | SHA-256 |
-| --- | --- | --- |
-| `business-deck-v4.pptx` | 8 张模板页（见下表） | `348995833def2f1ab3fa31a0907bca570d9813000f629b94712f3919dae5cff9` |
-| `blank-root.pptx` | **零页**根模板：只有母版 / 版式 / 主题 | `f7c7950a01dc2f9a269a27373367777e9292b5d1b8536d18eca6b953c777b4ae` |
+| 文件                    | 用途                                   | SHA-256                                                            |
+| ----------------------- | -------------------------------------- | ------------------------------------------------------------------ |
+| `business-deck-v4.pptx` | 8 张模板页（见下表）                   | `348995833def2f1ab3fa31a0907bca570d9813000f629b94712f3919dae5cff9` |
+| `blank-root.pptx`       | **零页**根模板：只有母版 / 版式 / 主题 | `f7c7950a01dc2f9a269a27373367777e9292b5d1b8536d18eca6b953c777b4ae` |
 
 ### 为什么还要一个"零页根"
 
@@ -34,16 +34,16 @@
 `src/main/docgen/pptx-template/catalog.ts` 声明，
 并由 `test/pptx-template-catalog.test.ts` 打开**这份真实文件**逐页核对。
 
-| 页 | templateId | 形状名（= 占位符 token） |
-| --- | --- | --- |
-| 1 | `cover` | `COVER_TITLE`(封面标题，必填) · `COVER_SUBTITLE` · `COVER_DATE` · `COVER_AUTHOR` |
-| 2 | `section` | `SECTION_TITLE`(必填) · `SECTION_SUMMARY` · `SECTION_CONTEXT` |
-| 3 | `insight` | `SLIDE_TITLE`(必填) · `SLIDE_SUBTITLE` · `TAKEAWAY` · `EVIDENCE_1..3` |
-| 4 | `comparison` | `SLIDE_TITLE`(必填) · `SLIDE_SUBTITLE` · `LEFT_TITLE` · `RIGHT_TITLE` · `LEFT_ITEM_1..3` · `RIGHT_ITEM_1..3` |
-| 5 | `metrics` | `SLIDE_TITLE`(必填) · `SLIDE_SUBTITLE` · `METRIC_1..3_VALUE` · `METRIC_1..3_LABEL` · `METRIC_1..3_NOTE` · `METRIC_SOURCE` |
-| 6 | `timeline` | `SLIDE_TITLE`(必填) · `SLIDE_SUBTITLE` · `STEP_1..5_TITLE` · `STEP_1..5_DESC` |
-| 7 | `actions` | `SLIDE_TITLE`(必填) · `SLIDE_SUBTITLE` · `ACTION_1..4` · `OWNER_1..4` · `DUE_1..4` |
-| 8 | `closing` | `CLOSING_TITLE`(必填) · `CLOSING_MESSAGE` · `CLOSING_CONTACT` |
+| 页  | templateId   | 形状名（= 占位符 token）                                                                                                  |
+| --- | ------------ | ------------------------------------------------------------------------------------------------------------------------- |
+| 1   | `cover`      | `COVER_TITLE`(封面标题，必填) · `COVER_SUBTITLE` · `COVER_DATE` · `COVER_AUTHOR`                                          |
+| 2   | `section`    | `SECTION_TITLE`(必填) · `SECTION_SUMMARY` · `SECTION_CONTEXT`                                                             |
+| 3   | `insight`    | `SLIDE_TITLE`(必填) · `SLIDE_SUBTITLE` · `TAKEAWAY` · `EVIDENCE_1..3`                                                     |
+| 4   | `comparison` | `SLIDE_TITLE`(必填) · `SLIDE_SUBTITLE` · `LEFT_TITLE` · `RIGHT_TITLE` · `LEFT_ITEM_1..3` · `RIGHT_ITEM_1..3`              |
+| 5   | `metrics`    | `SLIDE_TITLE`(必填) · `SLIDE_SUBTITLE` · `METRIC_1..3_VALUE` · `METRIC_1..3_LABEL` · `METRIC_1..3_NOTE` · `METRIC_SOURCE` |
+| 6   | `timeline`   | `SLIDE_TITLE`(必填) · `SLIDE_SUBTITLE` · `STEP_1..5_TITLE` · `STEP_1..5_DESC`                                             |
+| 7   | `actions`    | `SLIDE_TITLE`(必填) · `SLIDE_SUBTITLE` · `ACTION_1..4` · `OWNER_1..4` · `DUE_1..4`                                        |
+| 8   | `closing`    | `CLOSING_TITLE`(必填) · `CLOSING_MESSAGE` · `CLOSING_CONTACT`                                                             |
 
 ⚠️ 形状名**不等于** token 名：token 是 `value_1`，形状是 `METRIC_1_VALUE`。
 这层映射推不出来，只能写死 —— 所以那条对齐测试是必须的：漂移了产物上那一格**永远是空的**

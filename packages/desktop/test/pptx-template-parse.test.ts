@@ -106,7 +106,9 @@ describe('parseTemplateDeck —— 四种拒绝', () => {
   it('超长 ⇒ template-field-too-long，且带上真正的上限（提示里那个数字必须是真的）', () => {
     const spec = findPptxTemplate('cover')!;
     const limit = spec.tokens.cover_title.maxLength;
-    const result = parseTemplateDeck({ slides: [{ templateId: 'cover', data: { cover_title: '字'.repeat(limit + 1) } }] });
+    const result = parseTemplateDeck({
+      slides: [{ templateId: 'cover', data: { cover_title: '字'.repeat(limit + 1) } }],
+    });
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.failure).toEqual({
