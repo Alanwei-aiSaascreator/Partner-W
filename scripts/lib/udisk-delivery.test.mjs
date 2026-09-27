@@ -190,19 +190,34 @@ test('assemble CLI copies only launcher, program, and instructions into an empty
  * 交付说明里那几条**只有在真机踩过才知道要写**的告知，以及**唯一会漂的那个数字**。
  * 说明本身是纯文本、不参与编译，改错了没有任何门禁会拦 —— 只能靠这里。
  */
-test('delivery instructions carry the exFAT/NTFS requirement and the no-nesting rule', () => {
+test('delivery instructions carry the filesystem requirement and the no-nesting rule', () => {
   // ⚠️ 判据必须**连着那件事的措辞**，不能只查词在不在。
   //    第一版写的是 `assert.match(readme, /exFAT/)` —— 变异验证当场戳穿：
-  //    把"必须使用 exFAT 或 NTFS"这一整行删掉，测试**照样绿**，因为另一行
-  //    "换成 exFAT / NTFS 会清空 U 盘"里也有 `exFAT`。
+  //    把要求那一整行删掉，测试**照样绿**，因为另一行里也有 `exFAT`。
   //    ⇒ 查的是"这个词在文件里出现过"，不是"这条要求还写着"。同
   //      [[stale-green-tests]] 那一族：标签+数字要精确串。
   //
-  // 盘格式：FAT32 上程序**能启动**、助手**全失败**（`dev=0` 拿不到文件身份），
-  // 用户唯一的有效动作是换盘格式 —— 不写清楚，他只会反复重装。
-  assert.match(readme, /必须使用\s*exFAT\s*或\s*NTFS/, '必须写明"必须用 exFAT 或 NTFS"');
+  // 盘格式：FAT32 上程序**能启动**、助手**全失败**（`dev=0` 拿不到文件身份）。
+  // ⭐ 2026-09-27 修正：原来说"exFAT 或 NTFS 都行"是**错的**。
+  //    那条结论来自 `probeWorkspaceFsIdentity`，而它**只建文件 + lstat 读 dev/ino**、
+  //    **从来没真写过一个文件** —— 把"dev≠0"这个**代理指标**当成了"可用"。
+  //    实测（58.6GB exFAT、128KB 簇）：用随包运行时那份 `@openclaw/fs-safe` 真写，
+  //    新文件 / 覆盖 / 建子目录**三个全部失败**，底层是 `inspect opened path failed with
+  //    Windows error 87`；同一序列在 NTFS 上三个全过。
+  //    ⇒ 现在只承诺 NTFS。同 [[grep-presence-is-not-state]]：读到的不是状态。
+  assert.match(readme, /格式化成\s*NTFS/, '必须写明"格式化成 NTFS"（唯一验证过可用的）');
   assert.match(readme, /FAT32\s*不支持/, '必须点名 FAT32 不支持');
+  assert.match(readme, /exFAT[^\n]*改用\s*NTFS/, '必须把 exFAT 明确导向 NTFS，不能含糊');
   assert.match(readme, /先[^\n]*备份/, '格式会清空盘 ⇒ 必须提醒先备份');
+
+  // ⭐ 反向守卫：**不许**再把 exFAT 说成可用。
+  //    这条是为了防止"照着旧结论顺手改回去"——旧结论有测试注释与记忆为它背书，
+  //    不动它就会再犯一次。要恢复 exFAT 的说法，必须先有一份**真写成功**的证据。
+  assert.doesNotMatch(
+    readme,
+    /必须使用\s*exFAT|exFAT\s*或\s*NTFS\s*格式的\s*U\s*盘|exFAT\s*可用|exFAT\s*\/\s*NTFS\s*都/,
+    '说明书里不许再出现"exFAT 可以"这类说法 —— 实测它是写不进工作区的（见上）',
+  );
 
   // 放置位置：决定了它到底算不算"盘上运行"。
   assert.match(readme, /解压到\s*U\s*盘根目录/, '必须说清解压到盘根');

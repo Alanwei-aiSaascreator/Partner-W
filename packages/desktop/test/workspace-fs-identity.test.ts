@@ -13,7 +13,17 @@ import { probeWorkspaceFsIdentity } from '../src/main/workspace/fs-identity.js';
  * 用户完全无从判断（同事那块盘的真机形状：114 条 `agents.files.get` 全是这一句）。
  *
  * 判据是**量出来的**（在目标目录真建一个文件、真 lstat），不是按盘符/卷标猜：
- * 实测三档 —— FAT32 `dev=0` 必坏 / exFAT `dev≠0` 可用 / NTFS `dev≠0` 可用。
+ * 实测三档 —— FAT32 `dev=0` 必坏 / NTFS `dev≠0` 可用 / **exFAT 见下**。
+ *
+ * ⚠️ **2026-09-27 纠正**：这里原来写的是「exFAT `dev≠0` **可用**」，**那是错的**。
+ *    本探测只建文件 + `lstat` 读 `dev`/`ino`，**从来没真写过一个文件** ——
+ *    把「`dev≠0`」这个代理指标当成了「写可用」这个能力。
+ *    真机反例：同一份 `@openclaw/fs-safe`，在 58.6GB exFAT（簇 128KB）上
+ *    新文件/覆盖/建子目录**三条全失败**（底层 `Windows error 87`），NTFS 上三条全过。
+ *    而 Node 自己的 `realpath.native` / `lstat` 在那块盘上全是好的
+ *    ⇒ **本探测在原理上看不见这个故障**。
+ *    ⇒ 它的 `ok` 只能读作「**没量到零身份**」，**不是**「这块盘写入没问题」。
+ *      即：**只能证伪，不能证明。** 顺 [[grep-presence-is-not-state]]。
  *
  * ⚠️ 探测必须在**真实的工作区目录**里做：fs-safe 校验的是工作区里那些身份文件所在的卷。
  */

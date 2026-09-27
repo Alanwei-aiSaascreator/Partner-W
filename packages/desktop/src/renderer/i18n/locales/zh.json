@@ -1886,7 +1886,7 @@
     "relayRetryable": "商业服务还没准备好，你可以再试一次",
     "retry": "重新准备",
     "takingLonger": "准备时间比平时更久，你可以留在工作台内重新尝试。",
-    "workspaceFilesystemUnsupported": "工作区所在的盘不支持：助手要在里面读写自己的身份文件，而在这块盘上这一步必然失败。请把工作区换到 exFAT 或 NTFS 的盘（或另一个文件夹），再重新准备。",
+    "workspaceFilesystemUnsupported": "工作区所在的盘不支持：助手要在里面读写自己的身份文件，而在这块盘上这一步必然失败。请把工作区换到 NTFS 的盘（或另一个文件夹），再重新准备。",
     "workspaceUnwritable": "工作区不可写：助手要在里面读写自己的身份文件，现在连一个探测文件都建不出来。请检查这块盘是不是只读、是不是满了，或换一个文件夹。"
   },
   "tasksPanel": {

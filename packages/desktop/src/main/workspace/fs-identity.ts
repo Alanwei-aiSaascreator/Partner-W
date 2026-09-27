@@ -16,7 +16,27 @@ import type { WorkspaceFsIdentity, WorkspaceFsIdentityState } from '@clawwork/sh
  * > names the object we created. Cleanup must fail closed…
  *
  * 而 **FAT32 上 `dev` 恒为 0** ⇒ 凡走"变更/清理守卫"的路径必定失败 ⇒ 助手全废。
- * 实测三档：**FAT32 `dev=0` 必坏 / exFAT `dev≠0` 可用 / NTFS `dev≠0` 可用**。
+ *
+ * ⭐ 实测三档：**FAT32 `dev=0` 必坏 / NTFS `dev≠0` 可用 / exFAT 见下**。
+ *
+ * ⚠️ **2026-09-27 纠正 —— exFAT 不是"可用"，我们之前写错了。**
+ *
+ *   原来这里写的是「exFAT `dev≠0` **可用**」。那条结论的问题是**它量的东西不够**：
+ *   本探测只**建文件 + `lstat` 读 `dev`/`ino`**，**从来没有真写过一个文件**。
+ *   于是它把「`dev≠0`」这个**代理指标**当成了「写入可用」这个**能力**。
+ *
+ *   真机反例（2026-09-27，58.6GB exFAT、簇 128KB）：同一份随包运行时的 `@openclaw/fs-safe`，
+ *   **新文件 / 覆盖已有 / 建子目录 三条路全部失败**，底层是
+ *   `inspect opened path failed with Windows error 87`（`ERROR_INVALID_PARAMETER`，
+ *   发生在它**原生模块**的路径检查里）；同一序列在 NTFS 上三条全过。
+ *   而 Node 自己的 `realpath.native` / `lstat` / `readdir` 在这块盘上**全是好的** ——
+ *   所以**本探测（纯 Node）在原理上就看不见这个故障**。
+ *
+ *   ⇒ 结论：**本探测只能证伪（`dev=0` ⇒ 一定坏），不能证明"可用"。**
+ *     `state: 'ok'` 的正确读法是"**没量到零身份**"，**不是**"这块盘写入没问题"。
+ *     别再把它的 `ok` 当成能力保证 —— 顺 [[grep-presence-is-not-state]]。
+ *   ⇒ 面向用户的结论：**只承诺 NTFS**。说明书与 `workspaceFilesystemUnsupported`
+ *     文案都已按这一条改过，且各有一条反向守卫钉住（防止照旧结论改回去）。
  *
  * 客户端原来**认这个错**（`ws/gateway-client.ts` 写过回读缓解），但那条缓解的前提是
  * "其实写成功了、只是身份校验误报"，而 FAT32 上**回读也失败** ⇒ 缓解一次都没生效。

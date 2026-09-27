@@ -1886,7 +1886,7 @@
     "relayRetryable": "商用サービスの準備がまだ整っていません。もう一度お試しいただけます。",
     "retry": "もう一度準備する",
     "takingLonger": "This is taking longer than usual. You can retry without leaving the workspace.",
-    "workspaceFilesystemUnsupported": "ワークスペースのあるディスクは未対応です：アシスタントはそこに自分の識別ファイルを読み書きする必要があり、このファイルシステムでは必ず失敗します。ワークスペースを exFAT または NTFS のディスク（または別のフォルダー）に移して、もう一度準備してください。",
+    "workspaceFilesystemUnsupported": "ワークスペースのあるディスクは未対応です：アシスタントはそこに自分の識別ファイルを読み書きする必要があり、このファイルシステムでは必ず失敗します。ワークスペースを NTFS のディスク（または別のフォルダー）に移して、もう一度準備してください。",
     "workspaceUnwritable": "ワークスペースに書き込めません：アシスタントはそこに自分の識別ファイルを読み書きする必要がありますが、確認用ファイルすら作成できません。ディスクが読み取り専用か、容量がいっぱいでないか確認するか、別のフォルダーを選んでください。"
   },
   "tasksPanel": {
