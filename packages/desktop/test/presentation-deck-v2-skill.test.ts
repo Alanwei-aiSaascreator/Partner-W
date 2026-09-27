@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { PPTX_TEMPLATE_IDS, PPTX_TEMPLATE_SET_ID, PPTX_TEMPLATES } from '../src/main/docgen/pptx-template/catalog';
+import { parseDocgenRequest } from '../src/main/docgen/request';
 import {
   installBundledSkill,
   isBundledSkillInstalled,
@@ -111,6 +112,30 @@ describe('presentation-deck-v2 —— 内容与契约层不漂移', () => {
     expect(text).toMatch(/别写样式|不要写样式/);
     expect(text).toMatch(/没有地方写|根本不存在/);
   });
+
+  it('⭐ 技能里那段示例，**喂给真契约层**必须是合法请求', () => {
+    // 这条才是真正会咬人的那种守卫。合并两条线时它当场抓到一个真漏：
+    // 示例里写了 `kind` / `template` / `slides`，却漏了 **`title`** ——
+    // 而 `title` 是所有 docgen 格式的必填项（它同时是文件名）。
+    // 助手照着示例写 ⇒ 整份被 `request-invalid` 拒掉，而**两条线各自的单测全绿**，
+    // 因为它们都直接调 `parseTemplateDeck`，**绕过了契约层**。
+    //
+    // ⇒ 判据只能是"把示例原文喂给 `parseDocgenRequest`"，而不是"看起来像那么回事"。
+    const blocks = [...text.matchAll(/```docgen\n([\s\S]*?)\n```/g)];
+    expect(blocks.length, '技能里一段 docgen 示例都没有').toBeGreaterThan(0);
+
+    for (const [, body] of blocks) {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(body);
+      } catch (error) {
+        throw new Error(`技能里的示例不是合法 JSON：${String(error)}\n${body}`);
+      }
+      const result = parseDocgenRequest(parsed);
+      expect(result.ok, `技能里的示例被契约层拒了：${result.ok ? '' : result.error}`).toBe(true);
+      if (result.ok) expect(result.request.kind).toBe('pptx');
+    }
+  });
 });
 
 describe('presentation-deck-v2 —— 四种盘上的行为', () => {
@@ -134,7 +159,11 @@ describe('presentation-deck-v2 —— 四种盘上的行为', () => {
     expect(installed).not.toBeNull();
     const recordedOld = skillContentSha(installed!); // 假装记账是上一版的内容
 
-    const stale = staleBundledSkills([skill], (s) => readInstalledSkillContent(managedDir, s), () => recordedOld);
+    const stale = staleBundledSkills(
+      [skill],
+      (s) => readInstalledSkillContent(managedDir, s),
+      () => recordedOld,
+    );
     // 盘上 == 记账，而随包 == 记账（同一份） ⇒ 没什么可升的
     expect(stale).toEqual([]);
   });
@@ -147,7 +176,11 @@ describe('presentation-deck-v2 —— 四种盘上的行为', () => {
     fs.writeFileSync(path.join(managedDir, SLUG, 'SKILL.md'), '# 老版本的旧正文\n');
 
     const missing = missingBundledSkills([skill], (slug) => isBundledSkillInstalled(managedDir, slug));
-    const stale = staleBundledSkills([skill], (s) => readInstalledSkillContent(managedDir, s), () => null);
+    const stale = staleBundledSkills(
+      [skill],
+      (s) => readInstalledSkillContent(managedDir, s),
+      () => null,
+    );
 
     // 三条路同时落空：不补装（已装）、不升级（没记账）
     expect(missing, '已装 ⇒ 不进补装').toEqual([]);
@@ -165,7 +198,11 @@ describe('presentation-deck-v2 —— 四种盘上的行为', () => {
     // 用户改过：盘上内容变了，记账还是装下去时那个
     fs.writeFileSync(path.join(managedDir, SLUG, 'SKILL.md'), `${original}\n\n（我自己加的一行）\n`);
 
-    const stale = staleBundledSkills([skill], (s) => readInstalledSkillContent(managedDir, s), () => recorded);
+    const stale = staleBundledSkills(
+      [skill],
+      (s) => readInstalledSkillContent(managedDir, s),
+      () => recorded,
+    );
     expect(stale, '有人改过 ⇒ 不碰').toEqual([]);
     expect(readInstalledSkillContent(managedDir, SLUG)).toContain('我自己加的一行');
   });

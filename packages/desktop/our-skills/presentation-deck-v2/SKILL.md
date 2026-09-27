@@ -22,6 +22,7 @@ metadata: { 'openclaw': { 'emoji': '📊', 'skillKey': 'presentation-deck-v2' } 
 ```docgen
 {
   "kind": "pptx",
+  "title": "九月经营简报",
   "template": "business-deck-v4",
   "slides": [
     { "templateId": "cover",   "data": { "cover_title": "九月经营简报", "cover_subtitle": "私域增长与渠道结构", "date": "2026-09-27", "author": "增长组" } },
@@ -32,22 +33,24 @@ metadata: { 'openclaw': { 'emoji': '📊', 'skillKey': 'presentation-deck-v2' } 
 ```
 ````
 
+⚠️ **`title` 是必填的**（和三种现画格式一样）—— 它同时是**文件名**。漏了它整份会被拒。
+
 `template` 写 `business-deck-v4`（这一版只有这一套）；每一页用 `templateId` 挑版式、`data` 填字段。
 
 ## 八种模板页
 
 `templateId` **只能从这八个里挑**，别的会被拒：
 
-| `templateId` | 用途 | 可以填的字段 |
-| --- | --- | --- |
-| `cover` | 封面 | `cover_title`(必填) `cover_subtitle` `date` `author` |
-| `section` | 章节页（给一段内容起头） | `section_title`(必填) `section_summary` `section_context` |
-| `insight` | 观点页：一个主结论 + 三条证据 | `slide_title`(必填) `slide_subtitle` `takeaway` `evidence_1` `evidence_2` `evidence_3` |
-| `comparison` | 左右对比 | `slide_title`(必填) `slide_subtitle` `left_title` `right_title` `left_item_1` `left_item_2` `left_item_3` `right_item_1` `right_item_2` `right_item_3` |
-| `metrics` | 三个关键指标 | `slide_title`(必填) `slide_subtitle` `value_1`(必填) `label_1`(必填) `note_1` `value_2` `label_2` `note_2` `value_3` `label_3` `note_3` `source_or_note` |
-| `timeline` | 最多五步的时间线 | `slide_title`(必填) `slide_subtitle` `step_1_title`(必填) `step_1_desc` `step_2_title` `step_2_desc` `step_3_title` `step_3_desc` `step_4_title` `step_4_desc` `step_5_title` `step_5_desc` |
-| `actions` | 谁 / 什么时候 / 做什么（最多四条） | `slide_title`(必填) `slide_subtitle` `action_1`(必填) `owner_1` `due_1` `action_2` `owner_2` `due_2` `action_3` `owner_3` `due_3` `action_4` `owner_4` `due_4` |
-| `closing` | 结尾页 | `closing_title`(必填) `closing_message` `contact_or_next_step` |
+| `templateId` | 用途                               | 可以填的字段                                                                                                                                                                                |
+| ------------ | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cover`      | 封面                               | `cover_title`(必填) `cover_subtitle` `date` `author`                                                                                                                                        |
+| `section`    | 章节页（给一段内容起头）           | `section_title`(必填) `section_summary` `section_context`                                                                                                                                   |
+| `insight`    | 观点页：一个主结论 + 三条证据      | `slide_title`(必填) `slide_subtitle` `takeaway` `evidence_1` `evidence_2` `evidence_3`                                                                                                      |
+| `comparison` | 左右对比                           | `slide_title`(必填) `slide_subtitle` `left_title` `right_title` `left_item_1` `left_item_2` `left_item_3` `right_item_1` `right_item_2` `right_item_3`                                      |
+| `metrics`    | 三个关键指标                       | `slide_title`(必填) `slide_subtitle` `value_1`(必填) `label_1`(必填) `note_1` `value_2` `label_2` `note_2` `value_3` `label_3` `note_3` `source_or_note`                                    |
+| `timeline`   | 最多五步的时间线                   | `slide_title`(必填) `slide_subtitle` `step_1_title`(必填) `step_1_desc` `step_2_title` `step_2_desc` `step_3_title` `step_3_desc` `step_4_title` `step_4_desc` `step_5_title` `step_5_desc` |
+| `actions`    | 谁 / 什么时候 / 做什么（最多四条） | `slide_title`(必填) `slide_subtitle` `action_1`(必填) `owner_1` `due_1` `action_2` `owner_2` `due_2` `action_3` `owner_3` `due_3` `action_4` `owner_4` `due_4`                              |
+| `closing`    | 结尾页                             | `closing_title`(必填) `closing_message` `contact_or_next_step`                                                                                                                              |
 
 ## 四条硬规矩（违反了会被拒，而且会告诉你错在哪一页哪个字段）
 

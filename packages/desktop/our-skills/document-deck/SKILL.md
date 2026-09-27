@@ -45,6 +45,7 @@ metadata: { 'openclaw': { 'emoji': '📄', 'skillKey': 'document-deck' } }
 ```docgen
 {
   "kind": "pptx",
+  "title": "九月经营简报",
   "template": "business-deck-v4",
   "slides": [
     { "templateId": "cover",   "data": { "cover_title": "九月经营简报", "cover_subtitle": "私域增长与渠道结构", "date": "2026-09-27", "author": "增长组" } },
@@ -53,6 +54,8 @@ metadata: { 'openclaw': { 'emoji': '📄', 'skillKey': 'document-deck' } }
   ]
 }
 ```
+
+⚠️ **`title` 是必填的**（与上面三种现画格式一样）—— 它同时是**文件名**。漏了整份会被拒。
 ````
 
 **八种模板页**（`templateId` 只能从这八个里挑，别的会被拒）：
