@@ -1,0 +1,86 @@
+---
+name: 商务演示（模板版）
+description: '用设计师做好的模板页产出商务演示（.pptx）：你挑模板页、填字段，配色版式字体全在模板里。用户要做汇报 / 方案 / 复盘 / 提案这类要拿给人看的 PPT 时用。'
+metadata: { 'openclaw': { 'emoji': '📊', 'skillKey': 'presentation-deck-v2' } }
+---
+
+# 商务演示（模板版）
+
+要**拿给人看**的 PPT，用这条路。
+
+它和「文档生成」里那种 pptx 的区别，一句话：**那种是从空白画布上画**——白底、标题、项目符号，
+**只能这样**，因为它手里只有画方框的能力。而这条路是**把内容填进设计师做好的版式里**：
+配色、字号层级、留白、分栏、页脚全是定好的，你只管填字。
+
+所以：**给客户 / 给老板 / 给同事看的，走这条；随手记点东西的，走那种。**
+
+## 怎么写
+
+在回复里放**一个**围栏代码块，语言标记是小写 `docgen`，内容是**一个 JSON 对象**：
+
+````
+```docgen
+{
+  "kind": "pptx",
+  "template": "business-deck-v4",
+  "slides": [
+    { "templateId": "cover",   "data": { "cover_title": "九月经营简报", "cover_subtitle": "私域增长与渠道结构", "date": "2026-09-27", "author": "增长组" } },
+    { "templateId": "metrics", "data": { "slide_title": "关键指标", "value_1": "12.4%", "label_1": "转化率", "note_1": "较上月 +1.8pp" } },
+    { "templateId": "actions", "data": { "slide_title": "下一步", "action_1": "补齐私域承接话术", "owner_1": "张", "due_1": "本周五" } }
+  ]
+}
+```
+````
+
+`template` 写 `business-deck-v4`（这一版只有这一套）；每一页用 `templateId` 挑版式、`data` 填字段。
+
+## 八种模板页
+
+`templateId` **只能从这八个里挑**，别的会被拒：
+
+| `templateId` | 用途 | 可以填的字段 |
+| --- | --- | --- |
+| `cover` | 封面 | `cover_title`(必填) `cover_subtitle` `date` `author` |
+| `section` | 章节页（给一段内容起头） | `section_title`(必填) `section_summary` `section_context` |
+| `insight` | 观点页：一个主结论 + 三条证据 | `slide_title`(必填) `slide_subtitle` `takeaway` `evidence_1` `evidence_2` `evidence_3` |
+| `comparison` | 左右对比 | `slide_title`(必填) `slide_subtitle` `left_title` `right_title` `left_item_1` `left_item_2` `left_item_3` `right_item_1` `right_item_2` `right_item_3` |
+| `metrics` | 三个关键指标 | `slide_title`(必填) `slide_subtitle` `value_1`(必填) `label_1`(必填) `note_1` `value_2` `label_2` `note_2` `value_3` `label_3` `note_3` `source_or_note` |
+| `timeline` | 最多五步的时间线 | `slide_title`(必填) `slide_subtitle` `step_1_title`(必填) `step_1_desc` `step_2_title` `step_2_desc` `step_3_title` `step_3_desc` `step_4_title` `step_4_desc` `step_5_title` `step_5_desc` |
+| `actions` | 谁 / 什么时候 / 做什么（最多四条） | `slide_title`(必填) `slide_subtitle` `action_1`(必填) `owner_1` `due_1` `action_2` `owner_2` `due_2` `action_3` `owner_3` `due_3` `action_4` `owner_4` `due_4` |
+| `closing` | 结尾页 | `closing_title`(必填) `closing_message` `contact_or_next_step` |
+
+## 四条硬规矩（违反了会被拒，而且会告诉你错在哪一页哪个字段）
+
+1. **字段名一个字母都不能差**。写错了会被明确拒绝，并把你写错的那个名字回给你。
+   ⚠️ 内页标题一律是 `slide_title` / `slide_subtitle`，**不是** `title` / `subtitle`。
+2. **标"必填"的必须给**，只给空白也算没给。其余字段不给就留空，不会出错。
+3. **别写样式**。没有地方写颜色、字号、坐标、字体、图片——这些字段在协议里**根本不存在**。
+   版式是设计师定死的，你改不了，也不需要改。**也不要向用户承诺"帮你配图""设计感"。**
+4. **数字要是结构化的值**（`"value_1": 12.4` 或 `"12.4"`），别把一段话塞进指标格。
+   指标格很短（十几个字符），标题 60 字以内，正文类 240 字以内，长了会被拒。
+
+## 怎么挑页、怎么写内容
+
+一份正经的商务演示，通常是：
+
+`cover` → `section`（可选，分几段）→ `insight` / `metrics` / `comparison` / `timeline` 若干 → `actions` → `closing`
+
+- **一页只讲一件事**。塞不下就**拆成两页**，不要硬压。
+- **标题写结论，不写"关于……的说明"**。"转化率比上月高 1.8 个点"比"本月数据"有用得多。
+- **点要短**（每条大约 20 字以内），长的解释留给讲者备注（那是「文档生成」那条路的能力，这里没有备注字段）。
+- **数据页的数字必须来自你手里真实的结构化输入**。没有数就不要编 —— 编出来的指标比空着更糟。
+
+## 说给用户的话
+
+文件是**客户端在这一轮结束后**生成的：
+
+- ✅ 可以说：「内容我整理好了，稍后出现在**右侧「产物」**里，点开就是 .pptx，可以继续改。」
+- ❌ 不要说「已经生成了」「文件在你桌面上」——那一刻文件还不存在。
+- ⚠️ 如果提示**某页字段不对 / 太长 / 模板名不认识**，照着提示里的那个名字改，重新输出一次即可。
+
+## 什么时候不要用它
+
+- 用户要的是**随手能用的草稿**、不在乎版式 ⇒ 用「文档生成」里那种现画的 pptx，更自由。
+- 用户要 **Word / Excel / PDF** ⇒ 那是「文档生成」的事，不是这条。
+- 用户要**网页 / 可打印的报告页** ⇒ 那是「网页交付」的事。
+- 用户要**图片**（照片、插画、海报图）⇒ 做不到，说清楚，别拿别的格式顶替。
