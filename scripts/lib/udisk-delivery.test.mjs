@@ -23,6 +23,22 @@ import {
 
 const roots = [];
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+const README_TEMPLATE = path.join(repositoryRoot, 'scripts', 'templates', 'udisk-readme.txt');
+/**
+ * 交付说明（`scripts/templates/udisk-readme.txt`）是**客户唯一一份说明**，
+ * 而它给出的是一条**对代码行为的对外承诺**，两处会悄悄漂开：
+ *
+ * ① **深度数字**：`isDeliveryLayout` 里 `MAX_DELIVERY_DEPTH` 决定"程序目录埋在盘根下多深
+ *    还算盘上运行"。超过了不会报错 —— 它**静默**把运行数据与工作区留在本机，
+ *    用户换台电脑打开就是"数据不见了"。而用户只会照说明里写的层数去解压。
+ *    数字对不上，等于**照说明做反而坏**。
+ * ② **Markdown 混进 `.txt`**：这份是纯文本，`**粗体**` 会原样显示成一串星号。
+ */
+const portableSource = fs.readFileSync(
+  path.join(repositoryRoot, 'packages', 'desktop', 'src', 'main', 'workspace', 'portable.ts'),
+  'utf-8',
+);
+const readme = fs.readFileSync(README_TEMPLATE, 'utf-8');
 const io = {
   exists: (target) => fs.existsSync(target),
   listNames: (target) => fs.readdirSync(target),
@@ -158,4 +174,59 @@ test('assemble CLI copies only launcher, program, and instructions into an empty
   assert.equal(fs.existsSync(path.join(out, WORKSPACE_DIR_NAME)), false);
   assert.equal(fs.existsSync(path.join(out, UPDATE_DIR_NAME)), false);
   assert.deepEqual(auditDelivery(io, out), []);
+
+  // ⭐ 交付说明是**逐字节**抄模板的（组装期读模板、不进 app.asar）——
+  //    所以"改说明书"只需要改 `scripts/templates/udisk-readme.txt` 一个地方。
+  //    这条断言把那份便利钉住：哪天有人在组装时加工/改写过它（换行、替换、加页脚），
+  //    这里会红，而不是等客户手上的说明和仓库里的模板悄悄不一样。
+  assert.deepEqual(
+    fs.readFileSync(path.join(out, README_NAME)),
+    fs.readFileSync(README_TEMPLATE),
+    '使用说明.txt 必须是模板的逐字节副本',
+  );
+});
+
+/**
+ * 交付说明里那几条**只有在真机踩过才知道要写**的告知，以及**唯一会漂的那个数字**。
+ * 说明本身是纯文本、不参与编译，改错了没有任何门禁会拦 —— 只能靠这里。
+ */
+test('delivery instructions carry the exFAT/NTFS requirement and the no-nesting rule', () => {
+  // ⚠️ 判据必须**连着那件事的措辞**，不能只查词在不在。
+  //    第一版写的是 `assert.match(readme, /exFAT/)` —— 变异验证当场戳穿：
+  //    把"必须使用 exFAT 或 NTFS"这一整行删掉，测试**照样绿**，因为另一行
+  //    "换成 exFAT / NTFS 会清空 U 盘"里也有 `exFAT`。
+  //    ⇒ 查的是"这个词在文件里出现过"，不是"这条要求还写着"。同
+  //      [[stale-green-tests]] 那一族：标签+数字要精确串。
+  //
+  // 盘格式：FAT32 上程序**能启动**、助手**全失败**（`dev=0` 拿不到文件身份），
+  // 用户唯一的有效动作是换盘格式 —— 不写清楚，他只会反复重装。
+  assert.match(readme, /必须使用\s*exFAT\s*或\s*NTFS/, '必须写明"必须用 exFAT 或 NTFS"');
+  assert.match(readme, /FAT32\s*不支持/, '必须点名 FAT32 不支持');
+  assert.match(readme, /先[^\n]*备份/, '格式会清空盘 ⇒ 必须提醒先备份');
+
+  // 放置位置：决定了它到底算不算"盘上运行"。
+  assert.match(readme, /解压到\s*U\s*盘根目录/, '必须说清解压到盘根');
+  assert.match(readme, /不要先解压到电脑桌面/, '必须挡住"先解压到桌面再拷进来"这条路');
+});
+
+test('⭐ 说明里写的层数与代码里的 MAX_DELIVERY_DEPTH 是同一个数', () => {
+  const declared = portableSource.match(/MAX_DELIVERY_DEPTH\s*=\s*(\d+)/);
+  assert.ok(declared, 'portable.ts 里找不到 MAX_DELIVERY_DEPTH —— 判据搬走了，这个测试要重写');
+
+  const CN = { 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5 };
+  const stated = readme.match(/盘根下超过([一二两三四五])层/);
+  assert.ok(stated, '说明里没写"盘根下超过 N 层"—— 用户不知道能套几层');
+
+  assert.equal(
+    CN[stated[1]],
+    Number(declared[1]),
+    `说明说"超过${stated[1]}层"，代码是 ${declared[1]} 层 —— 照说明解压会被判成非盘上运行`,
+  );
+});
+
+test('交付说明是纯文本：不该出现 Markdown 标记', () => {
+  // 这份文件原样落到用户盘上，`**粗体**` 不会渲染，只会显示成一串星号。
+  assert.doesNotMatch(readme, /\*\*/, '使用说明.txt 是纯文本，别写 Markdown 粗体');
+  assert.doesNotMatch(readme, /^\s*#{1,6}\s/m, '使用说明.txt 是纯文本，别写 Markdown 标题');
+  assert.doesNotMatch(readme, /\[[^\]]+\]\([^)]+\)/, '使用说明.txt 是纯文本，别写 Markdown 链接');
 });

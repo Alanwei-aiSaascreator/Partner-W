@@ -80,3 +80,46 @@ describe('document-deck 技能：四种格式都教到了', () => {
     expect(text).toMatch(/右侧「产物」/);
   });
 });
+
+/**
+ * 「正文里别写裸英文双引号」这条**不是风格建议，是硬失败**。
+ *
+ * 2026-09-27 实测：助手写了「点击"仍要运行"」⇒ 用户那边**一个文件都没有**。
+ * 关键在于它**不是"这一页被拒"** —— JSON 字符串里多一个裸 `"` 会让**整块**解析不出来，
+ * 一次丢光整份请求（对比"字段名写错"只拒那一份请求、并且会告诉你错在哪）。
+ *
+ * ⚠️ 这条容易漏，是因为它**恰好是中文正文里最自然的动作**（想引用一个按钮名）,
+ *    而 `"` 正好是这份 JSON 的语法字符。技能文档是唯一能拦住它的地方 ——
+ *    所以这里既验"文档写了"，也验"文档说的那件事**真的会发生**"。
+ */
+describe('document-deck 技能：裸英文双引号那条是真的会整块报废', () => {
+  const block = (() => {
+    const blocks = [...text.matchAll(/```docgen\n([\s\S]*?)\n```/g)];
+    expect(blocks.length, '技能里一段 docgen 示例都没有').toBeGreaterThan(0);
+    return blocks[0][1];
+  })();
+
+  it('技能正文里明确写了这条规矩，且给出了替代写法', () => {
+    expect(text, '没写"别用英文双引号"这条').toMatch(/别用英文双引号/);
+    expect(text, '没给替代写法（「」或 \\"）').toMatch(/中文引号/);
+  });
+
+  it('⭐ 把示例里的一个字段插进裸英文双引号 ⇒ 整块 JSON 当场报废（不是只废那一页）', () => {
+    expect(() => JSON.parse(block), '示例原文本身必须是合法 JSON').not.toThrow();
+
+    // 助手最自然的动作：引用一个界面按钮名
+    const broken = block.replace('"要点一"', '"点击"仍要运行""');
+    expect(broken, '替换锚点失效了，这个测试要重写').not.toBe(block);
+    expect(() => JSON.parse(broken), '整块都该解析失败 —— 这就是"一个文件都没有"').toThrow();
+
+    // ⇒ 不是这一页被拒、不是这一份被拒，是**块都没了**，所以没有"重试一次"的提示。
+  });
+
+  it('技能给的两种替代写法都真的能解析（否则助手照做还是废）', () => {
+    for (const safe of ['"点击「仍要运行」"', '"点击\\"仍要运行\\""']) {
+      const fixed = block.replace('"要点一"', safe);
+      expect(fixed, '替换锚点失效了，这个测试要重写').not.toBe(block);
+      expect(() => JSON.parse(fixed), `技能推荐的写法 ${safe} 本身不合法`).not.toThrow();
+    }
+  });
+});

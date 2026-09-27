@@ -52,7 +52,7 @@ metadata: { 'openclaw': { 'emoji': '📊', 'skillKey': 'presentation-deck-v2' } 
 | `actions`    | 谁 / 什么时候 / 做什么（最多四条） | `slide_title`(必填) `slide_subtitle` `action_1`(必填) `owner_1` `due_1` `action_2` `owner_2` `due_2` `action_3` `owner_3` `due_3` `action_4` `owner_4` `due_4`                              |
 | `closing`    | 结尾页                             | `closing_title`(必填) `closing_message` `contact_or_next_step`                                                                                                                              |
 
-## 四条硬规矩（违反了会被拒，而且会告诉你错在哪一页哪个字段）
+## 五条硬规矩（违反了会被拒，而且会告诉你错在哪一页哪个字段）
 
 1. **字段名一个字母都不能差**。写错了会被明确拒绝，并把你写错的那个名字回给你。
    ⚠️ 内页标题一律是 `slide_title` / `slide_subtitle`，**不是** `title` / `subtitle`。
@@ -61,6 +61,10 @@ metadata: { 'openclaw': { 'emoji': '📊', 'skillKey': 'presentation-deck-v2' } 
    版式是设计师定死的，你改不了，也不需要改。**也不要向用户承诺"帮你配图""设计感"。**
 4. **数字要是结构化的值**（`"value_1": 12.4` 或 `"12.4"`），别把一段话塞进指标格。
    指标格很短（十几个字符），标题 60 字以内，正文类 240 字以内，长了会被拒。
+5. ⭐ **正文里要引用什么，别用英文双引号**：JSON 字符串**里面**再出现一个裸的 `"`，**整块就废了**
+   —— 不是"这一页被拒"，是**整份请求解析失败、一个文件都不生成**。
+   实测（2026-09-27）：助手写了「点击"仍要运行"」，用户那边什么都没拿到。
+   要引号就用**中文引号**「」或“”，或者写成 `\"`。
 
 ## 怎么挑页、怎么写内容
 
