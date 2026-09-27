@@ -1,4 +1,14 @@
-import { mkdirSync, mkdtempSync, renameSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  renameSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { closeDatabase, getSqlite, initDatabase } from '../../src/main/db/index.js';
@@ -239,6 +249,51 @@ async function main(): Promise<Record<string, unknown>> {
       .prepare('SELECT source_key, content_text FROM artifacts WHERE id = ?')
       .get('attachment-artifact');
     return { result, stored };
+  }
+
+  /**
+   * 第二个受信根：**助手自己的工作区**（2026-09-27）。
+   *
+   * 现场：助手用 exec 在它自己的工作区里生成 pptx / html，而产物表**从来没有过任何记录**
+   * （真机 `.clawwork.db` 实测 `COUNT(*) = 0`）—— 任务产物的扫描根一直是
+   * `<应用工作区>/<taskId>`，与助手工作区是**兄弟目录**。
+   *
+   * 这个场景一次验三件事：
+   *   ① 助手根里新出现的文件**能被登记**，且 `root='agent'`、`local_path` 不带任务前缀；
+   *   ② **不在助手工作区里建任务目录**（那是网关的目录，我们只读）；
+   *   ③ 之后跑的那趟**应用根** reconcile **不把助手根的行判成 missing**（两批各行其是）。
+   */
+  if (scenario === 'agent-root') {
+    const agentWorkspace = join(workspacePath, 'agent-ws');
+    mkdirSync(agentWorkspace, { recursive: true });
+
+    const baseline = await captureTaskArtifactBaseline({
+      workspacePath: agentWorkspace,
+      taskId: 'task-1',
+      rootKind: 'agent',
+    });
+    const createdTaskDirInsideAgentWs = existsSync(join(agentWorkspace, 'task-1'));
+
+    writeFileSync(join(agentWorkspace, 'deck.pptx'), 'PPTX');
+    const agentResult = await reconcileTaskArtifacts({
+      workspacePath: agentWorkspace,
+      taskId: 'task-1',
+      messageId: 'msg-1',
+      baseline,
+      rootKind: 'agent',
+    });
+
+    // 再跑一趟**应用根**（同一个任务）：它只该看自己的行。
+    const appBaseline = await captureTaskArtifactBaseline({ workspacePath, taskId: 'task-1' });
+    const appResult = await reconcileTaskArtifacts({
+      workspacePath,
+      taskId: 'task-1',
+      messageId: 'msg-1',
+      baseline: appBaseline,
+    });
+
+    const rows = getSqlite()!.prepare('SELECT name, local_path, root, source_key FROM artifacts').all();
+    return { createdTaskDirInsideAgentWs, agentResult, appResult, rows };
   }
 
   if (scenario === 'nested-link') {

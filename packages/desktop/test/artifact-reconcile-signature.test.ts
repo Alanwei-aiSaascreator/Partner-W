@@ -25,6 +25,22 @@ describe('产物扫描的身份字符串', () => {
   const statsWith = (ino: bigint, size = 10n, mtimeMs = 1000n, ctimeMs = 2000n): BigIntStats =>
     ({ dev: 1n, ino, size, mtimeMs, ctimeMs }) as BigIntStats;
 
+  /**
+   * 按**应用根**的前缀取来源键。
+   *
+   * ⚠️ 前缀本身与"身份精度"这件事无关（下面几条钉的是 dev/ino），之所以从
+   *    `__testing` 里取而不是写死字面量，是为了**跟生产用同一个来源** ——
+   *    前缀写死了，生产改了它这条用例也不会红。
+   */
+  const sourceKey = (stats: BigIntStats, relativePath = 'task-1/x.txt'): string =>
+    __testing.sourceKeyFor(__testing.WORKSPACE_SOURCE_PREFIX, relativePath, stats);
+
+  it('⭐ 两个根的来源键前缀必须**不同** —— 否则后跑的那趟会改写先跑那趟的行', () => {
+    // `reconcileTaskArtifacts` 用"前缀是不是我的"判「这行归不归我改」。
+    // 共用前缀 ⇒ 助手根那趟把应用根的行当成自己的 ⇒ 改写别人的行。
+    expect(__testing.AGENT_SOURCE_PREFIX).not.toBe(__testing.WORKSPACE_SOURCE_PREFIX);
+  });
+
   it('⭐ 两个 64 位 ino 不同、但转 Number 后相同 ⇒ 签名与来源键都必须不同', () => {
     // 前提先钉死：这两个数在 Number 下**确实**相等（否则这条用例是空的）
     expect(Number(10977524094393692n) === Number(10977524094393693n), '前提：舍入后相等').toBe(true);
@@ -33,17 +49,13 @@ describe('产物扫描的身份字符串', () => {
     const b = statsWith(10977524094393693n);
 
     expect(__testing.signature(a), '签名相同 ⇒ 该重建的被跳过 ⇒ 陈旧数据').not.toBe(__testing.signature(b));
-    expect(__testing.sourceKey('task-1/x.txt', a), '来源键相同 ⇒ 两个文件被认成同一个来源').not.toBe(
-      __testing.sourceKey('task-1/x.txt', b),
-    );
+    expect(sourceKey(a), '来源键相同 ⇒ 两个文件被认成同一个来源').not.toBe(sourceKey(b));
   });
 
   it('同一个文件（两处读到相同的 64 位值）⇒ 两条字符串都必须相同', () => {
     const ino = 39125021765459235n;
     expect(__testing.signature(statsWith(ino))).toBe(__testing.signature(statsWith(ino)));
-    expect(__testing.sourceKey('task-1/x.txt', statsWith(ino))).toBe(
-      __testing.sourceKey('task-1/x.txt', statsWith(ino)),
-    );
+    expect(sourceKey(statsWith(ino))).toBe(sourceKey(statsWith(ino)));
   });
 
   it('换卷（dev 不同）即使 ino 一样也要不同', () => {
@@ -60,8 +72,6 @@ describe('产物扫描的身份字符串', () => {
   });
 
   it('来源键里带着相对路径（不同文件本来就不该撞到一起去）', () => {
-    expect(__testing.sourceKey('task-1/a.txt', statsWith(7n))).not.toBe(
-      __testing.sourceKey('task-1/b.txt', statsWith(7n)),
-    );
+    expect(sourceKey(statsWith(7n), 'task-1/a.txt')).not.toBe(sourceKey(statsWith(7n), 'task-1/b.txt'));
   });
 });

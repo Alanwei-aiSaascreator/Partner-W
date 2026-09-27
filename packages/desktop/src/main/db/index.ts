@@ -209,13 +209,17 @@ function openAndMigrate(dbPath: string): void {
   // Legacy releases could persist the same task-relative output more than once.
   // Prefer a row with usable generated-file metadata, then the newest row, before
   // enforcing task-path identity for reconciliation and concurrent runs.
+  //
+  // ⚠️ 分区键含 `root`（2026-09-27）：`local_path` 是**相对某个根**的，两个根下
+  //    可以有同名文件。不带 `root` 的话 `('agent', '<taskId>/x.pptx')` 这种形状
+  //    会和 `workspace` 根的同名行撞成"重复"而被误删一条。
   sqlite.exec(`
     DELETE FROM artifacts
     WHERE rowid NOT IN (
       SELECT rowid FROM (
         SELECT rowid,
           ROW_NUMBER() OVER (
-            PARTITION BY task_id, local_path
+            PARTITION BY task_id, root, local_path
             ORDER BY
               CASE WHEN size > 0 AND source_key <> '' THEN 1 ELSE 0 END DESC,
               created_at DESC,
@@ -226,9 +230,12 @@ function openAndMigrate(dbPath: string): void {
       WHERE duplicate_rank = 1
     )
   `);
+  // ⚠️ 先 DROP 再建：老库里那个索引**不含 `root`**，而 `CREATE UNIQUE INDEX IF NOT EXISTS`
+  //    见到同名索引就跳过 ⇒ 不 DROP 的话新形状永远建不上（迁移静默失效）。
+  sqlite.exec('DROP INDEX IF EXISTS artifacts_task_local_path');
   sqlite.exec(`
     CREATE UNIQUE INDEX IF NOT EXISTS artifacts_task_local_path
-    ON artifacts(task_id, local_path)
+    ON artifacts(task_id, root, local_path)
   `);
   sqlite.exec(`
     DELETE FROM artifacts

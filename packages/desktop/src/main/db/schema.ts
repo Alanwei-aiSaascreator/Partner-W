@@ -136,5 +136,7 @@ export const artifacts = sqliteTable(
     root: text('root').notNull().default('workspace'),
     createdAt: text('created_at').notNull(),
   },
-  (table) => [uniqueIndex('artifacts_task_local_path').on(table.taskId, table.localPath)],
+  // ⚠️ 索引必须含 `root`，且**必须与 `db/index.ts` 里手写的那条逐字一致**：
+  //    `local_path` 是相对某个根的，两个根下可以有同名文件。
+  (table) => [uniqueIndex('artifacts_task_local_path').on(table.taskId, table.root, table.localPath)],
 );

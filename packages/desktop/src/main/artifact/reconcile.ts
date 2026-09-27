@@ -3,7 +3,7 @@ import type { BigIntStats, Dirent } from 'node:fs';
 import { hasStrongIdentity, identityKey, identityOf, sameIdentity } from '../util/file-identity.js';
 import { closeSync, existsSync, fstatSync, lstatSync, openSync, opendirSync, realpathSync, statSync } from 'node:fs';
 import { extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import type { Artifact, ArtifactAvailability } from '@clawwork/shared';
+import type { Artifact, ArtifactAvailability, ArtifactRootKind } from '@clawwork/shared';
 import { getSqlite } from '../db/index.js';
 import { validateImportTaskId } from '../context/file-import.js';
 import { ensureTaskDir } from '../workspace/init.js';
@@ -53,10 +53,19 @@ export interface ArtifactScanBudgets {
 }
 
 export interface ReconcileTaskArtifactsInput {
+  /**
+   * 扫描根。
+   *
+   * ⚠️ **含义随 `rootKind` 变**：
+   *    - 缺省 / `'workspace'`：**应用工作区**，扫描根是 `<workspacePath>/<taskId>`
+   *    - `'agent'`：**助手自己的工作区**，扫描根就是它本身
+   */
   workspacePath: string;
   taskId: string;
   messageId: string;
   baseline: ArtifactBaseline;
+  /** 见 `workspacePath`。缺省 = `'workspace'`（老行为）。 */
+  rootKind?: ArtifactRootKind;
 }
 
 export interface ReconcileTaskArtifactsResult {
@@ -147,6 +156,80 @@ function trustedTaskRoot(workspacePath: string, taskIdValue: string): TrustedTas
   } catch {
     throw new Error('trusted task output directory is unavailable');
   }
+}
+
+/**
+ * 受信根：**助手自己的工作区**（第二个根，2026-09-27）。
+ *
+ * ## 为什么需要它
+ *
+ * 助手把它生成的文件写在**它自己的工作区**里（网关 `agents.entries.<id>.workspace`），
+ * 而任务产物的扫描根一直是 `<应用工作区>/<taskId>` —— 两者是**兄弟目录**，永不重叠
+ * ⇒ 通道外生成的文件从来没进过产物表（真机 `.clawwork.db` 实测 `COUNT(*) = 0`）。
+ *
+ * ## ⚠️ 这里刻意让 `taskPath === workspacePath`
+ *
+ * 那个"任务根"的形状是下游十几个守卫的**共同前提**（`collectPaths` 的 `isWithin`、
+ * `stableCandidateOnce` 的 realpath 比对、`verifyTrustedRoot` 的身份复核、
+ * `normalizedRelativePath`）。把两个字段都指到助手工作区，这些守卫就**一字不改**地生效 ——
+ * 它们本来要的就是"一个已知的、非符号链接、有强身份的目录"。
+ *
+ * ⚠️ **不建目录**（与 `trustedTaskRoot` 的调用方不同）：助手工作区是网关的，
+ *    我们只读。不存在就是"读不到"，由调用方回落成"没有这个根"。
+ */
+function trustedAgentWorkspaceRoot(agentWorkspacePath: string): TrustedTaskRoot {
+  try {
+    const identity = lstatSync(agentWorkspacePath, { bigint: true });
+    const real = realpathSync.native(agentWorkspacePath);
+    if (identity.isSymbolicLink() || !identity.isDirectory() || !hasStrongIdentity(identityOf(identity))) {
+      throw new Error();
+    }
+    return {
+      workspacePath: agentWorkspacePath,
+      taskPath: agentWorkspacePath,
+      realWorkspace: real,
+      realTask: real,
+      workspaceIdentity: identity,
+      taskIdentity: identity,
+    };
+  } catch {
+    throw new Error('trusted agent workspace is unavailable');
+  }
+}
+
+/**
+ * `source_key` 前缀。
+ *
+ * ⚠️ 两个根**必须用不同前缀**：`reconcileTaskArtifacts` 用"前缀是不是我的"来判
+ *    「这行归不归我改」—— 共用前缀会让助手根的那一趟把应用根的行**当成自己的**改写掉。
+ */
+const WORKSPACE_SOURCE_PREFIX = 'workspace-file:';
+const AGENT_SOURCE_PREFIX = 'agent-workspace-file:';
+
+/** 一趟 reconcile 的全部"根相关"取值，集中在一处，免得散落五六个分支。 */
+interface ReconcileScope {
+  root: TrustedTaskRoot;
+  rootKind: ArtifactRootKind;
+  /** 落库 `local_path` 的前缀。应用根是 `<taskId>/`（既有约定，不改）；助手根是空串。 */
+  localPrefix: string;
+  sourcePrefix: string;
+}
+
+function scopeFor(input: { workspacePath: string; taskId: string; rootKind?: ArtifactRootKind }): ReconcileScope {
+  if (input.rootKind === 'agent') {
+    return {
+      root: trustedAgentWorkspaceRoot(input.workspacePath),
+      rootKind: 'agent',
+      localPrefix: '',
+      sourcePrefix: AGENT_SOURCE_PREFIX,
+    };
+  }
+  return {
+    root: trustedTaskRoot(input.workspacePath, input.taskId),
+    rootKind: 'workspace',
+    localPrefix: `${input.taskId}/`,
+    sourcePrefix: WORKSPACE_SOURCE_PREFIX,
+  };
 }
 
 function verifyTrustedRoot(root: TrustedTaskRoot): void {
@@ -329,6 +412,9 @@ function artifactFromRow(row: Record<string, unknown>): Artifact {
     name: String(row.name),
     filePath: String(row.file_path),
     localPath: String(row.local_path),
+    // ⚠️ 只认 `'agent'`，其余（含老行的 `'workspace'` 与任何脏值）一律归 `'workspace'` ——
+    //    与 `Artifact.root` 是可选字段、缺省即老行为**同一个方向**。
+    root: row.root === 'agent' ? 'agent' : 'workspace',
     mimeType: String(row.mime_type),
     size: Number(row.size),
     sourceKey: String(row.source_key),
@@ -353,12 +439,19 @@ export async function captureTaskArtifactBaseline(
   input: {
     workspacePath: string;
     taskId: string;
+    /** 见 `ReconcileTaskArtifactsInput.workspacePath`。缺省 = `'workspace'`。 */
+    rootKind?: ArtifactRootKind;
   },
   hooks: CaptureBaselineHooks = {},
 ): Promise<ArtifactBaseline> {
   validateImportTaskId(input.taskId);
-  if (!existsSync(join(input.workspacePath, input.taskId))) ensureTaskDir(input.workspacePath, input.taskId);
-  const root = trustedTaskRoot(input.workspacePath, input.taskId);
+  // ⚠️ 建任务目录**只在应用根**做：助手的工作区是**网关的**，我们只读 ——
+  //    绝不因为它不存在就往里建东西（那会污染助手的沙箱）。
+  if (input.rootKind !== 'agent' && !existsSync(join(input.workspacePath, input.taskId))) {
+    ensureTaskDir(input.workspacePath, input.taskId);
+  }
+  const scope = scopeFor(input);
+  const root = scope.root;
   const budgets = {
     ...DEFAULT_BUDGETS,
     maxResults: DEFAULT_BUDGETS.maxVisited,
@@ -453,29 +546,40 @@ async function stableCandidate(
   return null;
 }
 
-function localPath(taskId: string, relativePath: string): string {
-  return `${taskId}/${relativePath}`;
+function localPathFor(localPrefix: string, relativePath: string): string {
+  return `${localPrefix}${relativePath}`;
 }
 
 /**
  * 落库的来源键。⚠️ 身份部分是 `artifacts` 表里用来判「同一个来源文件」的，
  *    同样必须精确 —— 否则两个不同文件会被认成同一个来源（去重错误）。
+ *
+ * ⚠️ 前缀**按根变**：同一个 `reconcileTaskArtifacts` 既跑应用根也跑助手根，
+ *    而它用"前缀是不是我的"判「这行归不归我改」—— 共用前缀会让后跑的那趟
+ *    把先跑那趟的行当成自己的改写掉。
+ *
+ * 前缀单独传（而不是收整个 `ReconcileScope`）：这个函数只用到前缀，
+ * 而它又是**唯一按函数级钉身份精度**的入口（见 `__testing`）。
  */
-function sourceKey(relativePath: string, stats: BigIntStats): string {
-  return `workspace-file:${relativePath}:${identityKey(identityOf(stats))}:${stats.size}:${stats.mtimeMs}:${stats.ctimeMs}`;
+function sourceKeyFor(sourcePrefix: string, relativePath: string, stats: BigIntStats): string {
+  return `${sourcePrefix}${relativePath}:${identityKey(identityOf(stats))}:${stats.size}:${stats.mtimeMs}:${stats.ctimeMs}`;
 }
 
 export async function reconcileTaskArtifacts(
   input: ReconcileTaskArtifactsInput,
   hooks: ReconcileHooks = {},
 ): Promise<ReconcileTaskArtifactsResult> {
-  const root = trustedTaskRoot(input.workspacePath, input.taskId);
+  const scope = scopeFor(input);
+  const root = scope.root;
   const budgets = { ...DEFAULT_BUDGETS, ...hooks.budgets };
-  const existingRows = listTaskArtifacts(input.taskId);
-  const taskLocalPrefix = `${input.taskId}/`;
+  // ⚠️ 只认**本根**的行。一个任务会同时挂两批产物（应用根 + 助手根），
+  //    混在一起算 `missing` 会把另一批整个判成"文件不见了"（在界面上就是一片红）。
+  const existingRows = listTaskArtifacts(input.taskId).filter(
+    (artifact) => (artifact.root ?? 'workspace') === scope.rootKind,
+  );
   const missing = existingRows.filter(
     (artifact) =>
-      !artifact.localPath.startsWith(taskLocalPrefix) ||
+      !artifact.localPath.startsWith(scope.localPrefix) ||
       getArtifactAvailability(artifact.localPath, input.workspacePath) !== 'available',
   );
   const saved: Artifact[] = [];
@@ -511,7 +615,7 @@ export async function reconcileTaskArtifacts(
         }
         const sqlite = getSqlite();
         if (!sqlite) throw new Error('database not ready');
-        const storedLocalPath = localPath(input.taskId, candidate.relativePath);
+        const storedLocalPath = localPathFor(scope.localPrefix, candidate.relativePath);
         const now = new Date().toISOString();
         const artifact: Artifact = {
           id: randomUUID(),
@@ -521,9 +625,10 @@ export async function reconcileTaskArtifacts(
           name: candidate.relativePath.split('/').at(-1)!,
           filePath: '',
           localPath: storedLocalPath,
+          root: scope.rootKind,
           mimeType: candidate.mimeType,
           size: Number(stable.stats.size),
-          sourceKey: sourceKey(candidate.relativePath, stable.stats),
+          sourceKey: sourceKeyFor(scope.sourcePrefix, candidate.relativePath, stable.stats),
           contentText: '',
           createdAt: now,
           availability: 'available',
@@ -535,13 +640,13 @@ export async function reconcileTaskArtifacts(
             throw new UnstableArtifactError();
           }
           const prior = sqlite
-            .prepare('SELECT * FROM artifacts WHERE task_id = ? AND local_path = ? LIMIT 1')
-            .get(input.taskId, storedLocalPath) as Record<string, unknown> | undefined;
+            .prepare('SELECT * FROM artifacts WHERE task_id = ? AND root = ? AND local_path = ? LIMIT 1')
+            .get(input.taskId, scope.rootKind, storedLocalPath) as Record<string, unknown> | undefined;
           let result: { kind: 'saved' | 'existing' | 'updated'; artifact: Artifact };
           if (prior) {
             const previous = artifactFromRow(prior);
             if (
-              !previous.sourceKey?.startsWith('workspace-file:') ||
+              !previous.sourceKey?.startsWith(scope.sourcePrefix) ||
               (previous.sourceKey === artifact.sourceKey &&
                 previous.size === artifact.size &&
                 previous.mimeType === artifact.mimeType)
@@ -553,6 +658,7 @@ export async function reconcileTaskArtifacts(
                 .prepare(
                   `UPDATE artifacts
                  SET message_id = @messageId, type = @type, name = @name, file_path = @filePath,
+                     local_path = @localPath, root = @root,
                      mime_type = @mimeType, size = @size, source_key = @sourceKey, content_text = @contentText
                  WHERE id = @id`,
                 )
@@ -563,18 +669,18 @@ export async function reconcileTaskArtifacts(
             const insert = sqlite
               .prepare(
                 `INSERT INTO artifacts
-               (id, task_id, message_id, type, name, file_path, local_path, mime_type, size, source_key, content_text,
-                created_at)
-               VALUES (@id, @taskId, @messageId, @type, @name, @filePath, @localPath, @mimeType, @size, @sourceKey,
-                       @contentText, @createdAt)
-               ON CONFLICT(task_id, local_path) DO NOTHING`,
+               (id, task_id, message_id, type, name, file_path, local_path, root, mime_type, size, source_key,
+                content_text, created_at)
+               VALUES (@id, @taskId, @messageId, @type, @name, @filePath, @localPath, @root, @mimeType, @size,
+                       @sourceKey, @contentText, @createdAt)
+               ON CONFLICT(task_id, root, local_path) DO NOTHING`,
               )
               .run(artifact);
             if (insert.changes === 1) result = { kind: 'saved', artifact };
             else {
               const winner = sqlite
-                .prepare('SELECT * FROM artifacts WHERE task_id = ? AND local_path = ? LIMIT 1')
-                .get(input.taskId, storedLocalPath) as Record<string, unknown>;
+                .prepare('SELECT * FROM artifacts WHERE task_id = ? AND root = ? AND local_path = ? LIMIT 1')
+                .get(input.taskId, scope.rootKind, storedLocalPath) as Record<string, unknown>;
               result = { kind: 'existing', artifact: artifactFromRow(winner) };
             }
           }
@@ -651,4 +757,4 @@ export function getArtifactAvailability(localPathValue: string, workspacePath: s
  *    的形态（ctime 改不了，它总会在签名里兜住）。而恰恰是"两个不同的文件签名相同"
  *    才会导致"该重建的跳过 ⇒ 陈旧数据"。所以只能在函数层面用合成的 bigint stats 钉。
  */
-export const __testing = Object.freeze({ signature, sourceKey });
+export const __testing = Object.freeze({ signature, sourceKeyFor, WORKSPACE_SOURCE_PREFIX, AGENT_SOURCE_PREFIX });

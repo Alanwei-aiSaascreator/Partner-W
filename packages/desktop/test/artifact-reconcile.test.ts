@@ -220,4 +220,38 @@ describe('artifact reconciliation', () => {
     };
     expect(rows).toEqual([{ id: 'new-valid', size: 42, source_key: 'workspace-file:report.txt:new' }]);
   });
+
+  /**
+   * ⭐ **第二个受信根**：助手自己的工作区（2026-09-27）。
+   *
+   * 现场：用户让助手做 PPT / HTML，文件确实生成了、躺在助手的工作区里，
+   * 而产物面板是空的 —— 真机 `.clawwork.db` 里 `SELECT COUNT(*) FROM artifacts` = **0**，
+   * 因为扫描根一直是 `<应用工作区>/<taskId>`，与助手工作区是**兄弟目录**。
+   *
+   * ⚠️ 注意 `legacy-artifact-upgrade` 那条**顺带**验了老库迁移：
+   *    探针里那张老 `artifacts` 表**没有 `root` 列**，而它照样通过。
+   */
+  it('⭐ 助手自己的工作区：新文件进产物，且不建任务目录、不干扰应用根那批', () => {
+    const probe = runProbe(workspacePath, 'agent-root') as {
+      createdTaskDirInsideAgentWs: boolean;
+      agentResult: ReconcileResult;
+      appResult: ReconcileResult;
+      rows: Array<{ name: string; local_path: string; root: string; source_key: string }>;
+    };
+
+    // ① 助手根里新出现的文件被登记了
+    expect(probe.agentResult.saved.map((artifact) => artifact.name)).toEqual(['deck.pptx']);
+    expect(probe.rows).toHaveLength(1);
+    expect(probe.rows[0]).toMatchObject({ name: 'deck.pptx', root: 'agent' });
+    // ⭐ `local_path` **不带任务前缀** —— 它是相对**助手工作区**的
+    expect(probe.rows[0]?.local_path).toBe('deck.pptx');
+    expect(probe.rows[0]?.source_key.startsWith('agent-workspace-file:')).toBe(true);
+
+    // ② 不许在助手工作区里建任务目录：那是**网关的**目录，我们只读
+    expect(probe.createdTaskDirInsideAgentWs, '在助手工作区里建了 task-1/').toBe(false);
+
+    // ③ 之后跑的应用根那趟**不该**把助手根的行判成 missing
+    //    （两批产物各行其是；混着算就会在界面上显示成"文件不见了"）
+    expect(probe.appResult.missing).toEqual([]);
+  });
 });
