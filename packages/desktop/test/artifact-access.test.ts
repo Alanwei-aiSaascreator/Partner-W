@@ -2,12 +2,7 @@ import { link, mkdtemp, mkdir, readFile, readdir, rename, symlink, writeFile } f
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import {
-  __testing,
-  copyArtifactToDestination,
-  inspectArtifactFile,
-  rootDirFor,
-} from '../src/main/artifact/access.js';
+import { __testing, copyArtifactToDestination, inspectArtifactFile, rootDirFor } from '../src/main/artifact/access.js';
 
 const roots: string[] = [];
 

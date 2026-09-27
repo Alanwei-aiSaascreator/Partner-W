@@ -1,8 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  clearAgentWorkspaceCache,
-  resolveAgentWorkspace,
-} from '../src/main/artifact/agent-workspace.js';
+import { clearAgentWorkspaceCache, resolveAgentWorkspace } from '../src/main/artifact/agent-workspace.js';
 
 /**
  * 「助手的工作区在哪」—— 新增那个受信根的**唯一来源**。
@@ -63,9 +60,7 @@ describe('resolveAgentWorkspace', () => {
       throw new Error('gateway client not available');
     });
 
-    await expect(
-      resolveAgentWorkspace({ gatewayId: 'g', agentId: 'a', listAgentFiles: list }),
-    ).resolves.toBeNull();
+    await expect(resolveAgentWorkspace({ gatewayId: 'g', agentId: 'a', listAgentFiles: list })).resolves.toBeNull();
   });
 
   it('gatewayId / agentId 为空时直接 null，**一次 RPC 都不发**', async () => {
