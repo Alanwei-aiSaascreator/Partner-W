@@ -74,3 +74,72 @@ describe('MarkdownContent 对 docgen 块的处理', () => {
     unmount();
   });
 });
+
+const PAGE_JSON = JSON.stringify(
+  {
+    kind: 'html',
+    template: 'brief',
+    title: '九月简报',
+    sections: [{ kind: 'summary', heading: '结论', paragraphs: ['环比 +12%'] }],
+  },
+  null,
+  2,
+);
+
+/**
+ * ⭐ `htmlgen` 曾经**漏了这张特判** —— 于是它渲染成一段普通 JSON 代码块，
+ * 而代码块是带**复制按钮**的。
+ *
+ * 对用户来说那就是"这功能不存在，你自己复制吧"。2026-09-27 真机反馈的原话：
+ * 「生产 html 文件生产不了，让自己去复制自己做，那要你有何用」——
+ * 他看到的正是这个 JSON 块 + 复制按钮。（那条通道本身是通的。）
+ *
+ * ⇒ **每加一条 fence 通道，都必须在这个 `pre` 处理器里加分支**，否则新通道
+ *    在用户侧等于不存在，而且看起来像"产品做不到"。
+ */
+describe('MarkdownContent 对 htmlgen 块的处理', () => {
+  it('⭐ htmlgen 块渲染成一行卡片，**不含**原始 JSON', () => {
+    const { container, unmount } = render(<MarkdownContent content={['```htmlgen', PAGE_JSON, '```'].join('\n')} />);
+
+    expect(container.querySelector('[data-testid="htmlgen-block"]')).not.toBeNull();
+    expect(container.textContent, '卡片文案').toContain('chatMessage.htmlgenBlock');
+    expect(container.textContent, '不该把 JSON 摊出来').not.toContain('"kind"');
+    expect(container.textContent).not.toContain('九月简报');
+    unmount();
+  });
+
+  it('⭐ 不许掉进代码块那条路（那条路挂着复制按钮 —— 正是"让你自己复制"）', () => {
+    const { container, unmount } = render(<MarkdownContent content={['```htmlgen', PAGE_JSON, '```'].join('\n')} />);
+
+    // 代码块外面是 `<div className="group/code …">`，复制/保存按钮挂在它里面。
+    // 命中它就说明我们落到了"普通代码块"分支。
+    expect(
+      container.querySelector('[class*="group/code"]'),
+      'htmlgen 掉进了代码块分支 ⇒ 用户会看到一个复制按钮',
+    ).toBeNull();
+    unmount();
+  });
+
+  it('大小写不敏感（模型会写 ```HtmlGen ）', () => {
+    const { container, unmount } = render(<MarkdownContent content={['```HtmlGen', PAGE_JSON, '```'].join('\n')} />);
+    expect(container.querySelector('[data-testid="htmlgen-block"]')).not.toBeNull();
+    unmount();
+  });
+
+  it('两条通道各自成卡，不互相吞', () => {
+    const content = ['```docgen', DECK_JSON, '```', '', '```htmlgen', PAGE_JSON, '```'].join('\n');
+    const { container, unmount } = render(<MarkdownContent content={content} />);
+
+    expect(container.querySelector('[data-testid="docgen-block"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="htmlgen-block"]')).not.toBeNull();
+    unmount();
+  });
+
+  it('json 块**不**走 htmlgen 卡片（普通 JSON 是用户要看的）', () => {
+    const { container, unmount } = render(<MarkdownContent content={['```json', PAGE_JSON, '```'].join('\n')} />);
+
+    expect(container.querySelector('[data-testid="htmlgen-block"]')).toBeNull();
+    expect(container.textContent).toContain('九月简报');
+    unmount();
+  });
+});

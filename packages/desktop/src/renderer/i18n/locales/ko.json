@@ -486,6 +486,7 @@
     "copyCode": "코드 복사",
     "copyMessage": "메시지 복사",
     "docgenBlock": "문서 내용(완성된 파일은 오른쪽 产物에 표시됩니다)",
+    "htmlgenBlock": "페이지 내용(완성본은 오른쪽 「产物」에 표시됩니다)",
     "retryHint": "이전 메시지를 다시 보냅니다 (요금이 한 번 더 차감됩니다)",
     "thinkingProcess": "사고 과정",
     "toolCallSummary": "{{count}}개 도구 호출 실행됨",

@@ -486,6 +486,7 @@
     "copyCode": "Copiar código",
     "copyMessage": "Copiar mensagem",
     "docgenBlock": "Conteúdo do documento (o arquivo aparece em 产物, à direita)",
+    "htmlgenBlock": "Conteúdo da página (o arquivo aparece em 产物 à direita)",
     "retryHint": "Reenviar a mensagem anterior — será cobrado novamente",
     "thinkingProcess": "Processo de raciocínio",
     "toolCallSummary": "{{count}} chamadas de ferramenta executadas",

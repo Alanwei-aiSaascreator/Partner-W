@@ -84,6 +84,8 @@ function setup(
     if (processing) processingBySession.add(sessionKey);
     else processingBySession.delete(sessionKey);
   });
+  /** 清掉"这一轮正在进行"的提示（与 `setProcessing(false)` 成对，见 `settleLocalStop`）。 */
+  const clearActiveTurn = vi.fn();
   const task = {
     id: TASK_ID,
     gatewayId: 'gw-1',
@@ -122,6 +124,7 @@ function setup(
       addMessage,
       removeMessage,
       setProcessing,
+      clearActiveTurn,
       clearMessages: vi.fn(),
       // ⭐ B8：压缩播报交给统一出口 ⇒ 这三个要走真的（桩成空函数的话"报没报"根本看不出来）
       compactionAnnouncedEpisodeBySession: {},
@@ -189,6 +192,8 @@ function setup(
     removeMessage,
     processingBySession,
     setProcessing,
+    clearActiveTurn,
+    abortChat,
     onError: deps.onError,
   };
 }
@@ -814,5 +819,96 @@ describe('chat-composer × 电脑操控权限两档', () => {
     });
     await h.composer.send(TASK_ID, { content: 'hi', mentions: ['worker'], mentionsOnly: true } as never);
     expect(h.permissionPatches()).toEqual([]);
+  });
+});
+
+/**
+ * ⭐ 停止按钮：网关答 `aborted:false` 时**必须自己收尾**。
+ *
+ * 2026-09-27 真机实测（U 盘上一次工具自测，任务 `a0d6c691`）：
+ * `chat.abort → {"ok":true,"aborted":false,"runIds":[]}` —— 网关那边**没有可中止的 run**，
+ * 所以它**不会再发** `aborted` 状态事件；而界面的"处理中"只能靠那个事件清掉。
+ * 结果：**永远转圈、停止按钮点了没反应**，用户只能杀进程（他就是这么做的）。
+ */
+describe('停止按钮：没东西可中止时客户端自己收尾', () => {
+  it('⭐ aborted:false ⇒ 自己清掉「处理中」', async () => {
+    const { composer, abortChat, processingBySession, setProcessing, clearActiveTurn } = setup();
+    processingBySession.add(SESSION_KEY);
+    abortChat.mockResolvedValueOnce({ ok: true, result: { aborted: false, runIds: [] } });
+
+    await composer.abort(TASK_ID);
+
+    expect(setProcessing).toHaveBeenCalledWith(SESSION_KEY, false);
+    expect(clearActiveTurn).toHaveBeenCalledWith(SESSION_KEY);
+    expect(processingBySession.has(SESSION_KEY), '清完就不该还在处理中').toBe(false);
+  });
+
+  it('真中止了（aborted:true）⇒ 不抢网关的活，交给 aborted 事件收尾', async () => {
+    const { composer, abortChat, setProcessing, clearActiveTurn } = setup();
+    abortChat.mockResolvedValueOnce({ ok: true, result: { aborted: true, runIds: ['r1'] } });
+
+    await composer.abort(TASK_ID);
+
+    expect(setProcessing).not.toHaveBeenCalledWith(SESSION_KEY, false);
+    expect(clearActiveTurn).not.toHaveBeenCalled();
+  });
+
+  it('应答形状不认识（没有 aborted 字段）⇒ 退回旧行为，**不猜**', async () => {
+    const { composer, abortChat, setProcessing, clearActiveTurn } = setup();
+    abortChat.mockResolvedValueOnce({ ok: true, result: { somethingElse: 1 } });
+
+    await composer.abort(TASK_ID);
+
+    expect(setProcessing).not.toHaveBeenCalledWith(SESSION_KEY, false);
+    expect(clearActiveTurn).not.toHaveBeenCalled();
+  });
+
+  it('调用失败（ok:false）⇒ 不动本地状态（那可能是网络问题，回合还在跑）', async () => {
+    const { composer, abortChat, clearActiveTurn } = setup();
+    abortChat.mockResolvedValueOnce({ ok: false, error: 'boom' });
+
+    await composer.abort(TASK_ID);
+
+    expect(clearActiveTurn).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * ⭐ 首轮产物索引：**发给模型，但不冒充用户发言**。
+ *
+ * 2026-09-27 真机反馈：每一轮消息里都顶着一大块 `<artifacts-index>…`。
+ * 根因是它被拼进了 `content` —— 而 `content` 会**存库**并**渲染在用户自己的气泡里**，
+ * 于是产品注入的背景被当成"用户说过的话"显示了出来。
+ */
+describe('首轮产物索引：只进网关，不进气泡', () => {
+  const INDEX = '<artifacts-index>\nFiles produced earlier…\n- 数学第一课.pptx\n</artifacts-index>';
+
+  it('⭐ contextPrefix 进网关正文，但 store 与落库里只有用户那句话', async () => {
+    const { composer, sendMessage, addMessage } = setup();
+    sendMessage.mockResolvedValueOnce({ ok: true });
+
+    await composer.send(TASK_ID, { content: '你好', contextPrefix: INDEX });
+
+    const sent = sendMessage.mock.calls[0]?.[2] as string;
+    expect(sent, '模型必须看得见索引').toContain('<artifacts-index>');
+    expect(sent, '用户那句话也得在').toContain('你好');
+
+    const userAdd = addMessage.mock.calls.find((c) => c[1] === 'user');
+    expect(userAdd?.[2], 'store 里不许有索引').toBe('你好');
+
+    // ⚠️ 这里**不**断言 `persistMessage` 的 content：真代码取的是
+    //    `pendingUserMessage.content`（= store 的返回值），而本文件的 `addMessage` 桩
+    //    固定返回 `content: ''` ⇒ 那条断言测的是桩自己，不是产品行为。
+    //    「落库不含索引」是由**上面那条**推出来的：落库的输入就是这个调用存进去的内容。
+  });
+
+  it('没有 contextPrefix 时行为不变（正文原样）', async () => {
+    const { composer, sendMessage, addMessage } = setup();
+    sendMessage.mockResolvedValueOnce({ ok: true });
+
+    await composer.send(TASK_ID, { content: '你好' });
+
+    expect(sendMessage.mock.calls[0]?.[2]).toBe('你好');
+    expect(addMessage.mock.calls.find((c) => c[1] === 'user')?.[2]).toBe('你好');
   });
 });

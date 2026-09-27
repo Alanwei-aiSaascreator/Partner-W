@@ -442,6 +442,13 @@ export function useChatSend(opts: UseChatSendOpts) {
       const agentMentions = [...selectedAgents];
       try {
         let finalContent = content || '';
+        /**
+         * ⭐ **只给模型看的背景**，与 `finalContent` 分开（store/落库只收 `finalContent`）。
+         * 拼进 `finalContent` 的话，它会**存进用户消息并显示在气泡里** ——
+         * 2026-09-27 真机反馈正是这个：每轮消息顶着一大块 `<artifacts-index>…`。
+         * 见 `SendOptions.contextPrefix`。
+         */
+        let contextPrefix = '';
         const extraAttachments: { mimeType: string; fileName: string; content: string }[] = [];
 
         /**
@@ -463,7 +470,9 @@ export function useChatSend(opts: UseChatSendOpts) {
                 excludeTaskId: activeTask?.id ?? null,
                 unknownTaskLabel: t('rightPanel.historyUnknownTask'),
               });
-              if (index) finalContent = `${index}\n\n${finalContent}`;
+              // ⚠️ 赋给 `contextPrefix`（只发模型），**不要**再拼进 `finalContent`：
+              //    拼进去它就会被当成用户说过的话存库并显示在气泡里。
+              if (index) contextPrefix = index;
             }
           } catch {
             // 锦上添花的东西，拿不到就不加 —— 不能因为少一份索引就把用户的消息卡住
@@ -696,6 +705,8 @@ export function useChatSend(opts: UseChatSendOpts) {
         const isMentionAll = agentMentions.some((a) => a.agentId === MENTION_ALL_AGENT_ID);
         const result = await composer.send(task.id, {
           content: finalContent,
+          // 首轮产物索引：发给模型，但**不进** store / 落库 / 气泡。
+          contextPrefix: contextPrefix || undefined,
           attachments: allAttachments.length > 0 ? allAttachments : undefined,
           messageAttachments: allMessageAttachments,
           deferUserMessageUntilSent,

@@ -71,6 +71,12 @@ export const COMMON_OPERATING_CONTRACT = `# Shared operating contract
   (you can see it in your skill list). Use it: emit a \`docgen\` block with the right \`kind\`
   (pptx = presentation, docx = Word, xlsx = Excel, pdf = a fixed-layout document for printing or
   sending) and the client turns it into a real file in this turn's 产物. If that skill is **not** available, say plainly that you can only provide the content as text.
+- **Web pages (.html) are possible** — *if* the 网页交付 skill is available to you (look for
+  \`html-deliverable\` in your skill list; **open it and follow it** — it carries the whole contract).
+  Same shape: emit an \`htmlgen\` block and the client builds a self-contained, printable page into
+  产物. ⚠️ **Do not write HTML source yourself, and never hand the user markup to save by hand** —
+  a page you write straight into the workspace is *not* a 产物 and the user will not find it.
+  If the skill is **not** available, say plainly that you can only give the content as text.
 - **Never claim a file already exists.** The client renders it *after* your turn ends;
   say it will appear in 产物, not that you produced it.
 - You **cannot** produce images. Say so plainly in the first reply, then deliver the content in a
@@ -112,7 +118,7 @@ function withCommonContract(roleSoul: string): string {
  *    没有标记或标记对不上 ⇒ 用户改过，一律不碰**"。
  *    ⚠️ 但**已有的旧盘没有标记** —— 那批怎么升级是单独的决定，见设计稿。
  */
-export const PRESET_PROMPT_VERSION = '2026-09-26.1';
+export const PRESET_PROMPT_VERSION = '2026-09-27.1';
 
 const PROMPT_MARKER_RE = /\n?<!--\s*mofang-prompt:[^>]*-->\s*$/;
 

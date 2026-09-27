@@ -38,6 +38,12 @@ export interface ChatComposerDeps {
     ) => Message;
     removeMessage: (taskId: string, messageId: string) => void;
     setProcessing: (taskId: string, processing: boolean) => void;
+    /**
+     * 清掉"这一轮正在进行"的提示（`aborted` / `error` 收尾时与 `setProcessing(false)` 成对使用）。
+     * ⭐ 加它是因为：网关答 `aborted:false` 时**不会再发** `aborted` 事件，
+     * 那里没人收尾 ⇒ 界面永远停在"处理中"（见 `settleLocalStop`）。
+     */
+    clearActiveTurn: (sessionKey: string) => void;
     clearMessages: (taskId: string) => void;
     // ⭐ B8 统一出口要用的三个（压缩播报的记账与幂等）
     announceCompactionOnce: (taskId: string, sessionKey: string, episode: number, text: string) => boolean;
@@ -107,6 +113,18 @@ export interface ChatComposerDeps {
 
 export interface SendOptions {
   content: string;
+  /**
+   * **只发给模型、不属于用户那句话**的背景（例如首轮那份 `<artifacts-index>`）。
+   *
+   * ⭐ 为什么必须与 `content` 分开：`content` 会被**存库**并**渲染在用户自己的气泡里**，
+   *    所以任何拼进 `content` 的注入文本都会**当成用户说过的话显示出来**。
+   *    2026-09-27 真机反馈就是这个：助手索引被拼进 `content`，于是每一轮的消息里
+   *    都顶着一大块 `<artifacts-index>…`，用户以为产品在往他嘴里塞东西。
+   *
+   * ⚠️ 只放**客户端自己加的背景**。用户主动 `@` 出来的引用（任务/产物/文件）
+   *    仍然是 `content` 的一部分 —— 那是他自己做的动作，看得到是对的。
+   */
+  contextPrefix?: string;
   attachments?: ChatAttachment[];
   messageAttachments?: MessageAttachment[];
   /** Keep an optimistic user message in memory, but persist it only after gateway dispatch succeeds. */
@@ -291,6 +309,15 @@ export function createChatComposer(deps: ChatComposerDeps) {
     }
 
     const store = deps.getMessageStore();
+    /**
+     * ⭐ **发给网关的文本 ≠ 存库/上屏的文本。**
+     *
+     * `contextPrefix` 是客户端加的背景（首轮产物索引），模型必须看见；
+     * 但它**不是用户说的话** —— 存库或显示就等于伪造用户发言。
+     * 所以：`content` 进 store 与落库，`gatewayContent` 只进 `sendMessage`。
+     * （见 `SendOptions.contextPrefix` 的说明。）
+     */
+    const gatewayContent = options.contextPrefix ? `${options.contextPrefix}\n\n${options.content}` : options.content;
     const pendingUserMessage = store.addMessage(task.id, 'user', options.content, options.messageAttachments, {
       persist: false,
     });
@@ -398,7 +425,7 @@ export function createChatComposer(deps: ChatComposerDeps) {
       if (isMentionSend) {
         const attachments = options.attachments?.length ? options.attachments : undefined;
         const results = await Promise.allSettled(
-          mentionTargets.map((sk) => deps.gateway.sendMessage(task.gatewayId, sk, options.content, attachments)),
+          mentionTargets.map((sk) => deps.gateway.sendMessage(task.gatewayId, sk, gatewayContent, attachments)),
         );
         acceptedMentionTargets = mentionTargets.filter((_, index) => {
           const result = results[index];
@@ -446,7 +473,7 @@ export function createChatComposer(deps: ChatComposerDeps) {
         const result = await deps.gateway.sendMessage(
           task.gatewayId,
           task.sessionKey,
-          options.content,
+          gatewayContent,
           options.attachments?.length ? options.attachments : undefined,
         );
         if (result && !result.ok) {
@@ -522,6 +549,41 @@ export function createChatComposer(deps: ChatComposerDeps) {
     }
   }
 
+  /**
+   * 网关对 `chat.abort` 的应答是 `{ ok: true, aborted: boolean, runIds: string[] }`。
+   *
+   * ⭐ **`aborted: false` 的意思是"没有任何可中止的 run"** —— 这种情况下网关
+   *    **不会再发** `aborted` 状态事件（没东西可中止），而界面的"处理中"
+   *    **只能靠那个事件清掉** ⇒ 症状是**永远转圈 + 停止按钮点了没反应**，
+   *    用户唯一的出路是杀掉应用。
+   *
+   *    2026-09-27 真机实测（U 盘上的一次工具自测，任务 `a0d6c691`）：
+   *    `chat.abort → {"ok":true,"aborted":false,"runIds":[]}`，
+   *    之后 `renderer.agent.thinking` 仍以约 1 条/秒继续，直到用户强杀进程。
+   *    同一份日志里 `lifecycle.start` 9 次、`lifecycle.end` 8 次 —— 有一个 run 没收尾。
+   *
+   * ⚠️ 判据取**显式的 `aborted === false`**，而不是"没看到 true"：
+   *    应答形状变了（缺字段、类型变了）时**退回旧行为**（继续等事件），
+   *    不凭猜测去清状态 —— 清早了会把还在跑的回合打断。
+   */
+  function abortedNothing(res: IpcResult): boolean {
+    const payload = res.result as { aborted?: unknown } | undefined;
+    return res.ok === true && payload !== undefined && payload.aborted === false;
+  }
+
+  /**
+   * 自己收尾：网关答"没东西可中止"时，本地把"处理中"清掉。
+   *
+   * ⚠️ 只在这条判据成立时调用 —— 正常情况下那个清理由 dispatcher 收到 `aborted` 事件时做
+   *    （见 `gateway-dispatcher.ts` 的 `state === 'aborted'` 分支），
+   *    这里补的正是"那条事件永远不会来"的那一格。
+   */
+  function settleLocalStop(sessionKey: string): void {
+    const store = deps.getMessageStore();
+    store.setProcessing(sessionKey, false);
+    store.clearActiveTurn(sessionKey);
+  }
+
   async function abort(taskId: string): Promise<void> {
     const task = deps.getTaskStore().tasks.find((t) => t.id === taskId);
     if (!task) return;
@@ -530,13 +592,15 @@ export function createChatComposer(deps: ChatComposerDeps) {
     clearTimer(taskId);
 
     if (!task.ensemble || !deps.getRoomState || !deps.setRoomStatus) {
-      await deps.gateway.abortChat(task.gatewayId, task.sessionKey);
+      const res = await deps.gateway.abortChat(task.gatewayId, task.sessionKey);
+      if (abortedNothing(res)) settleLocalStop(task.sessionKey);
       return;
     }
 
     const room = deps.getRoomState(taskId);
     if (!room || room.status !== 'active') {
-      await deps.gateway.abortChat(task.gatewayId, task.sessionKey);
+      const res = await deps.gateway.abortChat(task.gatewayId, task.sessionKey);
+      if (abortedNothing(res)) settleLocalStop(task.sessionKey);
       return;
     }
 
@@ -546,7 +610,13 @@ export function createChatComposer(deps: ChatComposerDeps) {
     allKeys.add(room.conductorSessionKey);
     for (const p of room.performers) allKeys.add(p.sessionKey);
 
-    await Promise.allSettled([...allKeys].map((sk) => deps.gateway.abortChat(task.gatewayId, sk)));
+    const keys = [...allKeys];
+    const results = await Promise.allSettled(keys.map((sk) => deps.gateway.abortChat(task.gatewayId, sk)));
+    // 协作那一侧由 `setRoomStatus('stopped')` 收房间的尾；但每一列会话自己的"处理中"
+    // 同样只靠 `aborted` 事件清 ⇒ 全都没东西可中止时，那几列会各自挂在转圈上。
+    for (const [i, r] of results.entries()) {
+      if (r.status === 'fulfilled' && abortedNothing(r.value)) settleLocalStop(keys[i]);
+    }
 
     deps.setRoomStatus(taskId, 'stopped');
   }

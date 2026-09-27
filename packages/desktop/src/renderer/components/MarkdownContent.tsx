@@ -2,7 +2,7 @@ import { isValidElement, type ReactNode, useEffect, useState, type ComponentProp
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
-import { Check, Copy, Save, Loader2, Presentation } from 'lucide-react';
+import { Check, Copy, Save, Loader2, Presentation, Globe } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -215,20 +215,43 @@ export default function MarkdownContent({
                 const code = flattenTextContent(children).replace(/\n$/, '');
                 const lang = extractLang(children);
                 /**
-                 * ⭐ `docgen` 块**不是代码**，是"请生成一份文件"的请求
-                 * （pptx / docx / xlsx 三种，schema 见 `main/docgen/request.ts`）。
-                 * 把原始 JSON 摊给用户看既是噪音、又像是让他去编辑它。
-                 * 这里换成一行卡片：真正的东西是客户端渲染出来的文件，
-                 * 它出现在右侧「产物」里。
+                 * ⭐ `docgen` / `htmlgen` 块**不是代码**，是"请生成一份文件 / 网页"的请求
+                 * （schema 见 `main/docgen/request.ts` 与 `main/htmlgen/request.ts`）。
+                 * 把原始 JSON 摊给用户看既是噪音、又像是让他去编辑它 ——
+                 * **更要命的是它带一个"复制"按钮**：用户会以为"我得自己存成文件"，
+                 * 而那正是这条通道想消灭的行为。
+                 * 这里换成一行卡片：真正的东西是客户端渲染出来的文件，出现在右侧「产物」里。
+                 *
+                 * ⚠️ 两条通道必须**同时**在这里有分支：`htmlgen` 曾经漏掉，
+                 *    于是它渲染成普通代码块 + 复制按钮 —— 界面上等于告诉用户
+                 *    "这功能不存在，你自己复制吧"。加通道时别忘了这里。
                  */
-                if (lang.toLowerCase() === 'docgen') {
+                const requestCard = (() => {
+                  switch (lang.toLowerCase()) {
+                    case 'docgen':
+                      return {
+                        testId: 'docgen-block',
+                        Icon: Presentation,
+                        label: t('chatMessage.docgenBlock'),
+                      };
+                    case 'htmlgen':
+                      return {
+                        testId: 'htmlgen-block',
+                        Icon: Globe,
+                        label: t('chatMessage.htmlgenBlock'),
+                      };
+                    default:
+                      return null;
+                  }
+                })();
+                if (requestCard) {
                   return (
                     <div
-                      data-testid="docgen-block"
+                      data-testid={requestCard.testId}
                       className="my-1.5 flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-2 text-[var(--text-secondary)]"
                     >
-                      <Presentation size={14} className="shrink-0 text-[var(--accent)]" />
-                      <span className="type-support">{t('chatMessage.docgenBlock')}</span>
+                      <requestCard.Icon size={14} className="shrink-0 text-[var(--accent)]" />
+                      <span className="type-support">{requestCard.label}</span>
                     </div>
                   );
                 }

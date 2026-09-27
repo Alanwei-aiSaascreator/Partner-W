@@ -486,6 +486,7 @@
     "copyCode": "コードをコピー",
     "copyMessage": "メッセージをコピー",
     "docgenBlock": "ドキュメントの内容（完成したファイルは右側の「产物」に表示されます）",
+    "htmlgenBlock": "ページ内容（完成品は右側の「産物」に表示されます）",
     "retryHint": "前のメッセージを再送します（もう一度消費されます）",
     "thinkingProcess": "思考プロセス",
     "toolCallSummary": "{{count}} 件のツール呼び出しを実行",
