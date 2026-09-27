@@ -66,7 +66,14 @@ describe('htmlgen 渲染：五个版式都排得出来', () => {
 
       expect(html.startsWith('<!doctype html>'), template).toBe(true);
       expect(html).toContain('<html lang="zh-CN">');
+      // ⚠️ 编码与视口是**这份文件能不能被浏览器正确读出来**的前提，不是可选装饰：
+      //    少了 charset，中文在某些阅读器里就是乱码；少了 viewport，手机上是一屏缩到底。
+      //    渲染器里一直有，但**此前没有任何断言提到它们**（全文件 0 处）——
+      //    谁哪天顺手删掉一行，不会有任何东西变红。补上。
+      expect(html, template).toContain('<meta charset="utf-8">');
+      expect(html, template).toContain('<meta name="viewport"');
       expect(html).toContain('<title>九月经营简报</title>');
+      expect(html, template).toMatch(/<main[ >]/);
       expect(html).toContain('<style>');
       expect(html).toContain('</html>');
       // 内容真进了页面（不是只生成个壳）
