@@ -157,6 +157,14 @@ function isGatewayRejection(err: HandshakeFailure): boolean {
 type GatewayClientOptions = {
   noReconnect?: boolean;
   onPairingSuccess?: (gatewayId: string) => void;
+  /**
+   * 审批专用连接（根因与理由见 `APPROVAL_CHANNEL_CAPS`）。
+   *
+   * 只为"能被网关推 exec 审批"而存在：走完整握手、心跳与重连，但**不订阅会话事件、
+   * 不报界面连接状态** —— 那两件事是主连接的职责，重复做的后果是每条会话事件翻倍、
+   * 以及两条连接在界面上互相覆盖连接状态。
+   */
+  approvalChannel?: boolean;
 };
 
 export interface GatewayConfigMutationTx {
@@ -200,6 +208,70 @@ function isSecureGatewayWebSocketUrl(raw: string): boolean {
   }
 }
 
+/**
+ * 审批专用连接的 `caps` —— exec 审批**永远送不到用户面前**的修法。
+ *
+ * ## 现场（2026-09-27，用户真机的 `operator_approvals` 表）
+ *
+ * 助手跑 `node -e "...createServer(...).listen(8080)"` 想在本机起个服务给用户看刚
+ * 生成的 HTML，审批在 **17 毫秒**后就被判死 —— `terminal_reason="no-route"`、
+ * `resolver_id="no-approval-route"`，用户**来不及看见任何弹窗**，于是读成"工具调用失败"。
+ * 同一天三次全是这个死法。
+ *
+ * ## 判死条件（运行时源码，不是推断）
+ *
+ * ```js
+ * // ① 一条能收的连接都没有 ⇒ 直接 expire
+ * hasExecApprovalClients: (excludeConnId) => {
+ *   for (const gatewayClient of clients) {
+ *     if (excludeConnId && gatewayClient.connId === excludeConnId) continue;  // ★ 跳过请求者
+ *     if (canDeliverApprovals(gatewayClient, "exec")) return true;
+ *   }
+ * // ② 单条连接要满足 scope + 四选一
+ * canDeliverApprovals = (scopes ∋ operator.admin|operator.approvals)
+ *   && (internal.approvalRuntime || id ∈ {CONTROL_UI} || caps ∋ approvals
+ *       || (exec && (id ∈ EXEC_APPROVAL_CLIENT_IDS || caps ∋ exec-approvals)))
+ * ```
+ *
+ * 我们发的是 `id='gateway-client'`、`caps=['tool-events']` ⇒ scope 那条**够**
+ * （`operator.approvals` 早在 scopes 里），**四选一全不满足** ⇒ 没有任何一条连接能收
+ * ⇒ 每条 exec 审批秒死。
+ *
+ * ## ⚠️ 两个字段别搞混（第一版就在这里读错了）
+ *
+ * | 字段 | 谁在用 | 含义 |
+ * | --- | --- | --- |
+ * | **`connId`** | `hasExecApprovalClients(excludeConnId)` 的排除 | **每条 WS 连接独有** |
+ * | `client.id` | `canDeliverApprovals` 的四选一 | 客户端自报的身份 |
+ *
+ * `excludeConnId` 把**发起请求的那条连接**跳过了（网关刻意不问"提问者本人"），
+ * 所以给主连接补 cap 没用 —— 必须**另开一条**。但既然比的是 `connId`，
+ * 第二条**保持同一个 `client.id`** 就够了，**不该**换 id：配对记录里存着
+ * `device.clientId`，换掉有配对失配风险而收益为零。
+ * 网关也不会踢掉第二条：`server-ws-runtime-*.mjs` 里唯一的"踢旧"是
+ * `existing.worker?.environmentId === next.worker.environmentId`，只针对 worker。
+ *
+ * ## 为什么"恰好"只有这一项
+ *
+ * 刻意**不**加通用 `approvals` cap —— 那会让 `plugin.approval.*` / `openclaw.approval.*`
+ * 也变成可投递，而那两个家族我们**没接线**（收到只会被丢掉）。那是另一刀的事。
+ */
+export const APPROVAL_CHANNEL_CAPS: readonly string[] = ['exec-approvals'];
+
+/**
+ * 审批连接**只**把这几个事件转发给渲染器。
+ *
+ * ⚠️ **不能转发全部**：`tick` / `health` / `presence` / `node.*` / `talk.*` 这类是
+ *    **广播**事件，两条连接都会收到 ⇒ 渲染器每条都会看到两遍。
+ *    这条连接存在的唯一理由是收 `exec.approval.*`（主连接因为"请求者被排除"收不到），
+ *    那就只转发这一族。
+ *
+ * ⚠️ 将来网关新增审批族（`plugin.approval.*` / `openclaw.approval.*`）时，**要显式加进来**：
+ *    没加 = 静默丢掉（本项目在 `lifecycle`/`item.status` 上已经栽过三次同样形状的坑）。
+ *    那两个族目前**没接线**，加了 cap 也不投递（见 `APPROVAL_CHANNEL_CAPS`）。
+ */
+const APPROVAL_CHANNEL_EVENTS = new Set(['exec.approval.requested', 'exec.approval.resolved']);
+
 export class GatewayClient {
   private ws: WebSocket | null = null;
   private authenticated = false;
@@ -233,6 +305,8 @@ export class GatewayClient {
    * 把整段事务接到同一条尾链，避免冷启时 relay 和预置助手互相打掉 baseHash。
    */
   private configMutationTail: Promise<void> = Promise.resolve();
+  /** 见 `APPROVAL_CHANNEL_CAPS`：这条连接只为了能被推 exec 审批。 */
+  private approvalChannel = false;
 
   constructor(config: GatewayClientConfig, opts?: GatewayClientOptions) {
     this.gatewayId = config.id;
@@ -243,6 +317,7 @@ export class GatewayClient {
     this.deviceIdentity = loadOrCreateDeviceIdentity();
     if (opts?.noReconnect) this.noReconnect = true;
     this.onPairingSuccess = opts?.onPairingSuccess;
+    this.approvalChannel = opts?.approvalChannel === true;
   }
 
   get id(): string {
@@ -461,6 +536,10 @@ export class GatewayClient {
       data: { payload: summarizePayload(frame.payload) },
     });
 
+    // ⚠️ 审批连接**只**转发审批事件：其余多是广播事件（tick/health/presence/node.*），
+    //    主连接也在收 —— 转发它们等于让渲染器把每条都处理两遍。
+    if (this.approvalChannel && !APPROVAL_CHANNEL_EVENTS.has(frame.event)) return;
+
     sendToWindow(getMainWindow(), 'gateway-event', {
       gatewayId: this.gatewayId,
       event: frame.event,
@@ -498,12 +577,14 @@ export class GatewayClient {
       maxProtocol: 4,
       client: {
         id: 'gateway-client',
-        displayName: 'ClawWork Desktop',
+        // 同一份身份（见 `APPROVAL_CHANNEL_CAPS` 那两行字段对照表：排除按 connId 走，
+        // 换 id 没有收益、只有配对失配的风险）。后缀只为在网关的客户端列表里分得清。
+        displayName: this.approvalChannel ? 'ClawWork Desktop (approvals)' : 'ClawWork Desktop',
         version: app.getVersion(),
         platform: process.platform,
         mode: 'backend',
       },
-      caps: ['tool-events'],
+      caps: this.approvalChannel ? [...APPROVAL_CHANNEL_CAPS] : ['tool-events'],
       auth: this.buildAuthWithDeviceToken(),
       role: 'operator',
       scopes,
@@ -534,6 +615,15 @@ export class GatewayClient {
           const server = payload['server'] as Record<string, unknown> | undefined;
           const rawVersion = server?.['version'];
           this.serverVersion = typeof rawVersion === 'string' ? rawVersion : undefined;
+          // ⚠️ 审批连接到此为止。三件事**都不能做**，每一件都有具体后果：
+          //    ① 存设备令牌 —— 那是**主连接的身份**，两条一起写会互相覆盖（谁后写谁算）；
+          //    ② 订阅会话 —— 每条会话事件会翻倍；
+          //    ③ 报 `gateway-status` —— 两条连接会在界面上互相覆盖连接状态。
+          //    它只要连着、并且被网关认成"能收 exec 审批"就够了。
+          if (this.approvalChannel) {
+            this.startHeartbeat();
+            return;
+          }
           this.storeDeviceTokenFromPayload(payload);
           this.subscribeSessionEvents();
           this.startHeartbeat();

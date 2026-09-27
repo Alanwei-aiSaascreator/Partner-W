@@ -1044,3 +1044,217 @@ describe('网关连上了却不发 challenge：必须有人喊一声（不是静
     expect(websocketMock.instances.length).toBe(1);
   });
 });
+
+/**
+ * 审批专用连接 —— exec 审批**永远送不到用户面前**的根因与修法。
+ *
+ * ## 现场（2026-09-27，用户真机的 `operator_approvals` 表）
+ *
+ * 助手写好 `数学第一课·认识数字1-5.html`，想在本机起个服务给用户看，
+ * 于是跑 `node -e "...createServer(...).listen(8080)"`。审批记录是：
+ * 创建 → **17 毫秒后** `status=denied`、`terminal_reason="no-route"`、
+ * `resolver_id="no-approval-route"`。用户**根本来不及看见任何弹窗**。
+ * 同一天三次，全都是这个死法；用户读成「工具调用失败」。
+ *
+ * ## 判死条件（运行时源码，不是推断）
+ *
+ * ```js
+ * // approval-shared-*.mjs
+ * const hasApprovalClients = params.context.hasExecApprovalClients?.(params.clientConnId) ?? false;
+ * if (... && !hasApprovalClients && !hasTurnSourceRoute && !delivered)
+ *   manager.expire(record.id, "no-approval-route");
+ *
+ * // server-request-context-*.mjs —— ★ 请求者自己被跳过
+ * hasExecApprovalClients: (excludeConnId) => {
+ *   for (const gatewayClient of clients) {
+ *     if (excludeConnId && gatewayClient.connId === excludeConnId) continue;
+ *     if (canDeliverApprovals(gatewayClient, "exec")) return true;
+ *   }
+ *
+ * // server-request-context-*.mjs —— 四选一，我们一条都不满足
+ * function canDeliverApprovals(gatewayClient, approvalKind) {
+ *   if (!(scopes.includes("operator.admin") || scopes.includes("operator.approvals"))) return false;
+ *   return internal?.approvalRuntime === true
+ *       || client.id ∈ {CONTROL_UI}
+ *       || caps ∋ APPROVALS
+ *       || approvalKind === "exec" && (client.id ∈ EXEC_APPROVAL_CLIENT_IDS || caps ∋ EXEC_APPROVALS);
+ * }
+ * ```
+ *
+ * 我们发的是 `client.id = 'gateway-client'`、`caps = ['tool-events']`
+ * ⇒ scope 那条**满足**（`operator.approvals` 早就在 scopes 里），**后面四选一全不满足**。
+ *
+ * ## ⭐ 为什么必须是**第二条**连接，而不是给主连接加个 cap
+ *
+ * `excludeConnId` 把**发起请求的那条连接**跳过了（网关刻意不问"提问者本人"）。
+ * 所以主连接即使补上 `exec-approvals` 也永远查不到自己 —— 网关侧每条 WS 连接是
+ * 独立的 client 条目，**多开一条**才落在 `excludeConnId` 之外。
+ *
+ * ## ⚠️ 两个字段别搞混（我第一版就在这里读错了）
+ *
+ * | 字段 | 谁在用 | 含义 |
+ * | --- | --- | --- |
+ * | **`connId`** | `hasExecApprovalClients(excludeConnId)` 的排除 | **每条 WS 连接独有** |
+ * | `client.id` | `canDeliverApprovals` 的四选一 | 客户端自报的身份 |
+ *
+ * ⇒ 第二条连接**保持同一个 `client.id`** 就够了（connId 天然不同），
+ *   **不该**为了"看起来不同"去换 id：配对记录里存着 `device.clientId`
+ *   （`device-pairing-tokens-*.mjs` 的 `isBrowserRelatedPairedDevice` 就拿它判），
+ *   换掉有配对失配的风险，而收益是零。
+ *
+ * 网关也不会踢掉第二条：`server-ws-runtime-*.mjs` 里唯一的"踢旧"是
+ * `existing.worker?.environmentId === next.worker.environmentId` —— 只针对
+ * **worker** 连接，operator 连接不去重。
+ *
+ * ## 这条连接刻意**不做**什么
+ *
+ * 它只为"能被推审批"而存在，所以不发 `sessions.subscribe`（否则每条会话事件翻倍）、
+ * 不发 `gateway-status`（否则会跟主连接抢界面上的连接状态）。
+ * 它照样走完整握手、心跳与重连。
+ */
+describe('审批专用连接：exec 审批要真能送到用户面前', () => {
+  const clients: Array<{ destroy: () => void }> = [];
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    websocketMock.constructor.mockClear();
+    websocketMock.instances.length = 0;
+    vi.mocked(sendToWindow).mockClear();
+  });
+
+  afterEach(() => {
+    for (const client of clients) client.destroy();
+    clients.length = 0;
+    vi.clearAllTimers();
+    vi.useRealTimers();
+  });
+
+  type Socket = (typeof websocketMock.instances)[number];
+
+  function sentMethods(socket: Socket): string[] {
+    return socket.send.mock.calls.map((call) => (JSON.parse(String(call[0])) as { method: string }).method);
+  }
+
+  function sentFrame(socket: Socket, method: string): { id: string; params?: Record<string, unknown> } {
+    const frames = socket.send.mock.calls.map(
+      (call) => JSON.parse(String(call[0])) as { id: string; method: string; params?: Record<string, unknown> },
+    );
+    const frame = frames.find((item) => item.method === method);
+    if (!frame) throw new Error(`没有发出 ${method} 帧：${JSON.stringify(frames.map((f) => f.method))}`);
+    return frame;
+  }
+
+  /** 走到 `connect` 已发出为止（不算握手完成）。 */
+  async function reachConnect(opts?: { approvalChannel?: boolean }) {
+    const { GatewayClient } = await import('../src/main/ws/gateway-client.js');
+    const client = new GatewayClient(
+      { id: 'gw-1', name: 'Gateway', url: 'ws://127.0.0.1:18789', auth: { token: 'token' } },
+      opts,
+    );
+    clients.push(client);
+    client.connect();
+    const socket = websocketMock.instances.at(-1);
+    if (!socket) throw new Error('expected a websocket instance');
+    socket.readyState = 1;
+    socket.emit('message', JSON.stringify({ type: 'event', event: 'connect.challenge', payload: { nonce: 'n1' } }));
+    const connect = sentFrame(socket, 'connect');
+    return { socket, connect, params: connect.params as Record<string, unknown> };
+  }
+
+  /** 走到握手**真的完成**（收到 hello-ok），否则"没发 gateway-status"是假绿。 */
+  async function finishHandshake(opts?: { approvalChannel?: boolean }) {
+    const reached = await reachConnect(opts);
+    reached.socket.emit(
+      'message',
+      JSON.stringify({
+        type: 'res',
+        id: reached.connect.id,
+        ok: true,
+        payload: { type: 'hello-ok', server: { version: '2026.9.3' } },
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(0); // 让 connect 的 .then 链跑完
+    return reached;
+  }
+
+  it('caps **恰好**是 [exec-approvals] —— 四选一里唯一我们拿得到的那条', async () => {
+    const { params } = await reachConnect({ approvalChannel: true });
+    // ⭐ 断言"恰好"而不是"包含"：通用 `approvals` cap 会让 plugin./openclaw. 两个
+    //    **没接线**的审批家族也变成可投递（收到只会被丢掉）。谁顺手加上它，这条要红。
+    expect(params['caps']).toEqual(['exec-approvals']);
+  });
+
+  it('operator.approvals 这个 scope 也得在（canDeliverApprovals 的第一道门）', async () => {
+    const { params } = await reachConnect({ approvalChannel: true });
+    expect(params['scopes']).toContain('operator.approvals');
+  });
+
+  it('⭐ client.id 与主连接**相同** —— 换了 id 有配对失配风险，而收益是零', async () => {
+    const primary = await reachConnect();
+    const companion = await reachConnect({ approvalChannel: true });
+    const primaryId = (primary.params['client'] as Record<string, unknown>)['id'];
+    const companionId = (companion.params['client'] as Record<string, unknown>)['id'];
+    expect(primaryId, '主连接不许被顺手改掉').toBe('gateway-client');
+    // 排除是**按 connId**（网关逐条分配）不是按 client.id ⇒ 不需要、也不该换 id。
+    // ⚠️ "真的不被 excludeConnId 排除"是**服务端行为，单测观测不到** ——
+    //    这条只钉住"我们没去换 id"这个决定；端到端要真机验。
+    expect(companionId).toBe(primaryId);
+  });
+
+  it('⭐ 不发 sessions.subscribe —— 否则每条会话事件都翻倍', async () => {
+    const { socket } = await finishHandshake({ approvalChannel: true });
+    expect(sentMethods(socket)).not.toContain('sessions.subscribe');
+  });
+
+  it('⭐ 不发 gateway-status —— 否则会跟主连接抢界面上的连接状态', async () => {
+    // ⚠️ 这条必须驱动到 hello-ok 才有意义：没完成握手时"没发状态"是**必然**的，
+    //    断言它会得到一条永远不会红的假绿（本项目栽过）。
+    const { socket } = await finishHandshake({ approvalChannel: true });
+    expect(sentMethods(socket)).toContain('connect'); // 前提：握手真的发了
+    const statuses = vi
+      .mocked(sendToWindow)
+      .mock.calls.filter((call) => call[1] === 'gateway-status')
+      .map((call) => call[2] as Record<string, unknown>);
+    expect(statuses).toHaveLength(0);
+  });
+
+  it('对照组：**主连接**照常发 sessions.subscribe 与 gateway-status（证明上面两条不是恒真）', async () => {
+    const { socket } = await finishHandshake();
+    expect(sentMethods(socket)).toContain('sessions.subscribe');
+    const statuses = vi.mocked(sendToWindow).mock.calls.filter((call) => call[1] === 'gateway-status');
+    expect(statuses.length, '主连接完成握手后必须报一次状态').toBeGreaterThan(0);
+  });
+
+  function emitEvent(socket: Socket, event: string, payload: Record<string, unknown> = {}): void {
+    socket.emit('message', JSON.stringify({ type: 'event', event, payload }));
+  }
+
+  /** 转发给渲染器的 `gateway-event` 事件名（按发出顺序）。 */
+  function forwardedEvents(): string[] {
+    return vi
+      .mocked(sendToWindow)
+      .mock.calls.filter((call) => call[1] === 'gateway-event')
+      .map((call) => (call[2] as Record<string, unknown>)['event'] as string);
+  }
+
+  it('⭐ 转发 `exec.approval.*` —— 这是它存在的**唯一**理由', async () => {
+    const { socket } = await reachConnect({ approvalChannel: true });
+    emitEvent(socket, 'exec.approval.requested', { id: 'a1' });
+    emitEvent(socket, 'exec.approval.resolved', { id: 'a1' });
+    expect(forwardedEvents()).toEqual(['exec.approval.requested', 'exec.approval.resolved']);
+  });
+
+  it('⭐ 广播事件**不**转发 —— 主连接也在收，转发等于渲染器把每条处理两遍', async () => {
+    const { socket } = await reachConnect({ approvalChannel: true });
+    emitEvent(socket, 'health', {});
+    emitEvent(socket, 'presence', {});
+    emitEvent(socket, 'node.changed', {});
+    expect(forwardedEvents()).toHaveLength(0);
+  });
+
+  it('对照组：**主连接**照常转发广播事件（证明上面那条不是恒真）', async () => {
+    const { socket } = await reachConnect();
+    emitEvent(socket, 'health', {});
+    expect(forwardedEvents()).toContain('health');
+  });
+});
