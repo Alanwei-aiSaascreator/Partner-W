@@ -121,6 +121,8 @@ export {
   normalizeGrowthHistory,
   normalizeBounties,
   normalizeDailyTasks,
+  computeCheckInStreak,
+  shanghaiDate,
 } from './services/growth-service.js';
 export { describeGrowthError } from './services/growth-error-message.js';
 export { normalizePrivacyState, DELETION_REQUEST_NOTE } from './services/privacy-service.js';

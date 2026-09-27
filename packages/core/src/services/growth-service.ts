@@ -81,6 +81,60 @@ export function normalizeDailyTasks(raw: unknown): DailyTask[] {
     }));
 }
 
+/** `YYYY-MM-DD`（服务端 `growth_today()` 与签到 `ref_id` 就是这个形状）。 */
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Asia/Shanghai 的日期串（`YYYY-MM-DD`）。
+ *
+ * ⚠️ **必须与服务端的 `growth_today()` 用同一个时区**（迁移 46 里写死 `Asia/Shanghai`）。
+ *    用本机时区的话，在非 +08:00 的机器上会差一天 ⇒ 连续签到整条错位。
+ */
+export function shanghaiDate(now: Date = new Date()): string {
+  // en-CA 的短日期格式恰好就是 YYYY-MM-DD
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(now);
+}
+
+/** 前一天。走 UTC 算术 —— 本地时间会踩夏令时，UTC 不会。 */
+function previousDay(date: string): string {
+  return new Date(Date.parse(`${date}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
+}
+
+/**
+ * 连续签到天数。**派生**出来的 —— 服务端没有这个字段。
+ *
+ * 签到流水的 `refId` 就是**签的那天**（服务端写 `growth_today()`），
+ * 所以「连续几天」= 从今天往回数、连续存在的那些日期。
+ *
+ * ⭐ **今天还没签不算断**：起点取今天（签了）或昨天（还没签但昨天签了）。
+ *    一天要**过完**才算断 —— 否则每天早上所有人都会看到 0。
+ *
+ * 🔴🔴 **`complete=false` 一律返回 0（=不显示）。**
+ *    `growthHistory` 只取 50 条，悬赏流水会把窗口占满、把签到那几天挤出视野，
+ *    这时数出来的"连续 3 天"真身可能是 7 天。**算错比不显示更糟** ——
+ *    用户会以为自己的连续记录断了。宁可不说。
+ */
+export function computeCheckInStreak(entries: GrowthEntry[], opts: { today: string; complete: boolean }): number {
+  if (!opts.complete) return 0;
+  const days = new Set(entries.filter((e) => e.reason === 'check_in' && DATE_RE.test(e.refId)).map((e) => e.refId));
+  if (days.size === 0) return 0;
+
+  let cursor = opts.today;
+  if (!days.has(cursor)) cursor = previousDay(cursor);
+
+  let streak = 0;
+  while (days.has(cursor)) {
+    streak++;
+    cursor = previousDay(cursor);
+  }
+  return streak;
+}
+
 export function normalizeBounties(raw: unknown): Bounty[] {
   if (!Array.isArray(raw)) return [];
   return raw

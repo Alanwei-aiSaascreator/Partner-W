@@ -1060,6 +1060,7 @@
     "reason_bounty_refund": "Tarefa cancelada (devolvida)",
     "reason_bounty_reward": "Recompensa da tarefa",
     "reason_check_in": "Check-in diário",
+    "streak": "{{days}} dias seguidos",
     "task_accept": "Aprovar uma tarefa",
     "task_publish": "Publicar uma tarefa",
     "task_submit": "Enviar uma tarefa",

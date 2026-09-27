@@ -1060,6 +1060,7 @@
     "reason_bounty_refund": "Bounty refund",
     "reason_bounty_reward": "Bounty reward",
     "reason_check_in": "Daily check-in",
+    "streak": "{{days}}-day streak",
     "task_accept": "Approve a bounty",
     "task_publish": "Post a bounty",
     "task_submit": "Submit bounty work",

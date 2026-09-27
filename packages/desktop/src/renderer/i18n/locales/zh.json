@@ -1060,6 +1060,7 @@
     "reason_bounty_refund": "悬赏取消退回",
     "reason_bounty_reward": "悬赏完成奖励",
     "reason_check_in": "每日签到",
+    "streak": "已连续签到 {{days}} 天",
     "task_accept": "验收一个悬赏",
     "task_publish": "发布一个悬赏",
     "task_submit": "交付一个悬赏",

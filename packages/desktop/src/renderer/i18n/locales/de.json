@@ -1060,6 +1060,7 @@
     "reason_bounty_refund": "Prämie storniert",
     "reason_bounty_reward": "Prämienbelohnung",
     "reason_check_in": "Täglicher Check-in",
+    "streak": "{{days}} Tage in Folge",
     "task_accept": "Prämie abnehmen",
     "task_publish": "Prämie ausschreiben",
     "task_submit": "Prämie abliefern",

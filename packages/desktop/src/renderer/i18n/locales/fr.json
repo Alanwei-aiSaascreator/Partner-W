@@ -1060,6 +1060,7 @@
     "reason_bounty_refund": "Prime annulée (remboursement)",
     "reason_bounty_reward": "Récompense de prime",
     "reason_check_in": "Pointage quotidien",
+    "streak": "{{days}} jours d'affilée",
     "task_accept": "Accepter une prime",
     "task_publish": "Publier une prime",
     "task_submit": "Livrer une prime",

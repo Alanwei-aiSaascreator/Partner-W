@@ -1060,6 +1060,7 @@
     "reason_bounty_refund": "Encargo cancelado (devuelto)",
     "reason_bounty_reward": "Recompensa del encargo",
     "reason_check_in": "Registro diario",
+    "streak": "{{days}} días seguidos",
     "task_accept": "Aprobar un encargo",
     "task_publish": "Publicar un encargo",
     "task_submit": "Enviar un encargo",

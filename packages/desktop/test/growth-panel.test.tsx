@@ -42,6 +42,7 @@ vi.mock('react-i18next', () => ({
         'growth.taskClaim': '领取',
         'growth.taskClaimed': '已领取',
         'growth.taskTodo': '未完成',
+        'growth.streak': '已连续签到 {{days}} 天',
       };
       const raw = table[key] ?? key;
       return raw.replace(/\{\{(\w+)\}\}/g, (_m, name: string) => String(values?.[name] ?? ''));
@@ -54,6 +55,7 @@ vi.mock('../src/renderer/components/ui/scroll-area', () => ({
   ScrollArea: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));
 
+import { shanghaiDate } from '@clawwork/core';
 import GrowthPanel from '../src/renderer/layouts/GrowthPanel';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -438,6 +440,111 @@ describe('GrowthPanel', () => {
       withTasks([]);
       const view = await render();
       expect(view.container.querySelector('[data-field="daily-tasks"]')).toBeNull();
+      view.unmount();
+    });
+
+    /**
+     * ⭐ **今日任务进度**（`2/3`）。
+     *
+     * ⚠️ 判据是 `done`（**做过**）而不是 `claimed`（领过）：进度条要回答的是
+     *    "今天还剩多少事"，做完没领的那件用户确实已经做了。
+     */
+    it('⭐ 卡片副标题给出「今天做完了几件 / 一共几件」', async () => {
+      withTasks([
+        taskRow({ task: 'publish', done: true, claimed: true }),
+        taskRow({ task: 'submit', done: true, claimed: false }),
+        taskRow({ task: 'accept', done: false }),
+      ]);
+      const view = await render();
+      const card = view.container.querySelector('[data-field="daily-tasks"]')?.closest('div[class]');
+      expect(view.container.textContent, '做完没领的那件也要算进去 —— 算成未完成会让人以为还得再做一遍').toContain(
+        '2/3',
+      );
+      expect(card).not.toBeNull();
+      view.unmount();
+    });
+  });
+
+  /**
+   * ⭐ **丰富成长中心**（2026-09-28）。
+   *
+   * 三处都只用**已有数据**，不新增后端：连续签到从明细派生、
+   * 任务进度是数出来的、明细日期是格式化的。
+   */
+  describe('丰富：连续签到 / 进度 / 明细日期', () => {
+    // ⚠️ 用**真实的上海日期**造夹具 —— 组件内部也用 `shanghaiDate()`，
+    //    写死日期的话在别的日子跑就会飘。
+    const today = shanghaiDate();
+    const daysBack = (n: number): string =>
+      new Date(Date.parse(`${today}T00:00:00Z`) - n * 86_400_000).toISOString().slice(0, 10);
+
+    const checkIn = (date: string, id: string) => ({
+      id,
+      amount: 20,
+      reason: 'check_in',
+      ref_id: date,
+      note: '',
+      created_at: `${date}T01:00:00Z`,
+    });
+
+    function withHistory(rows: unknown[]): void {
+      Object.assign(window.clawwork, { growthHistory: vi.fn(async () => ({ ok: true, result: rows })) });
+    }
+
+    it('⭐ 连续 3 天 ⇒ 显示「已连续签到 3 天」', async () => {
+      withHistory([checkIn(daysBack(0), 'a'), checkIn(daysBack(1), 'b'), checkIn(daysBack(2), 'c')]);
+      const view = await render();
+      expect(view.container.querySelector('[data-field="streak"]')).not.toBeNull();
+      expect(view.container.textContent).toContain('已连续签到 3 天');
+      view.unmount();
+    });
+
+    it('连续 1 天 ⇒ 不显示（"今天签了"按钮上已经写着）', async () => {
+      withHistory([checkIn(daysBack(0), 'a')]);
+      const view = await render();
+      expect(view.container.querySelector('[data-field="streak"]')).toBeNull();
+      view.unmount();
+    });
+
+    /**
+     * 🔴🔴 **历史取满 50 条 ⇒ 一律不显示连续天数。**
+     *
+     * 取满就说明后面还有没取到的流水，签到那几天可能被悬赏流水挤出视野 ——
+     * 这时数出来的天数是**错的**。算错比不显示更糟：用户会以为记录断了。
+     */
+    it('🔴🔴 明细取满上限（可能被截断）⇒ 不显示连续天数', async () => {
+      const rows = Array.from({ length: 50 }, (_, i) => checkIn(daysBack(i), `e${i}`));
+      withHistory(rows);
+      const view = await render();
+      expect(
+        view.container.querySelector('[data-field="streak"]'),
+        '历史可能被截断时还显示天数 —— 那是个可能算错的值',
+      ).toBeNull();
+      view.unmount();
+    });
+
+    it('49 条（没取满 ⇒ 确定是全量）⇒ 照常显示', async () => {
+      const rows = Array.from({ length: 49 }, (_, i) => checkIn(daysBack(i), `e${i}`));
+      withHistory(rows);
+      const view = await render();
+      expect(view.container.textContent).toContain('已连续签到 49 天');
+      view.unmount();
+    });
+
+    /**
+     * ⭐ 明细的时间：**今天的只写 `HH:mm`，更早的带 `MM-DD`**。
+     *
+     * 原先一律只有 `HH:mm` —— 一份跨好几天的明细里，那一列完全读不出"哪天"，
+     * 上周的扣款和今天的长得一模一样。
+     */
+    it('⭐ 明细：今天的不带日期，更早的带 MM-DD', async () => {
+      withHistory([checkIn(daysBack(0), 'today'), checkIn(daysBack(3), 'older')]);
+      const view = await render();
+      const rows = [...view.container.querySelectorAll('[data-entry]')];
+      const text = rows.map((el) => el.textContent ?? '');
+
+      expect(text[0], '今天那条不该带日期').not.toMatch(/\d{2}-\d{2} /);
+      expect(text[1], '三天前那条必须带日期，否则读不出是哪天').toMatch(/\d{2}-\d{2} \d{2}:\d{2}/);
       view.unmount();
     });
   });

@@ -1,13 +1,22 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
+  computeCheckInStreak,
   describeGrowthError,
   normalizeBounties,
   normalizeDailyTasks,
   normalizeGrowthHistory,
   normalizeGrowthSummary,
+  shanghaiDate,
 } from '@clawwork/core';
 import type { Bounty, DailyTask, GrowthEntry, GrowthSummary } from '@clawwork/shared';
 import { toast } from '@/lib/toast';
+
+/**
+ * 明细一次取多少条。
+ *
+ * ⚠️ 这个数还是**连续签到能不能算**的前提（见下）：只有"取的比上限少"才说明拿到了全量。
+ */
+const HISTORY_LIMIT = 50;
 
 /** 读不到时用这个空账户兜底：界面显示 0 / Lv.1，而不是崩或者空白。 */
 const EMPTY_SUMMARY: GrowthSummary = {
@@ -24,6 +33,8 @@ export function useGrowth() {
   const [history, setHistory] = useState<GrowthEntry[]>([]);
   const [myBounties, setMyBounties] = useState<Bounty[]>([]);
   const [dailyTasks, setDailyTasks] = useState<DailyTask[]>([]);
+  /** 连续签到天数。**可能被截断时恒为 0**（见 `computeCheckInStreak` 的说明）。 */
+  const [streak, setStreak] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -70,7 +81,7 @@ export function useGrowth() {
 
     const [summaryRes, historyRes, bounties, tasks] = await Promise.all([
       window.clawwork.growthSummary(),
-      window.clawwork.growthHistory({ limit: 50 }),
+      window.clawwork.growthHistory({ limit: HISTORY_LIMIT }),
       loadBounties(),
       loadDailyTasks(),
     ]);
@@ -82,7 +93,21 @@ export function useGrowth() {
     setError(null);
     setSummary(normalizeGrowthSummary(summaryRes.result));
     // 明细失败不影响主卡片：只把列表留空，不把整页打成错误态
-    setHistory(historyRes.ok ? normalizeGrowthHistory(historyRes.result) : []);
+    const history = historyRes.ok ? normalizeGrowthHistory(historyRes.result) : [];
+    setHistory(history);
+    /**
+     * 🔴 **连续签到只有在"确定拿到了全量"时才算。**
+     *
+     * 取回来正好等于上限 ⇒ 后面很可能还有没取到的流水 ⇒ 签到那几天可能被挤出去了，
+     * 那时数出来的天数**是错的**。算错比不显示更糟（用户以为记录断了），
+     * 所以这种情况交给 `computeCheckInStreak` 返回 0，界面就不显示这一行。
+     */
+    setStreak(
+      computeCheckInStreak(history, {
+        today: shanghaiDate(),
+        complete: historyRes.ok && history.length < HISTORY_LIMIT,
+      }),
+    );
     setMyBounties(bounties);
     setDailyTasks(tasks);
   }, []);
@@ -132,5 +157,17 @@ export function useGrowth() {
     [load],
   );
 
-  return { summary, history, myBounties, dailyTasks, loading, error, busy, checkIn, claimTask, reload: load };
+  return {
+    summary,
+    history,
+    myBounties,
+    dailyTasks,
+    streak,
+    loading,
+    error,
+    busy,
+    checkIn,
+    claimTask,
+    reload: load,
+  };
 }

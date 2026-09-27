@@ -1,5 +1,6 @@
 import { useTranslation } from 'react-i18next';
-import { ArrowDownLeft, ArrowUpRight, Check, Circle, Gift, Lock, Sparkles } from 'lucide-react';
+import { ArrowDownLeft, ArrowUpRight, Check, Circle, Flame, Gift, Lock, Sparkles } from 'lucide-react';
+import { shanghaiDate } from '@clawwork/core';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import EmptyState from '@/components/semantic/EmptyState';
@@ -25,7 +26,7 @@ import { useGrowth } from './useGrowth';
  */
 export default function GrowthPanel() {
   const { t } = useTranslation();
-  const { summary, history, myBounties, dailyTasks, loading, error, busy, checkIn, claimTask } = useGrowth();
+  const { summary, history, myBounties, dailyTasks, streak, loading, error, busy, checkIn, claimTask } = useGrowth();
 
   /**
    * 每级所需成长值。
@@ -45,6 +46,20 @@ export default function GrowthPanel() {
   const MAX_BOUNTIES_SHOWN = 5;
   const earnedInLevel = (LEVEL_STEP - summary.toNextLevel) % LEVEL_STEP;
   const progress = (earnedInLevel / LEVEL_STEP) * 100;
+  /**
+   * 今天做完了几件（**按"做过"算，不按"领过"**）。
+   *
+   * ⚠️ 进度条要回答的是"今天还剩多少事"，所以做完没领也算——那一件用户确实已经做了，
+   *    把它算成未完成会让人以为还得再做一遍。领没领由每行自己的状态显示。
+   */
+  const dailyDoneCount = dailyTasks.filter((task) => task.done).length;
+  /**
+   * 今天的上海日期串。用来判断明细里哪些是"今天"的。
+   *
+   * ⚠️ 与连续签到、与**服务端** `growth_today()` 同一个时区 —— 三处必须一致，
+   *    否则跨零点的那几笔会在"明细里算今天、签到里算昨天"。
+   */
+  const today = shanghaiDate();
 
   /**
    * 徽章**全集** —— 用来画"还没点亮"的格子。
@@ -101,6 +116,21 @@ export default function GrowthPanel() {
           <Gift />
           {summary.checkedInToday ? t('growth.checkedIn') : t('growth.checkIn')}
         </Button>
+
+        {/**
+         * 连续签到天数。
+         *
+         * ⚠️ **`streak < 2` 就不显示**：1 天和"今天签了"是同一件事，按钮上已经写着"今日已签到"；
+         *    0 天更是没什么可说。这一行只在**真的形成连续**时才有信息量。
+         * ⚠️ 取不到全量明细时 `streak` 恒为 0（见 `computeCheckInStreak`）⇒ 这一行自动消失，
+         *    不会显示一个**算错的**天数。
+         */}
+        {streak >= 2 ? (
+          <p className="mt-2.5 flex items-center gap-1.5" data-field="streak">
+            <Flame className="size-3.5 text-[var(--accent)]" aria-hidden="true" />
+            <span className="type-support text-[var(--text-muted)]">{t('growth.streak', { days: streak })}</span>
+          </p>
+        ) : null}
       </SectionCard>
 
       {/**
@@ -118,7 +148,8 @@ export default function GrowthPanel() {
        *    （服务端目录是空的、或这一路拿不到，表现都该是"今天没任务"）。
        */}
       {dailyTasks.length > 0 ? (
-        <SectionCard title={t('growth.dailyTasks')}>
+        // 副标题给出「今天做完了几件 / 一共几件」—— 纯数字，不需要任何新文案
+        <SectionCard title={t('growth.dailyTasks')} subtitle={`${dailyDoneCount}/${dailyTasks.length}`}>
           <div data-field="daily-tasks" className="space-y-1.5">
             {dailyTasks.map((task) => {
               const state = task.claimed ? 'claimed' : task.done ? 'ready' : 'todo';
@@ -244,7 +275,7 @@ export default function GrowthPanel() {
                   {t(`growth.reason_${entry.reason}`, { defaultValue: entry.reason })}
                 </span>
                 <span className="type-support shrink-0 tabular-nums text-[var(--text-muted)]">
-                  {formatClock(entry.createdAt)}
+                  {formatWhen(entry.createdAt, today)}
                 </span>
                 <span
                   className={cn(
@@ -264,15 +295,22 @@ export default function GrowthPanel() {
 }
 
 /**
- * 明细那一行的时间（`HH:mm`）。
+ * 明细那一行的时间。
+ *
+ * ⭐ **今天的只写 `HH:mm`，更早的带上 `MM-DD`。**
+ *    原先一律只写 `HH:mm` —— 同一份明细里跨越好几天时，那一列完全读不出"哪天"，
+ *    一笔上周的扣款和今天的一笔长得一模一样。
  *
  * ⚠️ 用**数字**而不是"今天 / 昨天"：相对时间要新文案（×9 个语种），
- *    而这一轮刻意不加任何新文案。数字在所有语言里都读得懂。
+ *    而这里刻意不加任何新文案。数字在所有语言里都读得懂。
  * ⚠️ 解析不出来就**空着**，不要显示 `Invalid Date`。
  */
-function formatClock(iso: string): string {
+function formatWhen(iso: string, today: string): string {
   const at = new Date(iso);
   if (Number.isNaN(at.getTime())) return '';
   const pad = (value: number): string => String(value).padStart(2, '0');
-  return `${pad(at.getHours())}:${pad(at.getMinutes())}`;
+  const clock = `${pad(at.getHours())}:${pad(at.getMinutes())}`;
+  // ⚠️ 与连续签到用**同一个时区**（Asia/Shanghai）—— 否则跨零点的那几笔会归错天。
+  if (shanghaiDate(at) === today) return clock;
+  return `${pad(at.getMonth() + 1)}-${pad(at.getDate())} ${clock}`;
 }

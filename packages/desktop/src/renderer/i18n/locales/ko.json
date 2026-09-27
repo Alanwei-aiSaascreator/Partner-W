@@ -1060,6 +1060,7 @@
     "reason_bounty_refund": "현상 취소 환불",
     "reason_bounty_reward": "현상 보상",
     "reason_check_in": "매일 출석",
+    "streak": "{{days}}일 연속",
     "task_accept": "현상 승인",
     "task_publish": "현상 등록",
     "task_submit": "현상 결과 제출",
