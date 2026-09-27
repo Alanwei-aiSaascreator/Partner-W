@@ -69,6 +69,19 @@ describe('ComputerAccessBadge', () => {
     unmount();
   });
 
+  it('⭐ 用**中性色**，不是警告色（2026-09-27 用户拍的「乙」）', async () => {
+    // 默认档在 2026-09-27 反转成了 `full` ⇒ 全权是**开箱即是的常态**，不再是例外。
+    // 常态永远亮着一条黄色警告，结果就是"永远亮着的警告 = 没有警告"。
+    // ⚠️ 谁把它改回 `--warning`，这条要红 —— 那是个**产品决定**，不是配色偏好。
+    listSessions.mockResolvedValue({ ok: true, result: { sessions: [{ key: 'k', permissionMode: 'full' }] } });
+    const { container, unmount } = await mount('local-runtime', 'k');
+    const el = badge(container);
+    expect(el, '前提：徽章真的显示出来了，否则下面两条是恒真的').not.toBeNull();
+    expect(el?.className).toContain('--bg-tertiary');
+    expect(el?.className, '别改回警告色').not.toContain('--warning');
+    unmount();
+  });
+
   it.each([['guarded'], ['workspace'], ['read-only']])("真值是 '%s' ⇒ 不显示", async (mode) => {
     listSessions.mockResolvedValue({ ok: true, result: { sessions: [{ key: 'k', permissionMode: mode }] } });
     const { container, unmount } = await mount('local-runtime', 'k');

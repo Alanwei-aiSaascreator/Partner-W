@@ -19,8 +19,11 @@ import {
 const applied = (...pairs: Array<[string, AppliedPermissionRecord]>) => new Map<string, AppliedPermissionRecord>(pairs);
 
 describe('DEFAULT_COMPUTER_ACCESS_TIER', () => {
-  it('默认必须是安全档', () => {
-    expect(DEFAULT_COMPUTER_ACCESS_TIER).toBe('safe');
+  it('⭐ 默认是**全权**（2026-09-27 用户明确反转；改动前先读 core 里那段说明）', () => {
+    // 这条断言存在的意义就是让"改默认"必须是一次**显式动作**，不能顺手改掉。
+    // 上一个值是 'safe' —— 默认档让助手连"起个本地服务给用户看 HTML"都做不到，
+    // 用户读成「工具调用失败」，真机上一天三次。
+    expect(DEFAULT_COMPUTER_ACCESS_TIER).toBe('full');
   });
 });
 

@@ -12,9 +12,14 @@ import { computerAccessRevision, subscribeComputerAccessRevision } from '@/lib/c
  *    **在任务 A 里开了全权、切到任务 B 把开关关掉 —— A 仍然是 full。**
  *    只显示开关的猜测，用户在 A 里就看不见"这个任务还能碰整台电脑"。
  *
- * ⚠️ 只在**全权**时显示（不是"常显"）：安全档是这个产品的默认状态，
- *    在输入框那一行常驻一个「默认安全」等于往最常看的地方加噪音。
- *    档位的完整说明在设置页里，那里两种状态都写着。
+ * 🔴 **2026-09-27 改成中性色**（用户拍的「乙」案）：默认档反转成 `full` 之后，
+ *    全权不再是例外状态，而是**开箱即是的常态**。原来是警告色
+ *    （`--bg-warning` / `--warning` + ⚡）——
+ *    常态永远亮着一条黄色警告，结果就是**"永远亮着的警告 = 没有警告"**。
+ *    ⇒ 改用 `StatusTag` 那套 `neutral` 配色（`--bg-tertiary` / `--text-muted`）：
+ *      **仍然看得见**（"看得见"这条判据不能丢），但不再喊。
+ *
+ * ⚠️ 只在**全权**时显示（不是"常显"）：档位的完整说明在设置页里，那里两种状态都写着。
  *
  * ⚠️ 读不到（掉线 / 抛错 / 没有当前任务）**一律不显示**，而且**不抛**：
  *    "读不到"绝不能被画成"全权"，也不该把输入框带崩。
@@ -68,7 +73,9 @@ export default function ComputerAccessBadge({
     <span
       data-field="computer-access-badge"
       title={t('computerAccess.badgeTitle')}
-      className="inline-flex items-center gap-1 rounded-md bg-[var(--bg-warning)] px-2 py-1 type-badge text-[var(--warning)]"
+      // ⚠️ 中性配色取自 `StatusTag` 的 `neutral` 档 —— 别改回 `--warning`：
+      //    默认档就是全权，警告色会变成"每个任务永远亮着一条黄"（见文件头那段）。
+      className="inline-flex items-center gap-1 rounded-md bg-[var(--bg-tertiary)] px-2 py-1 type-badge text-[var(--text-muted)]"
     >
       <Zap size={13} aria-hidden="true" />
       {t('computerAccess.stateOn')}

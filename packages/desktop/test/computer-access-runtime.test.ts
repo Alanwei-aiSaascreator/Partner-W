@@ -13,26 +13,42 @@ import type { AppliedPermissionRecord } from '@clawwork/core';
 /**
  * 桌面端那一层：把「设置里的一个字符串」翻译成 composer 认识的档位。
  *
- * ⚠️ 这一组里**最要紧的是 fail-closed**：设置读不出来 / 值不认识时必须是**安全档**。
- *    搞反了就是"配置坏掉反而放开权限"——本项目栽过"读取期兜底方向反了"的当。
+ * ## 🔴 2026-09-27：这一组的**判据方向反了**
+ *
+ * 原来钉的是 fail-closed ——「设置读不出来 / 值不认识 ⇒ 安全档」。
+ * 默认档反转成 `full` 之后那条原则被推翻（理由见 core 的 `DEFAULT_COMPUTER_ACCESS_TIER`），
+ * 现在钉的是**另一条**：
+ *
+ * ⭐ **用户显式存下的 `'safe'` 必须一直读回 `'safe'`** —— 也就是"开关关得掉"。
+ *    这一条现在**比什么都重要**，因为默认是开的：唯一的关闭途径就是它。
+ *
+ * ⚠️ 为什么值得单独一条：反转时顺手把默认值改掉，`value === 'full' ? 'full' : DEFAULT`
+ *    那一行会变成**永远返回 `full`**（`'safe'` 也落进 DEFAULT）——
+ *    表现是"关了开关，下次开设置又自己开了"。下面第三条用例钉的就是它。
  */
 describe('normalizeComputerAccessTier', () => {
   it("认得 'full'", () => {
     expect(normalizeComputerAccessTier('full')).toBe('full');
   });
 
+  it("⭐ 更认得 'safe' —— 默认开着，所以这是**唯一**的关闭路径，断了就等于关不掉", () => {
+    expect(normalizeComputerAccessTier('safe')).toBe('safe');
+  });
+
   it.each([
-    ['safe', 'safe'],
-    [undefined, 'safe'],
-    [null, 'safe'],
-    ['', 'safe'],
-    ['FULL', 'safe'],
-    ['full ', 'safe'],
-    ['yolo', 'safe'],
-    [1, 'safe'],
-    [{}, 'safe'],
-    [[], 'safe'],
-  ])('认不出的一律当安全档：%p → %p', (input, expected) => {
+    // 从没设置过 ⇒ 产品默认档（2026-09-27 起是 'full'）
+    [undefined, 'full'],
+    [null, 'full'],
+    // 脏值 / 拼错 / 别的版本写的值 ⇒ 同样落默认档
+    // ⚠️ 这几行的**值**与默认档相同，所以它们只钉"没抛异常"，判别力在第三条用例上。
+    ['', 'full'],
+    ['FULL', 'full'],
+    ['full ', 'full'],
+    ['yolo', 'full'],
+    [1, 'full'],
+    [{}, 'full'],
+    [[], 'full'],
+  ])('未设置 / 认不出的落**产品默认档**：%p → %p', (input, expected) => {
     expect(normalizeComputerAccessTier(input)).toBe(expected);
   });
 });
@@ -55,9 +71,13 @@ describe('createComputerAccessDep', () => {
   const dep = (tier: unknown, applied = new Map<string, AppliedPermissionRecord>()) =>
     createComputerAccessDep({ readTier: () => tier, applied });
 
-  it('tier() 走 fail-closed（设置坏掉 ⇒ safe）', () => {
-    expect(dep(undefined).tier()).toBe('safe');
-    expect(dep('nonsense').tier()).toBe('safe');
+  it('⭐ tier()：显式值照办，未设置 / 脏值落**产品默认档**（2026-09-27 已反转成 full）', () => {
+    // ⚠️ 这条以前叫「tier() 走 fail-closed（设置坏掉 ⇒ safe）」——那个方向已被用户拍反，
+    //    别照着旧名字改回去。现在**最要紧的是第二行**：默认开着时，
+    //    "显式存下的 safe" 是**唯一**的关闭路径，它断了就等于开关关不掉。
+    expect(dep('safe').tier(), '显式 safe 必须活下来，否则开关关不掉').toBe('safe');
+    expect(dep(undefined).tier()).toBe('full');
+    expect(dep('nonsense').tier()).toBe('full');
     expect(dep('full').tier()).toBe('full');
   });
 

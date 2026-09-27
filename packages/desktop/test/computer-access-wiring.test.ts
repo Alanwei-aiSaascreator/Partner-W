@@ -77,10 +77,13 @@ describe('platform 里的接线（真文件）', () => {
     expect(permissionPatches()).toEqual([]);
   });
 
-  it('设置缺字段（老配置）⇒ 也一次都不发', async () => {
+  it('⭐ 设置缺字段（老盘升级 / 新装机）⇒ 发 full —— 2026-09-27 起默认就是全权', async () => {
+    // ⚠️ 这条**以前断言的是 `[]`**（默认安全 ⇒ 一个字都不发）。默认反转之后，
+    //    它变成了「老盘升级上来会不会自动开全权」的**唯一判据** —— 答案是**会**，
+    //    而且那是用户明确要的（"我建议默认开启"）。别把它当成 bug 改回去。
     const platform = await mountPlatform(undefined);
     await platform.composer.send(TASK.id, { content: 'hi' });
-    expect(permissionPatches()).toEqual([]);
+    expect(permissionPatches()).toEqual([{ key: TASK.sessionKey, mode: 'full' }]);
   });
 
   it('⭐ 设置是全权 ⇒ 真的发 {permissionMode:"full"} 到这个会话', async () => {

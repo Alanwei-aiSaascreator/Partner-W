@@ -150,14 +150,28 @@ describe('设置页「电脑操控权限」', () => {
   const confirmEl = (c: HTMLElement) => c.querySelector('[data-action="computer-access-confirm"]');
   const ackEl = (c: HTMLElement) => c.querySelector('[data-field="computer-access-ack"]');
 
-  it('缺省是安全档：开关关着', async () => {
+  it('⭐ 缺省是**全权**：开关**开着**（2026-09-27 反转，理由见 core 的 DEFAULT_COMPUTER_ACCESS_TIER）', async () => {
+    // ⚠️ 上一个默认是 `safe`（这条断言当时写的是 'false'）。反转之后新装机打开设置
+    //    看到的就是「已开启」，用户要做的是**关掉**它 —— 所以下面那几条"打开路径"
+    //    的用例一律改成从 `'safe'` 起步，否则它们连同意框都到不了。
     const { container, unmount } = await mountWithSetting(undefined);
-    expect(switchEl(container)?.getAttribute('aria-checked')).toBe('false');
+    expect(switchEl(container)?.getAttribute('aria-checked')).toBe('true');
+    unmount();
+  });
+
+  it('⭐ 默认开着时点开关 = **直接关掉**，不弹同意框（收回权限不该再要一次同意）', async () => {
+    // 默认反转带来的**新**路径，之前不存在：从"开着"往"关"走。
+    const { container, unmount } = await mountWithSetting(undefined);
+    await clickAsync(switchEl(container));
+
+    expect(confirmEl(container), '关掉不该弹同意框').toBeNull();
+    expect(patchSession).toHaveBeenCalledWith('local-runtime', TASK.sessionKey, { permissionMode: 'guarded' });
+    expect(updateSettings).toHaveBeenCalledWith({ computerAccess: 'safe' });
     unmount();
   });
 
   it('判据 2：点开关只弹同意框，**一个写请求都不发**', async () => {
-    const { container, unmount } = await mountWithSetting(undefined);
+    const { container, unmount } = await mountWithSetting('safe');
     await clickAsync(switchEl(container));
 
     expect(confirmEl(container), '同意框该出现').not.toBeNull();
@@ -167,7 +181,7 @@ describe('设置页「电脑操控权限」', () => {
   });
 
   it('判据 2：没勾选 ⇒ 确认按钮 disabled，点了也不发请求', async () => {
-    const { container, unmount } = await mountWithSetting(undefined);
+    const { container, unmount } = await mountWithSetting('safe');
     await clickAsync(switchEl(container));
 
     expect((confirmEl(container) as HTMLButtonElement).disabled).toBe(true);
@@ -178,7 +192,7 @@ describe('设置页「电脑操控权限」', () => {
   });
 
   it('判据 3：勾选 + 确认 ⇒ 真的切当前会话为 full，并把设置落成 full', async () => {
-    const { container, unmount } = await mountWithSetting(undefined);
+    const { container, unmount } = await mountWithSetting('safe');
     // ⚠️ 夹具要**真的**有别的会话记着 full —— 不然"打开时也去收网"那条变异
     //    扫的是一个空集合，看起来毫无差别（它就是靠这个活下来的）。
     computerAccessApplied.set('agent:main:old-a', { mode: 'full', gatewayId: 'local-runtime' });
@@ -206,7 +220,7 @@ describe('设置页「电脑操控权限」', () => {
 
   it('判据 6：切会话失败 ⇒ **设置一个字节都不落**，且如实报错（界面不许显示已开）', async () => {
     patchSession.mockResolvedValue({ ok: false, error: 'gateway refused' });
-    const { container, unmount } = await mountWithSetting(undefined);
+    const { container, unmount } = await mountWithSetting('safe');
     await clickAsync(switchEl(container));
 
     click(ackEl(container));

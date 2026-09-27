@@ -11,7 +11,7 @@ import type {
  * 桌面端那一层：把「设置里那一个字符串」翻译成 composer 认识的档位。
  *
  * 三件事，各占一个小函数（都好单测）：
- *   1. `normalizeComputerAccessTier` —— 字符串 → 档位，**认不出的一律安全档**；
+ *   1. `normalizeComputerAccessTier` —— 字符串 → 档位（**显式值照办，其余落产品默认档**）；
  *   2. `permissionModeForTier`     —— 档位 → 该写下去的会话模式；
  *   3. `createComputerAccessDep`   —— 组装 composer 要的那个可选 dep。
  *
@@ -20,15 +20,29 @@ import type {
  */
 
 /**
- * 只认识 `'full'` 一个字面量，**其它一切**（`undefined` / `null` / `'FULL'` /
- * `'safe'` / 数字 / 对象 / 设置还没加载完）都是**安全档**。
+ * 设置里那个原始值 → 档位。
  *
- * ⚠️ 方向不许反过来。这里是本项目的老坑（"读取期兜底"）：
- *    配置坏掉、字段缺失、IPC 还没回来 —— 这些都必须落到**更窄**的那一档。
- *    兜到 `full` 就成了"配置一坏反而放开整台电脑"。
+ * 规则两句话：
+ *   1. **显式写下的 `'full'` / `'safe'` 一律照办** —— 用户关得掉；
+ *   2. 其余（`undefined` / `null` / 数字 / 对象 / 拼错的字符串）⇒ **产品默认档**。
+ *
+ * 🔴 **2026-09-27 反转**：默认档从 `safe` 改成 `full`（理由见
+ *    `@clawwork/core` 的 `DEFAULT_COMPUTER_ACCESS_TIER`）。
+ *
+ * ⚠️ **这里曾经是这样写的**：`value === 'full' ? 'full' : DEFAULT` —— 在默认是
+ *    `safe` 时它恰好正确，但默认一改成 `full`，那一行就会**永远返回 `full`**：
+ *    用户明确关掉（存下 `'safe'`）下次读又变回开着，**开关根本关不掉**。
+ *    ⇒ 所以改成**逐字面量判断**，而不是"不是 full 就是默认"。
+ *    有测试按名钉住（用例表里那条 `['safe', 'safe']`）。
+ *
+ * ⚠️ 认不出的值是**照默认档**处理（不再 fail-closed 到 `safe`）：默认档本身就是
+ *    `full`，"坏值落到默认"才是一致的行为。这是用户知情的取舍 —— 原文写在这里的
+ *    「配置坏掉必须落到更窄那一档」已被这次反转推翻，别当成 bug 改回去。
  */
 export function normalizeComputerAccessTier(value: unknown): ComputerAccessTier {
-  return value === 'full' ? 'full' : DEFAULT_COMPUTER_ACCESS_TIER;
+  if (value === 'full') return 'full';
+  if (value === 'safe') return 'safe';
+  return DEFAULT_COMPUTER_ACCESS_TIER;
 }
 
 /**
