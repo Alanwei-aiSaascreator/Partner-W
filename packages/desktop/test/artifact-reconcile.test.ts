@@ -239,8 +239,12 @@ describe('artifact reconciliation', () => {
       rows: Array<{ name: string; local_path: string; root: string; source_key: string }>;
     };
 
-    // ① 助手根里新出现的文件被登记了
+    // ① 助手根里新出现的**交付物**被登记了，而助手自己的配置（SOUL.md / IDENTITY.md /
+    //    AGENTS.md / memory/**）**一个都不许进** —— 用户当初选「只要交付物」时点名的就是这批。
+    //    漏掉的后果不是"少一条"，是每个任务的产物面板里永远堆着同一批噪音。
     expect(probe.agentResult.saved.map((artifact) => artifact.name)).toEqual(['deck.pptx']);
+    expect(probe.agentResult.saved.map((artifact) => artifact.name)).not.toContain('SOUL.md');
+    expect(probe.agentResult.saved.map((artifact) => artifact.name)).not.toContain('IDENTITY.md');
     expect(probe.rows).toHaveLength(1);
     expect(probe.rows[0]).toMatchObject({ name: 'deck.pptx', root: 'agent' });
     // ⭐ `local_path` **不带任务前缀** —— 它是相对**助手工作区**的

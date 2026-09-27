@@ -5,13 +5,14 @@ import { getDb, isDbReady } from '../db/index.js';
 import { tasks, messages, artifacts, taskRooms, taskRoomSessions, teams, teamAgents } from '../db/schema.js';
 import { autoExtractArtifacts } from '../artifact/auto-extract.js';
 import { captureTaskArtifactBaseline, reconcileTaskArtifacts, type ArtifactBaseline } from '../artifact/reconcile.js';
+import { resolveAgentWorkspace } from '../artifact/agent-workspace.js';
 import { generateDocumentsFromMessage } from '../docgen/generate.js';
 // ⚠️ 两条线各往这里插了一行，合并时冲突过一次 —— **两个都要**。
 //    删掉任何一个，下面各自那个调用点就变成 TS2304（找不到名字）。
 import { resolvePptxTemplatesRoot } from '../docgen/pptx-template/locate.js';
 import { generateHtmlPagesFromMessage } from '../htmlgen/generate.js';
 import { generateSlidesFromMessage } from '../slidegen/generate.js';
-import type { MessageAttachment } from '@clawwork/shared';
+import { parseAgentIdFromSessionKey, type MessageAttachment } from '@clawwork/shared';
 import { getWorkspacePath } from '../workspace/config.js';
 import { getGatewayClient } from '../ws/index.js';
 
@@ -56,8 +57,26 @@ function parseTeamAgentSkills(raw: string | null): string[] {
   }
 }
 
+/**
+ * 第二个根的基线：**助手自己的工作区**（2026-09-27）。
+ *
+ * 现场：助手用 exec 在它自己的工作区里生成 pptx / html，而产物表从来没有过任何记录
+ * （真机 `.clawwork.db` 实测 `COUNT(*) = 0`）—— 任务产物的扫描根一直是
+ * `<应用工作区>/<taskId>`，与助手工作区是**兄弟目录**。
+ *
+ * ⚠️ **可缺**：解析不到助手工作区（网关没连 / agent 没有显式 workspace /
+ *    它恰好就是应用工作区）时整个为 `null` —— 那时这一趟**不跑**，
+ *    而**不是**回落到应用工作区（回落会把行解析到错误的目录）。
+ */
+interface AgentRootBaseline {
+  workspacePath: string;
+  baseline: ArtifactBaseline;
+}
+
 interface ArtifactRunContext {
   baseline?: Promise<ArtifactBaseline>;
+  /** 见 `AgentRootBaseline`。`null` = 没有第二个根，这趟不跑。 */
+  agentBaseline?: Promise<AgentRootBaseline | null>;
   token: string;
   createdAt: number;
   sequence: number;
@@ -97,7 +116,59 @@ function hasRunningToolCall(toolCalls: unknown[] | undefined): boolean {
   );
 }
 
-export function beginArtifactRun(workspacePath: string, taskId: string, sessionKey: string): string {
+/**
+ * 解析助手工作区并采它的基线；**任何失败都回 `null`，绝不抛**。
+ *
+ * 它跑在发消息那一刻（与应用根基线并发），所以：
+ *   · 网关没连 / RPC 超时 ⇒ `null`（`resolveAgentWorkspace` 自己吞异常并短暂缓存）
+ *   · 助手工作区 == 应用工作区 ⇒ `null`（否则同一个目录会被扫两遍、两批产物撞 `local_path`）
+ *   · 基线采集本身失败 ⇒ `null`（它跑在一轮消息收尾的产物链上，掀翻代价太大）
+ */
+async function captureAgentRootBaseline(input: {
+  gatewayId: string;
+  sessionKey: string;
+  taskId: string;
+}): Promise<AgentRootBaseline | null> {
+  try {
+    const agentId = parseAgentIdFromSessionKey(input.sessionKey);
+    const workspacePath = await resolveAgentWorkspace({
+      gatewayId: input.gatewayId,
+      agentId,
+      listAgentFiles: (gatewayId, agent) => {
+        const client = getGatewayClient(gatewayId);
+        // 抛出去由 `resolveAgentWorkspace` 吞掉并回 null —— 那是它写明的契约。
+        if (!client) return Promise.reject(new Error('gateway client unavailable'));
+        return client.listAgentFiles(agent);
+      },
+    });
+    if (!workspacePath) return null;
+    if (workspacePath === getWorkspacePath()) return null;
+    const baseline = await captureTaskArtifactBaseline({
+      workspacePath,
+      taskId: input.taskId,
+      rootKind: 'agent',
+    });
+    return { workspacePath, baseline };
+  } catch (error) {
+    console.error('[artifact_agent_baseline_failed]', { taskId: input.taskId, error });
+    return null;
+  }
+}
+
+/**
+ * 起一次产物运行。
+ *
+ * @param opts.gatewayId 网关 id。**只有它才能解析出助手的工作区**（第二个根）。
+ *   ⚠️ 省略 ⇒ 第二个根**整个不跑**（不是回落到应用工作区）—— 与"读不到助手工作区"
+ *   是同一条处置。生产路径（`beginArtifactRunForGatewayDispatch`）**总是**传它；
+ *   省略只出现在测试里。
+ */
+export function beginArtifactRun(
+  workspacePath: string,
+  taskId: string,
+  sessionKey: string,
+  opts?: { gatewayId?: string },
+): string {
   pruneArtifactRuns();
   pruneCompletedAssistantMessages();
   const token = randomUUID();
@@ -109,6 +180,10 @@ export function beginArtifactRun(workspacePath: string, taskId: string, sessionK
   // arrive (cancel/disconnect), and an unobserved baseline rejection must not
   // become an unhandled process rejection.
   void baseline.catch(() => undefined);
+  // 第二个根（助手自己的工作区）：同样在这一刻起跑 —— 它要抓的是"这一轮**开始之前**"的快照。
+  const gatewayId = opts?.gatewayId;
+  const agentBaseline = gatewayId ? captureAgentRootBaseline({ gatewayId, sessionKey, taskId }) : Promise.resolve(null);
+  void agentBaseline.catch(() => undefined);
   const key = artifactRunKey(taskId, sessionKey);
   if (desynchronizedArtifactSessions.has(key)) return token;
   while (artifactRunCount() >= MAX_ARTIFACT_RUNS) desynchronizeOldestArtifactSession();
@@ -118,6 +193,7 @@ export function beginArtifactRun(workspacePath: string, taskId: string, sessionK
   const queue = artifactRuns.get(key) ?? [];
   queue.push({
     baseline,
+    agentBaseline,
     token,
     createdAt: Date.now(),
     sequence: nextArtifactRunSequence++,
@@ -293,7 +369,9 @@ export function beginArtifactRunForGatewayDispatch(input: {
     .get();
   const workspacePath = getWorkspacePath();
   if (!task || !workspacePath) return null;
-  return beginArtifactRun(workspacePath, input.taskId, input.sessionKey);
+  return beginArtifactRun(workspacePath, input.taskId, input.sessionKey, {
+    gatewayId: input.gatewayId,
+  });
 }
 
 function finalizeAssistantArtifacts(input: {
@@ -414,21 +492,56 @@ function finalizeAssistantArtifacts(input: {
     } catch (error) {
       console.error('[slidegen]', error);
     }
+    // ⚠️ 外层这一 try **只为了那个 finally**：清理（解除认领 + 标完成）必须把
+    //    下面**两条** reconcile 都罩住。上一版把 finally 挂在了第二条上，于是
+    //    第一条里那个 `return`（取消 / 没有基线）会**跳过清理**，认领项要等 TTL 才回收。
+    //    缩进由 prettier 规整 —— 这里先保证括号配平。
     try {
-      if (isArtifactRunCanceled(run) || !run.baseline) return;
-      const baseline = await run.baseline;
-      if (isArtifactRunCanceled(run)) return;
-      const result = await reconcileTaskArtifacts({
-        workspacePath: input.workspacePath,
-        taskId: input.taskId,
-        messageId: input.messageId,
-        baseline,
-      });
-      for (const artifact of result.saved) {
-        for (const win of BrowserWindow.getAllWindows()) win.webContents.send('artifact:saved', artifact);
+      try {
+        if (isArtifactRunCanceled(run) || !run.baseline) return;
+        const baseline = await run.baseline;
+        if (isArtifactRunCanceled(run)) return;
+        const result = await reconcileTaskArtifacts({
+          workspacePath: input.workspacePath,
+          taskId: input.taskId,
+          messageId: input.messageId,
+          baseline,
+        });
+        for (const artifact of result.saved) {
+          for (const win of BrowserWindow.getAllWindows()) win.webContents.send('artifact:saved', artifact);
+        }
+      } catch (error) {
+        console.error('[artifact_reconcile_failed]', { taskId: input.taskId, messageId: input.messageId, error });
       }
-    } catch (error) {
-      console.error('[artifact_reconcile_failed]', { taskId: input.taskId, messageId: input.messageId, error });
+      // ⭐ 第二个根：**助手自己的工作区**（2026-09-27）。
+      //
+      // 现场：助手用 exec 在它自己的工作区里生成 pptx / html，产物面板却是空的 ——
+      // 真机 `.clawwork.db` 实测 `SELECT COUNT(*) FROM artifacts` = **0**。
+      // 上面那条 reconcile 扫的是 `<应用工作区>/<taskId>`，与助手工作区是**兄弟目录**。
+      //
+      // ⚠️ 与上面那条**完全独立**：各自的基线、各自的前缀、各自的行、各自的 try
+      //    —— 任一条坏了都不影响另一条，也不影响再上面的 auto-extract / docgen / htmlgen / slidegen。
+      try {
+        if (isArtifactRunCanceled(run) || !run.agentBaseline) return;
+        const agentRoot = await run.agentBaseline;
+        if (isArtifactRunCanceled(run) || !agentRoot) return;
+        const agentResult = await reconcileTaskArtifacts({
+          workspacePath: agentRoot.workspacePath,
+          taskId: input.taskId,
+          messageId: input.messageId,
+          baseline: agentRoot.baseline,
+          rootKind: 'agent',
+        });
+        for (const artifact of agentResult.saved) {
+          for (const win of BrowserWindow.getAllWindows()) win.webContents.send('artifact:saved', artifact);
+        }
+      } catch (error) {
+        console.error('[artifact_agent_reconcile_failed]', {
+          taskId: input.taskId,
+          messageId: input.messageId,
+          error,
+        });
+      }
     } finally {
       claimedArtifactRuns.delete(run.token);
       completedAssistantMessages.set(messageKey, {

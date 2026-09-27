@@ -942,4 +942,107 @@ describe('assistant artifact reconciliation boundary', () => {
     await flushJobs();
     expect(reconcileTaskArtifactsMock).not.toHaveBeenCalled();
   });
+
+  /**
+   * ⭐ **第二个根**接上了没有（2026-09-27）。
+   *
+   * 现场：助手用 exec 在它自己的工作区里生成 pptx / html，产物面板却是空的 ——
+   * 真机 `.clawwork.db` 实测 `SELECT COUNT(*) FROM artifacts` = **0**。
+   *
+   * ⚠️ 这两条**必须**走真实的 `resolveAgentWorkspace`（只把网关客户端换成桩），
+   *    否则验的是"我们 mock 得对"，而不是"接线真的接上了"。
+   */
+  it('⭐ 助手工作区解析得出来 ⇒ 第二条 reconcile 会跑，且带 rootKind:agent', async () => {
+    const { getGatewayClient } = await import('../src/main/ws/index.js');
+    vi.mocked(getGatewayClient).mockReturnValue({
+      listAgentFiles: async () => ({ agentId: 'main', workspace: 'C:\\agent-ws', files: [] }),
+    } as never);
+
+    const { beginArtifactRunForGatewayDispatch, registerDataHandlers } =
+      await import('../src/main/ipc/data-handlers.js');
+    registerDataHandlers();
+    const createMessage = handleMap.get('data:create-message')!;
+    const sessionKey = 'agent:main:clawwork:task-1';
+
+    selectGetMock.mockReturnValueOnce({ id: 'task-1' });
+    beginArtifactRunForGatewayDispatch({ gatewayId: 'gateway-1', sessionKey, taskId: 'task-1' });
+    await flushJobs(); // 让第二条基线跑完
+
+    selectGetMock.mockReturnValueOnce({ id: 'assistant-persisted' }).mockReturnValueOnce({ gid: 'gateway-1' });
+    createMessage(
+      {},
+      {
+        id: 'assistant-incoming',
+        taskId: 'task-1',
+        role: 'assistant',
+        content: '完成',
+        timestamp: '2026-09-16T00:00:02.000Z',
+        sessionKey,
+        toolCalls: [{ id: 'tool-1', status: 'done' }],
+      },
+    );
+    await flushJobs();
+
+    const agentCall = reconcileTaskArtifactsMock.mock.calls.find(
+      (call) => (call[0] as { rootKind?: string }).rootKind === 'agent',
+    );
+    expect(agentCall, '第二条 reconcile 没跑 —— 第二个根没接上').toBeTruthy();
+    expect(agentCall?.[0]).toMatchObject({ workspacePath: 'C:\\agent-ws', rootKind: 'agent' });
+    // 应用根那条照旧跑：两条**各跑各的**，不是二选一。
+    expect(
+      reconcileTaskArtifactsMock.mock.calls.some((call) => (call[0] as { rootKind?: string }).rootKind === undefined),
+    ).toBe(true);
+  });
+
+  it('⭐ 助手根登记出来的产物会**推送**给界面（不推的话面板还是空的）', async () => {
+    const { getGatewayClient } = await import('../src/main/ws/index.js');
+    vi.mocked(getGatewayClient).mockReturnValue({
+      listAgentFiles: async () => ({ agentId: 'main', workspace: 'C:\\agent-ws', files: [] }),
+    } as never);
+    // ⚠️ **只给 agent 那条**返回产物。用一个对所有调用都返回同样结果的 mock，
+    //    这条用例会被**第一条** reconcile 推的那一份满足 —— 于是"拆掉第二条 reconcile"
+    //    它照样绿（这正是变异验证第一次跑出来的结果：假绿）。
+    reconcileTaskArtifactsMock.mockImplementation(async (input: { rootKind?: string }) =>
+      input.rootKind === 'agent'
+        ? {
+            saved: [{ id: 'agent-artifact', name: 'deck.pptx', root: 'agent', localPath: 'deck.pptx' }],
+            existing: [],
+            updated: [],
+            missing: [],
+            skipped: [],
+            budgetExhausted: false,
+          }
+        : { saved: [], existing: [], updated: [], missing: [], skipped: [], budgetExhausted: false },
+    );
+
+    const { beginArtifactRunForGatewayDispatch, registerDataHandlers } =
+      await import('../src/main/ipc/data-handlers.js');
+    registerDataHandlers();
+    const createMessage = handleMap.get('data:create-message')!;
+    const sessionKey = 'agent:main:clawwork:task-1';
+
+    selectGetMock.mockReturnValueOnce({ id: 'task-1' });
+    beginArtifactRunForGatewayDispatch({ gatewayId: 'gateway-1', sessionKey, taskId: 'task-1' });
+    await flushJobs();
+
+    selectGetMock.mockReturnValueOnce({ id: 'assistant-persisted' }).mockReturnValueOnce({ gid: 'gateway-1' });
+    createMessage(
+      {},
+      {
+        id: 'assistant-incoming',
+        taskId: 'task-1',
+        role: 'assistant',
+        content: '完成',
+        timestamp: '2026-09-16T00:00:02.000Z',
+        sessionKey,
+        toolCalls: [{ id: 'tool-1', status: 'done' }],
+      },
+    );
+    await flushJobs();
+
+    expect(webContentsSendMock).toHaveBeenCalledWith(
+      'artifact:saved',
+      expect.objectContaining({ id: 'agent-artifact', root: 'agent' }),
+    );
+  });
 });

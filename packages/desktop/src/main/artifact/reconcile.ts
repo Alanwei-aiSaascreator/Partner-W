@@ -213,7 +213,34 @@ interface ReconcileScope {
   /** 落库 `local_path` 的前缀。应用根是 `<taskId>/`（既有约定，不改）；助手根是空串。 */
   localPrefix: string;
   sourcePrefix: string;
+  /**
+   * **根目录那一层**要跳过的名字（小写）。
+   *
+   * 只在这一层排除：助手工作区根下的 `SOUL.md` / `IDENTITY.md` / `memory/` 是
+   * **助手自己的东西**，不是产物。把它们登记进去，每个任务面板里会永远躺着几十条噪音。
+   * （更深层的同名文件是助手生成的，归 `excludedName` 与 MIME 表管。）
+   */
+  topLevelExclude: ReadonlySet<string>;
 }
+
+/**
+ * 助手工作区**根目录**下属于"助手自己"的名字 —— 不是产物。
+ *
+ * ⚠️ 这是用户当初选「只要交付物」时点名排除的那一批
+ *    （原话的选项写着「不进：SOUL.md / IDENTITY.md（助手自己的配置）」）。
+ *    漏掉的后果不是"少一条"，是**每个任务的产物面板里都堆满同一批配置噪音**。
+ */
+const AGENT_WORKSPACE_RESERVED: ReadonlySet<string> = new Set([
+  'soul.md',
+  'identity.md',
+  'agents.md',
+  'user.md',
+  'dreams.md',
+  'memory.md',
+  'memory',
+  'skills',
+  'inbox',
+]);
 
 function scopeFor(input: { workspacePath: string; taskId: string; rootKind?: ArtifactRootKind }): ReconcileScope {
   if (input.rootKind === 'agent') {
@@ -222,6 +249,8 @@ function scopeFor(input: { workspacePath: string; taskId: string; rootKind?: Art
       rootKind: 'agent',
       localPrefix: '',
       sourcePrefix: AGENT_SOURCE_PREFIX,
+      // ⭐ 助手工作区根下有助手自己的配置 —— 那些不是产物（见 `AGENT_WORKSPACE_RESERVED`）。
+      topLevelExclude: AGENT_WORKSPACE_RESERVED,
     };
   }
   return {
@@ -229,8 +258,12 @@ function scopeFor(input: { workspacePath: string; taskId: string; rootKind?: Art
     rootKind: 'workspace',
     localPrefix: `${input.taskId}/`,
     sourcePrefix: WORKSPACE_SOURCE_PREFIX,
+    // 应用根的"任务目录"里**没有**助手配置，保持原样（一个名字都不多排除）。
+    topLevelExclude: EMPTY_EXCLUDE,
   };
 }
+
+const EMPTY_EXCLUDE: ReadonlySet<string> = new Set();
 
 function verifyTrustedRoot(root: TrustedTaskRoot): void {
   try {
@@ -332,6 +365,8 @@ function collectPaths(
   root: TrustedTaskRoot,
   budgets: ArtifactScanBudgets,
   baseline?: ArtifactBaseline,
+  /** 根目录那一层要跳过的名字（小写）；见 `ReconcileScope.topLevelExclude`。 */
+  topLevelExclude: ReadonlySet<string> = new Set(),
 ): {
   candidates: Candidate[];
   skipped: string[];
@@ -354,7 +389,11 @@ function collectPaths(
       visited += 1;
       const absolutePath = join(current.path, entry.name);
       const relativePath = normalizedRelativePath(root.realTask, absolutePath);
-      if ((current.depth === 0 && entry.name.toLowerCase() === 'inbox') || excludedName(entry.name)) {
+      const lowerName = entry.name.toLowerCase();
+      if (
+        (current.depth === 0 && (lowerName === 'inbox' || topLevelExclude.has(lowerName))) ||
+        excludedName(entry.name)
+      ) {
         skipped.push(relativePath);
         continue;
       }
@@ -458,7 +497,7 @@ export async function captureTaskArtifactBaseline(
     maxTotalBytes: Number.MAX_SAFE_INTEGER,
     ...hooks.budgets,
   };
-  const { candidates, budgetExhausted } = collectPaths(root, budgets);
+  const { candidates, budgetExhausted } = collectPaths(root, budgets, undefined, scope.topLevelExclude);
   verifyTrustedRoot(root);
   const baseline = Object.fromEntries(
     candidates.map((candidate) => [candidate.relativePath, signature(candidate.stats)]),
@@ -589,7 +628,7 @@ export async function reconcileTaskArtifacts(
     verifyTrustedRoot(root);
     return { saved, existing, updated, missing, skipped: [], budgetExhausted: true };
   }
-  const discovered = collectPaths(root, budgets, input.baseline);
+  const discovered = collectPaths(root, budgets, input.baseline, scope.topLevelExclude);
   // Open and verify candidates in parallel so the stability window is paid
   // once per reconciliation, not once per output file. The result budget caps
   // the number of simultaneously open read-only handles.

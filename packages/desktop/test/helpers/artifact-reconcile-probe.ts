@@ -275,6 +275,13 @@ async function main(): Promise<Record<string, unknown>> {
     const createdTaskDirInsideAgentWs = existsSync(join(agentWorkspace, 'task-1'));
 
     writeFileSync(join(agentWorkspace, 'deck.pptx'), 'PPTX');
+    // 助手**自己的配置**：不是产物（用户当初选「只要交付物」时点名排除的那批）。
+    // 漏掉的后果不是"少一条"，是每个任务的产物面板里永远堆着同一批噪音。
+    writeFileSync(join(agentWorkspace, 'SOUL.md'), '# SOUL');
+    writeFileSync(join(agentWorkspace, 'IDENTITY.md'), '# IDENTITY');
+    writeFileSync(join(agentWorkspace, 'AGENTS.md'), '# AGENTS');
+    mkdirSync(join(agentWorkspace, 'memory'), { recursive: true });
+    writeFileSync(join(agentWorkspace, 'memory', '2026-09-27.md'), 'a note');
     const agentResult = await reconcileTaskArtifacts({
       workspacePath: agentWorkspace,
       taskId: 'task-1',
