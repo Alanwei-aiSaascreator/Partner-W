@@ -2,7 +2,12 @@ import { link, mkdtemp, mkdir, readFile, readdir, rename, symlink, writeFile } f
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { __testing, copyArtifactToDestination, inspectArtifactFile } from '../src/main/artifact/access.js';
+import {
+  __testing,
+  copyArtifactToDestination,
+  inspectArtifactFile,
+  rootDirFor,
+} from '../src/main/artifact/access.js';
 
 const roots: string[] = [];
 
@@ -231,5 +236,92 @@ describe('artifact file access', () => {
         },
       }),
     ).rejects.toThrow('artifact changed while reading');
+  });
+});
+
+/**
+ * 第二个受信根：**助手自己的工作区**（2026-09-27）。
+ *
+ * ## 现场
+ *
+ * 用户让助手做 PPT / HTML，文件**确实生成了**，但产物面板是空的。
+ * 真机取证：`.clawwork.db` 里 `SELECT COUNT(*) FROM artifacts` = **0** ——
+ * 产物表**从来没有过任何记录**，所以这不是"偶尔漏了"，是结构性的。
+ *
+ * 原因是原先只有**单一根**：所有 `localPath` 都当作相对**应用工作区**
+ * （`<appWorkspace>/<taskId>/…`，见 `db/index.ts:91` 与 `workspace/init.ts`）。
+ * 而助手把文件写在**它自己的工作区**（网关 `agents.entries.<id>.workspace`；
+ * `main` = `<state>/workspace`，预置助手 = `<appWorkspace>/rongying-agents/<id>`）——
+ * 那是任务目录的**兄弟**，永不重叠。
+ *
+ * ## ⚠️ 这一组真正要钉的**不是**"第二个根能用"
+ *
+ * 而是 **"多一个根没有把校验放松"**：下面每一条越界用例在单根时代就该红，
+ * 现在**仍然**必须红。第二个根只是多了一个**允许的目录**，五道校验一条不减。
+ */
+describe('第二个受信根（助手工作区）', () => {
+  /** 造一个"父目录 + agent 工作区"，用来验 `..` 越界。 */
+  async function agentWorkspace(): Promise<{ root: string; parent: string }> {
+    const parent = await mkdtemp(join(tmpdir(), 'mofang-agent-parent-'));
+    roots.push(parent);
+    const root = join(parent, 'agent-ws');
+    await mkdir(root, { recursive: true });
+    return { root, parent };
+  }
+
+  it('rootDirFor：缺省与未知都落回应用工作区（= 加这一列之前的行为）', () => {
+    const both = { workspacePath: '/ws', agentWorkspacePath: '/agent' };
+    expect(rootDirFor(both, undefined)).toBe('/ws');
+    expect(rootDirFor(both, 'workspace')).toBe('/ws');
+  });
+
+  it('rootDirFor：agent 根读得到就用它', () => {
+    expect(rootDirFor({ workspacePath: '/ws', agentWorkspacePath: '/agent' }, 'agent')).toBe('/agent');
+  });
+
+  it('⭐ rootDirFor：agent 根**读不到**时回 null，**绝不回落**到应用工作区', () => {
+    // 回落会把 root:'agent' 的行解析到**别的目录**，而出错的方向恰好是
+    // "把别的目录的文件当成这个任务的产物" ⇒ 宁可什么都不显示。
+    expect(rootDirFor({ workspacePath: '/ws', agentWorkspacePath: null }, 'agent')).toBeNull();
+  });
+
+  it('⭐ 助手工作区里的文件能被正常解析 —— 这就是那个新根存在的理由', async () => {
+    const { root } = await agentWorkspace();
+    await mkdir(join(root, 'rongying-agents'), { recursive: true });
+    await writeFile(join(root, 'rongying-agents', 'deck.pptx'), 'PPTX');
+
+    expect(await inspectArtifactFile(root, 'rongying-agents/deck.pptx')).toMatchObject({
+      availability: 'available',
+    });
+  });
+
+  it('越界仍然被拒：`..` 爬到根外', async () => {
+    const { root, parent } = await agentWorkspace();
+    await writeFile(join(parent, 'sibling-secret.txt'), 'SECRET');
+
+    expect((await inspectArtifactFile(root, '../sibling-secret.txt')).availability).toBe('unsafe');
+  });
+
+  it('越界仍然被拒：**绝对路径**', async () => {
+    const { root } = await agentWorkspace();
+    await writeFile(join(root, 'x.pptx'), 'X');
+
+    expect((await inspectArtifactFile(root, join(root, 'x.pptx'))).availability).toBe('unsafe');
+  });
+
+  it('目录不算产物', async () => {
+    const { root } = await agentWorkspace();
+    await mkdir(join(root, 'sub'), { recursive: true });
+
+    expect((await inspectArtifactFile(root, 'sub')).availability).toBe('unsafe');
+  });
+
+  // ⚠️ Windows 上建符号链接要权限 ⇒ 与文件里既有的那条同款跳过（那边也是这么处理的）。
+  it.runIf(process.platform !== 'win32')('⭐ 符号链接仍然被拒：指向根外也不行', async () => {
+    const { root, parent } = await agentWorkspace();
+    await writeFile(join(parent, 'outside.txt'), 'SECRET');
+    await symlink(join(parent, 'outside.txt'), join(root, 'link.txt'));
+
+    expect((await inspectArtifactFile(root, 'link.txt')).availability).toBe('unsafe');
   });
 });

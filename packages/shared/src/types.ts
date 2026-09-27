@@ -259,6 +259,18 @@ export interface Message {
   model?: string;
 }
 
+/**
+ * `localPath` 相对哪个根解析。
+ *
+ * - `'workspace'` —— 应用工作区（`<appWorkspace>/<taskId>/…`）。**老行为，也是默认值。**
+ * - `'agent'` —— 该任务所属**助手自己的工作区**（网关 `agents.entries.<id>.workspace`）。
+ *   助手直接在它工作区里生成的文件走这一支，见 `main/artifact/access.ts` 的说明。
+ *
+ * ⚠️ 可选字段（`undefined` 一律按 `'workspace'` 处理）：这样老行、老 IPC 载荷、
+ *    以及所有既有调用点都不用改，语义与加这一列之前**逐字相同**。
+ */
+export type ArtifactRootKind = 'workspace' | 'agent';
+
 export interface Artifact {
   id: string;
   taskId: string;
@@ -267,6 +279,8 @@ export interface Artifact {
   name: string;
   filePath: string;
   localPath: string;
+  /** 见 `ArtifactRootKind`。缺省 = `'workspace'`。 */
+  root?: ArtifactRootKind;
   mimeType: string;
   size: number;
   sourceKey?: string;

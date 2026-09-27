@@ -83,6 +83,7 @@ CREATE TABLE IF NOT EXISTS artifacts (
   size INTEGER NOT NULL DEFAULT 0,
   source_key TEXT NOT NULL DEFAULT '',
   content_text TEXT NOT NULL DEFAULT '',
+  root TEXT NOT NULL DEFAULT 'workspace',
   created_at TEXT NOT NULL
 );
 `;
@@ -194,6 +195,16 @@ function openAndMigrate(dbPath: string): void {
 
   migrateAddColumn(sqlite, "ALTER TABLE artifacts ADD COLUMN content_text TEXT NOT NULL DEFAULT ''");
   migrateAddColumn(sqlite, "ALTER TABLE artifacts ADD COLUMN source_key TEXT NOT NULL DEFAULT ''");
+  // ⭐ 产物的**受信根**（2026-09-27）。原来是隐含的：所有 `local_path` 都被当作
+  //    相对**应用工作区**（`<appWorkspace>/<taskId>/…`）。
+  //
+  //    加这一列是因为助手把文件写在**它自己的工作区**里（网关的
+  //    `agents.entries.<id>.workspace`），那与 `<appWorkspace>/<taskId>` 是**兄弟目录**
+  //    —— 于是通道外生成的文件从来没进过产物表（真机实测 `COUNT(*)` = 0）。
+  //
+  //    ⚠️ 默认值 `'workspace'` 就是老行为：既有行、以及所有走 `saveArtifact*` /
+  //       `reconcile` 的既有路径**一个字节都不变**。新值 `'agent'` 只由新那条扫描链写。
+  migrateAddColumn(sqlite, "ALTER TABLE artifacts ADD COLUMN root TEXT NOT NULL DEFAULT 'workspace'");
 
   // Legacy releases could persist the same task-relative output more than once.
   // Prefer a row with usable generated-file metadata, then the newest row, before

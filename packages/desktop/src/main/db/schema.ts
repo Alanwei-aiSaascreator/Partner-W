@@ -127,6 +127,13 @@ export const artifacts = sqliteTable(
     size: integer('size').notNull().default(0),
     sourceKey: text('source_key').notNull().default(''),
     contentText: text('content_text').notNull().default(''),
+    /**
+     * `localPath` 相对**哪个根**解析。见 `db/index.ts` 里那条迁移的说明。
+     *
+     * - `'workspace'`（默认，= 老行为）：应用工作区，`<appWorkspace>/<taskId>/…`
+     * - `'agent'`：该任务所属**助手的工作区**（网关 `agents.entries.<id>.workspace`）
+     */
+    root: text('root').notNull().default('workspace'),
     createdAt: text('created_at').notNull(),
   },
   (table) => [uniqueIndex('artifacts_task_local_path').on(table.taskId, table.localPath)],

@@ -3,12 +3,57 @@ import { constants } from 'node:fs';
 import { lstat, open, realpath, rename, stat, unlink, type FileHandle } from 'node:fs/promises';
 import type { BigIntStats } from 'node:fs';
 import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
-import type { ArtifactAvailability } from '@clawwork/shared';
+import type { ArtifactAvailability, ArtifactRootKind } from '@clawwork/shared';
 import { ArtifactTooLargeError } from './too-large.js';
 
 export interface ArtifactFileInspection {
   availability: ArtifactAvailability;
   absolutePath?: string;
+}
+
+/**
+ * 一个任务能用到的那几个**受信根**。
+ *
+ * ## 为什么会有第二个根（2026-09-27 真机取证）
+ *
+ * 产物原先是单一根的：所有 `localPath` 都当作相对**应用工作区**
+ * （`<appWorkspace>/<taskId>/…`）。但助手把文件写在**它自己的工作区**里
+ * （网关的 `agents.entries.<id>.workspace`：`main` = `<state>/workspace`，
+ * 预置助手 = `<appWorkspace>/rongying-agents/<id>`）—— 那与 `<appWorkspace>/<taskId>`
+ * 是**兄弟目录**，永不重叠。
+ *
+ * 结果：助手用 exec 直接生成的文件**从来没有进过产物表**
+ * （真机 `.clawwork.db` 实测 `SELECT COUNT(*) FROM artifacts` = **0**，
+ * 用户看到的就是"文件在那儿、产物面板空的"）。
+ *
+ * ⚠️ 把助手工作区认作受信根，**不是**"放开绝对路径"：下面 `openVerifiedArtifactFile`
+ *    的五道校验**一条不减**（必须相对、realpath 归一后落在根内、拒符号链接、
+ *    dev/ino 强身份、`O_NOFOLLOW` 打开）。变的只是**允许的根**从一个变成两个 ——
+ *    而第二个根本来就是**我们自己建的目录**（网关建的，或
+ *    `preset-agent-installer.ts:144` 建的）。
+ */
+export interface ArtifactRoots {
+  /** 应用工作区。任务目录与库都在它下面（`db/index.ts:91`）。 */
+  workspacePath: string;
+  /**
+   * 该任务所属**助手的工作区**。
+   *
+   * ⚠️ `null` = **读不到**（网关没连 / RPC 失败 / agent 没有显式 workspace）
+   *    ⇒ 调用方必须当作"**没有这个根**"：不扫、不预览、不打开。
+   *    **绝不回落到 `workspacePath`** —— 那会把 `root:'agent'` 的行解析到错误目录，
+   *    而出错的方向恰好是"把别的目录的文件当成这个任务的产物"。
+   */
+  agentWorkspacePath: string | null;
+}
+
+/**
+ * 某个根的实际目录；`'agent'` 且读不到时回 `null`。
+ *
+ * ⚠️ 缺省（`undefined`）= `'workspace'`：老行、老 IPC 载荷不改，语义与加这一列之前**逐字相同**。
+ */
+export function rootDirFor(roots: ArtifactRoots, kind: ArtifactRootKind | undefined): string | null {
+  if (kind === 'agent') return roots.agentWorkspacePath;
+  return roots.workspacePath;
 }
 
 interface ArtifactAccessHooks {
