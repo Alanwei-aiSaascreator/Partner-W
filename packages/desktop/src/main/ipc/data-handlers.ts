@@ -15,6 +15,7 @@ import { generateSlidesFromMessage } from '../slidegen/generate.js';
 import { parseAgentIdFromSessionKey, type MessageAttachment } from '@clawwork/shared';
 import { getWorkspacePath } from '../workspace/config.js';
 import { getGatewayClient } from '../ws/index.js';
+import { getDebugLogger } from '../debug/index.js';
 
 function ipcError(err: unknown): { ok: false; error: string } {
   return { ok: false, error: err instanceof Error ? err.message : 'unknown' };
@@ -141,8 +142,30 @@ async function captureAgentRootBaseline(input: {
         return client.listAgentFiles(agent);
       },
     });
-    if (!workspacePath) return null;
-    if (workspacePath === getWorkspacePath()) return null;
+    if (!workspacePath) {
+      // ⚠️ 这条**必须留痕**：第二个根是"产物面板为不为空"的**唯一变量**，而它失败的表现
+      //    与"这个功能根本没做"**一模一样**（面板就是空的、不报错、不留任何痕）。
+      //    这正是本项目反复栽的那类静默形态（`item.status` / `lifecycle` 都栽过）。
+      //    ⚠️ 走 debug 级不是 warn：网关没连上时每条消息都会来一次，warn 会刷屏。
+      getDebugLogger().debug({
+        domain: 'artifact',
+        event: 'artifact.agent-workspace.unavailable',
+        gatewayId: input.gatewayId,
+        data: { agentId, taskId: input.taskId },
+      });
+      return null;
+    }
+    if (workspacePath === getWorkspacePath()) {
+      // 助手工作区恰好就是应用工作区 ⇒ **故意**不跑第二趟（同一个目录会被扫两遍、
+      // 两批产物还会撞 `local_path`）。这条也留痕，免得看起来像"没生效"。
+      getDebugLogger().debug({
+        domain: 'artifact',
+        event: 'artifact.agent-workspace.same-as-workspace',
+        gatewayId: input.gatewayId,
+        data: { agentId, taskId: input.taskId },
+      });
+      return null;
+    }
     const baseline = await captureTaskArtifactBaseline({
       workspacePath,
       taskId: input.taskId,
@@ -531,6 +554,19 @@ function finalizeAssistantArtifacts(input: {
           messageId: input.messageId,
           baseline: agentRoot.baseline,
           rootKind: 'agent',
+        });
+        // ⭐ **正面证据**：真机排障时唯一能回答"这个功能跑没跑、找到了几条"的一行。
+        //    没有它，用户说"产物还是空的"时只能猜：是没扫到？根没接上？还是真没文件？
+        getDebugLogger().info({
+          domain: 'artifact',
+          event: 'artifact.agent-reconcile.done',
+          taskId: input.taskId,
+          data: {
+            workspacePath: agentRoot.workspacePath,
+            saved: agentResult.saved.length,
+            existing: agentResult.existing.length,
+            skipped: agentResult.skipped.length,
+          },
         });
         for (const artifact of agentResult.saved) {
           for (const win of BrowserWindow.getAllWindows()) win.webContents.send('artifact:saved', artifact);
