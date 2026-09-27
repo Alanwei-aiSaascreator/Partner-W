@@ -34,7 +34,11 @@ function request(template: HtmlgenTemplate, overrides: Record<string, unknown> =
     summary: '本月最重要的结论。',
     sections: [
       { kind: 'narrative' as const, heading: '核心判断', paragraphs: ['增长来自复购。'], bullets: ['老客贡献七成'] },
-      { kind: 'metrics' as const, heading: '关键指标', items: [{ label: '转化率', value: '12.4%', detail: '较上月 +1.8pp' }] },
+      {
+        kind: 'metrics' as const,
+        heading: '关键指标',
+        items: [{ label: '转化率', value: '12.4%', detail: '较上月 +1.8pp' }],
+      },
       {
         kind: 'table' as const,
         heading: '渠道表现',
@@ -42,7 +46,11 @@ function request(template: HtmlgenTemplate, overrides: Record<string, unknown> =
         columns: ['渠道', '线索', '成交'],
         rows: [['私域', '120', '18']],
       },
-      { kind: 'actions' as const, heading: '下一步', items: [{ title: '本周动作', detail: '把复购券发出去', owner: '待定', due: '本周五' }] },
+      {
+        kind: 'actions' as const,
+        heading: '下一步',
+        items: [{ title: '本周动作', detail: '把复购券发出去', owner: '待定', due: '本周五' }],
+      },
     ],
     sources: [{ label: '内部经营数据', note: '统计口径截至 2026-09-27' }],
     ...overrides,
@@ -172,10 +180,22 @@ describe('htmlgen 渲染：不含脚本、不引外部资源', () => {
         title: '<img src=x onerror=alert(1)>',
         summary: '<b>加粗</b>',
         sections: [
-          { kind: 'narrative', heading: '<script>alert(1)</script>', paragraphs: ['a & b'], bullets: ['<div>块</div>'] },
-          { kind: 'metrics', heading: 'x', items: [{ label: '<i>斜</i>', value: '<u>下划线</u>', detail: '<p>段</p>' }] },
+          {
+            kind: 'narrative',
+            heading: '<script>alert(1)</script>',
+            paragraphs: ['a & b'],
+            bullets: ['<div>块</div>'],
+          },
+          {
+            kind: 'metrics',
+            heading: 'x',
+            items: [{ label: '<i>斜</i>', value: '<u>下划线</u>', detail: '<p>段</p>' }],
+          },
           { kind: 'table', caption: '<caption>', columns: ['<th>'], rows: [['<td>']] },
-          { kind: 'actions', items: [{ title: '<a href="#">链接</a>', detail: '<hr>', owner: '<b>我</b>', due: '<i>周五</i>' }] },
+          {
+            kind: 'actions',
+            items: [{ title: '<a href="#">链接</a>', detail: '<hr>', owner: '<b>我</b>', due: '<i>周五</i>' }],
+          },
         ],
         sources: [{ label: '<script>src</script>', note: '<em>口径</em>' }],
       }),
@@ -289,7 +309,17 @@ describe('htmlgen 渲染：结构', () => {
   it('表格有表头、每个单元格一个 `<td>`、列数对齐', () => {
     const html = buildHtmlgenHtml(
       request('brief', {
-        sections: [{ kind: 'table', caption: '两个渠道', columns: ['甲', '乙'], rows: [['1', '2'], ['3', '4']] }],
+        sections: [
+          {
+            kind: 'table',
+            caption: '两个渠道',
+            columns: ['甲', '乙'],
+            rows: [
+              ['1', '2'],
+              ['3', '4'],
+            ],
+          },
+        ],
       }),
     );
 

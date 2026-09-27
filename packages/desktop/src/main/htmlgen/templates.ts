@@ -406,7 +406,10 @@ function renderSection(section: HtmlgenSection): string {
 }
 
 /** 按版式的顺序重排小节（同一类内部保持助手给的顺序 —— 稳定排序）。 */
-function orderSections(sections: readonly HtmlgenSection[], order: readonly HtmlgenSection['kind'][]): HtmlgenSection[] {
+function orderSections(
+  sections: readonly HtmlgenSection[],
+  order: readonly HtmlgenSection['kind'][],
+): HtmlgenSection[] {
   const rank = new Map(order.map((kind, index) => [kind, index]));
   return sections
     .map((section, index) => ({ section, index }))

@@ -232,10 +232,7 @@ export default function FilePreview({ artifact, onNavigateToTask, onClose }: Fil
           {/* ⚠️ 不是错误、也不是"这种格式看不了"：文件是好的，只是太大。
               说清楚**有多大**，用户才知道下一步是"用系统程序打开"还是"这份文件不该在这看"。 */}
           {!loading && !error && tooLarge !== null && (
-            <p
-              className="type-support px-4 py-8 text-center text-[var(--text-muted)]"
-              data-testid="preview-too-large"
-            >
+            <p className="type-support px-4 py-8 text-center text-[var(--text-muted)]" data-testid="preview-too-large">
               {t('filePreview.tooLargeToRead', { size: formatFileSize(tooLarge) })}
             </p>
           )}

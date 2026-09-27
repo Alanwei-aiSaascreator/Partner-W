@@ -166,9 +166,9 @@ describe('htmlgen 契约：版式的必备内容', () => {
   it('空内容：`sections` 空 / 全是空壳 / 只有空串 ⇒ 一律拒', () => {
     expect(parseHtmlgenRequest(validRequest({ sections: [] })).ok).toBe(false);
     expect(parseHtmlgenRequest(validRequest({ sections: [{}] })).ok).toBe(false);
-    expect(parseHtmlgenRequest(validRequest({ sections: [{ kind: 'narrative', paragraphs: [], bullets: [] }] })).ok).toBe(
-      false,
-    );
+    expect(
+      parseHtmlgenRequest(validRequest({ sections: [{ kind: 'narrative', paragraphs: [], bullets: [] }] })).ok,
+    ).toBe(false);
     expect(parseHtmlgenRequest(validRequest({ sections: [{ kind: 'narrative', paragraphs: ['', '  '] }] })).ok).toBe(
       false,
     );
@@ -177,11 +177,7 @@ describe('htmlgen 契约：版式的必备内容', () => {
   it('空壳小节被丢掉、其余照常（模型爱留空行，为此整份失败不值得）', () => {
     const result = parseHtmlgenRequest(
       validRequest({
-        sections: [
-          {},
-          { kind: 'narrative', paragraphs: ['正文'], bullets: [] },
-          { kind: 'metrics', items: [] },
-        ],
+        sections: [{}, { kind: 'narrative', paragraphs: ['正文'], bullets: [] }, { kind: 'metrics', items: [] }],
       }),
     );
 
@@ -197,7 +193,9 @@ describe('htmlgen 契约：版式的必备内容', () => {
   });
 
   it('小节**只有标题**也算有内容（与 docgen 同一条口径）', () => {
-    const result = parseHtmlgenRequest(validRequest({ template: 'research', sections: [{ heading: '只有标题' , kind: 'narrative'}] }));
+    const result = parseHtmlgenRequest(
+      validRequest({ template: 'research', sections: [{ heading: '只有标题', kind: 'narrative' }] }),
+    );
 
     expect(result.ok).toBe(true);
   });
@@ -212,7 +210,27 @@ describe('htmlgen 契约：版式的必备内容', () => {
  *   - 写了标记 ⇒ 当**文本**（转义那条由 `htmlgen-render.test.ts` 钉）。
  */
 describe('htmlgen 契约：结构上写不出标记/样式/坐标/外链', () => {
-  const forbiddenRootFields = ['html', 'raw', 'markup', 'style', 'css', 'color', 'font', 'src', 'url', 'href', 'image', 'x', 'y', 'w', 'h', 'path', 'filePath', 'base64', 'script'];
+  const forbiddenRootFields = [
+    'html',
+    'raw',
+    'markup',
+    'style',
+    'css',
+    'color',
+    'font',
+    'src',
+    'url',
+    'href',
+    'image',
+    'x',
+    'y',
+    'w',
+    'h',
+    'path',
+    'filePath',
+    'base64',
+    'script',
+  ];
 
   it('⭐ 根上出现任何一个"标记/样式/坐标/外链"字段 ⇒ 整份拒', () => {
     for (const field of forbiddenRootFields) {
@@ -257,7 +275,10 @@ describe('htmlgen 契约：结构上写不出标记/样式/坐标/外链', () =>
 
   it('⭐ 指标/行动项/来源各自的字段也白名单（`color` 写不进指标里）', () => {
     const cases: [string, Record<string, unknown>][] = [
-      ['sections[0].items[0].color', { sections: [{ kind: 'metrics', items: [{ label: 'a', value: 'b', color: '#f00' }] }], template: 'data' }],
+      [
+        'sections[0].items[0].color',
+        { sections: [{ kind: 'metrics', items: [{ label: 'a', value: 'b', color: '#f00' }] }], template: 'data' },
+      ],
       ['sections[0].items[0].icon', { sections: [{ kind: 'actions', items: [{ title: 't', icon: 'star' }] }] }],
       ['sources[0].url', { sources: [{ label: '来源', url: 'https://example.com' }] }],
     ];
@@ -303,7 +324,9 @@ describe('htmlgen 契约：超长与超量', () => {
   });
 
   it('小标题 / 指标 / 行动项 / 单元格超长 ⇒ 各自拒', () => {
-    const heading = validRequest({ sections: [{ kind: 'narrative', heading: '标'.repeat(L.maxHeadingChars + 1), paragraphs: ['正文'] }] });
+    const heading = validRequest({
+      sections: [{ kind: 'narrative', heading: '标'.repeat(L.maxHeadingChars + 1), paragraphs: ['正文'] }],
+    });
     expect(parseHtmlgenRequest(heading).ok).toBe(false);
 
     const metric = validRequest({
@@ -327,11 +350,15 @@ describe('htmlgen 契约：超长与超量', () => {
   it('条数超量 ⇒ 拒（小节数 / 段落数 / 要点数 / 指标数 / 行动项数 / 表行数 / 来源数）', () => {
     const tooMany = (sections: unknown[]) => parseHtmlgenRequest(validRequest({ sections })).ok;
 
-    expect(tooMany(Array.from({ length: L.maxSections + 1 }, () => ({ kind: 'narrative', paragraphs: ['正文'] })))).toBe(false);
+    expect(
+      tooMany(Array.from({ length: L.maxSections + 1 }, () => ({ kind: 'narrative', paragraphs: ['正文'] }))),
+    ).toBe(false);
     expect(
       tooMany([{ kind: 'narrative', paragraphs: Array.from({ length: L.maxParagraphs + 1 }, () => '正文') }]),
     ).toBe(false);
-    expect(tooMany([{ kind: 'narrative', bullets: Array.from({ length: L.maxBullets + 1 }, () => '要点') }])).toBe(false);
+    expect(tooMany([{ kind: 'narrative', bullets: Array.from({ length: L.maxBullets + 1 }, () => '要点') }])).toBe(
+      false,
+    );
     expect(
       tooMany([
         {
@@ -341,9 +368,7 @@ describe('htmlgen 契约：超长与超量', () => {
       ]),
     ).toBe(false);
     expect(
-      tooMany([
-        { kind: 'actions', items: Array.from({ length: L.maxActionItems + 1 }, () => ({ title: 't' })) },
-      ]),
+      tooMany([{ kind: 'actions', items: Array.from({ length: L.maxActionItems + 1 }, () => ({ title: 't' })) }]),
     ).toBe(false);
     expect(
       tooMany([
@@ -372,8 +397,12 @@ describe('htmlgen 契约：超长与超量', () => {
 
   it('表格：没有表头 / 表头空串 ⇒ 拒', () => {
     expect(parseHtmlgenRequest(validRequest({ sections: [{ kind: 'table', rows: [['x']] }] })).ok).toBe(false);
-    expect(parseHtmlgenRequest(validRequest({ sections: [{ kind: 'table', columns: [], rows: [['x']] }] })).ok).toBe(false);
-    expect(parseHtmlgenRequest(validRequest({ sections: [{ kind: 'table', columns: ['  '], rows: [['x']] }] })).ok).toBe(false);
+    expect(parseHtmlgenRequest(validRequest({ sections: [{ kind: 'table', columns: [], rows: [['x']] }] })).ok).toBe(
+      false,
+    );
+    expect(
+      parseHtmlgenRequest(validRequest({ sections: [{ kind: 'table', columns: ['  '], rows: [['x']] }] })).ok,
+    ).toBe(false);
   });
 
   it('表格：数字单元格变成文本（页面不是电子表格，不求和）', () => {

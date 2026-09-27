@@ -1,4 +1,9 @@
-import { HTMLGEN_TEMPLATES, type HtmlgenFailure, type HtmlgenSectionKind, type HtmlgenTemplate } from '@clawwork/shared';
+import {
+  HTMLGEN_TEMPLATES,
+  type HtmlgenFailure,
+  type HtmlgenSectionKind,
+  type HtmlgenTemplate,
+} from '@clawwork/shared';
 
 /**
  * 网页没生成出来时给用户看的那句话。
