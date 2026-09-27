@@ -1,4 +1,4 @@
-import { BrowserWindow, ipcMain } from 'electron';
+import { app, BrowserWindow, ipcMain } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { and, eq, desc } from 'drizzle-orm';
 import { getDb, isDbReady } from '../db/index.js';
@@ -6,6 +6,7 @@ import { tasks, messages, artifacts, taskRooms, taskRoomSessions, teams, teamAge
 import { autoExtractArtifacts } from '../artifact/auto-extract.js';
 import { captureTaskArtifactBaseline, reconcileTaskArtifacts, type ArtifactBaseline } from '../artifact/reconcile.js';
 import { generateDocumentsFromMessage } from '../docgen/generate.js';
+import { resolvePptxTemplatesRoot } from '../docgen/pptx-template/locate.js';
 import type { MessageAttachment } from '@clawwork/shared';
 import { getWorkspacePath } from '../workspace/config.js';
 import { getGatewayClient } from '../ws/index.js';
@@ -321,6 +322,11 @@ function finalizeAssistantArtifacts(input: {
         taskId: input.taskId,
         messageId: input.messageId,
         content: input.content,
+        templatesRoot: resolvePptxTemplatesRoot({
+          isPackaged: app.isPackaged,
+          resourcesPath: process.resourcesPath,
+          appPath: app.getAppPath(),
+        }),
       });
       for (const artifact of documents.saved) {
         for (const win of BrowserWindow.getAllWindows()) win.webContents.send('artifact:saved', artifact);

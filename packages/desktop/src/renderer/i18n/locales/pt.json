@@ -885,7 +885,11 @@
     "renderFailed": "Um arquivo não pôde ser criado.",
     "requestInvalid": "Um arquivo tinha conteúdo malformado e não foi criado. Peça ao assistente para gerar novamente.",
     "slideBulletMultiline": "O item {{bullet}} do slide {{page}} contém uma quebra de linha, então a apresentação não foi criada. Mantenha cada item em uma única linha; para vários parágrafos, use mais itens ou outro slide.",
-    "slideTitleMultiline": "O título do slide {{page}} contém uma quebra de linha, então a apresentação não foi criada. Escreva o título em uma única linha."
+    "slideTitleMultiline": "O título do slide {{page}} contém uma quebra de linha, então a apresentação não foi criada. Escreva o título em uma única linha.",
+    "templateFieldMissing": "O slide {{page}} ({{templateId}}) está sem o campo obrigatório \"{{field}}\", nada foi gerado.",
+    "templateFieldTooLong": "\"{{field}}\" no slide {{page}} ({{templateId}}) é longo demais, nada foi gerado. Encurte para no máximo {{maxChars}} caracteres.",
+    "templateFieldUnknown": "O slide {{page}} ({{templateId}}) não tem o campo \"{{field}}\", nada foi gerado. Remova-o.",
+    "templatePageUnknown": "O slide {{page}} usa um modelo que não existe (\"{{templateId}}\"), nada foi gerado. Modelos disponíveis: cover, section, insight, comparison, metrics, timeline, actions, closing."
   },
   "errors": {
     "agentMissing": "Esse assistente não está neste computador. Escolha outro e envie de novo.",

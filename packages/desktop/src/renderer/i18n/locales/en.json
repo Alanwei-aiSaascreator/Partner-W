@@ -885,7 +885,11 @@
     "renderFailed": "One file could not be created.",
     "requestInvalid": "One file had malformed content and was not created. Ask the assistant to output it again.",
     "slideBulletMultiline": "Bullet {{bullet}} on slide {{page}} contains a line break, so the presentation was not created. Keep each bullet on one line; split it into separate bullets or a new slide if you need paragraphs.",
-    "slideTitleMultiline": "The title of slide {{page}} contains a line break, so the presentation was not created. Write the title on one line."
+    "slideTitleMultiline": "The title of slide {{page}} contains a line break, so the presentation was not created. Write the title on one line.",
+    "templateFieldMissing": "Slide {{page}} ({{templateId}}) is missing the required field \"{{field}}\", so nothing was generated.",
+    "templateFieldTooLong": "\"{{field}}\" on slide {{page}} ({{templateId}}) is too long, so nothing was generated. Shorten it to {{maxChars}} characters or fewer.",
+    "templateFieldUnknown": "Slide {{page}} ({{templateId}}) has no field called \"{{field}}\", so nothing was generated. Remove it.",
+    "templatePageUnknown": "Slide {{page}} uses a template that does not exist (\"{{templateId}}\"), so nothing was generated. Available templates: cover, section, insight, comparison, metrics, timeline, actions, closing."
   },
   "errors": {
     "agentMissing": "That assistant is not on this machine. Pick another one and send again.",

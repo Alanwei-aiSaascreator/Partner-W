@@ -20,6 +20,30 @@ export function docgenFailureMessage(failure: DocgenFailure, t: Translate): stri
       return t('docgen.slideTitleMultiline', { page: failure.page });
     case 'presentation-slide-bullet-multiline':
       return t('docgen.slideBulletMultiline', { page: failure.page, bullet: failure.bullet });
+    // ── 模板填充那条路的四类拒绝 ──
+    // 文案里**都把名字带上**：只说"模板不对"助手改不了；
+    // 说"第 2 页我不认识 `tmeline`"，它一眼就看出自己拼错了。
+    case 'template-page-unknown':
+      return t('docgen.templatePageUnknown', { page: failure.page, templateId: failure.templateId });
+    case 'template-field-unknown':
+      return t('docgen.templateFieldUnknown', {
+        page: failure.page,
+        templateId: failure.templateId,
+        field: failure.field,
+      });
+    case 'template-field-missing':
+      return t('docgen.templateFieldMissing', {
+        page: failure.page,
+        templateId: failure.templateId,
+        field: failure.field,
+      });
+    case 'template-field-too-long':
+      return t('docgen.templateFieldTooLong', {
+        page: failure.page,
+        templateId: failure.templateId,
+        field: failure.field,
+        maxChars: failure.maxChars,
+      });
     case 'request-invalid':
       return t('docgen.requestInvalid');
     case 'render-failed':

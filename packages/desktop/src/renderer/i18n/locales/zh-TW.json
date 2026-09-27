@@ -885,7 +885,11 @@
     "renderFailed": "有一份檔案沒能生成。",
     "requestInvalid": "有一份檔案的內容格式不對，沒有生成。可以請助理重新輸出一次。",
     "slideBulletMultiline": "簡報第 {{page}} 頁第 {{bullet}} 條要點裡有換行，沒有生成。請把每條要點寫成一行；需要分段就拆成多條要點或另起一頁。",
-    "slideTitleMultiline": "簡報第 {{page}} 頁的標題裡有換行，沒有生成。請把標題寫成一行。"
+    "slideTitleMultiline": "簡報第 {{page}} 頁的標題裡有換行，沒有生成。請把標題寫成一行。",
+    "templateFieldMissing": "簡報第 {{page}} 頁（{{templateId}}）缺少必填欄位「{{field}}」，沒有產生。",
+    "templateFieldTooLong": "簡報第 {{page}} 頁（{{templateId}}）的「{{field}}」過長，沒有產生。請把它縮短到 {{maxChars}} 字以內。",
+    "templateFieldUnknown": "簡報第 {{page}} 頁（{{templateId}}）裡沒有「{{field}}」這個欄位，沒有產生。請刪掉它。",
+    "templatePageUnknown": "簡報第 {{page}} 頁用了不存在的範本「{{templateId}}」，沒有產生。可用的範本頁：cover、section、insight、comparison、metrics、timeline、actions、closing。"
   },
   "errors": {
     "agentMissing": "這個助手不在本機，換一個助手再傳送。",

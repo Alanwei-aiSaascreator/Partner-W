@@ -885,7 +885,11 @@
     "renderFailed": "Eine Datei konnte nicht erstellt werden.",
     "requestInvalid": "Eine Datei hatte ein ungültiges Inhaltsformat und wurde nicht erstellt. Lassen Sie den Assistenten sie erneut ausgeben.",
     "slideBulletMultiline": "Aufzählungspunkt {{bullet}} auf Folie {{page}} enthält einen Zeilenumbruch, daher wurde die Präsentation nicht erstellt. Halten Sie jeden Punkt in einer Zeile; für Absätze verwenden Sie mehrere Punkte oder eine neue Folie.",
-    "slideTitleMultiline": "Der Titel von Folie {{page}} enthält einen Zeilenumbruch, daher wurde die Präsentation nicht erstellt. Schreiben Sie den Titel in einer Zeile."
+    "slideTitleMultiline": "Der Titel von Folie {{page}} enthält einen Zeilenumbruch, daher wurde die Präsentation nicht erstellt. Schreiben Sie den Titel in einer Zeile.",
+    "templateFieldMissing": "Folie {{page}} ({{templateId}}) fehlt das Pflichtfeld \"{{field}}\", daher wurde nichts erzeugt.",
+    "templateFieldTooLong": "\"{{field}}\" auf Folie {{page}} ({{templateId}}) ist zu lang, daher wurde nichts erzeugt. Bitte auf höchstens {{maxChars}} Zeichen kürzen.",
+    "templateFieldUnknown": "Folie {{page}} ({{templateId}}) hat kein Feld \"{{field}}\", daher wurde nichts erzeugt. Bitte entfernen.",
+    "templatePageUnknown": "Folie {{page}} verwendet eine Vorlage, die es nicht gibt (\"{{templateId}}\"), daher wurde nichts erzeugt. Verfügbare Vorlagen: cover, section, insight, comparison, metrics, timeline, actions, closing."
   },
   "errors": {
     "agentMissing": "Dieser Assistent ist auf diesem Computer nicht vorhanden. Wähle einen anderen und sende erneut.",

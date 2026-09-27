@@ -4,6 +4,7 @@ import { getDebugLogger } from '../debug/index.js';
 import { saveArtifactFromBuffer } from '../artifact/save.js';
 import { extractDocgenBlocks } from './blocks.js';
 import { PptxLayoutError } from './pptx-layout.js';
+import { PptxTemplateFailureError } from './pptx-template/render.js';
 import { DOCGEN_OUTPUT_BY_KIND, type DocgenKind, type DocgenRequest } from './request.js';
 import { renderDocument } from './render.js';
 
@@ -40,6 +41,10 @@ export interface DocgenGenerateResult {
  * 原始文本进调试日志（下面 `docgen.save-failed`），排障时照样查得到。
  */
 function failureFromRenderError(error: unknown, format: DocgenFormat): DocgenFailure {
+  // 模板填充那条路**自带**结构化的失败（四类拒绝都带着模型写的那个名字）。
+  // ⚠️ 必须排在下面那串 `instanceof` 之前单独认，否则会被压成一句
+  //    `render-failed` —— 助手就只能看到"渲染失败"，不知道是自己拼错了模板名。
+  if (error instanceof PptxTemplateFailureError) return error.failure;
   if (error instanceof PptxLayoutError) {
     const problem = error.problem;
     switch (problem.code) {
@@ -114,6 +119,14 @@ export async function generateDocumentsFromMessage(input: {
   taskId: string;
   messageId: string;
   content: string;
+  /**
+   * 随包 pptx 模板目录，**由调用方注入**（`ipc/data-handlers.ts` 用 `resolvePptxTemplatesRoot` 算）。
+   *
+   * ⚠️ 刻意不在这里 `import { app } from 'electron'`：这个模块被测试直接 import
+   *    （`documentFileNameFor`），而 vitest 没有 electron mock —— 引进来会连带
+   *    打掉一批与模板毫无关系的测试。注入还顺带让"打包态定位"能在单测里覆盖。
+   */
+  templatesRoot?: string;
 }): Promise<DocgenGenerateResult> {
   const result: DocgenGenerateResult = { saved: [], failed: [] };
   const { requests, errors } = extractDocgenBlocks(input.content);
@@ -132,7 +145,10 @@ export async function generateDocumentsFromMessage(input: {
 
   for (const request of requests) {
     try {
-      const buffer = await renderDocument(request);
+      const buffer = await renderDocument(request, {
+        templatesRoot: input.templatesRoot,
+        fileName: documentFileNameFor(request.title, request.kind),
+      });
       const artifact = await saveArtifactFromBuffer({
         workspacePath: input.workspacePath,
         taskId: input.taskId,
