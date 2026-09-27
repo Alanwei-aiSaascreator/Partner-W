@@ -1058,6 +1058,29 @@
     "toNext": "{{value}} to the next level",
     "totalEarned": "{{value}} earned in total"
   },
+  "htmlgen": {
+    "blockInvalid": "The htmlgen block in the reply did not pass validation, so this page was not created. Ask the assistant to write it again in the documented format.",
+    "contentTooThin": "The content is too thin, so nothing was created: \"{{template}}\" is built around {{needs}}, and this content has none. Ask the assistant to add it and send it again.",
+    "failedTitle": "A page wasn't created",
+    "moreFailures": "{{rest}} more were not created either.",
+    "outputTooLarge": "This content lays out to more than {{maxMb}} MB, so nothing was created. Ask the assistant to trim it or split it into several pages.",
+    "renderFailed": "This page could not be created.",
+    "section": {
+      "actions": "action items",
+      "metrics": "metrics",
+      "narrative": "narrative",
+      "table": "a data table"
+    },
+    "template": {
+      "brief": "web report",
+      "data": "data page",
+      "plan": "project plan",
+      "proposal": "proposal",
+      "research": "research brief"
+    },
+    "unknownTemplate": "Unknown layout \"{{template}}\", so nothing was created. Ask the assistant to use one of: {{allowed}}.",
+    "unsupportedField": "The content carries a field the protocol does not accept (\"{{field}}\"), so nothing was created. The assistant supplies content only - the layout is ours - so ask it to drop that field and send it again."
+  },
   "identity": {
     "appliedToast": "Applied \"{{role}}\"",
     "apply": "Apply persona",

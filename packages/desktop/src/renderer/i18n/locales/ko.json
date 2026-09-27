@@ -1058,6 +1058,29 @@
     "toNext": "다음 레벨까지 {{value}}",
     "totalEarned": "누적 {{value}} 획득"
   },
+  "htmlgen": {
+    "blockInvalid": "답변의 htmlgen 블록이 검증을 통과하지 못해 이 페이지를 만들지 못했습니다. 스킬에 적힌 형식대로 다시 출력하도록 요청하세요.",
+    "contentTooThin": "내용이 너무 적어 만들지 못했습니다. \"{{template}}\"은(는) {{needs}}이(가) 있어야 하는 레이아웃인데 이 내용에는 없습니다. 채워서 다시 요청하세요.",
+    "failedTitle": "페이지를 만들지 못했습니다",
+    "moreFailures": "{{rest}}건도 만들지 못했습니다.",
+    "outputTooLarge": "이 내용은 {{maxMb}} MB를 넘어 만들어지지 않았습니다. 내용을 줄이거나 여러 페이지로 나누도록 요청하세요.",
+    "renderFailed": "이 페이지를 만들지 못했습니다.",
+    "section": {
+      "actions": "실행 항목",
+      "metrics": "지표",
+      "narrative": "본문",
+      "table": "표"
+    },
+    "template": {
+      "brief": "보고서",
+      "data": "데이터 페이지",
+      "plan": "프로젝트 계획",
+      "proposal": "제안 페이지",
+      "research": "조사 브리프"
+    },
+    "unknownTemplate": "알 수 없는 레이아웃 \"{{template}}\"이라 만들지 못했습니다. 다음 중 하나를 쓰도록 요청하세요: {{allowed}}",
+    "unsupportedField": "프로토콜이 받지 않는 필드 \"{{field}}\"가 있어 만들지 못했습니다. 도우미는 내용만 주고 레이아웃은 저희가 정합니다. 그 필드를 지우고 다시 출력하도록 요청하세요."
+  },
   "identity": {
     "appliedToast": "\"{{role}}\" 적용됨",
     "apply": "이 페르소나 적용",

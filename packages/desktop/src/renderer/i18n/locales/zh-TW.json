@@ -1058,6 +1058,29 @@
     "toNext": "距離下一級還需 {{value}}",
     "totalEarned": "累計獲得 {{value}}"
   },
+  "htmlgen": {
+    "blockInvalid": "回覆裡那個要產生網頁的區塊（htmlgen）沒有通過檢查，這一份沒有產生。請助手照技能裡的格式重寫一次。",
+    "contentTooThin": "內容太薄，沒有產生：「{{template}}」這個版式要的是{{needs}}，這份內容裡沒有。請助手補上再試一次。",
+    "failedTitle": "網頁沒有產生",
+    "moreFailures": "另有 {{rest}} 份也沒有產生。",
+    "outputTooLarge": "這份內容排出來超過 {{maxMb}} MB，沒有產生。請助手精簡一些，或拆成幾份分別輸出。",
+    "renderFailed": "這一份網頁沒有產生出來。",
+    "section": {
+      "actions": "行動項目",
+      "metrics": "資料指標",
+      "narrative": "正文",
+      "table": "表格"
+    },
+    "template": {
+      "brief": "網頁報告",
+      "data": "資料頁",
+      "plan": "專案計畫",
+      "proposal": "方案頁",
+      "research": "調研簡報"
+    },
+    "unknownTemplate": "不認識的版式「{{template}}」，沒有產生。請助手改用這幾種之一：{{allowed}}。",
+    "unsupportedField": "內容裡帶了協定不接受的欄位「{{field}}」，沒有產生。助手只提供內容、版式由用戶端決定 —— 請它把這個欄位刪掉再輸出一次。"
+  },
   "identity": {
     "appliedToast": "已套用「{{role}}」",
     "apply": "套用此畫像",

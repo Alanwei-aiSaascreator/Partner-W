@@ -44,6 +44,12 @@ function sanitizeExtractedFileName(raw: string): string {
   return raw;
 }
 
+/**
+ * **不是代码**的围栏语言：它们是"生成文件"的请求（`docgen` → Office 文件、`htmlgen` → 网页），
+ * 由各自的渲染器变成真文件后单独落盘。列在一处是为了"加第三条通道时只改一行"。
+ */
+const GENERATOR_FENCES = new Set(['docgen', 'htmlgen']);
+
 export function extractImagesFromMarkdown(content: string): ExtractedImage[] {
   return [...content.matchAll(/!\[([^\]]*)\]\(([^)]+)\)/g)].map(([, alt, src]) => ({
     src,
@@ -55,10 +61,12 @@ export function extractImagesFromMarkdown(content: string): ExtractedImage[] {
 export function extractCodeBlocksFromMarkdown(content: string): ExtractedCodeBlock[] {
   return (
     [...content.matchAll(/^```(\S*)\n([\s\S]*?)\n```/gm)]
-      // ⚠️ `docgen` 块**不是**代码产物：它是"请生成一份 PPT"的请求，由 `main/docgen/`
-      //    渲染成真文件后**单独**走 `saveArtifactFromBuffer` 存。不排除的话，
-      //    用户在产物里会同时看到那份 PPT 和一段 JSON 噪音。
-      .filter(([, lang]) => lang.trim().toLowerCase() !== 'docgen')
+      // ⚠️ `docgen` / `htmlgen` 块**不是**代码产物：它们是"请生成一份 PPT / 一个网页"的请求，
+      //    由 `main/docgen/`、`main/htmlgen/` 渲染成真文件后**单独**走 `saveArtifactFromBuffer` 存。
+      //    不排除的话，用户在产物里会同时看到那份文件**和**一段 JSON 噪音。
+      //    ⚠️ 这两个名字要与 `docgen/blocks.ts`、`htmlgen/blocks.ts` 的围栏正则**一致** ——
+      //    漏一个的症状是"网页生成出来了，旁边还多一份它的 JSON 源码"。
+      .filter(([, lang]) => !GENERATOR_FENCES.has(lang.trim().toLowerCase()))
       .map(([, lang, body]) => {
         const lineCount = body.split('\n').length;
         const hasDot = lang.includes('.');

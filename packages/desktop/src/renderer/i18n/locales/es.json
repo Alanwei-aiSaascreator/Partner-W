@@ -1058,6 +1058,29 @@
     "toNext": "{{value}} para el siguiente nivel",
     "totalEarned": "{{value}} acumulados"
   },
+  "htmlgen": {
+    "blockInvalid": "El bloque htmlgen de la respuesta no pasó la validación, así que esta página no se creó. Pide al asistente que lo reescriba con el formato documentado.",
+    "contentTooThin": "El contenido es demasiado escaso: «{{template}}» se basa en {{needs}}, y este contenido no trae nada de eso. Pide al asistente que lo complete y lo envíe otra vez.",
+    "failedTitle": "No se creó una página",
+    "moreFailures": "Otras {{rest}} tampoco se crearon.",
+    "outputTooLarge": "Este contenido ocupa más de {{maxMb}} MB, así que no se creó nada. Pide al asistente que lo recorte o lo divida en varias páginas.",
+    "renderFailed": "Esta página no se pudo crear.",
+    "section": {
+      "actions": "acciones",
+      "metrics": "métricas",
+      "narrative": "texto",
+      "table": "una tabla"
+    },
+    "template": {
+      "brief": "informe",
+      "data": "página de datos",
+      "plan": "plan de proyecto",
+      "proposal": "propuesta",
+      "research": "resumen de investigación"
+    },
+    "unknownTemplate": "Diseño desconocido «{{template}}», así que no se creó nada. Pide al asistente que use uno de estos: {{allowed}}.",
+    "unsupportedField": "El contenido incluye un campo que el protocolo no acepta («{{field}}»), así que no se creó nada. El asistente solo aporta contenido; el diseño es nuestro: pídele que quite ese campo y lo envíe otra vez."
+  },
   "identity": {
     "appliedToast": "Se aplicó «{{role}}»",
     "apply": "Aplicar persona",

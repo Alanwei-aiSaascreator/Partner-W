@@ -19,6 +19,7 @@ import type {
   CronStatusResult,
   ClawDashboardData,
   DocgenFailure,
+  HtmlgenFailure,
   SkillInstallParams,
   SkillInstallResult,
   SkillSearchParams,
@@ -546,6 +547,14 @@ export interface ClawWorkAPI {
    * 一次消息只推一次，可能带多条。
    */
   onDocgenFailed: (callback: (failures: DocgenFailure[]) => void) => () => void;
+  /**
+   * 助手在回复里给了 ```` ```htmlgen ```` 块，但有一份网页没能生成出来。
+   *
+   * 形状与 shared 的 `HtmlgenFailure` **必须一致**（IPC 是运行时边界，两边各写一份类型）。
+   * 一次消息只推一次，可能带多条 —— 与 `onDocgenFailed` 分开两条通道，
+   * 因为两边的失败原因与文案完全不相干（"PPT 某页装不下" vs "版式不认识"）。
+   */
+  onHtmlgenFailed: (callback: (failures: HtmlgenFailure[]) => void) => () => void;
   saveCodeBlock: (params: {
     taskId: string;
     messageId: string;
