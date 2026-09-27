@@ -73,5 +73,14 @@ export type HtmlgenFailure =
    *    `needs` 是"这个版式至少要有其中一类"（空数组 = 不限，纯粹是"整份空的"）。
    */
   | { code: 'htmlgen-content-too-thin'; template: HtmlgenTemplate; needs: readonly HtmlgenSectionKind[] }
+  /**
+   * 排出来**太大**，超过 `MAX_HTMLGEN_OUTPUT_BYTES`。
+   *
+   * ⚠️ 这条不是防滥用，是**保富预览**：超了 `MAX_HTML_PREVIEW_BYTES` 的 `.html`
+   *    只能当纯文本看（`build-preview.ts` 那条分支），等于这条路白做。
+   *    宁可"没生成 + 说清是内容太多"，也不要给用户一份打不开像样的页面。
+   *    `maxBytes` 带上是为了文案里那句"控制在多大以内"必须是**真的**。
+   */
+  | { code: 'htmlgen-output-too-large'; template: HtmlgenTemplate; maxBytes: number }
   /** 渲染/落盘时出的其它错（我们自己的意外，不假装知道原因）。 */
   | { code: 'htmlgen-render-failed'; template: HtmlgenTemplate };

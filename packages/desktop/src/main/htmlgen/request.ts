@@ -132,23 +132,24 @@ export type HtmlgenParseResult =
  * 上限：既是防手滑，也是防"助手把整篇东西塞进一个字段"。
  *
  * ⚠️ 这些数**不只是防滥用**，还是"产出必定能被富预览"的计算依据：
- *    最坏情况（每处都顶格写）渲染出来的 HTML 必须仍在
- *    `MAX_HTML_PREVIEW_BYTES`(4 MiB) 以内，否则用户拿到一份只能当纯文本看的大文件。
- *    这个不变量由 `test/htmlgen-render.test.ts` 里"满配内容仍能被富预览"那一条钉住 ——
- *    **改这里的任何一个数之前先去跑它**。
+ *    每处都顶格写（20 个小节全是满行满列的表格）时，渲染出来的 HTML 必须仍在
+ *    `MAX_HTMLGEN_OUTPUT_BYTES`(3 MiB) 以内，那又必须在 `MAX_HTML_PREVIEW_BYTES`(4 MiB) 以内，
+ *    否则用户拿到的是一份只能当纯文本看的大文件 —— 等于这条路白做。
+ *    这个不变量由 `test/htmlgen-render.test.ts` 里"顶格写满仍在预算内"那一条钉住，
+ *    **改这里的任何一个数之前先去跑它**（它会直接把算出来的字节数报出来）。
  */
 export const HTMLGEN_LIMITS = Object.freeze({
   maxTitleChars: 120,
   maxSummaryChars: 600,
-  maxSections: 24,
+  maxSections: 20,
   maxSources: 12,
   maxSourceLabelChars: 80,
   maxSourceNoteChars: 300,
   maxHeadingChars: 120,
   // ── narrative ────────────────────────────────────────────────────────
-  maxParagraphs: 30,
-  maxParagraphChars: 1200,
-  maxBullets: 24,
+  maxParagraphs: 20,
+  maxParagraphChars: 1000,
+  maxBullets: 20,
   maxBulletChars: 300,
   // ── metrics ──────────────────────────────────────────────────────────
   maxMetricItems: 12,
@@ -156,12 +157,13 @@ export const HTMLGEN_LIMITS = Object.freeze({
   maxMetricValueChars: 24,
   maxMetricDetailChars: 120,
   // ── table ────────────────────────────────────────────────────────────
-  maxTableColumns: 12,
-  maxTableRows: 200,
-  maxTableCellChars: 200,
+  // 表格是唯一会平方级膨胀的小节（行 × 列 × 格长），所以它是上面那条预算的**约束项**。
+  maxTableColumns: 10,
+  maxTableRows: 80,
+  maxTableCellChars: 150,
   maxCaptionChars: 120,
   // ── actions ──────────────────────────────────────────────────────────
-  maxActionItems: 24,
+  maxActionItems: 20,
   maxActionTitleChars: 120,
   maxActionDetailChars: 600,
   maxActionOwnerChars: 40,
