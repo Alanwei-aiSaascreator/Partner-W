@@ -1,5 +1,6 @@
 import type {
   IpcResult as SharedIpcResult,
+  ArtifactFileReadResult,
   LikeToggleResult,
   JoinTeamResult,
   ChatAttachment as SharedChatAttachment,
@@ -518,7 +519,14 @@ export interface ClawWorkAPI {
   }) => Promise<IpcResult>;
   listArtifacts: (taskId?: string) => Promise<IpcResult<Artifact[]>>;
   getArtifact: (id: string) => Promise<IpcResult<Artifact>>;
-  readArtifactFile: (artifactId: string, taskId?: string) => Promise<IpcResult>;
+  /**
+   * 朴素读法：整份读出来给界面。
+   *
+   * ⚠️ 结果里**可能是 `{ tooLarge, size }`**（文件是好的，只是超过我们能整份搬进内存的上限）。
+   *    调用方必须判这一支 —— 当成"内容为空"发出去比报错难查得多。
+   *    上限定在主进程（`artifact-handlers.ts` 的 `MAX_PLAIN_*_SOURCE_BYTES`）。
+   */
+  readArtifactFile: (artifactId: string, taskId?: string) => Promise<IpcResult<ArtifactFileReadResult>>;
   /**
    * 富预览：`.docx` / `.xlsx` / `.pptx` / `.pdf` 读成界面能直接渲染的形状。
    *

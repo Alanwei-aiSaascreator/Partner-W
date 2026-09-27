@@ -393,6 +393,7 @@
     "aiDisclaimer": "Contenu généré par IA. Veuillez vérifier les informations importantes.",
     "aiServiceStarting": "Démarrage du service IA…",
     "aiServiceStartingDetail": "Le premier démarrage peut prendre environ une minute. Veuillez patienter.",
+    "artifactTooLarge": "{{name}} est trop volumineux pour être joint comme contexte.",
     "attachmentSaveFailed": "Échec de l'enregistrement de la pièce jointe {{fileName}}",
     "attachmentTooLarge": "{{fileName}} dépasse la limite de 100 Mo",
     "compacting": "Compression du contexte…",
@@ -938,6 +939,7 @@
     "revealInFolder": "Afficher dans le Finder",
     "slideEmpty": "(no text on this slide)",
     "slideLabel": "Slide {{index}}",
+    "tooLargeToRead": "Ce fichier fait {{size}} : trop volumineux pour être affiché ici. Ouvrez-le avec une application système.",
     "truncated": "This is long, so only the beginning is shown."
   },
   "firstTaskCompletion": {

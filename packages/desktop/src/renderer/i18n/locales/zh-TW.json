@@ -393,6 +393,7 @@
     "aiDisclaimer": "內容由 AI 生成，請核實重要資訊",
     "aiServiceStarting": "正在啟動 AI 服務…",
     "aiServiceStartingDetail": "首次啟動可能需要約 1 分鐘，請稍候。",
+    "artifactTooLarge": "{{name}} 太大，無法作為上下文帶上。",
     "attachmentSaveFailed": "儲存附件 {{fileName}} 失敗",
     "attachmentTooLarge": "{{fileName}} 超出 100MB 上限",
     "compacting": "正在壓縮上下文…",
@@ -938,6 +939,7 @@
     "revealInFolder": "在 Finder 中顯示",
     "slideEmpty": "（这一页没有文字）",
     "slideLabel": "第 {{index}} 页",
+    "tooLargeToRead": "這份檔案有 {{size}}，太大，無法在這裡顯示。請用系統程式開啟。",
     "truncated": "内容较长，这里只显示了前面一部分。"
   },
   "firstTaskCompletion": {

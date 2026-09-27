@@ -393,6 +393,7 @@
     "aiDisclaimer": "Inhalte werden von KI erzeugt. Bitte prüfen Sie wichtige Informationen.",
     "aiServiceStarting": "KI-Dienst wird gestartet…",
     "aiServiceStartingDetail": "Der erste Start kann etwa eine Minute dauern. Bitte warten Sie.",
+    "artifactTooLarge": "{{name}} ist zu groß, um als Kontext angehängt zu werden.",
     "attachmentSaveFailed": "Anhang {{fileName}} konnte nicht gespeichert werden",
     "attachmentTooLarge": "{{fileName}} ueberschreitet das 100-MB-Limit",
     "compacting": "Kontext wird komprimiert…",
@@ -938,6 +939,7 @@
     "revealInFolder": "Im Finder anzeigen",
     "slideEmpty": "(no text on this slide)",
     "slideLabel": "Slide {{index}}",
+    "tooLargeToRead": "Diese Datei ist {{size}} groß und kann hier nicht angezeigt werden. Bitte mit einem Systemprogramm öffnen.",
     "truncated": "This is long, so only the beginning is shown."
   },
   "firstTaskCompletion": {

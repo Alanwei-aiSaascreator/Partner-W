@@ -393,6 +393,7 @@
     "aiDisclaimer": "内容由 AI 生成，请核实重要信息",
     "aiServiceStarting": "正在启动 AI 服务…",
     "aiServiceStartingDetail": "首次启动可能需要约 1 分钟，请稍候。",
+    "artifactTooLarge": "{{name}} 太大，没法作为上下文带上。",
     "attachmentSaveFailed": "保存附件 {{fileName}} 失败",
     "attachmentTooLarge": "{{fileName}} 超出 100MB 上限",
     "compacting": "正在压缩上下文…",
@@ -938,6 +939,7 @@
     "revealInFolder": "在访达中显示",
     "slideEmpty": "（这一页没有文字）",
     "slideLabel": "第 {{index}} 页",
+    "tooLargeToRead": "这份文件有 {{size}}，太大，没法在这里显示。请用系统程序打开。",
     "truncated": "内容较长，这里只显示了前面一部分。"
   },
   "firstTaskCompletion": {

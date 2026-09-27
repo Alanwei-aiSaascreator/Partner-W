@@ -5,6 +5,15 @@ import {
   stopAnalyticsReporter,
   type AnalyticsReporter,
 } from '../src/main/analytics/reporter.js';
+// ⚠️ 这两个常量与那个错误类都从**真模块**取，不走 `artifact/access.js` 的 mock ——
+//    mock 只替掉"怎么读文件"，不该连带替掉"上限是多少"这个被测对象。
+//    （它们所在的那个模块不 import electron，所以可以静态 import；换成从
+//     `ipc/artifact-handlers.js` 取会撞上本文件 mock 工厂的 TDZ。）
+import {
+  ArtifactTooLargeError,
+  MAX_PLAIN_BINARY_SOURCE_BYTES,
+  MAX_PLAIN_TEXT_SOURCE_BYTES,
+} from '../src/main/artifact/too-large.js';
 
 const handleMap = new Map<string, (...args: unknown[]) => unknown>();
 const allMock = vi.fn();
@@ -212,7 +221,89 @@ describe('artifact handlers', () => {
       ok: true,
       result: { content: 'trusted', encoding: 'utf-8' },
     });
-    expect(readVerifiedArtifactFileMock).toHaveBeenCalledWith('/workspace', 'task-1/report.txt');
+    // ⭐ 现在必须**带着上限**读：这条路的内容会整份进 `hljs.highlight`（同步），
+    //    没有上限就是"文件一大界面就卡死"。上限值本身由下面两条钉。
+    expect(readVerifiedArtifactFileMock).toHaveBeenCalledWith('/workspace', 'task-1/report.txt', {
+      maxBytes: MAX_PLAIN_TEXT_SOURCE_BYTES,
+    });
+  });
+
+  /**
+   * 文本读法的上限（2026-09-27）。
+   *
+   * 这个缺口原来长这样：`.html` 超过 4 MiB ⇒ 富预览回 `unsupported` ⇒ 界面掉到
+   * `artifact:read-file` ⇒ **那条路没有 `maxBytes`** ⇒ 几十兆整份读成字符串、
+   * 跨 IPC、再整份进同步高亮。于是"太大所以不给富预览"变成了"太大所以卡死"。
+   *
+   * 判据两条（正反各一）：
+   *  1. 正常大小 ⇒ 照旧给内容（不许把这条路整个掐掉）；
+   *  2. 超限 ⇒ 回 `{ tooLarge, size }` 这个**结构化**结果，且**一个字节的内容都不给**
+   *     —— 那正是"不整份进高亮链"在协议层的样子。
+   */
+  describe('artifact:read-file 的上限', () => {
+    const htmlArtifact = [{ id: 'a1', taskId: 'task-1', name: '大页面.html', localPath: 'task-1/大页面.html' }];
+
+    it('⭐ 上限是**分档**的：文本 4 MiB、二进制松十倍（照片不能卡在 4 MiB）', () => {
+      expect(MAX_PLAIN_TEXT_SOURCE_BYTES).toBe(4 * 1024 * 1024);
+      expect(MAX_PLAIN_BINARY_SOURCE_BYTES).toBe(40 * 1024 * 1024);
+      expect(MAX_PLAIN_BINARY_SOURCE_BYTES).toBeGreaterThan(MAX_PLAIN_TEXT_SOURCE_BYTES);
+    });
+
+    it('正：没超限 ⇒ 照旧给内容（这条路不许被上限整个掐死）', async () => {
+      allMock.mockReturnValue(htmlArtifact);
+      readVerifiedArtifactFileMock.mockResolvedValue(Buffer.from('<p>小页面</p>'));
+      const { registerArtifactHandlers } = await import('../src/main/ipc/artifact-handlers.js');
+      registerArtifactHandlers();
+
+      await expect(handleMap.get('artifact:read-file')?.({}, { artifactId: 'a1', taskId: 'task-1' })).resolves.toEqual({
+        ok: true,
+        result: { content: '<p>小页面</p>', encoding: 'utf-8' },
+      });
+    });
+
+    it('反：超限 ⇒ `{ tooLarge, size }`，**没有 `content`**（不整份进高亮链）', async () => {
+      allMock.mockReturnValue(htmlArtifact);
+      readVerifiedArtifactFileMock.mockRejectedValue(new ArtifactTooLargeError(30 * 1024 * 1024));
+      const { registerArtifactHandlers } = await import('../src/main/ipc/artifact-handlers.js');
+      registerArtifactHandlers();
+
+      const result = (await handleMap.get('artifact:read-file')?.({}, { artifactId: 'a1', taskId: 'task-1' })) as {
+        ok: boolean;
+        result?: Record<string, unknown>;
+      };
+
+      // ⚠️ 不是 `ok: false`：文件是好的，是我们不肯搬 —— 界面要说另一句话。
+      expect(result.ok).toBe(true);
+      expect(result.result).toEqual({ tooLarge: true, size: 30 * 1024 * 1024 });
+      // 载荷里**不许**出现内容：出现即等于说"我们读出来了"
+      expect(result.result).not.toHaveProperty('content');
+      expect(JSON.stringify(result)).not.toContain('大页面');
+    });
+
+    it('⭐ 非超限的错误照旧如实报错（别把"文件坏了"也吞成"太大"）', async () => {
+      allMock.mockReturnValue(htmlArtifact);
+      readVerifiedArtifactFileMock.mockRejectedValue(new Error('artifact unsafe'));
+      const { registerArtifactHandlers } = await import('../src/main/ipc/artifact-handlers.js');
+      registerArtifactHandlers();
+
+      await expect(handleMap.get('artifact:read-file')?.({}, { artifactId: 'a1', taskId: 'task-1' })).resolves.toEqual({
+        ok: false,
+        error: 'artifact unsafe',
+      });
+    });
+
+    it('二进制（图片）走的是那条松的上限', async () => {
+      allMock.mockReturnValue([{ id: 'a1', taskId: 'task-1', name: '照片.png', localPath: 'task-1/照片.png' }]);
+      readVerifiedArtifactFileMock.mockResolvedValue(Buffer.from('png'));
+      const { registerArtifactHandlers } = await import('../src/main/ipc/artifact-handlers.js');
+      registerArtifactHandlers();
+
+      await handleMap.get('artifact:read-file')?.({}, { artifactId: 'a1', taskId: 'task-1' });
+
+      expect(readVerifiedArtifactFileMock).toHaveBeenCalledWith('/workspace', 'task-1/照片.png', {
+        maxBytes: MAX_PLAIN_BINARY_SOURCE_BYTES,
+      });
+    });
   });
 
   it('revalidates identity immediately before passing a path to the shell', async () => {

@@ -393,6 +393,7 @@
     "aiDisclaimer": "AI が生成した内容です。重要な情報は必ず確認してください。",
     "aiServiceStarting": "AI サービスを起動しています…",
     "aiServiceStartingDetail": "初回起動には約 1 分かかる場合があります。しばらくお待ちください。",
+    "artifactTooLarge": "{{name}} は大きすぎるため、コンテキストとして添付できません。",
     "attachmentSaveFailed": "添付ファイル {{fileName}} の保存に失敗しました",
     "attachmentTooLarge": "{{fileName}} が 100MB の上限を超えています",
     "compacting": "コンテキストを圧縮しています…",
@@ -938,6 +939,7 @@
     "revealInFolder": "Finder で表示",
     "slideEmpty": "(no text on this slide)",
     "slideLabel": "Slide {{index}}",
+    "tooLargeToRead": "このファイルは {{size}} あり、大きすぎるためここに表示できません。システムのアプリで開いてください。",
     "truncated": "This is long, so only the beginning is shown."
   },
   "firstTaskCompletion": {

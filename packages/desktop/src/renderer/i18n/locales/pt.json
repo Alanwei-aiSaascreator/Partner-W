@@ -393,6 +393,7 @@
     "aiDisclaimer": "Conteúdo gerado por IA. Verifique as informações importantes.",
     "aiServiceStarting": "Iniciando o serviço de IA…",
     "aiServiceStartingDetail": "A primeira inicialização pode levar cerca de um minuto. Aguarde.",
+    "artifactTooLarge": "{{name}} é grande demais para ser anexado como contexto.",
     "attachmentSaveFailed": "Falha ao salvar o anexo {{fileName}}",
     "attachmentTooLarge": "{{fileName}} excede o limite de 100MB",
     "compacting": "Compactando o contexto…",
@@ -938,6 +939,7 @@
     "revealInFolder": "Mostrar no Finder",
     "slideEmpty": "(no text on this slide)",
     "slideLabel": "Slide {{index}}",
+    "tooLargeToRead": "Este arquivo tem {{size}} e é grande demais para ser exibido aqui. Abra-o com um aplicativo do sistema.",
     "truncated": "This is long, so only the beginning is shown."
   },
   "firstTaskCompletion": {
