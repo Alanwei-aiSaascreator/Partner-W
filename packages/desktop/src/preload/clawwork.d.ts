@@ -1,14 +1,21 @@
 import type {
-  IpcResult as SharedIpcResult,
-  ArtifactFileReadResult,
-  LikeToggleResult,
-  JoinTeamResult,
-  ChatAttachment as SharedChatAttachment,
-  CommandsListParams,
-  Team,
-  TeamHubRegistry,
+  AgentFileSet,
   ApprovalDecision,
-  QuestionResolveParams,
+  Artifact,
+  ArtifactFileReadResult,
+  ArtifactPreview,
+  ArtifactSaveAsResult,
+  ChatAttachment as SharedChatAttachment,
+  ClawDashboardData,
+  CommandsListParams,
+  CommercialAccountOverview,
+  ConfigPatchParams,
+  ConfigPatchResult,
+  ConfigSchemaLookupResult,
+  ConfigSchemaResult,
+  ConfigSetParams,
+  ConfigSetResult,
+  ConfigSnapshot,
   CronJob,
   CronJobCreate,
   CronJobPatch,
@@ -17,40 +24,35 @@ import type {
   CronRunResult,
   CronRunsParams,
   CronStatusResult,
-  ClawDashboardData,
   DocgenFailure,
+  FileIndexEntry,
+  FileReadResult,
+  GatewayFailureReason,
   HtmlgenFailure,
+  ImportFilesResult,
+  ImportedTaskFile,
+  IpcResult as SharedIpcResult,
+  JoinTeamResult,
+  LikeToggleResult,
+  OurSkillsListResult,
+  ParsedTeam,
+  QuestionResolveParams,
+  RelayBootstrapPublicState,
+  RuntimeBootstrapStatus,
+  SessionsPreviewResult,
+  SkillBinsResult,
+  SkillDetailResult,
   SkillInstallParams,
   SkillInstallResult,
   SkillSearchParams,
   SkillSearchResult,
-  SkillDetailResult,
   SkillUpdateParams,
   SkillUpdateResult,
-  SkillBinsResult,
-  OurSkillsListResult,
-  ConfigSnapshot,
-  ConfigSetParams,
-  ConfigPatchParams,
-  ConfigSetResult,
-  ConfigPatchResult,
-  ConfigSchemaResult,
-  ConfigSchemaLookupResult,
-  ParsedTeam,
-  AgentFileSet,
-  SessionsPreviewResult,
-  CommercialAccountOverview,
-  FileIndexEntry,
-  FileReadResult,
+  SlidegenFailure,
+  SlidegenWarning,
   TaskContextSource,
-  ImportedTaskFile,
-  ImportFilesResult,
-  Artifact,
-  ArtifactSaveAsResult,
-  ArtifactPreview,
-  GatewayFailureReason,
-  RuntimeBootstrapStatus,
-  RelayBootstrapPublicState,
+  Team,
+  TeamHubRegistry,
   WorkspaceFsIdentity,
 } from '@clawwork/shared';
 // 隐私工单状态的**归一化后**形状（snake→camel、字节数字、真布尔）由 core 定义，
@@ -555,6 +557,15 @@ export interface ClawWorkAPI {
    * 因为两边的失败原因与文案完全不相干（"PPT 某页装不下" vs "版式不认识"）。
    */
   onHtmlgenFailed: (callback: (failures: HtmlgenFailure[]) => void) => () => void;
+  /**
+   * 幻灯片那条通道的**两档**结果。
+   *
+   * ⚠️ 分开是刻意的：`onSlidegenWarned` 表示**文件已经在产物里了**，
+   *    只是有几页版式要改（元素冲出画布 / 文字被盖住）。把两者合起来，
+   *    用户会在一个其实存在的文件上找半天。
+   */
+  onSlidegenFailed: (callback: (failures: SlidegenFailure[]) => void) => () => void;
+  onSlidegenWarned: (callback: (warnings: SlidegenWarning[]) => void) => () => void;
   saveCodeBlock: (params: {
     taskId: string;
     messageId: string;

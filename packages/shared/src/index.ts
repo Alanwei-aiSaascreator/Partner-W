@@ -15,3 +15,4 @@ export * from './artifact-preview.js';
 export * from './artifact-read.js';
 export * from './docgen-failure.js';
 export * from './htmlgen-failure.js';
+export * from './slidegen-failure.js';

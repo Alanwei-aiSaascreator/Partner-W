@@ -1859,6 +1859,24 @@
     "title": "Comandos Slash",
     "tooltip": "Comandos"
   },
+  "slidegen": {
+    "fail": {
+      "blockEmpty": "O layout enviado pelo assistente estava vazio.",
+      "evalFailed": "Não foi possível avaliar uma expressão do layout — pode estar errada ou ser complexa demais.",
+      "renderFailed": "Algo deu errado ao montar os slides. É um problema nosso, não do seu conteúdo.",
+      "titleMissing": "O layout precisa de uma linha // title: … no início para o arquivo ter um nome.",
+      "tooManyPages": "Páginas demais ({{got}}, o máximo é {{max}}).",
+      "unknownTag": "Tag desconhecida <{{tag}}>. Só há suporte a Slide / Box / Text / Image.",
+      "unparsable": "O layout tem um erro de sintaxe e não pôde ser lido."
+    },
+    "failedTitle": "Não foi possível gerar a apresentação",
+    "warn": {
+      "head": "O arquivo já está em 产物 à direita. Só estes pontos precisam de ajuste:",
+      "occluded": "O texto da página {{page}} está coberto por outro elemento",
+      "outOfBounds": "A página {{page}} tem conteúdo fora do slide, então não aparecerá na apresentação"
+    },
+    "warnedTitle": "A apresentação foi gerada, com alguns pontos a ajustar"
+  },
   "startupReadiness": {
     "aiCatalogFailed": "Não foi possível obter a lista de modelos",
     "aiError": "Nenhum modelo está disponível no momento",

@@ -1859,6 +1859,24 @@
     "title": "Slash-Befehle",
     "tooltip": "Befehle"
   },
+  "slidegen": {
+    "fail": {
+      "blockEmpty": "Das vom Assistenten gesendete Layout war leer.",
+      "evalFailed": "Ein Ausdruck im Layout konnte nicht ausgewertet werden – möglicherweise fehlerhaft oder zu komplex.",
+      "renderFailed": "Beim Setzen der Folien ist etwas schiefgelaufen. Das liegt auf unserer Seite, nicht an Ihren Inhalten.",
+      "titleMissing": "Das Layout braucht oben eine Zeile // title: …, damit die Datei einen Namen hat.",
+      "tooManyPages": "Zu viele Seiten ({{got}}, Maximum sind {{max}}).",
+      "unknownTag": "Unbekanntes Tag <{{tag}}>. Unterstützt werden nur Slide / Box / Text / Image.",
+      "unparsable": "Das Layout enthält einen Syntaxfehler und konnte nicht gelesen werden."
+    },
+    "failedTitle": "Die Präsentation konnte nicht erstellt werden",
+    "warn": {
+      "head": "Die Datei liegt bereits rechts unter 产物. Nur diese Stellen müssen angepasst werden:",
+      "occluded": "Text auf Seite {{page}} wird von einem anderen Element verdeckt",
+      "outOfBounds": "Seite {{page}} hat Inhalte außerhalb der Folie – sie werden bei der Präsentation nicht angezeigt"
+    },
+    "warnedTitle": "Die Präsentation wurde erstellt – ein paar Stellen müssen noch angepasst werden"
+  },
   "startupReadiness": {
     "aiCatalogFailed": "Modellliste konnte nicht geladen werden",
     "aiError": "Derzeit sind keine Modelle verfügbar",

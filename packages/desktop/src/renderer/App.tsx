@@ -27,6 +27,7 @@ import { useSettingsBootstrap } from './hooks/useSettingsBootstrap';
 import { useStartupReadiness } from './hooks/useStartupReadiness';
 import { useDocgenFailureToast } from './hooks/useDocgenFailureToast';
 import { useHtmlgenFailureToast } from './hooks/useHtmlgenFailureToast';
+import { useSlidegenToast } from './hooks/useSlidegenToast';
 import { cn } from '@/lib/utils';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { motionDuration, motionEase } from '@/styles/design-tokens';
@@ -113,6 +114,7 @@ export default function App() {
   // 而"漏掉一条失败提示"的表现恰好和"什么都没发生"一模一样。
   useDocgenFailureToast();
   useHtmlgenFailureToast();
+  useSlidegenToast();
   useTraySync();
   useSettingsBootstrap(ready);
   useModuleOpenTracking();

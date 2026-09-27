@@ -1859,6 +1859,24 @@
     "title": "Commandes slash",
     "tooltip": "Commandes"
   },
+  "slidegen": {
+    "fail": {
+      "blockEmpty": "La mise en page envoyée par l’assistant était vide.",
+      "evalFailed": "Une expression de la mise en page n’a pas pu être évaluée : elle est peut-être erronée ou trop complexe.",
+      "renderFailed": "Une erreur est survenue lors de la mise en page. Cela vient de notre côté, pas de votre contenu.",
+      "titleMissing": "La mise en page doit commencer par une ligne // title: … pour que le fichier ait un nom.",
+      "tooManyPages": "Trop de pages ({{got}}, le maximum est {{max}}).",
+      "unknownTag": "Balise inconnue <{{tag}}>. Seules Slide / Box / Text / Image sont prises en charge.",
+      "unparsable": "La mise en page contient une erreur de syntaxe et n’a pas pu être lue."
+    },
+    "failedTitle": "La présentation n’a pas pu être générée",
+    "warn": {
+      "head": "Le fichier est déjà dans 产物 à droite. Seuls ces points sont à ajuster :",
+      "occluded": "Le texte de la page {{page}} est masqué par un autre élément",
+      "outOfBounds": "La page {{page}} a du contenu hors de la diapositive : il ne s’affichera pas à la présentation"
+    },
+    "warnedTitle": "La présentation a été générée, avec quelques points à ajuster"
+  },
   "startupReadiness": {
     "aiCatalogFailed": "Impossible d’obtenir la liste des modèles",
     "aiError": "Aucun modèle n’est disponible pour le moment",

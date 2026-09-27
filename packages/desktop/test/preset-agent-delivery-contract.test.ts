@@ -33,6 +33,16 @@ describe('预置助手的交付合同：每条通道都要在清单里', () => {
     expect(COMMON_OPERATING_CONTRACT, '要说清自己写的页面不算「产物」').toMatch(/not\*?\s*a 产物/);
   });
 
+  it('⭐ 幻灯版面通道也要在清单里（点名牌面与技能）', () => {
+    // 漏了这一步的代价有实测：`htmlgen` 当初只写进了 SKILL.md，而技能正文**不进系统提示词**，
+    // 于是助手压根不知道自己有那条通道 —— 用户看到的是"它让我自己复制"。
+    // 每加一条交付通道，这张清单必须同步，否则那条通道在用户侧等于不存在。
+    expect(COMMON_OPERATING_CONTRACT, '没写幻灯版面这一条').toMatch(/Slide layouts you compose yourself/);
+    expect(COMMON_OPERATING_CONTRACT, '没点名 slidegen 这条围栏').toContain('slidegen');
+    expect(COMMON_OPERATING_CONTRACT, '没点名技能 slug，助手不知道去翻哪一份').toContain('deck-layout');
+    expect(COMMON_OPERATING_CONTRACT, '要提醒它内容装得下时优先用模板（填格子更快）').toMatch(/模板版/);
+  });
+
   it('四件文档那条**还在**（加新的别把旧的挤掉）', () => {
     expect(COMMON_OPERATING_CONTRACT).toMatch(/\.pptx \/ \.docx \/ \.xlsx \/ \.pdf/);
     expect(COMMON_OPERATING_CONTRACT).toContain('docgen');
@@ -52,6 +62,6 @@ describe('预置助手的交付合同：每条通道都要在清单里', () => {
   it('提示词版本号是当前那一版（改了合同就该动它）', () => {
     // 这一版加了网页交付那条。版本号是"将来能不能安全升级已发出去的盘"的唯一依据
     // （见 preset-agents.ts 里 PRESET_PROMPT_VERSION 的注释）。
-    expect(PRESET_PROMPT_VERSION).toBe('2026-09-27.1');
+    expect(PRESET_PROMPT_VERSION).toBe('2026-09-27.2');
   });
 });

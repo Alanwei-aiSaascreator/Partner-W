@@ -1859,6 +1859,24 @@
     "title": "斜線指令",
     "tooltip": "指令"
   },
+  "slidegen": {
+    "fail": {
+      "blockEmpty": "助手給的版面是空的。",
+      "evalFailed": "版面裡的運算式算不出來 —— 可能是寫錯了，或者太複雜。",
+      "renderFailed": "排版時出錯了。這是我們這邊的問題，不是您的內容有問題。",
+      "titleMissing": "版面開頭要有一行 // title: 檔名，現在沒有，所以這份檔案不知道該叫什麼名字。",
+      "tooManyPages": "頁數太多了（{{got}} 頁，最多 {{max}} 頁）。",
+      "unknownTag": "版面裡用了不認識的標籤 <{{tag}}>。只支援 Slide / Box / Text / Image 這四個。",
+      "unparsable": "版面寫法有語法錯誤，讀不出來。"
+    },
+    "failedTitle": "簡報沒能生成",
+    "warn": {
+      "head": "檔案已經在右側「產物」裡了，只是這幾處版式要調整：",
+      "occluded": "第 {{page}} 頁有文字被別的元件蓋住了",
+      "outOfBounds": "第 {{page}} 頁有內容超出畫面，放映時看不到"
+    },
+    "warnedTitle": "簡報已生成，但有幾處要調整"
+  },
   "startupReadiness": {
     "aiCatalogFailed": "沒能取到模型列表",
     "aiError": "暫時沒有可用模型",

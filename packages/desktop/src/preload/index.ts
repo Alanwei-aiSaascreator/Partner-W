@@ -1,24 +1,26 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
   ApprovalDecision,
-  QuestionResolveParams,
+  Artifact,
   CommandsListParams,
+  ConfigPatchParams,
+  ConfigSetParams,
   CronJobCreate,
   CronJobPatch,
   CronListParams,
   CronRunParams,
   CronRunsParams,
+  DocgenFailure,
+  HtmlgenFailure,
+  PortableUpdatePublicState,
+  QuestionResolveParams,
+  RelayBootstrapPublicState,
+  RuntimeBootstrapStatus,
   SkillInstallParams,
   SkillSearchParams,
   SkillUpdateParams,
-  ConfigSetParams,
-  ConfigPatchParams,
-  Artifact,
-  DocgenFailure,
-  HtmlgenFailure,
-  RelayBootstrapPublicState,
-  PortableUpdatePublicState,
-  RuntimeBootstrapStatus,
+  SlidegenFailure,
+  SlidegenWarning,
 } from '@clawwork/shared';
 import type { ClawWorkAPI, GatewayServerConfig } from './clawwork';
 
@@ -193,6 +195,24 @@ function buildApi(): ClawWorkAPI {
       ipcRenderer.on('htmlgen:failed', listener);
       return () => {
         ipcRenderer.removeListener('htmlgen:failed', listener);
+      };
+    },
+    onSlidegenFailed: (callback: (failures: SlidegenFailure[]) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, failures: SlidegenFailure[]): void => {
+        callback(failures);
+      };
+      ipcRenderer.on('slidegen:failed', listener);
+      return () => {
+        ipcRenderer.removeListener('slidegen:failed', listener);
+      };
+    },
+    onSlidegenWarned: (callback: (warnings: SlidegenWarning[]) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, warnings: SlidegenWarning[]): void => {
+        callback(warnings);
+      };
+      ipcRenderer.on('slidegen:warned', listener);
+      return () => {
+        ipcRenderer.removeListener('slidegen:warned', listener);
       };
     },
     saveCodeBlock: (params) => ipcRenderer.invoke('artifact:save-content', params),

@@ -10,6 +10,7 @@ import { generateDocumentsFromMessage } from '../docgen/generate.js';
 //    删掉任何一个，下面各自那个调用点就变成 TS2304（找不到名字）。
 import { resolvePptxTemplatesRoot } from '../docgen/pptx-template/locate.js';
 import { generateHtmlPagesFromMessage } from '../htmlgen/generate.js';
+import { generateSlidesFromMessage } from '../slidegen/generate.js';
 import type { MessageAttachment } from '@clawwork/shared';
 import { getWorkspacePath } from '../workspace/config.js';
 import { getGatewayClient } from '../ws/index.js';
@@ -383,6 +384,35 @@ function finalizeAssistantArtifacts(input: {
       }
     } catch (error) {
       console.error('[htmlgen]', error);
+    }
+    try {
+      // ⭐ 幻灯片生成：助手给出 ```` ```slidegen ```` 块（**JSX + CSS 的版面源码**，
+      //    不是填格子；见 `main/slidegen/`）。
+      //
+      //    与上一条的本质差别：这条通道允许模型**写版面本身**，客户端拿真浏览器
+      //    （Electron 隐藏窗口）排版、量出每个元素的最终矩形，再写回成
+      //    **真文字、可编辑**的 pptx。
+      //
+      //    ⚠️ 失败与**警告**分开推：版式有毛病（元素冲出画布 / 文字被盖住）
+      //       **不挡交付** —— 文件照样在产物里，只是要告诉用户哪一页哪里不对。
+      //       把警告当成失败，就回到了"内容多一点 = 零输出"那条老路（`docgen` 踩过）。
+      const decks = await generateSlidesFromMessage({
+        workspacePath: input.workspacePath,
+        taskId: input.taskId,
+        messageId: input.messageId,
+        content: input.content,
+      });
+      for (const artifact of decks.saved) {
+        for (const win of BrowserWindow.getAllWindows()) win.webContents.send('artifact:saved', artifact);
+      }
+      if (decks.failed.length > 0) {
+        for (const win of BrowserWindow.getAllWindows()) win.webContents.send('slidegen:failed', decks.failed);
+      }
+      if (decks.warnings.length > 0) {
+        for (const win of BrowserWindow.getAllWindows()) win.webContents.send('slidegen:warned', decks.warnings);
+      }
+    } catch (error) {
+      console.error('[slidegen]', error);
     }
     try {
       if (isArtifactRunCanceled(run) || !run.baseline) return;

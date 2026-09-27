@@ -1859,6 +1859,24 @@
     "title": "Slash Commands",
     "tooltip": "Commands"
   },
+  "slidegen": {
+    "fail": {
+      "blockEmpty": "The layout the assistant sent was empty.",
+      "evalFailed": "An expression in the layout could not be evaluated — it may be malformed or too complex.",
+      "renderFailed": "Something went wrong while laying out the slides. That is on our side, not your content.",
+      "titleMissing": "The layout needs a // title: … line at the top, so the file has a name to use.",
+      "tooManyPages": "Too many pages ({{got}}, the limit is {{max}}).",
+      "unknownTag": "Unknown tag <{{tag}}>. Only Slide / Box / Text / Image are supported.",
+      "unparsable": "The layout has a syntax error and could not be read."
+    },
+    "failedTitle": "The presentation couldn't be generated",
+    "warn": {
+      "head": "The file is already in 产物 on the right. These spots need adjusting:",
+      "occluded": "Text on page {{page}} is covered by another element",
+      "outOfBounds": "Page {{page}} has content outside the slide, so it will not show when presented"
+    },
+    "warnedTitle": "The presentation was generated, with a few spots to fix"
+  },
   "startupReadiness": {
     "aiCatalogFailed": "Could not get the model list",
     "aiError": "No models are available right now",
