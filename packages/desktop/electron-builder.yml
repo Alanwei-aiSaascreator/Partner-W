@@ -55,6 +55,20 @@ extraResources:
   # ⚠️ `to:` 必须与 `locate.ts` 的 `OUR_SKILLS_DIR_NAME` 一字不差，靠上面那个测试钉住。
   - from: our-skills
     to: our-skills
+  # PPTX 模板（`resources/pptx-templates/*.pptx`，自制、随包分发）。
+  # 落点是 `<resources>/pptx-templates`，客户端侧见
+  # `src/main/docgen/pptx-template/locate.ts`。
+  #
+  # ⚠️ 必须走 extraResources 而**不能**打进 app.asar：
+  #    主进程要把 .pptx 当**普通文件**交给 pptx-automizer 读，
+  #    而 asar 里的路径是虚拟的、普通 fs / zip 读取器读不了。
+  #    同理，这个目录**只读**：产出写到任务目录，由现成的产物通道落盘。
+  #
+  # ⚠️ `to:` 必须与 `locate.ts` 的 `PPTX_TEMPLATES_DIR_NAME` 一字不差 ——
+  #    漂移的表现是"模板填充永远失败而开发态一切正常"，
+  #    靠 `test/pptx-template-packaging-gate.test.ts` 断言两者相等钉住。
+  - from: resources/pptx-templates
+    to: pptx-templates
 # ⚠️ electron-builder 只接受**一个** beforePack ⇒ 这里是组合钩子，
 #    两道门禁（随包运行时 / 内嵌更新公钥）各自的判定在各自那个文件里。
 beforePack: ./scripts/before-pack.cjs

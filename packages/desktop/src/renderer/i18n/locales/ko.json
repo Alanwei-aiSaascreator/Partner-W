@@ -886,7 +886,11 @@
     "renderFailed": "만들지 못한 파일이 하나 있습니다.",
     "requestInvalid": "내용 형식이 올바르지 않은 파일이 있어 만들지 않았습니다. 어시스턴트에게 다시 출력하도록 요청해 주세요.",
     "slideBulletMultiline": "슬라이드 {{page}}의 {{bullet}}번째 항목에 줄바꿈이 있어 만들지 않았습니다. 각 항목은 한 줄로 써 주세요. 문단을 나누려면 항목을 나누거나 슬라이드를 추가해 주세요.",
-    "slideTitleMultiline": "슬라이드 {{page}}의 제목에 줄바꿈이 있어 만들지 않았습니다. 제목은 한 줄로 써 주세요."
+    "slideTitleMultiline": "슬라이드 {{page}}의 제목에 줄바꿈이 있어 만들지 않았습니다. 제목은 한 줄로 써 주세요.",
+    "templateFieldMissing": "슬라이드 {{page}}({{templateId}})에 필수 필드 \"{{field}}\"가 없어 생성되지 않았습니다.",
+    "templateFieldTooLong": "슬라이드 {{page}}({{templateId}})의 \"{{field}}\"가 너무 길어 생성되지 않았습니다. {{maxChars}}자 이내로 줄여 주세요.",
+    "templateFieldUnknown": "슬라이드 {{page}}({{templateId}})에 \"{{field}}\" 필드가 없어 생성되지 않았습니다. 삭제해 주세요.",
+    "templatePageUnknown": "슬라이드 {{page}}에 없는 템플릿 \"{{templateId}}\"을(를) 사용해 생성되지 않았습니다. 사용 가능한 템플릿: cover, section, insight, comparison, metrics, timeline, actions, closing."
   },
   "errors": {
     "agentMissing": "해당 어시스턴트는 이 컴퓨터에 없습니다. 다른 어시스턴트를 선택해 다시 보내세요.",

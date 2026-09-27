@@ -67,13 +67,41 @@ export interface DocgenSlide {
   notes?: string;
 }
 
+/**
+ * pptx 请求有**两种形态**，靠 `template` 字段区分：
+ *
+ *  · **模板填充**（`template: 'business-deck-v4'` + `slides[{templateId,data}]`）
+ *    —— 填进设计师做好的模板页，样式一个字节都不改。**推荐走这条**。
+ *  · **现画**（`slides[{title,bullets,notes}]`，没有 `template`）
+ *    —— pptxgenjs 从坐标上画。保底用：模板覆盖不到的版式才走它。
+ *    效果上限低（它只有画矩形和文本框的能力），但没有它就没有"任意内容都能出片"。
+ *
+ * ⚠️ 两条路的 `slides` 元素形状不同，所以下面用 `deck` 而不是把两者塞进同一个字段 ——
+ *    塞在一起的话，读代码的人分不清"这一页是模板页还是现画页"，
+ *    而那个判断恰恰决定走哪条渲染路。
+ */
 export interface DocgenPptxRequest {
   kind: 'pptx';
-  /** 演示标题（封面用）。 */
+  /** 演示标题（封面用）。**现画那条路**用它当封面标题。 */
   title: string;
   /** 副标题（封面用），可空。 */
   subtitle?: string;
+  /** 现画那条路的页。模板填充时是空数组。 */
   slides: DocgenSlide[];
+  /**
+   * 模板填充那条路的**原始**输入（`{template?, slides:[{templateId,data}]}`）。
+   * 有它 ⇒ 走模板；没有 ⇒ 走现画。
+   *
+   * ⚠️ 这里是 `unknown` 而不是解析好的形状，是**故意的**：
+   *    模板那条路的四类拒绝（页不认识 / 字段不认识 / 字段缺了 / 值太长）
+   *    都必须带着**模型写的那个名字**回到界面上。而契约层这一关的错误出口是
+   *    一句 `string`，到了 `generate.ts` 会被统一压成 `{code:'request-invalid'}` ——
+   *    名字就丢了，助手只能看到"你的请求不合法"。
+   *    ⇒ 完整的目录校验放在**渲染阶段**做（`pptx-template/render.ts`），
+   *      那里的失败出口是 `DocgenFailure`，四类拒绝能原样上去。
+   *      这一层只做最浅的一层形状检查（是不是数组、是不是非空）。
+   */
+  rawTemplateDeck?: unknown;
 }
 
 export interface DocgenSection {
@@ -223,6 +251,23 @@ function parsePptx(input: Record<string, unknown>, title: string): DocgenParseRe
   if (rawSlides.length === 0) return { ok: false, error: 'slides must not be empty' };
   if (rawSlides.length > DOCGEN_LIMITS.maxSlides) {
     return { ok: false, error: `slides exceeds ${DOCGEN_LIMITS.maxSlides}` };
+  }
+
+  // 模板填充那条路：`template` 字段在场就走它。
+  // ⚠️ 这一层**不做目录校验**（见 `DocgenPptxRequest.rawTemplateDeck` 的说明）：
+  //    只确认形状是"一个非空的 slides 数组"，完整的白名单检查在渲染阶段。
+  if (input.template !== undefined) {
+    const subtitle = asTrimmedString(input.subtitle) ?? undefined;
+    return {
+      ok: true,
+      request: {
+        kind: 'pptx',
+        title,
+        ...(subtitle ? { subtitle } : {}),
+        slides: [],
+        rawTemplateDeck: { template: input.template, slides: rawSlides },
+      },
+    };
   }
 
   const slides: DocgenSlide[] = [];

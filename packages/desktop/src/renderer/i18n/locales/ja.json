@@ -886,7 +886,11 @@
     "renderFailed": "作成できなかったファイルが 1 つあります。",
     "requestInvalid": "内容の形式が正しくないファイルが 1 つあり、作成しませんでした。アシスタントにもう一度出力させるか、内容を確認してください。",
     "slideBulletMultiline": "スライド {{page}} の箇条書き {{bullet}} 番目に改行が含まれているため、作成しませんでした。各項目は 1 行で書いてください。段落を分けたい場合は項目を増やすか別のスライドにしてください。",
-    "slideTitleMultiline": "スライド {{page}} のタイトルに改行が含まれているため、作成しませんでした。タイトルは 1 行で書いてください。"
+    "slideTitleMultiline": "スライド {{page}} のタイトルに改行が含まれているため、作成しませんでした。タイトルは 1 行で書いてください。",
+    "templateFieldMissing": "スライド {{page}}（{{templateId}}）に必須フィールド「{{field}}」がないため、生成されませんでした。",
+    "templateFieldTooLong": "スライド {{page}}（{{templateId}}）の「{{field}}」が長すぎるため、生成されませんでした。{{maxChars}} 文字以内に短くしてください。",
+    "templateFieldUnknown": "スライド {{page}}（{{templateId}}）に「{{field}}」というフィールドはないため、生成されませんでした。削除してください。",
+    "templatePageUnknown": "スライド {{page}} に存在しないテンプレート「{{templateId}}」が指定されたため、生成されませんでした。使用できるテンプレート：cover、section、insight、comparison、metrics、timeline、actions、closing。"
   },
   "errors": {
     "agentMissing": "そのアシスタントはこのパソコンにありません。別のアシスタントを選んで送信してください。",

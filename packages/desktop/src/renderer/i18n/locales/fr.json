@@ -886,7 +886,11 @@
     "renderFailed": "Un fichier n'a pas pu être créé.",
     "requestInvalid": "Un fichier avait un contenu mal formé et n'a pas été créé. Demandez à l'assistant de le produire à nouveau.",
     "slideBulletMultiline": "La puce {{bullet}} de la diapositive {{page}} contient un saut de ligne : la présentation n'a pas été créée. Gardez chaque puce sur une seule ligne ; pour plusieurs paragraphes, ajoutez des puces ou une diapositive.",
-    "slideTitleMultiline": "Le titre de la diapositive {{page}} contient un saut de ligne : la présentation n'a pas été créée. Écrivez le titre sur une seule ligne."
+    "slideTitleMultiline": "Le titre de la diapositive {{page}} contient un saut de ligne : la présentation n'a pas été créée. Écrivez le titre sur une seule ligne.",
+    "templateFieldMissing": "La diapositive {{page}} ({{templateId}}) n’a pas le champ obligatoire « {{field}} », rien n’a été généré.",
+    "templateFieldTooLong": "« {{field}} » sur la diapositive {{page}} ({{templateId}}) est trop long, rien n’a été généré. Raccourcissez à {{maxChars}} caractères maximum.",
+    "templateFieldUnknown": "La diapositive {{page}} ({{templateId}}) n’a pas de champ « {{field}} », rien n’a été généré. Supprimez-le.",
+    "templatePageUnknown": "La diapositive {{page}} utilise un modèle inexistant (« {{templateId}} »), rien n’a été généré. Modèles disponibles : cover, section, insight, comparison, metrics, timeline, actions, closing."
   },
   "errors": {
     "agentMissing": "Cet assistant n’est pas sur cet ordinateur. Choisissez-en un autre et renvoyez.",

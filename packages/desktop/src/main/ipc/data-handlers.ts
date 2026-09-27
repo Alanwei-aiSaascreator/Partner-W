@@ -1,4 +1,4 @@
-import { BrowserWindow, ipcMain } from 'electron';
+import { app, BrowserWindow, ipcMain } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { and, eq, desc } from 'drizzle-orm';
 import { getDb, isDbReady } from '../db/index.js';
@@ -6,6 +6,9 @@ import { tasks, messages, artifacts, taskRooms, taskRoomSessions, teams, teamAge
 import { autoExtractArtifacts } from '../artifact/auto-extract.js';
 import { captureTaskArtifactBaseline, reconcileTaskArtifacts, type ArtifactBaseline } from '../artifact/reconcile.js';
 import { generateDocumentsFromMessage } from '../docgen/generate.js';
+// ⚠️ 两条线各往这里插了一行，合并时冲突过一次 —— **两个都要**。
+//    删掉任何一个，下面各自那个调用点就变成 TS2304（找不到名字）。
+import { resolvePptxTemplatesRoot } from '../docgen/pptx-template/locate.js';
 import { generateHtmlPagesFromMessage } from '../htmlgen/generate.js';
 import type { MessageAttachment } from '@clawwork/shared';
 import { getWorkspacePath } from '../workspace/config.js';
@@ -13,6 +16,31 @@ import { getGatewayClient } from '../ws/index.js';
 
 function ipcError(err: unknown): { ok: false; error: string } {
   return { ok: false, error: err instanceof Error ? err.message : 'unknown' };
+}
+
+/**
+ * 随包 pptx 模板目录。**算不出来就返回 `undefined`，绝不抛。**
+ *
+ * 为什么必须这么小心：它跑在**消息收尾路径**上，而那条路径还负责自动抽取、
+ * 产物对账、以及把 `docgen:failed` 推给界面 —— 模板定位只是其中一个小分支，
+ * 让它把整条收尾掀翻是荒唐的。
+ *
+ * ⚠️ 这不是假设，是踩过的：`test/data-handlers-artifacts.test.ts` 里
+ *    `vi.mock('electron')` 只给了 `ipcMain` 与 `BrowserWindow`，**没有 `app`** ⇒
+ *    `app.isPackaged` 抛 `TypeError` ⇒ 三个 `docgen:failed` 用例全红 ——
+ *    而症状是"失败事件一次都没推"，看起来像内容校验坏了，跟模板毫无关系。
+ *    模板定位失败的正确表现是"这条 deck 报 render-failed"，不是"整条链停摆"。
+ */
+function pptxTemplatesRoot(): string | undefined {
+  try {
+    return resolvePptxTemplatesRoot({
+      isPackaged: app.isPackaged,
+      resourcesPath: process.resourcesPath,
+      appPath: app.getAppPath(),
+    });
+  } catch {
+    return undefined;
+  }
 }
 
 function parseTeamAgentSkills(raw: string | null): string[] {
@@ -322,6 +350,7 @@ function finalizeAssistantArtifacts(input: {
         taskId: input.taskId,
         messageId: input.messageId,
         content: input.content,
+        templatesRoot: pptxTemplatesRoot(),
       });
       for (const artifact of documents.saved) {
         for (const win of BrowserWindow.getAllWindows()) win.webContents.send('artifact:saved', artifact);

@@ -57,6 +57,31 @@ export type DocgenFailure =
   | { code: 'presentation-slide-title-multiline'; format: DocgenFormat; page: number }
   | { code: 'presentation-slide-bullet-multiline'; format: DocgenFormat; page: number; bullet: number }
   /**
+   * **模板填充**那条路的四种拒绝（见 `main/docgen/pptx-template/`）。
+   *
+   * ⚠️ 它们带的是 `templateId` / `field` 这类**标识符**，不是句子 ——
+   *    `presentation-*` 那几条只带数字是刻意的（文案里那个位置那句话完全不同），
+   *    而这几条要告诉助手的是"**你写的这个名字我不认识**"，
+   *    所以必须把那个名字原样回给它，否则它没法改。
+   *
+   * ⚠️ 四个码分开而不是"一个码 + 一个 kind 字段"：文案里给助手的**动作**不同 ——
+   *    名字不认识 ⇒ 从目录里挑一个；字段不认识 ⇒ 删掉它；
+   *    字段缺了 ⇒ 补上；值太长 ⇒ 改短。合成一条会让文案只能写一句万金油。
+   *
+   * `page` 的口径与上面一致：`slides` 数组里**从 1 数**。
+   */
+  | { code: 'template-page-unknown'; format: DocgenFormat; page: number; templateId: string }
+  | { code: 'template-field-unknown'; format: DocgenFormat; page: number; templateId: string; field: string }
+  | { code: 'template-field-missing'; format: DocgenFormat; page: number; templateId: string; field: string }
+  | {
+      code: 'template-field-too-long';
+      format: DocgenFormat;
+      page: number;
+      templateId: string;
+      field: string;
+      maxChars: number;
+    }
+  /**
    * 这一份的内容本身就不合规（JSON 非法、字段与 `kind` 对不上……）。
    *
    * ⚠️ **没有 `format`**：请求还没解析出来就失败了，我们并不知道它本来想做成什么。

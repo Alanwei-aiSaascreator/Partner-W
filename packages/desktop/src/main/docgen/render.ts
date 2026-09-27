@@ -1,8 +1,19 @@
 import type { DocgenRequest } from './request.js';
+import { renderPptxFromTemplate } from './pptx-template/render.js';
 import { renderDocx } from './render-docx.js';
 import { renderPdf } from './render-pdf.js';
 import { renderPptx } from './render-pptx.js';
 import { renderXlsx } from './render-xlsx.js';
+
+export interface RenderDocumentOptions {
+  /**
+   * 随包模板目录。只有 pptx 的**模板填充**那条路用得到。
+   * `undefined` = 定位不到（打包漏了 extraResources / 开发态跑错目录）。
+   */
+  templatesRoot?: string;
+  /** 产出文件名（模板那条路要拿它当 automizer 的输出名）。 */
+  fileName?: string;
+}
 
 /**
  * **渲染层的唯一入口**：按 `kind` 把请求交给对应格式的渲染器。
@@ -18,9 +29,17 @@ import { renderXlsx } from './render-xlsx.js';
  * ⚠️ 每个渲染器只接收**已经校验过**的请求（`parseDocgenRequest` 的产物），
  *    所以这里不做任何字段检查：形状不对说明契约层漏了，那是契约层的 bug。
  */
-export async function renderDocument(request: DocgenRequest): Promise<Buffer> {
+export async function renderDocument(request: DocgenRequest, options: RenderDocumentOptions = {}): Promise<Buffer> {
   switch (request.kind) {
     case 'pptx':
+      // 两条路，按契约层留下的记号分：有 `rawTemplateDeck` ⇒ 模板填充，没有 ⇒ 现画。
+      if (request.rawTemplateDeck !== undefined) {
+        return renderPptxFromTemplate({
+          raw: request.rawTemplateDeck,
+          templatesRoot: options.templatesRoot,
+          fileName: options.fileName ?? 'deck.pptx',
+        });
+      }
       return renderPptx(request);
     case 'docx':
       return renderDocx(request);
