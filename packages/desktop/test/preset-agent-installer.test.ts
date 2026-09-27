@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, type Mocked } from 'vitest';
-import { PRESET_AGENT_DEFINITIONS, stampPresetPrompt } from '../src/renderer/lib/preset-agents';
+import { PRESET_AGENT_DEFINITIONS, PRESET_PROMPT_VERSION, stampPresetPrompt } from '../src/renderer/lib/preset-agents';
 import { installPresetAgentPack, type PresetAgentInstallerApi } from '../src/renderer/lib/preset-agent-installer';
 
 function createApi(): Mocked<PresetAgentInstallerApi> {
@@ -170,5 +170,66 @@ describe('installPresetAgentPack', () => {
     });
     expect(api.setAgentFile).not.toHaveBeenCalled();
     expect(api.deleteAgent).not.toHaveBeenCalled();
+  });
+
+  /**
+   * ⭐⭐ **提示词升级路**（2026-09-27）。
+   *
+   * 标记机制（`<!-- mofang-prompt:<版本> -->`）建好很久了，但安装器原先**只在文件缺失时写**
+   * ⇒ 已发出去的盘**永远拿不到改过的提示词**。原话就写在 `preset-agents.ts` 里：
+   * 「改一次提示词，改动只在"新装"的盘上生效，已发出去的盘永远不会变」。
+   *
+   * **实测代价**：交付合同里那句「内容装得下时优先用模板 —— 填格子更快」把助手送进了
+   * **每格约 40 字**的模板；用户真机上整份被拒、产物里什么都没有。
+   * 改掉那句话**只有新盘生效**，老盘照旧踩 —— 所以这条升级路不是锦上添花。
+   *
+   * ⚠️ 三条边界缺一不可：**我们的旧版 ⇒ 升** · **没标记 ⇒ 绝不碰**（用户改过）·
+   *    **已是当前版 ⇒ 什么都不做**（幂等）。
+   */
+  describe('提示词升级路', () => {
+    const withMarker = (version: string): string => `# SOUL\n\n<!-- mofang-prompt:${version} -->\n`;
+
+    async function installWithExisting(content: string) {
+      const api = createApi();
+      api.getAgentFile.mockImplementation(async (_gatewayId, agentId, name) => ({
+        ok: true,
+        result: { agentId, file: { name, missing: false, content } },
+      }));
+      const result = await installPresetAgentPack({
+        gatewayId: 'gw-1',
+        workspaceRoot: 'E:/cube',
+        currentAgentIds: ['rongying-content'],
+        verifyExisting: true,
+        definitions: PRESET_AGENT_DEFINITIONS.slice(0, 1),
+        displayNames: { 'rongying-content': '内容创作' },
+        api,
+      });
+      return { api, result };
+    }
+
+    it('⭐ 带**旧版本标记** ⇒ 覆盖成当前版（老盘终于升得上来了）', async () => {
+      const { api, result } = await installWithExisting(withMarker('2020-01-01.1'));
+
+      expect(api.setAgentFile, '旧版没被升级 —— 老盘会一直拿不到改过的提示词').toHaveBeenCalledTimes(2);
+      expect(result.skipped).toEqual([]);
+      // 覆盖后的正文必须盖**当前**版本号，否则下一轮还会被当成旧版、反复重写。
+      expect(api.setAgentFile.mock.calls[0]?.[3] ?? '').toContain(`mofang-prompt:${PRESET_PROMPT_VERSION}`);
+    });
+
+    it('⭐ **没有标记** ⇒ 一个字节都不碰（那是用户自己改过的）', async () => {
+      // 这一条是标记机制存在的**全部理由**：分不清"我们写的旧版"和"用户改过的"，
+      // 就只能选择不碰。少了它，用户的自定义会被每次开机悄悄抹掉。
+      const { api, result } = await installWithExisting('# SOUL\n\n我改过的内容\n');
+
+      expect(api.setAgentFile).not.toHaveBeenCalled();
+      expect(result.skipped).toEqual(['rongying-content']);
+    });
+
+    it('标记已是**当前版** ⇒ 什么都不做（幂等，不然每次开机都重写一遍）', async () => {
+      const { api, result } = await installWithExisting(withMarker(PRESET_PROMPT_VERSION));
+
+      expect(api.setAgentFile).not.toHaveBeenCalled();
+      expect(result.skipped).toEqual(['rongying-content']);
+    });
   });
 });

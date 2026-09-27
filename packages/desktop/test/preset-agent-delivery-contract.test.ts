@@ -33,14 +33,42 @@ describe('预置助手的交付合同：每条通道都要在清单里', () => {
     expect(COMMON_OPERATING_CONTRACT, '要说清自己写的页面不算「产物」').toMatch(/not\*?\s*a 产物/);
   });
 
-  it('⭐ 幻灯版面通道也要在清单里（点名牌面与技能）', () => {
-    // 漏了这一步的代价有实测：`htmlgen` 当初只写进了 SKILL.md，而技能正文**不进系统提示词**，
-    // 于是助手压根不知道自己有那条通道 —— 用户看到的是"它让我自己复制"。
-    // 每加一条交付通道，这张清单必须同步，否则那条通道在用户侧等于不存在。
-    expect(COMMON_OPERATING_CONTRACT, '没写幻灯版面这一条').toMatch(/Slide layouts you compose yourself/);
+  /**
+   * ⭐⭐ **这一条曾经把错的策略钉成绿色**（2026-09-27 改动前它写着
+   * 「要提醒它内容装得下时优先用模板（填格子更快）」）。
+   *
+   * 那段合同的原文是：
+   * > Reach for the 商务演示（模板版）template route when the content fits a template —
+   * > filling slots is faster and it is already designed.
+   *
+   * 助手照做了 —— 用户真机上它原话是「太好了！有这个模板技能可以直接用专业设计的版式」——
+   * 然后撞上模板**每格约 40 字**的硬上限，**整份被拒**，产物里什么都没有。
+   * 更糟的是它没有改走幻灯版面，而是**手搓 Python 脚本**把文件写进工作区（面板里永远看不见）。
+   *
+   * ⇒ 所以现在要钉的是**两件事**：「哪条是默认」和「被拒了怎么办」。
+   *    少了任何一条，同一场事故可以原样重演。
+   */
+  it('⭐⭐ 幻灯版面是**默认路**，且被拒时要**换路**而不是缩内容', () => {
     expect(COMMON_OPERATING_CONTRACT, '没点名 slidegen 这条围栏').toContain('slidegen');
     expect(COMMON_OPERATING_CONTRACT, '没点名技能 slug，助手不知道去翻哪一份').toContain('deck-layout');
-    expect(COMMON_OPERATING_CONTRACT, '要提醒它内容装得下时优先用模板（填格子更快）').toMatch(/模板版/);
+    // ⚠️ 合同正文里有 Markdown 粗体（`**default route**`）⇒ 正则必须容忍那对星号，
+    //    否则查的是一个不存在于文本里的形状（本文件上面那条注释记过同一个坑）。
+    expect(COMMON_OPERATING_CONTRACT, '⭐ 要说清它是**默认路**，不是兜底').toMatch(
+      /default route\*{0,2},\s*not a fallback/,
+    );
+    expect(COMMON_OPERATING_CONTRACT, '⭐ 要说清它**没有字数上限**（这是选它的理由）').toMatch(/no character limit/);
+    expect(COMMON_OPERATING_CONTRACT, '要说清模板**每格有上限、超一格整份被拒**').toMatch(/caps every slot/);
+    expect(COMMON_OPERATING_CONTRACT, '⭐ 被拒 = **换路**的信号，不是缩用户内容的理由').toMatch(
+      /signal to switch routes, not to shorten/,
+    );
+    expect(COMMON_OPERATING_CONTRACT, '⭐ 不许退回手写文档（那是用户看不见的产物）').toMatch(
+      /fall back to\s+writing a document by hand/,
+    );
+  });
+
+  it('⭐ 模板那条**仍然在清单里**（不是把它删掉，是把它收窄）', () => {
+    // 反方向也要钉：谁把模板那条整段删掉，这条要红 —— 用户确实有"内容很短、正好套模板"的场景。
+    expect(COMMON_OPERATING_CONTRACT, '模板那条被删了').toMatch(/模板版/);
   });
 
   it('四件文档那条**还在**（加新的别把旧的挤掉）', () => {
@@ -60,8 +88,9 @@ describe('预置助手的交付合同：每条通道都要在清单里', () => {
   });
 
   it('提示词版本号是当前那一版（改了合同就该动它）', () => {
-    // 这一版加了网页交付那条。版本号是"将来能不能安全升级已发出去的盘"的唯一依据
+    // 这一版把幻灯版面提成**默认路**、把模板收窄，并写死"被拒就换路"。
+    // 版本号是"将来能不能安全升级已发出去的盘"的唯一依据
     // （见 preset-agents.ts 里 PRESET_PROMPT_VERSION 的注释）。
-    expect(PRESET_PROMPT_VERSION).toBe('2026-09-27.2');
+    expect(PRESET_PROMPT_VERSION).toBe('2026-09-27.3');
   });
 });

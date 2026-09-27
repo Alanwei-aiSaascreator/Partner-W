@@ -1,4 +1,9 @@
-import { PRESET_AGENT_DEFINITIONS, stampPresetPrompt } from '@/lib/preset-agents';
+import {
+  PRESET_AGENT_DEFINITIONS,
+  PRESET_PROMPT_VERSION,
+  readPresetPromptVersion,
+  stampPresetPrompt,
+} from '@/lib/preset-agents';
 import type { AgentInstallDefinition } from '@clawwork/core';
 
 interface MutationResult {
@@ -55,12 +60,18 @@ function resultError(result: MutationResult, fallback: string): string {
   return result.error?.trim() || fallback;
 }
 
-async function hasCompleteAgentFile(
+/** 读一个助手文件：在不在 + 正文（正文用来认版本标记）。 */
+interface AgentFileState {
+  exists: boolean;
+  content: string;
+}
+
+async function readAgentFile(
   api: PresetAgentInstallerApi,
   gatewayId: string,
   agentId: string,
   name: string,
-): Promise<boolean> {
+): Promise<AgentFileState> {
   const result = await api.getAgentFile(gatewayId, agentId, name);
   if (!result.ok) throw new Error(resultError(result, `${name} read failed`));
   const payload = result.result;
@@ -69,14 +80,42 @@ async function hasCompleteAgentFile(
   }
   const file = payload.file;
   if (!file || typeof file !== 'object') throw new Error(`${name} read returned an invalid file`);
-  if ('missing' in file && file.missing === true) return false;
-  return (
-    'missing' in file &&
-    file.missing === false &&
-    'content' in file &&
-    typeof file.content === 'string' &&
-    file.content.trim().length > 0
-  );
+  const missing = 'missing' in file && file.missing === true;
+  const content = 'content' in file && typeof file.content === 'string' ? file.content : '';
+  return { exists: !missing && content.trim().length > 0, content };
+}
+
+/**
+ * 这份文件是不是「**我们写的**、但**不是这一版**」⇒ 该覆盖。
+ *
+ * ## 🔴 为什么必须补上这一段（2026-09-27）
+ *
+ * 标记机制（`<!-- mofang-prompt:<版本> -->`）建好很久了，但**从来没有人用它做升级** ——
+ * 安装器只在**文件缺失**时写。后果写在 `preset-agents.ts` 的注释里却一直成立：
+ *
+ * > 改一次提示词，改动只在"新装"的盘上生效，**已发出去的盘永远不会变**。
+ *
+ * 实测代价：交付合同里那句"内容装得下时优先用模板"把助手送进了**每格约 40 字**的模板，
+ * 用户真机上整份被拒、产物什么都没有。改掉那句话**新盘才生效**，老盘照旧踩坑。
+ *
+ * ⚠️ **没标记一律不碰**。标记的含义是"这份文件是我们写的、而且是我们这一版写的"；
+ *    读不到标记 = 用户自己改过（或标记机制之前的老盘）。
+ *    覆盖会**抹掉用户的修改** —— 这正是当初要盖这个标记的全部理由。
+ */
+function needsPromptUpgrade(content: string): boolean {
+  const version = readPresetPromptVersion(content);
+  return version !== null && version !== PRESET_PROMPT_VERSION;
+}
+
+/**
+ * 是不是**内置的六个预置助手** —— 只有它们才盖/认我们的版本标记。
+ *
+ * ⚠️ 市场模板（`rongying-tpl-*`）与用户自己建的 agent **一律不算**：
+ *    它们的正文来自数据库或用户本人，覆盖会**抹掉用户的东西**。
+ *    同一个白名单判据在盖章那一侧也必须成立，两边缺一不可。
+ */
+function isBuiltInPresetId(id: string): boolean {
+  return PRESET_AGENT_DEFINITIONS.some((preset) => preset.id === id);
 }
 
 async function rollbackNewAgent(
@@ -119,8 +158,11 @@ export async function installPresetAgentPack({
     let failureMessage = '';
     try {
       const alreadyExists = knownAgentIds.has(definition.id);
-      let identityComplete = false;
-      let soulComplete = false;
+      let identityFile: AgentFileState = { exists: false, content: '' };
+      let soulFile: AgentFileState = { exists: false, content: '' };
+      /** ⭐ 「是**我们写的旧版本** ⇒ 该覆盖」。新装的 agent 两个都保持 `false`。 */
+      let identityUpgrade = false;
+      let soulUpgrade = false;
 
       if (alreadyExists) {
         if (!verifyExisting && !repairAgentIdSet.has(definition.id)) {
@@ -130,9 +172,22 @@ export async function installPresetAgentPack({
           continue;
         }
         createdAgentId = definition.id;
-        identityComplete = await hasCompleteAgentFile(api, gatewayId, definition.id, 'IDENTITY.md');
-        soulComplete = await hasCompleteAgentFile(api, gatewayId, definition.id, 'SOUL.md');
-        if (identityComplete && soulComplete && !repairAgentIdSet.has(definition.id)) {
+        identityFile = await readAgentFile(api, gatewayId, definition.id, 'IDENTITY.md');
+        soulFile = await readAgentFile(api, gatewayId, definition.id, 'SOUL.md');
+        // ⭐ **升级路**：文件都在、也**没有**"我们盖的旧版本标记"要处理时，才算跳过。
+        //    ⚠️ 少了这两个 `needsPromptUpgrade` 条件，**老盘永远升不上来** ——
+        //    提示词改动只在"新装"的机器上生效（见 `needsPromptUpgrade` 的说明）。
+        //    ⚠️ 只有**内置预置**才判升级：市场模板（`rongying-tpl-*`）与用户的 agent 不归我们管。
+        const builtIn = isBuiltInPresetId(definition.id);
+        identityUpgrade = builtIn && needsPromptUpgrade(identityFile.content);
+        soulUpgrade = builtIn && needsPromptUpgrade(soulFile.content);
+        if (
+          identityFile.exists &&
+          soulFile.exists &&
+          !repairAgentIdSet.has(definition.id) &&
+          !identityUpgrade &&
+          !soulUpgrade
+        ) {
           skipped.push(definition.id);
           completed++;
           onProgress?.({ completed, total: definitions.length, currentId: definition.id });
@@ -171,15 +226,16 @@ export async function installPresetAgentPack({
 
       // ⚠️ 只有**内置的六个预置助手**才盖版本标记。标记的含义是"这份文件是我们写的、
       //    并且是我们这一版写的" —— 市场模板的内容来自数据库（`rongying-tpl-*`），
-      //    用户还会自己改，盖我们的版本号会让将来那套"是我们的旧版本 ⇒ 可升级"
+      //    用户还会自己改，盖我们的版本号会让"是我们的旧版本 ⇒ 可升级"
       //    的判据把**用户改过的模板**也认成我们的。判断按 id 白名单，不做例外。
-      const isBuiltInPreset = PRESET_AGENT_DEFINITIONS.some((preset) => preset.id === definition.id);
-      const stamp = (text: string) => (isBuiltInPreset ? stampPresetPrompt(text) : text);
+      const stamp = (text: string) => (isBuiltInPresetId(definition.id) ? stampPresetPrompt(text) : text);
 
-      if (!identityComplete) {
-        // 为什么必须盖章：这两个文件是运行时**每轮全文注入**的提示词，而安装器只在
+      if (!identityFile.exists || identityUpgrade) {
+        // 为什么必须盖章：这两个文件是运行时**每轮全文注入**的提示词，而安装器原先只在
         // 文件缺失时才写 ⇒ 没有标记就永远无法安全地升级已有盘
         // （分不清"我们写的旧版本"和"用户自己改过的"）。见 `preset-agents.ts` 的长注释。
+        //
+        // ⭐ 2026-09-27 起 `identityUpgrade` 也在这一支里：**老盘终于能升上来了**。
         const identityResult = await api.setAgentFile(
           gatewayId,
           createdAgentId,
@@ -189,7 +245,7 @@ export async function installPresetAgentPack({
         if (!identityResult.ok) throw new Error(resultError(identityResult, 'IDENTITY.md write failed'));
       }
 
-      if (!soulComplete) {
+      if (!soulFile.exists || soulUpgrade) {
         const soulResult = await api.setAgentFile(gatewayId, createdAgentId, 'SOUL.md', stamp(definition.soulMd));
         if (!soulResult.ok) throw new Error(resultError(soulResult, 'SOUL.md write failed'));
       }

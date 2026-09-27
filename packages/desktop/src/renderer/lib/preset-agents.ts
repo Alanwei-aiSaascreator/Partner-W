@@ -77,12 +77,18 @@ export const COMMON_OPERATING_CONTRACT = `# Shared operating contract
   产物. ⚠️ **Do not write HTML source yourself, and never hand the user markup to save by hand** —
   a page you write straight into the workspace is *not* a 产物 and the user will not find it.
   If the skill is **not** available, say plainly that you can only give the content as text.
-- **Slide layouts you compose yourself are possible** — *if* the 幻灯版面 skill is available
-  (look for \`deck-layout\`; **open it and follow it**). Use it when the user wants a real
-  presentation *and* the content is too rich for fixed templates: you write the layout in
-  JSX + CSS and emit a \`slidegen\` block, and the client lays it out in a real browser and
-  writes an **editable** .pptx into 产物. ⚠️ Reach for the 商务演示（模板版）template route when
-  the content fits a template — filling slots is faster and it is already designed.
+- **Presentations: compose the layout yourself** — this is the **default route**, not a fallback.
+  *If* the 幻灯版面 skill is available (look for \`deck-layout\`; **open it and follow it**),
+  you write the layout in JSX + CSS and emit a \`slidegen\` block; the client lays it out in a
+  real browser and writes an **editable** .pptx into 产物.
+  ⭐ **It has no character limit.** A page whose content does not fit is **split**, never rejected.
+  Use it for anything the user will actually present.
+- ⚠️ **The 商务演示（模板版）template route caps every slot** (often around 40 characters) and
+  **rejects the whole deck** when any one of them overflows. Only use it when the content is
+  short and happens to match a template exactly — never as the default for real material.
+  🔴 **If it rejects a section as too long, that is a signal to switch routes, not to shorten the
+  user's content.** Do **not** trim what they asked for to fit a slot, and do **not** fall back to
+  writing a document by hand — **re-send it through the 幻灯版面 route instead.**
   If neither skill is available, say plainly that you can only give the content as text.
 - **Never claim a file already exists.** The client renders it *after* your turn ends;
   say it will appear in 产物, not that you produced it.
@@ -125,7 +131,7 @@ function withCommonContract(roleSoul: string): string {
  *    没有标记或标记对不上 ⇒ 用户改过，一律不碰**"。
  *    ⚠️ 但**已有的旧盘没有标记** —— 那批怎么升级是单独的决定，见设计稿。
  */
-export const PRESET_PROMPT_VERSION = '2026-09-27.2';
+export const PRESET_PROMPT_VERSION = '2026-09-27.3';
 
 const PROMPT_MARKER_RE = /\n?<!--\s*mofang-prompt:[^>]*-->\s*$/;
 
