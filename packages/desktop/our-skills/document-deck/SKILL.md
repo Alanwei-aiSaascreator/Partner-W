@@ -35,6 +35,53 @@ metadata: { 'openclaw': { 'emoji': '📄', 'skillKey': 'document-deck' } }
 排出来是**看不见的**（字会冲出画面、压在标题上）。所以客户端会在排版前**判定**，
 装不下就**整份不生成**并告诉用户是哪一页。想让它真的生成出来，按下面的建议写。
 
+#### ⭐ 商务演示优先用**模板填充**（效果远好于上面那种）
+
+上面那种是"从零画"——白底 + 标题 + 项目符号，**只能这样**，因为它手里只有画方框的能力。
+要做**给客户看的东西**，改用模板填充：把内容填进设计师做好的版式里，
+配色、字体、留白、分栏都是定好的，你只管填字。
+
+````
+```docgen
+{
+  "kind": "pptx",
+  "template": "business-deck-v4",
+  "slides": [
+    { "templateId": "cover",   "data": { "cover_title": "九月经营简报", "cover_subtitle": "私域增长与渠道结构", "date": "2026-09-27", "author": "增长组" } },
+    { "templateId": "metrics", "data": { "slide_title": "关键指标", "value_1": "12.4%", "label_1": "转化率", "note_1": "较上月 +1.8pp" } },
+    { "templateId": "actions", "data": { "slide_title": "下一步", "action_1": "补齐私域承接话术", "owner_1": "张", "due_1": "本周五" } }
+  ]
+}
+```
+````
+
+**八种模板页**（`templateId` 只能从这八个里挑，别的会被拒）：
+
+| `templateId` | 用途 | 可以填的字段 |
+| --- | --- | --- |
+| `cover` | 封面 | `cover_title`(必填) `cover_subtitle` `date` `author` |
+| `section` | 章节页 | `section_title`(必填) `section_summary` `section_context` |
+| `insight` | 观点页（一个结论 + 三条证据） | `slide_title`(必填) `slide_subtitle` `takeaway` `evidence_1..3` |
+| `comparison` | 左右对比 | `slide_title`(必填) `slide_subtitle` `left_title` `right_title` `left_item_1..3` `right_item_1..3` |
+| `metrics` | 三个关键指标 | `slide_title`(必填) `slide_subtitle` `value_1..3` `label_1..3` `note_1..3` `source_or_note` |
+| `timeline` | 最多五步的时间线 | `slide_title`(必填) `slide_subtitle` `step_1..5_title` `step_1..5_desc` |
+| `actions` | 谁在什么时候做什么（最多四条） | `slide_title`(必填) `slide_subtitle` `action_1..4` `owner_1..4` `due_1..4` |
+| `closing` | 结尾页 | `closing_title`(必填) `closing_message` `contact_or_next_step` |
+
+**四条硬规矩**（违反了会被拒，而且会告诉你错在哪一页哪个字段）：
+
+1. **只填表里列出的字段名**，一个字母都不能差。写错了会被明确拒绝，并把你写错的那个名字回给你。
+   （所以**不要**写 `title`、`subtitle` 这种通用名 —— 内页一律是 `slide_title` / `slide_subtitle`。）
+2. **标"必填"的字段必须给**，只给空白也算没给。其余字段不给就留空，不会出错。
+3. **别写样式**。没有地方写颜色、字号、坐标、字体、图片 —— 协议里没有这些字段。
+   版式是设计师定死的，你改不了，也不需要改。
+4. **数字要是结构化的值**（`"value_1": "12.4%"` 或 `12.4`），别把一段话塞进指标格。
+   指标格很短（十几个字符），长了会被拒。
+
+**怎么挑页**：一份正经的商务演示，通常是
+`cover` → `section`（可选，分几段）→ `insight` / `metrics` / `comparison` / `timeline` 若干 → `actions` → `closing`。
+**一页只讲一件事**；同一页塞不下就拆成两页，不要硬压。
+
 ### 2. Word 文档（docx）
 
 ````
