@@ -25,7 +25,7 @@ import { useGrowth } from './useGrowth';
  */
 export default function GrowthPanel() {
   const { t } = useTranslation();
-  const { summary, history, loading, error, busy, checkIn } = useGrowth();
+  const { summary, history, myBounties, loading, error, busy, checkIn } = useGrowth();
 
   /**
    * 每级所需成长值。
@@ -35,6 +35,14 @@ export default function GrowthPanel() {
    *    改那边要同步改这里；`toNextLevel` 仍是**唯一的进度真值**（下面由它反推分子）。
    */
   const LEVEL_STEP = 200;
+  /**
+   * 成长中心里最多列几条悬赏。
+   *
+   * ⚠️ 这是**摘要**、不是列表 —— 完整列表在「广场 → 悬赏」那一屏（带六个动作）。
+   *    这一块只回答"我的成长值从哪来、去哪了"；把全部悬赏铺进来会把下面的
+   *    成长明细挤掉，两样都看不清。
+   */
+  const MAX_BOUNTIES_SHOWN = 5;
   const earnedInLevel = (LEVEL_STEP - summary.toNextLevel) % LEVEL_STEP;
   const progress = (earnedInLevel / LEVEL_STEP) * 100;
 
@@ -117,6 +125,24 @@ export default function GrowthPanel() {
             );
           })}
         </div>
+      </SectionCard>
+
+      <SectionCard title={t('bounty.tab')}>
+        {myBounties.length === 0 ? (
+          <p className="type-body text-[var(--text-muted)]">{t('bounty.empty')}</p>
+        ) : (
+          <div className="space-y-1.5">
+            {myBounties.slice(0, MAX_BOUNTIES_SHOWN).map((bounty) => (
+              <div key={bounty.id} data-bounty={bounty.id} className="flex items-center gap-3">
+                <span className="type-body min-w-0 flex-1 truncate text-[var(--text-primary)]">{bounty.title}</span>
+                {/* 复用现成的 `bounty.meta`（"奖励 {{reward}} 成长值 · {{status}}"）—— 这一轮不加新文案 */}
+                <span className="type-support shrink-0 text-[var(--text-muted)]">
+                  {t('bounty.meta', { reward: bounty.reward, status: t(`bounty.status_${bounty.status}`) })}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
       </SectionCard>
 
       <SectionCard title={t('growth.history')} className="min-h-0 flex-1" bodyClassName="h-full min-h-0">

@@ -28,6 +28,11 @@ vi.mock('react-i18next', () => ({
         'growth.badge_check_in_7': '坚持一周',
         'growth.badge_bounty_3': '完成三个悬赏',
         'growth.badge_growth_500': '累计 500 成长值',
+        'bounty.tab': '悬赏',
+        'bounty.empty': '还没有悬赏，发一个试试',
+        'bounty.meta': '奖励 {{reward}} 成长值 · {{status}}',
+        'bounty.status_open': '待领取',
+        'bounty.status_claimed': '进行中',
         'growth.reason_check_in': '每日签到',
         'growth.reason_bounty_escrow': '发布悬赏托管',
       };
@@ -212,5 +217,74 @@ describe('GrowthPanel', () => {
     expect(view.container.querySelector('[data-field="level-progress"]')).not.toBeNull();
     expect(view.container.textContent).toContain('40 / 200');
     view.unmount();
+  });
+
+  /**
+   * ⭐ **与悬赏打通**（2026-09-27）。
+   *
+   * 成长值的大头进出都在悬赏上（发布扣托管、验收发放、取消退回），
+   * 而成长中心原先只显示一串流水 —— 用户看到"-100 发布悬赏托管"却不知道那是**哪一条**。
+   * 现在把"我的悬赏"摆在同一屏，流水和它的来源对得上。
+   */
+  describe('悬赏摘要', () => {
+    const bountyRow = (over: Record<string, unknown>) => ({
+      id: 'b1',
+      title: '做个封面',
+      description: '',
+      reward: 100,
+      status: 'open',
+      author_id: 'u1',
+      author_name: '我',
+      claimant_id: null,
+      claimant_name: null,
+      submitted_note: '',
+      created_at: '2026-09-17T10:00:00Z',
+      accepted_at: null,
+      is_mine: false,
+      is_claimed_by_me: false,
+      can_claim: false,
+      can_release: false,
+      can_submit: false,
+      can_accept: false,
+      can_reject: false,
+      can_cancel: false,
+      ...over,
+    });
+
+    function withBounties(rows: unknown[]): void {
+      Object.assign(window.clawwork, { bountyList: vi.fn(async () => ({ ok: true, result: rows })) });
+    }
+
+    it('⭐ **只列我发布或我领取的**（别人的在这里是噪音）', async () => {
+      withBounties([
+        bountyRow({ id: 'mine-posted', title: '我发布的', is_mine: true }),
+        bountyRow({ id: 'mine-claimed', title: '我领取的', is_claimed_by_me: true }),
+        bountyRow({ id: 'someone-else', title: '别人的悬赏', is_mine: false, is_claimed_by_me: false }),
+      ]);
+
+      const view = await render();
+      const rows = [...view.container.querySelectorAll('[data-bounty]')];
+
+      expect(rows.map((el) => el.getAttribute('data-bounty'))).toEqual(['mine-posted', 'mine-claimed']);
+      expect(view.container.textContent).toContain('我发布的');
+      expect(view.container.textContent).not.toContain('别人的悬赏');
+      view.unmount();
+    });
+
+    it('一条都没有 ⇒ 空态文案（不是一块空白）', async () => {
+      withBounties([]);
+      const view = await render();
+      expect(view.container.textContent).toContain('还没有悬赏，发一个试试');
+      view.unmount();
+    });
+
+    it('⭐ 悬赏这一路拿不到（旧预加载没有这个入口）⇒ **不把整页打成错误态**', async () => {
+      // 夹具/旧版本里 `bountyList` 可能压根不存在，直接调会 TypeError。
+      // 那是夹具差异，不该让**成长主卡片**跟着崩 —— 主数据是好的。
+      const view = await render();
+      expect(view.container.querySelector('[data-field="error"]')).toBeNull();
+      expect(view.container.textContent).toContain('240');
+      view.unmount();
+    });
   });
 });
