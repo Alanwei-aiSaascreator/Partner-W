@@ -633,6 +633,8 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
     { error: string; runId?: string; timer: ReturnType<typeof setTimeout> }
   >();
   const abortedByUser = new Set<string>();
+  /** chat.final / lifecycle.end 之后仍涌来的 thinking/delta 要丢掉，否则白屏。 */
+  const closedStreams = new Set<string>();
   const connectedGateways = new Set<string>();
   /** 每个网关最多一个待执行的目录重试定时器（重连/成功后旧的作废）。 */
   const catalogRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -864,6 +866,15 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
     }
 
     if (state === 'delta') {
+      if (closedStreams.has(sessionKey)) {
+        debugEvent('renderer.chat.dropped_after_final', {
+          taskId,
+          sessionKey,
+          stream: 'delta',
+          chars: extractDeltaText(payload).text.length,
+        });
+        return;
+      }
       clearTaskErrorState(taskId);
       // ⭐ **追加还是替换**：delta 帧的 `message.content` 是**全文快照**（白皮书 §4.2 原文），
       //    只有 v4 的 `deltaText` 才是增量。一律追加会把正文重复膨胀（实测 5–57 倍）。
@@ -887,6 +898,7 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
       }
     } else if (state === 'final') {
       store.setProcessing(sessionKey, false);
+      closedStreams.add(sessionKey);
       // `final` 带的同样是**完整正文** ⇒ 替换（追加等于把答案再重复一遍）
       if (text) store.replaceStreamText(sessionKey, text);
       if (thinking) store.appendThinkingDelta(sessionKey, thinking);
@@ -920,6 +932,7 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
       }
     } else if (state === 'error') {
       store.setProcessing(sessionKey, false);
+      closedStreams.add(sessionKey);
       store.clearActiveTurn(sessionKey);
 
       const errorCode = payload.errorCode ?? payload.error?.code;
@@ -982,6 +995,7 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
       }
     } else if (state === 'aborted') {
       store.setProcessing(sessionKey, false);
+      closedStreams.add(sessionKey);
       store.clearActiveTurn(sessionKey);
       // 用户中断可能记在两处：task 级（普通会话的「停止」）与**会话**级（对比的某一列，
       // 它的登记表在删会话那一刻就摘键了，task 级标记也已经跟不上 —— 见依赖的说明）。
@@ -1074,19 +1088,18 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
         break;
       }
       case 'thinking': {
-        // 模型的推理输出走的是 **agent 通道**，此前被 default 当未知整段丢掉。
-        // ⚠️ chat 通道**补不回来**：网关只在 `evt.stream === "assistant"` 时才 emitChatDelta
-        //（openclaw `server-chat-*.mjs`），final 的 `message.content` 也从不含 thinking 块 ——
-        // 所以 `extractThinking` 那条路在这条链路上一次都不会触发，必须在这里接。
-        // 最坏情形实测过：`content` 为空、整条回复都在 `reasoning_content` 里，
-        // 界面上一个字都看不到，而账照扣。
-        //
-        // 喂 `text`（累计快照）而不是 `delta`：store 的 `mergeGatewayStreamText` 对快照幂等，
-        // 重复投递（重连 / 重订阅）不会把推理拼成两遍，而纯增量会。
         const reasoning = data as AgentThinkingData;
         const chunk = reasoning.text || reasoning.delta || '';
-        // `{progressTokens}` 的进度心跳和空事件都不产出文本。
         if (!chunk) break;
+        if (closedStreams.has(sessionKey)) {
+          debugEvent('renderer.chat.dropped_after_final', {
+            taskId,
+            sessionKey,
+            stream: 'thinking',
+            chars: chunk.length,
+          });
+          break;
+        }
         deps.getMessageStore().appendThinkingDelta(sessionKey, chunk);
         debugEvent('renderer.agent.thinking', { taskId, sessionKey, chars: chunk.length });
         break;
@@ -1619,6 +1632,7 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
     switch (data.phase) {
       case 'start':
         if (!ephemeral) deps.notifyAgentResponse?.(sessionKey);
+        closedStreams.delete(sessionKey);
         store.setProcessing(sessionKey, true);
         // ⚠️ 这里**不**清 run phase：实测 `starting_model` 会在 lifecycle.start **之后**才到
         //（2026-09-11 实测：start 7.5s、starting_model 7.6s），清了会被立刻覆盖回去。
@@ -1627,12 +1641,14 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
         break;
       case 'end':
         store.setProcessing(sessionKey, false);
+        closedStreams.add(sessionKey);
         store.setRunPhase(sessionKey, null);
         store.setSessionProgressText(sessionKey, null);
         debugEvent('renderer.agent.lifecycle.end', { taskId, sessionKey });
         break;
       case 'error': {
         store.setProcessing(sessionKey, false);
+        closedStreams.add(sessionKey);
         store.setRunPhase(sessionKey, null);
         store.setSessionProgressText(sessionKey, null);
         debugEvent('renderer.agent.lifecycle.error', { taskId, sessionKey, error: data.error });

@@ -63,13 +63,21 @@ function ToolActivityGroupRow({ group }: { group: ToolActivityGroup }) {
   );
 }
 
-function ToolCallSummary({ toolCalls }: { toolCalls: ToolCall[] }) {
+function ToolCallSummary({ toolCalls, settled = false }: { toolCalls: ToolCall[]; settled?: boolean }) {
   const { t } = useTranslation();
+  const shown = useMemo(() => {
+    if (!settled) return toolCalls;
+    return toolCalls.map((call) => {
+      if (call.status !== 'running' && call.status !== 'awaitingApproval') return call;
+      return { ...call, status: 'error' as const, result: call.result?.trim() || t('toolActivity.noResult') };
+    });
+  }, [settled, t, toolCalls]);
   const [expanded, setExpanded] = useState(false);
-  const summary = useMemo(() => summarizeToolActivity(toolCalls), [toolCalls]);
+  const summary = useMemo(() => summarizeToolActivity(shown), [shown]);
+  const failureReason = shown.find((call) => call.status === 'error' && call.result?.trim())?.result?.trim() ?? '';
   const status: ToolCall['status'] = summary.errorCount > 0 ? 'error' : summary.runningCount > 0 ? 'running' : 'done';
   // ⚠️ 走**唯一出口**（与活动条同一个判据）：两处各写一遍的话，改一处就会两处不一致。
-  const currentCall = latestRunningCall(toolCalls);
+  const currentCall = latestRunningCall(shown);
   // ⭐ "正在做什么"优先用网关拼好的 `title`（带参数摘要），拿不到才退回按工具名分类的泛化文案
   //（泛化文案是"查看文件"这种，说不出具体在看哪个文件）。
   const currentAction = currentCall
@@ -102,7 +110,18 @@ function ToolCallSummary({ toolCalls }: { toolCalls: ToolCall[] }) {
           >
             {expanded ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
             <StatusIcon status={status} />
-            <span className="type-label flex-1 text-left">{summaryText}</span>
+            <span className="type-label flex-1 text-left">
+              {summaryText}
+              {failureReason ? (
+                <span
+                  data-testid="tool-failure-reason"
+                  className="type-support mt-0.5 block truncate text-[var(--danger)]"
+                  title={failureReason}
+                >
+                  {failureReason}
+                </span>
+              ) : null}
+            </span>
             {currentAction ? (
               <span className="type-support max-w-44 truncate text-[var(--text-muted)]">{currentAction}</span>
             ) : null}

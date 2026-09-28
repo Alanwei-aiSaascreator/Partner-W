@@ -28,6 +28,7 @@ import { useStartupReadiness } from './hooks/useStartupReadiness';
 import { useDocgenFailureToast } from './hooks/useDocgenFailureToast';
 import { useHtmlgenFailureToast } from './hooks/useHtmlgenFailureToast';
 import { useSlidegenToast } from './hooks/useSlidegenToast';
+import { useClaimGuardToast } from './hooks/useClaimGuardToast';
 import { cn } from '@/lib/utils';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { motionDuration, motionEase } from '@/styles/design-tokens';
@@ -115,6 +116,7 @@ export default function App() {
   useDocgenFailureToast();
   useHtmlgenFailureToast();
   useSlidegenToast();
+  useClaimGuardToast();
   useTraySync();
   useSettingsBootstrap(ready);
   useModuleOpenTracking();

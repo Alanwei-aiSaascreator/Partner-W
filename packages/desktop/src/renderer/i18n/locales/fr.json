@@ -492,6 +492,10 @@
     "toolCallSummary": "{{count}} appels d'outil exécutés",
     "toolCallSummaryWithErrors": "{{count}} appels d'outil exécutés ({{errorCount}} échoués)"
   },
+  "claimGuard": {
+    "missingBody": "La réponse mentionne {{names}}, mais ces fichiers ne sont pas dans l’espace de travail.",
+    "missingTitle": "Le fichier annoncé est absent"
+  },
   "commandPalette": {
     "actions": "Actions",
     "activeTasks": "Tâches actives",
@@ -884,7 +888,7 @@
     "moreFailures": "{{rest}} autres n'ont pas été créés non plus.",
     "pageOverflow": "La diapositive {{page}} contient trop de contenu : la présentation n'a pas été créée. Répartissez-le sur plusieurs diapositives ou déplacez les détails dans les notes du présentateur.",
     "pageTitleOverflow": "Le titre de la diapositive {{page}} est trop long : la présentation n'a pas été créée. Raccourcissez-le à {{maxChars}} caractères maximum.",
-    "renderFailed": "Un fichier n'a pas pu être créé.",
+    "renderFailed": "Impossible de générer « {{format}} ». L’étape de mise en page a échoué, rien n’a été écrit.",
     "replyIncomplete": "Le contenu était trop long pour être récupéré en entier cette fois : aucun fichier n’a été généré. Raccourcissez-le et réessayez.",
     "replyUnavailable": "La réponse complète de ce tour n’a pas pu être récupérée : **aucun fichier n’a été généré** — un demi-fichier est pire que rien. Réessayer suffit généralement.",
     "requestInvalid": "Un fichier avait un contenu mal formé et n'a pas été créé. Demandez à l'assistant de le produire à nouveau.",
@@ -2004,6 +2008,18 @@
       "createNew": "Créer un nouvel agent",
       "description": "Description",
       "descriptionPlaceholder": "Brève description des capacités de cet agent",
+      "errAlreadyExists": "L’assistant « {{name}} » est déjà là, il sera réutilisé.",
+      "errConfigChanged": "La configuration vient d’être modifiée. Cliquez encore une fois sur créer.",
+      "errConfigureSubagents": "La collaboration de l’équipe n’a pas été écrite.",
+      "errCreateAgent": "L’assistant « {{name}} » n’a pas pu être créé.",
+      "errDownload": "Le paquet de l’équipe n’a pas pu être téléchargé.",
+      "errGeneric": "Impossible d’aboutir. Réessayez.",
+      "errNoAgents": "Aucun assistant n’a été créé.",
+      "errPersist": "L’équipe n’a pas pu être enregistrée.",
+      "errSetFile": "Le profil de l’assistant n’a pas pu être écrit.",
+      "errSkill": "La compétence « {{name}} » n’a pas été installée.",
+      "errSkillUnsupported": "Les compétences de cette source ne sont pas encore prises en charge.",
+      "errUpdate": "L’équipe n’a pas pu être mise à jour.",
       "existing": "Existant",
       "install": "Installer l'équipe",
       "installComplete": "Équipe installée avec succès",
@@ -2067,6 +2083,7 @@
     "completed": "Completed {{count}} steps",
     "duration": "{{seconds}} sec",
     "groupCount": "× {{count}}",
+    "noResult": "Cette étape n’a rien renvoyé, elle ne s’est donc pas terminée.",
     "running": "Working · completed {{count}} steps",
     "viewDetails": "View details"
   },

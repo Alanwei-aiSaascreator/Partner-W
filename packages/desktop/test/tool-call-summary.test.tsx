@@ -86,6 +86,16 @@ describe('ToolCallSummary', () => {
     unmount();
   });
 
+  it('已结束的消息里还在转圈的步骤，要说出没有结果', () => {
+    const { container, unmount } = render(
+      <ToolCallSummary settled toolCalls={[call('1', 'sessions_spawn', 'running')]} />,
+    );
+    const summary = container.querySelector('[data-testid="tool-activity-summary"]') as HTMLButtonElement;
+    expect(summary.dataset.status).toBe('error');
+    expect(container.querySelector('[data-testid="tool-failure-reason"]')?.textContent).toBe('toolActivity.noResult');
+    unmount();
+  });
+
   it('shows only the current semantic action while work is running', () => {
     const { container, unmount } = render(
       <ToolCallSummary toolCalls={[call('1', 'ls'), call('2', 'exec', 'running')]} />,

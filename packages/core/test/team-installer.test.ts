@@ -301,7 +301,7 @@ describe('installTeam', () => {
   it('rolls back and errors when subagent configuration fails', async () => {
     const parsed = makeParsed();
     const deps = makeDeps({
-      patchConfig: vi.fn().mockResolvedValue({ ok: false, error: 'config changed' }),
+      patchConfig: vi.fn().mockResolvedValue({ ok: false, error: 'permission denied' }),
     });
 
     const events = await collect(installTeam(parsed, {}, 'gw-1', '/w', deps));
@@ -331,5 +331,87 @@ describe('installTeam', () => {
     expect(totals.size).toBe(1);
     const total = [...totals][0];
     expect(total).toBe(2 + 1 + 2 + 1 + 1);
+  });
+
+  it('ALREADY EXISTS 当成功：连点两次也能装完，且不把已有助手列入回滚删除', async () => {
+    const parsed = makeParsed();
+    const deps = makeDeps({
+      createAgent: vi
+        .fn()
+        .mockResolvedValueOnce({ ok: false, error: 'AGENT "Manager" ALREADY EXISTS' })
+        .mockResolvedValueOnce({ ok: true, result: { agentId: 'agent-2', name: 'dev', workspace: '/w' } }),
+    });
+    const events = await collect(installTeam(parsed, {}, 'gw-1', '/w', deps));
+
+    expect(events.map((e) => e.type)).toContain('done');
+    expect(events.filter((e) => e.type === 'warning')).toHaveLength(0);
+
+    const persistCall = (deps.persistTeam as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(persistCall.agents.map((a: { agentId: string }) => a.agentId)).toEqual(['Manager', 'agent-2']);
+
+    expect(deps.deleteAgent).not.toHaveBeenCalled();
+  });
+
+  it('ALREADY EXISTS 的助手在 persist 失败时也不删除（那是别人的助手）', async () => {
+    const parsed = makeParsed();
+    const deps = makeDeps({
+      createAgent: vi.fn().mockResolvedValue({ ok: false, error: 'AGENT "Manager" ALREADY EXISTS' }),
+      persistTeam: vi.fn().mockResolvedValue({ ok: false, error: 'db error' }),
+    });
+    await collect(installTeam(parsed, {}, 'gw-1', '/w', deps));
+    expect(deps.deleteAgent).not.toHaveBeenCalled();
+  });
+
+  it('config changed ⇒ 再 GET 一次并用新 hash 重试 patch，第二次成功就算装完', async () => {
+    const parsed = makeParsed();
+    const getConfig = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        result: {
+          raw: '{}',
+          hash: 'h1',
+          config: { agents: { entries: { 'agent-1': {}, 'agent-2': {} } } },
+          path: '/openclaw.json',
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        result: {
+          raw: '{}',
+          hash: 'h2',
+          config: { agents: { entries: { 'agent-1': {}, 'agent-2': {} } } },
+          path: '/openclaw.json',
+        },
+      });
+    const patchConfig = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        error: 'CONFIG CHANGED SINCE LAST LOAD; RE-RUN CONFIG.GET AND RETRY',
+      })
+      .mockResolvedValueOnce({ ok: true, result: { ok: true, path: '/openclaw.json', config: {} } });
+    const deps = makeDeps({ getConfig, patchConfig });
+    const events = await collect(installTeam(parsed, {}, 'gw-1', '/w', deps));
+
+    expect(getConfig).toHaveBeenCalledTimes(2);
+    expect(patchConfig).toHaveBeenCalledTimes(2);
+    expect(patchConfig.mock.calls[1][0].baseHash).toBe('h2');
+    expect(events.map((e) => e.type)).toContain('done');
+    expect(deps.deleteAgent).not.toHaveBeenCalled();
+  });
+
+  it('config changed 重试仍失败 ⇒ 回滚', async () => {
+    const parsed = makeParsed();
+    const patchConfig = vi
+      .fn()
+      .mockResolvedValue({ ok: false, error: 'CONFIG CHANGED SINCE LAST LOAD; RE-RUN CONFIG.GET AND RETRY' });
+    const deps = makeDeps({ patchConfig });
+    const events = await collect(installTeam(parsed, {}, 'gw-1', '/w', deps));
+
+    expect(deps.getConfig).toHaveBeenCalledTimes(2);
+    expect(patchConfig).toHaveBeenCalledTimes(2);
+    expect(deps.deleteAgent).toHaveBeenCalledTimes(2);
+    expect(events.find((e) => e.type === 'error')?.message).toContain('Failed to configure subagents');
   });
 });

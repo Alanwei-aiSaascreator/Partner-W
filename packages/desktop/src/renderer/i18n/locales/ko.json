@@ -492,6 +492,10 @@
     "toolCallSummary": "{{count}}개 도구 호출 실행됨",
     "toolCallSummaryWithErrors": "{{count}}개 도구 호출 실행됨 ({{errorCount}}개 실패)"
   },
+  "claimGuard": {
+    "missingBody": "답변에 {{names}}이(가) 언급되었지만, 그 파일이 작업 공간에 없습니다.",
+    "missingTitle": "약속한 파일이 없습니다"
+  },
   "commandPalette": {
     "actions": "작업",
     "activeTasks": "진행 중인 작업",
@@ -884,7 +888,7 @@
     "moreFailures": "그 외 {{rest}}개도 생성되지 않았습니다.",
     "pageOverflow": "슬라이드 {{page}}의 내용이 너무 많아 프레젠테이션을 만들지 않았습니다. 여러 페이지로 나누거나 세부 내용을 발표자 노트로 옮겨 주세요.",
     "pageTitleOverflow": "슬라이드 {{page}}의 제목이 너무 길어 프레젠테이션을 만들지 않았습니다. {{maxChars}}자 이내로 줄여 주세요.",
-    "renderFailed": "만들지 못한 파일이 하나 있습니다.",
+    "renderFailed": "{{format}} 파일을 생성하지 못했습니다. 레이아웃 단계에서 실패해 파일이 저장되지 않았습니다.",
     "replyIncomplete": "내용이 너무 길어 이번에는 전체를 가져오지 못해 파일을 생성하지 않았습니다. 내용을 줄여 다시 시도해 주세요.",
     "replyUnavailable": "이번 턴의 전체 응답을 가져오지 못해 **파일을 생성하지 않았습니다**(반쪽짜리는 내보내지 않습니다). 잠시 후 다시 시도하면 대개 해결됩니다.",
     "requestInvalid": "내용 형식이 올바르지 않은 파일이 있어 만들지 않았습니다. 어시스턴트에게 다시 출력하도록 요청해 주세요.",
@@ -2004,6 +2008,18 @@
       "createNew": "새 에이전트 생성",
       "description": "설명",
       "descriptionPlaceholder": "이 에이전트의 기능을 간단히 설명하세요",
+      "errAlreadyExists": "어시스턴트 「{{name}}」이(가) 이미 있어 그대로 사용합니다.",
+      "errConfigChanged": "설정이 방금 바뀌었습니다. 만들기를 한 번 더 눌러 주세요.",
+      "errConfigureSubagents": "팀 협업 설정을 쓰지 못했습니다.",
+      "errCreateAgent": "어시스턴트 「{{name}}」을(를) 만들지 못했습니다.",
+      "errDownload": "팀 패키지를 내려받지 못했습니다.",
+      "errGeneric": "완료하지 못했습니다. 다시 시도해 주세요.",
+      "errNoAgents": "어시스턴트가 하나도 만들어지지 않았습니다.",
+      "errPersist": "팀을 저장하지 못했습니다.",
+      "errSetFile": "어시스턴트 프로필을 쓰지 못했습니다.",
+      "errSkill": "스킬 「{{name}}」을(를) 설치하지 못했습니다.",
+      "errSkillUnsupported": "이 출처의 스킬은 아직 지원하지 않습니다.",
+      "errUpdate": "팀을 업데이트하지 못했습니다.",
       "existing": "기존",
       "install": "팀 설치",
       "installComplete": "팀 설치 완료",
@@ -2067,6 +2083,7 @@
     "completed": "Completed {{count}} steps",
     "duration": "{{seconds}} sec",
     "groupCount": "× {{count}}",
+    "noResult": "이 단계가 결과를 반환하지 않아 완료되지 않았습니다.",
     "running": "Working · completed {{count}} steps",
     "viewDetails": "View details"
   },

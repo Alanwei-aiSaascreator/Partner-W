@@ -215,6 +215,15 @@ function buildApi(): ClawWorkAPI {
         ipcRenderer.removeListener('slidegen:warned', listener);
       };
     },
+    onClaimViolation: (callback: (violation: { taskId: string; missing: string[] }) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, violation: { taskId: string; missing: string[] }): void => {
+        callback(violation);
+      };
+      ipcRenderer.on('artifact:claim-violation', listener);
+      return () => {
+        ipcRenderer.removeListener('artifact:claim-violation', listener);
+      };
+    },
     saveCodeBlock: (params) => ipcRenderer.invoke('artifact:save-content', params),
     saveImageFromUrl: (params) => ipcRenderer.invoke('artifact:save-image-url', params),
     searchArtifacts: (query: string, options) => ipcRenderer.invoke('artifact:search', { query, ...(options ?? {}) }),

@@ -18,6 +18,7 @@ import { toast } from '@/lib/toast';
 import type { ModelCatalogEntry, InstallEvent } from '@clawwork/shared';
 import { cn } from '@/lib/utils';
 import { buildInstallEventView } from '@/lib/install-event-view';
+import { InstallMessageLine } from '@/components/InstallMessageLine';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover';
@@ -643,7 +644,7 @@ export function InstallProgress({
                 {agent.warnings.map((w, i) => (
                   <div key={i} className="flex items-start gap-1.5 type-meta text-[var(--text-warning)]">
                     <AlertTriangle size={10} className="mt-0.5 flex-shrink-0" />
-                    {w}
+                    <InstallMessageLine message={w} />
                   </div>
                 ))}
               </div>
@@ -661,14 +662,14 @@ export function InstallProgress({
         {globalWarnings.map((w, i) => (
           <div key={i} className="flex items-center gap-2 px-3 py-2 type-meta text-[var(--text-warning)]">
             <AlertTriangle size={12} />
-            {w}
+            <InstallMessageLine message={w} />
           </div>
         ))}
 
         {globalError && (
           <div className="flex items-center gap-2 px-3 py-2 type-meta text-[var(--text-danger)]">
             <AlertTriangle size={12} />
-            {globalError}
+            <InstallMessageLine message={globalError} />
           </div>
         )}
       </div>

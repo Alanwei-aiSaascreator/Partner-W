@@ -492,6 +492,10 @@
     "toolCallSummary": "{{count}} Tool-Aufrufe ausgefuehrt",
     "toolCallSummaryWithErrors": "{{count}} Tool-Aufrufe ausgefuehrt ({{errorCount}} fehlgeschlagen)"
   },
+  "claimGuard": {
+    "missingBody": "Die Antwort nennt {{names}}, aber diese Dateien sind nicht im Arbeitsbereich.",
+    "missingTitle": "Die zugesagte Datei fehlt"
+  },
   "commandPalette": {
     "actions": "Aktionen",
     "activeTasks": "Aktive Aufgaben",
@@ -884,7 +888,7 @@
     "moreFailures": "{{rest}} weitere wurden ebenfalls nicht erstellt.",
     "pageOverflow": "Folie {{page}} enthält zu viel Inhalt, daher wurde die Präsentation nicht erstellt. Teilen Sie sie auf mehrere Folien auf oder verschieben Sie die Details in die Notizen.",
     "pageTitleOverflow": "Der Titel von Folie {{page}} ist zu lang, daher wurde die Präsentation nicht erstellt. Kürzen Sie ihn auf höchstens {{maxChars}} Zeichen.",
-    "renderFailed": "Eine Datei konnte nicht erstellt werden.",
+    "renderFailed": "„{{format}}“ konnte nicht erstellt werden. Der Layout-Schritt ist fehlgeschlagen, es wurde nichts geschrieben.",
     "replyIncomplete": "Der Inhalt war zu lang, um ihn diesmal vollständig zu laden – es wurde keine Datei erzeugt. Kürzen Sie ihn und versuchen Sie es erneut.",
     "replyUnavailable": "Die vollständige Antwort dieses Durchlaufs konnte nicht geladen werden, daher wurde **keine Datei erzeugt** – eine halbe Datei ist schlechter als keine. Ein erneuter Versuch hilft meistens.",
     "requestInvalid": "Eine Datei hatte ein ungültiges Inhaltsformat und wurde nicht erstellt. Lassen Sie den Assistenten sie erneut ausgeben.",
@@ -2004,6 +2008,18 @@
       "createNew": "Neuen Agent erstellen",
       "description": "Beschreibung",
       "descriptionPlaceholder": "Kurze Beschreibung der Fähigkeiten dieses Agenten",
+      "errAlreadyExists": "Der Assistent „{{name}}“ ist bereits da und wird wiederverwendet.",
+      "errConfigChanged": "Die Konfiguration wurde gerade geändert – bitte erneut auf Erstellen drücken.",
+      "errConfigureSubagents": "Die Zusammenarbeit des Teams wurde nicht geschrieben.",
+      "errCreateAgent": "Der Assistent „{{name}}“ konnte nicht erstellt werden.",
+      "errDownload": "Das Team-Paket konnte nicht heruntergeladen werden.",
+      "errGeneric": "Konnte nicht abgeschlossen werden – bitte erneut versuchen.",
+      "errNoAgents": "Es wurde kein Assistent erstellt.",
+      "errPersist": "Das Team konnte nicht gespeichert werden.",
+      "errSetFile": "Das Profil des Assistenten konnte nicht geschrieben werden.",
+      "errSkill": "Der Skill „{{name}}“ wurde nicht installiert.",
+      "errSkillUnsupported": "Skills aus dieser Quelle werden noch nicht unterstützt.",
+      "errUpdate": "Das Team konnte nicht aktualisiert werden.",
       "existing": "Vorhanden",
       "install": "Team installieren",
       "installComplete": "Team erfolgreich installiert",
@@ -2067,6 +2083,7 @@
     "completed": "Completed {{count}} steps",
     "duration": "{{seconds}} sec",
     "groupCount": "× {{count}}",
+    "noResult": "Dieser Schritt hat kein Ergebnis geliefert und wurde nicht abgeschlossen.",
     "running": "Working · completed {{count}} steps",
     "viewDetails": "View details"
   },

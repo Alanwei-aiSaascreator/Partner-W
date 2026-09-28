@@ -78,18 +78,22 @@ function readAllowAgents(config: Record<string, unknown>, agentId: string): stri
   return entry.subagents.allowAgents.filter((id): id is string => typeof id === 'string' && id.trim().length > 0);
 }
 
-async function configureTeamSubagents(
-  teamAgents: Array<{ agentId: string; role?: string; isManager?: boolean; skills?: string[] }>,
+/** 连点两次安装时，网关会回 `AGENT "X" ALREADY EXISTS` —— 那是成功，不是失败。 */
+function parseAlreadyExistsAgentId(error: string | undefined): string | null {
+  const match = (error ?? '').match(/agent\s+"([^"]+)"\s+already exists/i);
+  return match?.[1] ?? null;
+}
+
+function isConfigChangedError(error: string | undefined): boolean {
+  return /config changed/i.test(error ?? '');
+}
+
+async function patchSubagentAllowList(
+  snapshot: ConfigSnapshot,
+  managerIds: string[],
+  workerIds: string[],
   deps: InstallerDeps,
 ): Promise<IpcResult> {
-  const managerIds = teamAgents.filter((agent) => agent.role === 'coordinator').map((agent) => agent.agentId);
-  const workerIds = teamAgents.filter((agent) => agent.role === 'worker').map((agent) => agent.agentId);
-  if (managerIds.length === 0 || workerIds.length === 0) return { ok: true };
-
-  const configRes = await deps.getConfig();
-  if (!configRes.ok || !configRes.result) return { ok: false, error: configRes.error ?? 'failed to read config' };
-  const snapshot = configRes.result;
-
   // ⚠️ 形状必须是 `agents.entries.<agentId>.subagents.allowAgents`（以 id 为键的对象）。
   //    写成 `agents.list: [{id, ...}]` 会被运行时拒：`Unrecognized key: "list"`。
   //    `config.patch` 是**深合并**（`applyMergePatch`），所以只写 entries 这一支
@@ -104,10 +108,30 @@ async function configureTeamSubagents(
     };
   }
 
-  const patchRes = await deps.patchConfig({
+  return deps.patchConfig({
     baseHash: snapshot.hash,
     raw: JSON.stringify({ agents: { entries } }),
   });
+}
+
+async function configureTeamSubagents(
+  teamAgents: Array<{ agentId: string; role?: string; isManager?: boolean; skills?: string[] }>,
+  deps: InstallerDeps,
+): Promise<IpcResult> {
+  const managerIds = teamAgents.filter((agent) => agent.role === 'coordinator').map((agent) => agent.agentId);
+  const workerIds = teamAgents.filter((agent) => agent.role === 'worker').map((agent) => agent.agentId);
+  if (managerIds.length === 0 || workerIds.length === 0) return { ok: true };
+
+  const configRes = await deps.getConfig();
+  if (!configRes.ok || !configRes.result) return { ok: false, error: configRes.error ?? 'failed to read config' };
+
+  let patchRes = await patchSubagentAllowList(configRes.result, managerIds, workerIds, deps);
+  // 乐观并发：别人刚改过配置 ⇒ 再 GET 一次、用新 hash 重试一次。再失败才算失败。
+  if (!patchRes.ok && isConfigChangedError(patchRes.error)) {
+    const retry = await deps.getConfig();
+    if (!retry.ok || !retry.result) return { ok: false, error: retry.error ?? patchRes.error };
+    patchRes = await patchSubagentAllowList(retry.result, managerIds, workerIds, deps);
+  }
   if (!patchRes.ok) return { ok: false, error: patchRes.error ?? 'failed to configure subagents' };
   return { ok: true };
 }
@@ -145,7 +169,16 @@ export async function* installTeam(
     };
 
     const res = await deps.createAgent({ name: agent.name, workspace });
-    if (!res.ok || !res.result) {
+    let agentId: string | null = null;
+    let newlyCreated = false;
+    if (res.ok && res.result) {
+      agentId = res.result.agentId;
+      newlyCreated = true;
+    } else {
+      // 连点两次 / 助手已经在网关里：quoted 名就是它的 id。当成功，不要进回滚删除名单。
+      agentId = parseAlreadyExistsAgentId(res.error);
+    }
+    if (!agentId) {
       yield {
         type: 'warning',
         agentSlug: agent.id,
@@ -156,8 +189,7 @@ export async function* installTeam(
       continue;
     }
 
-    const agentId = res.result.agentId;
-    createdAgentIds.push(agentId);
+    if (newlyCreated) createdAgentIds.push(agentId);
     agentMap.set(agent.id, agentId);
     yield { type: 'agent_created', agentSlug: agent.id, agentId, progress: { current: ++step, total: totalSteps } };
 

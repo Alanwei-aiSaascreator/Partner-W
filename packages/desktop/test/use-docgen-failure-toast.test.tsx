@@ -116,7 +116,9 @@ describe('docgenFailureMessage —— 每种原因说**具体**的话，不说"�
   });
 
   it('我们自己的意外 ⇒ 老实说"没能生成"，不编原因', () => {
-    expect(docgenFailureMessage({ code: 'render-failed', format: 'docx' }, t)).toBe('docgen.renderFailed');
+    expect(docgenFailureMessage({ code: 'render-failed', format: 'docx' }, t)).toBe(
+      'docgen.renderFailed({"format":"docx"})',
+    );
   });
 });
 

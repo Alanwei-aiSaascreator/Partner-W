@@ -566,6 +566,7 @@ export interface ClawWorkAPI {
    */
   onSlidegenFailed: (callback: (failures: SlidegenFailure[]) => void) => () => void;
   onSlidegenWarned: (callback: (warnings: SlidegenWarning[]) => void) => () => void;
+  onClaimViolation: (callback: (violation: { taskId: string; missing: string[] }) => void) => () => void;
   saveCodeBlock: (params: {
     taskId: string;
     messageId: string;

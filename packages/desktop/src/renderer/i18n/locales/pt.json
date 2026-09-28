@@ -492,6 +492,10 @@
     "toolCallSummary": "{{count}} chamadas de ferramenta executadas",
     "toolCallSummaryWithErrors": "{{count}} chamadas de ferramenta executadas ({{errorCount}} falharam)"
   },
+  "claimGuard": {
+    "missingBody": "A resposta menciona {{names}}, mas esses arquivos não estão na área de trabalho.",
+    "missingTitle": "O arquivo prometido não está lá"
+  },
   "commandPalette": {
     "actions": "Ações",
     "activeTasks": "Tarefas ativas",
@@ -884,7 +888,7 @@
     "moreFailures": "Outros {{rest}} também não foram criados.",
     "pageOverflow": "O slide {{page}} tem conteúdo demais, então a apresentação não foi criada. Divida em vários slides ou mova os detalhes para as notas do apresentador.",
     "pageTitleOverflow": "O título do slide {{page}} é longo demais, então a apresentação não foi criada. Encurte para no máximo {{maxChars}} caracteres.",
-    "renderFailed": "Um arquivo não pôde ser criado.",
+    "renderFailed": "Não foi possível gerar «{{format}}». A etapa de layout falhou e nada foi gravado.",
     "replyIncomplete": "O conteúdo era longo demais para ser recuperado por inteiro desta vez, então nenhum arquivo foi gerado. Encurte e tente de novo.",
     "replyUnavailable": "Não foi possível recuperar a resposta completa deste turno, então **nenhum arquivo foi gerado** — meio arquivo é pior que nenhum. Tentar de novo costuma resolver.",
     "requestInvalid": "Um arquivo tinha conteúdo malformado e não foi criado. Peça ao assistente para gerar novamente.",
@@ -2004,6 +2008,18 @@
       "createNew": "Criar novo agente",
       "description": "Descrição",
       "descriptionPlaceholder": "Breve descrição das capacidades deste agente",
+      "errAlreadyExists": "O assistente «{{name}}» já está aí, então será reutilizado.",
+      "errConfigChanged": "A configuração acabou de mudar. Clique em criar mais uma vez.",
+      "errConfigureSubagents": "A colaboração da equipe não foi gravada.",
+      "errCreateAgent": "Não foi possível criar o assistente «{{name}}».",
+      "errDownload": "Não foi possível baixar o pacote da equipe.",
+      "errGeneric": "Não foi possível concluir. Tente de novo.",
+      "errNoAgents": "Nenhum assistente foi criado.",
+      "errPersist": "Não foi possível salvar a equipe.",
+      "errSetFile": "Não foi possível gravar o perfil do assistente.",
+      "errSkill": "A habilidade «{{name}}» não foi instalada.",
+      "errSkillUnsupported": "Habilidades desta origem ainda não são suportadas.",
+      "errUpdate": "Não foi possível atualizar a equipe.",
       "existing": "Existente",
       "install": "Instalar equipe",
       "installComplete": "Equipe instalada com sucesso",
@@ -2067,6 +2083,7 @@
     "completed": "Completed {{count}} steps",
     "duration": "{{seconds}} sec",
     "groupCount": "× {{count}}",
+    "noResult": "Esta etapa não retornou resultado, então não foi concluída.",
     "running": "Working · completed {{count}} steps",
     "viewDetails": "View details"
   },

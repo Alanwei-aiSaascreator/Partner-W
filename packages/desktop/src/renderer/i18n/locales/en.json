@@ -492,6 +492,10 @@
     "toolCallSummary": "{{count}} tool calls executed",
     "toolCallSummaryWithErrors": "{{count}} tool calls executed ({{errorCount}} failed)"
   },
+  "claimGuard": {
+    "missingBody": "The reply mentions {{names}}, but no such files are in the workspace.",
+    "missingTitle": "The promised file is not there"
+  },
   "commandPalette": {
     "actions": "Actions",
     "activeTasks": "Active Tasks",
@@ -884,7 +888,7 @@
     "moreFailures": "{{rest}} more were not created either.",
     "pageOverflow": "Slide {{page}} has too much content, so the presentation was not created. Split it across slides, or move the details into the speaker notes.",
     "pageTitleOverflow": "The title of slide {{page}} is too long, so the presentation was not created. Shorten it to {{maxChars}} characters or fewer.",
-    "renderFailed": "One file could not be created.",
+    "renderFailed": "{{format}} could not be generated. The layout step failed, so nothing was written to disk.",
     "replyIncomplete": "The content was too long to be retrieved in full this time, so no file was generated. Try trimming it and asking again.",
     "replyUnavailable": "The full reply for this turn could not be retrieved, so **no file was generated** — a half file is worse than none. Trying again usually fixes it.",
     "requestInvalid": "One file had malformed content and was not created. Ask the assistant to output it again.",
@@ -2004,6 +2008,18 @@
       "createNew": "Create New Agent",
       "description": "Description",
       "descriptionPlaceholder": "Brief description of this agent's capabilities",
+      "errAlreadyExists": "The assistant “{{name}}” is already there, so this run will reuse it.",
+      "errConfigChanged": "The configuration just changed — press create once more.",
+      "errConfigureSubagents": "The team's collaboration settings were not written.",
+      "errCreateAgent": "The assistant “{{name}}” could not be created.",
+      "errDownload": "The team package could not be downloaded.",
+      "errGeneric": "Could not finish — please try again.",
+      "errNoAgents": "No assistant was created.",
+      "errPersist": "The team could not be saved.",
+      "errSetFile": "The assistant's profile could not be written.",
+      "errSkill": "The skill “{{name}}” was not installed.",
+      "errSkillUnsupported": "Skills from this source are not supported yet.",
+      "errUpdate": "The team could not be updated.",
       "existing": "Existing",
       "install": "Install Team",
       "installComplete": "Team installed successfully",
@@ -2067,6 +2083,7 @@
     "completed": "Completed {{count}} steps",
     "duration": "{{seconds}} sec",
     "groupCount": "× {{count}}",
+    "noResult": "This step returned no result, so it did not finish.",
     "running": "Working · completed {{count}} steps",
     "viewDetails": "View details"
   },

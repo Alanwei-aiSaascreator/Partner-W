@@ -52,6 +52,8 @@ export function useTraySync(): void {
         title: task.title || i18n.t('common.noTitle'),
         snippet: ((snippetSessionKey ? activeTurnBySession[snippetSessionKey]?.streamingText : '') ?? '').slice(0, 60),
         duration: formatDuration(task.updatedAt),
+        gatewayId: task.gatewayId,
+        sessionKey: snippetSessionKey ?? sessionKeys[0],
       };
     });
 

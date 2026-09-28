@@ -492,6 +492,10 @@
     "toolCallSummary": "已執行 {{count}} 次工具呼叫",
     "toolCallSummaryWithErrors": "已執行 {{count}} 次工具呼叫（{{errorCount}} 次失敗）"
   },
+  "claimGuard": {
+    "missingBody": "回覆裡提到了 {{names}}，工作區裡沒有這些檔案。",
+    "missingTitle": "說好的檔案不在"
+  },
   "commandPalette": {
     "actions": "操作",
     "activeTasks": "進行中的任務",
@@ -884,7 +888,7 @@
     "moreFailures": "另有 {{rest}} 份也沒有生成。",
     "pageOverflow": "簡報第 {{page}} 頁內容過多，沒有生成。請把它拆成多頁，或把細節寫進講者備忘稿。",
     "pageTitleOverflow": "簡報第 {{page}} 頁的標題過長，沒有生成。請把它縮短到 {{maxChars}} 字以內。",
-    "renderFailed": "有一份檔案沒能生成。",
+    "renderFailed": "{{format}} 沒能產生。排版這一步出錯了，檔案沒有寫入。",
     "replyIncomplete": "內容太長，這一次沒能完整取回，所以沒有產生檔案。請把內容精簡一些再試。",
     "replyUnavailable": "沒能取回這一輪的完整回覆，所以**沒有產生檔案**（不給半份）。稍後再試一次通常就好了。",
     "requestInvalid": "有一份檔案的內容格式不對，沒有生成。可以請助理重新輸出一次。",
@@ -2004,6 +2008,18 @@
       "createNew": "新建 Agent",
       "description": "描述",
       "descriptionPlaceholder": "簡要描述此 Agent 的能力",
+      "errAlreadyExists": "助手「{{name}}」已經在了，這次會直接用它。",
+      "errConfigChanged": "設定剛被改過，請再點一次建立。",
+      "errConfigureSubagents": "團隊協作設定沒寫上。",
+      "errCreateAgent": "助手「{{name}}」沒能建立。",
+      "errDownload": "團隊包沒下載下來。",
+      "errGeneric": "沒能完成，請重試。",
+      "errNoAgents": "一個助手都沒建出來。",
+      "errPersist": "團隊沒能儲存下來。",
+      "errSetFile": "助手資料沒能寫上。",
+      "errSkill": "技能「{{name}}」沒裝上。",
+      "errSkillUnsupported": "技能「{{name}}」這種來源暫不支援。",
+      "errUpdate": "團隊沒能更新。",
       "existing": "已有",
       "install": "安裝團隊",
       "installComplete": "團隊安裝成功",
@@ -2067,6 +2083,7 @@
     "completed": "Completed {{count}} steps",
     "duration": "{{seconds}} sec",
     "groupCount": "× {{count}}",
+    "noResult": "這一步沒有回傳結果，所以沒有完成。",
     "running": "Working · completed {{count}} steps",
     "viewDetails": "View details"
   },

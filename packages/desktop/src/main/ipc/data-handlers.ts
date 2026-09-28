@@ -25,6 +25,7 @@ import {
   type ArtifactKind,
   type RecoverResult,
 } from '../artifact/recover-full-reply.js';
+import { checkClaimedFiles } from '../artifact/claim-guard.js';
 import { parseAgentIdFromSessionKey, type MessageAttachment, type SlidegenFailure } from '@clawwork/shared';
 import { getWorkspacePath } from '../workspace/config.js';
 import { getGatewayClient } from '../ws/index.js';
@@ -752,6 +753,38 @@ function finalizeAssistantArtifacts(input: {
           messageId: input.messageId,
           error,
         });
+      }
+      // ⭐ P0 守卫：「声称成功但没产物」—— 从回复里抠出提到的产物文件名，逐个查存在性。
+      //    声称了但不存在 ⇒ 报一条失败，让界面说人话（而不是"已完成"然后一片空白）。
+      //    判据是「东西真的在」，不是「流程跑完了」。
+      //    跨所有产物类功能（slidegen / docgen / htmlgen / 助手直接写文件），不是 PPT 专属。
+      try {
+        const roots = [input.workspacePath];
+        const agentWs = (await run.agentBaseline)?.workspacePath;
+        if (agentWs && !roots.includes(agentWs)) roots.push(agentWs);
+        // ⭐ `sinceMs` 是**必需**的，不是可选项：只查名字的话，**上一轮留下的同名文件**
+        //    会满足本轮的声称 ⇒「让助手再改一版」这种最常见的用法依然静默。
+        //    `run.createdAt` 是这一轮开始（= 快照基线）的时刻，本轮写的文件必然比它新。
+        const claimResult = checkClaimedFiles(input.content, roots, { sinceMs: run.createdAt });
+        if (claimResult.missing.length > 0) {
+          getDebugLogger().warn({
+            domain: 'artifact',
+            event: 'artifact.claim-guard.missing',
+            taskId: input.taskId,
+            data: {
+              missing: claimResult.missing.map((f) => f.name),
+              present: claimResult.present.map((f) => f.name),
+            },
+          });
+          for (const win of BrowserWindow.getAllWindows()) {
+            win.webContents.send('artifact:claim-violation', {
+              taskId: input.taskId,
+              missing: claimResult.missing.map((f) => f.name),
+            });
+          }
+        }
+      } catch (error) {
+        console.error('[artifact_claim_guard_failed]', { taskId: input.taskId, error });
       }
     } finally {
       claimedArtifactRuns.delete(run.token);

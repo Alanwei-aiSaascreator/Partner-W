@@ -492,6 +492,10 @@
     "toolCallSummary": "{{count}} llamadas a herramientas ejecutadas",
     "toolCallSummaryWithErrors": "{{count}} llamadas a herramientas ejecutadas ({{errorCount}} fallaron)"
   },
+  "claimGuard": {
+    "missingBody": "La respuesta menciona {{names}}, pero esos archivos no están en el espacio de trabajo.",
+    "missingTitle": "El archivo prometido no está"
+  },
   "commandPalette": {
     "actions": "Acciones",
     "activeTasks": "Tareas activas",
@@ -884,7 +888,7 @@
     "moreFailures": "Otros {{rest}} tampoco se crearon.",
     "pageOverflow": "La diapositiva {{page}} tiene demasiado contenido, así que la presentación no se creó. Divídela en varias diapositivas o mueve los detalles a las notas del orador.",
     "pageTitleOverflow": "El título de la diapositiva {{page}} es demasiado largo, así que la presentación no se creó. Acórtalo a {{maxChars}} caracteres como máximo.",
-    "renderFailed": "Un archivo no se pudo crear.",
+    "renderFailed": "No se pudo generar «{{format}}». El paso de maquetación falló y no se escribió nada.",
     "replyIncomplete": "El contenido era demasiado largo para recuperarlo entero esta vez, así que no se generó ningún archivo. Acórtalo y vuelve a intentarlo.",
     "replyUnavailable": "No se pudo recuperar la respuesta completa de este turno, así que **no se generó ningún archivo** — medio archivo es peor que ninguno. Volver a intentarlo suele bastar.",
     "requestInvalid": "Un archivo tenía el contenido mal formado y no se creó. Pídele al asistente que lo genere de nuevo.",
@@ -2004,6 +2008,18 @@
       "createNew": "Crear nuevo agente",
       "description": "Descripción",
       "descriptionPlaceholder": "Breve descripción de las capacidades de este agente",
+      "errAlreadyExists": "El asistente «{{name}}» ya está, así que se reutilizará.",
+      "errConfigChanged": "La configuración acaba de cambiar. Pulsa crear otra vez.",
+      "errConfigureSubagents": "No se escribió la colaboración del equipo.",
+      "errCreateAgent": "No se pudo crear el asistente «{{name}}».",
+      "errDownload": "No se pudo descargar el paquete del equipo.",
+      "errGeneric": "No se pudo completar. Inténtalo de nuevo.",
+      "errNoAgents": "No se creó ningún asistente.",
+      "errPersist": "No se pudo guardar el equipo.",
+      "errSetFile": "No se pudo escribir el perfil del asistente.",
+      "errSkill": "La habilidad «{{name}}» no se instaló.",
+      "errSkillUnsupported": "Las habilidades de esta fuente aún no son compatibles.",
+      "errUpdate": "No se pudo actualizar el equipo.",
       "existing": "Existente",
       "install": "Instalar equipo",
       "installComplete": "Equipo instalado correctamente",
@@ -2067,6 +2083,7 @@
     "completed": "Completed {{count}} steps",
     "duration": "{{seconds}} sec",
     "groupCount": "× {{count}}",
+    "noResult": "Este paso no devolvió resultado, así que no se completó.",
     "running": "Working · completed {{count}} steps",
     "viewDetails": "View details"
   },

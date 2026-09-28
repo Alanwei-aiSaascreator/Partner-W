@@ -24,7 +24,7 @@ export function useTeamHubInstall(onDone?: () => void) {
 
       const res = await window.clawwork.hubDownloadTeam(entry._registryId, entry.slug);
       if (!res.ok || !res.result) {
-        setError(res.error ?? 'Download failed');
+        setError(res.error ?? 'download failed');
         setPhase('error');
         return;
       }

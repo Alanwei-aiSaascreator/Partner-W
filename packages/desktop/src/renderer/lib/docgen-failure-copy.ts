@@ -53,7 +53,7 @@ export function docgenFailureMessage(failure: DocgenFailure, t: Translate): stri
       // 没取到本轮那条回复 ⇒ **我们没生成**（宁可没有，也不给半份）。重试有意义。
       return t('docgen.replyUnavailable');
     case 'render-failed':
-      return t('docgen.renderFailed');
+      return t('docgen.renderFailed', { format: failure.format });
   }
 }
 

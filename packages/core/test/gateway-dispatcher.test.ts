@@ -1853,6 +1853,34 @@ describe('thinking —— 模型的推理输出要显示，不能当未知丢掉
       expect.objectContaining({ event: 'renderer.agent.unknown_stream.threshold' }),
     );
   });
+
+  it('chat.final 之后再来的 thinking 丢掉，不再往界面堆', () => {
+    const h = createHarness();
+    h.emit('chat', {
+      sessionKey: TASK.sessionKey,
+      state: 'final',
+      message: { role: 'assistant', content: [{ type: 'text', text: '最终全文' }] },
+    });
+    h.messageStore.appendThinkingDelta.mockClear();
+    emitThinking(h, { text: '收尾之后的推理', delta: '收尾之后的推理' });
+    expect(h.messageStore.appendThinkingDelta).not.toHaveBeenCalled();
+    expect(h.deps.reportDebugEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'renderer.chat.dropped_after_final' }),
+    );
+  });
+
+  it('lifecycle.start 之后 thinking 重新接上', () => {
+    const h = createHarness();
+    h.emit('chat', {
+      sessionKey: TASK.sessionKey,
+      state: 'final',
+      message: { role: 'assistant', content: [{ type: 'text', text: '最终全文' }] },
+    });
+    h.emit('agent', { sessionKey: TASK.sessionKey, stream: 'lifecycle', data: { phase: 'start' } });
+    h.messageStore.appendThinkingDelta.mockClear();
+    emitThinking(h, { text: '下一轮', delta: '下一轮' });
+    expect(h.messageStore.appendThinkingDelta).toHaveBeenCalledWith(TASK.sessionKey, '下一轮');
+  });
 });
 
 describe('未知事件种类的告警阈值', () => {

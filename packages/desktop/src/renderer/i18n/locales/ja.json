@@ -492,6 +492,10 @@
     "toolCallSummary": "{{count}} 件のツール呼び出しを実行",
     "toolCallSummaryWithErrors": "{{count}} 件のツール呼び出しを実行（{{errorCount}} 件失敗）"
   },
+  "claimGuard": {
+    "missingBody": "返信に {{names}} とありますが、そのファイルはワークスペースにありません。",
+    "missingTitle": "約束されたファイルがありません"
+  },
   "commandPalette": {
     "actions": "アクション",
     "activeTasks": "実行中のタスク",
@@ -884,7 +888,7 @@
     "moreFailures": "ほかにも {{rest}} 件作成されていません。",
     "pageOverflow": "スライド {{page}} は内容が多すぎるため、プレゼンテーションを作成しませんでした。複数ページに分けるか、詳細を発表者ノートに移してください。",
     "pageTitleOverflow": "スライド {{page}} のタイトルが長すぎるため、プレゼンテーションを作成しませんでした。{{maxChars}} 文字以内に短くしてください。",
-    "renderFailed": "作成できなかったファイルが 1 つあります。",
+    "renderFailed": "{{format}} を生成できませんでした。レイアウト処理で失敗し、ファイルは書き出されていません。",
     "replyIncomplete": "内容が長すぎて今回は全文を取得できなかったため、ファイルを生成しませんでした。内容を短くして、もう一度お試しください。",
     "replyUnavailable": "このターンの完全な回答を取得できなかったため、**ファイルを生成しませんでした**（中途半端なものは出しません）。少し待って再試行するとたいてい直ります。",
     "requestInvalid": "内容の形式が正しくないファイルが 1 つあり、作成しませんでした。アシスタントにもう一度出力させるか、内容を確認してください。",
@@ -2004,6 +2008,18 @@
       "createNew": "新規エージェント作成",
       "description": "説明",
       "descriptionPlaceholder": "このエージェントの機能を簡単に説明してください",
+      "errAlreadyExists": "アシスタント「{{name}}」はすでにあるため、そのまま使います。",
+      "errConfigChanged": "設定が変更されました。もう一度「作成」を押してください。",
+      "errConfigureSubagents": "チームの連携設定を書き込めませんでした。",
+      "errCreateAgent": "アシスタント「{{name}}」を作成できませんでした。",
+      "errDownload": "チームパッケージをダウンロードできませんでした。",
+      "errGeneric": "完了できませんでした。もう一度お試しください。",
+      "errNoAgents": "アシスタントが1つも作成されませんでした。",
+      "errPersist": "チームを保存できませんでした。",
+      "errSetFile": "アシスタントのプロフィールを書き込めませんでした。",
+      "errSkill": "スキル「{{name}}」をインストールできませんでした。",
+      "errSkillUnsupported": "この提供元のスキルはまだ対応していません。",
+      "errUpdate": "チームを更新できませんでした。",
       "existing": "既存",
       "install": "チームをインストール",
       "installComplete": "チームのインストールが完了しました",
@@ -2067,6 +2083,7 @@
     "completed": "Completed {{count}} steps",
     "duration": "{{seconds}} sec",
     "groupCount": "× {{count}}",
+    "noResult": "この手順は結果を返さなかったため、完了していません。",
     "running": "Working · completed {{count}} steps",
     "viewDetails": "View details"
   },

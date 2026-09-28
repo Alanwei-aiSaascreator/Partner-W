@@ -110,7 +110,7 @@ export function AssistantFinalizedBody({ message, agentName, onImageClick }: Ass
           ))}
         </div>
       ) : null}
-      {message.toolCalls.length > 0 && <ToolCallSummary toolCalls={message.toolCalls} />}
+      {message.toolCalls.length > 0 && <ToolCallSummary toolCalls={message.toolCalls} settled />}
       {message.content.trim() && (
         <div className="mt-1.5 flex items-center gap-1 opacity-0 transition-opacity group-hover/message:opacity-100 focus-within:opacity-100">
           {canSaveMessage && (

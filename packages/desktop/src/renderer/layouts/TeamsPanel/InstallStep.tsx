@@ -4,6 +4,7 @@ import { Check, AlertTriangle, Loader2, Crown, Users } from 'lucide-react';
 import type { InstallEvent } from '@clawwork/shared';
 import { cn } from '@/lib/utils';
 import { buildInstallEventView, type InstallAgentState } from '@/lib/install-event-view';
+import { InstallMessageLine } from '@/components/InstallMessageLine';
 import type { AgentDraft } from './types';
 
 interface InstallStepProps {
@@ -125,7 +126,7 @@ export default function InstallStep({ teamInfo, agents, status, events, isEdit }
                 {agent.warnings.map((w, i) => (
                   <div key={i} className="flex items-start gap-1.5 type-meta text-[var(--text-warning)]">
                     <AlertTriangle size={10} className="mt-0.5 flex-shrink-0" />
-                    {w}
+                    <InstallMessageLine message={w} />
                   </div>
                 ))}
               </div>
@@ -143,14 +144,14 @@ export default function InstallStep({ teamInfo, agents, status, events, isEdit }
         {globalWarnings.map((w, i) => (
           <div key={i} className="flex items-center gap-2 px-3 py-2 type-meta text-[var(--text-warning)]">
             <AlertTriangle size={12} />
-            {w}
+            <InstallMessageLine message={w} />
           </div>
         ))}
 
         {globalError && (
           <div className="flex items-center gap-2 px-3 py-2 type-meta text-[var(--text-danger)]">
             <AlertTriangle size={12} />
-            {globalError}
+            <InstallMessageLine message={globalError} />
           </div>
         )}
       </div>

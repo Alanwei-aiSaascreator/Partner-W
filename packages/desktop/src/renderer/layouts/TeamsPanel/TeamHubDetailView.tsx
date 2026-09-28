@@ -13,6 +13,7 @@ import GatewayInstanceSelector from '@/components/GatewayInstanceSelector';
 import TeamFileTree, { type TreeFile } from './TeamFileTree';
 import InstallStep from './InstallStep';
 import { useTeamHubInstall } from './useTeamHubInstall';
+import { InstallMessageLine } from '@/components/InstallMessageLine';
 import type { AgentDraft } from './types';
 
 interface TeamHubDetailViewProps {
@@ -200,7 +201,11 @@ export default function TeamHubDetailView({ entry, onBack }: TeamHubDetailViewPr
             }
             events={installEvents}
           />
-          {error && <p className="type-meta text-[var(--text-danger)] mt-3">{error}</p>}
+          {error && (
+            <p className="type-meta text-[var(--text-danger)] mt-3">
+              <InstallMessageLine message={error} />
+            </p>
+          )}
         </div>
       ) : loadingPreview ? (
         <div className="flex flex-1 items-center justify-center">

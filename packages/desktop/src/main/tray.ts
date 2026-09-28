@@ -5,6 +5,12 @@ import { getDebugLogger } from './debug/index.js';
 import { readConfig, updateConfig } from './workspace/config.js';
 import { getMainWindow } from './window-manager.js';
 
+let abortActive: ((task: TrayTaskInfo) => void) | null = null;
+
+export function setTrayAbortHandler(fn: (task: TrayTaskInfo) => void): void {
+  abortActive = fn;
+}
+
 export type TrayStatus = 'idle' | 'running' | 'unread';
 
 export interface TrayTaskInfo {
@@ -12,6 +18,8 @@ export interface TrayTaskInfo {
   title: string;
   snippet: string;
   duration: string;
+  gatewayId?: string;
+  sessionKey?: string;
 }
 
 interface TrayState {
@@ -81,27 +89,35 @@ function openSettings(): void {
   if (win) win.webContents.send('tray:open-settings');
 }
 
+function stopTask(task: TrayTaskInfo): void {
+  abortActive?.(task);
+}
+
 function buildMenu(state: TrayState): Menu {
   const items: Electron.MenuItemConstructorOptions[] = [];
 
   if (state.tasks.length === 0) {
-    items.push({ label: 'No active tasks', enabled: false });
+    items.push({ label: '没有正在进行的任务', enabled: false });
   } else {
     for (const task of state.tasks) {
-      const label = (task.title || 'Untitled').slice(0, 40);
+      const label = (task.title || '未命名').slice(0, 40);
       items.push({
         label,
         sublabel: (task.snippet || task.duration).slice(0, 60),
         click: () => navigateToTask(task.taskId),
       });
     }
+    items.push({
+      label: '停止当前对话',
+      click: () => stopTask(state.tasks[0]),
+    });
   }
 
   items.push({ type: 'separator' });
-  items.push({ label: 'Open 荣盈魔方', click: focusMainWindow });
-  items.push({ label: 'Settings', click: openSettings });
+  items.push({ label: '打开荣盈魔方', click: focusMainWindow });
+  items.push({ label: '设置', click: openSettings });
   items.push({ type: 'separator' });
-  items.push({ label: 'Quit', click: () => app.quit() });
+  items.push({ label: '退出', click: () => app.quit() });
 
   return Menu.buildFromTemplate(items);
 }
