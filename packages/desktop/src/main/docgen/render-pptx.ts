@@ -13,6 +13,7 @@ import {
   SLIDE_TITLE,
   SLIDE_TITLE_RULE,
   bodyFontSizePt,
+  coverTitlePtFor,
   findPptxLayoutProblem,
 } from './pptx-layout.js';
 import type { DocgenPptxRequest } from './request.js';
@@ -67,7 +68,7 @@ export async function renderPptx(request: DocgenPptxRequest): Promise<Buffer> {
     y: COVER_TITLE.y,
     w: COVER_TITLE.w,
     h: COVER_TITLE.h,
-    fontSize: COVER_TITLE.pt,
+    fontSize: coverTitlePtFor(request.title),
     bold: true,
     color: COLOR_TITLE,
     fontFace: FONT,

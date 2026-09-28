@@ -46,6 +46,15 @@ const BOX_INSET_W = 0.4;
 /** 封面主标题：位置、绘制框、字号。与 `render-pptx.ts` 共用一份。 */
 export const COVER_TITLE = Object.freeze({ x: 0.6, y: 2.1, w: 9, h: 1.4, pt: 34 });
 
+/**
+ * 封面标题**缩字号的下限**。
+ *
+ * 为什么是 24：封面上其余字号都排在这之下（副标题 16、页脚 9），标题再小就压不住版面、
+ * 也不像封面了。到这个值还挤不进一行就**不硬缩** —— 宁可折行（折行至少还是个大标题），
+ * 也不要一行小字。
+ */
+export const COVER_TITLE_MIN_PT = 24;
+
 /** 封面副标题（时间 / 汇报人）。 */
 export const COVER_SUBTITLE = Object.freeze({ x: 0.6, y: 3.75, w: 9, h: 0.8, pt: 16 });
 
@@ -167,6 +176,37 @@ export function bodyFontSizePt(bullets: readonly string[]): number {
     if (estimateBodyHeightPt(bullets, size) <= available) return size;
   }
   return MIN_BODY_PT;
+}
+
+/**
+ * 封面标题在这个字号下折成几行。与估高同一把尺子（同一个 `wrappedLinesIn`、同样扣内缩），
+ * 所以"挤进一行"和"装得下"两条判定不会一个宽一个严。
+ */
+export function coverTitleLinesAt(title: string, sizePt: number): number {
+  return wrappedLinesIn(title, sizePt, COVER_TITLE.w - BOX_INSET_W);
+}
+
+/**
+ * 封面标题该用多大字号。
+ *
+ * ## 为什么要有这个函数（2026-09-28 真机看到的）
+ *
+ * `一年级数学上册·第一单元 准备课（最终版）` 在 34pt 下几何上装得下，于是照排 ——
+ * 折成「…准备课（最终」/「版）」，**括号被劈开**。这不是 bug，`findPptxLayoutProblem`
+ * 特意允许两行；但它**观感差**，而封面是第一印象。
+ *
+ * ⇒ 与其折在一个难看的位置，不如**收一档字号挤进一行**。
+ *
+ * 两条边界都是刻意的：
+ * - **只在"收得动"的时候收**：缩到 `COVER_TITLE_MIN_PT` 还放不下就保持原字号，
+ *   让它照旧折行（硬缩会把标题变成一行小字，比折行更糟）。
+ * - **短标题一位都不缩**：本来就一行放得下，没有任何理由改它的字号。
+ */
+export function coverTitlePtFor(title: string): number {
+  for (let size = COVER_TITLE.pt; size >= COVER_TITLE_MIN_PT; size -= 1) {
+    if (coverTitleLinesAt(title, size) <= 1) return size;
+  }
+  return COVER_TITLE.pt;
 }
 
 /**

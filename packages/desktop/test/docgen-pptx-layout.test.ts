@@ -1,10 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
   BODY_BOX,
+  COVER_TITLE,
+  COVER_TITLE_MIN_PT,
   LINE_SPACING,
   MAX_BODY_PT,
   MIN_BODY_PT,
   bodyFontSizePt,
+  coverTitleLinesAt,
+  coverTitlePtFor,
   estimateBodyHeightPt,
   estimateTextHeightPt,
   findPptxLayoutProblem,
@@ -325,5 +329,67 @@ describe('findPptxLayoutProblem —— 内嵌换行：四类字段 × 三种换�
 
   it('负对照：制表符与全角空格**不算**换行（别把"看着像空白"都拦掉）', () => {
     expect(findPptxLayoutProblem(pageWith('标题', ['甲乙\t丙　丁']))).toBeNull();
+  });
+});
+
+/**
+ * 🔴 2026-09-28 真机：**封面标题一长就折行，折点很难看。**
+ *
+ * 现场：`一年级数学上册·第一单元 准备课（最终版）` 折成
+ * 「…准备课（最终」/「版）」—— 括号被劈开。版面判定**允许**两行（几何上装得下），
+ * 所以这不是 bug —— 但它**观感差**，而封面是第一印象。
+ *
+ * ⇒ 与其折在一个难看的位置，不如**把字号收一档挤进一行**。
+ *    只在"收得动"的时候收：缩到下限还放不下就**不硬缩**，让它照旧折行
+ *    （硬缩会把标题变成一行小字，比折行更糟）。
+ */
+describe('封面标题：长了就收字号挤进一行', () => {
+  const SHORT = '九月经营简报';
+  const LONG = '一年级数学上册·第一单元 准备课（最终版）';
+
+  it('短标题**不缩**（本来就一行放得下）', () => {
+    expect(coverTitlePtFor(SHORT)).toBe(COVER_TITLE.pt);
+  });
+
+  it('⭐ 长标题缩到一行放得下 —— 且缩完确实只剩一行', () => {
+    const pt = coverTitlePtFor(LONG);
+    expect(pt, '一点没缩 ⇒ 它会折成两行，折点很难看').toBeLessThan(COVER_TITLE.pt);
+    expect(coverTitleLinesAt(LONG, pt), `缩到 ${pt}pt 还是不止一行`).toBe(1);
+  });
+
+  it('⭐ 不缩到看不见：有下限，且缩完仍然是一档能当封面的字号', () => {
+    const pt = coverTitlePtFor(LONG);
+    expect(pt).toBeGreaterThanOrEqual(COVER_TITLE_MIN_PT);
+    expect(COVER_TITLE_MIN_PT).toBeGreaterThanOrEqual(24);
+  });
+
+  it('⭐ 缩到下限还放不下 ⇒ **不硬缩**，保持原字号（宁可折行，也不要一行小字）', () => {
+    const absurd = '这是一个非常非常非常非常非常非常非常非常非常非常非常长的封面标题'.repeat(2);
+    expect(coverTitlePtFor(absurd)).toBe(COVER_TITLE.pt);
+  });
+
+  /**
+   * ⭐ 这条是**渲染探针反推出来的**，不是在实现里读出来的。
+   *
+   * 上面那条用的标题**过不了版面判定**（34pt 折 4 行 > 封面标题下边界），
+   * 所以它在生产里根本走不到 `coverTitlePtFor` —— 只拿它当夹具，
+   * "不硬缩"那条分支就有可能是**死代码**，没人会发现。
+   *
+   * 真机可达的那一档是：**34pt 两行装得下、缩到下限仍挤不进一行**。
+   * 下面这个标题半角宽 57（一行容量 34pt 是 36.4、下限 24pt 是 51.6），正好落在这档里。
+   * 两头都钉住：判定说它没问题，而函数**确实**没缩。
+   */
+  it('⭐ "不硬缩"分支在**真实可达**的输入上也走得到（不是只有被拒的标题才这样）', () => {
+    const reachable = '2026 年第三季度华东区渠道复盘与第四季度铺货计划（讨论稿）';
+    expect(
+      findPptxLayoutProblem(deckOf([{ title: '第一页', bullets: [] }], reachable)),
+      '夹具本身该是"判定通过"的',
+    ).toBeNull();
+    expect(coverTitleLinesAt(reachable, COVER_TITLE_MIN_PT), '夹具该是"缩到下限也挤不进一行"的').toBeGreaterThan(1);
+    expect(coverTitlePtFor(reachable)).toBe(COVER_TITLE.pt);
+  });
+
+  it('空串不炸（契约层会挡，但这里不该抛）', () => {
+    expect(coverTitlePtFor('')).toBe(COVER_TITLE.pt);
   });
 });
