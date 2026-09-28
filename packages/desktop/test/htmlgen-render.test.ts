@@ -546,3 +546,54 @@ describe('htmlgen：解析 → 渲染 接得上', () => {
     expect(html).toContain('内部经营数据');
   });
 });
+
+/**
+ * 🔴 2026-09-28：**打印 / 存 PDF 时会把设计整个丢掉。**
+ *
+ * `@media print` 早就写了（A4、页边距、卡片不跨页断开），但**漏了 `print-color-adjust`**。
+ * 浏览器的默认是 `economy` —— 打印时**背景色和底色一律不印**：
+ *
+ * - 摘要那张卡片的浅底色 → 没了
+ * - 表格表头行的深底 → 没了（只剩一行黑字，跟数据行分不开）
+ * - 指标卡片的底 → 没了
+ * - 各种 chip / 品牌色块 → 全没了
+ *
+ * ⇒ 印出来正好是这份文件开头明确说要避免的形状：「白底黑字一列到底」。
+ *   这条路存在的理由就是"网页有排版引擎"，而**打印是报告最常见的去向**（用户点"打印"）。
+ *
+ * ⚠️ 两个前缀都要：`-webkit-print-color-adjust` 给 WebKit/Chromium（我们的预览与打印都走它），
+ *    无前缀的 `print-color-adjust` 是标准写法。少任何一个在某个引擎上就是白印。
+ */
+describe('打印保真：颜色必须跟着印出来', () => {
+  const html = (() => {
+    const parsed = parseHtmlgenRequest({
+      kind: 'html',
+      title: '九月经营简报',
+      lang: 'zh-CN',
+      template: 'brief',
+      summary: '本月最重要的结论。',
+      sections: [
+        { kind: 'metrics', heading: '关键指标', items: [{ label: '转化率', value: '12.4%' }] },
+        { kind: 'table', heading: '分渠道', columns: ['渠道', '营收'], rows: [['老客', '¥130 万']] },
+      ],
+      sources: [{ label: '内部经营数据' }],
+    });
+    expect(parsed.ok, '样本本身不合契约').toBe(true);
+    return parsed.ok ? buildHtmlgenHtml(parsed.request) : '';
+  })();
+
+  it('⭐ 写了 `print-color-adjust: exact`（否则表头底 / 卡片底 / 品牌色全不印）', () => {
+    expect(html, '漏了它 ⇒ 印出来是"白底黑字一列到底"（这份文件开头明确说要避免的形状）').toMatch(
+      /print-color-adjust:\s*exact/,
+    );
+  });
+
+  it('⭐ `-webkit-` 前缀也在（Chromium 是预览与打印的引擎）', () => {
+    expect(html).toMatch(/-webkit-print-color-adjust:\s*exact/);
+  });
+
+  it('打印块还在（别为了保色把 A4 / 页边距弄丢）', () => {
+    expect(html).toMatch(/@media\s+print/);
+    expect(html).toMatch(/@page/);
+  });
+});

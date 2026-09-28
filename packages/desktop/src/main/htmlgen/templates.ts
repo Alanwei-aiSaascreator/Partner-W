@@ -314,6 +314,16 @@ tbody tr:last-child td { border-bottom: 0; }
 /* ── 打印 ────────────────────────────────────────────────────────────── */
 @media print {
   @page { size: A4; margin: 16mm 14mm; }
+  /* 🔴 浏览器默认是 economy —— **打印时背景色和底色一律不印**：
+     摘要卡的浅底、表头行的深底、指标卡底、各种 chip 与品牌色**全没了**，
+     印出来正好是这份文件开头明确说要避免的「白底黑字一列到底」。
+     打印是报告最常见的去向（用户点"打印"或存 PDF），所以这条必须有。
+     ⚠️ 两个前缀都要：-webkit- 那个给 Chromium（预览与打印都是它），无前缀的是标准写法。 */
+  html,
+  body {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
   body { background: #ffffff; font-size: 11pt; line-height: 1.65; }
   .page { max-width: none; margin: 0; box-shadow: none; }
   .hero { padding: 0 0 1.25rem; }
