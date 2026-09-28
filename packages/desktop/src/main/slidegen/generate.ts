@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { Artifact, SlidegenFailure, SlidegenWarning } from '@clawwork/shared';
-import { SLIDEGEN_MAX_PAGES } from '@clawwork/shared';
+import { pageBudgetFailure } from '@clawwork/shared';
 import { getDebugLogger } from '../debug/index.js';
 import { saveArtifactFromBuffer } from '../artifact/save.js';
 import { documentFileStem } from '../util/document-file-name.js';
@@ -99,8 +99,10 @@ export async function generateSlidesFromMessage(input: {
   for (const deck of decks) {
     try {
       const pages = evaluateSlide(deck.source);
-      if (pages.length > SLIDEGEN_MAX_PAGES) {
-        result.failed.push({ code: 'slidegen-too-many-pages', max: SLIDEGEN_MAX_PAGES, got: pages.length });
+      // 判据在 `pageBudgetFailure`（纯函数，有测试）—— 别把比较写回这里，那样它又没测试了。
+      const budget = pageBudgetFailure(pages.length);
+      if (budget) {
+        result.failed.push(budget);
         continue;
       }
 

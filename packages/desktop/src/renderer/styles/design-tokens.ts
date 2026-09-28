@@ -1,5 +1,16 @@
 export const STAGGER_STEP = 0.03;
 
+/**
+ * 左侧栏**收纳态**的宽度（2026-09-29，体验稿 `侧栏收纳-方案.html` 的 `--sc`）。
+ *
+ * ⚠️ 它**不能**并进 `uiStore.leftNavWidth`：那个值被夹在 **200–260**（`packages/core` 的
+ * `fixedPanelWidth`），且有三条测试钉着 224/200/260。收纳态是"另一个状态"，不是"另一个宽度"。
+ *
+ * 宽度只在 JS 里出现（`motion.aside` 的 `animate`），**不当类名用** ——
+ * `check:ui-contract` 会把 `w-[60px]` 这类任意值判成违规。
+ */
+export const LEFT_NAV_RAIL_WIDTH = 60;
+
 export const motionDuration = {
   fast: 0.1,
   normal: 0.15,

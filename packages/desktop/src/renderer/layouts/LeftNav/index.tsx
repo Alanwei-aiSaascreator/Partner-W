@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { PanelLeftClose, Search, SquarePen } from 'lucide-react';
+import { PanelLeftClose, PanelLeftOpen, Search, SquarePen } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { cn } from '@/lib/utils';
 import { useTaskStore } from '@/stores/taskStore';
 import { useMessageStore } from '@/stores/messageStore';
 import { useUiStore } from '@/stores/uiStore';
@@ -124,41 +125,60 @@ export default function LeftNav({ onOpenAssistantSettings, onOpenSettings }: Lef
   //    也要切助手，两边各写一遍必然漂移（最典型是漏掉 `setPending`）。
   const handleSelectAgent = useSelectAgent();
 
+  /**
+   * 折叠/展开按钮（2026-09-29 按体验稿搬到**搜索框左边**，`侧栏收纳-方案.html` 的 `.side-top` 首元素）。
+   *
+   * ⚠️ 它以前在顶部那条 `titlebar-drag` 里靠右 —— 那条拖拽区**留着**（窗口还得能拖），
+   * 只是不再放按钮。
+   *
+   * ⚠️ 沿用 `ToolbarButton`（语义组件）：`check:ui-contract` 对
+   * `layouts/LeftNav/index.tsx` 有一条 component-usage 规则，要求这里出现
+   * `ToolbarButton|EmptyState`；原来的裸 `<button>` 是靠旁边「新建任务」那个 `ToolbarButton`
+   * 才过关的，现在自己就是合规的那种写法。
+   */
+  const collapseLabel = leftNavCollapsed ? t('leftNav.expandNav') : t('leftNav.collapseNav');
   const CollapseToggleButton = (
     <Tooltip>
       <TooltipTrigger asChild>
-        <button
+        <ToolbarButton
           type="button"
+          icon={leftNavCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
           onClick={toggleLeftNavCollapsed}
-          aria-label={t('leftNav.collapseNav')}
-          className="titlebar-no-drag glow-focus flex h-8 w-8 items-center justify-center rounded-md text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-hover)] active:scale-95"
-        >
-          <PanelLeftClose size={16} />
-        </button>
+          aria-label={collapseLabel}
+          data-action="toggle-left-nav"
+          className="h-[var(--density-control-height-sm)] w-8 flex-shrink-0 px-0"
+        />
       </TooltipTrigger>
-      <TooltipContent side="right">{t('leftNav.collapseNav')}</TooltipContent>
+      <TooltipContent side="right">{collapseLabel}</TooltipContent>
     </Tooltip>
   );
 
   return (
     <div className="relative flex h-full flex-col overflow-hidden pt-10">
-      <div className="titlebar-drag absolute inset-x-0 top-0 z-[51] flex h-10 items-center justify-end px-3">
-        <div className="titlebar-no-drag flex items-center gap-0.5">{CollapseToggleButton}</div>
-      </div>
+      {/* 拖拽区照旧留着（窗口要能拖），只是它不再承载折叠按钮。 */}
+      <div className="titlebar-drag absolute inset-x-0 top-0 z-[51] h-10" />
 
       <div className="flex-shrink-0 px-3 py-2">
-        <div className="titlebar-no-drag flex items-center gap-1">
-          <div className="relative min-w-0 flex-1">
-            <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" />
-            <input
-              ref={searchInputRef}
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder={t('leftNav.searchTasks')}
-              className="h-[var(--density-control-height-sm)] w-full rounded-md border border-[var(--border)] bg-[var(--bg-primary)] pl-9 pr-3 type-body text-[var(--text-primary)] placeholder:text-[var(--text-muted)] glow-focus transition-all focus:border-transparent"
-            />
-          </div>
+        <div
+          className={cn('titlebar-no-drag flex items-center gap-1', leftNavCollapsed && 'flex-col items-center gap-1')}
+        >
+          {CollapseToggleButton}
+          {/* 收纳态隐藏搜索框（体验稿 `.fold .search{display:none}`）。
+              收起后那点宽度放不下输入框；搜索入口仍在（导航第一项就是「搜索任务」），
+              展开即回到这里。 */}
+          {!leftNavCollapsed && (
+            <div className="relative min-w-0 flex-1">
+              <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" />
+              <input
+                ref={searchInputRef}
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder={t('leftNav.searchTasks')}
+                className="h-[var(--density-control-height-sm)] w-full rounded-md border border-[var(--border)] bg-[var(--bg-primary)] pl-9 pr-3 type-body text-[var(--text-primary)] placeholder:text-[var(--text-muted)] glow-focus transition-all focus:border-transparent"
+              />
+            </div>
+          )}
           {/* ⚠️「新建任务」原来长在下面那块「最近任务」的标题行里 —— 那块搬进面板后
               它**留在这里**（搜索框边上）。别顺手一起删：这一列是用户最顺手的入口。
               ⚠️ 走 `ToolbarButton`（语义组件）而不是裸 `<button>` ——
@@ -194,6 +214,7 @@ export default function LeftNav({ onOpenAssistantSettings, onOpenSettings }: Lef
           onSelectView={setMainView}
           onOpenSettings={onOpenSettings}
           hasUpdate={hasUpdate}
+          collapsed={leftNavCollapsed}
           assistantSlot={
             <>
               <AssistantSwitcher
@@ -201,9 +222,12 @@ export default function LeftNav({ onOpenAssistantSettings, onOpenSettings }: Lef
                 selectedAgentId={currentAgentId}
                 onSelect={handleSelectAgent}
                 onAddAssistant={onOpenAssistantSettings}
+                collapsed={leftNavCollapsed}
               />
-              {/* 这一列太窄，只放说明不放按钮 —— 出口在欢迎屏那边（团队页入口就在本列导航里）。 */}
-              {requestedState === 'missing' ? (
+              {/* 这一列太窄，只放说明不放按钮 —— 出口在欢迎屏那边（团队页入口就在本列导航里）。
+                  ⚠️ 收纳态那句说明**放不下**（60px 装不下一段多行文案）⇒ 收起点在
+                  `AssistantSwitcher` 的头像上，展开就回到这里。**不是删掉不说了。** */}
+              {requestedState === 'missing' && !leftNavCollapsed ? (
                 <AgentMissingNotice agentId={selectedAgentId} className="mx-3 mt-1" />
               ) : null}
             </>

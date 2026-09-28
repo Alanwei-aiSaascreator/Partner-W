@@ -1841,6 +1841,7 @@
   },
   "skillMarket": {
     "actionFailed": "Could not complete that: {{reason}}",
+    "count": "{{total}} in total · {{installed}} installed",
     "empty": "This build ships no skills.",
     "gatewayRequired": "Not connected to a gateway yet — installing a skill needs one. Reconnect, then refresh.",
     "install": "Install",
@@ -1851,7 +1852,11 @@
     "remove": "Remove",
     "removed": "Removed “{{name}}”",
     "removedCaveat": "An assistant may still use it during this run; restarting the app makes it final.",
-    "subtitle": "These skills come with the app. Once installed, every assistant can use them."
+    "subtitle": "These skills come with the app. Once installed, every assistant can use them.",
+    "verdictBlocked": "This assistant can't use it yet",
+    "verdictChecking": "Checking whether the assistant can use it…",
+    "verdictUnknown": "Couldn't find out — we don't know whether the assistant can use it yet",
+    "verdictUsable": "This assistant can use it now"
   },
   "slash": {
     "argOptions": "Options for /{{command}}"

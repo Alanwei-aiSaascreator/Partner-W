@@ -1841,6 +1841,7 @@
   },
   "skillMarket": {
     "actionFailed": "작업에 실패했습니다: {{reason}}",
+    "count": "전체 {{total}}개 · 설치됨 {{installed}}개",
     "empty": "이 버전에는 함께 제공되는 스킬이 없습니다.",
     "gatewayRequired": "아직 게이트웨이에 연결되지 않았습니다. 설치하려면 먼저 연결하세요. 연결한 뒤 새로 고침하세요.",
     "install": "설치",
@@ -1851,7 +1852,11 @@
     "remove": "제거",
     "removed": "“{{name}}”을 제거했습니다",
     "removedCaveat": "이번 실행 중에는 어시스턴트가 아직 사용할 수 있습니다. 앱을 다시 시작하면 확실히 반영됩니다.",
-    "subtitle": "앱에 함께 제공되는 스킬입니다. 설치하면 모든 어시스턴트가 사용할 수 있습니다."
+    "subtitle": "앱에 함께 제공되는 스킬입니다. 설치하면 모든 어시스턴트가 사용할 수 있습니다.",
+    "verdictBlocked": "이 어시스턴트는 아직 사용할 수 없습니다",
+    "verdictChecking": "어시스턴트가 사용할 수 있는지 확인 중…",
+    "verdictUnknown": "확인하지 못했습니다. 어시스턴트가 사용할 수 있는지 아직 알 수 없습니다",
+    "verdictUsable": "이 어시스턴트는 지금 사용할 수 있습니다"
   },
   "slash": {
     "argOptions": "/{{command}} 옵션"

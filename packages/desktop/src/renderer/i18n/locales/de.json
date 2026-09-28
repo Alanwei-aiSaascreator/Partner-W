@@ -1841,6 +1841,7 @@
   },
   "skillMarket": {
     "actionFailed": "Aktion fehlgeschlagen: {{reason}}",
+    "count": "{{total}} insgesamt · {{installed}} installiert",
     "empty": "In dieser Version sind keine Skills enthalten.",
     "gatewayRequired": "Noch keine Verbindung zum Gateway — zum Installieren wird eine benötigt. Verbinden und dann aktualisieren.",
     "install": "Installieren",
@@ -1851,7 +1852,11 @@
     "remove": "Entfernen",
     "removed": "„{{name}}“ entfernt",
     "removedCaveat": "Ein Assistent kann sie in diesem Lauf noch verwenden; endgültig wird es nach einem Neustart der App.",
-    "subtitle": "Diese Skills sind im Programm enthalten. Einmal installiert, stehen sie allen Assistenten zur Verfügung."
+    "subtitle": "Diese Skills sind im Programm enthalten. Einmal installiert, stehen sie allen Assistenten zur Verfügung.",
+    "verdictBlocked": "Dieser Assistent kann es noch nicht nutzen",
+    "verdictChecking": "Es wird geprüft, ob der Assistent es nutzen kann …",
+    "verdictUnknown": "Nicht zu ermitteln – ob der Assistent es nutzen kann, ist noch unbekannt",
+    "verdictUsable": "Dieser Assistent kann es jetzt nutzen"
   },
   "slash": {
     "argOptions": "Optionen fuer /{{command}}"

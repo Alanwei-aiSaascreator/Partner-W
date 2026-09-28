@@ -1841,6 +1841,7 @@
   },
   "skillMarket": {
     "actionFailed": "操作失败：{{reason}}",
+    "count": "共 {{total}} 个 · 已装 {{installed}} 个",
     "empty": "这个版本没有随包的技能。",
     "gatewayRequired": "还没连上网关；装上技能需要先连上。连上后回来刷新即可。",
     "install": "装上",
@@ -1851,7 +1852,11 @@
     "remove": "卸载",
     "removed": "已卸载「{{name}}」",
     "removedCaveat": "助手可能还会在这次运行里用到它；重启应用后彻底生效。",
-    "subtitle": "这些是随程序一起提供的技能，装上之后所有助手都能用。"
+    "subtitle": "这些是随程序一起提供的技能，装上之后所有助手都能用。",
+    "verdictBlocked": "这个助手暂时用不了它",
+    "verdictChecking": "正在确认助手能不能用…",
+    "verdictUnknown": "没问出来：暂时不知道助手那边能不能用",
+    "verdictUsable": "这个助手现在已经能用它"
   },
   "slash": {
     "argOptions": "/{{command}} 的可选项"

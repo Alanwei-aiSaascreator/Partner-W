@@ -23,6 +23,20 @@ export interface AssistantSwitcherProps {
   selectedAgentId: string;
   onSelect: (agentId: string) => void;
   onAddAssistant: () => void;
+  /**
+   * 收纳态（2026-09-29）：只留头像图标。
+   *
+   * ⚠️ **不叠 Tooltip** —— 这个按钮已经是 `Popover` 的触发器，两个 Radix portal
+   * 抢同一个元素会互相打架（Popover 自己的 `side="right"` 在窄条旁边本来就够用）。
+   *
+   * ⭐ 「当前助手不在本机」时，展开态由紧跟其后的 `AgentMissingNotice` 说明；
+   * 收纳态那点宽度放不下那句说明，所以**落成一个警示角点**。
+   *
+   * ⚠️ 只留一个 2px 的点，对**读屏**等于什么都没说（独立复核指出：那句话是
+   * "不许悄悄消化掉"，而当时对 AT 恰恰就是消化的）。所以警示也折进了
+   * `aria-label` —— 见下面那个三元。
+   */
+  collapsed?: boolean;
 }
 
 function agentLabel(agent: AgentInfo, t: (k: string) => string): string {
@@ -35,6 +49,7 @@ export default function AssistantSwitcher({
   selectedAgentId,
   onSelect,
   onAddAssistant,
+  collapsed = false,
 }: AssistantSwitcherProps) {
   const { t } = useTranslation();
   /**
@@ -48,6 +63,8 @@ export default function AssistantSwitcher({
    */
   const current = agents.find((a) => a.id === selectedAgentId) ?? (selectedAgentId ? undefined : agents[0]);
   const currentLabel = current ? agentLabel(current, t) : t('leftNav.myAssistants');
+  /** 点了名却不在目录里 —— 展开态由 `AgentMissingNotice` 说，收纳态落成角点。 */
+  const missing = !current && Boolean(selectedAgentId);
 
   return (
     <Popover>
@@ -55,16 +72,35 @@ export default function AssistantSwitcher({
         <button
           type="button"
           data-testid="assistant-switcher"
-          aria-label={t('leftNav.myAssistants')}
-          className="titlebar-no-drag glow-focus flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left type-body text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] data-[state=open]:bg-[var(--bg-hover)] data-[state=open]:text-[var(--text-primary)]"
+          data-missing={missing ? 'true' : undefined}
+          /**
+           * ⚠️ 收纳态那句说明放不下，只落了一个 2px 的角点 —— 对读屏**等于什么都没说**。
+           * 所以把"当前助手不在本机"折进**可访问名**（展开态同样无害，只是与下面的
+           * `AgentMissingNotice` 重复一次，而重复远好过沉默）。
+           */
+          aria-label={
+            missing
+              ? `${t('leftNav.myAssistants')} — ${t('agent.missingTitle', { agentId: selectedAgentId })}`
+              : t('leftNav.myAssistants')
+          }
+          className={cn(
+            'titlebar-no-drag glow-focus relative flex w-full items-center rounded-md text-left type-body text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] data-[state=open]:bg-[var(--bg-hover)] data-[state=open]:text-[var(--text-primary)]',
+            collapsed ? 'justify-center py-2' : 'gap-2.5 px-2.5 py-1.5',
+          )}
         >
           {current ? (
             <CubeFaceIcon agentId={current.id} size={18} />
           ) : (
             <span className="size-[18px] flex-shrink-0 rounded bg-[var(--bg-tertiary)]" />
           )}
-          <span className="min-w-0 flex-1 truncate font-semibold">{currentLabel}</span>
-          <ChevronDown size={14} className="flex-shrink-0 opacity-70" />
+          <span className={cn('min-w-0 flex-1 truncate font-semibold', collapsed && 'hidden')}>{currentLabel}</span>
+          <ChevronDown size={14} className={cn('flex-shrink-0 opacity-70', collapsed && 'hidden')} />
+          {collapsed && missing && (
+            <span
+              data-testid="assistant-missing-dot"
+              className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-[var(--warning)]"
+            />
+          )}
         </button>
       </PopoverTrigger>
 

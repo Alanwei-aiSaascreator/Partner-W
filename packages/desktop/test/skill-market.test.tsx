@@ -42,6 +42,14 @@ interface Stubs {
   listOurSkills: ReturnType<typeof vi.fn>;
   installOurSkill: ReturnType<typeof vi.fn>;
   removeOurSkill: ReturnType<typeof vi.fn>;
+  /**
+   * ⚠️ 桩必须**跟着组件长**：组件新增一次网关调用，桩不补上就是
+   * `window.clawwork.getSkillsStatus is not a function` ——
+   * 而更坏的一种是桩**按渲染层的假设手写**（本项目 `skills:our-list` 那次：
+   * handler 返回扁平对象、渲染层按 `res.result.…` 读，整页报错而**单测全绿**）。
+   * 所以 IPC 两端的类型要**显式标注**，让 `pnpm typecheck` 当那条防漂移的测试。
+   */
+  getSkillsStatus: ReturnType<typeof vi.fn>;
 }
 
 function installStubs(overrides: Partial<Stubs> = {}): Stubs {
@@ -49,6 +57,12 @@ function installStubs(overrides: Partial<Stubs> = {}): Stubs {
     listOurSkills: vi.fn(async (): Promise<IpcResult<OurSkillsListResult>> => ({ ok: true, result: SKILLS })),
     installOurSkill: vi.fn(async () => ({ ok: true })),
     removeOurSkill: vi.fn(async () => ({ ok: true })),
+    // 默认成功桩：返回一份**空报告**（什么都不认得）。
+    // 空报告 = 「网关还没认」⇒ 状态是未知，不会凭空把哪个技能说成能用。
+    getSkillsStatus: vi.fn(async () => ({
+      ok: true,
+      result: { workspaceDir: '', managedSkillsDir: '', skills: [] },
+    })),
     ...overrides,
   };
   (window as unknown as { clawwork: unknown }).clawwork = stubs;
@@ -155,7 +169,7 @@ describe('技能市场面板', () => {
 
   it('⭐ 网关没连上（managedDirKnown=false）⇒ 按钮禁用 + 一条提示，**且不显示"未装"**', async () => {
     // "不知道装没装"与"没装"是两回事：混在一起用户会以为自己的技能丢了。
-    installStubs({
+    const stubs = installStubs({
       listOurSkills: vi.fn(async () => ({
         ok: true,
         result: { managedDirKnown: false, skills: SKILLS.skills },
@@ -167,6 +181,12 @@ describe('技能市场面板', () => {
     const installBtn = container.querySelector('[data-testid="our-skill-install"]') as HTMLButtonElement;
     expect(installBtn.disabled).toBe(true);
     expect(container.textContent).toContain('skillMarket.gatewayRequired');
+    /**
+     * ⚠️ 网关没连上时**不许**给每张卡挂"没问出来"：整页已经有一条「未连接」了，
+     * 再挂一句是噪音，而且会让人以为**是这个技能**的问题。
+     */
+    expect(container.querySelectorAll('[data-testid="our-skill-verdict"]').length).toBe(0);
+    expect(stubs.getSkillsStatus).not.toHaveBeenCalled();
     unmount();
   });
 
@@ -238,6 +258,278 @@ describe('技能市场面板', () => {
     });
     await flush();
     expect(stubs.listOurSkills).toHaveBeenCalledTimes(2);
+    unmount();
+  });
+});
+
+/**
+ * ⭐⭐ 「装上了」≠「助手用得上」（2026-09-29）。
+ *
+ * 这一页原来只有一个**本地**判据：磁盘上有没有那个目录（主进程 `fs.existsSync`）。
+ * 用户的原话是「技能我不知安装后到底能不能用」—— 而这两件事在本项目**栽过至少两次**：
+ * 手工把 SKILL.md 放进目录，**运行时不认**；技能描述改了，已装的盘拿不到。
+ *
+ * 所以新增的判据必须**从网关那一侧读回来**（`skills.status`，按助手），
+ * 并且**如实保留"问不到"这一态** —— 既不许说成能用，也不许说成不能用。
+ *
+ * ⚠️ 磁盘判据**没有被替换**（页面上那段"别为了等网关把已装状态改成读 skills.status"
+ * 的注释仍然有效）：装/卸按钮与「已装 M 个」照旧看磁盘，网关侧的结论是**另一个**标签。
+ */
+describe('技能市场 · 助手侧能不能用', () => {
+  const AGENT = 'agent-1';
+
+  const statusReport = (skills: { skillKey: string; eligible?: boolean }[]) => ({
+    workspaceDir: 'C:/ws',
+    managedSkillsDir: 'C:/managed',
+    skills: skills.map((s) => ({
+      name: s.skillKey,
+      description: '',
+      source: 'openclaw-managed',
+      bundled: false,
+      filePath: '',
+      baseDir: '',
+      skillKey: s.skillKey,
+      always: false,
+      disabled: false,
+      blockedByAllowlist: false,
+      eligible: s.eligible ?? true,
+      requirements: { bins: [], anyBins: [], env: [], config: [], os: [] },
+      missing: { bins: [], anyBins: [], env: [], config: [], os: [] },
+      configChecks: [],
+      install: [],
+    })),
+  });
+
+  beforeEach(() => {
+    document.body.innerHTML = '';
+    vi.useRealTimers();
+    useUiStore.setState({
+      defaultGatewayId: GATEWAY,
+      selectedAgentByGateway: { [GATEWAY]: AGENT },
+      agentCatalogByGateway: { [GATEWAY]: { agents: [{ id: AGENT } as never], defaultId: AGENT } },
+    });
+  });
+
+  const verdictOf = (container: HTMLElement, slug: string): string =>
+    row(container, slug).getAttribute('data-verdict') ?? '';
+
+  it('⭐ 网关说这个助手能看见它 ⇒ 明确标出来（不是我们自己乐观）', async () => {
+    const stubs = installStubs({
+      getSkillsStatus: vi.fn(async () => ({ ok: true, result: statusReport([{ skillKey: 'weekly-report' }]) })),
+    });
+    const { container, unmount } = render(<SkillMarket />);
+    await flush();
+
+    expect(stubs.getSkillsStatus, '必须**点名助手**问（不带 agentId 会落到环境属主，那是假绿）').toHaveBeenCalledWith(
+      GATEWAY,
+      AGENT,
+    );
+    expect(verdictOf(container, 'weekly-report')).toBe('usable');
+    expect(row(container, 'weekly-report').textContent).toContain('skillMarket.verdictUsable');
+    unmount();
+  });
+
+  it('⭐ 不知道该问哪个助手 ⇒ **压根不发探测**，落成"不知道"', async () => {
+    useUiStore.setState({ defaultGatewayId: GATEWAY, selectedAgentByGateway: {}, agentCatalogByGateway: {} });
+    const stubs = installStubs({
+      getSkillsStatus: vi.fn(async () => ({ ok: true, result: statusReport([{ skillKey: 'weekly-report' }]) })),
+    });
+    const { container, unmount } = render(<SkillMarket />);
+    await flush();
+
+    expect(stubs.getSkillsStatus, '问不出助手名就不问 —— 问错人比不问更坏').not.toHaveBeenCalled();
+    expect(verdictOf(container, 'weekly-report')).toBe('unknown');
+    unmount();
+  });
+
+  it('⭐ 问不到（RPC 一直失败）⇒ "不知道"，既不说能用也不说不能用', async () => {
+    installStubs({ getSkillsStatus: vi.fn(async () => ({ ok: false, error: 'boom' })) });
+    vi.useFakeTimers();
+    const { container, unmount } = render(<SkillMarket />);
+    await flush();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2500);
+    });
+
+    expect(verdictOf(container, 'weekly-report')).toBe('unknown');
+    const text = row(container, 'weekly-report').textContent ?? '';
+    expect(text).toContain('skillMarket.verdictUnknown');
+    expect(text, '问不到**不许**说成能用').not.toContain('skillMarket.verdictUsable');
+    unmount();
+    vi.useRealTimers();
+  });
+
+  it('⭐ 安装有约 0.7 秒可见延迟 ⇒ 第一遍没有它要重试，转绿（不是立刻判不能用）', async () => {
+    let call = 0;
+    installStubs({
+      getSkillsStatus: vi.fn(async () => {
+        call += 1;
+        // 第一次网关还没认；第二次才认得
+        return { ok: true, result: statusReport(call === 1 ? [] : [{ skillKey: 'weekly-report' }]) };
+      }),
+    });
+    vi.useFakeTimers();
+    const { container, unmount } = render(<SkillMarket />);
+    await flush();
+    expect(verdictOf(container, 'weekly-report'), '第一遍还没认出来时不许下结论').not.toBe('blocked');
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2500);
+    });
+    expect(verdictOf(container, 'weekly-report')).toBe('usable');
+    unmount();
+    vi.useRealTimers();
+  });
+
+  it('⭐ 卸载之后不许自相矛盾：网关还报"在"（缓存 ≥3 分钟），但磁盘说没装 ⇒ 不给标签、也不再问', async () => {
+    /**
+     * ⚠️ 夹具要**忠实于真身**：卸载之后 `listOurSkills` 必须真的不再报它已装 ——
+     * 第一版这里让桩一直返回 `installed: true`，于是"磁盘说没装"这个前提压根没发生，
+     * 测试以"组件是坏的"为理由假红（其实是夹具没跟上）。
+     */
+    let removed = false;
+    const stubs = installStubs({
+      listOurSkills: vi.fn(async () => ({
+        ok: true,
+        result: {
+          managedDirKnown: true,
+          skills: SKILLS.skills.map((s) => (s.slug === 'weekly-report' ? { ...s, installed: !removed } : s)),
+        },
+      })),
+      removeOurSkill: vi.fn(async () => {
+        removed = true;
+        return { ok: true };
+      }),
+      // 网关侧照旧报 weekly-report 在（这就是卸载后那个 ≥3 分钟窗口）
+      getSkillsStatus: vi.fn(async () => ({ ok: true, result: statusReport([{ skillKey: 'weekly-report' }]) })),
+    });
+    const { container, unmount } = render(<SkillMarket />);
+    await flush();
+    expect(verdictOf(container, 'weekly-report')).toBe('usable');
+
+    await act(async () => {
+      (row(container, 'weekly-report').querySelector('[data-testid="our-skill-remove"]') as HTMLElement).click();
+    });
+    await flush();
+
+    expect(verdictOf(container, 'weekly-report'), '没装就不该有任何助手侧标签').toBe('none');
+    expect(
+      stubs.getSkillsStatus.mock.calls.length,
+      '卸载之后不该再为它发探测（网关那 3 分钟窗口是它的、不是我们的）',
+    ).toBeLessThanOrEqual(1);
+    unmount();
+  });
+
+  it('⭐ 去问网关失败**不会**影响磁盘那一半：按钮照旧按磁盘说话', async () => {
+    installStubs({ getSkillsStatus: vi.fn(async () => ({ ok: false, error: 'boom' })) });
+    vi.useFakeTimers();
+    const { container, unmount } = render(<SkillMarket />);
+    await flush();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2500);
+    });
+
+    expect(row(container, 'weekly-report').getAttribute('data-installed')).toBe('true');
+    expect(row(container, 'meeting-minutes').getAttribute('data-installed')).toBe('false');
+    unmount();
+    vi.useRealTimers();
+  });
+
+  it('⭐ 数量装置：共 N 个 · 已装 M 个（已装数比总数更有用）', async () => {
+    installStubs({ getSkillsStatus: vi.fn(async () => ({ ok: true, result: statusReport([]) })) });
+    const { container, unmount } = render(<SkillMarket />);
+    await flush();
+
+    const counter = container.querySelector('[data-testid="our-skill-count"]') as HTMLElement;
+    expect(counter, '要有数量装置').not.toBeNull();
+    expect(counter.getAttribute('data-total')).toBe('2');
+    expect(counter.getAttribute('data-installed')).toBe('1');
+    expect(counter.textContent).toContain('skillMarket.count');
+    unmount();
+  });
+
+  it('⭐ 慢的那次尝试回来得晚 ⇒ 不许把已经变绿的打回"正在确认…"（那会永久卡住）', async () => {
+    /**
+     * ⚠️ 2026-09-29 独立复核抓到的真 bug：三次尝试是一次性排好的，
+     * 而**慢的那次**（网关冷启动，实测 0.7~2 秒）可能最后才回来 ——
+     * 它拿着"还没有这个技能"的旧结果，把已经变绿的界面重新打回"正在确认…"，
+     * 而那时定时器已经用完 ⇒ **永远卡在"正在确认…"**。
+     */
+    let releaseFirst!: (value: unknown) => void;
+    const pending = new Promise((resolve) => {
+      releaseFirst = resolve;
+    });
+    let call = 0;
+    installStubs({
+      getSkillsStatus: vi.fn(async () => {
+        call += 1;
+        if (call === 1) return pending; // 第 0 拍：慢
+        return { ok: true, result: statusReport([{ skillKey: 'weekly-report' }]) };
+      }),
+    });
+    vi.useFakeTimers();
+    const { container, unmount } = render(<SkillMarket />);
+    await flush();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1600);
+    });
+    expect(verdictOf(container, 'weekly-report')).toBe('usable');
+
+    // 第 0 拍现在才回来，且拿的是"还没有这个技能"的旧结果
+    await act(async () => {
+      releaseFirst({ ok: true, result: statusReport([]) });
+      await Promise.resolve();
+    });
+
+    expect(verdictOf(container, 'weekly-report'), '旧的响应不许把已收工的结论打回去').toBe('usable');
+    expect(verdictOf(container, 'weekly-report')).not.toBe('checking');
+    unmount();
+    vi.useRealTimers();
+  });
+
+  it('⭐ 最后一次探测失败 ⇒ 不许把前面已经问到的好报告扔掉', async () => {
+    /**
+     * ⚠️ 同一个复核：原来失败那条路写的是 `report: null`，
+     * 于是"第 1 拍问到了、第 3 拍超时"会把刚看到的绿/红**变成"没问出来"**。
+     * 总超时那条路本来就写着"只降级不覆盖"，这两条路却反着来。
+     */
+    let call = 0;
+    installStubs({
+      listOurSkills: vi.fn(async () => ({
+        ok: true,
+        result: {
+          managedDirKnown: true,
+          skills: SKILLS.skills.map((s) => (s.slug === 'meeting-minutes' ? { ...s, installed: true } : s)),
+        },
+      })),
+      getSkillsStatus: vi.fn(async () => {
+        call += 1;
+        // 第 1 拍：只认得其中一个（所以不会早停）；第 3 拍：失败
+        if (call === 3) return { ok: false, error: 'boom' };
+        return { ok: true, result: statusReport([{ skillKey: 'weekly-report' }]) };
+      }),
+    });
+    vi.useFakeTimers();
+    const { container, unmount } = render(<SkillMarket />);
+    await flush();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2600);
+    });
+
+    expect(verdictOf(container, 'weekly-report'), '已经问到的答案不许被后来的失败抹掉').toBe('usable');
+    expect(verdictOf(container, 'meeting-minutes'), '没见到的那一个才是"不知道"').toBe('unknown');
+    unmount();
+    vi.useRealTimers();
+  });
+
+  it('空列表时**不显示**数量装置（"共 0 个"是噪音）', async () => {
+    installStubs({
+      listOurSkills: vi.fn(async () => ({ ok: true, result: { managedDirKnown: true, skills: [] } })),
+    });
+    const { container, unmount } = render(<SkillMarket />);
+    await flush();
+
+    expect(container.querySelector('[data-testid="our-skill-count"]')).toBeNull();
     unmount();
   });
 });

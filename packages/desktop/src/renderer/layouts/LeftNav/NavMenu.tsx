@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import type { MainView } from '@clawwork/core';
 import { cn } from '@/lib/utils';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
 /**
  * 左侧栏的**页面导航清单**（2026-09-19）。
@@ -64,6 +65,20 @@ export interface NavMenuProps {
    * 它是插在列表里的一个槽位，不是 `mainView` 项。
    */
   assistantSlot?: ReactNode;
+  /**
+   * 收纳态（2026-09-29，按体验稿 `侧栏收纳-方案.html`）：整列缩成图标条。
+   *
+   * ⚠️ **必须带默认值 `false`** —— 既有测试直接渲染这个组件、不传新 prop。
+   *
+   * 收起时三件事一起做，缺一件都会退化：
+   * 1. 标签/角标**用 CSS 隐藏**（`hidden`），**不是**条件渲染 —— 从 DOM 里删掉，
+   *    既有的 `textContent` 断言会红，读屏也读不出；
+   * 2. 补 `aria-label`（标签 `display:none` 之后可访问名会变空）；
+   * 3. 挂 `Tooltip` 说名字。
+   * ⚠️ 气泡**只在收起时挂**：Radix 的 `Tooltip.Root` 没有 `TooltipProvider` 会**直接抛**，
+   *    而 `left-nav-menu.test.tsx` 正是在没有 provider 的情况下渲染展开态的。
+   */
+  collapsed?: boolean;
 }
 
 type NavItem = {
@@ -83,6 +98,7 @@ export default function NavMenu({
   onOpenSettings,
   hasUpdate,
   assistantSlot,
+  collapsed = false,
 }: NavMenuProps) {
   const { t } = useTranslation();
 
@@ -130,28 +146,62 @@ export default function NavMenu({
     //    （「技能市场」原来是同一个缺口 —— 它已经不在这里了，见上面 items 里的说明。）
     const active = item.view !== undefined && !settingsOpen && mainView === item.view;
 
-    return (
+    /**
+     * 气泡/可访问名。
+     *
+     * ⚠️ `'•'` 是「有新版本」的**状态点**，不是一个词 —— 把它念进名字里（"有新版本可用 · •"）
+     * 只会添乱，所以只把**有词义的**角标（`Beta`）接上去。
+     */
+    const name = t(item.labelKey);
+    const spoken = item.badge && item.badge !== '•' ? `${name} · ${item.badge}` : name;
+
+    const button = (
       <button
         key={item.key}
         type="button"
         data-nav={item.key}
         aria-current={active ? 'page' : undefined}
+        aria-label={collapsed ? spoken : undefined}
         onClick={() => (item.onClick ? item.onClick() : item.view && onSelectView(item.view))}
         className={cn(
-          'titlebar-no-drag glow-focus flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left type-body transition-colors',
+          'titlebar-no-drag glow-focus relative flex w-full items-center rounded-md text-left type-body transition-colors',
+          collapsed ? 'justify-center py-2' : 'gap-2.5 px-2.5 py-1.5',
           active
             ? 'bg-[var(--state-selected)] font-semibold text-[var(--accent)]'
             : 'text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]',
         )}
       >
-        <Icon size={15} className="flex-shrink-0" />
-        <span className="min-w-0 flex-1 truncate">{t(item.labelKey)}</span>
+        <Icon size={collapsed ? 18 : 15} className="flex-shrink-0" />
+        <span className={cn('min-w-0 flex-1 truncate', collapsed && 'hidden')}>{t(item.labelKey)}</span>
         {item.badge && (
-          <span className="type-badge flex-shrink-0 rounded-full bg-[var(--accent-soft)] px-1.5 text-[var(--accent)]">
+          <span
+            className={cn(
+              'type-badge flex-shrink-0 rounded-full bg-[var(--accent-soft)] px-1.5 text-[var(--accent)]',
+              collapsed && 'hidden',
+            )}
+          >
             {item.badge}
           </span>
         )}
+        {/* ⭐ 收起时文字角标藏了，但**信息不许丢**：落成一个角落圆点
+            （图标栏 `GlobalRail` 当年就是这么做的），文字部分进气泡/可访问名。
+            体验稿这里写的是 `.badge{display:none}`，我们比它多留一个点。 */}
+        {collapsed && item.badge && (
+          <span
+            data-testid="nav-badge-dot"
+            className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-[var(--accent)]"
+          />
+        )}
       </button>
+    );
+
+    if (!collapsed) return button;
+
+    return (
+      <Tooltip key={item.key}>
+        <TooltipTrigger asChild>{button}</TooltipTrigger>
+        <TooltipContent side="right">{spoken}</TooltipContent>
+      </Tooltip>
     );
   };
 

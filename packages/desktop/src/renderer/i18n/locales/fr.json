@@ -1841,6 +1841,7 @@
   },
   "skillMarket": {
     "actionFailed": "Échec de l'opération : {{reason}}",
+    "count": "{{total}} au total · {{installed}} installées",
     "empty": "Cette version ne contient aucune compétence.",
     "gatewayRequired": "Pas encore connecté à une passerelle — l'installation en a besoin. Connectez-vous puis actualisez.",
     "install": "Installer",
@@ -1851,7 +1852,11 @@
     "remove": "Retirer",
     "removed": "« {{name}} » retirée",
     "removedCaveat": "Un assistant peut encore l'utiliser pendant cette session ; redémarrez l'application pour que ce soit définitif.",
-    "subtitle": "Ces compétences sont fournies avec l'application. Une fois installée, tous les assistants peuvent l'utiliser."
+    "subtitle": "Ces compétences sont fournies avec l'application. Une fois installée, tous les assistants peuvent l'utiliser.",
+    "verdictBlocked": "Cet assistant ne peut pas encore l’utiliser",
+    "verdictChecking": "Vérification de la possibilité pour l’assistant de l’utiliser…",
+    "verdictUnknown": "Impossible de savoir : on ne sait pas encore si l’assistant peut l’utiliser",
+    "verdictUsable": "Cet assistant peut désormais l’utiliser"
   },
   "slash": {
     "argOptions": "Options pour /{{command}}"

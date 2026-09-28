@@ -1841,6 +1841,7 @@
   },
   "skillMarket": {
     "actionFailed": "Não foi possível concluir: {{reason}}",
+    "count": "{{total}} no total · {{installed}} instaladas",
     "empty": "Esta versão não inclui habilidades.",
     "gatewayRequired": "Ainda sem conexão com um gateway — instalar exige uma. Conecte e atualize.",
     "install": "Instalar",
@@ -1851,7 +1852,11 @@
     "remove": "Remover",
     "removed": "“{{name}}” removida",
     "removedCaveat": "Um assistente ainda pode usá-la nesta execução; reinicie o aplicativo para valer.",
-    "subtitle": "Estas habilidades acompanham o aplicativo. Depois de instalada, todos os assistentes podem usá-la."
+    "subtitle": "Estas habilidades acompanham o aplicativo. Depois de instalada, todos os assistentes podem usá-la.",
+    "verdictBlocked": "Este assistente ainda não pode usá-la",
+    "verdictChecking": "Verificando se o assistente pode usá-la…",
+    "verdictUnknown": "Não foi possível saber: ainda não sabemos se o assistente pode usá-la",
+    "verdictUsable": "Este assistente já pode usá-la"
   },
   "slash": {
     "argOptions": "Opções para /{{command}}"

@@ -1,7 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { useTranslation } from 'react-i18next';
-import { PanelLeftOpen } from 'lucide-react';
 import { Toaster, TOAST_DURATION_MS, TOAST_OPTIONS } from '@/lib/toast';
 import LeftNav from './layouts/LeftNav';
 import MainArea from './layouts/MainArea';
@@ -31,7 +29,7 @@ import { useSlidegenToast } from './hooks/useSlidegenToast';
 import { useClaimGuardToast } from './hooks/useClaimGuardToast';
 import { cn } from '@/lib/utils';
 import { TooltipProvider } from '@/components/ui/tooltip';
-import { motionDuration, motionEase } from '@/styles/design-tokens';
+import { LEFT_NAV_RAIL_WIDTH, motionDuration, motionEase } from '@/styles/design-tokens';
 import { loadOnboardingProfile, saveOnboardingProfile, type OnboardingProfile } from '@/lib/user-onboarding';
 import { AUTH_CHECK_FALLBACK_MS, resolveAppEntryScreen, runAuthBootstrap } from '@/lib/app-entry-flow';
 import { parseBetaRoute } from '@/features/internal-beta/beta-route';
@@ -51,7 +49,6 @@ function AppToaster({ themeMode }: { themeMode: Theme }) {
 }
 
 export default function App() {
-  const { t } = useTranslation();
   const [ready, setReady] = useState(false);
   const [needsSetup, setNeedsSetup] = useState(false);
   const [authState, setAuthState] = useState<'checking' | 'required' | 'ok'>('checking');
@@ -350,12 +347,12 @@ export default function App() {
             文件管理 / 归档对话 / 资料库（主清单）、内测中心 / 设置（底部一组）。
             ⇒ 现在左侧只剩**一列**：导航列（`LeftNav`）。 */}
         <motion.aside
-          animate={{ width: leftNavCollapsed ? 0 : leftNavWidth }}
+          animate={{ width: leftNavCollapsed ? LEFT_NAV_RAIL_WIDTH : leftNavWidth }}
           transition={{ duration: motionDuration.moderate, ease: motionEase.standard }}
           className={cn(
             'relative z-[1] flex-shrink-0 overflow-hidden border-r border-[var(--border-subtle)] bg-[var(--bg-secondary)]',
           )}
-          style={{ minWidth: leftNavCollapsed ? 0 : 200 }}
+          style={{ minWidth: leftNavCollapsed ? LEFT_NAV_RAIL_WIDTH : 200 }}
         >
           <LeftNav
             onOpenAssistantSettings={() => openSettings('agents')}
@@ -371,23 +368,12 @@ export default function App() {
             <div className="h-full w-px mx-auto bg-[var(--border)] group-hover:bg-[var(--accent)] transition-colors" />
           </div>
         )}
-        {/* ⚠️ 收起侧栏后**必须留一个展开入口**。
-            原来这个入口在图标栏上（`GlobalRail` 的 `expandNav` 按钮），本刀连图标栏一起删了
-            ⇒ 不留的话用户收起之后**再也点不回来**（只剩键盘快捷键）。
-            这里留一条 28px 窄条，只放一个展开按钮。 */}
-        {leftNavCollapsed && (
-          <div className="titlebar-drag flex w-7 flex-shrink-0 flex-col items-center border-r border-[var(--border-subtle)] bg-[var(--bg-secondary)] pt-2">
-            <button
-              type="button"
-              onClick={toggleLeftNavCollapsed}
-              aria-label={t('leftNav.expandNav')}
-              title={t('leftNav.expandNav')}
-              className="titlebar-no-drag glow-focus flex h-7 w-7 items-center justify-center rounded-md text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
-            >
-              <PanelLeftOpen size={15} />
-            </button>
-          </div>
-        )}
+        {/* 2026-09-29：**收起不再等于归零** —— 缩成一条图标条（`LEFT_NAV_RAIL_WIDTH`），
+            导航项还在、图标居中、悬停出气泡。
+            ⚠️ 因此原来那条 28px 展开窄条**整个删掉**（不是留着不用）：它的存在理由是
+            「归零之后再也点不回来」（图标栏 `GlobalRail` 已在 2026-09-19 删除，当时只剩那一条退路），
+            现在图标条自己就带着展开按钮（在 `LeftNav` 顶部第一行），理由不成立。
+            留着的坏处是两条窄栏并排，用户会以为那是两个东西。 */}
 
         <main className="relative flex-1 min-w-0 flex flex-col z-[1]">
           {settingsOpen ? (
