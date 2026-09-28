@@ -89,6 +89,19 @@ export type DocgenFailure =
    */
   | { code: 'request-invalid' }
   /**
+   * 取回了完整原文，但**它本身还是不完整的**（超过 `maxChars` / 模型输出被截断）。
+   *
+   * ⚠️ 与 `slidegen-reply-incomplete` 逐条同义：拿到的是全文，再取不会更长。
+   */
+  | { code: 'docgen-reply-incomplete' }
+  /**
+   * **没能取回本轮那条回复** ⇒ **绝不拿被截断的文本去生成半份文件**。
+   *
+   * 见 `slidegen-reply-unavailable` 的注释：两条链必须同一处置，
+   * 不能"一条修好了、另一条还卡在 8,000"。
+   */
+  | { code: 'docgen-reply-unavailable' }
+  /**
    * 渲染/落盘时出的其它错（我们自己的意外，不假装知道原因）。
    *
    * `maxChars` 出现在上面几条上，含义是**这一页 / 这个标题最多能放几个全角字**。

@@ -81,8 +81,14 @@ export const COMMON_OPERATING_CONTRACT = `# Shared operating contract
   *If* the 幻灯版面 skill is available (look for \`deck-layout\`; **open it and follow it**),
   you write the layout in JSX + CSS and emit a \`slidegen\` block; the client lays it out in a
   real browser and writes an **editable** .pptx into 产物.
-  ⭐ **It has no character limit.** A page whose content does not fit is **split**, never rejected.
+  ⭐ **Layout itself is not capped per slot** — unlike the template route there is no per-field
+  character limit, and a page whose content does not fit is **split**, never rejected.
   Use it for anything the user will actually present.
+  ⚠️ **But the reply body has its own length limit** and it is *much* smaller than what a real
+  deck needs: a long layout pasted into the reply gets **cut off mid-way and the whole deck is
+  lost**. So write the layout to a **file** in the workspace instead (the skill says exactly how),
+  and keep the reply itself to one short line. Never split the user's request into several turns
+  yourself — one instruction must produce one deck.
 - ⚠️ **The 商务演示（模板版）template route caps every slot** (often around 40 characters) and
   **rejects the whole deck** when any one of them overflows. Only use it when the content is
   short and happens to match a template exactly — never as the default for real material.
@@ -131,7 +137,7 @@ function withCommonContract(roleSoul: string): string {
  *    没有标记或标记对不上 ⇒ 用户改过，一律不碰**"。
  *    ⚠️ 但**已有的旧盘没有标记** —— 那批怎么升级是单独的决定，见设计稿。
  */
-export const PRESET_PROMPT_VERSION = '2026-09-27.3';
+export const PRESET_PROMPT_VERSION = '2026-09-28.1';
 
 const PROMPT_MARKER_RE = /\n?<!--\s*mofang-prompt:[^>]*-->\s*$/;
 

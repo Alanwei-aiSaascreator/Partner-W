@@ -56,7 +56,18 @@ describe('预置助手的交付合同：每条通道都要在清单里', () => {
     expect(COMMON_OPERATING_CONTRACT, '⭐ 要说清它是**默认路**，不是兜底').toMatch(
       /default route\*{0,2},\s*not a fallback/,
     );
-    expect(COMMON_OPERATING_CONTRACT, '⭐ 要说清它**没有字数上限**（这是选它的理由）').toMatch(/no character limit/);
+    // ⭐ 2026-09-28 改：原来这里钉的是「**It has no character limit**」。
+    //    那句话在部署版里**是假的** —— 回复正文会被网关截断，长 deck 贴进正文
+    //    会**从中间断掉、整份作废**。所以现在钉的是**准确的那三件事**。
+    expect(COMMON_OPERATING_CONTRACT, '要说清**版式本身**没有逐格字数上限').toMatch(/not capped per slot/);
+    expect(COMMON_OPERATING_CONTRACT, '要说清一页装不下是**分页**、不是被拒').toMatch(/split\*\*, never rejected/);
+    expect(COMMON_OPERATING_CONTRACT, '⭐ 必须说清**回复正文有上限**，所以长版面要写成文件').toMatch(
+      /reply body has its own length limit/,
+    );
+    expect(COMMON_OPERATING_CONTRACT, '⭐ 要指明落在**文件**里').toMatch(/write the layout to a \*\*file\*\*/);
+    expect(COMMON_OPERATING_CONTRACT, '⭐ 不许让用户自己拆几轮：一条指令一份 deck').toMatch(
+      /one instruction must produce one deck/,
+    );
     expect(COMMON_OPERATING_CONTRACT, '要说清模板**每格有上限、超一格整份被拒**').toMatch(/caps every slot/);
     expect(COMMON_OPERATING_CONTRACT, '⭐ 被拒 = **换路**的信号，不是缩用户内容的理由').toMatch(
       /signal to switch routes, not to shorten/,
@@ -88,9 +99,11 @@ describe('预置助手的交付合同：每条通道都要在清单里', () => {
   });
 
   it('提示词版本号是当前那一版（改了合同就该动它）', () => {
-    // 这一版把幻灯版面提成**默认路**、把模板收窄，并写死"被拒就换路"。
+    // 这一版删掉了「**It has no character limit**」那句假话，改成"正文有上限、
+    // 长版面要写成文件、一条指令一份 deck"。
     // 版本号是"将来能不能安全升级已发出去的盘"的唯一依据
-    // （见 preset-agents.ts 里 PRESET_PROMPT_VERSION 的注释）。
-    expect(PRESET_PROMPT_VERSION).toBe('2026-09-27.3');
+    // （见 preset-agents.ts 里 PRESET_PROMPT_VERSION 的注释）——
+    // ⚠️ 所以**改了合同文本就必须动它**，否则已装的盘拿不到新合同。
+    expect(PRESET_PROMPT_VERSION).toBe('2026-09-28.1');
   });
 });

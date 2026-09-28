@@ -28,6 +28,22 @@ function failureLine(failure: SlidegenFailure, t: Translate): string {
     case 'slidegen-block-unclosed':
       // 几乎总是"这一次回复太长、被截断了"。要说清"内容还在"，否则用户以为白做了。
       return t('slidegen.fail.blockUnclosed');
+    case 'slidegen-file-no-fence':
+      // 助手**写了文件**、但文件里没有版面代码。要说清"文件在哪儿、缺的是什么"，
+      // 助手才知道去改那个文件，而不是重发一段聊天。（与上面那条的处置不同。）
+      return t('slidegen.fail.fileNoFence');
+    case 'slidegen-file-unreadable':
+      // 文件在、但读不动（权限 / 被删 / 正写到一半）。让用户知道**再试一次**有意义。
+      return t('slidegen.fail.fileUnreadable');
+    case 'slidegen-file-too-large':
+      // 带上 max/got：用户要能看到"超了多少"，否则只能猜。单位为字节，文案里写清。
+      return t('slidegen.fail.fileTooLarge', { max: failure.max, got: failure.got });
+    case 'slidegen-reply-incomplete':
+      // 拿到全文了，全文就这么长（超了取回上限 / 模型自己写超了）⇒ 重试没用，要改内容。
+      return t('slidegen.fail.replyIncomplete');
+    case 'slidegen-reply-unavailable':
+      // 没取到本轮那条回复 ⇒ **我们没生成**（宁可没有，也不给半份）。重试有意义。
+      return t('slidegen.fail.replyUnavailable');
     case 'slidegen-title-missing':
       // 标题同时是**文件名**。说清"要一行 title 注释"，助手才知道补什么。
       return t('slidegen.fail.titleMissing');

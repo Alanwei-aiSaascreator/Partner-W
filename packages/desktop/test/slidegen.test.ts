@@ -388,23 +388,28 @@ describe('⭐ 技能示例必须能被**真解析器**吃下（漂移守卫）',
   });
 
   /**
-   * 🔴 2026-09-28 真机：**消息正文被网关截断在 8,000 字符** ⇒ 13 KB 的 deck 围栏没闭合
-   * ⇒ 静默丢一整份演示（详见 `slidegen-block-unclosed` 那条）。
+   * ⭐ 2026-09-28 定：**整份版面写成工作区里的一个文件**，不是写进回复正文。
    *
-   * 截断在随包运行时里：`truncateChatHistoryText(text, DEFAULT_CHAT_HISTORY_TEXT_MAX_CHARS)`
-   * （`worker.mjs`，8e3 = 8000），而且调用点全是单参数 ⇒ **恒等于 8000、配不了**。
-   * ⇒ 我们改不了那个数，**只能让模型别撞上它**：一条消息装不下就分两条发。
+   * 理由是真机量出来的：显示层把**单条消息**切在 8,000 字符，所以"整份写进回复"
+   * 连续四次都死在 8,000；而同一次**写进文件的那份是完整的**（13 KB）。
+   * ⇒ 客户端现在**优先读文件**（`slidegen/deck-file.ts`），聊天正文只作回落。
    *
-   * ⚠️ 这**不是**"内容有上限"—— 每页多长仍然没人管，管的是**一条回复**能有多长。
-   *    技能原来只写了"一页装不下会分页"，那是**页内**的事，管不了这件事。
+   * 所以技能必须同时说清三件事，缺一条这条路就白走：
+   *  1. 用**写文件工具**、文件名以 `.slidegen` 结尾；
+   *  2. 文件**里面**仍是一个**闭合**的 `slidegen` 围栏（客户端按围栏取源码）；
+   *  3. 回复正文**别复述源码**（复述了就还会撞上限，而且用户会看到两遍）。
    */
-  it('⭐ 必须写明"一条消息装不下就分两条发"（网关在 8,000 字符处截断）', () => {
+  it('技能要求整份版面写成 `.slidegen` 文件，而不是贴进回复', () => {
     const root = resolveOurSkillsRoot({ isPackaged: false, appPath: PROJECT_DIR })!;
     const text = fs.readFileSync(path.join(root, 'deck-layout', 'SKILL.md'), 'utf-8').replace(/\r\n/g, '\n');
 
-    expect(text, '没写"一条消息会被截断" —— 模型不知道有这堵墙，长 deck 必然被切').toMatch(/截断|装不下/);
-    expect(text, '要给出可行动的写法：分两条消息发').toMatch(/分成?两条|分两条|分多次|分几次/);
-    expect(text, '要给出预算数字，模型才能自己估').toMatch(/8[,，]?000|8000/);
+    expect(text, '要点名文件名以 `.slidegen` 结尾').toMatch(/\.slidegen/);
+    expect(text, '要说清用写文件工具').toMatch(/写文件工具/);
+    expect(text, '要写明一次写完').toMatch(/一次写完/);
+    expect(text, '要说清文件里的围栏必须闭合（客户端按围栏取源码）').toMatch(/围栏必须闭合/);
+    expect(text, '要写明正文里不要复述源码').toMatch(/不要复述源码/);
+    expect(text, '要写明一栅最多 60 页').toMatch(/60 页/);
+    expect(text, '不要再教模型拆成两条消息').not.toMatch(/分成?两条|分两条/);
   });
 });
 
@@ -482,3 +487,15 @@ describe('未闭合的 slidegen 围栏：必须报出来，不许静默', () => 
     expect(failures).toHaveLength(0);
   });
 });
+
+/**
+ * ⚠️ 2026-09-28 删掉了这一组（原「显示层截断了，历史里的全文还在：用全文出片」）。
+ *
+ * 它测的是 `preferClosedSlidegenSource` —— **按"更长"挑候选、并要求候选里有一个闭合围栏**。
+ * 那两条**正是新规格明令禁止的取法**（"禁止按最长消息选取 / 禁止按最近闭合 fence 猜测"）。
+ * ⇒ 连同 `slidegen/full-reply.ts` 整个模块一起删了，改成按 `__openclaw.runId`
+ *    **精确匹配**（见 `test/recover-full-reply.test.ts`）。
+ *
+ * `assistantHistoryText` 是通用的正文提取，**没删** —— 搬进了
+ * `artifact/recover-full-reply.ts`，断言也跟着搬到了那个测试文件里。
+ */

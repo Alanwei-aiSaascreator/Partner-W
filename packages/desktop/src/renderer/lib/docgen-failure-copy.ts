@@ -46,6 +46,12 @@ export function docgenFailureMessage(failure: DocgenFailure, t: Translate): stri
       });
     case 'request-invalid':
       return t('docgen.requestInvalid');
+    case 'docgen-reply-incomplete':
+      // 拿到全文了，全文就这么长 ⇒ 重试没用，要改内容。
+      return t('docgen.replyIncomplete');
+    case 'docgen-reply-unavailable':
+      // 没取到本轮那条回复 ⇒ **我们没生成**（宁可没有，也不给半份）。重试有意义。
+      return t('docgen.replyUnavailable');
     case 'render-failed':
       return t('docgen.renderFailed');
   }

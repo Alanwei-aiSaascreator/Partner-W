@@ -1045,4 +1045,62 @@ describe('assistant artifact reconciliation boundary', () => {
       expect.objectContaining({ id: 'agent-artifact', root: 'agent' }),
     );
   });
+
+  /**
+   * ⭐ RED **E**（规格原文）：**docgen 与 slidegen 两条链都要覆盖** ——
+   * "不允许一条链修好、另一条链仍然 8K 截断"。
+   *
+   * 场景就是正式包 1.0.2 的真机形状：助手把整份源码写进回复 ⇒ 运行时在投影时
+   * 截到 8,000 字符、末尾追加 `...(truncated)...` ⇒ **开头围栏在、结尾围栏没了**。
+   *
+   * 这里 `getGatewayClient` 被 mock 成 `undefined`（该文件顶部**本来就这么 mock**），
+   * 也就是"取不回完整原文"那一档 ⇒ 正确处置是**一份都不生成**，并推一条可重试的失败。
+   * ⭐ 关键断言是"**没有生成**"：如果哪条链偷偷拿截断文本去排版，这里会红。
+   */
+  describe('被显示层截断的回复：结构化产物两条链都覆盖，且绝不拿截断文本出片', () => {
+    /** 造一条被截断的回复：**开头围栏在、结尾围栏没了**。 */
+    const cutReply = (fence: 'slidegen' | 'docgen'): string =>
+      `版面我排好了。\n\`\`\`${fence}\n// title: 长演示\n<Slide>\n  …写到这里被切断了\n\n...(truncated)...`;
+
+    /** 走一遍真实的收尾路径。 */
+    async function persistAssistant(content: string): Promise<void> {
+      const { beginArtifactRun, registerDataHandlers } = await import('../src/main/ipc/data-handlers.js');
+      registerDataHandlers();
+      beginArtifactRun('C:\\trusted-workspace', 'task-1', 'session-task-1');
+      selectGetMock.mockReturnValueOnce({ id: 'assistant-cut' }).mockReturnValueOnce({ gid: 'gateway-1' });
+      handleMap.get('data:create-message')!(
+        {},
+        {
+          id: 'assistant-cut',
+          taskId: 'task-1',
+          role: 'assistant',
+          content,
+          timestamp: '2026-09-28T00:00:01.000Z',
+          sessionKey: 'session-task-1',
+        },
+      );
+      await flushJobs();
+    }
+
+    it('⭐ slidegen 链：取不回完整原文 ⇒ 推 slidegen-reply-unavailable，**不出片**', async () => {
+      await persistAssistant(cutReply('slidegen'));
+      expect(webContentsSendMock).toHaveBeenCalledWith('slidegen:failed', [{ code: 'slidegen-reply-unavailable' }]);
+    });
+
+    it('⭐ docgen 链：**同一条规则** ⇒ 推 docgen-reply-unavailable（不是只有 slidegen 修好了）', async () => {
+      await persistAssistant(cutReply('docgen'));
+      expect(webContentsSendMock).toHaveBeenCalledWith('docgen:failed', [{ code: 'docgen-reply-unavailable' }]);
+    });
+
+    it('⭐ 负对照：只写了 PPT 的长回复**不该**弹出"文件没能生成"（那是假失败）', async () => {
+      await persistAssistant(cutReply('slidegen'));
+      expect(webContentsSendMock).not.toHaveBeenCalledWith('docgen:failed', expect.anything());
+    });
+
+    it('⭐ 负对照：**没被截断**的普通回复不受影响（一次网关请求都不发）', async () => {
+      await persistAssistant('就是一句普通回复，没有任何围栏，也没有截断标记。');
+      expect(webContentsSendMock).not.toHaveBeenCalledWith('slidegen:failed', expect.anything());
+      expect(webContentsSendMock).not.toHaveBeenCalledWith('docgen:failed', expect.anything());
+    });
+  });
 });

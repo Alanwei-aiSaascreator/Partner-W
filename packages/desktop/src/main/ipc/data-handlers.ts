@@ -12,7 +12,20 @@ import { generateDocumentsFromMessage } from '../docgen/generate.js';
 import { resolvePptxTemplatesRoot } from '../docgen/pptx-template/locate.js';
 import { generateHtmlPagesFromMessage } from '../htmlgen/generate.js';
 import { generateSlidesFromMessage } from '../slidegen/generate.js';
-import { parseAgentIdFromSessionKey, type MessageAttachment } from '@clawwork/shared';
+import {
+  captureDeckFileBaseline,
+  changedDeckFiles,
+  decksFromFiles,
+  type DeckFileBaseline,
+} from '../slidegen/deck-file.js';
+import {
+  DISPLAY_TRUNCATION_MARKER,
+  historyFetcherFrom,
+  recoverFullReply,
+  type ArtifactKind,
+  type RecoverResult,
+} from '../artifact/recover-full-reply.js';
+import { parseAgentIdFromSessionKey, type MessageAttachment, type SlidegenFailure } from '@clawwork/shared';
 import { getWorkspacePath } from '../workspace/config.js';
 import { getGatewayClient } from '../ws/index.js';
 import { getDebugLogger } from '../debug/index.js';
@@ -72,6 +85,14 @@ function parseTeamAgentSkills(raw: string | null): string[] {
 interface AgentRootBaseline {
   workspacePath: string;
   baseline: ArtifactBaseline;
+  /**
+   * 助手工作区里 `.slidegen` 文件的快照（**这一轮开始之前**那一刻）。
+   *
+   * 收尾时与它比一遍 ⇒ "这一轮新写出来的版面文件"。见 `slidegen/deck-file.ts`。
+   * ⚠️ 与 `baseline` 同刻采集，但**用途完全独立**：那个管"产物面板收哪些文件"，
+   *    这个管"拿哪份文本去排 PPT"。
+   */
+  deckBaseline: DeckFileBaseline | null;
 }
 
 interface ArtifactRunContext {
@@ -171,7 +192,10 @@ async function captureAgentRootBaseline(input: {
       taskId: input.taskId,
       rootKind: 'agent',
     });
-    return { workspacePath, baseline };
+    // 同在**这一刻**采版面文件的基线：助手这一轮开始写文件之前。
+    // ⚠️ 同步、极便宜（只 stat 一遍 `.slidegen`），失败回 null 由 `captureDeckFileBaseline` 自己处理。
+    const deckBaseline = captureDeckFileBaseline(workspacePath);
+    return { workspacePath, baseline, deckBaseline };
   } catch (error) {
     console.error('[artifact_agent_baseline_failed]', { taskId: input.taskId, error });
     return null;
@@ -397,6 +421,62 @@ export function beginArtifactRunForGatewayDispatch(input: {
   });
 }
 
+/**
+ * 结构化产物（docgen / slidegen）该用哪一份原文。
+ *
+ * ## 为什么必须换一份
+ *
+ * 随包运行时把**单条消息**在投影时截到 **8,000 字符**（末尾追加 `...(truncated)...`）。
+ * 一份整册 PPT 的源码远超它 ⇒ 贴进回复就被切断 ⇒ 围栏没闭合 ⇒ 整份丢掉。
+ * 真机上**连续四次**这么死。
+ *
+ * 完整原文还在网关的会话记录里，用 `chat.history` 带 `maxChars` **能取回来**
+ * （实测同一条消息 8,018 → 12,414 且截断标记消失）。见 `artifact/recover-full-reply.ts`。
+ *
+ * ## 三条处置
+ *
+ * - **没被截断**（显示文本里没有标记）⇒ 直接用，**一次网关请求都不发**（普通回复零成本）。
+ * - **取回完整** ⇒ 用取回的那份。
+ * - **取不回 / 取回的仍不完整** ⇒ 返回非 `complete`，调用方**不生成**。
+ *   ⭐ 宁可什么都没有，也不交付**半份** PPT —— 半份比没有更糟（用户会以为做完了）。
+ */
+/**
+ * 这条回复里**有没有**结构化产物块。
+ *
+ * ⚠️ 用它做闸门是有意的：取回动作（`structuredReplyContent`）只在"真的可能要解析"
+ *    时才该发生。否则一条**很长的普通聊天消息**也会白等一次网关往返，
+ *    取不到时还要等满 1.85 秒的重试 —— 那是在收尾路径上，用户直接能感觉到。
+ *
+ * ⚠️ 只看**开头**围栏：被截断的那份正是"开了头、没有结尾"，用 `includes` 恰好命中。
+ */
+function hasStructuredFence(content: string): boolean {
+  return ['```docgen', '```slidegen', '```htmlgen'].some((fence) => content.includes(fence));
+}
+
+async function structuredReplyContent(input: {
+  gatewayId?: string;
+  sessionKey: string;
+  runId?: string;
+  content: string;
+  artifactKind: ArtifactKind;
+}): Promise<RecoverResult> {
+  const gateway = input.gatewayId ? getGatewayClient(input.gatewayId) : undefined;
+  if (!gateway) {
+    // 网关没连上：**没被截断**的回复照旧可用（那种情况本来也不需要取回）；
+    // 被截断的则明确回 unavailable —— 不拿截断文本凑一份。
+    return input.content.includes(DISPLAY_TRUNCATION_MARKER)
+      ? { status: 'unavailable', reason: 'gateway-unavailable' }
+      : { status: 'complete', content: input.content };
+  }
+  return recoverFullReply({
+    sessionKey: input.sessionKey,
+    currentRunId: input.runId ?? '',
+    displayContent: input.content,
+    artifactKind: input.artifactKind,
+    deps: { fetchHistory: historyFetcherFrom(gateway) },
+  });
+}
+
 function finalizeAssistantArtifacts(input: {
   workspacePath: string;
   taskId: string;
@@ -406,6 +486,7 @@ function finalizeAssistantArtifacts(input: {
   content: string;
   attachments?: MessageAttachment[];
   gatewayHttpBase?: string;
+  gatewayId?: string;
 }): void {
   pruneCompletedAssistantMessages();
   const messageKey = completedMessageKey(input.taskId, input.messageId);
@@ -441,19 +522,47 @@ function finalizeAssistantArtifacts(input: {
     } catch (error) {
       console.error('[auto-extract]', error);
     }
+    // ⭐ 结构化产物的**原文**：docgen 与 slidegen 共用这一次取回。
+    //    被显示层截断时（8,000 那条）去网关按 runId 要回完整原文；
+    //    没被截断就直接用 `input.content`（一次请求都不发）。
+    //    ⚠️ 只在回复里**真的有**结构化块时才取 —— 见 `hasStructuredFence` 的理由。
+    const structured: RecoverResult = hasStructuredFence(input.content)
+      ? await structuredReplyContent({
+          gatewayId: input.gatewayId,
+          sessionKey: input.sessionKey,
+          runId: input.runId,
+          content: input.content,
+          artifactKind: 'docgen',
+        })
+      : { status: 'complete', content: input.content };
     try {
       // ⭐ 文档生成：助手在回复里给出 ```` ```docgen ```` 块（内容 schema 见
       //    `main/docgen/request.ts`），这里渲染成真 pptx / docx / xlsx 并**走现成的产物通道**
       //    存下来（`saveArtifactFromBuffer` 会写进任务目录 + 写库），然后把事件推给界面。
       //    放在 autoExtract 之前：产物先落库，后面的抽取与 reconcile 就不会重复登记。
       //    内部自己吞异常（一份坏请求不影响其它），这里再包一层只是防它自己坏掉。
-      const documents = await generateDocumentsFromMessage({
-        workspacePath: input.workspacePath,
-        taskId: input.taskId,
-        messageId: input.messageId,
-        content: input.content,
-        templatesRoot: pptxTemplatesRoot(),
-      });
+      const documents =
+        structured.status === 'complete'
+          ? await generateDocumentsFromMessage({
+              workspacePath: input.workspacePath,
+              taskId: input.taskId,
+              messageId: input.messageId,
+              content: structured.content,
+              templatesRoot: pptxTemplatesRoot(),
+            })
+          : {
+              saved: [],
+              // ⚠️ **只在回复里真的有 `docgen` 围栏时才报这条**。
+              //    否则一条只写了 PPT 的长回复会连带弹一句"文件没能生成" ——
+              //    用户压根没要文件，那是**假失败**。
+              failed: input.content.includes('```docgen')
+                ? [
+                    structured.status === 'incomplete'
+                      ? ({ code: 'docgen-reply-incomplete' } as const)
+                      : ({ code: 'docgen-reply-unavailable' } as const),
+                  ]
+                : [],
+            };
       for (const artifact of documents.saved) {
         for (const win of BrowserWindow.getAllWindows()) win.webContents.send('artifact:saved', artifact);
       }
@@ -497,20 +606,86 @@ function finalizeAssistantArtifacts(input: {
       //    ⚠️ 失败与**警告**分开推：版式有毛病（元素冲出画布 / 文字被盖住）
       //       **不挡交付** —— 文件照样在产物里，只是要告诉用户哪一页哪里不对。
       //       把警告当成失败，就回到了"内容多一点 = 零输出"那条老路（`docgen` 踩过）。
-      const decks = await generateSlidesFromMessage({
-        workspacePath: input.workspacePath,
-        taskId: input.taskId,
-        messageId: input.messageId,
-        content: input.content,
-      });
-      for (const artifact of decks.saved) {
-        for (const win of BrowserWindow.getAllWindows()) win.webContents.send('artifact:saved', artifact);
+      // ── 版面源码**优先取文件**，取不到才回落聊天正文 ──────────────────────
+      //
+      // ⭐ 2026-09-28 定的：网关把**单条消息**截在 8,000 字符，所以"整份写进回复里"
+      //    真机四次都死在 8,000。而**写文件拿得到全文**（13,052 字节那份在盘上是完整的）。
+      //    ⇒ 有合格文件就以文件为准，**截断不再决定出不出片**。
+      //
+      // 「合格文件」= 助手工作区里、文件名含 `.slidegen`、且相对**这一轮开始那一刻**是新的
+      // （新增 / size 变 / mtime 变，同名覆盖也算）。判据与理由见 `slidegen/deck-file.ts`。
+      const agentRoot = await run.agentBaseline;
+      const deckFiles = agentRoot?.deckBaseline
+        ? changedDeckFiles(agentRoot.deckBaseline, agentRoot.workspacePath)
+        : [];
+      let slideContent: string | null = null;
+      let deckFileFailures: SlidegenFailure[] = [];
+      if (agentRoot && deckFiles.length > 0) {
+        const fromFiles = decksFromFiles({ root: agentRoot.workspacePath, relatives: deckFiles });
+        slideContent = fromFiles.text;
+        deckFileFailures = fromFiles.failures;
+        // ⚠️ 必须留痕：这条路"没出片"时，日志里要能分辨是**文件路**走的还是**聊天路**走的。
+        getDebugLogger().info({
+          domain: 'artifact',
+          event: 'slidegen.deck-files-used',
+          gatewayId: input.gatewayId,
+          data: { taskId: input.taskId, files: deckFiles, failures: deckFileFailures.map((f) => f.code) },
+        });
+      } else {
+        // 聊天这条路：用**取回的完整原文**（被截断时见 `structuredReplyContent`）。
+        //
+        // ⚠️ 取不回 / 取回的仍不完整 ⇒ **一份都不生成**。
+        //    宁可什么都没有，也不交付半份 deck —— 半份比没有更糟（用户以为做完了）。
+        getDebugLogger().info({
+          domain: 'artifact',
+          event: 'slidegen.reply-content',
+          gatewayId: input.gatewayId,
+          data: {
+            taskId: input.taskId,
+            status: structured.status,
+            ...(structured.status === 'complete' ? {} : { reason: structured.reason }),
+          },
+        });
+        if (structured.status === 'complete') slideContent = structured.content;
       }
-      if (decks.failed.length > 0) {
-        for (const win of BrowserWindow.getAllWindows()) win.webContents.send('slidegen:failed', decks.failed);
-      }
-      if (decks.warnings.length > 0) {
-        for (const win of BrowserWindow.getAllWindows()) win.webContents.send('slidegen:warned', decks.warnings);
+
+      if (slideContent === null) {
+        // 没拿到可用的原文 ⇒ 只推失败，不进排版。
+        // ⚠️ 这里**不能 `return`**：这一整个是收尾 IIFE 的一段，后面还有产物对账 ——
+        //    提前 return 会让这一轮的产物**整个不被收集**（那正是我们要消灭的静默）。
+        // ⚠️ 同上：**只在回复里真有 `slidegen` 围栏时才报**（免得给没要演示的用户弹假失败）。
+        if (input.content.includes('```slidegen')) {
+          const failure: SlidegenFailure =
+            structured.status === 'incomplete'
+              ? { code: 'slidegen-reply-incomplete' }
+              : { code: 'slidegen-reply-unavailable' };
+          getDebugLogger().warn({
+            domain: 'artifact',
+            event: 'slidegen.reply-content-unusable',
+            gatewayId: input.gatewayId,
+            data: { taskId: input.taskId, status: structured.status },
+          });
+          for (const win of BrowserWindow.getAllWindows()) win.webContents.send('slidegen:failed', [failure]);
+        }
+      } else {
+        const decks = await generateSlidesFromMessage({
+          workspacePath: input.workspacePath,
+          taskId: input.taskId,
+          messageId: input.messageId,
+          content: slideContent,
+        });
+        // 文件那条路自己判出来的失败（没围栏 / 读不动）**也要上屏** —— 否则又回到
+        // "产物空、日志空、界面说已完成"那类静默。放前面：它比排版层的失败更根本。
+        decks.failed.unshift(...deckFileFailures);
+        for (const artifact of decks.saved) {
+          for (const win of BrowserWindow.getAllWindows()) win.webContents.send('artifact:saved', artifact);
+        }
+        if (decks.failed.length > 0) {
+          for (const win of BrowserWindow.getAllWindows()) win.webContents.send('slidegen:failed', decks.failed);
+        }
+        if (decks.warnings.length > 0) {
+          for (const win of BrowserWindow.getAllWindows()) win.webContents.send('slidegen:warned', decks.warnings);
+        }
       }
     } catch (error) {
       console.error('[slidegen]', error);
@@ -798,6 +973,7 @@ export function registerDataHandlers(): void {
               content: msg.content,
               attachments: msg.attachments as MessageAttachment[] | undefined,
               gatewayHttpBase,
+              gatewayId: taskRow?.gid,
             });
           } else {
             // Legacy/history hydration still needs attachment and fenced-code

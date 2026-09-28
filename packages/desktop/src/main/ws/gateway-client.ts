@@ -904,8 +904,13 @@ export class GatewayClient {
     return this.sendReq('chat.abort', { sessionKey }, this.sessionMeta(sessionKey));
   }
 
-  async getChatHistory(sessionKey: string, limit = 50): Promise<Record<string, unknown>> {
-    return this.sendReq('chat.history', { sessionKey, limit }, this.sessionMeta(sessionKey));
+  async getChatHistory(sessionKey: string, limit = 50, maxChars?: number): Promise<Record<string, unknown>> {
+    const params: Record<string, unknown> = { sessionKey, limit };
+    // 不传就沿用网关默认（**显示层 8,000 字符**，末尾追加 `...(truncated)...`）。
+    // 结构化产物要全文时必须显式抬高 —— 合法范围 1 … 500,000，见
+    // `artifact/recover-full-reply.ts` 的 `HISTORY_MAX_CHARS`（那些结论是真发请求量到的）。
+    if (typeof maxChars === 'number') params.maxChars = maxChars;
+    return this.sendReq('chat.history', params, this.sessionMeta(sessionKey));
   }
 
   async listSessions(): Promise<Record<string, unknown>> {
