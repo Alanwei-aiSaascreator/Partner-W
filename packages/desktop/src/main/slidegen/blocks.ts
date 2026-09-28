@@ -85,5 +85,18 @@ export function extractSlidegenBlocks(content: string): SlidegenExtraction {
     decks.push({ title, source: body });
   }
 
+  // ⚠️ `FENCE_RE` 只认**闭合**的围栏 —— 被截断的那一份既不进 decks 也不进 failures，
+  //    上层两个分支都不进、**直接 return**。真机 2026-09-28 就是这么静默丢掉了一整份演示
+  //    （助手消息 8,220 字符、有开头没结尾、末尾是 `...(truncated)...`，
+  //     而日志里连一条 `slidegen.*` 都没有）。
+  //    ⇒ 单独数一次**开头**：开头比"配成对的"多，就是被截断了。
+  const openings = (content.match(/^```[ \t]*slidegen[ \t]*$/gim) ?? []).length;
+  for (let extra = decks.length + failures.length; extra < openings; extra++) {
+    failures.push({
+      failure: { code: 'slidegen-block-unclosed' },
+      detail: 'a slidegen fence is opened and never closed (the reply was truncated)',
+    });
+  }
+
   return { decks, failures };
 }

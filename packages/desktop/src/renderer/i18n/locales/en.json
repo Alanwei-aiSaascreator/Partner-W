@@ -1870,6 +1870,7 @@
   "slidegen": {
     "fail": {
       "blockEmpty": "The layout the assistant sent was empty.",
+      "blockUnclosed": "The content was too long and got cut off, so nothing was generated. Ask the assistant to split it into two decks.",
       "evalFailed": "An expression in the layout could not be evaluated — it may be malformed or too complex.",
       "renderFailed": "Something went wrong while laying out the slides. That is on our side, not your content.",
       "titleMissing": "The layout needs a // title: … line at the top, so the file has a name to use.",

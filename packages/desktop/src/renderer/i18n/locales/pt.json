@@ -1870,6 +1870,7 @@
   "slidegen": {
     "fail": {
       "blockEmpty": "O layout enviado pelo assistente estava vazio.",
+      "blockUnclosed": "O conteúdo era longo demais e foi cortado, então nada foi gerado. Peça ao assistente para dividir em duas apresentações.",
       "evalFailed": "Não foi possível avaliar uma expressão do layout — pode estar errada ou ser complexa demais.",
       "renderFailed": "Algo deu errado ao montar os slides. É um problema nosso, não do seu conteúdo.",
       "titleMissing": "O layout precisa de uma linha // title: … no início para o arquivo ter um nome.",

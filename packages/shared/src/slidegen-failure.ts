@@ -39,6 +39,14 @@ export const SLIDEGEN_MAX_PAGES = 60;
 export type SlidegenFailure =
   /** 围栏里是空的。 */
   | { code: 'slidegen-block-empty' }
+  /**
+   * 围栏**开了头没有结尾** —— 几乎总是"助手的回复被截断了"。
+   *
+   * ⚠️ 这一档是 2026-09-28 真机补上的，而且它防的正是**静默**：`FENCE_RE` 只认闭合的围栏，
+   *    所以被截断的那一份既不进 `decks` 也不进 `failures` ⇒ 上层两个分支都不进、直接 return
+   *    ⇒ 用户看到"任务已完成、结果已保存"，产物面板却是空的，且**日志里一条都没有**。
+   */
+  | { code: 'slidegen-block-unclosed' }
   /** 没有 `// title: …`。标题是文件名，缺了就只能编一个，而用户认不出编出来的名字。 */
   | { code: 'slidegen-title-missing' }
   /** JSX 结构不成立（标签不配平、属性没值…）。 */

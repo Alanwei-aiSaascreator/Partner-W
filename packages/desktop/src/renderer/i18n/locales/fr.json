@@ -1870,6 +1870,7 @@
   "slidegen": {
     "fail": {
       "blockEmpty": "La mise en page envoyée par l’assistant était vide.",
+      "blockUnclosed": "Le contenu était trop long et a été coupé, rien n'a donc été généré. Demandez à l'assistant de le répartir sur deux présentations.",
       "evalFailed": "Une expression de la mise en page n’a pas pu être évaluée : elle est peut-être erronée ou trop complexe.",
       "renderFailed": "Une erreur est survenue lors de la mise en page. Cela vient de notre côté, pas de votre contenu.",
       "titleMissing": "La mise en page doit commencer par une ligne // title: … pour que le fichier ait un nom.",

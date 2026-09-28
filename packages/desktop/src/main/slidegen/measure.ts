@@ -104,14 +104,21 @@ export function absolutizeImageSources(html: string, assetsRoot: string | null):
 }
 
 /**
- * 渲染并量框。返回按绘制顺序排列的元素（**顺序即 z-order**）。
+ * **一个进程内只建一个**测量窗口，量不同页只换内容、不销毁。
  *
- * 失败一律抛出 —— 上层翻成失败码。**绝不返回空数组冒充"这页是空的"**。
+ * 🔴 2026-09-28 真机查清：**每页新建一个窗口会让第 2 页起 `loadFile` 直接 `ERR_FAILED (-2)`。**
+ *    对照实验（隐藏窗口、同一份 HTML）：
+ *    - 不销毁、连开两个 ⇒ **都 OK**
+ *    - 销毁之后再建一个 ⇒ **FAIL: ERR_FAILED (-2)**
+ *    ⇒ 是「destroy → 新建」这一步坏了，不是"第二个窗口"。
+ *
+ * ⚠️ 而 `emitPageShapes` 是**逐页**调的 ⇒ 双页 deck 一定在第二页炸。
+ *    这条通道**从来没在真机出过一份 deck**，这就是原因。
  */
-export async function measureSlide(html: string, assetsRoot: string | null): Promise<MeasuredElement[]> {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slidegen-'));
-  const htmlPath = path.join(dir, 'slide.html');
-  fs.writeFileSync(htmlPath, slideDocument(absolutizeImageSources(html, assetsRoot)), 'utf8');
+let reusableWindow: BrowserWindow | null = null;
+
+function acquireMeasureWindow(): BrowserWindow {
+  if (reusableWindow && !reusableWindow.isDestroyed()) return reusableWindow;
 
   const win = new BrowserWindow({
     show: false,
@@ -128,6 +135,25 @@ export async function measureSlide(html: string, assetsRoot: string | null): Pro
       javascript: true,
     },
   });
+  // 窗口真的没了就清掉引用，下次重新建（这是"被外力关掉"的兜底，不是常规路径）。
+  win.on('closed', () => {
+    if (reusableWindow === win) reusableWindow = null;
+  });
+  reusableWindow = win;
+  return win;
+}
+
+/**
+ * 渲染并量框。返回按绘制顺序排列的元素（**顺序即 z-order**）。
+ *
+ * 失败一律抛出 —— 上层翻成失败码。**绝不返回空数组冒充"这页是空的"**。
+ */
+export async function measureSlide(html: string, assetsRoot: string | null): Promise<MeasuredElement[]> {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slidegen-'));
+  const htmlPath = path.join(dir, 'slide.html');
+  fs.writeFileSync(htmlPath, slideDocument(absolutizeImageSources(html, assetsRoot)), 'utf8');
+
+  const win = acquireMeasureWindow();
 
   try {
     await win.loadFile(htmlPath);
@@ -139,7 +165,8 @@ export async function measureSlide(html: string, assetsRoot: string | null): Pro
     }
     return parsed;
   } finally {
-    if (!win.isDestroyed()) win.destroy();
+    // ⚠️ **不要 destroy** —— 复用的窗口就是靠"不被销毁"才躲开那个竞态。
+    //    只清掉这一页的临时文件。
     fs.rmSync(dir, { recursive: true, force: true });
   }
 }

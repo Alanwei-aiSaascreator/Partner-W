@@ -1870,6 +1870,7 @@
   "slidegen": {
     "fail": {
       "blockEmpty": "El diseño que envió el asistente estaba vacío.",
+      "blockUnclosed": "El contenido era demasiado largo y se cortó, así que no se generó nada. Pide al asistente que lo divida en dos presentaciones.",
       "evalFailed": "No se pudo evaluar una expresión del diseño: puede estar mal escrita o ser demasiado compleja.",
       "renderFailed": "Algo falló al maquetar las diapositivas. Es un problema nuestro, no de tu contenido.",
       "titleMissing": "El diseño necesita una línea // title: … al principio para que el archivo tenga nombre.",

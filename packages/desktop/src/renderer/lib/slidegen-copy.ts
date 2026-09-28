@@ -25,6 +25,9 @@ function failureLine(failure: SlidegenFailure, t: Translate): string {
   switch (failure.code) {
     case 'slidegen-block-empty':
       return t('slidegen.fail.blockEmpty');
+    case 'slidegen-block-unclosed':
+      // 几乎总是"这一次回复太长、被截断了"。要说清"内容还在"，否则用户以为白做了。
+      return t('slidegen.fail.blockUnclosed');
     case 'slidegen-title-missing':
       // 标题同时是**文件名**。说清"要一行 title 注释"，助手才知道补什么。
       return t('slidegen.fail.titleMissing');

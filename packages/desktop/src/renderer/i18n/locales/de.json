@@ -1870,6 +1870,7 @@
   "slidegen": {
     "fail": {
       "blockEmpty": "Das vom Assistenten gesendete Layout war leer.",
+      "blockUnclosed": "Der Inhalt war zu lang und wurde abgeschnitten, daher wurde nichts erstellt. Bitten Sie den Assistenten, ihn auf zwei Präsentationen aufzuteilen.",
       "evalFailed": "Ein Ausdruck im Layout konnte nicht ausgewertet werden – möglicherweise fehlerhaft oder zu komplex.",
       "renderFailed": "Beim Setzen der Folien ist etwas schiefgelaufen. Das liegt auf unserer Seite, nicht an Ihren Inhalten.",
       "titleMissing": "Das Layout braucht oben eine Zeile // title: …, damit die Datei einen Namen hat.",

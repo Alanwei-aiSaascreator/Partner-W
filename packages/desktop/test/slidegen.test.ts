@@ -309,3 +309,78 @@ describe('⭐ 技能示例必须能被**真解析器**吃下（漂移守卫）',
     expect(text, '必须写清 title 是必填的').toMatch(/\/\/ title:/);
   });
 });
+
+/**
+ * 🔴 2026-09-28 真机：**助手的长回复被截断 ⇒ 围栏没有结尾 ⇒ 静默丢掉一整份演示。**
+ *
+ * 现场形状（不是推测）：助手消息 8,220 字符，里面有 ```slidegen 开头、**没有结尾围栏**，
+ * 末尾 literally 是 `...(truncated)...`。模型写了 13 KB 的 JSX（存成了工作区里的
+ * `.slidegen.jsx` 文件），版面做得很好 —— 可客户端**一条 `slidegen.*` 日志都没打**，
+ * 产物面板空的，用户什么都没拿到、也没有任何提示。
+ *
+ * 为什么这是**这一族里最坏的一种**：`FENCE_RE` 只认**闭合**的围栏，于是"被截断"
+ * 既进不了 `decks` 也进不了 `failures` ⇒ `generateSlidesFromMessage` 两个分支都不进，
+ * **直接 return**。用户看到的是"助手干完了、结果已保存"，然后什么都没有。
+ *
+ * 判据：**只要出现了开头围栏而没有对应的结尾，就必须产一条失败** ——
+ * 让 `slidegen.blocks-invalid` 落日志、让界面能说一句人话（"这份内容太长被截断了"）。
+ */
+describe('未闭合的 slidegen 围栏：必须报出来，不许静默', () => {
+  const TRUNCATED = [
+    '好的，我来做这份演示。',
+    '',
+    '```slidegen',
+    '// title: 九月经营简报-跨境电商',
+    '<Slide style={{ width: 1280, height: 720, background: "#0F0D1A" }}>',
+    '  <Text style={{ fontSize: 58, color: "#FFFFFF" }}>九月经营简报</Text>',
+    '...(truncated)...',
+  ].join('\n');
+
+  it('⭐ 只有开头没有结尾 ⇒ 一条 failure，而不是"什么都没发生"', () => {
+    const { decks, failures } = extractSlidegenBlocks(TRUNCATED);
+
+    expect(decks, '截断的块不该被当成完整的 deck').toHaveLength(0);
+    expect(failures, '真机上就是这里静默了 —— 用户拿到的是"结果已保存"加一个空产物面板').toHaveLength(1);
+    expect(failures[0].failure.code).toBe('slidegen-block-unclosed');
+  });
+
+  it('⭐ 完整的块**不受影响**（别把好的也判坏）', () => {
+    const good = [
+      '```slidegen',
+      '// title: 九月经营简报',
+      '<Slide style={{ width: 1280, height: 720, background: "#FFFFFF" }}>',
+      '  <Text style={{ fontSize: 40 }}>九月</Text>',
+      '</Slide>',
+      '```',
+    ].join('\n');
+
+    const { decks, failures } = extractSlidegenBlocks(good);
+
+    expect(failures).toHaveLength(0);
+    expect(decks).toHaveLength(1);
+    expect(decks[0].title).toBe('九月经营简报');
+  });
+
+  it('前面一个好的 + 后面一个被截断的 ⇒ 报出好的，也报出坏的', () => {
+    const good = [
+      '```slidegen',
+      '// title: 第一份',
+      '<Slide style={{ width: 1280, height: 720, background: "#FFFFFF" }}>',
+      '  <Text style={{ fontSize: 40 }}>甲</Text>',
+      '</Slide>',
+      '```',
+    ].join('\n');
+
+    const { decks, failures } = extractSlidegenBlocks(`${good}\n\n${TRUNCATED}`);
+
+    expect(decks).toHaveLength(1);
+    expect(failures).toHaveLength(1);
+    expect(failures[0].failure.code).toBe('slidegen-block-unclosed');
+  });
+
+  it('正文里只是**提到**这个词（没有围栏）⇒ 不报，别误伤', () => {
+    const { decks, failures } = extractSlidegenBlocks('我会用 slidegen 这条路来做，稍等。');
+    expect(decks).toHaveLength(0);
+    expect(failures).toHaveLength(0);
+  });
+});
