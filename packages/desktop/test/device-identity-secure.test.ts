@@ -1,3 +1,4 @@
+import { createPrivateKey } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -159,6 +160,73 @@ describe('device-identity.json —— 私钥不落明文', () => {
     mocks.encryptionAvailable = false;
 
     expect(() => loadOrCreateDeviceIdentity()).not.toThrow();
+  });
+});
+
+/**
+ * 🔴 2026-09-28 真机：**密文解得开、解出来的却不是钥匙** ⇒ 主进程未捕获异常弹框。
+ *
+ * 真机形状（换机器 / 换 Windows 账户 ⇒ DPAPI 结出来的不是原来那把钥匙）：
+ * `decryptSecret` 返回一个**非 null 的字符串**，`loadOrCreateDeviceIdentity` 只判
+ * "非空"就把它当身份交出去；等到连网关 `handleChallenge` 才用
+ * `crypto.createPrivateKey` 去解析它 ⇒ `BAD_DECRYPT` ⇒ **整个主进程弹框、握手走不完**。
+ *
+ * 那段代码的注释写着"设备身份丢了要重新配对，但**绝不能因此让应用起不来**"——
+ * 这一组用例就是让那句话成立：**交出去的私钥必须是能解析的，否则宁可重新生成。**
+ */
+describe('device-identity.json —— 解出来的东西必须是能用的私钥', () => {
+  /** 造一份"解密成功、但内容不是私钥"的文件（真机上换机器后就是这形状）。 */
+  function writeGarbageKeyFile(): void {
+    const created = loadOrCreateDeviceIdentity();
+    const garbage = `enc:${Buffer.from('ENC(not-a-private-key)').toString('base64')}`;
+    writeFileSync(
+      join(dir, IDENTITY_FILE),
+      `${JSON.stringify(
+        {
+          version: 1,
+          deviceId: created.deviceId,
+          publicKeyPem: created.publicKeyPem,
+          privateKeyPem: garbage,
+          createdAtMs: 1_700_000_000_000,
+        },
+        null,
+        2,
+      )}\n`,
+      'utf8',
+    );
+    // 前置条件：这份文件**解得开**（否则测的是另一条分支，红得跟这件事无关）
+    expect(read(IDENTITY_FILE), '夹具必须是"能解密"的那一种').toContain('enc:');
+  }
+
+  it('⭐ 交出来的私钥必须能解析 —— 不是"解出来非空"就算数', () => {
+    writeGarbageKeyFile();
+
+    const identity = loadOrCreateDeviceIdentity();
+
+    expect(identity.privateKeyPem).toContain('BEGIN PRIVATE KEY');
+    expect(
+      () => createPrivateKey(identity.privateKeyPem),
+      '把不可用的私钥交出去 ⇒ 连网关时 createPrivateKey 抛 BAD_DECRYPT ⇒ 主进程弹框',
+    ).not.toThrow();
+  });
+
+  it('⭐ 坏值不许留在盘上（否则下次启动再崩一次）', () => {
+    writeGarbageKeyFile();
+
+    loadOrCreateDeviceIdentity();
+
+    const reloaded = loadOrCreateDeviceIdentity();
+    expect(() => createPrivateKey(reloaded.privateKeyPem), '第二次读也必须能用').not.toThrow();
+  });
+
+  it('⭐ 坏的那份不能继续冒充这台设备（要换一把新钥匙）', () => {
+    writeGarbageKeyFile();
+    const before = read(IDENTITY_FILE);
+
+    const identity = loadOrCreateDeviceIdentity();
+
+    expect(read(IDENTITY_FILE), '盘上那份必须被换掉').not.toBe(before);
+    expect(() => createPrivateKey(identity.privateKeyPem)).not.toThrow();
   });
 });
 

@@ -63,6 +63,27 @@ function resolveDefaultIdentityPath(): string {
   return path.join(app.getPath('userData'), 'device-identity.json');
 }
 
+/**
+ * 解出来的东西**必须真是一把能用的私钥**才算数。
+ *
+ * ⚠️ 只判"解密返回了非空字符串"是不够的 —— 2026-09-28 真机就是这个形状：
+ *    换机器 / 换 Windows 账户之后，`safeStorage` 结出来的**不是原来那把钥匙**，
+ *    于是 `decryptSecret` 返回一个**非 null、但不是钥匙**的字符串。它一路被当成身份
+ *    带到连网关的 `crypto.createPrivateKey` 才炸（`BAD_DECRYPT`），而那是
+ *    **主进程未捕获异常**：用户看到的是一个错误弹框，且网关握手永远走不完。
+ *
+ * ⇒ 在这里判"能不能解析"。不能解析就当作"身份丢了"，落到下面重新生成 ——
+ *   设备身份丢了要重新配对，但**绝不能因此让应用起不来**（这正是本文件那句注释的兑现）。
+ */
+function isUsablePrivateKey(pem: string): boolean {
+  try {
+    crypto.createPrivateKey(pem);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** 落盘（私钥在这里加密；传进来的是**已存形式**，所以 re-derive 时不会二次加密）。 */
 function writeIdentityFile(resolved: string, stored: StoredIdentity): void {
   fs.mkdirSync(path.dirname(resolved), { recursive: true });
@@ -83,7 +104,10 @@ export function loadOrCreateDeviceIdentity(filePath?: string): DeviceIdentity {
       ) {
         // 明文（加固前落的）与密文都从这里出来；**解不开**才返回 null
         const privateKeyPem = decryptSecret(parsed.privateKeyPem);
-        if (privateKeyPem) {
+        // ⚠️ 两道都要：`decryptSecret` 只管"解不解得开"，`isUsablePrivateKey`
+        //    才管"解出来的到底是不是一把钥匙"。少第二道就会出现真机那个弹框
+        //    （见 isUsablePrivateKey 的注释）。
+        if (privateKeyPem && isUsablePrivateKey(privateKeyPem)) {
           const derivedId = fingerprintPublicKey(parsed.publicKeyPem);
           if (derivedId && derivedId !== parsed.deviceId) {
             const updated: StoredIdentity = { ...parsed, deviceId: derivedId };

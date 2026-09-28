@@ -1,6 +1,6 @@
 ---
 name: 文档生成（PPT / Word / Excel / PDF）
-description: '把内容做成真正的文件（.pptx 演示文稿 / .docx 文档 / .xlsx 表格 / .pdf）：你给出内容，客户端渲染成文件放进这一轮的产物里。用户说"做个PPT""写份报告""整理成表格""导出PDF"时用。'
+description: '把内容做成真正的文件（.docx 文档 / .xlsx 表格 / .pdf / 随手草稿用的 .pptx）：你给出内容，客户端渲染成文件放进这一轮的产物里。用户说"写份报告""整理成表格""导出PDF""做个文档"时用。⚠️ 要拿给人看的演示文稿**不要**用这条 —— 用「幻灯版面」或「商务演示（模板版）」，这条只出白底 + 项目符号的素版。'
 metadata: { 'openclaw': { 'emoji': '📄', 'skillKey': 'document-deck' } }
 ---
 

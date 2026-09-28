@@ -123,3 +123,36 @@ describe('document-deck 技能：裸英文双引号那条是真的会整块报�
     }
   });
 });
+
+/**
+ * 🔴 2026-09-28 真机：**触发词被这条技能抢走了，于是所有 PPT 请求都落到最朴素那条路。**
+ *
+ * 三条路各自认领的触发语原本都收"做个PPT"，而这条（`document-deck`）的产出是
+ * **白底 + 标题 + 项目符号 —— 它自己的对照表都写着"没有版式"**。
+ * 用户说"做个PPT" ⇒ 模型照 description 选了它（description 就是选技能时唯一能看见的东西）
+ * ⇒ 观感直接落到三条路里最差的那条。
+ *
+ * 真机证据：同一个任务下**四版 PPTX 全部是 `PptxGenJS`**（`docProps/core.xml` 的
+ * `<dc:creator>`），从"优化版"到"最终版"**一次都没换过路**，只是在同一条路上越磨越花。
+ *
+ * ⇒ 分工必须**互斥**：这条只认文档三格式（报告 / 表格 / PDF）；
+ *   "做个PPT"归 `deck-layout`（幻灯版面）与 `presentation-deck-v2`（模板版）。
+ */
+describe('document-deck 技能：不许认领「做个PPT」这个触发词', () => {
+  /** description 是**选技能时唯一能看见**的东西 —— 所以只钉它，不钉正文。 */
+  const description = (() => {
+    const m = text.match(/^description:\s*'([^']*)'/m);
+    expect(m, '读不到 frontmatter 的 description —— 这个测试就失去意义了').not.toBeNull();
+    return m?.[1] ?? '';
+  })();
+
+  it('⭐ description 里不许出现「做个PPT」—— 它会把 PPT 请求吸到最朴素那条路', () => {
+    expect(description, '「做个PPT」应该归幻灯版面 / 模板版，不该由文档生成认领').not.toMatch(/做个\s*PPT/i);
+  });
+
+  it('文档三格式的触发词仍然认领（报告 / 表格 / PDF 不能一起让掉）', () => {
+    for (const trigger of ['写份报告', '整理成表格', '导出PDF']) {
+      expect(description, `description 里丢了「${trigger}」—— 那种格式就没人认领了`).toContain(trigger);
+    }
+  });
+});
