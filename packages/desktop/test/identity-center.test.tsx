@@ -447,3 +447,88 @@ describe('客群卡 × 新建任务', () => {
     unmount();
   });
 });
+
+/**
+ * ⭐⭐ 绕过判据的另外两个入口（2026-09-29）。
+ *
+ * 「点了团队里的助手却落到主罗盘」那一族（层 2）在 2026-09-24 已经修掉，判据收在
+ * `lib/requested-agent.ts`，`applyPersona` 也接上了。**但这一页还有两个入口没接**：
+ * 点客群卡（`chooseGroup`）和「用它开任务」（`startTaskWithAgent`）。
+ * 它们让"这个助手不在本机"只在**跳进对话页之后**才由欢迎屏说出来 ——
+ * 而 `TeamsPanel` 的注释明确反对这种"跳过去才说"（用户已经换了页面，才知道刚才那下没成）。
+ *
+ * ⭐ 判据必须**复用** `resolveRequestedAgent`：它在目录**还没拉回来**时返回 `loading`，
+ * 不判缺失。自己写 `agents.some(...)` 会把"还没加载"误报成"不在本机"——
+ * 那是用一个新的误报换掉旧的静默。
+ */
+describe('绕过判据的入口 × 缺失的助手', () => {
+  beforeEach(() => {
+    useTaskStore.setState({ pendingNewTask: null, activeTaskId: null });
+    // 目录里只有罗盘；选中的却是电商运营（盘上没有它）
+    useUiStore.setState({
+      defaultGatewayId: 'gw-1',
+      mainView: 'identity',
+      agentCatalogByGateway: { 'gw-1': catalog(['main']) },
+      selectedAgentByGateway: { 'gw-1': 'rongying-ecommerce' },
+    });
+  });
+
+  it('⭐ 「用它开任务」：缺失时不许开出一个指向不存在助手的任务', () => {
+    const { container, unmount } = render(<IdentityCenter />);
+
+    click(container.querySelector('[data-action="new-task-with-agent"]'));
+
+    expect(useTaskStore.getState().pendingNewTask, '不许留个开不出来的待发任务').toBeNull();
+    expect(useUiStore.getState().mainView, '要留在原地说明，不是先跳走再说').toBe('identity');
+    expect(container.textContent, '要如实说明').toContain('agent.missingTitle');
+    unmount();
+  });
+
+  it('⭐ 点一个不在本机的客群卡：不许静默切过去', () => {
+    useUiStore.setState({ selectedAgentByGateway: { 'gw-1': 'main' } });
+    const { container, unmount } = render(<IdentityCenter />);
+
+    click(container.querySelector('[data-group="rongying-ecommerce"]'));
+
+    expect(selectAgentSpy, '不许静默换人').not.toHaveBeenCalled();
+    expect(container.textContent, '要如实说明').toContain('agent.missingTitle');
+    unmount();
+  });
+
+  it('对照：目录**还没拉回来**时两个入口都走老路（不许把 loading 判成缺失）', () => {
+    useUiStore.setState({
+      defaultGatewayId: 'gw-1',
+      mainView: 'identity',
+      agentCatalogByGateway: {},
+      selectedAgentByGateway: { 'gw-1': 'rongying-ecommerce' },
+    });
+    const { container, unmount } = render(<IdentityCenter />);
+
+    click(container.querySelector('[data-group="rongying-ecommerce"]'));
+    expect(selectAgentSpy, '目录未加载时照常切').toHaveBeenCalledWith('rongying-ecommerce');
+
+    click(container.querySelector('[data-action="new-task-with-agent"]'));
+    expect(useTaskStore.getState().pendingNewTask?.agentId, '目录未加载时照常开').toBe('rongying-ecommerce');
+    expect(container.textContent, '目录未加载时不许判缺失').not.toContain('agent.missingTitle');
+    unmount();
+  });
+
+  it('对照：装着的助手照常切、照常开（别把守卫修成谁都拦）', () => {
+    // ⚠️ 这一组的外层 beforeEach 把目录**收窄成只有 main**（为了造缺失），
+    //    所以这里必须把目录还原成完整的 —— 否则"装着的助手"根本不装着，
+    //    这条对照会以"守卫是对的"为理由假红（第一版就是这么红的）。
+    useUiStore.setState({
+      selectedAgentByGateway: { 'gw-1': 'main' },
+      agentCatalogByGateway: { 'gw-1': catalog(['main', 'rongying-ecommerce', 'rongying-office']) },
+    });
+    const { container, unmount } = render(<IdentityCenter />);
+
+    click(container.querySelector('[data-group="rongying-office"]'));
+    expect(selectAgentSpy).toHaveBeenCalledWith('rongying-office');
+
+    click(container.querySelector('[data-action="new-task-with-agent"]'));
+    expect(useTaskStore.getState().pendingNewTask?.agentId).toBe('rongying-office');
+    expect(container.textContent).not.toContain('agent.missingTitle');
+    unmount();
+  });
+});

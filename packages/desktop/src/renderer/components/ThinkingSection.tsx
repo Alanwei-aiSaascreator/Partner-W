@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { memo, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Brain, ChevronDown } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -13,7 +13,7 @@ interface ThinkingSectionProps {
   showCursor?: boolean;
 }
 
-export default function ThinkingSection({
+function ThinkingSection({
   content,
   defaultOpen = false,
   streaming = false,
@@ -60,3 +60,13 @@ export default function ThinkingSection({
     </div>
   );
 }
+
+/**
+ * ⭐ `memo`（2026-09-29）：这一块是**长思维链**那条路上最贵的一环 ——
+ * 它的 props 全是字符串/布尔（浅比较按值比，正好），而它内部只有 `open` 一个 state。
+ * 不 memo 的话，**正文**每来一个 delta 都会把整段推理重新解析一遍 markdown，
+ * 反过来也一样。真机实测一轮长思维链 480 次整块重渲染。
+ *
+ * ⚠️ 别加自定义比较器：漏掉 `content` 会让流式推理**冻住**。
+ */
+export default memo(ThinkingSection);

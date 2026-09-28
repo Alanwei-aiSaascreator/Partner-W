@@ -16,7 +16,8 @@ import {
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { parseAgentIdFromSessionKey, type ToolCall } from '@clawwork/shared';
-import { resolveAssistantIdentity } from './assistant-identity';
+import type { AssistantIdentity } from './assistant-identity';
+import { useAssistantIdentityIndex } from './useAssistantIdentityIndex';
 import {
   deriveSessionActivity,
   getTaskSessionKeys,
@@ -75,6 +76,7 @@ import type { CustomGoalAnalysis } from '@/features/goal-routing/goal-analysis';
 import { createAgentWithRollback } from '@/lib/agent-builder';
 import { checkInstallWorkspace } from '@/lib/install-workspace';
 import { fetchAgentsForGateway } from '@/hooks/useGatewayBootstrap';
+import { useSelectRecommendedAssistant } from '@/hooks/useSelectRecommendedAssistant';
 import { toast } from '@/lib/toast';
 import { ASSISTANT_TASK_PRESETS, type AssistantTaskPreset } from '@/lib/assistant-task-presets';
 import {
@@ -487,7 +489,6 @@ export function ChatContent({
   const setMainView = useUiStore((s) => s.setMainView);
   const setRightPanelOpen = useUiStore((s) => s.setRightPanelOpen);
   const defaultGatewayId = useUiStore((s) => s.defaultGatewayId ?? '');
-  const setSelectedAgent = useUiStore((s) => s.setSelectedAgent);
   const goalAgentCatalog = useUiStore((s) =>
     s.defaultGatewayId ? s.agentCatalogByGateway[s.defaultGatewayId] : undefined,
   );
@@ -683,15 +684,12 @@ export function ChatContent({
     [requestDraft],
   );
 
-  const handleSelectRecommendedAssistant = useCallback(
-    (agentId: string) => {
-      if (!defaultGatewayId) return;
-      setSelectedAgent(defaultGatewayId, agentId);
-      useTaskStore.getState().setPending({ gatewayId: defaultGatewayId, agentId });
-      clearDraftRequest();
-    },
-    [clearDraftRequest, defaultGatewayId, setSelectedAgent],
-  );
+  /**
+   * ⚠️ 这段判断搬到 `hooks/useSelectRecommendedAssistant.ts` 了（2026-09-29）——
+   * 它在这里**测不到**（渲染整个 `MainArea` 要网关/启动自检/引导画像一大串状态）。
+   * 搬走之后它才接上了同族入口都有的那条判据：推荐的助手不在本机时**如实说明、不切**。
+   */
+  const handleSelectRecommendedAssistant = useSelectRecommendedAssistant(clearDraftRequest);
 
   const handleCreateCustomAssistant = useCallback(
     async (analysis: CustomGoalAnalysis) => {
@@ -854,6 +852,81 @@ export function ChatContent({
   const showWelcome = !activeTask || (messages.length === 0 && !hasRenderableActiveTurn);
   const conductorLabel = t('chatMessage.conductor');
 
+  /**
+   * ⭐ 身份对象**按会话缓存**（2026-09-29）—— 这是"思维链把界面拖死"的根因那一刀。
+   *
+   * 原来渲染循环里每次都调 `resolveAssistantIdentity()`，它返回**新的对象字面量** ⇒
+   * `memo(AssistantBlock)` 的浅比较每次失败 ⇒ 每个 delta 重渲整棵子树（含 markdown 解析）。
+   *
+   * ⚠️ 依赖里**刻意只放**"会话内容无关"的东西：`messages`（流式期间不变）、
+   *    `activeTask`、以及那个**签名字符串**。`activeTurns` 每来一个 delta 就换一个数组，
+   *    放进依赖等于没缓存 —— 但它里面的**会话键集合**在流式期间是不变的，所以取签名。
+   */
+  /**
+   * ⚠️⚠️ 这个数组**必须逐 delta 保持同一个引用**，否则 `useAssistantIdentityIndex`
+   * 里的缓存每渲染都失效 —— 那就等于没改，`memo` 照样每个 delta 被击穿。
+   *
+   * 所以依赖里**不能放 `activeTurns` 本身**（它由 `activeTurnBySession` 推出来，
+   * 每个 delta 都是新数组）；只放它里面那串**值稳定**的会话键。
+   * 会话键不含逗号，用它做拼接/拆分是安全的。
+   */
+  const activeTurnSessionKeyList = activeTurns.map((item) => item.sessionKey).join(',');
+  const identityEntries = useMemo(() => {
+    const seen = new Set<string>();
+    const out: { sessionKey: string; agentId?: string }[] = [];
+    const push = (sessionKey: string | undefined, agentId: string | undefined): void => {
+      const key = `${sessionKey ?? ''}||${agentId ?? ''}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      out.push(agentId ? { sessionKey: sessionKey ?? '', agentId } : { sessionKey: sessionKey ?? '' });
+    };
+    // ⚠️ 消息那一支要带上 `message.agentId`（历史消息里它由网关给，**可能**与会话键不一致）
+    for (const message of messages) push(message.sessionKey, message.agentId);
+    // 另两支旧代码是从会话键解析助手，所以这里**不带** agentId
+    for (const sessionKey of activeTurnSessionKeyList ? activeTurnSessionKeyList.split(',') : []) {
+      push(sessionKey, undefined);
+    }
+    push(activeTask?.sessionKey, undefined);
+    /**
+     * ⭐ **"等待中"那个会话也要登记**（2026-09-29 独立复核抓到的 P1）。
+     *
+     * `pickWaitingSessionKey` 挑的正是"正在处理、但还没有可渲染回合"的会话 ——
+     * 此刻 `activeTurnBySession[sk]` 可能**还不存在**，于是它不在 `activeTurns` 里、
+     * 也没进 `messages` ⇒ 索引查不到 ⇒ 落到那个**全空**的兜底对象上。
+     * 表现：worker 的等待气泡**没有名字、没有头像**（`MessageBlock` 只在有字段时才画头部），
+     * 等第一个 delta 到了又**突然冒出来** —— 正是本仓一直在治的"身份闪一下"。
+     */
+    push(waitingSessionKey, undefined);
+    return out;
+  }, [activeTask?.sessionKey, activeTurnSessionKeyList, messages, waitingSessionKey]);
+
+  const identityFor = useAssistantIdentityIndex({
+    entries: identityEntries,
+    task: activeTask,
+    gatewayId: activeTask?.gatewayId,
+    performerBySessionKey,
+    performerByAgentId,
+    catalogAgentById,
+    conductorLabel,
+  });
+
+  /**
+   * 定稿消息那一支还要叠一层「这条回复实际是哪个模型」（模型徽章）。
+   * 同样要**按 message.id 缓存** —— 否则那条分支又变回"每渲染一个新对象"。
+   */
+  const identityByMessageId = useMemo(() => {
+    const map = new Map<string, AssistantIdentity & { modelLabel?: string; modelTitle?: string }>();
+    for (const message of messages) {
+      map.set(message.id, {
+        // ⚠️ 旧代码在这一支传的是 `agentId: message.agentId` —— 逐字对齐，别只剩会话键
+        ...identityFor(message.sessionKey, message.agentId),
+        modelLabel: resolveModelLabel(message.model, modelCatalog),
+        modelTitle: message.model,
+      });
+    }
+    return map;
+  }, [identityFor, messages, modelCatalog]);
+
   const handleScroll = useCallback(() => {
     if (isAutoScrolling.current) return;
     const el = viewportRef.current;
@@ -972,27 +1045,13 @@ export function ChatContent({
                   if (item.kind === 'message') {
                     const message = item.message;
                     if (message.role === 'assistant') {
-                      const identity = resolveAssistantIdentity({
-                        task: activeTask,
-                        sessionKey: message.sessionKey,
-                        agentId: message.agentId,
-                        gatewayId: activeTask?.gatewayId,
-                        performerBySessionKey,
-                        performerByAgentId,
-                        catalogAgentById,
-                        conductorLabel,
-                      });
                       return (
                         <AssistantBlock
                           state="finalized"
                           message={message}
-                          identity={{
-                            ...identity,
-                            // 这条回复**实际**是谁生成的 —— 取自网关逐条消息的 model，
-                            // 不是会话选中的模型（模型自述不可信，这枚徽章是唯一的可验证来源）。
-                            modelLabel: resolveModelLabel(message.model, modelCatalog),
-                            modelTitle: message.model,
-                          }}
+                          identity={
+                            identityByMessageId.get(message.id) ?? identityFor(message.sessionKey, message.agentId)
+                          }
                           highlighted={message.id === highlightedId}
                           onHighlightDone={handleHighlightDone}
                           onImageClick={setLightboxSrc}
@@ -1013,23 +1072,12 @@ export function ChatContent({
                     );
                   }
 
-                  const identity = resolveAssistantIdentity({
-                    task: activeTask,
-                    sessionKey: item.sessionKey,
-                    agentId: parseAgentIdFromSessionKey(item.sessionKey),
-                    gatewayId: activeTask?.gatewayId,
-                    performerBySessionKey,
-                    performerByAgentId,
-                    catalogAgentById,
-                    conductorLabel,
-                  });
-
                   if (item.turn?.finalized && item.turn.content) {
                     return (
                       <AssistantBlock
                         state="finalized"
                         message={activeTurnToMessage(item.turn, activeTaskId!, item.sessionKey)}
-                        identity={identity}
+                        identity={identityFor(item.sessionKey)}
                         onImageClick={setLightboxSrc}
                       />
                     );
@@ -1055,7 +1103,7 @@ export function ChatContent({
                         content={item.turn?.streamingText ?? ''}
                         thinkingContent={item.turn?.streamingThinking || undefined}
                         toolCalls={item.turn?.toolCalls ?? EMPTY_TOOL_CALLS}
-                        identity={identity}
+                        identity={identityFor(item.sessionKey)}
                       />
                     );
                   }

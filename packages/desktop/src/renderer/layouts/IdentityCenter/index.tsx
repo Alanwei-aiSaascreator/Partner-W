@@ -80,19 +80,37 @@ export default function IdentityCenter() {
    */
   const startNewTask = useTaskStore((s) => s.startNewTask);
 
+  /**
+   * ⭐ **判据只此一处**（2026-09-29）：目录**已加载**、而点名的助手不在里面 ⇒
+   * 如实说明，并且**不做那件事**（不切、不开任务）。返回 `true` = 已被拒绝。
+   *
+   * ⚠️ 别在这里自己写 `agents.some(...)`：`resolveRequestedAgent` 在**目录还没拉回来**时
+   * 返回 `loading`，**不判缺失** —— 自己写会拿"还没加载"冒充"不在本机"，
+   * 那是用一个新的误报换掉旧的静默（这一页的 `applyPersona` 早就按这条判据写了）。
+   *
+   * ⚠️ 这一页原来有**三个**入口会切助手/开任务，但只有「应用此画像」接了判据；
+   * 点客群卡与「用它开任务」没接 ⇒ 用户点的是一个不存在的助手，
+   * 却要等**跳进对话页之后**由欢迎屏告诉他 —— `TeamsPanel` 的注释明确反对这种"跳过去才说"。
+   */
+  const refuseIfAgentMissing = useCallback(
+    (agentId: string): boolean => {
+      if (resolveRequestedAgent(agentId, catalogEntry) !== 'missing') return false;
+      setMissingAgentId(agentId);
+      return true;
+    },
+    [catalogEntry],
+  );
+
   const applyPersona = useCallback((): boolean => {
     if (!gatewayId) {
       toast.error(t('identity.applyFailed'));
       return false;
     }
-    if (resolveRequestedAgent(currentAgentId, catalogEntry) === 'missing') {
-      setMissingAgentId(currentAgentId);
-      return false;
-    }
+    if (refuseIfAgentMissing(currentAgentId)) return false;
     setMissingAgentId(null);
     selectAgent(currentAgentId);
     return true;
-  }, [catalogEntry, gatewayId, currentAgentId, selectAgent, t]);
+  }, [gatewayId, currentAgentId, refuseIfAgentMissing, selectAgent, t]);
 
   /**
    * 提示里的出口：直接切到罗盘助手。
@@ -106,6 +124,10 @@ export default function IdentityCenter() {
   /** 点客群卡：真的切，但**留在这一页**（用户是在挑，不是在开新任务）。 */
   const chooseGroup = useCallback(
     (agentId: string) => {
+      // ⭐ 卡片是按**固定的预设 id 清单**渲染的（`IDENTITY_AGENT_IDS`），
+      //    所以盘上没装的助手**也有卡片、也点得着** —— 这正是静默换人的入口。
+      if (refuseIfAgentMissing(agentId)) return;
+      setMissingAgentId(null);
       selectAgent(agentId);
       // ⚠️ 顺序有意：`useSelectAgent` 的最后一步会把主区切到对话页。
       //    这一页是"选择器"，选完把用户甩进对话页等于让他重新找路。
@@ -113,7 +135,7 @@ export default function IdentityCenter() {
       //    （少了 `setPending` 就会出现"下一条消息发给上一个助手"的老毛病）。
       setMainView('identity');
     },
-    [selectAgent, setMainView],
+    [refuseIfAgentMissing, selectAgent, setMainView],
   );
 
   /**
@@ -130,11 +152,15 @@ export default function IdentityCenter() {
       toast.error(t('identity.applyFailed'));
       return;
     }
+    // ⭐ 缺失时**留在原地说明**，不开任务。原来这里只判了网关在不在 ⇒
+    //    用户会先被甩进对话页、再在欢迎屏上看到"这个助手不在本机"（跳过去才说）。
+    if (refuseIfAgentMissing(currentAgentId)) return;
+    setMissingAgentId(null);
     // ⚠️ **不自己切视图**：`startNewTask` 内部已经通过平台的 `onTaskCreated`
     //    把主区切到对话页了（`platform/index.ts:89`）。这里再调一次 `setMainView('chat')`
     //    是冗余的 —— 变异测试把那条删掉之后**测试照样全绿**，正是它在说明这件事。
     startNewTask({ gatewayId, agentId: currentAgentId });
-  }, [currentAgentId, gatewayId, startNewTask, t]);
+  }, [currentAgentId, gatewayId, refuseIfAgentMissing, startNewTask, t]);
 
   const onApply = useCallback(() => {
     if (selected.length === 0) {
