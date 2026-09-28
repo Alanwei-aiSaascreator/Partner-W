@@ -229,6 +229,40 @@ function readTagName(src: string, i: number): string {
   return (/^<\/?([A-Za-z][A-Za-z0-9]*)/.exec(src.slice(i, i + 40)) ?? [])[1] ?? '?';
 }
 
+/**
+ * 这段 `{…}` 里**整段都是注释**吗（块注释 / 行注释 / 连续几个都算）。
+ *
+ * 🔴 2026-09-28 真机：**注释不是一个孩子**，可原来的实现无条件把它包成 `(… )`，
+ *    于是「花括号包起来的注释」变成**空括号表达式** ⇒ `SyntaxError: Unexpected token ')'`
+ *    ⇒ **整份 deck 一个文件都出不来**。
+ *
+ * 为什么以前没被发现：没人写过带注释的 deck。而**模型写版面时天然会写注释**
+ * （真机那份 13 KB 的 deck 里到处是分节说明），所以这条一撞就是全灭。
+ *
+ * ⚠️ 没闭合的块注释返回 `false` —— 交给后面的解析去报一条像样的错，
+ *    别在这里悄悄吞掉半截源码。
+ */
+function isCommentOnly(body: string): boolean {
+  let rest = body;
+  for (;;) {
+    rest = rest.trimStart();
+    if (rest === '') return true; // 空 `{}`（JSX 里什么都不画）也当注释处理
+    if (rest.startsWith('/*')) {
+      const close = rest.indexOf('*/');
+      if (close < 0) return false; // 没闭合 ⇒ 不认，让解析报错
+      rest = rest.slice(close + 2);
+      continue;
+    }
+    if (rest.startsWith('//')) {
+      const nl = rest.indexOf('\n');
+      if (nl < 0) return true; // 行注释一直到结尾
+      rest = rest.slice(nl + 1);
+      continue;
+    }
+    return false;
+  }
+}
+
 /** 解析一个元素（`i` 指向 `<`），返回它的 `__h(...)` 代码与结束位置。 */
 function parseElement(src: string, i: number, strict = false): { code: string; end: number } {
   const tag = tagAt(src, i);
@@ -296,7 +330,8 @@ function parseElement(src: string, i: number, strict = false): { code: string; e
     }
     if (src[j] === '{') {
       const { body, end } = readBraced(src, j);
-      kids.push(`(${body})`); // 里面的 JS 原样（JSX 已在 readBraced 里转好）
+      // ⚠️ 注释**不产出孩子**：包成 `(…)` 就是空括号表达式，整份 deck 会报废（见 isCommentOnly）。
+      if (!isCommentOnly(body)) kids.push(`(${body})`); // 里面的 JS 原样（JSX 已在 readBraced 里转好）
       j = end + 1;
       continue;
     }

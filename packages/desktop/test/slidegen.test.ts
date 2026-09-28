@@ -57,6 +57,49 @@ describe('slidegen DSL：JSX → JS', () => {
     const js = transformSlideJsx('<Slide>{`a${1 + 1}b`}</Slide>');
     expect(js).toContain('`a${1 + 1}b`');
   });
+
+  /**
+   * 🔴 2026-09-28 真机：**JSX 注释让整份 deck 求值失败** —— 而模型到处在用它。
+   *
+   * 现场：模型写的 13 KB deck 里满是「花括号包起来的块注释」（版面分节说明那种），
+   * 而转换器把注释也当成"一个表达式孩子"，产出「左括号 + 注释 + 右括号」——
+   * **一个空的括号表达式** ⇒ `SyntaxError: Unexpected token ')'` ⇒ 整份 deck 一个文件都出不来。
+   *
+   * ⚠️ 注释**不是**一个孩子（它不画任何东西），所以正确做法是**整段丢掉**，
+   *    而不是包一层括号。这也解释了为什么它一直没被发现：
+   *    以前没人写过带注释的 deck —— 而模型写版面时**天然会写注释**。
+   */
+  describe('JSX 注释：必须被丢掉，不能变成一个空括号', () => {
+    it('⭐ 块注释不产出孩子，也不让求值炸', () => {
+      const src = `<Slide>{/* 说明 */}<Text>x</Text></Slide>`;
+      const js = transformSlideJsx(src);
+      expect(js, '注释不该变成 (/* … */) 这种空括号表达式').not.toContain('(/*');
+      const pages = evaluateSlide(src);
+      expect(pages).toHaveLength(1);
+      expect(pages[0]?.children, '注释不该占一个孩子位').toHaveLength(1);
+    });
+
+    it('⭐ 多行 / 连续多个注释也一样', () => {
+      const src = `<Slide>\n  {/* 顶栏 */}\n  {/* 标题 */}\n  <Text>x</Text>\n</Slide>`;
+      const pages = evaluateSlide(src);
+      expect(pages[0]?.children).toHaveLength(1);
+    });
+
+    it('⭐ 注释夹在别的孩子中间，不影响前后', () => {
+      const src = `<Slide><Text>a</Text>{/* 中间 */}<Text>b</Text></Slide>`;
+      const pages = evaluateSlide(src);
+      expect(pages[0]?.children).toHaveLength(2);
+    });
+
+    it('属性里的 `style={{…}}` 对象字面量不受影响（别把对象也当注释删了）', () => {
+      const js = transformSlideJsx(`<Slide style={{ width: 1280 }}><Text>x</Text></Slide>`);
+      expect(js, 'style 对象被误删了').toContain('width');
+      expect(js).toContain('1280');
+      expect(evaluateSlide(`<Slide style={{ width: 1280 }}><Text>x</Text></Slide>`)[0]?.props?.style).toMatchObject({
+        width: 1280,
+      });
+    });
+  });
 });
 
 describe('slidegen 求值', () => {
@@ -101,6 +144,41 @@ describe('slidegen 版面 → DOM', () => {
     const pages = evaluateSlide(`<Slide style={{ width: 1280 }}><Box style={{ flexDirection: 'row' }} /></Slide>`);
     const { html } = renderSlide(pages[0]!);
     expect(html).toContain('display:flex');
+  });
+
+  /**
+   * 🔴 2026-09-28 真机：**没写 `flexDirection` 时默认横排（CSS 的默认），而模型期望竖着堆。**
+   *
+   * 现场：模型写的封面上是「标题 → 装饰线 → 副标题」这种最自然的堆叠，它**没写方向**
+   * （因为没人会想到"容器默认横着排"）。结果三件东西被挤在同一行、互相压住，
+   * 副标题还和"报告期"叠在一起 —— 一份本来设计得不错的 deck 毁在这一条上。
+   *
+   * ⇒ 对一个**给人排版的 DSL** 来说，容器的默认方向该是 `column`（与"文档流"的直觉一致），
+   *    而不是 CSS flex 的 `row`。显式写了 `row` 的照旧 —— 只改**缺省**。
+   */
+  describe('Box 的默认排版方向：竖着堆', () => {
+    it('⭐ 没写 flexDirection ⇒ 默认 column（模型写的"标题+线+副标题"要竖着排）', () => {
+      const pages = evaluateSlide(`<Slide><Box><Text>标题</Text><Text>副标题</Text></Box></Slide>`);
+      const { html } = renderSlide(pages[0]!);
+      expect(html, '默认横排会把它们挤成一行 —— 真机就是这个形状').toContain('flex-direction:column');
+    });
+
+    it('写了 row 就还是 row（别把显式的盖掉）', () => {
+      const pages = evaluateSlide(`<Slide><Box style={{ flexDirection: 'row' }}><Text>甲</Text></Box></Slide>`);
+      const { html } = renderSlide(pages[0]!);
+      // ⚠️ 只看那个 **Box** 自己的 style —— 外层 `<Slide>` 也会拿到 column，
+      //    对整个 HTML 断言 `not.toContain` 会被它误伤（第一版就是这么栽的）。
+      const boxDiv = html.slice(html.indexOf('data-sg-kind="box"'));
+      expect(boxDiv.slice(0, 160), '显式写的 row 被缺省盖掉了').toContain('flex-direction:row');
+      expect(boxDiv.slice(0, 160)).not.toContain('flex-direction:column');
+    });
+
+    it('`Text` 不是 flex 容器，别给它塞方向', () => {
+      const pages = evaluateSlide(`<Slide><Text>甲</Text></Slide>`);
+      const { html } = renderSlide(pages[0]!);
+      const textDiv = html.slice(html.indexOf('data-sg-kind="text"'));
+      expect(textDiv.slice(0, 80)).not.toContain('flex-direction');
+    });
   });
 
   it('`Text` **不**变成 flex 容器', () => {
@@ -307,6 +385,26 @@ describe('⭐ 技能示例必须能被**真解析器**吃下（漂移守卫）',
     const text = fs.readFileSync(path.join(root, 'deck-layout', 'SKILL.md'), 'utf-8');
     for (const tag of ['Slide', 'Box', 'Text', 'Image']) expect(text).toContain(tag);
     expect(text, '必须写清 title 是必填的').toMatch(/\/\/ title:/);
+  });
+
+  /**
+   * 🔴 2026-09-28 真机：**消息正文被网关截断在 8,000 字符** ⇒ 13 KB 的 deck 围栏没闭合
+   * ⇒ 静默丢一整份演示（详见 `slidegen-block-unclosed` 那条）。
+   *
+   * 截断在随包运行时里：`truncateChatHistoryText(text, DEFAULT_CHAT_HISTORY_TEXT_MAX_CHARS)`
+   * （`worker.mjs`，8e3 = 8000），而且调用点全是单参数 ⇒ **恒等于 8000、配不了**。
+   * ⇒ 我们改不了那个数，**只能让模型别撞上它**：一条消息装不下就分两条发。
+   *
+   * ⚠️ 这**不是**"内容有上限"—— 每页多长仍然没人管，管的是**一条回复**能有多长。
+   *    技能原来只写了"一页装不下会分页"，那是**页内**的事，管不了这件事。
+   */
+  it('⭐ 必须写明"一条消息装不下就分两条发"（网关在 8,000 字符处截断）', () => {
+    const root = resolveOurSkillsRoot({ isPackaged: false, appPath: PROJECT_DIR })!;
+    const text = fs.readFileSync(path.join(root, 'deck-layout', 'SKILL.md'), 'utf-8').replace(/\r\n/g, '\n');
+
+    expect(text, '没写"一条消息会被截断" —— 模型不知道有这堵墙，长 deck 必然被切').toMatch(/截断|装不下/);
+    expect(text, '要给出可行动的写法：分两条消息发').toMatch(/分成?两条|分两条|分多次|分几次/);
+    expect(text, '要给出预算数字，模型才能自己估').toMatch(/8[,，]?000|8000/);
   });
 });
 

@@ -67,7 +67,16 @@ export function renderSlide(root: SlideNode): RenderedSlide {
     const style: Record<string, unknown> = { ...((props.style as Record<string, unknown>) ?? {}) };
 
     // ⭐ `<Slide>` / `<Box>` 在这个 DSL 里**就是 flex 容器**。
-    if (tag !== 'Text' && tag !== 'Image') style.display = 'flex';
+    if (tag !== 'Text' && tag !== 'Image') {
+      style.display = 'flex';
+      // 🔴 2026-09-28 真机：**缺省方向必须是 `column`**，不是 CSS flex 的 `row`。
+      //    模型写「标题 → 装饰线 → 副标题」这种最自然的堆叠时**不会写方向**
+      //    （没人会想到"容器默认横着排"），于是三件东西被挤成一行、互相压住 ——
+      //    一份本来设计得不错的 deck 就毁在这一条上。
+      //    ⇒ 对一个**给人排版的 DSL**，容器的默认该跟"文档流"的直觉一致；
+      //      要横排的显式写 `flexDirection: 'row'`（技能示例里就是这么写的）。
+      if (style.flexDirection === undefined) style.flexDirection = 'column';
+    }
 
     const mark = `${MARK_ATTR}="${id}" ${MARK_KIND_ATTR}="${tag === 'Text' ? 'text' : tag === 'Image' ? 'image' : tag === 'Box' ? 'box' : 'slide'}"`;
 
