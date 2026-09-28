@@ -561,16 +561,49 @@ export class GatewayClient {
       'token' in this.auth ? this.auth.token : 'bootstrapToken' in this.auth ? this.auth.bootstrapToken : null;
     const scopes = ['operator.admin', 'operator.write', 'operator.read', 'operator.approvals', 'operator.pairing'];
 
-    const device = buildDeviceConnectPayload(this.deviceIdentity, {
-      clientId: 'gateway-client',
-      clientMode: 'backend',
-      role: 'operator',
-      scopes,
-      nonce,
-      token: signatureToken,
-      platform: process.platform,
-      deviceFamily: null,
-    });
+    /**
+     * ⭐ 防御（§二 P0，2026-09-29）：下面两步是**同步**的，而 `sendReq(...).catch()`
+     * 只管**异步**失败 —— 同步抛出的异常会直接冲出 WS 消息处理器，成为
+     * **主进程未捕获异常**（真机那次表现就是一个错误弹框，而且网关握手永远走不完）。
+     *
+     * 最常见的触发就是设备身份不可用（钥匙文件被换、换了 Windows 账户导致 DPAPI 解不开、
+     * 公钥私钥张冠李戴）。`loadOrCreateDeviceIdentity` 现在会把这些挡在加载阶段，
+     * 这里是**第二道**：身份文件在运行期被换掉、或将来别的原因让签名抛出来，
+     * 也必须变成"这次连接没成"，而不是崩主进程。
+     */
+    let device: ReturnType<typeof buildDeviceConnectPayload>;
+    let auth: GatewayAuth;
+    try {
+      device = buildDeviceConnectPayload(this.deviceIdentity, {
+        clientId: 'gateway-client',
+        clientMode: 'backend',
+        role: 'operator',
+        scopes,
+        nonce,
+        token: signatureToken,
+        platform: process.platform,
+        deviceFamily: null,
+      });
+      auth = this.buildAuthWithDeviceToken();
+    } catch (err) {
+      const error = err as Error & { code?: string };
+      this.lastError = error.message;
+      this.lastErrorCode = error.code ?? null;
+      getDebugLogger().error({
+        domain: 'gateway',
+        event: 'gateway.connect.device-identity-unusable',
+        gatewayId: this.gatewayId,
+        requestId: 'connect-handshake',
+        error: { name: error.name, message: error.message, stack: error.stack },
+        data: {
+          deviceId: this.deviceIdentity.deviceId,
+          hint: '设备身份在本机不可用 ⇒ 握手没发出去。这一条不该出现（加载阶段已挡），出现即上报。',
+        },
+      });
+      // 当作"这次连接没成"⇒ 走普通断线路径（背退重连），不下"服务端拒绝"的结论。
+      this.ws?.close();
+      return;
+    }
 
     const params: GatewayConnectParams = {
       minProtocol: 3,
@@ -585,7 +618,7 @@ export class GatewayClient {
         mode: 'backend',
       },
       caps: this.approvalChannel ? [...APPROVAL_CHANNEL_CAPS] : ['tool-events'],
-      auth: this.buildAuthWithDeviceToken(),
+      auth,
       role: 'operator',
       scopes,
       device,

@@ -1,4 +1,4 @@
-import { createPrivateKey } from 'node:crypto';
+import { createPrivateKey, generateKeyPairSync } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -36,7 +36,7 @@ vi.mock('electron', () => ({
   },
 }));
 
-const { loadOrCreateDeviceIdentity, saveDeviceToken, loadDeviceToken } =
+const { loadOrCreateDeviceIdentity, saveDeviceToken, loadDeviceToken, isUsableIdentityPair } =
   await import('../src/main/ws/device-identity.js');
 
 const IDENTITY_FILE = 'device-identity.json';
@@ -268,5 +268,111 @@ describe('device-tokens.json —— operator token 不落明文', () => {
     saveDeviceToken('gw-1', 'plain-token', 'operator', 1);
 
     expect(loadDeviceToken('gw-1')).toBe('plain-token');
+  });
+});
+
+/**
+ * ⭐⭐ 身份**轮换**时的两件事（2026-09-29，§二 P0）。
+ *
+ * ## 为什么单独一组
+ *
+ * 现有那两组盯的是"**存得安不安全**"（密文、向后兼容、加密不可用时降级）。
+ * 这一组盯的是另一个方向：**那把钥匙到底能不能用**，以及**身份换了之后旧的配对怎么办**。
+ * 两件事原来都没做：
+ *
+ * 1. 只验了"`crypto.createPrivateKey` 解析得开"（当时那个私有判据），
+ *    **没验"私钥和公钥是不是一对"**。一把**别的**钥匙也能解析得开 ——
+ *    它会一路带到网关，在**服务端**签名校验失败，而这边看起来一切正常。
+ * 2. 轮换只重写了身份文件，**旧的设备配对 token 原样留着**。
+ *    于是新身份带着旧配对去握手 —— 网关那边是失配的，用户只看到"连不上"。
+ */
+describe('设备身份轮换：钥匙要真的配对，旧配对要清掉', () => {
+  /** 造一对**真**密钥（`publicKeyPem` 要能算指纹，假 PEM 会走错分支）。 */
+  function keyPair(): { publicKeyPem: string; privateKeyPem: string } {
+    const { publicKey, privateKey } = generateKeyPairSync('ed25519');
+    return {
+      // ⚠️ 必须 `trim()`：node 导出的 PEM **带尾随换行**，而模块自己存的那份不带。
+      //    不 trim 的话指纹也会变，于是红的是"指纹对不上"而**不是**"钥匙不配对"——
+      //    我第一版就栽在这儿：夹具里同时埋了两个缺陷，红的成了错的那一个。
+      publicKeyPem: publicKey.export({ type: 'spki', format: 'pem' }).toString().trim(),
+      privateKeyPem: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString().trim(),
+    };
+  }
+
+  it('⭐ 私钥能解析、但**和公钥不是一对** ⇒ 判据必须说不（否则去网关必然签名失败）', () => {
+    /**
+     * ⚠️ 这条改成**直接测判据**，而不是"造个失配的文件再读回来"。
+     *
+     * 我先写的就是文件版，连写三版都没红对：因为加载路径里还有别的副作用
+     * （deviceId 会在首次加载时被 `fingerprintPublicKey` 改写、PEM 尾换行会改指纹），
+     * 夹具稍微不干净，红的就是**另一个**原因 —— 那正是本仓"夹具骗人"那一类坑。
+     * 判据本身是纯的，就直接测它：**拿私钥签、用公钥验**，这是"能用"的定义。
+     */
+    const a = keyPair();
+    const b = keyPair();
+
+    expect(isUsableIdentityPair(a.privateKeyPem, a.publicKeyPem), '真配对应过').toBe(true);
+    expect(isUsableIdentityPair(b.privateKeyPem, b.publicKeyPem), '真配对应过').toBe(true);
+    expect(isUsableIdentityPair(b.privateKeyPem, a.publicKeyPem), '拿 B 的私钥配 A 的公钥：必须说不').toBe(false);
+    expect(isUsableIdentityPair('not a pem at all', a.publicKeyPem), '非空垃圾：必须说不').toBe(false);
+    expect(isUsableIdentityPair(a.privateKeyPem, 'not a pem at all'), '公钥是垃圾：必须说不').toBe(false);
+  });
+
+  it('对照：钥匙**是**一对 ⇒ 原样用，不轮换', () => {
+    const good = loadOrCreateDeviceIdentity();
+    const loaded = loadOrCreateDeviceIdentity();
+    expect(loaded.deviceId, '好身份不该被换掉（换了就要重新配对）').toBe(good.deviceId);
+  });
+
+  it('⭐ 轮换之后，旧的设备配对 token 必须清掉（新身份不能带旧配对去握手）', () => {
+    const good = loadOrCreateDeviceIdentity();
+    saveDeviceToken('gw-1', 'stale-token', 'operator', 1);
+    expect(loadDeviceToken('gw-1'), '前置：token 确实存进去了').toBe('stale-token');
+
+    // 把身份弄坏 ⇒ 下一次加载必然轮换
+    const other = keyPair();
+    writeFileSync(
+      join(dir, IDENTITY_FILE),
+      `${JSON.stringify(
+        {
+          version: 1,
+          deviceId: good.deviceId,
+          publicKeyPem: good.publicKeyPem,
+          privateKeyPem: `ENC(${other.privateKeyPem})`,
+          createdAtMs: 1,
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    const rotated = loadOrCreateDeviceIdentity();
+    expect(rotated.deviceId).not.toBe(good.deviceId);
+
+    expect(loadDeviceToken('gw-1'), '旧配对留着 = 新身份带旧配对去握手').toBeNull();
+  });
+
+  it('⭐ 轮换**不许**连累别的东西（许可证/会话/聊天/工作区/知识库都不归它管）', () => {
+    loadOrCreateDeviceIdentity();
+    // 身份目录里放一份"别的东西"，轮换后必须原样还在
+    writeFileSync(join(dir, 'unrelated.json'), '{"keep":true}');
+    const other = keyPair();
+    writeFileSync(
+      join(dir, IDENTITY_FILE),
+      `${JSON.stringify(
+        {
+          version: 1,
+          deviceId: 'whatever',
+          publicKeyPem: 'not-a-key',
+          privateKeyPem: `ENC(${other.privateKeyPem})`,
+          createdAtMs: 1,
+        },
+        null,
+        2,
+      )}\n`,
+    );
+
+    loadOrCreateDeviceIdentity();
+
+    expect(read('unrelated.json'), '轮换只动身份，别的一律不碰').toBe('{"keep":true}');
   });
 });

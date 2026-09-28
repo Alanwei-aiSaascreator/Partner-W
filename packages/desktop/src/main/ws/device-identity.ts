@@ -72,13 +72,26 @@ function resolveDefaultIdentityPath(): string {
  *    带到连网关的 `crypto.createPrivateKey` 才炸（`BAD_DECRYPT`），而那是
  *    **主进程未捕获异常**：用户看到的是一个错误弹框，且网关握手永远走不完。
  *
- * ⇒ 在这里判"能不能解析"。不能解析就当作"身份丢了"，落到下面重新生成 ——
- *   设备身份丢了要重新配对，但**绝不能因此让应用起不来**（这正是本文件那句注释的兑现）。
+ * ⇒ 判据是 `isUsableIdentityPair`：**解析 + 拿私钥签、用公钥验**。
+ *   判不过就当作"身份丢了"，落到下面重新生成 —— 设备身份丢了要重新配对，
+ *   但**绝不能因此让应用起不来**（这正是本文件那句注释的兑现）。
  */
-function isUsablePrivateKey(pem: string): boolean {
+/**
+ * ⭐ 这一对钥匙**能不能真用**（2026-09-29，§二 P0）。
+ *
+ * 从前这里只验"私钥能不能被 `crypto.createPrivateKey` 解析"——**一把别的钥匙也解析得开**。
+ * 那种身份会一路带到网关，在**服务端**签名校验失败，而这边看起来一切正常
+ * （日志里只有一句连接失败，没人知道是钥匙配错了）。
+ *
+ * ⇒ 判据取"能用"的定义本身：**拿私钥签一段探针，再用公钥验一遍**。
+ *    只有真配对的钥匙才过得去；顺带把坏 PEM、非空垃圾、公钥私钥张冠李戴全挡在这里。
+ */
+export function isUsableIdentityPair(privateKeyPem: string, publicKeyPem: string): boolean {
   try {
-    crypto.createPrivateKey(pem);
-    return true;
+    const privateKey = crypto.createPrivateKey(privateKeyPem);
+    const publicKey = crypto.createPublicKey(publicKeyPem);
+    const probe = Buffer.from('clawwork-device-identity-probe', 'utf8');
+    return crypto.verify(null, probe, publicKey, crypto.sign(null, probe, privateKey));
   } catch {
     return false;
   }
@@ -104,10 +117,9 @@ export function loadOrCreateDeviceIdentity(filePath?: string): DeviceIdentity {
       ) {
         // 明文（加固前落的）与密文都从这里出来；**解不开**才返回 null
         const privateKeyPem = decryptSecret(parsed.privateKeyPem);
-        // ⚠️ 两道都要：`decryptSecret` 只管"解不解得开"，`isUsablePrivateKey`
-        //    才管"解出来的到底是不是一把钥匙"。少第二道就会出现真机那个弹框
-        //    （见 isUsablePrivateKey 的注释）。
-        if (privateKeyPem && isUsablePrivateKey(privateKeyPem)) {
+        // ⚠️ 两道都要：`decryptSecret` 管"解不解得开"，`isUsableIdentityPair`
+        //    管"解出来的是不是**这一对**钥匙"（只验解析会发现不了张冠李戴）。
+        if (privateKeyPem && isUsableIdentityPair(privateKeyPem, parsed.publicKeyPem)) {
           const derivedId = fingerprintPublicKey(parsed.publicKeyPem);
           if (derivedId && derivedId !== parsed.deviceId) {
             const updated: StoredIdentity = { ...parsed, deviceId: derivedId };
@@ -121,6 +133,10 @@ export function loadOrCreateDeviceIdentity(filePath?: string): DeviceIdentity {
       }
     }
   } catch {}
+  // ⭐ 轮换 = 身份换了 ⇒ **旧设备的配对 token 必须清掉**（2026-09-29，§二 P0）。
+  //    留着的话新身份会带着旧配对去握手，网关侧必然失配，用户只看到"连不上"。
+  //    ⚠️ 只在这一支清：上面 `derivedId !== deviceId` 那条只是**规范化 id**，钥匙没换。
+  clearDeviceTokens();
   const identity = generateIdentity();
   writeIdentityFile(resolved, {
     version: 1,
@@ -278,4 +294,19 @@ export function saveDeviceToken(gatewayId: string, token: string, role: string, 
 export function loadDeviceToken(gatewayId: string): string | null {
   const store = readTokenStore();
   return store.tokens[gatewayId]?.token ?? null;
+}
+
+/**
+ * 清掉**全部**设备配对 token（2026-09-29）。
+ *
+ * ⚠️ 只在**身份轮换**时调（钥匙换了 ⇒ 旧配对一律作废）。
+ *    它**不碰**许可证、登录会话、聊天、工作区、知识库 —— 那些都不在这个 store 里，
+ *    也正因为如此，"轮换身份"这件事的破坏面被限制在这一个文件里。
+ */
+export function clearDeviceTokens(): void {
+  try {
+    writeTokenStore({ version: 1, tokens: {} });
+  } catch {
+    // 清不掉不阻断身份生成：设备身份丢了要重新配对，但应用不能因此起不来。
+  }
 }
