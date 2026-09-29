@@ -482,6 +482,10 @@ if (!gotLock) {
             // OpenClaw state 不能落 exFAT，也不能嵌在运行时的 64 位 scope 下：其日志/插件
             // 子树很深，Windows 路径预算会被吃光。token 派生的短目录仍会隔离不同 U 盘。
             stateCacheUserDataDir: localUserDataDir,
+            // 便携版主助手必须和用户文件一起留在已验证的盘上工作区；否则 OpenClaw
+            // 会把 `main` 默认到本机 state/workspace，生成物与“记住你”的文件就会
+            // 悄悄落进 C 盘。非 NTFS 盘已在工作区启动门禁被诚实拒绝。
+            portableWorkspacePath: workspace.portable ? wsPath : undefined,
             deps: {
               log: (event, data) => {
                 const entry = { domain: 'gateway' as const, event, data };

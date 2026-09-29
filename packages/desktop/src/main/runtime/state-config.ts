@@ -146,10 +146,39 @@ function hasPortableBootstrapDisabled(raw: unknown): boolean {
   return isRecord(defaults) && defaults.skipBootstrap === true;
 }
 
-function mergePortableAgentDefaults(existing: Record<string, unknown> | null): Record<string, unknown> {
+function readPortableMainWorkspace(raw: unknown): string | null {
+  if (!isRecord(raw)) return null;
+  const agents = raw.agents;
+  if (!isRecord(agents)) return null;
+  const entries = agents.entries;
+  if (!isRecord(entries)) return null;
+  const main = entries.main;
+  if (!isRecord(main)) return null;
+  return typeof main.workspace === 'string' && main.workspace.length > 0 ? main.workspace : null;
+}
+
+function hasPortableAgentDefaults(raw: unknown, workspacePath?: string): boolean {
+  return (
+    hasPortableBootstrapDisabled(raw) &&
+    (!workspacePath || readPortableMainWorkspace(raw) === workspacePath)
+  );
+}
+
+function mergePortableAgentDefaults(
+  existing: Record<string, unknown> | null,
+  workspacePath?: string,
+): Record<string, unknown> {
   const agents = existing && isRecord(existing.agents) ? existing.agents : {};
   const defaults = isRecord(agents.defaults) ? agents.defaults : {};
-  return { ...agents, defaults: { ...defaults, skipBootstrap: true } };
+  if (!workspacePath) return { ...agents, defaults: { ...defaults, skipBootstrap: true } };
+
+  const entries = isRecord(agents.entries) ? agents.entries : {};
+  const main = isRecord(entries.main) ? entries.main : {};
+  return {
+    ...agents,
+    defaults: { ...defaults, skipBootstrap: true },
+    entries: { ...entries, main: { ...main, workspace: workspacePath } },
+  };
 }
 
 /**
@@ -370,6 +399,7 @@ function readStateConfigFile(configPath: string): Record<string, unknown> | null
 export function ensureStateConfig(
   userDataDir: string,
   stateUserDataDir = userDataDir,
+  portableWorkspacePath?: string,
 ): {
   token: string;
   created: boolean;
@@ -408,7 +438,7 @@ export function ensureStateConfig(
     hasMemoryToolsDenied(existing) &&
     hasToolGuard(existing) &&
     !hasStaleExecKeys(existing) &&
-    (!splitState || hasPortableBootstrapDisabled(existing))
+    (!splitState || hasPortableAgentDefaults(existing, portableWorkspacePath))
   ) {
     return { token: store.token, created: false, configPath, stateDir };
   }
@@ -419,7 +449,7 @@ export function ensureStateConfig(
     gateway: { ...gateway, auth: { mode: 'token', token: store.token } },
     memory: mergeMemoryDefaults(existing),
     tools: mergeToolsDefaults(existing),
-    ...(splitState ? { agents: mergePortableAgentDefaults(existing) } : {}),
+    ...(splitState ? { agents: mergePortableAgentDefaults(existing, portableWorkspacePath) } : {}),
   };
 
   writeJsonAtomic(configPath, merged);
@@ -477,11 +507,15 @@ export interface EnsureClientGatewayEntryResult {
 export async function ensureClientGatewayEntry(opts: {
   userDataDir: string;
   stateUserDataDir?: string;
+  portableWorkspacePath?: string;
 }): Promise<EnsureClientGatewayEntryResult> {
   const stateUserDataDir = opts.stateUserDataDir ?? opts.userDataDir;
-  const { token, stateDir } = ensureStateConfig(opts.userDataDir, stateUserDataDir);
-
   const current: AppConfig = readConfig() ?? { workspacePath: '', gateways: [] };
+  const portableWorkspacePath =
+    stateUserDataDir !== opts.userDataDir && opts.portableWorkspacePath?.trim()
+      ? opts.portableWorkspacePath
+      : undefined;
+  const { token, stateDir } = ensureStateConfig(opts.userDataDir, stateUserDataDir, portableWorkspacePath);
   const retainedGateways = current.gateways.filter((gateway) => !isLegacyEmptyLocalGateway(gateway));
   const existing = retainedGateways.find((g) => g.id === LOCAL_GATEWAY_ID);
   const configuredDefaultStillExists = retainedGateways.some((gateway) => gateway.id === current.defaultGatewayId);

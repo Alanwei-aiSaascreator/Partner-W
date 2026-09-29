@@ -82,6 +82,7 @@ export interface RuntimeBootstrapDeps {
   alignClientConfig: (opts: {
     userDataDir: string;
     stateUserDataDir: string;
+    portableWorkspacePath?: string;
   }) => Promise<{ token: string; stateDir: string }>;
   readCached: (userDataDir: string) => CurrentDeployment;
   deployFromMedia: (opts: { userDataDir: string }) => Promise<DeployResult>;
@@ -208,8 +209,8 @@ export async function locateAndPlan(
 
 function makeDefaultDeps(): RuntimeBootstrapDeps {
   return {
-    alignClientConfig: async ({ userDataDir, stateUserDataDir }) => {
-      const res = await ensureClientGatewayEntry({ userDataDir, stateUserDataDir });
+    alignClientConfig: async ({ userDataDir, stateUserDataDir, portableWorkspacePath }) => {
+      const res = await ensureClientGatewayEntry({ userDataDir, stateUserDataDir, portableWorkspacePath });
       return { token: res.token, stateDir: res.stateDir };
     },
     readCached: (userDataDir) => readCurrentDeployment(userDataDir),
@@ -265,6 +266,7 @@ export async function bootstrapLocalGatewayRuntime(opts: {
   userDataDir: string;
   runtimeCacheUserDataDir?: string;
   stateCacheUserDataDir?: string;
+  portableWorkspacePath?: string;
   deps?: Partial<RuntimeBootstrapDeps>;
 }): Promise<RuntimeBootstrapResult> {
   const deps: RuntimeBootstrapDeps = { ...makeDefaultDeps(), ...opts.deps };
@@ -287,6 +289,7 @@ export async function bootstrapLocalGatewayRuntime(opts: {
     const { token, stateDir } = await deps.alignClientConfig({
       userDataDir,
       stateUserDataDir: stateCacheUserDataDir,
+      portableWorkspacePath: opts.portableWorkspacePath,
     });
     deps.setStateDirEnv(stateDir);
 

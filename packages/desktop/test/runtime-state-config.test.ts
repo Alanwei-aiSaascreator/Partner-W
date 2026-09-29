@@ -493,6 +493,34 @@ describe('红线：工具闸门（写不出工作区 + 工作区外先问）', (
 });
 
 describe('ensureClientGatewayEntry', () => {
+  it('⭐ 便携版：main 助手工作区跟随已选 U 盘工作区，不能静默落回本机 state/workspace', async () => {
+    const localStateUserDataDir = path.join(tmpRoot, 'local-runtime-cache');
+    const portableWorkspace = path.join(tmpRoot, 'portable-volume', '荣盈魔方工作区');
+    const { writeConfig } = await import('../src/main/workspace/config.js');
+    writeConfig({ workspacePath: portableWorkspace, gateways: [] });
+
+    const first = await ensureClientGatewayEntry({
+      userDataDir,
+      stateUserDataDir: localStateUserDataDir,
+      portableWorkspacePath: portableWorkspace,
+    });
+    const firstConfig = JSON.parse(fs.readFileSync(stateConfigPath(first.stateDir), 'utf-8'));
+
+    expect(firstConfig.agents.entries.main.workspace).toBe(portableWorkspace);
+
+    // 存量盘上的旧值也必须自愈；其它 main 字段不能被覆盖。
+    firstConfig.agents.entries.main = { ...firstConfig.agents.entries.main, workspace: 'C:\\stale', name: '主代理' };
+    fs.writeFileSync(stateConfigPath(first.stateDir), JSON.stringify(firstConfig));
+
+    await ensureClientGatewayEntry({
+      userDataDir,
+      stateUserDataDir: localStateUserDataDir,
+      portableWorkspacePath: portableWorkspace,
+    });
+    const healed = JSON.parse(fs.readFileSync(stateConfigPath(first.stateDir), 'utf-8'));
+    expect(healed.agents.entries.main).toEqual({ workspace: portableWorkspace, name: '主代理' });
+  });
+
   it('⭐ 便携版：登录凭证留在 U 盘，OpenClaw 内部 state 写到本机 NTFS 缓存', async () => {
     const localStateUserDataDir = path.join(tmpRoot, 'local-runtime-cache');
     const legacyStateDir = stateDirFor(userDataDir);
