@@ -488,6 +488,7 @@
     "copyMessage": "メッセージをコピー",
     "docgenBlock": "ドキュメントの内容（完成したファイルは右側の「产物」に表示されます）",
     "htmlgenBlock": "ページ内容（完成品は右側の「産物」に表示されます）",
+    "noVisibleAnswer": "アシスタントから表示できる回答が返されませんでした。もう一度お試しください。",
     "retryHint": "前のメッセージを再送します（もう一度消費されます）",
     "toolCallSummary": "{{count}} 件のツール呼び出しを実行",
     "toolCallSummaryWithErrors": "{{count}} 件のツール呼び出しを実行（{{errorCount}} 件失敗）"

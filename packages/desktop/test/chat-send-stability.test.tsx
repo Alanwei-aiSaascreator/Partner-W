@@ -751,6 +751,30 @@ describe('聊天区在发送时的稳定性', () => {
     view.unmount();
   });
 
+  it('⭐ 定稿只有隐藏思考、没有正文：显示可重试失败态，不再伪装成仍在生成', () => {
+    const SESSION = 'agent:rongying-content:clawwork:abc:task:task-1';
+    mocks.tasks = [activeTask()];
+    mocks.activeTaskId = 'task-1';
+    mocks.messagesByTask = { 'task-1': [userMessage('msg-1', '你好')] };
+    messageState.processingBySession = new Set([SESSION]);
+    messageState.activeTurnBySession = {
+      [SESSION]: {
+        id: 'turn-empty',
+        streamingText: '',
+        streamingThinking: '供应商返回了内部推理，但没有用户可见正文',
+        toolCalls: [],
+        finalized: true,
+        content: '',
+        timestamp: '2026-09-20T00:00:00.000Z',
+      },
+    };
+
+    const view = renderMainArea();
+    expect(view.container.querySelector('[data-testid="assistant-no-visible-answer"]')).not.toBeNull();
+    expect(view.container.textContent).not.toContain('供应商返回了内部推理');
+    view.unmount();
+  });
+
   /**
    * 2026-09-20 现场日志定的第三道口子：**收编**。
    *

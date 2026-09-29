@@ -1063,6 +1063,7 @@ export function ChatContent({
                           highlighted={message.id === highlightedId}
                           onHighlightDone={handleHighlightDone}
                           onImageClick={setLightboxSrc}
+                          onRetry={() => retryLastTurn(message.id)}
                         />
                       );
                     }
@@ -1080,7 +1081,7 @@ export function ChatContent({
                     );
                   }
 
-                  if (item.turn?.finalized && item.turn.content) {
+                  if (item.turn?.finalized) {
                     return (
                       <AssistantBlock
                         state="finalized"

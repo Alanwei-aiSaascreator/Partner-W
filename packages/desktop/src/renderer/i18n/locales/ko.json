@@ -488,6 +488,7 @@
     "copyMessage": "메시지 복사",
     "docgenBlock": "문서 내용(완성된 파일은 오른쪽 产物에 표시됩니다)",
     "htmlgenBlock": "페이지 내용(완성본은 오른쪽 「产物」에 표시됩니다)",
+    "noVisibleAnswer": "도우미가 표시할 수 있는 답변을 반환하지 않았습니다. 다시 시도해 주세요.",
     "retryHint": "이전 메시지를 다시 보냅니다 (요금이 한 번 더 차감됩니다)",
     "toolCallSummary": "{{count}}개 도구 호출 실행됨",
     "toolCallSummaryWithErrors": "{{count}}개 도구 호출 실행됨 ({{errorCount}}개 실패)"

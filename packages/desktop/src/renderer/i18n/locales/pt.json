@@ -488,6 +488,7 @@
     "copyMessage": "Copiar mensagem",
     "docgenBlock": "Conteúdo do documento (o arquivo aparece em 产物, à direita)",
     "htmlgenBlock": "Conteúdo da página (o arquivo aparece em 产物 à direita)",
+    "noVisibleAnswer": "O assistente não retornou uma resposta visível. Tente novamente.",
     "retryHint": "Reenviar a mensagem anterior — será cobrado novamente",
     "toolCallSummary": "{{count}} chamadas de ferramenta executadas",
     "toolCallSummaryWithErrors": "{{count}} chamadas de ferramenta executadas ({{errorCount}} falharam)"

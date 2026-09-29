@@ -29,9 +29,10 @@ export interface AssistantFinalizedBodyProps {
   message: Message;
   agentName?: string;
   onImageClick?: (src: string) => void;
+  onRetry?: () => void;
 }
 
-export function AssistantFinalizedBody({ message, agentName, onImageClick }: AssistantFinalizedBodyProps) {
+export function AssistantFinalizedBody({ message, agentName, onImageClick, onRetry }: AssistantFinalizedBodyProps) {
   const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
@@ -49,6 +50,7 @@ export function AssistantFinalizedBody({ message, agentName, onImageClick }: Ass
   }, [saveState]);
 
   const attachments = message.attachments;
+  const hasVisibleAnswer = Boolean(message.content.trim() || attachments?.length || message.artifacts.length);
   const canSaveMessage = Boolean(message.content.trim()) && Boolean(message.taskId) && Boolean(message.id);
 
   const handleCopy = (): void => {
@@ -74,7 +76,7 @@ export function AssistantFinalizedBody({ message, agentName, onImageClick }: Ass
 
   return (
     <>
-      {message.content || !attachments?.length ? (
+      {message.content.trim() ? (
         <div className="inline-block max-w-full leading-relaxed rounded-2xl px-4 py-3 text-[var(--text-primary)]">
           <MarkdownContent
             content={message.content}
@@ -109,6 +111,26 @@ export function AssistantFinalizedBody({ message, agentName, onImageClick }: Ass
         </div>
       ) : null}
       {message.toolCalls.length > 0 && <ToolCallSummary toolCalls={message.toolCalls} settled />}
+      {!hasVisibleAnswer ? (
+        <div
+          data-testid="assistant-no-visible-answer"
+          role="status"
+          className="mt-2 flex max-w-xl flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-secondary)] px-4 py-3 text-sm text-[var(--text-secondary)]"
+        >
+          <span>{t('chatMessage.noVisibleAnswer')}</span>
+          {onRetry ? (
+            <button
+              type="button"
+              data-testid="assistant-empty-retry"
+              title={t('chatMessage.retryHint')}
+              onClick={onRetry}
+              className="font-medium text-[var(--accent-primary)] underline-offset-4 hover:underline focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-primary)]"
+            >
+              {t('common.retry')}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
       {message.content.trim() && (
         <div className="mt-1.5 flex items-center gap-1 opacity-0 transition-opacity group-hover/message:opacity-100 focus-within:opacity-100">
           {canSaveMessage && (
@@ -186,6 +208,7 @@ export type AssistantBlockProps = {
       /** 定稿：正文已经落在这条正式消息上。 */
       state: 'finalized';
       message: Message;
+      onRetry?: () => void;
     }
 );
 
@@ -208,7 +231,12 @@ const AssistantBlock = memo(function AssistantBlock(props: AssistantBlockProps) 
       className={cn(highlighted && 'animate-highlight rounded-lg')}
     >
       {props.state === 'finalized' ? (
-        <AssistantFinalizedBody message={props.message} agentName={identity.agentName} onImageClick={onImageClick} />
+        <AssistantFinalizedBody
+          message={props.message}
+          agentName={identity.agentName}
+          onImageClick={onImageClick}
+          onRetry={props.onRetry}
+        />
       ) : (
         <AssistantStreamingBody
           content={props.content}

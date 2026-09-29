@@ -488,6 +488,7 @@
     "copyMessage": "複製訊息",
     "docgenBlock": "文件內容（成品見右側「產物」）",
     "htmlgenBlock": "網頁內容（成品見右側「產物」）",
+    "noVisibleAnswer": "助手沒有返回可顯示的內容，請重試。",
     "retryHint": "重發上一則訊息，會再扣一次積分",
     "toolCallSummary": "已執行 {{count}} 次工具呼叫",
     "toolCallSummaryWithErrors": "已執行 {{count}} 次工具呼叫（{{errorCount}} 次失敗）"

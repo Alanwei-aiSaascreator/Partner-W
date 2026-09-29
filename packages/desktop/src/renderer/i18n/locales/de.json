@@ -488,6 +488,7 @@
     "copyMessage": "Nachricht kopieren",
     "docgenBlock": "Dokumentinhalt (die Datei erscheint rechts unter 产物)",
     "htmlgenBlock": "Seiteninhalt (die Datei erscheint rechts unter 产物)",
+    "noVisibleAnswer": "Der Assistent hat keine sichtbare Antwort zurückgegeben. Bitte versuchen Sie es erneut.",
     "retryHint": "Vorherige Nachricht erneut senden – es wird erneut abgerechnet",
     "toolCallSummary": "{{count}} Tool-Aufrufe ausgefuehrt",
     "toolCallSummaryWithErrors": "{{count}} Tool-Aufrufe ausgefuehrt ({{errorCount}} fehlgeschlagen)"

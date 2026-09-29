@@ -188,4 +188,26 @@ describe('AssistantBlock：状态切换时块与头像不能被卸载重建', ()
     expect(view.container.textContent).toContain('给用户的答案');
     expect(view.container.textContent).not.toContain(rawThinking);
   });
+
+  it('⭐ 只有思考却没有可见答案：定稿后停止转圈，明确失败并允许重试', () => {
+    const retry = vi.fn();
+    const rawThinking = 'Private reasoning exists, but no user-facing answer was produced.';
+    const view = render(
+      <AssistantBlock
+        state="finalized"
+        message={buildMessage({ content: '', thinkingContent: rawThinking })}
+        identity={identity}
+        onRetry={retry}
+      />,
+    );
+
+    expect(view.container.querySelector('[data-testid="thinking-indicator"]'), '定稿后绝不能继续显示进行中').toBeNull();
+    expect(view.container.querySelector('[data-testid="assistant-no-visible-answer"]')).not.toBeNull();
+    expect(view.container.textContent).not.toContain(rawThinking);
+
+    const button = view.container.querySelector<HTMLButtonElement>('[data-testid="assistant-empty-retry"]');
+    expect(button).not.toBeNull();
+    act(() => button?.click());
+    expect(retry).toHaveBeenCalledTimes(1);
+  });
 });
