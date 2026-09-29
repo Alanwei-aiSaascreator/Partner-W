@@ -414,4 +414,18 @@ describe('installTeam', () => {
     expect(deps.deleteAgent).toHaveBeenCalledTimes(2);
     expect(events.find((e) => e.type === 'error')?.message).toContain('Failed to configure subagents');
   });
+
+  it('回滚删除返回 ok:false ⇒ 必须留下 warning，不能静默残留助手', async () => {
+    const deps = makeDeps({
+      patchConfig: vi.fn().mockResolvedValue({ ok: false, error: 'permission denied' }),
+      deleteAgent: vi.fn().mockResolvedValue({ ok: false, error: 'delete rejected' }),
+    });
+
+    const events = await collect(installTeam(makeParsed(), {}, 'gw-1', '/w', deps));
+
+    expect(events.filter((event) => event.type === 'warning').map((event) => event.message)).toEqual([
+      'Rollback: failed to delete agent agent-1: delete rejected',
+      'Rollback: failed to delete agent agent-2: delete rejected',
+    ]);
+  });
 });

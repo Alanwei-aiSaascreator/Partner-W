@@ -5,6 +5,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useTeamInstall } from '../src/renderer/layouts/TeamsPanel/useTeamInstall';
+import { useUiStore } from '../src/renderer/stores/uiStore';
 import type { AgentDraft, TeamInfo } from '../src/renderer/layouts/TeamsPanel/types';
 import { toSlug } from '../src/renderer/layouts/TeamsPanel/utils';
 import { WORKSPACE_UNAVAILABLE_MESSAGE } from '../src/renderer/lib/install-workspace';
@@ -93,6 +94,11 @@ beforeEach(() => {
     listAgents: vi.fn(async () => ({ ok: true, result: { agents: [] } })),
   };
   (window as unknown as { clawwork: ClawworkMock }).clawwork = clawwork;
+  useUiStore.setState({
+    modelCatalogByGateway: {
+      'gw-1': [{ id: 'deepseek-v4-flash', provider: 'clawrouter', name: 'DeepSeek V4 Flash' }],
+    },
+  });
 
   container = document.createElement('div');
   document.body.appendChild(container);
@@ -164,7 +170,12 @@ describe('useTeamInstall 的工作区守卫', () => {
       });
     clawwork.listAgents.mockResolvedValue({
       ok: true,
-      result: { agents: [{ id: 'marketing-copywriter', name: 'Marketing Copywriter' }] },
+      result: {
+        agents: [
+          { id: 'marketing_copywriter', name: 'Marketing_Copywriter' },
+          { id: 'marketing-copywriter', name: 'Marketing Copywriter' },
+        ],
+      },
     });
 
     await mount();
@@ -195,5 +206,26 @@ describe('useTeamInstall 的工作区守卫', () => {
     expect(api?.installStatus).toBe('error');
     expect(clawwork.persistTeam).not.toHaveBeenCalled();
     expect(api?.installEvents.some((event) => event.type === 'error')).toBe(true);
+  });
+
+  it('手工入口传入非 relay 或 unavailable 模型 ⇒ 执行边界不许写进助手', async () => {
+    const agents = makeAgents();
+    agents[0].model = 'openai/deepseek-v4-flash';
+    useUiStore.setState({
+      modelCatalogByGateway: {
+        'gw-1': [
+          { id: 'deepseek-v4-flash', provider: 'clawrouter', available: false },
+          { id: 'deepseek-v4-flash', provider: 'openai', available: true },
+        ],
+      },
+    });
+
+    await mount();
+    await act(async () => {
+      await api?.runInstall(teamInfo, agents);
+    });
+
+    expect(api?.installStatus).toBe('done');
+    expect(clawwork.updateAgent).not.toHaveBeenCalled();
   });
 });

@@ -10,6 +10,9 @@ import type {
 import type { InstallerDeps } from '@clawwork/core';
 import { installTeam, serializeIdentityMd } from '@clawwork/core';
 import { WORKSPACE_UNAVAILABLE_MESSAGE, checkInstallWorkspace } from '@/lib/install-workspace';
+import { relayModelsFrom } from '@/components/ChatInput/model-families';
+import { resolveTeamModelRef } from '@/lib/team-model-ref';
+import { useUiStore } from '@/stores/uiStore';
 import { toSlug } from './utils';
 import type { TeamInfo, AgentDraft } from './types';
 
@@ -66,6 +69,7 @@ export async function finishTeamInstall(input: {
 export function useTeamInstall(onDone?: () => void) {
   const [installStatus, setInstallStatus] = useState<InstallStatus>('idle');
   const [installEvents, setInstallEvents] = useState<InstallEvent[]>([]);
+  const modelCatalogByGateway = useUiStore((state) => state.modelCatalogByGateway);
 
   const resetInstall = useCallback(() => {
     setInstallStatus('idle');
@@ -121,9 +125,14 @@ export function useTeamInstall(onDone?: () => void) {
         agentFiles[slug] = files;
       }
 
+      const gwId = teamInfo.gatewayId;
+      const availableModels = relayModelsFrom(modelCatalogByGateway[gwId] ?? []).filter(
+        (model) => model.available !== false,
+      );
       const agentModelMap = new Map<string, string>();
       for (const a of agents) {
-        if (a.model) agentModelMap.set(toSlug(a.name), a.model);
+        const model = resolveTeamModelRef(a.model, availableModels);
+        if (model) agentModelMap.set(toSlug(a.name), model);
       }
       const pendingModelUpdates: Promise<IpcResult>[] = [];
       const waitForModelUpdates = async (): Promise<IpcResult> => {
@@ -132,7 +141,6 @@ export function useTeamInstall(onDone?: () => void) {
         return failed ?? { ok: true };
       };
 
-      const gwId = teamInfo.gatewayId;
       let cachedGatewayAgents: AgentInfo[] | null = null;
       const deps: InstallerDeps = {
         createAgent: async (params) => {
@@ -154,13 +162,18 @@ export function useTeamInstall(onDone?: () => void) {
               }
               const existingAgentId = idMatch[1];
               const existingKey = toSlug(existingAgentId);
-              const match = cachedGatewayAgents?.find(
-                (a) => a.id === existingAgentId || toSlug(a.id) === existingKey || toSlug(a.name ?? '') === existingKey,
+              const exactMatch = cachedGatewayAgents?.find((a) => a.id === existingAgentId);
+              const requestedMatch = cachedGatewayAgents?.find((a) => a.id === slug);
+              const normalizedMatches = (cachedGatewayAgents ?? []).filter(
+                (a) => toSlug(a.id) === existingKey || toSlug(a.name ?? '') === existingKey,
               );
+              const match =
+                exactMatch ?? requestedMatch ?? (normalizedMatches.length === 1 ? normalizedMatches[0] : null);
               if (match) {
                 fallbackAgentIds.add(match.id);
                 return { ok: true, result: { agentId: match.id, name: match.name ?? params.name, workspace: '' } };
               }
+              return { ok: false, error: `Existing agent could not be reconciled: ${existingAgentId}` };
             }
             return { ok: false, error: res.error } as IpcResult<AgentCreateResponse>;
           }
@@ -263,7 +276,7 @@ export function useTeamInstall(onDone?: () => void) {
         setInstallStatus('error');
       }
     },
-    [onDone],
+    [modelCatalogByGateway, onDone],
   );
 
   const runUpdate = useCallback(
@@ -273,6 +286,20 @@ export function useTeamInstall(onDone?: () => void) {
 
       try {
         const gwId = teamInfo.gatewayId;
+        const availableModels = relayModelsFrom(modelCatalogByGateway[gwId] ?? []).filter(
+          (model) => model.available !== false,
+        );
+        for (const agent of agents) {
+          if (!agent.existingAgentId) continue;
+          const model = resolveTeamModelRef(agent.model, availableModels);
+          if (!model) continue;
+          const update = await window.clawwork.updateAgent(gwId, { agentId: agent.existingAgentId, model });
+          if (!update.ok) {
+            setInstallEvents([{ type: 'error', message: update.error ?? 'Failed to update agent model' }]);
+            setInstallStatus('error');
+            return;
+          }
+        }
         const skillPromises = agents.flatMap((a) =>
           a.skills.length > 0 && a.existingAgentId
             ? a.skills.map((slug) =>
@@ -320,7 +347,7 @@ export function useTeamInstall(onDone?: () => void) {
         setInstallStatus('error');
       }
     },
-    [onDone],
+    [modelCatalogByGateway, onDone],
   );
 
   return { installStatus, installEvents, runInstall, runUpdate, resetInstall };

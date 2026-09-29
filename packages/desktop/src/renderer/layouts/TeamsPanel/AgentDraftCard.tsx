@@ -1,10 +1,18 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ChevronDown, ChevronRight, Trash2, X, Crown, Loader2, Search, Check } from 'lucide-react';
-import type { AgentInfo, SkillSearchResultEntry, SkillStatusEntry, SkillStatusReport } from '@clawwork/shared';
+import type {
+  AgentInfo,
+  ModelCatalogEntry,
+  SkillSearchResultEntry,
+  SkillStatusEntry,
+  SkillStatusReport,
+} from '@clawwork/shared';
 import { TEAM_POSITIONS, type TeamPosition } from '@clawwork/shared';
 import { parseIdentityMd } from '@clawwork/core';
 import { normalizePosition } from '@/lib/team-roundtable';
+import { relayModelsFrom } from '@/components/ChatInput/model-families';
+import { canonicalModelRef, resolveTeamModelRef } from '@/lib/team-model-ref';
 import { cn } from '@/lib/utils';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover';
@@ -12,7 +20,7 @@ import { useUiStore } from '@/platform';
 import type { AgentDraft } from './types';
 import { inputClass } from './utils';
 
-const EMPTY_MODELS: { id: string; name?: string; provider?: string }[] = [];
+const EMPTY_MODELS: ModelCatalogEntry[] = [];
 
 interface SkillPickItem {
   id: string;
@@ -21,9 +29,10 @@ interface SkillPickItem {
   source: 'installed' | 'clawhub';
 }
 
-function modelLabel(modelId: string, models: { id: string; name?: string; provider?: string }[]): string {
+function modelLabel(modelId: string, models: ModelCatalogEntry[]): string {
   if (!modelId) return '';
-  const m = models.find((x) => x.id === modelId);
+  const canonical = resolveTeamModelRef(modelId, models);
+  const m = models.find((entry) => canonicalModelRef(entry) === canonical);
   if (!m) return modelId;
   return m.name ?? m.id;
 }
@@ -67,7 +76,8 @@ export default function AgentDraftCard({
   const modelCatalogByGateway = useUiStore((s) => s.modelCatalogByGateway);
   const skillsStatus = useUiStore((s) => (gatewayId ? s.skillsStatusByGateway[gatewayId] : undefined));
   const setSkillsStatusForGateway = useUiStore((s) => s.setSkillsStatusForGateway);
-  const models = (gatewayId ? modelCatalogByGateway[gatewayId] : null) ?? EMPTY_MODELS;
+  const catalog = (gatewayId ? modelCatalogByGateway[gatewayId] : null) ?? EMPTY_MODELS;
+  const models = useMemo(() => relayModelsFrom(catalog).filter((model) => model.available !== false), [catalog]);
   const isExisting = !!agent.existingAgentId;
   const canSwitchMode = !lockExisting;
 
@@ -82,7 +92,7 @@ export default function AgentDraftCard({
       existingAgentId: info.id,
       name: info.name ?? info.id,
       description: '',
-      model: info.model?.primary ?? '',
+      model: resolveTeamModelRef(info.model?.primary, models),
       agentMd: '',
       soulMd: '',
       skills: [],
@@ -354,13 +364,13 @@ export default function AgentDraftCard({
                 <div className="space-y-1">
                   <label className="type-meta text-[var(--text-muted)]">{t('teams.wizard.model')}</label>
                   <select
-                    value={agent.model}
+                    value={resolveTeamModelRef(agent.model, models)}
                     onChange={(e) => onUpdate({ model: e.target.value })}
                     className={inputClass}
                   >
                     <option value="">{t('teams.wizard.modelDefault')}</option>
                     {models.map((m) => (
-                      <option key={m.id} value={m.id}>
+                      <option key={canonicalModelRef(m)} value={canonicalModelRef(m)}>
                         {m.name ?? m.id}
                         {m.provider ? ` (${m.provider})` : ''}
                       </option>

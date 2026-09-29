@@ -319,7 +319,10 @@ export async function* installTeam(
 async function* rollback(agentIds: string[], deps: InstallerDeps): AsyncGenerator<InstallEvent> {
   for (const agentId of agentIds) {
     try {
-      await deps.deleteAgent({ agentId });
+      const result = await deps.deleteAgent({ agentId });
+      if (!result.ok) {
+        yield { type: 'warning', agentId, message: `Rollback: failed to delete agent ${agentId}: ${result.error}` };
+      }
     } catch {
       yield { type: 'warning', agentId, message: `Rollback: failed to delete agent ${agentId}` };
     }
