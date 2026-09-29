@@ -56,6 +56,7 @@ import {
 import { getModelLabel, readAsBase64 } from './utils';
 import { resolveCommercialDefaultModel } from '@/lib/commercial-default-model';
 import { mergeTeamWorkflowContext } from '@/lib/team-workflow';
+import { normalizePosition } from '@/lib/team-roundtable';
 
 interface UseChatSendOpts {
   textareaRef: RefObject<HTMLTextAreaElement | null>;
@@ -487,7 +488,32 @@ export function useChatSend(opts: UseChatSendOpts) {
         // 团队任务不再依赖 conductor。合同作为隐藏上下文发送，既不污染用户气泡/落库正文，
         // 又在每一轮都守住“策略 → 创作 → 质检/修订 → 交付”的可靠模式。
         if (task.teamId) {
-          contextPrefix = mergeTeamWorkflowContext(contextPrefix);
+          // 冷启动直接从任务列表续聊时，用户可能从未打开过团队页，因而 store 还是空的。
+          // 按 id 补读一次持久化团队，不能把真实花名册降级成只有四阶段合同。
+          const teamState = useTeamStore.getState();
+          const team = teamState.teams[task.teamId] ?? (await teamState.loadTeam(task.teamId));
+          const catalog = useUiStore.getState().agentCatalogByGateway[task.gatewayId]?.agents ?? [];
+          const namesById = new Map(catalog.map((agent) => [agent.id, agent.name ?? agent.id]));
+          contextPrefix = mergeTeamWorkflowContext(
+            contextPrefix,
+            team
+              ? {
+                  name: team.name,
+                  activeAgentId:
+                    task.agentId ??
+                    team.agents.find((agent) => agent.isManager)?.agentId ??
+                    team.agents[0]?.agentId ??
+                    'main',
+                  members: team.agents.map((agent) => ({
+                    agentId: agent.agentId,
+                    name: namesById.get(agent.agentId) ?? agent.agentId,
+                    role: agent.role,
+                    position: normalizePosition(agent.position),
+                    isManager: agent.isManager,
+                  })),
+                }
+              : undefined,
+          );
         }
 
         if (taskMentions.length > 0) {

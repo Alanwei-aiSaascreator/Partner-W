@@ -57,6 +57,7 @@ const mocks = vi.hoisted(() => {
     uiState: {
       gatewayStatusMap: { 'gw-1': 'connected' } as Record<string, 'connected' | 'connecting' | 'disconnected'>,
       modelCatalogByGateway: {} as Record<string, ModelCatalogEntry[]>,
+      agentCatalogByGateway: {} as Record<string, { agents: Array<{ id: string; name?: string }>; defaultId: string }>,
       // 手写 store 桩**必须跟着长**（缺一个字段 = 整屏渲染崩）。
       modelCatalogFailureByGateway: {} as Record<string, true>,
       toolsCatalogByGateway: {},
@@ -68,6 +69,10 @@ const mocks = vi.hoisted(() => {
     },
     roomState: {
       rooms: {},
+    },
+    teamState: {
+      teams: {} as Record<string, import('@clawwork/shared').Team>,
+      loadTeam: vi.fn(async () => null as import('@clawwork/shared').Team | null),
     },
   };
 });
@@ -100,10 +105,16 @@ vi.mock('../src/renderer/platform', () => ({
     selector ? selector(mocks.taskState) : mocks.taskState,
   useMessageStore: <T,>(selector?: (state: typeof mocks.messageState) => T) =>
     selector ? selector(mocks.messageState) : mocks.messageState,
-  useUiStore: <T,>(selector?: (state: typeof mocks.uiState) => T) =>
-    selector ? selector(mocks.uiState) : mocks.uiState,
+  useUiStore: Object.assign(
+    <T,>(selector?: (state: typeof mocks.uiState) => T) => (selector ? selector(mocks.uiState) : mocks.uiState),
+    { getState: () => mocks.uiState },
+  ),
   useRoomStore: <T,>(selector?: (state: typeof mocks.roomState) => T) =>
     selector ? selector(mocks.roomState) : mocks.roomState,
+  useTeamStore: Object.assign(
+    <T,>(selector?: (state: typeof mocks.teamState) => T) => (selector ? selector(mocks.teamState) : mocks.teamState),
+    { getState: () => mocks.teamState },
+  ),
 }));
 
 import { UnknownAgentError } from '@clawwork/core';
@@ -262,9 +273,11 @@ describe('useChatSend abort flow', () => {
     });
     mocks.uiState.gatewayStatusMap = { 'gw-1': 'connected' };
     mocks.uiState.modelCatalogByGateway = {};
+    mocks.uiState.agentCatalogByGateway = {};
     mocks.uiState.toolsCatalogByGateway = {};
     mocks.uiState.effectiveToolsByGateway = {};
     mocks.roomState.rooms = {};
+    mocks.teamState.teams = {};
     useCommercialStore.setState({
       status: 'ready',
       overview: {
@@ -397,6 +410,32 @@ describe('useChatSend abort flow', () => {
   it('injects the four-phase contract into hidden context for a direct team task', async () => {
     const active = mocks.taskState.tasks[0]!;
     mocks.taskState.tasks = [{ ...active, teamId: 'team-design', ensemble: false }];
+    mocks.teamState.teams = {
+      'team-design': {
+        id: 'team-design',
+        name: 'Merchant Service Squad',
+        emoji: '🍽️',
+        description: '餐饮运营团队',
+        gatewayId: 'gw-1',
+        source: 'local',
+        version: '1',
+        agents: [
+          { agentId: 'main', role: 'coordinator', isManager: true, skills: [] },
+          { agentId: 'reviewer', role: 'worker', position: 'challenger', isManager: false, skills: [] },
+        ],
+        createdAt: '2026-09-29T00:00:00.000Z',
+        updatedAt: '2026-09-29T00:00:00.000Z',
+      },
+    };
+    mocks.uiState.agentCatalogByGateway = {
+      'gw-1': {
+        defaultId: 'main',
+        agents: [
+          { id: 'main', name: 'Front Desk' },
+          { id: 'reviewer', name: 'Quality Reviewer' },
+        ],
+      },
+    };
     const { container, unmount } = render(<Harness initialValue="设计一张发布海报" />);
 
     await act(async () => {
@@ -415,6 +454,50 @@ describe('useChatSend abort flow', () => {
     expect(options.contextPrefix).toContain('当前实际可用的工具');
     expect(options.contextPrefix).toContain('产物确实存在');
     expect(options.contextPrefix).toContain('sessions_spawn');
+    expect(options.contextPrefix).toContain('Merchant Service Squad');
+    expect(options.contextPrefix).toContain('Front Desk');
+    expect(options.contextPrefix).toContain('Quality Reviewer');
+    expect(options.contextPrefix).toContain('challenger');
+    expect(options.contextPrefix).toContain('agentId="main" name="Front Desk" role="coordinator" position="expert"');
+    expect(options.contextPrefix).toContain('single-agent-reliable');
+    unmount();
+  });
+
+  it('冷启动未打开团队页也会按 teamId 补读花名册再发送', async () => {
+    const active = mocks.taskState.tasks[0]!;
+    mocks.taskState.tasks = [{ ...active, teamId: 'team-cold', ensemble: false }];
+    mocks.teamState.teams = {};
+    mocks.teamState.loadTeam.mockImplementationOnce(async () => {
+      const team: import('@clawwork/shared').Team = {
+        id: 'team-cold',
+        name: '中文增长团队',
+        emoji: '🚀',
+        description: '冷启动团队',
+        gatewayId: 'gw-1',
+        source: 'local',
+        version: '1',
+        agents: [{ agentId: 'main', role: 'coordinator', isManager: true, skills: [] }],
+        createdAt: '2026-09-29T00:00:00.000Z',
+        updatedAt: '2026-09-29T00:00:00.000Z',
+      };
+      mocks.teamState.teams[team.id] = team;
+      return team;
+    });
+    mocks.uiState.agentCatalogByGateway = {
+      'gw-1': { defaultId: 'main', agents: [{ id: 'main', name: '增长主管' }] },
+    };
+    const { container, unmount } = render(<Harness initialValue="继续昨天的方案" />);
+
+    await act(async () => {
+      (container.querySelectorAll('button')[1] as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+
+    expect(mocks.teamState.loadTeam).toHaveBeenCalledWith('team-cold');
+    const options = mocks.send.mock.calls[0]![1] as { contextPrefix: string };
+    expect(options.contextPrefix).toContain('中文增长团队');
+    expect(options.contextPrefix).toContain('增长主管');
+    expect(options.contextPrefix).toContain('position="expert"');
     unmount();
   });
 
