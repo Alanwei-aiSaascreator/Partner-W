@@ -11,7 +11,7 @@ import { relayBootstrapPublicStateStore, type RelayBootstrapPublicPhase } from '
 import { getCommercialClient } from './client.js';
 import { probeAuth } from './auth.js';
 import { deviceFingerprint, mapActivationError, readLicenseStatus } from './license.js';
-import { webSearchEnabled, fetchFirstRelayModel } from './relay-config.js';
+import { webSearchEnabled, fetchFirstRelayModel, fetchRelayMediaCapabilities } from './relay-config.js';
 import { readConfig } from '../workspace/config.js';
 import { createRelayBootstrapScheduler } from './relay-bootstrap.js';
 import type {
@@ -201,11 +201,14 @@ export function buildRelayBootstrapDeps(): RelayBootstrapDeps {
     },
     readLicenseKey: async () => {
       const res = await readLicenseStatus();
-      return res.ok && res.result?.licenseKey ? res.result.licenseKey : null;
+      return res.ok && res.result?.configured && res.result.activated && res.result.licenseKey
+        ? res.result.licenseKey
+        : null;
     },
     fetchRelayKey: fetchRelayKeyForLicense,
     getGateway: findConnectedGateway,
     resolveDefaultModel: fetchFirstRelayModel,
+    resolveMediaCapabilities: fetchRelayMediaCapabilities,
     deviceFingerprint,
     log,
   };

@@ -57,6 +57,8 @@ function setOverview(activated: boolean): void {
       license: activated
         ? {
             activated: true,
+            licenseId: 'license-1',
+            orgId: 'org-owner',
             licenseKey: 'RY-TEST-0001',
             sku: 'USB-内测版',
             status: 'active',

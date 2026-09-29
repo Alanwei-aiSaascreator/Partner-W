@@ -5,10 +5,12 @@ import { getCommercialClient } from './client.js';
 import { ensureDeviceId, readConfig, updateConfig } from '../workspace/config.js';
 import { getAllGatewayClients } from '../ws/index.js';
 import { getDebugLogger } from '../debug/index.js';
-import { applyRelayConfig, fetchFirstRelayModel } from './relay-config.js';
+import { applyRelayConfig, fetchFirstRelayModel, fetchRelayMediaCapabilities } from './relay-config.js';
 
 export interface LicenseStatus {
   configured: boolean;
+  licenseId: string | null;
+  orgId: string | null;
   licenseKey: string | null;
   sku: string | null;
   status: string | null;
@@ -28,6 +30,27 @@ export interface LicenseStatus {
   relayConfigured?: boolean;
 }
 
+let licenseOperationTail: Promise<void> = Promise.resolve();
+let licenseGeneration = 0;
+
+function runLicenseOperation<T>(operation: () => Promise<T>): Promise<T> {
+  const result = licenseOperationTail.then(operation, operation);
+  licenseOperationTail = result.then(
+    () => undefined,
+    () => undefined,
+  );
+  return result;
+}
+
+function nextLicenseGeneration(): number {
+  licenseGeneration += 1;
+  return licenseGeneration;
+}
+
+function isCurrentLicenseGeneration(generation: number): boolean {
+  return generation === licenseGeneration;
+}
+
 type CommercialClient = NonNullable<ReturnType<typeof getCommercialClient>>;
 
 function fail<T = unknown>(error: unknown, errorCode: string): IpcResult<T> {
@@ -41,36 +64,79 @@ export function deviceFingerprint(): string {
   return createHash('sha256').update(material).digest('hex');
 }
 
-function readStoredLicenseKey(): string | null {
-  const key = readConfig()?.commercial?.licenseKey ?? '';
-  return key || null;
+function readStoredLicense(): {
+  licenseKey: string | null;
+  licenseBinding: { userId: string; orgId: string; licenseId: string } | undefined;
+} {
+  const commercial = readConfig()?.commercial;
+  return { licenseKey: commercial?.licenseKey || null, licenseBinding: commercial?.licenseBinding };
 }
 
 // Both sources expose exactly these: the `licenses` table directly, and the
 // `org_active_license` view (migration 20260911000008 added max_activations to it).
-const LICENSE_FIELDS = 'license_key, sku, status, expires_at, max_activations, token_quota_micros, token_used_micros';
+const LICENSE_FIELDS =
+  'id, org_id, license_key, sku, status, expires_at, issued_at, max_activations, token_quota_micros, token_used_micros';
 
-/**
- * The caller's owner org, chosen the same way the server chooses it
- * (`order by joined_at asc, org_id asc`) so both sides agree on which org a
- * user "is" when they happen to own several.
- */
-async function firstOwnerOrg(supabase: CommercialClient): Promise<string | null> {
-  const { data } = await supabase
-    .from('org_members')
-    .select('org_id, joined_at')
-    .eq('role', 'owner')
-    .order('joined_at', { ascending: true })
-    .order('org_id', { ascending: true })
-    .limit(1);
-  return (data?.[0]?.org_id as string) ?? null;
+interface LicenseRow {
+  id: unknown;
+  org_id: unknown;
+  license_key: unknown;
+  sku: unknown;
+  status: unknown;
+  expires_at: unknown;
+  issued_at?: unknown;
+  max_activations: unknown;
+  token_quota_micros: unknown;
+  token_used_micros: unknown;
 }
 
-export async function readLicenseStatus(): Promise<IpcResult<LicenseStatus>> {
+/** Every organization this exact user owns, in the server's deterministic order. */
+async function ownerOrgIds(supabase: CommercialClient, userId: string): Promise<string[]> {
+  const { data, error } = await supabase
+    .from('org_members')
+    .select('org_id, joined_at')
+    .eq('user_id', userId)
+    .eq('role', 'owner')
+    .order('joined_at', { ascending: true })
+    .order('org_id', { ascending: true });
+  if (error) throw error;
+  return (data ?? []).map((row) => String(row.org_id ?? '')).filter(Boolean);
+}
+
+function persistLicenseBinding(userId: string, license: LicenseRow, generation: number): void {
+  if (!isCurrentLicenseGeneration(generation)) return;
+  const licenseKey = String(license.license_key ?? '');
+  const licenseId = String(license.id ?? '');
+  const orgId = String(license.org_id ?? '');
+  if (!licenseKey || !licenseId || !orgId) return;
+
+  const current = readConfig()?.commercial ?? { supabaseUrl: '', supabaseAnonKey: '' };
+  const binding = current.licenseBinding;
+  if (
+    current.licenseKey === licenseKey &&
+    binding?.userId === userId &&
+    binding.orgId === orgId &&
+    binding.licenseId === licenseId
+  ) {
+    return;
+  }
+  updateConfig({ commercial: { ...current, licenseKey, licenseBinding: { userId, orgId, licenseId } } });
+}
+
+function clearPersistedLicenseBinding(generation: number): void {
+  if (!isCurrentLicenseGeneration(generation)) return;
+  const current = readConfig()?.commercial;
+  if (!current?.licenseKey && !current?.licenseBinding) return;
+  updateConfig({ commercial: { ...current, licenseKey: undefined, licenseBinding: undefined } });
+}
+
+async function readLicenseStatusUnlocked(generation: number): Promise<IpcResult<LicenseStatus>> {
   const fingerprint = deviceFingerprint();
-  const storedKey = readStoredLicenseKey();
+  const { licenseKey: storedKey, licenseBinding: storedBinding } = readStoredLicense();
   const base: LicenseStatus = {
     configured: false,
+    licenseId: null,
+    orgId: null,
     licenseKey: storedKey,
     sku: null,
     status: null,
@@ -86,6 +152,13 @@ export async function readLicenseStatus(): Promise<IpcResult<LicenseStatus>> {
   if (!supabase) return { ok: true, result: base };
 
   try {
+    const auth = await supabase.auth.getUser();
+    const userId = auth.data.user?.id ?? null;
+    if (auth.error || !userId) return { ok: true, result: base };
+
+    const ownedOrgIds = await ownerOrgIds(supabase, userId);
+    const ownedOrgSet = new Set(ownedOrgIds);
+
     // Look the licence up by this machine's stored key first, then by account.
     //
     // The account lookup is what makes a new machine work. A fresh install has
@@ -93,29 +166,56 @@ export async function readLicenseStatus(): Promise<IpcResult<LicenseStatus>> {
     // row in license_activations, is what "I own this" means. Gating on the
     // device row is what used to lock people out after a reinstall while
     // protecting nothing (see migration 20260911000008).
-    let license = storedKey
-      ? (await supabase.from('licenses').select(LICENSE_FIELDS).eq('license_key', storedKey).maybeSingle()).data
-      : null;
-
-    if (!license) {
-      const org = await firstOwnerOrg(supabase);
-      if (!org) return { ok: true, result: base };
-
-      license = (await supabase.from('org_active_license').select(LICENSE_FIELDS).eq('org_id', org).maybeSingle()).data;
-
-      // Remember it locally so the next launch takes the direct path.
-      if (license?.license_key) {
-        const current = readConfig()?.commercial ?? { supabaseUrl: '', supabaseAnonKey: '' };
-        updateConfig({ commercial: { ...current, licenseKey: String(license.license_key) } });
-      }
+    // `license_select` intentionally exposes a row to every member of its org,
+    // but activate_license authorizes owners only.  Therefore RLS visibility is
+    // not sufficient: the row's org must be in this exact user's owner rows.
+    let license: LicenseRow | null = null;
+    if (storedKey) {
+      const stored = await supabase.from('licenses').select(LICENSE_FIELDS).eq('license_key', storedKey).maybeSingle();
+      if (stored.error) throw stored.error;
+      const candidate = stored.data as LicenseRow | null;
+      const candidateOrgId = String(candidate?.org_id ?? '');
+      const candidateLicenseId = String(candidate?.id ?? '');
+      const exactStoredBinding =
+        !storedBinding ||
+        (storedBinding.userId === userId &&
+          storedBinding.orgId === candidateOrgId &&
+          storedBinding.licenseId === candidateLicenseId);
+      if (candidate && ownedOrgSet.has(candidateOrgId) && exactStoredBinding) license = candidate;
     }
 
-    if (!license) return { ok: true, result: base };
+    if (!license && ownedOrgIds.length > 0) {
+      const active = await supabase.from('org_active_license').select(LICENSE_FIELDS).in('org_id', ownedOrgIds);
+      if (active.error) throw active.error;
+      const rank = new Map(ownedOrgIds.map((orgId, index) => [orgId, index]));
+      license =
+        ((active.data ?? []) as LicenseRow[])
+          .filter((row) => ownedOrgSet.has(String(row.org_id ?? '')))
+          .sort(
+            (left, right) =>
+              (rank.get(String(left.org_id ?? '')) ?? Number.MAX_SAFE_INTEGER) -
+              (rank.get(String(right.org_id ?? '')) ?? Number.MAX_SAFE_INTEGER),
+          )[0] ?? null;
+    }
+
+    if (!license) {
+      // The signed-in account cannot legally activate the cached key. Keeping it
+      // would let relay bootstrap call activate_license with a previous/member
+      // account's card even though the entitlement check rejected it.
+      clearPersistedLicenseBinding(generation);
+      return { ok: true, result: { ...base, licenseKey: null } };
+    }
+    if (!isCurrentLicenseGeneration(generation)) {
+      return { ok: true, result: { ...base, licenseKey: null } };
+    }
+    persistLicenseBinding(userId, license, generation);
 
     return {
       ok: true,
       result: {
         configured: true,
+        licenseId: String(license.id ?? '') || null,
+        orgId: String(license.org_id ?? '') || null,
         licenseKey: (license.license_key as string) ?? null,
         sku: (license.sku as string) ?? null,
         status: (license.status as string) ?? null,
@@ -131,6 +231,11 @@ export async function readLicenseStatus(): Promise<IpcResult<LicenseStatus>> {
   } catch (error) {
     return fail(error, 'license_read_failed');
   }
+}
+
+export function readLicenseStatus(): Promise<IpcResult<LicenseStatus>> {
+  const generation = licenseGeneration;
+  return runLicenseOperation(() => readLicenseStatusUnlocked(generation));
 }
 
 /**
@@ -192,7 +297,7 @@ export function mapActivationError(error: { code?: string; message?: string }): 
   return 'activation_failed';
 }
 
-export async function activateLicense(licenseKey: string): Promise<IpcResult<LicenseStatus>> {
+async function activateLicenseUnlocked(licenseKey: string, generation: number): Promise<IpcResult<LicenseStatus>> {
   const supabase = getCommercialClient();
   if (!supabase) {
     return { ok: false, error: 'Commercial backend is not configured', errorCode: 'not_configured' };
@@ -217,17 +322,35 @@ export async function activateLicense(licenseKey: string): Promise<IpcResult<Lic
       return { ok: false, error: String(error.message ?? ''), errorCode: mapActivationError(error) };
     }
 
-    updateConfig({ commercial: { ...readConfig()?.commercial, licenseKey: trimmed } as never });
+    if (!isCurrentLicenseGeneration(generation)) {
+      return { ok: false, error: 'License activation was superseded', errorCode: 'activation_failed' };
+    }
+
+    // The key has just crossed the server authorization boundary. Drop any
+    // previous card's triple so the live row below can establish and persist
+    // the newly activated owner/org/license identity.
+    updateConfig({
+      commercial: { ...readConfig()?.commercial, licenseKey: trimmed, licenseBinding: undefined } as never,
+    });
 
     // 把中转配置写进网关。**写失败不让激活整体失败** —— 授权已经绑定成功了，
     // 重试配置写入比让用户重新激活代价小。失败只在状态里带一个 relayConfigured: false。
     const relayConfigured = await configureRelay((data as { relayKey?: string | null } | null)?.relayKey ?? null);
 
-    const status = await readLicenseStatus();
+    if (!isCurrentLicenseGeneration(generation)) {
+      return { ok: false, error: 'License activation was superseded', errorCode: 'activation_failed' };
+    }
+
+    const status = await readLicenseStatusUnlocked(generation);
     return status.ok && status.result ? { ...status, result: { ...status.result, relayConfigured } } : status;
   } catch (error) {
     return fail(error, 'activation_failed');
   }
+}
+
+export function activateLicense(licenseKey: string): Promise<IpcResult<LicenseStatus>> {
+  const generation = nextLicenseGeneration();
+  return runLicenseOperation(() => activateLicenseUnlocked(licenseKey, generation));
 }
 
 /**
@@ -260,6 +383,7 @@ async function configureRelay(relayKey: string | null): Promise<boolean> {
         getConfig: tx.getConfig,
         patchConfig: tx.patchConfig,
         resolveDefaultModel: fetchFirstRelayModel,
+        resolveMediaCapabilities: fetchRelayMediaCapabilities,
         log: (event, data) => getDebugLogger().info({ domain: 'commercial', event, data }),
       },
       { relayKey, deviceFingerprint: deviceFingerprint() },
@@ -277,9 +401,10 @@ async function configureRelay(relayKey: string | null): Promise<boolean> {
 }
 
 export function clearLicense(): IpcResult {
+  nextLicenseGeneration();
   const current = readConfig()?.commercial;
   if (current) {
-    updateConfig({ commercial: { ...current, licenseKey: undefined } });
+    updateConfig({ commercial: { ...current, licenseKey: undefined, licenseBinding: undefined } });
   }
   return { ok: true };
 }

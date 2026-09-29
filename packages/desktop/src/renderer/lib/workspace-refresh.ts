@@ -68,6 +68,7 @@ export async function refreshRendererAfterWorkspaceChange(): Promise<void> {
     modelCatalogByGateway: {},
     agentCatalogByGateway: {},
     toolsCatalogByGateway: {},
+    effectiveToolsByGateway: {},
     skillsStatusByGateway: {},
     commandCatalogByGateway: {},
   });

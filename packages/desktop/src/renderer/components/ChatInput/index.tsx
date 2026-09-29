@@ -281,7 +281,7 @@ export default function ChatInput({
     currentModel,
     currentThinking,
     modelAvailability,
-    toolsCatalog,
+    effectiveToolsState,
     modelLabel,
     currentModelEntry,
     modelsByProvider,
@@ -1174,9 +1174,7 @@ export default function ChatInput({
                   <TooltipContent side="top">{t('slashDashboard.tooltip')}</TooltipContent>
                 </Tooltip>
 
-                {toolsCatalog?.groups && toolsCatalog.groups.length > 0 && (
-                  <ToolsCatalog groups={toolsCatalog.groups} onToolSelect={handleToolSelect} />
-                )}
+                {effectiveToolsState && <ToolsCatalog state={effectiveToolsState} onToolSelect={handleToolSelect} />}
               </div>
             )}
           </div>

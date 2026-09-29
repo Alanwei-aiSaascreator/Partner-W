@@ -39,6 +39,7 @@ const mocks = vi.hoisted(() => ({
   activateLicense: vi.fn(),
   requestCommercialAccessCleanup: vi.fn(),
   drainPendingCommercialAccessCleanup: vi.fn(),
+  clearLicense: vi.fn(),
   clearCommercialSession: vi.fn(),
   hasLocalSession: vi.fn(),
   readSessionState: vi.fn(),
@@ -89,7 +90,7 @@ vi.mock('../src/main/commercial/relay-startup.js', () => ({
 
 vi.mock('../src/main/commercial/license.js', () => ({
   activateLicense: (...a: unknown[]) => mocks.activateLicense(...a),
-  clearLicense: vi.fn(),
+  clearLicense: () => mocks.clearLicense(),
   deviceFingerprint: () => 'fp-test',
   readLicenseStatus: vi.fn(),
 }));
@@ -129,6 +130,7 @@ describe('登录入口 → notifyCommercialSignedIn（Stage 2C 接线）', () =>
     mocks.activateLicense.mockReset();
     mocks.requestCommercialAccessCleanup.mockReset();
     mocks.drainPendingCommercialAccessCleanup.mockReset();
+    mocks.clearLicense.mockReset();
     mocks.clearCommercialSession.mockReset();
     mocks.requestCommercialAccessCleanup.mockResolvedValue({ cleaned: true, pending: false });
     mocks.drainPendingCommercialAccessCleanup.mockResolvedValue({ cleaned: false, pending: false });
@@ -222,7 +224,11 @@ describe('登录入口 → notifyCommercialSignedIn（Stage 2C 接线）', () =>
     const result = (await handlerFor('commercial:sign-out')({})) as { ok: boolean };
 
     expect(result.ok).toBe(false);
+    expect(mocks.clearLicense).toHaveBeenCalledTimes(1);
     expect(mocks.requestCommercialAccessCleanup).toHaveBeenCalledTimes(1);
+    expect(mocks.clearLicense.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.requestCommercialAccessCleanup.mock.invocationCallOrder[0]!,
+    );
     expect(mocks.clearCommercialSession).toHaveBeenCalledTimes(1);
   });
 });

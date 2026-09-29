@@ -293,6 +293,12 @@ export class BrowserGatewayClient {
     return this.sendReq('tools.catalog', params);
   }
 
+  async getEffectiveTools(sessionKey: string, agentId?: string): Promise<Record<string, unknown>> {
+    const params: Record<string, unknown> = { sessionKey };
+    if (agentId) params.agentId = agentId;
+    return this.sendReq('tools.effective', params);
+  }
+
   async getSkillsStatus(agentId?: string): Promise<Record<string, unknown>> {
     const params: Record<string, unknown> = {};
     if (agentId) params.agentId = agentId;

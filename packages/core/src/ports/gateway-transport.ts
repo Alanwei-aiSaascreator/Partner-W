@@ -113,6 +113,7 @@ export interface GatewayTransportPort {
   listCommands: (gatewayId: string, params?: CommandsListParams) => Promise<IpcResult>;
   listAgents: (gatewayId: string) => Promise<IpcResult>;
   getToolsCatalog: (gatewayId: string, agentId?: string) => Promise<IpcResult>;
+  getEffectiveTools: (gatewayId: string, sessionKey: string, agentId?: string) => Promise<IpcResult>;
   getSkillsStatus: (gatewayId: string, agentId?: string) => Promise<IpcResult>;
   createSession: (gatewayId: string, params: { key: string; agentId: string; message?: string }) => Promise<IpcResult>;
   deleteSession: (gatewayId: string, sessionKey: string) => Promise<IpcResult>;

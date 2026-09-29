@@ -1,6 +1,6 @@
 import type { CommercialAccountOverview, CommercialLicenseSummary, IpcResult } from '@clawwork/shared';
 import { getCommercialClient, resetCommercialClient } from './client.js';
-import { deviceFingerprint } from './license.js';
+import { deviceFingerprint, readLicenseStatus } from './license.js';
 import {
   classifyAuthFailure,
   classifyOtpVerifyFailure,
@@ -392,6 +392,7 @@ export async function readSessionState(): Promise<IpcResult<CommercialSessionSta
       supabase
         .from('org_members')
         .select('role, joined_at, organizations(id, name, slug, plan)')
+        .eq('user_id', user.id)
         .order('joined_at', { ascending: true })
         .order('org_id', { ascending: true }),
       'org_members.select',
@@ -445,9 +446,8 @@ function shortenFingerprint(fingerprint: string): string {
 /**
  * Reads the Account panel's entire snapshot in one round-trip.
  *
- * License is resolved from the user's active org rather than from the locally
- * stored license key: activation happens on one device, but the plan and quota
- * belong to the org and must show on every device the user signs in on.
+ * License identity comes from the same resolver relay bootstrap uses.  The UI
+ * must never show one card's balance while the gateway spends another card.
  */
 export async function readAccountOverview(): Promise<IpcResult<CommercialAccountOverview>> {
   const supabase = getCommercialClient();
@@ -467,61 +467,29 @@ export async function readAccountOverview(): Promise<IpcResult<CommercialAccount
       return { ok: false, error: 'Not signed in', errorCode: 'not_signed_in' };
     }
 
-    // ⚠️ 2026-09-24 修：以前这里是 `session.orgs[0]`，而 `readSessionState` 当时
-    //    既没 order 也没 role 过滤 ⇒ 取到的是**任意的**一个所属组织，可能是
-    //    用户只是 member 的组织。后果：界面把那个组织的卡显示成
-    //    「当前账户已绑定 {sku}」，用户既用不了、又因为激活页那时不渲染输入框而换不掉。
-    //    现在统一走 `selectOwnerOrg`（最早加入的 **owner** 组织，与服务端
-    //    `activate_license` / `license.ts` 的 `firstOwnerOrg()` 同一口径）。
-    const org = selectOwnerOrg(session.orgs);
+    const statusResult = await readLicenseStatus();
+    if (!statusResult.ok) return fail(statusResult.error, statusResult.errorCode ?? 'license_read_failed');
+    const status = statusResult.result;
+
+    const exactOrg = status?.orgId
+      ? (session.orgs.find((candidate) => candidate.id === status.orgId && candidate.role === 'owner') ?? null)
+      : null;
+    const org = exactOrg ?? selectOwnerOrg(session.orgs);
 
     let license: CommercialLicenseSummary | null = null;
-    if (org) {
-      // Reads the org's *active* licence through the view, not the table.
-      //
-      // Two reasons, both of which used to bite:
-      //   1. An org can hold more than one licence (two U-disks bound to the
-      //      same account). Selecting from the table by org_id then returned
-      //      several rows, and `.maybeSingle()` turned that into PGRST116 —
-      //      the whole panel failed to load, and because the quota gate reads
-      //      the same snapshot it silently fell back to "unlimited".
-      //   2. Which licence to show is not an arbitrary choice: the server
-      //      charges the one with the most remaining balance (see
-      //      org_active_license). Showing a different card's balance would
-      //      mean the number on screen is not the number being spent.
-      const licenseResponse = await withTimeoutOrNull(
-        supabase
-          .from('org_active_license')
-          .select('id, license_key, sku, status, expires_at, token_quota_micros, token_used_micros')
-          .eq('org_id', org.id)
-          .maybeSingle(),
-        'licenses.read',
-      );
-
-      if (!licenseResponse) {
-        return { ok: false, error: 'License lookup timed out', errorCode: 'license_read_timeout' };
-      }
-      if (licenseResponse.error) return fail(licenseResponse.error, 'license_read_failed');
-
-      const row = licenseResponse.data;
-      if (row) {
-        license = {
-          // The licence is visible through RLS, which means it belongs to one of
-          // this user's orgs — that is what ownership means, and it is what the
-          // UI should report. Previously this also required a non-revoked device
-          // row for *this* machine, which locked people out after a reinstall
-          // while gating nothing (see migration 20260911000008).
-          activated: true,
-          licenseKey: (row.license_key as string) ?? null,
-          sku: (row.sku as string) ?? null,
-          status: (row.status as string) ?? null,
-          expiresAt: (row.expires_at as string) ?? null,
-          tokenQuotaMicros: Number(row.token_quota_micros ?? 0),
-          tokenUsedMicros: Number(row.token_used_micros ?? 0),
-        };
-
-        void registerDevice(supabase, String(row.license_key ?? ''));
-      }
+    if (status?.configured && status.activated && status.licenseId && status.orgId) {
+      license = {
+        activated: true,
+        licenseId: status.licenseId,
+        orgId: status.orgId,
+        licenseKey: status.licenseKey,
+        sku: status.sku,
+        status: status.status,
+        expiresAt: status.expiresAt,
+        tokenQuotaMicros: status.tokenQuotaMicros,
+        tokenUsedMicros: status.tokenUsedMicros,
+      };
+      void registerDevice(supabase, status.licenseKey ?? '');
     }
 
     return {

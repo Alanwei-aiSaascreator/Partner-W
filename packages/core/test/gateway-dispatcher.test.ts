@@ -137,6 +137,7 @@ function createHarness() {
     setModelCatalogFailureForGateway: vi.fn(),
     setAgentCatalogForGateway: vi.fn(),
     setToolsCatalogForGateway: vi.fn(),
+    setEffectiveToolsState: vi.fn(),
     setSkillsStatusForGateway: vi.fn(),
     setCommandCatalogForGateway: vi.fn(),
     onToast: vi.fn((type: string, title: string, opts?: { description?: string }) => {
@@ -3832,5 +3833,128 @@ describe('网关明确拒绝：把"哪一类"一起存下来', () => {
     h.emitStatus({ gatewayId: 'gw-1', connected: true });
 
     expect(h.deps.setGatewayReconnectInfo).toHaveBeenLastCalledWith('gw-1', null);
+  });
+});
+
+describe('fetchEffectiveTools', () => {
+  it('stores only the session-scoped effective inventory', async () => {
+    const h = createHarness();
+    const inventory = {
+      agentId: 'main',
+      profile: 'coding',
+      groups: [{ id: 'core', label: 'Core', source: 'core', tools: [] }],
+    };
+    const getEffectiveTools = vi.fn(async () => ({ ok: true as const, result: inventory }));
+    const setEffectiveToolsState = vi.fn();
+    Object.assign(h.deps.gateway, { getEffectiveTools });
+    Object.assign(h.deps, { setEffectiveToolsState });
+    const dispatcher = h.dispatcher as unknown as {
+      fetchEffectiveTools: (gatewayId: string, sessionKey: string) => Promise<void>;
+    };
+
+    expect(typeof dispatcher.fetchEffectiveTools).toBe('function');
+    await dispatcher.fetchEffectiveTools('gw-1', TASK.sessionKey);
+
+    expect(getEffectiveTools).toHaveBeenCalledWith('gw-1', TASK.sessionKey);
+    expect(setEffectiveToolsState).toHaveBeenNthCalledWith(1, 'gw-1', TASK.sessionKey, { status: 'loading' });
+    expect(setEffectiveToolsState).toHaveBeenNthCalledWith(2, 'gw-1', TASK.sessionKey, {
+      status: 'ready',
+      inventory,
+    });
+  });
+
+  it('replaces any prior inventory with an explicit error and never falls back to tools.catalog', async () => {
+    const h = createHarness();
+    const getEffectiveTools = vi.fn(async () => ({ ok: false as const, error: 'unknown session key' }));
+    const getToolsCatalog = vi.fn(async () => ({ ok: true as const, result: { groups: [{ id: 'core' }] } }));
+    const setEffectiveToolsState = vi.fn();
+    Object.assign(h.deps.gateway, { getEffectiveTools, getToolsCatalog });
+    Object.assign(h.deps, { setEffectiveToolsState });
+    const dispatcher = h.dispatcher as unknown as {
+      fetchEffectiveTools: (gatewayId: string, sessionKey: string) => Promise<void>;
+    };
+
+    expect(typeof dispatcher.fetchEffectiveTools).toBe('function');
+    await dispatcher.fetchEffectiveTools('gw-1', TASK.sessionKey);
+
+    expect(setEffectiveToolsState).toHaveBeenLastCalledWith('gw-1', TASK.sessionKey, {
+      status: 'error',
+      error: 'unknown session key',
+    });
+    expect(getToolsCatalog).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['missing agent identity', { profile: 'coding', groups: [] }],
+    [
+      'missing group tools',
+      { agentId: 'main', profile: 'coding', groups: [{ id: 'core', label: 'Core', source: 'core' }] },
+    ],
+    [
+      'malformed tool entry',
+      {
+        agentId: 'main',
+        profile: 'coding',
+        groups: [{ id: 'core', label: 'Core', source: 'core', tools: [{ id: 'exec', source: 'core' }] }],
+      },
+    ],
+    ['malformed notices', { agentId: 'main', profile: 'coding', groups: [], notices: {} }],
+  ])('fails closed for a structurally invalid tools.effective result: %s', async (_name, result) => {
+    const h = createHarness();
+    const getEffectiveTools = vi.fn(async () => ({ ok: true as const, result }));
+    const setEffectiveToolsState = vi.fn();
+    Object.assign(h.deps.gateway, { getEffectiveTools });
+    Object.assign(h.deps, { setEffectiveToolsState });
+
+    await h.dispatcher.fetchEffectiveTools('gw-1', TASK.sessionKey);
+
+    expect(setEffectiveToolsState).toHaveBeenLastCalledWith('gw-1', TASK.sessionKey, {
+      status: 'error',
+      error: 'tools.effective returned an invalid response',
+    });
+    expect(setEffectiveToolsState).not.toHaveBeenCalledWith(
+      'gw-1',
+      TASK.sessionKey,
+      expect.objectContaining({ status: 'ready' }),
+    );
+  });
+
+  it('refreshes after the gateway materializes or patches the task session', async () => {
+    const h = createHarness();
+    const getEffectiveTools = vi.fn(async () => ({
+      ok: true as const,
+      result: { agentId: 'main', profile: 'coding', groups: [] },
+    }));
+    Object.assign(h.deps.gateway, { getEffectiveTools });
+
+    h.emit('sessions.changed', { sessionKey: TASK.sessionKey, reason: 'created' });
+    await vi.waitFor(() => expect(getEffectiveTools).toHaveBeenCalledWith('gw-1', TASK.sessionKey));
+  });
+
+  it('does not let an older failed lookup overwrite a newer ready inventory', async () => {
+    const h = createHarness();
+    let releaseOld!: (value: { ok: false; error: string }) => void;
+    const oldResponse = new Promise<{ ok: false; error: string }>((resolve) => {
+      releaseOld = resolve;
+    });
+    const inventory = { agentId: 'main', profile: 'coding', groups: [] };
+    const getEffectiveTools = vi
+      .fn()
+      .mockImplementationOnce(() => oldResponse)
+      .mockResolvedValueOnce({ ok: true, result: inventory });
+    const setEffectiveToolsState = vi.fn();
+    Object.assign(h.deps.gateway, { getEffectiveTools });
+    Object.assign(h.deps, { setEffectiveToolsState });
+
+    const older = h.dispatcher.fetchEffectiveTools('gw-1', TASK.sessionKey);
+    const newer = h.dispatcher.fetchEffectiveTools('gw-1', TASK.sessionKey);
+    await newer;
+    releaseOld({ ok: false, error: 'unknown session key' });
+    await older;
+
+    expect(setEffectiveToolsState).toHaveBeenLastCalledWith('gw-1', TASK.sessionKey, {
+      status: 'ready',
+      inventory,
+    });
   });
 });

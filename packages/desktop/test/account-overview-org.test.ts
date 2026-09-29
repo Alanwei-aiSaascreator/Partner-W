@@ -24,6 +24,7 @@ const hoisted = vi.hoisted(() => ({
   getUser: vi.fn(),
   from: vi.fn(),
   rpc: vi.fn(),
+  readLicenseStatus: vi.fn(),
 }));
 
 vi.mock('../src/main/commercial/client.js', () => ({
@@ -42,17 +43,16 @@ vi.mock('../src/main/debug/index.js', () => ({
   getDebugLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), flush: vi.fn() }),
 }));
 
-// license.ts 在模块顶层就 import 了 ws 层，不 mock 会把真实网关栈拖进来。
-vi.mock('../src/main/ws/index.js', () => ({ getAllGatewayClients: () => new Map() }));
+vi.mock('../src/main/commercial/license.js', () => ({
+  deviceFingerprint: () => '0123456789abcdef0123456789abcdef',
+  readLicenseStatus: hoisted.readLicenseStatus,
+}));
 
 interface OrgRow {
   role: string;
   joined_at: string;
   organizations: { id: string; name: string; slug: string; plan: string };
 }
-
-/** 记录「对哪个 org_id 查过卡」，用来断言**查询打在了哪个组织上**，而不只是返回值。 */
-const licenseQueries: string[] = [];
 
 function chain(result: unknown, onEq?: (column: string, value: unknown) => void) {
   const node: Record<string, unknown> = {};
@@ -80,33 +80,39 @@ function orgRow(id: string, role: string, joinedAt: string): OrgRow {
 function wireSupabase(rows: OrgRow[], activeCardOrgId: string | null) {
   hoisted.from.mockImplementation((table: string) => {
     if (table === 'org_members') return chain({ data: rows, error: null });
-    if (table !== 'org_active_license') throw new Error(`unexpected table: ${table}`);
-
-    // 卡要按**被问到的组织**返回，所以必须先记住 `.eq('org_id', …)` 的值。
-    let asked: string | null = null;
-    const node = chain({ data: null, error: null }, (column, value) => {
-      if (column === 'org_id') asked = String(value);
-    }) as Record<string, unknown>;
-
-    node.maybeSingle = vi.fn(async () => {
-      licenseQueries.push(String(asked));
-      const hit = asked !== null && asked === activeCardOrgId;
-      return {
-        data: hit
-          ? {
-              id: 'lic-1',
-              license_key: 'RY-TEST-0001',
-              sku: 'USB-内测版',
-              status: 'active',
-              expires_at: null,
-              token_quota_micros: 5_000_000_000,
-              token_used_micros: 1_000_000,
-            }
-          : null,
-        error: null,
-      };
-    });
-    return node;
+    throw new Error(`unexpected table: ${table}`);
+  });
+  hoisted.readLicenseStatus.mockResolvedValue({
+    ok: true,
+    result: activeCardOrgId
+      ? {
+          configured: true,
+          licenseId: 'lic-1',
+          orgId: activeCardOrgId,
+          licenseKey: 'RY-TEST-0001',
+          sku: 'USB-内测版',
+          status: 'active',
+          expiresAt: null,
+          maxActivations: 3,
+          tokenQuotaMicros: 5_000_000_000,
+          tokenUsedMicros: 1_000_000,
+          activated: true,
+          deviceFingerprint: 'fingerprint',
+        }
+      : {
+          configured: false,
+          licenseId: null,
+          orgId: null,
+          licenseKey: null,
+          sku: null,
+          status: null,
+          expiresAt: null,
+          maxActivations: 0,
+          tokenQuotaMicros: 0,
+          tokenUsedMicros: 0,
+          activated: false,
+          deviceFingerprint: 'fingerprint',
+        },
   });
 }
 
@@ -119,7 +125,6 @@ describe('readAccountOverview 的组织选择', () => {
   beforeEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
-    licenseQueries.length = 0;
     hoisted.getUser.mockResolvedValue({
       data: { user: { id: 'user-1', email: null, phone: '18581821250' } },
       error: null,
@@ -138,9 +143,8 @@ describe('readAccountOverview 的组织选择', () => {
     const result = res.ok ? res.result : null;
     expect(result?.org?.id, '选中的组织').toBe('org-owner');
     expect(result?.license?.sku, '取到的是 owner 组织那张卡').toBe('USB-内测版');
-    // 查询本身也必须打在 owner 组织上 —— 否则"返回值对"可能只是巧合。
-    expect(licenseQueries).toContain('org-owner');
-    expect(licenseQueries, 'member 组织不该被问过卡').not.toContain('org-member');
+    expect(hoisted.readLicenseStatus).toHaveBeenCalledTimes(1);
+    expect(hoisted.from).not.toHaveBeenCalledWith('org_active_license');
   });
 
   it('两个 owner ⇒ 取先加入的那个（数组顺序颠倒也成立）', async () => {
@@ -154,17 +158,17 @@ describe('readAccountOverview 的组织选择', () => {
     const result = res.ok ? res.result : null;
     expect(result?.org?.id).toBe('org-early');
     expect(result?.license?.sku).toBe('USB-内测版');
-    expect(licenseQueries).toContain('org-early');
+    expect(hoisted.readLicenseStatus).toHaveBeenCalledTimes(1);
   });
 
   it('一个 owner 组织都没有 ⇒ 不显示任何卡（**不**挑一个 member 组织顶上）', async () => {
-    wireSupabase([orgRow('org-member', 'member', '2026-01-01T00:00:00Z')], 'org-member');
+    wireSupabase([orgRow('org-member', 'member', '2026-01-01T00:00:00Z')], null);
 
     const res = await readOverview();
 
     const result = res.ok ? res.result : null;
     expect(result?.org, '没有 owner 组织 ⇒ org 为 null').toBeNull();
     expect(result?.license, '因此也不该显示卡').toBeNull();
-    expect(licenseQueries, '不该去任何组织查卡').toEqual([]);
+    expect(hoisted.readLicenseStatus).toHaveBeenCalledTimes(1);
   });
 });

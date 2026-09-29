@@ -69,6 +69,8 @@ function buildApi(): ClawWorkAPI {
       ipcRenderer.invoke('ws:session-patch', { gatewayId, sessionKey, patch }),
     getToolsCatalog: (gatewayId: string, agentId?: string) =>
       ipcRenderer.invoke('ws:tools-catalog', { gatewayId, agentId }),
+    getEffectiveTools: (gatewayId: string, sessionKey: string, agentId?: string) =>
+      ipcRenderer.invoke('ws:tools-effective', { gatewayId, sessionKey, agentId }),
     getSkillsStatus: (gatewayId: string, agentId?: string) =>
       ipcRenderer.invoke('ws:skills-status', { gatewayId, agentId }),
     searchSkills: (gatewayId: string, params: SkillSearchParams) =>

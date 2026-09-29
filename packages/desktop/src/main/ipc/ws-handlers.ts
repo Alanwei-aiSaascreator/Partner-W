@@ -694,6 +694,18 @@ export function registerWsHandlers(): void {
   );
 
   ipcMain.handle(
+    'ws:tools-effective',
+    async (
+      _event,
+      payload: {
+        gatewayId: string;
+        sessionKey: string;
+        agentId?: string;
+      },
+    ) => gatewayRpc(payload.gatewayId, (gw) => gw.getEffectiveTools(payload.sessionKey, payload.agentId)),
+  );
+
+  ipcMain.handle(
     'ws:skills-status',
     async (
       _event,

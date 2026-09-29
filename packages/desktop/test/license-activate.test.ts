@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const rpcMock = vi.fn();
-const getCommercialClientMock = vi.fn(() => ({ rpc: rpcMock }));
+const getUserMock = vi.fn(async () => ({ data: { user: { id: 'user-1' } }, error: null }));
+const getCommercialClientMock = vi.fn(() => ({ auth: { getUser: getUserMock }, rpc: rpcMock }));
 
 vi.mock('../src/main/commercial/client.js', () => ({
   getCommercialClient: getCommercialClientMock,
@@ -68,22 +69,35 @@ describe('activateLicense', () => {
   beforeEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
-    getCommercialClientMock.mockReturnValue({ rpc: rpcMock, from: fromMock } as never);
+    getCommercialClientMock.mockReturnValue({ auth: { getUser: getUserMock }, rpc: rpcMock, from: fromMock } as never);
 
     fromMock.mockImplementation((table: string) => {
-      if (table === 'org_members') return tableChain({ data: [{ org_id: 'org-1' }] });
-      // licenses / org_active_license 都走 maybeSingle()，返回一行。
-      return tableChain({
-        data: {
-          license_key: 'RY-AAAA-BBBB',
-          sku: 'USB-标准版',
-          status: 'active',
-          expires_at: null,
-          max_activations: 1,
-          token_quota_cents: 5000,
-          token_used_cents: 0,
-        },
-      });
+      if (table === 'org_members') {
+        return tableChain({
+          data: [{ user_id: 'user-1', org_id: 'org-1', role: 'owner', joined_at: '2026-01-01T00:00:00Z' }],
+          error: null,
+        });
+      }
+      if (table === 'org_active_license') {
+        return tableChain({
+          data: [
+            {
+              id: 'license-1',
+              org_id: 'org-1',
+              license_key: 'RY-AAAA-BBBB',
+              sku: 'USB-标准版',
+              status: 'active',
+              expires_at: null,
+              issued_at: '2026-01-01T00:00:00Z',
+              max_activations: 1,
+              token_quota_micros: 5_000_000_000,
+              token_used_micros: 0,
+            },
+          ],
+          error: null,
+        });
+      }
+      throw new Error(`unexpected table: ${table}`);
     });
 
     // 模拟一个「写入真的生效」的网关：patchConfig 之后 getConfig 能读回结果。
@@ -164,6 +178,29 @@ describe('activateLicense', () => {
     expect(written.models.providers.clawrouter?.apiKey).toBe('rly_TESTKEY');
     assertOk(res);
     expect(res.result?.relayConfigured).toBe(true);
+  });
+
+  it('激活时只按 relay 的逐卡 capabilities 接入视频能力', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) =>
+        url.endsWith('/v1/capabilities')
+          ? { ok: true, json: async () => ({ image: { enabled: false }, video: { enabled: true } }) }
+          : { ok: false, status: 503, json: async () => ({}) },
+      ),
+    );
+
+    const { activateLicense } = await import('../src/main/commercial/license.js');
+    const res = await activateLicense('RY-AAAA-BBBB');
+
+    assertOk(res);
+    const written = JSON.parse((patchConfigMock.mock.calls[0]?.[0] as { raw: string }).raw) as {
+      models: { providers: Record<string, { baseUrl?: string }> };
+      agents: { defaults: { mediaModels: { video: { primary: string } } } };
+    };
+    expect(written.models.providers.xai?.baseUrl).toBe('https://api.rongyinghudong.com/relay/v1');
+    expect(written.agents.defaults.mediaModels.video.primary).toBe('xai/grok-imagine-video');
+    expect(written.models.providers.openai).toBeUndefined();
   });
 
   it('网关写失败**不影响激活成功** —— 授权已经绑好了，不该让用户重新激活', async () => {

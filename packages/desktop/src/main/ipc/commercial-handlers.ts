@@ -79,6 +79,7 @@ export function registerCommercialHandlers(): void {
       // ⚠️ 必须放在清理**之前**：`requestCommercialAccessCleanup` 会抛（它自己去碰网关），
       //    而"换账号了"这件事已经成立 —— 旧账号的结论不该因为清理失败而留在界面上。
       resetRelayBootstrapPublicState();
+      clearLicense();
       // 即使没有先点退出，也不能沿用旧账号的 relay。
       await requestCommercialAccessCleanup(buildCommercialAccessCleanupDeps());
       notifyCommercialSignedIn();
@@ -90,12 +91,16 @@ export function registerCommercialHandlers(): void {
     const tracked = trackOnSuccess(res, 'login_success'); // 同上：先记事件，再跑清理
     if (res.ok) {
       resetRelayBootstrapPublicState(); // 同上：账户边界，先作废旧账号的公开状态
+      clearLicense();
       await requestCommercialAccessCleanup(buildCommercialAccessCleanupDeps());
       notifyCommercialSignedIn();
     }
     return tracked;
   });
   ipcMain.handle('commercial:sign-out', async () => {
+    // 同步作废所有在途的 license 读取/激活，再开始可能很慢的网关清理。
+    // 否则旧账号的慢读取可能在 cleanup 清空本地绑定后把它重新写回来。
+    clearLicense();
     try {
       await requestCommercialAccessCleanup(buildCommercialAccessCleanupDeps());
       return await signOutCommercial();

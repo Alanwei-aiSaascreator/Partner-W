@@ -71,3 +71,37 @@ describe('ui store —— 模型目录「取不到」的标记', () => {
     expect(store.getState().modelCatalogFailureByGateway['gw-2']).toBe(true);
   });
 });
+
+describe('ui store session-scoped effective tools', () => {
+  it('keeps inventories isolated by gateway and session', () => {
+    const store = setup();
+    const setState = store.getState() as unknown as {
+      setEffectiveToolsState: (
+        gatewayId: string,
+        sessionKey: string,
+        state: { status: 'loading' } | { status: 'error'; error: string },
+      ) => void;
+      effectiveToolsByGateway: Record<string, Record<string, unknown>>;
+    };
+
+    expect(typeof setState.setEffectiveToolsState).toBe('function');
+    setState.setEffectiveToolsState('gw-1', 'session-a', { status: 'loading' });
+    setState.setEffectiveToolsState('gw-1', 'session-b', { status: 'error', error: 'denied' });
+    setState.setEffectiveToolsState('gw-2', 'session-a', { status: 'error', error: 'offline' });
+
+    const actual = (
+      store.getState() as unknown as {
+        effectiveToolsByGateway: Record<string, Record<string, unknown>>;
+      }
+    ).effectiveToolsByGateway;
+    expect(actual).toEqual({
+      'gw-1': {
+        'session-a': { status: 'loading' },
+        'session-b': { status: 'error', error: 'denied' },
+      },
+      'gw-2': {
+        'session-a': { status: 'error', error: 'offline' },
+      },
+    });
+  });
+});

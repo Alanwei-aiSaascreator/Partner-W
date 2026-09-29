@@ -435,6 +435,24 @@ describe('ensureRelayConfigured —— 幂等 & 配置变化', () => {
     expect(fetchRelayKey).not.toHaveBeenCalled();
   });
 
+  it('有媒体能力探针时，即使聊天 provider 已存在也重新取 key 并对齐媒体配置', async () => {
+    const fetchRelayKey = vi.fn(async (): Promise<RelayKeyFetchResult> => ({ ok: true, relayKey: RELAY_KEY }));
+    const resolveMediaCapabilities = vi.fn(async () => ({ image: false, video: true }));
+    const { deps, patchConfig } = makeDeps({ fetchRelayKey, resolveMediaCapabilities }, alreadyRelay);
+
+    const res = await ensureRelayConfigured(deps);
+
+    expect(res.status).toBe('applied');
+    expect(fetchRelayKey).toHaveBeenCalledWith(LICENSE);
+    expect(resolveMediaCapabilities).toHaveBeenCalledWith(RELAY_KEY);
+    const raw = JSON.parse(patchConfig.mock.calls[0]?.[0].raw as string) as {
+      models: { providers: Record<string, { baseUrl?: string }> };
+      agents: { defaults: { mediaModels: { video: { primary: string } } } };
+    };
+    expect(raw.models.providers.xai?.baseUrl).toBe(`${RELAY_BASE_URL}/v1`);
+    expect(raw.agents.defaults.mediaModels.video.primary).toBe('xai/grok-imagine-video');
+  });
+
   it('⭐ 重复调用结果稳定（第二次幂等命中，不再写）', async () => {
     const { gateway, patchConfig, getConfig } = makeGateway();
     const deps = makeDeps({ getGateway: () => gateway });

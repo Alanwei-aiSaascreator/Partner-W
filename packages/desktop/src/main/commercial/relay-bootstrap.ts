@@ -33,7 +33,7 @@
  * 也保证「runtime loader」与「commercial activation」继续是两层。
  */
 
-import { relayProviderIds, applyRelayConfig, RELAY_PROVIDER_ID } from './relay-config.js';
+import { relayProviderIds, applyRelayConfig, RELAY_PROVIDER_ID, type RelayMediaCapabilities } from './relay-config.js';
 import type { AuthCheck } from './auth-classify.js';
 // ⚠️ **type-only**：编译期擦除 ⇒ 运行时**不**加载 license.js，上面那句
 //    「本模块不认识 Supabase / 不认识 electron，可以裸跑单测」仍然成立。
@@ -196,6 +196,8 @@ export interface RelayBootstrapDeps {
   getGateway: () => RelayGatewayHandle | null;
   /** 解析一个默认模型 ref；拿不到返回 null（不阻塞）。 */
   resolveDefaultModel?: (relayKey: string) => Promise<string | null>;
+  /** 逐卡媒体能力；存在时启动必须重新对齐，不能被聊天 provider 的幂等快路跳过。 */
+  resolveMediaCapabilities?: (relayKey: string) => Promise<RelayMediaCapabilities>;
   deviceFingerprint: () => string;
   /** 日志。⚠️ **不要传含 relay key 的数据进来**。 */
   log?: (event: string, data?: Record<string, unknown>) => void;
@@ -308,7 +310,7 @@ export async function ensureRelayConfigured(deps: RelayBootstrapDeps): Promise<R
     return { status: 'runtime-not-ready', relayReady: false, retryable: true, detail: messageOf(error) };
   }
 
-  if (relayProviderIds(snapshot).size > 0) {
+  if (relayProviderIds(snapshot).size > 0 && !deps.resolveMediaCapabilities) {
     log('relay.bootstrap.already-applied', { provider: RELAY_PROVIDER_ID });
     return { status: 'already-applied', relayReady: true, retryable: false };
   }
@@ -371,6 +373,7 @@ export async function ensureRelayConfigured(deps: RelayBootstrapDeps): Promise<R
         getConfig: tx.getConfig,
         patchConfig: tx.patchConfig,
         resolveDefaultModel: deps.resolveDefaultModel,
+        resolveMediaCapabilities: deps.resolveMediaCapabilities,
         log: (event, data) => log(event, data),
       },
       { relayKey, deviceFingerprint: deps.deviceFingerprint(), webSearch: deps.webSearchEnabled?.() ?? true },

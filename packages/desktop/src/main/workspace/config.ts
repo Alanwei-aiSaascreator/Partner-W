@@ -40,6 +40,19 @@ export interface CommercialConfig {
   supabaseUrl: string;
   supabaseAnonKey: string;
   licenseKey?: string;
+  /**
+   * Server-verified identity of `licenseKey`.
+   *
+   * A license row can be visible through RLS to every member of an organization,
+   * while `activate_license` deliberately authorizes only an exact owner.  Keeping
+   * the account/org/license triple prevents a cached key from silently crossing an
+   * account boundary after sign-out, profile recovery, or a Windows-user change.
+   */
+  licenseBinding?: {
+    userId: string;
+    orgId: string;
+    licenseId: string;
+  };
   /** A previous account's relay config still needs verified removal from the gateway. */
   relayCleanupPending?: boolean;
   /** Origin of the Alipay payment service; defaults to the production domain. */

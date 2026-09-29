@@ -80,6 +80,7 @@ function createHarness(
     setModelCatalogFailureForGateway: vi.fn(),
     setAgentCatalogForGateway: vi.fn(),
     setToolsCatalogForGateway: vi.fn(),
+    setEffectiveToolsState: vi.fn(),
     setSkillsStatusForGateway: vi.fn(),
     setCommandCatalogForGateway: vi.fn(),
     onPerformerCandidate: vi.fn((taskId, sessionKey, gatewayId) => {

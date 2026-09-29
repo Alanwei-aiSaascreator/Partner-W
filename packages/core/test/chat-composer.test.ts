@@ -30,6 +30,7 @@ let mentionNameResolver: ((agentId: string) => string | undefined) | undefined;
 function setup(
   options: {
     ensemble?: boolean;
+    teamId?: string;
     model?: string;
     performers?: Array<{ agentId: string; agentName: string; sessionKey: string }>;
     /** 模拟"宿主没接这个 dep"（字段真的不存在，不是"存在但返回 undefined"）。 */
@@ -93,6 +94,7 @@ function setup(
     title: 'T',
     model: options.model ?? 'qwen3.5-27b',
     ensemble: options.ensemble,
+    teamId: options.teamId,
   };
   const room = options.ensemble
     ? {
@@ -305,6 +307,21 @@ describe('chat-composer', () => {
     await vi.advanceTimersByTimeAsync(SEND_TIMEOUT_MS);
     expect(addMessage.mock.calls.filter((call) => call[1] === 'system')).toHaveLength(0);
     expect(onError).not.toHaveBeenCalled();
+  });
+
+  it('routes a persisted team task directly even when its legacy ensemble flag is still true', async () => {
+    const { composer, sendMessage, processingBySession } = setup({ ensemble: true, teamId: 'team-design' });
+
+    const result = await composer.send(TASK_ID, {
+      content: 'team request',
+      mentionAll: true,
+      mentions: ['worker'],
+    });
+
+    expect(result.ok).toBe(true);
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenCalledWith('gw-1', SESSION_KEY, 'team request', undefined);
+    expect([...processingBySession]).toEqual([SESSION_KEY]);
   });
 
   it('rolls back a deferred ensemble message only when every target fails', async () => {

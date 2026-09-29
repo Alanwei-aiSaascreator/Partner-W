@@ -83,8 +83,10 @@ export default function TeamsPanel() {
         toast.error(t(decision.kind === 'agent-missing' ? 'teams.agentNotInstalled' : 'teams.noAgents'));
         return;
       }
-      const needsEnsemble = team.agents.length >= 2;
-      startNewTask({ gatewayId: team.gatewayId, agentId: decision.agentId, ensemble: needsEnsemble, teamId });
+      // 可靠模式：团队任务先固定由主管（或第一位成员）单独完成完整工作流。
+      // `teamId` 刻意保留，未来增加“创作者 → 复审者”的顺序执行时仍能找到原团队，
+      // 但不再把成员数映射成 ensemble/conductor/sessions_spawn。
+      startNewTask({ gatewayId: team.gatewayId, agentId: decision.agentId, ensemble: false, teamId });
       setMainView('chat');
     },
     [teamsMap, agentCatalogByGateway, startNewTask, setMainView, t],

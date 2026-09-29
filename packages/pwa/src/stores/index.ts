@@ -153,6 +153,8 @@ function getDispatcher() {
       setAgentCatalogForGateway: (gwId, agents, defaultId) =>
         uiStoreApi.getState().setAgentCatalogForGateway(gwId, agents as AgentInfo[], defaultId),
       setToolsCatalogForGateway: (gwId, catalog) => uiStoreApi.getState().setToolsCatalogForGateway(gwId, catalog),
+      setEffectiveToolsState: (gwId, sessionKey, state) =>
+        uiStoreApi.getState().setEffectiveToolsState(gwId, sessionKey, state),
       setSkillsStatusForGateway: (gwId, report) => uiStoreApi.getState().setSkillsStatusForGateway(gwId, report),
       setCommandCatalogForGateway: (gwId, commands) =>
         uiStoreApi.getState().setCommandCatalogForGateway(gwId, commands),

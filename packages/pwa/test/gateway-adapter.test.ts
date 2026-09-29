@@ -33,6 +33,7 @@ function makeMockClient(
     listModels: vi.fn().mockResolvedValue({ models: [] }),
     listAgents: vi.fn().mockResolvedValue({ agents: [] }),
     getToolsCatalog: vi.fn().mockResolvedValue({ tools: [] }),
+    getEffectiveTools: vi.fn().mockResolvedValue({ groups: [] }),
     getSkillsStatus: vi.fn().mockResolvedValue({ skills: [] }),
     connect: vi.fn(),
     destroy: vi.fn(),
@@ -44,6 +45,7 @@ function makeMockClient(
     listModels: ReturnType<typeof vi.fn>;
     listAgents: ReturnType<typeof vi.fn>;
     getToolsCatalog: ReturnType<typeof vi.fn>;
+    getEffectiveTools: ReturnType<typeof vi.fn>;
     getSkillsStatus: ReturnType<typeof vi.fn>;
   };
 }
@@ -346,6 +348,26 @@ describe('createBrowserGatewayTransport', () => {
 
       expect(result).toEqual({ ok: true, result: catalog });
       expect(mockClient.getToolsCatalog).toHaveBeenCalledWith('agent-1');
+    });
+  });
+
+  describe('getEffectiveTools', () => {
+    it('delegates with the session key and never substitutes the static catalog', async () => {
+      const inventory = { agentId: 'main', profile: 'coding', groups: [] };
+      mockClient.getEffectiveTools.mockResolvedValue(inventory);
+      const { transport } = createBrowserGatewayTransport(getClients, getClient, getDeviceId);
+
+      const method = (
+        transport as unknown as {
+          getEffectiveTools: (gatewayId: string, sessionKey: string) => Promise<unknown>;
+        }
+      ).getEffectiveTools;
+      expect(typeof method).toBe('function');
+      const result = await method('gw-1', 'agent:main:clawwork:task:task-1');
+
+      expect(result).toEqual({ ok: true, result: inventory });
+      expect(mockClient.getEffectiveTools).toHaveBeenCalledWith('agent:main:clawwork:task:task-1');
+      expect(mockClient.getToolsCatalog).not.toHaveBeenCalled();
     });
   });
 

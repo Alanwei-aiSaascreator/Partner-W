@@ -30,14 +30,14 @@ vi.mock('electron', () => ({
 vi.mock('../src/main/commercial/client.js', () => ({
   getCommercialClient: () => ({
     auth: { getUser: () => mocks.getUser() },
-    // ⚠️ 查询链是 `select().order().order()`（2026-09-24 加了 order：
-    //    选计费组织要靠 `joined_at` 的先后）。替身必须跟着长出来 ——
-    //    少了 `order` 会抛 TypeError，被 `readSessionState` 的 catch 吞成
-    //    `ok:false`，表现成"两条用例莫名其妙红了"，而不是报一句缺方法。
+    // ⚠️ 查询链是 `select().eq().order().order()`：真实代码先把成员关系
+    //    绑定到当前 user_id，再按 joined_at/org_id 排序。替身必须把每一节
+    //    都实现，否则 TypeError 会被 `readSessionState` 归一成 `ok:false`，把安全约束
+    //    误报成产品失败。
     from: () => ({
       select: () => {
         const pending = mocks.orgsSelect();
-        const node: Record<string, unknown> = { order: () => node };
+        const node: Record<string, unknown> = { eq: () => node, order: () => node };
         node.then = (onFulfilled: (v: unknown) => unknown, onRejected?: (e: unknown) => unknown) =>
           (pending as Promise<unknown>).then(onFulfilled, onRejected);
         return node;

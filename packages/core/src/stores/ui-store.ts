@@ -2,6 +2,7 @@ import { createStore } from 'zustand/vanilla';
 import type {
   AgentInfo,
   CommandEntry,
+  EffectiveToolsLoadState,
   GatewayFailureReason,
   ModelCatalogEntry,
   SkillStatusReport,
@@ -167,6 +168,9 @@ export interface UiState {
 
   toolsCatalogByGateway: Record<string, ToolsCatalog>;
   setToolsCatalogForGateway: (gatewayId: string, catalog: ToolsCatalog) => void;
+
+  effectiveToolsByGateway: Record<string, Record<string, EffectiveToolsLoadState>>;
+  setEffectiveToolsState: (gatewayId: string, sessionKey: string, state: EffectiveToolsLoadState) => void;
 
   skillsStatusByGateway: Record<string, SkillStatusReport>;
   setSkillsStatusForGateway: (gatewayId: string, report: SkillStatusReport) => void;
@@ -411,6 +415,18 @@ export function createUiStore(deps: UiStoreDeps) {
         toolsCatalogByGateway: {
           ...s.toolsCatalogByGateway,
           [gatewayId]: catalog,
+        },
+      })),
+
+    effectiveToolsByGateway: {},
+    setEffectiveToolsState: (gatewayId, sessionKey, state) =>
+      set((s) => ({
+        effectiveToolsByGateway: {
+          ...s.effectiveToolsByGateway,
+          [gatewayId]: {
+            ...s.effectiveToolsByGateway[gatewayId],
+            [sessionKey]: state,
+          },
         },
       })),
 

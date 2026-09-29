@@ -195,13 +195,14 @@ describe('buildConductorPrompt', () => {
     expect(prompt.endsWith('Available agents:\n')).toBe(true);
   });
 
-  it('does not let the conductor claim workers started before sessions_spawn succeeds', () => {
+  it('does not require sessions_spawn and falls back to direct work', () => {
     const prompt = buildConductorPrompt('- id: worker, name: "Worker"');
 
-    expect(prompt).toContain(
-      'Do not say a worker is ready, working, or started until its `sessions_spawn` call succeeds.',
-    );
-    expect(prompt).toContain('If `sessions_spawn` fails, say plainly that no worker was started.');
+    expect(prompt).toContain('Delegation is optional');
+    expect(prompt).toContain('continue the task yourself in the current session');
+    expect(prompt).not.toContain('MUST use OpenClaw native subagent sessions');
+    expect(prompt).not.toContain('You do not solve problems directly');
+    expect(prompt).toContain('Do not claim that a worker started unless its `sessions_spawn` call succeeded.');
     expect(prompt).toContain(
       'Do not tell desktop users to run `openclaw doctor`, any other OpenClaw CLI command, or terminal commands.',
     );

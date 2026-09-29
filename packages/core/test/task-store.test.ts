@@ -89,4 +89,39 @@ describe('task store pending task metadata', () => {
 
     expect(store.getState().tasks[0]?.tags).toEqual(tags);
   });
+
+  it('hydrates persisted team tasks as direct while preserving non-team ensemble tasks', async () => {
+    const row = (id: string, teamId?: string) => ({
+      id,
+      sessionKey: `agent:main:clawwork:task:${id}`,
+      sessionId: '',
+      title: id,
+      status: 'active',
+      ensemble: true,
+      teamId,
+      createdAt: '2026-09-17T00:00:00.000Z',
+      updatedAt: '2026-09-17T00:00:00.000Z',
+      tags: [],
+      artifactDir: '',
+      gatewayId: 'gw-1',
+    });
+    const store = createTaskStore({
+      persistTask: vi.fn(async () => ({ ok: true as const })),
+      persistTaskUpdate: vi.fn(async () => ({ ok: true as const })),
+      deleteTask: vi.fn(async () => ({ ok: true as const })),
+      loadTasks: vi.fn(async () => ({
+        ok: true,
+        rows: [row('team-task', 'team-design'), row('ensemble-task')],
+      })),
+      patchSession: vi.fn(async () => ({ ok: true as const })),
+      getDeviceId: vi.fn(async () => 'device-1'),
+      getDefaultGatewayId: () => 'gw-1',
+      getAgentCatalog: () => ({ agents: [{ id: 'main' }], defaultId: 'main' }),
+    });
+
+    await store.getState().hydrate();
+
+    expect(store.getState().tasks.find((task) => task.id === 'team-task')?.ensemble).toBe(false);
+    expect(store.getState().tasks.find((task) => task.id === 'ensemble-task')?.ensemble).toBe(true);
+  });
 });

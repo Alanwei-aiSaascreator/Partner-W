@@ -7,6 +7,8 @@ import type {
   AgentListResponse,
   CommandEntry,
   CommandsListResponse,
+  EffectiveToolsInventory,
+  EffectiveToolsLoadState,
   SkillStatusReport,
   ToolsCatalog,
 } from '@clawwork/shared';
@@ -184,6 +186,65 @@ interface SessionChangedEvent {
   compacted?: boolean;
 }
 
+const EFFECTIVE_TOOL_SOURCES = new Set(['core', 'plugin', 'channel', 'mcp']);
+const EFFECTIVE_TOOL_RISKS = new Set(['low', 'medium', 'high']);
+const EFFECTIVE_NOTICE_SEVERITIES = new Set(['info', 'warning']);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0;
+}
+
+function isOptionalNonEmptyString(value: unknown): boolean {
+  return value === undefined || isNonEmptyString(value);
+}
+
+function isNonEmptyStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every(isNonEmptyString);
+}
+
+function isEffectiveToolEntry(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  if (!isNonEmptyString(value.id) || !isNonEmptyString(value.label)) return false;
+  if (typeof value.description !== 'string' || typeof value.rawDescription !== 'string') return false;
+  if (!isNonEmptyString(value.source) || !EFFECTIVE_TOOL_SOURCES.has(value.source)) return false;
+  if (!isOptionalNonEmptyString(value.pluginId)) return false;
+  if (!isOptionalNonEmptyString(value.channelId)) return false;
+  if (!isOptionalNonEmptyString(value.mcpServer)) return false;
+  if (!isOptionalNonEmptyString(value.mcpToolName)) return false;
+  if (value.deniedBySession !== undefined && value.deniedBySession !== true) return false;
+  if (value.risk !== undefined && (!isNonEmptyString(value.risk) || !EFFECTIVE_TOOL_RISKS.has(value.risk)))
+    return false;
+  if (value.tags !== undefined && !isNonEmptyStringArray(value.tags)) return false;
+  return true;
+}
+
+function isEffectiveToolGroup(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  if (!isNonEmptyString(value.id) || !EFFECTIVE_TOOL_SOURCES.has(value.id)) return false;
+  if (!isNonEmptyString(value.label)) return false;
+  if (!isNonEmptyString(value.source) || !EFFECTIVE_TOOL_SOURCES.has(value.source)) return false;
+  return Array.isArray(value.tools) && value.tools.every(isEffectiveToolEntry);
+}
+
+function isEffectiveToolNotice(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  if (!isNonEmptyString(value.id)) return false;
+  if (!isNonEmptyString(value.severity) || !EFFECTIVE_NOTICE_SEVERITIES.has(value.severity)) return false;
+  if (typeof value.message !== 'string') return false;
+  return value.servers === undefined || isNonEmptyStringArray(value.servers);
+}
+
+function isEffectiveToolsInventory(value: unknown): value is EffectiveToolsInventory {
+  if (!isRecord(value)) return false;
+  if (!isNonEmptyString(value.agentId) || !isNonEmptyString(value.profile)) return false;
+  if (!Array.isArray(value.groups) || !value.groups.every(isEffectiveToolGroup)) return false;
+  return value.notices === undefined || (Array.isArray(value.notices) && value.notices.every(isEffectiveToolNotice));
+}
+
 interface ErrorCorrelation {
   taskId: string;
   runId?: string;
@@ -286,6 +347,7 @@ export interface GatewayDispatcherDeps {
   setModelCatalogFailureForGateway: (gatewayId: string, failed: boolean) => void;
   setAgentCatalogForGateway: (gatewayId: string, agents: unknown[], defaultId: string) => void;
   setToolsCatalogForGateway: (gatewayId: string, catalog: ToolsCatalog) => void;
+  setEffectiveToolsState: (gatewayId: string, sessionKey: string, state: EffectiveToolsLoadState) => void;
   setSkillsStatusForGateway: (gatewayId: string, report: SkillStatusReport) => void;
   setCommandCatalogForGateway: (gatewayId: string, commands: CommandEntry[]) => void;
 
@@ -638,6 +700,7 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
   const connectedGateways = new Set<string>();
   /** 每个网关最多一个待执行的目录重试定时器（重连/成功后旧的作废）。 */
   const catalogRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  const effectiveToolsRequestTokens = new Map<string, symbol>();
   let synced = false;
 
   /**
@@ -1181,6 +1244,13 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
     if (!sessionKey) {
       debugEvent('renderer.session.dropped.missing_session', { gatewayId, reason, phase });
       return;
+    }
+
+    const taskSession = deps
+      .getTaskStore()
+      .tasks.find((task) => task.gatewayId === gatewayId && task.sessionKey === sessionKey);
+    if (taskSession && (!reason || !SESSION_DELETE_REASONS.has(reason))) {
+      void fetchEffectiveTools(gatewayId, sessionKey);
     }
 
     // ⭐ "压缩完成了" —— **必须排在下面那个过滤之前**。那个过滤只看**子代理**会话，
@@ -1916,6 +1986,42 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
     }
   }
 
+  async function fetchEffectiveTools(gatewayId: string, sessionKey: string): Promise<void> {
+    const requestKey = `${gatewayId}\u0000${sessionKey}`;
+    const requestToken = Symbol(requestKey);
+    effectiveToolsRequestTokens.set(requestKey, requestToken);
+    deps.setEffectiveToolsState(gatewayId, sessionKey, { status: 'loading' });
+    const settle = (state: EffectiveToolsLoadState): void => {
+      if (effectiveToolsRequestTokens.get(requestKey) !== requestToken) return;
+      effectiveToolsRequestTokens.delete(requestKey);
+      deps.setEffectiveToolsState(gatewayId, sessionKey, state);
+    };
+    try {
+      const response = await deps.gateway.getEffectiveTools(gatewayId, sessionKey);
+      if (!response.ok) {
+        settle({
+          status: 'error',
+          error: response.error || 'tools.effective failed',
+        });
+        return;
+      }
+      const inventory = response.result;
+      if (!isEffectiveToolsInventory(inventory)) {
+        settle({
+          status: 'error',
+          error: 'tools.effective returned an invalid response',
+        });
+        return;
+      }
+      settle({ status: 'ready', inventory });
+    } catch (error) {
+      settle({
+        status: 'error',
+        error: error instanceof Error ? error.message : 'tools.effective failed',
+      });
+    }
+  }
+
   function markAbortedByUser(taskId: string): void {
     abortedByUser.add(taskId);
   }
@@ -2104,8 +2210,17 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
     connectedGateways.clear();
     for (const timer of catalogRetryTimers.values()) clearTimeout(timer);
     catalogRetryTimers.clear();
+    effectiveToolsRequestTokens.clear();
     synced = false;
   }
 
-  return { start, initialize, startGatewayStatus, markAbortedByUser, fetchAgentsForGateway, reset };
+  return {
+    start,
+    initialize,
+    startGatewayStatus,
+    markAbortedByUser,
+    fetchAgentsForGateway,
+    fetchEffectiveTools,
+    reset,
+  };
 }

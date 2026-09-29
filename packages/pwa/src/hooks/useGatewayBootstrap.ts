@@ -6,12 +6,21 @@ import { BrowserGatewayClient } from '../gateway/client.js';
 import { registerClient, destroyAllClients } from '../gateway/client-registry.js';
 import { getGatewayBroadcasters } from '../platform/index.js';
 import { dispatcher, uiStoreApi } from '../stores/index.js';
+import { useTaskStore, useUiStore } from '../stores/hooks.js';
 import { reportDebugEvent } from '../lib/debug.js';
 import type { GatewayAuth } from '@clawwork/shared';
 import { toast } from 'sonner';
 import i18next from 'i18next';
 
 export function useGatewayBootstrap(): void {
+  const activeTask = useTaskStore((state) => state.tasks.find((task) => task.id === state.activeTaskId));
+  const gatewayStatus = useUiStore((state) => (activeTask ? state.gatewayStatusMap[activeTask.gatewayId] : undefined));
+
+  useEffect(() => {
+    if (!activeTask || gatewayStatus !== 'connected') return;
+    void dispatcher.fetchEffectiveTools(activeTask.gatewayId, activeTask.sessionKey);
+  }, [activeTask, gatewayStatus]);
+
   useEffect(() => {
     let cancelled = false;
     const cleanupFns: Array<() => void> = [];

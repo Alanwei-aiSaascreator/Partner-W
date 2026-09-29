@@ -161,6 +161,8 @@ interface CommercialSessionState {
 
 interface CommercialLicenseStatus {
   configured: boolean;
+  licenseId: string | null;
+  orgId: string | null;
   licenseKey: string | null;
   sku: string | null;
   status: string | null;
@@ -461,6 +463,7 @@ export interface ClawWorkAPI {
   setAgentFile: (gatewayId: string, agentId: string, name: string, content: string) => Promise<IpcResult>;
   patchSession: (gatewayId: string, sessionKey: string, patch: Record<string, unknown>) => Promise<IpcResult>;
   getToolsCatalog: (gatewayId: string, agentId?: string) => Promise<IpcResult>;
+  getEffectiveTools: (gatewayId: string, sessionKey: string, agentId?: string) => Promise<IpcResult>;
   getSkillsStatus: (gatewayId: string, agentId?: string) => Promise<IpcResult>;
   searchSkills: (gatewayId: string, params: SkillSearchParams) => Promise<IpcResult<SkillSearchResult>>;
   getSkillDetail: (gatewayId: string, slug: string) => Promise<IpcResult<SkillDetailResult>>;

@@ -369,6 +369,20 @@ export function createBrowserGatewayTransport(
       }
     },
 
+    async getEffectiveTools(gatewayId, sessionKey, agentId) {
+      const client = getClient(gatewayId);
+      if (!client?.isConnected)
+        return { ok: false, error: 'gateway not connected', errorCode: 'GATEWAY_NOT_CONNECTED' };
+      try {
+        const result = agentId
+          ? await client.getEffectiveTools(sessionKey, agentId)
+          : await client.getEffectiveTools(sessionKey);
+        return { ok: true, result };
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : 'getEffectiveTools failed' };
+      }
+    },
+
     async getSkillsStatus(gatewayId, agentId) {
       const client = getClient(gatewayId);
       if (!client?.isConnected)

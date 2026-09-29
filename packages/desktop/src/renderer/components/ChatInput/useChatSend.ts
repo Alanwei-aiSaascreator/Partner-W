@@ -22,7 +22,7 @@ import type {
   Artifact,
   MessageAttachment,
   ModelCatalogEntry,
-  ToolEntry,
+  EffectiveToolEntry,
   FileReadResult,
 } from '@clawwork/shared';
 import type { PendingNewTask } from '@clawwork/core';
@@ -55,6 +55,7 @@ import {
 } from './constants';
 import { getModelLabel, readAsBase64 } from './utils';
 import { resolveCommercialDefaultModel } from '@/lib/commercial-default-model';
+import { mergeTeamWorkflowContext } from '@/lib/team-workflow';
 
 interface UseChatSendOpts {
   textareaRef: RefObject<HTMLTextAreaElement | null>;
@@ -107,7 +108,9 @@ export function useChatSend(opts: UseChatSendOpts) {
   const addMessage = useMessageStore((s) => s.addMessage);
   const setProcessing = useMessageStore((s) => s.setProcessing);
 
-  const activeRoom = useRoomStore((s) => (activeTask?.ensemble ? s.rooms[activeTask.id] : undefined));
+  const activeRoom = useRoomStore((s) =>
+    activeTask?.ensemble && !activeTask.teamId ? s.rooms[activeTask.id] : undefined,
+  );
   const activity = useMessageStore((s) =>
     activeTask
       ? deriveSessionActivity(getTaskSessionKeys(activeTask, activeRoom), s.activeTurnBySession, s.processingBySession)
@@ -153,8 +156,10 @@ export function useChatSend(opts: UseChatSendOpts) {
     catalogFailed,
     modelCount: modelCatalog.length,
   });
-  const toolsCatalogByGateway = useUiStore((s) => s.toolsCatalogByGateway);
-  const toolsCatalog = taskGwId ? toolsCatalogByGateway[taskGwId] : undefined;
+  const effectiveToolsState = useUiStore((s) =>
+    activeTask ? s.effectiveToolsByGateway?.[activeTask.gatewayId]?.[activeTask.sessionKey] : undefined,
+  );
+  const toolsCatalog = effectiveToolsState?.status === 'ready' ? effectiveToolsState.inventory : undefined;
   const defaultModel = useMemo(() => resolveCommercialDefaultModel(modelCatalog), [modelCatalog]);
   const currentModel = activeTask
     ? activeTask.model === GATEWAY_INJECTED_MODEL
@@ -297,7 +302,7 @@ export function useChatSend(opts: UseChatSendOpts) {
       //
       // 放在这个位置是有意的：离线/空内容/额度/**任务已就绪**四关都已经过了，
       // 而「任务级模型可用」那一关刻意跳过（对比用的是各列自己的模型）。
-      if (compare.mode) {
+      if (compare.mode && !task.teamId) {
         // ⚠️ 闸门带**任务身份**：`active` 是全局唯一的，而用户可以切任务 ——
         // 用 `compare.active` 直接拦的话，前一个任务里跑着的一轮会让**这个任务**
         // 一个字都发不出去（提示"上一轮对比还在跑"，可用户眼前这一屏根本没有对比面板）。
@@ -479,6 +484,12 @@ export function useChatSend(opts: UseChatSendOpts) {
           }
         }
 
+        // 团队任务不再依赖 conductor。合同作为隐藏上下文发送，既不污染用户气泡/落库正文，
+        // 又在每一轮都守住“策略 → 创作 → 质检/修订 → 交付”的可靠模式。
+        if (task.teamId) {
+          contextPrefix = mergeTeamWorkflowContext(contextPrefix);
+        }
+
         if (taskMentions.length > 0) {
           let taskContextSize = 0;
           const blocks = await Promise.all(
@@ -611,9 +622,10 @@ export function useChatSend(opts: UseChatSendOpts) {
           content: record.base64,
         }));
         const allAttachments = [...gatewayAttachments, ...importedGatewayAttachments, ...extraAttachments];
-        const deferUserMessageUntilSent = Boolean(task.ensemble);
+        const useEnsembleDelivery = Boolean(task.ensemble && !task.teamId);
+        const deferUserMessageUntilSent = useEnsembleDelivery;
 
-        if (task.ensemble) {
+        if (useEnsembleDelivery) {
           const room = useRoomStore.getState().rooms[task.id];
           if (!room || !room.conductorReady) {
             const catalogEntryAll = useUiStore.getState().agentCatalogByGateway[task.gatewayId];
@@ -841,7 +853,7 @@ export function useChatSend(opts: UseChatSendOpts) {
   }, [currentModel, defaultModel?.id, t]);
 
   const handleToolSelect = useCallback(
-    (tool: ToolEntry) => {
+    (tool: EffectiveToolEntry) => {
       const ta = textareaRef.current;
       if (!ta) return;
       const insert = `${tool.label} `;
@@ -871,6 +883,7 @@ export function useChatSend(opts: UseChatSendOpts) {
     modelCatalog,
     modelAvailability,
     toolsCatalog,
+    effectiveToolsState,
     modelLabel,
     currentModelEntry,
     modelsByProvider,

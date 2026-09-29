@@ -1,4 +1,4 @@
-import { Wrench, Plug } from 'lucide-react';
+import { Wrench, Plug, TriangleAlert } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import {
   DropdownMenu,
@@ -7,21 +7,41 @@ import {
   DropdownMenuSeparator,
   DropdownMenuItem,
 } from '@/components/ui/dropdown-menu';
-import type { ToolGroup, ToolEntry } from '@clawwork/shared';
+import type { EffectiveToolEntry, EffectiveToolsLoadState } from '@clawwork/shared';
 import ListItem from '@/components/semantic/ListItem';
 import SectionCard from '@/components/semantic/SectionCard';
 import ToolbarButton from '@/components/semantic/ToolbarButton';
 
 interface ToolsCatalogProps {
-  groups: ToolGroup[];
-  onToolSelect?: (tool: ToolEntry) => void;
+  state: EffectiveToolsLoadState;
+  onToolSelect?: (tool: EffectiveToolEntry) => void;
 }
 
-export default function ToolsCatalog({ groups, onToolSelect }: ToolsCatalogProps) {
+export default function ToolsCatalog({ state, onToolSelect }: ToolsCatalogProps) {
   const { t } = useTranslation();
-  if (groups.length === 0) return null;
+  if (state.status === 'loading') return null;
+
+  if (state.status === 'error') {
+    const title = `${t('errors.requestFailed')}: ${state.error}`;
+    return (
+      <ToolbarButton
+        variant="ghost"
+        size="sm"
+        icon={<TriangleAlert size={14} className="flex-shrink-0" />}
+        className="rounded-lg text-[var(--danger)]"
+        title={title}
+        aria-label={title}
+        data-testid="effective-tools-error"
+      />
+    );
+  }
+
+  const { groups, notices = [] } = state.inventory;
 
   const totalTools = groups.reduce((sum, g) => sum + g.tools.length, 0);
+  const title = [t('rightPanel.toolCount', { count: totalTools }), ...notices.map((notice) => notice.message)].join(
+    ' — ',
+  );
 
   return (
     <DropdownMenu>
@@ -31,10 +51,24 @@ export default function ToolsCatalog({ groups, onToolSelect }: ToolsCatalogProps
           size="sm"
           icon={<Wrench size={14} className="flex-shrink-0" />}
           className="rounded-lg text-[var(--text-secondary)]"
-          title={t('rightPanel.toolCount', { count: totalTools })}
+          title={title}
+          aria-label={title}
         />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="max-h-96 w-72 overflow-y-auto">
+        {notices.map((notice) => (
+          <div
+            key={notice.id}
+            className={
+              notice.severity === 'warning'
+                ? 'type-meta px-3 py-2 text-[var(--danger)]'
+                : 'type-meta px-3 py-2 text-[var(--text-secondary)]'
+            }
+          >
+            {notice.message}
+          </div>
+        ))}
+        {notices.length > 0 && groups.length > 0 && <DropdownMenuSeparator />}
         {groups.map((group, gi) => (
           <div key={group.id}>
             {gi > 0 && <DropdownMenuSeparator />}

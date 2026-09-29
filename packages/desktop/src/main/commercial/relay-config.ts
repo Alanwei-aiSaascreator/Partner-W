@@ -91,6 +91,15 @@ export const OPENAI_IMAGE_MODEL_REF = `${OPENAI_IMAGE_PROVIDER_ID}/${OPENAI_IMAG
 export const RELAY_IMAGE_BASE_URL = `${RELAY_BASE_URL}/v1`;
 
 /**
+ * 视频复用随包 OpenClaw 的内置 `xai` provider。客户端只说 xAI 形状，relay
+ * 在服务端把它转换成豆包 Seedance/Ark 的任务协议；供应商 Key 不下发到客户端。
+ */
+export const XAI_VIDEO_PROVIDER_ID = 'xai';
+export const XAI_VIDEO_MODEL_ID = 'grok-imagine-video';
+export const XAI_VIDEO_MODEL_REF = `${XAI_VIDEO_PROVIDER_ID}/${XAI_VIDEO_MODEL_ID}`;
+export const RELAY_VIDEO_BASE_URL = `${RELAY_BASE_URL}/v1`;
+
+/**
  * 图片接线**总闸**。默认 **false** —— 不写 `models.providers.openai`、不写 `mediaModels.image`。
  *
  * ⚠️ 为什么默认必须是关的，而不是"先写好、服务端以后再说"：
@@ -105,6 +114,9 @@ export const RELAY_IMAGE_BASE_URL = `${RELAY_BASE_URL}/v1`;
  *    两条缺一不可 —— 只做①就翻，等于让用户去撞一个没人验过的上游接口。
  */
 export const IMAGE_GENERATION_WIRED = false;
+
+/** 缺少 relay 的逐卡能力证据时，视频同样必须保持关闭。 */
+export const VIDEO_GENERATION_WIRED = false;
 
 /**
  * 这份 openai 图片配置**是不是我们的**。
@@ -134,6 +146,20 @@ export function ownsOpenAIImageConfig(configSnapshot: unknown): boolean {
   return typeof baseUrl === 'string' && normalizeBaseUrl(baseUrl) === normalizeBaseUrl(RELAY_IMAGE_BASE_URL);
 }
 
+/** 与图片同一条所有权纪律：模型 ref 与 relay baseUrl 两条必须同时命中。 */
+export function ownsXaiVideoConfig(configSnapshot: unknown): boolean {
+  const config = configOf(configSnapshot);
+  if (!config) return false;
+
+  const defaults = (config.agents as { defaults?: Record<string, unknown> } | undefined)?.defaults;
+  const primary = (defaults?.mediaModels as { video?: { primary?: unknown } } | undefined)?.video?.primary;
+  if (primary !== XAI_VIDEO_MODEL_REF) return false;
+
+  const providers = (config.models as { providers?: Record<string, unknown> } | undefined)?.providers;
+  const baseUrl = (providers?.[XAI_VIDEO_PROVIDER_ID] as { baseUrl?: unknown } | undefined)?.baseUrl;
+  return typeof baseUrl === 'string' && normalizeBaseUrl(baseUrl) === normalizeBaseUrl(RELAY_VIDEO_BASE_URL);
+}
+
 export interface RelayPatchInput {
   relayKey: string | null | undefined;
   deviceFingerprint: string;
@@ -155,6 +181,8 @@ export interface RelayPatchInput {
    * 而"默认关"这条行为本身由常量兜底。
    */
   imageGenerationWired?: boolean;
+  /** 视频能力是否接线；生产值只能来自 relay `/v1/capabilities`。 */
+  videoGenerationWired?: boolean;
 }
 
 export type RelayConfigPatch = Record<string, unknown>;
@@ -233,6 +261,8 @@ export function buildRelayPatch(input: RelayPatchInput): RelayConfigPatch | null
   }
 
   const config = configOf(input.existingConfig);
+  const ownedImageConfig = ownsOpenAIImageConfig(input.existingConfig);
+  const ownedVideoConfig = ownsXaiVideoConfig(input.existingConfig);
 
   /**
    * 图片那一整块能不能动。**两条同时成立**才动：
@@ -247,9 +277,20 @@ export function buildRelayPatch(input: RelayPatchInput): RelayConfigPatch | null
     const hasOpenAiProvider =
       (config?.models as { providers?: Record<string, unknown> } | undefined)?.providers?.openai !== undefined;
     if (!hasOpenAiProvider) return true;
-    return ownsOpenAIImageConfig(input.existingConfig);
+    return ownedImageConfig;
   })();
-  const wired = (input.imageGenerationWired ?? IMAGE_GENERATION_WIRED) && acceptsOurImageConfig;
+  const imageWired = (input.imageGenerationWired ?? IMAGE_GENERATION_WIRED) && acceptsOurImageConfig;
+
+  const acceptsOurVideoConfig = ((): boolean => {
+    const providers = (config?.models as { providers?: Record<string, unknown> } | undefined)?.providers;
+    const hasXaiProvider = providers?.[XAI_VIDEO_PROVIDER_ID] !== undefined;
+    const videoPrimary = (
+      config?.agents as { defaults?: { mediaModels?: { video?: { primary?: unknown } } } } | undefined
+    )?.defaults?.mediaModels?.video?.primary;
+    if (!hasXaiProvider && videoPrimary === undefined) return true;
+    return ownedVideoConfig;
+  })();
+  const videoWired = (input.videoGenerationWired ?? VIDEO_GENERATION_WIRED) && acceptsOurVideoConfig;
 
   const providers: Record<string, unknown> = {
     [RELAY_PROVIDER_ID]: {
@@ -261,12 +302,27 @@ export function buildRelayPatch(input: RelayPatchInput): RelayConfigPatch | null
 
   // 图片：**默认不写**（见 `IMAGE_GENERATION_WIRED`）。只在允许时补这一条 ——
   // 同一个 relay key、同一个设备头，只是形状是 OpenAI 那条。
-  if (wired) {
+  if (imageWired) {
     providers[OPENAI_IMAGE_PROVIDER_ID] = {
       baseUrl: RELAY_IMAGE_BASE_URL,
       apiKey: input.relayKey,
       headers,
     };
+  } else if (ownedImageConfig) {
+    // JSON merge patch：省略键表示“保持原值”，只有 null 才会真的删除。
+    // 因此卡片降权或能力探针失败时，必须显式清掉我们自己留下的入口；
+    // 所有权判据同时核对 provider URL + model ref，不会碰用户自己的 openai。
+    providers[OPENAI_IMAGE_PROVIDER_ID] = null;
+  }
+
+  if (videoWired) {
+    providers[XAI_VIDEO_PROVIDER_ID] = {
+      baseUrl: RELAY_VIDEO_BASE_URL,
+      apiKey: input.relayKey,
+      headers,
+    };
+  } else if (ownedVideoConfig) {
+    providers[XAI_VIDEO_PROVIDER_ID] = null;
   }
 
   const patch: RelayConfigPatch = { models: { providers } };
@@ -299,8 +355,19 @@ export function buildRelayPatch(input: RelayPatchInput): RelayConfigPatch | null
   const imagePrimary = (
     config?.agents as { defaults?: { mediaModels?: { image?: { primary?: unknown } } } } | undefined
   )?.defaults?.mediaModels?.image?.primary;
-  if (wired && (imagePrimary === undefined || ownsOpenAIImageConfig(input.existingConfig))) {
-    agentsDefaults.mediaModels = { image: { primary: OPENAI_IMAGE_MODEL_REF } };
+  const mediaModels: Record<string, { primary: string | null }> = {};
+  if (imageWired && (imagePrimary === undefined || ownedImageConfig)) {
+    mediaModels.image = { primary: OPENAI_IMAGE_MODEL_REF };
+  } else if (!imageWired && ownedImageConfig) {
+    mediaModels.image = { primary: null };
+  }
+  if (videoWired) {
+    mediaModels.video = { primary: XAI_VIDEO_MODEL_REF };
+  } else if (ownedVideoConfig) {
+    mediaModels.video = { primary: null };
+  }
+  if (Object.keys(mediaModels).length > 0) {
+    agentsDefaults.mediaModels = mediaModels;
   }
 
   patch.agents = { defaults: agentsDefaults };
@@ -352,6 +419,14 @@ export function buildRelayRemovalPatch(configSnapshot: unknown): RelayRemovalPat
   if (!config) return null;
 
   const providerIds = relayProviderIds(configSnapshot);
+  // `openai` / `xai` 是运行时的公共 provider 名，不能只凭 baseUrl 删除；必须同时
+  // 命中我们写入的 media model ref，避免清掉用户自己配置的同名 provider。
+  if (providerIds.has(OPENAI_IMAGE_PROVIDER_ID) && !ownsOpenAIImageConfig(configSnapshot)) {
+    providerIds.delete(OPENAI_IMAGE_PROVIDER_ID);
+  }
+  if (providerIds.has(XAI_VIDEO_PROVIDER_ID) && !ownsXaiVideoConfig(configSnapshot)) {
+    providerIds.delete(XAI_VIDEO_PROVIDER_ID);
+  }
   const patch: RelayConfigPatch = {};
   const replacePaths: string[] = [];
 
@@ -398,8 +473,15 @@ export function buildRelayRemovalPatch(configSnapshot: unknown): RelayRemovalPat
 
   // ⚠️ 判据与写入侧**同一个函数**（`ownsOpenAIImageConfig`）：两条都成立才清。
   //    用"前缀是 `openai/`"或"指向 relay"这类放宽的判据，会把**用户自己**的图片模型一起清掉。
+  const removedMediaModels: Record<string, { primary: null }> = {};
   if (ownsOpenAIImageConfig(configSnapshot)) {
-    agentsRemoval.mediaModels = { image: { primary: null } };
+    removedMediaModels.image = { primary: null };
+  }
+  if (ownsXaiVideoConfig(configSnapshot)) {
+    removedMediaModels.video = { primary: null };
+  }
+  if (Object.keys(removedMediaModels).length > 0) {
+    agentsRemoval.mediaModels = removedMediaModels;
   }
 
   if (agentsRemoval.mediaModels) {
@@ -407,6 +489,8 @@ export function buildRelayRemovalPatch(configSnapshot: unknown): RelayRemovalPat
     // 否则网关会以"破坏性补丁"为由**拒掉整条 patch**（不是拒这一段）。
     const image = (agentDefaultsForRemoval?.mediaModels as { image?: unknown } | undefined)?.image;
     replacePaths.push(...collectBaseArrayPaths(image, 'agents.defaults.mediaModels.image'));
+    const video = (agentDefaultsForRemoval?.mediaModels as { video?: unknown } | undefined)?.video;
+    replacePaths.push(...collectBaseArrayPaths(video, 'agents.defaults.mediaModels.video'));
   }
 
   if (Object.keys(agentsRemoval).length > 0) {
@@ -462,6 +546,32 @@ export async function fetchFirstRelayModel(relayKey: string): Promise<string | n
   return `${RELAY_PROVIDER_ID}/${String(model.id)}`;
 }
 
+export interface RelayMediaCapabilities {
+  image: boolean;
+  video: boolean;
+}
+
+/**
+ * 逐卡查询 relay 当前**真实可用**的媒体能力。网络、HTTP 或结构异常全部抛给
+ * `applyRelayConfig` 收成 fail-closed 告警；绝不因为探针失败而猜成可用。
+ */
+export async function fetchRelayMediaCapabilities(relayKey: string): Promise<RelayMediaCapabilities> {
+  const res = await fetch(`${normalizeBaseUrl(RELAY_BASE_URL)}/v1/capabilities`, {
+    headers: { Authorization: `Bearer ${relayKey}` },
+    signal: AbortSignal.timeout(CATALOG_TIMEOUT_MS),
+  });
+  if (!res.ok) throw new Error(`relay media capabilities returned ${res.status}`);
+
+  const body = (await res.json()) as {
+    image?: { enabled?: unknown };
+    video?: { enabled?: unknown };
+  };
+  if (typeof body?.image?.enabled !== 'boolean' || typeof body?.video?.enabled !== 'boolean') {
+    throw new Error('invalid media capabilities response');
+  }
+  return { image: body.image.enabled, video: body.video.enabled };
+}
+
 export interface ApplyRelayConfigDeps {
   /** 读网关配置快照（`gateway-client.getConfig()`）。**会抛**，不返回 IpcResult。 */
   getConfig: () => Promise<unknown>;
@@ -469,6 +579,8 @@ export interface ApplyRelayConfigDeps {
   patchConfig: (params: { baseHash: string; raw: string; replacePaths?: string[] }) => Promise<unknown>;
   /** 解析一个可用的中转模型 ref；拿不到返回 null（不阻塞主流程）。 */
   resolveDefaultModel?: (relayKey: string) => Promise<string | null>;
+  /** relay 的逐卡媒体能力探针；缺省或失败一律按两项关闭。 */
+  resolveMediaCapabilities?: (relayKey: string) => Promise<RelayMediaCapabilities>;
   /** 日志。**不要传含 relay key 的数据进来**。 */
   log?: (event: string, data: Record<string, unknown>) => void;
 }
@@ -594,6 +706,58 @@ function providerApplied(snapshot: unknown): boolean {
 }
 
 /**
+ * 回读校验本次媒体补丁真的生效。
+ *
+ * 只检查本次明确写过的路径：没碰的第三方 provider / 用户模型不参与判断；
+ * 写 null 的路径必须在回读里消失，避免“聊天中转成功”掩盖幽灵媒体入口。
+ */
+function mediaPatchApplied(snapshot: unknown, patch: RelayConfigPatch): boolean {
+  const config = configOf(snapshot);
+  if (!config) return false;
+
+  const patchedProviders = (patch.models as { providers?: Record<string, unknown> } | undefined)?.providers;
+  const currentProviders = (config.models as { providers?: Record<string, unknown> } | undefined)?.providers;
+  const patchedMedia =
+    (patch.agents as { defaults?: { mediaModels?: Record<string, { primary?: unknown }> } } | undefined)?.defaults
+      ?.mediaModels ?? {};
+  const currentMedia =
+    (config.agents as { defaults?: { mediaModels?: Record<string, { primary?: unknown }> } } | undefined)?.defaults
+      ?.mediaModels ?? {};
+
+  const check = (input: { providerId: string; expectedBaseUrl: string; mediaKind: 'image' | 'video' }): boolean => {
+    const providerTouched = Object.prototype.hasOwnProperty.call(patchedProviders ?? {}, input.providerId);
+    if (providerTouched) {
+      const expectedProvider = patchedProviders?.[input.providerId];
+      const currentProvider = currentProviders?.[input.providerId];
+      if (expectedProvider === null) {
+        if (currentProvider !== undefined && currentProvider !== null) return false;
+      } else {
+        const baseUrl = (currentProvider as { baseUrl?: unknown } | null)?.baseUrl;
+        if (typeof baseUrl !== 'string' || normalizeBaseUrl(baseUrl) !== normalizeBaseUrl(input.expectedBaseUrl)) {
+          return false;
+        }
+      }
+    }
+
+    if (Object.prototype.hasOwnProperty.call(patchedMedia, input.mediaKind)) {
+      const expectedPrimary = patchedMedia[input.mediaKind]?.primary;
+      const currentPrimary = currentMedia[input.mediaKind]?.primary;
+      if (expectedPrimary === null) {
+        if (currentPrimary !== undefined && currentPrimary !== null) return false;
+      } else if (currentPrimary !== expectedPrimary) {
+        return false;
+      }
+    }
+    return true;
+  };
+
+  return (
+    check({ providerId: OPENAI_IMAGE_PROVIDER_ID, expectedBaseUrl: RELAY_IMAGE_BASE_URL, mediaKind: 'image' }) &&
+    check({ providerId: XAI_VIDEO_PROVIDER_ID, expectedBaseUrl: RELAY_VIDEO_BASE_URL, mediaKind: 'video' })
+  );
+}
+
+/**
  * 把中转配置写进网关，并**回读校验**。
  *
  * 为什么不直接写盘上的 `openclaw.json`：客户端本来就不直接改那个文件，
@@ -626,6 +790,16 @@ export async function applyRelayConfig(
     }
   }
 
+  let mediaCapabilities: RelayMediaCapabilities = { image: false, video: false };
+  if (deps.resolveMediaCapabilities) {
+    try {
+      mediaCapabilities = await deps.resolveMediaCapabilities(input.relayKey);
+    } catch (error) {
+      warnings.push('resolve-media-capabilities-failed');
+      log('relay.media-capabilities-resolve-failed', { message: messageOf(error) });
+    }
+  }
+
   for (let attempt = 1; attempt <= MAX_HASH_RETRIES; attempt += 1) {
     let snapshot: unknown;
     try {
@@ -642,7 +816,13 @@ export async function applyRelayConfig(
 
     // ⭐ 联网开关由**调用方**传（不在这个函数里读全局配置）：读全局会让它没法单测，
     //    而它的测试恰恰是"写没写进去"这件事的主要防线。
-    const patch = buildRelayPatch({ ...input, existingConfig: snapshot, defaultModel });
+    const patch = buildRelayPatch({
+      ...input,
+      existingConfig: snapshot,
+      defaultModel,
+      imageGenerationWired: mediaCapabilities.image,
+      videoGenerationWired: mediaCapabilities.video,
+    });
     if (!patch) {
       return { ok: false, configured: false, errorCode: 'no-key', error: 'no relay key', warnings };
     }
@@ -673,7 +853,8 @@ export async function applyRelayConfig(
     // 「返回成功但网关没生效」是它独有的。所以回读一次。
     let verified = false;
     try {
-      verified = providerApplied(await deps.getConfig());
+      const appliedSnapshot = await deps.getConfig();
+      verified = providerApplied(appliedSnapshot) && mediaPatchApplied(appliedSnapshot, patch);
     } catch (error) {
       log('relay.config-verify-read-failed', { attempt, message: messageOf(error) });
     }

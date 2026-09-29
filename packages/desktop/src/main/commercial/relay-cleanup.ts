@@ -57,7 +57,12 @@ export async function requestCommercialAccessCleanup(
   deps: CommercialAccessCleanupDeps,
 ): Promise<CommercialAccessCleanupResult> {
   const current = deps.readCommercialConfig() ?? { supabaseUrl: '', supabaseAnonKey: '' };
-  deps.writeCommercialConfig({ ...current, licenseKey: undefined, relayCleanupPending: true });
+  deps.writeCommercialConfig({
+    ...current,
+    licenseKey: undefined,
+    licenseBinding: undefined,
+    relayCleanupPending: true,
+  });
   return performPendingCleanup(deps);
 }
 

@@ -654,6 +654,16 @@ describe('聊天区在发送时的稳定性', () => {
     view.unmount();
   });
 
+  it('hides the compare entry for a team task', () => {
+    mocks.tasks = [{ ...activeTask(), teamId: 'team-design', ensemble: false }];
+    mocks.activeTaskId = 'task-1';
+
+    const view = renderMainArea();
+
+    expect(view.container.querySelector('[data-testid="compare-toggle"]')).toBeNull();
+    view.unmount();
+  });
+
   /**
    * 2026-09-20 实机报障：「我发完要求，那个对话头像会消失一下，然后再给我反馈」。
    *

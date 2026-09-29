@@ -531,6 +531,48 @@ func TestApplySwapsTheTreesAndCommitsAfterHealth(t *testing.T) {
 	}
 }
 
+func TestApplyPreservesCommercialIdentityAndQuotaCacheAcrossInPlaceUpdate(t *testing.T) {
+	instance := newScenario(t)
+	instance.writeCurrentProgram(t)
+	instance.stageVerifiedProgram(t)
+	instance.writeHealthReceipt(t, instance.transaction.TransactionID, instance.transaction.TargetVersion, instance.transaction.CurrentProgramPath)
+
+	// These are deliberately outside the swappable program directory. Together
+	// they model every local link needed to reopen the same entitlement after an
+	// update: stable commercial device id, exact account/org/license binding,
+	// encrypted login session, gateway device key, and the renderer quota cache.
+	protected := map[string][]byte{
+		filepath.Join(instance.root, DataDirectoryName, "clawwork-config.json"):                   []byte(`{"deviceId":"device-stable","commercial":{"licenseKey":"RY-KEEP-0001","licenseBinding":{"userId":"user-1","orgId":"org-1","licenseId":"license-1"}}}`),
+		filepath.Join(instance.root, DataDirectoryName, "commercial-session.json"):                []byte("enc:dpapi-session-ciphertext"),
+		filepath.Join(instance.root, DataDirectoryName, "device-identity.json"):                   []byte(`{"version":1,"deviceId":"gateway-device-stable","privateKeyPem":"enc:dpapi-key"}`),
+		filepath.Join(instance.root, DataDirectoryName, "Local Storage", "leveldb", "000003.log"): []byte(`cw:commercial-overview={"license":{"licenseId":"license-1","orgId":"org-1","tokenQuotaMicros":5000000000,"tokenUsedMicros":125000000}}`),
+		filepath.Join(instance.root, WorkspaceDirectoryName, "USER.md"):                           []byte("operator workspace must survive byte-for-byte\n"),
+	}
+	for target, contents := range protected {
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			t.Fatalf("create %s: %v", filepath.Dir(target), err)
+		}
+		if err := os.WriteFile(target, contents, 0o600); err != nil {
+			t.Fatalf("write %s: %v", target, err)
+		}
+	}
+
+	if err := Apply(context.Background(), instance.transaction, instance.key, instance.ops); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	for target, want := range protected {
+		got, err := os.ReadFile(target)
+		if err != nil {
+			t.Fatalf("protected commercial asset %s must survive: %v", target, err)
+		}
+		if string(got) != string(want) {
+			t.Fatalf("protected commercial asset %s changed across update: got %q want %q", target, got, want)
+		}
+	}
+	instance.assertOnlyScopedOperations(t)
+}
+
 func TestApplyRefusesAnUnverifiedStage(t *testing.T) {
 	instance := newScenario(t)
 	instance.writeCurrentProgram(t)

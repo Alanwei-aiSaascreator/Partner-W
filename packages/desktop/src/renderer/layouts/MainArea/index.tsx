@@ -438,7 +438,7 @@ function ChatHeader({
         </Tooltip>
         {/* 多模型对比的**入口**：只在有任务时出现（对比必须挂在一个真实任务上，
             否则 N 路会话没有归属，采纳也无处可落）。 */}
-        {activeTask && (
+        {activeTask && !activeTask.teamId && (
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
@@ -1176,7 +1176,7 @@ export function ChatContent({
       {/* 选择条挂在输入框**上方**、与输入框同一段：模型选完照常按发送（发送键的语义
           在 useChatSend 里整条换成"并发问 N 个模型"，见那边的注释）。
           `active` 非空时不显示 —— 那一轮已经带着模型跑起来了，这时候换选择只会误导。 */}
-      {compareMode && !compareActive && (
+      {compareMode && !activeTask?.teamId && !compareActive && (
         <CompareSetupBar modelCatalog={compareCatalog} onClose={() => setCompareMode(false)} />
       )}
       <ChatInput

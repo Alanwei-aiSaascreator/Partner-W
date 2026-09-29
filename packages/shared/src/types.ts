@@ -371,6 +371,10 @@ export interface CommercialLicenseSummary {
    *    消费侧还要看 `status` / `expiresAt`（见 renderer 的 `evaluateCommercialSendAccess`）。
    */
   activated: boolean;
+  /** Exact card identity used by relay authentication and quota accounting. */
+  licenseId: string;
+  /** Exact owner organization to which that card is bound. */
+  orgId: string;
   licenseKey: string | null;
   sku: string | null;
   status: string | null;
@@ -549,6 +553,49 @@ export interface ToolsCatalog {
   profiles: Array<{ id: string; label: string }>;
   groups: ToolGroup[];
 }
+
+export type EffectiveToolSource = 'core' | 'plugin' | 'channel' | 'mcp';
+
+export interface EffectiveToolEntry {
+  id: string;
+  label: string;
+  description: string;
+  rawDescription: string;
+  source: EffectiveToolSource;
+  pluginId?: string;
+  channelId?: string;
+  mcpServer?: string;
+  mcpToolName?: string;
+  deniedBySession?: true;
+  risk?: 'low' | 'medium' | 'high';
+  tags?: string[];
+}
+
+export interface EffectiveToolGroup {
+  id: EffectiveToolSource;
+  label: string;
+  source: EffectiveToolSource;
+  tools: EffectiveToolEntry[];
+}
+
+export interface EffectiveToolNotice {
+  id: string;
+  severity: 'info' | 'warning';
+  message: string;
+  servers?: string[];
+}
+
+export interface EffectiveToolsInventory {
+  agentId: string;
+  profile: string;
+  groups: EffectiveToolGroup[];
+  notices?: EffectiveToolNotice[];
+}
+
+export type EffectiveToolsLoadState =
+  | { status: 'loading' }
+  | { status: 'ready'; inventory: EffectiveToolsInventory }
+  | { status: 'error'; error: string };
 
 export interface SkillStatusConfigCheck {
   path: string;

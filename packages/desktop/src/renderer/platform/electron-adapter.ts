@@ -26,6 +26,7 @@ export function createElectronPorts(): PlatformPorts {
       listCommands: api.listCommands,
       listAgents: api.listAgents,
       getToolsCatalog: api.getToolsCatalog,
+      getEffectiveTools: api.getEffectiveTools,
       getSkillsStatus: api.getSkillsStatus,
       createSession: api.createSession,
       deleteSession: api.deleteSession,

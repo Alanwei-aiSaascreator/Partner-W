@@ -21,7 +21,6 @@ const mocks = vi.hoisted(() => {
     gatewayId: 'gw-1',
     agentId: 'manager-agent',
     ensemble: true,
-    teamId: 'team-1',
   };
 
   const teamData: Team = {
@@ -232,6 +231,8 @@ describe('conductor initialization - catalog fallback', () => {
         org: null,
         license: {
           activated: true,
+          licenseId: 'license-1',
+          orgId: 'org-1',
           licenseKey: 'RY-1',
           sku: 'USB',
           status: 'active',
@@ -251,8 +252,7 @@ describe('conductor initialization - catalog fallback', () => {
     vi.restoreAllMocks();
   });
 
-  it('falls back to team agents when gateway catalog is not yet loaded', async () => {
-    // --- Setup: gateway catalog is empty (not yet fetched), but team data is available ---
+  it('keeps ordinary ensemble tasks fail-closed when the gateway catalog is not yet loaded', async () => {
     mocks.uiState.agentCatalogByGateway = {};
     mocks.teamState.teams = { 'team-1': mocks.teamData };
     mocks.roomState.rooms = {};
@@ -265,23 +265,14 @@ describe('conductor initialization - catalog fallback', () => {
       await capturedHandleSend!();
     });
 
-    // The conductor should have been initialized (not the error toast).
-    expect(toast.error).not.toHaveBeenCalledWith('errors.conductorInitFailed');
-    expect(mocks.roomState.initConductor).toHaveBeenCalledTimes(1);
-
-    // Verify the agentCatalogStr passed to initConductor contains the two worker agents.
-    const catalogArg = (mocks.roomState.initConductor.mock.calls[0] as unknown[])[3] as string;
-    expect(catalogArg).toContain('worker-a');
-    expect(catalogArg).toContain('worker-b');
-    // Manager agent should be excluded (it equals task.agentId).
-    expect(catalogArg).not.toContain('manager-agent');
+    expect(toast.error).toHaveBeenCalledWith('errors.conductorInitFailed');
+    expect(mocks.roomState.initConductor).not.toHaveBeenCalled();
 
     unmount();
   });
 
-  it('shows error toast when gateway catalog is empty AND no team data exists', async () => {
-    // --- Setup: gateway catalog empty, no team data ---
-    mocks.uiState.agentCatalogByGateway = {};
+  it('shows error toast when an ordinary ensemble catalog is loaded but empty', async () => {
+    mocks.uiState.agentCatalogByGateway = { 'gw-1': { defaultId: 'main', agents: [] } };
     mocks.teamState.teams = {};
     mocks.roomState.rooms = {};
 
@@ -298,8 +289,7 @@ describe('conductor initialization - catalog fallback', () => {
     unmount();
   });
 
-  it('uses gateway catalog agents when catalog IS loaded (no fallback needed)', async () => {
-    // --- Setup: gateway catalog is populated ---
+  it('uses gateway catalog agents for an ordinary non-team ensemble task', async () => {
     mocks.uiState.agentCatalogByGateway = {
       'gw-1': {
         defaultId: 'main',
@@ -324,18 +314,22 @@ describe('conductor initialization - catalog fallback', () => {
     expect(toast.error).not.toHaveBeenCalledWith('errors.conductorInitFailed');
     expect(mocks.roomState.initConductor).toHaveBeenCalledTimes(1);
 
-    // When catalog IS loaded, agent names from the catalog should appear.
     const catalogArg = (mocks.roomState.initConductor.mock.calls[0] as unknown[])[3] as string;
+    expect(catalogArg).toContain('Manager');
     expect(catalogArg).toContain('Worker A');
     expect(catalogArg).toContain('Worker B');
-    // unrelated-agent is not in the team, should not appear.
-    expect(catalogArg).not.toContain('unrelated-agent');
+    expect(catalogArg).toContain('Other');
 
     unmount();
   });
 
   it('initializes first, then dispatches imported, source, and pasted attachments before clearing the draft', async () => {
-    mocks.uiState.agentCatalogByGateway = {};
+    mocks.uiState.agentCatalogByGateway = {
+      'gw-1': {
+        defaultId: 'main',
+        agents: [{ id: 'worker-a', name: 'Worker A' }],
+      },
+    };
     mocks.teamState.teams = { 'team-1': mocks.teamData };
     mocks.roomState.rooms = {};
     const setPendingAttachments = vi.fn();
@@ -392,7 +386,12 @@ describe('conductor initialization - catalog fallback', () => {
   });
 
   it('preserves the draft and does not persist a user message when conductor initialization fails', async () => {
-    mocks.uiState.agentCatalogByGateway = {};
+    mocks.uiState.agentCatalogByGateway = {
+      'gw-1': {
+        defaultId: 'main',
+        agents: [{ id: 'worker-a', name: 'Worker A' }],
+      },
+    };
     mocks.teamState.teams = { 'team-1': mocks.teamData };
     mocks.roomState.rooms = {};
     mocks.roomState.initConductor.mockResolvedValueOnce(false);
@@ -422,7 +421,12 @@ describe('conductor initialization - catalog fallback', () => {
   });
 
   it('preserves the draft and avoids a false local message when first dispatch fails after initialization', async () => {
-    mocks.uiState.agentCatalogByGateway = {};
+    mocks.uiState.agentCatalogByGateway = {
+      'gw-1': {
+        defaultId: 'main',
+        agents: [{ id: 'worker-a', name: 'Worker A' }],
+      },
+    };
     mocks.teamState.teams = { 'team-1': mocks.teamData };
     mocks.roomState.rooms = {};
     mocks.composerSend.mockResolvedValueOnce({ ok: false, taskId: 'task-ensemble' });
@@ -453,7 +457,12 @@ describe('conductor initialization - catalog fallback', () => {
   });
 
   it('defers every ready ensemble retry and clears once after the first successful dispatch', async () => {
-    mocks.uiState.agentCatalogByGateway = {};
+    mocks.uiState.agentCatalogByGateway = {
+      'gw-1': {
+        defaultId: 'main',
+        agents: [{ id: 'worker-a', name: 'Worker A' }],
+      },
+    };
     mocks.teamState.teams = { 'team-1': mocks.teamData };
     mocks.roomState.rooms = {
       'task-ensemble': { taskId: 'task-ensemble', conductorReady: true, status: 'active', performers: [] },

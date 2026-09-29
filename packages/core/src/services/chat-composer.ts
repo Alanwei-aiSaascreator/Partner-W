@@ -16,6 +16,7 @@ interface TaskRef {
   /** 该任务当前用的模型 —— `/think` 要靠它判断档位支不支持。 */
   model?: string;
   ensemble?: boolean;
+  teamId?: string;
 }
 
 export interface ChatComposerDeps {
@@ -332,7 +333,7 @@ export function createChatComposer(deps: ChatComposerDeps) {
     }
 
     try {
-      const room = task.ensemble ? deps.getRoomState?.(task.id) : undefined;
+      const room = task.ensemble && !task.teamId ? deps.getRoomState?.(task.id) : undefined;
       const mentionTargets = resolveMentionTargets(room, options.mentions, options.mentionAll);
       const isMentionSend = mentionTargets.length > 0;
       processingSessionKeys = isMentionSend ? mentionTargets : [task.sessionKey];

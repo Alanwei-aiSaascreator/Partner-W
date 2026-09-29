@@ -22,9 +22,15 @@ const mocks = vi.hoisted(() => {
   };
 
   return {
+    baseTask: activeTask,
     abort: vi.fn(async () => {}),
     applySlashCommand: vi.fn(async () => ({ ok: true })),
-    send: vi.fn<(taskId: string) => Promise<{ ok: boolean; taskId?: string; partialFailure?: string }>>(async () => ({
+    send: vi.fn<
+      (
+        taskId: string,
+        options?: Record<string, unknown>,
+      ) => Promise<{ ok: boolean; taskId?: string; partialFailure?: string }>
+    >(async () => ({
       ok: true,
       taskId: 'task-1',
     })),
@@ -54,6 +60,7 @@ const mocks = vi.hoisted(() => {
       // 手写 store 桩**必须跟着长**（缺一个字段 = 整屏渲染崩）。
       modelCatalogFailureByGateway: {} as Record<string, true>,
       toolsCatalogByGateway: {},
+      effectiveToolsByGateway: {} as Record<string, Record<string, unknown>>,
       // 「这次运行连上过没有」+ 重连进度：输入框那格说"正在启动"还是"离线只读"靠它们分
       //（`lib/gateway-display-phase.ts`）。缺这两个字段时真身走 `?.` ⇒ 一律"从没连上过"。
       gatewayReconnectInfo: {} as Record<string, { attempt: number; max: number; gaveUp: boolean }>,
@@ -161,6 +168,9 @@ function Harness({ initialValue = '' }: { initialValue?: string }) {
       </button>
       <div data-testid="aborting">{chat.aborting ? 'aborting' : 'idle'}</div>
       <div data-testid="model-availability">{chat.modelAvailability}</div>
+      <div data-testid="tool-ids">
+        {chat.toolsCatalog?.groups.flatMap((group) => group.tools.map((tool) => tool.id)).join(',') ?? ''}
+      </div>
     </>
   );
 }
@@ -237,7 +247,7 @@ describe('useChatSend abort flow', () => {
     //    不重置就**泄漏给后面所有用例**（2026-09-24 我自己踩了一次：4 条无关用例跟着红）。
     mocks.taskState.commitPendingTask.mockReset();
     mocks.taskState.activeTaskId = 'task-1';
-    mocks.taskState.tasks = [mocks.taskState.tasks.find((task) => task.id === 'task-1')!];
+    mocks.taskState.tasks = [{ ...mocks.baseTask }];
     Object.assign(window, {
       clawwork: {
         readInboxFileForSend: vi.fn(async () => ({
@@ -252,6 +262,9 @@ describe('useChatSend abort flow', () => {
     });
     mocks.uiState.gatewayStatusMap = { 'gw-1': 'connected' };
     mocks.uiState.modelCatalogByGateway = {};
+    mocks.uiState.toolsCatalogByGateway = {};
+    mocks.uiState.effectiveToolsByGateway = {};
+    mocks.roomState.rooms = {};
     useCommercialStore.setState({
       status: 'ready',
       overview: {
@@ -259,6 +272,8 @@ describe('useChatSend abort flow', () => {
         org: null,
         license: {
           activated: true,
+          licenseId: 'license-1',
+          orgId: 'org-1',
           licenseKey: 'RY-1',
           sku: 'USB',
           status: 'active',
@@ -271,6 +286,58 @@ describe('useChatSend abort flow', () => {
       },
     });
     (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  });
+
+  it('does not expose a static catalog when the session effective lookup failed', () => {
+    mocks.uiState.toolsCatalogByGateway = {
+      'gw-1': {
+        groups: [
+          {
+            id: 'core',
+            label: 'Core',
+            source: 'core',
+            tools: [{ id: 'ghost_tool', label: 'Ghost', description: '', source: 'core' }],
+          },
+        ],
+      },
+    };
+    mocks.uiState.effectiveToolsByGateway = {
+      'gw-1': {
+        [mocks.taskState.tasks[0]!.sessionKey]: { status: 'error', error: 'unknown session key' },
+      },
+    };
+
+    const { container, unmount } = render(<Harness />);
+
+    expect(container.querySelector('[data-testid="tool-ids"]')?.textContent).toBe('');
+    unmount();
+  });
+
+  it('exposes only the session effective inventory', () => {
+    mocks.uiState.effectiveToolsByGateway = {
+      'gw-1': {
+        [mocks.taskState.tasks[0]!.sessionKey]: {
+          status: 'ready',
+          inventory: {
+            agentId: 'main',
+            profile: 'coding',
+            groups: [
+              {
+                id: 'core',
+                label: 'Core',
+                source: 'core',
+                tools: [{ id: 'exec', label: 'Exec', description: '', rawDescription: '', source: 'core' }],
+              },
+            ],
+          },
+        },
+      },
+    };
+
+    const { container, unmount } = render(<Harness />);
+
+    expect(container.querySelector('[data-testid="tool-ids"]')?.textContent).toBe('exec');
+    unmount();
   });
 
   afterEach(() => {
@@ -325,6 +392,59 @@ describe('useChatSend abort flow', () => {
     });
 
     expect(mocks.send).toHaveBeenCalledWith('task-1', expect.objectContaining({ presetModel: 'deepseek-v4-flash' }));
+  });
+
+  it('injects the four-phase contract into hidden context for a direct team task', async () => {
+    const active = mocks.taskState.tasks[0]!;
+    mocks.taskState.tasks = [{ ...active, teamId: 'team-design', ensemble: false }];
+    const { container, unmount } = render(<Harness initialValue="设计一张发布海报" />);
+
+    await act(async () => {
+      (container.querySelectorAll('button')[1] as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+
+    expect(mocks.send).toHaveBeenCalledWith(
+      'task-1',
+      expect.objectContaining({
+        content: '设计一张发布海报',
+        contextPrefix: expect.stringMatching(/策略[\s\S]*创作[\s\S]*质检[\s\S]*修订[\s\S]*交付/),
+      }),
+    );
+    const options = mocks.send.mock.calls[0]![1] as { contextPrefix: string };
+    expect(options.contextPrefix).toContain('当前实际可用的工具');
+    expect(options.contextPrefix).toContain('产物确实存在');
+    expect(options.contextPrefix).toContain('sessions_spawn');
+    unmount();
+  });
+
+  it('bypasses legacy ensemble delivery for an already-open team task', async () => {
+    const active = mocks.taskState.tasks[0]!;
+    mocks.taskState.tasks = [{ ...active, teamId: 'team-design', ensemble: true }];
+    mocks.roomState.rooms = {
+      'task-1': {
+        taskId: 'task-1',
+        conductorSessionKey: 'agent:conductor:clawwork:task:task-1',
+        conductorReady: true,
+        status: 'active',
+        performers: [],
+      },
+    };
+    const { container, unmount } = render(<Harness initialValue="continue the team task" />);
+
+    await act(async () => {
+      (container.querySelectorAll('button')[1] as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+
+    expect(mocks.send).toHaveBeenCalledWith(
+      'task-1',
+      expect.objectContaining({
+        contextPrefix: expect.stringMatching(/1\.[\s\S]*2\.[\s\S]*3\.[\s\S]*4\./),
+        deferUserMessageUntilSent: false,
+      }),
+    );
+    unmount();
   });
 
   it('does not call the model or tools when the current account has zero quota', async () => {
@@ -732,7 +852,7 @@ describe('对比模式下的发送', () => {
     mocks.toastError.mockClear();
     for (const fn of Object.values(gateway)) fn.mockClear();
     mocks.taskState.activeTaskId = 'task-1';
-    mocks.taskState.tasks = [mocks.taskState.tasks.find((task) => task.id === 'task-1')!];
+    mocks.taskState.tasks = [{ ...mocks.baseTask }];
     Object.assign(window, {
       clawwork: {
         readInboxFileForSend: vi.fn(async () => ({
@@ -755,6 +875,8 @@ describe('对比模式下的发送', () => {
         org: null,
         license: {
           activated: true,
+          licenseId: 'license-1',
+          orgId: 'org-1',
           licenseKey: 'RY-1',
           sku: 'USB',
           status: 'active',
@@ -812,6 +934,23 @@ describe('对比模式下的发送', () => {
     expect(mocks.send).not.toHaveBeenCalled();
     // 发出去之后输入框要清掉（用户看得见"这一句已经发出去了"）
     expect((container.querySelector('textarea') as HTMLTextAreaElement).value).toBe('');
+  });
+
+  it('团队任务即使残留在 compare 模式也走单 Agent 直发并注入四阶段合同', async () => {
+    mocks.taskState.tasks = [{ ...mocks.baseTask, teamId: 'team-design', ensemble: false }];
+    const { container } = render(<Harness initialValue="设计一张发布海报" />);
+    clickSend(container);
+    await flush();
+
+    expect(gateway.createSession).not.toHaveBeenCalled();
+    expect(gateway.sendMessage).not.toHaveBeenCalled();
+    expect(mocks.send).toHaveBeenCalledWith(
+      'task-1',
+      expect.objectContaining({
+        content: '设计一张发布海报',
+        contextPrefix: expect.stringMatching(/策略[\s\S]*创作[\s\S]*质检[\s\S]*修订[\s\S]*交付/),
+      }),
+    );
   });
 
   it('带附件/引用时不发：只提示一句，**一个网关调用都不发**', async () => {

@@ -81,10 +81,12 @@ const mocks = vi.hoisted(() => ({
   warn: vi.fn(),
   rpc: vi.fn(),
   from: vi.fn(),
+  getUser: vi.fn(async () => ({ data: { user: { id: 'user-1' } }, error: null })),
   getAllGatewayClients: vi.fn(),
   probeAuth: vi.fn(async () => 'authenticated'),
   drain: vi.fn(async () => ({ cleaned: false, pending: false })),
   getCommercialClient: vi.fn(),
+  fetchRelayMediaCapabilities: vi.fn(async () => ({ image: false, video: true })),
   /** 主窗口替身（`sendToWindow` 要 `isDestroyed()` / `webContents.send`）。null = 窗口还没建。 */
   mainWindow: null as null | {
     isDestroyed: () => boolean;
@@ -115,6 +117,7 @@ vi.mock('../src/main/window-manager.js', () => ({
 vi.mock('../src/main/commercial/relay-config.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../src/main/commercial/relay-config.js')>()),
   fetchFirstRelayModel: vi.fn(async () => null),
+  fetchRelayMediaCapabilities: mocks.fetchRelayMediaCapabilities,
 }));
 
 // 接线层会 import 这些模块的全部真身（ws / auth / cleanup → electron、state-config）。
@@ -151,6 +154,41 @@ function tableChain(result: unknown) {
   return node;
 }
 
+function commercialClientMockValue() {
+  return { auth: { getUser: mocks.getUser }, rpc: mocks.rpc, from: mocks.from };
+}
+
+function installLicensedTableMocks(): void {
+  mocks.from.mockImplementation((table: string) => {
+    if (table === 'org_members') {
+      return tableChain({
+        data: [{ user_id: 'user-1', org_id: 'org-1', role: 'owner', joined_at: '2026-01-01T00:00:00Z' }],
+        error: null,
+      });
+    }
+    if (table === 'org_active_license') {
+      return tableChain({
+        data: [
+          {
+            id: 'license-1',
+            org_id: 'org-1',
+            license_key: LICENSE,
+            sku: 'USB-标准版',
+            status: 'active',
+            expires_at: null,
+            issued_at: '2026-01-01T00:00:00Z',
+            max_activations: 1,
+            token_quota_micros: 5000,
+            token_used_micros: 0,
+          },
+        ],
+        error: null,
+      });
+    }
+    throw new Error(`unexpected table: ${table}`);
+  });
+}
+
 /** 一个假网关：patch 之后回读能看见 provider（applyRelayConfig 要回读校验）。 */
 function makeGateway(): {
   gateway: RelayGatewayHandle;
@@ -175,6 +213,16 @@ function printedLogs(): string {
   return JSON.stringify([...mocks.info.mock.calls, ...mocks.warn.mock.calls]);
 }
 
+describe('媒体能力生产接线', () => {
+  it('buildRelayBootstrapDeps 把 relay capabilities 探针接进启动恢复链', async () => {
+    const { buildRelayBootstrapDeps } = await import('../src/main/commercial/relay-startup.js');
+    const deps = buildRelayBootstrapDeps();
+
+    await expect(deps.resolveMediaCapabilities?.(RELAY_KEY)).resolves.toEqual({ image: false, video: true });
+    expect(mocks.fetchRelayMediaCapabilities).toHaveBeenCalledWith(RELAY_KEY);
+  });
+});
+
 describe('fetchRelayKeyForLicense —— 服务端拒绝不再被压成 null', () => {
   beforeEach(() => {
     vi.resetModules();
@@ -183,21 +231,8 @@ describe('fetchRelayKeyForLicense —— 服务端拒绝不再被压成 null', (
     //    如果没把排队的值消费完，剩下的会漏给**下一个**用例（实测：一条按预期红掉的
     //    用例让后一条"硬抛"用例只被调了一次）。`mockReset()` 会把队列一起清掉。
     mocks.rpc.mockReset();
-    mocks.getCommercialClient.mockReturnValue({ rpc: mocks.rpc, from: mocks.from });
-    mocks.from.mockImplementation((table: string) => {
-      if (table === 'org_members') return tableChain({ data: [{ org_id: 'org-1' }] });
-      return tableChain({
-        data: {
-          license_key: LICENSE,
-          sku: 'USB-标准版',
-          status: 'active',
-          expires_at: null,
-          max_activations: 1,
-          token_quota_micros: 5000,
-          token_used_micros: 0,
-        },
-      });
-    });
+    mocks.getCommercialClient.mockReturnValue(commercialClientMockValue());
+    installLicensedTableMocks();
     mocks.rpc.mockResolvedValue({ data: { relayKey: RELAY_KEY }, error: null });
   });
 
@@ -398,7 +433,7 @@ describe('日志卫生 —— SQLSTATE 与安全码进日志，卡密/原始文�
     //    如果没把排队的值消费完，剩下的会漏给**下一个**用例（实测：一条按预期红掉的
     //    用例让后一条"硬抛"用例只被调了一次）。`mockReset()` 会把队列一起清掉。
     mocks.rpc.mockReset();
-    mocks.getCommercialClient.mockReturnValue({ rpc: mocks.rpc, from: mocks.from });
+    mocks.getCommercialClient.mockReturnValue(commercialClientMockValue());
   });
 
   afterEach(() => {
@@ -447,21 +482,8 @@ describe('整条链 —— 永久拒绝在 4 分钟窗口里只发一次 activat
     //    如果没把排队的值消费完，剩下的会漏给**下一个**用例（实测：一条按预期红掉的
     //    用例让后一条"硬抛"用例只被调了一次）。`mockReset()` 会把队列一起清掉。
     mocks.rpc.mockReset();
-    mocks.getCommercialClient.mockReturnValue({ rpc: mocks.rpc, from: mocks.from });
-    mocks.from.mockImplementation((table: string) => {
-      if (table === 'org_members') return tableChain({ data: [{ org_id: 'org-1' }] });
-      return tableChain({
-        data: {
-          license_key: LICENSE,
-          sku: 'USB-标准版',
-          status: 'active',
-          expires_at: null,
-          max_activations: 1,
-          token_quota_micros: 5000,
-          token_used_micros: 0,
-        },
-      });
-    });
+    mocks.getCommercialClient.mockReturnValue(commercialClientMockValue());
+    installLicensedTableMocks();
     mocks.rpc.mockResolvedValue({ data: { relayKey: RELAY_KEY }, error: null });
     mocks.probeAuth.mockResolvedValue('authenticated');
     mocks.drain.mockResolvedValue({ cleaned: false, pending: false });
@@ -759,21 +781,8 @@ describe('公开状态 —— 渲染层唯一能看到的那份结论', () => {
     vi.clearAllMocks();
     mocks.rpc.mockReset();
     mocks.probeAuth.mockReset();
-    mocks.getCommercialClient.mockReturnValue({ rpc: mocks.rpc, from: mocks.from });
-    mocks.from.mockImplementation((table: string) => {
-      if (table === 'org_members') return tableChain({ data: [{ org_id: 'org-1' }] });
-      return tableChain({
-        data: {
-          license_key: LICENSE,
-          sku: 'USB-标准版',
-          status: 'active',
-          expires_at: null,
-          max_activations: 1,
-          token_quota_micros: 5000,
-          token_used_micros: 0,
-        },
-      });
-    });
+    mocks.getCommercialClient.mockReturnValue(commercialClientMockValue());
+    installLicensedTableMocks();
     mocks.rpc.mockResolvedValue({ data: { relayKey: RELAY_KEY }, error: null });
     mocks.probeAuth.mockResolvedValue('authenticated');
     mocks.drain.mockResolvedValue({ cleaned: false, pending: false });

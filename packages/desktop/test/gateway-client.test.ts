@@ -1257,4 +1257,29 @@ describe('审批专用连接：exec 审批要真能送到用户面前', () => {
     emitEvent(socket, 'health', {});
     expect(forwardedEvents()).toContain('health');
   });
+
+  it('requests the effective tool inventory for the exact session', async () => {
+    const { GatewayClient } = await import('../src/main/ws/gateway-client.js');
+    const client = new GatewayClient({
+      id: 'gw-1',
+      name: 'Gateway',
+      url: 'ws://127.0.0.1:18789',
+      auth: { token: 'token' },
+    });
+    clients.push(client);
+    const sendReq = vi.spyOn(client, 'sendReq').mockResolvedValue({ groups: [] });
+    const method = (
+      client as unknown as {
+        getEffectiveTools: (sessionKey: string, agentId?: string) => Promise<Record<string, unknown>>;
+      }
+    ).getEffectiveTools;
+
+    expect(typeof method).toBe('function');
+    await method.call(client, 'agent:main:clawwork:task:task-1', 'main');
+
+    expect(sendReq).toHaveBeenCalledWith('tools.effective', {
+      sessionKey: 'agent:main:clawwork:task:task-1',
+      agentId: 'main',
+    });
+  });
 });

@@ -13,6 +13,7 @@ function fixture(connected: boolean) {
     supabaseUrl: 'https://commercial.test',
     supabaseAnonKey: 'anon',
     licenseKey: 'RY-OLD',
+    licenseBinding: { userId: 'old-user', orgId: 'old-org', licenseId: 'old-license' },
   };
   let gatewayConfig: Record<string, unknown> = {
     models: {
@@ -68,6 +69,7 @@ function fixtureWithRealisticGateway(rejectEverything = false) {
     supabaseUrl: 'https://commercial.test',
     supabaseAnonKey: 'anon',
     licenseKey: 'RY-OLD',
+    licenseBinding: { userId: 'old-user', orgId: 'old-org', licenseId: 'old-license' },
   };
   const gatewayConfig: Record<string, unknown> = {
     models: {
@@ -144,6 +146,7 @@ describe('commercial relay cleanup coordinator', () => {
 
     expect(result).toEqual({ cleaned: false, pending: true });
     expect(f.read().licenseKey).toBeUndefined();
+    expect(f.read().licenseBinding).toBeUndefined();
     expect(f.read().relayCleanupPending).toBe(true);
   });
 
