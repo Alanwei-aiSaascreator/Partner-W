@@ -42,7 +42,8 @@ import ToolbarButton from '@/components/semantic/ToolbarButton';
 import { createAgentWithRollback } from '@/lib/agent-builder';
 import { isWorkspaceInputResolvable } from '@/lib/install-workspace';
 import { AVATAR_ACCEPT, readFileAsDataUrl, validateAvatarFile } from '@/lib/avatar-utils';
-import AgentIcon, { listLocalAvatarIds } from '@/components/AgentIcon';
+import AgentIcon from '@/components/AgentIcon';
+import { listLocalAvatarIds } from '@/lib/local-avatar';
 
 const EMPTY_MODELS: ModelCatalogEntry[] = [];
 

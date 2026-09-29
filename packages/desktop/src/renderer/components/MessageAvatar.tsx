@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Bot, User } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { useLocalAvatarUrl } from './AgentIcon';
+import { useLocalAvatarUrl } from '@/lib/local-avatar';
 
 interface MessageAvatarProps {
   role: 'user' | 'assistant';
