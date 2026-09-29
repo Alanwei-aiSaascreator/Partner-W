@@ -42,4 +42,18 @@ describe('runWorkspaceGatedBootstrap', () => {
     expect(order.slice(0, 2)).toEqual(['probe:start', 'probe:end']);
     expect(order).toEqual(expect.arrayContaining(['assistants', 'skills']));
   });
+
+  it('⭐ unknown / null 都 fail-closed，不启动任何写入链', async () => {
+    for (const result of [{ state: 'unknown' as const, dev: null, ino: null }, null]) {
+      const bootstrapAssistants = vi.fn(async () => {});
+      const ensureSkills = vi.fn(async () => {});
+      await runWorkspaceGatedBootstrap({
+        probe: async () => result,
+        bootstrapAssistants,
+        ensureSkills,
+      });
+      expect(bootstrapAssistants).not.toHaveBeenCalled();
+      expect(ensureSkills).not.toHaveBeenCalled();
+    }
+  });
 });

@@ -15,9 +15,7 @@ export async function runWorkspaceGatedBootstrap(
   deps: WorkspaceGatedBootstrapDeps,
 ): Promise<WorkspaceFsIdentity | null> {
   const identity = await deps.probe();
-  if (!identity || identity.state === 'unsupported-identity' || identity.state === 'unwritable') {
-    return identity;
-  }
+  if (identity?.state !== 'ok') return identity;
   await Promise.all([deps.bootstrapAssistants(), deps.ensureSkills()]);
   return identity;
 }

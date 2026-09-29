@@ -122,6 +122,15 @@ function isZeroIdentity(identity: StatLike): boolean {
 export function probeWorkspaceFsIdentity(dir: string, deps: WorkspaceFsIdentityDeps = {}): WorkspaceFsIdentity {
   const stat = deps.stat ?? defaultStat;
   const filesystemType = (deps.filesystemType ?? defaultFilesystemType)(dir);
+  const isWindowsDrivePath = process.platform === 'win32' && /^[a-z]:\\$/i.test(parse(dir).root);
+  if (isWindowsDrivePath && !filesystemType) {
+    return {
+      state: 'unknown',
+      dev: null,
+      ino: null,
+      error: 'filesystem type unavailable',
+    };
+  }
   if (filesystemType && filesystemType.toUpperCase() !== 'NTFS') {
     return {
       state: 'unsupported-identity',

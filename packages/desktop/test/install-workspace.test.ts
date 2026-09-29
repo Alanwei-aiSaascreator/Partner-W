@@ -76,6 +76,13 @@ describe('checkInstallWorkspaceCapability', () => {
 
     expect(result).toEqual({ ok: true, path: 'D:\\ws' });
   });
+
+  it('⭐ 探测 unknown / null 都拒绝，不能在未证明 NTFS 时写助手', async () => {
+    for (const result of [{ state: 'unknown' as const, dev: null, ino: null }, null]) {
+      const checked = await checkInstallWorkspaceCapability('E:\\荣盈魔方工作区', async () => result);
+      expect(checked).toEqual({ ok: false, message: WORKSPACE_UNAVAILABLE_MESSAGE });
+    }
+  });
 });
 
 describe('isAbsoluteWorkspacePath', () => {

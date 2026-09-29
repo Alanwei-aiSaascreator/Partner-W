@@ -80,6 +80,16 @@ describe('probeWorkspaceFsIdentity', () => {
     expect(result.state).toBe('ok');
   });
 
+  it('⭐ Windows 盘符的 DriveFormat 读取失败 ⇒ unknown，不能靠非零 dev/ino 伪装成 ok', () => {
+    const result = probeWorkspaceFsIdentity(tmpDir(), {
+      filesystemType: () => null,
+      stat: () => ({ dev: 1611287400n, ino: 4785074606070117n }),
+    });
+
+    expect(result.state).toBe('unknown');
+    expect(result.error).toContain('filesystem type unavailable');
+  });
+
   it('⭐ 两次探测结果**不一致** ⇒ unknown（可能是杀毒/索引器争用造成的偶发零值，不许下结论）', () => {
     let call = 0;
     const result = probeWorkspaceFsIdentity(tmpDir(), {

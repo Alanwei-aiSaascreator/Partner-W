@@ -42,12 +42,10 @@ export async function checkInstallWorkspaceCapability(
   } catch {
     return { ok: false, message: WORKSPACE_UNAVAILABLE_MESSAGE };
   }
-  if (!identity || identity.state === 'unwritable') {
-    return { ok: false, message: WORKSPACE_UNAVAILABLE_MESSAGE };
-  }
-  if (identity.state === 'unsupported-identity') {
+  if (identity?.state === 'unsupported-identity') {
     return { ok: false, message: WORKSPACE_FILESYSTEM_UNSUPPORTED_MESSAGE };
   }
+  if (identity?.state !== 'ok') return { ok: false, message: WORKSPACE_UNAVAILABLE_MESSAGE };
   return checked;
 }
 
