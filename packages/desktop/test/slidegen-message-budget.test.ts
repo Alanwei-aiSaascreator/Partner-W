@@ -34,15 +34,16 @@ describe('slidegen 单消息累计页数预算', () => {
     mocks.emitPageShapes.mockResolvedValue({ page: { shapes: [], background: 'FFFFFF' }, warnings: [] });
   });
 
-  it('⭐ 120 + 81 页在任何渲染或写盘之前整条拒绝', async () => {
+  it('⭐ 120 + 81 页立即拒绝，后续 deck 不再求值且没有任何渲染或写盘', async () => {
     const result = await generateSlidesFromMessage({
       workspacePath: 'D:\\workspace-that-does-not-exist',
       taskId: 'task-1',
       messageId: 'message-1',
-      content: `${deck('第一份')}\n\n${deck('第二份')}`,
+      content: `${deck('第一份')}\n\n${deck('第二份')}\n\n${deck('不应求值的第三份')}`,
     });
 
     expect(result.failed).toContainEqual({ code: 'slidegen-too-many-pages', max: 200, got: 201 });
+    expect(mocks.evaluateSlide).toHaveBeenCalledTimes(2);
     expect(mocks.emitPageShapes).not.toHaveBeenCalled();
     expect(mocks.writeSlidePptx).not.toHaveBeenCalled();
     expect(mocks.saveArtifactFromBuffer).not.toHaveBeenCalled();

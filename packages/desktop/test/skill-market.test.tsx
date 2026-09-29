@@ -359,6 +359,23 @@ describe('技能市场 · 助手侧能不能用', () => {
     vi.useRealTimers();
   });
 
+  it('⭐ 三次 RPC 全部悬挂 ⇒ 2500ms 总超时收工，不永久停在确认中', async () => {
+    const stubs = installStubs({ getSkillsStatus: vi.fn(() => new Promise(() => undefined)) });
+    vi.useFakeTimers();
+    const { container, unmount } = render(<SkillMarket />);
+    await flush();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2500);
+    });
+
+    expect(stubs.getSkillsStatus).toHaveBeenCalledTimes(3);
+    expect(verdictOf(container, 'weekly-report')).toBe('unknown');
+    expect(verdictOf(container, 'weekly-report')).not.toBe('checking');
+    unmount();
+    vi.useRealTimers();
+  });
+
   it('⭐ 安装有约 0.7 秒可见延迟 ⇒ 第一遍没有它要重试，转绿（不是立刻判不能用）', async () => {
     let call = 0;
     installStubs({
@@ -482,6 +499,43 @@ describe('技能市场 · 助手侧能不能用', () => {
     });
 
     expect(verdictOf(container, 'weekly-report'), '旧的响应不许把已收工的结论打回去').toBe('usable');
+    expect(verdictOf(container, 'weekly-report')).not.toBe('checking');
+    unmount();
+    vi.useRealTimers();
+  });
+
+  it('⭐ 刷新开启新 epoch 后，旧 epoch 的迟到响应不得覆盖新结论', async () => {
+    let releaseOld!: (value: unknown) => void;
+    const oldPending = new Promise((resolve) => {
+      releaseOld = resolve;
+    });
+    let call = 0;
+    installStubs({
+      getSkillsStatus: vi.fn(async () => {
+        call += 1;
+        if (call === 1) return oldPending;
+        return { ok: true, result: statusReport([{ skillKey: 'weekly-report' }]) };
+      }),
+    });
+    vi.useFakeTimers();
+    const { container, unmount } = render(<SkillMarket />);
+    await flush();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    await act(async () => {
+      (container.querySelector('[data-testid="our-skill-refresh"]') as HTMLElement).click();
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(verdictOf(container, 'weekly-report')).toBe('usable');
+
+    await act(async () => {
+      releaseOld({ ok: true, result: statusReport([]) });
+      await Promise.resolve();
+    });
+    expect(verdictOf(container, 'weekly-report')).toBe('usable');
     expect(verdictOf(container, 'weekly-report')).not.toBe('checking');
     unmount();
     vi.useRealTimers();

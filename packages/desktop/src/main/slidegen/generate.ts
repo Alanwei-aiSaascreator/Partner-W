@@ -96,12 +96,20 @@ export async function generateSlidesFromMessage(input: {
   const assetsDir = path.join(input.workspacePath, 'assets');
   const assetRoot = fs.existsSync(assetsDir) ? assetsDir : input.workspacePath;
 
-  // 先求值完同一条消息里的所有 deck，再决定是否允许渲染。
-  // 否则前一份已经写盘后才发现累计超额，用户会拿到一套不完整的产物。
+  // 先求值、累计同一条消息里的 deck，再决定是否允许渲染。
+  // 首次超额就返回：既不能让前一份先写盘，也不能在预算已确定失败后继续耗时求值。
   const evaluated: Array<{ deck: SlidegenDeck; pages: ReturnType<typeof evaluateSlide> }> = [];
+  const evaluatedPageCounts: number[] = [];
   for (const deck of decks) {
     try {
-      evaluated.push({ deck, pages: evaluateSlide(deck.source) });
+      const pages = evaluateSlide(deck.source);
+      evaluated.push({ deck, pages });
+      evaluatedPageCounts.push(pages.length);
+      const budget = messagePageBudgetFailure(evaluatedPageCounts);
+      if (budget) {
+        result.failed.push(budget);
+        return result;
+      }
     } catch (error) {
       result.failed.push(failureFromError(error));
       getDebugLogger().warn({
@@ -110,12 +118,6 @@ export async function generateSlidesFromMessage(input: {
         data: { taskId: input.taskId, error: (error as Error).message },
       });
     }
-  }
-
-  const budget = messagePageBudgetFailure(evaluated.map(({ pages }) => pages.length));
-  if (budget) {
-    result.failed.push(budget);
-    return result;
   }
 
   for (const { deck, pages } of evaluated) {
