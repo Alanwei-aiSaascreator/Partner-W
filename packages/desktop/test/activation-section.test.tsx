@@ -11,7 +11,7 @@ vi.mock('react-i18next', () => ({
 
 vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
-import ActivationSection from '../src/renderer/layouts/Settings/sections/ActivationSection';
+import ActivationSection, { activationErrorKey } from '../src/renderer/layouts/Settings/sections/ActivationSection';
 import { useCommercialStore } from '../src/renderer/stores/commercialStore';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -121,5 +121,9 @@ describe('ActivationSection', () => {
     expect(target, '按钮存在').toBeTruthy();
     expect((target as HTMLButtonElement).disabled, '按钮必须可点').toBe(false);
     unmount();
+  });
+
+  it('响应丢失使用专用提示，不冒充普通激活失败', () => {
+    expect(activationErrorKey('activation_outcome_unknown')).toBe('activation.errorOutcomeUnknown');
   });
 });

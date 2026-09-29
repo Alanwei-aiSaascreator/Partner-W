@@ -38,6 +38,7 @@
     "errorLimit": "該授權的裝置數已達上限",
     "errorNotConfigured": "商業後端未設定",
     "errorNotFound": "找不到該授權碼，請檢查是否輸入有誤",
+    "errorOutcomeUnknown": "伺服器回應中斷，暫時無法確認結果。請重試同一個授權碼，不會重複占用裝置名額",
     "placeholder": "授權碼",
     "replaceCard": "換一張卡",
     "submit": "啟用",

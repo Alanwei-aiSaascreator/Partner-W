@@ -6,6 +6,7 @@ import { ensureDeviceId, readConfig, updateConfig } from '../workspace/config.js
 import { getAllGatewayClients } from '../ws/index.js';
 import { getDebugLogger } from '../debug/index.js';
 import { applyRelayConfig, fetchFirstRelayModel, fetchRelayMediaCapabilities } from './relay-config.js';
+import { COMMERCIAL_REQUEST_TIMEOUT_MS } from './request-timeout.js';
 
 export interface LicenseStatus {
   configured: boolean;
@@ -32,6 +33,46 @@ export interface LicenseStatus {
 
 let licenseOperationTail: Promise<void> = Promise.resolve();
 let licenseGeneration = 0;
+const LICENSE_BACKEND_TIMEOUT_MS = 8_000;
+const ACTIVATION_RESPONSE_TIMEOUT_MS = COMMERCIAL_REQUEST_TIMEOUT_MS + 1_000;
+
+class LicenseBackendTimeoutError extends Error {
+  constructor(label: string) {
+    super(`${label} timed out`);
+    this.name = 'LicenseBackendTimeoutError';
+  }
+}
+
+/**
+ * Supabase does not impose a request deadline of its own.  Every backend wait
+ * inside the serialized license lane must therefore be bounded; otherwise one
+ * lost response keeps `licenseOperationTail` pending forever and blocks every
+ * later read or activation until the app restarts.
+ *
+ * Read-only calls use the short deadline. Activation uses a separate 16-second
+ * deadline, just beyond the fetch layer's 15-second abort, and then verifies
+ * the exact key + owner + device using reads. This bounds the serial lane
+ * without pretending that aborting HTTP rolled back a transaction.
+ */
+function withLicenseBackendTimeout<T>(
+  work: PromiseLike<T>,
+  label: string,
+  timeoutMs = LICENSE_BACKEND_TIMEOUT_MS,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new LicenseBackendTimeoutError(label)), timeoutMs);
+    Promise.resolve(work).then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
 
 function runLicenseOperation<T>(operation: () => Promise<T>): Promise<T> {
   const result = licenseOperationTail.then(operation, operation);
@@ -92,13 +133,16 @@ interface LicenseRow {
 
 /** Every organization this exact user owns, in the server's deterministic order. */
 async function ownerOrgIds(supabase: CommercialClient, userId: string): Promise<string[]> {
-  const { data, error } = await supabase
-    .from('org_members')
-    .select('org_id, joined_at')
-    .eq('user_id', userId)
-    .eq('role', 'owner')
-    .order('joined_at', { ascending: true })
-    .order('org_id', { ascending: true });
+  const { data, error } = await withLicenseBackendTimeout(
+    supabase
+      .from('org_members')
+      .select('org_id, joined_at')
+      .eq('user_id', userId)
+      .eq('role', 'owner')
+      .order('joined_at', { ascending: true })
+      .order('org_id', { ascending: true }),
+    'org_members.select',
+  );
   if (error) throw error;
   return (data ?? []).map((row) => String(row.org_id ?? '')).filter(Boolean);
 }
@@ -152,7 +196,7 @@ async function readLicenseStatusUnlocked(generation: number): Promise<IpcResult<
   if (!supabase) return { ok: true, result: base };
 
   try {
-    const auth = await supabase.auth.getUser();
+    const auth = await withLicenseBackendTimeout(supabase.auth.getUser(), 'auth.getUser');
     const userId = auth.data.user?.id ?? null;
     if (auth.error || !userId) return { ok: true, result: base };
 
@@ -171,7 +215,10 @@ async function readLicenseStatusUnlocked(generation: number): Promise<IpcResult<
     // not sufficient: the row's org must be in this exact user's owner rows.
     let license: LicenseRow | null = null;
     if (storedKey) {
-      const stored = await supabase.from('licenses').select(LICENSE_FIELDS).eq('license_key', storedKey).maybeSingle();
+      const stored = await withLicenseBackendTimeout(
+        supabase.from('licenses').select(LICENSE_FIELDS).eq('license_key', storedKey).maybeSingle(),
+        'licenses.select',
+      );
       if (stored.error) throw stored.error;
       const candidate = stored.data as LicenseRow | null;
       const candidateOrgId = String(candidate?.org_id ?? '');
@@ -185,7 +232,10 @@ async function readLicenseStatusUnlocked(generation: number): Promise<IpcResult<
     }
 
     if (!license && ownedOrgIds.length > 0) {
-      const active = await supabase.from('org_active_license').select(LICENSE_FIELDS).in('org_id', ownedOrgIds);
+      const active = await withLicenseBackendTimeout(
+        supabase.from('org_active_license').select(LICENSE_FIELDS).in('org_id', ownedOrgIds),
+        'org_active_license.select',
+      );
       if (active.error) throw active.error;
       const rank = new Map(ownedOrgIds.map((orgId, index) => [orgId, index]));
       license =
@@ -297,6 +347,69 @@ export function mapActivationError(error: { code?: string; message?: string }): 
   return 'activation_failed';
 }
 
+function isUnknownActivationOutcome(error: unknown): boolean {
+  if (error instanceof LicenseBackendTimeoutError) return true;
+  if (typeof error !== 'object' || error === null) return false;
+  const name = (error as { name?: unknown }).name;
+  return name === 'AbortError' || name === 'TimeoutError';
+}
+
+function unknownActivationResult(): IpcResult<LicenseStatus> {
+  return {
+    ok: false,
+    error: 'License activation response was not received; the server outcome is unknown',
+    errorCode: 'activation_outcome_unknown',
+  };
+}
+
+/**
+ * A lost HTTP response is not proof that Postgres rolled the transaction back.
+ * Confirm only the exact card, exact owner and exact live device activation.
+ * Ownership alone is insufficient: `readLicenseStatusUnlocked()` deliberately
+ * treats an account-owned card as usable on a new installation.
+ */
+async function reconcileUnknownActivation(
+  supabase: CommercialClient,
+  licenseKey: string,
+  fingerprint: string,
+  generation: number,
+): Promise<IpcResult<LicenseStatus> | null> {
+  try {
+    const auth = await withLicenseBackendTimeout(supabase.auth.getUser(), 'auth.getUser');
+    const userId = auth.data.user?.id ?? null;
+    if (auth.error || !userId) return null;
+
+    const ownedOrgIds = await ownerOrgIds(supabase, userId);
+    const exact = await withLicenseBackendTimeout(
+      supabase.from('licenses').select(LICENSE_FIELDS).eq('license_key', licenseKey).maybeSingle(),
+      'licenses.select',
+    );
+    if (exact.error || !exact.data) return null;
+    const license = exact.data as LicenseRow;
+    const licenseId = String(license.id ?? '');
+    const orgId = String(license.org_id ?? '');
+    if (!licenseId || !ownedOrgIds.includes(orgId)) return null;
+
+    const activation = await withLicenseBackendTimeout(
+      supabase
+        .from('license_activations')
+        .select('id')
+        .eq('license_id', licenseId)
+        .eq('device_fingerprint', fingerprint)
+        .is('revoked_at', null)
+        .maybeSingle(),
+      'license_activations.select',
+    );
+    if (activation.error || !activation.data || !isCurrentLicenseGeneration(generation)) return null;
+
+    persistLicenseBinding(userId, license, generation);
+    const status = await readLicenseStatusUnlocked(generation);
+    return status.ok && status.result ? { ...status, result: { ...status.result, relayConfigured: false } } : null;
+  } catch {
+    return null;
+  }
+}
+
 async function activateLicenseUnlocked(licenseKey: string, generation: number): Promise<IpcResult<LicenseStatus>> {
   const supabase = getCommercialClient();
   if (!supabase) {
@@ -308,18 +421,33 @@ async function activateLicenseUnlocked(licenseKey: string, generation: number): 
     return { ok: false, error: 'License key is empty', errorCode: 'empty_key' };
   }
 
+  const fingerprint = deviceFingerprint();
   try {
     // Direct table access cannot work here: a freshly minted licence has a null
     // org_id, and the RLS policy is `org_id in (auth_org_ids())` — null matches
     // nothing, so the row is invisible to every user. The definer function does
     // the claim, the limit check and the activation row in one transaction.
-    const { data, error } = await supabase.rpc('activate_license', {
-      p_license_key: trimmed,
-      p_device_fingerprint: deviceFingerprint(),
-    });
+    const {
+      data,
+      error,
+      status: httpStatus,
+    } = await withLicenseBackendTimeout(
+      supabase.rpc('activate_license', {
+        p_license_key: trimmed,
+        p_device_fingerprint: fingerprint,
+      }),
+      'activate_license',
+      ACTIVATION_RESPONSE_TIMEOUT_MS,
+    );
 
     if (error) {
-      return { ok: false, error: String(error.message ?? ''), errorCode: mapActivationError(error) };
+      const mapped = mapActivationError(error);
+      if (httpStatus === 0 || (!String(error.code ?? '') && mapped === 'activation_failed')) {
+        return (
+          (await reconcileUnknownActivation(supabase, trimmed, fingerprint, generation)) ?? unknownActivationResult()
+        );
+      }
+      return { ok: false, error: String(error.message ?? ''), errorCode: mapped };
     }
 
     if (!isCurrentLicenseGeneration(generation)) {
@@ -344,6 +472,11 @@ async function activateLicenseUnlocked(licenseKey: string, generation: number): 
     const status = await readLicenseStatusUnlocked(generation);
     return status.ok && status.result ? { ...status, result: { ...status.result, relayConfigured } } : status;
   } catch (error) {
+    if (isUnknownActivationOutcome(error)) {
+      return (
+        (await reconcileUnknownActivation(supabase, trimmed, fingerprint, generation)) ?? unknownActivationResult()
+      );
+    }
     return fail(error, 'activation_failed');
   }
 }

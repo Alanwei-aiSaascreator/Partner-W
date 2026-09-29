@@ -38,6 +38,7 @@
     "errorLimit": "The device limit for this license has been reached",
     "errorNotConfigured": "Commercial backend is not configured",
     "errorNotFound": "That license key was not found, please check for typos",
+    "errorOutcomeUnknown": "The server response was interrupted. Retry the same license key; it will not consume another device slot",
     "placeholder": "License key",
     "replaceCard": "Replace card",
     "submit": "Activate",

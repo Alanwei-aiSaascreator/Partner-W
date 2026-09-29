@@ -20,12 +20,20 @@ interface LicenseRow {
   token_used_micros: number;
 }
 
+interface ActivationRow {
+  id: string;
+  license_id: string;
+  device_fingerprint: string;
+  revoked_at: string | null;
+}
+
 const state = vi.hoisted(() => ({
   currentUserId: 'user-current',
   config: {} as Record<string, unknown>,
   memberships: [] as MembershipRow[],
   licenses: [] as LicenseRow[],
   activeLicenses: [] as LicenseRow[],
+  activations: [] as ActivationRow[],
   queriedTables: [] as string[],
   rpc: vi.fn(),
   beforeLicenseLookup: vi.fn<(licenseKey: string) => Promise<void>>(async () => {}),
@@ -37,7 +45,13 @@ function filteredRows(
   inValues: Map<string, readonly unknown[]>,
 ): unknown[] {
   const source =
-    table === 'org_members' ? state.memberships : table === 'licenses' ? state.licenses : state.activeLicenses;
+    table === 'org_members'
+      ? state.memberships
+      : table === 'licenses'
+        ? state.licenses
+        : table === 'license_activations'
+          ? state.activations
+          : state.activeLicenses;
 
   return source.filter((row) => {
     const record = row as unknown as Record<string, unknown>;
@@ -76,6 +90,10 @@ function query(table: string) {
   const node = {
     select: vi.fn(() => node),
     eq: vi.fn((column: string, value: unknown) => {
+      equals.set(column, value);
+      return node;
+    }),
+    is: vi.fn((column: string, value: unknown) => {
       equals.set(column, value);
       return node;
     }),
@@ -155,10 +173,68 @@ describe('commercial entitlement identity', () => {
     state.memberships = [];
     state.licenses = [];
     state.activeLicenses = [];
+    state.activations = [];
     state.queriedTables = [];
     state.rpc.mockReset();
     state.beforeLicenseLookup.mockReset();
     state.beforeLicenseLookup.mockResolvedValue(undefined);
+  });
+
+  it('releases the license queue after a stalled read so a later activation can complete', async () => {
+    vi.useFakeTimers();
+    try {
+      const previous = ownLicense({ id: 'license-previous', license_key: 'RY-PREVIOUS-0001' });
+      const activated = ownLicense({ id: 'license-activated', license_key: 'RY-ACTIVATED-0001' });
+      state.config = {
+        commercial: {
+          licenseKey: previous.license_key,
+          licenseBinding: { userId: state.currentUserId, orgId: previous.org_id, licenseId: previous.id },
+        },
+      };
+      state.memberships = [
+        {
+          user_id: state.currentUserId,
+          org_id: previous.org_id,
+          role: 'owner',
+          joined_at: '2026-01-01T00:00:00Z',
+        },
+      ];
+      state.licenses = [previous, activated];
+      state.activeLicenses = [activated];
+      state.rpc.mockResolvedValue({ data: { relayKey: null }, error: null });
+
+      let markPreviousLookupStarted!: () => void;
+      const previousLookupStarted = new Promise<void>((resolve) => {
+        markPreviousLookupStarted = resolve;
+      });
+      state.beforeLicenseLookup.mockImplementation((licenseKey) => {
+        if (licenseKey !== previous.license_key) return Promise.resolve();
+        markPreviousLookupStarted();
+        return new Promise<void>(() => {});
+      });
+
+      const { activateLicense, readLicenseStatus } = await import('../src/main/commercial/license.js');
+      const stalledRead = readLicenseStatus();
+      await previousLookupStarted;
+      const activation = activateLicense(activated.license_key);
+      await Promise.resolve();
+      expect(state.rpc).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(8_000);
+
+      expect(state.rpc).toHaveBeenCalledTimes(1);
+      await expect(stalledRead).resolves.toMatchObject({ ok: false, errorCode: 'license_read_failed' });
+      await expect(activation).resolves.toMatchObject({
+        ok: true,
+        result: {
+          licenseId: activated.id,
+          orgId: activated.org_id,
+          licenseKey: activated.license_key,
+        },
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('serializes a new activation behind an older license read so the old card cannot be written back last', async () => {
@@ -315,6 +391,106 @@ describe('commercial entitlement identity', () => {
         },
       },
     });
+  });
+
+  it('⭐ 激活响应永久丢失也会在 16 秒内返回“结果未知”并放行下一次操作', async () => {
+    vi.useFakeTimers();
+    try {
+      const first = ownLicense({ id: 'license-slow', license_key: 'RY-SLOW-0001' });
+      const second = ownLicense({ id: 'license-next', license_key: 'RY-NEXT-0001' });
+      state.memberships = [
+        {
+          user_id: state.currentUserId,
+          org_id: first.org_id,
+          role: 'owner',
+          joined_at: '2026-01-01T00:00:00Z',
+        },
+      ];
+      state.licenses = [first, second];
+      state.activeLicenses = [second];
+
+      const blocked = new Promise<void>(() => {});
+      state.rpc.mockImplementation(async (_name: string, params: { p_license_key: string }) => {
+        if (params.p_license_key === first.license_key) await blocked;
+        return { data: { relayKey: `relay-${params.p_license_key}` }, error: null };
+      });
+
+      const { activateLicense } = await import('../src/main/commercial/license.js');
+      const firstActivation = activateLicense(first.license_key);
+      await Promise.resolve();
+      const secondActivation = activateLicense(second.license_key);
+      let firstSettled = false;
+      void firstActivation.finally(() => {
+        firstSettled = true;
+      });
+
+      await vi.advanceTimersByTimeAsync(15_999);
+      expect(firstSettled).toBe(false);
+      expect(state.rpc).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(1);
+      const [firstResult, secondResult] = await Promise.all([firstActivation, secondActivation]);
+      expect(firstResult).toMatchObject({ ok: false, errorCode: 'activation_outcome_unknown' });
+      expect(secondResult.ok).toBe(true);
+      expect(state.rpc).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('⭐ 激活响应丢失但 exact key + owner + 当前 device 已落库时，只读对账恢复成功', async () => {
+    vi.useFakeTimers();
+    try {
+      const activated = ownLicense({ id: 'license-reconciled', license_key: 'RY-RECONCILED-0001' });
+      state.memberships = [
+        {
+          user_id: state.currentUserId,
+          org_id: activated.org_id,
+          role: 'owner',
+          joined_at: '2026-01-01T00:00:00Z',
+        },
+      ];
+      state.licenses = [activated];
+      state.activeLicenses = [activated];
+      state.rpc.mockImplementation(async () => new Promise(() => {}));
+
+      const { activateLicense, deviceFingerprint } = await import('../src/main/commercial/license.js');
+      const activation = activateLicense(activated.license_key);
+      await Promise.resolve();
+      state.activations = [
+        {
+          id: 'activation-current-device',
+          license_id: activated.id,
+          device_fingerprint: deviceFingerprint(),
+          revoked_at: null,
+        },
+      ];
+
+      await vi.advanceTimersByTimeAsync(16_000);
+
+      await expect(activation).resolves.toMatchObject({
+        ok: true,
+        result: {
+          activated: true,
+          licenseId: activated.id,
+          licenseKey: activated.license_key,
+          relayConfigured: false,
+        },
+      });
+      expect(state.queriedTables).toContain('license_activations');
+      expect(state.config).toMatchObject({
+        commercial: {
+          licenseKey: activated.license_key,
+          licenseBinding: {
+            userId: state.currentUserId,
+            orgId: activated.org_id,
+            licenseId: activated.id,
+          },
+        },
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('rejects an RLS-visible member card and recovers an exact owner-authorized license', async () => {

@@ -121,6 +121,16 @@ describe('商业请求的中止', () => {
     expect(init.method).toBe('POST');
     expect(init.headers).toEqual({ 'x-a': 'b' });
   });
+
+  it('⭐ activate_license 也必须有界，避免丢响应后永久占住许可队列', async () => {
+    const base = vi.fn(async () => new Response('{}', { status: 200 }));
+    const guarded = createTimeoutFetch({ baseFetch: base as never, timeoutMs: 1 });
+
+    await guarded('https://example.supabase.co/rest/v1/rpc/activate_license', { method: 'POST' });
+
+    const [, init] = base.mock.calls[0] as unknown as [unknown, RequestInit];
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+  });
 });
 
 /**

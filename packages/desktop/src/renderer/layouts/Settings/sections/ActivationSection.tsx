@@ -14,8 +14,13 @@ const ERROR_KEYS: Record<string, string> = {
   license_expired: 'activation.errorExpired',
   license_bound_elsewhere: 'activation.errorBoundElsewhere',
   activation_limit_reached: 'activation.errorLimit',
+  activation_outcome_unknown: 'activation.errorOutcomeUnknown',
   not_configured: 'activation.errorNotConfigured',
 };
+
+export function activationErrorKey(errorCode: string | undefined): string {
+  return ERROR_KEYS[errorCode ?? ''] ?? 'activation.errorGeneric';
+}
 
 export default function ActivationSection() {
   const { t } = useTranslation();
@@ -43,7 +48,7 @@ export default function ActivationSection() {
     try {
       const res = await window.clawwork.commercialLicenseActivate(trimmed);
       if (!res.ok) {
-        setErrorKey(ERROR_KEYS[res.errorCode ?? ''] ?? 'activation.errorGeneric');
+        setErrorKey(activationErrorKey(res.errorCode));
         return;
       }
       toast.success(t('activation.success'));

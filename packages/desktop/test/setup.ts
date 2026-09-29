@@ -1,3 +1,15 @@
+import WebSocketImpl from 'ws';
+
+// Electron 34 and the release CI both use Node 20.  Newer supabase-js versions
+// eagerly construct their Realtime client even for plain auth calls and require
+// a WebSocket implementation at construction time.  The packaged main process
+// installs the same `ws` implementation in commercial/client.ts; install it in
+// the shared test runtime as well so integration tests exercise the supported
+// Node 20 shape instead of failing before the request under test is sent.
+if (typeof globalThis.WebSocket === 'undefined') {
+  (globalThis as unknown as { WebSocket: unknown }).WebSocket = WebSocketImpl;
+}
+
 /**
  * 测试环境兜底：给 jsdom 补上 `window.localStorage`。
  *
