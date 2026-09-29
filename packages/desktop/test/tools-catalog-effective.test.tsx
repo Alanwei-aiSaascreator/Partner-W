@@ -4,7 +4,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { act, createElement, type ComponentType, type ReactElement } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { EffectiveToolEntry, EffectiveToolsLoadState } from '@clawwork/shared';
-import ToolsCatalog from '../src/renderer/components/ToolsCatalog';
+import ToolsCatalog, { selectableToolGroups } from '../src/renderer/components/ToolsCatalog';
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
@@ -76,6 +76,48 @@ describe('ToolsCatalog effective inventory states', () => {
     );
 
     expect(container.querySelector('[title="rightPanel.toolCount:1"]')).not.toBeNull();
+  });
+
+  it('⭐ 会话已关闭的工具不计入可用数、也不进入可选择菜单', () => {
+    const onToolSelect = vi.fn();
+    const mixedState = {
+      status: 'ready',
+      inventory: {
+        agentId: 'main',
+        profile: 'coding',
+        groups: [
+          {
+            id: 'core',
+            label: 'Core',
+            source: 'core',
+            tools: [
+              { id: 'read', label: 'Read', description: 'Read', rawDescription: 'Read', source: 'core' },
+              {
+                id: 'exec',
+                label: 'Denied Exec',
+                description: 'Run',
+                rawDescription: 'Run',
+                source: 'core',
+                deniedBySession: true,
+              },
+            ],
+          },
+        ],
+      },
+    } as const satisfies EffectiveToolsLoadState;
+    const container = render(
+      createElement(EffectiveCatalog, {
+        groups: [],
+        onToolSelect,
+        state: mixedState,
+      }),
+    );
+
+    expect(container.querySelector('[title="rightPanel.toolCount:1"]')).not.toBeNull();
+
+    const selectable = selectableToolGroups(mixedState.inventory.groups);
+    expect(selectable.flatMap((group) => group.tools).map((tool) => tool.id)).toEqual(['read']);
+    expect(onToolSelect).not.toHaveBeenCalled();
   });
 
   it('surfaces effective inventory notices on the tool trigger', () => {

@@ -7,7 +7,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuItem,
 } from '@/components/ui/dropdown-menu';
-import type { EffectiveToolEntry, EffectiveToolsLoadState } from '@clawwork/shared';
+import type { EffectiveToolEntry, EffectiveToolGroup, EffectiveToolsLoadState } from '@clawwork/shared';
 import ListItem from '@/components/semantic/ListItem';
 import SectionCard from '@/components/semantic/SectionCard';
 import ToolbarButton from '@/components/semantic/ToolbarButton';
@@ -15,6 +15,13 @@ import ToolbarButton from '@/components/semantic/ToolbarButton';
 interface ToolsCatalogProps {
   state: EffectiveToolsLoadState;
   onToolSelect?: (tool: EffectiveToolEntry) => void;
+}
+
+/** `deniedBySession` 只为只读盘点保留，当前会话不能执行，绝不能伪装成可选工具。 */
+export function selectableToolGroups(groups: readonly EffectiveToolGroup[]): EffectiveToolGroup[] {
+  return groups
+    .map((group) => ({ ...group, tools: group.tools.filter((tool) => tool.deniedBySession !== true) }))
+    .filter((group) => group.tools.length > 0);
 }
 
 export default function ToolsCatalog({ state, onToolSelect }: ToolsCatalogProps) {
@@ -36,7 +43,8 @@ export default function ToolsCatalog({ state, onToolSelect }: ToolsCatalogProps)
     );
   }
 
-  const { groups, notices = [] } = state.inventory;
+  const { notices = [] } = state.inventory;
+  const groups = selectableToolGroups(state.inventory.groups);
 
   const totalTools = groups.reduce((sum, g) => sum + g.tools.length, 0);
   const title = [t('rightPanel.toolCount', { count: totalTools }), ...notices.map((notice) => notice.message)].join(
