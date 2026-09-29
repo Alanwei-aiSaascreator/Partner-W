@@ -35,6 +35,7 @@ function makeAgents(): AgentDraft[] {
       name: '后端工程师',
       description: '',
       role: 'worker',
+      position: 'challenger',
       model: '',
       agentMd: '',
       soulMd: '',
@@ -45,6 +46,7 @@ function makeAgents(): AgentDraft[] {
       name: '前端工程师',
       description: '',
       role: 'worker',
+      position: 'scribe',
       model: '',
       agentMd: '',
       soulMd: '',
@@ -157,6 +159,14 @@ describe('useTeamInstall 的工作区守卫', () => {
     expect(clawwork.getTeamWorkspacePath).toHaveBeenCalledWith(toSlug(teamInfo.name));
     expect(clawwork.createAgent).toHaveBeenCalledTimes(2);
     expect(clawwork.createAgent.mock.calls[0]?.[1]).toMatchObject({ workspace: 'D:\\ws\\开发团队' });
+    expect(clawwork.persistTeam).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agents: expect.arrayContaining([
+          expect.objectContaining({ agentId: '后端工程师', position: 'challenger' }),
+          expect.objectContaining({ agentId: '前端工程师', position: 'scribe' }),
+        ]),
+      }),
+    );
     expect(api?.installStatus).toBe('done');
   });
 

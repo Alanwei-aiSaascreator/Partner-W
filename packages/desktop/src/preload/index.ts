@@ -21,6 +21,7 @@ import type {
   SkillUpdateParams,
   SlidegenFailure,
   SlidegenWarning,
+  TeamPosition,
 } from '@clawwork/shared';
 import type { ClawWorkAPI, GatewayServerConfig } from './clawwork';
 
@@ -521,7 +522,13 @@ function buildApi(): ClawWorkAPI {
       source?: string;
       version?: string;
       hubSlug?: string;
-      agents: Array<{ agentId: string; role?: string; isManager?: boolean; skills?: string[] }>;
+      agents: Array<{
+        agentId: string;
+        role?: string;
+        isManager?: boolean;
+        skills?: string[];
+        position?: TeamPosition;
+      }>;
       createdAt: string;
       updatedAt: string;
     }) => ipcRenderer.invoke('data:team-persist', team),

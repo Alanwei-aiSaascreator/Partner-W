@@ -12,6 +12,7 @@ import type {
   IpcResult,
   SkillInstallParams,
   SkillInstallResult,
+  TeamPosition,
 } from '@clawwork/shared';
 import { extractSkillSlugs } from './team-parser.js';
 
@@ -31,7 +32,13 @@ export interface InstallerDeps {
     source?: string;
     version?: string;
     hubSlug?: string;
-    agents: Array<{ agentId: string; role?: string; isManager?: boolean; skills?: string[] }>;
+    agents: Array<{
+      agentId: string;
+      role?: string;
+      isManager?: boolean;
+      skills?: string[];
+      position?: TeamPosition;
+    }>;
     createdAt: string;
     updatedAt: string;
   }) => Promise<IpcResult>;
@@ -273,6 +280,7 @@ export async function* installTeam(
       role: a.role,
       isManager: a.role === 'coordinator',
       skills: (skillsByAgent.get(a.id) ?? []).map((skill) => skill.id),
+      position: a.position,
     }));
 
   if (teamAgents.length === 0) {

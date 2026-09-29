@@ -53,6 +53,7 @@ import type {
   TaskContextSource,
   Team,
   TeamHubRegistry,
+  TeamPosition,
   WorkspaceFsIdentity,
 } from '@clawwork/shared';
 // 隐私工单状态的**归一化后**形状（snake→camel、字节数字、真布尔）由 core 定义，
@@ -824,7 +825,7 @@ export interface ClawWorkAPI {
       isManager?: boolean;
       skills?: string[];
       /** 讨论职位（圆桌用）。'' = 没选。 */
-      position?: string;
+      position?: TeamPosition;
     }>;
     createdAt: string;
     updatedAt: string;

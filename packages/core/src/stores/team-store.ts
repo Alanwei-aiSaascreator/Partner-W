@@ -1,5 +1,5 @@
 import { createStore } from 'zustand/vanilla';
-import type { Team, TeamAgent, IpcResult } from '@clawwork/shared';
+import type { Team, TeamAgent, TeamPosition, IpcResult } from '@clawwork/shared';
 
 export interface TeamStoreDeps {
   listTeams: () => Promise<IpcResult<Team[]>>;
@@ -13,7 +13,13 @@ export interface TeamStoreDeps {
     source?: string;
     version?: string;
     hubSlug?: string;
-    agents: Array<{ agentId: string; role?: string; isManager?: boolean; skills?: string[] }>;
+    agents: Array<{
+      agentId: string;
+      role?: string;
+      isManager?: boolean;
+      skills?: string[];
+      position?: TeamPosition;
+    }>;
     createdAt: string;
     updatedAt: string;
   }) => Promise<IpcResult>;
@@ -25,6 +31,8 @@ export interface TeamState {
   loading: boolean;
   loadedOnce: boolean;
   loadTeams(): Promise<void>;
+  /** Load one persisted team on demand (for cold-start task resume). */
+  loadTeam(id: string): Promise<Team | null>;
   createTeam(params: Omit<Team, 'id' | 'createdAt' | 'updatedAt'>): Promise<string>;
   updateTeam(id: string, updates: Partial<Team>): Promise<void>;
   deleteTeam(id: string): Promise<void>;
@@ -55,6 +63,22 @@ export function createTeamStore(deps: TeamStoreDeps) {
       } finally {
         set({ loading: false });
       }
+    },
+
+    loadTeam: async (id) => {
+      const cached = get().teams[id];
+      if (cached) return cached;
+      try {
+        const res = await deps.getTeam(id);
+        if (res.ok && res.result) {
+          const team = res.result;
+          set((state) => ({ teams: { ...state.teams, [team.id]: team } }));
+          return team;
+        }
+      } catch (err) {
+        console.error('[team-store] loadTeam failed:', err);
+      }
+      return null;
     },
 
     createTeam: async (params) => {

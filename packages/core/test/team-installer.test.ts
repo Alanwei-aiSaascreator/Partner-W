@@ -9,8 +9,8 @@ function makeParsed(overrides?: Partial<ParsedTeam>): ParsedTeam {
     description: 'A test team',
     version: '1.0.0',
     agents: [
-      { id: 'manager', name: 'Manager', role: 'coordinator' },
-      { id: 'dev', name: 'Developer', role: 'worker' },
+      { id: 'manager', name: 'Manager', role: 'coordinator', position: 'moderator' },
+      { id: 'dev', name: 'Developer', role: 'worker', position: 'challenger' },
     ],
     body: '# Mission\nTest.',
     ...overrides,
@@ -58,6 +58,10 @@ describe('installTeam', () => {
 
     expect(deps.createAgent).toHaveBeenCalledTimes(2);
     expect(deps.persistTeam).toHaveBeenCalledTimes(1);
+    expect((deps.persistTeam as ReturnType<typeof vi.fn>).mock.calls[0][0].agents).toMatchObject([
+      { agentId: 'agent-1', position: 'moderator' },
+      { agentId: 'agent-2', position: 'challenger' },
+    ]);
 
     const types = events.map((e) => e.type);
     expect(types).toContain('agent_creating');
@@ -252,8 +256,8 @@ describe('installTeam', () => {
 
     const persistCall = (deps.persistTeam as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(persistCall.agents).toEqual([
-      { agentId: 'agent-1', role: 'coordinator', isManager: true, skills: ['plan'] },
-      { agentId: 'agent-2', role: 'worker', isManager: false, skills: ['code', 'review'] },
+      { agentId: 'agent-1', role: 'coordinator', isManager: true, skills: ['plan'], position: 'moderator' },
+      { agentId: 'agent-2', role: 'worker', isManager: false, skills: ['code', 'review'], position: 'challenger' },
     ]);
   });
 

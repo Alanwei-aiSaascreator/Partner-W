@@ -1263,7 +1263,13 @@ export function registerDataHandlers(): void {
       const agentRows = db.select().from(teamAgents).all();
       const agentsByTeam = new Map<
         string,
-        Array<{ agentId: string; role: string | null; isManager: boolean | null; skillsJson: string | null }>
+        Array<{
+          agentId: string;
+          role: string | null;
+          isManager: boolean | null;
+          skillsJson: string | null;
+          position: string | null;
+        }>
       >();
       for (const a of agentRows) {
         let list = agentsByTeam.get(a.teamId);
@@ -1271,7 +1277,13 @@ export function registerDataHandlers(): void {
           list = [];
           agentsByTeam.set(a.teamId, list);
         }
-        list.push({ agentId: a.agentId, role: a.role, isManager: a.isManager, skillsJson: a.skillsJson });
+        list.push({
+          agentId: a.agentId,
+          role: a.role,
+          isManager: a.isManager,
+          skillsJson: a.skillsJson,
+          position: a.position,
+        });
       }
       return {
         ok: true,
@@ -1282,6 +1294,7 @@ export function registerDataHandlers(): void {
             role: a.role ?? '',
             isManager: a.isManager ?? false,
             skills: parseTeamAgentSkills(a.skillsJson),
+            position: a.position ?? '',
           })),
         })),
       };

@@ -183,6 +183,8 @@ export interface ParsedTeamAgent {
   id: string;
   name: string;
   role: 'coordinator' | 'worker';
+  /** 讨论职位；从向导一路透传到 team_agents，不能在安装时丢失。 */
+  position?: TeamPosition;
 }
 
 export interface AgentFileSet {

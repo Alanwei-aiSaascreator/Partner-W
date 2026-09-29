@@ -119,6 +119,7 @@ export function useTeamInstall(onDone?: () => void) {
           id: toSlug(a.name),
           name: a.name.trim(),
           role: a.role,
+          position: a.position,
         })),
         body: '',
       };
@@ -351,9 +352,9 @@ export function useTeamInstall(onDone?: () => void) {
           role: a.role,
           isManager: a.role === 'coordinator',
           skills: a.skills,
-          // 讨论职位（圆桌用）。老草稿可能没填 ⇒ 落空串，读的时候由 normalizePosition
-          // 兜底成领域专家 —— 落库这一步不做兜底，免得把"用户没选"和"用户选了专家"混成一个。
-          position: a.position ?? '',
+          // 讨论职位（圆桌用）。老草稿可能没填 ⇒ 保持 undefined，读的时候由
+          // normalizePosition 兜底成领域专家；不要在落库时冒充用户主动选过专家。
+          position: a.position,
         }));
 
         const now = new Date().toISOString();
