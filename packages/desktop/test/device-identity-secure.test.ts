@@ -318,6 +318,20 @@ describe('设备身份轮换：钥匙要真的配对，旧配对要清掉', () =
     expect(isUsableIdentityPair(a.privateKeyPem, 'not a pem at all'), '公钥是垃圾：必须说不').toBe(false);
   });
 
+  it.each([
+    ['RSA', () => generateKeyPairSync('rsa', { modulusLength: 2048 })],
+    ['EC', () => generateKeyPairSync('ec', { namedCurve: 'prime256v1' })],
+  ])('⭐ 匹配的 %s 密钥对也必须拒绝（设备身份只允许 Ed25519）', (_name, createPair) => {
+    const { publicKey, privateKey } = createPair();
+
+    expect(
+      isUsableIdentityPair(
+        privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(),
+        publicKey.export({ type: 'spki', format: 'pem' }).toString(),
+      ),
+    ).toBe(false);
+  });
+
   it('对照：钥匙**是**一对 ⇒ 原样用，不轮换', () => {
     const good = loadOrCreateDeviceIdentity();
     const loaded = loadOrCreateDeviceIdentity();

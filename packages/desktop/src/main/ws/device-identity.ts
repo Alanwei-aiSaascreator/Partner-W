@@ -90,6 +90,9 @@ export function isUsableIdentityPair(privateKeyPem: string, publicKeyPem: string
   try {
     const privateKey = crypto.createPrivateKey(privateKeyPem);
     const publicKey = crypto.createPublicKey(publicKeyPem);
+    if (privateKey.asymmetricKeyType !== 'ed25519' || publicKey.asymmetricKeyType !== 'ed25519') {
+      return false;
+    }
     const probe = Buffer.from('clawwork-device-identity-probe', 'utf8');
     return crypto.verify(null, probe, publicKey, crypto.sign(null, probe, privateKey));
   } catch {
