@@ -214,6 +214,22 @@ describe('extractDocgenBlocks（经 generateDocumentsFromMessage 间接验）', 
     expect(result.failed).toEqual([{ code: 'request-invalid' }]);
   });
 
+  it('⭐ 数组相邻字符串缺逗号不得被修成一条合并后的正文', async () => {
+    const structurallyBroken = '{"kind":"pptx","title":"t","slides":[{"title":"x","bullets":["first" "second"]}]}';
+    expect(() => JSON.parse(structurallyBroken), '样例必须是缺逗号的非法 JSON').toThrow();
+
+    const result = await generateDocumentsFromMessage({
+      workspacePath,
+      taskId,
+      messageId,
+      content: docgenBlock(structurallyBroken),
+    });
+
+    expect(result.saved).toEqual([]);
+    expect(result.failed).toEqual([{ code: 'request-invalid' }]);
+    expect(mocks.saveArtifactFromBuffer).not.toHaveBeenCalled();
+  });
+
   it('schema 不合法（缺 slides）⇒ 记账', async () => {
     const result = await generateDocumentsFromMessage({
       workspacePath,

@@ -999,6 +999,65 @@ describe('assistant artifact reconciliation boundary', () => {
     expect(webContentsSendMock).not.toHaveBeenCalledWith('artifact:claim-violation', expect.anything());
   });
 
+  it('用户明确要 HTML 但本轮没有网页 ⇒ 结果守卫明确报缺 HTML', async () => {
+    const { beginArtifactRun, registerDataHandlers } = await import('../src/main/ipc/data-handlers.js');
+    registerDataHandlers();
+    beginArtifactRun('C:\\trusted-workspace', 'task-1', 'session-task-1', {
+      userContent: '帮我生成一个 HTML 网页',
+    });
+    selectGetMock.mockReturnValueOnce({ id: 'assistant-persisted' }).mockReturnValueOnce({ gid: 'gateway-1' });
+
+    handleMap.get('data:create-message')!(
+      {},
+      {
+        id: 'assistant-incoming',
+        taskId: 'task-1',
+        role: 'assistant',
+        content: '内容已整理完成。',
+        timestamp: '2026-09-16T00:00:02.000Z',
+        sessionKey: 'session-task-1',
+      },
+    );
+    await flushJobs();
+
+    expect(webContentsSendMock).toHaveBeenCalledWith('artifact:claim-violation', {
+      taskId: 'task-1',
+      missing: ['HTML 网页'],
+    });
+  });
+
+  it('用户明确要 HTML 且本轮新增了真实 .html ⇒ 不报结果缺失', async () => {
+    reconcileTaskArtifactsMock.mockResolvedValue({
+      saved: [{ id: 'page', name: 'report.html', localPath: 'task-1/report.html' }],
+      existing: [],
+      updated: [],
+      missing: [],
+      skipped: [],
+      budgetExhausted: false,
+    });
+    const { beginArtifactRun, registerDataHandlers } = await import('../src/main/ipc/data-handlers.js');
+    registerDataHandlers();
+    beginArtifactRun('C:\\trusted-workspace', 'task-1', 'session-task-1', {
+      userContent: '帮我生成一个 HTML 网页',
+    });
+    selectGetMock.mockReturnValueOnce({ id: 'assistant-persisted' }).mockReturnValueOnce({ gid: 'gateway-1' });
+
+    handleMap.get('data:create-message')!(
+      {},
+      {
+        id: 'assistant-incoming',
+        taskId: 'task-1',
+        role: 'assistant',
+        content: '已完成。',
+        timestamp: '2026-09-16T00:00:02.000Z',
+        sessionKey: 'session-task-1',
+      },
+    );
+    await flushJobs();
+
+    expect(webContentsSendMock).not.toHaveBeenCalledWith('artifact:claim-violation', expect.anything());
+  });
+
   it('clears every artifact run for a deleted task', async () => {
     const { beginArtifactRun, registerDataHandlers } = await import('../src/main/ipc/data-handlers.js');
     registerDataHandlers();

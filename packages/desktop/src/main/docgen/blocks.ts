@@ -42,13 +42,17 @@ function repairBareQuotesInJsonStrings(source: string): string | null {
   let insideString = false;
   let escaped = false;
   let repairs = 0;
+  let repairsInCurrentString = 0;
   let repaired = '';
 
   for (let index = 0; index < source.length; index += 1) {
     const char = source[index] ?? '';
     if (!insideString) {
       repaired += char;
-      if (char === '"') insideString = true;
+      if (char === '"') {
+        insideString = true;
+        repairsInCurrentString = 0;
+      }
       continue;
     }
 
@@ -68,12 +72,19 @@ function repairBareQuotesInJsonStrings(source: string): string | null {
     }
 
     const follower = nextNonWhitespace(source, index + 1);
-    if (follower === undefined || JSON_STRING_END_FOLLOWERS.has(follower)) {
+    if (
+      follower === undefined ||
+      JSON_STRING_END_FOLLOWERS.has(follower) ||
+      // `"a" "b"` 是两个相邻字符串缺逗号，不是正文引号。只有当前字符串前面
+      // 已经出现过明确的裸引号，`...""` 才可能是「正文右引号 + JSON 结束引号」。
+      (follower === '"' && repairsInCurrentString === 0)
+    ) {
       repaired += char;
       insideString = false;
     } else {
       repaired += '\\"';
       repairs += 1;
+      repairsInCurrentString += 1;
     }
   }
 

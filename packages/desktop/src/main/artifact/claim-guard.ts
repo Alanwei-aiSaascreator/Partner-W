@@ -2,7 +2,7 @@ import { readdirSync, statSync, type Dirent } from 'node:fs';
 import path from 'node:path';
 
 /** 用户本轮明确要求交付的文件格式。 */
-export type ExpectedArtifactKind = 'pptx' | 'pdf' | 'docx' | 'xlsx';
+export type ExpectedArtifactKind = 'pptx' | 'pdf' | 'docx' | 'xlsx' | 'html';
 
 /** 复用现有 claim-violation 提示时展示的人话，不伪造一个具体文件名。 */
 export const EXPECTED_ARTIFACT_LABELS: Readonly<Record<ExpectedArtifactKind, string>> = Object.freeze({
@@ -10,6 +10,7 @@ export const EXPECTED_ARTIFACT_LABELS: Readonly<Record<ExpectedArtifactKind, str
   pdf: 'PDF 文件',
   docx: 'Word/DOCX 文档',
   xlsx: 'Excel/XLSX 表格',
+  html: 'HTML 网页',
 });
 
 const EXPECTED_ARTIFACT_EXTENSIONS: Readonly<Record<ExpectedArtifactKind, string>> = Object.freeze({
@@ -17,13 +18,15 @@ const EXPECTED_ARTIFACT_EXTENSIONS: Readonly<Record<ExpectedArtifactKind, string
   pdf: '.pdf',
   docx: '.docx',
   xlsx: '.xlsx',
+  html: '.html',
 });
 
 const EXPECTED_KIND_TERMS: readonly Readonly<{ kind: ExpectedArtifactKind; term: RegExp }>[] = [
-  { kind: 'pptx', term: /\b(?:pptx?|power\s*point)\b|演示文稿/gi },
+  { kind: 'pptx', term: /\b(?:pptx?|power\s*point)\b|(?:演示文稿|幻灯片)/gi },
   { kind: 'pdf', term: /\bpdf\b/gi },
   { kind: 'docx', term: /\b(?:word|docx)\b/gi },
   { kind: 'xlsx', term: /\b(?:excel|xlsx)\b/gi },
+  { kind: 'html', term: /\bhtml\b|网页/gi },
 ];
 
 /**
@@ -33,13 +36,49 @@ const EXPECTED_KIND_TERMS: readonly Readonly<{ kind: ExpectedArtifactKind; term:
  * 把「PPT 是什么」误判成交付请求，则会在普通聊天结束时弹假失败，代价更大。
  */
 const ARTIFACT_REQUEST_ACTION_RE =
-  /(?:做(?:成)?|制作|生成|创建|导出|输出|交付|整理成|写成|转换成|转成|保存为|修改|更新|改成|给我|想要|需要|\b(?:make|create|generate|export|deliver|convert|build|produce)\b)/i;
+  /(?:做(?:成)?|制作|生成|创建|导出|输出|交付|整理成|写成|转换(?:成|为)|转(?:成|为)|保存(?:成|为)|修改|更新|改(?:成|为)|给我|想要|需要|\b(?:make|create|generate|export|deliver|convert|build|produce)\b)/i;
 const STRONG_ARTIFACT_REQUEST_RE =
-  /(?:(?:帮我|为我|替我|请(?:帮我)?|给我).{0,16}(?:做(?:成)?|制作|生成|创建|导出|输出|交付|整理成|写成|转换成|转成|保存为|修改|更新|改成|一份|一个)|(?:我要|我想要|我需要)(?:一份|一个)|\bcan\s+you(?:\s+please)?\s+(?:make|create|generate|export|deliver|convert|build|produce)\b)/i;
+  /(?:(?:帮我|为我|替我|请(?:帮我)?|给我).{0,16}(?:做(?:成)?|制作|生成|创建|导出|输出|交付|整理成|写成|转换(?:成|为)|转(?:成|为)|保存(?:成|为)|修改|更新|改(?:成|为)|一份|一个)|(?:我要|我想要|我需要)(?:一份|一个)|\bcan\s+you(?:\s+please)?\s+(?:make|create|generate|export|deliver|convert|build|produce)\b)/i;
 const INFORMATIONAL_REQUEST_RE =
   /(?:是什么|什么意思|区别|哪个好|教程|方法|怎么|如何|为什么|是否|能否|会不会|学习|介绍|解释|了解|支持.{0,12}吗|难吗|\b(?:what|how|why|whether|can you|do you support)\b)/i;
+const STRONG_INFORMATIONAL_REQUEST_RE = /(?:教程|方法|操作指南|使用指南|\b(?:tutorial|guide)\b)/i;
+const GENERIC_NO_FILE_OUTPUT_RE =
+  /(?:不要|不用|无需|不需要|别|不)(?:再)?(?:帮我|给我|为我)?(?:生成|制作|创建|导出|输出|交付|保存)?(?:任何|实际|真实)?\s*(?:文件|产物|成品)|\b(?:do\s+not|don't|no\s+need\s+to)\s+(?:create|generate|export|deliver|save)(?:\s+any)?\s+(?:files?|artifacts?)\b/i;
+const EXPLICIT_ARTIFACT_CREATION_RE =
+  /(?:做(?:成)?|制作|生成|创建|导出|输出|交付|整理成|写成|转换(?:成|为)|转(?:成|为)|保存(?:成|为)|修改|更新|改(?:成|为)|\b(?:make|create|generate|export|deliver|convert|build|produce)\b)/i;
 const NEGATED_ARTIFACT_TERM_RE =
-  /(?:不要|不用|无需|不需要|别)(?:再)?(?:给我|帮我|为我)?(?:做|做成|制作|生成|创建|导出|输出|交付|转换成|转成|整理成|写成|保存为)?(?:一份|一个)?\s*$|\b(?:do\s+not|don't|no\s+need\s+to|without)(?:\s+\w+){0,3}\s*$/i;
+  /(?:不要|不用|无需|不需要|别)(?:再)?(?:给我|帮我|为我)?(?:做|做成|制作|生成|创建|导出|输出|交付|转换(?:成|为)|转(?:成|为)|整理成|写成|保存(?:成|为))?(?:一份|一个)?\s*$|\b(?:do\s+not|don't|no\s+need\s+to|without)(?:\s+\w+){0,3}\s*$/i;
+
+function isOutlineOnlyRequest(segment: string): boolean {
+  const outline = /(?:大纲|提纲|内容框架|\boutline\b)/i.exec(segment);
+  if (!outline) return false;
+  if (GENERIC_NO_FILE_OUTPUT_RE.test(segment)) return true;
+
+  for (const { term } of EXPECTED_KIND_TERMS) {
+    term.lastIndex = 0;
+    for (const match of segment.matchAll(term)) {
+      const before = segment.slice(Math.max(0, (match.index ?? 0) - 48), match.index ?? 0);
+      if (NEGATED_ARTIFACT_TERM_RE.test(before)) continue;
+      if (EXPLICIT_ARTIFACT_CREATION_RE.test(before)) return false;
+    }
+  }
+  return true;
+}
+
+/** `A 转成 B` 这类请求里，A 是输入，只有 B 是本轮必须新增的产物。 */
+function conversionTargetClause(segment: string): string | null {
+  const chinese = /(?:转换(?:成|为)|转(?:成|为)|改(?:成|为)|保存(?:成|为)|导出(?:成|为)|输出(?:成|为))/g;
+  const chineseMatches = [...segment.matchAll(chinese)];
+  const lastChinese = chineseMatches.at(-1);
+  if (lastChinese?.index !== undefined) return segment.slice(lastChinese.index + lastChinese[0].length);
+
+  const english = /\b(?:convert(?:ed|ing)?|export(?:ed|ing)?|save[ds]?|saving)\b[\s\S]*?\b(?:to|as)\b/gi;
+  const englishMatches = [...segment.matchAll(english)];
+  const lastEnglish = englishMatches.at(-1);
+  if (lastEnglish?.index !== undefined) return segment.slice(lastEnglish.index + lastEnglish[0].length);
+
+  return null;
+}
 
 /** 从用户本轮文本中提取明确的文件交付格式；顺序固定且去重。 */
 export function expectedArtifactKindsFromRequest(content: string): ExpectedArtifactKind[] {
@@ -50,12 +89,19 @@ export function expectedArtifactKindsFromRequest(content: string): ExpectedArtif
   for (const segment of segments) {
     if (!ARTIFACT_REQUEST_ACTION_RE.test(segment)) continue;
     const strongRequest = STRONG_ARTIFACT_REQUEST_RE.test(segment);
-    if (!strongRequest && INFORMATIONAL_REQUEST_RE.test(segment)) continue;
+    if (
+      (!strongRequest && INFORMATIONAL_REQUEST_RE.test(segment)) ||
+      STRONG_INFORMATIONAL_REQUEST_RE.test(segment) ||
+      isOutlineOnlyRequest(segment)
+    ) {
+      continue;
+    }
+    const artifactTerms = conversionTargetClause(segment) ?? segment;
 
     for (const { kind, term } of EXPECTED_KIND_TERMS) {
       term.lastIndex = 0;
-      for (const match of segment.matchAll(term)) {
-        const before = segment.slice(Math.max(0, (match.index ?? 0) - 48), match.index ?? 0);
+      for (const match of artifactTerms.matchAll(term)) {
+        const before = artifactTerms.slice(Math.max(0, (match.index ?? 0) - 48), match.index ?? 0);
         if (NEGATED_ARTIFACT_TERM_RE.test(before)) continue;
         expected.add(kind);
         break;

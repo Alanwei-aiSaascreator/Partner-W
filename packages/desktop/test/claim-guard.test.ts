@@ -226,9 +226,27 @@ describe('用户本轮明确要求的文件格式', () => {
     ['帮我做一份产品发布会 PPT', ['pptx']],
     ['请生成 PPTX 演示文稿和 PDF 版本', ['pptx', 'pdf']],
     ['给我导出 Word 和 Excel 两份文件', ['docx', 'xlsx']],
+    ['请帮我生成一份幻灯片', ['pptx']],
+    ['根据这份大纲生成一份 PPT 文件', ['pptx']],
+    ['帮我生成 PPT，先给出大纲再制作', ['pptx']],
+    ['帮我生成 PPT，其他内容不用生成文件', ['pptx']],
+    ['帮我生成 PPT。另一个问题不需要文件。', ['pptx']],
+    ['帮我生成一个 HTML 网页', ['html']],
     ['Create a PowerPoint deck and export a PDF', ['pptx', 'pdf']],
+    ['Create an HTML page for me', ['html']],
     ['Can you create a PowerPoint deck for me?', ['pptx']],
   ])('明确交付请求：%s', (content, expected) => {
+    expect(expectedArtifactKindsFromRequest(content)).toEqual(expected);
+  });
+
+  it.each([
+    ['把这个 PPT 转成 PDF', ['pdf']],
+    ['把这个 PPT 转为 PDF', ['pdf']],
+    ['把 Word 文档转换成 PDF', ['pdf']],
+    ['把 Word 文档导出成 PDF', ['pdf']],
+    ['把 Excel 表格保存成 PDF', ['pdf']],
+    ['Convert this PowerPoint deck to PDF', ['pdf']],
+  ])('转换请求只要求目标格式，不把输入格式误判成本轮新产物：%s', (content, expected) => {
     expect(expectedArtifactKindsFromRequest(content)).toEqual(expected);
   });
 
@@ -237,6 +255,14 @@ describe('用户本轮明确要求的文件格式', () => {
     '你支持 PPT 吗？',
     '怎么制作一份 PPT？',
     '我需要学习如何制作 PPT。',
+    '我需要一个 PPT 制作教程。',
+    '给我一个 PPT 制作方法。',
+    '帮我写一份 PPT 大纲。',
+    '给我一份 PPT 内容大纲。',
+    '大纲形式给我一份 PPT 内容。',
+    '只要 PPT 大纲，不生成文件。',
+    '帮我写一份 PPT 大纲，不需要生成 PPT 文件。',
+    '帮我做 PPT 内容大纲，不要生成文件。',
     '给我介绍一下 Word 和 Excel 的区别。',
     '不要做 PPT，只给我一份文字大纲',
     '普通聊天，不需要任何文件。',
@@ -246,6 +272,11 @@ describe('用户本轮明确要求的文件格式', () => {
 
   it('只有 snippet.md / preview.html 不能冒充用户要的 PPTX', () => {
     expect(missingExpectedArtifactKinds(['pptx'], ['snippet.md', 'preview.html'])).toEqual(['pptx']);
+  });
+
+  it('本轮新增的真实 .html 满足网页交付，markdown 不能冒充', () => {
+    expect(missingExpectedArtifactKinds(['html'], ['report.html'])).toEqual([]);
+    expect(missingExpectedArtifactKinds(['html'], ['snippet.md'])).toEqual(['html']);
   });
 
   it('本轮真的新增了对应格式才算满足；扩展名大小写不影响', () => {
