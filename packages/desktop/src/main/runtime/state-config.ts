@@ -158,10 +158,7 @@ function readPortableMainWorkspace(raw: unknown): string | null {
 }
 
 function hasPortableAgentDefaults(raw: unknown, workspacePath?: string): boolean {
-  return (
-    hasPortableBootstrapDisabled(raw) &&
-    (!workspacePath || readPortableMainWorkspace(raw) === workspacePath)
-  );
+  return hasPortableBootstrapDisabled(raw) && (!workspacePath || readPortableMainWorkspace(raw) === workspacePath);
 }
 
 function mergePortableAgentDefaults(
