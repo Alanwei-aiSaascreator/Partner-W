@@ -363,8 +363,7 @@ export async function checkForUpdatesViaUpdater(): Promise<UpdateCheckResult> {
   // 清理必须包住**便携与装机两条返回路径**。旧实现把 finally 放在装机分支的
   // try/catch 里，便携检查成功后 `inFlightCheck` 会永远指向第一次的已完成结果；
   // 后续检查看不到状态变化，也让 ready 锁定逻辑误以为仍是 available。
-  let tracked: Promise<UpdateCheckResult>;
-  tracked = promise.finally(() => {
+  const tracked: Promise<UpdateCheckResult> = promise.finally(() => {
     if (inFlightCheck === tracked) inFlightCheck = null;
   });
   inFlightCheck = tracked;
