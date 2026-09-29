@@ -84,14 +84,29 @@ export default function MarketTab() {
   const handleInstall = useCallback(
     async (template: AgentTemplateSummary): Promise<void> => {
       // 安装要用提示词 ⇒ 先拿详情（顺带让用户看到他要装的是什么）
-      const full = await openDetail(template.id);
+      let full: AgentTemplateDetail | null;
+      try {
+        full = await openDetail(template.id);
+      } catch (error) {
+        console.error('[market] 助手安装请求异常:', error);
+        toast.error(t('market.installFailed'));
+        return;
+      }
       if (!full) {
         toast.error(t('market.loadFailed'));
         return;
       }
 
-      const outcome = await install(full);
+      let outcome;
+      try {
+        outcome = await install(full);
+      } catch (error) {
+        console.error('[market] 助手安装请求异常:', error);
+        toast.error(t('market.installFailed'));
+        return;
+      }
       if (!outcome.ok) {
+        if (outcome.diagnostic) console.error('[market] 助手安装失败:', outcome.diagnostic);
         toast.error(outcome.message ?? t('market.installFailed'));
         return;
       }

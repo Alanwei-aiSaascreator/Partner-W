@@ -37,11 +37,10 @@ export interface TemplateInstallOutcome {
   alreadyInstalled?: boolean;
   /** 本地装好了、只是服务端记账没成功（只提示，不影响结果）。 */
   recordWarning?: string;
-  /**
-   * 失败时给用户看的原因：**中文结论在前**；本地建 agent 失败时**原文（证据）跟在后面**
-   * （2026-09-20 U 盘交付实机：只给结论 ⇒ 用户无从下手、我们也无法远程定位）。
-   */
+  /** 失败时给用户看的本地化结论。 */
   message?: string;
+  /** 仅供日志或显式展开的技术详情，不得默认拼进用户提示。 */
+  diagnostic?: string;
 }
 
 export async function installTemplate(
@@ -69,26 +68,25 @@ export async function installTemplate(
   });
 
   if (res.failed.length > 0) {
-    // 安装器已经回滚掉刚建的 agent；这里只把原因带出去。
-    // ⚠️ 2026-09-20 U 盘交付实机（T-a28，用户原话「市场的哪些 prompt 都安装不了」）：
-    //    这一行原来**写死** `describeTemplateError('unknown')` ⇒ 不管网关怎么解释
-    //    （`agent creation failed: <网关原文>`），用户**永远**只看到「操作没成功，请稍后重试。」，
-    //    原文被丢掉、我们也无法远程定位。
-    //    ⇒ 结论仍用那句中文（用户先看到能读的），**原文作为证据跟在后面**。
+    // 安装器已回滚掉刚建的 agent。用户提示只放本地化结论；
+    // 网关原文单独保留为诊断，由 UI 写日志或在用户主动展开时显示。
     const reason = res.failed
       .map((failure) => failure.error)
       .filter((text) => Boolean(text))
       .join('; ');
     return {
       ok: false,
-      message: reason ? `${describeTemplateError('unknown')}（${reason}）` : describeTemplateError('unknown'),
+      message: describeTemplateError('unknown'),
+      ...(reason ? { diagnostic: reason } : {}),
     };
   }
 
   const alreadyInstalled = res.skipped.length > 0;
+  const reconciledExisting = (res.reconciled?.length ?? 0) > 0;
 
-  // 只有真的建了才需要刷新目录（跳过时目录里本来就有它）
-  if (!alreadyInstalled) await deps.refreshAgents();
+  // 新建成功要刷；本地目录陈旧时，虽然网关对账后归类为“已安装”，
+  // renderer store 仍然是旧的，也必须强刷；普通已安装仍不多发请求。
+  if (!alreadyInstalled || reconciledExisting) await deps.refreshAgents();
 
   const recorded = await deps.recordInstalled(template.id);
   return {

@@ -4,6 +4,10 @@ import { installPresetAgentPack, type PresetAgentInstallerApi } from '../src/ren
 
 function createApi(): Mocked<PresetAgentInstallerApi> {
   return {
+    listAgents: vi.fn<PresetAgentInstallerApi['listAgents']>().mockResolvedValue({
+      ok: true,
+      result: { defaultId: 'main', mainKey: 'main', scope: 'per-sender', agents: [] },
+    }),
     createAgent: vi.fn<PresetAgentInstallerApi['createAgent']>(),
     updateAgent: vi.fn<PresetAgentInstallerApi['updateAgent']>().mockResolvedValue({ ok: true }),
     getAgentFile: vi
@@ -36,6 +40,57 @@ describe('installPresetAgentPack', () => {
     expect(api.createAgent).not.toHaveBeenCalled();
     expect(api.updateAgent).not.toHaveBeenCalled();
     expect(api.setAgentFile).not.toHaveBeenCalled();
+    expect(api.deleteAgent).not.toHaveBeenCalled();
+  });
+
+  it('陈旧目录触发 already exists 对账后，verifyExisting 仍会补齐缺失文件', async () => {
+    const api = createApi();
+    api.createAgent.mockResolvedValue({
+      ok: false,
+      error: 'agent "rongying-content" already exists',
+    });
+    api.listAgents.mockResolvedValue({
+      ok: true,
+      result: {
+        defaultId: 'main',
+        mainKey: 'main',
+        scope: 'per-sender',
+        agents: [{ id: 'rongying-content', name: '内容创作' }],
+      },
+    });
+    api.getAgentFile.mockImplementation(async (_gatewayId, agentId, name) => ({
+      ok: true,
+      result: {
+        agentId,
+        file: name === 'SOUL.md' ? { name, missing: true, content: '' } : { name, missing: false, content: '# kept\n' },
+      },
+    }));
+
+    const result = await installPresetAgentPack({
+      gatewayId: 'gw-1',
+      workspaceRoot: 'E:/cube',
+      currentAgentIds: [],
+      verifyExisting: true,
+      definitions: PRESET_AGENT_DEFINITIONS.slice(0, 1),
+      displayNames: { 'rongying-content': '内容创作' },
+      api,
+    });
+
+    expect(result).toMatchObject({
+      installed: ['rongying-content'],
+      skipped: [],
+      reconciled: ['rongying-content'],
+      failed: [],
+    });
+    expect(api.getAgentFile).toHaveBeenCalledTimes(2);
+    expect(api.setAgentFile).toHaveBeenCalledOnce();
+    expect(api.setAgentFile).toHaveBeenCalledWith(
+      'gw-1',
+      'rongying-content',
+      'SOUL.md',
+      stampPresetPrompt(PRESET_AGENT_DEFINITIONS[0].soulMd),
+    );
+    expect(api.updateAgent).not.toHaveBeenCalled();
     expect(api.deleteAgent).not.toHaveBeenCalled();
   });
 

@@ -17,6 +17,7 @@ interface MutationResult {
 
 interface Recorder {
   calls: Array<{ fn: string; args: unknown[] }>;
+  listAgents: (...args: unknown[]) => Promise<MutationResult>;
   createAgent: (...args: unknown[]) => Promise<MutationResult>;
   updateAgent: (...args: unknown[]) => Promise<MutationResult>;
   getAgentFile: (...args: unknown[]) => Promise<MutationResult>;
@@ -45,6 +46,7 @@ function makeApi(overrides: Record<string, unknown> = {}): Recorder {
     };
   return {
     calls,
+    listAgents: rec('listAgents'),
     createAgent: rec('createAgent'),
     updateAgent: rec('updateAgent'),
     getAgentFile: rec('getAgentFile'),
@@ -94,6 +96,90 @@ describe('installPresetAgentPack —— 可注入自定义定义（助手市场�
     expect(res.skipped).toEqual(['rongying-tpl-3f2a1b4c']);
     expect(res.installed).toEqual([]);
     expect(api.calls).toHaveLength(0);
+  });
+
+  it('⭐ 本地目录陈旧 + 网关报 already exists ⇒ 强制查目录并复用精确 id', async () => {
+    const api = makeApi({
+      createAgent: { ok: false, error: 'agent "rongying-tpl-3f2a1b4c" already exists' },
+      listAgents: {
+        ok: true,
+        result: {
+          defaultId: 'main',
+          mainKey: 'main',
+          scope: 'per-sender',
+          agents: [{ id: 'rongying-tpl-3f2a1b4c', name: '爆款内容教练' }],
+        },
+      },
+    });
+
+    const res = await installPresetAgentPack({
+      gatewayId: 'gw',
+      workspaceRoot: 'C:/ws',
+      currentAgentIds: [],
+      displayNames: {},
+      definitions: [templateDef],
+      api,
+    });
+
+    expect(res).toMatchObject({ installed: [], skipped: ['rongying-tpl-3f2a1b4c'], failed: [] });
+    expect(api.calls.map((call) => call.fn)).toEqual(['createAgent', 'listAgents']);
+  });
+
+  it('已存在冲突只有一个归一化 id 候选 ⇒ 安全复用', async () => {
+    const api = makeApi({
+      createAgent: { ok: false, error: 'agent "rongying-tpl-3f2a1b4c" already exists' },
+      listAgents: {
+        ok: true,
+        result: {
+          defaultId: 'main',
+          mainKey: 'main',
+          scope: 'per-sender',
+          agents: [{ id: 'RONGYING-TPL-3F2A1B4C' }],
+        },
+      },
+    });
+
+    const res = await installPresetAgentPack({
+      gatewayId: 'gw',
+      workspaceRoot: 'C:/ws',
+      currentAgentIds: [],
+      displayNames: {},
+      definitions: [templateDef],
+      api,
+    });
+
+    expect(res.failed).toEqual([]);
+    expect(res.skipped).toEqual(['rongying-tpl-3f2a1b4c']);
+    expect(api.calls.map((call) => call.fn)).toEqual(['createAgent', 'listAgents']);
+  });
+
+  it('已存在冲突有多个归一化 id 候选 ⇒ 拒绝猜测，不写文件也不回滚', async () => {
+    const api = makeApi({
+      createAgent: { ok: false, error: 'agent "rongying-tpl-3f2a1b4c" already exists' },
+      listAgents: {
+        ok: true,
+        result: {
+          defaultId: 'main',
+          mainKey: 'main',
+          scope: 'per-sender',
+          agents: [{ id: 'RONGYING-TPL-3F2A1B4C' }, { id: 'Rongying-Tpl-3f2a1b4c' }],
+        },
+      },
+    });
+
+    const res = await installPresetAgentPack({
+      gatewayId: 'gw',
+      workspaceRoot: 'C:/ws',
+      currentAgentIds: [],
+      displayNames: {},
+      definitions: [templateDef],
+      api,
+    });
+
+    expect(res.failed).toHaveLength(1);
+    expect(res.skipped).toEqual([]);
+    expect(api.calls.map((call) => call.fn)).toEqual(['createAgent', 'listAgents']);
+    expect(api.calls.some((call) => call.fn === 'setAgentFile' || call.fn === 'deleteAgent')).toBe(false);
   });
 
   it('⭐ 写文件失败 ⇒ 回滚删掉刚建的 agent（不留半成品）', async () => {

@@ -189,8 +189,13 @@ describe('MarketTab', () => {
     view.unmount();
   });
 
-  it('⭐ 安装失败 ⇒ 中文提示，且卡片没变成「已安装」', async () => {
-    install.mockResolvedValueOnce({ ok: false, message: '安装没成功，请稍后重试。' });
+  it('⭐ 安装失败 ⇒ 主提示只显示中文，technical diagnostic 只进日志', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    install.mockResolvedValueOnce({
+      ok: false,
+      message: '安装没成功，请稍后重试。',
+      diagnostic: 'gateway not connected',
+    });
     const view = await render();
     const installButton = [...view.container.querySelectorAll('button[data-action="install"]')].find((b) =>
       b.textContent?.includes(translate('market.install')),
@@ -202,11 +207,36 @@ describe('MarketTab', () => {
 
     const errorTexts = (toast.error as unknown as { mock: { calls: unknown[][] } }).mock.calls.map((c) => String(c[0]));
     expect(errorTexts.some((text) => /[一-龥]/.test(text))).toBe(true);
+    expect(errorTexts.join(' ')).not.toContain('gateway not connected');
+    expect(consoleError).toHaveBeenCalledWith('[market] 助手安装失败:', 'gateway not connected');
     // ⚠️ 只能断言**这一张卡片**：列表里另一张本来就是"已安装"，
     //    对整个容器做 not.toContain('已安装') 会因为别人的状态而永远失败
     expect(installButton.textContent).not.toContain(translate('market.installed'));
     expect(installButton.disabled).toBe(false);
     view.unmount();
+    consoleError.mockRestore();
+  });
+
+  it('⭐ install promise reject ⇒ 捕获并给中文失败提示', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    install.mockRejectedValueOnce(new Error('gateway exploded'));
+    const view = await render();
+    const installButton = [...view.container.querySelectorAll('button[data-action="install"]')].find((b) =>
+      b.textContent?.includes(translate('market.install')),
+    ) as HTMLButtonElement;
+
+    await act(async () => {
+      installButton.click();
+      await Promise.resolve();
+    });
+
+    expect((toast.error as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]?.[0]).toBe(
+      translate('market.installFailed'),
+    );
+    expect(consoleError).toHaveBeenCalledWith('[market] 助手安装请求异常:', expect.any(Error));
+    expect(installButton.textContent).not.toContain(translate('market.installed'));
+    view.unmount();
+    consoleError.mockRestore();
   });
 
   it('⭐ 记账失败 ⇒ 助手装好了但提示一句"次数没记上"（不当作失败）', async () => {

@@ -52,6 +52,7 @@ function makeApi(overrides: Record<string, unknown> = {}) {
     };
   return {
     calls,
+    listAgents: rec('listAgents'),
     createAgent: rec('createAgent'),
     updateAgent: rec('updateAgent'),
     getAgentFile: rec('getAgentFile'),
@@ -121,25 +122,16 @@ describe('installTemplate —— 真安装的编排', () => {
     expect(outcome.message ?? '').toMatch(/[\u4e00-\u9fa5]/); // 中文，不是英文堆栈
   });
 
-  /**
-   * ⭐⭐ 2026-09-20 U 盘交付实机（T-a28，用户原话「市场的哪些 prompt 都安装不了」）：
-   *
-   * 走到这个分支时，用户**永远**只看到「操作没成功，请稍后重试。」—— 因为那一行**写死了**
-   * `describeTemplateError('unknown')`：网关怎么解释（`agent creation failed: …`）都被丢掉，
-   * 界面上没有原文 ⇒ 用户无从下手，我们也无法远程定位。
-   * ⇒ 断言：**结论仍是中文**（用户先看到能读的那句），但**原文必须跟着出来**。
-   *
-   * ⚠️ 这条与上面那条「不是英文堆栈」并不冲突：中文结论在前，原文是**证据**不是堆栈。
-   */
-  it('⭐⭐ 建失败时要把**网关原文**带出来（不许再拿一句"请稍后重试"糊掉）', async () => {
+  it('⭐⭐ 建失败时主提示只给本地化结论，网关原文单独放进 diagnostic', async () => {
     const failingApi = makeApi({ createAgent: { ok: false, error: 'gateway not connected' } });
     const { deps } = makeDeps({ api: failingApi });
 
     const outcome = await installTemplate(deps, template);
 
     expect(outcome.ok).toBe(false);
-    expect(outcome.message ?? '').toMatch(/[一-龥]/); // 结论仍是中文（与上一条同口径）
-    expect(outcome.message ?? '').toContain('gateway not connected'); // 原文必须带出来
+    expect(outcome.message ?? '').toMatch(/[一-龥]/);
+    expect(outcome.message ?? '').not.toContain('gateway not connected');
+    expect(outcome.diagnostic).toContain('gateway not connected');
   });
 
   it('⭐ 已装过（同 id 在网关里）⇒ 跳过建、仍然记一次账（跨机器状态最终一致）', async () => {
@@ -151,6 +143,33 @@ describe('installTemplate —— 真安装的编排', () => {
     expect(outcome.alreadyInstalled).toBe(true);
     expect(api.calls).toHaveLength(0);
     expect(recordInstalled).toHaveBeenCalledOnce();
+  });
+
+  it('本地目录陈旧 + 网关报 already exists ⇒ 对账复用后强刷 UI 目录', async () => {
+    const staleApi = makeApi({
+      createAgent: { ok: false, error: 'agent "rongying-tpl-3f2a1b4c" already exists' },
+      listAgents: {
+        ok: true,
+        result: {
+          defaultId: 'main',
+          mainKey: 'main',
+          scope: 'per-sender',
+          agents: [{ id: 'rongying-tpl-3f2a1b4c', name: '爆款内容教练' }],
+        },
+      },
+    });
+    const { deps, refreshAgents, recordInstalled } = makeDeps({ api: staleApi, currentAgentIds: [] });
+
+    const outcome = await installTemplate(deps, template);
+
+    expect(outcome).toMatchObject({
+      ok: true,
+      agentId: 'rongying-tpl-3f2a1b4c',
+      alreadyInstalled: true,
+    });
+    expect(refreshAgents).toHaveBeenCalledOnce();
+    expect(recordInstalled).toHaveBeenCalledOnce();
+    expect(staleApi.calls.map((call) => call.fn)).toEqual(['createAgent', 'listAgents']);
   });
 
   /**
