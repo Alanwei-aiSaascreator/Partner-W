@@ -9,7 +9,7 @@ describe('开机随包技能重试', () => {
       .fn()
       .mockResolvedValueOnce({ ok: false, error: 'GATEWAY_UNAVAILABLE' })
       .mockResolvedValueOnce({ ok: true, result: { installed: ['deck-layout'], failed: [] } });
-    const sleep = vi.fn(async () => undefined);
+    const sleep = vi.fn<(ms: number) => Promise<void>>(async () => undefined);
 
     const result = await ensureBundledSkillsWithRetry('gw-1', { ensure, sleep, delaysMs: [500, 1_500] });
 
@@ -23,7 +23,7 @@ describe('开机随包技能重试', () => {
       ok: true,
       result: { installed: [], failed: [{ slug: 'deck-layout', error: 'still unavailable' }] },
     }));
-    const sleep = vi.fn(async () => undefined);
+    const sleep = vi.fn<(ms: number) => Promise<void>>(async () => undefined);
 
     const result = await ensureBundledSkillsWithRetry('gw-1', { ensure, sleep, delaysMs: [500, 1_500] });
 
