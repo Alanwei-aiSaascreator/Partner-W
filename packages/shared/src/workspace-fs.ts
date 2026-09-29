@@ -8,7 +8,7 @@
  * 是 **fail-closed** —— 零值是 *unknown*，不是"还是我建的那个文件"的证明。
  * **FAT32 上 `dev` 恒为 0** ⇒ 助手读写工作区里的身份文件**必然**失败，
  * 表现是六个预置助手全部报 `unsafe workspace file`，而界面只会说"助手失败"。
- * 实测三档：FAT32 必坏 / exFAT 可用 / NTFS 可用。
+ * 实测结论：FAT32 与 exFAT 都不满足随包 OpenClaw 的安全写入语义；产品只承诺 NTFS。
  */
 export type WorkspaceFsIdentityState =
   /** 量到了非零身份：这块文件系统不会撞那条判据。 */

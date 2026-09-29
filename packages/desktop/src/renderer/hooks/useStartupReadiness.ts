@@ -165,7 +165,7 @@ export function useStartupReadiness(enabled: boolean) {
    * 量一次工作区所在文件系统（探测文件建完就删，不留东西）。
    *
    * 为什么值得单开一路：FAT32 的盘上六个助手**必定**失败，而失败原因在界面上长成一句
-   * 「助手失败」—— 用户唯一能做的动作（换块 exFAT/NTFS 的盘）从界面上看不出来。
+   * 「助手失败」—— 用户唯一能做的动作（换到 NTFS 的盘）从界面上看不出来。
    * 探测量的是 fs-safe 判的**那两个数**（`dev`/`ino`），不是盘符或卷标。
    */
   const probeWorkspaceFilesystem = useCallback(async (): Promise<WorkspaceFsIdentity | null> => {
