@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { SLIDEGEN_MAX_PAGES, pageBudgetFailure } from '@clawwork/shared';
+import { SLIDEGEN_MAX_PAGES, messagePageBudgetFailure, pageBudgetFailure } from '@clawwork/shared';
 
 /**
  * ⭐⭐ 「多少页算太多」这一刀（2026-09-29）。
@@ -34,12 +34,6 @@ describe('slidegen 的页数闸', () => {
     }
   });
 
-  it('⭐ 上限必须接得上"100K 字符恢复上限"那一头（否则自相矛盾）', () => {
-    // 8K 修复把长回复的恢复上限定在 100,000 字符；实测约 785 字符/页 ⇒ 约 127 页。
-    // 页数闸若低于这个数，就会出现"内容允许恢复、页数却被拒"。
-    expect(SLIDEGEN_MAX_PAGES).toBeGreaterThanOrEqual(140);
-  });
-
   it('上限之内放行、超出才拒（边界两侧各一次）', () => {
     expect(pageBudgetFailure(SLIDEGEN_MAX_PAGES)).toBeNull();
     expect(pageBudgetFailure(SLIDEGEN_MAX_PAGES + 1)).toEqual({
@@ -54,5 +48,14 @@ describe('slidegen 的页数闸', () => {
     expect(failure?.code).toBe('slidegen-too-many-pages');
     expect(failure && 'max' in failure ? failure.max : 0).toBeGreaterThan(0);
     expect(failure && 'got' in failure ? failure.got : 0).toBe(9999);
+  });
+
+  it('⭐ 同一消息里多份 deck 共享 200 页预算', () => {
+    expect(messagePageBudgetFailure([80, 120])).toBeNull();
+    expect(messagePageBudgetFailure([120, 81])).toEqual({
+      code: 'slidegen-too-many-pages',
+      max: SLIDEGEN_MAX_PAGES,
+      got: 201,
+    });
   });
 });

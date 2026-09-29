@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { Artifact, SlidegenFailure, SlidegenWarning } from '@clawwork/shared';
-import { pageBudgetFailure } from '@clawwork/shared';
+import { messagePageBudgetFailure } from '@clawwork/shared';
 import { getDebugLogger } from '../debug/index.js';
 import { saveArtifactFromBuffer } from '../artifact/save.js';
 import { documentFileStem } from '../util/document-file-name.js';
@@ -96,16 +96,30 @@ export async function generateSlidesFromMessage(input: {
   const assetsDir = path.join(input.workspacePath, 'assets');
   const assetRoot = fs.existsSync(assetsDir) ? assetsDir : input.workspacePath;
 
+  // 先求值完同一条消息里的所有 deck，再决定是否允许渲染。
+  // 否则前一份已经写盘后才发现累计超额，用户会拿到一套不完整的产物。
+  const evaluated: Array<{ deck: SlidegenDeck; pages: ReturnType<typeof evaluateSlide> }> = [];
   for (const deck of decks) {
     try {
-      const pages = evaluateSlide(deck.source);
-      // 判据在 `pageBudgetFailure`（纯函数，有测试）—— 别把比较写回这里，那样它又没测试了。
-      const budget = pageBudgetFailure(pages.length);
-      if (budget) {
-        result.failed.push(budget);
-        continue;
-      }
+      evaluated.push({ deck, pages: evaluateSlide(deck.source) });
+    } catch (error) {
+      result.failed.push(failureFromError(error));
+      getDebugLogger().warn({
+        domain: 'artifact',
+        event: 'slidegen.save-failed',
+        data: { taskId: input.taskId, error: (error as Error).message },
+      });
+    }
+  }
 
+  const budget = messagePageBudgetFailure(evaluated.map(({ pages }) => pages.length));
+  if (budget) {
+    result.failed.push(budget);
+    return result;
+  }
+
+  for (const { deck, pages } of evaluated) {
+    try {
       let buffer: Buffer;
       const emitted = [];
       for (const [index, page] of pages.entries()) {

@@ -32,10 +32,8 @@
  * 旧值 60 会拒掉一份**只花 1 秒**就能渲染完的稿子（实测那一次就是 64 页），
  * 而这是 `SlidegenFailure` 那份设计里明写"**不因为内容多而拒绝**"的通道。
  *
- * ⭐ 200 不是拍的，它要**接得上另一头**：8K 修复把长回复的恢复上限定在
- * **100,000 字符**，而实测约 **785 字符/页** ⇒ 100K 字符大约能排 **127 页**。
- * 闸若低于 127，就会出现"内容允许恢复、页数却被拒"的自相矛盾。
- * 200 = 127 + 余量；仍然拦得住"几百页"那个原始担忧。
+ * 200 保留了正常长稿的充足余量，同时仍然拦得住几百页导致的渲染成本失控。
+ * 它不与聊天历史的字符上限绑定：字符数不能稳定换算成页数或渲染成本。
  */
 export const SLIDEGEN_MAX_PAGES = 200;
 
@@ -49,6 +47,11 @@ export const SLIDEGEN_MAX_PAGES = 200;
 export function pageBudgetFailure(pageCount: number): SlidegenFailure | null {
   if (pageCount <= SLIDEGEN_MAX_PAGES) return null;
   return { code: 'slidegen-too-many-pages', max: SLIDEGEN_MAX_PAGES, got: pageCount };
+}
+
+/** 同一条助手消息里的多份 deck 共享一份渲染成本预算。 */
+export function messagePageBudgetFailure(pageCounts: readonly number[]): SlidegenFailure | null {
+  return pageBudgetFailure(pageCounts.reduce((total, count) => total + count, 0));
 }
 
 /**
