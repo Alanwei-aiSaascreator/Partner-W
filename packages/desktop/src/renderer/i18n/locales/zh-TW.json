@@ -488,7 +488,6 @@
     "docgenBlock": "文件內容（成品見右側「產物」）",
     "htmlgenBlock": "網頁內容（成品見右側「產物」）",
     "retryHint": "重發上一則訊息，會再扣一次積分",
-    "thinkingProcess": "思考過程",
     "toolCallSummary": "已執行 {{count}} 次工具呼叫",
     "toolCallSummaryWithErrors": "已執行 {{count}} 次工具呼叫（{{errorCount}} 次失敗）"
   },

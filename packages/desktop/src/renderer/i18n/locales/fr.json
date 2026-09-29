@@ -488,7 +488,6 @@
     "docgenBlock": "Contenu du document (le fichier apparaît dans 产物, à droite)",
     "htmlgenBlock": "Contenu de la page (le fichier apparaît dans 产物 à droite)",
     "retryHint": "Renvoyer le message précédent — une nouvelle consommation sera facturée",
-    "thinkingProcess": "Processus de réflexion",
     "toolCallSummary": "{{count}} appels d'outil exécutés",
     "toolCallSummaryWithErrors": "{{count}} appels d'outil exécutés ({{errorCount}} échoués)"
   },
