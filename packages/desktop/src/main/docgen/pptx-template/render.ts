@@ -7,9 +7,8 @@
  * 而模板这条路的四类拒绝全都要带着名字回去（"我不认识 `tmeline`"），
  * 所以它们必须从**渲染阶段的失败出口**（`DocgenFailure`）走。
  *
- * ⚠️ 这一层不许"顺手兜底"：模板没填上不是"渲染失败"，
- *    大多数时候是**目录与模板文件漂移了**（形状名对不上）。
- *    那种情况会被上游的对齐测试在 CI 里拦掉；线上真发生了就如实报 render-failed。
+ * ⚠️ 这一层只负责忠实区分“内容错误”和“模板内部故障”。是否对内部故障降级，
+ *    由上层统一入口 `renderDocument` 决定；这里会保留原始 cause 供日志排障。
  */
 
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -22,8 +21,8 @@ import { parseTemplateDeck } from './parse.js';
 /** 渲染阶段的失败：带着结构化的 `DocgenFailure` 上去，而不是一句人话。 */
 export class PptxTemplateFailureError extends Error {
   readonly failure: DocgenFailure;
-  constructor(failure: DocgenFailure) {
-    super(`pptx template: ${failure.code}`);
+  constructor(failure: DocgenFailure, cause?: unknown) {
+    super(`pptx template: ${failure.code}`, cause === undefined ? undefined : { cause });
     this.name = 'PptxTemplateFailureError';
     this.failure = failure;
   }
@@ -41,6 +40,23 @@ export interface RenderPptxFromTemplateOptions {
 export async function renderPptxFromTemplate(opts: RenderPptxFromTemplateOptions): Promise<Buffer> {
   const parsed = parseTemplateDeck(opts.raw);
   if (!parsed.ok) throw new PptxTemplateFailureError(parsed.failure);
+
+  // SECTION_CONTEXT is a physically narrow 5.83in × 0.33in box in the shipped
+  // template.  The schema accepts up to 60 characters so a real 47-character
+  // team background is not rejected outright, but putting >40 CJK characters
+  // into that box makes Office/WPS shrink it below a readable presentation size.
+  // Treat that as a template capability failure and let the caller use the
+  // editable same-format fallback, where the full text is split across normal
+  // body lines.  Content errors still retain their precise validation failures.
+  const hasNarrowSectionOverflow = parsed.deck.slides.some(
+    (slide) => slide.templateId === 'section' && Array.from(slide.data.section_context?.trim() ?? '').length > 40,
+  );
+  if (hasNarrowSectionOverflow) {
+    throw new PptxTemplateFailureError(
+      { code: 'render-failed', format: 'pptx' },
+      new Error('section_context exceeds the readable template box'),
+    );
+  }
 
   if (!opts.templatesRoot) {
     // 定位不到模板目录：这是**我们这边**的问题，不是助手内容的问题 ⇒ render-failed。
@@ -60,7 +76,7 @@ export async function renderPptxFromTemplate(opts: RenderPptxFromTemplateOptions
     return readFileSync(written);
   } catch (error) {
     if (error instanceof PptxTemplateFailureError) throw error;
-    throw new PptxTemplateFailureError({ code: 'render-failed', format: 'pptx' });
+    throw new PptxTemplateFailureError({ code: 'render-failed', format: 'pptx' }, error);
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }

@@ -1,5 +1,6 @@
 import type { DocgenRequest } from './request.js';
-import { renderPptxFromTemplate } from './pptx-template/render.js';
+import { templateDeckFallbackRequest } from './pptx-template/fallback.js';
+import { PptxTemplateFailureError, renderPptxFromTemplate } from './pptx-template/render.js';
 import { renderDocx } from './render-docx.js';
 import { renderPdf } from './render-pdf.js';
 import { renderPptx } from './render-pptx.js';
@@ -13,6 +14,8 @@ export interface RenderDocumentOptions {
   templatesRoot?: string;
   /** 产出文件名（模板那条路要拿它当 automizer 的输出名）。 */
   fileName?: string;
+  /** 模板内部故障被同格式保底成功接住后的审计钩子。钩子失败不得影响产物。 */
+  onTemplateFallback?: (error: PptxTemplateFailureError) => void;
 }
 
 /**
@@ -34,11 +37,27 @@ export async function renderDocument(request: DocgenRequest, options: RenderDocu
     case 'pptx':
       // 两条路，按契约层留下的记号分：有 `rawTemplateDeck` ⇒ 模板填充，没有 ⇒ 现画。
       if (request.rawTemplateDeck !== undefined) {
-        return renderPptxFromTemplate({
-          raw: request.rawTemplateDeck,
-          templatesRoot: options.templatesRoot,
-          fileName: options.fileName ?? 'deck.pptx',
-        });
+        try {
+          return await renderPptxFromTemplate({
+            raw: request.rawTemplateDeck,
+            templatesRoot: options.templatesRoot,
+            fileName: options.fileName ?? 'deck.pptx',
+          });
+        } catch (error) {
+          // 模板内容本身不合法时必须把精确错误交回去；只有模板文件/Automizer 这类
+          // **产品内部故障**才降级。这样用户至少拿到一份可编辑、可打开的 PPTX，
+          // 而不是助手说做完了、产物面板却空着。
+          if (!(error instanceof PptxTemplateFailureError) || error.failure.code !== 'render-failed') throw error;
+          const fallback = templateDeckFallbackRequest(request.title, request.rawTemplateDeck);
+          if (!fallback) throw error;
+          const buffer = await renderPptx(fallback);
+          try {
+            options.onTemplateFallback?.(error);
+          } catch {
+            // 审计日志只是旁路；绝不能让“日志写失败”重新变成“用户拿不到 PPT”。
+          }
+          return buffer;
+        }
       }
       return renderPptx(request);
     case 'docx':

@@ -122,6 +122,38 @@ describe.skipIf(!ENABLED)('打包态资源', () => {
     expect(shapeText(texts[2], pageNumberShapeFor('closing')!)).toBe('03');
   });
 
+  it('⭐ 真机投资路演顺序在打包资源上可重复使用观点页与指标页', async () => {
+    const parsed = parseTemplateDeck({
+      template: 'business-deck-v4',
+      slides: [
+        { templateId: 'cover', data: { cover_title: '我的项目商业计划书' } },
+        { templateId: 'insight', data: { slide_title: '市场痛点' } },
+        { templateId: 'insight', data: { slide_title: '解决方案' } },
+        { templateId: 'metrics', data: { slide_title: '市场空间', value_1: '5.6万亿', label_1: '市场规模' } },
+        { templateId: 'comparison', data: { slide_title: '竞争优势' } },
+        { templateId: 'insight', data: { slide_title: '商业模式' } },
+        { templateId: 'timeline', data: { slide_title: '发展规划', step_1_title: '第一阶段' } },
+        { templateId: 'metrics', data: { slide_title: '经营预测', value_1: '120万', label_1: '单店收入' } },
+        { templateId: 'section', data: { section_title: '团队介绍' } },
+        { templateId: 'actions', data: { slide_title: '融资计划', action_1: '产品研发' } },
+        { templateId: 'closing', data: { closing_title: '感谢关注' } },
+      ],
+    });
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+
+    const written = await fillTemplateDeck({
+      deck: parsed.deck,
+      templatesRoot: TEMPLATES_ROOT,
+      outputDir: scratch,
+      outputName: 'packaged-investor-deck.pptx',
+    });
+    const texts = slideTexts(readFileSync(written));
+    expect(texts).toHaveLength(11);
+    expect(texts[0]).toContain('我的项目商业计划书');
+    expect(texts[10]).toContain('感谢关注');
+  });
+
   it('打包态资源与 catalog 仍然对齐（换模板文件忘了改目录会在这里红）', async () => {
     const buffer = readFileSync(join(TEMPLATES_ROOT, PPTX_TEMPLATE_FILE));
     for (const id of ['cover', 'insight', 'metrics', 'timeline', 'closing'] as const) {

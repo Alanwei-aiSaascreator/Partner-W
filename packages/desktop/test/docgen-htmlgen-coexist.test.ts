@@ -273,7 +273,7 @@ describe('一条坏掉不带走另一条', () => {
     expect(pages.failed.length).toBeGreaterThan(0);
   });
 
-  it('模板目录定位不到时（打包漏了资源）⇒ 报失败，但**不抛**、不带走别的东西', async () => {
+  it('模板目录定位不到时（打包漏了资源）⇒ 自动降级为可编辑 PPTX，不让用户空手', async () => {
     const docs = await generateDocumentsFromMessage({
       workspacePath: workspace,
       taskId: TASK_ID,
@@ -281,10 +281,13 @@ describe('一条坏掉不带走另一条', () => {
       content: mixedMessage(),
       templatesRoot: undefined,
     });
-    expect(docs.saved).toHaveLength(0);
-    expect(docs.failed).toHaveLength(1);
-    // 定位不到是我们这边的问题 ⇒ render-failed，而不是把锅甩给模型的内容
-    expect(docs.failed[0]).toMatchObject({ code: 'render-failed', format: 'pptx' });
+    expect(docs.saved).toHaveLength(1);
+    expect(docs.failed).toEqual([]);
+    const saved = mocks.saveArtifactFromBuffer.mock.calls.at(-1)?.[0] as
+      | { fileName?: string; buffer?: Buffer }
+      | undefined;
+    expect(saved?.fileName).toMatch(/\.pptx$/i);
+    expect(saved?.buffer?.subarray(0, 2).toString('utf8')).toBe('PK');
     // 代码块的抽取与它无关，照旧
     expect(extractCodeBlocksFromMarkdown(mixedMessage())).toHaveLength(1);
   });

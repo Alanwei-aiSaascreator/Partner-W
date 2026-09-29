@@ -143,6 +143,24 @@ describe('presentation-deck-v2 —— 内容与契约层不漂移', () => {
     expect(text, '没给替代写法（「」或 \\"）').toMatch(/中文引号/);
   });
 
+  it('⭐ ask_user 契约写清楚：最多 3 问、自由文本不用它、失败不能当成用户已回答', () => {
+    expect(text).toMatch(/ask_user/);
+    expect(text).toMatch(/最多\s*3/);
+    expect(text).toMatch(/自由文本|开放式问题/);
+    expect(text).toMatch(/普通消息|直接在对话里问/);
+    expect(text).toMatch(/失败.*(?:不代表|不能当作|不得视为).*回答|不能.*失败.*当.*回答/);
+  });
+
+  it('⭐ 技能里的 section_context 字数必须与真 catalog 一致', () => {
+    const max = PPTX_TEMPLATES.section.tokens.section_context.maxLength;
+    expect(text).toMatch(new RegExp(`section_context[^\\n]{0,80}${max}`));
+  });
+
+  it('⭐ 不许先向用户宣称 PPT 已交付，必须以右侧实际出现 .pptx 为准', () => {
+    expect(text).toMatch(/以.*右侧.*实际出现.*\.pptx.*为准/);
+    expect(text).toMatch(/不要.*(?:改走|换成).*slidegen|不要.*\.slidegen.*兜底/);
+  });
+
   it('⭐ 裸英文双引号让原始 JSON 非法；换成技能推荐的写法就没事', () => {
     const body = text.match(/```docgen\n([\s\S]*?)\n```/)![1];
     expect(() => JSON.parse(body), '示例原文必须是合法 JSON').not.toThrow();

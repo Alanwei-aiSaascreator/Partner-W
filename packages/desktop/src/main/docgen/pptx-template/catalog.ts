@@ -102,7 +102,10 @@ export const PPTX_TEMPLATES: Readonly<Record<string, PptxTemplateSpec>> = Object
     tokens: {
       section_title: { shape: 'SECTION_TITLE', maxLength: TITLE, required: true },
       section_summary: { shape: 'SECTION_SUMMARY', maxLength: BODY },
-      section_context: { shape: 'SECTION_CONTEXT', maxLength: LABEL },
+      // 这格在模板里是两行上下文，不是负责人/日期那种单行短标签。
+      // 真机投资路演的 47 字团队背景会自然落在这里；沿用 LABEL=40 会让整份 PPT
+      // 在渲染前被拒。60 与同页标题上限一致，仍保留明确边界，避免塞入小作文。
+      section_context: { shape: 'SECTION_CONTEXT', maxLength: TITLE },
     },
   },
   insight: {

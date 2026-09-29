@@ -163,6 +163,33 @@ describe('八种模板页 —— 逐个真生成', () => {
     expect(texts[1]).toContain('第二份');
   });
 
+  it('⭐ 真机投资路演顺序：重复观点页和指标页仍能生成完整 PPTX', async () => {
+    const { buffer } = await fill(
+      {
+        template: 'business-deck-v4',
+        slides: [
+          { templateId: 'cover', data: { cover_title: '我的项目商业计划书' } },
+          { templateId: 'insight', data: { slide_title: '市场痛点' } },
+          { templateId: 'insight', data: { slide_title: '解决方案' } },
+          { templateId: 'metrics', data: { slide_title: '市场空间', value_1: '5.6万亿', label_1: '市场规模' } },
+          { templateId: 'comparison', data: { slide_title: '竞争优势' } },
+          { templateId: 'insight', data: { slide_title: '商业模式' } },
+          { templateId: 'timeline', data: { slide_title: '发展规划', step_1_title: '第一阶段' } },
+          { templateId: 'metrics', data: { slide_title: '经营预测', value_1: '120万', label_1: '单店收入' } },
+          { templateId: 'section', data: { section_title: '团队介绍' } },
+          { templateId: 'actions', data: { slide_title: '融资计划', action_1: '产品研发' } },
+          { templateId: 'closing', data: { closing_title: '感谢关注' } },
+        ],
+      },
+      'investor-deck.pptx',
+    );
+
+    const texts = slideTexts(buffer);
+    expect(texts).toHaveLength(11);
+    expect(texts[0]).toContain('我的项目商业计划书');
+    expect(texts[10]).toContain('感谢关注');
+  });
+
   it('⭐ 页脚页码跟**在成品里的位置**走，不沿用模板里写死的那个数', async () => {
     // 模板里 timeline 那一页写死 FOOTER_PAGE_6 = "06"。把它放在一副 3 页 deck 的
     // 第 2 页，页脚必须印 02 而不是 06 —— 这是靠 WPS 渲图审出来的缺陷：

@@ -137,6 +137,14 @@ export async function generateDocumentsFromMessage(input: {
       const buffer = await renderDocument(request, {
         templatesRoot: input.templatesRoot,
         fileName: documentFileNameFor(request.title, request.kind),
+        onTemplateFallback: (error) => {
+          const cause = error.cause instanceof Error ? error.cause.message : undefined;
+          getDebugLogger().warn({
+            domain: 'artifact',
+            event: 'docgen.template-render-fallback',
+            data: { taskId: input.taskId, kind: request.kind, cause },
+          });
+        },
       });
       const artifact = await saveArtifactFromBuffer({
         workspacePath: input.workspacePath,

@@ -127,6 +127,16 @@ describe('parseTemplateDeck —— 四种拒绝', () => {
     expect(parseTemplateDeck({ slides: [{ templateId: 'cover', data: { cover_title: atLimit } }] }).ok).toBe(true);
   });
 
+  it('⭐ 真机团队背景 47 字能放进章节上下文，不因沿用短标签上限整份拒绝', () => {
+    const sectionContext = '核心团队平均从业经验8年以上，曾在头部餐饮集团/互联网平台担任管理职位，具备从0到1的创业经验';
+    expect(sectionContext.length).toBe(47);
+    expect(
+      parseTemplateDeck({
+        slides: [{ templateId: 'section', data: { section_title: '团队介绍', section_context: sectionContext } }],
+      }).ok,
+    ).toBe(true);
+  });
+
   it('页码按 slides 数组从 1 数（助手手里就是那个数组，不用自己减一）', () => {
     const result = parseTemplateDeck({ slides: [COVER, { templateId: 'nope', data: {} }] });
     expect(result.ok).toBe(false);
