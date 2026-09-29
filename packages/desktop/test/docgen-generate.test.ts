@@ -200,6 +200,24 @@ describe('extractDocgenBlocks（经 generateDocumentsFromMessage 间接验）', 
     expect(savedParams(0).fileName).toBe('内测汇报.pptx');
   });
 
+  it('⭐ 模型漏掉字符串开引号时做窄修复：`"title": 🤖 我是谁？"` 仍生成真 PPTX', async () => {
+    const broken = JSON.stringify(PPTX, null, 2).replace('"title": "本周进展"', '"title": 🤖 我是谁？"');
+    expect(() => JSON.parse(broken), '真机样例必须先是非法 JSON').toThrow();
+
+    const result = await generateDocumentsFromMessage({
+      workspacePath,
+      taskId,
+      messageId,
+      content: docgenBlock(broken),
+    });
+
+    expect(result.failed).toEqual([]);
+    expect(result.saved).toHaveLength(1);
+    expect(mocks.saveArtifactFromBuffer).toHaveBeenCalledTimes(1);
+    expect(savedParams(0).fileName).toBe('内测汇报.pptx');
+    expect(await unzipNames(savedParams(0).buffer), '受限修复后产出的必须是真 PPTX').toContain('ppt/presentation.xml');
+  });
+
   it('缺逗号等结构错误不得被“裸引号修复”放过', async () => {
     const structurallyBroken = '{"kind":"pptx" "title":"t","slides":[{"title":"x","bullets":["y"]}]}';
 

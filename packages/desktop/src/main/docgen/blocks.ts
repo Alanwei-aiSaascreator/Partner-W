@@ -92,6 +92,53 @@ function repairBareQuotesInJsonStrings(source: string): string | null {
   return repaired;
 }
 
+/**
+ * 只修复另一种有明确边界的模型笔误：属性值漏了**开**引号，但仍留下了闭引号。
+ *
+ * 真机样例：`"title": 🤖 我是谁？",`。这不是放宽成 JSON5：只接受“一整行、
+ * 已加引号的属性名、无任何 JSON 结构字符的纯文本值、明确的闭引号”这个形状；
+ * 不补逗号/括号，不执行代码，最多修 8 行，结果仍必须通过 JSON.parse 与完整 schema。
+ */
+function repairMissingOpeningQuotesForStringValues(source: string): string | null {
+  let repairs = 0;
+  const repaired = source
+    .split(/(\r?\n)/)
+    .map((line) => {
+      if (line === '\n' || line === '\r\n') return line;
+      const match = line.match(/^(\s*"(?:\\.|[^"\\])+"\s*:\s*)([^"\s{}[\],:\\][^"{}[\],:\\\r\n]*)"(\s*,?\s*)$/);
+      if (!match) return line;
+      const value = (match[2] ?? '').trim();
+      if (!value || /^(?:true|false|null|-?\d+(?:\.\d+)?)$/i.test(value)) return line;
+      repairs += 1;
+      return `${match[1]}"${match[2]}"${match[3]}`;
+    })
+    .join('');
+
+  return repairs > 0 && repairs <= 8 ? repaired : null;
+}
+
+function parseJsonWithNarrowRepairs(source: string): unknown {
+  try {
+    return JSON.parse(source);
+  } catch (initialError) {
+    const bareQuotes = repairBareQuotesInJsonStrings(source);
+    const candidates = [
+      bareQuotes,
+      repairMissingOpeningQuotesForStringValues(source),
+      bareQuotes === null ? null : repairMissingOpeningQuotesForStringValues(bareQuotes),
+    ].filter((candidate): candidate is string => candidate !== null);
+
+    for (const candidate of new Set(candidates)) {
+      try {
+        return JSON.parse(candidate);
+      } catch {
+        // Try the next narrowly-scoped repair candidate.
+      }
+    }
+    throw initialError;
+  }
+}
+
 export interface DocgenExtraction {
   requests: DocgenRequest[];
   /** 有 `docgen` 块但没通过校验的，带原因（给日志；不上屏，避免把 JSON 报错糊到用户脸上）。 */
@@ -111,20 +158,10 @@ export function extractDocgenBlocks(content: string): DocgenExtraction {
     const body = match[1] ?? '';
     let raw: unknown;
     try {
-      raw = JSON.parse(body);
+      raw = parseJsonWithNarrowRepairs(body);
     } catch (initialError) {
-      const repaired = repairBareQuotesInJsonStrings(body);
-      if (repaired !== null) {
-        try {
-          raw = JSON.parse(repaired);
-        } catch {
-          errors.push(`invalid JSON in docgen block: ${(initialError as Error).message}`);
-          continue;
-        }
-      } else {
-        errors.push(`invalid JSON in docgen block: ${(initialError as Error).message}`);
-        continue;
-      }
+      errors.push(`invalid JSON in docgen block: ${(initialError as Error).message}`);
+      continue;
     }
     const parsed = parseDocgenRequest(raw);
     if (!parsed.ok) {
