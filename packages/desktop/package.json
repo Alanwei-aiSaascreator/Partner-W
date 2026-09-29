@@ -1,15 +1,15 @@
 {
   "name": "@clawwork/desktop",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "private": true,
-  "description": "OpenClaw desktop client with structured task management",
+  "description": "荣盈魔方 AI 桌面工作台",
   "type": "module",
   "main": "./out/main/index.js",
   "repository": {
     "type": "git",
     "url": "https://github.com/clawwork-ai/clawwork.git"
   },
-  "author": "clawwork-ai",
+  "author": "荣盈魔方",
   "scripts": {
     "clean": "node ./scripts/clean.mjs",
     "dev": "electron-vite dev",
