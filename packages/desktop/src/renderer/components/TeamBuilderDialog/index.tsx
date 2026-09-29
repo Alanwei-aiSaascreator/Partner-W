@@ -31,6 +31,8 @@ import { useTeamStore } from '@/stores/teamStore';
 import { useTeamInstall } from '@/layouts/TeamsPanel/useTeamInstall';
 import { toSlug, EMOJI_OPTIONS } from '@/layouts/TeamsPanel/utils';
 import type { AgentDraft, TeamInfo } from '@/layouts/TeamsPanel/types';
+import { relayModelsFrom } from '@/components/ChatInput/model-families';
+import { canonicalModelRef, resolveTeamModelRef } from '@/lib/team-model-ref';
 
 interface AgentConfig {
   name: string;
@@ -74,7 +76,7 @@ Rules:
 - Example:
 
 \`\`\`team-config
-{"name": "Research Team", "emoji": "🔬", "description": "Deep research and analysis team", "agents": [{"name": "Research Lead", "role": "coordinator", "description": "Coordinates research tasks and synthesizes findings", "model": "gpt-4", "identity": "A research coordinator who plans research strategies and synthesizes findings from team members."}, {"name": "Data Analyst", "role": "worker", "description": "Analyzes data and generates insights", "model": "gpt-4", "identity": "A data analyst specializing in statistical analysis and data visualization."}]}
+{"name": "Research Team", "emoji": "🔬", "description": "Deep research and analysis team", "agents": [{"name": "Research Lead", "role": "coordinator", "description": "Coordinates research tasks and synthesizes findings", "model": "{{exampleModel}}", "identity": "A research coordinator who plans research strategies and synthesizes findings from team members."}, {"name": "Data Analyst", "role": "worker", "description": "Analyzes data and generates insights", "model": "{{exampleModel}}", "identity": "A data analyst specializing in statistical analysis and data visualization."}]}
 \`\`\`
 
 Respond in {{language}}.
@@ -84,26 +86,26 @@ Now begin by asking what kind of Team the user wants to create.`;
 const CONFIG_BLOCK_RE = /\n?```team-config\n([\s\S]*?)\n```\n?/g;
 const CONFIG_BLOCK_PARTIAL_RE = /\n?```team-config[\s\S]*$/;
 
-function sanitizeAgents(raw: unknown[]): AgentConfig[] {
+function sanitizeAgents(raw: unknown[], models: ModelCatalogEntry[]): AgentConfig[] {
   return raw
     .filter((a): a is Record<string, unknown> => !!a && typeof a === 'object')
     .map((a) => ({
       name: typeof a.name === 'string' ? a.name : '',
       role: VALID_ROLES.has(a.role as string) ? (a.role as 'coordinator' | 'worker') : 'worker',
       description: typeof a.description === 'string' ? a.description : '',
-      model: typeof a.model === 'string' ? a.model : '',
+      model: resolveTeamModelRef(typeof a.model === 'string' ? a.model : '', models),
       identity: typeof a.identity === 'string' ? a.identity : '',
     }));
 }
 
-function parseTeamConfig(text: string): Partial<TeamConfig> | null {
+function parseTeamConfig(text: string, models: ModelCatalogEntry[]): Partial<TeamConfig> | null {
   const matches = [...text.matchAll(CONFIG_BLOCK_RE)];
   if (matches.length === 0) return null;
   const last = matches[matches.length - 1];
   try {
     const raw = JSON.parse(last[1]);
     if (raw.agents && Array.isArray(raw.agents)) {
-      raw.agents = sanitizeAgents(raw.agents);
+      raw.agents = sanitizeAgents(raw.agents, models);
     }
     return raw;
   } catch {
@@ -126,13 +128,13 @@ function configToTeamInfo(config: TeamConfig, gatewayId: string): TeamInfo {
   };
 }
 
-function configToAgentDrafts(config: TeamConfig): AgentDraft[] {
+function configToAgentDrafts(config: TeamConfig, models: ModelCatalogEntry[]): AgentDraft[] {
   return config.agents.map((a) => ({
     uid: crypto.randomUUID(),
     name: a.name.trim(),
     description: a.description.trim(),
     role: a.role,
-    model: a.model,
+    model: resolveTeamModelRef(a.model, models),
     agentMd: a.identity.trim(),
     soulMd: '',
     skills: [],
@@ -160,6 +162,7 @@ export default function TeamBuilderDialog({ open, onOpenChange, gatewayId, onCre
   const modelCatalogByGateway = useUiStore((s) => s.modelCatalogByGateway);
   const agentCatalogByGateway = useUiStore((s) => s.agentCatalogByGateway);
   const models = modelCatalogByGateway[gatewayId] ?? EMPTY_MODELS;
+  const relayModels = useMemo(() => relayModelsFrom(models).filter((model) => model.available !== false), [models]);
   const defaultAgentId = agentCatalogByGateway[gatewayId]?.defaultId ?? 'main';
 
   const loadTeams = useTeamStore((s) => s.loadTeams);
@@ -207,11 +210,10 @@ export default function TeamBuilderDialog({ open, onOpenChange, gatewayId, onCre
     setExpandedAgent(null);
     resetInstall();
 
-    const modelListStr = models.map((m) => `${m.name ?? m.id}${m.provider ? ` (${m.provider})` : ''}`).join(', ');
-    const prompt = SYSTEM_PROMPT_TEMPLATE.replace('{{modelList}}', modelListStr || 'default').replace(
-      '{{language}}',
-      i18n.language,
-    );
+    const modelRefs = relayModels.map(canonicalModelRef);
+    const prompt = SYSTEM_PROMPT_TEMPLATE.replace('{{modelList}}', modelRefs.join(', ') || 'default')
+      .replaceAll('{{exampleModel}}', modelRefs[0] ?? '')
+      .replace('{{language}}', i18n.language);
 
     start({
       gatewayId,
@@ -219,13 +221,13 @@ export default function TeamBuilderDialog({ open, onOpenChange, gatewayId, onCre
       purpose: 'team-builder',
       initialMessage: prompt,
     });
-  }, [open, gatewayId, defaultAgentId, models, start, i18n.language, resetInstall]);
+  }, [open, gatewayId, defaultAgentId, relayModels, start, i18n.language, resetInstall]);
 
   useEffect(() => {
     if (status === 'streaming' || (prevStatusRef.current === 'streaming' && status === 'active')) {
       const lastMsg = messages[messages.length - 1];
       if (lastMsg?.role === 'assistant') {
-        const parsed = parseTeamConfig(lastMsg.content);
+        const parsed = parseTeamConfig(lastMsg.content, relayModels);
         if (parsed) {
           setConfig((prev) => ({
             name: userEdited.has('name') ? prev.name : (parsed.name ?? prev.name),
@@ -237,7 +239,7 @@ export default function TeamBuilderDialog({ open, onOpenChange, gatewayId, onCre
       }
     }
     prevStatusRef.current = status;
-  }, [status, messages, userEdited]);
+  }, [status, messages, userEdited, relayModels]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -292,9 +294,9 @@ export default function TeamBuilderDialog({ open, onOpenChange, gatewayId, onCre
     if (!isValid) return;
     await end();
     const teamInfo = configToTeamInfo(config, gatewayId);
-    const agentDrafts = configToAgentDrafts(config);
+    const agentDrafts = configToAgentDrafts(config, relayModels);
     runInstall(teamInfo, agentDrafts);
-  }, [isValid, config, gatewayId, end, runInstall]);
+  }, [isValid, config, gatewayId, end, runInstall, relayModels]);
 
   useEffect(() => {
     if (!open) return;

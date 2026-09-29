@@ -62,6 +62,7 @@ type ClawworkMock = {
   persistTeam: ReturnType<typeof vi.fn>;
   installSkill: ReturnType<typeof vi.fn>;
   updateAgent: ReturnType<typeof vi.fn>;
+  listAgents: ReturnType<typeof vi.fn>;
 };
 
 let clawwork: ClawworkMock;
@@ -89,6 +90,7 @@ beforeEach(() => {
     persistTeam: vi.fn(async () => ({ ok: true })),
     installSkill: vi.fn(async () => ({ ok: true })),
     updateAgent: vi.fn(async () => ({ ok: true })),
+    listAgents: vi.fn(async () => ({ ok: true, result: { agents: [] } })),
   };
   (window as unknown as { clawwork: ClawworkMock }).clawwork = clawwork;
 
@@ -148,5 +150,50 @@ describe('useTeamInstall 的工作区守卫', () => {
     expect(clawwork.createAgent).toHaveBeenCalledTimes(2);
     expect(clawwork.createAgent.mock.calls[0]?.[1]).toMatchObject({ workspace: 'D:\\ws\\开发团队' });
     expect(api?.installStatus).toBe('done');
+  });
+
+  it('重复安装时网关用展示名报 already exists ⇒ 复用已有 id，不能整队安装失败', async () => {
+    const agents = makeAgents();
+    agents[0].name = 'Marketing Copywriter';
+    agents[1].name = 'Growth Director';
+    clawwork.createAgent
+      .mockResolvedValueOnce({ ok: false, error: 'AGENT "MARKETING COPYWRITER" ALREADY EXISTS' })
+      .mockResolvedValueOnce({
+        ok: true,
+        result: { agentId: 'growth-director', name: 'Growth Director', workspace: '' },
+      });
+    clawwork.listAgents.mockResolvedValue({
+      ok: true,
+      result: { agents: [{ id: 'marketing-copywriter', name: 'Marketing Copywriter' }] },
+    });
+
+    await mount();
+    await act(async () => {
+      await api?.runInstall(teamInfo, agents);
+    });
+
+    expect(api?.installStatus).toBe('done');
+    expect(clawwork.listAgents).toHaveBeenCalledTimes(1);
+    expect(clawwork.persistTeam).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agents: expect.arrayContaining([expect.objectContaining({ agentId: 'marketing-copywriter' })]),
+      }),
+    );
+    expect(clawwork.deleteAgent).not.toHaveBeenCalledWith('gw-1', { agentId: 'marketing-copywriter' });
+  });
+
+  it('模型写入返回 ok:false ⇒ 安装必须失败，不能保存团队并显示成功', async () => {
+    const agents = makeAgents();
+    agents[0].model = 'clawrouter/deepseek-v4-flash';
+    clawwork.updateAgent.mockResolvedValue({ ok: false, error: 'model update rejected' });
+
+    await mount();
+    await act(async () => {
+      await api?.runInstall(teamInfo, agents);
+    });
+
+    expect(api?.installStatus).toBe('error');
+    expect(clawwork.persistTeam).not.toHaveBeenCalled();
+    expect(api?.installEvents.some((event) => event.type === 'error')).toBe(true);
   });
 });
