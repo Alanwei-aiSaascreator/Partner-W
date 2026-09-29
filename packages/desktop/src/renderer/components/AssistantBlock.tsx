@@ -115,7 +115,7 @@ export function AssistantFinalizedBody({ message, agentName, onImageClick, onRet
         <div
           data-testid="assistant-no-visible-answer"
           role="status"
-          className="mt-2 flex max-w-xl flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-secondary)] px-4 py-3 text-sm text-[var(--text-secondary)]"
+          className="type-support mt-2 flex max-w-xl flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-secondary)] px-4 py-3 text-[var(--text-secondary)]"
         >
           <span>{t('chatMessage.noVisibleAnswer')}</span>
           {onRetry ? (
@@ -124,7 +124,7 @@ export function AssistantFinalizedBody({ message, agentName, onImageClick, onRet
               data-testid="assistant-empty-retry"
               title={t('chatMessage.retryHint')}
               onClick={onRetry}
-              className="font-medium text-[var(--accent-primary)] underline-offset-4 hover:underline focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-primary)]"
+              className="font-medium text-[var(--accent)] underline-offset-4 hover:underline focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
             >
               {t('common.retry')}
             </button>
