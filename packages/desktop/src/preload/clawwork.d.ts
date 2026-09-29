@@ -2,6 +2,7 @@ import type {
   AgentFileSet,
   ApprovalDecision,
   Artifact,
+  ArtifactDeliveryFailure,
   ArtifactFileReadResult,
   ArtifactPreview,
   ArtifactSaveAsResult,
@@ -570,7 +571,7 @@ export interface ClawWorkAPI {
    */
   onSlidegenFailed: (callback: (failures: SlidegenFailure[]) => void) => () => void;
   onSlidegenWarned: (callback: (warnings: SlidegenWarning[]) => void) => () => void;
-  onClaimViolation: (callback: (violation: { taskId: string; missing: string[] }) => void) => () => void;
+  onClaimViolation: (callback: (violation: ArtifactDeliveryFailure) => void) => () => void;
   saveCodeBlock: (params: {
     taskId: string;
     messageId: string;

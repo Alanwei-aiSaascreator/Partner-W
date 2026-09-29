@@ -6,6 +6,7 @@ import { useTranslation } from 'react-i18next';
 import { cn } from '@/lib/utils';
 import { motion as motionPresets } from '@/styles/design-tokens';
 import { copyTextToClipboard } from '@/lib/clipboard';
+import { ARTIFACT_FAILURE_MARKER } from '@/lib/artifact-delivery-feedback';
 import AssistantBlock from './AssistantBlock';
 import { AttachmentFileCard, InlineImageBubble, MessageActionButton } from './MessageParts';
 import MessageAvatar from './MessageAvatar';
@@ -143,6 +144,18 @@ const ChatMessage = memo(function ChatMessage({
   }
 
   if (isSystem) {
+    if (message.content.startsWith(ARTIFACT_FAILURE_MARKER)) {
+      return (
+        <div className="py-3">
+          <div
+            role="alert"
+            className="type-support whitespace-pre-wrap break-words rounded-xl border border-[var(--danger)] bg-[var(--danger-bg)] px-3 py-2 text-[var(--text-primary)]"
+          >
+            {message.content.slice(ARTIFACT_FAILURE_MARKER.length).trimStart()}
+          </div>
+        </div>
+      );
+    }
     // ⚠️ 两个条件**都**要满足才给按钮：`retryable` 是网关的判断（重发有没有意义），
     //    `onRetry` 是调用方能不能真的发出去。只满足一个就渲染，等于给一个点了没反应、
     //    或者点一下白花一次钱的按钮。

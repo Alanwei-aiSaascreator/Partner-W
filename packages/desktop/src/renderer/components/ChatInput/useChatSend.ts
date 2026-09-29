@@ -34,6 +34,7 @@ import {
   getTaskSessionKeys,
 } from '@clawwork/core';
 import { buildArtifactsIndex } from '../../lib/artifact-index';
+import { artifactFailureContext } from '../../lib/artifact-delivery-feedback';
 import { useTaskStore } from '../../stores/taskStore';
 import { useMessageStore } from '../../stores/messageStore';
 import { useUiStore } from '../../stores/uiStore';
@@ -741,6 +742,11 @@ export function useChatSend(opts: UseChatSendOpts) {
           (attachmentRecords.length ? `[${attachmentRecords[0].fileName}]` : '');
 
         const isMentionAll = agentMentions.some((a) => a.agentId === MENTION_ALL_AGENT_ID);
+        const failureContext = artifactFailureContext(
+          useMessageStore.getState().messagesByTask[task.id] ?? [],
+          task.sessionKey,
+        );
+        contextPrefix = [contextPrefix, failureContext].filter(Boolean).join('\n\n');
         const result = await composer.send(task.id, {
           content: finalContent,
           // 首轮产物索引：发给模型，但**不进** store / 落库 / 气泡。

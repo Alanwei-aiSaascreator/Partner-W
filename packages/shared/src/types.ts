@@ -218,7 +218,15 @@ export type InstallEventType =
   | 'team_persisted'
   | 'warning'
   | 'error'
+  | 'degraded'
   | 'done';
+
+export interface TeamInstallSummary {
+  agentsSucceeded: number;
+  agentsFailed: number;
+  skillsSucceeded: number;
+  skillsFailed: number;
+}
 
 export interface InstallEvent {
   type: InstallEventType;
@@ -228,6 +236,7 @@ export interface InstallEvent {
   fileName?: string;
   message?: string;
   progress?: { current: number; total: number };
+  summary?: TeamInstallSummary;
 }
 
 export interface MessageAttachment {
@@ -647,8 +656,8 @@ export interface SkillStatusReport {
 }
 
 export type SkillInstallParams =
-  | { name: string; installId: string; dangerouslyForceUnsafeInstall?: boolean; timeoutMs?: number }
-  | { source: 'clawhub'; slug: string; version?: string; force?: boolean; timeoutMs?: number };
+  | { agentId?: string; name: string; installId: string; dangerouslyForceUnsafeInstall?: boolean; timeoutMs?: number }
+  | { agentId?: string; source: 'clawhub'; slug: string; version?: string; force?: boolean; timeoutMs?: number };
 
 export interface SkillInstallResult {
   ok: boolean;

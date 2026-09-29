@@ -62,7 +62,14 @@ describe('gatewayFailureReasonFrom', () => {
 
   it('闭集本身只有 5 个值（多一个都要先想清楚界面上说什么）', () => {
     expect([...GATEWAY_FAILURE_REASONS].sort()).toEqual(
-      ['auth-rejected', 'port-occupied', 'process-exited', 'ready-timeout', 'unknown'].sort(),
+      [
+        'auth-rejected',
+        'port-occupied',
+        'process-exited',
+        'ready-timeout',
+        'state-migration-blocked',
+        'unknown',
+      ].sort(),
     );
   });
 

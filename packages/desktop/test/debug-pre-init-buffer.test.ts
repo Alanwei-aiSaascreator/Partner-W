@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { rmSync } from 'node:fs';
+
+const cleanups: Array<() => Promise<void>> = [];
 
 vi.mock('electron', () => ({
   BrowserWindow: { getAllWindows: () => [] },
@@ -16,7 +19,8 @@ describe('debug logger pre-init buffer (#412)', () => {
     consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    for (const cleanup of cleanups.splice(0)) await cleanup();
     consoleWarnSpy.mockRestore();
   });
 
@@ -44,6 +48,10 @@ describe('debug logger pre-init buffer (#412)', () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'clawwork-debug-'));
 
     const realLogger = initDebugLogger(tmp);
+    cleanups.push(async () => {
+      await realLogger.close();
+      rmSync(tmp, { recursive: true, force: true });
+    });
     const recent = realLogger.getRecentEvents();
     const replayed = recent.find((e) => e.event === 'pre-init-error');
     expect(replayed).toMatchObject({
@@ -95,6 +103,10 @@ describe('debug logger pre-init buffer (#412)', () => {
     const path = await import('node:path');
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'clawwork-debug-'));
     const realLogger = initDebugLogger(tmp);
+    cleanups.push(async () => {
+      await realLogger.close();
+      rmSync(tmp, { recursive: true, force: true });
+    });
     const flushedEvents = realLogger.getRecentEvents();
     expect(flushedEvents.some((e) => e.event === 'oldest-event')).toBe(false);
   });
@@ -139,7 +151,11 @@ describe('debug logger pre-init buffer (#412)', () => {
       const fs = await import('node:fs');
       const path = await import('node:path');
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'clawwork-debug-'));
-      initDebugLogger(tmp);
+      const realLogger = initDebugLogger(tmp);
+      cleanups.push(async () => {
+        await realLogger.close();
+        rmSync(tmp, { recursive: true, force: true });
+      });
 
       expect(consoleWarnSpy.mock.calls.length).toBe(preInitWarnCount);
       expect(consoleErrorSpy.mock.calls.length).toBe(preInitErrorCount);

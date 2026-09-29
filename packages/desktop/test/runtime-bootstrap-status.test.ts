@@ -23,6 +23,13 @@ const HOSTILE_REASON =
   '网关启动失败 token=sk-live-9f3a 手机号 13800138000 的验证码 123456 路径 C:\\Users\\张三\\AppData';
 
 describe('toPublicBootstrapStatus', () => {
+  it('exposes a safe migration-blocked reason without raw filesystem details', () => {
+    expect(toPublicBootstrapStatus({ ok: false, code: 'runtime.portable-state-migration-blocked' })).toEqual({
+      ok: false,
+      reason: 'state-migration-blocked',
+    });
+  });
+
   it('18789 被别的程序占用 ⇒ port-occupied', () => {
     expect(toPublicBootstrapStatus({ ok: false, code: 'runtime.gateway-port-occupied' })).toEqual({
       ok: false,

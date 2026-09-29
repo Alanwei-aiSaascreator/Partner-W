@@ -51,14 +51,18 @@ export function classifyToolActivity(name: string): ToolActivityKind {
   return 'other';
 }
 
+export function toolCallDurationMs(call: ToolCall): number | null {
+  const start = Date.parse(call.startedAt);
+  const end = call.completedAt ? Date.parse(call.completedAt) : Number.NaN;
+  return Number.isFinite(start) && Number.isFinite(end) && end >= start ? end - start : null;
+}
+
 function activityDuration(toolCalls: ToolCall[], hasRunning: boolean): number | null {
   if (toolCalls.length === 0 || hasRunning) return null;
-  const starts = toolCalls.map((call) => Date.parse(call.startedAt)).filter(Number.isFinite);
-  const completions = toolCalls
-    .map((call) => (call.completedAt ? Date.parse(call.completedAt) : Number.NaN))
-    .filter(Number.isFinite);
-  if (starts.length === 0 || completions.length === 0) return null;
-  return Math.max(0, Math.max(...completions) - Math.min(...starts));
+  if (toolCalls.some((call) => toolCallDurationMs(call) === null)) return null;
+  const starts = toolCalls.map((call) => Date.parse(call.startedAt));
+  const completions = toolCalls.map((call) => Date.parse(call.completedAt!));
+  return Math.max(...completions) - Math.min(...starts);
 }
 
 /**

@@ -134,6 +134,26 @@ describe('错误消息上的重试入口', () => {
     expect(title).toContain('积分');
   });
 
+  it.each(['light', 'dark'])('shows persisted artifact diagnostics as a readable %s theme alert', (theme) => {
+    document.documentElement.dataset.theme = theme;
+    const { container, unmount } = render(
+      <ChatMessage
+        message={buildMessage({
+          content:
+            '[artifact-delivery-failed]\nPresentation was not generated\n[dsl-close-mismatch @34] expected </Text> but found </Slide>',
+        })}
+      />,
+    );
+    cleanups.push(unmount);
+    const alert = container.querySelector('[role="alert"]');
+    expect(alert).not.toBeNull();
+    expect(alert?.textContent).toContain('dsl-close-mismatch @34');
+    expect(alert?.textContent).toContain('expected </Text> but found </Slide>');
+    expect(alert?.textContent).not.toContain('[artifact-delivery-failed]');
+    expect(retryButton(container)).toBeNull();
+    delete document.documentElement.dataset.theme;
+  });
+
   it('普通消息（用户 / 助手）不会长出重试按钮', () => {
     const user = render(
       <ChatMessage message={buildMessage({ role: 'user', content: '你好' })} retryable onRetry={vi.fn()} />,

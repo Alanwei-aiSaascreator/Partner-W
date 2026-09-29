@@ -134,6 +134,21 @@ test('installer content is rejected instead of being downgraded to a warning', (
   assert.equal(finding?.level, 'error');
 });
 
+test('a loose installer cannot coexist with the portable launcher', () => {
+  const root = makeDelivery();
+  fs.writeFileSync(path.join(root, 'setup-1.0.4-win-x64.exe'), 'installer');
+
+  assert.ok(ids(auditDelivery(io, root)).includes('extra-root-executable'));
+});
+
+test('legacy runtime data cannot be included in a clean portable delivery', () => {
+  const root = makeDelivery();
+  fs.mkdirSync(path.join(root, 'runtime', 'workspace'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'runtime', 'workspace', '.clawwork.db'), 'private-history');
+
+  assert.ok(ids(auditDelivery(io, root)).includes('prepopulated-legacy-runtime'));
+});
+
 test('a launcher inside the replaceable program directory is rejected', () => {
   const root = makeDelivery({ launcherInsideProgram: true });
 

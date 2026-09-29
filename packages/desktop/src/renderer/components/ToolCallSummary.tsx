@@ -75,7 +75,8 @@ function ToolCallSummary({ toolCalls, settled = false }: { toolCalls: ToolCall[]
   const [expanded, setExpanded] = useState(false);
   const summary = useMemo(() => summarizeToolActivity(shown), [shown]);
   const failureReason = shown.find((call) => call.status === 'error' && call.result?.trim())?.result?.trim() ?? '';
-  const status: ToolCall['status'] = summary.errorCount > 0 ? 'error' : summary.runningCount > 0 ? 'running' : 'done';
+  const status: ToolCall['status'] =
+    summary.errorCount > 0 ? 'error' : !settled || summary.runningCount > 0 ? 'running' : 'done';
   // ⚠️ 走**唯一出口**（与活动条同一个判据）：两处各写一遍的话，改一处就会两处不一致。
   const currentCall = latestRunningCall(shown);
   // ⭐ "正在做什么"优先用网关拼好的 `title`（带参数摘要），拿不到才退回按工具名分类的泛化文案
@@ -89,7 +90,7 @@ function ToolCallSummary({ toolCalls, settled = false }: { toolCalls: ToolCall[]
           count: summary.totalCount,
           errorCount: summary.errorCount,
         })
-      : summary.runningCount > 0
+      : !settled || summary.runningCount > 0
         ? t('toolActivity.running', { count: summary.completedCount })
         : t('toolActivity.completed', { count: summary.completedCount });
 
@@ -125,9 +126,11 @@ function ToolCallSummary({ toolCalls, settled = false }: { toolCalls: ToolCall[]
             {currentAction ? (
               <span className="type-support max-w-44 truncate text-[var(--text-muted)]">{currentAction}</span>
             ) : null}
-            {summary.durationMs !== null ? (
+            {settled && summary.durationMs !== null ? (
               <span className="type-mono-data text-[var(--text-muted)]">
-                {t('toolActivity.duration', { seconds: (summary.durationMs / 1000).toFixed(1) })}
+                {t('toolActivity.duration', {
+                  seconds: summary.durationMs < 100 ? '<0.1' : (summary.durationMs / 1000).toFixed(1),
+                })}
               </span>
             ) : null}
             <span className="type-support text-[var(--text-muted)]">{t('toolActivity.viewDetails')}</span>

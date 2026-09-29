@@ -277,6 +277,12 @@ export function toISOTimestamp(epoch: number | undefined): string {
   return epoch ? new Date(epoch).toISOString() : new Date().toISOString();
 }
 
+function toKnownToolTimestamp(epoch: number | undefined): string | undefined {
+  if (typeof epoch !== 'number' || !Number.isFinite(epoch)) return undefined;
+  const date = new Date(epoch);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : undefined;
+}
+
 function appendSegment(base: string, segment: string): string {
   const trimmed = segment.trim();
   if (!trimmed) return base;
@@ -377,11 +383,14 @@ function shouldStartVisibleAssistantTurn(
 export function normalizeAssistantTurns(rawMsgs: RawHistoryMessage[], httpBase?: string): NormalizedAssistantTurn[] {
   const messages = deduplicateRawHistoryMessages(rawMsgs);
   const toolResultMap = new Map<string, string>();
+  const toolCompletionMap = new Map<string, string>();
   for (const msg of messages) {
     if (msg.role !== 'toolResult') continue;
     for (const block of msg.content ?? []) {
       if (block.type === 'toolResult' && block.id && block.result !== undefined) {
         toolResultMap.set(block.id, typeof block.result === 'string' ? block.result : JSON.stringify(block.result));
+        const completedAt = toKnownToolTimestamp(msg.timestamp);
+        if (completedAt !== undefined) toolCompletionMap.set(block.id, completedAt);
       }
     }
   }
@@ -433,8 +442,8 @@ export function normalizeAssistantTurns(rawMsgs: RawHistoryMessage[], httpBase?:
                 ? safeJsonParse(block.arguments)
                 : undefined,
           result: toolResultMap.get(block.id!),
-          startedAt: timestamp,
-          completedAt: toolResultMap.has(block.id!) ? timestamp : undefined,
+          startedAt: '',
+          completedAt: toolCompletionMap.get(block.id!),
         }),
       );
 

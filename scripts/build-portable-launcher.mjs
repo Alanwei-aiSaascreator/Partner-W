@@ -1,7 +1,7 @@
 import { PortableLauncherBuildError, buildPortableLauncher } from './lib/portable-launcher-build.mjs';
 
 try {
-  const result = buildPortableLauncher({
+  const result = await buildPortableLauncher({
     env: process.env,
     log: (message) => console.log(message),
   });

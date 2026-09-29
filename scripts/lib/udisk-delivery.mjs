@@ -112,6 +112,17 @@ export function auditDelivery(io, root) {
       ),
     );
   }
+  for (const name of rootNames) {
+    if (name.toLowerCase().endsWith('.exe') && name !== LAUNCHER_EXE_NAME) {
+      findings.push(
+        finding(
+          'extra-root-executable',
+          `Unexpected root executable: ${name}`,
+          'Portable delivery has one entry point: the root launcher. Keep desktop installers outside it.',
+        ),
+      );
+    }
+  }
   if (io.exists(at(APP_DIR_NAME, LAUNCHER_EXE_NAME))) {
     findings.push(
       finding(
@@ -126,6 +137,7 @@ export function auditDelivery(io, root) {
     [RUN_DATA_DIR_NAME, 'prepopulated-data'],
     [WORKSPACE_DIR_NAME, 'prepopulated-workspace'],
     [UPDATE_DIR_NAME, 'prepopulated-update'],
+    ['runtime', 'prepopulated-legacy-runtime'],
   ]) {
     if (io.exists(at(name))) {
       findings.push(

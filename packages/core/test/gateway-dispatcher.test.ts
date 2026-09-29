@@ -1044,6 +1044,29 @@ describe('tool 的 phase：词表是五个，丢弃不许没声音', () => {
       data: { name: 'shell', toolCallId: 'tc-1', ...data },
     });
 
+  it('result-only events do not invent a start time after completion', () => {
+    const h = createHarness();
+    emitTool(h, { phase: 'result' });
+    expect(h.messageStore.upsertToolCall).toHaveBeenCalledWith(
+      TASK.sessionKey,
+      TASK.id,
+      expect.objectContaining({ startedAt: '', status: 'done' }),
+    );
+  });
+
+  it('result events preserve the active turn start before canonical history exists', () => {
+    const h = createHarness();
+    h.messageStore.activeTurnBySession[TASK.sessionKey] = {
+      toolCalls: [{ id: 'tc-1', startedAt: '2026-09-29T14:39:37.150Z' }],
+    };
+    emitTool(h, { phase: 'result' });
+    expect(h.messageStore.upsertToolCall).toHaveBeenCalledWith(
+      TASK.sessionKey,
+      TASK.id,
+      expect.objectContaining({ startedAt: '2026-09-29T14:39:37.150Z' }),
+    );
+  });
+
   it('⭐⭐ `phase:"input_delta"` ⇒ 记 `ignored_phase`（**实测第五个，我们的清单漏了它**）', () => {
     const h = createHarness();
 

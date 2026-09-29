@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 import type {
   ApprovalDecision,
   Artifact,
+  ArtifactDeliveryFailure,
   CommandsListParams,
   ConfigPatchParams,
   ConfigSetParams,
@@ -218,8 +219,8 @@ function buildApi(): ClawWorkAPI {
         ipcRenderer.removeListener('slidegen:warned', listener);
       };
     },
-    onClaimViolation: (callback: (violation: { taskId: string; missing: string[] }) => void) => {
-      const listener = (_event: Electron.IpcRendererEvent, violation: { taskId: string; missing: string[] }): void => {
+    onClaimViolation: (callback: (violation: ArtifactDeliveryFailure) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, violation: ArtifactDeliveryFailure): void => {
         callback(violation);
       };
       ipcRenderer.on('artifact:claim-violation', listener);

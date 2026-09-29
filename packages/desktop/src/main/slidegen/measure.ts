@@ -25,6 +25,9 @@ export interface MeasuredElement {
   text: string;
   fontSize: number;
   fontWeight: string;
+  fontFamily?: string;
+  fontStyle?: string;
+  lineHeight?: number;
   color: string;
   textAlign: string;
   letterSpacing: number;
@@ -38,7 +41,7 @@ export interface MeasuredElement {
   lines: number;
   /**
    * 它是不是**被人盖住了**（中心点上 topmost 的不是它自己）。
-   * 由浏览器用 `elementFromPoint` 回答 —— 我们按 DOM 顺序画，所以这个结论在 pptx 里同样成立。
+   * 由浏览器用 `elementFromPoint` 回答；导出顺序另取 Chromium 的实际 paint order。
    * 有值就说明**源版式有重叠**，属于校验器要报的东西。
    */
   occludedBy: string | null;
@@ -47,7 +50,17 @@ export interface MeasuredElement {
 /** 浏览器里跑的量框脚本（在渲染进程执行）。 */
 const MEASURE_SCRIPT = `(() => {
   const out = [];
-  for (const el of document.querySelectorAll('[${MARK_ATTR}]')) {
+  const elements = [];
+  const visit = (el) => {
+    if (el.hasAttribute('${MARK_ATTR}')) elements.push(el);
+    const children = Array.from(el.children);
+    if (/^(inline-)?(flex|grid)$/.test(getComputedStyle(el).display)) {
+      children.sort((a, b) => (Number(getComputedStyle(a).order) || 0) - (Number(getComputedStyle(b).order) || 0));
+    }
+    children.forEach(visit);
+  };
+  visit(document.body);
+  for (const el of elements) {
     const r = el.getBoundingClientRect();
     const cs = getComputedStyle(el);
     const kind = el.getAttribute('${MARK_KIND_ATTR}');
@@ -66,6 +79,8 @@ const MEASURE_SCRIPT = `(() => {
       x: r.x, y: r.y, w: r.width, h: r.height,
       text: kind === 'text' ? el.textContent.trim() : '',
       fontSize: parseFloat(cs.fontSize), fontWeight: cs.fontWeight, color: cs.color,
+      fontFamily: cs.fontFamily, fontStyle: cs.fontStyle,
+      lineHeight: cs.lineHeight === 'normal' ? undefined : parseFloat(cs.lineHeight),
       textAlign: cs.textAlign,
       letterSpacing: cs.letterSpacing === 'normal' ? 0 : parseFloat(cs.letterSpacing),
       background: cs.backgroundColor, backgroundImage: cs.backgroundImage,
@@ -79,6 +94,65 @@ const MEASURE_SCRIPT = `(() => {
   }
   return JSON.stringify(out);
 })()`;
+
+interface PaintSnapshot {
+  strings: string[];
+  documents: {
+    nodes: { attributes: number[][] };
+    layout: { nodeIndex: number[]; paintOrders?: number[] };
+  }[];
+}
+
+/**
+ * DOM preorder is not paint order: positioned auto-z elements can paint above
+ * later flow content, and nested z-index values cannot be compared globally.
+ * Chromium supplies the stacking-layer order; stable ties retain the browser
+ * script's order-modified tree traversal (including flex/grid item `order`).
+ */
+async function orderByBrowserPaint(win: BrowserWindow, elements: MeasuredElement[]): Promise<MeasuredElement[]> {
+  const debuggerApi = win.webContents.debugger;
+  let attachedHere = false;
+  try {
+    if (!debuggerApi.isAttached()) {
+      debuggerApi.attach('1.3');
+      attachedHere = true;
+    }
+    const snapshot = (await debuggerApi.sendCommand('DOMSnapshot.captureSnapshot', {
+      computedStyles: [],
+      includePaintOrder: true,
+    })) as PaintSnapshot;
+    const orders = new Map<number, number>();
+    if (!Array.isArray(snapshot?.strings) || !Array.isArray(snapshot.documents)) {
+      throw new Error('browser paint order snapshot unavailable');
+    }
+    for (const document of snapshot.documents) {
+      const { layout, nodes } = document;
+      if (!Array.isArray(layout?.nodeIndex) || !Array.isArray(layout.paintOrders)) {
+        throw new Error('browser paint order data unavailable');
+      }
+      for (let index = 0; index < layout.nodeIndex.length; index++) {
+        const attributes = nodes.attributes[layout.nodeIndex[index]] ?? [];
+        for (let attr = 0; attr < attributes.length; attr += 2) {
+          if (snapshot.strings[attributes[attr]] !== MARK_ATTR) continue;
+          const id = Number(snapshot.strings[attributes[attr + 1]]);
+          const order = layout.paintOrders[index];
+          if (!Number.isFinite(id) || !Number.isFinite(order)) {
+            throw new Error('browser paint order contains an invalid element mapping');
+          }
+          orders.set(id, order);
+        }
+      }
+    }
+    for (const element of elements) {
+      if (element.w > 0 && element.h > 0 && !orders.has(element.id)) {
+        throw new Error(`browser paint order missing for element #${element.id}`);
+      }
+    }
+    return elements.sort((a, b) => (orders.get(a.id) ?? -1) - (orders.get(b.id) ?? -1));
+  } finally {
+    if (attachedHere && !win.isDestroyed() && debuggerApi.isAttached()) debuggerApi.detach();
+  }
+}
 
 /** 等图片与字体就绪 —— 不等的话量到的是回退字体/空图的尺寸。 */
 const READY_SCRIPT = `(async () => {
@@ -116,6 +190,7 @@ export function absolutizeImageSources(html: string, assetsRoot: string | null):
  *    这条通道**从来没在真机出过一份 deck**，这就是原因。
  */
 let reusableWindow: BrowserWindow | null = null;
+let measurementQueue: Promise<void> = Promise.resolve();
 
 function acquireMeasureWindow(): BrowserWindow {
   if (reusableWindow && !reusableWindow.isDestroyed()) return reusableWindow;
@@ -148,7 +223,18 @@ function acquireMeasureWindow(): BrowserWindow {
  *
  * 失败一律抛出 —— 上层翻成失败码。**绝不返回空数组冒充"这页是空的"**。
  */
-export async function measureSlide(html: string, assetsRoot: string | null): Promise<MeasuredElement[]> {
+export function measureSlide(html: string, assetsRoot: string | null): Promise<MeasuredElement[]> {
+  // Every caller shares one DOM and debugger. Hold the queue through cleanup,
+  // and recover its tail so one failed page cannot block later requests.
+  const result = measurementQueue.then(() => measureSlideInWindow(html, assetsRoot));
+  measurementQueue = result.then(
+    () => undefined,
+    () => undefined,
+  );
+  return result;
+}
+
+async function measureSlideInWindow(html: string, assetsRoot: string | null): Promise<MeasuredElement[]> {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slidegen-'));
   const htmlPath = path.join(dir, 'slide.html');
   fs.writeFileSync(htmlPath, slideDocument(absolutizeImageSources(html, assetsRoot)), 'utf8');
@@ -163,7 +249,7 @@ export async function measureSlide(html: string, assetsRoot: string | null): Pro
     if (!Array.isArray(parsed) || parsed.length === 0) {
       throw new Error('measure produced no elements');
     }
-    return parsed;
+    return await orderByBrowserPaint(win, parsed);
   } finally {
     // ⚠️ **不要 destroy** —— 复用的窗口就是靠"不被销毁"才躲开那个竞态。
     //    只清掉这一页的临时文件。

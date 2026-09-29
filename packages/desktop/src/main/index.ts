@@ -64,6 +64,7 @@ import {
 import { bootstrapLocalGatewayRuntime, GATEWAY_PORT_OCCUPIED, shutdownLocalGatewayRuntime } from './runtime/index.js';
 import { bootstrapWithRetry } from './runtime/bootstrap-retry.js';
 import { ensureClientGatewayEntry } from './runtime/state-config.js';
+import { PORTABLE_STATE_MIGRATION_BLOCKED } from './runtime/portable-state-migration.js';
 import { getRuntimeBootstrapStatus, publishRuntimeBootstrapStatus } from './runtime/bootstrap-status.js';
 import { removableDrives } from './workspace/removable-drives.js';
 import { GATEWAY_WS_PORT } from '@clawwork/shared';
@@ -361,7 +362,8 @@ if (!gotLock) {
               syncRuntimeWorkspace: async (workspacePath) => {
                 await ensureClientGatewayEntry({
                   userDataDir: app.getPath('userData'),
-                  stateUserDataDir: localUserDataDir,
+                  stateUserDataDir: app.getPath('userData'),
+                  legacyStateUserDataDir: localUserDataDir,
                   portableWorkspacePath: workspacePath,
                 });
               },
@@ -492,9 +494,8 @@ if (!gotLock) {
           bootstrapLocalGatewayRuntime({
             userDataDir: app.getPath('userData'),
             runtimeCacheUserDataDir,
-            // OpenClaw state 不能落 exFAT，也不能嵌在运行时的 64 位 scope 下：其日志/插件
-            // 子树很深，Windows 路径预算会被吃光。token 派生的短目录仍会隔离不同 U 盘。
-            stateCacheUserDataDir: localUserDataDir,
+            stateCacheUserDataDir: app.getPath('userData'),
+            legacyStateUserDataDir: portableAppData.target ? localUserDataDir : undefined,
             // 便携版主助手必须和用户文件一起留在已验证的盘上工作区；否则 OpenClaw
             // 会把 `main` 默认到本机 state/workspace，生成物与“记住你”的文件就会
             // 悄悄落进 C 盘。非 NTFS 盘已在工作区启动门禁被诚实拒绝。
@@ -547,7 +548,7 @@ if (!gotLock) {
         sendToWindow(getMainWindow(), 'runtime-status', getRuntimeBootstrapStatus());
       }
 
-      initAllGateways();
+      if (runtimeResult.code !== PORTABLE_STATE_MIGRATION_BLOCKED) initAllGateways();
 
       // ⚠️ **runtime ready ≠ commercial ready**：网关活着只说明连得上；模型能不能用
       // 要看中转配置有没有落到网关（clawrouter provider）。

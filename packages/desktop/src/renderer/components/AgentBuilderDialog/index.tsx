@@ -10,9 +10,11 @@ import { useUiStore } from '@/stores/uiStore';
 import { useSystemSession } from '@/hooks/useSystemSession';
 import type { ModelCatalogEntry } from '@clawwork/shared';
 import { serializeIdentityMd } from '@clawwork/core';
-import { createAgentWithRollback } from '@/lib/agent-builder';
+import { createAgentWithRollback, deriveAgentCreationId } from '@/lib/agent-builder';
 import { checkInstallWorkspace } from '@/lib/install-workspace';
 import { resolveCommercialDefaultModel } from '@/lib/commercial-default-model';
+import { relayModelsFrom } from '@/components/ChatInput/model-families';
+import { canonicalModelRef, resolveTeamModelRef } from '@/lib/team-model-ref';
 
 /**
  * AI 引导多久没吐出新内容就认定「卡住了」并给出跳过入口。
@@ -45,7 +47,7 @@ Your job:
 Rules:
 - Ask ONE question at a time
 - Be proactive: extract name, description, and identity from the user's first description
-- The name MUST be in English (ASCII only, e.g. "Story Crafter" not "故事匠") — it is used as a system identifier
+- All user-visible names, descriptions and identities must use the requested response language. The client derives internal identifiers separately.
 - The description should be a brief capability summary (under 200 chars) used by conductor agents to understand what this agent can do
 - Keep identity concise but specific (2-4 sentences)
 - Always end your response with the current config as a JSON block
@@ -80,15 +82,6 @@ function stripConfigBlock(text: string): string {
   return result.trim();
 }
 
-function deriveWorkspace(name: string): string {
-  return name
-    .toLowerCase()
-    .replace(/[^a-z0-9\s-]/g, '')
-    .replace(/\s+/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '');
-}
-
 const inputClass = cn(
   'flex-1 h-[var(--density-control-height-lg)] px-3 py-2 rounded-md',
   'bg-[var(--bg-tertiary)] border border-[var(--border)]',
@@ -109,7 +102,8 @@ export default function AgentBuilderDialog({ open, onOpenChange, gatewayId, onCr
 
   const modelCatalogByGateway = useUiStore((s) => s.modelCatalogByGateway);
   const agentCatalogByGateway = useUiStore((s) => s.agentCatalogByGateway);
-  const models = modelCatalogByGateway[gatewayId] ?? EMPTY_MODELS;
+  const catalog = modelCatalogByGateway[gatewayId] ?? EMPTY_MODELS;
+  const models = useMemo(() => relayModelsFrom(catalog).filter((model) => model.available !== false), [catalog]);
   const defaultAgentId = agentCatalogByGateway[gatewayId]?.defaultId ?? 'main';
 
   const [config, setConfig] = useState<AgentConfig>(EMPTY_CONFIG);
@@ -124,7 +118,12 @@ export default function AgentBuilderDialog({ open, onOpenChange, gatewayId, onCr
 
   // 用**当前确实可用**的模型，而不是主助手配的那个：侧会话以主助手身份建立会继承它的模型，
   // 而实机就是那个模型卡住了（见 GUIDANCE_STALL_HINT_MS 的注释）。
-  const availableModelId = useMemo(() => resolveCommercialDefaultModel(models)?.id ?? models[0]?.id ?? '', [models]);
+  const availableModelId = useMemo(
+    () =>
+      resolveTeamModelRef(resolveCommercialDefaultModel(models)?.id, models) ||
+      (models[0] ? canonicalModelRef(models[0]) : ''),
+    [models],
+  );
 
   useEffect(() => {
     if (!open) {
@@ -132,6 +131,7 @@ export default function AgentBuilderDialog({ open, onOpenChange, gatewayId, onCr
       return;
     }
     if (startedRef.current) return;
+    if (!availableModelId) return;
     startedRef.current = true;
 
     // ⚠️ 这里**不重置** `config`：用户关掉再打开时必须还能看到自己填的草稿
@@ -140,7 +140,7 @@ export default function AgentBuilderDialog({ open, onOpenChange, gatewayId, onCr
     setCreating(false);
     setStalled(false);
 
-    const modelListStr = models.map((m) => `${m.name ?? m.id}${m.provider ? ` (${m.provider})` : ''}`).join(', ');
+    const modelListStr = models.map(canonicalModelRef).join(', ');
     const prompt = SYSTEM_PROMPT_TEMPLATE.replace('{{modelList}}', modelListStr || 'default').replace(
       '{{language}}',
       i18n.language,
@@ -150,7 +150,7 @@ export default function AgentBuilderDialog({ open, onOpenChange, gatewayId, onCr
       gatewayId,
       agentId: defaultAgentId,
       purpose: 'agent-builder',
-      model: availableModelId || undefined,
+      model: availableModelId,
       initialMessage: prompt,
     });
   }, [open, gatewayId, defaultAgentId, models, start, i18n.language, availableModelId]);
@@ -242,7 +242,13 @@ export default function AgentBuilderDialog({ open, onOpenChange, gatewayId, onCr
     setCreating(true);
 
     try {
-      const slug = deriveWorkspace(config.name) || 'new-agent';
+      const model = resolveTeamModelRef(config.model, models);
+      if (!model) {
+        toast.error(t('chatInput.modelGone', { model: config.model || t('chatInput.noModelsAvailable') }));
+        return;
+      }
+      const existingAgents = agentCatalogByGateway[gatewayId]?.agents;
+      const slug = deriveAgentCreationId(config.name, existingAgents);
       // ⚠️ 不许再用 `wsBase ? `${wsBase}/${slug}` : slug`（2026-09-20，T-a28 同族）：
       //    拿不到工作区时**发出去的 slug 是相对路径**，而 `agents.create` 是**另一个进程**
       //    按它自己的 cwd 解析 ⇒ 助手的文件落在谁也没预期的地方，且界面不报错。
@@ -267,8 +273,9 @@ export default function AgentBuilderDialog({ open, onOpenChange, gatewayId, onCr
         gatewayId,
         name: config.name.trim(),
         workspace,
-        model: config.model.trim() || undefined,
+        model,
         identityContent: identityContent || undefined,
+        existingAgents,
       });
       if (!createRes.ok) {
         toast.error(createRes.error ?? t('errors.failed'));
@@ -287,7 +294,7 @@ export default function AgentBuilderDialog({ open, onOpenChange, gatewayId, onCr
     } finally {
       setCreating(false);
     }
-  }, [config, gatewayId, end, onCreated, onOpenChange, t]);
+  }, [config, models, gatewayId, agentCatalogByGateway, end, onCreated, onOpenChange, t]);
 
   const requestClose = useCallback(() => {
     if (creating) return;
@@ -361,6 +368,11 @@ export default function AgentBuilderDialog({ open, onOpenChange, gatewayId, onCr
                 </div>
               ))}
               {error && <p className="type-support text-center text-[var(--danger)]">{error}</p>}
+              {models.length === 0 && (
+                <p className="type-support text-center text-[var(--text-muted)]">
+                  {t('chatInput.noModelsAvailable')} {t('chatInput.noModelsAvailableDetail')}
+                </p>
+              )}
               <div ref={messagesEndRef} />
             </div>
 
@@ -456,7 +468,7 @@ export default function AgentBuilderDialog({ open, onOpenChange, gatewayId, onCr
                 >
                   <option value="">{t('settings.agentModelPlaceholder')}</option>
                   {models.map((m) => (
-                    <option key={m.id} value={m.id}>
+                    <option key={m.id} value={canonicalModelRef(m)}>
                       {m.name ?? m.id}
                       {m.provider ? ` (${m.provider})` : ''}
                     </option>

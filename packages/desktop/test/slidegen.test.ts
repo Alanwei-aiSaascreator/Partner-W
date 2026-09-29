@@ -27,7 +27,7 @@ const PROJECT_DIR = path.resolve(HERE, '..');
 
 describe('slidegen DSL：JSX → JS', () => {
   it('基本元素与属性', () => {
-    const js = transformSlideJsx(`<Slide style={{ width: 1280 }}>hi</Slide>`);
+    const js = transformSlideJsx(`<Slide style={{ width: 1280 }}><Text>hi</Text></Slide>`);
     expect(js).toContain('__h("Slide"');
     expect(js).toContain('"style": ({ width: 1280 })');
     expect(js).toContain('"hi"');
@@ -130,10 +130,9 @@ describe('slidegen 求值', () => {
 
   it('沙箱里**没有宿主能力**（require / process 取不到）', () => {
     // 这两条是边界的另一半：拿不到 I/O，最多烧 CPU。
-    expect(() => evaluateSlide(`<Slide>{typeof require}</Slide>`)).not.toThrow();
-    const pages = evaluateSlide(`<Slide>{String(typeof require)}</Slide>`);
-    const text = pages[0]?.children?.[0];
-    expect(String(text)).toBe('undefined');
+    expect(() => evaluateSlide(`<Slide><Text>{typeof require}</Text></Slide>`)).not.toThrow();
+    const pages = evaluateSlide(`<Slide><Text>{String(typeof require)}</Text></Slide>`);
+    expect(pages[0]?.children?.[0]).toMatchObject({ tag: 'Text', children: ['undefined'] });
   });
 });
 

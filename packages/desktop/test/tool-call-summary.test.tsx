@@ -18,6 +18,7 @@ vi.mock('framer-motion', () => ({
 }));
 
 import ToolCallSummary from '../src/renderer/components/ToolCallSummary';
+import ToolCallCard from '../src/renderer/components/ToolCallCard';
 // 流式那一格现在是 `AssistantBlock` 的 `state="streaming"`（`StreamingMessage` 已并入）。
 import AssistantBlock from '../src/renderer/components/AssistantBlock';
 
@@ -48,9 +49,25 @@ function render(ui: ReactElement): { container: HTMLDivElement; unmount: () => v
 }
 
 describe('ToolCallSummary', () => {
+  it('does not declare a running model turn completed just because its tools are done', () => {
+    const { container, unmount } = render(<ToolCallSummary toolCalls={[call('1', 'agents_list')]} />);
+    expect(container.querySelector('[data-testid="tool-activity-summary"]')?.getAttribute('data-status')).toBe(
+      'running',
+    );
+    expect(container.textContent).toContain('toolActivity.running:1');
+    expect(container.textContent).not.toContain('toolActivity.duration');
+    unmount();
+  });
+
+  it.each(['', 'invalid', '2026-09-15T00:00:01.019Z'])('hides untrustworthy individual tool timing %s', (startedAt) => {
+    const { container, unmount } = render(<ToolCallCard toolCall={{ ...call('1', 'agents_list'), startedAt }} />);
+    expect(container.textContent).not.toMatch(/NaNs|-0\.0s|0\.0s/);
+    unmount();
+  });
+
   it('shows one compact summary for many successful calls', () => {
     const calls = Array.from({ length: 10 }, (_, index) => call(String(index), index < 8 ? 'ls' : 'exec'));
-    const { container, unmount } = render(<ToolCallSummary toolCalls={calls} />);
+    const { container, unmount } = render(<ToolCallSummary settled toolCalls={calls} />);
 
     expect(container.querySelectorAll('[data-testid="tool-activity-summary"]')).toHaveLength(1);
     expect(container.querySelectorAll('[data-testid="tool-call-card"]')).toHaveLength(0);
@@ -159,7 +176,7 @@ describe('AssistantBlock tool activity', () => {
 
     expect(container.querySelectorAll('[data-testid="tool-activity-summary"]')).toHaveLength(1);
     expect(container.querySelectorAll('[data-testid="tool-call-card"]')).toHaveLength(0);
-    expect(container.textContent).toContain('toolActivity.completed:10');
+    expect(container.textContent).toContain('toolActivity.running:10');
     unmount();
   });
 });

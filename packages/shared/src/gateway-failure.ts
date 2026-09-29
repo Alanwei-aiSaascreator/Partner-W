@@ -17,6 +17,7 @@ export type GatewayFailureReason =
   | 'process-exited'
   /** 等就绪**等满了超时**（慢 ⇒ 终态，绝不重试三次）。 */
   | 'ready-timeout'
+  | 'state-migration-blocked'
   /** 说不清就是说不清 —— **不猜**。 */
   | 'unknown';
 
@@ -36,6 +37,7 @@ export const GATEWAY_FAILURE_REASONS = [
   'auth-rejected',
   'process-exited',
   'ready-timeout',
+  'state-migration-blocked',
   'unknown',
 ] as const satisfies readonly GatewayFailureReason[];
 
@@ -44,6 +46,7 @@ const FROM_BOOTSTRAP_CODE: Readonly<Record<string, GatewayFailureReason>> = {
   'runtime.gateway-port-occupied': 'port-occupied',
   'runtime.gateway-process-exited': 'process-exited',
   'runtime.gateway-ready-timeout': 'ready-timeout',
+  'runtime.portable-state-migration-blocked': 'state-migration-blocked',
 };
 
 /**

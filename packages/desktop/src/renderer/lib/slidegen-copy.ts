@@ -66,7 +66,10 @@ export function slidegenFailureToastBody(failures: readonly SlidegenFailure[], t
   const lines: string[] = [];
   const seen = new Set<string>();
   for (const failure of failures) {
-    const line = failureLine(failure, t);
+    const diagnostic = failure.diagnostic;
+    const line = diagnostic
+      ? `${failureLine(failure, t)}\n[${diagnostic.code}${diagnostic.offset === undefined ? '' : ` @${diagnostic.offset}`}] ${diagnostic.detail}`
+      : failureLine(failure, t);
     if (seen.has(line)) continue;
     seen.add(line);
     lines.push(line);

@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { InstallEvent } from '@clawwork/shared';
 
 import { InstallProgress } from '../src/renderer/components/TeamBuilderDialog/index';
+import InstallStep from '../src/renderer/layouts/TeamsPanel/InstallStep';
 
 /**
  * 「智能组建」的进度面板：**失败原因必须上屏**（2026-09-20 U 盘交付实机，截图 4）。
@@ -51,6 +52,49 @@ function render() {
 }
 
 describe('InstallProgress —— 失败原因上屏', () => {
+  it.each(['ai', 'manual'])('shows partial counts and preserves warnings in the %s result panel', (entry) => {
+    const partialEvents: InstallEvent[] = [
+      { type: 'agent_created', agentSlug: 'codearchitect', agentId: 'codearchitect' },
+      { type: 'warning', agentSlug: 'frontendengineer', message: 'quota exceeded' },
+      {
+        type: 'warning',
+        agentSlug: 'codearchitect',
+        skillId: 'absent',
+        message: 'Skill "absent" install failed: not found',
+      },
+      { type: 'team_persisted' },
+      { type: 'degraded', summary: { agentsSucceeded: 1, agentsFailed: 1, skillsSucceeded: 0, skillsFailed: 1 } },
+    ];
+    act(() => {
+      root.render(
+        entry === 'ai' ? (
+          <InstallProgress status="degraded" events={partialEvents} progressPercent={100} agents={agents} />
+        ) : (
+          <InstallStep
+            status="degraded"
+            events={partialEvents}
+            teamInfo={{ name: 'Team', emoji: '', description: '' }}
+            agents={agents.map((agent) => ({
+              ...agent,
+              uid: agent.name,
+              role: 'worker',
+              description: '',
+              model: '',
+              agentMd: '',
+              soulMd: '',
+              skills: [],
+            }))}
+          />
+        ),
+      );
+    });
+    expect(container.textContent).toContain('quota exceeded');
+    expect(container.textContent).toContain('absent');
+    const summary = container.querySelector('[role="status"]');
+    expect(summary?.textContent).toMatch(/1.*1.*0.*1/);
+    expect(summary?.getAttribute('data-install-outcome')).toBe('degraded');
+  });
+
   it('⭐ 逐助手的网关原文出现在面板上（不再是"只有 slug + 一句英文"）', () => {
     const text = render();
 

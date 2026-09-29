@@ -83,6 +83,7 @@ export interface RuntimeBootstrapDeps {
     userDataDir: string;
     stateUserDataDir: string;
     portableWorkspacePath?: string;
+    legacyStateUserDataDir?: string;
   }) => Promise<{ token: string; stateDir: string }>;
   readCached: (userDataDir: string) => CurrentDeployment;
   deployFromMedia: (opts: { userDataDir: string }) => Promise<DeployResult>;
@@ -209,8 +210,13 @@ export async function locateAndPlan(
 
 function makeDefaultDeps(): RuntimeBootstrapDeps {
   return {
-    alignClientConfig: async ({ userDataDir, stateUserDataDir, portableWorkspacePath }) => {
-      const res = await ensureClientGatewayEntry({ userDataDir, stateUserDataDir, portableWorkspacePath });
+    alignClientConfig: async ({ userDataDir, stateUserDataDir, portableWorkspacePath, legacyStateUserDataDir }) => {
+      const res = await ensureClientGatewayEntry({
+        userDataDir,
+        stateUserDataDir,
+        portableWorkspacePath,
+        legacyStateUserDataDir,
+      });
       return { token: res.token, stateDir: res.stateDir };
     },
     readCached: (userDataDir) => readCurrentDeployment(userDataDir),
@@ -267,12 +273,13 @@ export async function bootstrapLocalGatewayRuntime(opts: {
   runtimeCacheUserDataDir?: string;
   stateCacheUserDataDir?: string;
   portableWorkspacePath?: string;
+  legacyStateUserDataDir?: string;
   deps?: Partial<RuntimeBootstrapDeps>;
 }): Promise<RuntimeBootstrapResult> {
   const deps: RuntimeBootstrapDeps = { ...makeDefaultDeps(), ...opts.deps };
   const { userDataDir } = opts;
   const runtimeCacheUserDataDir = opts.runtimeCacheUserDataDir ?? userDataDir;
-  const stateCacheUserDataDir = opts.stateCacheUserDataDir ?? runtimeCacheUserDataDir;
+  const stateCacheUserDataDir = opts.stateCacheUserDataDir ?? userDataDir;
   const startedAt = deps.now();
 
   const fail = (
@@ -285,11 +292,11 @@ export async function bootstrapLocalGatewayRuntime(opts: {
   };
 
   try {
-    // ① token/store 仍跟着 U 盘；OpenClaw 内部 state 放本机缓存（exFAT 不满足其文件语义）。
     const { token, stateDir } = await deps.alignClientConfig({
       userDataDir,
       stateUserDataDir: stateCacheUserDataDir,
       portableWorkspacePath: opts.portableWorkspacePath,
+      ...(opts.legacyStateUserDataDir ? { legacyStateUserDataDir: opts.legacyStateUserDataDir } : {}),
     });
     deps.setStateDirEnv(stateDir);
 
@@ -379,7 +386,6 @@ export async function bootstrapLocalGatewayRuntime(opts: {
       cliPath: deployed.cliPath,
       deployedRoot: deployed.deployedRoot,
       stateDir,
-      // 设备身份与登录/授权同属便携身份，仍随 U 盘；只有 OpenClaw 内部 state 本机化。
       identityPath: path.join(userDataDir, 'device-identity.json'),
       token,
     });

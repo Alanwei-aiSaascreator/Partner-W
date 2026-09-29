@@ -111,6 +111,13 @@ describe('minimalGatewayConfig', () => {
 });
 
 describe('ensureStateConfig', () => {
+  it('keeps portable state token-scoped when state and app data share the portable root', () => {
+    const result = ensureStateConfig(userDataDir, userDataDir, path.join(tmpRoot, 'workspace'));
+
+    expect(result.stateDir).toBe(portableStateDirFor(userDataDir, result.token));
+    expect(fs.existsSync(stateDirFor(userDataDir))).toBe(false);
+  });
+
   it('首跑：建 openclaw.json，token 是 32 字节的 base64url', () => {
     const res = ensureStateConfig(userDataDir);
 
@@ -492,7 +499,133 @@ describe('红线：工具闸门（写不出工作区 + 工作区外先问）', (
   });
 });
 
+describe('portable heartbeat defaults', () => {
+  it('disables an unconfigured portable heartbeat using the runtime-supported cadence', () => {
+    const stateRoot = path.join(tmpRoot, 'heartbeat-state');
+    const first = ensureStateConfig(userDataDir, stateRoot);
+    const config = JSON.parse(fs.readFileSync(first.configPath, 'utf8'));
+    expect(config.agents.defaults.heartbeat).toEqual({ every: '0m' });
+    const bytes = fs.readFileSync(first.configPath, 'utf8');
+    ensureStateConfig(userDataDir, stateRoot);
+    expect(fs.readFileSync(first.configPath, 'utf8')).toBe(bytes);
+  });
+
+  it('repairs legacy owner-only heartbeat defaults while retaining the owner', () => {
+    const stateRoot = path.join(tmpRoot, 'heartbeat-state');
+    const first = ensureStateConfig(userDataDir, stateRoot);
+    const config = JSON.parse(fs.readFileSync(first.configPath, 'utf8'));
+    config.agents.defaults.heartbeat = { agentId: 'main' };
+    fs.writeFileSync(first.configPath, JSON.stringify(config));
+    ensureStateConfig(userDataDir, stateRoot);
+    expect(JSON.parse(fs.readFileSync(first.configPath, 'utf8')).agents.defaults.heartbeat).toEqual({
+      agentId: 'main',
+      every: '0m',
+    });
+  });
+
+  it.each([
+    { every: '45m' },
+    { target: 'last' },
+    { to: 'owner-channel' },
+    { activeHours: { start: '09:00', end: '18:00' } },
+    { prompt: 'Check scheduled work.' },
+    { model: 'clawrouter/custom' },
+    { session: 'agent:main:custom' },
+    { lightContext: false },
+  ])('preserves explicit heartbeat configuration %j', (heartbeat) => {
+    const stateRoot = path.join(tmpRoot, 'heartbeat-state');
+    const first = ensureStateConfig(userDataDir, stateRoot);
+    const config = JSON.parse(fs.readFileSync(first.configPath, 'utf8'));
+    config.agents.defaults.heartbeat = heartbeat;
+    fs.writeFileSync(first.configPath, JSON.stringify(config));
+    ensureStateConfig(userDataDir, stateRoot);
+    expect(JSON.parse(fs.readFileSync(first.configPath, 'utf8')).agents.defaults.heartbeat).toEqual(heartbeat);
+  });
+
+  it('does not disable a gateway with configured delivery channels', () => {
+    const stateRoot = path.join(tmpRoot, 'heartbeat-state');
+    const first = ensureStateConfig(userDataDir, stateRoot);
+    const config = JSON.parse(fs.readFileSync(first.configPath, 'utf8'));
+    config.agents.defaults.heartbeat = { agentId: 'main' };
+    config.channels = { telegram: { enabled: true } };
+    fs.writeFileSync(first.configPath, JSON.stringify(config));
+    ensureStateConfig(userDataDir, stateRoot);
+    expect(JSON.parse(fs.readFileSync(first.configPath, 'utf8')).agents.defaults.heartbeat).toEqual({
+      agentId: 'main',
+    });
+  });
+
+  it.each(['entries', 'list'])('preserves explicit per-agent heartbeat settings under %s', (shape) => {
+    const stateRoot = path.join(tmpRoot, 'heartbeat-state');
+    const first = ensureStateConfig(userDataDir, stateRoot);
+    const config = JSON.parse(fs.readFileSync(first.configPath, 'utf8'));
+    config.agents.defaults.heartbeat = { agentId: 'main' };
+    const worker = { id: 'worker', heartbeat: { target: 'last' } };
+    config.agents[shape] = shape === 'list' ? [worker] : { worker };
+    fs.writeFileSync(first.configPath, JSON.stringify(config));
+    ensureStateConfig(userDataDir, stateRoot);
+    expect(JSON.parse(fs.readFileSync(first.configPath, 'utf8')).agents.defaults.heartbeat).toEqual({
+      agentId: 'main',
+    });
+  });
+
+  it.each(['entries', 'list'])('preserves explicit per-agent default-cadence enrollment under %s', (shape) => {
+    const stateRoot = path.join(tmpRoot, 'heartbeat-state');
+    const first = ensureStateConfig(userDataDir, stateRoot);
+    const config = JSON.parse(fs.readFileSync(first.configPath, 'utf8'));
+    config.agents.defaults.heartbeat = { agentId: 'main' };
+    const worker = { id: 'worker', heartbeat: {} };
+    config.agents[shape] = shape === 'list' ? [worker] : { worker };
+    fs.writeFileSync(first.configPath, JSON.stringify(config));
+    ensureStateConfig(userDataDir, stateRoot);
+    const rewritten = JSON.parse(fs.readFileSync(first.configPath, 'utf8'));
+    expect(rewritten.agents.defaults.heartbeat).toEqual({ agentId: 'main' });
+    expect(shape === 'list' ? rewritten.agents.list[0].heartbeat : rewritten.agents.entries.worker.heartbeat).toEqual(
+      {},
+    );
+  });
+
+  it('does not change installed-mode heartbeat defaults', () => {
+    const result = ensureStateConfig(userDataDir);
+    const config = JSON.parse(fs.readFileSync(result.configPath, 'utf8'));
+    expect(config.agents?.defaults?.heartbeat).toBeUndefined();
+  });
+});
+
 describe('ensureClientGatewayEntry', () => {
+  it.runIf(process.platform === 'win32')(
+    'migrates the matching legacy token tree before creating portable config',
+    async () => {
+      const localData = path.join(tmpRoot, 'legacy-local');
+      const legacy = ensureStateConfig(userDataDir, localData, path.join(tmpRoot, 'workspace'));
+      fs.mkdirSync(path.join(legacy.stateDir, 'state'), { recursive: true });
+      fs.writeFileSync(path.join(legacy.stateDir, 'state', 'openclaw.sqlite'), 'database-bytes');
+      fs.writeFileSync(path.join(legacy.stateDir, 'state', 'openclaw.sqlite-wal'), 'wal-bytes');
+      fs.writeFileSync(
+        configPath(),
+        JSON.stringify({
+          workspacePath: '',
+          gateways: [],
+          bundledSkillRecords: {
+            [path.join(legacy.stateDir, 'skills')]: { 'custom-skill': 'original-digest' },
+          },
+        }),
+      );
+      const result = await ensureClientGatewayEntry({
+        userDataDir,
+        portableWorkspacePath: path.join(tmpRoot, 'workspace'),
+        legacyStateUserDataDir: localData,
+      });
+
+      expect(fs.readFileSync(path.join(result.stateDir, 'state', 'openclaw.sqlite'), 'utf8')).toBe('database-bytes');
+      expect(fs.readFileSync(path.join(result.stateDir, 'state', 'openclaw.sqlite-wal'), 'utf8')).toBe('wal-bytes');
+      expect(fs.readFileSync(path.join(legacy.stateDir, 'state', 'openclaw.sqlite-wal'), 'utf8')).toBe('wal-bytes');
+      expect(readConfigRaw().bundledSkillRecords).toEqual({
+        [path.join(result.stateDir, 'skills')]: { 'custom-skill': 'original-digest' },
+      });
+    },
+  );
+
   it('⭐ 便携版：main 助手工作区跟随已选 U 盘工作区，不能静默落回本机 state/workspace', async () => {
     const localStateUserDataDir = path.join(tmpRoot, 'local-runtime-cache');
     const portableWorkspace = path.join(tmpRoot, 'portable-volume', '荣盈魔方工作区');
@@ -558,7 +691,7 @@ describe('ensureClientGatewayEntry', () => {
 
     const rewritten = JSON.parse(fs.readFileSync(stateConfigPath(first.stateDir), 'utf-8'));
     expect(rewritten.agents).toEqual({
-      defaults: { model: 'clawrouter/existing-model', skipBootstrap: true },
+      defaults: { model: 'clawrouter/existing-model', skipBootstrap: true, heartbeat: { every: '0m' } },
       keep: 'yes',
     });
 

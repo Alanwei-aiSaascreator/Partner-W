@@ -35,6 +35,9 @@
  * 200 保留了正常长稿的充足余量，同时仍然拦得住几百页导致的渲染成本失控。
  * 它不与聊天历史的字符上限绑定：字符数不能稳定换算成页数或渲染成本。
  */
+import type { DocgenFailure } from './docgen-failure.js';
+import type { HtmlgenFailure } from './htmlgen-failure.js';
+
 export const SLIDEGEN_MAX_PAGES = 200;
 
 /**
@@ -62,7 +65,21 @@ export function messagePageBudgetFailure(pageCounts: readonly number[]): Slidege
  *    版式有问题（越界、被盖住）走的是**警告**，文件照样出（见 `main/slidegen/validate.ts`）。
  *    要恢复这个档位之前，先回去读 `docgen` 那段历史 —— 那是个已经踩过的坑。
  */
-export type SlidegenFailure =
+export type SlidegenFailure = SlidegenFailureReason & {
+  diagnostic?: { code: string; offset?: number; detail: string };
+};
+
+export interface ArtifactDeliveryFailure {
+  taskId: string;
+  sessionKey: string;
+  messageId: string;
+  missing: string[];
+  slideFailures?: SlidegenFailure[];
+  docFailures?: DocgenFailure[];
+  htmlFailures?: HtmlgenFailure[];
+}
+
+type SlidegenFailureReason =
   /** 围栏里是空的。 */
   | { code: 'slidegen-block-empty' }
   /**

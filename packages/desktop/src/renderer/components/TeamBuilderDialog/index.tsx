@@ -19,6 +19,7 @@ import type { ModelCatalogEntry, InstallEvent, TeamPosition } from '@clawwork/sh
 import { cn } from '@/lib/utils';
 import { buildInstallEventView } from '@/lib/install-event-view';
 import { InstallMessageLine } from '@/components/InstallMessageLine';
+import { TeamInstallOutcome } from '@/components/TeamInstallOutcome';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover';
@@ -29,12 +30,14 @@ import { useSystemSession } from '@/hooks/useSystemSession';
 import { useDialogGuard } from '@/hooks/useDialogGuard';
 import { useTeamStore } from '@/stores/teamStore';
 import { useTeamInstall } from '@/layouts/TeamsPanel/useTeamInstall';
-import { toSlug, EMOJI_OPTIONS } from '@/layouts/TeamsPanel/utils';
-import type { AgentDraft, TeamInfo } from '@/layouts/TeamsPanel/types';
+import { toSlug, withAgentIds, EMOJI_OPTIONS } from '@/layouts/TeamsPanel/utils';
+import type { AgentDraft, TeamInfo, InstallStatus } from '@/layouts/TeamsPanel/types';
 import { relayModelsFrom } from '@/components/ChatInput/model-families';
 import { canonicalModelRef, resolveTeamModelRef } from '@/lib/team-model-ref';
+import { resolveCommercialDefaultModel } from '@/lib/commercial-default-model';
 
 export interface AgentConfig {
+  id?: string;
   name: string;
   role: 'coordinator' | 'worker';
   description: string;
@@ -184,19 +187,21 @@ const CONFIG_BLOCK_RE = /\n?```team-config\n([\s\S]*?)\n```\n?/g;
 const CONFIG_BLOCK_PARTIAL_RE = /\n?```team-config[\s\S]*$/;
 
 function sanitizeAgents(raw: unknown[], models: ModelCatalogEntry[]): AgentConfig[] {
-  return raw
-    .filter((a): a is Record<string, unknown> => !!a && typeof a === 'object')
-    .map((a) => {
-      const role = VALID_ROLES.has(a.role as string) ? (a.role as 'coordinator' | 'worker') : 'worker';
-      return {
-        name: typeof a.name === 'string' ? a.name : '',
-        role,
-        description: typeof a.description === 'string' ? a.description : '',
-        model: resolveTeamModelRef(typeof a.model === 'string' ? a.model : '', models),
-        identity: typeof a.identity === 'string' ? a.identity : '',
-        position: defaultTeamPositionForRole(role),
-      };
-    });
+  return withAgentIds(
+    raw
+      .filter((a): a is Record<string, unknown> => !!a && typeof a === 'object')
+      .map((a) => {
+        const role = VALID_ROLES.has(a.role as string) ? (a.role as 'coordinator' | 'worker') : 'worker';
+        return {
+          name: typeof a.name === 'string' ? a.name : '',
+          role,
+          description: typeof a.description === 'string' ? a.description : '',
+          model: resolveTeamModelRef(typeof a.model === 'string' ? a.model : '', models),
+          identity: typeof a.identity === 'string' ? a.identity : '',
+          position: defaultTeamPositionForRole(role),
+        };
+      }),
+  );
 }
 
 export function parseTeamConfig(text: string, models: ModelCatalogEntry[]): Partial<TeamConfig> | null {
@@ -233,8 +238,9 @@ function configToTeamInfo(config: TeamConfig, gatewayId: string): TeamInfo {
   };
 }
 
-function configToAgentDrafts(config: TeamConfig, models: ModelCatalogEntry[]): AgentDraft[] {
-  return config.agents.map((a) => ({
+export function configToAgentDrafts(config: TeamConfig, models: ModelCatalogEntry[]): AgentDraft[] {
+  return withAgentIds(config.agents).map((a) => ({
+    id: a.id,
     uid: crypto.randomUUID(),
     name: a.name.trim(),
     description: a.description.trim(),
@@ -263,7 +269,7 @@ export function isTeamConfigValid(config: TeamConfig, language: string): boolean
   ) {
     return false;
   }
-  const slugs = config.agents.map((agent) => toSlug(agent.name));
+  const slugs = withAgentIds(config.agents).map((agent) => agent.id);
   if (new Set(slugs).size !== slugs.length) return false;
 
   if (isChinese(language)) {
@@ -316,7 +322,7 @@ export default function TeamBuilderDialog({ open, onOpenChange, gatewayId, onCre
 
   const isDirty = useCallback(() => {
     if (installStatus === 'installing') return true;
-    if (installStatus === 'done' || installStatus === 'error') return false;
+    if (installStatus === 'done' || installStatus === 'degraded' || installStatus === 'error') return false;
     return messages.length > 1;
   }, [installStatus, messages.length]);
 
@@ -337,6 +343,7 @@ export default function TeamBuilderDialog({ open, onOpenChange, gatewayId, onCre
       return;
     }
     if (startedRef.current) return;
+    if (relayModels.length === 0) return;
     startedRef.current = true;
 
     setConfig(EMPTY_CONFIG);
@@ -353,6 +360,7 @@ export default function TeamBuilderDialog({ open, onOpenChange, gatewayId, onCre
       gatewayId,
       agentId: defaultAgentId,
       purpose: 'team-builder',
+      model: resolveTeamModelRef(resolveCommercialDefaultModel(relayModels)?.id, relayModels) || modelRefs[0],
       initialMessage: prompt,
     });
   }, [open, gatewayId, defaultAgentId, relayModels, start, i18n.language, resetInstall]);
@@ -447,7 +455,7 @@ export default function TeamBuilderDialog({ open, onOpenChange, gatewayId, onCre
 
   const progressPercent = lastProgress ? Math.round((lastProgress.current / lastProgress.total) * 100) : 0;
 
-  const installing = installStatus === 'installing' || installStatus === 'done' || installStatus === 'error';
+  const installing = installStatus !== 'idle';
 
   return (
     <Dialog open={open} onOpenChange={guardedOpenChange}>
@@ -509,6 +517,11 @@ export default function TeamBuilderDialog({ open, onOpenChange, gatewayId, onCre
                 </div>
               ))}
               {error && <p className="type-support text-center text-[var(--danger)]">{error}</p>}
+              {relayModels.length === 0 && (
+                <p className="type-support text-center text-[var(--text-muted)]">
+                  {t('chatInput.noModelsAvailable')} {t('chatInput.noModelsAvailableDetail')}
+                </p>
+              )}
               <div ref={messagesEndRef} />
             </div>
 
@@ -710,7 +723,7 @@ export function InstallProgress({
   progressPercent,
   agents,
 }: {
-  status: 'idle' | 'installing' | 'done' | 'error';
+  status: InstallStatus;
   events: InstallEvent[];
   progressPercent: number;
   /**
@@ -745,6 +758,7 @@ export function InstallProgress({
         <span className="type-label text-[var(--text-secondary)]">
           {status === 'installing' && t('teams.wizard.installing')}
           {status === 'done' && t('teams.wizard.installComplete')}
+          {status === 'degraded' && t('teams.wizard.installDegraded')}
           {status === 'error' && t('teams.wizard.installError')}
         </span>
         <div className="h-1.5 rounded-full bg-[var(--bg-tertiary)] overflow-hidden">
@@ -753,11 +767,12 @@ export function InstallProgress({
               'h-full rounded-full transition-all duration-300',
               status === 'error' ? 'bg-[var(--text-danger)]' : 'bg-[var(--accent)]',
             )}
-            style={{ width: `${status === 'done' ? 100 : progressPercent}%` }}
+            style={{ width: `${status === 'done' || status === 'degraded' ? 100 : progressPercent}%` }}
           />
         </div>
       </div>
 
+      <TeamInstallOutcome events={events} />
       <div className="flex-1 space-y-2 overflow-y-auto">
         {agentStates.map((agent) => (
           <div key={agent.slug} className="rounded-md border border-[var(--border)] bg-[var(--bg-primary)] px-3 py-2">

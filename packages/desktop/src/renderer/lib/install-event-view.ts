@@ -1,5 +1,5 @@
 import type { InstallEvent } from '@clawwork/shared';
-import { toSlug } from '@/layouts/TeamsPanel/utils';
+import { withAgentIds } from '@/layouts/TeamsPanel/utils';
 
 /**
  * 安装事件流 → 界面视图。
@@ -29,12 +29,13 @@ export interface InstallEventView {
 }
 
 export function buildInstallEventView(
-  agents: ReadonlyArray<{ name: string }>,
+  agents: ReadonlyArray<{ id?: string; name: string }>,
   events: InstallEvent[],
 ): InstallEventView {
   const stateMap = new Map<string, InstallAgentState>();
-  for (const a of agents) {
-    const slug = toSlug(a.name);
+  const identifiedAgents = withAgentIds(agents);
+  for (const a of identifiedAgents) {
+    const slug = a.id;
     stateMap.set(slug, { slug, status: 'pending', files: [], skills: [], warnings: [] });
   }
 
@@ -79,6 +80,6 @@ export function buildInstallEventView(
     }
   }
 
-  const agentStates = agents.map((a) => stateMap.get(toSlug(a.name))!).filter(Boolean);
+  const agentStates = identifiedAgents.map((a) => stateMap.get(a.id)!).filter(Boolean);
   return { agentStates, teamSaved, globalWarnings, globalError };
 }

@@ -128,6 +128,35 @@ describe('RightPanel artifacts', () => {
     container.remove();
   });
 
+  it('refreshes same-id metadata when a reconciliation update arrives through artifact:saved', async () => {
+    let saved: ((value: Artifact) => void) | undefined;
+    let current = artifact;
+    const listArtifacts = vi.fn(async () => ({ ok: true, result: [current] }));
+    Object.assign(window, {
+      clawwork: {
+        listArtifacts,
+        onArtifactSaved: (callback: typeof saved) => {
+          saved = callback;
+          return () => {};
+        },
+        readArtifactThumbnail: vi.fn(),
+        saveArtifactAs: vi.fn(),
+        openArtifactFile: vi.fn(),
+        showArtifactInFolder: vi.fn(),
+      },
+    });
+    const container = document.createElement('div');
+    const root = createRoot(container);
+    await act(async () => root.render(<RightPanel />));
+    expect(container.textContent).toContain('report.txt');
+    current = { ...artifact, name: 'updated-report.txt', availability: 'missing' };
+    await act(async () => saved!(current));
+    expect(container.textContent).toContain('updated-report.txt');
+    expect(container.textContent).toContain('artifactCard.missing');
+    expect(listArtifacts).toHaveBeenCalledTimes(4);
+    act(() => root.unmount());
+  });
+
   it('does not mark an artifact selected when the selected id belongs to another task', async () => {
     useFileStore.setState({ selectedArtifactId: 'external-artifact' });
     const externalArtifact = {

@@ -1386,15 +1386,16 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
     };
 
     const store = deps.getMessageStore();
+    tc.startedAt = store.activeTurnBySession[sessionKey]?.toolCalls.find((call) => call.id === tc.id)?.startedAt ?? '';
     const existingMsgs = store.messagesByTask[taskId] ?? [];
-    for (let i = existingMsgs.length - 1; i >= 0; i--) {
+    for (let i = existingMsgs.length - 1; !tc.startedAt && i >= 0; i--) {
       const existing = existingMsgs[i].toolCalls.find((t) => t.id === tc.id);
       if (existing) {
         tc.startedAt = existing.startedAt;
         break;
       }
     }
-    if (!tc.startedAt) tc.startedAt = new Date().toISOString();
+    if (!tc.startedAt && data.phase === 'start') tc.startedAt = new Date().toISOString();
 
     store.upsertToolCall(sessionKey, taskId, tc);
     debugEvent('renderer.toolcall.upserted', {
@@ -1514,7 +1515,7 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
       // ⭐ `title` 就是用户要的"做了什么操作"：网关拼好的「工具名 + 参数摘要」。
       title: data.title,
       // 网关给的是**真实**起止时间（毫秒），比自己打点准。
-      startedAt: toMs(data.startedAt) ?? new Date().toISOString(),
+      startedAt: toMs(data.startedAt) ?? (data.phase === 'start' ? new Date().toISOString() : ''),
       completedAt: settled ? (toMs(data.endedAt) ?? new Date().toISOString()) : undefined,
       result: data.error,
     });

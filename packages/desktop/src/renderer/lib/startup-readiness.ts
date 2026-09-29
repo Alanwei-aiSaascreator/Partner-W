@@ -112,6 +112,7 @@ export function relayFailureText(failure: StartupRelayFailure, t: (key: string) 
 export function gatewayFailureText(readiness: StartupReadiness, t: (key: string) => string): string | null {
   const reason = readiness.ai.failureReason ?? null;
   if (reason === 'port-occupied') return t('startupReadiness.gatewayPortOccupied');
+  if (reason === 'state-migration-blocked') return t('startupReadiness.gatewayStateMigrationBlocked');
   if (reason === 'auth-rejected') return t('startupReadiness.gatewayAuthRejected');
   if (reason === 'process-exited') return t('startupReadiness.gatewayProcessExited');
   if (reason === 'ready-timeout') return t('startupReadiness.gatewayReadyTimeout');

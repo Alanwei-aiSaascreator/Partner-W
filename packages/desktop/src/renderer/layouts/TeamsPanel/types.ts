@@ -1,6 +1,9 @@
 import type { TeamPosition } from '@clawwork/shared';
 
+export type InstallStatus = 'idle' | 'installing' | 'done' | 'degraded' | 'error';
+
 export interface AgentDraft {
+  id?: string;
   uid: string;
   name: string;
   description: string;

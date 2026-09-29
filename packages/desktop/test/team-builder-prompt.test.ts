@@ -7,8 +7,35 @@ import {
   isTeamConfigValid,
   parseTeamConfig,
 } from '../src/renderer/components/TeamBuilderDialog';
+import { toSlug } from '../src/renderer/layouts/TeamsPanel/utils';
 
 describe('AI 创建团队提示词', () => {
+  it('derives stable distinct ids from Chinese AI names without changing their identity', () => {
+    const names = ['\u878d\u8d44\u4e3b\u7ba1', '\u5546\u4e1a\u5206\u6790\u5e08', '\u6f14\u793a\u8bbe\u8ba1\u5e08'];
+    const rawAgents = names.map((name, index) => ({
+      name,
+      role: index === 0 ? 'coordinator' : 'worker',
+      identity: `Identity ${index}`,
+    }));
+    const text = '```team-config\n' + JSON.stringify({ agents: rawAgents }) + '\n```';
+    const parsed = parseTeamConfig(text, []);
+
+    expect(parsed?.agents?.map((agent) => agent.id)).toEqual(names.map(toSlug));
+    expect(parseTeamConfig(text, [])).toEqual(parsed);
+    expect(parsed?.agents?.map((agent) => agent.name)).toEqual(names);
+    expect(parsed?.agents?.map((agent) => agent.identity)).toEqual(rawAgents.map((agent) => agent.identity));
+  });
+
+  it('deduplicates colliding normalized names within the runtime id length limit', () => {
+    const names = ['\u878d\u8d44 A1', '\u5546\u4e1a A1', 'A1-2', 'x'.repeat(80), 'x'.repeat(80)];
+    const text = '```team-config\n' + JSON.stringify({ agents: names.map((name) => ({ name })) }) + '\n```';
+    const ids = parseTeamConfig(text, [])?.agents?.map((agent) => agent.id) ?? [];
+
+    expect(new Set(ids).size).toBe(names.length);
+    expect(ids.every((id) => typeof id === 'string' && /^[a-z0-9][a-z0-9_-]{0,63}$/.test(id))).toBe(true);
+    expect(parseTeamConfig(text, [])?.agents?.map((agent) => agent.id)).toEqual(ids);
+  });
+
   it('中文界面生成中文团队名、成员名和说明，英文只保留协议枚举与模型 ID', () => {
     const prompt = buildTeamBuilderSystemPrompt(['openai/deepseek-v4-flash'], 'zh-CN');
 

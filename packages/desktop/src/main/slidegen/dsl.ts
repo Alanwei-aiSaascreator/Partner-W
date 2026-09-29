@@ -39,6 +39,8 @@
  * **绝不猜**。猜错的后果是产出一份看起来像样、内容却是乱码的 PPT。
  */
 
+import { parse } from 'acorn';
+
 export type SlideNode =
   | { kind: 'element'; tag: SlideTag; props: Record<string, unknown>; children: SlideChild[] }
   | { kind: 'text'; value: string };
@@ -56,13 +58,21 @@ export type SlideElement = Extract<SlideNode, { kind: 'element' }>;
 
 export type SlideTag = 'Slide' | 'Box' | 'Text' | 'Image';
 
-/** DSL 只认这四个标签。别的（含 HTML 标签）一律拒 —— 这是个封闭集合。 */
+/** 四个内置标签；其余大写标签按同一程序中声明的函数组件求值。 */
 const TAGS: readonly SlideTag[] = ['Slide', 'Box', 'Text', 'Image'];
 
 export class SlideDslError extends Error {
   constructor(
-    readonly code: 'dsl-unparsable' | 'dsl-unknown-tag' | 'dsl-eval-failed' | 'dsl-no-root',
+    readonly code:
+      | 'dsl-unparsable'
+      | 'dsl-unknown-tag'
+      | 'dsl-eval-failed'
+      | 'dsl-no-root'
+      | 'dsl-close-mismatch'
+      | 'dsl-stray-close'
+      | 'dsl-text-outside-text',
     message: string,
+    readonly offset?: number,
   ) {
     super(message);
     this.name = 'SlideDslError';
@@ -71,18 +81,10 @@ export class SlideDslError extends Error {
 
 const escapeJsString = (s: string): string => JSON.stringify(s);
 
-/** `i` 处是不是一个**我们的**标签的开头（用来把 JSX 与 `a < b` 这种比较区分开）。 */
-function tagAt(src: string, i: number): SlideTag | null {
+/** 内置元素或大写函数组件的 JSX 开头；小写 HTML 标签不在支持范围。 */
+function tagAt(src: string, i: number): string | null {
   if (src[i] !== '<') return null;
-  for (const tag of TAGS) {
-    if (!src.startsWith('<' + tag, i)) continue;
-    const after = src[i + 1 + tag.length];
-    // 标签名后面必须是分隔符，免得把 `<TextBox>` 认成 `<Text>`
-    if (after === undefined || /[\s/>]/.test(after)) return tag;
-    // 闭合标签 `</Text>`
-    if (src[i + 1] === '/') return tag;
-  }
-  return null;
+  return /^<([A-Z][A-Za-z0-9_$]*)(?=[\s/>]|$)/.exec(src.slice(i))?.[1] ?? null;
 }
 
 /**
@@ -92,7 +94,7 @@ function tagAt(src: string, i: number): SlideTag | null {
  *    模板串里的 `${ … }` 还要递归数括号。
  * ⚠️ 其中的 JSX 会被**就地转换**（见文件头那段）。
  */
-function readBraced(src: string, i: number): { body: string; end: number } {
+function readBraced(src: string, i: number, baseOffset = 0): { body: string; end: number } {
   if (src[i] !== '{') throw new SlideDslError('dsl-unparsable', `expected { at ${i}`);
   let depth = 0;
   let j = i;
@@ -127,12 +129,12 @@ function readBraced(src: string, i: number): { body: string; end: number } {
       depth -= 1;
       if (depth === 0) {
         // ⭐ 表达式里的 JSX 在这里被转换掉 —— 漏了这步，列表页全废。
-        return { body: scanJsx(src.slice(i + 1, j)), end: j };
+        return { body: scanJsx(src.slice(i + 1, j), { baseOffset: baseOffset + i + 1 }), end: j };
       }
     }
     j += 1;
   }
-  throw new SlideDslError('dsl-unparsable', 'unbalanced { in expression');
+  throw new SlideDslError('dsl-unparsable', 'unbalanced { in expression', baseOffset + i);
 }
 
 /** 只数括号、不做 JSX 转换的版本（模板串 `${}` 用）。 */
@@ -165,7 +167,7 @@ function readRawBraced(src: string, i: number): { end: number } {
  *  - 顶层（整个 `.slide` 源码）
  *  - `{}` 内部（表达式里的 JSX）
  */
-function scanJsx(src: string, opts: { strict?: boolean; collect?: string[] } = {}): string {
+function scanJsx(src: string, opts: { strict?: boolean; collect?: string[]; baseOffset?: number } = {}): string {
   let out = '';
   let i = 0;
   while (i < src.length) {
@@ -184,33 +186,37 @@ function scanJsx(src: string, opts: { strict?: boolean; collect?: string[] } = {
       continue;
     }
     // 字符串字面量原样带过（`"<Box>"` 不是标签）
-    if (src[i] === '"' || src[i] === "'") {
+    if (src[i] === '"' || src[i] === "'" || src[i] === '`') {
       const q = src[i]!;
       let j = i + 1;
       while (j < src.length && src[j] !== q) {
         if (src[j] === '\\') j += 1;
+        else if (q === '`' && src[j] === '$' && src[j + 1] === '{') j = readRawBraced(src, j + 1).end;
         j += 1;
       }
       out += src.slice(i, Math.min(j + 1, src.length));
       i = Math.min(j + 1, src.length);
       continue;
     }
+    if (src.startsWith('</', i)) {
+      const closing = readClosingTag(src, i, opts.baseOffset ?? 0);
+      throw new SlideDslError('dsl-stray-close', `stray closing tag </${closing.name}>`, (opts.baseOffset ?? 0) + i);
+    }
     const tag = tagAt(src, i);
     if (tag) {
       // ⚠️ 闭合标签由 parseElement 自己消费，走到这里说明是**开标签**
-      if (src[i + 1] === '/') throw new SlideDslError('dsl-unparsable', 'stray closing tag');
-      const { code, end } = parseElement(src, i, opts.strict);
+      const { code, end } = parseElement(src, i, opts.strict, opts.baseOffset ?? 0);
       if (opts.collect) opts.collect.push(code);
-      else out += code;
+      out += code + '\n';
       i = end;
       continue;
     }
-    // ⭐ **严格模式**：看着像标签却不是我们那四个 ⇒ 拒。
+    // 严格模式拒绝小写 HTML 标签；大写组件已由上面的分支转换。
     //    这是在"版面位置"（顶层 / 子节点）才成立的判据 —— 那几个位置出现 `<div>`
     //    一定是助手写错了，放过它只会产出半份版面。
     //    ⚠️ `{}` 表达式里**不能**严格：`{a < b}` 是合法的 JS，误伤它会让正常版面被拒。
     if (opts.strict && looksLikeTag(src, i)) {
-      throw new SlideDslError('dsl-unknown-tag', `unknown tag <${readTagName(src, i)}>`);
+      throw new SlideDslError('dsl-unknown-tag', `unknown tag <${readTagName(src, i)}>`, (opts.baseOffset ?? 0) + i);
     }
     out += src[i];
     i += 1;
@@ -221,12 +227,20 @@ function scanJsx(src: string, opts: { strict?: boolean; collect?: string[] } = {
 /** `i` 处像不像一个标签（`<Name` 且 Name 是标识符、紧跟分隔符）。 */
 function looksLikeTag(src: string, i: number): boolean {
   if (src[i] !== '<') return false;
-  return /^<\/?[A-Za-z][A-Za-z0-9]*[\s/>]/.test(src.slice(i, i + 40));
+  return /^<\/?[A-Za-z][A-Za-z0-9_$]*[\s/>]/.test(src.slice(i, i + 100));
 }
 
 /** 取出标签名（只用于报错信息）。 */
 function readTagName(src: string, i: number): string {
-  return (/^<\/?([A-Za-z][A-Za-z0-9]*)/.exec(src.slice(i, i + 40)) ?? [])[1] ?? '?';
+  return (/^<\/?([A-Za-z][A-Za-z0-9_$]*)/.exec(src.slice(i, i + 100)) ?? [])[1] ?? '?';
+}
+
+function readClosingTag(src: string, i: number, baseOffset: number): { name: string; end: number } {
+  const close = src.indexOf('>', i);
+  if (close < 0) throw new SlideDslError('dsl-unparsable', 'closing tag not closed', baseOffset + i);
+  const match = /^<\/([A-Za-z][A-Za-z0-9_$]*)\s*>$/.exec(src.slice(i, close + 1));
+  if (!match) throw new SlideDslError('dsl-unparsable', 'invalid closing tag', baseOffset + i);
+  return { name: match[1]!, end: close + 1 };
 }
 
 /**
@@ -264,34 +278,36 @@ function isCommentOnly(body: string): boolean {
 }
 
 /** 解析一个元素（`i` 指向 `<`），返回它的 `__h(...)` 代码与结束位置。 */
-function parseElement(src: string, i: number, strict = false): { code: string; end: number } {
+function parseElement(src: string, i: number, strict = false, baseOffset = 0): { code: string; end: number } {
   const tag = tagAt(src, i);
   if (!tag) throw new SlideDslError('dsl-unknown-tag', 'not a slidegen tag');
+  const tagExpression = TAGS.includes(tag as SlideTag) ? escapeJsString(tag) : tag;
   let j = i + 1 + tag.length;
 
   const attrs: string[] = [];
   for (;;) {
     while (j < src.length && /\s/.test(src[j] ?? '')) j += 1;
     if (src[j] === '/' && src[j + 1] === '>') {
-      return { code: `__h(${escapeJsString(tag)}, {${attrs.join(',')}})`, end: j + 2 };
+      return { code: `__h(${tagExpression}, {${attrs.join(',')}})`, end: j + 2 };
     }
     if (src[j] === '>') {
       j += 1;
       break;
     }
-    if (j >= src.length) throw new SlideDslError('dsl-unparsable', `<${tag}> not closed`);
+    if (j >= src.length) throw new SlideDslError('dsl-unparsable', `<${tag}> not closed`, baseOffset + i);
 
     let attr = '';
     while (j < src.length && /[A-Za-z0-9_$:-]/.test(src[j] ?? '')) {
       attr += src[j];
       j += 1;
     }
+    if (!attr) throw new SlideDslError('dsl-unparsable', 'invalid attribute', baseOffset + j);
     while (j < src.length && /\s/.test(src[j] ?? '')) j += 1;
     if (src[j] === '=') {
       j += 1;
       while (j < src.length && /\s/.test(src[j] ?? '')) j += 1;
       if (src[j] === '{') {
-        const { body, end } = readBraced(src, j);
+        const { body, end } = readBraced(src, j, baseOffset);
         attrs.push(`${escapeJsString(attr)}: (${body})`);
         j = end + 1;
       } else if (src[j] === '"' || src[j] === "'") {
@@ -311,52 +327,82 @@ function parseElement(src: string, i: number, strict = false): { code: string; e
 
   const kids: string[] = [];
   for (;;) {
-    if (j >= src.length) throw new SlideDslError('dsl-unparsable', `</${tag}> missing`);
+    if (j >= src.length) throw new SlideDslError('dsl-unparsable', `</${tag}> missing`, baseOffset + i);
     if (src[j] === '<' && src[j + 1] === '/') {
-      const close = src.indexOf('>', j);
-      if (close < 0) throw new SlideDslError('dsl-unparsable', `</${tag}> not closed`);
-      j = close + 1;
+      const closing = readClosingTag(src, j, baseOffset);
+      if (closing.name !== tag) {
+        throw new SlideDslError(
+          'dsl-close-mismatch',
+          `expected </${tag}> but found </${closing.name}>`,
+          baseOffset + j,
+        );
+      }
+      j = closing.end;
       break;
     }
     if (tagAt(src, j)) {
-      const inner = parseElement(src, j, strict);
+      const inner = parseElement(src, j, strict, baseOffset);
       kids.push(inner.code);
       j = inner.end;
       continue;
     }
     // 子节点位置同样严格：`<div>` 这种必须拒，不能当文字吞掉。
     if (strict && looksLikeTag(src, j)) {
-      throw new SlideDslError('dsl-unknown-tag', `unknown tag <${readTagName(src, j)}>`);
+      throw new SlideDslError('dsl-unknown-tag', `unknown tag <${readTagName(src, j)}>`, baseOffset + j);
     }
     if (src[j] === '{') {
-      const { body, end } = readBraced(src, j);
+      const { body, end } = readBraced(src, j, baseOffset);
       // ⚠️ 注释**不产出孩子**：包成 `(…)` 就是空括号表达式，整份 deck 会报废（见 isCommentOnly）。
       if (!isCommentOnly(body)) kids.push(`(${body})`); // 里面的 JS 原样（JSX 已在 readBraced 里转好）
       j = end + 1;
       continue;
     }
+    if (src[j] === '<') throw new SlideDslError('dsl-unparsable', 'invalid tag syntax', baseOffset + j);
+    const textStart = j;
     let text = '';
     while (j < src.length && src[j] !== '<' && src[j] !== '{') {
       text += src[j];
       j += 1;
     }
-    if (text.trim()) kids.push(escapeJsString(text.trim()));
+    if (text.trim()) {
+      if (tag !== 'Text') {
+        throw new SlideDslError(
+          'dsl-text-outside-text',
+          'text must be inside <Text>...</Text>; a self-closing <Text /> has no content',
+          baseOffset + textStart + text.search(/\S/),
+        );
+      }
+      kids.push(escapeJsString(text.trim()));
+    }
   }
 
-  return { code: `__h(${escapeJsString(tag)}, {${attrs.join(',')}}, ${kids.join(',')})`, end: j };
+  return { code: `__h(${tagExpression}, {${attrs.join(',')}}, ${kids.join(',')})`, end: j };
 }
 
 /**
- * JSX → JS 表达式字符串（`__h(...)` 调用）。
+ * 保留完整 JS 程序，将 JSX 转成 __h 调用，按 AST 包装顶层表达式以收集页面。
+ * 声明与函数体不能被单独提取成页，否则会丢失作用域或误执行未调用的组件。
  *
  * ⭐ **顶层可以并列多个 `<Slide>`** —— 那就是多页。一栅写 24 页比写 24 个围栏
  * 既短又不容易漏；单页时不必包数组。
  */
 export function transformSlideJsx(src: string): string {
   const roots: string[] = [];
-  // ⚠️ 顶层**只收根元素**（`collect`）—— 早先的写法是"转完整串再按 `;` 切"，
-  //    而相邻两个根之间**没有分隔符**，切分正则永远匹配不上（多页直接语法错）。
-  scanJsx(src, { strict: true, collect: roots });
+  const program = scanJsx(src, { strict: true, collect: roots });
   if (roots.length === 0) throw new SlideDslError('dsl-no-root', 'no <Slide> element found');
-  return roots.length === 1 ? roots[0]! : `[${roots.join(',')}]`;
+  try {
+    const ast = parse(program, { ecmaVersion: 'latest', sourceType: 'script' });
+    let result = '';
+    let cursor = 0;
+    let expressionIndex = 0;
+    for (const statement of ast.body) {
+      if (statement.type !== 'ExpressionStatement') continue;
+      result += program.slice(cursor, statement.start);
+      result += `__collect(() => (${program.slice(statement.expression.start, statement.expression.end)}), ${++expressionIndex});`;
+      cursor = statement.end;
+    }
+    return result + program.slice(cursor);
+  } catch (error) {
+    throw new SlideDslError('dsl-unparsable', error instanceof Error ? error.message : 'invalid JavaScript program');
+  }
 }

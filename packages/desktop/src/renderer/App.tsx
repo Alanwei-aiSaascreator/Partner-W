@@ -148,7 +148,7 @@ export default function App() {
 
   useEffect(() => {
     const cleanup = window.clawwork.onArtifactSaved((artifact) => {
-      useFileStore.getState().addArtifactIfNew(artifact as import('@clawwork/shared').Artifact);
+      useFileStore.getState().upsertArtifact(artifact as import('@clawwork/shared').Artifact);
     });
     return cleanup;
   }, []);

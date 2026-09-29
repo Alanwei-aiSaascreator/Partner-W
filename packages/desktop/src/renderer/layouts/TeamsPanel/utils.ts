@@ -25,10 +25,37 @@ function nameSuffix(name: string): string {
 export function toSlug(name: string): string {
   return (
     name
+      .trim()
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-|-$/g, '') || `agent-${nameSuffix(name)}`
+      .replace(/^-|-$/g, '')
+      .slice(0, 64)
+      .replace(/-$/, '') || `agent-${nameSuffix(name.trim())}`
   );
+}
+
+export function withAgentIds<T extends { id?: string; name: string }>(agents: readonly T[]): Array<T & { id: string }> {
+  const bases = agents.map((agent) => {
+    const explicit = agent.id?.trim();
+    if (explicit && /^[a-z0-9][a-z0-9_-]{0,63}$/.test(explicit)) return explicit;
+    const slug = toSlug(agent.name);
+    return ['main', 'openclaw', 'crestodian'].includes(slug) ? `agent-${slug}` : slug;
+  });
+  const reserved = new Set(bases);
+  const used = new Set<string>();
+  return agents.map((agent, index) => {
+    const base = bases[index];
+    let id = base;
+    if (used.has(id)) {
+      let suffix = 2;
+      do {
+        const tail = `-${suffix++}`;
+        id = `${base.slice(0, 64 - tail.length)}${tail}`;
+      } while (used.has(id) || reserved.has(id));
+    }
+    used.add(id);
+    return { ...agent, id };
+  });
 }
 
 export const EMOJI_OPTIONS = [

@@ -32,6 +32,7 @@ import { writeJsonAtomic } from '../util/json-file.js';
 import { readConfig, updateConfig } from '../workspace/config.js';
 import type { AppConfig, GatewayServerConfig } from '../workspace/config.js';
 import { ensureLocalGatewayToken } from './token-store.js';
+import { preparePortableState } from './portable-state-migration.js';
 
 export const STATE_DIR_NAME = 'openclaw-state';
 export const STATE_CONFIG_FILE = 'openclaw.json';
@@ -85,9 +86,9 @@ export function stateConfigPath(stateDir: string): string {
  * SHA-256 的前 96 bit 作目录名既不泄露 token，也足够把一台机器上的几支盘隔开。
  * 不用完整 64 hex：OpenClaw 的 npm/plugin 子树很深，Windows 路径预算是真实故障面。
  */
-export function portableStateDirFor(stateUserDataDir: string, token: string): string {
+export function portableStateDirFor(stateRootDir: string, token: string): string {
   const identity = createHash('sha256').update(token, 'utf8').digest('hex').slice(0, 24);
-  return path.join(stateUserDataDir, PORTABLE_STATE_DIR_NAME, identity);
+  return path.join(stateRootDir, PORTABLE_STATE_DIR_NAME, identity);
 }
 
 /**
@@ -158,7 +159,24 @@ function readPortableMainWorkspace(raw: unknown): string | null {
 }
 
 function hasPortableAgentDefaults(raw: unknown, workspacePath?: string): boolean {
-  return hasPortableBootstrapDisabled(raw) && (!workspacePath || readPortableMainWorkspace(raw) === workspacePath);
+  return (
+    hasPortableBootstrapDisabled(raw) &&
+    !needsPortableHeartbeatDefault(isRecord(raw) ? raw : null) &&
+    (!workspacePath || readPortableMainWorkspace(raw) === workspacePath)
+  );
+}
+
+function needsPortableHeartbeatDefault(existing: Record<string, unknown> | null): boolean {
+  const agents = existing && isRecord(existing.agents) ? existing.agents : {};
+  const defaults = isRecord(agents.defaults) ? agents.defaults : {};
+  const heartbeat = isRecord(defaults.heartbeat) ? defaults.heartbeat : {};
+  if (existing && isRecord(existing.channels) && Object.keys(existing.channels).length > 0) return false;
+  const agentEntries = [
+    ...(isRecord(agents.entries) ? Object.values(agents.entries) : []),
+    ...(Array.isArray(agents.list) ? agents.list : []),
+  ];
+  if (agentEntries.some((entry) => isRecord(entry) && isRecord(entry.heartbeat))) return false;
+  return Object.keys(heartbeat).every((key) => key === 'agentId');
 }
 
 function mergePortableAgentDefaults(
@@ -167,13 +185,19 @@ function mergePortableAgentDefaults(
 ): Record<string, unknown> {
   const agents = existing && isRecord(existing.agents) ? existing.agents : {};
   const defaults = isRecord(agents.defaults) ? agents.defaults : {};
-  if (!workspacePath) return { ...agents, defaults: { ...defaults, skipBootstrap: true } };
+  const heartbeat = isRecord(defaults.heartbeat) ? defaults.heartbeat : {};
+  const portableDefaults = {
+    ...defaults,
+    skipBootstrap: true,
+    ...(needsPortableHeartbeatDefault(existing) ? { heartbeat: { ...heartbeat, every: '0m' } } : {}),
+  };
+  if (!workspacePath) return { ...agents, defaults: portableDefaults };
 
   const entries = isRecord(agents.entries) ? agents.entries : {};
   const main = isRecord(entries.main) ? entries.main : {};
   return {
     ...agents,
-    defaults: { ...defaults, skipBootstrap: true },
+    defaults: portableDefaults,
     entries: { ...entries, main: { ...main, workspace: workspacePath } },
   };
 }
@@ -385,11 +409,6 @@ function readStateConfigFile(configPath: string): Record<string, unknown> | null
  *   - 这份文件是**镜像**：缺了、或认证段与 store 不一致 ⇒ 按 store 写回去
  *   - 已有配置里的其它字段一律保留（openclaw 也会往这里写东西）
  *
- * ⚠️ 便携版的两个根目录故意分开：
- *   - `userDataDir`：U 盘，放 token store 与客户端 config（身份随盘走）
- *   - `stateUserDataDir`：本机 NTFS 缓存，放 OpenClaw 内部 state（exFAT 不满足它的
- *     文件身份/原子写约束，实机会报 `file identity changed or could not be verified`）
- *
  * store 首次建立时只接管 **U 盘旧 state** → 客户端 config，不能接管本机缓存里残留的
  * token：同一个盘符以后可能插入另一支 U 盘，本机残留没有资格冒充新盘的身份。
  */
@@ -403,7 +422,7 @@ export function ensureStateConfig(
   configPath: string;
   stateDir: string;
 } {
-  const splitState = stateUserDataDir !== userDataDir;
+  const splitState = stateUserDataDir !== userDataDir || Boolean(portableWorkspacePath?.trim());
   const legacyPortableConfig = readStateConfigFile(stateConfigPath(stateDirFor(userDataDir)));
   const legacyPortableToken = readStateToken(legacyPortableConfig);
 
@@ -505,13 +524,30 @@ export async function ensureClientGatewayEntry(opts: {
   userDataDir: string;
   stateUserDataDir?: string;
   portableWorkspacePath?: string;
+  legacyStateUserDataDir?: string;
 }): Promise<EnsureClientGatewayEntryResult> {
   const stateUserDataDir = opts.stateUserDataDir ?? opts.userDataDir;
   const current: AppConfig = readConfig() ?? { workspacePath: '', gateways: [] };
-  const portableWorkspacePath =
-    stateUserDataDir !== opts.userDataDir && opts.portableWorkspacePath?.trim()
-      ? opts.portableWorkspacePath
-      : undefined;
+  const portableWorkspacePath = opts.portableWorkspacePath?.trim() || undefined;
+  let previousStateDir: string | undefined;
+  if (portableWorkspacePath && stateUserDataDir === opts.userDataDir) {
+    const store = ensureLocalGatewayToken({
+      userDataDir: opts.userDataDir,
+      adopt: () =>
+        readStateToken(readStateConfigFile(stateConfigPath(stateDirFor(opts.userDataDir)))) ??
+        readClientLocalRuntimeToken(),
+    });
+    const prepared = await preparePortableState({
+      stateDir: portableStateDirFor(opts.userDataDir, store.token),
+      sourceDir:
+        opts.legacyStateUserDataDir && opts.legacyStateUserDataDir !== opts.userDataDir
+          ? portableStateDirFor(opts.legacyStateUserDataDir, store.token)
+          : undefined,
+      token: store.token,
+      workspacePath: portableWorkspacePath,
+    });
+    previousStateDir = prepared.previousStateDir;
+  }
   const { token, stateDir } = ensureStateConfig(opts.userDataDir, stateUserDataDir, portableWorkspacePath);
   const retainedGateways = current.gateways.filter((gateway) => !isLegacyEmptyLocalGateway(gateway));
   const existing = retainedGateways.find((g) => g.id === LOCAL_GATEWAY_ID);
@@ -529,8 +565,22 @@ export async function ensureClientGatewayEntry(opts: {
 
   const drifted = Boolean(existing && existing.token !== undefined && existing.token !== token);
   const gateways = mergeGatewayEntry(retainedGateways, entry);
+  let bundledSkillRecords = current.bundledSkillRecords;
+  if (previousStateDir && bundledSkillRecords) {
+    const oldSkillsDir = path.join(previousStateDir, 'skills');
+    const newSkillsDir = path.join(stateDir, 'skills');
+    if (oldSkillsDir !== newSkillsDir && Object.hasOwn(bundledSkillRecords, oldSkillsDir)) {
+      bundledSkillRecords = {
+        ...bundledSkillRecords,
+        [newSkillsDir]: bundledSkillRecords[newSkillsDir] ?? bundledSkillRecords[oldSkillsDir]!,
+      };
+      delete bundledSkillRecords[oldSkillsDir];
+    }
+  }
   const changed =
-    JSON.stringify(gateways) !== JSON.stringify(current.gateways) || current.defaultGatewayId !== defaultGatewayId;
+    JSON.stringify(gateways) !== JSON.stringify(current.gateways) ||
+    current.defaultGatewayId !== defaultGatewayId ||
+    bundledSkillRecords !== current.bundledSkillRecords;
 
   if (!changed) {
     return { token, changed: false, drifted: false, stateDir };
@@ -539,6 +589,7 @@ export async function ensureClientGatewayEntry(opts: {
   updateConfig({
     gateways,
     defaultGatewayId,
+    ...(bundledSkillRecords ? { bundledSkillRecords } : {}),
   });
 
   if (drifted) {

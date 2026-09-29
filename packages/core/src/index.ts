@@ -179,6 +179,7 @@ export {
   parseIdentityMd,
   extractDescription,
   serializeIdentityMd,
+  withIdentityName,
 } from './services/team-parser.js';
 export { installTeam } from './services/team-installer.js';
 export type { InstallerDeps } from './services/team-installer.js';

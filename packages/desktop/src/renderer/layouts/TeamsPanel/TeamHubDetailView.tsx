@@ -56,10 +56,11 @@ export default function TeamHubDetailView({ entry, onBack }: TeamHubDetailViewPr
     [teamsMap, entry.slug],
   );
 
-  const { phase, installEvents, error, install } = useTeamHubInstall(() => {
-    loadTeams();
-    toast.success(t('teamshub.installSuccess'));
-  });
+  const { phase, installEvents, error, install } = useTeamHubInstall(loadTeams);
+
+  useEffect(() => {
+    if (phase === 'done') toast.success(t('teamshub.installSuccess'));
+  }, [phase, t]);
 
   useEffect(() => {
     if (gatewayId && gateways.some((gateway) => gateway.id === gatewayId)) return;
@@ -147,6 +148,7 @@ export default function TeamHubDetailView({ entry, onBack }: TeamHubDetailViewPr
       const skills = files ? extractSkillSlugs(files) : [];
       return {
         uid: crypto.randomUUID(),
+        id: a.id,
         name: a.name,
         description: '',
         role: a.role,
@@ -163,7 +165,7 @@ export default function TeamHubDetailView({ entry, onBack }: TeamHubDetailViewPr
     install(entry, gatewayId);
   }, [install, entry, gatewayId, phase]);
 
-  const showProgress = phase === 'downloading' || phase === 'installing' || phase === 'done' || phase === 'error';
+  const showProgress = phase !== 'idle';
 
   return (
     <div className="flex h-full flex-col">
@@ -178,9 +180,11 @@ export default function TeamHubDetailView({ entry, onBack }: TeamHubDetailViewPr
           <span className="titlebar-no-drag type-meta text-[var(--text-muted)]">
             {phase === 'done'
               ? t('teamshub.installed')
-              : phase === 'error'
-                ? t('teams.wizard.installError')
-                : t('teams.wizard.installing')}
+              : phase === 'degraded'
+                ? t('teams.wizard.installDegraded')
+                : phase === 'error'
+                  ? t('teams.wizard.installError')
+                  : t('teams.wizard.installing')}
           </span>
         )}
       </header>
@@ -193,8 +197,8 @@ export default function TeamHubDetailView({ entry, onBack }: TeamHubDetailViewPr
             status={
               phase === 'downloading'
                 ? 'installing'
-                : phase === 'done'
-                  ? 'done'
+                : phase === 'done' || phase === 'degraded'
+                  ? phase
                   : phase === 'error'
                     ? 'error'
                     : 'installing'

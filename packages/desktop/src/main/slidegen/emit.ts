@@ -44,9 +44,11 @@ export type Shape =
       w: number;
       h: number;
       fill: string;
+      fillTransparency?: number;
       radius: number;
       borderWidth: number;
       borderColor: string | null;
+      borderTransparency?: number;
       gradient: GradientSpec | null;
     }
   | { kind: 'image'; id: number; x: number; y: number; w: number; h: number; src: string }
@@ -59,8 +61,12 @@ export type Shape =
       h: number;
       text: string;
       fontSize: number;
+      fontFace?: string;
+      lineSpacing?: number;
+      italic?: boolean;
       bold: boolean;
       color: string;
+      transparency?: number;
       align: 'left' | 'center' | 'right';
       letterSpacing: number;
       wrap: boolean;
@@ -76,6 +82,14 @@ export function hexOf(color: string | undefined): string | null {
     .map((n) => Math.round(Number(n)).toString(16).padStart(2, '0'))
     .join('')
     .toUpperCase();
+}
+
+/** Computed CSS alpha must survive conversion to native DrawingML transparency. */
+function transparencyOf(color: string): number | undefined {
+  const alpha = /^rgba\([\d.]+,\s*[\d.]+,\s*[\d.]+,\s*([\d.]+)\)$/.exec(color.trim())?.[1];
+  if (alpha === undefined) return undefined;
+  const transparency = Math.round((1 - Math.max(0, Math.min(1, Number(alpha)))) * 100000) / 1000;
+  return transparency > 0 ? transparency : undefined;
 }
 
 /**
@@ -160,10 +174,16 @@ export function toShapes(elements: readonly MeasuredElement[]): Shape[] {
         id: e.id,
         ...geo,
         fill,
+        ...(solid && transparencyOf(e.background) !== undefined
+          ? { fillTransparency: transparencyOf(e.background) }
+          : {}),
         gradient: solid ? null : gradient,
         radius: Math.min(e.borderRadius, Math.min(e.w, e.h) / 2),
         borderWidth: e.borderWidth,
         borderColor: e.borderWidth > 0 ? hexOf(e.borderColor) : null,
+        ...(e.borderWidth > 0 && transparencyOf(e.borderColor) !== undefined
+          ? { borderTransparency: transparencyOf(e.borderColor) }
+          : {}),
       });
       continue;
     }
@@ -177,8 +197,16 @@ export function toShapes(elements: readonly MeasuredElement[]): Shape[] {
       ...geo,
       text: e.text,
       fontSize: e.fontSize * PT_PER_PX,
+      fontFace:
+        e.fontFamily
+          ?.split(',')[0]
+          ?.trim()
+          .replace(/^["']|["']$/g, '') || 'Microsoft YaHei',
+      lineSpacing: e.lineHeight && Number.isFinite(e.lineHeight) ? e.lineHeight * PT_PER_PX : undefined,
+      italic: e.fontStyle === 'italic' || e.fontStyle === 'oblique',
       bold: e.fontWeight === 'bold' || Number(e.fontWeight) >= 600,
       color: solid ?? (gradient ? midColor(gradient) : 'FFFFFF'),
+      ...(!gradient && transparencyOf(e.color) !== undefined ? { transparency: transparencyOf(e.color) } : {}),
       align: e.textAlign === 'center' ? 'center' : e.textAlign === 'right' ? 'right' : 'left',
       letterSpacing: e.letterSpacing * PT_PER_PX,
       // ⭐ 单行 ⇒ 关掉折行。框宽是**量出来的紧贴宽度**，PowerPoint 的字宽差一点点就会折
@@ -274,11 +302,11 @@ function emitPage(pptx: PptxGenJS, page: SlidePage, assetsRoot: string | null, g
       if (s.gradient) gradients.push(s.gradient);
       slide.addShape(s.radius > 0 ? pptx.ShapeType.roundRect : pptx.ShapeType.rect, {
         ...box,
-        fill: { color: s.fill },
+        fill: { color: s.fill, transparency: s.fillTransparency },
         line:
           s.borderWidth > 0 && s.borderColor
-            ? { color: s.borderColor, width: s.borderWidth * PT_PER_PX }
-            : { color: s.fill, width: 0 },
+            ? { color: s.borderColor, width: s.borderWidth * PT_PER_PX, transparency: s.borderTransparency }
+            : { color: s.fill, width: 0, transparency: 100 },
         ...(s.radius > 0 ? { rectRadius: inOf(s.radius) } : {}),
       });
       continue;
@@ -288,7 +316,9 @@ function emitPage(pptx: PptxGenJS, page: SlidePage, assetsRoot: string | null, g
       ...box,
       fontSize: s.fontSize,
       bold: s.bold,
-      fontFace: 'Microsoft YaHei',
+      fontFace: s.fontFace || 'Microsoft YaHei',
+      lineSpacing: s.lineSpacing,
+      italic: s.italic,
       align: s.align,
       valign: 'top' as const,
       charSpacing: s.letterSpacing,
@@ -307,6 +337,6 @@ function emitPage(pptx: PptxGenJS, page: SlidePage, assetsRoot: string | null, g
       slide.addText(runs, shared);
       continue;
     }
-    slide.addText(s.text, { ...shared, color: s.color });
+    slide.addText(s.text, { ...shared, color: s.color, transparency: s.transparency });
   }
 }

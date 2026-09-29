@@ -724,7 +724,7 @@ describe('源码契约：失败路径不许 app.quit()', () => {
     );
   });
 
-  it('盘上 userData 覆盖前保存本机运行时缓存根，并明确传给 bootstrap', () => {
+  it('keeps disposable runtime code local while persistent state follows effective portable userData', () => {
     const override = code.indexOf('applyUserDataOverride({');
     const capture = code.indexOf("const localUserDataDir = app.getPath('userData');");
     const portable = code.indexOf('applyPortableAppData({');
@@ -746,8 +746,16 @@ describe('源码契约：失败路径不许 app.quit()', () => {
     expect(code.slice(bootstrapStart, bootstrapEnd), 'bootstrap 没有收到本机运行时缓存根').toContain(
       'runtimeCacheUserDataDir',
     );
-    expect(code.slice(bootstrapStart, bootstrapEnd), 'OpenClaw state 没有使用短的本机根目录').toContain(
-      'stateCacheUserDataDir: localUserDataDir',
+    const bootstrapRegion = code.slice(bootstrapStart, bootstrapEnd);
+    expect(bootstrapRegion, 'Persistent OpenClaw state must follow effective portable userData').toContain(
+      "stateCacheUserDataDir: app.getPath('userData')",
+    );
+    expect(bootstrapRegion, 'Local state may only be used as a portable migration source').toContain(
+      'legacyStateUserDataDir: portableAppData.target ? localUserDataDir : undefined',
+    );
+    expect(bootstrapRegion).not.toContain('stateCacheUserDataDir: localUserDataDir');
+    expect(bootstrapRegion, 'The managed agent workspace must follow the selected portable workspace').toContain(
+      'portableWorkspacePath: workspace.portable ? wsPath : undefined',
     );
   });
 

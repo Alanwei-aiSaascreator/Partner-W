@@ -77,7 +77,12 @@ export function extractSlidegenBlocks(content: string): SlidegenExtraction {
         failure:
           error instanceof SlideDslError && error.code === 'dsl-unknown-tag'
             ? { code: 'slidegen-unknown-tag', tag: error.message.replace(/^unknown tag <|>$/g, '') }
-            : { code: 'slidegen-unparsable' },
+            : {
+                code: 'slidegen-unparsable',
+                ...(error instanceof SlideDslError
+                  ? { diagnostic: { code: error.code, offset: error.offset, detail: error.message } }
+                  : {}),
+              },
         detail,
       });
       continue;

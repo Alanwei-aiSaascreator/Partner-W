@@ -1,6 +1,6 @@
 {
   "name": "@clawwork/desktop",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "private": true,
   "description": "荣盈魔方 AI 桌面工作台",
   "type": "module",
@@ -37,6 +37,7 @@
     "@radix-ui/react-tabs": "^1.1.13",
     "@radix-ui/react-tooltip": "^1.2.8",
     "@supabase/supabase-js": "^2.116.0",
+    "acorn": "8.16.0",
     "better-sqlite3": "^12.6.2",
     "builder-util-runtime": "9.5.1",
     "class-variance-authority": "^0.7.1",

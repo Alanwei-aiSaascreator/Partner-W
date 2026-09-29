@@ -83,6 +83,13 @@ export function extractIdentityBody(agentMd: string): string {
   return parseIdentityMd(agentMd).body;
 }
 
+export function withIdentityName(raw: string, name: string): string {
+  const parsed = parseIdentityMd(raw);
+  const line = `- Name: ${name.replace(/\s+/g, ' ').trim()}`;
+  const body = [parsed.body, line].filter(Boolean).join('\n\n');
+  return serializeIdentityMd(parsed.description, body, raw);
+}
+
 const FM_DESC_LINE_RE = /^description:\s*.*/m;
 
 export function serializeIdentityMd(description: string | undefined, body: string, existingRaw?: string): string {

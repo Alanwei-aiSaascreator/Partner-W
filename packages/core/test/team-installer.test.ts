@@ -24,6 +24,7 @@ function makeDeps(overrides?: Partial<InstallerDeps>): InstallerDeps {
       ok: true,
       result: { agentId: `agent-${++agentCounter}`, name: 'x', workspace: '/w' },
     })),
+    updateAgent: vi.fn().mockResolvedValue({ ok: true }),
     deleteAgent: vi.fn().mockResolvedValue({ ok: true }),
     setAgentFile: vi.fn().mockResolvedValue({ ok: true }),
     installSkill: vi
@@ -51,6 +52,60 @@ async function collect(gen: AsyncGenerator<InstallEvent>): Promise<InstallEvent[
 }
 
 describe('installTeam', () => {
+  it('creates through the legacy name field using ids and isolated workspaces', async () => {
+    const deps = makeDeps();
+    await collect(installTeam(makeParsed(), {}, 'gw-1', 'D:\\workspace', deps));
+
+    expect(deps.createAgent).toHaveBeenNthCalledWith(1, { name: 'manager', workspace: 'D:\\workspace\\manager' });
+    expect(deps.createAgent).toHaveBeenNthCalledWith(2, { name: 'dev', workspace: 'D:\\workspace\\dev' });
+  });
+
+  it.each(['../outside', '', 'Uppercase', undefined, null])(
+    'rejects unsafe or noncanonical team ids before mutation: %s',
+    async (id) => {
+      const deps = makeDeps();
+      const parsed = makeParsed();
+      Object.assign(parsed.agents[0], { id });
+      const events = await collect(installTeam(parsed, {}, 'gw-1', '/w', deps));
+
+      expect(deps.createAgent).not.toHaveBeenCalled();
+      expect(events.map((event) => event.type)).toContain('error');
+    },
+  );
+
+  it('rejects duplicate ids before creating or overwriting any agent', async () => {
+    const deps = makeDeps();
+    const parsed = makeParsed();
+    parsed.agents[1].id = parsed.agents[0].id;
+    const events = await collect(installTeam(parsed, {}, 'gw-1', '/w', deps));
+
+    expect(deps.createAgent).not.toHaveBeenCalled();
+    expect(events.map((event) => event.type)).toContain('error');
+  });
+
+  it('restores the display name through agents.update after the identity body is written', async () => {
+    const updateAgent = vi.fn().mockResolvedValue({ ok: true });
+    const deps = { ...makeDeps(), updateAgent };
+    const content = '---\ndescription: "Role description"\n---\n\nCustom identity body';
+    await collect(installTeam(makeParsed(), { manager: { agentMd: content } }, 'gw-1', '/w', deps));
+
+    expect(deps.setAgentFile).toHaveBeenCalledWith('agent-1', 'IDENTITY.md', `${content}\n\n- Name: Manager`);
+    expect(updateAgent).toHaveBeenNthCalledWith(1, { agentId: 'agent-1', name: 'Manager' });
+    expect(updateAgent).toHaveBeenNthCalledWith(2, { agentId: 'agent-2', name: 'Developer' });
+    expect(updateAgent.mock.invocationCallOrder[0]).toBeGreaterThan(
+      vi.mocked(deps.setAgentFile).mock.invocationCallOrder[0],
+    );
+  });
+
+  it('rolls back newly created agents when restoring the display name fails', async () => {
+    const deps = { ...makeDeps(), updateAgent: vi.fn().mockResolvedValue({ ok: false, error: 'name rejected' }) };
+    const events = await collect(installTeam(makeParsed(), {}, 'gw-1', '/w', deps));
+
+    expect(events.find((event) => event.type === 'error')?.message).toContain('name rejected');
+    expect(deps.persistTeam).not.toHaveBeenCalled();
+    expect(deps.deleteAgent).toHaveBeenCalledWith({ agentId: 'agent-1' });
+  });
+
   it('installs a team successfully with no files', async () => {
     const parsed = makeParsed();
     const deps = makeDeps();
@@ -83,12 +138,54 @@ describe('installTeam', () => {
     const events = await collect(installTeam(parsed, files, 'gw-1', '/w', deps));
 
     expect(deps.setAgentFile).toHaveBeenCalledTimes(2);
-    expect(deps.setAgentFile).toHaveBeenCalledWith('agent-1', 'IDENTITY.md', '# Manager');
+    expect(deps.setAgentFile).toHaveBeenCalledWith('agent-1', 'IDENTITY.md', '# Manager\n\n- Name: Manager');
     expect(deps.setAgentFile).toHaveBeenCalledWith('agent-1', 'SOUL.md', '# Soul');
 
     const types = events.map((e) => e.type);
     expect(types).toContain('file_setting');
     expect(types).toContain('file_set');
+  });
+
+  it.each(['agentMd', 'soulMd'] as const)('fails closed when required %s cannot be written', async (fileKey) => {
+    const deps = makeDeps({ setAgentFile: vi.fn().mockResolvedValue({ ok: false, error: 'disk read-only' }) });
+    const events = await collect(
+      installTeam(makeParsed(), { manager: { [fileKey]: 'Required identity' } }, 'gw-1', '/w', deps),
+    );
+    expect(events.some((event) => event.type === 'error' && event.message?.includes('disk read-only'))).toBe(true);
+    expect(events.some((event) => event.type === 'done')).toBe(false);
+    expect(deps.persistTeam).not.toHaveBeenCalled();
+    expect(deps.deleteAgent).toHaveBeenCalledWith({ agentId: 'agent-1' });
+  });
+
+  it('persists only installed optional skills and keeps failed installs as visible warnings', async () => {
+    const deps = makeDeps({
+      installSkill: vi
+        .fn()
+        .mockResolvedValueOnce({ ok: false, error: 'not found' })
+        .mockResolvedValueOnce({ ok: true }),
+    });
+    const files = {
+      dev: {
+        skillsJson: JSON.stringify({
+          skills: {
+            missing: { sourceType: 'clawhub' },
+            ready: { sourceType: 'clawhub' },
+            local: { sourceType: 'local' },
+          },
+        }),
+      },
+    };
+    const events = await collect(installTeam(makeParsed(), files, 'gw-1', '/w', deps));
+    expect(deps.persistTeam).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agents: expect.arrayContaining([expect.objectContaining({ agentId: 'agent-2', skills: ['ready'] })]),
+      }),
+    );
+    expect(events.filter((event) => event.type === 'warning').map((event) => event.skillId)).toEqual([
+      'missing',
+      'local',
+    ]);
+    expect(deps.deleteAgent).not.toHaveBeenCalled();
   });
 
   it('installs skills from skills.json', async () => {
@@ -105,7 +202,7 @@ describe('installTeam', () => {
     const events = await collect(installTeam(parsed, files, 'gw-1', '/w', deps));
 
     expect(deps.installSkill).toHaveBeenCalledTimes(1);
-    expect(deps.installSkill).toHaveBeenCalledWith({ source: 'clawhub', slug: 'web-search' });
+    expect(deps.installSkill).toHaveBeenCalledWith({ agentId: 'agent-2', source: 'clawhub', slug: 'web-search' });
 
     const types = events.map((e) => e.type);
     expect(types).toContain('skill_installing');
@@ -146,7 +243,12 @@ describe('installTeam', () => {
     expect(warnings[0].message).toContain('quota exceeded');
 
     const types = events.map((e) => e.type);
-    expect(types).toContain('done');
+    expect(types).not.toContain('done');
+    expect(events.at(-1)).toMatchObject({
+      type: 'degraded',
+      summary: { agentsSucceeded: 1, agentsFailed: 1, skillsSucceeded: 0, skillsFailed: 0 },
+    });
+    expect(deps.deleteAgent).not.toHaveBeenCalled();
 
     const persistCall = (deps.persistTeam as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(persistCall.agents).toHaveLength(1);
@@ -172,7 +274,12 @@ describe('installTeam', () => {
     expect(warning).toBeTruthy();
     expect(warning!.message).toContain('not found');
 
-    expect(events.map((e) => e.type)).toContain('done');
+    expect(events.map((e) => e.type)).not.toContain('done');
+    expect(events.at(-1)).toMatchObject({
+      type: 'degraded',
+      summary: { agentsSucceeded: 2, agentsFailed: 0, skillsSucceeded: 0, skillsFailed: 1 },
+    });
+    expect(deps.deleteAgent).not.toHaveBeenCalled();
   });
 
   it('rolls back and errors when all agents fail', async () => {
@@ -219,9 +326,13 @@ describe('installTeam', () => {
     });
     const events = await collect(installTeam(parsed, files, 'gw-1', '/w', deps));
 
-    expect(deps.setAgentFile).toHaveBeenCalledWith('existing-1', 'IDENTITY.md', '# Manager Identity');
+    expect(deps.setAgentFile).toHaveBeenCalledWith(
+      'existing-1',
+      'IDENTITY.md',
+      '# Manager Identity\n\n- Name: Manager',
+    );
     expect(deps.setAgentFile).toHaveBeenCalledWith('existing-1', 'SOUL.md', '# Manager Soul');
-    expect(deps.setAgentFile).toHaveBeenCalledWith('existing-2', 'IDENTITY.md', '# Dev Identity');
+    expect(deps.setAgentFile).toHaveBeenCalledWith('existing-2', 'IDENTITY.md', '# Dev Identity\n\n- Name: Developer');
     expect(deps.setAgentFile).toHaveBeenCalledTimes(3);
 
     expect(deps.deleteAgent).not.toHaveBeenCalled();

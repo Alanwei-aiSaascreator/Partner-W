@@ -74,7 +74,7 @@ import StartupReadinessPanel from './StartupReadinessPanel';
 import GoalRecommendationPanel from '@/features/goal-routing/GoalRecommendationPanel';
 import { useGoalAnalysis } from '@/features/goal-routing/useGoalAnalysis';
 import type { CustomGoalAnalysis } from '@/features/goal-routing/goal-analysis';
-import { createAgentWithRollback } from '@/lib/agent-builder';
+import { createAgentWithRollback, deriveAgentCreationId } from '@/lib/agent-builder';
 import { checkInstallWorkspace } from '@/lib/install-workspace';
 import { fetchAgentsForGateway } from '@/hooks/useGatewayBootstrap';
 import { useSelectRecommendedAssistant } from '@/hooks/useSelectRecommendedAssistant';
@@ -702,12 +702,7 @@ export function ChatContent({
       const actionGatewayId = defaultGatewayId;
       if (!actionGatewayId) return;
       const existingAgents = useUiStore.getState().agentCatalogByGateway[actionGatewayId]?.agents;
-      const slug = analysis.draft.name
-        .toLowerCase()
-        .replace(/[^a-z0-9\s-]/g, '')
-        .replace(/\s+/g, '-')
-        .replace(/-+/g, '-')
-        .replace(/^-|-$/g, '');
+      const slug = deriveAgentCreationId(analysis.draft.name, existingAgents);
       // ⚠️ 不许再用 `workspaceRoot ? ... : slug`（2026-09-20，T-a28 同族）：拿不到工作区时
       //    发出去的是**相对路径**，而 `agents.create` 由另一个进程按自己的 cwd 解析 ⇒
       //    助手文件落在谁也没预期的地方，界面还不报错。判据与模板/团队安装、创建向导同一份。
@@ -716,7 +711,7 @@ export function ChatContent({
         toast.error(wsCheck.message);
         return;
       }
-      const workspace = `${wsCheck.path}/${slug || 'custom-assistant'}`;
+      const workspace = `${wsCheck.path}/${slug}`;
       const identityContent = serializeIdentityMd(
         analysis.draft.description,
         `${analysis.draft.identity}\n\n## Boundaries\n\n${analysis.draft.boundaries}`,

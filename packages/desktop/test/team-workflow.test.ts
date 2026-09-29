@@ -23,6 +23,7 @@ describe('reliable single-agent team workflow', () => {
     expect(prompt).toContain('sessions_send');
     expect(prompt).toContain('单 Agent 可靠模式');
     expect(prompt).toContain('不是多 Agent 并发');
+    expect(prompt).toContain('角色阶段，不是不同智能体分别执行');
     expect(prompt).toContain('不要说“没挂其他 Agent，所以不是团队”');
     expect(prompt).toContain('不要停下来询问用户是否同意换路线');
   });

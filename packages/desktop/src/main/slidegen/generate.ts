@@ -61,10 +61,16 @@ export function failureFromError(error: unknown): SlidegenFailure {
       case 'dsl-unknown-tag':
         return { code: 'slidegen-unknown-tag', tag: error.message.replace(/^unknown tag <|>$/g, '') };
       case 'dsl-eval-failed':
-        return { code: 'slidegen-eval-failed' };
+        return { code: 'slidegen-eval-failed', diagnostic: { code: error.code, detail: error.message } };
       case 'dsl-unparsable':
       case 'dsl-no-root':
-        return { code: 'slidegen-unparsable' };
+      case 'dsl-close-mismatch':
+      case 'dsl-stray-close':
+      case 'dsl-text-outside-text':
+        return {
+          code: 'slidegen-unparsable',
+          diagnostic: { code: error.code, offset: error.offset, detail: error.message },
+        };
       default:
         return { code: 'slidegen-render-failed' };
     }

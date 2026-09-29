@@ -115,6 +115,9 @@ importers:
       '@supabase/supabase-js':
         specifier: ^2.116.0
         version: 2.116.0
+      acorn:
+        specifier: 8.16.0
+        version: 8.16.0
       better-sqlite3:
         specifier: ^12.6.2
         version: 12.6.2

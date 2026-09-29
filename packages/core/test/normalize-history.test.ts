@@ -7,6 +7,33 @@ import {
 import type { RawHistoryMessage } from '../src/protocol/types';
 
 describe('normalizeAssistantTurns', () => {
+  it('keeps the result timestamp without treating the assistant message time as a tool start', () => {
+    const [turn] = normalizeAssistantTurns([
+      { role: 'assistant', timestamp: 1000, content: [{ type: 'toolCall', id: 't1', name: 'agents_list' }] },
+      { role: 'toolResult', timestamp: 25000, content: [{ type: 'toolResult', id: 't1', result: 'ok' }] },
+    ]);
+    expect(turn.timestamp).toBe('1970-01-01T00:00:01.000Z');
+    expect(turn.toolCalls[0].startedAt).toBe('');
+    expect(turn.toolCalls[0].completedAt).toBe('1970-01-01T00:00:25.000Z');
+  });
+
+  it.each([
+    [0, '1970-01-01T00:00:00.000Z'],
+    [Number.NaN, undefined],
+    [Number.POSITIVE_INFINITY, undefined],
+    [Number.NEGATIVE_INFINITY, undefined],
+    [8_640_000_000_000_001, undefined],
+    [undefined, undefined],
+  ])('handles the tool result timestamp %s without fabricating a completion', (timestamp, expected) => {
+    const [turn] = normalizeAssistantTurns([
+      { role: 'assistant', timestamp: 1000, content: [{ type: 'toolCall', id: 't1', name: 'exec' }] },
+      { role: 'toolResult', timestamp, content: [{ type: 'toolResult', id: 't1', result: 'ok' }] },
+    ]);
+    expect(turn.timestamp).toBe('1970-01-01T00:00:01.000Z');
+    expect(turn.toolCalls[0].completedAt).toBe(expected);
+    expect(turn.toolCalls[0].status).toBe('done');
+  });
+
   it('deduplicates repeated raw history messages within one payload', () => {
     const rawMsgs: RawHistoryMessage[] = [
       { role: 'user', timestamp: 1000, content: [{ type: 'text', text: '/model_usage' }] },

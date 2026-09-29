@@ -14,10 +14,8 @@ import { WORKSPACE_UNAVAILABLE_MESSAGE, checkInstallWorkspaceCapability } from '
 import { relayModelsFrom } from '@/components/ChatInput/model-families';
 import { resolveTeamModelRef } from '@/lib/team-model-ref';
 import { useUiStore } from '@/stores/uiStore';
-import { toSlug } from './utils';
-import type { TeamInfo, AgentDraft } from './types';
-
-type InstallStatus = 'idle' | 'installing' | 'done' | 'error';
+import { toSlug, withAgentIds } from './utils';
+import type { TeamInfo, AgentDraft, InstallStatus } from './types';
 
 type TeamModelResolution = { ok: true; models: Map<string, string> } | { ok: false; message: string };
 
@@ -25,7 +23,10 @@ type TeamModelResolution = { ok: true; models: Map<string, string> } | { ok: fal
  * 显式选了模型就必须把它解析成当前可用的国内中转模型；解析失败不能悄悄退回网关默认值。
  * 否则界面会说“团队安装成功”，真正对话时却由另一个模型执行，属于结果造假而非降级。
  */
-function resolveRequestedTeamModels(agents: AgentDraft[], availableModels: ModelCatalogEntry[]): TeamModelResolution {
+function resolveRequestedTeamModels(
+  agents: Array<AgentDraft & { id: string }>,
+  availableModels: ModelCatalogEntry[],
+): TeamModelResolution {
   const models = new Map<string, string>();
   for (const agent of agents) {
     const requested = agent.model.trim();
@@ -38,7 +39,7 @@ function resolveRequestedTeamModels(agents: AgentDraft[], availableModels: Model
         message: `助手“${name}”选择的模型“${requested}”当前不可用，请选择可用的国内模型后重试。`,
       };
     }
-    models.set(toSlug(agent.name), resolved);
+    models.set(agent.id, resolved);
   }
   return { ok: true, models };
 }
@@ -85,9 +86,10 @@ export async function finishTeamInstall(input: {
   setStatus: (status: InstallStatus) => void;
   onDone?: (() => void) | undefined;
   refresh?: (gatewayId: string) => Promise<void>;
+  terminalStatus?: 'done' | 'degraded';
 }): Promise<void> {
   await (input.refresh ?? refreshAgentCatalog)(input.gatewayId);
-  input.setStatus('done');
+  input.setStatus(input.terminalStatus ?? 'done');
   input.onDone?.();
 }
 
@@ -104,19 +106,20 @@ export function useTeamInstall(onDone?: () => void) {
   const runInstall = useCallback(
     async (
       teamInfo: TeamInfo,
-      agents: AgentDraft[],
+      agentDrafts: AgentDraft[],
       editContext?: { teamId: string; createdAt: string },
       hubMeta?: { slug: string },
     ) => {
       setInstallStatus('installing');
       setInstallEvents([]);
 
+      const agents = withAgentIds(agentDrafts);
       const parsed = {
         name: teamInfo.name.trim(),
         description: teamInfo.description.trim(),
         version: '1.0.0',
         agents: agents.map((a) => ({
-          id: toSlug(a.name),
+          id: a.id,
           name: a.name.trim(),
           role: a.role,
           position: a.position,
@@ -129,14 +132,14 @@ export function useTeamInstall(onDone?: () => void) {
       const fallbackAgentIds = new Set<string>();
       for (const a of agents) {
         if (a.existingAgentId) {
-          existingMap.set(toSlug(a.name), a.existingAgentId);
+          existingMap.set(a.id, a.existingAgentId);
           existingAgentIds.add(a.existingAgentId);
         }
       }
 
       const agentFiles: Record<string, { agentMd?: string; soulMd?: string; skillsJson?: string }> = {};
       for (const a of agents) {
-        const slug = toSlug(a.name);
+        const slug = a.id;
         const files: { agentMd?: string; soulMd?: string; skillsJson?: string } = {};
         if (!a.existingAgentId) {
           const identity = serializeIdentityMd(a.description, a.agentMd.trim());
@@ -172,7 +175,7 @@ export function useTeamInstall(onDone?: () => void) {
       let cachedGatewayAgents: AgentInfo[] | null = null;
       const deps: InstallerDeps = {
         createAgent: async (params) => {
-          const slug = toSlug(params.name);
+          const slug = params.name;
           const existingId = existingMap.get(slug);
           if (existingId) {
             return { ok: true, result: { agentId: existingId, name: params.name, workspace: '' } };
@@ -207,6 +210,11 @@ export function useTeamInstall(onDone?: () => void) {
           }
           const r = res.result as Record<string, unknown>;
           return { ok: true, result: r as unknown as AgentCreateResponse };
+        },
+        updateAgent: (params) => {
+          if (existingAgentIds.has(params.agentId) || fallbackAgentIds.has(params.agentId))
+            return Promise.resolve({ ok: true } as IpcResult);
+          return window.clawwork.updateAgent(gwId, params);
         },
         deleteAgent: (params) => {
           if (existingAgentIds.has(params.agentId) || fallbackAgentIds.has(params.agentId))
@@ -285,13 +293,18 @@ export function useTeamInstall(onDone?: () => void) {
             setInstallStatus('error');
             return;
           }
-          if (event.type === 'done') {
+          if (event.type === 'done' || event.type === 'degraded') {
             // ⚠️ 三步的顺序是承重的，见 `finishTeamInstall` 的说明（目录陈旧 ⇒ 紧接着的
             //    「发起对话」会被静默换成 main）。
             // ⚠️⚠️ **收尾三步只许出现在 `finishTeamInstall` 里**。把它内联回这里并提前
             //    调一次 `setInstallStatus('done')`，现在**会被 `runInstall` 那条用例红掉**
             //    （它在 `act` 作用域之后读状态）；保持走缝只是更省事，不是"测试看不见"。
-            await finishTeamInstall({ gatewayId: teamInfo.gatewayId, setStatus: setInstallStatus, onDone });
+            await finishTeamInstall({
+              gatewayId: teamInfo.gatewayId,
+              setStatus: setInstallStatus,
+              onDone,
+              terminalStatus: event.type,
+            });
             return;
           }
         }
@@ -310,10 +323,11 @@ export function useTeamInstall(onDone?: () => void) {
   );
 
   const runUpdate = useCallback(
-    async (teamId: string, createdAt: string, teamInfo: TeamInfo, agents: AgentDraft[]) => {
+    async (teamId: string, createdAt: string, teamInfo: TeamInfo, agentDrafts: AgentDraft[]) => {
       setInstallStatus('installing');
       setInstallEvents([]);
 
+      const agents = withAgentIds(agentDrafts);
       try {
         const gwId = teamInfo.gatewayId;
         const availableModels = relayModelsFrom(modelCatalogByGateway[gwId] ?? []).filter(
@@ -327,7 +341,7 @@ export function useTeamInstall(onDone?: () => void) {
         }
         for (const agent of agents) {
           if (!agent.existingAgentId) continue;
-          const model = modelResolution.models.get(toSlug(agent.name));
+          const model = modelResolution.models.get(agent.id);
           if (!model) continue;
           const update = await window.clawwork.updateAgent(gwId, { agentId: agent.existingAgentId, model });
           if (!update.ok) {
@@ -336,16 +350,27 @@ export function useTeamInstall(onDone?: () => void) {
             return;
           }
         }
-        const skillPromises = agents.flatMap((a) =>
-          a.skills.length > 0 && a.existingAgentId
-            ? a.skills.map((slug) =>
-                window.clawwork
-                  .installSkill(gwId, { source: 'clawhub', slug })
-                  .catch((err) => console.error(`Failed to install skill ${slug}`, err)),
-              )
-            : [],
-        );
-        if (skillPromises.length > 0) await Promise.all(skillPromises);
+        for (const agent of agents) {
+          if (!agent.existingAgentId) continue;
+          for (const slug of agent.skills) {
+            const result = await window.clawwork
+              .installSkill(gwId, { agentId: agent.existingAgentId, source: 'clawhub', slug })
+              .catch((error: unknown) => ({
+                ok: false,
+                error: error instanceof Error ? error.message : String(error),
+              }));
+            if (!result.ok) {
+              setInstallEvents([
+                {
+                  type: 'error',
+                  message: `助手“${agent.name}”的技能“${slug}”安装失败，团队未保存本次修改。请检查技能来源和网络后重试：${result.error ?? 'unknown'}`,
+                },
+              ]);
+              setInstallStatus('error');
+              return;
+            }
+          }
+        }
 
         const teamAgents = agents.map((a) => ({
           agentId: a.existingAgentId!,

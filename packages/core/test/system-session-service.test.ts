@@ -33,6 +33,27 @@ function setup() {
 }
 
 describe('system session service', () => {
+  it.each(['returned', 'thrown'])(
+    'does not send on an unintended inherited model when model selection is %s failure',
+    async (mode) => {
+      const { service, gateway, storeApi, listeners } = setup();
+      if (mode === 'returned') gateway.patchSession.mockResolvedValue({ ok: false, error: 'model unavailable' });
+      else gateway.patchSession.mockRejectedValue(new Error('model unavailable'));
+      const result = await service.start({
+        gatewayId: 'gw-1',
+        agentId: 'main',
+        purpose: 'test',
+        model: 'clawrouter/domestic-model',
+        initialMessage: 'build team',
+      });
+      expect(result).toEqual({ ok: false, error: 'model unavailable' });
+      expect(gateway.sendMessage).not.toHaveBeenCalled();
+      expect(listeners.size).toBe(0);
+      expect(storeApi.getState().status).toBe('idle');
+      expect(gateway.deleteSession).toHaveBeenCalledOnce();
+    },
+  );
+
   beforeEach(() => {
     vi.restoreAllMocks();
   });
@@ -305,7 +326,7 @@ describe('system session 的模型选择', () => {
     expect(gateway.patchSession).not.toHaveBeenCalled();
   });
 
-  it('打补丁失败时照样继续（引导只是辅助，不能因此挡住向导）', async () => {
+  it('显式选定模型失败就停止，不偷偷退回继承模型', async () => {
     const { service, gateway, storeApi } = setup();
     gateway.patchSession.mockResolvedValueOnce({ ok: false, error: 'model not available' });
 
@@ -317,8 +338,8 @@ describe('system session 的模型选择', () => {
       initialMessage: 'hello',
     });
 
-    expect(res.ok).toBe(true);
-    expect(gateway.sendMessage).toHaveBeenCalledOnce();
-    expect(storeApi.getState().status).toBe('streaming');
+    expect(res).toEqual({ ok: false, error: 'model not available' });
+    expect(gateway.sendMessage).not.toHaveBeenCalled();
+    expect(storeApi.getState().status).toBe('idle');
   });
 });

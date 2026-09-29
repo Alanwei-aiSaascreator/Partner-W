@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ToolCall } from '@clawwork/shared';
-import { createMessageStore } from '../src/stores/message-store';
+import { createMessageStore, mergeCanonicalMessageWithActiveTurn } from '../src/stores/message-store';
 
 /**
  * 工具调用**跨帧合并**：一条工具调用的信息由**多条帧**拼出来，谁后到都不许把别人那半冲掉。
@@ -50,6 +50,68 @@ function upsert(store: ReturnType<typeof makeStore>, tc: Partial<ToolCall> & { i
 }
 
 describe('工具调用跨帧合并', () => {
+  it.each(['2026-09-29T14:39:00.000Z', '2026-09-29T14:40:01.164Z'])(
+    'preserves live tool timing when canonical message time is %s',
+    (historyTimestamp) => {
+      const store = makeStore();
+      upsert(store, {
+        id: 'c1',
+        startedAt: '2026-09-29T14:39:37.150Z',
+        completedAt: '2026-09-29T14:40:01.145Z',
+        status: 'done',
+      });
+      const merged = mergeCanonicalMessageWithActiveTurn(
+        {
+          id: 'm1',
+          taskId: TID,
+          role: 'assistant',
+          content: '',
+          artifacts: [],
+          timestamp: historyTimestamp,
+          toolCalls: [
+            {
+              id: 'c1',
+              name: 'agents_list',
+              status: 'done',
+              startedAt: historyTimestamp,
+              completedAt: '2026-09-29T14:40:01.164Z',
+            },
+          ],
+        },
+        store.getState().activeTurnBySession[SK],
+      );
+      expect(merged.toolCalls[0].startedAt).toBe('2026-09-29T14:39:37.150Z');
+      expect(merged.toolCalls[0].completedAt).toBe('2026-09-29T14:40:01.145Z');
+    },
+  );
+
+  it('does not fill a result-only live tool start with a canonical message timestamp', () => {
+    const store = makeStore();
+    upsert(store, { id: 'c1', startedAt: '', completedAt: '2026-09-29T14:40:01.145Z', status: 'done' });
+    const merged = mergeCanonicalMessageWithActiveTurn(
+      {
+        id: 'm1',
+        taskId: TID,
+        role: 'assistant',
+        content: '',
+        artifacts: [],
+        timestamp: '2026-09-29T14:39:00.000Z',
+        toolCalls: [{ id: 'c1', name: 'exec', status: 'done', startedAt: '2026-09-29T14:39:00.000Z' }],
+      },
+      store.getState().activeTurnBySession[SK],
+    );
+    expect(merged.toolCalls[0].startedAt).toBe('');
+    expect(merged.toolCalls[0].completedAt).toBe('2026-09-29T14:40:01.145Z');
+  });
+
+  it('迟到的真实起点可以补齐先收到result的未知起点', () => {
+    const store = makeStore();
+    upsert(store, { id: 'c1', startedAt: '', completedAt: '2026-09-19T00:00:24.000Z', status: 'done' });
+    upsert(store, { id: 'c1', startedAt: '2026-09-19T00:00:00.000Z' });
+    expect(stored(store, 'c1').startedAt).toBe('2026-09-19T00:00:00.000Z');
+    expect(stored(store, 'c1').status).toBe('done');
+  });
+
   it('⭐ update 帧（只有 partialResult）不许冲掉 start 带来的 args', () => {
     const store = makeStore();
 

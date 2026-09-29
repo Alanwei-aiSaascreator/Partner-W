@@ -6,6 +6,7 @@ import type {
   AgentCreateParams,
   AgentCreateResponse,
   AgentDeleteParams,
+  AgentUpdateParams,
   ConfigPatchParams,
   ConfigPatchResult,
   ConfigSnapshot,
@@ -14,10 +15,11 @@ import type {
   SkillInstallResult,
   TeamPosition,
 } from '@clawwork/shared';
-import { extractSkillSlugs } from './team-parser.js';
+import { extractSkillSlugs, withIdentityName } from './team-parser.js';
 
 export interface InstallerDeps {
   createAgent: (params: AgentCreateParams) => Promise<IpcResult<AgentCreateResponse>>;
+  updateAgent: (params: AgentUpdateParams) => Promise<IpcResult>;
   deleteAgent: (params: AgentDeleteParams) => Promise<IpcResult>;
   setAgentFile: (agentId: string, name: string, content: string) => Promise<IpcResult>;
   installSkill: (params: SkillInstallParams) => Promise<IpcResult<SkillInstallResult>>;
@@ -151,9 +153,18 @@ export async function* installTeam(
   deps: InstallerDeps,
   hubMeta?: { slug: string },
 ): AsyncGenerator<InstallEvent> {
+  if (
+    parsed.agents.some((agent) => typeof agent.id !== 'string' || !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(agent.id)) ||
+    new Set(parsed.agents.map((agent) => agent.id)).size !== parsed.agents.length
+  ) {
+    yield { type: 'error', message: 'Invalid team agent id' };
+    return;
+  }
   const createdAgentIds: string[] = [];
   const agentMap = new Map<string, string>();
   const skillsByAgent = new Map<string, SkillRef[]>();
+  const installedSkillsByAgent = new Map<string, string[]>();
+  let failedSkillCount = 0;
 
   let totalSteps = 1;
   for (const agent of parsed.agents) {
@@ -175,7 +186,9 @@ export async function* installTeam(
       progress: { current: step, total: totalSteps },
     };
 
-    const res = await deps.createAgent({ name: agent.name, workspace });
+    const separator = workspace.includes('\\') ? '\\' : '/';
+    const agentWorkspace = `${workspace.replace(/[\\/]+$/, '')}${separator}${agent.id}`;
+    const res = await deps.createAgent({ name: agent.id, workspace: agentWorkspace });
     let agentId: string | null = null;
     let newlyCreated = false;
     if (res.ok && res.result) {
@@ -186,6 +199,7 @@ export async function* installTeam(
       agentId = parseAlreadyExistsAgentId(res.error);
     }
     if (!agentId) {
+      failedSkillCount += skillsByAgent.get(agent.id)?.length ?? 0;
       yield {
         type: 'warning',
         agentSlug: agent.id,
@@ -203,10 +217,13 @@ export async function* installTeam(
     const files = agentFiles[agent.id];
     if (files?.agentMd) {
       yield { type: 'file_setting', agentSlug: agent.id, agentId, fileName: 'IDENTITY.md' };
-      const r = await deps.setAgentFile(agentId, 'IDENTITY.md', files.agentMd);
+      const r = await deps.setAgentFile(agentId, 'IDENTITY.md', withIdentityName(files.agentMd, agent.name));
       step++;
-      if (!r.ok) yield { type: 'warning', agentSlug: agent.id, message: `Failed to set IDENTITY.md: ${r.error}` };
-      else
+      if (!r.ok) {
+        yield* rollback(createdAgentIds, deps);
+        yield { type: 'error', agentSlug: agent.id, message: `Failed to set IDENTITY.md: ${r.error}` };
+        return;
+      } else
         yield {
           type: 'file_set',
           agentSlug: agent.id,
@@ -219,8 +236,11 @@ export async function* installTeam(
       yield { type: 'file_setting', agentSlug: agent.id, agentId, fileName: 'SOUL.md' };
       const r = await deps.setAgentFile(agentId, 'SOUL.md', files.soulMd);
       step++;
-      if (!r.ok) yield { type: 'warning', agentSlug: agent.id, message: `Failed to set SOUL.md: ${r.error}` };
-      else
+      if (!r.ok) {
+        yield* rollback(createdAgentIds, deps);
+        yield { type: 'error', agentSlug: agent.id, message: `Failed to set SOUL.md: ${r.error}` };
+        return;
+      } else
         yield {
           type: 'file_set',
           agentSlug: agent.id,
@@ -228,6 +248,15 @@ export async function* installTeam(
           fileName: 'SOUL.md',
           progress: { current: step, total: totalSteps },
         };
+    }
+
+    if (newlyCreated) {
+      const identityResult = await deps.updateAgent({ agentId, name: agent.name });
+      if (!identityResult.ok) {
+        yield* rollback(createdAgentIds, deps);
+        yield { type: 'error', agentSlug: agent.id, message: `Failed to set agent name: ${identityResult.error}` };
+        return;
+      }
     }
 
     const skills = skillsByAgent.get(agent.id) ?? [];
@@ -242,6 +271,7 @@ export async function* installTeam(
 
       const params = buildSkillInstallParams(skill);
       if (!params) {
+        failedSkillCount++;
         yield {
           type: 'warning',
           agentSlug: agent.id,
@@ -252,9 +282,13 @@ export async function* installTeam(
         continue;
       }
 
-      const installRes = await deps.installSkill(params);
+      const installRes = await deps.installSkill({ ...params, agentId }).catch((error: unknown) => ({
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      }));
       step++;
       if (!installRes.ok) {
+        failedSkillCount++;
         yield {
           type: 'warning',
           agentSlug: agent.id,
@@ -262,6 +296,7 @@ export async function* installTeam(
           message: `Skill "${skill.id}" install failed: ${installRes.error ?? 'unknown'}`,
         };
       } else {
+        installedSkillsByAgent.set(agent.id, [...(installedSkillsByAgent.get(agent.id) ?? []), skill.id]);
         yield {
           type: 'skill_installed',
           agentSlug: agent.id,
@@ -279,7 +314,7 @@ export async function* installTeam(
       agentId: agentMap.get(a.id)!,
       role: a.role,
       isManager: a.role === 'coordinator',
-      skills: (skillsByAgent.get(a.id) ?? []).map((skill) => skill.id),
+      skills: installedSkillsByAgent.get(a.id) ?? [],
       position: a.position,
     }));
 
@@ -321,7 +356,13 @@ export async function* installTeam(
   }
 
   yield { type: 'team_persisted', progress: { current: ++step, total: totalSteps } };
-  yield { type: 'done', message: teamId };
+  const summary = {
+    agentsSucceeded: teamAgents.length,
+    agentsFailed: parsed.agents.length - teamAgents.length,
+    skillsSucceeded: [...installedSkillsByAgent.values()].reduce((count, skills) => count + skills.length, 0),
+    skillsFailed: failedSkillCount,
+  };
+  yield { type: summary.agentsFailed > 0 || summary.skillsFailed > 0 ? 'degraded' : 'done', message: teamId, summary };
 }
 
 async function* rollback(agentIds: string[], deps: InstallerDeps): AsyncGenerator<InstallEvent> {

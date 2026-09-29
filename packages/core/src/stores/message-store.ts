@@ -272,6 +272,7 @@ function mergeToolCallState(existing: ToolCall | undefined, incoming: ToolCall):
   if (!existing) return incoming;
 
   const preferIncoming = toolStatusRank(incoming.status) >= toolStatusRank(existing.status);
+  const knownStarts = [existing.startedAt, incoming.startedAt].filter((value) => Number.isFinite(Date.parse(value)));
   return {
     ...existing,
     ...incoming,
@@ -281,7 +282,7 @@ function mergeToolCallState(existing: ToolCall | undefined, incoming: ToolCall):
     // `title` 来自 `item` 流、`args` 来自 `tool` 流 —— 两条流各带一半，
     // 谁先到都不许把对方那半冲掉（`...incoming` 会把显式 undefined 一起铺过来）。
     title: incoming.title ?? existing.title,
-    startedAt: existing.startedAt || incoming.startedAt,
+    startedAt: knownStarts.sort((a, b) => Date.parse(a) - Date.parse(b))[0] ?? '',
     completedAt: incoming.completedAt ?? existing.completedAt,
   };
 }
@@ -292,7 +293,10 @@ function mergeToolCalls(canonical: ToolCall[], turn: ToolCall[]): ToolCall[] {
     merged.set(toolCall.id, toolCall);
   }
   for (const toolCall of turn) {
-    merged.set(toolCall.id, mergeToolCallState(merged.get(toolCall.id), toolCall));
+    merged.set(toolCall.id, {
+      ...mergeToolCallState(merged.get(toolCall.id), toolCall),
+      startedAt: Number.isFinite(Date.parse(toolCall.startedAt)) ? toolCall.startedAt : '',
+    });
   }
   return Array.from(merged.values());
 }

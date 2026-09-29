@@ -4,7 +4,7 @@ import { extractSkillSlugs } from '@clawwork/core';
 import type { AgentDraft, TeamInfo } from './types';
 import { useTeamInstall } from './useTeamInstall';
 
-type HubInstallPhase = 'idle' | 'downloading' | 'installing' | 'done' | 'error';
+type HubInstallPhase = 'idle' | 'downloading' | 'installing' | 'done' | 'degraded' | 'error';
 
 export function useTeamHubInstall(onDone?: () => void) {
   const [phase, setPhase] = useState<HubInstallPhase>('idle');
@@ -39,6 +39,7 @@ export function useTeamHubInstall(onDone?: () => void) {
         const skills = files ? extractSkillSlugs(files) : [];
         return {
           uid: crypto.randomUUID(),
+          id: a.id,
           name: a.name,
           description: '',
           role: a.role,

@@ -40,6 +40,11 @@ describe('随包图标资源', () => {
   const ico = readFileSync(path.join(PROJECT_DIR, 'build', 'icon.ico'));
   const png = readFileSync(path.join(PROJECT_DIR, 'build', 'icon.png'));
 
+  it('uses the same current brand artwork inside the application and in the tray', () => {
+    const rendererLogo = readFileSync(path.join(PROJECT_DIR, 'src', 'renderer', 'assets', 'logo.png'));
+    expect(rendererLogo.equals(png)).toBe(true);
+  });
+
   it('⭐ .ico 必须是**多尺寸**的（单尺寸在任务栏/资源管理器里会糊）', () => {
     const entries = icoEntries(ico);
     expect(entries.length, '尺寸太少：Windows 会挑不到合适的').toBeGreaterThanOrEqual(6);

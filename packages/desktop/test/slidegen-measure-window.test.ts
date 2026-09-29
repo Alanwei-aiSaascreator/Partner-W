@@ -26,10 +26,21 @@ const mocks = vi.hoisted(() => ({ constructed: 0, destroyed: 0 }));
 
 vi.mock('electron', () => {
   const MEASURED = JSON.stringify([
-    { tag: 'Text', x: 0, y: 0, w: 100, h: 20, fontSizePx: 16, color: 'rgb(0,0,0)', text: 'x' },
+    { id: 0, tag: 'Text', x: 0, y: 0, w: 100, h: 20, fontSizePx: 16, color: 'rgb(0,0,0)', text: 'x' },
   ]);
   class FakeBrowserWindow {
-    webContents = { executeJavaScript: vi.fn(async () => MEASURED) };
+    webContents = {
+      executeJavaScript: vi.fn(async () => MEASURED),
+      debugger: {
+        isAttached: () => false,
+        attach: () => undefined,
+        detach: () => undefined,
+        sendCommand: async () => ({
+          strings: ['data-sg', '0'],
+          documents: [{ nodes: { attributes: [[0, 1]] }, layout: { nodeIndex: [0], paintOrders: [1] } }],
+        }),
+      },
+    };
     constructor() {
       mocks.constructed += 1;
     }

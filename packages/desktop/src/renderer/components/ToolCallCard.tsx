@@ -6,6 +6,7 @@ import type { ToolCall } from '@clawwork/shared';
 import { cn } from '@/lib/utils';
 import { motion as motionPresets } from '@/styles/design-tokens';
 import { getToolColor } from '@/lib/getToolFamily';
+import { toolCallDurationMs } from '@/lib/tool-activity';
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/components/ui/collapsible';
 
 function StatusIcon({ status }: { status: ToolCall['status'] }) {
@@ -37,10 +38,10 @@ const ToolCallCard = memo(function ToolCallCard({ toolCall, defaultOpen, label }
   const toolColor = getToolColor(toolCall.name);
 
   const duration = useMemo(() => {
-    if (!toolCall.completedAt) return null;
-    const elapsed = new Date(toolCall.completedAt).getTime() - new Date(toolCall.startedAt).getTime();
-    return `${(elapsed / 1000).toFixed(1)}s`;
-  }, [toolCall.completedAt, toolCall.startedAt]);
+    const elapsed = toolCallDurationMs(toolCall);
+    if (elapsed === null) return null;
+    return elapsed < 100 ? '<0.1s' : `${(elapsed / 1000).toFixed(1)}s`;
+  }, [toolCall]);
 
   /** 失败原因：**运行时给的原文**，空/纯空白一律当没有（不渲染空行，也不编一句话顶上）。 */
   const errorText = toolCall.status === 'error' ? toolCall.result?.trim() : '';

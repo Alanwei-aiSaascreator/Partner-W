@@ -232,7 +232,7 @@ describe('⭐ 8,000 边界：文件这条路对它必须**完全不敏感**', ()
     const pages = Array.from({ length: 12 }, (_, i) => page(i + 1)).join('');
     const source = `${head}${pages}\`\`\`\n`;
     const padding = Math.max(0, 20_000 - source.length);
-    const padded = source.replace('<Text style', `${'甲'.repeat(padding)}<Text style`);
+    const padded = source.replace('</Text>', `${'\u7532'.repeat(padding)}</Text>`);
     writeFileSync(join(root, 'big.slidegen'), padded);
 
     const { text, failures } = decksFromFiles({ root, relatives: ['big.slidegen'] });

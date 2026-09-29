@@ -125,7 +125,7 @@ export default function CreateTeamWizard({ open, onOpenChange, defaultGatewayId,
 
   const isDirty = useCallback(() => {
     if (installStatus === 'installing') return true;
-    if (installStatus === 'done') return false;
+    if (installStatus === 'done' || installStatus === 'degraded') return false;
     if (isEdit) return touched;
     return teamInfo.name.trim().length > 0 || agents.some((a) => a.name.trim().length > 0);
   }, [teamInfo.name, agents, installStatus, isEdit, touched]);
@@ -226,7 +226,7 @@ export default function CreateTeamWizard({ open, onOpenChange, defaultGatewayId,
           <div className="flex gap-2">
             {installStatus !== 'installing' && (
               <Button variant="outline" onClick={() => guardedOpenChange(false)}>
-                {installStatus === 'done' ? t('common.close') : t('common.cancel')}
+                {installStatus === 'done' || installStatus === 'degraded' ? t('common.close') : t('common.cancel')}
               </Button>
             )}
             {step < 3 && (

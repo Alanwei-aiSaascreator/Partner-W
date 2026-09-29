@@ -1,7 +1,9 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { verifyExecutableIcon } from './pe-icon.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = resolve(here, '..', '..');
@@ -53,64 +55,95 @@ export function launcherBuildArguments({ version, publicKeyBase64, outputPath })
   ];
 }
 
-function isPortableExecutable(path) {
-  const header = Buffer.alloc(2);
-  const descriptor = readFileSync(path);
-  header[0] = descriptor[0] ?? 0;
-  header[1] = descriptor[1] ?? 0;
-  return header.toString('ascii') === 'MZ';
+export async function resolveResourceEditor() {
+  if (process.platform !== 'win32') throw new PortableLauncherBuildError('The launcher resource tool requires Windows');
+  try {
+    const desktopRequire = createRequire(join(repositoryRoot, 'packages', 'desktop', 'package.json'));
+    const builderRequire = createRequire(desktopRequire.resolve('electron-builder'));
+    const { getBin } = builderRequire('app-builder-lib/out/binDownload.js');
+    const resourceEditor = join(await getBin('winCodeSign'), 'rcedit-x64.exe');
+    if (!existsSync(resourceEditor)) throw new Error('rcedit-x64.exe is missing from the resolved vendor directory');
+    return resourceEditor;
+  } catch (error) {
+    throw new PortableLauncherBuildError(`The launcher resource tool is unavailable: ${error.message}`);
+  }
 }
 
-export function buildPortableLauncher({
+export async function buildPortableLauncher({
   env,
   outputPath = defaultLauncherOutput,
   runner = spawnSync,
   goBinary = 'go',
+  resourceEditorResolver = resolveResourceEditor,
+  iconPath = join(repositoryRoot, 'packages', 'desktop', 'build', 'icon.ico'),
   log = () => {},
 }) {
   const { version, publicKeyBase64 } = requireEnvironment(env);
-  const arguments_ = launcherBuildArguments({ version, publicKeyBase64, outputPath });
+  const resourceEditor = await resourceEditorResolver();
+  if (!resourceEditor) throw new PortableLauncherBuildError('The launcher resource tool is unavailable');
+  const sourceIcon = readFileSync(iconPath);
+  const outputDirectory = dirname(resolve(outputPath));
+  mkdirSync(outputDirectory, { recursive: true });
+  const stageDirectory = mkdtempSync(join(outputDirectory, '.launcher-build-'));
+  const stagedOutput = join(stageDirectory, 'launcher.exe');
+  const arguments_ = launcherBuildArguments({ version, publicKeyBase64, outputPath: stagedOutput });
   log(`building the portable launcher for version ${version}`);
 
-  const result = runner(goBinary, arguments_, {
-    cwd: repositoryRoot,
-    env: { ...env, GOOS: 'windows', GOARCH: 'amd64' },
-    stdio: 'pipe',
-    encoding: 'utf8',
-  });
+  function run(binary, args, label) {
+    const result = runner(binary, args, {
+      cwd: repositoryRoot,
+      env: { ...env, GOOS: 'windows', GOARCH: 'amd64' },
+      stdio: 'pipe',
+      encoding: 'utf8',
+      windowsHide: true,
+    });
 
-  const diagnostic = redactSecrets([result?.stdout ?? '', result?.stderr ?? ''].filter(Boolean).join('\n'), [
-    publicKeyBase64,
-  ]);
-  if (diagnostic.length > 0) log(diagnostic);
+    const diagnostic = redactSecrets([result?.stdout ?? '', result?.stderr ?? ''].filter(Boolean).join('\n'), [
+      publicKeyBase64,
+    ]);
+    if (diagnostic.length > 0) log(diagnostic);
 
-  if (result?.error) {
-    throw new PortableLauncherBuildError(
-      redactSecrets(`the launcher toolchain did not start: ${result.error.message}`, [publicKeyBase64]),
-    );
+    if (result?.error) {
+      throw new PortableLauncherBuildError(
+        redactSecrets(`the launcher ${label} did not start: ${result.error.message}`, [publicKeyBase64]),
+      );
+    }
+    if (result?.status !== 0) {
+      throw new PortableLauncherBuildError(`the launcher ${label} exited with status ${result?.status}`);
+    }
   }
-  if (result?.status !== 0) {
-    throw new PortableLauncherBuildError(`the launcher toolchain exited with status ${result?.status}`);
-  }
-  if (!existsSync(outputPath)) {
-    throw new PortableLauncherBuildError('the launcher binary was not produced');
-  }
+  try {
+    run(goBinary, arguments_, 'toolchain');
+    if (!existsSync(stagedOutput)) {
+      throw new PortableLauncherBuildError('the launcher binary was not produced');
+    }
 
-  const size = statSync(outputPath).size;
-  if (size === 0) {
-    throw new PortableLauncherBuildError('the launcher binary is empty');
+    const sizeBeforeEdit = statSync(stagedOutput).size;
+    if (sizeBeforeEdit === 0) {
+      throw new PortableLauncherBuildError('the launcher binary is empty');
+    }
+    if (readFileSync(stagedOutput).toString('ascii', 0, 2) !== 'MZ') {
+      throw new PortableLauncherBuildError('the launcher output is not a Windows PE image');
+    }
+    run(resourceEditor, [stagedOutput, '--set-icon', iconPath], 'resource editor');
+    let verification;
+    try {
+      verification = verifyExecutableIcon(readFileSync(stagedOutput), sourceIcon);
+    } catch (error) {
+      throw new PortableLauncherBuildError(`The launcher icon verification failed: ${error.message}`);
+    }
+    const size = statSync(stagedOutput).size;
+    renameSync(stagedOutput, resolve(outputPath));
+    log(`portable launcher written to ${outputPath} (${size} bytes)`);
+    return { outputPath, size, iconImages: verification.imageCount };
+  } finally {
+    rmSync(stageDirectory, { recursive: true, force: true });
   }
-  if (!isPortableExecutable(outputPath)) {
-    throw new PortableLauncherBuildError('the launcher output is not a Windows PE image');
-  }
-
-  log(`portable launcher written to ${outputPath} (${size} bytes)`);
-  return { outputPath, size };
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) {
   try {
-    buildPortableLauncher({ env: process.env, log: (message) => console.log(message) });
+    await buildPortableLauncher({ env: process.env, log: (message) => console.log(message) });
   } catch (error) {
     console.error(error instanceof PortableLauncherBuildError ? error.message : error);
     process.exit(1);

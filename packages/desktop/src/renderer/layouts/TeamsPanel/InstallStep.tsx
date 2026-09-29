@@ -5,12 +5,13 @@ import type { InstallEvent } from '@clawwork/shared';
 import { cn } from '@/lib/utils';
 import { buildInstallEventView, type InstallAgentState } from '@/lib/install-event-view';
 import { InstallMessageLine } from '@/components/InstallMessageLine';
-import type { AgentDraft } from './types';
+import { TeamInstallOutcome } from '@/components/TeamInstallOutcome';
+import type { AgentDraft, InstallStatus } from './types';
 
 interface InstallStepProps {
   teamInfo: { name: string; emoji: string; description: string };
   agents: AgentDraft[];
-  status: 'idle' | 'installing' | 'done' | 'error';
+  status: InstallStatus;
   events: InstallEvent[];
   isEdit?: boolean;
 }
@@ -91,6 +92,7 @@ export default function InstallStep({ teamInfo, agents, status, events, isEdit }
           <span className="type-label text-[var(--text-secondary)]">
             {status === 'installing' && (isEdit ? t('teams.wizard.saving') : t('teams.wizard.installing'))}
             {status === 'done' && (isEdit ? t('teams.wizard.saveComplete') : t('teams.wizard.installComplete'))}
+            {status === 'degraded' && t('teams.wizard.installDegraded')}
             {status === 'error' && (isEdit ? t('teams.wizard.saveError') : t('teams.wizard.installError'))}
           </span>
           {lastProgress && <span className="type-meta text-[var(--text-muted)]">{progressPercent}%</span>}
@@ -101,11 +103,12 @@ export default function InstallStep({ teamInfo, agents, status, events, isEdit }
               'h-full rounded-full transition-all duration-300',
               status === 'error' ? 'bg-[var(--text-danger)]' : 'bg-[var(--accent)]',
             )}
-            style={{ width: `${status === 'done' ? 100 : progressPercent}%` }}
+            style={{ width: `${status === 'done' || status === 'degraded' ? 100 : progressPercent}%` }}
           />
         </div>
       </div>
 
+      <TeamInstallOutcome events={events} />
       <div className="space-y-2">
         {agentStates.map((agent) => (
           <div key={agent.slug} className="rounded-md border border-[var(--border)] bg-[var(--bg-primary)] px-3 py-2">

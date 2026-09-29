@@ -1201,8 +1201,14 @@ export class GatewayClient {
 
   async installSkill(
     params:
-      | { name: string; installId: string; dangerouslyForceUnsafeInstall?: boolean; timeoutMs?: number }
-      | { source: 'clawhub'; slug: string; version?: string; force?: boolean; timeoutMs?: number },
+      | {
+          agentId?: string;
+          name: string;
+          installId: string;
+          dangerouslyForceUnsafeInstall?: boolean;
+          timeoutMs?: number;
+        }
+      | { agentId?: string; source: 'clawhub'; slug: string; version?: string; force?: boolean; timeoutMs?: number },
   ): Promise<Record<string, unknown>> {
     return this.sendReq('skills.install', params);
   }

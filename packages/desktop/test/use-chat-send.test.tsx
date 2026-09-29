@@ -3,7 +3,7 @@
 import { act, useRef, type Dispatch, type ReactElement, type SetStateAction } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ModelCatalogEntry, Task } from '@clawwork/shared';
+import type { Message, ModelCatalogEntry, Task } from '@clawwork/shared';
 
 const mocks = vi.hoisted(() => {
   const activeTask: Task = {
@@ -44,6 +44,7 @@ const mocks = vi.hoisted(() => {
       updateTaskMetadata: vi.fn(),
     },
     messageState: {
+      messagesByTask: {} as Record<string, Message[]>,
       addMessage: vi.fn(),
       setProcessing: vi.fn(),
       processingBySession: new Set<string>(),
@@ -103,8 +104,11 @@ vi.mock('../src/renderer/platform', () => ({
   taskStore: { getState: () => mocks.taskState },
   useTaskStore: <T,>(selector?: (state: typeof mocks.taskState) => T) =>
     selector ? selector(mocks.taskState) : mocks.taskState,
-  useMessageStore: <T,>(selector?: (state: typeof mocks.messageState) => T) =>
-    selector ? selector(mocks.messageState) : mocks.messageState,
+  useMessageStore: Object.assign(
+    <T,>(selector?: (state: typeof mocks.messageState) => T) =>
+      selector ? selector(mocks.messageState) : mocks.messageState,
+    { getState: () => mocks.messageState },
+  ),
   useUiStore: Object.assign(
     <T,>(selector?: (state: typeof mocks.uiState) => T) => (selector ? selector(mocks.uiState) : mocks.uiState),
     { getState: () => mocks.uiState },
@@ -248,6 +252,7 @@ function MaterialHarness({
 
 describe('useChatSend abort flow', () => {
   beforeEach(() => {
+    mocks.messageState.messagesByTask = {};
     vi.useFakeTimers();
     document.body.innerHTML = '';
     mocks.abort.mockClear();
@@ -299,6 +304,36 @@ describe('useChatSend abort flow', () => {
       },
     });
     (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  });
+
+  it('passes persisted artifact diagnostics to the next requested turn without changing user text', async () => {
+    const sessionKey = mocks.baseTask.sessionKey;
+    mocks.messageState.messagesByTask['task-1'] = [
+      {
+        id: 'delivery-failed',
+        taskId: 'task-1',
+        sessionKey,
+        role: 'system',
+        content: '[artifact-delivery-failed]\n[dsl-close-mismatch @34] expected </Text> but found </Slide>',
+        timestamp: '2026-09-29T00:00:00.000Z',
+        artifacts: [],
+        toolCalls: [],
+      },
+    ];
+    const { container, unmount } = render(<Harness initialValue="Please fix the PPT" />);
+    expect(mocks.send).not.toHaveBeenCalled();
+    await act(async () => {
+      container.querySelectorAll('button')[1]!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await Promise.resolve();
+    });
+    expect(mocks.send).toHaveBeenCalledWith(
+      'task-1',
+      expect.objectContaining({
+        content: 'Please fix the PPT',
+        contextPrefix: expect.stringContaining('dsl-close-mismatch @34'),
+      }),
+    );
+    unmount();
   });
 
   it('does not expose a static catalog when the session effective lookup failed', () => {

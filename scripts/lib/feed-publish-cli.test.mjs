@@ -363,9 +363,9 @@ test('the dry run refuses a triple whose manifest signature was corrupted and pr
 test('the dry run refuses to run without the public key in the environment', async () => {
   const triple = await writeSignedTriple();
   const factory = makeCountingRefusal();
-  const result = await captureRun(offlineArgs('--dry-run', triple, []), {
-    createTransport: factory.createTransport,
-  });
+  const result = await withEnvironment('MOFANG_UPDATE_PUBLIC_KEY_B64', '', () =>
+    captureRun(offlineArgs('--dry-run', triple, []), { createTransport: factory.createTransport }),
+  );
   assert.equal(result.code, 1);
   assert.equal(factory.constructions(), 0, 'a refused plan must not build a transport either');
   assert.match(result.stderr, /MOFANG_UPDATE_PUBLIC_KEY_B64 is required/u);

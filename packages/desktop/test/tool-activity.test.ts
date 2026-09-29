@@ -13,6 +13,17 @@ function call(
 }
 
 describe('summarizeToolActivity', () => {
+  it.each([
+    ['', '2026-09-15T00:00:01.000Z'],
+    ['invalid', '2026-09-15T00:00:01.000Z'],
+    ['2026-09-15T00:00:01.164Z', '2026-09-15T00:00:01.145Z'],
+  ])('does not display fabricated zero duration for invalid timing %s', (start, end) => {
+    expect(summarizeToolActivity([call('1', 'agents_list', 'done', start, end)]).durationMs).toBeNull();
+    expect(
+      summarizeToolActivity([call('1', 'agents_list', 'done', start, end), call('2', 'ls', 'done')]).durationMs,
+    ).toBeNull();
+  });
+
   it('groups repeated tools into semantic activities', () => {
     const summary = summarizeToolActivity([
       call('1', 'ls', 'done'),

@@ -5,10 +5,15 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useTeamInstall } from '../src/renderer/layouts/TeamsPanel/useTeamInstall';
+import { useTeamHubInstall } from '../src/renderer/layouts/TeamsPanel/useTeamHubInstall';
 import { useUiStore } from '../src/renderer/stores/uiStore';
 import type { AgentDraft, TeamInfo } from '../src/renderer/layouts/TeamsPanel/types';
 import { toSlug } from '../src/renderer/layouts/TeamsPanel/utils';
 import { WORKSPACE_UNAVAILABLE_MESSAGE } from '../src/renderer/lib/install-workspace';
+import { configToAgentDrafts, parseTeamConfig, type TeamConfig } from '../src/renderer/components/TeamBuilderDialog';
+import { buildInstallEventView } from '../src/renderer/lib/install-event-view';
+
+vi.mock('../src/renderer/hooks/useGatewayDispatcherSetup', () => ({ fetchAgentsForGateway: vi.fn() }));
 
 /**
  * 团队安装的**工作区守卫**（2026-09-20 U 盘交付实机）。
@@ -56,6 +61,7 @@ function makeAgents(): AgentDraft[] {
 }
 
 type ClawworkMock = {
+  hubDownloadTeam: ReturnType<typeof vi.fn>;
   getTeamWorkspacePath: ReturnType<typeof vi.fn>;
   createAgent: ReturnType<typeof vi.fn>;
   deleteAgent: ReturnType<typeof vi.fn>;
@@ -71,6 +77,7 @@ type ClawworkMock = {
 
 let clawwork: ClawworkMock;
 let api: ReturnType<typeof useTeamInstall> | null = null;
+let hubApi: ReturnType<typeof useTeamHubInstall> | null = null;
 let container: HTMLDivElement;
 let root: Root;
 
@@ -79,9 +86,15 @@ function Harness() {
   return null;
 }
 
+function HubHarness() {
+  hubApi = useTeamHubInstall();
+  return null;
+}
+
 beforeEach(() => {
   (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   clawwork = {
+    hubDownloadTeam: vi.fn(),
     getTeamWorkspacePath: vi.fn(async () => 'D:\\ws\\开发团队'),
     createAgent: vi.fn(async (_gw: string, params: { name: string }) => ({
       ok: true,
@@ -108,6 +121,7 @@ beforeEach(() => {
   document.body.appendChild(container);
   root = createRoot(container);
   api = null;
+  hubApi = null;
 });
 
 afterEach(() => {
@@ -129,6 +143,309 @@ async function run() {
 }
 
 describe('useTeamInstall 的工作区守卫', () => {
+  it.each(['create', 'skill'])(
+    'keeps saved usable members but reports degraded after a %s failure',
+    async (failure) => {
+      const drafts = makeAgents();
+      if (failure === 'create') clawwork.createAgent.mockResolvedValueOnce({ ok: false, error: 'quota exceeded' });
+      else {
+        drafts[0].skills = ['missing-skill'];
+        clawwork.installSkill.mockResolvedValue({ ok: false, error: 'not found' });
+      }
+      await mount();
+      await act(async () => {
+        await api?.runInstall(teamInfo, drafts);
+      });
+      expect(api?.installStatus).toBe('degraded');
+      expect(clawwork.persistTeam).toHaveBeenCalledOnce();
+      expect(clawwork.deleteAgent).not.toHaveBeenCalled();
+      expect(api?.installEvents.at(-1)).toMatchObject({
+        type: 'degraded',
+        summary: {
+          agentsSucceeded: failure === 'create' ? 1 : 2,
+          agentsFailed: failure === 'create' ? 1 : 0,
+          skillsFailed: failure === 'skill' ? 1 : 0,
+        },
+      });
+    },
+  );
+
+  it('keeps degraded status and warnings at the marketplace entry', async () => {
+    clawwork.hubDownloadTeam.mockResolvedValue({
+      ok: true,
+      result: {
+        parsed: {
+          name: 'Market',
+          agents: [{ id: 'author', name: 'Author', role: 'worker' }],
+          version: '1',
+          description: '',
+          body: '',
+        },
+        agentFiles: { author: { skillsJson: JSON.stringify({ skills: { absent: { sourceType: 'clawhub' } } }) } },
+      },
+    });
+    clawwork.installSkill.mockResolvedValue({ ok: false, error: 'not found' });
+    await act(async () => {
+      root.render(<HubHarness />);
+    });
+    await act(async () => {
+      await hubApi?.install(
+        {
+          _registryId: 'registry',
+          slug: 'market',
+          name: 'Market',
+          emoji: '',
+          description: '',
+          version: '1',
+          agentCount: 1,
+          category: '',
+          tags: [],
+          author: '',
+        },
+        'gw-1',
+      );
+    });
+    expect(hubApi?.phase).toBe('degraded');
+    expect(hubApi?.installEvents.some((event) => event.type === 'warning' && event.skillId === 'absent')).toBe(true);
+    expect(clawwork.deleteAgent).not.toHaveBeenCalled();
+  });
+
+  it.each(['result', 'throw'])('does not save an existing team when a skill install fails: %s', async (failure) => {
+    if (failure === 'result') clawwork.installSkill.mockResolvedValue({ ok: false, error: 'skill not found' });
+    else clawwork.installSkill.mockRejectedValue(new Error('network disconnected'));
+    const drafts = makeAgents().map((draft, index) => ({
+      ...draft,
+      existingAgentId: `existing-${index}`,
+      skills: ['requested-skill'],
+    }));
+    await mount();
+    await act(async () => {
+      await api?.runUpdate('team-id', 'created-at', teamInfo, drafts);
+    });
+    expect(api?.installStatus).toBe('error');
+    expect(api?.installEvents.find((event) => event.type === 'error')?.message).toMatch(/技能.*requested-skill.*重试/);
+    expect(clawwork.installSkill).toHaveBeenCalledWith('gw-1', {
+      agentId: 'existing-0',
+      source: 'clawhub',
+      slug: 'requested-skill',
+    });
+    expect(clawwork.persistTeam).not.toHaveBeenCalled();
+    expect(clawwork.deleteAgent).not.toHaveBeenCalled();
+  });
+
+  it('preserves marketplace ids through the shared installer and repeat-install reconciliation', async () => {
+    const members = [
+      { id: 'finance-chief', name: '\u878d\u8d44\u4e3b\u7ba1', role: 'coordinator' },
+      { id: 'finance-research', name: '\u5546\u4e1a\u5206\u6790\u5e08', role: 'worker' },
+    ];
+    const entry = {
+      _registryId: 'registry',
+      slug: 'finance-team',
+      name: 'Finance',
+      emoji: '',
+      description: '',
+      version: '1.0.0',
+      agentCount: 2,
+      category: 'business',
+      tags: [],
+      author: 'author',
+    };
+    clawwork.hubDownloadTeam.mockResolvedValue({
+      ok: true,
+      result: {
+        parsed: { name: 'Finance', description: '', version: '1.0.0', agents: members, body: '' },
+        agentFiles: Object.fromEntries(
+          members.map((member) => [
+            member.id,
+            {
+              agentMd: `Identity for ${member.id}`,
+              skillsJson: JSON.stringify({ version: 1, skills: { [member.id + '-skill']: { sourceType: 'clawhub' } } }),
+            },
+          ]),
+        ),
+      },
+    });
+    clawwork.getConfig.mockResolvedValue({ ok: true, result: { hash: 'hash', config: { agents: { entries: {} } } } });
+    await act(async () => {
+      root.render(<HubHarness />);
+    });
+    await act(async () => {
+      await hubApi?.install(entry, 'gw-1');
+    });
+
+    expect(hubApi?.phase).toBe('done');
+    expect(clawwork.createAgent.mock.calls.map((call) => call[1].name)).toEqual(members.map((member) => member.id));
+    for (const member of members) {
+      expect(clawwork.setAgentFile).toHaveBeenCalledWith(
+        'gw-1',
+        member.id,
+        'IDENTITY.md',
+        `Identity for ${member.id}\n\n- Name: ${member.name}`,
+      );
+      expect(clawwork.updateAgent).toHaveBeenCalledWith('gw-1', { agentId: member.id, name: member.name });
+    }
+    expect(clawwork.persistTeam).toHaveBeenCalledWith(
+      expect.objectContaining({
+        hubSlug: entry.slug,
+        agents: members.map((member) =>
+          expect.objectContaining({ agentId: member.id, skills: [member.id + '-skill'] }),
+        ),
+      }),
+    );
+    expect(clawwork.patchConfig).toHaveBeenCalledWith('gw-1', {
+      baseHash: 'hash',
+      raw: JSON.stringify({
+        agents: { entries: { 'finance-chief': { subagents: { allowAgents: ['finance-research'] } } } },
+      }),
+    });
+
+    clawwork.setAgentFile.mockClear();
+    clawwork.updateAgent.mockClear();
+    clawwork.createAgent.mockImplementation(async (_gw, params) => ({
+      ok: false,
+      error: `agent "${params.name}" already exists`,
+    }));
+    clawwork.listAgents.mockResolvedValue({ ok: true, result: { agents: members } });
+    await act(async () => {
+      await hubApi?.install(entry, 'gw-1');
+    });
+    expect(hubApi?.phase).toBe('done');
+    expect(clawwork.setAgentFile).not.toHaveBeenCalled();
+    expect(clawwork.updateAgent).not.toHaveBeenCalled();
+    expect(clawwork.deleteAgent).not.toHaveBeenCalled();
+  });
+
+  it('installs parsed Chinese AI configs with matching ids, files, models, skills and progress', async () => {
+    const names = ['\u878d\u8d44\u4e3b\u7ba1', '\u5546\u4e1a\u5206\u6790\u5e08', '\u6f14\u793a\u8bbe\u8ba1\u5e08'];
+    const models = names.map((_, index) => ({ id: `model-${index}`, provider: 'clawrouter' }));
+    useUiStore.setState({ modelCatalogByGateway: { 'gw-1': models } });
+    const raw = {
+      name: 'Team',
+      emoji: '',
+      description: 'Team description',
+      agents: names.map((name, index) => ({
+        name,
+        role: index === 0 ? 'coordinator' : 'worker',
+        description: `Description ${index}`,
+        model: `clawrouter/model-${index}`,
+        identity: `Identity ${index}`,
+      })),
+    };
+    const config = parseTeamConfig('```team-config\n' + JSON.stringify(raw) + '\n```', models) as TeamConfig;
+    const drafts = configToAgentDrafts(config, models).map((draft, index) => ({
+      ...draft,
+      skills: [`skill-${index}`],
+    }));
+    clawwork.getConfig.mockResolvedValue({ ok: true, result: { hash: 'hash', config: { agents: { entries: {} } } } });
+    await mount();
+    await act(async () => {
+      await api?.runInstall(teamInfo, drafts);
+    });
+
+    expect(api?.installStatus).toBe('done');
+    for (const [index, draft] of drafts.entries()) {
+      const id = config.agents[index].id;
+      expect(clawwork.createAgent).toHaveBeenNthCalledWith(index + 1, 'gw-1', {
+        name: id,
+        workspace: `D:\\ws\\${teamInfo.name}\\${id}`,
+      });
+      expect(clawwork.setAgentFile).toHaveBeenCalledWith(
+        'gw-1',
+        id,
+        'IDENTITY.md',
+        expect.stringContaining(draft.agentMd),
+      );
+      expect(clawwork.updateAgent).toHaveBeenCalledWith('gw-1', { agentId: id, name: names[index] });
+      expect(clawwork.updateAgent).toHaveBeenCalledWith('gw-1', { agentId: id, model: `clawrouter/model-${index}` });
+      expect(clawwork.persistTeam).toHaveBeenCalledWith(
+        expect.objectContaining({
+          agents: expect.arrayContaining([expect.objectContaining({ agentId: id, skills: [`skill-${index}`] })]),
+        }),
+      );
+    }
+    expect(
+      api?.installEvents.filter((event) => event.type === 'agent_created').map((event) => event.agentSlug),
+    ).toEqual(config.agents.map((agent) => agent.id));
+    expect(
+      buildInstallEventView(config.agents, api?.installEvents ?? []).agentStates.map((state) => state.status),
+    ).toEqual(['created', 'created', 'created']);
+  });
+
+  it('keeps colliding names separate across files, models, persisted agents and progress', async () => {
+    const drafts = makeAgents().map((draft, index) => ({
+      ...draft,
+      id: index === 0 ? 'a1' : 'a1-2',
+      name: `${draft.name} A1`,
+      model: 'clawrouter/deepseek-v4-flash',
+      agentMd: `Identity ${index}`,
+      skills: [`skill-${index}`],
+    }));
+    await mount();
+    await act(async () => {
+      await api?.runInstall(teamInfo, drafts);
+    });
+
+    expect(clawwork.createAgent.mock.calls.map((call) => call[1].name)).toEqual(['a1', 'a1-2']);
+    expect(clawwork.setAgentFile).toHaveBeenCalledWith(
+      'gw-1',
+      'a1',
+      'IDENTITY.md',
+      `Identity 0\n\n- Name: ${drafts[0].name}`,
+    );
+    expect(clawwork.setAgentFile).toHaveBeenCalledWith(
+      'gw-1',
+      'a1-2',
+      'IDENTITY.md',
+      `Identity 1\n\n- Name: ${drafts[1].name}`,
+    );
+    expect(clawwork.updateAgent).toHaveBeenCalledWith('gw-1', {
+      agentId: 'a1-2',
+      model: 'clawrouter/deepseek-v4-flash',
+    });
+    expect(clawwork.persistTeam).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agents: [
+          expect.objectContaining({ agentId: 'a1', skills: ['skill-0'] }),
+          expect.objectContaining({ agentId: 'a1-2', skills: ['skill-1'] }),
+        ],
+      }),
+    );
+    expect(buildInstallEventView(drafts, api?.installEvents ?? []).agentStates.map((state) => state.slug)).toEqual([
+      'a1',
+      'a1-2',
+    ]);
+  });
+
+  it('reuses existing stable ids after a Chinese display-name change without touching their files', async () => {
+    const drafts = makeAgents().map((draft, index) => ({
+      ...draft,
+      id: `stable-${index}`,
+      agentMd: `Identity ${index}`,
+    }));
+    clawwork.createAgent.mockImplementation(async (_gw, params) => ({
+      ok: false,
+      error: `agent "${params.name}" already exists`,
+    }));
+    clawwork.listAgents.mockResolvedValue({
+      ok: true,
+      result: { agents: drafts.map((draft) => ({ id: draft.id, name: draft.name })) },
+    });
+    await mount();
+    await act(async () => {
+      await api?.runInstall(teamInfo, drafts);
+    });
+
+    expect(api?.installStatus).toBe('done');
+    expect(clawwork.persistTeam).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agents: [expect.objectContaining({ agentId: 'stable-0' }), expect.objectContaining({ agentId: 'stable-1' })],
+      }),
+    );
+    expect(clawwork.setAgentFile).not.toHaveBeenCalled();
+    expect(clawwork.updateAgent).not.toHaveBeenCalled();
+    expect(clawwork.deleteAgent).not.toHaveBeenCalled();
+  });
+
   it('⭐ 工作区是相对路径（＝没解析出来时返回的 slug）⇒ 一个助手都不建，错误事件带中文原因', async () => {
     clawwork.getTeamWorkspacePath.mockResolvedValue('kai-fa-tuan-dui');
     await mount();
@@ -158,12 +475,14 @@ describe('useTeamInstall 的工作区守卫', () => {
 
     expect(clawwork.getTeamWorkspacePath).toHaveBeenCalledWith(toSlug(teamInfo.name));
     expect(clawwork.createAgent).toHaveBeenCalledTimes(2);
-    expect(clawwork.createAgent.mock.calls[0]?.[1]).toMatchObject({ workspace: 'D:\\ws\\开发团队' });
+    expect(clawwork.createAgent.mock.calls[0]?.[1]).toMatchObject({
+      workspace: `D:\\ws\\${teamInfo.name}\\${toSlug(makeAgents()[0].name)}`,
+    });
     expect(clawwork.persistTeam).toHaveBeenCalledWith(
       expect.objectContaining({
         agents: expect.arrayContaining([
-          expect.objectContaining({ agentId: '后端工程师', position: 'challenger' }),
-          expect.objectContaining({ agentId: '前端工程师', position: 'scribe' }),
+          expect.objectContaining({ agentId: toSlug(makeAgents()[0].name), position: 'challenger' }),
+          expect.objectContaining({ agentId: toSlug(makeAgents()[1].name), position: 'scribe' }),
         ]),
       }),
     );

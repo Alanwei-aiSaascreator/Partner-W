@@ -3,7 +3,7 @@
 import { act, useRef, type Dispatch, type ReactElement, type SetStateAction } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Task, Team } from '@clawwork/shared';
+import type { Message, Task, Team } from '@clawwork/shared';
 import type { TaskContextFile } from '../src/renderer/components/ChatInput/useTaskMaterials';
 
 /* ---------- hoisted mocks ---------- */
@@ -53,6 +53,7 @@ const mocks = vi.hoisted(() => {
       updateTaskMetadata: vi.fn(),
     },
     messageState: {
+      messagesByTask: {} as Record<string, Message[]>,
       addMessage: vi.fn(),
       setProcessing: vi.fn(),
       processingBySession: new Set<string>(),

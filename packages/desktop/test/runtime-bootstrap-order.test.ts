@@ -76,6 +76,40 @@ function makeDeps(over: Partial<RuntimeBootstrapDeps> = {}) {
 }
 
 describe('bootstrapLocalGatewayRuntime', () => {
+  it('does not deploy or start a gateway when portable state migration is blocked', async () => {
+    const error = Object.assign(new Error('state is busy'), { code: 'runtime.portable-state-migration-blocked' });
+    const { deps } = makeDeps({
+      alignClientConfig: vi.fn(async () => {
+        throw error;
+      }),
+    });
+    const { bootstrapLocalGatewayRuntime } = await import('../src/main/runtime/index.js');
+    expect(await bootstrapLocalGatewayRuntime({ userDataDir: PORTABLE_USER_DATA, deps })).toMatchObject({
+      ok: false,
+      code: 'runtime.portable-state-migration-blocked',
+    });
+    expect(deps.deployFromMedia).not.toHaveBeenCalled();
+    expect(deps.startGateway).not.toHaveBeenCalled();
+    expect(deps.setStateDirEnv).not.toHaveBeenCalled();
+  });
+
+  it('keeps state on portable userData when only the disposable runtime cache is local', async () => {
+    const { deps } = makeDeps();
+    const { bootstrapLocalGatewayRuntime } = await import('../src/main/runtime/index.js');
+    await bootstrapLocalGatewayRuntime({
+      userDataDir: PORTABLE_USER_DATA,
+      runtimeCacheUserDataDir: LOCAL_RUNTIME_CACHE,
+      portableWorkspacePath: 'E:\\workspace',
+      deps,
+    });
+
+    expect(deps.alignClientConfig).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stateUserDataDir: PORTABLE_USER_DATA,
+      }),
+    );
+  });
+
   beforeEach(() => {
     vi.resetModules();
   });

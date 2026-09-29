@@ -32,7 +32,13 @@ import {
   missingExpectedArtifactKinds,
   type ExpectedArtifactKind,
 } from '../artifact/claim-guard.js';
-import { parseAgentIdFromSessionKey, type MessageAttachment, type SlidegenFailure } from '@clawwork/shared';
+import {
+  parseAgentIdFromSessionKey,
+  type Artifact,
+  type ArtifactDeliveryFailure,
+  type MessageAttachment,
+  type SlidegenFailure,
+} from '@clawwork/shared';
 import { getWorkspacePath } from '../workspace/config.js';
 import { getGatewayClient } from '../ws/index.js';
 import { getDebugLogger } from '../debug/index.js';
@@ -281,7 +287,10 @@ export function cancelArtifactRun(taskId: string, sessionKey: string, token: str
 export function bindArtifactRun(taskId: string, sessionKey: string, token: string, gatewayRunId: string): void {
   if (!gatewayRunId) return;
   const run = artifactRuns.get(artifactRunKey(taskId, sessionKey))?.find((candidate) => candidate.token === token);
-  if (run) run.gatewayRunId = gatewayRunId;
+  if (run) {
+    run.gatewayRunId = gatewayRunId;
+    if (run.state === 'active') clearTimeout(run.expiryTimer);
+  }
 }
 
 function claimArtifactRun(taskId: string, sessionKey: string, gatewayRunId?: string): ArtifactRunContext | undefined {
@@ -346,6 +355,7 @@ function desynchronizeOldestArtifactSession(): void {
 function pruneArtifactRuns(now = Date.now()): void {
   for (const [key, queue] of artifactRuns) {
     for (const run of [...queue]) {
+      if (run.state === 'active' && run.gatewayRunId) continue;
       if (now - run.createdAt < ARTIFACT_RUN_TTL_MS) continue;
       const separator = key.indexOf('\0');
       cancelArtifactRun(key.slice(0, separator), key.slice(separator + 1), run.token);
@@ -530,12 +540,25 @@ function finalizeAssistantArtifacts(input: {
     return;
   }
   void (async () => {
+    const deliveryFailure: ArtifactDeliveryFailure = {
+      taskId: input.taskId,
+      sessionKey: input.sessionKey,
+      messageId: input.messageId,
+      missing: [],
+    };
     // 只记真实生成器或基线对账认出来的本轮文件。auto-extract 的 snippet.md / preview.html
     // 故意不记：代码片段不能冒充用户明确要的 Office/PDF 交付物。
     const producedArtifactNames = new Set<string>();
     const rememberProduced = (artifact: { name?: string; localPath?: string }): void => {
       const name = artifact.name ?? artifact.localPath;
       if (name) producedArtifactNames.add(name);
+    };
+    const notifyReconciledArtifacts = (result: { saved: Artifact[]; updated?: Artifact[] }): void => {
+      const changed = new Map([...result.saved, ...(result.updated ?? [])].map((artifact) => [artifact.id, artifact]));
+      for (const artifact of changed.values()) {
+        rememberProduced(artifact);
+        for (const win of BrowserWindow.getAllWindows()) win.webContents.send('artifact:saved', artifact);
+      }
     };
     try {
       await autoExtractArtifacts({
@@ -553,15 +576,17 @@ function finalizeAssistantArtifacts(input: {
     //    被显示层截断时（8,000 那条）去网关按 runId 要回完整原文；
     //    没被截断就直接用 `input.content`（一次请求都不发）。
     //    ⚠️ 只在回复里**真的有**结构化块时才取 —— 见 `hasStructuredFence` 的理由。
-    const structured: RecoverResult = hasStructuredFence(input.content)
-      ? await structuredReplyContent({
-          gatewayId: input.gatewayId,
-          sessionKey: input.sessionKey,
-          runId: input.runId,
-          content: input.content,
-          artifactKind: 'docgen',
-        })
-      : { status: 'complete', content: input.content };
+    const structured: RecoverResult =
+      hasStructuredFence(input.content) ||
+      (run.expectedArtifactKinds.length > 0 && input.content.includes(DISPLAY_TRUNCATION_MARKER))
+        ? await structuredReplyContent({
+            gatewayId: input.gatewayId,
+            sessionKey: input.sessionKey,
+            runId: input.runId,
+            content: input.content,
+            artifactKind: 'docgen',
+          })
+        : { status: 'complete', content: input.content };
     try {
       // ⭐ 文档生成：助手在回复里给出 ```` ```docgen ```` 块（内容 schema 见
       //    `main/docgen/request.ts`），这里渲染成真 pptx / docx / xlsx 并**走现成的产物通道**
@@ -599,6 +624,7 @@ function finalizeAssistantArtifacts(input: {
       //    而两者都长得像"它说做好了，但产物里什么都没有"。
       //    **一次消息只推一次**：九个失败弹九个 toast 是另一种坏体验。
       if (documents.failed.length > 0) {
+        deliveryFailure.docFailures = documents.failed;
         for (const win of BrowserWindow.getAllWindows()) win.webContents.send('docgen:failed', documents.failed);
       }
     } catch (error) {
@@ -627,6 +653,7 @@ function finalizeAssistantArtifacts(input: {
         for (const win of BrowserWindow.getAllWindows()) win.webContents.send('artifact:saved', artifact);
       }
       if (pages.failed.length > 0) {
+        deliveryFailure.htmlFailures = [...pages.failed];
         for (const win of BrowserWindow.getAllWindows()) win.webContents.send('htmlgen:failed', pages.failed);
       }
     } catch (error) {
@@ -703,6 +730,7 @@ function finalizeAssistantArtifacts(input: {
             data: { taskId: input.taskId, status: structured.status },
           });
           for (const win of BrowserWindow.getAllWindows()) win.webContents.send('slidegen:failed', [failure]);
+          deliveryFailure.slideFailures = [failure];
         }
       } else {
         const decks = await generateSlidesFromMessage({
@@ -719,6 +747,7 @@ function finalizeAssistantArtifacts(input: {
           for (const win of BrowserWindow.getAllWindows()) win.webContents.send('artifact:saved', artifact);
         }
         if (decks.failed.length > 0) {
+          deliveryFailure.slideFailures = decks.failed;
           for (const win of BrowserWindow.getAllWindows()) win.webContents.send('slidegen:failed', decks.failed);
         }
         if (decks.warnings.length > 0) {
@@ -727,6 +756,7 @@ function finalizeAssistantArtifacts(input: {
       }
     } catch (error) {
       console.error('[slidegen]', error);
+      deliveryFailure.slideFailures = [{ code: 'slidegen-render-failed' }];
     }
     // ⚠️ 外层这一 try **只为了那个 finally**：清理（解除认领 + 标完成）必须把
     //    下面**两条** reconcile 都罩住。上一版把 finally 挂在了第二条上，于是
@@ -743,10 +773,7 @@ function finalizeAssistantArtifacts(input: {
           messageId: input.messageId,
           baseline,
         });
-        for (const artifact of [...result.saved, ...(result.updated ?? [])]) rememberProduced(artifact);
-        for (const artifact of result.saved) {
-          for (const win of BrowserWindow.getAllWindows()) win.webContents.send('artifact:saved', artifact);
-        }
+        notifyReconciledArtifacts(result);
       } catch (error) {
         console.error('[artifact_reconcile_failed]', { taskId: input.taskId, messageId: input.messageId, error });
       }
@@ -769,7 +796,6 @@ function finalizeAssistantArtifacts(input: {
             baseline: agentRoot.baseline,
             rootKind: 'agent',
           });
-          for (const artifact of [...agentResult.saved, ...(agentResult.updated ?? [])]) rememberProduced(artifact);
           // ⭐ **正面证据**：真机排障时唯一能回答"这个功能跑没跑、找到了几条"的一行。
           //    没有它，用户说"产物还是空的"时只能猜：是没扫到？根没接上？还是真没文件？
           getDebugLogger().info({
@@ -783,9 +809,7 @@ function finalizeAssistantArtifacts(input: {
               skipped: agentResult.skipped.length,
             },
           });
-          for (const artifact of agentResult.saved) {
-            for (const win of BrowserWindow.getAllWindows()) win.webContents.send('artifact:saved', artifact);
-          }
+          notifyReconciledArtifacts(agentResult);
         }
       } catch (error) {
         console.error('[artifact_agent_reconcile_failed]', {
@@ -826,12 +850,7 @@ function finalizeAssistantArtifacts(input: {
               produced: [...producedArtifactNames],
             },
           });
-          for (const win of BrowserWindow.getAllWindows()) {
-            win.webContents.send('artifact:claim-violation', {
-              taskId: input.taskId,
-              missing,
-            });
-          }
+          deliveryFailure.missing = missing;
         }
       } catch (error) {
         console.error('[artifact_claim_guard_failed]', { taskId: input.taskId, error });
@@ -846,6 +865,17 @@ function finalizeAssistantArtifacts(input: {
         sessionKey: input.sessionKey,
       });
       pruneCompletedAssistantMessages();
+      if (
+        !isArtifactRunCanceled(run) &&
+        (deliveryFailure.missing.length ||
+          deliveryFailure.slideFailures?.length ||
+          deliveryFailure.docFailures?.length ||
+          deliveryFailure.htmlFailures?.length)
+      ) {
+        for (const win of BrowserWindow.getAllWindows()) {
+          win.webContents.send('artifact:claim-violation', deliveryFailure);
+        }
+      }
     }
   })();
 }

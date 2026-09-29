@@ -111,10 +111,23 @@ export function createSystemSessionService(deps: SystemSessionServiceDeps): Syst
         return res;
       }
 
-      // 模型补丁必须在首条消息之前：第一条回复就会走这个模型，晚一步等于没打。
-      // 失败只当作「用了继承来的模型」，**不能**因此挡住上层功能（引导只是辅助）。
       if (opts.model) {
-        await deps.gateway.patchSession?.(opts.gatewayId, sessionKey, { model: opts.model }).catch(() => undefined);
+        let selection: IpcResult;
+        try {
+          selection = (await deps.gateway.patchSession?.(opts.gatewayId, sessionKey, { model: opts.model })) ?? {
+            ok: false,
+            error: 'model selection unavailable',
+          };
+        } catch (error) {
+          selection = { ok: false, error: error instanceof Error ? error.message : 'model selection failed' };
+        }
+        if (!selection.ok) {
+          removeListener?.();
+          removeListener = null;
+          store.close();
+          await deps.gateway.deleteSession(opts.gatewayId, sessionKey).catch(() => undefined);
+          return selection;
+        }
       }
 
       if (opts.initialMessage) {
