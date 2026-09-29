@@ -830,7 +830,7 @@ export interface ClawWorkAPI {
 
   saveAgentAvatar: (gatewayId: string, agentId: string, dataUrl: string) => Promise<IpcResult>;
   deleteAgentAvatar: (gatewayId: string, agentId: string) => Promise<IpcResult>;
-  listLocalAvatars: (gatewayId: string) => Promise<IpcResult<{ result: string[] }>>;
+  listLocalAvatars: (gatewayId: string) => Promise<IpcResult<string[]>>;
 
   hubListRegistries: () => Promise<IpcResult<TeamHubRegistry[]>>;
   hubFetchRegistry: (id: string) => Promise<IpcResult<TeamHubRegistry>>;
