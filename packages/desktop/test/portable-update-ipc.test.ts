@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   portableRoot: null as string | null,
   quit: vi.fn(),
   packaged: true,
+  updateChannel: 'stable' as 'stable' | 'beta',
 }));
 
 vi.mock('electron', () => ({
@@ -49,7 +50,7 @@ vi.mock('electron-updater', () => ({
 }));
 
 vi.mock('../src/main/workspace/config.js', () => ({
-  readConfig: () => ({ updateChannel: 'stable' }),
+  readConfig: () => ({ updateChannel: mocks.updateChannel }),
   getPortableWorkspaceRoot: () => mocks.portableRoot,
 }));
 
@@ -81,10 +82,12 @@ beforeEach(() => {
   mocks.portableRoot = null;
   mocks.quit.mockReset();
   mocks.packaged = true;
+  mocks.updateChannel = 'stable';
 });
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe('portable update IPC', () => {
@@ -168,5 +171,24 @@ describe('portable update IPC', () => {
 
     expect(result.ok).toBe(false);
     expect(mocks.quit, '没有 ready 事务时不许退出应用').not.toHaveBeenCalled();
+  });
+
+  it('同一进程从 stable 切到 beta 后，下一次检查必须请求 internal 清单', async () => {
+    mocks.portableRoot = 'F:\\';
+    const fetchMock = vi.fn(async () => new Response('', { status: 404 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const { registerUpdateHandlers } = await loadHandlers();
+    registerUpdateHandlers();
+    const check = mocks.handlers.get('app:check-for-updates');
+
+    await check?.();
+    mocks.updateChannel = 'beta';
+    expect((await import('../src/main/auto-updater.js')).getUpdateChannel()).toBe('beta');
+    await check?.();
+
+    expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual([
+      'https://api.rongyinghudong.com/updates/stable/manifest.json',
+      'https://api.rongyinghudong.com/updates/internal/manifest.json',
+    ]);
   });
 });

@@ -71,10 +71,14 @@ function devCheckResult(): UpdateCheckResult {
   };
 }
 
-let portableInitialization: Promise<void> | null = null;
+let portableInitialization: { key: string; promise: Promise<void> } | null = null;
+let portableInitializationGeneration = 0;
 
-async function initializePortableUpdateService(root: string): Promise<void> {
-  const channel = portableChannel();
+async function initializePortableUpdateService(
+  root: string,
+  channel: PortableUpdateChannel,
+  generation: number,
+): Promise<void> {
   const feed = `${UPDATE_FEED_BASE}${channel}/`;
   const stateStore = new PortableUpdateStateStore({
     // 路径走唯一那个算法：启动恢复读的必须是同一个文件（两处各拼一次迟早会漂）。
@@ -97,58 +101,57 @@ async function initializePortableUpdateService(root: string): Promise<void> {
     });
   }
 
-  attachPortableUpdateService(
-    createPortableUpdateService({
-      root,
-      currentVersion: app.getVersion(),
-      channel,
-      launcherVersion: probe.kind === 'version' ? probe.version : null,
-      publicKeyBase64: buildTimePublicKey(),
-      stateStore,
-      fetchManifest: async () => {
-        const response = await fetchFeedResponse(`${feed}manifest.json`);
-        // 404 = **这个频道还没有发布任何 manifest**（每次发版之前的正常状态，不是故障）。
-        // 报成一个用户无事可做的错误会误导人；交给服务落回 idle，由文案说"当前频道暂无更新"。
-        if (response.status === 404) throw new PortableUpdateFailure('update-not-published');
-        if (!response.ok) throw new PortableUpdateFailure('feed-response');
-        return readFeedJson(response);
-      },
-      fetchFileManifest: async (manifest) => {
-        const response = await fetchFeedResponse(new URL('portable-files.json', manifest.packageUrl).toString());
-        // ⚠️ 以前这里是 `throw new Error(...)`（普通 Error）⇒ 服务只能报 `unknown`。
-        if (!response.ok) throw new PortableUpdateFailure('feed-response');
-        return readFeedJson(response);
-      },
-      downloadPackage: downloadPortablePackage,
-      extractPackage: extractPortablePackage,
-      verifyTree: verifyPortableProgramTree,
-      // 启动器 `Apply` 的第一步就是读 `staged/<事务>/` 下这两份清单验签；
-      // 它们会重新规范化再验，所以这里给**规范 JSON** 就行（发布出去的本来就是规范形式）。
-      // ⚠️ 以前**没人写这两份** ⇒ 事务指向两个不存在的文件 ⇒ 更新永远卡在「应用」。
-      writeStagedManifests: async ({ paths, manifest, fileManifest }) => {
-        await asarSafeFs.promises.mkdir(dirname(paths.manifestPath), { recursive: true });
-        await asarSafeFs.promises.writeFile(paths.manifestPath, canonicalizeJson(manifest), 'utf8');
-        await asarSafeFs.promises.writeFile(paths.fileManifestPath, canonicalizeJson(fileManifest), 'utf8');
-      },
-      // 空间预算的第三项：换目录之前，现有程序目录一直占着这块盘。
-      measureProgramSize: () => measureProgramTreeBytes(join(root, PORTABLE_PROGRAM_DIRECTORY_NAME)),
-      now: () => Date.now(),
-      createTransactionId: () => randomUUID(),
-      startLauncher: (stateFilePath) =>
-        new Promise<void>((resolve, reject) => {
-          const child = spawn(join(root, LAUNCHER_FILE_NAME), ['--apply', stateFilePath], {
-            detached: true,
-            stdio: 'ignore',
-          });
-          child.once('error', reject);
-          child.once('spawn', () => {
-            child.unref();
-            resolve();
-          });
-        }),
-      quit: () => app.quit(),
-    }),
-  );
+  const service = createPortableUpdateService({
+    root,
+    currentVersion: app.getVersion(),
+    channel,
+    launcherVersion: probe.kind === 'version' ? probe.version : null,
+    publicKeyBase64: buildTimePublicKey(),
+    stateStore,
+    fetchManifest: async () => {
+      const response = await fetchFeedResponse(`${feed}manifest.json`);
+      // 404 = **这个频道还没有发布任何 manifest**（每次发版之前的正常状态，不是故障）。
+      // 报成一个用户无事可做的错误会误导人；交给服务落回 idle，由文案说"当前频道暂无更新"。
+      if (response.status === 404) throw new PortableUpdateFailure('update-not-published');
+      if (!response.ok) throw new PortableUpdateFailure('feed-response');
+      return readFeedJson(response);
+    },
+    fetchFileManifest: async (manifest) => {
+      const response = await fetchFeedResponse(new URL('portable-files.json', manifest.packageUrl).toString());
+      // ⚠️ 以前这里是 `throw new Error(...)`（普通 Error）⇒ 服务只能报 `unknown`。
+      if (!response.ok) throw new PortableUpdateFailure('feed-response');
+      return readFeedJson(response);
+    },
+    downloadPackage: downloadPortablePackage,
+    extractPackage: extractPortablePackage,
+    verifyTree: verifyPortableProgramTree,
+    // 启动器 `Apply` 的第一步就是读 `staged/<事务>/` 下这两份清单验签；
+    // 它们会重新规范化再验，所以这里给**规范 JSON** 就行（发布出去的本来就是规范形式）。
+    // ⚠️ 以前**没人写这两份** ⇒ 事务指向两个不存在的文件 ⇒ 更新永远卡在「应用」。
+    writeStagedManifests: async ({ paths, manifest, fileManifest }) => {
+      await asarSafeFs.promises.mkdir(dirname(paths.manifestPath), { recursive: true });
+      await asarSafeFs.promises.writeFile(paths.manifestPath, canonicalizeJson(manifest), 'utf8');
+      await asarSafeFs.promises.writeFile(paths.fileManifestPath, canonicalizeJson(fileManifest), 'utf8');
+    },
+    // 空间预算的第三项：换目录之前，现有程序目录一直占着这块盘。
+    measureProgramSize: () => measureProgramTreeBytes(join(root, PORTABLE_PROGRAM_DIRECTORY_NAME)),
+    now: () => Date.now(),
+    createTransactionId: () => randomUUID(),
+    startLauncher: (stateFilePath) =>
+      new Promise<void>((resolve, reject) => {
+        const child = spawn(join(root, LAUNCHER_FILE_NAME), ['--apply', stateFilePath], {
+          detached: true,
+          stdio: 'ignore',
+        });
+        child.once('error', reject);
+        child.once('spawn', () => {
+          child.unref();
+          resolve();
+        });
+      }),
+    quit: () => app.quit(),
+  });
+  if (generation === portableInitializationGeneration) attachPortableUpdateService(service);
 }
 
 /**
@@ -162,20 +165,22 @@ async function initializePortableUpdateService(root: string): Promise<void> {
  * 同一时刻只会有一次在飞，所以 `app:check-for-updates` 与启动时那次调用不会各探一遍。
  */
 function ensurePortableUpdateService(): Promise<void> {
-  if (portableInitialization !== null) return portableInitialization;
-
   const root = getPortableWorkspaceRoot();
   if (root === null) return Promise.resolve();
+  const channel = portableChannel();
+  const key = `${root}\u0000${channel}`;
+  if (portableInitialization?.key === key) return portableInitialization.promise;
+  const generation = ++portableInitializationGeneration;
 
-  const run = initializePortableUpdateService(root).catch((error: unknown) => {
+  const run = initializePortableUpdateService(root, channel, generation).catch((error: unknown) => {
     getDebugLogger().error({
       domain: 'updater',
       event: 'portable.service.init-failed',
       message: error instanceof Error ? error.message : String(error),
     });
-    if (portableInitialization === run) portableInitialization = null;
+    if (portableInitialization?.promise === run) portableInitialization = null;
   });
-  portableInitialization = run;
+  portableInitialization = { key, promise: run };
   return run;
 }
 

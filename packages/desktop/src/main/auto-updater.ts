@@ -28,6 +28,7 @@ let portableService: PortableUpdateService | null = null;
 let portableUnsubscribe: (() => void) | null = null;
 
 export function attachPortableUpdateService(service: PortableUpdateService | null): void {
+  if (service !== portableService) inFlightCheck = null;
   if (portableUnsubscribe !== null) {
     portableUnsubscribe();
     portableUnsubscribe = null;
