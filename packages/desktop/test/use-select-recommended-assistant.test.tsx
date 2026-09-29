@@ -4,9 +4,10 @@ import { act, type ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { toastSpy, tSpy } = vi.hoisted(() => ({
+const { toastSpy, tSpy, refreshAgentsSpy } = vi.hoisted(() => ({
   toastSpy: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
   tSpy: vi.fn((key: string, _params?: unknown) => key),
+  refreshAgentsSpy: vi.fn<(gatewayId: string, options?: { force?: boolean }) => Promise<void>>(async () => undefined),
 }));
 
 vi.mock('react-i18next', () => ({
@@ -14,6 +15,7 @@ vi.mock('react-i18next', () => ({
   initReactI18next: { type: '3rdParty', init: vi.fn() },
 }));
 vi.mock('@/lib/toast', () => ({ toast: toastSpy }));
+vi.mock('@/hooks/useGatewayBootstrap', () => ({ fetchAgentsForGateway: refreshAgentsSpy }));
 
 import { useSelectRecommendedAssistant } from '../src/renderer/hooks/useSelectRecommendedAssistant';
 import { useUiStore } from '../src/renderer/stores/uiStore';
@@ -33,7 +35,7 @@ import { useTaskStore } from '../src/renderer/stores/taskStore';
  */
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-let pick!: (agentId: string) => void;
+let pick!: (agentId: string, gatewayId: string) => Promise<boolean>;
 const onDone = vi.fn();
 
 function Probe(): ReactElement {
@@ -58,6 +60,7 @@ const catalog = (agents: string[]) => ({ agents: agents.map((id) => ({ id }) as 
 
 beforeEach(() => {
   vi.clearAllMocks();
+  refreshAgentsSpy.mockImplementation(async () => undefined);
   window.localStorage.clear();
   useTaskStore.setState({ pendingNewTask: null, activeTaskId: null });
   useUiStore.setState({
@@ -68,11 +71,13 @@ beforeEach(() => {
 });
 
 describe('useSelectRecommendedAssistant', () => {
-  it('⭐ 推荐的助手不在本机 ⇒ 不切、不设待发任务、如实说明', () => {
+  it('⭐ 推荐的助手不在本机 ⇒ 不切、不设待发任务、如实说明', async () => {
     useUiStore.setState({ agentCatalogByGateway: { 'gw-1': catalog(['main']) } });
     const { unmount } = render(<Probe />);
 
-    act(() => pick('team-agent-x'));
+    await act(async () => {
+      await pick('team-agent-x', 'gw-1');
+    });
 
     expect(useUiStore.getState().selectedAgentByGateway['gw-1'], '不许静默换人').toBe('main');
     expect(useTaskStore.getState().pendingNewTask, '不许留个开不出来的待发任务').toBeNull();
@@ -81,10 +86,12 @@ describe('useSelectRecommendedAssistant', () => {
     unmount();
   });
 
-  it('对照：推荐的助手装着 ⇒ 切它、设待发任务、收尾', () => {
+  it('对照：推荐的助手装着 ⇒ 切它、设待发任务、收尾', async () => {
     const { unmount } = render(<Probe />);
 
-    act(() => pick('rongying-ecommerce'));
+    await act(async () => {
+      await pick('rongying-ecommerce', 'gw-1');
+    });
 
     expect(useUiStore.getState().selectedAgentByGateway['gw-1']).toBe('rongying-ecommerce');
     expect(useTaskStore.getState().pendingNewTask?.agentId).toBe('rongying-ecommerce');
@@ -93,14 +100,51 @@ describe('useSelectRecommendedAssistant', () => {
     unmount();
   });
 
-  it('对照：目录**还没拉回来** ⇒ 走老路（不许把 loading 判成缺失）', () => {
+  it('⭐ 目录**还没拉回来** ⇒ 刷新完成前零副作用，确认安装后才切', async () => {
     useUiStore.setState({ agentCatalogByGateway: {} });
+    let release!: () => void;
+    refreshAgentsSpy.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          release = () => {
+            useUiStore.setState({ agentCatalogByGateway: { 'gw-1': catalog(['main', 'rongying-ecommerce']) } });
+            resolve();
+          };
+        }),
+    );
     const { unmount } = render(<Probe />);
 
-    act(() => pick('rongying-ecommerce'));
+    let pending!: Promise<boolean>;
+    act(() => {
+      pending = pick('rongying-ecommerce', 'gw-1');
+    });
+    expect(useUiStore.getState().selectedAgentByGateway['gw-1'], '刷新未完成时不许提前切').toBe('main');
+    expect(useTaskStore.getState().pendingNewTask).toBeNull();
 
-    expect(useUiStore.getState().selectedAgentByGateway['gw-1'], '目录未加载时照常切').toBe('rongying-ecommerce');
+    await act(async () => {
+      release();
+      await pending;
+    });
+
+    expect(refreshAgentsSpy).toHaveBeenCalledWith('gw-1', { force: true });
+    expect(useUiStore.getState().selectedAgentByGateway['gw-1']).toBe('rongying-ecommerce');
     expect(toastSpy.error).not.toHaveBeenCalled();
+    unmount();
+  });
+
+  it('⭐ loading 刷新失败 ⇒ 不切、不设待发、不误报助手缺失', async () => {
+    useUiStore.setState({ agentCatalogByGateway: {} });
+    refreshAgentsSpy.mockRejectedValueOnce(new Error('offline'));
+    const { unmount } = render(<Probe />);
+
+    await act(async () => {
+      await pick('rongying-ecommerce', 'gw-1');
+    });
+
+    expect(useUiStore.getState().selectedAgentByGateway['gw-1']).toBe('main');
+    expect(useTaskStore.getState().pendingNewTask).toBeNull();
+    expect(onDone).not.toHaveBeenCalled();
+    expect(toastSpy.error).toHaveBeenCalledWith('errors.failed');
     unmount();
   });
 
@@ -115,7 +159,7 @@ describe('useSelectRecommendedAssistant', () => {
    *
    * ⇒ 判据必须**在调用那一刻**读 store（`getState()`），不能读渲染时捕获的那份。
    */
-  it('⭐ 目录在本轮渲染之后才更新（刚建完助手）⇒ 必须按**最新**目录判，不许拒绝', () => {
+  it('⭐ 目录在本轮渲染之后才更新（刚建完助手）⇒ 必须按**最新**目录判，不许拒绝', async () => {
     const { unmount } = render(<Probe />);
 
     /**
@@ -132,11 +176,35 @@ describe('useSelectRecommendedAssistant', () => {
       useUiStore.setState({ agentCatalogByGateway: { 'gw-1': catalog(['main', 'brand-new-agent']) } });
     });
 
-    act(() => captured('brand-new-agent'));
+    await act(async () => {
+      await captured('brand-new-agent', 'gw-1');
+    });
 
     expect(toastSpy.error, '刚建好的助手被判成"不在本机" = 告诉他创建失败了').not.toHaveBeenCalled();
     expect(useUiStore.getState().selectedAgentByGateway['gw-1']).toBe('brand-new-agent');
     expect(onDone).toHaveBeenCalled();
+    unmount();
+  });
+
+  it('⭐ 在途期间默认网关从 gw-1 切到 gw-2，仍必须把助手和待发任务留在 gw-1', async () => {
+    useUiStore.setState({
+      agentCatalogByGateway: {
+        'gw-1': catalog(['main', 'brand-new-agent']),
+        'gw-2': catalog(['main', 'brand-new-agent']),
+      },
+      selectedAgentByGateway: { 'gw-1': 'main', 'gw-2': 'main' },
+    });
+    const { unmount } = render(<Probe />);
+    const captured = pick;
+    act(() => useUiStore.setState({ defaultGatewayId: 'gw-2' }));
+
+    await act(async () => {
+      await captured('brand-new-agent', 'gw-1');
+    });
+
+    expect(useUiStore.getState().selectedAgentByGateway['gw-1']).toBe('brand-new-agent');
+    expect(useUiStore.getState().selectedAgentByGateway['gw-2']).toBe('main');
+    expect(useTaskStore.getState().pendingNewTask).toMatchObject({ gatewayId: 'gw-1', agentId: 'brand-new-agent' });
     unmount();
   });
 });

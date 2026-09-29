@@ -7,7 +7,7 @@ import { toast } from '@/lib/toast';
 import { useUiStore } from '@/stores/uiStore';
 import { useTaskStore } from '@/stores/taskStore';
 import { useSelectAgent } from '@/hooks/useSelectAgent';
-import { fetchAgentsForGateway } from '@/hooks/useGatewayDispatcherSetup';
+import { fetchAgentsForGateway } from '@/hooks/useGatewayBootstrap';
 import AgentMissingNotice from '@/components/AgentMissingNotice';
 import { resolveRequestedAgentForAction } from '@/lib/requested-agent';
 import { PRESET_AGENT_IDS, resolveAssistantWorkspace } from '@/lib/preset-agents';

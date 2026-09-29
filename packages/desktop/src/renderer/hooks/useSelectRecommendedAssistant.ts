@@ -2,7 +2,8 @@ import { useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useUiStore } from '@/stores/uiStore';
 import { useTaskStore } from '@/stores/taskStore';
-import { resolveRequestedAgent } from '@/lib/requested-agent';
+import { fetchAgentsForGateway } from '@/hooks/useGatewayBootstrap';
+import { resolveRequestedAgentForAction } from '@/lib/requested-agent';
 import { toast } from '@/lib/toast';
 
 /**
@@ -13,12 +14,15 @@ import { toast } from '@/lib/toast';
  * （另两个同族入口在 `IdentityCenter`，那边是走组件测的。）
  *
  * @param onDone 选成功后的收尾（`MainArea` 传的是清掉草稿请求）
+ * @returns 动作结果。第二个参数 `gatewayId` 是流程起点的归属，不得在 await 后重读默认网关。
  */
-export function useSelectRecommendedAssistant(onDone: () => void): (agentId: string) => void {
+export function useSelectRecommendedAssistant(
+  onDone: () => void,
+): (agentId: string, gatewayId: string) => Promise<boolean> {
   const { t } = useTranslation();
 
   return useCallback(
-    (agentId: string) => {
+    async (agentId: string, gatewayId: string): Promise<boolean> => {
       /**
        * ⚠️⚠️ **在调用这一刻读 store，不要读渲染时捕获的那一份**（2026-09-29 自查抓到的真错）。
        *
@@ -31,11 +35,10 @@ export function useSelectRecommendedAssistant(onDone: () => void): (agentId: str
        * （这是我改成"带判据"之后引进的回归；原来没有判据，所以不存在这个问题。
        *   测试里那条 ⭐ 用例专门复现这个时序：先抓住旧闭包，再更新目录。）
        *
-       * 顺带的好处：依赖表里不再有会变的值 ⇒ 这个回调本身是稳定的。
+       * 路由则只认调用方显式传入的 `gatewayId`：流程中途用户切换默认网关，
+       * 刚创建的助手、目录刷新和待发任务仍然必须留在原网关。
        */
-      const state = useUiStore.getState();
-      const gatewayId = state.defaultGatewayId ?? '';
-      if (!gatewayId) return;
+      if (!gatewayId) return false;
 
       /**
        * ⭐ 推荐的助手**不在本机**时如实说明，并且**什么都不做**。
@@ -43,16 +46,28 @@ export function useSelectRecommendedAssistant(onDone: () => void): (agentId: str
        * 原来的写法是直接 `setSelectedAgent` —— 目录里没有它，界面就静默落到第一个
        * （也就是「点了 A 进去的是罗盘助手」，`[[team-agent-404-405-brief]]` 的层 2）。
        *
-       * ⚠️ 判据**复用** `resolveRequestedAgent`：目录还没拉回来时它返回 `loading`，
-       * 不判缺失。自己写 `agents.some(...)` 会把"还没加载"说成"不在本机"。
+       * 目录还没拉回来时强制刷新一次；刷新失败不误报缺失，
+       * 但也不得把 loading 当成 ok 继续路由。
        */
-      if (resolveRequestedAgent(agentId, state.agentCatalogByGateway[gatewayId]) === 'missing') {
+      const decision = await resolveRequestedAgentForAction({
+        requestedAgentId: agentId,
+        readCatalog: () => useUiStore.getState().agentCatalogByGateway[gatewayId],
+        refresh: () => fetchAgentsForGateway(gatewayId, { force: true }),
+      });
+      if (decision === 'missing') {
         toast.error(t('agent.missingTitle', { agentId }));
-        return;
+        return false;
       }
+      if (decision === 'unavailable') {
+        toast.error(t('errors.failed'));
+        return false;
+      }
+
+      const state = useUiStore.getState();
       state.setSelectedAgent(gatewayId, agentId);
       useTaskStore.getState().setPending({ gatewayId, agentId });
       onDone();
+      return true;
     },
     [onDone, t],
   );

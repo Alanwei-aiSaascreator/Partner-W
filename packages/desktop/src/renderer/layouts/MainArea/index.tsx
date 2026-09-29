@@ -689,11 +689,18 @@ export function ChatContent({
    * 它在这里**测不到**（渲染整个 `MainArea` 要网关/启动自检/引导画像一大串状态）。
    * 搬走之后它才接上了同族入口都有的那条判据：推荐的助手不在本机时**如实说明、不切**。
    */
-  const handleSelectRecommendedAssistant = useSelectRecommendedAssistant(clearDraftRequest);
+  const selectRecommendedAssistant = useSelectRecommendedAssistant(clearDraftRequest);
+  const handleSelectRecommendedAssistant = useCallback(
+    (agentId: string) => void selectRecommendedAssistant(agentId, defaultGatewayId),
+    [defaultGatewayId, selectRecommendedAssistant],
+  );
 
   const handleCreateCustomAssistant = useCallback(
     async (analysis: CustomGoalAnalysis) => {
-      if (!defaultGatewayId) return;
+      // 从用户点下创建起就固定网关。中途切换默认网关不得让后续刷新/选择串线。
+      const actionGatewayId = defaultGatewayId;
+      if (!actionGatewayId) return;
+      const existingAgents = useUiStore.getState().agentCatalogByGateway[actionGatewayId]?.agents;
       const slug = analysis.draft.name
         .toLowerCase()
         .replace(/[^a-z0-9\s-]/g, '')
@@ -714,24 +721,24 @@ export function ChatContent({
         `${analysis.draft.identity}\n\n## Boundaries\n\n${analysis.draft.boundaries}`,
       );
       const response = await createAgentWithRollback(window.clawwork, {
-        gatewayId: defaultGatewayId,
+        gatewayId: actionGatewayId,
         name: analysis.draft.name,
         workspace,
         model: analysis.model,
         identityContent,
-        existingAgents: goalAgentCatalog?.agents,
+        existingAgents,
       });
       if (!response.ok) {
         toast.error(response.error ?? t('errors.failed'));
         throw new Error(response.error ?? 'agent_create_failed');
       }
-      await fetchAgentsForGateway(defaultGatewayId, { force: true });
+      await fetchAgentsForGateway(actionGatewayId, { force: true });
       const agentId = typeof response.result?.agentId === 'string' ? response.result.agentId : '';
-      if (agentId) handleSelectRecommendedAssistant(agentId);
+      if (agentId && !(await selectRecommendedAssistant(agentId, actionGatewayId))) return;
       requestDraft(analysis.starters[0] ?? '', 'goal-routing');
       toast.success(t('goalRouting.created'));
     },
-    [defaultGatewayId, goalAgentCatalog?.agents, handleSelectRecommendedAssistant, requestDraft, t],
+    [defaultGatewayId, requestDraft, selectRecommendedAssistant, t],
   );
 
   const closeFilePreview = useCallback(() => setPreviewFile(null), []);

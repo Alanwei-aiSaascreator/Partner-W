@@ -29,7 +29,7 @@ vi.mock('@/lib/toast', () => ({ toast: toastSpy }));
  * 这里只问一件事 —— 按钮按下去**有没有走到切助手**，以及带的是哪个助手。
  */
 vi.mock('@/hooks/useSelectAgent', () => ({ useSelectAgent: () => selectAgentSpy }));
-vi.mock('@/hooks/useGatewayDispatcherSetup', () => ({ fetchAgentsForGateway: refreshAgentsSpy }));
+vi.mock('@/hooks/useGatewayBootstrap', () => ({ fetchAgentsForGateway: refreshAgentsSpy }));
 
 import IdentityCenter from '../src/renderer/layouts/IdentityCenter';
 import { IDENTITY_BLOCK_START } from '../src/renderer/lib/identity-persona';
