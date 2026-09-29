@@ -7,7 +7,6 @@ import { motion as motionPresets } from '@/styles/design-tokens';
 import { copyTextToClipboard } from '@/lib/clipboard';
 import MessageBlock, { type AssistantIdentity } from './MessageBlock';
 import { AttachmentFileCard, InlineImageBubble, MessageActionButton } from './MessageParts';
-import ThinkingSection from './ThinkingSection';
 import ThinkingIndicator from './ThinkingIndicator';
 import ToolCallSummary from './ToolCallSummary';
 import MarkdownContent from './MarkdownContent';
@@ -75,7 +74,6 @@ export function AssistantFinalizedBody({ message, agentName, onImageClick }: Ass
 
   return (
     <>
-      {message.thinkingContent && <ThinkingSection content={message.thinkingContent} />}
       {message.content || !attachments?.length ? (
         <div className="inline-block max-w-full leading-relaxed rounded-2xl px-4 py-3 text-[var(--text-primary)]">
           <MarkdownContent
@@ -149,14 +147,13 @@ export interface AssistantStreamingBodyProps {
   toolCalls?: ToolCall[];
 }
 
-export function AssistantStreamingBody({ content, thinkingContent, toolCalls }: AssistantStreamingBodyProps) {
+export function AssistantStreamingBody({ content, toolCalls }: AssistantStreamingBodyProps) {
   return (
     <>
       {/* ⚠️ 顺序要紧：**什么都没到**时才显示跳动点。
           发出之后到第一个字之前，这一块已经在页面上（头像+名字也在），
           于是这条消息从"发出"到"结束"始终是**同一个 DOM 节点** —— 头像不会闪。 */}
-      {!content && !thinkingContent && !toolCalls?.length ? <ThinkingIndicator /> : null}
-      {thinkingContent && <ThinkingSection content={thinkingContent} defaultOpen streaming showCursor={!content} />}
+      {!content && !toolCalls?.length ? <ThinkingIndicator /> : null}
       {toolCalls?.length ? (
         <div className="mb-2">
           <ToolCallSummary toolCalls={toolCalls} />

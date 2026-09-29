@@ -164,4 +164,28 @@ describe('AssistantBlock：状态切换时块与头像不能被卸载重建', ()
     expect(view.container.querySelector('[data-testid="message-avatar"]')).toBe(avatarBefore);
     expect(view.container.textContent).not.toContain('第一轮答案');
   });
+
+  it('流式思考只显示中性等待态，绝不把供应商原始推理暴露给用户', () => {
+    const rawThinking = 'We need inspect private chain-of-thought before answering.';
+    const view = render(
+      <AssistantBlock state="streaming" content="" thinkingContent={rawThinking} toolCalls={[]} identity={identity} />,
+    );
+
+    expect(view.container.textContent).not.toContain(rawThinking);
+    expect(view.container.querySelector('[data-testid="thinking-indicator"]')).not.toBeNull();
+  });
+
+  it('定稿消息也不显示已经保存的原始推理', () => {
+    const rawThinking = 'Hidden provider reasoning must stay hidden.';
+    const view = render(
+      <AssistantBlock
+        state="finalized"
+        message={buildMessage({ content: '给用户的答案', thinkingContent: rawThinking })}
+        identity={identity}
+      />,
+    );
+
+    expect(view.container.textContent).toContain('给用户的答案');
+    expect(view.container.textContent).not.toContain(rawThinking);
+  });
 });

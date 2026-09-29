@@ -23,7 +23,7 @@ import type { ModelCatalogEntry } from '@clawwork/shared';
 import { useMessageStore } from '@/stores/messageStore';
 import { Button } from '@/components/ui/button';
 import MarkdownContent from '@/components/MarkdownContent';
-import ThinkingSection from '@/components/ThinkingSection';
+import ThinkingIndicator from '@/components/ThinkingIndicator';
 import { resolveModelLabel } from '@/lib/model-display';
 import { cn } from '@/lib/utils';
 import {
@@ -134,13 +134,7 @@ function CompareColumn({
           </div>
         ) : (
           <>
-            {view.thinking && (
-              <ThinkingSection
-                content={view.thinking}
-                streaming={view.status === 'streaming'}
-                showCursor={!view.text}
-              />
-            )}
+            {view.thinking && !view.text ? <ThinkingIndicator /> : null}
             {view.text ? (
               <div className="leading-relaxed text-[var(--text-primary)]">
                 <MarkdownContent content={view.text} showCursor={view.status === 'streaming'} />
