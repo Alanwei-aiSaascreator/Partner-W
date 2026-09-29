@@ -58,7 +58,8 @@ type ClawworkMock = Record<
   | 'patchConfig'
   | 'persistTeam'
   | 'installSkill'
-  | 'updateAgent',
+  | 'updateAgent'
+  | 'probeWorkspaceFsIdentity',
   ReturnType<typeof vi.fn>
 >;
 
@@ -91,6 +92,7 @@ beforeEach(() => {
     persistTeam: vi.fn(async () => ({ ok: true })),
     installSkill: vi.fn(async () => ({ ok: true })),
     updateAgent: vi.fn(async () => ({ ok: true })),
+    probeWorkspaceFsIdentity: vi.fn(async () => ({ state: 'ok', dev: '1', ino: '2' })),
   };
   (window as unknown as { clawwork: ClawworkMock }).clawwork = clawwork;
 

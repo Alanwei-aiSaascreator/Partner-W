@@ -285,6 +285,8 @@ const relayApi = {
       }),
   ),
   commercialRelayBootstrapRetry: vi.fn(async () => ({ ok: true })),
+  probeWorkspaceFsIdentity: vi.fn(async () => ({ state: 'ok' as const, dev: '1', ino: '2' })),
+  ensureOurSkills: vi.fn(async () => ({ ok: true })),
 };
 
 function emit(state: RelayBootstrapPublicState): void {
@@ -299,6 +301,8 @@ beforeEach(() => {
   relayApi.onCommercialRelayBootstrapState.mockClear();
   relayApi.commercialRelayBootstrapState.mockClear();
   relayApi.commercialRelayBootstrapRetry.mockClear();
+  relayApi.probeWorkspaceFsIdentity.mockClear();
+  relayApi.ensureOurSkills.mockClear();
   gatewayMocks.reinitializeGatewayBootstrap.mockClear();
   coordinatorMocks.run.mockClear();
   coordinatorMocks.reset.mockClear();

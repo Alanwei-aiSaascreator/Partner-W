@@ -140,19 +140,17 @@ describe('skills:our-ensure（开机自装）', () => {
  * 渲染层那道**栅栏**（不是行为测试，故意说明白）。
  *
  * 上面验的是主进程"接到调用会不会装"。真正让它在开机时发生的，是
- * `useStartupReadiness` 里那一行 `void ensureOurSkills()` ——
- * 把它删掉、或挪出那个 effect，**整套测试都不会红**，而功能会静默失效
+ * `useStartupReadiness` 把 `ensureOurSkills` 交给工作区能力门禁，并在网关连接 effect 里启动门禁。
+ * 把这条接线删掉、或挪出那个 effect，**整套主进程测试都不会红**，而功能会静默失效
  * （新盘上助手看不到随包技能 ⇒ 例如"做个 PPT"它只会说只能给文字稿）。
  *
  * 给 `useStartupReadiness` 写一个行为测试要搭起 zustand 会话、中转状态订阅、
  * 网关 bootstrap 一大套；这里用源码栅栏换那个成本，**并把它的性质写在名字里**。
  */
 describe('栅栏：开机时机确实会调自装', () => {
-  it('useStartupReadiness 在与助手安装同一个 effect 里调 ensureOurSkills', () => {
+  it('useStartupReadiness 把技能自装与助手安装一起交给工作区门禁', () => {
     const source = readFileSync(join(process.cwd(), 'src/renderer/hooks/useStartupReadiness.ts'), 'utf8');
-    expect(source, '这行被删掉了：开机就不会自装随包技能').toContain('void ensureOurSkills()');
-    expect(source, '要挂在"网关联上"那个 effect 里（和 runAssistantBootstrap 同一处）').toMatch(
-      /void runAssistantBootstrap\(\);\s*\n\s*void ensureOurSkills\(\);/,
-    );
+    expect(source, '技能自装必须经过与助手相同的文件系统能力门禁').toContain('ensureSkills: ensureOurSkills');
+    expect(source, '网关联上时必须启动这道统一门禁').toContain('void runGatedBootstrap()');
   });
 });
