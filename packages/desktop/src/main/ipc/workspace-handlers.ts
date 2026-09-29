@@ -64,7 +64,15 @@ function locationPatch(workspacePath: string): { workspaceRelPath?: string; volu
   });
 }
 
-export function registerWorkspaceHandlers(): void {
+export interface WorkspaceHandlerDeps {
+  /**
+   * Keep the already-running portable runtime's `agents.entries.main.workspace`
+   * aligned with the desktop workspace before the desktop commits the change.
+   */
+  syncRuntimeWorkspace?: (workspacePath: string) => Promise<void>;
+}
+
+export function registerWorkspaceHandlers(deps: WorkspaceHandlerDeps = {}): void {
   ipcMain.handle('workspace:open-folder', () => {
     const p = getWorkspacePath();
     if (p) shell.openPath(p);
@@ -116,9 +124,14 @@ export function registerWorkspaceHandlers(): void {
     const oldPath = getWorkspacePath();
     if (!oldPath) return { ok: false, error: 'no current workspace' };
     if (oldPath === newWorkspacePath) return { ok: true };
+    let runtimeSyncAttempted = false;
     try {
       closeDatabase();
       await migrateWorkspace(oldPath, newWorkspacePath);
+      if (deps.syncRuntimeWorkspace) {
+        runtimeSyncAttempted = true;
+        await deps.syncRuntimeWorkspace(newWorkspacePath);
+      }
       reinitDatabase(newWorkspacePath);
       restartKbRuntime();
       updateConfig({ workspacePath: newWorkspacePath, ...locationPatch(newWorkspacePath) });
@@ -126,6 +139,15 @@ export function registerWorkspaceHandlers(): void {
       if (win) win.webContents.send('workspace:changed', newWorkspacePath);
       return { ok: true };
     } catch (err) {
+      if (runtimeSyncAttempted && deps.syncRuntimeWorkspace) {
+        try {
+          await deps.syncRuntimeWorkspace(oldPath);
+        } catch {
+          // Keep the original failure as the user-facing result. The runtime
+          // sync uses an atomic writer, so this rollback is a best-effort guard
+          // for failures after the new value had already been committed.
+        }
+      }
       reinitDatabase(oldPath);
       restartKbRuntime();
       return { ok: false, error: err instanceof Error ? err.message : 'migration failed' };

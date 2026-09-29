@@ -110,6 +110,44 @@ describe('registerWorkspaceHandlers', () => {
     expect(updateConfigMock).toHaveBeenCalledWith({ workspacePath: '/tmp/new-workspace' });
   });
 
+  it('⭐ 运行中换工作区先同步 runtime main.workspace，再提交客户端配置', async () => {
+    const order: string[] = [];
+    migrateWorkspaceMock.mockImplementation(async () => {
+      order.push('migrate');
+    });
+    const syncRuntimeWorkspace = vi.fn(async () => {
+      order.push('runtime');
+    });
+    updateConfigMock.mockImplementation(() => {
+      order.push('config');
+    });
+
+    const { registerWorkspaceHandlers } = await import('../src/main/ipc/workspace-handlers.js');
+    registerWorkspaceHandlers({ syncRuntimeWorkspace });
+    const handler = handleMap.get('workspace:change');
+
+    await expect(handler?.({}, '/tmp/new-workspace')).resolves.toEqual({ ok: true });
+    expect(syncRuntimeWorkspace).toHaveBeenCalledWith('/tmp/new-workspace');
+    expect(order).toEqual(['migrate', 'runtime', 'config']);
+  });
+
+  it('⭐ runtime main.workspace 同步失败 ⇒ 不报成功、不改客户端配置，并恢复旧数据库', async () => {
+    const syncRuntimeWorkspace = vi.fn(async () => {
+      throw new Error('runtime config busy');
+    });
+
+    const { registerWorkspaceHandlers } = await import('../src/main/ipc/workspace-handlers.js');
+    registerWorkspaceHandlers({ syncRuntimeWorkspace });
+    const handler = handleMap.get('workspace:change');
+
+    await expect(handler?.({}, '/tmp/new-workspace')).resolves.toEqual({
+      ok: false,
+      error: 'runtime config busy',
+    });
+    expect(updateConfigMock).not.toHaveBeenCalled();
+    expect(reinitDatabaseMock).toHaveBeenLastCalledWith('/tmp/old-workspace');
+  });
+
   it('returns error without closing database when migration fails', async () => {
     migrateWorkspaceMock.mockRejectedValue(new Error('copy failed'));
 

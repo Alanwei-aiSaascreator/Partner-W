@@ -63,6 +63,7 @@ import {
 } from './runtime/instance-guard.js';
 import { bootstrapLocalGatewayRuntime, GATEWAY_PORT_OCCUPIED, shutdownLocalGatewayRuntime } from './runtime/index.js';
 import { bootstrapWithRetry } from './runtime/bootstrap-retry.js';
+import { ensureClientGatewayEntry } from './runtime/state-config.js';
 import { getRuntimeBootstrapStatus, publishRuntimeBootstrapStatus } from './runtime/bootstrap-status.js';
 import { removableDrives } from './workspace/removable-drives.js';
 import { GATEWAY_WS_PORT } from '@clawwork/shared';
@@ -354,7 +355,19 @@ if (!gotLock) {
       registerArtifactHandlers();
       registerInboxHandlers();
       registerMediaHandlers();
-      registerWorkspaceHandlers();
+      registerWorkspaceHandlers(
+        portableAppData.target
+          ? {
+              syncRuntimeWorkspace: async (workspacePath) => {
+                await ensureClientGatewayEntry({
+                  userDataDir: app.getPath('userData'),
+                  stateUserDataDir: localUserDataDir,
+                  portableWorkspacePath: workspacePath,
+                });
+              },
+            }
+          : {},
+      );
       registerSettingsHandlers();
       registerSearchHandlers();
       registerDataHandlers();
