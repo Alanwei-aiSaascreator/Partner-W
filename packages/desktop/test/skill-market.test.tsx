@@ -487,6 +487,43 @@ describe('技能市场 · 助手侧能不能用', () => {
     vi.useRealTimers();
   });
 
+  it.each([
+    ['失败', { ok: false, error: 'boom' }],
+    ['缺项', { ok: true, result: statusReport([]) }],
+  ])('⭐ 最后发出的请求先%s，早先请求后成功 ⇒ 完整成功必须胜出', async (_case, thirdResult) => {
+    let releaseFirst!: (value: unknown) => void;
+    const first = new Promise((resolve) => {
+      releaseFirst = resolve;
+    });
+    const second = new Promise(() => undefined);
+    let call = 0;
+    installStubs({
+      getSkillsStatus: vi.fn(async () => {
+        call += 1;
+        if (call === 1) return first;
+        if (call === 2) return second;
+        return thirdResult;
+      }),
+    });
+    vi.useFakeTimers();
+    const { container, unmount } = render(<SkillMarket />);
+    await flush();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1600);
+    });
+    expect(verdictOf(container, 'weekly-report'), '仍有完整报告在途，不许抢先结算').toBe('checking');
+
+    await act(async () => {
+      releaseFirst({ ok: true, result: statusReport([{ skillKey: 'weekly-report' }]) });
+      await Promise.resolve();
+    });
+    expect(verdictOf(container, 'weekly-report')).toBe('usable');
+
+    unmount();
+    vi.useRealTimers();
+  });
+
   it('⭐ 最后一次探测失败 ⇒ 不许把前面已经问到的好报告扔掉', async () => {
     /**
      * ⚠️ 同一个复核：原来失败那条路写的是 `report: null`，

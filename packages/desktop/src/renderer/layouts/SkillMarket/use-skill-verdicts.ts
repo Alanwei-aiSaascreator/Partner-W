@@ -79,30 +79,25 @@ export function useSkillVerdicts({
 
     const epoch = (epochRef.current += 1);
     const wanted = probeKey.split('|');
-    const lastIndex = RETRY_DELAYS_MS.length - 1;
     let cancelled = false;
     const timers: ReturnType<typeof setTimeout>[] = [];
     /**
-     * 这一轮里**已经落地过的最新一次尝试**，以及**是否已经收工**。
-     *
-     * ⚠️ 这两个变量是 2026-09-29 独立复核抓出来的**两个真 bug** 的修复：
-     *
-     * (1) 三次尝试是一次性排好的，而慢的那次（网关冷启动，实测 0.7~2 秒）可能**最后才回来**：
-     *     它拿着"还没有这个技能"的**旧**结果，把已经变绿的界面**重新打回"正在确认…"**，
-     *     而那时定时器已经用完 ⇒ **永远卡在"正在确认…"**。
-     *     ⇒ 收工之后一律不许再改状态；更早的 index 也不许覆盖更晚的。
-     *
-     * (2) 最后一次**失败**时原来写的是 `report: null` —— 把前面已经问到的好报告**扔了**，
-     *     界面上刚看到的绿/红会变成"没问出来"。总超时那条路本来就写着"只降级不覆盖"，
-     *     这两条路却反着来。
+     * 三次请求是并发的，**返回顺序不代表新旧**。
+     * 因此不按 attempt index 抢先结算：任一完整报告立即胜出；
+     * 失败或缺项只记为一次完成，等全部在途请求结束后才能下否定结论。
+     * `bestReport` 保留命中技能最多的合法报告，总超时也不把它抹掉。
      */
-    let appliedIndex = -1;
+    let pendingAttempts = RETRY_DELAYS_MS.length;
     let settled = false;
+    let bestReport: SkillStatusReport | null = null;
+    let bestSeenCount = -1;
     setSnapshot({ report: null, settled: false, failure: 'rpc-failed' });
 
     const finish = (failure: 'rpc-failed' | 'timeout'): void => {
+      if (settled) return;
       settled = true;
-      setSnapshot((prev) => (prev.report ? { ...prev, settled: true } : { report: null, settled: true, failure }));
+      clearTimeout(overall);
+      setSnapshot({ report: bestReport, settled: true, failure });
     };
 
     const overall = setTimeout(() => {
@@ -111,36 +106,42 @@ export function useSkillVerdicts({
       finish('timeout');
     }, OVERALL_TIMEOUT_MS);
 
-    const attempt = async (index: number): Promise<void> => {
-      try {
-        const res = await window.clawwork.getSkillsStatus(gatewayId as string, agentId);
-        if (cancelled || epochRef.current !== epoch) return;
-        // ⚠️ 收工之后、或比已经落地的那次更早 ⇒ **丢弃**（上面那个"卡死"就是这么来的）。
-        if (settled || index < appliedIndex) return;
-        const parsed = res.ok ? readSkillStatusReport(res.result) : null;
-        if (!parsed) {
-          if (index === lastIndex) finish('rpc-failed');
-          return;
-        }
-        appliedIndex = index;
-        // 集齐就早停：**连还没跑的重试一起取消**（原来只取消了总超时 ⇒ 每轮仍然打满 3 次 RPC）。
-        const allSeen = wanted.every((key) => parsed.skills.some((entry) => entry.skillKey === key));
-        if (allSeen) {
-          clearTimeout(overall);
-          for (const timer of timers) clearTimeout(timer);
-          settled = true;
-        } else if (index === lastIndex) {
-          settled = true;
-        }
-        setSnapshot({ report: parsed, settled, failure: 'rpc-failed' });
-      } catch {
-        if (!cancelled && epochRef.current === epoch && index === lastIndex && !settled && index >= appliedIndex) {
-          finish('rpc-failed');
-        }
+    const completeAttempt = (): void => {
+      pendingAttempts -= 1;
+      if (!cancelled && epochRef.current === epoch && pendingAttempts === 0 && !settled) {
+        finish('rpc-failed');
       }
     };
 
-    RETRY_DELAYS_MS.forEach((delay, index) => timers.push(setTimeout(() => void attempt(index), delay)));
+    const attempt = async (): Promise<void> => {
+      try {
+        const res = await window.clawwork.getSkillsStatus(gatewayId as string, agentId);
+        if (cancelled || epochRef.current !== epoch || settled) return;
+        const parsed = res.ok ? readSkillStatusReport(res.result) : null;
+        if (!parsed) return;
+
+        const seenCount = wanted.filter((key) => parsed.skills.some((entry) => entry.skillKey === key)).length;
+        if (seenCount >= bestSeenCount) {
+          bestSeenCount = seenCount;
+          bestReport = parsed;
+        }
+        // 集齐就早停：**连还没跑的重试一起取消**（原来只取消了总超时 ⇒ 每轮仍然打满 3 次 RPC）。
+        if (seenCount === wanted.length) {
+          for (const timer of timers) clearTimeout(timer);
+          finish('rpc-failed');
+          return;
+        }
+
+        // 缺项只是中间态：保留目前命中最多的报告，继续等其他在途请求。
+        setSnapshot({ report: bestReport, settled: false, failure: 'rpc-failed' });
+      } catch {
+        // 单次失败不是最终结论；只有全部尝试结束或总超时才能结算。
+      } finally {
+        completeAttempt();
+      }
+    };
+
+    RETRY_DELAYS_MS.forEach((delay) => timers.push(setTimeout(() => void attempt(), delay)));
 
     return () => {
       // 取消：换助手/换网关/装卸/卸载组件之后，旧那一轮的响应一律作废（epoch 也兜一层）。
