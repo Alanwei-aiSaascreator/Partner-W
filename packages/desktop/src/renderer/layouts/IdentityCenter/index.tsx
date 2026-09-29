@@ -7,8 +7,9 @@ import { toast } from '@/lib/toast';
 import { useUiStore } from '@/stores/uiStore';
 import { useTaskStore } from '@/stores/taskStore';
 import { useSelectAgent } from '@/hooks/useSelectAgent';
+import { fetchAgentsForGateway } from '@/hooks/useGatewayDispatcherSetup';
 import AgentMissingNotice from '@/components/AgentMissingNotice';
-import { resolveRequestedAgent } from '@/lib/requested-agent';
+import { resolveRequestedAgentForAction } from '@/lib/requested-agent';
 import { PRESET_AGENT_IDS, resolveAssistantWorkspace } from '@/lib/preset-agents';
 import {
   IDENTITY_DEFAULT_TAGS,
@@ -75,8 +76,8 @@ export default function IdentityCenter() {
    * 「我的助手」切换器**同一条路**：改选择 + 改待发任务 + 离开旧会话 + 回到对话）。
    *
    * ⚠️ 没有网关时**如实报错**，不假装成功（本项目栽过"把不确定说成确定"）。
-   * ⭐ 查"这个助手在不在目录里"**只在目录已加载时**做（`resolveRequestedAgent` 返回
-   *    `loading` 时不判缺失）—— 目录还没拉回来就判缺失是用误报换静默。
+   * ⭐ 目录已加载时直接使用权威结论；目录还没拉回来时强制刷新一次。
+   * 这样既不把 loading 误报成缺失，也不把 loading 当成可以盲目切换的 ok。
    */
   const startNewTask = useTaskStore((s) => s.startNewTask);
 
@@ -84,33 +85,46 @@ export default function IdentityCenter() {
    * ⭐ **判据只此一处**（2026-09-29）：目录**已加载**、而点名的助手不在里面 ⇒
    * 如实说明，并且**不做那件事**（不切、不开任务）。返回 `true` = 已被拒绝。
    *
-   * ⚠️ 别在这里自己写 `agents.some(...)`：`resolveRequestedAgent` 在**目录还没拉回来**时
-   * 返回 `loading`，**不判缺失** —— 自己写会拿"还没加载"冒充"不在本机"，
-   * 那是用一个新的误报换掉旧的静默（这一页的 `applyPersona` 早就按这条判据写了）。
+   * 目录 `loading` 也不是放行证：必须强制刷新一次，重读 store 里的权威目录。
+   * 刷新失败时既不误报“助手缺失”，也不得切换或开任务。
    *
    * ⚠️ 这一页原来有**三个**入口会切助手/开任务，但只有「应用此画像」接了判据；
    * 点客群卡与「用它开任务」没接 ⇒ 用户点的是一个不存在的助手，
    * 却要等**跳进对话页之后**由欢迎屏告诉他 —— `TeamsPanel` 的注释明确反对这种"跳过去才说"。
    */
-  const refuseIfAgentMissing = useCallback(
-    (agentId: string): boolean => {
-      if (resolveRequestedAgent(agentId, catalogEntry) !== 'missing') return false;
-      setMissingAgentId(agentId);
+  const refuseIfAgentUnavailable = useCallback(
+    async (agentId: string): Promise<boolean> => {
+      if (!gatewayId) return true;
+      const decision = await resolveRequestedAgentForAction({
+        requestedAgentId: agentId,
+        readCatalog: () => useUiStore.getState().agentCatalogByGateway[gatewayId],
+        refresh: () => fetchAgentsForGateway(gatewayId, { force: true }),
+      });
+      if (decision === 'ok') {
+        setMissingAgentId(null);
+        return false;
+      }
+      if (decision === 'missing') {
+        setMissingAgentId(agentId);
+      } else {
+        setMissingAgentId(null);
+        toast.error(t('errors.failed'));
+      }
       return true;
     },
-    [catalogEntry],
+    [gatewayId, t],
   );
 
-  const applyPersona = useCallback((): boolean => {
+  const applyPersona = useCallback(async (): Promise<boolean> => {
     if (!gatewayId) {
       toast.error(t('identity.applyFailed'));
       return false;
     }
-    if (refuseIfAgentMissing(currentAgentId)) return false;
+    if (await refuseIfAgentUnavailable(currentAgentId)) return false;
     setMissingAgentId(null);
     selectAgent(currentAgentId);
     return true;
-  }, [gatewayId, currentAgentId, refuseIfAgentMissing, selectAgent, t]);
+  }, [gatewayId, currentAgentId, refuseIfAgentUnavailable, selectAgent, t]);
 
   /**
    * 提示里的出口：直接切到罗盘助手。
@@ -123,10 +137,10 @@ export default function IdentityCenter() {
 
   /** 点客群卡：真的切，但**留在这一页**（用户是在挑，不是在开新任务）。 */
   const chooseGroup = useCallback(
-    (agentId: string) => {
+    async (agentId: string): Promise<void> => {
       // ⭐ 卡片是按**固定的预设 id 清单**渲染的（`IDENTITY_AGENT_IDS`），
       //    所以盘上没装的助手**也有卡片、也点得着** —— 这正是静默换人的入口。
-      if (refuseIfAgentMissing(agentId)) return;
+      if (await refuseIfAgentUnavailable(agentId)) return;
       setMissingAgentId(null);
       selectAgent(agentId);
       // ⚠️ 顺序有意：`useSelectAgent` 的最后一步会把主区切到对话页。
@@ -135,7 +149,7 @@ export default function IdentityCenter() {
       //    （少了 `setPending` 就会出现"下一条消息发给上一个助手"的老毛病）。
       setMainView('identity');
     },
-    [refuseIfAgentMissing, selectAgent, setMainView],
+    [refuseIfAgentUnavailable, selectAgent, setMainView],
   );
 
   /**
@@ -147,27 +161,27 @@ export default function IdentityCenter() {
    *
    * ⚠️ 没网关时**如实报错**，不假装成功（与 `applyPersona` 同一条规矩）。
    */
-  const startTaskWithAgent = useCallback(() => {
+  const startTaskWithAgent = useCallback(async (): Promise<void> => {
     if (!gatewayId) {
       toast.error(t('identity.applyFailed'));
       return;
     }
     // ⭐ 缺失时**留在原地说明**，不开任务。原来这里只判了网关在不在 ⇒
     //    用户会先被甩进对话页、再在欢迎屏上看到"这个助手不在本机"（跳过去才说）。
-    if (refuseIfAgentMissing(currentAgentId)) return;
+    if (await refuseIfAgentUnavailable(currentAgentId)) return;
     setMissingAgentId(null);
     // ⚠️ **不自己切视图**：`startNewTask` 内部已经通过平台的 `onTaskCreated`
     //    把主区切到对话页了（`platform/index.ts:89`）。这里再调一次 `setMainView('chat')`
     //    是冗余的 —— 变异测试把那条删掉之后**测试照样全绿**，正是它在说明这件事。
     startNewTask({ gatewayId, agentId: currentAgentId });
-  }, [currentAgentId, gatewayId, refuseIfAgentMissing, startNewTask, t]);
+  }, [currentAgentId, gatewayId, refuseIfAgentUnavailable, startNewTask, t]);
 
-  const onApply = useCallback(() => {
+  const onApply = useCallback(async (): Promise<void> => {
     if (selected.length === 0) {
       toast.error(t('identity.needTag'));
       return;
     }
-    if (applyPersona()) toast.success(t('identity.appliedToast', { role: groupLabel }));
+    if (await applyPersona()) toast.success(t('identity.appliedToast', { role: groupLabel }));
   }, [selected.length, applyPersona, groupLabel, t]);
 
   const toggleTag = (id: IdentityTagId) =>
@@ -213,7 +227,7 @@ export default function IdentityCenter() {
         if (!write.ok) failed += 1;
       }
 
-      applyPersona();
+      await applyPersona();
 
       if (overLimit === agents.length) {
         toast.error(t('settings.memoryTooLong', { max: USER_MD_MAX_CHARS }));
@@ -247,7 +261,7 @@ export default function IdentityCenter() {
                   data-group={agentId}
                   data-selected={on ? 'true' : 'false'}
                   aria-pressed={on}
-                  onClick={() => chooseGroup(agentId)}
+                  onClick={() => void chooseGroup(agentId)}
                   className={
                     'glow-focus rounded-[10px] border px-3 py-2.5 text-left transition-colors ' +
                     (on
@@ -270,7 +284,12 @@ export default function IdentityCenter() {
           {/* ⭐ 挑完助手的**出口**：开一个新任务用上它。
               ⚠️ 与卡片本身的点击分开两次动作（见 `startTaskWithAgent` 的注释）。 */}
           <div className="mt-2.5 flex items-center gap-2">
-            <Button size="sm" className="type-support" data-action="new-task-with-agent" onClick={startTaskWithAgent}>
+            <Button
+              size="sm"
+              className="type-support"
+              data-action="new-task-with-agent"
+              onClick={() => void startTaskWithAgent()}
+            >
               <SquarePen />
               {t('identity.startTask', { role: groupLabel })}
             </Button>

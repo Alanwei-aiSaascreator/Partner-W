@@ -19,3 +19,27 @@ export function resolveRequestedAgent(
   if (!requested) return 'ok';
   return catalog.agents.some((agent) => agent.id === requested) ? 'ok' : 'missing';
 }
+
+export type RequestedAgentActionState = 'ok' | 'missing' | 'unavailable';
+
+/**
+ * 动作入口不能拿 `loading` 当放行证：强制刷新一次，再读权威目录。
+ * 刷新失败或刷新后仍无目录时返回 `unavailable`，调用方必须保持零副作用。
+ */
+export async function resolveRequestedAgentForAction(input: {
+  requestedAgentId: string | undefined;
+  readCatalog: () => { agents: readonly { id: string }[] } | undefined;
+  refresh: () => Promise<void>;
+}): Promise<RequestedAgentActionState> {
+  const first = resolveRequestedAgent(input.requestedAgentId, input.readCatalog());
+  if (first !== 'loading') return first;
+
+  try {
+    await input.refresh();
+  } catch {
+    return 'unavailable';
+  }
+
+  const refreshed = resolveRequestedAgent(input.requestedAgentId, input.readCatalog());
+  return refreshed === 'loading' ? 'unavailable' : refreshed;
+}

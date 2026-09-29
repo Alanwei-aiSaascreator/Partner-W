@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { resolveRequestedAgent } from '../src/renderer/lib/requested-agent';
+import { describe, expect, it, vi } from 'vitest';
+import { resolveRequestedAgent, resolveRequestedAgentForAction } from '../src/renderer/lib/requested-agent';
 
 const loaded = { agents: [{ id: 'main' }] };
 
@@ -29,5 +29,70 @@ describe('resolveRequestedAgent', () => {
    */
   it('目录已加载但为空时，非空请求判 missing', () => {
     expect(resolveRequestedAgent('team-agent-x', { agents: [] })).toBe('missing');
+  });
+});
+
+describe('resolveRequestedAgentForAction', () => {
+  it('目录 loading 时强制刷新，刷新后找到才返回 ok', async () => {
+    let current: typeof loaded | undefined;
+    const refresh = vi.fn(async () => {
+      current = { agents: [{ id: 'team-agent-x' }] };
+    });
+
+    await expect(
+      resolveRequestedAgentForAction({
+        requestedAgentId: 'team-agent-x',
+        readCatalog: () => current,
+        refresh,
+      }),
+    ).resolves.toBe('ok');
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it('目录 loading 时强制刷新，刷新后确认没有则返回 missing', async () => {
+    let current: typeof loaded | undefined;
+
+    await expect(
+      resolveRequestedAgentForAction({
+        requestedAgentId: 'team-agent-x',
+        readCatalog: () => current,
+        refresh: async () => {
+          current = loaded;
+        },
+      }),
+    ).resolves.toBe('missing');
+  });
+
+  it('刷新抛错或刷新后仍 loading 都返回 unavailable，不许当 ok', async () => {
+    await expect(
+      resolveRequestedAgentForAction({
+        requestedAgentId: 'team-agent-x',
+        readCatalog: () => undefined,
+        refresh: async () => {
+          throw new Error('offline');
+        },
+      }),
+    ).resolves.toBe('unavailable');
+
+    await expect(
+      resolveRequestedAgentForAction({
+        requestedAgentId: 'team-agent-x',
+        readCatalog: () => undefined,
+        refresh: async () => undefined,
+      }),
+    ).resolves.toBe('unavailable');
+  });
+
+  it('目录已有权威结论时不发刷新', async () => {
+    const refresh = vi.fn(async () => undefined);
+
+    await expect(
+      resolveRequestedAgentForAction({
+        requestedAgentId: 'main',
+        readCatalog: () => loaded,
+        refresh,
+      }),
+    ).resolves.toBe('ok');
+    expect(refresh).not.toHaveBeenCalled();
   });
 });

@@ -13,12 +13,13 @@ vi.mock('react-i18next', () => ({
 
 // ⚠️ `vi.mock` 的工厂会被提升到文件最上面 ⇒ 里面引用的变量**必须**用 `vi.hoisted`
 //    造，否则是 "Cannot access 'toastSpy' before initialization"。
-const { toastSpy, selectAgentSpy, getAgentFileSpy, setAgentFileSpy, tSpy } = vi.hoisted(() => ({
+const { toastSpy, selectAgentSpy, getAgentFileSpy, setAgentFileSpy, tSpy, refreshAgentsSpy } = vi.hoisted(() => ({
   toastSpy: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
   selectAgentSpy: vi.fn(),
   getAgentFileSpy: vi.fn(),
   setAgentFileSpy: vi.fn(),
   tSpy: vi.fn((key: string, _params?: unknown) => key),
+  refreshAgentsSpy: vi.fn<(gatewayId: string, options?: { force?: boolean }) => Promise<void>>(async () => undefined),
 }));
 
 vi.mock('@/lib/toast', () => ({ toast: toastSpy }));
@@ -28,6 +29,7 @@ vi.mock('@/lib/toast', () => ({ toast: toastSpy }));
  * 这里只问一件事 —— 按钮按下去**有没有走到切助手**，以及带的是哪个助手。
  */
 vi.mock('@/hooks/useSelectAgent', () => ({ useSelectAgent: () => selectAgentSpy }));
+vi.mock('@/hooks/useGatewayDispatcherSetup', () => ({ fetchAgentsForGateway: refreshAgentsSpy }));
 
 import IdentityCenter from '../src/renderer/layouts/IdentityCenter';
 import { IDENTITY_BLOCK_START } from '../src/renderer/lib/identity-persona';
@@ -79,6 +81,7 @@ const catalog = (agents: string[]) => ({
 
 beforeEach(() => {
   vi.clearAllMocks();
+  refreshAgentsSpy.mockImplementation(async () => undefined);
   window.localStorage.clear();
   /**
    * ⚠️ 桩要忠实于真身：真 `useSelectAgent` 的**第一步**就是
@@ -160,11 +163,12 @@ describe('IdentityCenter — 版式不变量', () => {
     unmount();
   });
 
-  it('推荐角色与推荐技能来自**当前选区**（不是写死的"高效办公"）', () => {
+  it('推荐角色与推荐技能来自**当前选区**（不是写死的"高效办公"）', async () => {
     const { container, unmount } = render(<IdentityCenter />);
     expect(container.querySelector('[data-field="role"]')?.textContent).toBe('mainArea.compassAssistant');
 
     click(container.querySelector('[data-group="rongying-ecommerce"]'));
+    await flush();
 
     expect(container.querySelector('[data-field="role"]')?.textContent).toBe('presetAgents.roles.ecommerce');
     const skills = container.querySelector('[data-field="skills"]');
@@ -225,21 +229,23 @@ describe('IdentityCenter — 按钮真的干活', () => {
     unmount();
   });
 
-  it('⭐ 换客群 ⇒ 画像、推荐角色、推荐技能一起变', () => {
+  it('⭐ 换客群 ⇒ 画像、推荐角色、推荐技能一起变', async () => {
     const { container, unmount } = render(<IdentityCenter />);
     const before = personaText(container);
 
     click(container.querySelector('[data-group="rongying-office"]'));
+    await flush();
 
     expect(personaText(container)).not.toBe(before);
     expect(container.querySelector('[data-field="role"]')?.textContent).toBe('presetAgents.roles.office');
     unmount();
   });
 
-  it('⭐ 点客群卡真的切助手，且**留在身份中心**（不是把用户甩进对话页）', () => {
+  it('⭐ 点客群卡真的切助手，且**留在身份中心**（不是把用户甩进对话页）', async () => {
     const { container, unmount } = render(<IdentityCenter />);
 
     click(container.querySelector('[data-group="rongying-ecommerce"]'));
+    await flush();
 
     expect(selectAgentSpy).toHaveBeenCalledWith('rongying-ecommerce');
     expect(useUiStore.getState().mainView, '选完要留在这一页').toBe('identity');
@@ -248,12 +254,14 @@ describe('IdentityCenter — 按钮真的干活', () => {
     unmount();
   });
 
-  it('⭐「应用此画像」切到**当前选中的客群**（不再写死高效办公）并报成功', () => {
+  it('⭐「应用此画像」切到**当前选中的客群**（不再写死高效办公）并报成功', async () => {
     const { container, unmount } = render(<IdentityCenter />);
 
     click(container.querySelector('[data-group="rongying-ecommerce"]'));
+    await flush();
     selectAgentSpy.mockClear();
     click(container.querySelector('[data-action="apply"]'));
+    await flush();
 
     expect(selectAgentSpy).toHaveBeenCalledWith('rongying-ecommerce');
     expect(toastSpy.success).toHaveBeenCalledWith('identity.appliedToast');
@@ -372,7 +380,7 @@ describe('IdentityCenter — 按钮真的干活', () => {
     unmount();
   });
 
-  it('⭐ 目录还没拉回来时走老路：照常切，且不许说"不在本机"', async () => {
+  it('⭐ 目录还没拉回来且刷新后仍不可用：不切换、不误报缺失', async () => {
     useUiStore.setState({
       defaultGatewayId: 'gw-1',
       agentCatalogByGateway: {},
@@ -383,7 +391,9 @@ describe('IdentityCenter — 按钮真的干活', () => {
     click(container.querySelector('[data-action="apply"]'));
     await flush();
 
-    expect(selectAgentSpy).toHaveBeenCalledWith('main');
+    expect(refreshAgentsSpy).toHaveBeenCalledWith('gw-1', { force: true });
+    expect(selectAgentSpy).not.toHaveBeenCalled();
+    expect(toastSpy.error).toHaveBeenCalledWith('errors.failed');
     expect(container.textContent, '目录未加载时不许判缺失').not.toContain('agent.missingTitle');
     unmount();
   });
@@ -407,16 +417,18 @@ describe('客群卡 × 新建任务', () => {
     useTaskStore.setState({ pendingNewTask: null, activeTaskId: null });
   });
 
-  it('⭐ 卡片下方那个按钮真的开了新任务，且待发任务带的是当前助手', () => {
+  it('⭐ 卡片下方那个按钮真的开了新任务，且待发任务带的是当前助手', async () => {
     const { container, unmount } = render(<IdentityCenter />);
 
     click(container.querySelector('[data-group="rongying-ecommerce"]'));
+    await flush();
     expect(useTaskStore.getState().pendingNewTask, '点卡片本身不该开任务').toBeNull();
     // ⚠️ 前置断言：**先确认此刻停在身份中心** —— 没有它，下面那句 `toBe('chat')`
     //    会被"初始就是 chat"满足（变异 I3 第一版就是这么活下来的）。
     expect(useUiStore.getState().mainView, '点之前该停在身份中心').toBe('identity');
 
     click(container.querySelector('[data-action="new-task-with-agent"]'));
+    await flush();
 
     const pending = useTaskStore.getState().pendingNewTask;
     expect(pending?.agentId, '待发任务要带这个助手').toBe('rongying-ecommerce');
@@ -437,10 +449,11 @@ describe('客群卡 × 新建任务', () => {
     unmount();
   });
 
-  it('⚠️ 对照：点卡片**仍然**只切、留在这一页（别顺手把上一版的取舍推翻）', () => {
+  it('⚠️ 对照：点卡片**仍然**只切、留在这一页（别顺手把上一版的取舍推翻）', async () => {
     const { container, unmount } = render(<IdentityCenter />);
 
     click(container.querySelector('[data-group="rongying-ecommerce"]'));
+    await flush();
 
     expect(useTaskStore.getState().pendingNewTask).toBeNull();
     expect(useUiStore.getState().mainView).toBe('identity');
@@ -457,9 +470,9 @@ describe('客群卡 × 新建任务', () => {
  * 它们让"这个助手不在本机"只在**跳进对话页之后**才由欢迎屏说出来 ——
  * 而 `TeamsPanel` 的注释明确反对这种"跳过去才说"（用户已经换了页面，才知道刚才那下没成）。
  *
- * ⭐ 判据必须**复用** `resolveRequestedAgent`：它在目录**还没拉回来**时返回 `loading`，
- * 不判缺失。自己写 `agents.some(...)` 会把"还没加载"误报成"不在本机"——
- * 那是用一个新的误报换掉旧的静默。
+ * ⭐ 判据必须复用共用 action helper：目录**还没拉回来**时先强制刷新，
+ * 只有权威目录返回 ok 才能执行。既不许把 loading 误报成"不在本机"，
+ * 也不许它继续被当成 ok 直接切换。
  */
 describe('绕过判据的入口 × 缺失的助手', () => {
   beforeEach(() => {
@@ -473,10 +486,11 @@ describe('绕过判据的入口 × 缺失的助手', () => {
     });
   });
 
-  it('⭐ 「用它开任务」：缺失时不许开出一个指向不存在助手的任务', () => {
+  it('⭐ 「用它开任务」：缺失时不许开出一个指向不存在助手的任务', async () => {
     const { container, unmount } = render(<IdentityCenter />);
 
     click(container.querySelector('[data-action="new-task-with-agent"]'));
+    await flush();
 
     expect(useTaskStore.getState().pendingNewTask, '不许留个开不出来的待发任务').toBeNull();
     expect(useUiStore.getState().mainView, '要留在原地说明，不是先跳走再说').toBe('identity');
@@ -484,18 +498,19 @@ describe('绕过判据的入口 × 缺失的助手', () => {
     unmount();
   });
 
-  it('⭐ 点一个不在本机的客群卡：不许静默切过去', () => {
+  it('⭐ 点一个不在本机的客群卡：不许静默切过去', async () => {
     useUiStore.setState({ selectedAgentByGateway: { 'gw-1': 'main' } });
     const { container, unmount } = render(<IdentityCenter />);
 
     click(container.querySelector('[data-group="rongying-ecommerce"]'));
+    await flush();
 
     expect(selectAgentSpy, '不许静默换人').not.toHaveBeenCalled();
     expect(container.textContent, '要如实说明').toContain('agent.missingTitle');
     unmount();
   });
 
-  it('对照：目录**还没拉回来**时两个入口都走老路（不许把 loading 判成缺失）', () => {
+  it('⭐ 目录**还没拉回来**时两个入口都要停住，不许把 loading 当 ok', async () => {
     useUiStore.setState({
       defaultGatewayId: 'gw-1',
       mainView: 'identity',
@@ -505,15 +520,44 @@ describe('绕过判据的入口 × 缺失的助手', () => {
     const { container, unmount } = render(<IdentityCenter />);
 
     click(container.querySelector('[data-group="rongying-ecommerce"]'));
-    expect(selectAgentSpy, '目录未加载时照常切').toHaveBeenCalledWith('rongying-ecommerce');
+    await flush();
+    expect(selectAgentSpy, '目录未确认时不许切').not.toHaveBeenCalled();
 
     click(container.querySelector('[data-action="new-task-with-agent"]'));
-    expect(useTaskStore.getState().pendingNewTask?.agentId, '目录未加载时照常开').toBe('rongying-ecommerce');
+    await flush();
+    expect(useTaskStore.getState().pendingNewTask, '目录未确认时不许开').toBeNull();
+    expect(refreshAgentsSpy).toHaveBeenCalledTimes(2);
     expect(container.textContent, '目录未加载时不许判缺失').not.toContain('agent.missingTitle');
     unmount();
   });
 
-  it('对照：装着的助手照常切、照常开（别把守卫修成谁都拦）', () => {
+  it('⭐ loading 刷新后确认已安装：才允许切换和开任务', async () => {
+    useUiStore.setState({
+      defaultGatewayId: 'gw-1',
+      mainView: 'identity',
+      agentCatalogByGateway: {},
+      selectedAgentByGateway: { 'gw-1': 'main' },
+    });
+    refreshAgentsSpy.mockImplementationOnce(async () => {
+      useUiStore.setState({
+        agentCatalogByGateway: { 'gw-1': catalog(['main', 'rongying-ecommerce']) },
+      });
+    });
+    const { container, unmount } = render(<IdentityCenter />);
+
+    click(container.querySelector('[data-group="rongying-ecommerce"]'));
+    expect(selectAgentSpy, '刷新还未完成前不许提前切').not.toHaveBeenCalled();
+    await flush();
+    expect(refreshAgentsSpy).toHaveBeenCalledWith('gw-1', { force: true });
+    expect(selectAgentSpy).toHaveBeenCalledWith('rongying-ecommerce');
+
+    click(container.querySelector('[data-action="new-task-with-agent"]'));
+    await flush();
+    expect(useTaskStore.getState().pendingNewTask?.agentId).toBe('rongying-ecommerce');
+    unmount();
+  });
+
+  it('对照：装着的助手照常切、照常开（别把守卫修成谁都拦）', async () => {
     // ⚠️ 这一组的外层 beforeEach 把目录**收窄成只有 main**（为了造缺失），
     //    所以这里必须把目录还原成完整的 —— 否则"装着的助手"根本不装着，
     //    这条对照会以"守卫是对的"为理由假红（第一版就是这么红的）。
@@ -524,9 +568,11 @@ describe('绕过判据的入口 × 缺失的助手', () => {
     const { container, unmount } = render(<IdentityCenter />);
 
     click(container.querySelector('[data-group="rongying-office"]'));
+    await flush();
     expect(selectAgentSpy).toHaveBeenCalledWith('rongying-office');
 
     click(container.querySelector('[data-action="new-task-with-agent"]'));
+    await flush();
     expect(useTaskStore.getState().pendingNewTask?.agentId).toBe('rongying-office');
     expect(container.textContent).not.toContain('agent.missingTitle');
     unmount();
