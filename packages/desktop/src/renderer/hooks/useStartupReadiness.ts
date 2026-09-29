@@ -11,6 +11,7 @@ import { PRESET_AGENT_DEFINITIONS } from '@/lib/preset-agents';
 import { installPresetAgentPack } from '@/lib/preset-agent-installer';
 import { deriveStartupReadiness } from '@/lib/startup-readiness';
 import { ensureBundledSkillsWithRetry } from '@/lib/ensure-bundled-skills';
+import { runWorkspaceGatedBootstrap } from '@/lib/startup-workspace-gate';
 import { useUiStore } from '@/stores/uiStore';
 
 function emptyAssistantSnapshot(): PresetAgentBootstrapSnapshot {
@@ -167,22 +168,32 @@ export function useStartupReadiness(enabled: boolean) {
    * 「助手失败」—— 用户唯一能做的动作（换块 exFAT/NTFS 的盘）从界面上看不出来。
    * 探测量的是 fs-safe 判的**那两个数**（`dev`/`ino`），不是盘符或卷标。
    */
-  const probeWorkspaceFilesystem = useCallback(async () => {
+  const probeWorkspaceFilesystem = useCallback(async (): Promise<WorkspaceFsIdentity | null> => {
     try {
       const result = await window.clawwork.probeWorkspaceFsIdentity();
       setWorkspaceFsIdentity(result ?? null);
+      return result ?? null;
     } catch {
       // 探测自己坏了 = 没有结论（**不是**"文件系统有问题"）。
       setWorkspaceFsIdentity(null);
+      return null;
     }
   }, []);
 
+  const runGatedBootstrap = useCallback(
+    () =>
+      runWorkspaceGatedBootstrap({
+        probe: probeWorkspaceFilesystem,
+        bootstrapAssistants: runAssistantBootstrap,
+        ensureSkills: ensureOurSkills,
+      }),
+    [ensureOurSkills, probeWorkspaceFilesystem, runAssistantBootstrap],
+  );
+
   useEffect(() => {
     if (!enabled || !gatewayId || gatewayStatus !== 'connected') return;
-    void runAssistantBootstrap();
-    void ensureOurSkills();
-    void probeWorkspaceFilesystem();
-  }, [enabled, gatewayId, gatewayStatus, runAssistantBootstrap, ensureOurSkills, probeWorkspaceFilesystem]);
+    void runGatedBootstrap();
+  }, [enabled, gatewayId, gatewayStatus, runGatedBootstrap]);
 
   const readiness = deriveStartupReadiness({
     gatewayId,
@@ -212,10 +223,10 @@ export function useStartupReadiness(enabled: boolean) {
     if (relayState.phase !== 'ready') return; // 又失败了：不白刷（失败结论已经给到界面）
     void reinitializeGatewayBootstrap().then(() => {
       if (gatewayId && useUiStore.getState().gatewayStatusMap[gatewayId] === 'connected') {
-        void runAssistantBootstrap();
+        void runGatedBootstrap();
       }
     });
-  }, [gatewayId, relayRetryFrom, relayState, runAssistantBootstrap]);
+  }, [gatewayId, relayRetryFrom, relayState, runGatedBootstrap]);
 
   const retry = useCallback(async () => {
     // ⭐ 已知的中转失败：出口是**让主进程重跑一轮**，不是"重新准备模型"。
@@ -231,24 +242,15 @@ export function useStartupReadiness(enabled: boolean) {
     if (gatewayId) presetAgentBootstrapCoordinator.reset(gatewayId);
     // 重试也要重新量一次：用户完全可能在这期间**把工作区换到另一块盘**，
     // 而结论是按旧盘下的（换盘正是这条失败唯一的出路）。
-    void probeWorkspaceFilesystem();
     if (readiness.ai.phase === 'ready' && gatewayStatus === 'connected') {
-      await runAssistantBootstrap();
+      await runGatedBootstrap();
       return;
     }
     await reinitializeGatewayBootstrap();
     if (gatewayId && useUiStore.getState().gatewayStatusMap[gatewayId] === 'connected') {
-      await runAssistantBootstrap();
+      await runGatedBootstrap();
     }
-  }, [
-    gatewayId,
-    gatewayStatus,
-    readiness.ai.phase,
-    readiness.relayFailure,
-    relayState,
-    runAssistantBootstrap,
-    probeWorkspaceFilesystem,
-  ]);
+  }, [gatewayId, gatewayStatus, readiness.ai.phase, readiness.relayFailure, relayState, runGatedBootstrap]);
 
   return { ...readiness, retry };
 }

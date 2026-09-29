@@ -73,6 +73,7 @@ function makeDeps(overrides: Partial<TemplateInstallDeps> = {}) {
     refreshAgents,
     recordInstalled,
     commonContract: '公共契约',
+    probeWorkspaceFsIdentity: vi.fn(async () => ({ state: 'ok' as const, dev: '1', ino: '2' })),
     ...overrides,
   };
   return { deps, api, refreshAgents, recordInstalled };
@@ -188,6 +189,23 @@ describe('installTemplate —— 真安装的编排', () => {
       expect(refreshAgents).not.toHaveBeenCalled();
       expect(recordInstalled).not.toHaveBeenCalled();
     }
+  });
+
+  it('⭐ 工作区文件系统不支持 ⇒ 创建助手前拒绝，零网关写入', async () => {
+    const { deps, api, recordInstalled } = makeDeps({
+      probeWorkspaceFsIdentity: vi.fn(async () => ({
+        state: 'unsupported-identity' as const,
+        dev: null,
+        ino: null,
+        error: 'unsupported filesystem: exFAT',
+      })),
+    });
+
+    const outcome = await installTemplate(deps, template);
+
+    expect(outcome.ok).toBe(false);
+    expect(api.calls).toHaveLength(0);
+    expect(recordInstalled).not.toHaveBeenCalled();
   });
 
   it('拿不到网关 id ⇒ 直接拒绝（不发任何请求）', async () => {

@@ -1,8 +1,8 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
-import { probeWorkspaceFsIdentity } from '../src/main/workspace/fs-identity.js';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { probeWorkspaceFsIdentity, readWorkspaceFilesystemType } from '../src/main/workspace/fs-identity.js';
 
 /**
  * 工作区所在**文件系统**能不能支撑助手读写（2026-09-25）。
@@ -109,5 +109,26 @@ describe('probeWorkspaceFsIdentity', () => {
     probeWorkspaceFsIdentity(dir);
     fs.writeFileSync(path.join(dir, '真实文件.txt'), 'x');
     expect(fs.readdirSync(dir)).toEqual(['真实文件.txt']);
+  });
+});
+
+describe('readWorkspaceFilesystemType', () => {
+  it('⭐ 同一盘符每次重新读取格式，不能永久缓存第一次结果', () => {
+    const execFile = vi.fn().mockReturnValueOnce('NTFS\r\n').mockReturnValueOnce('exFAT\r\n');
+
+    expect(readWorkspaceFilesystemType('E:\\工作区', { platform: 'win32', execFile })).toBe('NTFS');
+    expect(readWorkspaceFilesystemType('E:\\工作区', { platform: 'win32', execFile })).toBe('exFAT');
+    expect(execFile).toHaveBeenCalledTimes(2);
+  });
+
+  it('一次读取失败不会留下 null 缓存，下一次可以恢复', () => {
+    const execFile = vi.fn().mockImplementationOnce(() => {
+      throw new Error('drive temporarily unavailable');
+    });
+    execFile.mockReturnValueOnce('NTFS\n');
+
+    expect(readWorkspaceFilesystemType('E:\\工作区', { platform: 'win32', execFile })).toBeNull();
+    expect(readWorkspaceFilesystemType('E:\\工作区', { platform: 'win32', execFile })).toBe('NTFS');
+    expect(execFile).toHaveBeenCalledTimes(2);
   });
 });

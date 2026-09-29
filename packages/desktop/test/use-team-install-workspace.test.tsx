@@ -64,6 +64,7 @@ type ClawworkMock = {
   installSkill: ReturnType<typeof vi.fn>;
   updateAgent: ReturnType<typeof vi.fn>;
   listAgents: ReturnType<typeof vi.fn>;
+  probeWorkspaceFsIdentity: ReturnType<typeof vi.fn>;
 };
 
 let clawwork: ClawworkMock;
@@ -92,6 +93,7 @@ beforeEach(() => {
     installSkill: vi.fn(async () => ({ ok: true })),
     updateAgent: vi.fn(async () => ({ ok: true })),
     listAgents: vi.fn(async () => ({ ok: true, result: { agents: [] } })),
+    probeWorkspaceFsIdentity: vi.fn(async () => ({ state: 'ok', dev: '1', ino: '2' })),
   };
   (window as unknown as { clawwork: ClawworkMock }).clawwork = clawwork;
   useUiStore.setState({
@@ -156,6 +158,21 @@ describe('useTeamInstall 的工作区守卫', () => {
     expect(clawwork.createAgent).toHaveBeenCalledTimes(2);
     expect(clawwork.createAgent.mock.calls[0]?.[1]).toMatchObject({ workspace: 'D:\\ws\\开发团队' });
     expect(api?.installStatus).toBe('done');
+  });
+
+  it('⭐ exFAT/FAT32 能力探测不通过 ⇒ 一个助手都不建', async () => {
+    clawwork.probeWorkspaceFsIdentity.mockResolvedValue({
+      state: 'unsupported-identity',
+      dev: null,
+      ino: null,
+      error: 'unsupported filesystem: exFAT',
+    });
+    await mount();
+    await run();
+
+    expect(clawwork.createAgent).not.toHaveBeenCalled();
+    expect(clawwork.persistTeam).not.toHaveBeenCalled();
+    expect(api?.installStatus).toBe('error');
   });
 
   it('重复安装时网关用展示名报 already exists ⇒ 复用已有 id，不能整队安装失败', async () => {

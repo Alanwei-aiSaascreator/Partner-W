@@ -45,6 +45,7 @@ export function useTemplateInstall(): {
             },
             recordInstalled: (id) => window.clawwork.marketTemplateInstalled(id),
             commonContract: COMMON_OPERATING_CONTRACT,
+            probeWorkspaceFsIdentity: () => window.clawwork.probeWorkspaceFsIdentity(),
           },
           template,
         );

@@ -75,26 +75,43 @@ function defaultStat(filePath: string): StatLike {
   return { dev: stats.dev, ino: stats.ino };
 }
 
-const filesystemTypeCache = new Map<string, string | null>();
+export interface WorkspaceFilesystemTypeReadDeps {
+  platform?: NodeJS.Platform;
+  execFile?: (
+    file: string,
+    args: string[],
+    options: { encoding: 'utf8'; timeout: number; windowsHide: boolean },
+  ) => string;
+}
 
-function defaultFilesystemType(dir: string): string | null {
-  if (process.platform !== 'win32') return null;
+/**
+ * Read the volume format at the time of the probe.
+ *
+ * Portable drive letters are reusable: E: can be NTFS now and exFAT after a
+ * device swap.  A process-lifetime cache (especially a cached `null`) turns a
+ * transient lookup failure into a permanent safety bypass, so this deliberately
+ * performs a fresh lookup for every capability check.
+ */
+export function readWorkspaceFilesystemType(dir: string, deps: WorkspaceFilesystemTypeReadDeps = {}): string | null {
+  if ((deps.platform ?? process.platform) !== 'win32') return null;
   const root = parse(dir).root;
   if (!/^[a-z]:\\$/i.test(root)) return null;
-  if (filesystemTypeCache.has(root)) return filesystemTypeCache.get(root) ?? null;
   try {
     const drive = root.slice(0, 2);
-    const filesystemType = execFileSync(
+    const run: NonNullable<WorkspaceFilesystemTypeReadDeps['execFile']> =
+      deps.execFile ?? ((file, args, options) => execFileSync(file, args, options) as string);
+    return run(
       'powershell.exe',
       ['-NoProfile', '-NonInteractive', '-Command', `[System.IO.DriveInfo]::new('${drive}').DriveFormat`],
       { encoding: 'utf8', timeout: 5_000, windowsHide: true },
     ).trim();
-    filesystemTypeCache.set(root, filesystemType);
-    return filesystemType;
   } catch {
-    filesystemTypeCache.set(root, null);
     return null;
   }
+}
+
+function defaultFilesystemType(dir: string): string | null {
+  return readWorkspaceFilesystemType(dir);
 }
 
 /** 零 = fs-safe 会 fail-closed 的那一侧（**任一为零**就算）。 */

@@ -14,6 +14,7 @@
  *    拼接（`<工作区>/<子目录>`）由各自的调用方负责，这里不替它清理尾部分隔符。
  */
 export const WORKSPACE_UNAVAILABLE_MESSAGE = '工作区还没准备好，先在设置里指定工作区，再安装助手。';
+export const WORKSPACE_FILESYSTEM_UNSUPPORTED_MESSAGE = '当前工作区所在磁盘不支持助手文件，请改用 NTFS 工作区。';
 
 export type InstallWorkspaceCheck = { ok: true; path: string } | { ok: false; message: string };
 
@@ -26,6 +27,28 @@ export function checkInstallWorkspace(raw: string | null | undefined): InstallWo
   const path = (raw ?? '').trim();
   if (!path || !isAbsoluteWorkspacePath(path)) return { ok: false, message: WORKSPACE_UNAVAILABLE_MESSAGE };
   return { ok: true, path };
+}
+
+export async function checkInstallWorkspaceCapability(
+  raw: string | null | undefined,
+  probe: () => Promise<WorkspaceFsIdentity | null>,
+): Promise<InstallWorkspaceCheck> {
+  const checked = checkInstallWorkspace(raw);
+  if (!checked.ok) return checked;
+
+  let identity: WorkspaceFsIdentity | null;
+  try {
+    identity = await probe();
+  } catch {
+    return { ok: false, message: WORKSPACE_UNAVAILABLE_MESSAGE };
+  }
+  if (!identity || identity.state === 'unwritable') {
+    return { ok: false, message: WORKSPACE_UNAVAILABLE_MESSAGE };
+  }
+  if (identity.state === 'unsupported-identity') {
+    return { ok: false, message: WORKSPACE_FILESYSTEM_UNSUPPORTED_MESSAGE };
+  }
+  return checked;
 }
 
 /**
@@ -47,3 +70,4 @@ export function isWorkspaceInputResolvable(raw: string | null | undefined): bool
   if (path === '~' || /^~[\\/]/.test(path)) return true;
   return isAbsoluteWorkspacePath(path);
 }
+import type { WorkspaceFsIdentity } from '@clawwork/shared';

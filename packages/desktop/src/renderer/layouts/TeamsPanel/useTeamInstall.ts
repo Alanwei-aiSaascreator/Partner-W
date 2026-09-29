@@ -9,7 +9,7 @@ import type {
 } from '@clawwork/shared';
 import type { InstallerDeps } from '@clawwork/core';
 import { installTeam, serializeIdentityMd } from '@clawwork/core';
-import { WORKSPACE_UNAVAILABLE_MESSAGE, checkInstallWorkspace } from '@/lib/install-workspace';
+import { WORKSPACE_UNAVAILABLE_MESSAGE, checkInstallWorkspaceCapability } from '@/lib/install-workspace';
 import { relayModelsFrom } from '@/components/ChatInput/model-families';
 import { resolveTeamModelRef } from '@/lib/team-model-ref';
 import { useUiStore } from '@/stores/uiStore';
@@ -235,7 +235,9 @@ export function useTeamInstall(onDone?: () => void) {
           // 主进程会 `throw new Error('workspace not configured')`（IPC 会包一层英文前缀，别往界面上摆）
           throw new Error(WORKSPACE_UNAVAILABLE_MESSAGE);
         }
-        const checked = checkInstallWorkspace(workspace);
+        const checked = await checkInstallWorkspaceCapability(workspace, () =>
+          window.clawwork.probeWorkspaceFsIdentity(),
+        );
         if (!checked.ok) throw new Error(checked.message);
 
         for await (const event of installTeam(parsed, agentFiles, teamInfo.gatewayId, checked.path, deps, hubMeta)) {

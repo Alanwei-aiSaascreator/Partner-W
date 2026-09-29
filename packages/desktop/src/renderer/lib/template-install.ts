@@ -1,6 +1,6 @@
 import type { AgentTemplateDetail } from '@clawwork/shared';
 import { describeTemplateError, templateToInstallDefinition } from '@clawwork/core';
-import { checkInstallWorkspace } from './install-workspace';
+import { checkInstallWorkspaceCapability } from './install-workspace';
 import { installPresetAgentPack, type PresetAgentInstallerApi } from './preset-agent-installer';
 
 /**
@@ -28,6 +28,7 @@ export interface TemplateInstallDeps {
   recordInstalled: (templateId: string) => Promise<{ ok: boolean; errorCode?: string }>;
   /** 装出来的助手共用的操作契约（`COMMON_OPERATING_CONTRACT`）。 */
   commonContract: string;
+  probeWorkspaceFsIdentity: () => ReturnType<typeof window.clawwork.probeWorkspaceFsIdentity>;
 }
 
 export interface TemplateInstallOutcome {
@@ -53,7 +54,7 @@ export async function installTemplate(
 
   // ⚠️ 必须在**发任何请求之前**判：工作区坏掉时"建一个助手试试看"只会在网关那边
   //    留下 N 条失败记录，而用户看到的仍然只是一句「操作没成功，请稍后重试。」
-  const workspace = checkInstallWorkspace(deps.workspaceRoot);
+  const workspace = await checkInstallWorkspaceCapability(deps.workspaceRoot, deps.probeWorkspaceFsIdentity);
   if (!workspace.ok) return { ok: false, message: workspace.message };
 
   const definition = templateToInstallDefinition(template, deps.commonContract);

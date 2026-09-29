@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  WORKSPACE_FILESYSTEM_UNSUPPORTED_MESSAGE,
   WORKSPACE_UNAVAILABLE_MESSAGE,
   checkInstallWorkspace,
+  checkInstallWorkspaceCapability,
   isAbsoluteWorkspacePath,
   isWorkspaceInputResolvable,
 } from '../src/renderer/lib/install-workspace';
@@ -50,6 +52,29 @@ describe('checkInstallWorkspace', () => {
     const posix = checkInstallWorkspace('/tmp/ws');
     expect(posix.ok).toBe(true);
     expect(posix.ok === true && posix.path).toBe('/tmp/ws');
+  });
+});
+
+describe('checkInstallWorkspaceCapability', () => {
+  it('⭐ 非 NTFS / 零身份工作区 ⇒ 安装入口统一拒绝', async () => {
+    const result = await checkInstallWorkspaceCapability('E:\\荣盈魔方工作区', async () => ({
+      state: 'unsupported-identity',
+      dev: null,
+      ino: null,
+      error: 'unsupported filesystem: exFAT',
+    }));
+
+    expect(result).toEqual({ ok: false, message: WORKSPACE_FILESYSTEM_UNSUPPORTED_MESSAGE });
+  });
+
+  it('NTFS 能力探测通过 ⇒ 保留原绝对路径', async () => {
+    const result = await checkInstallWorkspaceCapability('D:\\ws', async () => ({
+      state: 'ok',
+      dev: '1',
+      ino: '2',
+    }));
+
+    expect(result).toEqual({ ok: true, path: 'D:\\ws' });
   });
 });
 
