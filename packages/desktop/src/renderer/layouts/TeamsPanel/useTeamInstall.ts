@@ -4,6 +4,7 @@ import type {
   AgentCreateResponse,
   AgentInfo,
   AgentListResponse,
+  ModelCatalogEntry,
   SkillInstallResult,
   IpcResult,
 } from '@clawwork/shared';
@@ -17,6 +18,30 @@ import { toSlug } from './utils';
 import type { TeamInfo, AgentDraft } from './types';
 
 type InstallStatus = 'idle' | 'installing' | 'done' | 'error';
+
+type TeamModelResolution = { ok: true; models: Map<string, string> } | { ok: false; message: string };
+
+/**
+ * 显式选了模型就必须把它解析成当前可用的国内中转模型；解析失败不能悄悄退回网关默认值。
+ * 否则界面会说“团队安装成功”，真正对话时却由另一个模型执行，属于结果造假而非降级。
+ */
+function resolveRequestedTeamModels(agents: AgentDraft[], availableModels: ModelCatalogEntry[]): TeamModelResolution {
+  const models = new Map<string, string>();
+  for (const agent of agents) {
+    const requested = agent.model.trim();
+    if (!requested) continue;
+    const resolved = resolveTeamModelRef(requested, availableModels);
+    if (!resolved) {
+      const name = agent.name.trim() || toSlug(agent.name) || '未命名助手';
+      return {
+        ok: false,
+        message: `助手“${name}”选择的模型“${requested}”当前不可用，请选择可用的国内模型后重试。`,
+      };
+    }
+    models.set(toSlug(agent.name), resolved);
+  }
+  return { ok: true, models };
+}
 
 /**
  * 装完团队后**强刷助手目录**。
@@ -129,11 +154,13 @@ export function useTeamInstall(onDone?: () => void) {
       const availableModels = relayModelsFrom(modelCatalogByGateway[gwId] ?? []).filter(
         (model) => model.available !== false,
       );
-      const agentModelMap = new Map<string, string>();
-      for (const a of agents) {
-        const model = resolveTeamModelRef(a.model, availableModels);
-        if (model) agentModelMap.set(toSlug(a.name), model);
+      const modelResolution = resolveRequestedTeamModels(agents, availableModels);
+      if (!modelResolution.ok) {
+        setInstallEvents([{ type: 'error', message: modelResolution.message }]);
+        setInstallStatus('error');
+        return;
       }
+      const agentModelMap = modelResolution.models;
       const pendingModelUpdates: Promise<IpcResult>[] = [];
       const waitForModelUpdates = async (): Promise<IpcResult> => {
         const updates = await Promise.all(pendingModelUpdates);
@@ -291,9 +318,15 @@ export function useTeamInstall(onDone?: () => void) {
         const availableModels = relayModelsFrom(modelCatalogByGateway[gwId] ?? []).filter(
           (model) => model.available !== false,
         );
+        const modelResolution = resolveRequestedTeamModels(agents, availableModels);
+        if (!modelResolution.ok) {
+          setInstallEvents([{ type: 'error', message: modelResolution.message }]);
+          setInstallStatus('error');
+          return;
+        }
         for (const agent of agents) {
           if (!agent.existingAgentId) continue;
-          const model = resolveTeamModelRef(agent.model, availableModels);
+          const model = modelResolution.models.get(toSlug(agent.name));
           if (!model) continue;
           const update = await window.clawwork.updateAgent(gwId, { agentId: agent.existingAgentId, model });
           if (!update.ok) {

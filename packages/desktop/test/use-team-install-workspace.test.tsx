@@ -225,7 +225,7 @@ describe('useTeamInstall 的工作区守卫', () => {
     expect(api?.installEvents.some((event) => event.type === 'error')).toBe(true);
   });
 
-  it('手工入口传入非 relay 或 unavailable 模型 ⇒ 执行边界不许写进助手', async () => {
+  it('⭐ 新装团队显式指定非 relay 或 unavailable 模型 ⇒ 失败关闭，不能静默用默认模型冒充成功', async () => {
     const agents = makeAgents();
     agents[0].model = 'openai/deepseek-v4-flash';
     useUiStore.setState({
@@ -242,7 +242,29 @@ describe('useTeamInstall 的工作区守卫', () => {
       await api?.runInstall(teamInfo, agents);
     });
 
-    expect(api?.installStatus).toBe('done');
+    expect(api?.installStatus).toBe('error');
     expect(clawwork.updateAgent).not.toHaveBeenCalled();
+    expect(clawwork.createAgent).not.toHaveBeenCalled();
+    expect(clawwork.persistTeam).not.toHaveBeenCalled();
+    expect(api?.installEvents.find((event) => event.type === 'error')?.message).toContain('deepseek-v4-flash');
+  });
+
+  it('⭐ 编辑已有团队时显式模型无法解析 ⇒ 不能跳过更新后仍保存并显示成功', async () => {
+    const agents = makeAgents();
+    agents[0].existingAgentId = 'backend-existing';
+    agents[0].model = 'openai/unknown-domestic-model';
+
+    await mount();
+    await act(async () => {
+      await api?.runUpdate('team-1', '2026-09-20T00:00:00.000Z', teamInfo, agents);
+    });
+
+    expect(api?.installStatus).toBe('error');
+    expect(clawwork.updateAgent).not.toHaveBeenCalled();
+    expect(clawwork.installSkill).not.toHaveBeenCalled();
+    expect(clawwork.persistTeam).not.toHaveBeenCalled();
+    expect(api?.installEvents.find((event) => event.type === 'error')?.message).toContain(
+      'openai/unknown-domestic-model',
+    );
   });
 });
