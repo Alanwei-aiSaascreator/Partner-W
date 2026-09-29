@@ -10,6 +10,7 @@ import {
 import { PRESET_AGENT_DEFINITIONS } from '@/lib/preset-agents';
 import { installPresetAgentPack } from '@/lib/preset-agent-installer';
 import { deriveStartupReadiness } from '@/lib/startup-readiness';
+import { ensureBundledSkillsWithRetry } from '@/lib/ensure-bundled-skills';
 import { useUiStore } from '@/stores/uiStore';
 
 function emptyAssistantSnapshot(): PresetAgentBootstrapSnapshot {
@@ -151,14 +152,12 @@ export function useStartupReadiness(enabled: boolean) {
    */
   const ensureOurSkills = useCallback(async () => {
     if (!gatewayId) return;
-    try {
-      const result = await window.clawwork.ensureOurSkills(gatewayId);
-      if (result.ok && result.result && result.result.failed.length > 0) {
-        console.warn('[skills] 随包技能自装部分失败', result.result.failed);
-      }
-    } catch (error) {
-      console.warn('[skills] 随包技能自装失败', error);
-    }
+    const ready = await ensureBundledSkillsWithRetry(gatewayId, {
+      ensure: (id) => window.clawwork.ensureOurSkills(id),
+      sleep: (ms) => new Promise((resolve) => window.setTimeout(resolve, ms)),
+      delaysMs: [500, 1_500],
+    });
+    if (!ready) console.warn('[skills] 随包技能自装重试后仍失败');
   }, [gatewayId]);
 
   /**
