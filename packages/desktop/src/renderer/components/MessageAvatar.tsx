@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Bot, User } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useLocalAvatarUrl } from './AgentIcon';
 
 interface MessageAvatarProps {
   role: 'user' | 'assistant';
@@ -11,7 +12,10 @@ interface MessageAvatarProps {
 
 export default function MessageAvatar({ role, agentEmoji, localAvatarUrl, gatewayAvatarUrl }: MessageAvatarProps) {
   const [failCount, setFailCount] = useState(0);
-  const urls = [localAvatarUrl, gatewayAvatarUrl].filter(Boolean) as string[];
+  const localMatch = localAvatarUrl?.match(/^clawwork-avatar:\/\/([^/]+)\/(.+)$/);
+  const verifiedLocalAvatarUrl = useLocalAvatarUrl(localMatch?.[1], localMatch?.[2]);
+  useEffect(() => setFailCount(0), [gatewayAvatarUrl, verifiedLocalAvatarUrl]);
+  const urls = [verifiedLocalAvatarUrl, gatewayAvatarUrl].filter(Boolean) as string[];
   const avatarUrl = urls[failCount];
   const showImg = role === 'assistant' && avatarUrl;
 

@@ -42,6 +42,7 @@ import ToolbarButton from '@/components/semantic/ToolbarButton';
 import { createAgentWithRollback } from '@/lib/agent-builder';
 import { isWorkspaceInputResolvable } from '@/lib/install-workspace';
 import { AVATAR_ACCEPT, readFileAsDataUrl, validateAvatarFile } from '@/lib/avatar-utils';
+import AgentIcon, { listLocalAvatarIds } from '@/components/AgentIcon';
 
 const EMPTY_MODELS: ModelCatalogEntry[] = [];
 
@@ -120,10 +121,6 @@ function AgentCard({
 }) {
   const { t } = useTranslation();
   const emoji = agent.identity?.emoji;
-  const localAvatarUrl = gatewayId ? `clawwork-avatar://${gatewayId}/${agent.id}` : undefined;
-  const [avatarFails, setAvatarFails] = useState(0);
-  const avatarUrls = [localAvatarUrl, agent.identity?.avatarUrl].filter(Boolean) as string[];
-  const resolvedAvatar = avatarUrls[avatarFails];
   const availableSkills = skills.filter((skill) => skill.eligible);
   const unavailableSkills = skills.filter((skill) => !skill.eligible);
   const [collapsedSections, setCollapsedSections] = useState<Record<'available' | 'unavailable', boolean>>({
@@ -150,18 +147,16 @@ function AgentCard({
             isDefault ? 'bg-[var(--accent-soft)]' : 'bg-[var(--bg-tertiary)]',
           )}
         >
-          {resolvedAvatar ? (
-            <img
-              src={resolvedAvatar}
-              alt=""
-              className="w-9 h-9 rounded-lg object-cover"
-              onError={() => setAvatarFails((c) => c + 1)}
-            />
-          ) : emoji ? (
-            <span className="emoji-lg">{emoji}</span>
-          ) : (
-            <Bot size={16} className={isDefault ? 'text-[var(--accent)]' : 'text-[var(--text-muted)]'} />
-          )}
+          <AgentIcon
+            gatewayId={gatewayId}
+            agentId={agent.id}
+            gatewayAvatarUrl={agent.identity?.avatarUrl}
+            emoji={emoji}
+            imgClass="w-9 h-9 rounded-lg object-cover"
+            emojiClass="emoji-lg"
+            iconSize={16}
+            iconClass={isDefault ? 'text-[var(--accent)]' : 'text-[var(--text-muted)]'}
+          />
         </div>
 
         <div className="flex-1 min-w-0">
@@ -773,11 +768,10 @@ export default function AgentsSection() {
       const seq = ++editSeqRef.current;
       setEditingAgentId(agent.id);
       const gatewayAvatar = agent.identity?.avatarUrl ?? agent.identity?.avatar ?? '';
-      const localAvatar = selectedGatewayId ? `clawwork-avatar://${selectedGatewayId}/${agent.id}` : '';
       setForm({
         name: agent.name ?? agent.id,
         workspace: agentWorkspaceMap[agent.id] ?? '',
-        avatar: gatewayAvatar || localAvatar,
+        avatar: gatewayAvatar,
         model: '',
         description: '',
         identityRaw: '',
@@ -785,6 +779,13 @@ export default function AgentsSection() {
       setShowForm(true);
       fetchAgentMeta(agent.id);
       if (selectedGatewayId) {
+        void listLocalAvatarIds(selectedGatewayId).then((ids) => {
+          if (seq !== editSeqRef.current || gatewayAvatar || !ids.has(agent.id)) return;
+          setForm((current) => ({
+            ...current,
+            avatar: `clawwork-avatar://${selectedGatewayId}/${agent.id}`,
+          }));
+        });
         window.clawwork.getAgentFile(selectedGatewayId, agent.id, 'IDENTITY.md').then((res) => {
           if (seq !== editSeqRef.current) return;
           if (res.ok && res.result) {
