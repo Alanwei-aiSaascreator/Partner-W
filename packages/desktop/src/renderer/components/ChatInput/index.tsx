@@ -708,6 +708,14 @@ export default function ChatInput({
           )}
         </AnimatePresence>
 
+        <p
+          role="note"
+          data-testid="ai-content-disclaimer"
+          className="type-support mb-2 px-1 text-center text-[var(--text-muted)]"
+        >
+          {t('chatInput.aiDisclaimer')}
+        </p>
+
         <div className="relative">
           {slashMenuVisible && (
             <SlashCommandMenu
@@ -1173,8 +1181,6 @@ export default function ChatInput({
             )}
           </div>
         )}
-
-        <p className="type-support mt-2 px-1 text-center text-[var(--text-muted)]">{t('chatInput.aiDisclaimer')}</p>
       </div>
       {/* ⚠️ 文案按**原因**给：四种情况共用「额度已用尽，请充值」正是实机 bug 的成因
           （读不到额度被说成用尽）。见 lib/quota.ts 的 quotaBlockCopy。 */}

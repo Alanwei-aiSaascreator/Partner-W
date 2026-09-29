@@ -91,7 +91,8 @@ export async function saveArtifact(params: SaveArtifactParams): Promise<Artifact
     messageId,
     type: 'file',
     name: finalName,
-    filePath: sourcePath,
+    // `filePath` 对外是“这份成品现在在哪”，不是一个可能已被清掉的临时源文件。
+    filePath: destPath,
     localPath,
     mimeType,
     size: stat.size,
@@ -159,7 +160,7 @@ export async function saveArtifactFromBuffer(params: SaveArtifactFromBufferParam
     messageId,
     type: artifactType,
     name: finalName,
-    filePath: '',
+    filePath: destPath,
     localPath,
     mimeType,
     size: buffer.length,

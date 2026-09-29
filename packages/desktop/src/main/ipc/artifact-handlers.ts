@@ -2,7 +2,7 @@ import { ipcMain, BrowserWindow, dialog, shell, nativeImage, type NativeImage } 
 import { readFileSync, realpathSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { fileURLToPath } from 'node:url';
-import { resolve, sep } from 'path';
+import { isAbsolute, relative, resolve, sep } from 'path';
 import { eq } from 'drizzle-orm';
 import { getDb, getSqlite } from '../db/index.js';
 import { artifacts, tasks, messages } from '../db/schema.js';
@@ -32,6 +32,20 @@ interface SaveParams {
 }
 
 const MAX_THUMBNAIL_SOURCE_BYTES = 10 * 1024 * 1024;
+
+/**
+ * 用现有 `Artifact.filePath` 字段向界面交付成品的绝对路径，不新增 IPC。
+ * 这里只做词法边界校验；文件是否真实、是否符号链接仍由 availability/
+ * `inspectArtifactFile` 的强校验负责。
+ */
+function artifactAbsolutePath(rootPath: string, localPath: string): string | null {
+  if (!localPath || localPath.includes('\0') || isAbsolute(localPath)) return null;
+  const root = resolve(rootPath);
+  const absolutePath = resolve(root, localPath);
+  const relation = relative(root, absolutePath);
+  if (relation === '' || relation === '..' || relation.startsWith(`..${sep}`) || isAbsolute(relation)) return null;
+  return absolutePath;
+}
 /**
  * 预览能读多大的源文件。
  *
@@ -95,8 +109,10 @@ export function registerArtifactHandlers(): void {
         result: await Promise.all(
           rows.map(async (row) => {
             const rootPath = await rootForArtifact(row);
+            const filePath = rootPath ? artifactAbsolutePath(rootPath, row.localPath) : null;
             return {
               ...row,
+              ...(filePath ? { filePath } : {}),
               availability: rootPath ? getArtifactAvailability(row.localPath, rootPath) : 'missing',
             };
           }),
@@ -116,10 +132,12 @@ export function registerArtifactHandlers(): void {
         return { ok: false, error: 'artifact not found' };
       }
       const rootPath = await rootForArtifact(rows[0]);
+      const filePath = rootPath ? artifactAbsolutePath(rootPath, rows[0].localPath) : null;
       return {
         ok: true,
         result: {
           ...rows[0],
+          ...(filePath ? { filePath } : {}),
           availability: rootPath ? getArtifactAvailability(rows[0].localPath, rootPath) : 'missing',
         },
       };

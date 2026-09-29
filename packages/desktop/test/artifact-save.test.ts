@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { resolve } from 'node:path';
 
 vi.mock('fs', () => ({
   copyFileSync: vi.fn(),
@@ -76,6 +77,7 @@ describe('saveArtifact', () => {
     expect(result.taskId).toBe('task-1');
     expect(result.messageId).toBe('msg-1');
     expect(result.mimeType).toBe('image/png');
+    expect(result.filePath).toBe(resolve('/workspace/tasks/task-1', 'upload.png'));
     expect(mockCopyFileSync).toHaveBeenCalledTimes(1);
     expect(mockUnlinkSync).not.toHaveBeenCalled();
   });
@@ -117,6 +119,7 @@ describe('saveArtifactFromBuffer', () => {
 
     expect(result.taskId).toBe('task-1');
     expect(result.mimeType).toBe('application/json');
+    expect(result.filePath).toBe(resolve('/workspace/tasks/task-1', 'output.json'));
     expect(mockWriteFileSync).toHaveBeenCalledTimes(1);
     expect(mockUnlinkSync).not.toHaveBeenCalled();
   });

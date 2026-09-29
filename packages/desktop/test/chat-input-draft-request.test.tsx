@@ -4,6 +4,7 @@ import { act, type ButtonHTMLAttributes, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DraftPromptRequest, DraftPromptResolution } from '../src/renderer/components/ChatInput/types';
+import zh from '../src/renderer/i18n/locales/zh.json';
 
 const mocks = vi.hoisted(() => ({
   handleSend: vi.fn(),
@@ -463,14 +464,18 @@ describe('ChatInput draft requests', () => {
 });
 
 /**
- * 「内容由 AI 生成」那行小字（2026-09-27）。
+ * 「内容由 AI 生成」那行小字（2026-09-29）。
  *
- * 判据是**它在输入框下面真的渲染出来了**，而且用的是**比正文更小的字**：
+ * 判据是**它在输入框正上方真的渲染出来了**，而且用的是**比正文更小的字**：
  *  - 只断言"这个 key 在词表里"是不够的 —— 键齐备但没人渲染，用户一个字都看不到
  *    （本仓栽过：整屏门禁没人渲染而测试全绿）；
  *  - 只断言"有一段文字"也不够 —— 它得是**小字**，否则就是往输入框下面塞了一句正文。
  */
-describe('输入框下面的 AI 生成提示', () => {
+describe('输入框上面的 AI 生成提示', () => {
+  it('采用用户熟悉的风险提示文案', () => {
+    expect(zh.chatInput.aiDisclaimer).toBe('内容由 AI 生成，请仔细甄别');
+  });
+
   it('⭐ 渲染出来了', () => {
     const view = renderChatInput();
     expect(view.container.textContent).toContain('chatInput.aiDisclaimer');
@@ -486,6 +491,21 @@ describe('输入框下面的 AI 生成提示', () => {
     expect(line, '那行提示应当是一个 <p>').toBeTruthy();
     expect(line?.className).toContain('type-support');
     expect(line?.className, '正文档会把提示变成一句话').not.toContain('type-body');
+    view.unmount();
+  });
+
+  it('⭐ 位于输入框之前，作为固定的近场提示', () => {
+    const view = renderChatInput();
+    const line = view.container.querySelector('[data-testid="ai-content-disclaimer"]');
+    const composer = textarea(view.container);
+
+    expect(line, 'AI 提示必须能被稳定定位').toBeTruthy();
+    expect(line?.compareDocumentPosition(composer) ?? 0, 'AI 提示必须出现在输入框之前，不能落到输入框下面').toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+    expect(line?.getAttribute('role')).toBe('note');
+    expect(line?.className).toContain('mb-2');
+    expect(line?.className).not.toContain('mt-2');
     view.unmount();
   });
 

@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { Artifact } from '@clawwork/shared';
-import { Check, ExternalLink, FileWarning, FolderOpen, Loader2, Save } from 'lucide-react';
+import { Check, Copy, ExternalLink, FileWarning, FolderOpen, Loader2, Save } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { cn, formatFileSize, formatRelativeTime } from '@/lib/utils';
+import { copyTextToClipboard } from '@/lib/clipboard';
 import { getArtifactLabel } from '@/lib/artifact-labels';
 import ArtifactThumbnail from '@/components/ArtifactThumbnail';
 import { Button } from '@/components/ui/button';
@@ -16,6 +17,19 @@ interface ArtifactCardProps {
 
 type ActionState = 'idle' | 'saving' | 'saved' | 'cancelled' | 'error';
 
+/**
+ * 只把真正的绝对路径呈现给用户。
+ *
+ * `Artifact.filePath` 是跨主进程 / renderer 的现有字段；新产物和列表 IPC
+ * 都会把它规范成当前成品的绝对路径。老数据或夹具若只有相对路径，
+ * 宁可不显示，也不把它冒充成“可复制的完整路径”。
+ */
+function absoluteArtifactPath(value: string): string | null {
+  const candidate = value.trim();
+  if (!candidate || candidate.includes('\0')) return null;
+  return /^(?:[A-Za-z]:[\\/]|\\\\|\/)/.test(candidate) ? candidate : null;
+}
+
 export default function ArtifactCard({
   artifact,
   assistantLabel,
@@ -24,7 +38,25 @@ export default function ArtifactCard({
 }: ArtifactCardProps) {
   const { t } = useTranslation();
   const [state, setState] = useState<ActionState>('idle');
+  const [pathCopied, setPathCopied] = useState(false);
   const available = artifact.availability === 'available';
+  const absolutePath = absoluteArtifactPath(artifact.filePath);
+
+  useEffect(() => {
+    if (!pathCopied) return;
+    const timer = window.setTimeout(() => setPathCopied(false), 1500);
+    return () => window.clearTimeout(timer);
+  }, [pathCopied]);
+
+  const copyPath = (): void => {
+    if (!absolutePath) return;
+    void copyTextToClipboard(absolutePath)
+      .then(() => setPathCopied(true))
+      .catch(() => {
+        setState('error');
+        window.setTimeout(() => setState('idle'), 2400);
+      });
+  };
 
   const runAction = async (action: 'save' | 'open' | 'reveal'): Promise<void> => {
     if (!available || state === 'saving') return;
@@ -92,6 +124,30 @@ export default function ArtifactCard({
           <div className="min-w-0 flex-1">{identity}</div>
         )}
       </div>
+
+      {absolutePath ? (
+        <div className="mt-2 flex min-w-0 items-center gap-1.5 rounded-md bg-[var(--bg-tertiary)] px-2 py-1">
+          <p
+            className="type-mono-data min-w-0 flex-1 truncate text-[var(--text-muted)]"
+            title={absolutePath}
+            data-testid="artifact-path"
+          >
+            {absolutePath}
+          </p>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="shrink-0"
+            aria-label={pathCopied ? t('chatMessage.copied') : t('artifactCard.copyPath')}
+            title={pathCopied ? t('chatMessage.copied') : t('artifactCard.copyPath')}
+            onClick={copyPath}
+          >
+            {pathCopied ? <Check size={13} /> : <Copy size={13} />}
+            {!compact ? (pathCopied ? t('chatMessage.copied') : t('artifactCard.copyPath')) : null}
+          </Button>
+        </div>
+      ) : null}
 
       <div className="mt-2.5 flex min-w-0 flex-wrap items-center gap-1.5">
         <span

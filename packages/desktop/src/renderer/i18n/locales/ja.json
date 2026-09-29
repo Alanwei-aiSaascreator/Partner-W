@@ -72,6 +72,7 @@
   "artifactCard": {
     "available": "使用できます",
     "cancelled": "保存をキャンセルしました",
+    "copyPath": "パスをコピー",
     "error": "操作を完了できませんでした",
     "locateMessage": "{{name}} を作成したメッセージへ移動",
     "missing": "ファイルが見つかりません",

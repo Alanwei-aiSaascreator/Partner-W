@@ -163,6 +163,20 @@ describe('IdentityCenter — 版式不变量', () => {
     unmount();
   });
 
+  it('七张客群卡响应式铺满每一行，不留固定的第四个空位', () => {
+    const { container, unmount } = render(<IdentityCenter />);
+    const grid = container.querySelector('[data-testid="identity-agent-grid"]');
+    const groups = [...container.querySelectorAll<HTMLElement>('[data-group]')];
+
+    expect(grid?.className).toContain('grid-cols-12');
+    expect(groups).toHaveLength(7);
+    expect(groups.slice(0, 4).every((group) => group.className.includes('lg:col-span-3'))).toBe(true);
+    expect(groups.slice(4).every((group) => group.className.includes('lg:col-span-4'))).toBe(true);
+    expect(groups.slice(0, 6).every((group) => group.className.includes('sm:col-span-6'))).toBe(true);
+    expect(groups[6]?.className).toContain('sm:col-span-12');
+    unmount();
+  });
+
   it('推荐角色与推荐技能来自**当前选区**（不是写死的"高效办公"）', async () => {
     const { container, unmount } = render(<IdentityCenter />);
     expect(container.querySelector('[data-field="role"]')?.textContent).toBe('mainArea.compassAssistant');

@@ -72,6 +72,7 @@
   "artifactCard": {
     "available": "사용 가능",
     "cancelled": "저장을 취소했습니다",
+    "copyPath": "경로 복사",
     "error": "작업을 완료하지 못했습니다",
     "locateMessage": "{{name}}을 만든 메시지로 이동",
     "missing": "파일이 없습니다",

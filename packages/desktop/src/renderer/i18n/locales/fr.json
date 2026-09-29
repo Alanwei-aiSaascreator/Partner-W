@@ -72,6 +72,7 @@
   "artifactCard": {
     "available": "Disponible",
     "cancelled": "Enregistrement annulé",
+    "copyPath": "Copier le chemin",
     "error": "Impossible de terminer l’action",
     "locateMessage": "Accéder au message qui a créé {{name}}",
     "missing": "Fichier manquant",

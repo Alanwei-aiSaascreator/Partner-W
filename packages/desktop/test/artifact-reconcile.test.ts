@@ -11,6 +11,7 @@ interface ArtifactRow {
   id: string;
   name: string;
   type: string;
+  filePath: string;
   localPath: string;
   mimeType: string;
   size: number;
@@ -95,6 +96,7 @@ describe('artifact reconciliation', () => {
       expect.objectContaining({
         name: '汇报.pptx',
         type: 'file',
+        filePath: join(workspacePath, 'task-1', '汇报.pptx'),
         localPath: 'task-1/汇报.pptx',
         mimeType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
       }),

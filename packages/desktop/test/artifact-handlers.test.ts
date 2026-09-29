@@ -14,6 +14,7 @@ import {
   MAX_PLAIN_BINARY_SOURCE_BYTES,
   MAX_PLAIN_TEXT_SOURCE_BYTES,
 } from '../src/main/artifact/too-large.js';
+import { resolve } from 'node:path';
 
 const handleMap = new Map<string, (...args: unknown[]) => unknown>();
 const allMock = vi.fn();
@@ -141,7 +142,11 @@ describe('artifact handlers', () => {
       ok: true,
       result: [
         expect.objectContaining({ id: 'a1', availability: 'available' }),
-        expect.objectContaining({ id: 'a2', availability: 'available' }),
+        expect.objectContaining({
+          id: 'a2',
+          availability: 'available',
+          filePath: resolve('/workspace', 'task-1/image-1---abc-22222222.png'),
+        }),
       ],
     });
     expect(getArtifactAvailabilityMock).toHaveBeenCalledTimes(2);

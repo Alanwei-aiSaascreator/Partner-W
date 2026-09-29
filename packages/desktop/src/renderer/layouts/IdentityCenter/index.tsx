@@ -249,11 +249,19 @@ export default function IdentityCenter() {
           <p className="type-support mt-1 text-[var(--text-muted)]">{t('identity.subtitle')}</p>
 
           {/* ── 客群（= 真实助手）：点一下真的换 ── */}
-          <div className="mt-3 grid grid-cols-4 gap-2.5">
-            {IDENTITY_AGENT_IDS.map((agentId) => {
+          <div className="mt-3 grid grid-cols-12 gap-2.5" data-testid="identity-agent-grid">
+            {IDENTITY_AGENT_IDS.map((agentId, index) => {
               const ws = resolveAssistantWorkspace(agentId);
               if (!ws) return null;
               const on = agentId === currentAgentId;
+              // 7 张卡不能用固定 4 列：第二行会永久缺一格。
+              // 12 列只用来分配宽度：桌面端 4×3 + 3×4，窄屏 2 列，最后一张铺满。
+              const layoutClass =
+                index < 4
+                  ? 'col-span-12 sm:col-span-6 lg:col-span-3'
+                  : index < 6
+                    ? 'col-span-12 sm:col-span-6 lg:col-span-4'
+                    : 'col-span-12 sm:col-span-12 lg:col-span-4';
               return (
                 <button
                   key={agentId}
@@ -263,7 +271,7 @@ export default function IdentityCenter() {
                   aria-pressed={on}
                   onClick={() => void chooseGroup(agentId)}
                   className={
-                    'glow-focus rounded-[10px] border px-3 py-2.5 text-left transition-colors ' +
+                    `glow-focus ${layoutClass} rounded-[10px] border px-3 py-2.5 text-left transition-colors ` +
                     (on
                       ? 'border-[var(--accent)] bg-[var(--accent-dim)]'
                       : 'border-[var(--border)] bg-[var(--bg-elevated)] hover:bg-[var(--bg-hover)]')

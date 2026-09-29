@@ -72,6 +72,7 @@
   "artifactCard": {
     "available": "可以使用",
     "cancelled": "已取消另存",
+    "copyPath": "複製路徑",
     "error": "操作未完成",
     "locateMessage": "前往產生 {{name}} 的訊息",
     "missing": "檔案已遺失",
@@ -390,7 +391,7 @@
     "addFiles": "新增檔案",
     "addFolder": "新增資料夾",
     "addMaterials": "新增任務材料",
-    "aiDisclaimer": "內容由 AI 生成，請核實重要資訊",
+    "aiDisclaimer": "內容由 AI 生成，請仔細甄別",
     "aiServiceStarting": "正在啟動 AI 服務…",
     "aiServiceStartingDetail": "首次啟動可能需要約 1 分鐘，請稍候。",
     "artifactTooLarge": "{{name}} 太大，無法作為上下文帶上。",

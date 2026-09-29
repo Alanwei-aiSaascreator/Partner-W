@@ -72,6 +72,7 @@
   "artifactCard": {
     "available": "Ready",
     "cancelled": "Save cancelled",
+    "copyPath": "Copy path",
     "error": "Could not complete the action",
     "locateMessage": "Go to the message that created {{name}}",
     "missing": "File missing",

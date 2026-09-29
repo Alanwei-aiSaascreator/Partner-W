@@ -72,6 +72,7 @@
   "artifactCard": {
     "available": "可以使用",
     "cancelled": "已取消另存",
+    "copyPath": "复制路径",
     "error": "操作未完成",
     "locateMessage": "定位到生成 {{name}} 的消息",
     "missing": "文件已缺失",
@@ -390,7 +391,7 @@
     "addFiles": "添加文件",
     "addFolder": "添加文件夹",
     "addMaterials": "添加任务材料",
-    "aiDisclaimer": "内容由 AI 生成，请核实重要信息",
+    "aiDisclaimer": "内容由 AI 生成，请仔细甄别",
     "aiServiceStarting": "正在启动 AI 服务…",
     "aiServiceStartingDetail": "首次启动可能需要约 1 分钟，请稍候。",
     "artifactTooLarge": "{{name}} 太大，没法作为上下文带上。",

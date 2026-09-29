@@ -72,6 +72,7 @@
   "artifactCard": {
     "available": "Disponível",
     "cancelled": "Gravação cancelada",
+    "copyPath": "Copiar caminho",
     "error": "Não foi possível concluir a ação",
     "locateMessage": "Ir para a mensagem que criou {{name}}",
     "missing": "Arquivo ausente",

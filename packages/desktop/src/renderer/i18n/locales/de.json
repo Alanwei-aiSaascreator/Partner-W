@@ -72,6 +72,7 @@
   "artifactCard": {
     "available": "Verfügbar",
     "cancelled": "Speichern abgebrochen",
+    "copyPath": "Pfad kopieren",
     "error": "Aktion konnte nicht abgeschlossen werden",
     "locateMessage": "Zur Nachricht wechseln, die {{name}} erstellt hat",
     "missing": "Datei fehlt",

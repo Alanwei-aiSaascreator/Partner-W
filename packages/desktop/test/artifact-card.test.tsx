@@ -21,7 +21,7 @@ const artifact: Artifact = {
   messageId: 'message-1',
   type: 'file',
   name: 'report.pdf',
-  filePath: 'report.pdf',
+  filePath: 'E:\\荣盈魔方工作区\\task-1\\report.pdf',
   localPath: 'task-1/report.pdf',
   mimeType: 'application/pdf',
   size: 2048,
@@ -46,6 +46,10 @@ function render(ui: ReactElement): { container: HTMLDivElement; unmount: () => v
 describe('ArtifactCard', () => {
   beforeEach(() => {
     document.body.innerHTML = '';
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: vi.fn(async () => undefined) },
+    });
     Object.assign(window, {
       clawwork: {
         saveArtifactAs: vi.fn(async () => ({ ok: true, result: { status: 'saved', filePath: 'C:/report.pdf' } })),
@@ -62,16 +66,32 @@ describe('ArtifactCard', () => {
 
     expect(container.textContent).toContain('report.pdf');
     expect(container.textContent).toContain('高效办公');
+    expect(container.querySelector('[data-testid="artifact-path"]')?.textContent).toBe(
+      'E:\\荣盈魔方工作区\\task-1\\report.pdf',
+    );
+    expect(container.querySelector('[data-testid="artifact-path"]')?.className).toContain('truncate');
     const save = container.querySelector<HTMLButtonElement>('[aria-label="artifactCard.saveAs"]');
     const open = container.querySelector<HTMLButtonElement>('[aria-label="artifactCard.open"]');
     const reveal = container.querySelector<HTMLButtonElement>('[aria-label="artifactCard.showInFolder"]');
+    const copyPath = container.querySelector<HTMLButtonElement>('[aria-label="artifactCard.copyPath"]');
     await act(async () => save?.click());
     await act(async () => open?.click());
     await act(async () => reveal?.click());
+    await act(async () => copyPath?.click());
 
     expect(window.clawwork.saveArtifactAs).toHaveBeenCalledWith('artifact-1', 'task-1');
     expect(window.clawwork.openArtifactFile).toHaveBeenCalledWith('artifact-1', 'task-1');
     expect(window.clawwork.showArtifactInFolder).toHaveBeenCalledWith('artifact-1', 'task-1');
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith('E:\\荣盈魔方工作区\\task-1\\report.pdf');
+    expect(container.querySelector('[aria-label="chatMessage.copied"]')).toBeTruthy();
+    unmount();
+  });
+
+  it('不把相对路径冒充成用户可复制的绝对路径', () => {
+    const { container, unmount } = render(<ArtifactCard artifact={{ ...artifact, filePath: 'task-1/report.pdf' }} />);
+
+    expect(container.querySelector('[data-testid="artifact-path"]')).toBeNull();
+    expect(container.querySelector('[aria-label="artifactCard.copyPath"]')).toBeNull();
     unmount();
   });
 

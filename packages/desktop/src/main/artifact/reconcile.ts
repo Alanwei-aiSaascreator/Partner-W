@@ -662,7 +662,7 @@ export async function reconcileTaskArtifacts(
           messageId: input.messageId,
           type: artifactType(candidate.mimeType),
           name: candidate.relativePath.split('/').at(-1)!,
-          filePath: '',
+          filePath: candidate.absolutePath,
           localPath: storedLocalPath,
           root: scope.rootKind,
           mimeType: candidate.mimeType,
