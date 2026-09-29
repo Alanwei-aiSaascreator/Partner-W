@@ -47,6 +47,8 @@ export interface DebugLogger {
   getRecentEvents: (filter?: DebugLogFilter) => DebugEvent[];
   currentFilePath: () => string;
   flush: () => Promise<void>;
+  /** Flush every pending write and release all file handles. */
+  close: () => Promise<void>;
 }
 
 export interface LogEventInput {
@@ -79,6 +81,7 @@ export function createDebugLogger(options: CreateDebugLoggerOptions): DebugLogge
 
   // Write stream state — cached fd avoids open/write/close per event
   let writeStream: WriteStream | null = null;
+  const openStreams = new Set<WriteStream>();
   let currentLogDate = '';
   let currentFileSize = 0;
 
@@ -108,8 +111,13 @@ export function createDebugLogger(options: CreateDebugLoggerOptions): DebugLogge
       currentFileSize = 0;
     }
     const fd = openSync(filePath, 'a');
-    writeStream = createWriteStream(filePath, { fd, autoClose: true }).on('error', (err) => {
+    const stream = createWriteStream(filePath, { fd, autoClose: true }).on('error', (err) => {
       console.error('[debug] logger stream error:', err);
+    });
+    writeStream = stream;
+    openStreams.add(stream);
+    stream.once('close', () => {
+      openStreams.delete(stream);
     });
   }
 
@@ -183,6 +191,26 @@ export function createDebugLogger(options: CreateDebugLoggerOptions): DebugLogge
     });
   }
 
+  async function close(): Promise<void> {
+    const streams = [...openStreams];
+    if (streams.length === 0) {
+      writeStream = null;
+      return;
+    }
+
+    const closed = streams.map((stream) => {
+      if (stream.closed) return Promise.resolve();
+      return new Promise<void>((resolve) => stream.once('close', resolve));
+    });
+
+    const activeStream = writeStream;
+    writeStream = null;
+    if (activeStream && !activeStream.destroyed && !activeStream.writableEnded) {
+      activeStream.end();
+    }
+    await Promise.all(closed);
+  }
+
   return {
     debug: (input) => log({ ...input, level: 'debug' }),
     info: (input) => log({ ...input, level: 'info' }),
@@ -192,6 +220,7 @@ export function createDebugLogger(options: CreateDebugLoggerOptions): DebugLogge
     getRecentEvents: (filter) => filterEvents(recentEvents, filter),
     currentFilePath,
     flush,
+    close,
   };
 }
 

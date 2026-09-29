@@ -6,17 +6,20 @@ import { createDebugLogger } from '../src/main/debug/logger';
 
 describe('debug logger size rotation', () => {
   let dir: string;
+  let logger: ReturnType<typeof createDebugLogger> | null;
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'clawwork-debug-rotation-'));
+    logger = null;
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await logger?.close();
     rmSync(dir, { recursive: true, force: true });
   });
 
   it('rotates to .1.ndjson when file exceeds maxFileSize', async () => {
-    const logger = createDebugLogger({
+    logger = createDebugLogger({
       debugDir: dir,
       maxEvents: 1000,
       console: false,
@@ -58,7 +61,7 @@ describe('debug logger size rotation', () => {
   });
 
   it('creates multiple rotation files .1, .2, .3 when needed', async () => {
-    const logger = createDebugLogger({
+    logger = createDebugLogger({
       debugDir: dir,
       maxEvents: 5000,
       console: false,
@@ -193,19 +196,22 @@ describe('debug logger retention cleanup', () => {
 
 describe('debug logger file size boundaries', () => {
   let dir: string;
+  let logger: ReturnType<typeof createDebugLogger> | null;
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'clawwork-debug-boundary-'));
+    logger = null;
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await logger?.close();
     rmSync(dir, { recursive: true, force: true });
   });
 
   it('keeps active file within size limit across rotations', async () => {
     // Create a logger with a moderate size limit
     const maxFileSize = 500;
-    const logger = createDebugLogger({
+    logger = createDebugLogger({
       debugDir: dir,
       maxEvents: 5000,
       console: false,

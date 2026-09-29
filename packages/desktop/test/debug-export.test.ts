@@ -7,17 +7,20 @@ import { exportDebugBundle } from '../src/main/debug/export';
 
 describe('debug export', () => {
   let dir: string;
+  let logger: ReturnType<typeof createDebugLogger> | null;
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'clawwork-debug-export-'));
+    logger = null;
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await logger?.close();
     rmSync(dir, { recursive: true, force: true });
   });
 
   it('exports recent events and metadata into a bundle directory', () => {
-    const logger = createDebugLogger({
+    logger = createDebugLogger({
       debugDir: dir,
       maxEvents: 20,
       console: false,

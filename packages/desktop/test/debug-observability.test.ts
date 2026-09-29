@@ -37,18 +37,21 @@ describe('debug observability foundation', () => {
 
   describe('createDebugLogger', () => {
     let dir: string;
+    let logger: ReturnType<typeof createDebugLogger> | null;
 
     beforeEach(() => {
       dir = mkdtempSync(join(tmpdir(), 'clawwork-debug-'));
+      logger = null;
     });
 
-    afterEach(() => {
+    afterEach(async () => {
+      await logger?.close();
       rmSync(dir, { recursive: true, force: true });
     });
 
     it('stores recent events and writes ndjson to disk', async () => {
       const seen: string[] = [];
-      const logger = createDebugLogger({
+      logger = createDebugLogger({
         debugDir: dir,
         maxEvents: 3,
         console: false,
@@ -78,7 +81,7 @@ describe('debug observability foundation', () => {
       // 与 gateway-client.ts 实际调用形状一致：
       //   logger.debug({ domain:'gateway', event:'gateway.res.received', data:{ payload: summarizePayload(frame.payload) } })
       const userText = '帮我把 D 盘那个 3.2G 的备份删了，里面是我的护照扫描件';
-      const logger = createDebugLogger({ debugDir: dir, console: false });
+      logger = createDebugLogger({ debugDir: dir, console: false });
 
       logger.debug({
         domain: 'gateway',
@@ -120,7 +123,7 @@ describe('debug observability foundation', () => {
     });
 
     it('keeps only the newest events in memory', () => {
-      const logger = createDebugLogger({
+      logger = createDebugLogger({
         debugDir: dir,
         maxEvents: 2,
         console: false,
