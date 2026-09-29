@@ -24,6 +24,21 @@ type UpdaterState = 'idle' | 'checking' | 'available' | 'downloading' | 'downloa
 
 export type UpdateState = UpdaterState | PortableUpdatePhase;
 
+const PORTABLE_OPERATION_PHASES: ReadonlySet<PortableUpdatePhase> = new Set([
+  'checking',
+  'downloading',
+  'verifying-archive',
+  'extracting',
+  'verifying-files',
+  'ready',
+  'applying',
+]);
+
+/** 活跃事务必须继续由创建它的频道服务持有，直到取消、失败或安装接管。 */
+export function isPortableUpdateOperationActive(phase: PortableUpdatePhase): boolean {
+  return PORTABLE_OPERATION_PHASES.has(phase);
+}
+
 let portableService: PortableUpdateService | null = null;
 let portableUnsubscribe: (() => void) | null = null;
 
@@ -251,13 +266,22 @@ export async function checkForUpdatesViaUpdater(): Promise<UpdateCheckResult> {
 
     // 盘上运行：签名的整目录清单才是真相源，electron-updater 在这里没有立足点。
     if (portable && portableService !== null) {
-      const portableState = await portableService.check();
+      const currentPortableState = portableService.getState();
+      // 下载、校验、ready/applying 都属于同一份有状态事务。此时“再检查一次”只能
+      // 回报当前事实，不能把服务推进 checking，更不能因设置里的频道变化丢掉 ready 事务。
+      const portableState = isPortableUpdateOperationActive(currentPortableState.phase)
+        ? currentPortableState
+        : await portableService.check();
       const target = portableState.targetVersion ?? currentVersion;
       latestKnownVersion = target;
       return {
         currentVersion,
         latestVersion: target,
-        hasUpdate: portableState.phase === 'available',
+        hasUpdate:
+          portableState.targetVersion !== undefined &&
+          portableState.phase !== 'idle' &&
+          portableState.phase !== 'checking' &&
+          portableState.phase !== 'error',
         releaseUrl: UPDATE_FEED_BASE,
         releaseNotes: null,
         state: portableState.phase,
@@ -333,13 +357,18 @@ export async function checkForUpdatesViaUpdater(): Promise<UpdateCheckResult> {
         message: err instanceof Error ? err.message : String(err),
       });
       throw err;
-    } finally {
-      inFlightCheck = null;
     }
   })();
 
-  inFlightCheck = promise;
-  return promise;
+  // 清理必须包住**便携与装机两条返回路径**。旧实现把 finally 放在装机分支的
+  // try/catch 里，便携检查成功后 `inFlightCheck` 会永远指向第一次的已完成结果；
+  // 后续检查看不到状态变化，也让 ready 锁定逻辑误以为仍是 available。
+  let tracked: Promise<UpdateCheckResult>;
+  tracked = promise.finally(() => {
+    if (inFlightCheck === tracked) inFlightCheck = null;
+  });
+  inFlightCheck = tracked;
+  return tracked;
 }
 
 export async function downloadUpdate(): Promise<{ ok: boolean; error?: string }> {

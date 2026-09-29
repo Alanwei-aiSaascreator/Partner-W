@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { PortableUpdateService, PortableUpdateServiceDeps } from '../src/main/update/portable-update-service.js';
 
 const mocks = vi.hoisted(() => ({
   handlers: new Map<string, (...args: unknown[]) => unknown>(),
@@ -7,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   quit: vi.fn(),
   packaged: true,
   updateChannel: 'stable' as 'stable' | 'beta',
+  serviceFactory: null as null | ((deps: PortableUpdateServiceDeps) => PortableUpdateService),
 }));
 
 vi.mock('electron', () => ({
@@ -71,6 +73,15 @@ vi.mock('../src/main/update/launcher-version.js', () => ({
   probeLauncherVersion: async () => ({ kind: 'version', version: '0.0.21' }),
 }));
 
+vi.mock('../src/main/update/portable-update-service.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/main/update/portable-update-service.js')>();
+  return {
+    ...actual,
+    createPortableUpdateService: (deps: PortableUpdateServiceDeps) =>
+      mocks.serviceFactory?.(deps) ?? actual.createPortableUpdateService(deps),
+  };
+});
+
 async function loadHandlers() {
   vi.resetModules();
   return import('../src/main/ipc/update-handlers.js');
@@ -83,6 +94,7 @@ beforeEach(() => {
   mocks.quit.mockReset();
   mocks.packaged = true;
   mocks.updateChannel = 'stable';
+  mocks.serviceFactory = null;
 });
 
 afterEach(() => {
@@ -91,6 +103,47 @@ afterEach(() => {
 });
 
 describe('portable update IPC', () => {
+  function controlledService(deps: PortableUpdateServiceDeps) {
+    let phase: ReturnType<PortableUpdateService['getState']>['phase'] = 'idle';
+    let finishPrepare: ((result: { ok: false; errorCode: 'unknown' }) => void) | null = null;
+    const prepare = vi.fn(() => {
+      phase = 'downloading';
+      return new Promise<{ ok: false; errorCode: 'unknown' }>((resolve) => {
+        finishPrepare = resolve;
+      });
+    });
+    const cancel = vi.fn(() => {
+      phase = 'error';
+      finishPrepare?.({ ok: false, errorCode: 'unknown' });
+      return { ok: true } as const;
+    });
+    const requestRestart = vi.fn(async () => ({ ok: true }) as const);
+    const service: PortableUpdateService = {
+      getState: () => ({
+        phase,
+        currentVersion: deps.currentVersion,
+        ...(phase === 'idle' || phase === 'checking' || phase === 'error' ? {} : { targetVersion: '0.0.22' }),
+        updatedAt: 1,
+      }),
+      subscribe: () => () => {},
+      check: async () => {
+        phase = 'available';
+        return service.getState();
+      },
+      prepare,
+      cancel,
+      requestRestart,
+    };
+    return {
+      channel: deps.channel,
+      service,
+      prepare,
+      cancel,
+      requestRestart,
+      setPhase: (next: typeof phase) => (phase = next),
+    };
+  }
+
   it('registers each channel once', async () => {
     const { registerUpdateHandlers } = await loadHandlers();
     registerUpdateHandlers();
@@ -156,7 +209,7 @@ describe('portable update IPC', () => {
       ok: false,
       error: 'dev-not-supported',
     });
-    expect(mocks.handlers.get('app:cancel-update-download')?.()).toEqual({
+    await expect(mocks.handlers.get('app:cancel-update-download')?.()).resolves.toEqual({
       ok: false,
       error: 'dev-not-supported',
     });
@@ -192,5 +245,58 @@ describe('portable update IPC', () => {
       'https://api.rongyinghudong.com/updates/stable/manifest.json',
       'https://api.rongyinghudong.com/updates/internal/manifest.json',
     ]);
+  });
+
+  it('⭐ 空闲时切频道后再下载：先换到新频道；下载中取消仍命中同一服务', async () => {
+    mocks.portableRoot = 'F:\\';
+    const created: ReturnType<typeof controlledService>[] = [];
+    mocks.serviceFactory = (deps) => {
+      const entry = controlledService(deps);
+      created.push(entry);
+      return entry.service;
+    };
+    const { registerUpdateHandlers } = await loadHandlers();
+    registerUpdateHandlers();
+    const check = mocks.handlers.get('app:check-for-updates');
+    const download = mocks.handlers.get('app:download-update');
+    const cancel = mocks.handlers.get('app:cancel-update-download');
+
+    await check?.();
+    expect(created.map((entry) => entry.channel)).toEqual(['stable']);
+
+    mocks.updateChannel = 'beta';
+    const downloading = Promise.resolve(download?.());
+    await vi.waitFor(() => expect(created.map((entry) => entry.channel)).toEqual(['stable', 'internal']));
+    expect(created[0]?.prepare).not.toHaveBeenCalled();
+    expect(created[1]?.prepare).toHaveBeenCalledTimes(1);
+
+    await expect(cancel?.()).resolves.toEqual({ ok: true });
+    expect(created).toHaveLength(2);
+    expect(created[1]?.cancel).toHaveBeenCalledTimes(1);
+    await expect(downloading).resolves.toEqual({ ok: false, error: 'unknown' });
+  });
+
+  it('⭐ ready 事务期间切频道并再次检查：不换服务，安装仍交给原事务', async () => {
+    mocks.portableRoot = 'F:\\';
+    const created: ReturnType<typeof controlledService>[] = [];
+    mocks.serviceFactory = (deps) => {
+      const entry = controlledService(deps);
+      created.push(entry);
+      return entry.service;
+    };
+    const { registerUpdateHandlers } = await loadHandlers();
+    registerUpdateHandlers();
+    const check = mocks.handlers.get('app:check-for-updates');
+    const install = mocks.handlers.get('app:install-update');
+
+    await check?.();
+    created[0]?.setPhase('ready');
+    mocks.updateChannel = 'beta';
+
+    const state = (await check?.()) as { state: string; latestVersion: string };
+    expect(state).toMatchObject({ state: 'ready', latestVersion: '0.0.22' });
+    expect(created, 'ready 事务是可安装资产，切频道不能把它从路由上摘掉').toHaveLength(1);
+    await expect(install?.()).resolves.toEqual({ ok: true });
+    expect(created[0]?.requestRestart).toHaveBeenCalledTimes(1);
   });
 });

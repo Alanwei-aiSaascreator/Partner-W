@@ -14,6 +14,7 @@ import {
   initAutoUpdater,
   installUpdate,
   isAutoUpdaterAvailable,
+  isPortableUpdateOperationActive,
 } from '../auto-updater.js';
 import { getPortableWorkspaceRoot } from '../workspace/config.js';
 import { getDebugLogger } from '../debug/index.js';
@@ -170,6 +171,12 @@ function ensurePortableUpdateService(): Promise<void> {
   const channel = portableChannel();
   const key = `${root}\u0000${channel}`;
   if (portableInitialization?.key === key) return portableInitialization.promise;
+  const currentState = getPortableUpdateState();
+  if (portableInitialization && currentState && isPortableUpdateOperationActive(currentState.phase)) {
+    // 频道是“下一次事务”的选择，不是给正在下载/已 ready 的事务换血。
+    // 旧服务必须一直持有取消句柄与 readyTransaction，否则取消、安装都会路由到空服务。
+    return portableInitialization.promise;
+  }
   const generation = ++portableInitializationGeneration;
 
   const run = initializePortableUpdateService(root, channel, generation).catch((error: unknown) => {
@@ -215,6 +222,7 @@ export function registerUpdateHandlers(options: { onRendererReady?: () => void }
     if (!isPortableUpdateNow() && !isAutoUpdaterAvailable()) {
       return { ok: false, error: 'dev-not-supported' };
     }
+    await ensurePortableUpdateService();
     return downloadUpdate();
   });
 
@@ -222,13 +230,15 @@ export function registerUpdateHandlers(options: { onRendererReady?: () => void }
     if (!isPortableUpdateNow() && !isAutoUpdaterAvailable()) {
       return { ok: false, error: 'dev-not-supported' };
     }
+    await ensurePortableUpdateService();
     return installUpdate();
   });
 
-  ipcMain.handle('app:cancel-update-download', (): { ok: boolean; error?: string } => {
+  ipcMain.handle('app:cancel-update-download', async (): Promise<{ ok: boolean; error?: string }> => {
     if (!isPortableUpdateNow() && !isAutoUpdaterAvailable()) {
       return { ok: false, error: 'dev-not-supported' };
     }
+    await ensurePortableUpdateService();
     return cancelUpdateDownload();
   });
 }
