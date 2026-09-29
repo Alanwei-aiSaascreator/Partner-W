@@ -1,6 +1,7 @@
 import { closeSync, lstatSync, openSync, unlinkSync, writeSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
-import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { join, parse } from 'node:path';
 import type { WorkspaceFsIdentity, WorkspaceFsIdentityState } from '@clawwork/shared';
 
 /**
@@ -66,11 +67,34 @@ export interface WorkspaceFsIdentityDeps {
   stat?: (filePath: string) => StatLike;
   /** 探测文件的前缀，带上就带上了 —— 探测失败时它是唯一能看出是谁留下的线索。 */
   probePrefix?: string;
+  filesystemType?: (dir: string) => string | null;
 }
 
 function defaultStat(filePath: string): StatLike {
   const stats = lstatSync(filePath, { bigint: true });
   return { dev: stats.dev, ino: stats.ino };
+}
+
+const filesystemTypeCache = new Map<string, string | null>();
+
+function defaultFilesystemType(dir: string): string | null {
+  if (process.platform !== 'win32') return null;
+  const root = parse(dir).root;
+  if (!/^[a-z]:\\$/i.test(root)) return null;
+  if (filesystemTypeCache.has(root)) return filesystemTypeCache.get(root) ?? null;
+  try {
+    const drive = root.slice(0, 2);
+    const filesystemType = execFileSync(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-Command', `[System.IO.DriveInfo]::new('${drive}').DriveFormat`],
+      { encoding: 'utf8', timeout: 5_000, windowsHide: true },
+    ).trim();
+    filesystemTypeCache.set(root, filesystemType);
+    return filesystemType;
+  } catch {
+    filesystemTypeCache.set(root, null);
+    return null;
+  }
 }
 
 /** 零 = fs-safe 会 fail-closed 的那一侧（**任一为零**就算）。 */
@@ -80,6 +104,15 @@ function isZeroIdentity(identity: StatLike): boolean {
 
 export function probeWorkspaceFsIdentity(dir: string, deps: WorkspaceFsIdentityDeps = {}): WorkspaceFsIdentity {
   const stat = deps.stat ?? defaultStat;
+  const filesystemType = (deps.filesystemType ?? defaultFilesystemType)(dir);
+  if (filesystemType && filesystemType.toUpperCase() !== 'NTFS') {
+    return {
+      state: 'unsupported-identity',
+      dev: null,
+      ino: null,
+      error: `unsupported filesystem: ${filesystemType}`,
+    };
+  }
   const prefix = deps.probePrefix ?? '.rongying-fs-probe-';
   const samples: StatLike[] = [];
 

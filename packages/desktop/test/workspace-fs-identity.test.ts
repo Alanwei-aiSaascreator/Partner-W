@@ -63,6 +63,23 @@ describe('probeWorkspaceFsIdentity', () => {
     expect(result.state).toBe('unsupported-identity');
   });
 
+  it('⭐ Windows 明确识别为 exFAT ⇒ 即使 dev/ino 非零也必须拦住', () => {
+    const result = probeWorkspaceFsIdentity(tmpDir(), {
+      filesystemType: () => 'exFAT',
+      stat: () => ({ dev: 1611287400n, ino: 4785074606070117n }),
+    });
+    expect(result.state).toBe('unsupported-identity');
+    expect(result.error).toContain('exFAT');
+  });
+
+  it('明确识别为 NTFS ⇒ 继续做真实身份探测，不误伤', () => {
+    const result = probeWorkspaceFsIdentity(tmpDir(), {
+      filesystemType: () => 'NTFS',
+      stat: () => ({ dev: 1611287400n, ino: 4785074606070117n }),
+    });
+    expect(result.state).toBe('ok');
+  });
+
   it('⭐ 两次探测结果**不一致** ⇒ unknown（可能是杀毒/索引器争用造成的偶发零值，不许下结论）', () => {
     let call = 0;
     const result = probeWorkspaceFsIdentity(tmpDir(), {
