@@ -53,6 +53,7 @@ import CronPanel from '@/layouts/CronPanel';
 import TeamsPanel from '@/layouts/TeamsPanel';
 import Dashboard from '@/layouts/Dashboard';
 import InternalBetaHub from '@/features/internal-beta/InternalBetaHub';
+import { isInternalBetaEnabled } from '@/features/internal-beta/beta-route';
 import CommunityPanel from '@/layouts/CommunityPanel';
 import MarketPanel from '@/layouts/MarketPanel';
 import GrowthPanel from '@/layouts/GrowthPanel';
@@ -1375,7 +1376,7 @@ export default function MainArea({
         <div className="flex-1 min-h-0">
           <Dashboard />
         </div>
-      ) : mainView === 'betaHub' ? (
+      ) : mainView === 'betaHub' && isInternalBetaEnabled() ? (
         <div className="flex-1 min-h-0">
           <InternalBetaHub />
         </div>

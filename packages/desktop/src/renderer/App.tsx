@@ -32,7 +32,7 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import { LEFT_NAV_RAIL_WIDTH, motionDuration, motionEase } from '@/styles/design-tokens';
 import { loadOnboardingProfile, saveOnboardingProfile, type OnboardingProfile } from '@/lib/user-onboarding';
 import { AUTH_CHECK_FALLBACK_MS, resolveAppEntryScreen, runAuthBootstrap } from '@/lib/app-entry-flow';
-import { parseBetaRoute } from '@/features/internal-beta/beta-route';
+import { isInternalBetaEnabled, parseBetaRoute } from '@/features/internal-beta/beta-route';
 import { useGatewayDisappearanceNotice } from '@/lib/gateway-disappearance';
 
 function AppToaster({ themeMode }: { themeMode: Theme }) {
@@ -93,7 +93,7 @@ export default function App() {
 
   useEffect(() => {
     const navigateHash = () => {
-      if (parseBetaRoute(window.location.hash)) setMainView('betaHub');
+      if (isInternalBetaEnabled() && parseBetaRoute(window.location.hash)) setMainView('betaHub');
     };
     navigateHash();
     window.addEventListener('hashchange', navigateHash);

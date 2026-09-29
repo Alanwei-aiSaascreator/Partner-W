@@ -60,8 +60,7 @@ describe('LeftNav NavMenu', () => {
     const { container, unmount } = setup();
     const keys = [...container.querySelectorAll('[data-nav]')].map((el) => el.getAttribute('data-nav'));
 
-    // 前 11 项 = 设计稿的顺序；后 5 项 = 2026-09-19 去掉图标栏后搬来的
-    //（文件管理 / 归档对话 / 资料库 进主清单，内测中心 / 设置 进底部一组）。
+    // 客户发行包不带运营/内测入口；那一项只允许内部构建显式打开。
     // ⚠️ `tasks`（最近任务）是 2026-09-20 用户点名加的：**放在「身份中心」上面**
     //    —— 原来那栏在左列最下面、"显示也不全"，改成导航入口 + 右侧全量面板。
     expect(keys).toEqual([
@@ -80,7 +79,6 @@ describe('LeftNav NavMenu', () => {
       'files',
       'archived',
       'kb',
-      'betaHub',
       'settings',
     ]);
     unmount();
@@ -103,7 +101,7 @@ describe('LeftNav NavMenu', () => {
     unmount();
   });
 
-  it('⭐ 图标栏搬来的三项能落到对应页面', () => {
+  it('⭐ 图标栏搬来的三项能落到对应页面，客户包没有运营后台入口', () => {
     const { container, onSelectView, unmount } = setup();
 
     clickNav(container, 'files');
@@ -112,8 +110,7 @@ describe('LeftNav NavMenu', () => {
     expect(onSelectView).toHaveBeenLastCalledWith('archived');
     clickNav(container, 'kb');
     expect(onSelectView).toHaveBeenLastCalledWith('kb');
-    clickNav(container, 'betaHub');
-    expect(onSelectView).toHaveBeenLastCalledWith('betaHub');
+    expect(container.querySelector('[data-nav="betaHub"]')).toBeNull();
     unmount();
   });
 

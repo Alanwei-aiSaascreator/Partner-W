@@ -35,6 +35,7 @@ declare module '*.md?raw' {
 
 interface ImportMetaEnv {
   readonly VITE_ADMIN_CONSOLE_URL?: string;
+  readonly VITE_INTERNAL_BETA_ENABLED?: string;
 }
 
 interface ImportMeta {

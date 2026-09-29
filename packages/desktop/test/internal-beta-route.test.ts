@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { betaRoute, parseBetaRoute } from '../src/renderer/features/internal-beta/beta-route';
+import { betaRoute, isInternalBetaEnabled, parseBetaRoute } from '../src/renderer/features/internal-beta/beta-route';
 
 describe('internal beta route', () => {
+  it('客户构建默认关闭，只有内部构建显式 true 才开放', () => {
+    expect(isInternalBetaEnabled(undefined)).toBe(false);
+    expect(isInternalBetaEnabled('false')).toBe(false);
+    expect(isInternalBetaEnabled('true')).toBe(true);
+  });
   it('round trips every beta module through a stable hash route', () => {
     for (const module of ['operations', 'updates'] as const) {
       expect(parseBetaRoute(betaRoute(module))).toBe(module);

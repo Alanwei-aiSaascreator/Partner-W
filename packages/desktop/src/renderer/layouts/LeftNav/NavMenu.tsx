@@ -22,6 +22,7 @@ import {
 import type { MainView } from '@clawwork/core';
 import { cn } from '@/lib/utils';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { isInternalBetaEnabled } from '@/features/internal-beta/beta-route';
 
 /**
  * 左侧栏的**页面导航清单**（2026-09-19）。
@@ -129,7 +130,9 @@ export default function NavMenu({
 
   /** 底部一组：设置类入口（原来在图标栏最下面）。 */
   const footItems: NavItem[] = [
-    { key: 'betaHub', labelKey: 'beta.title', icon: FlaskConical, view: 'betaHub' },
+    ...(isInternalBetaEnabled()
+      ? ([{ key: 'betaHub', labelKey: 'beta.title', icon: FlaskConical, view: 'betaHub' }] satisfies NavItem[])
+      : []),
     {
       key: 'settings',
       labelKey: hasUpdate ? 'leftNav.updateAvailable' : 'leftNav.appSettings',
