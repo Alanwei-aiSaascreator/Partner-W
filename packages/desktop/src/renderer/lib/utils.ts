@@ -56,6 +56,10 @@ export function formatCredits(microCents: number): string {
   return Math.round(credits).toLocaleString();
 }
 
-const isMac = navigator.platform.toUpperCase().includes('MAC');
+// A few renderer helpers are deliberately imported by pure-Node tests and by
+// build-time tooling.  Reading `navigator` at module evaluation time made all
+// of those consumers crash before they could use the platform-independent
+// helpers in this file.  The real renderer still takes the browser branch.
+const isMac = typeof navigator !== 'undefined' && navigator.platform.toUpperCase().includes('MAC');
 
 export const modKey = isMac ? '⌘' : 'Ctrl';
