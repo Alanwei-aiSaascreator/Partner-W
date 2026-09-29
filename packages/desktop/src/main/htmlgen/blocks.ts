@@ -20,6 +20,7 @@ import { parseHtmlgenRequest, type HtmlgenRequest } from './request.js';
  */
 
 const FENCE_RE = /^```[ \t]*htmlgen[ \t]*\r?\n([\s\S]*?)\r?\n```[ \t]*$/gim;
+const OPENING_FENCE_RE = /^```[ \t]*htmlgen[ \t]*$/gim;
 
 export interface HtmlgenExtraction {
   requests: HtmlgenRequest[];
@@ -34,7 +35,9 @@ export function extractHtmlgenBlocks(content: string): HtmlgenExtraction {
 
   // ⚠️ 每次调用都要重置 lastIndex：正则带 `g` 且是模块级常量，跨次调用会接着上次的位置找。
   FENCE_RE.lastIndex = 0;
+  let closedBlocks = 0;
   for (const match of content.matchAll(FENCE_RE)) {
+    closedBlocks += 1;
     const body = match[1] ?? '';
     let raw: unknown;
     try {
@@ -52,6 +55,12 @@ export function extractHtmlgenBlocks(content: string): HtmlgenExtraction {
       continue;
     }
     requests.push(parsed.request);
+  }
+
+  OPENING_FENCE_RE.lastIndex = 0;
+  const openings = [...content.matchAll(OPENING_FENCE_RE)].length;
+  for (let extra = closedBlocks; extra < openings; extra += 1) {
+    failures.push({ failure: { code: 'htmlgen-block-invalid' }, detail: 'unclosed htmlgen block' });
   }
 
   return { requests, failures };

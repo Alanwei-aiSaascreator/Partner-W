@@ -4,6 +4,8 @@ const handleMap = new Map<string, (...args: unknown[]) => unknown>();
 const autoExtractArtifactsMock = vi.fn();
 const captureTaskArtifactBaselineMock = vi.fn();
 const reconcileTaskArtifactsMock = vi.fn();
+const getGatewayClientMock = vi.fn();
+const generateHtmlPagesFromMessageMock = vi.fn();
 const webContentsSendMock = vi.fn();
 const consoleErrorMock = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 const conflictRunMock = vi.fn();
@@ -31,11 +33,14 @@ vi.mock('../src/main/db/index.js', () => ({
 }));
 
 vi.mock('../src/main/workspace/config.js', () => ({ getWorkspacePath: vi.fn(() => 'C:\\trusted-workspace') }));
-vi.mock('../src/main/ws/index.js', () => ({ getGatewayClient: vi.fn(() => undefined) }));
+vi.mock('../src/main/ws/index.js', () => ({ getGatewayClient: getGatewayClientMock }));
 vi.mock('../src/main/artifact/auto-extract.js', () => ({ autoExtractArtifacts: autoExtractArtifactsMock }));
 vi.mock('../src/main/artifact/reconcile.js', () => ({
   captureTaskArtifactBaseline: captureTaskArtifactBaselineMock,
   reconcileTaskArtifacts: reconcileTaskArtifactsMock,
+}));
+vi.mock('../src/main/htmlgen/generate.js', () => ({
+  generateHtmlPagesFromMessage: generateHtmlPagesFromMessageMock,
 }));
 
 async function flushJobs(): Promise<void> {
@@ -60,6 +65,8 @@ describe('assistant artifact reconciliation boundary', () => {
       skipped: [],
       budgetExhausted: false,
     });
+    getGatewayClientMock.mockReset().mockReturnValue(undefined);
+    generateHtmlPagesFromMessageMock.mockReset().mockResolvedValue({ saved: [], failed: [] });
     webContentsSendMock.mockReset();
     conflictRunMock.mockReset();
     valuesMock.mockClear();
@@ -83,6 +90,7 @@ describe('assistant artifact reconciliation boundary', () => {
         gatewayId: 'gateway-1',
         sessionKey: 'session-task-1',
         taskId: 'task-1',
+        userContent: 'make a PDF',
       }),
     ).toEqual(expect.any(String));
     files.add('created-after-gateway-accept.pdf');
@@ -921,6 +929,76 @@ describe('assistant artifact reconciliation boundary', () => {
     expect(webContentsSendMock.mock.calls.filter((call) => call[0] === 'docgen:failed')).toHaveLength(0);
   });
 
+  it('⭐ 用户明确要 PPT、但本轮只有 markdown/html ⇒ 结果守卫必须报缺 PPTX', async () => {
+    reconcileTaskArtifactsMock.mockResolvedValue({
+      saved: [
+        { id: 'snippet', name: 'snippet.md', localPath: 'task-1/snippet.md' },
+        { id: 'preview', name: 'preview.html', localPath: 'task-1/preview.html' },
+      ],
+      existing: [],
+      updated: [],
+      missing: [],
+      skipped: [],
+      budgetExhausted: false,
+    });
+    const { beginArtifactRun, registerDataHandlers } = await import('../src/main/ipc/data-handlers.js');
+    registerDataHandlers();
+    beginArtifactRun('C:\\trusted-workspace', 'task-1', 'session-task-1', {
+      userContent: '请帮我做一份产品发布会 PPT',
+    });
+    selectGetMock.mockReturnValueOnce({ id: 'assistant-persisted' }).mockReturnValueOnce({ gid: 'gateway-1' });
+
+    handleMap.get('data:create-message')!(
+      {},
+      {
+        id: 'assistant-incoming',
+        taskId: 'task-1',
+        role: 'assistant',
+        content: '方案已经整理完毕。',
+        timestamp: '2026-09-16T00:00:02.000Z',
+        sessionKey: 'session-task-1',
+      },
+    );
+    await flushJobs();
+
+    expect(webContentsSendMock).toHaveBeenCalledWith('artifact:claim-violation', {
+      taskId: 'task-1',
+      missing: ['PPT/PPTX 演示文稿'],
+    });
+  });
+
+  it('用户明确要 PPT 且本轮新增了 pptx ⇒ 不报结果缺失', async () => {
+    reconcileTaskArtifactsMock.mockResolvedValue({
+      saved: [{ id: 'deck', name: 'deck.pptx', localPath: 'task-1/deck.pptx' }],
+      existing: [],
+      updated: [],
+      missing: [],
+      skipped: [],
+      budgetExhausted: false,
+    });
+    const { beginArtifactRun, registerDataHandlers } = await import('../src/main/ipc/data-handlers.js');
+    registerDataHandlers();
+    beginArtifactRun('C:\\trusted-workspace', 'task-1', 'session-task-1', {
+      userContent: '给我生成一份 PPTX 演示文稿',
+    });
+    selectGetMock.mockReturnValueOnce({ id: 'assistant-persisted' }).mockReturnValueOnce({ gid: 'gateway-1' });
+
+    handleMap.get('data:create-message')!(
+      {},
+      {
+        id: 'assistant-incoming',
+        taskId: 'task-1',
+        role: 'assistant',
+        content: '已完成。',
+        timestamp: '2026-09-16T00:00:02.000Z',
+        sessionKey: 'session-task-1',
+      },
+    );
+    await flushJobs();
+
+    expect(webContentsSendMock).not.toHaveBeenCalledWith('artifact:claim-violation', expect.anything());
+  });
+
   it('clears every artifact run for a deleted task', async () => {
     const { beginArtifactRun, registerDataHandlers } = await import('../src/main/ipc/data-handlers.js');
     registerDataHandlers();
@@ -965,7 +1043,12 @@ describe('assistant artifact reconciliation boundary', () => {
     const sessionKey = 'agent:main:clawwork:task-1';
 
     selectGetMock.mockReturnValueOnce({ id: 'task-1' });
-    beginArtifactRunForGatewayDispatch({ gatewayId: 'gateway-1', sessionKey, taskId: 'task-1' });
+    beginArtifactRunForGatewayDispatch({
+      gatewayId: 'gateway-1',
+      sessionKey,
+      taskId: 'task-1',
+      userContent: 'create a file',
+    });
     await flushJobs(); // 让第二条基线跑完
 
     selectGetMock.mockReturnValueOnce({ id: 'assistant-persisted' }).mockReturnValueOnce({ gid: 'gateway-1' });
@@ -1022,7 +1105,12 @@ describe('assistant artifact reconciliation boundary', () => {
     const sessionKey = 'agent:main:clawwork:task-1';
 
     selectGetMock.mockReturnValueOnce({ id: 'task-1' });
-    beginArtifactRunForGatewayDispatch({ gatewayId: 'gateway-1', sessionKey, taskId: 'task-1' });
+    beginArtifactRunForGatewayDispatch({
+      gatewayId: 'gateway-1',
+      sessionKey,
+      taskId: 'task-1',
+      userContent: 'create a file',
+    });
     await flushJobs();
 
     selectGetMock.mockReturnValueOnce({ id: 'assistant-persisted' }).mockReturnValueOnce({ gid: 'gateway-1' });
@@ -1057,7 +1145,7 @@ describe('assistant artifact reconciliation boundary', () => {
    * 也就是"取不回完整原文"那一档 ⇒ 正确处置是**一份都不生成**，并推一条可重试的失败。
    * ⭐ 关键断言是"**没有生成**"：如果哪条链偷偷拿截断文本去排版，这里会红。
    */
-  describe('被显示层截断的回复：结构化产物两条链都覆盖，且绝不拿截断文本出片', () => {
+  describe('被显示层截断的回复：三条结构化产物链都覆盖，且绝不拿截断文本生成', () => {
     /** 造一条被截断的回复：**开头围栏在、结尾围栏没了**。 */
     const cutReply = (fence: 'slidegen' | 'docgen'): string =>
       `版面我排好了。\n\`\`\`${fence}\n// title: 长演示\n<Slide>\n  …写到这里被切断了\n\n...(truncated)...`;
@@ -1101,6 +1189,84 @@ describe('assistant artifact reconciliation boundary', () => {
       await persistAssistant('就是一句普通回复，没有任何围栏，也没有截断标记。');
       expect(webContentsSendMock).not.toHaveBeenCalledWith('slidegen:failed', expect.anything());
       expect(webContentsSendMock).not.toHaveBeenCalledWith('docgen:failed', expect.anything());
+    });
+
+    it('⭐ HTML 链使用按 runId 取回的完整原文，不把 8K 显示截断文本交给生成器', async () => {
+      const sessionKey = 'session-task-1';
+      const runId = 'run-html-1';
+      const displayContent = '网页正在生成\n```htmlgen\n{"kind":"html"\n\n...(truncated)...';
+      const fullContent = [
+        '网页正在生成',
+        '```htmlgen',
+        '{"kind":"html","title":"完整网页","template":"brief","sections":[{"kind":"narrative","paragraphs":["完整内容"]}]}',
+        '```',
+      ].join('\n');
+      getGatewayClientMock.mockReturnValue({
+        httpBase: 'http://gateway.test',
+        getChatHistory: vi.fn().mockResolvedValue({
+          messages: [{ role: 'assistant', content: fullContent, __openclaw: { runId } }],
+        }),
+      });
+
+      const { beginArtifactRun, bindArtifactRun, registerDataHandlers } =
+        await import('../src/main/ipc/data-handlers.js');
+      registerDataHandlers();
+      const token = beginArtifactRun('C:\\trusted-workspace', 'task-1', sessionKey);
+      bindArtifactRun('task-1', sessionKey, token, runId);
+      selectGetMock.mockReturnValueOnce({ id: 'assistant-html' }).mockReturnValueOnce({ gid: 'gateway-1' });
+      handleMap.get('data:create-message')!(
+        {},
+        {
+          id: 'assistant-html',
+          taskId: 'task-1',
+          role: 'assistant',
+          runId,
+          content: displayContent,
+          timestamp: '2026-09-28T00:00:01.000Z',
+          sessionKey,
+        },
+      );
+      await flushJobs();
+
+      expect(generateHtmlPagesFromMessageMock).toHaveBeenCalledWith(expect.objectContaining({ content: fullContent }));
+    });
+
+    it('⭐ 大写 `HTMLGEN` 开头围栏也会进入完整原文恢复', async () => {
+      const sessionKey = 'session-task-1';
+      const runId = 'run-html-uppercase';
+      const displayContent = '网页正在生成\n```HTMLGEN\n{"kind":"html"\n\n...(truncated)...';
+      const fullContent = [
+        '```HTMLGEN',
+        '{"kind":"html","title":"大写围栏","template":"brief","sections":[{"kind":"narrative","paragraphs":["全文"]}]}',
+        '```',
+      ].join('\n');
+      getGatewayClientMock.mockReturnValue({
+        getChatHistory: vi.fn().mockResolvedValue({
+          messages: [{ role: 'assistant', content: fullContent, __openclaw: { runId } }],
+        }),
+      });
+
+      const { beginArtifactRun, bindArtifactRun, registerDataHandlers } =
+        await import('../src/main/ipc/data-handlers.js');
+      registerDataHandlers();
+      const token = beginArtifactRun('C:\\trusted-workspace', 'task-1', sessionKey);
+      bindArtifactRun('task-1', sessionKey, token, runId);
+      selectGetMock.mockReturnValueOnce({ id: 'assistant-html-uppercase' }).mockReturnValueOnce({ gid: 'gateway-1' });
+      handleMap.get('data:create-message')!(
+        {},
+        {
+          id: 'assistant-html-uppercase',
+          taskId: 'task-1',
+          role: 'assistant',
+          runId,
+          content: displayContent,
+          timestamp: '2026-09-28T00:00:02.000Z',
+          sessionKey,
+        },
+      );
+      await flushJobs();
+
+      expect(generateHtmlPagesFromMessageMock).toHaveBeenCalledWith(expect.objectContaining({ content: fullContent }));
     });
   });
 });

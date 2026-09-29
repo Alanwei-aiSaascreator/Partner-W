@@ -408,7 +408,7 @@ describe('⭐ 技能示例必须能被**真解析器**吃下（漂移守卫）',
     expect(text, '要写明一次写完').toMatch(/一次写完/);
     expect(text, '要说清文件里的围栏必须闭合（客户端按围栏取源码）').toMatch(/围栏必须闭合/);
     expect(text, '要写明正文里不要复述源码').toMatch(/不要复述源码/);
-    expect(text, '要写明一栅最多 60 页').toMatch(/60 页/);
+    expect(text, '要写明一栅最多 200 页').toMatch(/200 页/);
     expect(text, '不要再教模型拆成两条消息').not.toMatch(/分成?两条|分两条/);
   });
 });

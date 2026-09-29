@@ -226,6 +226,7 @@ export function registerWsHandlers(): void {
             gatewayId: payload.gatewayId,
             sessionKey: payload.sessionKey,
             taskId,
+            userContent: payload.content,
           });
         } catch (error) {
           getDebugLogger().error({

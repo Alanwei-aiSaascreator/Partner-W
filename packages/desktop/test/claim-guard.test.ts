@@ -2,7 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { mkdtempSync, mkdirSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { checkClaimedFiles, extractClaimedFileNames } from '../src/main/artifact/claim-guard';
+import {
+  checkClaimedFiles,
+  expectedArtifactKindsFromRequest,
+  extractClaimedFileNames,
+  missingExpectedArtifactKinds,
+} from '../src/main/artifact/claim-guard';
 
 /** 今天真机那 577 字原话 —— 模型谎称写了文件，实际全盘 0 个。 */
 const TODAY_LIE = `版面写好了！文件在工作区 **\`Nova产品发布会.slidegen\`**，共 **25 页**，稍后出现在右侧**「产物」**里，点开就是可编辑的 .pptx。
@@ -213,5 +218,38 @@ describe('checkClaimedFiles：逐个查存在性', () => {
     const result = checkClaimedFiles('你好', [tmp]);
     expect(result.missing).toHaveLength(0);
     expect(result.present).toHaveLength(0);
+  });
+});
+
+describe('用户本轮明确要求的文件格式', () => {
+  it.each([
+    ['帮我做一份产品发布会 PPT', ['pptx']],
+    ['请生成 PPTX 演示文稿和 PDF 版本', ['pptx', 'pdf']],
+    ['给我导出 Word 和 Excel 两份文件', ['docx', 'xlsx']],
+    ['Create a PowerPoint deck and export a PDF', ['pptx', 'pdf']],
+    ['Can you create a PowerPoint deck for me?', ['pptx']],
+  ])('明确交付请求：%s', (content, expected) => {
+    expect(expectedArtifactKindsFromRequest(content)).toEqual(expected);
+  });
+
+  it.each([
+    'PPT 是什么？',
+    '你支持 PPT 吗？',
+    '怎么制作一份 PPT？',
+    '我需要学习如何制作 PPT。',
+    '给我介绍一下 Word 和 Excel 的区别。',
+    '不要做 PPT，只给我一份文字大纲',
+    '普通聊天，不需要任何文件。',
+  ])('普通咨询/明确否定不进入结果守卫：%s', (content) => {
+    expect(expectedArtifactKindsFromRequest(content)).toEqual([]);
+  });
+
+  it('只有 snippet.md / preview.html 不能冒充用户要的 PPTX', () => {
+    expect(missingExpectedArtifactKinds(['pptx'], ['snippet.md', 'preview.html'])).toEqual(['pptx']);
+  });
+
+  it('本轮真的新增了对应格式才算满足；扩展名大小写不影响', () => {
+    expect(missingExpectedArtifactKinds(['pptx', 'pdf'], ['deck.PPTX', 'report.pdf'])).toEqual([]);
+    expect(missingExpectedArtifactKinds(['pptx', 'pdf'], ['deck.pptx'])).toEqual(['pdf']);
   });
 });

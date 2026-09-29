@@ -148,8 +148,8 @@ export function changedDeckFiles(baseline: DeckFileBaseline, root: string): stri
  * ## 取值
  *
  * **1 MiB**。标定依据（可测）：真机那份成功的 deck 是 **13,052 字节**，
- * 这里给了约 **80 倍**余量 —— 足够一份 60 页（`SLIDEGEN_MAX_PAGES`）、每页都带
- * 自定义 CSS 的整册，同时把内存与收尾耗时钉在有限值上。
+ * 这里给了约 **80 倍**余量 —— 足够长演示在 200 页预算（`SLIDEGEN_MAX_PAGES`）内
+ * 共享样式、保留完整内容，同时把内存与收尾耗时钉在有限值上。
  * ⚠️ 单位为**字节**：中文一个字 3 字节 ⇒ 约 34 万个汉字。**别用"多少字"当判据。**
  */
 export const DECK_FILE_MAX_BYTES = 1024 * 1024;

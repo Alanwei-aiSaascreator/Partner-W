@@ -1,6 +1,82 @@
 import { readdirSync, statSync, type Dirent } from 'node:fs';
 import path from 'node:path';
 
+/** 用户本轮明确要求交付的文件格式。 */
+export type ExpectedArtifactKind = 'pptx' | 'pdf' | 'docx' | 'xlsx';
+
+/** 复用现有 claim-violation 提示时展示的人话，不伪造一个具体文件名。 */
+export const EXPECTED_ARTIFACT_LABELS: Readonly<Record<ExpectedArtifactKind, string>> = Object.freeze({
+  pptx: 'PPT/PPTX 演示文稿',
+  pdf: 'PDF 文件',
+  docx: 'Word/DOCX 文档',
+  xlsx: 'Excel/XLSX 表格',
+});
+
+const EXPECTED_ARTIFACT_EXTENSIONS: Readonly<Record<ExpectedArtifactKind, string>> = Object.freeze({
+  pptx: '.pptx',
+  pdf: '.pdf',
+  docx: '.docx',
+  xlsx: '.xlsx',
+});
+
+const EXPECTED_KIND_TERMS: readonly Readonly<{ kind: ExpectedArtifactKind; term: RegExp }>[] = [
+  { kind: 'pptx', term: /\b(?:pptx?|power\s*point)\b|演示文稿/gi },
+  { kind: 'pdf', term: /\bpdf\b/gi },
+  { kind: 'docx', term: /\b(?:word|docx)\b/gi },
+  { kind: 'xlsx', term: /\b(?:excel|xlsx)\b/gi },
+];
+
+/**
+ * 只有「要求产出」才算期望格式；格式咨询、教程问题和明确否定都不算。
+ *
+ * 这是一个刻意保守的入口闸门：漏掉一句少见省略句，只是继续沿用旧行为；
+ * 把「PPT 是什么」误判成交付请求，则会在普通聊天结束时弹假失败，代价更大。
+ */
+const ARTIFACT_REQUEST_ACTION_RE =
+  /(?:做(?:成)?|制作|生成|创建|导出|输出|交付|整理成|写成|转换成|转成|保存为|修改|更新|改成|给我|想要|需要|\b(?:make|create|generate|export|deliver|convert|build|produce)\b)/i;
+const STRONG_ARTIFACT_REQUEST_RE =
+  /(?:(?:帮我|为我|替我|请(?:帮我)?|给我).{0,16}(?:做(?:成)?|制作|生成|创建|导出|输出|交付|整理成|写成|转换成|转成|保存为|修改|更新|改成|一份|一个)|(?:我要|我想要|我需要)(?:一份|一个)|\bcan\s+you(?:\s+please)?\s+(?:make|create|generate|export|deliver|convert|build|produce)\b)/i;
+const INFORMATIONAL_REQUEST_RE =
+  /(?:是什么|什么意思|区别|哪个好|教程|方法|怎么|如何|为什么|是否|能否|会不会|学习|介绍|解释|了解|支持.{0,12}吗|难吗|\b(?:what|how|why|whether|can you|do you support)\b)/i;
+const NEGATED_ARTIFACT_TERM_RE =
+  /(?:不要|不用|无需|不需要|别)(?:再)?(?:给我|帮我|为我)?(?:做|做成|制作|生成|创建|导出|输出|交付|转换成|转成|整理成|写成|保存为)?(?:一份|一个)?\s*$|\b(?:do\s+not|don't|no\s+need\s+to|without)(?:\s+\w+){0,3}\s*$/i;
+
+/** 从用户本轮文本中提取明确的文件交付格式；顺序固定且去重。 */
+export function expectedArtifactKindsFromRequest(content: string): ExpectedArtifactKind[] {
+  const expected = new Set<ExpectedArtifactKind>();
+  // 逗号保留在同一句里：例如「帮我做季度汇报，用 PPT」的动作与格式分列在逗号两边。
+  const segments = content.split(/[\n。！？!?；;]+/).filter(Boolean);
+
+  for (const segment of segments) {
+    if (!ARTIFACT_REQUEST_ACTION_RE.test(segment)) continue;
+    const strongRequest = STRONG_ARTIFACT_REQUEST_RE.test(segment);
+    if (!strongRequest && INFORMATIONAL_REQUEST_RE.test(segment)) continue;
+
+    for (const { kind, term } of EXPECTED_KIND_TERMS) {
+      term.lastIndex = 0;
+      for (const match of segment.matchAll(term)) {
+        const before = segment.slice(Math.max(0, (match.index ?? 0) - 48), match.index ?? 0);
+        if (NEGATED_ARTIFACT_TERM_RE.test(before)) continue;
+        expected.add(kind);
+        break;
+      }
+    }
+  }
+
+  return EXPECTED_KIND_TERMS.map(({ kind }) => kind).filter((kind) => expected.has(kind));
+}
+
+/** 本轮实际新增/更新的产物里，哪些明确要求的格式仍然没有出现。 */
+export function missingExpectedArtifactKinds(
+  expected: readonly ExpectedArtifactKind[],
+  artifactNames: readonly string[],
+): ExpectedArtifactKind[] {
+  const normalizedNames = artifactNames.map((name) => name.toLowerCase());
+  return [...new Set(expected)].filter(
+    (kind) => !normalizedNames.some((name) => name.endsWith(EXPECTED_ARTIFACT_EXTENSIONS[kind])),
+  );
+}
+
 /**
  * 「声称成功但没产物」的通用守卫。
  *

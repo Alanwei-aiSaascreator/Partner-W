@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { SLIDEGEN_MAX_PAGES } from '@clawwork/shared';
 import { resolveOurSkillsRoot } from '../src/main/skills/locate.js';
 
 /**
@@ -36,9 +37,14 @@ function descriptionOf(skillDir: string): string {
   return m?.[1] ?? '';
 }
 
+function skillTextOf(skillDir: string): string {
+  return fs.readFileSync(path.join(SKILLS_ROOT, skillDir, 'SKILL.md'), 'utf-8').replace(/\r\n/g, '\n');
+}
+
 const 文档生成 = descriptionOf('document-deck');
 const 幻灯版面 = descriptionOf('deck-layout');
 const 模板版 = descriptionOf('presentation-deck-v2');
+const 幻灯片版面全文 = skillTextOf('deck-layout');
 
 describe('出 PPT 的三条路：触发词分工互斥', () => {
   it('⭐「做个PPT」只由「幻灯版面」认领（无字数上限那条，才是该给它的默认）', () => {
@@ -77,5 +83,17 @@ describe('出 PPT 的三条路：触发词分工互斥', () => {
     // 只需要钉一条最要命的：PPT 这个触发词只能有一个主人。
     const 认领PPT = [文档生成, 幻灯版面, 模板版].filter((d) => /做个\s*PPT/i.test(d));
     expect(认领PPT, `「做个PPT」被 ${认领PPT.length} 条描述认领 —— 必须只有一条`).toHaveLength(1);
+  });
+
+  it('⭐ 技能声明的页数上限与运行时唯一真源一致', () => {
+    expect(幻灯片版面全文).toContain(`最多 ${SLIDEGEN_MAX_PAGES} 页`);
+    expect(幻灯片版面全文).not.toMatch(/(?:上限|最多).*60 页/);
+  });
+
+  it('⭐ 长材料先做覆盖大纲，保留用户命名章节，不得默认压成固定三页或单一版式', () => {
+    expect(幻灯片版面全文).toMatch(/覆盖大纲/);
+    expect(幻灯片版面全文).toMatch(/保留用户命名的章节/);
+    expect(幻灯片版面全文).toMatch(/不要固定三页/);
+    expect(幻灯片版面全文).not.toMatch(/一页三块，位置钉死/);
   });
 });

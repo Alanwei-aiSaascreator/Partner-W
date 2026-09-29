@@ -25,7 +25,13 @@ import {
   type ArtifactKind,
   type RecoverResult,
 } from '../artifact/recover-full-reply.js';
-import { checkClaimedFiles } from '../artifact/claim-guard.js';
+import {
+  checkClaimedFiles,
+  EXPECTED_ARTIFACT_LABELS,
+  expectedArtifactKindsFromRequest,
+  missingExpectedArtifactKinds,
+  type ExpectedArtifactKind,
+} from '../artifact/claim-guard.js';
 import { parseAgentIdFromSessionKey, type MessageAttachment, type SlidegenFailure } from '@clawwork/shared';
 import { getWorkspacePath } from '../workspace/config.js';
 import { getGatewayClient } from '../ws/index.js';
@@ -105,6 +111,8 @@ interface ArtifactRunContext {
   sequence: number;
   expiryTimer: ReturnType<typeof setTimeout>;
   gatewayRunId?: string;
+  /** 用户在这一轮明确要求交付的格式；空数组表示普通聊天/格式咨询。 */
+  expectedArtifactKinds: ExpectedArtifactKind[];
   state: 'active' | 'canceled' | 'claimed';
   taskId: string;
   sessionKey: string;
@@ -215,7 +223,7 @@ export function beginArtifactRun(
   workspacePath: string,
   taskId: string,
   sessionKey: string,
-  opts?: { gatewayId?: string },
+  opts?: { gatewayId?: string; userContent?: string },
 ): string {
   pruneArtifactRuns();
   pruneCompletedAssistantMessages();
@@ -247,6 +255,7 @@ export function beginArtifactRun(
     sequence: nextArtifactRunSequence++,
     expiryTimer,
     state: 'active',
+    expectedArtifactKinds: expectedArtifactKindsFromRequest(opts?.userContent ?? ''),
     taskId,
     sessionKey,
   });
@@ -408,6 +417,8 @@ export function beginArtifactRunForGatewayDispatch(input: {
   gatewayId: string;
   sessionKey: string;
   taskId: string;
+  /** 必须是即将派发的用户原文；此时用户消息可能还没有落库。 */
+  userContent: string;
 }): string | null {
   if (!isDbReady()) return null;
   const task = getDb()
@@ -419,6 +430,7 @@ export function beginArtifactRunForGatewayDispatch(input: {
   if (!task || !workspacePath) return null;
   return beginArtifactRun(workspacePath, input.taskId, input.sessionKey, {
     gatewayId: input.gatewayId,
+    userContent: input.userContent,
   });
 }
 
@@ -448,10 +460,17 @@ export function beginArtifactRunForGatewayDispatch(input: {
  *    时才该发生。否则一条**很长的普通聊天消息**也会白等一次网关往返，
  *    取不到时还要等满 1.85 秒的重试 —— 那是在收尾路径上，用户直接能感觉到。
  *
- * ⚠️ 只看**开头**围栏：被截断的那份正是"开了头、没有结尾"，用 `includes` 恰好命中。
+ * ⚠️ 只看**开头**围栏：被截断的那份正是"开了头、没有结尾"。
+ *    大小写不敏感，但语言标记必须恰好是三种生成围栏之一。
  */
+type StructuredFenceKind = 'docgen' | 'slidegen' | 'htmlgen';
+
+function hasStructuredFenceKind(content: string, kind: StructuredFenceKind): boolean {
+  return new RegExp('^```[ \\t]*' + kind + '[ \\t]*$', 'im').test(content);
+}
+
 function hasStructuredFence(content: string): boolean {
-  return ['```docgen', '```slidegen', '```htmlgen'].some((fence) => content.includes(fence));
+  return (['docgen', 'slidegen', 'htmlgen'] as const).some((kind) => hasStructuredFenceKind(content, kind));
 }
 
 async function structuredReplyContent(input: {
@@ -511,6 +530,13 @@ function finalizeAssistantArtifacts(input: {
     return;
   }
   void (async () => {
+    // 只记真实生成器或基线对账认出来的本轮文件。auto-extract 的 snippet.md / preview.html
+    // 故意不记：代码片段不能冒充用户明确要的 Office/PDF 交付物。
+    const producedArtifactNames = new Set<string>();
+    const rememberProduced = (artifact: { name?: string; localPath?: string }): void => {
+      const name = artifact.name ?? artifact.localPath;
+      if (name) producedArtifactNames.add(name);
+    };
     try {
       await autoExtractArtifacts({
         workspacePath: input.workspacePath,
@@ -556,7 +582,7 @@ function finalizeAssistantArtifacts(input: {
               // ⚠️ **只在回复里真的有 `docgen` 围栏时才报这条**。
               //    否则一条只写了 PPT 的长回复会连带弹一句"文件没能生成" ——
               //    用户压根没要文件，那是**假失败**。
-              failed: input.content.includes('```docgen')
+              failed: hasStructuredFenceKind(input.content, 'docgen')
                 ? [
                     structured.status === 'incomplete'
                       ? ({ code: 'docgen-reply-incomplete' } as const)
@@ -565,6 +591,7 @@ function finalizeAssistantArtifacts(input: {
                 : [],
             };
       for (const artifact of documents.saved) {
+        rememberProduced(artifact);
         for (const win of BrowserWindow.getAllWindows()) win.webContents.send('artifact:saved', artifact);
       }
       // ⭐ 没生成出来的那一份也要说。原来这里只把 `failed` 收进局部变量就丢掉 ——
@@ -581,13 +608,22 @@ function finalizeAssistantArtifacts(input: {
       // ⭐ 网页生成：助手给出 ```` ```htmlgen ```` 块（结构化内容，**不是** HTML 源码，
       //    schema 见 `main/htmlgen/request.ts`），这里排成一份离线自包含的 .html 并走
       //    同一条产物通道存下来。与 docgen 各管各的：一条坏了不影响另一条。
-      const pages = await generateHtmlPagesFromMessage({
-        workspacePath: input.workspacePath,
-        taskId: input.taskId,
-        messageId: input.messageId,
-        content: input.content,
-      });
+      const pages =
+        structured.status === 'complete'
+          ? await generateHtmlPagesFromMessage({
+              workspacePath: input.workspacePath,
+              taskId: input.taskId,
+              messageId: input.messageId,
+              content: structured.content,
+            })
+          : {
+              saved: [],
+              failed: hasStructuredFenceKind(input.content, 'htmlgen')
+                ? ([{ code: 'htmlgen-block-invalid' }] as const)
+                : [],
+            };
       for (const artifact of pages.saved) {
+        rememberProduced(artifact);
         for (const win of BrowserWindow.getAllWindows()) win.webContents.send('artifact:saved', artifact);
       }
       if (pages.failed.length > 0) {
@@ -655,7 +691,7 @@ function finalizeAssistantArtifacts(input: {
         // ⚠️ 这里**不能 `return`**：这一整个是收尾 IIFE 的一段，后面还有产物对账 ——
         //    提前 return 会让这一轮的产物**整个不被收集**（那正是我们要消灭的静默）。
         // ⚠️ 同上：**只在回复里真有 `slidegen` 围栏时才报**（免得给没要演示的用户弹假失败）。
-        if (input.content.includes('```slidegen')) {
+        if (hasStructuredFenceKind(input.content, 'slidegen')) {
           const failure: SlidegenFailure =
             structured.status === 'incomplete'
               ? { code: 'slidegen-reply-incomplete' }
@@ -679,6 +715,7 @@ function finalizeAssistantArtifacts(input: {
         // "产物空、日志空、界面说已完成"那类静默。放前面：它比排版层的失败更根本。
         decks.failed.unshift(...deckFileFailures);
         for (const artifact of decks.saved) {
+          rememberProduced(artifact);
           for (const win of BrowserWindow.getAllWindows()) win.webContents.send('artifact:saved', artifact);
         }
         if (decks.failed.length > 0) {
@@ -706,6 +743,7 @@ function finalizeAssistantArtifacts(input: {
           messageId: input.messageId,
           baseline,
         });
+        for (const artifact of [...result.saved, ...(result.updated ?? [])]) rememberProduced(artifact);
         for (const artifact of result.saved) {
           for (const win of BrowserWindow.getAllWindows()) win.webContents.send('artifact:saved', artifact);
         }
@@ -721,31 +759,33 @@ function finalizeAssistantArtifacts(input: {
       // ⚠️ 与上面那条**完全独立**：各自的基线、各自的前缀、各自的行、各自的 try
       //    —— 任一条坏了都不影响另一条，也不影响再上面的 auto-extract / docgen / htmlgen / slidegen。
       try {
-        if (isArtifactRunCanceled(run) || !run.agentBaseline) return;
-        const agentRoot = await run.agentBaseline;
-        if (isArtifactRunCanceled(run) || !agentRoot) return;
-        const agentResult = await reconcileTaskArtifacts({
-          workspacePath: agentRoot.workspacePath,
-          taskId: input.taskId,
-          messageId: input.messageId,
-          baseline: agentRoot.baseline,
-          rootKind: 'agent',
-        });
-        // ⭐ **正面证据**：真机排障时唯一能回答"这个功能跑没跑、找到了几条"的一行。
-        //    没有它，用户说"产物还是空的"时只能猜：是没扫到？根没接上？还是真没文件？
-        getDebugLogger().info({
-          domain: 'artifact',
-          event: 'artifact.agent-reconcile.done',
-          taskId: input.taskId,
-          data: {
+        const agentRoot = run.agentBaseline ? await run.agentBaseline : null;
+        // 没有第二个根只是「这趟不扫助手工作区」，不能 `return`：后面的结果/声称守卫仍要跑。
+        if (!isArtifactRunCanceled(run) && agentRoot) {
+          const agentResult = await reconcileTaskArtifacts({
             workspacePath: agentRoot.workspacePath,
-            saved: agentResult.saved.length,
-            existing: agentResult.existing.length,
-            skipped: agentResult.skipped.length,
-          },
-        });
-        for (const artifact of agentResult.saved) {
-          for (const win of BrowserWindow.getAllWindows()) win.webContents.send('artifact:saved', artifact);
+            taskId: input.taskId,
+            messageId: input.messageId,
+            baseline: agentRoot.baseline,
+            rootKind: 'agent',
+          });
+          for (const artifact of [...agentResult.saved, ...(agentResult.updated ?? [])]) rememberProduced(artifact);
+          // ⭐ **正面证据**：真机排障时唯一能回答"这个功能跑没跑、找到了几条"的一行。
+          //    没有它，用户说"产物还是空的"时只能猜：是没扫到？根没接上？还是真没文件？
+          getDebugLogger().info({
+            domain: 'artifact',
+            event: 'artifact.agent-reconcile.done',
+            taskId: input.taskId,
+            data: {
+              workspacePath: agentRoot.workspacePath,
+              saved: agentResult.saved.length,
+              existing: agentResult.existing.length,
+              skipped: agentResult.skipped.length,
+            },
+          });
+          for (const artifact of agentResult.saved) {
+            for (const win of BrowserWindow.getAllWindows()) win.webContents.send('artifact:saved', artifact);
+          }
         }
       } catch (error) {
         console.error('[artifact_agent_reconcile_failed]', {
@@ -766,20 +806,30 @@ function finalizeAssistantArtifacts(input: {
         //    会满足本轮的声称 ⇒「让助手再改一版」这种最常见的用法依然静默。
         //    `run.createdAt` 是这一轮开始（= 快照基线）的时刻，本轮写的文件必然比它新。
         const claimResult = checkClaimedFiles(input.content, roots, { sinceMs: run.createdAt });
-        if (claimResult.missing.length > 0) {
+        const missingExpected = missingExpectedArtifactKinds(run.expectedArtifactKinds, [...producedArtifactNames]);
+        const missing = [
+          ...new Set([
+            ...claimResult.missing.map((file) => file.name),
+            ...missingExpected.map((kind) => EXPECTED_ARTIFACT_LABELS[kind]),
+          ]),
+        ];
+        if (missing.length > 0) {
           getDebugLogger().warn({
             domain: 'artifact',
             event: 'artifact.claim-guard.missing',
             taskId: input.taskId,
             data: {
-              missing: claimResult.missing.map((f) => f.name),
+              missing,
               present: claimResult.present.map((f) => f.name),
+              expectedKinds: run.expectedArtifactKinds,
+              missingExpectedKinds: missingExpected,
+              produced: [...producedArtifactNames],
             },
           });
           for (const win of BrowserWindow.getAllWindows()) {
             win.webContents.send('artifact:claim-violation', {
               taskId: input.taskId,
-              missing: claimResult.missing.map((f) => f.name),
+              missing,
             });
           }
         }

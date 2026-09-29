@@ -96,6 +96,15 @@ describe('htmlgen 围栏：只认 `htmlgen`', () => {
     expect(failures[0].failure.code).toBe('htmlgen-block-invalid');
   });
 
+  it('⭐ 回复打开了 htmlgen 围栏却没有闭合 ⇒ 明确报 htmlgen-block-invalid', () => {
+    const content = ['```HTMLGEN', JSON.stringify(PAGE)].join('\n');
+
+    const { requests, failures } = extractHtmlgenBlocks(content);
+
+    expect(requests).toEqual([]);
+    expect(failures.map((entry) => entry.failure)).toEqual([{ code: 'htmlgen-block-invalid' }]);
+  });
+
   it('⭐ 未知版式 / 未知字段的原因**逐级冒上来**（不是一律"格式不对"）', () => {
     const unknownTemplate = extractHtmlgenBlocks(htmlgenBlock({ ...PAGE, template: 'dashboard' }));
     expect(unknownTemplate.failures[0].failure).toEqual({ code: 'htmlgen-unknown-template', template: 'dashboard' });
@@ -281,13 +290,17 @@ describe('htmlgen 端到端：产出能被富预览认下', () => {
  * 不排除的话，用户在产物面板里会同时看到那个网页**和**它的 JSON 源码。
  */
 describe('htmlgen 块不进代码产物', () => {
-  it('`htmlgen` 围栏被排除（`docgen` 也一样，两个都不能漏）', () => {
+  it('`htmlgen` / `docgen` / `slidegen` 三种生成围栏都被排除', () => {
     const content = [
       '```htmlgen',
       JSON.stringify(PAGE),
       '```',
       '```docgen',
       JSON.stringify({ kind: 'pdf', title: 'x', sections: [] }),
+      '```',
+      '```slidegen',
+      '// title: 演示文稿',
+      ...Array.from({ length: 12 }, (_, i) => `<Slide><Text>第 ${i} 行</Text></Slide>`),
       '```',
       '```html',
       // ⚠️ 要**多于 10 行**：短于 10 行且语言标记里没有点的块本来就会被丢掉

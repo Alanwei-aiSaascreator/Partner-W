@@ -138,19 +138,18 @@ describe('presentation-deck-v2 —— 内容与契约层不漂移', () => {
   });
 
   it('技能正文里写了"别用裸英文双引号"这条，并给了替代写法', () => {
-    // 2026-09-27 实测：助手写了「点击"仍要运行"」⇒ 用户那边**一个文件都没有**。
-    // 这不是"这一页被拒"，是**整块 JSON 解析不出来、整份请求报废**。
+    // 原始 JSON 仍不合法；客户端的受控修复是最后保险，不是模型的写法契约。
     expect(text, '没写"别用英文双引号"这条').toMatch(/别用英文双引号/);
     expect(text, '没给替代写法（「」或 \\"）').toMatch(/中文引号/);
   });
 
-  it('⭐ 把示例里的一个字段插进裸英文双引号 ⇒ 整块报废；换成技能推荐的写法就没事', () => {
+  it('⭐ 裸英文双引号让原始 JSON 非法；换成技能推荐的写法就没事', () => {
     const body = text.match(/```docgen\n([\s\S]*?)\n```/)![1];
     expect(() => JSON.parse(body), '示例原文必须是合法 JSON').not.toThrow();
 
     const broken = body.replace('"私域增长与渠道结构"', '"私域"增长"与渠道结构"');
     expect(broken, '替换锚点失效了，这个测试要重写').not.toBe(body);
-    expect(() => JSON.parse(broken), '整块都该解析失败 —— 这就是"一个文件都没有"').toThrow();
+    expect(() => JSON.parse(broken), '裸引号样例必须真的是非法 JSON').toThrow();
 
     for (const safe of ['"私域「增长」与渠道结构"', '"私域\\"增长\\"与渠道结构"']) {
       const fixed = body.replace('"私域增长与渠道结构"', safe);

@@ -20,6 +20,66 @@ import { parseDocgenRequest, type DocgenRequest } from './request.js';
  */
 
 const FENCE_RE = /^```[ \t]*docgen[ \t]*\r?\n([\s\S]*?)\r?\n```[ \t]*$/gim;
+const OPENING_FENCE_RE = /^```[ \t]*docgen[ \t]*$/gim;
+
+const JSON_STRING_END_FOLLOWERS = new Set([':', ',', '}', ']']);
+
+function nextNonWhitespace(source: string, start: number): string | undefined {
+  for (let index = start; index < source.length; index += 1) {
+    if (!/\s/.test(source[index] ?? '')) return source[index];
+  }
+  return undefined;
+}
+
+/**
+ * 只修复模型最常见的一种 JSON 失误：字符串正文里未转义的 `"`。
+ *
+ * 不用 eval，不改结构字符，也不猜缺失的逗号/括号。一个引号只有在字符串内，
+ * 且其后下一个非空白字符不是合法的字符串结束后继（`: , } ]` / EOF）时，
+ * 才补一个反斜杠。修复结果还要再过 `JSON.parse` 和 `parseDocgenRequest`。
+ */
+function repairBareQuotesInJsonStrings(source: string): string | null {
+  let insideString = false;
+  let escaped = false;
+  let repairs = 0;
+  let repaired = '';
+
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index] ?? '';
+    if (!insideString) {
+      repaired += char;
+      if (char === '"') insideString = true;
+      continue;
+    }
+
+    if (escaped) {
+      repaired += char;
+      escaped = false;
+      continue;
+    }
+    if (char === '\\') {
+      repaired += char;
+      escaped = true;
+      continue;
+    }
+    if (char !== '"') {
+      repaired += char;
+      continue;
+    }
+
+    const follower = nextNonWhitespace(source, index + 1);
+    if (follower === undefined || JSON_STRING_END_FOLLOWERS.has(follower)) {
+      repaired += char;
+      insideString = false;
+    } else {
+      repaired += '\\"';
+      repairs += 1;
+    }
+  }
+
+  if (insideString || escaped || repairs === 0) return null;
+  return repaired;
+}
 
 export interface DocgenExtraction {
   requests: DocgenRequest[];
@@ -34,14 +94,26 @@ export function extractDocgenBlocks(content: string): DocgenExtraction {
 
   // ⚠️ 每次调用都要重置 lastIndex：正则带 `g` 且是模块级常量，跨次调用会接着上次的位置找。
   FENCE_RE.lastIndex = 0;
+  let closedBlocks = 0;
   for (const match of content.matchAll(FENCE_RE)) {
+    closedBlocks += 1;
     const body = match[1] ?? '';
     let raw: unknown;
     try {
       raw = JSON.parse(body);
-    } catch (error) {
-      errors.push(`invalid JSON in docgen block: ${(error as Error).message}`);
-      continue;
+    } catch (initialError) {
+      const repaired = repairBareQuotesInJsonStrings(body);
+      if (repaired !== null) {
+        try {
+          raw = JSON.parse(repaired);
+        } catch {
+          errors.push(`invalid JSON in docgen block: ${(initialError as Error).message}`);
+          continue;
+        }
+      } else {
+        errors.push(`invalid JSON in docgen block: ${(initialError as Error).message}`);
+        continue;
+      }
     }
     const parsed = parseDocgenRequest(raw);
     if (!parsed.ok) {
@@ -49,6 +121,12 @@ export function extractDocgenBlocks(content: string): DocgenExtraction {
       continue;
     }
     requests.push(parsed.request);
+  }
+
+  OPENING_FENCE_RE.lastIndex = 0;
+  const openings = [...content.matchAll(OPENING_FENCE_RE)].length;
+  for (let extra = closedBlocks; extra < openings; extra += 1) {
+    errors.push('unclosed docgen block');
   }
 
   return { requests, errors };

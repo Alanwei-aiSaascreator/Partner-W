@@ -128,6 +128,7 @@ describe('ws-handlers: skills + config IPC channels', () => {
       gatewayId: 'gw-1',
       sessionKey: 'agent:main:clawwork:task-1',
       taskId: 'task-1',
+      userContent: 'create a file',
     });
     expect(beginArtifactRunForGatewayDispatchMock.mock.invocationCallOrder[0]).toBeLessThan(
       sendChatMessageMock.mock.invocationCallOrder[0],

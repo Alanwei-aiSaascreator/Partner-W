@@ -174,6 +174,46 @@ describe('extractDocgenBlocks（经 generateDocumentsFromMessage 间接验）', 
     expect(mocks.saveArtifactFromBuffer).not.toHaveBeenCalled();
   });
 
+  it('⭐ 回复打开了 docgen 围栏却没有闭合 ⇒ 明确记一条 request-invalid', async () => {
+    const content = ['```DocGen', JSON.stringify(PPTX)].join('\n');
+
+    const result = await generateDocumentsFromMessage({ workspacePath, taskId, messageId, content });
+
+    expect(result.saved).toEqual([]);
+    expect(result.failed).toEqual([{ code: 'request-invalid' }]);
+    expect(mocks.saveArtifactFromBuffer).not.toHaveBeenCalled();
+  });
+
+  it('⭐ JSON 字符串内的裸英文双引号只修复一次，修复后仍走 schema 并生成文件', async () => {
+    const broken = JSON.stringify(PPTX).replace('"方案已出"', '"点击"仍要运行""');
+    expect(() => JSON.parse(broken), '样例必须先是真实的非法 JSON').toThrow();
+
+    const result = await generateDocumentsFromMessage({
+      workspacePath,
+      taskId,
+      messageId,
+      content: docgenBlock(broken),
+    });
+
+    expect(result.failed).toEqual([]);
+    expect(result.saved).toHaveLength(1);
+    expect(savedParams(0).fileName).toBe('内测汇报.pptx');
+  });
+
+  it('缺逗号等结构错误不得被“裸引号修复”放过', async () => {
+    const structurallyBroken = '{"kind":"pptx" "title":"t","slides":[{"title":"x","bullets":["y"]}]}';
+
+    const result = await generateDocumentsFromMessage({
+      workspacePath,
+      taskId,
+      messageId,
+      content: docgenBlock(structurallyBroken),
+    });
+
+    expect(result.saved).toEqual([]);
+    expect(result.failed).toEqual([{ code: 'request-invalid' }]);
+  });
+
   it('schema 不合法（缺 slides）⇒ 记账', async () => {
     const result = await generateDocumentsFromMessage({
       workspacePath,
