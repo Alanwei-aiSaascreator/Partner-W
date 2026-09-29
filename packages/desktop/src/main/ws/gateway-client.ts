@@ -192,6 +192,8 @@ type PendingReq = {
 };
 
 const REQ_TIMEOUT_MS = 15_000;
+const MAX_REQ_TIMEOUT_MS = 60_000;
+const SKILL_UPDATE_TIMEOUT_MS = 60_000;
 const MAX_RECONNECT_BACKOFF_EXPONENT = 5;
 
 export function calculateReconnectDelay(attempt: number): number {
@@ -849,7 +851,7 @@ export class GatewayClient {
       const startedAt = Date.now();
       const timeoutMs =
         typeof meta?.timeoutMs === 'number' && Number.isFinite(meta.timeoutMs) && meta.timeoutMs > 0
-          ? Math.min(meta.timeoutMs, REQ_TIMEOUT_MS)
+          ? Math.min(meta.timeoutMs, MAX_REQ_TIMEOUT_MS)
           : REQ_TIMEOUT_MS;
 
       const timer = setTimeout(() => {
@@ -1210,7 +1212,10 @@ export class GatewayClient {
       | { skillKey: string; enabled?: boolean; apiKey?: string; env?: Record<string, string> }
       | { source: 'clawhub'; slug?: string; all?: boolean },
   ): Promise<Record<string, unknown>> {
-    return this.sendReq('skills.update', params);
+    // skills.update mutates the same OpenClaw config as agents/config RPCs.
+    // Serializing it avoids concurrent startup upgrades queueing inside the
+    // gateway until our 15-second request deadline expires.
+    return this.runConfigMutation(() => this.sendReq('skills.update', params, { timeoutMs: SKILL_UPDATE_TIMEOUT_MS }));
   }
 
   async searchSkills(params: { query?: string; limit?: number }): Promise<Record<string, unknown>> {

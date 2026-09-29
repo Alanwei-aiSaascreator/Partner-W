@@ -228,16 +228,17 @@ describe('skills:our-install / skills:our-remove 成功之后会通知网关', (
  * 说"PDF 做不到"。装的那一下 `{enabled:true}` 对已经 `true` 的那条**不是变更**，
  * 网关那边 `changedPaths.length === 0` 直接 return ⇒ 缓存不 bump。
  *
- * 修法用**已经被实测过的那条机制**（值必须真的变）：`force` 时先写 `false` 再写 `true`
- * ⇒ 两次都是真变更 ⇒ 一定 bump。顺序不能反（先 false 后 true 才能停在"已启用"）。
+ * 修法用**已经被实测过的那条机制**（值必须真的变）：`force` 时在同一笔
+ * 写入里保持目标 enabled，只更新内部 nonce。nonce 每次不同 ⇒ 一定 bump；从头到尾
+ * 都不会把真技能暂时关掉。
  */
-describe('内容升级：强制 bump（值必须真的变两次）', () => {
+describe('内容升级：强制 bump（原子 nonce，不切换真技能 enabled）', () => {
   beforeEach(() => {
     mocks.updateSkill.mockClear();
     mocks.updateSkill.mockImplementation(async () => ({}));
   });
 
-  it('force ⇒ 先 false 后 true，两次调用', async () => {
+  it('force ⇒ 一笔写入同时保持 enabled 并携带内部 nonce', async () => {
     const outcome = await notifySkillCacheChange({
       client: { updateSkill: mocks.updateSkill },
       slug: 'document-deck',
@@ -246,25 +247,92 @@ describe('内容升级：强制 bump（值必须真的变两次）', () => {
     });
 
     expect(outcome).toBe('ok');
-    expect(mocks.updateSkill.mock.calls.map((c) => (c[0] as { enabled: boolean }).enabled)).toEqual([false, true]);
-    expect(mocks.updateSkill.mock.calls.every((c) => (c[0] as { skillKey: string }).skillKey === 'document-deck')).toBe(
-      true,
-    );
+    expect(mocks.updateSkill).toHaveBeenCalledTimes(1);
+    expect(mocks.updateSkill.mock.calls[0]?.[0]).toMatchObject({
+      skillKey: 'document-deck',
+      enabled: true,
+      env: { CLAWWORK_CACHE_REFRESH_NONCE: expect.any(String) },
+    });
   });
 
-  it('⚠️ 顺序不许反：最后落定的必须是 enabled', async () => {
+  it('⭐ 连续 force 的 nonce 必须不同，否则第二次内容升级不会 bump', async () => {
     await notifySkillCacheChange({
       client: { updateSkill: mocks.updateSkill },
       slug: 'x',
       enabled: true,
       force: true,
     });
-    // ⚠️ 必须**同时**钉住"两次"与"最后是 true"：只断言最后一个是 true 的话，
-    //    没实现 force 时它照样通过（一次 `{enabled:true}` 也叫"最后是 true"）
-    //    —— 这条测试第一版就是这么空过的，变异测试前先自己抓住。
-    expect(mocks.updateSkill, 'force 必须是两次（false → true）').toHaveBeenCalledTimes(2);
-    const last = mocks.updateSkill.mock.calls.at(-1)?.[0] as { enabled: boolean };
-    expect(last.enabled).toBe(true);
+    await notifySkillCacheChange({
+      client: { updateSkill: mocks.updateSkill },
+      slug: 'x',
+      enabled: true,
+      force: true,
+    });
+
+    expect(mocks.updateSkill).toHaveBeenCalledTimes(2);
+    const nonces = mocks.updateSkill.mock.calls.map(
+      (call) => (call[0] as { env: { CLAWWORK_CACHE_REFRESH_NONCE: string } }).env.CLAWWORK_CACHE_REFRESH_NONCE,
+    );
+    expect(nonces[0]).not.toBe(nonces[1]);
+    expect(mocks.updateSkill.mock.calls.every((call) => (call[0] as { enabled: boolean }).enabled)).toBe(true);
+  });
+
+  it('⭐ 原子刷新超时时只报警，请求本身仍必须携带正确 enabled', async () => {
+    const timeout = Object.assign(new Error('request timeout: skills.update'), { code: 'TIMEOUT' });
+    mocks.updateSkill.mockRejectedValueOnce(timeout).mockResolvedValueOnce({});
+    const onWarn = vi.fn();
+
+    const outcome = await notifySkillCacheChange({
+      client: { updateSkill: mocks.updateSkill },
+      slug: 'presentation-deck-v2',
+      enabled: true,
+      force: true,
+      onWarn,
+    });
+
+    expect(outcome).toBe('failed');
+    expect(mocks.updateSkill).toHaveBeenCalledTimes(1);
+    expect(mocks.updateSkill.mock.calls[0]?.[0]).toMatchObject({
+      skillKey: 'presentation-deck-v2',
+      enabled: true,
+      env: { CLAWWORK_CACHE_REFRESH_NONCE: expect.any(String) },
+    });
+    expect(onWarn).toHaveBeenCalledTimes(1);
+  });
+
+  it('⭐ 超时的首笔写入在最终恢复之后迟到，也不得把目标技能重新关掉', async () => {
+    const target = 'presentation-deck-v2';
+    const serverState = new Map<string, boolean>([[target, true]]);
+    const timeout = Object.assign(new Error('request timeout: skills.update'), { code: 'TIMEOUT' });
+    let releaseLateCommit!: () => void;
+    const lateCommitGate = new Promise<void>((resolve) => {
+      releaseLateCommit = resolve;
+    });
+    let call = 0;
+    const updateSkill = vi.fn(async (params: { skillKey: string; enabled: boolean }) => {
+      call += 1;
+      if (call === 1) {
+        // 客户端已经收到超时，但服务端的第一笔配置写仍可能继续执行。
+        void lateCommitGate.then(() => serverState.set(params.skillKey, params.enabled));
+        throw timeout;
+      }
+      serverState.set(params.skillKey, params.enabled);
+      return {};
+    });
+
+    await notifySkillCacheChange({
+      client: { updateSkill },
+      slug: target,
+      enabled: true,
+      force: true,
+    });
+    expect(serverState.get(target)).toBe(true);
+
+    releaseLateCommit();
+    await lateCommitGate;
+    await Promise.resolve();
+
+    expect(serverState.get(target), '迟到的第一笔写不能覆盖目标技能的最终恢复').toBe(true);
   });
 
   it('不传 force ⇒ 还是一刀（普通装/卸不该多打一次）', async () => {
@@ -327,7 +395,7 @@ describe('开机自装 × 内容升级', () => {
     expect(mocks.updateSkill, '也不该发通知').not.toHaveBeenCalled();
   });
 
-  it('⭐ 我们自己把它放旧了 ⇒ 覆盖安装 + 强制 bump（false → true）', async () => {
+  it('⭐ 我们自己把它放旧了 ⇒ 覆盖安装 + 原子 nonce 强制 bump', async () => {
     mocks.readBundledSkills.mockReturnValue([{ slug: 'document-deck', content: '新正文含 PDF 段' }]);
     mocks.isBundledSkillInstalled.mockReturnValue(true);
     mocks.readInstalledSkillContent.mockReturnValue('旧正文只有三种格式');
@@ -341,8 +409,12 @@ describe('开机自装 × 内容升级', () => {
 
     expect(res.result?.upgraded).toEqual(['document-deck']);
     expect(mocks.installBundledSkill).toHaveBeenCalledTimes(1);
-    const enabledCalls = mocks.updateSkill.mock.calls.map((c) => (c[0] as { enabled: boolean }).enabled);
-    expect(enabledCalls, '内容升级必须强制 bump（值要真的变）').toEqual([false, true]);
+    expect(mocks.updateSkill, '内容升级必须强制 bump（nonce 要真的变）').toHaveBeenCalledTimes(1);
+    expect(mocks.updateSkill.mock.calls[0]?.[0]).toMatchObject({
+      skillKey: 'document-deck',
+      enabled: true,
+      env: { CLAWWORK_CACHE_REFRESH_NONCE: expect.any(String) },
+    });
   });
 
   it('没装的不算升级（那是 missing 那条路）', async () => {

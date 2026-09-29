@@ -28,8 +28,9 @@
  * `skills.entries.<skillKey>`）。装上 → 卸下 → 再装，值每次都真变，所以这三种
  * 常见动作都能立刻生效。
  *
- * ⚠️ 上面那个「内容升级值没变 ⇒ 不 bump」的缺口**已经补上了**（2026-09-26）：
- *    走 `force: true`（先 `false` 再 `true`，两次都是真变更）。见下面 `force` 的注释。
+ * ⚠️ 上面那个「内容升级值没变 ⇒ 不 bump」的缺口**已经补上了**（2026-09-29）：
+ *    `force: true` 在同一笔 `skills.update` 中保持目标 enabled 不变，同时更新一个
+ *    内部 nonce。这样既能让 `skills.*` 版本号前进，也没有「先禁用、再恢复」的竞态窗口。
  *
  * ## 纪律
  *
@@ -42,7 +43,7 @@
 
 /** 只需要 `updateSkill` 这一个方法 —— 传 `GatewayClient` 进来即可（结构匹配）。 */
 export interface SkillCacheClient {
-  updateSkill(params: { skillKey: string; enabled: boolean }): Promise<unknown>;
+  updateSkill(params: { skillKey: string; enabled: boolean; env?: Record<string, string> }): Promise<unknown>;
 }
 
 export type SkillCacheNotifyOutcome = 'ok' | 'skipped' | 'failed';
@@ -53,30 +54,39 @@ export interface NotifySkillCacheChangeOptions {
   slug: string;
   enabled: boolean;
   /**
-   * **强制 bump**：先写 `false` 再写 `true`（两次都是真变更）。
+   * **强制 bump**：保持 `enabled` 为最终值，同一笔写入里更新内部 nonce。
    *
    * 为什么需要它：上面那段注释里记的**已知缺口** —— 「重复装同一个技能（内容升级）
    * 写进去的值没变 ⇒ 不 bump」。真机形状（2026-09-26，盘 E: 0.0.35）：
    * 技能内容升级后助手照旧按旧契约说"PDF 做不到"。
    *
-   * 用的还是同一条**已实测过**的机制（"值必须真的变"），只是让它变两次。
+   * 用的还是同一条**已实测过**的机制（“值必须真的变”）：
+   * `skills.entries.<skillKey>.env.CLAWWORK_CACHE_REFRESH_NONCE` 每次都是新值。网关对
+   * `env` 是逐键 merge，不会清掉技能原有的 Key。
    *
-   * ⚠️ **顺序不能反**：先 `false` 后 `true`，这样收尾状态是"已启用"。
-   *    中间那一瞬是 disabled —— 启动阶段、毫秒级，且两次写各触发一次 bump；
-   *    比起"静默用着旧技能"，这个代价小得多。
+   * 一笔原子更新还消掉了超时歧义：就算客户端先收到超时、服务端稍后才
+   * 提交，迟到的也是“正确 enabled + 新 nonce”，不可能再把目标技能关掉。
    * ⚠️ 只给**内容升级**用。普通装/卸的值本来就会变，多打一次是白打。
    */
   force?: boolean;
   onWarn?: (info: { slug: string; error: unknown }) => void;
 }
 
+let refreshNonceSequence = 0;
+
+function nextRefreshNonce(): string {
+  refreshNonceSequence += 1;
+  return `${Date.now().toString(36)}-${refreshNonceSequence.toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
 export async function notifySkillCacheChange(opts: NotifySkillCacheChangeOptions): Promise<SkillCacheNotifyOutcome> {
   if (!opts.client) return 'skipped';
   try {
-    if (opts.force) {
-      await opts.client.updateSkill({ skillKey: opts.slug, enabled: !opts.enabled });
-    }
-    await opts.client.updateSkill({ skillKey: opts.slug, enabled: opts.enabled });
+    await opts.client.updateSkill({
+      skillKey: opts.slug,
+      enabled: opts.enabled,
+      ...(opts.force ? { env: { CLAWWORK_CACHE_REFRESH_NONCE: nextRefreshNonce() } } : {}),
+    });
     return 'ok';
   } catch (error) {
     opts.onWarn?.({ slug: opts.slug, error });

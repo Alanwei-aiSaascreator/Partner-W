@@ -139,6 +139,40 @@ describe('GatewayClient connection lifecycle', () => {
     expect(order).toEqual(['first:start', 'first:end', 'second']);
   });
 
+  it('⭐ skills.update 必须加入配置写队列，多个随包技能启动升级不能并发争同一份配置', async () => {
+    const { GatewayClient } = await import('../src/main/ws/gateway-client.js');
+    const client = new GatewayClient({
+      id: 'gw-1',
+      name: 'Gateway',
+      url: 'ws://127.0.0.1:18789',
+      auth: { token: 'token' },
+    });
+    clients.push(client);
+    let releaseFirst = (): void => {};
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const sendReq = vi.spyOn(client, 'sendReq').mockResolvedValue({ ok: true });
+
+    const first = client.runConfigMutation(async () => firstGate);
+    const update = client.updateSkill({ skillKey: 'presentation-deck-v2', enabled: false });
+    await Promise.resolve();
+    expect(sendReq).not.toHaveBeenCalled();
+
+    releaseFirst();
+    await first;
+    await expect(update).resolves.toEqual({ ok: true });
+    expect(sendReq).toHaveBeenCalledOnce();
+    expect(sendReq).toHaveBeenCalledWith(
+      'skills.update',
+      {
+        skillKey: 'presentation-deck-v2',
+        enabled: false,
+      },
+      { timeoutMs: 60_000 },
+    );
+  });
+
   it('⭐ agents.create/update 必须加入同一条配置写队列，不能穿过 relay 事务', async () => {
     const { GatewayClient } = await import('../src/main/ws/gateway-client.js');
     const client = new GatewayClient({
@@ -386,6 +420,49 @@ describe('GatewayClient connection lifecycle', () => {
     vi.advanceTimersByTime(1);
     await expect(request).rejects.toMatchObject({
       message: 'request timeout: slow.request',
+      code: 'TIMEOUT',
+    });
+    expect(pendingRequestCount(client)).toBe(0);
+  });
+
+  it('⭐ 显式长超时可等待到 60 秒，技能冷启动写配置不能在 15 秒时制造迟到副作用', async () => {
+    const { GatewayClient } = await import('../src/main/ws/gateway-client.js');
+    const client = new GatewayClient({
+      id: 'gw-1',
+      name: 'Gateway',
+      url: 'ws://127.0.0.1:18789',
+      auth: { token: 'token' },
+    });
+    clients.push(client);
+    client.connect();
+
+    const socket = websocketMock.instances[0];
+    if (!socket) throw new Error('expected a websocket instance');
+    socket.readyState = 1;
+
+    let settled = false;
+    const request = client.sendReq('skills.update', {}, { timeoutMs: 60_000 });
+    void request.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      },
+    );
+
+    vi.advanceTimersByTime(15_000);
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    expect(pendingRequestCount(client)).toBe(1);
+
+    vi.advanceTimersByTime(44_999);
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    vi.advanceTimersByTime(1);
+    await expect(request).rejects.toMatchObject({
+      message: 'request timeout: skills.update',
       code: 'TIMEOUT',
     });
     expect(pendingRequestCount(client)).toBe(0);
