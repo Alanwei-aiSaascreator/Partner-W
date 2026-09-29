@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { toast } from '@/lib/toast';
-import type { ModelCatalogEntry, InstallEvent } from '@clawwork/shared';
+import type { ModelCatalogEntry, InstallEvent, TeamPosition } from '@clawwork/shared';
 import { cn } from '@/lib/utils';
 import { buildInstallEventView } from '@/lib/install-event-view';
 import { InstallMessageLine } from '@/components/InstallMessageLine';
@@ -34,15 +34,16 @@ import type { AgentDraft, TeamInfo } from '@/layouts/TeamsPanel/types';
 import { relayModelsFrom } from '@/components/ChatInput/model-families';
 import { canonicalModelRef, resolveTeamModelRef } from '@/lib/team-model-ref';
 
-interface AgentConfig {
+export interface AgentConfig {
   name: string;
   role: 'coordinator' | 'worker';
   description: string;
   model: string;
   identity: string;
+  position?: TeamPosition;
 }
 
-interface TeamConfig {
+export interface TeamConfig {
   name: string;
   emoji: string;
   description: string;
@@ -54,6 +55,11 @@ const EMPTY_CONFIG: TeamConfig = { name: '', emoji: '🤖', description: '', age
 const EMPTY_MODELS: ModelCatalogEntry[] = [];
 
 const VALID_ROLES = new Set<string>(['coordinator', 'worker']);
+const HAS_CJK = /[\u3400-\u4dbf\u4e00-\u9fff]/u;
+
+export function defaultTeamPositionForRole(role: AgentConfig['role']): TeamPosition {
+  return role === 'coordinator' ? 'moderator' : 'expert';
+}
 
 const SYSTEM_PROMPT_TEMPLATE = `You are a Team creation assistant for Rongying Cube. Help the user create a new AI Team — a group of specialized Agents that work together on tasks.
 
@@ -67,7 +73,9 @@ Your job:
 Rules:
 - Ask ONE question at a time
 - Be proactive: extract team structure from the user's first description
-- Team name and all agent names MUST be in English (ASCII only, e.g. "Research Team" not "研究团队") — they are used as system identifiers
+- All user-visible team names, agent names, descriptions, identities, and prose MUST use {{displayLanguage}}. Do not copy English display names from the example when the requested language is Chinese.
+- The client derives stable internal identifiers separately, so user-visible names do NOT need to be English or ASCII.
+- Keep the JSON values for role exactly "coordinator" or "worker", and copy model identifiers exactly from the available list.
 - Team description should be a brief summary (under 200 chars) of the team's purpose
 - Each agent needs: name, role (coordinator or worker), description (brief capability summary under 200 chars), model, and identity (system prompt, 2-4 sentences)
 - A team must have at least 2 agents, with at least 1 coordinator
@@ -76,12 +84,101 @@ Rules:
 - Example:
 
 \`\`\`team-config
-{"name": "Research Team", "emoji": "🔬", "description": "Deep research and analysis team", "agents": [{"name": "Research Lead", "role": "coordinator", "description": "Coordinates research tasks and synthesizes findings", "model": "{{exampleModel}}", "identity": "A research coordinator who plans research strategies and synthesizes findings from team members."}, {"name": "Data Analyst", "role": "worker", "description": "Analyzes data and generates insights", "model": "{{exampleModel}}", "identity": "A data analyst specializing in statistical analysis and data visualization."}]}
+{{exampleConfig}}
 \`\`\`
 
-Respond in {{language}}.
+Respond in {{displayLanguage}}.
 
 Now begin by asking what kind of Team the user wants to create.`;
+
+function isTraditionalChinese(language: string): boolean {
+  return /^zh-(tw|hk|hant)/i.test(language);
+}
+
+function isChinese(language: string): boolean {
+  return /^zh(?:-|$)/i.test(language);
+}
+
+function localizedTeamConfigExample(language: string, model: string): string {
+  if (isTraditionalChinese(language)) {
+    return JSON.stringify({
+      name: '研究分析團隊',
+      emoji: '🔬',
+      description: '負責資料研究、分析與結論整合',
+      agents: [
+        {
+          name: '研究主管',
+          role: 'coordinator',
+          description: '規劃研究方向並整合結論',
+          model,
+          identity: '你是研究主管。先制定研究策略，再核對證據並整合成清晰結論。',
+        },
+        {
+          name: '資料分析師',
+          role: 'worker',
+          description: '分析資料並提煉洞察',
+          model,
+          identity: '你是資料分析師。負責清理資料、比較指標並輸出可驗證的洞察。',
+        },
+      ],
+    });
+  }
+  if (isChinese(language)) {
+    return JSON.stringify({
+      name: '研究分析团队',
+      emoji: '🔬',
+      description: '负责资料研究、分析与结论整合',
+      agents: [
+        {
+          name: '研究主管',
+          role: 'coordinator',
+          description: '规划研究方向并整合结论',
+          model,
+          identity: '你是研究主管。先制定研究策略，再核对证据并整合成清晰结论。',
+        },
+        {
+          name: '数据分析师',
+          role: 'worker',
+          description: '分析数据并提炼洞察',
+          model,
+          identity: '你是数据分析师。负责清理数据、比较指标并输出可验证的洞察。',
+        },
+      ],
+    });
+  }
+  return JSON.stringify({
+    name: 'Research Team',
+    emoji: '🔬',
+    description: 'Deep research and analysis team',
+    agents: [
+      {
+        name: 'Research Lead',
+        role: 'coordinator',
+        description: 'Coordinates research and synthesizes findings',
+        model,
+        identity: 'You plan research strategies, verify evidence, and synthesize findings.',
+      },
+      {
+        name: 'Data Analyst',
+        role: 'worker',
+        description: 'Analyzes data and produces insights',
+        model,
+        identity: 'You clean data, compare metrics, and produce verifiable insights.',
+      },
+    ],
+  });
+}
+
+export function buildTeamBuilderSystemPrompt(modelRefs: string[], language: string): string {
+  const displayLanguage = isTraditionalChinese(language)
+    ? 'Traditional Chinese (繁體中文)'
+    : isChinese(language)
+      ? 'Simplified Chinese (简体中文)'
+      : language || 'the user language';
+  return SYSTEM_PROMPT_TEMPLATE.replace('{{modelList}}', modelRefs.join(', ') || 'default')
+    .replaceAll('{{displayLanguage}}', displayLanguage)
+    .replace('{{exampleConfig}}', localizedTeamConfigExample(language, modelRefs[0] ?? ''));
+}
 
 const CONFIG_BLOCK_RE = /\n?```team-config\n([\s\S]*?)\n```\n?/g;
 const CONFIG_BLOCK_PARTIAL_RE = /\n?```team-config[\s\S]*$/;
@@ -89,25 +186,33 @@ const CONFIG_BLOCK_PARTIAL_RE = /\n?```team-config[\s\S]*$/;
 function sanitizeAgents(raw: unknown[], models: ModelCatalogEntry[]): AgentConfig[] {
   return raw
     .filter((a): a is Record<string, unknown> => !!a && typeof a === 'object')
-    .map((a) => ({
-      name: typeof a.name === 'string' ? a.name : '',
-      role: VALID_ROLES.has(a.role as string) ? (a.role as 'coordinator' | 'worker') : 'worker',
-      description: typeof a.description === 'string' ? a.description : '',
-      model: resolveTeamModelRef(typeof a.model === 'string' ? a.model : '', models),
-      identity: typeof a.identity === 'string' ? a.identity : '',
-    }));
+    .map((a) => {
+      const role = VALID_ROLES.has(a.role as string) ? (a.role as 'coordinator' | 'worker') : 'worker';
+      return {
+        name: typeof a.name === 'string' ? a.name : '',
+        role,
+        description: typeof a.description === 'string' ? a.description : '',
+        model: resolveTeamModelRef(typeof a.model === 'string' ? a.model : '', models),
+        identity: typeof a.identity === 'string' ? a.identity : '',
+        position: defaultTeamPositionForRole(role),
+      };
+    });
 }
 
-function parseTeamConfig(text: string, models: ModelCatalogEntry[]): Partial<TeamConfig> | null {
+export function parseTeamConfig(text: string, models: ModelCatalogEntry[]): Partial<TeamConfig> | null {
   const matches = [...text.matchAll(CONFIG_BLOCK_RE)];
   if (matches.length === 0) return null;
   const last = matches[matches.length - 1];
   try {
-    const raw = JSON.parse(last[1]);
-    if (raw.agents && Array.isArray(raw.agents)) {
-      raw.agents = sanitizeAgents(raw.agents, models);
-    }
-    return raw;
+    const value: unknown = JSON.parse(last[1]);
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const raw = value as Record<string, unknown>;
+    const parsed: Partial<TeamConfig> = {};
+    if (typeof raw.name === 'string') parsed.name = raw.name;
+    if (typeof raw.emoji === 'string') parsed.emoji = raw.emoji;
+    if (typeof raw.description === 'string') parsed.description = raw.description;
+    if (Array.isArray(raw.agents)) parsed.agents = sanitizeAgents(raw.agents, models);
+    return parsed;
   } catch {
     return null;
   }
@@ -134,11 +239,42 @@ function configToAgentDrafts(config: TeamConfig, models: ModelCatalogEntry[]): A
     name: a.name.trim(),
     description: a.description.trim(),
     role: a.role,
+    position: a.position ?? defaultTeamPositionForRole(a.role),
     model: resolveTeamModelRef(a.model, models),
     agentMd: a.identity.trim(),
     soulMd: '',
     skills: [],
   }));
+}
+
+export function isTeamConfigValid(config: TeamConfig, language: string): boolean {
+  if (!config.name.trim() || !config.description.trim()) return false;
+  if (config.agents.length < 2) return false;
+  if (!config.agents.some((agent) => agent.role === 'coordinator')) return false;
+  if (
+    !config.agents.every(
+      (agent) =>
+        agent.name.trim() &&
+        agent.description.trim() &&
+        agent.model.trim() &&
+        agent.identity.trim() &&
+        toSlug(agent.name),
+    )
+  ) {
+    return false;
+  }
+  const slugs = config.agents.map((agent) => toSlug(agent.name));
+  if (new Set(slugs).size !== slugs.length) return false;
+
+  if (isChinese(language)) {
+    const visibleFields = [
+      config.name,
+      config.description,
+      ...config.agents.flatMap((agent) => [agent.name, agent.description, agent.identity]),
+    ];
+    if (!visibleFields.every((value) => HAS_CJK.test(value))) return false;
+  }
+  return true;
 }
 
 const inputClass = cn(
@@ -211,9 +347,7 @@ export default function TeamBuilderDialog({ open, onOpenChange, gatewayId, onCre
     resetInstall();
 
     const modelRefs = relayModels.map(canonicalModelRef);
-    const prompt = SYSTEM_PROMPT_TEMPLATE.replace('{{modelList}}', modelRefs.join(', ') || 'default')
-      .replaceAll('{{exampleModel}}', modelRefs[0] ?? '')
-      .replace('{{language}}', i18n.language);
+    const prompt = buildTeamBuilderSystemPrompt(modelRefs, i18n.language);
 
     start({
       gatewayId,
@@ -281,14 +415,8 @@ export default function TeamBuilderDialog({ open, onOpenChange, gatewayId, onCre
   }, []);
 
   const isValid = useMemo(() => {
-    if (!config.name.trim()) return false;
-    if (config.agents.length < 2) return false;
-    if (!config.agents.some((a) => a.role === 'coordinator')) return false;
-    if (!config.agents.every((a) => a.name.trim())) return false;
-    const slugs = config.agents.map((a) => toSlug(a.name));
-    if (new Set(slugs).size !== slugs.length) return false;
-    return true;
-  }, [config]);
+    return isTeamConfigValid(config, i18n.language);
+  }, [config, i18n.language]);
 
   const handleCreate = useCallback(async () => {
     if (!isValid) return;
