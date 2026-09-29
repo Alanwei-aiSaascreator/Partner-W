@@ -175,7 +175,9 @@ describe('portable update IPC', () => {
 
   it('同一进程从 stable 切到 beta 后，下一次检查必须请求 internal 清单', async () => {
     mocks.portableRoot = 'F:\\';
-    const fetchMock = vi.fn(async () => new Response('', { status: 404 }));
+    const fetchMock = vi.fn<(input: string | URL | Request, init?: RequestInit) => Promise<Response>>(async () =>
+      new Response('', { status: 404 }),
+    );
     vi.stubGlobal('fetch', fetchMock);
     const { registerUpdateHandlers } = await loadHandlers();
     registerUpdateHandlers();
