@@ -2120,7 +2120,7 @@
     "introConfirm": "Compris",
     "introDescription": "Maintenez Espace pour dicter, puis relâchez pour terminer.",
     "introSkip": "Pas maintenant",
-    "introStepBeta": "Nécessite whisper-cpp installé en local. Exécutez : brew install whisper-cpp",
+    "introStepBeta": "La saisie vocale s’exécute localement et reste en version bêta.",
     "introStepHold": "La transcription est insérée dans le champ de saisie et n'est jamais envoyée automatiquement.",
     "introStepInsert": "Une pression brève sur Espace insère toujours une espace normale.",
     "introTitle": "Saisie vocale (Beta)",
@@ -2129,7 +2129,8 @@
     "recognitionFailed": "Échec de la reconnaissance vocale",
     "tooltip": "Saisie vocale (Beta)",
     "transcribing": "Transcription…",
-    "unsupported": "whisper-cpp introuvable. Exécutez : brew install whisper-cpp, puis téléchargez un modèle dans ~/models/whisper/",
-    "unsupportedTooltip": "La saisie vocale nécessite whisper-cpp. Exécutez : brew install whisper-cpp"
+    "unsupported": "La saisie vocale n’est pas disponible. Utilisez la saisie de texte.",
+    "unsupportedPlatform": "La saisie vocale n’est pas encore prise en charge sous Windows. Utilisez la saisie de texte.",
+    "unsupportedTooltip": "La saisie vocale n’est pas disponible dans cette application."
   }
 }

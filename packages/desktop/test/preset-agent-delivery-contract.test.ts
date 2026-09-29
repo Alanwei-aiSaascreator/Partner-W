@@ -91,6 +91,22 @@ describe('预置助手的交付合同：每条通道都要在清单里', () => {
     expect(COMMON_OPERATING_CONTRACT).toMatch(/Never claim a file already exists/);
   });
 
+  it('委派前后必须如实说明 worker 是否真的启动', () => {
+    expect(COMMON_OPERATING_CONTRACT).toContain(
+      'Do not say a worker or subagent is ready, working, or started until its corresponding `sessions_spawn` call succeeds.',
+    );
+    expect(COMMON_OPERATING_CONTRACT).toContain('If `sessions_spawn` fails, say plainly that no worker was started.');
+  });
+
+  it('桌面用户的故障建议只能走应用内入口，不能被要求运行 OpenClaw CLI', () => {
+    expect(COMMON_OPERATING_CONTRACT).toContain(
+      'Do not tell desktop users to run `openclaw doctor`, any other OpenClaw CLI command, or terminal commands.',
+    );
+    expect(COMMON_OPERATING_CONTRACT).toContain(
+      'Offer only in-app next steps such as retrying, reconnecting, or opening Settings.',
+    );
+  });
+
   it('⭐ 合同真的被拼进了每个助手的 SOUL（否则改了也不生效）', () => {
     const needle = 'Web pages (.html)';
     for (const agent of PRESET_AGENT_DEFINITIONS) {
@@ -104,6 +120,6 @@ describe('预置助手的交付合同：每条通道都要在清单里', () => {
     // 版本号是"将来能不能安全升级已发出去的盘"的唯一依据
     // （见 preset-agents.ts 里 PRESET_PROMPT_VERSION 的注释）——
     // ⚠️ 所以**改了合同文本就必须动它**，否则已装的盘拿不到新合同。
-    expect(PRESET_PROMPT_VERSION).toBe('2026-09-28.1');
+    expect(PRESET_PROMPT_VERSION).toBe('2026-09-29.1');
   });
 });

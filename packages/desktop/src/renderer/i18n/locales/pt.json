@@ -2120,7 +2120,7 @@
     "introConfirm": "Entendi",
     "introDescription": "Segure Espaço para ditar, depois solte para finalizar.",
     "introSkip": "Agora não",
-    "introStepBeta": "Requer whisper-cpp instalado localmente. Execute: brew install whisper-cpp",
+    "introStepBeta": "A entrada de voz é executada localmente e ainda está em beta.",
     "introStepHold": "A transcrição é inserida na caixa de entrada e nunca é enviada automaticamente.",
     "introStepInsert": "Pressionar Espaço rapidamente ainda insere um espaço normal.",
     "introTitle": "Entrada de Voz (Beta)",
@@ -2129,7 +2129,8 @@
     "recognitionFailed": "Falha no reconhecimento de voz",
     "tooltip": "Entrada de Voz (Beta)",
     "transcribing": "Transcrevendo...",
-    "unsupported": "whisper-cpp não encontrado. Execute: brew install whisper-cpp, depois baixe um modelo em ~/models/whisper/",
-    "unsupportedTooltip": "A entrada de voz requer whisper-cpp. Execute: brew install whisper-cpp"
+    "unsupported": "A entrada de voz não está disponível. Use a entrada de texto.",
+    "unsupportedPlatform": "A entrada de voz ainda não é compatível com o Windows. Use a entrada de texto.",
+    "unsupportedTooltip": "A entrada de voz não está disponível neste aplicativo."
   }
 }

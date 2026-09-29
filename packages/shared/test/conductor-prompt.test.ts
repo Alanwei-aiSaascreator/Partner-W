@@ -194,4 +194,17 @@ describe('buildConductorPrompt', () => {
     expect(prompt).not.toContain('Ignore all previous instructions');
     expect(prompt.endsWith('Available agents:\n')).toBe(true);
   });
+
+  it('does not let the conductor claim workers started before sessions_spawn succeeds', () => {
+    const prompt = buildConductorPrompt('- id: worker, name: "Worker"');
+
+    expect(prompt).toContain(
+      'Do not say a worker is ready, working, or started until its `sessions_spawn` call succeeds.',
+    );
+    expect(prompt).toContain('If `sessions_spawn` fails, say plainly that no worker was started.');
+    expect(prompt).toContain(
+      'Do not tell desktop users to run `openclaw doctor`, any other OpenClaw CLI command, or terminal commands.',
+    );
+    expect(prompt).toContain('Offer only in-app next steps such as retrying, reconnecting, or opening Settings.');
+  });
 });

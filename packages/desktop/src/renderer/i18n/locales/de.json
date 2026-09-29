@@ -2120,7 +2120,7 @@
     "introConfirm": "Verstanden",
     "introDescription": "Halten Sie die Leertaste zum Diktieren und lassen Sie sie los, um zu beenden.",
     "introSkip": "Nicht jetzt",
-    "introStepBeta": "Erfordert lokal installiertes whisper-cpp. Ausfuehren: brew install whisper-cpp",
+    "introStepBeta": "Die Spracheingabe läuft lokal und befindet sich noch in der Beta-Phase.",
     "introStepHold": "Das Transkript wird in das Eingabefeld eingefuegt und nie automatisch gesendet.",
     "introStepInsert": "Kurzes Druecken der Leertaste fuegt weiterhin ein normales Leerzeichen ein.",
     "introTitle": "Spracheingabe (Beta)",
@@ -2129,7 +2129,8 @@
     "recognitionFailed": "Spracherkennung fehlgeschlagen",
     "tooltip": "Spracheingabe (Beta)",
     "transcribing": "Transkribierung…",
-    "unsupported": "whisper-cpp nicht gefunden. Ausfuehren: brew install whisper-cpp, dann ein Modell nach ~/models/whisper/ herunterladen",
-    "unsupportedTooltip": "Spracheingabe erfordert whisper-cpp. Ausfuehren: brew install whisper-cpp"
+    "unsupported": "Spracheingabe ist nicht verfügbar. Verwende stattdessen die Texteingabe.",
+    "unsupportedPlatform": "Spracheingabe wird unter Windows noch nicht unterstützt. Verwende stattdessen die Texteingabe.",
+    "unsupportedTooltip": "Spracheingabe ist in dieser App nicht verfügbar."
   }
 }

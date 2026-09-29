@@ -2120,7 +2120,7 @@
     "introConfirm": "확인",
     "introDescription": "Space를 길게 눌러 말한 후 놓으면 완료됩니다.",
     "introSkip": "나중에",
-    "introStepBeta": "로컬에 whisper-cpp가 설치되어 있어야 합니다. 실행: brew install whisper-cpp",
+    "introStepBeta": "음성 입력은 로컬에서 처리되며 아직 베타 기능입니다.",
     "introStepHold": "변환된 텍스트는 입력란에 삽입되며 자동으로 전송되지 않습니다.",
     "introStepInsert": "Space를 짧게 누르면 일반 공백이 입력됩니다.",
     "introTitle": "음성 입력 (베타)",
@@ -2129,7 +2129,8 @@
     "recognitionFailed": "음성 인식에 실패했습니다",
     "tooltip": "음성 입력 (베타)",
     "transcribing": "변환 중...",
-    "unsupported": "whisper-cpp를 찾을 수 없습니다. 실행: brew install whisper-cpp, 그 후 ~/models/whisper/에 모델을 다운로드하세요",
-    "unsupportedTooltip": "음성 입력에는 whisper-cpp가 필요합니다. 실행: brew install whisper-cpp"
+    "unsupported": "음성 입력을 사용할 수 없습니다. 텍스트 입력을 사용해 주세요.",
+    "unsupportedPlatform": "Windows에서는 아직 음성 입력을 지원하지 않습니다. 텍스트 입력을 사용해 주세요.",
+    "unsupportedTooltip": "이 앱에서는 음성 입력을 사용할 수 없습니다."
   }
 }

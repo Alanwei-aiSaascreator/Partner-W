@@ -232,19 +232,25 @@ export default function ChatInput({
   });
 
   const [whisperAvailable, setWhisperAvailable] = useState(false);
+  const [whisperPlatformUnsupported, setWhisperPlatformUnsupported] = useState(false);
   const loadSettings = useSettingsStore((s) => s.load);
   const updateSettings = useSettingsStore((s) => s.updateSettings);
   useEffect(() => {
     if (typeof window.clawwork.checkWhisper !== 'function') {
       setWhisperAvailable(false);
+      setWhisperPlatformUnsupported(false);
       return;
     }
     window.clawwork
       .checkWhisper()
-      .then((r) => setWhisperAvailable(r.available))
+      .then((r) => {
+        setWhisperAvailable(r.available);
+        setWhisperPlatformUnsupported(r.unsupportedPlatform === true);
+      })
       .catch((err: unknown) => {
         console.error('[ChatInput] checkWhisper failed:', err);
         setWhisperAvailable(false);
+        setWhisperPlatformUnsupported(false);
       });
   }, []);
 
@@ -574,7 +580,9 @@ export default function ChatInput({
   //    老写法把"还不知道"（网关状态还没有这一条）也算成离线，于是首启那 50 秒里
   //    输入框在说一件不是事实的话（2026-09-20 实机截图）。
   const placeholder = t(composerPlaceholderKey({ phase: gatewayDisplayPhase, isOffline, readinessBlocked }));
-  const voiceTooltip = !isVoiceSupported ? t('voiceInput.unsupportedTooltip') : t('voiceInput.tooltip');
+  const voiceTooltip = !isVoiceSupported
+    ? t(whisperPlatformUnsupported ? 'voiceInput.unsupportedPlatform' : 'voiceInput.unsupportedTooltip')
+    : t('voiceInput.tooltip');
   // 文案分档全部住在 `modelStatusCopy` 里（可单测）：哪一档转圈、哪一档说什么话，
   // 一个地方定；尤其「无需重复操作」**只许**在真加载那一档出现（2026-09-20 报障）。
   // ⚠️ 已知的中转失败**压过**目录推断：这时"正在准备模型，准备完会自动显示"是句谎
@@ -619,11 +627,11 @@ export default function ChatInput({
       return;
     }
     if (voiceErrorCode === 'unsupported') {
-      toast.error(t('voiceInput.unsupported'));
+      toast.error(t(whisperPlatformUnsupported ? 'voiceInput.unsupportedPlatform' : 'voiceInput.unsupported'));
       return;
     }
     toast.error(t('voiceInput.recognitionFailed'));
-  }, [voiceErrorCode, t]);
+  }, [voiceErrorCode, t, whisperPlatformUnsupported]);
 
   useEffect(() => {
     const textarea = textareaRef.current;
@@ -1061,7 +1069,7 @@ export default function ChatInput({
                               }
                               void startVoiceInput();
                             }}
-                            disabled={disabled}
+                            disabled={disabled || !isVoiceSupported}
                             aria-label={voiceTooltip}
                             className={cn(
                               'rounded-xl',

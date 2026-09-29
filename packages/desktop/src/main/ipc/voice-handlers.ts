@@ -12,6 +12,7 @@ interface WhisperCheckResult {
   available: boolean;
   binaryPath: string | null;
   modelPath: string | null;
+  unsupportedPlatform?: boolean;
   error?: string;
 }
 
@@ -107,6 +108,15 @@ export function registerVoiceHandlers(): void {
   });
 
   ipcMain.handle('voice:check-whisper', (): WhisperCheckResult => {
+    if (process.platform === 'win32') {
+      return {
+        available: false,
+        binaryPath: null,
+        modelPath: null,
+        unsupportedPlatform: true,
+        error: 'voice input is not supported on Windows yet',
+      };
+    }
     const binaryPath = findWhisperBinary();
     if (!binaryPath) {
       return { available: false, binaryPath: null, modelPath: null, error: 'whisper-cpp not found' };

@@ -2120,7 +2120,7 @@
     "introConfirm": "知道了",
     "introDescription": "按住 Space 说话，松开后结束。",
     "introSkip": "暂不使用",
-    "introStepBeta": "需要本地安装 whisper-cpp，请运行: brew install whisper-cpp",
+    "introStepBeta": "语音输入在本机处理，目前仍为 Beta 功能。",
     "introStepHold": "识别结果会写入输入框，不会自动发送。",
     "introStepInsert": "短按 Space 仍然会输入普通空格。",
     "introTitle": "语音输入（Beta）",
@@ -2129,7 +2129,8 @@
     "recognitionFailed": "语音识别失败",
     "tooltip": "语音输入（Beta）",
     "transcribing": "正在识别…",
-    "unsupported": "未找到 whisper-cpp，请运行 brew install whisper-cpp 并下载模型到 ~/models/whisper/",
-    "unsupportedTooltip": "语音输入需要 whisper-cpp，请运行: brew install whisper-cpp"
+    "unsupported": "语音输入暂不可用，请继续使用文字输入。",
+    "unsupportedPlatform": "此版本暂不支持 Windows 语音输入，请继续使用文字输入。",
+    "unsupportedTooltip": "此应用暂时无法使用语音输入。"
   }
 }

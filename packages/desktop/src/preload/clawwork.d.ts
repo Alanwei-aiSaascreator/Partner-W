@@ -625,6 +625,7 @@ export interface ClawWorkAPI {
     available: boolean;
     binaryPath: string | null;
     modelPath: string | null;
+    unsupportedPlatform?: boolean;
     error?: string;
   }>;
   transcribeAudio: (audio: ArrayBuffer) => Promise<{ ok: boolean; transcript?: string; error?: string }>;

@@ -2120,7 +2120,7 @@
     "introConfirm": "了解",
     "introDescription": "按住空白鍵開始聽寫，放開後結束。",
     "introSkip": "暫時不用",
-    "introStepBeta": "需要在本機安裝 whisper-cpp。請執行：brew install whisper-cpp",
+    "introStepBeta": "語音輸入會在本機處理，目前仍為 Beta 功能。",
     "introStepHold": "轉錄文字會插入輸入框，不會自動傳送。",
     "introStepInsert": "短按空白鍵仍會輸入普通空格。",
     "introTitle": "語音輸入（Beta）",
@@ -2129,7 +2129,8 @@
     "recognitionFailed": "語音辨識失敗",
     "tooltip": "語音輸入（Beta）",
     "transcribing": "轉錄中…",
-    "unsupported": "找不到 whisper-cpp。請執行：brew install whisper-cpp，然後下載模型至 ~/models/whisper/",
-    "unsupportedTooltip": "語音輸入需要 whisper-cpp。請執行：brew install whisper-cpp"
+    "unsupported": "語音輸入暫時無法使用，請繼續使用文字輸入。",
+    "unsupportedPlatform": "此版本暫不支援 Windows 語音輸入，請繼續使用文字輸入。",
+    "unsupportedTooltip": "此應用程式暫時無法使用語音輸入。"
   }
 }

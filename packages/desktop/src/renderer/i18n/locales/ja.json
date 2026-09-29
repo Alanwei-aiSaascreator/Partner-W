@@ -2120,7 +2120,7 @@
     "introConfirm": "了解",
     "introDescription": "Space を長押しして音声入力し、離すと終了します。",
     "introSkip": "後で",
-    "introStepBeta": "whisper-cpp のローカルインストールが必要です。実行: brew install whisper-cpp",
+    "introStepBeta": "音声入力はローカルで処理され、現在ベータ版です。",
     "introStepHold": "文字起こし結果は入力欄に挿入され、自動送信されません。",
     "introStepInsert": "Space の短押しは通常のスペース入力になります。",
     "introTitle": "音声入力 (ベータ)",
@@ -2129,7 +2129,8 @@
     "recognitionFailed": "音声認識に失敗しました",
     "tooltip": "音声入力 (ベータ)",
     "transcribing": "文字起こし中...",
-    "unsupported": "whisper-cpp が見つかりません。実行: brew install whisper-cpp 後、モデルを ~/models/whisper/ にダウンロードしてください",
-    "unsupportedTooltip": "音声入力には whisper-cpp が必要です。実行: brew install whisper-cpp"
+    "unsupported": "音声入力は利用できません。テキスト入力をお使いください。",
+    "unsupportedPlatform": "Windows では音声入力はまだサポートされていません。テキスト入力をお使いください。",
+    "unsupportedTooltip": "このアプリでは音声入力を利用できません。"
   }
 }
