@@ -79,7 +79,7 @@ export function findOutOfBounds(elements: readonly MeasuredElement[]): LayoutWar
  * 用户看不到那句话，却完全不知道它存在。
  *
  * 判据由**浏览器**给（`elementFromPoint`，见 `measure.ts`）：它的答案就是"谁在最上面"。
- * 我们按 DOM 顺序画 pptx，所以这个结论在原文件里同样成立 —— 不是近似。
+ * 导出按 Chromium paint order。文字行内采样能发现部分遮挡，但并非完整可见性证明。
  */
 export function findOccludedText(elements: readonly MeasuredElement[]): LayoutWarning[] {
   const out: LayoutWarning[] = [];
@@ -89,7 +89,7 @@ export function findOccludedText(elements: readonly MeasuredElement[]): LayoutWa
     out.push({
       code: 'layout-text-occluded',
       element: e.id,
-      detail: `${describe(e)} 被 ${e.occludedBy} 盖住了，放映时看不见。把它的位置或盖住它的那块挪开。`,
+      detail: `${describe(e)} 有部分被 ${e.occludedBy} 盖住了。把它的位置或盖住它的那块挪开。`,
     });
   }
   return out;

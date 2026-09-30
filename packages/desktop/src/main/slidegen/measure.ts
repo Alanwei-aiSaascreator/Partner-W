@@ -40,7 +40,7 @@ export interface MeasuredElement {
   /** 这行文字**实际占几行**（浏览器说了算）。单行的框在 pptx 里必须 `wrap:false`。 */
   lines: number;
   /**
-   * 它是不是**被人盖住了**（中心点上 topmost 的不是它自己）。
+   * 它是不是**被人盖住了**（文字行内采样点上 topmost 的不是它自己）。
    * 由浏览器用 `elementFromPoint` 回答；导出顺序另取 Chromium 的实际 paint order。
    * 有值就说明**源版式有重叠**，属于校验器要报的东西。
    */
@@ -68,10 +68,25 @@ const MEASURE_SCRIPT = `(() => {
     range.selectNodeContents(el);
     let occludedBy = null;
     if (r.width >= 1 && r.height >= 1) {
-      const top = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
-      if (top && top !== el && !el.contains(top)) {
-        const owner = top.closest('[${MARK_ATTR}]');
-        occludedBy = owner && owner !== el ? '#' + owner.getAttribute('${MARK_ATTR}') : top.tagName;
+      // A container center can be visible while the end of a footer line is
+      // covered. Sample actual line rectangles so blank container space does
+      // not become a text warning. This is a diagnostic, not a visibility proof.
+      const rects = kind === 'text' ? Array.from(range.getClientRects()) : [r];
+      const fractions = kind === 'text' ? [0.05, 0.25, 0.5, 0.75, 0.95] : [0.5];
+      for (const rect of rects) {
+        if (rect.width < 1 || rect.height < 1) continue;
+        for (const fx of fractions) {
+          for (const fy of [0.25, 0.5, 0.75]) {
+            const top = document.elementFromPoint(rect.x + rect.width * fx, rect.y + rect.height * fy);
+            if (top && top !== el && !el.contains(top)) {
+              const owner = top.closest('[${MARK_ATTR}]');
+              occludedBy = owner && owner !== el ? '#' + owner.getAttribute('${MARK_ATTR}') : top.tagName;
+              break;
+            }
+          }
+          if (occludedBy) break;
+        }
+        if (occludedBy) break;
       }
     }
     out.push({
