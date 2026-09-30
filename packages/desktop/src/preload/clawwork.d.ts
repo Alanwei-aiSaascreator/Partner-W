@@ -442,6 +442,7 @@ export interface ClawWorkAPI {
     sessionKey: string,
     content: string,
     attachments?: ChatAttachment[],
+    dispatchContext?: { userContent: string },
   ) => Promise<IpcResult>;
   chatHistory: (gatewayId: string, sessionKey: string, limit?: number) => Promise<IpcResult>;
   listSessions: (gatewayId: string) => Promise<IpcResult>;

@@ -37,7 +37,8 @@ function buildApi(): ClawWorkAPI {
       sessionKey: string,
       content: string,
       attachments?: { mimeType: string; fileName: string; content: string }[],
-    ) => ipcRenderer.invoke('ws:send-message', { gatewayId, sessionKey, content, attachments }),
+      dispatchContext?: { userContent: string },
+    ) => ipcRenderer.invoke('ws:send-message', { gatewayId, sessionKey, content, attachments, dispatchContext }),
     chatHistory: (gatewayId: string, sessionKey: string, limit?: number) =>
       ipcRenderer.invoke('ws:chat-history', { gatewayId, sessionKey, limit }),
     listSessions: (gatewayId: string) => ipcRenderer.invoke('ws:list-sessions', { gatewayId }),

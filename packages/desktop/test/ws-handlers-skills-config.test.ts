@@ -14,6 +14,7 @@ const lookupConfigSchemaMock = vi.fn();
 const getChatHistoryMock = vi.fn();
 const listSessionsBySpawnerMock = vi.fn();
 const sendChatMessageMock = vi.fn();
+const abortChatMock = vi.fn();
 const beginArtifactRunForGatewayDispatchMock = vi.fn();
 const bindArtifactRunMock = vi.fn();
 const cancelArtifactRunMock = vi.fn();
@@ -34,6 +35,7 @@ const fakeGatewayClient = {
   getChatHistory: getChatHistoryMock,
   listSessionsBySpawner: listSessionsBySpawnerMock,
   sendChatMessage: sendChatMessageMock,
+  abortChat: abortChatMock,
 };
 
 vi.mock('electron', () => ({
@@ -107,6 +109,7 @@ describe('ws-handlers: skills + config IPC channels', () => {
     vi.clearAllMocks();
     getChatHistoryMock.mockReset();
     sendChatMessageMock.mockReset().mockResolvedValue(undefined);
+    abortChatMock.mockReset().mockResolvedValue(undefined);
     beginArtifactRunForGatewayDispatchMock.mockReset().mockReturnValue('artifact-run-1');
     bindArtifactRunMock.mockReset();
     cancelArtifactRunMock.mockReset();
@@ -146,6 +149,23 @@ describe('ws-handlers: skills + config IPC channels', () => {
     );
     expect(cancelArtifactRunMock).not.toHaveBeenCalled();
   });
+
+  it.each(['你是干啥的，怎么获客', '帮我生成一个 HTML 网页'])(
+    'uses only the user request for delivery expectations: %s',
+    async (userContent) => {
+      const content =
+        '<artifacts-index>\n报告.html (帮我做一个ppt)\n</artifacts-index>\n[artifact-delivery-failed] PPT 生成失败\n\n' +
+        userContent;
+      await invoke('ws:send-message', {
+        gatewayId: 'gw-1',
+        sessionKey: 'agent:main:clawwork:task-1',
+        content,
+        dispatchContext: { userContent },
+      });
+      expect(beginArtifactRunForGatewayDispatchMock).toHaveBeenCalledWith(expect.objectContaining({ userContent }));
+      expect(sendChatMessageMock).toHaveBeenCalledWith('agent:main:clawwork:task-1', content, undefined);
+    },
+  );
 
   it('binds the trusted artifact run slot to the gateway run id', async () => {
     sendChatMessageMock.mockResolvedValueOnce({ runId: 'gateway-run-42' });
@@ -217,6 +237,27 @@ describe('ws-handlers: skills + config IPC channels', () => {
       expect(cancelArtifactRunsForSessionMock).toHaveBeenCalledWith('agent:main:clawwork:task-1');
     },
   );
+
+  it.each([{ aborted: true }, { aborted: false }, {}])(
+    'preserves the gateway abort receipt %j without inventing confirmation',
+    async (receipt) => {
+      abortChatMock.mockResolvedValueOnce(receipt);
+      expect(await invoke('ws:abort-chat', { gatewayId: 'gw-1', sessionKey: 'agent:main:clawwork:task-1' })).toEqual({
+        ok: true,
+        result: receipt,
+      });
+      expect(abortChatMock).toHaveBeenCalledOnce();
+      expect(abortChatMock).toHaveBeenCalledWith('agent:main:clawwork:task-1');
+    },
+  );
+
+  it('preserves rejected abort errors without a success receipt', async () => {
+    abortChatMock.mockRejectedValueOnce(new Error('abort failed'));
+    expect(await invoke('ws:abort-chat', { gatewayId: 'gw-1', sessionKey: 'agent:main:clawwork:task-1' })).toEqual({
+      ok: false,
+      error: 'abort failed',
+    });
+  });
 
   it('★ 发送成功才记 chat_sent（首条同时记 first_chat_sent）', async () => {
     const reporter = await freshReporter();

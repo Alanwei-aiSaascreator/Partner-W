@@ -197,6 +197,7 @@ export function registerWsHandlers(): void {
         sessionKey: string;
         content: string;
         attachments?: ChatAttachment[];
+        dispatchContext?: { userContent: string };
       },
     ) => {
       const taskId = parseTaskIdFromSessionKey(payload.sessionKey) ?? undefined;
@@ -227,7 +228,11 @@ export function registerWsHandlers(): void {
             gatewayId: payload.gatewayId,
             sessionKey: payload.sessionKey,
             taskId,
-            userContent: payload.content,
+            // Client-added history and diagnostics are context, not new user deliverables.
+            userContent:
+              typeof payload.dispatchContext?.userContent === 'string'
+                ? payload.dispatchContext.userContent
+                : payload.content,
           });
         } catch (error) {
           getDebugLogger().error({
@@ -679,8 +684,7 @@ export function registerWsHandlers(): void {
     const gw = getGatewayClient(payload.gatewayId);
     if (!gw?.isConnected) return { ok: false, error: 'gateway not connected' };
     try {
-      await gw.abortChat(payload.sessionKey);
-      return { ok: true };
+      return { ok: true, result: await gw.abortChat(payload.sessionKey) };
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'unknown error';
       return { ok: false, error: msg };
