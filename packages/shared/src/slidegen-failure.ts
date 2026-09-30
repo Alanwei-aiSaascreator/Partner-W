@@ -160,7 +160,9 @@ type SlidegenFailureReason =
  *    对标产品那份 deck 里就有一处重叠，它照样出了成品 ——
  *    "版式有点毛病"和"什么都没生成"是两种完全不同的坏。
  */
-export type SlidegenWarning =
+export type SlidegenWarning = SlidegenWarningReason & { artifactName?: string };
+
+type SlidegenWarningReason =
   /** 元素冲出画布 ⇒ 放映时那一块看不到。 */
   | { code: 'layout-out-of-bounds'; page: number; element: number; detail: string }
   /** 文字被别的元素盖住 ⇒ 用户看不到那句话，还不知道它存在。 */

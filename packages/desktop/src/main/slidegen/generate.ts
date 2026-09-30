@@ -130,10 +130,11 @@ export async function generateSlidesFromMessage(input: {
     try {
       let buffer: Buffer;
       const emitted = [];
+      const deckWarnings: SlidegenWarning[] = [];
       for (const [index, page] of pages.entries()) {
         const one = await emitPageShapes(page, assetRoot);
         emitted.push(one.page);
-        for (const w of one.warnings) result.warnings.push({ ...w, page: index + 1 });
+        for (const w of one.warnings) deckWarnings.push({ ...w, page: index + 1 });
       }
 
       // 先写到盘上（pptxgenjs 只接受路径），读完立刻删掉 —— 产物通道那边会再存一份，
@@ -156,6 +157,7 @@ export async function generateSlidesFromMessage(input: {
         sourceKey: sourceKeyFor(deck),
       });
       result.saved.push(artifact);
+      result.warnings.push(...deckWarnings.map((warning) => ({ ...warning, artifactName: artifact.name })));
       getDebugLogger().info({
         domain: 'artifact',
         event: 'slidegen.saved',
@@ -164,7 +166,7 @@ export async function generateSlidesFromMessage(input: {
           name: artifact.name,
           size: artifact.size,
           pages: emitted.length,
-          warnings: result.warnings.length,
+          warnings: deckWarnings.length,
         },
       });
     } catch (error) {
