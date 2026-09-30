@@ -3,7 +3,9 @@
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Artifact } from '@clawwork/shared';
+import type { Artifact, TeamMeetingRecord } from '@clawwork/shared';
+import { toast } from '../src/renderer/lib/toast';
+vi.mock('../src/renderer/lib/toast', () => ({ toast: { error: vi.fn() } }));
 
 vi.mock('react-i18next', () => ({
   // ⚠️ 把插值参数也渲染出来：否则"还有 {{count}} 条"这类文案**数字看不见**，
@@ -13,19 +15,30 @@ vi.mock('react-i18next', () => ({
   }),
   initReactI18next: { type: '3rdParty', init: vi.fn() },
 }));
-const { setActiveTaskSpy } = vi.hoisted(() => ({ setActiveTaskSpy: vi.fn() }));
+const { setActiveTaskSpy, taskState } = vi.hoisted(() => ({
+  setActiveTaskSpy: vi.fn(),
+  taskState: { activeTaskId: 'task-1' as string | null, workspaceEpoch: 0 },
+}));
+const meetingState = vi.hoisted(() => ({ records: [] as TeamMeetingRecord[] }));
+vi.mock('../src/renderer/features/team-meeting/instance', () => ({
+  useTeamMeetingStore: (selector: (state: typeof meetingState) => unknown) => selector(meetingState),
+}));
 
 vi.mock('../src/renderer/stores/taskStore', () => ({
-  useTaskStore: (selector: (state: unknown) => unknown) =>
-    selector({
-      activeTaskId: 'task-1',
-      // 历史产物那一块要拿会话标题（跳回来源会话时用户得知道跳到哪）
-      tasks: [
-        { id: 'task-1', title: '当前会话' },
-        { id: 'task-2', title: '上一个会话' },
-      ],
-      setActiveTask: setActiveTaskSpy,
-    }),
+  useTaskStore: Object.assign(
+    (selector: (state: unknown) => unknown) =>
+      selector({
+        activeTaskId: taskState.activeTaskId,
+        workspaceEpoch: taskState.workspaceEpoch,
+        // 历史产物那一块要拿会话标题（跳回来源会话时用户得知道跳到哪）
+        tasks: [
+          { id: 'task-1', title: '当前会话' },
+          { id: 'task-2', title: '上一个会话' },
+        ],
+        setActiveTask: setActiveTaskSpy,
+      }),
+    { getState: () => taskState },
+  ),
 }));
 vi.mock('../src/renderer/stores/messageStore', () => ({
   useMessageStore: (selector: (state: { setHighlightedMessage: () => void }) => unknown) =>
@@ -56,8 +69,152 @@ const artifact: Artifact = {
 
 describe('RightPanel artifacts', () => {
   beforeEach(() => {
+    vi.clearAllMocks();
+    meetingState.records = [];
+    taskState.activeTaskId = 'task-1';
+    taskState.workspaceEpoch = 0;
     document.body.innerHTML = '';
     useFileStore.setState({ selectedArtifactId: null });
+  });
+
+  it('hides current and historical files when the workspace changes but task ids are reused', async () => {
+    const oldHistory = { ...artifact, id: 'old-history', taskId: 'task-2', name: 'old-workspace.txt' };
+    const listArtifacts = vi.fn().mockResolvedValue({ ok: true, result: [artifact, oldHistory] });
+    Object.assign(window, {
+      clawwork: { listArtifacts, onArtifactSaved: vi.fn(() => () => {}), readArtifactThumbnail: vi.fn() },
+    });
+    const container = document.createElement('div');
+    const root = createRoot(container);
+    await act(async () => root.render(<RightPanel />));
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[data-action="toggle-artifact-history"]')!.click(),
+    );
+    expect(container.textContent).toContain('old-workspace.txt');
+    taskState.workspaceEpoch++;
+    listArtifacts.mockRejectedValue(new Error('new workspace unavailable'));
+    await act(async () => root.render(<RightPanel />));
+    expect(container.textContent).not.toContain('report.txt');
+    expect(container.textContent).not.toContain('old-workspace.txt');
+    expect(toast.error).toHaveBeenCalledTimes(1);
+    act(() => root.unmount());
+  });
+
+  it.each(['success', 'error'])('ignores an old workspace %s before React has rendered the reset', async (outcome) => {
+    let resolveOld!: (value: { ok: boolean; result: Artifact[] }) => void;
+    let rejectOld!: (error: Error) => void;
+    const listArtifacts = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, result: [] })
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve, reject) => {
+            resolveOld = resolve;
+            rejectOld = reject;
+          }),
+      )
+      .mockResolvedValue({ ok: true, result: [] });
+    Object.assign(window, { clawwork: { listArtifacts, onArtifactSaved: vi.fn(() => () => {}) } });
+    const container = document.createElement('div');
+    const root = createRoot(container);
+    await act(async () => root.render(<RightPanel />));
+    taskState.workspaceEpoch++;
+    await act(async () => {
+      if (outcome === 'error') rejectOld(new Error('old workspace disconnected'));
+      else resolveOld({ ok: true, result: [{ ...artifact, taskId: 'task-2' }] });
+    });
+    expect(toast.error).not.toHaveBeenCalled();
+    expect(container.textContent).not.toContain('report.txt');
+    expect(container.querySelector('[data-testid="artifact-history"]')).toBeNull();
+    await act(async () => root.render(<RightPanel />));
+    act(() => root.unmount());
+  });
+
+  it('shows all meeting stage artifacts once while preserving original source tasks', async () => {
+    meetingState.records = [
+      {
+        id: 'meeting-a',
+        ownerTaskId: 'task-1',
+        turns: [{ taskId: 'task-1' }, { taskId: 'task-2' }, { taskId: 'task-3' }],
+      } as TeamMeetingRecord,
+    ];
+    const child = { ...artifact, id: 'child', taskId: 'task-2', name: 'review.docx' };
+    const unrelated = { ...artifact, id: 'unrelated', taskId: 'other', name: 'unrelated.txt' };
+    const listArtifacts = vi.fn(async (taskId?: string) => ({
+      ok: true,
+      result: taskId ? [artifact] : [artifact, child, child, unrelated],
+    }));
+    Object.assign(window, {
+      clawwork: { listArtifacts, onArtifactSaved: vi.fn(() => () => {}), readArtifactThumbnail: vi.fn() },
+    });
+    const container = document.createElement('div');
+    const root = createRoot(container);
+    await act(async () => root.render(<RightPanel />));
+    expect(container.textContent).toContain('review.docx');
+    expect(container.textContent?.match(/review\.docx/g)).toHaveLength(1);
+    expect(container.textContent).not.toContain('unrelated.txt');
+    expect(container.querySelector('[data-meeting-source="task-2"]')).not.toBeNull();
+    act(() => root.unmount());
+  });
+
+  it('allows refreshing historical files without an active task', async () => {
+    taskState.activeTaskId = null;
+    const listArtifacts = vi.fn(async () => ({ ok: true, result: [artifact] }));
+    Object.assign(window, { clawwork: { listArtifacts, onArtifactSaved: vi.fn(() => () => {}) } });
+    const container = document.createElement('div');
+    const root = createRoot(container);
+    await act(async () => root.render(<RightPanel />));
+    const refresh = container.querySelector<HTMLButtonElement>('[aria-label="artifactCard.refresh"]')!;
+    expect(refresh.disabled).toBe(false);
+    await act(async () => refresh.click());
+    expect(listArtifacts).toHaveBeenCalledTimes(2);
+    expect(listArtifacts).toHaveBeenLastCalledWith();
+    act(() => root.unmount());
+  });
+
+  it('never displays previous-task artifacts after switching when refresh fails', async () => {
+    const listArtifacts = vi.fn(async () => ({ ok: true, result: [artifact] }));
+    Object.assign(window, {
+      clawwork: { listArtifacts, onArtifactSaved: vi.fn(() => () => {}), readArtifactThumbnail: vi.fn() },
+    });
+    const container = document.createElement('div');
+    const root = createRoot(container);
+    await act(async () => root.render(<RightPanel />));
+    expect(container.textContent).toContain('report.txt');
+    taskState.activeTaskId = null;
+    listArtifacts.mockRejectedValue(new Error('offline'));
+    await act(async () => root.render(<RightPanel />));
+    expect(container.textContent).not.toContain('report.txt');
+    expect(container.querySelector<HTMLButtonElement>('[aria-label="artifactCard.refresh"]')?.disabled).toBe(false);
+    act(() => root.unmount());
+  });
+
+  it('ignores a late response from the previous task after the next task has loaded', async () => {
+    let resolveOld!: (value: { ok: boolean; result: Artifact[] }) => void;
+    const next = { ...artifact, id: 'next', taskId: 'task-2', name: 'next-report.txt' };
+    const listArtifacts = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveOld = resolve;
+          }),
+      )
+      .mockResolvedValueOnce({ ok: true, result: [] })
+      .mockResolvedValue({ ok: true, result: [next] });
+    Object.assign(window, {
+      clawwork: { listArtifacts, onArtifactSaved: vi.fn(() => () => {}), readArtifactThumbnail: vi.fn() },
+    });
+    const container = document.createElement('div');
+    const root = createRoot(container);
+    await act(async () => root.render(<RightPanel />));
+    taskState.activeTaskId = 'task-2';
+    await act(async () => root.render(<RightPanel />));
+    expect(container.textContent).toContain('next-report.txt');
+    await act(async () => resolveOld({ ok: true, result: [{ ...artifact, name: 'stale-report.txt' }] }));
+    expect(container.textContent).toContain('next-report.txt');
+    expect(container.textContent).not.toContain('stale-report.txt');
+    expect(container.querySelector<HTMLButtonElement>('[aria-label="artifactCard.refresh"]')?.disabled).toBe(false);
+    act(() => root.unmount());
   });
 
   it('refreshes the list and displays a newly missing file state', async () => {

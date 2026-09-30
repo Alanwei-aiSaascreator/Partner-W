@@ -18,9 +18,8 @@ import { teamMeetingController } from '../features/team-meeting/instance';
 
 export async function refreshRendererAfterWorkspaceChange(): Promise<void> {
   teamMeetingController.reset();
-  await systemSessionService.end().catch(() => {});
-
   useTaskStore.getState().resetWorkspace();
+  await systemSessionService.end().catch(() => {});
 
   useMessageStore.setState({
     messagesByTask: {},

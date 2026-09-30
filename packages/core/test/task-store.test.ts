@@ -24,6 +24,17 @@ function setup() {
 }
 
 describe('task store pending task metadata', () => {
+  it('publishes a new workspace epoch even when both workspaces have no active task', () => {
+    const h = setup();
+    const observed: number[] = [];
+    const unsubscribe = h.store.subscribe((state) => observed.push(state.workspaceEpoch));
+    const before = h.store.getState().workspaceEpoch;
+    h.store.getState().resetWorkspace();
+    expect(h.store.getState().activeTaskId).toBeNull();
+    expect(h.store.getState().workspaceEpoch).toBe(before + 1);
+    expect(observed).toEqual([before + 1]);
+    unsubscribe();
+  });
   it.each(['device', 'tasks'])('ignores prior workspace hydration while awaiting %s', async (phase) => {
     const h = setup();
     const replacement = h.store.getState().createTask();

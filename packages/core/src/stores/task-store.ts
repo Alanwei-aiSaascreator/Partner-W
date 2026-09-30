@@ -33,6 +33,8 @@ export interface PendingNewTask {
 export interface TaskState {
   tasks: Task[];
   activeTaskId: string | null;
+  /** Changes synchronously on workspace reset, including reused task identities. */
+  workspaceEpoch: number;
   hydrated: boolean;
   pendingNewTask: PendingNewTask | null;
 
@@ -174,6 +176,7 @@ export function createTaskStore(deps: TaskStoreDeps) {
     tasks: [],
     activeTaskId: null,
     hydrated: false,
+    workspaceEpoch: 0,
     pendingNewTask: null,
 
     startNewTask: (opts?) => {
@@ -347,7 +350,13 @@ export function createTaskStore(deps: TaskStoreDeps) {
     resetWorkspace: () => {
       workspaceGeneration++;
       cachedDeviceId = null;
-      set({ tasks: [], activeTaskId: null, hydrated: false, pendingNewTask: null });
+      set({
+        tasks: [],
+        activeTaskId: null,
+        hydrated: false,
+        pendingNewTask: null,
+        workspaceEpoch: workspaceGeneration,
+      });
     },
     removeTask: async (id) => {
       const generation = workspaceGeneration;

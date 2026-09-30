@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, ChevronRight, FileText, RefreshCw } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useTaskStore } from '@/stores/taskStore';
@@ -12,6 +12,8 @@ import ArtifactCard from '@/components/ArtifactCard';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { buildArtifactHistory } from '@/lib/artifact-history';
+import { toast } from '@/lib/toast';
+import { useTeamMeetingStore } from '@/features/team-meeting/instance';
 
 function sortArtifacts(artifacts: Artifact[]) {
   return [...artifacts].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -19,35 +21,67 @@ function sortArtifacts(artifacts: Artifact[]) {
 
 export default function RightPanel() {
   const { t } = useTranslation();
+  const translate = useRef(t);
+  translate.current = t;
   const activeTaskId = useTaskStore((s) => s.activeTaskId);
+  const workspaceEpoch = useTaskStore((s) => s.workspaceEpoch);
   const tasks = useTaskStore((s) => s.tasks);
   const setActiveTask = useTaskStore((s) => s.setActiveTask);
   const setHighlightedMessage = useMessageStore((s) => s.setHighlightedMessage);
   const setMainView = useUiStore((s) => s.setMainView);
   const selectedArtifactId = useFileStore((s) => s.selectedArtifactId);
+  const meetings = useTeamMeetingStore((s) => s.records);
+  const meeting = meetings.find((record) => record.turns.some((turn) => turn.taskId === activeTaskId));
+  const scopeIds = useMemo(
+    () => (meeting ? meeting.turns.map((turn) => turn.taskId) : activeTaskId ? [activeTaskId] : []),
+    [meeting, activeTaskId],
+  );
+  const scopeKey = JSON.stringify([workspaceEpoch, activeTaskId, meeting?.id, scopeIds]);
+  const currentScopeKey = useRef(scopeKey);
+  currentScopeKey.current = scopeKey;
 
   const [taskArtifacts, setTaskArtifacts] = useState<Artifact[]>([]);
+  const [artifactScopeKey, setArtifactScopeKey] = useState<string | null>(null);
+  const currentTaskArtifacts = artifactScopeKey === scopeKey ? taskArtifacts : [];
   /** 全库产物（跨会话）。与 `taskArtifacts` 是两条查询：一个查会话内、一个查全部。 */
   const [allArtifacts, setAllArtifacts] = useState<Artifact[]>([]);
+  const [historyWorkspaceEpoch, setHistoryWorkspaceEpoch] = useState<number | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const refreshSequence = useRef(0);
 
   const refreshArtifacts = useCallback(async () => {
-    if (!activeTaskId) {
-      setTaskArtifacts([]);
-    } else {
-      setRefreshing(true);
-      try {
-        const res = await window.clawwork.listArtifacts(activeTaskId);
-        if (res.ok && res.result) setTaskArtifacts(sortArtifacts(res.result));
-      } finally {
-        setRefreshing(false);
-      }
+    const sequence = ++refreshSequence.current;
+    const ownsScope = () => {
+      const current = useTaskStore.getState();
+      return (
+        sequence === refreshSequence.current &&
+        current.workspaceEpoch === workspaceEpoch &&
+        current.activeTaskId === activeTaskId &&
+        currentScopeKey.current === scopeKey
+      );
+    };
+    setRefreshing(true);
+    try {
+      const [current, all] = await Promise.all([
+        activeTaskId ? window.clawwork.listArtifacts(activeTaskId) : Promise.resolve({ ok: true, result: [] }),
+        window.clawwork.listArtifacts(),
+      ]);
+      if (!ownsScope()) return;
+      if (!current.ok || !all.ok) throw new Error('artifact refresh failed');
+      const scoped = meeting
+        ? (all.result ?? []).filter((artifact) => scopeIds.includes(artifact.taskId))
+        : (current.result ?? []);
+      setTaskArtifacts(sortArtifacts([...new Map(scoped.map((artifact) => [artifact.id, artifact])).values()]));
+      setArtifactScopeKey(scopeKey);
+      setAllArtifacts(all.result ?? []);
+      setHistoryWorkspaceEpoch(workspaceEpoch);
+    } catch {
+      if (ownsScope()) toast.error(translate.current('artifactCard.error'));
+    } finally {
+      if (ownsScope()) setRefreshing(false);
     }
-    // 全库那条**不受"当前会话"影响**：它要的就是别的会话产出的东西。
-    const all = await window.clawwork.listArtifacts();
-    if (all.ok && all.result) setAllArtifacts(all.result);
-  }, [activeTaskId]);
+  }, [activeTaskId, meeting, scopeIds, scopeKey, workspaceEpoch]);
 
   useEffect(() => {
     void refreshArtifacts();
@@ -60,6 +94,7 @@ export default function RightPanel() {
     };
     const cleanup = window.clawwork.onArtifactSaved(handleArtifactSaved);
     return () => {
+      refreshSequence.current += 1;
       cleanup();
     };
   }, [activeTaskId, refreshArtifacts]);
@@ -68,7 +103,16 @@ export default function RightPanel() {
    * 历史产物（跨会话）：
    * 当前会话的那些**不进这里**（主列表已经有了），其余按来源会话分组、时间倒序、最多 50 条。
    */
-  const history = useMemo(() => buildArtifactHistory(allArtifacts, activeTaskId), [allArtifacts, activeTaskId]);
+  const history = useMemo(
+    () =>
+      buildArtifactHistory(
+        historyWorkspaceEpoch === workspaceEpoch
+          ? allArtifacts.filter((artifact) => !scopeIds.includes(artifact.taskId))
+          : [],
+        activeTaskId,
+      ),
+    [allArtifacts, activeTaskId, scopeIds, historyWorkspaceEpoch, workspaceEpoch],
+  );
   const taskTitles = useMemo(() => new Map(tasks.map((task) => [task.id, task.title])), [tasks]);
 
   /** 跳回来源会话 —— 与「文件」主视图里那条"跳转到源消息"同一套动作。 */
@@ -94,7 +138,7 @@ export default function RightPanel() {
               size="icon-sm"
               aria-label={t('artifactCard.refresh')}
               title={t('artifactCard.refresh')}
-              disabled={!activeTaskId || refreshing}
+              disabled={refreshing}
               onClick={() => void refreshArtifacts()}
             >
               <RefreshCw size={14} className={refreshing ? 'animate-spin motion-reduce:animate-none' : undefined} />
@@ -105,14 +149,14 @@ export default function RightPanel() {
 
       <ScrollArea className="min-h-0 flex-1">
         <div className="flex flex-col gap-2.5 px-3 py-3">
-          {taskArtifacts.length === 0 ? (
+          {currentTaskArtifacts.length === 0 ? (
             <div className="flex items-center gap-2 px-2 py-1.5 text-[var(--text-muted)]">
               <FileText size={14} className="shrink-0 text-[var(--text-muted)]" />
               <span className="type-support">{t('common.noFiles')}</span>
             </div>
           ) : (
             <div className="space-y-2">
-              {taskArtifacts.map((a) => {
+              {currentTaskArtifacts.map((a) => {
                 const selected = a.taskId === activeTaskId && a.id === selectedArtifactId;
                 return (
                   <div
@@ -124,7 +168,22 @@ export default function RightPanel() {
                       selected && 'border-[var(--border-accent)]',
                     )}
                   >
-                    <ArtifactCard artifact={a} compact onSelectMessage={setHighlightedMessage} />
+                    {meeting && a.taskId !== activeTaskId && (
+                      <button
+                        data-meeting-source={a.taskId}
+                        className="type-meta px-2 py-1 text-[var(--text-muted)]"
+                        onClick={() => jumpToTask(a.taskId, a.messageId)}
+                      >
+                        {taskTitles.get(a.taskId) ?? t('rightPanel.historyUnknownTask')}
+                      </button>
+                    )}
+                    <ArtifactCard
+                      artifact={a}
+                      compact
+                      onSelectMessage={(messageId) =>
+                        a.taskId === activeTaskId ? setHighlightedMessage(messageId) : jumpToTask(a.taskId, messageId)
+                      }
+                    />
                   </div>
                 );
               })}

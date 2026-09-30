@@ -7,6 +7,31 @@ vi.mock('../src/renderer/hooks/useGatewayDispatcherSetup', () => ({
 }));
 
 describe('refreshRendererAfterWorkspaceChange', () => {
+  it('invalidates workspace artifact ownership before asynchronous side-session cleanup', async () => {
+    vi.resetModules();
+    let finish!: () => void;
+    vi.doMock('../src/renderer/platform', async () => {
+      const actual = await vi.importActual<typeof import('../src/renderer/platform')>('../src/renderer/platform');
+      return {
+        ...actual,
+        systemSessionService: {
+          end: () =>
+            new Promise<void>((resolve) => {
+              finish = resolve;
+            }),
+        },
+      };
+    });
+    const { useTaskStore } = await import('../src/renderer/platform');
+    const { refreshRendererAfterWorkspaceChange } = await import('../src/renderer/lib/workspace-refresh');
+    const epoch = useTaskStore.getState().workspaceEpoch;
+    const pending = refreshRendererAfterWorkspaceChange();
+    const actual = useTaskStore.getState().workspaceEpoch;
+    finish();
+    await pending;
+    vi.doUnmock('../src/renderer/platform');
+    expect(actual).toBe(epoch + 1);
+  });
   beforeEach(() => {
     vi.clearAllMocks();
     reinitializeGatewayBootstrapMock.mockResolvedValue(undefined);
