@@ -4,10 +4,29 @@ import {
   collapseDiscoveredMessages,
   normalizeAssistantTurns,
   normalizeContentBlocks,
+  mergeMessageAttachments,
 } from '../src/protocol/normalize-history';
 import type { RawHistoryMessage } from '../src/protocol/types';
 
 describe('normalizeAssistantTurns', () => {
+  it('enriches the existing attachment metadata on the same URL without duplicating it', () => {
+    const original = { fileName: 'clip.mp4', dataUrl: 'https://example.com/clip.mp4', localPath: 'qa/clip.mp4' };
+    const enriched = { ...original, artifactId: 'artifact_managed_media_fixture', mimeType: 'video/mp4', size: 12 };
+    expect(mergeMessageAttachments([original], [enriched])).toEqual([enriched]);
+    expect(original).not.toHaveProperty('artifactId');
+  });
+
+  it('preserves established attachment ownership and reuses unchanged metadata', () => {
+    const original = {
+      fileName: 'clip.mp4',
+      dataUrl: 'https://example.com/clip.mp4',
+      artifactId: 'artifact_managed_media_original',
+    };
+    const base = [original];
+    expect(mergeMessageAttachments(base, [{ ...original, artifactId: 'artifact_managed_media_other' }])).toBe(base);
+    expect(mergeMessageAttachments(base, [original])).toBe(base);
+  });
+
   it.each([
     ['run-a', undefined],
     [undefined, 'run-a'],

@@ -105,6 +105,7 @@ export interface NormalizedAssistantTurn {
 }
 
 export interface DiscoveredMessageShape {
+  runId?: string;
   role: string;
   content: string;
   timestamp: string;

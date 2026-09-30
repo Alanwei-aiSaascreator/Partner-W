@@ -79,7 +79,7 @@ export interface DiscoveredSession {
   inputTokens?: number;
   outputTokens?: number;
   contextTokens?: number;
-  messages: { role: string; content: string; timestamp: string; attachments?: MessageAttachment[] }[];
+  messages: { role: string; content: string; timestamp: string; runId?: string; attachments?: MessageAttachment[] }[];
 }
 
 export interface SyncResult {

@@ -12,6 +12,7 @@ import {
 } from '../protocol/normalize-history.js';
 
 type DiscoveredSyncMessage = {
+  runId?: string;
   role: string;
   content: string;
   timestamp: string;
@@ -303,7 +304,7 @@ export function createSessionSync(deps: SessionSyncDeps) {
   async function backfillAssistantAttachments(
     taskId: string,
     sessionKey: string,
-    incoming: Array<{ timestamp: string; attachments?: Message['attachments'] }>,
+    incoming: Array<{ timestamp: string; runId?: string; attachments?: Message['attachments'] }>,
     gatewayId: string,
     epoch: number,
   ): Promise<void> {
@@ -321,9 +322,10 @@ export function createSessionSync(deps: SessionSyncDeps) {
         if ((message.sessionKey ?? sessionKey) !== sessionKey) return message;
         const match = byTimestamp.get(message.timestamp);
         if (!match?.attachments?.length) return message;
+        if (message.runId && match.runId && message.runId !== match.runId) return message;
 
         const merged = mergeMessageAttachments(message.attachments, match.attachments);
-        if ((merged?.length ?? 0) === (message.attachments?.length ?? 0)) return message;
+        if (merged === message.attachments) return message;
 
         changed = true;
         const nextMessage = { ...message, attachments: merged };
@@ -693,6 +695,7 @@ export function createSessionSync(deps: SessionSyncDeps) {
               attachments: message.attachments as Message['attachments'],
               toolCalls: message.toolCalls,
               model: message.model,
+              runId: message.runId,
             })),
             d.taskId,
           );

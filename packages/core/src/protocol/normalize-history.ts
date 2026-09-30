@@ -239,13 +239,25 @@ export function mergeMessageAttachments(
   incoming: MessageAttachment[] | undefined,
 ): MessageAttachment[] | undefined {
   const merged = [...(base ?? [])];
-  const seen = new Set(merged.map((attachment) => attachment.dataUrl));
+  const indexes = new Map(merged.map((attachment, index) => [attachment.dataUrl, index]));
+  let changed = false;
   for (const attachment of incoming ?? []) {
-    if (seen.has(attachment.dataUrl)) continue;
-    seen.add(attachment.dataUrl);
+    const index = indexes.get(attachment.dataUrl);
+    if (index !== undefined) {
+      const existing = merged[index];
+      const missing = Object.entries(attachment).filter(
+        ([key, value]) => value !== undefined && existing[key as keyof MessageAttachment] === undefined,
+      );
+      if (missing.length === 0) continue;
+      merged[index] = { ...existing, ...Object.fromEntries(missing) };
+      changed = true;
+      continue;
+    }
+    indexes.set(attachment.dataUrl, merged.length);
     merged.push(attachment);
+    changed = true;
   }
-  return merged.length ? merged : undefined;
+  return merged.length ? (changed ? merged : base) : undefined;
 }
 
 export function normalizeContentBlocks(
@@ -629,6 +641,7 @@ export function collapseDiscoveredMessages(messages: DiscoveredMessageShape[], t
     // 同 normalizeAssistantTurns：取最后一条带 model 的，缺的不清空。
     const model = sanitizeModel(message.model);
 
+    if (currentAssistant?.runId && message.runId && currentAssistant.runId !== message.runId) flushAssistant();
     if (!currentAssistant) {
       currentAssistant = {
         id: crypto.randomUUID(),
@@ -639,10 +652,12 @@ export function collapseDiscoveredMessages(messages: DiscoveredMessageShape[], t
         toolCalls: [],
         timestamp: message.timestamp,
         ...(model ? { model } : {}),
+        ...(message.runId ? { runId: message.runId } : {}),
       };
     } else if (model) {
       currentAssistant.model = model;
     }
+    if (message.runId) currentAssistant.runId = message.runId;
 
     if (visibleText) {
       currentAssistant.content = appendSegment(currentAssistant.content, visibleText);
