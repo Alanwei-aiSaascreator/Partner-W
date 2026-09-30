@@ -35,6 +35,7 @@ import WebSocket from 'ws';
 import { getDebugLogger } from '../debug/index.js';
 import { attachGatewayOutputStreams, gatewayOutputDigest } from './gateway-output.js';
 import { BOOTSTRAP_PROCESS_EXITED, BOOTSTRAP_READY_TIMEOUT } from './bootstrap-retry.js';
+import { inheritWindowsSystemProxy } from './gateway-proxy.js';
 
 /** 端口被**别人**的网关占着（或占着的那个不可信）。 */
 export const GATEWAY_PORT_OCCUPIED = 'runtime.gateway-port-occupied';
@@ -577,9 +578,10 @@ export function buildGatewayEnvironment(baseEnv: NodeJS.ProcessEnv, stateDir: st
     env[key] = value;
   }
 
-  env.OPENCLAW_STATE_DIR = stateDir;
-  env.OPENCLAW_SUPERVISOR_MODE = 'external';
-  return env;
+  const childEnv = inheritWindowsSystemProxy(env);
+  childEnv.OPENCLAW_STATE_DIR = stateDir;
+  childEnv.OPENCLAW_SUPERVISOR_MODE = 'external';
+  return childEnv;
 }
 
 /**
