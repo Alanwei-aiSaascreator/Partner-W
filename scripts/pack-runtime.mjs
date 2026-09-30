@@ -30,6 +30,8 @@ import {
   WEB_SEARCH_AVAILABILITY_ENTRY,
   WEB_SEARCH_AVAILABILITY_PATCH_ID,
 } from './lib/web-search-availability-runtime.mjs';
+import { bundleNativeTools, verifyNativeToolRuntime } from './lib/native-tool-runtime.mjs';
+import { bundleWindowsVideoFrames } from './lib/windows-video-frames-runtime.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(HERE, '..');
@@ -193,6 +195,7 @@ function parseArgs(argv) {
     else if (a === '--no-prune') out.prune = false;
     else if (a === '--verify-only') out.verifyOnly = true;
     else if (a === '--keep-file') out.keepFile = path.resolve(argv[++i]);
+    else if (a === '--native-tools') out.nativeTools = path.resolve(argv[++i]);
   }
   return out;
 }
@@ -249,6 +252,9 @@ async function main() {
   }
 
   if (!args.version) throw new Error('缺 --version，例如 --version 2026.9.3');
+  if (!args.nativeTools)
+    throw new Error('Windows runtime packaging requires --native-tools <verified bundle directory>');
+  verifyNativeToolRuntime(args.nativeTools);
 
   const keepList = args.keepFile
     ? fs
@@ -286,6 +292,8 @@ async function main() {
   const searchPlugin = bundleOfficialSearchPlugin(stage);
   const searchRuntime = path.join(stage, WEB_SEARCH_AVAILABILITY_ENTRY);
   fs.writeFileSync(searchRuntime, patchWebSearchAvailabilityRuntime(fs.readFileSync(searchRuntime, 'utf8')));
+  const nativePatch = bundleNativeTools(stage, args.nativeTools);
+  const videoFramesPatch = bundleWindowsVideoFrames(stage);
 
   // ③ 剪技能
   const skillsDir = path.join(pkgDir, 'skills');
@@ -334,7 +342,7 @@ async function main() {
     fileCount,
     sha256,
     extractor: 'win32-x64/extractor/7za.exe',
-    patches: [searchPlugin.patchId, WEB_SEARCH_AVAILABILITY_PATCH_ID],
+    patches: [searchPlugin.patchId, WEB_SEARCH_AVAILABILITY_PATCH_ID, nativePatch, videoFramesPatch],
   });
   const runtimeDir = path.join(args.out, 'openclaw-runtime');
   fs.mkdirSync(runtimeDir, { recursive: true });
