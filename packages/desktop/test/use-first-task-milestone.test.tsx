@@ -2,7 +2,8 @@
 
 import { act, type ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
+import { useArtifactDeliveryStore } from '../src/renderer/stores/artifactDeliveryStore';
 import { useFirstTaskMilestone } from '../src/renderer/hooks/useFirstTaskMilestone';
 import type { MilestoneMessage, MilestoneStorage } from '../src/renderer/lib/first-task-milestone';
 
@@ -75,6 +76,7 @@ const assistantMessage: MilestoneMessage = {
 };
 
 describe('useFirstTaskMilestone', () => {
+  beforeEach(() => useArtifactDeliveryStore.setState({ settled: [] }));
   it('reveals and persists once after a completed idle exchange', () => {
     (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     const storage = new MemoryStorage();
@@ -87,6 +89,13 @@ describe('useFirstTaskMilestone', () => {
     expect(view.container.textContent).toContain('hidden');
 
     act(() => view.root.render(<Harness storage={storage} messages={[userMessage, assistantMessage]} />));
+    expect(view.container.textContent).toContain('hidden');
+    expect(storage.writes).toBe(0);
+    act(() =>
+      useArtifactDeliveryStore
+        .getState()
+        .record({ taskId: 'task-1', sessionKey: 'session-1', messageId: 'a1', status: 'succeeded' }),
+    );
     expect(view.container.textContent).toContain('visible');
     expect(storage.writes).toBe(1);
 
@@ -112,6 +121,19 @@ describe('useFirstTaskMilestone', () => {
 
     expect(view.container.textContent).toContain('hidden');
     expect(storage.writes).toBe(1);
+    view.unmount();
+  });
+
+  it.each(['failed', 'needs-review', 'canceled'] as const)('does not celebrate %s delivery', (status) => {
+    const storage = new MemoryStorage();
+    const view = mount(<Harness storage={storage} messages={[userMessage, assistantMessage]} />);
+    act(() =>
+      useArtifactDeliveryStore
+        .getState()
+        .record({ taskId: 'task-1', sessionKey: 'session-1', messageId: 'a1', status }),
+    );
+    expect(view.container.textContent).toContain('hidden');
+    expect(storage.writes).toBe(0);
     view.unmount();
   });
 });

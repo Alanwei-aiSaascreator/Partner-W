@@ -24,6 +24,7 @@ const baseInput = {
   taskId: 'task-1',
   onboardingCompletedAt: '2026-09-14T10:00:00.000Z',
   activity: 'idle' as const,
+  deliveredMessageIds: ['a1'],
   messages: [
     { id: 'u1', role: 'user' as const, content: 'draft a plan', timestamp: '2026-09-14T10:01:00.000Z' },
     {
@@ -47,6 +48,8 @@ describe('first task milestone', () => {
   });
 
   it('rejects incomplete, empty, out-of-order, and historical exchanges', () => {
+    expect(detectFirstTaskCompletion({ ...baseInput, deliveredMessageIds: [] })).toBeNull();
+    expect(detectFirstTaskCompletion({ ...baseInput, deliveredMessageIds: ['unrelated-message'] })).toBeNull();
     expect(detectFirstTaskCompletion({ ...baseInput, activity: 'responding' })).toBeNull();
     expect(
       detectFirstTaskCompletion({

@@ -25,7 +25,12 @@ vi.mock('../src/main/db/index.js', () => ({
   isDbReady: vi.fn(() => true),
   getDb: vi.fn(() => ({
     insert: vi.fn(() => ({ values: vi.fn(() => ({ onConflictDoUpdate: vi.fn(() => ({ run: vi.fn() })) })) })),
-    select: vi.fn(() => ({ from: vi.fn(() => ({ where: vi.fn(() => ({ get: selectGetMock })) })) })),
+    select: vi.fn((fields?: Record<string, unknown>) => {
+      if (fields && 'taskId' in fields && 'sessionKey' in fields && 'role' in fields) {
+        return { from: () => ({ where: () => ({ get: () => undefined }) }) };
+      }
+      return { from: vi.fn(() => ({ where: vi.fn(() => ({ get: selectGetMock })) })) };
+    }),
   })),
 }));
 vi.mock('../src/main/ipc/team-meeting-handlers.js', () => ({ withTeamMeetingTaskDeletion: vi.fn() }));

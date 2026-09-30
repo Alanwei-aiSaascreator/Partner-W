@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { SessionActivity } from '@clawwork/core';
+import { useArtifactDeliveryStore } from '@/stores/artifactDeliveryStore';
 import {
   detectFirstTaskCompletion,
   loadFirstTaskMilestone,
@@ -33,6 +34,7 @@ export function useFirstTaskMilestone({
   activity,
   storage = window.localStorage,
 }: UseFirstTaskMilestoneParams): { visible: boolean; dismiss: () => void } {
+  const settled = useArtifactDeliveryStore((s) => s.settled);
   const [state, setState] = useState<MilestoneState>(() => ({
     userId,
     record: loadFirstTaskMilestone(userId, storage),
@@ -58,11 +60,14 @@ export function useFirstTaskMilestone({
       onboardingCompletedAt,
       activity,
       messages,
+      deliveredMessageIds: settled
+        .filter((entry) => entry.taskId === taskId && entry.status === 'succeeded')
+        .map((entry) => entry.messageId),
     });
     if (!record) return;
     saveFirstTaskMilestone(record, storage);
     setState({ userId, record, visibleTaskId: taskId, dismissed: false });
-  }, [activity, messages, onboardingCompletedAt, state.record, state.userId, storage, taskId, userId]);
+  }, [activity, messages, onboardingCompletedAt, state.record, state.userId, storage, taskId, userId, settled]);
 
   const dismiss = useCallback(() => {
     setState((current) => ({ ...current, dismissed: true }));

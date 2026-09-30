@@ -1,4 +1,4 @@
-import type { SlidegenFailure, SlidegenWarning } from '@clawwork/shared';
+import type { SlidegenFailure } from '@clawwork/shared';
 
 /**
  * 幻灯片没生成出来 / 版式有毛病时，给用户看的那句话。
@@ -75,34 +75,4 @@ export function slidegenFailureToastBody(failures: readonly SlidegenFailure[], t
     lines.push(line);
   }
   return lines.join('\n');
-}
-
-/**
- * 版式警告 → 一句话。**第一句必须说清文件已经出来了。**
- *
- * 最多列三条：一页里几十个元素越界时，全列出来会变成一堵墙，
- * 用户要的是"去哪一页看什么"，不是一份完整清单。
- */
-const MAX_WARNING_LINES = 3;
-
-export function slidegenWarningToastBody(warnings: readonly SlidegenWarning[], t: Translate): string {
-  const lines: string[] = [];
-  const seen = new Set<string>();
-  for (const warning of warnings) {
-    let line: string;
-    switch (warning.code) {
-      case 'layout-out-of-bounds':
-        line = t('slidegen.warn.outOfBounds', { page: warning.page });
-        break;
-      case 'layout-text-occluded':
-        line = t('slidegen.warn.occluded', { page: warning.page });
-        break;
-    }
-    if (seen.has(line)) continue;
-    seen.add(line);
-    lines.push(line);
-    if (lines.length >= MAX_WARNING_LINES) break;
-  }
-  const head = t('slidegen.warn.head');
-  return lines.length > 0 ? `${head}\n${lines.join('\n')}` : head;
 }

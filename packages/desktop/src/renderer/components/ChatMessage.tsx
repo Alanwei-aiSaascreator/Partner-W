@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils';
 import { motion as motionPresets } from '@/styles/design-tokens';
 import { copyTextToClipboard } from '@/lib/clipboard';
 import { ARTIFACT_FAILURE_MARKER } from '@/lib/artifact-delivery-feedback';
+import { parseArtifactQualityNote } from '@/lib/artifact-quality-feedback';
 import AssistantBlock from './AssistantBlock';
 import { AttachmentFileCard, InlineImageBubble, MessageActionButton } from './MessageParts';
 import MessageAvatar from './MessageAvatar';
@@ -144,6 +145,34 @@ const ChatMessage = memo(function ChatMessage({
   }
 
   if (isSystem) {
+    const quality = parseArtifactQualityNote(message);
+    if (quality) {
+      return (
+        <div className="py-3">
+          <div
+            role="status"
+            className="type-support break-words rounded-xl border border-[var(--border-warning)] bg-[var(--bg-warning)] px-3 py-2 text-[var(--text-primary)]"
+          >
+            <p className="font-medium">{t('slidegen.warnedTitle')}</p>
+            <p className="mt-1">{t('slidegen.warn.head')}</p>
+            <ul className="mt-2 space-y-2">
+              {quality.warnings.map((warning, index) => (
+                <li key={index}>
+                  {warning.artifactName && <p className="font-medium">{warning.artifactName}</p>}
+                  <p>
+                    {t(
+                      warning.code === 'layout-text-occluded' ? 'slidegen.warn.occluded' : 'slidegen.warn.outOfBounds',
+                      { page: warning.page },
+                    )}
+                  </p>
+                  <p className="whitespace-pre-wrap">{`#${warning.element}: ${warning.detail}`}</p>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      );
+    }
     if (message.content.startsWith(ARTIFACT_FAILURE_MARKER)) {
       return (
         <div className="py-3">

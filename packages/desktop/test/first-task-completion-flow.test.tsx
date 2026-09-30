@@ -2,7 +2,8 @@
 
 import { act, type ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { useArtifactDeliveryStore } from '../src/renderer/stores/artifactDeliveryStore';
 import type { MilestoneStorage } from '../src/renderer/lib/first-task-milestone';
 
 vi.mock('react-i18next', () => ({
@@ -39,6 +40,14 @@ function render(ui: ReactElement): { container: HTMLDivElement; unmount: () => v
 }
 
 describe('FirstTaskCompletionFlow', () => {
+  beforeEach(() =>
+    useArtifactDeliveryStore.setState({
+      settled: [
+        { taskId: 'task-1', sessionKey: 'session-1', messageId: 'assistant-message', status: 'succeeded' },
+        { taskId: 'task-2', sessionKey: 'session-2', messageId: 'assistant-message', status: 'succeeded' },
+      ],
+    }),
+  );
   it('reveals the first completion actions and consumes the card after an action', () => {
     (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     const storage = new MemoryStorage();

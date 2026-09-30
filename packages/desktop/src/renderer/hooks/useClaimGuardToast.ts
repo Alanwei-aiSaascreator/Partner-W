@@ -5,11 +5,39 @@ import { slidegenFailureToastBody } from '@/lib/slidegen-copy';
 import { docgenFailureMessage } from '@/lib/docgen-failure-copy';
 import { htmlgenFailureMessage } from '@/lib/htmlgen-failure-copy';
 import { ARTIFACT_FAILURE_MARKER } from '@/lib/artifact-delivery-feedback';
+import { ARTIFACT_QUALITY_MARKER, parseArtifactQualityNote } from '@/lib/artifact-quality-feedback';
 import { useMessageStore } from '@/stores/messageStore';
+import { useArtifactDeliveryStore } from '@/stores/artifactDeliveryStore';
 
 export function useClaimGuardToast(): void {
   const { t } = useTranslation();
   const seen = useRef(new Set<string>());
+
+  useEffect(
+    () =>
+      window.clawwork.onArtifactDeliverySettled?.((result) => {
+        useArtifactDeliveryStore.getState().record(result);
+        if (result.status === 'canceled' || !result.slideWarnings?.length) return;
+        const store = useMessageStore.getState();
+        const existing = store.messagesByTask[result.taskId] ?? [];
+        if (
+          existing.some(
+            (message) =>
+              message.taskId === result.taskId &&
+              message.sessionKey === result.sessionKey &&
+              parseArtifactQualityNote(message)?.sourceMessageId === result.messageId,
+          )
+        )
+          return;
+        const content = `${ARTIFACT_QUALITY_MARKER}\n${JSON.stringify({
+          sourceMessageId: result.messageId,
+          warnings: result.slideWarnings,
+        })}`;
+        if (!parseArtifactQualityNote({ role: 'system', content })) return;
+        store.addMessage(result.taskId, 'system', content, undefined, { sessionKey: result.sessionKey });
+      }),
+    [],
+  );
 
   useEffect(() => {
     return window.clawwork.onClaimViolation((violation) => {

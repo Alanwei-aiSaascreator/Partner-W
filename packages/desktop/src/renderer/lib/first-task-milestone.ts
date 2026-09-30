@@ -27,6 +27,7 @@ interface DetectFirstTaskCompletionParams {
   onboardingCompletedAt: string;
   activity: SessionActivity;
   messages: readonly MilestoneMessage[];
+  deliveredMessageIds: readonly string[];
 }
 
 const STORAGE_PREFIX = 'rongying-cube:first-task:v1:';
@@ -46,6 +47,7 @@ export function detectFirstTaskCompletion({
   onboardingCompletedAt,
   activity,
   messages,
+  deliveredMessageIds,
 }: DetectFirstTaskCompletionParams): FirstTaskMilestoneRecord | null {
   if (!userId || !taskId || activity !== 'idle') return null;
 
@@ -65,6 +67,7 @@ export function detectFirstTaskCompletion({
     const timestamp = validTimestamp(message.timestamp);
     return (
       message.role === 'assistant' &&
+      deliveredMessageIds.includes(message.id) &&
       message.content.trim().length > 0 &&
       timestamp !== null &&
       timestamp >= userTimestamp
