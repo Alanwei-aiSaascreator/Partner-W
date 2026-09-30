@@ -27,9 +27,23 @@ describe('交付边界（COMMON_OPERATING_CONTRACT）', () => {
     expect(COMMON_OPERATING_CONTRACT, '技能不可见时的口径').toMatch(/skill is \*\*not\*\* available/i);
   });
 
-  it('⭐ 拿不出手的仍然拿不出手：**图片**要一口回绝，且"第一句就说明"', () => {
-    expect(COMMON_OPERATING_CONTRACT).toMatch(/cannot\*{0,2} produce images/i);
-    expect(COMMON_OPERATING_CONTRACT).toMatch(/say so plainly in the first reply/i);
+  it('uses actual image tool availability instead of refusing every image request', () => {
+    expect(COMMON_OPERATING_CONTRACT).not.toMatch(/cannot\*{0,2} produce images/i);
+    expect(COMMON_OPERATING_CONTRACT).toMatch(/image_generate` is available, use that tool/);
+    expect(COMMON_OPERATING_CONTRACT).toMatch(/tool is unavailable, state the specific missing capability/);
+    expect(COMMON_OPERATING_CONTRACT).toMatch(/verify its actual output before claiming completion/);
+  });
+
+  it('does not invent image job progress or image links', () => {
+    expect(COMMON_OPERATING_CONTRACT).toMatch(/Do not claim an image job is\s+running before the tool accepts it/);
+    expect(COMMON_OPERATING_CONTRACT).toContain('fictitious image links');
+  });
+
+  it('includes the capability-driven image contract in every preset soul', () => {
+    for (const definition of PRESET_AGENT_DEFINITIONS) {
+      expect(definition.soulMd, definition.id).toContain('image_generate');
+      expect(definition.soulMd, definition.id).not.toMatch(/cannot\*{0,2} produce images/i);
+    }
   });
 
   it('⭐ 别把三种文档写成"已经能了"——边界句必须挂着技能这个前提', () => {

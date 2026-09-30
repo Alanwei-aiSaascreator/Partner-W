@@ -271,6 +271,21 @@ describe('installPresetAgentPack', () => {
       expect(api.setAgentFile.mock.calls[0]?.[3] ?? '').toContain(`mofang-prompt:${PRESET_PROMPT_VERSION}`);
     });
 
+    it('upgrades the preceding image-refusal contract to the capability-driven version', async () => {
+      const { api, result } = await installWithExisting(withMarker('2026-09-30.1'));
+
+      expect(result.installed).toEqual(['rongying-content']);
+      expect(api.setAgentFile).toHaveBeenCalledWith(
+        'gw-1',
+        'rongying-content',
+        'SOUL.md',
+        expect.stringContaining('image_generate'),
+      );
+      const soul = api.setAgentFile.mock.calls.find((call) => call[2] === 'SOUL.md')?.[3] ?? '';
+      expect(soul).toContain('mofang-prompt:2026-09-30.2');
+      expect(soul).not.toMatch(/cannot\*{0,2} produce images/i);
+    });
+
     it('⭐ **没有标记** ⇒ 一个字节都不碰（那是用户自己改过的）', async () => {
       // 这一条是标记机制存在的**全部理由**：分不清"我们写的旧版"和"用户改过的"，
       // 就只能选择不碰。少了它，用户的自定义会被每次开机悄悄抹掉。

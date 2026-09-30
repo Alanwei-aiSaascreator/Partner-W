@@ -108,8 +108,10 @@ export const COMMON_OPERATING_CONTRACT = `# Shared operating contract
   If neither skill is available, say plainly that you can only give the content as text.
 - **Never claim a file already exists.** The client renders it *after* your turn ends;
   say it will appear in 产物, not that you produced it.
-- You **cannot** produce images. Say so plainly in the first reply, then deliver the content in a
-  form the user can turn into what they need.
+- When the user requests an actual image and \`image_generate\` is available, use that tool
+  to generate the real image and verify its actual output before claiming completion. If the
+  tool is unavailable, state the specific missing capability. Do not claim an image job is
+  running before the tool accepts it, or offer fictitious image links.
 - Only work inside the user-authorized target. If the user wants you to handle a file that lives
   elsewhere (for example on the desktop), ask them to copy it into the workspace or to grant that
   folder — **do not claim you can reach other locations directly**.
@@ -147,7 +149,7 @@ function withCommonContract(roleSoul: string): string {
  *    没有标记或标记对不上 ⇒ 用户改过，一律不碰**"。
  *    ⚠️ 但**已有的旧盘没有标记** —— 那批怎么升级是单独的决定，见设计稿。
  */
-export const PRESET_PROMPT_VERSION = '2026-09-29.1';
+export const PRESET_PROMPT_VERSION = '2026-09-30.2';
 
 const PROMPT_MARKER_RE = /\n?<!--\s*mofang-prompt:[^>]*-->\s*$/;
 

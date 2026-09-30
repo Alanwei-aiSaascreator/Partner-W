@@ -120,6 +120,6 @@ describe('预置助手的交付合同：每条通道都要在清单里', () => {
     // 版本号是"将来能不能安全升级已发出去的盘"的唯一依据
     // （见 preset-agents.ts 里 PRESET_PROMPT_VERSION 的注释）——
     // ⚠️ 所以**改了合同文本就必须动它**，否则已装的盘拿不到新合同。
-    expect(PRESET_PROMPT_VERSION).toBe('2026-09-29.1');
+    expect(PRESET_PROMPT_VERSION).toBe('2026-09-30.2');
   });
 });
