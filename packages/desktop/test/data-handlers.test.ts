@@ -163,6 +163,9 @@ describe('registerDataHandlers', () => {
       messageId: 'msg-image-1',
       content: '',
       attachments,
+      gatewayHttpBase: undefined,
+      resolveMediaDownload: expect.any(Function),
+      onActivity: expect.any(Function),
     });
   });
 
@@ -197,6 +200,9 @@ describe('registerDataHandlers', () => {
       messageId: 'existing-msg-1',
       content: 'done',
       attachments: undefined,
+      gatewayHttpBase: undefined,
+      resolveMediaDownload: expect.any(Function),
+      onActivity: expect.any(Function),
     });
   });
 

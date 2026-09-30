@@ -4,6 +4,7 @@ import { and, eq, desc, sql } from 'drizzle-orm';
 import { getDb, isDbReady } from '../db/index.js';
 import { tasks, messages, artifacts, taskRooms, taskRoomSessions, teams, teamAgents } from '../db/schema.js';
 import { autoExtractArtifacts } from '../artifact/auto-extract.js';
+import { captureArtifactDeliveryOperation } from '../artifact/delivery-operation.js';
 import { captureTaskArtifactBaseline, reconcileTaskArtifacts, type ArtifactBaseline } from '../artifact/reconcile.js';
 import { resolveAgentWorkspace } from '../artifact/agent-workspace.js';
 import { generateDocumentsFromMessage } from '../docgen/generate.js';
@@ -633,6 +634,7 @@ function finalizeAssistantArtifacts(input: {
     });
     return;
   }
+  const activity = captureArtifactDeliveryOperation(input);
   void (async () => {
     const deliveryFailure: ArtifactDeliveryFailure = {
       taskId: input.taskId,
@@ -665,6 +667,7 @@ function finalizeAssistantArtifacts(input: {
         attachments: input.attachments,
         gatewayHttpBase: input.gatewayHttpBase,
         resolveMediaDownload: mediaDownloadResolver(input.gatewayId, input.sessionKey),
+        onActivity: activity.phase,
       });
       if (extraction?.mediaFailures.length) deliveryFailure.mediaFailures = extraction.mediaFailures;
       const completed = completedAssistantMessages.get(messageKey);
@@ -707,6 +710,7 @@ function finalizeAssistantArtifacts(input: {
               messageId: input.messageId,
               content: structured.content,
               templatesRoot: pptxTemplatesRoot(),
+              onActivity: activity.phase,
             })
           : {
               saved: [],
@@ -748,6 +752,7 @@ function finalizeAssistantArtifacts(input: {
               taskId: input.taskId,
               messageId: input.messageId,
               content: structured.content,
+              onActivity: activity.phase,
             })
           : {
               saved: [],
@@ -846,6 +851,7 @@ function finalizeAssistantArtifacts(input: {
           taskId: input.taskId,
           messageId: input.messageId,
           content: slideContent,
+          onActivity: activity.phase,
         });
         // 文件那条路自己判出来的失败（没围栏 / 读不动）**也要上屏** —— 否则又回到
         // "产物空、日志空、界面说已完成"那类静默。放前面：它比排版层的失败更根本。
@@ -873,6 +879,7 @@ function finalizeAssistantArtifacts(input: {
         if (isArtifactRunCanceled(run) || !run.baseline) return;
         const baseline = await run.baseline;
         if (isArtifactRunCanceled(run)) return;
+        activity.phase('reconciling-artifacts');
         const result = await reconcileTaskArtifacts({
           workspacePath: input.workspacePath,
           taskId: input.taskId,
@@ -896,6 +903,7 @@ function finalizeAssistantArtifacts(input: {
         const agentRoot = run.agentBaseline ? await run.agentBaseline : null;
         // 没有第二个根只是「这趟不扫助手工作区」，不能 `return`：后面的结果/声称守卫仍要跑。
         if (!isArtifactRunCanceled(run) && agentRoot) {
+          activity.phase('reconciling-artifacts');
           const agentResult = await reconcileTaskArtifacts({
             workspacePath: agentRoot.workspacePath,
             taskId: input.taskId,
@@ -1001,6 +1009,7 @@ function finalizeAssistantArtifacts(input: {
         deliveryFailure.docFailures?.length ||
         deliveryFailure.htmlFailures?.length,
       );
+      activity.finish(settlement.status);
       completedAssistantMessages.get(messageKey)!.mediaRetrySettlement = {
         ...settlement,
         status: canceled ? 'canceled' : nonMediaFailed ? 'failed' : hasWarnings ? 'needs-review' : 'succeeded',
@@ -1022,7 +1031,12 @@ function finalizeAssistantArtifacts(input: {
         }
       }
     }
-  })();
+  })()
+    .catch((error: unknown) => {
+      activity.finish('failed');
+      console.error('[artifact] delivery pipeline failed:', error);
+    })
+    .finally(() => activity.finish('failed'));
 }
 
 export function registerDataHandlers(): void {
@@ -1256,6 +1270,13 @@ export function registerDataHandlers(): void {
             // trusted user-turn baseline so old workspace files are not claimed.
             const taskRow = db.select({ gid: tasks.gatewayId }).from(tasks).where(eq(tasks.id, msg.taskId)).get();
             const gatewayHttpBase = taskRow ? getGatewayClient(taskRow.gid)?.httpBase : undefined;
+            const activity = captureArtifactDeliveryOperation({
+              taskId: msg.taskId,
+              sessionKey: resolvedSessionKey,
+              messageId: persistedMessageId,
+              runId: msg.runId,
+            });
+            let activityOutcome: ArtifactDeliverySettled['status'] = 'failed';
             autoExtractArtifacts({
               workspacePath,
               taskId: msg.taskId,
@@ -1264,6 +1285,7 @@ export function registerDataHandlers(): void {
               attachments: msg.attachments as MessageAttachment[] | undefined,
               gatewayHttpBase,
               resolveMediaDownload: mediaDownloadResolver(taskRow?.gid, resolvedSessionKey),
+              onActivity: activity.phase,
             })
               .then((result) => {
                 if (getDb() !== db || getWorkspacePath() !== workspacePath) return;
@@ -1279,6 +1301,9 @@ export function registerDataHandlers(): void {
                 )
                   return;
                 const completed = completedAssistantMessages.get(completedMessageKey(msg.taskId, persistedMessageId));
+                activityOutcome = result?.mediaFailures.length
+                  ? 'failed'
+                  : (completed?.mediaRetrySettlement?.status ?? 'succeeded');
                 const incomingVideoSources = new Set(
                   (msg.attachments as MessageAttachment[] | undefined)
                     ?.filter(
@@ -1296,6 +1321,7 @@ export function registerDataHandlers(): void {
                   completed.mediaRetryRequiredSources = completed.mediaRetryRequiredSources.filter(
                     (key) => !incomingVideoSources.has(key) || !result?.savedMediaSourceKeys?.includes(key),
                   );
+                if (completed?.mediaRetryRequiredSources?.length) activityOutcome = 'failed';
                 if (!result?.mediaFailures.length) {
                   const savedSource = (msg.attachments as MessageAttachment[] | undefined)?.some(
                     (attachment) =>
@@ -1377,7 +1403,11 @@ export function registerDataHandlers(): void {
                   });
                 }
               })
-              .catch((err: unknown) => console.error('[auto-extract]', err));
+              .catch((err: unknown) => {
+                activityOutcome = 'failed';
+                console.error('[auto-extract]', err);
+              })
+              .finally(() => activity.finish(activityOutcome));
           }
         }
         return { ok: true };
