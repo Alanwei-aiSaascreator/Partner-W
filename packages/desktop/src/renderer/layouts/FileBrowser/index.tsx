@@ -61,12 +61,17 @@ export default function FileBrowser() {
   const setIsSearching = useFileStore((s) => s.setIsSearching);
 
   const tasks = useTaskStore((s) => s.tasks);
+  const workspaceEpoch = useTaskStore((s) => s.workspaceEpoch);
   const setActiveTask = useTaskStore((s) => s.setActiveTask);
   const setMainView = useUiStore((s) => s.setMainView);
   const setHighlightedMessage = useMessageStore((s) => s.setHighlightedMessage);
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const searchRequestIdRef = useRef(0);
+  const [listError, setListError] = useState<number | null>(null);
+  const [searchError, setSearchError] = useState<{ epoch: number; query: string; filter: ArtifactKindFilter } | null>(
+    null,
+  );
 
   const [fileMenu, setFileMenu] = useState<FileMenuState>(null);
 
@@ -114,58 +119,88 @@ export default function FileBrowser() {
 
   useEffect(() => {
     let cancelled = false;
+    const ownsWorkspace = () => !cancelled && useTaskStore.getState().workspaceEpoch === workspaceEpoch;
+    setListError(null);
 
-    window.clawwork
-      .listArtifacts()
-      .then((res) => {
-        if (cancelled) return;
-        if (res.ok && res.result) {
-          setArtifacts(res.result as unknown as Artifact[]);
-        }
-      })
-      .catch((err: unknown) => {
-        if (cancelled) return;
-        console.error('[FileBrowser] listArtifacts failed:', err);
-      });
+    const load = (): void => {
+      const snapshot = useFileStore.getState().artifacts;
+      window.clawwork
+        .listArtifacts()
+        .then((res) => {
+          if (!ownsWorkspace()) return;
+          if (useFileStore.getState().artifacts !== snapshot) {
+            load();
+            return;
+          }
+          if (res.ok && res.result) {
+            setArtifacts(res.result as unknown as Artifact[]);
+          } else {
+            setListError(workspaceEpoch);
+          }
+        })
+        .catch((err: unknown) => {
+          if (!ownsWorkspace()) return;
+          setListError(workspaceEpoch);
+          console.error('[FileBrowser] listArtifacts failed:', err);
+        });
+    };
+    load();
 
     return () => {
       cancelled = true;
     };
-  }, [setArtifacts]);
+  }, [setArtifacts, workspaceEpoch]);
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
+    const requestId = ++searchRequestIdRef.current;
+    setSearchError(null);
     if (!searchQuery.trim()) {
       setSearchResults(null);
       setIsSearching(false);
       return;
     }
     setIsSearching(true);
-    const requestId = ++searchRequestIdRef.current;
+    setSearchResults(null);
+    let cancelled = false;
+    const ownsRequest = () => {
+      const current = useFileStore.getState();
+      return (
+        !cancelled &&
+        searchRequestIdRef.current === requestId &&
+        useTaskStore.getState().workspaceEpoch === workspaceEpoch &&
+        current.searchQuery === searchQuery &&
+        current.typeFilter === typeFilter
+      );
+    };
+    const fail = () => {
+      setIsSearching(false);
+      setSearchError({ epoch: workspaceEpoch, query: searchQuery, filter: typeFilter });
+    };
     debounceRef.current = setTimeout(() => {
       window.clawwork
         .searchArtifacts(searchQuery, {
           kind: typeFilter,
         })
         .then((res) => {
-          if (searchRequestIdRef.current !== requestId) return;
+          if (!ownsRequest()) return;
           setIsSearching(false);
           if (res.ok && res.result) {
             setSearchResults(res.result as unknown as ArtifactSearchResult[]);
           } else {
-            setSearchResults([]);
+            fail();
           }
         })
         .catch(() => {
-          if (searchRequestIdRef.current !== requestId) return;
-          setIsSearching(false);
-          setSearchResults([]);
+          if (!ownsRequest()) return;
+          fail();
         });
     }, 300);
     return () => {
+      cancelled = true;
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-  }, [searchQuery, setSearchResults, setIsSearching, typeFilter]);
+  }, [searchQuery, setSearchResults, setIsSearching, typeFilter, workspaceEpoch]);
 
   const taskMap = useMemo(() => {
     const m = new Map<string, string>();
@@ -208,6 +243,9 @@ export default function FileBrowser() {
   });
 
   const isSearchMode = searchQuery.trim().length > 0;
+  const requestFailed = isSearchMode
+    ? searchError?.epoch === workspaceEpoch && searchError.query === searchQuery && searchError.filter === typeFilter
+    : listError === workspaceEpoch;
   const typeFilterOptions: Array<{ value: ArtifactKindFilter; label: string }> = [
     { value: 'all', label: t('fileBrowser.allTypes') },
     { value: 'image', label: t('fileBrowser.typeImages') },
@@ -277,7 +315,11 @@ export default function FileBrowser() {
 
         <ScrollArea className="flex-1">
           <div className="px-6 py-4">
-            {isSearchMode ? (
+            {requestFailed ? (
+              <p role="alert" className="type-support text-[var(--text-danger)]">
+                {t('errors.requestFailed')}
+              </p>
+            ) : isSearchMode ? (
               searchResults === null || isSearching ? (
                 <div className="flex items-center justify-center h-32">
                   <Loader2 className="w-5 h-5 animate-spin text-[var(--text-muted)]" />
