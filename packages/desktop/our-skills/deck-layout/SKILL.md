@@ -160,6 +160,35 @@ const Footer = ({ label }) => <Text style={{ fontSize: 18, color: C.muted }}>{la
 ```
 ````
 
+## 页脚与正文分区
+
+页脚说明和页码放进**同一个横向 flex 容器**：说明在左，设 `flex: 1, minWidth: 0`；页码在右，设 `flexShrink: 0`，中间留出 `gap`。
+**两段文字都要保留**，不要把它们分别绝对定位到同一个 `left` / `bottom`；共享坐标会让说明盖住页码。
+页脚文字用与背景有足够对比的**不透明实色**，不要靠低透明度制造层级。
+
+先为页脚预留区域，再排正文。下面这份完整示例中，正文区域到 `y = 620` 结束，页脚占 `y = 660–692`；
+**正文不得进入页脚区域**。放不下就拆页，不要缩小字号硬塞，也不要截断或删掉页脚文字。
+
+````
+```slidegen
+// title: 正文与页脚分区示例
+const Footer = ({ note, num, total }) => (
+  <Box style={{ position: 'absolute', left: 80, bottom: 28, width: 1120, height: 32, flexDirection: 'row', alignItems: 'center', gap: 24 }}>
+    <Text style={{ flex: 1, minWidth: 0, fontSize: 18, lineHeight: 1.25, color: '#4A4356' }}>{note}</Text>
+    <Text style={{ flexShrink: 0, fontSize: 18, lineHeight: 1.25, color: '#4A4356' }}>{num} / {total}</Text>
+  </Box>
+);
+<Slide style={{ width: 1280, height: 720, background: '#FBFBFD', position: 'relative' }}>
+  <Box style={{ position: 'absolute', left: 80, top: 64, width: 1120, height: 556, flexDirection: 'column', gap: 32 }}>
+    <Text style={{ fontSize: 48, lineHeight: 1.2, fontWeight: 'bold', color: '#100D13' }}>先留出页脚，再安排正文</Text>
+    <Text style={{ fontSize: 28, lineHeight: 1.5, color: '#4A4356' }}>正文只放本页结论与证据；更多内容拆到下一页。</Text>
+    <Text style={{ fontSize: 28, lineHeight: 1.5, color: '#4A4356' }}>来源说明与页码在底部各占一侧，保持完整可读。</Text>
+  </Box>
+  <Footer note="来源：九月经营复盘 · 内部讨论稿" num={1} total={1} />
+</Slide>
+```
+````
+
 ## 版式纪律（一套视觉系统，不是一个死模板）
 
 所有页保持 1280×720、字号层级、主色和页脚规则一致，但**不要每页都用同一种三卡片布局**。
