@@ -1,0 +1,258 @@
+```slidegen
+// title: 荣盈魔方产品介绍
+const C = {
+  dark: '#1E1B4B',
+  primary: '#4F46E5',
+  primaryLight: '#EEF2FF',
+  violet: '#7C3AED',
+  bg: '#F8FAFC',
+  text: '#1E293B',
+  muted: '#64748B',
+  white: '#FFFFFF',
+  cardBorder: '#E2E8F0',
+};
+const Footer = () => (
+  <Text style={{ position: 'absolute', left: 80, bottom: 30, width: 1120, fontSize: 13, color: C.muted, textAlign: 'center' }}>
+    荣盈魔方 · 你的 AI 全能助手
+  </Text>
+);
+const PageTitle = ({ children, sub }) => (
+  <Box style={{ position: 'absolute', left: 80, top: 60, width: 1120, flexDirection: 'column', gap: 8 }}>
+    <Text style={{ fontSize: 42, fontWeight: 'bold', color: C.text }}>{children}</Text>
+    {sub && <Text style={{ fontSize: 20, color: C.muted, lineHeight: 1.5 }}>{sub}</Text>}
+  </Box>
+);
+const BulletItem = ({ icon, text, accent }) => (
+  <Box style={{ flexDirection: 'row', gap: 12, alignItems: 'flex-start' }}>
+    <Box style={{ minWidth: 28, height: 28, borderRadius: 14, background: accent || C.primaryLight, alignItems: 'center', justifyContent: 'center' }}>
+      <Text style={{ fontSize: 14, fontWeight: 'bold', color: C.primary }}>{icon}</Text>
+    </Box>
+    <Text style={{ fontSize: 17, color: C.text, lineHeight: 1.5, flex: 1 }}>{text}</Text>
+  </Box>
+);
+
+// 封面
+<Slide style={{ width: 1280, height: 720, background: C.white, position: 'relative' }}>
+  <Box style={{ position: 'absolute', left: 80, top: 0, width: 8, height: 720, background: `linear-gradient(180deg, ${C.primary} 0%, ${C.violet} 100%)` }} />
+  <Box style={{ position: 'absolute', left: 140, top: 210, flexDirection: 'column', gap: 16 }}>
+    <Text style={{ fontSize: 60, fontWeight: 'bold', color: C.dark, letterSpacing: 2 }}>荣盈魔方</Text>
+    <Text style={{ fontSize: 28, color: C.muted, letterSpacing: 4 }}>你的 AI 全能助手</Text>
+    <Box style={{ width: 80, height: 4, borderRadius: 2, background: C.primary, marginTop: 8 }} />
+    <Text style={{ fontSize: 18, color: C.muted, lineHeight: 1.6, marginTop: 8 }}>一个平台 · 六面能力 · 像魔方一样，转出你需要的每一面</Text>
+  </Box>
+  <Box style={{ position: 'absolute', right: 80, bottom: 100, width: 120, height: 120, flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+    {[C.primary, '#06B6D4', '#10B981', '#F59E0B', '#EF4444', C.violet].map((c, i) => (
+      <Box key={i} style={{ width: 36, height: 36, borderRadius: 8, background: c, opacity: 0.3 }} />
+    ))}
+  </Box>
+  <Footer />
+</Slide>
+
+// 什么是荣盈魔方
+<Slide style={{ width: 1280, height: 720, background: C.bg, position: 'relative' }}>
+  <PageTitle sub="一个由多个 AI 专业助手组成的智能平台，每个助手专注一个领域">什么是荣盈魔方？</PageTitle>
+  <Box style={{ position: 'absolute', left: 80, top: 200, width: 540, flexDirection: 'column', gap: 20 }}>
+    <Text style={{ fontSize: 20, color: C.text, lineHeight: 1.7 }}>荣盈魔方是一个基于 OpenClaw 构建的智能 AI 助手平台。</Text>
+    <Text style={{ fontSize: 18, color: C.muted, lineHeight: 1.6 }}>不同于通用聊天机器人，它由六位专注不同领域的专业助手组成——就像魔方的六面，每一面都拥有独特的专业能力。</Text>
+    <Text style={{ fontSize: 18, color: C.muted, lineHeight: 1.6 }}>你不需要切换工具或平台：内容创作、电商、调研、办公、家庭生活、视频——一个平台全部覆盖。</Text>
+  </Box>
+  <Box style={{ position: 'absolute', right: 80, top: 190, width: 480, flexDirection: 'column', gap: 14 }}>
+    {[
+      ['专业分工', '六位助手各司其职，深度覆盖不同领域'],
+      ['统一平台', '不需要在多个 AI 工具之间来回切换'],
+      ['持续进化', '知识库和技能随使用不断更新完善'],
+    ].map(([t, d], i) => (
+      <Box key={i} style={{ flexDirection: 'row', gap: 16, padding: '14px 20px', borderRadius: 10, background: C.white, border: `1px solid ${C.cardBorder}` }}>
+        <Box style={{ minWidth: 32, height: 32, borderRadius: 16, background: C.primaryLight, alignItems: 'center', justifyContent: 'center' }}>
+          <Text style={{ fontSize: 16, fontWeight: 'bold', color: C.primary }}>{i + 1}</Text>
+        </Box>
+        <Box style={{ flexDirection: 'column', gap: 2 }}>
+          <Text style={{ fontSize: 17, fontWeight: 'bold', color: C.text }}>{t}</Text>
+          <Text style={{ fontSize: 14, color: C.muted }}>{d}</Text>
+        </Box>
+      </Box>
+    ))}
+  </Box>
+  <Footer />
+</Slide>
+
+// 六面概览
+<Slide style={{ width: 1280, height: 720, background: C.bg, position: 'relative' }}>
+  <PageTitle sub="每个助手专注一个领域，深度而非广度">魔方的六面</PageTitle>
+  <Box style={{ position: 'absolute', left: 80, top: 170, width: 1120, flexDirection: 'row', flexWrap: 'wrap', gap: 20 }}>
+    {[
+      ['内容创作', '把想法变成可发布的内容', C.primary],
+      ['电商运营', '让商品描述更清晰，让客户沟通更高效', '#06B6D4'],
+      ['调研学习', '帮你定义问题、梳理证据、得出结论', '#10B981'],
+      ['办公协同', '会议纪要、文档、报表，高效产出', '#F59E0B'],
+      ['家庭生活', '菜谱、旅行、家庭计划，一手搞定', '#EF4444'],
+      ['视频创作', '脚本、分镜、拍摄计划，直接开拍', C.violet],
+    ].map(([name, desc, color], i) => (
+      <Box key={i} style={{ width: 355, flexDirection: 'column', gap: 10, padding: '22px', borderRadius: 14, background: C.white, border: `1px solid ${C.cardBorder}` }}>
+        <Box style={{ flexDirection: 'row', gap: 14, alignItems: 'center' }}>
+          <Box style={{ width: 40, height: 40, borderRadius: 10, background: color + '18', alignItems: 'center', justifyContent: 'center' }}>
+            <Text style={{ fontSize: 18, color: color }}>{['✎', '☰', '▣', '▤', '♡', '▶'][i]}</Text>
+          </Box>
+          <Text style={{ fontSize: 20, fontWeight: 'bold', color: C.text }}>{name}</Text>
+        </Box>
+        <Text style={{ fontSize: 15, color: C.muted, lineHeight: 1.5 }}>{desc}</Text>
+      </Box>
+    ))}
+  </Box>
+  <Footer />
+</Slide>
+
+// 内容创作 + 电商运营（双卡片并排）
+<Slide style={{ width: 1280, height: 720, background: C.white, position: 'relative' }}>
+  <PageTitle sub="六面详解">核心能力</PageTitle>
+  <Box style={{ position: 'absolute', left: 80, top: 180, width: 1120, flexDirection: 'row', gap: 24 }}>
+    <Box style={{ flex: 1, flexDirection: 'column', gap: 14, padding: '28px', borderRadius: 14, background: C.bg, border: `1px solid ${C.cardBorder}` }}>
+      <Box style={{ width: 44, height: 44, borderRadius: 12, background: C.primary + '18', alignItems: 'center', justifyContent: 'center' }}>
+        <Text style={{ fontSize: 22, color: C.primary }}>✎</Text>
+      </Box>
+      <Text style={{ fontSize: 24, fontWeight: 'bold', color: C.text }}>内容创作</Text>
+      <Text style={{ fontSize: 15, color: C.muted, lineHeight: 1.6 }}>从一句话想法到完整的第一稿，帮你节省起草时间。支持公众号、小红书、短视频脚本等多种平台体裁。</Text>
+      {['选题建议与内容大纲', '直接产出可用的正文初稿', '一个素材适配多个平台'].map((t, i) => (
+        <Text key={i} style={{ fontSize: 15, color: C.text, lineHeight: 1.8 }}>▸ {t}</Text>
+      ))}
+    </Box>
+    <Box style={{ flex: 1, flexDirection: 'column', gap: 14, padding: '28px', borderRadius: 14, background: C.bg, border: `1px solid ${C.cardBorder}` }}>
+      <Box style={{ width: 44, height: 44, borderRadius: 12, background: '#06B6D4' + '18', alignItems: 'center', justifyContent: 'center' }}>
+        <Text style={{ fontSize: 22, color: '#06B6D4' }}>☰</Text>
+      </Box>
+      <Text style={{ fontSize: 24, fontWeight: 'bold', color: C.text }}>电商运营</Text>
+      <Text style={{ fontSize: 15, color: C.muted, lineHeight: 1.6 }}>把真实产品信息转化成清晰的商品页面和客户沟通，基于证据而非臆测。</Text>
+      {['商品标题与卖点提炼', '竞品比较，不编造数据', '促销活动方案策划'].map((t, i) => (
+        <Text key={i} style={{ fontSize: 15, color: C.text, lineHeight: 1.8 }}>▸ {t}</Text>
+      ))}
+    </Box>
+  </Box>
+  <Footer />
+</Slide>
+
+// 调研学习 + 办公协同
+<Slide style={{ width: 1280, height: 720, background: C.bg, position: 'relative' }}>
+  <PageTitle sub="六面详解" />
+  <Box style={{ position: 'absolute', left: 80, top: 180, width: 1120, flexDirection: 'row', gap: 24 }}>
+    <Box style={{ flex: 1, flexDirection: 'column', gap: 14, padding: '28px', borderRadius: 14, background: C.white, border: `1px solid ${C.cardBorder}` }}>
+      <Box style={{ width: 44, height: 44, borderRadius: 12, background: '#10B981' + '18', alignItems: 'center', justifyContent: 'center' }}>
+        <Text style={{ fontSize: 22, color: '#10B981' }}>▣</Text>
+      </Box>
+      <Text style={{ fontSize: 24, fontWeight: 'bold', color: C.text }}>调研学习</Text>
+      <Text style={{ fontSize: 15, color: C.muted, lineHeight: 1.6 }}>帮你理清问题、梳理证据、辨析观点，得出扎实结论。</Text>
+      {['读书笔记与知识卡片', '行业调研与竞品分析', '学习路径规划'].map((t, i) => (
+        <Text key={i} style={{ fontSize: 15, color: C.text, lineHeight: 1.8 }}>▸ {t}</Text>
+      ))}
+    </Box>
+    <Box style={{ flex: 1, flexDirection: 'column', gap: 14, padding: '28px', borderRadius: 14, background: C.white, border: `1px solid ${C.cardBorder}` }}>
+      <Box style={{ width: 44, height: 44, borderRadius: 12, background: '#F59E0B' + '18', alignItems: 'center', justifyContent: 'center' }}>
+        <Text style={{ fontSize: 22, color: '#F59E0B' }}>▤</Text>
+      </Box>
+      <Text style={{ fontSize: 24, fontWeight: 'bold', color: C.text }}>办公协同</Text>
+      <Text style={{ fontSize: 15, color: C.muted, lineHeight: 1.6 }}>从原始笔记到正式产出，减少重复劳动。</Text>
+      {['会议纪要：决策、待办、责任人一目了然', '周报月报自动生成', '导出为 .docx / .xlsx / .pdf'].map((t, i) => (
+        <Text key={i} style={{ fontSize: 15, color: C.text, lineHeight: 1.8 }}>▸ {t}</Text>
+      ))}
+    </Box>
+  </Box>
+  <Footer />
+</Slide>
+
+// 家庭生活 + 视频创作
+<Slide style={{ width: 1280, height: 720, background: C.white, position: 'relative' }}>
+  <PageTitle sub="六面详解" />
+  <Box style={{ position: 'absolute', left: 80, top: 180, width: 1120, flexDirection: 'row', gap: 24 }}>
+    <Box style={{ flex: 1, flexDirection: 'column', gap: 14, padding: '28px', borderRadius: 14, background: C.bg, border: `1px solid ${C.cardBorder}` }}>
+      <Box style={{ width: 44, height: 44, borderRadius: 12, background: '#EF4444' + '18', alignItems: 'center', justifyContent: 'center' }}>
+        <Text style={{ fontSize: 22, color: '#EF4444' }}>♡</Text>
+      </Box>
+      <Text style={{ fontSize: 24, fontWeight: 'bold', color: C.text }}>家庭生活</Text>
+      <Text style={{ fontSize: 15, color: C.muted, lineHeight: 1.6 }}>照顾日常琐碎的事，让你把时间留给真正重要的人。</Text>
+      {['一周食谱，按预算和冰箱存货规划', '旅行安排、行李清单一气呵成', '购物清单与家务分配'].map((t, i) => (
+        <Text key={i} style={{ fontSize: 15, color: C.text, lineHeight: 1.8 }}>▸ {t}</Text>
+      ))}
+    </Box>
+    <Box style={{ flex: 1, flexDirection: 'column', gap: 14, padding: '28px', borderRadius: 14, background: C.bg, border: `1px solid ${C.cardBorder}` }}>
+      <Box style={{ width: 44, height: 44, borderRadius: 12, background: C.violet + '18', alignItems: 'center', justifyContent: 'center' }}>
+        <Text style={{ fontSize: 22, color: C.violet }}>▶</Text>
+      </Box>
+      <Text style={{ fontSize: 24, fontWeight: 'bold', color: C.text }}>视频创作</Text>
+      <Text style={{ fontSize: 15, color: C.muted, lineHeight: 1.6 }}>把一条信息拆解成可拍摄、可剪辑的视频执行方案。</Text>
+      {['口播脚本写人说的话，不是写文章', '分镜本逐镜标注画面与字幕', '适配抖音、小红书、视频号等平台'].map((t, i) => (
+        <Text key={i} style={{ fontSize: 15, color: C.text, lineHeight: 1.8 }}>▸ {t}</Text>
+      ))}
+    </Box>
+  </Box>
+  <Footer />
+</Slide>
+
+// 核心优势
+<Slide style={{ width: 1280, height: 720, background: C.bg, position: 'relative' }}>
+  <PageTitle sub="不是又一个 AI 聊天框，而是一套专业内容工具">为什么选择荣盈魔方</PageTitle>
+  <Box style={{ position: 'absolute', left: 80, top: 190, width: 1120, flexDirection: 'row', gap: 20 }}>
+    {[
+      ['专业分工', '六位专精助手各自深度覆盖一个领域，不是通用问答', C.primary],
+      ['真实优先', '不编造数据、案例、评论，所有输出基于你给的真实材料', '#06B6D4'],
+      ['第一稿先行', '先产出完整初稿再调整，不是给一堆提示建议', '#10B981'],
+    ].map(([t, d, color], i) => (
+      <Box key={i} style={{ flex: 1, flexDirection: 'column', gap: 12, padding: '24px', borderRadius: 14, background: C.white, border: `1px solid ${C.cardBorder}` }}>
+        <Box style={{ width: 40, height: 4, borderRadius: 2, background: color }} />
+        <Text style={{ fontSize: 20, fontWeight: 'bold', color: C.text }}>{t}</Text>
+        <Text style={{ fontSize: 15, color: C.muted, lineHeight: 1.6 }}>{d}</Text>
+      </Box>
+    ))}
+  </Box>
+  <Box style={{ position: 'absolute', left: 80, top: 440, width: 1120, flexDirection: 'row', gap: 20 }}>
+    {[
+      ['即用即走', '从想法直接到文档，不用学习复杂模板'],
+      ['多格式输出', '文档、表格、PPT、网页，按需产出真实文件'],
+      ['持续进化', '技能库持续更新，覆盖更多使用场景'],
+    ].map(([t, d], i) => (
+      <Box key={i} style={{ flex: 1, flexDirection: 'row', gap: 14, padding: '16px', borderRadius: 10, background: C.primaryLight }}>
+        <Box style={{ minWidth: 36, height: 36, borderRadius: 18, background: C.primary, alignItems: 'center', justifyContent: 'center' }}>
+          <Text style={{ fontSize: 16, color: C.white }}>✓</Text>
+        </Box>
+        <Box style={{ flexDirection: 'column', gap: 2 }}>
+          <Text style={{ fontSize: 17, fontWeight: 'bold', color: C.text }}>{t}</Text>
+          <Text style={{ fontSize: 14, color: C.muted }}>{d}</Text>
+        </Box>
+      </Box>
+    ))}
+  </Box>
+  <Footer />
+</Slide>
+
+// 适用场景
+<Slide style={{ width: 1280, height: 720, background: C.white, position: 'relative' }}>
+  <PageTitle sub="从个人创作者到运营团队，你都可以立刻上手">谁在使用荣盈魔方</PageTitle>
+  <Box style={{ position: 'absolute', left: 80, top: 180, width: 1120, flexDirection: 'row', gap: 20 }}>
+    {[
+      { role: '内容创作者', color: C.primary, items: '公众号/小红书日更 / 短视频脚本批量产出 / 多平台内容分发' },
+      { role: '电商运营', color: '#06B6D4', items: '商品页优化 / 客户消息批量回复 / 促销活动策划' },
+      { role: '上班族 / 管理者', color: '#F59E0B', items: '会议纪要与周报 / 调研报告与方案 / 正式邮件与通知' },
+      { role: '个体 / 家庭', color: '#10B981', items: '旅行计划与菜谱 / 家庭活动安排 / 学习与知识整理' },
+    ].map(({ role, color, items }, i) => (
+      <Box key={i} style={{ flex: 1, flexDirection: 'column', gap: 12, padding: '22px', borderRadius: 14, background: C.bg, border: `1px solid ${C.cardBorder}` }}>
+        <Box style={{ width: 44, height: 44, borderRadius: 12, background: color + '18', alignItems: 'center', justifyContent: 'center' }}>
+          <Text style={{ fontSize: 22, color }}>{['✎', '☰', '▤', '♡'][i]}</Text>
+        </Box>
+        <Text style={{ fontSize: 20, fontWeight: 'bold', color: C.text }}>{role}</Text>
+        <Text style={{ fontSize: 15, color: C.muted, lineHeight: 1.6 }}>{items}</Text>
+      </Box>
+    ))}
+  </Box>
+  <Footer />
+</Slide>
+
+// 尾页
+<Slide style={{ width: 1280, height: 720, background: C.dark, position: 'relative' }}>
+  <Box style={{ position: 'absolute', left: 80, top: 0, width: 8, height: 720, background: `linear-gradient(180deg, ${C.primary} 0%, ${C.violet} 100%)` }} />
+  <Box style={{ position: 'absolute', left: 140, top: 240, flexDirection: 'column', gap: 20 }}>
+    <Text style={{ fontSize: 48, fontWeight: 'bold', color: C.white, letterSpacing: 2 }}>现在就试试</Text>
+    <Text style={{ fontSize: 22, color: '#94A3B8', lineHeight: 1.6 }}>把你的想法、素材或问题发过来</Text>
+    <Box style={{ width: 80, height: 4, borderRadius: 2, background: C.primary }} />
+    <Text style={{ fontSize: 18, color: '#94A3B8', lineHeight: 1.6, marginTop: 8 }}>荣盈魔方会直接产出你需要的内容——第一稿就是能用的稿</Text>
+  </Box>
+  <Footer />
+</Slide>
+```

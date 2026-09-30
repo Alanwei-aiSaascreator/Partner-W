@@ -365,7 +365,7 @@ function parseElement(src: string, i: number, strict = false, baseOffset = 0): {
       j += 1;
     }
     if (text.trim()) {
-      if (tag !== 'Text') {
+      if (TAGS.includes(tag as SlideTag) && tag !== 'Text') {
         throw new SlideDslError(
           'dsl-text-outside-text',
           'text must be inside <Text>...</Text>; a self-closing <Text /> has no content',
