@@ -3,6 +3,7 @@ import type { Artifact, HtmlgenFailure } from '@clawwork/shared';
 import { getDebugLogger } from '../debug/index.js';
 import { saveArtifactFromBuffer } from '../artifact/save.js';
 import { notifyArtifactActivity, type ArtifactActivityCallback } from '../artifact/activity-callback.js';
+import { captureArtifactWorkspaceOwner } from '../artifact/workspace-owner.js';
 import { documentFileStem } from '../util/document-file-name.js';
 import { extractHtmlgenBlocks } from './blocks.js';
 import type { HtmlgenRequest } from './request.js';
@@ -66,6 +67,7 @@ export async function generateHtmlPagesFromMessage(input: {
   content: string;
   onActivity?: ArtifactActivityCallback;
 }): Promise<HtmlgenGenerateResult> {
+  const owner = captureArtifactWorkspaceOwner();
   const result: HtmlgenGenerateResult = { saved: [], failed: [] };
   const { requests, failures } = extractHtmlgenBlocks(input.content);
   result.failed.push(...failures.map((entry) => entry.failure));
@@ -82,8 +84,10 @@ export async function generateHtmlPagesFromMessage(input: {
 
   for (const request of requests) {
     try {
+      owner.assertCurrent();
       notifyArtifactActivity(input.onActivity, 'generating-html');
       const buffer = await renderHtmlgenDocument(request);
+      owner.assertCurrent();
       notifyArtifactActivity(input.onActivity, 'saving-artifacts');
       const artifact = await saveArtifactFromBuffer({
         workspacePath: input.workspacePath,

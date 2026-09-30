@@ -6,6 +6,7 @@ import { messagePageBudgetFailure } from '@clawwork/shared';
 import { getDebugLogger } from '../debug/index.js';
 import { saveArtifactFromBuffer } from '../artifact/save.js';
 import { notifyArtifactActivity, type ArtifactActivityCallback } from '../artifact/activity-callback.js';
+import { captureArtifactWorkspaceOwner } from '../artifact/workspace-owner.js';
 import { documentFileStem } from '../util/document-file-name.js';
 import { extractSlidegenBlocks, type SlidegenDeck } from './blocks.js';
 import { SlideDslError } from './dsl.js';
@@ -86,6 +87,7 @@ export async function generateSlidesFromMessage(input: {
   content: string;
   onActivity?: ArtifactActivityCallback;
 }): Promise<SlidegenGenerateResult> {
+  const owner = captureArtifactWorkspaceOwner();
   const result: SlidegenGenerateResult = { saved: [], failed: [], warnings: [] };
   const { decks, failures } = extractSlidegenBlocks(input.content);
   result.failed.push(...failures.map((entry) => entry.failure));
@@ -130,6 +132,7 @@ export async function generateSlidesFromMessage(input: {
 
   for (const { deck, pages } of evaluated) {
     try {
+      owner.assertCurrent();
       let buffer: Buffer;
       const emitted = [];
       const deckWarnings: SlidegenWarning[] = [];
@@ -144,12 +147,14 @@ export async function generateSlidesFromMessage(input: {
       // 留着这个临时文件会在用户的工作区里多出一个他没要的文件。
       const tmpPath = path.join(input.workspacePath, `.slidegen-${Date.now()}.pptx`);
       try {
+        owner.assertCurrent();
         await writeSlidePptx(emitted, tmpPath, assetRoot);
         buffer = fs.readFileSync(tmpPath);
       } finally {
         fs.rmSync(tmpPath, { force: true });
       }
 
+      owner.assertCurrent();
       notifyArtifactActivity(input.onActivity, 'saving-artifacts');
       const artifact = await saveArtifactFromBuffer({
         workspacePath: input.workspacePath,

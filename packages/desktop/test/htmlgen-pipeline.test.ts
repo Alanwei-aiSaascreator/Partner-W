@@ -10,6 +10,7 @@
  * 焊点松了的表现是"助手说做好了，右边什么都没有"，两个单测都不会红。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { setWorkspaceDatabaseOwner } from '../src/main/workspace/scope.js';
 
 const mocks = vi.hoisted(() => ({
   saveArtifactFromBuffer: vi.fn(),
@@ -51,6 +52,7 @@ const PAGE = {
 };
 
 beforeEach(() => {
+  setWorkspaceDatabaseOwner({});
   vi.clearAllMocks();
   mocks.saveArtifactFromBuffer.mockImplementation(async (params: { fileName: string }) => ({
     id: 'a1',

@@ -7,6 +7,7 @@ import type { Artifact, ArtifactAvailability, ArtifactRootKind } from '@clawwork
 import { getSqlite } from '../db/index.js';
 import { validateImportTaskId } from '../context/file-import.js';
 import { ensureTaskDir } from '../workspace/init.js';
+import { captureArtifactWorkspaceOwner } from './workspace-owner.js';
 
 const DEFAULT_BUDGETS = Object.freeze({
   maxDepth: 4,
@@ -610,6 +611,7 @@ export async function reconcileTaskArtifacts(
   input: ReconcileTaskArtifactsInput,
   hooks: ReconcileHooks = {},
 ): Promise<ReconcileTaskArtifactsResult> {
+  const owner = captureArtifactWorkspaceOwner();
   const scope = scopeFor(input);
   const root = scope.root;
   const budgets = { ...DEFAULT_BUDGETS, ...hooks.budgets };
@@ -643,6 +645,7 @@ export async function reconcileTaskArtifacts(
   );
 
   try {
+    owner.assertCurrent();
     for (const stable of stableCandidates) {
       if (!stable) continue;
       const { candidate } = stable;

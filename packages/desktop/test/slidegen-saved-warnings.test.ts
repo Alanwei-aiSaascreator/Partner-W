@@ -4,6 +4,7 @@ import path from 'node:path';
 import JSZip from 'jszip';
 import type { Artifact } from '@clawwork/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { setWorkspaceDatabaseOwner } from '../src/main/workspace/scope.js';
 import type { MeasuredElement } from '../src/main/slidegen/measure.js';
 
 vi.mock('electron', () => ({ BrowserWindow: { getAllWindows: () => [] } }));
@@ -107,6 +108,7 @@ function savedEvents() {
 
 describe('warnings for saved slide artifacts', () => {
   beforeEach(() => {
+    setWorkspaceDatabaseOwner({});
     vi.resetAllMocks();
     outputRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'slidegen-saved-warnings-'));
     initDebugLogger(path.join(outputRoot, 'logs'));

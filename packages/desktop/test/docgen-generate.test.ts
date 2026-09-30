@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { setWorkspaceDatabaseOwner } from '../src/main/workspace/scope.js';
 import yauzl from 'yauzl';
 import { extractCodeBlocksFromMarkdown } from '../src/main/artifact/extract';
 
@@ -70,6 +71,7 @@ const taskId = 'task-1';
 const messageId = 'msg-1';
 
 beforeEach(() => {
+  setWorkspaceDatabaseOwner({});
   workspacePath = mkdtempSync(join(tmpdir(), 'clawwork-docgen-gen-'));
   mocks.saveArtifactFromBuffer.mockReset();
   mocks.saveArtifactFromBuffer.mockImplementation(async (params: { fileName: string; buffer: Buffer }) => ({

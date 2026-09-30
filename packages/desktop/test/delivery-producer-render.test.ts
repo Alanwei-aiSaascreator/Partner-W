@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { setWorkspaceDatabaseOwner } from '../src/main/workspace/scope.js';
 
 const mocks = vi.hoisted(() => ({ save: vi.fn(), render: vi.fn(), html: vi.fn(), events: [] as string[] }));
 vi.mock('../src/main/artifact/save.js', () => ({ saveArtifactFromBuffer: mocks.save }));
@@ -47,6 +48,7 @@ const block = (kind: string) =>
   ].join('\n');
 const deck = ['```slidegen', '// title: deck', '<Slide><Text>Hello</Text></Slide>', '```'].join('\n');
 beforeEach(() => {
+  setWorkspaceDatabaseOwner({});
   vi.resetAllMocks();
   mocks.events.length = 0;
   workspacePath = mkdtempSync(join(tmpdir(), 'delivery-producer-'));

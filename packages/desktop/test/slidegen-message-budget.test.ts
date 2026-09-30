@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { setWorkspaceDatabaseOwner } from '../src/main/workspace/scope.js';
 
 const mocks = vi.hoisted(() => ({
   evaluateSlide: vi.fn(),
@@ -29,6 +30,7 @@ function pages(count: number): unknown[] {
 
 describe('slidegen 单消息累计页数预算', () => {
   beforeEach(() => {
+    setWorkspaceDatabaseOwner({});
     vi.clearAllMocks();
     mocks.evaluateSlide.mockReturnValueOnce(pages(120)).mockReturnValueOnce(pages(81));
     mocks.emitPageShapes.mockResolvedValue({ page: { shapes: [], background: 'FFFFFF' }, warnings: [] });

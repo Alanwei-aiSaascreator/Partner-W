@@ -3,6 +3,7 @@ import type { Artifact, DocgenFailure, DocgenFormat } from '@clawwork/shared';
 import { getDebugLogger } from '../debug/index.js';
 import { saveArtifactFromBuffer } from '../artifact/save.js';
 import { notifyArtifactActivity, type ArtifactActivityCallback } from '../artifact/activity-callback.js';
+import { captureArtifactWorkspaceOwner } from '../artifact/workspace-owner.js';
 import { documentFileStem } from '../util/document-file-name.js';
 import { extractDocgenBlocks } from './blocks.js';
 import { PptxLayoutError } from './pptx-layout.js';
@@ -119,6 +120,7 @@ export async function generateDocumentsFromMessage(input: {
    */
   templatesRoot?: string;
 }): Promise<DocgenGenerateResult> {
+  const owner = captureArtifactWorkspaceOwner();
   const result: DocgenGenerateResult = { saved: [], failed: [] };
   const { requests, errors } = extractDocgenBlocks(input.content);
   // 解析阶段失败**说不出格式**（请求还没成形，硬填一个就是编事实）。
@@ -136,6 +138,7 @@ export async function generateDocumentsFromMessage(input: {
 
   for (const request of requests) {
     try {
+      owner.assertCurrent();
       notifyArtifactActivity(
         input.onActivity,
         request.kind === 'pptx' ? 'generating-presentation' : 'generating-document',
@@ -152,6 +155,7 @@ export async function generateDocumentsFromMessage(input: {
           });
         },
       });
+      owner.assertCurrent();
       notifyArtifactActivity(input.onActivity, 'saving-artifacts');
       const artifact = await saveArtifactFromBuffer({
         workspacePath: input.workspacePath,

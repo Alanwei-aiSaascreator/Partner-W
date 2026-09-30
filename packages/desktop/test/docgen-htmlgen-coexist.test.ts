@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { setWorkspaceDatabaseOwner } from '../src/main/workspace/scope.js';
 
 /**
  * **两条交付线在同一条消息里并存** —— 这是把 PPTX 模板引擎与 htmlgen 合进候选之后
@@ -99,6 +100,7 @@ function mixedMessage(): string {
 
 let workspace: string;
 beforeEach(() => {
+  setWorkspaceDatabaseOwner({});
   workspace = mkdtempSync(join(tmpdir(), 'coexist-'));
   mocks.saveArtifactFromBuffer.mockClear();
 });

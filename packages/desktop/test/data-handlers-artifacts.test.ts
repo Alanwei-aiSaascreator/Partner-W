@@ -32,7 +32,9 @@ vi.mock('electron', () => ({
   ipcMain: {
     handle: vi.fn((channel: string, handler: (...args: unknown[]) => unknown) => handleMap.set(channel, handler)),
   },
-  BrowserWindow: { getAllWindows: vi.fn(() => [{ webContents: { send: webContentsSendMock } }]) },
+  BrowserWindow: {
+    getAllWindows: vi.fn(() => [{ webContents: { isDestroyed: () => false, send: webContentsSendMock } }]),
+  },
 }));
 
 vi.mock('../src/main/db/index.js', () => ({
@@ -534,8 +536,9 @@ describe('assistant artifact reconciliation boundary', () => {
     );
   });
 
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.resetModules();
+    (await import('../src/main/workspace/scope.js')).setWorkspaceDatabaseOwner(dbMock);
     handleMap.clear();
     getWorkspacePathMock.mockReturnValue('C:\\trusted-workspace');
     autoExtractArtifactsMock.mockReset().mockResolvedValue(undefined);
