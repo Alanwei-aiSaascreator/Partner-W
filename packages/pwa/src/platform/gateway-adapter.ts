@@ -6,8 +6,9 @@ import type {
   GatewayListItem,
   DiscoveredSession,
   SyncResult,
+  RawContentBlock,
 } from '@clawwork/core';
-import { INTERNAL_ASSISTANT_MARKERS, parseToolArgs } from '@clawwork/core';
+import { INTERNAL_ASSISTANT_MARKERS, normalizeContentBlocks, parseToolArgs, toISOTimestamp } from '@clawwork/core';
 import { isClawWorkSession, parseTaskIdFromSessionKey, parseAgentIdFromSessionKey } from '@clawwork/shared';
 import type { BrowserGatewayClient } from '../gateway/client.js';
 import { listGateways as listGatewayConfigs } from '../persistence/db.js';
@@ -32,20 +33,10 @@ interface SessionsListPayload {
   sessions?: GatewaySessionRow[];
 }
 
-interface ChatHistoryContentBlock {
-  type: string;
-  text?: string;
-  thinking?: string;
-  id?: string;
-  name?: string;
-  arguments?: unknown;
-  result?: unknown;
-}
-
 interface ChatHistoryMessage {
   role: string;
   __openclaw?: { runId?: string };
-  content: ChatHistoryContentBlock[];
+  content?: RawContentBlock[] | string | null;
   timestamp?: number;
 }
 
@@ -207,7 +198,7 @@ export function createBrowserGatewayTransport(
             const toolResultMap = new Map<string, string>();
             for (const m of rawMsgs) {
               if (m.role === 'toolResult') {
-                for (const b of m.content ?? []) {
+                for (const b of Array.isArray(m.content) ? m.content : []) {
                   if (b.type === 'toolResult' && b.id && b.result !== undefined) {
                     toolResultMap.set(b.id, typeof b.result === 'string' ? b.result : JSON.stringify(b.result));
                   }
@@ -218,12 +209,24 @@ export function createBrowserGatewayTransport(
             const msgs = rawMsgs
               .filter((m) => m.role === 'user' || m.role === 'assistant')
               .map((m) => {
-                const textContent = (m.content ?? [])
-                  .filter((b) => b.type === 'text' && b.text)
-                  .map((b) => b.text!)
-                  .join('');
+                const blocks: RawContentBlock[] =
+                  typeof m.content === 'string'
+                    ? [{ type: 'text', text: m.content }]
+                    : Array.isArray(m.content)
+                      ? m.content
+                      : [];
+                const normalized =
+                  m.role === 'assistant'
+                    ? normalizeContentBlocks(blocks, client.httpBase)
+                    : {
+                        content: blocks
+                          .filter((b) => b.type === 'text' && b.text)
+                          .map((b) => b.text)
+                          .join(''),
+                      };
+                const timestamp = toISOTimestamp(m.timestamp);
 
-                const toolCalls: ParsedToolCall[] = (m.content ?? [])
+                const toolCalls: ParsedToolCall[] = blocks
                   .filter((b) => b.type === 'toolCall' && b.id && b.name)
                   .map((b) => {
                     const tcId = b.id!;
@@ -239,26 +242,21 @@ export function createBrowserGatewayTransport(
                             ? parseToolArgs(b.arguments)
                             : undefined,
                       result: resultText,
-                      startedAt: m.timestamp ? new Date(m.timestamp).toISOString() : new Date().toISOString(),
-                      completedAt:
-                        resultText !== undefined
-                          ? m.timestamp
-                            ? new Date(m.timestamp).toISOString()
-                            : new Date().toISOString()
-                          : undefined,
+                      startedAt: timestamp,
+                      completedAt: resultText !== undefined ? timestamp : undefined,
                     };
                   });
 
                 return {
                   role: m.role,
-                  content: textContent,
+                  ...normalized,
                   runId: m.__openclaw?.runId,
-                  timestamp: m.timestamp ? new Date(m.timestamp).toISOString() : new Date().toISOString(),
+                  timestamp,
                   toolCalls,
                 };
               })
               .filter((m) => {
-                if (!m.content && m.toolCalls.length === 0) return false;
+                if (!m.content && m.toolCalls.length === 0 && !m.attachments?.length) return false;
                 if (m.role === 'assistant' && INTERNAL_ASSISTANT_MARKERS.has(m.content.trim())) return false;
                 return true;
               });
@@ -271,7 +269,7 @@ export function createBrowserGatewayTransport(
               taskId,
               sessionKey: s.key,
               title: s.derivedTitle ?? s.label ?? titleFromMsg,
-              updatedAt: s.updatedAt ? new Date(s.updatedAt).toISOString() : new Date().toISOString(),
+              updatedAt: toISOTimestamp(s.updatedAt ?? undefined),
               agentId: parseAgentIdFromSessionKey(s.key),
               model: s.model,
               modelProvider: s.modelProvider,
