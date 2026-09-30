@@ -306,6 +306,8 @@ function rawHistoryMessageKey(msg: RawHistoryMessage): string {
     role: msg.role,
     timestamp: msg.timestamp ?? null,
     content: normalizeSignatureValue(msg.content ?? []),
+    runId: msg.__openclaw?.runId,
+    toolCallId: msg.toolCallId,
   });
 }
 
@@ -380,30 +382,88 @@ function shouldStartVisibleAssistantTurn(
   return Boolean((turn?.content || turn?.attachments?.length) && turn.timestamp !== timestamp && !canMergeToolFinal);
 }
 
+function hasDifferentRun(turn: NormalizedAssistantTurn | null, runId: string | undefined): boolean {
+  return Boolean(runId && turn?.runId && runId !== turn.runId);
+}
+
 export function normalizeAssistantTurns(rawMsgs: RawHistoryMessage[], httpBase?: string): NormalizedAssistantTurn[] {
   const messages = deduplicateRawHistoryMessages(rawMsgs);
-  const toolResultMap = new Map<string, string>();
-  const toolCompletionMap = new Map<string, string>();
+  const toolResultMap = new Map<string, { result: string; completedAt?: string; status: 'done' | 'error' }>();
+  const segments = new Map<RawHistoryMessage, number>();
+  const toolOwners = new Map<string, Set<string | undefined>>();
+  const resultOwners = new Map<string, Set<string | undefined>>();
+  let segment = 0;
+  const scopeKey = (msg: RawHistoryMessage, id: string): string => JSON.stringify([segments.get(msg), id]);
+  const rememberOwner = (owners: Map<string, Set<string | undefined>>, msg: RawHistoryMessage, id: string): void => {
+    const key = scopeKey(msg, id);
+    const runs = owners.get(key) ?? new Set<string | undefined>();
+    runs.add(msg.__openclaw?.runId);
+    owners.set(key, runs);
+  };
+  const toolKey = (msg: RawHistoryMessage, id: string): string =>
+    JSON.stringify([segments.get(msg), msg.__openclaw?.runId ?? null, id]);
   for (const msg of messages) {
-    if (msg.role !== 'toolResult') continue;
-    for (const block of msg.content ?? []) {
-      if (block.type === 'toolResult' && block.id && block.result !== undefined) {
-        toolResultMap.set(block.id, typeof block.result === 'string' ? block.result : JSON.stringify(block.result));
-        const completedAt = toKnownToolTimestamp(msg.timestamp);
-        if (completedAt !== undefined) toolCompletionMap.set(block.id, completedAt);
+    if (msg.role === 'user') segment++;
+    segments.set(msg, segment);
+    if (msg.role === 'assistant') {
+      for (const block of msg.content ?? []) {
+        if (block.type === 'toolCall' && block.id) rememberOwner(toolOwners, msg, block.id);
       }
     }
+    if (msg.role !== 'toolResult') continue;
+    const completedAt = toKnownToolTimestamp(msg.timestamp);
+    const status = msg.isError ? 'error' : 'done';
+    if (msg.toolCallId) {
+      rememberOwner(resultOwners, msg, msg.toolCallId);
+      const result = (msg.content ?? [])
+        .filter((block) => block.type === 'text')
+        .map((block) => block.text ?? '')
+        .join('\n');
+      toolResultMap.set(toolKey(msg, msg.toolCallId), {
+        result: result || JSON.stringify(msg.content ?? []),
+        completedAt,
+        status,
+      });
+    }
+    for (const block of msg.content ?? []) {
+      if (block.type === 'toolResult' && block.id && block.result !== undefined) {
+        rememberOwner(resultOwners, msg, block.id);
+        toolResultMap.set(toolKey(msg, block.id), {
+          result: typeof block.result === 'string' ? block.result : JSON.stringify(block.result),
+          completedAt,
+          status,
+        });
+      }
+    }
+  }
+
+  function resultFor(msg: RawHistoryMessage, id: string) {
+    const runId = msg.__openclaw?.runId;
+    const exact = toolResultMap.get(toolKey(msg, id));
+    if (runId && exact) return exact;
+    const scope = scopeKey(msg, id);
+    if (toolOwners.get(scope)?.size !== 1 || resultOwners.get(scope)?.size !== 1) return undefined;
+    const resultRun = resultOwners.get(scope)!.values().next().value;
+    if (runId && resultRun && runId !== resultRun) return undefined;
+    return toolResultMap.get(JSON.stringify([segments.get(msg), resultRun ?? null, id]));
   }
 
   const turns: NormalizedAssistantTurn[] = [];
   let current: NormalizedAssistantTurn | null = null;
   let canMergeToolFinal = false;
+  let currentRunId: string | undefined;
 
   // 消息级 model：同一次回复可能由多条 assistant 记录拼成（toolCall / 推理 / 最终正文），
   // 它们各自带 model —— 取**最后一条带它的**（= 产出最终正文的那次调用）。
   // ⚠️ 缺 model 的记录**不清空**已记下的值：老网关/老记录可能没有这个字段。
   function startCurrent(timestamp: string, model?: string): NormalizedAssistantTurn {
-    current = { content: '', toolCalls: [], timestamp, ...(model ? { model } : {}) };
+    current = {
+      content: '',
+      toolCalls: [],
+      timestamp,
+      ...(model ? { model } : {}),
+      ...(currentRunId ? { runId: currentRunId } : {}),
+    };
     turns.push(current);
     return current;
   }
@@ -411,6 +471,7 @@ export function normalizeAssistantTurns(rawMsgs: RawHistoryMessage[], httpBase?:
   function ensureCurrent(timestamp: string, model?: string): NormalizedAssistantTurn {
     if (!current) return startCurrent(timestamp, model);
     if (model) current.model = model;
+    if (currentRunId) current.runId = currentRunId;
     return current;
   }
 
@@ -421,6 +482,13 @@ export function normalizeAssistantTurns(rawMsgs: RawHistoryMessage[], httpBase?:
       continue;
     }
     if (msg.role !== 'assistant') continue;
+
+    const runId = msg.__openclaw?.runId;
+    currentRunId = runId;
+    if (hasDifferentRun(current, runId)) {
+      current = null;
+      canMergeToolFinal = false;
+    }
 
     const timestamp = toISOTimestamp(msg.timestamp);
     const normalizedContent = normalizeContentBlocks(msg.content ?? [], httpBase);
@@ -434,16 +502,16 @@ export function normalizeAssistantTurns(rawMsgs: RawHistoryMessage[], httpBase?:
         (block: RawContentBlock): ToolCall => ({
           id: block.id!,
           name: block.name!,
-          status: toolResultMap.has(block.id!) ? 'done' : 'running',
+          status: resultFor(msg, block.id!)?.status ?? 'running',
           args:
             typeof block.arguments === 'object' && block.arguments !== null
               ? (block.arguments as Record<string, unknown>)
               : typeof block.arguments === 'string'
                 ? safeJsonParse(block.arguments)
                 : undefined,
-          result: toolResultMap.get(block.id!),
+          result: resultFor(msg, block.id!)?.result,
           startedAt: '',
-          completedAt: toolCompletionMap.get(block.id!),
+          completedAt: resultFor(msg, block.id!)?.completedAt,
         }),
       );
 

@@ -81,6 +81,10 @@ export type ChatContentBlock = RawContentBlock & {
 
 export interface RawHistoryMessage {
   role: string;
+  stopReason?: string;
+  toolCallId?: string;
+  isError?: boolean;
+  __openclaw?: { runId?: string };
   content?: RawContentBlock[];
   timestamp?: number;
   /** 实际生成这条回复的模型 id。**只有 assistant 记录带**（实测网关 transcript）。 */
@@ -88,6 +92,7 @@ export interface RawHistoryMessage {
 }
 
 export interface NormalizedAssistantTurn {
+  runId?: string;
   content: string;
   thinkingContent?: string;
   toolCalls: ToolCall[];
