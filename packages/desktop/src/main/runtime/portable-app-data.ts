@@ -11,9 +11,8 @@
  *    （点了没反应）。这也正是交付包里那个 `.bat` 唯一在做的事（它拿 tasklist
  *    查一遍再给一句人话）。userData 分开之后，双份可以并存，`.bat` 就没有存在
  *    的理由了 —— 用户直接双击 `荣盈魔方\荣盈魔方.exe` 即可。
- * ③ **可重建运行时不跟盘走**。数万小文件写进 exFAT 会把首启放大到几十分钟；
- *    登录态、设备身份、日志仍在盘上，运行时改存当前电脑的本机缓存。换电脑会再准备
- *    一次运行时，但不会把 U 盘写成数 GiB 的小文件树。
+ * Runtime caches also follow portable application data. Portable launch never
+ * selects the host cache after application-data preparation fails.
  *
  * ⚠️ 与 `user-data-override.ts` 的分工（**别把两者合并**）：
  *    那个是 dev/test 的隔离后门，硬要求"打包后一律不认"；这个是打包后的盘上形态。
@@ -178,7 +177,7 @@ export interface PortableAppDataApplyResult {
   target: string | null;
   volumeRoot: string | null;
   reason: PortableAppDataReason | null;
-  /** 目标建不出来时的人话原因（只进日志，不弹框）。 */
+  /** Preparation failure; startup must notify and exit before using any paths. */
   failed?: string;
 }
 
@@ -188,8 +187,8 @@ export interface PortableAppDataApplyResult {
  * ⚠️ **未判定为盘上形态时一次 `setPath` 都不调用** —— 与 `user-data-override.ts`
  *    同一条硬要求（安装形态的启动路径不许被这里碰到）。
  *
- * ⚠️ 建目录失败（只读盘、没权限、盘满了）**不是错误**：回落本机默认目录继续启动，
- *    只把原因记进日志。为了"数据跟盘走"让用户打不开程序，是更坏的结果。
+ * Directory or path-redirection failure returns a fatal preparation result.
+ * Callers must stop before cache, instance-owner, logging, or config writes.
  */
 export function applyPortableAppData(opts: PortableAppDataApplyInput): PortableAppDataApplyResult {
   const decision = decidePortableAppData({
@@ -209,9 +208,11 @@ export function applyPortableAppData(opts: PortableAppDataApplyInput): PortableA
   const logsDir = P().join(target, 'logs');
   const mkdir = opts.mkdir ?? ((dir: string): void => void mkdirSync(dir, { recursive: true }));
   try {
-    // ⚠️ `setPath` 要求目录**已经存在**（Electron 对不存在的路径会抛）——logs 同样。
     mkdir(target);
     mkdir(logsDir);
+    opts.app.setPath('userData', target);
+    opts.app.setPath('sessionData', target);
+    opts.app.setPath('logs', logsDir);
   } catch (err) {
     return {
       target: null,
@@ -220,12 +221,6 @@ export function applyPortableAppData(opts: PortableAppDataApplyInput): PortableA
       failed: err instanceof Error ? err.message : String(err),
     };
   }
-
-  opts.app.setPath('userData', target);
-  // `sessionData`（Chromium 的 Cache/Storage）默认跟着 userData —— 显式写出来，
-  // 免得日后有人只改 userData 却发现缓存还留在本机。
-  opts.app.setPath('sessionData', target);
-  opts.app.setPath('logs', logsDir);
 
   return { target, volumeRoot: decision.volumeRoot, reason: decision.reason };
 }

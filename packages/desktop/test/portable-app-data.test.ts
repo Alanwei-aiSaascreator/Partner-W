@@ -276,7 +276,7 @@ describe('applyPortableAppData', () => {
     ]);
   });
 
-  it('⑩ 目录建不出来（只读盘/没权限）⇒ 回落本机默认，不抛、也不 setPath', () => {
+  it('reports directory preparation failure without setting paths so startup can abort', () => {
     const mkdir = vi.fn(() => {
       throw new Error('EPERM: read-only file system');
     });
