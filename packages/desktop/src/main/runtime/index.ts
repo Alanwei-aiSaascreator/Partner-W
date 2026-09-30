@@ -405,6 +405,11 @@ export async function bootstrapLocalGatewayRuntime(opts: {
       stateDir,
     };
     if (gateway.ownership === 'spawned' || !activeGateway) activeGateway = nextActive;
+    if (gateway.ownership === 'spawned') {
+      gateway.child?.onExit(() => {
+        if (activeGateway === nextActive) activeGateway = null;
+      });
+    }
 
     deps.log('runtime.bootstrap.ok', {
       deploymentKey: deployed.deploymentKey,
@@ -442,7 +447,7 @@ let activeGateway: {
 } | null = null;
 
 export function getActiveLocalGatewayDeploymentRoot(): string | null {
-  return activeGateway?.deployedRoot ?? null;
+  return activeGateway?.ownership === 'spawned' && activeGateway.child ? activeGateway.deployedRoot : null;
 }
 
 /** 整体收尾超时 —— `before-quit` 里**不能卡住退出**。 */
