@@ -234,8 +234,6 @@ function createWindow(): BrowserWindow {
 // **唯一**合法手段（绝不靠删真实 %APPDATA%，见 junction 事故）。
 applyUserDataOverride({ app, isPackaged: app.isPackaged });
 
-// 运行时是可重建的本机缓存，不能跟着便携 userData 搬到 exFAT U 盘。
-// 此刻 dev override 已生效、portable override 尚未发生，正好是正确的本机缓存根。
 const localUserDataDir = app.getPath('userData');
 
 /**
@@ -258,8 +256,6 @@ const portableAppData = applyPortableAppData({
   removableDrives: () => removableDrives(),
 });
 
-// 运行时是可重建的本机缓存：盘上形态按“实际 userData”分一个独立作用域。
-// 同作用域受下面的单实例锁保护；不同 U 盘、安装版互不争写 current.json / deploy-*。
 const runtimeCacheUserDataDir = runtimeCacheScopeDir({
   localUserDataDir,
   effectiveUserDataDir: app.getPath('userData'),

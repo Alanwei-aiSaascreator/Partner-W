@@ -5,7 +5,7 @@ import { runtimeCacheScopeDir } from '../src/main/runtime/cache-scope.js';
 const LOCAL_USER_DATA = 'C:\\Users\\u\\AppData\\Roaming\\@clawwork\\desktop';
 
 describe('runtimeCacheScopeDir', () => {
-  it('安装形态沿用原 userData，保持现有缓存兼容', () => {
+  it('preserves the installed application cache root', () => {
     expect(
       runtimeCacheScopeDir({
         localUserDataDir: LOCAL_USER_DATA,
@@ -15,27 +15,39 @@ describe('runtimeCacheScopeDir', () => {
     ).toBe(LOCAL_USER_DATA);
   });
 
-  it('便携形态按单实例 userData 隔离本机缓存，不与安装版或另一块盘争写', () => {
+  it('keeps portable runtime files on the effective portable data volume', () => {
     const eDrive = runtimeCacheScopeDir({
       localUserDataDir: LOCAL_USER_DATA,
-      effectiveUserDataDir: 'E:\\荣盈魔方-运行数据',
+      effectiveUserDataDir: 'E:\\portable-data',
       portable: true,
     });
     const sameScopeDifferentCase = runtimeCacheScopeDir({
       localUserDataDir: LOCAL_USER_DATA,
-      effectiveUserDataDir: 'e:\\荣盈魔方-运行数据\\',
+      effectiveUserDataDir: 'e:\\portable-data\\',
       portable: true,
     });
     const fDrive = runtimeCacheScopeDir({
       localUserDataDir: LOCAL_USER_DATA,
-      effectiveUserDataDir: 'F:\\荣盈魔方-运行数据',
+      effectiveUserDataDir: 'F:\\portable-data',
       portable: true,
     });
 
-    expect(eDrive).toBe(sameScopeDifferentCase);
+    expect(path.win32.relative(eDrive, sameScopeDifferentCase)).toBe('');
+    expect(path.win32.relative('E:\\portable-data', eDrive)).toBe('portable-runtime-cache');
+    expect(path.win32.relative('F:\\portable-data', fDrive)).toBe('portable-runtime-cache');
     expect(eDrive).not.toBe(LOCAL_USER_DATA);
     expect(eDrive).not.toBe(fDrive);
-    expect(path.basename(path.dirname(eDrive))).toBe('portable-runtime-cache');
-    expect(path.basename(eDrive)).toMatch(/^[a-f0-9]{64}$/u);
+    expect(eDrive).not.toContain(LOCAL_USER_DATA);
+    expect(fDrive).not.toContain(LOCAL_USER_DATA);
+  });
+
+  it('uses the effective data root for non-Windows portable deployments', () => {
+    expect(
+      runtimeCacheScopeDir({
+        localUserDataDir: '/host/application-data',
+        effectiveUserDataDir: '/media/device/application-data',
+        portable: true,
+      }),
+    ).toBe(path.join('/media/device/application-data', 'portable-runtime-cache'));
   });
 });
