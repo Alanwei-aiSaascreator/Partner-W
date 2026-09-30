@@ -441,6 +441,10 @@ let activeGateway: {
   stateDir: string;
 } | null = null;
 
+export function getActiveLocalGatewayDeploymentRoot(): string | null {
+  return activeGateway?.deployedRoot ?? null;
+}
+
 /** 整体收尾超时 —— `before-quit` 里**不能卡住退出**。 */
 const SHUTDOWN_TIMEOUT_MS = 5000;
 
