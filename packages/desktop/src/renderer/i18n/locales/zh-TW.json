@@ -1,14 +1,4 @@
 {
-  "mediaReadiness": {
-    "chatModelNote": "聊天中選擇 Seed 不會選擇影片生成模型。",
-    "image": "圖片",
-    "video": "影片",
-    "ready": "可用",
-    "unavailable": "中轉暫不可用",
-    "unknown": "尚未檢查",
-    "probe-failed": "未能確認",
-    "relayLabel": "中轉媒體能力"
-  },
   "account": {
     "activated": "已授權",
     "device": "本機裝置",
@@ -1309,6 +1299,16 @@
     "unpublishDone": "已下架",
     "views": "{{count}} 次瀏覽"
   },
+  "mediaReadiness": {
+    "chatModelNote": "聊天中選擇 Seed 不會選擇影片生成模型。",
+    "image": "圖片",
+    "probe-failed": "未能確認",
+    "ready": "可用",
+    "relayLabel": "中轉媒體能力",
+    "unavailable": "中轉暫不可用",
+    "unknown": "尚未檢查",
+    "video": "影片"
+  },
   "meeting": {
     "abort": {
       "confirmed": "閘道已確認停止",
@@ -2146,8 +2146,6 @@
   },
   "toolActivity": {
     "actions": {
-      "generateImage": "產生圖片",
-      "generateVideo": "產生影片",
       "browseWeb": "Browse the web",
       "execute": "Run an operation",
       "generateImage": "產生圖片",

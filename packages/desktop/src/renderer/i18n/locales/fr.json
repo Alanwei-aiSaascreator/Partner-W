@@ -1,14 +1,4 @@
 {
-  "mediaReadiness": {
-    "chatModelNote": "Choisir Seed pour le chat ne sélectionne pas le modèle de génération vidéo.",
-    "image": "Image",
-    "video": "Vidéo",
-    "ready": "Disponible",
-    "unavailable": "Indisponible via le relais",
-    "unknown": "Non vérifié",
-    "probe-failed": "Impossible à confirmer",
-    "relayLabel": "Médias du relais"
-  },
   "account": {
     "activated": "Activé",
     "device": "Cet appareil",
@@ -1309,6 +1299,16 @@
     "unpublishDone": "Unpublished",
     "views": "{{count}} views"
   },
+  "mediaReadiness": {
+    "chatModelNote": "Choisir Seed pour le chat ne sélectionne pas le modèle de génération vidéo.",
+    "image": "Image",
+    "probe-failed": "Impossible à confirmer",
+    "ready": "Disponible",
+    "relayLabel": "Médias du relais",
+    "unavailable": "Indisponible via le relais",
+    "unknown": "Non vérifié",
+    "video": "Vidéo"
+  },
   "meeting": {
     "abort": {
       "confirmed": "Arrêt confirmé par la passerelle",
@@ -2146,8 +2146,6 @@
   },
   "toolActivity": {
     "actions": {
-      "generateImage": "Générer une image",
-      "generateVideo": "Générer une vidéo",
       "browseWeb": "Browse the web",
       "execute": "Run an operation",
       "generateImage": "Générer une image",

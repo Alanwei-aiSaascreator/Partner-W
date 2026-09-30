@@ -1,14 +1,4 @@
 {
-  "mediaReadiness": {
-    "chatModelNote": "Escolher Seed para o chat não seleciona o modelo de geração de vídeo.",
-    "image": "Imagem",
-    "video": "Vídeo",
-    "ready": "Disponível",
-    "unavailable": "Indisponível no relay",
-    "unknown": "Não verificado",
-    "probe-failed": "Não foi possível confirmar",
-    "relayLabel": "Mídia do relay"
-  },
   "account": {
     "activated": "Ativado",
     "device": "Este dispositivo",
@@ -1309,6 +1299,16 @@
     "unpublishDone": "Unpublished",
     "views": "{{count}} views"
   },
+  "mediaReadiness": {
+    "chatModelNote": "Escolher Seed para o chat não seleciona o modelo de geração de vídeo.",
+    "image": "Imagem",
+    "probe-failed": "Não foi possível confirmar",
+    "ready": "Disponível",
+    "relayLabel": "Mídia do relay",
+    "unavailable": "Indisponível no relay",
+    "unknown": "Não verificado",
+    "video": "Vídeo"
+  },
   "meeting": {
     "abort": {
       "confirmed": "O gateway confirmou a interrupção",
@@ -2146,8 +2146,6 @@
   },
   "toolActivity": {
     "actions": {
-      "generateImage": "Gerar uma imagem",
-      "generateVideo": "Gerar um vídeo",
       "browseWeb": "Browse the web",
       "execute": "Run an operation",
       "generateImage": "Gerar uma imagem",

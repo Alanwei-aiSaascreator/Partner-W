@@ -1,14 +1,4 @@
 {
-  "mediaReadiness": {
-    "chatModelNote": "채팅에서 Seed를 선택해도 동영상 생성 모델은 선택되지 않습니다.",
-    "image": "이미지",
-    "video": "동영상",
-    "ready": "사용 가능",
-    "unavailable": "릴레이에서 사용 불가",
-    "unknown": "확인 전",
-    "probe-failed": "확인하지 못함",
-    "relayLabel": "릴레이 미디어"
-  },
   "account": {
     "activated": "인증됨",
     "device": "이 기기",
@@ -1309,6 +1299,16 @@
     "unpublishDone": "Unpublished",
     "views": "{{count}} views"
   },
+  "mediaReadiness": {
+    "chatModelNote": "채팅에서 Seed를 선택해도 동영상 생성 모델은 선택되지 않습니다.",
+    "image": "이미지",
+    "probe-failed": "확인하지 못함",
+    "ready": "사용 가능",
+    "relayLabel": "릴레이 미디어",
+    "unavailable": "릴레이에서 사용 불가",
+    "unknown": "확인 전",
+    "video": "동영상"
+  },
   "meeting": {
     "abort": {
       "confirmed": "게이트웨이에서 중지 확인됨",
@@ -2146,8 +2146,6 @@
   },
   "toolActivity": {
     "actions": {
-      "generateImage": "이미지 생성",
-      "generateVideo": "동영상 생성",
       "browseWeb": "Browse the web",
       "execute": "Run an operation",
       "generateImage": "이미지 생성",

@@ -1,14 +1,4 @@
 {
-  "mediaReadiness": {
-    "chatModelNote": "Choosing Seed for chat does not select the video-generation model.",
-    "image": "Image",
-    "video": "Video",
-    "ready": "Available",
-    "unavailable": "Unavailable in relay",
-    "unknown": "Not checked",
-    "probe-failed": "Could not confirm",
-    "relayLabel": "Relay media"
-  },
   "account": {
     "activated": "Activated",
     "device": "This device",
@@ -1309,6 +1299,16 @@
     "unpublishDone": "Unpublished",
     "views": "{{count}} views"
   },
+  "mediaReadiness": {
+    "chatModelNote": "Choosing Seed for chat does not select the video-generation model.",
+    "image": "Image",
+    "probe-failed": "Could not confirm",
+    "ready": "Available",
+    "relayLabel": "Relay media",
+    "unavailable": "Unavailable in relay",
+    "unknown": "Not checked",
+    "video": "Video"
+  },
   "meeting": {
     "abort": {
       "confirmed": "Gateway confirmed stop",
@@ -2146,8 +2146,6 @@
   },
   "toolActivity": {
     "actions": {
-      "generateImage": "Generate an image",
-      "generateVideo": "Generate a video",
       "browseWeb": "Browse the web",
       "execute": "Run an operation",
       "generateImage": "Generate an image",

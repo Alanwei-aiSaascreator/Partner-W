@@ -1,1 +1,1 @@
-pnpm lint-staged && pnpm check:architecture
+pnpm lint-staged --concurrent false && pnpm check:architecture

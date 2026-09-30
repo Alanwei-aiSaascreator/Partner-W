@@ -1,14 +1,4 @@
 {
-  "mediaReadiness": {
-    "chatModelNote": "チャットで Seed を選んでも、動画生成モデルは選択されません。",
-    "image": "画像",
-    "video": "動画",
-    "ready": "利用可能",
-    "unavailable": "リレーでは利用不可",
-    "unknown": "未確認",
-    "probe-failed": "確認できませんでした",
-    "relayLabel": "リレーのメディア機能"
-  },
   "account": {
     "activated": "認証済み",
     "device": "このデバイス",
@@ -1309,6 +1299,16 @@
     "unpublishDone": "Unpublished",
     "views": "{{count}} views"
   },
+  "mediaReadiness": {
+    "chatModelNote": "チャットで Seed を選んでも、動画生成モデルは選択されません。",
+    "image": "画像",
+    "probe-failed": "確認できませんでした",
+    "ready": "利用可能",
+    "relayLabel": "リレーのメディア機能",
+    "unavailable": "リレーでは利用不可",
+    "unknown": "未確認",
+    "video": "動画"
+  },
   "meeting": {
     "abort": {
       "confirmed": "ゲートウェイが停止を確認済み",
@@ -2146,8 +2146,6 @@
   },
   "toolActivity": {
     "actions": {
-      "generateImage": "画像を生成",
-      "generateVideo": "動画を生成",
       "browseWeb": "Browse the web",
       "execute": "Run an operation",
       "generateImage": "画像を生成",

@@ -1,14 +1,4 @@
 {
-  "mediaReadiness": {
-    "chatModelNote": "聊天中选择 Seed 不会选择视频生成模型。",
-    "image": "图片",
-    "video": "视频",
-    "ready": "可用",
-    "unavailable": "中转暂不可用",
-    "unknown": "尚未检查",
-    "probe-failed": "未能确认",
-    "relayLabel": "中转媒体能力"
-  },
   "account": {
     "activated": "已授权",
     "device": "本机设备",
@@ -1309,6 +1299,16 @@
     "unpublishDone": "已下架",
     "views": "{{count}} 次浏览"
   },
+  "mediaReadiness": {
+    "chatModelNote": "聊天中选择 Seed 不会选择视频生成模型。",
+    "image": "图片",
+    "probe-failed": "未能确认",
+    "ready": "可用",
+    "relayLabel": "中转媒体能力",
+    "unavailable": "中转暂不可用",
+    "unknown": "尚未检查",
+    "video": "视频"
+  },
   "meeting": {
     "abort": {
       "confirmed": "网关已确认停止",
@@ -2146,8 +2146,6 @@
   },
   "toolActivity": {
     "actions": {
-      "generateImage": "生成图片",
-      "generateVideo": "生成视频",
       "browseWeb": "查询网页",
       "execute": "执行操作",
       "generateImage": "生成图片",
