@@ -322,6 +322,28 @@ describe('createBrowserGatewayTransport', () => {
   });
 
   describe('syncSessions', () => {
+    it('preserves known run identities without inventing legacy ownership', async () => {
+      vi.mocked(mockClient.listSessions).mockResolvedValue({
+        sessions: [{ key: 'agent:main:clawwork:device-123:task:t1' }],
+      });
+      mockClient.getChatHistory.mockResolvedValue({
+        messages: ['run-old', 'run-new', undefined].map((runId) => ({
+          role: 'assistant',
+          content: [{ type: 'text', text: 'answer' }],
+          ...(runId ? { __openclaw: { runId } } : {}),
+        })),
+      });
+      const { transport } = createBrowserGatewayTransport(getClients, getClient, getDeviceId);
+
+      const result = await transport.syncSessions();
+
+      expect(result.discovered![0]!.messages!.map((message) => message.runId)).toEqual([
+        'run-old',
+        'run-new',
+        undefined,
+      ]);
+    });
+
     it('continues past a failed client and returns discovered from others', async () => {
       vi.mocked(mockClient.listSessions).mockRejectedValue(new Error('sync failed'));
       const { transport } = createBrowserGatewayTransport(getClients, getClient, getDeviceId);

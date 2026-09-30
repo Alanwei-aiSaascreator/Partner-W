@@ -88,7 +88,7 @@ interface Discovered {
   taskId?: string;
   sessionKey?: string;
   title?: string;
-  messages?: Array<{ role: string; content: string }>;
+  messages?: Array<{ role: string; content: string; runId?: string }>;
 }
 
 async function runSync(): Promise<Discovered[]> {
@@ -113,6 +113,22 @@ beforeEach(() => {
 });
 
 describe('ws:sync-sessions —— chat.history content 多态', () => {
+  it('preserves known run identities without inventing legacy ownership', async () => {
+    const key = keyFor('run-history');
+    sessionsPayload = { sessions: [{ key }] };
+    historyByKey[key] = {
+      messages: ['run-old', 'run-new', undefined].map((runId) => ({
+        role: 'assistant',
+        content: [{ type: 'text', text: 'answer' }],
+        ...(runId ? { __openclaw: { runId } } : {}),
+      })),
+    };
+
+    const discovered = await runSync();
+
+    expect(discovered[0]!.messages!.map((message) => message.runId)).toEqual(['run-old', 'run-new', undefined]);
+  });
+
   it('A. 字符串 content（user 的真实形状）能被 materialize，不再抛', async () => {
     const key = keyFor('t1');
     sessionsPayload = { sessions: [{ key }] };

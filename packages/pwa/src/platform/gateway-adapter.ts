@@ -44,6 +44,7 @@ interface ChatHistoryContentBlock {
 
 interface ChatHistoryMessage {
   role: string;
+  __openclaw?: { runId?: string };
   content: ChatHistoryContentBlock[];
   timestamp?: number;
 }
@@ -251,6 +252,7 @@ export function createBrowserGatewayTransport(
                 return {
                   role: m.role,
                   content: textContent,
+                  runId: m.__openclaw?.runId,
                   timestamp: m.timestamp ? new Date(m.timestamp).toISOString() : new Date().toISOString(),
                   toolCalls,
                 };

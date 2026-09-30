@@ -109,6 +109,7 @@ type RawMessageContent = string | RawContentBlock[] | null | undefined;
 
 interface ChatHistoryMessage {
   role: string;
+  __openclaw?: { runId?: string };
   /** 实际生成这条回复的模型。**只有 assistant 记录带**（实测网关 transcript）。 */
   model?: string;
   content: RawMessageContent;
@@ -404,6 +405,7 @@ export function registerWsHandlers(): void {
       contextTokens?: number;
       messages: {
         role: string;
+        runId?: string;
         content: string;
         timestamp: string;
         attachments?: unknown[];
@@ -497,6 +499,7 @@ export function registerWsHandlers(): void {
                   toolCalls,
                   // 逐条透传：网关每条 assistant 记录都带它（实测），user 记录没有。
                   model: m.model,
+                  runId: m.__openclaw?.runId,
                 };
               })
               .filter((m) => {
