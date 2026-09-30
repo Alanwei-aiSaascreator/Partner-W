@@ -479,7 +479,7 @@ function MediaReadinessStatus({
     <div
       role="status"
       aria-label={t('mediaReadiness.relayLabel')}
-      className="mx-5 mt-3 rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-2 text-xs text-[var(--text-secondary)]"
+      className="type-support mx-5 mt-3 rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-2 text-[var(--text-secondary)]"
     >
       <div className="flex flex-wrap gap-x-4 gap-y-1">
         <span>{t('mediaReadiness.relayLabel')}</span>
