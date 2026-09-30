@@ -25,7 +25,7 @@
 
 import { existsSync } from 'node:fs';
 import path from 'node:path';
-import Automizer, { modify } from 'pptx-automizer';
+import { Automizer, modify } from 'pptx-automizer';
 import { findPptxTemplate, pageNumberShapeFor, PPTX_BLANK_ROOT_FILE, PPTX_TEMPLATE_FILE } from './catalog.js';
 import type { TemplateDeckSpec } from './parse.js';
 
