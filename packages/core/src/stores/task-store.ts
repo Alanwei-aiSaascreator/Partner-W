@@ -83,7 +83,9 @@ export interface TaskState {
       updatedAt?: string;
     },
   ) => void;
-  removeTask: (id: string) => void;
+  registerPersistedTasks: (tasks: Task[], activeTaskId?: string) => void;
+  resetWorkspace: () => void;
+  removeTask: (id: string) => Promise<void>;
   hydrate: () => Promise<void>;
   adoptTasks: (
     discovered: {
@@ -166,6 +168,7 @@ export interface TaskStoreDeps {
 
 export function createTaskStore(deps: TaskStoreDeps) {
   let cachedDeviceId: string | null = null;
+  let workspaceGeneration = 0;
 
   return createStore<TaskState>((set, get) => ({
     tasks: [],
@@ -326,7 +329,38 @@ export function createTaskStore(deps: TaskStoreDeps) {
         });
     },
 
-    removeTask: (id) => {
+    registerPersistedTasks: (tasks, activeTaskId) => {
+      const ids = new Set(tasks.map((task) => task.id));
+      if (ids.size !== tasks.length || (activeTaskId && !ids.has(activeTaskId)))
+        throw new Error('Invalid persisted task registration');
+      for (const task of tasks) {
+        const existing = get().tasks.find((item) => item.id === task.id);
+        if (existing && (existing.sessionKey !== task.sessionKey || existing.gatewayId !== task.gatewayId))
+          throw new Error('Persisted task ownership mismatch');
+      }
+      set((state) => ({
+        tasks: [...tasks, ...state.tasks.filter((task) => !ids.has(task.id))],
+        ...(activeTaskId ? { activeTaskId, pendingNewTask: null } : {}),
+      }));
+    },
+
+    resetWorkspace: () => {
+      workspaceGeneration++;
+      cachedDeviceId = null;
+      set({ tasks: [], activeTaskId: null, hydrated: false, pendingNewTask: null });
+    },
+    removeTask: async (id) => {
+      const generation = workspaceGeneration;
+      const task = get().tasks.find((task) => task.id === id);
+      const result = await deps.deleteTask(id);
+      if (!result.ok) throw new Error(result.error || 'Task deletion failed');
+      const current = get().tasks.find((item) => item.id === id);
+      if (
+        generation !== workspaceGeneration ||
+        current?.sessionKey !== task?.sessionKey ||
+        current?.gatewayId !== task?.gatewayId
+      )
+        throw new Error('Task changed during deletion');
       set((s) => {
         const nextActiveId = s.activeTaskId === id ? null : s.activeTaskId;
         return {
@@ -334,16 +368,17 @@ export function createTaskStore(deps: TaskStoreDeps) {
           activeTaskId: nextActiveId,
         };
       });
-      deps.deleteTask(id).catch((err) => {
-        console.error('[persist:task]', err);
-      });
     },
 
     hydrate: async () => {
       if (get().hydrated) return;
+      const generation = workspaceGeneration;
       try {
-        cachedDeviceId = await deps.getDeviceId();
+        const deviceId = await deps.getDeviceId();
+        if (generation !== workspaceGeneration) return;
+        cachedDeviceId = deviceId;
         const res = await deps.loadTasks();
+        if (generation !== workspaceGeneration) return;
         if (res.ok && res.rows) {
           set({
             tasks: res.rows.map((r) => ({
