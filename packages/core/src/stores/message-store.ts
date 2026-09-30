@@ -142,6 +142,7 @@ export interface MessageState {
   upsertToolCall: (sessionKey: string, taskId: string, tc: ToolCall) => void;
   bulkLoad: (taskId: string, msgs: Message[]) => void;
   appendStreamDelta: (sessionKey: string, delta: string) => void;
+  bindActiveRun: (sessionKey: string, runId: string) => void;
   /**
    * 把这一轮的流式正文**整个换掉**（不是追加）。
    *
@@ -302,6 +303,7 @@ function mergeToolCalls(canonical: ToolCall[], turn: ToolCall[]): ToolCall[] {
 }
 
 export function mergeCanonicalMessageWithActiveTurn(canonical: Message, turn?: ActiveTurn): Message {
+  if (turn?.runId && canonical.runId !== turn.runId) return canonical;
   return {
     ...canonical,
     thinkingContent: turn?.thinkingContent ?? canonical.thinkingContent,
@@ -471,6 +473,13 @@ export function createMessageStore(deps: MessageStoreDeps) {
         },
       })),
 
+    bindActiveRun: (sessionKey, runId) =>
+      set((state) => {
+        const existing = state.activeTurnBySession[sessionKey];
+        const turn = existing && (!existing.runId || existing.runId === runId) ? existing : newActiveTurn();
+        return { activeTurnBySession: { ...state.activeTurnBySession, [sessionKey]: { ...turn, runId } } };
+      }),
+
     appendStreamDelta: (sessionKey, delta) =>
       set((s) => {
         const turn = s.activeTurnBySession[sessionKey] ?? newActiveTurn();
@@ -558,7 +567,7 @@ export function createMessageStore(deps: MessageStoreDeps) {
         const turn = s.activeTurnBySession[sessionKey];
         const merged = mergeCanonicalMessageWithActiveTurn(canonical, turn);
         const nextTurns = { ...s.activeTurnBySession };
-        delete nextTurns[sessionKey];
+        if (!turn?.runId || canonical.runId === turn.runId) delete nextTurns[sessionKey];
         return {
           messagesByTask: {
             ...s.messagesByTask,

@@ -1,5 +1,5 @@
 import { parseAgentIdFromSessionKey, parseTaskIdFromSessionKey } from '@clawwork/shared';
-import type { Message, MessageRole, ToolCall, IpcResult } from '@clawwork/shared';
+import type { Message, MessageRole, ToolCall, IpcResult, ChatDispatchReceipt } from '@clawwork/shared';
 import type { RawHistoryMessage } from '../protocol/types.js';
 import type { ActiveTurn, MessageState } from '../stores/message-store.js';
 import { mergeCanonicalMessageWithActiveTurn } from '../stores/message-store.js';
@@ -137,6 +137,12 @@ export interface SessionSyncDeps {
 }
 
 const RETRY_DELAYS = [2000, 4000, 8000];
+export type RunSyncResult =
+  | { kind: 'pending' }
+  | { kind: 'completed'; messageIds: string[]; content: string }
+  | { kind: 'failed'; reason: 'invalid-receipt' | 'persistence' | 'history' };
+type PersistenceScope = { taskId: string; sessionKey: string; gatewayId: string };
+class CanonicalPersistenceError extends Error {}
 
 function normalizeLocalAssistantMessage(row: { role: string; content: string; attachments?: unknown[] }): {
   content: string;
@@ -154,33 +160,63 @@ function normalizeLocalAssistantMessage(row: { role: string; content: string; at
 export function createSessionSync(deps: SessionSyncDeps) {
   let hydrationPromise: Promise<void> | null = null;
   const syncChains = new Map<string, Promise<void>>();
+  const pendingWrites = new Map<string, PersistenceScope & { message: Message }>();
   let syncEpoch = 0;
 
-  function persistCanonicalMessage(message: Message): void {
-    deps.persistence
-      .persistMessage({
-        id: message.id,
-        taskId: message.taskId,
-        role: message.role,
-        content: message.content,
-        timestamp: message.timestamp,
-        sessionKey: message.sessionKey,
-        agentId: message.agentId,
-        runId: message.runId,
-        attachments: message.attachments as unknown[] | undefined,
-        toolCalls: message.toolCalls,
-        thinkingContent: message.thinkingContent,
-        // 消息级模型：落库后重启才还在（重载读回见 hydrateFromLocal）。
-        model: message.model,
-      })
-      .catch((err) => console.error('[session-sync] persistMessage failed:', err));
+  async function persistCanonicalMessage(message: Message): Promise<void> {
+    const result = await deps.persistence.persistMessage({
+      id: message.id,
+      taskId: message.taskId,
+      role: message.role,
+      content: message.content,
+      timestamp: message.timestamp,
+      sessionKey: message.sessionKey,
+      agentId: message.agentId,
+      runId: message.runId,
+      attachments: message.attachments as unknown[] | undefined,
+      toolCalls: message.toolCalls,
+      thinkingContent: message.thinkingContent,
+      // 消息级模型：落库后重启才还在（重载读回见 hydrateFromLocal）。
+      model: message.model,
+    });
+    if (!result.ok) throw new Error(result.error ?? 'Canonical message persistence failed');
   }
 
-  function backfillAssistantAttachments(
+  async function flushPendingWrites(scope: PersistenceScope, epoch: number): Promise<void> {
+    for (const [id, entry] of pendingWrites) {
+      if (syncEpoch !== epoch) return;
+      if (entry.taskId !== scope.taskId || entry.sessionKey !== scope.sessionKey || entry.gatewayId !== scope.gatewayId)
+        continue;
+      for (let attempt = 0; attempt <= RETRY_DELAYS.length; attempt++) {
+        if (syncEpoch !== epoch || pendingWrites.get(id) !== entry) break;
+        try {
+          await persistCanonicalMessage(entry.message);
+          if (syncEpoch === epoch && pendingWrites.get(id) === entry) pendingWrites.delete(id);
+          break;
+        } catch (error) {
+          if (syncEpoch !== epoch || pendingWrites.get(id) !== entry) break;
+          if (attempt === RETRY_DELAYS.length) {
+            throw new CanonicalPersistenceError('Canonical message persistence exhausted retries', { cause: error });
+          }
+          await new Promise((resolve) => setTimeout(resolve, RETRY_DELAYS[attempt]));
+        }
+      }
+    }
+  }
+
+  async function persistCanonicalMessages(messages: Message[], scope: PersistenceScope, epoch: number): Promise<void> {
+    if (syncEpoch !== epoch) return;
+    for (const message of messages) pendingWrites.set(message.id, { ...scope, message });
+    await flushPendingWrites(scope, epoch);
+  }
+
+  async function backfillAssistantAttachments(
     taskId: string,
     sessionKey: string,
     incoming: Array<{ timestamp: string; attachments?: Message['attachments'] }>,
-  ): void {
+    gatewayId: string,
+    epoch: number,
+  ): Promise<void> {
     const withAttachments = incoming.filter((message) => message.attachments?.length);
     if (withAttachments.length === 0) return;
 
@@ -208,9 +244,7 @@ export function createSessionSync(deps: SessionSyncDeps) {
       return changed ? { messagesByTask: { ...s.messagesByTask, [taskId]: next } } : {};
     });
 
-    for (const message of updated) {
-      persistCanonicalMessage(message);
-    }
+    await persistCanonicalMessages(updated, { taskId, sessionKey, gatewayId }, epoch);
   }
 
   async function hydrateFromLocal(): Promise<void> {
@@ -253,27 +287,43 @@ export function createSessionSync(deps: SessionSyncDeps) {
           }
         }
       })().catch((err) => {
-        hydrationPromise = null;
+        if (syncEpoch === epoch) hydrationPromise = null;
         throw err;
       });
     }
     await hydrationPromise;
   }
 
-  async function doSyncSession(taskId: string, sessionKeyOverride: string | undefined, epoch: number): Promise<void> {
+  async function doSyncSession(
+    scope: PersistenceScope,
+    epoch: number,
+    expectedRunId?: string,
+  ): Promise<RunSyncResult | void> {
+    const { taskId, sessionKey, gatewayId } = scope;
     const task = deps.getTaskStore().tasks.find((t) => t.id === taskId);
-    const sessionKey = sessionKeyOverride ?? task?.sessionKey;
-    if (!task?.gatewayId || !sessionKey) return;
+    if (!task || task.gatewayId !== gatewayId) return;
+    if (expectedRunId && task.sessionKey !== sessionKey) return;
     if (deps.isEphemeralSession?.(sessionKey)) return;
 
+    await flushPendingWrites({ taskId, sessionKey, gatewayId: task.gatewayId }, epoch);
+    if (syncEpoch !== epoch) return;
     const httpBase = await deps.gateway.getHttpBase?.(task.gatewayId);
     if (syncEpoch !== epoch) return;
     const res = await deps.gateway.chatHistory(task.gatewayId, sessionKey);
     if (syncEpoch !== epoch) return;
-    if (!res.ok || !res.result) return;
+    if (!res.ok || !res.result) return expectedRunId ? { kind: 'failed', reason: 'history' } : undefined;
 
     const raw = res.result as { messages?: RawHistoryMessage[] };
     const rawMsgs = raw.messages ?? [];
+    let finalTimestamp: string | undefined;
+    if (expectedRunId) {
+      const finalRaw = rawMsgs.filter((message) => message.role === 'assistant').at(-1);
+      const finalTurn = finalRaw ? normalizeAssistantTurns([finalRaw], httpBase).at(-1) : undefined;
+      if (finalRaw?.__openclaw?.runId !== expectedRunId || finalRaw.stopReason !== 'stop' || !finalTurn?.content) {
+        return { kind: 'pending' };
+      }
+      finalTimestamp = finalTurn.timestamp;
+    }
 
     const messageStore = deps.getMessageStore();
     const localMsgs = messageStore.messagesByTask[taskId] ?? [];
@@ -283,24 +333,52 @@ export function createSessionSync(deps: SessionSyncDeps) {
     const localAssistantKeys = new Set(
       localAssistantMsgs.map((m) => `${m.sessionKey ?? task.sessionKey}|${m.timestamp}`),
     );
-    const latestLocalAssistantTimestamp = localAssistantMsgs.reduce<string | undefined>(
-      (latest, message) => (!latest || message.timestamp > latest ? message.timestamp : latest),
-      undefined,
-    );
 
     const gatewayAssistant = normalizeAssistantTurns(rawMsgs, httpBase);
-    backfillAssistantAttachments(taskId, sessionKey, gatewayAssistant);
+    const collisions = new Set(
+      gatewayAssistant.filter((incoming) =>
+        localAssistantMsgs.some(
+          (local) =>
+            local.timestamp === incoming.timestamp && local.runId && incoming.runId && local.runId !== incoming.runId,
+        ),
+      ),
+    );
+    for (const incoming of gatewayAssistant) {
+      if (
+        gatewayAssistant.some(
+          (other) =>
+            other.timestamp === incoming.timestamp && other.runId && incoming.runId && other.runId !== incoming.runId,
+        )
+      )
+        collisions.add(incoming);
+    }
+    if (expectedRunId && collisions.size > 0) return { kind: 'pending' };
+    if (collisions.size > 0)
+      console.warn('[sync] canonical timestamp collision between distinct runs', { taskId, sessionKey, gatewayId });
+    await backfillAssistantAttachments(
+      taskId,
+      sessionKey,
+      gatewayAssistant.filter((incoming) => !collisions.has(incoming)),
+      task.gatewayId,
+      epoch,
+    );
+    if (syncEpoch !== epoch) return;
 
     const newest = gatewayAssistant.filter(
-      (m) =>
-        !localAssistantKeys.has(`${sessionKey}|${m.timestamp}`) &&
-        (!latestLocalAssistantTimestamp || m.timestamp > latestLocalAssistantTimestamp),
+      (m) => !collisions.has(m) && !localAssistantKeys.has(`${sessionKey}|${m.timestamp}`),
     );
-    if (newest.length === 0) {
-      messageStore.clearActiveTurn(sessionKey);
+    if (newest.length === 0 && !expectedRunId) {
+      if (collisions.size > 0) return;
+      const currentStore = deps.getMessageStore();
+      const activeRunId = currentStore.activeTurnBySession[sessionKey]?.runId;
+      const historyRunId = gatewayAssistant.at(-1)?.runId;
+      if (gatewayAssistant.length > 0 && (!activeRunId || activeRunId === historyRunId)) {
+        currentStore.clearActiveTurn(sessionKey);
+      }
       return;
     }
 
+    const acknowledged = new Set<string>();
     for (let i = 0; i < newest.length; i++) {
       if (syncEpoch !== epoch) return;
       const gm = newest[i];
@@ -317,6 +395,7 @@ export function createSessionSync(deps: SessionSyncDeps) {
         model: gm.model,
         artifacts: [],
         toolCalls: gm.toolCalls,
+        runId: gm.runId,
         attachments: gm.attachments,
         sessionKey,
         agentId: parseAgentIdFromSessionKey(sessionKey),
@@ -339,14 +418,69 @@ export function createSessionSync(deps: SessionSyncDeps) {
         }));
       }
 
-      persistCanonicalMessage(mergedCanonical);
+      await persistCanonicalMessages([mergedCanonical], { taskId, sessionKey, gatewayId: task.gatewayId }, epoch);
+      acknowledged.add(mergedCanonical.id);
+    }
+
+    if (expectedRunId && syncEpoch === epoch) {
+      const finalTurn = gatewayAssistant.find(
+        (message) => message.runId === expectedRunId && message.timestamp === finalTimestamp,
+      );
+      const canonical = deps
+        .getMessageStore()
+        .messagesByTask[
+          taskId
+        ]?.find((message) => message.role === 'assistant' && message.sessionKey === sessionKey && (!message.runId || message.runId === expectedRunId) && message.timestamp === finalTimestamp);
+      if (!canonical || !finalTurn?.content) return { kind: 'pending' };
+      const confirmed = { ...canonical, runId: expectedRunId, content: finalTurn.content };
+      if (!acknowledged.has(canonical.id)) {
+        deps.getMessageStore().setState((state) => ({
+          messagesByTask: {
+            ...state.messagesByTask,
+            [taskId]: state.messagesByTask[taskId].map((message) =>
+              message.id === canonical.id ? confirmed : message,
+            ),
+          },
+        }));
+        await persistCanonicalMessages([confirmed], scope, epoch);
+      }
+      if (syncEpoch !== epoch) return { kind: 'pending' };
+      return { kind: 'completed', messageIds: [confirmed.id], content: confirmed.content };
+    }
+  }
+
+  async function syncRun(taskId: string, receipt: ChatDispatchReceipt): Promise<RunSyncResult> {
+    const epoch = syncEpoch;
+    const task = deps.getTaskStore().tasks.find((entry) => entry.id === taskId);
+    if (!task?.gatewayId || receipt.sessionKey !== task.sessionKey || !receipt.runId.trim()) {
+      return { kind: 'failed', reason: 'invalid-receipt' };
+    }
+    const scope = { taskId, sessionKey: receipt.sessionKey, gatewayId: task.gatewayId };
+    let result: RunSyncResult = { kind: 'pending' };
+    try {
+      await enqueueSync(scope, epoch, async () => {
+        result = (await doSyncSession(scope, epoch, receipt.runId)) ?? { kind: 'pending' };
+      });
+      return syncEpoch === epoch ? result : { kind: 'pending' };
+    } catch (error) {
+      if (syncEpoch !== epoch) return { kind: 'pending' };
+      return { kind: 'failed', reason: error instanceof CanonicalPersistenceError ? 'persistence' : 'history' };
     }
   }
 
   function syncSessionMessages(taskId: string, sessionKeyOverride?: string): Promise<void> {
-    const chainKey = sessionKeyOverride ?? deps.getTaskStore().tasks.find((t) => t.id === taskId)?.sessionKey ?? taskId;
+    const epoch = syncEpoch;
+    const task = deps.getTaskStore().tasks.find((t) => t.id === taskId);
+    const sessionKey = sessionKeyOverride ?? task?.sessionKey;
+    if (!task?.gatewayId || !sessionKey) return Promise.resolve();
+    const scope = { taskId, sessionKey, gatewayId: task.gatewayId };
+    return enqueueSync(scope, epoch, () => syncWithRetry(scope, epoch));
+  }
+
+  function enqueueSync(scope: PersistenceScope, epoch: number, work: () => Promise<void>): Promise<void> {
+    const chainKey = JSON.stringify([scope.gatewayId, scope.sessionKey]);
     const prev = syncChains.get(chainKey) ?? Promise.resolve();
-    const job = prev.then(() => syncWithRetry(taskId, sessionKeyOverride));
+    const job = prev.then(() => (syncEpoch === epoch ? work() : undefined));
     const settled = job
       .catch(() => {})
       .finally(() => {
@@ -356,14 +490,14 @@ export function createSessionSync(deps: SessionSyncDeps) {
     return job;
   }
 
-  async function syncWithRetry(taskId: string, sessionKeyOverride?: string): Promise<void> {
-    const epoch = syncEpoch;
+  async function syncWithRetry(scope: PersistenceScope, epoch: number): Promise<void> {
     for (let attempt = 0; attempt <= RETRY_DELAYS.length; attempt++) {
       if (syncEpoch !== epoch) return;
       try {
-        await doSyncSession(taskId, sessionKeyOverride, epoch);
+        await doSyncSession(scope, epoch);
         return;
-      } catch {
+      } catch (error) {
+        if (error instanceof CanonicalPersistenceError) throw error;
         if (attempt < RETRY_DELAYS.length) {
           await new Promise((r) => setTimeout(r, RETRY_DELAYS[attempt]));
           if (syncEpoch !== epoch) return;
@@ -371,28 +505,41 @@ export function createSessionSync(deps: SessionSyncDeps) {
       }
     }
     if (syncEpoch === epoch) {
-      console.warn('[sync] syncSessionMessages exhausted retries for task', taskId);
+      console.warn('[sync] syncSessionMessages exhausted retries for task', scope.taskId);
     }
   }
 
   function retrySyncPending(): void {
+    const pendingSessions = new Map<string, string>();
+    for (const entry of pendingWrites.values()) {
+      if (deps.getTaskStore().tasks.some((task) => task.id === entry.taskId && task.gatewayId === entry.gatewayId)) {
+        pendingSessions.set(entry.sessionKey, entry.taskId);
+      }
+    }
     const turns = deps.getMessageStore().activeTurnBySession;
     for (const [sessionKey, turn] of Object.entries(turns)) {
       if (deps.isEphemeralSession?.(sessionKey)) continue;
       if ((turn as ActiveTurn).finalized) {
         const taskId = parseTaskIdFromSessionKey(sessionKey);
-        if (taskId) syncSessionMessages(taskId, sessionKey).catch(() => {});
+        if (taskId) pendingSessions.set(sessionKey, taskId);
       }
+    }
+    for (const [sessionKey, taskId] of pendingSessions) {
+      syncSessionMessages(taskId, sessionKey).catch((error) =>
+        console.warn('[sync] Pending persistence sync failed', error),
+      );
     }
   }
 
-  function loadAndPersistMessages(params: {
+  async function loadAndPersistMessages(params: {
     taskId: string;
     messages: Message[];
     sessionKey: string;
     agentId?: string;
     existingMessages?: Message[];
-  }): void {
+    gatewayId: string;
+    epoch: number;
+  }): Promise<void> {
     const mapped: Message[] = params.messages.map((message) => ({
       ...message,
       id: crypto.randomUUID(),
@@ -405,9 +552,7 @@ export function createSessionSync(deps: SessionSyncDeps) {
 
     deps.getMessageStore().bulkLoad(params.taskId, nextMessages);
 
-    for (const msg of mapped) {
-      persistCanonicalMessage(msg);
-    }
+    await persistCanonicalMessages(mapped, params, params.epoch);
   }
 
   async function syncFromGateway(): Promise<void> {
@@ -419,78 +564,90 @@ export function createSessionSync(deps: SessionSyncDeps) {
       if (syncEpoch !== epoch) return;
       if (!res.ok || !res.discovered) return;
       const taskStore = deps.getTaskStore();
-      const messageStore = deps.getMessageStore();
       const discovered = res.discovered.map((d) => ({ ...d, model: sanitizeModel(d.model) }));
       taskStore.adoptTasks(discovered);
 
       for (const d of discovered) {
         if (syncEpoch !== epoch) return;
-        const collapsedMessages = collapseDiscoveredMessages(
-          d.messages.map((message: DiscoveredSyncMessage) => ({
-            role: message.role,
-            content: message.content,
-            timestamp: message.timestamp,
-            attachments: message.attachments as Message['attachments'],
-            toolCalls: message.toolCalls,
-            model: message.model,
-          })),
-          d.taskId,
-        );
-
-        taskStore.updateTaskMetadata(d.taskId, {
-          model: d.model,
-          modelProvider: d.modelProvider,
-          thinkingLevel: d.thinkingLevel,
-          inputTokens: d.inputTokens,
-          outputTokens: d.outputTokens,
-          contextTokens: d.contextTokens,
-          // ⚠️ **必须带上**：`updateTaskMetadata` 对缺省的 `updatedAt` 会填 `new Date()`
-          //    ⇒ 每启动同步一圈，就把**所有任务**的"最后活动时间"抹平成"现在"
-          //    （2026-09-20 实测：42 个任务的 `updated_at` 全落在 5 毫秒里）。
-          //    后果是侧栏「最近任务」按时间排序**退化成任意顺序** —— 用户最近那次对话
-          //    不一定在最上面，看起来就像"聊天记录找不到了"。
-          //    同步元数据（模型/用量）不是"任务又活动了"；网关报的这个值才是真的。
-          updatedAt: d.updatedAt,
-        });
-        if (collapsedMessages.length === 0) continue;
-
-        const local = messageStore.messagesByTask[d.taskId] ?? [];
-        const hasLocalData = local.length > 0;
-
-        if (hasLocalData) {
-          backfillAssistantAttachments(
+        await enqueueSync(d, epoch, async () => {
+          await flushPendingWrites(d, epoch);
+          if (syncEpoch !== epoch) return;
+          const collapsedMessages = collapseDiscoveredMessages(
+            d.messages.map((message: DiscoveredSyncMessage) => ({
+              role: message.role,
+              content: message.content,
+              timestamp: message.timestamp,
+              attachments: message.attachments as Message['attachments'],
+              toolCalls: message.toolCalls,
+              model: message.model,
+            })),
             d.taskId,
-            d.sessionKey,
-            collapsedMessages.filter((message) => message.role === 'assistant'),
           );
-          const ownerTask = deps.getTaskStore().tasks.find((task) => task.id === d.taskId);
-          const localTimestamps = new Set(
-            local
-              .filter((m) => m.role === 'assistant' && (m.sessionKey ?? ownerTask?.sessionKey) === d.sessionKey)
-              .map((m) => m.timestamp),
-          );
-          const newAssistantMsgs = collapsedMessages.filter(
-            (message) => message.role === 'assistant' && !localTimestamps.has(message.timestamp),
-          );
-          if (newAssistantMsgs.length === 0) continue;
 
-          loadAndPersistMessages({
-            taskId: d.taskId,
-            messages: newAssistantMsgs,
-            sessionKey: d.sessionKey,
-            agentId: d.agentId,
-            existingMessages: local,
+          taskStore.updateTaskMetadata(d.taskId, {
+            model: d.model,
+            modelProvider: d.modelProvider,
+            thinkingLevel: d.thinkingLevel,
+            inputTokens: d.inputTokens,
+            outputTokens: d.outputTokens,
+            contextTokens: d.contextTokens,
+            // ⚠️ **必须带上**：`updateTaskMetadata` 对缺省的 `updatedAt` 会填 `new Date()`
+            //    ⇒ 每启动同步一圈，就把**所有任务**的"最后活动时间"抹平成"现在"
+            //    （2026-09-20 实测：42 个任务的 `updated_at` 全落在 5 毫秒里）。
+            //    后果是侧栏「最近任务」按时间排序**退化成任意顺序** —— 用户最近那次对话
+            //    不一定在最上面，看起来就像"聊天记录找不到了"。
+            //    同步元数据（模型/用量）不是"任务又活动了"；网关报的这个值才是真的。
+            updatedAt: d.updatedAt,
           });
-        } else {
-          loadAndPersistMessages({
-            taskId: d.taskId,
-            messages: collapsedMessages,
-            sessionKey: d.sessionKey,
-            agentId: d.agentId,
-          });
-        }
+          if (collapsedMessages.length === 0) return;
+
+          let local = deps.getMessageStore().messagesByTask[d.taskId] ?? [];
+          const hasLocalData = local.length > 0;
+
+          if (hasLocalData) {
+            await backfillAssistantAttachments(
+              d.taskId,
+              d.sessionKey,
+              collapsedMessages.filter((message) => message.role === 'assistant'),
+              d.gatewayId,
+              epoch,
+            );
+            if (syncEpoch !== epoch) return;
+            local = deps.getMessageStore().messagesByTask[d.taskId] ?? [];
+            const ownerTask = deps.getTaskStore().tasks.find((task) => task.id === d.taskId);
+            const localTimestamps = new Set(
+              local
+                .filter((m) => m.role === 'assistant' && (m.sessionKey ?? ownerTask?.sessionKey) === d.sessionKey)
+                .map((m) => m.timestamp),
+            );
+            const newAssistantMsgs = collapsedMessages.filter(
+              (message) => message.role === 'assistant' && !localTimestamps.has(message.timestamp),
+            );
+            if (newAssistantMsgs.length === 0) return;
+
+            await loadAndPersistMessages({
+              taskId: d.taskId,
+              messages: newAssistantMsgs,
+              sessionKey: d.sessionKey,
+              agentId: d.agentId,
+              existingMessages: local,
+              gatewayId: d.gatewayId,
+              epoch,
+            });
+          } else {
+            await loadAndPersistMessages({
+              taskId: d.taskId,
+              messages: collapsedMessages,
+              sessionKey: d.sessionKey,
+              agentId: d.agentId,
+              gatewayId: d.gatewayId,
+              epoch,
+            });
+          }
+        });
       }
-    } catch {
+    } catch (error) {
+      if (error instanceof CanonicalPersistenceError) throw error;
       console.warn('[sync] Gateway session sync failed');
     }
   }
@@ -498,8 +655,9 @@ export function createSessionSync(deps: SessionSyncDeps) {
   function resetHydration(): void {
     hydrationPromise = null;
     syncChains.clear();
+    pendingWrites.clear();
     syncEpoch++;
   }
 
-  return { hydrateFromLocal, syncSessionMessages, syncFromGateway, retrySyncPending, resetHydration };
+  return { hydrateFromLocal, syncSessionMessages, syncFromGateway, syncRun, retrySyncPending, resetHydration };
 }
