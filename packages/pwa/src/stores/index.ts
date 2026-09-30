@@ -164,7 +164,8 @@ function getDispatcher() {
       reportDebugEvent: (event) => reportDebugEvent(event as Partial<DebugEvent>),
       hydrateFromLocal: () => ensureHydrationReady(),
       syncFromGateway: () => sessionSync.syncFromGateway(),
-      syncSessionMessages: (taskId) => sessionSync.syncSessionMessages(taskId),
+      syncSessionMessages: (taskId, sessionKey, lateTool) =>
+        sessionSync.syncSessionMessages(taskId, sessionKey, lateTool),
       retrySyncPending: () => sessionSync.retrySyncPending(),
     });
   }
@@ -187,6 +188,8 @@ function getComposer(): ChatComposer {
       getMessageStore: () => messageStoreApi.getState(),
       persistMessage: (...args) => getPorts().persistence.persistMessage(...args),
       markAbortedByUser: (taskId) => getDispatcher().markAbortedByUser(taskId),
+      beginDispatch: (gatewayId, sessionKey) => getDispatcher().beginDispatch(gatewayId, sessionKey),
+      settleDispatch: (ticket, receipt, accepted) => getDispatcher().settleDispatch(ticket, receipt, accepted),
       compactSession: (gwId, sk) => {
         const c = getClient(gwId);
         if (!c) return Promise.resolve({ ok: false, error: 'Gateway not found' });

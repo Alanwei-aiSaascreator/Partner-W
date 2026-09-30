@@ -161,6 +161,9 @@ function getDispatcher(): GatewayDispatcher {
       retrySyncPending,
     });
     composerBridge.markAbortedByUser = (taskId) => dispatcher!.markAbortedByUser(taskId);
+    composerBridge.beginDispatch = (gatewayId, sessionKey) => dispatcher!.beginDispatch(gatewayId, sessionKey);
+    composerBridge.settleDispatch = (ticket, receipt, accepted) =>
+      dispatcher!.settleDispatch(ticket, receipt, accepted);
   }
 
   return dispatcher;

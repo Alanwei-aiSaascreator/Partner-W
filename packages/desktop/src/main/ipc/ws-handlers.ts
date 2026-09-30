@@ -7,6 +7,7 @@ import { normalizeContentBlocks, parseToolArgs } from '@clawwork/core';
 import type {
   ApprovalDecision,
   ChatAttachment,
+  ChatDispatchReceipt,
   CommandsListParams,
   ConfigPatchParams,
   ConfigSetParams,
@@ -241,8 +242,12 @@ export function registerWsHandlers(): void {
       }
       try {
         const sendResult = await gw.sendChatMessage(payload.sessionKey, payload.content, payload.attachments);
-        if (taskId && artifactRunToken && typeof sendResult?.runId === 'string') {
-          bindArtifactRun(taskId, payload.sessionKey, artifactRunToken, sendResult.runId);
+        const receipt: ChatDispatchReceipt | undefined =
+          typeof sendResult?.runId === 'string' && sendResult.runId.trim().length > 0
+            ? { sessionKey: payload.sessionKey, runId: sendResult.runId }
+            : undefined;
+        if (taskId && artifactRunToken && receipt) {
+          bindArtifactRun(taskId, payload.sessionKey, artifactRunToken, receipt.runId);
         }
         getDebugLogger().info({
           domain: 'ipc',
@@ -255,7 +260,7 @@ export function registerWsHandlers(): void {
         // 到这一行说明消息**真的发出去了**（失败从下面的 catch 返回）。
         // 埋点绝不 await、绝不改返回值 —— 它对这条路径必须完全透明。
         trackChatSent();
-        return { ok: true };
+        return { ok: true, ...(receipt ? { result: receipt } : {}) };
       } catch (err) {
         if (taskId && artifactRunToken) cancelArtifactRun(taskId, payload.sessionKey, artifactRunToken);
         const typed = err as Error & { code?: string; details?: Record<string, unknown> };

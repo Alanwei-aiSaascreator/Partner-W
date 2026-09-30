@@ -17,6 +17,7 @@ import type {
   TeamState,
   PlatformPorts,
   ChatComposer,
+  ChatComposerDeps,
   SystemSessionState,
   SystemSessionService,
 } from '@clawwork/core';
@@ -126,6 +127,12 @@ const roomStoreApi = createRoomStore({
 
 export const composerBridge = {
   markAbortedByUser: (_taskId: string): void => {},
+  beginDispatch: ((_gatewayId, _sessionKey) => {
+    throw new Error('Gateway dispatcher is not initialized');
+  }) as NonNullable<ChatComposerDeps['beginDispatch']>,
+  settleDispatch: ((_ticket, _receipt, _accepted) => {
+    throw new Error('Gateway dispatcher is not initialized');
+  }) as NonNullable<ChatComposerDeps['settleDispatch']>,
 };
 
 let _composer: ChatComposer | null = null;
@@ -138,6 +145,8 @@ function getComposer(): ChatComposer {
       getMessageStore: () => messageStoreApi.getState(),
       persistMessage: (...args) => getPorts().persistence.persistMessage(...args),
       markAbortedByUser: (taskId) => composerBridge.markAbortedByUser(taskId),
+      beginDispatch: (gatewayId, sessionKey) => composerBridge.beginDispatch(gatewayId, sessionKey),
+      settleDispatch: (ticket, receipt, accepted) => composerBridge.settleDispatch(ticket, receipt, accepted),
       compactSession: (gwId, sk) => window.clawwork.compactSession(gwId, sk),
       resetSession: (gwId, sk, mode) => window.clawwork.resetSession(gwId, sk, mode as 'new' | 'reset'),
       getModelProvider: (gwId, modelId) => {

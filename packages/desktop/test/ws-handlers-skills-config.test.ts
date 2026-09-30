@@ -145,7 +145,10 @@ describe('ws-handlers: skills + config IPC channels', () => {
       content: 'create a file',
     });
 
-    expect(result).toEqual({ ok: true });
+    expect(result).toEqual({
+      ok: true,
+      result: { sessionKey: 'agent:main:clawwork:task-1', runId: 'gateway-run-42' },
+    });
     expect(bindArtifactRunMock).toHaveBeenCalledWith(
       'task-1',
       'agent:main:clawwork:task-1',
@@ -153,6 +156,21 @@ describe('ws-handlers: skills + config IPC channels', () => {
       'gateway-run-42',
     );
   });
+
+  it.each([undefined, null, {}, { runId: '' }, { runId: '  ' }, { runId: 42 }])(
+    'omits the dispatch receipt when the gateway has no valid run id: %j',
+    async (response) => {
+      sendChatMessageMock.mockResolvedValueOnce(response);
+      expect(
+        await invoke('ws:send-message', {
+          gatewayId: 'gw-1',
+          sessionKey: 'agent:main:clawwork:task-1',
+          content: 'hello',
+        }),
+      ).toEqual({ ok: true });
+      expect(bindArtifactRunMock).not.toHaveBeenCalled();
+    },
+  );
 
   it('cancels only the matching artifact run when gateway dispatch fails', async () => {
     sendChatMessageMock.mockRejectedValueOnce(new Error('dispatch failed'));

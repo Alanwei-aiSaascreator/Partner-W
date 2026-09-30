@@ -118,8 +118,9 @@ export function createBrowserGatewayTransport(
       if (!client?.isConnected)
         return { ok: false, error: 'gateway not connected', errorCode: 'GATEWAY_NOT_CONNECTED' };
       try {
-        await client.sendChatMessage(sessionKey, content, attachments);
-        return { ok: true };
+        const response = await client.sendChatMessage(sessionKey, content, attachments);
+        const runId = response?.runId;
+        return { ok: true, ...(typeof runId === 'string' && runId.trim() ? { result: { sessionKey, runId } } : {}) };
       } catch (err) {
         const typed = err as Error & { code?: string; details?: Record<string, unknown> };
         return { ok: false, error: typed.message, errorCode: typed.code, errorDetails: typed.details };
