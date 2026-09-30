@@ -1,8 +1,8 @@
-import { spawnSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build } from 'vite';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
@@ -60,6 +60,21 @@ describe('artifact reconciliation', () => {
       configFile: false,
       logLevel: 'silent',
       root: packageDir,
+      plugins:
+        process.env.CLAW_TEST_GIT_INDEX === '1'
+          ? [
+              {
+                name: 'reconcile-probe-scoped-index',
+                enforce: 'pre',
+                load(id) {
+                  const repository = resolve(packageDir, '../..');
+                  const path = relative(repository, id.split('?')[0]).replaceAll('\\', '/');
+                  if (/^packages\/.*(?:\.[cm]?[jt]sx?|\.json)$/.test(path))
+                    return execFileSync('git', ['show', `:${path}`], { cwd: repository, encoding: 'utf8' });
+                },
+              },
+            ]
+          : [],
       ssr: { noExternal: true, external: ['better-sqlite3'] },
       build: {
         emptyOutDir: true,
@@ -110,6 +125,16 @@ describe('artifact reconciliation', () => {
       ]),
     );
     expect(result.count).toEqual({ count: 2 });
+  });
+
+  it('registers generated MP4/WebM files with video MIME without duplicate rows', () => {
+    const result = runProbe(workspacePath, 'videos') as unknown as { first: ReconcileResult; second: ReconcileResult };
+    expect(result.first.saved).toEqual([
+      expect.objectContaining({ name: 'clip.mp4', type: 'file', mimeType: 'video/mp4' }),
+      expect.objectContaining({ name: 'clip.webm', type: 'file', mimeType: 'video/webm' }),
+    ]);
+    expect(result.second.saved).toEqual([]);
+    expect(result.second.existing).toHaveLength(2);
   });
 
   it('does not register a file that existed unchanged in the run baseline', () => {

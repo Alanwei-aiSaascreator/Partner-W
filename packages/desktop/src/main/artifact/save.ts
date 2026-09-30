@@ -8,6 +8,8 @@ import { ensureTaskDir } from '../workspace/init.js';
 import { uniqueFileNameIn } from '../workspace/safe-name.js';
 
 const MIME_MAP: Record<string, string> = {
+  '.mp4': 'video/mp4',
+  '.webm': 'video/webm',
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',

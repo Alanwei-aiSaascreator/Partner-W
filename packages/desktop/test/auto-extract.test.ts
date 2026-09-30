@@ -6,7 +6,9 @@ const dbAllMock = vi.fn();
 const whereMock = vi.fn(() => ({ all: dbAllMock }));
 const fromMock = vi.fn(() => ({ where: whereMock }));
 const selectMock = vi.fn(() => ({ from: fromMock }));
-const getDbMock = vi.fn(() => ({ select: selectMock }));
+const capturedDb = { select: selectMock };
+const getDbMock = vi.fn(() => capturedDb);
+const getWorkspacePathMock = vi.fn(() => '/workspace');
 const saveArtifactFromBufferMock = vi.fn();
 const readOpenClawMediaFileMock = vi.fn();
 
@@ -19,6 +21,7 @@ vi.mock('electron', () => ({
 vi.mock('../src/main/db/index.js', () => ({
   getDb: getDbMock,
 }));
+vi.mock('../src/main/workspace/config.js', () => ({ getWorkspacePath: getWorkspacePathMock }));
 
 vi.mock('../src/main/artifact/save.js', () => ({
   saveArtifactFromBuffer: saveArtifactFromBufferMock,
@@ -35,8 +38,141 @@ vi.mock('../src/main/net/safe-fetch.js', () => ({
 }));
 
 describe('autoExtractArtifacts', () => {
+  it.each(['database', 'workspace'])('discards pending media after %s replacement', async (replacement) => {
+    const { autoExtractArtifacts } = await import('../src/main/artifact/auto-extract.js');
+    let finish!: (buffer: Buffer) => void;
+    safeFetchMock.mockReturnValueOnce(
+      new Promise<Buffer>((resolve) => {
+        finish = resolve;
+      }),
+    );
+    const job = autoExtractArtifacts({
+      workspacePath: '/workspace',
+      taskId: 'task-1',
+      messageId: 'old-workspace',
+      content: '',
+      attachments: [{ fileName: 'clip.mp4', dataUrl: 'https://example.invalid/clip.mp4', mimeType: 'video/mp4' }],
+    });
+    if (replacement === 'database') getDbMock.mockReturnValue({ select: selectMock });
+    else getWorkspacePathMock.mockReturnValue('/replacement');
+    finish(Buffer.from('video'));
+    await job;
+    expect(saveArtifactFromBufferMock).not.toHaveBeenCalled();
+    expect(webContentsSendMock).not.toHaveBeenCalled();
+  });
+  it('retries enriched video metadata after the prior unsigned import finishes', async () => {
+    const { autoExtractArtifacts } = await import('../src/main/artifact/auto-extract.js');
+    let failUnsigned!: (error: Error) => void;
+    safeFetchMock.mockReturnValueOnce(
+      new Promise<Buffer>((_resolve, reject) => {
+        failUnsigned = reject;
+      }),
+    );
+    const dataUrl = 'http://127.0.0.1:18789/api/chat/media/outgoing/session/video/full';
+    const resolveMediaDownload = vi.fn().mockResolvedValue(`${dataUrl}?ticket=secret`);
+    const params = {
+      workspacePath: '/workspace',
+      taskId: 'task-1',
+      messageId: 'enriched-video',
+      content: '',
+      gatewayHttpBase: 'http://127.0.0.1:18789',
+      resolveMediaDownload,
+      attachments: [{ fileName: 'clip.mp4', dataUrl, mimeType: 'video/mp4' }],
+    };
+    const initial = autoExtractArtifacts(params);
+    const enriched = autoExtractArtifacts({
+      ...params,
+      attachments: [{ ...params.attachments[0]!, artifactId: 'artifact_managed_media_fixture' }],
+    });
+    expect(resolveMediaDownload).not.toHaveBeenCalled();
+    failUnsigned(new Error('unsigned media denied'));
+    expect((await initial).mediaFailures).toHaveLength(1);
+    expect((await enriched).savedMediaSourceKeys).toHaveLength(1);
+    expect(resolveMediaDownload).toHaveBeenCalledOnce();
+    expect(saveArtifactFromBufferMock).toHaveBeenCalledOnce();
+  });
+
+  it('uses transient managed-video download tickets while deduplicating the original source', async () => {
+    const { autoExtractArtifacts } = await import('../src/main/artifact/auto-extract.js');
+    const dataUrl = 'http://127.0.0.1:18789/api/chat/media/outgoing/session/video/full';
+    const resolveMediaDownload = vi.fn().mockResolvedValue(`${dataUrl}?ticket=secret`);
+    const params = {
+      workspacePath: '/workspace',
+      taskId: 'task-1',
+      messageId: 'ticket-video',
+      content: '',
+      gatewayHttpBase: 'http://127.0.0.1:18789',
+      resolveMediaDownload,
+      attachments: [
+        { fileName: 'clip.mp4', dataUrl, mimeType: 'video/mp4', artifactId: 'artifact_managed_media_fixture' },
+      ],
+    };
+    const result = await autoExtractArtifacts(params);
+    expect(result).toMatchObject({
+      savedMediaSourceKeys: [`attachment:${createHash('sha256').update(dataUrl).digest('hex').slice(0, 16)}`],
+    });
+    expect(resolveMediaDownload).toHaveBeenCalledWith(params.attachments[0]);
+    expect(safeFetchMock).toHaveBeenCalledWith(
+      `${dataUrl}?ticket=secret`,
+      expect.objectContaining({ maxSize: 25 * 1024 * 1024 }),
+    );
+    expect(saveArtifactFromBufferMock.mock.calls[0][0].sourceKey).toBe(
+      `attachment:${createHash('sha256').update(dataUrl).digest('hex').slice(0, 16)}`,
+    );
+    expect(JSON.stringify(saveArtifactFromBufferMock.mock.calls)).not.toContain('secret');
+  });
+
+  it('reports managed-video ticket denial without falling back to an unsigned fetch', async () => {
+    const { autoExtractArtifacts } = await import('../src/main/artifact/auto-extract.js');
+    const params = {
+      workspacePath: '/workspace',
+      taskId: 'task-1',
+      messageId: 'denied-video',
+      content: '',
+      resolveMediaDownload: vi.fn().mockResolvedValue(null),
+      attachments: [
+        {
+          fileName: 'clip.mp4',
+          dataUrl: 'http://127.0.0.1:18789/api/chat/media/outgoing/session/video/full',
+          mimeType: 'video/mp4',
+          artifactId: 'artifact_managed_media_fixture',
+        },
+      ],
+    };
+    expect(await autoExtractArtifacts(params)).toEqual({
+      mediaFailures: [{ fileName: 'clip.mp4', reason: 'unavailable' }],
+    });
+    expect(safeFetchMock).not.toHaveBeenCalled();
+  });
+
+  it('imports native gateway video media through safe fetch with the 25 MB media limit', async () => {
+    const { autoExtractArtifacts } = await import('../src/main/artifact/auto-extract.js');
+    const dataUrl = 'http://127.0.0.1:18789/api/chat/media/outgoing/session/video/full';
+    const result = await autoExtractArtifacts({
+      workspacePath: '/workspace',
+      taskId: 'task-1',
+      messageId: 'native-video',
+      content: '',
+      gatewayHttpBase: 'http://127.0.0.1:18789',
+      attachments: [{ fileName: 'clip.mp4', dataUrl, mimeType: 'video/mp4' }],
+    });
+    expect(safeFetchMock).toHaveBeenCalledWith(dataUrl, {
+      trustedOrigin: 'http://127.0.0.1:18789',
+      maxSize: 25 * 1024 * 1024,
+    });
+    expect(saveArtifactFromBufferMock).toHaveBeenCalledWith(
+      expect.objectContaining({ fileName: 'clip.mp4', artifactType: 'file' }),
+    );
+    expect(result).toEqual({
+      mediaFailures: [],
+      savedMediaSourceKeys: [`attachment:${createHash('sha256').update(dataUrl).digest('hex').slice(0, 16)}`],
+    });
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
+    getDbMock.mockReturnValue(capturedDb);
+    getWorkspacePathMock.mockReturnValue('/workspace');
     dbAllMock.mockReturnValue([]);
     saveArtifactFromBufferMock.mockResolvedValue({
       id: 'artifact-1',
@@ -84,6 +220,91 @@ describe('autoExtractArtifacts', () => {
       }),
     );
     expect(webContentsSendMock).toHaveBeenCalledWith('artifact:saved', expect.objectContaining({ id: 'artifact-1' }));
+  });
+
+  it.each(['mp4', 'webm'])('saves %s attachments once as file artifacts and emits a saved event', async (extension) => {
+    const { autoExtractArtifacts } = await import('../src/main/artifact/auto-extract.js');
+    const sourcePath = `C:/qa/media/tool-video-generation/clip.${extension}`;
+    const attachment = {
+      fileName: `clip.${extension}`,
+      dataUrl: `file:///${sourcePath}`,
+      mimeType: `video/${extension}`,
+      sourcePath,
+    };
+    const params = {
+      workspacePath: '/workspace',
+      taskId: 'task-1',
+      messageId: 'msg-video',
+      content: '',
+      attachments: [attachment, attachment],
+    };
+    saveArtifactFromBufferMock.mockResolvedValue({
+      id: 'video-1',
+      type: 'file',
+      name: attachment.fileName,
+      mimeType: attachment.mimeType,
+      size: 5,
+    });
+    await autoExtractArtifacts(params);
+    expect(readOpenClawMediaFileMock).toHaveBeenCalledWith(sourcePath);
+    expect(saveArtifactFromBufferMock).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        artifactType: 'file',
+        fileName: `clip.${extension}`,
+        sourceKey: expect.stringMatching(/^attachment:/),
+      }),
+    );
+    expect(webContentsSendMock).toHaveBeenCalledExactlyOnceWith(
+      'artifact:saved',
+      expect.objectContaining({ id: 'video-1', mimeType: `video/${extension}` }),
+    );
+    dbAllMock.mockReturnValue([{ sourceKey: saveArtifactFromBufferMock.mock.calls[0][0].sourceKey }]);
+    await autoExtractArtifacts(params);
+    expect(saveArtifactFromBufferMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not save or emit a video rejected by the verified media reader', async () => {
+    const { autoExtractArtifacts } = await import('../src/main/artifact/auto-extract.js');
+    readOpenClawMediaFileMock.mockResolvedValue(null);
+    const result = await autoExtractArtifacts({
+      workspacePath: '/workspace',
+      taskId: 'task-1',
+      messageId: 'msg-video',
+      content: '',
+      attachments: [
+        {
+          fileName: 'clip.mp4',
+          dataUrl: 'file:///outside/clip.mp4',
+          sourcePath: '/outside/clip.mp4',
+          mimeType: 'video/mp4',
+        },
+      ],
+    });
+    expect(readOpenClawMediaFileMock).toHaveBeenCalledOnce();
+    expect(saveArtifactFromBufferMock).not.toHaveBeenCalled();
+    expect(webContentsSendMock).not.toHaveBeenCalled();
+    expect(result).toEqual({ mediaFailures: [{ fileName: 'clip.mp4', reason: 'unavailable' }] });
+  });
+
+  it('returns a filename-only video failure when the verified reader throws', async () => {
+    const { autoExtractArtifacts } = await import('../src/main/artifact/auto-extract.js');
+    readOpenClawMediaFileMock.mockRejectedValue(new Error('cannot read C:/private/clip.mp4'));
+    const result = await autoExtractArtifacts({
+      workspacePath: '/workspace',
+      taskId: 'task-1',
+      messageId: 'msg-video',
+      content: '',
+      attachments: [
+        {
+          fileName: 'C:/private/clip.mp4',
+          dataUrl: 'file:///C:/private/clip.mp4',
+          sourcePath: 'C:/private/clip.mp4',
+          mimeType: 'video/mp4',
+        },
+      ],
+    });
+    expect(result).toEqual({ mediaFailures: [{ fileName: 'clip.mp4', reason: 'unavailable' }] });
+    expect(saveArtifactFromBufferMock).not.toHaveBeenCalled();
   });
 
   it('does not save duplicate attachment artifacts with the same source key', async () => {

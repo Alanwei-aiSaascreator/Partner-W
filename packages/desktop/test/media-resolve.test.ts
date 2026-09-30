@@ -62,6 +62,45 @@ describe('OpenClaw media file access', () => {
     expect(close).toHaveBeenCalledTimes(1);
   });
 
+  it.each(['mp4', 'webm'])('reads supported %s videos through the same verified fd', async (extension) => {
+    const videoPath = join(MEDIA_ROOT, 'tool-video-generation', `clip.${extension}`);
+    const openedStat = { dev: 1n, ino: 2n, isFile: () => true, size: 1024n };
+    const readFile = vi.fn().mockResolvedValue('dmlkZW8=');
+    const close = vi.fn().mockResolvedValue(undefined);
+    mockOpen.mockResolvedValue({
+      fd: 42,
+      stat: vi.fn().mockResolvedValue(openedStat),
+      readFile,
+      close,
+    } as unknown as Awaited<ReturnType<typeof open>>);
+    mockRealpath.mockImplementation(async (path) => (path === MEDIA_ROOT ? MEDIA_ROOT : videoPath));
+    mockRealpathSync.mockReturnValue(videoPath);
+    mockStat.mockResolvedValue(openedStat as Awaited<ReturnType<typeof stat>>);
+    await expect(readOpenClawMediaFile(videoPath)).resolves.toBe('dmlkZW8=');
+    expect(readFile).toHaveBeenCalledWith({ encoding: 'base64' });
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  it('rejects lexical traversal even when it resolves inside the media root', async () => {
+    const source = `${MEDIA_ROOT}/nested/../clip.png`;
+    await expect(readOpenClawMediaFile(source)).resolves.toBeNull();
+    expect(mockOpen).not.toHaveBeenCalled();
+  });
+
+  it('rejects videos above the existing 25 MB read limit', async () => {
+    const close = vi.fn().mockResolvedValue(undefined);
+    const readFile = vi.fn();
+    mockOpen.mockResolvedValue({
+      fd: 42,
+      stat: vi.fn().mockResolvedValue({ isFile: () => true, size: 25 * 1024 * 1024 + 1 }),
+      readFile,
+      close,
+    } as unknown as Awaited<ReturnType<typeof open>>);
+    await expect(readOpenClawMediaFile(join(MEDIA_ROOT, 'clip.mp4'))).resolves.toBeNull();
+    expect(readFile).not.toHaveBeenCalled();
+    expect(close).toHaveBeenCalledOnce();
+  });
+
   it('rejects opened fds outside the OpenClaw media root', async () => {
     const readFile = vi.fn().mockResolvedValue('c2VjcmV0');
     const close = vi.fn().mockResolvedValue(undefined);

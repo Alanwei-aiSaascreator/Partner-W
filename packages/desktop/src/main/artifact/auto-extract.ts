@@ -5,11 +5,12 @@ import { extname, resolve, sep } from 'path';
 import { extractImagesFromMarkdown, extractCodeBlocksFromMarkdown } from './extract.js';
 import { saveArtifactFromBuffer } from './save.js';
 import { getDb } from '../db/index.js';
+import { getWorkspacePath } from '../workspace/config.js';
 import { artifacts } from '../db/schema.js';
 import { eq } from 'drizzle-orm';
 import { safeFetch } from '../net/safe-fetch.js';
 import { readOpenClawMediaFile } from '../media/resolve.js';
-import type { Artifact, MessageAttachment } from '@clawwork/shared';
+import type { Artifact, ArtifactDeliveryFailure, MessageAttachment } from '@clawwork/shared';
 
 interface AutoExtractParams {
   workspacePath: string;
@@ -18,10 +19,16 @@ interface AutoExtractParams {
   content: string;
   attachments?: MessageAttachment[];
   gatewayHttpBase?: string;
+  resolveMediaDownload?: (attachment: MessageAttachment) => Promise<string | null>;
 }
 
 const DATA_IMAGE_RE = /^data:(image\/(?:png|jpe?g|gif|webp|avif));base64,(.+)$/i;
-const extractionByMessage = new Map<string, Promise<void>>();
+interface AutoExtractResult {
+  mediaFailures: NonNullable<ArtifactDeliveryFailure['mediaFailures']>;
+  savedMediaSourceKeys?: string[];
+}
+
+const extractionByMessage = new Map<string, { signature: string; job: Promise<AutoExtractResult> }>();
 
 type ExistingArtifact = Pick<Artifact, 'name' | 'type' | 'size' | 'contentText' | 'sourceKey'>;
 
@@ -48,18 +55,32 @@ function extFromMime(mimeType: string | undefined): string {
   if (mimeType === 'image/gif') return 'gif';
   if (mimeType === 'image/webp') return 'webp';
   if (mimeType === 'image/avif') return 'avif';
+  if (mimeType === 'video/mp4') return 'mp4';
+  if (mimeType === 'video/webm') return 'webm';
   return 'png';
 }
 
-function safeImageFileName(fileName: string | undefined, mimeType: string | undefined): string {
+function safeMediaFileName(fileName: string | undefined, mimeType: string | undefined): string {
   const ext = extFromMime(mimeType);
   const raw = fileName?.trim() || `image.${ext}`;
   const clean = raw.replace(/[/\\]/g, '_').replace(/[^a-zA-Z0-9._-]/g, '_');
+  if (mimeType === 'video/mp4' || mimeType === 'video/webm') {
+    return clean.toLowerCase().endsWith(`.${ext}`) ? clean : `${clean}.${ext}`;
+  }
   if (/\.(png|jpe?g|gif|webp|avif)$/i.test(clean)) return clean;
   return `${clean || 'image'}.${ext}`;
 }
 
-async function readAttachmentImage(attachment: MessageAttachment, trustedOrigin?: string): Promise<Buffer | null> {
+async function readAttachmentMedia(
+  attachment: MessageAttachment,
+  trustedOrigin?: string,
+  resolveMediaDownload?: AutoExtractParams['resolveMediaDownload'],
+): Promise<Buffer | null> {
+  if (attachment.artifactId && (attachment.mimeType === 'video/mp4' || attachment.mimeType === 'video/webm')) {
+    const downloadUrl = await resolveMediaDownload?.(attachment);
+    if (!downloadUrl) return null;
+    return safeFetch(downloadUrl, { trustedOrigin, maxSize: 25 * 1024 * 1024 });
+  }
   if (attachment.sourcePath) {
     const base64 = await readOpenClawMediaFile(attachment.sourcePath);
     return base64 ? Buffer.from(base64, 'base64') : null;
@@ -69,16 +90,19 @@ async function readAttachmentImage(attachment: MessageAttachment, trustedOrigin?
   if (dataMatch) return Buffer.from(dataMatch[2], 'base64');
 
   if (/^https?:\/\//i.test(attachment.dataUrl)) {
-    return safeFetch(attachment.dataUrl, { trustedOrigin });
+    const isVideo = attachment.mimeType === 'video/mp4' || attachment.mimeType === 'video/webm';
+    return safeFetch(attachment.dataUrl, { trustedOrigin, ...(isVideo ? { maxSize: 25 * 1024 * 1024 } : {}) });
   }
 
   return null;
 }
 
-async function doAutoExtractArtifacts(params: AutoExtractParams): Promise<void> {
-  const { workspacePath, taskId, messageId, content, attachments = [], gatewayHttpBase } = params;
+async function doAutoExtractArtifacts(params: AutoExtractParams): Promise<AutoExtractResult> {
+  const { workspacePath, taskId, messageId, content, attachments = [], gatewayHttpBase, resolveMediaDownload } = params;
 
   const db = getDb();
+  const ownsWorkspace = (): boolean => getDb() === db && getWorkspacePath() === workspacePath;
+  if (!ownsWorkspace()) return { mediaFailures: [] };
   const existingForMsg = db.select().from(artifacts).where(eq(artifacts.messageId, messageId)).all();
   const existing = existingForMsg as ExistingArtifact[];
   const existingSourceKeys = new Set(existing.map((artifact) => artifact.sourceKey).filter(Boolean));
@@ -87,14 +111,17 @@ async function doAutoExtractArtifacts(params: AutoExtractParams): Promise<void> 
   const codeBlocks = extractCodeBlocksFromMarkdown(content);
 
   const saved: Artifact[] = [];
+  const mediaFailures: AutoExtractResult['mediaFailures'] = [];
+  const savedMediaSourceKeys: string[] = [];
 
   async function saveExtracted(input: {
     fileName: string;
     buffer: Buffer;
-    artifactType: 'image' | 'code';
+    artifactType: 'image' | 'code' | 'file';
     sourceKey: string;
     contentText?: string;
   }): Promise<void> {
+    if (!ownsWorkspace()) return;
     if (existingSourceKeys.has(input.sourceKey)) return;
 
     const canonicalName = canonicalSavedName(input.fileName);
@@ -167,22 +194,37 @@ async function doAutoExtractArtifacts(params: AutoExtractParams): Promise<void> 
   }
 
   for (const attachment of attachments) {
+    const isVideo = attachment.mimeType === 'video/mp4' || attachment.mimeType === 'video/webm';
+    const recordVideoFailure = (): void => {
+      const fileName =
+        attachment.fileName?.replaceAll('\\', '/').split('/').at(-1)?.trim() ||
+        `video.${extFromMime(attachment.mimeType)}`;
+      if (!mediaFailures.some((failure) => failure.fileName === fileName)) {
+        mediaFailures.push({ fileName, reason: 'unavailable' });
+      }
+    };
     try {
       if (!attachment.dataUrl && !attachment.sourcePath) continue;
-      if (attachment.mimeType && !attachment.mimeType.startsWith('image/')) continue;
+      if (attachment.mimeType && !attachment.mimeType.startsWith('image/') && !isVideo) continue;
       const key = sourceKey('attachment', attachment.sourcePath ?? attachment.dataUrl);
       if (existingSourceKeys.has(key)) continue;
-      const buffer = await readAttachmentImage(attachment, gatewayHttpBase);
-      if (!buffer) continue;
-      const fileName = safeImageFileName(attachment.fileName, attachment.mimeType);
+      const buffer = await readAttachmentMedia(attachment, gatewayHttpBase, resolveMediaDownload);
+      if (!buffer) {
+        if (isVideo) recordVideoFailure();
+        continue;
+      }
+      const fileName = safeMediaFileName(attachment.fileName, attachment.mimeType);
+      const previousSaved = saved.length;
       await saveExtracted({
         fileName,
         buffer,
-        artifactType: 'image',
+        artifactType: isVideo ? 'file' : 'image',
         sourceKey: key,
       });
+      if (isVideo && saved.length > previousSaved) savedMediaSourceKeys.push(key);
     } catch (err) {
-      console.error('[auto-extract] attachment image save failed:', err);
+      if (isVideo) recordVideoFailure();
+      else console.error('[auto-extract] attachment media save failed:', err);
     }
   }
 
@@ -202,27 +244,29 @@ async function doAutoExtractArtifacts(params: AutoExtractParams): Promise<void> 
     }
   }
 
-  if (saved.length === 0) return;
-
+  if (!ownsWorkspace()) return { mediaFailures: [] };
   const win = BrowserWindow.getAllWindows()[0];
   if (win) {
     for (const artifact of saved) {
       win.webContents.send('artifact:saved', artifact);
     }
   }
+  return { mediaFailures, ...(savedMediaSourceKeys.length ? { savedMediaSourceKeys } : {}) };
 }
 
-export async function autoExtractArtifacts(params: AutoExtractParams): Promise<void> {
+export async function autoExtractArtifacts(params: AutoExtractParams): Promise<AutoExtractResult> {
   const key = `${params.taskId}:${params.messageId}`;
+  const signature = JSON.stringify([params.workspacePath, params.content, params.attachments, params.gatewayHttpBase]);
   const active = extractionByMessage.get(key);
   if (active) {
-    await active;
-    return;
+    if (active.signature === signature) return active.job;
+    await active.job.catch(() => undefined);
+    return autoExtractArtifacts(params);
   }
 
   const job = doAutoExtractArtifacts(params).finally(() => {
-    if (extractionByMessage.get(key) === job) extractionByMessage.delete(key);
+    if (extractionByMessage.get(key)?.job === job) extractionByMessage.delete(key);
   });
-  extractionByMessage.set(key, job);
-  await job;
+  extractionByMessage.set(key, { signature, job });
+  return job;
 }

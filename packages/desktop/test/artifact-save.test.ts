@@ -104,6 +104,19 @@ describe('saveArtifact', () => {
 });
 
 describe('saveArtifactFromBuffer', () => {
+  it.each(['mp4', 'webm'])('assigns the correct MIME to a generated %s file', async (extension) => {
+    mockDbSuccess();
+    const result = await saveArtifactFromBuffer({
+      workspacePath: '/workspace',
+      taskId: 'task-1',
+      messageId: 'msg-1',
+      fileName: `clip.${extension}`,
+      buffer: Buffer.from('video'),
+      artifactType: 'file',
+    });
+    expect(result).toMatchObject({ type: 'file', mimeType: `video/${extension}` });
+  });
+
   const params = {
     workspacePath: '/workspace',
     taskId: 'task-1',

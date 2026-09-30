@@ -18,6 +18,8 @@ const MAX_FILE_BYTES = 100 * 1024 * 1024;
 const STABILITY_DELAY_MS = 250;
 
 const MIME_TYPES: Record<string, string> = {
+  '.mp4': 'video/mp4',
+  '.webm': 'video/webm',
   '.txt': 'text/plain',
   '.md': 'text/markdown',
   '.csv': 'text/csv',

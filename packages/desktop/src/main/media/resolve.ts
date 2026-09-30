@@ -6,7 +6,7 @@ import { isAbsolute, join, resolve, sep } from 'path';
 import { identityOf, sameIdentity } from '../util/file-identity.js';
 
 const MAX_MEDIA_BYTES = 25 * 1024 * 1024;
-const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|avif)$/i;
+const MEDIA_EXT_RE = /\.(png|jpe?g|gif|webp|avif|mp4|webm)$/i;
 
 function isWithin(parent: string, child: string): boolean {
   return child === parent || child.startsWith(`${parent}${sep}`);
@@ -32,9 +32,17 @@ function isSameFile(left: BigIntStats, right: BigIntStats): boolean {
 }
 
 function isLexicallyAllowedMediaPath(sourcePath: string): boolean {
-  if (!sourcePath || sourcePath.includes('\0') || !isAbsolute(sourcePath)) return false;
+  if (
+    !sourcePath ||
+    sourcePath.includes('\0') ||
+    !isAbsolute(sourcePath) ||
+    /^[\\/]{2}/.test(sourcePath) ||
+    sourcePath.split(/[\\/]+/).includes('..') ||
+    sourcePath.replace(/^[a-z]:/i, '').includes(':')
+  )
+    return false;
   const requested = resolve(sourcePath);
-  if (!IMAGE_EXT_RE.test(requested)) return false;
+  if (!MEDIA_EXT_RE.test(requested)) return false;
   return mediaRoots().some((root) => isWithin(root, requested));
 }
 

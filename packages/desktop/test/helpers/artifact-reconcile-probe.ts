@@ -83,6 +83,15 @@ async function main(): Promise<Record<string, unknown>> {
     return { first, second, count };
   }
 
+  if (scenario === 'videos') {
+    const baseline = await captureTaskArtifactBaseline({ workspacePath, taskId: 'task-1' });
+    writeFileSync(join(workspacePath, 'task-1', 'clip.mp4'), 'video');
+    writeFileSync(join(workspacePath, 'task-1', 'clip.webm'), 'video');
+    const first = await reconcileTaskArtifacts({ workspacePath, taskId: 'task-1', messageId: 'msg-1', baseline });
+    const second = await reconcileTaskArtifacts({ workspacePath, taskId: 'task-1', messageId: 'msg-1', baseline });
+    return { first, second };
+  }
+
   if (scenario === 'baseline') {
     writeFileSync(join(workspacePath, 'task-1', 'original.md'), 'user file');
     const baseline = await captureTaskArtifactBaseline({ workspacePath, taskId: 'task-1' });
