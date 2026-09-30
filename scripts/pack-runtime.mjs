@@ -5,7 +5,8 @@
  * 产出与荣盈同形的运行时包（形状取自 `F:\0.0.17\resources\openclaw-runtime-manifest.json`，
  * 2026-09-11 实测），客户端那一侧的装载器（见交付路线图阶段 1）按 manifest 找它。
  *
- *   node scripts/pack-runtime.mjs --version 2026.9.3
+ *   node scripts/lib/native-tool-runtime.mjs --archives <downloads> --out <native-bundle> --download --extractor <7z>
+ *   node scripts/pack-runtime.mjs --version 2026.9.3 --native-tools <native-bundle>
  *
  * 为什么是参数化的：目标版本会变（决定见 docs/superpowers/plans/2026-09-11-交付路线图.md），
  * 版本一发布就该是「改一个参数重跑」，而不是「重新摸一遍流程」。
@@ -32,6 +33,7 @@ import {
 } from './lib/web-search-availability-runtime.mjs';
 import { bundleNativeTools, verifyNativeToolRuntime } from './lib/native-tool-runtime.mjs';
 import { bundleWindowsVideoFrames } from './lib/windows-video-frames-runtime.mjs';
+import { bundleWindowsDebugSkills } from './lib/windows-debug-skills.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(HERE, '..');
@@ -294,6 +296,7 @@ async function main() {
   fs.writeFileSync(searchRuntime, patchWebSearchAvailabilityRuntime(fs.readFileSync(searchRuntime, 'utf8')));
   const nativePatch = bundleNativeTools(stage, args.nativeTools);
   const videoFramesPatch = bundleWindowsVideoFrames(stage);
+  const debugSkillsPatch = bundleWindowsDebugSkills(stage);
 
   // ③ 剪技能
   const skillsDir = path.join(pkgDir, 'skills');
@@ -342,7 +345,7 @@ async function main() {
     fileCount,
     sha256,
     extractor: 'win32-x64/extractor/7za.exe',
-    patches: [searchPlugin.patchId, WEB_SEARCH_AVAILABILITY_PATCH_ID, nativePatch, videoFramesPatch],
+    patches: [searchPlugin.patchId, WEB_SEARCH_AVAILABILITY_PATCH_ID, nativePatch, videoFramesPatch, debugSkillsPatch],
   });
   const runtimeDir = path.join(args.out, 'openclaw-runtime');
   fs.mkdirSync(runtimeDir, { recursive: true });
