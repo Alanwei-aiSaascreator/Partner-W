@@ -35,6 +35,11 @@ export interface GradientSpec {
   angleDeg: number;
 }
 
+interface GradientTarget {
+  gradient: GradientSpec;
+  objectName: string;
+}
+
 export type Shape =
   | {
       kind: 'rect';
@@ -154,7 +159,6 @@ function midColor(g: GradientSpec): string {
 export function toShapes(elements: readonly MeasuredElement[]): Shape[] {
   const shapes: Shape[] = [];
   for (const e of elements) {
-    if (e.kind === 'slide') continue;
     // 多行文本给 3% 宽度余量：折行位置由 PowerPoint 的字宽决定，卡得太死会多折一行。
     const slack = e.kind === 'text' && e.lines > 1 ? 1.03 : 1;
     const geo = { x: e.x, y: e.y, w: e.w * slack, h: e.h };
@@ -164,20 +168,21 @@ export function toShapes(elements: readonly MeasuredElement[]): Shape[] {
       continue;
     }
 
-    if (e.kind === 'box') {
+    if (e.kind === 'box' || e.kind === 'slide') {
       const solid = hexOf(e.background);
       const gradient = parseGradient(e.backgroundImage);
-      const fill = solid ?? (gradient ? midColor(gradient) : null);
+      if (e.kind === 'slide' && !gradient) continue;
+      const fill = gradient ? midColor(gradient) : solid;
       if (!fill) continue; // 纯布局容器
       shapes.push({
         kind: 'rect',
         id: e.id,
         ...geo,
         fill,
-        ...(solid && transparencyOf(e.background) !== undefined
+        ...(!gradient && solid && transparencyOf(e.background) !== undefined
           ? { fillTransparency: transparencyOf(e.background) }
           : {}),
-        gradient: solid ? null : gradient,
+        gradient,
         radius: Math.min(e.borderRadius, Math.min(e.w, e.h) / 2),
         borderWidth: e.borderWidth,
         borderColor: e.borderWidth > 0 ? hexOf(e.borderColor) : null,
@@ -225,7 +230,7 @@ export function toShapes(elements: readonly MeasuredElement[]): Shape[] {
  * 参考那份 deck 用的也是原生 `gradFill` + `<a:lin ang="0" scaled="1"/>` ——
  * 这样在 PowerPoint 里是**可编辑的真渐变**，不是贴一张图。
  */
-export async function applyGradients(pptxPath: string, gradients: readonly GradientSpec[]): Promise<number> {
+export async function applyGradients(pptxPath: string, gradients: readonly GradientTarget[]): Promise<number> {
   if (gradients.length === 0) return 0;
   const zip = await JSZip.loadAsync(fs.readFileSync(pptxPath));
   let patched = 0;
@@ -234,7 +239,7 @@ export async function applyGradients(pptxPath: string, gradients: readonly Gradi
     if (!/^ppt\/slides\/slide\d+\.xml$/.test(name)) continue;
     let xml = await zip.file(name)!.async('string');
 
-    for (const g of gradients) {
+    for (const { gradient: g, objectName } of gradients) {
       const solid = `<a:solidFill><a:srgbClr val="${midColor(g)}"/></a:solidFill>`;
       if (!xml.includes(solid)) continue;
       const stops = g.stops
@@ -242,10 +247,14 @@ export async function applyGradients(pptxPath: string, gradients: readonly Gradi
         .join('');
       // CSS 90deg（向右）↔ OOXML ang=0；CSS 180deg（向下）↔ ang=5400000（60000/度）。
       const ang = Math.round(((((g.angleDeg - 90) % 360) + 360) % 360) * 60000);
-      xml = xml
-        .split(solid)
-        .join(`<a:gradFill><a:gsLst>${stops}</a:gsLst><a:lin ang="${ang}" scaled="1"/></a:gradFill>`);
-      patched += 1;
+      xml = xml.replace(/<p:sp>[\s\S]*?<\/p:sp>/g, (shape) => {
+        if (!shape.includes(`name="${objectName}"`) || !shape.includes(solid)) return shape;
+        patched += 1;
+        return shape.replace(
+          solid,
+          `<a:gradFill><a:gsLst>${stops}</a:gsLst><a:lin ang="${ang}" scaled="1"/></a:gradFill>`,
+        );
+      });
     }
     zip.file(name, xml);
   }
@@ -273,13 +282,13 @@ export async function writeSlidePptx(
   const pptx = new PptxGenJS();
   pptx.defineLayout({ name: 'SLIDE169', width: inOf(SLIDE_CANVAS.width), height: inOf(SLIDE_CANVAS.height) });
   pptx.layout = 'SLIDE169';
-  const gradients: GradientSpec[] = [];
+  const gradients: GradientTarget[] = [];
   for (const page of pages) emitPage(pptx, page, assetsRoot, gradients);
   await pptx.writeFile({ fileName: outPath });
   await applyGradients(outPath, gradients);
 }
 
-function emitPage(pptx: PptxGenJS, page: SlidePage, assetsRoot: string | null, gradients: GradientSpec[]): void {
+function emitPage(pptx: PptxGenJS, page: SlidePage, assetsRoot: string | null, gradients: GradientTarget[]): void {
   const slide = pptx.addSlide();
   slide.background = { color: page.background };
 
@@ -299,9 +308,11 @@ function emitPage(pptx: PptxGenJS, page: SlidePage, assetsRoot: string | null, g
     }
 
     if (s.kind === 'rect') {
-      if (s.gradient) gradients.push(s.gradient);
+      const objectName = s.gradient ? `slidegen-gradient-${gradients.length}` : undefined;
+      if (s.gradient && objectName) gradients.push({ gradient: s.gradient, objectName });
       slide.addShape(s.radius > 0 ? pptx.ShapeType.roundRect : pptx.ShapeType.rect, {
         ...box,
+        objectName,
         fill: { color: s.fill, transparency: s.fillTransparency },
         line:
           s.borderWidth > 0 && s.borderColor
