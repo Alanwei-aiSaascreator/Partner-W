@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import type { Artifact, DocgenFailure, DocgenFormat } from '@clawwork/shared';
 import { getDebugLogger } from '../debug/index.js';
 import { saveArtifactFromBuffer } from '../artifact/save.js';
+import { notifyArtifactActivity, type ArtifactActivityCallback } from '../artifact/activity-callback.js';
 import { documentFileStem } from '../util/document-file-name.js';
 import { extractDocgenBlocks } from './blocks.js';
 import { PptxLayoutError } from './pptx-layout.js';
@@ -108,6 +109,7 @@ export async function generateDocumentsFromMessage(input: {
   taskId: string;
   messageId: string;
   content: string;
+  onActivity?: ArtifactActivityCallback;
   /**
    * 随包 pptx 模板目录，**由调用方注入**（`ipc/data-handlers.ts` 用 `resolvePptxTemplatesRoot` 算）。
    *
@@ -134,6 +136,10 @@ export async function generateDocumentsFromMessage(input: {
 
   for (const request of requests) {
     try {
+      notifyArtifactActivity(
+        input.onActivity,
+        request.kind === 'pptx' ? 'generating-presentation' : 'generating-document',
+      );
       const buffer = await renderDocument(request, {
         templatesRoot: input.templatesRoot,
         fileName: documentFileNameFor(request.title, request.kind),
@@ -146,6 +152,7 @@ export async function generateDocumentsFromMessage(input: {
           });
         },
       });
+      notifyArtifactActivity(input.onActivity, 'saving-artifacts');
       const artifact = await saveArtifactFromBuffer({
         workspacePath: input.workspacePath,
         taskId: input.taskId,

@@ -5,6 +5,7 @@ import type { Artifact, SlidegenFailure, SlidegenWarning } from '@clawwork/share
 import { messagePageBudgetFailure } from '@clawwork/shared';
 import { getDebugLogger } from '../debug/index.js';
 import { saveArtifactFromBuffer } from '../artifact/save.js';
+import { notifyArtifactActivity, type ArtifactActivityCallback } from '../artifact/activity-callback.js';
 import { documentFileStem } from '../util/document-file-name.js';
 import { extractSlidegenBlocks, type SlidegenDeck } from './blocks.js';
 import { SlideDslError } from './dsl.js';
@@ -83,6 +84,7 @@ export async function generateSlidesFromMessage(input: {
   taskId: string;
   messageId: string;
   content: string;
+  onActivity?: ArtifactActivityCallback;
 }): Promise<SlidegenGenerateResult> {
   const result: SlidegenGenerateResult = { saved: [], failed: [], warnings: [] };
   const { decks, failures } = extractSlidegenBlocks(input.content);
@@ -131,6 +133,7 @@ export async function generateSlidesFromMessage(input: {
       let buffer: Buffer;
       const emitted = [];
       const deckWarnings: SlidegenWarning[] = [];
+      notifyArtifactActivity(input.onActivity, 'generating-presentation');
       for (const [index, page] of pages.entries()) {
         const one = await emitPageShapes(page, assetRoot);
         emitted.push(one.page);
@@ -147,6 +150,7 @@ export async function generateSlidesFromMessage(input: {
         fs.rmSync(tmpPath, { force: true });
       }
 
+      notifyArtifactActivity(input.onActivity, 'saving-artifacts');
       const artifact = await saveArtifactFromBuffer({
         workspacePath: input.workspacePath,
         taskId: input.taskId,

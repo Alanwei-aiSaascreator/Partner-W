@@ -4,6 +4,7 @@ import { readFileSync } from 'fs';
 import { extname, resolve, sep } from 'path';
 import { extractImagesFromMarkdown, extractCodeBlocksFromMarkdown } from './extract.js';
 import { saveArtifactFromBuffer } from './save.js';
+import { notifyArtifactActivity, type ArtifactActivityCallback } from './activity-callback.js';
 import { getDb } from '../db/index.js';
 import { getWorkspacePath } from '../workspace/config.js';
 import { artifacts } from '../db/schema.js';
@@ -20,6 +21,7 @@ interface AutoExtractParams {
   attachments?: MessageAttachment[];
   gatewayHttpBase?: string;
   resolveMediaDownload?: (attachment: MessageAttachment) => Promise<string | null>;
+  onActivity?: ArtifactActivityCallback;
 }
 
 const DATA_IMAGE_RE = /^data:(image\/(?:png|jpe?g|gif|webp|avif));base64,(.+)$/i;
@@ -76,10 +78,12 @@ async function readAttachmentMedia(
   attachment: MessageAttachment,
   trustedOrigin?: string,
   resolveMediaDownload?: AutoExtractParams['resolveMediaDownload'],
+  onActivity?: ArtifactActivityCallback,
 ): Promise<Buffer | null> {
   if (attachment.artifactId && (attachment.mimeType === 'video/mp4' || attachment.mimeType === 'video/webm')) {
     const downloadUrl = await resolveMediaDownload?.(attachment);
     if (!downloadUrl) return null;
+    notifyArtifactActivity(onActivity, 'downloading-media');
     return safeFetch(downloadUrl, { trustedOrigin, maxSize: 25 * 1024 * 1024 });
   }
   if (attachment.sourcePath) {
@@ -92,6 +96,7 @@ async function readAttachmentMedia(
 
   if (/^https?:\/\//i.test(attachment.dataUrl)) {
     const isVideo = attachment.mimeType === 'video/mp4' || attachment.mimeType === 'video/webm';
+    notifyArtifactActivity(onActivity, 'downloading-media');
     return safeFetch(attachment.dataUrl, { trustedOrigin, ...(isVideo ? { maxSize: 25 * 1024 * 1024 } : {}) });
   }
 
@@ -139,6 +144,7 @@ async function doAutoExtractArtifacts(params: AutoExtractParams): Promise<AutoEx
     }
 
     try {
+      notifyArtifactActivity(params.onActivity, 'saving-artifacts');
       const artifact = await saveArtifactFromBuffer({
         workspacePath,
         taskId,
@@ -167,6 +173,7 @@ async function doAutoExtractArtifacts(params: AutoExtractParams): Promise<AutoEx
       if (existingSourceKeys.has(key)) continue;
       let buffer: Buffer;
       if (img.isRemote) {
+        notifyArtifactActivity(params.onActivity, 'downloading-media');
         buffer = await safeFetch(img.src);
       } else if (img.src.startsWith('clawwork-media://')) {
         const filePath = resolve(img.src.replace('clawwork-media://', ''));
@@ -212,7 +219,7 @@ async function doAutoExtractArtifacts(params: AutoExtractParams): Promise<AutoEx
       if (attachment.mimeType && !attachment.mimeType.startsWith('image/') && !isVideo) continue;
       const key = sourceKey('attachment', attachment.sourcePath ?? attachment.dataUrl);
       if (existingSourceKeys.has(key)) continue;
-      const buffer = await readAttachmentMedia(attachment, gatewayHttpBase, resolveMediaDownload);
+      const buffer = await readAttachmentMedia(attachment, gatewayHttpBase, resolveMediaDownload, params.onActivity);
       if (!buffer) {
         if (isVideo) recordVideoFailure();
         continue;
