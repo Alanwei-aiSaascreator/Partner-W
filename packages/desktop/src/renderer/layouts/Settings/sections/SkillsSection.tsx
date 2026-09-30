@@ -16,6 +16,7 @@ import {
   Settings2,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { resolveCatalogAgentId } from '@clawwork/core';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 import { motion as motionPresets, motionDuration } from '@/styles/design-tokens';
@@ -692,6 +693,7 @@ export default function SkillsSection() {
   const gatewayInfoMap = useUiStore((s) => s.gatewayInfoMap);
   const storeDefaultGatewayId = useUiStore((s) => s.defaultGatewayId);
   const skillsStatusByGateway = useUiStore((s) => s.skillsStatusByGateway);
+  const agentCatalogByGateway = useUiStore((s) => s.agentCatalogByGateway);
   const setSkillsStatusForGateway = useUiStore((s) => s.setSkillsStatusForGateway);
 
   const connectedGatewayIds = Object.entries(gatewayStatusMap)
@@ -705,6 +707,28 @@ export default function SkillsSection() {
   const [filter, setFilter] = useState<SkillFilter>('all');
   const [loading, setLoading] = useState(false);
   const [togglingKeys, setTogglingKeys] = useState<Set<string>>(new Set());
+  const requestEpoch = useRef(0);
+  const connectionEpoch = useRef(0);
+  const agentCatalog = selectedGatewayId ? agentCatalogByGateway[selectedGatewayId] : undefined;
+  const skillOwner = resolveCatalogAgentId(agentCatalog);
+  const cachedReport = selectedGatewayId ? skillsStatusByGateway[selectedGatewayId] : undefined;
+  const scopedReport = skillOwner && cachedReport?.agentId === skillOwner ? cachedReport : undefined;
+
+  useEffect(() => {
+    if (!selectedGatewayId) return;
+    return useUiStore.subscribe((current, previous) => {
+      if (current.gatewayStatusMap[selectedGatewayId] !== previous.gatewayStatusMap[selectedGatewayId]) {
+        connectionEpoch.current += 1;
+      }
+    });
+  }, [selectedGatewayId]);
+
+  useEffect(() => {
+    setLoading(false);
+    return () => {
+      requestEpoch.current += 1;
+    };
+  }, [selectedGatewayId, skillOwner]);
 
   useEffect(() => {
     if (selectedGatewayId && connectedGatewayIds.includes(selectedGatewayId)) return;
@@ -717,26 +741,51 @@ export default function SkillsSection() {
 
   const refreshSkills = useCallback(async () => {
     if (!selectedGatewayId) return;
-    setLoading(true);
-    const res = await window.clawwork.getSkillsStatus(selectedGatewayId);
-    if (res.ok && res.result) {
-      setSkillsStatusForGateway(selectedGatewayId, res.result as unknown as SkillStatusReport);
-    } else {
-      toast.error(res.error ?? t('settings.skillUpdateFailed'));
+    if (!skillOwner) {
+      setLoading(false);
+      toast.error(t('settings.skillUpdateFailed'));
+      return;
     }
-    setLoading(false);
-  }, [selectedGatewayId, setSkillsStatusForGateway, t]);
+    const epoch = ++requestEpoch.current;
+    const connection = connectionEpoch.current;
+    const roster = useUiStore.getState().agentCatalogByGateway[selectedGatewayId];
+    const ownsRequest = () => {
+      const current = useUiStore.getState();
+      return (
+        epoch === requestEpoch.current &&
+        connection === connectionEpoch.current &&
+        current.gatewayStatusMap[selectedGatewayId] === 'connected' &&
+        current.agentCatalogByGateway[selectedGatewayId] === roster &&
+        resolveCatalogAgentId(current.agentCatalogByGateway[selectedGatewayId]) === skillOwner
+      );
+    };
+    setLoading(true);
+    try {
+      const res = await window.clawwork.getSkillsStatus(selectedGatewayId, skillOwner);
+      if (!ownsRequest()) return;
+      const report = res.ok && res.result ? (res.result as unknown as SkillStatusReport) : undefined;
+      if (report && (!report.agentId || report.agentId === skillOwner)) {
+        setSkillsStatusForGateway(selectedGatewayId, { ...report, agentId: skillOwner });
+      } else {
+        toast.error(res.error ?? t('settings.skillUpdateFailed'));
+      }
+    } catch {
+      if (ownsRequest()) toast.error(t('settings.skillUpdateFailed'));
+    } finally {
+      if (epoch === requestEpoch.current) setLoading(false);
+    }
+  }, [selectedGatewayId, skillOwner, setSkillsStatusForGateway, t]);
 
   useEffect(() => {
-    if (selectedGatewayId && !skillsStatusByGateway[selectedGatewayId]) {
+    if (selectedGatewayId && agentCatalog && !scopedReport) {
       refreshSkills();
     }
-  }, [selectedGatewayId, skillsStatusByGateway, refreshSkills]);
+  }, [selectedGatewayId, agentCatalog, scopedReport, refreshSkills]);
 
   const allSkills = useMemo(() => {
     if (!selectedGatewayId) return [];
-    return skillsStatusByGateway[selectedGatewayId]?.skills ?? [];
-  }, [selectedGatewayId, skillsStatusByGateway]);
+    return scopedReport?.skills ?? [];
+  }, [selectedGatewayId, scopedReport]);
 
   const filteredSkills = useMemo(() => {
     if (filter === 'available') return allSkills.filter(isSkillAvailable);

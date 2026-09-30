@@ -129,7 +129,8 @@ function seed(report: SkillStatusReport): void {
     gatewayStatusMap: { [GATEWAY]: 'connected' },
     gatewayInfoMap: {},
     defaultGatewayId: GATEWAY,
-    skillsStatusByGateway: { [GATEWAY]: report },
+    agentCatalogByGateway: { [GATEWAY]: { defaultId: 'main', agents: [{ id: 'main' }] } },
+    skillsStatusByGateway: { [GATEWAY]: { ...report, agentId: 'main' } },
   });
 }
 
