@@ -43,6 +43,15 @@ export const taskContextSources = sqliteTable(
   ],
 );
 
+export const teamMeetings = sqliteTable('team_meetings', {
+  id: text('id').primaryKey(),
+  ownerTaskId: text('owner_task_id').notNull().unique(),
+  revision: integer('revision').notNull(),
+  recordJson: text('record_json').notNull(),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+});
+
 export const messages = sqliteTable('messages', {
   id: text('id').primaryKey(),
   taskId: text('task_id')

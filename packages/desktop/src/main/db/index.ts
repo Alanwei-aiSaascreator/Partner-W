@@ -57,6 +57,15 @@ CREATE TABLE IF NOT EXISTS task_context_sources (
   last_seen_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS team_meetings (
+  id TEXT PRIMARY KEY,
+  owner_task_id TEXT NOT NULL UNIQUE,
+  revision INTEGER NOT NULL,
+  record_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
 CREATE UNIQUE INDEX IF NOT EXISTS task_context_sources_task_path
 ON task_context_sources(task_id, absolute_path);
 
