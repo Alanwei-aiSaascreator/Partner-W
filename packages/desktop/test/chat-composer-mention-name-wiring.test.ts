@@ -30,19 +30,24 @@ const h = vi.hoisted(() => {
 });
 
 import { composer, useRoomStore, useTaskStore, useUiStore } from '../src/renderer/platform';
+import { useGatewayDispatcherSetup } from '../src/renderer/hooks/useGatewayDispatcherSetup';
+
+vi.mock('../src/renderer/features/team-meeting/instance', () => ({
+  teamMeetingController: { load: vi.fn(async () => {}) },
+}));
 
 const TASK_ID = 'task-1';
 const GATEWAY_ID = 'gw1';
 const AGENT_ID = 'rongying-tpl-78b62899';
 const AGENT_NAME = '爆款内容教练';
 const SESSION_KEY = `agent:${AGENT_ID}:subagent:0e0b5f3a-1111-2222-3333-444455556666`;
-const CONDUCTOR_KEY = `agent:conductor:${TASK_ID}`;
+const CONDUCTOR_KEY = `agent:conductor:clawwork:task:${TASK_ID}`;
 
 /** seed：一个**存量脏快照**的房间（`agentName` 存的是裸 id），外加网关目录。 */
 function seed(opts: { taskGatewayId?: string | undefined; agents?: Array<{ id: string; name?: string }> } = {}) {
   const task: { id: string; gatewayId?: string; sessionKey: string; ensemble: boolean; title: string } = {
     id: TASK_ID,
-    sessionKey: `task:${TASK_ID}`,
+    sessionKey: CONDUCTOR_KEY,
     ensemble: true,
     title: 'T',
   };
@@ -71,7 +76,7 @@ function seed(opts: { taskGatewayId?: string | undefined; agents?: Array<{ id: s
         ],
       },
     },
-    subagentKeyMap: {},
+    subagentKeyMap: { [SESSION_KEY]: TASK_ID },
   } as never);
 }
 
@@ -82,6 +87,7 @@ function sentTo(sessionKey: string): string[] {
 
 describe('@ 提及通知的接线 —— conductor 那句话里的名字必须来自网关目录', () => {
   beforeEach(() => {
+    useGatewayDispatcherSetup();
     h.sendMessage.mockClear();
     h.patchSession.mockClear();
     seed();
