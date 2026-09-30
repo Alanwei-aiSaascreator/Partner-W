@@ -77,6 +77,7 @@ export interface ArtifactDeliveryFailure {
   slideFailures?: SlidegenFailure[];
   docFailures?: DocgenFailure[];
   htmlFailures?: HtmlgenFailure[];
+  mediaFailures?: { fileName: string; reason: 'unavailable' }[];
 }
 
 export interface ArtifactDeliverySettled {

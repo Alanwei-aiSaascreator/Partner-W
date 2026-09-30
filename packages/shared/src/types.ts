@@ -240,6 +240,7 @@ export interface InstallEvent {
 }
 
 export interface MessageAttachment {
+  artifactId?: string;
   fileName: string;
   dataUrl: string;
   mimeType?: string;

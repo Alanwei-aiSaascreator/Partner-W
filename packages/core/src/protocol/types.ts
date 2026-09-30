@@ -68,6 +68,8 @@ export interface RawContentBlock {
   url?: string;
   openUrl?: string;
   alt?: string;
+  fileName?: string;
+  artifactId?: string;
   mimeType?: string;
   id?: string;
   name?: string;

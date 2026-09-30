@@ -2240,6 +2240,28 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
     }
   }
 
+  function handleCanonicalMediaMessage(payload: Record<string, unknown>, gatewayId: string): void {
+    const sessionKey = payload.sessionKey;
+    if (typeof sessionKey !== 'string' || deps.isEphemeralSession?.(sessionKey)) return;
+    const message = payload.message;
+    if (!isRecord(message) || message.role !== 'assistant' || !Array.isArray(message.content)) return;
+    if (
+      !message.content.some((block: unknown) => isRecord(block) && (block.type === 'video' || block.type === 'image'))
+    )
+      return;
+    const task = deps
+      .getTaskStore()
+      .tasks.find((candidate) => candidate.gatewayId === gatewayId && candidate.sessionKey === sessionKey);
+    if (!task) return;
+    deps.syncSessionMessages(task.id, sessionKey).catch((error) => {
+      debugEvent('renderer.sync.media-message.failed', {
+        taskId: task.id,
+        sessionKey,
+        error: error instanceof Error ? error.message : 'unknown',
+      });
+    });
+  }
+
   function start(): () => void {
     const removeGatewayEvent = deps.gateway.onGatewayEvent((data) => {
       debugEvent('renderer.gateway.event.received', {
@@ -2251,6 +2273,8 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
         routeRunFrame(data.event, data.payload, data.gatewayId);
       } else if (data.event === 'sessions.changed') {
         handleSessionChangedEvent(data.payload as SessionChangedEvent, data.gatewayId);
+      } else if (data.event === 'session.message') {
+        handleCanonicalMediaMessage(data.payload, data.gatewayId);
       } else if (data.event === 'exec.approval.requested') {
         deps.onApprovalRequested?.(data.gatewayId, data.payload);
       } else if (data.event === 'exec.approval.resolved') {

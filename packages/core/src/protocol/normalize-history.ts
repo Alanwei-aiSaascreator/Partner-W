@@ -15,7 +15,7 @@ export function isVisibleAssistantContent(content: string): boolean {
   return trimmed.length > 0 && !INTERNAL_ASSISTANT_MARKERS.has(trimmed);
 }
 
-const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|avif)(?:[?#].*)?$/i;
+const MEDIA_EXT_RE = /\.(png|jpe?g|gif|webp|avif|mp4|webm)(?:[?#].*)?$/i;
 const DATA_IMAGE_RE = /^data:image\/(png|jpe?g|gif|webp|avif);base64,/i;
 const GATEWAY_MEDIA_PATH_RE = /^\/(?:api\/chat\/media\/outgoing\/|media\/|__openclaw__\/media\/)/;
 
@@ -30,15 +30,20 @@ function hasUnsafePathSegment(value: string): boolean {
 }
 
 function encodeFilePath(path: string): string {
+  if (/^[a-z]:[\\/]/i.test(path)) {
+    return `file:///${path.slice(0, 2)}${path.slice(2).replaceAll('\\', '/').split('/').map(encodeURIComponent).join('/')}`;
+  }
   return `file://${path.split('/').map(encodeURIComponent).join('/')}`;
 }
 
 function filePathFromMediaCandidate(candidate: string): string | null {
   if (!candidate.startsWith('file://')) return candidate;
   try {
+    if (hasUnsafePathSegment(decodeURIComponent(candidate))) return null;
     const url = new URL(candidate);
     if (url.protocol !== 'file:' || (url.hostname && url.hostname !== 'localhost')) return null;
-    return decodeURIComponent(url.pathname);
+    const path = decodeURIComponent(url.pathname);
+    return /^\/[a-z]:\//i.test(path) ? path.slice(1) : path;
   } catch {
     return null;
   }
@@ -126,13 +131,15 @@ function resolveGatewayMediaSource(candidate: string, httpBase?: string): string
 }
 
 function mimeTypeFromSource(source: string, fallback?: string): string | undefined {
-  if (fallback?.startsWith('image/')) return fallback;
+  if (fallback?.startsWith('image/') || fallback === 'video/mp4' || fallback === 'video/webm') return fallback;
   const lower = source.split(/[?#]/)[0]?.toLowerCase() ?? '';
   if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
   if (lower.endsWith('.png')) return 'image/png';
   if (lower.endsWith('.gif')) return 'image/gif';
   if (lower.endsWith('.webp')) return 'image/webp';
   if (lower.endsWith('.avif')) return 'image/avif';
+  if (lower.endsWith('.mp4')) return 'video/mp4';
+  if (lower.endsWith('.webm')) return 'video/webm';
   const dataMatch = source.match(/^data:(image\/[^;]+);/i);
   return dataMatch?.[1] ?? fallback;
 }
@@ -156,7 +163,8 @@ function attachmentFromMediaSource(
   }
 
   const gatewayMedia = resolveGatewayMediaSource(candidate, httpBase);
-  if (gatewayMedia && (IMAGE_EXT_RE.test(gatewayMedia) || mimeType?.startsWith('image/'))) {
+  const supportedMime = mimeType?.startsWith('image/') || mimeType === 'video/mp4' || mimeType === 'video/webm';
+  if (gatewayMedia && (MEDIA_EXT_RE.test(gatewayMedia) || supportedMime)) {
     return {
       fileName: alt?.trim() || fileNameFromSource(gatewayMedia, 'image.png'),
       dataUrl: gatewayMedia,
@@ -165,7 +173,7 @@ function attachmentFromMediaSource(
   }
   if (candidate.startsWith('/') && GATEWAY_MEDIA_PATH_RE.test(candidate)) return null;
 
-  if (isAllowedRemoteMediaUrl(candidate) && (IMAGE_EXT_RE.test(candidate) || mimeType?.startsWith('image/'))) {
+  if (isAllowedRemoteMediaUrl(candidate) && (MEDIA_EXT_RE.test(candidate) || supportedMime)) {
     return {
       fileName: alt?.trim() || fileNameFromSource(candidate, 'image.png'),
       dataUrl: candidate,
@@ -174,8 +182,15 @@ function attachmentFromMediaSource(
   }
 
   const filePath = filePathFromMediaCandidate(candidate);
-  if (!filePath) return null;
-  if (filePath.startsWith('/') && IMAGE_EXT_RE.test(filePath)) {
+  if (
+    !filePath ||
+    [...filePath].some((char) => char.charCodeAt(0) < 32) ||
+    /^[\\/]{2}/.test(filePath) ||
+    hasUnsafePathSegment(filePath) ||
+    filePath.replace(/^[a-z]:/i, '').includes(':')
+  )
+    return null;
+  if ((filePath.startsWith('/') || /^[a-z]:[\\/]/i.test(filePath)) && MEDIA_EXT_RE.test(filePath)) {
     return {
       fileName: alt?.trim() || fileNameFromSource(filePath, 'image.png'),
       dataUrl: encodeFilePath(filePath),
@@ -251,10 +266,13 @@ export function normalizeContentBlocks(
       continue;
     }
 
-    if (block.type === 'image') {
+    if (block.type === 'image' || block.type === 'video') {
       const rawSource = block.url ?? block.openUrl;
       if (rawSource) {
-        const attachment = attachmentFromMediaSource(rawSource, block.alt, block.mimeType, httpBase);
+        const attachment = attachmentFromMediaSource(rawSource, block.fileName ?? block.alt, block.mimeType, httpBase);
+        if (attachment && block.type === 'video' && block.artifactId?.startsWith('artifact_managed_media_')) {
+          attachment.artifactId = block.artifactId;
+        }
         attachments = mergeMessageAttachments(attachments, attachment ? [attachment] : undefined);
       }
     }
@@ -543,6 +561,9 @@ export function normalizeAssistantTurns(rawMsgs: RawHistoryMessage[], httpBase?:
     }
 
     if (!visibleText && normalizedContent.attachments?.length) {
+      if (shouldStartVisibleAssistantTurn(current, timestamp, canMergeToolFinal)) {
+        startCurrent(timestamp, model);
+      }
       const turn = ensureCurrent(timestamp, model);
       turn.attachments = mergeMessageAttachments(turn.attachments, normalizedContent.attachments);
       turn.timestamp = timestamp;

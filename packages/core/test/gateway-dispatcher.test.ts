@@ -196,6 +196,46 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+describe('canonical media session messages', () => {
+  const media = {
+    sessionKey: TASK.sessionKey,
+    messageId: 'canonical-video-1',
+    message: {
+      role: 'assistant',
+      content: [{ type: 'video', url: '/api/chat/media/outgoing/session/video/full', mimeType: 'video/mp4' }],
+    },
+  };
+
+  it('refreshes canonical history when media arrives after the final text', () => {
+    const h = createHarness();
+    h.emit('session.message', media);
+    expect(h.deps.syncSessionMessages).toHaveBeenCalledWith(TASK.id, TASK.sessionKey);
+    expect(h.messageStore.addMessage).not.toHaveBeenCalled();
+    expect(h.messageStore.finalizeStream).not.toHaveBeenCalled();
+  });
+
+  it('does not import another gateway, another session, or ephemeral media', () => {
+    const h = createHarness();
+    h.emit('session.message', media, 'gw-other');
+    h.emit('session.message', { ...media, sessionKey: 'agent:other:clawwork:task:task-1' });
+    h.deps.isEphemeralSession = () => true;
+    h.emit('session.message', media);
+    expect(h.deps.syncSessionMessages).not.toHaveBeenCalled();
+  });
+
+  it('ignores user messages and text-only or malformed payloads', () => {
+    const h = createHarness();
+    h.emit('session.message', {});
+    h.emit('session.message', { ...media, message: null });
+    h.emit('session.message', { ...media, message: { ...media.message, role: 'user' } });
+    h.emit('session.message', {
+      ...media,
+      message: { role: 'assistant', content: [{ type: 'text', text: 'Video ready' }] },
+    });
+    expect(h.deps.syncSessionMessages).not.toHaveBeenCalled();
+  });
+});
+
 describe('fetchAgentsForGateway', () => {
   it('keeps the cache for ordinary reads', async () => {
     const h = createHarness();

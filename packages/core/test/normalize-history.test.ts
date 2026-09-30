@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
 import {
   collapseDiscoveredMessages,
   normalizeAssistantTurns,
@@ -7,6 +8,164 @@ import {
 import type { RawHistoryMessage } from '../src/protocol/types';
 
 describe('normalizeAssistantTurns', () => {
+  it.each([
+    ['run-a', undefined],
+    [undefined, 'run-a'],
+  ])('matches unique legacy tool ownership with one unknown run %s / %s', (callRun, resultRun) => {
+    const history = [
+      {
+        role: 'assistant',
+        timestamp: 1000,
+        __openclaw: { runId: callRun },
+        content: [{ type: 'toolCall', id: 'legacy-id', name: 'exec' }],
+      },
+      {
+        role: 'toolResult',
+        timestamp: 2000,
+        __openclaw: { runId: resultRun },
+        toolCallId: 'legacy-id',
+        content: [{ type: 'text', text: 'legacy-result' }],
+      },
+    ];
+    expect(normalizeAssistantTurns(history)[0].toolCalls[0]).toMatchObject({ status: 'done', result: 'legacy-result' });
+  });
+
+  it('does not assign an unknown-run result to either of two possible tool owners', () => {
+    const history = [
+      {
+        role: 'assistant',
+        timestamp: 1000,
+        __openclaw: { runId: 'run-a' },
+        content: [{ type: 'toolCall', id: 'same-id', name: 'exec' }],
+      },
+      {
+        role: 'assistant',
+        timestamp: 2000,
+        __openclaw: { runId: 'run-b' },
+        content: [{ type: 'toolCall', id: 'same-id', name: 'exec' }],
+      },
+      { role: 'toolResult', timestamp: 3000, toolCallId: 'same-id', content: [{ type: 'text', text: 'ambiguous' }] },
+    ];
+    expect(normalizeAssistantTurns(history).map((turn) => turn.toolCalls[0].result)).toEqual([undefined, undefined]);
+  });
+
+  it('keeps the actual asynchronous video runs and message-level tool result separate', () => {
+    const history = JSON.parse(readFileSync(new URL('./fixtures/video-async-history.json', import.meta.url), 'utf8'));
+    const turns = normalizeAssistantTurns(history, 'http://127.0.0.1:18789');
+    expect(turns).toHaveLength(3);
+    expect(turns[0]).toMatchObject({
+      timestamp: '2026-09-29T19:53:53.323Z',
+      runId: '6c0b1c10-3e13-4d84-aa0b-8db0f6ab60ef',
+      toolCalls: [{ id: 'qa-video-call-1', status: 'done', completedAt: '2026-09-29T19:53:55.897Z' }],
+    });
+    expect(turns[0].toolCalls[0].result).toContain('Background task started');
+    expect(turns[1]).toMatchObject({
+      content: '视频已生成。',
+      runId: 'video_generate:eaebdb9c-f6e3-46cb-94a9-fa3e2718eff8:ok:agent-loop',
+      toolCalls: [],
+    });
+    expect(turns[2].toolCalls).toEqual([]);
+    expect(turns[2].attachments?.[0].mimeType).toBe('video/mp4');
+  });
+
+  it('does not match reused tool ids across explicit runs', () => {
+    const history = [
+      {
+        role: 'assistant',
+        timestamp: 1000,
+        __openclaw: { runId: 'run-a' },
+        content: [{ type: 'toolCall', id: 'same-id', name: 'exec' }],
+      },
+      {
+        role: 'toolResult',
+        timestamp: 2000,
+        __openclaw: { runId: 'run-a' },
+        toolCallId: 'same-id',
+        content: [{ type: 'text', text: 'result-a' }],
+      },
+      {
+        role: 'assistant',
+        timestamp: 3000,
+        __openclaw: { runId: 'run-b' },
+        content: [{ type: 'toolCall', id: 'same-id', name: 'exec' }],
+      },
+      {
+        role: 'toolResult',
+        timestamp: 4000,
+        __openclaw: { runId: 'run-b' },
+        toolCallId: 'same-id',
+        isError: true,
+        content: [{ type: 'text', text: 'result-b' }],
+      },
+    ];
+    const turns = normalizeAssistantTurns(history);
+    expect(turns).toHaveLength(2);
+    expect(turns[0].toolCalls[0]).toMatchObject({ status: 'done', result: 'result-a' });
+    expect(turns[1].toolCalls[0]).toMatchObject({ status: 'error', result: 'result-b' });
+  });
+
+  it('preserves the delayed delivery-mirror video history message after its text completion', () => {
+    const turns = normalizeAssistantTurns(
+      [
+        { role: 'assistant', timestamp: 1000, content: [{ type: 'text', text: 'Your video is ready.' }] },
+        {
+          role: 'assistant',
+          timestamp: 2000,
+          model: 'delivery-mirror',
+          content: [
+            {
+              type: 'video',
+              url: '/api/chat/media/outgoing/session/video/full',
+              openUrl: '/api/chat/media/outgoing/session/video/full',
+              fileName: 'clip.mp4',
+              mimeType: 'video/mp4',
+            },
+          ],
+        },
+      ],
+      'http://127.0.0.1:18789',
+    );
+    expect(turns).toHaveLength(2);
+    expect(turns[1]).toMatchObject({
+      content: '',
+      timestamp: '1970-01-01T00:00:02.000Z',
+      attachments: [
+        {
+          fileName: 'clip.mp4',
+          dataUrl: 'http://127.0.0.1:18789/api/chat/media/outgoing/session/video/full',
+          mimeType: 'video/mp4',
+        },
+      ],
+    });
+  });
+
+  it('normalizes the observed native video display block through the gateway media route', () => {
+    const block = {
+      type: 'video',
+      artifactId: 'artifact_managed_media_fixture',
+      url: '/api/chat/media/outgoing/encoded-session/video-id/full',
+      openUrl: '/api/chat/media/outgoing/encoded-session/video-id/full',
+      fileName: 'generated.mp4',
+      mimeType: 'video/mp4',
+      playback: 'native',
+      sizeBytes: 6186,
+      durationMs: 5000,
+      width: 854,
+      height: 480,
+    };
+    expect(normalizeContentBlocks([block], 'http://127.0.0.1:18789')).toEqual({
+      content: '',
+      attachments: [
+        {
+          fileName: 'generated.mp4',
+          artifactId: 'artifact_managed_media_fixture',
+          dataUrl: 'http://127.0.0.1:18789/api/chat/media/outgoing/encoded-session/video-id/full',
+          mimeType: 'video/mp4',
+        },
+      ],
+    });
+  });
+
   it('keeps the result timestamp without treating the assistant message time as a tool start', () => {
     const [turn] = normalizeAssistantTurns([
       { role: 'assistant', timestamp: 1000, content: [{ type: 'toolCall', id: 't1', name: 'agents_list' }] },
@@ -170,6 +329,48 @@ describe('normalizeAssistantTurns', () => {
       dataUrl: 'file:///Users/x/.openclaw/media/generated%20image.png',
       sourcePath: '/Users/x/.openclaw/media/generated image.png',
     });
+  });
+
+  it.each([
+    ['/Users/x/.openclaw/media/clip.mp4', 'file:///Users/x/.openclaw/media/clip.mp4', 'video/mp4'],
+    ['C:\\qa\\media\\clip.mp4', 'file:///C:/qa/media/clip.mp4', 'video/mp4'],
+    ['D:/qa/media/clip.webm', 'file:///D:/qa/media/clip.webm', 'video/webm'],
+    ['C:\\qa\\media\\image.png', 'file:///C:/qa/media/image.png', 'image/png'],
+  ])('normalizes a supported local MEDIA directive %s', (sourcePath, dataUrl, mimeType) => {
+    const normalized = normalizeContentBlocks([{ type: 'text', text: `MEDIA:${sourcePath}` }]);
+    expect(normalized.content).toBe('');
+    expect(normalized.attachments).toEqual([expect.objectContaining({ sourcePath, dataUrl, mimeType })]);
+  });
+
+  it('decodes Windows file URLs without turning the drive into a POSIX path', () => {
+    const normalized = normalizeContentBlocks([{ type: 'text', text: 'MEDIA:file:///C:/qa/media/my%20clip.mp4' }]);
+    expect(normalized.attachments).toEqual([
+      {
+        fileName: 'my clip.mp4',
+        dataUrl: 'file:///C:/qa/media/my%20clip.mp4',
+        sourcePath: 'C:/qa/media/my clip.mp4',
+        mimeType: 'video/mp4',
+      },
+    ]);
+  });
+
+  it.each([
+    '\\\\server\\share\\clip.mp4',
+    '//server/share/clip.mp4',
+    '\\\\?\\C:\\qa\\clip.mp4',
+    '\\\\.\\C:\\qa\\clip.mp4',
+    'C:clip.mp4',
+    'C:\\qa\\..\\clip.mp4',
+    'file:///C:/qa/%2e%2e/clip.mp4',
+    'file://server/share/clip.mp4',
+    'file:///C:/qa/%00clip.mp4',
+    'C:/qa/clip.mp4:stream.mp4',
+    'ftp://example.com/clip.mp4',
+    'https://127.0.0.1/clip.mp4',
+    'http://example.com/clip.mp4',
+  ])('leaves unsafe video directives unconsumed: %s', (source) => {
+    const text = `MEDIA:${source}`;
+    expect(normalizeContentBlocks([{ type: 'text', text }])).toEqual({ content: text });
   });
 
   it('keeps prose MEDIA mentions as text', () => {
