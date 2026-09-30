@@ -79,6 +79,14 @@ export interface ArtifactDeliveryFailure {
   htmlFailures?: HtmlgenFailure[];
 }
 
+export interface ArtifactDeliverySettled {
+  taskId: string;
+  sessionKey: string;
+  messageId: string;
+  status: 'succeeded' | 'needs-review' | 'failed' | 'canceled';
+  slideWarnings?: SlidegenWarning[];
+}
+
 type SlidegenFailureReason =
   /** 围栏里是空的。 */
   | { code: 'slidegen-block-empty' }

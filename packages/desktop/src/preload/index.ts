@@ -3,6 +3,7 @@ import type {
   ApprovalDecision,
   Artifact,
   ArtifactDeliveryFailure,
+  ArtifactDeliverySettled,
   CommandsListParams,
   ConfigPatchParams,
   ConfigSetParams,
@@ -218,6 +219,11 @@ function buildApi(): ClawWorkAPI {
       return () => {
         ipcRenderer.removeListener('slidegen:warned', listener);
       };
+    },
+    onArtifactDeliverySettled: (callback: (result: ArtifactDeliverySettled) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, result: ArtifactDeliverySettled): void => callback(result);
+      ipcRenderer.on('artifact:delivery-settled', listener);
+      return () => ipcRenderer.removeListener('artifact:delivery-settled', listener);
     },
     onClaimViolation: (callback: (violation: ArtifactDeliveryFailure) => void) => {
       const listener = (_event: Electron.IpcRendererEvent, violation: ArtifactDeliveryFailure): void => {

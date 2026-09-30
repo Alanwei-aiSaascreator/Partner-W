@@ -3,6 +3,7 @@ import type {
   ApprovalDecision,
   Artifact,
   ArtifactDeliveryFailure,
+  ArtifactDeliverySettled,
   ArtifactFileReadResult,
   ArtifactPreview,
   ArtifactSaveAsResult,
@@ -571,6 +572,7 @@ export interface ClawWorkAPI {
    */
   onSlidegenFailed: (callback: (failures: SlidegenFailure[]) => void) => () => void;
   onSlidegenWarned: (callback: (warnings: SlidegenWarning[]) => void) => () => void;
+  onArtifactDeliverySettled: (callback: (result: ArtifactDeliverySettled) => void) => () => void;
   onClaimViolation: (callback: (violation: ArtifactDeliveryFailure) => void) => () => void;
   saveCodeBlock: (params: {
     taskId: string;

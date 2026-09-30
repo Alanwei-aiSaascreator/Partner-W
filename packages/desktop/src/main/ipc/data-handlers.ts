@@ -36,8 +36,10 @@ import {
   parseAgentIdFromSessionKey,
   type Artifact,
   type ArtifactDeliveryFailure,
+  type ArtifactDeliverySettled,
   type MessageAttachment,
   type SlidegenFailure,
+  type SlidegenWarning,
 } from '@clawwork/shared';
 import { getWorkspacePath } from '../workspace/config.js';
 import { getGatewayClient } from '../ws/index.js';
@@ -549,6 +551,8 @@ function finalizeAssistantArtifacts(input: {
     // 只记真实生成器或基线对账认出来的本轮文件。auto-extract 的 snippet.md / preview.html
     // 故意不记：代码片段不能冒充用户明确要的 Office/PDF 交付物。
     const producedArtifactNames = new Set<string>();
+    const slideWarnings: SlidegenWarning[] = [];
+    let pipelineFailed = false;
     const rememberProduced = (artifact: { name?: string; localPath?: string }): void => {
       const name = artifact.name ?? artifact.localPath;
       if (name) producedArtifactNames.add(name);
@@ -570,6 +574,7 @@ function finalizeAssistantArtifacts(input: {
         gatewayHttpBase: input.gatewayHttpBase,
       });
     } catch (error) {
+      pipelineFailed = true;
       console.error('[auto-extract]', error);
     }
     // ⭐ 结构化产物的**原文**：docgen 与 slidegen 共用这一次取回。
@@ -628,6 +633,7 @@ function finalizeAssistantArtifacts(input: {
         for (const win of BrowserWindow.getAllWindows()) win.webContents.send('docgen:failed', documents.failed);
       }
     } catch (error) {
+      pipelineFailed = true;
       console.error('[docgen]', error);
     }
     try {
@@ -657,6 +663,7 @@ function finalizeAssistantArtifacts(input: {
         for (const win of BrowserWindow.getAllWindows()) win.webContents.send('htmlgen:failed', pages.failed);
       }
     } catch (error) {
+      pipelineFailed = true;
       console.error('[htmlgen]', error);
     }
     try {
@@ -750,9 +757,7 @@ function finalizeAssistantArtifacts(input: {
           deliveryFailure.slideFailures = decks.failed;
           for (const win of BrowserWindow.getAllWindows()) win.webContents.send('slidegen:failed', decks.failed);
         }
-        if (decks.warnings.length > 0) {
-          for (const win of BrowserWindow.getAllWindows()) win.webContents.send('slidegen:warned', decks.warnings);
-        }
+        slideWarnings.push(...decks.warnings);
       }
     } catch (error) {
       console.error('[slidegen]', error);
@@ -775,6 +780,7 @@ function finalizeAssistantArtifacts(input: {
         });
         notifyReconciledArtifacts(result);
       } catch (error) {
+        pipelineFailed = true;
         console.error('[artifact_reconcile_failed]', { taskId: input.taskId, messageId: input.messageId, error });
       }
       // ⭐ 第二个根：**助手自己的工作区**（2026-09-27）。
@@ -812,6 +818,7 @@ function finalizeAssistantArtifacts(input: {
           notifyReconciledArtifacts(agentResult);
         }
       } catch (error) {
+        pipelineFailed = true;
         console.error('[artifact_agent_reconcile_failed]', {
           taskId: input.taskId,
           messageId: input.messageId,
@@ -853,6 +860,7 @@ function finalizeAssistantArtifacts(input: {
           deliveryFailure.missing = missing;
         }
       } catch (error) {
+        pipelineFailed = true;
         console.error('[artifact_claim_guard_failed]', { taskId: input.taskId, error });
       }
     } finally {
@@ -865,6 +873,26 @@ function finalizeAssistantArtifacts(input: {
         sessionKey: input.sessionKey,
       });
       pruneCompletedAssistantMessages();
+      const failed = Boolean(
+        pipelineFailed ||
+        deliveryFailure.missing.length ||
+        deliveryFailure.slideFailures?.length ||
+        deliveryFailure.docFailures?.length ||
+        deliveryFailure.htmlFailures?.length,
+      );
+      const canceled = isArtifactRunCanceled(run);
+      const hasWarnings = !canceled && slideWarnings.length > 0;
+      const settlement: ArtifactDeliverySettled = {
+        taskId: input.taskId,
+        sessionKey: input.sessionKey,
+        messageId: input.messageId,
+        status: canceled ? 'canceled' : failed ? 'failed' : hasWarnings ? 'needs-review' : 'succeeded',
+        ...(hasWarnings ? { slideWarnings } : {}),
+      };
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (hasWarnings) win.webContents.send('slidegen:warned', slideWarnings);
+        win.webContents.send('artifact:delivery-settled', settlement);
+      }
       if (
         !isArtifactRunCanceled(run) &&
         (deliveryFailure.missing.length ||
