@@ -155,13 +155,20 @@ function openAndMigrate(dbPath: string): void {
   `);
   sqlite.exec(`UPDATE messages SET session_key = '' WHERE session_key IS NULL`);
 
-  sqlite.exec(`DROP INDEX IF EXISTS messages_logical_unique`);
-  sqlite.exec(`DROP INDEX IF EXISTS messages_dedup`);
-
-  sqlite.exec(`
-    CREATE UNIQUE INDEX IF NOT EXISTS messages_dedup
-    ON messages(task_id, session_key, role, timestamp)
-  `);
+  sqlite.exec('BEGIN IMMEDIATE');
+  try {
+    sqlite.exec(`
+      DROP INDEX IF EXISTS messages_logical_unique;
+      DROP INDEX IF EXISTS messages_dedup;
+      CREATE UNIQUE INDEX messages_dedup
+      ON messages(task_id, session_key, role, timestamp)
+      WHERE role <> 'system';
+    `);
+    sqlite.exec('COMMIT');
+  } catch (err) {
+    sqlite.exec('ROLLBACK');
+    throw err;
+  }
 
   sqlite.exec(`
     CREATE TABLE IF NOT EXISTS task_rooms (

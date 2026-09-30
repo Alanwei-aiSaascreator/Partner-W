@@ -14,7 +14,12 @@ const insertMock = vi.fn(() => ({ values: valuesMock }));
 const selectGetMock = vi.fn<() => { sk?: string; id?: string }>(() => ({ sk: 'agent:main:clawwork:task:task-1' }));
 const selectWhereMock = vi.fn(() => ({ get: selectGetMock }));
 const selectFromMock = vi.fn(() => ({ where: selectWhereMock }));
-const selectMock = vi.fn(() => ({ from: selectFromMock }));
+const selectMock = vi.fn((fields?: Record<string, unknown>) => {
+  if (fields && 'taskId' in fields && 'sessionKey' in fields && 'role' in fields) {
+    return { from: () => ({ where: () => ({ get: () => undefined }) }) };
+  }
+  return { from: selectFromMock };
+});
 const getDbMock = vi.fn(() => ({ insert: insertMock, select: selectMock }));
 
 vi.mock('electron', () => ({

@@ -41,7 +41,15 @@
 
 ## DB Unique Index
 
-`messages_dedup ON messages(task_id, role, timestamp)` — This is a **single-writer idempotency guard**, not a dedup strategy. Since the sync path is the sole writer for assistant messages, and all timestamps come from Gateway, the index prevents accidental re-insertion of the same message if sync runs twice.
+`messages_dedup ON messages(task_id, session_key, role, timestamp) WHERE role <> 'system'` is the single-writer idempotency guard for user and assistant messages. These roles keep their existing canonical tuple identity; a repeated write updates the existing row and retains its ID for artifact references. The IPC upsert uses a literal `targetWhere` matching the partial index predicate so SQLite can identify the conflict target.
+
+Client-generated system messages use `messages.id` as their identity. Distinct IDs persist independently even when task, session, content and timestamp are identical. Replaying an ID updates that row; it does not replace the row or change its task, session or role. The IPC handler rejects reuse of any message ID with different task, session or role ownership before writing. Persisted system rows are looked up by ID; canonical user and assistant rows are looked up by their tuple.
+
+Database startup replaces the previous all-role index inside one transaction. Migration preserves existing message rows, IDs, artifact foreign keys and FTS entries. If canonical conflicts prevent creating the index, the prior indexes remain intact and startup reports the error. This migration cannot recover system-message content already overwritten by an older release.
+
+### Downgrade Compatibility
+
+Older clients unconditionally recreate the all-role index at startup. After this migration has allowed two system messages in the same millisecond, an older client's index creation fails with a unique-constraint error. If no collision exists yet, that client can still reopen the workspace and resume the old overwriting behavior. Keep upgraded workspaces on a client containing this repair. To use an older client, use a separate copy of a pre-upgrade backup; do not delete system-message history to make the older index succeed.
 
 ## Protocol Limitation
 

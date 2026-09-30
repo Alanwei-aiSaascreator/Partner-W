@@ -16,7 +16,12 @@ const valuesMock = vi.fn(() => ({
 const selectGetMock = vi.fn();
 const dbMock = {
   insert: vi.fn(() => ({ values: valuesMock })),
-  select: vi.fn(() => ({ from: vi.fn(() => ({ where: vi.fn(() => ({ get: selectGetMock })) })) })),
+  select: vi.fn((fields?: Record<string, unknown>) => {
+    if (fields && 'taskId' in fields && 'sessionKey' in fields && 'role' in fields) {
+      return { from: () => ({ where: () => ({ get: () => undefined }) }) };
+    }
+    return { from: vi.fn(() => ({ where: vi.fn(() => ({ get: selectGetMock })) })) };
+  }),
   delete: vi.fn(() => ({ where: vi.fn(() => ({ run: vi.fn() })) })),
 };
 

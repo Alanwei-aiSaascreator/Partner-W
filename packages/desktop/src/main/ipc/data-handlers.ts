@@ -1,6 +1,6 @@
 import { app, BrowserWindow, ipcMain } from 'electron';
 import { randomUUID } from 'node:crypto';
-import { and, eq, desc } from 'drizzle-orm';
+import { and, eq, desc, sql } from 'drizzle-orm';
 import { getDb, isDbReady } from '../db/index.js';
 import { tasks, messages, artifacts, taskRooms, taskRoomSessions, teams, teamAgents } from '../db/schema.js';
 import { autoExtractArtifacts } from '../artifact/auto-extract.js';
@@ -1049,6 +1049,17 @@ export function registerDataHandlers(): void {
           const task = db.select({ sk: tasks.sessionKey }).from(tasks).where(eq(tasks.id, msg.taskId)).get();
           resolvedSessionKey = task?.sk ?? '';
         }
+        const existing = db
+          .select({ taskId: messages.taskId, sessionKey: messages.sessionKey, role: messages.role })
+          .from(messages)
+          .where(eq(messages.id, msg.id))
+          .get();
+        if (
+          existing &&
+          (existing.taskId !== msg.taskId || existing.sessionKey !== resolvedSessionKey || existing.role !== msg.role)
+        ) {
+          throw new Error('message id belongs to a different task, session or role');
+        }
         db.insert(messages)
           .values({
             id: msg.id,
@@ -1065,7 +1076,11 @@ export function registerDataHandlers(): void {
             model: msg.model ?? null,
           })
           .onConflictDoUpdate({
-            target: [messages.taskId, messages.sessionKey, messages.role, messages.timestamp],
+            target:
+              msg.role === 'system'
+                ? messages.id
+                : [messages.taskId, messages.sessionKey, messages.role, messages.timestamp],
+            ...(msg.role !== 'system' ? { targetWhere: sql`role <> 'system'` } : {}),
             set: {
               content: msg.content,
               agentId: msg.agentId ?? null,
@@ -1085,12 +1100,14 @@ export function registerDataHandlers(): void {
           .select({ id: messages.id })
           .from(messages)
           .where(
-            and(
-              eq(messages.taskId, msg.taskId),
-              eq(messages.sessionKey, resolvedSessionKey),
-              eq(messages.role, msg.role),
-              eq(messages.timestamp, msg.timestamp),
-            ),
+            msg.role === 'system'
+              ? eq(messages.id, msg.id)
+              : and(
+                  eq(messages.taskId, msg.taskId),
+                  eq(messages.sessionKey, resolvedSessionKey),
+                  eq(messages.role, msg.role),
+                  eq(messages.timestamp, msg.timestamp),
+                ),
           )
           .get();
         const persistedMessageId = persisted?.id ?? msg.id;

@@ -10,11 +10,25 @@ The workspace DB is at `<workspace>/.clawwork.db`. Query it directly:
 sqlite3 .clawwork.db "SELECT id, task_id, role, substr(content,1,50), timestamp FROM messages WHERE task_id='<id>' ORDER BY timestamp"
 ```
 
-Check for duplicate rows (same role+content, different timestamps — a known past bug pattern):
+Check the canonical user/assistant idempotency invariant:
 
 ```bash
-sqlite3 .clawwork.db "SELECT task_id, role, substr(content,1,50), COUNT(*) as cnt FROM messages GROUP BY task_id, role, content HAVING cnt > 1"
+sqlite3 .clawwork.db "SELECT task_id, session_key, role, timestamp, COUNT(*) AS cnt FROM messages WHERE role <> 'system' GROUP BY task_id, session_key, role, timestamp HAVING cnt > 1"
 ```
+
+This query must return no rows. System notices have stable IDs; two different IDs with the same timestamp or text are valid history. Repeated user/assistant text can also be intentional, so content-grouped queries are diagnostic clues only and must never drive deletion or deduplication.
+
+Inspect repeated user/assistant content when investigating a known dual-write symptom:
+
+```bash
+sqlite3 .clawwork.db "SELECT task_id, session_key, role, substr(content,1,50), COUNT(*) as cnt FROM messages WHERE role <> 'system' GROUP BY task_id, session_key, role, content HAVING cnt > 1"
+```
+
+For missing system notices, compare attempted write IDs with the persisted IDs and full content, rather than relying on duplicate counts. The pre-repair overwrite leaves one row with the first ID and the second notice's content, so a duplicate query alone returns empty. Check the index definition with `SELECT sql FROM sqlite_master WHERE name = 'messages_dedup'`; it must end with `WHERE role <> 'system'`.
+
+The regression suite `pnpm --filter @clawwork/desktop exec vitest run test/message-persistence-sqlite.test.ts` runs the production IPC handler, Drizzle and Electron's actual SQLite driver against disposable workspaces. It covers fresh databases, old-index migration, failed-migration rollback, reopen, artifact foreign keys, FTS, system ID replay and cross-route ID rejection.
+
+Do not open an upgraded workspace with an older client that recreates the all-role index: it can fail to open once valid system timestamp collisions exist, or resume overwriting if none exist. Use a separate pre-upgrade backup for a downgrade; see `docs/message-persistence.md`.
 
 ## Renderer Debug Events
 
@@ -137,7 +151,7 @@ grep '<SESSION_KEY>' ~/Library/Logs/@clawwork/desktop/debug-$(date +%Y-%m-%d).nd
 # Check for duplicates (dedup index should prevent, but verify)
 sqlite3 "$DB" \
   "SELECT session_key, role, timestamp, COUNT(*) AS cnt
-   FROM messages WHERE task_id = '<TASK_ID>'
+   FROM messages WHERE task_id = '<TASK_ID>' AND role <> 'system'
    GROUP BY session_key, role, timestamp HAVING cnt > 1"
 
 # Check for empty or NO_REPLY assistant messages (should have been cleaned)
