@@ -102,7 +102,9 @@ export async function fillTemplateDeck(opts: FillTemplateDeckOptions): Promise<s
       //    那是给用户看的假字。`parse.ts` 已经把所有缺的补成空串，
       //    这里再按目录走一遍，等于"只要白名单里有，就一定被写到"。
       for (const [token, tokenSpec] of Object.entries(spec.tokens)) {
-        target.modifyElement(tokenSpec.shape, [modify.setText(slide.data[token] ?? '')]);
+        const value = slide.data[token] ?? '';
+        if (tokenSpec.keepTemplateTextWhenEmpty && !value.trim()) continue;
+        target.modifyElement(tokenSpec.shape, [modify.setText(value)]);
       }
       if (pageShape) target.modifyElement(pageShape, [modify.setText(pageNumber)]);
       if (spec.id === 'actions') {

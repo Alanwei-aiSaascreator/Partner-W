@@ -47,22 +47,22 @@ metadata: { 'openclaw': { 'emoji': '📊', 'skillKey': 'presentation-deck-v2' } 
 
 `templateId` **只能从这八个里挑**，别的会被拒：
 
-| `templateId` | 用途                               | 可以填的字段                                                                                                                                                                                |
-| ------------ | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `cover`      | 封面                               | `cover_title`(必填) `cover_subtitle` `date` `author`                                                                                                                                        |
-| `section`    | 章节页（给一段内容起头）           | `section_title`(必填) `section_summary` `section_context`（最多 60 字）                                                                                                                     |
-| `insight`    | 观点页：一个主结论 + 三条证据      | `slide_title`(必填) `slide_subtitle` `takeaway` `evidence_1` `evidence_2` `evidence_3`                                                                                                      |
-| `comparison` | 左右对比                           | `slide_title`(必填) `slide_subtitle` `left_title` `right_title` `left_item_1` `left_item_2` `left_item_3` `right_item_1` `right_item_2` `right_item_3`                                      |
-| `metrics`    | 三个关键指标                       | `slide_title`(必填) `slide_subtitle` `value_1`(必填) `label_1`(必填) `note_1` `value_2` `label_2` `note_2` `value_3` `label_3` `note_3` `source_or_note`                                    |
-| `timeline`   | 最多五步的时间线                   | `slide_title`(必填) `slide_subtitle` `step_1_title`(必填) `step_1_desc` `step_2_title` `step_2_desc` `step_3_title` `step_3_desc` `step_4_title` `step_4_desc` `step_5_title` `step_5_desc` |
-| `actions`    | 谁 / 什么时候 / 做什么（最多四条） | `slide_title`(必填) `slide_subtitle` `action_1`(必填) `owner_1` `due_1` `action_2` `owner_2` `due_2` `action_3` `owner_3` `due_3` `action_4` `owner_4` `due_4`                              |
-| `closing`    | 结尾页                             | `closing_title`(必填) `closing_message` `contact_or_next_step`                                                                                                                              |
+| `templateId` | 用途                             | 可以填的字段                                                                                                                                                                                               |
+| ------------ | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cover`      | 封面                             | `cover_title`(必填) `cover_subtitle` `date` `author`                                                                                                                                                       |
+| `section`    | 章节页（给一段内容起头）         | `section_title`(必填) `section_summary` `section_context`（最多 60 字）                                                                                                                                    |
+| `insight`    | 观点页：一个主结论 + 三条证据    | `slide_title`(必填) `slide_subtitle` `takeaway` `evidence_1` `evidence_2` `evidence_3`                                                                                                                     |
+| `comparison` | 左右对比                         | `slide_title`(必填) `slide_subtitle` `left_title` `right_title` `left_item_1` `left_item_2` `left_item_3` `right_item_1` `right_item_2` `right_item_3`                                                     |
+| `metrics`    | 三个关键指标                     | `slide_title`(必填) `slide_subtitle` `value_1`(必填) `label_1`(必填) `note_1` `value_2` `label_2` `note_2` `value_3` `label_3` `note_3` `source_or_note`                                                   |
+| `timeline`   | 最多五步的时间线                 | `slide_title`(必填) `slide_subtitle` `step_1_title`(必填) `step_1_desc` `step_2_title` `step_2_desc` `step_3_title` `step_3_desc` `step_4_title` `step_4_desc` `step_5_title` `step_5_desc`                |
+| `actions`    | 行动计划或三列合作表（最多四条） | `slide_title`(必填) `slide_subtitle` `action_header` `owner_header` `due_header` `action_1`(必填) `owner_1` `due_1` `action_2` `owner_2` `due_2` `action_3` `owner_3` `due_3` `action_4` `owner_4` `due_4` |
+| `closing`    | 结尾页                           | `closing_title`(必填) `closing_message` `contact_or_next_step`                                                                                                                                             |
 
 ## 五条硬规矩（违反了会被拒，而且会告诉你错在哪一页哪个字段）
 
 1. **字段名一个字母都不能差**。写错了会被明确拒绝，并把你写错的那个名字回给你。
    ⚠️ 内页标题一律是 `slide_title` / `slide_subtitle`，**不是** `title` / `subtitle`。
-2. **标"必填"的必须给**，只给空白也算没给。其余字段不给就留空，不会出错。
+2. **标"必填"的必须给**，只给空白也算没给。其余字段不给就留空，不会出错；例外是 `actions` 的三个表头字段，省略或只给空白时保留模板默认表头。
 3. **别写样式**。没有地方写颜色、字号、坐标、字体、图片——这些字段在协议里**根本不存在**。
    版式是设计师定死的，你改不了，也不需要改。**也不要向用户承诺"帮你配图""设计感"。**
 4. **数字要是结构化的值**（`"value_1": 12.4` 或 `"12.4"`），别把一段话塞进指标格。
@@ -70,6 +70,34 @@ metadata: { 'openclaw': { 'emoji': '📊', 'skillKey': 'presentation-deck-v2' } 
 5. ⭐ **正文里要引用什么，别用英文双引号**：JSON 字符串**里面**再出现一个裸的 `"`，原始 JSON 就不合法。
    客户端会对「点击"仍要运行"」这种明确的正文引号做**一次受控修复**，但歧义写法和其它 JSON 结构错误仍会被拒绝，不要依赖修复。
    要引号就用**中文引号**「」或“”，或者写成 `\"`。
+
+## 合作表的三列表头
+
+`actions` 也能做「服务 / 适用对象 / 交付方式」这类合作表。三列从左到右仍用 `action_1` / `owner_1` / `due_1` 填第一行，后续行对应 `_2` 到 `_4`。
+明确给出 `action_header` / `owner_header` / `due_header` 就能分别替换这三列表头，每个最多 40 字。
+这三个字段都可选：省略、空字符串或只有空白时保留模板现有表头；只给其中一个就只改那一列。客户端不会根据正文猜表头，合作表应显式填写三列名称。
+
+```docgen
+{
+  "kind": "pptx",
+  "title": "合作方案",
+  "template": "business-deck-v4",
+  "slides": [
+    {
+      "templateId": "actions",
+      "data": {
+        "slide_title": "合作方案",
+        "action_header": "合作方式",
+        "owner_header": "适用对象",
+        "due_header": "交付周期",
+        "action_1": "单品诊断",
+        "owner_1": "中小商家",
+        "due_1": "3 个工作日"
+      }
+    }
+  ]
+}
+```
 
 ## 怎么挑页、怎么写内容
 

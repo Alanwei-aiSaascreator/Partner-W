@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { PPTX_TEMPLATE_IDS, PPTX_TEMPLATE_SET_ID, PPTX_TEMPLATES } from '../src/main/docgen/pptx-template/catalog';
+import { parseTemplateDeck } from '../src/main/docgen/pptx-template/parse';
 import { parseDocgenRequest } from '../src/main/docgen/request';
 import {
   installBundledSkill,
@@ -133,8 +134,36 @@ describe('presentation-deck-v2 —— 内容与契约层不漂移', () => {
       }
       const result = parseDocgenRequest(parsed);
       expect(result.ok, `技能里的示例被契约层拒了：${result.ok ? '' : result.error}`).toBe(true);
-      if (result.ok) expect(result.request.kind).toBe('pptx');
+      if (result.ok) {
+        expect(result.request.kind).toBe('pptx');
+        if (result.request.kind === 'pptx') {
+          const deck = parseTemplateDeck(result.request.rawTemplateDeck);
+          expect(deck.ok, JSON.stringify(deck)).toBe(true);
+        }
+      }
     }
+  });
+
+  it('documents a valid cooperation table example with three explicit column headers', () => {
+    const slides = [...text.matchAll(/```docgen\n([\s\S]*?)\n```/g)].flatMap(([, body]) => {
+      const result = parseDocgenRequest(JSON.parse(body));
+      if (!result.ok || result.request.kind !== 'pptx') throw new Error('Invalid documented PPTX request');
+      const deck = parseTemplateDeck(result.request.rawTemplateDeck);
+      if (!deck.ok) throw new Error(JSON.stringify(deck.failure));
+      return deck.deck.slides;
+    });
+    expect(slides).toContainEqual({
+      templateId: 'actions',
+      data: expect.objectContaining({
+        slide_title: '\u5408\u4f5c\u65b9\u6848',
+        action_header: '\u5408\u4f5c\u65b9\u5f0f',
+        owner_header: '\u9002\u7528\u5bf9\u8c61',
+        due_header: '\u4ea4\u4ed8\u5468\u671f',
+        action_1: '\u5355\u54c1\u8bca\u65ad',
+        owner_1: '\u4e2d\u5c0f\u5546\u5bb6',
+        due_1: '3 \u4e2a\u5de5\u4f5c\u65e5',
+      }),
+    });
   });
 
   it('技能正文里写了"别用裸英文双引号"这条，并给了替代写法', () => {

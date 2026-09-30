@@ -55,6 +55,7 @@ export interface PptxTemplateTokenSpec {
   maxLength: number;
   /** 缺省即"可以不给"：不给就写成空串（占位符必须被清掉，见 parse.ts）。 */
   required?: boolean;
+  keepTemplateTextWhenEmpty?: boolean;
 }
 
 export interface PptxTemplateSpec {
@@ -178,6 +179,9 @@ export const PPTX_TEMPLATES: Readonly<Record<string, PptxTemplateSpec>> = Object
     purpose: '行动页：谁、在什么时候、做什么（最多四条）',
     tokens: {
       ...SLIDE_HEAD,
+      action_header: { shape: 'ACTION_HEADER', maxLength: LABEL, keepTemplateTextWhenEmpty: true },
+      owner_header: { shape: 'OWNER_HEADER', maxLength: LABEL, keepTemplateTextWhenEmpty: true },
+      due_header: { shape: 'DUE_HEADER', maxLength: LABEL, keepTemplateTextWhenEmpty: true },
       action_1: { shape: 'ACTION_1', maxLength: BODY, required: true },
       owner_1: { shape: 'OWNER_1', maxLength: LABEL },
       due_1: { shape: 'DUE_1', maxLength: LABEL },

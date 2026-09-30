@@ -69,6 +69,11 @@ describe('pptx 模板目录 —— 与真实模板文件对齐', () => {
 
     for (const [token, tokenSpec] of Object.entries(spec.tokens)) {
       expect(shapes.has(tokenSpec.shape), `第 ${spec.slide} 页没有名为 ${tokenSpec.shape} 的形状`).toBe(true);
+      if (tokenSpec.keepTemplateTextWhenEmpty) {
+        expect(shapes.get(tokenSpec.shape)?.trim()).toBeTruthy();
+        expect(shapes.get(tokenSpec.shape)).not.toMatch(/\{\{[^}]+\}\}/);
+        continue;
+      }
       expect(shapes.get(tokenSpec.shape), `${tokenSpec.shape} 的文字不是 {{${token}}}`).toBe(`{{${token}}}`);
     }
   });
@@ -88,7 +93,10 @@ describe('pptx 模板目录 —— 与真实模板文件对齐', () => {
   });
 
   it('目录里声明的 token 总数与文件里的占位符总数一致（没有只声明不存在的）', () => {
-    const declared = Object.values(PPTX_TEMPLATES).reduce((n, spec) => n + Object.keys(spec.tokens).length, 0);
+    const declared = Object.values(PPTX_TEMPLATES).reduce(
+      (n, spec) => n + Object.values(spec.tokens).filter((token) => !token.keepTemplateTextWhenEmpty).length,
+      0,
+    );
     const entries = listZipEntries(buffer).filter((n) => /^ppt\/slides\/slide\d+\.xml$/.test(n));
     let inFile = 0;
     for (const entry of entries) {
@@ -96,6 +104,27 @@ describe('pptx 模板目录 —— 与真实模板文件对齐', () => {
       inFile += (xml.match(/\{\{[^}]+\}\}/g) ?? []).length;
     }
     expect(inFile).toBe(declared);
+  });
+
+  it('preserves template defaults only for the three optional action header mappings', () => {
+    const preserved = Object.values(PPTX_TEMPLATES).flatMap((spec) =>
+      Object.entries(spec.tokens)
+        .filter(([, tokenSpec]) => tokenSpec.keepTemplateTextWhenEmpty)
+        .map(([token, tokenSpec]) => ({ templateId: spec.id, token, ...tokenSpec })),
+    );
+    expect(preserved).toEqual(
+      [
+        ['action_header', 'ACTION_HEADER'],
+        ['owner_header', 'OWNER_HEADER'],
+        ['due_header', 'DUE_HEADER'],
+      ].map(([token, shape]) => ({
+        templateId: 'actions',
+        token,
+        shape,
+        maxLength: 40,
+        keepTemplateTextWhenEmpty: true,
+      })),
+    );
   });
 });
 
