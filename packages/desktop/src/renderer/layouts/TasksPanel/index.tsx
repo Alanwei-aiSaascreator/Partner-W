@@ -24,6 +24,8 @@ import EmptyState from '@/components/semantic/EmptyState';
 import { useGatewaySelector } from '@/hooks/useGatewaySelector';
 import { resolveTaskAgentId } from '@/lib/task-sort';
 import TaskRow from './TaskRow';
+import { toast } from '@/lib/toast';
+import { deleteTaskAfterAcknowledgment } from '@/lib/delete-task';
 
 type ConfirmAction = 'reset' | 'delete' | null;
 
@@ -111,15 +113,20 @@ export default function TasksPanel() {
     setConfirmAction(null);
   }, [addMessage, clearMessages, confirmTaskId, findTask, t]);
 
-  const handleDeleteConfirm = useCallback(() => {
+  const handleDeleteConfirm = useCallback(async () => {
     const task = findTask(confirmTaskId);
-    if (task) {
-      window.clawwork.deleteSession(task.gatewayId, task.sessionKey).catch(() => {});
+    if (!task) return;
+    try {
+      await deleteTaskAfterAcknowledgment(task, {
+        removeTask,
+        clearMessages,
+        deleteSession: (gatewayId, sessionKey) => window.clawwork.deleteSession(gatewayId, sessionKey),
+      });
+      setConfirmAction(null);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t('errors.requestFailed'));
     }
-    clearMessages(confirmTaskId);
-    removeTask(confirmTaskId);
-    setConfirmAction(null);
-  }, [clearMessages, confirmTaskId, findTask, removeTask]);
+  }, [clearMessages, confirmTaskId, findTask, removeTask, t]);
 
   const sessionActions: SessionActions = useMemo(
     () => ({
