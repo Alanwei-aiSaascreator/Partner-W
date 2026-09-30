@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MAX_RECONNECT_ATTEMPTS, RECONNECT_DELAY_MS } from '@clawwork/shared';
 import { sendToWindow } from '../src/main/ws/window-utils.js';
+import { getDebugLogger } from '../src/main/debug/index.js';
 
 const websocketMock = vi.hoisted(() => {
   type Handler = (...args: unknown[]) => void;
@@ -104,6 +105,33 @@ describe('GatewayClient connection lifecycle', () => {
     expect(calculateReconnectDelay(6)).toBe(RECONNECT_DELAY_MS * 32);
     expect(calculateReconnectDelay(7)).toBe(RECONNECT_DELAY_MS * 32);
     expect(calculateReconnectDelay(MAX_RECONNECT_ATTEMPTS)).toBe(RECONNECT_DELAY_MS * 32);
+  });
+
+  it('does not log a temporary artifact download ticket while returning it to the caller', async () => {
+    const { GatewayClient } = await import('../src/main/ws/gateway-client.js');
+    const logger = getDebugLogger();
+    vi.mocked(getDebugLogger).mockReturnValue(logger);
+    const client = new GatewayClient({
+      id: 'gw-1',
+      name: 'Gateway',
+      url: 'ws://127.0.0.1:18789',
+      auth: { token: 'test' },
+    });
+    clients.push(client);
+    client.connect();
+    const socket = websocketMock.instances.at(-1)!;
+    socket.readyState = 1;
+    const pending = client.sendReq('artifacts.download', {
+      sessionKey: 'agent:main:clawwork:task:qa',
+      artifactId: 'artifact_managed_media_test',
+    });
+    const request = JSON.parse(socket.send.mock.calls.at(-1)![0] as string) as { id: string };
+    const payload = {
+      url: 'http://127.0.0.1:18789/api/chat/media/outgoing/test/full?mediaTicket=private-download-ticket',
+    };
+    socket.emit('message', JSON.stringify({ type: 'res', id: request.id, ok: true, payload }));
+    await expect(pending).resolves.toEqual(payload);
+    expect(JSON.stringify(vi.mocked(logger.info).mock.calls)).not.toContain('private-download-ticket');
   });
 
   it('passes the explicit model catalog owner onto the wire', async () => {

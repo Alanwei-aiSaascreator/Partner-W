@@ -5,6 +5,7 @@ const autoExtractArtifactsMock = vi.fn();
 const captureTaskArtifactBaselineMock = vi.fn();
 const reconcileTaskArtifactsMock = vi.fn();
 const getGatewayClientMock = vi.fn();
+const getWorkspacePathMock = vi.fn(() => 'C:\\trusted-workspace');
 const generateHtmlPagesFromMessageMock = vi.fn();
 const webContentsSendMock = vi.fn();
 const consoleErrorMock = vi.spyOn(console, 'error').mockImplementation(() => undefined);
@@ -42,7 +43,7 @@ vi.mock('../src/main/ipc/team-meeting-handlers.js', () => ({
   withTeamMeetingTaskDeletion: withTeamMeetingTaskDeletionMock,
 }));
 
-vi.mock('../src/main/workspace/config.js', () => ({ getWorkspacePath: vi.fn(() => 'C:\\trusted-workspace') }));
+vi.mock('../src/main/workspace/config.js', () => ({ getWorkspacePath: getWorkspacePathMock }));
 vi.mock('../src/main/ws/index.js', () => ({ getGatewayClient: getGatewayClientMock }));
 vi.mock('../src/main/artifact/auto-extract.js', () => ({ autoExtractArtifacts: autoExtractArtifactsMock }));
 vi.mock('../src/main/artifact/reconcile.js', () => ({
@@ -63,10 +64,191 @@ async function flushMicrotasks(): Promise<void> {
 }
 
 describe('assistant artifact reconciliation boundary', () => {
+  it.each([true, false])(
+    'resolves managed video tickets using only the task gateway and session, active run=%s',
+    async (activeRun) => {
+      const { beginArtifactRun, registerDataHandlers } = await import('../src/main/ipc/data-handlers.js');
+      registerDataHandlers();
+      if (activeRun) beginArtifactRun('C:\\trusted-workspace', 'task-1', 'session-task-1');
+      const artifactId = 'artifact_managed_media_fixture';
+      const dataUrl = 'http://127.0.0.1:18789/api/chat/media/outgoing/session-task-1/video/full';
+      const sendReq = vi.fn().mockResolvedValue({
+        artifact: {
+          id: artifactId,
+          sessionKey: 'session-task-1',
+          source: 'session-transcript',
+          download: { mode: 'url' },
+        },
+        url: `${dataUrl}?ticket=secret&download=1`,
+      });
+      getGatewayClientMock.mockImplementation((id) =>
+        id === 'gateway-1' ? { httpBase: 'http://127.0.0.1:18789', sendReq } : undefined,
+      );
+      selectGetMock.mockReturnValueOnce({ id: 'assistant-video' }).mockReturnValueOnce({ gid: 'gateway-1' });
+      handleMap.get('data:create-message')!(
+        {},
+        {
+          id: 'assistant-video',
+          taskId: 'task-1',
+          role: 'assistant',
+          content: '',
+          timestamp: '2026-09-30T00:00:00.000Z',
+          sessionKey: 'session-task-1',
+          attachments: [{ fileName: 'clip.mp4', dataUrl, mimeType: 'video/mp4', artifactId }],
+        },
+      );
+      await flushJobs();
+      const resolveMediaDownload = autoExtractArtifactsMock.mock.calls[0][0].resolveMediaDownload;
+      expect(resolveMediaDownload).toBeTypeOf('function');
+      const attachment = { fileName: 'clip.mp4', dataUrl, mimeType: 'video/mp4', artifactId };
+      await expect(resolveMediaDownload(attachment)).resolves.toBe(`${dataUrl}?ticket=secret&download=1`);
+      expect(sendReq).toHaveBeenCalledWith('artifacts.download', { sessionKey: 'session-task-1', artifactId });
+      sendReq.mockResolvedValue({
+        artifact: {
+          id: artifactId,
+          sessionKey: 'session-task-1',
+          source: 'session-transcript',
+          download: { mode: 'url' },
+        },
+        url: '/api/chat/media/outgoing/session-task-1/video/full?ticket=secret&download=1',
+      });
+      await expect(resolveMediaDownload(attachment)).resolves.toBe(`${dataUrl}?ticket=secret&download=1`);
+      sendReq.mockClear();
+      await expect(
+        resolveMediaDownload({ ...attachment, dataUrl: dataUrl.replace('session-task-1', 'other-session') }),
+      ).resolves.toBeNull();
+      await expect(
+        resolveMediaDownload({ ...attachment, dataUrl: dataUrl.replace('127.0.0.1:18789', 'evil.example') }),
+      ).resolves.toBeNull();
+      expect(sendReq).not.toHaveBeenCalled();
+      for (const invalid of [
+        {
+          artifact: {
+            id: 'wrong',
+            sessionKey: 'session-task-1',
+            source: 'session-transcript',
+            download: { mode: 'url' },
+          },
+          url: `${dataUrl}?ticket=secret`,
+        },
+        {
+          artifact: {
+            id: artifactId,
+            sessionKey: 'other-session',
+            source: 'session-transcript',
+            download: { mode: 'url' },
+          },
+          url: `${dataUrl}?ticket=secret`,
+        },
+        {
+          artifact: {
+            id: artifactId,
+            sessionKey: 'session-task-1',
+            source: 'session-transcript',
+            download: { mode: 'url' },
+          },
+          url: 'https://evil.example/file?ticket=secret',
+        },
+        {
+          artifact: {
+            id: artifactId,
+            sessionKey: 'session-task-1',
+            source: 'session-transcript',
+            download: { mode: 'url' },
+          },
+          url: `${dataUrl}/other?ticket=secret`,
+        },
+        {
+          artifact: {
+            id: artifactId,
+            sessionKey: 'session-task-1',
+            source: 'session-transcript',
+            download: { mode: 'url' },
+          },
+          url: `${dataUrl}?ticket=secret#fragment`,
+        },
+      ]) {
+        sendReq.mockResolvedValue(invalid);
+        await expect(resolveMediaDownload(attachment)).resolves.toBeNull();
+      }
+    },
+  );
+
+  it('passes the configured gateway origin when importing late history media without an active run', async () => {
+    const { registerDataHandlers } = await import('../src/main/ipc/data-handlers.js');
+    registerDataHandlers();
+    getGatewayClientMock.mockReturnValue({ httpBase: 'http://127.0.0.1:18789' });
+    selectGetMock.mockReturnValueOnce({ id: 'assistant-video' }).mockReturnValueOnce({ gid: 'gateway-1' });
+    handleMap.get('data:create-message')!(
+      {},
+      {
+        id: 'assistant-video',
+        taskId: 'task-1',
+        role: 'assistant',
+        content: '',
+        timestamp: '2026-09-30T00:00:00.000Z',
+        sessionKey: 'session-task-1',
+        attachments: [
+          {
+            fileName: 'clip.mp4',
+            dataUrl: 'http://127.0.0.1:18789/api/chat/media/outgoing/session/video/full',
+            mimeType: 'video/mp4',
+          },
+        ],
+      },
+    );
+    await flushJobs();
+    expect(autoExtractArtifactsMock).toHaveBeenCalledWith(
+      expect.objectContaining({ gatewayHttpBase: 'http://127.0.0.1:18789' }),
+    );
+  });
+
+  it.each([true, false])('reports failed video imports with an active run=%s', async (activeRun) => {
+    const { beginArtifactRun, registerDataHandlers } = await import('../src/main/ipc/data-handlers.js');
+    registerDataHandlers();
+    if (activeRun) beginArtifactRun('C:\\trusted-workspace', 'task-1', 'session-task-1');
+    autoExtractArtifactsMock.mockResolvedValue({ mediaFailures: [{ fileName: 'clip.mp4', reason: 'unavailable' }] });
+    selectGetMock.mockReturnValueOnce({ id: 'assistant-video' }).mockReturnValueOnce({ gid: 'gateway-1' });
+    if (!activeRun) selectGetMock.mockReturnValueOnce({ taskId: 'task-1', sessionKey: 'session-task-1' });
+    handleMap.get('data:create-message')!(
+      {},
+      {
+        id: 'assistant-video',
+        taskId: 'task-1',
+        role: 'assistant',
+        content: 'Video ready',
+        timestamp: '2026-09-30T00:00:00.000Z',
+        sessionKey: 'session-task-1',
+        attachments: [
+          {
+            fileName: 'clip.mp4',
+            dataUrl: 'file:///runtime/media/clip.mp4',
+            sourcePath: '/runtime/media/clip.mp4',
+            mimeType: 'video/mp4',
+          },
+        ],
+      },
+    );
+    await flushJobs();
+    expect(webContentsSendMock).toHaveBeenCalledWith(
+      'artifact:claim-violation',
+      expect.objectContaining({
+        taskId: 'task-1',
+        sessionKey: 'session-task-1',
+        messageId: 'assistant-video',
+        mediaFailures: [{ fileName: 'clip.mp4', reason: 'unavailable' }],
+      }),
+    );
+    expect(webContentsSendMock).toHaveBeenCalledWith(
+      'artifact:delivery-settled',
+      expect.objectContaining({ status: 'failed' }),
+    );
+  });
+
   beforeEach(() => {
     vi.resetModules();
     handleMap.clear();
-    dbMock.delete.mockClear();
+    getWorkspacePathMock.mockReturnValue('C:\\trusted-workspace');
     autoExtractArtifactsMock.mockReset().mockResolvedValue(undefined);
     captureTaskArtifactBaselineMock.mockReset().mockResolvedValue({ 'before.txt': 'signature' });
     reconcileTaskArtifactsMock.mockReset().mockResolvedValue({
@@ -83,6 +265,8 @@ describe('assistant artifact reconciliation boundary', () => {
     valuesMock.mockClear();
     selectGetMock.mockReset();
     consoleErrorMock.mockClear();
+    withTeamMeetingTaskDeletionMock.mockReset().mockImplementation((_taskId, remove) => remove());
+    dbMock.delete.mockClear();
   });
 
   it('uses the gateway-start baseline even when output appears before the user message is persisted', async () => {
@@ -155,6 +339,10 @@ describe('assistant artifact reconciliation boundary', () => {
       reconcileTaskArtifactsMock.mock.invocationCallOrder[0],
     );
     expect(webContentsSendMock).toHaveBeenCalledWith('artifact:saved', expect.objectContaining({ id: 'artifact-1' }));
+    expect(webContentsSendMock).toHaveBeenCalledWith(
+      'artifact:delivery-settled',
+      expect.objectContaining({ taskId: 'task-1', status: 'succeeded' }),
+    );
 
     selectGetMock.mockReturnValueOnce({ id: 'assistant-persisted' }).mockReturnValueOnce({ gid: 'gateway-1' });
     expect(
@@ -895,6 +1083,10 @@ describe('assistant artifact reconciliation boundary', () => {
     );
     await flushJobs();
     expect(webContentsSendMock).toHaveBeenCalledWith('docgen:failed', [{ code: 'request-invalid' }]);
+    expect(webContentsSendMock).toHaveBeenCalledWith(
+      'artifact:delivery-settled',
+      expect.objectContaining({ messageId: 'late-after-expiry', status: 'canceled' }),
+    );
     expect(reconcileTaskArtifactsMock).not.toHaveBeenCalled();
     expect(webContentsSendMock).not.toHaveBeenCalledWith('artifact:claim-violation', expect.anything());
   });
@@ -954,6 +1146,10 @@ describe('assistant artifact reconciliation boundary', () => {
         messageId: 'assistant-persisted',
         docFailures: [{ code: 'request-invalid' }],
       }),
+    );
+    expect(webContentsSendMock).toHaveBeenCalledWith(
+      'artifact:delivery-settled',
+      expect.objectContaining({ messageId: 'assistant-persisted', status: 'failed' }),
     );
   });
 

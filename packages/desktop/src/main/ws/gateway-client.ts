@@ -778,7 +778,7 @@ export class GatewayClient {
         ok: true,
         data: {
           method: pending.method,
-          payload: summarizePayload(frame.payload),
+          payload: pending.method === 'artifacts.download' ? { redacted: true } : summarizePayload(frame.payload),
         },
       });
       pending.resolve(frame.payload);

@@ -1,5 +1,5 @@
 import { app, BrowserWindow, ipcMain } from 'electron';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { and, eq, desc, sql } from 'drizzle-orm';
 import { getDb, isDbReady } from '../db/index.js';
 import { tasks, messages, artifacts, taskRooms, taskRoomSessions, teams, teamAgents } from '../db/schema.js';
@@ -48,6 +48,88 @@ import { withTeamMeetingTaskDeletion } from './team-meeting-handlers.js';
 
 function ipcError(err: unknown): { ok: false; error: string } {
   return { ok: false, error: err instanceof Error ? err.message : 'unknown' };
+}
+
+function mediaDownloadResolver(gatewayId: string | undefined, sessionKey: string) {
+  return async (attachment: MessageAttachment): Promise<string | null> => {
+    const gateway = gatewayId ? getGatewayClient(gatewayId) : undefined;
+    if (!gateway || !attachment.artifactId?.startsWith('artifact_managed_media_')) return null;
+    if (attachment.mimeType !== 'video/mp4' && attachment.mimeType !== 'video/webm') return null;
+    try {
+      const base = new URL(gateway.httpBase);
+      const original = new URL(attachment.dataUrl);
+      const route = original.pathname.match(/^\/api\/chat\/media\/outgoing\/([^/]+)\/([^/]+)\/full$/);
+      if (
+        original.origin !== base.origin ||
+        original.username ||
+        original.password ||
+        original.hash ||
+        original.search ||
+        !route ||
+        decodeURIComponent(route[1]) !== sessionKey
+      )
+        return null;
+      const response = await gateway.sendReq('artifacts.download', { sessionKey, artifactId: attachment.artifactId });
+      const artifact = response.artifact;
+      if (
+        !artifact ||
+        typeof artifact !== 'object' ||
+        !('id' in artifact) ||
+        artifact.id !== attachment.artifactId ||
+        !('sessionKey' in artifact) ||
+        artifact.sessionKey !== sessionKey ||
+        !('source' in artifact) ||
+        artifact.source !== 'session-transcript' ||
+        !('download' in artifact)
+      )
+        return null;
+      const download = artifact.download;
+      if (
+        !download ||
+        typeof download !== 'object' ||
+        !('mode' in download) ||
+        download.mode !== 'url' ||
+        typeof response.url !== 'string'
+      )
+        return null;
+      const ticket = new URL(response.url, base);
+      if (
+        ticket.origin !== base.origin ||
+        ticket.pathname !== original.pathname ||
+        ticket.username ||
+        ticket.password ||
+        ticket.hash
+      )
+        return null;
+      return ticket.toString();
+    } catch {
+      return null;
+    }
+  };
+}
+
+function failedMediaSources(
+  attachments: MessageAttachment[] | undefined,
+  failures: NonNullable<ArtifactDeliveryFailure['mediaFailures']>,
+  exactSources?: string[],
+): string[] {
+  if (exactSources) return exactSources;
+  return (attachments ?? [])
+    .filter((attachment) =>
+      failures.some(
+        (failure) =>
+          failure.fileName ===
+          (attachment.fileName?.replaceAll('\\', '/').split('/').at(-1)?.trim() ||
+            `video.${attachment.mimeType === 'video/webm' ? 'webm' : 'mp4'}`),
+      ),
+    )
+    .map(
+      (attachment) =>
+        `attachment:${createHash('sha256')
+          .update(attachment.sourcePath ?? attachment.dataUrl)
+          .digest('hex')
+          .slice(0, 16)}`,
+    );
 }
 
 /**
@@ -132,7 +214,16 @@ const claimedArtifactRuns = new Map<string, ArtifactRunContext>();
 const desynchronizedArtifactSessions = new Set<string>();
 const completedAssistantMessages = new Map<
   string,
-  { state: 'inFlight' | 'completed'; touchedAt: number; sequence: number; taskId: string; sessionKey: string }
+  {
+    state: 'inFlight' | 'completed';
+    touchedAt: number;
+    sequence: number;
+    taskId: string;
+    sessionKey: string;
+    mediaRetrySucceeded?: boolean;
+    mediaRetryRequiredSources?: string[];
+    mediaRetrySettlement?: ArtifactDeliverySettled;
+  }
 >();
 const ARTIFACT_RUN_TTL_MS = 15 * 60 * 1000;
 const MAX_ARTIFACT_RUNS = 128;
@@ -566,14 +657,23 @@ function finalizeAssistantArtifacts(input: {
       }
     };
     try {
-      await autoExtractArtifacts({
+      const extraction = await autoExtractArtifacts({
         workspacePath: input.workspacePath,
         taskId: input.taskId,
         messageId: input.messageId,
         content: input.content,
         attachments: input.attachments,
         gatewayHttpBase: input.gatewayHttpBase,
+        resolveMediaDownload: mediaDownloadResolver(input.gatewayId, input.sessionKey),
       });
+      if (extraction?.mediaFailures.length) deliveryFailure.mediaFailures = extraction.mediaFailures;
+      const completed = completedAssistantMessages.get(messageKey);
+      if (completed)
+        completed.mediaRetryRequiredSources = failedMediaSources(
+          input.attachments,
+          extraction?.mediaFailures ?? [],
+          extraction?.failedMediaSourceKeys,
+        );
     } catch (error) {
       pipelineFailed = true;
       console.error('[auto-extract]', error);
@@ -866,12 +966,15 @@ function finalizeAssistantArtifacts(input: {
       }
     } finally {
       claimedArtifactRuns.delete(run.token);
+      const requiredMediaSources = completedAssistantMessages.get(messageKey)?.mediaRetryRequiredSources;
+      if (completedAssistantMessages.get(messageKey)?.mediaRetrySucceeded) deliveryFailure.mediaFailures = undefined;
       completedAssistantMessages.set(messageKey, {
         state: 'completed',
         touchedAt: Date.now(),
         sequence: nextCompletedMessageSequence++,
         taskId: input.taskId,
         sessionKey: input.sessionKey,
+        mediaRetryRequiredSources: requiredMediaSources,
       });
       pruneCompletedAssistantMessages();
       const failed = Boolean(
@@ -879,7 +982,8 @@ function finalizeAssistantArtifacts(input: {
         deliveryFailure.missing.length ||
         deliveryFailure.slideFailures?.length ||
         deliveryFailure.docFailures?.length ||
-        deliveryFailure.htmlFailures?.length,
+        deliveryFailure.htmlFailures?.length ||
+        deliveryFailure.mediaFailures?.length,
       );
       const canceled = isArtifactRunCanceled(run);
       const hasWarnings = !canceled && slideWarnings.length > 0;
@@ -890,6 +994,17 @@ function finalizeAssistantArtifacts(input: {
         status: canceled ? 'canceled' : failed ? 'failed' : hasWarnings ? 'needs-review' : 'succeeded',
         ...(hasWarnings ? { slideWarnings } : {}),
       };
+      const nonMediaFailed = Boolean(
+        pipelineFailed ||
+        deliveryFailure.missing.length ||
+        deliveryFailure.slideFailures?.length ||
+        deliveryFailure.docFailures?.length ||
+        deliveryFailure.htmlFailures?.length,
+      );
+      completedAssistantMessages.get(messageKey)!.mediaRetrySettlement = {
+        ...settlement,
+        status: canceled ? 'canceled' : nonMediaFailed ? 'failed' : hasWarnings ? 'needs-review' : 'succeeded',
+      };
       for (const win of BrowserWindow.getAllWindows()) {
         if (hasWarnings) win.webContents.send('slidegen:warned', slideWarnings);
         win.webContents.send('artifact:delivery-settled', settlement);
@@ -899,7 +1014,8 @@ function finalizeAssistantArtifacts(input: {
         (deliveryFailure.missing.length ||
           deliveryFailure.slideFailures?.length ||
           deliveryFailure.docFailures?.length ||
-          deliveryFailure.htmlFailures?.length)
+          deliveryFailure.htmlFailures?.length ||
+          deliveryFailure.mediaFailures?.length)
       ) {
         for (const win of BrowserWindow.getAllWindows()) {
           win.webContents.send('artifact:claim-violation', deliveryFailure);
@@ -1120,7 +1236,7 @@ export function registerDataHandlers(): void {
           (msg.content.length > 0 || (msg.attachments?.length ?? 0) > 0 || (msg.toolCalls?.length ?? 0) > 0)
         ) {
           const run = artifactRuns.get(artifactRunKey(msg.taskId, resolvedSessionKey));
-          if (run) {
+          if (run && !completedAssistantMessages.has(completedMessageKey(msg.taskId, persistedMessageId))) {
             const taskRow = db.select({ gid: tasks.gatewayId }).from(tasks).where(eq(tasks.id, msg.taskId)).get();
             const gatewayHttpBase = taskRow ? getGatewayClient(taskRow.gid)?.httpBase : undefined;
             finalizeAssistantArtifacts({
@@ -1138,13 +1254,130 @@ export function registerDataHandlers(): void {
             // Legacy/history hydration still needs attachment and fenced-code
             // extraction. Reconciliation deliberately fails closed without a
             // trusted user-turn baseline so old workspace files are not claimed.
+            const taskRow = db.select({ gid: tasks.gatewayId }).from(tasks).where(eq(tasks.id, msg.taskId)).get();
+            const gatewayHttpBase = taskRow ? getGatewayClient(taskRow.gid)?.httpBase : undefined;
             autoExtractArtifacts({
               workspacePath,
               taskId: msg.taskId,
               messageId: persistedMessageId,
               content: msg.content,
               attachments: msg.attachments as MessageAttachment[] | undefined,
-            }).catch((err: unknown) => console.error('[auto-extract]', err));
+              gatewayHttpBase,
+              resolveMediaDownload: mediaDownloadResolver(taskRow?.gid, resolvedSessionKey),
+            })
+              .then((result) => {
+                if (getDb() !== db || getWorkspacePath() !== workspacePath) return;
+                const currentMessage = db
+                  .select({ taskId: messages.taskId, sessionKey: messages.sessionKey, runId: messages.runId })
+                  .from(messages)
+                  .where(eq(messages.id, persistedMessageId))
+                  .get();
+                if (
+                  currentMessage?.taskId !== msg.taskId ||
+                  currentMessage.sessionKey !== resolvedSessionKey ||
+                  (currentMessage.runId ?? undefined) !== (msg.runId ?? undefined)
+                )
+                  return;
+                const completed = completedAssistantMessages.get(completedMessageKey(msg.taskId, persistedMessageId));
+                const incomingVideoSources = new Set(
+                  (msg.attachments as MessageAttachment[] | undefined)
+                    ?.filter(
+                      (attachment) => attachment.mimeType === 'video/mp4' || attachment.mimeType === 'video/webm',
+                    )
+                    .map(
+                      (attachment) =>
+                        `attachment:${createHash('sha256')
+                          .update(attachment.sourcePath ?? attachment.dataUrl)
+                          .digest('hex')
+                          .slice(0, 16)}`,
+                    ),
+                );
+                if (completed?.mediaRetryRequiredSources)
+                  completed.mediaRetryRequiredSources = completed.mediaRetryRequiredSources.filter(
+                    (key) => !incomingVideoSources.has(key) || !result?.savedMediaSourceKeys?.includes(key),
+                  );
+                if (!result?.mediaFailures.length) {
+                  const savedSource = (msg.attachments as MessageAttachment[] | undefined)?.some(
+                    (attachment) =>
+                      (attachment.mimeType === 'video/mp4' || attachment.mimeType === 'video/webm') &&
+                      result?.savedMediaSourceKeys?.includes(
+                        `attachment:${createHash('sha256')
+                          .update(attachment.sourcePath ?? attachment.dataUrl)
+                          .digest('hex')
+                          .slice(0, 16)}`,
+                      ),
+                  );
+                  if (!savedSource) return;
+                  if (completed) {
+                    if (!completed.mediaRetryRequiredSources) return;
+                    if (completed.mediaRetryRequiredSources.length) return;
+                  }
+                  if (completed?.state === 'inFlight') {
+                    completed.mediaRetrySucceeded = true;
+                    return;
+                  }
+                  if (completed && !completed.mediaRetrySettlement) return;
+                  for (const win of BrowserWindow.getAllWindows()) {
+                    win.webContents.send('artifact:delivery-settled', {
+                      taskId: msg.taskId,
+                      sessionKey: resolvedSessionKey,
+                      messageId: persistedMessageId,
+                      status: 'succeeded',
+                      ...completed?.mediaRetrySettlement,
+                    });
+                  }
+                  return;
+                }
+                const failure: ArtifactDeliveryFailure = {
+                  taskId: msg.taskId,
+                  sessionKey: resolvedSessionKey,
+                  messageId: persistedMessageId,
+                  missing: [],
+                  mediaFailures: result.mediaFailures,
+                };
+                const messageKey = completedMessageKey(msg.taskId, persistedMessageId);
+                pruneCompletedAssistantMessages();
+                if (completed)
+                  completed.mediaRetryRequiredSources = [
+                    ...new Set([
+                      ...(completed.mediaRetryRequiredSources ?? []),
+                      ...failedMediaSources(
+                        msg.attachments as MessageAttachment[] | undefined,
+                        result.mediaFailures,
+                        result.failedMediaSourceKeys,
+                      ),
+                    ]),
+                  ];
+                if (!completedAssistantMessages.has(messageKey))
+                  completedAssistantMessages.set(messageKey, {
+                    state: 'completed',
+                    touchedAt: Date.now(),
+                    sequence: nextCompletedMessageSequence++,
+                    taskId: msg.taskId,
+                    sessionKey: resolvedSessionKey,
+                    mediaRetryRequiredSources: failedMediaSources(
+                      msg.attachments as MessageAttachment[] | undefined,
+                      result.mediaFailures,
+                      result.failedMediaSourceKeys,
+                    ),
+                    mediaRetrySettlement: {
+                      taskId: msg.taskId,
+                      sessionKey: resolvedSessionKey,
+                      messageId: persistedMessageId,
+                      status: 'succeeded',
+                    },
+                  });
+                for (const win of BrowserWindow.getAllWindows()) {
+                  win.webContents.send('artifact:claim-violation', failure);
+                  win.webContents.send('artifact:delivery-settled', {
+                    taskId: msg.taskId,
+                    sessionKey: resolvedSessionKey,
+                    messageId: persistedMessageId,
+                    status: 'failed',
+                  });
+                }
+              })
+              .catch((err: unknown) => console.error('[auto-extract]', err));
           }
         }
         return { ok: true };
