@@ -26,6 +26,7 @@ const DATA_IMAGE_RE = /^data:(image\/(?:png|jpe?g|gif|webp|avif));base64,(.+)$/i
 interface AutoExtractResult {
   mediaFailures: NonNullable<ArtifactDeliveryFailure['mediaFailures']>;
   savedMediaSourceKeys?: string[];
+  failedMediaSourceKeys?: string[];
 }
 
 const extractionByMessage = new Map<string, { signature: string; job: Promise<AutoExtractResult> }>();
@@ -113,6 +114,7 @@ async function doAutoExtractArtifacts(params: AutoExtractParams): Promise<AutoEx
   const saved: Artifact[] = [];
   const mediaFailures: AutoExtractResult['mediaFailures'] = [];
   const savedMediaSourceKeys: string[] = [];
+  const failedMediaSourceKeys: string[] = [];
 
   async function saveExtracted(input: {
     fileName: string;
@@ -196,6 +198,8 @@ async function doAutoExtractArtifacts(params: AutoExtractParams): Promise<AutoEx
   for (const attachment of attachments) {
     const isVideo = attachment.mimeType === 'video/mp4' || attachment.mimeType === 'video/webm';
     const recordVideoFailure = (): void => {
+      const key = sourceKey('attachment', attachment.sourcePath ?? attachment.dataUrl);
+      if (!failedMediaSourceKeys.includes(key)) failedMediaSourceKeys.push(key);
       const fileName =
         attachment.fileName?.replaceAll('\\', '/').split('/').at(-1)?.trim() ||
         `video.${extFromMime(attachment.mimeType)}`;
@@ -251,7 +255,11 @@ async function doAutoExtractArtifacts(params: AutoExtractParams): Promise<AutoEx
       win.webContents.send('artifact:saved', artifact);
     }
   }
-  return { mediaFailures, ...(savedMediaSourceKeys.length ? { savedMediaSourceKeys } : {}) };
+  return {
+    mediaFailures,
+    ...(savedMediaSourceKeys.length ? { savedMediaSourceKeys } : {}),
+    ...(failedMediaSourceKeys.length ? { failedMediaSourceKeys } : {}),
+  };
 }
 
 export async function autoExtractArtifacts(params: AutoExtractParams): Promise<AutoExtractResult> {

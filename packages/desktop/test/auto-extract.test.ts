@@ -38,6 +38,28 @@ vi.mock('../src/main/net/safe-fetch.js', () => ({
 }));
 
 describe('autoExtractArtifacts', () => {
+  it('distinguishes failed video sources when filenames are identical', async () => {
+    const { autoExtractArtifacts } = await import('../src/main/artifact/auto-extract.js');
+    safeFetchMock.mockResolvedValueOnce(Buffer.from('saved video')).mockRejectedValueOnce(new Error('denied'));
+    const attachments = ['first', 'second'].map((name) => ({
+      fileName: 'clip.mp4',
+      mimeType: 'video/mp4',
+      dataUrl: `https://example.invalid/${name}.mp4`,
+    }));
+    const result = await autoExtractArtifacts({
+      workspacePath: '/workspace',
+      taskId: 'task-1',
+      messageId: 'same-basename',
+      content: '',
+      attachments,
+    });
+    expect(result.mediaFailures).toEqual([{ fileName: 'clip.mp4', reason: 'unavailable' }]);
+    expect(result.failedMediaSourceKeys).toEqual([
+      `attachment:${createHash('sha256').update(attachments[1]!.dataUrl).digest('hex').slice(0, 16)}`,
+    ]);
+    expect(result.savedMediaSourceKeys).toHaveLength(1);
+    expect(JSON.stringify(result.mediaFailures)).not.toContain('example.invalid');
+  });
   it.each(['database', 'workspace'])('discards pending media after %s replacement', async (replacement) => {
     const { autoExtractArtifacts } = await import('../src/main/artifact/auto-extract.js');
     let finish!: (buffer: Buffer) => void;
@@ -141,6 +163,9 @@ describe('autoExtractArtifacts', () => {
     };
     expect(await autoExtractArtifacts(params)).toEqual({
       mediaFailures: [{ fileName: 'clip.mp4', reason: 'unavailable' }],
+      failedMediaSourceKeys: [
+        `attachment:${createHash('sha256').update(params.attachments[0]!.dataUrl).digest('hex').slice(0, 16)}`,
+      ],
     });
     expect(safeFetchMock).not.toHaveBeenCalled();
   });
@@ -283,7 +308,12 @@ describe('autoExtractArtifacts', () => {
     expect(readOpenClawMediaFileMock).toHaveBeenCalledOnce();
     expect(saveArtifactFromBufferMock).not.toHaveBeenCalled();
     expect(webContentsSendMock).not.toHaveBeenCalled();
-    expect(result).toEqual({ mediaFailures: [{ fileName: 'clip.mp4', reason: 'unavailable' }] });
+    expect(result).toEqual({
+      mediaFailures: [{ fileName: 'clip.mp4', reason: 'unavailable' }],
+      failedMediaSourceKeys: [
+        `attachment:${createHash('sha256').update('/outside/clip.mp4').digest('hex').slice(0, 16)}`,
+      ],
+    });
   });
 
   it('returns a filename-only video failure when the verified reader throws', async () => {
@@ -303,7 +333,12 @@ describe('autoExtractArtifacts', () => {
         },
       ],
     });
-    expect(result).toEqual({ mediaFailures: [{ fileName: 'clip.mp4', reason: 'unavailable' }] });
+    expect(result).toEqual({
+      mediaFailures: [{ fileName: 'clip.mp4', reason: 'unavailable' }],
+      failedMediaSourceKeys: [
+        `attachment:${createHash('sha256').update('C:/private/clip.mp4').digest('hex').slice(0, 16)}`,
+      ],
+    });
     expect(saveArtifactFromBufferMock).not.toHaveBeenCalled();
   });
 
