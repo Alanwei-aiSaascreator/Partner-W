@@ -35,6 +35,7 @@ import {
 } from '@clawwork/core';
 import { buildArtifactsIndex } from '../../lib/artifact-index';
 import { artifactFailureContext } from '../../lib/artifact-delivery-feedback';
+import { buildResponseLanguageContext } from '../../lib/response-language';
 import { useTaskStore } from '../../stores/taskStore';
 import { useMessageStore } from '../../stores/messageStore';
 import { useUiStore } from '../../stores/uiStore';
@@ -43,6 +44,7 @@ import { useTeamStore } from '../../stores/teamStore';
 import { composer } from '../../platform';
 import { compareStore } from '@/features/compare/compare-store-instance';
 import { compareRuntimeForTask } from '@/features/compare/compare-plan';
+import { isMeetingTaskBusy } from '@/features/team-meeting/send-guard';
 import type { PendingAttachment } from './types';
 import type { ImportedMaterialFile, TaskContextFile } from './useTaskMaterials';
 import type { ThinkingLevel } from './constants';
@@ -100,7 +102,7 @@ export function useChatSend(opts: UseChatSendOpts) {
     onComposerCleared,
   } = opts;
 
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
 
   const activeTask = useTaskStore((s) => s.tasks.find((tt) => tt.id === s.activeTaskId));
   const tasks = useTaskStore((s) => s.tasks);
@@ -234,6 +236,10 @@ export function useChatSend(opts: UseChatSendOpts) {
   }, []);
 
   const handleSend = useCallback(async () => {
+    if (isMeetingTaskBusy(activeTask?.id)) {
+      toast.error(t('meeting.taskBusy'));
+      return;
+    }
     const sendLockKey = activeTask?.id ?? '__pending_task__';
     if (sendInFlightTaskIdsRef.current.has(sendLockKey)) return;
     sendInFlightTaskIdsRef.current.add(sendLockKey);
@@ -295,6 +301,11 @@ export function useChatSend(opts: UseChatSendOpts) {
         if (sendInFlightTaskIdsRef.current.has(task.id)) return;
         sendInFlightTaskIdsRef.current.add(task.id);
         ownedSendLockKeys.add(task.id);
+      }
+
+      if (isMeetingTaskBusy(task.id)) {
+        toast.error(t('meeting.taskBusy'));
+        return;
       }
 
       // ── 多模型对比 ────────────────────────────────────────────────────────
@@ -718,6 +729,10 @@ export function useChatSend(opts: UseChatSendOpts) {
 
         const slashMatch = finalContent.trim().match(/^\/(model|think)\s+(.+)$/);
         if (slashMatch && allAttachments.length === 0 && !allMessageAttachments?.length) {
+          if (isMeetingTaskBusy(task.id)) {
+            toast.error(t('meeting.taskBusy'));
+            return;
+          }
           const command = slashMatch[1] as 'model' | 'think';
           const result = await composer.applySlashCommand(task.id, command, slashMatch[2].trim());
           if (!result.ok) {
@@ -746,7 +761,17 @@ export function useChatSend(opts: UseChatSendOpts) {
           useMessageStore.getState().messagesByTask[task.id] ?? [],
           task.sessionKey,
         );
-        contextPrefix = [contextPrefix, failureContext].filter(Boolean).join('\n\n');
+        contextPrefix = [
+          buildResponseLanguageContext(i18n?.resolvedLanguage ?? i18n?.language ?? 'zh-CN'),
+          contextPrefix,
+          failureContext,
+        ]
+          .filter(Boolean)
+          .join('\n\n');
+        if (isMeetingTaskBusy(task.id)) {
+          toast.error(t('meeting.taskBusy'));
+          return;
+        }
         const result = await composer.send(task.id, {
           content: finalContent,
           // 首轮产物索引：发给模型，但**不进** store / 落库 / 气泡。
@@ -809,6 +834,7 @@ export function useChatSend(opts: UseChatSendOpts) {
     setSelectedAgents,
     textareaRef,
     t,
+    i18n,
     onComposerCleared,
     modelCatalog,
     currentModel,

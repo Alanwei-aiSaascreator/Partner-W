@@ -1310,7 +1310,8 @@
     "stage": {
       "proposal": "Proposta",
       "review": "Revisão"
-    }
+    },
+    "taskBusy": "Esta tarefa está sendo usada em uma discussão. Interrompa a discussão ou aguarde sua conclusão antes de enviar outra mensagem."
   },
   "mentionPicker": {
     "agents": "Agents",

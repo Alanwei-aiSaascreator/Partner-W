@@ -14,16 +14,13 @@ import { useQuestionStore } from '../stores/questionStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { hydrateFromLocal, resetHydration } from './session-sync';
 import { reinitializeGatewayBootstrap } from '../hooks/useGatewayDispatcherSetup';
+import { teamMeetingController } from '../features/team-meeting/instance';
 
 export async function refreshRendererAfterWorkspaceChange(): Promise<void> {
+  teamMeetingController.reset();
   await systemSessionService.end().catch(() => {});
 
-  useTaskStore.setState({
-    tasks: [],
-    activeTaskId: null,
-    hydrated: false,
-    pendingNewTask: null,
-  });
+  useTaskStore.getState().resetWorkspace();
 
   useMessageStore.setState({
     messagesByTask: {},
@@ -87,4 +84,5 @@ export async function refreshRendererAfterWorkspaceChange(): Promise<void> {
     .getState()
     .loadTeams()
     .catch((err) => console.error('[workspace-refresh] Failed to load teams:', err));
+  await teamMeetingController.load().catch((err) => console.error('[workspace-refresh] Failed to load meetings:', err));
 }

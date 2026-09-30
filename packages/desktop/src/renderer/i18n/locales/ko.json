@@ -1310,7 +1310,8 @@
     "stage": {
       "proposal": "제안",
       "review": "검토"
-    }
+    },
+    "taskBusy": "토론에서 이 작업을 사용 중입니다. 토론을 중지하거나 종료될 때까지 기다린 후 메시지를 보내세요."
   },
   "mentionPicker": {
     "agents": "Agents",

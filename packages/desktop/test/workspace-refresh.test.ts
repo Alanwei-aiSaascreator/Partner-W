@@ -16,6 +16,7 @@ describe('refreshRendererAfterWorkspaceChange', () => {
       loadTasks: vi.fn().mockResolvedValue({ ok: true, rows: [] }),
       getDeviceId: vi.fn().mockResolvedValue('device-1'),
       listTeams: vi.fn().mockResolvedValue({ ok: true, result: [] }),
+      listTeamMeetings: vi.fn().mockResolvedValue({ ok: true, result: [] }),
       deleteSession: vi.fn().mockResolvedValue({ ok: true }),
     };
 

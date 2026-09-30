@@ -3,7 +3,7 @@
 import { act, useRef, type Dispatch, type ReactElement, type SetStateAction } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Message, ModelCatalogEntry, Task } from '@clawwork/shared';
+import type { MeetingStatus, Message, ModelCatalogEntry, Task } from '@clawwork/shared';
 
 const mocks = vi.hoisted(() => {
   const activeTask: Task = {
@@ -36,6 +36,14 @@ const mocks = vi.hoisted(() => {
     })),
     toastWarning: vi.fn(),
     toastError: vi.fn(),
+    meetingState: {
+      records: [] as Array<{
+        id: string;
+        status: MeetingStatus;
+        abortStatus?: 'unconfirmed' | 'requested' | 'confirmed' | 'not-running';
+        turns: Array<{ taskId: string }>;
+      }>,
+    },
     taskState: {
       tasks: [activeTask],
       activeTaskId: 'task-1' as string | null,
@@ -122,6 +130,9 @@ vi.mock('../src/renderer/platform', () => ({
 }));
 
 import { UnknownAgentError } from '@clawwork/core';
+vi.mock('../src/renderer/features/team-meeting/instance', () => ({
+  teamMeetingController: { store: { getState: () => mocks.meetingState } },
+}));
 import { useChatSend } from '../src/renderer/components/ChatInput/useChatSend';
 import type { ImportedMaterialFile, TaskContextFile } from '../src/renderer/components/ChatInput/useTaskMaterials';
 import { useCommercialStore } from '../src/renderer/stores/commercialStore';
@@ -259,6 +270,8 @@ describe('useChatSend abort flow', () => {
     mocks.applySlashCommand.mockClear();
     mocks.send.mockClear();
     mocks.toastWarning.mockClear();
+    mocks.toastError.mockClear();
+    mocks.meetingState.records = [];
     // ⚠️ 必须重置实现，不只是清调用：`commitPendingTask` 有测试会装"抛错"的实现，
     //    不重置就**泄漏给后面所有用例**（2026-09-24 我自己踩了一次：4 条无关用例跟着红）。
     mocks.taskState.commitPendingTask.mockReset();
@@ -304,6 +317,120 @@ describe('useChatSend abort flow', () => {
       },
     });
     (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  });
+
+  it.each(
+    (['draft', 'running', 'stopping'] as const).flatMap((status) =>
+      ['task-1', 'task-2', 'task-3'].map((taskId) => ({ status, taskId })),
+    ),
+  )('blocks ordinary sends to $taskId while its meeting is $status', async ({ status, taskId }) => {
+    mocks.taskState.activeTaskId = taskId;
+    mocks.taskState.tasks = [{ ...mocks.baseTask, id: taskId }];
+    mocks.meetingState.records = [
+      { id: 'meeting-1', status, turns: ['task-1', 'task-2', 'task-3'].map((id) => ({ taskId: id })) },
+    ];
+    const { container, unmount } = render(<Harness initialValue="follow up" />);
+    await act(async () => {
+      container.querySelectorAll('button')[1]!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(mocks.send).not.toHaveBeenCalled();
+    expect(mocks.toastError).toHaveBeenCalledWith('meeting.taskBusy', expect.any(Object));
+    expect(container.querySelector('textarea')!.value).toBe('follow up');
+    unmount();
+  });
+
+  it('rechecks meeting ownership after awaiting material reads', async () => {
+    let release!: (result: Awaited<ReturnType<typeof window.clawwork.readInboxFileForSend>>) => void;
+    vi.mocked(window.clawwork.readInboxFileForSend).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    const clearImported = vi.fn();
+    const clearFolder = vi.fn();
+    const { container, unmount } = render(<MaterialHarness clearImported={clearImported} clearFolder={clearFolder} />);
+    await act(async () => {
+      container.querySelector('button')!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(window.clawwork.readInboxFileForSend).toHaveBeenCalledOnce();
+    mocks.meetingState.records = [{ id: 'meeting-1', status: 'running', turns: [{ taskId: 'task-1' }] }];
+    await act(async () => {
+      release({ ok: true, result: { content: 'cGRm', encoding: 'base64', byteLength: 3 } });
+    });
+    expect(mocks.send).not.toHaveBeenCalled();
+    expect(mocks.toastError).toHaveBeenCalledWith('meeting.taskBusy', expect.any(Object));
+    expect(container.querySelector('textarea')!.value).toBe('summarize');
+    expect(clearImported).not.toHaveBeenCalled();
+    expect(clearFolder).not.toHaveBeenCalled();
+    unmount();
+  });
+
+  it.each(
+    (['interrupted', 'stopped'] as const).flatMap((status) =>
+      (['unconfirmed', 'requested'] as const).flatMap((abortStatus) =>
+        ['task-1', 'task-2', 'task-3'].map((taskId) => ({ status, abortStatus, taskId })),
+      ),
+    ),
+  )(
+    'keeps recovered $status meeting task $taskId locked while abort is $abortStatus',
+    async ({ status, abortStatus, taskId }) => {
+      mocks.taskState.activeTaskId = taskId;
+      mocks.taskState.tasks = [{ ...mocks.baseTask, id: taskId }];
+      mocks.meetingState.records = [
+        {
+          id: 'meeting-1',
+          status,
+          abortStatus,
+          turns: ['task-1', 'task-2', 'task-3'].map((id) => ({ taskId: id })),
+        },
+      ];
+      const { container, unmount } = render(<Harness initialValue="follow up" />);
+      await act(async () => {
+        container.querySelectorAll('button')[1]!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      });
+      expect(mocks.send).not.toHaveBeenCalled();
+      expect(mocks.toastError).toHaveBeenCalledWith('meeting.taskBusy', expect.any(Object));
+      unmount();
+    },
+  );
+
+  it.each(['confirmed', 'not-running'] as const)(
+    'unlocks a stopped meeting task once abort is %s',
+    async (abortStatus) => {
+      mocks.meetingState.records = [{ id: 'meeting-1', status: 'stopped', abortStatus, turns: [{ taskId: 'task-1' }] }];
+      const { container, unmount } = render(<Harness initialValue="follow up" />);
+      await act(async () => {
+        container.querySelectorAll('button')[1]!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      });
+      expect(mocks.send).toHaveBeenCalledOnce();
+      expect(mocks.toastError).not.toHaveBeenCalled();
+      unmount();
+    },
+  );
+
+  it.each(['completed', 'failed', 'stopped', 'interrupted'] as const)(
+    'allows an ordinary follow-up after the meeting is %s',
+    async (status) => {
+      mocks.meetingState.records = [{ id: 'meeting-1', status, turns: [{ taskId: 'task-1' }] }];
+      const { container, unmount } = render(<Harness initialValue="follow up" />);
+      await act(async () => {
+        container.querySelectorAll('button')[1]!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      });
+      expect(mocks.send).toHaveBeenCalledOnce();
+      expect(mocks.toastError).not.toHaveBeenCalled();
+      unmount();
+    },
+  );
+
+  it('allows sends to tasks outside an active meeting', async () => {
+    mocks.meetingState.records = [{ id: 'meeting-1', status: 'running', turns: [{ taskId: 'task-other' }] }];
+    const { container, unmount } = render(<Harness initialValue="follow up" />);
+    await act(async () => {
+      container.querySelectorAll('button')[1]!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(mocks.send).toHaveBeenCalledOnce();
+    unmount();
   });
 
   it('passes persisted artifact diagnostics to the next requested turn without changing user text', async () => {

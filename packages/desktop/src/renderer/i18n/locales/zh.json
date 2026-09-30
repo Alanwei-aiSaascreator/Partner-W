@@ -1310,7 +1310,8 @@
     "stage": {
       "proposal": "提出方案",
       "review": "审核改进"
-    }
+    },
+    "taskBusy": "会议正在使用此任务。请停止会议或等待会议结束后再发送消息。"
   },
   "mentionPicker": {
     "agents": "智能体",

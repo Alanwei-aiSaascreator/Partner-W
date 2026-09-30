@@ -1310,7 +1310,8 @@
     "stage": {
       "proposal": "Proposal",
       "review": "Review"
-    }
+    },
+    "taskBusy": "A discussion is using this task. Stop the discussion or wait for it to finish before sending another message."
   },
   "mentionPicker": {
     "agents": "Agents",

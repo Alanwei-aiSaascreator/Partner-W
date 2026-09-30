@@ -1310,7 +1310,8 @@
     "stage": {
       "proposal": "提案",
       "review": "レビュー"
-    }
+    },
+    "taskBusy": "このタスクはディスカッションで使用中です。ディスカッションを停止するか、終了してからメッセージを送信してください。"
   },
   "mentionPicker": {
     "agents": "Agents",
