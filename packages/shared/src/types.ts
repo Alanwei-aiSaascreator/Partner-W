@@ -656,6 +656,7 @@ export interface SkillStatusEntry {
 }
 
 export interface SkillStatusReport {
+  agentId?: string;
   workspaceDir: string;
   managedSkillsDir: string;
   skills: SkillStatusEntry[];

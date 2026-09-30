@@ -41,9 +41,14 @@ vi.mock('electron', () => ({
   safeStorage: { isEncryptionAvailable: () => false, encryptString: () => Buffer.alloc(0), decryptString: () => '' },
 }));
 
-vi.mock('../src/main/ws/index.js', () => ({
-  getGatewayClient: () => ({ isConnected: true, getSkillsStatus: mocks.skillsStatus }),
-}));
+vi.mock('../src/main/ws/index.js', () => {
+  const client = {
+    isConnected: true,
+    getSkillsStatus: mocks.skillsStatus,
+    listAgents: async () => ({ defaultId: 'main', agents: [{ id: 'main' }] }),
+  };
+  return { getGatewayClient: () => client };
+});
 
 vi.mock('../src/main/debug/index.js', () => ({
   initDebugLogger: vi.fn(),

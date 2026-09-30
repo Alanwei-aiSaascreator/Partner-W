@@ -20,7 +20,8 @@
  */
 
 import { app, ipcMain } from 'electron';
-import type { IpcResult, OurSkillsListResult } from '@clawwork/shared';
+import type { AgentListResponse, IpcResult, OurSkillsListResult } from '@clawwork/shared';
+import { resolveCatalogAgentId } from '@clawwork/core';
 import { getGatewayClient } from '../ws/index.js';
 import {
   installBundledSkill,
@@ -60,7 +61,17 @@ async function managedSkillsDirOf(gatewayId: string, agentId?: string): Promise<
   const gw = getGatewayClient(gatewayId);
   if (!gw?.isConnected) return null;
   try {
-    const report = await gw.getSkillsStatus(agentId);
+    let owner = agentId?.trim();
+    if (!owner) {
+      const catalog = await gw.listAgents();
+      owner = resolveCatalogAgentId(
+        Array.isArray(catalog.agents) ? (catalog as unknown as AgentListResponse) : undefined,
+      );
+    }
+    if (!owner || getGatewayClient(gatewayId) !== gw || !gw.isConnected) return null;
+    const report = await gw.getSkillsStatus(owner);
+    if (getGatewayClient(gatewayId) !== gw || !gw.isConnected) return null;
+    if (report.agentId && report.agentId !== owner) return null;
     const dir = (report as { managedSkillsDir?: unknown } | undefined)?.managedSkillsDir;
     return typeof dir === 'string' && dir.length > 0 ? dir : null;
   } catch {

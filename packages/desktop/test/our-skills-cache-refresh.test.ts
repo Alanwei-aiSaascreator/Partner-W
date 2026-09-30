@@ -44,6 +44,7 @@ const mocks = vi.hoisted(() => ({
   configState: { value: {} as Record<string, unknown> },
   updateSkill: vi.fn<(params: unknown) => Promise<unknown>>(async () => ({})),
   getSkillsStatus: vi.fn(async () => ({ managedSkillsDir: 'C:/managed-skills' })),
+  listAgents: vi.fn(async () => ({ defaultId: 'office', agents: [{ id: 'video' }, { id: 'office' }] })),
   getGatewayClient: vi.fn(),
   installBundledSkill: vi.fn(),
   removeBundledSkill: vi.fn(),
@@ -100,7 +101,12 @@ import { skillContentSha } from '../src/main/skills/bundled.js';
 
 /** 一个连上的网关客户端替身。`updateSkill` 的**载荷形状**是本切片的核心断言。 */
 function connectedClient() {
-  return { isConnected: true, updateSkill: mocks.updateSkill, getSkillsStatus: mocks.getSkillsStatus };
+  return {
+    isConnected: true,
+    updateSkill: mocks.updateSkill,
+    getSkillsStatus: mocks.getSkillsStatus,
+    listAgents: mocks.listAgents,
+  };
 }
 
 async function invoke(channel: string, payload: unknown): Promise<Record<string, unknown>> {
@@ -165,6 +171,36 @@ describe('skills:our-install / skills:our-remove 成功之后会通知网关', (
     mocks.getGatewayClient.mockReturnValue(connectedClient());
     mocks.installBundledSkill.mockReturnValue({ ok: true });
     mocks.removeBundledSkill.mockReturnValue({ ok: true });
+    mocks.listAgents.mockResolvedValue({ defaultId: 'office', agents: [{ id: 'video' }, { id: 'office' }] });
+  });
+
+  it('resolves an owner for an ownerless managed directory lookup', async () => {
+    const res = await invoke('skills:our-list', { gatewayId: 'gw-1' });
+    expect(res.ok).toBe(true);
+    expect(mocks.getSkillsStatus).toHaveBeenCalledWith('office');
+  });
+
+  it('does not choose the first agent when a managed directory lookup has no valid owner', async () => {
+    mocks.listAgents.mockResolvedValue({ defaultId: '', agents: [{ id: 'video' }, { id: 'office' }] });
+    const res = await invoke('skills:our-list', { gatewayId: 'gw-1' });
+    expect(res).toMatchObject({ ok: true, result: { managedDirKnown: false } });
+    expect(mocks.getSkillsStatus).not.toHaveBeenCalled();
+  });
+
+  it('does not install into a directory returned by a replaced gateway connection', async () => {
+    let finish!: (value: { managedSkillsDir: string }) => void;
+    mocks.getSkillsStatus.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const pending = invoke('skills:our-install', { gatewayId: 'gw-1', agentId: 'office', slug: 'formal-writing' });
+    await Promise.resolve();
+    mocks.getGatewayClient.mockReturnValue(connectedClient());
+    finish({ managedSkillsDir: 'C:/old-gateway-skills' });
+    expect(await pending).toMatchObject({ ok: false, error: 'GATEWAY_UNAVAILABLE' });
+    expect(mocks.installBundledSkill).not.toHaveBeenCalled();
   });
 
   it('⭐ 装上成功 ⇒ 通知 enabled:true；IPC 结果仍是「装」那一份', async () => {
@@ -209,9 +245,9 @@ describe('skills:our-install / skills:our-remove 成功之后会通知网关', (
       getSkillsStatus: mocks.getSkillsStatus,
       updateSkill: mocks.updateSkill,
     };
-    mocks.getSkillsStatus.mockImplementation(async () => {
+    mocks.installBundledSkill.mockImplementation(() => {
       client.isConnected = false;
-      return { managedSkillsDir: 'C:/managed-skills' };
+      return { ok: true };
     });
     mocks.getGatewayClient.mockReturnValue(client);
     const res = await invoke('skills:our-install', { gatewayId: 'gw-1', agentId: 'a-1', slug: 'copy-variants' });
@@ -368,7 +404,9 @@ describe('开机自装 × 内容升级', () => {
       isConnected: true,
       updateSkill: mocks.updateSkill,
       getSkillsStatus: mocks.getSkillsStatus,
+      listAgents: mocks.listAgents,
     });
+    mocks.listAgents.mockResolvedValue({ defaultId: 'office', agents: [{ id: 'video' }, { id: 'office' }] });
     mocks.getSkillsStatus.mockResolvedValue({ managedSkillsDir: 'C:/managed-skills' });
     mocks.configState.value = {};
   });
