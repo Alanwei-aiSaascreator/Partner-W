@@ -339,6 +339,11 @@ export interface AppError {
   retryable: Retryable;
 }
 
+export interface ChatDispatchReceipt {
+  sessionKey: string;
+  runId: string;
+}
+
 export interface IpcResult<T = unknown> {
   ok: boolean;
   result?: T;

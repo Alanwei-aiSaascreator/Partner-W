@@ -1,4 +1,5 @@
 export * from './types.js';
+export * from './team-meeting.js';
 export * from './gateway-protocol.js';
 export * from './constants.js';
 export * from './commercial-defaults.js';
