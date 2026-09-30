@@ -274,7 +274,7 @@ export function normalizeContentBlocks(
  *    表现为采纳过的答案被当"网关新回复"再写一遍。
  */
 export function toISOTimestamp(epoch: number | undefined): string {
-  return epoch ? new Date(epoch).toISOString() : new Date().toISOString();
+  return epoch !== undefined ? new Date(epoch).toISOString() : new Date().toISOString();
 }
 
 function toKnownToolTimestamp(epoch: number | undefined): string | undefined {
