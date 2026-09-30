@@ -1,5 +1,13 @@
 import { resolvePerformerAgentName } from '@clawwork/shared';
-import type { Message, MessageAttachment, IpcResult, ErrorStage, TaskRoom, RoomStatus } from '@clawwork/shared';
+import type {
+  Message,
+  MessageAttachment,
+  IpcResult,
+  ErrorStage,
+  TaskRoom,
+  RoomStatus,
+  ChatDispatchReceipt,
+} from '@clawwork/shared';
 import type { GatewayTransportPort, ChatAttachment } from '../ports/gateway-transport.js';
 import { buildAppError, formatErrorForUser, formatErrorForToast } from './error-classify.js';
 import type { TranslateFn } from './error-classify.js';
@@ -64,6 +72,8 @@ export interface ChatComposerDeps {
   }) => Promise<unknown>;
 
   markAbortedByUser: (taskId: string) => void;
+  beginDispatch?: (gatewayId: string, sessionKey: string) => symbol;
+  settleDispatch?: (ticket: symbol, receipt?: ChatDispatchReceipt, accepted?: boolean) => void;
 
   compactSession: (gatewayId: string, sessionKey: string) => Promise<IpcResult>;
   resetSession: (gatewayId: string, sessionKey: string, mode: string) => Promise<IpcResult>;
@@ -237,9 +247,8 @@ function resolveMentionNames(
 }
 
 export function createChatComposer(deps: ChatComposerDeps) {
-  const responseTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  const sessionToTask = new Map<string, string>();
-  const pendingResponseSessions = new Map<string, Set<string>>();
+  const responseWatches = new Map<string, { taskId: string; owner: symbol; timer?: ReturnType<typeof setTimeout> }>();
+  const pendingSendOwners = new Map<string, symbol>();
 
   /**
    * ⚠️ 2026-09-24：**别把拒绝的原因吞掉**。这里原来是一个裸的 `catch { return null }`，
@@ -274,32 +283,27 @@ export function createChatComposer(deps: ChatComposerDeps) {
     deps.onError?.(toast);
   }
 
+  function clearSessionWatch(sessionKey: string): void {
+    const watch = responseWatches.get(sessionKey);
+    if (watch?.timer) clearTimeout(watch.timer);
+    responseWatches.delete(sessionKey);
+  }
+
   function clearTimer(taskId: string): void {
-    const timer = responseTimers.get(taskId);
-    if (timer) {
-      clearTimeout(timer);
-      responseTimers.delete(taskId);
-    }
-    pendingResponseSessions.delete(taskId);
-    for (const [sk, tid] of sessionToTask) {
-      if (tid === taskId) sessionToTask.delete(sk);
+    for (const [sessionKey, watch] of responseWatches) {
+      if (watch.taskId === taskId) clearSessionWatch(sessionKey);
     }
   }
 
   function notifyResponse(sessionKey: string): void {
     deps.getMessageStore().setProcessing(sessionKey, false);
-    const taskId = sessionToTask.get(sessionKey);
-    if (!taskId) return;
-    sessionToTask.delete(sessionKey);
-    const pendingSessions = pendingResponseSessions.get(taskId);
-    pendingSessions?.delete(sessionKey);
-    if (!pendingSessions || pendingSessions.size === 0) clearTimer(taskId);
+    clearSessionWatch(sessionKey);
   }
 
   async function send(
     taskId: string | undefined,
     options: SendOptions,
-  ): Promise<{ ok: boolean; taskId?: string; partialFailure?: string }> {
+  ): Promise<{ ok: boolean; taskId?: string; partialFailure?: string; dispatch?: ChatDispatchReceipt }> {
     const { task, error: resolveError } = resolveTask(taskId);
     if (!task) {
       deps.onError?.({
@@ -310,6 +314,32 @@ export function createChatComposer(deps: ChatComposerDeps) {
     }
 
     const store = deps.getMessageStore();
+    let dispatch: ChatDispatchReceipt | undefined;
+    const sendTracked = async (sessionKey: string, content: string, attachments?: ChatAttachment[]) => {
+      const ticket = deps.beginDispatch?.(task.gatewayId, sessionKey);
+      let accepted = false;
+      let receipt: ChatDispatchReceipt | undefined;
+      try {
+        const result = await deps.gateway.sendMessage(task.gatewayId, sessionKey, content, attachments);
+        accepted = !result || result.ok;
+        const value = result?.ok ? result.result : undefined;
+        if (
+          value &&
+          typeof value === 'object' &&
+          'sessionKey' in value &&
+          value.sessionKey === sessionKey &&
+          'runId' in value &&
+          typeof value.runId === 'string' &&
+          value.runId.trim()
+        ) {
+          receipt = { sessionKey, runId: value.runId };
+          if (sessionKey === task.sessionKey) dispatch = receipt;
+        }
+        return result;
+      } finally {
+        if (ticket) deps.settleDispatch?.(ticket, receipt, accepted);
+      }
+    };
     /**
      * ⭐ **发给网关的文本 ≠ 存库/上屏的文本。**
      *
@@ -326,6 +356,7 @@ export function createChatComposer(deps: ChatComposerDeps) {
       if (options.deferUserMessageUntilSent) store.removeMessage(task.id, pendingUserMessage.id);
     };
     let processingSessionKeys: string[] = [];
+    const sendOwner = Symbol();
 
     if (!task.title && options.titleHint) {
       const title = options.titleHint.slice(0, 30).replace(/\n/g, ' ').trim();
@@ -337,7 +368,13 @@ export function createChatComposer(deps: ChatComposerDeps) {
       const mentionTargets = resolveMentionTargets(room, options.mentions, options.mentionAll);
       const isMentionSend = mentionTargets.length > 0;
       processingSessionKeys = isMentionSend ? mentionTargets : [task.sessionKey];
-      for (const sessionKey of processingSessionKeys) store.setProcessing(sessionKey, true);
+      for (const sessionKey of processingSessionKeys) {
+        clearSessionWatch(sessionKey);
+        responseWatches.set(sessionKey, { taskId: task.id, owner: sendOwner });
+        pendingSendOwners.set(sessionKey, sendOwner);
+        store.setProcessing(sessionKey, true);
+      }
+
       let acceptedMentionTargets = mentionTargets;
       let partialFailure: string | undefined;
 
@@ -348,7 +385,7 @@ export function createChatComposer(deps: ChatComposerDeps) {
           });
           if (!modelRes.ok) {
             rollbackPendingUserMessage();
-            store.setProcessing(task.sessionKey, false);
+            if (pendingSendOwners.get(task.sessionKey) === sendOwner) store.setProcessing(task.sessionKey, false);
             emitError(
               task.id,
               'gateway',
@@ -388,7 +425,7 @@ export function createChatComposer(deps: ChatComposerDeps) {
           });
           if (!thinkingRes.ok) {
             rollbackPendingUserMessage();
-            store.setProcessing(task.sessionKey, false);
+            if (pendingSendOwners.get(task.sessionKey) === sendOwner) store.setProcessing(task.sessionKey, false);
             emitError(
               task.id,
               'gateway',
@@ -426,7 +463,7 @@ export function createChatComposer(deps: ChatComposerDeps) {
       if (isMentionSend) {
         const attachments = options.attachments?.length ? options.attachments : undefined;
         const results = await Promise.allSettled(
-          mentionTargets.map((sk) => deps.gateway.sendMessage(task.gatewayId, sk, gatewayContent, attachments)),
+          mentionTargets.map((sk) => sendTracked(sk, gatewayContent, attachments)),
         );
         acceptedMentionTargets = mentionTargets.filter((_, index) => {
           const result = results[index];
@@ -438,7 +475,9 @@ export function createChatComposer(deps: ChatComposerDeps) {
           return [];
         });
         for (const sessionKey of mentionTargets) {
-          if (!acceptedMentionTargets.includes(sessionKey)) store.setProcessing(sessionKey, false);
+          if (!acceptedMentionTargets.includes(sessionKey) && pendingSendOwners.get(sessionKey) === sendOwner) {
+            store.setProcessing(sessionKey, false);
+          }
         }
         if (acceptedMentionTargets.length === 0) {
           rollbackPendingUserMessage();
@@ -462,24 +501,19 @@ export function createChatComposer(deps: ChatComposerDeps) {
           //    而 `resolveMentionNames` 最差也会给出裸 agentId ⇒ 名字列表不可能为空。
           const targetNames = resolveMentionNames(deps, task.id, room.performers, options.mentions).join(', ');
           const preview = options.content.slice(0, 200);
-          deps.gateway
-            .sendMessage(
-              task.gatewayId,
-              room.conductorSessionKey,
-              `[User directed message to ${targetNames}: "${preview}"]`,
-            )
-            .catch((err) => console.error('[chat-composer] conductor sendMessage failed:', err));
+          sendTracked(room.conductorSessionKey, `[User directed message to ${targetNames}: "${preview}"]`).catch(
+            (err) => console.error('[chat-composer] conductor sendMessage failed:', err),
+          );
         }
       } else {
-        const result = await deps.gateway.sendMessage(
-          task.gatewayId,
+        const result = await sendTracked(
           task.sessionKey,
           gatewayContent,
           options.attachments?.length ? options.attachments : undefined,
         );
         if (result && !result.ok) {
           rollbackPendingUserMessage();
-          store.setProcessing(task.sessionKey, false);
+          if (pendingSendOwners.get(task.sessionKey) === sendOwner) store.setProcessing(task.sessionKey, false);
           emitError(
             task.id,
             'gateway',
@@ -493,20 +527,14 @@ export function createChatComposer(deps: ChatComposerDeps) {
         }
       }
 
-      clearTimer(task.id);
       const watchKeys = isMentionSend ? acceptedMentionTargets : [task.sessionKey];
-      const pendingSessions = new Set(watchKeys);
-      pendingResponseSessions.set(task.id, pendingSessions);
-      for (const sk of watchKeys) sessionToTask.set(sk, task.id);
-      responseTimers.set(
-        task.id,
-        setTimeout(() => {
-          responseTimers.delete(task.id);
-          pendingResponseSessions.delete(task.id);
-          for (const sk of pendingSessions) {
-            sessionToTask.delete(sk);
-            store.setProcessing(sk, false);
-          }
+      for (const sessionKey of watchKeys) {
+        const watch = responseWatches.get(sessionKey);
+        if (!watch || watch.owner !== sendOwner) continue;
+        watch.timer = setTimeout(() => {
+          if (responseWatches.get(sessionKey) !== watch) return;
+          clearSessionWatch(sessionKey);
+          store.setProcessing(sessionKey, false);
           const appError = buildAppError({
             source: 'gateway',
             stage: 'lifecycle',
@@ -515,10 +543,10 @@ export function createChatComposer(deps: ChatComposerDeps) {
           deps
             .getMessageStore()
             .addMessage(task.id, 'system', formatErrorForUser(appError, deps.translate), undefined, {
-              sessionKey: task.sessionKey,
+              sessionKey,
             });
-        }, SEND_TIMEOUT_MS),
-      );
+        }, SEND_TIMEOUT_MS);
+      }
 
       deps
         .persistMessage({
@@ -533,10 +561,17 @@ export function createChatComposer(deps: ChatComposerDeps) {
         })
         .catch((err) => console.error('[chat-composer] persistMessage failed:', err));
 
-      return { ok: true, taskId: task.id, ...(partialFailure ? { partialFailure } : {}) };
+      return {
+        ok: true,
+        taskId: task.id,
+        ...(partialFailure ? { partialFailure } : {}),
+        ...(dispatch ? { dispatch } : {}),
+      };
     } catch (err) {
       rollbackPendingUserMessage();
-      for (const sessionKey of processingSessionKeys) store.setProcessing(sessionKey, false);
+      for (const sessionKey of processingSessionKeys) {
+        if (pendingSendOwners.get(sessionKey) === sendOwner) store.setProcessing(sessionKey, false);
+      }
       emitError(
         task.id,
         'local',
@@ -547,6 +582,12 @@ export function createChatComposer(deps: ChatComposerDeps) {
         task.sessionKey,
       );
       return { ok: false, taskId: task.id };
+    } finally {
+      for (const sessionKey of processingSessionKeys) {
+        const watch = responseWatches.get(sessionKey);
+        if (watch?.owner === sendOwner && !watch.timer) clearSessionWatch(sessionKey);
+        if (pendingSendOwners.get(sessionKey) === sendOwner) pendingSendOwners.delete(sessionKey);
+      }
     }
   }
 
@@ -697,10 +738,8 @@ export function createChatComposer(deps: ChatComposerDeps) {
   }
 
   function dispose(): void {
-    for (const timer of responseTimers.values()) clearTimeout(timer);
-    responseTimers.clear();
-    sessionToTask.clear();
-    pendingResponseSessions.clear();
+    for (const sessionKey of responseWatches.keys()) clearSessionWatch(sessionKey);
+    pendingSendOwners.clear();
   }
 
   return { send, abort, applySlashCommand, clearTimer, notifyResponse, dispose };
