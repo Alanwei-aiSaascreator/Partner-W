@@ -26,6 +26,7 @@ import type { ChatEventPayload } from '../protocol/types.js';
 import { buildAppError, formatErrorForUser, formatErrorForToast } from './error-classify.js';
 import type { TranslateFn } from './error-classify.js';
 import { autoTitleIfNeeded } from './auto-title.js';
+import type { LateToolUpdate } from './session-sync.js';
 import { announceCompaction, currentCompactionEpisode } from './compaction-announce.js';
 import type { MessageState } from '../stores/message-store.js';
 import type { GatewayReconnectInfo } from '../stores/ui-store.js';
@@ -384,7 +385,7 @@ export interface GatewayDispatcherDeps {
 
   hydrateFromLocal: () => Promise<void>;
   syncFromGateway: () => Promise<void>;
-  syncSessionMessages: (taskId: string, sessionKeyOverride?: string) => Promise<void>;
+  syncSessionMessages: (taskId: string, sessionKeyOverride?: string, lateTool?: LateToolUpdate) => Promise<void>;
   retrySyncPending: () => void;
 }
 
@@ -1237,8 +1238,17 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
     if (
       !acceptsRun(sessionKey, payload.runId, stream === 'lifecycle' && (data as AgentLifecycleData).phase === 'start')
     ) {
-      if (stream === 'tool' || (stream === 'lifecycle' && (data as AgentLifecycleData).phase === 'end'))
-        reconcileRun(taskId, sessionKey);
+      if (stream === 'tool')
+        handleAgentToolStream(
+          taskId,
+          sessionKey,
+          data as AgentToolData,
+          deps.isEphemeralSession?.(sessionKey) === true,
+          payload.runId,
+          gatewayId,
+          true,
+        );
+      else if (stream === 'lifecycle' && (data as AgentLifecycleData).phase === 'end') reconcileRun(taskId, sessionKey);
       debugEvent('renderer.agent.dropped.stale_run', { taskId, sessionKey, runId: payload.runId, stream });
       return;
     }
@@ -1254,7 +1264,7 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
 
     switch (stream) {
       case 'tool':
-        handleAgentToolStream(taskId, sessionKey, data as AgentToolData, ephemeral);
+        handleAgentToolStream(taskId, sessionKey, data as AgentToolData, ephemeral, payload.runId, gatewayId);
         break;
       case 'lifecycle':
         handleAgentLifecycleStream(taskId, sessionKey, data as AgentLifecycleData, ephemeral);
@@ -1443,7 +1453,15 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
     debugEvent('renderer.session.performer_candidate', { taskId, sessionKey, spawnedBy, reason, phase });
   }
 
-  function handleAgentToolStream(taskId: string, sessionKey: string, data: AgentToolData, ephemeral: boolean): void {
+  function handleAgentToolStream(
+    taskId: string,
+    sessionKey: string,
+    data: AgentToolData,
+    ephemeral: boolean,
+    runId?: string,
+    gatewayId?: string,
+    canonicalOnly = false,
+  ): void {
     if (!data.name || !data.toolCallId) {
       // ⚠️ 从前是**静默 return**：这张工具卡片永远不出现，而日志里连一行都没有 ——
       //    用户看到的是"模型好像什么都没干"。
@@ -1457,7 +1475,17 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
       return;
     }
 
-    if (!ephemeral) {
+    const active = deps.getMessageStore().activeTurnBySession[sessionKey];
+    const canonicalExists = Boolean(
+      runId &&
+      deps
+        .getMessageStore()
+        .messagesByTask[
+          taskId
+        ]?.some((message) => message.role === 'assistant' && message.sessionKey === sessionKey && message.runId === runId),
+    );
+    const reconcileOnly = canonicalOnly || (!active && (canonicalExists || closedStreams.has(sessionKey)));
+    if (!ephemeral && !reconcileOnly) {
       deps.notifyAgentResponse?.(sessionKey);
 
       if (taskId !== deps.getActiveTaskId()) {
@@ -1510,10 +1538,13 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
     };
 
     const store = deps.getMessageStore();
-    tc.startedAt = store.activeTurnBySession[sessionKey]?.toolCalls.find((call) => call.id === tc.id)?.startedAt ?? '';
+    const matchingActive = !runId || !active?.runId || active.runId === runId ? active : undefined;
+    tc.startedAt = matchingActive?.toolCalls.find((call) => call.id === tc.id)?.startedAt ?? '';
     const existingMsgs = store.messagesByTask[taskId] ?? [];
     for (let i = existingMsgs.length - 1; !tc.startedAt && i >= 0; i--) {
-      const existing = existingMsgs[i].toolCalls.find((t) => t.id === tc.id);
+      const message = existingMsgs[i];
+      if (message.sessionKey !== sessionKey || (runId && message.runId && message.runId !== runId)) continue;
+      const existing = message.toolCalls.find((t) => t.id === tc.id);
       if (existing) {
         tc.startedAt = existing.startedAt;
         break;
@@ -1521,7 +1552,11 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
     }
     if (!tc.startedAt && data.phase === 'start') tc.startedAt = new Date().toISOString();
 
-    store.upsertToolCall(sessionKey, taskId, tc);
+    if (reconcileOnly && !ephemeral && runId && gatewayId) {
+      deps
+        .syncSessionMessages(taskId, sessionKey, { gatewayId, runId, toolCall: tc })
+        .catch((error) => console.error('[dispatcher] late tool sync failed', error));
+    } else if (!reconcileOnly) store.upsertToolCall(sessionKey, taskId, tc);
     debugEvent('renderer.toolcall.upserted', {
       taskId,
       sessionKey,

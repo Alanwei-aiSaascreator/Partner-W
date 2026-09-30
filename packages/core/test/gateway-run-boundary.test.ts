@@ -148,6 +148,45 @@ describe('dispatcher run boundaries with the real message store', () => {
       composer.dispose();
     }
   });
+  it('routes a late old-run tool result through session-sync while another run remains active', async () => {
+    const h = harness();
+    h.store.getState().bulkLoad(task.id, [
+      {
+        id: 'old',
+        taskId: task.id,
+        sessionKey: task.sessionKey,
+        runId: 'old',
+        role: 'assistant',
+        content: 'old answer',
+        artifacts: [],
+        toolCalls: [],
+        timestamp: new Date(1000).toISOString(),
+      },
+    ]);
+    const ticket = h.dispatcher.beginDispatch(task.gatewayId, task.sessionKey);
+    h.dispatcher.settleDispatch(ticket, { sessionKey: task.sessionKey, runId: 'new' });
+    h.lifecycle('new', 'start');
+    h.chat('new', 'delta', 'new answer');
+    h.emit('agent', {
+      sessionKey: task.sessionKey,
+      runId: 'old',
+      stream: 'tool',
+      data: {
+        name: 'exec',
+        toolCallId: 'old-tool',
+        phase: 'result',
+        result: { content: [{ type: 'text', text: 'late output' }] },
+      },
+    });
+    await h.syncSessionMessages.mock.results.at(-1)?.value;
+    expect(h.store.getState().activeTurnBySession[task.sessionKey]?.streamingText).toBe('new answer');
+    expect(h.store.getState().messagesByTask[task.id][0].toolCalls[0]).toMatchObject({
+      id: 'old-tool',
+      result: 'late output',
+    });
+    expect(h.persistMessage).toHaveBeenCalledTimes(1);
+    expect(h.persistMessage).toHaveBeenCalledWith(expect.objectContaining({ id: 'old', runId: 'old' }));
+  });
   it('buffers early frames and accepts only the acknowledged run', () => {
     const h = harness();
     const ticket = h.dispatcher.beginDispatch(task.gatewayId, task.sessionKey);
