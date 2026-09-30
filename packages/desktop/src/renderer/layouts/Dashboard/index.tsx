@@ -150,6 +150,7 @@ export default function Dashboard() {
   const { t } = useTranslation();
   const data = useDashboardStore((s) => s.data);
   const loading = useDashboardStore((s) => s.loading);
+  const error = useDashboardStore((s) => s.error);
   const fetchDashboard = useDashboardStore((s) => s.fetch);
   const commercialOverview = useCommercialStore((s) => s.overview);
   const loadCommercial = useCommercialStore((s) => s.load);
@@ -198,6 +199,12 @@ export default function Dashboard() {
             {t('dashboard.refresh')}
           </Button>
         </header>
+
+        {error && (
+          <p role="alert" className="type-support text-[var(--text-danger)]">
+            {t('errors.requestFailed')}
+          </p>
+        )}
 
         <section>
           <SectionHeader text={t('dashboard.allTimeSection')} />

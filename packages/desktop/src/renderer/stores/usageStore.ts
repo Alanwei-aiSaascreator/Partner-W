@@ -41,6 +41,10 @@ interface UsageState {
 
 let refreshTimer: ReturnType<typeof setInterval> | null = null;
 let instanceFetchedAt = 0;
+let generation = 0;
+let requestSequence = 0;
+let cachedGatewayId: string | null = null;
+let currentGatewayId: string | null = null;
 
 export const useUsageStore = create<UsageState>((set, get) => ({
   status: null,
@@ -49,6 +53,14 @@ export const useUsageStore = create<UsageState>((set, get) => ({
 
   fetchUsage: async (gatewayId: string) => {
     if (!gatewayId) return;
+    const owner = generation;
+    const request = ++requestSequence;
+    if (currentGatewayId !== gatewayId) {
+      currentGatewayId = gatewayId;
+      cachedGatewayId = null;
+      instanceFetchedAt = 0;
+      set({ status: null, error: null });
+    }
     if (typeof window.clawwork.getUsageStatus !== 'function') {
       set({ loading: false, error: null });
       return;
@@ -56,22 +68,25 @@ export const useUsageStore = create<UsageState>((set, get) => ({
     set({ loading: true, error: null });
     try {
       // 30 秒窗口内实例级查询已被跳过 ⇒ 这条路上**再没有别的请求**可发（会话级两条都已撤掉）。
-      if (Date.now() - instanceFetchedAt < INSTANCE_CACHE_MS && get().status != null) {
+      if (cachedGatewayId === gatewayId && Date.now() - instanceFetchedAt < INSTANCE_CACHE_MS && get().status != null) {
         set({ loading: false });
         return;
       }
 
       const statusRes = await window.clawwork.getUsageStatus(gatewayId);
+      if (owner !== generation || request !== requestSequence) return;
       const updates: Partial<UsageState> = { loading: false };
       if (statusRes.ok && statusRes.result) {
         updates.status = statusRes.result as unknown as UsageStatus;
+        cachedGatewayId = gatewayId;
+        instanceFetchedAt = Date.now();
       }
       if (!statusRes.ok) {
         updates.error = statusRes.error ?? 'fetch failed';
       }
-      instanceFetchedAt = Date.now();
       set(updates);
     } catch (err) {
+      if (owner !== generation || request !== requestSequence) return;
       set({
         loading: false,
         error: err instanceof Error ? err.message : 'fetch failed',
@@ -95,8 +110,11 @@ export const useUsageStore = create<UsageState>((set, get) => ({
   },
 
   clear: () => {
+    generation++;
     get().stopAutoRefresh();
     instanceFetchedAt = 0;
+    cachedGatewayId = null;
+    currentGatewayId = null;
     set({ status: null, loading: false, error: null });
   },
 }));

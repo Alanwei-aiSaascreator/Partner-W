@@ -5,6 +5,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
+  error: null as string | null,
   fetchDashboard: vi.fn(),
   loadCommercial: vi.fn(),
   refreshCommercial: vi.fn(),
@@ -79,7 +80,7 @@ vi.mock('recharts', () => ({
 
 vi.mock('@/stores/dashboardStore', () => ({
   useDashboardStore: (selector: (state: unknown) => unknown) =>
-    selector({ data: mocks.data, loading: false, fetch: mocks.fetchDashboard }),
+    selector({ data: mocks.data, loading: false, error: mocks.error, fetch: mocks.fetchDashboard }),
 }));
 
 vi.mock('@/stores/commercialStore', () => ({
@@ -112,9 +113,18 @@ function render(ui: ReactElement): { container: HTMLDivElement; unmount: () => v
 
 describe('Dashboard overview', () => {
   beforeEach(() => {
+    mocks.error = null;
     mocks.fetchDashboard.mockClear();
     mocks.loadCommercial.mockClear();
     mocks.refreshCommercial.mockClear();
+  });
+
+  it('shows a failed request distinctly from unavailable statistics', () => {
+    mocks.error = 'private RPC error';
+    const { container, unmount } = render(<Dashboard />);
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe('errors.requestFailed');
+    expect(container.textContent).not.toContain('private RPC error');
+    unmount();
   });
 
   it('⭐ 每个数字都带口径，且**标签必须挨着它标的那个数字**（本机=这块盘 / 账号=服务端账本）', () => {
