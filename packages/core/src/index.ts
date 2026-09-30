@@ -182,6 +182,7 @@ export {
   withIdentityName,
 } from './services/team-parser.js';
 export { installTeam } from './services/team-installer.js';
+export { resolveCatalogAgentId } from './services/catalog-owner.js';
 export type { InstallerDeps } from './services/team-installer.js';
 
 // 资料库（T6a：切片 / 状态机 / 向量 / 混合排序）。纯逻辑，无 IO。

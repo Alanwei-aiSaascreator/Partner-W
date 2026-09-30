@@ -109,7 +109,7 @@ export interface GatewayTransportPort {
   gatewayStatus: () => Promise<GatewayStatusMap>;
   syncSessions: () => Promise<SyncResult>;
   listGateways: () => Promise<GatewayListItem[]>;
-  listModels: (gatewayId: string) => Promise<IpcResult>;
+  listModels: (gatewayId: string, agentId?: string) => Promise<IpcResult>;
   listCommands: (gatewayId: string, params?: CommandsListParams) => Promise<IpcResult>;
   listAgents: (gatewayId: string) => Promise<IpcResult>;
   getToolsCatalog: (gatewayId: string, agentId?: string) => Promise<IpcResult>;

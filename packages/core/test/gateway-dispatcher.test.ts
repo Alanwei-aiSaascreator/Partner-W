@@ -104,7 +104,7 @@ function createHarness() {
       gatewayStatus: async () => ({}),
       listGateways: async () => [],
       listModels: async () => ({ ok: true, result: {} }),
-      listAgents: async () => ({ ok: true, result: {} }),
+      listAgents: async () => ({ ok: true, result: { defaultId: 'main', agents: [{ id: 'main' }] } }),
       getToolsCatalog: async () => ({ ok: true, result: {} }),
       getSkillsStatus: async () => ({ ok: true, result: {} }),
       listCommands: async () => ({ ok: true, result: {} }),
@@ -1601,6 +1601,87 @@ describe('agent lifecycle error buffer', () => {
     expect(h.systemMessages).toHaveLength(1);
     expect(h.systemMessages.some((m) => m.content.includes('provider unavailable'))).toBe(false);
     expect(h.toasts).toHaveLength(1);
+  });
+});
+
+describe('catalog ownership', () => {
+  function connect(catalog: { defaultId?: string; agents: Array<{ id: string }> }) {
+    const h = createHarness();
+    h.deps.gateway.listAgents = vi.fn().mockResolvedValue({ ok: true, result: catalog });
+    h.deps.gateway.listModels = vi.fn().mockResolvedValue({ ok: true, result: { models: [{ id: 'owned' }] } });
+    h.deps.gateway.getSkillsStatus = vi.fn().mockResolvedValue({ ok: true, result: { skills: [] } });
+    h.deps.gateway.getToolsCatalog = vi.fn().mockResolvedValue({ ok: true, result: {} });
+    h.deps.gateway.listCommands = vi.fn().mockResolvedValue({ ok: true, result: { commands: [] } });
+    h.dispatcher.startGatewayStatus();
+    return h;
+  }
+
+  it('passes the validated management owner to every scoped catalog, not the first agent', async () => {
+    vi.useFakeTimers();
+    const h = connect({ defaultId: 'office', agents: [{ id: 'video' }, { id: 'office' }] });
+    h.emitStatus({ gatewayId: 'gw-1', connected: true });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.deps.gateway.listModels).toHaveBeenCalledWith('gw-1', 'office');
+    expect(h.deps.gateway.getSkillsStatus).toHaveBeenCalledWith('gw-1', 'office');
+    expect(h.deps.gateway.getToolsCatalog).toHaveBeenCalledWith('gw-1', 'office');
+    expect(h.deps.gateway.listCommands).toHaveBeenCalledWith('gw-1', expect.objectContaining({ agentId: 'office' }));
+  });
+
+  it.each([undefined, '', 'missing'])('fails closed for multi-agent default %s', async (defaultId) => {
+    vi.useFakeTimers();
+    const h = connect({ defaultId, agents: [{ id: 'video' }, { id: 'office' }] });
+    h.emitStatus({ gatewayId: 'gw-1', connected: true });
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(h.deps.gateway.listModels).not.toHaveBeenCalled();
+    expect(h.deps.gateway.getSkillsStatus).not.toHaveBeenCalled();
+    expect(h.deps.gateway.getToolsCatalog).not.toHaveBeenCalled();
+    expect(h.deps.gateway.listCommands).not.toHaveBeenCalled();
+    expect(h.deps.setModelCatalogFailureForGateway).toHaveBeenLastCalledWith('gw-1', true);
+  });
+
+  it('uses the sole agent when the runtime has no default', async () => {
+    vi.useFakeTimers();
+    const h = connect({ agents: [{ id: 'office' }] });
+    h.emitStatus({ gatewayId: 'gw-1', connected: true });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.deps.gateway.listModels).toHaveBeenCalledWith('gw-1', 'office');
+  });
+
+  it('keeps the same owner on model retries', async () => {
+    vi.useFakeTimers();
+    const h = connect({ defaultId: 'office', agents: [{ id: 'video' }, { id: 'office' }] });
+    h.deps.gateway.listModels = vi.fn().mockResolvedValue({ ok: true, result: { models: [] } });
+    h.emitStatus({ gatewayId: 'gw-1', connected: true });
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(vi.mocked(h.deps.gateway.listModels).mock.calls.length).toBeGreaterThan(1);
+    expect(vi.mocked(h.deps.gateway.listModels).mock.calls.every((args) => args[1] === 'office')).toBe(true);
+  });
+
+  it('discards old connection catalog responses after a reconnect changes owner', async () => {
+    vi.useFakeTimers();
+    const h = connect({ defaultId: 'office', agents: [{ id: 'video' }, { id: 'office' }] });
+    let resolveOld: (value: { ok: boolean; result: { models: Array<{ id: string }> } }) => void = () => {};
+    h.deps.gateway.listModels = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveOld = resolve;
+          }),
+      )
+      .mockResolvedValue({ ok: true, result: { models: [{ id: 'new' }] } });
+    h.emitStatus({ gatewayId: 'gw-1', connected: true });
+    await vi.advanceTimersByTimeAsync(0);
+    h.emitStatus({ gatewayId: 'gw-1', connected: false });
+    h.deps.gateway.listAgents = vi
+      .fn()
+      .mockResolvedValue({ ok: true, result: { defaultId: 'video', agents: [{ id: 'office' }, { id: 'video' }] } });
+    h.emitStatus({ gatewayId: 'gw-1', connected: true });
+    await vi.advanceTimersByTimeAsync(0);
+    resolveOld({ ok: true, result: { models: [{ id: 'old' }] } });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.deps.setModelCatalogForGateway).toHaveBeenLastCalledWith('gw-1', [{ id: 'new' }]);
+    expect(h.deps.setModelCatalogForGateway).not.toHaveBeenCalledWith('gw-1', [{ id: 'old' }]);
   });
 });
 
