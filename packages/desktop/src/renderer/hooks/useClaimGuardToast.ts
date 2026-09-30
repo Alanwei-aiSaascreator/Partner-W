@@ -45,13 +45,34 @@ export function useClaimGuardToast(): void {
         !violation.missing.length &&
         !violation.slideFailures?.length &&
         !violation.docFailures?.length &&
-        !violation.htmlFailures?.length
+        !violation.htmlFailures?.length &&
+        !violation.mediaFailures?.length
       )
         return;
-      const key = JSON.stringify([violation.taskId, violation.sessionKey, violation.messageId]);
+      const key = JSON.stringify([
+        violation.taskId,
+        violation.sessionKey,
+        violation.messageId,
+        violation.missing,
+        violation.slideFailures ?? [],
+        violation.docFailures ?? [],
+        violation.htmlFailures ?? [],
+        violation.mediaFailures ?? [],
+      ]);
       if (seen.current.has(key)) return;
       seen.current.add(key);
       const lines = [ARTIFACT_FAILURE_MARKER];
+      if (violation.mediaFailures?.length) {
+        const description = t('claimGuard.mediaUnavailableBody', {
+          names: violation.mediaFailures.map((failure) => failure.fileName).join(', '),
+        });
+        lines.push(
+          t('claimGuard.mediaUnavailableTitle'),
+          description,
+          ...violation.mediaFailures.map((failure) => JSON.stringify(failure)),
+        );
+        toast.error(t('claimGuard.mediaUnavailableTitle'), { description });
+      }
       if (violation.slideFailures?.length) {
         lines.push(
           t('slidegen.failedTitle'),

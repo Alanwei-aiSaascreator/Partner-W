@@ -131,6 +131,7 @@ describe('artifact delivery failure feedback', () => {
   });
 
   it.each([
+    { mediaFailures: [{ fileName: 'clip.mp4', reason: 'unavailable' }], expected: 'clip.mp4' },
     { docFailures: [{ code: 'request-invalid' }], expected: 'request-invalid' },
     {
       htmlFailures: [{ code: 'htmlgen-unsupported-field', field: 'sections[0].style' }],
@@ -157,20 +158,40 @@ describe('artifact delivery failure feedback', () => {
       return null;
     }
     act(() => root.render(<Harness />));
-    act(() =>
-      callback!({
+    act(() => {
+      const event = {
         taskId: 'task-1',
         sessionKey: 'session-1',
         messageId: 'assistant-1',
         missing: [],
         ...failure,
-      } as ArtifactDeliveryFailure),
-    );
+      } as ArtifactDeliveryFailure;
+      callback!(event);
+      callback!(event);
+    });
     const messages = store.getState().messagesByTask['task-1'] ?? [];
     expect(messages).toHaveLength(1);
     expect(messages[0].role).toBe('system');
     expect(persistMessage).toHaveBeenCalledTimes(1);
     expect(artifactFailureContext(messages, 'session-1')).toContain(failure.expected);
+    if ('mediaFailures' in failure) {
+      act(() => {
+        const laterFailure: ArtifactDeliveryFailure = {
+          taskId: 'task-1',
+          sessionKey: 'session-1',
+          messageId: 'assistant-1',
+          missing: [],
+          docFailures: [{ code: 'request-invalid' }],
+        };
+        callback!(laterFailure);
+        callback!(laterFailure);
+      });
+      const updated = store.getState().messagesByTask['task-1'] ?? [];
+      expect(updated).toHaveLength(2);
+      expect(persistMessage).toHaveBeenCalledTimes(2);
+      expect(updated.map((message) => message.content).join('\n')).toContain('clip.mp4');
+      expect(artifactFailureContext(updated, 'session-1')).toContain('request-invalid');
+    }
     act(() => root.unmount());
   });
 });
