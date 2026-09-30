@@ -697,7 +697,7 @@ describe('源码契约：失败路径不许 app.quit()', () => {
   });
 
   it('旧的英文错误框已经删掉（它不会说"怎么办"，而且后面紧跟退出）', () => {
-    expect(code).not.toContain('showErrorBox');
+    expect(region).not.toContain('showErrorBox');
   });
 
   it('工作区准备好**之后**才开窗（先有工作区，再有界面）', () => {
