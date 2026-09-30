@@ -1,9 +1,10 @@
-import { useEffect, useRef, useMemo } from 'react';
+import { useEffect, useRef, useMemo, useState } from 'react';
 import { Bot, File, FileCode, FolderOpen, Image as ImageIcon, ListTodo, Users } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { Task, Artifact } from '@clawwork/shared';
 import type { TaskContextFile } from './ChatInput/useTaskMaterials';
 import { useFileStore } from '@/stores/fileStore';
+import { useTaskStore } from '@/stores/taskStore';
 import { cn, formatFileSize } from '@/lib/utils';
 import { getArtifactLabel } from '@/lib/artifact-labels';
 import AgentIcon from './AgentIcon';
@@ -69,27 +70,57 @@ export default function MentionPicker({
   const { t } = useTranslation();
   const artifacts = useFileStore((s) => s.artifacts);
   const setArtifacts = useFileStore((s) => s.setArtifacts);
+  const workspaceEpoch = useTaskStore((s) => s.workspaceEpoch);
   const listRef = useRef<HTMLDivElement>(null);
   const artifactsLoaded = useRef(false);
+  const loadedWorkspace = useRef(workspaceEpoch);
+  const [loadError, setLoadError] = useState<number | null>(null);
+  const [retry, setRetry] = useState(0);
 
   useEffect(() => {
+    if (loadedWorkspace.current !== workspaceEpoch) {
+      loadedWorkspace.current = workspaceEpoch;
+      artifactsLoaded.current = false;
+    }
     if (!visible || artifactsLoaded.current) return;
-    if (artifacts.length > 0) {
+    setLoadError(null);
+    if (useFileStore.getState().artifacts.length > 0 && retry === 0) {
       artifactsLoaded.current = true;
       return;
     }
     artifactsLoaded.current = true;
-    window.clawwork
-      .listArtifacts()
-      .then((res) => {
-        if (res.ok && res.result) {
-          setArtifacts(res.result as unknown as Artifact[]);
-        }
-      })
-      .catch((err: unknown) => {
-        console.error('[MentionPicker] listArtifacts failed:', err);
-      });
-  }, [visible, artifacts.length, setArtifacts]);
+    let cancelled = false;
+    const ownsWorkspace = () => !cancelled && useTaskStore.getState().workspaceEpoch === workspaceEpoch;
+    const load = (): void => {
+      const snapshot = useFileStore.getState().artifacts;
+      window.clawwork
+        .listArtifacts()
+        .then((res) => {
+          if (!ownsWorkspace()) return;
+          if (useFileStore.getState().artifacts !== snapshot) {
+            load();
+            return;
+          }
+          if (res.ok && res.result) {
+            setArtifacts(res.result as unknown as Artifact[]);
+          } else {
+            artifactsLoaded.current = false;
+            setLoadError(workspaceEpoch);
+          }
+        })
+        .catch((err: unknown) => {
+          if (!ownsWorkspace()) return;
+          artifactsLoaded.current = false;
+          setLoadError(workspaceEpoch);
+          console.error('[MentionPicker] listArtifacts failed:', err);
+        });
+    };
+    load();
+    return () => {
+      cancelled = true;
+      artifactsLoaded.current = false;
+    };
+  }, [visible, setArtifacts, workspaceEpoch, retry]);
 
   const tabs = useMemo(() => {
     const allTabs: { id: MentionTab; label: string; icon: typeof ListTodo }[] = [
@@ -176,7 +207,15 @@ export default function MentionPicker({
       </div>
 
       <div ref={listRef} className="max-h-56 overflow-y-auto py-1">
-        {items.length === 0 && (
+        {activeTab === 'files' && loadError === workspaceEpoch && (
+          <div role="alert" className="type-support px-3 py-4 text-[var(--text-danger)]">
+            {t('errors.requestFailed')}
+            <button type="button" className="ml-2 underline" onClick={() => setRetry((value) => value + 1)}>
+              {t('common.retry')}
+            </button>
+          </div>
+        )}
+        {items.length === 0 && !(activeTab === 'files' && loadError === workspaceEpoch) && (
           <div className="type-support px-3 py-4 text-center text-[var(--text-muted)]">
             {activeTab === 'agents'
               ? t('mentionPicker.noAgents')
