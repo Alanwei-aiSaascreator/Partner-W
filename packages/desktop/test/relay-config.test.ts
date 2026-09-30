@@ -793,16 +793,19 @@ describe('联网开关：关掉之后不再注入，缺省仍然开着', () => {
   const agentsDefaults = (patch: unknown): { models?: Record<string, unknown> } =>
     (patch as { agents: { defaults: Record<string, unknown> } }).agents.defaults;
 
-  it('⭐ webSearch: false ⇒ 一个模型都不带 enable_search', () => {
+  it('uses deletion markers for owned search parameters when webSearch is false', () => {
     const patch = buildRelayPatch({ relayKey: 'rly_abc', deviceFingerprint: 'fp', webSearch: false });
 
-    expect(agentsDefaults(patch).models).toEqual({});
+    expect(agentsDefaults(patch).models).toEqual({
+      'clawrouter/qwen-turbo': { params: { extra_body: { enable_search: null } } },
+      'clawrouter/qwen-plus': { params: { extra_body: { enable_search: null } } },
+    });
   });
 
-  it('⭐ 关掉时是**空表**，不是写一个 false 进去（少一个出错面）', () => {
+  it('does not forward false as an upstream search parameter', () => {
     const patch = buildRelayPatch({ relayKey: 'rly_abc', deviceFingerprint: 'fp', webSearch: false });
 
-    expect(JSON.stringify(patch)).not.toContain('enable_search');
+    expect(JSON.stringify(patch)).not.toContain('"enable_search":false');
   });
 
   it('webSearch: true ⇒ 照旧注入（显式打开）', () => {

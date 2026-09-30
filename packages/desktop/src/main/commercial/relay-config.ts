@@ -225,14 +225,11 @@ const ENABLE_SEARCH_MODEL_IDS = ['qwen-turbo', 'qwen-plus'] as const;
  */
 function enableSearchModelEntries(
   enabled: boolean,
-): Record<string, { params: { extra_body: { enable_search: true } } }> {
-  // ⭐ 关掉时返回**空表**（而不是"写一个 false"）：百炼那边认的是"有没有这个参数"，
-  //    写 `enable_search: false` 是另一回事（它会照 false 处理，但少写更干净、也少一个出错面）。
-  if (!enabled) return {};
+): Record<string, { params: { extra_body: { enable_search: true | null } } }> {
   return Object.fromEntries(
     ENABLE_SEARCH_MODEL_IDS.map((id) => [
       `${RELAY_PROVIDER_ID}/${id}`,
-      { params: { extra_body: { enable_search: true } } },
+      { params: { extra_body: { enable_search: enabled ? true : null } } },
     ]),
   );
 }

@@ -519,7 +519,7 @@ async function configureRelay(relayKey: string | null): Promise<boolean> {
         resolveMediaCapabilities: fetchRelayMediaCapabilities,
         log: (event, data) => getDebugLogger().info({ domain: 'commercial', event, data }),
       },
-      { relayKey, deviceFingerprint: deviceFingerprint() },
+      { relayKey, deviceFingerprint: deviceFingerprint(), webSearch: readConfig()?.webSearch },
     ),
   );
 
