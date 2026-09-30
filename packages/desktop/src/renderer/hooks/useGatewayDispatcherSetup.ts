@@ -8,6 +8,7 @@ import { composer, composerBridge, ports, useMessageStore, useTaskStore, useUiSt
 import { useApprovalStore } from '../stores/approvalStore';
 import { useQuestionStore } from '../stores/questionStore';
 import { compareStore } from '../features/compare/compare-store-instance';
+import { teamMeetingController } from '../features/team-meeting/instance';
 
 export type GatewayDispatcher = ReturnType<typeof createGatewayDispatcher>;
 
@@ -155,7 +156,10 @@ function getDispatcher(): GatewayDispatcher {
       isWindowFocused: () => document.hasFocus(),
       reportDebugEvent: (event) => window.clawwork.reportDebugEvent(event),
 
-      hydrateFromLocal,
+      hydrateFromLocal: async () => {
+        await hydrateFromLocal();
+        await teamMeetingController.load().catch((error) => console.error('[meeting] Recovery failed:', error));
+      },
       syncFromGateway,
       syncSessionMessages,
       retrySyncPending,

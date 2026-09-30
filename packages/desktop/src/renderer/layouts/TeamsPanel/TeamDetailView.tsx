@@ -10,6 +10,7 @@ import { useResizePanel } from '@/hooks/useResizePanel';
 import { useUiStore } from '@/stores/uiStore';
 import { cn } from '@/lib/utils';
 import TeamFileTree, { type TreeFile } from './TeamFileTree';
+import TeamMeetingEntry from '@/features/team-meeting/TeamMeetingEntry';
 
 interface SkillEntry {
   id: string;
@@ -221,6 +222,7 @@ export default function TeamDetailView({ team, onBack, onStartChat, onEdit }: Te
             </div>
           </div>
           <div className="flex items-center gap-1.5 flex-shrink-0">
+            <TeamMeetingEntry team={team} />
             <Button variant="ghost" size="sm" onClick={onEdit}>
               <Pencil size={14} />
               {t('teams.editTeam')}
