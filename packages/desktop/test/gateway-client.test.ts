@@ -106,6 +106,20 @@ describe('GatewayClient connection lifecycle', () => {
     expect(calculateReconnectDelay(MAX_RECONNECT_ATTEMPTS)).toBe(RECONNECT_DELAY_MS * 32);
   });
 
+  it('passes the explicit model catalog owner onto the wire', async () => {
+    const { GatewayClient } = await import('../src/main/ws/gateway-client.js');
+    const client = new GatewayClient({
+      id: 'gw-1',
+      name: 'Gateway',
+      url: 'ws://127.0.0.1:18789',
+      auth: { token: 'test' },
+    });
+    clients.push(client);
+    const sendReq = vi.spyOn(client, 'sendReq').mockResolvedValue({ models: [] });
+    await client.listModels('office');
+    expect(sendReq).toHaveBeenCalledWith('models.list', { agentId: 'office' });
+  });
+
   it('⭐ 同一个网关的配置写事务严格串行，失败也必须释放后续队列', async () => {
     const { GatewayClient } = await import('../src/main/ws/gateway-client.js');
     const client = new GatewayClient({

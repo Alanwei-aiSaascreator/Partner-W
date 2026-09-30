@@ -316,12 +316,12 @@ export function createBrowserGatewayTransport(
       });
     },
 
-    async listModels(gatewayId) {
+    async listModels(gatewayId, agentId) {
       const client = getClient(gatewayId);
       if (!client?.isConnected)
         return { ok: false, error: 'gateway not connected', errorCode: 'GATEWAY_NOT_CONNECTED' };
       try {
-        const result = await client.listModels();
+        const result = await client.listModels(agentId);
         return { ok: true, result };
       } catch (err) {
         return { ok: false, error: err instanceof Error ? err.message : 'listModels failed' };

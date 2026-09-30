@@ -294,6 +294,12 @@ describe('createBrowserGatewayTransport', () => {
   });
 
   describe('listModels', () => {
+    it('forwards an explicit catalog owner to the browser client', async () => {
+      const { transport } = createBrowserGatewayTransport(getClients, getClient, getDeviceId);
+      await transport.listModels('gw-1', 'office');
+      expect(mockClient.listModels).toHaveBeenCalledWith('office');
+    });
+
     it('delegates to client.listModels', async () => {
       const models = { models: [{ id: 'm1' }] };
       mockClient.listModels.mockResolvedValue(models);

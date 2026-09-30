@@ -443,7 +443,7 @@ export interface ClawWorkAPI {
   listSessions: (gatewayId: string) => Promise<IpcResult>;
   abortChat: (gatewayId: string, sessionKey: string) => Promise<IpcResult>;
 
-  listModels: (gatewayId: string) => Promise<IpcResult>;
+  listModels: (gatewayId: string, agentId?: string) => Promise<IpcResult>;
   listCommands: (gatewayId: string, params?: CommandsListParams) => Promise<IpcResult>;
   listAgents: (gatewayId: string) => Promise<IpcResult>;
   createAgent: (

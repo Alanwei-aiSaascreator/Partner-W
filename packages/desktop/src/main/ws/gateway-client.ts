@@ -963,8 +963,8 @@ export class GatewayClient {
     return this.sendReq('sessions.create', params, { requestId: randomUUID() });
   }
 
-  async listModels(): Promise<Record<string, unknown>> {
-    return this.sendReq('models.list', {});
+  async listModels(agentId?: string): Promise<Record<string, unknown>> {
+    return this.sendReq('models.list', agentId?.trim() ? { agentId: agentId.trim() } : {});
   }
 
   async listCommands(params: Record<string, unknown> = {}): Promise<Record<string, unknown>> {

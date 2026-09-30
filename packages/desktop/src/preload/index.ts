@@ -44,7 +44,7 @@ function buildApi(): ClawWorkAPI {
     abortChat: (gatewayId: string, sessionKey: string) =>
       ipcRenderer.invoke('ws:abort-chat', { gatewayId, sessionKey }),
     listGateways: () => ipcRenderer.invoke('ws:list-gateways'),
-    listModels: (gatewayId: string) => ipcRenderer.invoke('ws:models-list', { gatewayId }),
+    listModels: (gatewayId: string, agentId?: string) => ipcRenderer.invoke('ws:models-list', { gatewayId, agentId }),
     listCommands: (gatewayId: string, params?: CommandsListParams) =>
       ipcRenderer.invoke('ws:commands-list', { gatewayId, ...(params ?? {}) }),
     listAgents: (gatewayId: string) => ipcRenderer.invoke('ws:agents-list', { gatewayId }),

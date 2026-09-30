@@ -552,11 +552,11 @@ export function registerWsHandlers(): void {
     return { ok: true, discovered };
   });
 
-  ipcMain.handle('ws:models-list', async (_event, payload: { gatewayId: string }) => {
+  ipcMain.handle('ws:models-list', async (_event, payload: { gatewayId: string; agentId?: string }) => {
     const gw = getGatewayClient(payload.gatewayId);
     if (!gw?.isConnected) return { ok: false, error: 'gateway not connected' };
     try {
-      const result = await gw.listModels();
+      const result = await gw.listModels(payload.agentId);
       return { ok: true, result };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : 'unknown error' };

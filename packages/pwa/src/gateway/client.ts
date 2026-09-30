@@ -271,8 +271,8 @@ export class BrowserGatewayClient {
     return this.sendReq('sessions.list', {}, { requestId: this.nextReqId() });
   }
 
-  async listModels(): Promise<Record<string, unknown>> {
-    return this.sendReq('models.list', {});
+  async listModels(agentId?: string): Promise<Record<string, unknown>> {
+    return this.sendReq('models.list', agentId?.trim() ? { agentId: agentId.trim() } : {});
   }
 
   async listCommands(params: Record<string, unknown> = {}): Promise<Record<string, unknown>> {

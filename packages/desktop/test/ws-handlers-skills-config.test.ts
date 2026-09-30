@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const handleMap = new Map<string, (...args: unknown[]) => unknown>();
 
 const installSkillMock = vi.fn();
+const listModelsMock = vi.fn();
 const updateSkillMock = vi.fn();
 const getSkillBinsMock = vi.fn();
 const getConfigMock = vi.fn();
@@ -20,6 +21,7 @@ const cancelArtifactRunsForSessionMock = vi.fn();
 
 const fakeGatewayClient = {
   isConnected: true,
+  listModels: listModelsMock,
   httpBase: 'http://127.0.0.1:18789',
   installSkill: installSkillMock,
   updateSkill: updateSkillMock,
@@ -114,6 +116,15 @@ describe('ws-handlers: skills + config IPC channels', () => {
     vi.resetModules();
     const { registerWsHandlers } = await import('../src/main/ipc/ws-handlers.js');
     registerWsHandlers();
+  });
+
+  it('forwards the explicitly selected catalog owner', async () => {
+    listModelsMock.mockResolvedValue({ models: [] });
+    expect(await invoke('ws:models-list', { gatewayId: 'gw-1', agentId: 'office' })).toEqual({
+      ok: true,
+      result: { models: [] },
+    });
+    expect(listModelsMock).toHaveBeenCalledWith('office');
   });
 
   it('captures an artifact baseline before gateway dispatch', async () => {
