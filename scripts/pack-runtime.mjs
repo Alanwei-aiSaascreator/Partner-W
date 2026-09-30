@@ -34,6 +34,11 @@ import {
 import { bundleNativeTools, verifyNativeToolRuntime } from './lib/native-tool-runtime.mjs';
 import { bundleWindowsVideoFrames } from './lib/windows-video-frames-runtime.mjs';
 import { bundleWindowsDebugSkills } from './lib/windows-debug-skills.mjs';
+import {
+  bundleOfficialLobsterPlugin,
+  officialLobsterPluginSpec,
+  OFFICIAL_LOBSTER_RUNTIME_ENTRY,
+} from './lib/bundled-lobster-runtime.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(HERE, '..');
@@ -233,6 +238,13 @@ export function verifyArchive(sevenZipPath, archivePath) {
     if (!fs.existsSync(searchEntry) || fs.statSync(searchEntry).size === 0) {
       throw new Error(`runtime archive is missing the official search plugin: ${OFFICIAL_SEARCH_RUNTIME_ENTRY}`);
     }
+    const lobsterDirectory = path.join(tmp, 'lobster');
+    execFileSync(sevenZipPath, ['e', archivePath, `-o${lobsterDirectory}`, '-y', OFFICIAL_LOBSTER_RUNTIME_ENTRY], {
+      stdio: 'ignore',
+    });
+    const lobsterEntry = path.join(lobsterDirectory, 'index.js');
+    if (!fs.existsSync(lobsterEntry) || fs.statSync(lobsterEntry).size === 0)
+      throw new Error(`runtime archive is missing the official Lobster plugin: ${OFFICIAL_LOBSTER_RUNTIME_ENTRY}`);
     return true;
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
@@ -281,6 +293,7 @@ async function main() {
     'install',
     `openclaw@${args.version}`,
     officialSearchPluginSpec(args.version),
+    officialLobsterPluginSpec(args.version),
     '--prefix',
     stage,
     '--omit=dev',
@@ -292,6 +305,7 @@ async function main() {
   const pkgDir = path.join(stage, 'node_modules', 'openclaw');
   if (!fs.existsSync(pkgDir)) throw new Error(`装完了但 ${pkgDir} 不存在`);
   const searchPlugin = bundleOfficialSearchPlugin(stage);
+  const lobsterPlugin = bundleOfficialLobsterPlugin(stage);
   const searchRuntime = path.join(stage, WEB_SEARCH_AVAILABILITY_ENTRY);
   fs.writeFileSync(searchRuntime, patchWebSearchAvailabilityRuntime(fs.readFileSync(searchRuntime, 'utf8')));
   const nativePatch = bundleNativeTools(stage, args.nativeTools);
@@ -345,7 +359,15 @@ async function main() {
     fileCount,
     sha256,
     extractor: 'win32-x64/extractor/7za.exe',
-    patches: [searchPlugin.patchId, WEB_SEARCH_AVAILABILITY_PATCH_ID, nativePatch, videoFramesPatch, debugSkillsPatch],
+    patches: [
+      searchPlugin.patchId,
+      WEB_SEARCH_AVAILABILITY_PATCH_ID,
+      nativePatch,
+      videoFramesPatch,
+      debugSkillsPatch,
+      lobsterPlugin.patchId,
+      lobsterPlugin.compatibilityPatch,
+    ],
   });
   const runtimeDir = path.join(args.out, 'openclaw-runtime');
   fs.mkdirSync(runtimeDir, { recursive: true });
