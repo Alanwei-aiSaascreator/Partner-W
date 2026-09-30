@@ -694,6 +694,21 @@ describe('整条链 —— 永久拒绝在 4 分钟窗口里只发一次 activat
  * 把 `auth-transient` 当 blocked，就是把一次网络抖动说成"你的卡不行"。
  */
 const MAPPING_CASES: Array<[string, RelayBootstrapResult, RelayBootstrapPublicPhase]> = [
+  [
+    'verified media readiness is independent of chat readiness',
+    { status: 'applied', relayReady: true, retryable: false, media: { image: 'ready', video: 'unavailable' } },
+    { phase: 'ready', media: { image: 'ready', video: 'unavailable' } },
+  ],
+  [
+    'missing media probe is not a denied entitlement',
+    {
+      status: 'already-applied',
+      relayReady: true,
+      retryable: false,
+      media: { image: 'unknown', video: 'probe-failed' },
+    },
+    { phase: 'ready', media: { image: 'unknown', video: 'probe-failed' } },
+  ],
   ['写进去了 ⇒ ready', { status: 'applied', relayReady: true, retryable: false }, { phase: 'ready' }],
   [
     '幂等命中（网关已经有中转 provider）⇒ ready',
@@ -980,7 +995,11 @@ describe('公开状态 —— 渲染层唯一能看到的那份结论', () => {
     const mapped = mapRelayBootstrapPublicPhase(result);
     expect(mapped).toEqual(expected);
     expect(Object.keys(mapped).sort()).toEqual(
-      expected.phase === 'blocked' || expected.phase === 'retryable-error' ? ['errorCode', 'phase'] : ['phase'],
+      expected.phase === 'blocked' || expected.phase === 'retryable-error'
+        ? ['errorCode', 'phase']
+        : expected.phase === 'ready' && expected.media
+          ? ['media', 'phase']
+          : ['phase'],
     );
   });
 });

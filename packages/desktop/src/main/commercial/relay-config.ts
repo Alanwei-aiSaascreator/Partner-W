@@ -1,4 +1,5 @@
 import { COMMERCIAL_DEFAULT_MODEL_ID } from '@clawwork/shared';
+import type { RelayMediaReadiness } from '@clawwork/shared';
 
 /**
  * 中转服务（relay）在客户端这一侧的常量与识别逻辑。
@@ -287,7 +288,10 @@ export function buildRelayPatch(input: RelayPatchInput): RelayConfigPatch | null
     if (!hasOpenAiProvider) return true;
     return ownedImageConfig;
   })();
-  const imageWired = (input.imageGenerationWired ?? IMAGE_GENERATION_WIRED) && acceptsOurImageConfig;
+  const imageWired =
+    (input.imageGenerationWired ?? IMAGE_GENERATION_WIRED) &&
+    acceptsOurImageConfig &&
+    !isPluginExplicitlyDisabled(config, OPENAI_IMAGE_PROVIDER_ID);
 
   const acceptsOurVideoConfig = ((): boolean => {
     const providers = (config?.models as { providers?: Record<string, unknown> } | undefined)?.providers;
@@ -298,7 +302,10 @@ export function buildRelayPatch(input: RelayPatchInput): RelayConfigPatch | null
     if (!hasXaiProvider && videoPrimary === undefined) return true;
     return ownedVideoConfig;
   })();
-  const videoWired = (input.videoGenerationWired ?? VIDEO_GENERATION_WIRED) && acceptsOurVideoConfig;
+  const videoWired =
+    (input.videoGenerationWired ?? VIDEO_GENERATION_WIRED) &&
+    acceptsOurVideoConfig &&
+    !isPluginExplicitlyDisabled(config, XAI_VIDEO_PROVIDER_ID);
 
   const providers: Record<string, unknown> = {
     [RELAY_PROVIDER_ID]: {
@@ -359,9 +366,15 @@ export function buildRelayPatch(input: RelayPatchInput): RelayConfigPatch | null
   const allow = (config?.plugins as { allow?: unknown } | undefined)?.allow;
   if (Array.isArray(allow)) {
     const names = allow.filter((x): x is string => typeof x === 'string');
+    const required = [
+      RELAY_PROVIDER_ID,
+      ...(imageWired ? [OPENAI_IMAGE_PROVIDER_ID] : []),
+      ...(videoWired ? [XAI_VIDEO_PROVIDER_ID] : []),
+      ...(enableBundledSearch ? ['duckduckgo'] : []),
+    ];
     patch.plugins = {
       ...(patch.plugins as Record<string, unknown> | undefined),
-      allow: [...new Set([...names, RELAY_PROVIDER_ID, ...(enableBundledSearch ? ['duckduckgo'] : [])])],
+      allow: [...new Set([...names, ...required])],
     };
   }
 
@@ -620,6 +633,7 @@ export interface ApplyRelayResult {
   ok: boolean;
   /** 配置是否**真的写进去了**（回读校验通过）。只看 patchConfig 的返回不够。 */
   configured: boolean;
+  media?: RelayMediaReadiness;
   warnings: string[];
   error?: string;
   errorCode?: ApplyRelayErrorCode;
@@ -839,10 +853,17 @@ export async function applyRelayConfig(
   }
 
   let mediaCapabilities: RelayMediaCapabilities = { image: false, video: false };
+  let mediaProbeStatus: 'unknown' | 'resolved' | 'probe-failed' = 'unknown';
   if (deps.resolveMediaCapabilities) {
     try {
-      mediaCapabilities = await deps.resolveMediaCapabilities(input.relayKey);
+      const capabilities = await deps.resolveMediaCapabilities(input.relayKey);
+      if (typeof capabilities?.image !== 'boolean' || typeof capabilities?.video !== 'boolean') {
+        throw new Error('invalid media capabilities response');
+      }
+      mediaCapabilities = capabilities;
+      mediaProbeStatus = 'resolved';
     } catch (error) {
+      mediaProbeStatus = 'probe-failed';
       warnings.push('resolve-media-capabilities-failed');
       log('relay.media-capabilities-resolve-failed', { message: messageOf(error) });
     }
@@ -900,8 +921,9 @@ export async function applyRelayConfig(
     // 只信 patchConfig 的返回是不够的 —— WS 通道的失败模式比本地文件写复杂，
     // 「返回成功但网关没生效」是它独有的。所以回读一次。
     let verified = false;
+    let appliedSnapshot: unknown;
     try {
-      const appliedSnapshot = await deps.getConfig();
+      appliedSnapshot = await deps.getConfig();
       verified =
         providerApplied(appliedSnapshot) &&
         mediaPatchApplied(appliedSnapshot, patch) &&
@@ -921,7 +943,34 @@ export async function applyRelayConfig(
         warnings,
       };
     }
-    return { ok: true, configured: true, warnings };
+    const patchedMedia = (
+      patch.agents as { defaults?: { mediaModels?: Record<string, { primary?: unknown }> } } | undefined
+    )?.defaults?.mediaModels;
+    const appliedConfig = configOf(appliedSnapshot);
+    const appliedProviders = (appliedConfig?.models as { providers?: Record<string, { apiKey?: unknown }> } | undefined)
+      ?.providers;
+    const allow = (appliedConfig?.plugins as { allow?: unknown } | undefined)?.allow;
+    const mediaState = (
+      kind: 'image' | 'video',
+      providerId: string,
+      modelRef: string,
+    ): RelayMediaReadiness['image'] => {
+      if (mediaProbeStatus !== 'resolved') return mediaProbeStatus;
+      const apiKey = appliedProviders?.[providerId]?.apiKey;
+      return mediaCapabilities[kind] &&
+        patchedMedia?.[kind]?.primary === modelRef &&
+        typeof apiKey === 'string' &&
+        apiKey.trim().length > 0 &&
+        !isPluginExplicitlyDisabled(appliedConfig, providerId) &&
+        (!Array.isArray(allow) || allow.includes(providerId))
+        ? 'ready'
+        : 'unavailable';
+    };
+    const media: RelayMediaReadiness = {
+      image: mediaState('image', OPENAI_IMAGE_PROVIDER_ID, OPENAI_IMAGE_MODEL_REF),
+      video: mediaState('video', XAI_VIDEO_PROVIDER_ID, XAI_VIDEO_MODEL_REF),
+    };
+    return { ok: true, configured: true, media, warnings };
   }
 
   return {

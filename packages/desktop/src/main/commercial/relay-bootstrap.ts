@@ -40,6 +40,7 @@ import type { AuthCheck } from './auth-classify.js';
 //    宁可要这一个类型依赖，也不要在这边再写一遍错误码字面量：闭集少一个成员的
 //    后果是「边界层永远产不出那个码」，而 runtime 不报错、lint 也看不见。
 import type { ActivationErrorCode } from './license.js';
+import type { RelayMediaReadiness } from '@clawwork/shared';
 
 /**
  * 取中转 key 失败原因的**安全错误码**闭集。
@@ -108,6 +109,7 @@ export interface RelayBootstrapResult {
    * `runtime ready`，模型能不能用要看这个。
    */
   relayReady: boolean;
+  media?: RelayMediaReadiness;
   /**
    * 给人看的补充。
    *
@@ -313,7 +315,12 @@ export async function ensureRelayConfigured(deps: RelayBootstrapDeps): Promise<R
 
   if (relayProviderIds(snapshot).size > 0 && !deps.resolveMediaCapabilities) {
     log('relay.bootstrap.already-applied', { provider: RELAY_PROVIDER_ID });
-    return { status: 'already-applied', relayReady: true, retryable: false };
+    return {
+      status: 'already-applied',
+      relayReady: true,
+      retryable: false,
+      media: { image: 'unknown', video: 'unknown' },
+    };
   }
 
   let keyResult: RelayKeyFetchResult;
@@ -388,7 +395,7 @@ export async function ensureRelayConfigured(deps: RelayBootstrapDeps): Promise<R
 
   if (result.configured) {
     log('relay.bootstrap.applied', { provider: RELAY_PROVIDER_ID });
-    return { status: 'applied', relayReady: true, retryable: false };
+    return { status: 'applied', relayReady: true, retryable: false, ...(result.media ? { media: result.media } : {}) };
   }
 
   log('relay.bootstrap.failed', { errorCode: result.errorCode, error: result.error });

@@ -271,7 +271,10 @@ export function mapRelayBootstrapPublicPhase(result: RelayBootstrapResult): Rela
   switch (result.status) {
     case 'applied':
     case 'already-applied':
-      return { phase: 'ready' };
+      return {
+        phase: 'ready',
+        ...(result.media ? { media: { image: result.media.image, video: result.media.video } } : {}),
+      };
     case 'unlicensed':
       // 名下（或本地）没有可用的卡 ⇒ 用户要做的是**去激活**，不是"再试一次"。
       // ⚠️ 与 `entitlement-rejected` 分开：那个是"有卡，但服务端说不行"。

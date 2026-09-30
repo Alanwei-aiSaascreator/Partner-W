@@ -85,6 +85,45 @@ const alreadyRelay = {
   config: { models: { providers: { clawrouter: { baseUrl: RELAY_BASE_URL, apiKey: 'whatever' } } } },
 };
 
+describe('bootstrap media readiness propagation', () => {
+  it('preserves verified capability differences without blocking chat', async () => {
+    const { deps } = makeDeps({ resolveMediaCapabilities: async () => ({ image: true, video: false }) });
+    expect(await ensureRelayConfigured(deps)).toMatchObject({
+      status: 'applied',
+      relayReady: true,
+      retryable: false,
+      media: { image: 'ready', video: 'unavailable' },
+    });
+  });
+
+  it('keeps probe failure distinct from media denial and does not retry paid work', async () => {
+    const { deps } = makeDeps({
+      resolveMediaCapabilities: vi.fn(async () => {
+        throw new Error('private token');
+      }),
+    });
+    const result = await bootstrapRelayWithRetry(deps, { ...advancingClock(), waitForGatewayMs: 240_000 });
+    expect(result).toMatchObject({
+      status: 'applied',
+      relayReady: true,
+      retryable: false,
+      media: { image: 'probe-failed', video: 'probe-failed' },
+    });
+    expect(deps.resolveMediaCapabilities).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(result)).not.toContain('private');
+  });
+
+  it('does not infer media readiness from an already configured chat provider', async () => {
+    const { deps } = makeDeps({}, alreadyRelay);
+    expect(await ensureRelayConfigured(deps)).toMatchObject({
+      status: 'already-applied',
+      relayReady: true,
+      media: { image: 'unknown', video: 'unknown' },
+    });
+    expect(deps.fetchRelayKey).not.toHaveBeenCalled();
+  });
+});
+
 describe('ensureRelayConfigured —— 纯净/未配置', () => {
   it('⭐ 没配商业层（无 Supabase）⇒ not-configured，且**不碰网关**', async () => {
     const { deps, patchConfig, getConfig } = makeDeps({ hasCommercialClient: () => false });
