@@ -124,6 +124,7 @@ export interface ChatComposerDeps {
 
 export interface SendOptions {
   content: string;
+  signal?: AbortSignal;
   /**
    * **只发给模型、不属于用户那句话**的背景（例如首轮那份 `<artifacts-index>`）。
    *
@@ -303,9 +304,16 @@ export function createChatComposer(deps: ChatComposerDeps) {
   async function send(
     taskId: string | undefined,
     options: SendOptions,
-  ): Promise<{ ok: boolean; taskId?: string; partialFailure?: string; dispatch?: ChatDispatchReceipt }> {
-    const { task, error: resolveError } = resolveTask(taskId);
-    if (!task) {
+  ): Promise<{
+    ok: boolean;
+    taskId?: string;
+    partialFailure?: string;
+    dispatch?: ChatDispatchReceipt;
+    aborted?: true;
+  }> {
+    if (options.signal?.aborted) return { ok: false, ...(taskId ? { taskId } : {}), aborted: true };
+    const { task: resolvedTask, error: resolveError } = resolveTask(taskId);
+    if (!resolvedTask) {
       deps.onError?.({
         title: deps.translate('errors.stage.send'),
         description: describeSendRefusal(resolveError, deps.translate),
@@ -313,14 +321,25 @@ export function createChatComposer(deps: ChatComposerDeps) {
       return { ok: false };
     }
 
+    const task = { ...resolvedTask };
     const store = deps.getMessageStore();
-    let dispatch: ChatDispatchReceipt | undefined;
-    const sendTracked = async (sessionKey: string, content: string, attachments?: ChatAttachment[]) => {
+    const sendTracked = async (
+      sessionKey: string,
+      content: string,
+      attachments?: ChatAttachment[],
+      dispatchContext?: { userContent: string },
+    ) => {
       const ticket = deps.beginDispatch?.(task.gatewayId, sessionKey);
       let accepted = false;
       let receipt: ChatDispatchReceipt | undefined;
       try {
-        const result = await deps.gateway.sendMessage(task.gatewayId, sessionKey, content, attachments);
+        const result = await deps.gateway.sendMessage(
+          task.gatewayId,
+          sessionKey,
+          content,
+          attachments,
+          dispatchContext,
+        );
         accepted = !result || result.ok;
         const value = result?.ok ? result.result : undefined;
         if (
@@ -331,10 +350,8 @@ export function createChatComposer(deps: ChatComposerDeps) {
           'runId' in value &&
           typeof value.runId === 'string' &&
           value.runId.trim()
-        ) {
+        )
           receipt = { sessionKey, runId: value.runId };
-          if (sessionKey === task.sessionKey) dispatch = receipt;
-        }
         return result;
       } finally {
         if (ticket) deps.settleDispatch?.(ticket, receipt, accepted);
@@ -357,6 +374,16 @@ export function createChatComposer(deps: ChatComposerDeps) {
     };
     let processingSessionKeys: string[] = [];
     const sendOwner = Symbol();
+    let submitted = false;
+    const cancelBeforeSubmission = () => {
+      store.removeMessage(task.id, pendingUserMessage.id);
+      for (const sessionKey of processingSessionKeys) {
+        if (pendingSendOwners.get(sessionKey) !== sendOwner) continue;
+        store.setProcessing(sessionKey, false);
+        store.clearActiveTurn(sessionKey);
+      }
+      return { ok: false, taskId: task.id, aborted: true as const };
+    };
 
     if (!task.title && options.titleHint) {
       const title = options.titleHint.slice(0, 30).replace(/\n/g, ' ').trim();
@@ -374,15 +401,16 @@ export function createChatComposer(deps: ChatComposerDeps) {
         pendingSendOwners.set(sessionKey, sendOwner);
         store.setProcessing(sessionKey, true);
       }
-
       let acceptedMentionTargets = mentionTargets;
       let partialFailure: string | undefined;
+      let dispatch: ChatDispatchReceipt | undefined;
 
       if (!isMentionSend) {
         if (options.presetModel) {
           const modelRes = await deps.gateway.patchSession(task.gatewayId, task.sessionKey, {
             model: options.presetModel,
           });
+          if (options.signal?.aborted) return cancelBeforeSubmission();
           if (!modelRes.ok) {
             rollbackPendingUserMessage();
             if (pendingSendOwners.get(task.sessionKey) === sendOwner) store.setProcessing(task.sessionKey, false);
@@ -412,6 +440,7 @@ export function createChatComposer(deps: ChatComposerDeps) {
         //    而"因为一个显示问题把消息卡住"是更坏的失败。
         else if (task.model) {
           const pinned = await deps.gateway.patchSession(task.gatewayId, task.sessionKey, { model: task.model });
+          if (options.signal?.aborted) return cancelBeforeSubmission();
           if (!pinned?.ok) {
             console.warn('[chat-composer] pin task model failed:', task.model, pinned?.error);
           }
@@ -423,6 +452,7 @@ export function createChatComposer(deps: ChatComposerDeps) {
           const thinkingRes = await deps.gateway.patchSession(task.gatewayId, task.sessionKey, {
             thinkingLevel,
           });
+          if (options.signal?.aborted) return cancelBeforeSubmission();
           if (!thinkingRes.ok) {
             rollbackPendingUserMessage();
             if (pendingSendOwners.get(task.sessionKey) === sendOwner) store.setProcessing(task.sessionKey, false);
@@ -452,6 +482,7 @@ export function createChatComposer(deps: ChatComposerDeps) {
             const permissionRes = await deps.gateway.patchSession(task.gatewayId, task.sessionKey, {
               permissionMode: mode,
             });
+            if (options.signal?.aborted) return cancelBeforeSubmission();
             // ⚠️ **成功了才记账**：失败还记账 ⇒ 下次不补 ⇒ 永久哑掉（有测试按名钉住）。
             if (permissionRes?.ok) {
               deps.computerAccess.remember(task.sessionKey, { mode, gatewayId: task.gatewayId });
@@ -460,10 +491,12 @@ export function createChatComposer(deps: ChatComposerDeps) {
         }
       }
 
+      if (options.signal?.aborted) return cancelBeforeSubmission();
+      submitted = true;
       if (isMentionSend) {
         const attachments = options.attachments?.length ? options.attachments : undefined;
         const results = await Promise.allSettled(
-          mentionTargets.map((sk) => sendTracked(sk, gatewayContent, attachments)),
+          mentionTargets.map((sk) => sendTracked(sk, gatewayContent, attachments, { userContent: options.content })),
         );
         acceptedMentionTargets = mentionTargets.filter((_, index) => {
           const result = results[index];
@@ -494,7 +527,7 @@ export function createChatComposer(deps: ChatComposerDeps) {
         }
         if (failures.length > 0) partialFailure = failures.join('; ');
 
-        if (room && !mentionTargets.includes(room.conductorSessionKey)) {
+        if (room && !mentionTargets.includes(room.conductorSessionKey) && !options.signal?.aborted) {
           // 名字走目录优先（见 `resolveMentionNames`）。
           // ⚠️ 这里**不再**有 `?? 'performers'` 那个兜底词：走到这一句时 `mentions` 一定非空
           //    （`mentionAll` 那一支会把 conductor 自己也算进目标 ⇒ 上面的守卫已经返回），
@@ -510,6 +543,7 @@ export function createChatComposer(deps: ChatComposerDeps) {
           task.sessionKey,
           gatewayContent,
           options.attachments?.length ? options.attachments : undefined,
+          { userContent: options.content },
         );
         if (result && !result.ok) {
           rollbackPendingUserMessage();
@@ -524,6 +558,18 @@ export function createChatComposer(deps: ChatComposerDeps) {
             task.sessionKey,
           );
           return { ok: false, taskId: task.id };
+        }
+        const receipt = result?.ok ? result.result : undefined;
+        if (
+          receipt !== null &&
+          typeof receipt === 'object' &&
+          'sessionKey' in receipt &&
+          receipt.sessionKey === task.sessionKey &&
+          'runId' in receipt &&
+          typeof receipt.runId === 'string' &&
+          receipt.runId.trim().length > 0
+        ) {
+          dispatch = { sessionKey: receipt.sessionKey, runId: receipt.runId };
         }
       }
 
@@ -568,6 +614,7 @@ export function createChatComposer(deps: ChatComposerDeps) {
         ...(dispatch ? { dispatch } : {}),
       };
     } catch (err) {
+      if (!submitted && options.signal?.aborted) return cancelBeforeSubmission();
       rollbackPendingUserMessage();
       for (const sessionKey of processingSessionKeys) {
         if (pendingSendOwners.get(sessionKey) === sendOwner) store.setProcessing(sessionKey, false);
@@ -626,7 +673,7 @@ export function createChatComposer(deps: ChatComposerDeps) {
     store.clearActiveTurn(sessionKey);
   }
 
-  async function abort(taskId: string): Promise<void> {
+  async function abort(taskId: string): Promise<IpcResult | undefined> {
     const task = deps.getTaskStore().tasks.find((t) => t.id === taskId);
     if (!task) return;
 
@@ -636,14 +683,14 @@ export function createChatComposer(deps: ChatComposerDeps) {
     if (!task.ensemble || !deps.getRoomState || !deps.setRoomStatus) {
       const res = await deps.gateway.abortChat(task.gatewayId, task.sessionKey);
       if (abortedNothing(res)) settleLocalStop(task.sessionKey);
-      return;
+      return res;
     }
 
     const room = deps.getRoomState(taskId);
     if (!room || room.status !== 'active') {
       const res = await deps.gateway.abortChat(task.gatewayId, task.sessionKey);
       if (abortedNothing(res)) settleLocalStop(task.sessionKey);
-      return;
+      return res;
     }
 
     deps.setRoomStatus(taskId, 'stopping');

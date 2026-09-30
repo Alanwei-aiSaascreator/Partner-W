@@ -101,6 +101,7 @@ export interface GatewayTransportPort {
     sessionKey: string,
     content: string,
     attachments?: ChatAttachment[],
+    dispatchContext?: { userContent: string },
   ) => Promise<IpcResult>;
   chatHistory: (gatewayId: string, sessionKey: string, limit?: number) => Promise<IpcResult>;
   abortChat: (gatewayId: string, sessionKey: string) => Promise<IpcResult>;

@@ -71,6 +71,7 @@ function setup(
       _sessionKey: string,
       _content: string,
       _attachments?: ChatAttachment[],
+      _dispatchContext?: { userContent: string },
     ): Promise<IpcResult> => ({ ok: true }),
   );
   const removeMessage = vi.fn();
@@ -182,6 +183,8 @@ function setup(
 
   return {
     composer,
+    deps,
+    task,
     addMessage,
     systemOptions,
     sendMessage,
@@ -203,6 +206,213 @@ function setup(
 describe('chat-composer', () => {
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it('returns the accepted dispatch receipt for the sent session', async () => {
+    const h = setup();
+    const receipt = { sessionKey: SESSION_KEY, runId: 'gateway-run-42' };
+    h.sendMessage.mockResolvedValueOnce({ ok: true, result: receipt });
+    expect(await h.composer.send(TASK_ID, { content: 'hello' })).toEqual({
+      ok: true,
+      taskId: TASK_ID,
+      dispatch: receipt,
+    });
+    expect(h.persistMessage).toHaveBeenCalledTimes(1);
+    h.composer.dispose();
+  });
+
+  it('validates the receipt against the session actually submitted', async () => {
+    const h = setup();
+    h.sendMessage.mockImplementationOnce(async (_gatewayId, sessionKey) => {
+      h.task.sessionKey = buildSessionKey('replacement');
+      return { ok: true, result: { sessionKey, runId: 'gateway-run-42' } };
+    });
+    expect(await h.composer.send(TASK_ID, { content: 'hello' })).toMatchObject({
+      ok: true,
+      dispatch: { sessionKey: SESSION_KEY, runId: 'gateway-run-42' },
+    });
+    h.composer.dispose();
+  });
+
+  it.each(['rejected', 'failed'] as const)(
+    'does not report a %s patch as provider failure after cancellation',
+    async (kind) => {
+      const h = setup();
+      const controller = new AbortController();
+      h.patchSession.mockImplementationOnce(async () => {
+        controller.abort();
+        if (kind === 'rejected') throw new Error('patch failed');
+        return { ok: false, error: 'patch failed' };
+      });
+      expect(
+        await h.composer.send(TASK_ID, { content: 'hello', signal: controller.signal, presetModel: 'model' }),
+      ).toEqual({
+        ok: false,
+        taskId: TASK_ID,
+        aborted: true,
+      });
+      expect(h.sendMessage).not.toHaveBeenCalled();
+      expect(h.onError).not.toHaveBeenCalled();
+      expect(h.systemOptions()).toEqual([]);
+      expect(h.removeMessage).toHaveBeenCalledWith(TASK_ID, 'm1');
+      expect(h.processingBySession.size).toBe(0);
+      h.composer.dispose();
+    },
+  );
+
+  it.each([
+    undefined,
+    null,
+    'run-id',
+    {},
+    { runId: 'gateway-run-42' },
+    { sessionKey: SESSION_KEY, runId: '' },
+    { sessionKey: SESSION_KEY, runId: '  ' },
+    { sessionKey: SESSION_KEY, runId: 42 },
+    { sessionKey: buildSessionKey('other'), runId: 'gateway-run-42' },
+  ])('preserves ordinary success without trusting an invalid receipt: %j', async (result) => {
+    const h = setup();
+    h.sendMessage.mockResolvedValueOnce({ ok: true, result });
+    expect(await h.composer.send(TASK_ID, { content: 'hello' })).toEqual({ ok: true, taskId: TASK_ID });
+    expect(h.persistMessage).toHaveBeenCalledTimes(1);
+    h.composer.dispose();
+  });
+
+  it('does not submit or create pending state for an already aborted send', async () => {
+    const h = setup();
+    const controller = new AbortController();
+    controller.abort();
+    expect(await h.composer.send(TASK_ID, { content: 'hello', signal: controller.signal })).toEqual({
+      ok: false,
+      taskId: TASK_ID,
+      aborted: true,
+    });
+    expect(h.patchSession).not.toHaveBeenCalled();
+    expect(h.sendMessage).not.toHaveBeenCalled();
+    expect(h.addMessage).not.toHaveBeenCalled();
+    expect(h.onError).not.toHaveBeenCalled();
+    h.composer.dispose();
+  });
+
+  it.each(['presetModel', 'taskModel', 'thinking', 'permission'] as const)(
+    'cancels before submission when aborted while awaiting %s',
+    async (stage) => {
+      vi.useFakeTimers();
+      const h = setup({ computerAccess: { tier: 'full', applied: new Map() } });
+      const controller = new AbortController();
+      let releasePatch!: (result: IpcResult) => void;
+      h.patchSession.mockImplementation(async (_gatewayId, _sessionKey, patch) => {
+        const target =
+          stage === 'presetModel' || stage === 'taskModel'
+            ? 'model'
+            : stage === 'thinking'
+              ? 'thinkingLevel'
+              : 'permissionMode';
+        if (target in patch)
+          return new Promise<IpcResult>((resolve) => {
+            releasePatch = resolve;
+          });
+        return { ok: true };
+      });
+      const pending = h.composer.send(TASK_ID, {
+        content: 'hello',
+        signal: controller.signal,
+        presetModel: stage === 'presetModel' ? 'test-model' : undefined,
+        presetThinking: stage === 'thinking' ? 'high' : undefined,
+      });
+      await vi.waitFor(() => expect(releasePatch).toBeTypeOf('function'));
+      controller.abort();
+      releasePatch({ ok: true });
+      expect(await pending).toEqual({ ok: false, taskId: TASK_ID, aborted: true });
+      expect(h.sendMessage).not.toHaveBeenCalled();
+      expect(h.persistMessage).not.toHaveBeenCalled();
+      expect(h.removeMessage).toHaveBeenCalledWith(TASK_ID, 'm1');
+      expect(h.processingBySession.size).toBe(0);
+      expect(h.clearActiveTurn).toHaveBeenCalledWith(SESSION_KEY);
+      expect(h.onError).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(SEND_TIMEOUT_MS);
+      expect(h.systemOptions()).toEqual([]);
+      h.composer.dispose();
+    },
+  );
+
+  it('returns the accepted receipt even when aborted while awaiting submission', async () => {
+    const h = setup();
+    const controller = new AbortController();
+    const receipt = { sessionKey: SESSION_KEY, runId: 'gateway-run-42' };
+    h.sendMessage.mockImplementationOnce(async () => {
+      controller.abort();
+      return { ok: true, result: receipt };
+    });
+    expect(await h.composer.send(TASK_ID, { content: 'hello', signal: controller.signal })).toEqual({
+      ok: true,
+      taskId: TASK_ID,
+      dispatch: receipt,
+    });
+    expect(h.removeMessage).not.toHaveBeenCalled();
+    expect(h.persistMessage).toHaveBeenCalledTimes(1);
+    h.composer.dispose();
+  });
+
+  it.each([
+    { name: 'same task and session', nextTaskId: TASK_ID, nextSessionKey: SESSION_KEY },
+    { name: 'same task with a replaced session', nextTaskId: TASK_ID, nextSessionKey: buildSessionKey('replacement') },
+    { name: 'different task and session', nextTaskId: 'next-task', nextSessionKey: buildSessionKey('next-task') },
+  ])('an older cancellation preserves the accepted send for $name', async ({ nextTaskId, nextSessionKey }) => {
+    vi.useFakeTimers();
+    const h = setup();
+    const controller = new AbortController();
+    const pendingMessages = new Map<string, Message>();
+    let nextMessageId = 0;
+    h.addMessage.mockImplementation((taskId, role, content) => {
+      const message: Message = {
+        id: `message-${++nextMessageId}`,
+        taskId,
+        role,
+        content,
+        artifacts: [],
+        toolCalls: [],
+        timestamp: '',
+      };
+      pendingMessages.set(message.id, message);
+      return message;
+    });
+    h.removeMessage.mockImplementation((_taskId, messageId) => pendingMessages.delete(messageId));
+    let releaseOldPatch!: (result: IpcResult) => void;
+    h.patchSession.mockImplementationOnce(
+      () =>
+        new Promise<IpcResult>((resolve) => {
+          releaseOldPatch = resolve;
+        }),
+    );
+    const oldSend = h.composer.send(TASK_ID, { content: 'old request', signal: controller.signal });
+    expect(releaseOldPatch).toBeTypeOf('function');
+    controller.abort();
+    h.task.id = nextTaskId;
+    h.task.sessionKey = nextSessionKey;
+    const receipt = { sessionKey: nextSessionKey, runId: 'new-run' };
+    h.sendMessage.mockResolvedValueOnce({ ok: true, result: receipt });
+    expect(await h.composer.send(nextTaskId, { content: 'new request' })).toEqual({
+      ok: true,
+      taskId: nextTaskId,
+      dispatch: receipt,
+    });
+    releaseOldPatch({ ok: true });
+    expect(await oldSend).toEqual({ ok: false, taskId: TASK_ID, aborted: true });
+    expect(h.sendMessage).toHaveBeenCalledTimes(1);
+    expect(h.processingBySession).toEqual(new Set([nextSessionKey]));
+    expect(h.clearActiveTurn).not.toHaveBeenCalledWith(nextSessionKey);
+    if (nextSessionKey !== SESSION_KEY) expect(h.clearActiveTurn).toHaveBeenCalledWith(SESSION_KEY);
+    expect(h.removeMessage.mock.calls).toEqual([[TASK_ID, 'message-1']]);
+    expect([...pendingMessages.values()].map((message) => message.content)).toEqual(['new request']);
+    expect(h.persistMessage).toHaveBeenCalledTimes(1);
+    expect(h.persistMessage).toHaveBeenCalledWith(expect.objectContaining({ id: 'message-2', taskId: nextTaskId }));
+    expect(h.onError).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(1);
+    await vi.advanceTimersByTimeAsync(SEND_TIMEOUT_MS);
+    expect(h.systemOptions()).toEqual([{ sessionKey: nextSessionKey }]);
+    expect(h.processingBySession.size).toBe(0);
+    h.composer.dispose();
   });
 
   it('attaches task.sessionKey to system messages from emitError, send-timeout, reset（compact 已改走统一出口）', async () => {
@@ -274,9 +484,13 @@ describe('chat-composer', () => {
     });
 
     expect(result.ok).toBe(true);
-    expect(sendMessage).toHaveBeenCalledWith('gw-1', SESSION_KEY, 'first ensemble message', [
-      { fileName: 'brief.pdf', mimeType: 'application/pdf', content: 'cGRm' },
-    ]);
+    expect(sendMessage).toHaveBeenCalledWith(
+      'gw-1',
+      SESSION_KEY,
+      'first ensemble message',
+      [{ fileName: 'brief.pdf', mimeType: 'application/pdf', content: 'cGRm' }],
+      { userContent: 'first ensemble message' },
+    );
     expect(addMessage).toHaveBeenCalledWith(TASK_ID, 'user', 'first ensemble message', attachments, { persist: false });
     expect(addMessage.mock.invocationCallOrder[0]).toBeLessThan(sendMessage.mock.invocationCallOrder[0]);
     expect(persistMessage).toHaveBeenCalledTimes(1);
@@ -320,7 +534,9 @@ describe('chat-composer', () => {
 
     expect(result.ok).toBe(true);
     expect(sendMessage).toHaveBeenCalledTimes(1);
-    expect(sendMessage).toHaveBeenCalledWith('gw-1', SESSION_KEY, 'team request', undefined);
+    expect(sendMessage).toHaveBeenCalledWith('gw-1', SESSION_KEY, 'team request', undefined, {
+      userContent: 'team request',
+    });
     expect([...processingBySession]).toEqual([SESSION_KEY]);
   });
 
@@ -647,7 +863,9 @@ describe('chat-composer —— 告诉 conductor「用户 @ 了谁」要用名字
     expect(res.ok).toBe(true);
     expect(conductorNotes(h.sendMessage)).toEqual(['[User directed message to 爆款内容教练: "看看这个"]']);
     // 载荷一个字节都不许动：worker 收到的仍然是用户原话，目标仍然是它的 sessionKey。
-    expect(h.sendMessage).toHaveBeenCalledWith('gw-1', `${SESSION_KEY}:worker`, '看看这个', undefined);
+    expect(h.sendMessage).toHaveBeenCalledWith('gw-1', `${SESSION_KEY}:worker`, '看看这个', undefined, {
+      userContent: '看看这个',
+    });
   });
 
   it('⭐ 目录里查不到（目录没拉到 / agent 被删）⇒ 退回房间快照里的名字', async () => {
@@ -681,7 +899,9 @@ describe('chat-composer —— 告诉 conductor「用户 @ 了谁」要用名字
     const res = await h.composer.send(TASK_ID, { content: '看看这个', mentions: ['worker'] });
 
     expect(res.ok).toBe(true);
-    expect(h.sendMessage).toHaveBeenCalledWith('gw-1', `${SESSION_KEY}:worker`, '看看这个', undefined);
+    expect(h.sendMessage).toHaveBeenCalledWith('gw-1', `${SESSION_KEY}:worker`, '看看这个', undefined, {
+      userContent: '看看这个',
+    });
     expect(conductorNotes(h.sendMessage)).toEqual(['[User directed message to Worker: "看看这个"]']);
     expect(h.onError).not.toHaveBeenCalled();
     // 吞掉但**不静默**：留一条 warn，免得以后有人以为是"目录里就没名字"。
@@ -853,7 +1073,7 @@ describe('停止按钮：没东西可中止时客户端自己收尾', () => {
     processingBySession.add(SESSION_KEY);
     abortChat.mockResolvedValueOnce({ ok: true, result: { aborted: false, runIds: [] } });
 
-    await composer.abort(TASK_ID);
+    expect(await composer.abort(TASK_ID)).toEqual({ ok: true, result: { aborted: false, runIds: [] } });
 
     expect(setProcessing).toHaveBeenCalledWith(SESSION_KEY, false);
     expect(clearActiveTurn).toHaveBeenCalledWith(SESSION_KEY);
@@ -864,7 +1084,7 @@ describe('停止按钮：没东西可中止时客户端自己收尾', () => {
     const { composer, abortChat, setProcessing, clearActiveTurn } = setup();
     abortChat.mockResolvedValueOnce({ ok: true, result: { aborted: true, runIds: ['r1'] } });
 
-    await composer.abort(TASK_ID);
+    expect(await composer.abort(TASK_ID)).toEqual({ ok: true, result: { aborted: true, runIds: ['r1'] } });
 
     expect(setProcessing).not.toHaveBeenCalledWith(SESSION_KEY, false);
     expect(clearActiveTurn).not.toHaveBeenCalled();
@@ -874,7 +1094,7 @@ describe('停止按钮：没东西可中止时客户端自己收尾', () => {
     const { composer, abortChat, setProcessing, clearActiveTurn } = setup();
     abortChat.mockResolvedValueOnce({ ok: true, result: { somethingElse: 1 } });
 
-    await composer.abort(TASK_ID);
+    expect(await composer.abort(TASK_ID)).toEqual({ ok: true, result: { somethingElse: 1 } });
 
     expect(setProcessing).not.toHaveBeenCalledWith(SESSION_KEY, false);
     expect(clearActiveTurn).not.toHaveBeenCalled();
@@ -884,9 +1104,31 @@ describe('停止按钮：没东西可中止时客户端自己收尾', () => {
     const { composer, abortChat, clearActiveTurn } = setup();
     abortChat.mockResolvedValueOnce({ ok: false, error: 'boom' });
 
-    await composer.abort(TASK_ID);
+    expect(await composer.abort(TASK_ID)).toEqual({ ok: false, error: 'boom' });
 
     expect(clearActiveTurn).not.toHaveBeenCalled();
+  });
+
+  it('returns the upstream receipt when an inactive room falls back to its ordinary session', async () => {
+    const h = setup({ ensemble: true });
+    h.deps.setRoomStatus = vi.fn();
+    h.deps.getRoomState = () => undefined;
+    const receipt = { ok: true, result: { aborted: true, runIds: ['run-1'] } };
+    h.abortChat.mockResolvedValueOnce(receipt);
+    expect(await h.composer.abort(TASK_ID)).toBe(receipt);
+    expect(h.abortChat).toHaveBeenCalledExactlyOnceWith('gw-1', SESSION_KEY);
+    expect(h.deps.markAbortedByUser).toHaveBeenCalledExactlyOnceWith(TASK_ID);
+  });
+
+  it('does not invent one confirmed receipt for a room with mixed abort outcomes', async () => {
+    const h = setup({ ensemble: true });
+    h.deps.setRoomStatus = vi.fn();
+    h.abortChat.mockResolvedValueOnce({ ok: true, result: { aborted: true, runIds: ['run-1'] } });
+    h.abortChat.mockResolvedValueOnce({ ok: false, error: 'offline' });
+    expect(await h.composer.abort(TASK_ID)).toBeUndefined();
+    expect(h.abortChat).toHaveBeenCalledTimes(2);
+    expect(h.deps.setRoomStatus).toHaveBeenCalledWith(TASK_ID, 'stopping');
+    expect(h.deps.setRoomStatus).toHaveBeenCalledWith(TASK_ID, 'stopped');
   });
 });
 
@@ -909,6 +1151,9 @@ describe('首轮产物索引：只进网关，不进气泡', () => {
     const sent = sendMessage.mock.calls[0]?.[2] as string;
     expect(sent, '模型必须看得见索引').toContain('<artifacts-index>');
     expect(sent, '用户那句话也得在').toContain('你好');
+    expect(sendMessage.mock.calls[0]?.[4], '交付判断只能收到用户原话，不能用索引或旧失败诊断').toEqual({
+      userContent: '你好',
+    });
 
     const userAdd = addMessage.mock.calls.find((c) => c[1] === 'user');
     expect(userAdd?.[2], 'store 里不许有索引').toBe('你好');
