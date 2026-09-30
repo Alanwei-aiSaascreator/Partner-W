@@ -32,12 +32,13 @@ import { execFileSync, spawn as nodeSpawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import type { ChildProcess } from 'node:child_process';
 import WebSocket from 'ws';
-import { delimiter, dirname } from 'node:path';
+import { delimiter, dirname, join } from 'node:path';
 import { getDebugLogger } from '../debug/index.js';
 import { attachGatewayOutputStreams, gatewayOutputDigest } from './gateway-output.js';
 import { BOOTSTRAP_PROCESS_EXITED, BOOTSTRAP_READY_TIMEOUT } from './bootstrap-retry.js';
 import { inheritWindowsSystemProxy } from './gateway-proxy.js';
 import { resolveBundledNativeTools } from './native-tools.js';
+import { ensureBundledWorkflowTools } from './workflow-tools.js';
 
 /** 端口被**别人**的网关占着（或占着的那个不可信）。 */
 export const GATEWAY_PORT_OCCUPIED = 'runtime.gateway-port-occupied';
@@ -580,7 +581,13 @@ export function buildGatewayEnvironment(
   for (const [key, value] of Object.entries(baseEnv)) {
     if (value === undefined) continue;
     const upper = key.toUpperCase();
-    if (upper.startsWith('OPENCLAW_') || upper === 'NODE_OPTIONS' || upper === 'NODE_PATH') continue;
+    if (
+      upper.startsWith('OPENCLAW_') ||
+      upper === 'LOBSTER_STATE_DIR' ||
+      upper === 'NODE_OPTIONS' ||
+      upper === 'NODE_PATH'
+    )
+      continue;
     if (triggersExternalPluginInstall(upper)) continue;
     env[key] = value;
   }
@@ -599,6 +606,7 @@ export function buildGatewayEnvironment(
     childEnv.PATH = [dirname(nodeExe), nativeTools, inheritedPath].filter(Boolean).join(delimiter);
   }
   childEnv.OPENCLAW_STATE_DIR = stateDir;
+  childEnv.LOBSTER_STATE_DIR = join(stateDir, 'lobster');
   childEnv.OPENCLAW_SUPERVISOR_MODE = 'external';
   return childEnv;
 }
@@ -659,6 +667,7 @@ export async function ensureGatewayRunning(opts: EnsureGatewayRunningOptions): P
   }
 
   const args = buildGatewayArgs({ cliPath: opts.cliPath, port });
+  ensureBundledWorkflowTools(opts.deployedRoot, opts.stateDir);
   const env = buildGatewayEnvironment(process.env, opts.stateDir, opts.nodeExe, opts.deployedRoot);
 
   const child = spawn({ nodeExe: opts.nodeExe, args, cwd: opts.deployedRoot, env, secrets: [token] });
