@@ -27,6 +27,8 @@ import { sendToWindow } from '../ws/window-utils.js';
 import { getMainWindow } from '../window-manager.js';
 import { getDebugLogger } from '../debug/index.js';
 import { LOCAL_GATEWAY_ID } from '../runtime/state-config.js';
+import { getActiveLocalGatewayDeploymentRoot } from '../runtime/index.js';
+import { hasBundledSearchProvider } from '../runtime/bundled-search.js';
 import { buildCommercialAccessCleanupDeps, drainPendingCommercialAccessCleanup } from './relay-cleanup.js';
 
 /**
@@ -41,6 +43,7 @@ export function findConnectedGateway(): RelayGatewayHandle | null {
   const picked = preferred?.isConnected ? preferred : Array.from(clients.values()).find((gw) => gw.isConnected);
   if (!picked) return null;
   return {
+    bundledWebSearchAvailable: picked === preferred && hasBundledSearchProvider(getActiveLocalGatewayDeploymentRoot()),
     getConfig: () => picked.getConfig(),
     patchConfig: (params) => picked.patchConfig(params),
     runConfigMutation: (work) =>

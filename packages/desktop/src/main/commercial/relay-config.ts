@@ -174,6 +174,7 @@ export interface RelayPatchInput {
    *    默认改关等于升级一次就静默拿走一个能力。
    */
   webSearch?: boolean;
+  bundledWebSearchAvailable?: boolean;
   /**
    * 图片能力是否接线。**缺省 = 关**（见 `IMAGE_GENERATION_WIRED`）。
    *
@@ -189,6 +190,16 @@ export type RelayConfigPatch = Record<string, unknown>;
 
 function configOf(snapshot: unknown): Record<string, unknown> | undefined {
   return (snapshot as { config?: Record<string, unknown> } | null)?.config;
+}
+
+function isPluginExplicitlyDisabled(config: Record<string, unknown> | undefined, pluginId: string): boolean {
+  const plugins = config?.plugins as
+    | { enabled?: unknown; deny?: unknown; entries?: Record<string, { enabled?: unknown }> }
+    | undefined;
+  if (plugins?.enabled === false) return true;
+  const matches = (id: unknown): boolean => typeof id === 'string' && id.trim().toLowerCase() === pluginId;
+  if (Array.isArray(plugins?.deny) && plugins.deny.some(matches)) return true;
+  return Object.entries(plugins?.entries ?? {}).some(([id, entry]) => matches(id) && entry?.enabled === false);
 }
 
 /**
@@ -323,6 +334,24 @@ export function buildRelayPatch(input: RelayPatchInput): RelayConfigPatch | null
   }
 
   const patch: RelayConfigPatch = { models: { providers } };
+  const search = (config?.tools as { web?: { search?: Record<string, unknown> } } | undefined)?.web?.search;
+  const searchOwned = search?.provider === 'duckduckgo';
+  const userSearchConfigured =
+    !searchOwned &&
+    search !== undefined &&
+    (search.enabled === false ||
+      Object.keys(search).some((key) => !['enabled', 'maxResults', 'timeoutSeconds', 'cacheTtlMinutes'].includes(key)));
+  const searchWired =
+    input.bundledWebSearchAvailable === true &&
+    !userSearchConfigured &&
+    !isPluginExplicitlyDisabled(config, 'duckduckgo');
+  const enableBundledSearch = searchWired && input.webSearch !== false;
+  if (enableBundledSearch) {
+    patch.tools = { web: { search: { enabled: true, provider: 'duckduckgo' } } };
+    patch.plugins = { entries: { duckduckgo: { enabled: true } } };
+  } else if (searchWired && searchOwned && input.webSearch === false) {
+    patch.tools = { web: { search: { enabled: false } } };
+  }
 
   // `plugins.allow`：官方文档说「若配置里设了它，必须把 clawrouter 加进名单」。
   // ⚠️ **只在它本来就存在时补名** —— 凭空创建一份 allow 名单会把其他插件
@@ -330,7 +359,10 @@ export function buildRelayPatch(input: RelayPatchInput): RelayConfigPatch | null
   const allow = (config?.plugins as { allow?: unknown } | undefined)?.allow;
   if (Array.isArray(allow)) {
     const names = allow.filter((x): x is string => typeof x === 'string');
-    patch.plugins = { allow: [...new Set([...names, RELAY_PROVIDER_ID])] };
+    patch.plugins = {
+      ...(patch.plugins as Record<string, unknown> | undefined),
+      allow: [...new Set([...names, RELAY_PROVIDER_ID, ...(enableBundledSearch ? ['duckduckgo'] : [])])],
+    };
   }
 
   // 默认模型：**只在该字段未设置时写**。
@@ -754,6 +786,20 @@ function mediaPatchApplied(snapshot: unknown, patch: RelayConfigPatch): boolean 
   );
 }
 
+function searchPatchApplied(snapshot: unknown, patch: RelayConfigPatch): boolean {
+  const expected = (patch.tools as { web?: { search?: Record<string, unknown> } } | undefined)?.web?.search;
+  if (!expected) return true;
+  const config = configOf(snapshot);
+  const actual = (config?.tools as { web?: { search?: Record<string, unknown> } } | undefined)?.web?.search;
+  if (!Object.entries(expected).every(([key, value]) => actual?.[key] === value)) return false;
+  if (expected.enabled !== true) return true;
+  const plugins = config?.plugins as { entries?: Record<string, { enabled?: unknown }>; allow?: string[] } | undefined;
+  return (
+    plugins?.entries?.duckduckgo?.enabled === true &&
+    (!Array.isArray(plugins.allow) || plugins.allow.includes('duckduckgo'))
+  );
+}
+
 /**
  * 把中转配置写进网关，并**回读校验**。
  *
@@ -767,7 +813,12 @@ function mediaPatchApplied(snapshot: unknown, patch: RelayConfigPatch): boolean 
  */
 export async function applyRelayConfig(
   deps: ApplyRelayConfigDeps,
-  input: { relayKey: string | null | undefined; deviceFingerprint: string; webSearch?: boolean },
+  input: {
+    relayKey: string | null | undefined;
+    deviceFingerprint: string;
+    webSearch?: boolean;
+    bundledWebSearchAvailable?: boolean;
+  },
 ): Promise<ApplyRelayResult> {
   const warnings: string[] = [];
   const log = deps.log ?? ((): void => {});
@@ -851,7 +902,10 @@ export async function applyRelayConfig(
     let verified = false;
     try {
       const appliedSnapshot = await deps.getConfig();
-      verified = providerApplied(appliedSnapshot) && mediaPatchApplied(appliedSnapshot, patch);
+      verified =
+        providerApplied(appliedSnapshot) &&
+        mediaPatchApplied(appliedSnapshot, patch) &&
+        searchPatchApplied(appliedSnapshot, patch);
     } catch (error) {
       log('relay.config-verify-read-failed', { attempt, message: messageOf(error) });
     }

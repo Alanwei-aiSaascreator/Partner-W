@@ -146,6 +146,7 @@ export interface RelayBootstrapResult {
 }
 
 export interface RelayGatewayHandle {
+  bundledWebSearchAvailable?: boolean;
   getConfig: () => Promise<unknown>;
   patchConfig: (params: { baseHash: string; raw: string; replacePaths?: string[] }) => Promise<unknown>;
   /** 把 relay 的 get→patch→verify 作为一笔事务排进该网关的配置写队列。 */
@@ -376,7 +377,12 @@ export async function ensureRelayConfigured(deps: RelayBootstrapDeps): Promise<R
         resolveMediaCapabilities: deps.resolveMediaCapabilities,
         log: (event, data) => log(event, data),
       },
-      { relayKey, deviceFingerprint: deps.deviceFingerprint(), webSearch: deps.webSearchEnabled?.() ?? true },
+      {
+        relayKey,
+        deviceFingerprint: deps.deviceFingerprint(),
+        webSearch: deps.webSearchEnabled?.() ?? true,
+        bundledWebSearchAvailable: gateway.bundledWebSearchAvailable === true,
+      },
     );
   const result = await gateway.runConfigMutation(apply);
 

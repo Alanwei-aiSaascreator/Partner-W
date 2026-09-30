@@ -18,6 +18,8 @@ vi.mock('../src/main/commercial/client.js', () => ({ getCommercialClient: getCom
 vi.mock('../src/main/debug/index.js', () => ({
   getDebugLogger: () => ({ info: vi.fn(), warn: vi.fn() }),
 }));
+vi.mock('../src/main/runtime/index.js', () => ({ getActiveLocalGatewayDeploymentRoot: () => 'search-test-runtime' }));
+vi.mock('../src/main/runtime/bundled-search.js', () => ({ hasBundledSearchProvider: () => true }));
 
 const INPUT = { relayKey: 'test-relay-key', deviceFingerprint: 'test-device' };
 const SEARCH_REFS = ['clawrouter/qwen-turbo', 'clawrouter/qwen-plus'];
@@ -146,47 +148,87 @@ describe('relay search preference merge patches', () => {
     const { config } = await gateway.getConfig();
     for (const ref of SEARCH_REFS) expect(config).not.toHaveProperty(searchPath(ref));
   });
+
+  it.each([
+    [true, true],
+    [true, false],
+    [false, true],
+  ] as const)(
+    'forwards selected gateway availability %s and saved preference %s during startup',
+    async (available, webSearch) => {
+      const gateway = { ...makeGateway(), bundledWebSearchAvailable: available };
+      const result = await ensureRelayConfigured({
+        hasCommercialClient: () => true,
+        checkAuth: async () => 'authenticated',
+        readLicenseKey: async () => 'test-license',
+        fetchRelayKey: async () => ({ ok: true, relayKey: INPUT.relayKey }),
+        getGateway: () => gateway,
+        deviceFingerprint: () => INPUT.deviceFingerprint,
+        webSearchEnabled: () => webSearch,
+        resolveMediaCapabilities: async () => ({ image: false, video: false }),
+      });
+      expect(result.status).toBe('applied');
+      const { config } = await gateway.getConfig();
+      if (available && webSearch) expect(config).toHaveProperty(['tools', 'web', 'search', 'provider'], 'duckduckgo');
+      else expect(config).not.toHaveProperty(['tools', 'web', 'search']);
+    },
+  );
 });
 
 describe('license activation search preference', () => {
-  it.each([false, true, undefined])('honors the saved preference %s during activation', async (webSearch) => {
-    const gateway = makeGateway();
-    await applyRelayConfig(gateway, INPUT);
-    getAllGatewayClientsMock.mockReturnValue(new Map([['test-gateway', gateway]]));
-    readConfigMock.mockReturnValue({ webSearch, commercial: { licenseKey: 'test-license' } });
-    getCommercialClientMock.mockReturnValue({
-      auth: { getUser: async () => ({ data: { user: { id: 'test-user' } }, error: null }) },
-      rpc: async () => ({ data: { relayKey: INPUT.relayKey }, error: null }),
-      from: (table: string) => {
-        if (table === 'org_members') return tableResult([{ org_id: 'test-org' }]);
-        if (table === 'licenses') {
-          return tableResult({
-            id: 'test-license-id',
-            org_id: 'test-org',
-            license_key: 'test-license',
-            sku: 'test-sku',
-            status: 'active',
-            expires_at: null,
-            max_activations: 1,
-            token_quota_micros: 0,
-            token_used_micros: 0,
-          });
-        }
-        throw new Error(`Unexpected table: ${table}`);
-      },
-    });
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => ({ ok: false, status: 503 })),
-    );
+  it.each([
+    ['test-gateway', false],
+    ['test-gateway', true],
+    ['test-gateway', undefined],
+    ['local-runtime', false],
+    ['local-runtime', true],
+    ['local-runtime', undefined],
+  ] as const)(
+    'honors the selected gateway %s and saved preference %s during activation',
+    async (gatewayId, webSearch) => {
+      const gateway = makeGateway();
+      await applyRelayConfig(gateway, INPUT);
+      getAllGatewayClientsMock.mockReturnValue(new Map([[gatewayId, gateway]]));
+      readConfigMock.mockReturnValue({ webSearch, commercial: { licenseKey: 'test-license' } });
+      getCommercialClientMock.mockReturnValue({
+        auth: { getUser: async () => ({ data: { user: { id: 'test-user' } }, error: null }) },
+        rpc: async () => ({ data: { relayKey: INPUT.relayKey }, error: null }),
+        from: (table: string) => {
+          if (table === 'org_members') return tableResult([{ org_id: 'test-org' }]);
+          if (table === 'licenses') {
+            return tableResult({
+              id: 'test-license-id',
+              org_id: 'test-org',
+              license_key: 'test-license',
+              sku: 'test-sku',
+              status: 'active',
+              expires_at: null,
+              max_activations: 1,
+              token_quota_micros: 0,
+              token_used_micros: 0,
+            });
+          }
+          throw new Error(`Unexpected table: ${table}`);
+        },
+      });
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => ({ ok: false, status: 503 })),
+      );
 
-    const { activateLicense } = await import('../src/main/commercial/license.js');
-    const result = await activateLicense('test-license');
-    expect(result).toMatchObject({ ok: true, result: { activated: true, relayConfigured: true } });
-    const { config } = await gateway.getConfig();
-    for (const ref of SEARCH_REFS) {
-      if (webSearch === false) expect(config).not.toHaveProperty(searchPath(ref));
-      else expect(config).toHaveProperty(searchPath(ref), true);
-    }
-  });
+      const { activateLicense } = await import('../src/main/commercial/license.js');
+      const result = await activateLicense('test-license');
+      expect(result).toMatchObject({ ok: true, result: { activated: true, relayConfigured: true } });
+      const { config } = await gateway.getConfig();
+      for (const ref of SEARCH_REFS) {
+        if (webSearch === false) expect(config).not.toHaveProperty(searchPath(ref));
+        else expect(config).toHaveProperty(searchPath(ref), true);
+      }
+      if (gatewayId === 'local-runtime' && webSearch !== false) {
+        expect(config).toHaveProperty(['tools', 'web', 'search', 'provider'], 'duckduckgo');
+      } else {
+        expect(config).not.toHaveProperty(['tools', 'web', 'search']);
+      }
+    },
+  );
 });

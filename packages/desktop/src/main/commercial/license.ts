@@ -7,6 +7,9 @@ import { getAllGatewayClients } from '../ws/index.js';
 import { getDebugLogger } from '../debug/index.js';
 import { applyRelayConfig, fetchFirstRelayModel, fetchRelayMediaCapabilities } from './relay-config.js';
 import { COMMERCIAL_REQUEST_TIMEOUT_MS } from './request-timeout.js';
+import { LOCAL_GATEWAY_ID } from '../runtime/state-config.js';
+import { getActiveLocalGatewayDeploymentRoot } from '../runtime/index.js';
+import { hasBundledSearchProvider } from '../runtime/bundled-search.js';
 
 export interface LicenseStatus {
   configured: boolean;
@@ -504,11 +507,12 @@ async function configureRelay(relayKey: string | null): Promise<boolean> {
   }
 
   // 挑一个连上的网关写。多网关时写第一个 —— 与用量上报挑网关的口径一致。
-  const gateway = Array.from(getAllGatewayClients().values()).find((gw) => gw.isConnected);
-  if (!gateway) {
+  const selected = Array.from(getAllGatewayClients().entries()).find(([, gw]) => gw.isConnected);
+  if (!selected) {
     getDebugLogger().warn({ domain: 'commercial', event: 'relay.config-no-gateway', data: {} });
     return false;
   }
+  const [gatewayId, gateway] = selected;
 
   const result = await gateway.runConfigMutation((tx) =>
     applyRelayConfig(
@@ -519,7 +523,13 @@ async function configureRelay(relayKey: string | null): Promise<boolean> {
         resolveMediaCapabilities: fetchRelayMediaCapabilities,
         log: (event, data) => getDebugLogger().info({ domain: 'commercial', event, data }),
       },
-      { relayKey, deviceFingerprint: deviceFingerprint(), webSearch: readConfig()?.webSearch },
+      {
+        relayKey,
+        deviceFingerprint: deviceFingerprint(),
+        webSearch: readConfig()?.webSearch,
+        bundledWebSearchAvailable:
+          gatewayId === LOCAL_GATEWAY_ID && hasBundledSearchProvider(getActiveLocalGatewayDeploymentRoot()),
+      },
     ),
   );
 
