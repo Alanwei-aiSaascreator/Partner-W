@@ -32,6 +32,7 @@ import { execFileSync, spawn as nodeSpawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import type { ChildProcess } from 'node:child_process';
 import WebSocket from 'ws';
+import { delimiter, dirname } from 'node:path';
 import { getDebugLogger } from '../debug/index.js';
 import { attachGatewayOutputStreams, gatewayOutputDigest } from './gateway-output.js';
 import { BOOTSTRAP_PROCESS_EXITED, BOOTSTRAP_READY_TIMEOUT } from './bootstrap-retry.js';
@@ -567,7 +568,11 @@ function triggersExternalPluginInstall(upperKey: string): boolean {
   );
 }
 
-export function buildGatewayEnvironment(baseEnv: NodeJS.ProcessEnv, stateDir: string): NodeJS.ProcessEnv {
+export function buildGatewayEnvironment(
+  baseEnv: NodeJS.ProcessEnv,
+  stateDir: string,
+  nodeExe?: string,
+): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
 
   for (const [key, value] of Object.entries(baseEnv)) {
@@ -579,6 +584,17 @@ export function buildGatewayEnvironment(baseEnv: NodeJS.ProcessEnv, stateDir: st
   }
 
   const childEnv = inheritWindowsSystemProxy(env);
+  if (nodeExe) {
+    const pathKeys = Object.keys(childEnv).filter((key) =>
+      process.platform === 'win32' ? key.toUpperCase() === 'PATH' : key === 'PATH',
+    );
+    const inheritedPath = pathKeys
+      .map((key) => childEnv[key])
+      .filter(Boolean)
+      .join(delimiter);
+    for (const key of pathKeys) delete childEnv[key];
+    childEnv.PATH = [dirname(nodeExe), inheritedPath].filter(Boolean).join(delimiter);
+  }
   childEnv.OPENCLAW_STATE_DIR = stateDir;
   childEnv.OPENCLAW_SUPERVISOR_MODE = 'external';
   return childEnv;
@@ -640,7 +656,7 @@ export async function ensureGatewayRunning(opts: EnsureGatewayRunningOptions): P
   }
 
   const args = buildGatewayArgs({ cliPath: opts.cliPath, port });
-  const env = buildGatewayEnvironment(process.env, opts.stateDir);
+  const env = buildGatewayEnvironment(process.env, opts.stateDir, opts.nodeExe);
 
   const child = spawn({ nodeExe: opts.nodeExe, args, cwd: opts.deployedRoot, env, secrets: [token] });
   await (
@@ -717,7 +733,7 @@ export async function stopGateway(opts: StopGatewayOptions): Promise<void> {
   try {
     runCommand(nodeExe, [cliPath, 'gateway', 'stop', '--force'], {
       cwd: deployedRoot,
-      env: buildGatewayEnvironment(process.env, stateDir),
+      env: buildGatewayEnvironment(process.env, stateDir, nodeExe),
       timeout: gracefulTimeoutMs,
     });
   } catch (err) {

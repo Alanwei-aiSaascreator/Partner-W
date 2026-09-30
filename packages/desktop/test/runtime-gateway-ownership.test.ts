@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
+import { delimiter, dirname } from 'node:path';
+import { execFileSync } from 'node:child_process';
 import {
   GATEWAY_PORT_OCCUPIED,
   buildGatewayEnvironment,
@@ -95,6 +97,29 @@ describe('buildGatewayArgs', () => {
 });
 
 describe('ensureGatewayRunning', () => {
+  it('executes Node tool subprocesses with an otherwise empty PATH', () => {
+    const env = buildGatewayEnvironment(
+      { SystemRoot: process.env.SystemRoot, PATH: '' },
+      'isolated-state',
+      process.execPath,
+    );
+    const output = execFileSync(
+      process.execPath,
+      [
+        '-e',
+        `process.stdout.write(require('node:child_process').execFileSync('node', ['-e', 'process.stdout.write("ready")'], {windowsHide:true}))`,
+      ],
+      { env, windowsHide: true, encoding: 'utf8' },
+    );
+    expect(output).toBe('ready');
+  });
+  it('exposes the bundled Node directory to registered exec tools without a system Node install', async () => {
+    const { opts, spawn } = baseOpts();
+    await ensureGatewayRunning(opts);
+    const env = spawn.mock.calls[0][0].env;
+    const pathKey = Object.keys(env).find((key) => key.toUpperCase() === 'PATH')!;
+    expect(env[pathKey]?.split(delimiter)[0]).toBe(dirname(opts.nodeExe));
+  });
   it('⭐ 网关子进程不继承宿主模型密钥，但保留运行必需的普通环境变量', () => {
     const env = buildGatewayEnvironment(
       {
