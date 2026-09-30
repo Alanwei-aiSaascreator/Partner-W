@@ -88,6 +88,8 @@ export type {
 
 export { createSessionSync } from './services/session-sync.js';
 export type { SessionSyncDeps } from './services/session-sync.js';
+export { observeChatRun } from './services/run-observer.js';
+export type { ChatRunTerminal } from './services/run-observer.js';
 
 export { buildAppError, formatErrorForUser, formatErrorForToast } from './services/error-classify.js';
 export {
