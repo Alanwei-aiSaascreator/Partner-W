@@ -105,6 +105,15 @@ export async function fillTemplateDeck(opts: FillTemplateDeckOptions): Promise<s
         target.modifyElement(tokenSpec.shape, [modify.setText(slide.data[token] ?? '')]);
       }
       if (pageShape) target.modifyElement(pageShape, [modify.setText(pageNumber)]);
+      if (spec.id === 'actions') {
+        for (let row = 1; row <= 4; row += 1) {
+          const empty = ['action', 'owner', 'due'].every((key) => !(slide.data[`${key}_${row}`] ?? '').trim());
+          if (empty) {
+            target.removeElement(`ACTION_${row}_NUMBER`);
+            target.removeElement(`ACTION_RULE_${row}`);
+          }
+        }
+      }
     });
   }
 
