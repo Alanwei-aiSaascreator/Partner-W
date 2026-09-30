@@ -83,6 +83,16 @@ async function setup(storeState: {
 const q = (id: string) => container.querySelector(`[data-testid="${id}"]`);
 
 describe('ComposerActivity —— 等待期别让用户以为它死了', () => {
+  it.each([
+    ['web_search', 'search'],
+    ['image_generate', 'generateImage'],
+    ['video_generate', 'generateVideo'],
+  ])('shows a readable activity for %s when the gateway omits its title', async (name, kind) => {
+    await setup({ toolCalls: [{ id: 'activity', name, status: 'running', startedAt: new Date(T0).toISOString() }] });
+    expect(q('composer-activity')?.textContent).toContain(`toolActivity.actions.${kind}`);
+    expect(q('composer-activity')?.textContent).not.toContain(`(${name})`);
+  });
+
   it('没在跑的时候整条不显示', async () => {
     await setup({ processing: false });
     expect(q('composer-activity')).toBeNull();
@@ -119,12 +129,12 @@ describe('ComposerActivity —— 等待期别让用户以为它死了', () => {
     expect(q('composer-activity')?.textContent).toContain('memory_search 游戏 爆款 创作 内容');
   });
 
-  it('拿不到工具标题时退回工具名（不能显示空白）', async () => {
+  it('keeps an unknown tool name visible when no activity title is available', async () => {
     await setup({
-      toolCalls: [{ id: 'call_1', name: 'ls', status: 'running', startedAt: new Date(T0).toISOString() }],
+      toolCalls: [{ id: 'call_1', name: 'unknown_tool', status: 'running', startedAt: new Date(T0).toISOString() }],
     });
 
-    expect(q('composer-activity')?.textContent).toContain('ls');
+    expect(q('composer-activity')?.textContent).toContain('unknown_tool');
   });
 
   it('还没开跑工具时显示网关报的准备阶段', async () => {

@@ -5,7 +5,8 @@ import { RETRY_RUN_PHASE, RUN_PHASE_IDS } from '@clawwork/core';
 import { useMessageStore } from '@/stores/messageStore';
 import { cn } from '@/lib/utils';
 import { formatElapsed, waitingLineSuffix } from '@/lib/waiting-copy';
-import { latestAwaitingApproval, latestRunningCall } from '@/lib/tool-activity';
+import { classifyToolActivity, latestAwaitingApproval, latestRunningCall } from '@/lib/tool-activity';
+import type { ToolCall } from '@clawwork/shared';
 
 /**
  * 输入框上方的**活动条** —— 一轮在跑的时候，把"它在干什么"和"等了多久"摆出来。
@@ -75,12 +76,18 @@ export default function ComposerActivity({ sessionKey, onCancel }: ComposerActiv
   // 主行要说的是"此刻在干什么"，优先级：**等人批准的工具** > 正在跑的工具 >
   // 网关报的准备阶段 > 写回答。
   let headline: string;
+  const activityLabel = (call: ToolCall): string => {
+    const title = call.title?.trim();
+    if (title) return title;
+    const kind = classifyToolActivity(call.name);
+    return kind === 'other' ? call.name : t(`toolActivity.actions.${kind}`);
+  };
   if (awaitingCall) {
     // ⚠️ **不复用 `runningTool`**："执行中：X" 说的是"在动"，而这条要说的是"没动，在等人"
     //    —— 复用就等于什么都没说（A2 的口径就是不让复用）。
-    headline = t('chatInput.waiting.awaitingApproval', { what: awaitingCall.title ?? awaitingCall.name });
+    headline = t('chatInput.waiting.awaitingApproval', { what: activityLabel(awaitingCall) });
   } else if (runningCall) {
-    headline = t('chatInput.waiting.runningTool', { what: runningCall.title ?? runningCall.name });
+    headline = t('chatInput.waiting.runningTool', { what: activityLabel(runningCall) });
   } else if (compacting) {
     // ⭐ 压缩是**此刻系统在做的事**（与"正在跑的工具"同类：都是事实），而且它正是
     //    "界面为什么停住"的答案 ⇒ 排在模型**自述**的进度前面

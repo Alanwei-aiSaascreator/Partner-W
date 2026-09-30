@@ -82,7 +82,7 @@ function ToolCallSummary({ toolCalls, settled = false }: { toolCalls: ToolCall[]
   // ⭐ "正在做什么"优先用网关拼好的 `title`（带参数摘要），拿不到才退回按工具名分类的泛化文案
   //（泛化文案是"查看文件"这种，说不出具体在看哪个文件）。
   const currentAction = currentCall
-    ? (currentCall.title ?? t(`toolActivity.actions.${classifyToolActivity(currentCall.name)}`))
+    ? currentCall.title?.trim() || t(`toolActivity.actions.${classifyToolActivity(currentCall.name)}`)
     : null;
   const summaryText =
     summary.errorCount > 0

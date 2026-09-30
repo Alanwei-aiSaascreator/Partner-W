@@ -1,4 +1,14 @@
 {
+  "mediaReadiness": {
+    "chatModelNote": "채팅에서 Seed를 선택해도 동영상 생성 모델은 선택되지 않습니다.",
+    "image": "이미지",
+    "video": "동영상",
+    "ready": "사용 가능",
+    "unavailable": "릴레이에서 사용 불가",
+    "unknown": "확인 전",
+    "probe-failed": "확인하지 못함",
+    "relayLabel": "릴레이 미디어"
+  },
   "account": {
     "activated": "인증됨",
     "device": "이 기기",
@@ -495,6 +505,8 @@
     "toolCallSummaryWithErrors": "{{count}}개 도구 호출 실행됨 ({{errorCount}}개 실패)"
   },
   "claimGuard": {
+    "mediaUnavailableBody": "{{names}}을(를) 읽거나 가져올 수 없습니다. 파일이 없거나 접근할 수 없거나 가져오기 한도인 25 MB를 초과했을 수 있습니다.",
+    "mediaUnavailableTitle": "생성된 미디어를 가져올 수 없습니다",
     "missingBody": "답변에 {{names}}이(가) 언급되었지만, 그 파일이 작업 공간에 없습니다.",
     "missingTitle": "약속한 파일이 없습니다"
   },
@@ -1190,6 +1202,7 @@
     "collapseNav": "사이드바 접기",
     "expandNav": "사이드바 펼치기",
     "identityCenter": "계정 센터",
+    "independentAssistants": "독립 어시스턴트",
     "myAssistants": "내 어시스턴트",
     "pages": {
       "agents": "에이전트 마켓",
@@ -1295,16 +1308,6 @@
     "unpublish": "Unpublish",
     "unpublishDone": "Unpublished",
     "views": "{{count}} views"
-  },
-  "mediaReadiness": {
-    "chatModelNote": "채팅에서 Seed를 선택해도 동영상 생성 모델은 선택되지 않습니다.",
-    "image": "이미지",
-    "probe-failed": "확인하지 못함",
-    "ready": "사용 가능",
-    "relayLabel": "릴레이 미디어",
-    "unavailable": "릴레이에서 사용 불가",
-    "unknown": "확인 전",
-    "video": "동영상"
   },
   "meeting": {
     "abort": {
@@ -2143,8 +2146,12 @@
   },
   "toolActivity": {
     "actions": {
+      "generateImage": "이미지 생성",
+      "generateVideo": "동영상 생성",
       "browseWeb": "Browse the web",
       "execute": "Run an operation",
+      "generateImage": "이미지 생성",
+      "generateVideo": "동영상 생성",
       "listDirectory": "View folders",
       "other": "Use a tool",
       "readFile": "Read files",

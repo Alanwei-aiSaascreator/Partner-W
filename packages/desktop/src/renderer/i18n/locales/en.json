@@ -1,4 +1,14 @@
 {
+  "mediaReadiness": {
+    "chatModelNote": "Choosing Seed for chat does not select the video-generation model.",
+    "image": "Image",
+    "video": "Video",
+    "ready": "Available",
+    "unavailable": "Unavailable in relay",
+    "unknown": "Not checked",
+    "probe-failed": "Could not confirm",
+    "relayLabel": "Relay media"
+  },
   "account": {
     "activated": "Activated",
     "device": "This device",
@@ -495,6 +505,8 @@
     "toolCallSummaryWithErrors": "{{count}} tool calls executed ({{errorCount}} failed)"
   },
   "claimGuard": {
+    "mediaUnavailableBody": "Could not read or import {{names}}. The file may be missing, inaccessible, or larger than the 25 MB import limit.",
+    "mediaUnavailableTitle": "Could not import generated media",
     "missingBody": "The reply mentions {{names}}, but no such files are in the workspace.",
     "missingTitle": "The promised file is not there"
   },
@@ -1190,6 +1202,7 @@
     "collapseNav": "Collapse sidebar",
     "expandNav": "Expand sidebar",
     "identityCenter": "Identity center",
+    "independentAssistants": "Independent assistants",
     "myAssistants": "My assistants",
     "pages": {
       "agents": "Agent market",
@@ -1295,16 +1308,6 @@
     "unpublish": "Unpublish",
     "unpublishDone": "Unpublished",
     "views": "{{count}} views"
-  },
-  "mediaReadiness": {
-    "chatModelNote": "Choosing Seed for chat does not select the video-generation model.",
-    "image": "Image",
-    "probe-failed": "Could not confirm",
-    "ready": "Available",
-    "relayLabel": "Relay media",
-    "unavailable": "Unavailable in relay",
-    "unknown": "Not checked",
-    "video": "Video"
   },
   "meeting": {
     "abort": {
@@ -2143,8 +2146,12 @@
   },
   "toolActivity": {
     "actions": {
+      "generateImage": "Generate an image",
+      "generateVideo": "Generate a video",
       "browseWeb": "Browse the web",
       "execute": "Run an operation",
+      "generateImage": "Generate an image",
+      "generateVideo": "Generate a video",
       "listDirectory": "View folders",
       "other": "Use a tool",
       "readFile": "Read files",

@@ -1,4 +1,14 @@
 {
+  "mediaReadiness": {
+    "chatModelNote": "聊天中選擇 Seed 不會選擇影片生成模型。",
+    "image": "圖片",
+    "video": "影片",
+    "ready": "可用",
+    "unavailable": "中轉暫不可用",
+    "unknown": "尚未檢查",
+    "probe-failed": "未能確認",
+    "relayLabel": "中轉媒體能力"
+  },
   "account": {
     "activated": "已授權",
     "device": "本機裝置",
@@ -495,6 +505,8 @@
     "toolCallSummaryWithErrors": "已執行 {{count}} 次工具呼叫（{{errorCount}} 次失敗）"
   },
   "claimGuard": {
+    "mediaUnavailableBody": "無法讀取或匯入 {{names}}。檔案可能已遺失、無法存取，或超過 25 MB 匯入上限。",
+    "mediaUnavailableTitle": "無法匯入生成的媒體",
     "missingBody": "回覆裡提到了 {{names}}，工作區裡沒有這些檔案。",
     "missingTitle": "說好的檔案不在"
   },
@@ -1190,6 +1202,7 @@
     "collapseNav": "收合側邊欄",
     "expandNav": "展開側邊欄",
     "identityCenter": "身分中心",
+    "independentAssistants": "獨立助手",
     "myAssistants": "我的助手",
     "pages": {
       "agents": "智能體市集",
@@ -1295,16 +1308,6 @@
     "unpublish": "下架",
     "unpublishDone": "已下架",
     "views": "{{count}} 次瀏覽"
-  },
-  "mediaReadiness": {
-    "chatModelNote": "聊天中選擇 Seed 不會選擇影片生成模型。",
-    "image": "圖片",
-    "probe-failed": "未能確認",
-    "ready": "可用",
-    "relayLabel": "中轉媒體能力",
-    "unavailable": "中轉暫不可用",
-    "unknown": "尚未檢查",
-    "video": "影片"
   },
   "meeting": {
     "abort": {
@@ -2143,8 +2146,12 @@
   },
   "toolActivity": {
     "actions": {
+      "generateImage": "產生圖片",
+      "generateVideo": "產生影片",
       "browseWeb": "Browse the web",
       "execute": "Run an operation",
+      "generateImage": "產生圖片",
+      "generateVideo": "產生影片",
       "listDirectory": "View folders",
       "other": "Use a tool",
       "readFile": "Read files",

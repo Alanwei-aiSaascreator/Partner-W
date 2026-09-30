@@ -1,4 +1,14 @@
 {
+  "mediaReadiness": {
+    "chatModelNote": "Escolher Seed para o chat não seleciona o modelo de geração de vídeo.",
+    "image": "Imagem",
+    "video": "Vídeo",
+    "ready": "Disponível",
+    "unavailable": "Indisponível no relay",
+    "unknown": "Não verificado",
+    "probe-failed": "Não foi possível confirmar",
+    "relayLabel": "Mídia do relay"
+  },
   "account": {
     "activated": "Ativado",
     "device": "Este dispositivo",
@@ -495,6 +505,8 @@
     "toolCallSummaryWithErrors": "{{count}} chamadas de ferramenta executadas ({{errorCount}} falharam)"
   },
   "claimGuard": {
+    "mediaUnavailableBody": "Não foi possível ler ou importar {{names}}. O arquivo pode estar ausente, inacessível ou exceder o limite de importação de 25 MB.",
+    "mediaUnavailableTitle": "Não foi possível importar a mídia gerada",
     "missingBody": "A resposta menciona {{names}}, mas esses arquivos não estão na área de trabalho.",
     "missingTitle": "O arquivo prometido não está lá"
   },
@@ -1190,6 +1202,7 @@
     "collapseNav": "Recolher barra lateral",
     "expandNav": "Expandir barra lateral",
     "identityCenter": "Central de identidade",
+    "independentAssistants": "Assistentes independentes",
     "myAssistants": "Meus assistentes",
     "pages": {
       "agents": "Mercado de agentes",
@@ -1295,16 +1308,6 @@
     "unpublish": "Unpublish",
     "unpublishDone": "Unpublished",
     "views": "{{count}} views"
-  },
-  "mediaReadiness": {
-    "chatModelNote": "Escolher Seed para o chat não seleciona o modelo de geração de vídeo.",
-    "image": "Imagem",
-    "probe-failed": "Não foi possível confirmar",
-    "ready": "Disponível",
-    "relayLabel": "Mídia do relay",
-    "unavailable": "Indisponível no relay",
-    "unknown": "Não verificado",
-    "video": "Vídeo"
   },
   "meeting": {
     "abort": {
@@ -2143,8 +2146,12 @@
   },
   "toolActivity": {
     "actions": {
+      "generateImage": "Gerar uma imagem",
+      "generateVideo": "Gerar um vídeo",
       "browseWeb": "Browse the web",
       "execute": "Run an operation",
+      "generateImage": "Gerar uma imagem",
+      "generateVideo": "Gerar um vídeo",
       "listDirectory": "View folders",
       "other": "Use a tool",
       "readFile": "Read files",

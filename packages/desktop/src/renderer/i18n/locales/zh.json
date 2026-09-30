@@ -1,4 +1,14 @@
 {
+  "mediaReadiness": {
+    "chatModelNote": "聊天中选择 Seed 不会选择视频生成模型。",
+    "image": "图片",
+    "video": "视频",
+    "ready": "可用",
+    "unavailable": "中转暂不可用",
+    "unknown": "尚未检查",
+    "probe-failed": "未能确认",
+    "relayLabel": "中转媒体能力"
+  },
   "account": {
     "activated": "已授权",
     "device": "本机设备",
@@ -495,6 +505,8 @@
     "toolCallSummaryWithErrors": "执行了 {{count}} 个工具调用（{{errorCount}} 个失败）"
   },
   "claimGuard": {
+    "mediaUnavailableBody": "无法读取或导入 {{names}}。文件可能已丢失、无法访问，或超过 25 MB 导入上限。",
+    "mediaUnavailableTitle": "生成的媒体未能导入",
     "missingBody": "回复里提到了 {{names}}，工作区里没有这些文件。",
     "missingTitle": "说好的文件不在"
   },
@@ -1190,6 +1202,7 @@
     "collapseNav": "收起侧栏",
     "expandNav": "展开侧栏",
     "identityCenter": "身份中心",
+    "independentAssistants": "独立助手",
     "myAssistants": "我的助手",
     "pages": {
       "agents": "智能体市场",
@@ -1295,16 +1308,6 @@
     "unpublish": "下架",
     "unpublishDone": "已下架",
     "views": "{{count}} 次浏览"
-  },
-  "mediaReadiness": {
-    "chatModelNote": "聊天中选择 Seed 不会选择视频生成模型。",
-    "image": "图片",
-    "probe-failed": "未能确认",
-    "ready": "可用",
-    "relayLabel": "中转媒体能力",
-    "unavailable": "中转暂不可用",
-    "unknown": "尚未检查",
-    "video": "视频"
   },
   "meeting": {
     "abort": {
@@ -2143,8 +2146,12 @@
   },
   "toolActivity": {
     "actions": {
+      "generateImage": "生成图片",
+      "generateVideo": "生成视频",
       "browseWeb": "查询网页",
       "execute": "执行操作",
+      "generateImage": "生成图片",
+      "generateVideo": "生成视频",
       "listDirectory": "查看文件夹",
       "other": "使用工具",
       "readFile": "读取文件",

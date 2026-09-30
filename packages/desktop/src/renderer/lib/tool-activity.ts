@@ -7,6 +7,8 @@ export type ToolActivityKind =
   | 'execute'
   | 'writeFile'
   | 'browseWeb'
+  | 'generateImage'
+  | 'generateVideo'
   | 'other';
 
 export interface ToolActivityGroup {
@@ -34,6 +36,8 @@ const EXACT_KINDS: Readonly<Record<string, ToolActivityKind>> = {
   exec: 'execute',
   shell: 'execute',
   bash: 'execute',
+  image_generate: 'generateImage',
+  video_generate: 'generateVideo',
 };
 
 export function classifyToolActivity(name: string): ToolActivityKind {

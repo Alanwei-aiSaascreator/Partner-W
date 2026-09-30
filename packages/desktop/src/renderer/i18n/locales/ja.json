@@ -1,4 +1,14 @@
 {
+  "mediaReadiness": {
+    "chatModelNote": "チャットで Seed を選んでも、動画生成モデルは選択されません。",
+    "image": "画像",
+    "video": "動画",
+    "ready": "利用可能",
+    "unavailable": "リレーでは利用不可",
+    "unknown": "未確認",
+    "probe-failed": "確認できませんでした",
+    "relayLabel": "リレーのメディア機能"
+  },
   "account": {
     "activated": "認証済み",
     "device": "このデバイス",
@@ -495,6 +505,8 @@
     "toolCallSummaryWithErrors": "{{count}} 件のツール呼び出しを実行（{{errorCount}} 件失敗）"
   },
   "claimGuard": {
+    "mediaUnavailableBody": "{{names}} を読み込むか取り込むことができませんでした。ファイルが見つからない、アクセスできない、または取り込み上限の 25 MB を超えている可能性があります。",
+    "mediaUnavailableTitle": "生成されたメディアを取り込めませんでした",
     "missingBody": "返信に {{names}} とありますが、そのファイルはワークスペースにありません。",
     "missingTitle": "約束されたファイルがありません"
   },
@@ -1190,6 +1202,7 @@
     "collapseNav": "サイドバーを折りたたむ",
     "expandNav": "サイドバーを展開",
     "identityCenter": "アカウント",
+    "independentAssistants": "個別のアシスタント",
     "myAssistants": "マイアシスタント",
     "pages": {
       "agents": "エージェント市場",
@@ -1295,16 +1308,6 @@
     "unpublish": "Unpublish",
     "unpublishDone": "Unpublished",
     "views": "{{count}} views"
-  },
-  "mediaReadiness": {
-    "chatModelNote": "チャットで Seed を選んでも、動画生成モデルは選択されません。",
-    "image": "画像",
-    "probe-failed": "確認できませんでした",
-    "ready": "利用可能",
-    "relayLabel": "リレーのメディア機能",
-    "unavailable": "リレーでは利用不可",
-    "unknown": "未確認",
-    "video": "動画"
   },
   "meeting": {
     "abort": {
@@ -2143,8 +2146,12 @@
   },
   "toolActivity": {
     "actions": {
+      "generateImage": "画像を生成",
+      "generateVideo": "動画を生成",
       "browseWeb": "Browse the web",
       "execute": "Run an operation",
+      "generateImage": "画像を生成",
+      "generateVideo": "動画を生成",
       "listDirectory": "View folders",
       "other": "Use a tool",
       "readFile": "Read files",
