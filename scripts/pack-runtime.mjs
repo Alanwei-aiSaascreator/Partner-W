@@ -34,6 +34,7 @@ import {
 import { bundleNativeTools, verifyNativeToolRuntime } from './lib/native-tool-runtime.mjs';
 import { bundleWindowsVideoFrames } from './lib/windows-video-frames-runtime.mjs';
 import { bundleWindowsDebugSkills } from './lib/windows-debug-skills.mjs';
+import { bundleTaskflowSkillAvailability } from './lib/taskflow-skill-availability.mjs';
 import {
   bundleOfficialLobsterPlugin,
   officialLobsterPluginSpec,
@@ -311,6 +312,7 @@ async function main() {
   const nativePatch = bundleNativeTools(stage, args.nativeTools);
   const videoFramesPatch = bundleWindowsVideoFrames(stage);
   const debugSkillsPatch = bundleWindowsDebugSkills(stage);
+  const taskflowSkillsPatch = bundleTaskflowSkillAvailability(stage);
 
   // ③ 剪技能
   const skillsDir = path.join(pkgDir, 'skills');
@@ -367,6 +369,7 @@ async function main() {
       debugSkillsPatch,
       lobsterPlugin.patchId,
       lobsterPlugin.compatibilityPatch,
+      taskflowSkillsPatch,
     ],
   });
   const runtimeDir = path.join(args.out, 'openclaw-runtime');
