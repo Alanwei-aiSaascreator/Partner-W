@@ -7,6 +7,7 @@ import type {
   CommandsListParams,
   ConfigPatchParams,
   ConfigSetParams,
+  CreateTeamMeetingInput,
   CronJobCreate,
   CronJobPatch,
   CronListParams,
@@ -18,6 +19,7 @@ import type {
   QuestionResolveParams,
   RelayBootstrapPublicState,
   RuntimeBootstrapStatus,
+  SaveTeamMeetingInput,
   SkillInstallParams,
   SkillSearchParams,
   SkillUpdateParams,
@@ -392,6 +394,9 @@ function buildApi(): ClawWorkAPI {
     }) => ipcRenderer.invoke('data:create-message', msg),
 
     deleteTask: (taskId: string) => ipcRenderer.invoke('data:delete-task', { id: taskId }),
+    createTeamMeeting: (input: CreateTeamMeetingInput) => ipcRenderer.invoke('data:create-team-meeting', input),
+    saveTeamMeeting: (input: SaveTeamMeetingInput) => ipcRenderer.invoke('data:save-team-meeting', input),
+    listTeamMeetings: () => ipcRenderer.invoke('data:list-team-meetings'),
 
     persistRoom: (params: { taskId: string; status: string; conductorReady: boolean }) =>
       ipcRenderer.invoke('data:persist-room', params),

@@ -197,6 +197,38 @@ function save(input: SaveTeamMeetingInput): TeamMeetingRecord {
   });
 }
 
+export function withTeamMeetingTaskDeletion(taskId: string, remove: () => void): void {
+  transaction(() => {
+    const db = getDb();
+    const affected = list().filter((record) => record.turns.some((turn) => turn.taskId === taskId));
+    requireValid(
+      affected.every((record) => !isTeamMeetingActive(record, false)),
+      'Task belongs to an active meeting',
+    );
+    const existed = db.select({ id: tasks.id }).from(tasks).where(eq(tasks.id, taskId)).get();
+    remove();
+    if (affected.length)
+      requireValid(
+        existed && !db.select({ id: tasks.id }).from(tasks).where(eq(tasks.id, taskId)).get(),
+        'Source task was not deleted',
+      );
+    for (const record of affected) {
+      const saved: TeamMeetingRecord = {
+        ...record,
+        status: 'interrupted',
+        stopRequested: true,
+        revision: record.revision + 1,
+        updatedAt: new Date().toISOString(),
+        missingTaskIds: [...new Set([...(record.missingTaskIds ?? []), taskId])],
+      };
+      db.update(teamMeetings)
+        .set({ revision: saved.revision, recordJson: JSON.stringify(saved), updatedAt: saved.updatedAt })
+        .where(eq(teamMeetings.id, record.id))
+        .run();
+    }
+  });
+}
+
 function result<T>(action: () => T): IpcResult<T> {
   try {
     return { ok: true, result: action() };

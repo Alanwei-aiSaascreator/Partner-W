@@ -1,4 +1,9 @@
-import { buildSessionKey, type CreateTeamMeetingInput, type MeetingStage } from '@clawwork/shared';
+import {
+  buildSessionKey,
+  type CreateTeamMeetingInput,
+  type MeetingStage,
+  type TeamMeetingRecord,
+} from '@clawwork/shared';
 import { initDatabase, closeDatabase, getSqlite } from '../../src/main/db/index.js';
 import { handlers } from './team-meeting-ipc.js';
 
@@ -114,6 +119,73 @@ async function main() {
   }
   const created = invoke('create', input);
   if (created.ok !== true) return { created };
+  if (scenario.startsWith('start:') || scenario.startsWith('delete-state:')) {
+    const [action, status, abortStatus, followup] = scenario.split(':');
+    const previous = structuredClone(input.record);
+    if (['dispatching', 'syncing'].includes(status)) {
+      previous.status = 'interrupted';
+      previous.turns[0].status = status as 'dispatching' | 'syncing';
+      if (status === 'syncing') previous.turns[0].runId = 'accepted';
+    } else {
+      previous.status = status as TeamMeetingRecord['status'];
+    }
+    if (abortStatus && abortStatus !== 'none') {
+      previous.abortStatus = abortStatus as TeamMeetingRecord['abortStatus'];
+      previous.stopRequested = true;
+      previous.turns[0].status = 'stopped';
+      previous.turns[0].runId = 'accepted';
+    }
+    if (status === 'completed') {
+      for (const turn of previous.turns) {
+        turn.status = 'completed';
+        turn.runId = `completed-${turn.id}`;
+        turn.messageIds = [`canonical-${turn.id}`];
+        db.prepare(
+          'INSERT INTO messages (id, task_id, role, content, timestamp, session_key, run_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        ).run(turn.messageIds[0], turn.taskId, 'assistant', 'canonical completion', now, turn.sessionKey, turn.runId);
+      }
+    }
+    const saved = invoke('save', { record: previous, expectedRevision: 0 });
+    if (saved.ok !== true) throw new Error(JSON.stringify(saved));
+    if (action === 'delete-state') {
+      let error: string | undefined;
+      let removed = false;
+      try {
+        meeting.withTeamMeetingTaskDeletion('task-2', () => {
+          removed = true;
+          db.prepare("DELETE FROM messages WHERE task_id = 'task-2'").run();
+          db.prepare("DELETE FROM tasks WHERE id = 'task-2'").run();
+        });
+      } catch (caught) {
+        error = caught instanceof Error ? caught.message : String(caught);
+      }
+      const deletedCount = count();
+      const nextMeeting = followup === 'create' ? invoke('create', fixture('next-')) : undefined;
+      return { error, removed, deletedCount, nextMeeting, count: count(), listed: invoke('list') };
+    }
+    const next = fixture('next-', followup === 'unrelated' ? 'other-team' : 'team');
+    if (followup === 'unrelated') {
+      db.prepare('INSERT INTO teams (id, name, gateway_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)').run(
+        'other-team',
+        'Other',
+        'gateway',
+        now,
+        now,
+      );
+      for (const agent of ['author', 'reviewer'])
+        db.prepare('INSERT INTO team_agents (team_id, agent_id) VALUES (?, ?)').run('other-team', agent);
+    }
+    const response = invoke('create', next);
+    const blockedCount = count();
+    if (followup === 'confirmed' || followup === 'not-running') {
+      const retry = invoke('save', {
+        record: { ...previous, revision: 1, status: 'stopped', abortStatus: followup },
+        expectedRevision: 1,
+      });
+      return { response, blockedCount, retry, unlocked: invoke('create', next), count: count() };
+    }
+    return { response, count: count(), listed: invoke('list') };
+  }
   if (scenario === 'cas') {
     const update = { ...input.record, status: 'running', updatedAt: now };
     const saved = invoke('save', { record: update, expectedRevision: 0 });
@@ -124,6 +196,65 @@ async function main() {
   if (scenario === 'corrupt') {
     db.prepare("UPDATE team_meetings SET record_json = '{broken'").run();
     return invoke('list');
+  }
+  if (scenario === 'missing-save') {
+    db.prepare("DELETE FROM tasks WHERE id = 'task-0'").run();
+    return invoke('save', {
+      record: { ...input.record, status: 'interrupted', missingTaskIds: ['task-0'] },
+      expectedRevision: 0,
+    });
+  }
+  if (scenario === 'receipt') {
+    const running = structuredClone(input.record);
+    running.status = 'running';
+    running.turns[0].status = 'running';
+    running.turns[0].runId = 'run-1';
+    const accepted = invoke('save', { record: running, expectedRevision: 0 });
+    const replaced = structuredClone(running);
+    replaced.revision = 1;
+    replaced.turns[0].runId = 'run-2';
+    const replacement = invoke('save', { record: replaced, expectedRevision: 1 });
+    const completed = structuredClone(running);
+    completed.revision = 1;
+    completed.turns[0].status = 'completed';
+    completed.turns[0].messageIds = ['message-1'];
+    const missingMessage = invoke('save', { record: completed, expectedRevision: 1 });
+    db.prepare(
+      'INSERT INTO messages (id, task_id, role, content, timestamp, session_key, run_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    ).run('message-1', 'task-0', 'assistant', 'canonical answer', now, input.record.turns[0].sessionKey, 'run-1');
+    const saved = invoke('save', { record: completed, expectedRevision: 1 });
+    const regressed = structuredClone(completed);
+    regressed.revision = 2;
+    regressed.turns[0].status = 'running';
+    return {
+      accepted,
+      replacement,
+      missingMessage,
+      saved,
+      regression: invoke('save', { record: regressed, expectedRevision: 2 }),
+    };
+  }
+  if (scenario.startsWith('delete-')) {
+    if (scenario === 'delete-running')
+      invoke('save', { record: { ...input.record, status: 'running' }, expectedRevision: 0 });
+    if (scenario === 'delete-rollback')
+      db.exec(
+        "CREATE TRIGGER refuse_meeting_update BEFORE UPDATE ON team_meetings BEGIN SELECT RAISE(ABORT, 'fixture refuses update'); END;",
+      );
+    let error: string | undefined;
+    try {
+      meeting.withTeamMeetingTaskDeletion('task-2', () => {
+        db.prepare("DELETE FROM tasks WHERE id = 'task-2'").run();
+      });
+    } catch (caught) {
+      error = caught instanceof Error ? caught.message : String(caught);
+    }
+    return {
+      error,
+      count: count(),
+      listed: invoke('list'),
+      taskIds: db.prepare('SELECT id FROM tasks ORDER BY id').all(),
+    };
   }
   throw new Error(`Unknown scenario ${scenario}`);
 }

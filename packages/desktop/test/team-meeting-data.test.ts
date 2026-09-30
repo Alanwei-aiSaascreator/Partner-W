@@ -112,4 +112,105 @@ describe('team meeting metadata SQLite IPC', () => {
   it('fails safely on malformed JSON', () => {
     expect(run('corrupt')).toMatchObject({ ok: false });
   });
+  it('does not let a caller mark a task missing to bypass ownership validation', () => {
+    expect(run('missing-save')).toMatchObject({ ok: false });
+  });
+  it('preserves accepted receipts and checks canonical message ownership before completion', () => {
+    expect(run('receipt')).toMatchObject({
+      accepted: { ok: true },
+      replacement: { ok: false },
+      missingMessage: { ok: false },
+      saved: { ok: true },
+      regression: { ok: false },
+    });
+  });
+  it('blocks deleting an active meeting task', () => {
+    expect(run('delete-running')).toMatchObject({ error: expect.any(String), count: { tasks: { n: 3 } } });
+  });
+  it.each([
+    ['draft', 'none'],
+    ['running', 'none'],
+    ['stopping', 'requested'],
+    ['dispatching', 'none'],
+    ['syncing', 'none'],
+    ['stopped', 'unconfirmed'],
+    ['stopped', 'requested'],
+    ['interrupted', 'unconfirmed'],
+    ['interrupted', 'requested'],
+  ])('rejects IPC creation alongside persisted %s/%s without inserting tasks', (status, abortStatus) => {
+    expect(run(`start:${status}:${abortStatus}`)).toMatchObject({
+      response: { ok: false, error: expect.stringContaining('active meeting') },
+      count: { tasks: { n: 3 }, meetings: { n: 1 } },
+    });
+  });
+  it.each(['confirmed', 'not-running'])('allows IPC creation only after explicit abort retry reports %s', (result) => {
+    expect(run(`start:stopped:unconfirmed:${result}`)).toMatchObject({
+      response: { ok: false },
+      blockedCount: { tasks: { n: 3 }, meetings: { n: 1 } },
+      retry: { ok: true },
+      unlocked: { ok: true },
+      count: { tasks: { n: 6 }, meetings: { n: 2 } },
+    });
+  });
+  it.each([
+    ['stopped', 'unconfirmed'],
+    ['stopped', 'requested'],
+    ['interrupted', 'unconfirmed'],
+    ['interrupted', 'requested'],
+  ])('blocks deletion of %s tasks with %s cancellation', (status, abortStatus) => {
+    expect(run(`delete-state:${status}:${abortStatus}`)).toMatchObject({
+      error: expect.stringContaining('active meeting'),
+      removed: false,
+      count: { tasks: { n: 3 }, meetings: { n: 1 } },
+    });
+  });
+  it.each([
+    ['stopped', 'confirmed'],
+    ['stopped', 'not-running'],
+    ['completed', 'unconfirmed'],
+  ])('allows deletion after %s/%s canonical or cancellation evidence', (status, abortStatus) => {
+    expect(run(`delete-state:${status}:${abortStatus}`)).toMatchObject({
+      removed: true,
+      count: { tasks: { n: 2 }, meetings: { n: 1 } },
+    });
+  });
+  it.each([
+    ['stopped', 'unconfirmed', 'unrelated'],
+    ['completed', 'unconfirmed', 'same-team'],
+    ['failed', 'not-running', 'same-team'],
+  ])('allows %s/%s records alongside %s IPC creation', (status, abortStatus, team) => {
+    expect(run(`start:${status}:${abortStatus}:${team}`)).toMatchObject({
+      response: { ok: true },
+      count: { tasks: { n: 6 }, meetings: { n: 2 } },
+    });
+  });
+  it('does not relock canonical completed meetings after managed deletion interrupts their metadata', () => {
+    expect(run('delete-state:completed:unconfirmed:create')).toMatchObject({
+      removed: true,
+      deletedCount: { tasks: { n: 2 }, meetings: { n: 1 } },
+      nextMeeting: { ok: true },
+      count: { tasks: { n: 5 }, meetings: { n: 2 } },
+      listed: {
+        ok: true,
+        result: [{ id: 'meeting', status: 'interrupted', abortStatus: 'unconfirmed' }, { id: 'next-meeting' }],
+      },
+    });
+  });
+  it('retains child tasks and marks missing owner metadata after idle deletion', () => {
+    expect(run('delete-idle')).toMatchObject({
+      count: { tasks: { n: 2 }, meetings: { n: 1 } },
+      taskIds: [{ id: 'task-0' }, { id: 'task-1' }],
+      listed: {
+        ok: true,
+        result: [{ ownerTaskId: 'task-2', status: 'interrupted', missingTaskIds: ['task-2'], revision: 1 }],
+      },
+    });
+  });
+  it('rolls back task deletion if interrupted metadata cannot be saved', () => {
+    expect(run('delete-rollback')).toMatchObject({
+      error: expect.any(String),
+      count: { tasks: { n: 3 } },
+      listed: { ok: true, result: [{ status: 'draft', revision: 0 }] },
+    });
+  });
 });

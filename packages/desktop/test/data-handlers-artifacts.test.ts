@@ -14,6 +14,7 @@ const valuesMock = vi.fn(() => ({
   run: vi.fn(),
 }));
 const selectGetMock = vi.fn();
+const withTeamMeetingTaskDeletionMock = vi.fn((_taskId: string, remove: () => void) => remove());
 const dbMock = {
   insert: vi.fn(() => ({ values: valuesMock })),
   select: vi.fn((fields?: Record<string, unknown>) => {
@@ -35,6 +36,10 @@ vi.mock('electron', () => ({
 vi.mock('../src/main/db/index.js', () => ({
   getDb: vi.fn(() => dbMock),
   isDbReady: vi.fn(() => true),
+}));
+
+vi.mock('../src/main/ipc/team-meeting-handlers.js', () => ({
+  withTeamMeetingTaskDeletion: withTeamMeetingTaskDeletionMock,
 }));
 
 vi.mock('../src/main/workspace/config.js', () => ({ getWorkspacePath: vi.fn(() => 'C:\\trusted-workspace') }));
@@ -61,6 +66,7 @@ describe('assistant artifact reconciliation boundary', () => {
   beforeEach(() => {
     vi.resetModules();
     handleMap.clear();
+    dbMock.delete.mockClear();
     autoExtractArtifactsMock.mockReset().mockResolvedValue(undefined);
     captureTaskArtifactBaselineMock.mockReset().mockResolvedValue({ 'before.txt': 'signature' });
     reconcileTaskArtifactsMock.mockReset().mockResolvedValue({
@@ -1250,6 +1256,34 @@ describe('assistant artifact reconciliation boundary', () => {
     );
     await flushJobs();
     expect(reconcileTaskArtifactsMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps task data and artifact tracking when an active meeting blocks deletion', async () => {
+    const { beginArtifactRun, registerDataHandlers } = await import('../src/main/ipc/data-handlers.js');
+    registerDataHandlers();
+    beginArtifactRun('C:\\trusted-workspace', 'task-retained', 'session-retained');
+    withTeamMeetingTaskDeletionMock.mockImplementationOnce(() => {
+      throw new Error('Task belongs to an active meeting');
+    });
+    expect(handleMap.get('data:delete-task')!({}, { id: 'task-retained' })).toEqual({
+      ok: false,
+      error: 'Task belongs to an active meeting',
+    });
+    expect(dbMock.delete).not.toHaveBeenCalled();
+    selectGetMock.mockReturnValueOnce({ id: 'accepted-assistant' });
+    handleMap.get('data:create-message')!(
+      {},
+      {
+        id: 'accepted-assistant',
+        taskId: 'task-retained',
+        role: 'assistant',
+        content: 'done',
+        timestamp: '2026-09-30T00:00:00.000Z',
+        sessionKey: 'session-retained',
+      },
+    );
+    await flushJobs();
+    expect(reconcileTaskArtifactsMock).toHaveBeenCalled();
   });
 
   it.each(['workspace', 'agent'])(

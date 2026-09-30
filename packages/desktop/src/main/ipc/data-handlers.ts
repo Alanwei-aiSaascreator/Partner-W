@@ -44,6 +44,7 @@ import {
 import { getWorkspacePath } from '../workspace/config.js';
 import { getGatewayClient } from '../ws/index.js';
 import { getDebugLogger } from '../debug/index.js';
+import { withTeamMeetingTaskDeletion } from './team-meeting-handlers.js';
 
 function ipcError(err: unknown): { ok: false; error: string } {
   return { ok: false, error: err instanceof Error ? err.message : 'unknown' };
@@ -1155,15 +1156,17 @@ export function registerDataHandlers(): void {
   );
 
   ipcMain.handle('data:delete-task', (_event, params: { id: string }) => {
-    cancelArtifactRunsForTask(params.id);
     if (!isDbReady()) return ipcError(new Error('database not ready'));
     try {
       const db = getDb();
-      db.delete(taskRoomSessions).where(eq(taskRoomSessions.taskId, params.id)).run();
-      db.delete(taskRooms).where(eq(taskRooms.taskId, params.id)).run();
-      db.delete(artifacts).where(eq(artifacts.taskId, params.id)).run();
-      db.delete(messages).where(eq(messages.taskId, params.id)).run();
-      db.delete(tasks).where(eq(tasks.id, params.id)).run();
+      withTeamMeetingTaskDeletion(params.id, () => {
+        db.delete(taskRoomSessions).where(eq(taskRoomSessions.taskId, params.id)).run();
+        db.delete(taskRooms).where(eq(taskRooms.taskId, params.id)).run();
+        db.delete(artifacts).where(eq(artifacts.taskId, params.id)).run();
+        db.delete(messages).where(eq(messages.taskId, params.id)).run();
+        db.delete(tasks).where(eq(tasks.id, params.id)).run();
+      });
+      cancelArtifactRunsForTask(params.id);
       return { ok: true };
     } catch (err) {
       console.error('[data] delete-task failed:', err);

@@ -16,6 +16,7 @@ import { registerWorkspaceHandlers } from './ipc/workspace-handlers.js';
 import { registerSettingsHandlers } from './ipc/settings-handlers.js';
 import { registerSearchHandlers } from './ipc/search-handlers.js';
 import { registerDataHandlers } from './ipc/data-handlers.js';
+import { registerTeamMeetingHandlers } from './ipc/team-meeting-handlers.js';
 import { registerStatsHandlers } from './ipc/stats-handlers.js';
 import { registerUpdateHandlers } from './ipc/update-handlers.js';
 import { runUpdaterStartupHousekeeping } from './auto-updater.js';
@@ -374,6 +375,7 @@ continueAfterPortableAppData(
           registerSettingsHandlers();
           registerSearchHandlers();
           registerDataHandlers();
+          registerTeamMeetingHandlers();
           registerStatsHandlers();
           registerUpdateHandlers({ onRendererReady: () => portableHealth.markRendererReady() });
           registerDebugHandlers();

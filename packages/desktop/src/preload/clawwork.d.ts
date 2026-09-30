@@ -18,6 +18,8 @@ import type {
   ConfigSetParams,
   ConfigSetResult,
   ConfigSnapshot,
+  CreateTeamMeetingInput,
+  CreateTeamMeetingResult,
   CronJob,
   CronJobCreate,
   CronJobPatch,
@@ -41,6 +43,7 @@ import type {
   QuestionResolveParams,
   RelayBootstrapPublicState,
   RuntimeBootstrapStatus,
+  SaveTeamMeetingInput,
   SessionsPreviewResult,
   SkillBinsResult,
   SkillDetailResult,
@@ -56,6 +59,7 @@ import type {
   Team,
   TeamHubRegistry,
   TeamPosition,
+  TeamMeetingRecord,
   WorkspaceFsIdentity,
 } from '@clawwork/shared';
 // 隐私工单状态的**归一化后**形状（snake→camel、字节数字、真布尔）由 core 定义，
@@ -718,6 +722,9 @@ export interface ClawWorkAPI {
   }) => Promise<IpcResult>;
 
   deleteTask: (taskId: string) => Promise<IpcResult>;
+  createTeamMeeting: (input: CreateTeamMeetingInput) => Promise<IpcResult<CreateTeamMeetingResult>>;
+  saveTeamMeeting: (input: SaveTeamMeetingInput) => Promise<IpcResult<TeamMeetingRecord>>;
+  listTeamMeetings: () => Promise<IpcResult<TeamMeetingRecord[]>>;
 
   persistRoom: (params: { taskId: string; status: string; conductorReady: boolean }) => Promise<IpcResult>;
   loadRoom: (taskId: string) => Promise<{
