@@ -22,6 +22,10 @@ function isImage(mime: string): boolean {
   return mime.startsWith('image/');
 }
 
+function isVideo(mime: string): boolean {
+  return mime === 'video/mp4' || mime === 'video/webm';
+}
+
 function isMarkdown(name: string): boolean {
   return name.endsWith('.md');
 }
@@ -102,7 +106,8 @@ export default function FilePreview({ artifact, onNavigateToTask, onClose }: Fil
 
   const ext = extFromName(artifact.name);
   const title = getArtifactLabel(artifact, t);
-  const isCode = encoding === 'utf-8' && !isMarkdown(artifact.name) && !isImage(artifact.mimeType);
+  const isCode =
+    encoding === 'utf-8' && !isMarkdown(artifact.name) && !isImage(artifact.mimeType) && !isVideo(artifact.mimeType);
 
   const [preview, setPreview] = useState<ArtifactPreview | null>(null);
 
@@ -299,6 +304,21 @@ function PreviewContent({
   alt: string;
 }) {
   const { t } = useTranslation();
+
+  if (isVideo(mimeType) && encoding === 'base64') {
+    return (
+      <div className="flex items-center justify-center p-4">
+        <video
+          src={`data:${mimeType};base64,${content}`}
+          aria-label={alt}
+          controls
+          playsInline
+          preload="metadata"
+          className="max-w-full max-h-96 rounded-lg object-contain"
+        />
+      </div>
+    );
+  }
 
   if (isImage(mimeType) && encoding === 'base64') {
     return (
