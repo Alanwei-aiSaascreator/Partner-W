@@ -37,6 +37,7 @@ import { getDebugLogger } from '../debug/index.js';
 import { attachGatewayOutputStreams, gatewayOutputDigest } from './gateway-output.js';
 import { BOOTSTRAP_PROCESS_EXITED, BOOTSTRAP_READY_TIMEOUT } from './bootstrap-retry.js';
 import { inheritWindowsSystemProxy } from './gateway-proxy.js';
+import { resolveBundledNativeTools } from './native-tools.js';
 
 /** 端口被**别人**的网关占着（或占着的那个不可信）。 */
 export const GATEWAY_PORT_OCCUPIED = 'runtime.gateway-port-occupied';
@@ -572,6 +573,7 @@ export function buildGatewayEnvironment(
   baseEnv: NodeJS.ProcessEnv,
   stateDir: string,
   nodeExe?: string,
+  deployedRoot?: string,
 ): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
 
@@ -593,7 +595,8 @@ export function buildGatewayEnvironment(
       .filter(Boolean)
       .join(delimiter);
     for (const key of pathKeys) delete childEnv[key];
-    childEnv.PATH = [dirname(nodeExe), inheritedPath].filter(Boolean).join(delimiter);
+    const nativeTools = deployedRoot ? resolveBundledNativeTools(deployedRoot) : undefined;
+    childEnv.PATH = [dirname(nodeExe), nativeTools, inheritedPath].filter(Boolean).join(delimiter);
   }
   childEnv.OPENCLAW_STATE_DIR = stateDir;
   childEnv.OPENCLAW_SUPERVISOR_MODE = 'external';
@@ -656,7 +659,7 @@ export async function ensureGatewayRunning(opts: EnsureGatewayRunningOptions): P
   }
 
   const args = buildGatewayArgs({ cliPath: opts.cliPath, port });
-  const env = buildGatewayEnvironment(process.env, opts.stateDir, opts.nodeExe);
+  const env = buildGatewayEnvironment(process.env, opts.stateDir, opts.nodeExe, opts.deployedRoot);
 
   const child = spawn({ nodeExe: opts.nodeExe, args, cwd: opts.deployedRoot, env, secrets: [token] });
   await (
@@ -733,7 +736,7 @@ export async function stopGateway(opts: StopGatewayOptions): Promise<void> {
   try {
     runCommand(nodeExe, [cliPath, 'gateway', 'stop', '--force'], {
       cwd: deployedRoot,
-      env: buildGatewayEnvironment(process.env, stateDir, nodeExe),
+      env: buildGatewayEnvironment(process.env, stateDir, nodeExe, deployedRoot),
       timeout: gracefulTimeoutMs,
     });
   } catch (err) {
