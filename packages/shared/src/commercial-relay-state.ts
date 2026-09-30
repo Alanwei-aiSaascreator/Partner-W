@@ -25,8 +25,8 @@
  *    "包内单例"，而"进程级"这句话在渲染层根本不成立（每个窗口/上下文各一份）。
  *    `desktop/test/commercial-preload-surface.test.ts` 会扫源码把这条钉死。
  *
- * ⚠️ 这一份 DTO 是渲染层**唯一**的来源，字段是**闭集**：`phase` / `errorCode` /
- *    `updatedAt`。**不许**加 `detail`、原始 message、卡密、relay key、token：
+ * Public fields are bounded: phase / errorCode / updatedAt and optional ready-only media enums.
+ * Never include detail, raw messages, license keys, relay keys or tokens:
  *    `activate_license` 的入参就是卡密（服务端文案很可能回显它），异常文案里还常带
  *    URL 与 apikey。要排查去看主进程的调试日志 —— 那条路有它自己的脱敏纪律。
  *
@@ -88,15 +88,23 @@ export type RelayBootstrapBlockedCode =
  */
 export type RelayBootstrapRetryableCode = 'auth_unavailable' | 'transport' | 'runtime_not_ready' | 'relay_apply_failed';
 
+export type RelayMediaReadinessState = 'ready' | 'unavailable' | 'unknown' | 'probe-failed';
+
+export interface RelayMediaReadiness {
+  image: RelayMediaReadinessState;
+  video: RelayMediaReadinessState;
+}
+
 /**
  * 渲染层能看到的**全部**内容。
  *
- * ⚠️ 三个成员是**互斥**的：带 `errorCode` 的相位必须带码，不带码的相位**不许**带
+ * Phase members are exclusive: error phases require a code; only ready may carry media.
  *    （用了 `as` 硬塞进来的多余字段会一路走到事件载荷上 —— 见
  *    `desktop/test/relay-startup.test.ts` 的"载荷只有白名单字段"那条）。
  */
 export type RelayBootstrapPublicState =
-  | { phase: 'idle' | 'running' | 'ready'; updatedAt: number }
+  | { phase: 'idle' | 'running'; updatedAt: number }
+  | { phase: 'ready'; media?: RelayMediaReadiness; updatedAt: number }
   | {
       phase: 'blocked';
       errorCode: RelayBootstrapBlockedCode;
@@ -113,9 +121,21 @@ export type RelayBootstrapPublicState =
  * 提供的东西：时间戳由 store 统一盖章，写入方不许自己造。
  */
 export type RelayBootstrapPublicPhase =
-  | { phase: 'idle' | 'running' | 'ready' }
+  | { phase: 'idle' | 'running' }
+  | { phase: 'ready'; media?: RelayMediaReadiness }
   | { phase: 'blocked'; errorCode: RelayBootstrapBlockedCode }
   | { phase: 'retryable-error'; errorCode: RelayBootstrapRetryableCode };
+
+function safeMediaReadiness(value: unknown): RelayMediaReadinessState {
+  switch (value) {
+    case 'ready':
+    case 'unavailable':
+    case 'probe-failed':
+      return value;
+    default:
+      return 'unknown';
+  }
+}
 
 export interface RelayBootstrapPublicStateStore {
   /** 当前快照。**渲染层挂载前发生的一切都在这里** —— 初始读就是来取它的。 */
@@ -154,6 +174,20 @@ export function createRelayBootstrapPublicStateStore(
       //    `phase` 会宽成 `'blocked' | 'retryable-error'`，配不出任何合法的成员，
       //    `tsc` 直接报 TS2322；这条我也实测过）。
       switch (next.phase) {
+        case 'ready':
+          current = {
+            phase: 'ready',
+            ...(next.media
+              ? {
+                  media: {
+                    image: safeMediaReadiness(next.media.image),
+                    video: safeMediaReadiness(next.media.video),
+                  },
+                }
+              : {}),
+            updatedAt,
+          };
+          break;
         case 'blocked':
           current = { phase: 'blocked', errorCode: next.errorCode, updatedAt };
           break;

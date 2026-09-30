@@ -7,6 +7,7 @@ import {
   type RelayBootstrapPhase,
   type RelayBootstrapPublicState,
   type RelayBootstrapRetryableCode,
+  type RelayMediaReadinessState,
 } from '../src/index.js';
 
 /**
@@ -154,6 +155,57 @@ describe('进程级单例与账户边界重置', () => {
     resetRelayBootstrapPublicState();
 
     expect(relayBootstrapPublicStateStore.get().updatedAt).toBeGreaterThan(before.updatedAt);
+  });
+});
+
+describe('public media readiness', () => {
+  it('has exactly four safe media states', () => {
+    const states: Record<RelayMediaReadinessState, true> = {
+      ready: true,
+      unavailable: true,
+      unknown: true,
+      'probe-failed': true,
+    };
+    expect(Object.keys(states)).toEqual(['ready', 'unavailable', 'unknown', 'probe-failed']);
+  });
+  it('preserves independent media enums only on ready snapshots', () => {
+    const store = createRelayBootstrapPublicStateStore({ now: () => 1_000 });
+    const media = { image: 'ready' as const, video: 'unavailable' as const };
+
+    expect(store.set({ phase: 'ready', media })).toEqual({ phase: 'ready', media, updatedAt: 1_001 });
+    expect(store.set({ phase: 'running' })).toEqual({ phase: 'running', updatedAt: 1_002 });
+    expect(store.set({ phase: 'idle' })).toEqual({ phase: 'idle', updatedAt: 1_003 });
+  });
+
+  it('copies only whitelisted media enums and never forwards nested diagnostics', () => {
+    const store = createRelayBootstrapPublicStateStore({ now: () => 1_000 });
+    const input = {
+      phase: 'ready' as const,
+      media: { image: 'probe-failed', video: 'token=private', warnings: ['private'], relayKey: 'private' },
+      detail: 'private',
+    };
+
+    expect(store.set(input as Parameters<typeof store.set>[0])).toEqual({
+      phase: 'ready',
+      media: { image: 'probe-failed', video: 'unknown' },
+      updatedAt: 1_001,
+    });
+    expect(JSON.stringify(store.get())).not.toContain('private');
+  });
+
+  it('does not retain the caller media object or account-bound readiness after reset', () => {
+    const media = { image: 'ready' as const, video: 'unavailable' as const };
+    relayBootstrapPublicStateStore.set({ phase: 'ready', media });
+    const state = relayBootstrapPublicStateStore.get();
+    expect(state.phase === 'ready' ? state.media : undefined).not.toBe(media);
+    resetRelayBootstrapPublicState();
+    expect(relayBootstrapPublicStateStore.get()).not.toHaveProperty('media');
+  });
+
+  it.each(['idle', 'running', 'blocked', 'retryable-error'] as const)('discards injected media on %s', (phase) => {
+    const store = createRelayBootstrapPublicStateStore({ now: () => 1_000 });
+    const input = { phase, errorCode: 'transport', media: { image: 'ready', video: 'ready' } };
+    expect(store.set(input as Parameters<typeof store.set>[0])).not.toHaveProperty('media');
   });
 });
 
