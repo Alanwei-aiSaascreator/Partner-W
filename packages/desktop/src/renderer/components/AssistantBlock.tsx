@@ -50,7 +50,9 @@ export function AssistantFinalizedBody({ message, agentName, onImageClick, onRet
   }, [saveState]);
 
   const attachments = message.attachments;
-  const hasVisibleAnswer = Boolean(message.content.trim() || attachments?.length || message.artifacts.length);
+  const hasVisibleAnswer = Boolean(
+    message.content.trim() || attachments?.length || message.artifacts.length || message.toolCalls.length,
+  );
   const canSaveMessage = Boolean(message.content.trim()) && Boolean(message.taskId) && Boolean(message.id);
 
   const handleCopy = (): void => {

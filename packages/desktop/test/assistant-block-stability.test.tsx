@@ -4,7 +4,7 @@ import { act, type ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { describe, expect, it, vi, afterEach } from 'vitest';
 import type { Message } from '@clawwork/shared';
-import '../src/renderer/i18n';
+import i18n from '../src/renderer/i18n';
 
 // 与 `chat-message-copy.test.tsx` 同款：framer-motion 换成"原样渲染"（只去掉动效），
 // 于是断言看到的就是产品里那棵树。`useReducedMotion` 必须给（`ThinkingIndicator` 用它）。
@@ -209,5 +209,54 @@ describe('AssistantBlock：状态切换时块与头像不能被卸载重建', ()
     expect(button).not.toBeNull();
     act(() => button?.click());
     expect(retry).toHaveBeenCalledTimes(1);
+  });
+
+  it('renders a successful tool-only message without suggesting a duplicate retry', () => {
+    const view = render(
+      <AssistantBlock
+        state="finalized"
+        message={buildMessage({
+          toolCalls: [
+            {
+              id: 'video-1',
+              name: 'video_generate',
+              status: 'done',
+              result: 'Background task started',
+              startedAt: '2026-09-30T00:00:00.000Z',
+            },
+          ],
+        })}
+        identity={identity}
+        onRetry={vi.fn()}
+      />,
+    );
+    expect(view.container.querySelector('[data-testid="assistant-no-visible-answer"]')).toBeNull();
+    expect(view.container.querySelector('[data-testid="assistant-empty-retry"]')).toBeNull();
+    expect(view.container.textContent).toContain(i18n.t('toolActivity.completed', { count: 1 }));
+  });
+
+  it('keeps the actual tool failure visible for a tool-only message', () => {
+    const view = render(
+      <AssistantBlock
+        state="finalized"
+        message={buildMessage({
+          toolCalls: [
+            {
+              id: 'video-1',
+              name: 'video_generate',
+              status: 'error',
+              result: 'provider unavailable',
+              startedAt: '2026-09-30T00:00:00.000Z',
+            },
+          ],
+        })}
+        identity={identity}
+      />,
+    );
+    expect(view.container.textContent).toContain(
+      i18n.t('chatMessage.toolCallSummaryWithErrors', { count: 1, errorCount: 1 }),
+    );
+    expect(view.container.textContent).toContain('provider unavailable');
+    expect(view.container.querySelector('[data-testid="assistant-no-visible-answer"]')).toBeNull();
   });
 });
