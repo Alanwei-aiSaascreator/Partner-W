@@ -625,11 +625,12 @@ app.on('before-quit', (event) => {
           // 收尾失败**绝不能**挡住退出 —— 记一笔就继续
           console.error('[runtime] 退出时收尾失败（忽略，继续退出）:', err);
         })
-        .finally(() => {
+        .finally(async () => {
           destroyAllGateways();
           destroyTray();
           destroyQuickLaunch();
           closeDatabase();
+          await logger.close().catch((err) => console.error('[debug] close failed:', err));
           app.quit();
         });
     });
