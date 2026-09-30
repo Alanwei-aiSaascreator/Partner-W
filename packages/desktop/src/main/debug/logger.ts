@@ -1,14 +1,4 @@
-import {
-  createWriteStream,
-  existsSync,
-  mkdirSync,
-  openSync,
-  readdirSync,
-  renameSync,
-  statSync,
-  unlinkSync,
-  type WriteStream,
-} from 'node:fs';
+import { createWriteStream, existsSync, mkdirSync, openSync, unlinkSync, type WriteStream } from 'node:fs';
 import { join } from 'node:path';
 import type { DebugDomain, DebugEvent, DebugLevel } from '@clawwork/shared';
 import { sanitizeForLog } from '@clawwork/shared';
@@ -19,6 +9,7 @@ interface CreateDebugLoggerOptions {
   console?: boolean;
   onEvent?: (event: DebugEvent) => void;
   maxFileSize?: number;
+  maxFiles?: number;
   retentionDays?: number;
 }
 
@@ -75,84 +66,110 @@ export function createDebugLogger(options: CreateDebugLoggerOptions): DebugLogge
   const maxEvents = options.maxEvents ?? 1000;
   const writeConsole = options.console ?? true;
   const maxFileSize = options.maxFileSize ?? 50 * 1024 * 1024;
+  const maxFiles = options.maxFiles ?? 5;
   const retentionDays = options.retentionDays ?? 14;
   const recentEvents: DebugEvent[] = [];
   const debugDir = options.debugDir;
 
-  // Write stream state — cached fd avoids open/write/close per event
+  if (!Number.isInteger(maxFiles) || maxFiles < 1) throw new RangeError('maxFiles must be a positive integer');
+
   let writeStream: WriteStream | null = null;
-  const openStreams = new Set<WriteStream>();
   let currentLogDate = '';
+  let activeFilePath = '';
   let currentFileSize = 0;
+  let pendingWrites = Promise.resolve();
+  let diskError: Error | undefined;
+  let closing = false;
+  let closePromise: Promise<void> | undefined;
+  const ownedFiles: Array<{ path: string; day: string }> = [];
+  const nextSlots = new Map<string, number>();
 
   ensureDir(debugDir);
 
-  // Age-based cleanup: purge files older than retentionDays
-  if (retentionDays > 0) {
-    cleanupOldLogs(debugDir, retentionDays);
+  function recordDiskError(error: unknown): void {
+    if (diskError) return;
+    diskError = error instanceof Error ? error : new Error(String(error));
+    console.error('[debug] logger disk error:', diskError);
+  }
+
+  function enqueue(operation: () => Promise<void>): Promise<void> {
+    const next = pendingWrites.then(operation);
+    pendingWrites = next.catch(recordDiskError);
+    return next;
+  }
+
+  function slotPath(day: string, slot: number): string {
+    return join(debugDir, `debug-${day}${slot === 0 ? '' : `.${slot}`}.ndjson`);
   }
 
   function currentFilePath(): string {
+    if (activeFilePath) return activeFilePath;
     const day = new Date().toISOString().slice(0, 10);
-    return join(debugDir, `debug-${day}.ndjson`);
+    let slot = nextSlots.get(day) ?? 0;
+    while (existsSync(slotPath(day, slot))) slot++;
+    return slotPath(day, slot);
   }
 
-  /** Open a write stream for the current day's file. Restores file size via statSync
-   *  so mid-day process restarts don't lose track of the written size. */
-  function openStream(): void {
-    const today = new Date().toISOString().slice(0, 10);
+  function pruneOwnedFiles(): void {
+    const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
+    while (
+      ownedFiles.length > 0 &&
+      (ownedFiles.length >= maxFiles || (retentionDays > 0 && Date.parse(ownedFiles[0].day) < cutoff))
+    ) {
+      unlinkSync(ownedFiles[0].path);
+      ownedFiles.shift();
+    }
+  }
+
+  function openStream(day: string): void {
     ensureDir(debugDir);
-    currentLogDate = today;
-    const filePath = currentFilePath();
-    // Restore file size on init (handles process restart mid-day)
-    try {
-      currentFileSize = statSync(filePath).size;
-    } catch {
-      currentFileSize = 0;
+    pruneOwnedFiles();
+    let slot = nextSlots.get(day) ?? 0;
+    let filePath: string;
+    let fd: number;
+    for (;;) {
+      filePath = slotPath(day, slot++);
+      try {
+        fd = openSync(filePath, 'wx');
+        break;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+      }
     }
-    const fd = openSync(filePath, 'a');
-    const stream = createWriteStream(filePath, { fd, autoClose: true }).on('error', (err) => {
-      console.error('[debug] logger stream error:', err);
-    });
-    writeStream = stream;
-    openStreams.add(stream);
-    stream.once('close', () => {
-      openStreams.delete(stream);
-    });
+    nextSlots.set(day, slot);
+    activeFilePath = filePath;
+    currentLogDate = day;
+    currentFileSize = 0;
+    ownedFiles.push({ path: filePath, day });
+    writeStream = createWriteStream(filePath, { fd, autoClose: true }).on('error', recordDiskError);
   }
 
-  function ensureStream(): void {
-    const today = new Date().toISOString().slice(0, 10);
+  async function closeStream(): Promise<void> {
+    const stream = writeStream;
+    writeStream = null;
+    if (!stream || stream.closed) return;
+    const closed = new Promise<void>((resolve) => stream.once('close', resolve));
+    if (!stream.destroyed && !stream.writableEnded) stream.end();
+    await closed;
+  }
 
-    // Same day, stream open — check tracked size for rotation
-    if (writeStream && currentLogDate === today) {
-      if (currentFileSize >= maxFileSize) {
-        // Rotate: close stream, find next slot, rename current file
-        writeStream.end();
-        writeStream = null;
-
-        let rotIdx = 1;
-        while (existsSync(join(debugDir, `debug-${today}.${rotIdx}.ndjson`))) {
-          rotIdx++;
-        }
-        renameSync(currentFilePath(), join(debugDir, `debug-${today}.${rotIdx}.ndjson`));
-        openStream();
-      } else {
-        return; // stream is fine, no rotation needed
-      }
-    } else {
-      // Date changed, first call, or stream was rotated
-      if (writeStream) {
-        writeStream.end();
-        writeStream = null;
-      }
-      openStream();
-    }
+  async function ensureStream(day: string, nextLineSize: number): Promise<void> {
+    if (
+      writeStream &&
+      currentLogDate === day &&
+      (currentFileSize === 0 || currentFileSize + nextLineSize <= maxFileSize)
+    )
+      return;
+    await closeStream();
+    if (diskError) throw diskError;
+    openStream(day);
   }
 
   function log(input: LogEventInput & { level: DebugLevel }, logOptions?: LogEventOptions): DebugEvent {
+    if (closing) throw new Error('Debug logger is closing or closed');
+    const now = new Date();
     const event: DebugEvent = sanitizeForLog({
-      ts: new Date().toISOString(),
+      ts: now.toISOString(),
       ...input,
     });
 
@@ -161,11 +178,25 @@ export function createDebugLogger(options: CreateDebugLoggerOptions): DebugLogge
       recentEvents.splice(0, recentEvents.length - maxEvents);
     }
 
-    // Async write via persistent stream — no more blocking the event loop
-    ensureStream();
     const jsonLine = `${JSON.stringify(event)}\n`;
-    currentFileSize += Buffer.byteLength(jsonLine, 'utf8');
-    writeStream!.write(jsonLine, 'utf8');
+    const lineSize = Buffer.byteLength(jsonLine, 'utf8');
+    const day = now.toISOString().slice(0, 10);
+    if (!diskError) {
+      void enqueue(async () => {
+        if (diskError) throw diskError;
+        await ensureStream(day, lineSize);
+        currentFileSize += lineSize;
+        writeStream!.write(jsonLine, 'utf8');
+      });
+    }
+
+    if (lineSize > maxFileSize && writeConsole && !logOptions?.silent) {
+      console.warn('[debug] Event exceeds file budget; complete sanitized evidence retained:', {
+        event: event.event,
+        bytes: lineSize,
+        maxFileSize,
+      });
+    }
 
     if (writeConsole && !logOptions?.silent) {
       const line = `[${event.level}] [${event.domain}] ${event.event}`;
@@ -178,37 +209,29 @@ export function createDebugLogger(options: CreateDebugLoggerOptions): DebugLogge
     return event;
   }
 
-  async function flush(): Promise<void> {
-    if (!writeStream || writeStream.closed || writeStream.destroyed) return;
-    // Write an empty chunk to serve as a flush marker.
-    // Writable maintains ordering — this callback fires only after
-    // all previously enqueued data has been written to the OS.
-    return new Promise<void>((resolve, reject) => {
-      writeStream!.write(Buffer.alloc(0), (err) => {
-        if (err) reject(err);
-        else resolve();
+  function flush(): Promise<void> {
+    if (closePromise) return closePromise;
+    return enqueue(async () => {
+      if (diskError) throw diskError;
+      if (!writeStream) return;
+      await new Promise<void>((resolve, reject) => {
+        writeStream!.write(Buffer.alloc(0), (error) => {
+          if (error) reject(error);
+          else resolve();
+        });
       });
+      if (diskError) throw diskError;
     });
   }
 
-  async function close(): Promise<void> {
-    const streams = [...openStreams];
-    if (streams.length === 0) {
-      writeStream = null;
-      return;
-    }
-
-    const closed = streams.map((stream) => {
-      if (stream.closed) return Promise.resolve();
-      return new Promise<void>((resolve) => stream.once('close', resolve));
+  function close(): Promise<void> {
+    if (closePromise) return closePromise;
+    closing = true;
+    closePromise = enqueue(async () => {
+      await closeStream();
+      if (diskError) throw diskError;
     });
-
-    const activeStream = writeStream;
-    writeStream = null;
-    if (activeStream && !activeStream.destroyed && !activeStream.writableEnded) {
-      activeStream.end();
-    }
-    await Promise.all(closed);
+    return closePromise;
   }
 
   return {
@@ -241,19 +264,5 @@ function filterEvents(events: DebugEvent[], filter?: DebugLogFilter): DebugEvent
 function ensureDir(dir: string): void {
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true });
-  }
-}
-
-function cleanupOldLogs(dir: string, retentionDays: number): void {
-  const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
-  const entries = readdirSync(dir, { withFileTypes: true });
-  for (const entry of entries) {
-    if (!entry.isFile()) continue;
-    const match = entry.name.match(/^debug-(\d{4}-\d{2}-\d{2})(?:\.\d+)?\.ndjson$/);
-    if (!match) continue;
-    const fileDate = new Date(match[1]).getTime();
-    if (fileDate < cutoff) {
-      unlinkSync(join(dir, entry.name));
-    }
   }
 }

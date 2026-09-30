@@ -24,6 +24,29 @@ describe('debug logger pre-init buffer (#412)', () => {
     consoleWarnSpy.mockRestore();
   });
 
+  it('initializes the production logger with an explicit five-file, five-MiB budget', async () => {
+    vi.resetModules();
+    const loggerModule = await import('../src/main/debug/logger.js');
+    const createLogger = vi.spyOn(loggerModule, 'createDebugLogger');
+    const { initDebugLogger } = await import('../src/main/debug/index.js');
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const tmp = fs.mkdtempSync(path.join(process.cwd(), '.debug-production-budget-'));
+    const realLogger = initDebugLogger(tmp);
+    cleanups.push(async () => {
+      await realLogger.close();
+      rmSync(tmp, { recursive: true, force: true });
+    });
+    try {
+      expect(createLogger).toHaveBeenCalledWith(expect.objectContaining({ maxFiles: 5, maxFileSize: 5 * 1024 * 1024 }));
+      realLogger.log({ domain: 'app', event: 'production-budget', level: 'info' }, { silent: true });
+      await realLogger.flush();
+      expect(JSON.parse(fs.readFileSync(realLogger.currentFilePath(), 'utf8')).event).toBe('production-budget');
+    } finally {
+      createLogger.mockRestore();
+    }
+  });
+
   it('captures events before initDebugLogger and replays them on init', async () => {
     const debugModule = await loadDebugModule();
     const { getDebugLogger, initDebugLogger } = debugModule;

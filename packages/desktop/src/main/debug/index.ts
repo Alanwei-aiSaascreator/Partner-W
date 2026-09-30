@@ -41,6 +41,8 @@ let debugLogger: DebugLogger = {
 export function initDebugLogger(debugDir: string): DebugLogger {
   debugLogger = createDebugLogger({
     debugDir,
+    maxFiles: 5,
+    maxFileSize: 5 * 1024 * 1024,
     console: true,
     onEvent: broadcastDebugEvent,
   });

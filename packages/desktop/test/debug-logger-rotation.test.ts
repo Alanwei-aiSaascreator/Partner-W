@@ -18,16 +18,16 @@ describe('debug logger size rotation', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it('rotates to .1.ndjson when file exceeds maxFileSize', async () => {
+  it('rotates to .1.ndjson before the next complete event exceeds maxFileSize', async () => {
     logger = createDebugLogger({
       debugDir: dir,
       maxEvents: 1000,
       console: false,
-      maxFileSize: 100, // tiny — rotate after ~100 bytes
+      maxFileSize: 256,
     });
 
     // Write enough events to trigger rotation
-    for (let i = 0; i < 50; i++) {
+    for (let i = 0; i < 3; i++) {
       logger.info({
         domain: 'gateway',
         event: `test-event-${i}`,
@@ -45,14 +45,7 @@ describe('debug logger size rotation', () => {
     const rotatedFiles = files.filter((f) => f.includes('.1.ndjson'));
     expect(rotatedFiles.length).toBeGreaterThanOrEqual(1);
 
-    // The current (active) file should be under the size limit
-    // current is debug-YYYY-MM-DD.ndjson, rotated are .1, .2, etc.
-    // The "current" active file has no suffix
-    const activeFile = files.find((f) => /^debug-\d{4}-\d{2}-\d{2}\.ndjson$/.test(f) && !/\.\d+\.ndjson$/.test(f));
-    if (activeFile) {
-      const size = statSync(join(dir, activeFile)).size;
-      expect(size).toBeLessThan(200); // well within the limit
-    }
+    expect(statSync(logger.currentFilePath()).size).toBeLessThanOrEqual(256);
 
     // Verify rotated files are named correctly
     for (const f of rotatedFiles) {
@@ -97,7 +90,7 @@ describe('debug logger size rotation', () => {
   });
 });
 
-describe('debug logger retention cleanup', () => {
+describe('debug logger historical retention', () => {
   let dir: string;
 
   beforeEach(() => {
@@ -108,7 +101,7 @@ describe('debug logger retention cleanup', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it('deletes log files older than retentionDays on init', () => {
+  it('preserves historical log files regardless of retentionDays on init', () => {
     const today = new Date().toISOString().slice(0, 10);
 
     // Create old log files (15 days ago)
@@ -128,7 +121,6 @@ describe('debug logger retention cleanup', () => {
     expect(existsSync(join(dir, `debug-${oldDateStr}.1.ndjson`))).toBe(true);
     expect(existsSync(join(dir, `debug-${today}.ndjson`))).toBe(true);
 
-    // Create logger with 7-day retention — this triggers cleanup
     createDebugLogger({
       debugDir: dir,
       maxEvents: 100,
@@ -136,9 +128,8 @@ describe('debug logger retention cleanup', () => {
       retentionDays: 7,
     });
 
-    // Old files should be deleted
-    expect(existsSync(join(dir, `debug-${oldDateStr}.ndjson`))).toBe(false);
-    expect(existsSync(join(dir, `debug-${oldDateStr}.1.ndjson`))).toBe(false);
+    expect(existsSync(join(dir, `debug-${oldDateStr}.ndjson`))).toBe(true);
+    expect(existsSync(join(dir, `debug-${oldDateStr}.1.ndjson`))).toBe(true);
 
     // Recent file should remain
     expect(existsSync(join(dir, `debug-${today}.ndjson`))).toBe(true);
@@ -234,20 +225,12 @@ describe('debug logger file size boundaries', () => {
 
     // The active file should be well within the size limit
     const files = readdirSync(dir).filter((f) => f.endsWith('.ndjson'));
-    const activeFile = files.find((f) => /^debug-\d{4}-\d{2}-\d{2}\.ndjson$/.test(f) && !/\.\d+\.ndjson$/.test(f));
-    expect(activeFile).toBeTruthy();
-    const activeSize = statSync(join(dir, activeFile!)).size;
+    const activeSize = statSync(logger.currentFilePath()).size;
 
     // Active file should not exceed maxFileSize
     expect(activeSize).toBeLessThan(maxFileSize);
 
     // All rotated files should also stay within limits
-    for (const f of files) {
-      if (f === activeFile) continue;
-      const size = statSync(join(dir, f)).size;
-      // Rotated files may exceed maxFileSize slightly since they're renamed when the limit is hit
-      // but they shouldn't be wildly larger
-      expect(size).toBeLessThan(maxFileSize * 2);
-    }
+    for (const f of files) expect(statSync(join(dir, f)).size).toBeLessThanOrEqual(maxFileSize);
   });
 });
