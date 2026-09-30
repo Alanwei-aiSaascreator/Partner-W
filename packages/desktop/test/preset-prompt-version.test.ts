@@ -51,9 +51,11 @@ describe('交付边界（COMMON_OPERATING_CONTRACT）', () => {
     expect(COMMON_OPERATING_CONTRACT).not.toMatch(/cannot[\s\S]{0,40}produce[\s\S]{0,20}\.docx/i);
   });
 
-  it('⭐ 不许说"文件已经存在" —— 客户端是在这一轮**结束后**才渲染的（说早了就是假话）', () => {
-    expect(COMMON_OPERATING_CONTRACT).toMatch(/Never claim a file already exists/i);
-    expect(COMMON_OPERATING_CONTRACT).toMatch(/after\*{0,2} your turn ends/i);
+  it('distinguishes submitted source from verified output files', () => {
+    expect(COMMON_OPERATING_CONTRACT).toContain('submitted for generation');
+    expect(COMMON_OPERATING_CONTRACT).toContain('already exists or is guaranteed to appear');
+    expect(COMMON_OPERATING_CONTRACT).toMatch(/verify the actual output file\s+before claiming success/);
+    expect(COMMON_OPERATING_CONTRACT).toContain('a plan, source file, or script alone is not the requested PPT');
   });
 
   it('工作区之外（例如桌面）不许声称能直接拿到', () => {

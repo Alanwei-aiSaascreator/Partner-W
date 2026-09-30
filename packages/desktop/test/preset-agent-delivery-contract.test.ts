@@ -20,17 +20,36 @@ import {
  *    而且表现成"产品做不到"，不是"没接线"。
  */
 describe('预置助手的交付合同：每条通道都要在清单里', () => {
+  it('only requests video generation when the real tool is available and never invents acceptance', () => {
+    expect(COMMON_OPERATING_CONTRACT).toMatch(/video_generate` is available, use that tool/);
+    expect(COMMON_OPERATING_CONTRACT).toContain('If unavailable, state the missing');
+    expect(COMMON_OPERATING_CONTRACT).toContain(
+      'capability without claiming that a video is running or offering fictitious links',
+    );
+    expect(COMMON_OPERATING_CONTRACT).toContain('An accepted background job is still running, not a completed video');
+    expect(COMMON_OPERATING_CONTRACT).toContain('Never automatically resubmit after a timeout');
+    for (const definition of PRESET_AGENT_DEFINITIONS) {
+      expect(definition.soulMd).toContain('video_generate');
+    }
+  });
+
+  it('allows an available real-file generator when a skill route is unavailable or fails', () => {
+    expect(COMMON_OPERATING_CONTRACT).toContain('another available document-generation tool or installed library');
+    expect(COMMON_OPERATING_CONTRACT).toContain('verify that the final file exists and is readable');
+    expect(COMMON_OPERATING_CONTRACT).not.toMatch(/neither skill is available, say plainly that you can only/);
+    expect(COMMON_OPERATING_CONTRACT).not.toMatch(/skill is \*\*not\*\* available, say plainly that you can only/);
+  });
   it('⭐ 网页（html）必须在清单里，并点名 htmlgen 与那个技能', () => {
     expect(COMMON_OPERATING_CONTRACT, '没写网页交付这一条').toMatch(/Web pages \(\.html\)/);
     expect(COMMON_OPERATING_CONTRACT, '没点名 htmlgen 这条 fence 通道').toContain('htmlgen');
     expect(COMMON_OPERATING_CONTRACT, '没点名技能 slug，模型不知道去翻哪一份').toContain('html-deliverable');
   });
 
-  it('⭐ 必须明说"别自己写 HTML、别让用户手动存" —— 那正是上一轮的失败形态', () => {
-    expect(COMMON_OPERATING_CONTRACT).toMatch(/never hand the user markup to save/);
-    // ⚠️ 合同正文里有 Markdown 斜体（`is *not* a 产物`）⇒ 正则要把星号带上，
-    //    否则查的是"没有星号的版本"，永远匹配不到（就是这次踩的）。
-    expect(COMMON_OPERATING_CONTRACT, '要说清自己写的页面不算「产物」').toMatch(/not\*?\s*a 产物/);
+  it('allows verified workspace HTML without making the user save markup manually', () => {
+    expect(COMMON_OPERATING_CONTRACT).toMatch(/Do not hand the\s+user markup to save by hand/);
+    expect(COMMON_OPERATING_CONTRACT).toMatch(/file-writing tool may also create a self-contained HTML file/);
+    expect(COMMON_OPERATING_CONTRACT).toContain('verify the actual output file and give its real path');
+    expect(COMMON_OPERATING_CONTRACT).not.toMatch(/not\*?\s*a 产物/);
   });
 
   /**
@@ -72,9 +91,7 @@ describe('预置助手的交付合同：每条通道都要在清单里', () => {
     expect(COMMON_OPERATING_CONTRACT, '⭐ 被拒 = **换路**的信号，不是缩用户内容的理由').toMatch(
       /signal to switch routes, not to shorten/,
     );
-    expect(COMMON_OPERATING_CONTRACT, '⭐ 不许退回手写文档（那是用户看不见的产物）').toMatch(
-      /fall back to\s+writing a document by hand/,
-    );
+    expect(COMMON_OPERATING_CONTRACT).toContain('Do not substitute source code or a renamed text file');
   });
 
   it('⭐ 模板那条**仍然在清单里**（不是把它删掉，是把它收窄）', () => {
@@ -87,8 +104,10 @@ describe('预置助手的交付合同：每条通道都要在清单里', () => {
     expect(COMMON_OPERATING_CONTRACT).toContain('docgen');
   });
 
-  it('"不许声称文件已经存在"那条还在（网页也一样适用）', () => {
-    expect(COMMON_OPERATING_CONTRACT).toMatch(/Never claim a file already exists/);
+  it('requires actual file verification before claiming delivery success', () => {
+    expect(COMMON_OPERATING_CONTRACT).toMatch(/verify the actual output file\s+before claiming success/);
+    expect(COMMON_OPERATING_CONTRACT).toContain('not that the final file');
+    expect(COMMON_OPERATING_CONTRACT).toContain('already exists or is guaranteed to appear');
   });
 
   it('委派前后必须如实说明 worker 是否真的启动', () => {
@@ -120,6 +139,6 @@ describe('预置助手的交付合同：每条通道都要在清单里', () => {
     // 版本号是"将来能不能安全升级已发出去的盘"的唯一依据
     // （见 preset-agents.ts 里 PRESET_PROMPT_VERSION 的注释）——
     // ⚠️ 所以**改了合同文本就必须动它**，否则已装的盘拿不到新合同。
-    expect(PRESET_PROMPT_VERSION).toBe('2026-09-30.2');
+    expect(PRESET_PROMPT_VERSION).toBe('2026-09-30.3');
   });
 });

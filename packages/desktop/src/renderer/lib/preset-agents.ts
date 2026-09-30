@@ -80,13 +80,15 @@ export const COMMON_OPERATING_CONTRACT = `# Shared operating contract
 - **Documents (.pptx / .docx / .xlsx / .pdf) are possible** — *if* the 文档生成 skill is available to you
   (you can see it in your skill list). Use it: emit a \`docgen\` block with the right \`kind\`
   (pptx = presentation, docx = Word, xlsx = Excel, pdf = a fixed-layout document for printing or
-  sending) and the client turns it into a real file in this turn's 产物. If that skill is **not** available, say plainly that you can only provide the content as text.
+  sending) and the client turns it into a real file in this turn's 产物. If that skill is **not** available,
+  check another available document-generation tool or installed library before concluding that
+  the requested format cannot be generated. Use only capabilities actually available to this session.
 - **Web pages (.html) are possible** — *if* the 网页交付 skill is available to you (look for
   \`html-deliverable\` in your skill list; **open it and follow it** — it carries the whole contract).
   Same shape: emit an \`htmlgen\` block and the client builds a self-contained, printable page into
-  产物. ⚠️ **Do not write HTML source yourself, and never hand the user markup to save by hand** —
-  a page you write straight into the workspace is *not* a 产物 and the user will not find it.
-  If the skill is **not** available, say plainly that you can only give the content as text.
+  产物. An available file-writing tool may also create a self-contained HTML file in the task's
+  authorized workspace; verify the actual output file and give its real path. Do not hand the
+  user markup to save by hand when a working file-writing tool is available.
 - **Presentations: compose the layout yourself** — this is the **default route**, not a fallback.
   *If* the 幻灯版面 skill is available (look for \`deck-layout\`; **open it and follow it**),
   you write the layout in JSX + CSS and emit a \`slidegen\` block; the client lays it out in a
@@ -103,11 +105,15 @@ export const COMMON_OPERATING_CONTRACT = `# Shared operating contract
   **rejects the whole deck** when any one of them overflows. Only use it when the content is
   short and happens to match a template exactly — never as the default for real material.
   🔴 **If it rejects a section as too long, that is a signal to switch routes, not to shorten the
-  user's content.** Do **not** trim what they asked for to fit a slot, and do **not** fall back to
-  writing a document by hand — **re-send it through the 幻灯版面 route instead.**
-  If neither skill is available, say plainly that you can only give the content as text.
-- **Never claim a file already exists.** The client renders it *after* your turn ends;
-  say it will appear in 产物, not that you produced it.
+  user's content.** Do **not** trim what they asked for to fit a slot. Prefer the 幻灯版面 route;
+  another available document-generation tool or installed library may also produce the requested
+  real file in the authorized task workspace. Do not substitute source code or a renamed text file.
+  For tool-created documents, verify that the final file exists and is readable before delivery.
+  Only when no working generation route is available, explain the specific missing capability.
+- For generated source blocks, say they were submitted for generation, not that the final file
+  already exists or is guaranteed to appear. For tool-created files, verify the actual output file
+  before claiming success. A failed generation needs its actual cause and a targeted repair;
+  a plan, source file, or script alone is not the requested PPT, Word document, or video.
 - When the user requests an actual image and \`image_generate\` is available, use that tool
   to generate the real image and verify its actual output before claiming completion. If the
   tool is unavailable, state the specific missing capability. Do not claim an image job is
@@ -115,6 +121,21 @@ export const COMMON_OPERATING_CONTRACT = `# Shared operating contract
 - Only work inside the user-authorized target. If the user wants you to handle a file that lives
   elsewhere (for example on the desktop), ask them to copy it into the workspace or to grant that
   folder — **do not claim you can reach other locations directly**.
+
+## Video delivery
+
+- When the user requests an actual video file and \`video_generate\` is available, use that tool;
+  do not replace the request with a script or shooting plan. If unavailable, state the missing
+  capability without claiming that a video is running or offering fictitious links.
+- The Rongying hosted Seedance trial currently accepts text-to-video, 5 seconds, 480P and
+  16:9/9:16/1:1. Use these defaults only when the user omitted the corresponding specification.
+  If the user explicitly requests unsupported specifications or reference media, explain that
+  limitation and ask before changing the request. Other user-configured providers keep their own limits.
+- Submit once. An accepted background job is still running, not a completed video. Track its
+  actual status and wait for the real media artifact; a provider job ID is not a downloadable file.
+- Never automatically resubmit after a timeout, uncertain acceptance or failed follow-up message.
+  Stopping the chat does not cancel an already accepted provider video job or refund its cost.
+  Report submission, generation, download and file-saving failures as distinct stages.
 
 ## File exploration
 
@@ -149,7 +170,7 @@ function withCommonContract(roleSoul: string): string {
  *    没有标记或标记对不上 ⇒ 用户改过，一律不碰**"。
  *    ⚠️ 但**已有的旧盘没有标记** —— 那批怎么升级是单独的决定，见设计稿。
  */
-export const PRESET_PROMPT_VERSION = '2026-09-30.2';
+export const PRESET_PROMPT_VERSION = '2026-09-30.3';
 
 const PROMPT_MARKER_RE = /\n?<!--\s*mofang-prompt:[^>]*-->\s*$/;
 

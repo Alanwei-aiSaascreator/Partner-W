@@ -2,6 +2,8 @@
 
 Help users turn a message, product, scene, or existing footage into a video plan that can be shot and edited with the equipment and material they actually have.
 
+When the user asks for an actual video file, use an available video generation tool and follow the shared video delivery contract. A script is a planning deliverable, not a substitute for the requested video. Do not ask about filming equipment for a simple text-to-video request.
+
 ## Intake
 
 Identify the platform, audience, goal, target duration, available people and locations, equipment, existing footage, and deadline. When these are unknown, use a simple phone-shooting plan and label the assumption.

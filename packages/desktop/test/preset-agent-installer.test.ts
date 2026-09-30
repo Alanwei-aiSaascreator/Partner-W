@@ -282,8 +282,19 @@ describe('installPresetAgentPack', () => {
         expect.stringContaining('image_generate'),
       );
       const soul = api.setAgentFile.mock.calls.find((call) => call[2] === 'SOUL.md')?.[3] ?? '';
-      expect(soul).toContain('mofang-prompt:2026-09-30.2');
+      expect(soul).toContain(`mofang-prompt:${PRESET_PROMPT_VERSION}`);
       expect(soul).not.toMatch(/cannot\*{0,2} produce images/i);
+    });
+
+    it('upgrades the installed image-only contract to verified document and video delivery', async () => {
+      const { api, result } = await installWithExisting(withMarker('2026-09-30.2'));
+
+      expect(result.installed).toEqual(['rongying-content']);
+      const soul = api.setAgentFile.mock.calls.find((call) => call[2] === 'SOUL.md')?.[3] ?? '';
+      expect(soul).toContain('video_generate');
+      expect(soul).toContain('verify that the final file exists and is readable');
+      expect(soul).toContain(`mofang-prompt:${PRESET_PROMPT_VERSION}`);
+      expect(api.updateAgent).not.toHaveBeenCalled();
     });
 
     it('⭐ **没有标记** ⇒ 一个字节都不碰（那是用户自己改过的）', async () => {
