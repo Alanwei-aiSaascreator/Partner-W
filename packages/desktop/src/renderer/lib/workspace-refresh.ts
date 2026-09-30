@@ -13,6 +13,7 @@ import { useApprovalStore } from '../stores/approvalStore';
 import { useQuestionStore } from '../stores/questionStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useArtifactDeliveryStore } from '../stores/artifactDeliveryStore';
+import { useDeliveryActivityStore } from '../stores/deliveryActivityStore';
 import { hydrateFromLocal, resetHydration } from './session-sync';
 import { reinitializeGatewayBootstrap } from '../hooks/useGatewayDispatcherSetup';
 import { teamMeetingController } from '../features/team-meeting/instance';
@@ -20,6 +21,7 @@ import { teamMeetingController } from '../features/team-meeting/instance';
 export async function refreshRendererAfterWorkspaceChange(): Promise<void> {
   teamMeetingController.reset();
   useTaskStore.getState().resetWorkspace();
+  useDeliveryActivityStore.getState().clear(useTaskStore.getState().workspaceEpoch);
 
   useMessageStore.setState({
     messagesByTask: {},
