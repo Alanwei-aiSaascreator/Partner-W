@@ -110,6 +110,7 @@ async function waitForSettlement(count = 1): Promise<void> {
 describe('slide quality delivery settlement', () => {
   beforeEach(async () => {
     vi.resetModules();
+    (await import('../src/main/workspace/scope.js')).setWorkspaceDatabaseOwner({});
     handleMap.clear();
     sendMock.mockReset();
     selectGetMock.mockReset();

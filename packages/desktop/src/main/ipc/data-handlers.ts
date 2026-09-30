@@ -5,6 +5,8 @@ import { getDb, isDbReady } from '../db/index.js';
 import { tasks, messages, artifacts, taskRooms, taskRoomSessions, teams, teamAgents } from '../db/schema.js';
 import { autoExtractArtifacts } from '../artifact/auto-extract.js';
 import { captureArtifactDeliveryOperation } from '../artifact/delivery-operation.js';
+import { captureArtifactWorkspaceOwner } from '../artifact/workspace-owner.js';
+import { subscribeWorkspaceScope } from '../workspace/scope.js';
 import { captureTaskArtifactBaseline, reconcileTaskArtifacts, type ArtifactBaseline } from '../artifact/reconcile.js';
 import { resolveAgentWorkspace } from '../artifact/agent-workspace.js';
 import { generateDocumentsFromMessage } from '../docgen/generate.js';
@@ -232,6 +234,17 @@ const COMPLETED_MESSAGE_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_COMPLETED_MESSAGES = 2048;
 let nextArtifactRunSequence = 0;
 let nextCompletedMessageSequence = 0;
+
+subscribeWorkspaceScope(() => {
+  for (const run of [...artifactRuns.values()].flat().concat([...claimedArtifactRuns.values()])) {
+    run.state = 'canceled';
+    clearTimeout(run.expiryTimer);
+  }
+  artifactRuns.clear();
+  claimedArtifactRuns.clear();
+  desynchronizedArtifactSessions.clear();
+  completedAssistantMessages.clear();
+});
 
 function artifactRunKey(taskId: string, sessionKey: string): string {
   return `${taskId}\0${sessionKey}`;
@@ -613,6 +626,8 @@ function finalizeAssistantArtifacts(input: {
   gatewayHttpBase?: string;
   gatewayId?: string;
 }): void {
+  const owner = captureArtifactWorkspaceOwner();
+  if (!owner.current()) return;
   pruneCompletedAssistantMessages();
   const messageKey = completedMessageKey(input.taskId, input.messageId);
   if (completedAssistantMessages.has(messageKey)) return;
@@ -652,6 +667,7 @@ function finalizeAssistantArtifacts(input: {
       if (name) producedArtifactNames.add(name);
     };
     const notifyReconciledArtifacts = (result: { saved: Artifact[]; updated?: Artifact[] }): void => {
+      if (!owner.current()) return;
       const changed = new Map([...result.saved, ...(result.updated ?? [])].map((artifact) => [artifact.id, artifact]));
       for (const artifact of changed.values()) {
         rememberProduced(artifact);
@@ -669,6 +685,7 @@ function finalizeAssistantArtifacts(input: {
         resolveMediaDownload: mediaDownloadResolver(input.gatewayId, input.sessionKey),
         onActivity: activity.phase,
       });
+      if (!owner.current()) return;
       if (extraction?.mediaFailures.length) deliveryFailure.mediaFailures = extraction.mediaFailures;
       const completed = completedAssistantMessages.get(messageKey);
       if (completed)
@@ -678,6 +695,7 @@ function finalizeAssistantArtifacts(input: {
           extraction?.failedMediaSourceKeys,
         );
     } catch (error) {
+      if (!owner.current()) return;
       pipelineFailed = true;
       console.error('[auto-extract]', error);
     }
@@ -696,6 +714,7 @@ function finalizeAssistantArtifacts(input: {
             artifactKind: 'docgen',
           })
         : { status: 'complete', content: input.content };
+    if (!owner.current()) return;
     try {
       // ⭐ 文档生成：助手在回复里给出 ```` ```docgen ```` 块（内容 schema 见
       //    `main/docgen/request.ts`），这里渲染成真 pptx / docx / xlsx 并**走现成的产物通道**
@@ -725,6 +744,7 @@ function finalizeAssistantArtifacts(input: {
                   ]
                 : [],
             };
+      if (!owner.current()) return;
       for (const artifact of documents.saved) {
         rememberProduced(artifact);
         for (const win of BrowserWindow.getAllWindows()) win.webContents.send('artifact:saved', artifact);
@@ -738,6 +758,7 @@ function finalizeAssistantArtifacts(input: {
         for (const win of BrowserWindow.getAllWindows()) win.webContents.send('docgen:failed', documents.failed);
       }
     } catch (error) {
+      if (!owner.current()) return;
       pipelineFailed = true;
       console.error('[docgen]', error);
     }
@@ -760,6 +781,7 @@ function finalizeAssistantArtifacts(input: {
                 ? ([{ code: 'htmlgen-block-invalid' }] as const)
                 : [],
             };
+      if (!owner.current()) return;
       for (const artifact of pages.saved) {
         rememberProduced(artifact);
         for (const win of BrowserWindow.getAllWindows()) win.webContents.send('artifact:saved', artifact);
@@ -769,6 +791,7 @@ function finalizeAssistantArtifacts(input: {
         for (const win of BrowserWindow.getAllWindows()) win.webContents.send('htmlgen:failed', pages.failed);
       }
     } catch (error) {
+      if (!owner.current()) return;
       pipelineFailed = true;
       console.error('[htmlgen]', error);
     }
@@ -792,6 +815,7 @@ function finalizeAssistantArtifacts(input: {
       // 「合格文件」= 助手工作区里、文件名含 `.slidegen`、且相对**这一轮开始那一刻**是新的
       // （新增 / size 变 / mtime 变，同名覆盖也算）。判据与理由见 `slidegen/deck-file.ts`。
       const agentRoot = await run.agentBaseline;
+      if (!owner.current()) return;
       const deckFiles = agentRoot?.deckBaseline
         ? changedDeckFiles(agentRoot.deckBaseline, agentRoot.workspacePath)
         : [];
@@ -853,6 +877,7 @@ function finalizeAssistantArtifacts(input: {
           content: slideContent,
           onActivity: activity.phase,
         });
+        if (!owner.current()) return;
         // 文件那条路自己判出来的失败（没围栏 / 读不动）**也要上屏** —— 否则又回到
         // "产物空、日志空、界面说已完成"那类静默。放前面：它比排版层的失败更根本。
         decks.failed.unshift(...deckFileFailures);
@@ -867,6 +892,7 @@ function finalizeAssistantArtifacts(input: {
         slideWarnings.push(...decks.warnings);
       }
     } catch (error) {
+      if (!owner.current()) return;
       console.error('[slidegen]', error);
       deliveryFailure.slideFailures = [{ code: 'slidegen-render-failed' }];
     }
@@ -878,6 +904,7 @@ function finalizeAssistantArtifacts(input: {
       try {
         if (isArtifactRunCanceled(run) || !run.baseline) return;
         const baseline = await run.baseline;
+        if (!owner.current()) return;
         if (isArtifactRunCanceled(run)) return;
         activity.phase('reconciling-artifacts');
         const result = await reconcileTaskArtifacts({
@@ -886,8 +913,10 @@ function finalizeAssistantArtifacts(input: {
           messageId: input.messageId,
           baseline,
         });
+        if (!owner.current()) return;
         notifyReconciledArtifacts(result);
       } catch (error) {
+        if (!owner.current()) return;
         pipelineFailed = true;
         console.error('[artifact_reconcile_failed]', { taskId: input.taskId, messageId: input.messageId, error });
       }
@@ -901,6 +930,7 @@ function finalizeAssistantArtifacts(input: {
       //    —— 任一条坏了都不影响另一条，也不影响再上面的 auto-extract / docgen / htmlgen / slidegen。
       try {
         const agentRoot = run.agentBaseline ? await run.agentBaseline : null;
+        if (!owner.current()) return;
         // 没有第二个根只是「这趟不扫助手工作区」，不能 `return`：后面的结果/声称守卫仍要跑。
         if (!isArtifactRunCanceled(run) && agentRoot) {
           activity.phase('reconciling-artifacts');
@@ -911,6 +941,7 @@ function finalizeAssistantArtifacts(input: {
             baseline: agentRoot.baseline,
             rootKind: 'agent',
           });
+          if (!owner.current()) return;
           // ⭐ **正面证据**：真机排障时唯一能回答"这个功能跑没跑、找到了几条"的一行。
           //    没有它，用户说"产物还是空的"时只能猜：是没扫到？根没接上？还是真没文件？
           getDebugLogger().info({
@@ -927,6 +958,7 @@ function finalizeAssistantArtifacts(input: {
           notifyReconciledArtifacts(agentResult);
         }
       } catch (error) {
+        if (!owner.current()) return;
         pipelineFailed = true;
         console.error('[artifact_agent_reconcile_failed]', {
           taskId: input.taskId,
@@ -941,6 +973,7 @@ function finalizeAssistantArtifacts(input: {
       try {
         const roots = [input.workspacePath];
         const agentWs = (await run.agentBaseline)?.workspacePath;
+        if (!owner.current()) return;
         if (agentWs && !roots.includes(agentWs)) roots.push(agentWs);
         // ⭐ `sinceMs` 是**必需**的，不是可选项：只查名字的话，**上一轮留下的同名文件**
         //    会满足本轮的声称 ⇒「让助手再改一版」这种最常见的用法依然静默。
@@ -969,65 +1002,68 @@ function finalizeAssistantArtifacts(input: {
           deliveryFailure.missing = missing;
         }
       } catch (error) {
+        if (!owner.current()) return;
         pipelineFailed = true;
         console.error('[artifact_claim_guard_failed]', { taskId: input.taskId, error });
       }
     } finally {
-      claimedArtifactRuns.delete(run.token);
-      const requiredMediaSources = completedAssistantMessages.get(messageKey)?.mediaRetryRequiredSources;
-      if (completedAssistantMessages.get(messageKey)?.mediaRetrySucceeded) deliveryFailure.mediaFailures = undefined;
-      completedAssistantMessages.set(messageKey, {
-        state: 'completed',
-        touchedAt: Date.now(),
-        sequence: nextCompletedMessageSequence++,
-        taskId: input.taskId,
-        sessionKey: input.sessionKey,
-        mediaRetryRequiredSources: requiredMediaSources,
-      });
-      pruneCompletedAssistantMessages();
-      const failed = Boolean(
-        pipelineFailed ||
-        deliveryFailure.missing.length ||
-        deliveryFailure.slideFailures?.length ||
-        deliveryFailure.docFailures?.length ||
-        deliveryFailure.htmlFailures?.length ||
-        deliveryFailure.mediaFailures?.length,
-      );
-      const canceled = isArtifactRunCanceled(run);
-      const hasWarnings = !canceled && slideWarnings.length > 0;
-      const settlement: ArtifactDeliverySettled = {
-        taskId: input.taskId,
-        sessionKey: input.sessionKey,
-        messageId: input.messageId,
-        status: canceled ? 'canceled' : failed ? 'failed' : hasWarnings ? 'needs-review' : 'succeeded',
-        ...(hasWarnings ? { slideWarnings } : {}),
-      };
-      const nonMediaFailed = Boolean(
-        pipelineFailed ||
-        deliveryFailure.missing.length ||
-        deliveryFailure.slideFailures?.length ||
-        deliveryFailure.docFailures?.length ||
-        deliveryFailure.htmlFailures?.length,
-      );
-      activity.finish(settlement.status);
-      completedAssistantMessages.get(messageKey)!.mediaRetrySettlement = {
-        ...settlement,
-        status: canceled ? 'canceled' : nonMediaFailed ? 'failed' : hasWarnings ? 'needs-review' : 'succeeded',
-      };
-      for (const win of BrowserWindow.getAllWindows()) {
-        if (hasWarnings) win.webContents.send('slidegen:warned', slideWarnings);
-        win.webContents.send('artifact:delivery-settled', settlement);
-      }
-      if (
-        !isArtifactRunCanceled(run) &&
-        (deliveryFailure.missing.length ||
+      if (owner.current()) {
+        claimedArtifactRuns.delete(run.token);
+        const requiredMediaSources = completedAssistantMessages.get(messageKey)?.mediaRetryRequiredSources;
+        if (completedAssistantMessages.get(messageKey)?.mediaRetrySucceeded) deliveryFailure.mediaFailures = undefined;
+        completedAssistantMessages.set(messageKey, {
+          state: 'completed',
+          touchedAt: Date.now(),
+          sequence: nextCompletedMessageSequence++,
+          taskId: input.taskId,
+          sessionKey: input.sessionKey,
+          mediaRetryRequiredSources: requiredMediaSources,
+        });
+        pruneCompletedAssistantMessages();
+        const failed = Boolean(
+          pipelineFailed ||
+          deliveryFailure.missing.length ||
           deliveryFailure.slideFailures?.length ||
           deliveryFailure.docFailures?.length ||
           deliveryFailure.htmlFailures?.length ||
-          deliveryFailure.mediaFailures?.length)
-      ) {
+          deliveryFailure.mediaFailures?.length,
+        );
+        const canceled = isArtifactRunCanceled(run);
+        const hasWarnings = !canceled && slideWarnings.length > 0;
+        const settlement: ArtifactDeliverySettled = {
+          taskId: input.taskId,
+          sessionKey: input.sessionKey,
+          messageId: input.messageId,
+          status: canceled ? 'canceled' : failed ? 'failed' : hasWarnings ? 'needs-review' : 'succeeded',
+          ...(hasWarnings ? { slideWarnings } : {}),
+        };
+        const nonMediaFailed = Boolean(
+          pipelineFailed ||
+          deliveryFailure.missing.length ||
+          deliveryFailure.slideFailures?.length ||
+          deliveryFailure.docFailures?.length ||
+          deliveryFailure.htmlFailures?.length,
+        );
+        activity.finish(settlement.status);
+        completedAssistantMessages.get(messageKey)!.mediaRetrySettlement = {
+          ...settlement,
+          status: canceled ? 'canceled' : nonMediaFailed ? 'failed' : hasWarnings ? 'needs-review' : 'succeeded',
+        };
         for (const win of BrowserWindow.getAllWindows()) {
-          win.webContents.send('artifact:claim-violation', deliveryFailure);
+          if (hasWarnings) win.webContents.send('slidegen:warned', slideWarnings);
+          win.webContents.send('artifact:delivery-settled', settlement);
+        }
+        if (
+          !isArtifactRunCanceled(run) &&
+          (deliveryFailure.missing.length ||
+            deliveryFailure.slideFailures?.length ||
+            deliveryFailure.docFailures?.length ||
+            deliveryFailure.htmlFailures?.length ||
+            deliveryFailure.mediaFailures?.length)
+        ) {
+          for (const win of BrowserWindow.getAllWindows()) {
+            win.webContents.send('artifact:claim-violation', deliveryFailure);
+          }
         }
       }
     }
@@ -1268,6 +1304,7 @@ export function registerDataHandlers(): void {
             // Legacy/history hydration still needs attachment and fenced-code
             // extraction. Reconciliation deliberately fails closed without a
             // trusted user-turn baseline so old workspace files are not claimed.
+            const owner = captureArtifactWorkspaceOwner();
             const taskRow = db.select({ gid: tasks.gatewayId }).from(tasks).where(eq(tasks.id, msg.taskId)).get();
             const gatewayHttpBase = taskRow ? getGatewayClient(taskRow.gid)?.httpBase : undefined;
             const activity = captureArtifactDeliveryOperation({
@@ -1288,7 +1325,7 @@ export function registerDataHandlers(): void {
               onActivity: activity.phase,
             })
               .then((result) => {
-                if (getDb() !== db || getWorkspacePath() !== workspacePath) return;
+                if (!owner.current() || getDb() !== db || getWorkspacePath() !== workspacePath) return;
                 const currentMessage = db
                   .select({ taskId: messages.taskId, sessionKey: messages.sessionKey, runId: messages.runId })
                   .from(messages)
