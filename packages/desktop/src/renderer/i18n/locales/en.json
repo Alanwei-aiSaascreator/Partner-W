@@ -1307,11 +1307,54 @@
     "video": "Video"
   },
   "meeting": {
+    "abort": {
+      "confirmed": "Gateway confirmed stop",
+      "not-running": "No active run reported",
+      "requested": "Stop requested",
+      "unconfirmed": "Stop not confirmed; do not assume the upstream job or billing stopped."
+    },
+    "artifactsHint": "Open a stage to view its real replies and files in the right-hand artifact panel.",
+    "chooseModel": "Select a model",
+    "costWarning": "Each stage calls its selected model and consumes credits. Closing this window does not stop the discussion.",
+    "description": "Two or three real members speak in order: proposal, review, then conclusion.",
+    "failed": "The discussion could not be started.",
+    "memberModel": "Model for {{name}}",
+    "members": "Choose 2–3 members",
+    "modelUnavailable": "Model unavailable",
+    "noAutoResume": "Not resumed automatically. Open the stage tasks to inspect replies before starting a new discussion.",
+    "question": "What should the team discuss?",
+    "reselect": "Choose members again",
+    "selectionChanged": "The member list has changed. Please confirm the participants again.",
     "stage": {
       "proposal": "Proposal",
-      "review": "Review"
+      "review": "Review",
+      "summary": "Conclusion"
     },
-    "taskBusy": "A discussion is using this task. Stop the discussion or wait for it to finish before sending another message."
+    "start": "Start discussion",
+    "starting": "Creating discussion…",
+    "status": {
+      "completed": "Discussion completed",
+      "draft": "Preparing",
+      "failed": "Failed",
+      "interrupted": "Interrupted / not confirmed",
+      "running": "In progress",
+      "stopped": "Stopped",
+      "stopping": "Stopping"
+    },
+    "stop": "Stop discussion",
+    "taskBusy": "A discussion is using this task. Stop the discussion or wait for it to finish before sending another message.",
+    "title": "Team discussion",
+    "turn": {
+      "completed": "Reply saved",
+      "dispatching": "Sending",
+      "failed": "Failed",
+      "interrupted": "Not confirmed",
+      "pending": "Waiting",
+      "running": "Speaking",
+      "stopped": "Stopped",
+      "syncing": "Saving reply"
+    },
+    "unavailable": "Connect the gateway and make at least two team members available first."
   },
   "mentionPicker": {
     "agents": "Agents",

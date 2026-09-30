@@ -1307,11 +1307,54 @@
     "video": "Vidéo"
   },
   "meeting": {
+    "abort": {
+      "confirmed": "Arrêt confirmé par la passerelle",
+      "not-running": "Aucune exécution active signalée",
+      "requested": "Arrêt demandé",
+      "unconfirmed": "L’arrêt n’est pas confirmé. Ne supposez pas que la tâche chez le fournisseur ou la facturation s’est arrêtée."
+    },
+    "artifactsHint": "Ouvrez une étape pour consulter ses réponses réelles et ses fichiers dans le panneau des résultats à droite.",
+    "chooseModel": "Sélectionner un modèle",
+    "costWarning": "Chaque étape utilise le modèle sélectionné et consomme des crédits. Fermer cette fenêtre n’arrête pas la discussion.",
+    "description": "Deux ou trois membres disponibles de l’équipe interviennent à tour de rôle : proposition, évaluation, puis conclusion.",
+    "failed": "Impossible de lancer la discussion.",
+    "memberModel": "Modèle pour {{name}}",
+    "members": "Choisir 2 à 3 membres",
+    "modelUnavailable": "Modèle indisponible",
+    "noAutoResume": "La discussion ne reprend pas automatiquement. Ouvrez les tâches de chaque étape pour vérifier les réponses avant de lancer une nouvelle discussion.",
+    "question": "De quoi l’équipe doit-elle discuter ?",
+    "reselect": "Sélectionner à nouveau les membres",
+    "selectionChanged": "La liste des membres a changé. Veuillez confirmer à nouveau les participants.",
     "stage": {
       "proposal": "Proposition",
-      "review": "Évaluation"
+      "review": "Évaluation",
+      "summary": "Conclusion"
     },
-    "taskBusy": "Cette tâche est utilisée par une discussion. Arrêtez la discussion ou attendez qu’elle se termine avant d’envoyer un autre message."
+    "start": "Lancer la discussion",
+    "starting": "Création de la discussion…",
+    "status": {
+      "completed": "Discussion terminée",
+      "draft": "Préparation",
+      "failed": "Échec",
+      "interrupted": "Interrompue / non confirmée",
+      "running": "En cours",
+      "stopped": "Arrêtée",
+      "stopping": "Arrêt en cours"
+    },
+    "stop": "Arrêter la discussion",
+    "taskBusy": "Cette tâche est utilisée par une discussion. Arrêtez la discussion ou attendez qu’elle se termine avant d’envoyer un autre message.",
+    "title": "Discussion d’équipe",
+    "turn": {
+      "completed": "Réponse enregistrée",
+      "dispatching": "Envoi en cours",
+      "failed": "Échec",
+      "interrupted": "Non confirmée",
+      "pending": "En attente",
+      "running": "Intervention en cours",
+      "stopped": "Arrêtée",
+      "syncing": "Enregistrement de la réponse"
+    },
+    "unavailable": "Connectez d’abord la passerelle et assurez-vous qu’au moins deux membres de l’équipe sont disponibles."
   },
   "mentionPicker": {
     "agents": "Agents",

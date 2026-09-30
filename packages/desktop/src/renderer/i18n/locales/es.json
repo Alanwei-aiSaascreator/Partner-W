@@ -1307,11 +1307,54 @@
     "video": "Vídeo"
   },
   "meeting": {
+    "abort": {
+      "confirmed": "El gateway confirmó la detención",
+      "not-running": "No se informó de ninguna ejecución activa",
+      "requested": "Detención solicitada",
+      "unconfirmed": "La detención no está confirmada. No supongas que la tarea del proveedor o la facturación se han detenido."
+    },
+    "artifactsHint": "Abre una etapa para ver sus respuestas reales y sus archivos en el panel de resultados de la derecha.",
+    "chooseModel": "Selecciona un modelo",
+    "costWarning": "Cada etapa utiliza el modelo seleccionado y consume créditos. Cerrar esta ventana no detiene la reunión.",
+    "description": "Dos o tres miembros disponibles del equipo intervienen por turnos: propuesta, revisión y conclusión.",
+    "failed": "No se pudo iniciar la reunión.",
+    "memberModel": "Modelo de {{name}}",
+    "members": "Elige de 2 a 3 miembros",
+    "modelUnavailable": "Modelo no disponible",
+    "noAutoResume": "La reunión no se reanuda automáticamente. Abre las tareas de cada etapa y revisa las respuestas antes de iniciar otra reunión.",
+    "question": "¿Qué debería debatir el equipo?",
+    "reselect": "Volver a elegir miembros",
+    "selectionChanged": "La lista de miembros ha cambiado. Confirma de nuevo quiénes participarán.",
     "stage": {
       "proposal": "Propuesta",
-      "review": "Revisión"
+      "review": "Revisión",
+      "summary": "Conclusión"
     },
-    "taskBusy": "Una discusión está usando esta tarea. Detén la discusión o espera a que termine antes de enviar otro mensaje."
+    "start": "Iniciar reunión",
+    "starting": "Creando reunión…",
+    "status": {
+      "completed": "Reunión completada",
+      "draft": "Preparando",
+      "failed": "Fallida",
+      "interrupted": "Interrumpida / sin confirmar",
+      "running": "En curso",
+      "stopped": "Detenida",
+      "stopping": "Deteniendo"
+    },
+    "stop": "Detener reunión",
+    "taskBusy": "Una discusión está usando esta tarea. Detén la discusión o espera a que termine antes de enviar otro mensaje.",
+    "title": "Reunión de equipo",
+    "turn": {
+      "completed": "Respuesta guardada",
+      "dispatching": "Enviando",
+      "failed": "Fallida",
+      "interrupted": "Sin confirmar",
+      "pending": "En espera",
+      "running": "Interviniendo",
+      "stopped": "Detenida",
+      "syncing": "Guardando respuesta"
+    },
+    "unavailable": "Conecta primero el gateway y asegúrate de que haya al menos dos miembros del equipo disponibles."
   },
   "mentionPicker": {
     "agents": "Agents",

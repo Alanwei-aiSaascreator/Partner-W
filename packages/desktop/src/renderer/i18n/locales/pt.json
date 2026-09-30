@@ -1307,11 +1307,54 @@
     "video": "Vídeo"
   },
   "meeting": {
+    "abort": {
+      "confirmed": "O gateway confirmou a interrupção",
+      "not-running": "Nenhuma execução ativa foi informada",
+      "requested": "Interrupção solicitada",
+      "unconfirmed": "A interrupção não foi confirmada. Não presuma que a tarefa no provedor ou a cobrança tenham sido interrompidas."
+    },
+    "artifactsHint": "Abra uma etapa para ver as respostas reais e os arquivos no painel de resultados à direita.",
+    "chooseModel": "Selecione um modelo",
+    "costWarning": "Cada etapa utiliza o modelo selecionado e consome créditos. Fechar esta janela não interrompe a reunião.",
+    "description": "Dois ou três membros disponíveis da equipe participam em sequência: proposta, revisão e conclusão.",
+    "failed": "Não foi possível iniciar a reunião.",
+    "memberModel": "Modelo de {{name}}",
+    "members": "Escolha de 2 a 3 membros",
+    "modelUnavailable": "Modelo indisponível",
+    "noAutoResume": "A reunião não será retomada automaticamente. Abra as tarefas de cada etapa e confira as respostas antes de iniciar outra reunião.",
+    "question": "O que a equipe deve discutir?",
+    "reselect": "Selecionar membros novamente",
+    "selectionChanged": "A lista de membros mudou. Confirme novamente quem participará.",
     "stage": {
       "proposal": "Proposta",
-      "review": "Revisão"
+      "review": "Revisão",
+      "summary": "Conclusão"
     },
-    "taskBusy": "Esta tarefa está sendo usada em uma discussão. Interrompa a discussão ou aguarde sua conclusão antes de enviar outra mensagem."
+    "start": "Iniciar reunião",
+    "starting": "Criando reunião…",
+    "status": {
+      "completed": "Reunião concluída",
+      "draft": "Preparando",
+      "failed": "Falhou",
+      "interrupted": "Interrompida / não confirmada",
+      "running": "Em andamento",
+      "stopped": "Interrompida",
+      "stopping": "Interrompendo"
+    },
+    "stop": "Interromper reunião",
+    "taskBusy": "Esta tarefa está sendo usada em uma discussão. Interrompa a discussão ou aguarde sua conclusão antes de enviar outra mensagem.",
+    "title": "Reunião da equipe",
+    "turn": {
+      "completed": "Resposta salva",
+      "dispatching": "Enviando",
+      "failed": "Falhou",
+      "interrupted": "Não confirmada",
+      "pending": "Aguardando",
+      "running": "Apresentando a resposta",
+      "stopped": "Interrompida",
+      "syncing": "Salvando resposta"
+    },
+    "unavailable": "Primeiro, conecte o gateway e verifique se há pelo menos dois membros da equipe disponíveis."
   },
   "mentionPicker": {
     "agents": "Agents",

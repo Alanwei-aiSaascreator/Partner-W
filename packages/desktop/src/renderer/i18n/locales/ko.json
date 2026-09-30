@@ -1307,11 +1307,54 @@
     "video": "동영상"
   },
   "meeting": {
+    "abort": {
+      "confirmed": "게이트웨이에서 중지 확인됨",
+      "not-running": "실행 중인 작업이 없다고 보고됨",
+      "requested": "중지 요청됨",
+      "unconfirmed": "중지가 확인되지 않았습니다. 제공업체의 작업이나 과금이 중지되었다고 판단할 수 없습니다."
+    },
+    "artifactsHint": "각 단계를 열면 실제 답변과 생성된 파일을 오른쪽 결과물 패널에서 확인할 수 있습니다.",
+    "chooseModel": "모델 선택",
+    "costWarning": "각 단계에서 선택한 모델을 호출하고 크레딧을 사용합니다. 이 창을 닫아도 회의는 중지되지 않습니다.",
+    "description": "사용 가능한 팀 구성원 2~3명이 제안, 검토, 결론 순서로 발언합니다.",
+    "failed": "회의를 시작하지 못했습니다.",
+    "memberModel": "{{name}}의 모델",
+    "members": "구성원 2~3명 선택",
+    "modelUnavailable": "사용할 수 없는 모델",
+    "noAutoResume": "자동으로 재개되지 않습니다. 새 회의를 시작하기 전에 각 단계의 작업을 열어 답변을 확인해 주세요.",
+    "question": "팀에서 무엇을 논의할까요?",
+    "reselect": "구성원 다시 선택",
+    "selectionChanged": "구성원 목록이 변경되었습니다. 발언할 구성원을 다시 확인해 주세요.",
     "stage": {
       "proposal": "제안",
-      "review": "검토"
+      "review": "검토",
+      "summary": "결론"
     },
-    "taskBusy": "토론에서 이 작업을 사용 중입니다. 토론을 중지하거나 종료될 때까지 기다린 후 메시지를 보내세요."
+    "start": "회의 시작",
+    "starting": "회의 생성 중…",
+    "status": {
+      "completed": "회의 완료",
+      "draft": "준비 중",
+      "failed": "실패",
+      "interrupted": "중단됨 / 결과 미확인",
+      "running": "논의 중",
+      "stopped": "중지됨",
+      "stopping": "중지 중"
+    },
+    "stop": "회의 중지",
+    "taskBusy": "토론에서 이 작업을 사용 중입니다. 토론을 중지하거나 종료될 때까지 기다린 후 메시지를 보내세요.",
+    "title": "팀 회의",
+    "turn": {
+      "completed": "답변 저장됨",
+      "dispatching": "전송 중",
+      "failed": "실패",
+      "interrupted": "결과 미확인",
+      "pending": "발언 대기 중",
+      "running": "발언 중",
+      "stopped": "중지됨",
+      "syncing": "답변 저장 중"
+    },
+    "unavailable": "먼저 게이트웨이에 연결하고 팀 구성원을 최소 2명 이상 사용할 수 있는지 확인해 주세요."
   },
   "mentionPicker": {
     "agents": "Agents",

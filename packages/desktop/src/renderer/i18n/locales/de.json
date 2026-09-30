@@ -1307,11 +1307,54 @@
     "video": "Video"
   },
   "meeting": {
+    "abort": {
+      "confirmed": "Stopp vom Gateway bestätigt",
+      "not-running": "Kein aktiver Lauf gemeldet",
+      "requested": "Stopp angefordert",
+      "unconfirmed": "Der Stopp wurde nicht bestätigt. Gehen Sie nicht davon aus, dass der Auftrag beim Anbieter oder die Abrechnung beendet wurde."
+    },
+    "artifactsHint": "Öffnen Sie eine Phase, um deren tatsächliche Antworten und Dateien im Ergebnisbereich rechts anzusehen.",
+    "chooseModel": "Modell auswählen",
+    "costWarning": "Jede Phase ruft das ausgewählte Modell auf und verbraucht Credits. Das Schließen dieses Fensters beendet die Besprechung nicht.",
+    "description": "Zwei oder drei verfügbare Teammitglieder kommen nacheinander zu Wort: Vorschlag, Prüfung und Fazit.",
+    "failed": "Die Besprechung konnte nicht gestartet werden.",
+    "memberModel": "Modell für {{name}}",
+    "members": "2–3 Mitglieder auswählen",
+    "modelUnavailable": "Modell nicht verfügbar",
+    "noAutoResume": "Die Besprechung wird nicht automatisch fortgesetzt. Öffnen Sie die Aufgaben der einzelnen Phasen und prüfen Sie die Antworten, bevor Sie eine neue Besprechung starten.",
+    "question": "Was soll das Team besprechen?",
+    "reselect": "Mitglieder erneut auswählen",
+    "selectionChanged": "Die Mitgliederliste hat sich geändert. Bitte bestätigen Sie erneut, wer teilnehmen soll.",
     "stage": {
       "proposal": "Vorschlag",
-      "review": "Prüfung"
+      "review": "Prüfung",
+      "summary": "Fazit"
     },
-    "taskBusy": "Diese Aufgabe wird gerade in einer Diskussion verwendet. Beenden Sie die Diskussion oder warten Sie, bis sie abgeschlossen ist, bevor Sie eine weitere Nachricht senden."
+    "start": "Besprechung starten",
+    "starting": "Besprechung wird erstellt…",
+    "status": {
+      "completed": "Besprechung abgeschlossen",
+      "draft": "Wird vorbereitet",
+      "failed": "Fehlgeschlagen",
+      "interrupted": "Unterbrochen / nicht bestätigt",
+      "running": "Läuft",
+      "stopped": "Gestoppt",
+      "stopping": "Wird gestoppt"
+    },
+    "stop": "Besprechung stoppen",
+    "taskBusy": "Diese Aufgabe wird gerade in einer Diskussion verwendet. Beenden Sie die Diskussion oder warten Sie, bis sie abgeschlossen ist, bevor Sie eine weitere Nachricht senden.",
+    "title": "Teambesprechung",
+    "turn": {
+      "completed": "Antwort gespeichert",
+      "dispatching": "Wird gesendet",
+      "failed": "Fehlgeschlagen",
+      "interrupted": "Nicht bestätigt",
+      "pending": "Wartet",
+      "running": "Beitrag wird erstellt",
+      "stopped": "Gestoppt",
+      "syncing": "Antwort wird gespeichert"
+    },
+    "unavailable": "Verbinden Sie zuerst das Gateway und stellen Sie sicher, dass mindestens zwei Teammitglieder verfügbar sind."
   },
   "mentionPicker": {
     "agents": "Agents",

@@ -1307,11 +1307,54 @@
     "video": "動画"
   },
   "meeting": {
+    "abort": {
+      "confirmed": "ゲートウェイが停止を確認済み",
+      "not-running": "実行中の処理はないと報告されました",
+      "requested": "停止を要求済み",
+      "unconfirmed": "停止はまだ確認されていません。提供元での処理や課金が停止したとは判断できません。"
+    },
+    "artifactsHint": "各段階を開くと、実際の回答と生成されたファイルを右側の成果物パネルで確認できます。",
+    "chooseModel": "モデルを選択",
+    "costWarning": "各段階で選択したモデルを呼び出し、クレジットを消費します。このウィンドウを閉じても会議は停止しません。",
+    "description": "利用可能なチームメンバー2〜3名が、提案、レビュー、結論の順に発言します。",
+    "failed": "会議を開始できませんでした。",
+    "memberModel": "{{name}} のモデル",
+    "members": "メンバーを2〜3名選択",
+    "modelUnavailable": "モデルを利用できません",
+    "noAutoResume": "自動では再開しません。新しい会議を始める前に、各段階のタスクを開いて回答を確認してください。",
+    "question": "チームで何を話し合いますか？",
+    "reselect": "メンバーを選び直す",
+    "selectionChanged": "メンバー一覧が変更されました。発言するメンバーをもう一度確認してください。",
     "stage": {
       "proposal": "提案",
-      "review": "レビュー"
+      "review": "レビュー",
+      "summary": "結論"
     },
-    "taskBusy": "このタスクはディスカッションで使用中です。ディスカッションを停止するか、終了してからメッセージを送信してください。"
+    "start": "会議を開始",
+    "starting": "会議を作成中…",
+    "status": {
+      "completed": "会議完了",
+      "draft": "準備中",
+      "failed": "失敗",
+      "interrupted": "中断／結果未確認",
+      "running": "討議中",
+      "stopped": "停止済み",
+      "stopping": "停止処理中"
+    },
+    "stop": "会議を停止",
+    "taskBusy": "このタスクはディスカッションで使用中です。ディスカッションを停止するか、終了してからメッセージを送信してください。",
+    "title": "チーム会議",
+    "turn": {
+      "completed": "回答を保存済み",
+      "dispatching": "送信中",
+      "failed": "失敗",
+      "interrupted": "結果未確認",
+      "pending": "発言待ち",
+      "running": "発言中",
+      "stopped": "停止済み",
+      "syncing": "回答を保存中"
+    },
+    "unavailable": "先にゲートウェイに接続し、少なくとも2名のチームメンバーが利用可能な状態にしてください。"
   },
   "mentionPicker": {
     "agents": "Agents",

@@ -1307,11 +1307,54 @@
     "video": "影片"
   },
   "meeting": {
+    "abort": {
+      "confirmed": "閘道已確認停止",
+      "not-running": "閘道回報目前沒有執行中的任務",
+      "requested": "已請求停止",
+      "unconfirmed": "停止尚未確認，不能據此認定上游任務或計費已經停止。"
+    },
+    "artifactsHint": "點擊階段可查看真實回覆及右側產物；檔案以實際產生結果為準。",
+    "chooseModel": "請選擇模型",
+    "costWarning": "每個階段都會呼叫所選模型並消耗點數。關閉此視窗不會停止會議。",
+    "description": "由 2–3 位真實成員依序提出方案、審核，再彙總結論。",
+    "failed": "會議未能開始。",
+    "memberModel": "{{name}} 使用的模型",
+    "members": "選擇 2–3 位成員",
+    "modelUnavailable": "模型無法使用",
+    "noAutoResume": "不會自動續跑。請先開啟各階段核對回覆，再決定是否建立新會議。",
+    "question": "希望團隊討論什麼？",
+    "reselect": "重新選擇成員",
+    "selectionChanged": "成員名單已變更，請重新確認發言成員。",
     "stage": {
       "proposal": "提出方案",
-      "review": "審核改進"
+      "review": "審核改進",
+      "summary": "彙總結論"
     },
-    "taskBusy": "會議正在使用此任務。請停止會議或等待會議結束後再傳送訊息。"
+    "start": "開始會議",
+    "starting": "正在建立會議…",
+    "status": {
+      "completed": "會議已完成",
+      "draft": "準備中",
+      "failed": "執行失敗",
+      "interrupted": "已中斷／結果未確認",
+      "running": "討論中",
+      "stopped": "已停止",
+      "stopping": "正在停止"
+    },
+    "stop": "停止會議",
+    "taskBusy": "會議正在使用此任務。請停止會議或等待會議結束後再傳送訊息。",
+    "title": "團隊開會",
+    "turn": {
+      "completed": "回覆已儲存",
+      "dispatching": "正在傳送",
+      "failed": "執行失敗",
+      "interrupted": "結果未確認",
+      "pending": "等待發言",
+      "running": "正在發言",
+      "stopped": "已停止",
+      "syncing": "正在儲存回覆"
+    },
+    "unavailable": "請先連接閘道，並確保至少兩位團隊成員可用。"
   },
   "mentionPicker": {
     "agents": "智慧體",
