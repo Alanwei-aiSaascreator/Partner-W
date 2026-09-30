@@ -1306,6 +1306,12 @@
     "unknown": "未確認",
     "video": "動画"
   },
+  "meeting": {
+    "stage": {
+      "proposal": "提案",
+      "review": "レビュー"
+    }
+  },
   "mentionPicker": {
     "agents": "Agents",
     "allAgents": "全エージェント",

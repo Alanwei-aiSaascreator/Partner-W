@@ -1306,6 +1306,12 @@
     "unknown": "Nicht geprüft",
     "video": "Video"
   },
+  "meeting": {
+    "stage": {
+      "proposal": "Vorschlag",
+      "review": "Prüfung"
+    }
+  },
   "mentionPicker": {
     "agents": "Agents",
     "allAgents": "Alle Agents",

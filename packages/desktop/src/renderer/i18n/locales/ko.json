@@ -1306,6 +1306,12 @@
     "unknown": "확인 전",
     "video": "동영상"
   },
+  "meeting": {
+    "stage": {
+      "proposal": "제안",
+      "review": "검토"
+    }
+  },
   "mentionPicker": {
     "agents": "Agents",
     "allAgents": "모든 에이전트",

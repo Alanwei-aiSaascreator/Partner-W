@@ -1306,6 +1306,12 @@
     "unknown": "尚未檢查",
     "video": "影片"
   },
+  "meeting": {
+    "stage": {
+      "proposal": "提出方案",
+      "review": "審核改進"
+    }
+  },
   "mentionPicker": {
     "agents": "智慧體",
     "allAgents": "所有代理",
