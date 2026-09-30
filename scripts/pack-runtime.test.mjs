@@ -103,3 +103,19 @@ test('sha256File 对大文件也走流式（与系统 sha256sum 结果一致）'
     fs.rmSync(f, { force: true });
   }
 });
+
+test('runtime manifest records the exact applied compatibility patches', () => {
+  const patches = ['rongying-relay-video-trial-v1'];
+  const manifest = buildManifest({
+    version: '2026.9.3',
+    archive: 'runtime.7z',
+    archiveSize: 1,
+    fileCount: 2,
+    sha256: 'new-archive-hash',
+    extractor: '',
+    patches,
+  });
+  assert.deepEqual(manifest.runtimes[0].patches, patches);
+  patches.push('not-applied');
+  assert.deepEqual(manifest.runtimes[0].patches, ['rongying-relay-video-trial-v1']);
+});

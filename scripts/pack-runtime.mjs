@@ -20,6 +20,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  bundleOfficialSearchPlugin,
+  officialSearchPluginSpec,
+  OFFICIAL_SEARCH_RUNTIME_ENTRY,
+} from './lib/bundled-search-runtime.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(HERE, '..');
@@ -94,7 +99,7 @@ export function unmatchedKeepEntries(existingDirs, keepList) {
  * 构造 manifest。字段与荣盈那份**逐字对齐** —— 装载器要按同一份 schema 读，
  * 少一个字段那边就是 undefined。
  */
-export function buildManifest({ version, archive, archiveSize, fileCount, sha256, extractor }) {
+export function buildManifest({ version, archive, archiveSize, fileCount, sha256, extractor, patches = [] }) {
   return {
     formatVersion: 1,
     packageName: 'openclaw',
@@ -113,7 +118,7 @@ export function buildManifest({ version, archive, archiveSize, fileCount, sha256
         packageRoot: 'node_modules/openclaw',
         cliPath: 'node_modules/openclaw/openclaw.mjs',
         source: 'mofang-pack-runtime',
-        patches: [],
+        patches: [...patches],
         requiredPackages: [],
         sha256,
       },
@@ -210,6 +215,14 @@ export function verifyArchive(sevenZipPath, archivePath) {
           '没有 clawrouter，relay 会静默不计费（模型列表为空、调用根本不发到中转）。',
       );
     }
+    const searchDirectory = path.join(tmp, 'search');
+    execFileSync(sevenZipPath, ['e', archivePath, `-o${searchDirectory}`, '-y', OFFICIAL_SEARCH_RUNTIME_ENTRY], {
+      stdio: 'ignore',
+    });
+    const searchEntry = path.join(searchDirectory, 'index.js');
+    if (!fs.existsSync(searchEntry) || fs.statSync(searchEntry).size === 0) {
+      throw new Error(`runtime archive is missing the official search plugin: ${OFFICIAL_SEARCH_RUNTIME_ENTRY}`);
+    }
     return true;
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
@@ -254,6 +267,7 @@ async function main() {
   sh(NPM, [
     'install',
     `openclaw@${args.version}`,
+    officialSearchPluginSpec(args.version),
     '--prefix',
     stage,
     '--omit=dev',
@@ -264,6 +278,7 @@ async function main() {
   ]);
   const pkgDir = path.join(stage, 'node_modules', 'openclaw');
   if (!fs.existsSync(pkgDir)) throw new Error(`装完了但 ${pkgDir} 不存在`);
+  const searchPlugin = bundleOfficialSearchPlugin(stage);
 
   // ③ 剪技能
   const skillsDir = path.join(pkgDir, 'skills');
@@ -312,6 +327,7 @@ async function main() {
     fileCount,
     sha256,
     extractor: 'win32-x64/extractor/7za.exe',
+    patches: [searchPlugin.patchId],
   });
   const runtimeDir = path.join(args.out, 'openclaw-runtime');
   fs.mkdirSync(runtimeDir, { recursive: true });
