@@ -336,7 +336,7 @@ describe('session sync startup flow', () => {
     expect(mockApi.persistMessage).not.toHaveBeenCalled();
   });
 
-  it('does not backfill split assistant turns before a legacy collapsed local row during runtime sync', async () => {
+  it('recovers an older missing canonical tuple without rewriting a legacy collapsed local row', async () => {
     const { sessionSync, taskStore, messageStore } = await loadModules();
     const sessionKey = 'agent:main:clawwork:task:task-legacy';
 
@@ -412,11 +412,18 @@ describe('session sync startup flow', () => {
     });
 
     await sessionSync.syncSessionMessages('task-legacy');
+    await sessionSync.syncSessionMessages('task-legacy');
 
     const msgs = messageStore.useMessageStore.getState().messagesByTask['task-legacy'];
-    expect(msgs).toHaveLength(2);
+    expect(msgs).toHaveLength(3);
+    expect(msgs[1].id).toBe('a1');
     expect(msgs[1].content).toBe('Intro\n\nFinal status');
-    expect(mockApi.persistMessage).not.toHaveBeenCalled();
+    expect(msgs[2]).toEqual(
+      expect.objectContaining({ content: 'Intro', sessionKey, timestamp: '2026-03-16T10:00:01.000Z' }),
+    );
+    expect(mockApi.persistMessage).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ id: msgs[2].id, content: 'Intro', sessionKey }),
+    );
   });
 
   it('syncs only new assistant messages for existing tasks (single-writer)', async () => {
@@ -662,26 +669,31 @@ describe('session sync startup flow', () => {
             role: 'assistant',
             timestamp: Date.parse('2026-03-16T10:00:01.000Z'),
             content: [{ type: 'text', text: '今天他的天气怎么样? 我先看下天气和 IP。' }],
+            __openclaw: { runId: 'run-1' },
           },
           {
             role: 'assistant',
             timestamp: Date.parse('2026-03-16T10:00:02.000Z'),
             content: [{ type: 'toolCall', id: 'exec-1', name: 'exec', arguments: '{}' }],
+            __openclaw: { runId: 'run-1' },
           },
           {
             role: 'toolResult',
             timestamp: Date.parse('2026-03-16T10:00:02.100Z'),
             content: [{ type: 'toolResult', id: 'exec-1', result: 'fetch url' }],
+            __openclaw: { runId: 'run-1' },
           },
           {
             role: 'assistant',
             timestamp: Date.parse('2026-03-16T10:00:03.000Z'),
             content: [{ type: 'text', text: '天气（上海）： 15°C' }],
+            __openclaw: { runId: 'run-1' },
           },
           {
             role: 'assistant',
             timestamp: Date.parse('2026-03-16T10:00:03.100Z'),
             content: [{ type: 'text', text: 'NO_REPLY' }],
+            __openclaw: { runId: 'run-1' },
           },
         ],
       },
@@ -841,6 +853,7 @@ describe('session sync startup flow', () => {
               { type: 'text', text: 'CPU info' },
               { type: 'toolCall', id: 'exec-1', name: 'exec', arguments: '{}' },
             ],
+            __openclaw: { runId: 'run-sync-persist' },
           },
         ],
       },

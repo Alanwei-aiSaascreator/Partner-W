@@ -19,7 +19,7 @@ describe('message store tool call persistence', () => {
     } as unknown as typeof windowWithClawwork.clawwork;
   });
 
-  it('persists tool status updates for the latest assistant message after promotion', async () => {
+  it('keeps tool updates in the active turn without rewriting a promoted assistant', async () => {
     const { useMessageStore } = await loadStore();
 
     useMessageStore.setState({
@@ -58,15 +58,12 @@ describe('message store tool call persistence', () => {
     });
 
     const saved = useMessageStore.getState().messagesByTask['task-1'][0];
-    expect(saved.toolCalls).toEqual([expect.objectContaining({ id: 'exec-1', status: 'done', result: 'uname -a' })]);
-    expect(window.clawwork.persistMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        id: 'assistant-1',
-        taskId: 'task-1',
-        role: 'assistant',
-        toolCalls: [expect.objectContaining({ id: 'exec-1', status: 'done', result: 'uname -a' })],
-      }),
-    );
+    expect(saved.toolCalls).toEqual([expect.objectContaining({ id: 'exec-1', status: 'running' })]);
+    expect(saved.toolCalls[0].result).toBeUndefined();
+    expect(useMessageStore.getState().activeTurnBySession['agent:main:clawwork:task:task-1']?.toolCalls).toEqual([
+      expect.objectContaining({ id: 'exec-1', status: 'done', result: 'uname -a' }),
+    ]);
+    expect(window.clawwork.persistMessage).not.toHaveBeenCalled();
   });
 
   it('finalizes tool-call-only active turns', async () => {

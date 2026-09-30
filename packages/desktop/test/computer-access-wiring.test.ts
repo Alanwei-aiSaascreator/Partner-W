@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { buildSessionKey } from '@clawwork/shared';
 
 /**
  * **接线**集成测试：跑的是**真的 `platform/index.ts`**，不是桩。
@@ -18,7 +19,7 @@ vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 const TASK = {
   id: 'wire-1',
   gatewayId: 'local-runtime',
-  sessionKey: 'agent:main:wire-1',
+  sessionKey: buildSessionKey('wire-1'),
   title: '接线',
   model: 'deepseek-v4-flash',
 };
@@ -32,7 +33,10 @@ describe('platform 里的接线（真文件）', () => {
     vi.resetModules();
 
     patchSession = vi.fn().mockResolvedValue({ ok: true });
-    sendMessage = vi.fn().mockResolvedValue({ ok: true });
+    sendMessage = vi.fn().mockResolvedValue({
+      ok: true,
+      result: { sessionKey: TASK.sessionKey, runId: 'wire-run' },
+    });
 
     (globalThis.window as unknown as { clawwork: Record<string, unknown> }).clawwork = {
       patchSession,
@@ -62,6 +66,8 @@ describe('platform 里的接线（真文件）', () => {
       loading: false,
     });
     platform.taskStore.setState({ tasks: [TASK], activeTaskId: TASK.id } as never);
+    const { useGatewayDispatcherSetup } = await import('../src/renderer/hooks/useGatewayDispatcherSetup');
+    useGatewayDispatcherSetup();
     return platform;
   }
 
@@ -73,7 +79,7 @@ describe('platform 里的接线（真文件）', () => {
 
   it('设置是安全档 ⇒ 发送链上一次 permissionMode 都不发', async () => {
     const platform = await mountPlatform('safe');
-    await platform.composer.send(TASK.id, { content: 'hi' });
+    expect((await platform.composer.send(TASK.id, { content: 'hi' })).ok).toBe(true);
     expect(permissionPatches()).toEqual([]);
   });
 
@@ -82,20 +88,20 @@ describe('platform 里的接线（真文件）', () => {
     //    它变成了「老盘升级上来会不会自动开全权」的**唯一判据** —— 答案是**会**，
     //    而且那是用户明确要的（"我建议默认开启"）。别把它当成 bug 改回去。
     const platform = await mountPlatform(undefined);
-    await platform.composer.send(TASK.id, { content: 'hi' });
+    expect((await platform.composer.send(TASK.id, { content: 'hi' })).ok).toBe(true);
     expect(permissionPatches()).toEqual([{ key: TASK.sessionKey, mode: 'full' }]);
   });
 
   it('⭐ 设置是全权 ⇒ 真的发 {permissionMode:"full"} 到这个会话', async () => {
     const platform = await mountPlatform('full');
-    await platform.composer.send(TASK.id, { content: 'hi' });
+    expect((await platform.composer.send(TASK.id, { content: 'hi' })).ok).toBe(true);
     expect(permissionPatches()).toEqual([{ key: TASK.sessionKey, mode: 'full' }]);
     expect(sendMessage).toHaveBeenCalled();
   });
 
   it('⭐ 设置被改回安全 ⇒ 下一条消息真的把它收回去', async () => {
     const platform = await mountPlatform('full');
-    await platform.composer.send(TASK.id, { content: '一' });
+    expect((await platform.composer.send(TASK.id, { content: '一' })).ok).toBe(true);
     expect(permissionPatches()).toEqual([{ key: TASK.sessionKey, mode: 'full' }]);
 
     const { useSettingsStore } = await import('../src/renderer/stores/settingsStore');
@@ -104,7 +110,7 @@ describe('platform 里的接线（真文件）', () => {
       loaded: true,
       loading: false,
     });
-    await platform.composer.send(TASK.id, { content: '二' });
+    expect((await platform.composer.send(TASK.id, { content: '二' })).ok).toBe(true);
 
     expect(permissionPatches()).toEqual([
       { key: TASK.sessionKey, mode: 'full' },
