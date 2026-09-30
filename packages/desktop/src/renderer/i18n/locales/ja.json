@@ -1296,6 +1296,16 @@
     "unpublishDone": "Unpublished",
     "views": "{{count}} views"
   },
+  "mediaReadiness": {
+    "chatModelNote": "チャットで Seed を選んでも、動画生成モデルは選択されません。",
+    "image": "画像",
+    "probe-failed": "確認できませんでした",
+    "ready": "利用可能",
+    "relayLabel": "リレーのメディア機能",
+    "unavailable": "リレーでは利用不可",
+    "unknown": "未確認",
+    "video": "動画"
+  },
   "mentionPicker": {
     "agents": "Agents",
     "allAgents": "全エージェント",

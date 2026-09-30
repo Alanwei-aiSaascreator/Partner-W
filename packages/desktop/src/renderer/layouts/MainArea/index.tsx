@@ -460,6 +460,41 @@ function ChatHeader({
   );
 }
 
+function MediaReadinessStatus({
+  readiness,
+  gatewayId,
+}: {
+  readiness: StartupReadiness;
+  gatewayId: string | null | undefined;
+}) {
+  const { t } = useTranslation();
+  if (
+    gatewayId !== 'local-runtime' ||
+    readiness.gatewayId !== gatewayId ||
+    readiness.ai.phase !== 'ready' ||
+    !readiness.media
+  )
+    return null;
+  return (
+    <div
+      role="status"
+      aria-label={t('mediaReadiness.relayLabel')}
+      className="mx-5 mt-3 rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-2 text-xs text-[var(--text-secondary)]"
+    >
+      <div className="flex flex-wrap gap-x-4 gap-y-1">
+        <span>{t('mediaReadiness.relayLabel')}</span>
+        <span>
+          {t('mediaReadiness.image')}: {t(`mediaReadiness.${readiness.media.image}`)}
+        </span>
+        <span>
+          {t('mediaReadiness.video')}: {t(`mediaReadiness.${readiness.media.video}`)}
+        </span>
+      </div>
+      <p className="mt-1">{t('mediaReadiness.chatModelNote')}</p>
+    </div>
+  );
+}
+
 export function ChatContent({
   onboardingProfile,
   startupReadiness,
@@ -980,6 +1015,10 @@ export function ChatContent({
   //    切任务需要重置的东西由下面的 effect 负责，不靠重挂载。
   return (
     <>
+      <MediaReadinessStatus
+        readiness={startupReadiness}
+        gatewayId={activeTask?.gatewayId ?? pendingGatewayId ?? defaultGatewayId}
+      />
       {/* 对比面板与对话区**互斥**：一轮对比在跑时，这一屏就是那几列。
           不叠在时间线上（两套滚动会互相打架），也不缩在角落（用户会以为没反应）。
           采纳/取消后 `compareActive` 归 null，对话区原样回来 —— 注意这里没有换 `key`，

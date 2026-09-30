@@ -1296,6 +1296,16 @@
     "unpublishDone": "Unpublished",
     "views": "{{count}} views"
   },
+  "mediaReadiness": {
+    "chatModelNote": "Choisir Seed pour le chat ne sélectionne pas le modèle de génération vidéo.",
+    "image": "Image",
+    "probe-failed": "Impossible à confirmer",
+    "ready": "Disponible",
+    "relayLabel": "Médias du relais",
+    "unavailable": "Indisponible via le relais",
+    "unknown": "Non vérifié",
+    "video": "Vidéo"
+  },
   "mentionPicker": {
     "agents": "Agents",
     "allAgents": "Tous les agents",

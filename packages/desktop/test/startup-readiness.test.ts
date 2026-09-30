@@ -25,7 +25,79 @@ const readyAssistants: PresetAgentBootstrapSnapshot = {
 
 const relayModel = { id: 'deepseek-v4-flash', provider: 'clawrouter' } as ModelCatalogEntry;
 
+describe('media readiness locale contract', () => {
+  it.each(['en', 'zh', 'zh-TW', 'de', 'es', 'fr', 'ja', 'ko', 'pt'])(
+    'provides relay-specific copy and the chat/video distinction in %s',
+    (locale) => {
+      const content = JSON.parse(
+        readFileSync(new URL(`../src/renderer/i18n/locales/${locale}.json`, import.meta.url), 'utf8'),
+      ) as {
+        mediaReadiness: Record<string, string>;
+      };
+      expect(Object.keys(content.mediaReadiness).sort()).toEqual([
+        'chatModelNote',
+        'image',
+        'probe-failed',
+        'ready',
+        'relayLabel',
+        'unavailable',
+        'unknown',
+        'video',
+      ]);
+      expect(
+        new Set(['ready', 'unavailable', 'unknown', 'probe-failed'].map((state) => content.mediaReadiness[state])).size,
+      ).toBe(4);
+      expect(content.mediaReadiness.chatModelNote).toContain('Seed');
+      expect(Object.values(content.mediaReadiness).every((value) => value.trim().length > 0)).toBe(true);
+    },
+  );
+});
+
 describe('deriveStartupReadiness', () => {
+  it.each(['ready', 'unavailable', 'unknown', 'probe-failed'] as const)(
+    'carries %s media only for the connected local runtime without blocking chat',
+    (video) => {
+      const media = { image: 'ready' as const, video };
+      const result = deriveStartupReadiness({
+        gatewayId: 'local-runtime',
+        gatewayStatus: 'connected',
+        rawModelCatalog: [relayModel],
+        catalogFailed: false,
+        assistantSnapshot: readyAssistants,
+        relayState: { phase: 'ready', media, updatedAt: 5 },
+      });
+      expect(result.media).toEqual(media);
+      expect(result.conversationReady).toBe(true);
+      expect(result.composerBlocked).toBe(false);
+      expect(result.isReady).toBe(true);
+      expect(result.hasError).toBe(false);
+    },
+  );
+
+  it.each(['gw-remote', null])('does not apply local media readiness to gateway %s', (gatewayId) => {
+    const result = deriveStartupReadiness({
+      gatewayId,
+      gatewayStatus: 'connected',
+      rawModelCatalog: [relayModel],
+      catalogFailed: false,
+      assistantSnapshot: readyAssistants,
+      relayState: { phase: 'ready', media: { image: 'ready', video: 'unavailable' }, updatedAt: 5 },
+    });
+    expect(result.media).toBeUndefined();
+  });
+
+  it.each(['idle', 'running'] as const)('clears media at the %s account/bootstrap boundary', (phase) => {
+    const result = deriveStartupReadiness({
+      gatewayId: 'local-runtime',
+      gatewayStatus: 'connected',
+      rawModelCatalog: [relayModel],
+      catalogFailed: false,
+      assistantSnapshot: readyAssistants,
+      relayState: { phase, updatedAt: 6 },
+    });
+    expect(result.media).toBeUndefined();
+  });
+
   it('waits for the AI service and assistants before a gateway connects', () => {
     const result = deriveStartupReadiness({
       gatewayId: 'gw-1',

@@ -318,6 +318,38 @@ beforeEach(() => {
 });
 
 describe('useStartupReadiness × 中转公开状态', () => {
+  it('keeps newer media events and clears them at account or bootstrap boundaries', async () => {
+    useUiStore.setState({
+      defaultGatewayId: 'local-runtime',
+      gatewayStatusMap: { 'local-runtime': 'connected' },
+      modelCatalogByGateway: { 'local-runtime': [{ id: 'deepseek-v4-flash', provider: 'clawrouter' }] },
+    } as never);
+    const harness = mountHarness();
+    harness.render();
+    const media = { image: 'ready' as const, video: 'unavailable' as const };
+    act(() => emit({ phase: 'ready', media, updatedAt: 9 }));
+    expect(harness.state.media).toEqual(media);
+    await act(async () =>
+      resolveRead?.({
+        ok: true,
+        result: {
+          phase: 'ready',
+          media: { image: 'ready', video: 'ready' },
+          updatedAt: 1,
+        },
+      }),
+    );
+    expect(harness.state.media).toEqual(media);
+    act(() => emit({ phase: 'running', updatedAt: 10 }));
+    expect(harness.state.media).toBeUndefined();
+    act(() => emit({ phase: 'ready', media, updatedAt: 11 }));
+    act(() => emit({ phase: 'idle', updatedAt: 12 }));
+    act(() => emit({ phase: 'ready', media, updatedAt: 11 }));
+    expect(harness.state.media).toBeUndefined();
+    expect(relayApi.commercialRelayBootstrapRetry).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
   it('⭐⭐ 先订阅再读初始快照：晚到的初始读不许把更新的结论盖回去', async () => {
     const harness = mountHarness();
     harness.render();

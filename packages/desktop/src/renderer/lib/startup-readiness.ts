@@ -5,6 +5,7 @@ import type {
   RelayBootstrapBlockedCode,
   RelayBootstrapPublicState,
   RelayBootstrapRetryableCode,
+  RelayMediaReadiness,
   WorkspaceFsIdentity,
 } from '@clawwork/shared';
 import { deriveModelAvailability } from '@/components/ChatInput/model-availability';
@@ -178,6 +179,7 @@ export function relayModelStatusCopy(failure: StartupRelayFailure, t: (key: stri
 
 export interface StartupReadiness {
   gatewayId: string | null | undefined;
+  media?: RelayMediaReadiness;
   ai: {
     phase: StartupAiPhase;
     /**
@@ -338,6 +340,9 @@ export function deriveStartupReadiness({
 
   return {
     gatewayId,
+    ...(gatewayId === 'local-runtime' && aiPhase === 'ready' && relayState?.phase === 'ready' && relayState.media
+      ? { media: relayState.media }
+      : {}),
     ai: { phase: aiPhase, failureReason: bootstrapFailure },
     assistants,
     workspaceAvailable: true,

@@ -1296,6 +1296,16 @@
     "unpublishDone": "Unpublished",
     "views": "{{count}} views"
   },
+  "mediaReadiness": {
+    "chatModelNote": "Elegir Seed para el chat no selecciona el modelo de generación de vídeo.",
+    "image": "Imagen",
+    "probe-failed": "No se pudo confirmar",
+    "ready": "Disponible",
+    "relayLabel": "Medios del relay",
+    "unavailable": "No disponible en el relay",
+    "unknown": "Sin comprobar",
+    "video": "Vídeo"
+  },
   "mentionPicker": {
     "agents": "Agents",
     "allAgents": "Todos los agentes",

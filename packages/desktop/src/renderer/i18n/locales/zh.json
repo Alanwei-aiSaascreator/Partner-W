@@ -1296,6 +1296,16 @@
     "unpublishDone": "已下架",
     "views": "{{count}} 次浏览"
   },
+  "mediaReadiness": {
+    "chatModelNote": "聊天中选择 Seed 不会选择视频生成模型。",
+    "image": "图片",
+    "probe-failed": "未能确认",
+    "ready": "可用",
+    "relayLabel": "中转媒体能力",
+    "unavailable": "中转暂不可用",
+    "unknown": "尚未检查",
+    "video": "视频"
+  },
   "mentionPicker": {
     "agents": "智能体",
     "allAgents": "所有智能体",
