@@ -142,6 +142,7 @@ export type RunSyncResult =
   | { kind: 'completed'; messageIds: string[]; content: string }
   | { kind: 'failed'; reason: 'invalid-receipt' | 'persistence' | 'history' };
 type PersistenceScope = { taskId: string; sessionKey: string; gatewayId: string };
+export type LateToolUpdate = { gatewayId: string; runId: string; toolCall: ToolCall };
 class CanonicalPersistenceError extends Error {}
 
 function normalizeLocalAssistantMessage(row: { role: string; content: string; attachments?: unknown[] }): {
@@ -161,7 +162,96 @@ export function createSessionSync(deps: SessionSyncDeps) {
   let hydrationPromise: Promise<void> | null = null;
   const syncChains = new Map<string, Promise<void>>();
   const pendingWrites = new Map<string, PersistenceScope & { message: Message }>();
+  const lateTools = new Map<string, PersistenceScope & { runId: string; tools: Map<string, ToolCall> }>();
   let syncEpoch = 0;
+
+  function lateToolKey(scope: PersistenceScope, runId: string): string {
+    return JSON.stringify([scope.gatewayId, scope.taskId, scope.sessionKey, runId]);
+  }
+
+  function queueLateTool(scope: PersistenceScope, update: LateToolUpdate): void {
+    const key = lateToolKey(scope, update.runId);
+    if (!lateTools.has(key) && lateTools.size >= 128) {
+      lateTools.delete(lateTools.keys().next().value!);
+      console.warn('[sync] late tool run buffer reached its limit');
+    }
+    const entry = lateTools.get(key) ?? { ...scope, runId: update.runId, tools: new Map<string, ToolCall>() };
+    if (!entry.tools.has(update.toolCall.id) && entry.tools.size >= 64) {
+      entry.tools.delete(entry.tools.keys().next().value!);
+      console.warn('[sync] late tool call buffer reached its limit');
+    }
+    const merged = mergeCanonicalMessageWithActiveTurn(
+      {
+        id: '',
+        taskId: scope.taskId,
+        role: 'assistant',
+        content: '',
+        artifacts: [],
+        timestamp: '',
+        toolCalls: [...entry.tools.values()],
+      },
+      {
+        id: '',
+        timestamp: '',
+        content: '',
+        streamingText: '',
+        streamingThinking: '',
+        finalized: true,
+        toolCalls: [update.toolCall],
+      },
+    );
+    entry.tools = new Map(merged.toolCalls.map((tool) => [tool.id, tool]));
+    lateTools.set(key, entry);
+  }
+
+  function mergeLateTools(message: Message, scope: PersistenceScope): Message {
+    const entry = message.runId ? lateTools.get(lateToolKey(scope, message.runId)) : undefined;
+    if (!entry) return message;
+    return mergeCanonicalMessageWithActiveTurn(message, {
+      id: '',
+      timestamp: '',
+      content: '',
+      streamingText: '',
+      streamingThinking: '',
+      finalized: true,
+      runId: entry.runId,
+      toolCalls: [...entry.tools.values()],
+    });
+  }
+
+  async function reconcileLateTools(scope: PersistenceScope, epoch: number): Promise<void> {
+    for (const [key, entry] of lateTools) {
+      if (entry.taskId !== scope.taskId || entry.gatewayId !== scope.gatewayId || entry.sessionKey !== scope.sessionKey)
+        continue;
+      const owner = deps.getTaskStore().tasks.find((task) => task.id === scope.taskId);
+      if (!owner || owner.gatewayId !== scope.gatewayId) return;
+      const messages = deps.getMessageStore().messagesByTask[scope.taskId] ?? [];
+      const scoped = messages.filter(
+        (message) => message.role === 'assistant' && (message.sessionKey ?? owner.sessionKey) === scope.sessionKey,
+      );
+      let matches = scoped.filter((message) => message.runId === entry.runId);
+      if (matches.length === 0) {
+        matches = scoped.filter(
+          (message) =>
+            !message.runId && [...entry.tools.keys()].every((id) => message.toolCalls.some((tool) => tool.id === id)),
+        );
+      }
+      if (matches.length !== 1) continue;
+      const canonical = { ...matches[0], runId: entry.runId };
+      const merged = mergeLateTools(canonical, scope);
+      await persistCanonicalMessages([merged], scope, epoch);
+      if (syncEpoch !== epoch) return;
+      deps.getMessageStore().setState((state) => ({
+        messagesByTask: {
+          ...state.messagesByTask,
+          [scope.taskId]: state.messagesByTask[scope.taskId].map((message) =>
+            message.id === merged.id ? merged : message,
+          ),
+        },
+      }));
+      if (lateTools.get(key) === entry) lateTools.delete(key);
+    }
+  }
 
   async function persistCanonicalMessage(message: Message): Promise<void> {
     const result = await deps.persistence.persistMessage({
@@ -307,6 +397,8 @@ export function createSessionSync(deps: SessionSyncDeps) {
 
     await flushPendingWrites({ taskId, sessionKey, gatewayId: task.gatewayId }, epoch);
     if (syncEpoch !== epoch) return;
+    await reconcileLateTools(scope, epoch);
+    if (syncEpoch !== epoch) return;
     const httpBase = await deps.gateway.getHttpBase?.(task.gatewayId);
     if (syncEpoch !== epoch) return;
     const res = await deps.gateway.chatHistory(task.gatewayId, sessionKey);
@@ -382,25 +474,28 @@ export function createSessionSync(deps: SessionSyncDeps) {
     for (let i = 0; i < newest.length; i++) {
       if (syncEpoch !== epoch) return;
       const gm = newest[i];
-      const canonical: Message = {
-        id: crypto.randomUUID(),
-        taskId,
-        role: 'assistant',
-        content: gm.content,
-        // 网关历史里带推理块（实测），换设备/清库后靠它重建。
-        // 本轮还在内存里的话，下面的 mergeCanonicalMessageWithActiveTurn 会优先用 activeTurn 的
-        //（同一段时间戳、同一段文本，是覆盖不是叠加）。
-        thinkingContent: gm.thinkingContent,
-        // 这条回复实际是谁生成的（逐条来自网关，不是会话选中的模型）。
-        model: gm.model,
-        artifacts: [],
-        toolCalls: gm.toolCalls,
-        runId: gm.runId,
-        attachments: gm.attachments,
-        sessionKey,
-        agentId: parseAgentIdFromSessionKey(sessionKey),
-        timestamp: gm.timestamp,
-      };
+      const canonical: Message = mergeLateTools(
+        {
+          id: crypto.randomUUID(),
+          taskId,
+          role: 'assistant',
+          content: gm.content,
+          // 网关历史里带推理块（实测），换设备/清库后靠它重建。
+          // 本轮还在内存里的话，下面的 mergeCanonicalMessageWithActiveTurn 会优先用 activeTurn 的
+          //（同一段时间戳、同一段文本，是覆盖不是叠加）。
+          thinkingContent: gm.thinkingContent,
+          // 这条回复实际是谁生成的（逐条来自网关，不是会话选中的模型）。
+          model: gm.model,
+          artifacts: [],
+          toolCalls: gm.toolCalls,
+          runId: gm.runId,
+          attachments: gm.attachments,
+          sessionKey,
+          agentId: parseAgentIdFromSessionKey(sessionKey),
+          timestamp: gm.timestamp,
+        },
+        scope,
+      );
       const currentStore = deps.getMessageStore();
       const mergedCanonical = mergeCanonicalMessageWithActiveTurn(
         canonical,
@@ -419,6 +514,8 @@ export function createSessionSync(deps: SessionSyncDeps) {
       }
 
       await persistCanonicalMessages([mergedCanonical], { taskId, sessionKey, gatewayId: task.gatewayId }, epoch);
+      if (syncEpoch !== epoch) return;
+      if (mergedCanonical.runId) lateTools.delete(lateToolKey(scope, mergedCanonical.runId));
       acknowledged.add(mergedCanonical.id);
     }
 
@@ -468,13 +565,29 @@ export function createSessionSync(deps: SessionSyncDeps) {
     }
   }
 
-  function syncSessionMessages(taskId: string, sessionKeyOverride?: string): Promise<void> {
+  function syncSessionMessages(taskId: string, sessionKeyOverride?: string, lateTool?: LateToolUpdate): Promise<void> {
     const epoch = syncEpoch;
     const task = deps.getTaskStore().tasks.find((t) => t.id === taskId);
     const sessionKey = sessionKeyOverride ?? task?.sessionKey;
     if (!task?.gatewayId || !sessionKey) return Promise.resolve();
     const scope = { taskId, sessionKey, gatewayId: task.gatewayId };
-    return enqueueSync(scope, epoch, () => syncWithRetry(scope, epoch));
+    if (lateTool) {
+      const parsedTaskId = parseTaskIdFromSessionKey(sessionKey);
+      const existingOwnedRun = (deps.getMessageStore().messagesByTask[taskId] ?? []).filter(
+        (message) =>
+          message.role === 'assistant' && message.sessionKey === sessionKey && message.runId === lateTool.runId,
+      );
+      if (
+        lateTool.gatewayId !== task.gatewayId ||
+        !lateTool.runId.trim() ||
+        (parsedTaskId ? parsedTaskId !== taskId : existingOwnedRun.length !== 1)
+      )
+        return Promise.resolve();
+    }
+    return enqueueSync(scope, epoch, () => {
+      if (lateTool) queueLateTool(scope, lateTool);
+      return syncWithRetry(scope, epoch);
+    });
   }
 
   function enqueueSync(scope: PersistenceScope, epoch: number, work: () => Promise<void>): Promise<void> {
@@ -656,6 +769,7 @@ export function createSessionSync(deps: SessionSyncDeps) {
     hydrationPromise = null;
     syncChains.clear();
     pendingWrites.clear();
+    lateTools.clear();
     syncEpoch++;
   }
 

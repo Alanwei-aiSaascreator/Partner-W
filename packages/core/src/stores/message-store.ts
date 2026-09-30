@@ -404,9 +404,7 @@ export function createMessageStore(deps: MessageStoreDeps) {
         },
       })),
 
-    upsertToolCall: (sessionKey, taskId, tc) => {
-      let persistedMessage: Message | null = null;
-
+    upsertToolCall: (sessionKey, _taskId, tc) => {
       set((s) => {
         const turn = s.activeTurnBySession[sessionKey];
         if (turn) {
@@ -422,28 +420,6 @@ export function createMessageStore(deps: MessageStoreDeps) {
           };
         }
 
-        const msgs = s.messagesByTask[taskId] ?? [];
-        let lastAssistantIdx = -1;
-        let lastUserIdx = -1;
-        for (let i = msgs.length - 1; i >= 0; i--) {
-          if (lastAssistantIdx < 0 && msgs[i].role === 'assistant') lastAssistantIdx = i;
-          if (lastUserIdx < 0 && msgs[i].role === 'user') lastUserIdx = i;
-          if (lastAssistantIdx >= 0 && lastUserIdx >= 0) break;
-        }
-
-        const targetIdx = lastAssistantIdx >= 0 && lastAssistantIdx > lastUserIdx ? lastAssistantIdx : -1;
-        if (targetIdx >= 0) {
-          const updatedMsgs = [...msgs];
-          const target = updatedMsgs[targetIdx];
-          const idx = target.toolCalls.findIndex((t) => t.id === tc.id);
-          const next = [...target.toolCalls];
-          if (idx >= 0) next[idx] = mergeToolCallState(next[idx], tc);
-          else next.push(tc);
-          updatedMsgs[targetIdx] = { ...target, toolCalls: next };
-          persistedMessage = updatedMsgs[targetIdx];
-          return { messagesByTask: { ...s.messagesByTask, [taskId]: updatedMsgs } };
-        }
-
         return {
           activeTurnBySession: {
             ...s.activeTurnBySession,
@@ -451,10 +427,6 @@ export function createMessageStore(deps: MessageStoreDeps) {
           },
         };
       });
-
-      if (persistedMessage) {
-        persistMessageUpdate(deps, persistedMessage);
-      }
     },
 
     // ⚠️ 装载**本地已存**的消息时也要切一次行内推理。
