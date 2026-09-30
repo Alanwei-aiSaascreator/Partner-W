@@ -33,6 +33,29 @@ function setup() {
 }
 
 describe('system session service', () => {
+  it('closes side-session UI synchronously while deleting the captured old session without clearing a replacement', async () => {
+    const { service, gateway, storeApi } = setup();
+    await service.start({ gatewayId: 'gw-old', agentId: 'main', purpose: 'old' });
+    const oldKey = storeApi.getState().sessionKey;
+    let finish!: (value: { ok: true }) => void;
+    gateway.deleteSession.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const pending = service.end();
+    const during = storeApi.getState();
+    const replacement = await service.start({ gatewayId: 'gw-new', agentId: 'main', purpose: 'new' });
+    const newKey = storeApi.getState().sessionKey;
+    finish({ ok: true });
+    await pending;
+    expect(during.sessionKey).toBeNull();
+    expect(during.messages).toEqual([]);
+    expect(replacement.ok).toBe(true);
+    expect(gateway.deleteSession).toHaveBeenCalledExactlyOnceWith('gw-old', oldKey);
+    expect(storeApi.getState().sessionKey).toBe(newKey);
+  });
   it.each(['returned', 'thrown'])(
     'does not send on an unintended inherited model when model selection is %s failure',
     async (mode) => {

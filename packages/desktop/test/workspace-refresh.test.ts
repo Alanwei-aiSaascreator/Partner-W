@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Artifact, Message } from '@clawwork/shared';
 
 const reinitializeGatewayBootstrapMock = vi.fn().mockResolvedValue(undefined);
 
@@ -22,15 +23,47 @@ describe('refreshRendererAfterWorkspaceChange', () => {
         },
       };
     });
-    const { useTaskStore } = await import('../src/renderer/platform');
+    const { useTaskStore, useMessageStore, useUiStore } = await import('../src/renderer/platform');
+    const { useFileStore } = await import('../src/renderer/stores/fileStore');
+    const { useArtifactDeliveryStore } = await import('../src/renderer/stores/artifactDeliveryStore');
+    useFileStore.setState({
+      artifacts: [{ id: 'old-artifact' } as Artifact],
+      selectedArtifactId: 'old-artifact',
+      searchQuery: 'private-old',
+      searchResults: [],
+      isSearching: true,
+    });
+    useMessageStore.setState({
+      messagesByTask: { old: [{ id: 'old-message' } as Message] },
+      highlightedMessageId: 'old-message',
+    });
+    useUiStore.setState({ agentCatalogByGateway: { old: { agents: [{ id: 'old-agent' }], defaultId: 'old-agent' } } });
+    useArtifactDeliveryStore.setState({
+      settled: [{ taskId: 'old', sessionKey: 'old-session', messageId: 'old-message', status: 'succeeded' }],
+    });
     const { refreshRendererAfterWorkspaceChange } = await import('../src/renderer/lib/workspace-refresh');
     const epoch = useTaskStore.getState().workspaceEpoch;
     const pending = refreshRendererAfterWorkspaceChange();
     const actual = useTaskStore.getState().workspaceEpoch;
+    const during = {
+      file: useFileStore.getState(),
+      messages: useMessageStore.getState(),
+      catalog: useUiStore.getState().agentCatalogByGateway,
+      delivery: useArtifactDeliveryStore.getState().settled,
+    };
     finish();
     await pending;
     vi.doUnmock('../src/renderer/platform');
     expect(actual).toBe(epoch + 1);
+    expect(during.file.selectedArtifactId).toBeNull();
+    expect(during.file.artifacts).toEqual([]);
+    expect(during.file.searchQuery).toBe('');
+    expect(during.file.searchResults).toBeNull();
+    expect(during.file.isSearching).toBe(false);
+    expect(during.messages.messagesByTask).toEqual({});
+    expect(during.messages.highlightedMessageId).toBeNull();
+    expect(during.catalog).toEqual({});
+    expect(during.delivery).toEqual([]);
   });
   beforeEach(() => {
     vi.clearAllMocks();

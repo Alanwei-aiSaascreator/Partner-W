@@ -12,6 +12,7 @@ import { useUsageStore } from '../stores/usageStore';
 import { useApprovalStore } from '../stores/approvalStore';
 import { useQuestionStore } from '../stores/questionStore';
 import { useSettingsStore } from '../stores/settingsStore';
+import { useArtifactDeliveryStore } from '../stores/artifactDeliveryStore';
 import { hydrateFromLocal, resetHydration } from './session-sync';
 import { reinitializeGatewayBootstrap } from '../hooks/useGatewayDispatcherSetup';
 import { teamMeetingController } from '../features/team-meeting/instance';
@@ -19,7 +20,6 @@ import { teamMeetingController } from '../features/team-meeting/instance';
 export async function refreshRendererAfterWorkspaceChange(): Promise<void> {
   teamMeetingController.reset();
   useTaskStore.getState().resetWorkspace();
-  await systemSessionService.end().catch(() => {});
 
   useMessageStore.setState({
     messagesByTask: {},
@@ -46,6 +46,7 @@ export async function refreshRendererAfterWorkspaceChange(): Promise<void> {
   useApprovalStore.getState().clear();
   // 退出 / 切号后不能留着上一账号的问题卡片：它指向的会话已经不属于当前账号了
   useQuestionStore.getState().clear();
+  useArtifactDeliveryStore.setState({ settled: [] });
 
   useUiStore.setState({
     gatewayStatusMap: {},
@@ -70,6 +71,7 @@ export async function refreshRendererAfterWorkspaceChange(): Promise<void> {
   });
 
   resetHydration();
+  await systemSessionService.end().catch(() => {});
 
   await useSettingsStore
     .getState()

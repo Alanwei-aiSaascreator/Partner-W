@@ -164,11 +164,10 @@ export function createSystemSessionService(deps: SystemSessionServiceDeps): Syst
       removeListener?.();
       removeListener = null;
 
+      store.close();
       if (gatewayId && sessionKey) {
         await deps.gateway.deleteSession(gatewayId, sessionKey).catch(() => {});
       }
-
-      store.close();
     },
   };
 }
