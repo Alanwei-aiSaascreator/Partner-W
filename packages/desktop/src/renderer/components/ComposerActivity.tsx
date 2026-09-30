@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils';
 import { formatElapsed, waitingLineSuffix } from '@/lib/waiting-copy';
 import { classifyToolActivity, latestAwaitingApproval, latestRunningCall } from '@/lib/tool-activity';
 import type { ToolCall } from '@clawwork/shared';
+import ArtifactDeliveryActivity from './ArtifactDeliveryActivity';
 
 /**
  * 输入框上方的**活动条** —— 一轮在跑的时候，把"它在干什么"和"等了多久"摆出来。
@@ -61,7 +62,7 @@ export default function ComposerActivity({ sessionKey, onCancel }: ComposerActiv
     return () => clearInterval(timer);
   }, [processing]);
 
-  if (!sessionKey || !processing) return null;
+  if (!sessionKey || !processing) return <ArtifactDeliveryActivity sessionKey={sessionKey} />;
 
   const elapsedMs = startedAt ? Math.max(0, now - startedAt) : 0;
   const calls = toolCalls ?? [];
@@ -124,36 +125,39 @@ export default function ComposerActivity({ sessionKey, onCancel }: ComposerActiv
   const running = Boolean(runningCall);
 
   return (
-    <div
-      data-testid="composer-activity"
-      data-status={running ? 'running-tool' : 'working'}
-      className="mb-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-secondary)] px-3 py-2"
-    >
-      <div className="flex items-center gap-2.5">
-        <Loader2 size={14} className="shrink-0 animate-spin text-[var(--accent)]" aria-hidden />
-        <span className="type-label min-w-0 flex-1 truncate text-[var(--text-secondary)]" aria-live="polite">
-          {headline}
-        </span>
-        <span data-testid="composer-activity-elapsed" className="type-mono-data shrink-0 text-[var(--text-muted)]">
-          {formatElapsed(elapsedMs)}
-        </span>
-        <button
-          type="button"
-          data-testid="composer-activity-cancel"
-          onClick={onCancel}
-          aria-label={t('chatInput.stopGenerating')}
-          title={t('chatInput.stopGenerating')}
-          className={cn(
-            'glow-focus shrink-0 rounded-lg p-1 text-[var(--text-muted)]',
-            'transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]',
-          )}
-        >
-          <X size={14} />
-        </button>
+    <>
+      <div
+        data-testid="composer-activity"
+        data-status={running ? 'running-tool' : 'working'}
+        className="mb-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-secondary)] px-3 py-2"
+      >
+        <div className="flex items-center gap-2.5">
+          <Loader2 size={14} className="shrink-0 animate-spin text-[var(--accent)]" aria-hidden />
+          <span className="type-label min-w-0 flex-1 truncate text-[var(--text-secondary)]" aria-live="polite">
+            {headline}
+          </span>
+          <span data-testid="composer-activity-elapsed" className="type-mono-data shrink-0 text-[var(--text-muted)]">
+            {formatElapsed(elapsedMs)}
+          </span>
+          <button
+            type="button"
+            data-testid="composer-activity-cancel"
+            onClick={onCancel}
+            aria-label={t('chatInput.stopGenerating')}
+            title={t('chatInput.stopGenerating')}
+            className={cn(
+              'glow-focus shrink-0 rounded-lg p-1 text-[var(--text-muted)]',
+              'transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]',
+            )}
+          >
+            <X size={14} />
+          </button>
+        </div>
+        <p data-testid="composer-activity-quip" className="type-support mt-0.5 pl-6 text-[var(--text-muted)]">
+          {quip}
+        </p>
       </div>
-      <p data-testid="composer-activity-quip" className="type-support mt-0.5 pl-6 text-[var(--text-muted)]">
-        {quip}
-      </p>
-    </div>
+      <ArtifactDeliveryActivity sessionKey={sessionKey} />
+    </>
   );
 }

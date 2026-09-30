@@ -399,6 +399,14 @@
     "attachmentSaveFailed": "Anhang {{fileName}} konnte nicht gespeichert werden",
     "attachmentTooLarge": "{{fileName}} ueberschreitet das 100-MB-Limit",
     "compacting": "Kontext wird komprimiert…",
+    "deliveryActivity": {
+      "downloading-media": "Bilder oder Videos werden heruntergeladen…",
+      "generating-document": "Dokument wird erstellt…",
+      "generating-html": "Webseite wird erstellt…",
+      "generating-presentation": "Präsentation wird erstellt…",
+      "reconciling-artifacts": "Erstellte Dateien werden geprüft…",
+      "saving-artifacts": "Dateien werden gespeichert…"
+    },
     "describeTask": "Beschreiben Sie Ihre Aufgabe…",
     "fileContextLimitExceeded": "Dateikontext ueberschreitet 500-KB-Limit",
     "grantFolderFailed": "Ordner konnte nicht hinzugefügt werden",

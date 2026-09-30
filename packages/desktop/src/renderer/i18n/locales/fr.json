@@ -399,6 +399,14 @@
     "attachmentSaveFailed": "Échec de l'enregistrement de la pièce jointe {{fileName}}",
     "attachmentTooLarge": "{{fileName}} dépasse la limite de 100 Mo",
     "compacting": "Compression du contexte…",
+    "deliveryActivity": {
+      "downloading-media": "Téléchargement des images ou vidéos…",
+      "generating-document": "Création du document…",
+      "generating-html": "Création de la page web…",
+      "generating-presentation": "Création de la présentation…",
+      "reconciling-artifacts": "Vérification des fichiers générés…",
+      "saving-artifacts": "Enregistrement des fichiers…"
+    },
     "describeTask": "Décrivez votre tâche…",
     "fileContextLimitExceeded": "Le contexte total des fichiers dépasse la limite de 500 Ko",
     "grantFolderFailed": "Échec de l'ajout du dossier",

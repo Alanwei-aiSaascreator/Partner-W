@@ -399,6 +399,14 @@
     "attachmentSaveFailed": "Falha ao salvar o anexo {{fileName}}",
     "attachmentTooLarge": "{{fileName}} excede o limite de 100MB",
     "compacting": "Compactando o contexto…",
+    "deliveryActivity": {
+      "downloading-media": "A transferir imagens ou vídeos…",
+      "generating-document": "A gerar documento…",
+      "generating-html": "A gerar página web…",
+      "generating-presentation": "A gerar apresentação…",
+      "reconciling-artifacts": "A verificar os ficheiros gerados…",
+      "saving-artifacts": "A guardar ficheiros…"
+    },
     "describeTask": "Descreva sua tarefa…",
     "fileContextLimitExceeded": "O contexto total de arquivos excede o limite de 500KB",
     "grantFolderFailed": "Falha ao adicionar a pasta",

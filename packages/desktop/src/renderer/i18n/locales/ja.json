@@ -399,6 +399,14 @@
     "attachmentSaveFailed": "添付ファイル {{fileName}} の保存に失敗しました",
     "attachmentTooLarge": "{{fileName}} が 100MB の上限を超えています",
     "compacting": "コンテキストを圧縮しています…",
+    "deliveryActivity": {
+      "downloading-media": "画像・動画をダウンロード中…",
+      "generating-document": "文書を生成中…",
+      "generating-html": "ウェブページを生成中…",
+      "generating-presentation": "プレゼンテーションを生成中…",
+      "reconciling-artifacts": "生成されたファイルを確認中…",
+      "saving-artifacts": "ファイルを保存中…"
+    },
     "describeTask": "タスクを入力…",
     "fileContextLimitExceeded": "ファイルコンテキストの合計が 500KB の上限を超えています",
     "grantFolderFailed": "フォルダを追加できませんでした",

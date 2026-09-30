@@ -399,6 +399,14 @@
     "attachmentSaveFailed": "Failed to save attachment {{fileName}}",
     "attachmentTooLarge": "{{fileName}} exceeds 100MB limit",
     "compacting": "Compacting context…",
+    "deliveryActivity": {
+      "downloading-media": "Downloading images or video…",
+      "generating-document": "Generating document…",
+      "generating-html": "Generating web page…",
+      "generating-presentation": "Generating presentation…",
+      "reconciling-artifacts": "Checking generated files…",
+      "saving-artifacts": "Saving files…"
+    },
     "describeTask": "Describe your task…",
     "fileContextLimitExceeded": "Total file context exceeds 500KB limit",
     "grantFolderFailed": "Failed to add folder",

@@ -399,6 +399,14 @@
     "attachmentSaveFailed": "첨부파일 {{fileName}} 저장 실패",
     "attachmentTooLarge": "{{fileName}}이(가) 100MB 제한을 초과했습니다",
     "compacting": "컨텍스트를 압축하는 중…",
+    "deliveryActivity": {
+      "downloading-media": "이미지 또는 동영상 다운로드 중…",
+      "generating-document": "문서 생성 중…",
+      "generating-html": "웹 페이지 생성 중…",
+      "generating-presentation": "프레젠테이션 생성 중…",
+      "reconciling-artifacts": "생성된 파일 확인 중…",
+      "saving-artifacts": "파일 저장 중…"
+    },
     "describeTask": "작업을 설명하세요…",
     "fileContextLimitExceeded": "전체 파일 컨텍스트가 500KB 제한을 초과했습니다",
     "grantFolderFailed": "폴더를 추가하지 못했습니다",

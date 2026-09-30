@@ -399,6 +399,14 @@
     "attachmentSaveFailed": "保存附件 {{fileName}} 失败",
     "attachmentTooLarge": "{{fileName}} 超出 100MB 上限",
     "compacting": "正在压缩上下文…",
+    "deliveryActivity": {
+      "downloading-media": "正在下载图片或视频…",
+      "generating-document": "正在生成文档…",
+      "generating-html": "正在生成网页…",
+      "generating-presentation": "正在生成演示文稿…",
+      "reconciling-artifacts": "正在检查生成的文件…",
+      "saving-artifacts": "正在保存文件…"
+    },
     "describeTask": "描述你的任务…",
     "fileContextLimitExceeded": "文件上下文总量超过 500KB 限制",
     "grantFolderFailed": "添加文件夹失败",

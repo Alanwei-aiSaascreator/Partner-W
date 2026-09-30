@@ -399,6 +399,14 @@
     "attachmentSaveFailed": "儲存附件 {{fileName}} 失敗",
     "attachmentTooLarge": "{{fileName}} 超出 100MB 上限",
     "compacting": "正在壓縮上下文…",
+    "deliveryActivity": {
+      "downloading-media": "正在下載圖片或影片…",
+      "generating-document": "正在產生文件…",
+      "generating-html": "正在產生網頁…",
+      "generating-presentation": "正在產生簡報…",
+      "reconciling-artifacts": "正在檢查產生的檔案…",
+      "saving-artifacts": "正在儲存檔案…"
+    },
     "describeTask": "描述你的任務…",
     "fileContextLimitExceeded": "檔案上下文總計超過 500KB 限制",
     "grantFolderFailed": "新增資料夾失敗",

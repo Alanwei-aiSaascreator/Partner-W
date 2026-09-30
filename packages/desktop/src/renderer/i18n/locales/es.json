@@ -399,6 +399,14 @@
     "attachmentSaveFailed": "No se pudo guardar el adjunto {{fileName}}",
     "attachmentTooLarge": "{{fileName}} excede el límite de 100MB",
     "compacting": "Comprimiendo el contexto…",
+    "deliveryActivity": {
+      "downloading-media": "Descargando imágenes o vídeo…",
+      "generating-document": "Generando documento…",
+      "generating-html": "Generando página web…",
+      "generating-presentation": "Generando presentación…",
+      "reconciling-artifacts": "Comprobando los archivos generados…",
+      "saving-artifacts": "Guardando archivos…"
+    },
     "describeTask": "Describe tu tarea…",
     "fileContextLimitExceeded": "El contexto total de archivos excede el límite de 500KB",
     "grantFolderFailed": "No se pudo agregar la carpeta",
