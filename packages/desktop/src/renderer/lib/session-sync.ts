@@ -15,4 +15,5 @@ const sync = createSessionSync({
   isEphemeralSession: (sessionKey) => compareStore().getState().isEphemeral(sessionKey),
 });
 
-export const { hydrateFromLocal, syncSessionMessages, syncFromGateway, retrySyncPending, resetHydration } = sync;
+export const { hydrateFromLocal, syncSessionMessages, syncFromGateway, retrySyncPending, resetHydration, syncRun } =
+  sync;
