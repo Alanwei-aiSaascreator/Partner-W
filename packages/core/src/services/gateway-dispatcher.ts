@@ -886,6 +886,10 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
       debugEvent('renderer.event.dropped.unknown_task', { taskId, sessionKey, state });
       return;
     }
+    if (matchedTask.gatewayId !== gatewayId) {
+      debugEvent('renderer.event.dropped.foreign_gateway', { taskId, sessionKey, gatewayId });
+      return;
+    }
 
     const ephemeral = deps.isEphemeralSession?.(sessionKey) === true;
 
@@ -1119,6 +1123,10 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
     const agentTask = localTasks.find((t) => t.id === taskId);
     if (!agentTask) {
       debugEvent('renderer.agent.dropped.unknown_task', { taskId, sessionKey, stream });
+      return;
+    }
+    if (agentTask.gatewayId !== gatewayId) {
+      debugEvent('renderer.agent.dropped.foreign_gateway', { taskId, sessionKey, gatewayId });
       return;
     }
 

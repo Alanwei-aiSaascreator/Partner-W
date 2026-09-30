@@ -277,7 +277,9 @@ export function createSessionSync(deps: SessionSyncDeps) {
 
     const messageStore = deps.getMessageStore();
     const localMsgs = messageStore.messagesByTask[taskId] ?? [];
-    const localAssistantMsgs = localMsgs.filter((m) => m.role === 'assistant');
+    const localAssistantMsgs = localMsgs.filter(
+      (m) => m.role === 'assistant' && (m.sessionKey ?? task.sessionKey) === sessionKey,
+    );
     const localAssistantKeys = new Set(
       localAssistantMsgs.map((m) => `${m.sessionKey ?? task.sessionKey}|${m.timestamp}`),
     );
@@ -461,7 +463,12 @@ export function createSessionSync(deps: SessionSyncDeps) {
             d.sessionKey,
             collapsedMessages.filter((message) => message.role === 'assistant'),
           );
-          const localTimestamps = new Set(local.filter((m) => m.role === 'assistant').map((m) => m.timestamp));
+          const ownerTask = deps.getTaskStore().tasks.find((task) => task.id === d.taskId);
+          const localTimestamps = new Set(
+            local
+              .filter((m) => m.role === 'assistant' && (m.sessionKey ?? ownerTask?.sessionKey) === d.sessionKey)
+              .map((m) => m.timestamp),
+          );
           const newAssistantMsgs = collapsedMessages.filter(
             (message) => message.role === 'assistant' && !localTimestamps.has(message.timestamp),
           );
