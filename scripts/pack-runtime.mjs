@@ -25,6 +25,11 @@ import {
   officialSearchPluginSpec,
   OFFICIAL_SEARCH_RUNTIME_ENTRY,
 } from './lib/bundled-search-runtime.mjs';
+import {
+  patchWebSearchAvailabilityRuntime,
+  WEB_SEARCH_AVAILABILITY_ENTRY,
+  WEB_SEARCH_AVAILABILITY_PATCH_ID,
+} from './lib/web-search-availability-runtime.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(HERE, '..');
@@ -279,6 +284,8 @@ async function main() {
   const pkgDir = path.join(stage, 'node_modules', 'openclaw');
   if (!fs.existsSync(pkgDir)) throw new Error(`装完了但 ${pkgDir} 不存在`);
   const searchPlugin = bundleOfficialSearchPlugin(stage);
+  const searchRuntime = path.join(stage, WEB_SEARCH_AVAILABILITY_ENTRY);
+  fs.writeFileSync(searchRuntime, patchWebSearchAvailabilityRuntime(fs.readFileSync(searchRuntime, 'utf8')));
 
   // ③ 剪技能
   const skillsDir = path.join(pkgDir, 'skills');
@@ -327,7 +334,7 @@ async function main() {
     fileCount,
     sha256,
     extractor: 'win32-x64/extractor/7za.exe',
-    patches: [searchPlugin.patchId],
+    patches: [searchPlugin.patchId, WEB_SEARCH_AVAILABILITY_PATCH_ID],
   });
   const runtimeDir = path.join(args.out, 'openclaw-runtime');
   fs.mkdirSync(runtimeDir, { recursive: true });
