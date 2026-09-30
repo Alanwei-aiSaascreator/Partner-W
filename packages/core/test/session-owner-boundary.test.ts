@@ -38,7 +38,7 @@ describe('gateway and session ownership boundaries', () => {
     const notifyAgentResponse = vi.fn();
     const dispatcher = createGatewayDispatcher({
       gateway: {
-        onGatewayEvent: (callback) => {
+        onGatewayEvent: (callback: (event: GatewayEvent) => void) => {
           listener = callback;
           return () => {};
         },
@@ -52,11 +52,11 @@ describe('gateway and session ownership boundaries', () => {
       getSettings: async () => null,
       sendNotification: async () => {},
       isWindowFocused: () => true,
-      translate: (key) => key,
+      translate: (key: string) => key,
       reportDebugEvent: () => {},
       notifyAgentResponse,
       syncSessionMessages: vi.fn(async () => {}),
-    } as GatewayDispatcherDeps);
+    } as unknown as GatewayDispatcherDeps);
     const stop = dispatcher.start();
     cleanups.push(() => {
       stop();

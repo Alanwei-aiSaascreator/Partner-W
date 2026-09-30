@@ -1,6 +1,7 @@
 import { parseTaskIdFromSessionKey, isSubagentSession, isSystemSession } from '@clawwork/shared';
 import type {
   GatewayFailureReason,
+  ChatDispatchReceipt,
   ToolCall,
   ToolCallStatus,
   ModelListResponse,
@@ -274,6 +275,7 @@ export interface GatewayDispatcherDeps {
     | 'addMessage'
     | 'upsertToolCall'
     | 'appendStreamDelta'
+    | 'bindActiveRun'
     | 'appendThinkingDelta'
     | 'finalizeStream'
     | 'clearActiveTurn'
@@ -697,11 +699,101 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
   const abortedByUser = new Set<string>();
   /** chat.final / lifecycle.end 之后仍涌来的 thinking/delta 要丢掉，否则白屏。 */
   const closedStreams = new Set<string>();
+  const currentRuns = new Map<string, { runId: string; confirmed: boolean; retired: Set<string> }>();
+  const pendingDispatches = new Map<
+    string,
+    {
+      ticket: symbol;
+      gatewayId: string;
+      overflowReconciled?: boolean;
+      frames: Array<{ event: string; payload: Record<string, unknown> }>;
+    }
+  >();
   const connectedGateways = new Set<string>();
   /** 每个网关最多一个待执行的目录重试定时器（重连/成功后旧的作废）。 */
   const catalogRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const effectiveToolsRequestTokens = new Map<string, symbol>();
   let synced = false;
+
+  function beginDispatch(gatewayId: string, sessionKey: string): symbol {
+    const ticket = Symbol();
+    const taskId = resolveTaskId(sessionKey);
+    if (!deps.getTaskStore().tasks.some((task) => task.id === taskId && task.gatewayId === gatewayId)) {
+      throw new Error('Dispatch gateway does not own the task');
+    }
+    if (!pendingDispatches.has(sessionKey) && pendingDispatches.size >= 128) {
+      debugEvent('renderer.dispatch.buffer_limit', { gatewayId, sessionKey });
+      throw new Error('Dispatch buffer limit reached');
+    }
+    pendingDispatches.set(sessionKey, { ticket, gatewayId, frames: [] });
+    return ticket;
+  }
+
+  function bindRun(sessionKey: string, runId: string, confirmed: boolean): void {
+    const previous = currentRuns.get(sessionKey);
+    const retired = previous?.retired ?? new Set<string>();
+    if (previous && previous.runId !== runId) retired.add(previous.runId);
+    if (retired.size > 16) retired.delete(retired.values().next().value!);
+    currentRuns.set(sessionKey, { runId, confirmed, retired });
+    closedStreams.delete(sessionKey);
+    const store = deps.getMessageStore();
+    if (store.activeTurnBySession[sessionKey]?.runId && store.activeTurnBySession[sessionKey].runId !== runId)
+      store.clearActiveTurn(sessionKey);
+  }
+
+  function settleDispatch(ticket: symbol, receipt?: ChatDispatchReceipt, accepted = true): void {
+    for (const [sessionKey, pending] of pendingDispatches) {
+      if (pending.ticket !== ticket) continue;
+      pendingDispatches.delete(sessionKey);
+      if (!accepted) return;
+      if (receipt) {
+        if (receipt.sessionKey !== sessionKey || !receipt.runId.trim()) return;
+        bindRun(sessionKey, receipt.runId, true);
+      } else currentRuns.delete(sessionKey);
+      for (const frame of pending.frames) routeRunFrame(frame.event, frame.payload, pending.gatewayId);
+      return;
+    }
+  }
+
+  function acceptsRun(sessionKey: string, runId: string | undefined, start = false): boolean {
+    if (!runId) return true;
+    const current = currentRuns.get(sessionKey);
+    if (!current) {
+      bindRun(sessionKey, runId, false);
+      return true;
+    }
+    if (current.runId === runId) return true;
+    if ((current.confirmed && !closedStreams.has(sessionKey)) || current.retired.has(runId) || !start) return false;
+    bindRun(sessionKey, runId, false);
+    return true;
+  }
+
+  function reconcileRun(taskId: string, sessionKey: string): void {
+    if (deps.isEphemeralSession?.(sessionKey)) return;
+    deps
+      .syncSessionMessages(taskId, sessionKey)
+      .catch((error) => console.error('[dispatcher] stale run sync failed', error));
+  }
+
+  function routeRunFrame(event: string, payload: Record<string, unknown>, gatewayId: string): void {
+    const sessionKey = payload.sessionKey;
+    const pending = typeof sessionKey === 'string' ? pendingDispatches.get(sessionKey) : undefined;
+    if (pending && pending.gatewayId === gatewayId) {
+      if (pending.frames.length >= 64) {
+        pending.frames.shift();
+        debugEvent('renderer.dispatch.frame_buffer_limit', { gatewayId, sessionKey });
+        const taskId = resolveTaskId(sessionKey as string);
+        if (taskId && !pending.overflowReconciled) {
+          pending.overflowReconciled = true;
+          reconcileRun(taskId, sessionKey as string);
+        }
+      }
+      pending.frames.push({ event, payload });
+      return;
+    }
+    if (event === 'chat') handleChatEvent(payload as unknown as ChatEventPayload, gatewayId);
+    else handleAgentEvent(payload as unknown as AgentEvent, gatewayId);
+  }
 
   /**
    * 未知流的窗口与计数 —— **按流名各算各的**（§11）。
@@ -890,6 +982,17 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
       debugEvent('renderer.event.dropped.foreign_gateway', { taskId, sessionKey, gatewayId });
       return;
     }
+    if (
+      !acceptsRun(
+        sessionKey,
+        payload.runId,
+        state === 'error' && closedStreams.has(sessionKey) && !deps.getMessageStore().activeTurnBySession[sessionKey],
+      )
+    ) {
+      if (state === 'final') reconcileRun(taskId, sessionKey);
+      debugEvent('renderer.chat.dropped.stale_run', { taskId, sessionKey, runId: payload.runId });
+      return;
+    }
 
     const ephemeral = deps.isEphemeralSession?.(sessionKey) === true;
 
@@ -943,6 +1046,7 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
         return;
       }
       clearTaskErrorState(taskId);
+      if (payload.runId) store.bindActiveRun?.(sessionKey, payload.runId);
       // ⭐ **追加还是替换**：delta 帧的 `message.content` 是**全文快照**（白皮书 §4.2 原文），
       //    只有 v4 的 `deltaText` 才是增量。一律追加会把正文重复膨胀（实测 5–57 倍）。
       const delta = extractDeltaText(payload);
@@ -964,6 +1068,7 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
         store.upsertToolCall(sessionKey, taskId, tc);
       }
     } else if (state === 'final') {
+      if (payload.runId) store.bindActiveRun?.(sessionKey, payload.runId);
       store.setProcessing(sessionKey, false);
       closedStreams.add(sessionKey);
       // `final` 带的同样是**完整正文** ⇒ 替换（追加等于把答案再重复一遍）
@@ -1129,12 +1234,23 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
       debugEvent('renderer.agent.dropped.foreign_gateway', { taskId, sessionKey, gatewayId });
       return;
     }
+    if (
+      !acceptsRun(sessionKey, payload.runId, stream === 'lifecycle' && (data as AgentLifecycleData).phase === 'start')
+    ) {
+      if (stream === 'tool' || (stream === 'lifecycle' && (data as AgentLifecycleData).phase === 'end'))
+        reconcileRun(taskId, sessionKey);
+      debugEvent('renderer.agent.dropped.stale_run', { taskId, sessionKey, runId: payload.runId, stream });
+      return;
+    }
 
     const ephemeral = deps.isEphemeralSession?.(sessionKey) === true;
 
     if (!ephemeral && agentTask.ensemble && sessionKey !== agentTask.sessionKey) {
       deps.onPerformerCandidate?.(taskId, sessionKey, agentTask.gatewayId);
     }
+
+    if (payload.runId && stream === 'lifecycle' && (data as AgentLifecycleData).phase === 'start')
+      deps.getMessageStore().bindActiveRun?.(sessionKey, payload.runId);
 
     switch (stream) {
       case 'tool':
@@ -2066,10 +2182,8 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
         event: data.event,
         payloadKeys: Object.keys(data.payload ?? {}),
       });
-      if (data.event === 'chat') {
-        handleChatEvent(data.payload as unknown as ChatEventPayload, data.gatewayId);
-      } else if (data.event === 'agent') {
-        handleAgentEvent(data.payload as unknown as AgentEvent, data.gatewayId);
+      if (data.event === 'chat' || data.event === 'agent') {
+        routeRunFrame(data.event, data.payload, data.gatewayId);
       } else if (data.event === 'sessions.changed') {
         handleSessionChangedEvent(data.payload as SessionChangedEvent, data.gatewayId);
       } else if (data.event === 'exec.approval.requested') {
@@ -2216,6 +2330,9 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
     for (const b of lifecycleErrorBuffer.values()) clearTimeout(b.timer);
     lifecycleErrorBuffer.clear();
     abortedByUser.clear();
+    closedStreams.clear();
+    currentRuns.clear();
+    pendingDispatches.clear();
     connectedGateways.clear();
     for (const timer of catalogRetryTimers.values()) clearTimeout(timer);
     catalogRetryTimers.clear();
@@ -2224,6 +2341,8 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
   }
 
   return {
+    beginDispatch,
+    settleDispatch,
     start,
     initialize,
     startGatewayStatus,
