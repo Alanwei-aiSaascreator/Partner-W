@@ -184,6 +184,30 @@ function emitChatError(
   });
 }
 
+describe('canonical discovery persistence failures', () => {
+  it.each(['initialize', 'status'] as const)('reports rejected discovery writes from %s', async (path) => {
+    const h = createHarness();
+    const error = new Error('Canonical message persistence exhausted retries');
+    const failed = Promise.reject(error);
+    void failed.catch(() => undefined);
+    h.deps.syncFromGateway = () => failed;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      if (path === 'initialize') {
+        h.deps.gateway.gatewayStatus = async () => ({ 'gw-1': { name: 'Gateway', connected: true } });
+        await h.dispatcher.initialize();
+      } else {
+        h.dispatcher.startGatewayStatus();
+        h.emitStatus({ gatewayId: 'gw-1', connected: true });
+      }
+      await Promise.resolve();
+      expect(warn).toHaveBeenCalledWith('[sync] Gateway session sync failed', error);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+});
+
 function emitLifecycleError(h: ReturnType<typeof createHarness>, error: string) {
   h.emit('agent', {
     sessionKey: TASK.sessionKey,

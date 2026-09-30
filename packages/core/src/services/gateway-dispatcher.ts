@@ -1260,7 +1260,6 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
     if (!ephemeral && agentTask.ensemble && sessionKey !== agentTask.sessionKey) {
       deps.onPerformerCandidate?.(taskId, sessionKey, agentTask.gatewayId);
     }
-
     if (payload.runId && stream === 'lifecycle' && (data as AgentLifecycleData).phase === 'start')
       deps.getMessageStore().bindActiveRun?.(sessionKey, payload.runId);
 
@@ -2316,7 +2315,7 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
       }
       if (connectedGateways.size > 0 && !synced) {
         synced = true;
-        deps.syncFromGateway();
+        void deps.syncFromGateway().catch((error) => console.warn('[sync] Gateway session sync failed', error));
         for (const gwId of connectedGateways) fetchCatalogs(gwId);
       }
     });
@@ -2358,7 +2357,7 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
       deps.onToast?.('success', deps.translate('connection.reconnected'));
       if (!synced) {
         synced = true;
-        deps.syncFromGateway();
+        void deps.syncFromGateway().catch((error) => console.warn('[sync] Gateway session sync failed', error));
       }
       deps.retrySyncPending();
       fetchCatalogs(s.gatewayId);
