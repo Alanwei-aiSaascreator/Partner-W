@@ -6,6 +6,7 @@ import { DB_FILE_NAME } from '@clawwork/shared';
 import * as schema from './schema.js';
 import { initFTS } from './fts.js';
 import { initKbSchema } from './kb-schema.js';
+import { setWorkspaceDatabaseOwner } from '../workspace/scope.js';
 
 let db: ReturnType<typeof drizzle> | null = null;
 let sqlite: Database.Database | null = null;
@@ -312,6 +313,7 @@ function openAndMigrate(dbPath: string): void {
   initKbSchema(sqlite);
 
   db = drizzle(sqlite, { schema });
+  setWorkspaceDatabaseOwner(db);
 }
 
 export function initDatabase(workspacePath: string): void {
@@ -353,4 +355,5 @@ export function closeDatabase(): void {
   sqlite = null;
   db = null;
   initializedWorkspacePath = null;
+  setWorkspaceDatabaseOwner(null);
 }

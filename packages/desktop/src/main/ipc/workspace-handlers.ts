@@ -16,6 +16,7 @@ import { workspaceLocationPatch } from '../workspace/portable.js';
 import { refreshRemovableDrives } from '../workspace/removable-drives.js';
 import { reinitDatabase, closeDatabase, getSqlite } from '../db/index.js';
 import { buildKbRuntime, ensureKbRuntime, resetKbRuntime } from '../kb/runtime.js';
+import { registerDeliveryActivityHandlers } from '../artifact/delivery-activity.js';
 
 /**
  * 换库之后重建资料库运行时。
@@ -73,6 +74,7 @@ export interface WorkspaceHandlerDeps {
 }
 
 export function registerWorkspaceHandlers(deps: WorkspaceHandlerDeps = {}): void {
+  registerDeliveryActivityHandlers();
   ipcMain.handle('workspace:open-folder', () => {
     const p = getWorkspacePath();
     if (p) shell.openPath(p);

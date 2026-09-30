@@ -4,6 +4,8 @@ import type {
   Artifact,
   ArtifactDeliveryFailure,
   ArtifactDeliverySettled,
+  ArtifactDeliveryActivity,
+  ArtifactWorkspaceScope,
   CommandsListParams,
   ConfigPatchParams,
   ConfigSetParams,
@@ -31,6 +33,19 @@ import type { ClawWorkAPI, GatewayServerConfig } from './clawwork';
 
 function buildApi(): ClawWorkAPI {
   return {
+    getArtifactWorkspaceScope: () => ipcRenderer.invoke('artifact:get-workspace-scope'),
+    getArtifactDeliveryActivitySnapshot: () => ipcRenderer.invoke('artifact:get-delivery-activity-snapshot'),
+    onArtifactWorkspaceScopeChanged: (callback: (scope: ArtifactWorkspaceScope) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, scope: ArtifactWorkspaceScope): void => callback(scope);
+      ipcRenderer.on('artifact:workspace-scope-changed', listener);
+      return () => ipcRenderer.removeListener('artifact:workspace-scope-changed', listener);
+    },
+    onArtifactDeliveryActivity: (callback: (activity: ArtifactDeliveryActivity) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, activity: ArtifactDeliveryActivity): void =>
+        callback(activity);
+      ipcRenderer.on('artifact:delivery-activity', listener);
+      return () => ipcRenderer.removeListener('artifact:delivery-activity', listener);
+    },
     getHttpBase: (gatewayId: string) => ipcRenderer.invoke('ws:get-http-base', { gatewayId }),
     sendMessage: (
       gatewayId: string,

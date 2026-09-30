@@ -4,6 +4,9 @@ import type {
   Artifact,
   ArtifactDeliveryFailure,
   ArtifactDeliverySettled,
+  ArtifactDeliveryActivity,
+  ArtifactDeliveryActivitySnapshot,
+  ArtifactWorkspaceScope,
   ArtifactFileReadResult,
   ArtifactPreview,
   ArtifactSaveAsResult,
@@ -579,6 +582,10 @@ export interface ClawWorkAPI {
   onSlidegenWarned: (callback: (warnings: SlidegenWarning[]) => void) => () => void;
   onArtifactDeliverySettled: (callback: (result: ArtifactDeliverySettled) => void) => () => void;
   onClaimViolation: (callback: (violation: ArtifactDeliveryFailure) => void) => () => void;
+  getArtifactWorkspaceScope: () => Promise<ArtifactWorkspaceScope>;
+  getArtifactDeliveryActivitySnapshot: () => Promise<ArtifactDeliveryActivitySnapshot>;
+  onArtifactWorkspaceScopeChanged: (callback: (scope: ArtifactWorkspaceScope) => void) => () => void;
+  onArtifactDeliveryActivity: (callback: (activity: ArtifactDeliveryActivity) => void) => () => void;
   saveCodeBlock: (params: {
     taskId: string;
     messageId: string;

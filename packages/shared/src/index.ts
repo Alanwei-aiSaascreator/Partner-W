@@ -17,3 +17,4 @@ export * from './artifact-read.js';
 export * from './docgen-failure.js';
 export * from './htmlgen-failure.js';
 export * from './slidegen-failure.js';
+export * from './artifact-delivery-activity.js';
