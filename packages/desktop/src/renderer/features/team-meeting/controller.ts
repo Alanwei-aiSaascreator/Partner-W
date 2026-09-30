@@ -419,5 +419,5 @@ export function createTeamMeetingController(deps: MeetingControllerPorts) {
     loading = undefined;
     store.setState(initialMeetingState());
   }
-  return { store, start, stop, load, reset };
+  return { store, start, stop, load, reset, getGeneration: () => epoch };
 }

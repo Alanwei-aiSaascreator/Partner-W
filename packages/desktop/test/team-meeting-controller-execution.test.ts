@@ -5,6 +5,12 @@ import { expectedArtifactKindsFromRequest } from '../src/main/artifact/claim-gua
 
 describe('team meeting canonical execution', () => {
   afterEach(() => vi.useRealTimers());
+  it('invalidates an admission token synchronously when a workspace resets', () => {
+    const h = setup();
+    const generation = h.controller.getGeneration();
+    h.controller.reset();
+    expect(h.controller.getGeneration()).not.toBe(generation);
+  });
   it('assigns final file delivery only to summary while retaining the complete question as discussion context', async () => {
     const h = setup();
     h.plan.record.question = '请讨论融资方案，最终生成 Word 文件';
