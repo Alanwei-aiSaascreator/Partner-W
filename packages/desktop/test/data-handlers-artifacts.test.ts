@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { createHash } from 'node:crypto';
 
 const handleMap = new Map<string, (...args: unknown[]) => unknown>();
 const autoExtractArtifactsMock = vi.fn();
@@ -64,6 +65,294 @@ async function flushMicrotasks(): Promise<void> {
 }
 
 describe('assistant artifact reconciliation boundary', () => {
+  it('settles the failed source after same-name video metadata retry without requiring the already saved source', async () => {
+    const { beginArtifactRun, bindArtifactRun, registerDataHandlers } =
+      await import('../src/main/ipc/data-handlers.js');
+    registerDataHandlers();
+    const token = beginArtifactRun('C:\\trusted-workspace', 'task-1', 'session-task-1');
+    bindArtifactRun('task-1', 'session-task-1', token, 'run-old');
+    const attachments = ['first', 'second'].map((name) => ({
+      fileName: 'clip.mp4',
+      mimeType: 'video/mp4',
+      dataUrl: `file:///runtime/${name}.mp4`,
+    }));
+    const key = (index: number) =>
+      `attachment:${createHash('sha256').update(attachments[index]!.dataUrl).digest('hex').slice(0, 16)}`;
+    const msg = {
+      id: 'same-name',
+      taskId: 'task-1',
+      sessionKey: 'session-task-1',
+      runId: 'run-old',
+      role: 'assistant',
+      content: '',
+      timestamp: '2026-09-30T00:00:00Z',
+      attachments,
+    };
+    autoExtractArtifactsMock.mockResolvedValueOnce({
+      mediaFailures: [{ fileName: 'clip.mp4', reason: 'unavailable' }],
+      savedMediaSourceKeys: [key(0)],
+      failedMediaSourceKeys: [key(1)],
+    });
+    selectGetMock.mockReturnValueOnce({ id: msg.id }).mockReturnValueOnce({ gid: 'gateway-1' });
+    const handler = handleMap.get('data:create-message')!;
+    handler({}, msg);
+    await flushJobs();
+    webContentsSendMock.mockClear();
+    autoExtractArtifactsMock.mockResolvedValueOnce({ mediaFailures: [], savedMediaSourceKeys: [key(1)] });
+    selectGetMock
+      .mockReturnValueOnce({ id: msg.id })
+      .mockReturnValueOnce({ gid: 'gateway-1' })
+      .mockReturnValueOnce(msg);
+    handler({}, { ...msg, attachments: [{ ...attachments[1]!, artifactId: 'artifact_managed_media_second' }] });
+    await flushJobs();
+    expect(webContentsSendMock).toHaveBeenCalledWith(
+      'artifact:delivery-settled',
+      expect.objectContaining({ status: 'succeeded' }),
+    );
+  });
+  it.each(['document', 'another-video'])(
+    'preserves %s failure after a successful video-only metadata retry',
+    async (kind) => {
+      const { beginArtifactRun, bindArtifactRun, registerDataHandlers } =
+        await import('../src/main/ipc/data-handlers.js');
+      registerDataHandlers();
+      const token = beginArtifactRun('C:\\trusted-workspace', 'task-1', 'session-task-1');
+      bindArtifactRun('task-1', 'session-task-1', token, 'run-old');
+      const msg = {
+        id: 'mixed-delivery',
+        taskId: 'task-1',
+        sessionKey: 'session-task-1',
+        runId: 'run-old',
+        role: 'assistant',
+        timestamp: '2026-09-30T00:00:00Z',
+        content: kind === 'document' ? '```docgen\n{ bad json\n```' : '',
+        attachments: [{ fileName: 'clip.mp4', mimeType: 'video/mp4', dataUrl: 'file:///runtime/clip.mp4' }],
+      };
+      if (kind === 'another-video')
+        msg.attachments.push({ fileName: 'other.mp4', mimeType: 'video/mp4', dataUrl: 'file:///runtime/other.mp4' });
+      selectGetMock.mockReturnValueOnce({ id: msg.id }).mockReturnValueOnce({ gid: 'gateway-1' });
+      autoExtractArtifactsMock.mockResolvedValueOnce({
+        mediaFailures:
+          kind === 'document'
+            ? [{ fileName: 'clip.mp4', reason: 'unavailable' }]
+            : [
+                { fileName: 'clip.mp4', reason: 'unavailable' },
+                { fileName: 'other.mp4', reason: 'unavailable' },
+              ],
+      });
+      const handler = handleMap.get('data:create-message')!;
+      handler({}, msg);
+      await flushJobs();
+      if (kind === 'document') expect(webContentsSendMock).toHaveBeenCalledWith('docgen:failed', expect.anything());
+      webContentsSendMock.mockClear();
+      autoExtractArtifactsMock.mockResolvedValueOnce({
+        mediaFailures: kind === 'another-video' ? [{ fileName: 'other.mp4', reason: 'unavailable' }] : [],
+        savedMediaSourceKeys: [
+          `attachment:${createHash('sha256').update(msg.attachments[0]!.dataUrl).digest('hex').slice(0, 16)}`,
+        ],
+      });
+      selectGetMock
+        .mockReturnValueOnce({ id: msg.id })
+        .mockReturnValueOnce({ gid: 'gateway-1' })
+        .mockReturnValueOnce(msg);
+      handler({}, { ...msg, attachments: [{ ...msg.attachments[0]!, artifactId: 'artifact_managed_media_fixture' }] });
+      await flushJobs();
+      expect(webContentsSendMock).not.toHaveBeenCalledWith(
+        'artifact:delivery-settled',
+        expect.objectContaining({ status: 'succeeded' }),
+      );
+      if (kind === 'another-video') {
+        const other = msg.attachments[1]!;
+        autoExtractArtifactsMock.mockResolvedValueOnce({
+          mediaFailures: [],
+          savedMediaSourceKeys: [`attachment:${createHash('sha256').update(other.dataUrl).digest('hex').slice(0, 16)}`],
+        });
+        selectGetMock
+          .mockReturnValueOnce({ id: msg.id })
+          .mockReturnValueOnce({ gid: 'gateway-1' })
+          .mockReturnValueOnce(msg);
+        handler({}, { ...msg, attachments: [{ ...other, artifactId: 'artifact_managed_media_other' }] });
+        await flushJobs();
+        expect(webContentsSendMock).toHaveBeenCalledWith(
+          'artifact:delivery-settled',
+          expect.objectContaining({ status: 'succeeded' }),
+        );
+        webContentsSendMock.mockClear();
+        const fresh = ['first', 'second'].map((name) => ({
+          fileName: `${name}.mp4`,
+          mimeType: 'video/mp4',
+          dataUrl: `file:///runtime/${name}.mp4`,
+        }));
+        async function retry(attachments: typeof fresh, result: unknown) {
+          autoExtractArtifactsMock.mockResolvedValueOnce(result);
+          selectGetMock
+            .mockReturnValueOnce({ id: msg.id })
+            .mockReturnValueOnce({ gid: 'gateway-1' })
+            .mockReturnValueOnce(msg);
+          handler({}, { ...msg, attachments });
+          await flushJobs();
+        }
+        await retry(fresh, {
+          mediaFailures: fresh.map((attachment) => ({ fileName: attachment.fileName, reason: 'unavailable' })),
+        });
+        const key = (index: number) =>
+          `attachment:${createHash('sha256').update(fresh[index]!.dataUrl).digest('hex').slice(0, 16)}`;
+        await retry([fresh[0]!], { mediaFailures: [], savedMediaSourceKeys: [key(0)] });
+        expect(webContentsSendMock).not.toHaveBeenCalledWith(
+          'artifact:delivery-settled',
+          expect.objectContaining({ status: 'succeeded' }),
+        );
+        await retry([fresh[1]!], { mediaFailures: [], savedMediaSourceKeys: [key(1)] });
+        expect(webContentsSendMock).toHaveBeenCalledWith(
+          'artifact:delivery-settled',
+          expect.objectContaining({ status: 'succeeded' }),
+        );
+      }
+    },
+  );
+  it('imports late metadata for a completed message while preserving the next queued turn', async () => {
+    const { beginArtifactRun, bindArtifactRun, registerDataHandlers } =
+      await import('../src/main/ipc/data-handlers.js');
+    registerDataHandlers();
+    const oldToken = beginArtifactRun('C:\\trusted-workspace', 'task-1', 'session-task-1');
+    bindArtifactRun('task-1', 'session-task-1', oldToken, 'run-old');
+    let finish!: (result: unknown) => void;
+    autoExtractArtifactsMock.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+    );
+    const msg = {
+      id: 'assistant-video',
+      taskId: 'task-1',
+      sessionKey: 'session-task-1',
+      runId: 'run-old',
+      role: 'assistant',
+      content: '',
+      timestamp: '2026-09-30T00:00:00.000Z',
+      attachments: [{ fileName: 'clip.mp4', dataUrl: 'file:///runtime/clip.mp4', mimeType: 'video/mp4' }],
+    };
+    const handler = handleMap.get('data:create-message')!;
+    selectGetMock.mockReturnValueOnce({ id: msg.id }).mockReturnValueOnce({ gid: 'gateway-1' });
+    handler({}, msg);
+    await flushMicrotasks();
+    const nextToken = beginArtifactRun('C:\\trusted-workspace', 'task-1', 'session-task-1');
+    bindArtifactRun('task-1', 'session-task-1', nextToken, 'run-new');
+    const enriched = {
+      ...msg,
+      attachments: [{ ...msg.attachments[0]!, artifactId: 'artifact_managed_media_fixture' }],
+    };
+    selectGetMock
+      .mockReturnValueOnce({ id: msg.id })
+      .mockReturnValueOnce({ gid: 'gateway-1' })
+      .mockReturnValueOnce(msg);
+    handler({}, enriched);
+    await flushMicrotasks();
+    expect(autoExtractArtifactsMock).toHaveBeenCalledTimes(2);
+    expect(autoExtractArtifactsMock.mock.calls[1]![0].attachments[0].artifactId).toBe('artifact_managed_media_fixture');
+    finish({ mediaFailures: [] });
+    await flushJobs();
+    selectGetMock.mockReturnValueOnce({ id: 'next-message' }).mockReturnValueOnce({ gid: 'gateway-1' });
+    handler({}, { ...msg, id: 'next-message', runId: 'run-new', timestamp: '2026-09-30T00:00:01.000Z' });
+    await flushJobs();
+    expect(reconcileTaskArtifactsMock).toHaveBeenCalledTimes(2);
+  });
+  it.each(['database', 'workspace', 'run'])(
+    'discards old history failure after %s replacement',
+    async (replacement) => {
+      const { registerDataHandlers } = await import('../src/main/ipc/data-handlers.js');
+      registerDataHandlers();
+      let finish!: (result: unknown) => void;
+      autoExtractArtifactsMock.mockReturnValueOnce(
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+      );
+      const msg = {
+        id: 'assistant-video',
+        taskId: 'task-1',
+        sessionKey: 'session-task-1',
+        runId: 'run-old',
+        role: 'assistant',
+        content: '',
+        timestamp: '2026-09-30T00:00:00.000Z',
+        attachments: [{ fileName: 'clip.mp4', dataUrl: 'file:///runtime/clip.mp4', mimeType: 'video/mp4' }],
+      };
+      selectGetMock.mockReturnValueOnce({ id: msg.id }).mockReturnValueOnce({ gid: 'gateway-1' });
+      handleMap.get('data:create-message')!({}, msg);
+      if (replacement === 'database') {
+        const { getDb } = await import('../src/main/db/index.js');
+        vi.mocked(getDb).mockReturnValueOnce({ ...dbMock } as unknown as ReturnType<typeof getDb>);
+      }
+      if (replacement === 'workspace') getWorkspacePathMock.mockReturnValue('C:\\replacement');
+      selectGetMock.mockReturnValue({ ...msg, runId: replacement === 'run' ? 'run-new' : msg.runId });
+      finish({ mediaFailures: [{ fileName: 'clip.mp4', reason: 'unavailable' }] });
+      await flushJobs();
+      expect(webContentsSendMock).not.toHaveBeenCalledWith('artifact:delivery-settled', expect.anything());
+      expect(webContentsSendMock).not.toHaveBeenCalledWith('artifact:claim-violation', expect.anything());
+    },
+  );
+  it.each(['same-run', 'changed-run', 'changed-task', 'changed-session', 'wrong-source', 'no-saved-media'])(
+    'settles a failed history media retry only after real saved evidence with %s ownership',
+    async (ownership) => {
+      const { registerDataHandlers } = await import('../src/main/ipc/data-handlers.js');
+      registerDataHandlers();
+      const msg = {
+        id: 'assistant-video',
+        taskId: 'task-1',
+        role: 'assistant',
+        content: '',
+        timestamp: '2026-09-30T00:00:00.000Z',
+        sessionKey: 'session-task-1',
+        runId: 'run-old',
+        attachments: [{ fileName: 'clip.mp4', dataUrl: 'file:///runtime/media/clip.mp4', mimeType: 'video/mp4' }],
+      };
+      const handler = handleMap.get('data:create-message')!;
+      autoExtractArtifactsMock.mockResolvedValueOnce({
+        mediaFailures: [{ fileName: 'clip.mp4', reason: 'unavailable' }],
+      });
+      selectGetMock
+        .mockReturnValueOnce({ id: msg.id })
+        .mockReturnValueOnce({ gid: 'gateway-1' })
+        .mockReturnValueOnce(msg);
+      handler({}, msg);
+      await flushJobs();
+      expect(webContentsSendMock).toHaveBeenCalledWith(
+        'artifact:delivery-settled',
+        expect.objectContaining({ status: 'failed' }),
+      );
+      webContentsSendMock.mockClear();
+      autoExtractArtifactsMock.mockResolvedValueOnce({
+        mediaFailures: [],
+        ...(ownership === 'no-saved-media'
+          ? {}
+          : {
+              savedMediaSourceKeys: [
+                ownership === 'wrong-source'
+                  ? 'attachment:unrelated'
+                  : `attachment:${createHash('sha256').update(msg.attachments[0]!.dataUrl).digest('hex').slice(0, 16)}`,
+              ],
+            }),
+      });
+      selectGetMock
+        .mockReturnValueOnce({ id: msg.id })
+        .mockReturnValueOnce({ gid: 'gateway-1' })
+        .mockReturnValueOnce({
+          taskId: ownership === 'changed-task' ? 'task-other' : msg.taskId,
+          sessionKey: ownership === 'changed-session' ? 'session-other' : msg.sessionKey,
+          runId: ownership === 'changed-run' ? 'run-new' : msg.runId,
+        });
+      handler({}, msg);
+      await flushJobs();
+      const successes = webContentsSendMock.mock.calls.filter(
+        ([channel, result]) => channel === 'artifact:delivery-settled' && result.status === 'succeeded',
+      );
+      expect(successes).toHaveLength(ownership === 'same-run' ? 1 : 0);
+      if (ownership === 'same-run')
+        expect(successes[0]![1]).toMatchObject({ taskId: msg.taskId, sessionKey: msg.sessionKey, messageId: msg.id });
+    },
+  );
+
   it.each([true, false])(
     'resolves managed video tickets using only the task gateway and session, active run=%s',
     async (activeRun) => {
