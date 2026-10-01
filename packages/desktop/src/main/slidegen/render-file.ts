@@ -74,7 +74,8 @@ export async function renderSlideSourceFile(file: string, workspace: string) {
     });
     assertCurrent();
     if (readSlideSourceFile(root, file) !== source) throw new Error('source-changed-during-render');
-    const fileName = `${documentFileStem(decks[0].title, 'presentation')}-${randomUUID().slice(0, 8)}.pptx`;
+    const stem = documentFileStem(decks[0].title, 'presentation');
+    const fileName = `${stem.startsWith('.') ? '_' : ''}${stem}-${randomUUID().slice(0, 8)}.pptx`;
     const destination = path.join(root, fileName);
     if (!contained(root, destination)) throw new Error('output-outside-workspace');
     const fd = fs.openSync(destination, 'wx');

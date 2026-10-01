@@ -62,6 +62,15 @@ function pptxFiles() {
   return fs.readdirSync(workspace).filter((name) => name.endsWith('.pptx'));
 }
 
+it.each(['.NET Report', '..Budget'])('keeps a dot-prefixed title collectable: %s', async (title) => {
+  write(source().replace('// title: Report', `// title: ${title}`));
+  const result = await render();
+  expect(result.status).toBe('file-generated');
+  expect(String(result.fileName).startsWith('.')).toBe(false);
+  expect(receipts.readSlideGenerationReceipt(workspace, String(result.receiptFile)).fileName).toBe(result.fileName);
+  expect(pptxFiles()).toHaveLength(1);
+});
+
 it('creates a verifiable receipt for the exact file it generated in this turn', async () => {
   write();
   const result = await render();
