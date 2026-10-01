@@ -1252,6 +1252,7 @@
     "sendFailed": "Code konnte nicht gesendet werden, bitte später erneut versuchen",
     "sendTimeout": "Der Dienst hat nicht geantwortet. Bitte erneut senden",
     "serviceUnavailable": "SMS-Dienst vorübergehend nicht verfügbar, später erneut versuchen",
+    "sessionUnavailable": "Sie sind angemeldet, aber Ihre Kontodaten konnten nicht geladen werden. Versuchen Sie es erneut; ein neuer Bestätigungscode ist nicht nötig.",
     "signIn": "Anmelden",
     "subtitle": "Geben Sie Ihre Telefonnummer ein, wir senden einen Code",
     "termsOfService": "Nutzungsbedingungen",

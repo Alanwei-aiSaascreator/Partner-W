@@ -1252,6 +1252,7 @@
     "sendFailed": "Não foi possível enviar o código, tente mais tarde",
     "sendTimeout": "O serviço não respondeu. Envie o código novamente",
     "serviceUnavailable": "Serviço de SMS temporariamente indisponível, tente mais tarde",
+    "sessionUnavailable": "Você está conectado, mas os dados da conta não puderam ser carregados. Tente novamente; não é preciso outro código.",
     "signIn": "Entrar",
     "subtitle": "Informe seu telefone e enviaremos um código",
     "termsOfService": "Termos de Serviço",

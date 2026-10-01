@@ -1,5 +1,24 @@
 export type AppEntryScreen = 'loading' | 'login' | 'onboarding' | 'setup' | 'workspace';
 
+export function entryModeFromConfig(config: {
+  ok: boolean;
+  result?: { supabaseUrl?: string; hasAnonKey?: boolean };
+}): 'local' | 'commercial' | 'error' {
+  if (!config.ok || !config.result) return 'error';
+  const { supabaseUrl, hasAnonKey } = config.result;
+  if (supabaseUrl && hasAnonKey) return 'commercial';
+  return !supabaseUrl && hasAnonKey === false ? 'local' : 'error';
+}
+
+export function entryAccountFromSession(session: {
+  ok: boolean;
+  result?: { signedIn: boolean; profile?: { userId?: string; nickname?: string | null } | null };
+}): { userId: string; nickname: string } | null {
+  const profile = session.result?.profile;
+  if (!session.ok || !session.result?.signedIn || !profile?.userId?.trim() || profile.userId === 'local') return null;
+  return { userId: profile.userId, nickname: profile.nickname ?? '' };
+}
+
 export interface AppEntryState {
   authState: 'checking' | 'required' | 'ok';
   onboardingResolved: boolean;

@@ -182,6 +182,38 @@ describe('Login', () => {
     unmount();
   });
 
+  it('keeps verified authentication recoverable when the account read fails, without consuming OTP again', async () => {
+    vi.useFakeTimers();
+    const onSignedIn = vi
+      .fn<() => Promise<void>>()
+      .mockRejectedValueOnce(new Error('session unavailable'))
+      .mockResolvedValueOnce();
+    const { container, unmount } = render(<Login onSignedIn={onSignedIn} />);
+    act(() => {
+      setInput(container.querySelector('input[type="tel"]') as HTMLInputElement, '13800138000');
+      (container.querySelector('input[type="checkbox"]') as HTMLInputElement).click();
+    });
+    await act(async () =>
+      container.querySelector('form')?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })),
+    );
+    act(() => setInput(container.querySelector('input[inputmode="numeric"]') as HTMLInputElement, '123456'));
+    await act(async () =>
+      container.querySelector('form')?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })),
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+    });
+    expect(container.textContent).toContain('login.sessionUnavailable');
+    expect(container.querySelector('.animate-spin')).toBeNull();
+    await act(async () =>
+      container.querySelector('form')?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })),
+    );
+    expect(verifyOtp).toHaveBeenCalledTimes(1);
+    expect(onSignedIn).toHaveBeenCalledTimes(2);
+    unmount();
+    vi.useRealTimers();
+  });
+
   /**
    * 🔴 2026-09-20 复核拍板（登录是内测门槛）：
    *

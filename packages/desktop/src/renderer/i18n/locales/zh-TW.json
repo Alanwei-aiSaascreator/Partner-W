@@ -1252,6 +1252,7 @@
     "sendFailed": "驗證碼發送失敗，請稍後重試",
     "sendTimeout": "服務暫時沒有回應，請重新傳送",
     "serviceUnavailable": "簡訊服務暫時無法使用，請稍後重試",
+    "sessionUnavailable": "帳號已登入，但暫時未能讀取帳號資料。請再次點擊繼續，無需重新取得驗證碼。",
     "signIn": "登入",
     "subtitle": "輸入手機號，我們會發送驗證碼",
     "termsOfService": "服務條款",

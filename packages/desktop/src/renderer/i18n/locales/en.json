@@ -1252,6 +1252,7 @@
     "sendFailed": "Could not send the code, please try again",
     "sendTimeout": "The service didn't respond in time. Please send a new code.",
     "serviceUnavailable": "SMS service is temporarily unavailable, please try later",
+    "sessionUnavailable": "You are signed in, but your account details could not be loaded. Try again to continue; no new verification code is needed.",
     "signIn": "Sign in",
     "subtitle": "Enter your phone number and we will send a code",
     "termsOfService": "Terms of Service",

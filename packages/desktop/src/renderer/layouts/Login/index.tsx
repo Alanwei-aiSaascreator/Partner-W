@@ -12,7 +12,8 @@ import GuideMascot, { type GuideMascotPose } from '@/components/GuideMascot';
 const RESEND_SECONDS = 60;
 
 interface LoginProps {
-  onSignedIn: () => void;
+  onSignedIn: () => void | Promise<void>;
+  onSignInStarted?: () => void;
 }
 
 function normalizePhone(input: string): string {
@@ -70,7 +71,7 @@ function AgreementLinks({
   );
 }
 
-export default function Login({ onSignedIn }: LoginProps) {
+export default function Login({ onSignedIn, onSignInStarted }: LoginProps) {
   const { t } = useTranslation();
   const [phone, setPhone] = useState('');
   const [code, setCode] = useState('');
@@ -91,6 +92,14 @@ export default function Login({ onSignedIn }: LoginProps) {
    *    （实测：`test/login-screen.test.tsx` 里"迟到的响应不许覆盖当前界面状态"）。
    */
   const attemptSeq = useRef(0);
+  const verifiedPhone = useRef<string | null>(null);
+
+  useEffect(
+    () => () => {
+      attemptSeq.current += 1;
+    },
+    [],
+  );
 
   useEffect(() => {
     if (countdown <= 0) return;
@@ -134,6 +143,7 @@ export default function Login({ onSignedIn }: LoginProps) {
 
   const sendCode = useCallback(async () => {
     if (!phoneValid || busy) return;
+    onSignInStarted?.();
     // ⚠️ `busy` 是 state、不是同步锁：同一个 tick 里的两次提交（表单 + 「重新发送」、
     //    或连点）都会读到 `busy === false` ⇒ 真的会发两次。发两次拦不住没关系，
     //    但**结论只能有一个**：给每次尝试编号，await 回来先对号，迟到的响应一律丢掉
@@ -141,6 +151,7 @@ export default function Login({ onSignedIn }: LoginProps) {
     const seq = ++attemptSeq.current;
     setBusy(true);
     setError('');
+    verifiedPhone.current = null;
     let res: Awaited<ReturnType<typeof window.clawwork.commercialSendOtp>>;
     try {
       res = await window.clawwork.commercialSendOtp(`+86${phone}`);
@@ -161,7 +172,7 @@ export default function Login({ onSignedIn }: LoginProps) {
       return;
     }
     toast.success(t('login.codeSent', { phone }));
-  }, [busy, describeSendError, phone, phoneValid, t]);
+  }, [busy, describeSendError, onSignInStarted, phone, phoneValid, t]);
 
   /**
    * 校验失败时**必须分原因**说。
@@ -186,26 +197,36 @@ export default function Login({ onSignedIn }: LoginProps) {
 
   const submit = useCallback(async () => {
     if (!codeValid || busy) return;
+    onSignInStarted?.();
     // 同 `sendCode`：编号 + 对号，迟到的响应不许覆盖当前界面状态。
     const seq = ++attemptSeq.current;
     setBusy(true);
     setError('');
     let res: Awaited<ReturnType<typeof window.clawwork.commercialVerifyOtp>>;
     try {
-      res = await window.clawwork.commercialVerifyOtp(`+86${phone}`, code);
+      res =
+        verifiedPhone.current === phone ? { ok: true } : await window.clawwork.commercialVerifyOtp(`+86${phone}`, code);
     } catch {
       // IPC 自己炸了 = 我们没拿到答案 ⇒ 属于"问不出来"，**不是**"你码错了"
       res = { ok: false, errorCode: 'otp_verify_unreachable' };
     }
     if (seq !== attemptSeq.current) return;
-    setBusy(false);
     if (!res.ok) {
+      setBusy(false);
       setError(describeVerifyError(res.errorCode));
       return;
     }
-    setMascotPose('success');
-    window.setTimeout(onSignedIn, 320);
-  }, [busy, code, codeValid, describeVerifyError, onSignedIn, phone]);
+    verifiedPhone.current = phone;
+    try {
+      await onSignedIn();
+      if (seq !== attemptSeq.current) return;
+      setMascotPose('success');
+    } catch {
+      if (seq !== attemptSeq.current) return;
+      setError(t('login.sessionUnavailable'));
+    }
+    if (seq === attemptSeq.current) setBusy(false);
+  }, [busy, code, codeValid, describeVerifyError, onSignedIn, onSignInStarted, phone, t]);
 
   const onSubmitForm = (e: React.FormEvent) => {
     e.preventDefault();

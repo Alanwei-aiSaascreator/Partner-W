@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Toaster, TOAST_DURATION_MS, TOAST_OPTIONS } from '@/lib/toast';
 import LeftNav from './layouts/LeftNav';
@@ -32,7 +32,13 @@ import { cn } from '@/lib/utils';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { LEFT_NAV_RAIL_WIDTH, motionDuration, motionEase } from '@/styles/design-tokens';
 import { loadOnboardingProfile, saveOnboardingProfile, type OnboardingProfile } from '@/lib/user-onboarding';
-import { AUTH_CHECK_FALLBACK_MS, resolveAppEntryScreen, runAuthBootstrap } from '@/lib/app-entry-flow';
+import {
+  AUTH_CHECK_FALLBACK_MS,
+  entryAccountFromSession,
+  entryModeFromConfig,
+  resolveAppEntryScreen,
+  runAuthBootstrap,
+} from '@/lib/app-entry-flow';
 import { isInternalBetaEnabled, parseBetaRoute } from '@/features/internal-beta/beta-route';
 import { useGatewayDisappearanceNotice } from '@/lib/gateway-disappearance';
 
@@ -57,6 +63,7 @@ export default function App() {
   const [onboardingProfile, setOnboardingProfile] = useState<OnboardingProfile | null>(null);
   const [onboardingResolved, setOnboardingResolved] = useState(false);
   const [editingOnboardingProfile, setEditingOnboardingProfile] = useState(false);
+  const authGeneration = useRef(0);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>('general');
 
   const rightPanelOpen = useUiStore((s) => s.rightPanelOpen);
@@ -173,6 +180,7 @@ export default function App() {
 
   useEffect(() => {
     let cancelled = false;
+    const generation = ++authGeneration.current;
     /** 配置读完才会知道要不要做会话检查，所以取消函数得晚一步才有 —— 先占个位。 */
     let cancelAuthCheck: (() => void) | null = null;
 
@@ -180,9 +188,13 @@ export default function App() {
       // ① 先看商业配置。**没配置就是本地模式，压根没有会话要检查**（也就没有网络依赖）。
       try {
         const config = await window.clawwork.commercialGetConfig();
-        if (cancelled) return;
-        const configured = Boolean(config.ok && config.result?.supabaseUrl && config.result?.hasAnonKey);
-        if (!configured) {
+        if (cancelled || generation !== authGeneration.current) return;
+        const entryMode = entryModeFromConfig(config);
+        if (entryMode === 'error') {
+          setAuthState('required');
+          return;
+        }
+        if (entryMode === 'local') {
           setOnboardingAccount({ userId: 'local', nickname: '' });
           setOnboardingProfile(loadOnboardingProfile('local'));
           setOnboardingResolved(true);
@@ -192,29 +204,32 @@ export default function App() {
       } catch (err) {
         // Fail closed — a thrown config read must not bypass the login gate.
         console.error('[App] commercial config read failed:', err);
-        if (!cancelled) setAuthState('required');
+        if (!cancelled && generation === authGeneration.current) setAuthState('required');
         return;
       }
-      if (cancelled) return;
+      if (cancelled || generation !== authGeneration.current) return;
 
       // ② 会话检查（B7）：本地快速态只决定**兜底怎么判**，结论一律听后台的。
       cancelAuthCheck = runAuthBootstrap<Awaited<ReturnType<typeof window.clawwork.commercialSession>>>({
         readLocalSession: () => window.clawwork.commercialLocalSession().then((r) => Boolean(r.ok && r.result)),
         checkBackend: () => window.clawwork.commercialSession(),
-        isSignedIn: (session) => Boolean(session.ok && session.result?.signedIn),
+        isSignedIn: (session) => entryAccountFromSession(session) !== null,
         timeoutMs: AUTH_CHECK_FALLBACK_MS,
         onSettled: (session, authState) => {
-          if (cancelled) return;
+          if (cancelled || generation !== authGeneration.current) return;
           if (authState === 'ok') {
-            const userId = session?.result?.profile?.userId ?? 'local';
-            setOnboardingAccount({ userId, nickname: session?.result?.profile?.nickname ?? '' });
-            setOnboardingProfile(loadOnboardingProfile(userId));
-            setOnboardingResolved(true);
+            const account = session && entryAccountFromSession(session);
+            if (account) {
+              setOnboardingAccount(account);
+              setOnboardingProfile(loadOnboardingProfile(account.userId));
+              setOnboardingResolved(true);
+            }
           }
           setAuthState(authState);
         },
         onTimeout: (fallback) => {
-          if (!cancelled) setAuthState((prev) => (prev === 'checking' ? fallback : prev));
+          if (!cancelled && generation === authGeneration.current)
+            setAuthState((prev) => (prev === 'checking' ? fallback : prev));
         },
       });
     })();
@@ -225,16 +240,22 @@ export default function App() {
     };
   }, []);
 
+  const handleSignInStarted = useCallback(() => {
+    authGeneration.current += 1;
+    setAuthState('required');
+    setOnboardingAccount(null);
+    setOnboardingProfile(null);
+    setOnboardingResolved(false);
+  }, []);
+
   const handleSignedIn = useCallback(async () => {
-    try {
-      const session = await window.clawwork.commercialSession();
-      const userId = session.result?.profile?.userId ?? 'local';
-      setOnboardingAccount({ userId, nickname: session.result?.profile?.nickname ?? '' });
-      setOnboardingProfile(loadOnboardingProfile(userId));
-    } catch {
-      setOnboardingAccount({ userId: 'local', nickname: '' });
-      setOnboardingProfile(loadOnboardingProfile('local'));
-    }
+    const generation = ++authGeneration.current;
+    const session = await window.clawwork.commercialSession();
+    if (generation !== authGeneration.current) return;
+    const account = entryAccountFromSession(session);
+    if (!account) throw new Error('commercial_entry_identity_unavailable');
+    setOnboardingAccount(account);
+    setOnboardingProfile(loadOnboardingProfile(account.userId));
     setOnboardingResolved(true);
     setAuthState('ok');
   }, []);
@@ -289,7 +310,7 @@ export default function App() {
   if (entryScreen === 'login') {
     return (
       <TooltipProvider>
-        <Login onSignedIn={handleSignedIn} />
+        <Login onSignedIn={handleSignedIn} onSignInStarted={handleSignInStarted} />
         <AppToaster themeMode={themeMode} />
       </TooltipProvider>
     );
