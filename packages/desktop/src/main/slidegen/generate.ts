@@ -11,8 +11,7 @@ import { documentFileStem } from '../util/document-file-name.js';
 import { extractSlidegenBlocks, type SlidegenDeck } from './blocks.js';
 import { SlideDslError } from './dsl.js';
 import { evaluateSlide } from './evaluate.js';
-import { emitPageShapes } from './pipeline.js';
-import { writeSlidePptx } from './emit.js';
+import { renderSlideDeck } from './render-deck.js';
 
 /**
  * 消息里有 ```` ```slidegen ```` 块 ⇒ 排成 `.pptx` 并走**客户端现成的产物通道**存下来。
@@ -133,26 +132,13 @@ export async function generateSlidesFromMessage(input: {
   for (const { deck, pages } of evaluated) {
     try {
       owner.assertCurrent();
-      let buffer: Buffer;
-      const emitted = [];
-      const deckWarnings: SlidegenWarning[] = [];
       notifyArtifactActivity(input.onActivity, 'generating-presentation');
-      for (const [index, page] of pages.entries()) {
-        const one = await emitPageShapes(page, assetRoot);
-        emitted.push(one.page);
-        for (const w of one.warnings) deckWarnings.push({ ...w, page: index + 1 });
-      }
-
-      // 先写到盘上（pptxgenjs 只接受路径），读完立刻删掉 —— 产物通道那边会再存一份，
-      // 留着这个临时文件会在用户的工作区里多出一个他没要的文件。
-      const tmpPath = path.join(input.workspacePath, `.slidegen-${Date.now()}.pptx`);
-      try {
-        owner.assertCurrent();
-        await writeSlidePptx(emitted, tmpPath, assetRoot);
-        buffer = fs.readFileSync(tmpPath);
-      } finally {
-        fs.rmSync(tmpPath, { force: true });
-      }
+      const rendered = await renderSlideDeck({
+        pages,
+        workspacePath: input.workspacePath,
+        assetsRoot: assetRoot,
+        assertCurrent: owner.assertCurrent,
+      });
 
       owner.assertCurrent();
       notifyArtifactActivity(input.onActivity, 'saving-artifacts');
@@ -161,12 +147,12 @@ export async function generateSlidesFromMessage(input: {
         taskId: input.taskId,
         messageId: input.messageId,
         fileName: slideFileNameFor(deck.title),
-        buffer,
+        buffer: rendered.buffer,
         artifactType: 'file',
         sourceKey: sourceKeyFor(deck),
       });
       result.saved.push(artifact);
-      result.warnings.push(...deckWarnings.map((warning) => ({ ...warning, artifactName: artifact.name })));
+      result.warnings.push(...rendered.warnings.map((warning) => ({ ...warning, artifactName: artifact.name })));
       getDebugLogger().info({
         domain: 'artifact',
         event: 'slidegen.saved',
@@ -174,8 +160,9 @@ export async function generateSlidesFromMessage(input: {
           taskId: input.taskId,
           name: artifact.name,
           size: artifact.size,
-          pages: emitted.length,
-          warnings: deckWarnings.length,
+          pages: rendered.pages,
+          warnings: rendered.warnings.length,
+          outputSha256: rendered.outputSha256,
         },
       });
     } catch (error) {
