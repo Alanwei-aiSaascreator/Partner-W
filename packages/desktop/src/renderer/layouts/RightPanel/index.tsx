@@ -118,11 +118,13 @@ export default function RightPanel() {
   /** 跳回来源会话 —— 与「文件」主视图里那条"跳转到源消息"同一套动作。 */
   const jumpToTask = useCallback(
     (taskId: string, messageId: string) => {
+      const current = useTaskStore.getState();
+      if (current.workspaceEpoch !== workspaceEpoch || current.activeTaskId !== activeTaskId) return;
       setActiveTask(taskId);
       setHighlightedMessage(messageId);
       setMainView('chat');
     },
-    [setActiveTask, setHighlightedMessage, setMainView],
+    [setActiveTask, setHighlightedMessage, setMainView, workspaceEpoch, activeTaskId],
   );
 
   return (
@@ -180,9 +182,7 @@ export default function RightPanel() {
                     <ArtifactCard
                       artifact={a}
                       compact
-                      onSelectMessage={(messageId) =>
-                        a.taskId === activeTaskId ? setHighlightedMessage(messageId) : jumpToTask(a.taskId, messageId)
-                      }
+                      onSelectMessage={(messageId) => jumpToTask(a.taskId, messageId)}
                     />
                   </div>
                 );
@@ -221,7 +221,11 @@ export default function RightPanel() {
                       <div className="mt-1 space-y-2">
                         {group.artifacts.map((a) => (
                           <div key={a.id} className="rounded-xl border border-transparent">
-                            <ArtifactCard artifact={a} compact onSelectMessage={setHighlightedMessage} />
+                            <ArtifactCard
+                              artifact={a}
+                              compact
+                              onSelectMessage={(messageId) => jumpToTask(a.taskId, messageId)}
+                            />
                           </div>
                         ))}
                       </div>
