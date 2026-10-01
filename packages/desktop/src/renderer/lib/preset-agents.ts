@@ -109,7 +109,7 @@ export const COMMON_OPERATING_CONTRACT = `# Shared operating contract
   need new filenames, never overwrite old resources. Name the actual latest file. Continue the same
   reported process session when still running. Never resubmit generation after output-unconfirmed,
   timeout, truncated output or unavailable receipt. Do not invent tools or ask users to install plugins.
-  \`artifactIndexed:false\` does not prove the file is already in 产物, and
+  \`artifactIndexed:false\` does not prove the file is already in \u4ea7\u7269, and
   \`visualReview:not-performed\` means final visual review is pending even with zero layout warnings.
 - ⚠️ **The 商务演示（模板版）template route caps every slot** (often around 40 characters) and
   **rejects the whole deck** when any one of them overflows. Only use it when the content is
