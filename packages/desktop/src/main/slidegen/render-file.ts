@@ -1,36 +1,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
-import type { SlideChild } from './dsl.js';
 import { preflightSource } from './preflight.js';
 import { extractSlidegenBlocks } from './blocks.js';
 import { evaluateSlide } from './evaluate.js';
 import { renderSlideDeck } from './render-deck.js';
 import { contained, readSlideSourceFile, readWorkspaceBytes } from './source-file.js';
 import { documentFileStem } from '../util/document-file-name.js';
-
-function imageNames(nodes: readonly SlideChild[]): string[] {
-  const names = new Set<string>();
-  const visit = (node: SlideChild) => {
-    if (!node || typeof node !== 'object' || node.kind !== 'element') return;
-    if (node.tag === 'Image') {
-      let src: string;
-      try {
-        if (typeof node.props.src !== 'string') throw new Error('invalid image');
-        src = decodeURIComponent(node.props.src);
-      } catch {
-        throw new Error('resource-source-invalid');
-      }
-      if (/^[\\/]|^[a-z]+:/i.test(src) || src.split(/[\\/]/).includes('..')) throw new Error('resource-source-invalid');
-      const name = path.basename(src);
-      names.add(name);
-      node.props.src = encodeURIComponent(name);
-    }
-    node.children.forEach(visit);
-  };
-  nodes.forEach(visit);
-  return [...names].sort();
-}
+import { imageNames } from './resources.js';
 
 export async function renderSlideSourceFile(file: string, workspace: string) {
   let rendering = false;
