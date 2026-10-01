@@ -3,6 +3,7 @@ import { BrowserWindow, ipcMain } from 'electron';
 import type {
   ArtifactDeliveryActivity,
   ArtifactDeliveryPhase,
+  ArtifactDeliveryPhaseObservation,
   ArtifactDeliveryTerminalStatus,
   ArtifactWorkspaceScope,
 } from '@clawwork/shared';
@@ -19,14 +20,25 @@ function broadcast(channel: string, payload: unknown): void {
 }
 
 const active = new Map<string, ArtifactDeliveryActivity>();
-subscribeWorkspaceScope(() => active.clear());
+const completed = new Map<string, ArtifactDeliveryActivity>();
+const MAX_COMPLETED_OPERATIONS = 256;
+const MAX_PHASE_OBSERVATIONS = 64;
+const copyActivity = (event: ArtifactDeliveryActivity): ArtifactDeliveryActivity => ({
+  ...event,
+  observedPhases: event.observedPhases?.map((step) => ({ ...step })),
+});
+subscribeWorkspaceScope(() => {
+  active.clear();
+  completed.clear();
+});
 
 let subscribed = false;
 export function registerDeliveryActivityHandlers(): void {
   ipcMain.handle('artifact:get-workspace-scope', getWorkspaceScope);
   ipcMain.handle('artifact:get-delivery-activity-snapshot', () => ({
     owner: getWorkspaceScope(),
-    activities: [...active.values()].map((event) => ({ ...event })),
+    activities: [...active.values()].map(copyActivity),
+    completedActivities: [...completed.values()].map(copyActivity),
   }));
   if (!subscribed) {
     subscribed = true;
@@ -62,9 +74,19 @@ export function beginArtifactDeliveryActivity(
   let sequence = 0,
     terminal = false,
     phase = initialPhase;
+  const observedPhases: ArtifactDeliveryPhaseObservation[] = [];
+  let historyTruncated = false;
   const emit = (status: ArtifactDeliveryActivity['status']): void => {
     if (terminal || !ownsWorkspace()) return;
     if (status !== 'active') terminal = true;
+    const observedAt = Date.now();
+    if (status === 'active' && observedPhases.at(-1)?.phase !== phase) {
+      observedPhases.push({ phase, observedAt, sequence: sequence + 1 });
+      if (observedPhases.length > MAX_PHASE_OBSERVATIONS) {
+        observedPhases.shift();
+        historyTruncated = true;
+      }
+    }
     const event: ArtifactDeliveryActivity = {
       taskId: identity.taskId,
       sessionKey: identity.sessionKey,
@@ -77,10 +99,17 @@ export function beginArtifactDeliveryActivity(
       sequence: ++sequence,
       phase,
       status,
+      observedPhases: observedPhases.map((step) => ({ ...step })),
+      ...(historyTruncated ? { historyTruncated: true } : {}),
+      ...(status !== 'active' ? { endedAt: observedAt } : {}),
     };
     if (status === 'active') active.set(operationId, event);
-    else active.delete(operationId);
-    broadcast('artifact:delivery-activity', event);
+    else {
+      active.delete(operationId);
+      completed.set(operationId, event);
+      if (completed.size > MAX_COMPLETED_OPERATIONS) completed.delete(completed.keys().next().value!);
+    }
+    broadcast('artifact:delivery-activity', copyActivity(event));
   };
   emit('active');
   return {

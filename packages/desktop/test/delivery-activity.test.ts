@@ -115,3 +115,74 @@ it('keeps captured message ownership when caller objects mutate and does not fai
   });
   expect(() => operation.finish('succeeded')).not.toThrow();
 });
+
+it('recovers observed phase transitions and the actual terminal time after renderer reload', () => {
+  registerDeliveryActivityHandlers();
+  setWorkspaceDatabaseOwner({});
+  const operation = beginArtifactDeliveryActivity({ ...identity, owner: getWorkspaceScope() }, 'downloading-media')!;
+  operation.phase('downloading-media');
+  operation.phase('saving-artifacts');
+  operation.finish('needs-review');
+  const result = mocks.handlers.get('artifact:get-delivery-activity-snapshot')!() as {
+    completedActivities: {
+      status: string;
+      endedAt?: number;
+      observedPhases?: { phase: string; observedAt: number; sequence: number }[];
+    }[];
+  };
+  expect(result.completedActivities).toHaveLength(1);
+  expect(result.completedActivities[0]).toMatchObject({ status: 'needs-review', endedAt: expect.any(Number) });
+  expect(result.completedActivities[0].observedPhases).toEqual([
+    { phase: 'downloading-media', observedAt: expect.any(Number), sequence: 1 },
+    { phase: 'saving-artifacts', observedAt: expect.any(Number), sequence: 3 },
+  ]);
+  const firstEvent = mocks.send.mock.calls.find(([name]) => name === 'artifact:delivery-activity')![1];
+  expect(firstEvent.observedPhases).toHaveLength(1);
+  operation.phase('generating-presentation');
+  operation.finish('failed');
+  expect(mocks.handlers.get('artifact:get-delivery-activity-snapshot')!()).toEqual(result);
+});
+
+it('snapshot history is copied and cannot mutate retained producer evidence', () => {
+  registerDeliveryActivityHandlers();
+  setWorkspaceDatabaseOwner({});
+  beginArtifactDeliveryActivity({ ...identity, owner: getWorkspaceScope() }, 'saving-artifacts');
+  const snapshot = mocks.handlers.get('artifact:get-delivery-activity-snapshot')!;
+  const result = snapshot() as { activities: { observedPhases?: { phase: string }[] }[] };
+  expect(result.activities[0].observedPhases).toHaveLength(1);
+  result.activities[0].observedPhases![0].phase = 'forged';
+  expect(snapshot()).toMatchObject({ activities: [{ observedPhases: [{ phase: 'saving-artifacts' }] }] });
+});
+
+it('bounds terminal history without evicting active operations and clears both on workspace replacement', () => {
+  registerDeliveryActivityHandlers();
+  setWorkspaceDatabaseOwner({});
+  const owner = getWorkspaceScope();
+  const active = beginArtifactDeliveryActivity({ ...identity, owner }, 'downloading-media')!;
+  const completed = Array.from({ length: 257 }, () => {
+    const operation = beginArtifactDeliveryActivity({ ...identity, owner }, 'saving-artifacts')!;
+    operation.finish('succeeded');
+    return operation.operationId;
+  });
+  const snapshot = mocks.handlers.get('artifact:get-delivery-activity-snapshot')!;
+  const result = snapshot() as {
+    activities: { operationId: string }[];
+    completedActivities: { operationId: string }[];
+  };
+  expect(result.activities).toHaveLength(1);
+  expect(result.completedActivities).toHaveLength(256);
+  expect(result.activities.map((entry) => entry.operationId)).toContain(active.operationId);
+  expect(result.completedActivities.map((entry) => entry.operationId)).not.toContain(completed[0]);
+  setWorkspaceDatabaseOwner({});
+  expect(snapshot()).toMatchObject({ activities: [], completedActivities: [] });
+});
+
+it('bounds observed phase transitions per operation', () => {
+  setWorkspaceDatabaseOwner({});
+  const operation = beginArtifactDeliveryActivity({ ...identity, owner: getWorkspaceScope() }, 'downloading-media')!;
+  for (let i = 0; i < 70; i++) operation.phase(i % 2 ? 'downloading-media' : 'saving-artifacts');
+  operation.finish('failed');
+  expect(mocks.send.mock.calls.at(-1)![1].observedPhases).toHaveLength(64);
+  expect(mocks.send.mock.calls.at(-1)![1].historyTruncated).toBe(true);
+  expect(mocks.send.mock.calls.at(-1)![1].status).toBe('failed');
+});

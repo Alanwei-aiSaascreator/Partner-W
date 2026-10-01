@@ -12,6 +12,11 @@ export type ArtifactDeliveryPhase =
   | 'saving-artifacts'
   | 'reconciling-artifacts';
 export type ArtifactDeliveryTerminalStatus = 'succeeded' | 'needs-review' | 'failed' | 'canceled';
+export interface ArtifactDeliveryPhaseObservation {
+  phase: ArtifactDeliveryPhase;
+  observedAt: number;
+  sequence: number;
+}
 export interface ArtifactDeliveryActivity {
   taskId: string;
   sessionKey: string;
@@ -24,9 +29,15 @@ export interface ArtifactDeliveryActivity {
   startedAt: number;
   phase: ArtifactDeliveryPhase;
   status: 'active' | ArtifactDeliveryTerminalStatus;
+  /** Bounded, actually observed phase transitions; absent on older senders. */
+  observedPhases?: ArtifactDeliveryPhaseObservation[];
+  historyTruncated?: boolean;
+  endedAt?: number;
 }
 
 export interface ArtifactDeliveryActivitySnapshot {
   owner: ArtifactWorkspaceScope;
   activities: ArtifactDeliveryActivity[];
+  /** Recent completed operations, separate from the active-only list. */
+  completedActivities?: ArtifactDeliveryActivity[];
 }
