@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { MAX_BODY_PT, MIN_BODY_PT, bodyFontSizePt, findPptxLayoutProblem } from '../src/main/docgen/pptx-layout';
+import { paginatePptxRequest } from '../src/main/docgen/pptx-pagination';
 import { documentFileNameFor } from '../src/main/docgen/generate';
 import { parseDocgenRequest } from '../src/main/docgen/request';
 import { renderPptx } from '../src/main/docgen/render-pptx';
@@ -19,7 +20,6 @@ import { renderPptx } from '../src/main/docgen/render-pptx';
 
 const OUT_DIR = join(tmpdir(), 'mofang-ppt-visual');
 
-/** 正常五页中文：最常见的真实体量，18pt 满号，不该被这一版改动影响。 */
 const NORMAL_FIVE_PAGES = {
   kind: 'pptx',
   title: '九月经营简报',
@@ -33,12 +33,6 @@ const NORMAL_FIVE_PAGES = {
   ],
 };
 
-/**
- * 临界中英混排：**字号被压到贴近下限**（下面是 12pt，下限 11pt）。
- *
- * 为什么刻意做成临界：18pt 的正常页说明不了判定模型准不准 —— 它本来就不会溢出。
- * 真正要验的是"模型说刚刚装得下"的那一档，误差在那里才看得出来。
- */
 const BORDERLINE_MIXED = {
   kind: 'pptx',
   title: 'Q3 Review & 1.0.1 Plan',
@@ -54,22 +48,16 @@ const BORDERLINE_MIXED = {
   ],
 };
 
-/**
- * 通过包络的**真正边界**：字号正好压到下限 11pt 的那一档。
- *
- * 12 条要点、其中一条折成两行 ⇒ 13 行。12pt 装不下，11pt 刚好。
- * 这一份能干净渲染出来，"判定说装得下"这句话就在**最紧的那一格**上被真渲染器证过了。
- */
 const AT_THE_FLOOR = {
   kind: 'pptx',
   title: '满版压力样本',
-  subtitle: '11pt 下限边界',
+  subtitle: 'Dense source pagination',
   slides: [
     {
       title: '这一页正好压在下限',
       bullets: [
         ...Array.from({ length: 11 }, (_, i) => `第 ${i + 1} 项：这是一条长度正常、只占一行的要点内容。`),
-        '第 12 项：这一条刻意写得长一些，让它在正文框里折成两行，于是整页总行数刚好越过 12pt 的容量、落在 11pt 才能装下的那一格上。',
+        'Item 12: retain the full explanation through automatic pagination rather than shrinking the body text to fit a crowded source slide.',
       ],
     },
   ],
@@ -83,12 +71,12 @@ describe('人工视觉验收：把三份样本落到临时目录', () => {
     for (const [stem, raw] of [
       ['1-normal-5page-cn', NORMAL_FIVE_PAGES],
       ['2-borderline-mixed-cn-en', BORDERLINE_MIXED],
-      ['3-at-the-floor-11pt', AT_THE_FLOOR],
+      ['3-at-the-floor-18pt', AT_THE_FLOOR],
     ] as const) {
       const parsed = parseDocgenRequest(raw);
       if (!parsed.ok) throw new Error(`样本不合法：${parsed.error}`);
       if (parsed.request.kind !== 'pptx') throw new Error('样本 kind 不对');
-      expect(findPptxLayoutProblem(parsed.request), `${stem} 本该通过`).toBeNull();
+      expect(findPptxLayoutProblem(paginatePptxRequest(parsed.request)), `${stem} 本该通过`).toBeNull();
 
       const buffer = await renderPptx(parsed.request);
       // ⚠️ 落盘名用**纯 ASCII**，不用 `documentFileNameFor` 那套（标题里的 `&` 会把
@@ -105,18 +93,18 @@ describe('人工视觉验收：把三份样本落到临时目录', () => {
       expect(file.size, `${file.name} 太小，多半是空文件`).toBeGreaterThan(10_000);
     }
 
-    // ⭐ "临界"必须是**证据**，不是形容词：它的字号得真的贴近下限。
-    const bullets = BORDERLINE_MIXED.slides[0].bullets;
-    const size = bodyFontSizePt(bullets);
-    expect(size, `临界样本目前落在 ${size}pt，没有贴近下限 ${MIN_BODY_PT}pt`).toBeLessThanOrEqual(MIN_BODY_PT + 2);
-    expect(size).toBeGreaterThanOrEqual(MIN_BODY_PT);
-    expect(size).toBeLessThan(MAX_BODY_PT);
-
-    // ⭐ 第三份是**通过包络的边界**：字号必须正好落在下限上，否则它就不是边界样本。
-    expect(bodyFontSizePt(AT_THE_FLOOR.slides[0].bullets), '这一份应当正好压到 11pt').toBe(MIN_BODY_PT);
+    for (const raw of [NORMAL_FIVE_PAGES, BORDERLINE_MIXED, AT_THE_FLOOR]) {
+      const result = parseDocgenRequest(raw);
+      if (!result.ok || result.request.kind !== 'pptx') throw new Error('Invalid visual fixture');
+      for (const slide of paginatePptxRequest(result.request).slides) {
+        const size = bodyFontSizePt(slide.bullets);
+        expect(size).toBeGreaterThanOrEqual(MIN_BODY_PT);
+        expect(size).toBeLessThanOrEqual(MAX_BODY_PT);
+      }
+    }
   });
 
-  it('⭐ 此前会超量的那种体量（12 条 × 300 字）**一份文件都不产出**', () => {
+  it('reports raw body overflow before pagination without rejecting valid content', () => {
     const raw = {
       kind: 'pptx',
       title: '此前超量样本',
@@ -126,8 +114,7 @@ describe('人工视觉验收：把三份样本落到临时目录', () => {
     if (!parsed.ok) throw new Error(`样本不合法：${parsed.error}`);
     if (parsed.request.kind !== 'pptx') throw new Error('样本 kind 不对');
 
-    // 这一份的**正确结果**就是被拒 —— 所以"三份文件"里没有它，是设计如此。
     expect(findPptxLayoutProblem(parsed.request)).toEqual({ code: 'slide-body-overflow', page: 1 });
-    expect(existsSync(join(OUT_DIR, '3-overflow-sample.pptx')), '被拒的样本不许落文件').toBe(false);
+    expect(findPptxLayoutProblem(paginatePptxRequest(parsed.request))).toBeNull();
   });
 });

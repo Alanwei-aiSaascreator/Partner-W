@@ -328,7 +328,7 @@ describe('extractDocgenBlocks（经 generateDocumentsFromMessage 间接验）', 
   });
 });
 
-describe('排不下的内容：**不落文件**，并留下一条能被界面翻译出来的原因', () => {
+describe('readable pagination and invalid-layout artifact isolation', () => {
   const maxBullet = (): string => '内'.repeat(300);
 
   const overflowingDeck = (slideCount = 1): unknown => ({
@@ -340,16 +340,18 @@ describe('排不下的内容：**不落文件**，并留下一条能被界面翻
     })),
   });
 
-  it('一页 3600 字 ⇒ 报"内容过多"并带上第几页；**没调用过产物通道**', async () => {
+  it('saves maximum legal body content as one paginated artifact', async () => {
     const result = await generateDocumentsFromMessage({
       workspacePath,
       taskId,
       messageId,
       content: docgenBlock(overflowingDeck()),
     });
-    expect(result.saved).toEqual([]);
-    expect(result.failed).toEqual([{ code: 'presentation-page-overflow', format: 'pptx', page: 1 }]);
-    expect(mocks.saveArtifactFromBuffer, '排不下就不能产出文件').not.toHaveBeenCalled();
+    expect(result.saved).toHaveLength(1);
+    expect(result.failed).toEqual([]);
+    expect(mocks.saveArtifactFromBuffer).toHaveBeenCalledTimes(1);
+    const names = await unzipNames(savedParams(0).buffer);
+    expect(names.filter((name) => /^ppt\/slides\/slide\d+\.xml$/.test(name)).length).toBeGreaterThan(2);
   });
 
   it('页号是**改起来最省事**的那个口径：slides 里从 1 数（封面不算）', async () => {
@@ -365,11 +367,14 @@ describe('排不下的内容：**不落文件**，并留下一条能被界面翻
         slides: [
           { title: '第一页', bullets: ['一条'] },
           { title: '第二页', bullets: ['一条'] },
-          { title: '第三页', bullets: Array.from({ length: 12 }, () => maxBullet()) },
+          { title: '\u6807'.repeat(120), bullets: [] },
         ],
       }),
     });
-    expect(result.failed).toEqual([{ code: 'presentation-page-overflow', format: 'pptx', page: 3 }]);
+    expect(result.failed).toHaveLength(1);
+    expect(result.failed[0]).toMatchObject({ code: 'presentation-page-title-overflow', format: 'pptx', page: 3 });
+    expect(result.saved).toEqual([]);
+    expect(mocks.saveArtifactFromBuffer).not.toHaveBeenCalled();
   });
 
   it('页标题过长 ⇒ 报"标题过长"，并带上**真的能放下的字数**', async () => {
@@ -392,14 +397,19 @@ describe('排不下的内容：**不落文件**，并留下一条能被界面翻
     const content = [
       docgenBlock({ ...PPTX, title: '好的那份' }),
       '',
-      docgenBlock(overflowingDeck()),
+      docgenBlock({
+        kind: 'pptx',
+        title: '\u5185\u6d4b\u6c47\u62a5',
+        slides: [{ title: '\u6807'.repeat(120), bullets: [] }],
+      }),
       '',
       docgenBlock({ ...DOCX, title: '好的另一份' }),
     ].join('\n');
     const result = await generateDocumentsFromMessage({ workspacePath, taskId, messageId, content });
 
     expect(result.saved.map((a) => a.name)).toEqual(['好的那份.pptx', '好的另一份.docx']);
-    expect(result.failed).toEqual([{ code: 'presentation-page-overflow', format: 'pptx', page: 1 }]);
+    expect(result.failed).toHaveLength(1);
+    expect(result.failed[0]).toMatchObject({ code: 'presentation-page-title-overflow', format: 'pptx', page: 1 });
     // 坏的那份**从来没进过产物通道** —— 不是"存了再删"
     expect(mocks.saveArtifactFromBuffer).toHaveBeenCalledTimes(2);
     const names = mocks.saveArtifactFromBuffer.mock.calls.map((call) => (call[0] as { fileName: string }).fileName);

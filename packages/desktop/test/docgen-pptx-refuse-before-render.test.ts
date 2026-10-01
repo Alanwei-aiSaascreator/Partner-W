@@ -75,16 +75,16 @@ describe('排不下 / 有换行 ⇒ 一个渲染器对象都不许建', () => {
     expect(spans.writes, '更不该写出去').toBe(0);
   });
 
-  it('⭐ 内容超量：同样一个对象都不建', async () => {
+  it('refuses an invalid heading before constructing the renderer', async () => {
     spans.constructed = 0;
     await expect(
       renderPptx(
         requestOf({
           ...VALID,
-          slides: [{ title: '爆页', bullets: Array.from({ length: 12 }, () => '内'.repeat(300)) }],
+          slides: [{ title: '\u6807'.repeat(120), bullets: ['Evidence'] }],
         }),
       ),
-    ).rejects.toMatchObject({ problem: { code: 'slide-body-overflow', page: 1 } });
+    ).rejects.toMatchObject({ problem: { code: 'slide-title-overflow', page: 1 } });
     expect(spans.constructed).toBe(0);
   });
 

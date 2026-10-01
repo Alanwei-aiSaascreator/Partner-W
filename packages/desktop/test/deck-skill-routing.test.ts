@@ -45,8 +45,17 @@ const 文档生成 = descriptionOf('document-deck');
 const 幻灯版面 = descriptionOf('deck-layout');
 const 模板版 = descriptionOf('presentation-deck-v2');
 const 幻灯片版面全文 = skillTextOf('deck-layout');
+const templateBody = skillTextOf('presentation-deck-v2');
+const documentBody = skillTextOf('document-deck');
 
 describe('出 PPT 的三条路：触发词分工互斥', () => {
+  it('reserves the template route for explicit template requests in both descriptions and bodies', () => {
+    expect(模板版).toMatch(/\u6307\u5b9a.*\u6a21\u677f|\u660e\u786e.*\u6a21\u677f/u);
+    expect(模板版).not.toMatch(/\u6c47\u62a5.*\u4f18\u5148\u7528/u);
+    expect(templateBody).toMatch(/\u6307\u5b9a.*\u6a21\u677f|\u660e\u786e.*\u6a21\u677f/u);
+    expect(documentBody).not.toContain('\u5546\u52a1\u6f14\u793a\u4f18\u5148\u7528');
+  });
+
   it('⭐「做个PPT」只由「幻灯版面」认领（无字数上限那条，才是该给它的默认）', () => {
     expect(幻灯版面, '「做个PPT」必须由幻灯版面认领 —— 提示词里"自己排版是默认路线"说的就是它').toMatch(
       /做个\s*PPT|做\s*PPT|做一份\s*PPT/,

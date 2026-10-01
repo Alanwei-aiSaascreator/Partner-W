@@ -9,6 +9,7 @@ import {
   FOOTER_BOX,
   LINE_SPACING,
   PAGE_NUMBER_BOX,
+  PARA_SPACE_PT,
   PptxLayoutError,
   SLIDE_TITLE,
   SLIDE_TITLE_RULE,
@@ -17,6 +18,7 @@ import {
   findPptxLayoutProblem,
 } from './pptx-layout.js';
 import type { DocgenPptxRequest } from './request.js';
+import { paginatePptxRequest } from './pptx-pagination.js';
 
 /**
  * 把校验过的 pptx 请求渲染成 pptx 字节。
@@ -24,16 +26,10 @@ import type { DocgenPptxRequest } from './request.js';
  * ⚠️ 这一层是**唯一**碰 pptxgenjs 的地方：`request.ts` 只做校验（可穷举测试），
  * 这里只做排版（用"解包看结构 + 文字真的在"来验，见 `test/docgen-render-pptx.test.ts`）。
  *
- * ## 三个刻意的取舍
- *
  * 1. **只存字体名、不内嵌字体**（`fontFace`）。中文用微软雅黑：这是 Windows 自带字体，
  *    而本产品只发 Windows。内嵌字体既有体积问题也有授权问题，不做。
  * 2. **一种版式**（封面 + 标题/要点页）。P1 的目标是把链路走通，
  *    多版式是后续版本的事 —— 现在多做一种版式就多一份没人验过的代码。
- * 3. **排不下就当场拒**（`findPptxLayoutProblem`，写在**动任何一页之前**）。
- *    以前这里会把一份装不下的内容照样画出来，用户拿到的是文字冲出画面、
- *    压在标题上的 PPT —— 那不是"生成失败"，那比失败更难发现。
- *
  * ## 几何量只有一份
  *
  * 所有框的位置/尺寸/字号都从 `pptx-layout.ts` 来（那里同时是判定模型的家）。
@@ -50,9 +46,8 @@ const COLOR_BODY = '374151';
 const COLOR_MUTED = '6B7280';
 const COLOR_ACCENT = '2563EB';
 
-export async function renderPptx(request: DocgenPptxRequest): Promise<Buffer> {
-  // ⭐ 判定在**最前面**，早于 `new PptxGenJS()`。排不下的内容在这个函数里
-  //    一个字节都不会产出 —— 调用方拿到的是异常，不是一份半成品文件。
+export async function renderPptx(input: DocgenPptxRequest): Promise<Buffer> {
+  const request = paginatePptxRequest(input);
   const problem = findPptxLayoutProblem(request);
   if (problem) throw new PptxLayoutError(problem);
 
@@ -126,10 +121,11 @@ export async function renderPptx(request: DocgenPptxRequest): Promise<Buffer> {
     });
 
     if (slide.bullets.length > 0) {
-      // 字号由内容量算出来 —— 写死 18pt 会让 12 条要点压到标题上（`pptx-layout.ts`
-      // 里有真渲染的实测记录）。框的取值也从那里来，两处只留一份。
       page.addText(
-        slide.bullets.map((text) => ({ text, options: { bullet: true } })),
+        slide.bullets.map((text, index) => ({
+          text,
+          options: { bullet: true, paraSpaceAfter: index === slide.bullets.length - 1 ? 0 : PARA_SPACE_PT },
+        })),
         {
           x: BODY_BOX.x,
           y: BODY_BOX.y,
@@ -139,6 +135,8 @@ export async function renderPptx(request: DocgenPptxRequest): Promise<Buffer> {
           color: COLOR_BODY,
           fontFace: FONT,
           lineSpacingMultiple: LINE_SPACING,
+          valign: 'top',
+          margin: 0,
         },
       );
     }

@@ -66,7 +66,7 @@ metadata: { 'openclaw': { 'emoji': '🎨', 'skillKey': 'deck-layout' } }
 - 每张内容页写明非空主标题；副标题不代替主标题。`PageTitle` 这类自定义组件必须传正文，不能只传 `sub` 后自闭合。封面、尾页也要有明确主题。
 - 1280×720画布默认留出底部80px给页脚，正文卡片和文字在640px之前结束。页脚是独立区域；把页脚画在卡片上面仍然是区域冲突。放不下先拆页或调整正文结构，不能删用户必含信息或把字号缩到不可读。
 - 深浅背景分开配文字色。小字号正文与页脚优先采用至少4.5:1的对比，大字号至少3:1；深色尾页不要复用浅色页的灰色页脚。透明色要按实际底色检查，不能把未知图片或渐变当作已验证。
-- 商务稿默认正文20—24px、辅助信息14—16px；先用目标电脑可用字体，中文优先Microsoft YaHei。关键文字不用装饰符号、极细字重或渐变承担信息。
+- CSS字号以px计，导出PPTX时乘0.75转换成pt：24px对应18pt，不是24pt。商务稿正文用24–32px（18–24pt），主标题48–64px（36–48pt），辅助信息20–24px（15–18pt）。小字号不能承担关键正文。先用目标电脑可用字体，中文优先Microsoft YaHei。
 - 流程图每个箭头都应有对应的下一步或交付项；引用不能代替用户要求的结论。资料里缺少事实或数字时说明缺项，不自行编造。
 - 对话中出现页脚侵卡、低对比、越界或遮挡提示时，按具体页码修改源文件，另存新版本。旧可编辑PPTX仍然保留；只有实际生成、检查和右侧产物结果能说明交付状态，不能把无告警说成视觉必定合格。
 
@@ -136,7 +136,7 @@ metadata: { 'openclaw': { 'emoji': '🎨', 'skillKey': 'deck-layout' } }
 
 ```jsx
 const C = { background: '#FBFBFD', muted: '#4A4356' };
-const Footer = ({ label }) => <Text style={{ fontSize: 18, color: C.muted }}>{label}</Text>;
+const Footer = ({ label }) => <Text style={{ fontSize: 24, color: C.muted }}>{label}</Text>;
 <Slide style={{ width: 1280, height: 720, background: C.background }}>
   <Footer label="九月经营简报" />
 </Slide>;
@@ -159,9 +159,9 @@ const Footer = ({ label }) => <Text style={{ fontSize: 18, color: C.muted }}>{la
       ['Phase 03', '2 - 3 个月', '全域盈利期'],
     ].map((it, i) => (
       <Box key={i} style={{ width: 360, flexDirection: 'column', gap: 10, padding: '20px', borderRadius: 14, background: '#FFFFFF', border: '1px solid #ECE9F0' }}>
-        <Text style={{ fontSize: 15, color: '#7A1CA8', fontWeight: 600 }}>{it[0]}</Text>
+        <Text style={{ fontSize: 24, color: '#7A1CA8', fontWeight: 600 }}>{it[0]}</Text>
         <Text style={{ fontSize: 30, fontWeight: 'bold', color: '#100D13' }}>{it[1]}</Text>
-        <Text style={{ fontSize: 18, color: '#4A4356' }}>{it[2]}</Text>
+        <Text style={{ fontSize: 28, color: '#4A4356' }}>{it[2]}</Text>
       </Box>
     ))}
   </Box>
@@ -183,8 +183,8 @@ const Footer = ({ label }) => <Text style={{ fontSize: 18, color: C.muted }}>{la
 // title: 正文与页脚分区示例
 const Footer = ({ note, num, total }) => (
   <Box style={{ position: 'absolute', left: 80, bottom: 28, width: 1120, height: 32, flexDirection: 'row', alignItems: 'center', gap: 24 }}>
-    <Text style={{ flex: 1, minWidth: 0, fontSize: 18, lineHeight: 1.25, color: '#4A4356' }}>{note}</Text>
-    <Text style={{ flexShrink: 0, fontSize: 18, lineHeight: 1.25, color: '#4A4356' }}>{num} / {total}</Text>
+    <Text style={{ flex: 1, minWidth: 0, fontSize: 24, lineHeight: 1.25, color: '#4A4356' }}>{note}</Text>
+    <Text style={{ flexShrink: 0, fontSize: 24, lineHeight: 1.25, color: '#4A4356' }}>{num} / {total}</Text>
   </Box>
 );
 <Slide style={{ width: 1280, height: 720, background: '#FBFBFD', position: 'relative' }}>
@@ -226,7 +226,7 @@ const Footer = ({ note, num, total }) => (
 - **标题写结论**，不写"关于……的说明"
 - **一页只讲一件事**；装不下就**拆成两页**，别把字缩小硬塞
 - 用**大数字**、色块、留白做视觉锚点；**不要用 emoji**、不要用花哨插画
-- 正文优先 24–28px、卡片标题 30–36px、大标题 44–60px；页脚可更小。层级靠字号差，不靠加粗堆叠；放不下先拆页，不要缩成难读的小字
+- 正文优先24–32px、卡片标题32–40px、主标题48–64px；页脚20–24px。层级靠字号差；放不下先拆页，不要缩成难读的小字
 
 ## 客户端会告诉你的两件事
 

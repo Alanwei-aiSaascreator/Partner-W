@@ -93,22 +93,22 @@ export const CHROME_PT = 9;
 /** 封面底部那条满幅色带（x=0、宽=整幅）。封面上唯一的"设计感"来源。 */
 export const COVER_BAND = Object.freeze({ x: 0, y: 5.325, w: 10, h: 0.3 });
 
-/** 内容装得下时用的字号 —— 与 P1 的观感一致，正常篇幅的版式不会因此改变。 */
-export const MAX_BODY_PT = 18;
+export const MAX_BODY_PT = 22;
 
 /**
  * 下限。再小就不是"排版"而是"缩微"了；到这个值还装不下说明内容真的过量，
  * 那是**内容**该分页的事，不是把字缩到看不见能解决的。
  */
-export const MIN_BODY_PT = 11;
+export const MIN_BODY_PT = 18;
 
 /** 行距倍数。与 `render-pptx.ts` 的 `lineSpacingMultiple` 同源。 */
 export const LINE_SPACING = 1.3;
+export const BODY_HEIGHT_PT = BODY_BOX.h * 72 - MAX_BODY_PT * LINE_SPACING;
 
 /**
  * 每条要点之间的间距（pt）。从真渲染图反推出来的，不是 pptxgenjs 的公开默认值。
  */
-const PARA_SPACE_PT = 3;
+export const PARA_SPACE_PT = 3;
 
 /**
  * 去掉项目符号占位后可用的正文宽度（英寸）。
@@ -171,7 +171,7 @@ export function estimateBodyHeightPt(bullets: readonly string[], sizePt: number)
  * 都装不下就返回 `MIN_BODY_PT`（此时超量的是内容，不是排版能救的）。
  */
 export function bodyFontSizePt(bullets: readonly string[]): number {
-  const available = BODY_BOX.h * 72;
+  const available = BODY_HEIGHT_PT;
   for (let size = MAX_BODY_PT; size > MIN_BODY_PT; size -= 1) {
     if (estimateBodyHeightPt(bullets, size) <= available) return size;
   }
@@ -339,7 +339,7 @@ export function findPptxLayoutProblem(request: DocgenPptxRequest): PptxLayoutPro
         maxChars: maxFullWidthChars(SLIDE_TITLE, SLIDE_TITLE.pt, (titleLimit - SLIDE_TITLE.y) * 72),
       };
     }
-    if (estimateBodyHeightPt(slide.bullets, MIN_BODY_PT) > BODY_BOX.h * 72) {
+    if (estimateBodyHeightPt(slide.bullets, MIN_BODY_PT) > BODY_HEIGHT_PT) {
       return { code: 'slide-body-overflow', page };
     }
   }

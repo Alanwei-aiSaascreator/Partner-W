@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import yauzl from 'yauzl';
 import { bodyFontSizePt } from '../src/main/docgen/pptx-layout';
+import { paginatePptxRequest } from '../src/main/docgen/pptx-pagination';
 import { parseDocgenRequest } from '../src/main/docgen/request';
 import { renderPptx } from '../src/main/docgen/render-pptx';
 
@@ -144,19 +145,19 @@ describe('renderPptx —— 正文字号真的由内容量决定', () => {
     return [...xml.matchAll(/sz="(\d+)"/g)].map((match) => Number(match[1]) / 100);
   }
 
-  it('短内容：正文仍是 18pt（正常篇幅的观感不因这一刀改变）', async () => {
+  it('uses 22pt body text for short content', async () => {
     const sizes = await bodySizes(['文档生成能力：方案已出', '文件导入提示：已修']);
-    expect(sizes).toContain(18);
+    expect(sizes).toContain(22);
   });
 
-  it('12 条要点：XML 里的正文号 == 算出来的号（且不再是 18）', async () => {
+  it('uses the size calculated for the first generated continuation page', async () => {
     const bullets = Array.from({ length: 12 }, (_, i) => `第 ${i + 1} 条要点，简短一句`);
     const sizes = await bodySizes(bullets);
-    const expected = bodyFontSizePt(bullets);
-    expect(expected).toBeLessThan(18);
+    const request = { kind: 'pptx' as const, title: 't', slides: [{ title: 'Content', bullets }] };
+    const expected = bodyFontSizePt(paginatePptxRequest(request).slides[0].bullets);
+    expect(expected).toBeGreaterThanOrEqual(18);
     expect(sizes, '标题仍应是 26pt').toContain(26);
     expect(sizes, '正文必须用算出来的字号').toContain(expected);
-    expect(sizes, '正文不该还是写死的 18pt').not.toContain(18);
   });
 });
 
@@ -178,14 +179,11 @@ describe('renderPptx —— 排不下就**不产出文件**，而不是产出一
     return parsed.request;
   }
 
-  it('装不下时 throw（不是返回一份 0 页 / 空白 PPT）', async () => {
-    await expect(renderPptx(pptxOf(overflowing()))).rejects.toThrow();
-  });
-
-  it('throw 出来的错误**带着可判定的原因**，不是一句人话字符串', async () => {
-    await expect(renderPptx(pptxOf(overflowing()))).rejects.toMatchObject({
-      problem: { code: 'slide-body-overflow', page: 1 },
-    });
+  it('generates a real deck for dense legal content by paginating it', async () => {
+    const buffer = await renderPptx(pptxOf(overflowing()));
+    expect(buffer.byteLength).toBeGreaterThan(10_000);
+    const files = await unzip(buffer);
+    expect([...files.keys()].filter((name) => /^ppt\/slides\/slide\d+\.xml$/.test(name)).length).toBeGreaterThan(2);
   });
 
   it('判定发生在**写任何一页之前** —— 一份都不许落半成品', async () => {
@@ -202,7 +200,7 @@ describe('renderPptx —— 排不下就**不产出文件**，而不是产出一
             slides: [
               { title: '第一页', bullets: ['一条'] },
               { title: '第二页', bullets: ['一条'] },
-              { title: '第三页', bullets: Array.from({ length: 12 }, () => maxBullet()) },
+              { title: '\u6807'.repeat(120), bullets: ['Invalid heading'] },
             ],
           }),
         ),

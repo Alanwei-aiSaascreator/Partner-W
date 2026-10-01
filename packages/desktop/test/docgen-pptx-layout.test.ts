@@ -40,11 +40,12 @@ describe('bodyFontSizePt —— 现实体量必须装得下', () => {
     expect(bodyFontSizePt(SHORT)).toBe(MAX_BODY_PT);
   });
 
-  it('12 条短要点（真会踩到的体量）必须缩小，且算出来的字号真装得下', () => {
+  it('returns the readable floor when twelve bullets need pagination', () => {
     const bullets = Array.from({ length: 12 }, (_, i) => `第 ${i + 1} 条要点，简短一句`);
     const size = bodyFontSizePt(bullets);
-    expect(size).toBeLessThan(MAX_BODY_PT);
-    expect(estimateBodyHeightPt(bullets, size)).toBeLessThanOrEqual(BODY_BOX.h * 72);
+    expect(size).toBe(MIN_BODY_PT);
+    expect(size).toBeGreaterThanOrEqual(18);
+    expect(estimateBodyHeightPt(bullets, size)).toBeGreaterThan(BODY_BOX.h * 72);
   });
 
   it('一份中等的真实汇报（4 页 × 4 条）每页都装得下', () => {
@@ -92,7 +93,7 @@ describe('bodyFontSizePt —— 已知装不下的极限', () => {
   });
 
   it('下限本身是"还看得见"，不是能一直缩', () => {
-    expect(MIN_BODY_PT).toBeGreaterThanOrEqual(10);
+    expect(MIN_BODY_PT).toBeGreaterThanOrEqual(18);
     expect(MIN_BODY_PT).toBeLessThan(MAX_BODY_PT);
   });
 });
