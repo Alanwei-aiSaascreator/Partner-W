@@ -46,7 +46,13 @@ export const useDeliveryActivityStore = create<DeliveryActivityState>((set, get)
       const prior = changedOwner ? undefined : state.records[activity.operationId];
       // Terminal evidence is sticky even if a delayed snapshot claims a higher sequence.
       if (prior && (prior.status !== 'active' || activity.sequence <= prior.sequence)) return state;
-      const records = { ...(changedOwner ? {} : state.records), [activity.operationId]: { ...activity } };
+      const records = {
+        ...(changedOwner ? {} : state.records),
+        [activity.operationId]: {
+          ...activity,
+          ...(activity.observedPhases ? { observedPhases: activity.observedPhases.map((step) => ({ ...step })) } : {}),
+        },
+      };
       const terminals = Object.values(records).filter((entry) => entry.status !== 'active');
       for (const entry of terminals.slice(0, Math.max(0, terminals.length - 2048))) delete records[entry.operationId];
       return { owner, records, active: activeRecords(records) };
@@ -60,7 +66,11 @@ export const useDeliveryActivityStore = create<DeliveryActivityState>((set, get)
       state.owner.revision !== snapshot.owner.revision
     )
       return;
-    for (const activity of snapshot.activities) {
+    // Terminal facts are installed first so an inconsistent delayed active row cannot revive them.
+    for (const activity of [
+      ...(snapshot.completedActivities ?? []).filter((entry) => entry.status !== 'active'),
+      ...snapshot.activities,
+    ]) {
       if (activity.workspaceScope === snapshot.owner.scope && activity.workspaceRevision === snapshot.owner.revision)
         get().record(activity, epoch);
     }

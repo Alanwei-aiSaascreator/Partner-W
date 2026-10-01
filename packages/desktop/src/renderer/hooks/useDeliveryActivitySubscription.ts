@@ -32,6 +32,9 @@ export function useDeliveryActivitySubscription(): void {
           {
             ...snapshot,
             activities: snapshot.activities.filter((activity) => !observed.has(activity.operationId)),
+            completedActivities: snapshot.completedActivities?.filter(
+              (activity) => !observed.has(activity.operationId),
+            ),
           },
           epoch,
         );

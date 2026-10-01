@@ -93,3 +93,70 @@ it('does not let caller mutation change stored evidence', () => {
   expect(useDeliveryActivityStore.getState().active[0]?.taskId).toBe('task');
   expect(useDeliveryActivityStore.getState().active[0]?.status).toBe('active');
 });
+
+it('restores actual terminal history and steps after reload without active work', () => {
+  const completed = event({
+    status: 'needs-review',
+    sequence: 3,
+    endedAt: 300,
+    observedPhases: [
+      { phase: 'downloading-media', observedAt: 100, sequence: 1 },
+      { phase: 'saving-artifacts', observedAt: 200, sequence: 2 },
+    ],
+  });
+  useDeliveryActivityStore.getState().hydrate({ owner, activities: [], completedActivities: [completed] }, 0);
+  expect(useDeliveryActivityStore.getState().records.operation).toEqual(completed);
+  expect(useDeliveryActivityStore.getState().active).toEqual([]);
+});
+
+it('terminal snapshot evidence wins over conflicting active rows regardless of sequence', () => {
+  useDeliveryActivityStore.getState().hydrate(
+    {
+      owner,
+      activities: [event({ sequence: 99 })],
+      completedActivities: [event({ status: 'failed', sequence: 3, endedAt: 200 })],
+    },
+    0,
+  );
+  expect(useDeliveryActivityStore.getState().active).toEqual([]);
+  expect(useDeliveryActivityStore.getState().records.operation.status).toBe('failed');
+});
+
+it('detaches nested history from caller-owned event and snapshot arrays', () => {
+  const completed = event({
+    status: 'succeeded',
+    observedPhases: [{ phase: 'saving-artifacts', observedAt: 100, sequence: 1 }],
+  });
+  useDeliveryActivityStore.getState().hydrate({ owner, activities: [], completedActivities: [completed] }, 0);
+  completed.observedPhases![0].phase = 'downloading-media';
+  completed.observedPhases!.push({ phase: 'generating-html', observedAt: 200, sequence: 2 });
+  expect(useDeliveryActivityStore.getState().records.operation.observedPhases).toEqual([
+    { phase: 'saving-artifacts', observedAt: 100, sequence: 1 },
+  ]);
+});
+
+it('does not accept active or foreign-owner entries from the terminal snapshot field', () => {
+  useDeliveryActivityStore.getState().hydrate(
+    {
+      owner,
+      activities: [],
+      completedActivities: [event(), event({ operationId: 'foreign', status: 'failed', workspaceScope: 'wrong' })],
+    },
+    0,
+  );
+  expect(useDeliveryActivityStore.getState().records).toEqual({});
+});
+
+it('old workspace terminal history cannot populate a replacement epoch', () => {
+  const store = useDeliveryActivityStore.getState();
+  store.clear(1);
+  store.hydrate({ owner, activities: [], completedActivities: [event({ status: 'failed' })] }, 0);
+  expect(useDeliveryActivityStore.getState().records).toEqual({});
+});
+
+it('event history is detached before any reload hydration', () => {
+  const frame = event({ observedPhases: [{ phase: 'saving-artifacts', observedAt: 100, sequence: 1 }] });
+  useDeliveryActivityStore.getState().record(frame, 0);
+  frame.observedPhases![0].phase = 'downloading-media';
+  expect(useDeliveryActivityStore.getState().records.operation.observedPhases![0].phase).toBe('saving-artifacts');
+});

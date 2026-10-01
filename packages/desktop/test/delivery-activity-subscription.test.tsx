@@ -87,6 +87,31 @@ it('a terminal event preceding the snapshot cannot be revived', async () => {
   expect(useDeliveryActivityStore.getState().active).toEqual([]);
 });
 
+it('reload restores completed phase history without starting active work', async () => {
+  const completed = {
+    ...activity,
+    status: 'failed' as const,
+    endedAt: 200,
+    observedPhases: [{ phase: activity.phase, observedAt: 100, sequence: 1 }],
+  };
+  await act(async () => complete({ owner, activities: [], completedActivities: [completed] }));
+  expect(useDeliveryActivityStore.getState().records.operation).toEqual(completed);
+  expect(useDeliveryActivityStore.getState().active).toEqual([]);
+});
+
+it('late terminal history snapshots cannot replace events observed during initial hydration', async () => {
+  act(() => activityCallback({ ...activity, sequence: 2, status: 'succeeded', endedAt: 300 }));
+  await act(async () =>
+    complete({
+      owner,
+      activities: [],
+      completedActivities: [{ ...activity, sequence: 9, status: 'failed', endedAt: 200 }],
+    }),
+  );
+  expect(useDeliveryActivityStore.getState().records.operation.status).toBe('succeeded');
+  expect(useDeliveryActivityStore.getState().records.operation.endedAt).toBe(300);
+});
+
 it('a delayed snapshot cannot revive terminals after the bounded tombstone window overflows', async () => {
   act(() => {
     for (let index = 0; index < 2050; index += 1)
@@ -94,6 +119,14 @@ it('a delayed snapshot cannot revive terminals after the bounded tombstone windo
   });
   await act(async () => complete({ owner, activities: [{ ...activity, operationId: 'operation-0' }] }));
   expect(useDeliveryActivityStore.getState().active).toEqual([]);
+});
+
+it('pending history snapshot does not overwrite a newer observed phase event', async () => {
+  act(() => activityCallback({ ...activity, sequence: 2, phase: 'saving-artifacts' }));
+  await act(async () =>
+    complete({ owner, activities: [], completedActivities: [{ ...activity, sequence: 3, status: 'failed' }] }),
+  );
+  expect(useDeliveryActivityStore.getState().active[0]?.phase).toBe('saving-artifacts');
 });
 
 it('late snapshots cannot roll back a newer opaque workspace scope', async () => {
