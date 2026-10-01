@@ -8,6 +8,7 @@ import { renderSlideDeck } from './render-deck.js';
 import { contained, readSlideSourceFile, readWorkspaceBytes } from './source-file.js';
 import { documentFileStem } from '../util/document-file-name.js';
 import { imageNames } from './resources.js';
+import { writeSlideGenerationReceipt } from './receipt.js';
 
 export async function renderSlideSourceFile(file: string, workspace: string) {
   let rendering = false;
@@ -87,6 +88,35 @@ export async function renderSlideSourceFile(file: string, workspace: string) {
     } finally {
       fs.closeSync(fd);
     }
+    let receipt:
+      | { receiptStatus: 'ready'; receiptFile: string }
+      | {
+          receiptStatus: 'unavailable';
+          receiptDiagnostic: string;
+        };
+    try {
+      const receiptFile = writeSlideGenerationReceipt(root, {
+        sourceFile: path.relative(root, path.resolve(root, file)).replaceAll('\\', '/'),
+        sourceSha256,
+        fileName,
+        outputSha256: result.outputSha256,
+        bytes: result.bytes,
+        pages: result.pages,
+        resources: resources.map((resource) => ({
+          file: path.posix.join(assetsPrefix, resource.name),
+          bytes: resource.bytes,
+          sha256: resource.sha256,
+        })),
+        warnings: result.warnings,
+      });
+      receipt = { receiptStatus: 'ready', receiptFile: path.basename(receiptFile) };
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : '';
+      receipt = {
+        receiptStatus: 'unavailable',
+        receiptDiagnostic: detail.length <= 100 && /^receipt-[a-z-]+$/.test(detail) ? detail : 'receipt-unavailable',
+      };
+    }
     return {
       schemaVersion: 1,
       status: 'file-generated',
@@ -101,6 +131,7 @@ export async function renderSlideSourceFile(file: string, workspace: string) {
       visualReview: result.visualReview,
       fileCreated: true,
       artifactIndexed: false,
+      ...receipt,
     };
   } catch (error) {
     const detail = error instanceof Error ? error.message : '';

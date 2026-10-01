@@ -15,6 +15,7 @@ import { measureSlide } from '../src/main/slidegen/measure.js';
 import { renderSlideSourceFile } from '../src/main/slidegen/render-file.js';
 import { absolutizeImageSources } from '../src/main/slidegen/measure.js';
 import { fileURLToPath } from 'node:url';
+import * as receipts from '../src/main/slidegen/receipt.js';
 
 let root = '';
 let workspace = '';
@@ -60,6 +61,49 @@ async function render(file = 'report.slidegen'): Promise<Record<string, unknown>
 function pptxFiles() {
   return fs.readdirSync(workspace).filter((name) => name.endsWith('.pptx'));
 }
+
+it('creates a verifiable receipt for the exact file it generated in this turn', async () => {
+  write();
+  const result = await render();
+  expect(result).toMatchObject({ status: 'file-generated', receiptStatus: 'ready', artifactIndexed: false });
+  const receipt = receipts.readSlideGenerationReceipt(workspace, String(result.receiptFile));
+  expect(receipt).toMatchObject({
+    sourceFile: 'report.slidegen',
+    sourceSha256: result.sourceSha256,
+    fileName: result.fileName,
+    outputSha256: result.outputSha256,
+    pages: result.pages,
+    warnings: result.warnings,
+  });
+  expect(pptxFiles()).toHaveLength(1);
+});
+
+it.each([
+  { label: 'fixed error', reason: 'receipt-too-large', expected: 'receipt-too-large' },
+  { label: 'oversized diagnostic', reason: 'receipt-' + 'x'.repeat(10000), expected: 'receipt-unavailable' },
+])(
+  'reports an existing generated file honestly when receipt persistence fails: $label',
+  async ({ reason, expected }) => {
+    write();
+    const spy = vi.spyOn(receipts, 'writeSlideGenerationReceipt').mockImplementationOnce(() => {
+      throw new Error(reason);
+    });
+    try {
+      const result = await render();
+      expect(result).toMatchObject({
+        status: 'file-generated',
+        fileCreated: true,
+        artifactIndexed: false,
+        receiptStatus: 'unavailable',
+        receiptDiagnostic: expected,
+      });
+      expect(result.receiptFile).toBeUndefined();
+      expect(fs.existsSync(path.join(workspace, String(result.fileName)))).toBe(true);
+    } finally {
+      spy.mockRestore();
+    }
+  },
+);
 beforeEach(() => {
   vi.resetAllMocks();
   root = fs.mkdtempSync(path.join(os.tmpdir(), 'slidegen-file-render-'));
