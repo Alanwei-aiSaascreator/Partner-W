@@ -37,6 +37,7 @@ import { readConfig, updateConfig } from '../workspace/config.js';
 import { notifySkillCacheChange, type SkillCacheClient } from './cache-refresh.js';
 import { getDebugLogger } from '../debug/index.js';
 import { resolveOurSkillsRoot } from './locate.js';
+import { checkSlidegenLauncherOwnership, configureSlidegenRuntime } from './slidegen-runtime.js';
 
 function ipcError(err: unknown): { ok: false; error: string } {
   return { ok: false, error: err instanceof Error ? err.message : 'unknown' };
@@ -48,6 +49,21 @@ function ourSkillsRoot(): string | undefined {
     resourcesPath: process.resourcesPath,
     appPath: app.getAppPath(),
   });
+}
+
+function configureDeckRuntime(managedDir: string) {
+  return configureSlidegenRuntime({
+    root: ourSkillsRoot(),
+    managedDir,
+    isPackaged: app.isPackaged,
+    executable: process.execPath,
+    appPath: app.getAppPath(),
+  });
+}
+
+function installOurSkill(managedDir: string, slug: string) {
+  const result = installBundledSkill({ root: ourSkillsRoot(), managedDir, slug });
+  return result.ok && slug === 'deck-layout' ? configureDeckRuntime(managedDir) : result;
 }
 
 /**
@@ -147,7 +163,7 @@ export function registerSkillsHandlers(): void {
       try {
         const managedDir = await managedSkillsDirOf(payload.gatewayId, payload.agentId);
         if (!managedDir) return { ok: false, error: 'GATEWAY_UNAVAILABLE' };
-        const result = installBundledSkill({ root: ourSkillsRoot(), managedDir, slug: payload.slug });
+        const result = installOurSkill(managedDir, payload.slug);
         if (result.ok) notifySkillCache(payload.gatewayId, payload.slug, true);
         return result;
       } catch (err) {
@@ -190,7 +206,7 @@ export function registerSkillsHandlers(): void {
         const nextRecords: Record<string, string> = { ...records };
 
         for (const skill of missing) {
-          const result = installBundledSkill({ root: ourSkillsRoot(), managedDir, slug: skill.slug });
+          const result = installOurSkill(managedDir, skill.slug);
           if (result.ok) {
             installed.push(skill.slug);
             if (typeof skill.content === 'string') nextRecords[skill.slug] = skillContentSha(skill.content);
@@ -200,7 +216,9 @@ export function registerSkillsHandlers(): void {
           }
         }
         for (const skill of stale) {
-          const result = installBundledSkill({ root: ourSkillsRoot(), managedDir, slug: skill.slug });
+          const ownership =
+            skill.slug === 'deck-layout' ? checkSlidegenLauncherOwnership(ourSkillsRoot(), managedDir) : { ok: true };
+          const result = ownership.ok ? installOurSkill(managedDir, skill.slug) : ownership;
           if (result.ok) {
             upgraded.push(skill.slug);
             if (typeof skill.content === 'string') nextRecords[skill.slug] = skillContentSha(skill.content);
@@ -224,6 +242,11 @@ export function registerSkillsHandlers(): void {
           if (skillContentSha(onDisk) === skillContentSha(skill.content)) {
             nextRecords[skill.slug] = skillContentSha(skill.content);
           }
+        }
+
+        if (isBundledSkillInstalled(managedDir, 'deck-layout') && !failed.some((item) => item.slug === 'deck-layout')) {
+          const runtime = configureDeckRuntime(managedDir);
+          if (!runtime.ok) failed.push({ slug: 'deck-layout', error: runtime.error ?? 'slidegen-runtime-unavailable' });
         }
 
         if (Object.keys(nextRecords).length > 0) {
