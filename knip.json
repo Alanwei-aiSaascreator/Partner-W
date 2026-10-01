@@ -9,7 +9,7 @@
     "packages/core": {},
     "packages/desktop": {
       "entry": [
-        "src/main/index.ts",
+        "src/main/entry.ts",
         "src/main/slidegen/preflight-cli.ts",
         "src/preload/index.ts",
         "src/renderer/main.tsx",
