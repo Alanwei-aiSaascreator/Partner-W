@@ -2,7 +2,12 @@ import { createHash } from 'node:crypto';
 import { ipcMain } from 'electron';
 import { getGatewayClient, getAllGatewayClients, reconnectGateway } from '../ws/index.js';
 import { readConfig, ensureDeviceId } from '../workspace/config.js';
-import { isClawWorkSession, parseTaskIdFromSessionKey, parseAgentIdFromSessionKey } from '@clawwork/shared';
+import {
+  GATEWAY_WS_PORT,
+  isClawWorkSession,
+  parseTaskIdFromSessionKey,
+  parseAgentIdFromSessionKey,
+} from '@clawwork/shared';
 import { normalizeContentBlocks, parseToolArgs } from '@clawwork/core';
 import type {
   ApprovalDecision,
@@ -20,6 +25,9 @@ import type {
 import { getDebugLogger } from '../debug/index.js';
 import { trackChatSent } from '../analytics/reporter.js';
 import type { GatewayClient } from '../ws/gateway-client.js';
+import { hasBundledWorkflowTool, isSystemWorkflowAgent } from '../runtime/workflow-tools.js';
+import { authorizeCreatedWorkflowAgent } from '../runtime/workflow-created-agent.js';
+import { LOCAL_GATEWAY_ID } from '../runtime/state-config.js';
 import {
   beginArtifactRunForGatewayDispatch,
   bindArtifactRun,
@@ -595,14 +603,33 @@ export function registerWsHandlers(): void {
   ipcMain.handle(
     'ws:agents-create',
     async (_event, payload: { gatewayId: string; name: string; workspace: string; emoji?: string; avatar?: string }) =>
-      gatewayRpc(payload.gatewayId, (gw) =>
-        gw.createAgent({
+      gatewayRpc(payload.gatewayId, async (gw) => {
+        const params = {
           name: payload.name,
           workspace: payload.workspace,
           emoji: payload.emoji,
           avatar: payload.avatar,
-        }),
-      ),
+        };
+        if (
+          payload.gatewayId !== LOCAL_GATEWAY_ID ||
+          !isSystemWorkflowAgent(payload.name) ||
+          gw.httpBase !== `http://127.0.0.1:${GATEWAY_WS_PORT}`
+        )
+          return gw.createAgent(params);
+        const owner = (await import('../runtime/index.js')).captureOwnedLocalGatewayRuntime();
+        if (!owner || !hasBundledWorkflowTool(owner.deployedRoot)) return gw.createAgent(params);
+        return gw.createAgent(params, {
+          current: () => owner.current() && getGatewayClient(payload.gatewayId) === gw,
+          afterCreated: (agentId, tx, ownsConnection) =>
+            agentId !== payload.name
+              ? Promise.resolve(false)
+              : authorizeCreatedWorkflowAgent({
+                  agentId,
+                  tx,
+                  current: () => owner.current() && ownsConnection() && getGatewayClient(payload.gatewayId) === gw,
+                }),
+        });
+      }),
   );
 
   ipcMain.handle(

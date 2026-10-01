@@ -69,7 +69,7 @@ function authorizeDefaultAgents(config: Record<string, unknown>): Record<string,
 }
 
 /** Enable the verified supplied default, while keeping explicit plugin/tool policies intact. */
-export function ensureBundledWorkflowTools(deployedRoot: string, stateDir: string): boolean {
+export function hasBundledWorkflowTool(deployedRoot: string): boolean {
   const marker = path.join(deployedRoot, 'manifest.json');
   if (!fs.existsSync(marker)) return false;
   const manifest = read(marker);
@@ -99,6 +99,11 @@ export function ensureBundledWorkflowTools(deployedRoot: string, stateDir: strin
     !contract.contracts.tools.includes('lobster')
   )
     throw new Error('Required Lobster plugin identity or tool contract changed');
+  return true;
+}
+
+export function ensureBundledWorkflowTools(deployedRoot: string, stateDir: string): boolean {
+  if (!hasBundledWorkflowTool(deployedRoot)) return false;
   const configPath = path.join(stateDir, 'openclaw.json');
   if (!fs.existsSync(configPath)) return false;
   const config = read(configPath);
@@ -123,4 +128,56 @@ export function ensureBundledWorkflowTools(deployedRoot: string, stateDir: strin
     plugins: { ...plugins, entries: { ...entries, lobster: { ...lobster, enabled: true } } },
   });
   return true;
+}
+
+/** A patch for an existing built-in agent only; plugin activation remains a startup decision. */
+export function buildCreatedWorkflowAgentPatch(config: unknown, agentId: string): Record<string, unknown> | undefined {
+  if (!SYSTEM_WORKFLOW_AGENTS.has(agentId) || !record(config)) return;
+  const gateway = record(config.gateway) ? config.gateway : {};
+  const reload = record(gateway.reload) ? gateway.reload : {};
+  if (reload.mode === 'off' || reload.mode === 'restart') return;
+  const plugins = record(config.plugins) ? config.plugins : {};
+  const entries = record(plugins.entries) ? plugins.entries : {};
+  if (
+    plugins.enabled === false ||
+    !record(entries.lobster) ||
+    entries.lobster.enabled !== true ||
+    (Array.isArray(plugins.deny) && plugins.deny.includes('lobster')) ||
+    (Array.isArray(plugins.allow) && !plugins.allow.includes('lobster'))
+  )
+    return;
+  const agents = authorizeDefaultAgents(config);
+  const originalAgents = record(config.agents) ? config.agents : {};
+  const originalEntries = record(originalAgents.entries) ? originalAgents.entries : {};
+  const nextEntries = agents && record(agents.entries) ? agents.entries : {};
+  const next = nextEntries[agentId];
+  if (!record(originalEntries[agentId]) || !record(next) || next === originalEntries[agentId]) return;
+  return { agents: { entries: { [agentId]: { tools: next.tools } } } };
+}
+export function isSystemWorkflowAgent(agentId: string): boolean {
+  return SYSTEM_WORKFLOW_AGENTS.has(agentId);
+}
+
+export function hasCreatedWorkflowAgentGrant(config: unknown, agentId: string): boolean {
+  if (!record(config) || !record(config.agents) || !record(config.agents.entries)) return false;
+  const agent = config.agents.entries[agentId];
+  if (
+    !record(agent) ||
+    !record(agent.tools) ||
+    !Array.isArray(agent.tools.alsoAllow) ||
+    agent.tools.alsoAllow.length !== 1 ||
+    agent.tools.alsoAllow[0] !== 'lobster'
+  )
+    return false;
+  const tools = { ...agent.tools };
+  delete tools.alsoAllow;
+  return Boolean(
+    buildCreatedWorkflowAgentPatch(
+      {
+        ...config,
+        agents: { ...config.agents, entries: { ...config.agents.entries, [agentId]: { ...agent, tools } } },
+      },
+      agentId,
+    ),
+  );
 }

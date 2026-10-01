@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { GatewayConfigMutationTx } from '../src/main/ws/gateway-client.js';
 
 const handleMap = new Map<string, (...args: unknown[]) => unknown>();
 
@@ -19,6 +20,16 @@ const beginArtifactRunForGatewayDispatchMock = vi.fn();
 const bindArtifactRunMock = vi.fn();
 const cancelArtifactRunMock = vi.fn();
 const cancelArtifactRunsForSessionMock = vi.fn();
+const createAgentMock = vi.fn();
+const workflowRuntime = vi.hoisted(() => ({ owned: true, supplied: true }));
+vi.mock('../src/main/runtime/index.js', () => ({
+  captureOwnedLocalGatewayRuntime: () =>
+    workflowRuntime.owned ? { deployedRoot: 'owned-runtime', current: () => workflowRuntime.owned } : null,
+}));
+vi.mock('../src/main/runtime/workflow-tools.js', async (original) => ({
+  ...(await original<typeof import('../src/main/runtime/workflow-tools.js')>()),
+  hasBundledWorkflowTool: () => workflowRuntime.supplied,
+}));
 
 const fakeGatewayClient = {
   isConnected: true,
@@ -36,6 +47,7 @@ const fakeGatewayClient = {
   listSessionsBySpawner: listSessionsBySpawnerMock,
   sendChatMessage: sendChatMessageMock,
   abortChat: abortChatMock,
+  createAgent: createAgentMock,
 };
 
 vi.mock('electron', () => ({
@@ -48,7 +60,7 @@ vi.mock('electron', () => ({
 }));
 
 vi.mock('../src/main/ws/index.js', () => ({
-  getGatewayClient: vi.fn((id: string) => (id === 'gw-1' ? fakeGatewayClient : null)),
+  getGatewayClient: vi.fn((id: string) => (['gw-1', 'local-runtime'].includes(id) ? fakeGatewayClient : null)),
   getAllGatewayClients: vi.fn(() => new Map([['gw-1', fakeGatewayClient]])),
   reconnectGateway: vi.fn(),
 }));
@@ -104,6 +116,50 @@ async function freshReporter() {
 }
 
 describe('ws-handlers: skills + config IPC channels', () => {
+  it('wires the exact owned newly created system agent to the existing transaction and configured ACK', async () => {
+    const config = {
+      plugins: { entries: { lobster: { enabled: true } } },
+      agents: { entries: { 'rongying-office': { workspace: 'owned' } } },
+    };
+    getConfigMock.mockResolvedValue({ hash: 'revision', config });
+    patchConfigMock.mockImplementation(async ({ raw }) => {
+      Object.assign(config.agents.entries['rongying-office'], JSON.parse(raw).agents.entries['rongying-office']);
+      return { ok: true };
+    });
+    createAgentMock.mockImplementation(
+      async (
+        params,
+        options?: {
+          afterCreated: (id: string, tx: GatewayConfigMutationTx, current: () => boolean) => Promise<boolean>;
+        },
+      ) => ({
+        agentId: params.name,
+        workflowToolConfigured: await options?.afterCreated(
+          params.name,
+          { getConfig: getConfigMock, patchConfig: patchConfigMock, setConfig: setConfigMock },
+          () => true,
+        ),
+      }),
+    );
+    expect(
+      await invoke('ws:agents-create', { gatewayId: 'local-runtime', name: 'rongying-office', workspace: 'owned' }),
+    ).toMatchObject({ ok: true, result: { agentId: 'rongying-office', workflowToolConfigured: true } });
+    expect(patchConfigMock).toHaveBeenCalledTimes(1);
+  });
+  it.each(['foreign', 'custom', 'reused', 'unsupplied'])(
+    'does not supply a workflow hook for %s creation',
+    async (mode) => {
+      workflowRuntime.owned = mode !== 'reused';
+      workflowRuntime.supplied = mode !== 'unsupplied';
+      const name = mode === 'custom' ? 'custom' : 'rongying-office';
+      await invoke('ws:agents-create', {
+        gatewayId: mode === 'foreign' ? 'gw-1' : 'local-runtime',
+        name,
+        workspace: 'owned',
+      });
+      expect(createAgentMock).toHaveBeenCalledWith({ name, workspace: 'owned', emoji: undefined, avatar: undefined });
+    },
+  );
   beforeEach(async () => {
     handleMap.clear();
     vi.clearAllMocks();
@@ -115,6 +171,8 @@ describe('ws-handlers: skills + config IPC channels', () => {
     cancelArtifactRunMock.mockReset();
     cancelArtifactRunsForSessionMock.mockReset();
     fakeGatewayClient.isConnected = true;
+    workflowRuntime.owned = workflowRuntime.supplied = true;
+    createAgentMock.mockReset().mockImplementation(async (params) => ({ agentId: params.name }));
 
     vi.resetModules();
     const { registerWsHandlers } = await import('../src/main/ipc/ws-handlers.js');

@@ -975,15 +975,25 @@ export class GatewayClient {
     return this.sendReq('agents.list', {});
   }
 
-  async createAgent(params: {
-    name: string;
-    workspace: string;
-    emoji?: string;
-    avatar?: string;
-  }): Promise<Record<string, unknown>> {
-    return this.runConfigMutation(async () => {
+  async createAgent(
+    params: {
+      name: string;
+      workspace: string;
+      emoji?: string;
+      avatar?: string;
+    },
+    options?: {
+      current?: () => boolean;
+      afterCreated: (agentId: string, tx: GatewayConfigMutationTx, current: () => boolean) => Promise<boolean>;
+    },
+  ): Promise<Record<string, unknown>> {
+    const socket = this.ws;
+    const current = () => socket !== null && this.ws === socket && this.isConnected && (options?.current?.() ?? true);
+    return this.runConfigMutation(async (tx) => {
+      if (options && !current()) throw new Error('Created-agent connection owner changed');
       const result = await this.sendReq('agents.create', params);
       const agentId = typeof result['agentId'] === 'string' ? result['agentId'] : '';
+      if (options && !current()) return { ...result, workflowToolConfigured: false };
       if (agentId) {
         const visibility = await this.waitForAgentVisibility(agentId);
         if (!visibility.confirmed) {
@@ -999,6 +1009,20 @@ export class GatewayClient {
             ...result,
             visibilityConfirmed: false,
             visibilityError: visibility.error,
+          };
+        }
+      }
+      if (options && agentId) {
+        if (!current()) return { ...result, workflowToolConfigured: false };
+        try {
+          const ready = await options.afterCreated(agentId, tx, current);
+          return { ...result, workflowToolConfigured: current() && ready };
+        } catch (error) {
+          // Creation already persisted: expose the capability failure without losing its ACK/ID.
+          return {
+            ...result,
+            workflowToolConfigured: false,
+            workflowToolError: error instanceof Error ? error.message : 'Workflow tool verification failed',
           };
         }
       }

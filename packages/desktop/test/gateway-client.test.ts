@@ -107,6 +107,78 @@ describe('GatewayClient connection lifecycle', () => {
     expect(calculateReconnectDelay(MAX_RECONNECT_ATTEMPTS)).toBe(RECONNECT_DELAY_MS * 32);
   });
 
+  it('keeps created-agent configuration work inside the same mutation tail', async () => {
+    const { GatewayClient } = await import('../src/main/ws/gateway-client.js');
+    const client = new GatewayClient({
+      id: 'gw-1',
+      name: 'Gateway',
+      url: 'ws://127.0.0.1:18789',
+      auth: { token: 'token' },
+    });
+    clients.push(client);
+    client.connect();
+    vi.spyOn(client, 'isConnected', 'get').mockReturnValue(true);
+    const sendReq = vi
+      .spyOn(client, 'sendReq')
+      .mockImplementation(async (method) =>
+        method === 'agents.list' ? { agents: [{ id: 'rongying-office' }] } : { agentId: 'rongying-office' },
+      );
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const afterCreated = vi.fn(
+      async (_id: string, tx: { getConfig: () => Promise<Record<string, unknown>> }, current: () => boolean) => {
+        expect(current()).toBe(true);
+        await gate;
+        await tx.getConfig();
+        return true;
+      },
+    );
+    const create = client.createAgent({ name: 'rongying-office', workspace: 'owned' }, { afterCreated });
+    const update = client.updateAgent({ agentId: 'rongying-office', name: 'Office' });
+    await vi.waitFor(() => expect(afterCreated).toHaveBeenCalledOnce());
+    expect(sendReq.mock.calls.some(([method]) => method === 'agents.update')).toBe(false);
+    release();
+    expect(await create).toMatchObject({ agentId: 'rongying-office', workflowToolConfigured: true });
+    await update;
+    expect(sendReq.mock.calls.map(([method]) => method)).toEqual([
+      'agents.create',
+      'agents.list',
+      'config.get',
+      'agents.update',
+    ]);
+  });
+
+  it.each(['agents.create', 'agents.list'])(
+    'does not invoke a created-agent policy hook after connection replacement during %s or hide its creation ACK',
+    async (replacedDuring) => {
+      const { GatewayClient } = await import('../src/main/ws/gateway-client.js');
+      const client = new GatewayClient({
+        id: 'gw-1',
+        name: 'Gateway',
+        url: 'ws://127.0.0.1:18789',
+        auth: { token: 'token' },
+      });
+      clients.push(client);
+      client.connect();
+      vi.spyOn(client, 'isConnected', 'get').mockReturnValue(true);
+      vi.spyOn(client, 'sendReq').mockImplementation(async (method) => {
+        if (method === replacedDuring) client.connect();
+        if (method === 'agents.list') return { agents: [{ id: 'rongying-office' }] };
+        return { agentId: 'rongying-office' };
+      });
+      const afterCreated = vi.fn(async () => true);
+      expect(await client.createAgent({ name: 'rongying-office', workspace: 'owned' }, { afterCreated })).toMatchObject(
+        {
+          agentId: 'rongying-office',
+          workflowToolConfigured: false,
+        },
+      );
+      expect(afterCreated).not.toHaveBeenCalled();
+    },
+  );
+
   it('does not log a temporary artifact download ticket while returning it to the caller', async () => {
     const { GatewayClient } = await import('../src/main/ws/gateway-client.js');
     const logger = getDebugLogger();

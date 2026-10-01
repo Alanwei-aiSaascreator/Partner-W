@@ -450,6 +450,12 @@ export function getActiveLocalGatewayDeploymentRoot(): string | null {
   return activeGateway?.ownership === 'spawned' && activeGateway.child ? activeGateway.deployedRoot : null;
 }
 
+export function captureOwnedLocalGatewayRuntime(): { deployedRoot: string; current: () => boolean } | null {
+  const owner = activeGateway;
+  if (owner?.ownership !== 'spawned' || !owner.child) return null;
+  return { deployedRoot: owner.deployedRoot, current: () => activeGateway === owner };
+}
+
 /** 整体收尾超时 —— `before-quit` 里**不能卡住退出**。 */
 const SHUTDOWN_TIMEOUT_MS = 5000;
 

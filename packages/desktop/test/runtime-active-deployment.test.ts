@@ -97,6 +97,27 @@ afterEach(() => {
 });
 
 describe('active local gateway deployment evidence', () => {
+  it('captures the exact owned process generation and rejects a replacement at the same deployed path', async () => {
+    const root = deployment();
+    const first = ownedChild(),
+      second = ownedChild();
+    const { bootstrapLocalGatewayRuntime, captureOwnedLocalGatewayRuntime } =
+      await import('../src/main/runtime/index.js');
+    expect(captureOwnedLocalGatewayRuntime()).toBeNull();
+    await bootstrapLocalGatewayRuntime({ userDataDir: root, deps: dependencies(root, 'reused') });
+    expect(captureOwnedLocalGatewayRuntime()).toBeNull();
+    await bootstrapLocalGatewayRuntime({ userDataDir: root, deps: dependencies(root, 'spawned', first.child) });
+    const owner = captureOwnedLocalGatewayRuntime()!;
+    expect(owner.deployedRoot).toBe(root);
+    expect(owner.current()).toBe(true);
+    await bootstrapLocalGatewayRuntime({ userDataDir: root, deps: dependencies(root, 'spawned', second.child) });
+    expect(owner.current()).toBe(false);
+    const replacement = captureOwnedLocalGatewayRuntime()!;
+    first.exit();
+    expect(replacement.current()).toBe(true);
+    second.exit();
+    expect(replacement.current()).toBe(false);
+  });
   it('does not advertise a candidate plugin for an initially reused gateway', async () => {
     const root = deployment();
     const { bootstrapLocalGatewayRuntime, getActiveLocalGatewayDeploymentRoot } =
