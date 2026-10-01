@@ -111,7 +111,30 @@ describe('打包门禁：随包运行时（beforePack 钩子）', () => {
     try {
       fs.writeFileSync(path.join(projectDir, 'icon.png'), '');
       fs.mkdirSync(path.join(projectDir, 'runtime-out'));
-      fs.writeFileSync(path.join(projectDir, 'runtime-out', RUNTIME_MANIFEST_FILE), '{}');
+      const archive = Buffer.from('private runtime archive fixture');
+      fs.writeFileSync(path.join(projectDir, 'runtime-out', 'runtime.zip'), archive);
+      fs.writeFileSync(
+        path.join(projectDir, 'runtime-out', RUNTIME_MANIFEST_FILE),
+        JSON.stringify({
+          formatVersion: 1,
+          packageName: 'openclaw',
+          version: '2026.9.3',
+          runtimes: [
+            {
+              platform: 'win32',
+              arch: 'x64',
+              version: '2026.9.3',
+              runtimeDeploymentKey: 'fixture',
+              archive: 'runtime.zip',
+              archiveSize: archive.length,
+              fileCount: 1,
+              packageRoot: 'node_modules/openclaw',
+              cliPath: 'node_modules/openclaw/openclaw.mjs',
+              sha256: requireCjs('node:crypto').createHash('sha256').update(archive).digest('hex'),
+            },
+          ],
+        }),
+      );
 
       const sameShape = {
         extraResources: [

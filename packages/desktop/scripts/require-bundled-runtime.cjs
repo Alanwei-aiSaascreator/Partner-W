@@ -159,6 +159,10 @@ async function beforePack(context) {
   const message = checkBundledRuntime(config, projectDir);
   if (message) throw new Error(message);
 
+  await require('./verify-runtime-archives.cjs').verifyRuntimeArchives(
+    staticExtraResourceSources(config, projectDir).find((entry) => entry.to === BUNDLED_TO).abs,
+  );
+
   const count = staticExtraResourceSources(config, projectDir).length;
   console.log(`[require-bundled-runtime] 随包运行时已就位（extraResources 静态源 ${count} 项全部存在）`);
 }
