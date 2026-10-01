@@ -2,10 +2,14 @@ import { resolve } from 'path';
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
+import { buildSlidegenPreflight } from './scripts/build-slidegen-preflight.mjs';
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin({ exclude: ['@clawwork/shared', '@clawwork/core'] })],
+    plugins: [
+      { name: 'slidegen-source-preflight', buildStart: () => buildSlidegenPreflight().then(() => undefined) },
+      externalizeDepsPlugin({ exclude: ['@clawwork/shared', '@clawwork/core'] }),
+    ],
     define: {
       __MOFANG_UPDATE_PUBLIC_KEY_B64__: JSON.stringify(process.env.MOFANG_UPDATE_PUBLIC_KEY_B64 ?? ''),
     },

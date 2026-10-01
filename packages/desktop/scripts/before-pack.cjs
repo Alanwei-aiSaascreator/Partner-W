@@ -17,6 +17,8 @@ const publicKeyGate = require('./require-update-public-key.cjs');
 async function beforePack(context) {
   await runtimeGate.beforePack(context);
   await publicKeyGate.beforePack(context);
+  const { buildSlidegenPreflight } = await import('./build-slidegen-preflight.mjs');
+  await buildSlidegenPreflight(context.packager.projectDir);
 }
 
 exports.beforePack = beforePack;

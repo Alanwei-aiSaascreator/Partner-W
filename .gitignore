@@ -47,3 +47,4 @@ coverage/
 
 # 打包态 E2E 的截图证据（每次跑都会重新生成，别把二进制塞进仓库）
 packages/desktop/e2e-artifacts/
+packages/desktop/our-skills/deck-layout/scripts/preflight.cjs

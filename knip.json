@@ -10,6 +10,7 @@
     "packages/desktop": {
       "entry": [
         "src/main/index.ts",
+        "src/main/slidegen/preflight-cli.ts",
         "src/preload/index.ts",
         "src/renderer/main.tsx",
         "src/renderer/styles/design-tokens.ts",
