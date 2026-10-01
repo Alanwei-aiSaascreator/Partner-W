@@ -335,3 +335,26 @@ it('does not mistake successful preflight and other schema-one tools for generat
   });
   expect(collector.hasUnconfirmedSlideToolOutput([preflight, other, tool()], collect().receipts)).toBe(false);
 });
+
+it('binds final candidate registration to the whole confirmed receipt snapshot', () => {
+  const entries = collect().receipts;
+  expect(collector.isToolSlideOutputCurrent).toBeTypeOf('function');
+  expect(collector.isToolSlideOutputCurrent(root, entries, input.fileName)).toBe(true);
+  expect(collector.isToolSlideOutputCurrent(root, entries, 'unrelated.txt')).toBe(true);
+  fs.writeFileSync(path.join(root, input.fileName), 'change');
+  expect(collector.isToolSlideOutputCurrent(root, entries, input.fileName)).toBe(false);
+});
+it('rejects final registration after the source changes even if output bytes do not change', () => {
+  const entries = collect().receipts;
+  fs.writeFileSync(path.join(root, input.sourceFile), source.replace('One', 'Two'));
+  expect(collector.isToolSlideOutputCurrent(root, entries, input.fileName)).toBe(false);
+});
+it('rejects final registration after receipt metadata is rewritten to describe a new valid source', () => {
+  const entries = collect().receipts;
+  const next = source.replace('One', 'Two');
+  fs.writeFileSync(path.join(root, input.sourceFile), next);
+  const receipt = JSON.parse(fs.readFileSync(path.join(root, receiptFile), 'utf8'));
+  receipt.sourceSha256 = hash(next);
+  fs.writeFileSync(path.join(root, receiptFile), JSON.stringify(receipt));
+  expect(collector.isToolSlideOutputCurrent(root, entries, input.fileName)).toBe(false);
+});

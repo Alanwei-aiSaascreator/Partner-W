@@ -1,5 +1,6 @@
 import { app, BrowserWindow, ipcMain } from 'electron';
 import { createHash, randomUUID } from 'node:crypto';
+import { resolve } from 'node:path';
 import { and, eq, desc, sql } from 'drizzle-orm';
 import { getDb, isDbReady } from '../db/index.js';
 import { tasks, messages, artifacts, taskRooms, taskRoomSessions, teams, teamAgents } from '../db/schema.js';
@@ -18,6 +19,8 @@ import { generateSlidesFromMessage } from '../slidegen/generate.js';
 import {
   collectToolSlideReceipts,
   hasUnconfirmedSlideToolOutput,
+  isToolSlideOutputCurrent,
+  type ToolSlideReceipt,
   reuseToolSlideDeck,
 } from '../slidegen/tool-receipts.js';
 import {
@@ -668,6 +671,9 @@ function finalizeAssistantArtifacts(input: {
     // 故意不记：代码片段不能冒充用户明确要的 Office/PDF 交付物。
     const producedArtifactNames = new Set<string>();
     const slideWarnings: SlidegenWarning[] = [];
+    let confirmedSlides: ToolSlideReceipt[] = [];
+    let confirmedSlideWorkspace = '';
+    const isRunCurrent = () => owner.current() && !isArtifactRunCanceled(run);
     let pipelineFailed = false;
     const rememberProduced = (artifact: { name?: string; localPath?: string }): void => {
       const name = artifact.name ?? artifact.localPath;
@@ -858,6 +864,8 @@ function finalizeAssistantArtifacts(input: {
             ],
           })
         : { receipts: [], rejected: 0 };
+      confirmedSlides = confirmed.receipts;
+      confirmedSlideWorkspace = agentRoot?.workspacePath ?? '';
       const deckFiles = agentRoot?.deckBaseline
         ? changedDeckFiles(agentRoot.deckBaseline, agentRoot.workspacePath)
         : [];
@@ -968,6 +976,7 @@ function finalizeAssistantArtifacts(input: {
           taskId: input.taskId,
           messageId: input.messageId,
           baseline,
+          isCandidateCurrent: isRunCurrent,
         });
         if (!owner.current()) return;
         notifyReconciledArtifacts(result);
@@ -990,14 +999,66 @@ function finalizeAssistantArtifacts(input: {
         // 没有第二个根只是「这趟不扫助手工作区」，不能 `return`：后面的结果/声称守卫仍要跑。
         if (!isArtifactRunCanceled(run) && agentRoot) {
           activity.phase('reconciling-artifacts');
+          const staleSlideNames = new Set<string>();
           const agentResult = await reconcileTaskArtifacts({
             workspacePath: agentRoot.workspacePath,
             taskId: input.taskId,
             messageId: input.messageId,
             baseline: agentRoot.baseline,
             rootKind: 'agent',
+            isCandidateCurrent: (file) => {
+              if (!isRunCurrent()) return false;
+              if (
+                agentRoot.workspacePath === confirmedSlideWorkspace &&
+                !isToolSlideOutputCurrent(agentRoot.workspacePath, confirmedSlides, file)
+              ) {
+                staleSlideNames.add(file);
+                return false;
+              }
+              return true;
+            },
           });
           if (!owner.current()) return;
+          if (isRunCurrent()) {
+            const indexed = [...agentResult.saved, ...agentResult.existing, ...(agentResult.updated ?? [])];
+            for (const entry of confirmedSlides) {
+              const expectedPath = resolve(agentRoot.workspacePath, entry.receipt.fileName);
+              const matchesPath = (value: string) =>
+                process.platform === 'win32'
+                  ? value.toLowerCase() === expectedPath.toLowerCase()
+                  : value === expectedPath;
+              const registered = indexed.some(
+                (artifact) =>
+                  artifact.taskId === input.taskId &&
+                  artifact.messageId === input.messageId &&
+                  artifact.root === 'agent' &&
+                  artifact.size === entry.receipt.bytes &&
+                  matchesPath(resolve(artifact.filePath)) &&
+                  matchesPath(resolve(agentRoot.workspacePath, artifact.localPath)),
+              );
+              if (
+                !registered ||
+                !isToolSlideOutputCurrent(agentRoot.workspacePath, confirmedSlides, entry.receipt.fileName)
+              )
+                staleSlideNames.add(entry.receipt.fileName);
+            }
+          }
+          if (staleSlideNames.size) {
+            const normalized = (name: string) => (process.platform === 'win32' ? name.toLowerCase() : name);
+            const stale = new Set([...staleSlideNames].map(normalized));
+            const kept = slideWarnings.filter(
+              (warning) => !warning.artifactName || !stale.has(normalized(warning.artifactName)),
+            );
+            slideWarnings.splice(0, slideWarnings.length, ...kept);
+            if (!deliveryFailure.slideFailures?.some((failure) => failure.code === 'slidegen-output-unconfirmed')) {
+              deliveryFailure.slideFailures = [
+                ...(deliveryFailure.slideFailures ?? []),
+                { code: 'slidegen-output-unconfirmed' },
+              ];
+              for (const win of BrowserWindow.getAllWindows())
+                win.webContents.send('slidegen:failed', deliveryFailure.slideFailures);
+            }
+          }
           // ⭐ **正面证据**：真机排障时唯一能回答"这个功能跑没跑、找到了几条"的一行。
           //    没有它，用户说"产物还是空的"时只能猜：是没扫到？根没接上？还是真没文件？
           getDebugLogger().info({

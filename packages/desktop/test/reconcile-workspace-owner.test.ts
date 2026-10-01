@@ -105,3 +105,41 @@ it('an unchanged real SQLite owner still registers a stable generated file', asy
   const count = getSqlite()!.prepare('SELECT COUNT(*) AS count FROM artifacts').get() as { count: number };
   expect(count.count).toBe(1);
 });
+
+it.each([1, 2])(
+  'skips or rolls back the SQLite row when candidate validity fails at checkpoint %i',
+  async (checkpoint) => {
+    const workspacePath = join(root, 'a');
+    const baseline = await captureTaskArtifactBaseline({ workspacePath, taskId: 'task' });
+    writeFileSync(join(workspacePath, 'task', 'answer.txt'), 'generated file');
+    let checks = 0;
+    const isCandidateCurrent = vi.fn(() => ++checks < checkpoint);
+    const result = await reconcileTaskArtifacts(
+      { workspacePath, taskId: 'task', messageId: 'message', baseline, isCandidateCurrent },
+      { stabilityDelayMs: 0 },
+    );
+    expect(isCandidateCurrent).toHaveBeenCalledTimes(checkpoint);
+    expect(result.saved).toEqual([]);
+    expect(result.skipped).toContain('answer.txt');
+    const count = getSqlite()!.prepare('SELECT COUNT(*) AS count FROM artifacts').get() as { count: number };
+    expect(count.count).toBe(0);
+  },
+);
+it('continues indexing unaffected candidates when another final version is invalid', async () => {
+  const workspacePath = join(root, 'a');
+  const baseline = await captureTaskArtifactBaseline({ workspacePath, taskId: 'task' });
+  writeFileSync(join(workspacePath, 'task', 'answer.txt'), 'generated file');
+  writeFileSync(join(workspacePath, 'task', 'invalid.pptx'), 'changed file');
+  const result = await reconcileTaskArtifacts(
+    {
+      workspacePath,
+      taskId: 'task',
+      messageId: 'message',
+      baseline,
+      isCandidateCurrent: (file) => file !== 'invalid.pptx',
+    },
+    { stabilityDelayMs: 0 },
+  );
+  expect(result.saved.map((artifact) => artifact.name)).toEqual(['answer.txt']);
+  expect(result.skipped).toContain('invalid.pptx');
+});

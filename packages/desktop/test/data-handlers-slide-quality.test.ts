@@ -17,6 +17,7 @@ const slidesMock = vi.fn<typeof generateSlidesFromMessage>();
 const collectReceiptsMock = vi.fn();
 const reuseDeckMock = vi.fn();
 const unconfirmedMock = vi.fn();
+const outputCurrentMock = vi.fn();
 
 vi.mock('electron', () => ({
   ipcMain: {
@@ -54,6 +55,7 @@ vi.mock('../src/main/slidegen/tool-receipts.js', () => ({
   collectToolSlideReceipts: collectReceiptsMock,
   reuseToolSlideDeck: reuseDeckMock,
   hasUnconfirmedSlideToolOutput: unconfirmedMock,
+  isToolSlideOutputCurrent: outputCurrentMock,
 }));
 vi.mock('../src/main/artifact/agent-workspace.js', () => ({
   resolveAgentWorkspace: vi.fn().mockResolvedValue('C:\\agent-quality-workspace'),
@@ -138,6 +140,7 @@ describe('slide quality delivery settlement', () => {
     collectReceiptsMock.mockReset().mockReturnValue({ receipts: [], rejected: 0 });
     reuseDeckMock.mockReset().mockReturnValue([]);
     unconfirmedMock.mockReset().mockReturnValue(false);
+    outputCurrentMock.mockReset().mockReturnValue(true);
     const { registerDataHandlers, beginArtifactRun } = await import('../src/main/ipc/data-handlers.js');
     registerDataHandlers();
     beginArtifactRun(workspacePath, taskId, sessionKey);
@@ -149,7 +152,7 @@ describe('slide quality delivery settlement', () => {
       {
         receiptFile: '.royin-ppt-receipt-proof.json',
         source: '// title: Existing\n<Slide></Slide>',
-        receipt: { sourceFile: 'report.slidegen' },
+        receipt: { sourceFile: 'report.slidegen', fileName: artifact.name, bytes: artifact.size },
       },
     ];
     collectReceiptsMock.mockReturnValue({ receipts: entries, rejected: 0 });
@@ -159,7 +162,17 @@ describe('slide quality delivery settlement', () => {
       failed: [],
       warnings: input.reuseExisting?.({ title: 'Existing', source: entries[0].source }) ?? [],
     }));
-    reconcileMock.mockResolvedValue({ ...emptyReconciliation, saved: [artifact] });
+    reconcileMock.mockResolvedValue({
+      ...emptyReconciliation,
+      saved: [
+        {
+          ...artifact,
+          root: 'agent',
+          localPath: artifact.name,
+          filePath: 'C:\\agent-quality-workspace\\' + artifact.name,
+        },
+      ],
+    });
     const { beginArtifactRun, bindArtifactRun } = await import('../src/main/ipc/data-handlers.js');
     const token = beginArtifactRun(workspacePath, taskId, sessionKey, { gatewayId: 'gateway-1' });
     bindArtifactRun(taskId, sessionKey, token, 'run-1');
@@ -227,6 +240,88 @@ describe('slide quality delivery settlement', () => {
       expect(sendMock).toHaveBeenCalledWith('artifact:saved', artifact);
       expect(sendMock).toHaveBeenCalledWith('slidegen:failed', [{ code: 'slidegen-output-unconfirmed' }]);
       expect(settlements()[0]).toMatchObject({ status: 'failed' });
+    },
+  );
+
+  it('checks confirmed final versions at agent registration and discards stale file warnings', async () => {
+    const entries = [
+      { receiptFile: 'proof', source: 'source', receipt: { sourceFile: 'report.slidegen', fileName: artifact.name } },
+    ];
+    collectReceiptsMock.mockReturnValue({ receipts: entries, rejected: 0 });
+    outputCurrentMock.mockReturnValue(false);
+    const unrelated = { ...artifact, id: 'other', name: 'notes.txt' };
+    reconcileMock.mockImplementation(async (input) => {
+      if (input.rootKind !== 'agent') return emptyReconciliation;
+      expect(input.isCandidateCurrent).toBeTypeOf('function');
+      expect(input.isCandidateCurrent(artifact.name)).toBe(false);
+      return { ...emptyReconciliation, saved: [unrelated], skipped: [artifact.name] };
+    });
+    const { beginArtifactRun, bindArtifactRun } = await import('../src/main/ipc/data-handlers.js');
+    const token = beginArtifactRun(workspacePath, taskId, sessionKey, { gatewayId: 'gateway-1' });
+    bindArtifactRun(taskId, sessionKey, token, 'run-1');
+    selectGetMock.mockReturnValueOnce({ id: messageId }).mockReturnValueOnce({ gid: 'gateway-1' });
+    handleMap.get('data:create-message')!(
+      {},
+      { id: 'incoming', taskId, sessionKey, runId: 'run-1', role: 'assistant', content: 'Done', timestamp: 'now' },
+    );
+    await waitForSettlement();
+    expect(outputCurrentMock).toHaveBeenCalledWith('C:\\agent-quality-workspace', entries, artifact.name);
+    expect(sendMock).toHaveBeenCalledWith('artifact:saved', unrelated);
+    expect(sendMock).not.toHaveBeenCalledWith('slidegen:warned', [warning]);
+    expect(sendMock).toHaveBeenCalledWith('slidegen:failed', [{ code: 'slidegen-output-unconfirmed' }]);
+    expect(settlements()[0]).toMatchObject({ status: 'failed' });
+    expect(settlements()[0]).not.toHaveProperty('slideWarnings');
+  });
+
+  it('prevents a canceled run from passing the pending reconciliation write guard', async () => {
+    const { cancelArtifactRunsForSession } = await import('../src/main/ipc/data-handlers.js');
+    reconcileMock.mockImplementation(async (input) => {
+      expect(input.isCandidateCurrent).toBeTypeOf('function');
+      expect(input.isCandidateCurrent('file.txt')).toBe(true);
+      cancelArtifactRunsForSession(sessionKey);
+      expect(input.isCandidateCurrent('file.txt')).toBe(false);
+      return emptyReconciliation;
+    });
+    persistAssistant();
+    await waitForSettlement();
+    expect(settlements()[0]).toMatchObject({ status: 'canceled' });
+  });
+
+  it.each(['missing', 'old-message', 'wrong-task', 'wrong-root', 'wrong-path', 'wrong-size'])(
+    'does not attach a confirmed receipt to a %s registered artifact',
+    async (kind) => {
+      const entries = [
+        {
+          receiptFile: 'proof',
+          source: 'source',
+          receipt: { sourceFile: 'report.slidegen', fileName: artifact.name, bytes: artifact.size },
+        },
+      ];
+      collectReceiptsMock.mockReturnValue({ receipts: entries, rejected: 0 });
+      const row = {
+        ...artifact,
+        root: 'agent',
+        filePath: 'C:\\agent-quality-workspace\\' + artifact.name,
+        localPath: artifact.name,
+      };
+      if (kind === 'old-message') row.messageId = 'earlier-assistant';
+      if (kind === 'wrong-task') row.taskId = 'other-task';
+      if (kind === 'wrong-root') row.root = 'workspace';
+      if (kind === 'wrong-path') row.filePath = 'C:\\other-root\\' + artifact.name;
+      if (kind === 'wrong-size') row.size += 1;
+      reconcileMock.mockResolvedValue({ ...emptyReconciliation, saved: kind === 'missing' ? [] : [row] });
+      const { beginArtifactRun, bindArtifactRun } = await import('../src/main/ipc/data-handlers.js');
+      const token = beginArtifactRun(workspacePath, taskId, sessionKey, { gatewayId: 'gateway-1' });
+      bindArtifactRun(taskId, sessionKey, token, 'run-1');
+      selectGetMock.mockReturnValueOnce({ id: messageId }).mockReturnValueOnce({ gid: 'gateway-1' });
+      handleMap.get('data:create-message')!(
+        {},
+        { id: 'incoming', taskId, sessionKey, runId: 'run-1', role: 'assistant', content: 'Done', timestamp: 'now' },
+      );
+      await waitForSettlement();
+      expect(settlements()[0]).toMatchObject({ status: 'failed' });
+      expect(settlements()[0]).not.toHaveProperty('slideWarnings');
+      expect(sendMock).toHaveBeenCalledWith('slidegen:failed', [{ code: 'slidegen-output-unconfirmed' }]);
     },
   );
 

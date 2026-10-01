@@ -208,3 +208,23 @@ export function hasUnconfirmedSlideToolOutput(
     return true;
   });
 }
+
+export function isToolSlideOutputCurrent(
+  workspace: string,
+  entries: readonly ToolSlideReceipt[],
+  file: string,
+): boolean {
+  const matching = entries.filter((entry) =>
+    process.platform === 'win32'
+      ? entry.receipt.fileName.toLowerCase() === file.toLowerCase()
+      : entry.receipt.fileName === file,
+  );
+  try {
+    return matching.every(
+      (entry) =>
+        JSON.stringify(readSlideGenerationReceipt(workspace, entry.receiptFile)) === JSON.stringify(entry.receipt),
+    );
+  } catch {
+    return false;
+  }
+}

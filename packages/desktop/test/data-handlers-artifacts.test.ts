@@ -622,6 +622,7 @@ describe('assistant artifact reconciliation boundary', () => {
 
     expect(autoExtractArtifactsMock).toHaveBeenCalledTimes(1);
     expect(reconcileTaskArtifactsMock).toHaveBeenCalledWith({
+      isCandidateCurrent: expect.any(Function),
       workspacePath: 'C:\\trusted-workspace',
       taskId: 'task-1',
       messageId: 'assistant-persisted',

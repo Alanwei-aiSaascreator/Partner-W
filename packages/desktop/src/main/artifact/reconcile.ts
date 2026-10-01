@@ -69,6 +69,7 @@ export interface ReconcileTaskArtifactsInput {
   baseline: ArtifactBaseline;
   /** 见 `workspacePath`。缺省 = `'workspace'`（老行为）。 */
   rootKind?: ArtifactRootKind;
+  isCandidateCurrent?: (relativePath: string) => boolean;
 }
 
 export interface ReconcileTaskArtifactsResult {
@@ -678,6 +679,8 @@ export async function reconcileTaskArtifacts(
           availability: 'available',
         };
         const persist = sqlite.transaction((): { kind: 'saved' | 'existing' | 'updated'; artifact: Artifact } => {
+          if (input.isCandidateCurrent && !input.isCandidateCurrent(candidate.relativePath))
+            throw new UnstableArtifactError();
           const beforeHandle = fstatSync(stable.fd, { bigint: true });
           const beforePath = lstatSync(candidate.absolutePath, { bigint: true });
           if (!sameSnapshot(stable.stats, beforeHandle) || !sameSnapshot(stable.stats, beforePath)) {
@@ -728,6 +731,8 @@ export async function reconcileTaskArtifacts(
               result = { kind: 'existing', artifact: artifactFromRow(winner) };
             }
           }
+          if (input.isCandidateCurrent && !input.isCandidateCurrent(candidate.relativePath))
+            throw new UnstableArtifactError();
           const afterHandle = fstatSync(stable.fd, { bigint: true });
           const afterPath = lstatSync(candidate.absolutePath, { bigint: true });
           if (!sameSnapshot(stable.stats, afterHandle) || !sameSnapshot(stable.stats, afterPath)) {
