@@ -404,7 +404,10 @@ describe('⭐ 技能示例必须能被**真解析器**吃下（漂移守卫）',
 
     expect(text, '要点名文件名以 `.slidegen` 结尾').toMatch(/\.slidegen/);
     expect(text, '要说清用写文件工具').toMatch(/写文件工具/);
-    expect(text, '要写明一次写完').toMatch(/一次写完/);
+    expect(text, 'Require a complete final source file').toContain(
+      '\u6700\u7ec8\u53ea\u6709\u4e00\u4efd\u5b8c\u6574\u6e90\u6587\u4ef6',
+    );
+    expect(text, 'Allow bounded writes without dropping sections').toContain('\u5206\u6bb5\u5b8c\u6210');
     expect(text, '要说清文件里的围栏必须闭合（客户端按围栏取源码）').toMatch(/围栏必须闭合/);
     expect(text, '要写明正文里不要复述源码').toMatch(/不要复述源码/);
     expect(text, '要写明一栅最多 200 页').toMatch(/200 页/);
