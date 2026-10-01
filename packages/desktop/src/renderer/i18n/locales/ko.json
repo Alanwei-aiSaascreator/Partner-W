@@ -2192,7 +2192,8 @@
     "groupCount": "× {{count}}",
     "noResult": "이 단계가 결과를 반환하지 않아 완료되지 않았습니다.",
     "running": "Working · completed {{count}} steps",
-    "viewDetails": "View details"
+    "viewDetails": "View details",
+    "waitingElapsed": "대기 시간 {{time}}"
   },
   "toolCall": {
     "args": "인수",

@@ -2192,7 +2192,8 @@
     "groupCount": "× {{count}}",
     "noResult": "这一步没有返回结果，所以没有完成。",
     "running": "正在处理 · 已完成 {{count}} 个步骤",
-    "viewDetails": "查看详情"
+    "viewDetails": "查看详情",
+    "waitingElapsed": "已等待 {{time}}"
   },
   "toolCall": {
     "args": "参数",

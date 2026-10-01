@@ -2192,7 +2192,8 @@
     "groupCount": "× {{count}}",
     "noResult": "Cette étape n’a rien renvoyé, elle ne s’est donc pas terminée.",
     "running": "Working · completed {{count}} steps",
-    "viewDetails": "View details"
+    "viewDetails": "View details",
+    "waitingElapsed": "Attente : {{time}}"
   },
   "toolCall": {
     "args": "Arguments",

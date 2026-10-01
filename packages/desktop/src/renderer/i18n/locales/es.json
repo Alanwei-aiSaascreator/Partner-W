@@ -2192,7 +2192,8 @@
     "groupCount": "× {{count}}",
     "noResult": "Este paso no devolvió resultado, así que no se completó.",
     "running": "Working · completed {{count}} steps",
-    "viewDetails": "View details"
+    "viewDetails": "View details",
+    "waitingElapsed": "Espera: {{time}}"
   },
   "toolCall": {
     "args": "Argumentos",

@@ -2192,7 +2192,8 @@
     "groupCount": "× {{count}}",
     "noResult": "This step returned no result, so it did not finish.",
     "running": "Working · completed {{count}} steps",
-    "viewDetails": "View details"
+    "viewDetails": "View details",
+    "waitingElapsed": "Waiting {{time}}"
   },
   "toolCall": {
     "args": "Arguments",

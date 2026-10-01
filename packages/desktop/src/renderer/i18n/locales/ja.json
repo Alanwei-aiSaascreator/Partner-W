@@ -2192,7 +2192,8 @@
     "groupCount": "× {{count}}",
     "noResult": "この手順は結果を返さなかったため、完了していません。",
     "running": "Working · completed {{count}} steps",
-    "viewDetails": "View details"
+    "viewDetails": "View details",
+    "waitingElapsed": "待機時間 {{time}}"
   },
   "toolCall": {
     "args": "引数",

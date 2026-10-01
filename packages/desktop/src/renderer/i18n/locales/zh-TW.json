@@ -2192,7 +2192,8 @@
     "groupCount": "× {{count}}",
     "noResult": "這一步沒有回傳結果，所以沒有完成。",
     "running": "Working · completed {{count}} steps",
-    "viewDetails": "View details"
+    "viewDetails": "View details",
+    "waitingElapsed": "已等待 {{time}}"
   },
   "toolCall": {
     "args": "參數",

@@ -1,4 +1,4 @@
-import { memo, useMemo, useState } from 'react';
+import { memo, useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { ChevronDown, ChevronRight, Clock, Loader2, Check, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils';
 import { motion as motionPresets } from '@/styles/design-tokens';
 import { getToolColor } from '@/lib/getToolFamily';
 import { toolCallDurationMs } from '@/lib/tool-activity';
+import { formatElapsed } from '@/lib/waiting-copy';
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/components/ui/collapsible';
 
 function StatusIcon({ status }: { status: ToolCall['status'] }) {
@@ -36,8 +37,21 @@ const ToolCallCard = memo(function ToolCallCard({ toolCall, defaultOpen, label }
   const { t } = useTranslation();
   const [open, setOpen] = useState(defaultOpen ?? false);
   const toolColor = getToolColor(toolCall.name);
+  const [now, setNow] = useState(() => Date.now());
+  const start = Date.parse(toolCall.startedAt);
+  const waiting = toolCall.status === 'running' || toolCall.status === 'awaitingApproval';
+
+  useEffect(() => {
+    if (!waiting || !Number.isFinite(start)) return;
+    setNow(Date.now());
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [waiting, start]);
+
+  const waited = waiting && Number.isFinite(start) && now >= start ? now - start : null;
 
   const duration = useMemo(() => {
+    if (toolCall.status === 'running' || toolCall.status === 'awaitingApproval') return null;
     const elapsed = toolCallDurationMs(toolCall);
     if (elapsed === null) return null;
     return elapsed < 100 ? '<0.1s' : `${(elapsed / 1000).toFixed(1)}s`;
@@ -110,7 +124,13 @@ const ToolCallCard = memo(function ToolCallCard({ toolCall, defaultOpen, label }
                   {t('toolCall.awaitingApproval')}
                 </span>
               )}
-              {duration && <span className="text-[var(--text-muted)]">{duration}</span>}
+              {waited !== null ? (
+                <span className="type-mono-data shrink-0 text-[var(--text-muted)]" data-testid="tool-call-waiting-time">
+                  {t('toolActivity.waitingElapsed', { time: waited < 100 ? '<0.1s' : formatElapsed(waited) })}
+                </span>
+              ) : duration ? (
+                <span className="text-[var(--text-muted)]">{duration}</span>
+              ) : null}
             </button>
           </CollapsibleTrigger>
 
