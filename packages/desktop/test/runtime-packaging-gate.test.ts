@@ -131,6 +131,7 @@ describe('打包门禁：随包运行时（beforePack 钩子）', () => {
               packageRoot: 'node_modules/openclaw',
               cliPath: 'node_modules/openclaw/openclaw.mjs',
               sha256: requireCjs('node:crypto').createHash('sha256').update(archive).digest('hex'),
+              patches: (await import('../scripts/verify-runtime-supply.mjs')).requiredRuntimePatches('2026.9.3'),
             },
           ],
         }),
@@ -143,6 +144,18 @@ describe('打包门禁：随包运行时（beforePack 钩子）', () => {
         ],
       };
       await expect(gate.beforePack({ packager: { projectDir, config: sameShape } })).resolves.toBeUndefined();
+      const manifestPath = path.join(projectDir, 'runtime-out', RUNTIME_MANIFEST_FILE);
+      const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+      const required = [...manifest.runtimes[0].patches];
+      for (const omitted of required) {
+        manifest.runtimes[0].patches = required.filter((patch) => patch !== omitted);
+        fs.writeFileSync(manifestPath, JSON.stringify(manifest));
+        await expect(gate.beforePack({ packager: { projectDir, config: sameShape } })).rejects.toThrow(
+          /required runtime patch/,
+        );
+      }
+      manifest.runtimes[0].patches = required;
+      fs.writeFileSync(manifestPath, JSON.stringify(manifest));
 
       // 把运行时删掉（= 忘了产出 runtime-out/）⇒ 构建必须中止
       fs.rmSync(path.join(projectDir, 'runtime-out'), { recursive: true });
