@@ -119,3 +119,92 @@ export function reuseToolSlideDeck(
     return entry.receipt.warnings.map((warning) => ({ ...warning, artifactName: current.fileName }));
   });
 }
+
+export function hasUnconfirmedSlideToolOutput(
+  tools: readonly ToolCall[],
+  entries: readonly ToolSlideReceipt[],
+): boolean {
+  const generationCommand = (tool: ToolCall) =>
+    tool.name === 'exec' &&
+    typeof tool.args?.command === 'string' &&
+    /(?:^|[\\/\s"'])deck-layout[\\/]scripts[\\/]generate\.cjs(?:[\s"']|$)/i.test(tool.args.command);
+  const known = (tool: ToolCall): boolean => {
+    if (tool.status !== 'done' || typeof tool.result !== 'string' || tool.result.length > 2 * 1024 * 1024) return false;
+    const report = reportFrom(tool);
+    if (
+      report &&
+      entries.some(
+        (entry) =>
+          entry.receiptFile === report.receiptFile &&
+          ['sourceSha256', 'fileName', 'outputSha256', 'bytes', 'pages'].every(
+            (key) => report[key] === entry.receipt[key as keyof SlideGenerationReceipt],
+          ),
+      )
+    )
+      return true;
+    const trailer =
+      tool.name === 'exec'
+        ? '\n\n(Command exited with code 1)'
+        : tool.name === 'process' && tool.args?.action === 'poll'
+          ? '\n\nProcess exited with code 1.'
+          : '';
+    if (!trailer || !tool.result.trim().endsWith(trailer)) return false;
+    try {
+      const value: unknown = JSON.parse(tool.result.trim().slice(0, -trailer.length).trim());
+      return (
+        object(value) &&
+        value.schemaVersion === 1 &&
+        value.fileCreated === false &&
+        value.artifactIndexed === false &&
+        value.visualReview === 'not-performed' &&
+        ['source-invalid', 'render-failed', 'runtime-unavailable'].includes(String(value.status))
+      );
+    } catch {
+      return false;
+    }
+  };
+  const looksLikeReport = (tool: ToolCall): boolean => {
+    if (typeof tool.result !== 'string' || tool.result.length > 2 * 1024 * 1024) return false;
+    const text = tool.result
+      .trim()
+      .replace(/\n\n(?:\(Command exited with code -?\d+\)|Process exited with code -?\d+\.)$/, '')
+      .trim();
+    try {
+      const value: unknown = JSON.parse(text);
+      return (
+        object(value) &&
+        value.schemaVersion === 1 &&
+        value.artifactIndexed === false &&
+        value.visualReview === 'not-performed' &&
+        'fileCreated' in value &&
+        ['file-generated', 'source-invalid', 'render-failed', 'runtime-unavailable', 'output-unconfirmed'].includes(
+          String(value.status),
+        )
+      );
+    } catch {
+      return false;
+    }
+  };
+  const polls = new Map<string, boolean[]>();
+  let characters = 0;
+  for (const tool of tools) {
+    characters += typeof tool.result === 'string' ? tool.result.length : 0;
+    if (tool.name !== 'process' || tool.args?.action !== 'poll' || typeof tool.args.sessionId !== 'string') continue;
+    if (tool.result?.trim().endsWith('Process still running.')) continue;
+    const outcomes = polls.get(tool.args.sessionId) ?? [];
+    outcomes.push(known(tool));
+    polls.set(tool.args.sessionId, outcomes);
+  }
+  if (characters > 8 * 1024 * 1024 || tools.length > 256) return tools.some(generationCommand);
+  return tools.some((tool) => {
+    if (tool.name !== 'exec' && !(tool.name === 'process' && tool.args?.action === 'poll')) return false;
+    if (!generationCommand(tool) && !looksLikeReport(tool)) return false;
+    if (known(tool)) return false;
+    if (generationCommand(tool) && typeof tool.result === 'string') {
+      const session = /Command still running \(session ([^,\s)]+), pid [^)]*\)\./.exec(tool.result)?.[1];
+      const outcomes = session ? polls.get(session) : undefined;
+      if (outcomes?.length && outcomes.every(Boolean)) return false;
+    }
+    return true;
+  });
+}

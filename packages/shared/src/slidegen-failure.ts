@@ -149,6 +149,7 @@ type SlidegenFailureReason =
    *    取不到就明确报"没取到"，让用户重试 —— 那比交付一份缺了一半的演示强得多。
    */
   | { code: 'slidegen-reply-unavailable' }
+  | { code: 'slidegen-output-unconfirmed' }
   /** 没有 `// title: …`。标题是文件名，缺了就只能编一个，而用户认不出编出来的名字。 */
   | { code: 'slidegen-title-missing' }
   /** JSX 结构不成立（标签不配平、属性没值…）。 */

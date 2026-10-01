@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from '@/lib/toast';
-import { slidegenFailureToastBody } from '@/lib/slidegen-copy';
+import { slidegenFailureToastBody, slidegenFailureToastTitle } from '@/lib/slidegen-copy';
 import { docgenFailureMessage } from '@/lib/docgen-failure-copy';
 import { htmlgenFailureMessage } from '@/lib/htmlgen-failure-copy';
 import { ARTIFACT_FAILURE_MARKER } from '@/lib/artifact-delivery-feedback';
@@ -75,7 +75,7 @@ export function useClaimGuardToast(): void {
       }
       if (violation.slideFailures?.length) {
         lines.push(
-          t('slidegen.failedTitle'),
+          slidegenFailureToastTitle(violation.slideFailures, t),
           ...violation.slideFailures.map((failure) => slidegenFailureToastBody([failure], t)),
         );
       }

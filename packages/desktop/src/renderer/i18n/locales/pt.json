@@ -1977,6 +1977,7 @@
       "fileNoFence": "O assistente criou um arquivo de layout, mas não há código de layout dentro dele, então nada foi gerado. Peça ao assistente para completar esse arquivo.",
       "fileTooLarge": "O arquivo de layout é grande demais ({{got}} bytes, o limite é {{max}}). Peça ao assistente para enxugar o conteúdo ou dividir em dois.",
       "fileUnreadable": "Não foi possível ler o arquivo de layout do assistente — ele pode ter ficado pela metade ou ter sido excluído. Tentar de novo costuma resolver.",
+      "outputUnconfirmed": "Não foi possível confirmar o resultado; o arquivo pode já existir. A geração automática está pausada para evitar duplicatas. Verifique os arquivos existentes antes de tentar novamente.",
       "renderFailed": "Algo deu errado ao montar os slides. É um problema nosso, não do seu conteúdo.",
       "replyIncomplete": "O conteúdo era longo demais para ser recuperado por inteiro desta vez, então nenhum slide foi gerado. Encurte e tente de novo.",
       "replyUnavailable": "Não foi possível recuperar a resposta completa deste turno, então **nenhum slide foi gerado** — meio deck é pior que nada. Tentar de novo costuma resolver.",
@@ -1986,6 +1987,7 @@
       "unparsable": "O layout tem um erro de sintaxe e não pôde ser lido."
     },
     "failedTitle": "Não foi possível gerar a apresentação",
+    "unconfirmedTitle": "É preciso verificar a apresentação",
     "warn": {
       "footerOverlap": "O rodapé da página {{page}} se sobrepõe a um cartão de conteúdo",
       "head": "O arquivo já está em 产物 à direita. Só estes pontos precisam de ajuste:",

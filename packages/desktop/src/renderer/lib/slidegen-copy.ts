@@ -44,6 +44,8 @@ function failureLine(failure: SlidegenFailure, t: Translate): string {
     case 'slidegen-reply-unavailable':
       // 没取到本轮那条回复 ⇒ **我们没生成**（宁可没有，也不给半份）。重试有意义。
       return t('slidegen.fail.replyUnavailable');
+    case 'slidegen-output-unconfirmed':
+      return t('slidegen.fail.outputUnconfirmed');
     case 'slidegen-title-missing':
       // 标题同时是**文件名**。说清"要一行 title 注释"，助手才知道补什么。
       return t('slidegen.fail.titleMissing');
@@ -75,4 +77,12 @@ export function slidegenFailureToastBody(failures: readonly SlidegenFailure[], t
     lines.push(line);
   }
   return lines.join('\n');
+}
+
+export function slidegenFailureToastTitle(failures: readonly SlidegenFailure[], t: Translate): string {
+  return t(
+    failures.some((failure) => failure.code === 'slidegen-output-unconfirmed')
+      ? 'slidegen.unconfirmedTitle'
+      : 'slidegen.failedTitle',
+  );
 }

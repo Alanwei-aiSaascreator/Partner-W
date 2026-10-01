@@ -1977,6 +1977,7 @@
       "fileNoFence": "L’assistant a écrit un fichier de mise en page, mais il ne contient pas de code de mise en page : rien n’a donc été généré. Demandez-lui de compléter ce fichier.",
       "fileTooLarge": "Le fichier de mise en page est trop volumineux ({{got}} octets, la limite est {{max}}). Demandez à l’assistant de l’alléger ou de le scinder en deux.",
       "fileUnreadable": "Le fichier de mise en page de l’assistant n’a pas pu être lu : il était peut-être à moitié écrit ou supprimé. Réessayer suffit généralement.",
+      "outputUnconfirmed": "Le résultat n’a pas pu être confirmé ; un fichier existe peut-être déjà. La génération automatique est suspendue pour éviter les doublons. Vérifiez les fichiers existants avant de réessayer.",
       "renderFailed": "Une erreur est survenue lors de la mise en page. Cela vient de notre côté, pas de votre contenu.",
       "replyIncomplete": "Le contenu était trop long pour être récupéré en entier cette fois : aucune diapositive n’a été générée. Raccourcissez-le et réessayez.",
       "replyUnavailable": "La réponse complète de ce tour n’a pas pu être récupérée : **aucune diapositive n’a été générée** — une demi-présentation est pire que rien. Réessayer suffit généralement.",
@@ -1986,6 +1987,7 @@
       "unparsable": "La mise en page contient une erreur de syntaxe et n’a pas pu être lue."
     },
     "failedTitle": "La présentation n’a pas pu être générée",
+    "unconfirmedTitle": "La présentation doit être vérifiée",
     "warn": {
       "footerOverlap": "Le pied de la page {{page}} chevauche une carte de contenu",
       "head": "Le fichier est déjà dans 产物 à droite. Seuls ces points sont à ajuster :",

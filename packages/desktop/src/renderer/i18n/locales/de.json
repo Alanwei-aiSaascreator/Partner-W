@@ -1977,6 +1977,7 @@
       "fileNoFence": "Der Assistent hat eine Layout-Datei geschrieben, aber darin steht kein Layout-Code – deshalb wurde nichts erzeugt. Bitten Sie den Assistenten, diese Datei zu ergänzen.",
       "fileTooLarge": "Die Layout-Datei ist zu groß ({{got}} Bytes, Grenze {{max}}). Bitten Sie den Assistenten, sie zu kürzen oder auf zwei Dateien aufzuteilen.",
       "fileUnreadable": "Die Layout-Datei des Assistenten ließ sich nicht lesen – sie war vielleicht noch nicht fertig geschrieben oder wurde gelöscht. Ein erneuter Versuch hilft meistens.",
+      "outputUnconfirmed": "Das Ergebnis konnte nicht bestätigt werden; eine Datei kann bereits vorhanden sein. Die automatische Erstellung ist pausiert, um Duplikate zu vermeiden. Prüfen Sie vorhandene Ergebnisse vor einem erneuten Versuch.",
       "renderFailed": "Beim Setzen der Folien ist etwas schiefgelaufen. Das liegt auf unserer Seite, nicht an Ihren Inhalten.",
       "replyIncomplete": "Der Inhalt war zu lang, um ihn diesmal vollständig zu laden – es wurden keine Folien erzeugt. Kürzen Sie ihn und versuchen Sie es erneut.",
       "replyUnavailable": "Die vollständige Antwort dieses Durchlaufs konnte nicht geladen werden, daher wurden **keine Folien erzeugt** – ein halbes Deck ist schlechter als keines. Ein erneuter Versuch hilft meistens.",
@@ -1986,6 +1987,7 @@
       "unparsable": "Das Layout enthält einen Syntaxfehler und konnte nicht gelesen werden."
     },
     "failedTitle": "Die Präsentation konnte nicht erstellt werden",
+    "unconfirmedTitle": "Präsentationsergebnis prüfen",
     "warn": {
       "footerOverlap": "Die Fußzeile auf Seite {{page}} überlappt eine Inhaltskarte",
       "head": "Die Datei liegt bereits rechts unter 产物. Nur diese Stellen müssen angepasst werden:",

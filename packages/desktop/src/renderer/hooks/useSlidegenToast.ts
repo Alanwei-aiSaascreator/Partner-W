@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from '@/lib/toast';
-import { slidegenFailureToastBody } from '@/lib/slidegen-copy';
+import { slidegenFailureToastBody, slidegenFailureToastTitle } from '@/lib/slidegen-copy';
 export function useSlidegenToast(): void {
   const { t } = useTranslation();
 
@@ -9,7 +9,7 @@ export function useSlidegenToast(): void {
     return window.clawwork.onSlidegenFailed((failures) => {
       const body = slidegenFailureToastBody(failures, t);
       if (!body) return;
-      toast.error(t('slidegen.failedTitle'), { description: body });
+      toast.error(slidegenFailureToastTitle(failures, t), { description: body });
     });
   }, [t]);
 }

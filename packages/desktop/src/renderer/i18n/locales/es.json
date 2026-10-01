@@ -1977,6 +1977,7 @@
       "fileNoFence": "El asistente escribió un archivo de diseño, pero no contiene código de diseño, así que no se generó nada. Pídele que complete ese archivo.",
       "fileTooLarge": "El archivo de diseño es demasiado grande ({{got}} bytes, el límite es {{max}}). Pídele al asistente que lo recorte o que lo divida en dos.",
       "fileUnreadable": "No se pudo leer el archivo de diseño del asistente: puede que estuviera a medio escribir o se haya borrado. Volver a intentarlo suele bastar.",
+      "outputUnconfirmed": "No se pudo confirmar el resultado; puede que el archivo ya exista. La generación automática está en pausa para evitar duplicados. Revisa los archivos existentes antes de volver a intentarlo.",
       "renderFailed": "Algo falló al maquetar las diapositivas. Es un problema nuestro, no de tu contenido.",
       "replyIncomplete": "El contenido era demasiado largo para recuperarlo entero esta vez, así que no se generaron diapositivas. Acórtalo y vuelve a intentarlo.",
       "replyUnavailable": "No se pudo recuperar la respuesta completa de este turno, así que **no se generaron diapositivas** — medio diseño es peor que ninguno. Volver a intentarlo suele bastar.",
@@ -1986,6 +1987,7 @@
       "unparsable": "El diseño tiene un error de sintaxis y no se pudo leer."
     },
     "failedTitle": "No se pudo generar la presentación",
+    "unconfirmedTitle": "Hay que comprobar la presentación",
     "warn": {
       "footerOverlap": "El pie de la página {{page}} se superpone a una tarjeta de contenido",
       "head": "El archivo ya está en 产物 a la derecha. Solo hay que ajustar estos puntos:",

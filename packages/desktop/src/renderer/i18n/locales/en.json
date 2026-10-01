@@ -1977,6 +1977,7 @@
       "fileNoFence": "The assistant wrote a layout file, but it has no layout code in it, so nothing was generated. Ask the assistant to fill that file in.",
       "fileTooLarge": "The layout file is too large ({{got}} bytes, the limit is {{max}}). Ask the assistant to trim it down or split it into two.",
       "fileUnreadable": "The assistant's layout file could not be read — it may have been half-written or deleted. Trying again usually fixes it.",
+      "outputUnconfirmed": "The result could not be confirmed; a file may already exist. Automatic generation is paused to avoid duplicates. Check the existing outputs before trying again.",
       "renderFailed": "Something went wrong while laying out the slides. That is on our side, not your content.",
       "replyIncomplete": "The content was too long to be retrieved in full this time, so no slides were generated. Try trimming it and asking again.",
       "replyUnavailable": "The full reply for this turn could not be retrieved, so **no slides were generated** — half a deck is worse than none. Trying again usually fixes it.",
@@ -1986,6 +1987,7 @@
       "unparsable": "The layout has a syntax error and could not be read."
     },
     "failedTitle": "The presentation couldn't be generated",
+    "unconfirmedTitle": "Presentation delivery needs checking",
     "warn": {
       "footerOverlap": "The footer on page {{page}} overlaps a content card",
       "head": "The file is already in 产物 on the right. These spots need adjusting:",

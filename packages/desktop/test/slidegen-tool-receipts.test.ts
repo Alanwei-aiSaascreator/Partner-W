@@ -205,3 +205,133 @@ it('bounds stdout rather than extracting a report out of truncated or oversized 
     collect([message({ toolCalls: [tool({ result: report() + ' '.repeat(2 * 1024 * 1024) })] })]).receipts,
   ).toEqual([]);
 });
+
+it('pauses automatic fallback for an existing file without a usable receipt or unknown output', () => {
+  expect(collector.hasUnconfirmedSlideToolOutput).toBeTypeOf('function');
+  for (const result of [
+    report({ receiptStatus: 'unavailable', receiptFile: undefined }),
+    report({ status: 'output-unconfirmed', fileCreated: null, receiptStatus: undefined, receiptFile: undefined }),
+    report().slice(0, 70),
+  ]) {
+    expect(
+      collector.hasUnconfirmedSlideToolOutput(
+        [
+          tool({
+            args: { command: 'node "C:\\skills\\deck-layout\\scripts\\generate.cjs" --source report.slidegen' },
+            result,
+          }),
+        ],
+        [],
+      ),
+    ).toBe(true);
+  }
+});
+it('accepts a verified completed report but never an errored or unverified success report', () => {
+  const entries = collect().receipts;
+  expect(collector.hasUnconfirmedSlideToolOutput([tool()], entries)).toBe(false);
+  expect(collector.hasUnconfirmedSlideToolOutput([tool()], [])).toBe(true);
+  expect(collector.hasUnconfirmedSlideToolOutput([tool({ status: 'error' })], entries)).toBe(true);
+});
+it('distinguishes confirmed no-output failure from an unknown outcome and ignores unrelated tools', () => {
+  const failure = JSON.stringify({
+    schemaVersion: 1,
+    status: 'source-invalid',
+    fileCreated: false,
+    artifactIndexed: false,
+    visualReview: 'not-performed',
+  });
+  expect(
+    collector.hasUnconfirmedSlideToolOutput(
+      [
+        tool({
+          result: failure + '\n\n(Command exited with code 1)',
+          args: { command: 'node deck-layout/scripts/generate.cjs' },
+        }),
+      ],
+      [],
+    ),
+  ).toBe(false);
+  expect(
+    collector.hasUnconfirmedSlideToolOutput(
+      [
+        tool({ name: 'web_search', result: 'Some results' }),
+        tool({ args: { command: 'node unrelated.cjs' }, result: 'Done' }),
+        tool({ args: { command: 'node unrelated/scripts/generate.cjs' }, result: 'Done' }),
+      ],
+      [],
+    ),
+  ).toBe(false);
+});
+it('resolves a background generation only with its own verified terminal poll', () => {
+  const launch = tool({
+    args: { command: 'node deck-layout/scripts/generate.cjs' },
+    result: 'Command still running (session quiet-river, pid 42). Use process for follow-up.',
+  });
+  const poll = tool({
+    id: 'poll-1',
+    name: 'process',
+    args: { action: 'poll', sessionId: 'quiet-river' },
+    result: report() + '\n\nProcess exited with code 0.',
+  });
+  const entries = collect([message({ toolCalls: [poll] })]).receipts;
+  expect(collector.hasUnconfirmedSlideToolOutput([launch], [])).toBe(true);
+  expect(collector.hasUnconfirmedSlideToolOutput([launch, poll], entries)).toBe(false);
+  expect(
+    collector.hasUnconfirmedSlideToolOutput(
+      [launch, { ...poll, args: { action: 'poll', sessionId: 'another' } }],
+      entries,
+    ),
+  ).toBe(true);
+  expect(collector.hasUnconfirmedSlideToolOutput([launch, { ...poll, result: report() }], entries)).toBe(true);
+  expect(
+    collector.hasUnconfirmedSlideToolOutput(
+      [launch, poll, { ...poll, id: 'poll-2', result: 'truncated\n\nProcess exited with code 0.' }],
+      entries,
+    ),
+  ).toBe(true);
+});
+it('holds a background generation with an intermediate poll but accepts its confirmed no-output exit', () => {
+  const launch = tool({
+    args: { command: 'node deck-layout/scripts/generate.cjs' },
+    result: 'Command still running (session quiet-river, pid 42). Use process for follow-up.',
+  });
+  const poll = tool({
+    id: 'poll-1',
+    name: 'process',
+    args: { action: 'poll', sessionId: 'quiet-river' },
+    result: '\n\nProcess still running.',
+  });
+  const failure = JSON.stringify({
+    schemaVersion: 1,
+    status: 'source-invalid',
+    fileCreated: false,
+    artifactIndexed: false,
+    visualReview: 'not-performed',
+  });
+  expect(collector.hasUnconfirmedSlideToolOutput([launch, poll], [])).toBe(true);
+  expect(
+    collector.hasUnconfirmedSlideToolOutput(
+      [launch, poll, { ...poll, id: 'poll-2', result: failure + '\n\nProcess exited with code 1.' }],
+      [],
+    ),
+  ).toBe(false);
+});
+
+it('does not mistake successful preflight and other schema-one tools for generation attempts', () => {
+  const preflight = tool({
+    id: 'preflight',
+    args: { command: 'node skills/deck-layout/scripts/preflight.cjs report.slidegen' },
+    result: JSON.stringify({
+      schemaVersion: 1,
+      status: 'source-valid',
+      pages: 1,
+      sourceSha256: input.sourceSha256,
+      diagnostics: [],
+    }),
+  });
+  const other = tool({
+    id: 'other',
+    result: JSON.stringify({ schemaVersion: 1, status: 'complete', value: 'other tool' }),
+  });
+  expect(collector.hasUnconfirmedSlideToolOutput([preflight, other, tool()], collect().receipts)).toBe(false);
+});

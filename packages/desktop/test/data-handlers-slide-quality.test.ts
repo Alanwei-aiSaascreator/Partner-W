@@ -16,6 +16,7 @@ const htmlMock = vi.fn();
 const slidesMock = vi.fn<typeof generateSlidesFromMessage>();
 const collectReceiptsMock = vi.fn();
 const reuseDeckMock = vi.fn();
+const unconfirmedMock = vi.fn();
 
 vi.mock('electron', () => ({
   ipcMain: {
@@ -52,6 +53,7 @@ vi.mock('../src/main/slidegen/generate.js', () => ({ generateSlidesFromMessage: 
 vi.mock('../src/main/slidegen/tool-receipts.js', () => ({
   collectToolSlideReceipts: collectReceiptsMock,
   reuseToolSlideDeck: reuseDeckMock,
+  hasUnconfirmedSlideToolOutput: unconfirmedMock,
 }));
 vi.mock('../src/main/artifact/agent-workspace.js', () => ({
   resolveAgentWorkspace: vi.fn().mockResolvedValue('C:\\agent-quality-workspace'),
@@ -135,6 +137,7 @@ describe('slide quality delivery settlement', () => {
     slidesMock.mockReset().mockResolvedValue(warningResult());
     collectReceiptsMock.mockReset().mockReturnValue({ receipts: [], rejected: 0 });
     reuseDeckMock.mockReset().mockReturnValue([]);
+    unconfirmedMock.mockReset().mockReturnValue(false);
     const { registerDataHandlers, beginArtifactRun } = await import('../src/main/ipc/data-handlers.js');
     registerDataHandlers();
     beginArtifactRun(workspacePath, taskId, sessionKey);
@@ -195,6 +198,37 @@ describe('slide quality delivery settlement', () => {
     );
     expect(settlements()[0]).toMatchObject({ status: 'needs-review', slideWarnings: [warning] });
   });
+
+  it.each(['unconfirmed', 'rejected'])(
+    'pauses automatic generation for %s output but still reconciles the real file',
+    async (kind) => {
+      if (kind === 'unconfirmed') unconfirmedMock.mockReturnValue(true);
+      else collectReceiptsMock.mockReturnValue({ receipts: [], rejected: 1 });
+      reconcileMock.mockResolvedValue({ ...emptyReconciliation, saved: [artifact] });
+      const { beginArtifactRun, bindArtifactRun } = await import('../src/main/ipc/data-handlers.js');
+      const token = beginArtifactRun(workspacePath, taskId, sessionKey, { gatewayId: 'gateway-1' });
+      bindArtifactRun(taskId, sessionKey, token, 'run-1');
+      selectGetMock.mockReturnValueOnce({ id: messageId }).mockReturnValueOnce({ gid: 'gateway-1' });
+      handleMap.get('data:create-message')!(
+        {},
+        {
+          id: 'incoming',
+          taskId,
+          sessionKey,
+          runId: 'run-1',
+          role: 'assistant',
+          content: 'Created',
+          timestamp: '2026-09-30T00:00:00Z',
+        },
+      );
+      await waitForSettlement();
+      expect(slidesMock).not.toHaveBeenCalled();
+      expect(reconcileMock).toHaveBeenCalled();
+      expect(sendMock).toHaveBeenCalledWith('artifact:saved', artifact);
+      expect(sendMock).toHaveBeenCalledWith('slidegen:failed', [{ code: 'slidegen-output-unconfirmed' }]);
+      expect(settlements()[0]).toMatchObject({ status: 'failed' });
+    },
+  );
 
   it('settles saved deck warnings with their filenames and canonical turn identity', async () => {
     const secondArtifact = {

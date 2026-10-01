@@ -15,7 +15,11 @@ import { generateDocumentsFromMessage } from '../docgen/generate.js';
 import { resolvePptxTemplatesRoot } from '../docgen/pptx-template/locate.js';
 import { generateHtmlPagesFromMessage } from '../htmlgen/generate.js';
 import { generateSlidesFromMessage } from '../slidegen/generate.js';
-import { collectToolSlideReceipts, reuseToolSlideDeck } from '../slidegen/tool-receipts.js';
+import {
+  collectToolSlideReceipts,
+  hasUnconfirmedSlideToolOutput,
+  reuseToolSlideDeck,
+} from '../slidegen/tool-receipts.js';
 import {
   captureDeckFileBaseline,
   changedDeckFiles,
@@ -895,7 +899,11 @@ function finalizeAssistantArtifacts(input: {
         if (structured.status === 'complete') slideContent = structured.content;
       }
 
-      if (slideContent === null) {
+      if (confirmed.rejected > 0 || hasUnconfirmedSlideToolOutput(tools, confirmed.receipts)) {
+        const failure: SlidegenFailure = { code: 'slidegen-output-unconfirmed' };
+        deliveryFailure.slideFailures = [failure];
+        for (const win of BrowserWindow.getAllWindows()) win.webContents.send('slidegen:failed', [failure]);
+      } else if (slideContent === null) {
         // 没拿到可用的原文 ⇒ 只推失败，不进排版。
         // ⚠️ 这里**不能 `return`**：这一整个是收尾 IIFE 的一段，后面还有产物对账 ——
         //    提前 return 会让这一轮的产物**整个不被收集**（那正是我们要消灭的静默）。
