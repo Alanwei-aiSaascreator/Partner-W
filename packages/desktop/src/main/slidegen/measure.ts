@@ -106,7 +106,7 @@ const MEASURE_SCRIPT = `(() => {
       textBounds: kind === 'text' ? Array.from(range.getClientRects()).filter(rect => rect.width > 0 && rect.height > 0)
         .map(rect => ({x: rect.x, y: rect.y, w: rect.width, h: rect.height})) : undefined,
       x: r.x, y: r.y, w: r.width, h: r.height,
-      text: kind === 'text' ? el.textContent.trim() : '',
+      text: kind === 'text' ? (el.innerText ?? el.textContent.trim()) : '',
       fontSize: parseFloat(cs.fontSize), fontWeight: cs.fontWeight, color: cs.color,
       fontFamily: cs.fontFamily, fontStyle: cs.fontStyle,
       lineHeight: cs.lineHeight === 'normal' ? undefined : parseFloat(cs.lineHeight),
