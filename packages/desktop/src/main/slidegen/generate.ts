@@ -138,12 +138,14 @@ export async function generateSlidesFromMessage(input: {
         result.warnings.push(...reusedWarnings);
         continue;
       }
-      notifyArtifactActivity(input.onActivity, 'generating-presentation');
+      notifyArtifactActivity(input.onActivity, 'generating-presentation', { completed: 0, total: pages.length });
       const rendered = await renderSlideDeck({
         pages,
         workspacePath: input.workspacePath,
         assetsRoot: assetRoot,
         assertCurrent: owner.assertCurrent,
+        onPage: (completed, total) =>
+          notifyArtifactActivity(input.onActivity, 'generating-presentation', { completed, total }),
       });
 
       owner.assertCurrent();

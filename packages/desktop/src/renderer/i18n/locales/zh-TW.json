@@ -424,6 +424,7 @@
       "succeeded": "處理完成",
       "truncated": "較早的處理記錄已不再保留。"
     },
+    "deliveryPageProgress": "已排版 {{completed}} / {{total}} 頁",
     "describeTask": "描述你的任務…",
     "fileContextLimitExceeded": "檔案上下文總計超過 500KB 限制",
     "grantFolderFailed": "新增資料夾失敗",

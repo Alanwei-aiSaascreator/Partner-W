@@ -15,10 +15,10 @@ export function captureArtifactDeliveryOperation(identity: {
   let operation: ReturnType<typeof beginArtifactDeliveryActivity>;
   let ended = false;
   return {
-    phase: (phase) => {
+    phase: (phase, progress) => {
       if (ended) return;
-      if (operation) operation.phase(phase);
-      else operation = beginArtifactDeliveryActivity({ ...captured, owner }, phase);
+      if (operation) operation.phase(phase, progress);
+      else operation = beginArtifactDeliveryActivity({ ...captured, owner }, phase, progress);
     },
     finish: (status) => {
       if (ended) return;

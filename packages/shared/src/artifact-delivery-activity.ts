@@ -1,3 +1,25 @@
+import { SLIDEGEN_MAX_PAGES } from './slidegen-failure.js';
+
+export interface ArtifactDeliveryPageProgress {
+  completed: number;
+  total: number;
+}
+
+export function isArtifactDeliveryPageProgress(value: unknown): value is ArtifactDeliveryPageProgress {
+  if (!value || typeof value !== 'object') return false;
+  const progress = value as Record<string, unknown>;
+  return (
+    typeof progress.completed === 'number' &&
+    typeof progress.total === 'number' &&
+    Number.isInteger(progress.completed) &&
+    Number.isInteger(progress.total) &&
+    progress.completed >= 0 &&
+    progress.completed <= progress.total &&
+    progress.total > 0 &&
+    progress.total <= SLIDEGEN_MAX_PAGES
+  );
+}
+
 export interface ArtifactWorkspaceScope {
   scope: string | null;
   /** Monotonic within this main process; rejects late initial snapshots. */
@@ -29,6 +51,7 @@ export interface ArtifactDeliveryActivity {
   startedAt: number;
   phase: ArtifactDeliveryPhase;
   status: 'active' | ArtifactDeliveryTerminalStatus;
+  pageProgress?: ArtifactDeliveryPageProgress;
   /** Bounded, actually observed phase transitions; absent on older senders. */
   observedPhases?: ArtifactDeliveryPhaseObservation[];
   historyTruncated?: boolean;

@@ -79,7 +79,13 @@ it.each([
 it('slidegen starts only after page validation and before rendering', async () => {
   const result = await generateSlidesFromMessage({ ...input(), content: deck });
   expect(result.failed).toEqual([]);
-  expect(mocks.events).toEqual(['generating-presentation', 'render', 'saving-artifacts', 'save']);
+  expect(mocks.events).toEqual([
+    'generating-presentation',
+    'render',
+    'generating-presentation',
+    'saving-artifacts',
+    'save',
+  ]);
 });
 
 it('an over-budget deck does not announce rendering or saving', async () => {

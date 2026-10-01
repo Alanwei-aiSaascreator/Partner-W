@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { ArtifactDeliveryActivity as DeliveryActivity } from '@clawwork/shared';
+import { isArtifactDeliveryPageProgress } from '@clawwork/shared';
 import { useDeliveryActivityStore } from '../stores/deliveryActivityStore';
 import { useTaskStore } from '../stores/taskStore';
 import { formatElapsed } from '../lib/waiting-copy';
@@ -32,6 +33,25 @@ function ObservedPhases({ activity }: { activity: DeliveryActivity }) {
           </li>
         ))}
       </ol>
+    </div>
+  );
+}
+
+function PageProgress({ activity }: { activity: DeliveryActivity }) {
+  const { t } = useTranslation();
+  if (activity.phase !== 'generating-presentation' || !isArtifactDeliveryPageProgress(activity.pageProgress))
+    return null;
+  const { completed, total } = activity.pageProgress;
+  const label = t('chatInput.deliveryPageProgress', { completed, total });
+  return (
+    <div className="mt-2 space-y-1">
+      <p className="type-caption text-[var(--text-secondary)]">{label}</p>
+      <progress
+        value={completed}
+        max={total}
+        aria-label={label}
+        className="h-1.5 w-full appearance-none overflow-hidden rounded-full [&::-webkit-progress-bar]:bg-[var(--bg-hover)] [&::-webkit-progress-value]:bg-[var(--accent)] [&::-moz-progress-bar]:bg-[var(--accent)]"
+      />
     </div>
   );
 }
@@ -82,6 +102,7 @@ export default function ArtifactDeliveryActivity({ sessionKey }: { sessionKey: s
               {formatElapsed(Math.max(0, now - activity.startedAt))}
             </span>
           </div>
+          <PageProgress activity={activity} />
           {Boolean(activity.observedPhases?.length) && (
             <details className="mt-1">
               <summary className="type-caption cursor-pointer text-[var(--text-muted)]">

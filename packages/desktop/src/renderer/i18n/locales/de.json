@@ -424,6 +424,7 @@
       "succeeded": "Verarbeitung abgeschlossen",
       "truncated": "Frühere Aktionen werden nicht mehr aufbewahrt."
     },
+    "deliveryPageProgress": "{{completed}} / {{total}} Seiten gestaltet",
     "describeTask": "Beschreiben Sie Ihre Aufgabe…",
     "fileContextLimitExceeded": "Dateikontext ueberschreitet 500-KB-Limit",
     "grantFolderFailed": "Ordner konnte nicht hinzugefügt werden",

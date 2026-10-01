@@ -424,6 +424,7 @@
       "succeeded": "处理完成",
       "truncated": "较早的处理记录已不再保留。"
     },
+    "deliveryPageProgress": "已排版 {{completed}} / {{total}} 页",
     "describeTask": "描述你的任务…",
     "fileContextLimitExceeded": "文件上下文总量超过 500KB 限制",
     "grantFolderFailed": "添加文件夹失败",

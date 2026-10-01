@@ -424,6 +424,7 @@
       "succeeded": "Traitement terminé",
       "truncated": "Les actions précédentes ne sont plus conservées."
     },
+    "deliveryPageProgress": "{{completed}} / {{total}} pages mises en page",
     "describeTask": "Décrivez votre tâche…",
     "fileContextLimitExceeded": "Le contexte total des fichiers dépasse la limite de 500 Ko",
     "grantFolderFailed": "Échec de l'ajout du dossier",

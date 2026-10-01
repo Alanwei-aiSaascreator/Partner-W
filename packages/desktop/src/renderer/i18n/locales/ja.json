@@ -424,6 +424,7 @@
       "succeeded": "処理が完了しました",
       "truncated": "以前の処理記録は保持されていません。"
     },
+    "deliveryPageProgress": "{{completed}} / {{total}} ページのレイアウト完了",
     "describeTask": "タスクを入力…",
     "fileContextLimitExceeded": "ファイルコンテキストの合計が 500KB の上限を超えています",
     "grantFolderFailed": "フォルダを追加できませんでした",

@@ -424,6 +424,7 @@
       "succeeded": "Procesamiento completado",
       "truncated": "Las acciones anteriores ya no se conservan."
     },
+    "deliveryPageProgress": "{{completed}} / {{total}} páginas maquetadas",
     "describeTask": "Describe tu tarea…",
     "fileContextLimitExceeded": "El contexto total de archivos excede el límite de 500KB",
     "grantFolderFailed": "No se pudo agregar la carpeta",

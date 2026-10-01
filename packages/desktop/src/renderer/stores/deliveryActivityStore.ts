@@ -50,6 +50,7 @@ export const useDeliveryActivityStore = create<DeliveryActivityState>((set, get)
         ...(changedOwner ? {} : state.records),
         [activity.operationId]: {
           ...activity,
+          ...(activity.pageProgress ? { pageProgress: { ...activity.pageProgress } } : {}),
           ...(activity.observedPhases ? { observedPhases: activity.observedPhases.map((step) => ({ ...step })) } : {}),
         },
       };

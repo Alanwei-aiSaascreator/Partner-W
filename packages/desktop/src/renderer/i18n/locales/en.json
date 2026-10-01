@@ -424,6 +424,7 @@
       "succeeded": "Processing completed",
       "truncated": "Earlier actions are no longer retained."
     },
+    "deliveryPageProgress": "Laid out {{completed}} / {{total}} pages",
     "describeTask": "Describe your task…",
     "fileContextLimitExceeded": "Total file context exceeds 500KB limit",
     "grantFolderFailed": "Failed to add folder",

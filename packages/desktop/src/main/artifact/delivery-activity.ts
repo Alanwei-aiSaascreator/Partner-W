@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { BrowserWindow, ipcMain } from 'electron';
+import { isArtifactDeliveryPageProgress } from '@clawwork/shared';
 import type {
   ArtifactDeliveryActivity,
+  ArtifactDeliveryPageProgress,
   ArtifactDeliveryPhase,
   ArtifactDeliveryPhaseObservation,
   ArtifactDeliveryTerminalStatus,
@@ -25,6 +27,7 @@ const MAX_COMPLETED_OPERATIONS = 256;
 const MAX_PHASE_OBSERVATIONS = 64;
 const copyActivity = (event: ArtifactDeliveryActivity): ArtifactDeliveryActivity => ({
   ...event,
+  ...(event.pageProgress ? { pageProgress: { ...event.pageProgress } } : {}),
   observedPhases: event.observedPhases?.map((step) => ({ ...step })),
 });
 subscribeWorkspaceScope(() => {
@@ -52,9 +55,10 @@ export function beginArtifactDeliveryActivity(
     owner: ArtifactWorkspaceScope;
   },
   initialPhase: ArtifactDeliveryPhase,
+  initialProgress?: ArtifactDeliveryPageProgress,
 ): {
   operationId: string;
-  phase: (phase: ArtifactDeliveryPhase) => void;
+  phase: (phase: ArtifactDeliveryPhase, progress?: ArtifactDeliveryPageProgress) => void;
   finish: (status: ArtifactDeliveryTerminalStatus) => void;
 } | null {
   const owner = { ...input.owner };
@@ -74,6 +78,7 @@ export function beginArtifactDeliveryActivity(
   let sequence = 0,
     terminal = false,
     phase = initialPhase;
+  let pageProgress = isArtifactDeliveryPageProgress(initialProgress) ? { ...initialProgress } : undefined;
   const observedPhases: ArtifactDeliveryPhaseObservation[] = [];
   let historyTruncated = false;
   const emit = (status: ArtifactDeliveryActivity['status']): void => {
@@ -99,6 +104,9 @@ export function beginArtifactDeliveryActivity(
       sequence: ++sequence,
       phase,
       status,
+      ...(phase === 'generating-presentation' && isArtifactDeliveryPageProgress(pageProgress)
+        ? { pageProgress: { ...pageProgress } }
+        : {}),
       observedPhases: observedPhases.map((step) => ({ ...step })),
       ...(historyTruncated ? { historyTruncated: true } : {}),
       ...(status !== 'active' ? { endedAt: observedAt } : {}),
@@ -114,8 +122,9 @@ export function beginArtifactDeliveryActivity(
   emit('active');
   return {
     operationId,
-    phase: (next) => {
+    phase: (next, progress) => {
       phase = next;
+      pageProgress = isArtifactDeliveryPageProgress(progress) ? { ...progress } : undefined;
       emit('active');
     },
     finish: (status) => emit(status),

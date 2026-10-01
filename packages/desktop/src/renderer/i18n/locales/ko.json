@@ -424,6 +424,7 @@
       "succeeded": "처리가 완료되었습니다",
       "truncated": "이전 처리 기록은 더 이상 보관되지 않습니다."
     },
+    "deliveryPageProgress": "{{completed}} / {{total}}페이지 레이아웃 완료",
     "describeTask": "작업을 설명하세요…",
     "fileContextLimitExceeded": "전체 파일 컨텍스트가 500KB 제한을 초과했습니다",
     "grantFolderFailed": "폴더를 추가하지 못했습니다",

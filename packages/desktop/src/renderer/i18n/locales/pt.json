@@ -424,6 +424,7 @@
       "succeeded": "Processamento concluído",
       "truncated": "As ações anteriores não são mais mantidas."
     },
+    "deliveryPageProgress": "{{completed}} / {{total}} páginas diagramadas",
     "describeTask": "Descreva sua tarefa…",
     "fileContextLimitExceeded": "O contexto total de arquivos excede o limite de 500KB",
     "grantFolderFailed": "Falha ao adicionar a pasta",
