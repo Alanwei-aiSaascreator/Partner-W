@@ -4,6 +4,8 @@ import path from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import { ensureBundledWorkflowTools } from '../src/main/runtime/workflow-tools';
 import { buildGatewayEnvironment, ensureGatewayRunning } from '../src/main/runtime/gateway-process';
+import { ASSISTANT_ID_BY_WORKSPACE } from '../src/renderer/lib/assistant-task-presets';
+import { mergeToolsDefaults } from '../src/main/runtime/state-config';
 
 const roots: string[] = [];
 afterEach(() => {
@@ -33,6 +35,31 @@ function fixture(config: Record<string, unknown> = {}) {
   fs.writeFileSync(configPath, JSON.stringify(config));
   return { root, stateDir, plugin, configPath, read: () => JSON.parse(fs.readFileSync(configPath, 'utf8')) };
 }
+it.each([undefined, true])('authorizes only Lobster under the system default tools policy (enabled=%s)', (enabled) => {
+  const tools = mergeToolsDefaults(null);
+  const config = { tools, plugins: { entries: { lobster: enabled === undefined ? {} : { enabled } } } };
+  const f = fixture(config);
+  expect(ensureBundledWorkflowTools(f.root, f.stateDir)).toBe(true);
+  expect(f.read().tools).toEqual(tools);
+  expect(f.read().agents.entries.main.tools).toEqual({ alsoAllow: ['lobster'] });
+  expect(f.read().plugins.entries.lobster.enabled).toBe(true);
+  expect(ensureBundledWorkflowTools(f.root, f.stateDir)).toBe(false);
+});
+it.each([
+  { profile: 'minimal' },
+  { profile: 'full' },
+  { allow: ['read'] },
+  { alsoAllow: ['other'] },
+  { deny: ['lobster'] },
+  { deny: ['*'] },
+  { deny: ['group:plugins'] },
+  { byProvider: { openai: { allow: ['read'] } } },
+])('does not expand an explicit global tool policy: %j', (policy) => {
+  const tools = { ...mergeToolsDefaults(null), ...policy };
+  const f = fixture({ tools, plugins: { entries: { lobster: { enabled: true } } } });
+  expect(ensureBundledWorkflowTools(f.root, f.stateDir)).toBe(false);
+  expect(f.read().tools).toEqual(tools);
+});
 it('enables a supplied default plugin without expanding any tool or agent policy and is idempotent', () => {
   const config = {
     tools: { profile: 'minimal', deny: ['lobster'] },
@@ -114,4 +141,75 @@ it('enables the plugin before an owned spawn and leaves reused gateways unchange
   });
   expect(f.read()).toEqual({});
   expect(spawn).toHaveBeenCalledOnce();
+});
+
+it('grants current system roster entries while preserving custom and restricted agents', () => {
+  const agents = {
+    list: [
+      { id: 'main' },
+      { id: 'rongying-office' },
+      { id: 'custom' },
+      { id: 'rongying-video', tools: { profile: 'minimal' } },
+      { id: 'rongying-research', tools: { deny: ['lobster'] } },
+    ],
+  };
+  const f = fixture({ tools: mergeToolsDefaults(null), agents });
+  expect(ensureBundledWorkflowTools(f.root, f.stateDir)).toBe(true);
+  expect(f.read().agents.list).toEqual([
+    { id: 'main', tools: { alsoAllow: ['lobster'] } },
+    { id: 'rongying-office', tools: { alsoAllow: ['lobster'] } },
+    ...agents.list.slice(2),
+  ]);
+  expect(ensureBundledWorkflowTools(f.root, f.stateDir)).toBe(false);
+});
+it('supports current entries roster without inventing agents in a custom-only roster', () => {
+  const f = fixture({
+    agents: { entries: { main: { workspace: 'owned' }, custom: { tools: { profile: 'minimal' } } } },
+  });
+  expect(ensureBundledWorkflowTools(f.root, f.stateDir)).toBe(true);
+  expect(f.read().agents.entries.main).toEqual({ workspace: 'owned', tools: { alsoAllow: ['lobster'] } });
+  expect(f.read().agents.entries.custom).toEqual({ tools: { profile: 'minimal' } });
+  const custom = fixture({
+    agents: { list: [{ id: 'custom' }] },
+    plugins: { entries: { lobster: { enabled: true } } },
+  });
+  expect(ensureBundledWorkflowTools(custom.root, custom.stateDir)).toBe(false);
+  expect(custom.read().agents.list).toEqual([{ id: 'custom' }]);
+});
+it('does not expand restricted inherited agent defaults or explicitly disabled plugin tools', () => {
+  for (const config of [
+    { agents: { defaults: { tools: { profile: 'minimal' } }, list: [{ id: 'main' }] } },
+    { plugins: { entries: { lobster: { enabled: false } } }, tools: mergeToolsDefaults(null) },
+  ]) {
+    const f = fixture(config);
+    ensureBundledWorkflowTools(f.root, f.stateDir);
+    expect(f.read().agents).toEqual('agents' in config ? config.agents : undefined);
+    expect(f.read().tools).toEqual('tools' in config ? config.tools : undefined);
+  }
+});
+
+it('covers the actual built-in assistant IDs without authorizing arbitrary custom IDs', () => {
+  const ids = Object.values(ASSISTANT_ID_BY_WORKSPACE);
+  const f = fixture({ agents: { entries: Object.fromEntries([...ids, 'custom'].map((id) => [id, {}])) } });
+  expect(ensureBundledWorkflowTools(f.root, f.stateDir)).toBe(true);
+  for (const id of ids) expect(f.read().agents.entries[id].tools).toEqual({ alsoAllow: ['lobster'] });
+  expect(f.read().agents.entries.custom).toEqual({});
+});
+it.each([
+  { agents: null },
+  { agents: [] },
+  { agents: 'invalid' },
+  { agents: { list: {} } },
+  { agents: { list: null } },
+  { agents: { list: [null] } },
+  { agents: { entries: [] } },
+  { agents: { entries: null } },
+  { agents: { entries: { main: null } } },
+  { agents: { defaults: [] } },
+  { agents: { defaults: null } },
+])('rejects malformed agent configuration without rewriting its bytes: %j', (config) => {
+  const f = fixture(config);
+  const before = fs.readFileSync(f.configPath, 'utf8');
+  expect(() => ensureBundledWorkflowTools(f.root, f.stateDir)).toThrow(/agent/i);
+  expect(fs.readFileSync(f.configPath, 'utf8')).toBe(before);
 });

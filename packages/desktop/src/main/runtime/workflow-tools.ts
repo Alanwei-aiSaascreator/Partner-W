@@ -6,6 +6,68 @@ const record = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 const read = (file: string): unknown => JSON.parse(fs.readFileSync(file, 'utf8'));
 
+/** Only the product's unconstrained default receives a new optional tool grant. */
+function isDefaultToolPolicy(value: unknown): boolean {
+  if (value === undefined) return true;
+  if (!record(value) || Object.keys(value).some((key) => !['deny', 'fs', 'exec', 'elevated'].includes(key)))
+    return false;
+  if (
+    value.deny !== undefined &&
+    (!Array.isArray(value.deny) || value.deny.some((tool) => !['memory_search', 'memory_get'].includes(tool)))
+  )
+    return false;
+  return [
+    ['fs', 'workspaceOnly', true],
+    ['exec', 'mode', 'ask'],
+    ['elevated', 'enabled', false],
+  ].every(([section, key, expected]) => {
+    const policy = value[section as string];
+    return (
+      policy === undefined || (record(policy) && Object.keys(policy).length === 1 && policy[key as string] === expected)
+    );
+  });
+}
+
+const SYSTEM_WORKFLOW_AGENTS = new Set([
+  'main',
+  'rongying-content',
+  'rongying-video',
+  'rongying-office',
+  'rongying-ecommerce',
+  'rongying-research',
+  'rongying-family',
+]);
+function authorizeDefaultAgents(config: Record<string, unknown>): Record<string, unknown> | undefined {
+  if (config.agents !== undefined && !record(config.agents)) throw new Error('Gateway agent configuration is invalid');
+  const agents = record(config.agents) ? config.agents : {};
+  if (
+    (agents.list !== undefined && (!Array.isArray(agents.list) || agents.list.some((agent) => !record(agent)))) ||
+    (agents.entries !== undefined &&
+      (!record(agents.entries) || Object.values(agents.entries).some((agent) => !record(agent)))) ||
+    (agents.defaults !== undefined && !record(agents.defaults))
+  )
+    throw new Error('Gateway agent roster or defaults are invalid');
+  if (!isDefaultToolPolicy(config.tools)) return;
+  if (record(agents.defaults) && !isDefaultToolPolicy(agents.defaults.tools)) return;
+  let changed = false;
+  const grant = (agent: unknown, id: string): unknown => {
+    if (!SYSTEM_WORKFLOW_AGENTS.has(id) || !record(agent) || !isDefaultToolPolicy(agent.tools)) return agent;
+    changed = true;
+    return { ...agent, tools: { ...(record(agent.tools) ? agent.tools : {}), alsoAllow: ['lobster'] } };
+  };
+  const updated = { ...agents };
+  if (Array.isArray(agents.list)) {
+    updated.list = agents.list.map((agent) =>
+      grant(agent, record(agent) && typeof agent.id === 'string' ? agent.id : ''),
+    );
+  } else if (record(agents.entries)) {
+    updated.entries = Object.fromEntries(Object.entries(agents.entries).map(([id, agent]) => [id, grant(agent, id)]));
+  } else {
+    updated.entries = { main: grant({}, 'main') };
+  }
+  return changed ? updated : undefined;
+}
+
 /** Enable the verified supplied default, while keeping explicit plugin/tool policies intact. */
 export function ensureBundledWorkflowTools(deployedRoot: string, stateDir: string): boolean {
   const marker = path.join(deployedRoot, 'manifest.json');
@@ -50,9 +112,14 @@ export function ensureBundledWorkflowTools(deployedRoot: string, stateDir: strin
   const entries = record(plugins.entries) ? plugins.entries : {};
   if (entries.lobster !== undefined && !record(entries.lobster)) throw new Error('Gateway Lobster entry is invalid');
   const lobster = record(entries.lobster) ? entries.lobster : {};
-  if (lobster.enabled !== undefined) return false;
+  if (lobster.enabled !== undefined && typeof lobster.enabled !== 'boolean')
+    throw new Error('Gateway Lobster enabled policy is invalid');
+  if (lobster.enabled === false) return false;
+  const authorizedAgents = authorizeDefaultAgents(config);
+  if (lobster.enabled !== undefined && !authorizedAgents) return false;
   writeJsonAtomic(configPath, {
     ...config,
+    ...(authorizedAgents ? { agents: authorizedAgents } : {}),
     plugins: { ...plugins, entries: { ...entries, lobster: { ...lobster, enabled: true } } },
   });
   return true;
