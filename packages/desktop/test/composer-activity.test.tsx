@@ -2,25 +2,36 @@
 import { act, type ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import zh from '../src/renderer/i18n/locales/zh.json';
+
+const translationMode = vi.hoisted(() => ({ localized: false }));
 
 /**
  * 输入框上方的活动条。
  *
  * 用户原话：「卡住好久突然跳出来，用户体验感很差」。
  * 正文不流式是上游的事（改不了），但"等待期界面上一片空白"是我们的 ——
- * 这条测的就是那段时间里**用户能不能看出它还在动**：
- * 秒数在走、说得出在干什么、等久了会说人话。
+ * 验证真实收到的动作与本地等待计时分别可见；秒数不是后台心跳。
  */
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
-    t: (key: string, opts?: Record<string, unknown>) =>
-      opts && 'what' in opts
+    t: (key: string, opts?: Record<string, unknown>) => {
+      if (translationMode.localized && key === 'chatInput.waiting.writing') {
+        return zh.chatInput.waiting.writing.replace('{{count}}', String(opts?.count));
+      }
+      if (translationMode.localized && key.startsWith('chatInput.waiting.line.')) {
+        return zh.chatInput.waiting.line[
+          key.slice('chatInput.waiting.line.'.length) as keyof typeof zh.chatInput.waiting.line
+        ];
+      }
+      return opts && 'what' in opts
         ? `${key}(${String(opts.what)})`
         : opts && 'count' in opts
           ? `${key}(${opts.count})`
           : opts && 'attempt' in opts
             ? `${key}(${opts.attempt}/${opts.maxAttempts})`
-            : key,
+            : key;
+    },
   }),
   initReactI18next: { type: '3rdParty', init: vi.fn() },
 }));
@@ -34,6 +45,7 @@ let container: HTMLDivElement;
 let root: Root;
 
 beforeEach(() => {
+  translationMode.localized = false;
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -83,6 +95,36 @@ async function setup(storeState: {
 const q = (id: string) => container.querySelector(`[data-testid="${id}"]`);
 
 describe('ComposerActivity —— 等待期别让用户以为它死了', () => {
+  it.each([['error'], ['done', 'error']])(
+    'counts ended tool calls without claiming success: %j',
+    async (...statuses) => {
+      translationMode.localized = true;
+      await setup({
+        toolCalls: statuses.map((status, index) => ({
+          id: `ended-${index}`,
+          name: 'web_search',
+          status,
+          startedAt: new Date(T0).toISOString(),
+        })),
+      });
+      const text = q('composer-activity')?.textContent ?? '';
+      expect(text).toContain(`${statuses.length} 次工具调用已结束`);
+      expect(text).not.toContain('已完成');
+      expect(text).not.toContain('正在写');
+    },
+  );
+
+  it('shows neutral waiting copy as elapsed time advances without a new gateway update', async () => {
+    translationMode.localized = true;
+    await setup({ startedAgoMs: 31_000 });
+    expect(q('composer-activity-quip')?.textContent).toContain('等待响应');
+    await act(async () => {
+      vi.advanceTimersByTime(60_000);
+    });
+    expect(q('composer-activity-quip')?.textContent).toContain('等待响应');
+    expect(q('composer-activity-elapsed')?.textContent).toBe('91.0s');
+  });
+
   it.each([
     ['web_search', 'search'],
     ['image_generate', 'generateImage'],
@@ -98,13 +140,13 @@ describe('ComposerActivity —— 等待期别让用户以为它死了', () => {
     expect(q('composer-activity')).toBeNull();
   });
 
-  it('⭐ 在跑的时候显示**一直在走的秒数**（这是"它没死"最直接的证据）', async () => {
+  it('在等待时显示本地计算的已等待时长', async () => {
     await setup({ startedAgoMs: 12_400 });
 
     expect(q('composer-activity')).not.toBeNull();
     expect(q('composer-activity-elapsed')?.textContent).toBe('12.4s');
 
-    // 再走 3 秒 ⇒ 数字要跟着动（不动就等于没在走）
+    // 本地再经过 3 秒，等待时长随之增加；不依赖后台状态事件。
     await act(async () => {
       vi.advanceTimersByTime(3000);
     });
@@ -143,7 +185,7 @@ describe('ComposerActivity —— 等待期别让用户以为它死了', () => {
     expect(q('composer-activity')?.textContent).toContain('chatInput.runPhase.preparing_workspace');
   });
 
-  it('⭐ 等越久，俏皮话越自嘲（30s / 90s 两档边界）', async () => {
+  it('按已等待时长选择中性提示（30s / 90s 两档边界）', async () => {
     await setup({ startedAgoMs: 0 });
     expect(q('composer-activity-quip')?.textContent).toContain('chatInput.waiting.line.fresh');
 

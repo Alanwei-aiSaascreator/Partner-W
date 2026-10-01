@@ -491,20 +491,20 @@
     "waiting": {
       "awaitingApproval": "Esperando aprobación: {{what}}",
       "line": {
-        "fresh0": "Déjame ver lo que me diste",
-        "fresh1": "Esto lo tengo — un momento",
-        "fresh2": "Estoy leyendo tu material",
-        "long0": "Sigo trabajando — no se ha colgado, palabra",
-        "long1": "Hay bastante que hacer; voy uno por uno",
-        "long2": "Estoy dándole forma a las palabras",
-        "veryLong0": "Esto es grande. Estoy en ello — no está congelado",
-        "veryLong1": "Despacio y bien — sigo escribiendo",
-        "veryLong2": "Sigue en marcha. No me cierres"
+        "fresh0": "Esperando una respuesta",
+        "fresh1": "Tu solicitud está a la espera de una respuesta",
+        "fresh2": "La respuesta aparecerá aquí cuando esté disponible",
+        "long0": "Esperando una respuesta; ha pasado más tiempo",
+        "long1": "La respuesta sigue pendiente",
+        "long2": "Esperando una respuesta; el contador muestra el tiempo transcurrido",
+        "veryLong0": "La espera de una respuesta se ha prolongado",
+        "veryLong1": "Esperando una respuesta; se desconoce cuándo terminará",
+        "veryLong2": "Esperando una respuesta; el tiempo transcurrido aparece arriba"
       },
       "modelProgress": "Progreso del modelo: {{what}}",
       "runningTool": "Ejecutando: {{what}}",
       "working": "Procesando…",
-      "writing": "{{count}} pasos hechos · escribiendo la respuesta…"
+      "writing": "{{count}} llamadas a herramientas finalizadas · esperando una respuesta"
     }
   },
   "chatMessage": {

@@ -491,20 +491,20 @@
     "waiting": {
       "awaitingApproval": "等待批准：{{what}}",
       "line": {
-        "fresh0": "让我看看你给的料",
-        "fresh1": "这活儿我熟，稍等",
-        "fresh2": "正在认真读你给的东西",
-        "long0": "还在忙，别急，我没卡住",
-        "long1": "活儿有点多，我一件件来",
-        "long2": "正把话组织好，这就说",
-        "veryLong0": "这题有点大，我在认真答，不是死机了",
-        "veryLong1": "慢工出细活，我还在写",
-        "veryLong2": "还在跑，别关我"
+        "fresh0": "等待响应",
+        "fresh1": "你的请求正在等待响应",
+        "fresh2": "响应到达后会显示在这里",
+        "long0": "等待响应，已等待较长时间",
+        "long1": "仍在等待响应",
+        "long2": "等待响应，计时显示已等待时长",
+        "veryLong0": "等待响应，这次等待时间较长",
+        "veryLong1": "等待响应，完成时间尚不确定",
+        "veryLong2": "等待响应，已等待时长显示在上方"
       },
       "modelProgress": "模型进度：{{what}}",
       "runningTool": "执行中：{{what}}",
       "working": "正在处理…",
-      "writing": "已完成 {{count}} 步 · 正在写回答…"
+      "writing": "{{count}} 次工具调用已结束 · 等待响应"
     }
   },
   "chatMessage": {

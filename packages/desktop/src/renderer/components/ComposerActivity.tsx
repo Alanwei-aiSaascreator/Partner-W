@@ -20,11 +20,11 @@ import ArtifactDeliveryActivity from './ArtifactDeliveryActivity';
  *   ② **等待期界面上什么都没有** —— 这个我们能修，而且修的是体感的大头：
  *      用户骂"卡住"，多半是**看不出它还在动**。
  *
- * 所以这条上有三样东西，每一样都在回答"它活着吗"：
- *   - **一直在走的秒数**（最有效的一件 —— 数字在变就证明没死）
+ * 活动条区分实际收到的状态与本地等待计时：
+ *   - **已等待时长**（本地计时，不是后台心跳或存活证明）
  *   - **具体在干什么**（优先用网关 `item` 流拼好的那个人话标题，例如
  *     「memory_search 游戏 爆款 创作 内容」；拿不到才退回泛化文案）
- *   - **一句随秒数换的俏皮话**，越等越自嘲（见 `lib/waiting-copy.ts`）
+ *   - **随时长轮换的中性等待提示**，不推断后台动作或完成时间
  *
  * ⚠️ 秒数的起算点来自 store 的 `turnStartedAtBySession`，**不是**本组件自己打点 ——
  *    组件会随路由/重挂载重建，自己打点的话用户会看到计时器莫名跳回 0。
@@ -72,10 +72,11 @@ export default function ComposerActivity({ sessionKey, onCancel }: ComposerActiv
   // ⭐ A2：**在等人批准**的调用 —— 排在**最前面**。它正是"为什么没有进展"的答案，
   //    而且**该谁动**在用户那边（不是我们）。
   const awaitingCall = latestAwaitingApproval(calls);
-  const doneCount = calls.filter((call) => call.status === 'done' || call.status === 'error').length;
+  // 已结束调用包含成功与错误，不代表成功步骤数或整个任务的完成度。
+  const endedCallCount = calls.filter((call) => call.status === 'done' || call.status === 'error').length;
 
   // 主行要说的是"此刻在干什么"，优先级：**等人批准的工具** > 正在跑的工具 >
-  // 网关报的准备阶段 > 写回答。
+  // 网关报的准备阶段 > 已结束工具调用计数 / 等待响应。
   let headline: string;
   const activityLabel = (call: ToolCall): string => {
     const title = call.title?.trim();
@@ -111,13 +112,13 @@ export default function ComposerActivity({ sessionKey, onCancel }: ComposerActiv
     //    「正在重试（第 / 次）…」这种半截话，比泛化文案更糟。
     const generic = runPhase !== RETRY_RUN_PHASE && RUN_PHASE_IDS.includes(runPhase) ? runPhase : 'unknown';
     headline = t(`chatInput.runPhase.${generic}`);
-  } else if (doneCount > 0) {
-    headline = t('chatInput.waiting.writing', { count: doneCount });
+  } else if (endedCallCount > 0) {
+    headline = t('chatInput.waiting.writing', { count: endedCallCount });
   } else {
     headline = t('chatInput.waiting.working');
   }
 
-  // 趣味文案：确定性轮播（同一个秒数永远给同一句），越久越自嘲。
+  // 中性等待提示：按已等待时长确定性轮播，不作为后台心跳。
   // ⚠️ 前缀必须**写在这个模板串里**：`scripts/lib/i18n-usage.mjs` 的扫描器
   //    只认字面 key 或「前缀 + ${变量}」，把 key 拼在辅助函数里它看不见，
   //    这些文案会被判成 unused 然后 check:i18n 失败（真踩过）。

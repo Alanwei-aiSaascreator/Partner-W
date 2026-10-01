@@ -491,20 +491,20 @@
     "waiting": {
       "awaitingApproval": "En attente d'approbation : {{what}}",
       "line": {
-        "fresh0": "Je regarde ce que vous m’avez donné",
-        "fresh1": "Ça, je connais — un instant",
-        "fresh2": "Je lis attentivement vos documents",
-        "long0": "Toujours au travail — pas bloqué, promis",
-        "long1": "Il y a du pain sur la planche ; je fais dans l’ordre",
-        "long2": "Je mets ça en mots",
-        "veryLong0": "C’est du costaud. J’y suis — pas planté",
-        "veryLong1": "Travailler lentement, travailler bien — j’écris encore",
-        "veryLong2": "Ça tourne encore. Ne me fermez pas"
+        "fresh0": "En attente d’une réponse",
+        "fresh1": "Votre demande est en attente d’une réponse",
+        "fresh2": "La réponse apparaîtra ici lorsqu’elle sera disponible",
+        "long0": "En attente d’une réponse ; davantage de temps s’est écoulé",
+        "long1": "La réponse est toujours en attente",
+        "long2": "En attente d’une réponse ; le compteur indique le temps écoulé",
+        "veryLong0": "L’attente d’une réponse s’est prolongée",
+        "veryLong1": "En attente d’une réponse ; l’heure de fin est inconnue",
+        "veryLong2": "En attente d’une réponse ; le temps écoulé figure ci-dessus"
       },
       "modelProgress": "Progression du modèle : {{what}}",
       "runningTool": "En cours : {{what}}",
       "working": "Traitement…",
-      "writing": "{{count}} étapes faites · rédaction de la réponse…"
+      "writing": "{{count}} appels d’outils terminés · en attente d’une réponse"
     }
   },
   "chatMessage": {

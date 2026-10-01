@@ -491,20 +491,20 @@
     "waiting": {
       "awaitingApproval": "Waiting for approval: {{what}}",
       "line": {
-        "fresh0": "Let me see what you gave me",
-        "fresh1": "I know this one — one moment",
-        "fresh2": "Reading through your material",
-        "long0": "Still working — not stuck, promise",
-        "long1": "A fair amount to do; taking it one at a time",
-        "long2": "Putting it into words now",
-        "veryLong0": "This one's big. I'm on it — not frozen",
-        "veryLong1": "Slow work, good work — still writing",
-        "veryLong2": "Still going. Don't close me"
+        "fresh0": "Waiting for a response",
+        "fresh1": "Your request is awaiting a response",
+        "fresh2": "The response will appear here when available",
+        "long0": "Waiting for a response; more time has elapsed",
+        "long1": "The response is still pending",
+        "long2": "Waiting for a response; the timer shows elapsed time",
+        "veryLong0": "The wait for a response has been longer",
+        "veryLong1": "Waiting for a response; completion time is unknown",
+        "veryLong2": "Waiting for a response; elapsed time is shown above"
       },
       "modelProgress": "Model progress: {{what}}",
       "runningTool": "Running: {{what}}",
       "working": "Working…",
-      "writing": "{{count}} steps done · writing the answer…"
+      "writing": "{{count}} tool calls ended · waiting for a response"
     }
   },
   "chatMessage": {
