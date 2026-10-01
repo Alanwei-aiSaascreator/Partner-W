@@ -99,8 +99,18 @@ export const COMMON_OPERATING_CONTRACT = `# Shared operating contract
   ⚠️ **But the reply body has its own length limit** and it is *much* smaller than what a real
   deck needs: a long layout pasted into the reply gets **cut off mid-way and the whole deck is
   lost**. So write the layout to a **file** in the workspace instead (the skill says exactly how),
-  and keep the reply itself to one short line. Never split the user's request into several turns
+  and keep the final reply concise. Never split the user's request into several turns
   yourself — one instruction must produce one deck.
+- With an available execution tool and bundled Node, follow the skill's actual preflight and
+  \`scripts/generate.cjs\` commands in this turn. Do not end the turn at source-valid: that is
+  source validation, not a PPTX. Read the actual generation report and verify its file before
+  replying. Use the returned page-specific diagnostics for at most two targeted correction rounds;
+  preserve generated source/output/receipt and referenced image versions; replacement images
+  need new filenames, never overwrite old resources. Name the actual latest file. Continue the same
+  reported process session when still running. Never resubmit generation after output-unconfirmed,
+  timeout, truncated output or unavailable receipt. Do not invent tools or ask users to install plugins.
+  \`artifactIndexed:false\` does not prove the file is already in 产物, and
+  \`visualReview:not-performed\` means final visual review is pending even with zero layout warnings.
 - ⚠️ **The 商务演示（模板版）template route caps every slot** (often around 40 characters) and
   **rejects the whole deck** when any one of them overflows. Only use it when the content is
   short and happens to match a template exactly — never as the default for real material.
@@ -170,7 +180,7 @@ function withCommonContract(roleSoul: string): string {
  *    没有标记或标记对不上 ⇒ 用户改过，一律不碰**"。
  *    ⚠️ 但**已有的旧盘没有标记** —— 那批怎么升级是单独的决定，见设计稿。
  */
-export const PRESET_PROMPT_VERSION = '2026-09-30.3';
+export const PRESET_PROMPT_VERSION = '2026-10-02.1';
 
 const PROMPT_MARKER_RE = /\n?<!--\s*mofang-prompt:[^>]*-->\s*$/;
 

@@ -20,6 +20,17 @@ import {
  *    而且表现成"产品做不到"，不是"没接线"。
  */
 describe('预置助手的交付合同：每条通道都要在清单里', () => {
+  it('requires in-turn generation and bounded diagnostic repair for every preset', () => {
+    for (const definition of PRESET_AGENT_DEFINITIONS) {
+      expect(definition.soulMd).toContain('scripts/generate.cjs');
+      expect(definition.soulMd).toContain('Do not end the turn at source-valid');
+      expect(definition.soulMd).toContain('at most two targeted correction rounds');
+      expect(definition.soulMd).toContain('output-unconfirmed');
+      expect(definition.soulMd).toContain('artifactIndexed:false');
+      expect(definition.soulMd).toContain('visualReview:not-performed');
+      expect(definition.soulMd).toContain('referenced image versions');
+    }
+  });
   it('only requests video generation when the real tool is available and never invents acceptance', () => {
     expect(COMMON_OPERATING_CONTRACT).toMatch(/video_generate` is available, use that tool/);
     expect(COMMON_OPERATING_CONTRACT).toContain('If unavailable, state the missing');
@@ -139,6 +150,6 @@ describe('预置助手的交付合同：每条通道都要在清单里', () => {
     // 版本号是"将来能不能安全升级已发出去的盘"的唯一依据
     // （见 preset-agents.ts 里 PRESET_PROMPT_VERSION 的注释）——
     // ⚠️ 所以**改了合同文本就必须动它**，否则已装的盘拿不到新合同。
-    expect(PRESET_PROMPT_VERSION).toBe('2026-09-30.3');
+    expect(PRESET_PROMPT_VERSION).toBe('2026-10-02.1');
   });
 });
