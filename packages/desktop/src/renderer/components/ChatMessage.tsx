@@ -161,7 +161,12 @@ const ChatMessage = memo(function ChatMessage({
                   {warning.artifactName && <p className="font-medium">{warning.artifactName}</p>}
                   <p>
                     {t(
-                      warning.code === 'layout-text-occluded' ? 'slidegen.warn.occluded' : 'slidegen.warn.outOfBounds',
+                      {
+                        'layout-text-occluded': 'slidegen.warn.occluded',
+                        'layout-out-of-bounds': 'slidegen.warn.outOfBounds',
+                        'layout-footer-overlap': 'slidegen.warn.footerOverlap',
+                        'layout-text-low-contrast': 'slidegen.warn.lowContrast',
+                      }[warning.code],
                       { page: warning.page },
                     )}
                   </p>

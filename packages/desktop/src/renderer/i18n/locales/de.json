@@ -1986,7 +1986,9 @@
     },
     "failedTitle": "Die Präsentation konnte nicht erstellt werden",
     "warn": {
+      "footerOverlap": "Die Fußzeile auf Seite {{page}} überlappt eine Inhaltskarte",
       "head": "Die Datei liegt bereits rechts unter 产物. Nur diese Stellen müssen angepasst werden:",
+      "lowContrast": "Text auf Seite {{page}} hat zu wenig Kontrast zum Hintergrund",
       "occluded": "Text auf Seite {{page}} wird von einem anderen Element verdeckt",
       "outOfBounds": "Seite {{page}} hat Inhalte außerhalb der Folie – sie werden bei der Präsentation nicht angezeigt"
     },

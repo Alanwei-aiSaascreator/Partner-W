@@ -1986,7 +1986,9 @@
     },
     "failedTitle": "演示文稿没能生成",
     "warn": {
+      "footerOverlap": "第 {{page}} 页的页脚侵入了正文卡片区域",
       "head": "文件已经在右侧「产物」里了，只是这几处版式要调整：",
+      "lowContrast": "第 {{page}} 页文字与背景的对比不足",
       "occluded": "第 {{page}} 页有文字被别的元素盖住了",
       "outOfBounds": "第 {{page}} 页有内容超出画面，放映时看不到"
     },

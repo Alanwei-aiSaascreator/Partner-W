@@ -198,6 +198,20 @@ describe('quality diagnostic context isolation', () => {
 });
 
 describe('available-file quality notice', () => {
+  it.each(['light', 'dark'])('renders new quality diagnostics in %s without calling them out of bounds', (theme) => {
+    document.documentElement.dataset.theme = theme;
+    for (const [code, key] of [
+      ['layout-footer-overlap', 'footerOverlap'],
+      ['layout-text-low-contrast', 'lowContrast'],
+    ] as const) {
+      const content = `${marker}\n${JSON.stringify({ sourceMessageId: 'assistant-1', warnings: [{ ...warning, code }] })}`;
+      const { container } = render(<ChatMessage message={message('quality-new', 'system', content)} />);
+      expect(container.querySelector('[role="status"]')?.textContent).toContain(
+        i18n.t(`slidegen.warn.${key}`, { page: 4 }),
+      );
+      expect(container.textContent).not.toContain(i18n.t('slidegen.warn.outOfBounds', { page: 4 }));
+    }
+  });
   it.each([
     null,
     {},

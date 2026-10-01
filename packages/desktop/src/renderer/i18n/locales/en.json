@@ -1986,7 +1986,9 @@
     },
     "failedTitle": "The presentation couldn't be generated",
     "warn": {
+      "footerOverlap": "The footer on page {{page}} overlaps a content card",
       "head": "The file is already in 产物 on the right. These spots need adjusting:",
+      "lowContrast": "Text on page {{page}} has insufficient contrast against its background",
       "occluded": "Text on page {{page}} is covered by another element",
       "outOfBounds": "Page {{page}} has content outside the slide, so it will not show when presented"
     },

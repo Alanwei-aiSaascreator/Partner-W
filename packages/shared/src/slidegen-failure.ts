@@ -175,4 +175,6 @@ type SlidegenWarningReason =
   /** 元素冲出画布 ⇒ 放映时那一块看不到。 */
   | { code: 'layout-out-of-bounds'; page: number; element: number; detail: string }
   /** 文字被别的元素盖住 ⇒ 用户看不到那句话，还不知道它存在。 */
-  | { code: 'layout-text-occluded'; page: number; element: number; detail: string };
+  | { code: 'layout-text-occluded'; page: number; element: number; detail: string }
+  | { code: 'layout-footer-overlap'; page: number; element: number; detail: string }
+  | { code: 'layout-text-low-contrast'; page: number; element: number; detail: string };

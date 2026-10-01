@@ -1986,7 +1986,9 @@
     },
     "failedTitle": "簡報沒能生成",
     "warn": {
+      "footerOverlap": "第 {{page}} 頁的頁腳侵入了正文卡片區域",
       "head": "檔案已經在右側「產物」裡了，只是這幾處版式要調整：",
+      "lowContrast": "第 {{page}} 頁文字與背景的對比不足",
       "occluded": "第 {{page}} 頁有文字被別的元件蓋住了",
       "outOfBounds": "第 {{page}} 頁有內容超出畫面，放映時看不到"
     },

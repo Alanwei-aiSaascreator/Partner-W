@@ -24,7 +24,7 @@ import { SLIDE_CANVAS } from './layout.js';
 
 /** 一页跑完之后，值得回头告诉助手/用户的版式问题。 */
 export interface LayoutWarning {
-  code: 'layout-out-of-bounds' | 'layout-text-occluded';
+  code: 'layout-out-of-bounds' | 'layout-text-occluded' | 'layout-footer-overlap' | 'layout-text-low-contrast';
   /** 元素在页面里的绘制序号（= `data-sg`）。 */
   element: number;
   /** 人能读懂的一句话。**要能直接照着改**，所以带元素类型与文字片段。 */
@@ -97,5 +97,166 @@ export function findOccludedText(elements: readonly MeasuredElement[]): LayoutWa
 
 /** 全部版式检查。 */
 export function validateLayout(elements: readonly MeasuredElement[]): LayoutWarning[] {
-  return [...findOutOfBounds(elements), ...findOccludedText(elements)];
+  return [
+    ...findOutOfBounds(elements),
+    ...findOccludedText(elements),
+    ...findFooterOverlap(elements),
+    ...findLowContrast(elements),
+  ];
+}
+
+type Bounds = Pick<MeasuredElement, 'x' | 'y' | 'w' | 'h'>;
+
+function overlaps(a: Bounds, b: Bounds): boolean {
+  return (
+    Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x) > BOUNDS_TOLERANCE &&
+    Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y) > BOUNDS_TOLERANCE
+  );
+}
+
+function contains(a: Bounds, b: Bounds): boolean {
+  return (
+    a.x <= b.x + BOUNDS_TOLERANCE &&
+    a.y <= b.y + BOUNDS_TOLERANCE &&
+    a.x + a.w >= b.x + b.w - BOUNDS_TOLERANCE &&
+    a.y + a.h >= b.y + b.h - BOUNDS_TOLERANCE
+  );
+}
+
+function findFooterOverlap(elements: readonly MeasuredElement[]): LayoutWarning[] {
+  const roots = new Set(elements.filter((e) => e.kind === 'slide').map((e) => e.id));
+  const out: LayoutWarning[] = [];
+  for (const footer of elements) {
+    if (
+      footer.kind !== 'text' ||
+      !footer.text.trim() ||
+      footer.position !== 'absolute' ||
+      footer.parentId === undefined ||
+      !roots.has(footer.parentId) ||
+      footer.y < SLIDE_CANVAS.height - 80 ||
+      footer.fontSize > 18 ||
+      footer.w < SLIDE_CANVAS.width / 2
+    )
+      continue;
+    const card = elements.find(
+      (e) =>
+        e.kind === 'box' &&
+        !(e.y <= 0 && e.h >= SLIDE_CANVAS.height) &&
+        e.y < SLIDE_CANVAS.height - 80 &&
+        e.h > 80 &&
+        overlaps(e, footer) &&
+        (e.borderWidth > 0 || (rgba(e.background)?.[3] ?? 0) > 0),
+    );
+    if (card)
+      out.push({
+        code: 'layout-footer-overlap',
+        element: footer.id,
+        detail: `Footer #${footer.id} enters body region #${card.id}. Reserve space above the footer or move the body region; keep all text.`,
+      });
+  }
+  return out;
+}
+
+type Rgba = [number, number, number, number];
+function rgba(value: string): Rgba | null {
+  const match = /^rgba?\(([\d.]+),\s*([\d.]+),\s*([\d.]+)(?:,\s*([\d.]+))?\)$/.exec(value.trim());
+  if (!match) return null;
+  const color: Rgba = [Number(match[1]), Number(match[2]), Number(match[3]), Number(match[4] ?? 1)];
+  return color.every(Number.isFinite) &&
+    color.slice(0, 3).every((n) => n >= 0 && n <= 255) &&
+    color[3] >= 0 &&
+    color[3] <= 1
+    ? color
+    : null;
+}
+
+function blend(front: Rgba, back: Rgba): Rgba {
+  return [
+    front[0] * front[3] + back[0] * (1 - front[3]),
+    front[1] * front[3] + back[1] * (1 - front[3]),
+    front[2] * front[3] + back[2] * (1 - front[3]),
+    1,
+  ];
+}
+
+function luminance(color: Rgba): number {
+  const channels = color
+    .slice(0, 3)
+    .map((n) => n / 255)
+    .map((n) => (n <= 0.04045 ? n / 12.92 : ((n + 0.055) / 1.055) ** 2.4));
+  return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
+}
+
+function containsPaint(layer: MeasuredElement, region: Bounds): boolean {
+  if (!contains(layer, region)) return false;
+  const radius = Math.min(layer.borderRadius, layer.w / 2, layer.h / 2);
+  if (radius <= 0) return true;
+  return [region.x, region.x + region.w].every((x) =>
+    [region.y, region.y + region.h].every((y) => {
+      const nearestX = Math.max(layer.x + radius, Math.min(x, layer.x + layer.w - radius));
+      const nearestY = Math.max(layer.y + radius, Math.min(y, layer.y + layer.h - radius));
+      return Math.hypot(x - nearestX, y - nearestY) <= radius;
+    }),
+  );
+}
+
+function findLowContrast(elements: readonly MeasuredElement[]): LayoutWarning[] {
+  const out: LayoutWarning[] = [];
+  for (const [index, text] of elements.entries()) {
+    if (
+      text.kind !== 'text' ||
+      !text.text.trim() ||
+      text.w <= 0 ||
+      text.h <= 0 ||
+      (text.opacity !== undefined && text.opacity !== 1)
+    )
+      continue;
+    const ink = rgba(text.color);
+    const textFill = rgba(text.background);
+    if (!ink || !textFill || textFill[3] > 0) continue;
+    for (const region of text.textBounds?.length ? text.textBounds : [text]) {
+      let back: Rgba | null = null;
+      let unknown = false;
+      for (const layer of elements.slice(0, index + 1)) {
+        if (layer.kind === 'text' && layer.id !== text.id) continue;
+        if (!overlaps(layer, region)) continue;
+        const fill = rgba(layer.background);
+        if (
+          layer.kind === 'image' ||
+          (layer.backgroundImage && layer.backgroundImage !== 'none') ||
+          (layer.opacity !== undefined && layer.opacity !== 1)
+        ) {
+          unknown = true;
+          continue;
+        }
+        if (!fill) {
+          unknown = true;
+          continue;
+        }
+        if (fill[3] === 0) continue;
+        if (!containsPaint(layer, region)) {
+          unknown = true;
+          continue;
+        }
+        if (fill[3] === 1) {
+          back = fill;
+          unknown = false;
+        } else if (back && !unknown) back = blend(fill, back);
+      }
+      if (!back || unknown) continue;
+      const light = luminance(blend(ink, back)),
+        dark = luminance(back);
+      const ratio = (Math.max(light, dark) + 0.05) / (Math.min(light, dark) + 0.05);
+      const minimum = text.fontSize >= 24 || (text.fontSize >= 18.67 && Number(text.fontWeight) >= 700) ? 3 : 4.5;
+      if (ratio + 0.01 < minimum) {
+        out.push({
+          code: 'layout-text-low-contrast',
+          element: text.id,
+          detail: `Text #${text.id} has ${ratio.toFixed(2)}:1 contrast on the measured solid background (target ${minimum}:1). Change text or background color.`,
+        });
+        break;
+      }
+    }
+  }
+  return out;
 }

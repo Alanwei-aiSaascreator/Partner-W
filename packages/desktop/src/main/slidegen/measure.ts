@@ -18,6 +18,10 @@ import { MARK_ATTR, MARK_KIND_ATTR, SLIDE_CANVAS, slideDocument } from './layout
 export interface MeasuredElement {
   id: number;
   kind: 'slide' | 'box' | 'text' | 'image';
+  parentId?: number;
+  position?: string;
+  opacity?: number;
+  textBounds?: { x: number; y: number; w: number; h: number }[];
   x: number;
   y: number;
   w: number;
@@ -63,6 +67,12 @@ const MEASURE_SCRIPT = `(() => {
   for (const el of elements) {
     const r = el.getBoundingClientRect();
     const cs = getComputedStyle(el);
+    const parent = el.parentElement?.closest('[${MARK_ATTR}]');
+    let opacity = 1;
+    for (let ancestor = el; ancestor; ancestor = ancestor.parentElement) {
+      const value = Number.parseFloat(getComputedStyle(ancestor).opacity);
+      opacity *= Number.isFinite(value) ? value : 1;
+    }
     const kind = el.getAttribute('${MARK_KIND_ATTR}');
     const range = document.createRange();
     range.selectNodeContents(el);
@@ -91,6 +101,10 @@ const MEASURE_SCRIPT = `(() => {
     }
     out.push({
       id: Number(el.getAttribute('${MARK_ATTR}')), kind,
+      parentId: parent ? Number(parent.getAttribute('${MARK_ATTR}')) : undefined,
+      position: cs.position, opacity,
+      textBounds: kind === 'text' ? Array.from(range.getClientRects()).filter(rect => rect.width > 0 && rect.height > 0)
+        .map(rect => ({x: rect.x, y: rect.y, w: rect.width, h: rect.height})) : undefined,
       x: r.x, y: r.y, w: r.width, h: r.height,
       text: kind === 'text' ? el.textContent.trim() : '',
       fontSize: parseFloat(cs.fontSize), fontWeight: cs.fontWeight, color: cs.color,

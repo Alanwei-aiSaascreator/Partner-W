@@ -1986,7 +1986,9 @@
     },
     "failedTitle": "Não foi possível gerar a apresentação",
     "warn": {
+      "footerOverlap": "O rodapé da página {{page}} se sobrepõe a um cartão de conteúdo",
       "head": "O arquivo já está em 产物 à direita. Só estes pontos precisam de ajuste:",
+      "lowContrast": "O texto da página {{page}} tem pouco contraste com o fundo",
       "occluded": "O texto da página {{page}} está coberto por outro elemento",
       "outOfBounds": "A página {{page}} tem conteúdo fora do slide, então não aparecerá na apresentação"
     },

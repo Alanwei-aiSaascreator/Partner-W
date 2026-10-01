@@ -17,7 +17,10 @@ export function parseArtifactQualityNote(message: Pick<Message, 'role' | 'conten
       !value.warnings.every(
         (warning) =>
           warning &&
-          (warning.code === 'layout-out-of-bounds' || warning.code === 'layout-text-occluded') &&
+          (warning.code === 'layout-out-of-bounds' ||
+            warning.code === 'layout-text-occluded' ||
+            warning.code === 'layout-footer-overlap' ||
+            warning.code === 'layout-text-low-contrast') &&
           Number.isInteger(warning.page) &&
           warning.page > 0 &&
           Number.isInteger(warning.element) &&

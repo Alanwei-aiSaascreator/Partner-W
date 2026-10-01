@@ -136,6 +136,40 @@ describe('warnings for saved slide artifacts', () => {
     expect(result.warnings).toEqual([warning('Collision-renamed.pptx', 1)]);
   });
 
+  it.each(['layout-footer-overlap', 'layout-text-low-contrast'])(
+    'delivers editable output and associates %s with its actual saved name',
+    async (code) => {
+      const text: MeasuredElement = {
+        ...root,
+        id: 1,
+        kind: 'text',
+        parentId: 0,
+        position: 'absolute',
+        x: 80,
+        y: 674,
+        w: 1120,
+        h: 16,
+        text: 'Editable footer',
+        fontSize: 13,
+        background: 'rgba(0, 0, 0, 0)',
+        color: code === 'layout-text-low-contrast' ? 'rgb(200, 200, 200)' : 'rgb(0, 0, 0)',
+      };
+      measure.mockResolvedValue([
+        root,
+        ...(code === 'layout-footer-overlap'
+          ? [{ ...root, id: 2, kind: 'box' as const, x: 760, y: 480, w: 440, h: 214 }]
+          : []),
+        text,
+      ]);
+      save.mockImplementationOnce((input) => persistBuffer(input, 'Actual-name.pptx'));
+      const result = await generate(deck('Requested'));
+      expect(result.failed).toEqual([]);
+      expect(result.warnings).toEqual([warning('Actual-name.pptx', 1, code)]);
+      const zip = await JSZip.loadAsync(fs.readFileSync(result.saved[0].filePath));
+      expect(await zip.file('ppt/slides/slide1.xml')!.async('string')).toContain('<a:t>Editable footer</a:t>');
+    },
+  );
+
   it('keeps warning names separate and restarts page numbering for each deck', async () => {
     measure.mockResolvedValueOnce(measuredPage()).mockResolvedValueOnce(measuredPage('bounds'));
 

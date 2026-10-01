@@ -1986,7 +1986,9 @@
     },
     "failedTitle": "La présentation n’a pas pu être générée",
     "warn": {
+      "footerOverlap": "Le pied de la page {{page}} chevauche une carte de contenu",
       "head": "Le fichier est déjà dans 产物 à droite. Seuls ces points sont à ajuster :",
+      "lowContrast": "Le texte de la page {{page}} manque de contraste avec le fond",
       "occluded": "Le texte de la page {{page}} est masqué par un autre élément",
       "outOfBounds": "La page {{page}} a du contenu hors de la diapositive : il ne s’affichera pas à la présentation"
     },
