@@ -44,6 +44,11 @@ describe('production message IPC with Drizzle and Electron SQLite', () => {
           resolveId(source, importer) {
             if (
               importer?.replaceAll('\\', '/').endsWith('/src/main/ipc/data-handlers.ts') &&
+              ![
+                '../artifact/delivery-operation.js',
+                '../artifact/workspace-owner.js',
+                '../slidegen/tool-receipts.js',
+              ].includes(source) &&
               (source.startsWith('../artifact/') ||
                 source.startsWith('../docgen/') ||
                 source.startsWith('../htmlgen/') ||
