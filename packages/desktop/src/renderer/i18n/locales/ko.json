@@ -407,6 +407,23 @@
       "reconciling-artifacts": "생성된 파일 확인 중…",
       "saving-artifacts": "파일 저장 중…"
     },
+    "deliveryHistory": {
+      "canceled": "처리가 취소되었습니다",
+      "details": "처리 기록 보기",
+      "failed": "처리에 실패했습니다",
+      "needs-review": "처리 완료; 검토 필요",
+      "phaseTypes": {
+        "downloading-media": "이미지 또는 영상 다운로드",
+        "generating-document": "문서 생성",
+        "generating-html": "웹페이지 생성",
+        "generating-presentation": "프레젠테이션 생성",
+        "reconciling-artifacts": "파일 확인",
+        "saving-artifacts": "파일 저장"
+      },
+      "recent": "최근 파일 처리",
+      "succeeded": "처리가 완료되었습니다",
+      "truncated": "이전 처리 기록은 더 이상 보관되지 않습니다."
+    },
     "describeTask": "작업을 설명하세요…",
     "fileContextLimitExceeded": "전체 파일 컨텍스트가 500KB 제한을 초과했습니다",
     "grantFolderFailed": "폴더를 추가하지 못했습니다",

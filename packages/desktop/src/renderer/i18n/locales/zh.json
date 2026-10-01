@@ -407,6 +407,23 @@
       "reconciling-artifacts": "正在检查生成的文件…",
       "saving-artifacts": "正在保存文件…"
     },
+    "deliveryHistory": {
+      "canceled": "处理已取消",
+      "details": "查看处理记录",
+      "failed": "处理失败",
+      "needs-review": "处理完成，需检查",
+      "phaseTypes": {
+        "downloading-media": "下载图片或视频",
+        "generating-document": "生成文档",
+        "generating-html": "生成网页",
+        "generating-presentation": "生成演示文稿",
+        "reconciling-artifacts": "检查文件",
+        "saving-artifacts": "保存文件"
+      },
+      "recent": "最近的文件处理",
+      "succeeded": "处理完成",
+      "truncated": "较早的处理记录已不再保留。"
+    },
     "describeTask": "描述你的任务…",
     "fileContextLimitExceeded": "文件上下文总量超过 500KB 限制",
     "grantFolderFailed": "添加文件夹失败",

@@ -407,6 +407,23 @@
       "reconciling-artifacts": "生成されたファイルを確認中…",
       "saving-artifacts": "ファイルを保存中…"
     },
+    "deliveryHistory": {
+      "canceled": "処理をキャンセルしました",
+      "details": "処理の記録",
+      "failed": "処理に失敗しました",
+      "needs-review": "処理完了・確認が必要です",
+      "phaseTypes": {
+        "downloading-media": "画像・動画のダウンロード",
+        "generating-document": "文書の生成",
+        "generating-html": "ウェブページの生成",
+        "generating-presentation": "プレゼンテーションの生成",
+        "reconciling-artifacts": "ファイルの確認",
+        "saving-artifacts": "ファイルの保存"
+      },
+      "recent": "最近のファイル処理",
+      "succeeded": "処理が完了しました",
+      "truncated": "以前の処理記録は保持されていません。"
+    },
     "describeTask": "タスクを入力…",
     "fileContextLimitExceeded": "ファイルコンテキストの合計が 500KB の上限を超えています",
     "grantFolderFailed": "フォルダを追加できませんでした",

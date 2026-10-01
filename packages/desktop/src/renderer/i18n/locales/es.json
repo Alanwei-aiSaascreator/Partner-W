@@ -407,6 +407,23 @@
       "reconciling-artifacts": "Comprobando los archivos generados…",
       "saving-artifacts": "Guardando archivos…"
     },
+    "deliveryHistory": {
+      "canceled": "Procesamiento cancelado",
+      "details": "Acciones observadas",
+      "failed": "Error de procesamiento",
+      "needs-review": "Completado; requiere revisión",
+      "phaseTypes": {
+        "downloading-media": "Descargar imágenes o vídeos",
+        "generating-document": "Generar documento",
+        "generating-html": "Generar página web",
+        "generating-presentation": "Generar presentación",
+        "reconciling-artifacts": "Comprobar archivos",
+        "saving-artifacts": "Guardar archivos"
+      },
+      "recent": "Procesamiento reciente de archivos",
+      "succeeded": "Procesamiento completado",
+      "truncated": "Las acciones anteriores ya no se conservan."
+    },
     "describeTask": "Describe tu tarea…",
     "fileContextLimitExceeded": "El contexto total de archivos excede el límite de 500KB",
     "grantFolderFailed": "No se pudo agregar la carpeta",

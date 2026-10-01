@@ -407,6 +407,23 @@
       "reconciling-artifacts": "A verificar os ficheiros gerados…",
       "saving-artifacts": "A guardar ficheiros…"
     },
+    "deliveryHistory": {
+      "canceled": "Processamento cancelado",
+      "details": "Ações observadas",
+      "failed": "Falha no processamento",
+      "needs-review": "Concluído; requer revisão",
+      "phaseTypes": {
+        "downloading-media": "Baixar imagens ou vídeos",
+        "generating-document": "Gerar documento",
+        "generating-html": "Gerar página web",
+        "generating-presentation": "Gerar apresentação",
+        "reconciling-artifacts": "Verificar arquivos",
+        "saving-artifacts": "Salvar arquivos"
+      },
+      "recent": "Processamento recente de arquivos",
+      "succeeded": "Processamento concluído",
+      "truncated": "As ações anteriores não são mais mantidas."
+    },
     "describeTask": "Descreva sua tarefa…",
     "fileContextLimitExceeded": "O contexto total de arquivos excede o limite de 500KB",
     "grantFolderFailed": "Falha ao adicionar a pasta",

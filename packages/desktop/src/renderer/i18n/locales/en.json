@@ -407,6 +407,23 @@
       "reconciling-artifacts": "Checking generated files…",
       "saving-artifacts": "Saving files…"
     },
+    "deliveryHistory": {
+      "canceled": "Processing canceled",
+      "details": "Observed actions",
+      "failed": "Processing failed",
+      "needs-review": "Completed; review needed",
+      "phaseTypes": {
+        "downloading-media": "Download images or video",
+        "generating-document": "Generate document",
+        "generating-html": "Generate webpage",
+        "generating-presentation": "Generate presentation",
+        "reconciling-artifacts": "Check files",
+        "saving-artifacts": "Save files"
+      },
+      "recent": "Recent file processing",
+      "succeeded": "Processing completed",
+      "truncated": "Earlier actions are no longer retained."
+    },
     "describeTask": "Describe your task…",
     "fileContextLimitExceeded": "Total file context exceeds 500KB limit",
     "grantFolderFailed": "Failed to add folder",

@@ -407,6 +407,23 @@
       "reconciling-artifacts": "Vérification des fichiers générés…",
       "saving-artifacts": "Enregistrement des fichiers…"
     },
+    "deliveryHistory": {
+      "canceled": "Traitement annulé",
+      "details": "Actions observées",
+      "failed": "Échec du traitement",
+      "needs-review": "Terminé ; vérification nécessaire",
+      "phaseTypes": {
+        "downloading-media": "Télécharger des images ou vidéos",
+        "generating-document": "Générer un document",
+        "generating-html": "Générer une page web",
+        "generating-presentation": "Générer une présentation",
+        "reconciling-artifacts": "Vérifier les fichiers",
+        "saving-artifacts": "Enregistrer les fichiers"
+      },
+      "recent": "Traitements de fichiers récents",
+      "succeeded": "Traitement terminé",
+      "truncated": "Les actions précédentes ne sont plus conservées."
+    },
     "describeTask": "Décrivez votre tâche…",
     "fileContextLimitExceeded": "Le contexte total des fichiers dépasse la limite de 500 Ko",
     "grantFolderFailed": "Échec de l'ajout du dossier",

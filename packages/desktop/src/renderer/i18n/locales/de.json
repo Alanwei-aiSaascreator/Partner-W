@@ -407,6 +407,23 @@
       "reconciling-artifacts": "Erstellte Dateien werden geprüft…",
       "saving-artifacts": "Dateien werden gespeichert…"
     },
+    "deliveryHistory": {
+      "canceled": "Verarbeitung abgebrochen",
+      "details": "Beobachtete Aktionen",
+      "failed": "Verarbeitung fehlgeschlagen",
+      "needs-review": "Abgeschlossen; Prüfung nötig",
+      "phaseTypes": {
+        "downloading-media": "Bilder oder Videos herunterladen",
+        "generating-document": "Dokument erstellen",
+        "generating-html": "Webseite erstellen",
+        "generating-presentation": "Präsentation erstellen",
+        "reconciling-artifacts": "Dateien prüfen",
+        "saving-artifacts": "Dateien speichern"
+      },
+      "recent": "Letzte Dateiverarbeitung",
+      "succeeded": "Verarbeitung abgeschlossen",
+      "truncated": "Frühere Aktionen werden nicht mehr aufbewahrt."
+    },
     "describeTask": "Beschreiben Sie Ihre Aufgabe…",
     "fileContextLimitExceeded": "Dateikontext ueberschreitet 500-KB-Limit",
     "grantFolderFailed": "Ordner konnte nicht hinzugefügt werden",
