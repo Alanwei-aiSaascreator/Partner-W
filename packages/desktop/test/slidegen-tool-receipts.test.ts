@@ -74,6 +74,47 @@ function collect(messages = [message()], runId: string | undefined = 'run-1') {
 
 it('revalidates the receipt named by the completed current-run tool result', () => {
   expect(collect()).toMatchObject({ receipts: [{ receiptFile, receipt: input }], rejected: 0 });
+  expect(collect().receipts[0]?.source).toBe('// title: Report\n<Slide><Text>One</Text></Slide>');
+});
+
+it('reuses only the exact parsed source and preserves warnings with the actual output name', () => {
+  expect(collector.reuseToolSlideDeck).toBeTypeOf('function');
+  const entries = collect().receipts;
+  expect(collector.reuseToolSlideDeck(root, entries, { title: 'Report', source: entries[0]!.source })).toEqual([]);
+  expect(collector.reuseToolSlideDeck(root, entries, { title: 'Report', source: 'different body' })).toBeNull();
+});
+
+it('revalidates the final output again at the point of skipping a render', () => {
+  expect(collector.reuseToolSlideDeck).toBeTypeOf('function');
+  const entries = collect().receipts;
+  fs.writeFileSync(path.join(root, input.fileName), 'change');
+  expect(() => collector.reuseToolSlideDeck(root, entries, { title: 'Report', source: entries[0]!.source })).toThrow(
+    'receipt-version-mismatch',
+  );
+});
+
+it('does not reuse an old output after images and receipt resource metadata change together', () => {
+  fs.mkdirSync(path.join(root, 'assets'));
+  fs.writeFileSync(path.join(root, 'assets/pixel.png'), 'first');
+  const imageSource = source.replace('<Slide>', '<Slide><Image src="assets/pixel.png"/>');
+  fs.writeFileSync(path.join(root, input.sourceFile), imageSource);
+  const value = {
+    ...input,
+    sourceSha256: hash(imageSource),
+    resources: [{ file: 'assets/pixel.png', bytes: 5, sha256: hash('first') }],
+  };
+  const file = writeSlideGenerationReceipt(root, value);
+  const entries = collect([
+    message({ toolCalls: [tool({ result: report({ ...value, receiptFile: path.basename(file) }) })] }),
+  ]).receipts;
+  expect(entries).toHaveLength(1);
+  fs.writeFileSync(path.join(root, 'assets/pixel.png'), 'second');
+  const changed = JSON.parse(fs.readFileSync(file, 'utf8'));
+  changed.resources = [{ file: 'assets/pixel.png', bytes: 6, sha256: hash('second') }];
+  fs.writeFileSync(file, JSON.stringify(changed));
+  expect(() => collector.reuseToolSlideDeck(root, entries, { title: 'Report', source: entries[0]!.source })).toThrow(
+    'tool-receipt-mismatch',
+  );
 });
 it.each([
   { taskId: 'other' },

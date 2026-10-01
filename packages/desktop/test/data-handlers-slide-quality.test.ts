@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildSessionKey, type Artifact, type SlidegenWarning } from '@clawwork/shared';
-import type { SlidegenGenerateResult } from '../src/main/slidegen/generate.js';
+import type { generateSlidesFromMessage, SlidegenGenerateResult } from '../src/main/slidegen/generate.js';
 
 const workspacePath = 'C:\\quality-test-workspace';
 const taskId = 'quality-task';
@@ -13,7 +13,9 @@ const extractMock = vi.fn();
 const reconcileMock = vi.fn();
 const documentsMock = vi.fn();
 const htmlMock = vi.fn();
-const slidesMock = vi.fn<() => Promise<SlidegenGenerateResult>>();
+const slidesMock = vi.fn<typeof generateSlidesFromMessage>();
+const collectReceiptsMock = vi.fn();
+const reuseDeckMock = vi.fn();
 
 vi.mock('electron', () => ({
   ipcMain: {
@@ -47,6 +49,18 @@ vi.mock('../src/main/artifact/reconcile.js', () => ({
 vi.mock('../src/main/docgen/generate.js', () => ({ generateDocumentsFromMessage: documentsMock }));
 vi.mock('../src/main/htmlgen/generate.js', () => ({ generateHtmlPagesFromMessage: htmlMock }));
 vi.mock('../src/main/slidegen/generate.js', () => ({ generateSlidesFromMessage: slidesMock }));
+vi.mock('../src/main/slidegen/tool-receipts.js', () => ({
+  collectToolSlideReceipts: collectReceiptsMock,
+  reuseToolSlideDeck: reuseDeckMock,
+}));
+vi.mock('../src/main/artifact/agent-workspace.js', () => ({
+  resolveAgentWorkspace: vi.fn().mockResolvedValue('C:\\agent-quality-workspace'),
+}));
+vi.mock('../src/main/slidegen/deck-file.js', () => ({
+  captureDeckFileBaseline: () => ({}),
+  changedDeckFiles: () => [],
+  decksFromFiles: () => ({ text: '```slidegen\n// title: Existing\n<Slide></Slide>\n```', failures: [] }),
+}));
 
 const artifact: Artifact = {
   id: 'saved-deck',
@@ -119,9 +133,67 @@ describe('slide quality delivery settlement', () => {
     documentsMock.mockReset().mockResolvedValue({ saved: [], failed: [] });
     htmlMock.mockReset().mockResolvedValue({ saved: [], failed: [] });
     slidesMock.mockReset().mockResolvedValue(warningResult());
+    collectReceiptsMock.mockReset().mockReturnValue({ receipts: [], rejected: 0 });
+    reuseDeckMock.mockReset().mockReturnValue([]);
     const { registerDataHandlers, beginArtifactRun } = await import('../src/main/ipc/data-handlers.js');
     registerDataHandlers();
     beginArtifactRun(workspacePath, taskId, sessionKey);
+  });
+
+  it('passes canonical completed run tools into receipt collection and keeps confirmed source warnings', async () => {
+    const tools = [{ id: 'exec-1', name: 'exec', status: 'done', startedAt: '', result: 'machine report' }];
+    const entries = [
+      {
+        receiptFile: '.royin-ppt-receipt-proof.json',
+        source: '// title: Existing\n<Slide></Slide>',
+        receipt: { sourceFile: 'report.slidegen' },
+      },
+    ];
+    collectReceiptsMock.mockReturnValue({ receipts: entries, rejected: 0 });
+    reuseDeckMock.mockReturnValue([warning]);
+    slidesMock.mockImplementationOnce(async (input) => ({
+      saved: [],
+      failed: [],
+      warnings: input.reuseExisting?.({ title: 'Existing', source: entries[0].source }) ?? [],
+    }));
+    reconcileMock.mockResolvedValue({ ...emptyReconciliation, saved: [artifact] });
+    const { beginArtifactRun, bindArtifactRun } = await import('../src/main/ipc/data-handlers.js');
+    const token = beginArtifactRun(workspacePath, taskId, sessionKey, { gatewayId: 'gateway-1' });
+    bindArtifactRun(taskId, sessionKey, token, 'run-1');
+    selectGetMock.mockReturnValueOnce({ id: messageId }).mockReturnValueOnce({ gid: 'gateway-1' });
+    expect(
+      handleMap.get('data:create-message')!(
+        {},
+        {
+          id: 'incoming',
+          taskId,
+          sessionKey,
+          runId: 'run-1',
+          role: 'assistant',
+          content: 'Created',
+          timestamp: '2026-09-30T00:00:00Z',
+          toolCalls: tools,
+        },
+      ),
+    ).toEqual({ ok: true });
+    await waitForSettlement();
+    expect(collectReceiptsMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        taskId,
+        sessionKey,
+        runId: 'run-1',
+        messages: [
+          expect.objectContaining({ taskId, sessionKey, runId: 'run-1', role: 'assistant', toolCalls: tools }),
+        ],
+      }),
+    );
+    expect(slidesMock.mock.calls[0]?.[0].content).toContain('// title: Existing');
+    expect(reuseDeckMock).toHaveBeenCalledWith(
+      'C:\\agent-quality-workspace',
+      entries,
+      expect.objectContaining({ title: 'Existing' }),
+    );
+    expect(settlements()[0]).toMatchObject({ status: 'needs-review', slideWarnings: [warning] });
   });
 
   it('settles saved deck warnings with their filenames and canonical turn identity', async () => {

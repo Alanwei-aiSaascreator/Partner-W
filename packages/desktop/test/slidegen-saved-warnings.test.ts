@@ -121,6 +121,44 @@ describe('warnings for saved slide artifacts', () => {
     fs.rmSync(outputRoot, { recursive: true, force: true });
   });
 
+  it('reuses a verified source with its real warnings while generating only the remaining deck', async () => {
+    const existingWarning = {
+      code: 'layout-out-of-bounds' as const,
+      page: 1,
+      element: 2,
+      detail: 'Outside',
+      artifactName: 'Existing.pptx',
+    };
+    const input = {
+      workspacePath: outputRoot,
+      taskId: 'task-1',
+      messageId: 'message-1',
+      content: `${deck('Existing')}\n${deck('New')}`,
+      reuseExisting: (current: { title: string }) => (current.title === 'Existing' ? [existingWarning] : null),
+    };
+    const result = await generateSlidesFromMessage(input);
+    expect(result.failed).toEqual([]);
+    expect(result.saved.map((entry) => entry.name)).toEqual(['New-stored.pptx']);
+    expect(measure).toHaveBeenCalledTimes(1);
+    expect(result.warnings).toEqual([existingWarning, warning('New-stored.pptx', 1)]);
+  });
+
+  it('does not blindly rerender a source when its known output becomes unconfirmed', async () => {
+    const input = {
+      workspacePath: outputRoot,
+      taskId: 'task-1',
+      messageId: 'message-1',
+      content: deck('Existing'),
+      reuseExisting: () => {
+        throw new Error('receipt-version-mismatch');
+      },
+    };
+    const result = await generateSlidesFromMessage(input);
+    expect(result.failed).toEqual([{ code: 'slidegen-render-failed' }]);
+    expect(measure).not.toHaveBeenCalled();
+    expect(save).not.toHaveBeenCalled();
+  });
+
   it('attaches the returned artifact name while preserving an editable PPTX', async () => {
     save.mockImplementationOnce((input) => persistBuffer(input, 'Collision-renamed.pptx'));
 

@@ -50,4 +50,20 @@ describe('slidegen 单消息累计页数预算', () => {
     expect(mocks.writeSlidePptx).not.toHaveBeenCalled();
     expect(mocks.saveArtifactFromBuffer).not.toHaveBeenCalled();
   });
+
+  it('counts a reused deck before deciding whether the remaining deck can render', async () => {
+    const reuseExisting = vi.fn(() => []);
+    const input = {
+      workspacePath: 'D:\\workspace-that-does-not-exist',
+      taskId: 'task-1',
+      messageId: 'message-1',
+      content: `${deck('Existing')}\n${deck('New')}`,
+      reuseExisting,
+    };
+    const result = await generateSlidesFromMessage(input);
+    expect(result.failed).toContainEqual({ code: 'slidegen-too-many-pages', max: 200, got: 201 });
+    expect(reuseExisting).not.toHaveBeenCalled();
+    expect(mocks.emitPageShapes).not.toHaveBeenCalled();
+    expect(mocks.saveArtifactFromBuffer).not.toHaveBeenCalled();
+  });
 });

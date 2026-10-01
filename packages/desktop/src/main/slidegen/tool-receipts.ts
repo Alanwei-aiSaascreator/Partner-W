@@ -1,9 +1,13 @@
-import type { Message, ToolCall } from '@clawwork/shared';
+import { createHash } from 'node:crypto';
+import type { Message, SlidegenWarning, ToolCall } from '@clawwork/shared';
 import { readSlideGenerationReceipt, type SlideGenerationReceipt } from './receipt.js';
+import { readSlideSourceFile } from './source-file.js';
+import { extractSlidegenBlocks, type SlidegenDeck } from './blocks.js';
 
 export interface ToolSlideReceipt {
   receiptFile: string;
   receipt: SlideGenerationReceipt;
+  source: string;
 }
 type ToolMessage = Pick<Message, 'taskId' | 'sessionKey' | 'runId' | 'role' | 'toolCalls'>;
 const object = (value: unknown): value is Record<string, unknown> =>
@@ -87,7 +91,12 @@ export function collectToolSlideReceipts(input: {
         if (report[key] !== receipt[key]) throw new Error('tool-receipt-mismatch');
       }
       if (!seen.has(file)) {
-        result.receipts.push({ receiptFile: file, receipt });
+        const content = readSlideSourceFile(input.workspacePath, receipt.sourceFile);
+        if (createHash('sha256').update(content).digest('hex') !== receipt.sourceSha256)
+          throw new Error('tool-receipt-mismatch');
+        const { decks } = extractSlidegenBlocks(content);
+        if (decks.length !== 1) throw new Error('tool-receipt-mismatch');
+        result.receipts.push({ receiptFile: file, receipt, source: decks[0].source });
         seen.add(file);
       }
     } catch {
@@ -95,4 +104,18 @@ export function collectToolSlideReceipts(input: {
     }
   }
   return result;
+}
+
+export function reuseToolSlideDeck(
+  workspace: string,
+  entries: readonly ToolSlideReceipt[],
+  deck: SlidegenDeck,
+): SlidegenWarning[] | null {
+  const matched = entries.filter((entry) => entry.source === deck.source);
+  if (!matched.length) return null;
+  return matched.flatMap((entry) => {
+    const current = readSlideGenerationReceipt(workspace, entry.receiptFile);
+    if (JSON.stringify(current) !== JSON.stringify(entry.receipt)) throw new Error('tool-receipt-mismatch');
+    return entry.receipt.warnings.map((warning) => ({ ...warning, artifactName: current.fileName }));
+  });
 }

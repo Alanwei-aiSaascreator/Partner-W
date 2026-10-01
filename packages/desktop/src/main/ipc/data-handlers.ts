@@ -15,6 +15,7 @@ import { generateDocumentsFromMessage } from '../docgen/generate.js';
 import { resolvePptxTemplatesRoot } from '../docgen/pptx-template/locate.js';
 import { generateHtmlPagesFromMessage } from '../htmlgen/generate.js';
 import { generateSlidesFromMessage } from '../slidegen/generate.js';
+import { collectToolSlideReceipts, reuseToolSlideDeck } from '../slidegen/tool-receipts.js';
 import {
   captureDeckFileBaseline,
   changedDeckFiles,
@@ -43,6 +44,7 @@ import {
   type MessageAttachment,
   type SlidegenFailure,
   type SlidegenWarning,
+  type ToolCall,
 } from '@clawwork/shared';
 import { getWorkspacePath } from '../workspace/config.js';
 import { getGatewayClient } from '../ws/index.js';
@@ -625,6 +627,7 @@ function finalizeAssistantArtifacts(input: {
   attachments?: MessageAttachment[];
   gatewayHttpBase?: string;
   gatewayId?: string;
+  toolCalls?: unknown[];
 }): void {
   const owner = captureArtifactWorkspaceOwner();
   if (!owner.current()) return;
@@ -816,13 +819,49 @@ function finalizeAssistantArtifacts(input: {
       // （新增 / size 变 / mtime 变，同名覆盖也算）。判据与理由见 `slidegen/deck-file.ts`。
       const agentRoot = await run.agentBaseline;
       if (!owner.current()) return;
+      const tools = (input.toolCalls ?? []).filter(
+        (tool): tool is ToolCall =>
+          typeof tool === 'object' &&
+          tool !== null &&
+          !Array.isArray(tool) &&
+          'id' in tool &&
+          typeof tool.id === 'string' &&
+          'name' in tool &&
+          typeof tool.name === 'string' &&
+          'startedAt' in tool &&
+          typeof tool.startedAt === 'string' &&
+          'status' in tool &&
+          ['running', 'done', 'error', 'awaitingApproval'].includes(String(tool.status)) &&
+          (!('result' in tool) || tool.result === undefined || typeof tool.result === 'string') &&
+          (!('args' in tool) ||
+            tool.args === undefined ||
+            (tool.args !== null && typeof tool.args === 'object' && !Array.isArray(tool.args))),
+      );
+      const confirmed = agentRoot
+        ? collectToolSlideReceipts({
+            workspacePath: agentRoot.workspacePath,
+            taskId: input.taskId,
+            sessionKey: input.sessionKey,
+            runId: input.runId,
+            messages: [
+              {
+                taskId: input.taskId,
+                sessionKey: input.sessionKey,
+                runId: input.runId,
+                role: 'assistant',
+                toolCalls: tools,
+              },
+            ],
+          })
+        : { receipts: [], rejected: 0 };
       const deckFiles = agentRoot?.deckBaseline
         ? changedDeckFiles(agentRoot.deckBaseline, agentRoot.workspacePath)
         : [];
+      const sourceFiles = [...new Set([...deckFiles, ...confirmed.receipts.map((entry) => entry.receipt.sourceFile)])];
       let slideContent: string | null = null;
       let deckFileFailures: SlidegenFailure[] = [];
-      if (agentRoot && deckFiles.length > 0) {
-        const fromFiles = decksFromFiles({ root: agentRoot.workspacePath, relatives: deckFiles });
+      if (agentRoot && sourceFiles.length > 0) {
+        const fromFiles = decksFromFiles({ root: agentRoot.workspacePath, relatives: sourceFiles });
         slideContent = fromFiles.text;
         deckFileFailures = fromFiles.failures;
         // ⚠️ 必须留痕：这条路"没出片"时，日志里要能分辨是**文件路**走的还是**聊天路**走的。
@@ -830,7 +869,13 @@ function finalizeAssistantArtifacts(input: {
           domain: 'artifact',
           event: 'slidegen.deck-files-used',
           gatewayId: input.gatewayId,
-          data: { taskId: input.taskId, files: deckFiles, failures: deckFileFailures.map((f) => f.code) },
+          data: {
+            taskId: input.taskId,
+            files: sourceFiles,
+            confirmed: confirmed.receipts.length,
+            rejected: confirmed.rejected,
+            failures: deckFileFailures.map((f) => f.code),
+          },
         });
       } else {
         // 聊天这条路：用**取回的完整原文**（被截断时见 `structuredReplyContent`）。
@@ -876,6 +921,9 @@ function finalizeAssistantArtifacts(input: {
           messageId: input.messageId,
           content: slideContent,
           onActivity: activity.phase,
+          reuseExisting: agentRoot
+            ? (deck) => reuseToolSlideDeck(agentRoot.workspacePath, confirmed.receipts, deck)
+            : undefined,
         });
         if (!owner.current()) return;
         // 文件那条路自己判出来的失败（没围栏 / 读不动）**也要上屏** —— 否则又回到
@@ -1299,6 +1347,7 @@ export function registerDataHandlers(): void {
               attachments: msg.attachments as MessageAttachment[] | undefined,
               gatewayHttpBase,
               gatewayId: taskRow?.gid,
+              toolCalls: msg.toolCalls,
             });
           } else {
             // Legacy/history hydration still needs attachment and fenced-code

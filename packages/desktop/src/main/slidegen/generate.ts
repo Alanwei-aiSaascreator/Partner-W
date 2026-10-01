@@ -85,6 +85,7 @@ export async function generateSlidesFromMessage(input: {
   messageId: string;
   content: string;
   onActivity?: ArtifactActivityCallback;
+  reuseExisting?: (deck: SlidegenDeck) => SlidegenWarning[] | null;
 }): Promise<SlidegenGenerateResult> {
   const owner = captureArtifactWorkspaceOwner();
   const result: SlidegenGenerateResult = { saved: [], failed: [], warnings: [] };
@@ -132,6 +133,11 @@ export async function generateSlidesFromMessage(input: {
   for (const { deck, pages } of evaluated) {
     try {
       owner.assertCurrent();
+      const reusedWarnings = input.reuseExisting?.(deck);
+      if (reusedWarnings !== undefined && reusedWarnings !== null) {
+        result.warnings.push(...reusedWarnings);
+        continue;
+      }
       notifyArtifactActivity(input.onActivity, 'generating-presentation');
       const rendered = await renderSlideDeck({
         pages,
