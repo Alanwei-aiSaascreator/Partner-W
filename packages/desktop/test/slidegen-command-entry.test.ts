@@ -25,6 +25,7 @@ vi.mock('../src/main/slidegen/render-file.js', () => ({ renderSlideSourceFile: m
 const originalArgv = process.argv;
 const originalTemp = process.env.TEMP;
 const originalTmp = process.env.TMP;
+const originalProfile = process.env.ROYIN_SLIDEGEN_PROFILE;
 let root = '';
 let ready: () => void;
 let output: string[] = [];
@@ -35,6 +36,7 @@ beforeEach(() => {
   process.env.TEMP = root;
   process.env.TMP = root;
   process.argv = ['electron', 'app', '--royin-render-slidegen', 'report.slidegen'];
+  delete process.env.ROYIN_SLIDEGEN_PROFILE;
   output = [];
   mocks.app.whenReady.mockReturnValue(new Promise<void>((resolve) => (ready = resolve)));
   mocks.render.mockResolvedValue({ status: 'file-generated', fileCreated: true, pages: 2 });
@@ -54,6 +56,8 @@ afterEach(() => {
   else process.env.TEMP = originalTemp;
   if (originalTmp === undefined) delete process.env.TMP;
   else process.env.TMP = originalTmp;
+  if (originalProfile === undefined) delete process.env.ROYIN_SLIDEGEN_PROFILE;
+  else process.env.ROYIN_SLIDEGEN_PROFILE = originalProfile;
   vi.restoreAllMocks();
   if (!path.resolve(root).startsWith(path.resolve(originalTemp ?? originalTmp ?? os.tmpdir()) + path.sep))
     throw new Error('test path escaped');
@@ -163,6 +167,27 @@ it('preserves actual source diagnostics and failure exit code', async () => {
   });
   expect(await loadCommand()).toMatchObject({ diagnostics: [{ code: 'slidegen-unparsable' }] });
   expect(mocks.app.exit).toHaveBeenCalledWith(1);
+});
+
+it('reuses only the parent launcher profile instead of nesting another Chromium profile', async () => {
+  const profile = path.join(root, 'royin-slidegen-launch-test');
+  fs.mkdirSync(path.join(profile, 'temp'), { recursive: true });
+  process.env.TEMP = path.join(profile, 'temp');
+  process.env.TMP = process.env.TEMP;
+  process.env.ROYIN_SLIDEGEN_PROFILE = profile;
+  expect((await loadCommand()).status).toBe('file-generated');
+  expect(mocks.app.setPath.mock.calls.every(([, directory]) => path.dirname(directory) === profile)).toBe(true);
+});
+
+it('rejects an unrelated requested profile without falling through to normal startup', async () => {
+  process.env.ROYIN_SLIDEGEN_PROFILE = root;
+  expect(await loadCommand()).toMatchObject({
+    status: 'render-failed',
+    diagnostics: [{ code: 'render-runtime-unavailable' }],
+  });
+  expect(mocks.app.setPath).not.toHaveBeenCalled();
+  expect(mocks.render).not.toHaveBeenCalled();
+  expect(mocks.normal).not.toHaveBeenCalled();
 });
 
 it('reports unexpected command failures without exposing exception contents', async () => {

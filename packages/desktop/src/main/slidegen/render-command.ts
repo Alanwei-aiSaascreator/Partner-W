@@ -32,10 +32,19 @@ if (flag < 0 || args.length !== 1 || args[0].startsWith('--')) {
 } else {
   try {
     const workspace = fs.realpathSync(process.cwd());
-    const profile = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'royin-slidegen-')));
+    const requestedProfile = process.env.ROYIN_SLIDEGEN_PROFILE;
+    const profile = requestedProfile
+      ? fs.realpathSync(requestedProfile)
+      : fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'royin-slidegen-')));
+    if (
+      requestedProfile &&
+      (path.dirname(fs.realpathSync(os.tmpdir())) !== profile ||
+        !path.basename(profile).startsWith('royin-slidegen-launch-'))
+    )
+      throw new Error('invalid launcher profile');
     for (const name of ['appData', 'userData', 'sessionData', 'logs', 'temp', 'cache', 'crashDumps'] as const) {
       const directory = path.join(profile, name);
-      fs.mkdirSync(directory);
+      fs.mkdirSync(directory, { recursive: true });
       app.setPath(name, directory);
     }
     process.env.TEMP = path.join(profile, 'temp');
