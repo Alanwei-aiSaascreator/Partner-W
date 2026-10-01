@@ -358,3 +358,58 @@ it('rejects final registration after receipt metadata is rewritten to describe a
   fs.writeFileSync(path.join(root, receiptFile), JSON.stringify(receipt));
   expect(collector.isToolSlideOutputCurrent(root, entries, input.fileName)).toBe(false);
 });
+
+function pageRecord(overrides: Record<string, unknown> = {}) {
+  return JSON.stringify({
+    schemaVersion: 1,
+    status: 'slidegen-progress',
+    sourceSha256: input.sourceSha256,
+    completed: 1,
+    total: 1,
+    ...overrides,
+  });
+}
+
+it('accepts only validated page telemetry before the exact current-run receipt', () => {
+  const call = tool({ result: pageRecord() + '\n' + report() });
+  const result = collect([message({ toolCalls: [call] })]);
+  expect(result).toMatchObject({ receipts: [{ receiptFile }], rejected: 0 });
+  expect(collector.hasUnconfirmedSlideToolOutput([call], result.receipts)).toBe(false);
+});
+
+it('accepts a terminal process poll tail with page telemetry and the exact receipt', () => {
+  const call = tool({
+    name: 'process',
+    args: { action: 'poll', sessionId: 'native-session' },
+    result: pageRecord() + '\n' + report() + '\n\nProcess exited with code 0.',
+  });
+  expect(collect([message({ toolCalls: [call] })])).toMatchObject({ receipts: [{ receiptFile }], rejected: 0 });
+});
+
+it.each([
+  ['source changes', pageRecord({ sourceSha256: hash('changed') })],
+  ['page total differs', pageRecord({ total: 2 })],
+  ['foreign prefix', 'untrusted text'],
+  ['duplicate progress', pageRecord() + '\n' + pageRecord()],
+  ['two terminal reports', report()],
+])('rejects a contaminated terminal stream: %s', (_label, prefix) => {
+  expect(collect([message({ toolCalls: [tool({ result: prefix + '\n' + report() })] })]).receipts).toEqual([]);
+});
+
+it('recognizes a verified failure after real page telemetry without claiming a file', () => {
+  const result =
+    pageRecord() +
+    '\n' +
+    JSON.stringify({
+      schemaVersion: 1,
+      status: 'render-failed',
+      sourceSha256: input.sourceSha256,
+      fileCreated: false,
+      artifactIndexed: false,
+      visualReview: 'not-performed',
+    }) +
+    '\n\n(Command exited with code 1)';
+  const call = tool({ args: { command: 'node "managed/deck-layout/scripts/generate.cjs" "report.slidegen"' }, result });
+  expect(collect([message({ toolCalls: [call] })]).receipts).toEqual([]);
+  expect(collector.hasUnconfirmedSlideToolOutput([call], [])).toBe(false);
+});

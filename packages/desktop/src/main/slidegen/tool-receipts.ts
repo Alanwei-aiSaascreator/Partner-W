@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { Message, SlidegenWarning, ToolCall } from '@clawwork/shared';
+import { parseSlidegenToolStream, type Message, type SlidegenWarning, type ToolCall } from '@clawwork/shared';
 import { readSlideGenerationReceipt, type SlideGenerationReceipt } from './receipt.js';
 import { readSlideSourceFile } from './source-file.js';
 import { extractSlidegenBlocks, type SlidegenDeck } from './blocks.js';
@@ -22,7 +22,7 @@ function reportFrom(tool: ToolCall): Record<string, unknown> | null {
     result = result.slice(0, -trailer.length).trim();
   } else if (tool.name !== 'exec') return null;
   try {
-    const report: unknown = JSON.parse(result);
+    const report = parseSlidegenToolStream(result)?.report;
     return object(report) && report.status === 'file-generated' && report.receiptStatus === 'ready' ? report : null;
   } catch {
     return null;
@@ -150,7 +150,7 @@ export function hasUnconfirmedSlideToolOutput(
           : '';
     if (!trailer || !tool.result.trim().endsWith(trailer)) return false;
     try {
-      const value: unknown = JSON.parse(tool.result.trim().slice(0, -trailer.length).trim());
+      const value = parseSlidegenToolStream(tool.result.trim().slice(0, -trailer.length).trim())?.report;
       return (
         object(value) &&
         value.schemaVersion === 1 &&
@@ -170,7 +170,7 @@ export function hasUnconfirmedSlideToolOutput(
       .replace(/\n\n(?:\(Command exited with code -?\d+\)|Process exited with code -?\d+\.)$/, '')
       .trim();
     try {
-      const value: unknown = JSON.parse(text);
+      const value = parseSlidegenToolStream(text)?.report;
       return (
         object(value) &&
         value.schemaVersion === 1 &&

@@ -18,3 +18,4 @@ export * from './docgen-failure.js';
 export * from './htmlgen-failure.js';
 export * from './slidegen-failure.js';
 export * from './artifact-delivery-activity.js';
+export * from './slidegen-tool-stream.js';
