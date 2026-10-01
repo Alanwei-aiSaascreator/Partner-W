@@ -2,7 +2,7 @@ import { memo, useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { ChevronDown, ChevronRight, Clock, Loader2, Check, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import type { ToolCall } from '@clawwork/shared';
+import { isSlidegenToolProgress, type ToolCall } from '@clawwork/shared';
 import { cn } from '@/lib/utils';
 import { motion as motionPresets } from '@/styles/design-tokens';
 import { getToolColor } from '@/lib/getToolFamily';
@@ -59,6 +59,11 @@ const ToolCallCard = memo(function ToolCallCard({ toolCall, defaultOpen, label }
 
   /** 失败原因：**运行时给的原文**，空/纯空白一律当没有（不渲染空行，也不编一句话顶上）。 */
   const errorText = toolCall.status === 'error' ? toolCall.result?.trim() : '';
+  const pageProgress = isSlidegenToolProgress(toolCall.slideProgress) ? toolCall.slideProgress : undefined;
+  const pagePending = toolCall.status === 'running';
+  const pageLabel = pageProgress
+    ? t('chatInput.deliveryPageProgress', { completed: pageProgress.completed, total: pageProgress.total })
+    : '';
 
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
@@ -134,6 +139,23 @@ const ToolCallCard = memo(function ToolCallCard({ toolCall, defaultOpen, label }
             </button>
           </CollapsibleTrigger>
 
+          {pageProgress && (
+            <div
+              className="px-3 pb-2.5 space-y-1"
+              data-generation-state={pagePending ? 'pending' : 'settled'}
+              aria-live={pagePending ? 'polite' : 'off'}
+            >
+              <p className="type-caption text-[var(--text-secondary)]">{pageLabel}</p>
+              {pagePending && (
+                <progress
+                  value={pageProgress.completed}
+                  max={pageProgress.total}
+                  aria-label={pageLabel}
+                  className="h-1.5 w-full appearance-none overflow-hidden rounded-full [&::-webkit-progress-bar]:bg-[var(--bg-hover)] [&::-webkit-progress-value]:bg-[var(--accent)] [&::-moz-progress-bar]:bg-[var(--accent)]"
+                />
+              )}
+            </div>
+          )}
           <CollapsibleContent forceMount>
             <AnimatePresence>
               {open && (

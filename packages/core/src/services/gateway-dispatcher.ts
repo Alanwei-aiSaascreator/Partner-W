@@ -1,4 +1,9 @@
-import { parseTaskIdFromSessionKey, isSubagentSession, isSystemSession } from '@clawwork/shared';
+import {
+  parseTaskIdFromSessionKey,
+  isSubagentSession,
+  isSystemSession,
+  parseSlidegenToolStream,
+} from '@clawwork/shared';
 import type {
   GatewayFailureReason,
   ChatDispatchReceipt,
@@ -62,6 +67,7 @@ interface AgentToolData {
   args?: unknown;
   /** 工具的真实输出：`{content:[{type:'text',text}]}`。 */
   result?: unknown;
+  partialResult?: unknown;
   commandBearing?: boolean;
 }
 
@@ -1540,18 +1546,43 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
 
     const store = deps.getMessageStore();
     const matchingActive = !runId || !active?.runId || active.runId === runId ? active : undefined;
-    tc.startedAt = matchingActive?.toolCalls.find((call) => call.id === tc.id)?.startedAt ?? '';
+    let previousCall = matchingActive?.toolCalls.find((call) => call.id === tc.id);
+    tc.startedAt = previousCall?.startedAt ?? '';
     const existingMsgs = store.messagesByTask[taskId] ?? [];
-    for (let i = existingMsgs.length - 1; !tc.startedAt && i >= 0; i--) {
+    for (let i = existingMsgs.length - 1; (!tc.startedAt || !previousCall) && i >= 0; i--) {
       const message = existingMsgs[i];
       if (message.sessionKey !== sessionKey || (runId && message.runId && message.runId !== runId)) continue;
       const existing = message.toolCalls.find((t) => t.id === tc.id);
       if (existing) {
         tc.startedAt = existing.startedAt;
+        previousCall ??= existing;
         break;
       }
     }
     if (!tc.startedAt && data.phase === 'start') tc.startedAt = new Date().toISOString();
+
+    const progressArgs = tc.args ?? previousCall?.args;
+    const slideCommand =
+      data.name === 'exec' &&
+      typeof progressArgs?.command === 'string' &&
+      /(?:^|[\\/\s"'])deck-layout[\\/]scripts[\\/]generate\.cjs(?:[\s"']|$)/i.test(progressArgs.command);
+    const processPoll = data.name === 'process' && progressArgs?.action === 'poll';
+    if ((slideCommand || processPoll) && (data.phase === 'update' || data.phase === 'result')) {
+      const nativeText = extractToolResultText(data.phase === 'update' ? data.partialResult : data.result);
+      const text = processPoll
+        ? nativeText
+            ?.trim()
+            .replace(/\n\nProcess (?:still running\.|exited with code -?\d+\.)$/, '')
+            .trim()
+        : nativeText;
+      const progress =
+        typeof text === 'string' ? parseSlidegenToolStream(text, data.phase === 'update')?.progress : undefined;
+      if (progress) {
+        if (data.phase === 'update') tc.result = undefined;
+        if (data.phase !== 'update' || (!reconcileOnly && previousCall?.status === 'running'))
+          tc.slideProgress = progress;
+      }
+    }
 
     if (reconcileOnly && !ephemeral && runId && gatewayId) {
       deps

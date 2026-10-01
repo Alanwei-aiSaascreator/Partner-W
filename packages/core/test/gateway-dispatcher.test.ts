@@ -4126,3 +4126,95 @@ describe('fetchEffectiveTools', () => {
     });
   });
 });
+
+describe('actual slide producer page records', () => {
+  const packet = {
+    schemaVersion: 1,
+    status: 'slidegen-progress',
+    sourceSha256: 'a'.repeat(64),
+    completed: 1,
+    total: 3,
+  };
+  const command = 'node "managed/deck-layout/scripts/generate.cjs" "report.slidegen"';
+  function live(activeCommand = command) {
+    const h = createHarness();
+    h.messageStore.activeTurnBySession[TASK.sessionKey] = {
+      runId: 'page-run',
+      toolCalls: [
+        {
+          id: 'page-call',
+          name: 'exec',
+          status: 'running',
+          args: { command: activeCommand },
+          startedAt: '2026-10-02T00:00:00.000Z',
+        },
+      ],
+    };
+    return h;
+  }
+  function emit(h: ReturnType<typeof createHarness>, data: Record<string, unknown>, runId = 'page-run') {
+    h.emit('agent', {
+      sessionKey: TASK.sessionKey,
+      runId,
+      stream: 'tool',
+      data: { name: 'exec', toolCallId: 'page-call', ...data },
+    });
+  }
+  it.each([command, 'node "C:\\skills\\deck-layout\\scripts\\generate.cjs" "report.slidegen"'])(
+    'carries actual native partialResult pages for %s without completion',
+    (activeCommand) => {
+      const h = live(activeCommand);
+      emit(h, { phase: 'update', partialResult: { content: [{ type: 'text', text: JSON.stringify(packet) }] } });
+      expect(h.messageStore.upsertToolCall).toHaveBeenCalledWith(
+        TASK.sessionKey,
+        TASK.id,
+        expect.objectContaining({
+          slideProgress: packet,
+          status: 'running',
+          startedAt: '2026-10-02T00:00:00.000Z',
+          result: undefined,
+          completedAt: undefined,
+        }),
+      );
+      h.dispatcher.reset();
+    },
+  );
+  it('reads the latest confirmed page from an incremental still-running process poll', () => {
+    const h = live();
+    const text = JSON.stringify({ ...packet, completed: 2 }) + '\n\nProcess still running.';
+    emit(h, {
+      name: 'process',
+      toolCallId: 'poll-call',
+      phase: 'result',
+      args: { action: 'poll', sessionId: 'native-session' },
+      result: { content: [{ type: 'text', text }] },
+    });
+    expect(h.messageStore.upsertToolCall).toHaveBeenCalledWith(
+      TASK.sessionKey,
+      TASK.id,
+      expect.objectContaining({ slideProgress: { ...packet, completed: 2 }, result: text, status: 'done' }),
+    );
+    h.dispatcher.reset();
+  });
+  it.each([
+    ['foreign text', 'secret-token\n' + JSON.stringify(packet)],
+    ['invalid counts', JSON.stringify({ ...packet, completed: 4 })],
+  ])('does not project a page from %s', (_label, text) => {
+    const h = live();
+    emit(h, { phase: 'update', partialResult: { content: [{ type: 'text', text }] } });
+    expect(h.messageStore.upsertToolCall.mock.calls.at(-1)?.[2]).not.toHaveProperty('slideProgress', packet);
+    h.dispatcher.reset();
+  });
+  it('does not project product pages from an unrelated exec command', () => {
+    const h = live();
+    h.messageStore.activeTurnBySession[TASK.sessionKey] = {
+      runId: 'page-run',
+      toolCalls: [
+        { id: 'page-call', name: 'exec', status: 'running', args: { command: 'node unrelated.cjs' }, startedAt: '' },
+      ],
+    };
+    emit(h, { phase: 'update', partialResult: { content: [{ type: 'text', text: JSON.stringify(packet) }] } });
+    expect(h.messageStore.upsertToolCall.mock.calls.at(-1)?.[2]).not.toHaveProperty('slideProgress', packet);
+    h.dispatcher.reset();
+  });
+});

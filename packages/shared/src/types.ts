@@ -1,3 +1,5 @@
+import type { SlidegenToolProgress } from './slidegen-tool-stream.js';
+
 export type TaskStatus = 'active' | 'completed' | 'archived';
 
 export type MessageRole = 'user' | 'assistant' | 'system';
@@ -302,6 +304,7 @@ export interface Artifact {
 }
 
 export interface ToolCall {
+  slideProgress?: SlidegenToolProgress;
   id: string;
   name: string;
   status: ToolCallStatus;

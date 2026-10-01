@@ -21,8 +21,9 @@ const reportStatuses = new Set([
   'output-unconfirmed',
 ]);
 
-function progressRecord(value: Record<string, unknown>): value is SlidegenToolProgress & Record<string, unknown> {
+export function isSlidegenToolProgress(value: unknown): value is SlidegenToolProgress {
   return (
+    object(value) &&
     Object.keys(value).length === 5 &&
     value.schemaVersion === 1 &&
     value.status === 'slidegen-progress' &&
@@ -53,7 +54,7 @@ export function parseSlidegenToolStream(text: string, partial = false): Slidegen
   try {
     const whole: unknown = JSON.parse(input);
     if (!object(whole)) return null;
-    if (progressRecord(whole)) return { progress: whole };
+    if (isSlidegenToolProgress(whole)) return { progress: whole };
     return terminalRecord(whole) ? { report: whole } : null;
   } catch {
     const lines = input.split(/\r?\n/);
@@ -67,7 +68,7 @@ export function parseSlidegenToolStream(text: string, partial = false): Slidegen
         return partial && i === lines.length - 1 && result.progress && lines[i].startsWith('{') ? result : null;
       }
       if (!object(value)) return null;
-      if (progressRecord(value)) {
+      if (isSlidegenToolProgress(value)) {
         const previous = result.progress;
         if (
           previous &&

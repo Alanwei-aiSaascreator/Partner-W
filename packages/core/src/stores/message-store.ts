@@ -1,5 +1,6 @@
 import { createStore } from 'zustand/vanilla';
 import {
+  isSlidegenToolProgress,
   mergeGatewayStreamText,
   mergeThinkingSegments,
   parseAgentIdFromSessionKey,
@@ -270,7 +271,23 @@ function toolStatusRank(status: ToolCall['status']): number {
 }
 
 function mergeToolCallState(existing: ToolCall | undefined, incoming: ToolCall): ToolCall {
-  if (!existing) return incoming;
+  if (!existing)
+    return {
+      ...incoming,
+      slideProgress: isSlidegenToolProgress(incoming.slideProgress) ? { ...incoming.slideProgress } : undefined,
+    };
+  const previousProgress = isSlidegenToolProgress(existing.slideProgress) ? existing.slideProgress : undefined;
+  const nextProgress = isSlidegenToolProgress(incoming.slideProgress) ? incoming.slideProgress : undefined;
+  const latePage = (existing.status === 'done' || existing.status === 'error') && incoming.status === 'running';
+  const slideProgress =
+    nextProgress &&
+    !latePage &&
+    (!previousProgress ||
+      (nextProgress.sourceSha256 === previousProgress.sourceSha256 &&
+        nextProgress.total === previousProgress.total &&
+        nextProgress.completed >= previousProgress.completed))
+      ? { ...nextProgress }
+      : previousProgress;
 
   const preferIncoming = toolStatusRank(incoming.status) >= toolStatusRank(existing.status);
   const knownStarts = [existing.startedAt, incoming.startedAt].filter((value) => Number.isFinite(Date.parse(value)));
@@ -278,6 +295,7 @@ function mergeToolCallState(existing: ToolCall | undefined, incoming: ToolCall):
     ...existing,
     ...incoming,
     status: preferIncoming ? incoming.status : existing.status,
+    slideProgress,
     args: incoming.args ?? existing.args,
     result: incoming.result ?? existing.result,
     // `title` 来自 `item` 流、`args` 来自 `tool` 流 —— 两条流各带一半，

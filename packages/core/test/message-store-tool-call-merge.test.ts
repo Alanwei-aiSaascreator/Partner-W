@@ -176,3 +176,40 @@ describe('工具调用跨帧合并', () => {
     expect(stored(store, 'c1').startedAt).toBe(first);
   });
 });
+
+describe('verified slide page metadata merge', () => {
+  const progress = {
+    schemaVersion: 1 as const,
+    status: 'slidegen-progress' as const,
+    sourceSha256: 'a'.repeat(64),
+    completed: 2,
+    total: 3,
+  };
+  it('keeps pages across title-only and terminal updates', () => {
+    const store = makeStore();
+    upsert(store, { id: 'page', slideProgress: progress });
+    upsert(store, { id: 'page', title: 'Generation', slideProgress: undefined });
+    expect(stored(store, 'page').slideProgress).toEqual(progress);
+    upsert(store, { id: 'page', status: 'done', result: 'actual final report' });
+    expect(stored(store, 'page')).toMatchObject({
+      slideProgress: progress,
+      status: 'done',
+      result: 'actual final report',
+    });
+  });
+  it.each([{ completed: 1 }, { total: 4 }, { sourceSha256: 'b'.repeat(64) }])(
+    'holds progress against stale or different-source metadata %j',
+    (change) => {
+      const store = makeStore();
+      upsert(store, { id: 'page', slideProgress: progress });
+      upsert(store, { id: 'page', slideProgress: { ...progress, ...change } });
+      expect(stored(store, 'page').slideProgress).toEqual(progress);
+    },
+  );
+  it('does not move a completed call from late page updates', () => {
+    const store = makeStore();
+    upsert(store, { id: 'page', status: 'done', slideProgress: progress, result: 'final' });
+    upsert(store, { id: 'page', slideProgress: { ...progress, completed: 3 } });
+    expect(stored(store, 'page')).toMatchObject({ slideProgress: progress, status: 'done', result: 'final' });
+  });
+});
