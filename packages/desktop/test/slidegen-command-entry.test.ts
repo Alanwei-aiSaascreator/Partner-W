@@ -121,7 +121,7 @@ it('redirects every profile path before readiness and renders only after readine
   expect(mocks.render).not.toHaveBeenCalled();
   ready();
   await vi.waitFor(() => expect(mocks.app.exit).toHaveBeenCalledWith(0));
-  expect(mocks.render).toHaveBeenCalledWith('report.slidegen', process.cwd());
+  expect(mocks.render).toHaveBeenCalledWith('report.slidegen', process.cwd(), { onPage: expect.any(Function) });
   expect(JSON.parse(output[0])).toMatchObject({ status: 'file-generated', fileCreated: true });
   const request = mocks.session.webRequest.onBeforeRequest.mock.calls[0][0];
   for (const [url, cancel] of [
@@ -198,4 +198,29 @@ it('reports unexpected command failures without exposing exception contents', as
   });
   expect(output.join('')).not.toContain('secret-token');
   expect(mocks.app.exit).toHaveBeenCalledWith(1);
+});
+
+it('writes real progress before its final report and ignores callbacks after terminal output', async () => {
+  const progress = {
+    schemaVersion: 1,
+    status: 'slidegen-progress',
+    sourceSha256: 'a'.repeat(64),
+    completed: 1,
+    total: 1,
+  };
+  mocks.render.mockImplementation(async (_file, _workspace, options) => {
+    options.onPage(progress);
+    expect(mocks.app.exit).not.toHaveBeenCalled();
+    expect(output.map((line) => JSON.parse(line))).toEqual([progress]);
+    return { status: 'file-generated', fileCreated: true, pages: 1 };
+  });
+  expect(await load('../src/main/slidegen/render-command.js')).toBeDefined();
+  ready();
+  await vi.waitFor(() => expect(mocks.app.exit).toHaveBeenCalledWith(0));
+  expect(output.map((line) => JSON.parse(line))).toEqual([
+    progress,
+    { status: 'file-generated', fileCreated: true, pages: 1 },
+  ]);
+  mocks.render.mock.calls[0][2].onPage(progress);
+  expect(output).toHaveLength(2);
 });

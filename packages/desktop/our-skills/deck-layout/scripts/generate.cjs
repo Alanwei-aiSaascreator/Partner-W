@@ -2,7 +2,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { createHash } = require('node:crypto');
-const { spawnSync } = require('node:child_process');
+const { spawn } = require('node:child_process');
 
 const contained = (root, file) => {
   const relative = path.relative(root, file);
@@ -51,8 +51,97 @@ function failure(status, code, fileCreated = false) {
     visualReview: 'not-performed',
   };
 }
+
+function renderChild(runtime, file, workspace, env, timeout, sourceSha256) {
+  return new Promise((resolve) => {
+    const child = spawn(runtime.executable, [...runtime.args, '--royin-render-slidegen', file], {
+      cwd: workspace,
+      env,
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let pending = '',
+      reportText = '',
+      bytes = 0,
+      error,
+      progress;
+    const stop = (code) => {
+      error ??= { code };
+      child.kill();
+    };
+    const deadline = setTimeout(() => stop('ETIMEDOUT'), timeout);
+    const line = (text) => {
+      if (!text.trim()) {
+        if (reportText) reportText += text + '\n';
+        return;
+      }
+      let packet;
+      try {
+        packet = JSON.parse(text);
+      } catch {
+        reportText += text + '\n';
+        return;
+      }
+      if (packet?.status !== 'slidegen-progress') {
+        reportText += text + '\n';
+        return;
+      }
+      try {
+        if (
+          reportText ||
+          !packet ||
+          typeof packet !== 'object' ||
+          Array.isArray(packet) ||
+          Object.keys(packet).length !== 5 ||
+          packet.schemaVersion !== 1 ||
+          packet.sourceSha256 !== sourceSha256 ||
+          !Number.isInteger(packet.completed) ||
+          !Number.isInteger(packet.total) ||
+          packet.total < 1 ||
+          packet.total > 200 ||
+          packet.completed !== (progress?.completed ?? 0) + 1 ||
+          packet.completed > packet.total ||
+          (progress && progress.total !== packet.total) ||
+          sha(read(workspace, file, 1024 * 1024)) !== sourceSha256
+        )
+          throw new Error('invalid progress');
+        progress = packet;
+        process.stdout.write(JSON.stringify(packet) + '\n');
+      } catch {
+        stop('EPROTOCOL');
+      }
+    };
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', (chunk) => {
+      if (error) return;
+      bytes += Buffer.byteLength(chunk);
+      if (bytes > 8 * 1024 * 1024) {
+        stop('ENOBUFS');
+        return;
+      }
+      pending += chunk;
+      let end;
+      while (!error && (end = pending.indexOf('\n')) >= 0) {
+        line(pending.slice(0, end));
+        pending = pending.slice(end + 1);
+      }
+    });
+    child.stderr.on('data', (chunk) => {
+      bytes += chunk.length;
+      if (bytes > 8 * 1024 * 1024) stop('ENOBUFS');
+    });
+    child.on('error', (value) => {
+      error = value;
+    });
+    child.on('close', (status) => {
+      clearTimeout(deadline);
+      resolve({ status, error, stdout: reportText + pending, progress });
+    });
+  });
+}
+
 let profile, identity, temporaryRoot;
-function run() {
+async function run() {
   const args = process.argv.slice(2);
   if (args.length !== 1 || args[0].startsWith('--')) return failure('source-invalid', 'source-argument-invalid');
   let runtime;
@@ -115,14 +204,7 @@ function run() {
     Number.isFinite(requestedTimeout) && requestedTimeout >= 1000 && requestedTimeout <= 150_000
       ? requestedTimeout
       : 150_000;
-  const result = spawnSync(runtime.executable, [...runtime.args, '--royin-render-slidegen', args[0]], {
-    cwd: workspace,
-    env,
-    windowsHide: true,
-    encoding: 'utf8',
-    timeout,
-    maxBuffer: 8 * 1024 * 1024,
-  });
+  const result = await renderChild(runtime, args[0], workspace, env, timeout, sourceSha256);
   if (result.error)
     return failure(
       'output-unconfirmed',
@@ -152,6 +234,7 @@ function run() {
       !Number.isInteger(report.pages) ||
       report.pages < 1 ||
       report.pages > 200 ||
+      (result.progress && (result.progress.completed !== report.pages || result.progress.total !== report.pages)) ||
       report.sourceSha256 !== sourceSha256 ||
       sha(read(workspace, args[0], 1024 * 1024)) !== sourceSha256
     )
@@ -163,28 +246,31 @@ function run() {
     return failure('output-unconfirmed', 'render-output-unconfirmed', null);
   }
 }
-let report;
-try {
-  report = run();
-} catch {
-  report = failure('runtime-unavailable', 'render-runtime-unavailable');
-}
-let runtimeCleanup = 'not-created';
-if (profile) {
+async function main() {
+  let report;
   try {
-    const current = fs.lstatSync(profile);
-    if (
-      !contained(temporaryRoot, profile) ||
-      current.dev !== identity.dev ||
-      current.ino !== identity.ino ||
-      current.isSymbolicLink()
-    )
-      throw new Error('changed profile');
-    fs.rmSync(profile, { recursive: true, force: true });
-    runtimeCleanup = 'complete';
+    report = await run();
   } catch {
-    runtimeCleanup = 'incomplete';
+    report = failure('runtime-unavailable', 'render-runtime-unavailable');
   }
+  let runtimeCleanup = 'not-created';
+  if (profile) {
+    try {
+      const current = fs.lstatSync(profile);
+      if (
+        !contained(temporaryRoot, profile) ||
+        current.dev !== identity.dev ||
+        current.ino !== identity.ino ||
+        current.isSymbolicLink()
+      )
+        throw new Error('changed profile');
+      fs.rmSync(profile, { recursive: true, force: true });
+      runtimeCleanup = 'complete';
+    } catch {
+      runtimeCleanup = 'incomplete';
+    }
+  }
+  process.stdout.write(JSON.stringify({ ...report, runtimeCleanup }) + '\n');
+  process.exitCode = report.status === 'file-generated' ? 0 : 1;
 }
-process.stdout.write(JSON.stringify({ ...report, runtimeCleanup }) + '\n');
-process.exitCode = report.status === 'file-generated' ? 0 : 1;
+void main();

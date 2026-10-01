@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
+import type { SlidegenToolProgress } from '@clawwork/shared';
 import { preflightSource } from './preflight.js';
 import { extractSlidegenBlocks } from './blocks.js';
 import { evaluateSlide } from './evaluate.js';
@@ -10,7 +11,11 @@ import { documentFileStem } from '../util/document-file-name.js';
 import { imageNames } from './resources.js';
 import { writeSlideGenerationReceipt } from './receipt.js';
 
-export async function renderSlideSourceFile(file: string, workspace: string) {
+export async function renderSlideSourceFile(
+  file: string,
+  workspace: string,
+  options: { onPage?: (progress: SlidegenToolProgress) => void } = {},
+) {
   let rendering = false;
   let snapshot: { root: string; path: string; identity: fs.Stats } | undefined;
   let sourceSha256: string | undefined;
@@ -57,6 +62,16 @@ export async function renderSlideSourceFile(file: string, workspace: string) {
       pages,
       workspacePath: snapshotPath,
       assetsRoot: snapshotPath,
+      onPage: (completed, total) => {
+        if (readSlideSourceFile(root, file) !== source) throw new Error('source-changed-during-render');
+        options.onPage?.({
+          schemaVersion: 1,
+          status: 'slidegen-progress',
+          sourceSha256: preflight.sourceSha256,
+          completed,
+          total,
+        });
+      },
       assertCurrent: () => {
         assertCurrent();
         try {

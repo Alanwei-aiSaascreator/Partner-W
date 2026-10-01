@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { parseSlidegenToolStream } from '@clawwork/shared';
 import { createHash } from 'node:crypto';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { installBundledSkill } from '../src/main/skills/bundled.js';
@@ -169,3 +170,95 @@ it.each([{ args: [] }, { args: [sourceName, 'extra'] }])(
     });
   },
 );
+
+const telemetry = (completed = 1, overrides: Record<string, unknown> = {}) =>
+  'console.log(JSON.stringify(' +
+  JSON.stringify({
+    schemaVersion: 1,
+    status: 'slidegen-progress',
+    sourceSha256: createHash('sha256').update('source').digest('hex'),
+    completed,
+    total: 2,
+    ...overrides,
+  }) +
+  '));';
+
+async function invokeStreaming() {
+  const frames: Array<{ text: string; fileAlreadyExists: boolean }> = [];
+  const result = await new Promise<{ status: number | null; stdout: string }>((resolve, reject) => {
+    const env = { ...process.env };
+    delete env.NODE_OPTIONS;
+    delete env.NODE_PATH;
+    const processChild = spawn(process.execPath, [command, sourceName], { cwd: workspace, env, windowsHide: true });
+    let stdout = '';
+    processChild.stdout.setEncoding('utf8');
+    processChild.stdout.on('data', (text: string) => {
+      stdout += text;
+      frames.push({ text, fileAlreadyExists: fs.existsSync(path.join(workspace, 'result.pptx')) });
+    });
+    processChild.on('error', reject);
+    processChild.on('close', (status) => resolve({ status, stdout }));
+  });
+  return { ...result, frames, stream: parseSlidegenToolStream(result.stdout) };
+}
+
+it('streams validated pages before the installed helper child creates its final file', async () => {
+  configure(telemetry() + 'setTimeout(()=>{' + telemetry(2) + success + '},600);');
+  const result = await invokeStreaming();
+  expect(result.status).toBe(0);
+  expect(result.frames.some((frame) => frame.text.includes('slidegen-progress') && !frame.fileAlreadyExists)).toBe(
+    true,
+  );
+  expect(result.stream).toMatchObject({
+    progress: { completed: 2, total: 2 },
+    report: { status: 'file-generated', runtimeCleanup: 'complete', pages: 2 },
+  });
+});
+
+it.each([
+  ['wrong source', telemetry(1, { sourceSha256: 'b'.repeat(64) })],
+  ['wrong total', telemetry(1, { total: 201 })],
+  ['extra fields', telemetry(1, { leaked: 'secret-token' })],
+  ['regression', telemetry(2) + telemetry(1)],
+  ['final page mismatch', telemetry(1, { total: 3 })],
+])('does not confirm a file for invalid producer telemetry: %s', async (_label, prefix) => {
+  configure(prefix + success);
+  const result = await invokeStreaming();
+  expect(result.status).toBe(1);
+  expect(result.stream?.report).toMatchObject({ status: 'output-unconfirmed', fileCreated: null });
+  expect(result.stdout).not.toContain('secret-token');
+});
+
+it.each(['stdout', 'stderr'])('bounds actual child %s without exposing oversized output', async (channel) => {
+  configure('process.' + channel + ".write('secret-token'.repeat(900000));setInterval(()=>{},1000);");
+  const result = await invokeStreaming();
+  expect(result.status).toBe(1);
+  expect(result.stream?.report).toMatchObject({
+    status: 'output-unconfirmed',
+    fileCreated: null,
+    runtimeCleanup: 'complete',
+  });
+  expect(result.stdout).not.toContain('secret-token');
+});
+
+it('preserves real page progress but reports unknown when the child times out afterward', async () => {
+  configure(telemetry() + 'setInterval(()=>{},1000);');
+  const envBefore = process.env.ROYIN_SLIDEGEN_TIMEOUT_MS;
+  process.env.ROYIN_SLIDEGEN_TIMEOUT_MS = '1000';
+  try {
+    const result = await invokeStreaming();
+    expect(result.status).toBe(1);
+    expect(result.stream).toMatchObject({
+      progress: { completed: 1, total: 2 },
+      report: {
+        status: 'output-unconfirmed',
+        fileCreated: null,
+        runtimeCleanup: 'complete',
+        diagnostics: [{ code: 'render-command-timeout' }],
+      },
+    });
+  } finally {
+    if (envBefore === undefined) delete process.env.ROYIN_SLIDEGEN_TIMEOUT_MS;
+    else process.env.ROYIN_SLIDEGEN_TIMEOUT_MS = envBefore;
+  }
+});

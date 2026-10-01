@@ -69,7 +69,13 @@ if (flag < 0 || args.length !== 1 || args[0].startsWith('--')) {
         session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
         session.defaultSession.setPermissionCheckHandler(() => false);
         try {
-          finish(await renderSlideSourceFile(args[0], workspace));
+          finish(
+            await renderSlideSourceFile(args[0], workspace, {
+              onPage: (progress) => {
+                if (!sent) process.stdout.write(JSON.stringify(progress) + '\n');
+              },
+            }),
+          );
         } catch {
           finish(failure('render-command-failed'));
         }

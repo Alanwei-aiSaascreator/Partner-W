@@ -370,3 +370,38 @@ it('cleans temporary data after a later page fails', async () => {
   expect(pptxFiles()).toEqual([]);
   expect(fs.readdirSync(workspace)).toEqual(['report.slidegen']);
 });
+
+it('reports each actually emitted page before final file persistence', async () => {
+  const input = write(source('<Slide><Text>One</Text></Slide><Slide><Text>Two</Text></Slide>'));
+  const pages: Array<{ completed: number; total: number; sourceSha256: string }> = [];
+  const report = await renderSlideSourceFile('report.slidegen', workspace, {
+    onPage: (progress) => {
+      expect(pptxFiles()).toEqual([]);
+      pages.push(progress);
+    },
+  });
+  expect(pages).toEqual(
+    [1, 2].map((completed) => ({
+      schemaVersion: 1,
+      status: 'slidegen-progress',
+      sourceSha256: createHash('sha256').update(input).digest('hex'),
+      completed,
+      total: 2,
+    })),
+  );
+  expect(report.status).toBe('file-generated');
+  expect(pptxFiles()).toHaveLength(1);
+});
+
+it('does not emit a page bound to source bytes that changed during measurement', async () => {
+  write();
+  vi.mocked(measureSlide).mockImplementation(async () => {
+    write(source('<Slide><Text>Changed</Text></Slide>'));
+    return measured;
+  });
+  const onPage = vi.fn();
+  const report = await renderSlideSourceFile('report.slidegen', workspace, { onPage });
+  expect(report.status).toBe('render-failed');
+  expect(onPage).not.toHaveBeenCalled();
+  expect(pptxFiles()).toEqual([]);
+});
