@@ -1,0 +1,124 @@
+import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import { RETRY_RUN_PHASE, RUN_PHASE_IDS } from '@clawwork/core';
+import { useMessageStore } from '@/stores/messageStore';
+import { classifyToolActivity, latestAwaitingApproval, latestRunningCall } from '@/lib/tool-activity';
+import { waitingLineSuffix } from '@/lib/waiting-copy';
+import type { ToolCall } from '@clawwork/shared';
+
+/**
+ * 一轮在跑的"活动"推导 —— **唯一出口**（ComposerActivity 与 TurnActivityRow 共用）。
+ *
+ * ⚠️ 这段推导原先内联在 `ComposerActivity` 里。会话内活动行（`TurnActivityRow`）要复用
+ *    同一套主行文案与计时口径，**不许各写一份**：两处一字不差地重写迟早只改一处，
+ *    用户会看到输入框上方和正文里说着两件不同的事（本仓对这类"唯一出口"的纪律
+ *    见 `latestRunningCall` 的注释）。
+ *
+ * 口径（逐条与 ComposerActivity 原实现一致，别在这里"顺手改进"）：
+ *   - 秒数是**本地等待计时**，不是后台心跳或存活证明，起算点来自 store 的
+ *     `turnStartedAtBySession`（组件重挂载也不回跳）。
+ *   - 主行优先级：**等人批准的工具** > 正在跑的工具 > 上下文压缩 > 模型自述进度 >
+ *     重试第 n/m 次 > 准备阶段 > 已结束工具计数 > 泛化"处理中"。
+ *   - 轮换待机文案只描述等待，**不承诺完成时间**（见 waiting-copy.ts 头注释）。
+ *
+ * ⚠️ i18n key 必须以**字面量或 `t(`前缀${变量}`)` 模板串**的形式出现在源码里 ——
+ *    `scripts/lib/i18n-usage.mjs` 的扫描器只认这两种形状（函数拼 key 会被判 unused）。
+ */
+export interface TurnActivity {
+  /** 这个会话当前有没有一轮在跑（没有时其余字段无意义）。 */
+  active: boolean;
+  /** 已等待毫秒（本地计时）。 */
+  elapsedMs: number;
+  /** 主行文案（"此刻在干什么"）。 */
+  headline: string;
+  /** 按等待时长轮换的中性提示。 */
+  quip: string;
+  /** 是否有"正在执行"的工具（用于状态标识，不等于完成度）。 */
+  running: boolean;
+}
+
+export function useTurnActivity(sessionKey: string | null): TurnActivity {
+  const { t } = useTranslation();
+
+  const active = useMessageStore((s) => (sessionKey ? s.processingBySession.has(sessionKey) : false));
+  const startedAt = useMessageStore((s) => (sessionKey ? s.turnStartedAtBySession[sessionKey] : undefined));
+  const runPhase = useMessageStore((s) => (sessionKey ? s.runPhaseBySession[sessionKey] : null));
+  // 重试到第几次了（只有 `run_status` 的 `phase:"retrying"` 才有）—— 见下面的文案分支。
+  const retry = useMessageStore((s) => (sessionKey ? s.runRetryBySession[sessionKey] : undefined));
+  // 模型**自述**的进度（网关 item 流的 preamble）—— 正文不流式时唯一在动的东西。
+  const modelProgress = useMessageStore((s) => (sessionKey ? s.progressTextBySession[sessionKey] : null));
+  const toolCalls = useMessageStore((s) => (sessionKey ? s.activeTurnBySession[sessionKey]?.toolCalls : undefined));
+  // 正在压缩上下文（B8 Phase 2）—— 压缩会让界面**停住一会儿**，必须有东西说明"为什么不动"。
+  const compacting = useMessageStore((s) => (sessionKey ? s.compactingBySession[sessionKey] === true : false));
+
+  // 每秒重渲染一次，只为让秒数和轮播文案往前走。不在跑的时候连定时器都不挂。
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!active) return;
+    setNow(Date.now());
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [active]);
+
+  const elapsedMs = startedAt ? Math.max(0, now - startedAt) : 0;
+  const calls = toolCalls ?? [];
+  // ⚠️ 走**唯一出口**（`latestRunningCall`）：这个推导原先在多处各写了一遍，
+  //    一字不差 ⇒ 迟早只改一处。返回 null 就是"该收掉了"（跑完/失败/取消）。
+  const runningCall = latestRunningCall(calls);
+  // ⭐ A2：**在等人批准**的调用 —— 排在**最前面**。它正是"为什么没有进展"的答案，
+  //    而且**该谁动**在用户那边（不是我们）。
+  const awaitingCall = latestAwaitingApproval(calls);
+  // 已结束调用包含成功与错误，不代表成功步骤数或整个任务的完成度。
+  const endedCallCount = calls.filter((call) => call.status === 'done' || call.status === 'error').length;
+
+  // 主行要说的是"此刻在干什么"，优先级：**等人批准的工具** > 正在跑的工具 >
+  // 网关报的准备阶段 > 已结束工具调用计数 / 等待响应。
+  let headline: string;
+  const activityLabel = (call: ToolCall): string => {
+    const title = call.title?.trim();
+    if (title) return title;
+    const kind = classifyToolActivity(call.name);
+    return kind === 'other' ? call.name : t(`toolActivity.actions.${kind}`);
+  };
+  if (awaitingCall) {
+    // ⚠️ **不复用 `runningTool`**："执行中：X" 说的是"在动"，而这条要说的是"没动，在等人"
+    //    —— 复用就等于什么都没说（A2 的口径就是不让复用）。
+    headline = t('chatInput.waiting.awaitingApproval', { what: activityLabel(awaitingCall) });
+  } else if (runningCall) {
+    headline = t('chatInput.waiting.runningTool', { what: activityLabel(runningCall) });
+  } else if (compacting) {
+    // ⭐ 压缩是**此刻系统在做的事**（与"正在跑的工具"同类：都是事实），而且它正是
+    //    "界面为什么停住"的答案 ⇒ 排在模型**自述**的进度前面
+    //    （那句是它上一轮说的话，压缩期间已经过期了）。
+    headline = t('chatInput.compacting');
+  } else if (modelProgress) {
+    // 工具的 `title` 是网关拼好的**事实**（工具名 + 参数），比模型的话更硬 ⇒ 排在它后面。
+    // 但它比 `runPhase` 具体得多（后者只是"正在调用模型"这一档），所以排在它前面。
+    headline = t('chatInput.waiting.modelProgress', { what: modelProgress });
+  } else if (runPhase === RETRY_RUN_PHASE && retry) {
+    // ⭐ 重试相位要说得出"**第 2/4 次**" —— 比"正在重试…"有用得多：
+    //    它同时回答了"在动吗"和"还要等几轮"。
+    // ⚠️ **只有同时拿到两个数字**才走这条（畸形帧没有数字 ⇒ 落回下面的泛化文案，
+    //    而不是显示一句"第 / 次"）。
+    headline = t('chatInput.runPhase.retrying', { attempt: retry.attempt, maxAttempts: retry.maxAttempts });
+  } else if (runPhase) {
+    // ⚠️ `retrying` **必须排除在这条泛化路之外**：它有自己的分支（上面那条，要两个数字），
+    //    走到这里就说明**没拿到数字**（畸形帧）。而 `runPhase.retrying` 那句里有
+    //    `{{attempt}}/{{maxAttempts}}` —— 没数字时 i18next 会渲染出
+    //    「正在重试（第 / 次）…」这种半截话，比泛化文案更糟。
+    const generic = runPhase !== RETRY_RUN_PHASE && RUN_PHASE_IDS.includes(runPhase) ? runPhase : 'unknown';
+    headline = t(`chatInput.runPhase.${generic}`);
+  } else if (endedCallCount > 0) {
+    headline = t('chatInput.waiting.writing', { count: endedCallCount });
+  } else {
+    headline = t('chatInput.waiting.working');
+  }
+
+  // 中性等待提示：按已等待时长确定性轮播，不作为后台心跳。
+  // ⚠️ 前缀必须**写在这个模板串里**：`scripts/lib/i18n-usage.mjs` 的扫描器
+  //    只认字面 key 或「前缀 + ${变量}」，把 key 拼在辅助函数里它看不见，
+  //    这些文案会被判成 unused 然后 check:i18n 失败（真踩过）。
+  const quip = t(`chatInput.waiting.line.${waitingLineSuffix(elapsedMs)}`);
+
+  return { active, elapsedMs, headline, quip, running: Boolean(runningCall) };
+}

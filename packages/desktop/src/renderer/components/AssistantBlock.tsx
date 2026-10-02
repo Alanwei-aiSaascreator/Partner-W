@@ -8,6 +8,7 @@ import { copyTextToClipboard } from '@/lib/clipboard';
 import MessageBlock, { type AssistantIdentity } from './MessageBlock';
 import { AttachmentFileCard, InlineImageBubble, MessageActionButton } from './MessageParts';
 import ThinkingIndicator from './ThinkingIndicator';
+import TurnActivityRow from './TurnActivityRow';
 import ToolCallSummary from './ToolCallSummary';
 import MarkdownContent from './MarkdownContent';
 import ArtifactCard from './ArtifactCard';
@@ -169,15 +170,29 @@ export interface AssistantStreamingBodyProps {
   content: string;
   thinkingContent?: string;
   toolCalls?: ToolCall[];
+  /**
+   * 有它时，"什么都没到"的等待期显示**富活动行**（`TurnActivityRow`：跳动条 +
+   * "正在干什么" + 已等待时长），否则退回原来的裸跳动点。
+   *
+   * ⚠️ 只有**会话主时间线**（MainArea）传它 —— 那里 `item.sessionKey` 现成、
+   *    且正是用户盯着看的那一格。遗留调用点不传即保持旧行为（默认参数，不改语义）。
+   */
+  activitySessionKey?: string;
 }
 
-export function AssistantStreamingBody({ content, toolCalls }: AssistantStreamingBodyProps) {
+export function AssistantStreamingBody({ content, toolCalls, activitySessionKey }: AssistantStreamingBodyProps) {
   return (
     <>
       {/* ⚠️ 顺序要紧：**什么都没到**时才显示跳动点。
           发出之后到第一个字之前，这一块已经在页面上（头像+名字也在），
           于是这条消息从"发出"到"结束"始终是**同一个 DOM 节点** —— 头像不会闪。 */}
-      {!content && !toolCalls?.length ? <ThinkingIndicator /> : null}
+      {!content && !toolCalls?.length ? (
+        activitySessionKey ? (
+          <TurnActivityRow sessionKey={activitySessionKey} />
+        ) : (
+          <ThinkingIndicator />
+        )
+      ) : null}
       {toolCalls?.length ? (
         <div className="mb-2">
           <ToolCallSummary toolCalls={toolCalls} />
@@ -205,6 +220,8 @@ export type AssistantBlockProps = {
       content: string;
       thinkingContent?: string;
       toolCalls?: ToolCall[];
+      /** 见 `AssistantStreamingBodyProps.activitySessionKey`。 */
+      activitySessionKey?: string;
     }
   | {
       /** 定稿：正文已经落在这条正式消息上。 */
@@ -244,6 +261,7 @@ const AssistantBlock = memo(function AssistantBlock(props: AssistantBlockProps) 
           content={props.content}
           thinkingContent={props.thinkingContent}
           toolCalls={props.toolCalls}
+          activitySessionKey={props.activitySessionKey}
         />
       )}
     </MessageBlock>
