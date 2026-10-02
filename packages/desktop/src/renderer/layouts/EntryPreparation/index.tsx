@@ -65,15 +65,25 @@ export default function EntryPreparation({
       if (active.current && currentScope.current === scope && actionAttempt.current === attempt) setBusy(false);
     }
   };
+  const runtimeBlocked = state.stage === 'runtime' && facts.runtime?.ok === false;
   const runtimeFailure =
-    facts.runtime?.ok === false
-      ? gatewayFailureText({ ...facts.startup, ai: { ...facts.startup.ai, failureReason: facts.runtime.reason } }, t)
+    runtimeBlocked && facts.runtime?.ok === false
+      ? facts.runtime.reason === 'process-exited'
+        ? t('entryPreparation.runtimeProcessExited')
+        : facts.runtime.reason === 'ready-timeout'
+          ? t('entryPreparation.runtimeReadyTimeout')
+          : gatewayFailureText(
+              { ...facts.startup, ai: { ...facts.startup.ai, failureReason: facts.runtime.reason } },
+              t,
+            )
       : null;
-  const failure = error
-    ? t('entryPreparation.recheckFailed')
-    : state.hasError
-      ? (runtimeFailure ?? startupFailureText(facts.startup, t) ?? t('entryPreparation.checkFailed'))
-      : null;
+  const failure = runtimeBlocked
+    ? (runtimeFailure ?? t('entryPreparation.checkFailed'))
+    : error
+      ? t('entryPreparation.recheckFailed')
+      : state.hasError
+        ? (startupFailureText(facts.startup, t) ?? t('entryPreparation.checkFailed'))
+        : null;
   const currentIndex = stages.indexOf(state.stage);
   return (
     <div className="min-h-screen bg-[var(--bg-primary)] text-[var(--text-primary)] px-6 py-8 overflow-auto">
@@ -154,6 +164,7 @@ export default function EntryPreparation({
             className={failure ? 'type-body text-[var(--danger)]' : 'type-support text-[var(--text-secondary)]'}
           >
             {failure ?? (state.canContinue ? t('entryPreparation.checked') : t(`entryPreparation.${state.stage}`))}
+            {runtimeBlocked && <p className="mt-2">{t('entryPreparation.runtimeRestartRequired')}</p>}
           </div>
           <div className="space-y-3">
             <Button
@@ -174,9 +185,11 @@ export default function EntryPreparation({
               )}
             </Button>
             <div className="flex flex-wrap justify-center gap-2">
-              <Button data-entry-retry variant="ghost" disabled={busy} onClick={() => void run(onRetry)}>
-                {t('startupReadiness.retry')}
-              </Button>
+              {!runtimeBlocked && (
+                <Button data-entry-retry variant="ghost" disabled={busy} onClick={() => void run(onRetry)}>
+                  {t('startupReadiness.retry')}
+                </Button>
+              )}
               <Button data-entry-workspace variant="ghost" disabled={busy} onClick={onChooseWorkspace}>
                 {t('entryPreparation.chooseWorkspace')}
               </Button>

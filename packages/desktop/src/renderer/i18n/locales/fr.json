@@ -946,6 +946,9 @@
     "recheckFailed": "La dernière vérification n’a pas pu être confirmée. Réessayez ou vérifiez le compte.",
     "relay": "Configuration de connexion",
     "runtime": "Démarrage du service local",
+    "runtimeProcessExited": "The local AI service exited during startup.",
+    "runtimeReadyTimeout": "The local AI service did not become ready before startup timed out.",
+    "runtimeRestartRequired": "Resolve the startup issue shown above, fully exit Royin Cube, then reopen it to start the local AI service again.",
     "title": "Préparation de votre Cube",
     "workspace": "Lecture et écriture de l’espace"
   },

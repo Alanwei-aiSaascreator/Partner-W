@@ -75,16 +75,61 @@ describe('EntryPreparation', () => {
     await act(async () => button?.click());
     expect(cb.onContinue).toHaveBeenCalledTimes(1);
   });
-  it('shows a known failure and provides retry, account and workspace exits', async () => {
+  it.each([
+    'process-exited',
+    'ready-timeout',
+    'port-occupied',
+    'auth-rejected',
+    'state-migration-blocked',
+    'unknown',
+  ] as const)('shows %s with a real restart instruction instead of ineffective retry', async (reason) => {
     const cb = callbacks();
-    const failed = { ...facts, runtime: { ok: false as const, reason: 'process-exited' as const } };
+    const failed = { ...facts, runtime: { ok: false as const, reason } };
     const { container } = render(<EntryPreparation facts={failed} {...cb} />);
-    expect(container.querySelector('[role="alert"]')?.textContent).toContain('startupReadiness.gatewayProcessExited');
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('entryPreparation.runtimeRestartRequired');
     expect(container.textContent).toContain('entryPreparation.needsAttention');
-    await act(async () => container.querySelector<HTMLButtonElement>('[data-entry-retry]')?.click());
-    expect(cb.onRetry).toHaveBeenCalledTimes(1);
+    expect(container.querySelector('[data-entry-retry]')).toBeNull();
+    expect(container.querySelector<HTMLButtonElement>('[data-entry-continue]')?.disabled).toBe(true);
+    expect(cb.onRetry).not.toHaveBeenCalled();
     expect(container.querySelector('[data-entry-account]')).not.toBeNull();
     expect(container.querySelector('[data-entry-workspace]')).not.toBeNull();
+  });
+  it('keeps retry available for service configuration failures after a successful local boot', async () => {
+    const cb = callbacks();
+    const failed = {
+      ...facts,
+      startup: {
+        ...facts.startup,
+        relayPhase: 'retryable-error' as const,
+        relayFailure: { kind: 'retryable' as const, errorCode: 'transport' as const },
+      },
+    };
+    const { container } = render(<EntryPreparation facts={failed} {...cb} />);
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-entry-retry]')?.click());
+    expect(cb.onRetry).toHaveBeenCalledTimes(1);
+    expect(container.querySelector('[role="alert"]')?.textContent).not.toContain(
+      'entryPreparation.runtimeRestartRequired',
+    );
+  });
+  it('keeps the known runtime cause when a concurrent final check rejects', async () => {
+    const cb = callbacks();
+    let reject!: (reason: Error) => void;
+    cb.onContinue.mockImplementationOnce(
+      () =>
+        new Promise<void>((_, r) => {
+          reject = r;
+        }),
+    );
+    const { container, rerender } = render(<EntryPreparation facts={facts} {...cb} />);
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-entry-continue]')?.click());
+    rerender(<EntryPreparation facts={{ ...facts, runtime: { ok: false, reason: 'port-occupied' } }} {...cb} />);
+    await act(async () => reject(new Error('private check failure')));
+    const alert = container.querySelector('[role="alert"]')?.textContent;
+    expect(alert).toContain('startupReadiness.gatewayPortOccupied');
+    expect(alert).toContain('entryPreparation.runtimeRestartRequired');
+    expect(alert).not.toContain('entryPreparation.recheckFailed');
+    expect(alert).not.toContain('private check failure');
+    expect(container.querySelector('[data-entry-retry]')).toBeNull();
   });
   it('rejects a failed final recheck without leaving and releases the button for retry', async () => {
     const cb = callbacks();

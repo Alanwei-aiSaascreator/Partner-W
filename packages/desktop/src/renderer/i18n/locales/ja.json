@@ -946,6 +946,9 @@
     "recheckFailed": "最新の確認が完了しませんでした。再試行するかアカウントを確認してください。",
     "relay": "サービス接続設定",
     "runtime": "ローカルサービス起動",
+    "runtimeProcessExited": "The local AI service exited during startup.",
+    "runtimeReadyTimeout": "The local AI service did not become ready before startup timed out.",
+    "runtimeRestartRequired": "Resolve the startup issue shown above, fully exit Royin Cube, then reopen it to start the local AI service again.",
     "title": "Cubeを準備しています",
     "workspace": "作業領域の読み書き"
   },

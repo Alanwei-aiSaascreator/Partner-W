@@ -946,6 +946,9 @@
     "recheckFailed": "本次檢查未確認成功，請重試或檢查帳號。",
     "relay": "服務連接設定",
     "runtime": "本機服務啟動",
+    "runtimeProcessExited": "本机 AI 服务在启动过程中退出了。",
+    "runtimeReadyTimeout": "本机 AI 服务启动超时，尚未准备好。",
+    "runtimeRestartRequired": "请先按上方提示处理启动问题，再完全退出荣盈魔方并重新打开，重新启动本机 AI 服务。",
     "title": "正在準備你的魔方",
     "workspace": "工作區讀寫"
   },
