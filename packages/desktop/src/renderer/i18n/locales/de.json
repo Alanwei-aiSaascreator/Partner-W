@@ -1471,7 +1471,7 @@
     },
     "filePermission": "File access",
     "finish": "Enter workspace",
-    "goalAnalysisHint": "We will save this now. When AI is ready, Compass will analyze it and recommend an assistant.",
+    "goalAnalysisHint": "Dein Arbeitsziel wird ohne automatischen KI-Aufruf gespeichert. Wähle im Arbeitsbereich einen Assistenten, um eine Aufgabe zu starten.",
     "multipleHint": "Choose more than one",
     "next": "Next",
     "nickname": "What should we call you?",

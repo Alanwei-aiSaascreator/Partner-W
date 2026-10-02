@@ -531,7 +531,6 @@ export function ChatContent({
   const goalModelCatalog = useUiStore((s) =>
     s.defaultGatewayId ? s.modelCatalogByGateway[s.defaultGatewayId] : undefined,
   );
-  const commercialOverview = useCommercialStore((s) => s.overview);
   const messages = useMessageStore((s) =>
     activeTaskId ? (s.messagesByTask[activeTaskId] ?? EMPTY_MESSAGES) : EMPTY_MESSAGES,
   );
@@ -599,13 +598,9 @@ export function ChatContent({
   const handleNavigateToAccount = useCallback(() => setSettingsOpen(true), [setSettingsOpen]);
   const [previewFile, setPreviewFile] = useState<{ path: string; content: string } | null>(null);
   const goalModelIds = useMemo(() => (goalModelCatalog ?? []).map((model) => model.id), [goalModelCatalog]);
-  const license = commercialOverview?.license;
   const goalAnalysis = useGoalAnalysis({
     profile: onboardingProfile,
-    enabled:
-      startupReadiness.conversationReady &&
-      Boolean(license?.activated) &&
-      (license?.tokenQuotaMicros ?? 0) > (license?.tokenUsedMicros ?? 0),
+    enabled: false,
     gatewayId: defaultGatewayId,
     agentId: goalAgentCatalog?.defaultId ?? 'main',
     modelIds: goalModelIds,
@@ -1028,7 +1023,7 @@ export function ChatContent({
       ) : showWelcome ? (
         <div className="flex-1 px-5 pt-4 pb-0 overflow-y-auto">
           {!startupReadiness.isReady && <StartupReadinessPanel readiness={startupReadiness} onRetry={onRetryStartup} />}
-          {onboardingProfile.customGoal.trim() && (
+          {goalAnalysis.result && (
             <GoalRecommendationPanel
               status={goalAnalysis.status}
               result={goalAnalysis.result}

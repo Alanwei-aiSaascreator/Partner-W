@@ -1471,7 +1471,7 @@
     },
     "filePermission": "文件访问方式",
     "finish": "进入工作台",
-    "goalAnalysisHint": "先记录下来，AI 服务准备好后，罗盘助手会分析目标并推荐合适的助手。",
+    "goalAnalysisHint": "先记录工作目标，不会自动调用 AI。进入工作台后可选择助手发起任务。",
     "multipleHint": "可以多选",
     "next": "下一步",
     "nickname": "怎么称呼你",

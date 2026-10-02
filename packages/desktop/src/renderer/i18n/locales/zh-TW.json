@@ -1471,7 +1471,7 @@
     },
     "filePermission": "File access",
     "finish": "Enter workspace",
-    "goalAnalysisHint": "先記錄下來，AI 服務準備好後，羅盤助手會分析目標並推薦合適的助手。",
+    "goalAnalysisHint": "先記錄工作目標，不會自動呼叫 AI。進入工作台後可選擇助手發起任務。",
     "multipleHint": "可以多選",
     "next": "Next",
     "nickname": "怎麼稱呼你",

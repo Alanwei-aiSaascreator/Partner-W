@@ -1471,7 +1471,7 @@
     },
     "filePermission": "File access",
     "finish": "Enter workspace",
-    "goalAnalysisHint": "We will save this now. When AI is ready, Compass will analyze it and recommend an assistant.",
+    "goalAnalysisHint": "Your work goal is saved without an automatic AI call. Choose an assistant in the workbench to start a task.",
     "multipleHint": "Choose more than one",
     "next": "Next",
     "nickname": "What should we call you?",
