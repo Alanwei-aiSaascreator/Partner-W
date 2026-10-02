@@ -544,6 +544,77 @@ describe('useChatSend abort flow', () => {
     expect(consoleError).not.toHaveBeenCalled();
   });
 
+  /**
+   * W02 停止口径（2026-10-03）：“先请求停止、后等 ACK”以及失败如实。
+   * 三条都是 P0 验收面：停止期间的**界面状态**与**请求次数**都不得说谎。
+   */
+  it('⭐ 停止：先请求停止、等 ACK 期间保持 stopping，确认后才回 idle', async () => {
+    let release!: () => void;
+    mocks.abort.mockImplementation(() => new Promise<void>((resolve) => (release = resolve)));
+    const { container, unmount } = render(<Harness />);
+    const button = container.querySelector('button')!;
+
+    await act(async () => {
+      button.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await Promise.resolve();
+    });
+    // 请求已按**当前任务 id**发出；ACK 未回 ⇒ 不许说“已停止”
+    expect(mocks.abort).toHaveBeenCalledWith('task-1');
+    expect(container.querySelector('[data-testid="aborting"]')?.textContent).toBe('aborting');
+
+    await act(async () => {
+      release();
+      await Promise.resolve();
+    });
+    act(() => vi.advanceTimersByTime(500));
+    expect(container.querySelector('[data-testid="aborting"]')?.textContent).toBe('idle');
+    unmount();
+  });
+
+  it('⭐ 停止失败：如实报错（abortFailed），且状态不许卡死在 stopping', async () => {
+    mocks.abort.mockRejectedValueOnce(new Error('boom'));
+    const { container, unmount } = render(<Harness />);
+
+    await act(async () => {
+      container.querySelector('button')!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    // 失败提示刻意久留（duration 10000）——停止失败是要用户去处理的，不该一闪而过。
+    expect(mocks.toastError).toHaveBeenCalledWith(
+      'chatInput.abortFailed',
+      expect.objectContaining({ duration: 10000 }),
+    );
+    act(() => vi.advanceTimersByTime(500));
+    expect(container.querySelector('[data-testid="aborting"]')?.textContent).toBe('idle');
+    unmount();
+  });
+
+  it('⭐ 停止中连点：同一轮只发一次停止请求（不重复打网关）', async () => {
+    let release!: () => void;
+    mocks.abort.mockImplementation(() => new Promise<void>((resolve) => (release = resolve)));
+    const { container, unmount } = render(<Harness />);
+    const button = container.querySelector('button')!;
+
+    await act(async () => {
+      button.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await Promise.resolve();
+    });
+    expect(mocks.abort).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      button.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await Promise.resolve();
+    });
+    expect(mocks.abort).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      release();
+      await Promise.resolve();
+    });
+    unmount();
+  });
+
   it('routes model slash input through the local command path', async () => {
     const { container } = render(<Harness initialValue="/model public/deepseek-v4-pro" />);
     const buttons = container.querySelectorAll('button');
