@@ -1,7 +1,27 @@
 // @vitest-environment jsdom
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+
+const entryFactsFixture = vi.hoisted(() => ({
+  startup: {
+    gatewayId: 'local-runtime',
+    relayPhase: 'ready' as 'ready' | 'running',
+    ai: { phase: 'ready' },
+    assistants: { phase: 'ready', completed: 6, total: 6, missingIds: [] },
+    workspaceAvailable: true,
+    conversationReady: true,
+    isReady: true,
+    hasError: false,
+    composerBlocked: false,
+    retry: vi.fn(async () => {}),
+  },
+  workspaceEpoch: 0,
+  storeWorkspaceEpoch: null as number | null,
+  runtime: { ok: true } as { ok: true } | { ok: false; reason: 'process-exited' },
+  connected: true,
+  catalogFailed: false,
+}));
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
@@ -26,6 +46,16 @@ vi.mock('../src/renderer/components/CommandPalette', () => ({ default: () => nul
 vi.mock('../src/renderer/platform', () => ({ composer: {} }));
 vi.mock('../src/renderer/stores/uiStore', () => {
   const state = {
+    defaultGatewayId: 'local-runtime',
+    get gatewayStatusMap() {
+      return { 'local-runtime': entryFactsFixture.connected ? 'connected' : 'disconnected' };
+    },
+    modelCatalogByGateway: { 'local-runtime': [{ id: 'deepseek', provider: 'clawrouter' }] },
+    get modelCatalogFailureByGateway() {
+      return { 'local-runtime': entryFactsFixture.catalogFailed };
+    },
+    gatewayReconnectInfo: {},
+    runtimeBootstrapFailure: null,
     rightPanelOpen: false,
     leftNavCollapsed: false,
     settingsOpen: false,
@@ -42,11 +72,29 @@ vi.mock('../src/renderer/stores/uiStore', () => {
     setLeftNavWidth: vi.fn(),
     setRightPanelWidth: vi.fn(),
   };
-  return { useUiStore: (selector: (value: typeof state) => unknown) => selector(state) };
+  return {
+    useUiStore: Object.assign((selector: (value: typeof state) => unknown) => selector(state), {
+      getState: () => state,
+    }),
+  };
 });
 vi.mock('../src/renderer/stores/taskStore', () => {
-  const state = { startNewTask: vi.fn(), createTask: vi.fn(), setActiveTask: vi.fn() };
-  return { useTaskStore: (selector: (value: typeof state) => unknown) => selector(state) };
+  const state = {
+    startNewTask: vi.fn(),
+    createTask: vi.fn(),
+    setActiveTask: vi.fn(),
+    get workspaceEpoch() {
+      return entryFactsFixture.workspaceEpoch;
+    },
+  };
+  return {
+    useTaskStore: Object.assign((selector: (value: typeof state) => unknown) => selector(state), {
+      getState: () => ({
+        ...state,
+        workspaceEpoch: entryFactsFixture.storeWorkspaceEpoch ?? entryFactsFixture.workspaceEpoch,
+      }),
+    }),
+  };
 });
 vi.mock('../src/renderer/hooks/useGatewayBootstrap', () => ({ useGatewayBootstrap: vi.fn() }));
 vi.mock('../src/renderer/hooks/useWorkspaceRefresh', () => ({ useWorkspaceRefresh: vi.fn() }));
@@ -55,7 +103,7 @@ vi.mock('../src/renderer/hooks/useTraySync', () => ({ useTraySync: vi.fn() }));
 vi.mock('../src/renderer/hooks/useModuleOpenTracking', () => ({ useModuleOpenTracking: vi.fn() }));
 vi.mock('../src/renderer/hooks/useKeyboardShortcuts', () => ({ useKeyboardShortcuts: vi.fn() }));
 vi.mock('../src/renderer/hooks/useSettingsBootstrap', () => ({ useSettingsBootstrap: vi.fn() }));
-vi.mock('../src/renderer/hooks/useStartupReadiness', () => ({ useStartupReadiness: () => ({ retry: vi.fn() }) }));
+vi.mock('../src/renderer/hooks/useStartupReadiness', () => ({ useStartupReadiness: () => entryFactsFixture.startup }));
 vi.mock('../src/renderer/hooks/useDocgenFailureToast', () => ({ useDocgenFailureToast: vi.fn() }));
 vi.mock('../src/renderer/hooks/useHtmlgenFailureToast', () => ({ useHtmlgenFailureToast: vi.fn() }));
 vi.mock('../src/renderer/hooks/useSlidegenToast', () => ({ useSlidegenToast: vi.fn() }));
@@ -63,6 +111,12 @@ vi.mock('../src/renderer/hooks/useClaimGuardToast', () => ({ useClaimGuardToast:
 vi.mock('../src/renderer/hooks/useDeliveryActivitySubscription', () => ({ useDeliveryActivitySubscription: vi.fn() }));
 vi.mock('../src/renderer/lib/gateway-disappearance', () => ({ useGatewayDisappearanceNotice: vi.fn() }));
 
+vi.mock('../src/renderer/hooks/useEntryRuntimeStatus', () => ({
+  useEntryRuntimeStatus: () => entryFactsFixture.runtime,
+}));
+vi.mock('../src/renderer/lib/preset-agent-bootstrap', () => ({
+  presetAgentBootstrapCoordinator: { getSnapshot: () => entryFactsFixture.startup.assistants },
+}));
 import App from '../src/renderer/App';
 import { loadOnboardingProfile } from '../src/renderer/lib/user-onboarding';
 
@@ -72,6 +126,14 @@ vi.mock('../src/renderer/lib/user-onboarding', () => ({
 }));
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
+beforeEach(() => {
+  entryFactsFixture.startup.relayPhase = 'ready';
+  entryFactsFixture.workspaceEpoch = 0;
+  entryFactsFixture.storeWorkspaceEpoch = null;
+  entryFactsFixture.connected = true;
+  entryFactsFixture.runtime = { ok: true };
+  entryFactsFixture.catalogFailed = false;
+});
 afterEach(() => vi.useRealTimers());
 
 it('keeps startup account A from replacing explicit login B while OTP is pending', async () => {
@@ -156,7 +218,7 @@ it('keeps startup account A from replacing explicit login B while OTP is pending
     await act(async () => {
       resolveOtp({ ok: true });
     });
-    expect(container.querySelector('[data-account="account-B"]')).not.toBeNull();
+    expect(container.querySelector('[data-entry-continue]')).not.toBeNull();
     expect(loadOnboardingProfile).toHaveBeenCalledWith('account-B');
     expect(commercialSession).toHaveBeenCalledTimes(2);
   } finally {
@@ -203,6 +265,12 @@ function installEntryBridge(overrides: Record<string, unknown> = {}) {
     commercialSendOtp: vi.fn(async () => ({ ok: true })),
     commercialVerifyOtp: vi.fn(async () => ({ ok: true })),
     commercialSignOut: vi.fn(async () => ({ ok: true })),
+    runtimeStatus: async () => ({ ok: true }),
+    commercialRelayBootstrapState: async () => ({
+      ok: true,
+      result: { phase: entryFactsFixture.startup.relayPhase, updatedAt: 1 },
+    }),
+    probeWorkspaceFsIdentity: async () => ({ ok: true, result: { state: 'ok' } }),
     commercialLicenseStatus: vi.fn(async () => ({ ok: true, result: missingLicense })),
     commercialLicenseActivate: vi.fn(async () => ({ ok: true, result: activeLicense })),
     commercialLicenseRecoverActivation: vi.fn(async () => ({ ok: true, result: activeLicense })),
@@ -254,7 +322,7 @@ it('keeps an already authenticated account without entitlement at activation and
     expect(ui.container.textContent).toContain('activation.errorOutcomeUnknown');
     expect(ui.container.querySelector('[data-account]')).toBeNull();
     await act(async () => ui.submit());
-    expect(ui.container.querySelector('[data-account="account-A"]')).not.toBeNull();
+    expect(ui.container.querySelector('[data-entry-continue]')).not.toBeNull();
     expect(activate).toHaveBeenCalledTimes(1);
     expect(recover).toHaveBeenCalledWith('RY-EXACT');
     expect(bridge.commercialVerifyOtp).not.toHaveBeenCalled();
@@ -269,7 +337,7 @@ it('uses an existing current entitlement without redeeming on restored authentic
     ui = mountEntry();
   try {
     await ui.render();
-    expect(ui.container.querySelector('[data-account="account-A"]')).not.toBeNull();
+    expect(ui.container.querySelector('[data-entry-continue]')).not.toBeNull();
     expect(bridge.commercialLicenseActivate).not.toHaveBeenCalled();
   } finally {
     ui.unmount();
@@ -299,7 +367,7 @@ it('does not activate until OTP is accepted and preserves the key through authen
     expect(bridge.commercialLicenseActivate).not.toHaveBeenCalled();
     await act(async () => ui.submit());
     expect(bridge.commercialLicenseActivate).toHaveBeenCalledWith('RY-EXACT');
-    expect(ui.container.querySelector('[data-account="account-A"]')).not.toBeNull();
+    expect(ui.container.querySelector('[data-entry-continue]')).not.toBeNull();
   } finally {
     ui.unmount();
   }
@@ -343,3 +411,196 @@ it('does not redeem a displayed account card for a replaced backend session', as
     ui.unmount();
   }
 });
+
+it('keeps a licensed account on real preparation until an explicit continue', async () => {
+  const bridge = installEntryBridge({
+      commercialLicenseStatus: vi.fn(async () => ({ ok: true, result: activeLicense })),
+    }),
+    ui = mountEntry();
+  try {
+    await ui.render();
+    expect(ui.container.querySelector('[data-entry-continue]')).not.toBeNull();
+    expect(ui.container.querySelector('[data-account]')).toBeNull();
+    expect(bridge.commercialSession).toHaveBeenCalledTimes(1);
+    await act(async () => ui.container.querySelector<HTMLButtonElement>('[data-entry-continue]')?.click());
+    expect(ui.container.querySelector('[data-account="account-A"]')).not.toBeNull();
+    expect(bridge.commercialSession).toHaveBeenCalledTimes(2);
+    expect(bridge.commercialLicenseActivate).not.toHaveBeenCalled();
+  } finally {
+    ui.unmount();
+  }
+});
+it('does not unlock preparation from a legacy ready flag while relay is still running', async () => {
+  entryFactsFixture.startup.relayPhase = 'running';
+  installEntryBridge({ commercialLicenseStatus: vi.fn(async () => ({ ok: true, result: activeLicense })) });
+  const ui = mountEntry();
+  try {
+    await ui.render();
+    const button = ui.container.querySelector<HTMLButtonElement>('[data-entry-continue]');
+    expect(button).not.toBeNull();
+    expect(button?.disabled).toBe(true);
+    expect(ui.container.querySelector('[data-account]')).toBeNull();
+  } finally {
+    ui.unmount();
+  }
+});
+it('refuses a continue whose account changes during final backend verification', async () => {
+  const session = (userId: string) => ({
+    ok: true,
+    result: { signedIn: true, profile: { userId, nickname: '' }, orgs: [] },
+  });
+  const commercialSession = vi
+    .fn()
+    .mockResolvedValueOnce(session('account-A'))
+    .mockResolvedValueOnce(session('account-B'));
+  const bridge = installEntryBridge({
+      commercialSession,
+      commercialLicenseStatus: vi.fn(async () => ({ ok: true, result: activeLicense })),
+    }),
+    ui = mountEntry();
+  try {
+    await ui.render();
+    expect(ui.container.querySelector('[data-entry-continue]')).not.toBeNull();
+    await act(async () => ui.container.querySelector<HTMLButtonElement>('[data-entry-continue]')?.click());
+    expect(ui.container.querySelector('[data-account]')).toBeNull();
+    expect(ui.container.querySelector('[role="alert"]')?.textContent).toContain('entryPreparation.recheckFailed');
+    expect(bridge.commercialLicenseActivate).not.toHaveBeenCalled();
+  } finally {
+    ui.unmount();
+  }
+});
+it('refuses a ready response after the workspace scope is replaced', async () => {
+  const session = () => ({
+    ok: true,
+    result: { signedIn: true, profile: { userId: 'account-A', nickname: '' }, orgs: [] },
+  });
+  let finish!: (value: ReturnType<typeof session>) => void;
+  const commercialSession = vi
+    .fn()
+    .mockResolvedValueOnce(session())
+    .mockImplementationOnce(
+      () =>
+        new Promise((r) => {
+          finish = r;
+        }),
+    );
+  installEntryBridge({
+    commercialSession,
+    commercialLicenseStatus: vi.fn(async () => ({ ok: true, result: activeLicense })),
+  });
+  const ui = mountEntry();
+  try {
+    await ui.render();
+    expect(ui.container.querySelector('[data-entry-continue]')).not.toBeNull();
+    await act(async () => ui.container.querySelector<HTMLButtonElement>('[data-entry-continue]')?.click());
+    entryFactsFixture.workspaceEpoch = 1;
+    await ui.render();
+    await act(async () => finish(session()));
+    expect(ui.container.querySelector('[data-account]')).toBeNull();
+    expect(ui.container.querySelector('[data-entry-continue]')).not.toBeNull();
+  } finally {
+    ui.unmount();
+  }
+});
+
+it('checks the live connection store when it changes before React renders the license response', async () => {
+  let finish!: (value: { ok: true; result: typeof activeLicense }) => void;
+  const status = vi
+    .fn()
+    .mockResolvedValueOnce({ ok: true, result: activeLicense })
+    .mockImplementationOnce(
+      () =>
+        new Promise((r) => {
+          finish = r;
+        }),
+    );
+  installEntryBridge({ commercialLicenseStatus: status });
+  const ui = mountEntry();
+  try {
+    await ui.render();
+    await act(async () => ui.container.querySelector<HTMLButtonElement>('[data-entry-continue]')?.click());
+    entryFactsFixture.connected = false;
+    await act(async () => finish({ ok: true, result: activeLicense }));
+    expect(ui.container.querySelector('[data-account]')).toBeNull();
+    expect(ui.container.querySelector('[data-entry-continue]')).not.toBeNull();
+  } finally {
+    ui.unmount();
+  }
+});
+it.each([
+  ['revoked', { ...activeLicense, status: 'revoked' }],
+  ['expired', { ...activeLicense, expiresAt: '1970-01-01T00:00:00.000Z' }],
+  ['unconfirmed', { ...activeLicense, orgId: null }],
+])('removes stale ready facts when final license is %s', async (_label, invalid) => {
+  const status = vi
+    .fn()
+    .mockResolvedValueOnce({ ok: true, result: activeLicense })
+    .mockResolvedValueOnce({ ok: true, result: invalid });
+  const bridge = installEntryBridge({ commercialLicenseStatus: status }),
+    ui = mountEntry();
+  try {
+    await ui.render();
+    await act(async () => ui.container.querySelector<HTMLButtonElement>('[data-entry-continue]')?.click());
+    expect(ui.container.querySelector('[data-entry-continue]')).toBeNull();
+    expect(ui.container.querySelector('[data-account]')).toBeNull();
+    expect(ui.container.querySelector('input[type="password"]')).not.toBeNull();
+    expect(bridge.commercialLicenseActivate).not.toHaveBeenCalled();
+  } finally {
+    ui.unmount();
+  }
+});
+
+it('rejects a workspace generation changed in the store before React receives it', async () => {
+  let finish!: (value: { ok: true; result: typeof activeLicense }) => void;
+  const status = vi
+    .fn()
+    .mockResolvedValueOnce({ ok: true, result: activeLicense })
+    .mockImplementationOnce(
+      () =>
+        new Promise((r) => {
+          finish = r;
+        }),
+    );
+  installEntryBridge({ commercialLicenseStatus: status });
+  const ui = mountEntry();
+  try {
+    await ui.render();
+    await act(async () => ui.container.querySelector<HTMLButtonElement>('[data-entry-continue]')?.click());
+    entryFactsFixture.storeWorkspaceEpoch = 1;
+    await act(async () => finish({ ok: true, result: activeLicense }));
+    expect(ui.container.querySelector('[data-account]')).toBeNull();
+    expect(ui.container.querySelector('[data-entry-continue]')).not.toBeNull();
+  } finally {
+    ui.unmount();
+  }
+});
+
+it.each(['relay', 'runtime'] as const)(
+  'does not overwrite a newer %s failure with an earlier ready snapshot during final workspace read',
+  async (kind) => {
+    let finish!: (value: { ok: true; result: { state: 'ok' } }) => void;
+    installEntryBridge({
+      commercialLicenseStatus: vi.fn(async () => ({ ok: true, result: activeLicense })),
+      probeWorkspaceFsIdentity: vi.fn(
+        () =>
+          new Promise((r) => {
+            finish = r;
+          }),
+      ),
+    });
+    const ui = mountEntry();
+    try {
+      await ui.render();
+      await act(async () => ui.container.querySelector<HTMLButtonElement>('[data-entry-continue]')?.click());
+      if (kind === 'relay') entryFactsFixture.startup.relayPhase = 'running';
+      else entryFactsFixture.runtime = { ok: false, reason: 'process-exited' };
+      await ui.render();
+      await act(async () => finish({ ok: true, result: { state: 'ok' } }));
+      expect(ui.container.querySelector('[data-account]')).toBeNull();
+      expect(ui.container.querySelector('[data-entry-continue]')).not.toBeNull();
+      expect(ui.container.querySelector<HTMLButtonElement>('[data-entry-continue]')?.disabled).toBe(true);
+    } finally {
+      ui.unmount();
+    }
+  },
+);

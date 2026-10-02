@@ -7,6 +7,11 @@ import RightPanel from './layouts/RightPanel';
 import Setup from './layouts/Setup';
 import Login from './layouts/Login';
 import Onboarding from './layouts/Onboarding';
+import EntryPreparation from './layouts/EntryPreparation';
+import { useEntryRuntimeStatus } from './hooks/useEntryRuntimeStatus';
+import { deriveStartupReadiness } from './lib/startup-readiness';
+import { presetAgentBootstrapCoordinator } from './lib/preset-agent-bootstrap';
+import { deriveEntryPreparation, type EntryEntitlement, type EntryPreparationFacts } from './lib/entry-preparation';
 import Settings from './layouts/Settings';
 import type { SettingsSection } from './layouts/Settings/SettingsNav';
 import ApprovalDialog from './components/ApprovalDialog';
@@ -67,15 +72,31 @@ export default function App() {
   const authGeneration = useRef(0);
   const [entryLicenseGate] = useState(createEntryLicenseGate);
   const [entryErrorCode, setEntryErrorCode] = useState<string>();
+  const [entryEntitlement, setEntryEntitlement] = useState<EntryEntitlement | null>(null);
+  const [preparedScope, setPreparedScope] = useState<string | null>(null);
+  const [preparationRetry, setPreparationRetry] = useState(0);
+  const preparationFactsRef = useRef<EntryPreparationFacts | null>(null);
+  const [preparationOverride, setPreparationOverride] = useState<Pick<
+    EntryPreparationFacts,
+    'scopeKey' | 'runtime' | 'startup'
+  > | null>(null);
   const completeAccountEntry = useCallback(
     async (account: { userId: string; nickname: string }, generation: number, activationKey = '') => {
-      await entryLicenseGate.ensure({
+      const license = await entryLicenseGate.ensure({
         userId: account.userId,
         activationKey,
         api: window.clawwork,
         isCurrent: () => generation === authGeneration.current,
       });
       if (generation !== authGeneration.current) throw new EntryLicenseError('entry_superseded');
+      setEntryEntitlement({
+        userId: account.userId,
+        licenseId: license.licenseId,
+        orgId: license.orgId,
+        status: license.status,
+        expiresAt: license.expiresAt,
+      });
+      setPreparedScope(null);
       setOnboardingAccount(account);
       setOnboardingProfile(loadOnboardingProfile(account.userId));
       setOnboardingResolved(true);
@@ -97,6 +118,7 @@ export default function App() {
   const startNewTask = useTaskStore((s) => s.startNewTask);
   const createTask = useTaskStore((s) => s.createTask);
   const setActiveTask = useTaskStore((s) => s.setActiveTask);
+  const workspaceEpoch = useTaskStore((s) => s.workspaceEpoch);
 
   const leftNavCollapsed = useUiStore((s) => s.leftNavCollapsed);
   const toggleLeftNavCollapsed = useUiStore((s) => s.toggleLeftNavCollapsed);
@@ -133,7 +155,29 @@ export default function App() {
   // ⚠️ 挂在 App 而不是 MainArea：打开设置会卸载 MainArea（`settingsOpen ? <Settings/> : <MainArea/>`），
   //    那期间的"消失"就会被漏掉，且回来时基准重置 ⇒ 一句都不报。
   useGatewayDisappearanceNotice();
+
   const startupReadiness = useStartupReadiness(ready && authState === 'ok');
+  const commercialEntry = onboardingAccount !== null && onboardingAccount.userId !== 'local';
+  const preparationScope = JSON.stringify([
+    onboardingAccount?.userId,
+    entryEntitlement?.licenseId,
+    entryEntitlement?.orgId,
+    workspaceEpoch,
+    startupReadiness.gatewayId,
+    authGeneration.current,
+    preparationRetry,
+  ]);
+  const runtimeStatus = useEntryRuntimeStatus(commercialEntry && authState === 'ok' ? preparationScope : null);
+  const preparationFacts: EntryPreparationFacts = {
+    scopeKey: preparationScope,
+    currentScopeKey: preparationScope,
+    accountUserId: onboardingAccount?.userId ?? null,
+    entitlement: entryEntitlement,
+    runtime: preparationOverride?.scopeKey === preparationScope ? preparationOverride.runtime : runtimeStatus,
+    startup: preparationOverride?.scopeKey === preparationScope ? preparationOverride.startup : startupReadiness,
+  };
+  preparationFactsRef.current = preparationFacts;
+
   useWorkspaceRefresh();
   useUpdateCheck();
   // 挂 App 而不是 MainArea：打开设置会卸载 MainArea，那期间文件生成失败就会被漏掉，
@@ -272,6 +316,8 @@ export default function App() {
     setOnboardingProfile(null);
     setOnboardingResolved(false);
     setEntryErrorCode(undefined);
+    setEntryEntitlement(null);
+    setPreparedScope(null);
   }, []);
 
   const handleSignedIn = useCallback(
@@ -299,6 +345,89 @@ export default function App() {
     handleSignInStarted();
   }, [handleSignInStarted]);
 
+  const handlePreparationContinue = async () => {
+    const initial = preparationFactsRef.current;
+    if (!initial || !deriveEntryPreparation(initial).canContinue) throw new EntryLicenseError('entry_not_ready');
+    const generation = authGeneration.current;
+    const scope = initial.scopeKey;
+    const isCurrent = () =>
+      generation === authGeneration.current &&
+      preparationFactsRef.current?.scopeKey === scope &&
+      useTaskStore.getState().workspaceEpoch === workspaceEpoch &&
+      useUiStore.getState().defaultGatewayId === initial.startup.gatewayId;
+    const session = await window.clawwork.commercialSession();
+    if (!isCurrent()) throw new EntryLicenseError('entry_superseded');
+    const account = entryAccountFromSession(session);
+    if (!account || account.userId !== initial.accountUserId) throw new EntryLicenseError('entry_identity_unavailable');
+
+    let license: Awaited<ReturnType<typeof entryLicenseGate.ensure>>;
+    try {
+      license = await entryLicenseGate.ensure({
+        userId: account.userId,
+        activationKey: '',
+        api: window.clawwork,
+        isCurrent,
+      });
+    } catch (failure) {
+      if (isCurrent() && failure instanceof EntryLicenseError && failure.code !== 'entry_superseded') {
+        setEntryEntitlement(null);
+        setPreparedScope(null);
+        setEntryErrorCode(failure.code);
+        setAuthState('required');
+      }
+      throw failure;
+    }
+    if (!isCurrent()) throw new EntryLicenseError('entry_superseded');
+    const entitlement = {
+      userId: account.userId,
+      licenseId: license.licenseId,
+      orgId: license.orgId,
+      status: license.status,
+      expiresAt: license.expiresAt,
+    };
+    if (entitlement.licenseId !== initial.entitlement?.licenseId || entitlement.orgId !== initial.entitlement?.orgId) {
+      setEntryEntitlement(entitlement);
+      throw new EntryLicenseError('entry_superseded');
+    }
+
+    const [runtime, relay, workspace] = await Promise.all([
+      window.clawwork.runtimeStatus(),
+      window.clawwork.commercialRelayBootstrapState(),
+      window.clawwork.probeWorkspaceFsIdentity(),
+    ]);
+    if (!isCurrent()) throw new EntryLicenseError('entry_superseded');
+    const ui = useUiStore.getState(),
+      gatewayId = ui.defaultGatewayId;
+    const live = deriveStartupReadiness({
+      gatewayId,
+      gatewayStatus: gatewayId ? ui.gatewayStatusMap[gatewayId] : undefined,
+      rawModelCatalog: gatewayId ? ui.modelCatalogByGateway[gatewayId] : undefined,
+      catalogFailed: Boolean(gatewayId && ui.modelCatalogFailureByGateway[gatewayId]),
+      assistantSnapshot: presetAgentBootstrapCoordinator.getSnapshot(gatewayId ?? ''),
+      relayState: relay.ok ? (relay.result ?? null) : null,
+      workspaceFsIdentity: workspace.ok ? (workspace.result ?? null) : null,
+      gatewayReconnect: gatewayId ? ui.gatewayReconnectInfo?.[gatewayId] : undefined,
+      runtimeBootstrapFailure: runtime?.ok === false ? runtime.reason : null,
+    });
+    const current = preparationFactsRef.current;
+    if (
+      !current ||
+      !deriveEntryPreparation(current).canContinue ||
+      !deriveEntryPreparation({ ...current, entitlement, runtime, startup: live }).canContinue
+    ) {
+      if (!current || !deriveEntryPreparation({ ...current, entitlement, runtime, startup: live }).canContinue)
+        setPreparationOverride({ scopeKey: scope, runtime, startup: live });
+      throw new EntryLicenseError('entry_not_ready');
+    }
+    setEntryEntitlement(entitlement);
+    setPreparedScope(scope);
+  };
+  const handlePreparationRetry = async () => {
+    setPreparedScope(null);
+    setPreparationOverride(null);
+    setPreparationRetry((value) => value + 1);
+    await startupReadiness.retry();
+  };
   const handleOnboardingComplete = useCallback((profile: OnboardingProfile) => {
     saveOnboardingProfile(profile);
     setOnboardingProfile(profile);
@@ -342,6 +471,7 @@ export default function App() {
     hasOnboardingProfile: Boolean(onboardingProfile),
     needsSetup,
     ready,
+    preparationRequired: commercialEntry && preparedScope !== preparationScope,
   });
 
   if (entryScreen === 'loading') return null;
@@ -362,6 +492,23 @@ export default function App() {
     );
   }
 
+  if (entryScreen === 'preparation')
+    return (
+      <TooltipProvider>
+        <EntryPreparation
+          key={preparationScope}
+          facts={preparationFacts}
+          onContinue={handlePreparationContinue}
+          onRetry={handlePreparationRetry}
+          onChangeAccount={handleChangeAccount}
+          onChooseWorkspace={() => {
+            setPreparedScope(null);
+            setNeedsSetup(true);
+          }}
+        />
+        <AppToaster themeMode={themeMode} />
+      </TooltipProvider>
+    );
   if (entryScreen === 'onboarding' && onboardingAccount) {
     return (
       <TooltipProvider>

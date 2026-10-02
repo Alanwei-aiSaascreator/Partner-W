@@ -24,3 +24,21 @@ describe('resolveAppEntryScreen', () => {
     expect(resolveAppEntryScreen(state)).toBe(expected);
   });
 });
+
+it('routes commercial preparation before onboarding and workspace', () => {
+  expect(resolveAppEntryScreen({ ...readyState, preparationRequired: true, hasOnboardingProfile: false })).toBe(
+    'preparation',
+  );
+  expect(resolveAppEntryScreen({ ...readyState, preparationRequired: true })).toBe('preparation');
+});
+it('routes an unconfigured commercial workspace to setup before preparation', () => {
+  expect(
+    resolveAppEntryScreen({
+      ...readyState,
+      preparationRequired: true,
+      hasOnboardingProfile: false,
+      needsSetup: true,
+      ready: false,
+    }),
+  ).toBe('setup');
+});

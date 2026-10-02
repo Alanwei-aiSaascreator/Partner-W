@@ -1,4 +1,4 @@
-export type AppEntryScreen = 'loading' | 'login' | 'onboarding' | 'setup' | 'workspace';
+export type AppEntryScreen = 'loading' | 'login' | 'onboarding' | 'setup' | 'workspace' | 'preparation';
 
 export function entryModeFromConfig(config: {
   ok: boolean;
@@ -26,12 +26,17 @@ export interface AppEntryState {
   hasOnboardingProfile: boolean;
   needsSetup: boolean;
   ready: boolean;
+  preparationRequired?: boolean;
 }
 
 export function resolveAppEntryScreen(state: AppEntryState): AppEntryScreen {
   if (state.authState === 'checking') return 'loading';
   if (state.authState === 'required') return 'login';
   if (!state.onboardingResolved || !state.hasOnboardingAccount) return 'loading';
+  if (state.preparationRequired) {
+    if (state.needsSetup) return 'setup';
+    return state.ready ? 'preparation' : 'loading';
+  }
   if (!state.hasOnboardingProfile) return 'onboarding';
   if (state.needsSetup) return 'setup';
   if (!state.ready) return 'loading';
