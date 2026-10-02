@@ -988,6 +988,61 @@ describe('公开状态 —— 渲染层唯一能看到的那份结论', () => {
     ]);
   });
 
+  it.each(['ready', 'blocked'] as const)(
+    'does not publish a late %s after the account state was reset',
+    async (mode) => {
+      let release: ((value: unknown) => void) | undefined;
+      mocks.rpc.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            release = resolve;
+          }),
+      );
+      const { bootstrapCommercialRelay } = await import('../src/main/commercial/relay-startup.js');
+      const { relayBootstrapPublicStateStore, resetRelayBootstrapPublicState } = await import('@clawwork/shared');
+      const pending = bootstrapCommercialRelay({ waitForGatewayMs: 0 });
+      await vi.waitFor(() => expect(mocks.rpc).toHaveBeenCalledTimes(1));
+      resetRelayBootstrapPublicState();
+      const reset = relayBootstrapPublicStateStore.get();
+      release?.(
+        mode === 'ready'
+          ? { data: { relayKey: RELAY_KEY }, error: null }
+          : { data: null, error: { code: 'P0001', message: BOUND_ELSEWHERE_MESSAGE }, status: 400 },
+      );
+      const result = await pending;
+      expect(result.status).toBe(mode === 'ready' ? 'applied' : 'entitlement-rejected');
+      expect(relayBootstrapPublicStateStore.get()).toEqual(reset);
+    },
+  );
+
+  it('publishes only the latest queued run after reset and activation', async () => {
+    let release: ((value: unknown) => void) | undefined;
+    mocks.rpc.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    const { bootstrapCommercialRelay, notifyCommercialActivated } =
+      await import('../src/main/commercial/relay-startup.js');
+    const { relayBootstrapPublicStateStore, resetRelayBootstrapPublicState } = await import('@clawwork/shared');
+    const seen: string[] = [];
+    const unsubscribe = relayBootstrapPublicStateStore.subscribe((state) => seen.push(state.phase));
+    try {
+      const pending = bootstrapCommercialRelay({ waitForGatewayMs: 0 });
+      await vi.waitFor(() => expect(mocks.rpc).toHaveBeenCalledTimes(1));
+      resetRelayBootstrapPublicState();
+      notifyCommercialActivated();
+      release?.({ data: { relayKey: RELAY_KEY }, error: null });
+      await pending;
+      expect(relayBootstrapPublicStateStore.get().phase).toBe('ready');
+      expect(seen).toEqual(['running', 'idle', 'running', 'ready']);
+      expect(mocks.rpc).toHaveBeenCalledTimes(2);
+    } finally {
+      unsubscribe();
+    }
+  });
+
   it.each(MAPPING_CASES)('⭐ 映射表：%s', async (_label, result, expected) => {
     const { mapRelayBootstrapPublicPhase } = await import('../src/main/commercial/relay-startup.js');
 

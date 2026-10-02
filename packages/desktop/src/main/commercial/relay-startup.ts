@@ -329,25 +329,28 @@ function runRelayBootstrap(
   // 事件桥按需建：模块加载时不建，免得在没有窗口的进程（测试 / 工具）里也去碰窗口管理器。
   ensureRendererBridge();
   // 先宣布"在跑"：初始读可能正好问上来，而这一轮确实已经开始了。
-  relayBootstrapPublicStateStore.set({ phase: 'running' });
+  const running = relayBootstrapPublicStateStore.set({ phase: 'running' });
+  const publish = (phase: RelayBootstrapPublicPhase) => {
+    if (relayBootstrapPublicStateStore.get().updatedAt === running.updatedAt) relayBootstrapPublicStateStore.set(phase);
+  };
 
   let pending: Promise<RelayBootstrapResult>;
   try {
     pending = getScheduler(opts).trigger(reason);
   } catch (error) {
     // 同步就抛（违约的实现）：状态**绝不能**停在 `running`。
-    relayBootstrapPublicStateStore.set({ phase: 'retryable-error', errorCode: 'relay_apply_failed' });
+    publish({ phase: 'retryable-error', errorCode: 'relay_apply_failed' });
     return Promise.reject(error);
   }
 
   return pending.then(
     (result) => {
-      relayBootstrapPublicStateStore.set(mapRelayBootstrapPublicPhase(result));
+      publish(mapRelayBootstrapPublicPhase(result));
       return result;
     },
     (error: unknown) => {
       // 同上：调度器内部不抛，这里只是兜底。
-      relayBootstrapPublicStateStore.set({ phase: 'retryable-error', errorCode: 'relay_apply_failed' });
+      publish({ phase: 'retryable-error', errorCode: 'relay_apply_failed' });
       throw error;
     },
   );
