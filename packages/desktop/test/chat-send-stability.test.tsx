@@ -420,6 +420,12 @@ const messageState = {
   // B10：MainArea 会读它决定"给不给重试按钮"。手写的 store 桩**必须跟着长**，
   // 缺一个字段就是整屏聊天区渲染崩掉（这里是桩的保真度问题，不是产品代码的问题）。
   retryableErrorBySession: {},
+  // A1（`58705b4c`）起：流式块"什么都没到"时改渲染 `TurnActivityRow`（`useTurnActivity`
+  // 唯一出口），它会读下面这四个面 —— 同一条"桩必须跟着长"的纪律。
+  turnStartedAtBySession: {} as Record<string, number>,
+  runRetryBySession: {} as Record<string, { attempt: number; maxAttempts: number }>,
+  progressTextBySession: {} as Record<string, string | null>,
+  compactingBySession: {} as Record<string, boolean>,
 };
 
 const roomState = { rooms: {} };
@@ -616,6 +622,63 @@ describe('聊天区在发送时的稳定性', () => {
     messageState.activeTurnBySession = {};
     Object.assign(window, { clawwork: {} });
     (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  });
+
+  it.each([
+    { theme: 'light', video: 'ready' },
+    { theme: 'dark', video: 'ready' },
+    { theme: 'light', video: 'unavailable' },
+    { theme: 'dark', video: 'unavailable' },
+    { theme: 'light', video: 'unknown' },
+    { theme: 'dark', video: 'unknown' },
+    { theme: 'light', video: 'probe-failed' },
+    { theme: 'dark', video: 'probe-failed' },
+  ] as const)('shows relay $video media without blocking chat in $theme theme', ({ theme, video }) => {
+    const previousGateway = uiState.defaultGatewayId;
+    const previousStatus = uiState.gatewayStatusMap;
+    const previousCatalog = uiState.modelCatalogByGateway;
+    uiState.defaultGatewayId = 'local-runtime';
+    uiState.gatewayStatusMap = { 'local-runtime': 'connected' };
+    uiState.modelCatalogByGateway = { 'local-runtime': [{ id: 'seed-chat', provider: 'clawrouter' }] };
+    mocks.pendingNewTask = { gatewayId: 'local-runtime', agentId: 'main', model: 'seed-chat' };
+    document.documentElement.dataset.theme = theme;
+    try {
+      const view = renderMainArea({
+        ...readiness,
+        gatewayId: 'local-runtime',
+        composerBlocked: false,
+        media: { image: 'ready', video },
+      });
+      const status = view.container.querySelector('[role="status"][aria-label="mediaReadiness.relayLabel"]');
+      expect(status).not.toBeNull();
+      expect(status?.textContent).toContain('mediaReadiness.image');
+      expect(status?.textContent).toContain('mediaReadiness.video');
+      expect(status?.textContent).toContain('mediaReadiness.ready');
+      expect(status?.textContent).toContain(`mediaReadiness.${video}`);
+      expect(status?.textContent).toContain('mediaReadiness.chatModelNote');
+      expect(status?.querySelector('button')).toBeNull();
+      expect(view.container.querySelector<HTMLTextAreaElement>('textarea')?.disabled).toBe(false);
+      expect(mocks.handleSend).not.toHaveBeenCalled();
+      const composer = view.container.querySelector('textarea');
+      mocks.tasks = [{ ...activeTask(), gatewayId: 'remote-gateway' }];
+      mocks.activeTaskId = 'task-1';
+      mocks.pendingNewTask = null;
+      view.rerender();
+      expect(view.container.querySelector('[aria-label="mediaReadiness.relayLabel"]')).toBeNull();
+      expect(view.container.querySelector('textarea')).toBe(composer);
+      view.unmount();
+    } finally {
+      uiState.defaultGatewayId = previousGateway;
+      uiState.gatewayStatusMap = previousStatus;
+      uiState.modelCatalogByGateway = previousCatalog;
+      delete document.documentElement.dataset.theme;
+    }
+  });
+
+  it('keeps media status hidden without ready local relay evidence', () => {
+    const view = renderMainArea(readiness);
+    expect(view.container.querySelector('[aria-label="mediaReadiness.relayLabel"]')).toBeNull();
+    view.unmount();
   });
 
   it('keeps the same composer node when the pending task becomes active on first send', () => {

@@ -85,6 +85,15 @@ describe('production message IPC with Drizzle and Electron SQLite', () => {
                 export const checkClaimedFiles = () => [];
                 export const expectedArtifactKindsFromRequest = () => [];
                 export const missingExpectedArtifactKinds = () => [];
+                // native PPT 在途子系统（codex 在途，data-handlers 新 import）——桩必须跟着长，
+                // 缺一个 export 整个 probe 构建就 RollupError（同"桩必须跟着长"的纪律）。
+                export const nativeTaskControl = () => ({ get: () => undefined, cancel: () => undefined });
+                export const nativeInputFromCompletedWrites = () => [];
+                export const renderNativePptFile = async () => undefined;
+                export const readSlideGenerationReceipt = () => undefined;
+                export const readWorkspaceBytes = () => Buffer.from('');
+                export const reviewNativePpt = async () => undefined;
+                export const nativeReviewPorts = () => undefined;
               `;
           },
         },
