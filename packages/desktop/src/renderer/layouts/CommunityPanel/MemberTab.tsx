@@ -106,7 +106,10 @@ export default function MemberTab() {
   const isAdmin = info.role === 'owner' || info.role === 'admin';
 
   const createInvite = useCallback(async (): Promise<void> => {
-    const res = await window.clawwork.communityInviteCreate({ role: 'member', maxUses: 1, expiresInHours: 72 });
+    // 服务端自迁移 77 起对新码**固定五次**（旧客户端传 1/50 都不能改变规则）；
+    // 这里显式传 5 让意图与展示口径一致 —— 传 1 也只会拿到五次码（兼容路径）。
+    // 剩余/总量一律读服务端的 maxUses/usedCount（见列表渲染），不硬写。
+    const res = await window.clawwork.communityInviteCreate({ role: 'member', maxUses: 5, expiresInHours: 72 });
     if (!res.ok) {
       toast.error(describeCommunityError(res.errorCode));
       return;
