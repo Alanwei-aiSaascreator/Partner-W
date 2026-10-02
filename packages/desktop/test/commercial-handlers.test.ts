@@ -37,6 +37,7 @@ const mocks = vi.hoisted(() => ({
   notifyCommercialActivated: vi.fn(),
   retryCommercialRelayBootstrap: vi.fn(),
   activateLicense: vi.fn(),
+  recoverLicenseActivation: vi.fn(),
   requestCommercialAccessCleanup: vi.fn(),
   drainPendingCommercialAccessCleanup: vi.fn(),
   clearLicense: vi.fn(),
@@ -90,6 +91,7 @@ vi.mock('../src/main/commercial/relay-startup.js', () => ({
 
 vi.mock('../src/main/commercial/license.js', () => ({
   activateLicense: (...a: unknown[]) => mocks.activateLicense(...a),
+  recoverLicenseActivation: (...a: unknown[]) => mocks.recoverLicenseActivation(...a),
   clearLicense: () => mocks.clearLicense(),
   deviceFingerprint: () => 'fp-test',
   readLicenseStatus: vi.fn(),
@@ -412,5 +414,27 @@ describe('中转 bootstrap 公开状态：初始读 / 手动重试 / 账户边�
     expect(res).toEqual({ ok: true });
     expect(mocks.retryCommercialRelayBootstrap).toHaveBeenCalledTimes(1);
     release();
+  });
+});
+
+describe('read-only activation recovery IPC', () => {
+  beforeEach(() => {
+    mocks.handlers.clear();
+    mocks.recoverLicenseActivation.mockReset();
+    mocks.activateLicense.mockReset();
+    mocks.notifyCommercialActivated.mockReset();
+    registerCommercialHandlers();
+  });
+  it.each([true, false])('schedules existing relay readiness only for recovered success %s', async (ok) => {
+    const result = ok
+      ? { ok: true, result: { activated: true } }
+      : { ok: false, errorCode: 'activation_outcome_unknown' };
+    mocks.recoverLicenseActivation.mockResolvedValue(result);
+    expect(mocks.handlers.has('commercial:license-recover-activation')).toBe(true);
+    await expect(handlerFor('commercial:license-recover-activation')({}, 'RY-EXACT-KEY')).resolves.toEqual(result);
+    expect(mocks.recoverLicenseActivation).toHaveBeenCalledWith('RY-EXACT-KEY');
+    expect(mocks.activateLicense).not.toHaveBeenCalled();
+    expect(mocks.notifyCommercialActivated).toHaveBeenCalledTimes(ok ? 1 : 0);
+    expect(analytics.peek()).toEqual([]);
   });
 });

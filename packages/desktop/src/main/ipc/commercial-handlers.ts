@@ -14,7 +14,13 @@ import {
   signInWithPassword,
   verifyLoginOtp,
 } from '../commercial/auth.js';
-import { activateLicense, clearLicense, deviceFingerprint, readLicenseStatus } from '../commercial/license.js';
+import {
+  activateLicense,
+  clearLicense,
+  deviceFingerprint,
+  readLicenseStatus,
+  recoverLicenseActivation,
+} from '../commercial/license.js';
 import { trackOnSuccess } from '../analytics/reporter.js';
 import {
   notifyCommercialActivated,
@@ -135,6 +141,11 @@ export function registerCommercialHandlers(): void {
     // ⚠️ 与登录不同：**不做**账户清理 —— 那会把刚激活的 license 清掉。
     if (res.ok) notifyCommercialActivated();
     return trackOnSuccess(res, 'license_activated');
+  });
+  ipcMain.handle('commercial:license-recover-activation', async (_event, licenseKey: string) => {
+    const res = await recoverLicenseActivation(String(licenseKey ?? ''));
+    if (res.ok) notifyCommercialActivated();
+    return res;
   });
   ipcMain.handle('commercial:license-clear', () => clearLicense());
   ipcMain.handle('commercial:device-fingerprint', () => deviceFingerprint());

@@ -743,4 +743,114 @@ describe('commercial entitlement identity', () => {
       commercial: { licenseKey: undefined, licenseBinding: undefined },
     });
   });
+  it.each(['committed', 'missing-device', 'revoked-device', 'other-device', 'member', 'other-key'] as const)(
+    'only recovers exact current activation without submitting another RPC: %s',
+    async (mode) => {
+      const license = ownLicense();
+      state.memberships = [
+        {
+          user_id: state.currentUserId,
+          org_id: license.org_id,
+          role: mode === 'member' ? 'member' : 'owner',
+          joined_at: '2026-01-01T00:00:00Z',
+        },
+      ];
+      state.licenses = [license];
+      state.activeLicenses = [license];
+      const module = await import('../src/main/commercial/license.js');
+      const recovery = module.recoverLicenseActivation;
+      expect(typeof recovery).toBe('function');
+      if (mode !== 'missing-device')
+        state.activations = [
+          {
+            id: 'activation-exact',
+            license_id: license.id,
+            device_fingerprint: mode === 'other-device' ? 'another-device' : module.deviceFingerprint(),
+            revoked_at: mode === 'revoked-device' ? '2026-01-01T00:00:00Z' : null,
+          },
+        ];
+      const result = await recovery(mode === 'other-key' ? 'RY-ANOTHER-KEY' : license.license_key);
+      expect(result).toMatchObject(
+        mode === 'committed'
+          ? { ok: true, result: { licenseId: license.id, activated: true, relayConfigured: false } }
+          : { ok: false, errorCode: 'activation_outcome_unknown' },
+      );
+      expect(state.rpc).not.toHaveBeenCalled();
+      if (mode !== 'committed') expect(state.config).toEqual({});
+    },
+  );
+
+  it('does not restore a binding after recovery is superseded by clearing the license', async () => {
+    const license = ownLicense();
+    state.licenses = [license];
+    state.activeLicenses = [license];
+    state.memberships = [
+      { user_id: state.currentUserId, org_id: license.org_id, role: 'owner', joined_at: '2026-01-01T00:00:00Z' },
+    ];
+    const module = await import('../src/main/commercial/license.js');
+    state.activations = [
+      {
+        id: 'activation-exact',
+        license_id: license.id,
+        device_fingerprint: module.deviceFingerprint(),
+        revoked_at: null,
+      },
+    ];
+    let finishLookup: (() => void) | undefined;
+    state.beforeLicenseLookup.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finishLookup = resolve;
+        }),
+    );
+    const recovery = module.recoverLicenseActivation(license.license_key);
+    for (let i = 0; i < 20 && !finishLookup; i++) await Promise.resolve();
+    expect(finishLookup).toBeTypeOf('function');
+    module.clearLicense();
+    finishLookup?.();
+    await expect(recovery).resolves.toMatchObject({ ok: false, errorCode: 'activation_outcome_unknown' });
+    expect(state.config).toEqual({});
+    expect(state.rpc).not.toHaveBeenCalled();
+  });
+  it('rejects an empty recovery key before querying or activating', async () => {
+    const module = await import('../src/main/commercial/license.js');
+    await expect(module.recoverLicenseActivation('   ')).resolves.toMatchObject({ ok: false, errorCode: 'empty_key' });
+    expect(state.queriedTables).toEqual([]);
+    expect(state.rpc).not.toHaveBeenCalled();
+  });
+  it('does not report recovery success when the license is cleared during the final status read', async () => {
+    const license = ownLicense();
+    state.licenses = [license];
+    state.activeLicenses = [license];
+    state.memberships = [
+      { user_id: state.currentUserId, org_id: license.org_id, role: 'owner', joined_at: '2026-01-01T00:00:00Z' },
+    ];
+    const module = await import('../src/main/commercial/license.js');
+    state.activations = [
+      {
+        id: 'activation-exact',
+        license_id: license.id,
+        device_fingerprint: module.deviceFingerprint(),
+        revoked_at: null,
+      },
+    ];
+    let finishFinalRead: (() => void) | undefined;
+    state.beforeLicenseLookup
+      .mockImplementationOnce(async () => {})
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            finishFinalRead = resolve;
+          }),
+      );
+    const recovery = module.recoverLicenseActivation(license.license_key);
+    for (let i = 0; i < 50 && !finishFinalRead; i++) await Promise.resolve();
+    expect(finishFinalRead).toBeTypeOf('function');
+    expect(state.config).toMatchObject({ commercial: { licenseBinding: { licenseId: license.id } } });
+    module.clearLicense();
+    finishFinalRead?.();
+    await expect(recovery).resolves.toMatchObject({ ok: false, errorCode: 'activation_outcome_unknown' });
+    expect(state.config).toMatchObject({ commercial: { licenseBinding: undefined, licenseKey: undefined } });
+    expect(state.rpc).not.toHaveBeenCalled();
+  });
 });

@@ -880,6 +880,7 @@ export interface ClawWorkAPI {
   commercialAccountOverview: () => Promise<IpcResult<CommercialAccountOverview>>;
   commercialLicenseStatus: () => Promise<IpcResult<CommercialLicenseStatus>>;
   commercialLicenseActivate: (licenseKey: string) => Promise<IpcResult<CommercialLicenseStatus>>;
+  commercialLicenseRecoverActivation: (licenseKey: string) => Promise<IpcResult<CommercialLicenseStatus>>;
   commercialLicenseClear: () => Promise<IpcResult>;
   commercialDeviceFingerprint: () => Promise<string>;
   commercialUsageReport: () => Promise<number>;

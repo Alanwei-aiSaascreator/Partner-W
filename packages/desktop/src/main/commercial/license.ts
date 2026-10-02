@@ -407,7 +407,17 @@ async function reconcileUnknownActivation(
 
     persistLicenseBinding(userId, license, generation);
     const status = await readLicenseStatusUnlocked(generation);
-    return status.ok && status.result ? { ...status, result: { ...status.result, relayConfigured: false } } : null;
+    if (
+      !isCurrentLicenseGeneration(generation) ||
+      !status.ok ||
+      !status.result?.activated ||
+      status.result.licenseKey !== licenseKey ||
+      status.result.licenseId !== licenseId ||
+      status.result.orgId !== orgId ||
+      status.result.deviceFingerprint !== fingerprint
+    )
+      return null;
+    return { ...status, result: { ...status.result, relayConfigured: false } };
   } catch {
     return null;
   }
@@ -482,6 +492,21 @@ async function activateLicenseUnlocked(licenseKey: string, generation: number): 
     }
     return fail(error, 'activation_failed');
   }
+}
+
+export function recoverLicenseActivation(licenseKey: string): Promise<IpcResult<LicenseStatus>> {
+  const generation = licenseGeneration;
+  return runLicenseOperation(async () => {
+    const supabase = getCommercialClient();
+    if (!supabase) return { ok: false, errorCode: 'not_configured' };
+    const trimmed = licenseKey.trim();
+    if (!trimmed) return { ok: false, errorCode: 'empty_key' };
+    if (!isCurrentLicenseGeneration(generation)) return unknownActivationResult();
+    return (
+      (await reconcileUnknownActivation(supabase, trimmed, deviceFingerprint(), generation)) ??
+      unknownActivationResult()
+    );
+  });
 }
 
 export function activateLicense(licenseKey: string): Promise<IpcResult<LicenseStatus>> {
