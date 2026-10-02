@@ -12,18 +12,49 @@ import type { RelayMediaReadiness } from '@clawwork/shared';
  */
 
 /**
- * 中转服务的地址。
+ * 中转服务的地址（**生产默认值**）。
  *
  * ⚠️ 必须带 `/relay` 前缀：nginx 会把该前缀剥掉再转给中转服务
  * （`services/relay/deploy/nginx-relay.conf` 的 `proxy_pass`），而 clawrouter 插件
  * 是在这个地址后面接 `/v1/catalog`、`/v1/chat/completions` 的。
  * 少了前缀，请求会打到站点根上，表现为「模型列表是空的」而且不报错。
+ *
+ * ⚠️ 2026-10-03 起本模块**不再直接用它**写配置/认配置 —— 一律走
+ *    `activeRelayBaseUrl()`（受控配置出口，见 `relay-endpoint.ts`）。
+ *    这个常量只剩两个身份：① 默认值；② 白名单/回退的锚点。
  */
 export const RELAY_BASE_URL = 'https://api.rongyinghudong.com/relay';
 
 /** 去掉尾斜杠，只用于比较。 */
-function normalizeBaseUrl(value: string): string {
+export function normalizeBaseUrl(value: string): string {
   return value.replace(/\/+$/, '');
+}
+
+/**
+ * 受控配置出口的**唯一落地形态**：一个进程级覆盖值。
+ *
+ * - `null`（默认）= 生产基址，行为与历史逐字相同；
+ * - 非 null = 测试模式解析出的本机基址（`relay-startup` 在每轮 bootstrap
+ *   写入前解析一次，见 `ensureControlledRelayEndpointResolved`）。
+ *
+ * ⚠️ 只该由受控解析处调用（测试可以用它固定夹具）。别在别处随手 set ——
+ *    这个值决定"写进网关的 provider 打到哪"与"哪些用量算中转"两件事。
+ */
+let activeRelayBaseUrlOverride: string | null = null;
+
+/** 设置活动基址；`null` 恢复生产默认。（受控配置出口，2026-10-03） */
+export function setActiveRelayBaseUrl(baseUrl: string | null): void {
+  activeRelayBaseUrlOverride = baseUrl ? normalizeBaseUrl(baseUrl) : null;
+}
+
+/** 当前**实际**使用的中转基址：写配置、认配置、探针三处共用这一个出口。 */
+export function activeRelayBaseUrl(): string {
+  return activeRelayBaseUrlOverride ?? RELAY_BASE_URL;
+}
+
+/** 媒体那条（图片/视频）基址要带 `/v1`，理由见 `RELAY_IMAGE_BASE_URL`。 */
+function activeRelayMediaBaseUrl(): string {
+  return `${activeRelayBaseUrl()}/v1`;
 }
 
 /**
@@ -48,7 +79,7 @@ export function relayProviderIds(configSnapshot: unknown): Set<string> {
     ?.providers;
   if (!providers || typeof providers !== 'object') return ids;
 
-  const target = normalizeBaseUrl(RELAY_BASE_URL);
+  const target = normalizeBaseUrl(activeRelayBaseUrl());
   for (const [id, entry] of Object.entries(providers as Record<string, unknown>)) {
     const baseUrl = (entry as { baseUrl?: unknown } | null)?.baseUrl;
     if (typeof baseUrl !== 'string') continue;
@@ -144,7 +175,7 @@ export function ownsOpenAIImageConfig(configSnapshot: unknown): boolean {
 
   const providers = (config.models as { providers?: Record<string, unknown> } | undefined)?.providers;
   const baseUrl = (providers?.openai as { baseUrl?: unknown } | undefined)?.baseUrl;
-  return typeof baseUrl === 'string' && normalizeBaseUrl(baseUrl) === normalizeBaseUrl(RELAY_IMAGE_BASE_URL);
+  return typeof baseUrl === 'string' && normalizeBaseUrl(baseUrl) === normalizeBaseUrl(activeRelayMediaBaseUrl());
 }
 
 /** 与图片同一条所有权纪律：模型 ref 与 relay baseUrl 两条必须同时命中。 */
@@ -158,7 +189,7 @@ export function ownsXaiVideoConfig(configSnapshot: unknown): boolean {
 
   const providers = (config.models as { providers?: Record<string, unknown> } | undefined)?.providers;
   const baseUrl = (providers?.[XAI_VIDEO_PROVIDER_ID] as { baseUrl?: unknown } | undefined)?.baseUrl;
-  return typeof baseUrl === 'string' && normalizeBaseUrl(baseUrl) === normalizeBaseUrl(RELAY_VIDEO_BASE_URL);
+  return typeof baseUrl === 'string' && normalizeBaseUrl(baseUrl) === normalizeBaseUrl(activeRelayMediaBaseUrl());
 }
 
 export interface RelayPatchInput {
@@ -309,7 +340,7 @@ export function buildRelayPatch(input: RelayPatchInput): RelayConfigPatch | null
 
   const providers: Record<string, unknown> = {
     [RELAY_PROVIDER_ID]: {
-      baseUrl: RELAY_BASE_URL,
+      baseUrl: activeRelayBaseUrl(),
       apiKey: input.relayKey,
       headers,
     },
@@ -319,7 +350,7 @@ export function buildRelayPatch(input: RelayPatchInput): RelayConfigPatch | null
   // 同一个 relay key、同一个设备头，只是形状是 OpenAI 那条。
   if (imageWired) {
     providers[OPENAI_IMAGE_PROVIDER_ID] = {
-      baseUrl: RELAY_IMAGE_BASE_URL,
+      baseUrl: activeRelayMediaBaseUrl(),
       apiKey: input.relayKey,
       headers,
     };
@@ -332,7 +363,7 @@ export function buildRelayPatch(input: RelayPatchInput): RelayConfigPatch | null
 
   if (videoWired) {
     providers[XAI_VIDEO_PROVIDER_ID] = {
-      baseUrl: RELAY_VIDEO_BASE_URL,
+      baseUrl: activeRelayMediaBaseUrl(),
       apiKey: input.relayKey,
       headers,
     };
@@ -565,7 +596,7 @@ const CATALOG_TIMEOUT_MS = 8_000;
  * 拿不到就返回 null —— 默认模型不写而已，不该拖垮配置写入。
  */
 export async function fetchFirstRelayModel(relayKey: string): Promise<string | null> {
-  const res = await fetch(`${normalizeBaseUrl(RELAY_BASE_URL)}/v1/catalog`, {
+  const res = await fetch(`${normalizeBaseUrl(activeRelayBaseUrl())}/v1/catalog`, {
     headers: { Authorization: `Bearer ${relayKey}` },
     signal: AbortSignal.timeout(CATALOG_TIMEOUT_MS),
   });
@@ -598,7 +629,7 @@ export interface RelayMediaCapabilities {
  * `applyRelayConfig` 收成 fail-closed 告警；绝不因为探针失败而猜成可用。
  */
 export async function fetchRelayMediaCapabilities(relayKey: string): Promise<RelayMediaCapabilities> {
-  const res = await fetch(`${normalizeBaseUrl(RELAY_BASE_URL)}/v1/capabilities`, {
+  const res = await fetch(`${normalizeBaseUrl(activeRelayBaseUrl())}/v1/capabilities`, {
     headers: { Authorization: `Bearer ${relayKey}` },
     signal: AbortSignal.timeout(CATALOG_TIMEOUT_MS),
   });
@@ -742,7 +773,7 @@ function providerApplied(snapshot: unknown): boolean {
   if (!entry || typeof entry !== 'object') return false;
 
   const { apiKey, baseUrl } = entry as { apiKey?: unknown; baseUrl?: unknown };
-  if (normalizeBaseUrl(String(baseUrl ?? '')) !== normalizeBaseUrl(RELAY_BASE_URL)) return false;
+  if (normalizeBaseUrl(String(baseUrl ?? '')) !== normalizeBaseUrl(activeRelayBaseUrl())) return false;
   // 脱敏后仍然是**非空字符串**（真 key 或 `__OPENCLAW_REDACTED__` 都算有 key）；
   // 空串/缺失才说明这个 provider 没带上凭证。
   return typeof apiKey === 'string' && apiKey.length > 0;
@@ -795,8 +826,8 @@ function mediaPatchApplied(snapshot: unknown, patch: RelayConfigPatch): boolean 
   };
 
   return (
-    check({ providerId: OPENAI_IMAGE_PROVIDER_ID, expectedBaseUrl: RELAY_IMAGE_BASE_URL, mediaKind: 'image' }) &&
-    check({ providerId: XAI_VIDEO_PROVIDER_ID, expectedBaseUrl: RELAY_VIDEO_BASE_URL, mediaKind: 'video' })
+    check({ providerId: OPENAI_IMAGE_PROVIDER_ID, expectedBaseUrl: activeRelayMediaBaseUrl(), mediaKind: 'image' }) &&
+    check({ providerId: XAI_VIDEO_PROVIDER_ID, expectedBaseUrl: activeRelayMediaBaseUrl(), mediaKind: 'video' })
   );
 }
 

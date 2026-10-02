@@ -11,7 +11,13 @@ import { relayBootstrapPublicStateStore, type RelayBootstrapPublicPhase } from '
 import { getCommercialClient } from './client.js';
 import { probeAuth } from './auth.js';
 import { deviceFingerprint, mapActivationError, readLicenseStatus } from './license.js';
-import { webSearchEnabled, fetchFirstRelayModel, fetchRelayMediaCapabilities } from './relay-config.js';
+import {
+  webSearchEnabled,
+  fetchFirstRelayModel,
+  fetchRelayMediaCapabilities,
+  setActiveRelayBaseUrl,
+} from './relay-config.js';
+import { resolveControlledRelayEndpoint, readCappedTextFile, controlledTestConfigPath } from './relay-endpoint.js';
 import { readConfig } from '../workspace/config.js';
 import { createRelayBootstrapScheduler } from './relay-bootstrap.js';
 import type {
@@ -317,6 +323,40 @@ export function mapRelayBootstrapPublicPhase(result: RelayBootstrapResult): Rela
 }
 
 /**
+ * 受控配置出口（2026-10-03）：每轮 bootstrap **写入之前**先裁决一次"打到哪个中转"。
+ *
+ * - 单飞 + 记忆化：解析是纯本地读（两个小文件 + 一次许可读取），一次会话解析一次；
+ * - **永不抛**：解析失败/被拒一律回退生产基址（安全侧）——
+ *   测试模式打不开是"少一个能力"，不是"坏一个生产"；
+ * - 它放在所有 bootstrap 触发（启动/登录/激活/重试）**共用**的入口上：
+ *   env 还在 ⇒ 解析结果还是本地，启动重写写回的仍是本地，**不会把测试配置冲成生产**。
+ */
+let controlledEndpointResolution: Promise<void> | null = null;
+
+function ensureControlledRelayEndpointResolved(): Promise<void> {
+  controlledEndpointResolution ??= resolveControlledRelayEndpoint({
+    env: process.env,
+    readTextFile: readCappedTextFile,
+    readLicenseId: async () => {
+      const res = await readLicenseStatus();
+      return res.ok ? (res.result?.licenseId ?? null) : null;
+    },
+  })
+    .then((resolution) => {
+      setActiveRelayBaseUrl(resolution.source === 'test-config' ? resolution.baseUrl : null);
+      log('relay.endpoint-resolved', {
+        source: resolution.source,
+        ...(resolution.reason ? { reason: resolution.reason } : {}),
+      });
+    })
+    .catch((error: unknown) => {
+      setActiveRelayBaseUrl(null);
+      log('relay.endpoint-resolve-failed', { message: error instanceof Error ? error.message : String(error) });
+    });
+  return controlledEndpointResolution;
+}
+
+/**
  * 跑一轮 bootstrap，并把结果翻成公开状态。**永不抛**（调度器自己也不抛）。
  *
  * ⚠️ 先宣布 `running` **再**进单飞：渲染层可能正好在这两条状态之间问上来
@@ -334,26 +374,42 @@ function runRelayBootstrap(
     if (relayBootstrapPublicStateStore.get().updatedAt === running.updatedAt) relayBootstrapPublicStateStore.set(phase);
   };
 
-  let pending: Promise<RelayBootstrapResult>;
-  try {
-    pending = getScheduler(opts).trigger(reason);
-  } catch (error) {
-    // 同步就抛（违约的实现）：状态**绝不能**停在 `running`。
-    publish({ phase: 'retryable-error', errorCode: 'relay_apply_failed' });
-    return Promise.reject(error);
-  }
-
-  return pending.then(
-    (result) => {
-      publish(mapRelayBootstrapPublicPhase(result));
-      return result;
-    },
-    (error: unknown) => {
-      // 同上：调度器内部不抛，这里只是兜底。
+  const start = (): Promise<RelayBootstrapResult> => {
+    let pending: Promise<RelayBootstrapResult>;
+    try {
+      pending = getScheduler(opts).trigger(reason);
+    } catch (error) {
+      // 同步就抛（违约的实现）：状态**绝不能**停在 `running`。
       publish({ phase: 'retryable-error', errorCode: 'relay_apply_failed' });
-      throw error;
-    },
-  );
+      return Promise.reject(error);
+    }
+
+    return pending.then(
+      (result) => {
+        publish(mapRelayBootstrapPublicPhase(result));
+        return result;
+      },
+      (error: unknown) => {
+        // 同上：调度器内部不抛，这里只是兜底。
+        publish({ phase: 'retryable-error', errorCode: 'relay_apply_failed' });
+        throw error;
+      },
+    );
+  };
+
+  // ⭐ 受控配置出口（2026-10-03）：先把"打到哪个中转"定下来，再让**任何配置
+  //    读取/写入**发生（含启动时重写 provider —— 那一步必须写活动基址）。
+  //
+  // ⚠️ 只有 env 配了测试配置才进异步解析；生产默认**同步开工**，与历史逐字相同。
+  //    "触发即开工 / 同步进 running"由 relay-startup.test.ts 的重试用例钉住 ——
+  //    改成无条件 await 会把它推迟一个微任务，别再改回去。
+  if (!controlledTestConfigPath(process.env)) {
+    // 没有测试配置 = 生产默认。顺带复位可能残留的覆盖（测试配置从环境里消失时，
+    // 下一次 bootstrap 必须写回生产 —— 否则会拿一个已不存在的测试基址继续跑）。
+    setActiveRelayBaseUrl(null);
+    return start();
+  }
+  return ensureControlledRelayEndpointResolved().then(start);
 }
 
 /**
