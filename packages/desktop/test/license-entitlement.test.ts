@@ -853,4 +853,33 @@ describe('commercial entitlement identity', () => {
     expect(state.config).toMatchObject({ commercial: { licenseBinding: undefined, licenseKey: undefined } });
     expect(state.rpc).not.toHaveBeenCalled();
   });
+  it('never submits a queued activation after its account generation was cleared', async () => {
+    const previous = ownLicense();
+    state.licenses = [previous];
+    state.activeLicenses = [previous];
+    state.memberships = [
+      { user_id: state.currentUserId, org_id: previous.org_id, role: 'owner', joined_at: '2026-01-01T00:00:00Z' },
+    ];
+    state.config = { commercial: { licenseKey: previous.license_key } };
+    let finishLookup: (() => void) | undefined;
+    state.beforeLicenseLookup.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finishLookup = resolve;
+        }),
+    );
+    state.rpc.mockResolvedValue({ data: { relayKey: null }, error: null });
+    const module = await import('../src/main/commercial/license.js');
+    const olderRead = module.readLicenseStatus();
+    for (let i = 0; i < 30 && !finishLookup; i++) await Promise.resolve();
+    expect(finishLookup).toBeTypeOf('function');
+    const activation = module.activateLicense('RY-NEXT-UNCLAIMED');
+    module.clearLicense();
+    state.currentUserId = 'another-user';
+    finishLookup?.();
+    await olderRead;
+    await expect(activation).resolves.toMatchObject({ ok: false, errorCode: 'activation_failed' });
+    expect(state.rpc).not.toHaveBeenCalled();
+    expect(state.config).toMatchObject({ commercial: { licenseKey: undefined, licenseBinding: undefined } });
+  });
 });

@@ -424,6 +424,9 @@ async function reconcileUnknownActivation(
 }
 
 async function activateLicenseUnlocked(licenseKey: string, generation: number): Promise<IpcResult<LicenseStatus>> {
+  if (!isCurrentLicenseGeneration(generation)) {
+    return { ok: false, error: 'License activation was superseded', errorCode: 'activation_failed' };
+  }
   const supabase = getCommercialClient();
   if (!supabase) {
     return { ok: false, error: 'Commercial backend is not configured', errorCode: 'not_configured' };
