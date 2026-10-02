@@ -15,13 +15,18 @@ import Login from '../src/renderer/layouts/Login';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-function render(ui: ReactElement): { container: HTMLDivElement; unmount: () => void } {
+function render(ui: ReactElement): {
+  container: HTMLDivElement;
+  unmount: () => void;
+  rerender: (ui: ReactElement) => void;
+} {
   const container = document.createElement('div');
   document.body.appendChild(container);
   const root: Root = createRoot(container);
   act(() => root.render(ui));
   return {
     container,
+    rerender: (nextUi) => act(() => root.render(nextUi)),
     unmount: () => {
       act(() => root.unmount());
       container.remove();
@@ -362,5 +367,238 @@ describe('Login', () => {
     expect(container.textContent).not.toContain('login.verifyUnreachable');
     expect(container.textContent).not.toContain('login.verifyTimeout');
     unmount();
+  });
+  it('keeps a card on the login form and only forwards it after successful OTP', async () => {
+    const onSignedIn = vi.fn(),
+      { container, unmount } = render(<Login activationEnabled onSignedIn={onSignedIn} />);
+    try {
+      expect(container.querySelector('input[type="password"]')).not.toBeNull();
+      act(() => {
+        setInput(container.querySelector('input[type="tel"]') as HTMLInputElement, '13800138000');
+        setInput(container.querySelector('input[type="password"]') as HTMLInputElement, 'RY-EXACT');
+        (container.querySelector('input[type="checkbox"]') as HTMLInputElement).click();
+      });
+      await act(async () =>
+        container.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })),
+      );
+      expect(onSignedIn).not.toHaveBeenCalled();
+      act(() => setInput(container.querySelector('input[inputmode="numeric"]') as HTMLInputElement, '123456'));
+      verifyOtp.mockResolvedValueOnce({ ok: false, errorCode: 'otp_verify_failed' });
+      await act(async () =>
+        container.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })),
+      );
+      expect(onSignedIn).not.toHaveBeenCalled();
+      await act(async () =>
+        container.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })),
+      );
+      expect(onSignedIn).toHaveBeenCalledWith('RY-EXACT');
+      expect(JSON.stringify(window.localStorage)).not.toContain('RY-EXACT');
+    } finally {
+      unmount();
+    }
+  });
+  it('keeps an authenticated account at activation without another OTP and maps its error', async () => {
+    const onSignedIn = vi
+      .fn()
+      .mockRejectedValueOnce(Object.assign(new Error('unknown'), { code: 'activation_outcome_unknown' }))
+      .mockResolvedValueOnce(undefined);
+    const { container, unmount } = render(
+      <Login
+        activationEnabled
+        authenticatedAccount={{ userId: 'user-A', nickname: 'Alice' }}
+        onSignedIn={onSignedIn}
+      />,
+    );
+    try {
+      expect(container.querySelector('input[type="tel"]')).toBeNull();
+      expect(container.querySelector('input[inputmode="numeric"]')).toBeNull();
+      act(() => setInput(container.querySelector('input[type="password"]') as HTMLInputElement, 'RY-EXACT'));
+      await act(async () =>
+        container.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })),
+      );
+      expect(container.textContent).toContain('activation.errorOutcomeUnknown');
+      expect((container.querySelector('input[type="password"]') as HTMLInputElement).value).toBe('RY-EXACT');
+      await act(async () =>
+        container.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })),
+      );
+      expect(verifyOtp).not.toHaveBeenCalled();
+      expect(onSignedIn).toHaveBeenCalledTimes(2);
+    } finally {
+      unmount();
+    }
+  });
+  it('locks same-tick activation submissions without invalidating the first attempt', async () => {
+    let finish: (() => void) | undefined;
+    const onSignedIn = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const { container, unmount } = render(
+      <Login activationEnabled authenticatedAccount={{ userId: 'user-A', nickname: '' }} onSignedIn={onSignedIn} />,
+    );
+    try {
+      await act(async () => {
+        container.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+        container.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      });
+      expect(onSignedIn).toHaveBeenCalledTimes(1);
+      await act(async () => finish?.());
+      expect(container.querySelector('.animate-spin')).toBeNull();
+    } finally {
+      unmount();
+    }
+  });
+  it('clears the card and returns to authentication when the user changes account', async () => {
+    const onChangeAccount = vi.fn();
+    const { container, unmount } = render(
+      <Login
+        activationEnabled
+        authenticatedAccount={{ userId: 'user-A', nickname: 'Alice' }}
+        onSignedIn={vi.fn()}
+        onChangeAccount={onChangeAccount}
+      />,
+    );
+    try {
+      expect(container.querySelector('input[type="password"]')).not.toBeNull();
+      act(() => setInput(container.querySelector('input[type="password"]') as HTMLInputElement, 'PRIVATE-CARD'));
+      await act(async () => (container.querySelector('[data-change-account]') as HTMLButtonElement).click());
+      expect(onChangeAccount).toHaveBeenCalledTimes(1);
+      expect((container.querySelector('input[type="password"]') as HTMLInputElement).value).toBe('');
+    } finally {
+      unmount();
+    }
+  });
+  it('clears a replaced account card and ignores its late rejection', async () => {
+    let rejectOld: ((reason: Error) => void) | undefined;
+    const onSignedIn = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((_, reject) => {
+            rejectOld = reject;
+          }),
+      )
+      .mockResolvedValueOnce(undefined);
+    const { container, unmount, rerender } = render(
+      <Login activationEnabled authenticatedAccount={{ userId: 'A', nickname: '' }} onSignedIn={onSignedIn} />,
+    );
+    try {
+      act(() => setInput(container.querySelector('input[type="password"]') as HTMLInputElement, 'A-PRIVATE-CARD'));
+      await act(async () =>
+        container.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })),
+      );
+      rerender(
+        <Login activationEnabled authenticatedAccount={{ userId: 'B', nickname: '' }} onSignedIn={onSignedIn} />,
+      );
+      expect((container.querySelector('input[type="password"]') as HTMLInputElement).value).toBe('');
+      await act(async () => rejectOld?.(Object.assign(new Error('old'), { code: 'activation_outcome_unknown' })));
+      expect(container.querySelector('[role="alert"]')).toBeNull();
+      await act(async () =>
+        container.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })),
+      );
+      expect(onSignedIn).toHaveBeenLastCalledWith('');
+    } finally {
+      unmount();
+    }
+  });
+  it('does not let a replaced account release the current activation lock', async () => {
+    let finishOld: (() => void) | undefined, finishNew: (() => void) | undefined;
+    const onSignedIn = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            finishOld = resolve;
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            finishNew = resolve;
+          }),
+      );
+    const { container, unmount, rerender } = render(
+      <Login activationEnabled authenticatedAccount={{ userId: 'A', nickname: '' }} onSignedIn={onSignedIn} />,
+    );
+    const submit = () =>
+      container.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    try {
+      await act(async () => submit());
+      rerender(
+        <Login activationEnabled authenticatedAccount={{ userId: 'B', nickname: '' }} onSignedIn={onSignedIn} />,
+      );
+      await act(async () => submit());
+      await act(async () => finishOld?.());
+      expect(container.querySelector('.animate-spin')).not.toBeNull();
+      await act(async () => submit());
+      expect(onSignedIn).toHaveBeenCalledTimes(2);
+      await act(async () => finishNew?.());
+    } finally {
+      unmount();
+    }
+  });
+  it('does not trust an external account arriving during an OTP activation attempt', async () => {
+    let rejectOld: ((reason: Error) => void) | undefined;
+    const onSignedIn = vi.fn(
+      () =>
+        new Promise<void>((_, reject) => {
+          rejectOld = reject;
+        }),
+    );
+    const { container, unmount, rerender } = render(<Login activationEnabled onSignedIn={onSignedIn} />);
+    try {
+      act(() => {
+        setInput(container.querySelector('input[type="tel"]') as HTMLInputElement, '13800138000');
+        setInput(container.querySelector('input[type="password"]') as HTMLInputElement, 'A-CARD');
+        (container.querySelector('input[type="checkbox"]') as HTMLInputElement).click();
+      });
+      await act(async () =>
+        container.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })),
+      );
+      act(() => setInput(container.querySelector('input[inputmode="numeric"]') as HTMLInputElement, '123456'));
+      await act(async () =>
+        container.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })),
+      );
+      rerender(
+        <Login activationEnabled authenticatedAccount={{ userId: 'B', nickname: '' }} onSignedIn={onSignedIn} />,
+      );
+      expect((container.querySelector('input[type="password"]') as HTMLInputElement).value).toBe('');
+      await act(async () => rejectOld?.(Object.assign(new Error('A late'), { code: 'activation_outcome_unknown' })));
+      expect(container.querySelector('[role="alert"]')).toBeNull();
+    } finally {
+      unmount();
+    }
+  });
+  it('waits for account sign-out before permitting another entry request', async () => {
+    let finish: (() => void) | undefined;
+    const onSignedIn = vi.fn(),
+      onChangeAccount = vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            finish = resolve;
+          }),
+      );
+    const { container, unmount } = render(
+      <Login
+        activationEnabled
+        authenticatedAccount={{ userId: 'A', nickname: '' }}
+        onSignedIn={onSignedIn}
+        onChangeAccount={onChangeAccount}
+      />,
+    );
+    try {
+      await act(async () => (container.querySelector('[data-change-account]') as HTMLButtonElement).click());
+      expect(container.querySelector('.animate-spin')).not.toBeNull();
+      await act(async () =>
+        container.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })),
+      );
+      expect(onSignedIn).not.toHaveBeenCalled();
+      await act(async () => finish?.());
+      expect(container.querySelector('.animate-spin')).toBeNull();
+    } finally {
+      unmount();
+    }
   });
 });

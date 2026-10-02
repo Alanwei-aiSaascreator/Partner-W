@@ -6,13 +6,18 @@ import logo from '@/assets/logo.png';
 import { motion as motionPresets } from '@/styles/design-tokens';
 import { cn } from '@/lib/utils';
 import { toast } from '@/lib/toast';
+import { activationErrorKey } from '@/lib/activation-errors';
 import { Button } from '@/components/ui/button';
 import GuideMascot, { type GuideMascotPose } from '@/components/GuideMascot';
 
 const RESEND_SECONDS = 60;
 
 interface LoginProps {
-  onSignedIn: () => void | Promise<void>;
+  onSignedIn: (activationKey?: string) => void | Promise<void>;
+  activationEnabled?: boolean;
+  authenticatedAccount?: { userId: string; nickname: string } | null;
+  onChangeAccount?: () => void | Promise<void>;
+  entryErrorCode?: string;
   onSignInStarted?: () => void;
 }
 
@@ -71,10 +76,20 @@ function AgreementLinks({
   );
 }
 
-export default function Login({ onSignedIn, onSignInStarted }: LoginProps) {
+export default function Login({
+  onSignedIn,
+  onSignInStarted,
+  activationEnabled = false,
+  authenticatedAccount,
+  onChangeAccount,
+  entryErrorCode,
+}: LoginProps) {
   const { t } = useTranslation();
   const [phone, setPhone] = useState('');
   const [code, setCode] = useState('');
+  const [activationKey, setActivationKey] = useState('');
+  const activationLock = useRef(false);
+  const authenticated = activationEnabled && Boolean(authenticatedAccount);
   const [phase, setPhase] = useState<'phone' | 'code'>('phone');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -93,6 +108,29 @@ export default function Login({ onSignedIn, onSignInStarted }: LoginProps) {
    */
   const attemptSeq = useRef(0);
   const verifiedPhone = useRef<string | null>(null);
+  const previousAccount = useRef(authenticatedAccount?.userId ?? null);
+  useEffect(() => {
+    const nextAccount = authenticatedAccount?.userId ?? null;
+    const previous = previousAccount.current;
+    previousAccount.current = nextAccount;
+    if (previous === nextAccount) return;
+    attemptSeq.current += 1;
+    activationLock.current = false;
+    verifiedPhone.current = null;
+    setActivationKey('');
+    setCode('');
+    setPhone('');
+    setPhase('phone');
+    setError('');
+    setBusy(false);
+    setMascotPose('idle');
+  }, [authenticatedAccount?.userId]);
+  const lastEntryErrorCode = useRef<string>(undefined);
+  useEffect(() => {
+    if (entryErrorCode && entryErrorCode !== lastEntryErrorCode.current)
+      setError(t(activationErrorKey(entryErrorCode)));
+    lastEntryErrorCode.current = entryErrorCode;
+  }, [entryErrorCode, t]);
 
   useEffect(
     () => () => {
@@ -142,7 +180,8 @@ export default function Login({ onSignedIn, onSignInStarted }: LoginProps) {
   );
 
   const sendCode = useCallback(async () => {
-    if (!phoneValid || busy) return;
+    if (!phoneValid || busy || (activationEnabled && (activationLock.current || !agreed))) return;
+    if (activationEnabled) activationLock.current = true;
     onSignInStarted?.();
     // ⚠️ `busy` 是 state、不是同步锁：同一个 tick 里的两次提交（表单 + 「重新发送」、
     //    或连点）都会读到 `busy === false` ⇒ 真的会发两次。发两次拦不住没关系，
@@ -159,6 +198,7 @@ export default function Login({ onSignedIn, onSignInStarted }: LoginProps) {
       res = { ok: false, errorCode: 'otp_send_failed' };
     }
     if (seq !== attemptSeq.current) return;
+    activationLock.current = false;
     setBusy(false);
 
     // Start the cooldown on every attempt, not just success. Throttling is
@@ -172,7 +212,7 @@ export default function Login({ onSignedIn, onSignInStarted }: LoginProps) {
       return;
     }
     toast.success(t('login.codeSent', { phone }));
-  }, [busy, describeSendError, onSignInStarted, phone, phoneValid, t]);
+  }, [activationEnabled, agreed, busy, describeSendError, onSignInStarted, phone, phoneValid, t]);
 
   /**
    * 校验失败时**必须分原因**说。
@@ -196,8 +236,14 @@ export default function Login({ onSignedIn, onSignInStarted }: LoginProps) {
   );
 
   const submit = useCallback(async () => {
-    if (!codeValid || busy) return;
-    onSignInStarted?.();
+    if (
+      (!authenticated && !codeValid) ||
+      busy ||
+      (activationEnabled && (activationLock.current || (!authenticated && !agreed)))
+    )
+      return;
+    if (activationEnabled) activationLock.current = true;
+    if (!authenticated) onSignInStarted?.();
     // 同 `sendCode`：编号 + 对号，迟到的响应不许覆盖当前界面状态。
     const seq = ++attemptSeq.current;
     setBusy(true);
@@ -205,32 +251,53 @@ export default function Login({ onSignedIn, onSignInStarted }: LoginProps) {
     let res: Awaited<ReturnType<typeof window.clawwork.commercialVerifyOtp>>;
     try {
       res =
-        verifiedPhone.current === phone ? { ok: true } : await window.clawwork.commercialVerifyOtp(`+86${phone}`, code);
+        authenticated || verifiedPhone.current === phone
+          ? { ok: true }
+          : await window.clawwork.commercialVerifyOtp(`+86${phone}`, code);
     } catch {
       // IPC 自己炸了 = 我们没拿到答案 ⇒ 属于"问不出来"，**不是**"你码错了"
       res = { ok: false, errorCode: 'otp_verify_unreachable' };
     }
     if (seq !== attemptSeq.current) return;
     if (!res.ok) {
+      activationLock.current = false;
       setBusy(false);
       setError(describeVerifyError(res.errorCode));
       return;
     }
     verifiedPhone.current = phone;
     try {
-      await onSignedIn();
+      await onSignedIn(activationEnabled ? activationKey.trim() : undefined);
       if (seq !== attemptSeq.current) return;
       setMascotPose('success');
-    } catch {
+    } catch (failure) {
       if (seq !== attemptSeq.current) return;
-      setError(t('login.sessionUnavailable'));
+      const failureCode =
+        failure instanceof Error && 'code' in failure && typeof failure.code === 'string' ? failure.code : null;
+      if (failureCode !== 'entry_superseded')
+        setError(t(failureCode ? activationErrorKey(failureCode) : 'login.sessionUnavailable'));
+    } finally {
+      if (seq === attemptSeq.current) activationLock.current = false;
     }
     if (seq === attemptSeq.current) setBusy(false);
-  }, [busy, code, codeValid, describeVerifyError, onSignedIn, onSignInStarted, phone, t]);
+  }, [
+    activationEnabled,
+    activationKey,
+    agreed,
+    authenticated,
+    busy,
+    code,
+    codeValid,
+    describeVerifyError,
+    onSignedIn,
+    onSignInStarted,
+    phone,
+    t,
+  ]);
 
   const onSubmitForm = (e: React.FormEvent) => {
     e.preventDefault();
-    if (phase === 'phone') void sendCode();
+    if (phase === 'phone' && !authenticated) void sendCode();
     else void submit();
   };
 
@@ -281,10 +348,14 @@ export default function Login({ onSignedIn, onSignInStarted }: LoginProps) {
           </div>
           <div className="flex flex-col items-center text-center space-y-3">
             <h1 className="type-section-title text-[var(--text-primary)]">
-              {phase === 'phone' ? t('login.title') : t('login.codeTitle')}
+              {authenticated ? t('activation.title') : phase === 'phone' ? t('login.title') : t('login.codeTitle')}
             </h1>
             <p className="type-body leading-relaxed text-[var(--text-muted)]">
-              {phase === 'phone' ? t('login.subtitle') : t('login.codeSubtitle', { phone })}
+              {authenticated
+                ? t('login.authenticatedForActivation')
+                : phase === 'phone'
+                  ? t('login.subtitle')
+                  : t('login.codeSubtitle', { phone })}
             </p>
             {/*
               ⭐ 合规最小告知（2026-09-19）：内测用**手机号**注册，手机号是个人信息。
@@ -292,7 +363,7 @@ export default function Login({ onSignedIn, onSignInStarted }: LoginProps) {
               但"我们拿它干什么、留多久"这一句必须**现在**摆出来 —— 否则就是"采了没说"。
               位置刻意放在**输入手机号那一屏**：用户正要填的那一刻才是有用的时刻。
             */}
-            {phase === 'phone' && (
+            {phase === 'phone' && !authenticated && (
               <p className="type-support mt-2 leading-relaxed text-[var(--text-muted)]" data-testid="beta-phone-notice">
                 {t('login.betaPhoneNotice')}
               </p>
@@ -303,7 +374,7 @@ export default function Login({ onSignedIn, onSignInStarted }: LoginProps) {
             onSubmit={onSubmitForm}
             className="space-y-4 rounded-2xl bg-[var(--bg-elevated)] p-5 shadow-[var(--shadow-elevated)] sm:p-6"
           >
-            {phase === 'phone' ? (
+            {authenticated ? null : phase === 'phone' ? (
               <div className="relative">
                 <Phone size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" />
                 <span className="absolute left-9 top-1/2 -translate-y-1/2 type-body text-[var(--text-muted)]">+86</span>
@@ -341,6 +412,24 @@ export default function Login({ onSignedIn, onSignInStarted }: LoginProps) {
               </div>
             )}
 
+            {activationEnabled && (
+              <div className="space-y-2">
+                <label htmlFor="entry-activation-key" className="type-support text-[var(--text-secondary)]">
+                  {t('activation.placeholder')}
+                </label>
+                <input
+                  id="entry-activation-key"
+                  type="password"
+                  autoComplete="off"
+                  value={activationKey}
+                  onChange={(e) => setActivationKey(e.target.value)}
+                  disabled={busy}
+                  placeholder={t('activation.placeholder')}
+                  className={inputClass}
+                />
+                <p className="type-support text-[var(--text-muted)]">{t('login.existingLicenseHint')}</p>
+              </div>
+            )}
             {error && (
               <p className="type-support text-[var(--danger)]" role="alert">
                 {error}
@@ -350,14 +439,18 @@ export default function Login({ onSignedIn, onSignInStarted }: LoginProps) {
             <Button
               data-primary-action
               type="submit"
-              disabled={busy || !agreed || (phase === 'phone' ? !phoneValid : !codeValid)}
+              disabled={busy || (!authenticated && (!agreed || (phase === 'phone' ? !phoneValid : !codeValid)))}
               className="brand-action w-full"
             >
               {busy ? (
                 <Loader2 size={15} className="animate-spin" />
               ) : (
                 <>
-                  {phase === 'phone' ? t('login.sendCode') : t('login.signIn')}
+                  {authenticated
+                    ? t('activation.submit')
+                    : phase === 'phone'
+                      ? t('login.sendCode')
+                      : t(activationEnabled ? 'login.signInAndActivate' : 'login.signIn')}
                   <ArrowRight size={15} />
                 </>
               )}
@@ -380,22 +473,55 @@ export default function Login({ onSignedIn, onSignInStarted }: LoginProps) {
           </form>
 
           <div className="flex flex-col items-center gap-2">
-            <label className="flex items-start gap-2 type-support text-[var(--text-muted)] cursor-pointer">
-              <input
-                type="checkbox"
-                checked={agreed}
-                onChange={(e) => setAgreed(e.target.checked)}
-                className="mt-0.5 h-4 w-4 accent-[var(--accent)]"
-              />
-              <AgreementLinks
-                template={t('login.agreement')}
-                termsLabel={t('login.termsOfService')}
-                privacyLabel={t('login.privacyPolicy')}
-                termsUrl={t('login.termsUrl')}
-                privacyUrl={t('login.privacyUrl')}
-              />
-            </label>
-            {phase === 'code' && (
+            {!authenticated && (
+              <label className="flex items-start gap-2 type-support text-[var(--text-muted)] cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={agreed}
+                  onChange={(e) => setAgreed(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 accent-[var(--accent)]"
+                />
+                <AgreementLinks
+                  template={t('login.agreement')}
+                  termsLabel={t('login.termsOfService')}
+                  privacyLabel={t('login.privacyPolicy')}
+                  termsUrl={t('login.termsUrl')}
+                  privacyUrl={t('login.privacyUrl')}
+                />
+              </label>
+            )}
+            {authenticated && onChangeAccount && (
+              <Button
+                data-change-account
+                variant="ghost"
+                disabled={busy}
+                onClick={async () => {
+                  if (busy || activationLock.current) return;
+                  activationLock.current = true;
+                  const seq = ++attemptSeq.current;
+                  setBusy(true);
+                  try {
+                    await onChangeAccount();
+                    if (seq !== attemptSeq.current) return;
+                    setActivationKey('');
+                    setCode('');
+                    setError('');
+                    setPhase('phone');
+                    verifiedPhone.current = null;
+                  } catch {
+                    if (seq === attemptSeq.current) setError(t('login.sessionUnavailable'));
+                  } finally {
+                    if (seq === attemptSeq.current) {
+                      activationLock.current = false;
+                      setBusy(false);
+                    }
+                  }
+                }}
+              >
+                {t('login.changeAccount')}
+              </Button>
+            )}
+            {phase === 'code' && !authenticated && (
               <div className="flex items-center justify-center gap-1 type-support text-[var(--text-muted)]">
                 <button
                   type="button"
