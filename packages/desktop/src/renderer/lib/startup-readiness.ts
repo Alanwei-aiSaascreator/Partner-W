@@ -345,7 +345,7 @@ export function deriveStartupReadiness({
       : {}),
     ai: { phase: aiPhase, failureReason: bootstrapFailure },
     assistants,
-    workspaceAvailable: true,
+    workspaceAvailable: workspaceFsIdentity?.state === 'ok',
     conversationReady,
     composerBlocked,
     isReady,

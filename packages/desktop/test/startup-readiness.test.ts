@@ -110,7 +110,7 @@ describe('deriveStartupReadiness', () => {
     expect(result.ai.phase).toBe('starting');
     expect(result.assistants.phase).toBe('waiting');
     expect(result.isReady).toBe(false);
-    expect(result.workspaceAvailable).toBe(true);
+    expect(result.workspaceAvailable).toBe(false);
     expect(result.conversationReady).toBe(false);
   });
 
@@ -139,7 +139,7 @@ describe('deriveStartupReadiness', () => {
     expect(result.ai.phase).toBe('error');
     expect(result.hasError).toBe(true);
     expect(result.isReady).toBe(false);
-    expect(result.workspaceAvailable).toBe(true);
+    expect(result.workspaceAvailable).toBe(false);
     expect(result.conversationReady).toBe(false);
   });
 
@@ -165,7 +165,7 @@ describe('deriveStartupReadiness', () => {
       currentId: 'rongying-office',
     });
     expect(result.isReady).toBe(false);
-    expect(result.workspaceAvailable).toBe(true);
+    expect(result.workspaceAvailable).toBe(false);
     expect(result.conversationReady).toBe(true);
   });
 
@@ -773,5 +773,37 @@ describe('网关失败：四类各自说得出话，说不清的交给通用那�
     for (const forbidden of ['token', 'Token', 'TOKEN', '密钥', '卡密', '手机号', '验证码']) {
       expect(text).not.toContain(forbidden);
     }
+  });
+});
+
+describe('startup workspace availability evidence', () => {
+  it.each([
+    undefined,
+    null,
+    { state: 'unknown', dev: null, ino: null },
+    { state: 'unwritable', dev: null, ino: null },
+    { state: 'unsupported-identity', dev: null, ino: null },
+  ] as const)('does not claim a writable workspace from %o', (identity) => {
+    const readiness = deriveStartupReadiness({
+      gatewayId: 'local-runtime',
+      gatewayStatus: 'connected',
+      rawModelCatalog: [relayModel],
+      catalogFailed: false,
+      assistantSnapshot: readyAssistants,
+      workspaceFsIdentity: identity,
+    });
+    expect(readiness.workspaceAvailable).toBe(false);
+    expect(readiness.conversationReady).toBe(true);
+  });
+  it('reports availability after an actual successful filesystem probe', () => {
+    const readiness = deriveStartupReadiness({
+      gatewayId: 'local-runtime',
+      gatewayStatus: 'connected',
+      rawModelCatalog: [relayModel],
+      catalogFailed: false,
+      assistantSnapshot: readyAssistants,
+      workspaceFsIdentity: { state: 'ok', dev: '1', ino: '2' },
+    });
+    expect(readiness.workspaceAvailable).toBe(true);
   });
 });

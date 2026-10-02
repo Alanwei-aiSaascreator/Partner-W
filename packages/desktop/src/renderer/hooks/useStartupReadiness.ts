@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { RelayBootstrapPublicState, WorkspaceFsIdentity } from '@clawwork/shared';
 import i18n from '@/i18n';
 import { fetchAgentsForGateway, reinitializeGatewayBootstrap } from '@/hooks/useGatewayDispatcherSetup';
@@ -13,6 +13,7 @@ import { deriveStartupReadiness } from '@/lib/startup-readiness';
 import { ensureBundledSkillsWithRetry } from '@/lib/ensure-bundled-skills';
 import { runWorkspaceGatedBootstrap } from '@/lib/startup-workspace-gate';
 import { useUiStore } from '@/stores/uiStore';
+import { useTaskStore } from '@/stores/taskStore';
 
 function emptyAssistantSnapshot(): PresetAgentBootstrapSnapshot {
   return {
@@ -57,7 +58,19 @@ export function createBootstrapDeps(gatewayId: string): PresetAgentBootstrapDeps
 }
 
 export function useStartupReadiness(enabled: boolean) {
+  const workspaceEpoch = useTaskStore((state) => state.workspaceEpoch);
+  const active = useRef(true);
+  const bootstrapAttempt = useRef(0);
+  const currentScope = useRef({ enabled, workspaceEpoch, gatewayId: null as string | null });
   const gatewayId = useUiStore((state) => state.defaultGatewayId);
+  currentScope.current = { enabled, workspaceEpoch, gatewayId };
+  useEffect(() => {
+    active.current = true;
+    return () => {
+      active.current = false;
+      bootstrapAttempt.current += 1;
+    };
+  }, []);
   const gatewayStatus = useUiStore((state) =>
     state.defaultGatewayId ? state.gatewayStatusMap[state.defaultGatewayId] : undefined,
   );
@@ -86,7 +99,19 @@ export function useStartupReadiness(enabled: boolean) {
    * ⚠️ **失败/读不到一律当"没有结论"**（`null`），绝不折算成"文件系统有问题"：
    *    这条结论会把用户劝去换盘，说错一次代价很大。判据见 `deriveStartupReadiness`。
    */
-  const [workspaceFsIdentity, setWorkspaceFsIdentity] = useState<WorkspaceFsIdentity | null>(null);
+  const [workspaceProbe, setWorkspaceProbe] = useState<{
+    identity: WorkspaceFsIdentity | null;
+    gatewayId: string | null;
+    workspaceEpoch: number;
+    attempt: number;
+  } | null>(null);
+  const workspaceFsIdentity =
+    enabled &&
+    workspaceProbe?.gatewayId === gatewayId &&
+    workspaceProbe.workspaceEpoch === workspaceEpoch &&
+    workspaceProbe.attempt === bootstrapAttempt.current
+      ? workspaceProbe.identity
+      : null;
   // 请求重试那一刻手头那条快照的时间戳：只有**比它更新**的结论才算这一轮的答复。
   const [relayRetryFrom, setRelayRetryFrom] = useState<number | null>(null);
 
@@ -168,31 +193,48 @@ export function useStartupReadiness(enabled: boolean) {
    * 「助手失败」—— 用户唯一能做的动作（换到 NTFS 的盘）从界面上看不出来。
    * 探测量的是 fs-safe 判的**那两个数**（`dev`/`ino`），不是盘符或卷标。
    */
-  const probeWorkspaceFilesystem = useCallback(async (): Promise<WorkspaceFsIdentity | null> => {
-    try {
-      const result = await window.clawwork.probeWorkspaceFsIdentity();
-      setWorkspaceFsIdentity(result ?? null);
-      return result ?? null;
-    } catch {
-      // 探测自己坏了 = 没有结论（**不是**"文件系统有问题"）。
-      setWorkspaceFsIdentity(null);
-      return null;
-    }
-  }, []);
-
-  const runGatedBootstrap = useCallback(
-    () =>
-      runWorkspaceGatedBootstrap({
-        probe: probeWorkspaceFilesystem,
-        bootstrapAssistants: runAssistantBootstrap,
-        ensureSkills: ensureOurSkills,
-      }),
-    [ensureOurSkills, probeWorkspaceFilesystem, runAssistantBootstrap],
+  const probeWorkspaceFilesystem = useCallback(
+    async (isCurrent: () => boolean, attempt: number): Promise<WorkspaceFsIdentity | null> => {
+      try {
+        const result = await window.clawwork.probeWorkspaceFsIdentity();
+        if (!isCurrent()) return null;
+        setWorkspaceProbe({ identity: result ?? null, gatewayId, workspaceEpoch, attempt });
+        return result ?? null;
+      } catch {
+        if (isCurrent()) setWorkspaceProbe({ identity: null, gatewayId, workspaceEpoch, attempt });
+        return null;
+      }
+    },
+    [gatewayId, workspaceEpoch],
   );
 
+  const runGatedBootstrap = useCallback(() => {
+    const ownsScope = () =>
+      active.current &&
+      enabled &&
+      currentScope.current.enabled &&
+      currentScope.current.gatewayId === gatewayId &&
+      currentScope.current.workspaceEpoch === workspaceEpoch &&
+      useUiStore.getState().defaultGatewayId === gatewayId &&
+      useTaskStore.getState().workspaceEpoch === workspaceEpoch &&
+      Boolean(gatewayId && useUiStore.getState().gatewayStatusMap[gatewayId] === 'connected');
+    if (!ownsScope()) return Promise.resolve(null);
+    const attempt = ++bootstrapAttempt.current;
+    const isCurrent = () => ownsScope() && bootstrapAttempt.current === attempt;
+    setWorkspaceProbe(null);
+    return runWorkspaceGatedBootstrap({
+      isCurrent,
+      probe: () => probeWorkspaceFilesystem(isCurrent, attempt),
+      bootstrapAssistants: runAssistantBootstrap,
+      ensureSkills: ensureOurSkills,
+    });
+  }, [enabled, workspaceEpoch, gatewayId, ensureOurSkills, probeWorkspaceFilesystem, runAssistantBootstrap]);
+
   useEffect(() => {
-    if (!enabled || !gatewayId || gatewayStatus !== 'connected') return;
-    void runGatedBootstrap();
+    if (enabled && gatewayId && gatewayStatus === 'connected') void runGatedBootstrap();
+    return () => {
+      bootstrapAttempt.current += 1;
+    };
   }, [enabled, gatewayId, gatewayStatus, runGatedBootstrap]);
 
   const readiness = deriveStartupReadiness({

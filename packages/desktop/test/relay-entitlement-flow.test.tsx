@@ -219,6 +219,7 @@ vi.mock('../src/renderer/components/ChatInput/useChatSend', () => ({
 
 import { useStartupReadiness } from '../src/renderer/hooks/useStartupReadiness';
 import { useUiStore } from '../src/renderer/stores/uiStore';
+import { useTaskStore } from '../src/renderer/stores/taskStore';
 import ChatInput from '../src/renderer/components/ChatInput';
 import {
   relayFailureText,
@@ -232,14 +233,14 @@ import {
 
 type HookState = ReturnType<typeof useStartupReadiness>;
 
-function mountHarness() {
+function mountHarness(enabled = true) {
   const container = document.createElement('div');
   document.body.appendChild(container);
   const root: Root = createRoot(container);
   let latest: HookState | null = null;
 
   function Harness() {
-    const state = useStartupReadiness(true);
+    const state = useStartupReadiness(enabled);
     useEffect(() => {
       latest = state;
     }, [state]);
@@ -251,7 +252,10 @@ function mountHarness() {
       if (!latest) throw new Error('harness 还没渲染出第一帧');
       return latest;
     },
-    render: () => act(() => root.render(<Harness />)),
+    render: (nextEnabled = enabled) => {
+      enabled = nextEnabled;
+      act(() => root.render(<Harness />));
+    },
     /** 让挂起的 promise / effect 全部落地（`act` 里等一轮微任务）。 */
     flush: async () => {
       await act(async () => undefined);
@@ -601,5 +605,95 @@ describe('ChatInput × 已知中转失败（渲染级）', () => {
     expect(container.querySelectorAll('.animate-spin').length, '真在准备时才转圈').toBeGreaterThan(0);
 
     unmount();
+  });
+});
+
+describe('startup filesystem scope isolation', () => {
+  beforeEach(() => {
+    relayApi.probeWorkspaceFsIdentity.mockReset().mockResolvedValue({ state: 'ok', dev: '1', ino: '2' });
+    useUiStore.setState({ defaultGatewayId: 'gw-1', gatewayStatusMap: { 'gw-1': 'connected' } });
+  });
+  it.each(['workspace', 'gateway', 'disabled', 'unmounted'] as const)(
+    'does not bootstrap from a probe after %s replacement',
+    async (change) => {
+      let finish: ((identity: { state: 'ok'; dev: string; ino: string }) => void) | undefined;
+      relayApi.probeWorkspaceFsIdentity.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          }),
+      );
+      relayApi.probeWorkspaceFsIdentity.mockImplementationOnce(() => new Promise(() => {}));
+      const harness = mountHarness();
+      try {
+        harness.render();
+        await harness.flush();
+        expect(relayApi.probeWorkspaceFsIdentity).toHaveBeenCalledTimes(1);
+        if (change === 'workspace')
+          act(() => useTaskStore.setState({ workspaceEpoch: useTaskStore.getState().workspaceEpoch + 1 }));
+        if (change === 'gateway')
+          act(() => useUiStore.setState({ defaultGatewayId: 'gw-2', gatewayStatusMap: { 'gw-2': 'connected' } }));
+        if (change === 'disabled') harness.render(false);
+        if (change === 'unmounted') harness.unmount();
+        await act(async () => finish?.({ state: 'ok', dev: '1', ino: '2' }));
+        expect(coordinatorMocks.run).not.toHaveBeenCalled();
+        expect(relayApi.ensureOurSkills).not.toHaveBeenCalled();
+        if (change !== 'unmounted') expect(harness.state.workspaceAvailable).toBe(false);
+      } finally {
+        if (change !== 'unmounted') harness.unmount();
+      }
+    },
+  );
+  it('hides an old successful probe immediately when the workspace epoch changes', async () => {
+    const harness = mountHarness();
+    try {
+      harness.render();
+      await harness.flush();
+      expect(harness.state.workspaceAvailable).toBe(true);
+      relayApi.probeWorkspaceFsIdentity.mockImplementationOnce(() => new Promise(() => {}));
+      act(() => useTaskStore.setState({ workspaceEpoch: useTaskStore.getState().workspaceEpoch + 1 }));
+      expect(harness.state.workspaceAvailable).toBe(false);
+    } finally {
+      harness.unmount();
+    }
+  });
+  it('does not invalidate a new workspace probe when an old retry resumes', async () => {
+    let finishRetry: (() => void) | undefined;
+    let finishNewProbe: ((identity: { state: 'ok'; dev: string; ino: string }) => void) | undefined;
+    const harness = mountHarness();
+    try {
+      harness.render();
+      await harness.flush();
+      coordinatorMocks.run.mockClear();
+      relayApi.ensureOurSkills.mockClear();
+      gatewayMocks.reinitializeGatewayBootstrap.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishRetry = () => resolve(undefined);
+          }),
+      );
+      let oldRetry: Promise<void> | undefined;
+      act(() => {
+        oldRetry = harness.state.retry();
+      });
+      relayApi.probeWorkspaceFsIdentity.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishNewProbe = resolve;
+          }),
+      );
+      act(() => useTaskStore.setState({ workspaceEpoch: useTaskStore.getState().workspaceEpoch + 1 }));
+      await harness.flush();
+      await act(async () => {
+        finishRetry?.();
+        await oldRetry;
+      });
+      await act(async () => finishNewProbe?.({ state: 'ok', dev: '1', ino: '2' }));
+      expect(harness.state.workspaceAvailable).toBe(true);
+      expect(coordinatorMocks.run).toHaveBeenCalledTimes(1);
+      expect(relayApi.ensureOurSkills).toHaveBeenCalledTimes(1);
+    } finally {
+      harness.unmount();
+    }
   });
 });
