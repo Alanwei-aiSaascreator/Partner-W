@@ -14,7 +14,16 @@ import {
   Users,
   X,
 } from 'lucide-react';
-import { type KeyboardEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  type DragEvent,
+  type KeyboardEvent,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from '@/lib/toast';
 import AgentIcon from '@/components/AgentIcon';
@@ -153,6 +162,8 @@ export default function ChatInput({
   const handledDraftRequestIdsRef = useRef(new Set<string>());
   const [canSend, setCanSend] = useState(false);
   const [draftConflict, setDraftConflict] = useState<DraftPromptRequest | null>(null);
+  /** 文件正拖在输入卡片上方（只影响描边提示；真正的导入在 onDrop）。 */
+  const [isFileDragging, setIsFileDragging] = useState(false);
 
   const sendShortcut = useUiStore((s) => s.sendShortcut);
   const mainView = useUiStore((s) => s.mainView);
@@ -643,6 +654,44 @@ export default function ChatInput({
     );
   }, [pendingAttachments.length, materials.selectedImportedFiles.length, selectedLocalFiles.length]);
 
+  /**
+   * 拖入（T05）：桌面文件拖到输入卡片上 → 任务材料导入。
+   *
+   * 纪律（逐条对应测试口径）：
+   *   - **复用**现有导入管线：只把路径交给 `materials.importFilesFromPaths`，
+   *     类型/大小/目录/重名/失败原因的拒绝全部沿用对话框那条路；
+   *   - 只认**带文件**的拖动：文本/选区拖进 textarea 的原生行为不受影响；
+   *   - `preventDefault` 只在"是文件拖动"时打 —— 顺带挡住 Chromium 的默认导航；
+   *     （窗口级的兜底在 `usePreventFileDropNavigation`，覆盖非输入区）
+   *   - **绝不等同发送**：只入材料，发送仍要用户自己按。
+   */
+  const hasFileDrag = (dataTransfer: DataTransfer | null): boolean =>
+    Boolean(dataTransfer && Array.from(dataTransfer.types ?? []).includes('Files'));
+
+  const handleFileDragOver = (event: DragEvent<HTMLDivElement>): void => {
+    if (!hasFileDrag(event.dataTransfer)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'copy';
+    setIsFileDragging(true);
+  };
+
+  const handleFileDragLeave = (event: DragEvent<HTMLDivElement>): void => {
+    // 只有真正离开卡片才熄描边：在卡片内部从子元素间移动也会触发 dragleave。
+    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setIsFileDragging(false);
+  };
+
+  const handleFileDrop = (event: DragEvent<HTMLDivElement>): void => {
+    if (!hasFileDrag(event.dataTransfer)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setIsFileDragging(false);
+    if (disabled) return;
+    const filePaths = Array.from(event.dataTransfer.files)
+      .map((file) => window.clawwork.getPathForFile(file))
+      .filter((candidate) => typeof candidate === 'string' && candidate.length > 0);
+    if (filePaths.length > 0) void materials.importFilesFromPaths(filePaths);
+  };
+
   return (
     <div className="flex-shrink-0 px-6 pb-5">
       <div className="max-w-[var(--content-max-width)] mx-auto">
@@ -760,9 +809,15 @@ export default function ChatInput({
           )}
 
           <div
+            data-testid="composer-drop-zone"
+            data-file-dragging={isFileDragging || undefined}
+            onDragOver={handleFileDragOver}
+            onDragLeave={handleFileDragLeave}
+            onDrop={handleFileDrop}
             className={cn(
               'glass-heavy rounded-3xl border border-[var(--border)] shadow-[var(--shadow-floating-layered)]',
               'ring-accent-focus transition-all duration-200 hover:border-[var(--border-accent)] focus-within:border-[var(--border-accent)]',
+              isFileDragging && 'border-[var(--border-accent)] ring-2 ring-[var(--accent)]',
               isOffline && 'opacity-60',
             )}
           >

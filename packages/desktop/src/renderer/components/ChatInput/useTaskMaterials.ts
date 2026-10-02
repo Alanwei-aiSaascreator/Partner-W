@@ -134,40 +134,62 @@ export function useTaskMaterials(taskIdOverride?: string | null) {
     return created.id;
   }, [resolveCurrentTaskId, t]);
 
-  const importFiles = useCallback(async () => {
-    const targetTaskId = ensureTaskId();
-    if (!targetTaskId) return [];
-    const generation = generationRef.current;
-    try {
-      const result = await window.clawwork.importTaskFiles(targetTaskId);
-      if (!isCurrent(targetTaskId, generation)) return [];
-      if (!result.ok || !result.result) {
-        toast.error(t('chatInput.importFilesFailed'), { description: result.error });
+  /**
+   * 导入的**共享后段**：目标任务解析、代际守卫、合并选中、失败/部分拒绝文案。
+   *
+   * 两条进料口（对话框选文件 / 拖入绝对路径）只在"怎么拿到文件列表"上不同，
+   * 拿到之后逐字同一条路 —— 拒绝原因、选中语义、换任务中的守卫都不许各写一份。
+   */
+  const runImport = useCallback(
+    async (
+      fetchImport: (targetTaskId: string) => ReturnType<typeof window.clawwork.importTaskFiles>,
+    ): Promise<ImportedTaskFile[]> => {
+      const targetTaskId = ensureTaskId();
+      if (!targetTaskId) return [];
+      const generation = generationRef.current;
+      try {
+        const result = await fetchImport(targetTaskId);
+        if (!isCurrent(targetTaskId, generation)) return [];
+        if (!result.ok || !result.result) {
+          toast.error(t('chatInput.importFilesFailed'), { description: result.error });
+          return [];
+        }
+        const imported = result.result.imported;
+        setImportedFiles((current) => mergeImported(current, imported, targetTaskId));
+        setSelectedImportedPaths((current) => {
+          const next = new Set(current);
+          for (const file of imported) next.add(file.localPath);
+          return next;
+        });
+        if (result.result.rejected.length > 0) {
+          // ⚠️ 别只说"有 N 个没能添加"：`rejected` 里带着**文件名与原因**，
+          //    丢掉它们，用户就只能得出"无法操作"（2026-09-24 同事的真机反馈）。
+          toast.warning(t('chatInput.importFilesPartiallyRejected', { count: result.result.rejected.length }), {
+            description: describeImportRejections(result.result.rejected, t),
+          });
+        }
+        return imported;
+      } catch (error) {
+        if (!isCurrent(targetTaskId, generation)) return [];
+        toast.error(t('chatInput.importFilesFailed'), {
+          description: error instanceof Error ? error.message : String(error),
+        });
         return [];
       }
-      const imported = result.result.imported;
-      setImportedFiles((current) => mergeImported(current, imported, targetTaskId));
-      setSelectedImportedPaths((current) => {
-        const next = new Set(current);
-        for (const file of imported) next.add(file.localPath);
-        return next;
-      });
-      if (result.result.rejected.length > 0) {
-        // ⚠️ 别只说"有 N 个没能添加"：`rejected` 里带着**文件名与原因**，
-        //    丢掉它们，用户就只能得出"无法操作"（2026-09-24 同事的真机反馈）。
-        toast.warning(t('chatInput.importFilesPartiallyRejected', { count: result.result.rejected.length }), {
-          description: describeImportRejections(result.result.rejected, t),
-        });
-      }
-      return imported;
-    } catch (error) {
-      if (!isCurrent(targetTaskId, generation)) return [];
-      toast.error(t('chatInput.importFilesFailed'), {
-        description: error instanceof Error ? error.message : String(error),
-      });
-      return [];
-    }
-  }, [ensureTaskId, isCurrent, t]);
+    },
+    [ensureTaskId, isCurrent, t],
+  );
+
+  const importFiles = useCallback(
+    () => runImport((targetTaskId) => window.clawwork.importTaskFiles(targetTaskId)),
+    [runImport],
+  );
+
+  /** 拖入路径的入口（T05）：与 `importFiles` 共享同一条导入后段，只是不弹对话框。 */
+  const importFilesFromPaths = useCallback(
+    (filePaths: string[]) => runImport((targetTaskId) => window.clawwork.importTaskFiles(targetTaskId, filePaths)),
+    [runImport],
+  );
 
   const grantFolder = useCallback(async () => {
     const targetTaskId = ensureTaskId();
@@ -300,6 +322,7 @@ export function useTaskMaterials(taskIdOverride?: string | null) {
     selectedImportedPaths,
     loading,
     importFiles,
+    importFilesFromPaths,
     grantFolder,
     revokeSource,
     listSourceFiles,

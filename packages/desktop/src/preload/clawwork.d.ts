@@ -796,7 +796,10 @@ export interface ClawWorkAPI {
 
   getDeviceId: () => Promise<string>;
 
-  importTaskFiles: (taskId: string) => Promise<IpcResult<ImportFilesResult>>;
+  /** 不传 filePaths = 主进程弹对话框；传 = 走同一条导入管线的**拖入**路径（T05）。 */
+  importTaskFiles: (taskId: string, filePaths?: string[]) => Promise<IpcResult<ImportFilesResult>>;
+  /** 拖入文件取绝对路径（preload 里的 `webUtils.getPathForFile`，Electron ≥32 官方形状）。 */
+  getPathForFile: (file: File) => string;
   listImportedTaskFiles: (taskId: string) => Promise<IpcResult<ImportedTaskFile[]>>;
   grantTaskContextFolder: (taskId: string) => Promise<IpcResult<TaskContextSource | null>>;
   listTaskContextSources: (taskId: string) => Promise<IpcResult<TaskContextSource[]>>;

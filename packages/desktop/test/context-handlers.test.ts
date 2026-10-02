@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const handleMap = new Map<string, (...args: unknown[]) => unknown>();
@@ -159,6 +160,78 @@ describe('task context source IPC handlers', () => {
     importTaskFilesMock.mockResolvedValue({ imported: [{ fileName: 'a.txt' }], rejected: [] });
     await handleMap.get('context:import-files')?.({}, { taskId: 'task-1' });
     expect(reporter.peek().map((e) => e.event)).toEqual(['file_attached']);
+  });
+
+  /**
+   * T05 拖入（2026-10-03）：桌面文件拖进输入卡片。
+   *
+   * 口径：拖入**复用同一条导入管线**（同一个 `importTaskFiles`），只是路径由
+   * 渲染层经 `webUtils.getPathForFile` 取到、主进程做形状校验；不弹对话框。
+   * 路径用 `path.resolve` 造（平台原生的绝对路径 —— 不能写死 `C:\`，否则
+   * 在非 Windows 的 CI 上 `path.isAbsolute` 判 false，测试会假红）。
+   */
+  const dropPathA = path.resolve('source', '草稿 报告.pdf');
+  const dropPathB = path.resolve('source', 'deck.pptx');
+
+  it('T05 拖入：绝对路径直接进同一条导入管线，且**不弹**对话框', async () => {
+    const imported = { imported: [{ fileName: '草稿 报告.pdf' }], rejected: [] };
+    importTaskFilesMock.mockResolvedValue(imported);
+
+    await expect(
+      handleMap.get('context:import-files')?.({}, { taskId: 'task-1', filePaths: [dropPathA, dropPathB] }),
+    ).resolves.toEqual({ ok: true, result: imported });
+
+    expect(showOpenDialogMock).not.toHaveBeenCalled();
+    expect(importTaskFilesMock).toHaveBeenCalledWith({
+      workspacePath: 'C:\\workspace',
+      taskId: 'task-1',
+      sourcePaths: [dropPathA, dropPathB],
+    });
+  });
+
+  it('T05 拖入：真导入照样只记一次 file_attached；全被拒也不记', async () => {
+    const reporter = await freshReporter();
+
+    importTaskFilesMock.mockResolvedValue({ imported: [], rejected: [{ fileName: 'a.exe' }] });
+    await handleMap.get('context:import-files')?.({}, { taskId: 'task-1', filePaths: [dropPathA] });
+    expect(reporter.peek()).toEqual([]);
+
+    importTaskFilesMock.mockResolvedValue({ imported: [{ fileName: '草稿 报告.pdf' }], rejected: [] });
+    await handleMap.get('context:import-files')?.({}, { taskId: 'task-1', filePaths: [dropPathA] });
+    expect(reporter.peek().map((e) => e.event)).toEqual(['file_attached']);
+  });
+
+  it('T05 拖入：非绝对路径/非字符串/非数组一律拒绝（形状校验在主进程）', async () => {
+    for (const filePaths of [[path.join('relative', 'a.txt')], [42], 'not-an-array']) {
+      await expect(handleMap.get('context:import-files')?.({}, { taskId: 'task-1', filePaths })).resolves.toEqual({
+        ok: false,
+        error: 'filePaths must be an array of absolute paths',
+      });
+    }
+    expect(showOpenDialogMock).not.toHaveBeenCalled();
+    expect(importTaskFilesMock).not.toHaveBeenCalled();
+  });
+
+  it('T05 拖入：空数组 = 没有文件（不弹框、不导入、不记埋点）', async () => {
+    const reporter = await freshReporter();
+
+    await expect(handleMap.get('context:import-files')?.({}, { taskId: 'task-1', filePaths: [] })).resolves.toEqual({
+      ok: true,
+      result: { imported: [], rejected: [] },
+    });
+
+    expect(showOpenDialogMock).not.toHaveBeenCalled();
+    expect(importTaskFilesMock).not.toHaveBeenCalled();
+    expect(reporter.peek()).toEqual([]);
+  });
+
+  it('T05 拖入：不依赖窗口/对话框（窗口没了也照样能导入）', async () => {
+    importTaskFilesMock.mockResolvedValue({ imported: [{ fileName: 'deck.pptx' }], rejected: [] });
+    getAllWindowsMock.mockReturnValue([]);
+
+    await expect(
+      handleMap.get('context:import-files')?.({}, { taskId: 'task-1', filePaths: [dropPathB] }),
+    ).resolves.toEqual({ ok: true, result: { imported: [{ fileName: 'deck.pptx' }], rejected: [] } });
   });
 
   it('lists imported files through the configured task workspace', () => {

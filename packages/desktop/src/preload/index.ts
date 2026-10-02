@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type {
   ApprovalDecision,
   Artifact,
@@ -501,7 +501,21 @@ function buildApi(): ClawWorkAPI {
 
     getDeviceId: () => ipcRenderer.invoke('workspace:get-device-id') as Promise<string>,
 
-    importTaskFiles: (taskId: string) => ipcRenderer.invoke('context:import-files', { taskId }),
+    importTaskFiles: (taskId: string, filePaths?: string[]) =>
+      ipcRenderer.invoke(
+        'context:import-files',
+        filePaths && filePaths.length > 0 ? { taskId, filePaths } : { taskId },
+      ),
+
+    /**
+     * 拖入文件取**绝对路径**的唯一通道（T05）。
+     *
+     * `File.path` 在 Electron 32 起被移除，官方给的替代就是 preload 里的
+     * `webUtils.getPathForFile` + contextBridge 转发（本函数就是那个形状）。
+     * ⚠️ 它只解析路径、不做校验 —— 校验（绝对路径/存在/类型/大小）在主进程，
+     *    与对话框选文件走同一条导入管线。
+     */
+    getPathForFile: (file: File) => webUtils.getPathForFile(file),
     listImportedTaskFiles: (taskId: string) => ipcRenderer.invoke('context:list-imported-files', { taskId }),
     grantTaskContextFolder: (taskId: string) => ipcRenderer.invoke('context:grant-folder', { taskId }),
     listTaskContextSources: (taskId: string) => ipcRenderer.invoke('context:list-sources', { taskId }),

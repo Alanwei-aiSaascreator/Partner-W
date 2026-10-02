@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { usePreventFileDropNavigation } from './hooks/usePreventFileDropNavigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Toaster, TOAST_DURATION_MS, TOAST_OPTIONS } from '@/lib/toast';
 import LeftNav from './layouts/LeftNav';
@@ -70,6 +71,8 @@ export default function App() {
   const [onboardingResolved, setOnboardingResolved] = useState(false);
   const [editingOnboardingProfile, setEditingOnboardingProfile] = useState(false);
   const authGeneration = useRef(0);
+  // 拖入文件不得触发整页导航（T05）：窗口级兜底，覆盖任何非输入区。
+  usePreventFileDropNavigation();
   const [entryLicenseGate] = useState(createEntryLicenseGate);
   const [entryErrorCode, setEntryErrorCode] = useState<string>();
   const [entryEntitlement, setEntryEntitlement] = useState<EntryEntitlement | null>(null);

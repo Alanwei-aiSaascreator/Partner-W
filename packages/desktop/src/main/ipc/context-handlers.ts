@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { ipcMain, dialog, BrowserWindow } from 'electron';
 import {
   IMPORT_FILE_EXTENSIONS,
@@ -26,29 +27,51 @@ function failure(error: unknown): { ok: false; error: string } {
 }
 
 export function registerContextHandlers(): void {
-  ipcMain.handle('context:import-files', async (_event, params: { taskId?: unknown }) => {
+  ipcMain.handle('context:import-files', async (_event, params: { taskId?: unknown; filePaths?: unknown }) => {
     try {
       const taskId = validateImportTaskId(params?.taskId);
       const workspacePath = getWorkspacePath();
       if (!workspacePath) return { ok: false, error: 'workspace not configured' };
-      const win = BrowserWindow.getAllWindows()[0];
-      if (!win) return { ok: false, error: 'no window available' };
-      const selection = await dialog.showOpenDialog(win, {
-        properties: ['openFile', 'multiSelections'],
-        title: 'Import Task Files',
-        filters: [
-          {
-            name: 'Supported Files',
-            extensions: [...IMPORT_FILE_EXTENSIONS],
-          },
-        ],
-      });
-      if (selection.canceled || selection.filePaths.length === 0) {
+
+      // 两条进料口，汇进**同一条**导入管线（T05 口径：不另造导入框架）：
+      //   ① 没有 `filePaths` → 主进程弹对话框（历史上唯一的入口）；
+      //   ② 有 `filePaths`（拖入）→ 渲染层经 preload 的 `webUtils.getPathForFile`
+      //      取到的**绝对路径**，主进程只做形状校验（字符串 + 绝对路径）。
+      //      逐文件的类型/大小/目录/重名拒绝全部由 `importTaskFiles` 处理 ——
+      //      与对话框逐字同一条路，失败状态（rejected 的原因）也同一套。
+      let sourcePaths: string[];
+      if (params && Object.prototype.hasOwnProperty.call(params, 'filePaths')) {
+        const dropped = params.filePaths;
+        if (
+          !Array.isArray(dropped) ||
+          dropped.some((candidate) => typeof candidate !== 'string' || !path.isAbsolute(candidate))
+        ) {
+          throw new Error('filePaths must be an array of absolute paths');
+        }
+        sourcePaths = dropped as string[];
+      } else {
+        const win = BrowserWindow.getAllWindows()[0];
+        if (!win) return { ok: false, error: 'no window available' };
+        const selection = await dialog.showOpenDialog(win, {
+          properties: ['openFile', 'multiSelections'],
+          title: 'Import Task Files',
+          filters: [
+            {
+              name: 'Supported Files',
+              extensions: [...IMPORT_FILE_EXTENSIONS],
+            },
+          ],
+        });
         // ⚠️ 用户「打开选择框又关掉」也是 ok:true —— 这里**绝不能**记埋点，
         //    否则 `file_attached` 把取消也算成一次附带文件，数据当场失真。
-        return { ok: true, result: { imported: [], rejected: [] } };
+        if (selection.canceled || selection.filePaths.length === 0) {
+          return { ok: true, result: { imported: [], rejected: [] } };
+        }
+        sourcePaths = selection.filePaths;
       }
-      const result = await importTaskFiles({ workspacePath, taskId, sourcePaths: selection.filePaths });
+
+      if (sourcePaths.length === 0) return { ok: true, result: { imported: [], rejected: [] } };
+      const result = await importTaskFiles({ workspacePath, taskId, sourcePaths });
       // 只有**真的进来文件**才算「附带文件」：选了文件但全被拒（超大/不支持）不算
       if (result.imported.length > 0) trackEvent('file_attached');
       return { ok: true, result };
