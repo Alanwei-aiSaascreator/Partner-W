@@ -94,6 +94,79 @@ describe('Login', () => {
     unmount();
   });
 
+  /**
+   * 激活页"同意勾选"（材料批 2026-10-03 对照项）。
+   *
+   * 现状即所需：勾选框在**合并页**（手机号+验证码+激活码同页）渲染，且
+   * **未勾选时两条提交都被挡住** —— 这不是"按钮画灰"那种装饰，挡的是真实
+   * 守卫（直接派发 form submit 也进不去），只有勾选状态为真才放行。
+   * C 切片的既有契约（认证后激活不再显示勾选、不重复要 OTP）由本文件其余
+   * 用例钉住，不在本条内改动。
+   */
+  it('⭐⭐ 激活页同意勾选：未勾选不许发码（激活码已填也一样），勾选后才放行', async () => {
+    const { container, unmount } = render(<Login activationEnabled onSignedIn={vi.fn()} />);
+    try {
+      const phone = container.querySelector('input[type="tel"]') as HTMLInputElement;
+      const card = container.querySelector('input[type="password"]') as HTMLInputElement;
+      const agreement = container.querySelector('input[type="checkbox"]') as HTMLInputElement;
+      const submit = (): void => {
+        container.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      };
+
+      act(() => {
+        setInput(phone, '13800138000');
+        setInput(card, 'RY-EXACT');
+      });
+      expect(agreement.checked).toBe(false);
+
+      // 未勾选：手机号合法、卡也填了 —— 仍然不发码（守卫挡的，不是按钮画灰）。
+      await act(async () => submit());
+      expect(sendOtp).not.toHaveBeenCalled();
+
+      act(() => agreement.click());
+      await act(async () => submit());
+      expect(sendOtp).toHaveBeenCalledWith('+8613800138000');
+    } finally {
+      unmount();
+    }
+  });
+
+  it('⭐⭐ 验证码屏：勾选状态跨 phase 保留；未勾选挡住校验提交，勾选后才校验', async () => {
+    const { container, unmount } = render(<Login activationEnabled onSignedIn={vi.fn()} />);
+    try {
+      const phone = container.querySelector('input[type="tel"]') as HTMLInputElement;
+      const agreement = container.querySelector('input[type="checkbox"]') as HTMLInputElement;
+      act(() => {
+        setInput(phone, '13800138000');
+        agreement.click();
+      });
+      await act(async () => {
+        container.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      });
+
+      // 切到验证码屏：勾选框仍在、且勾选状态保留（Task 13 的两个 phase 口径）。
+      const agreementInCode = container.querySelector('input[type="checkbox"]') as HTMLInputElement;
+      expect(agreementInCode).not.toBeNull();
+      expect(agreementInCode.checked).toBe(true);
+
+      act(() => agreementInCode.click()); // 取消勾选
+      const code = container.querySelector('input[inputmode="numeric"]') as HTMLInputElement;
+      act(() => setInput(code, '123456'));
+      await act(async () => {
+        container.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      });
+      expect(verifyOtp).not.toHaveBeenCalled();
+
+      act(() => agreementInCode.click()); // 重新勾选
+      await act(async () => {
+        container.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      });
+      expect(verifyOtp).toHaveBeenCalled();
+    } finally {
+      unmount();
+    }
+  });
+
   it('keeps purpose selection out of the login screen', () => {
     const { container, unmount } = render(<Login onSignedIn={vi.fn()} />);
 
