@@ -200,7 +200,7 @@ export function toShapes(elements: readonly MeasuredElement[]): Shape[] {
       kind: 'text',
       id: e.id,
       ...geo,
-      text: e.text,
+      text: e.textLines?.join('\n') ?? e.text,
       fontSize: e.fontSize * PT_PER_PX,
       fontFace:
         e.fontFamily
@@ -216,7 +216,7 @@ export function toShapes(elements: readonly MeasuredElement[]): Shape[] {
       letterSpacing: e.letterSpacing * PT_PER_PX,
       // ⭐ 单行 ⇒ 关掉折行。框宽是**量出来的紧贴宽度**，PowerPoint 的字宽差一点点就会折
       //    （实测：「战略落地」被折成「战略落」+「地」）。
-      wrap: e.lines > 1,
+      wrap: e.textLines ? false : e.lines > 1,
       gradient,
     });
   }

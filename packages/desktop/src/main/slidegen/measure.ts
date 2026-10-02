@@ -27,6 +27,9 @@ export interface MeasuredElement {
   w: number;
   h: number;
   text: string;
+  /** Only explicitly balanced, plain horizontal LTR text can freeze native rows. */
+  balancedPlainText?: boolean;
+  textLines?: string[];
   fontSize: number;
   fontWeight: string;
   fontFamily?: string;
@@ -107,6 +110,9 @@ const MEASURE_SCRIPT = `(() => {
         .map(rect => ({x: rect.x, y: rect.y, w: rect.width, h: rect.height})) : undefined,
       x: r.x, y: r.y, w: r.width, h: r.height,
       text: kind === 'text' ? (el.innerText ?? el.textContent.trim()) : '',
+      balancedPlainText: kind === 'text' && el.childNodes.length === 1 && el.firstChild?.nodeType === 3 &&
+        cs.getPropertyValue('text-wrap') === 'balance' && cs.direction === 'ltr' &&
+        cs.getPropertyValue('writing-mode') === 'horizontal-tb' && cs.whiteSpace === 'normal',
       fontSize: parseFloat(cs.fontSize), fontWeight: cs.fontWeight, color: cs.color,
       fontFamily: cs.fontFamily, fontStyle: cs.fontStyle,
       lineHeight: cs.lineHeight === 'normal' ? undefined : parseFloat(cs.lineHeight),
@@ -127,9 +133,89 @@ const MEASURE_SCRIPT = `(() => {
 interface PaintSnapshot {
   strings: string[];
   documents: {
-    nodes: { attributes: number[][] };
-    layout: { nodeIndex: number[]; paintOrders?: number[] };
+    nodes: { attributes: number[][]; parentIndex?: number[] };
+    layout: { nodeIndex: number[]; paintOrders?: number[]; text?: number[] };
+    textBoxes?: { layoutIndex: number[]; start: number[]; length: number[]; bounds: number[][] };
   }[];
+}
+
+/** Reuse Chromium's inline boxes, never estimate glyph widths or drop content. */
+function retainBalancedLines(
+  snapshot: PaintSnapshot,
+  document: PaintSnapshot['documents'][number],
+  elements: MeasuredElement[],
+): void {
+  const { nodes, layout, textBoxes: boxes } = document;
+  if (
+    !Array.isArray(nodes.parentIndex) ||
+    !Array.isArray(layout.text) ||
+    !boxes ||
+    ![boxes.layoutIndex, boxes.start, boxes.length, boxes.bounds].every(Array.isArray)
+  )
+    return;
+  const nonFormatting = (text: string) => text.replace(/[ \t\r\n\f]/g, '');
+  for (const element of elements) {
+    if (!element.balancedPlainText || /[\u0590-\u08ff\u202a-\u202e\u2066-\u2069]/.test(element.text)) continue;
+    const owner = nodes.attributes.findIndex((attributes) =>
+      attributes.some(
+        (value, i) =>
+          i % 2 === 0 &&
+          snapshot.strings[value] === MARK_ATTR &&
+          snapshot.strings[attributes[i + 1]] === String(element.id),
+      ),
+    );
+    if (owner < 0) continue;
+    const node = nodes.parentIndex.indexOf(owner);
+    const index = layout.nodeIndex.indexOf(node);
+    const text = snapshot.strings[layout.text[index]];
+    if (index < 0 || typeof text !== 'string') continue;
+    const fragments = boxes.layoutIndex.flatMap((value, i) =>
+      value === index ? [{ start: boxes.start[i], length: boxes.length[i], bounds: boxes.bounds[i] }] : [],
+    );
+    if (fragments.length < 2) continue;
+    fragments.sort((a, b) => a.start - b.start);
+    const rows: { text: string; y: number; height: number }[] = [];
+    let end = 0;
+    let valid = true;
+    for (const fragment of fragments) {
+      const { start, length, bounds } = fragment;
+      if (
+        !Number.isInteger(start) ||
+        !Number.isInteger(length) ||
+        start < end ||
+        length <= 0 ||
+        start + length > text.length ||
+        !Array.isArray(bounds) ||
+        bounds.length !== 4 ||
+        !bounds.every(Number.isFinite) ||
+        bounds[3] <= 0 ||
+        nonFormatting(text.slice(end, start))
+      ) {
+        valid = false;
+        break;
+      }
+      const row = rows.at(-1);
+      const sameRow = row && Math.abs(bounds[1] - row.y) < Math.min(row.height, bounds[3]) / 2;
+      if (sameRow) row.text += text.slice(end, start) + text.slice(start, start + length);
+      else {
+        if (row && bounds[1] <= row.y) {
+          valid = false;
+          break;
+        }
+        rows.push({ text: text.slice(start, start + length), y: bounds[1], height: bounds[3] });
+      }
+      end = start + length;
+    }
+    const lines = rows.map((row) => row.text.replace(/[ \t\r\n\f]+/g, ' ').trim());
+    if (
+      valid &&
+      !nonFormatting(text.slice(end)) &&
+      lines.length > 1 &&
+      lines.every((line) => line && !/^[\uDC00-\uDFFF]|[\uD800-\uDBFF]$/.test(line)) &&
+      nonFormatting(lines.join('')) === nonFormatting(element.text)
+    )
+      element.textLines = lines;
+  }
 }
 
 /**
@@ -171,6 +257,7 @@ async function orderByBrowserPaint(win: BrowserWindow, elements: MeasuredElement
           orders.set(id, order);
         }
       }
+      retainBalancedLines(snapshot, document, elements);
     }
     for (const element of elements) {
       if (element.w > 0 && element.h > 0 && !orders.has(element.id)) {
