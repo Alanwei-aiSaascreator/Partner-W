@@ -404,8 +404,8 @@ export default function App() {
       rawModelCatalog: gatewayId ? ui.modelCatalogByGateway[gatewayId] : undefined,
       catalogFailed: Boolean(gatewayId && ui.modelCatalogFailureByGateway[gatewayId]),
       assistantSnapshot: presetAgentBootstrapCoordinator.getSnapshot(gatewayId ?? ''),
-      relayState: relay.ok ? (relay.result ?? null) : null,
-      workspaceFsIdentity: workspace.ok ? (workspace.result ?? null) : null,
+      relayState: relay.ok ? relay.result : undefined,
+      workspaceFsIdentity: workspace,
       gatewayReconnect: gatewayId ? ui.gatewayReconnectInfo?.[gatewayId] : undefined,
       runtimeBootstrapFailure: runtime?.ok === false ? runtime.reason : null,
     });

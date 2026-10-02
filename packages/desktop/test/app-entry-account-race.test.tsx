@@ -270,7 +270,7 @@ function installEntryBridge(overrides: Record<string, unknown> = {}) {
       ok: true,
       result: { phase: entryFactsFixture.startup.relayPhase, updatedAt: 1 },
     }),
-    probeWorkspaceFsIdentity: async () => ({ ok: true, result: { state: 'ok' } }),
+    probeWorkspaceFsIdentity: async () => ({ state: 'ok' }),
     commercialLicenseStatus: vi.fn(async () => ({ ok: true, result: missingLicense })),
     commercialLicenseActivate: vi.fn(async () => ({ ok: true, result: activeLicense })),
     commercialLicenseRecoverActivation: vi.fn(async () => ({ ok: true, result: activeLicense })),
@@ -578,7 +578,7 @@ it('rejects a workspace generation changed in the store before React receives it
 it.each(['relay', 'runtime'] as const)(
   'does not overwrite a newer %s failure with an earlier ready snapshot during final workspace read',
   async (kind) => {
-    let finish!: (value: { ok: true; result: { state: 'ok' } }) => void;
+    let finish!: (value: { state: 'ok' }) => void;
     installEntryBridge({
       commercialLicenseStatus: vi.fn(async () => ({ ok: true, result: activeLicense })),
       probeWorkspaceFsIdentity: vi.fn(
@@ -595,7 +595,7 @@ it.each(['relay', 'runtime'] as const)(
       if (kind === 'relay') entryFactsFixture.startup.relayPhase = 'running';
       else entryFactsFixture.runtime = { ok: false, reason: 'process-exited' };
       await ui.render();
-      await act(async () => finish({ ok: true, result: { state: 'ok' } }));
+      await act(async () => finish({ state: 'ok' }));
       expect(ui.container.querySelector('[data-account]')).toBeNull();
       expect(ui.container.querySelector('[data-entry-continue]')).not.toBeNull();
       expect(ui.container.querySelector<HTMLButtonElement>('[data-entry-continue]')?.disabled).toBe(true);
