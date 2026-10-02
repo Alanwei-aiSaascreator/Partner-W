@@ -547,9 +547,10 @@ continueAfterPortableAppData(
             //    带路径/端口）**不进** IPC：见 `runtime/bootstrap-status.ts`。
             //    ⚠️ 推可能丢（窗口还没挂上来）—— 渲染层挂上来后会用
             //    `runtime:bootstrap-status` 补读一次，所以这里推失败不是 bug。
-            publishRuntimeBootstrapStatus(runtimeResult);
-            sendToWindow(getMainWindow(), 'runtime-status', getRuntimeBootstrapStatus());
           }
+
+          publishRuntimeBootstrapStatus(runtimeResult);
+          sendToWindow(getMainWindow(), 'runtime-status', getRuntimeBootstrapStatus());
 
           if (runtimeResult.code !== PORTABLE_STATE_MIGRATION_BLOCKED) initAllGateways();
 
