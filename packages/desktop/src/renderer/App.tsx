@@ -39,6 +39,7 @@ import {
   resolveAppEntryScreen,
   runAuthBootstrap,
 } from '@/lib/app-entry-flow';
+import { createEntryLicenseGate, EntryLicenseError } from '@/lib/entry-license-gate';
 import { isInternalBetaEnabled, parseBetaRoute } from '@/features/internal-beta/beta-route';
 import { useGatewayDisappearanceNotice } from '@/lib/gateway-disappearance';
 
@@ -64,6 +65,25 @@ export default function App() {
   const [onboardingResolved, setOnboardingResolved] = useState(false);
   const [editingOnboardingProfile, setEditingOnboardingProfile] = useState(false);
   const authGeneration = useRef(0);
+  const [entryLicenseGate] = useState(createEntryLicenseGate);
+  const [entryErrorCode, setEntryErrorCode] = useState<string>();
+  const completeAccountEntry = useCallback(
+    async (account: { userId: string; nickname: string }, generation: number, activationKey = '') => {
+      await entryLicenseGate.ensure({
+        userId: account.userId,
+        activationKey,
+        api: window.clawwork,
+        isCurrent: () => generation === authGeneration.current,
+      });
+      if (generation !== authGeneration.current) throw new EntryLicenseError('entry_superseded');
+      setOnboardingAccount(account);
+      setOnboardingProfile(loadOnboardingProfile(account.userId));
+      setOnboardingResolved(true);
+      setEntryErrorCode(undefined);
+      setAuthState('ok');
+    },
+    [entryLicenseGate],
+  );
   const [settingsSection, setSettingsSection] = useState<SettingsSection>('general');
 
   const rightPanelOpen = useUiStore((s) => s.rightPanelOpen);
@@ -113,7 +133,7 @@ export default function App() {
   // ⚠️ 挂在 App 而不是 MainArea：打开设置会卸载 MainArea（`settingsOpen ? <Settings/> : <MainArea/>`），
   //    那期间的"消失"就会被漏掉，且回来时基准重置 ⇒ 一句都不报。
   useGatewayDisappearanceNotice();
-  const startupReadiness = useStartupReadiness(ready);
+  const startupReadiness = useStartupReadiness(ready && authState === 'ok');
   useWorkspaceRefresh();
   useUpdateCheck();
   // 挂 App 而不是 MainArea：打开设置会卸载 MainArea，那期间文件生成失败就会被漏掉，
@@ -221,8 +241,12 @@ export default function App() {
             const account = session && entryAccountFromSession(session);
             if (account) {
               setOnboardingAccount(account);
-              setOnboardingProfile(loadOnboardingProfile(account.userId));
-              setOnboardingResolved(true);
+              void completeAccountEntry(account, generation).catch((failure: unknown) => {
+                if (cancelled || generation !== authGeneration.current) return;
+                setEntryErrorCode(failure instanceof EntryLicenseError ? failure.code : 'license_read_failed');
+                setAuthState('required');
+              });
+              return;
             }
           }
           setAuthState(authState);
@@ -236,9 +260,10 @@ export default function App() {
 
     return () => {
       cancelled = true;
+      authGeneration.current += 1;
       cancelAuthCheck?.();
     };
-  }, []);
+  }, [completeAccountEntry]);
 
   const handleSignInStarted = useCallback(() => {
     authGeneration.current += 1;
@@ -246,19 +271,33 @@ export default function App() {
     setOnboardingAccount(null);
     setOnboardingProfile(null);
     setOnboardingResolved(false);
+    setEntryErrorCode(undefined);
   }, []);
 
-  const handleSignedIn = useCallback(async () => {
+  const handleSignedIn = useCallback(
+    async (activationKey = '') => {
+      const generation = ++authGeneration.current;
+      const expectedUserId = onboardingAccount?.userId;
+      const config = await window.clawwork.commercialGetConfig();
+      if (generation !== authGeneration.current) throw new EntryLicenseError('entry_superseded');
+      if (entryModeFromConfig(config) !== 'commercial') throw new EntryLicenseError('not_configured');
+      const session = await window.clawwork.commercialSession();
+      if (generation !== authGeneration.current) throw new EntryLicenseError('entry_superseded');
+      const account = entryAccountFromSession(session);
+      if (!account) throw new Error('commercial_entry_identity_unavailable');
+      if (expectedUserId && account.userId !== expectedUserId)
+        throw new EntryLicenseError('entry_identity_unavailable');
+      await completeAccountEntry(account, generation, activationKey);
+    },
+    [completeAccountEntry, onboardingAccount?.userId],
+  );
+  const handleChangeAccount = useCallback(async () => {
     const generation = ++authGeneration.current;
-    const session = await window.clawwork.commercialSession();
-    if (generation !== authGeneration.current) return;
-    const account = entryAccountFromSession(session);
-    if (!account) throw new Error('commercial_entry_identity_unavailable');
-    setOnboardingAccount(account);
-    setOnboardingProfile(loadOnboardingProfile(account.userId));
-    setOnboardingResolved(true);
-    setAuthState('ok');
-  }, []);
+    const result = await window.clawwork.commercialSignOut();
+    if (generation !== authGeneration.current) throw new EntryLicenseError('entry_superseded');
+    if (!result.ok) throw new Error('commercial_sign_out_failed');
+    handleSignInStarted();
+  }, [handleSignInStarted]);
 
   const handleOnboardingComplete = useCallback((profile: OnboardingProfile) => {
     saveOnboardingProfile(profile);
@@ -310,7 +349,14 @@ export default function App() {
   if (entryScreen === 'login') {
     return (
       <TooltipProvider>
-        <Login onSignedIn={handleSignedIn} onSignInStarted={handleSignInStarted} />
+        <Login
+          activationEnabled
+          authenticatedAccount={onboardingAccount}
+          entryErrorCode={entryErrorCode}
+          onChangeAccount={handleChangeAccount}
+          onSignedIn={handleSignedIn}
+          onSignInStarted={handleSignInStarted}
+        />
         <AppToaster themeMode={themeMode} />
       </TooltipProvider>
     );

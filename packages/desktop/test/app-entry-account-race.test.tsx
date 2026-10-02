@@ -113,6 +113,7 @@ it('keeps startup account A from replacing explicit login B while OTP is pending
       commercialSession,
       commercialSendOtp: async () => ({ ok: true }),
       commercialVerifyOtp: verify,
+      commercialLicenseStatus: async () => ({ ok: true, result: activeLicense }),
       onArtifactSaved: unsubscribe,
       onQuickLaunchSubmit: unsubscribe,
       onTrayNavigateTask: unsubscribe,
@@ -161,5 +162,184 @@ it('keeps startup account A from replacing explicit login B while OTP is pending
   } finally {
     act(() => root.unmount());
     container.remove();
+  }
+});
+
+const activeLicense = {
+  configured: true,
+  activated: true,
+  licenseId: 'license',
+  orgId: 'org',
+  licenseKey: 'RY-EXACT',
+  sku: 'USB',
+  status: 'active',
+  expiresAt: null,
+  maxActivations: 1,
+  tokenQuotaMicros: 1000,
+  tokenUsedMicros: 0,
+  deviceFingerprint: 'device',
+};
+const missingLicense = {
+  ...activeLicense,
+  configured: false,
+  activated: false,
+  licenseId: null,
+  orgId: null,
+  licenseKey: null,
+  status: null,
+};
+function installEntryBridge(overrides: Record<string, unknown> = {}) {
+  const unsubscribe = () => () => {};
+  const bridge = {
+    reportPortableUpdateRendererReady: vi.fn(),
+    setWindowButtonVisibility: vi.fn(),
+    isWorkspaceConfigured: async () => true,
+    commercialGetConfig: async () => ({ ok: true, result: { supabaseUrl: 'https://example.test', hasAnonKey: true } }),
+    commercialLocalSession: async () => ({ ok: true, result: true }),
+    commercialSession: vi.fn(async () => ({
+      ok: true,
+      result: { signedIn: true, profile: { userId: 'account-A', nickname: '' }, orgs: [] },
+    })),
+    commercialSendOtp: vi.fn(async () => ({ ok: true })),
+    commercialVerifyOtp: vi.fn(async () => ({ ok: true })),
+    commercialSignOut: vi.fn(async () => ({ ok: true })),
+    commercialLicenseStatus: vi.fn(async () => ({ ok: true, result: missingLicense })),
+    commercialLicenseActivate: vi.fn(async () => ({ ok: true, result: activeLicense })),
+    commercialLicenseRecoverActivation: vi.fn(async () => ({ ok: true, result: activeLicense })),
+    onArtifactSaved: unsubscribe,
+    onQuickLaunchSubmit: unsubscribe,
+    onTrayNavigateTask: unsubscribe,
+    onNotificationNavigateTask: unsubscribe,
+    onTrayOpenSettings: unsubscribe,
+    ...overrides,
+  };
+  Object.assign(window, { clawwork: bridge });
+  return bridge;
+}
+function mountEntry() {
+  const container = document.createElement('div');
+  document.body.append(container);
+  const root = createRoot(container);
+  return {
+    container,
+    render: async () => act(async () => root.render(<App />)),
+    unmount: () => {
+      act(() => root.unmount());
+      container.remove();
+    },
+    submit: () =>
+      container.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })),
+    input: (selector: string, value: string) => {
+      const input = container.querySelector(selector)!;
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, value);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    },
+  };
+}
+it('keeps an already authenticated account without entitlement at activation and recovers an unknown result without OTP', async () => {
+  const activate = vi.fn(async () => ({ ok: false, errorCode: 'activation_outcome_unknown' })),
+    recover = vi.fn(async () => ({ ok: true, result: activeLicense }));
+  const bridge = installEntryBridge({
+      commercialLicenseActivate: activate,
+      commercialLicenseRecoverActivation: recover,
+    }),
+    ui = mountEntry();
+  try {
+    await ui.render();
+    expect(ui.container.querySelector('[data-account]')).toBeNull();
+    expect(ui.container.querySelector('input[type="tel"]')).toBeNull();
+    expect(ui.container.querySelector('input[type="password"]')).not.toBeNull();
+    act(() => ui.input('input[type="password"]', 'RY-EXACT'));
+    await act(async () => ui.submit());
+    expect(ui.container.textContent).toContain('activation.errorOutcomeUnknown');
+    expect(ui.container.querySelector('[data-account]')).toBeNull();
+    await act(async () => ui.submit());
+    expect(ui.container.querySelector('[data-account="account-A"]')).not.toBeNull();
+    expect(activate).toHaveBeenCalledTimes(1);
+    expect(recover).toHaveBeenCalledWith('RY-EXACT');
+    expect(bridge.commercialVerifyOtp).not.toHaveBeenCalled();
+  } finally {
+    ui.unmount();
+  }
+});
+it('uses an existing current entitlement without redeeming on restored authentication', async () => {
+  const bridge = installEntryBridge({
+      commercialLicenseStatus: vi.fn(async () => ({ ok: true, result: activeLicense })),
+    }),
+    ui = mountEntry();
+  try {
+    await ui.render();
+    expect(ui.container.querySelector('[data-account="account-A"]')).not.toBeNull();
+    expect(bridge.commercialLicenseActivate).not.toHaveBeenCalled();
+  } finally {
+    ui.unmount();
+  }
+});
+it('does not activate until OTP is accepted and preserves the key through authenticated transition', async () => {
+  const verify = vi
+    .fn()
+    .mockResolvedValueOnce({ ok: false, errorCode: 'otp_verify_failed' })
+    .mockResolvedValueOnce({ ok: true });
+  const bridge = installEntryBridge({
+      commercialLocalSession: async () => ({ ok: true, result: false }),
+      commercialVerifyOtp: verify,
+    }),
+    ui = mountEntry();
+  try {
+    await ui.render();
+    expect(ui.container.querySelector('input[type="password"]')).not.toBeNull();
+    act(() => {
+      ui.input('input[type="tel"]', '13800138000');
+      ui.input('input[type="password"]', 'RY-EXACT');
+      (ui.container.querySelector('input[type="checkbox"]') as HTMLInputElement).click();
+    });
+    await act(async () => ui.submit());
+    act(() => ui.input('input[inputmode="numeric"]', '123456'));
+    await act(async () => ui.submit());
+    expect(bridge.commercialLicenseActivate).not.toHaveBeenCalled();
+    await act(async () => ui.submit());
+    expect(bridge.commercialLicenseActivate).toHaveBeenCalledWith('RY-EXACT');
+    expect(ui.container.querySelector('[data-account="account-A"]')).not.toBeNull();
+  } finally {
+    ui.unmount();
+  }
+});
+it('keeps explicit local mode separate from commercial activation', async () => {
+  const bridge = installEntryBridge({
+      commercialGetConfig: async () => ({ ok: true, result: { supabaseUrl: '', hasAnonKey: false } }),
+    }),
+    ui = mountEntry();
+  try {
+    await ui.render();
+    expect(ui.container.querySelector('[data-account="local"]')).not.toBeNull();
+    expect(bridge.commercialSession).not.toHaveBeenCalled();
+    expect(bridge.commercialLicenseStatus).not.toHaveBeenCalled();
+    expect(bridge.commercialLicenseActivate).not.toHaveBeenCalled();
+  } finally {
+    ui.unmount();
+  }
+});
+
+it('does not redeem a displayed account card for a replaced backend session', async () => {
+  const session = (userId: string) => ({
+    ok: true,
+    result: { signedIn: true, profile: { userId, nickname: '' }, orgs: [] },
+  });
+  const commercialSession = vi
+    .fn()
+    .mockResolvedValueOnce(session('account-A'))
+    .mockResolvedValueOnce(session('account-B'));
+  const bridge = installEntryBridge({ commercialSession }),
+    ui = mountEntry();
+  try {
+    await ui.render();
+    expect(ui.container.querySelector('input[type="password"]')).not.toBeNull();
+    act(() => ui.input('input[type="password"]', 'A-CARD'));
+    await act(async () => ui.submit());
+    expect(bridge.commercialLicenseActivate).not.toHaveBeenCalled();
+    expect(ui.container.querySelector('[data-account="account-B"]')).toBeNull();
+    expect((ui.container.querySelector('input[type="password"]') as HTMLInputElement).value).toBe('A-CARD');
+  } finally {
+    ui.unmount();
   }
 });
