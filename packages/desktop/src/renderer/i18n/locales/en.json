@@ -929,6 +929,26 @@
     "templateFieldUnknown": "Slide {{page}} ({{templateId}}) has no field called \"{{field}}\", so nothing was generated. Remove it.",
     "templatePageUnknown": "Slide {{page}} uses a template that does not exist (\"{{templateId}}\"), so nothing was generated. Available templates: cover, section, insight, comparison, metrics, timeline, actions, closing."
   },
+  "entryPreparation": {
+    "account": "Account and entitlement",
+    "animationNote": "Silent local animation. Continue when ready.",
+    "assistants": "Basic work assistants",
+    "checked": "Connection and storage checks passed. No model task has been sent.",
+    "checkFailed": "Preparation encountered a problem. Check again.",
+    "checks": "Preparation checks",
+    "chooseWorkspace": "Check workspace",
+    "continue": "Continue to work profile",
+    "detail": "Connecting services and checking your workspace. The checklist shows actual status.",
+    "models": "Available model catalog",
+    "needsAttention": "Preparation needs attention",
+    "ready": "Basic services are ready",
+    "readyDetail": "Continue to your work profile, or stay here to view the checks.",
+    "recheckFailed": "The latest check could not be confirmed. Retry or check your account.",
+    "relay": "Service connection configuration",
+    "runtime": "Local service startup",
+    "title": "Preparing your Cube",
+    "workspace": "Workspace read and write"
+  },
   "errors": {
     "agentMissing": "That assistant is not on this machine. Pick another one and send again.",
     "agentNotResponding": "Agent is not responding — it may be unavailable or misconfigured on the server. Try a different agent.",

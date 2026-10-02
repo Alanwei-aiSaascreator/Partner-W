@@ -929,6 +929,26 @@
     "templateFieldUnknown": "La diapositiva {{page}} ({{templateId}}) no tiene el campo «{{field}}», no se generó nada. Elimínalo.",
     "templatePageUnknown": "La diapositiva {{page}} usa una plantilla que no existe («{{templateId}}»), no se generó nada. Plantillas disponibles: cover, section, insight, comparison, metrics, timeline, actions, closing."
   },
+  "entryPreparation": {
+    "account": "Cuenta y autorización",
+    "animationNote": "Animación local sin sonido. Continúa cuando esté listo.",
+    "assistants": "Asistentes básicos",
+    "checked": "Conexión y almacenamiento comprobados. No se ha enviado ninguna tarea al modelo.",
+    "checkFailed": "Problema durante la preparación. Comprueba de nuevo.",
+    "checks": "Comprobaciones de preparación",
+    "chooseWorkspace": "Comprobar espacio de trabajo",
+    "continue": "Continuar al perfil de trabajo",
+    "detail": "Conectando servicios y comprobando el espacio de trabajo. La lista muestra el estado real.",
+    "models": "Modelos disponibles",
+    "needsAttention": "Revisa la preparación",
+    "ready": "Servicios básicos listos",
+    "readyDetail": "Continúa con tu perfil de trabajo o revisa las comprobaciones aquí.",
+    "recheckFailed": "No se pudo confirmar la última comprobación. Reintenta o revisa tu cuenta.",
+    "relay": "Configuración de conexión",
+    "runtime": "Inicio del servicio local",
+    "title": "Preparando tu Cube",
+    "workspace": "Lectura y escritura del espacio"
+  },
   "errors": {
     "agentMissing": "Ese asistente no está en este equipo. Elige otro y vuelve a enviar.",
     "agentNotResponding": "El agente no responde — puede estar no disponible o mal configurado en el servidor. Prueba con otro agente.",

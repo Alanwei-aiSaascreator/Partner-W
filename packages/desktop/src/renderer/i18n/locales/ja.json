@@ -929,6 +929,26 @@
     "templateFieldUnknown": "スライド {{page}}（{{templateId}}）に「{{field}}」というフィールドはないため、生成されませんでした。削除してください。",
     "templatePageUnknown": "スライド {{page}} に存在しないテンプレート「{{templateId}}」が指定されたため、生成されませんでした。使用できるテンプレート：cover、section、insight、comparison、metrics、timeline、actions、closing。"
   },
+  "entryPreparation": {
+    "account": "アカウントと利用資格",
+    "animationNote": "無音のローカルアニメーションです。準備完了後に進めます。",
+    "assistants": "基本の仕事アシスタント",
+    "checked": "接続と保存条件を確認しました。モデルへのタスクは送信していません。",
+    "checkFailed": "準備中に問題が発生しました。再確認してください。",
+    "checks": "準備状況",
+    "chooseWorkspace": "作業領域を確認",
+    "continue": "仕事プロフィールへ進む",
+    "detail": "サービスの接続と作業領域を確認しています。実際の状態を以下に表示します。",
+    "models": "利用可能なモデル一覧",
+    "needsAttention": "準備状態を確認してください",
+    "ready": "基本サービスの準備ができました",
+    "readyDetail": "仕事プロフィールへ進むか、この画面で確認結果をご覧ください。",
+    "recheckFailed": "最新の確認が完了しませんでした。再試行するかアカウントを確認してください。",
+    "relay": "サービス接続設定",
+    "runtime": "ローカルサービス起動",
+    "title": "Cubeを準備しています",
+    "workspace": "作業領域の読み書き"
+  },
   "errors": {
     "agentMissing": "そのアシスタントはこのパソコンにありません。別のアシスタントを選んで送信してください。",
     "agentNotResponding": "エージェントが応答していません — サーバー上で利用できないか、設定に誤りがある可能性があります。別のエージェントをお試しください。",

@@ -929,6 +929,26 @@
     "templateFieldUnknown": "簡報第 {{page}} 頁（{{templateId}}）裡沒有「{{field}}」這個欄位，沒有產生。請刪掉它。",
     "templatePageUnknown": "簡報第 {{page}} 頁用了不存在的範本「{{templateId}}」，沒有產生。可用的範本頁：cover、section、insight、comparison、metrics、timeline、actions、closing。"
   },
+  "entryPreparation": {
+    "account": "帳號與使用資格",
+    "animationNote": "準備好後即可繼續，動畫不影響等待",
+    "assistants": "基礎工作助手",
+    "checked": "已完成連接及儲存條件檢查，尚未發起模型任務。",
+    "checkFailed": "準備遇到問題，請重新檢查。",
+    "checks": "準備檢查",
+    "chooseWorkspace": "檢查工作區",
+    "continue": "繼續填寫工作資料",
+    "detail": "背景正在連接服務並檢查工作區。下方會顯示實際準備情況。",
+    "models": "可用模型目錄",
+    "needsAttention": "準備需要處理",
+    "ready": "基礎服務準備好了",
+    "readyDetail": "你可以繼續填寫工作資料，或留在此處查看準備情況。",
+    "recheckFailed": "本次檢查未確認成功，請重試或檢查帳號。",
+    "relay": "服務連接設定",
+    "runtime": "本機服務啟動",
+    "title": "正在準備你的魔方",
+    "workspace": "工作區讀寫"
+  },
   "errors": {
     "agentMissing": "這個助手不在本機，換一個助手再傳送。",
     "agentNotResponding": "代理無回應 — 可能無法使用或伺服器端設定有誤。請嘗試其他代理。",

@@ -929,6 +929,26 @@
     "templateFieldUnknown": "Folie {{page}} ({{templateId}}) hat kein Feld \"{{field}}\", daher wurde nichts erzeugt. Bitte entfernen.",
     "templatePageUnknown": "Folie {{page}} verwendet eine Vorlage, die es nicht gibt (\"{{templateId}}\"), daher wurde nichts erzeugt. Verfügbare Vorlagen: cover, section, insight, comparison, metrics, timeline, actions, closing."
   },
+  "entryPreparation": {
+    "account": "Konto und Berechtigung",
+    "animationNote": "Lokale Animation ohne Ton. Weiter, sobald bereit.",
+    "assistants": "Basisassistenten",
+    "checked": "Verbindung und Speicher geprüft. Keine Modellaufgabe gesendet.",
+    "checkFailed": "Problem bei der Vorbereitung. Erneut prüfen.",
+    "checks": "Vorbereitungsprüfungen",
+    "chooseWorkspace": "Arbeitsbereich prüfen",
+    "continue": "Weiter zum Arbeitsprofil",
+    "detail": "Dienste werden verbunden und der Arbeitsbereich geprüft. Die Liste zeigt den aktuellen Status.",
+    "models": "Verfügbare Modelle",
+    "needsAttention": "Vorbereitung prüfen",
+    "ready": "Basisdienste sind bereit",
+    "readyDetail": "Weiter zum Arbeitsprofil oder hier die Prüfungen ansehen.",
+    "recheckFailed": "Die letzte Prüfung wurde nicht bestätigt. Erneut versuchen oder Konto prüfen.",
+    "relay": "Dienstverbindung",
+    "runtime": "Start des lokalen Dienstes",
+    "title": "Dein Cube wird vorbereitet",
+    "workspace": "Arbeitsbereich lesen und schreiben"
+  },
   "errors": {
     "agentMissing": "Dieser Assistent ist auf diesem Computer nicht vorhanden. Wähle einen anderen und sende erneut.",
     "agentNotResponding": "Agent antwortet nicht — moeglicherweise ist er nicht verfuegbar oder auf dem Server falsch konfiguriert. Versuchen Sie einen anderen Agent.",

@@ -929,6 +929,26 @@
     "templateFieldUnknown": "演示文稿第 {{page}} 页（{{templateId}}）里没有「{{field}}」这个字段，没有生成。请删掉它。",
     "templatePageUnknown": "演示文稿第 {{page}} 页用了不存在的模板「{{templateId}}」，没有生成。可用的模板页：cover、section、insight、comparison、metrics、timeline、actions、closing。"
   },
+  "entryPreparation": {
+    "account": "账号与使用资格",
+    "animationNote": "准备好后即可继续，动画不影响等待",
+    "assistants": "基础工作助手",
+    "checked": "已完成连接及保存条件检查，尚未发起模型任务。",
+    "checkFailed": "准备遇到了问题，请重新检查。",
+    "checks": "准备检查",
+    "chooseWorkspace": "检查工作区",
+    "continue": "继续填写工作资料",
+    "detail": "后台正在连接服务并检查工作区。下面会显示实际准备情况。",
+    "models": "可用模型目录",
+    "needsAttention": "准备需要处理",
+    "ready": "基础服务准备好了",
+    "readyDetail": "你可以继续填写工作资料，或留在这里查看准备情况。",
+    "recheckFailed": "本次检查未确认成功，请重试或检查账号。",
+    "relay": "服务连接配置",
+    "runtime": "本机服务启动",
+    "title": "正在准备你的魔方",
+    "workspace": "工作区读写"
+  },
   "errors": {
     "agentMissing": "这个助手不在本机，换一个助手再发送。",
     "agentNotResponding": "Agent 未响应 — 可能不可用或服务端配置有误，请尝试其他 Agent",

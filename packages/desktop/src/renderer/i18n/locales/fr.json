@@ -929,6 +929,26 @@
     "templateFieldUnknown": "La diapositive {{page}} ({{templateId}}) n’a pas de champ « {{field}} », rien n’a été généré. Supprimez-le.",
     "templatePageUnknown": "La diapositive {{page}} utilise un modèle inexistant (« {{templateId}} »), rien n’a été généré. Modèles disponibles : cover, section, insight, comparison, metrics, timeline, actions, closing."
   },
+  "entryPreparation": {
+    "account": "Compte et autorisation",
+    "animationNote": "Animation locale silencieuse. Continuez quand tout est prêt.",
+    "assistants": "Assistants de base",
+    "checked": "Connexion et stockage vérifiés. Aucune tâche envoyée au modèle.",
+    "checkFailed": "Problème pendant la préparation. Vérifiez à nouveau.",
+    "checks": "Vérifications de préparation",
+    "chooseWorkspace": "Vérifier l’espace de travail",
+    "continue": "Continuer vers le profil de travail",
+    "detail": "Connexion des services et vérification de votre espace de travail. La liste indique leur état réel.",
+    "models": "Modèles disponibles",
+    "needsAttention": "La préparation demande une vérification",
+    "ready": "Les services de base sont prêts",
+    "readyDetail": "Continuez vers votre profil de travail ou consultez les vérifications ici.",
+    "recheckFailed": "La dernière vérification n’a pas pu être confirmée. Réessayez ou vérifiez le compte.",
+    "relay": "Configuration de connexion",
+    "runtime": "Démarrage du service local",
+    "title": "Préparation de votre Cube",
+    "workspace": "Lecture et écriture de l’espace"
+  },
   "errors": {
     "agentMissing": "Cet assistant n’est pas sur cet ordinateur. Choisissez-en un autre et renvoyez.",
     "agentNotResponding": "L'agent ne répond pas — il est peut-être indisponible ou mal configuré sur le serveur. Essayez un autre agent.",

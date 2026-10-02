@@ -929,6 +929,26 @@
     "templateFieldUnknown": "O slide {{page}} ({{templateId}}) não tem o campo \"{{field}}\", nada foi gerado. Remova-o.",
     "templatePageUnknown": "O slide {{page}} usa um modelo que não existe (\"{{templateId}}\"), nada foi gerado. Modelos disponíveis: cover, section, insight, comparison, metrics, timeline, actions, closing."
   },
+  "entryPreparation": {
+    "account": "Conta e autorização",
+    "animationNote": "Animação local sem som. Continue quando estiver pronto.",
+    "assistants": "Assistentes básicos",
+    "checked": "Conexão e armazenamento verificados. Nenhuma tarefa enviada ao modelo.",
+    "checkFailed": "Problema durante a preparação. Verifique novamente.",
+    "checks": "Verificações de preparação",
+    "chooseWorkspace": "Verificar espaço de trabalho",
+    "continue": "Continuar para o perfil de trabalho",
+    "detail": "Conectando serviços e verificando o espaço de trabalho. A lista mostra o estado real.",
+    "models": "Modelos disponíveis",
+    "needsAttention": "Verifique a preparação",
+    "ready": "Serviços básicos prontos",
+    "readyDetail": "Continue para seu perfil de trabalho ou veja as verificações aqui.",
+    "recheckFailed": "Não foi possível confirmar a última verificação. Tente novamente ou confira a conta.",
+    "relay": "Configuração da conexão",
+    "runtime": "Inicialização do serviço local",
+    "title": "Preparando seu Cube",
+    "workspace": "Leitura e escrita do espaço"
+  },
   "errors": {
     "agentMissing": "Esse assistente não está neste computador. Escolha outro e envie de novo.",
     "agentNotResponding": "O agente não está respondendo — ele pode estar indisponível ou mal configurado no servidor. Tente um agente diferente.",
