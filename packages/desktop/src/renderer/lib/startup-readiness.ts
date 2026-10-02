@@ -179,6 +179,7 @@ export function relayModelStatusCopy(failure: StartupRelayFailure, t: (key: stri
 
 export interface StartupReadiness {
   gatewayId: string | null | undefined;
+  relayPhase?: RelayBootstrapPublicState['phase'];
   media?: RelayMediaReadiness;
   ai: {
     phase: StartupAiPhase;
@@ -340,6 +341,7 @@ export function deriveStartupReadiness({
 
   return {
     gatewayId,
+    relayPhase: relayState?.phase,
     ...(gatewayId === 'local-runtime' && aiPhase === 'ready' && relayState?.phase === 'ready' && relayState.media
       ? { media: relayState.media }
       : {}),
