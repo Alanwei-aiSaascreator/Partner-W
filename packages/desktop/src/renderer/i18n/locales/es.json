@@ -1337,6 +1337,8 @@
     "nameLabel": "Name (max 60)",
     "official": "Official",
     "prompt": "Prompt",
+    "publicClosedBody": "La venta y publicación públicas están desactivadas. Tus plantillas privadas permanecen en «Centro de creador · Mis plantillas» y siguen siendo utilizables, editables y exportables; la instalación de herramientas oficiales no se ve afectada.",
+    "publicClosedTitle": "El mercado público está cerrado",
     "publish": "Publish",
     "publishDone": "Published — teammates in your organisation can see it now",
     "recordWarning": "Assistant installed, but the install count was not recorded (no impact on usage).",

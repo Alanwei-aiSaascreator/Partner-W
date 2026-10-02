@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { PUBLIC_MARKET_CLOSED } from '@clawwork/shared';
 
 /**
  * 助手市场 / 创作者中心的 IPC。
@@ -45,14 +46,30 @@ describe('market IPC handlers', () => {
     registerMarketHandlers();
   });
 
-  it('未登录（拿不到商业客户端）⇒ not_authenticated', async () => {
+  it('未登录（拿不到商业客户端）⇒ not_authenticated（用私有面验，公开面被关闭闸先挡）', async () => {
     mocks.client = null;
-    const res = (await call('market:templates')) as { ok: boolean; errorCode?: string };
+    const res = (await call('market:mine')) as { ok: boolean; errorCode?: string };
     expect(res.ok).toBe(false);
     expect(res.errorCode).toBe('not_authenticated');
   });
 
-  it('列表：参数翻成 p_category / p_query，原样带回行', async () => {
+  /**
+   * W07-57 公开市场关闭闸（2026-10-03）。`runIf/skipIf` 让这份测试在开关
+   * 两个方向都自洽：关闭时钉住"公开面拒绝、私有面照常"，重开后自动恢复
+   * 原来的参数映射用例。
+   */
+  it.runIf(PUBLIC_MARKET_CLOSED)('公开市场关闭：浏览与详情直接拒绝、不发 RPC', async () => {
+    const list = (await call('market:templates', { category: 'content', query: '教练' })) as {
+      ok: boolean;
+      errorCode?: string;
+    };
+    const detail = (await call('market:detail', { id: 't1' })) as { ok: boolean; errorCode?: string };
+    expect(list).toEqual({ ok: false, errorCode: 'public_market_closed' });
+    expect(detail).toEqual({ ok: false, errorCode: 'public_market_closed' });
+    expect(mocks.rpc).not.toHaveBeenCalled();
+  });
+
+  it.skipIf(PUBLIC_MARKET_CLOSED)('列表：参数翻成 p_category / p_query，原样带回行', async () => {
     mocks.rpc.mockResolvedValueOnce({ data: [{ id: 't1' }], error: null });
     const res = (await call('market:templates', { category: 'content', query: '教练' })) as {
       ok: boolean;
@@ -62,16 +79,18 @@ describe('market IPC handlers', () => {
     expect(mocks.rpc).toHaveBeenCalledWith('market_templates', { p_category: 'content', p_query: '教练' });
   });
 
-  it('列表：不传参数时给 null（不是 undefined）', async () => {
+  it.skipIf(PUBLIC_MARKET_CLOSED)('列表：不传参数时给 null（不是 undefined）', async () => {
     mocks.rpc.mockResolvedValueOnce({ data: [], error: null });
     await call('market:templates');
     expect(mocks.rpc).toHaveBeenCalledWith('market_templates', { p_category: null, p_query: null });
   });
 
   it('详情 / 安装 / 删除都走 p_id，且安装结果翻成驼峰 installCount', async () => {
-    mocks.rpc.mockResolvedValueOnce({ data: [{ id: 't1', instructions: 'p' }], error: null });
-    await call('market:detail', { id: 't1' });
-    expect(mocks.rpc).toHaveBeenLastCalledWith('market_template_detail', { p_id: 't1' });
+    if (!PUBLIC_MARKET_CLOSED) {
+      mocks.rpc.mockResolvedValueOnce({ data: [{ id: 't1', instructions: 'p' }], error: null });
+      await call('market:detail', { id: 't1' });
+      expect(mocks.rpc).toHaveBeenLastCalledWith('market_template_detail', { p_id: 't1' });
+    }
 
     mocks.rpc.mockResolvedValueOnce({ data: [{ install_count: 3 }], error: null });
     const res = (await call('market:installed', { id: 't1' })) as { result?: { installCount: number } };
@@ -120,14 +139,28 @@ describe('market IPC handlers', () => {
       p_instructions: 'i',
     });
 
-    mocks.rpc.mockResolvedValueOnce({ data: null, error: null });
-    await call('market:set-status', { id: 't1', status: 'published' });
-    expect(mocks.rpc).toHaveBeenLastCalledWith('creator_template_set_status', { p_id: 't1', p_status: 'published' });
+    if (!PUBLIC_MARKET_CLOSED) {
+      mocks.rpc.mockResolvedValueOnce({ data: null, error: null });
+      await call('market:set-status', { id: 't1', status: 'published' });
+      expect(mocks.rpc).toHaveBeenLastCalledWith('creator_template_set_status', { p_id: 't1', p_status: 'published' });
+    }
   });
 
-  it('RPC 报机器码 ⇒ 原样进 errorCode', async () => {
+  it.runIf(PUBLIC_MARKET_CLOSED)('关闭期间：上架被拒、下架（归档）照常 —— 关新不关旧', async () => {
+    const published = (await call('market:set-status', { id: 't1', status: 'published' })) as {
+      ok: boolean;
+      errorCode?: string;
+    };
+    expect(published).toEqual({ ok: false, errorCode: 'public_market_closed' });
+
+    mocks.rpc.mockResolvedValueOnce({ data: null, error: null });
+    await call('market:set-status', { id: 't1', status: 'archived' });
+    expect(mocks.rpc).toHaveBeenLastCalledWith('creator_template_set_status', { p_id: 't1', p_status: 'archived' });
+  });
+
+  it('RPC 报机器码 ⇒ 原样进 errorCode（用私有面：公开面被关闭闸先挡）', async () => {
     mocks.rpc.mockResolvedValueOnce({ data: null, error: { message: 'template_not_found' } });
-    const res = (await call('market:detail', { id: 't1' })) as { ok: boolean; errorCode?: string };
+    const res = (await call('market:mine')) as { ok: boolean; errorCode?: string };
     expect(res.ok).toBe(false);
     expect(res.errorCode).toBe('template_not_found');
   });
@@ -141,9 +174,9 @@ describe('market IPC handlers', () => {
     expect(res.errorCode).toBe('unknown');
   });
 
-  it('RPC 抛异常 ⇒ network', async () => {
+  it('RPC 抛异常 ⇒ network（用私有面：公开面被关闭闸先挡）', async () => {
     mocks.rpc.mockRejectedValueOnce(new Error('fetch failed'));
-    const res = (await call('market:templates')) as { ok: boolean; errorCode?: string };
+    const res = (await call('market:mine')) as { ok: boolean; errorCode?: string };
     expect(res.errorCode).toBe('network');
   });
 

@@ -1337,6 +1337,8 @@
     "nameLabel": "名稱（不超過 60 字）",
     "official": "官方",
     "prompt": "提示詞",
+    "publicClosedBody": "公開販售與上架已停用。你的私有範本保留在「創作者中心 · 我的範本」，可繼續使用、編輯與匯出；官方工具安裝不受影響。",
+    "publicClosedTitle": "公開市場已關閉",
     "publish": "發布",
     "publishDone": "已發布，同組織的成員可以在市集裡看到它了",
     "recordWarning": "助手裝好了，只是安裝次數沒記上（不影響使用）。",

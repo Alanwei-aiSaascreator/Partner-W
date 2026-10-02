@@ -3,6 +3,7 @@
 import { act, type ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { describe, expect, it, vi } from 'vitest';
+import { PUBLIC_MARKET_CLOSED } from '@clawwork/shared';
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
@@ -154,8 +155,25 @@ describe('LeftNav NavMenu', () => {
     expect(onSelectView).toHaveBeenLastCalledWith('creator');
     clickNav(container, 'square');
     expect(onSelectView).toHaveBeenLastCalledWith('community');
+    if (!PUBLIC_MARKET_CLOSED) {
+      clickNav(container, 'agents');
+      expect(onSelectView).toHaveBeenLastCalledWith('market');
+    }
+    unmount();
+  });
+
+  it.runIf(PUBLIC_MARKET_CLOSED)('公开市场关闭：入口**保留可见**但置灰不可点（带说明气泡）', () => {
+    const { container, onSelectView, unmount } = setup();
+    const agents = container.querySelector('[data-nav="agents"]');
+
+    expect(agents, '入口不许直接删掉 —— 删除会让用户猜"功能没了还是藏了"').not.toBeNull();
+    expect((agents as HTMLButtonElement).disabled).toBe(true);
+    expect(agents?.getAttribute('aria-disabled')).toBe('true');
+    expect(agents?.getAttribute('title')).toBeTruthy();
+
+    // 点了也不许导航（disabled 按钮本来就不派发 click，这里显式钉住后果）。
     clickNav(container, 'agents');
-    expect(onSelectView).toHaveBeenLastCalledWith('market');
+    expect(onSelectView).not.toHaveBeenCalled();
     unmount();
   });
 

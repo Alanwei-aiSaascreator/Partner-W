@@ -1337,6 +1337,8 @@
     "nameLabel": "名字（不超过 60 字）",
     "official": "官方",
     "prompt": "提示词",
+    "publicClosedBody": "公开售卖与上架已停用。你的私有模板保留在「创作者中心 · 我的模板」，可继续使用、编辑与导出；官方工具安装不受影响。",
+    "publicClosedTitle": "公开市场已关闭",
     "publish": "发布",
     "publishDone": "已发布，同组织的成员可以在市场里看到它了",
     "recordWarning": "助手装好了，只是安装次数没记上（不影响使用）。",

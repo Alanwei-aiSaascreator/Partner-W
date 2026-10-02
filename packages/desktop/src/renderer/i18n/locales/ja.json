@@ -1337,6 +1337,8 @@
     "nameLabel": "Name (max 60)",
     "official": "Official",
     "prompt": "Prompt",
+    "publicClosedBody": "公開販売・出品は停止中です。プライベートテンプレートは「クリエイターセンター・マイテンプレート」に残り、引き続き利用・編集・書き出しできます。公式ツールのインストールには影響しません。",
+    "publicClosedTitle": "公開マーケットは終了しました",
     "publish": "Publish",
     "publishDone": "Published — teammates in your organisation can see it now",
     "recordWarning": "Assistant installed, but the install count was not recorded (no impact on usage).",

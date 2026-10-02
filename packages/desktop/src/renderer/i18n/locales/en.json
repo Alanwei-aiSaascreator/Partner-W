@@ -1337,6 +1337,8 @@
     "nameLabel": "Name (max 60)",
     "official": "Official",
     "prompt": "Prompt",
+    "publicClosedBody": "Public listing and trading are disabled. Your private templates remain under Creator Center · My Templates and can still be used, edited, and exported; official tool installation is unaffected.",
+    "publicClosedTitle": "Public market is closed",
     "publish": "Publish",
     "publishDone": "Published — teammates in your organisation can see it now",
     "recordWarning": "Assistant installed, but the install count was not recorded (no impact on usage).",

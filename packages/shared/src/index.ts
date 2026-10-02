@@ -7,6 +7,7 @@ export * from './commercial-relay-state.js';
 export * from './debug.js';
 export * from './community.js';
 export * from './agent-templates.js';
+export * from './public-market.js';
 export * from './growth.js';
 export * from './analytics-events.js';
 export * from './portable-update.js';

@@ -1,8 +1,10 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { PUBLIC_MARKET_CLOSED } from '@clawwork/shared';
 import { cn } from '@/lib/utils';
 import MarketTab from './MarketTab';
 import MyTemplatesTab from './MyTemplatesTab';
+import PublicMarketClosed from './PublicMarketClosed';
 
 type Tab = 'market' | 'mine';
 
@@ -48,7 +50,9 @@ export default function MarketPanel({ initialTab = 'market' }: { initialTab?: Ta
         ))}
       </div>
 
-      <div className="min-h-0 flex-1">{tab === 'market' ? <MarketTab /> : <MyTemplatesTab />}</div>
+      <div className="min-h-0 flex-1">
+        {tab === 'market' ? PUBLIC_MARKET_CLOSED ? <PublicMarketClosed /> : <MarketTab /> : <MyTemplatesTab />}
+      </div>
     </div>
   );
 }

@@ -18,6 +18,9 @@ const MESSAGES: Record<string, string> = {
   invalid_instructions: '提示词要在 1 到 8000 字之间。',
   invalid_status: '不支持的状态。',
   template_installed_cannot_delete: '已经有人装过这个模板了，只能下架、不能删除。',
+  // 公开市场关闭期间的上架被拒（W07-57）。措辞必须带上"私有模板不受影响"——
+  // 只说"不能上架"会让创作者以为自己的模板出了问题。
+  public_market_closed: '公开市场已关闭，暂时不能上架；你的私有模板不受影响。',
   network: '连不上服务器，请检查网络后重试。',
   unknown: '操作没成功，请稍后重试。',
 };

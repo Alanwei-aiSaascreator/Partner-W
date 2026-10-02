@@ -1,4 +1,5 @@
 import { ipcMain } from 'electron';
+import { PUBLIC_MARKET_CLOSED, PUBLIC_MARKET_CLOSED_CODE } from '@clawwork/shared';
 import type { IpcResult } from '@clawwork/shared';
 import { getCommercialClient } from '../commercial/client.js';
 
@@ -49,15 +50,22 @@ const firstRow = (data: unknown): unknown => rows(data)[0] ?? null;
 const asNumber = (value: unknown): number => (typeof value === 'number' ? value : Number(value) || 0);
 
 export function registerMarketHandlers(): void {
-  ipcMain.handle('market:templates', (_e, payload?: { category?: string | null; query?: string | null }) =>
-    callRpc('market_templates', { p_category: payload?.category ?? null, p_query: payload?.query ?? null }, (data) =>
-      rows(data),
-    ),
-  );
+  // ⚠️ 公开市场的**浏览与详情**随市场关闭一起守卫（W07-57）：主进程是接口边界，
+  //    界面关掉不算关 —— 这里关了，绕过界面直接调 IPC 也拿不到公开内容。
+  //    私有面（`market:mine`/create/update/delete）**不在这里**，照常开放。
+  ipcMain.handle('market:templates', (_e, payload?: { category?: string | null; query?: string | null }) => {
+    if (PUBLIC_MARKET_CLOSED) return { ok: false, errorCode: PUBLIC_MARKET_CLOSED_CODE };
+    return callRpc(
+      'market_templates',
+      { p_category: payload?.category ?? null, p_query: payload?.query ?? null },
+      (data) => rows(data),
+    );
+  });
 
-  ipcMain.handle('market:detail', (_e, payload: { id?: string }) =>
-    callRpc('market_template_detail', { p_id: payload?.id ?? null }, (data) => firstRow(data)),
-  );
+  ipcMain.handle('market:detail', (_e, payload: { id?: string }) => {
+    if (PUBLIC_MARKET_CLOSED) return { ok: false, errorCode: PUBLIC_MARKET_CLOSED_CODE };
+    return callRpc('market_template_detail', { p_id: payload?.id ?? null }, (data) => firstRow(data));
+  });
 
   // 记账：单对象，在这一层就翻成驼峰（与 community 的约定一致）
   ipcMain.handle('market:installed', (_e, payload: { id?: string }) =>
@@ -113,13 +121,18 @@ export function registerMarketHandlers(): void {
       ),
   );
 
-  ipcMain.handle('market:set-status', (_e, payload: { id?: string; status?: string }) =>
-    callRpc(
+  ipcMain.handle('market:set-status', (_e, payload: { id?: string; status?: string }) => {
+    // 上架公开 = 创作者的"公开入口"，随市场一起关；
+    // **下架/归档照常** —— 创作者必须能把已经公开的东西收回来（关新不关旧）。
+    if (PUBLIC_MARKET_CLOSED && payload?.status === 'published') {
+      return { ok: false, errorCode: PUBLIC_MARKET_CLOSED_CODE };
+    }
+    return callRpc(
       'creator_template_set_status',
       { p_id: payload?.id ?? null, p_status: payload?.status ?? 'draft' },
       () => null,
-    ),
-  );
+    );
+  });
 
   ipcMain.handle('market:delete', (_e, payload: { id?: string }) =>
     callRpc('creator_template_delete', { p_id: payload?.id ?? null }, () => null),

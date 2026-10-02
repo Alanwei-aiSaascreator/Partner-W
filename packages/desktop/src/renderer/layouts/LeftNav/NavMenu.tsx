@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
+import { PUBLIC_MARKET_CLOSED } from '@clawwork/shared';
 import {
   Archive,
   BookOpen,
@@ -90,6 +91,13 @@ type NavItem = {
   view?: MainView;
   onClick?: () => void;
   badge?: string;
+  /**
+   * 置灰不可点（2026-10-03，公开市场关闭期间用）：入口**保留可见**，
+   * 但挡住点击、给说明气泡 —— 直接删掉入口会让用户猜"功能没了还是藏了"。
+   */
+  disabled?: boolean;
+  /** 置灰项的说明气泡文案键（`title`）。 */
+  disabledTitleKey?: string;
 };
 
 export default function NavMenu({
@@ -115,7 +123,16 @@ export default function NavMenu({
     // ⚠️ 顺带修掉了下面那条"不显示选中态"的注释里写的缺口 —— 它当时就是因为
     //    这一项不是 `mainView` 才没有选中态。
     { key: 'skills', labelKey: 'leftNav.pages.skills', icon: Sparkles, view: 'skills' },
-    { key: 'agents', labelKey: 'leftNav.pages.agents', icon: Store, view: 'market' },
+    // ⚠️ 公开市场关闭期间（W07-57 / 需求 7）：入口置灰不可点，说明气泡指路私有模板。
+    //    重开时把 `PUBLIC_MARKET_CLOSED` 改回 false 即可，入口本身不删。
+    {
+      key: 'agents',
+      labelKey: 'leftNav.pages.agents',
+      icon: Store,
+      view: 'market',
+      disabled: PUBLIC_MARKET_CLOSED,
+      disabledTitleKey: 'market.publicClosedTitle',
+    },
     { key: 'bounty', labelKey: 'leftNav.pages.bounty', icon: Target, view: 'bounty' },
     { key: 'square', labelKey: 'leftNav.pages.square', icon: Compass, view: 'community' },
     { key: 'creator', labelKey: 'leftNav.pages.creator', icon: Feather, view: 'creator' },
@@ -165,13 +182,18 @@ export default function NavMenu({
         data-nav={item.key}
         aria-current={active ? 'page' : undefined}
         aria-label={collapsed ? spoken : undefined}
+        disabled={item.disabled}
+        aria-disabled={item.disabled || undefined}
+        title={item.disabled && item.disabledTitleKey ? t(item.disabledTitleKey) : undefined}
         onClick={() => (item.onClick ? item.onClick() : item.view && onSelectView(item.view))}
         className={cn(
           'titlebar-no-drag glow-focus relative flex w-full items-center rounded-md text-left type-body transition-colors',
           collapsed ? 'justify-center py-2' : 'gap-2.5 px-2.5 py-1.5',
-          active
-            ? 'bg-[var(--state-selected)] font-semibold text-[var(--accent)]'
-            : 'text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]',
+          item.disabled
+            ? 'cursor-not-allowed text-[var(--text-muted)] opacity-60'
+            : active
+              ? 'bg-[var(--state-selected)] font-semibold text-[var(--accent)]'
+              : 'text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]',
         )}
       >
         <Icon size={collapsed ? 18 : 15} className="flex-shrink-0" />

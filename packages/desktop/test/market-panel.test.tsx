@@ -3,6 +3,7 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { PUBLIC_MARKET_CLOSED } from '@clawwork/shared';
 import zh from '../src/renderer/i18n/locales/zh.json';
 
 /** 用真实中文文案渲染：这样"提示是中文"才是被验证过的。 */
@@ -62,13 +63,31 @@ describe('MarketPanel', () => {
     document.body.innerHTML = '';
   });
 
-  it('默认显示市场，点「我的模板」切过去', () => {
+  it('默认落在「市场」tab：关闭期间显示关闭态，点「我的模板」切过去', () => {
     const view = render();
-    expect(view.container.querySelector('[data-testid="market-tab"]')).not.toBeNull();
+    // W07-57：关闭期间公开面渲染关闭态（`MarketTab` 不挂载、不发市场请求）。
+    if (PUBLIC_MARKET_CLOSED) {
+      expect(view.container.querySelector('[data-testid="public-market-closed"]')).not.toBeNull();
+      expect(view.container.querySelector('[data-testid="market-tab"]')).toBeNull();
+    } else {
+      expect(view.container.querySelector('[data-testid="market-tab"]')).not.toBeNull();
+    }
 
     act(() => tabButton(view.container, translate('market.tabMine'))?.click());
     expect(view.container.querySelector('[data-testid="my-templates-tab"]')).not.toBeNull();
-    expect(view.container.querySelector('[data-testid="market-tab"]')).toBeNull();
+    expect(view.container.querySelector('[data-testid="public-market-closed"]')).toBeNull();
+    view.unmount();
+  });
+
+  it.runIf(PUBLIC_MARKET_CLOSED)('关闭态必须写明私有模板在哪（不能被读成"我的资料没了"）', () => {
+    const view = render();
+    const closed = view.container.querySelector('[data-testid="public-market-closed"]');
+    expect(closed?.textContent).toContain(translate('market.publicClosedTitle'));
+    expect(closed?.textContent).toContain(translate('market.publicClosedBody'));
+
+    // 直接从关闭态也要能走到私有面（为存量 MyTemplates 保留明确通路）。
+    act(() => tabButton(view.container, translate('market.tabMine'))?.click());
+    expect(view.container.querySelector('[data-testid="my-templates-tab"]')).not.toBeNull();
     view.unmount();
   });
 
