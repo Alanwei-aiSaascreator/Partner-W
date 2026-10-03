@@ -198,6 +198,42 @@ describe('ensureRelayConfigured —— 纯净/未配置', () => {
 });
 
 /**
+ * ⚠️ 2026-10-03 W03 定位的回归钉子：运行时没捆搜索扩展时，bundledWebSearchAvailable
+ * 闸门是 **silent false** —— 搜索补丁永不写入、用户"搜索调不动"，而日志里一无所见
+ * （本次 W03 排查只能反读产物配置才查到 extensions 里没有 duckduckgo）。
+ * 现在这一半必须有一条明确的日志事件；用户自己关搜索时不打（避免噪音）。
+ */
+describe('relay.bundled-search.unavailable —— 静默闸门要说话', () => {
+  it('运行时未捆搜索扩展 ⇒ 记明确事件（且捎带不泄 relay key）', async () => {
+    const log = vi.fn();
+    const { deps, gateway } = makeDeps({ log });
+    Object.assign(gateway, { bundledWebSearchAvailable: false });
+    const res = await ensureRelayConfigured(deps);
+
+    expect(res.status).toBe('applied');
+    const printed = JSON.stringify(log.mock.calls);
+    expect(printed, '闸门 false 不能在日志里消失').toContain('relay.bundled-search.unavailable');
+    expect(printed).not.toContain(RELAY_KEY);
+  });
+
+  it('搜索可用时不打这条（不制造噪音）', async () => {
+    const log = vi.fn();
+    const { deps, gateway } = makeDeps({ log });
+    Object.assign(gateway, { bundledWebSearchAvailable: true });
+    await ensureRelayConfigured(deps);
+    expect(JSON.stringify(log.mock.calls)).not.toContain('relay.bundled-search.unavailable');
+  });
+
+  it('用户自己关掉搜索 ⇒ 也不打（那是他的选择，不是运行时缺扩展）', async () => {
+    const log = vi.fn();
+    const { deps, gateway } = makeDeps({ log, webSearchEnabled: () => false });
+    Object.assign(gateway, { bundledWebSearchAvailable: false });
+    await ensureRelayConfigured(deps);
+    expect(JSON.stringify(log.mock.calls)).not.toContain('relay.bundled-search.unavailable');
+  });
+});
+
+/**
  * ⭐⭐ 确定性拒绝 vs 暂时失败：**重试策略必须分得开**。
  *
  * 那个 4 分钟窗口是为「等一等真的会好」的一类准备的（网关没连上 / 会话暂时问不出来）。

@@ -375,6 +375,15 @@ export async function ensureRelayConfigured(deps: RelayBootstrapDeps): Promise<R
     };
   }
 
+  const webSearch = deps.webSearchEnabled?.() ?? true;
+  // ⚠️ 2026-10-03（W03 真机定位）：运行时没捆搜索扩展时，这个闸门是 **silent false** ——
+  //    搜索补丁永不写入、用户侧"搜索调不动"，而日志里一无所见（排查只能反读产物配置，
+  //    本次就是这么查的）。补一条明确事件：只记"不可用且用户没自己关搜索"这半边，
+  //    支持侧一眼定位；搜索正常或用户自关时不打（避免噪音）。
+  if (gateway.bundledWebSearchAvailable !== true && webSearch) {
+    log('relay.bundled-search.unavailable', { detected: false });
+  }
+
   const apply = (tx: Pick<RelayGatewayHandle, 'getConfig' | 'patchConfig'>) =>
     applyRelayConfig(
       {
@@ -387,7 +396,7 @@ export async function ensureRelayConfigured(deps: RelayBootstrapDeps): Promise<R
       {
         relayKey,
         deviceFingerprint: deps.deviceFingerprint(),
-        webSearch: deps.webSearchEnabled?.() ?? true,
+        webSearch,
         bundledWebSearchAvailable: gateway.bundledWebSearchAvailable === true,
       },
     );
