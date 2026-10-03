@@ -2265,5 +2265,10 @@
     "unsupported": "La entrada de voz no está disponible. Usa la entrada de texto.",
     "unsupportedPlatform": "La entrada de voz aún no es compatible con Windows. Usa la entrada de texto.",
     "unsupportedTooltip": "La entrada de voz no está disponible en esta aplicación."
+  },
+  "workspaceNotice": {
+    "dismiss": "Entendido",
+    "openSettings": "Abrir ajustes de espacio de trabajo",
+    "recreated": "La carpeta de espacio de trabajo original ya no existe (pudo moverse o eliminarse), así que se creó uno nuevo vacío. Para recuperar datos antiguos: revisa la carpeta original o cambia de espacio de trabajo."
   }
 }

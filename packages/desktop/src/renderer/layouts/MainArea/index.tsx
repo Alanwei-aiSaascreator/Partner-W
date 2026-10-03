@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import ConnectionBanner from '@/components/ConnectionBanner';
 import RelayConnectionBanner from '@/components/RelayConnectionBanner';
+import WorkspaceRecreatedNotice from '@/components/WorkspaceRecreatedNotice';
 import {
   PanelRightOpen,
   PanelRightClose,
@@ -1024,6 +1025,7 @@ export function ChatContent({
       ) : showWelcome ? (
         <div className="flex-1 px-5 pt-4 pb-0 overflow-y-auto">
           {!startupReadiness.isReady && <StartupReadinessPanel readiness={startupReadiness} onRetry={onRetryStartup} />}
+          <WorkspaceRecreatedNotice />
           {goalAnalysis.result && (
             <GoalRecommendationPanel
               status={goalAnalysis.status}

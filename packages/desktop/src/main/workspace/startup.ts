@@ -24,6 +24,7 @@ import {
   workspaceLocationPatch,
   type WorkspaceStartupDecision,
 } from './portable.js';
+import { recordWorkspaceStartupDecision } from './startup-notice.js';
 import {
   getDefaultWorkspacePath,
   getHomedirWorkspacePath,
@@ -250,6 +251,9 @@ async function runWorkspaceStartup(options: PrepareWorkspaceOptions): Promise<Wo
     exists,
   });
   ctx.log('workspace.startup.decision', { kind: decision.kind });
+
+  // 只记"重建过"这一条（渲染层做非阻断告知；其余 kind 见 startup-notice.ts 的边界）。
+  recordWorkspaceStartupDecision(decision);
 
   let workspacePath: string;
   switch (decision.kind) {

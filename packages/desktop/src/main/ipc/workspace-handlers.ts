@@ -12,6 +12,7 @@ import {
 } from '../workspace/config.js';
 import { initWorkspace, migrateWorkspace } from '../workspace/init.js';
 import { probeWorkspaceFsIdentity } from '../workspace/fs-identity.js';
+import { clearWorkspaceStartupNotice, readWorkspaceStartupNotice } from '../workspace/startup-notice.js';
 import { workspaceLocationPatch } from '../workspace/portable.js';
 import { refreshRemovableDrives } from '../workspace/removable-drives.js';
 import { reinitDatabase, closeDatabase, getSqlite } from '../db/index.js';
@@ -108,6 +109,8 @@ export function registerWorkspaceHandlers(deps: WorkspaceHandlerDeps = {}): void
   });
 
   ipcMain.handle('workspace:setup', async (_event, workspacePath: string) => {
+    // 用户主动选了工作区：启动时那条"重建过"的通知到此作废（别挂在新工作区上）。
+    clearWorkspaceStartupNotice();
     try {
       await initWorkspace(workspacePath);
       reinitDatabase(workspacePath);
@@ -126,6 +129,8 @@ export function registerWorkspaceHandlers(deps: WorkspaceHandlerDeps = {}): void
     const oldPath = getWorkspacePath();
     if (!oldPath) return { ok: false, error: 'no current workspace' };
     if (oldPath === newWorkspacePath) return { ok: true };
+    // 同上：换到新工作区（或尝试换）后，启动时那条"重建过"的通知不再成立。
+    clearWorkspaceStartupNotice();
     let runtimeSyncAttempted = false;
     try {
       closeDatabase();
@@ -159,6 +164,12 @@ export function registerWorkspaceHandlers(deps: WorkspaceHandlerDeps = {}): void
   ipcMain.handle('workspace:get-device-id', () => {
     return ensureDeviceId();
   });
+
+  /**
+   * 启动时的「工作区被重建」通知（`null` = 没有这回事）。
+   * 只读；只带路径，不带别的东西。
+   */
+  ipcMain.handle('workspace:startup-notice', () => ({ ok: true, result: readWorkspaceStartupNotice() }));
 
   /**
    * 工作区所在文件系统的身份（FAT32 上 `dev = 0` ⇒ 助手读写身份文件必失败）。

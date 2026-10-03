@@ -629,6 +629,11 @@ export interface ClawWorkAPI {
    * 文件身份守卫 fail-closed，**六个预置助手全部失败**，而界面上只有一句"助手失败"。
    */
   probeWorkspaceFsIdentity: () => Promise<WorkspaceFsIdentity>;
+  /**
+   * 启动时的「工作区被重建」通知（`null` = 没有这回事）。
+   * 非阻断告知用；只带路径，不带别的东西。
+   */
+  workspaceStartupNotice: () => Promise<IpcResult<{ kind: 'recreated'; path: string; at: number } | null>>;
   getDefaultWorkspacePath: () => Promise<string>;
   getTeamWorkspacePath: (slug: string) => Promise<string>;
   browseWorkspace: () => Promise<string | null>;

@@ -279,6 +279,8 @@ function buildApi(): ClawWorkAPI {
     isPortableWorkspace: () => ipcRenderer.invoke('workspace:is-portable') as Promise<boolean>,
     // 量工作区所在文件系统的身份（FAT32 上 dev=0 ⇒ 助手读写身份文件必失败）。
     probeWorkspaceFsIdentity: () => ipcRenderer.invoke('workspace:fs-identity'),
+    // 启动时的"工作区被重建"通知（null = 没有这回事）；渲染层做非阻断告知用。
+    workspaceStartupNotice: () => ipcRenderer.invoke('workspace:startup-notice'),
     getDefaultWorkspacePath: () => ipcRenderer.invoke('workspace:get-default') as Promise<string>,
     getTeamWorkspacePath: (slug: string) => ipcRenderer.invoke('workspace:team-path', slug) as Promise<string>,
     browseWorkspace: () => ipcRenderer.invoke('workspace:browse') as Promise<string | null>,

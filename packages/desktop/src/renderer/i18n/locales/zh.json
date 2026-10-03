@@ -2265,5 +2265,10 @@
     "unsupported": "语音输入暂不可用，请继续使用文字输入。",
     "unsupportedPlatform": "此版本暂不支持 Windows 语音输入，请继续使用文字输入。",
     "unsupportedTooltip": "此应用暂时无法使用语音输入。"
+  },
+  "workspaceNotice": {
+    "dismiss": "知道了",
+    "openSettings": "打开工作区设置",
+    "recreated": "原工作区目录不存在（可能已被移动或删除），已在本机新建空工作区。如需找回旧数据：请检查原目录，或切换工作区。"
   }
 }

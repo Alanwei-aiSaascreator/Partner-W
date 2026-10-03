@@ -2265,5 +2265,10 @@
     "unsupported": "Voice input is unavailable. Continue with text input.",
     "unsupportedPlatform": "Voice input is not supported on Windows yet. Continue with text input.",
     "unsupportedTooltip": "Voice input is unavailable in this app."
+  },
+  "workspaceNotice": {
+    "dismiss": "Got it",
+    "openSettings": "Open workspace settings",
+    "recreated": "The original workspace folder no longer exists (it may have been moved or deleted), so a new empty workspace was created. To recover old data: check the original folder or switch workspaces."
   }
 }

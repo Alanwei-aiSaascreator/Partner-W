@@ -2265,5 +2265,10 @@
     "unsupported": "La saisie vocale n’est pas disponible. Utilisez la saisie de texte.",
     "unsupportedPlatform": "La saisie vocale n’est pas encore prise en charge sous Windows. Utilisez la saisie de texte.",
     "unsupportedTooltip": "La saisie vocale n’est pas disponible dans cette application."
+  },
+  "workspaceNotice": {
+    "dismiss": "Compris",
+    "openSettings": "Ouvrir les paramètres d’espace de travail",
+    "recreated": "Le dossier d’espace de travail d’origine n’existe plus (déplacé ou supprimé) ; un nouvel espace vide a été créé. Pour retrouver les anciennes données : vérifiez le dossier d’origine ou changez d’espace de travail."
   }
 }

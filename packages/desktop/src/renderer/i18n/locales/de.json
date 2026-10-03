@@ -2265,5 +2265,10 @@
     "unsupported": "Spracheingabe ist nicht verfügbar. Verwende stattdessen die Texteingabe.",
     "unsupportedPlatform": "Spracheingabe wird unter Windows noch nicht unterstützt. Verwende stattdessen die Texteingabe.",
     "unsupportedTooltip": "Spracheingabe ist in dieser App nicht verfügbar."
+  },
+  "workspaceNotice": {
+    "dismiss": "Verstanden",
+    "openSettings": "Arbeitsbereich-Einstellungen öffnen",
+    "recreated": "Der ursprüngliche Arbeitsbereichsordner existiert nicht mehr (verschoben oder gelöscht) – ein neuer leerer Arbeitsbereich wurde erstellt. Um alte Daten wiederzufinden: ursprünglichen Ordner prüfen oder Arbeitsbereich wechseln."
   }
 }

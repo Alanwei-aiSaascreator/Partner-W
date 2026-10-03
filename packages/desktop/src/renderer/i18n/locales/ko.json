@@ -2265,5 +2265,10 @@
     "unsupported": "음성 입력을 사용할 수 없습니다. 텍스트 입력을 사용해 주세요.",
     "unsupportedPlatform": "Windows에서는 아직 음성 입력을 지원하지 않습니다. 텍스트 입력을 사용해 주세요.",
     "unsupportedTooltip": "이 앱에서는 음성 입력을 사용할 수 없습니다."
+  },
+  "workspaceNotice": {
+    "dismiss": "확인",
+    "openSettings": "작업 공간 설정 열기",
+    "recreated": "원래 작업 공간 폴더가 없어져(이동 또는 삭제됨) 새 빈 작업 공간을 만들었습니다. 이전 데이터를 복구하려면 원래 폴더를 확인하거나 작업 공간을 전환하세요."
   }
 }

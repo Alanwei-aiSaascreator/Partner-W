@@ -2265,5 +2265,10 @@
     "unsupported": "語音輸入暫時無法使用，請繼續使用文字輸入。",
     "unsupportedPlatform": "此版本暫不支援 Windows 語音輸入，請繼續使用文字輸入。",
     "unsupportedTooltip": "此應用程式暫時無法使用語音輸入。"
+  },
+  "workspaceNotice": {
+    "dismiss": "知道了",
+    "openSettings": "開啟工作區設定",
+    "recreated": "原工作區目錄不存在（可能已被移動或刪除），已在本機新建空白工作區。如需找回舊資料：請檢查原目錄，或切換工作區。"
   }
 }

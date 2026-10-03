@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { ArrowRight, CheckCircle2, Circle, Loader2, ShieldCheck } from 'lucide-react';
 import logo from '@/assets/logo.png';
 import GuideMascot from '@/components/GuideMascot';
+import WorkspaceRecreatedNotice from '@/components/WorkspaceRecreatedNotice';
 import { Button } from '@/components/ui/button';
 import {
   deriveEntryPreparation,
@@ -166,6 +167,7 @@ export default function EntryPreparation({
             {failure ?? (state.canContinue ? t('entryPreparation.checked') : t(`entryPreparation.${state.stage}`))}
             {runtimeBlocked && <p className="mt-2">{t('entryPreparation.runtimeRestartRequired')}</p>}
           </div>
+          <WorkspaceRecreatedNotice />
           <div className="space-y-3">
             <Button
               data-entry-continue
