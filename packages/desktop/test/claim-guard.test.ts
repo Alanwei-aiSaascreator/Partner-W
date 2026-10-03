@@ -284,3 +284,35 @@ describe('用户本轮明确要求的文件格式', () => {
     expect(missingExpectedArtifactKinds(['pptx', 'pdf'], ['deck.pptx'])).toEqual(['pdf']);
   });
 });
+
+describe('⭐ 带空格的文件名（2026-10-03 场景一真机误报的直接回归）', () => {
+  it('抽取仍是尾巴 token（语义不变），但核对时会尝试带空格的全名', () => {
+    const content = '生成成功 ✅ 新文件：**荣盈魔方 · AI桌面工作台-12ddb119.pptx**';
+    const claimed = extractClaimedFileNames(content);
+    expect(claimed.map((f) => f.name)).toContain('AI桌面工作台-12ddb119.pptx');
+    expect(claimed.find((f) => f.name === 'AI桌面工作台-12ddb119.pptx')?.variants).toContain(
+      '荣盈魔方 · AI桌面工作台-12ddb119.pptx',
+    );
+  });
+
+  it('⭐ 全名在盘上 ⇒ present、missing 为空（本轮守卫误报的回归）', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'claim-guard-'));
+    mkdirSync(join(tmp, 'task'), { recursive: true });
+    writeFileSync(join(tmp, 'task', '荣盈魔方 · AI桌面工作台-12ddb119.pptx'), 'x');
+    const result = checkClaimedFiles('生成成功 ✅ 新文件：**荣盈魔方 · AI桌面工作台-12ddb119.pptx**', [tmp]);
+    expect(result.missing).toEqual([]);
+    expect(result.present.length).toBeGreaterThan(0);
+  });
+
+  it('抽取连带前导词时，按空格后缀逐级回退——不冤昭模型', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'claim-guard-'));
+    writeFileSync(join(tmp, '产品发布 v2.pptx'), 'x');
+    const result = checkClaimedFiles('已生成 Nova 产品发布 v2.pptx 请查收', [tmp]);
+    expect(result.missing).toEqual([]);
+  });
+
+  it('旧纪律不松：顿号列举不许被拼成一条', () => {
+    const names = extractClaimedFileNames('已生成 a.pptx、b.docx、c.xlsx').map((f) => f.name);
+    expect(names).toEqual(['a.pptx', 'b.docx', 'c.xlsx']);
+  });
+});

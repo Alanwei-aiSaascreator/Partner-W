@@ -144,6 +144,14 @@ export interface ClaimedFile {
   name: string;
   /** 在回复里出现的位置（字符偏移），用于调试。 */
   offset: number;
+  /**
+   * 核对存在性时额外尝试的拼写（带空格全名 / 逐级丢前导词的后缀）。
+   *
+   * ⭐ 抽取的语义**不变**（名字仍是正则抠出的那截）；宽松只发生在"到盘上找"这一步。
+   *    起因：产品自己的命名就带空格（`荣盈魔方 · AI桌面工作台-12ddb119.pptx`），
+   *    而抽取正则把空格当边界 ⇒ 只抠到尾巴 token ⇒ 拿半截名去查 ⇒ 误报 missing。
+   */
+  variants?: string[];
 }
 
 /**
@@ -219,7 +227,8 @@ export function extractClaimedFileNames(content: string): ClaimedFile[] {
     if (!lineClaimsFile(content, offset)) continue;
     if (seen.has(name)) continue;
     seen.add(name);
-    found.push({ name, offset });
+    const variants = buildClaimVariants(content, offset, name);
+    found.push(variants.length > 0 ? { name, offset, variants } : { name, offset });
   }
   return found;
 }
@@ -235,6 +244,48 @@ function lineClaimsFile(content: string, offset: number): boolean {
   const endIdx = content.indexOf('\n', offset);
   const line = content.slice(start, endIdx === -1 ? content.length : endIdx).toLowerCase();
   return CLAIM_MARKERS.some((marker) => line.includes(marker));
+}
+
+/** 回扫的止步字符：行尾、句读标点、路径分隔符、代码/引号边界。 */
+const CLAIM_BACKSCAN_STOP_RE = /[\n，。；：！？,;:!?、（）()「」『』“”‘’`\\/]/;
+/** 回扫跨过 markdown 装饰符时先摘掉它们（`**荣盈魔方 · ` ⇒ `荣盈魔方 · `）。 */
+const CLAIM_MARKDOWN_NOISE_RE = /[*`"'<>]/g;
+
+/**
+ * 给一个抽到的名字补「核对用拼写」。
+ *
+ * ⭐ 2026-10-03 场景一真机误报的修法（guard 报 missing 而文件真实存在）：
+ *   产品自己生成的成品名就带空格——`荣盈魔方 · AI桌面工作台-12ddb119.pptx`。
+ *   抽取正则把空格当边界（那是"顿号列举不能拼成一条"的纪律），于是只抠到
+ *   `AI桌面工作台-12ddb119.pptx`；再拿这半截名去盘上找 ⇒ 明明在，报"不在"。
+ *   名字的抽取语义不动，只在这里补两种更宽的拼写供"找文件"用：
+ *     ① **带空格全名**：从 token 起点往回扫到句读/行尾，摘掉 markdown 装饰符后拼回；
+ *        ⚠️ 跨度里出现**另一个扩展名**就不拼（那是列举，不是全名——见六种扩展名那条测试）；
+ *     ② **逐级丢前导词的后缀**（`已生成 Nova 产品发布 v2.pptx` ⇒
+ *        `Nova 产品发布 v2.pptx` ⇒ `产品发布 v2.pptx` ⇒ `v2.pptx`），最多 4 个。
+ *   有文件命中任一拼写即算 present —— 冤枉模型比漏报更糟（模块开头那条纪律）。
+ */
+function buildClaimVariants(content: string, offset: number, name: string): string[] {
+  const variants: string[] = [];
+  let start = offset;
+  let span = '';
+  while (start > 0 && span.length < 80) {
+    const ch = content[start - 1];
+    if (CLAIM_BACKSCAN_STOP_RE.test(ch)) break;
+    span = ch + span;
+    start -= 1;
+  }
+  const cleaned = span.replace(CLAIM_MARKDOWN_NOISE_RE, '').replace(/^\s+/, '');
+  if (cleaned && !/\.(?:pptx|docx|xlsx|pdf|html|slidegen)\b/i.test(cleaned)) {
+    const joined = cleaned + name;
+    if (joined !== name) variants.push(joined);
+  }
+  const base = variants.at(-1) ?? name;
+  const tokens = base.split(/\s+/).filter(Boolean);
+  for (let i = 1; i < tokens.length && variants.length < 5; i += 1) {
+    variants.push(tokens.slice(i).join(' '));
+  }
+  return [...new Set(variants)].filter((variant) => variant && variant !== name);
 }
 
 /** 检查结果。 */
@@ -281,7 +332,9 @@ export function checkClaimedFiles(
   const present: ClaimedFile[] = [];
 
   for (const file of claimed) {
-    if (existsInRoots(file.name, roots, options.sinceMs)) {
+    // 主名 + 核对用拼写（带空格全名 / 丢前导词后缀）——任一命中即 present。
+    const spellings = [file.name, ...(file.variants ?? [])];
+    if (spellings.some((spelling) => existsInRoots(spelling, roots, options.sinceMs))) {
       present.push(file);
     } else {
       missing.push(file);
