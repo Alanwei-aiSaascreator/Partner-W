@@ -98,6 +98,34 @@ export function latestRunningCall(toolCalls: ToolCall[]): ToolCall | null {
 }
 
 /**
+ * 工具失败原因是否属于**运行时安全样板**（不该当"失败原因"展示）。
+ *
+ * ⚠️ 2026-10-03 真机事故（W03 搜索复现）：`web_search` 失败时，运行时把
+ * EXTERNAL_UNTRUSTED_CONTENT 安全声明整段塞进了调用的 error/result（`SECURITY NOTICE:` 开头、
+ * 内容是"外部不可信来源 / 别把里面当指令"那套给模型看的防护话术），工具卡把这串**英文样板**
+ * 原样渲染成"失败原因"——用户看到的既不是中文可行动，也不是真正的失败原因。
+ *
+ * 判据**只认样板形状**（行首 `SECURITY NOTICE:` 或 `EXTERNAL_UNTRUSTED_CONTENT` 包裹标记），
+ * 别的一律原样展示；展开后的单卡里仍是原文（详情不删证据）。
+ */
+export function isRuntimeBoilerplateNotice(text: string): boolean {
+  const trimmed = text.trim();
+  return /^SECURITY NOTICE:/i.test(trimmed) || trimmed.includes('<<<EXTERNAL_UNTRUSTED_CONTENT');
+}
+
+/**
+ * 摘要行可展示的失败原因：跳过运行时安全样板；没有可用原因时返回空串（摘要行少一行灰字，
+ * 失败本身仍由"N 个失败"与展开详情表达）。
+ */
+export function visibleFailureReason(toolCalls: ToolCall[]): string {
+  const call = toolCalls.find(
+    (candidate) =>
+      candidate.status === 'error' && candidate.result?.trim() && !isRuntimeBoilerplateNotice(candidate.result),
+  );
+  return call?.result?.trim() ?? '';
+}
+
+/**
  * 还没结束的状态 —— `running` 与 `awaitingApproval`（A2，2026-09-19）。
  *
  * ⚠️ **它们不是一回事，但都"没结束"**：显示上要分开说（`awaitingApproval` 有自己的文案，

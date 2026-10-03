@@ -10,6 +10,7 @@ import {
   classifyToolActivity,
   latestRunningCall,
   summarizeToolActivity,
+  visibleFailureReason,
   type ToolActivityGroup,
 } from '@/lib/tool-activity';
 import ToolCallCard from './ToolCallCard';
@@ -74,7 +75,9 @@ function ToolCallSummary({ toolCalls, settled = false }: { toolCalls: ToolCall[]
   }, [settled, t, toolCalls]);
   const [expanded, setExpanded] = useState(false);
   const summary = useMemo(() => summarizeToolActivity(shown), [shown]);
-  const failureReason = shown.find((call) => call.status === 'error' && call.result?.trim())?.result?.trim() ?? '';
+  // ⚠️ 运行时安全样板（EXTERNAL_UNTRUSTED_CONTENT / SECURITY NOTICE）不进摘要行——2026-10-03
+  // 真机事故：web_search 失败时它被原样当"失败原因"上屏（英文、且不是真原因）。展开详情仍保留原文。
+  const failureReason = visibleFailureReason(shown);
   const status: ToolCall['status'] =
     summary.errorCount > 0 ? 'error' : !settled || summary.runningCount > 0 ? 'running' : 'done';
   // ⚠️ 走**唯一出口**（与活动条同一个判据）：两处各写一遍的话，改一处就会两处不一致。
