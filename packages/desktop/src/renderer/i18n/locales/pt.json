@@ -681,6 +681,7 @@
     "reconnected": "Gateway reconectado",
     "reconnecting": "Tentando reconectar...",
     "reconnectingBanner": "Gateway \"{{name}}\" desconectado. Tentando reconectar...",
+    "relayUnreachable": "Falha na conexão com o serviço comercial — chamadas de modelo podem falhar. Tentando novamente automaticamente...",
     "retryNow": "Tentar Agora",
     "startingBanner": "Iniciando o serviço de IA. A primeira inicialização leva cerca de um minuto.",
     "startupFailedBanner": "O serviço local ainda não respondeu. Tente \"Tentar Agora\" ou verifique a configuração em \"Abrir Configurações\".",

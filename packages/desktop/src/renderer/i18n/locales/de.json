@@ -681,6 +681,7 @@
     "reconnected": "Gateway wieder verbunden",
     "reconnecting": "Verbindung wird wiederhergestellt…",
     "reconnectingBanner": "Gateway \"{{name}}\" getrennt. Verbindung wird wiederhergestellt…",
+    "relayUnreachable": "Verbindung zum kommerziellen Dienst gestört – Modellaufrufe können fehlschlagen. Automatischer Wiederholungsversuch läuft…",
     "retryNow": "Jetzt erneut versuchen",
     "startingBanner": "Der AI-Dienst startet. Der erste Start dauert meist etwa eine Minute.",
     "startupFailedBanner": "Der lokale Dienst ist noch nicht erreichbar. Versuche \"Jetzt erneut versuchen\" oder pruefe die Konfiguration unter \"Einstellungen oeffnen\".",

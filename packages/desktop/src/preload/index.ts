@@ -20,6 +20,7 @@ import type {
   PortableUpdatePublicState,
   QuestionResolveParams,
   RelayBootstrapPublicState,
+  RelayLivenessPublicState,
   RuntimeBootstrapStatus,
   SaveTeamMeetingInput,
   SkillInstallParams,
@@ -640,6 +641,20 @@ function buildApi(): ClawWorkAPI {
     },
     // 只**排队**一次重试，不等它跑完（进度跟上面那条事件走）。
     commercialRelayBootstrapRetry: () => ipcRenderer.invoke('commercial:relay-bootstrap-retry'),
+
+    // ── relay 运行期存活（ready 之后的"还在不在"）────────────────────────
+    // 与上面那对同纪律：初读补"挂上之前"、事件覆盖"挂上之后"（按 updatedAt 取舍）。
+    commercialRelayLivenessState: () => ipcRenderer.invoke('commercial:relay-liveness-state'),
+    onCommercialRelayLivenessState: (callback: (state: RelayLivenessPublicState) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, state: RelayLivenessPublicState): void => {
+        callback(state);
+      };
+      ipcRenderer.on('commercial:relay-liveness-state-changed', listener);
+      return () => {
+        ipcRenderer.removeListener('commercial:relay-liveness-state-changed', listener);
+      };
+    },
+    commercialRelayLivenessProbe: () => ipcRenderer.invoke('commercial:relay-liveness-probe'),
 
     // ── 广场 / 团队（P1）──────────────────────────────────────────────
     // 频道名与 `main/ipc/community-handlers.ts` 一一对应（那个文件的测试

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import ConnectionBanner from '@/components/ConnectionBanner';
+import RelayConnectionBanner from '@/components/RelayConnectionBanner';
 import {
   PanelRightOpen,
   PanelRightClose,
@@ -1386,6 +1387,7 @@ export default function MainArea({
   return (
     <div className="flex flex-col h-full">
       <ConnectionBanner />
+      <RelayConnectionBanner />
       {mainView === 'tasks' ? (
         <div className="flex-1 min-h-0">
           <TasksPanel />

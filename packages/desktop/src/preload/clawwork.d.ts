@@ -45,6 +45,7 @@ import type {
   ParsedTeam,
   QuestionResolveParams,
   RelayBootstrapPublicState,
+  RelayLivenessPublicState,
   RuntimeBootstrapStatus,
   SaveTeamMeetingInput,
   SessionsPreviewResult,
@@ -910,6 +911,15 @@ export interface ClawWorkAPI {
   commercialRelayBootstrapState: () => Promise<IpcResult<RelayBootstrapPublicState>>;
   onCommercialRelayBootstrapState: (callback: (state: RelayBootstrapPublicState) => void) => () => void;
   commercialRelayBootstrapRetry: () => Promise<IpcResult>;
+
+  /**
+   * relay **运行期存活**（无密 DTO，定义在 `@clawwork/shared`）。与 bootstrap 那对同纪律：
+   * `commercialRelayLivenessState()` 初读、`onCommercialRelayLivenessState(cb)` 订阅
+   * （返回退订）、`commercialRelayLivenessProbe()` 请求立刻探一次（不等结果，进度跟事件走）。
+   */
+  commercialRelayLivenessState: () => Promise<IpcResult<RelayLivenessPublicState>>;
+  onCommercialRelayLivenessState: (callback: (state: RelayLivenessPublicState) => void) => () => void;
+  commercialRelayLivenessProbe: () => Promise<IpcResult>;
 
   // ── 广场 / 团队（P1）───────────────────────────────────────────────
   // ⚠️ 列表类返回的是**后端原样的行**（snake_case），由 core 的 normalizer 归一；

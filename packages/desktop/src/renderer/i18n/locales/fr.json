@@ -681,6 +681,7 @@
     "reconnected": "Passerelle reconnectée",
     "reconnecting": "Tentative de reconnexion...",
     "reconnectingBanner": "Passerelle « {{name}} » déconnectée. Tentative de reconnexion...",
+    "relayUnreachable": "Connexion au service commercial en échec — les appels de modèle peuvent échouer. Nouvelle tentative automatique...",
     "retryNow": "Réessayer maintenant",
     "startingBanner": "Démarrage du service IA. Le premier lancement prend environ une minute.",
     "startupFailedBanner": "Le service local n’est pas encore joignable. Essayez « Réessayer maintenant », ou vérifiez la configuration dans « Ouvrir les réglages ».",

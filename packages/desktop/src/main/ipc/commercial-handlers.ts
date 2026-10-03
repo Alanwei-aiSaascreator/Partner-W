@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron';
 import {
   relayBootstrapPublicStateStore,
+  relayLivenessPublicStateStore,
   resetRelayBootstrapPublicState,
   resolveCommercialCredentials,
 } from '@clawwork/shared';
@@ -27,6 +28,7 @@ import {
   notifyCommercialSignedIn,
   retryCommercialRelayBootstrap,
 } from '../commercial/relay-startup.js';
+import { probeRelayLivenessNow } from '../commercial/relay-liveness.js';
 import { buildCommercialAccessCleanupDeps, requestCommercialAccessCleanup } from '../commercial/relay-cleanup.js';
 import { runUsageReport } from '../commercial/usage-reporter.js';
 import {
@@ -181,6 +183,19 @@ export function registerCommercialHandlers(): void {
    */
   ipcMain.handle('commercial:relay-bootstrap-retry', () => {
     retryCommercialRelayBootstrap();
+    return { ok: true };
+  });
+
+  /**
+   * relay **运行期存活**的快照（初读）与手动探（[立即重试]）。
+   * 与 bootstrap 那对的分工相同：事件只覆盖"挂上之后"，初读补"挂上之前"。
+   */
+  ipcMain.handle('commercial:relay-liveness-state', () => ({
+    ok: true,
+    result: relayLivenessPublicStateStore.get(),
+  }));
+  ipcMain.handle('commercial:relay-liveness-probe', () => {
+    probeRelayLivenessNow();
     return { ok: true };
   });
 

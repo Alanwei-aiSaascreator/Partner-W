@@ -681,6 +681,7 @@
     "reconnected": "Gateway 已重连",
     "reconnecting": "正在尝试重连…",
     "reconnectingBanner": "网关“{{name}}”已断开，正在尝试重连…",
+    "relayUnreachable": "商业服务连接异常 —— 模型调用可能失败，正在自动重试…",
     "retryNow": "立即重试",
     "startingBanner": "正在启动 AI 服务，首次启动通常需要约 1 分钟。",
     "startupFailedBanner": "本地服务还没能连上。可点「立即重试」，或到「打开设置」检查配置。",

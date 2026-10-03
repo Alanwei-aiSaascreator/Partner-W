@@ -4,6 +4,7 @@ export * from './gateway-protocol.js';
 export * from './constants.js';
 export * from './commercial-defaults.js';
 export * from './commercial-relay-state.js';
+export * from './relay-liveness-state.js';
 export * from './debug.js';
 export * from './community.js';
 export * from './agent-templates.js';

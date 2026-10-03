@@ -681,6 +681,7 @@
     "reconnected": "Gateway reconnected",
     "reconnecting": "Attempting to reconnect...",
     "reconnectingBanner": "Gateway \"{{name}}\" disconnected. Attempting to reconnect...",
+    "relayUnreachable": "Commercial service connection is failing — model calls may fail; retrying automatically...",
     "retryNow": "Retry Now",
     "startingBanner": "Starting the AI service. The first launch usually takes about a minute.",
     "startupFailedBanner": "The local service has not come up yet. Try \"Retry Now\", or check your configuration under \"Open Settings\".",

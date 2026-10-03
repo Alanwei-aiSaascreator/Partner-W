@@ -109,7 +109,12 @@ describe('commercial relay bootstrap preload surface', () => {
 
   it('不额外暴露任何 commercialRelay 前缀的方法（闭集）', () => {
     const found = [...preload.matchAll(/\bcommercialRelay\w*/g)].map((m) => m[0]);
-    expect([...new Set(found)].sort()).toEqual(['commercialRelayBootstrapRetry', 'commercialRelayBootstrapState']);
+    expect([...new Set(found)].sort()).toEqual([
+      'commercialRelayBootstrapRetry',
+      'commercialRelayBootstrapState',
+      'commercialRelayLivenessProbe',
+      'commercialRelayLivenessState',
+    ]);
   });
 
   it('⭐⭐ 运行期：读 / 重试打到对应通道，事件带着载荷回调，**退订之后不再回调**', async () => {
@@ -156,6 +161,8 @@ const GUARDED_VALUE_EXPORTS = [
   'createRelayBootstrapPublicStateStore',
   'relayBootstrapPublicStateStore',
   'resetRelayBootstrapPublicState',
+  'createRelayLivenessPublicStateStore',
+  'relayLivenessPublicStateStore',
 ];
 
 /** 一段源码里，从 `@clawwork/shared` **按值**引进来的东西（只看被护栏盯住的那三个）。 */
