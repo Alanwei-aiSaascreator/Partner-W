@@ -93,12 +93,31 @@ function translateAgentNoResponse(raw: string): string | null {
   return '模型这次没有产出回复（可能是被截断或上游异常）。已经跑过的工具动作可能已经生效，重试前请先确认结果。';
 }
 
+/**
+ * 受控测试通道（relay）的**守门拒绝**：`⚠️ clawrouter/<model> request failed (HTTP 409).`
+ *
+ * 为什么值得单独一句（2026-10-03 场景一实测，runId e637f73d 的第 23 笔）：
+ *   - 这条 409 不是网络抖动 —— 是中转的预算/停止守卫在**供应商提交之前**拒了这次调用
+ *     （实测一例：任务帽 0.7385 + 单次最坏预留 0.3146 > 1 元 ⇒ `ppt_budget_exhausted`）；
+ *   - 重发同一句**必然再失败**（额度是确定性的），而原文只有一句 `request failed`，
+ *     用户会把它当故障反复重试；
+ *   - 被拒的调用**没有花掉任何钱**，已经生成的文件和回执都还在 —— 这两点必须说出来。
+ * ⚠️ 不下断言"就是预算"：409 这一类里还有"任务已停止"等（同样拒绝先于提交），
+ *    所以给的是"守门拦下"的类级说法 + 正确动作，与本文开头的纪律一致。
+ * ⚠️ 只认 `clawrouter/`（守门只在自家中转这条路上）；其他 provider 的 409 不吃这条。
+ */
+function translateRelayGuardRejected(raw: string): string | null {
+  if (!/clawrouter\/\S+\s+request failed \(HTTP 409\)/i.test(raw)) return null;
+  return '这次调用被额度守门拦下了（HTTP 409，通常是本轮测试额度已到上限，或任务已被停止）。没有产生费用；已经生成的文件和回执仍然保留。请不要反复重发，调整后继续。';
+}
+
 const TRANSLATORS = [
   translateThinkingLevelUnsupported,
   translateModelNotFound,
   translateQuestionFailure,
   translateAgentRunFailed,
   translateAgentNoResponse,
+  translateRelayGuardRejected,
 ];
 
 /** 命中已知错误返回中文；认不出来返回 null（调用方应回退到网关原文）。 */

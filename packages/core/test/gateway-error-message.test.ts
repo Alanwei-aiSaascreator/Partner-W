@@ -41,6 +41,25 @@ describe('translateGatewayError —— 已知错误翻中文', () => {
   });
 });
 
+describe('受控测试通道的守门拒绝（relay → HTTP 409）', () => {
+  it('⭐ 场景一实测原文 ⇒ 说清"没花钱、别重发、产物保留"', () => {
+    // 原文来自 2026-10-03 场景一真机聊天记录（该轮第 23 笔被任务帽拦下：0.7385+0.3146>1 元）
+    const raw = '⚠️ clawrouter/deepseek-v4-flash request failed (HTTP 409).';
+    const translated = translateGatewayError(raw);
+    expect(translated).toContain('没有产生费用');
+    expect(translated).toContain('不要反复重发');
+    expect(translated).toContain('保留');
+  });
+
+  it('500 的 request failed 不吃这条规则（那是另一类，另有出口）', () => {
+    expect(translateGatewayError('⚠️ clawrouter/deepseek-v4-flash request failed (HTTP 500).')).toBeNull();
+  });
+
+  it('非 clawrouter 的 409 不冒充（守门只在中转那条路上）', () => {
+    expect(translateGatewayError('⚠️ openai/gpt-5 request failed (HTTP 409).')).toBeNull();
+  });
+});
+
 describe('translateGatewayError —— 认不出来要返回 null（由调用方回退原文）', () => {
   it('未知错误返回 null，不编文案', () => {
     expect(translateGatewayError('some brand new gateway wording')).toBeNull();
