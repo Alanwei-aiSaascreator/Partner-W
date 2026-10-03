@@ -6,6 +6,10 @@ metadata: { 'openclaw': { 'emoji': '📊', 'skillKey': 'presentation-deck-v2' } 
 
 # 商务演示（模板版）
 
+> ⚠️ 受控验证环境（`ROYIN_NATIVE_PPT_VALIDATION=1`）下，本文件的正文会被**整体替换**为
+> 固定槽位契约——唯一真源见 `TEMPLATE-DECK.md`（`templateDeck` / 16 版式）。下面这套
+> `business-deck-v4` 口径只适用于非受控（生产）路线。
+
 用户**明确指定现成模板或模板填充**时用这条路。普通演示请求默认使用「幻灯版面」；
 只有用户明确要简单草稿时才使用「文档生成」的标题与要点版式。
 
