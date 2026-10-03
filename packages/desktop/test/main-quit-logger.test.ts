@@ -21,6 +21,10 @@ function loadQuitHandler(close: () => Promise<void>) {
     getDebugLogger: () => ({ info: vi.fn(), flush: () => Promise.resolve(), close: closeLogger }),
     globalShortcut: { unregisterAll: vi.fn() },
     destroyUsageReporter: vi.fn(),
+    // 退出链的新参与者（31eb737d 之后）：沙箱是**显式依赖白名单**，缺一个
+    // 就 ReferenceError、链断在 closeLogger 前 —— 补进来即恢复，顺序断言不受影响
+    // （这个桩不推 order）。
+    destroyRelayLiveness: vi.fn(),
     teardownAnalytics: vi.fn(),
     shutdownLocalGatewayRuntime: () => Promise.resolve(),
     destroyAllGateways: () => order.push('gateways'),
