@@ -58,7 +58,13 @@ it.runIf(Boolean(generateCjs))(
       expect(report.visualReview).toBe('not-performed');
       expect(fs.existsSync(path.join(workspace, report.fileName ?? ''))).toBe(true);
     } finally {
-      fs.rmSync(workspace, { recursive: true, force: true });
+      // ⚠️ Windows：electron 退场后文件句柄可能短暂未释放 ⇒ `rmSync` 偶发 EPERM。
+      //    重试若干次；仍清不掉也不让"清理竞态"污染渲染结论（残留落在 os.tmpdir，无害）。
+      try {
+        fs.rmSync(workspace, { recursive: true, force: true, maxRetries: 8, retryDelay: 250 });
+      } catch {
+        // best-effort 清理
+      }
     }
   },
 );
