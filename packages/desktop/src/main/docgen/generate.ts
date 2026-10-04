@@ -119,6 +119,7 @@ export async function generateDocumentsFromMessage(input: {
    *    打掉一批与模板毫无关系的测试。注入还顺带让"打包态定位"能在单测里覆盖。
    */
   templatesRoot?: string;
+  skipPptx?: boolean;
 }): Promise<DocgenGenerateResult> {
   const owner = captureArtifactWorkspaceOwner();
   const result: DocgenGenerateResult = { saved: [], failed: [] };
@@ -137,6 +138,7 @@ export async function generateDocumentsFromMessage(input: {
   }
 
   for (const request of requests) {
+    if (input.skipPptx && request.kind === 'pptx') continue;
     try {
       owner.assertCurrent();
       notifyArtifactActivity(

@@ -225,12 +225,50 @@ export function extractClaimedFileNames(content: string): ClaimedFile[] {
     // ⭐ 先过"这一句是不是在声称"，再看去重 —— 顺序反了会把
     //    先出现的那次"列举"占掉名额，后面真正的声称反而被去重掉。
     if (!lineClaimsFile(content, offset)) continue;
+    // ⭐ 再排除"在说它没有了"的句子（2026-10-04 真机误报，见函数注释）。
+    if (lineExplainsAbsence(content, offset, name)) continue;
     if (seen.has(name)) continue;
     seen.add(name);
     const variants = buildClaimVariants(content, offset, name);
     found.push(variants.length > 0 ? { name, offset, variants } : { name, offset });
   }
   return found;
+}
+
+/**
+ * 说了"这个文件**已经没了**"的措辞。
+ *
+ * ⚠️ 这是判"缺席说明"，不是判"否定式声称"。典型真机原句：
+ *    「修订版文件 `f08787c6.pptx` 及来源 JSON **已不在**。我需从零**重新生成**」
+ *    ——同一行里有「生成」这个声称标记（行级判据），这处**解释缺失**的提及于是被
+ *    当成声称，守卫反过来冤枉模型（界面弹"说好的文件不在"）。
+ *    判据刻意收窄：只认**同一句**里的明确缺失措辞，且只作用于**紧邻名字**的那一句；
+ *    真声称（"已生成 report.pptx"）与缺席说明里的**其他**文件都不受影响。
+ */
+const ABSENCE_RE =
+  /(?:已不在|已不存在|不再存在|不存在|找不到|无法找到|没有找到|已(?:被)?(?:删除|删掉|清理|清空|移除|丢失)|丢失了|no longer|not found|does not exist|deleted|missing)/i;
+
+/** 这一处提到名字的**同一句**里，是否在说它没有了。 */
+function lineExplainsAbsence(content: string, offset: number, name: string): boolean {
+  const lineStart = content.lastIndexOf('\n', offset - 1) + 1;
+  const lineEndIdx = content.indexOf('\n', offset);
+  const line = content.slice(lineStart, lineEndIdx === -1 ? content.length : lineEndIdx);
+  const rel = offset - lineStart;
+  // 名字之后 → 到句末为止；名字之前 → 到句首为止。
+  const after = line.slice(rel + name.length);
+  const sentenceEnd = after.search(/[。！？!?；;\n]/);
+  const afterSegment = sentenceEnd >= 0 ? after.slice(0, sentenceEnd + 1) : after;
+  if (ABSENCE_RE.test(afterSegment)) return true;
+  const before = line.slice(0, rel);
+  const sentenceStart = Math.max(
+    before.lastIndexOf('。'),
+    before.lastIndexOf('！'),
+    before.lastIndexOf('？'),
+    before.lastIndexOf('；'),
+    before.lastIndexOf('!'),
+    before.lastIndexOf('?'),
+  );
+  return ABSENCE_RE.test(before.slice(sentenceStart + 1));
 }
 
 /**

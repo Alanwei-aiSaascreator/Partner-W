@@ -152,7 +152,7 @@ export default function SkillMarket() {
         }
       />
       <ScrollArea className="flex-1 min-h-0">
-        <div className="mx-auto flex w-full max-w-[var(--content-max-width)] flex-col gap-4 px-6 py-5">
+        <div className="flex w-full flex-col gap-4 px-4 py-4">
           <div className="flex flex-wrap items-center gap-3">
             <p className="type-meta text-[var(--text-secondary)]">{t('skillMarket.subtitle')}</p>
             {/* 数量装置（2026-09-29）：**已装数**比总数更有用 —— 用户想知道"我还差几个"。
@@ -183,16 +183,7 @@ export default function SkillMarket() {
           ) : skills.length === 0 ? (
             <EmptyState icon={<Sparkles size={18} />} title={t('skillMarket.empty')} className="py-10" />
           ) : (
-            /* 卡片网格（2026-09-29）：原来是"一行一条"的竖排列表。
-               ⚠️ 类名照 `TeamsPanel` 那一处**原样抄** —— 带内容宽度变量的那一种是唯一被
-               UI 契约放行的任意值网格写法（别自己捏一个自定像素值，会被判成布局逃逸）。
-               ⚠️ 也**别在注释里照抄那个类名或那个变量名**：`check:ui-contract`
-               **连注释一起扫**，会把注释里的字面量当成真违规
-               （2026-09-29 我连栽两次：第一版写类名、第二版写变量名，各红一次）。 */
-            <ul
-              className="grid grid-cols-[repeat(auto-fill,minmax(var(--content-card-min),1fr))] gap-4"
-              data-testid="our-skill-list"
-            >
+            <ul className="divide-y divide-[var(--border-subtle)]" data-testid="our-skill-list">
               {skills.map((skill) => (
                 <li
                   key={skill.slug}
@@ -200,31 +191,37 @@ export default function SkillMarket() {
                   data-slug={skill.slug}
                   data-installed={skill.installed ? 'true' : 'false'}
                   data-verdict={verdicts[skill.slug]?.kind ?? 'none'}
-                  className="surface-card flex flex-col items-start gap-3 rounded-xl p-5"
+                  className="flex flex-col items-start gap-3 py-3 sm:flex-row sm:items-center"
                 >
-                  <div className="flex w-full items-center gap-2">
-                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[var(--bg-tertiary)]">
-                      <span className="emoji-lg">{skill.emoji ?? '🧩'}</span>
+                  <div className="flex min-w-0 flex-1 items-start gap-3">
+                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--bg-tertiary)]">
+                      <span className="emoji-sm">{skill.emoji ?? '🧩'}</span>
                     </span>
-                    {/* ⚠️ 技能名与描述来自 SKILL.md 的 frontmatter，**不进 i18n** ——
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                        {/* ⚠️ 技能名与描述来自 SKILL.md 的 frontmatter，**不进 i18n** ——
                         与市场里的官方模板同一个口径（内容自带，不随界面语言变）。 */}
-                    <span className="type-section-title truncate text-[var(--text-primary)]">
-                      {skill.name ?? skill.slug}
-                    </span>
-                    {skill.installed ? (
-                      <span className="type-meta ml-auto shrink-0 rounded bg-[var(--accent)]/10 px-1.5 text-[var(--accent)]">
-                        {t('skillMarket.installedBadge')}
-                      </span>
-                    ) : null}
-                  </div>
-                  {skill.description ? (
-                    <p className="type-body line-clamp-2 text-[var(--text-secondary)]">{skill.description}</p>
-                  ) : null}
-                  {/* 「已装」是磁盘的事；这一行是**网关按助手**回来的答案。两件事，两个标签。
+                        <span className="type-label break-words text-[var(--text-primary)]">
+                          {skill.name ?? skill.slug}
+                        </span>
+                        {skill.installed ? (
+                          <span className="type-meta shrink-0 rounded bg-[var(--accent)]/10 px-1.5 text-[var(--accent)]">
+                            {t('skillMarket.installedBadge')}
+                          </span>
+                        ) : null}
+                      </div>
+                      {skill.description ? (
+                        <p className="type-support mt-1 break-words text-[var(--text-secondary)]">
+                          {skill.description}
+                        </p>
+                      ) : null}
+                      {/* 「已装」是磁盘的事；这一行是**网关按助手**回来的答案。两件事，两个标签。
                       ⚠️ 只有**问得出去**的时候才画（`canAct`）：网关没连上时整页已经有一条
                       「未连接」的提示了，再给每张卡挂一句"没问出来"是噪音 ——
                       而且会让人以为是**这个技能**的问题，其实只是网关没连上。 */}
-                  {canAct ? <SkillVerdictBadge verdict={verdicts[skill.slug] ?? { kind: 'none' }} /> : null}
+                      {canAct ? <SkillVerdictBadge verdict={verdicts[skill.slug] ?? { kind: 'none' }} /> : null}
+                    </div>
+                  </div>
                   <Button
                     variant={skill.installed ? 'ghost' : 'default'}
                     size="sm"

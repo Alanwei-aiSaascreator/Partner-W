@@ -373,14 +373,18 @@ export async function bootstrapLocalGatewayRuntime(opts: {
     }
 
     // ⑤ 解析一个能跑 openclaw 的 Node（**必须先探版本**）
+    const nodeStartedAt = deps.now();
     const nodeRes = await deps.resolveNode({
       userDataDir: runtimeCacheUserDataDir,
       deploymentKey: deployed.deploymentKey,
       deployedRoot: deployed.deployedRoot,
     });
+    deps.log('runtime.node.resolve.done', { durationMs: Math.max(0, deps.now() - nodeStartedAt), ok: nodeRes.ok });
     if (!nodeRes.ok) return fail('runtime.no-usable-node', nodeRes.message, { deploymentKey: deployed.deploymentKey });
 
     // ⑥ 三态判定后 spawn / 复用（判成 foreign 会抛 port-occupied，由下面接住）
+    const gatewayStartedAt = deps.now();
+    deps.log('runtime.gateway.start', {});
     const gateway = await deps.startGateway({
       nodeExe: nodeRes.node.exe,
       cliPath: deployed.cliPath,
@@ -388,6 +392,10 @@ export async function bootstrapLocalGatewayRuntime(opts: {
       stateDir,
       identityPath: path.join(userDataDir, 'device-identity.json'),
       token,
+    });
+    deps.log('runtime.gateway.ready', {
+      durationMs: Math.max(0, deps.now() - gatewayStartedAt),
+      ownership: gateway.ownership,
     });
 
     // 记下来给退出收尾用（只有 spawned 会被真的停掉）。

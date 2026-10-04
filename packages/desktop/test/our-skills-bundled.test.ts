@@ -390,3 +390,94 @@ describe('staleBundledSkills —— 该升级的那些（判据三条全中）',
     ).toEqual(['b']);
   });
 });
+
+describe('controlled native PPT skill overlay', () => {
+  it('replaces competing PPT guidance while preserving production source and other document formats', () => {
+    const root = path.join(import.meta.dirname, '../our-skills');
+    const slugs = ['presentation-deck-v2', 'deck-layout', 'document-deck'];
+    const original = slugs.map((slug) => fs.readFileSync(path.join(root, slug, 'SKILL.md'), 'utf8'));
+    const managed = tmpDir();
+    const previous = process.env.ROYIN_NATIVE_PPT_VALIDATION;
+    process.env.ROYIN_NATIVE_PPT_VALIDATION = '1';
+    try {
+      const controlled = readBundledSkills(root);
+      const native = controlled.find((skill) => skill.slug === 'presentation-deck-v2')!;
+      expect(native.description).toContain('Controlled fixed slot PPT generation');
+      expect(native.content).not.toContain('\u4ec5\u7528\u6237\u660e\u786e\u6307\u5b9a');
+      expect(native.content).not.toContain('```docgen');
+      const helper = controlled.find((skill) => skill.slug === 'deck-layout')!;
+      expect(helper.content).toContain('.native-ppt.json');
+      expect(helper.content).not.toContain(
+        '\u8fd9\u662f**\u62ff\u7ed9\u4eba\u770b\u7684\u6f14\u793a\u7684\u9ed8\u8ba4\u8def\u7ebf**',
+      );
+      const docs = controlled.find((skill) => skill.slug === 'document-deck')!;
+      expect(docs.description).toContain('presentation-deck-v2');
+      expect(docs.content).toContain('"kind": "docx"');
+      expect(docs.content).toContain('"kind": "xlsx"');
+      expect(docs.content).not.toContain('"kind": "pptx"');
+      expect(docs.content).not.toMatch(/\u4e00(?:\u4efd|\u9875)\s*PPT.*Word/u);
+      for (const [index, slug] of slugs.entries()) {
+        expect(installBundledSkill({ root, managedDir: managed, slug }).ok).toBe(true);
+        const installed = fs.readFileSync(path.join(managed, slug, 'SKILL.md'), 'utf8');
+        expect(skillContentSha(installed)).toBe(
+          skillContentSha(controlled.find((skill) => skill.slug === slug)!.content!),
+        );
+        expect(fs.readFileSync(path.join(root, slug, 'SKILL.md'), 'utf8')).toBe(original[index]);
+      }
+      delete process.env.ROYIN_NATIVE_PPT_VALIDATION;
+      for (const [index, slug] of slugs.entries())
+        expect(readBundledSkills(root).find((skill) => skill.slug === slug)!.content).toBe(original[index]);
+    } finally {
+      if (previous === undefined) delete process.env.ROYIN_NATIVE_PPT_VALIDATION;
+      else process.env.ROYIN_NATIVE_PPT_VALIDATION = previous;
+    }
+  });
+
+  it('installs the controlled contract with the same fingerprint only under the test switch', () => {
+    const root = tmpDir(),
+      managed = tmpDir();
+    writeSkill(root, 'presentation-deck-v2', { name: 'Deck', description: 'PPT' });
+    const source = fs.readFileSync(path.join(root, 'presentation-deck-v2', 'SKILL.md'), 'utf8');
+    delete process.env.ROYIN_NATIVE_PPT_VALIDATION;
+    expect(readBundledSkills(root)[0].content).toBe(source);
+    process.env.ROYIN_NATIVE_PPT_VALIDATION = '1';
+    try {
+      expect(installBundledSkill({ root, managedDir: managed, slug: 'presentation-deck-v2' }).ok).toBe(true);
+      const installed = fs.readFileSync(path.join(managed, 'presentation-deck-v2', 'SKILL.md'), 'utf8');
+      expect(installed).toContain('TEMPLATE-DECK.md');
+      expect(installed, '受控口径只有一个契约：不许再把 business-deck-v5 教给模型').not.toContain('business-deck-v5');
+      expect(installed).toContain('.native-ppt.json');
+      expect(skillContentSha(installed)).toBe(skillContentSha(readBundledSkills(root)[0].content!));
+      expect(fs.readFileSync(path.join(root, 'presentation-deck-v2', 'SKILL.md'), 'utf8')).toBe(source);
+    } finally {
+      delete process.env.ROYIN_NATIVE_PPT_VALIDATION;
+    }
+  });
+});
+
+describe('fixed slot template controlled Skill', () => {
+  it('selects the slot contract only when both validation switches are enabled', () => {
+    const root = path.join(import.meta.dirname, '../our-skills');
+    const oldA = process.env.ROYIN_NATIVE_PPT_VALIDATION,
+      oldSlots = process.env.ROYIN_TEMPLATE_DECK_VALIDATION;
+    process.env.ROYIN_NATIVE_PPT_VALIDATION = '1';
+    process.env.ROYIN_TEMPLATE_DECK_VALIDATION = '1';
+    try {
+      const skill = readBundledSkills(root).find((s) => s.slug === 'presentation-deck-v2')!;
+      expect(skill.content).toContain('TEMPLATE-DECK.md');
+      expect(skill.content).not.toContain('CONTROLLED-VALIDATION.md');
+      expect(skill.content).not.toContain('business-deck-v5');
+      const helper = readBundledSkills(root).find((s) => s.slug === 'deck-layout')!;
+      expect(helper.content).toContain('TEMPLATE-DECK.md');
+      delete process.env.ROYIN_NATIVE_PPT_VALIDATION;
+      expect(readBundledSkills(root).find((s) => s.slug === 'presentation-deck-v2')!.content).toBe(
+        fs.readFileSync(path.join(root, 'presentation-deck-v2/SKILL.md'), 'utf8'),
+      );
+    } finally {
+      if (oldA === undefined) delete process.env.ROYIN_NATIVE_PPT_VALIDATION;
+      else process.env.ROYIN_NATIVE_PPT_VALIDATION = oldA;
+      if (oldSlots === undefined) delete process.env.ROYIN_TEMPLATE_DECK_VALIDATION;
+      else process.env.ROYIN_TEMPLATE_DECK_VALIDATION = oldSlots;
+    }
+  });
+});

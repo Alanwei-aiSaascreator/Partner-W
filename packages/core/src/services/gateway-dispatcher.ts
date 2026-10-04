@@ -720,7 +720,8 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
   const connectedGateways = new Set<string>();
   /** 每个网关最多一个待执行的目录重试定时器（重连/成功后旧的作废）。 */
   const catalogRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  const catalogRequests = new Map<string, { agentId?: string }>();
+  type CatalogRequest = { agentId?: string; isCurrent?: () => boolean };
+  const catalogRequests = new Map<string, CatalogRequest>();
   const effectiveToolsRequestTokens = new Map<string, symbol>();
   let synced = false;
 
@@ -2047,8 +2048,12 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
     }
   }
 
-  function scheduleCatalogRetry(gatewayId: string, attempt: number, request: { agentId?: string }): void {
-    if (catalogRequests.get(gatewayId) !== request) return;
+  function ownsCatalogRequest(gatewayId: string, request: CatalogRequest): boolean {
+    return catalogRequests.get(gatewayId) === request && request.isCurrent?.() !== false;
+  }
+
+  function scheduleCatalogRetry(gatewayId: string, attempt: number, request: CatalogRequest): void {
+    if (!ownsCatalogRequest(gatewayId, request)) return;
     cancelCatalogRetry(gatewayId);
     const timer = setTimeout(() => {
       catalogRetryTimers.delete(gatewayId);
@@ -2068,8 +2073,8 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
    *    退避用尽后落一个**显式失败态**（`setModelCatalogFailureForGateway`）——
    *    它既不是"没有模型"（那是替网关下结论），也不是"还在加载"（那会让人一直等）。
    */
-  function handleCatalogFailure(gatewayId: string, attempt: number, request: { agentId?: string }): void {
-    if (catalogRequests.get(gatewayId) !== request) return;
+  function handleCatalogFailure(gatewayId: string, attempt: number, request: CatalogRequest): void {
+    if (!ownsCatalogRequest(gatewayId, request)) return;
     if (attempt >= CATALOG_RETRY_DELAYS_MS.length) {
       deps.setModelCatalogFailureForGateway(gatewayId, true);
       return;
@@ -2090,13 +2095,8 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
    *    ⚠️ 但**起链时**那次归位（`fetchCatalogs`，界面回到"正在准备"）要留着 ——
    *    它才是重连后不让用户看到上一轮失败结论的那一次。
    */
-  function applyModelsCatalog(
-    gatewayId: string,
-    models: unknown[],
-    attempt: number,
-    request: { agentId?: string },
-  ): void {
-    if (catalogRequests.get(gatewayId) !== request) return;
+  function applyModelsCatalog(gatewayId: string, models: unknown[], attempt: number, request: CatalogRequest): void {
+    if (!ownsCatalogRequest(gatewayId, request)) return;
     if (models.length > 0) {
       cancelCatalogRetry(gatewayId);
       deps.setModelCatalogForGateway(gatewayId, models);
@@ -2110,15 +2110,11 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
     scheduleCatalogRetry(gatewayId, attempt, request);
   }
 
-  async function refetchModelsCatalog(
-    gatewayId: string,
-    attempt: number,
-    request: { agentId?: string },
-  ): Promise<void> {
-    if (!request.agentId || catalogRequests.get(gatewayId) !== request) return;
+  async function refetchModelsCatalog(gatewayId: string, attempt: number, request: CatalogRequest): Promise<void> {
+    if (!request.agentId || !ownsCatalogRequest(gatewayId, request)) return;
     try {
       const res = await deps.gateway.listModels(gatewayId, request.agentId);
-      if (catalogRequests.get(gatewayId) !== request) return;
+      if (!ownsCatalogRequest(gatewayId, request)) return;
       if (res.ok && res.result) {
         const data = res.result as unknown as ModelListResponse;
         if (data.models) {
@@ -2134,9 +2130,10 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
     }
   }
 
-  async function fetchCatalogs(gatewayId: string): Promise<void> {
+  async function fetchCatalogs(gatewayId: string, isCurrent?: () => boolean): Promise<void> {
+    if (isCurrent?.() === false) return;
     cancelCatalogRetry(gatewayId);
-    const request: { agentId?: string } = {};
+    const request: CatalogRequest = { isCurrent };
     catalogRequests.set(gatewayId, request);
     // 起一条新链：先把「取不到」归位（界面回到"正在准备"），失败与为空都会自己再走退避。
     deps.setModelCatalogFailureForGateway(gatewayId, false);
@@ -2144,7 +2141,7 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
     // 不能因为同一批里别的目录抛错就被整体的 try/catch 吞掉。
     try {
       const agentsRes = await deps.gateway.listAgents(gatewayId);
-      if (catalogRequests.get(gatewayId) !== request) return;
+      if (!ownsCatalogRequest(gatewayId, request)) return;
       if (agentsRes.ok && agentsRes.result) {
         const data = agentsRes.result as unknown as AgentListResponse;
         if (data.agents) deps.setAgentCatalogForGateway(gatewayId, data.agents, data.defaultId);
@@ -2181,7 +2178,7 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
         }),
         deps.gateway.getSkillsStatus(gatewayId, agentId),
       ]);
-      if (catalogRequests.get(gatewayId) !== request) return;
+      if (!ownsCatalogRequest(gatewayId, request)) return;
       if (toolsRes.ok && toolsRes.result) {
         const data = toolsRes.result as unknown as ToolsCatalog;
         if (data.groups) deps.setToolsCatalogForGateway(gatewayId, data);
@@ -2199,11 +2196,15 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
         }
       }
     } catch (err) {
-      if (catalogRequests.get(gatewayId) === request && !request.agentId) {
+      if (ownsCatalogRequest(gatewayId, request) && !request.agentId) {
         deps.setModelCatalogFailureForGateway(gatewayId, true);
       }
       console.warn('[catalogs] Failed to fetch catalogs for gateway', gatewayId, err);
     }
+  }
+
+  function refreshCatalogsForGateway(gatewayId: string, options: { isCurrent?: () => boolean } = {}): Promise<void> {
+    return fetchCatalogs(gatewayId, () => connectedGateways.has(gatewayId) && options.isCurrent?.() !== false);
   }
 
   async function fetchEffectiveTools(gatewayId: string, sessionKey: string): Promise<void> {
@@ -2470,6 +2471,7 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
     startGatewayStatus,
     markAbortedByUser,
     fetchAgentsForGateway,
+    refreshCatalogsForGateway,
     fetchEffectiveTools,
     reset,
   };

@@ -15,6 +15,7 @@ import { withAgentIds } from '@/layouts/TeamsPanel/utils';
  */
 export interface InstallAgentState {
   slug: string;
+  displayName: string;
   status: 'pending' | 'creating' | 'created' | 'warning';
   files: Array<{ name: string; ok: boolean }>;
   skills: Array<{ id: string; ok: boolean }>;
@@ -36,7 +37,14 @@ export function buildInstallEventView(
   const identifiedAgents = withAgentIds(agents);
   for (const a of identifiedAgents) {
     const slug = a.id;
-    stateMap.set(slug, { slug, status: 'pending', files: [], skills: [], warnings: [] });
+    stateMap.set(slug, {
+      slug,
+      displayName: a.name.trim() || slug,
+      status: 'pending',
+      files: [],
+      skills: [],
+      warnings: [],
+    });
   }
 
   let teamSaved = false;

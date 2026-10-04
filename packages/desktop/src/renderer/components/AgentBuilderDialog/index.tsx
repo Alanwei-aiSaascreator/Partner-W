@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Sparkles, Send, Loader2, Bot, User, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { buildResponseLanguageContext } from '@/lib/response-language';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -141,10 +142,13 @@ export default function AgentBuilderDialog({ open, onOpenChange, gatewayId, onCr
     setStalled(false);
 
     const modelListStr = models.map(canonicalModelRef).join(', ');
-    const prompt = SYSTEM_PROMPT_TEMPLATE.replace('{{modelList}}', modelListStr || 'default').replace(
-      '{{language}}',
-      i18n.language,
-    );
+    const prompt = SYSTEM_PROMPT_TEMPLATE.replace('{{modelList}}', modelListStr || 'default')
+      .replace('{{language}}', i18n.language)
+      .concat(
+        '\n\n',
+        buildResponseLanguageContext(i18n.language),
+        '\nThe generated identity must retain this response-language policy in the requested language, including the user override.',
+      );
 
     start({
       gatewayId,

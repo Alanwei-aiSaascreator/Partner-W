@@ -33,6 +33,7 @@ import LeftNav from '../src/renderer/layouts/LeftNav';
 import { TooltipProvider } from '../src/renderer/components/ui/tooltip';
 import { useTaskStore } from '../src/renderer/stores/taskStore';
 import { useUiStore } from '../src/renderer/stores/uiStore';
+import { useTeamStore } from '../src/renderer/stores/teamStore';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -80,6 +81,7 @@ describe('LeftNav 不拿默认助手冒充当前助手', () => {
     setLoadedCatalog(['main']);
     useUiStore.setState({ selectedAgentByGateway: {}, leftNavCollapsed: false, mainView: 'chat' });
     useTaskStore.setState({ tasks: [], activeTaskId: null, pendingNewTask: null });
+    useTeamStore.setState({ teams: {}, loadedOnce: true, loading: false });
   });
 
   it('⭐ 持久选择不在目录里 ⇒ 提示出现，且切换器不再把罗盘显示成当前助手', () => {

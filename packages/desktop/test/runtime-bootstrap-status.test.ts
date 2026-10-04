@@ -12,6 +12,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { GATEWAY_FAILURE_REASONS } from '@clawwork/shared';
 import {
+  convergeLateLocalRuntimeReady,
   getRuntimeBootstrapStatus,
   publishRuntimeBootstrapStatus,
   resetRuntimeBootstrapStatus,
@@ -125,6 +126,51 @@ describe('runtime bootstrap 快照：推得到就推，推丢了还能拉', () =
     publishRuntimeBootstrapStatus({ ok: false, code: 'runtime.gateway-port-occupied' });
     resetRuntimeBootstrapStatus();
 
+    expect(getRuntimeBootstrapStatus()).toBeNull();
+  });
+});
+
+/**
+ * 晚就绪收敛（2026-10-04 真机）：180 秒超时是"**那一次等待**失败"，
+ * 不是"当前服务仍失败" —— 两分钟后真实认证成功必须能把它收敛掉。
+ * 但收敛的口子是刻意收窄的：只有 ready-timeout 能收敛。
+ */
+describe('晚就绪收敛：只认 ready-timeout，别的错误一律不动', () => {
+  beforeEach(() => {
+    resetRuntimeBootstrapStatus();
+  });
+
+  it('⭐ 超时快照 + 晚到的本地认证成功 ⇒ 收敛成 ok', () => {
+    publishRuntimeBootstrapStatus({ ok: false, code: 'runtime.gateway-ready-timeout' });
+
+    expect(convergeLateLocalRuntimeReady()).toEqual({ ok: true });
+    expect(getRuntimeBootstrapStatus()).toEqual({ ok: true });
+  });
+
+  it('幂等：已经收敛/已经成功之后再来一次，什么都不做（返回 null）', () => {
+    publishRuntimeBootstrapStatus({ ok: false, code: 'runtime.gateway-ready-timeout' });
+    expect(convergeLateLocalRuntimeReady()).toEqual({ ok: true });
+    expect(convergeLateLocalRuntimeReady()).toBeNull();
+
+    resetRuntimeBootstrapStatus();
+    publishRuntimeBootstrapStatus({ ok: true });
+    expect(convergeLateLocalRuntimeReady()).toBeNull();
+  });
+
+  it.each([
+    ['runtime.gateway-port-occupied', 'port-occupied'],
+    ['runtime.portable-state-migration-blocked', 'state-migration-blocked'],
+    ['runtime.gateway-process-exited', 'process-exited'],
+    ['runtime.something-nobody-classified', 'unknown'],
+  ] as const)('⛔ %s ⇒ 不收敛，快照保持原样（那不是"再等等就好"）', (code, reason) => {
+    publishRuntimeBootstrapStatus({ ok: false, code });
+
+    expect(convergeLateLocalRuntimeReady()).toBeNull();
+    expect(getRuntimeBootstrapStatus()).toEqual({ ok: false, reason });
+  });
+
+  it('还没跑过（null）⇒ 不收敛，更不许凭空造一个成功出来', () => {
+    expect(convergeLateLocalRuntimeReady()).toBeNull();
     expect(getRuntimeBootstrapStatus()).toBeNull();
   });
 });

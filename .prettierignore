@@ -14,3 +14,7 @@ test-results/
 findings.md
 progress.md
 task_plan.md
+
+# User supplied slot-contract assets are byte-preserved and checked by SHA.
+packages/desktop/resources/pptx-templates/native-deck/detail.json
+packages/desktop/resources/pptx-templates/native-deck/content.example.json

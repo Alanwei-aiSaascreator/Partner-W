@@ -1,0 +1,3453 @@
+{
+ "name": "tpl-native",
+ "version": "2.0",
+ "aspect": "16:9",
+ "slide_count": 16,
+ "slide_size_emu": [
+  12191695,
+  6858000
+ ],
+ "license": "本模板由代码生成，不含第三方模板/图片素材",
+ "fonts": [
+  "思源黑体"
+ ],
+ "theme_colors": {
+  "主色": "1E3A5F",
+  "次主色": "2E6DA4",
+  "强调": "A52526",
+  "正文": "3C4552",
+  "辅助": "8A93A0",
+  "卡片底": "F2F4F7",
+  "对比右列底": "FDF3F3",
+  "图表配色": [
+   "1E3A5F",
+   "2E6DA4",
+   "A52526",
+   "6B8CAE",
+   "C9A227"
+  ]
+ },
+ "type_scale": {
+  "封面主标题": 40,
+  "封面副标题": 22,
+  "封面导语": 15,
+  "大序号": 30,
+  "章节号": 72,
+  "章节标题": 40,
+  "章节说明": 15,
+  "页面标题": 28,
+  "导语": 13,
+  "卡片标题": 18,
+  "正文": 14,
+  "表头": 15,
+  "表格说明": 13,
+  "表格正文": 12,
+  "目录序号": 16,
+  "目录项": 14,
+  "时间线节点": 16,
+  "时间线说明": 12,
+  "时间线年份": 14,
+  "KPI数字": 40,
+  "KPI标签": 14,
+  "KPI说明": 12,
+  "金字塔层名": 18,
+  "金字塔说明": 12,
+  "清单序号": 14,
+  "清单正文": 15,
+  "页脚": 12
+ },
+ "editing_rules": [
+  "只替换 run 的文本；禁止改动形状位置、尺寸、颜色、字号。",
+  "文字长度不得超过 max_chars；超出请改写内容，不允许缩字号。",
+  "按 slot_id 寻址，不要按 current_text 匹配（同页可能出现相同原文）。",
+  "组合形状内的槽位需递归遍历 shape tree；表格槽位用 address.cell 寻址。",
+  "图表只替换数据（categories / series values），不改类型与配色。"
+ ],
+ "pages": [
+  {
+   "slide_number": 1,
+   "layout": "封面",
+   "text_slots": [
+    {
+     "slide_number": 1,
+     "slot_id": "s1_sh6_p0",
+     "address": {
+      "shape_id": 6,
+      "paragraph": 0
+     },
+     "role": "主标题",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 26,
+     "chars_per_line": 13,
+     "max_lines": 2,
+     "font_size_pt": 40
+    },
+    {
+     "slide_number": 1,
+     "slot_id": "s1_sh6_p1",
+     "address": {
+      "shape_id": 6,
+      "paragraph": 1
+     },
+     "role": "副标题",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 69,
+     "chars_per_line": 23,
+     "max_lines": 3,
+     "font_size_pt": 22
+    },
+    {
+     "slide_number": 1,
+     "slot_id": "s1_sh7_p0",
+     "address": {
+      "shape_id": 7,
+      "paragraph": 0
+     },
+     "role": "导语",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 70,
+     "chars_per_line": 35,
+     "max_lines": 2,
+     "font_size_pt": 15
+    },
+    {
+     "slide_number": 1,
+     "slot_id": "s1_sh8_p0",
+     "address": {
+      "shape_id": 8,
+      "paragraph": 0
+     },
+     "role": "落款",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 43,
+     "chars_per_line": 43,
+     "max_lines": 1,
+     "font_size_pt": 12
+    }
+   ]
+  },
+  {
+   "slide_number": 2,
+   "layout": "目录",
+   "text_slots": [
+    {
+     "slide_number": 2,
+     "slot_id": "s2_sh2_p0",
+     "address": {
+      "shape_id": 2,
+      "paragraph": 0
+     },
+     "role": "页面标题",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 30,
+     "chars_per_line": 30,
+     "max_lines": 1,
+     "font_size_pt": 28
+    },
+    {
+     "slide_number": 2,
+     "slot_id": "s2_sh5_p0",
+     "address": {
+      "shape_id": 5,
+      "paragraph": 0
+     },
+     "role": "目录序号",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 3,
+     "chars_per_line": 3,
+     "max_lines": 1,
+     "font_size_pt": 16
+    },
+    {
+     "slide_number": 2,
+     "slot_id": "s2_sh6_p0",
+     "address": {
+      "shape_id": 6,
+      "paragraph": 0
+     },
+     "role": "目录项",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 23,
+     "chars_per_line": 23,
+     "max_lines": 1,
+     "font_size_pt": 14
+    },
+    {
+     "slide_number": 2,
+     "slot_id": "s2_sh8_p0",
+     "address": {
+      "shape_id": 8,
+      "paragraph": 0
+     },
+     "role": "目录序号",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 3,
+     "chars_per_line": 3,
+     "max_lines": 1,
+     "font_size_pt": 16
+    },
+    {
+     "slide_number": 2,
+     "slot_id": "s2_sh9_p0",
+     "address": {
+      "shape_id": 9,
+      "paragraph": 0
+     },
+     "role": "目录项",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 23,
+     "chars_per_line": 23,
+     "max_lines": 1,
+     "font_size_pt": 14
+    },
+    {
+     "slide_number": 2,
+     "slot_id": "s2_sh11_p0",
+     "address": {
+      "shape_id": 11,
+      "paragraph": 0
+     },
+     "role": "目录序号",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 3,
+     "chars_per_line": 3,
+     "max_lines": 1,
+     "font_size_pt": 16
+    },
+    {
+     "slide_number": 2,
+     "slot_id": "s2_sh12_p0",
+     "address": {
+      "shape_id": 12,
+      "paragraph": 0
+     },
+     "role": "目录项",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 23,
+     "chars_per_line": 23,
+     "max_lines": 1,
+     "font_size_pt": 14
+    },
+    {
+     "slide_number": 2,
+     "slot_id": "s2_sh14_p0",
+     "address": {
+      "shape_id": 14,
+      "paragraph": 0
+     },
+     "role": "目录序号",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 3,
+     "chars_per_line": 3,
+     "max_lines": 1,
+     "font_size_pt": 16
+    },
+    {
+     "slide_number": 2,
+     "slot_id": "s2_sh15_p0",
+     "address": {
+      "shape_id": 15,
+      "paragraph": 0
+     },
+     "role": "目录项",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 23,
+     "chars_per_line": 23,
+     "max_lines": 1,
+     "font_size_pt": 14
+    },
+    {
+     "slide_number": 2,
+     "slot_id": "s2_sh17_p0",
+     "address": {
+      "shape_id": 17,
+      "paragraph": 0
+     },
+     "role": "目录序号",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 3,
+     "chars_per_line": 3,
+     "max_lines": 1,
+     "font_size_pt": 16
+    },
+    {
+     "slide_number": 2,
+     "slot_id": "s2_sh18_p0",
+     "address": {
+      "shape_id": 18,
+      "paragraph": 0
+     },
+     "role": "目录项",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 23,
+     "chars_per_line": 23,
+     "max_lines": 1,
+     "font_size_pt": 14
+    },
+    {
+     "slide_number": 2,
+     "slot_id": "s2_sh20_p0",
+     "address": {
+      "shape_id": 20,
+      "paragraph": 0
+     },
+     "role": "目录序号",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 3,
+     "chars_per_line": 3,
+     "max_lines": 1,
+     "font_size_pt": 16
+    },
+    {
+     "slide_number": 2,
+     "slot_id": "s2_sh21_p0",
+     "address": {
+      "shape_id": 21,
+      "paragraph": 0
+     },
+     "role": "目录项",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 23,
+     "chars_per_line": 23,
+     "max_lines": 1,
+     "font_size_pt": 14
+    },
+    {
+     "slide_number": 2,
+     "slot_id": "s2_sh23_p0",
+     "address": {
+      "shape_id": 23,
+      "paragraph": 0
+     },
+     "role": "目录序号",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 3,
+     "chars_per_line": 3,
+     "max_lines": 1,
+     "font_size_pt": 16
+    },
+    {
+     "slide_number": 2,
+     "slot_id": "s2_sh24_p0",
+     "address": {
+      "shape_id": 24,
+      "paragraph": 0
+     },
+     "role": "目录项",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 23,
+     "chars_per_line": 23,
+     "max_lines": 1,
+     "font_size_pt": 14
+    },
+    {
+     "slide_number": 2,
+     "slot_id": "s2_sh26_p0",
+     "address": {
+      "shape_id": 26,
+      "paragraph": 0
+     },
+     "role": "目录序号",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 3,
+     "chars_per_line": 3,
+     "max_lines": 1,
+     "font_size_pt": 16
+    },
+    {
+     "slide_number": 2,
+     "slot_id": "s2_sh27_p0",
+     "address": {
+      "shape_id": 27,
+      "paragraph": 0
+     },
+     "role": "目录项",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 23,
+     "chars_per_line": 23,
+     "max_lines": 1,
+     "font_size_pt": 14
+    }
+   ]
+  },
+  {
+   "slide_number": 3,
+   "layout": "章节过渡",
+   "text_slots": [
+    {
+     "slide_number": 3,
+     "slot_id": "s3_sh4_p0",
+     "address": {
+      "shape_id": 4,
+      "paragraph": 0
+     },
+     "role": "章节号",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 3,
+     "chars_per_line": 3,
+     "max_lines": 1,
+     "font_size_pt": 72
+    },
+    {
+     "slide_number": 3,
+     "slot_id": "s3_sh6_p0",
+     "address": {
+      "shape_id": 6,
+      "paragraph": 0
+     },
+     "role": "章节标题",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 11,
+     "chars_per_line": 11,
+     "max_lines": 1,
+     "font_size_pt": 40
+    },
+    {
+     "slide_number": 3,
+     "slot_id": "s3_sh7_p0",
+     "address": {
+      "shape_id": 7,
+      "paragraph": 0
+     },
+     "role": "章节说明",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 87,
+     "chars_per_line": 29,
+     "max_lines": 3,
+     "font_size_pt": 15
+    }
+   ]
+  },
+  {
+   "slide_number": 4,
+   "layout": "三段并列",
+   "text_slots": [
+    {
+     "slide_number": 4,
+     "slot_id": "s4_sh2_p0",
+     "address": {
+      "shape_id": 2,
+      "paragraph": 0
+     },
+     "role": "页面标题",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 30,
+     "chars_per_line": 30,
+     "max_lines": 1,
+     "font_size_pt": 28
+    },
+    {
+     "slide_number": 4,
+     "slot_id": "s4_sh4_p0",
+     "address": {
+      "shape_id": 4,
+      "paragraph": 0
+     },
+     "role": "导语",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 65,
+     "chars_per_line": 65,
+     "max_lines": 1,
+     "font_size_pt": 13
+    },
+    {
+     "slide_number": 4,
+     "slot_id": "s4_sh7_p0",
+     "address": {
+      "shape_id": 7,
+      "paragraph": 0
+     },
+     "role": "序号",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 3,
+     "chars_per_line": 3,
+     "max_lines": 1,
+     "font_size_pt": 30
+    },
+    {
+     "slide_number": 4,
+     "slot_id": "s4_sh8_p0",
+     "address": {
+      "shape_id": 8,
+      "paragraph": 0
+     },
+     "role": "卡片标题",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 11,
+     "chars_per_line": 11,
+     "max_lines": 1,
+     "font_size_pt": 18
+    },
+    {
+     "slide_number": 4,
+     "slot_id": "s4_sh9_p0",
+     "address": {
+      "shape_id": 9,
+      "paragraph": 0
+     },
+     "role": "卡片正文",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 126,
+     "chars_per_line": 14,
+     "max_lines": 9,
+     "font_size_pt": 14
+    },
+    {
+     "slide_number": 4,
+     "slot_id": "s4_sh12_p0",
+     "address": {
+      "shape_id": 12,
+      "paragraph": 0
+     },
+     "role": "序号",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 3,
+     "chars_per_line": 3,
+     "max_lines": 1,
+     "font_size_pt": 30
+    },
+    {
+     "slide_number": 4,
+     "slot_id": "s4_sh13_p0",
+     "address": {
+      "shape_id": 13,
+      "paragraph": 0
+     },
+     "role": "卡片标题",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 11,
+     "chars_per_line": 11,
+     "max_lines": 1,
+     "font_size_pt": 18
+    },
+    {
+     "slide_number": 4,
+     "slot_id": "s4_sh14_p0",
+     "address": {
+      "shape_id": 14,
+      "paragraph": 0
+     },
+     "role": "卡片正文",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 126,
+     "chars_per_line": 14,
+     "max_lines": 9,
+     "font_size_pt": 14
+    },
+    {
+     "slide_number": 4,
+     "slot_id": "s4_sh17_p0",
+     "address": {
+      "shape_id": 17,
+      "paragraph": 0
+     },
+     "role": "序号",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 3,
+     "chars_per_line": 3,
+     "max_lines": 1,
+     "font_size_pt": 30
+    },
+    {
+     "slide_number": 4,
+     "slot_id": "s4_sh18_p0",
+     "address": {
+      "shape_id": 18,
+      "paragraph": 0
+     },
+     "role": "卡片标题",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 11,
+     "chars_per_line": 11,
+     "max_lines": 1,
+     "font_size_pt": 18
+    },
+    {
+     "slide_number": 4,
+     "slot_id": "s4_sh19_p0",
+     "address": {
+      "shape_id": 19,
+      "paragraph": 0
+     },
+     "role": "卡片正文",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 126,
+     "chars_per_line": 14,
+     "max_lines": 9,
+     "font_size_pt": 14
+    },
+    {
+     "slide_number": 4,
+     "slot_id": "s4_sh21_p0",
+     "address": {
+      "shape_id": 21,
+      "paragraph": 0
+     },
+     "role": "底部结论",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 134,
+     "chars_per_line": 67,
+     "max_lines": 2,
+     "font_size_pt": 12
+    }
+   ]
+  },
+  {
+   "slide_number": 5,
+   "layout": "四段并列",
+   "text_slots": [
+    {
+     "slide_number": 5,
+     "slot_id": "s5_sh2_p0",
+     "address": {
+      "shape_id": 2,
+      "paragraph": 0
+     },
+     "role": "页面标题",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 30,
+     "chars_per_line": 30,
+     "max_lines": 1,
+     "font_size_pt": 28
+    },
+    {
+     "slide_number": 5,
+     "slot_id": "s5_sh4_p0",
+     "address": {
+      "shape_id": 4,
+      "paragraph": 0
+     },
+     "role": "导语",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 65,
+     "chars_per_line": 65,
+     "max_lines": 1,
+     "font_size_pt": 13
+    },
+    {
+     "slide_number": 5,
+     "slot_id": "s5_sh7_p0",
+     "address": {
+      "shape_id": 7,
+      "paragraph": 0
+     },
+     "role": "序号",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 5,
+     "chars_per_line": 5,
+     "max_lines": 1,
+     "font_size_pt": 18
+    },
+    {
+     "slide_number": 5,
+     "slot_id": "s5_sh8_p0",
+     "address": {
+      "shape_id": 8,
+      "paragraph": 0
+     },
+     "role": "卡片标题",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 9,
+     "chars_per_line": 9,
+     "max_lines": 1,
+     "font_size_pt": 18
+    },
+    {
+     "slide_number": 5,
+     "slot_id": "s5_sh9_p0",
+     "address": {
+      "shape_id": 9,
+      "paragraph": 0
+     },
+     "role": "卡片正文",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 108,
+     "chars_per_line": 12,
+     "max_lines": 9,
+     "font_size_pt": 14
+    },
+    {
+     "slide_number": 5,
+     "slot_id": "s5_sh12_p0",
+     "address": {
+      "shape_id": 12,
+      "paragraph": 0
+     },
+     "role": "序号",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 5,
+     "chars_per_line": 5,
+     "max_lines": 1,
+     "font_size_pt": 18
+    },
+    {
+     "slide_number": 5,
+     "slot_id": "s5_sh13_p0",
+     "address": {
+      "shape_id": 13,
+      "paragraph": 0
+     },
+     "role": "卡片标题",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 9,
+     "chars_per_line": 9,
+     "max_lines": 1,
+     "font_size_pt": 18
+    },
+    {
+     "slide_number": 5,
+     "slot_id": "s5_sh14_p0",
+     "address": {
+      "shape_id": 14,
+      "paragraph": 0
+     },
+     "role": "卡片正文",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 108,
+     "chars_per_line": 12,
+     "max_lines": 9,
+     "font_size_pt": 14
+    },
+    {
+     "slide_number": 5,
+     "slot_id": "s5_sh17_p0",
+     "address": {
+      "shape_id": 17,
+      "paragraph": 0
+     },
+     "role": "序号",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 5,
+     "chars_per_line": 5,
+     "max_lines": 1,
+     "font_size_pt": 18
+    },
+    {
+     "slide_number": 5,
+     "slot_id": "s5_sh18_p0",
+     "address": {
+      "shape_id": 18,
+      "paragraph": 0
+     },
+     "role": "卡片标题",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 9,
+     "chars_per_line": 9,
+     "max_lines": 1,
+     "font_size_pt": 18
+    },
+    {
+     "slide_number": 5,
+     "slot_id": "s5_sh19_p0",
+     "address": {
+      "shape_id": 19,
+      "paragraph": 0
+     },
+     "role": "卡片正文",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 108,
+     "chars_per_line": 12,
+     "max_lines": 9,
+     "font_size_pt": 14
+    },
+    {
+     "slide_number": 5,
+     "slot_id": "s5_sh22_p0",
+     "address": {
+      "shape_id": 22,
+      "paragraph": 0
+     },
+     "role": "序号",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 5,
+     "chars_per_line": 5,
+     "max_lines": 1,
+     "font_size_pt": 18
+    },
+    {
+     "slide_number": 5,
+     "slot_id": "s5_sh23_p0",
+     "address": {
+      "shape_id": 23,
+      "paragraph": 0
+     },
+     "role": "卡片标题",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 9,
+     "chars_per_line": 9,
+     "max_lines": 1,
+     "font_size_pt": 18
+    },
+    {
+     "slide_number": 5,
+     "slot_id": "s5_sh24_p0",
+     "address": {
+      "shape_id": 24,
+      "paragraph": 0
+     },
+     "role": "卡片正文",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 108,
+     "chars_per_line": 12,
+     "max_lines": 9,
+     "font_size_pt": 14
+    }
+   ]
+  },
+  {
+   "slide_number": 6,
+   "layout": "两列对比",
+   "text_slots": [
+    {
+     "slide_number": 6,
+     "slot_id": "s6_sh2_p0",
+     "address": {
+      "shape_id": 2,
+      "paragraph": 0
+     },
+     "role": "页面标题",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 30,
+     "chars_per_line": 30,
+     "max_lines": 1,
+     "font_size_pt": 28
+    },
+    {
+     "slide_number": 6,
+     "slot_id": "s6_sh5_p0",
+     "address": {
+      "shape_id": 5,
+      "paragraph": 0
+     },
+     "role": "左表头",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 22,
+     "chars_per_line": 22,
+     "max_lines": 1,
+     "font_size_pt": 15
+    },
+    {
+     "slide_number": 6,
+     "slot_id": "s6_sh7_p0",
+     "address": {
+      "shape_id": 7,
+      "paragraph": 0
+     },
+     "role": "右表头",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 22,
+     "chars_per_line": 22,
+     "max_lines": 1,
+     "font_size_pt": 15
+    },
+    {
+     "slide_number": 6,
+     "slot_id": "s6_sh8_p0",
+     "address": {
+      "shape_id": 8,
+      "paragraph": 0
+     },
+     "role": "行标签",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 24,
+     "chars_per_line": 12,
+     "max_lines": 2,
+     "font_size_pt": 13
+    },
+    {
+     "slide_number": 6,
+     "slot_id": "s6_sh10_p0",
+     "address": {
+      "shape_id": 10,
+      "paragraph": 0
+     },
+     "role": "左列正文",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 48,
+     "chars_per_line": 24,
+     "max_lines": 2,
+     "font_size_pt": 13
+    },
+    {
+     "slide_number": 6,
+     "slot_id": "s6_sh12_p0",
+     "address": {
+      "shape_id": 12,
+      "paragraph": 0
+     },
+     "role": "右列正文",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 48,
+     "chars_per_line": 24,
+     "max_lines": 2,
+     "font_size_pt": 13
+    },
+    {
+     "slide_number": 6,
+     "slot_id": "s6_sh13_p0",
+     "address": {
+      "shape_id": 13,
+      "paragraph": 0
+     },
+     "role": "行标签",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 24,
+     "chars_per_line": 12,
+     "max_lines": 2,
+     "font_size_pt": 13
+    },
+    {
+     "slide_number": 6,
+     "slot_id": "s6_sh15_p0",
+     "address": {
+      "shape_id": 15,
+      "paragraph": 0
+     },
+     "role": "左列正文",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 48,
+     "chars_per_line": 24,
+     "max_lines": 2,
+     "font_size_pt": 13
+    },
+    {
+     "slide_number": 6,
+     "slot_id": "s6_sh17_p0",
+     "address": {
+      "shape_id": 17,
+      "paragraph": 0
+     },
+     "role": "右列正文",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 48,
+     "chars_per_line": 24,
+     "max_lines": 2,
+     "font_size_pt": 13
+    },
+    {
+     "slide_number": 6,
+     "slot_id": "s6_sh18_p0",
+     "address": {
+      "shape_id": 18,
+      "paragraph": 0
+     },
+     "role": "行标签",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 24,
+     "chars_per_line": 12,
+     "max_lines": 2,
+     "font_size_pt": 13
+    },
+    {
+     "slide_number": 6,
+     "slot_id": "s6_sh20_p0",
+     "address": {
+      "shape_id": 20,
+      "paragraph": 0
+     },
+     "role": "左列正文",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 48,
+     "chars_per_line": 24,
+     "max_lines": 2,
+     "font_size_pt": 13
+    },
+    {
+     "slide_number": 6,
+     "slot_id": "s6_sh22_p0",
+     "address": {
+      "shape_id": 22,
+      "paragraph": 0
+     },
+     "role": "右列正文",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 48,
+     "chars_per_line": 24,
+     "max_lines": 2,
+     "font_size_pt": 13
+    },
+    {
+     "slide_number": 6,
+     "slot_id": "s6_sh23_p0",
+     "address": {
+      "shape_id": 23,
+      "paragraph": 0
+     },
+     "role": "行标签",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 24,
+     "chars_per_line": 12,
+     "max_lines": 2,
+     "font_size_pt": 13
+    },
+    {
+     "slide_number": 6,
+     "slot_id": "s6_sh25_p0",
+     "address": {
+      "shape_id": 25,
+      "paragraph": 0
+     },
+     "role": "左列正文",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 48,
+     "chars_per_line": 24,
+     "max_lines": 2,
+     "font_size_pt": 13
+    },
+    {
+     "slide_number": 6,
+     "slot_id": "s6_sh27_p0",
+     "address": {
+      "shape_id": 27,
+      "paragraph": 0
+     },
+     "role": "右列正文",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 48,
+     "chars_per_line": 24,
+     "max_lines": 2,
+     "font_size_pt": 13
+    },
+    {
+     "slide_number": 6,
+     "slot_id": "s6_sh28_p0",
+     "address": {
+      "shape_id": 28,
+      "paragraph": 0
+     },
+     "role": "行标签",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 24,
+     "chars_per_line": 12,
+     "max_lines": 2,
+     "font_size_pt": 13
+    },
+    {
+     "slide_number": 6,
+     "slot_id": "s6_sh30_p0",
+     "address": {
+      "shape_id": 30,
+      "paragraph": 0
+     },
+     "role": "左列正文",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 48,
+     "chars_per_line": 24,
+     "max_lines": 2,
+     "font_size_pt": 13
+    },
+    {
+     "slide_number": 6,
+     "slot_id": "s6_sh32_p0",
+     "address": {
+      "shape_id": 32,
+      "paragraph": 0
+     },
+     "role": "右列正文",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 48,
+     "chars_per_line": 24,
+     "max_lines": 2,
+     "font_size_pt": 13
+    },
+    {
+     "slide_number": 6,
+     "slot_id": "s6_sh33_p0",
+     "address": {
+      "shape_id": 33,
+      "paragraph": 0
+     },
+     "role": "行标签",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 24,
+     "chars_per_line": 12,
+     "max_lines": 2,
+     "font_size_pt": 13
+    },
+    {
+     "slide_number": 6,
+     "slot_id": "s6_sh35_p0",
+     "address": {
+      "shape_id": 35,
+      "paragraph": 0
+     },
+     "role": "左列正文",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 48,
+     "chars_per_line": 24,
+     "max_lines": 2,
+     "font_size_pt": 13
+    },
+    {
+     "slide_number": 6,
+     "slot_id": "s6_sh37_p0",
+     "address": {
+      "shape_id": 37,
+      "paragraph": 0
+     },
+     "role": "右列正文",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 48,
+     "chars_per_line": 24,
+     "max_lines": 2,
+     "font_size_pt": 13
+    }
+   ]
+  },
+  {
+   "slide_number": 7,
+   "layout": "三列对比",
+   "text_slots": [
+    {
+     "slide_number": 7,
+     "slot_id": "s7_sh2_p0",
+     "address": {
+      "shape_id": 2,
+      "paragraph": 0
+     },
+     "role": "页面标题",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 30,
+     "chars_per_line": 30,
+     "max_lines": 1,
+     "font_size_pt": 28
+    },
+    {
+     "slide_number": 7,
+     "slot_id": "s7_sh4_p0",
+     "address": {
+      "shape_id": 4,
+      "paragraph": 0
+     },
+     "role": "导语",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 65,
+     "chars_per_line": 65,
+     "max_lines": 1,
+     "font_size_pt": 13
+    },
+    {
+     "slide_number": 7,
+     "slot_id": "s7_sh6_p0",
+     "address": {
+      "shape_id": 6,
+      "paragraph": 0
+     },
+     "role": "角标",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 10,
+     "chars_per_line": 10,
+     "max_lines": 1,
+     "font_size_pt": 15
+    },
+    {
+     "slide_number": 7,
+     "slot_id": "s7_sh8_p0",
+     "address": {
+      "shape_id": 8,
+      "paragraph": 0
+     },
+     "role": "列标题",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 14,
+     "chars_per_line": 14,
+     "max_lines": 1,
+     "font_size_pt": 15
+    },
+    {
+     "slide_number": 7,
+     "slot_id": "s7_sh10_p0",
+     "address": {
+      "shape_id": 10,
+      "paragraph": 0
+     },
+     "role": "列标题",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 14,
+     "chars_per_line": 14,
+     "max_lines": 1,
+     "font_size_pt": 15
+    },
+    {
+     "slide_number": 7,
+     "slot_id": "s7_sh12_p0",
+     "address": {
+      "shape_id": 12,
+      "paragraph": 0
+     },
+     "role": "列标题",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 14,
+     "chars_per_line": 14,
+     "max_lines": 1,
+     "font_size_pt": 15
+    },
+    {
+     "slide_number": 7,
+     "slot_id": "s7_sh14_p0",
+     "address": {
+      "shape_id": 14,
+      "paragraph": 0
+     },
+     "role": "行标签",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 33,
+     "chars_per_line": 11,
+     "max_lines": 3,
+     "font_size_pt": 13
+    },
+    {
+     "slide_number": 7,
+     "slot_id": "s7_sh16_p0",
+     "address": {
+      "shape_id": 16,
+      "paragraph": 0
+     },
+     "role": "对比正文",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 42,
+     "chars_per_line": 14,
+     "max_lines": 3,
+     "font_size_pt": 13
+    },
+    {
+     "slide_number": 7,
+     "slot_id": "s7_sh18_p0",
+     "address": {
+      "shape_id": 18,
+      "paragraph": 0
+     },
+     "role": "对比正文",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 42,
+     "chars_per_line": 14,
+     "max_lines": 3,
+     "font_size_pt": 13
+    },
+    {
+     "slide_number": 7,
+     "slot_id": "s7_sh20_p0",
+     "address": {
+      "shape_id": 20,
+      "paragraph": 0
+     },
+     "role": "对比正文",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 42,
+     "chars_per_line": 14,
+     "max_lines": 3,
+     "font_size_pt": 13
+    },
+    {
+     "slide_number": 7,
+     "slot_id": "s7_sh22_p0",
+     "address": {
+      "shape_id": 22,
+      "paragraph": 0
+     },
+     "role": "行标签",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 33,
+     "chars_per_line": 11,
+     "max_lines": 3,
+     "font_size_pt": 13
+    },
+    {
+     "slide_number": 7,
+     "slot_id": "s7_sh24_p0",
+     "address": {
+      "shape_id": 24,
+      "paragraph": 0
+     },
+     "role": "对比正文",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 42,
+     "chars_per_line": 14,
+     "max_lines": 3,
+     "font_size_pt": 13
+    },
+    {
+     "slide_number": 7,
+     "slot_id": "s7_sh26_p0",
+     "address": {
+      "shape_id": 26,
+      "paragraph": 0
+     },
+     "role": "对比正文",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 42,
+     "chars_per_line": 14,
+     "max_lines": 3,
+     "font_size_pt": 13
+    },
+    {
+     "slide_number": 7,
+     "slot_id": "s7_sh28_p0",
+     "address": {
+      "shape_id": 28,
+      "paragraph": 0
+     },
+     "role": "对比正文",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 42,
+     "chars_per_line": 14,
+     "max_lines": 3,
+     "font_size_pt": 13
+    },
+    {
+     "slide_number": 7,
+     "slot_id": "s7_sh30_p0",
+     "address": {
+      "shape_id": 30,
+      "paragraph": 0
+     },
+     "role": "行标签",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 33,
+     "chars_per_line": 11,
+     "max_lines": 3,
+     "font_size_pt": 13
+    },
+    {
+     "slide_number": 7,
+     "slot_id": "s7_sh32_p0",
+     "address": {
+      "shape_id": 32,
+      "paragraph": 0
+     },
+     "role": "对比正文",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 42,
+     "chars_per_line": 14,
+     "max_lines": 3,
+     "font_size_pt": 13
+    },
+    {
+     "slide_number": 7,
+     "slot_id": "s7_sh34_p0",
+     "address": {
+      "shape_id": 34,
+      "paragraph": 0
+     },
+     "role": "对比正文",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 42,
+     "chars_per_line": 14,
+     "max_lines": 3,
+     "font_size_pt": 13
+    },
+    {
+     "slide_number": 7,
+     "slot_id": "s7_sh36_p0",
+     "address": {
+      "shape_id": 36,
+      "paragraph": 0
+     },
+     "role": "对比正文",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 42,
+     "chars_per_line": 14,
+     "max_lines": 3,
+     "font_size_pt": 13
+    },
+    {
+     "slide_number": 7,
+     "slot_id": "s7_sh38_p0",
+     "address": {
+      "shape_id": 38,
+      "paragraph": 0
+     },
+     "role": "行标签",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 33,
+     "chars_per_line": 11,
+     "max_lines": 3,
+     "font_size_pt": 13
+    },
+    {
+     "slide_number": 7,
+     "slot_id": "s7_sh40_p0",
+     "address": {
+      "shape_id": 40,
+      "paragraph": 0
+     },
+     "role": "对比正文",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 42,
+     "chars_per_line": 14,
+     "max_lines": 3,
+     "font_size_pt": 13
+    },
+    {
+     "slide_number": 7,
+     "slot_id": "s7_sh42_p0",
+     "address": {
+      "shape_id": 42,
+      "paragraph": 0
+     },
+     "role": "对比正文",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 42,
+     "chars_per_line": 14,
+     "max_lines": 3,
+     "font_size_pt": 13
+    },
+    {
+     "slide_number": 7,
+     "slot_id": "s7_sh44_p0",
+     "address": {
+      "shape_id": 44,
+      "paragraph": 0
+     },
+     "role": "对比正文",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 42,
+     "chars_per_line": 14,
+     "max_lines": 3,
+     "font_size_pt": 13
+    }
+   ]
+  },
+  {
+   "slide_number": 8,
+   "layout": "三步递进",
+   "text_slots": [
+    {
+     "slide_number": 8,
+     "slot_id": "s8_sh2_p0",
+     "address": {
+      "shape_id": 2,
+      "paragraph": 0
+     },
+     "role": "页面标题",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 30,
+     "chars_per_line": 30,
+     "max_lines": 1,
+     "font_size_pt": 28
+    },
+    {
+     "slide_number": 8,
+     "slot_id": "s8_sh4_p0",
+     "address": {
+      "shape_id": 4,
+      "paragraph": 0
+     },
+     "role": "导语",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 65,
+     "chars_per_line": 65,
+     "max_lines": 1,
+     "font_size_pt": 13
+    },
+    {
+     "slide_number": 8,
+     "slot_id": "s8_sh10_p0",
+     "address": {
+      "shape_id": 10,
+      "paragraph": 0
+     },
+     "role": "步骤名",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 11,
+     "chars_per_line": 11,
+     "max_lines": 1,
+     "font_size_pt": 18
+    },
+    {
+     "slide_number": 8,
+     "slot_id": "s8_sh11_p0",
+     "address": {
+      "shape_id": 11,
+      "paragraph": 0
+     },
+     "role": "步骤说明",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 42,
+     "chars_per_line": 14,
+     "max_lines": 3,
+     "font_size_pt": 14
+    },
+    {
+     "slide_number": 8,
+     "slot_id": "s8_sh12_p0",
+     "address": {
+      "shape_id": 12,
+      "paragraph": 0
+     },
+     "role": "步骤名",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 11,
+     "chars_per_line": 11,
+     "max_lines": 1,
+     "font_size_pt": 18
+    },
+    {
+     "slide_number": 8,
+     "slot_id": "s8_sh13_p0",
+     "address": {
+      "shape_id": 13,
+      "paragraph": 0
+     },
+     "role": "步骤说明",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 42,
+     "chars_per_line": 14,
+     "max_lines": 3,
+     "font_size_pt": 14
+    },
+    {
+     "slide_number": 8,
+     "slot_id": "s8_sh14_p0",
+     "address": {
+      "shape_id": 14,
+      "paragraph": 0
+     },
+     "role": "步骤名",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 11,
+     "chars_per_line": 11,
+     "max_lines": 1,
+     "font_size_pt": 18
+    },
+    {
+     "slide_number": 8,
+     "slot_id": "s8_sh15_p0",
+     "address": {
+      "shape_id": 15,
+      "paragraph": 0
+     },
+     "role": "步骤说明",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 42,
+     "chars_per_line": 14,
+     "max_lines": 3,
+     "font_size_pt": 14
+    },
+    {
+     "slide_number": 8,
+     "slot_id": "s8_sh17_p0",
+     "address": {
+      "shape_id": 17,
+      "paragraph": 0
+     },
+     "role": "补充说明",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 171,
+     "chars_per_line": 57,
+     "max_lines": 3,
+     "font_size_pt": 14
+    },
+    {
+     "slide_number": 8,
+     "slot_id": "s8_sh19_p0",
+     "address": {
+      "shape_id": 19,
+      "paragraph": 0
+     },
+     "role": "页脚",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 71,
+     "chars_per_line": 71,
+     "max_lines": 1,
+     "font_size_pt": 12
+    }
+   ]
+  },
+  {
+   "slide_number": 9,
+   "layout": "时间线",
+   "text_slots": [
+    {
+     "slide_number": 9,
+     "slot_id": "s9_sh2_p0",
+     "address": {
+      "shape_id": 2,
+      "paragraph": 0
+     },
+     "role": "页面标题",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 30,
+     "chars_per_line": 30,
+     "max_lines": 1,
+     "font_size_pt": 28
+    },
+    {
+     "slide_number": 9,
+     "slot_id": "s9_sh4_p0",
+     "address": {
+      "shape_id": 4,
+      "paragraph": 0
+     },
+     "role": "导语",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 65,
+     "chars_per_line": 65,
+     "max_lines": 1,
+     "font_size_pt": 13
+    },
+    {
+     "slide_number": 9,
+     "slot_id": "s9_sh7_p0",
+     "address": {
+      "shape_id": 7,
+      "paragraph": 0
+     },
+     "role": "时间线年份",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 8,
+     "chars_per_line": 8,
+     "max_lines": 1,
+     "font_size_pt": 14
+    },
+    {
+     "slide_number": 9,
+     "slot_id": "s9_sh8_p0",
+     "address": {
+      "shape_id": 8,
+      "paragraph": 0
+     },
+     "role": "时间线节点",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 7,
+     "chars_per_line": 7,
+     "max_lines": 1,
+     "font_size_pt": 16
+    },
+    {
+     "slide_number": 9,
+     "slot_id": "s9_sh9_p0",
+     "address": {
+      "shape_id": 9,
+      "paragraph": 0
+     },
+     "role": "时间线说明",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 18,
+     "chars_per_line": 9,
+     "max_lines": 2,
+     "font_size_pt": 12
+    },
+    {
+     "slide_number": 9,
+     "slot_id": "s9_sh11_p0",
+     "address": {
+      "shape_id": 11,
+      "paragraph": 0
+     },
+     "role": "时间线年份",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 8,
+     "chars_per_line": 8,
+     "max_lines": 1,
+     "font_size_pt": 14
+    },
+    {
+     "slide_number": 9,
+     "slot_id": "s9_sh12_p0",
+     "address": {
+      "shape_id": 12,
+      "paragraph": 0
+     },
+     "role": "时间线节点",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 7,
+     "chars_per_line": 7,
+     "max_lines": 1,
+     "font_size_pt": 16
+    },
+    {
+     "slide_number": 9,
+     "slot_id": "s9_sh13_p0",
+     "address": {
+      "shape_id": 13,
+      "paragraph": 0
+     },
+     "role": "时间线说明",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 18,
+     "chars_per_line": 9,
+     "max_lines": 2,
+     "font_size_pt": 12
+    },
+    {
+     "slide_number": 9,
+     "slot_id": "s9_sh15_p0",
+     "address": {
+      "shape_id": 15,
+      "paragraph": 0
+     },
+     "role": "时间线年份",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 8,
+     "chars_per_line": 8,
+     "max_lines": 1,
+     "font_size_pt": 14
+    },
+    {
+     "slide_number": 9,
+     "slot_id": "s9_sh16_p0",
+     "address": {
+      "shape_id": 16,
+      "paragraph": 0
+     },
+     "role": "时间线节点",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 7,
+     "chars_per_line": 7,
+     "max_lines": 1,
+     "font_size_pt": 16
+    },
+    {
+     "slide_number": 9,
+     "slot_id": "s9_sh17_p0",
+     "address": {
+      "shape_id": 17,
+      "paragraph": 0
+     },
+     "role": "时间线说明",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 18,
+     "chars_per_line": 9,
+     "max_lines": 2,
+     "font_size_pt": 12
+    },
+    {
+     "slide_number": 9,
+     "slot_id": "s9_sh19_p0",
+     "address": {
+      "shape_id": 19,
+      "paragraph": 0
+     },
+     "role": "时间线年份",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 8,
+     "chars_per_line": 8,
+     "max_lines": 1,
+     "font_size_pt": 14
+    },
+    {
+     "slide_number": 9,
+     "slot_id": "s9_sh20_p0",
+     "address": {
+      "shape_id": 20,
+      "paragraph": 0
+     },
+     "role": "时间线节点",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 7,
+     "chars_per_line": 7,
+     "max_lines": 1,
+     "font_size_pt": 16
+    },
+    {
+     "slide_number": 9,
+     "slot_id": "s9_sh21_p0",
+     "address": {
+      "shape_id": 21,
+      "paragraph": 0
+     },
+     "role": "时间线说明",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 18,
+     "chars_per_line": 9,
+     "max_lines": 2,
+     "font_size_pt": 12
+    },
+    {
+     "slide_number": 9,
+     "slot_id": "s9_sh23_p0",
+     "address": {
+      "shape_id": 23,
+      "paragraph": 0
+     },
+     "role": "时间线年份",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 8,
+     "chars_per_line": 8,
+     "max_lines": 1,
+     "font_size_pt": 14
+    },
+    {
+     "slide_number": 9,
+     "slot_id": "s9_sh24_p0",
+     "address": {
+      "shape_id": 24,
+      "paragraph": 0
+     },
+     "role": "时间线节点",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 7,
+     "chars_per_line": 7,
+     "max_lines": 1,
+     "font_size_pt": 16
+    },
+    {
+     "slide_number": 9,
+     "slot_id": "s9_sh25_p0",
+     "address": {
+      "shape_id": 25,
+      "paragraph": 0
+     },
+     "role": "时间线说明",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 18,
+     "chars_per_line": 9,
+     "max_lines": 2,
+     "font_size_pt": 12
+    },
+    {
+     "slide_number": 9,
+     "slot_id": "s9_sh27_p0",
+     "address": {
+      "shape_id": 27,
+      "paragraph": 0
+     },
+     "role": "底部小结",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 114,
+     "chars_per_line": 57,
+     "max_lines": 2,
+     "font_size_pt": 14
+    }
+   ]
+  },
+  {
+   "slide_number": 10,
+   "layout": "柱状数据",
+   "text_slots": [
+    {
+     "slide_number": 10,
+     "slot_id": "s10_sh2_p0",
+     "address": {
+      "shape_id": 2,
+      "paragraph": 0
+     },
+     "role": "页面标题",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 30,
+     "chars_per_line": 30,
+     "max_lines": 1,
+     "font_size_pt": 28
+    },
+    {
+     "slide_number": 10,
+     "slot_id": "s10_sh4_p0",
+     "address": {
+      "shape_id": 4,
+      "paragraph": 0
+     },
+     "role": "导语",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 65,
+     "chars_per_line": 65,
+     "max_lines": 1,
+     "font_size_pt": 13
+    },
+    {
+     "slide_number": 10,
+     "slot_id": "s10_sh7_p0",
+     "address": {
+      "shape_id": 7,
+      "paragraph": 0
+     },
+     "role": "要点标题",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 10,
+     "chars_per_line": 10,
+     "max_lines": 1,
+     "font_size_pt": 18
+    },
+    {
+     "slide_number": 10,
+     "slot_id": "s10_sh8_p0",
+     "address": {
+      "shape_id": 8,
+      "paragraph": 0
+     },
+     "role": "要点说明",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 30,
+     "chars_per_line": 15,
+     "max_lines": 2,
+     "font_size_pt": 13
+    },
+    {
+     "slide_number": 10,
+     "slot_id": "s10_sh10_p0",
+     "address": {
+      "shape_id": 10,
+      "paragraph": 0
+     },
+     "role": "要点标题",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 10,
+     "chars_per_line": 10,
+     "max_lines": 1,
+     "font_size_pt": 18
+    },
+    {
+     "slide_number": 10,
+     "slot_id": "s10_sh11_p0",
+     "address": {
+      "shape_id": 11,
+      "paragraph": 0
+     },
+     "role": "要点说明",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 30,
+     "chars_per_line": 15,
+     "max_lines": 2,
+     "font_size_pt": 13
+    },
+    {
+     "slide_number": 10,
+     "slot_id": "s10_sh13_p0",
+     "address": {
+      "shape_id": 13,
+      "paragraph": 0
+     },
+     "role": "要点标题",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 10,
+     "chars_per_line": 10,
+     "max_lines": 1,
+     "font_size_pt": 18
+    },
+    {
+     "slide_number": 10,
+     "slot_id": "s10_sh14_p0",
+     "address": {
+      "shape_id": 14,
+      "paragraph": 0
+     },
+     "role": "要点说明",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 30,
+     "chars_per_line": 15,
+     "max_lines": 2,
+     "font_size_pt": 13
+    }
+   ],
+   "chart": {
+    "slide_number": 10,
+    "chart_id": "s10_sh5",
+    "shape_id": 5,
+    "kind": "bar",
+    "title": "图表标题",
+    "categories_max": 6,
+    "series_max": 1,
+    "value_range": [
+     0,
+     1000
+    ],
+    "font_size_pt": 12
+   }
+  },
+  {
+   "slide_number": 11,
+   "layout": "折线趋势",
+   "text_slots": [
+    {
+     "slide_number": 11,
+     "slot_id": "s11_sh2_p0",
+     "address": {
+      "shape_id": 2,
+      "paragraph": 0
+     },
+     "role": "页面标题",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 30,
+     "chars_per_line": 30,
+     "max_lines": 1,
+     "font_size_pt": 28
+    },
+    {
+     "slide_number": 11,
+     "slot_id": "s11_sh4_p0",
+     "address": {
+      "shape_id": 4,
+      "paragraph": 0
+     },
+     "role": "导语",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 65,
+     "chars_per_line": 65,
+     "max_lines": 1,
+     "font_size_pt": 13
+    },
+    {
+     "slide_number": 11,
+     "slot_id": "s11_sh7_p0",
+     "address": {
+      "shape_id": 7,
+      "paragraph": 0
+     },
+     "role": "结论标题",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 12,
+     "chars_per_line": 12,
+     "max_lines": 1,
+     "font_size_pt": 18
+    },
+    {
+     "slide_number": 11,
+     "slot_id": "s11_sh8_p0",
+     "address": {
+      "shape_id": 8,
+      "paragraph": 0
+     },
+     "role": "结论说明",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 51,
+     "chars_per_line": 17,
+     "max_lines": 3,
+     "font_size_pt": 13
+    },
+    {
+     "slide_number": 11,
+     "slot_id": "s11_sh10_p0",
+     "address": {
+      "shape_id": 10,
+      "paragraph": 0
+     },
+     "role": "结论标题",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 12,
+     "chars_per_line": 12,
+     "max_lines": 1,
+     "font_size_pt": 18
+    },
+    {
+     "slide_number": 11,
+     "slot_id": "s11_sh11_p0",
+     "address": {
+      "shape_id": 11,
+      "paragraph": 0
+     },
+     "role": "结论说明",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 51,
+     "chars_per_line": 17,
+     "max_lines": 3,
+     "font_size_pt": 13
+    },
+    {
+     "slide_number": 11,
+     "slot_id": "s11_sh13_p0",
+     "address": {
+      "shape_id": 13,
+      "paragraph": 0
+     },
+     "role": "结论标题",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 12,
+     "chars_per_line": 12,
+     "max_lines": 1,
+     "font_size_pt": 18
+    },
+    {
+     "slide_number": 11,
+     "slot_id": "s11_sh14_p0",
+     "address": {
+      "shape_id": 14,
+      "paragraph": 0
+     },
+     "role": "结论说明",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 51,
+     "chars_per_line": 17,
+     "max_lines": 3,
+     "font_size_pt": 13
+    }
+   ],
+   "chart": {
+    "slide_number": 11,
+    "chart_id": "s11_sh5",
+    "shape_id": 5,
+    "kind": "line",
+    "title": "图表标题",
+    "categories_max": 6,
+    "series_max": 2,
+    "value_range": [
+     0,
+     1000
+    ],
+    "font_size_pt": 12
+   }
+  },
+  {
+   "slide_number": 12,
+   "layout": "KPI看板",
+   "text_slots": [
+    {
+     "slide_number": 12,
+     "slot_id": "s12_sh2_p0",
+     "address": {
+      "shape_id": 2,
+      "paragraph": 0
+     },
+     "role": "页面标题",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 30,
+     "chars_per_line": 30,
+     "max_lines": 1,
+     "font_size_pt": 28
+    },
+    {
+     "slide_number": 12,
+     "slot_id": "s12_sh4_p0",
+     "address": {
+      "shape_id": 4,
+      "paragraph": 0
+     },
+     "role": "导语",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 65,
+     "chars_per_line": 65,
+     "max_lines": 1,
+     "font_size_pt": 13
+    },
+    {
+     "slide_number": 12,
+     "slot_id": "s12_sh7_p0",
+     "address": {
+      "shape_id": 7,
+      "paragraph": 0
+     },
+     "role": "KPI数字",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 4,
+     "chars_per_line": 4,
+     "max_lines": 1,
+     "font_size_pt": 40
+    },
+    {
+     "slide_number": 12,
+     "slot_id": "s12_sh8_p0",
+     "address": {
+      "shape_id": 8,
+      "paragraph": 0
+     },
+     "role": "KPI标签",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 12,
+     "chars_per_line": 12,
+     "max_lines": 1,
+     "font_size_pt": 14
+    },
+    {
+     "slide_number": 12,
+     "slot_id": "s12_sh9_p0",
+     "address": {
+      "shape_id": 9,
+      "paragraph": 0
+     },
+     "role": "KPI说明",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 14,
+     "chars_per_line": 14,
+     "max_lines": 1,
+     "font_size_pt": 12
+    },
+    {
+     "slide_number": 12,
+     "slot_id": "s12_sh12_p0",
+     "address": {
+      "shape_id": 12,
+      "paragraph": 0
+     },
+     "role": "KPI数字",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 4,
+     "chars_per_line": 4,
+     "max_lines": 1,
+     "font_size_pt": 40
+    },
+    {
+     "slide_number": 12,
+     "slot_id": "s12_sh13_p0",
+     "address": {
+      "shape_id": 13,
+      "paragraph": 0
+     },
+     "role": "KPI标签",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 12,
+     "chars_per_line": 12,
+     "max_lines": 1,
+     "font_size_pt": 14
+    },
+    {
+     "slide_number": 12,
+     "slot_id": "s12_sh14_p0",
+     "address": {
+      "shape_id": 14,
+      "paragraph": 0
+     },
+     "role": "KPI说明",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 14,
+     "chars_per_line": 14,
+     "max_lines": 1,
+     "font_size_pt": 12
+    },
+    {
+     "slide_number": 12,
+     "slot_id": "s12_sh17_p0",
+     "address": {
+      "shape_id": 17,
+      "paragraph": 0
+     },
+     "role": "KPI数字",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 4,
+     "chars_per_line": 4,
+     "max_lines": 1,
+     "font_size_pt": 40
+    },
+    {
+     "slide_number": 12,
+     "slot_id": "s12_sh18_p0",
+     "address": {
+      "shape_id": 18,
+      "paragraph": 0
+     },
+     "role": "KPI标签",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 12,
+     "chars_per_line": 12,
+     "max_lines": 1,
+     "font_size_pt": 14
+    },
+    {
+     "slide_number": 12,
+     "slot_id": "s12_sh19_p0",
+     "address": {
+      "shape_id": 19,
+      "paragraph": 0
+     },
+     "role": "KPI说明",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 14,
+     "chars_per_line": 14,
+     "max_lines": 1,
+     "font_size_pt": 12
+    },
+    {
+     "slide_number": 12,
+     "slot_id": "s12_sh22_p0",
+     "address": {
+      "shape_id": 22,
+      "paragraph": 0
+     },
+     "role": "KPI数字",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 4,
+     "chars_per_line": 4,
+     "max_lines": 1,
+     "font_size_pt": 40
+    },
+    {
+     "slide_number": 12,
+     "slot_id": "s12_sh23_p0",
+     "address": {
+      "shape_id": 23,
+      "paragraph": 0
+     },
+     "role": "KPI标签",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 12,
+     "chars_per_line": 12,
+     "max_lines": 1,
+     "font_size_pt": 14
+    },
+    {
+     "slide_number": 12,
+     "slot_id": "s12_sh24_p0",
+     "address": {
+      "shape_id": 24,
+      "paragraph": 0
+     },
+     "role": "KPI说明",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 14,
+     "chars_per_line": 14,
+     "max_lines": 1,
+     "font_size_pt": 12
+    },
+    {
+     "slide_number": 12,
+     "slot_id": "s12_sh26_p0",
+     "address": {
+      "shape_id": 26,
+      "paragraph": 0
+     },
+     "role": "解读标题",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 11,
+     "chars_per_line": 11,
+     "max_lines": 1,
+     "font_size_pt": 18
+    },
+    {
+     "slide_number": 12,
+     "slot_id": "s12_sh27_p0",
+     "address": {
+      "shape_id": 27,
+      "paragraph": 0
+     },
+     "role": "解读正文",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 56,
+     "chars_per_line": 14,
+     "max_lines": 4,
+     "font_size_pt": 14
+    },
+    {
+     "slide_number": 12,
+     "slot_id": "s12_sh29_p0",
+     "address": {
+      "shape_id": 29,
+      "paragraph": 0
+     },
+     "role": "解读标题",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 11,
+     "chars_per_line": 11,
+     "max_lines": 1,
+     "font_size_pt": 18
+    },
+    {
+     "slide_number": 12,
+     "slot_id": "s12_sh30_p0",
+     "address": {
+      "shape_id": 30,
+      "paragraph": 0
+     },
+     "role": "解读正文",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 56,
+     "chars_per_line": 14,
+     "max_lines": 4,
+     "font_size_pt": 14
+    },
+    {
+     "slide_number": 12,
+     "slot_id": "s12_sh32_p0",
+     "address": {
+      "shape_id": 32,
+      "paragraph": 0
+     },
+     "role": "解读标题",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 11,
+     "chars_per_line": 11,
+     "max_lines": 1,
+     "font_size_pt": 18
+    },
+    {
+     "slide_number": 12,
+     "slot_id": "s12_sh33_p0",
+     "address": {
+      "shape_id": 33,
+      "paragraph": 0
+     },
+     "role": "解读正文",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 56,
+     "chars_per_line": 14,
+     "max_lines": 4,
+     "font_size_pt": 14
+    }
+   ]
+  },
+  {
+   "slide_number": 13,
+   "layout": "原生表格",
+   "text_slots": [
+    {
+     "slide_number": 13,
+     "slot_id": "s13_sh2_p0",
+     "address": {
+      "shape_id": 2,
+      "paragraph": 0
+     },
+     "role": "页面标题",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 30,
+     "chars_per_line": 30,
+     "max_lines": 1,
+     "font_size_pt": 28
+    },
+    {
+     "slide_number": 13,
+     "slot_id": "s13_sh4_p0",
+     "address": {
+      "shape_id": 4,
+      "paragraph": 0
+     },
+     "role": "导语",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 65,
+     "chars_per_line": 65,
+     "max_lines": 1,
+     "font_size_pt": 13
+    },
+    {
+     "slide_number": 13,
+     "slot_id": "s13_sh5_c0r0",
+     "address": {
+      "shape_id": 5,
+      "cell": [
+       0,
+       0
+      ],
+      "paragraph": 0
+     },
+     "role": "表头1",
+     "editable": true,
+     "kind": "table_cell",
+     "max_chars": 28,
+     "chars_per_line": 14,
+     "max_lines": 2,
+     "font_size_pt": 15
+    },
+    {
+     "slide_number": 13,
+     "slot_id": "s13_sh5_c1r0",
+     "address": {
+      "shape_id": 5,
+      "cell": [
+       0,
+       1
+      ],
+      "paragraph": 0
+     },
+     "role": "表头2",
+     "editable": true,
+     "kind": "table_cell",
+     "max_chars": 24,
+     "chars_per_line": 12,
+     "max_lines": 2,
+     "font_size_pt": 15
+    },
+    {
+     "slide_number": 13,
+     "slot_id": "s13_sh5_c2r0",
+     "address": {
+      "shape_id": 5,
+      "cell": [
+       0,
+       2
+      ],
+      "paragraph": 0
+     },
+     "role": "表头3",
+     "editable": true,
+     "kind": "table_cell",
+     "max_chars": 24,
+     "chars_per_line": 12,
+     "max_lines": 2,
+     "font_size_pt": 15
+    },
+    {
+     "slide_number": 13,
+     "slot_id": "s13_sh5_c3r0",
+     "address": {
+      "shape_id": 5,
+      "cell": [
+       0,
+       3
+      ],
+      "paragraph": 0
+     },
+     "role": "表头4",
+     "editable": true,
+     "kind": "table_cell",
+     "max_chars": 24,
+     "chars_per_line": 12,
+     "max_lines": 2,
+     "font_size_pt": 15
+    },
+    {
+     "slide_number": 13,
+     "slot_id": "s13_sh5_c0r1",
+     "address": {
+      "shape_id": 5,
+      "cell": [
+       1,
+       0
+      ],
+      "paragraph": 0
+     },
+     "role": "行标签",
+     "editable": true,
+     "kind": "table_cell",
+     "max_chars": 36,
+     "chars_per_line": 18,
+     "max_lines": 2,
+     "font_size_pt": 12
+    },
+    {
+     "slide_number": 13,
+     "slot_id": "s13_sh5_c1r1",
+     "address": {
+      "shape_id": 5,
+      "cell": [
+       1,
+       1
+      ],
+      "paragraph": 0
+     },
+     "role": "表格内容",
+     "editable": true,
+     "kind": "table_cell",
+     "max_chars": 30,
+     "chars_per_line": 15,
+     "max_lines": 2,
+     "font_size_pt": 12
+    },
+    {
+     "slide_number": 13,
+     "slot_id": "s13_sh5_c2r1",
+     "address": {
+      "shape_id": 5,
+      "cell": [
+       1,
+       2
+      ],
+      "paragraph": 0
+     },
+     "role": "表格内容",
+     "editable": true,
+     "kind": "table_cell",
+     "max_chars": 30,
+     "chars_per_line": 15,
+     "max_lines": 2,
+     "font_size_pt": 12
+    },
+    {
+     "slide_number": 13,
+     "slot_id": "s13_sh5_c3r1",
+     "address": {
+      "shape_id": 5,
+      "cell": [
+       1,
+       3
+      ],
+      "paragraph": 0
+     },
+     "role": "表格内容",
+     "editable": true,
+     "kind": "table_cell",
+     "max_chars": 30,
+     "chars_per_line": 15,
+     "max_lines": 2,
+     "font_size_pt": 12
+    },
+    {
+     "slide_number": 13,
+     "slot_id": "s13_sh5_c0r2",
+     "address": {
+      "shape_id": 5,
+      "cell": [
+       2,
+       0
+      ],
+      "paragraph": 0
+     },
+     "role": "行标签",
+     "editable": true,
+     "kind": "table_cell",
+     "max_chars": 36,
+     "chars_per_line": 18,
+     "max_lines": 2,
+     "font_size_pt": 12
+    },
+    {
+     "slide_number": 13,
+     "slot_id": "s13_sh5_c1r2",
+     "address": {
+      "shape_id": 5,
+      "cell": [
+       2,
+       1
+      ],
+      "paragraph": 0
+     },
+     "role": "表格内容",
+     "editable": true,
+     "kind": "table_cell",
+     "max_chars": 30,
+     "chars_per_line": 15,
+     "max_lines": 2,
+     "font_size_pt": 12
+    },
+    {
+     "slide_number": 13,
+     "slot_id": "s13_sh5_c2r2",
+     "address": {
+      "shape_id": 5,
+      "cell": [
+       2,
+       2
+      ],
+      "paragraph": 0
+     },
+     "role": "表格内容",
+     "editable": true,
+     "kind": "table_cell",
+     "max_chars": 30,
+     "chars_per_line": 15,
+     "max_lines": 2,
+     "font_size_pt": 12
+    },
+    {
+     "slide_number": 13,
+     "slot_id": "s13_sh5_c3r2",
+     "address": {
+      "shape_id": 5,
+      "cell": [
+       2,
+       3
+      ],
+      "paragraph": 0
+     },
+     "role": "表格内容",
+     "editable": true,
+     "kind": "table_cell",
+     "max_chars": 30,
+     "chars_per_line": 15,
+     "max_lines": 2,
+     "font_size_pt": 12
+    },
+    {
+     "slide_number": 13,
+     "slot_id": "s13_sh5_c0r3",
+     "address": {
+      "shape_id": 5,
+      "cell": [
+       3,
+       0
+      ],
+      "paragraph": 0
+     },
+     "role": "行标签",
+     "editable": true,
+     "kind": "table_cell",
+     "max_chars": 36,
+     "chars_per_line": 18,
+     "max_lines": 2,
+     "font_size_pt": 12
+    },
+    {
+     "slide_number": 13,
+     "slot_id": "s13_sh5_c1r3",
+     "address": {
+      "shape_id": 5,
+      "cell": [
+       3,
+       1
+      ],
+      "paragraph": 0
+     },
+     "role": "表格内容",
+     "editable": true,
+     "kind": "table_cell",
+     "max_chars": 30,
+     "chars_per_line": 15,
+     "max_lines": 2,
+     "font_size_pt": 12
+    },
+    {
+     "slide_number": 13,
+     "slot_id": "s13_sh5_c2r3",
+     "address": {
+      "shape_id": 5,
+      "cell": [
+       3,
+       2
+      ],
+      "paragraph": 0
+     },
+     "role": "表格内容",
+     "editable": true,
+     "kind": "table_cell",
+     "max_chars": 30,
+     "chars_per_line": 15,
+     "max_lines": 2,
+     "font_size_pt": 12
+    },
+    {
+     "slide_number": 13,
+     "slot_id": "s13_sh5_c3r3",
+     "address": {
+      "shape_id": 5,
+      "cell": [
+       3,
+       3
+      ],
+      "paragraph": 0
+     },
+     "role": "表格内容",
+     "editable": true,
+     "kind": "table_cell",
+     "max_chars": 30,
+     "chars_per_line": 15,
+     "max_lines": 2,
+     "font_size_pt": 12
+    },
+    {
+     "slide_number": 13,
+     "slot_id": "s13_sh5_c0r4",
+     "address": {
+      "shape_id": 5,
+      "cell": [
+       4,
+       0
+      ],
+      "paragraph": 0
+     },
+     "role": "行标签",
+     "editable": true,
+     "kind": "table_cell",
+     "max_chars": 36,
+     "chars_per_line": 18,
+     "max_lines": 2,
+     "font_size_pt": 12
+    },
+    {
+     "slide_number": 13,
+     "slot_id": "s13_sh5_c1r4",
+     "address": {
+      "shape_id": 5,
+      "cell": [
+       4,
+       1
+      ],
+      "paragraph": 0
+     },
+     "role": "表格内容",
+     "editable": true,
+     "kind": "table_cell",
+     "max_chars": 30,
+     "chars_per_line": 15,
+     "max_lines": 2,
+     "font_size_pt": 12
+    },
+    {
+     "slide_number": 13,
+     "slot_id": "s13_sh5_c2r4",
+     "address": {
+      "shape_id": 5,
+      "cell": [
+       4,
+       2
+      ],
+      "paragraph": 0
+     },
+     "role": "表格内容",
+     "editable": true,
+     "kind": "table_cell",
+     "max_chars": 30,
+     "chars_per_line": 15,
+     "max_lines": 2,
+     "font_size_pt": 12
+    },
+    {
+     "slide_number": 13,
+     "slot_id": "s13_sh5_c3r4",
+     "address": {
+      "shape_id": 5,
+      "cell": [
+       4,
+       3
+      ],
+      "paragraph": 0
+     },
+     "role": "表格内容",
+     "editable": true,
+     "kind": "table_cell",
+     "max_chars": 30,
+     "chars_per_line": 15,
+     "max_lines": 2,
+     "font_size_pt": 12
+    },
+    {
+     "slide_number": 13,
+     "slot_id": "s13_sh5_c0r5",
+     "address": {
+      "shape_id": 5,
+      "cell": [
+       5,
+       0
+      ],
+      "paragraph": 0
+     },
+     "role": "行标签",
+     "editable": true,
+     "kind": "table_cell",
+     "max_chars": 36,
+     "chars_per_line": 18,
+     "max_lines": 2,
+     "font_size_pt": 12
+    },
+    {
+     "slide_number": 13,
+     "slot_id": "s13_sh5_c1r5",
+     "address": {
+      "shape_id": 5,
+      "cell": [
+       5,
+       1
+      ],
+      "paragraph": 0
+     },
+     "role": "表格内容",
+     "editable": true,
+     "kind": "table_cell",
+     "max_chars": 30,
+     "chars_per_line": 15,
+     "max_lines": 2,
+     "font_size_pt": 12
+    },
+    {
+     "slide_number": 13,
+     "slot_id": "s13_sh5_c2r5",
+     "address": {
+      "shape_id": 5,
+      "cell": [
+       5,
+       2
+      ],
+      "paragraph": 0
+     },
+     "role": "表格内容",
+     "editable": true,
+     "kind": "table_cell",
+     "max_chars": 30,
+     "chars_per_line": 15,
+     "max_lines": 2,
+     "font_size_pt": 12
+    },
+    {
+     "slide_number": 13,
+     "slot_id": "s13_sh5_c3r5",
+     "address": {
+      "shape_id": 5,
+      "cell": [
+       5,
+       3
+      ],
+      "paragraph": 0
+     },
+     "role": "表格内容",
+     "editable": true,
+     "kind": "table_cell",
+     "max_chars": 30,
+     "chars_per_line": 15,
+     "max_lines": 2,
+     "font_size_pt": 12
+    }
+   ]
+  },
+  {
+   "slide_number": 14,
+   "layout": "层级结构",
+   "text_slots": [
+    {
+     "slide_number": 14,
+     "slot_id": "s14_sh2_p0",
+     "address": {
+      "shape_id": 2,
+      "paragraph": 0
+     },
+     "role": "页面标题",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 30,
+     "chars_per_line": 30,
+     "max_lines": 1,
+     "font_size_pt": 28
+    },
+    {
+     "slide_number": 14,
+     "slot_id": "s14_sh4_p0",
+     "address": {
+      "shape_id": 4,
+      "paragraph": 0
+     },
+     "role": "导语",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 65,
+     "chars_per_line": 65,
+     "max_lines": 1,
+     "font_size_pt": 13
+    },
+    {
+     "slide_number": 14,
+     "slot_id": "s14_sh7_p0",
+     "address": {
+      "shape_id": 7,
+      "paragraph": 0
+     },
+     "role": "层级名称",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 24,
+     "chars_per_line": 12,
+     "max_lines": 2,
+     "font_size_pt": 18
+    },
+    {
+     "slide_number": 14,
+     "slot_id": "s14_sh8_p0",
+     "address": {
+      "shape_id": 8,
+      "paragraph": 0
+     },
+     "role": "层级说明",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 138,
+     "chars_per_line": 46,
+     "max_lines": 3,
+     "font_size_pt": 12
+    },
+    {
+     "slide_number": 14,
+     "slot_id": "s14_sh11_p0",
+     "address": {
+      "shape_id": 11,
+      "paragraph": 0
+     },
+     "role": "层级名称",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 24,
+     "chars_per_line": 12,
+     "max_lines": 2,
+     "font_size_pt": 18
+    },
+    {
+     "slide_number": 14,
+     "slot_id": "s14_sh12_p0",
+     "address": {
+      "shape_id": 12,
+      "paragraph": 0
+     },
+     "role": "层级说明",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 138,
+     "chars_per_line": 46,
+     "max_lines": 3,
+     "font_size_pt": 12
+    },
+    {
+     "slide_number": 14,
+     "slot_id": "s14_sh15_p0",
+     "address": {
+      "shape_id": 15,
+      "paragraph": 0
+     },
+     "role": "层级名称",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 24,
+     "chars_per_line": 12,
+     "max_lines": 2,
+     "font_size_pt": 18
+    },
+    {
+     "slide_number": 14,
+     "slot_id": "s14_sh16_p0",
+     "address": {
+      "shape_id": 16,
+      "paragraph": 0
+     },
+     "role": "层级说明",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 138,
+     "chars_per_line": 46,
+     "max_lines": 3,
+     "font_size_pt": 12
+    },
+    {
+     "slide_number": 14,
+     "slot_id": "s14_sh19_p0",
+     "address": {
+      "shape_id": 19,
+      "paragraph": 0
+     },
+     "role": "层级名称",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 24,
+     "chars_per_line": 12,
+     "max_lines": 2,
+     "font_size_pt": 18
+    },
+    {
+     "slide_number": 14,
+     "slot_id": "s14_sh20_p0",
+     "address": {
+      "shape_id": 20,
+      "paragraph": 0
+     },
+     "role": "层级说明",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 138,
+     "chars_per_line": 46,
+     "max_lines": 3,
+     "font_size_pt": 12
+    }
+   ]
+  },
+  {
+   "slide_number": 15,
+   "layout": "编号清单",
+   "text_slots": [
+    {
+     "slide_number": 15,
+     "slot_id": "s15_sh2_p0",
+     "address": {
+      "shape_id": 2,
+      "paragraph": 0
+     },
+     "role": "页面标题",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 30,
+     "chars_per_line": 30,
+     "max_lines": 1,
+     "font_size_pt": 28
+    },
+    {
+     "slide_number": 15,
+     "slot_id": "s15_sh4_p0",
+     "address": {
+      "shape_id": 4,
+      "paragraph": 0
+     },
+     "role": "导语",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 65,
+     "chars_per_line": 65,
+     "max_lines": 1,
+     "font_size_pt": 13
+    },
+    {
+     "slide_number": 15,
+     "slot_id": "s15_sh7_p0",
+     "address": {
+      "shape_id": 7,
+      "paragraph": 0
+     },
+     "role": "清单序号",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 2,
+     "chars_per_line": 2,
+     "max_lines": 1,
+     "font_size_pt": 14
+    },
+    {
+     "slide_number": 15,
+     "slot_id": "s15_sh8_p0",
+     "address": {
+      "shape_id": 8,
+      "paragraph": 0
+     },
+     "role": "清单条目",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 102,
+     "chars_per_line": 51,
+     "max_lines": 2,
+     "font_size_pt": 15
+    },
+    {
+     "slide_number": 15,
+     "slot_id": "s15_sh11_p0",
+     "address": {
+      "shape_id": 11,
+      "paragraph": 0
+     },
+     "role": "清单序号",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 2,
+     "chars_per_line": 2,
+     "max_lines": 1,
+     "font_size_pt": 14
+    },
+    {
+     "slide_number": 15,
+     "slot_id": "s15_sh12_p0",
+     "address": {
+      "shape_id": 12,
+      "paragraph": 0
+     },
+     "role": "清单条目",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 102,
+     "chars_per_line": 51,
+     "max_lines": 2,
+     "font_size_pt": 15
+    },
+    {
+     "slide_number": 15,
+     "slot_id": "s15_sh15_p0",
+     "address": {
+      "shape_id": 15,
+      "paragraph": 0
+     },
+     "role": "清单序号",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 2,
+     "chars_per_line": 2,
+     "max_lines": 1,
+     "font_size_pt": 14
+    },
+    {
+     "slide_number": 15,
+     "slot_id": "s15_sh16_p0",
+     "address": {
+      "shape_id": 16,
+      "paragraph": 0
+     },
+     "role": "清单条目",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 102,
+     "chars_per_line": 51,
+     "max_lines": 2,
+     "font_size_pt": 15
+    },
+    {
+     "slide_number": 15,
+     "slot_id": "s15_sh19_p0",
+     "address": {
+      "shape_id": 19,
+      "paragraph": 0
+     },
+     "role": "清单序号",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 2,
+     "chars_per_line": 2,
+     "max_lines": 1,
+     "font_size_pt": 14
+    },
+    {
+     "slide_number": 15,
+     "slot_id": "s15_sh20_p0",
+     "address": {
+      "shape_id": 20,
+      "paragraph": 0
+     },
+     "role": "清单条目",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 102,
+     "chars_per_line": 51,
+     "max_lines": 2,
+     "font_size_pt": 15
+    },
+    {
+     "slide_number": 15,
+     "slot_id": "s15_sh23_p0",
+     "address": {
+      "shape_id": 23,
+      "paragraph": 0
+     },
+     "role": "清单序号",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 2,
+     "chars_per_line": 2,
+     "max_lines": 1,
+     "font_size_pt": 14
+    },
+    {
+     "slide_number": 15,
+     "slot_id": "s15_sh24_p0",
+     "address": {
+      "shape_id": 24,
+      "paragraph": 0
+     },
+     "role": "清单条目",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 102,
+     "chars_per_line": 51,
+     "max_lines": 2,
+     "font_size_pt": 15
+    },
+    {
+     "slide_number": 15,
+     "slot_id": "s15_sh27_p0",
+     "address": {
+      "shape_id": 27,
+      "paragraph": 0
+     },
+     "role": "清单序号",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 2,
+     "chars_per_line": 2,
+     "max_lines": 1,
+     "font_size_pt": 14
+    },
+    {
+     "slide_number": 15,
+     "slot_id": "s15_sh28_p0",
+     "address": {
+      "shape_id": 28,
+      "paragraph": 0
+     },
+     "role": "清单条目",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 102,
+     "chars_per_line": 51,
+     "max_lines": 2,
+     "font_size_pt": 15
+    }
+   ]
+  },
+  {
+   "slide_number": 16,
+   "layout": "结尾页",
+   "text_slots": [
+    {
+     "slide_number": 16,
+     "slot_id": "s16_sh4_p0",
+     "address": {
+      "shape_id": 4,
+      "paragraph": 0
+     },
+     "role": "结尾主标",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 21,
+     "chars_per_line": 21,
+     "max_lines": 1,
+     "font_size_pt": 40
+    },
+    {
+     "slide_number": 16,
+     "slot_id": "s16_sh5_p0",
+     "address": {
+      "shape_id": 5,
+      "paragraph": 0
+     },
+     "role": "结尾副标",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 38,
+     "chars_per_line": 38,
+     "max_lines": 1,
+     "font_size_pt": 22
+    },
+    {
+     "slide_number": 16,
+     "slot_id": "s16_sh6_p0",
+     "address": {
+      "shape_id": 6,
+      "paragraph": 0
+     },
+     "role": "联系方式",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 60,
+     "chars_per_line": 60,
+     "max_lines": 1,
+     "font_size_pt": 14
+    },
+    {
+     "slide_number": 16,
+     "slot_id": "s16_sh7_p0",
+     "address": {
+      "shape_id": 7,
+      "paragraph": 0
+     },
+     "role": "页脚",
+     "editable": true,
+     "kind": "text",
+     "max_chars": 71,
+     "chars_per_line": 71,
+     "max_lines": 1,
+     "font_size_pt": 12
+    }
+   ]
+  }
+ ]
+}

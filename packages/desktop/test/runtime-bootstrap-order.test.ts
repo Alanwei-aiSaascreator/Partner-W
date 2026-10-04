@@ -76,6 +76,29 @@ function makeDeps(over: Partial<RuntimeBootstrapDeps> = {}) {
 }
 
 describe('bootstrapLocalGatewayRuntime', () => {
+  it('records node resolution and gateway startup durations without credentials', async () => {
+    let clock = 1000;
+    const { deps } = makeDeps({ now: () => clock });
+    const resolveNode = deps.resolveNode;
+    deps.resolveNode = async (options) => {
+      const result = await resolveNode(options);
+      clock += 64;
+      return result;
+    };
+    const startGateway = deps.startGateway;
+    deps.startGateway = async (options) => {
+      const result = await startGateway(options);
+      clock += 110000;
+      return result;
+    };
+    const { bootstrapLocalGatewayRuntime } = await import('../src/main/runtime/index.js');
+    await bootstrapLocalGatewayRuntime({ userDataDir: USER_DATA, deps });
+    expect(deps.log).toHaveBeenCalledWith('runtime.node.resolve.done', { durationMs: 64, ok: true });
+    expect(deps.log).toHaveBeenCalledWith('runtime.gateway.start', {});
+    expect(deps.log).toHaveBeenCalledWith('runtime.gateway.ready', { durationMs: 110000, ownership: 'spawned' });
+    expect(JSON.stringify(vi.mocked(deps.log).mock.calls)).not.toContain('tok-1');
+  });
+
   it('does not deploy or start a gateway when portable state migration is blocked', async () => {
     const error = Object.assign(new Error('state is busy'), { code: 'runtime.portable-state-migration-blocked' });
     const { deps } = makeDeps({

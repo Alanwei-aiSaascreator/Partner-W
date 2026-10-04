@@ -52,7 +52,6 @@ export function activeRelayBaseUrl(): string {
   return activeRelayBaseUrlOverride ?? RELAY_BASE_URL;
 }
 
-/** 媒体那条（图片/视频）基址要带 `/v1`，理由见 `RELAY_IMAGE_BASE_URL`。 */
 function activeRelayMediaBaseUrl(): string {
   return `${activeRelayBaseUrl()}/v1`;
 }
@@ -114,22 +113,12 @@ export const OPENAI_IMAGE_MODEL_ID = 'qwen-image-1';
 export const OPENAI_IMAGE_MODEL_REF = `${OPENAI_IMAGE_PROVIDER_ID}/${OPENAI_IMAGE_MODEL_ID}`;
 
 /**
- * 图片那条的 baseUrl：**要带 `/v1`**。
- *
- * OpenAI 形状的客户端会自己在后面接 `/images/generations`，所以给到 `/relay/v1`
- * 才拼得出 `/relay/v1/images/generations`（nginx 再把 `/relay` 剥掉转给 relay）。
- * 少一段的表现是请求打到 `/relay/images/generations` —— 404，而且不解释。
- */
-export const RELAY_IMAGE_BASE_URL = `${RELAY_BASE_URL}/v1`;
-
-/**
  * 视频复用随包 OpenClaw 的内置 `xai` provider。客户端只说 xAI 形状，relay
  * 在服务端把它转换成豆包 Seedance/Ark 的任务协议；供应商 Key 不下发到客户端。
  */
 export const XAI_VIDEO_PROVIDER_ID = 'xai';
 export const XAI_VIDEO_MODEL_ID = 'grok-imagine-video';
 export const XAI_VIDEO_MODEL_REF = `${XAI_VIDEO_PROVIDER_ID}/${XAI_VIDEO_MODEL_ID}`;
-export const RELAY_VIDEO_BASE_URL = `${RELAY_BASE_URL}/v1`;
 
 /**
  * 图片接线**总闸**。默认 **false** —— 不写 `models.providers.openai`、不写 `mediaModels.image`。

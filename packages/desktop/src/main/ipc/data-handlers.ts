@@ -1,10 +1,19 @@
 import { app, BrowserWindow, ipcMain } from 'electron';
 import { createHash, randomUUID } from 'node:crypto';
+import { realpathSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { and, eq, desc, sql } from 'drizzle-orm';
-import { getDb, isDbReady } from '../db/index.js';
+import { getDb, getSqlite, isDbReady } from '../db/index.js';
+import { nativeTaskControl } from '../docgen/native-task-control.js';
+import { nativeInputFromCompletedWrites } from '../docgen/native-tool-input.js';
+import { renderNativePptFile } from '../docgen/native-file.js';
+import { readSlideGenerationReceipt } from '../slidegen/receipt.js';
+import { readWorkspaceBytes } from '../slidegen/source-file.js';
+import { reviewNativePpt, type NativeVisualReview } from '../docgen/native-review.js';
+import { nativeReviewPorts } from '../docgen/native-review-runtime.js';
 import { tasks, messages, artifacts, taskRooms, taskRoomSessions, teams, teamAgents } from '../db/schema.js';
 import { autoExtractArtifacts } from '../artifact/auto-extract.js';
+import { forgetTaskDeliveryActivities } from '../artifact/delivery-activity.js';
 import { captureArtifactDeliveryOperation } from '../artifact/delivery-operation.js';
 import { captureArtifactWorkspaceOwner } from '../artifact/workspace-owner.js';
 import { subscribeWorkspaceScope } from '../workspace/scope.js';
@@ -217,6 +226,10 @@ interface ArtifactRunContext {
   /** 用户在这一轮明确要求交付的格式；空数组表示普通聊天/格式咨询。 */
   expectedArtifactKinds: ExpectedArtifactKind[];
   state: 'active' | 'canceled' | 'claimed';
+  nativeControlled?: boolean;
+  /** Parent fencing is established at dispatch, even before a PPT tool is selected. */
+  nativeFenced?: boolean;
+  nativePreviousReceipt?: string;
   taskId: string;
   sessionKey: string;
 }
@@ -346,11 +359,54 @@ export function beginArtifactRun(
   workspacePath: string,
   taskId: string,
   sessionKey: string,
-  opts?: { gatewayId?: string; userContent?: string },
+  opts?: {
+    gatewayId?: string;
+    userContent?: string;
+    nativeAutomaticFrom?: string;
+    /** Internal automatic continuation: null means this run explicitly has no parent. */
+    nativeParentReceipt?: string | null;
+  },
 ): string {
   pruneArtifactRuns();
   pruneCompletedAssistantMessages();
   const token = randomUUID();
+  const expectedKinds = expectedArtifactKindsFromRequest(opts?.userContent ?? '');
+  const newDeckIntent =
+    /(?:\u53e6.{0,8}(?:PPT|\u5e7b\u706f\u7247|\u6f14\u793a\u6587\u7a3f)|\u65b0\u7684.{0,8}PPT|(?:new|another).{0,16}(?:ppt|deck|presentation))/i.test(
+      opts?.userContent ?? '',
+    );
+  const revisionIntent =
+    /(?:\u6539\u7a3f|\u7f8e\u5316|\u91cd\u65b0\u6392\u7248|(?:\u518d|\u66f4)\u7f8e\u89c2|\u6587\u5b57.{0,16}(?:\u6324|\u5b57\u53f7)|(?:\u4fee\u6539|\u8c03\u6574|\u4f18\u5316).{0,12}(?:PPT|\u5e7b\u706f\u7247|\u6f14\u793a\u6587\u7a3f|\u6392\u7248|\u5b57\u53f7)|(?:revise|restyle|redesign).{0,24}(?:ppt|slides?|deck))/i.test(
+      opts?.userContent ?? '',
+    ) && !newDeckIntent;
+  let nativePreviousReceipt: string | undefined;
+  let nativeFenced = false;
+  let nativeControlled =
+    process.env.ROYIN_NATIVE_PPT_VALIDATION === '1' && (expectedKinds.includes('pptx') || !!opts?.nativeAutomaticFrom);
+  if (process.env.ROYIN_NATIVE_PPT_VALIDATION === '1') {
+    const db = getSqlite();
+    if (!db) throw Error('native-task-state-unavailable');
+    if (db) {
+      const control = nativeTaskControl(db);
+      const lastReceipt = control.get(taskId)?.last_receipt ?? undefined;
+      nativePreviousReceipt = opts?.nativeAutomaticFrom
+        ? opts.nativeParentReceipt === undefined
+          ? lastReceipt
+          : (opts.nativeParentReceipt ?? undefined)
+        : newDeckIntent
+          ? undefined
+          : lastReceipt;
+      nativeControlled ||= !!nativePreviousReceipt && revisionIntent;
+      nativeFenced = nativeControlled || !!nativePreviousReceipt;
+      // Reserve this run's token now. Finalization must never beginUser and revive a stopped or newer run.
+      if (nativeFenced) {
+        if (opts?.nativeAutomaticFrom) {
+          if (!control.beginAutomatic(taskId, opts.nativeAutomaticFrom, token))
+            throw Error('native-auto-limit-or-stopped');
+        } else control.beginUser(taskId, token);
+      }
+    }
+  }
   const baseline = captureTaskArtifactBaseline({ workspacePath, taskId }).catch((error: unknown) => {
     console.error('[artifact_baseline_failed]', { taskId, error });
     throw error;
@@ -370,6 +426,13 @@ export function beginArtifactRun(
   const expiryTimer = setTimeout(() => cancelArtifactRun(taskId, sessionKey, token), ARTIFACT_RUN_TTL_MS);
   expiryTimer.unref?.();
   const queue = artifactRuns.get(key) ?? [];
+  if (process.env.ROYIN_NATIVE_PPT_VALIDATION === '1') {
+    // A newer dispatch retires only requests still waiting to be accepted.
+    // Keep the old token canceled even after the newer request has completed.
+    for (const previous of queue) {
+      if (!previous.gatewayRunId && previous.state === 'active') cancelArtifactRun(taskId, sessionKey, previous.token);
+    }
+  }
   queue.push({
     baseline,
     agentBaseline,
@@ -378,12 +441,29 @@ export function beginArtifactRun(
     sequence: nextArtifactRunSequence++,
     expiryTimer,
     state: 'active',
-    expectedArtifactKinds: expectedArtifactKindsFromRequest(opts?.userContent ?? ''),
+    expectedArtifactKinds: nativeControlled ? [...new Set([...expectedKinds, 'pptx' as const])] : expectedKinds,
+    nativeControlled,
+    nativeFenced,
+    nativePreviousReceipt,
     taskId,
     sessionKey,
   });
   artifactRuns.set(key, queue);
   return token;
+}
+
+/** Read-only fence for a controlled dispatch resuming after asynchronous budget verification. */
+export function isArtifactRunPendingCurrent(taskId: string, sessionKey: string, token: string): boolean {
+  const queue = artifactRuns.get(artifactRunKey(taskId, sessionKey));
+  const run = queue?.find((candidate) => candidate.token === token);
+  return !!(run && run.state === 'active' && !run.gatewayRunId && queue?.at(-1) === run && !isArtifactRunCanceled(run));
+}
+
+function cancelNativeRun(run: ArtifactRunContext): void {
+  run.state = 'canceled';
+  if (!run.nativeFenced) return;
+  const db = getSqlite();
+  if (db) nativeTaskControl(db).cancel(run.taskId, run.token);
 }
 
 export function cancelArtifactRun(taskId: string, sessionKey: string, token: string): void {
@@ -392,11 +472,11 @@ export function cancelArtifactRun(taskId: string, sessionKey: string, token: str
   const index = queue?.findIndex((run) => run.token === token) ?? -1;
   if (!queue || index < 0) {
     const claimed = claimedArtifactRuns.get(token);
-    if (claimed?.taskId === taskId && claimed.sessionKey === sessionKey) claimed.state = 'canceled';
+    if (claimed?.taskId === taskId && claimed.sessionKey === sessionKey) cancelNativeRun(claimed);
     return;
   }
   const run = queue[index];
-  run.state = 'canceled';
+  cancelNativeRun(run);
   run.baseline = undefined;
   clearTimeout(run.expiryTimer);
 }
@@ -444,11 +524,14 @@ function artifactRunCount(): number {
 
 function markArtifactSessionDesynchronized(key: string): void {
   const queue = artifactRuns.get(key) ?? [];
-  for (const run of queue) clearTimeout(run.expiryTimer);
+  for (const run of queue) {
+    clearTimeout(run.expiryTimer);
+    cancelNativeRun(run);
+  }
   artifactRuns.delete(key);
   for (const [token, run] of claimedArtifactRuns) {
     if (artifactRunKey(run.taskId, run.sessionKey) !== key) continue;
-    run.state = 'canceled';
+    cancelNativeRun(run);
     claimedArtifactRuns.delete(token);
   }
   desynchronizedArtifactSessions.add(key);
@@ -485,7 +568,11 @@ function completedMessageKey(taskId: string, messageId: string): string {
 }
 
 function isArtifactRunCanceled(run: ArtifactRunContext): boolean {
-  return run.state === 'canceled';
+  if (run.state === 'canceled') return true;
+  if (!run.nativeFenced) return false;
+  const db = getSqlite(),
+    state = db ? nativeTaskControl(db).get(run.taskId) : undefined;
+  return !state || state.canceled === 1 || state.active_token !== run.token;
 }
 
 function pruneCompletedAssistantMessages(now = Date.now()): void {
@@ -509,11 +596,14 @@ function pruneCompletedAssistantMessages(now = Date.now()): void {
 export function cancelArtifactRunsForSession(sessionKey: string): void {
   for (const [key, queue] of artifactRuns) {
     if (!key.endsWith(`\0${sessionKey}`)) continue;
-    for (const run of queue) clearTimeout(run.expiryTimer);
+    for (const run of queue) {
+      clearTimeout(run.expiryTimer);
+      cancelNativeRun(run);
+    }
     artifactRuns.delete(key);
   }
   for (const run of claimedArtifactRuns.values()) {
-    if (run.sessionKey === sessionKey) run.state = 'canceled';
+    if (run.sessionKey === sessionKey) cancelNativeRun(run);
   }
   for (const key of desynchronizedArtifactSessions) {
     if (key.endsWith(`\0${sessionKey}`)) desynchronizedArtifactSessions.delete(key);
@@ -526,11 +616,14 @@ export function cancelArtifactRunsForSession(sessionKey: string): void {
 export function cancelArtifactRunsForTask(taskId: string): void {
   for (const [key, queue] of artifactRuns) {
     if (!key.startsWith(`${taskId}\0`)) continue;
-    for (const run of queue) clearTimeout(run.expiryTimer);
+    for (const run of queue) {
+      clearTimeout(run.expiryTimer);
+      cancelNativeRun(run);
+    }
     artifactRuns.delete(key);
   }
   for (const run of claimedArtifactRuns.values()) {
-    if (run.taskId === taskId) run.state = 'canceled';
+    if (run.taskId === taskId) cancelNativeRun(run);
   }
   for (const key of desynchronizedArtifactSessions) {
     if (key.startsWith(`${taskId}\0`)) desynchronizedArtifactSessions.delete(key);
@@ -672,6 +765,11 @@ function finalizeAssistantArtifacts(input: {
     const producedArtifactNames = new Set<string>();
     const slideWarnings: SlidegenWarning[] = [];
     let confirmedSlides: ToolSlideReceipt[] = [];
+    const nativeReviews: NativeVisualReview[] = [];
+    let nativeDiagnostics: unknown[] = [];
+    let nativeRegisteredReceipt: string | undefined;
+    let requirePptProof = !!run.nativeControlled;
+    const supersededNativeFiles = new Set<string>();
     let confirmedSlideWorkspace = '';
     const isRunCurrent = () => owner.current() && !isArtifactRunCanceled(run);
     let pipelineFailed = false;
@@ -728,6 +826,166 @@ function finalizeAssistantArtifacts(input: {
           })
         : { status: 'complete', content: input.content };
     if (!owner.current()) return;
+    const agentRoot = await run.agentBaseline;
+    if (!owner.current()) return;
+    const tools = (input.toolCalls ?? []).filter(
+      (tool): tool is ToolCall =>
+        typeof tool === 'object' &&
+        tool !== null &&
+        !Array.isArray(tool) &&
+        'id' in tool &&
+        typeof tool.id === 'string' &&
+        'name' in tool &&
+        typeof tool.name === 'string' &&
+        'startedAt' in tool &&
+        typeof tool.startedAt === 'string' &&
+        'status' in tool &&
+        ['running', 'done', 'error', 'awaitingApproval'].includes(String(tool.status)) &&
+        (!('result' in tool) || tool.result === undefined || typeof tool.result === 'string') &&
+        (!('args' in tool) ||
+          tool.args === undefined ||
+          (tool.args !== null && typeof tool.args === 'object' && !Array.isArray(tool.args))),
+    );
+    const confirmed = agentRoot
+      ? collectToolSlideReceipts({
+          workspacePath: agentRoot.workspacePath,
+          taskId: input.taskId,
+          sessionKey: input.sessionKey,
+          runId: input.runId,
+          allowNative: process.env.ROYIN_NATIVE_PPT_VALIDATION === '1',
+          isNativeParentCurrent: (fileName) => {
+            const parent = getDb()
+              .select({ filePath: artifacts.filePath })
+              .from(artifacts)
+              .where(
+                and(eq(artifacts.taskId, input.taskId), eq(artifacts.root, 'agent'), eq(artifacts.localPath, fileName)),
+              )
+              .get();
+            if (!parent) return false;
+            const expected = resolve(agentRoot.workspacePath, fileName),
+              actual = resolve(parent.filePath);
+            return process.platform === 'win32' ? actual.toLowerCase() === expected.toLowerCase() : actual === expected;
+          },
+          messages: [
+            {
+              taskId: input.taskId,
+              sessionKey: input.sessionKey,
+              runId: input.runId,
+              role: 'assistant',
+              toolCalls: tools,
+            },
+          ],
+        })
+      : { receipts: [], rejected: 0 };
+    const toolProofs = [...confirmed.receipts];
+    const hasNativeProof = confirmed.receipts.some((entry) => entry.receipt.sourceFormat === 'native-template-v5');
+    let currentNativeInput: string | undefined;
+    if (agentRoot && run.nativeFenced && !hasNativeProof && isRunCurrent()) {
+      try {
+        currentNativeInput = nativeInputFromCompletedWrites(agentRoot.workspacePath, tools) ?? undefined;
+      } catch {
+        if (run.nativeControlled) nativeDiagnostics = [{ code: 'native-current-input-unavailable' }];
+      }
+    }
+    // A same-task parent alone does not turn weather or plain chat into PPT work. Actual current-run evidence does.
+    if (run.nativeFenced && (hasNativeProof || currentNativeInput) && isRunCurrent()) {
+      run.nativeControlled = true;
+      run.expectedArtifactKinds = [...new Set([...run.expectedArtifactKinds, 'pptx' as const])];
+    }
+    requirePptProof ||= process.env.ROYIN_NATIVE_PPT_VALIDATION === '1' && hasNativeProof;
+    requirePptProof ||= !!run.nativeControlled;
+    let managedRevision = false;
+    if (run.nativeControlled && run.nativePreviousReceipt && agentRoot && isRunCurrent()) {
+      const candidates = confirmed.receipts.filter((entry) => entry.receipt.sourceFormat === 'native-template-v5');
+      const unlinked = candidates.find((entry) => entry.receipt.previousReceiptFile !== run.nativePreviousReceipt);
+      if (unlinked) {
+        try {
+          if (candidates.length !== 1 || unlinked.receipt.revision !== 0)
+            throw Error('native-revision-parent-mismatch');
+          activity.phase('generating-presentation');
+          const generated = await renderNativePptFile(unlinked.receipt.sourceFile, agentRoot.workspacePath, {
+            enabled: true,
+            templatesRoot: pptxTemplatesRoot(),
+            sourceReceipt: unlinked.receiptFile,
+            previous: run.nativePreviousReceipt,
+            onPage: (p) => activity.phase('generating-presentation', { completed: p.completed, total: p.total }),
+            isCurrent: () => owner.current() && !isArtifactRunCanceled(run),
+          });
+          if (generated.fileCreated && generated.receiptFile && isRunCurrent()) {
+            // ⭐ **父链真的成了才退役 standalone 候选**（2026-10-04 真机事故）：原先在重渲染
+            //    **之前**就把候选从 confirmed 移除并标 superseded ⇒ 一旦重渲染被拒（当时是数字
+            //    守卫把目录序号 07/08 误当业务事实），物理文件还在盘上，却既不算本轮成果也不能
+            //    被 reconcile 收走，界面最后只剩一句「工作区里没有这些文件」。失败必须保留文件
+            //    与诊断：候选留在 confirmed，照常被审查/登记，诊断进自动纠正通道。
+            managedRevision = true;
+            confirmed.receipts = confirmed.receipts.filter((entry) => !candidates.includes(entry));
+            for (const entry of candidates) supersededNativeFiles.add(entry.receipt.fileName);
+            const receipt = readSlideGenerationReceipt(agentRoot.workspacePath, generated.receiptFile);
+            confirmed.receipts.push({
+              receiptFile: generated.receiptFile,
+              receipt,
+              source: readWorkspaceBytes(agentRoot.workspacePath, receipt.sourceFile, 1024 * 1024).toString('utf8'),
+            });
+          } else if (generated.fileCreated && generated.receiptFile) {
+            // 文件已落盘但任务在这一刻不再是最新（被取消/被新轮替换）：保留文件，不退役、不登记。
+            nativeDiagnostics = [{ code: 'native-task-canceled' }];
+          } else nativeDiagnostics = generated.diagnostics ?? [{ code: 'native-revision-failed' }];
+        } catch {
+          nativeDiagnostics = [{ code: 'native-revision-parent-mismatch' }];
+        }
+      }
+    }
+    if (
+      run.nativeControlled &&
+      agentRoot &&
+      isRunCurrent() &&
+      !managedRevision &&
+      !confirmed.receipts.some((entry) => entry.receipt.sourceFormat === 'native-template-v5')
+    ) {
+      try {
+        const source = currentNativeInput;
+        if (source) {
+          activity.phase('generating-presentation');
+          const generated = await renderNativePptFile(source, agentRoot.workspacePath, {
+            enabled: true,
+            templatesRoot: pptxTemplatesRoot(),
+            onPage: (p) => activity.phase('generating-presentation', { completed: p.completed, total: p.total }),
+            previous: run.nativePreviousReceipt,
+            isCurrent: () => owner.current() && !isArtifactRunCanceled(run),
+          });
+          if (generated.fileCreated && generated.receiptFile) {
+            const receipt = readSlideGenerationReceipt(agentRoot.workspacePath, generated.receiptFile);
+            confirmed.receipts.push({
+              receiptFile: generated.receiptFile,
+              receipt,
+              source: readWorkspaceBytes(agentRoot.workspacePath, receipt.sourceFile, 1024 * 1024).toString('utf8'),
+            });
+          } else nativeDiagnostics = generated.diagnostics ?? [{ code: 'native-generation-failed' }];
+        } else nativeDiagnostics = [{ code: 'native-current-write-required' }];
+      } catch {
+        nativeDiagnostics = [{ code: 'native-current-input-unavailable' }];
+      }
+    }
+    for (const entry of confirmed.receipts.filter((entry) => entry.receipt.sourceFormat === 'native-template-v5')) {
+      if (!agentRoot || !owner.current() || isArtifactRunCanceled(run)) break;
+      const current = () => owner.current() && !isArtifactRunCanceled(run);
+      activity.phase('reconciling-artifacts');
+      const review = await reviewNativePpt(
+        agentRoot.workspacePath,
+        entry.receiptFile,
+        nativeReviewPorts(
+          agentRoot.workspacePath,
+          { taskId: input.taskId, sessionKey: input.sessionKey, runId: input.runId },
+          current,
+        ),
+        current,
+      );
+      nativeReviews.push(review);
+      // 追加而不是覆盖：受管修订失败时那条诊断（如 native-revision-data-changed）必须活到
+      // 自动纠正通道，不能被本轮的审查问题顶掉 —— 否则模型永远收不到真正的失败原因。
+      if (review.status === 'needs-revision')
+        nativeDiagnostics = [...nativeDiagnostics, ...(review.pages?.filter((p) => p.issues.length) ?? [])];
+    }
     try {
       // ⭐ 文档生成：助手在回复里给出 ```` ```docgen ```` 块（内容 schema 见
       //    `main/docgen/request.ts`），这里渲染成真 pptx / docx / xlsx 并**走现成的产物通道**
@@ -742,6 +1000,10 @@ function finalizeAssistantArtifacts(input: {
               messageId: input.messageId,
               content: structured.content,
               templatesRoot: pptxTemplatesRoot(),
+              ...(run.nativeControlled ||
+              confirmed.receipts.some((entry) => entry.receipt.sourceFormat === 'native-template-v5')
+                ? { skipPptx: true }
+                : {}),
               onActivity: activity.phase,
             })
           : {
@@ -827,49 +1089,23 @@ function finalizeAssistantArtifacts(input: {
       //
       // 「合格文件」= 助手工作区里、文件名含 `.slidegen`、且相对**这一轮开始那一刻**是新的
       // （新增 / size 变 / mtime 变，同名覆盖也算）。判据与理由见 `slidegen/deck-file.ts`。
-      const agentRoot = await run.agentBaseline;
       if (!owner.current()) return;
-      const tools = (input.toolCalls ?? []).filter(
-        (tool): tool is ToolCall =>
-          typeof tool === 'object' &&
-          tool !== null &&
-          !Array.isArray(tool) &&
-          'id' in tool &&
-          typeof tool.id === 'string' &&
-          'name' in tool &&
-          typeof tool.name === 'string' &&
-          'startedAt' in tool &&
-          typeof tool.startedAt === 'string' &&
-          'status' in tool &&
-          ['running', 'done', 'error', 'awaitingApproval'].includes(String(tool.status)) &&
-          (!('result' in tool) || tool.result === undefined || typeof tool.result === 'string') &&
-          (!('args' in tool) ||
-            tool.args === undefined ||
-            (tool.args !== null && typeof tool.args === 'object' && !Array.isArray(tool.args))),
-      );
-      const confirmed = agentRoot
-        ? collectToolSlideReceipts({
-            workspacePath: agentRoot.workspacePath,
-            taskId: input.taskId,
-            sessionKey: input.sessionKey,
-            runId: input.runId,
-            messages: [
-              {
-                taskId: input.taskId,
-                sessionKey: input.sessionKey,
-                runId: input.runId,
-                role: 'assistant',
-                toolCalls: tools,
-              },
-            ],
-          })
-        : { receipts: [], rejected: 0 };
       confirmedSlides = confirmed.receipts;
       confirmedSlideWorkspace = agentRoot?.workspacePath ?? '';
       const deckFiles = agentRoot?.deckBaseline
         ? changedDeckFiles(agentRoot.deckBaseline, agentRoot.workspacePath)
         : [];
-      const sourceFiles = [...new Set([...deckFiles, ...confirmed.receipts.map((entry) => entry.receipt.sourceFile)])];
+      const sourceFiles =
+        run.nativeControlled || confirmed.receipts.some((entry) => entry.receipt.sourceFormat === 'native-template-v5')
+          ? []
+          : [
+              ...new Set([
+                ...deckFiles,
+                ...confirmed.receipts
+                  .filter((entry) => entry.receipt.sourceFormat !== 'native-template-v5')
+                  .map((entry) => entry.receipt.sourceFile),
+              ]),
+            ];
       let slideContent: string | null = null;
       let deckFileFailures: SlidegenFailure[] = [];
       if (agentRoot && sourceFiles.length > 0) {
@@ -904,10 +1140,16 @@ function finalizeAssistantArtifacts(input: {
             ...(structured.status === 'complete' ? {} : { reason: structured.reason }),
           },
         });
-        if (structured.status === 'complete') slideContent = structured.content;
+        if (structured.status === 'complete')
+          slideContent =
+            run.nativeControlled ||
+            confirmed.receipts.some((entry) => entry.receipt.sourceFormat === 'native-template-v5')
+              ? ''
+              : structured.content;
       }
 
-      if (confirmed.rejected > 0 || hasUnconfirmedSlideToolOutput(tools, confirmed.receipts)) {
+      if (confirmed.rejected > 0 || hasUnconfirmedSlideToolOutput(tools, [...toolProofs, ...confirmed.receipts])) {
+        requirePptProof = process.env.ROYIN_NATIVE_PPT_VALIDATION === '1';
         const failure: SlidegenFailure = { code: 'slidegen-output-unconfirmed' };
         deliveryFailure.slideFailures = [failure];
         for (const win of BrowserWindow.getAllWindows()) win.webContents.send('slidegen:failed', [failure]);
@@ -976,7 +1218,27 @@ function finalizeAssistantArtifacts(input: {
           taskId: input.taskId,
           messageId: input.messageId,
           baseline,
-          isCandidateCurrent: isRunCurrent,
+          isCandidateCurrent: (file) => {
+            if (!isRunCurrent()) return false;
+            if (process.env.ROYIN_NATIVE_PPT_VALIDATION === '1' && file.endsWith('.native-ppt.json')) return false;
+            if (!requirePptProof || !/\.pptx$/i.test(file)) return true;
+            // A copied file with the same name/hash has no authority from an agent-root receipt.
+            const candidate = resolve(input.workspacePath, input.taskId, file);
+            return confirmedSlides.some((entry) => {
+              try {
+                const actual = realpathSync.native(candidate);
+                const proven = realpathSync.native(resolve(confirmedSlideWorkspace, entry.receipt.fileName));
+                const samePath =
+                  process.platform === 'win32' ? actual.toLowerCase() === proven.toLowerCase() : actual === proven;
+                return (
+                  samePath &&
+                  isToolSlideOutputCurrent(confirmedSlideWorkspace, confirmedSlides, entry.receipt.fileName, true)
+                );
+              } catch {
+                return false;
+              }
+            });
+          },
         });
         if (!owner.current()) return;
         notifyReconciledArtifacts(result);
@@ -1008,12 +1270,16 @@ function finalizeAssistantArtifacts(input: {
             rootKind: 'agent',
             isCandidateCurrent: (file) => {
               if (!isRunCurrent()) return false;
-              if (
-                agentRoot.workspacePath === confirmedSlideWorkspace &&
-                !isToolSlideOutputCurrent(agentRoot.workspacePath, confirmedSlides, file)
-              ) {
-                staleSlideNames.add(file);
-                return false;
+              if (supersededNativeFiles.has(file)) return false;
+              if (process.env.ROYIN_NATIVE_PPT_VALIDATION === '1' && file.endsWith('.native-ppt.json')) return false;
+              if (agentRoot.workspacePath === confirmedSlideWorkspace) {
+                const current = requirePptProof
+                  ? isToolSlideOutputCurrent(agentRoot.workspacePath, confirmedSlides, file, true)
+                  : isToolSlideOutputCurrent(agentRoot.workspacePath, confirmedSlides, file);
+                if (!current) {
+                  staleSlideNames.add(file);
+                  return false;
+                }
               }
               return true;
             },
@@ -1073,6 +1339,25 @@ function finalizeAssistantArtifacts(input: {
             },
           });
           notifyReconciledArtifacts(agentResult);
+          if (run.nativeControlled) {
+            const latest = confirmedSlides
+              .filter((entry) => entry.receipt.sourceFormat === 'native-template-v5')
+              .at(-1);
+            const registered =
+              latest &&
+              [...agentResult.saved, ...agentResult.existing].some((a) => a.localPath === latest.receipt.fileName);
+            const db = getSqlite();
+            if (db && latest && registered && !staleSlideNames.has(latest.receipt.fileName)) {
+              nativeTaskControl(db).remember(input.taskId, run.token, latest.receiptFile);
+              const current = nativeTaskControl(db).get(input.taskId);
+              if (
+                current?.active_token === run.token &&
+                !current.canceled &&
+                current.last_receipt === latest.receiptFile
+              )
+                nativeRegisteredReceipt = latest.receiptFile;
+            }
+          }
         }
       } catch (error) {
         if (!owner.current()) return;
@@ -1097,26 +1382,29 @@ function finalizeAssistantArtifacts(input: {
         //    `run.createdAt` 是这一轮开始（= 快照基线）的时刻，本轮写的文件必然比它新。
         const claimResult = checkClaimedFiles(input.content, roots, { sinceMs: run.createdAt });
         const missingExpected = missingExpectedArtifactKinds(run.expectedArtifactKinds, [...producedArtifactNames]);
-        const missing = [
-          ...new Set([
-            ...claimResult.missing.map((file) => file.name),
-            ...missingExpected.map((kind) => EXPECTED_ARTIFACT_LABELS[kind]),
-          ]),
-        ];
-        if (missing.length > 0) {
+        // ⭐ 两种「缺」不混成一句话（2026-10-04 真机）：claimResult.missing 是**物理上找不到**
+        //    声称的文件；missingExpected 是**成果列表里没登记到**该格式 —— 文件可能就在盘上，
+        //    只是版本关联/登记没走完。旧代码把两者拼成一个 missing 列表，于是界面把后者也说成
+        //    「工作区里没有这些文件」（当时两份改稿其实都在盘上）。分开报，守卫强度不变：
+        //    freshness、版本证明、注册要求全部照旧。
+        const missing = [...new Set(claimResult.missing.map((file) => file.name))];
+        const missingKinds = missingExpected.map((kind) => EXPECTED_ARTIFACT_LABELS[kind]);
+        if (missing.length > 0 || missingKinds.length > 0) {
           getDebugLogger().warn({
             domain: 'artifact',
             event: 'artifact.claim-guard.missing',
             taskId: input.taskId,
             data: {
               missing,
+              missingKinds,
               present: claimResult.present.map((f) => f.name),
               expectedKinds: run.expectedArtifactKinds,
               missingExpectedKinds: missingExpected,
               produced: [...producedArtifactNames],
             },
           });
-          deliveryFailure.missing = missing;
+          if (missing.length > 0) deliveryFailure.missing = missing;
+          if (missingKinds.length > 0) deliveryFailure.missingKinds = missingKinds;
         }
       } catch (error) {
         if (!owner.current()) return;
@@ -1125,7 +1413,6 @@ function finalizeAssistantArtifacts(input: {
       }
     } finally {
       if (owner.current()) {
-        claimedArtifactRuns.delete(run.token);
         const requiredMediaSources = completedAssistantMessages.get(messageKey)?.mediaRetryRequiredSources;
         if (completedAssistantMessages.get(messageKey)?.mediaRetrySucceeded) deliveryFailure.mediaFailures = undefined;
         completedAssistantMessages.set(messageKey, {
@@ -1140,6 +1427,7 @@ function finalizeAssistantArtifacts(input: {
         const failed = Boolean(
           pipelineFailed ||
           deliveryFailure.missing.length ||
+          deliveryFailure.missingKinds?.length ||
           deliveryFailure.slideFailures?.length ||
           deliveryFailure.docFailures?.length ||
           deliveryFailure.htmlFailures?.length ||
@@ -1147,39 +1435,100 @@ function finalizeAssistantArtifacts(input: {
         );
         const canceled = isArtifactRunCanceled(run);
         const hasWarnings = !canceled && slideWarnings.length > 0;
+        const nativeNeedsReview =
+          !canceled &&
+          confirmedSlides.some((entry) => entry.receipt.sourceFormat === 'native-template-v5') &&
+          (nativeReviews.length === 0 || nativeReviews.some((review) => review.status !== 'passed'));
         const settlement: ArtifactDeliverySettled = {
           taskId: input.taskId,
           sessionKey: input.sessionKey,
           messageId: input.messageId,
-          status: canceled ? 'canceled' : failed ? 'failed' : hasWarnings ? 'needs-review' : 'succeeded',
+          status: canceled
+            ? 'canceled'
+            : failed
+              ? 'failed'
+              : hasWarnings || nativeNeedsReview
+                ? 'needs-review'
+                : 'succeeded',
           ...(hasWarnings ? { slideWarnings } : {}),
         };
         const nonMediaFailed = Boolean(
           pipelineFailed ||
           deliveryFailure.missing.length ||
+          deliveryFailure.missingKinds?.length ||
           deliveryFailure.slideFailures?.length ||
           deliveryFailure.docFailures?.length ||
           deliveryFailure.htmlFailures?.length,
         );
-        activity.finish(settlement.status);
-        completedAssistantMessages.get(messageKey)!.mediaRetrySettlement = {
-          ...settlement,
-          status: canceled ? 'canceled' : nonMediaFailed ? 'failed' : hasWarnings ? 'needs-review' : 'succeeded',
-        };
-        for (const win of BrowserWindow.getAllWindows()) {
-          if (hasWarnings) win.webContents.send('slidegen:warned', slideWarnings);
-          win.webContents.send('artifact:delivery-settled', settlement);
+        let correctionToken: string | undefined;
+        if (run.nativeControlled && !canceled && nativeDiagnostics.length && input.gatewayId) {
+          try {
+            const { requireNativeTestBudget } = await import('../docgen/native-dispatch-guard.js');
+            await requireNativeTestBudget();
+            if (owner.current() && !isArtifactRunCanceled(run)) {
+              const gw = getGatewayClient(input.gatewayId);
+              if (gw?.isConnected) {
+                const token = beginArtifactRun(input.workspacePath, input.taskId, input.sessionKey, {
+                  gatewayId: input.gatewayId,
+                  userContent: 'Revise the PPT',
+                  nativeAutomaticFrom: run.token,
+                  nativeParentReceipt: nativeRegisteredReceipt ?? run.nativePreviousReceipt ?? null,
+                });
+                correctionToken = token;
+                const state = getSqlite();
+                const current = state ? nativeTaskControl(state).get(input.taskId) : undefined;
+                if (owner.current() && current && !current.canceled && current.active_token === token) {
+                  const reply = await gw.sendChatMessage(
+                    input.sessionKey,
+                    'Controlled native PPT correction. Read presentation-deck-v2/CONTROLLED-VALIDATION.md. Fix only the reported pages or capacity errors; preserve supplied facts and chart data. Write the source and run the native helper. Diagnostics: ' +
+                      JSON.stringify(nativeDiagnostics),
+                  );
+                  if (typeof reply?.runId === 'string')
+                    bindArtifactRun(input.taskId, input.sessionKey, token, reply.runId);
+                } else cancelArtifactRun(input.taskId, input.sessionKey, token);
+              }
+            }
+          } catch {
+            if (correctionToken) cancelArtifactRun(input.taskId, input.sessionKey, correctionToken);
+            // Keep current files and pending quality status when budget, stop or correction limit blocks continuation.
+          }
         }
-        if (
-          !isArtifactRunCanceled(run) &&
-          (deliveryFailure.missing.length ||
-            deliveryFailure.slideFailures?.length ||
-            deliveryFailure.docFailures?.length ||
-            deliveryFailure.htmlFailures?.length ||
-            deliveryFailure.mediaFailures?.length)
-        ) {
+        if (owner.current()) {
+          const canceledAfterContinuation =
+            run.state === 'canceled' || (!correctionToken && isArtifactRunCanceled(run));
+          if (canceledAfterContinuation) {
+            settlement.status = 'canceled';
+            delete settlement.slideWarnings;
+          }
+          activity.finish(settlement.status);
+          const completedMessage = completedAssistantMessages.get(messageKey);
+          if (completedMessage)
+            completedMessage.mediaRetrySettlement = {
+              ...settlement,
+              status: canceledAfterContinuation
+                ? 'canceled'
+                : nonMediaFailed
+                  ? 'failed'
+                  : hasWarnings || nativeNeedsReview
+                    ? 'needs-review'
+                    : 'succeeded',
+            };
           for (const win of BrowserWindow.getAllWindows()) {
-            win.webContents.send('artifact:claim-violation', deliveryFailure);
+            if (!canceledAfterContinuation && hasWarnings) win.webContents.send('slidegen:warned', slideWarnings);
+            win.webContents.send('artifact:delivery-settled', settlement);
+          }
+          if (
+            !isArtifactRunCanceled(run) &&
+            (deliveryFailure.missing.length ||
+              deliveryFailure.missingKinds?.length ||
+              deliveryFailure.slideFailures?.length ||
+              deliveryFailure.docFailures?.length ||
+              deliveryFailure.htmlFailures?.length ||
+              deliveryFailure.mediaFailures?.length)
+          ) {
+            for (const win of BrowserWindow.getAllWindows()) {
+              win.webContents.send('artifact:claim-violation', deliveryFailure);
+            }
           }
         }
       }
@@ -1189,7 +1538,10 @@ function finalizeAssistantArtifacts(input: {
       activity.finish('failed');
       console.error('[artifact] delivery pipeline failed:', error);
     })
-    .finally(() => activity.finish('failed'));
+    .finally(() => {
+      claimedArtifactRuns.delete(run.token);
+      activity.finish('failed');
+    });
 }
 
 export function registerDataHandlers(): void {
@@ -1584,6 +1936,7 @@ export function registerDataHandlers(): void {
         db.delete(messages).where(eq(messages.taskId, params.id)).run();
         db.delete(tasks).where(eq(tasks.id, params.id)).run();
       });
+      forgetTaskDeliveryActivities(params.id);
       cancelArtifactRunsForTask(params.id);
       return { ok: true };
     } catch (err) {

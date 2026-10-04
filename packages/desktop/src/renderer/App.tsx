@@ -122,6 +122,9 @@ export default function App() {
   const createTask = useTaskStore((s) => s.createTask);
   const setActiveTask = useTaskStore((s) => s.setActiveTask);
   const workspaceEpoch = useTaskStore((s) => s.workspaceEpoch);
+  const onboardingGeneration = authGeneration.current;
+  const currentOnboardingOwner = useRef({ authState, userId: onboardingAccount?.userId });
+  currentOnboardingOwner.current = { authState, userId: onboardingAccount?.userId };
 
   const leftNavCollapsed = useUiStore((s) => s.leftNavCollapsed);
   const toggleLeftNavCollapsed = useUiStore((s) => s.toggleLeftNavCollapsed);
@@ -431,11 +434,24 @@ export default function App() {
     setPreparationRetry((value) => value + 1);
     await startupReadiness.retry();
   };
-  const handleOnboardingComplete = useCallback((profile: OnboardingProfile) => {
-    saveOnboardingProfile(profile);
-    setOnboardingProfile(profile);
-    setEditingOnboardingProfile(false);
-  }, []);
+  const handleOnboardingComplete = useCallback(
+    (profile: OnboardingProfile) => {
+      if (
+        authState !== 'ok' ||
+        currentOnboardingOwner.current.authState !== 'ok' ||
+        !onboardingAccount ||
+        currentOnboardingOwner.current.userId !== onboardingAccount.userId ||
+        profile.userId !== onboardingAccount.userId ||
+        onboardingGeneration !== authGeneration.current ||
+        useTaskStore.getState().workspaceEpoch !== workspaceEpoch
+      )
+        return;
+      saveOnboardingProfile(profile);
+      setOnboardingProfile(profile);
+      setEditingOnboardingProfile(false);
+    },
+    [authState, onboardingAccount, onboardingGeneration, workspaceEpoch],
+  );
 
   useEffect(() => {
     window.clawwork.setWindowButtonVisibility(!leftNavCollapsed);
@@ -516,6 +532,7 @@ export default function App() {
     return (
       <TooltipProvider>
         <Onboarding
+          key={JSON.stringify([onboardingAccount.userId, onboardingGeneration, workspaceEpoch])}
           userId={onboardingAccount.userId}
           defaultNickname={onboardingAccount.nickname}
           onComplete={handleOnboardingComplete}
@@ -529,6 +546,7 @@ export default function App() {
     return (
       <TooltipProvider>
         <Onboarding
+          key={JSON.stringify([onboardingAccount.userId, onboardingGeneration, workspaceEpoch])}
           userId={onboardingAccount.userId}
           defaultNickname={onboardingAccount.nickname}
           mode="edit"

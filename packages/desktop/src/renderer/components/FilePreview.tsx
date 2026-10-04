@@ -9,7 +9,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { motion as motionPresets } from '@/styles/design-tokens';
 import { cn, formatFileSize } from '@/lib/utils';
 import { copyTextToClipboard } from '@/lib/clipboard';
-import { getArtifactLabel } from '@/lib/artifact-labels';
+import { getArtifactDisplayName } from '@/lib/artifact-labels';
 import MarkdownContent from './MarkdownContent';
 
 interface FilePreviewProps {
@@ -105,7 +105,8 @@ export default function FilePreview({ artifact, onNavigateToTask, onClose }: Fil
   const [tooLarge, setTooLarge] = useState<number | null>(null);
 
   const ext = extFromName(artifact.name);
-  const title = getArtifactLabel(artifact, t);
+  // 预览标题（及其 alt）显示**注册的文件名**，不再显示类型名（2026-10-04 真机缺陷）。
+  const title = getArtifactDisplayName(artifact, t);
   const isCode =
     encoding === 'utf-8' && !isMarkdown(artifact.name) && !isImage(artifact.mimeType) && !isVideo(artifact.mimeType);
 

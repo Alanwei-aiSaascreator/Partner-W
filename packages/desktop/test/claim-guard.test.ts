@@ -94,6 +94,24 @@ describe('extractClaimedFileNames：从回复里抠产物文件名', () => {
     }
   });
 
+  /**
+   * ⭐ 2026-10-04 真机误报：模型解释"工作区被清理了，修订版文件 `f08787c6.pptx`
+   * 及来源 JSON **已不在**。我需从零重新生成"——同一行里有「重新生成」这个声称标记
+   * （按"行"判据），于是**说明缺失**的提及被当成声称，守卫反过来冤枉模型，
+   * 真机弹「说好的文件不在」。判据收窄到**同一句**里的缺失措辞。
+   */
+  it('⭐ 说明文件"已不在"的句子不算声称（真机误报原句）', () => {
+    const line =
+      '工作区在轮次之间被清理了，修订版文件 `f08787c6.pptx` 及来源 JSON 已不在。我需从零重新生成——先恢复原文和模板数据';
+    expect(extractClaimedFileNames(line)).toHaveLength(0);
+  });
+
+  it('负对照：同一行里缺席说明之外的**真声称**仍要抓到', () => {
+    const names = extractClaimedFileNames('旧的 f08787c6.pptx 已不在。已生成 report.pptx 请查收').map((n) => n.name);
+    expect(names, '缺席说明里的名字不算声称').not.toContain('f08787c6.pptx');
+    expect(names, '真声称不许被缺席判据压掉').toContain('report.pptx');
+  });
+
   it('负对照：**真的声称**仍然要抓到（别把守卫修没了）', () => {
     expect(extractClaimedFileNames('文件已经存成 report.pptx 了').map((n) => n.name)).toContain('report.pptx');
     expect(extractClaimedFileNames('已为你生成 `Nova产品发布会.slidegen`，共 25 页').map((n) => n.name)).toContain(

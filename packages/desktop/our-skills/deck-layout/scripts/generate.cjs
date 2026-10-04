@@ -52,14 +52,24 @@ function failure(status, code, fileCreated = false) {
   };
 }
 
-function renderChild(runtime, file, workspace, env, timeout, sourceSha256) {
+function renderChild(runtime, file, workspace, env, timeout, sourceSha256, previous) {
   return new Promise((resolve) => {
-    const child = spawn(runtime.executable, [...runtime.args, '--royin-render-slidegen', file], {
-      cwd: workspace,
-      env,
-      windowsHide: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
+    const native = env.ROYIN_NATIVE_PPT_VALIDATION === '1' && file.endsWith('.native-ppt.json');
+    const child = spawn(
+      runtime.executable,
+      [
+        ...runtime.args,
+        native ? '--royin-render-native-ppt' : '--royin-render-slidegen',
+        file,
+        ...(previous ? ['--previous', previous] : []),
+      ],
+      {
+        cwd: workspace,
+        env,
+        windowsHide: true,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
+    );
     let pending = '',
       reportText = '',
       bytes = 0,
@@ -143,7 +153,11 @@ function renderChild(runtime, file, workspace, env, timeout, sourceSha256) {
 let profile, identity, temporaryRoot;
 async function run() {
   const args = process.argv.slice(2);
-  if (args.length !== 1 || args[0].startsWith('--')) return failure('source-invalid', 'source-argument-invalid');
+  const native = process.env.ROYIN_NATIVE_PPT_VALIDATION === '1' && args[0]?.endsWith('.native-ppt.json');
+  if ((args.length !== 1 && !(native && args.length === 3 && args[1] === '--previous')) || args[0].startsWith('--'))
+    return failure('source-invalid', 'source-argument-invalid');
+  if (process.env.ROYIN_NATIVE_PPT_VALIDATION === '1' && !native)
+    return failure('source-invalid', 'native-route-required');
   let runtime;
   try {
     runtime = JSON.parse(fs.readFileSync(path.join(__dirname, 'generate-runtime.json'), 'utf8'));
@@ -204,7 +218,7 @@ async function run() {
     Number.isFinite(requestedTimeout) && requestedTimeout >= 1000 && requestedTimeout <= 150_000
       ? requestedTimeout
       : 150_000;
-  const result = await renderChild(runtime, args[0], workspace, env, timeout, sourceSha256);
+  const result = await renderChild(runtime, args[0], workspace, env, timeout, sourceSha256, args[2]);
   if (result.error)
     return failure(
       'output-unconfirmed',

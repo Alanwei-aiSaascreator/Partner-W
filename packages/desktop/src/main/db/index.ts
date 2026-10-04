@@ -70,6 +70,18 @@ CREATE TABLE IF NOT EXISTS team_meetings (
 CREATE UNIQUE INDEX IF NOT EXISTS task_context_sources_task_path
 ON task_context_sources(task_id, absolute_path);
 
+CREATE TABLE IF NOT EXISTS artifact_delivery_activities (
+  operation_id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  session_key TEXT NOT NULL,
+  owner_user_id TEXT,
+  owner_org_id TEXT,
+  owner_license_id TEXT,
+  ended_at INTEGER NOT NULL,
+  record_json TEXT NOT NULL,
+  artifact_refs_json TEXT NOT NULL DEFAULT '[]'
+);
+
 CREATE TABLE IF NOT EXISTS messages (
   id TEXT PRIMARY KEY,
   task_id TEXT NOT NULL REFERENCES tasks(id),

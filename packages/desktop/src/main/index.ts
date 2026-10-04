@@ -156,6 +156,7 @@ function createWindow(): BrowserWindow {
     minWidth: 960,
     minHeight: 600,
     show: false,
+    icon: is.dev ? join(__dirname, '../../build/icon.png') : join(process.resourcesPath, 'icon.png'),
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 16, y: 16 },
     backgroundColor: (() => {
@@ -261,7 +262,10 @@ const portableAppData = applyPortableAppData({
 
 continueAfterPortableAppData(
   portableAppData,
-  { notifyFailure: (copy) => dialog.showErrorBox(copy.title, copy.content), exit: (code) => app.exit(code) },
+  {
+    notifyFailure: (copy) => dialog.showErrorBox(copy.title, copy.content),
+    exit: (code) => app.exit(code),
+  },
   () => {
     const runtimeCacheUserDataDir = runtimeCacheScopeDir({
       localUserDataDir,
@@ -353,7 +357,9 @@ continueAfterPortableAppData(
               },
             });
           }
-          electronApp.setAppUserModelId('com.mofangluopan.app');
+          electronApp.setAppUserModelId(
+            portableAppData.reason ? 'com.mofangluopan.app.portable' : 'com.mofangluopan.app',
+          );
 
           registerWsHandlers();
           registerArtifactHandlers();

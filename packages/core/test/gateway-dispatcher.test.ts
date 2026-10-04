@@ -1668,6 +1668,127 @@ describe('agent lifecycle error buffer', () => {
   });
 });
 
+describe('catalog refresh without dispatcher reset', () => {
+  async function connectedHarness() {
+    vi.useFakeTimers();
+    const h = createHarness();
+    h.deps.hydrateFromLocal = vi.fn(async () => {});
+    h.deps.gateway.listModels = vi.fn().mockResolvedValue({
+      ok: true,
+      result: { models: [{ id: 'cli-model', provider: 'codex-cli' }] },
+    });
+    h.dispatcher.startGatewayStatus();
+    h.emitStatus({ gatewayId: 'gw-1', connected: true });
+    await vi.advanceTimersByTimeAsync(0);
+    vi.mocked(h.deps.setModelCatalogForGateway).mockClear();
+    return h;
+  }
+
+  it('replaces a CLI-only catalog after relay ready using the existing transport and owner', async () => {
+    const h = await connectedHarness();
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(h.deps.gateway.listModels).toHaveBeenCalledTimes(1);
+    const models = [{ id: 'deepseek-v4-flash', provider: 'clawrouter' }];
+    h.deps.gateway.listModels = vi.fn().mockResolvedValue({ ok: true, result: { models } });
+    await h.dispatcher.refreshCatalogsForGateway('gw-1', { isCurrent: () => true });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.deps.gateway.listModels).toHaveBeenCalledWith('gw-1', 'main');
+    expect(h.deps.setModelCatalogForGateway).toHaveBeenCalledWith('gw-1', models);
+    expect(h.deps.hydrateFromLocal).not.toHaveBeenCalled();
+    expect(h.deps.setGatewayStatusByGateway).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not issue catalog RPCs when the caller scope is already invalid', async () => {
+    const h = await connectedHarness();
+    h.deps.gateway.listAgents = vi.fn();
+    await h.dispatcher.refreshCatalogsForGateway('gw-1', { isCurrent: () => false });
+    expect(h.deps.gateway.listAgents).not.toHaveBeenCalled();
+    expect(h.deps.setModelCatalogForGateway).not.toHaveBeenCalled();
+  });
+
+  it('discards a delayed agent response after the caller scope changes', async () => {
+    const h = await connectedHarness();
+    let current = true;
+    let finish = (_response: { ok: boolean; result: { agents: { id: string }[]; defaultId: string } }) => {};
+    h.deps.gateway.listAgents = vi.fn(() => new Promise<Parameters<typeof finish>[0]>((resolve) => (finish = resolve)));
+    vi.mocked(h.deps.setAgentCatalogForGateway).mockClear();
+    vi.mocked(h.deps.gateway.listModels).mockClear();
+    const refresh = h.dispatcher.refreshCatalogsForGateway('gw-1', { isCurrent: () => current });
+    current = false;
+    finish({ ok: true, result: { agents: [{ id: 'old-owner' }], defaultId: 'old-owner' } });
+    await refresh;
+    expect(h.deps.setAgentCatalogForGateway).not.toHaveBeenCalled();
+    expect(h.deps.gateway.listModels).not.toHaveBeenCalled();
+  });
+
+  it.each(['scope', 'disconnect', 'superseded'] as const)(
+    'discards delayed model output after %s',
+    async (boundary) => {
+      const h = await connectedHarness();
+      let current = true;
+      let finish = (_response: { ok: boolean; result: { models: { id: string }[] } }) => {};
+      h.deps.gateway.listModels = vi.fn(
+        () => new Promise<Parameters<typeof finish>[0]>((resolve) => (finish = resolve)),
+      );
+      await h.dispatcher.refreshCatalogsForGateway('gw-1', { isCurrent: () => current });
+      if (boundary === 'scope') current = false;
+      if (boundary === 'disconnect') h.emitStatus({ gatewayId: 'gw-1', connected: false });
+      if (boundary === 'superseded') {
+        h.deps.gateway.listModels = vi.fn().mockResolvedValue({ ok: true, result: { models: [{ id: 'new' }] } });
+        await h.dispatcher.refreshCatalogsForGateway('gw-1', { isCurrent: () => true });
+      }
+      finish({ ok: true, result: { models: [{ id: 'old' }] } });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(h.deps.setModelCatalogForGateway).not.toHaveBeenCalledWith('gw-1', [{ id: 'old' }]);
+    },
+  );
+
+  it('does not continue empty-catalog retries after scope invalidation', async () => {
+    const h = await connectedHarness();
+    let current = true;
+    h.deps.gateway.listModels = vi.fn().mockResolvedValue({ ok: true, result: { models: [] } });
+    await h.dispatcher.refreshCatalogsForGateway('gw-1', { isCurrent: () => current });
+    await vi.advanceTimersByTimeAsync(0);
+    current = false;
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(h.deps.gateway.listModels).toHaveBeenCalledTimes(1);
+    expect(h.deps.setModelCatalogForGateway).not.toHaveBeenCalled();
+  });
+
+  it('retains the existing finite empty-catalog retry budget', async () => {
+    const h = await connectedHarness();
+    h.deps.gateway.listModels = vi.fn().mockResolvedValue({ ok: true, result: { models: [] } });
+    await h.dispatcher.refreshCatalogsForGateway('gw-1', { isCurrent: () => true });
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(h.deps.gateway.listModels).toHaveBeenCalledTimes(7);
+    expect(h.deps.setModelCatalogForGateway).toHaveBeenLastCalledWith('gw-1', []);
+  });
+
+  it('retains a pending dispatch and rejects foreign run frames after catalog refresh', async () => {
+    const h = await connectedHarness();
+    const ticket = h.dispatcher.beginDispatch('gw-1', TASK.sessionKey);
+    h.emit('chat', { sessionKey: TASK.sessionKey, runId: 'run-current', state: 'delta', deltaText: 'buffered' });
+    expect(h.messageStore.appendStreamDelta).not.toHaveBeenCalled();
+    await h.dispatcher.refreshCatalogsForGateway('gw-1', { isCurrent: () => true });
+    h.dispatcher.settleDispatch(ticket, { sessionKey: TASK.sessionKey, runId: 'run-current' });
+    expect(h.messageStore.appendStreamDelta).toHaveBeenCalledWith(TASK.sessionKey, 'buffered');
+    vi.mocked(h.messageStore.appendStreamDelta).mockClear();
+    h.emit('chat', { sessionKey: TASK.sessionKey, runId: 'run-foreign', state: 'delta', deltaText: 'wrong' });
+    expect(h.messageStore.appendStreamDelta).not.toHaveBeenCalled();
+  });
+
+  it('retains user stop markers and closed streams across catalog refresh', async () => {
+    const h = await connectedHarness();
+    h.dispatcher.markAbortedByUser(TASK.id);
+    await h.dispatcher.refreshCatalogsForGateway('gw-1', { isCurrent: () => true });
+    h.emit('chat', { sessionKey: TASK.sessionKey, state: 'aborted' });
+    expect(h.systemMessages).toHaveLength(0);
+    await h.dispatcher.refreshCatalogsForGateway('gw-1', { isCurrent: () => true });
+    h.emit('chat', { sessionKey: TASK.sessionKey, state: 'delta', deltaText: 'late' });
+    expect(h.messageStore.appendStreamDelta).not.toHaveBeenCalled();
+  });
+});
+
 describe('catalog ownership', () => {
   function connect(catalog: { defaultId?: string; agents: Array<{ id: string }> }) {
     const h = createHarness();

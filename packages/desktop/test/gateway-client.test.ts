@@ -2,6 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MAX_RECONNECT_ATTEMPTS, RECONNECT_DELAY_MS } from '@clawwork/shared';
 import { sendToWindow } from '../src/main/ws/window-utils.js';
 import { getDebugLogger } from '../src/main/debug/index.js';
+import {
+  getRuntimeBootstrapStatus,
+  publishRuntimeBootstrapStatus,
+  resetRuntimeBootstrapStatus,
+} from '../src/main/runtime/bootstrap-status.js';
 
 const websocketMock = vi.hoisted(() => {
   type Handler = (...args: unknown[]) => void;
@@ -75,6 +80,10 @@ vi.mock('../src/main/debug/index.js', () => ({
 vi.mock('../src/main/ws/tls-trust.js', () => ({
   ensureGatewayWindowsSystemTrust: vi.fn(),
 }));
+
+/** `/startupz` 复核：晚就绪收敛只允许走这一条探测（不 spawn、不发模型调用）。 */
+const probeMock = vi.hoisted(() => vi.fn());
+vi.mock('../src/main/runtime/gateway-process.js', () => ({ probeStartupz: probeMock }));
 
 describe('GatewayClient connection lifecycle', () => {
   const clients: Array<{ destroy: () => void }> = [];
@@ -1472,5 +1481,168 @@ describe('审批专用连接：exec 审批要真能送到用户面前', () => {
       sessionKey: 'agent:main:clawwork:task:task-1',
       agentId: 'main',
     });
+  });
+});
+
+/**
+ * 晚就绪收敛（2026-10-04 真机）：bootstrap 等满 180 秒判 ready-timeout；约两分钟后
+ * 真实主连接才完成 hello-ok 认证 —— 但失败快照没人收敛，真实入口继续被挡住。
+ * 这里钉住收敛的触发面与全部不收敛的边界。
+ */
+describe('主连接 hello-ok 的晚就绪收敛', () => {
+  const clients: Array<{ destroy: () => void }> = [];
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    websocketMock.constructor.mockClear();
+    websocketMock.instances.length = 0;
+    vi.mocked(sendToWindow).mockClear();
+    probeMock.mockReset();
+    resetRuntimeBootstrapStatus();
+  });
+
+  afterEach(() => {
+    for (const client of clients) client.destroy();
+    clients.length = 0;
+    vi.clearAllTimers();
+    vi.useRealTimers();
+    resetRuntimeBootstrapStatus();
+  });
+
+  async function makeClient(url = 'ws://127.0.0.1:18789', opts?: { approvalChannel?: boolean }) {
+    const { GatewayClient } = await import('../src/main/ws/gateway-client.js');
+    const client = new GatewayClient({ id: 'gw-1', name: 'Gateway', url, auth: { token: 'token' } }, opts);
+    clients.push(client);
+    return client;
+  }
+
+  /** 驱动到主连接 hello-ok 成功（认证证据就是这次握手）。 */
+  async function helloOk(client: { connect: () => void }) {
+    client.connect();
+    const socket = websocketMock.instances.at(-1);
+    if (!socket) throw new Error('expected a websocket instance');
+    socket.readyState = 1;
+    socket.emit('message', JSON.stringify({ type: 'event', event: 'connect.challenge', payload: { nonce: 'n1' } }));
+    const frames = socket.send.mock.calls.map((call) => JSON.parse(String(call[0])) as { id: string; method: string });
+    const connect = frames.find((frame) => frame.method === 'connect');
+    if (!connect) throw new Error('没有发出 connect 帧');
+    socket.emit(
+      'message',
+      JSON.stringify({
+        type: 'res',
+        id: connect.id,
+        ok: true,
+        payload: { type: 'hello-ok', server: { version: '2026.9.3' } },
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    return socket;
+  }
+
+  function runtimeStatuses(): unknown[] {
+    return vi
+      .mocked(sendToWindow)
+      .mock.calls.filter((call) => call[1] === 'runtime-status')
+      .map((call) => call[2]);
+  }
+
+  it('⭐ ready-timeout 快照 + 主 hello-ok + /startupz started ⇒ 收敛并推 runtime-status', async () => {
+    publishRuntimeBootstrapStatus({ ok: false, code: 'runtime.gateway-ready-timeout' });
+    probeMock.mockResolvedValue({ reachable: true, status: 'started' });
+    const client = await makeClient();
+    await helloOk(client);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(probeMock).toHaveBeenCalledWith({ port: 18789, timeoutMs: 2000 });
+    expect(runtimeStatuses()).toEqual([{ ok: true }]);
+    expect(getRuntimeBootstrapStatus()).toEqual({ ok: true });
+  });
+
+  it('非 ready-timeout 快照（端口被占）⇒ 绝不收敛：探测都不发', async () => {
+    publishRuntimeBootstrapStatus({ ok: false, code: 'runtime.gateway-port-occupied' });
+    probeMock.mockResolvedValue({ reachable: true, status: 'started' });
+    const client = await makeClient();
+    await helloOk(client);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(probeMock).not.toHaveBeenCalled();
+    expect(runtimeStatuses()).toEqual([]);
+    expect(getRuntimeBootstrapStatus()).toEqual({ ok: false, reason: 'port-occupied' });
+  });
+
+  it.each([
+    ['还没 started', { reachable: true, status: 'starting' }],
+    ['探测连不上', { reachable: false }],
+  ])('复核失败（%s）⇒ 保留原错误快照，不推成功', async (_name, probe) => {
+    publishRuntimeBootstrapStatus({ ok: false, code: 'runtime.gateway-ready-timeout' });
+    probeMock.mockResolvedValue(probe);
+    const client = await makeClient();
+    await helloOk(client);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(probeMock).toHaveBeenCalledOnce();
+    expect(runtimeStatuses()).toEqual([]);
+    expect(getRuntimeBootstrapStatus()).toEqual({ ok: false, reason: 'ready-timeout' });
+  });
+
+  it('远端网关的连接成功不许碰"本机运行时"快照', async () => {
+    publishRuntimeBootstrapStatus({ ok: false, code: 'runtime.gateway-ready-timeout' });
+    probeMock.mockResolvedValue({ reachable: true, status: 'started' });
+    const client = await makeClient('ws://gateway.example.com:18789');
+    await helloOk(client);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(probeMock).not.toHaveBeenCalled();
+    expect(runtimeStatuses()).toEqual([]);
+    expect(getRuntimeBootstrapStatus()).toEqual({ ok: false, reason: 'ready-timeout' });
+  });
+
+  it('审批连接不触发收敛（它连握手成功都不报界面）', async () => {
+    publishRuntimeBootstrapStatus({ ok: false, code: 'runtime.gateway-ready-timeout' });
+    probeMock.mockResolvedValue({ reachable: true, status: 'started' });
+    const client = await makeClient('ws://127.0.0.1:18789', { approvalChannel: true });
+    await helloOk(client);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(probeMock).not.toHaveBeenCalled();
+    expect(runtimeStatuses()).toEqual([]);
+    expect(getRuntimeBootstrapStatus()).toEqual({ ok: false, reason: 'ready-timeout' });
+  });
+
+  it('握手没成（res.error）⇒ 没有认证证据，不收敛', async () => {
+    publishRuntimeBootstrapStatus({ ok: false, code: 'runtime.gateway-ready-timeout' });
+    probeMock.mockResolvedValue({ reachable: true, status: 'started' });
+    const client = await makeClient();
+    client.connect();
+    const socket = websocketMock.instances.at(-1)!;
+    socket.readyState = 1;
+    socket.emit('message', JSON.stringify({ type: 'event', event: 'connect.challenge', payload: { nonce: 'n1' } }));
+    const frames = socket.send.mock.calls.map((call) => JSON.parse(String(call[0])) as { id: string; method: string });
+    const connect = frames.find((frame) => frame.method === 'connect')!;
+    socket.emit(
+      'message',
+      JSON.stringify({ type: 'res', id: connect.id, ok: false, error: { code: 'pairing-required' } }),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(probeMock).not.toHaveBeenCalled();
+    expect(getRuntimeBootstrapStatus()).toEqual({ ok: false, reason: 'ready-timeout' });
+  });
+
+  it('探测期间连接被销毁 ⇒ 晚回包不许改新快照', async () => {
+    publishRuntimeBootstrapStatus({ ok: false, code: 'runtime.gateway-ready-timeout' });
+    let release!: (probe: { reachable: boolean; status?: string }) => void;
+    probeMock.mockReturnValue(new Promise((resolve) => (release = resolve)));
+    const client = await makeClient();
+    await helloOk(client);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(probeMock).toHaveBeenCalledOnce();
+
+    client.destroy();
+    release({ reachable: true, status: 'started' });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(runtimeStatuses()).toEqual([]);
+    expect(getRuntimeBootstrapStatus()).toEqual({ ok: false, reason: 'ready-timeout' });
   });
 });

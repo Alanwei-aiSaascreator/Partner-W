@@ -214,6 +214,53 @@ describe('autoExtractArtifacts', () => {
     safeFetchMock.mockResolvedValue(Buffer.from('image'));
   });
 
+  it.each([
+    'current.native-ppt.json',
+    'UPPER.NATIVE-PPT.JSON',
+    '.royin-ppt-receipt-private.json',
+    '.ROYIN-PPT-RECEIPT-private.JSON',
+    'current.native-ppt.json.tmp',
+    'diagnostic.tmp',
+    'diagnostic.PART',
+    'diagnostic.partial',
+    'diagnostic.lock',
+    'draft.json~',
+    '~$draft.json',
+  ])('does not register the reserved intermediate fence %s', async (fileName) => {
+    const { autoExtractArtifacts } = await import('../src/main/artifact/auto-extract.js');
+    const params = {
+      workspacePath: '/workspace',
+      taskId: 'task-1',
+      messageId: 'reserved-fence',
+      content: '```' + fileName + '\n{"private":true}\n```',
+    };
+
+    await autoExtractArtifacts(params);
+    await autoExtractArtifacts(params);
+
+    expect(saveArtifactFromBufferMock).not.toHaveBeenCalled();
+    expect(webContentsSendMock).not.toHaveBeenCalled();
+  });
+
+  it.each(['report.json', 'source.json', '.custom.json', '.gitignore'])(
+    'preserves the user-authored formal fence %s',
+    async (fileName) => {
+      const { autoExtractArtifacts } = await import('../src/main/artifact/auto-extract.js');
+      const content = '{"userReport":true}';
+
+      await autoExtractArtifacts({
+        workspacePath: '/workspace',
+        taskId: 'task-1',
+        messageId: 'formal-fence',
+        content: '```' + fileName + '\n' + content + '\n```',
+      });
+
+      expect(saveArtifactFromBufferMock).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ fileName, contentText: content, artifactType: 'code', buffer: Buffer.from(content) }),
+      );
+    },
+  );
+
   it('saves assistant image attachments as image artifacts', async () => {
     const { autoExtractArtifacts } = await import('../src/main/artifact/auto-extract.js');
 

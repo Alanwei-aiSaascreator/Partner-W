@@ -35,3 +35,18 @@ function getArtifactLabelKey(artifact: Pick<Artifact, 'type' | 'mimeType' | 'nam
 export function getArtifactLabel(artifact: Pick<Artifact, 'type' | 'mimeType' | 'name'>, t: Translate): string {
   return t(getArtifactLabelKey(artifact));
 }
+
+/**
+ * 文件**身份**（界面标题 / 可访问名）—— 就是注册时的 `name`。
+ *
+ * ⭐ 2026-10-04 真机缺陷：FileCard / FilePreview / 搜索结果把**类型名**当身份显示 ——
+ *    真实注册的视频「荣盈魔方测试.mp4」在界面上显示成「文件」。
+ *    类型名是**类型元信息**（`getArtifactLabel` 的用途），不是文件名。
+ *
+ * ⚠️ 只有注册名**确实为空**（历史遗留行）才回落到类型名：
+ *    不裁剪正常注册名、绝不从路径猜名字 —— 猜出来的名字比类型名更糟。
+ */
+export function getArtifactDisplayName(artifact: Pick<Artifact, 'type' | 'mimeType' | 'name'>, t: Translate): string {
+  const name = artifact.name.trim();
+  return name.length > 0 ? name : getArtifactLabel(artifact, t);
+}

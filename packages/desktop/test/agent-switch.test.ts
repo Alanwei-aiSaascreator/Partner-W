@@ -77,7 +77,7 @@ describe('resolvePendingAfterAgentSwitch', () => {
     expect('tags' in next).toBe(false);
   });
 
-  it('与助手无关的字段（model / thinkingLevel / ensemble / teamId）原样带过去', () => {
+  it('switching away from a team starts an independent scope but preserves model preferences', () => {
     const next = resolvePendingAfterAgentSwitch(
       {
         gatewayId: 'gw-1',
@@ -94,8 +94,23 @@ describe('resolvePendingAfterAgentSwitch', () => {
     expect(next).toMatchObject({
       model: 'qwen-max',
       thinkingLevel: 'high',
-      ensemble: true,
-      teamId: 'team-9',
+      ensemble: false,
     });
+    expect(next.teamId).toBeUndefined();
+  });
+
+  it('selecting the same team manager preserves the pending team and workflow', () => {
+    const pending = { gatewayId: 'gw-1', agentId: 'finance-lead', teamId: 'team-9', ensemble: false };
+    expect(resolvePendingAfterAgentSwitch(pending, 'gw-1', 'finance-lead')).toEqual(pending);
+  });
+
+  it('changing gateway clears the team even when the new agent has the same id', () => {
+    const next = resolvePendingAfterAgentSwitch(
+      { gatewayId: 'gw-1', agentId: 'finance-lead', teamId: 'team-9', ensemble: true },
+      'gw-2',
+      'finance-lead',
+    );
+    expect(next.teamId).toBeUndefined();
+    expect(next.ensemble).toBe(false);
   });
 });

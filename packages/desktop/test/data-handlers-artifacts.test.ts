@@ -39,6 +39,7 @@ vi.mock('electron', () => ({
 
 vi.mock('../src/main/db/index.js', () => ({
   getDb: vi.fn(() => dbMock),
+  getSqlite: () => null,
   isDbReady: vi.fn(() => true),
 }));
 
@@ -1588,11 +1589,15 @@ describe('assistant artifact reconciliation boundary', () => {
     );
     await flushJobs();
 
+    // ⭐ 2026-10-04：未登记到成果列表的格式走**独立字段** `missingKinds` —— 不再与
+    //    "物理上找不到的文件"混成同一句话（真机：文件在盘上却被说成"工作区里没有"）。
+    //    这条守卫的力度**不变**：明确要了 PPT、本轮没产出，就必须报。
     expect(webContentsSendMock).toHaveBeenCalledWith('artifact:claim-violation', {
       taskId: 'task-1',
       sessionKey: 'session-task-1',
       messageId: 'assistant-persisted',
-      missing: ['PPT/PPTX 演示文稿'],
+      missing: [],
+      missingKinds: ['PPT/PPTX 演示文稿'],
     });
   });
 
@@ -1685,11 +1690,13 @@ describe('assistant artifact reconciliation boundary', () => {
     );
     await flushJobs();
 
+    // 同上：格式缺失经 `missingKinds` 独立上报，守卫力度不变。
     expect(webContentsSendMock).toHaveBeenCalledWith('artifact:claim-violation', {
       taskId: 'task-1',
       sessionKey: 'session-task-1',
       messageId: 'assistant-persisted',
-      missing: ['HTML 网页'],
+      missing: [],
+      missingKinds: ['HTML 网页'],
     });
   });
 

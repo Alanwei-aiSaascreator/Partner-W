@@ -57,6 +57,30 @@ fs.writeFileSync('invocation.json',JSON.stringify({flag,file,env:{temp:process.e
 const bytes=Buffer.from('actual-child-output');fs.writeFileSync('result.pptx',bytes);
 console.log(JSON.stringify({schemaVersion:1,status:'file-generated',fileCreated:true,artifactIndexed:false,fileName:'result.pptx',pages:2,bytes:bytes.length,sourceSha256:crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex'),outputSha256:crypto.createHash('sha256').update(bytes).digest('hex'),warnings:[],visualReview:'not-performed'}));`;
 
+it('blocks a legacy PPT source before spawning in controlled native validation', () => {
+  configure(success);
+  const result = invoke([sourceName], { ROYIN_NATIVE_PPT_VALIDATION: '1' });
+  expect(result.status).toBe(1);
+  expect(result.report).toMatchObject({
+    status: 'source-invalid',
+    fileCreated: false,
+    diagnostics: [{ code: 'native-route-required' }],
+    runtimeCleanup: 'not-created',
+  });
+  expect(fs.existsSync(path.join(workspace, 'invocation.json'))).toBe(false);
+  expect(fs.existsSync(path.join(workspace, 'result.pptx'))).toBe(false);
+});
+
+it('uses the installed native command for a controlled source and its previous receipt', () => {
+  configure(success);
+  const native = 'report.native-ppt.json';
+  fs.writeFileSync(path.join(workspace, native), 'source');
+  expect(invoke([native, '--previous', 'report.receipt.json'], { ROYIN_NATIVE_PPT_VALIDATION: '1' }).status).toBe(0);
+  const invocation = JSON.parse(fs.readFileSync(path.join(workspace, 'invocation.json'), 'utf8'));
+  expect(invocation.flag).toBe('--royin-render-native-ppt');
+  expect(invocation.file).toBe(native);
+});
+
 it.each([
   { ELECTRON_RUN_AS_NODE: '1', NODE_OPTIONS: '--no-warnings', NODE_PATH: 'untrusted' },
   { electron_run_as_node: '1', node_options: '--no-warnings', node_path: 'untrusted' },

@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
@@ -111,31 +112,19 @@ describe('打包门禁：随包运行时（beforePack 钩子）', () => {
     try {
       fs.writeFileSync(path.join(projectDir, 'icon.png'), '');
       fs.mkdirSync(path.join(projectDir, 'runtime-out'));
-      const archive = Buffer.from('private runtime archive fixture');
+      const archive = Buffer.from('verified runtime fixture');
       fs.writeFileSync(path.join(projectDir, 'runtime-out', 'runtime.zip'), archive);
-      fs.writeFileSync(
-        path.join(projectDir, 'runtime-out', RUNTIME_MANIFEST_FILE),
-        JSON.stringify({
-          formatVersion: 1,
-          packageName: 'openclaw',
-          version: '2026.9.3',
-          runtimes: [
-            {
-              platform: 'win32',
-              arch: 'x64',
-              version: '2026.9.3',
-              runtimeDeploymentKey: 'fixture',
-              archive: 'runtime.zip',
-              archiveSize: archive.length,
-              fileCount: 1,
-              packageRoot: 'node_modules/openclaw',
-              cliPath: 'node_modules/openclaw/openclaw.mjs',
-              sha256: requireCjs('node:crypto').createHash('sha256').update(archive).digest('hex'),
-              patches: (await import('../scripts/verify-runtime-supply.mjs')).requiredRuntimePatches('2026.9.3'),
-            },
-          ],
-        }),
-      );
+      const manifest = {
+        runtimes: [
+          {
+            archive: 'runtime.zip',
+            sha256: createHash('sha256').update(archive).digest('hex'),
+            patches: ['rongying-relay-video-trial-v1'],
+          },
+        ],
+      };
+      const manifestPath = path.join(projectDir, 'runtime-out', RUNTIME_MANIFEST_FILE);
+      fs.writeFileSync(manifestPath, JSON.stringify(manifest));
 
       const sameShape = {
         extraResources: [
@@ -144,18 +133,18 @@ describe('打包门禁：随包运行时（beforePack 钩子）', () => {
         ],
       };
       await expect(gate.beforePack({ packager: { projectDir, config: sameShape } })).resolves.toBeUndefined();
-      const manifestPath = path.join(projectDir, 'runtime-out', RUNTIME_MANIFEST_FILE);
-      const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-      const required = [...manifest.runtimes[0].patches];
-      for (const omitted of required) {
-        manifest.runtimes[0].patches = required.filter((patch) => patch !== omitted);
-        fs.writeFileSync(manifestPath, JSON.stringify(manifest));
-        await expect(gate.beforePack({ packager: { projectDir, config: sameShape } })).rejects.toThrow(
-          /required runtime patch/,
-        );
-      }
-      manifest.runtimes[0].patches = required;
+
+      manifest.runtimes[0].patches = [];
       fs.writeFileSync(manifestPath, JSON.stringify(manifest));
+      await expect(gate.beforePack({ packager: { projectDir, config: sameShape } })).rejects.toThrow(/runtime patch/);
+      manifest.runtimes[0].patches = ['rongying-relay-video-trial-v1'];
+      fs.writeFileSync(manifestPath, JSON.stringify(manifest));
+      fs.appendFileSync(path.join(projectDir, 'runtime-out', 'runtime.zip'), 'corruption');
+      await expect(gate.beforePack({ packager: { projectDir, config: sameShape } })).rejects.toThrow(/archive hash/);
+      fs.writeFileSync(path.join(projectDir, 'runtime-out', 'runtime.zip'), archive);
+      manifest.runtimes[0].archive = '../icon.png';
+      fs.writeFileSync(manifestPath, JSON.stringify(manifest));
+      await expect(gate.beforePack({ packager: { projectDir, config: sameShape } })).rejects.toThrow(/archive path/);
 
       // 把运行时删掉（= 忘了产出 runtime-out/）⇒ 构建必须中止
       fs.rmSync(path.join(projectDir, 'runtime-out'), { recursive: true });

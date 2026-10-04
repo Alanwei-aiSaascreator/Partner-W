@@ -15,6 +15,7 @@ import { closeDatabase, getSqlite, initDatabase } from '../../src/main/db/index.
 import { captureTaskArtifactBaseline, reconcileTaskArtifacts } from '../../src/main/artifact/reconcile.js';
 import Database from 'better-sqlite3';
 import { DB_FILE_NAME } from '@clawwork/shared';
+import type { ArtifactRootKind } from '@clawwork/shared';
 
 const [, , workspacePath, scenario] = process.argv;
 
@@ -65,6 +66,59 @@ async function main(): Promise<Record<string, unknown>> {
   initDatabase(workspacePath);
   seedTaskAndMessage();
   mkdirSync(join(workspacePath, 'task-1', 'inbox', '.import-staging'), { recursive: true });
+
+  if (scenario.startsWith('reserved-intermediate-')) {
+    const rootKind: ArtifactRootKind = scenario.includes('-agent-') ? 'agent' : 'workspace';
+    if (scenario.endsWith('-controlled')) process.env.ROYIN_NATIVE_PPT_VALIDATION = '1';
+    else delete process.env.ROYIN_NATIVE_PPT_VALIDATION;
+    const outputRoot = join(workspacePath, rootKind === 'agent' ? 'agent-ws' : 'task-1');
+    mkdirSync(outputRoot, { recursive: true });
+    const reconcileWorkspace = rootKind === 'agent' ? outputRoot : workspacePath;
+    writeFileSync(join(outputRoot, 'prior.native-ppt.json'), '{"legacy":true}');
+    getSqlite()!
+      .prepare(
+        `INSERT INTO artifacts(id,task_id,message_id,type,name,file_path,local_path,root,created_at)
+        VALUES(?,?,?,?,?,?,?,?,?)`,
+      )
+      .run(
+        'prior-intermediate',
+        'task-1',
+        'msg-1',
+        'code',
+        'prior.native-ppt.json',
+        join(outputRoot, 'prior.native-ppt.json'),
+        rootKind === 'agent' ? 'prior.native-ppt.json' : 'task-1/prior.native-ppt.json',
+        rootKind,
+        new Date().toISOString(),
+      );
+    const baseline = await captureTaskArtifactBaseline({
+      workspacePath: reconcileWorkspace,
+      taskId: 'task-1',
+      rootKind,
+    });
+    for (const name of [
+      'current.native-ppt.json',
+      'UPPER.NATIVE-PPT.JSON',
+      '.royin-ppt-receipt-private.json',
+      '.ROYIN-PPT-RECEIPT-private.JSON',
+      'current.native-ppt.json.tmp',
+      'diagnostic.tmp',
+      'diagnostic.PART',
+      'diagnostic.partial',
+      'diagnostic.lock',
+      'draft.json~',
+      '~$draft.json',
+      'report.json',
+    ])
+      writeFileSync(join(outputRoot, name), JSON.stringify({ file: name }));
+    mkdirSync(join(outputRoot, '.royin-native-private'), { recursive: true });
+    writeFileSync(join(outputRoot, '.royin-native-private', 'source.json'), '{"intermediate":true}');
+    const params = { workspacePath: reconcileWorkspace, taskId: 'task-1', messageId: 'msg-1', rootKind, baseline };
+    const first = await reconcileTaskArtifacts(params, { stabilityDelayMs: 5 });
+    const second = await reconcileTaskArtifacts(params, { stabilityDelayMs: 5 });
+    const rows = getSqlite()!.prepare('SELECT id,name,root,local_path FROM artifacts ORDER BY name').all();
+    return { first, second, rows };
+  }
 
   if (scenario === 'lifecycle') {
     const baseline = await captureTaskArtifactBaseline({ workspacePath, taskId: 'task-1' });

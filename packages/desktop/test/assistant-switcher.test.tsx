@@ -3,15 +3,11 @@
 import { act, type ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { describe, expect, it, vi } from 'vitest';
-import type { AgentInfo } from '@clawwork/shared';
+import type { AgentInfo, Team } from '@clawwork/shared';
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
   initReactI18next: { type: '3rdParty', init: vi.fn() },
-}));
-
-vi.mock('@/components/CubeFaceIcon', () => ({
-  default: ({ agentId }: { agentId: string }) => <span data-cube={agentId} />,
 }));
 
 import AssistantSwitcher from '../src/renderer/layouts/LeftNav/AssistantSwitcher';
@@ -64,6 +60,74 @@ function setup(over: Partial<Parameters<typeof AssistantSwitcher>[0]> = {}) {
  *    以及**点开之后真的能切**（它是全应用唯一切助手的地方）。
  */
 describe('AssistantSwitcher', () => {
+  it('pins the default, collapses team members under their local name, and selects members without duplicates', async () => {
+    const team: Team = {
+      id: 'team-1',
+      name: '研究团队',
+      gatewayId: 'gw',
+      emoji: '',
+      description: '',
+      source: 'local',
+      version: '1',
+      createdAt: '',
+      updatedAt: '',
+      agents: [{ agentId: 'a-two', role: 'worker', isManager: false, skills: [], position: 'expert' }],
+    };
+    const view = setup({ gatewayId: 'gw', defaultAgentId: 'a-main', teams: [team], selectedAgentId: 'a-main' });
+    try {
+      await act(async () => {
+        (view.container.querySelector('[data-testid="assistant-switcher"]') as HTMLElement).click();
+      });
+      const group = document.querySelector('[data-team="team-1"]') as HTMLElement;
+      expect(group).not.toBeNull();
+      const toggle = group.querySelector('button[aria-expanded]') as HTMLButtonElement;
+      expect(toggle.textContent).toContain('研究团队');
+      expect(toggle.getAttribute('aria-expanded')).toBe('false');
+      expect(document.querySelectorAll('[data-agent="a-two"]')).toHaveLength(1);
+      expect(document.querySelector('[data-agent]')?.getAttribute('data-agent')).toBe('a-main');
+      expect(document.querySelector('[data-independent-assistants]')?.textContent).toContain('电商运营');
+      await act(async () => toggle.click());
+      expect(toggle.getAttribute('aria-expanded')).toBe('true');
+      await act(async () => {
+        (group.querySelector('[data-agent="a-two"]') as HTMLElement).click();
+      });
+      expect(view.onSelect).toHaveBeenCalledWith('a-two');
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it('uses the custom emoji in the trigger and expands the selected team', async () => {
+    const team: Team = {
+      id: 'selected-team',
+      name: 'Design',
+      gatewayId: 'gw',
+      emoji: '',
+      description: '',
+      source: 'local',
+      version: '1',
+      createdAt: '',
+      updatedAt: '',
+      agents: [{ agentId: 'a-two', role: 'worker', isManager: false, skills: [] }],
+    };
+    const view = setup({
+      gatewayId: 'gw',
+      teams: [team],
+      agents: agents.map((agent) => (agent.id === 'a-two' ? { ...agent, identity: { emoji: 'Z' } } : agent)),
+    });
+    try {
+      expect(view.container.querySelector('[data-testid="assistant-switcher"]')?.textContent).toContain('Z');
+      await act(async () => {
+        (view.container.querySelector('[data-testid="assistant-switcher"]') as HTMLElement).click();
+      });
+      expect(
+        document.querySelector('[data-team="selected-team"] button[aria-expanded]')?.getAttribute('aria-expanded'),
+      ).toBe('true');
+    } finally {
+      view.unmount();
+    }
+  });
+
   it('⭐ 收起时**只显示当前助手**，不把列表铺开', () => {
     const { container, unmount } = setup();
     const trigger = container.querySelector('[data-testid="assistant-switcher"]');

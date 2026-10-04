@@ -49,6 +49,24 @@ function setCatalog(agents: string[], defaultId: string): void {
 }
 
 describe('useGatewaySelector 拒绝不在本机的请求', () => {
+  it('honors a newly requested team manager when the selector remains mounted', () => {
+    setCatalog(['main', 'finance-lead'], 'main');
+    const view = render(<Harness initialAgentId="main" requestedAgentId="main" />);
+    view.rerender(<Harness initialAgentId="finance-lead" requestedAgentId="finance-lead" />);
+    expect(captured?.effectiveAgentId).toBe('finance-lead');
+    view.unmount();
+  });
+
+  it('honors the latest requested manager after a same-gateway catalog arrives late', () => {
+    act(() => useUiStore.setState({ agentCatalogByGateway: {} }));
+    const view = render(<Harness initialAgentId="main" requestedAgentId="main" />);
+    view.rerender(<Harness initialAgentId="finance-lead" requestedAgentId="finance-lead" />);
+    expect(captured?.effectiveAgentId).toBe('');
+    setCatalog(['main', 'finance-lead'], 'main');
+    expect(captured?.effectiveAgentId).toBe('finance-lead');
+    view.unmount();
+  });
+
   beforeEach(() => {
     captured = null;
     (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;

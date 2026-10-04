@@ -45,6 +45,7 @@ describe('production message IPC with Drizzle and Electron SQLite', () => {
             if (
               importer?.replaceAll('\\', '/').endsWith('/src/main/ipc/data-handlers.ts') &&
               ![
+                '../artifact/delivery-activity.js',
                 '../artifact/delivery-operation.js',
                 '../artifact/workspace-owner.js',
                 '../slidegen/tool-receipts.js',
@@ -108,7 +109,10 @@ describe('production message IPC with Drizzle and Electron SQLite', () => {
         rollupOptions: { output: { entryFileNames: 'probe.mjs' } },
       },
     });
-  });
+    // This cold Vite/Electron fixture competes with the full Windows suite.
+    // Bound setup like the existing 35s test budget; keep every SQLite probe's
+    // separate 30s timeout and all persistence assertions unchanged.
+  }, 35_000);
   afterAll(() => {
     if (runnerDir) rmSync(runnerDir, { recursive: true, force: true });
   });

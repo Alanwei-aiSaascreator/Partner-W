@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => {
   const startNewTask = vi.fn();
   const setMainView = vi.fn();
+  const setSelectedAgent = vi.fn();
   const loadTeams = vi.fn();
   const team = {
     id: 'team-design',
@@ -22,6 +23,7 @@ const mocks = vi.hoisted(() => {
   return {
     startNewTask,
     setMainView,
+    setSelectedAgent,
     loadTeams,
     teamState: {
       teams: { [team.id]: team },
@@ -30,6 +32,7 @@ const mocks = vi.hoisted(() => {
     },
     uiState: {
       setMainView,
+      setSelectedAgent,
       defaultGatewayId: 'gw-1',
       agentCatalogByGateway: {
         'gw-1': { agents: [{ id: 'design-lead' }, { id: 'design-reviewer' }] },
@@ -100,6 +103,7 @@ describe('TeamsPanel reliable team mode', () => {
   beforeEach(() => {
     mocks.startNewTask.mockClear();
     mocks.setMainView.mockClear();
+    mocks.setSelectedAgent.mockClear();
     mocks.loadTeams.mockClear();
   });
 
@@ -117,6 +121,7 @@ describe('TeamsPanel reliable team mode', () => {
       teamId: 'team-design',
     });
     expect(mocks.setMainView).toHaveBeenCalledWith('chat');
+    expect(mocks.setSelectedAgent).toHaveBeenCalledWith('gw-1', 'design-lead');
     view.unmount();
   });
 });

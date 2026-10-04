@@ -53,7 +53,7 @@ function createHarness(listModels: () => Promise<{ ok: boolean; result?: unknown
       gatewayStatus: async () => ({}),
       listGateways: async () => [],
       listModels,
-      listAgents: async () => ({ ok: true, result: {} }),
+      listAgents: async () => ({ ok: true, result: { defaultId: 'main', agents: [{ id: 'main' }] } }),
       getToolsCatalog: async () => ({ ok: true, result: {} }),
       getSkillsStatus: async () => ({ ok: true, result: {} }),
       listCommands: async () => ({ ok: true, result: {} }),
@@ -97,8 +97,8 @@ function createHarness(listModels: () => Promise<{ ok: boolean; result?: unknown
     translate: (key: string) => key,
     isWindowFocused: () => true,
     reportDebugEvent: vi.fn(),
-    hydrateFromLocal: vi.fn(),
-    syncFromGateway: vi.fn(),
+    hydrateFromLocal: vi.fn(async () => {}),
+    syncFromGateway: vi.fn(async () => {}),
     syncSessionMessages: vi.fn(async () => {}),
     retrySyncPending: vi.fn(),
   } as unknown as GatewayDispatcherDeps;
@@ -110,6 +110,8 @@ function createHarness(listModels: () => Promise<{ ok: boolean; result?: unknown
     store,
     connect: () => statusListener?.({ gatewayId: GW, connected: true }),
     disconnect: () => statusListener?.({ gatewayId: GW, connected: false, error: 'socket closed' }),
+    /** useStartupReadiness 的宿主补问走的就是这个公开入口（facade 直通）。 */
+    refresh: (options?: { isCurrent?: () => boolean }) => dispatcher.refreshCatalogsForGateway(GW, options),
   };
 }
 
@@ -231,5 +233,35 @@ describe('模型目录取不到的跨层链（网关 → store → 派生 → �
     expect(ui.copy?.label).toBe('chatInput.noModelsAvailable');
     // 两种结论都不该锁住输入框
     expect(ui.readiness.composerBlocked).toBe(false);
+  });
+
+  it('⭐ 目录 103 秒才变热：空结论落地之后，补问把真实目录带进 store（真机 2026-10-04 的 102.5s）', async () => {
+    /**
+     * 现场：中转 ready 后第一次目录刷新的退避窗（~74s）整个撞上"目录还没热"，
+     * 空结论落 store 之后 dispatcher **不再有任何计时器**；真实目录 102.5 秒才可用。
+     * `useStartupReadiness` 现在在同一 ready 代次里按 0/60/120 秒**有界**补问 ——
+     * 宿主补问走的就是这里的公开入口 `refreshCatalogsForGateway`。这条钉住：
+     * 目录变热后的下一次重取必须把真实目录带进 store，并让派生链回到 ready。
+     */
+    vi.useFakeTimers();
+    const startedAt = Date.now();
+    const h = createHarness(async () =>
+      Date.now() - startedAt >= 103_000 ? { ok: true, result: { models } } : { ok: true, result: { models: [] } },
+    );
+    h.connect();
+    await vi.advanceTimersByTimeAsync(80_000); // 第一链走完：目录还没热 ⇒ 空结论落地
+
+    let ui = readUi(h.store);
+    expect(ui.state.modelCatalogByGateway[GW]).toEqual([]);
+    expect(ui.modelAvailability).toBe('empty');
+
+    void h.refresh(); // 宿主补问重开同一入口
+    await vi.advanceTimersByTimeAsync(40_000); // 补问链的重取在 t≥103s 拿到真实目录
+
+    ui = readUi(h.store);
+    expect(ui.state.modelCatalogByGateway[GW]).toEqual(models);
+    expect(ui.modelAvailability).toBe('ready');
+    expect(ui.readiness.ai.phase).toBe('ready');
+    expect(ui.copy).toBeNull();
   });
 });

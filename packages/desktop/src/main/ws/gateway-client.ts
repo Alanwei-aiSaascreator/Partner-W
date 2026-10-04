@@ -2,6 +2,7 @@ import WebSocket, { type ClientOptions } from 'ws';
 import { app } from 'electron';
 import { randomUUID } from 'crypto';
 import {
+  GATEWAY_WS_PORT,
   HEARTBEAT_INTERVAL_MS,
   RECONNECT_DELAY_MS,
   MAX_RECONNECT_ATTEMPTS,
@@ -30,6 +31,24 @@ import {
 } from './device-identity.js';
 import { getDebugLogger } from '../debug/index.js';
 import { ensureGatewayWindowsSystemTrust } from './tls-trust.js';
+import { convergeLateLocalRuntimeReady, getRuntimeBootstrapStatus } from '../runtime/bootstrap-status.js';
+import { probeStartupz } from '../runtime/gateway-process.js';
+
+/**
+ * 本机运行时网关的地址面：规范 loopback + 18789。
+ *
+ * ⚠️ 只认这几样，不做任何"看起来像本机"的宽判：晚就绪收敛只对**我们自己那个**
+ *    本地运行时成立，远端网关的连接成功绝不能去改"本机运行时起没起来"的快照。
+ */
+const LOCAL_RUNTIME_HOSTS = new Set(['127.0.0.1', 'localhost', '::1']);
+function isLocalRuntimeUrl(raw: string): boolean {
+  try {
+    const url = new URL(raw.trim());
+    return url.protocol === 'ws:' && LOCAL_RUNTIME_HOSTS.has(url.hostname) && url.port === String(GATEWAY_WS_PORT);
+  } catch {
+    return false;
+  }
+}
 
 const WS_CLOSE_POLICY_VIOLATION = 1008;
 const WS_HANDSHAKE_TIMEOUT_MS = 10_000;
@@ -558,6 +577,31 @@ export class GatewayClient {
     return this.auth;
   }
 
+  /**
+   * 主连接 hello-ok 之后的**晚就绪收敛**（2026-10-04 真机缺口，见调用点注释）。
+   *
+   * 边界（缺一不动）：
+   *   - 当前快照必须是 ready-timeout（其它错误不是"再等等就好"，见 bootstrap-status）；
+   *   - 必须是我们自己的本地运行时地址（规范 loopback + 18789）且非审批连接；
+   *   - 必须还是**发这次握手的那个 socket**、这条连接没被销毁 —— 探测前后各查一次，
+   *     旧连接或晚回包不允许改新快照；
+   *   - 认证证据 = 这次 hello-ok 本身，不额外认证、不开第二条连接。
+   *
+   * 只做一次**短有界**的 /startupz 复核：不 spawn 第二个网关、不发模型调用。
+   * 复核失败 ⇒ 保留原错误快照（宁可继续显示"还没起来"，也不猜）。
+   */
+  private async convergeLateLocalRuntimeOnHello(socket: WebSocket | null): Promise<void> {
+    const snapshot = getRuntimeBootstrapStatus();
+    if (!snapshot || snapshot.ok || snapshot.reason !== 'ready-timeout') return;
+    if (this.approvalChannel || !isLocalRuntimeUrl(this.wsUrl)) return;
+    if (this.destroyed || socket === null || this.ws !== socket) return;
+    const probe = await probeStartupz({ port: GATEWAY_WS_PORT, timeoutMs: 2_000 });
+    if (!probe.reachable || probe.status !== 'started') return;
+    if (this.destroyed || this.ws !== socket) return;
+    const converged = convergeLateLocalRuntimeReady();
+    if (converged) sendToWindow(getMainWindow(), 'runtime-status', converged);
+  }
+
   private handleChallenge(nonce: string): void {
     const signatureToken =
       'token' in this.auth ? this.auth.token : 'bootstrapToken' in this.auth ? this.auth.bootstrapToken : null;
@@ -626,6 +670,9 @@ export class GatewayClient {
       device,
     };
 
+    // ⚠️ 记下**发这次握手的那个 socket**：晚就绪收敛只允许由它触发、也只在它仍是
+    //    当前连接时才生效（旧连接/晚回包不许改新快照）。
+    const connectSocket = this.ws;
     this.sendReq('connect', params as unknown as Record<string, unknown>, { requestId: 'connect-handshake' })
       .then((payload) => {
         const pType = payload['type'] as string | undefined;
@@ -667,6 +714,11 @@ export class GatewayClient {
             connected: true,
             serverVersion: this.serverVersion,
           });
+          // ⭐ 晚就绪收敛（2026-10-04 真机）：bootstrap 的 180 秒等待判了 ready-timeout，
+          //    但真实的认证成功在**两分钟后**才到 —— 那次失败只是那一次等待失败。
+          //    这里（主连接 hello-ok 成功、认证证据就是这次握手）把晚到的本机就绪
+          //    收敛进快照，否则旧失败快照会永久挡住真实入口。
+          void this.convergeLateLocalRuntimeOnHello(connectSocket);
         } else {
           getDebugLogger().error({
             domain: 'gateway',

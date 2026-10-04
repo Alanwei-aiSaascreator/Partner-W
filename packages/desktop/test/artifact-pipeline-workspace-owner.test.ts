@@ -23,7 +23,7 @@ vi.mock('../src/main/db/index.js', () => {
       from: () => ({ where: () => ({ get: () => (fields && 'role' in fields ? undefined : mocks.row) }) }),
     }),
   };
-  return { getDb: () => db, isDbReady: () => true };
+  return { getDb: () => db, getSqlite: () => null, isDbReady: () => true };
 });
 vi.mock('../src/main/workspace/config.js', () => ({ getWorkspacePath: () => 'C:\\workspace' }));
 vi.mock('../src/main/ws/index.js', () => ({ getGatewayClient: mocks.gateway }));

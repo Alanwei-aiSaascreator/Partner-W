@@ -40,6 +40,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { performance } from 'node:perf_hooks';
 import { writeJsonAtomic } from '../util/json-file.js';
 import { computeDeploymentKey, DEPLOYMENT_SCHEMA_VERSION, resolveArchivePath, resolveNodePath } from './manifest.js';
 import type { NodeVariant, RuntimeVariant } from './manifest.js';
@@ -392,6 +393,55 @@ async function copyIfExists(from: string, to: string): Promise<void> {
   await fs.copyFile(from, to);
 }
 
+/*
+ * Windows transient rename refusal and destination-ENOENT guard adapted from
+ * graceful-fs 4.2.11, polyfills.js (https://github.com/isaacs/node-graceful-fs/blob/v4.2.11/polyfills.js).
+ * The ISC License
+ * Copyright (c) 2011-2022 Isaac Z. Schlueter, Ben Noordhuis, and Contributors
+ * Permission to use, copy, modify, and/or distribute this software for any
+ * purpose with or without fee is hereby granted, provided that the above
+ * copyright notice and this permission notice appear in all copies.
+ * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+ * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+ * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR
+ * IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+ */
+async function renameDeployment(from: string, to: string): Promise<void> {
+  const startedAt = performance.now();
+  const retryLimitMs = 3_000;
+  const attemptLimit = 8;
+  let originalError: unknown;
+  for (let attempt = 0; attempt < attemptLimit; attempt++) {
+    try {
+      await fs.rename(from, to);
+      return;
+    } catch (error) {
+      if (attempt === 0) originalError = error;
+      const code = (error as NodeJS.ErrnoException | null)?.code;
+      if (process.platform !== 'win32' || (code !== 'EPERM' && code !== 'EACCES' && code !== 'EBUSY')) {
+        throw error;
+      }
+      const remainingMs = retryLimitMs - (performance.now() - startedAt);
+      if (attempt + 1 === attemptLimit || remainingMs <= 0) throw originalError;
+      await new Promise<void>((resolve) => setTimeout(resolve, Math.min(25 * 2 ** attempt, 1_000, remainingMs)));
+      if (performance.now() - startedAt >= retryLimitMs) throw originalError;
+      try {
+        // A dangling junction is still an existing destination: do not follow it.
+        await fs.lstat(to);
+      } catch (statError) {
+        if ((statError as NodeJS.ErrnoException | null)?.code !== 'ENOENT') throw originalError;
+        if (performance.now() - startedAt >= retryLimitMs) throw originalError;
+        continue;
+      }
+      // Do not replace a destination another deployment created while we yielded.
+      throw originalError;
+    }
+  }
+}
+
 /** 清掉上一次留下的半成品目录。失败只记日志，**不阻塞**本次启动。 */
 async function cleanStaleTemp(userDataDir: string): Promise<void> {
   const tmpRoot = tempDirRoot(userDataDir);
@@ -551,7 +601,7 @@ export async function ensureRuntimeDeployed(opts: DeployOptions): Promise<Deploy
       await fs.rm(deployedRoot, { recursive: true, force: true, maxRetries: 3 });
     }
     await fs.mkdir(deployedDirRoot(userDataDir), { recursive: true });
-    await fs.rename(tmpRoot, deployedRoot);
+    await renameDeployment(tmpRoot, deployedRoot);
     onProgress?.({ phase: 'finalize', done: 1, total: 1 });
   } catch (err) {
     // 半成品必须清掉，且**不能**留下 deployed/<key>（没有 stamp 就永远不是"已部署"）

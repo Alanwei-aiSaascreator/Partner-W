@@ -14,6 +14,15 @@ vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => k
 import { useClaimGuardToast } from '../src/renderer/hooks/useClaimGuardToast';
 import { artifactFailureContext } from '../src/renderer/lib/artifact-delivery-feedback';
 import { useArtifactDeliveryStore } from '../src/renderer/stores/artifactDeliveryStore';
+import en from '../src/renderer/i18n/locales/en.json';
+import zh from '../src/renderer/i18n/locales/zh.json';
+import zhTW from '../src/renderer/i18n/locales/zh-TW.json';
+import de from '../src/renderer/i18n/locales/de.json';
+import es from '../src/renderer/i18n/locales/es.json';
+import fr from '../src/renderer/i18n/locales/fr.json';
+import ja from '../src/renderer/i18n/locales/ja.json';
+import ko from '../src/renderer/i18n/locales/ko.json';
+import pt from '../src/renderer/i18n/locales/pt.json';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -128,6 +137,96 @@ describe('artifact delivery failure feedback', () => {
     expect(artifactFailureContext([note], 'session-1')).toContain('report.pptx');
     expect(artifactFailureContext([note, makeMessage('user', 'continue')], 'session-1')).toBe('');
     expect(artifactFailureContext([makeMessage('assistant', note.content)], 'session-1')).toBe('');
+  });
+
+  it('says "not registered" for missing kinds instead of "not in the workspace"', () => {
+    /**
+     * 2026-10-04 真机：两份改稿都在盘上，界面却说「工作区里没有这些文件」——
+     * 真形态是**没登记到成果列表**。missingKinds 走自己的话术，不下「不存在」的结论。
+     */
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    mocks.toast.mockClear();
+    const persistMessage = vi.fn(async () => ({ ok: true }));
+    const store = createMessageStore({ persistMessage });
+    mocks.getState.mockImplementation(store.getState);
+    let callback: ((event: ArtifactDeliveryFailure) => void) | undefined;
+    Object.defineProperty(window, 'clawwork', {
+      configurable: true,
+      value: {
+        onClaimViolation: (cb: typeof callback) => {
+          callback = cb;
+          return () => {};
+        },
+      },
+    });
+    const root = createRoot(document.createElement('div'));
+    function Harness() {
+      useClaimGuardToast();
+      return null;
+    }
+    act(() => root.render(<Harness />));
+    act(() => {
+      callback!({
+        taskId: 'task-1',
+        sessionKey: 'session-1',
+        messageId: 'assistant-1',
+        missing: [],
+        missingKinds: ['PPT/PPTX 演示文稿'],
+      });
+    });
+    expect(mocks.toast).toHaveBeenCalledWith('claimGuard.missingKindsTitle', {
+      description: 'claimGuard.missingKindsBody',
+    });
+    expect(mocks.toast).not.toHaveBeenCalledWith('claimGuard.missingTitle', expect.anything());
+    const content = (store.getState().messagesByTask['task-1'] ?? []).map((message) => message.content).join('\n');
+    expect(content).toContain('[artifact.claim-guard.missing-kinds]');
+    expect(content).not.toContain('[artifact.claim-guard.missing] ');
+    act(() => root.unmount());
+  });
+
+  it('keeps the physical-missing copy for claimed files that are not on disk', () => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    mocks.toast.mockClear();
+    const persistMessage = vi.fn(async () => ({ ok: true }));
+    const store = createMessageStore({ persistMessage });
+    mocks.getState.mockImplementation(store.getState);
+    let callback: ((event: ArtifactDeliveryFailure) => void) | undefined;
+    Object.defineProperty(window, 'clawwork', {
+      configurable: true,
+      value: {
+        onClaimViolation: (cb: typeof callback) => {
+          callback = cb;
+          return () => {};
+        },
+      },
+    });
+    const root = createRoot(document.createElement('div'));
+    function Harness() {
+      useClaimGuardToast();
+      return null;
+    }
+    act(() => root.render(<Harness />));
+    act(() => {
+      callback!({ taskId: 'task-1', sessionKey: 'session-1', messageId: 'assistant-1', missing: ['gone.pptx'] });
+    });
+    expect(mocks.toast).toHaveBeenCalledWith('claimGuard.missingTitle', { description: 'claimGuard.missingBody' });
+    expect(mocks.toast).not.toHaveBeenCalledWith('claimGuard.missingKindsTitle', expect.anything());
+    act(() => root.unmount());
+  });
+
+  it('all supported languages translate the claim guard copy', () => {
+    const keys = [
+      'mediaUnavailableBody',
+      'mediaUnavailableTitle',
+      'missingBody',
+      'missingKindsBody',
+      'missingKindsTitle',
+      'missingTitle',
+    ];
+    for (const locale of [en, zh, zhTW, de, es, fr, ja, ko, pt]) {
+      expect(Object.keys(locale.claimGuard).sort()).toEqual(keys);
+      expect(locale.claimGuard.missingKindsBody).toContain('{{names}}');
+    }
   });
 
   it.each([

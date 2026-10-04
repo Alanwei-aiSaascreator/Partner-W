@@ -53,7 +53,12 @@ if (!OUR_SKILLS_ROOT) throw new Error('解析不到随包技能根目录 —— 
 
 const SLUG = 'presentation-deck-v2';
 const SKILL_PATH = path.join(OUR_SKILLS_ROOT, SLUG, 'SKILL.md');
-const text = fs.readFileSync(SKILL_PATH, 'utf-8').replace(/\r\n/g, '\n');
+const entryText = fs.readFileSync(SKILL_PATH, 'utf-8').replace(/\r\n/g, '\n');
+// The production contract moved out of the entry document when the controlled
+// slot route was separated. Keep validating the actual referenced contract;
+// do not restore competing production instructions into the controlled Skill.
+const PRODUCTION_ROUTE = 'PRODUCTION-ROUTE.md';
+const text = fs.readFileSync(path.join(OUR_SKILLS_ROOT, SLUG, PRODUCTION_ROUTE), 'utf-8').replace(/\r\n/g, '\n');
 
 const temps: string[] = [];
 function tmpDir(): string {
@@ -73,6 +78,17 @@ function bundledSkill(): BundledSkill {
 }
 
 describe('presentation-deck-v2 —— 内容与契约层不漂移', () => {
+  it('installs the entry and its referenced production contract without merging the two routes', () => {
+    expect(entryText).toContain(PRODUCTION_ROUTE);
+    expect(entryText).not.toContain('```docgen');
+    const managedDir = tmpDir();
+    expect(installBundledSkill({ managedDir, root: OUR_SKILLS_ROOT!, slug: SLUG }).ok).toBe(true);
+    expect(fs.readFileSync(path.join(managedDir, SLUG, 'SKILL.md'))).toEqual(fs.readFileSync(SKILL_PATH));
+    expect(fs.readFileSync(path.join(managedDir, SLUG, PRODUCTION_ROUTE))).toEqual(
+      fs.readFileSync(path.join(OUR_SKILLS_ROOT!, SLUG, PRODUCTION_ROUTE)),
+    );
+  });
+
   it('⭐ 八种 templateId 一个不漏（技能里少一种，那种版式助手就永远用不出来）', () => {
     // ⚠️ 判据是「**表格里有一行**」而不是「正文里出现过」。
     //    第一版就是这个疏漏：`timeline` 在下面"怎么挑页"那句里也出现，

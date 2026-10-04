@@ -52,6 +52,20 @@ export const teamMeetings = sqliteTable('team_meetings', {
   updatedAt: text('updated_at').notNull(),
 });
 
+export const artifactDeliveryActivities = sqliteTable('artifact_delivery_activities', {
+  operationId: text('operation_id').primaryKey(),
+  taskId: text('task_id')
+    .notNull()
+    .references(() => tasks.id, { onDelete: 'cascade' }),
+  sessionKey: text('session_key').notNull(),
+  ownerUserId: text('owner_user_id'),
+  ownerOrgId: text('owner_org_id'),
+  ownerLicenseId: text('owner_license_id'),
+  endedAt: integer('ended_at').notNull(),
+  recordJson: text('record_json').notNull(),
+  artifactRefsJson: text('artifact_refs_json').notNull().default('[]'),
+});
+
 export const messages = sqliteTable('messages', {
   id: text('id').primaryKey(),
   taskId: text('task_id')

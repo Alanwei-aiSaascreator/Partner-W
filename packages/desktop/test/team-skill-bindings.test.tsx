@@ -10,6 +10,8 @@ import type { AgentDraft } from '../src/renderer/layouts/TeamsPanel/types';
 
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
+vi.mock('../src/renderer/features/team-meeting/TeamMeetingEntry', () => ({ default: () => null }));
+
 vi.mock('react-i18next', () => ({
   initReactI18next: { type: '3rdParty', init: vi.fn() },
   useTranslation: () => ({
@@ -34,7 +36,8 @@ const mocks = vi.hoisted(() => ({
   },
 }));
 
-vi.mock('../src/renderer/stores/uiStore', () => ({
+vi.mock('../src/renderer/platform', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/renderer/platform')>()),
   useUiStore: <T,>(selector: (state: typeof mocks.uiState) => T) => selector(mocks.uiState),
 }));
 
@@ -217,7 +220,10 @@ describe('team skill bindings UI', () => {
     cleanups.push(view.unmount);
 
     await act(async () => Promise.resolve());
-    expect(window.clawwork.getSkillsStatus).toHaveBeenCalledWith('gw-1');
+    expect(window.clawwork.getSkillsStatus).toHaveBeenCalledWith('gw-1', 'agent-a');
+    expect(vi.mocked(window.clawwork.getSkillsStatus).mock.calls.every(([, agentId]) => agentId === 'agent-a')).toBe(
+      true,
+    );
 
     const installed = Array.from(view.container.querySelectorAll('button')).find((button) =>
       button.textContent?.includes('Installed Skill'),

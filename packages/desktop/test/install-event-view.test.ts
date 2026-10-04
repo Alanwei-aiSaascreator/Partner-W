@@ -19,6 +19,27 @@ function view(events: InstallEvent[]) {
 }
 
 describe('buildInstallEventView', () => {
+  it('keeps user display names separate from stable event ids, including duplicate names', () => {
+    const { agentStates } = buildInstallEventView(
+      [
+        { id: 'finance-one', name: '融资主管' },
+        { id: 'finance-two', name: '融资主管' },
+        { id: 'design', name: 'Design Lead' },
+        { id: 'unnamed', name: '   ' },
+      ],
+      [
+        { type: 'agent_creating', agentSlug: 'finance-one' },
+        { type: 'warning', agentSlug: 'finance-one', message: 'original failure diagnostic' },
+        { type: 'agent_created', agentSlug: 'finance-two', agentId: 'finance-two' },
+      ],
+    );
+    expect(agentStates.map((agent) => agent.displayName)).toEqual(['融资主管', '融资主管', 'Design Lead', 'unnamed']);
+    expect(agentStates.map((agent) => agent.slug)).toEqual(['finance-one', 'finance-two', 'design', 'unnamed']);
+    expect(agentStates.map((agent) => agent.status)).toEqual(['warning', 'created', 'pending', 'pending']);
+    expect(agentStates[0].warnings).toEqual(['original failure diagnostic']);
+    expect(agentStates[1].warnings).toEqual([]);
+  });
+
   it('⭐ 逐助手的 warning 原因**挂在该助手行上**，不是被吞掉', () => {
     const events: InstallEvent[] = [
       { type: 'agent_creating', agentSlug: 'codearchitect', message: 'CodeArchitect' },

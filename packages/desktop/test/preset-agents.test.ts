@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { OnboardingProfile } from '../src/renderer/lib/user-onboarding';
 import {
   PRESET_AGENT_DEFINITIONS,
+  COMMON_OPERATING_CONTRACT,
   STARTER_AGENT_BY_ID,
   resolveAgentDisplayNameKey,
   resolveStarterAgentId,
@@ -10,6 +11,22 @@ import {
 } from '../src/renderer/lib/preset-agents';
 
 describe('preset agent definitions', () => {
+  it('routes actual video requests to an available tool without claiming a script is a video', () => {
+    expect(COMMON_OPERATING_CONTRACT).toContain('video_generate');
+    expect(COMMON_OPERATING_CONTRACT).toContain('5 seconds');
+    expect(COMMON_OPERATING_CONTRACT).toContain('Never automatically resubmit');
+    expect(COMMON_OPERATING_CONTRACT).toContain('Stopping the chat does not cancel');
+    expect(PRESET_AGENT_DEFINITIONS.find((agent) => agent.id === 'rongying-video')?.soulMd).toContain(
+      'actual video file',
+    );
+  });
+
+  it('does not deny file artifacts or promise a generated file before verification', () => {
+    expect(COMMON_OPERATING_CONTRACT).not.toContain('a page you write straight into the workspace is *not* a 产物');
+    expect(COMMON_OPERATING_CONTRACT).not.toContain('say it will appear in 产物');
+    expect(COMMON_OPERATING_CONTRACT).toContain('verify the actual output file');
+  });
+
   it('ships the six approved assistants with stable unique identities', () => {
     expect(PRESET_AGENT_DEFINITIONS.map((agent) => agent.id)).toEqual([
       'rongying-content',

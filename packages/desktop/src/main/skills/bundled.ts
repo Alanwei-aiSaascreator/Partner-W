@@ -27,6 +27,66 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
+function controlledContent(slug: string, content: string): string {
+  if (process.env.ROYIN_NATIVE_PPT_VALIDATION !== '1' || !parseOurSkillFrontmatter(content)) return content;
+  const normalized = stripBom(content).replace(/\r\n/g, '\n');
+  const close = normalized.indexOf('\n---', 3);
+  const header = normalized.slice(0, close);
+  let body = normalized.slice(close + 4);
+  let description: string;
+  if (slug === 'presentation-deck-v2') {
+    // ⭐ 2026-10-03 版本对齐：受控环境**只教一个契约** = 固定槽位 templateDeck（16 版式，
+    //    唯一真源 TEMPLATE-DECK.md / TEMPLATE-DECK-SLOTS.json）。原先这里讲的是
+    //    business-deck-v5（四页型试运行）——而实际出片与认可成品走的都是 templateDeck
+    //    槽位引擎（收据 sourceFormat 可对），模型被教 v5、验收要 16 版式，两套口径打架。
+    description =
+      'Controlled fixed slot PPT generation and revisions. Read TEMPLATE-DECK.md and TEMPLATE-DECK-SLOTS.json. Preserve declared styles and facts.';
+    body =
+      '\n\n# Controlled fixed slot PPT contract (templateDeck-v2)\n\n' +
+      'Read TEMPLATE-DECK.md and TEMPLATE-DECK-SLOTS.json before organizing content. ' +
+      'Write a .native-ppt.json with template: templateDeck and the approved content page mapping. ' +
+      'Choose a nonempty subset of the 16 existing layouts using content keys 1 through 16, naturally ordered once. ' +
+      'Do not select chart layouts 10 or 11 without sourced numeric data; every selected layout needs its complete slots. ' +
+      'Only replace text and chart data; never author geometry, fonts, CSS or layouts. ' +
+      'Use the installed deck-layout helper, retain the final receipt, and use --previous for user revisions. ' +
+      'The final reply must use the exact generated filename and path from that receipt, including its hash suffix. ' +
+      'Missing evidence or capacity failure must be reported; do not invent data to fill charts or omit required text. ' +
+      'The managed executor verifies, reviews and registers the final version. Never claim completion from text alone.\n';
+  } else if (slug === 'deck-layout') {
+    description =
+      'Controlled native PPT render helper. PPT content and revisions use presentation-deck-v2; this helper renders its .native-ppt.json source. Free JSX/CSS layouts are unavailable inside controlled A validation.';
+    body =
+      '\n\n# Controlled native PPT render helper\n\n' +
+      'Read presentation-deck-v2/SKILL.md and TEMPLATE-DECK.md before creating PPT content. ' +
+      'Use the actual installed helper path and trusted bundled Node executable:\n\n' +
+      '```text\nnode "{baseDir}/scripts/generate.cjs" "report.native-ppt.json"\n' +
+      'node "{baseDir}/scripts/generate.cjs" "report.native-ppt.json" --previous "verified.receipt.json"\n```\n\n' +
+      'Poll the available process tool if exec is still running. Keep the final JSON receipt. ' +
+      'Use the exact generated filename and path from the receipt in the final reply, including its hash suffix. ' +
+      'The managed product executor verifies the output, checks the final version, registers it and ends the task. ' +
+      'Do not duplicate export in chat, invoke absent tools or announce completion from text alone. ' +
+      'Native font sizes use points; CSS uses pixels (24px = 18pt) only on the separate legacy route.\n';
+  } else if (slug === 'document-deck') {
+    description =
+      'Generate Word, Excel and PDF documents using the existing document contract. All PPT tasks in controlled validation use presentation-deck-v2 and the deck-layout native helper.';
+    body = body
+      .replace(
+        /### 1\.[\s\S]*?(?=### 2\.)/,
+        '### PPT\n\nUse presentation-deck-v2 and its .native-ppt.json contract for this controlled test.\n\n',
+      )
+      .replace(/### \u6f14\u793a\u6587\u7a3f\n[\s\S]*?(?=### Word)/, '')
+      .replace('.pptx / .docx / .xlsx / .pdf', '.docx / .xlsx / .pdf')
+      .replace(/^.*`kind`.*`"pptx"`.*$/m, '- `kind` is docx, xlsx or pdf here. PPT uses presentation-deck-v2 only.')
+      .replace(/^.*\u666e\u901a\u8981\u70b9\u7248\u6b63\u6587.*\n.*\u6a21\u677f\u5b57\u6bb5.*$/m, '')
+      .replaceAll('PPT / Word / Excel', 'Word / Excel')
+      .replace(
+        /\u4e00(?:\u4efd|\u9875)\s*PPT\s*\+\s*\u4e00\u4efd(?:\u8bb2\u7a3f\s*)?Word/iu,
+        'a Word document and an Excel sheet',
+      );
+  } else return content;
+  return header.replace(/^description:.*$/m, `description: '${description}'`) + '\n---' + body;
+}
+
 export interface BundledSkill {
   slug: string;
   /** ⚠️ `undefined` 表示**这份文件格式不对**（不是"还没加载"）。由内容闸判红。 */
@@ -151,7 +211,7 @@ export function readBundledSkills(root: string | undefined): BundledSkill[] {
       let parsed: ParsedFrontmatter | null = null;
       let content: string | undefined;
       try {
-        content = fs.readFileSync(file, 'utf-8');
+        content = controlledContent(e.name, fs.readFileSync(file, 'utf-8'));
         parsed = parseOurSkillFrontmatter(content);
       } catch {
         /* 没有 SKILL.md / 读不动 —— 字段留空，交给内容闸报 */
@@ -325,6 +385,13 @@ export function installBundledSkill(opts: {
     // 覆盖语义：先删旧的再拷，避免源里删掉的文件残留在目标里。
     fs.rmSync(target, { recursive: true, force: true });
     fs.cpSync(source, target, { recursive: true });
+    if (
+      process.env.ROYIN_NATIVE_PPT_VALIDATION === '1' &&
+      ['presentation-deck-v2', 'deck-layout', 'document-deck'].includes(slug)
+    ) {
+      const file = path.join(target, 'SKILL.md');
+      fs.writeFileSync(file, controlledContent(slug, fs.readFileSync(file, 'utf8')));
+    }
     return { ok: true };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : 'unknown' };

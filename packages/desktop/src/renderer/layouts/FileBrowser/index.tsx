@@ -7,7 +7,7 @@ import { useTaskStore } from '@/stores/taskStore';
 import { useMessageStore } from '@/stores/messageStore';
 import { useUiStore } from '@/stores/uiStore';
 import { cn } from '@/lib/utils';
-import { getArtifactKindFilter, getArtifactLabel, type ArtifactKindFilter } from '@/lib/artifact-labels';
+import { getArtifactDisplayName, getArtifactKindFilter, type ArtifactKindFilter } from '@/lib/artifact-labels';
 import { motionDuration, motionEase } from '@/styles/design-tokens';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import FileCard from '@/components/FileCard';
@@ -341,7 +341,7 @@ export default function FileBrowser() {
                       )}
                     >
                       <ListItem
-                        title={getArtifactLabel(r, t)}
+                        title={getArtifactDisplayName(r, t)}
                         subtitle={r.contentSnippet ? <SnippetHighlight snippet={r.contentSnippet} /> : undefined}
                         meta={taskMap.get(r.taskId) ?? r.taskId}
                         active={r.id === selectedId}

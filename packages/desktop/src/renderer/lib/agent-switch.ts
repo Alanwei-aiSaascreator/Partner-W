@@ -9,7 +9,7 @@ import { removeAssistantTaskPresetTags } from '@/lib/assistant-task-preset-tags'
  *   否则下一个任务会带着上一个助手的预设发出去；
  * - 点的是**同一个**助手 ⇒ 标签保留（用户自己选的，别悄悄丢掉）。
  *
- * 其余字段（model / thinkingLevel / ensemble / teamId）原样带过去 —— 它们与助手无关。
+ * 模型偏好保留；离开团队当前助手时清除 teamId/团队并行模式，不能把旧团队合同带给新助手。
  */
 export function resolvePendingAfterAgentSwitch(
   pending: PendingNewTask | null,
@@ -19,10 +19,15 @@ export function resolvePendingAfterAgentSwitch(
   const sameScope = pending?.gatewayId === gatewayId && pending.agentId === agentId;
   const { tags: _previousTags, ...pendingWithoutTags } = pending ?? {};
   const tags = sameScope ? pending?.tags : removeAssistantTaskPresetTags(pending?.tags ?? []);
-  return {
+  const next: PendingNewTask = {
     ...(sameScope ? pending : pendingWithoutTags),
     gatewayId,
     agentId,
     ...(tags && tags.length > 0 ? { tags } : {}),
   };
+  if (!sameScope && pending?.teamId) {
+    delete next.teamId;
+    next.ensemble = false;
+  }
+  return next;
 }

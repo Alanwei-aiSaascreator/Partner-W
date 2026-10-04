@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { PanelLeftClose, PanelLeftOpen, Search, SquarePen } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils';
 import { useTaskStore } from '@/stores/taskStore';
 import { useMessageStore } from '@/stores/messageStore';
 import { useUiStore } from '@/stores/uiStore';
+import { useTeamStore } from '@/stores/teamStore';
 import { useFileStore } from '@/stores/fileStore';
 import SearchResults, { type SearchResult } from '@/components/SearchResults';
 import { motionDuration } from '@/styles/design-tokens';
@@ -93,6 +94,13 @@ export default function LeftNav({ onOpenAssistantSettings, onOpenSettings }: Lef
   };
 
   const { selectedGwId, agentCatalog, defaultAgentId } = useGatewaySelector();
+  const teamsMap = useTeamStore((state) => state.teams);
+  const loadTeams = useTeamStore((state) => state.loadTeams);
+  const teams = useMemo(() => Object.values(teamsMap), [teamsMap]);
+  useEffect(() => {
+    const state = useTeamStore.getState();
+    if (!state.loadedOnce && !state.loading) void loadTeams();
+  }, [loadTeams]);
   const agentCatalogEntry = useUiStore((s) => s.agentCatalogByGateway[selectedGwId]);
   const selectedAgentId = useUiStore((s) => s.selectedAgentByGateway[selectedGwId] ?? '');
   /**
@@ -219,6 +227,9 @@ export default function LeftNav({ onOpenAssistantSettings, onOpenSettings }: Lef
             <>
               <AssistantSwitcher
                 agents={agentCatalog}
+                teams={teams}
+                gatewayId={selectedGwId}
+                defaultAgentId={defaultAgentId}
                 selectedAgentId={currentAgentId}
                 onSelect={handleSelectAgent}
                 onAddAssistant={onOpenAssistantSettings}

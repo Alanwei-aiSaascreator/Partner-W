@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { RelayBootstrapPublicState, WorkspaceFsIdentity } from '@clawwork/shared';
 import i18n from '@/i18n';
-import { fetchAgentsForGateway, reinitializeGatewayBootstrap } from '@/hooks/useGatewayDispatcherSetup';
+import { relayModelsFrom } from '@/components/ChatInput/model-families';
+import {
+  fetchAgentsForGateway,
+  refreshCatalogsForGateway,
+  reinitializeGatewayBootstrap,
+} from '@/hooks/useGatewayDispatcherSetup';
 import {
   presetAgentBootstrapCoordinator,
   type PresetAgentBootstrapDeps,
@@ -93,6 +98,7 @@ export function useStartupReadiness(enabled: boolean) {
   const runtimeBootstrapFailure = useUiStore((state) => state.runtimeBootstrapFailure);
   const [assistantSnapshot, setAssistantSnapshot] = useState<PresetAgentBootstrapSnapshot>(emptyAssistantSnapshot);
   const [relayState, setRelayState] = useState<RelayBootstrapPublicState | null>(null);
+  const relaySnapshot = useRef<RelayBootstrapPublicState | null>(null);
   /**
    * 工作区所在文件系统的探测结果（FAT32 上 `dev=0` ⇒ 助手读写身份文件必失败）。
    *
@@ -141,6 +147,8 @@ export function useStartupReadiness(enabled: boolean) {
     if (typeof api?.onCommercialRelayBootstrapState !== 'function') return;
     let active = true;
     const accept = (next: RelayBootstrapPublicState): void => {
+      if (relaySnapshot.current && relaySnapshot.current.updatedAt >= next.updatedAt) return;
+      relaySnapshot.current = next;
       setRelayState((current) => (current && current.updatedAt >= next.updatedAt ? current : next));
     };
     const unsubscribe = api.onCommercialRelayBootstrapState((next) => {
@@ -161,6 +169,55 @@ export function useStartupReadiness(enabled: boolean) {
       unsubscribe();
     };
   }, []);
+
+  useEffect(() => {
+    if (!enabled || gatewayId !== 'local-runtime' || gatewayStatus !== 'connected' || relayState?.phase !== 'ready')
+      return;
+    let current = true;
+    const isCurrent = () =>
+      current &&
+      active.current &&
+      currentScope.current.enabled &&
+      currentScope.current.gatewayId === gatewayId &&
+      currentScope.current.workspaceEpoch === workspaceEpoch &&
+      useUiStore.getState().defaultGatewayId === gatewayId &&
+      useUiStore.getState().gatewayStatusMap[gatewayId] === 'connected' &&
+      useTaskStore.getState().workspaceEpoch === workspaceEpoch &&
+      relaySnapshot.current?.phase === 'ready' &&
+      relaySnapshot.current.updatedAt === relayState.updatedAt;
+    // ⭐ 晚热目录的**有界**恢复观察（2026-10-04 真机）：中转 ready 后第一次目录刷新可能
+    //    整个退避窗（~74s）都撞上"目录还没热"，空结论落进 store 之后**不再有任何计时器**，
+    //    而真实目录这次到 102.5 秒才可用 —— 界面就永久停在「暂时没有可用模型」。
+    //    所以同一 ready 代次、同一 scope 内最多再补问两次（+60s / +120s 起步，整个代次
+    //    不超过 180s），直到**真实可用的中转目录进入 store**才停。
+    //
+    //    边界（数字只限制观察，**不产生 ready 结论** —— ready 仍由 deriveStartupReadiness
+    //    按 store 里真实可用的目录推导）：
+    //      - 只在当前 ready 代次 / 当前 scope / 仍 connected 时才真发；
+    //      - 成功（可用目录已入 store）、失效（scope 变）、断连、禁用、卸载 ⇒ 立刻停；
+    //      - 不 reset、不 reinitialize；重渲染不会清零预算（窗口挂在本 effect 生命周期上，
+    //        只有真正的代次/scope 变化才重开）。
+    const catalogUsable = () =>
+      relayModelsFrom(useUiStore.getState().modelCatalogByGateway[gatewayId] ?? []).length > 0;
+    const nextAtMs = [60_000, 120_000];
+    const timers: number[] = [];
+    const attempt = (index: number): void => {
+      if (!current || !isCurrent() || catalogUsable()) return;
+      void refreshCatalogsForGateway(gatewayId, { isCurrent }).catch((error) => {
+        if (isCurrent()) console.warn('[catalogs] Relay-ready catalog refresh failed', error);
+      });
+      const next = nextAtMs[index];
+      if (next !== undefined) {
+        const delay = next - (nextAtMs[index - 1] ?? 0);
+        timers.push(window.setTimeout(() => attempt(index + 1), delay));
+      }
+    };
+    attempt(0);
+    return () => {
+      current = false;
+      for (const timer of timers) window.clearTimeout(timer);
+    };
+  }, [enabled, gatewayId, gatewayStatus, workspaceEpoch, relayState]);
 
   const runAssistantBootstrap = useCallback(async () => {
     if (!gatewayId) return;

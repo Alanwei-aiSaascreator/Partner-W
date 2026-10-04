@@ -44,6 +44,20 @@ function sanitizeExtractedFileName(raw: string): string {
   return raw;
 }
 
+export function isIntermediateArtifactName(name: string): boolean {
+  const lower = name.toLowerCase();
+  return (
+    lower.endsWith('.native-ppt.json') ||
+    lower.startsWith('.royin-ppt-receipt-') ||
+    name.startsWith('~$') ||
+    lower.endsWith('.tmp') ||
+    lower.endsWith('.part') ||
+    lower.endsWith('.partial') ||
+    lower.endsWith('.lock') ||
+    lower.endsWith('~')
+  );
+}
+
 /**
  * **不是代码**的围栏语言：它们是"生成文件"的请求（`docgen` → Office 文件、`htmlgen` → 网页），
  * 由各自的渲染器变成真文件后单独落盘。列在一处是为了"加第三条通道时只改一行"。
@@ -74,6 +88,7 @@ export function extractCodeBlocksFromMarkdown(content: string): ExtractedCodeBlo
         const fileName = hasDot
           ? sanitizeExtractedFileName(lang)
           : `snippet-${createHash('sha1').update(body).digest('hex').slice(0, 6)}.${LANG_EXT[lang.toLowerCase()] ?? 'txt'}`;
+        if (isIntermediateArtifactName(fileName)) return null;
         return { language: lang, content: body, fileName, lineCount };
       })
       .filter((b): b is ExtractedCodeBlock => b !== null)

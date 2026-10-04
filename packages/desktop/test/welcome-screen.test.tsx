@@ -14,8 +14,15 @@ const mocks = vi.hoisted(() => ({
   setSelectedAgent: vi.fn(),
   setMainView: vi.fn(),
   selectedGwId: 'gw-1',
-  pendingNewTask: null as { gatewayId?: string; agentId?: string; model?: string; tags?: string[] } | null,
-  gatewayState: { agentCatalog: [{ id: 'main' }] as Array<{ id: string }> },
+  pendingNewTask: null as {
+    gatewayId?: string;
+    agentId?: string;
+    model?: string;
+    tags?: string[];
+    teamId?: string;
+    ensemble?: boolean;
+  } | null,
+  gatewayState: { agentCatalog: [{ id: 'main' }] as Array<{ id: string; name?: string }> },
   modelCatalogByGateway: {
     'gw-1': [
       { id: 'deepseek-v4-flash', provider: 'clawrouter', name: 'DeepSeek V4 Flash' },
@@ -121,6 +128,101 @@ function render(ui: ReactElement): {
 }
 
 describe('WelcomeScreen assistant workspace', () => {
+  it('lets a user leave the requested team manager and clears only the pending team scope', () => {
+    mocks.gatewayState.agentCatalog = [
+      { id: 'main' },
+      { id: 'designer', name: '演示设计师' },
+      { id: 'finance-lead', name: '融资主管' },
+    ];
+    mocks.pendingNewTask = {
+      gatewayId: 'gw-1',
+      agentId: 'finance-lead',
+      model: 'qwen3.5-plus',
+      teamId: 'finance-team',
+      ensemble: false,
+    };
+    const ui = () => (
+      <WelcomeScreen
+        onboardingProfile={{ ...onboardingProfile, useCases: [] }}
+        recentPresetIds={[]}
+        onSelectPreset={vi.fn()}
+        onCustomTask={vi.fn()}
+        onAssistantChange={vi.fn()}
+      />
+    );
+    const view = render(ui());
+    mocks.setPending.mockImplementationOnce((next) => {
+      mocks.pendingNewTask = next;
+    });
+    const designer = Array.from(view.container.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('演示设计师'),
+    );
+    act(() => designer?.click());
+    expect(mocks.pendingNewTask).toMatchObject({ agentId: 'designer', gatewayId: 'gw-1' });
+    expect(mocks.pendingNewTask?.teamId).toBeUndefined();
+    expect(mocks.setSelectedAgent).toHaveBeenCalledWith('gw-1', 'designer');
+    expect(
+      Array.from(view.container.querySelectorAll('button')).find((button) => button.textContent?.includes('演示设计师'))
+        ?.className,
+    ).toContain('border-[var(--accent)]');
+    mocks.pendingNewTask = {
+      gatewayId: 'gw-1',
+      agentId: 'finance-lead',
+      model: 'qwen3.5-plus',
+      teamId: 'finance-team',
+      ensemble: false,
+    };
+    view.rerender(ui());
+    expect(
+      Array.from(view.container.querySelectorAll('button')).find((button) => button.textContent?.includes('融资主管'))
+        ?.className,
+    ).toContain('border-[var(--accent)]');
+    expect(mocks.pendingNewTask?.teamId).toBe('finance-team');
+    view.unmount();
+  });
+
+  it('shows a requested manager outside the first three catalog rows without losing pending team context', () => {
+    mocks.gatewayState.agentCatalog = [
+      { id: 'main' },
+      { id: 'analyst', name: '商业分析师' },
+      { id: 'designer', name: '演示设计师' },
+      { id: 'finance-lead', name: '融资主管' },
+    ];
+    mocks.pendingNewTask = { gatewayId: 'gw-1', agentId: 'main', model: 'deepseek-v4-flash' };
+    const ui = () => (
+      <WelcomeScreen
+        onboardingProfile={{ ...onboardingProfile, useCases: [] }}
+        recentPresetIds={[]}
+        onSelectPreset={vi.fn()}
+        onCustomTask={vi.fn()}
+        onAssistantChange={vi.fn()}
+      />
+    );
+    const view = render(ui());
+    mocks.setPending.mockClear();
+    mocks.pendingNewTask = {
+      gatewayId: 'gw-1',
+      agentId: 'finance-lead',
+      model: 'qwen3.5-plus',
+      teamId: 'finance-team',
+      ensemble: false,
+    };
+    view.rerender(ui());
+    const manager = Array.from(view.container.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('融资主管'),
+    );
+    expect(manager).toBeDefined();
+    expect(manager?.className).toContain('border-[var(--accent)]');
+    expect(mocks.pendingNewTask).toMatchObject({
+      agentId: 'finance-lead',
+      teamId: 'finance-team',
+      ensemble: false,
+      model: 'qwen3.5-plus',
+    });
+    expect(mocks.setPending).not.toHaveBeenCalled();
+    view.unmount();
+  });
+
   beforeEach(() => {
     (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     vi.clearAllMocks();

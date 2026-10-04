@@ -98,10 +98,12 @@ export function useGatewaySelector(options: UseGatewaySelectorOptions = {}): Use
     () =>
       requestedState === 'missing'
         ? ''
-        : agentCatalog.some((agent) => agent.id === selectedAgentId)
-          ? selectedAgentId
-          : defaultAgentId,
-    [agentCatalog, defaultAgentId, requestedState, selectedAgentId],
+        : requestGatewayMatches && requestedState === 'ok' && options.requestedAgentId
+          ? options.requestedAgentId
+          : agentCatalog.some((agent) => agent.id === selectedAgentId)
+            ? selectedAgentId
+            : defaultAgentId,
+    [agentCatalog, defaultAgentId, options.requestedAgentId, requestGatewayMatches, requestedState, selectedAgentId],
   );
 
   useEffect(() => {

@@ -96,6 +96,10 @@ vi.mock('@clawwork/core', () => ({
   getTaskSessionKeys: (task: { sessionKey: string }) => [task.sessionKey],
 }));
 
+vi.mock('../src/renderer/features/team-meeting/instance', () => ({
+  teamMeetingController: { store: { getState: () => ({ records: [] }) } },
+}));
+
 /* Build mock store functions that support both hook calls and .getState() */
 function makeStoreMock<T extends object>(stateRef: T) {
   const fn = <U,>(selector?: (state: T) => U) => (selector ? selector(stateRef) : stateRef);

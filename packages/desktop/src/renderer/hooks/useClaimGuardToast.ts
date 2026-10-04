@@ -43,6 +43,7 @@ export function useClaimGuardToast(): void {
     return window.clawwork.onClaimViolation((violation) => {
       if (
         !violation.missing.length &&
+        !violation.missingKinds?.length &&
         !violation.slideFailures?.length &&
         !violation.docFailures?.length &&
         !violation.htmlFailures?.length &&
@@ -54,6 +55,7 @@ export function useClaimGuardToast(): void {
         violation.sessionKey,
         violation.messageId,
         violation.missing,
+        violation.missingKinds ?? [],
         violation.slideFailures ?? [],
         violation.docFailures ?? [],
         violation.htmlFailures ?? [],
@@ -97,6 +99,14 @@ export function useClaimGuardToast(): void {
         const description = t('claimGuard.missingBody', { names: violation.missing.join(', ') });
         lines.push(`[artifact.claim-guard.missing] ${description}`);
         toast.error(t('claimGuard.missingTitle'), { description });
+      }
+      // ⭐ 没登记到 ≠ 文件不存在（2026-10-04 真机）：真机上两份改稿都在盘上，界面却在说
+      //    「工作区里没有这些文件」。这一档只说「没登记到成果列表」，不下「不存在」的结论，
+      //    也不放宽任何守卫 —— 它只是把已经发生的事说准确。
+      if (violation.missingKinds?.length) {
+        const description = t('claimGuard.missingKindsBody', { names: violation.missingKinds.join(', ') });
+        lines.push(`[artifact.claim-guard.missing-kinds] ${description}`);
+        toast.error(t('claimGuard.missingKindsTitle'), { description });
       }
       useMessageStore.getState().addMessage(violation.taskId, 'system', lines.join('\n'), undefined, {
         sessionKey: violation.sessionKey,

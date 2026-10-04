@@ -26,6 +26,7 @@ export default function TeamsPanel() {
   const deleteTeamAction = useTeamStore((s) => s.deleteTeam);
   const startNewTask = useTaskStore((s) => s.startNewTask);
   const setMainView = useUiStore((s) => s.setMainView);
+  const setSelectedAgent = useUiStore((s) => s.setSelectedAgent);
   const defaultGatewayId = useUiStore((s) => s.defaultGatewayId);
   // ⭐ "这个团队的助手装在这台机器上吗"要拿**那个团队所属网关**的目录来判
   //    （团队自己带 `gatewayId`，与当前默认网关未必是同一个）。
@@ -86,10 +87,11 @@ export default function TeamsPanel() {
       // 可靠模式：团队任务先固定由主管（或第一位成员）单独完成完整工作流。
       // `teamId` 刻意保留，未来增加“创作者 → 复审者”的顺序执行时仍能找到原团队，
       // 但不再把成员数映射成 ensemble/conductor/sessions_spawn。
+      setSelectedAgent(team.gatewayId, decision.agentId);
       startNewTask({ gatewayId: team.gatewayId, agentId: decision.agentId, ensemble: false, teamId });
       setMainView('chat');
     },
-    [teamsMap, agentCatalogByGateway, startNewTask, setMainView, t],
+    [teamsMap, agentCatalogByGateway, startNewTask, setMainView, setSelectedAgent, t],
   );
 
   const handleEdit = useCallback(

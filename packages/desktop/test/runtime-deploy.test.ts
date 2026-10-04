@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   CLAWROUTER_ENTRY,
   DEPLOYMENT_STAMP_FILE,
@@ -33,10 +33,157 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   // 双重保险：只删我们自己建的 tmp 目录，路径不含前缀就绝不删。
   if (tmpRoot && tmpRoot.includes(path.join(os.tmpdir(), 'clawwork-deploy-'))) {
     fs.rmSync(tmpRoot, { recursive: true, force: true });
   }
+});
+
+describe('Windows atomic deployment rename refuses transient filesystem locks within a bound', () => {
+  const onPlatform = (platform: string) => vi.stubGlobal('process', { ...process, platform });
+  const refusal = (code: string) => Object.assign(new Error(`controlled ${code} rename refusal`), { code });
+
+  it.each(['EPERM', 'EACCES', 'EBUSY'])(
+    'recovers temporary %s without updating current before atomic rename',
+    async (code) => {
+      onPlatform('win32');
+      const fx = buildSourceHere();
+      const userDataDir = newUserDataHere('transient');
+      const pointer = path.join(userDataDir, 'runtime', CURRENT_POINTER_FILE);
+      const originalRename = fs.promises.rename.bind(fs.promises);
+      let attempts = 0;
+      const rename = vi.spyOn(fs.promises, 'rename').mockImplementation(async (from, to) => {
+        attempts++;
+        expect(fs.existsSync(pointer)).toBe(false);
+        if (attempts < 3) throw refusal(code);
+        await originalRename(from, to);
+      });
+      const phases: string[] = [];
+      const result = await ensureRuntimeDeployed({
+        ...deployOpts(fx, userDataDir),
+        onProgress: (value) => phases.push(value.phase),
+      });
+      expect(rename).toHaveBeenCalledTimes(3);
+      expect(result.status).toBe('deployed');
+      expect(readCurrentDeployment(userDataDir).status).toBe('ok');
+      expect(sha256File(result.nodePath)).toBe(fx.node.sha256);
+      expect(phases.filter((phase) => phase === 'finalize')).toEqual(['finalize']);
+    },
+  );
+
+  it('persistent EPERM stops at eight attempts, retains the exact error, cleans tmp and leaves the previous pointer', async () => {
+    onPlatform('win32');
+    const fx = buildSourceHere();
+    const userDataDir = newUserDataHere('permanent');
+    const pointer = path.join(userDataDir, 'runtime', CURRENT_POINTER_FILE);
+    fs.mkdirSync(path.dirname(pointer), { recursive: true });
+    const previousPointer = JSON.stringify({ runtimeDeploymentKey: 'previous-good', updatedAt: NOW.toISOString() });
+    fs.writeFileSync(pointer, previousPointer);
+    const error = refusal('EPERM');
+    const rename = vi.spyOn(fs.promises, 'rename').mockRejectedValue(error);
+    const phases: string[] = [];
+    await expect(
+      ensureRuntimeDeployed({ ...deployOpts(fx, userDataDir), onProgress: (p) => phases.push(p.phase) }),
+    ).rejects.toBe(error);
+    expect(rename).toHaveBeenCalledTimes(8);
+    expect(fs.readFileSync(pointer, 'utf8')).toBe(previousPointer);
+    expect(fs.readdirSync(path.join(userDataDir, 'runtime', 'tmp'))).toEqual([]);
+    expect(fs.existsSync(path.join(userDataDir, 'runtime', 'deployed', fx.key))).toBe(false);
+    expect(phases).not.toContain('finalize');
+  });
+
+  it('elapsed three-second bound refuses further requests even before the attempt cap', async () => {
+    onPlatform('win32');
+    const fx = buildSourceHere();
+    const userDataDir = newUserDataHere('deadline');
+    const error = refusal('EPERM');
+    let elapsed = 0;
+    vi.spyOn(performance, 'now').mockImplementation(() => 1_000_000 + elapsed);
+    const rename = vi.spyOn(fs.promises, 'rename').mockImplementation(async () => {
+      elapsed = 3_001;
+      throw error;
+    });
+    await expect(ensureRuntimeDeployed(deployOpts(fx, userDataDir))).rejects.toBe(error);
+    expect(rename).toHaveBeenCalledTimes(1);
+    expect(fs.existsSync(path.join(userDataDir, 'runtime', CURRENT_POINTER_FILE))).toBe(false);
+  });
+
+  it.each(['linux', 'darwin'])('does not retry a filesystem refusal on %s', async (platform) => {
+    onPlatform(platform);
+    const fx = buildSourceHere();
+    const userDataDir = newUserDataHere('non-windows');
+    const error = refusal('EPERM');
+    const rename = vi.spyOn(fs.promises, 'rename').mockRejectedValue(error);
+    await expect(ensureRuntimeDeployed(deployOpts(fx, userDataDir))).rejects.toBe(error);
+    expect(rename).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['EXDEV', 'ENOENT', 'EIO'])('does not retry %s or replace atomic rename with copying', async (code) => {
+    onPlatform('win32');
+    const fx = buildSourceHere();
+    const userDataDir = newUserDataHere('wrong-error');
+    const error = refusal(code);
+    const rename = vi.spyOn(fs.promises, 'rename').mockRejectedValue(error);
+    await expect(ensureRuntimeDeployed(deployOpts(fx, userDataDir))).rejects.toBe(error);
+    expect(rename).toHaveBeenCalledTimes(1);
+    expect(fs.existsSync(path.join(userDataDir, 'runtime', CURRENT_POINTER_FILE))).toBe(false);
+  });
+
+  it('a destination appearing after the refusal is preserved and stops further attempts', async () => {
+    onPlatform('win32');
+    const fx = buildSourceHere();
+    const userDataDir = newUserDataHere('destination-race');
+    const deployed = path.join(userDataDir, 'runtime', 'deployed', fx.key);
+    const error = refusal('EPERM');
+    const rename = vi.spyOn(fs.promises, 'rename').mockImplementation(async (_from, to) => {
+      fs.mkdirSync(to, { recursive: true });
+      fs.writeFileSync(path.join(String(to), 'other-deployer.txt'), 'must remain');
+      throw error;
+    });
+    await expect(ensureRuntimeDeployed(deployOpts(fx, userDataDir))).rejects.toBe(error);
+    expect(rename).toHaveBeenCalledTimes(1);
+    expect(fs.readFileSync(path.join(deployed, 'other-deployer.txt'), 'utf8')).toBe('must remain');
+    expect(fs.existsSync(path.join(userDataDir, 'runtime', CURRENT_POINTER_FILE))).toBe(false);
+  });
+
+  it.skipIf(process.platform !== 'win32')(
+    'a dangling Windows junction is an existing destination and is preserved without retry',
+    async () => {
+      const fx = buildSourceHere();
+      const userDataDir = newUserDataHere('destination-junction');
+      const deployed = path.join(userDataDir, 'runtime', 'deployed', fx.key);
+      const missingTarget = path.join(tmpRoot, 'private-missing-junction-target');
+      const error = refusal('EPERM');
+      let attempts = 0;
+      const rename = vi.spyOn(fs.promises, 'rename').mockImplementation(async (_from, to) => {
+        if (++attempts === 1) fs.symlinkSync(missingTarget, to, 'junction');
+        expect(fs.lstatSync(to).isSymbolicLink()).toBe(true);
+        expect(() => fs.statSync(to)).toThrow();
+        throw error;
+      });
+      await expect(ensureRuntimeDeployed(deployOpts(fx, userDataDir))).rejects.toBe(error);
+      expect(rename).toHaveBeenCalledTimes(1);
+      expect(fs.lstatSync(deployed).isSymbolicLink()).toBe(true);
+      expect(path.resolve(fs.readlinkSync(deployed))).toBe(path.resolve(missingTarget));
+      expect(fs.existsSync(missingTarget)).toBe(false);
+      expect(fs.readdirSync(path.join(userDataDir, 'runtime', 'tmp'))).toEqual([]);
+      expect(fs.existsSync(path.join(userDataDir, 'runtime', CURRENT_POINTER_FILE))).toBe(false);
+    },
+  );
+
+  it('an unreadable destination check fails with the original rename error', async () => {
+    onPlatform('win32');
+    const fx = buildSourceHere();
+    const userDataDir = newUserDataHere('destination-lstat-failure');
+    const error = refusal('EPERM');
+    const rename = vi.spyOn(fs.promises, 'rename').mockRejectedValue(error);
+    const stat = vi.spyOn(fs.promises, 'lstat').mockRejectedValue(refusal('EACCES'));
+    await expect(ensureRuntimeDeployed(deployOpts(fx, userDataDir))).rejects.toBe(error);
+    expect(rename).toHaveBeenCalledTimes(1);
+    expect(stat).toHaveBeenCalledTimes(1);
+  });
 });
 
 const buildSourceHere = (opts?: Parameters<typeof buildSource>[1]): SourceFixture => buildSource(tmpRoot, opts);

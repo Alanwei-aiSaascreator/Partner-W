@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { build } from 'vite';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
@@ -31,6 +31,7 @@ const electronPath = require('electron') as string;
 const probePath = fileURLToPath(new URL('./helpers/artifact-reconcile-probe.ts', import.meta.url));
 const packagePath = fileURLToPath(new URL('../package.json', import.meta.url));
 const packageDir = dirname(packagePath);
+const privateProbeRoot = process.env.CLAW_ARTIFACT_PROBE_ROOT;
 let runnerDir: string;
 let compiledProbePath: string;
 
@@ -38,7 +39,11 @@ function runProbe(workspacePath: string, scenario: string): Record<string, unkno
   const child = spawnSync(electronPath, [compiledProbePath, workspacePath, scenario], {
     cwd: packageDir,
     encoding: 'utf8',
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+    env: {
+      ...process.env,
+      ELECTRON_RUN_AS_NODE: '1',
+      ...(privateProbeRoot ? { TMPDIR: privateProbeRoot, TMP: privateProbeRoot, TEMP: privateProbeRoot } : {}),
+    },
     timeout: 30_000,
   });
   if (child.error) throw new Error(`Artifact probe failed to start: ${child.error.message}\nstderr:\n${child.stderr}`);
@@ -54,19 +59,19 @@ describe('artifact reconciliation', () => {
   let workspacePath: string;
 
   beforeAll(async () => {
-    runnerDir = mkdtempSync(join(packageDir, '.artifact-reconcile-probe-'));
+    runnerDir = mkdtempSync(join(privateProbeRoot ?? packageDir, '.artifact-reconcile-probe-'));
     compiledProbePath = join(runnerDir, 'probe.mjs');
     await build({
       configFile: false,
       logLevel: 'silent',
       root: packageDir,
-      plugins:
-        process.env.CLAW_TEST_GIT_INDEX === '1'
+      plugins: [
+        ...(process.env.CLAW_TEST_GIT_INDEX === '1'
           ? [
               {
                 name: 'reconcile-probe-scoped-index',
-                enforce: 'pre',
-                load(id) {
+                enforce: 'pre' as const,
+                load(id: string) {
                   const repository = resolve(packageDir, '../..');
                   const path = relative(repository, id.split('?')[0]).replaceAll('\\', '/');
                   if (/^packages\/.*(?:\.[cm]?[jt]sx?|\.json)$/.test(path))
@@ -74,8 +79,21 @@ describe('artifact reconciliation', () => {
                 },
               },
             ]
-          : [],
-      ssr: { noExternal: true, external: ['better-sqlite3'] },
+          : []),
+        ...(privateProbeRoot
+          ? [
+              {
+                name: 'reconcile-probe-private-native-path',
+                enforce: 'pre' as const,
+                resolveId(source: string) {
+                  if (source === 'better-sqlite3')
+                    return { id: pathToFileURL(require.resolve('better-sqlite3')).href, external: true };
+                },
+              },
+            ]
+          : []),
+      ],
+      ssr: { noExternal: true, external: privateProbeRoot ? [] : ['better-sqlite3'] },
       build: {
         emptyOutDir: true,
         minify: false,
@@ -88,7 +106,7 @@ describe('artifact reconciliation', () => {
 
   afterAll(() => rmSync(runnerDir, { recursive: true, force: true }));
   beforeEach(() => {
-    workspacePath = mkdtempSync(join(tmpdir(), 'clawwork-artifact-reconcile-'));
+    workspacePath = mkdtempSync(join(privateProbeRoot ?? tmpdir(), 'clawwork-artifact-reconcile-'));
   });
   afterEach(() => rmSync(workspacePath, { recursive: true, force: true }));
 
@@ -140,6 +158,27 @@ describe('artifact reconciliation', () => {
   it('does not register a file that existed unchanged in the run baseline', () => {
     const { result } = runProbe(workspacePath, 'baseline') as unknown as { result: ReconcileResult };
     expect(result.saved).toEqual([]);
+  });
+
+  it.each([
+    ['workspace', 'normal'],
+    ['agent', 'normal'],
+    ['workspace', 'controlled'],
+    ['agent', 'controlled'],
+  ])('rejects reserved intermediate files in the %s root with %s routing', (rootKind, mode) => {
+    const probe = runProbe(workspacePath, `reserved-intermediate-${rootKind}-${mode}`) as {
+      first: ReconcileResult;
+      second: ReconcileResult;
+      rows: Array<{ id: string; name: string; root: string; local_path: string }>;
+    };
+
+    expect(probe.first.saved.map((artifact) => artifact.name)).toEqual(['report.json']);
+    expect(probe.second.saved).toEqual([]);
+    expect(probe.second.existing.map((artifact) => artifact.name)).toEqual(['report.json']);
+    expect(probe.rows).toEqual([
+      expect.objectContaining({ id: 'prior-intermediate', name: 'prior.native-ppt.json', root: rootKind }),
+      expect.objectContaining({ name: 'report.json', root: rootKind }),
+    ]);
   });
 
   it('captures an empty baseline for a new task before its output directory exists', () => {

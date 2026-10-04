@@ -182,6 +182,13 @@ export async function fetchAgentsForGateway(gatewayId: string, options: { force?
   return getDispatcher().fetchAgentsForGateway(gatewayId, agentCatalog, options);
 }
 
+export async function refreshCatalogsForGateway(
+  gatewayId: string,
+  options: { isCurrent?: () => boolean } = {},
+): Promise<void> {
+  await getDispatcher().refreshCatalogsForGateway(gatewayId, options);
+}
+
 export async function reinitializeGatewayBootstrap(): Promise<void> {
   const d = getDispatcher();
   d.reset();

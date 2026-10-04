@@ -43,6 +43,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { createPublicKey } = require('node:crypto');
+const { parse } = require('acorn');
 
 /** 内嵌更新公钥的变量名 —— 必须与 `electron.vite.config.ts` 读的那个变量一致。 */
 const ENV_VAR_NAME = 'MOFANG_UPDATE_PUBLIC_KEY_B64';
@@ -132,10 +133,64 @@ function checkBuiltBundle(input) {
   const displayPath = input.bundlePath;
   const relativePath = MAIN_BUNDLE_RELATIVE_PATH;
   const keyBase64 = String(input.keyBase64 || '').trim();
+  const mainDirectory = path.dirname(path.resolve(input.bundlePath));
+  const pending = [path.resolve(input.bundlePath)];
+  const visited = new Set();
+  let keyFound = false;
 
-  let source;
   try {
-    source = readFile(input.bundlePath);
+    while (pending.length > 0) {
+      const bundlePath = pending.pop();
+      if (visited.has(bundlePath)) continue;
+      visited.add(bundlePath);
+      if (!input.readFile) {
+        const componentPaths = [mainDirectory];
+        for (const component of path.relative(mainDirectory, bundlePath).split(path.sep)) {
+          componentPaths.push(path.join(componentPaths[componentPaths.length - 1], component));
+        }
+        const realRelative = path.relative(fs.realpathSync(mainDirectory), fs.realpathSync(bundlePath));
+        if (
+          componentPaths.some((componentPath) => fs.lstatSync(componentPath).isSymbolicLink()) ||
+          realRelative.startsWith('..') ||
+          path.isAbsolute(realRelative)
+        ) {
+          throw new Error(`Main chunk is outside the output directory or is a link: ${bundlePath}`);
+        }
+      }
+      const source = readFile(bundlePath);
+      keyFound ||= keyBase64.length > 0 && source.includes(keyBase64);
+      const nodes = [parse(source, { ecmaVersion: 'latest', sourceType: 'module' })];
+      while (nodes.length > 0) {
+        const node = nodes.pop();
+        if (!node || typeof node !== 'object') continue;
+        const imported = [
+          'ImportDeclaration',
+          'ExportNamedDeclaration',
+          'ExportAllDeclaration',
+          'ImportExpression',
+        ].includes(node.type)
+          ? node.source
+          : null;
+        if (imported && imported.type === 'Literal' && typeof imported.value === 'string') {
+          const specifier = imported.value;
+          if (/^file:/i.test(specifier) || (URL.canParse(specifier) && new URL(specifier).protocol === 'file:')) {
+            throw new Error(`Unsupported file URL main chunk: ${specifier}`);
+          }
+          if (specifier.startsWith('.') || path.isAbsolute(specifier)) {
+            const target = path.resolve(path.dirname(bundlePath), specifier);
+            const relative = path.relative(mainDirectory, target);
+            if (relative.startsWith('..') || path.isAbsolute(relative) || path.extname(target) !== '.js') {
+              throw new Error(`Unsupported local main chunk: ${specifier}`);
+            }
+            pending.push(target);
+          }
+        }
+        for (const value of Object.values(node)) {
+          if (Array.isArray(value)) nodes.push(...value);
+          else if (value && typeof value === 'object') nodes.push(value);
+        }
+      }
+    }
   } catch (error) {
     return [
       `构建中止：读不到主进程产物 ${displayPath}`,
@@ -147,7 +202,7 @@ function checkBuiltBundle(input) {
     ].join('\n');
   }
 
-  if (keyBase64.length === 0 || !source.includes(keyBase64)) {
+  if (!keyFound) {
     return [
       `构建中止：主进程产物里**没有那把更新公钥**（${displayPath}）。`,
       '环境变量是对的，但注入没落到产物上 —— 这个包打出去同样"永远检查不到更新"。',
@@ -176,7 +231,7 @@ async function beforePack(context, readFile) {
   const bundleMessage = checkBuiltBundle({
     bundlePath,
     keyBase64: process.env[ENV_VAR_NAME],
-    readFile: readFile || ((target) => fs.readFileSync(target, 'utf8')),
+    readFile,
   });
   if (bundleMessage) throw new Error(bundleMessage);
 

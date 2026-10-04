@@ -73,6 +73,10 @@ export default function WelcomeScreen({
       //    这一格说的是"手上没有能用的模型"，与失败是哪一种无关（所以措辞不许断言目录缺失）。
       (defaultModel?.label ?? (failureText ? t('chatInput.modelsUnusable') : t('chatInput.modelsLoading')));
   const definition = resolveAssistantWorkspace(effectiveAgentId);
+  const currentAgent = agentCatalog.find((agent) => agent.id === effectiveAgentId);
+  const visibleAgents = currentAgent
+    ? [currentAgent, ...agentCatalog.filter((agent) => agent.id !== effectiveAgentId)].slice(0, 3)
+    : agentCatalog.slice(0, 3);
 
   useEffect(() => {
     if (!selectedGwId || !effectiveAgentId) return;
@@ -167,7 +171,7 @@ export default function WelcomeScreen({
         )}
         <p className="type-support text-[var(--text-muted)]">{t('mainArea.currentAssistant')}</p>
         <div className="flex max-w-full flex-wrap items-center justify-center gap-2">
-          {agentCatalog.slice(0, 3).map((agent) => (
+          {visibleAgents.map((agent) => (
             <button
               key={agent.id}
               type="button"

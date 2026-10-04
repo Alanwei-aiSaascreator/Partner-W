@@ -105,6 +105,18 @@ describe('技能市场面板', () => {
     useUiStore.setState({ defaultGatewayId: GATEWAY });
   });
 
+  it('uses the full working width with compact rows instead of a centered card grid', async () => {
+    installStubs();
+    const { container, unmount } = render(<SkillMarket />);
+    await flush();
+    const list = container.querySelector('[data-testid="our-skill-list"]')!;
+    expect(list.className).not.toContain('grid');
+    expect(list.parentElement?.className).not.toContain('max-w-');
+    expect(row(container, 'meeting-minutes').className).not.toContain('surface-card');
+    expect(row(container, 'meeting-minutes').className).toContain('sm:flex-row');
+    unmount();
+  });
+
   it('⭐ 列的是**我们的**技能：中间名 + 中文描述都在（不是网关那批英文技能）', async () => {
     installStubs();
     const { container, unmount } = render(<SkillMarket />);

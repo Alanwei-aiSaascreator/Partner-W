@@ -73,13 +73,22 @@ export interface ArtifactDeliveryFailure {
   taskId: string;
   sessionKey: string;
   messageId: string;
+  /** 声称了、但在工作区里**物理上找不到**的文件名。 */
   missing: string[];
+  /**
+   * 本轮要求了、成果列表里**没有登记到**的格式（人话标签，如「PPT/PPTX 演示文稿」）。
+   *
+   * ⭐ 与 `missing` 分开（2026-10-04 真机）：文件可能就在盘上，只是版本关联或成果登记
+   *    没走完。两者合成一句「工作区里没有这些文件」时，界面就在对用户撒谎。
+   */
+  missingKinds?: string[];
   slideFailures?: SlidegenFailure[];
   docFailures?: DocgenFailure[];
   htmlFailures?: HtmlgenFailure[];
   mediaFailures?: { fileName: string; reason: 'unavailable' }[];
 }
 
+/** Emitted only after generation and workspace reconciliation have settled. */
 export interface ArtifactDeliverySettled {
   taskId: string;
   sessionKey: string;

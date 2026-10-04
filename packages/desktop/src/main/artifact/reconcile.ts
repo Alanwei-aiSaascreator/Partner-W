@@ -8,6 +8,7 @@ import { getSqlite } from '../db/index.js';
 import { validateImportTaskId } from '../context/file-import.js';
 import { ensureTaskDir } from '../workspace/init.js';
 import { captureArtifactWorkspaceOwner } from './workspace-owner.js';
+import { isIntermediateArtifactName } from './extract.js';
 
 const DEFAULT_BUDGETS = Object.freeze({
   maxDepth: 4,
@@ -305,16 +306,7 @@ function signature(stats: BigIntStats): string {
 }
 
 function excludedName(name: string): boolean {
-  const lower = name.toLowerCase();
-  return (
-    name.startsWith('.') ||
-    name.startsWith('~$') ||
-    lower.endsWith('.tmp') ||
-    lower.endsWith('.part') ||
-    lower.endsWith('.partial') ||
-    lower.endsWith('.lock') ||
-    lower.endsWith('~')
-  );
+  return name.startsWith('.') || isIntermediateArtifactName(name);
 }
 
 function mimeTypeFor(name: string): string | null {

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { parseSlidegenToolStream, type Message, type SlidegenWarning, type ToolCall } from '@clawwork/shared';
 import { readSlideGenerationReceipt, type SlideGenerationReceipt } from './receipt.js';
-import { readSlideSourceFile } from './source-file.js';
+import { readSlideSourceFile, readWorkspaceBytes } from './source-file.js';
 import { extractSlidegenBlocks, type SlidegenDeck } from './blocks.js';
 
 export interface ToolSlideReceipt {
@@ -35,6 +35,8 @@ export function collectToolSlideReceipts(input: {
   sessionKey: string;
   runId?: string;
   messages: readonly ToolMessage[];
+  allowNative?: boolean;
+  isNativeParentCurrent?: (fileName: string, outputSha256: string) => boolean;
 }): { receipts: ToolSlideReceipt[]; rejected: number } {
   const result: { receipts: ToolSlideReceipt[]; rejected: number } = { receipts: [], rejected: 0 };
   if (!input.runId || !input.taskId || !input.sessionKey) return result;
@@ -87,22 +89,63 @@ export function collectToolSlideReceipts(input: {
       )
         throw new Error('tool-receipt-invalid');
       const receipt = readSlideGenerationReceipt(input.workspacePath, file);
+      if (
+        receipt.sourceFormat === 'native-template-v5' &&
+        (!input.allowNative ||
+          report.contentReview !== 'field-coverage-passed' ||
+          report.officeReview !== 'not-performed' ||
+          report.qualityStatus !== 'needs-review')
+      )
+        throw new Error('tool-receipt-native-disabled');
       for (const key of ['sourceSha256', 'fileName', 'outputSha256', 'bytes', 'pages'] as const) {
         if (report[key] !== receipt[key]) throw new Error('tool-receipt-mismatch');
       }
       if (!seen.has(file)) {
-        const content = readSlideSourceFile(input.workspacePath, receipt.sourceFile);
+        const content =
+          receipt.sourceFormat === 'native-template-v5'
+            ? new TextDecoder('utf-8', { fatal: true }).decode(
+                readWorkspaceBytes(input.workspacePath, receipt.sourceFile, 1024 * 1024),
+              )
+            : readSlideSourceFile(input.workspacePath, receipt.sourceFile);
         if (createHash('sha256').update(content).digest('hex') !== receipt.sourceSha256)
           throw new Error('tool-receipt-mismatch');
-        const { decks } = extractSlidegenBlocks(content);
-        if (decks.length !== 1) throw new Error('tool-receipt-mismatch');
-        result.receipts.push({ receiptFile: file, receipt, source: decks[0].source });
+        if (receipt.sourceFormat === 'native-template-v5')
+          result.receipts.push({ receiptFile: file, receipt, source: content });
+        else {
+          const { decks } = extractSlidegenBlocks(content);
+          if (decks.length !== 1) throw new Error('tool-receipt-mismatch');
+          result.receipts.push({ receiptFile: file, receipt, source: decks[0].source });
+        }
         seen.add(file);
       }
     } catch {
       result.rejected++;
     }
   }
+  const accepted: ToolSlideReceipt[] = [];
+  for (const entry of result.receipts.sort((a, b) => (a.receipt.revision ?? 0) - (b.receipt.revision ?? 0))) {
+    const receipt = entry.receipt;
+    if (receipt.sourceFormat === 'native-template-v5' && (receipt.revision ?? 0) > 0) {
+      const parentProved = accepted.some(
+        (parent) =>
+          parent.receiptFile === receipt.previousReceiptFile &&
+          parent.receipt.sourceFormat === 'native-template-v5' &&
+          parent.receipt.fileName === receipt.previousFileName &&
+          parent.receipt.outputSha256 === receipt.previousOutputSha256,
+      );
+      if (
+        !parentProved &&
+        (!receipt.previousFileName ||
+          !receipt.previousOutputSha256 ||
+          !input.isNativeParentCurrent?.(receipt.previousFileName, receipt.previousOutputSha256))
+      ) {
+        result.rejected++;
+        continue;
+      }
+    }
+    accepted.push(entry);
+  }
+  result.receipts = accepted;
   return result;
 }
 
@@ -213,12 +256,14 @@ export function isToolSlideOutputCurrent(
   workspace: string,
   entries: readonly ToolSlideReceipt[],
   file: string,
+  requirePptProof = false,
 ): boolean {
   const matching = entries.filter((entry) =>
     process.platform === 'win32'
       ? entry.receipt.fileName.toLowerCase() === file.toLowerCase()
       : entry.receipt.fileName === file,
   );
+  if (requirePptProof && /\.pptx$/i.test(file) && !matching.length) return false;
   try {
     return matching.every(
       (entry) =>

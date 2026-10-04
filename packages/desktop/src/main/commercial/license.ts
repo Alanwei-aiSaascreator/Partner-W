@@ -10,6 +10,7 @@ import { COMMERCIAL_REQUEST_TIMEOUT_MS } from './request-timeout.js';
 import { LOCAL_GATEWAY_ID } from '../runtime/state-config.js';
 import { getActiveLocalGatewayDeploymentRoot } from '../runtime/index.js';
 import { hasBundledSearchProvider } from '../runtime/bundled-search.js';
+import { advanceLicenseGeneration, getLicenseGeneration } from './license-generation.js';
 
 export interface LicenseStatus {
   configured: boolean;
@@ -35,7 +36,6 @@ export interface LicenseStatus {
 }
 
 let licenseOperationTail: Promise<void> = Promise.resolve();
-let licenseGeneration = 0;
 const LICENSE_BACKEND_TIMEOUT_MS = 8_000;
 const ACTIVATION_RESPONSE_TIMEOUT_MS = COMMERCIAL_REQUEST_TIMEOUT_MS + 1_000;
 
@@ -87,12 +87,11 @@ function runLicenseOperation<T>(operation: () => Promise<T>): Promise<T> {
 }
 
 function nextLicenseGeneration(): number {
-  licenseGeneration += 1;
-  return licenseGeneration;
+  return advanceLicenseGeneration();
 }
 
 function isCurrentLicenseGeneration(generation: number): boolean {
-  return generation === licenseGeneration;
+  return generation === getLicenseGeneration();
 }
 
 type CommercialClient = NonNullable<ReturnType<typeof getCommercialClient>>;
@@ -287,7 +286,7 @@ async function readLicenseStatusUnlocked(generation: number): Promise<IpcResult<
 }
 
 export function readLicenseStatus(): Promise<IpcResult<LicenseStatus>> {
-  const generation = licenseGeneration;
+  const generation = getLicenseGeneration();
   return runLicenseOperation(() => readLicenseStatusUnlocked(generation));
 }
 
@@ -498,7 +497,7 @@ async function activateLicenseUnlocked(licenseKey: string, generation: number): 
 }
 
 export function recoverLicenseActivation(licenseKey: string): Promise<IpcResult<LicenseStatus>> {
-  const generation = licenseGeneration;
+  const generation = getLicenseGeneration();
   return runLicenseOperation(async () => {
     const supabase = getCommercialClient();
     if (!supabase) return { ok: false, errorCode: 'not_configured' };

@@ -35,6 +35,7 @@ import type { AgentDraft, TeamInfo, InstallStatus } from '@/layouts/TeamsPanel/t
 import { relayModelsFrom } from '@/components/ChatInput/model-families';
 import { canonicalModelRef, resolveTeamModelRef } from '@/lib/team-model-ref';
 import { resolveCommercialDefaultModel } from '@/lib/commercial-default-model';
+import { buildResponseLanguageContext } from '@/lib/response-language';
 
 export interface AgentConfig {
   id?: string;
@@ -180,7 +181,12 @@ export function buildTeamBuilderSystemPrompt(modelRefs: string[], language: stri
       : language || 'the user language';
   return SYSTEM_PROMPT_TEMPLATE.replace('{{modelList}}', modelRefs.join(', ') || 'default')
     .replaceAll('{{displayLanguage}}', displayLanguage)
-    .replace('{{exampleConfig}}', localizedTeamConfigExample(language, modelRefs[0] ?? ''));
+    .replace('{{exampleConfig}}', localizedTeamConfigExample(language, modelRefs[0] ?? ''))
+    .concat(
+      '\n\n',
+      buildResponseLanguageContext(language),
+      '\nEach generated identity must retain this response-language policy in the requested language, including the user override.',
+    );
 }
 
 const CONFIG_BLOCK_RE = /\n?```team-config\n([\s\S]*?)\n```\n?/g;
@@ -727,14 +733,14 @@ export function InstallProgress({
   events: InstallEvent[];
   progressPercent: number;
   /**
-   * 只收「它真正用到的那部分」：这个面板只读助手的 `name`（换算成 slug 去对事件），
-   * 而 `buildInstallEventView` 收的也正是 `ReadonlyArray<{ name: string }>`。
+   * 只收「它真正用到的那部分」：`id` 对齐事件，`name` 保留用户的显示名称；
+   * 没有显式 `id` 时，由共享事件视图生成稳定标识。
    *
    * ⚠️ 写成 `AgentConfig[]` 是**过度约束**：`test/install-progress-reason.test.tsx`
    *    要造的就是"两个只有名字的助手"，于是 `typecheck:tests` 报
    *    「缺少 role/description/model/identity」（既有红，2026-09-20 修）。
    */
-  agents: ReadonlyArray<{ name: string }>;
+  agents: ReadonlyArray<{ id?: string; name: string }>;
 }) {
   const { t } = useTranslation();
 
@@ -781,7 +787,7 @@ export function InstallProgress({
               {agent.status === 'creating' && <Loader2 size={12} className="animate-spin text-[var(--text-muted)]" />}
               {agent.status === 'created' && <Check size={12} className="text-[var(--accent)]" />}
               {agent.status === 'warning' && <AlertTriangle size={12} className="text-[var(--text-warning)]" />}
-              <span className="type-body text-[var(--text-primary)] flex-1 truncate">{agent.slug}</span>
+              <span className="type-body text-[var(--text-primary)] flex-1 truncate">{agent.displayName}</span>
             </div>
             {/* ⚠️ 逐助手的失败原文：**必须上屏**，否则用户和我们都没有可读的原因 */}
             {agent.warnings.length > 0 && (

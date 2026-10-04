@@ -6,7 +6,9 @@ import { buildSlidegenPreflight } from './scripts/build-slidegen-preflight.mjs';
 
 export default defineConfig({
   main: {
-    build: { rollupOptions: { input: { index: resolve('src/main/entry.ts') } } },
+    build: {
+      rollupOptions: { input: { index: resolve('src/main/entry.ts') }, output: { chunkFileNames: '[name]-[hash].js' } },
+    },
     plugins: [
       { name: 'slidegen-source-preflight', buildStart: () => buildSlidegenPreflight().then(() => undefined) },
       externalizeDepsPlugin({ exclude: ['@clawwork/shared', '@clawwork/core'] }),
