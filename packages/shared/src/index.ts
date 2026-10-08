@@ -14,6 +14,7 @@ export * from './analytics-events.js';
 export * from './portable-update.js';
 export * from './workspace-fs.js';
 export * from './task-modes.js';
+export * from './deck-intent.js';
 export * from './gateway-failure.js';
 export * from './runtime-deploy-progress.js';
 export * from './artifact-preview.js';

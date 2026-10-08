@@ -55,6 +55,9 @@ import {
   type ExpectedArtifactKind,
 } from '../artifact/claim-guard.js';
 import {
+  isDeckRevisionRequest,
+  isDeckWorkRequest,
+  isFreshDeckRequest,
   parseAgentIdFromSessionKey,
   type Artifact,
   type ArtifactDeliveryFailure,
@@ -425,19 +428,21 @@ export function beginArtifactRun(
   pruneCompletedAssistantMessages();
   const token = randomUUID();
   const expectedKinds = expectedArtifactKindsFromRequest(opts?.userContent ?? '');
-  const newDeckIntent =
-    /(?:\u53e6.{0,8}(?:PPT|\u5e7b\u706f\u7247|\u6f14\u793a\u6587\u7a3f)|\u65b0\u7684.{0,8}PPT|(?:new|another).{0,16}(?:ppt|deck|presentation))/i.test(
-      opts?.userContent ?? '',
-    );
-  const revisionIntent =
-    /(?:\u6539\u7a3f|\u7f8e\u5316|\u91cd\u65b0\u6392\u7248|(?:\u518d|\u66f4)\u7f8e\u89c2|\u6587\u5b57.{0,16}(?:\u6324|\u5b57\u53f7)|(?:\u4fee\u6539|\u8c03\u6574|\u4f18\u5316).{0,12}(?:PPT|\u5e7b\u706f\u7247|\u6f14\u793a\u6587\u7a3f|\u6392\u7248|\u5b57\u53f7)|(?:revise|restyle|redesign).{0,24}(?:ppt|slides?|deck))/i.test(
-      opts?.userContent ?? '',
-    ) && !newDeckIntent;
+  const userContent = opts?.userContent ?? '';
+  // ⚠️ 2026-10-09（只读复审 P1）：判据**唯一真源在 `@clawwork/shared`** —— 此前主进程
+  //    与渲染层各写一份词表，两个方向各漏一类：首次制作（「把材料做成一份 PPT」）渲染层
+  //    命中而这里不命中 ⇒ 硬门不生效；首次改稿（「美化这个 PPT」）这里命中而渲染层不命中
+  //    ⇒ 不走 DeepSeek。现在两边 import 同一组函数（改一处、两处同时生效）。
+  //    `newDeckIntent` 仍是**窄口径**（"另/新的 + 演示词"）：它服务受控 native 链的
+  //    收据语义（这一轮要不要抛弃上一份收据、开启新 deck），不要把制作动词并进来。
+  const newDeckIntent = isFreshDeckRequest(userContent);
+  const revisionIntent = isDeckRevisionRequest(userContent) && !newDeckIntent;
   // ⭐ **演示意图**（H0 硬门，2026-10-07）：用户这一轮要的是"给人看的演示"。
   //    在**这一瞬**定下来存进 run：收尾时用户请求早就不在手上了，现场重算只会算错。
   //    它管的是 docgen 的 pptx 请求（拦下并导流去「幻灯版面」）—— 与 native 那套
   //    正交：受控模式里 docgen pptx 本来就是静默跳过，两个旗标同时成立时受控优先。
-  const deckIntent = newDeckIntent || revisionIntent;
+  //    ⇒ 判据 = 制作 ∨ 改稿 ∨ 全新的（与渲染层 deck 路由同一个出口）。
+  const deckIntent = isDeckWorkRequest(userContent);
   let nativePreviousReceipt: string | undefined;
   let nativeFenced = false;
   let nativeControlled =
@@ -952,46 +957,49 @@ function finalizeAssistantArtifacts(input: {
           tool.args === undefined ||
           (tool.args !== null && typeof tool.args === 'object' && !Array.isArray(tool.args))),
     );
-    const confirmed = agentRoot
-      ? collectToolSlideReceipts({
-          workspacePath: agentRoot.workspacePath,
+    // ⭐ BUG-057（2026-10-09 只读复审）：助手目录**解析失败**（RPC 超时 / 网关离线）
+    //    不许把收据确认整条链拆掉 —— 收据与成品可能就躺在应用工作区（它本来就是
+    //    被允许的根之一）。根解析不出来 ≠ 收据不存在：主根回落到应用工作区，
+    //    照常逐项校验收据与文件（哈希 / 目录身份 / 来源一个不松，只是换了读的起点）。
+    const receiptWorkspace = agentRoot?.workspacePath ?? input.workspacePath;
+    const confirmed = collectToolSlideReceipts({
+      workspacePath: receiptWorkspace,
+      taskId: input.taskId,
+      sessionKey: input.sessionKey,
+      runId: input.runId,
+      allowNative: process.env.ROYIN_NATIVE_PPT_VALIDATION === '1',
+      /**
+       * ⭐ B 包（2026-10-07）：**还允许从应用工作区读收据**。
+       *
+       * 现场：模型把 CLI 的 cwd 设成了应用工作区（根层或子目录），收据与成品都在那儿 ——
+       * 只认助手工作区的话那条收据永远读不回来 ⇒ 一份**真产出**被判成
+       * `slidegen-output-unconfirmed`（假失败），而它其实就在盘上。
+       * ⚠️ 只交**我们自己的根**（应用工作区）；报告里编出来的路径不作数（见 `reportOutputDir`）。
+       */
+      allowedReceiptRoots: [input.workspacePath],
+      isNativeParentCurrent: (fileName) => {
+        const parent = getDb()
+          .select({ filePath: artifacts.filePath })
+          .from(artifacts)
+          .where(
+            and(eq(artifacts.taskId, input.taskId), eq(artifacts.root, 'agent'), eq(artifacts.localPath, fileName)),
+          )
+          .get();
+        if (!parent) return false;
+        const expected = resolve(receiptWorkspace, fileName),
+          actual = resolve(parent.filePath);
+        return process.platform === 'win32' ? actual.toLowerCase() === expected.toLowerCase() : actual === expected;
+      },
+      messages: [
+        {
           taskId: input.taskId,
           sessionKey: input.sessionKey,
           runId: input.runId,
-          allowNative: process.env.ROYIN_NATIVE_PPT_VALIDATION === '1',
-          /**
-           * ⭐ B 包（2026-10-07）：**还允许从应用工作区读收据**。
-           *
-           * 现场：模型把 CLI 的 cwd 设成了应用工作区（根层或子目录），收据与成品都在那儿 ——
-           * 只认助手工作区的话那条收据永远读不回来 ⇒ 一份**真产出**被判成
-           * `slidegen-output-unconfirmed`（假失败），而它其实就在盘上。
-           * ⚠️ 只交**我们自己的根**（应用工作区）；报告里编出来的路径不作数（见 `reportOutputDir`）。
-           */
-          allowedReceiptRoots: [input.workspacePath],
-          isNativeParentCurrent: (fileName) => {
-            const parent = getDb()
-              .select({ filePath: artifacts.filePath })
-              .from(artifacts)
-              .where(
-                and(eq(artifacts.taskId, input.taskId), eq(artifacts.root, 'agent'), eq(artifacts.localPath, fileName)),
-              )
-              .get();
-            if (!parent) return false;
-            const expected = resolve(agentRoot.workspacePath, fileName),
-              actual = resolve(parent.filePath);
-            return process.platform === 'win32' ? actual.toLowerCase() === expected.toLowerCase() : actual === expected;
-          },
-          messages: [
-            {
-              taskId: input.taskId,
-              sessionKey: input.sessionKey,
-              runId: input.runId,
-              role: 'assistant',
-              toolCalls: tools,
-            },
-          ],
-        })
-      : { receipts: [], rejected: 0 };
+          role: 'assistant',
+          toolCalls: tools,
+        },
+      ],
+    });
     const toolProofs = [...confirmed.receipts];
     const hasNativeProof = confirmed.receipts.some((entry) => entry.receipt.sourceFormat === 'native-template-v5');
     let currentNativeInput: string | undefined;

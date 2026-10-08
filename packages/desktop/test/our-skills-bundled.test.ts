@@ -5,7 +5,10 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   installBundledSkill,
   isBundledSkillInstalled,
+  readInstalledSkillContent,
+  readInstalledSkillManifest,
   skillContentSha,
+  skillDirManifestSha,
   staleBundledSkills,
   isContainedPath,
   isSafeSlug,
@@ -388,6 +391,152 @@ describe('staleBundledSkills —— 该升级的那些（判据三条全中）',
         (slug) => recorded[slug] ?? null,
       ).map((s) => s.slug),
     ).toEqual(['b']);
+  });
+});
+
+/**
+ * ⭐ BUG-052（2026-10-09 只读复审）：升级判据从"只看 SKILL.md"扩到**整目录清单**。
+ *
+ * 真实现场：安装是整目录拷贝（SKILL.md + scripts/ + layouts/ …）；只比别人 SKILL.md
+ * 时，随包只更新 `scripts/generate.cjs`（或 layouts 示例）对已发出的盘**等于没发生**
+ * —— 旧盘永远跑旧版本。1.0.1 的 16 份 layouts 修复正是这条传播缺口。
+ *
+ * 口径（保护不松）：SKILL.md 被人改过 ⇒ 一律不碰；新口径（`pkg1:` 整目录清单）下
+ * 盘上**任何文件**被人改过同样不碰。
+ */
+describe('⭐⭐ BUG-052：技能包整目录清单（scripts/layouts 更新必须触发升级）', () => {
+  const skillMd = (name: string) => `---\nname: ${name}\ndescription: 'x'\n---\n\n正文。\n`;
+  const writePackage = (root: string, slug: string, files: Record<string, string>): void => {
+    for (const [rel, body] of Object.entries(files)) {
+      const target = path.join(root, slug, rel);
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.writeFileSync(target, body);
+    }
+  };
+  const PACKAGE: Record<string, string> = {
+    'SKILL.md': skillMd('deck'),
+    'scripts/generate.cjs': 'v1\n',
+    'layouts/01.md': '版式一\n',
+  };
+  /** 造一对"随包根 + 已装目录"（已装 = 随包内容的整目录拷贝，与 installBundledSkill 同语义）。 */
+  const pair = () => {
+    const bundledRoot = tmpDir();
+    const managedDir = tmpDir();
+    writePackage(bundledRoot, 'deck', PACKAGE);
+    writePackage(managedDir, 'deck', PACKAGE);
+    return { bundledRoot, managedDir };
+  };
+
+  it('⭐ 真实临时安装后**只更新随包 scripts/generate.cjs**（SKILL.md 未动）⇒ 必须识别升级', () => {
+    const { bundledRoot, managedDir } = pair();
+    // 安装时刻的记账 = 旧口径（只记 SKILL.md 指纹）—— 老盘的真实形态。
+    const legacyRecord = skillContentSha(PACKAGE['SKILL.md']!);
+    fs.writeFileSync(path.join(bundledRoot, 'deck', 'scripts', 'generate.cjs'), 'v2\n');
+    const stale = staleBundledSkills(
+      readBundledSkills(bundledRoot),
+      (slug) => readInstalledSkillContent(managedDir, slug),
+      () => legacyRecord,
+      (slug) => readInstalledSkillManifest(managedDir, slug),
+    );
+    expect(
+      stale.map((s) => s.slug),
+      '辅助文件更新必须触发升级（旧口径在这里返回空数组）',
+    ).toEqual(['deck']);
+  });
+
+  it('对照：同时改 SKILL.md（旧口径本来就认的那条路）⇒ 升级（不误伤既有判据）', () => {
+    const { bundledRoot, managedDir } = pair();
+    const legacyRecord = skillContentSha(PACKAGE['SKILL.md']!);
+    fs.writeFileSync(path.join(bundledRoot, 'deck', 'SKILL.md'), skillMd('deck-v2'));
+    const stale = staleBundledSkills(
+      readBundledSkills(bundledRoot),
+      (slug) => readInstalledSkillContent(managedDir, slug),
+      () => legacyRecord,
+      (slug) => readInstalledSkillManifest(managedDir, slug),
+    );
+    expect(stale.map((s) => s.slug)).toEqual(['deck']);
+  });
+
+  it('对照：一切一致 ⇒ 不升（避免每次开机白覆盖）', () => {
+    const { bundledRoot, managedDir } = pair();
+    const skills = readBundledSkills(bundledRoot);
+    const installedSkill = readInstalledSkillContent(managedDir, 'deck');
+    const record = `pkg1:${skills[0]!.packageSha!}.${skillContentSha(installedSkill!)}`;
+    expect(
+      staleBundledSkills(
+        skills,
+        (slug) => readInstalledSkillContent(managedDir, slug),
+        () => record,
+        (slug) => readInstalledSkillManifest(managedDir, slug),
+      ),
+    ).toEqual([]);
+    // 新口径下随包脚本一更新 ⇒ 立刻可识别
+    fs.writeFileSync(path.join(bundledRoot, 'deck', 'scripts', 'generate.cjs'), 'v3\n');
+    expect(
+      staleBundledSkills(
+        readBundledSkills(bundledRoot),
+        (slug) => readInstalledSkillContent(managedDir, slug),
+        () => record,
+        (slug) => readInstalledSkillManifest(managedDir, slug),
+      ).map((s) => s.slug),
+    ).toEqual(['deck']);
+  });
+
+  it('⭐⭐ 保护不松：SKILL.md 被人改过（旧记账）⇒ 一个字节都不碰', () => {
+    const { bundledRoot, managedDir } = pair();
+    fs.writeFileSync(path.join(bundledRoot, 'deck', 'scripts', 'generate.cjs'), 'v2\n');
+    fs.writeFileSync(path.join(managedDir, 'deck', 'SKILL.md'), skillMd('被人写的'));
+    const stale = staleBundledSkills(
+      readBundledSkills(bundledRoot),
+      (slug) => readInstalledSkillContent(managedDir, slug),
+      () => skillContentSha(PACKAGE['SKILL.md']!),
+      (slug) => readInstalledSkillManifest(managedDir, slug),
+    );
+    expect(stale).toEqual([]);
+  });
+
+  it('⭐⭐ 保护不松：新口径下盘上 SKILL.md 被人改过 ⇒ 不碰（哪怕随包也更新了）', () => {
+    const { bundledRoot, managedDir } = pair();
+    const installedSkill = readInstalledSkillContent(managedDir, 'deck');
+    const record = `pkg1:${readBundledSkills(bundledRoot)[0]!.packageSha!}.${skillContentSha(installedSkill!)}`;
+    fs.writeFileSync(path.join(managedDir, 'deck', 'SKILL.md'), skillMd('被人写的'));
+    fs.writeFileSync(path.join(bundledRoot, 'deck', 'scripts', 'generate.cjs'), 'v2\n');
+    const stale = staleBundledSkills(
+      readBundledSkills(bundledRoot),
+      (slug) => readInstalledSkillContent(managedDir, slug),
+      () => record,
+      (slug) => readInstalledSkillManifest(managedDir, slug),
+    );
+    expect(stale).toEqual([]);
+  });
+
+  it('新口径 + 用户改过辅助文件 + **随包未动** ⇒ 不主动冲掉（下次随包更新才整体替换 —— 与既有整目录覆盖口径一致）', () => {
+    const { bundledRoot, managedDir } = pair();
+    const installedSkill = readInstalledSkillContent(managedDir, 'deck');
+    const record = `pkg1:${readBundledSkills(bundledRoot)[0]!.packageSha!}.${skillContentSha(installedSkill!)}`;
+    fs.writeFileSync(path.join(managedDir, 'deck', 'layouts', '01.md'), '用户改过的版式\n');
+    const stale = staleBundledSkills(
+      readBundledSkills(bundledRoot),
+      (slug) => readInstalledSkillContent(managedDir, slug),
+      () => record,
+      (slug) => readInstalledSkillManifest(managedDir, slug),
+    );
+    expect(stale).toEqual([]);
+  });
+
+  it('skillDirManifestSha：文件内容变 / 多一个文件 / 少一个文件都会变（读不动的目录 ⇒ null）', () => {
+    const { managedDir } = pair();
+    const dir = path.join(managedDir, 'deck');
+    const before = skillDirManifestSha(dir);
+    expect(before).not.toBeNull();
+    fs.writeFileSync(path.join(dir, 'layouts', '01.md'), '改过\n');
+    const contentChanged = skillDirManifestSha(dir);
+    expect(contentChanged).not.toBe(before);
+    fs.writeFileSync(path.join(dir, 'layouts', '02.md'), '新增\n');
+    expect(skillDirManifestSha(dir)).not.toBe(contentChanged);
+    fs.rmSync(path.join(dir, 'layouts', '02.md'));
+    expect(skillDirManifestSha(dir)).toBe(contentChanged);
+    expect(skillDirManifestSha(path.join(managedDir, '不存在'))).toBeNull();
   });
 });
 

@@ -24,11 +24,13 @@ import type { AgentListResponse, IpcResult, OurSkillsListResult } from '@clawwor
 import { resolveCatalogAgentId } from '@clawwork/core';
 import { getGatewayClient } from '../ws/index.js';
 import {
+  bundledSkillRecordValue,
   installBundledSkill,
   isBundledSkillInstalled,
   missingBundledSkills,
   readBundledSkills,
   readInstalledSkillContent,
+  readInstalledSkillManifest,
   removeBundledSkill,
   skillContentSha,
   staleBundledSkills,
@@ -191,14 +193,16 @@ export function registerSkillsHandlers(): void {
         const skills = readBundledSkills(ourSkillsRoot());
         const records = readConfig()?.bundledSkillRecords?.[managedDir] ?? {};
         const readInstalled = (slug: string) => readInstalledSkillContent(managedDir, slug);
+        // ⭐ BUG-052：整目录清单 —— 升级判据要看 SKILL.md 之外的辅助文件。
+        const readInstalledManifest = (slug: string) => readInstalledSkillManifest(managedDir, slug);
 
         const missing = missingBundledSkills(skills, (slug) => isBundledSkillInstalled(managedDir, slug));
         // ⭐ 第二层：**已装、但被我们自己放旧了**。`missingBundledSkills` 只管"缺了才补"，
         //    而老盘的技能**不缺** —— 不处理它，随包技能更新对已发出的盘等于没发生
-        //    （真机：助手照旧按旧契约说"PDF 做不到"）。
+        //    （真机：助手照旧按旧契约说"PDF 做不到"；1.0.1 的 layouts 修复同此传播）。
         //    判据三条全中才升，缺一不动（见 `staleBundledSkills` 的注释）——
         //    特别是"盘上那份必须还是我们装下去的那份"，否则就是有人改过，不许碰。
-        const stale = staleBundledSkills(skills, readInstalled, (slug) => records[slug] ?? null);
+        const stale = staleBundledSkills(skills, readInstalled, (slug) => records[slug] ?? null, readInstalledManifest);
 
         const installed: string[] = [];
         const upgraded: string[] = [];
@@ -209,7 +213,10 @@ export function registerSkillsHandlers(): void {
           const result = installOurSkill(managedDir, skill.slug);
           if (result.ok) {
             installed.push(skill.slug);
-            if (typeof skill.content === 'string') nextRecords[skill.slug] = skillContentSha(skill.content);
+            // 记账必须反映**装完之后的盘上状态**（读回来再记）：env=1 的受控覆盖与
+            // deck-layout 的运行时文件都发生在拷贝之后（BUG-052 双部件口径）。
+            const record = bundledSkillRecordValue(skill, readInstalled(skill.slug));
+            if (record !== null) nextRecords[skill.slug] = record;
             notifySkillCache(payload.gatewayId, skill.slug, true);
           } else {
             failed.push({ slug: skill.slug, error: result.error ?? 'install failed' });
@@ -221,7 +228,8 @@ export function registerSkillsHandlers(): void {
           const result = ownership.ok ? installOurSkill(managedDir, skill.slug) : ownership;
           if (result.ok) {
             upgraded.push(skill.slug);
-            if (typeof skill.content === 'string') nextRecords[skill.slug] = skillContentSha(skill.content);
+            const record = bundledSkillRecordValue(skill, readInstalled(skill.slug));
+            if (record !== null) nextRecords[skill.slug] = record;
             // ⚠️ **force**：内容升级时 `{enabled:true}` 对已经 true 的那条**不是变更**，
             //    网关那边 `changedPaths.length === 0` 直接 return ⇒ 缓存不 bump ⇒
             //    盘上换了、运行时照旧用旧的。force 让它变两次（false → true）。
@@ -234,13 +242,16 @@ export function registerSkillsHandlers(): void {
         // ⭐ **认领**：盘上那份与随包**一致**、但我们还没有记账的（老盘第一次跑这一版）
         //   ⇒ 补记一笔。不补的话下一版随包更新时"没有记账 ⇒ 不动"，老盘永远升不上来。
         //   ⚠️ 只认领**内容一致**的那些：不一致的说明不是我们装的，不记、不碰。
+        //   ⭐ BUG-052：按**双部件口径**记账（随包清单 + 装后 SKILL 指纹）—— 从此
+        //     scripts/layouts 的更新能被看见；保护强度不变（SKILL.md 偏离仍锁死升级）。
         for (const skill of skills) {
           if (nextRecords[skill.slug]) continue;
           if (typeof skill.content !== 'string') continue;
           const onDisk = readInstalled(skill.slug);
           if (onDisk === null) continue;
           if (skillContentSha(onDisk) === skillContentSha(skill.content)) {
-            nextRecords[skill.slug] = skillContentSha(skill.content);
+            const record = bundledSkillRecordValue(skill, onDisk);
+            if (record !== null) nextRecords[skill.slug] = record;
           }
         }
 

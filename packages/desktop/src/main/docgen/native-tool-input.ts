@@ -14,7 +14,9 @@ export interface NativeInputOptions {
    *
    * ⭐ BUG-046 ③（2026-10-08 真机 69 次 `native-current-write-required` 误诊）：
    * 判据从「write 工具 args 的 sha 必须与盘上一致」放宽为两层证据——
-   *   ① 最强：本轮 write 的内容与盘上字节一致（sha 匹配，未变）；
+   *   ① 最强：本轮**某一次** write 的内容与盘上字节一致（sha 匹配，未变；
+   *      BUG-054：同文件多次 write 时保留全部记录，任一次一致即通过 —— 数组序
+   *      ≠ 执行序，旧的"最后一次胜出"在倒序时会覆盖掉正确证据）；
    *   ② 本轮被 edit/apply_patch 改过、且盘上 mtime 不早于 run 开始（edit 的 args
    *      不是全文，没有 sha 可对；freshness 就是它的"这是本轮产物"证明）。
    * 守卫强度不松：**run 开始前就存在、本轮没碰过的旧文件永不入选**（旧 Artifact
@@ -36,7 +38,7 @@ export function nativeInputFromCompletedWrites(
   options: NativeInputOptions = {},
 ): string | undefined {
   const sinceMs = options.sinceMs;
-  const candidates = new Map<string, { content?: string; edited: boolean }>();
+  const candidates = new Map<string, { contents: string[]; edited: boolean }>();
   for (const tool of tools) {
     if (tool.status !== 'done' || !tool.args) continue;
     const write = WRITE_TOOLS.has(tool.name);
@@ -44,9 +46,12 @@ export function nativeInputFromCompletedWrites(
     const file = tool.args.path ?? tool.args.file_path;
     if (typeof file !== 'string' || !file.endsWith('.native-ppt.json')) continue;
     const relative = path.isAbsolute(file) ? path.relative(workspace, file) : file;
-    const entry = candidates.get(relative) ?? { edited: false };
-    // 同一文件多次写入：最后一次 write 的内容胜出（Map 顺序语义不变）。
-    if (write && typeof tool.args.content === 'string') entry.content = tool.args.content;
+    const entry = candidates.get(relative) ?? { contents: [], edited: false };
+    // ⭐ BUG-054（2026-10-09 只读复审）：同一文件多次写入时**保留每一次的内容**作为
+    //    候选证据 —— 数组序 ≠ 执行序（同 BUG-046 ③ 的实证）。旧的"最后一次 write 胜出"
+    //    在数组倒序时留下的是旧内容，sha 对不上 ⇒ 真新文件落选。现在 sha 与**任一次**
+    //    记录一致即通过；多候选之间的裁决仍然只由盘上 mtime 负责（见文件头）。
+    if (write && typeof tool.args.content === 'string') entry.contents.push(tool.args.content);
     // ⭐ F-A2：edit 证据与 write 证据**独立记账**——同 run 先 write 后 edit 同一文件时，
     //    write 记录的 args 是 edit 前的旧内容（第一层 sha 必不匹配），若第二层再因
     //    "该文件有 write 记录"跳过，候选两落空 → case A 误诊 native-current-write-required。
@@ -62,12 +67,14 @@ export function nativeInputFromCompletedWrites(
     }
   };
   // 第一层：sha 匹配（内容逐字节一致）——最强证据。
+  //    同文件多次 write ⇒ 与**任一次**记录一致即通过（BUG-054；数组序不作数）。
   const verified: Array<{ relative: string; mtimeMs: number }> = [];
   for (const [relative, entry] of candidates) {
-    if (typeof entry.content !== 'string') continue;
+    if (entry.contents.length === 0) continue;
     try {
       const disk = readWorkspaceBytes(workspace, relative, 1024 * 1024);
-      if (sha(disk) !== sha(Buffer.from(entry.content))) continue;
+      const diskSha = sha(disk);
+      if (!entry.contents.some((content) => sha(Buffer.from(content)) === diskSha)) continue;
       if (!fresh(relative)) continue;
       verified.push({ relative, mtimeMs: statSync(path.resolve(workspace, relative)).mtimeMs });
     } catch {

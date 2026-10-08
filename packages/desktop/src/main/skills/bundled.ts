@@ -126,6 +126,13 @@ export interface BundledSkill {
    * 读那份文件本来就要读全文去解析 frontmatter，多留一个字段是白拿。
    */
   content?: string;
+  /**
+   * 技能包**整目录**清单指纹（`skillDirManifestSha(root/<slug>)`；读不出来时 `undefined`）。
+   *
+   * ⭐ BUG-052（2026-10-09）：升级判据从"只看 SKILL.md"扩到整个目录 —— scripts/、
+   * layouts/ 这些辅助文件更新同样要能触发升级（真机后果：旧盘永远跑旧版）。
+   */
+  packageSha?: string;
 }
 
 export interface ParsedFrontmatter {
@@ -247,6 +254,8 @@ export function readBundledSkills(root: string | undefined): BundledSkill[] {
         emoji: parsed?.emoji,
         skillKey: parsed?.skillKey,
         content,
+        // 整目录清单（BUG-052）：升级判据要能看见 SKILL.md 之外的更新。
+        packageSha: skillDirManifestSha(path.join(root, e.name)) ?? undefined,
       };
     })
     .sort((a, b) => a.slug.localeCompare(b.slug));
@@ -346,6 +355,75 @@ export function skillContentSha(content: string): string {
   return createHash('sha256').update(normalizeLineEndings(content)).digest('hex');
 }
 
+/** 记账值的**新口径**前缀：`pkg1:<整目录清单 sha>`；无前缀 = 旧口径（只记过 SKILL.md）。 */
+export const SKILL_RECORD_PACKAGE_PREFIX = 'pkg1:';
+
+/**
+ * ⭐ BUG-052（2026-10-09 只读复审）：技能包**整目录**清单指纹。
+ *
+ * 安装是"整个目录删掉再拷"（SKILL.md + scripts/ + layouts/ …），而升级判据此前只比
+ * SKILL.md —— 辅助文件更新（真机后果：旧盘永远跑旧 layouts / 旧 `generate.cjs`）
+ * 对已发出的盘等于没发生。清单 = 目录下**每个文件**（相对路径 posix 化、排序）的
+ * sha256 逐行拼接后再哈希：任何一个文件变了（或多了/少了）都不同。
+ *
+ * 读目录失败 ⇒ `null`（调用方按"核验不了"保守处理，绝不据此判升级/不升级）。
+ */
+export function skillDirManifestSha(dir: string): string | null {
+  try {
+    const files: string[] = [];
+    const walk = (relative: string): void => {
+      const absolute = relative ? path.join(dir, relative) : dir;
+      for (const entry of fs.readdirSync(absolute, { withFileTypes: true })) {
+        const rel = relative ? `${relative}/${entry.name}` : entry.name;
+        if (entry.isDirectory()) walk(rel);
+        else if (entry.isFile()) files.push(rel);
+      }
+    };
+    walk('');
+    files.sort();
+    const hash = createHash('sha256');
+    hash.update('pkg1\n');
+    for (const rel of files) {
+      hash.update(rel);
+      hash.update('\u0000');
+      hash.update(
+        createHash('sha256')
+          .update(fs.readFileSync(path.join(dir, rel)))
+          .digest('hex'),
+      );
+      hash.update('\n');
+    }
+    return hash.digest('hex');
+  } catch {
+    return null;
+  }
+}
+
+/** 已装技能目录的清单指纹（路径白名单与安装同一把尺；未装/读不动 ⇒ `null`）。 */
+export function readInstalledSkillManifest(managedDir: string | undefined, slug: unknown): string | null {
+  const dir = resolveInstallDir(managedDir, slug);
+  return dir ? skillDirManifestSha(dir) : null;
+}
+
+/**
+ * 这次装下去该记的账（BUG-052 双部件口径）：`pkg1:<随包整目录清单 sha>.<装后 SKILL.md 指纹>`。
+ *
+ *  - 第一件（随包清单）= "**随包**是不是变了" —— 只看 bundled 侧，天然不受托管目录里
+ *    运行时附加文件（deck-layout 的 launcher / generate-runtime.json）干扰；
+ *  - 第二件（装后 SKILL.md 指纹）= "盘上 SKILL.md 还是不是我们装下去的那份" ——
+ *    与旧口径逐字同强度的用户修改保护。
+ *
+ * 任一件缺（packageSha 读不出 / 没读回装后内容）⇒ 回退旧口径只记 SKILL.md 指纹
+ * （等于老盘语义，升级照旧可用，只是看不见辅助文件更新）。返回 `null` = 连 SKILL.md
+ * 都没有，**不写半截账**。
+ */
+export function bundledSkillRecordValue(skill: BundledSkill, installedSkillContent: string | null): string | null {
+  if (typeof skill.packageSha === 'string' && typeof installedSkillContent === 'string')
+    return `${SKILL_RECORD_PACKAGE_PREFIX}${skill.packageSha}.${skillContentSha(installedSkillContent)}`;
+  if (typeof skill.content === 'string') return skillContentSha(skill.content);
+  return null;
+}
+
 /**
  * 挑出**该升级**的那些（纯函数）。
  *
@@ -368,6 +446,7 @@ export function staleBundledSkills(
   skills: readonly BundledSkill[],
   readInstalled: (slug: string) => string | null,
   readRecordedSha: (slug: string) => string | null,
+  readInstalledManifest?: (slug: string) => string | null,
 ): BundledSkill[] {
   return skills.filter((skill) => {
     if (typeof skill.content !== 'string') return false;
@@ -375,10 +454,39 @@ export function staleBundledSkills(
     if (installed === null) return false;
     const recorded = readRecordedSha(skill.slug);
     if (recorded === null) return false;
-    // ② 盘上那份已经不是我们装的了 ⇒ 有人改过，不碰
-    if (skillContentSha(installed) !== recorded) return false;
-    // ③ 随包那份和装下去那份一样 ⇒ 没什么可升的
-    return skillContentSha(skill.content) !== recorded;
+
+    const recordedPackage = recorded.startsWith(SKILL_RECORD_PACKAGE_PREFIX)
+      ? recorded.slice(SKILL_RECORD_PACKAGE_PREFIX.length)
+      : null;
+    const installedManifest = readInstalledManifest?.(skill.slug) ?? null;
+    const [recordedBundledPkg, recordedInstalledSkill] = recordedPackage?.split('.') ?? [];
+    const packaged = Boolean(recordedBundledPkg && recordedInstalledSkill);
+
+    // ② 保护（两口径同一强度）：盘上 SKILL.md 仍是我们装下去的那份 —— 被改过 ⇒ 一个字节都不碰。
+    //    新口径比"装后 SKILL.md 指纹"，旧口径比"装下去的 SKILL.md 指纹"（逐字同旧行为）。
+    if (packaged) {
+      if (skillContentSha(installed) !== recordedInstalledSkill) return false;
+    } else if (skillContentSha(installed) !== recorded) {
+      return false;
+    }
+
+    // ③ 更新判据。
+    if (packaged) {
+      // 新口径：只比**随包**整目录清单（含 scripts/layouts 的更新；托管目录里的
+      // 运行时附加文件不参与，避免 deck-layout 每次开机自升）。
+      return typeof skill.packageSha === 'string' && skill.packageSha !== recordedBundledPkg;
+    }
+    // 旧记账（老盘第一次跑这一版之前记的，只有 SKILL.md 指纹）：
+    //   随包 SKILL.md 变了 ⇒ 升（旧口径原样）；
+    //   SKILL.md 没变、但随包**整目录清单**与盘上不同 ⇒ 也升（BUG-052：辅助文件更新
+    //   对旧盘必须可达 —— 1.0.1 layouts 修复的传播缺口正是这条）。
+    //   ⚠️ 口径说明：用户修改的保护以 **SKILL.md 偏离**为准（②，与旧口径一致）；
+    //   辅助文件不单独承担保护 —— 老口径永远分不出"我们放旧了"还是"别人改过辅助文件"，
+    //   否则只能保守到永远不升（就是本 bug）。与"SKILL.md 一变就整目录覆盖"同一信任口径；
+    //   deck-layout 这类带运行时附加文件的技能在旧记账下可能多升一次，升完按新口径
+    //   记账即收敛（不再复发）。
+    if (skillContentSha(skill.content) !== recorded) return true;
+    return typeof skill.packageSha === 'string' && installedManifest !== null && skill.packageSha !== installedManifest;
   });
 }
 

@@ -62,6 +62,21 @@ describe('looksLikeDeckRequest —— 假例（缺动词或缺名词都不算）
   });
 });
 
+/**
+ * ⭐ 2026-10-09 复审反例（P1）：**新任务首次改稿**的实际措辞。
+ * 原制作动词表（做/制作/生成/整理/导出/输出/创建/转成/写）不含改稿动词 ⇒ 任务又没有
+ * `deckRouted` 粘性标记 ⇒ 首次改稿照旧发给普通模型。判据已统一到 `@clawwork/shared`
+ * （`isDeckWorkRequest` = 制作 ∨ 改稿 ∨ "再来一份全新的"）。
+ */
+describe('⭐ 2026-10-09 复审反例：新任务首次改稿必须命中', () => {
+  it.each(['美化这个 PPT', '调整 PPT 的排版', '优化这份 PPT', '把这份演示文稿重新排版', 'revise the deck'])(
+    '%s',
+    (text) => {
+      expect(looksLikeDeckRequest(text)).toBe(true);
+    },
+  );
+});
+
 describe('resolveDeckModelId —— 对着目录解析真实 id', () => {
   it('默认目标就是 deepseek-v4-flash', () => {
     expect(DECK_ROUTE_MODEL_ID).toBe('deepseek-v4-flash');

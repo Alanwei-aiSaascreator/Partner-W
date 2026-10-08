@@ -8,9 +8,9 @@
  * **输出稳定性**，不在速度档 —— 所以三条档（快速/智能/深度）**都**把演示类任务内部
  * 路由到 DeepSeek，模式芯片照旧显示用户选的那一档（这是内部路由，不是用户可见的模式）。
  *
- * ## 判据：制作动词 ∧ 演示名词（合取）
+ * ## 判据：`@clawwork/shared` 的 `isDeckWorkRequest`（唯一真源，2026-10-09 起）
  *
- * 两边同时出现才算 —— 只出现名词（"PPT是什么"）或只出现动词（"做个表格"）都不算。
+ * = 制作 ∨ 改稿 ∨ "再来一份全新的"（词表与主进程 `reroutePptxToSlidegen` 硬门共用）。
  * ⚠️ **判错方向的代价不对称**：漏判 = 演示任务仍发给 qwen（就是要治的那个病）；
  *    误判 = 一句聊天发给 DeepSeek（无害，且这种任务随后多半真的在做 PPT）。
  *    所以不堆负向守卫（"怎么/如何"之类），保持规则短、可预测。
@@ -20,7 +20,7 @@
  *    `attachment-actions.ts` 的 edit 判据同一条纪律）。
  */
 
-import { modelIdMatches, type TaskModeSetting } from '@clawwork/shared';
+import { isDeckWorkRequest, modelIdMatches, type TaskModeSetting } from '@clawwork/shared';
 
 /**
  * Deck 任务统一路由到的模型。**写本体、不写前缀** —— 目录里的 id 才是真身，
@@ -31,32 +31,15 @@ import { modelIdMatches, type TaskModeSetting } from '@clawwork/shared';
 export const DECK_ROUTE_MODEL_ID = 'deepseek-v4-flash';
 
 /**
- * 制作动词（中文）。`整理` 覆盖 `整理成/整理为`；`做` 覆盖 `做个/帮我做/做一份`；
- * `写` 覆盖 `编写/撰写/写一份` —— "帮我写个 PPT / 写一份演示文稿"是极常见说法，
- * 必须命中（名词门保证"写文档 / 写演讲稿 / 写邮件"照旧不算）。
- */
-const DECK_VERB_CN = /(做|制作|生成|整理|导出|输出|创建|转成|写)/;
-
-/** 制作动词（英文；与英文名词混排的写法，大小写不敏感）。 */
-const DECK_VERB_EN =
-  /\b(mak(?:e|es|ing)|creat(?:e|es|ing)|generat(?:e|es|ing)|build(?:s|ing)?|produc(?:e|es|ing)|export(?:s|ing)?|convert(?:s|ing)?|draft(?:s|ing)?|prepar(?:e|es|ing))\b/i;
-
-/**
- * 演示名词（中文 + 英文）。
- * ⚠️ 英文一律带 `\b`：`deckchair` / `decks` 这类词内片段不算（`slide`/`slides`/
- *    `slideshow(s)` 都算，`ppt`/`pptx` 都算）。
- */
-const DECK_NOUN = /(演示文稿|幻灯片|课件|\bppt(?:x)?\b|\bslide(?:s|show|shows)?\b|\bdeck\b)/i;
-
-/**
  * 这条文本是不是"要一份演示文稿"？（纯函数，单独钉）
  *
- * 规则 = 制作动词 ∧ 演示名词。空串/空白一律 false。
+ * ⚠️ 2026-10-09 起判据的**唯一真源在 `@clawwork/shared`**（`isDeckWorkRequest` =
+ *    制作 ∨ 改稿 ∨ "再来一份全新的"）：主进程的 `reroutePptxToSlidegen` 硬门用**同一个**
+ *    出口 —— 此前两边各写一份词表，首次制作（"把材料做成一份 PPT"）与首次改稿
+ *    （"美化这个 PPT"）各漏一个方向（见 shared 模块头注释）。空串/空白一律 false。
  */
 export function looksLikeDeckRequest(text: string): boolean {
-  if (typeof text !== 'string' || text.trim() === '') return false;
-  if (!DECK_VERB_CN.test(text) && !DECK_VERB_EN.test(text)) return false;
-  return DECK_NOUN.test(text);
+  return isDeckWorkRequest(text);
 }
 
 /**

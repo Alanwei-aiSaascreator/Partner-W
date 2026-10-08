@@ -102,4 +102,30 @@ describe('BUG-046 ③ 当前源判据重定义（mtime 优先 + 编辑工具 + f
     expect(readFileSync(join(folder, 'legacy.native-ppt.json'), 'utf8')).toBe('legacy');
     expect(nativeInputFromCompletedWrites(folder, [w])).toBe('legacy.native-ppt.json');
   });
+
+  /**
+   * ⭐ BUG-054（2026-10-09 只读复审）：同一文件多次 write 的**数组序依赖**。
+   *
+   * 旧实现 Map 对同文件只留"数组里最后一条"write 的内容 —— 数组序 ≠ 执行序（同
+   * BUG-046 ③ 的实证），倒序时留下的是**旧内容**，与盘上新字节 sha 不匹配 ⇒
+   * 真新文件落选、后续 mtime 排序也救不回（内容证据已被覆盖）。
+   * 修法：保留**每一次**写入的内容，sha 与任一次一致即通过。
+   */
+  it('⭐ BUG-054：同一文件多次 write —— 数组倒序（旧写入在数组末尾）仍能选中', () => {
+    writeFileSync(join(folder, 'deck.native-ppt.json'), 'current');
+    const tools = [
+      done('w2', 'write', { path: 'deck.native-ppt.json', content: 'current' }),
+      done('w1', 'write', { path: 'deck.native-ppt.json', content: 'old' }),
+    ];
+    expect(nativeInputFromCompletedWrites(folder, tools)).toBe('deck.native-ppt.json');
+  });
+
+  it('BUG-054 负对照：盘上内容不是本轮任何一次写入 ⇒ 仍不选（守卫不松）', () => {
+    writeFileSync(join(folder, 'deck.native-ppt.json'), 'someone-elses');
+    const tools = [
+      done('w1', 'write', { path: 'deck.native-ppt.json', content: 'old' }),
+      done('w2', 'write', { path: 'deck.native-ppt.json', content: 'current' }),
+    ];
+    expect(nativeInputFromCompletedWrites(folder, tools)).toBeUndefined();
+  });
 });

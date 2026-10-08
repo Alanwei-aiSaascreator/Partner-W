@@ -1709,6 +1709,86 @@ describe('slide quality delivery settlement', () => {
         rmSync(realWorkspace, { recursive: true, force: true });
       }
     });
+
+    it('⭐ BUG-057（2026-10-09 复审）：助手目录 RPC 失败 ⇒ 收据确认链不许被拆（应用工作区仍是可信根）', async () => {
+      // 现场形态：RPC 超时 / 网关离线 ⇒ `captureAgentRootBaseline` 回 null。
+      // 旧行为：agentRoot 为 null 直接给空收据集合、**collector 根本不被调用** ⇒
+      // 真产出（成品 + 收据都在应用工作区）被判 `slidegen-output-unconfirmed`。
+      // 修法：根解析失败时主根回落应用工作区，照常校验收据与文件（成功标准一分未松）。
+      const { mkdtempSync, rmSync, writeFileSync } = await import('node:fs');
+      const { tmpdir } = await import('node:os');
+      const { join } = await import('node:path');
+      const { createHash } = await import('node:crypto');
+      const realWorkspace = mkdtempSync(join(tmpdir(), 'deck-rpc-fail-'));
+      try {
+        const bytes = Buffer.from('deck-bytes');
+        writeFileSync(join(realWorkspace, 'deck.pptx'), bytes);
+        const { getWorkspacePath } = await import('../src/main/workspace/config.js');
+        vi.mocked(getWorkspacePath).mockReturnValue(realWorkspace);
+        const { resolveAgentWorkspace } = await import('../src/main/artifact/agent-workspace.js');
+        // RPC 失败（拒绝）⇒ 上层 catch 后按 null 处理 —— 与网关离线同形。
+        vi.mocked(resolveAgentWorkspace).mockRejectedValueOnce(new Error('gateway rpc failed'));
+        collectReceiptsMock.mockReturnValue({
+          receipts: [
+            {
+              receiptFile: '.royin-ppt-receipt-77777777-2222-3333-4444-555555555555.json',
+              source: '{}',
+              receipt: {
+                fileName: 'deck.pptx',
+                bytes: bytes.length,
+                outputSha256: createHash('sha256').update(bytes).digest('hex'),
+                sourceFile: '.royin-native-x/source.json',
+                sourceSha256: 'a'.repeat(64),
+                pages: 1,
+                sourceFormat: 'native-template-v5',
+              },
+              outputDir: realWorkspace,
+            },
+          ],
+          rejected: 0,
+        });
+        saveArtifactMock.mockResolvedValue({
+          ...artifact,
+          id: 'rpc-fail-deck',
+          name: 'deck.pptx',
+          size: bytes.length,
+          localPath: `${taskId}/deck.pptx`,
+        });
+
+        const { beginArtifactRun, bindArtifactRun } = await import('../src/main/ipc/data-handlers.js');
+        const token = beginArtifactRun(realWorkspace, taskId, sessionKey, { gatewayId: 'gateway-1' });
+        bindArtifactRun(taskId, sessionKey, token, 'rpc-fail-run');
+        selectGetMock.mockReturnValueOnce({ id: messageId }).mockReturnValueOnce(undefined);
+        handleMap.get('data:create-message')!(
+          {},
+          {
+            id: 'rpc-fail-incoming',
+            taskId,
+            sessionKey,
+            runId: 'rpc-fail-run',
+            role: 'assistant',
+            content: 'Done',
+            timestamp: '2026-10-09T00:00:00.000Z',
+          },
+        );
+        await waitForSettlement();
+
+        // ① collector 必须仍被调用（旧行为：0 次），主根 = 应用工作区（可信根）之一
+        expect(collectReceiptsMock).toHaveBeenCalled();
+        expect(collectReceiptsMock).toHaveBeenCalledWith(
+          expect.objectContaining({ workspacePath: realWorkspace, allowedReceiptRoots: [realWorkspace] }),
+        );
+        // ② 规范落位登记照常（产物面板就看这一行）
+        expect(saveArtifactMock).toHaveBeenCalledWith(
+          expect.objectContaining({
+            fileName: 'deck.pptx',
+            sourceKey: 'slidegen-cli:.royin-ppt-receipt-77777777-2222-3333-4444-555555555555.json',
+          }),
+        );
+      } finally {
+        rmSync(realWorkspace, { recursive: true, force: true });
+      }
+    });
   });
 
   /**
@@ -1744,13 +1824,20 @@ describe('slide quality delivery settlement', () => {
       await waitForSettlement();
     }
 
-    it.each(['另做一份PPT', '把这份 PPT 美化一下', '第一版不好看，重新排版'])(
-      '⭐ 演示意图（%s）⇒ docgen 收到改道旗标（pptx 不进产品通道）',
-      async (userContent) => {
-        await completeRunWith(userContent);
-        expect(documentsMock).toHaveBeenCalledWith(expect.objectContaining({ reroutePptxToSlidegen: true }));
-      },
-    );
+    it.each([
+      '另做一份PPT',
+      '把这份 PPT 美化一下',
+      '第一版不好看，重新排版',
+      // ⭐ 2026-10-09 复审反例（P1）：首次制作的实际措辞 —— 主进程旧口径（只认"另做/新的/改稿"）
+      //    不命中，即使渲染层选到了 DeepSeek，docgen 的 pptx 硬门也不生效。
+      //    判据已统一到 `@clawwork/shared` 的 `isDeckWorkRequest`（制作 ∨ 改稿 ∨ 全新的）。
+      '把材料做成一份 PPT',
+      '做一份公司介绍 PPT',
+      'Generate a PPT',
+    ])('⭐ 演示意图（%s）⇒ docgen 收到改道旗标（pptx 不进产品通道）', async (userContent) => {
+      await completeRunWith(userContent);
+      expect(documentsMock).toHaveBeenCalledWith(expect.objectContaining({ reroutePptxToSlidegen: true }));
+    });
 
     it('负对照：普通请求（不涉演示）⇒ 不带改道旗标，docgen 行为一字不变', async () => {
       await completeRunWith('把这份表格整理成 Excel');
