@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { namedToolFailureKind, productizedToolFailure } from '../src/renderer/lib/tool-activity';
+import {
+  namedToolFailureKind,
+  productizedToolFailure,
+  visibleFailureReason,
+  type DisplayToolCall,
+} from '../src/renderer/lib/tool-activity';
 import { explainToolFailure, matchToolFailure } from '../src/renderer/lib/tool-failure-explain';
 
 /**
@@ -210,5 +215,36 @@ describe('不泄漏：输出只可能含 i18n 键与参数名，不含本地路�
     expect(out).not.toContain('Users');
     expect(out).not.toContain('secret');
     expect(out).not.toContain('report.docx');
+  });
+});
+
+/**
+ * F4（2026-10-08 终审 · P3 条件风险）：**摘要入口不得二次解析已脱敏文本**。
+ *
+ * `visibleFailureReason`（摘要行）原先先 `sanitizeToolText` 再交给 `productizedToolFailure`，
+ * 遮路径会把 `C:\…\report.docx` 洗成 `report.docx`，被具名判据当作"参数名"报出去 ——
+ * 而卡片路径（传原文）给的是诚实兜底 ⇒ 同一失败两处说明矛盾。
+ * 修法：摘要与卡片一样**传原文**，解析与脱敏统一由 `productizedToolFailure` 出口负责。
+ * 注：该输入是构造边界（生产可达性未证），本用例钉的是"两处必须一致"。
+ */
+describe('F4：摘要入口与卡片路径必须一致（持同一原文）', () => {
+  const PATH_IN_PARAM_SLOT = 'Missing required parameter: C:\\Users\\secret\\report.docx (received: action, name).';
+  const callOf = (raw: string): DisplayToolCall =>
+    ({ id: 'e-1', name: 'read', status: 'error', startedAt: '', result: raw }) as DisplayToolCall;
+
+  it('⭐ 路径占参数位：摘要与卡片都走诚实兜底（不得报 missingParam:report.docx）', () => {
+    const card = productizedToolFailure(PATH_IN_PARAM_SLOT, t);
+    expect(card, '卡片路径（传原文）').toBe('toolActivity.failure.cannotContinue');
+
+    const summary = visibleFailureReason([callOf(PATH_IN_PARAM_SLOT)], t);
+    expect(summary, '摘要路径必须与卡片一致').toBe(card);
+    expect(summary, '不得把脱敏后的文件名当参数名').not.toContain('report.docx');
+  });
+
+  it('正向：真正的缺参（原文无路径）两处都给具名说明', () => {
+    const raw = 'Missing required parameter: timeout (received: action, name).';
+    const card = productizedToolFailure(raw, t);
+    expect(card).toBe('toolActivity.failure.missingParam:timeout');
+    expect(visibleFailureReason([callOf(raw)], t)).toBe(card);
   });
 });

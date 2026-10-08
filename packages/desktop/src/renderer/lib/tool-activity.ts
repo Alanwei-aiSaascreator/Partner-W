@@ -387,9 +387,14 @@ export function sanitizeToolTitle(title: string | undefined | null, toolName: st
 export function visibleFailureReason(toolCalls: readonly DisplayToolCall[], t?: Translate): string {
   for (const candidate of toolCalls) {
     if (candidate.status !== 'error') continue;
-    const cleaned = sanitizeToolText(candidate.result ?? '');
+    const raw = candidate.result ?? '';
+    const cleaned = sanitizeToolText(raw);
     if (!cleaned) continue;
-    if (t) return productizedToolFailure(cleaned, t) ?? cleaned;
+    // ⚠️ F4（2026-10-08 终审）：与卡片路径（`ToolCallCard` 传原始 `result`）**必须持同一原文** ——
+    //    `productizedToolFailure` 内部先"剥样板（未遮路径）"跑具名判据、再做脱敏清洗；
+    //    这里若先 `sanitizeToolText`，遮路径会把 `C:\…\report.docx` 洗成 `report.docx`，
+    //    被当成"参数名"报出去 ⇒ 同一失败在摘要与卡片给出互相矛盾的说明。
+    if (t) return productizedToolFailure(raw, t) ?? cleaned;
     return isOpaqueToolFailure(cleaned) ? '' : cleaned;
   }
   return '';
