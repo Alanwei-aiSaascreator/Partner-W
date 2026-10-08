@@ -2538,7 +2538,6 @@
       "rateLimit": "Type d’erreur : trop de requêtes",
       "timeout": "Type d’erreur : délai dépassé"
     },
-    "groupCount": "× {{count}}",
     "noResult": "Cette étape n’a renvoyé aucun résultat.",
     "repeatedFailure": "Échecs répétés ×{{count}}",
     "running": "Working · completed {{count}} steps",

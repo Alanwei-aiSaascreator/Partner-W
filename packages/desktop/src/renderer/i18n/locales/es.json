@@ -2538,7 +2538,6 @@
       "rateLimit": "Tipo de error: demasiadas solicitudes",
       "timeout": "Tipo de error: tiempo agotado"
     },
-    "groupCount": "× {{count}}",
     "noResult": "Este paso no devolvió ningún resultado.",
     "repeatedFailure": "Fallos repetidos ×{{count}}",
     "running": "Working · completed {{count}} steps",

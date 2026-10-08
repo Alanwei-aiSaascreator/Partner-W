@@ -2538,7 +2538,6 @@
       "rateLimit": "Tipo de erro: demasiadas solicitações",
       "timeout": "Tipo de erro: tempo esgotado"
     },
-    "groupCount": "× {{count}}",
     "noResult": "Esta etapa não retornou resultado.",
     "repeatedFailure": "Falhas repetidas ×{{count}}",
     "running": "Working · completed {{count}} steps",

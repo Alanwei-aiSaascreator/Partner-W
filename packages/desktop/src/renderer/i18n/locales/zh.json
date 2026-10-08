@@ -2538,7 +2538,6 @@
       "rateLimit": "错误类别：请求过于频繁",
       "timeout": "错误类别：等待超时"
     },
-    "groupCount": "× {{count}}",
     "noResult": "这一步没有返回结果。",
     "repeatedFailure": "重复失败 ×{{count}}",
     "running": "正在处理 · 已完成 {{count}} 个步骤",

@@ -2538,7 +2538,6 @@
       "rateLimit": "Failure type: too many requests",
       "timeout": "Failure type: timed out"
     },
-    "groupCount": "× {{count}}",
     "noResult": "This step returned no result.",
     "repeatedFailure": "Repeated failures ×{{count}}",
     "running": "Working · completed {{count}} steps",

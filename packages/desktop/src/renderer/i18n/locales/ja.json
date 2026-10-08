@@ -2538,7 +2538,6 @@
       "rateLimit": "エラーの種類：リクエスト過多",
       "timeout": "エラーの種類：タイムアウト"
     },
-    "groupCount": "× {{count}}",
     "noResult": "この手順は結果を返しませんでした。",
     "repeatedFailure": "繰り返し失敗 ×{{count}}",
     "running": "Working · completed {{count}} steps",

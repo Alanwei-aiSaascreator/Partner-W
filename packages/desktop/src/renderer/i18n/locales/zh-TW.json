@@ -2538,7 +2538,6 @@
       "rateLimit": "錯誤類別：請求過於頻繁",
       "timeout": "錯誤類別：等待逾時"
     },
-    "groupCount": "× {{count}}",
     "noResult": "這一步沒有回傳結果。",
     "repeatedFailure": "重複失敗 ×{{count}}",
     "running": "Working · completed {{count}} steps",

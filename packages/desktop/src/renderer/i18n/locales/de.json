@@ -2538,7 +2538,6 @@
       "rateLimit": "Fehlertyp: zu viele Anfragen",
       "timeout": "Fehlertyp: Zeitüberschreitung"
     },
-    "groupCount": "× {{count}}",
     "noResult": "Dieser Schritt hat kein Ergebnis geliefert.",
     "repeatedFailure": "Wiederholte Fehler ×{{count}}",
     "running": "Working · completed {{count}} steps",
