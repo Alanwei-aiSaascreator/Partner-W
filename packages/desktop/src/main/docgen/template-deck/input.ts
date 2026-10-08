@@ -168,8 +168,13 @@ export function validateContent(table: SlotTable, content: TemplateDeckContent):
    * \u53ea\u6709\u8868\u7ed3\u6784\u574f\uff08slot-table-invalid / content-invalid \u7b49**\u4e0d\u53ef\u6062\u590d**\u9879\uff09\u624d fail-fast\u3002
    */
   const issues: TemplateDeckDiagnostic[] = [];
-  for (const page of catalog.filter((item) => Object.hasOwn(content, String(item.slide_number)))) {
-    const number = result.size + 1;
+  // BUG-053①：输出页序按「选中序列的位次」计，与成败无关。
+  // 旧写法 `result.size + 1` 只在成功页上递增——失败页不 set，其后每页都重复同一个号
+  // （[3,3,3]），把"这页本该是输出第几页"这件事报成噪音。页序对模型修复无用，
+  // layout 身份始终由 detail 前缀 `layout <n>` 承载；这里保持页序字段自洽即可。
+  const selected = catalog.filter((item) => Object.hasOwn(content, String(item.slide_number)));
+  for (const [selectedIndex, page] of selected.entries()) {
+    const number = selectedIndex + 1;
     const label = (detail: string) => `layout ${page.slide_number}: ${detail}`;
     try {
       const raw = content[String(page.slide_number)];

@@ -468,6 +468,53 @@ describe('preflight vs readiness —— 同一件事，两个相反的结论', (
     });
   });
 
+  /**
+   * BUG-059 附 F4：熔断预检（`beforeSpawn`）只挂在**真 spawn 的分支**上。
+   *
+   * 旧实现把预检拦在整个 `startGateway` 之前 —— 连端口上**健康网关的复用**（reuse）
+   * 也被一并否决，用户白等窗口（窗口只有真 spawn 失败才会推进，复用根本不碰计数）。
+   */
+  describe('BUG-059 F4：熔断预检只闸 spawn，不闸复用', () => {
+    it('⭐ 真 spawn 之前调用 beforeSpawn；它抛 ⇒ 绝不 spawn（不撞墙）', async () => {
+      const gate = vi.fn(() => {
+        throw Object.assign(new Error('网关触发了自我保护'), { code: 'runtime.gateway-crash-loop-breaker' });
+      });
+      const { opts, spawn } = baseOpts({ beforeSpawn: gate });
+
+      await expect(ensureGatewayRunning(opts)).rejects.toMatchObject({
+        code: 'runtime.gateway-crash-loop-breaker',
+      });
+      expect(gate).toHaveBeenCalledTimes(1);
+      expect(spawn).not.toHaveBeenCalled();
+    });
+
+    it('⭐ 端口上是我们健康的网关（started + 认证通过）⇒ **不调用** beforeSpawn，照常复用', async () => {
+      const gate = vi.fn();
+      const { opts, spawn } = baseOpts({ probe: vi.fn(async () => READY), beforeSpawn: gate });
+
+      const res = await ensureGatewayRunning(opts);
+
+      expect(res.ownership).toBe('reused');
+      expect(gate).not.toHaveBeenCalled();
+      expect(spawn).not.toHaveBeenCalled();
+    });
+
+    it('⭐ 端口被 foreign 占用（明确拒绝）⇒ 也不调用 beforeSpawn（先报端口被占，别搅浑诊断）', async () => {
+      const gate = vi.fn();
+      const { opts, spawn } = baseOpts({
+        probe: vi.fn(async () => READY),
+        authenticate: vi.fn(async () => false),
+        beforeSpawn: gate,
+      });
+
+      await expect(
+        ensureGatewayRunning({ ...opts, authProbe: fastProbe(), foreignWait: noWait() }),
+      ).rejects.toMatchObject({ code: GATEWAY_PORT_OCCUPIED });
+      expect(gate).not.toHaveBeenCalled();
+      expect(spawn).not.toHaveBeenCalled();
+    });
+  });
+
   it('⭐ readiness：我们**自己 spawn 的**报 starting ⇒ 继续等，绝不判 foreign', async () => {
     // 先 DOWN（于是走 spawn），spawn 之后 /startupz 开始报 starting，
     // 最后才 started —— 这正是真实网关的冷启动过程（实测 ~38s）

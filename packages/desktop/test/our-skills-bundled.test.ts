@@ -510,8 +510,12 @@ describe('controlled PPT contract split（P0-A 两层契约：机器契约 + 模
       expect(fs.existsSync(file), `缺 ${path.basename(file)}`).toBe(true);
       const text = fs.readFileSync(file, 'utf8');
       // read 工具单窗 = 2000 行（内核 DEFAULT_MAX_LINES=2e3，offset 为行偏移）。速查文件
-      //   只几十行必在一窗内；字符数上限按宽松界钉（防止将来膨胀，非窗口口径）。
-      expect(text.length, `layout-${String(n).padStart(2, '0')}.md 超出宽松界`).toBeLessThan(2000);
+      //   只几十行必在一窗内；这里是防膨胀的**宽松界**（非窗口口径）。
+      // 2026-10-08 BUG-053② 重标 2000→2400：示例换成可照抄的合法内容后，layout-13
+      //   （26 槽位原生表格，天然最长的一版）约 2130 字符——是合法内容，不该被代理界挡在
+      //   门外（该界在原交付快照里已被 layout-13 越过 = 本就是红的）。真实窗口界=每个文件
+      //   < 8192B，钉在 our-skills-fix-regression-gate.test.ts；这条只防"翻倍式膨胀"。
+      expect(text.length, `layout-${String(n).padStart(2, '0')}.md 超出宽松界`).toBeLessThan(2400);
       const editable = page.text_slots.filter((s) => s.editable);
       expect(text).toContain(`共 ${editable.length} 个槽位`);
       for (const slot of editable) {

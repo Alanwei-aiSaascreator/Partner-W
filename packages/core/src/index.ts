@@ -55,6 +55,7 @@ export {
   createMessageStore,
   mergeCanonicalMessageWithActiveTurn,
   activeTurnToMessage,
+  activeTurnProducedOutput,
   EMPTY_MESSAGES,
 } from './stores/message-store.js';
 export type { MessageState, MessageStoreDeps, ActiveTurn, AutoRetryFailure } from './stores/message-store.js';

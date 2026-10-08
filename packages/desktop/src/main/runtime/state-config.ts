@@ -232,8 +232,9 @@ export const MEMORY_TOOLS_DENIED = ['memory_search', 'memory_get'] as const;
  * 不可执行（`canvas` = macOS 配对节点工具，`tool-*.mjs` 注册名实读 `name: "canvas"`；
  * 语料 434k 行内 0 次调用，但暴露给 Planner 只会换来失败调用）——与 memory 两工具一样
  * 并进 deny（同一个 `mergeToolsDefaults`，幂等并集）。
- * ⚠️ 待查证候选（确切注册名未经工具清单实读，勿凭"族名"猜测写入）：computer / nodes /
- *    mobile_ui / portal / dashboard。
+ * ⚠️ 旧"待查证候选"（computer / nodes / mobile_ui / portal / dashboard）已于 2026-10-08
+ *    在生效面 schema 记账中逐一实读确认——现落在下面 "deny v2" 的
+ *    `PAIRED_NODE_TOOLS_DENIED` / `OPS_SURFACE_TOOLS_DENIED` 两个名单里，候选言废止。
  */
 export const PLATFORM_IRRELEVANT_TOOLS_DENIED = ['canvas'] as const;
 
@@ -268,6 +269,95 @@ export const WEB_TOOLS_DENIED = ['web_search', 'web_fetch'] as const;
 export const SANDBOXLESS_VISION_TOOLS_DENIED = ['view_image'] as const;
 
 /**
+ * **配对节点族**（deny v2 · BUG-061，2026-10-08 用户拍板"整族剪"）。
+ *
+ * 本产品 = Windows 单机工作台，**无配对节点设施**：语料实锤被真实调用并失败
+ * （内核原文 `no paired nodes available… Use local file/exec tools`；dir_list /
+ * dir_fetch 0 成功），动态基线还主动推销 `portal` 扫码直传（超承诺）——"用不了就不给"。
+ *
+ * 名单来源 = 生效面 schema 记账实测 + `tools.catalog` 实读（不是族名猜测）。
+ * `file_fetch` 属同族、但已由能力注册表 `PLANNER_UNAVAILABLE_TOOL_IDS` 覆盖，不重复列。
+ */
+export const PAIRED_NODE_TOOLS_DENIED = [
+  'computer',
+  'nodes',
+  'mobile_ui',
+  'portal',
+  'node_inference',
+  'dir_fetch',
+  'dir_list',
+  'file_write',
+] as const;
+
+/**
+ * **运营面族**（内核管理台工具，deny v2 · BUG-061）：面向运营者控制台（仪表盘 / 终端 /
+ * 机密 / 网关控制 / 内核自管），本产品对终端用户无此面；`secrets`/`gateway` 直触凭据与
+ * 网关，暴露本身就是安全面（用不了就不给 + 不该给）。
+ *
+ * ⚠️ `lobster` **不在这里**（2026-10-08 集成复核抓出的矩阵误伤）：它不是运营面工具，
+ *    是**随包工作流插件的授权工具名**——`workflow-tools.ts` 有整套启用 / 身份校验 /
+ *    `alsoAllow` 授权（`official-lobster-2026.9.3` 补丁 + `@openclaw/lobster` 契约校验），
+ *    剪它 = 剪产品功能。
+ */
+export const OPS_SURFACE_TOOLS_DENIED = ['dashboard', 'terminal', 'secrets', 'gateway', 'openclaw'] as const;
+
+/**
+ * **无接线族**（deny v2 · BUG-061）：产品无对应功能（本仓零引用 / 无接线，逐名核过）。
+ * · `automations` —— 2026-10-08 用户拍板剪。动态基线 B5 实测它真能建"每天 9 点提醒"，
+ *   但 U 盘应用不常驻运行 ⇒ 空承诺（"成功盒子"比失败盒子更危险）。
+ * · `tts` —— 语音合成未接入（Windows 语音面已按 BUG-044 隐藏）。
+ * · `github_identity_status` —— B6 实测教用户去"OpenClaw 设置→Agents→Tools"
+ *   （不存在的 UI + 内部品牌泄漏）。
+ * · `message` / `conversations_*` —— 内核会话面工具，产品无对应功能。
+ * （`music_generate` 同族但归**能力注册表**——与 image/video 生成一起，见 capability-registry.ts。）
+ */
+export const UNWIRED_TOOLS_DENIED = [
+  'automations',
+  'tts',
+  'github_identity_status',
+  'message',
+  'conversations_list',
+  'conversations_send',
+  'conversations_turn',
+] as const;
+
+/** **目标族**（deny v2 · BUG-061）：产品无目标功能 UI——模型调了也没有任何显现面。 */
+export const GOAL_TOOLS_DENIED = ['create_goal', 'get_goal', 'update_goal'] as const;
+
+/**
+ * **休眠 / 零依赖族**（deny v2 · BUG-061；依赖核验逐条见 `D:\backup\tool-audit-20261008\deps-verdicts.md`）：
+ * sessions 读族仅被休眠 ensemble 提示词引用；agents_* / subagents 支撑的委派流被产品合同
+ * 明文禁止（team-workflow.ts"不要调用 sessions_spawn / sessions_send"）；`progress_card`
+ * 有意不接（B9）；`intent` / `transcripts` 全库零命中。剪它们不影响任何可达特性。
+ *
+ * ⚠️ `sessions_spawn` / `sessions_send` **刻意不在本名单**：在役合同文本
+ *    （`preset-agents.ts` 的 COMMON_OPERATING_CONTRACT）引用它们，剪必须与合同文本同批改
+ *    （BUG-061 决策点 2）——只剪工具不改文本 = 模型对不存在工具做假委派（BUG-037 同型）。
+ */
+export const DORMANT_TOOLS_DENIED = [
+  'sessions_list',
+  'sessions_search',
+  'sessions_history',
+  'sessions_yield',
+  'sessions',
+  'session_status',
+  'agents_list',
+  'agents_wait',
+  'subagents',
+  'transcripts',
+  'progress_card',
+  'intent',
+] as const;
+
+/**
+ * **技能工坊**（deny v2 · BUG-061；BUG-060 客户演示事故主角）：
+ * 语料 1/20 成功（95% 被拒：13 次所有权拒〔11 指向 deck-layout〕+ 6 次中文名校验拒）；
+ * 其官方描述 "Read one complete artifact" 对"查找读取随包技能方式"的模型构成直接误导
+ * （演示现场 3 次失败调用即此物）。产品无技能工坊 UI、本仓零引用——"用不了就不给"。
+ */
+export const WORKSHOP_TOOLS_DENIED = ['skill_workshop'] as const;
+
+/**
  * **能力注册表判定为 `unavailable` 的工具**（BUG-043，2026-10-08）——同样并入 deny。
  *
  * 本轮落地的是图片/视频生成（`image_generate` / `video_generate`）：media-loop 本轮
@@ -283,6 +373,30 @@ function capabilityToolsDenied(): readonly string[] {
   return plannerDeniedToolIds();
 }
 
+/**
+ * 产品级默认 deny 的**全量名单**（单一真源）：`mergeToolsDefaults`、自愈判据
+ * （`hasMemoryToolsDenied`）、`workflow-tools.ts` 的"系统默认策略"识别三处共用——
+ * 新增族名单只改上方常量区，三处自动跟随（deny v2 起归一到这里，消灭第二份抄写）。
+ *
+ * ⚠️ 函数而非顶层常量：`capabilityToolsDenied()` 必须**懒求值**（见其注释：本模块
+ *    import 顺序敏感，顶层求值会在 license 系测试 collect 期炸）。
+ */
+export function defaultDeniedToolNames(): readonly string[] {
+  return [
+    ...MEMORY_TOOLS_DENIED,
+    ...PLATFORM_IRRELEVANT_TOOLS_DENIED,
+    ...WEB_TOOLS_DENIED,
+    ...SANDBOXLESS_VISION_TOOLS_DENIED,
+    ...PAIRED_NODE_TOOLS_DENIED,
+    ...OPS_SURFACE_TOOLS_DENIED,
+    ...UNWIRED_TOOLS_DENIED,
+    ...GOAL_TOOLS_DENIED,
+    ...DORMANT_TOOLS_DENIED,
+    ...WORKSHOP_TOOLS_DENIED,
+    ...capabilityToolsDenied(),
+  ];
+}
+
 /** 从（任意的）配置里挖出全局 `tools.deny`；不是字符串数组则 null。 */
 export function readToolsDeny(raw: unknown): string[] | null {
   if (!isRecord(raw)) return null;
@@ -293,24 +407,19 @@ export function readToolsDeny(raw: unknown): string[] | null {
   return deny.filter((v): v is string => typeof v === 'string');
 }
 
-/** 那两个名字是不是都已经被 deny 掉了（决定"要不要写盘"的判据）。 */
+/**
+ * 全部产品级默认 deny 名字是不是都在（决定"要不要写盘"的判据）。
+ *
+ * ⚠️ 名字叫 memory 是历史（第一个被摘的就是它们），实际是**全量聚合判据**：
+ *    任何一个名单漏查 ⇒ 存量用户（配置里已有旧名单）会被提前返回**永远拿不到**
+ *    新增的 deny——这个坑 2026-10-07 canvas、2026-10-08 view_image / 能力注册表
+ *    逐次踩过，deny v2 起统一走 `defaultDeniedToolNames()` 聚合，别再逐名单手写。
+ */
 export function hasMemoryToolsDenied(raw: unknown): boolean {
   const deny = readToolsDeny(raw);
-  return (
-    deny !== null &&
-    MEMORY_TOOLS_DENIED.every((name) => deny.includes(name)) &&
-    // 2026-10-07 P0-3：平台特异工具（canvas）同走这条判据——只查 memory 两名的话，
-    // 存量用户会因提前返回**永远拿不到**新增的 deny（与 memory/工具闸门当初同一个坑）。
-    PLATFORM_IRRELEVANT_TOOLS_DENIED.every((name) => deny.includes(name)) &&
-    // 2026-10-07 交付日：web 工具降级（BUG-033）同走这条判据（同上坑理）。
-    WEB_TOOLS_DENIED.every((name) => deny.includes(name)) &&
-    // 2026-10-08 BUG-049：无沙箱看图工具 view_image 同走这条判据 —— 漏了它，存量用户
-    // （配置里已有 canvas/web 等旧名单）会被提前返回**永远锁在没有新 deny 的状态**。
-    SANDBOXLESS_VISION_TOOLS_DENIED.every((name) => deny.includes(name)) &&
-    // 2026-10-08：能力注册表的 unavailable 工具（image/video 生成，BUG-043）同走这条判据 ——
-    // 漏了它，存量用户（配置里已有旧的四个名字）会被提前返回**永远锁在没有新 deny 的状态**。
-    capabilityToolsDenied().every((name) => deny.includes(name))
-  );
+  if (deny === null) return false;
+  const present = new Set(deny);
+  return defaultDeniedToolNames().every((name) => present.has(name));
 }
 
 /**
@@ -395,10 +504,11 @@ export function hasStaleExecKeys(raw: unknown): boolean {
 }
 
 /**
- * 工具段合并（纯函数）：把这两个名字**并进** deny + **红线三闸门**（确保并保留）。
+ * 工具段合并（纯函数）：把默认名单（`defaultDeniedToolNames()`）**并进** deny +
+ * **红线三闸门**（确保并保留）。
  *
  * 为什么是并集而不是"没有才补"：用户/将来版本可能已经 deny 了别的东西，
- * 整段覆盖会把他的设置抹掉；而这两个名字必须确保在里面，所以只能并。
+ * 整段覆盖会把他的设置抹掉；而这些名字必须确保在里面，所以只能并。
  * 幂等由 `Set` 保证 —— 连跑多次不会重复追加。
  *
  * ⚠️ 三个闸门同上：**确保**而不是"没有才补"。红线是产品决定、不是用户偏好 ——
@@ -428,16 +538,7 @@ export function mergeToolsDefaults(existing: Record<string, unknown> | null): Re
 
   return {
     ...tools,
-    deny: [
-      ...new Set([
-        ...deny,
-        ...MEMORY_TOOLS_DENIED,
-        ...PLATFORM_IRRELEVANT_TOOLS_DENIED,
-        ...WEB_TOOLS_DENIED,
-        ...SANDBOXLESS_VISION_TOOLS_DENIED,
-        ...capabilityToolsDenied(),
-      ]),
-    ],
+    deny: [...new Set([...deny, ...defaultDeniedToolNames()])],
     fs: { ...fsSection, workspaceOnly: TOOL_GUARD_FS_WORKSPACE_ONLY },
     // ⚠️ 只写 `mode`：**不要**加 `askFallback`（见上面常量处的实测）。
     exec: { ...execRest, mode: TOOL_GUARD_EXEC_MODE },

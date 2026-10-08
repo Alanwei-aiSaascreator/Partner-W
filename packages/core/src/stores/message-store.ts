@@ -24,16 +24,49 @@ export interface ActiveTurn {
 }
 
 /**
+ * 这一轮**出过东西没有** —— 「整轮失败自动重发」判据的唯一真源（BUG-050）。
+ *
+ * ⚠️ 思考（`streamingThinking`）**不算**：那是模型的推理过程，用户拿不到成品，
+ *    也不落任何文件——空转的判据是"有没有交付物"，不是"模型有没有动过脑子"。
+ * ⚠️ 工具调用**算**：它可能有不可逆的副作用（写盘、发请求），界面上也已经有痕迹。
+ *
+ * 放在这里（而不是渲染层的 hook 里）是因为它有**两个消费者**：
+ *   ① dispatcher 在 `clearActiveTurn` **之前**用它快照证据（清掉就再也读不到了）；
+ *   ② 渲染层评估时用它兜底读"还活着的" activeTurn（迟到帧会把 turn 重新建出来）。
+ * 两边必须同一套语义 —— 各写一份迟早分叉。
+ */
+export function activeTurnProducedOutput(turn: ActiveTurn | undefined): boolean {
+  if (!turn) return false;
+  if (turn.finalized) return true;
+  if (turn.streamingText.trim() !== '' || turn.content.trim() !== '') return true;
+  if (turn.toolCalls.length > 0) return true;
+  return false;
+}
+
+/**
  * 「整轮失败自动重发 1 次」的候选类别（包 D）。
  *
  * `transient` = 登记时带结构化判据说"太频繁/超时"；`unclassified` = 认不出来
  * （lifecycle 失败帧只有一句英文原文）。**确定性失败不在这张表里** —— 它们根本不登记。
+ *
+ * ⚠️ `kind` 只是**登记时**能拿到的类别；**认不出来的一律不自动重发**（BUG-050 收紧：
+ *    malformed tool call / unknown 都落进 `unclassified`），只有 `transient` 才可能发。
  */
 export interface AutoRetryFailure {
   taskId: string;
   /** 时间线里那句失败消息（重发目标由它往前找，见 `findRetryTarget`）。 */
   messageId: string;
   kind: 'transient' | 'unclassified';
+  /**
+   * **登记那一刻**「本轮已产出」的证据快照（BUG-050）。
+   *
+   * 为什么必须是快照而不是评估时现读：dispatcher 的错误分支**先**
+   * `clearActiveTurn(sessionKey)`、**再**登记候选 —— 1.5s 后渲染层评估时那个
+   * activeTurn 早就没了，现读恒为 `undefined` ⇒ "什么都没做" ⇒ 守卫形同虚设、
+   * 一个已经跑过 write/exec 的轮次被整轮重发（副作用重复，不可逆）。
+   * 证据只在清理**之前**拿得到，所以谁清理谁负责把它带出来。
+   */
+  producedOutput: boolean;
 }
 
 export interface MessageState {
@@ -152,10 +185,14 @@ export interface MessageState {
    * 「重试」按钮 —— B10 明确拒绝过。两份的生命周期纪律相同（见上一条）。
    *
    * `kind` 是登记时能拿到的**唯一**类别信息：
-   *   - `transient`（rate_limit / timeout）—— 重发真可能改变结果；
-   *   - `unclassified` —— 认不出来。**不直接**等于要重发：渲染层还要再过一遍
-   *     「零最终交付」严格判据（见 `useAutoRetryFailedTurn`），过不了就不发。
+   *   - `transient`（rate_limit / timeout）—— 重发真可能改变结果，**唯一**允许自动重发的类别；
+   *   - `unclassified` —— 认不出来（含 malformed tool call）：**一律不自动重发**
+   *     （BUG-050 收紧：认不出来就不替用户再花一次钱、更不拿不可逆副作用去赌）。
+   *     登记照旧保留 —— 它是排查现场，且渲染层仍要给评估日志一个诚实的类别。
    * 确定性失败（refusal / context_length）**根本不登记**。
+   *
+   * ⚠️ 候选同时携带 `producedOutput`（本轮已产出的**证据快照**）：dispatcher 在
+   *    `clearActiveTurn` 之前取，渲染层据此挡住"跑过工具却整轮重发"（BUG-050）。
    *
    * ⚠️ 不落库：本轮界面状态，与 `retryableErrorBySession` 同性质。
    */

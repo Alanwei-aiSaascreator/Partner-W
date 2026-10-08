@@ -119,10 +119,16 @@ export interface RuntimeBootstrapDeps {
     stateDir: string;
     identityPath: string;
     token: string;
+    /**
+     * BUG-059 附 F4：真 spawn 之前的闸（判定为 reuse/foreign 的路径**不会**调用它）。
+     * 默认实现一路传到 `ensureGatewayRunning` 的 spawn 分支；测试假实现可自取所需。
+     */
+    beforeSpawn?: () => void | Promise<void>;
   }) => Promise<EnsureGatewayRunningResult>;
   setStateDirEnv: (stateDir: string) => void;
   /**
-   * BUG-040 ④：失败时看一眼网关的崩溃循环熔断（`gateway.crash_loop_breaker`）。
+   * BUG-040 ④ + BUG-059：看一眼网关的崩溃循环熔断（`gateway.crash_loop_breaker`）。
+   * 两处消费：①spawn 分支的预检 `beforeSpawn`（熔断 ⇒ 不撞墙）②失败路径的换码诊断。
    * **只读**、永不抛；缺省实现在 `gateway-breaker.ts`。可选（老测试的假依赖集不用改）。
    */
   inspectBreaker?: (stateDir: string) => CrashLoopBreakerState;
@@ -268,7 +274,7 @@ function makeDefaultDeps(): RuntimeBootstrapDeps {
         supportedRange: contract.supportedRange,
       });
     },
-    startGateway: async ({ nodeExe, cliPath, deployedRoot, stateDir, identityPath, token }) =>
+    startGateway: async ({ nodeExe, cliPath, deployedRoot, stateDir, identityPath, token, beforeSpawn }) =>
       ensureGatewayRunning({
         nodeExe,
         cliPath,
@@ -277,6 +283,8 @@ function makeDefaultDeps(): RuntimeBootstrapDeps {
         token,
         port: GATEWAY_WS_PORT,
         identityPath,
+        // 没人给这个闸就不带这个键（调用形状保持干净）
+        ...(beforeSpawn ? { beforeSpawn } : {}),
       }),
     setStateDirEnv: (stateDir) => {
       // ⚠️ media/resolve.ts 读它；不设的话聊天里的图片会**静默**读不到
@@ -440,25 +448,29 @@ export async function bootstrapLocalGatewayRuntime(opts: {
     if (!nodeRes.ok) return fail('runtime.no-usable-node', nodeRes.message, { deploymentKey: deployed.deploymentKey });
 
     /**
-     * BUG-040 ④：熔断期间**不去撞墙**。
+     * BUG-040 ④ + BUG-059 附 F4：熔断期间**不去撞墙** —— 预检挂在**真 spawn 的分支**上。
      *
-     * 内核（同一套判据）会拒绝启动，但每次尝试都会**新增一条"不干净启动"记录**、
-     * 把那 5 分钟窗口往后推 —— 用户越点「重新准备」越出不来。所以起网关之前先停手，
-     * 直接给出"等几分钟 / 退出应用再试"的指引。
+     * 内核（同一套判据）会拒绝启动，但每次**真 spawn** 都会新增一条"不干净启动"记录、
+     * 把那 5 分钟窗口往后推 —— 用户越点「重新准备」越出不来。所以 spawn 之前先停手。
      *
-     * ⚠️ 只读、永不抛、读不到按"没熔断"：这是**失败路径的诊断**，不许把正常启动拦下。
+     * ⚠️ BUG-059 附 F4：**不能**拦在 `deps.startGateway` 之前（旧位置 pre-start）——
+     *    `ensureGatewayRunning` 是三态判定：端口上已经跑着我们**健康**的网关时走 `reused`，
+     *    根本不碰内核的启动计数；拦在前面会让"复用"也被一并否决，用户白等窗口。
+     *    ⇒ 预检随 `beforeSpawn` 下传，只在 spawn 分支（判定为 reuse/foreign 之后）生效。
+     *
+     * ⚠️ 只读、读不到按"没熔断"（`available:false`）；唯一会抛的是"熔断 ⇒ 故意换码"那一支。
      */
-    const preBreaker = inspectBreaker(stateDir);
-    if (preBreaker.tripped) {
+    const beforeSpawn = (): void => {
+      const breaker = inspectBreaker(stateDir);
+      if (!breaker.tripped) return;
       deps.log('runtime.gateway-crash-loop-breaker', {
-        phase: 'pre-start',
-        uncleanBoots: preBreaker.uncleanBoots,
-        retryAfterMs: preBreaker.retryAfterMs,
+        phase: 'pre-spawn',
+        uncleanBoots: breaker.uncleanBoots,
+        retryAfterMs: breaker.retryAfterMs,
       });
-      return fail(GATEWAY_CRASH_LOOP_BREAKER, crashLoopBreakerGuidance(preBreaker), {
-        ...(deployStatus ? { deployStatus } : {}),
-      });
-    }
+      // 抛 = 不去撞墙（每次真 spawn 失败都会新增一条"不干净启动"、把窗口往后推）。
+      throw Object.assign(new Error(crashLoopBreakerGuidance(breaker)), { code: GATEWAY_CRASH_LOOP_BREAKER });
+    };
 
     // ⑥ 三态判定后 spawn / 复用（判成 foreign 会抛 port-occupied，由下面接住）
     const gatewayStartedAt = deps.now();
@@ -470,6 +482,7 @@ export async function bootstrapLocalGatewayRuntime(opts: {
       stateDir,
       identityPath: path.join(userDataDir, 'device-identity.json'),
       token,
+      beforeSpawn,
     });
     deps.log('runtime.gateway.ready', {
       durationMs: Math.max(0, deps.now() - gatewayStartedAt),
@@ -534,7 +547,10 @@ export async function bootstrapLocalGatewayRuntime(opts: {
         uncleanBoots: breaker.uncleanBoots,
         retryAfterMs: breaker.retryAfterMs,
       });
-      return fail(GATEWAY_CRASH_LOOP_BREAKER, `${e.message}；${crashLoopBreakerGuidance(breaker)}`, {
+      // `beforeSpawn` 抛出的错误**本身就带指引**（预检那一支），不重复拼一遍。
+      const reason =
+        e.code === GATEWAY_CRASH_LOOP_BREAKER ? e.message : `${e.message}；${crashLoopBreakerGuidance(breaker)}`;
+      return fail(GATEWAY_CRASH_LOOP_BREAKER, reason, {
         ...(deployStatus ? { deployStatus } : {}),
       });
     }

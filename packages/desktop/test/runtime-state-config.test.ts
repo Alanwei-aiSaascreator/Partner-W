@@ -65,6 +65,7 @@ vi.mock('../src/main/util/json-file.js', async (importOriginal) => {
 import { CONFIG_FILE_NAME } from '@clawwork/shared';
 import {
   LOCAL_GATEWAY_ID,
+  defaultDeniedToolNames,
   hasInboxReadonlyGuard,
   hasMemoryToolsDenied,
   hasStaleExecKeys,
@@ -139,17 +140,8 @@ describe('ensureStateConfig', () => {
         entries: { 'rongying-inbox-readonly': { enabled: true } },
       },
       tools: {
-        deny: [
-          'memory_search',
-          'memory_get',
-          'canvas',
-          'web_search',
-          'web_fetch',
-          'view_image',
-          'image_generate',
-          'video_generate',
-          'file_fetch',
-        ],
+        // deny v2 起以聚合名单（defaultDeniedToolNames）为期望——全量逐名、顺序一致
+        deny: [...defaultDeniedToolNames()],
         fs: { workspaceOnly: true },
         exec: { mode: 'ask' },
         elevated: { enabled: false },
@@ -279,21 +271,17 @@ describe('tools.deny —— 摘掉那两个会必然失败的 memory 工具', ()
    * ⚠️ **不用** `memory.search.enabled: false`：那会**静默关掉 "## Project Memory" 注入**，
    *    是个看不见的损失。
    */
-  it('⭐ 首跑就带上：两个名字都在，且不多不少', () => {
+  it('⭐ 首跑就带上全量默认名单（deny v2 起聚合自 defaultDeniedToolNames，逐名一致）', () => {
     const res = ensureStateConfig(userDataDir);
     const raw = JSON.parse(fs.readFileSync(res.configPath, 'utf-8'));
 
-    expect(raw.tools.deny).toEqual([
-      'memory_search',
-      'memory_get',
-      'canvas',
-      'web_search',
-      'web_fetch',
-      'view_image',
-      'image_generate',
-      'video_generate',
-      'file_fetch',
-    ]);
+    expect(raw.tools.deny).toEqual([...defaultDeniedToolNames()]);
+    // 硬点名代表（非自引用）：误删常量里的名字时这条会红
+    expect(raw.tools.deny).toEqual(
+      expect.arrayContaining(['memory_search', 'memory_get', 'automations', 'nodes', 'skill_workshop']),
+    );
+    // 误伤防线：在役载体（lobster=随包工作流插件）绝不在 deny 里
+    expect(raw.tools.deny).not.toContain('lobster');
   });
 
   it('⭐ 存量用户（token 与 memory 段都早就对了）也必须补上 —— 提前返回不能漏了它', () => {
@@ -312,17 +300,9 @@ describe('tools.deny —— 摘掉那两个会必然失败的 memory 工具', ()
 
     expect(res.token).toBe(first.token);
     const raw = JSON.parse(fs.readFileSync(stateConfigPath(stateDir), 'utf-8'));
-    expect(raw.tools.deny).toEqual([
-      'memory_search',
-      'memory_get',
-      'canvas',
-      'web_search',
-      'web_fetch',
-      'view_image',
-      'image_generate',
-      'video_generate',
-      'file_fetch',
-    ]);
+    expect(raw.tools.deny).toEqual([...defaultDeniedToolNames()]);
+    // deny v2：六族名字也在同一次回写里补齐（存量盘自愈）
+    expect(raw.tools.deny).toEqual(expect.arrayContaining(['automations', 'skill_workshop']));
   });
 
   it('用户/将来版本已经设过别的 deny ⇒ 并集，不动他原有的项', () => {
@@ -348,6 +328,10 @@ describe('tools.deny —— 摘掉那两个会必然失败的 memory 工具', ()
     // 2026-10-07 交付日：web 工具降级（BUG-033——无稳定国内搜索源前不暴露）也进并集
     expect(raw.tools.deny).toContain('web_search');
     expect(raw.tools.deny).toContain('web_fetch');
+    // 2026-10-08 deny v2（BUG-061）：六族代表也进并集；在役载体 lobster 绝不误伤
+    expect(raw.tools.deny).toContain('nodes');
+    expect(raw.tools.deny).toContain('skill_workshop');
+    expect(raw.tools.deny).not.toContain('lobster');
   });
 
   it('⭐ 查重：已经有 `memory_search` 时补 `memory_get`，**不能把它追加成两条**', () => {
@@ -369,17 +353,8 @@ describe('tools.deny —— 摘掉那两个会必然失败的 memory 工具', ()
     ensureStateConfig(userDataDir);
 
     const raw = JSON.parse(fs.readFileSync(stateConfigPath(stateDir), 'utf-8'));
-    expect(raw.tools.deny).toEqual([
-      'memory_search',
-      'memory_get',
-      'canvas',
-      'web_search',
-      'web_fetch',
-      'view_image',
-      'image_generate',
-      'video_generate',
-      'file_fetch',
-    ]);
+    // 用户已有的 memory_search 保持原位、只出现一次，其后是全量默认名单（去重后）
+    expect(raw.tools.deny).toEqual([...new Set(['memory_search', ...defaultDeniedToolNames()])]);
     expect(raw.tools.deny.filter((n: string) => n === 'memory_search')).toHaveLength(1);
   });
 });

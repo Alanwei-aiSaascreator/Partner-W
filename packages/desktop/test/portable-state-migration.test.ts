@@ -187,6 +187,27 @@ describe('portable state migration', () => {
   const subst = (args: string[]): void => {
     execFileSync('subst', args, { windowsHide: true, stdio: 'ignore' });
   };
+  /**
+   * 以 `X:` 别名跑一段（BUG-059 附③ 现场形态：内核写 realpath、应用传别名）。
+   * X: 已被占用 ⇒ 跳过（返回 undefined；沿用既有的环境限制约定）。
+   */
+  const withSubstX = async <T>(disk: string, fn: () => Promise<T>): Promise<T | undefined> => {
+    fs.mkdirSync(disk, { recursive: true });
+    try {
+      subst(['X:', disk]);
+    } catch {
+      return undefined;
+    }
+    try {
+      return await fn();
+    } finally {
+      try {
+        subst(['/d', 'X:']);
+      } catch {
+        /* 没建上就算了 */
+      }
+    }
+  };
   it.runIf(process.platform === 'win32')('⭐ 换盘符重放（X: → Y:）：旧盘符的锁残留不再阻断迁移', async () => {
     const disk = path.join(root, 'disk');
     fs.mkdirSync(disk, { recursive: true });
@@ -225,6 +246,79 @@ describe('portable state migration', () => {
         /* 没建上就算了 */
       }
     }
+  });
+
+  /**
+   * BUG-059 附③：位置比对先做 realpath 归一 + **startTime 相符是所有隔离判据里最决定性的**。
+   *
+   * 现场形态：subst / junction 下**内核写 realpath、应用传别名** —— 纯词法比对会把
+   * "同一份 state"判成"别处的残留"，把**活网关的锁**隔离掉（漏闸），而 startTime
+   * 相符本可一眼确认"这就是我们的活网关"。判据顺序必须让决定性判据先说话。
+   */
+  it.runIf(process.platform === 'win32')(
+    '⭐（BUG-059 附③）位置拼写不同（subst 别名）但 startTime 相符 ⇒ 绝不隔离：如实阻断、锁原样保留',
+    async () => {
+      await withSubstX(path.join(root, 'disk-alias'), async () => {
+        const real = path.join(root, 'disk-alias', 'state');
+        writeConfig(real);
+        write(
+          path.join(real, 'tmp', 'openclaw', 'gateway.state.lock'),
+          JSON.stringify({ pid: process.pid, startTime: 1_700_000_000_000, stateDir: real }),
+        );
+
+        const error = (await migrate({
+          sourceDir: 'X:\\state',
+          lockOwner: { startTime: () => 1_700_000_000_000 },
+        }).catch((reason: unknown) => reason)) as Error & { code?: string };
+
+        expect(error.code).toBe(PORTABLE_STATE_MIGRATION_BLOCKED);
+        expect(error.message).toMatch(/Previous gateway is still running/u);
+        // 决定性判据（startTime 相符）最优先：锁**没有被隔离**（现场原样，名字都没改）。
+        expect(fs.readdirSync(path.join(real, 'tmp', 'openclaw'))).toEqual(['gateway.state.lock']);
+      });
+    },
+  );
+
+  it.runIf(process.platform === 'win32')(
+    '⭐（BUG-059 附③）位置比对走 realpath：别名与真路径是同一目录 ⇒ 不当成"别处残留"隔离',
+    async () => {
+      await withSubstX(path.join(root, 'disk-realpath'), async () => {
+        const real = path.join(root, 'disk-realpath', 'state');
+        writeConfig(real);
+        // 无 startTime（无法按进程身份核验）——只有位置判据可看。
+        write(
+          path.join(real, 'tmp', 'openclaw', 'gateway.state.lock'),
+          JSON.stringify({ pid: process.pid, stateDir: real }),
+        );
+        const clock = fixtureClock();
+
+        const error = (await migrate({
+          sourceDir: 'X:\\state',
+          // 有界等待压到 0：只钉"位置判据认得出是同一份 state ⇒ 不隔离"。
+          lockOwner: { waitMs: 0, sleep: clock.sleep, now: clock.now },
+        }).catch((reason: unknown) => reason)) as Error & { code?: string };
+
+        expect(error.code).toBe(PORTABLE_STATE_MIGRATION_BLOCKED);
+        expect(fs.readdirSync(path.join(real, 'tmp', 'openclaw'))).toEqual(['gateway.state.lock']);
+      });
+    },
+  );
+
+  it('⭐（BUG-059 附②）隔离失败（锁被占用/介质只读）⇒ 阻断 + 可执行指引，不抛裸 EPERM、现场原样保留', async () => {
+    const lock = path.join(source, 'tmp', 'openclaw', 'gateway.state.lock');
+    write(lock, '\u0000'.repeat(493));
+    vi.spyOn(fs, 'renameSync').mockImplementationOnce(() => {
+      throw Object.assign(new Error('EPERM: operation not permitted, rename'), { code: 'EPERM' });
+    });
+
+    const error = (await migrate().catch((reason: unknown) => reason)) as Error & { code?: string };
+
+    expect(error.code).toBe(PORTABLE_STATE_MIGRATION_BLOCKED); // fail-closed：阻断
+    expect(error.message).toMatch(/完全退出荣盈魔方/u); // 可执行指引
+    expect(error.message).toContain('gateway.state.lock');
+    expect(error.message).toContain('EPERM'); // 原始原因保留（排障）
+    expect(fs.existsSync(lock)).toBe(true); // 现场保留：改名失败 ⇒ 文件原地未动
+    expect(fs.existsSync(target)).toBe(false); // 没有继续迁移
   });
 
   it('quarantines an all-NUL corrupted lock (field-proven, BUG-035) instead of blocking startup', async () => {

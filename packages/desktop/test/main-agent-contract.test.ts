@@ -83,7 +83,7 @@ describe('主罗盘交付合同：内容与文件名', () => {
     const soul = MAIN_AGENT_PROMPT_FILES.find((file) => file.name === 'SOUL.md')?.content ?? '';
     expect(soul).toContain(COMMON_OPERATING_CONTRACT.trim());
     // 演示硬约束四件：必须先读 SKILL.md / 禁 docgen pptx / 禁自写脚本 / 禁"链接或路径"式交付。
-    expect(soul).toContain('Before you write a presentation, open the 幻灯版面 skill');
+    expect(soul).toContain('Before you write a presentation, read the 幻灯版面 skill file');
     expect(soul).toContain('document-deck');
     expect(soul).toContain('PptxGenJS');
     expect(soul).toContain('python-pptx');

@@ -1,13 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { plannerDeniedToolIds } from '@clawwork/core';
 import { writeJsonAtomic } from '../util/json-file.js';
-import {
-  MEMORY_TOOLS_DENIED,
-  PLATFORM_IRRELEVANT_TOOLS_DENIED,
-  SANDBOXLESS_VISION_TOOLS_DENIED,
-  WEB_TOOLS_DENIED,
-} from './state-config.js';
+import { defaultDeniedToolNames } from './state-config.js';
 
 const record = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -16,26 +10,16 @@ const read = (file: string): unknown => JSON.parse(fs.readFileSync(file, 'utf8')
 /**
  * 「系统默认 deny 集合」的**单一真源在 state-config** —— 本文件一度自己抄了一份
  * （只认 memory 两名），2026-10-07 加 `canvas` 时立刻漂移翻车（对齐判据认不出新默认态）。
- * 以后**别再抄**：默认 deny 变 = `mergeToolsDefaults` 变 = 这里自动跟随。
+ * deny v2 起改为**直接消费 `defaultDeniedToolNames()`**（同一函数喂三条链），
+ * 默认 deny 变 = 那一处变 = 这里自动跟随，物理上没有再抄一份的机会。
  *
- * ⚠️ **懒构造**：直接顶层 `new Set([...MEMORY_TOOLS_DENIED, ...])` 会在**模块求值期**
- *    读入 —— 本文件新增的 import 边使加载顺序敏感（2026-10-07 实测：license 系测试
- *    collect 期炸 `MEMORY_TOOLS_DENIED is not iterable`）。挪到首次调用（运行时，
- *    全部模块已初始化）即可免疫加载顺序。
+ * ⚠️ **懒构造**：直接顶层求值会在**模块求值期**读入 —— 本文件新增的 import 边使加载顺序
+ *    敏感（2026-10-07 实测：license 系测试 collect 期炸 `… is not iterable`）。挪到首次
+ *    调用（运行时，全部模块已初始化）即可免疫加载顺序。
  */
 let defaultDeniedTools: ReadonlySet<string> | null = null;
 function isDefaultDeniedTool(tool: string): boolean {
-  defaultDeniedTools ??= new Set([
-    ...MEMORY_TOOLS_DENIED,
-    ...PLATFORM_IRRELEVANT_TOOLS_DENIED,
-    ...WEB_TOOLS_DENIED,
-    // 2026-10-08 BUG-049：无沙箱看图工具（view_image）——认不出它的后果与 canvas 同坑：
-    // 默认 deny 态被当成"用户显式策略"，lobster 授权静默跳过。
-    ...SANDBOXLESS_VISION_TOOLS_DENIED,
-    // 能力注册表的 unavailable 工具（BUG-043：image/video 生成）——不认识的后果是
-    // **默认策略被当成"用户显式策略"**，lobster 授权静默跳过（与当初 canvas 那次同坑）。
-    ...plannerDeniedToolIds(),
-  ]);
+  defaultDeniedTools ??= new Set(defaultDeniedToolNames());
   return defaultDeniedTools.has(tool);
 }
 

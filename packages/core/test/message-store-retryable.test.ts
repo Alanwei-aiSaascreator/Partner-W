@@ -100,13 +100,25 @@ describe('message-store —— 可重试错误的登记', () => {
  * 合成一份的话，lifecycle 失败（判据恒为 unknown）会凭空长出按钮 —— B10 明确拒绝过。
  */
 describe('message-store —— 自动重试候选的登记（包 D）', () => {
-  const candidate = { taskId: TID, messageId: 'msg-err', kind: 'unclassified' as const };
+  const candidate = {
+    taskId: TID,
+    messageId: 'msg-err',
+    kind: 'unclassified' as const,
+    producedOutput: false,
+  };
 
   it('登记之后界面查得到', () => {
     const store = makeStore();
     store.getState().markAutoRetryFailure(SK, candidate);
 
     expect(store.getState().autoRetryFailureBySession[SK]).toEqual(candidate);
+  });
+
+  it('「本轮已产出」的证据快照随候选原样存下（BUG-050：清理后判据只能靠它）', () => {
+    const store = makeStore();
+    store.getState().markAutoRetryFailure(SK, { ...candidate, kind: 'transient', producedOutput: true });
+
+    expect(store.getState().autoRetryFailureBySession[SK]?.producedOutput).toBe(true);
   });
 
   it('没登记过就查不到（默认不自动重发任何东西）', () => {

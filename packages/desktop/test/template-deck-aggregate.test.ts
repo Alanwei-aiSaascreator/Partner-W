@@ -55,8 +55,9 @@ describe('templateDeck 诊断聚合（一次返回全部 layout 问题）', () =
     const diagnostics = diagnosticsOf(thrown);
     const countIssues = diagnostics.filter((item) => item.code === 'slot-content-count');
     expect(countIssues).toHaveLength(3);
-    // 坏页都没有输出页号（全是要补的"第 3 页"）；layout 身份由 detail 前缀承载。
-    expect(countIssues.map((item) => item.page)).toEqual([3, 3, 3]);
+    // BUG-053①：输出页序 = 选中序列位次（3/4/5），逐页不同——旧写法只在成功页递增，
+    // 三个坏页会全报同一个号（[3,3,3]）；layout 身份由 detail 前缀 `layout <n>` 承载。
+    expect(countIssues.map((item) => item.page)).toEqual([3, 4, 5]);
     // 每条诊断都带「期望数 + 角色清单 + 实际数」，让模型一轮内按表补齐。
     for (const issue of countIssues) expect(issue.detail).toMatch(/expected \d+.*got \d+/);
     const layout4 = countIssues.find((item) => item.detail.includes('layout 4'));

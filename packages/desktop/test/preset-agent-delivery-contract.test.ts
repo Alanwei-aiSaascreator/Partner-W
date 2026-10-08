@@ -149,10 +149,33 @@ describe('预置助手的交付合同：每条通道都要在清单里', () => {
     // 长版面要写成文件、一条指令一份 deck"。
     // 2026-10-07 再次提版：演示条款从条件句改成**硬约束**（见上一组用例），
     // 同一版还引入了主罗盘（`main`）的交付合同文件。
+    // 2026-10-08 提版：合同新增「ask_user 形态规范」（B8 实证：自由文本问句 /
+    // 选项超量会被内核校验 blocked，问题到不了用户）。
     // 版本号是"将来能不能安全升级已发出去的盘"的唯一依据
     // （见 preset-agents.ts 里 PRESET_PROMPT_VERSION 的注释）——
     // ⚠️ 所以**改了合同文本就必须动它**，否则已装的盘拿不到新合同。
-    expect(PRESET_PROMPT_VERSION).toBe('2026-10-07.1');
+    expect(PRESET_PROMPT_VERSION).toBe('2026-10-08.1');
+  });
+
+  it('⭐ ask_user 形态规范：固定选项、≤3 问、禁自由文本、失败回退普通消息（B8）', () => {
+    expect(COMMON_OPERATING_CONTRACT).toContain('Structured questions (`ask_user`)');
+    // 固定选项 + 数量上限
+    expect(COMMON_OPERATING_CONTRACT).toContain('about 2–4');
+    expect(COMMON_OPERATING_CONTRACT).toContain('at most 3 questions');
+    // 禁自由文本 / 禁"其他"选项（B8 两次 blocked 的确切形状）
+    expect(COMMON_OPERATING_CONTRACT).toContain('**Never** use it for free-text or open questions');
+    expect(COMMON_OPERATING_CONTRACT).toContain('"other / 其他" free-text option');
+    // 失败不许瞎重试
+    expect(COMMON_OPERATING_CONTRACT).toContain('do not retry with guessed options');
+  });
+
+  it('⭐ 技能读取是可执行读法（BUG-060 预防）：<location> + read；"打开技能"式旧措辞已清', () => {
+    expect(COMMON_OPERATING_CONTRACT).toContain('## Using skills');
+    expect(COMMON_OPERATING_CONTRACT).toContain('read that exact path with the `read` tool');
+    expect(COMMON_OPERATING_CONTRACT).toContain('no tool that "opens" or "loads" a skill');
+    // 旧措辞（模型"去打开技能"的指令来源，客户演示事故 BUG-060）必须不再出现
+    expect(COMMON_OPERATING_CONTRACT).not.toContain('open it and follow it');
+    expect(COMMON_OPERATING_CONTRACT).not.toContain('open its SKILL.md');
   });
 });
 
@@ -166,9 +189,11 @@ describe('预置助手的交付合同：每条通道都要在清单里', () => {
  * 这三条不写成"必须 / 禁止"，就还是软的。
  */
 describe('演示硬约束（2026-10-07）：必须读 SKILL.md / 禁 docgen pptx / 禁自写脚本 / 禁链接式交付', () => {
-  it('给人看的演示必须先打开「幻灯版面」的 SKILL.md 并遵循', () => {
-    expect(COMMON_OPERATING_CONTRACT).toContain('Before you write a presentation, open the 幻灯版面 skill');
-    expect(COMMON_OPERATING_CONTRACT).toContain('open its SKILL.md and follow it');
+  it('给人看的演示必须先读「幻灯版面」的 SKILL.md 并遵循（BUG-060 改为可执行读法）', () => {
+    expect(COMMON_OPERATING_CONTRACT).toContain('Before you write a presentation, read the 幻灯版面 skill file');
+    expect(COMMON_OPERATING_CONTRACT).toContain(
+      "read the `SKILL.md` at that entry's `<location>` with the `read` tool",
+    );
     expect(COMMON_OPERATING_CONTRACT, '条件句（If available）会把硬约束读软').not.toMatch(
       /\*If\* the 幻灯版面 skill is available/,
     );

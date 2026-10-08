@@ -518,7 +518,7 @@ describe('bootstrapLocalGatewayRuntime', () => {
     expect(log.mock.calls.map((entry) => String(entry[0]))).toContain('runtime.gateway-crash-loop-breaker');
   });
 
-  it('⭐ 熔断中**不去撞墙**：起网关之前就停手（每次尝试都会延长那 5 分钟窗口）', async () => {
+  it('⭐ 熔断中**不去撞墙**：预检经 `beforeSpawn` 只在真 spawn 分支上闸（每次尝试都会延长那 5 分钟窗口）', async () => {
     const log = vi.fn();
     const inspectBreaker = vi.fn(() => ({
       available: true,
@@ -526,15 +526,47 @@ describe('bootstrapLocalGatewayRuntime', () => {
       uncleanBoots: 3,
       retryAfterMs: 240_000,
     }));
-    const { deps } = makeDeps({ inspectBreaker, log });
+    // 模拟真实 `ensureGatewayRunning`：spawn 分支先拉闸，判 reuse/foreign 时不拉。
+    const { deps } = makeDeps({
+      inspectBreaker,
+      log,
+      startGateway: vi.fn(async (opts: { beforeSpawn?: () => void | Promise<void> }) => {
+        await opts.beforeSpawn?.();
+        return { ownership: 'spawned' as const, pid: 123, decision: { verdict: 'spawn' as const, reason: 'x' } };
+      }),
+    });
     const { bootstrapLocalGatewayRuntime } = await import('../src/main/runtime/index.js');
 
     const res = await bootstrapLocalGatewayRuntime({ userDataDir: USER_DATA, deps });
 
     expect(res.code).toBe('runtime.gateway-crash-loop-breaker');
     expect(res.reason).toMatch(/退出应用/u);
-    expect(deps.startGateway).not.toHaveBeenCalled();
+    // 预检**不再**拦在 startGateway 之前（BUG-059 附 F4：那样连复用也被否决）——
+    // 它随 startGateway 的入参下传，由 spawn 分支决定何时拉闸。
+    expect(deps.startGateway).toHaveBeenCalledWith(expect.objectContaining({ beforeSpawn: expect.any(Function) }));
+    expect(inspectBreaker).toHaveBeenCalledWith('C:\\fake\\userdata\\openclaw-state');
     expect(log.mock.calls.map((entry) => String(entry[0]))).toContain('runtime.gateway-crash-loop-breaker');
+  });
+
+  it('⭐ 熔断中但端口上是我们健康的网关（reused）⇒ 照常复用，不被白等窗口（BUG-059 附 F4）', async () => {
+    const inspectBreaker = vi.fn(() => ({
+      available: true,
+      tripped: true,
+      uncleanBoots: 3,
+      retryAfterMs: 240_000,
+    }));
+    const { deps } = makeDeps({
+      inspectBreaker,
+      startGateway: vi.fn(async () => ({
+        ownership: 'reused' as const,
+        decision: { verdict: 'reuse' as const, reason: 'started + 认证通过' },
+      })),
+    });
+    const { bootstrapLocalGatewayRuntime } = await import('../src/main/runtime/index.js');
+
+    const res = await bootstrapLocalGatewayRuntime({ userDataDir: USER_DATA, deps });
+
+    expect(res).toMatchObject({ ok: true, ownership: 'reused' });
   });
 
   it('⭐ 对齐配置就失败（拿不到 stateDir）⇒ 不去碰熔断表（诊断不该在无路径时猜）', async () => {

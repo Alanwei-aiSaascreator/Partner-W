@@ -140,6 +140,13 @@ export const CAPABILITY_VERIFICATION_LEDGER: readonly CapabilityLedgerRecord[] =
   },
   {
     kind: 'tool',
+    id: 'music_generate',
+    capability: 'music-generation',
+    availability: 'unavailable',
+    reason: '音乐生成本轮不接入（media-loop 冻结）——不得暴露给模型，不许调用试错',
+  },
+  {
+    kind: 'tool',
     id: 'voice',
     capability: 'voice',
     availability: 'unavailable',
@@ -179,8 +186,17 @@ export const RELAY_SEARCH_ENABLED_MODEL_IDS: readonly string[] = ['qwen-turbo', 
  * （`no paired nodes available; file-transfer tools require a paired node…`）。
  * 与 image/video 同一条机制：并集由 `state-config` 的 deny 通道消费，
  * 存量自愈判据与 `workflow-tools` 的默认集合**全自动跟随**（改这一行即全链生效）。
+ *
+ * 2026-10-08（deny v2 · BUG-061）：补 `music_generate` —— 它是 media 三件套里**漏网的
+ * 那一个**（image/video 早已在名单；它只在 `tools.catalog`、从不在有效集）。media-loop
+ * 本轮不接入的拍板对它同样成立，一并摘除以免任何 UI/探测把它误报成"可用能力"。
  */
-export const PLANNER_UNAVAILABLE_TOOL_IDS: readonly string[] = ['image_generate', 'video_generate', 'file_fetch'];
+export const PLANNER_UNAVAILABLE_TOOL_IDS: readonly string[] = [
+  'image_generate',
+  'video_generate',
+  'music_generate',
+  'file_fetch',
+];
 
 export interface CapabilityModelSource {
   id: string;

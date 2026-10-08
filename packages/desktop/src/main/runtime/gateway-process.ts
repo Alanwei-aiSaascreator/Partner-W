@@ -483,6 +483,14 @@ export interface EnsureGatewayRunningOptions {
   };
   /** 端口占用者线索（默认 netstat+tasklist 只读查询；注入用于测试）。 */
   portOccupant?: (port: number) => string | null;
+  /**
+   * BUG-059 附 F4：**真 spawn 之前**的闸（三态判定完成后才拉）。
+   *
+   * `reuse`（端口上是我们健康的网关）与 `foreign`（明确被别人占用）都**不调用**它 ——
+   * 熔断预检拦在判定之前会把"复用"一并否决，让用户白等窗口（窗口只有真 spawn 失败才会推进）。
+   * 抛出即中止本次 spawn（异常原样上抛；熔断语义由调用方负责）。
+   */
+  beforeSpawn?: () => void | Promise<void>;
 }
 
 /** BUG-040 R1 默认值：3 次、间隔 1 秒（够网关把 WS 握手做完，又不是无限等）。 */
@@ -792,6 +800,9 @@ export async function ensureGatewayRunning(opts: EnsureGatewayRunningOptions): P
         '为避免破坏它，装载器不会强制启动、也不会结束它 —— 请先停掉那个网关，或改用其它端口。',
     );
   }
+
+  // BUG-059 附 F4：闸在**确定要 spawn** 之后才拉（reuse/foreign 两条路径已在上面返回/抛出）。
+  if (opts.beforeSpawn) await opts.beforeSpawn();
 
   const args = buildGatewayArgs({ cliPath: opts.cliPath, port });
   ensureBundledWorkflowTools(opts.deployedRoot, opts.stateDir);

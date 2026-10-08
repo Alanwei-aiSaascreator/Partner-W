@@ -444,9 +444,11 @@ describe('可重试错误的登记（B10）', () => {
  *   - **确定性**失败（`refusal` / `context_length`）**两边都不登记** —— 重发同一句话
  *     只会再失败一次（与 B10 同一条结论）；
  *   - **瞬时**失败（`rate_limit` / `timeout`）登记成 `transient` 候选；
- *   - **认不出类别**的登记成 `unclassified` 候选 —— 它们**不直接**触发重发，
- *     还要在渲染层再过一遍「零最终交付」严格判据（activeTurn 无正文/工具、
- *     本轮无新产物、无已结算交付）；判据本体在 `useAutoRetryFailedTurn` 的用例里。
+ *   - **认不出类别**的登记成 `unclassified` 候选 —— 保留登记（排查现场），但
+ *     渲染层的类别门**不会**自动重发它们（BUG-050 收紧：malformed / unknown 都在这里）。
+ *   - 候选一律携带 `producedOutput`：**清理之前**取的「本轮已产出」证据快照（BUG-050）——
+ *     登记发生在 `clearActiveTurn` 之后，不留快照的话渲染层就判不出"跑过工具没有"。
+ *     其余判据（本轮无新产物、无已结算交付）本体在 `useAutoRetryFailedTurn` 的用例里。
  *
  * ⚠️ 两份登记**故意分开**：B10 的按钮判据在 lifecycle 这条路上恒为 `unknown`
  *    （帧里没有结构化的 code/kind），若复用同一份登记，等于给这类失败凭空加个
@@ -465,6 +467,7 @@ describe('自动重试候选的登记（包 D）', () => {
       taskId: 'task-1',
       messageId: 'msg-1',
       kind: 'unclassified',
+      producedOutput: false,
     });
   });
 
@@ -507,6 +510,7 @@ describe('自动重试候选的登记（包 D）', () => {
         taskId: 'task-1',
         messageId: 'msg-1',
         kind: 'transient',
+        producedOutput: false,
       });
     }
   });
@@ -522,16 +526,93 @@ describe('自动重试候选的登记（包 D）', () => {
     }
   });
 
-  it('认不出类别（unknown / 没有 kind）⇒ 登记为未分类候选（由渲染层过零交付判据）', () => {
+  it('认不出类别（unknown / 没有 kind）⇒ 登记为未分类候选（渲染层的类别门不会自动重发它）', () => {
     for (const errorKind of ['unknown', undefined]) {
       const h = createHarness();
       emitChatError(h, { errorMessage: 'SomethingNewError: x', ...(errorKind ? { errorKind } : {}) });
 
       expect(h.messageStore.markAutoRetryFailure, `kind=${errorKind ?? '(missing)'}`).toHaveBeenCalledWith(
         TASK.sessionKey,
-        { taskId: 'task-1', messageId: 'msg-1', kind: 'unclassified' },
+        { taskId: 'task-1', messageId: 'msg-1', kind: 'unclassified', producedOutput: false },
       );
     }
+  });
+
+  it('⭐ 本轮跑过工具 ⇒ 候选带「已产出」快照，且确证快照取在 clearActiveTurn **之前**（BUG-050）', () => {
+    const h = createHarness();
+    // 真身 clearActiveTurn 会**删掉** turn —— 用一个真删的桩，顺序错了这里立刻红
+    //（登记发生在清理之后：清理时不留证据就永远拿不回来了）。
+    h.messageStore.clearActiveTurn = vi.fn((sessionKey: string) => {
+      delete h.messageStore.activeTurnBySession[sessionKey];
+    });
+    h.messageStore.activeTurnBySession[TASK.sessionKey] = {
+      id: 'turn-1',
+      streamingText: '',
+      streamingThinking: '',
+      toolCalls: [{ id: 't1', name: 'exec', status: 'done' }],
+      finalized: false,
+      content: '',
+      timestamp: '2026-10-08T00:00:00.000Z',
+    };
+
+    emitChatError(h, { errorMessage: 'RateLimitExceededError: slow down', errorKind: 'rate_limit' });
+
+    expect(h.messageStore.clearActiveTurn).toHaveBeenCalledWith(TASK.sessionKey);
+    expect(h.messageStore.activeTurnBySession[TASK.sessionKey]).toBeUndefined();
+    expect(h.messageStore.markAutoRetryFailure).toHaveBeenCalledWith(TASK.sessionKey, {
+      taskId: 'task-1',
+      messageId: 'msg-1',
+      kind: 'transient',
+      producedOutput: true,
+    });
+  });
+
+  it('⭐ lifecycle error 路径同样带快照（取在事件那一刻，不看 2s 去重窗之后的现场）', async () => {
+    vi.useFakeTimers();
+    const h = createHarness();
+    h.messageStore.activeTurnBySession[TASK.sessionKey] = {
+      id: 'turn-1',
+      streamingText: '正在写第 1 页…',
+      streamingThinking: '',
+      toolCalls: [],
+      finalized: false,
+      content: '',
+      timestamp: '2026-10-08T00:00:00.000Z',
+    };
+
+    emitLifecycleError(h, 'provider unavailable');
+    // 去重窗里现场被清（别的清理路径），登记照旧要带上"这一轮出过正文"。
+    delete h.messageStore.activeTurnBySession[TASK.sessionKey];
+    await vi.advanceTimersByTimeAsync(DEDUP_FALLBACK_WINDOW_MS);
+
+    expect(h.messageStore.markAutoRetryFailure).toHaveBeenCalledWith(TASK.sessionKey, {
+      taskId: 'task-1',
+      messageId: 'msg-1',
+      kind: 'unclassified',
+      producedOutput: true,
+    });
+  });
+
+  it('只有思考流不算产出（快照为 false）—— 空转的判据是"有没有交付物"', () => {
+    const h = createHarness();
+    h.messageStore.activeTurnBySession[TASK.sessionKey] = {
+      id: 'turn-1',
+      streamingText: '',
+      streamingThinking: '让我想想…',
+      toolCalls: [],
+      finalized: false,
+      content: '',
+      timestamp: '2026-10-08T00:00:00.000Z',
+    };
+
+    emitChatError(h, { errorMessage: 'RateLimitExceededError: slow down', errorKind: 'rate_limit' });
+
+    expect(h.messageStore.markAutoRetryFailure).toHaveBeenCalledWith(TASK.sessionKey, {
+      taskId: 'task-1',
+      messageId: 'msg-1',
+      kind: 'transient',
+      producedOutput: false,
+    });
   });
 
   it('临时会话（对比的一列）不登记自动重试候选', () => {

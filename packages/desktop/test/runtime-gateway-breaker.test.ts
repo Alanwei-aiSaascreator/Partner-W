@@ -16,6 +16,12 @@ import {
  * 现场（2026-10-07 pre17 用户盘）：23:08 起 7 次 `startup_failed`，23:19:42 触发熔断，
  * 网关从此拒启 —— 而用户看到只有"一直卡着"。这一层要能说出"是被自我保护挡下了、
  * 还得等几分钟"，且**绝不碰内核的状态表**（那是防崩溃循环的安全机制）。
+ *
+ * BUG-059（2026-10-08）：判据必须与内核**逐字对齐**（实读 `gateway-boot-lifecycle-*.mjs`）：
+ *   `tripped = uncleanBoots >= 3`（5 分钟窗口）；`gateway.crash_loop_breaker` 标记
+ *   **不参与** tripped —— 它是内核自愈的触发条件（`recovered = !tripped && marker`）：
+ *   窗口排空后，下一次内核启动会写 `gateway.crash_loop_recovered` 收掉标记。
+ *   旧实现把"标记未恢复"并进 tripped ⇒ **曾熔断的盘被永久挡在启动前**（自愈行永远等不到）。
  */
 
 const NOW = 1_800_000_000_000;
@@ -28,7 +34,7 @@ const row = (over: Partial<BootLifecycleRow>): BootLifecycleRow => ({
 });
 
 describe('decideCrashLoopBreaker（内核判据的对照实现）', () => {
-  it('窗口内 3 次不干净启动 ⇒ 熔断，并给出还要等多久', () => {
+  it('窗口内 3 次不干净启动 ⇒ 熔断，并给出"计数降到阈值以下"的等待时间', () => {
     const state = decideCrashLoopBreaker(
       [
         row({ started_at_ms: NOW - 10_000 }),
@@ -38,7 +44,11 @@ describe('decideCrashLoopBreaker（内核判据的对照实现）', () => {
       NOW,
     );
     expect(state).toMatchObject({ available: true, tripped: true, uncleanBoots: 3 });
-    expect(state.retryAfterMs).toBe(GATEWAY_BOOT_LOOP_WINDOW_MS);
+    // BUG-059 新语义：retryAfterMs = 窗口内计数**降到阈值以下**的时刻 − now。
+    // 每条 open 行的滑出时刻 = started_at + 窗口 ⇒ NOW+290s / NOW+280s / NOW+270s，
+    // 第 3 新（= 计数落到 2 的那一刻）是 NOW+270s ⇒ 270_000。
+    // （旧实现按"熔断行时刻 + 窗口"算、恒等于 300_000 —— 语义错误，已随本修法替换。）
+    expect(state.retryAfterMs).toBe(270_000);
     expect(GATEWAY_BOOT_LOOP_UNCLEAN_THRESHOLD).toBe(3);
   });
 
@@ -99,8 +109,11 @@ describe('decideCrashLoopBreaker（内核判据的对照实现）', () => {
     expect(state.uncleanBoots).toBe(0);
   });
 
-  it('⭐ 熔断行仍在（未恢复）⇒ 就算窗口计数已排空也算熔断，且剩余时间按熔断行算', () => {
-    const breakerAt = NOW - 60_000;
+  it('⭐（BUG-059）熔断行仍在（未恢复）+ 窗口已排空 ⇒ **不熔断**：标记只是诊断，内核会自愈', () => {
+    // 旧实现：tripped = uncleanBoots>=3 || breakerUnrecovered ⇒ 这盘被永久挡在启动前，
+    // 而内核的自愈恰恰需要"下一次启动"（recovered = !tripped && marker）——永远等不到。
+    // 场景 = 熔断已过去 >5 分钟（窗口自然排空），熔断行还在表里。
+    const breakerAt = NOW - GATEWAY_BOOT_LOOP_WINDOW_MS - 60_000;
     const state = decideCrashLoopBreaker(
       [
         row({
@@ -112,12 +125,82 @@ describe('decideCrashLoopBreaker（内核判据的对照实现）', () => {
       ],
       NOW,
     );
-    expect(state.tripped).toBe(true);
+    expect(state.tripped).toBe(false);
+    expect(state.uncleanBoots).toBe(0);
+    // 现场证据仍要留着（诊断/日志看得见），但**不参与** tripped。
     expect(state.breakerStartedAtMs).toBe(breakerAt);
-    expect(state.retryAfterMs).toBe(GATEWAY_BOOT_LOOP_WINDOW_MS - 60_000);
+    expect(state.breakerUnrecovered).toBe(true);
+    expect(state.retryAfterMs).toBeUndefined();
   });
 
-  it('⭐ 恢复行在熔断行之后 ⇒ 解除（内核自己的窗口自愈）', () => {
+  it('⭐（BUG-059）未恢复熔断行（窗口外）+ 窗口内不干净 <3 ⇒ 不熔断（放行让内核写 recovered 行）', () => {
+    const state = decideCrashLoopBreaker(
+      [
+        row({
+          started_at_ms: NOW - GATEWAY_BOOT_LOOP_WINDOW_MS - 60_000,
+          startup_reason: 'gateway.crash_loop_breaker',
+        }),
+        row({ started_at_ms: NOW - 10_000 }),
+        row({ started_at_ms: NOW - 20_000 }),
+      ],
+      NOW,
+    );
+    expect(state.uncleanBoots).toBe(2);
+    expect(state.tripped).toBe(false);
+    expect(state.breakerUnrecovered).toBe(true);
+  });
+
+  it('⭐（BUG-059）熔断行（窗口外）+ 窗口内仍 3 次不干净 ⇒ 仍熔断（判据是计数，不是标记）', () => {
+    const state = decideCrashLoopBreaker(
+      [
+        row({
+          started_at_ms: NOW - GATEWAY_BOOT_LOOP_WINDOW_MS - 60_000,
+          startup_reason: 'gateway.crash_loop_breaker',
+        }),
+        row({ started_at_ms: NOW - 10_000 }),
+        row({ started_at_ms: NOW - 20_000 }),
+        row({ started_at_ms: NOW - 30_000 }),
+      ],
+      NOW,
+    );
+    expect(state.tripped).toBe(true);
+    expect(state.uncleanBoots).toBe(3);
+    expect(state.breakerUnrecovered).toBe(true);
+    expect(state.retryAfterMs).toBe(270_000);
+  });
+
+  it('⭐ 内核逐字对齐：open 的熔断/恢复标记行**也算**不干净（内核 SQL 只排除维护性原因）', () => {
+    // 内核查询：startup_reason IS NULL OR NOT IN (维护原因)，再叠 open-in-window / failed-in-window。
+    // 熔断行与恢复行都是 open 行且不是维护原因 ⇒ 窗口内照样计入计数（与内核一致，别"好心"排除）。
+    const state = decideCrashLoopBreaker(
+      [
+        row({ started_at_ms: NOW - 60_000, startup_reason: 'gateway.crash_loop_breaker' }),
+        row({ started_at_ms: NOW - 120_000, startup_reason: 'gateway.crash_loop_recovered' }),
+        row({ started_at_ms: NOW - 10_000 }),
+      ],
+      NOW,
+    );
+    expect(state.uncleanBoots).toBe(3);
+    expect(state.tripped).toBe(true);
+  });
+
+  it('⭐ retryAfterMs 按每条行自己的滑出时刻算：failed 行看 completed_at、open 行看 started_at', () => {
+    const state = decideCrashLoopBreaker(
+      [
+        row({ started_at_ms: NOW - 100_000, completed_at_ms: NOW - 5_000, outcome: 'startup_failed' }),
+        row({ started_at_ms: NOW - 200_000, completed_at_ms: NOW - 40_000, outcome: 'startup_failed' }),
+        row({ started_at_ms: NOW - 50_000 }),
+      ],
+      NOW,
+    );
+    expect(state.uncleanBoots).toBe(3);
+    expect(state.tripped).toBe(true);
+    // 滑出时刻（新→旧）：NOW+295s（completed-5s）/ NOW+260s（completed-40s）/ NOW+250s（open-50s）
+    // ⇒ 第 3 新 = NOW+250s
+    expect(state.retryAfterMs).toBe(250_000);
+  });
+
+  it('⭐ 恢复行在熔断行之后 ⇒ 标记已被收掉（内核自己的窗口自愈）', () => {
     const state = decideCrashLoopBreaker(
       [
         row({ started_at_ms: NOW - 60_000, startup_reason: 'gateway.crash_loop_breaker' }),
@@ -126,6 +209,20 @@ describe('decideCrashLoopBreaker（内核判据的对照实现）', () => {
       NOW,
     );
     expect(state.tripped).toBe(false);
+    expect(state.breakerUnrecovered).toBe(false);
+  });
+
+  it('⭐（BUG-059）恢复行**不清计数**：窗口内计数够 3 就仍熔断（判据只有计数）', () => {
+    const state = decideCrashLoopBreaker(
+      [
+        row({ started_at_ms: NOW - 90_000, startup_reason: 'gateway.crash_loop_recovered' }),
+        row({ started_at_ms: NOW - 10_000 }),
+        row({ started_at_ms: NOW - 20_000 }),
+      ],
+      NOW,
+    );
+    expect(state.uncleanBoots).toBe(3);
+    expect(state.tripped).toBe(true);
   });
 });
 

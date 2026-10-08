@@ -136,8 +136,10 @@ describe('Planner 边界：unavailable 的能力不暴露', () => {
     const denied = plannerDeniedToolIds();
     expect(denied).toContain('image_generate');
     expect(denied).toContain('video_generate');
+    // 2026-10-08 deny v2（BUG-061）：music_generate 是 media 三件套的漏网者，一并摘除
+    expect(denied).toContain('music_generate');
     // 2026-10-08：file_fetch（配对节点文件传输，单机必败）同名单 —— 见下方专门用例
-    expect(PLANNER_UNAVAILABLE_TOOL_IDS).toEqual(['image_generate', 'video_generate', 'file_fetch']);
+    expect(PLANNER_UNAVAILABLE_TOOL_IDS).toEqual(['image_generate', 'video_generate', 'music_generate', 'file_fetch']);
   });
 
   it('账本里标记 unavailable 的工具 = deny 名单（一个不多、一个不少）', () => {
@@ -169,7 +171,18 @@ describe('Planner 边界：unavailable 的能力不暴露', () => {
     expect(fetch?.availability).toBe('unavailable');
     expect(fetch?.reason ?? '').toMatch(/配对|节点/);
     expect(plannerDeniedToolIds()).toContain('file_fetch');
-    expect(PLANNER_UNAVAILABLE_TOOL_IDS).toEqual(['image_generate', 'video_generate', 'file_fetch']);
+    expect(PLANNER_UNAVAILABLE_TOOL_IDS).toEqual(['image_generate', 'video_generate', 'music_generate', 'file_fetch']);
+  });
+
+  it('music_generate（media 三件套漏网者）同批进 deny（deny v2，BUG-061）', () => {
+    const music = findCapabilityEntry(buildCapabilityRegistry(), {
+      kind: 'tool',
+      id: 'music_generate',
+      capability: 'music-generation',
+    });
+    expect(music?.availability).toBe('unavailable');
+    expect(music?.reason ?? '').toMatch(/media-loop|不接入/);
+    expect(plannerDeniedToolIds()).toContain('music_generate');
   });
 
   it('清单里有 file_fetch 时仍按账本判 unavailable（"在清单里"不等于可用）', () => {

@@ -34,6 +34,7 @@ import { autoTitleIfNeeded } from './auto-title.js';
 import { resolveCatalogAgentId } from './catalog-owner.js';
 import type { LateToolUpdate } from './session-sync.js';
 import { announceCompaction, currentCompactionEpisode } from './compaction-announce.js';
+import { activeTurnProducedOutput } from '../stores/message-store.js';
 import type { MessageState } from '../stores/message-store.js';
 import type { GatewayReconnectInfo } from '../stores/ui-store.js';
 import type { GatewayTransportPort, GatewayStatusEvent, RuntimeStatusEvent } from '../ports/gateway-transport.js';
@@ -1124,6 +1125,11 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
     } else if (state === 'error') {
       store.setProcessing(sessionKey, false);
       closedStreams.add(sessionKey);
+      // ⭐ BUG-050：这一轮"已产出"的证据必须在 `clearActiveTurn` **之前**快照 ——
+      //    清掉之后就再也读不到了，1.5s 后渲染层评估自动重试时会恒判"什么都没做"
+      //    ⇒ 一个已经跑过 write/exec 的轮次被整轮重发（副作用重复，不可逆）。
+      //    下面登记候选时把它带出去（`AutoRetryFailure.producedOutput`）。
+      const producedOutput = activeTurnProducedOutput(store.activeTurnBySession[sessionKey]);
       store.clearActiveTurn(sessionKey);
 
       const errorCode = payload.errorCode ?? payload.error?.code;
@@ -1181,14 +1187,16 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
           store.markRetryableError(sessionKey, { taskId, messageId: shown.id });
         }
         // ⭐ 包 D：「整轮失败自动重发 1 次」的候选登记（与上面那只按钮**分开**）。
-        //    确定性失败（`'no'`）连候选都不是；`'yes'` 记瞬时、其余（认不出）记未分类。
-        //    真正发不发由渲染层决定 —— 还要过「零最终交付」严格判据（见
-        //    `useAutoRetryFailedTurn`），这里只负责把"有这么一次失败"如实传出去。
+        //    确定性失败（`'no'`）连候选都不是；`'yes'` 记瞬时、其余（认不出）记未分类
+        //    （未分类**不会被自动重发** —— 见 `useAutoRetryFailedTurn` 的类别门）。
+        //    `producedOutput` 是本轮产出的证据快照（在上面 `clearActiveTurn` 之前取的，
+        //    BUG-050）—— 真正发不发还要过渲染层的严格判据，这里只负责如实传出去。
         if (appError.retryable !== 'no') {
           store.markAutoRetryFailure(sessionKey, {
             taskId,
             messageId: shown.id,
             kind: appError.retryable === 'yes' ? 'transient' : 'unclassified',
+            producedOutput,
           });
         }
         const { title, description } = formatErrorForToast(appError, deps.translate);
@@ -1930,6 +1938,11 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
         debugEvent('renderer.agent.lifecycle.end', { taskId, sessionKey });
         break;
       case 'error': {
+        // ⭐ BUG-050：证据快照取在**最前**。这一支自己没有 clearActiveTurn，但登记发生在
+        //    2s 去重窗之后（见下）—— 期间任何清理路径（aborted 帧 / session 同步 / 新 run
+        //    绑定）都可能把 activeTurn 清掉。到时候再读就恒判"什么都没做"
+        //    ⇒ 跑过工具的轮次被整轮重发（副作用重复，不可逆）。
+        const producedOutput = activeTurnProducedOutput(store.activeTurnBySession[sessionKey]);
         store.setProcessing(sessionKey, false);
         closedStreams.add(sessionKey);
         store.setRunPhase(sessionKey, null);
@@ -1962,14 +1975,16 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
             });
             // ⭐ 包 D：「整轮失败自动重发 1 次」的候选登记（真机事故走的正是这条）。
             //    这一支**没有结构化类别**（lifecycle 帧只有一句英文原文，`buildAppError`
-            //    拿不到 code/kind ⇒ `retryable` 恒为 `'unknown'`），所以登记成"未分类"。
+            //    拿不到 code/kind ⇒ `retryable` 恒为 `'unknown'`），所以登记成"未分类"
+            //    —— 未分类**不会被自动重发**（BUG-050 收紧：认不出来就不替用户再花钱）。
             //    `'no'` 的排除是给未来准备的：哪天这个帧带上了类别，确定性失败照样不登记。
-            //    发不发由渲染层决定（还要过「零最终交付」严格判据）。
+            //    `producedOutput` 是 case 入口取的证据快照（BUG-050），随候选传给渲染层。
             if (appError.retryable !== 'no') {
               store.markAutoRetryFailure(sessionKey, {
                 taskId,
                 messageId: shown.id,
                 kind: appError.retryable === 'yes' ? 'transient' : 'unclassified',
+                producedOutput,
               });
             }
             const { title, description } = formatErrorForToast(appError, deps.translate);

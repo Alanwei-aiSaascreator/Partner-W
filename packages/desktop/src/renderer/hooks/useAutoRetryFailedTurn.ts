@@ -1,6 +1,12 @@
 import { useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
-import { findRetryTarget, type ActiveTurn, type AutoRetryFailure, type RetryTarget } from '@clawwork/core';
+import {
+  activeTurnProducedOutput,
+  findRetryTarget,
+  type ActiveTurn,
+  type AutoRetryFailure,
+  type RetryTarget,
+} from '@clawwork/core';
 import {
   parseTaskIdFromSessionKey,
   type Artifact,
@@ -25,13 +31,26 @@ import { compareStore } from '../features/compare/compare-store-instance';
  * 分流放在 `gateway-dispatcher` 的登记点（确定性失败根本不登记 `AutoRetryFailure`，
  * 见 `message-store.ts` 的同名字段说明），这里负责第二道闸。
  *
- * ## 第二道闸：「零最终交付」严格判据
+ * ## 第二道闸之一：只有 `transient` 类别才发（BUG-050 收紧）
+ *
+ * 认不出来的（`unclassified`，含 malformed tool call / unknown / lifecycle 那种
+ * 只有一句英文原文的失败）**一律不自动重发**：判不出"重发真能改变结果"就不该替用户
+ * 再花一次钱，更不该拿不可逆的副作用去赌。登记照旧（排查现场），门在评估这里。
+ *
+ * ## 第二道闸之二：「零最终交付」严格判据
  *
  * 只有**这一轮什么也没交付**时才自动重发一次：
- *   - `activeTurnBySession` 没有实质正文、没有工具调用（工具可能已经落盘，不可逆）；
+ *   - 本轮没有产出（**证据快照** `failure.producedOutput`，见下面 ⚠️）；
  *   - 该任务在本轮之内没有新产物（`artifacts.createdAt` 晚于本轮起点）；
  *   - 该任务没有**已结算**的交付（`succeeded` / `needs-review`）。
  * 三条**全为"零"**才发 —— 判据用"或"的话，一个已经写了一半的轮次也会被重发。
+ *
+ * ⚠️ **为什么必须读快照**（BUG-050）：dispatcher 的错误分支**先清 activeTurn、
+ *    再登记候选**，1.5s 后这里现读 `activeTurnBySession` 恒为 `undefined` ——
+ *    一个已经跑过 write/exec 的轮次会被判成"什么都没做"而整轮重发（副作用重复）。
+ *    所以证据由 dispatcher 在清理**之前**快照进候选（`failure.producedOutput`）；
+ *    这里**额外**再看一眼还活着的 activeTurn —— 迟到帧会把 turn 重新建出来
+ *    （`appendStreamDelta` 在无 turn 时会新建），那同样是"已经出过东西"，也不许重发。
  *
  * ## 其余纪律
  *
@@ -59,8 +78,13 @@ export const AUTO_RETRY_DELAY_MS = 1500;
 
 export interface AutoRetryProbe {
   taskId: string;
+  /** 登记时的类别：只有 `transient` 可能触发自动重发（见文件头「第二道闸之一」）。 */
+  kind: AutoRetryFailure['kind'];
   messages: Message[];
   errorMessageId: string;
+  /** dispatcher 在 `clearActiveTurn` **之前**取的「本轮已产出」证据快照（BUG-050）。 */
+  producedOutput: boolean;
+  /** 评估这一刻还活着的 activeTurn（迟到帧会把它重新建出来）——额外的兜底判据。 */
   activeTurn: ActiveTurn | undefined;
   artifacts: readonly Artifact[];
   deliveries: readonly ArtifactDeliveryActivity[];
@@ -68,7 +92,10 @@ export interface AutoRetryProbe {
 
 export type AutoRetryVerdict =
   | { send: true; target: RetryTarget }
-  | { send: false; reason: 'no-target' | 'no-anchor' | 'turn-output' | 'new-artifact' | 'delivery-settled' };
+  | {
+      send: false;
+      reason: 'not-transient' | 'no-target' | 'no-anchor' | 'turn-output' | 'new-artifact' | 'delivery-settled';
+    };
 
 /**
  * 本轮起点 = 这条失败之前**最近一条用户消息**的时间（也就是 `findRetryTarget` 选中的那条）。
@@ -87,21 +114,6 @@ function resolveTurnStartMs(messages: Message[], errorMessageId: string): number
     return Number.isFinite(at) ? at : null;
   }
   return null;
-}
-
-/**
- * 这一轮在 `activeTurn` 里出过东西没有。
- *
- * ⚠️ 思考（`streamingThinking`）**不算**：那是模型的推理过程，用户拿不到成品，
- *    也不落任何文件——空转的判据是"有没有交付物"，不是"模型有没有动过脑子"。
- * ⚠️ 工具调用**算**：它可能有不可逆的副作用（写盘、发请求），界面上也已经有痕迹。
- */
-function turnProducedOutput(turn: ActiveTurn | undefined): boolean {
-  if (!turn) return false;
-  if (turn.finalized) return true;
-  if (turn.streamingText.trim() !== '' || turn.content.trim() !== '') return true;
-  if (turn.toolCalls.length > 0) return true;
-  return false;
 }
 
 function hasArtifactSince(artifacts: readonly Artifact[], taskId: string, since: number): boolean {
@@ -127,12 +139,18 @@ function hasSettledDeliverySince(
 }
 
 function evaluateAutoRetry(probe: AutoRetryProbe): AutoRetryVerdict {
+  // 类别门（BUG-050）：认不出来的（unclassified，含 malformed / unknown）不自动重发。
+  if (probe.kind !== 'transient') return { send: false, reason: 'not-transient' };
   // 重发的目标与手动「重试」同一出口：这条失败之前最近的那条用户消息（附件原样带回）。
   const target = findRetryTarget(probe.messages, probe.errorMessageId);
   if (!target) return { send: false, reason: 'no-target' };
   const turnStartMs = resolveTurnStartMs(probe.messages, probe.errorMessageId);
   if (turnStartMs === null) return { send: false, reason: 'no-anchor' };
-  if (turnProducedOutput(probe.activeTurn)) return { send: false, reason: 'turn-output' };
+  // 产出判据两道：①登记时的证据快照（主判据，store 里已被清掉也读得到，BUG-050）；
+  // ②还活着的 activeTurn（迟到帧重建出来的那种，兜底）。
+  if (probe.producedOutput || activeTurnProducedOutput(probe.activeTurn)) {
+    return { send: false, reason: 'turn-output' };
+  }
   if (hasArtifactSince(probe.artifacts, probe.taskId, turnStartMs)) return { send: false, reason: 'new-artifact' };
   if (hasSettledDeliverySince(probe.deliveries, probe.taskId, turnStartMs)) {
     return { send: false, reason: 'delivery-settled' };
@@ -180,11 +198,14 @@ export function useAutoRetryFailedTurn(): void {
       const task = useTaskStore.getState().tasks.find((entry) => entry.id === failure.taskId);
       if (!task) return;
 
-      // ⑤ 零最终交付判据（纯函数，见上）。
+      // ⑤ 类别门 + 零最终交付判据（纯函数，见上）。产出证据读**登记时的快照**
+      //    （`failure.producedOutput`）—— 这一刻 store 里的 activeTurn 早被清理过了。
       const verdict = evaluateAutoRetry({
         taskId: failure.taskId,
+        kind: failure.kind,
         messages: state.messagesByTask[failure.taskId] ?? [],
         errorMessageId: failure.messageId,
+        producedOutput: failure.producedOutput,
         activeTurn: state.activeTurnBySession[sessionKey],
         artifacts: useFileStore.getState().artifacts,
         deliveries: Object.values(useDeliveryActivityStore.getState().records),

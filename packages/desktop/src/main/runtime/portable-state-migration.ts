@@ -18,9 +18,12 @@ const GATEWAY_LOCK_NAME = /^gateway\..*\.lock$/u;
  * 锁所有者核验的可注入面（BUG-039；默认实现在 `process-liveness.ts`）。
  *
  * ⚠️ 语义（改动必须同时改测试）：**"pid 活着"不等于"写锁的那个网关还在跑"**。
- *    判据链是 ①锁里声明的 state/config 位置是不是这一份 state（词法比对，决定性）
- *    ②锁里若带 `startTime`，与真实进程启动时间比对（pid 复用判据，决定性）
- *    ③都拿不到 ⇒ **有界等待**（窗口内退场即放行），仍在 ⇒ 阻断但给出可执行指引。
+ *    判据链（BUG-059 附③ 定序）：
+ *    ①锁里若带 `startTime`，与真实进程启动时间比对（**最决定性**：相符⇒一律不隔离；
+ *      对不上⇒pid 被复用，按 stale 隔离）
+ *    ②拿不到 startTime 时退回锁声明的 state/config 位置比对（先 realpath 归一——
+ *      subst/junction 下内核写 realpath、应用传别名，"拼写不同"不等于"不是同一份"）
+ *    ③都核验不了 ⇒ **有界等待**（窗口内退场即放行），仍在 ⇒ 阻断但给出可执行指引。
  */
 export interface LockOwnerProbeOptions {
   /** 锁所有者的存活判定。 */
@@ -136,10 +139,32 @@ function normalizeDirectory(value: string): string | null {
   return win ? normalized.toLowerCase() : normalized;
 }
 
+/**
+ * realpath 归一（BUG-059 附③）：**subst / junction / 8.3 短名下，同一个目录会有多种拼写**。
+ *
+ * ⚠️ 必须用 `realpathSync.native` —— 普通 `realpathSync` 在 subst 盘上原样返回别名
+ *    （实测：`realpathSync('X:\\state') = 'X:\\state'`，`.native` 才解析到真路径）。
+ *    读不到（路径不存在 / 无权限）⇒ `null`（判不出就別硬判）。
+ */
+function realDirectory(value: string): string | null {
+  try {
+    const real = fs.realpathSync.native(value);
+    // Windows 扩展前缀（`\\?\` / `\\?\UNC\`）只是写法，归一后再比。
+    const withoutPrefix = real.replace(/^\\\\\?\\UNC\\/iu, '\\\\').replace(/^\\\\\?\\/u, '');
+    return normalizeDirectory(withoutPrefix);
+  } catch {
+    return null;
+  }
+}
+
 function sameDirectory(left: string, right: string): boolean {
   const a = normalizeDirectory(left);
   const b = normalizeDirectory(right);
-  return a !== null && b !== null && a === b;
+  if (a !== null && b !== null && a === b) return true;
+  // 词法对不上 ≠ 不是同一份（内核写 realpath、应用传别名是现场形态）——再看真路径。
+  const realLeft = realDirectory(left);
+  const realRight = realDirectory(right);
+  return realLeft !== null && realRight !== null && realLeft === realRight;
 }
 
 function declaredOwnerStartTime(lock: Record<string, unknown>): number | null {
@@ -170,7 +195,20 @@ function quarantineUnusableLocks(root: string, entries: Entry[], probe: Resolved
   let quarantined = 0;
   const quarantine = (file: string, relative: string, reason: 'corrupt' | 'stale', detail: string): void => {
     const target = `${file}.${reason}-${new Date().toISOString().replace(/[:.]/gu, '-')}`;
-    fs.renameSync(file, target);
+    try {
+      fs.renameSync(file, target);
+    } catch (error) {
+      // BUG-059 附②：隔离失败（锁被占用 / 介质只读）**不许抛裸错误** —— 那会绕过
+      // "阻断 + 可执行指引"的既定路径（现场 2026-10-04 的教训：用户与排查者都无从下手）。
+      // fail-closed：不删、不改，原样保留现场，把下一步写进消息里。
+      throw new Error(
+        `无法隔离不可用的网关锁（${relative}）：文件被占用或所在介质不可写（${
+          error instanceof Error ? error.message : String(error)
+        }）。` +
+          '请先完全退出荣盈魔方、等本机服务结束后重试；' +
+          `若确认没有网关在运行，可手动把该锁文件改名备份后重试：${file}`,
+      );
+    }
     quarantined += 1;
     console.warn(
       `[portable-state-migration] quarantined ${reason} gateway lock: ${relative} -> ${path.basename(target)}（${detail}）`,
@@ -194,17 +232,24 @@ function quarantineUnusableLocks(root: string, entries: Entry[], probe: Resolved
       continue;
     }
 
+    // ⚠️ 判据顺序（BUG-059 附③）：**startTime 相符是所有判据里最决定性的** ——
+    //    一致即确认"用的就是那个进程"，此后**一律不隔离**（位置拼写差异不算数：
+    //    subst/junction 下内核写 realpath、应用传别名是现场形态，纯词法比对会把
+    //    **活网关的锁**误判成"别处的残留"）。对不上（pid 复用）同样决定性 ⇒ 直接隔离。
+    const declaredStart = declaredOwnerStartTime(lock);
+    if (declaredStart !== null && pidMightBeAlive(pid, probe)) {
+      const actualStart = probe.startTime(pid);
+      if (actualStart !== null) {
+        if (processStartTimeMatches(declaredStart, actualStart)) continue;
+        quarantine(file, entry.relative, 'stale', `pid ${pid} 已被系统复用（启动时间对不上）`);
+        continue;
+      }
+    }
+
+    // 身份核验拿不到时，位置判据兜底（realpath 归一后仍对不上 ⇒ 别的机器/旧盘符残留）。
     const declaredLocation = declaredLocationOf(lock);
     if (declaredLocation && !sameDirectory(declaredLocation, root)) {
       quarantine(file, entry.relative, 'stale', `锁声明的位置不是这一份 state（${declaredLocation}）`);
-      continue;
-    }
-
-    const declaredStart = declaredOwnerStartTime(lock);
-    if (declaredStart === null || !pidMightBeAlive(pid, probe)) continue;
-    const actualStart = probe.startTime(pid);
-    if (actualStart !== null && !processStartTimeMatches(declaredStart, actualStart)) {
-      quarantine(file, entry.relative, 'stale', `pid ${pid} 已被系统复用（启动时间对不上）`);
     }
   }
   return quarantined;
