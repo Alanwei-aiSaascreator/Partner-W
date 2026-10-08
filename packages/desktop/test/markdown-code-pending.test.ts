@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { isPendingFencedCode } from '../src/renderer/lib/markdown-code-pending';
+import { fromMarkdown } from 'mdast-util-from-markdown';
+import { isPendingFencedCode, pendingFencedCodeStarts } from '../src/renderer/lib/markdown-code-pending';
 
 /**
  * 「未闭合围栏」判据（Task 6 / R7 重写为**行数对齐**）。
@@ -125,5 +126,88 @@ describe('isPendingFencedCode —— 防御', () => {
     expect(isPendingFencedCode('abc', 2, 1, '')).toBe(false);
     expect(isPendingFencedCode('abc', Number.NaN, 3, '')).toBe(false);
     expect(isPendingFencedCode('abc', 1, 99, '')).toBe(false);
+  });
+});
+
+/**
+ * G2 回归（2026-10-08 集中终审 · P2 必修）：**行数启发式换真实解析器 token**。
+ *
+ * 旧判据（"原文行数对齐"）在三个形状上失守（同一根因）：引用/嵌套引用的**两行及以上
+ * 容器空尾**再次误判；**纯 CR 换行**下已闭合围栏也误判。权威矩阵 44 场景
+ * （root/quote/nested-quote/ordered-list × 空尾 0–4 行 × 开/闭 + 四个对照）。
+ *
+ * ⚠️ 按合同要求：**不用手工捏造的 AST offset**，每个场景都用 `mdast-util-from-markdown`
+ * 的真实解析结果取节点跨度与正文。
+ */
+type MdNode = {
+  type: string;
+  value?: string;
+  position?: { start: { offset?: number }; end: { offset?: number } };
+  children?: MdNode[];
+};
+
+function lastCodeNode(source: string): MdNode | undefined {
+  const walk = (node: MdNode): MdNode[] => [
+    ...(node.type === 'code' ? [node] : []),
+    ...(node.children ?? []).flatMap((child) => walk(child)),
+  ];
+  return walk(fromMarkdown(source) as unknown as MdNode).at(-1);
+}
+
+const MATRIX: Array<{ name: string; source: string; expected: boolean }> = [];
+for (const spec of [
+  { name: 'root', prefix: '', head: '' },
+  { name: 'quote', prefix: '> ', head: '' },
+  { name: 'nested-quote', prefix: '> > ', head: '' },
+  { name: 'ordered-list', prefix: '    ', head: '1. item\n\n' },
+]) {
+  for (let blanks = 0; blanks <= 4; blanks += 1) {
+    for (const closed of [false, true]) {
+      const lines = ['```js', 'const a = 1', ...(closed ? ['```'] : []), ...Array(blanks).fill('')];
+      MATRIX.push({
+        name: `${spec.name}-${closed ? 'closed' : 'open'}-blanks-${blanks}`,
+        source: spec.head + lines.map((line) => spec.prefix + line).join('\n'),
+        expected: !closed,
+      });
+    }
+  }
+}
+MATRIX.push(
+  { name: 'literal-quote-fence-in-root-code', source: '```txt\n> ```\nmore', expected: true },
+  { name: 'short-close', source: '````js\na\n```', expected: true },
+  { name: 'mixed-character-close', source: '```js\na\n~~~', expected: true },
+  { name: 'pure-CR-closed', source: '```js\ra\r```', expected: false },
+);
+
+describe('G2：真实解析器矩阵（44 场景；跨度与正文全部来自 mdast）', () => {
+  it.each(MATRIX.map((test) => [test.name, test.source, test.expected] as const))('%s', (_name, source, expected) => {
+    const node = lastCodeNode(source);
+    const start = node?.position?.start.offset;
+    const end = node?.position?.end.offset;
+    const actual =
+      typeof start === 'number' && typeof end === 'number'
+        ? isPendingFencedCode(source, start, end, node?.value ?? '')
+        : false;
+    expect(actual).toBe(expected);
+  });
+});
+
+describe('G2：pendingFencedCodeStarts（生产出口）', () => {
+  it('引用空尾 4 行 ⇒ 仍是未闭合（围栏起点在集合里）', () => {
+    const source = '> ```js\n> const a = 1\n> \n> \n> \n> ';
+    expect([...pendingFencedCodeStarts(source)]).toEqual([2]);
+  });
+
+  it('嵌套引用空尾 3 行 ⇒ 仍是未闭合', () => {
+    const source = '> > ```js\n> > const a = 1\n> > \n> > \n> > ';
+    expect([...pendingFencedCodeStarts(source)]).toEqual([4]);
+  });
+
+  it('纯 CR 换行、已闭合 ⇒ 空集', () => {
+    expect([...pendingFencedCodeStarts('```js\ra\r```')]).toEqual([]);
+  });
+
+  it('闭合 + 尾部还有正文 ⇒ 空集（最后一块不是它）', () => {
+    expect([...pendingFencedCodeStarts('```js\na\n```\n尾部正文')]).toEqual([]);
   });
 });

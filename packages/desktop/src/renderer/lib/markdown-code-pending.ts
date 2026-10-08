@@ -1,65 +1,81 @@
 /**
- * 「流式中还没写完的围栏代码块」判据（2026-10-08 对话可视化改造 · Task 6；R7 重写）。
+ * 「流式中还没写完的围栏代码块」判据（2026-10-08 对话可视化改造 · Task 6；G2 重写）。
  *
- * 用途：流式渲染时，**尚未闭合**的代码块要打虚线占位（`.prose-chat [data-code-pending] pre`），
- * 闭合后整体套样式（复刻包实测的渲染时机策略：代码块先占位、闭合后整体套用）。
+ * 用途与样式契约不变：流式渲染时 **尚未闭合** 的代码块打虚线占位
+ * （`.prose-chat [data-code-pending] pre`），闭合后整体套样式。
  *
- * ## 为什么不是"裸文本围栏扫描器"（Codex 审核 P2 / R7）
+ * ## G2（集中终审 · P2 必修）：行数启发式换真实解析器 token
  *
- * 计数法与"剥引用标记再正则"都有真实反例：4 反引号开 + 3 反引号闭、```/~~~ 混用、
- * 列表里缩进 4 空格的闭合围栏、根级代码正文里字面量 `> \`\`\``（不是容器）——
- * 固定缩进/字符剥离都会误判。本函数**不重扫围栏**，改用解析器已经给出的两样东西做
- * **行数对齐**（token/AST + 源位置）：
+ * 旧判据（原文行数与解析器给出的正文行数"对齐"）在三个形状上同根失效：
+ * 引用/嵌套引用的**两行及以上容器空尾**再次误判、**纯 CR 换行**下已闭合围栏误判。
+ * 现在改为**两次真实解析的交叉判定**，不再数行：
  *
- *   - `startOffset/endOffset`：解析器给出的该 code 节点在原文里的跨度；
- *   - `codeText`：解析器给出的**代码正文**（容器前缀已被剥掉，行结构原样保留）。
+ *   - `mdast-util-from-markdown`：取文档 AST 里"最后一个有实际内容的叶节点"——
+ *     它必须是 `code`（未闭合围栏才会是文档的最后一块），记下它的原文起点；
+ *   - `micromark` 的 `codeFenced` token 事件流：数该围栏的 `codeFencedFence`
+ *     边沿（开启 + 显式闭合 = 2 个）；**恰好 1 个** = 只有开启、没有显式闭合 ⇒ 还在写。
  *
- * 事实：围栏内的正文按**原样行**保留（一个内容行 ↔ 原文一个行，只差容器前缀）。
- * 因此 —— 未闭合 ⇒ 原始段落行数与 codeText 行数**一一对齐**；已闭合 ⇒ 原始段落里
- * 多出**一行闭合围栏**（行数 = codeText + 1）。多出来即闭合。不猜容器前缀、不做
- * 任何按内容剥字符的操作（那会把代码正文里的字面量 `> \`\`\`` 错当闭合符）。
+ * 与渲染链同源（react-markdown → remark-parse → 同族解析器），不引入另一套
+ * Markdown 规则；缩进代码（`codeIndented`）、已闭合围栏、尾部真正的新块都会被
+ * 正确排除，尾部空引用容器（`> `）不算"新内容"。两个依赖已声明为 desktop 的
+ * 直接运行时依赖（`pnpm-lock.yaml` 同步）。
  */
+import { fromMarkdown } from 'mdast-util-from-markdown';
+import { parse, postprocess, preprocess } from 'micromark';
 
-/** 去掉尾部空白行（两侧对齐前统一口径；代码块尾随空行不计结构）。 */
-function trimTrailingBlankLines(lines: readonly string[]): string[] {
-  let end = lines.length;
-  while (end > 0 && (lines[end - 1] ?? '').trim() === '') end -= 1;
-  return lines.slice(0, end);
+interface PositionedNode {
+  type: string;
+  children?: readonly PositionedNode[];
+  position?: { start: { offset?: number } };
 }
 
-/**
- * 解析器给出的节点位置（hast `node.position`，offsets 基于**原文**字符）+ 代码正文。
- *
- * @param content    当前 Markdown 原文
- * @param startOffset 该 code 节点在原文中的起始偏移（hast position.start.offset）
- * @param endOffset   该 code 节点在原文中的结束偏移（hast position.end.offset）
- * @param codeText    该代码块的正文（组件已从 children 展平，容器前缀已由解析器剥掉）
- */
+const CONTAINERS = new Set(['root', 'blockquote', 'list', 'listItem']);
+
+// 只忽略没有实际内容的尾部容器；空 listItem 代表已开始的新块。
+function lastMeaningfulLeaf(node: PositionedNode): PositionedNode | undefined {
+  if (!CONTAINERS.has(node.type)) return node;
+  if (node.type === 'listItem' && !node.children?.length) return node;
+  let last: PositionedNode | undefined;
+  for (const child of node.children ?? []) last = lastMeaningfulLeaf(child) ?? last;
+  return last;
+}
+
+/** 返回文档最后仍未显式闭合的围栏代码节点的原文起点。 */
+export function pendingFencedCodeStarts(content: string): ReadonlySet<number> {
+  const pending = new Set<number>();
+  const last = lastMeaningfulLeaf(fromMarkdown(content));
+  const lastStart = last?.position?.start.offset;
+  if (last?.type !== 'code' || typeof lastStart !== 'number') return pending;
+
+  const events = postprocess(
+    parse()
+      .document()
+      .write(preprocess()(content, undefined, true)),
+  );
+  let start: number | undefined;
+  let fenceCount = 0;
+  for (const [phase, token] of events) {
+    if (phase === 'enter' && token.type === 'codeFenced') {
+      start = token.start.offset;
+      fenceCount = 0;
+    } else if (phase === 'enter' && token.type === 'codeFencedFence') {
+      fenceCount += 1;
+    } else if (phase === 'exit' && token.type === 'codeFenced') {
+      if (fenceCount === 1 && start === lastStart) pending.add(lastStart);
+      start = undefined;
+    }
+  }
+  return pending;
+}
+
+// 保留旧入口，避免无关调用方改名。生产渲染应在父层按 content memo 一次后查 Set。
 export function isPendingFencedCode(
   content: string,
   startOffset: number,
   endOffset: number,
-  codeText: string,
+  _codeText: string,
 ): boolean {
   if (!Number.isFinite(startOffset) || !Number.isFinite(endOffset)) return false;
   if (startOffset < 0 || endOffset <= startOffset || endOffset > content.length) return false;
-  // ① 只有**贴到文档末尾**的代码块才可能是"还在写"的那一块。
-  //    ⚠️ F2（终审）：解析器的 `code.end` 会落在**容器空尾行之前**（例如引用里未闭合的围栏
-  //    后面还有一行 `> ` 的容器空行）—— 那不是"块后已有内容"。⇒ 判"尾巴"时只允许
-  //    `>`（容器标记，可重复/嵌套）与空白字符；出现**任何其它字符**才算后面还有内容。
-  //    （注意：`> more` 这类带内容的行会留下 `more` ⇒ 正确地判为"不贴边"。）
-  const tail = content.slice(endOffset);
-  if (tail.replace(/[>\s]/gu, '') !== '') return false;
-
-  const slice = content.slice(startOffset, endOffset);
-  const firstNewline = slice.indexOf('\n');
-  const firstLine = firstNewline === -1 ? slice : slice.slice(0, firstNewline);
-  // ② 只处理**围栏**代码块（≤3 空格 + 可选引用标记后是 ```/~~~）；缩进代码不在本判据范围。
-  if (!/^(?: {0,3}> ?)* {0,3}(`{3,}|~{3,})/.test(firstLine)) return false;
-
-  const rawBody = firstNewline === -1 ? [] : slice.slice(firstNewline + 1).split('\n');
-  const rawBodyLines = trimTrailingBlankLines(rawBody);
-  const codeLines = trimTrailingBlankLines(codeText.split('\n'));
-  // ③ 行数对齐：未闭合 ⇒ raw body 与 codeText 一一行对齐（相等）；已闭合 ⇒ raw 多一行围栏。
-  return rawBodyLines.length <= codeLines.length;
+  return pendingFencedCodeStarts(content).has(startOffset);
 }

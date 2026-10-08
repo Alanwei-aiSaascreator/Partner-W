@@ -157,6 +157,12 @@ importers:
       jszip:
         specifier: ^3.10.1
         version: 3.10.1
+      mdast-util-from-markdown:
+        specifier: 2.0.3
+        version: 2.0.3(supports-color@7.2.0)
+      micromark:
+        specifier: 4.0.2
+        version: 4.0.2(supports-color@7.2.0)
       pptx-automizer:
         specifier: 0.9.3
         version: 0.9.3

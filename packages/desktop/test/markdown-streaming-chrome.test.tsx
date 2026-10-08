@@ -130,4 +130,28 @@ describe('MarkdownContent 流式镀铬件', () => {
     expect(pendingOf(container), '闭合后占位必须消失').toHaveLength(0);
     view.unmount();
   });
+
+  it('⭐ G2：引用内未闭合 + **三行**容器空尾 ⇒ 仍占位；真闭合后消失（同一实例）', () => {
+    const view = mount(<MarkdownContent content={'> ```js\n> const a = 1\n> \n> \n> '} showCursor />);
+    expect(pendingOf(view.container), '两行以上空尾不是"块后内容"').toHaveLength(1);
+    view.rerender(<MarkdownContent content={'> ```js\n> const a = 1\n> \n> \n> \n> ```'} showCursor />);
+    expect(pendingOf(view.container), '真闭合后占位消失').toHaveLength(0);
+    view.unmount();
+  });
+
+  it('⭐ G2：嵌套引用空尾 3 行 ⇒ 仍占位', () => {
+    const view = mount(<MarkdownContent content={'> > ```js\n> > const a = 1\n> > \n> > \n> > '} showCursor />);
+    expect(pendingOf(view.container)).toHaveLength(1);
+    view.unmount();
+  });
+
+  it('⭐ G2：纯 CR 换行下，已闭合不占位、未闭合占位', () => {
+    const closed = mount(<MarkdownContent content={'```js\ra\r```'} showCursor />);
+    expect(pendingOf(closed.container), 'CR 换行下闭合围栏不得误判').toHaveLength(0);
+    closed.unmount();
+
+    const open = mount(<MarkdownContent content={'```js\ra'} showCursor />);
+    expect(pendingOf(open.container)).toHaveLength(1);
+    open.unmount();
+  });
 });

@@ -16,7 +16,7 @@ import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { copyTextToClipboard } from '@/lib/clipboard';
-import { isPendingFencedCode } from '@/lib/markdown-code-pending';
+import { pendingFencedCodeStarts } from '@/lib/markdown-code-pending';
 
 /**
  * react-markdown 注入的 hast 节点（只用位置信息；避免为此把 `hast` 引成依赖）。
@@ -179,13 +179,18 @@ function MarkdownContent({
   const copiedLabel = t('chatMessage.copied');
 
   /**
-   * 未闭合代码块判据（Task 6）需要**当前原文**与**是否流式**，但 `components` 表
+   * 未闭合代码块判据（Task 6 / G2）需要**当前原文**与**是否流式**，但 `components` 表
    * **必须引用稳定**（见下方注释：新 components 对象 = 每个子树卸载重建）。
-   * 所以走 ref：同一趟 render 里先写后读（渲染函数在父组件之后执行）。
-   * ⚠️ 这不是"改 ref 驱动界面"—— ref 只在渲染期传值，不承载状态。
+   * 所以：原文 → `pendingFencedCodeStarts`（按 content memo，**每次原文只解析一次**，
+   * 不在每个 `pre` 里重复解析；非流式/历史消息直接空集、不扫描），再走 ref 传入
+   * 渲染函数（同一趟 render 里先写后读；ref 只传值、不承载状态）。
    */
-  const contentRef = useRef(content);
-  contentRef.current = content;
+  const pendingStarts = useMemo(
+    () => (showCursor ? pendingFencedCodeStarts(content) : new Set<number>()),
+    [content, showCursor],
+  );
+  const pendingStartsRef = useRef(pendingStarts);
+  pendingStartsRef.current = pendingStarts;
   const showCursorRef = useRef(showCursor);
   showCursorRef.current = showCursor;
 
@@ -294,17 +299,13 @@ function MarkdownContent({
           );
         }
         /*
-          未闭合围栏占位（Task 6 / R7）：位置与代码正文都来自**解析器**
-          （hast node.position + children 展平），判据做行数对齐（见 `markdown-code-pending.ts`）。
-          仅流式期间生效；docgen/htmlgen 在此之前已分支，不套通用代码样式。
+          未闭合围栏占位（Task 6 / G2）：位置来自**真实解析器**（hast node.position 起点），
+          判据 = 起点在 `pendingFencedCodeStarts`（真实 mdast + micromark token 交叉判定，
+          见 `markdown-code-pending.ts`）。仅流式期间生效；docgen/htmlgen 在此之前已分支。
         */
         const startOffset = node?.position?.start?.offset;
-        const endOffset = node?.position?.end?.offset;
         const codePending =
-          showCursorRef.current &&
-          typeof startOffset === 'number' &&
-          typeof endOffset === 'number' &&
-          isPendingFencedCode(contentRef.current, startOffset, endOffset, code);
+          showCursorRef.current && typeof startOffset === 'number' && pendingStartsRef.current.has(startOffset);
         return (
           <div className="group/code relative max-w-full" data-code-pending={codePending ? 'true' : undefined}>
             {lang && (

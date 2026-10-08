@@ -51,6 +51,8 @@
     "highlight.js": "^11.11.1",
     "i18next": "^25.8.18",
     "jszip": "^3.10.1",
+    "mdast-util-from-markdown": "2.0.3",
+    "micromark": "4.0.2",
     "pptx-automizer": "0.9.3",
     "pptxgenjs": "^4.0.1",
     "react-i18next": "^16.5.8",
