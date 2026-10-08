@@ -50,25 +50,17 @@ export interface ActiveTurnActivity {
   thinkingSegment: number;
 }
 
-/** 生成下一个 activity（纯函数）—— ⚠️ 只在**内容真的变化**时调用（R1 见下）。 */
-function bumpActivity(turn: ActiveTurn, kind: ActiveTurnActivity['kind']): ActiveTurnActivity {
-  const prev = turn.activity;
-  const openedNewThinkingSegment = kind === 'thinking' && prev?.kind !== 'thinking';
-  return {
-    kind,
-    revision: (prev?.revision ?? 0) + 1,
-    thinkingSegment: openedNewThinkingSegment ? (prev?.thinkingSegment ?? 0) + 1 : (prev?.thinkingSegment ?? 0),
-  };
-}
-
 /**
- * R1（2026-10-08 总审）：**累计快照的重复投递不是"新活动"**。
+ * R1（2026-10-08 总审）＋ F1（终审）：活动元数据的两半职责
  *
- * chat 的 delta 帧里 `message.content` 是**到此刻为止的全文快照**（白皮书 §4.2），
- * dispatcher 又固定按「正文 → 思考 → 工具」处理 —— 一段旧 thinking 会被原样重发无数次。
- * 若写入端无条件更新活动元数据：正文期间相位被拨回 thinking（扫光/展开不复位）、
- * 每帧伪造"新思考段"（段号 +1，用户手动折叠被反复复位）、重复的工具快照会盖住
- * 之后真正的新思考。⇒ 三个写入方法都必须先比内容，**变了才记活动**。
+ * - **写入器**（本文件四个内容方法）只负责"**累计快照的重复投递不重写 state**"：
+ *   内容没变 ⇒ 返回原 state（引用不变 —— 事件入口正是靠这个引用比较判定"这一项真的变了"）。
+ *   它们**不再**自己记活动。R1 的教训：chat delta 的 `message.content` 是全文快照，
+ *   dispatcher 固定按「正文→思考→工具」处理，旧 thinking 会被原样重发无数次，
+ *   写入端无条件记活动就会把相位拨回 thinking、每帧伪造"新思考段"。
+ * - **帧封**（`sealTurnActivity`）：一帧结束时由事件入口按 **content blocks 的真实顺序**
+ *   一次定音。F1 的教训：同帧**多项都真变化**时，"处理顺序"不是真实顺序
+ *   （`[thinking, text]` 两段都新时，最新活动是正文而不是思考）。
  */
 function toolCallChanged(before: ToolCall | undefined, after: ToolCall): boolean {
   if (!before) return true;
@@ -269,6 +261,12 @@ export interface MessageState {
   ) => Message;
   removeMessage: (taskId: string, messageId: string) => void;
   upsertToolCall: (sessionKey: string, taskId: string, tc: ToolCall) => void;
+  /**
+   * **帧封**（F1）：把"这一帧真正变化的活动类别"按**真实顺序**交给 store，一次算定
+   * `kind` / `revision` / 思考段号。顺序信息只在事件帧里存在（content blocks 的位置），
+   * 写入器按处理顺序各记各的会记错 —— 见 `bumpActivity` 旧址上方注释。
+   */
+  sealTurnActivity: (sessionKey: string, kindsInOrder: readonly ActiveTurnActivity['kind'][]) => void;
   bulkLoad: (taskId: string, msgs: Message[]) => void;
   appendStreamDelta: (sessionKey: string, delta: string) => void;
   bindActiveRun: (sessionKey: string, runId: string) => void;
@@ -573,12 +571,12 @@ export function createMessageStore(deps: MessageStoreDeps) {
           } else {
             next.push(tc);
           }
-          // R1：重复/未变化的工具快照 ⇒ 连 state 都不动（不是"最新活动"）。
+          // R1：重复/未变化的工具快照 ⇒ 连 state 都不动（不是"最新活动"；引用比较即变更判定）。
           if (!changed) return s;
           return {
             activeTurnBySession: {
               ...s.activeTurnBySession,
-              [sessionKey]: { ...turn, toolCalls: next, activity: bumpActivity(turn, 'tools') },
+              [sessionKey]: { ...turn, toolCalls: next },
             },
           };
         }
@@ -587,11 +585,40 @@ export function createMessageStore(deps: MessageStoreDeps) {
         return {
           activeTurnBySession: {
             ...s.activeTurnBySession,
-            [sessionKey]: { ...fresh, toolCalls: [tc], activity: bumpActivity(fresh, 'tools') },
+            [sessionKey]: { ...fresh, toolCalls: [tc] },
           },
         };
       });
     },
+
+    sealTurnActivity: (sessionKey, kindsInOrder) =>
+      set((s) => {
+        const turn = s.activeTurnBySession[sessionKey];
+        if (!turn || kindsInOrder.length === 0) return s;
+        const prev = turn.activity;
+        let kind: ActiveTurnActivity['kind'] | null = prev ? prev.kind : null;
+        let revision = prev?.revision ?? 0;
+        let thinkingSegment = prev?.thinkingSegment ?? 0;
+        // 按**真实顺序**走一遍：thinking 只在"进入时上一个活动不是 thinking"才开新段；
+        // 每有一项真变化 revision +1（与旧口径"每次内容变化计一"一致）。
+        for (const entry of kindsInOrder) {
+          if (entry === 'thinking' && kind !== 'thinking') thinkingSegment += 1;
+          kind = entry;
+          revision += 1;
+        }
+        const activity: ActiveTurnActivity = { kind: kind as ActiveTurnActivity['kind'], revision, thinkingSegment };
+        if (
+          prev &&
+          prev.kind === activity.kind &&
+          prev.revision === revision &&
+          prev.thinkingSegment === thinkingSegment
+        ) {
+          return s;
+        }
+        return {
+          activeTurnBySession: { ...s.activeTurnBySession, [sessionKey]: { ...turn, activity } },
+        };
+      }),
 
     // ⚠️ 装载**本地已存**的消息时也要切一次行内推理。
     //    否则「修好之前就落库的那些」永远是脏的 —— 它们早就在磁盘上定形了，
@@ -630,7 +657,6 @@ export function createMessageStore(deps: MessageStoreDeps) {
             [sessionKey]: {
               ...turn,
               streamingText,
-              ...(changed ? { activity: bumpActivity(turn, 'output') } : {}),
             },
           },
         };
@@ -651,7 +677,6 @@ export function createMessageStore(deps: MessageStoreDeps) {
             [sessionKey]: {
               ...turn,
               streamingText: text,
-              ...(changed ? { activity: bumpActivity(turn, 'output') } : {}),
             },
           },
         };
@@ -673,7 +698,6 @@ export function createMessageStore(deps: MessageStoreDeps) {
             [sessionKey]: {
               ...turn,
               streamingThinking,
-              ...(changed ? { activity: bumpActivity(turn, 'thinking') } : {}),
             },
           },
         };

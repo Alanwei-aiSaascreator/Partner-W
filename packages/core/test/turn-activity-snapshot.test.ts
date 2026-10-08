@@ -178,3 +178,39 @@ describe('R1：累计快照与真实活动（真实 dispatcher + 真实 store）
     expect(h.activity()!.revision).toBeGreaterThan(rev);
   });
 });
+
+/**
+ * F1 回归（2026-10-08 终审）：**同帧多项都真变化时，按 content blocks 的真实顺序**定活动，
+ * 不能沿用"提取字段后的固定处理顺序（正文→思考→工具）"。
+ * 现有测试大多是"一个字段变化、其他字段重复"，因此全绿也盖不住本问题。
+ */
+describe('F1：同帧多项真变化的活动顺序', () => {
+  it('⭐ 首帧 [新 thinking, 新 text]（数组序 text 在后）⇒ output', () => {
+    const h = createHarness();
+    h.emitChatDelta([thinking('first thought'), text('first answer')]);
+    const a = h.activity()!;
+    expect(a.kind, '两段都新、数组里 text 在后 ⇒ 最新活动是正文').toBe('output');
+    expect(a.thinkingSegment, '首段思考已开始过 = 段 1').toBe(1);
+  });
+
+  it('⭐ [新 toolCall, 新 thinking]（数组序 thinking 在后）⇒ thinking，且为**新一段**', () => {
+    const h = createHarness();
+    h.emitChatDelta([thinking('first thought')]);
+    expect(h.activity()!.thinkingSegment).toBe(1);
+    // 同帧里工具先行、思考在后（数组序）⇒ 真序是先工具后思考 ⇒ 新思考段
+    h.emitChatDelta([toolCall('tc-9'), thinking('after tool')]);
+    const a = h.activity()!;
+    expect(a.kind, '数组里 thinking 在工具之后 ⇒ 最新活动是思考').toBe('thinking');
+    expect(a.thinkingSegment, '按真实顺序：先工具后思考 ⇒ 新段').toBe(2);
+  });
+
+  it('重复字段与真正变化混合 ⇒ 只按真变化项的顺序（旧思考回声 + 新 text ⇒ output）', () => {
+    const h = createHarness();
+    h.emitChatDelta([thinking('先看目录')]);
+    h.emitChatDelta([toolCall('tc-1')]);
+    h.emitChatDelta([toolCall('tc-1'), thinking('先看目录'), text('开始写答案')]);
+    const a = h.activity()!;
+    expect(a.kind).toBe('output');
+    expect(a.thinkingSegment, '回声不得开新段').toBe(1);
+  });
+});

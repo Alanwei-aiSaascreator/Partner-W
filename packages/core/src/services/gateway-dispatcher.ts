@@ -299,6 +299,7 @@ export interface GatewayDispatcherDeps {
     | 'markRetryableError'
     | 'markAutoRetryFailure'
     | 'replaceStreamText'
+    | 'sealTurnActivity'
   >;
 
   getActiveTaskId: () => string | null;
@@ -972,6 +973,46 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
    */
   const DELIBERATELY_IGNORED_CHAT_STATES = new Set(['status']);
 
+  /**
+   * F1（2026-10-08 终审）：**帧级活动封印** —— 一帧里多项都真变化时，"最新活动是谁"必须按
+   * **content blocks 的真实顺序**定，不能沿用提取字段后的固定处理顺序（正文→思考→工具）。
+   *
+   * `changed` 由各写入点的 **state 引用前后比较** 收集：写入器在内容没变时不重写 state
+   * （R1 的变化门），所以"引用没变 = 这一项没变"。`sealTurnActivity` 负责按给定顺序
+   * 一次算定 kind / revision / 思考段号。
+   */
+  function sealChatFrameActivity(
+    sessionKey: string,
+    changed: ReadonlyArray<{ kind: 'output' | 'thinking' | 'tools'; index: number }>,
+  ): void {
+    if (changed.length === 0) return;
+    // 两边都有块序 ⇒ 按块序；块序缺失（例如纯 deltaText 帧）⇒ 稳定排序回落到处理顺序。
+    const ordered = [...changed].sort((a, b) => (a.index >= 0 && b.index >= 0 ? a.index - b.index : 0));
+    deps.getMessageStore().sealTurnActivity?.(
+      sessionKey,
+      ordered.map((entry) => entry.kind),
+    );
+  }
+
+  /** 该类型 block 在 content 里的**最后一个**位置；没有 ⇒ -1（表示"块序不可用"）。 */
+  function lastContentBlockIndex(payload: ChatEventPayload, type: 'text' | 'thinking' | 'toolCall'): number {
+    const blocks = payload.message?.content ?? payload.content;
+    if (!blocks) return -1;
+    let idx = -1;
+    for (let i = 0; i < blocks.length; i += 1) {
+      if (blocks[i]?.type === type) idx = i;
+    }
+    return idx;
+  }
+
+  /** F1：工具写入 + 帧封（重复快照不重写 state ⇒ 引用比较即"真的变了"）。 */
+  function upsertToolCallTracked(sessionKey: string, taskId: string, tc: ToolCall): void {
+    const readTurn = () => deps.getMessageStore().activeTurnBySession[sessionKey];
+    const before = readTurn();
+    deps.getMessageStore().upsertToolCall(sessionKey, taskId, tc);
+    if (readTurn() !== before) deps.getMessageStore().sealTurnActivity?.(sessionKey, ['tools']);
+  }
+
   function handleChatEvent(payload: ChatEventPayload, gatewayId: string): void {
     const { sessionKey, state } = payload;
     if (!sessionKey) {
@@ -1070,10 +1111,17 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
       // ⭐ **追加还是替换**：delta 帧的 `message.content` 是**全文快照**（白皮书 §4.2 原文），
       //    只有 v4 的 `deltaText` 才是增量。一律追加会把正文重复膨胀（实测 5–57 倍）。
       const delta = extractDeltaText(payload);
+      // F1：逐项写入 + 变更收集。⚠️ `store` 是入口处捕的**状态快照**，读现态必须走
+      //     `getMessageStore()`（生产接线每次返回最新 state）；写入器内容没变时不重写 state，
+      //     所以"引用没变 = 这一项没变"。
+      const readTurn = () => deps.getMessageStore().activeTurnBySession[sessionKey];
+      const changed: Array<{ kind: 'output' | 'thinking' | 'tools'; index: number }> = [];
       if (delta.text) {
         store.setProcessing(sessionKey, false);
+        const before = readTurn();
         if (delta.replace) store.replaceStreamText(sessionKey, delta.text);
         else store.appendStreamDelta(sessionKey, delta.text);
+        if (readTurn() !== before) changed.push({ kind: 'output', index: lastContentBlockIndex(payload, 'text') });
         debugEvent('renderer.chat.delta.applied', {
           taskId,
           sessionKey,
@@ -1082,22 +1130,43 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
         });
       }
       if (thinking) {
+        const before = readTurn();
         store.appendThinkingDelta(sessionKey, thinking);
+        if (readTurn() !== before)
+          changed.push({ kind: 'thinking', index: lastContentBlockIndex(payload, 'thinking') });
       }
       for (const tc of toolCalls) {
+        const before = readTurn();
         store.upsertToolCall(sessionKey, taskId, tc);
+        if (readTurn() !== before) changed.push({ kind: 'tools', index: lastContentBlockIndex(payload, 'toolCall') });
       }
+      // 帧尾一次定音：多项真变化按 **content blocks 顺序**决定"最新活动"（F1）。
+      sealChatFrameActivity(sessionKey, changed);
     } else if (state === 'final') {
       if (payload.runId) store.bindActiveRun?.(sessionKey, payload.runId);
       store.setProcessing(sessionKey, false);
       closedStreams.add(sessionKey);
+      const readTurn = () => deps.getMessageStore().activeTurnBySession[sessionKey];
+      const changed: Array<{ kind: 'output' | 'thinking' | 'tools'; index: number }> = [];
       // `final` 带的同样是**完整正文** ⇒ 替换（追加等于把答案再重复一遍）
-      if (text) store.replaceStreamText(sessionKey, text);
-      if (thinking) store.appendThinkingDelta(sessionKey, thinking);
+      if (text) {
+        const before = readTurn();
+        store.replaceStreamText(sessionKey, text);
+        if (readTurn() !== before) changed.push({ kind: 'output', index: lastContentBlockIndex(payload, 'text') });
+      }
+      if (thinking) {
+        const before = readTurn();
+        store.appendThinkingDelta(sessionKey, thinking);
+        if (readTurn() !== before)
+          changed.push({ kind: 'thinking', index: lastContentBlockIndex(payload, 'thinking') });
+      }
       debugEvent('renderer.chat.final.received', { taskId, sessionKey, chars: text.length });
       for (const tc of toolCalls) {
+        const before = readTurn();
         store.upsertToolCall(sessionKey, taskId, tc);
+        if (readTurn() !== before) changed.push({ kind: 'tools', index: lastContentBlockIndex(payload, 'toolCall') });
       }
+      sealChatFrameActivity(sessionKey, changed);
       store.finalizeStream(sessionKey, { runId: payload.runId });
       debugEvent('renderer.chat.finalized', { taskId, sessionKey });
       // 临时会话到此为止：正文留在 activeTurn 里（各列自己显示），
@@ -1333,7 +1402,14 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
           });
           break;
         }
-        deps.getMessageStore().appendThinkingDelta(sessionKey, chunk);
+        // F1：agent 通道的思考是**单项帧**（顺序信息为单元素）——同样走帧封，入口统一；
+        //     重复快照不重写 state ⇒ 引用比较即"真的变了"（R1 语义保持）。
+        {
+          const readTurn = () => deps.getMessageStore().activeTurnBySession[sessionKey];
+          const before = readTurn();
+          deps.getMessageStore().appendThinkingDelta(sessionKey, chunk);
+          if (readTurn() !== before) deps.getMessageStore().sealTurnActivity?.(sessionKey, ['thinking']);
+        }
         debugEvent('renderer.agent.thinking', { taskId, sessionKey, chars: chunk.length });
         break;
       }
@@ -1617,7 +1693,7 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
       deps
         .syncSessionMessages(taskId, sessionKey, { gatewayId, runId, toolCall: tc })
         .catch((error) => console.error('[dispatcher] late tool sync failed', error));
-    } else if (!reconcileOnly) store.upsertToolCall(sessionKey, taskId, tc);
+    } else if (!reconcileOnly) upsertToolCallTracked(sessionKey, taskId, tc);
     debugEvent('renderer.toolcall.upserted', {
       taskId,
       sessionKey,
@@ -1728,7 +1804,8 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
     const toMs = (v: unknown): string | undefined =>
       typeof v === 'number' && v > 0 ? new Date(v).toISOString() : undefined;
 
-    deps.getMessageStore().upsertToolCall(sessionKey, taskId, {
+    // F1：工具写入统一走 `upsertToolCallTracked`（写入 + 帧封）。
+    upsertToolCallTracked(sessionKey, taskId, {
       id: data.toolCallId,
       name: data.name,
       status,
@@ -1842,7 +1919,7 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
     //    随后的真结果 / 拒绝照样压得过去，不会卡住收不了场。
     if (approvalStatus === APPROVAL_WAITING_STATUS) {
       const name = existingToolName(taskId, sessionKey, data.toolCallId) ?? data.kind ?? 'exec';
-      deps.getMessageStore().upsertToolCall(sessionKey, taskId, {
+      upsertToolCallTracked(sessionKey, taskId, {
         id: data.toolCallId,
         name,
         status: 'awaitingApproval',
@@ -1888,7 +1965,7 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
 
     const name = existingToolName(taskId, sessionKey, data.toolCallId) ?? data.kind ?? 'exec';
 
-    deps.getMessageStore().upsertToolCall(sessionKey, taskId, {
+    upsertToolCallTracked(sessionKey, taskId, {
       id: data.toolCallId,
       name,
       // ⚠️ `error` 不是"命令失败"，是"**没跑成**" —— 这是当前唯一能表达的、且不撒谎的状态。
