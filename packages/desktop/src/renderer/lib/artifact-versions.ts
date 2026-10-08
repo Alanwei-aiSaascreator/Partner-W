@@ -37,10 +37,28 @@ import type { Artifact } from '@clawwork/shared';
  */
 const VERSION_SUFFIX_RE = /^(.*)-([0-9a-f]{8})(\.[^.]*)?$/i;
 
+/** 受控后缀在**桶位**上的类标记（只进 group 的桶键，不进 `artifactFamilyKey` 的返回值）。 */
+const PACKAGED_BUCKET_MARK = '\u0000v';
+
 export function artifactFamilyKey(name: string): string {
   const match = VERSION_SUFFIX_RE.exec(name);
   const stem = match && /[a-f]/i.test(match[2]!) ? `${match[1]}${match[3] ?? ''}` : name;
   return stem.trim().toLowerCase();
+}
+
+/**
+ * 分组桶键 = 任务 + 族键 + **后缀类**。
+ *
+ * ⚠️ 为什么要带"后缀类"：`报告-3f2a1b8c.pptx`（生成器版本）与裸名 `报告.pptx` 的族键
+ *    都是 `报告.pptx`，但它们是**两份可能并列的交付物** —— 裸名可能是用户改名/别的工具
+ *    导出。把它们并族会让其中一份被折进"历史与问题文件"（= Task 2 要治的"隐藏"）。
+ *    只有**同为受控后缀**的才互为版本（`报告-aaaa1111.pptx` ⟷ `报告-bbbb2222.pptx`）；
+ *    裸名始终独立成族（与 2026-10-08 已钉死的既有口径一致）。
+ */
+function familyBucketKey(taskId: string, name: string): string {
+  const match = VERSION_SUFFIX_RE.exec(name);
+  const packaged = Boolean(match && /[a-f]/i.test(match[2]!));
+  return `${taskId}\u0000${artifactFamilyKey(name)}${packaged ? PACKAGED_BUCKET_MARK : ''}`;
 }
 
 export interface ArtifactVersionGroups {
@@ -53,8 +71,9 @@ export interface ArtifactVersionGroups {
 export function groupArtifactVersions(items: readonly Artifact[]): ArtifactVersionGroups {
   const families = new Map<string, Artifact[]>();
   for (const artifact of items) {
-    // ⚠️ 族键 = 任务 + 文件名：跨任务不归并（见文件头 ①）。
-    const key = `${artifact.taskId}\u0000${artifactFamilyKey(artifact.name)}`;
+    // ⚠️ 桶键 = 任务 + 族键 + 后缀类：跨任务不归并（见文件头 ①）；裸名与受控后缀不互并
+    //    （见 `familyBucketKey` 注释 —— 不隐藏并列成果）。
+    const key = familyBucketKey(artifact.taskId, artifact.name);
     const bucket = families.get(key);
     if (bucket) bucket.push(artifact);
     else families.set(key, [artifact]);

@@ -122,14 +122,14 @@ describe('groupArtifactVersions', () => {
       expect(archived.map((a) => a.id)).toEqual(['older']);
     });
 
-    it('对照：同名无后缀与生成器版本同族（同格式，最新可用胜出）', () => {
+    it('对照：裸名与受控后缀名**不互并**（裸名可能是用户改名/别处导出 —— 不隐藏并列成果）', () => {
       const plain = make('plain', '报告.pptx', '2026-10-09T01:00:00.000Z');
       const versioned = make('versioned', '报告-deadbeef.pptx', '2026-10-09T01:05:00.000Z');
 
       const { current, archived } = groupArtifactVersions([versioned, plain]);
 
-      expect(current.map((a) => a.id)).toEqual(['versioned']);
-      expect(archived.map((a) => a.id)).toEqual(['plain']);
+      expect(current.map((a) => a.id).sort()).toEqual(['plain', 'versioned']);
+      expect(archived).toEqual([]);
     });
   });
 
