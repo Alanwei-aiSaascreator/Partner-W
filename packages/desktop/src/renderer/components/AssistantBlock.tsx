@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import type { Message, ToolCall } from '@clawwork/shared';
 import type { ActiveTurnActivity } from '@clawwork/core';
 import { Check, Copy, Loader2, Save } from 'lucide-react';
@@ -6,6 +6,7 @@ import { useTranslation } from 'react-i18next';
 import { cn } from '@/lib/utils';
 import { motion as motionPresets } from '@/styles/design-tokens';
 import { copyTextToClipboard } from '@/lib/clipboard';
+import { selectCurrentArtifactsForMessage, useTaskArtifacts } from '@/hooks/useTaskArtifacts';
 import MessageBlock, { type AssistantIdentity } from './MessageBlock';
 import { AttachmentFileCard, InlineImageBubble, MessageActionButton } from './MessageParts';
 import ThinkingCollapse from './ThinkingCollapse';
@@ -53,8 +54,25 @@ export function AssistantFinalizedBody({ message, agentName, onImageClick, onRet
   }, [saveState]);
 
   const attachments = message.attachments;
+  /*
+    产物卡接**真源**（2026-10-08 · Task 8）：`message.artifacts` 在桌面链路上恒为空
+    （messages 表无该列、构造处一律 `[]`）——真源是任务级 `fileStore + listArtifacts`
+    （与右栏同源），再**先对完整任务归并、后按 messageId 分发**（跨消息同族只有 current 留在
+    它所属的消息上；旧版本绝不伪装成当前版）。
+  */
+  const { artifacts: taskArtifacts, pending: artifactsPending } = useTaskArtifacts(message.taskId);
+  const displayArtifacts = useMemo(
+    () => selectCurrentArtifactsForMessage(taskArtifacts, message.id),
+    [taskArtifacts, message.id],
+  );
   const hasVisibleAnswer = Boolean(
-    message.content.trim() || attachments?.length || message.artifacts.length || message.toolCalls.length,
+    // `artifactsPending`（首水合未回）也按"可能有内容"处理 —— 水合/交付期间不得先闪出
+    // 「无回答 → 重新尝试」（那个按钮的语义是"这一轮真的什么都没产出"）。
+    artifactsPending ||
+    message.content.trim() ||
+    attachments?.length ||
+    displayArtifacts.length ||
+    message.toolCalls.length,
   );
   const canSaveMessage = Boolean(message.content.trim()) && Boolean(message.taskId) && Boolean(message.id);
 
@@ -115,9 +133,9 @@ export function AssistantFinalizedBody({ message, agentName, onImageClick, onRet
           })}
         </div>
       ) : null}
-      {message.artifacts.length > 0 ? (
+      {displayArtifacts.length > 0 ? (
         <div className="mt-2 grid max-w-2xl gap-2 sm:grid-cols-2">
-          {message.artifacts.map((artifact) => (
+          {displayArtifacts.map((artifact) => (
             <ArtifactCard key={artifact.id} artifact={artifact} assistantLabel={agentName} />
           ))}
         </div>
