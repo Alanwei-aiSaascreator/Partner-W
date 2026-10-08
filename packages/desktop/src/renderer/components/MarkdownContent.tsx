@@ -294,8 +294,8 @@ function MarkdownContent({
           );
         }
         /*
-          未闭合围栏占位（Task 6）：位置来自**解析器**（hast node.position，基于原文偏移），
-          判据只回答"这块是否贴到文档末尾且没有合法闭合行"（见 `markdown-code-pending.ts`）。
+          未闭合围栏占位（Task 6 / R7）：位置与代码正文都来自**解析器**
+          （hast node.position + children 展平），判据做行数对齐（见 `markdown-code-pending.ts`）。
           仅流式期间生效；docgen/htmlgen 在此之前已分支，不套通用代码样式。
         */
         const startOffset = node?.position?.start?.offset;
@@ -304,7 +304,7 @@ function MarkdownContent({
           showCursorRef.current &&
           typeof startOffset === 'number' &&
           typeof endOffset === 'number' &&
-          isPendingFencedCode(contentRef.current, startOffset, endOffset);
+          isPendingFencedCode(contentRef.current, startOffset, endOffset, code);
         return (
           <div className="group/code relative max-w-full" data-code-pending={codePending ? 'true' : undefined}>
             {lang && (

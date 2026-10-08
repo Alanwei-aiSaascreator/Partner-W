@@ -1,22 +1,46 @@
 /**
- * 「流式中还没写完的围栏代码块」判据（2026-10-08 对话可视化改造 · Task 6）。
+ * 「流式中还没写完的围栏代码块」判据（2026-10-08 对话可视化改造 · Task 6；R7 重写）。
  *
  * 用途：流式渲染时，**尚未闭合**的代码块要打虚线占位（`.prose-chat [data-code-pending] pre`），
  * 闭合后整体套样式（复刻包实测的渲染时机策略：代码块先占位、闭合后整体套用）。
  *
- * ## 为什么不是"裸文本围栏扫描器"（Codex 审核 P2 / Task 6 补充）
+ * ## 为什么不是"裸文本围栏扫描器"（Codex 审核 P2 / R7）
  *
- * 计数法（奇偶）在 CommonMark 反例下是错的：4 反引号开 + 3 反引号闭、```/~~~ 混用、
- * 内容里含短围栏 —— 都会误判。本函数**不自己划块**：它只在**解析器（remark/react-markdown）
- * 已经给出的 code 节点**上回答两个问题（token/AST + 源位置核对）：
- *   ① 这个节点是不是**贴到文档末尾**的？（没贴边 ⇒ 后面还有内容 ⇒ 它已闭合）；
- *   ② 它的源片段里有没有**合法的闭合围栏行**（同字符、长度 ≥ 开启、行内只余空白）？
- * 容器（引用/列表）由解析器负责；这里只剥**引用标记**再判行（列表缩进由 ≤3 空格的
- * CommonMark 规则覆盖常见情形）。docgen/htmlgen 不走本判据（调用方在那之前就分支了）。
+ * 计数法与"剥引用标记再正则"都有真实反例：4 反引号开 + 3 反引号闭、```/~~~ 混用、
+ * 列表里缩进 4 空格的闭合围栏、根级代码正文里字面量 `> \`\`\``（不是容器）——
+ * 固定缩进/字符剥离都会误判。本函数**不重扫围栏**，改用解析器已经给出的两样东西做
+ * **行数对齐**（token/AST + 源位置）：
+ *
+ *   - `startOffset/endOffset`：解析器给出的该 code 节点在原文里的跨度；
+ *   - `codeText`：解析器给出的**代码正文**（容器前缀已被剥掉，行结构原样保留）。
+ *
+ * 事实：围栏内的正文按**原样行**保留（一个内容行 ↔ 原文一个行，只差容器前缀）。
+ * 因此 —— 未闭合 ⇒ 原始段落行数与 codeText 行数**一一对齐**；已闭合 ⇒ 原始段落里
+ * 多出**一行闭合围栏**（行数 = codeText + 1）。多出来即闭合。不猜容器前缀、不做
+ * 任何按内容剥字符的操作（那会把代码正文里的字面量 `> \`\`\`` 错当闭合符）。
  */
 
-/** 解析器给出的节点位置（hast `node.position`，offsets 基于**原文**字符）。 */
-export function isPendingFencedCode(content: string, startOffset: number, endOffset: number): boolean {
+/** 去掉尾部空白行（两侧对齐前统一口径；代码块尾随空行不计结构）。 */
+function trimTrailingBlankLines(lines: readonly string[]): string[] {
+  let end = lines.length;
+  while (end > 0 && (lines[end - 1] ?? '').trim() === '') end -= 1;
+  return lines.slice(0, end);
+}
+
+/**
+ * 解析器给出的节点位置（hast `node.position`，offsets 基于**原文**字符）+ 代码正文。
+ *
+ * @param content    当前 Markdown 原文
+ * @param startOffset 该 code 节点在原文中的起始偏移（hast position.start.offset）
+ * @param endOffset   该 code 节点在原文中的结束偏移（hast position.end.offset）
+ * @param codeText    该代码块的正文（组件已从 children 展平，容器前缀已由解析器剥掉）
+ */
+export function isPendingFencedCode(
+  content: string,
+  startOffset: number,
+  endOffset: number,
+  codeText: string,
+): boolean {
   if (!Number.isFinite(startOffset) || !Number.isFinite(endOffset)) return false;
   if (startOffset < 0 || endOffset <= startOffset || endOffset > content.length) return false;
   // ① 只有**贴到文档末尾**（忽略尾部空白）的代码块才可能是"还在写"的那一块。
@@ -24,17 +48,14 @@ export function isPendingFencedCode(content: string, startOffset: number, endOff
   if (endOffset < trimmedLength) return false;
 
   const slice = content.slice(startOffset, endOffset);
-  const lines = slice.split('\n');
-  const opener = /^ {0,3}(`{3,}|~{3,})/.exec(lines[0] ?? '');
-  if (!opener) return false; // 缩进代码（无围栏）等：不是本判据的对象
+  const firstNewline = slice.indexOf('\n');
+  const firstLine = firstNewline === -1 ? slice : slice.slice(0, firstNewline);
+  // ② 只处理**围栏**代码块（≤3 空格 + 可选引用标记后是 ```/~~~）；缩进代码不在本判据范围。
+  if (!/^(?: {0,3}> ?)* {0,3}(`{3,}|~{3,})/.test(firstLine)) return false;
 
-  const marker = opener[1]!;
-  const fenceChar = marker[0] === '`' ? '`' : '~';
-  const closerRe = new RegExp(`^ {0,3}${fenceChar}{${marker.length},}\\s*$`);
-  for (let i = 1; i < lines.length; i += 1) {
-    // ② 源片段里出现合法闭合行 ⇒ 已闭合。引用标记在原文里还在：剥掉再判。
-    const line = (lines[i] ?? '').replace(/^(?: *> ?)+/, '');
-    if (closerRe.test(line)) return false;
-  }
-  return true;
+  const rawBody = firstNewline === -1 ? [] : slice.slice(firstNewline + 1).split('\n');
+  const rawBodyLines = trimTrailingBlankLines(rawBody);
+  const codeLines = trimTrailingBlankLines(codeText.split('\n'));
+  // ③ 行数对齐：未闭合 ⇒ raw body 与 codeText 一一行对齐（相等）；已闭合 ⇒ raw 多一行围栏。
+  return rawBodyLines.length <= codeLines.length;
 }
