@@ -536,6 +536,7 @@
     "visionFallbackSwitched": "已為該圖片使用支援看圖的模型：{{model}}",
     "visionUnavailable": "圖片辨識暫時無法使用：本次訊息會照常送出，但圖片可能無法被辨識。",
     "waiting": {
+      "awaitingAnswer": "等待你的回答",
       "awaitingApproval": "等待批准：{{what}}",
       "line": {
         "fresh0": "等待回應",
@@ -564,6 +565,9 @@
     "htmlgenBlock": "網頁內容（成品見右側「產物」）",
     "noVisibleAnswer": "助手沒有返回可顯示的內容，請重試。",
     "retryHint": "重發上一則訊息，會再扣一次積分",
+    "thinking": {
+      "title": "深度思考"
+    },
     "toolCallSummary": "已執行 {{count}} 次工具呼叫",
     "toolCallSummaryWithErrors": "已執行 {{count}} 次工具呼叫（{{errorCount}} 次失敗）"
   },
@@ -2521,10 +2525,13 @@
       "cannotContinue": "這一步暫時無法完成。",
       "continueWithMaterials": "跳過這個失敗",
       "degradedContinue": "這一步已跳過，可以繼續提問。",
+      "localTransfer": "本機檔案不能用這種方式傳輸（目前沒有配對裝置），請改用本機讀寫",
+      "missingParam": "缺少必要參數（{{param}}）",
       "network": "聯網資料暫時不可用，可重試",
       "rateLimit": "請求過於頻繁，稍後重試即可",
       "retryAction": "重新嘗試",
-      "timeout": "這一步等待逾時，可重試"
+      "timeout": "這一步等待逾時，可重試",
+      "toolUnavailable": "這個工具在目前環境中無法使用"
     },
     "failureClass": {
       "network": "錯誤類別：網路無法使用",

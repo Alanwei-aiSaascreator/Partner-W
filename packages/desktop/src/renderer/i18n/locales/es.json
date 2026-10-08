@@ -536,6 +536,7 @@
     "visionFallbackSwitched": "Se ha usado un modelo con visión para esta imagen: {{model}}",
     "visionUnavailable": "El reconocimiento de imágenes no está disponible temporalmente: el mensaje se enviará igualmente, pero puede que la imagen no se reconozca.",
     "waiting": {
+      "awaitingAnswer": "Esperando tu respuesta",
       "awaitingApproval": "Esperando aprobación: {{what}}",
       "line": {
         "fresh0": "Esperando una respuesta",
@@ -564,6 +565,9 @@
     "htmlgenBlock": "Contenido de la página (el archivo aparece en 产物 a la derecha)",
     "noVisibleAnswer": "El asistente no devolvió una respuesta visible. Inténtalo de nuevo.",
     "retryHint": "Reenviar el mensaje anterior: se cobrará otra vez",
+    "thinking": {
+      "title": "Pensamiento profundo"
+    },
     "toolCallSummary": "{{count}} llamadas a herramientas ejecutadas",
     "toolCallSummaryWithErrors": "{{count}} llamadas a herramientas ejecutadas ({{errorCount}} fallaron)"
   },
@@ -2521,10 +2525,13 @@
       "cannotContinue": "Este paso no se puede completar por ahora.",
       "continueWithMaterials": "Omitir este fallo",
       "degradedContinue": "Este paso se omitió; puedes seguir preguntando.",
+      "localTransfer": "Los archivos locales no se pueden transferir así (no hay dispositivo vinculado); use el acceso local",
+      "missingParam": "Falta un parámetro obligatorio ({{param}})",
       "network": "Las fuentes en línea no están disponibles temporalmente; puedes reintentarlo",
       "rateLimit": "Demasiadas solicitudes: vuelve a intentarlo en un momento",
       "retryAction": "Reintentar",
-      "timeout": "Este paso agotó el tiempo; puedes reintentarlo"
+      "timeout": "Este paso agotó el tiempo; puedes reintentarlo",
+      "toolUnavailable": "Esta herramienta no está disponible en este entorno"
     },
     "failureClass": {
       "network": "Tipo de error: red no disponible",

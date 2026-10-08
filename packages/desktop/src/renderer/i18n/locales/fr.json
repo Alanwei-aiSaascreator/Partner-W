@@ -536,6 +536,7 @@
     "visionFallbackSwitched": "Un modèle capable de vision a été utilisé pour cette image : {{model}}",
     "visionUnavailable": "La reconnaissance d’images est temporairement indisponible : votre message sera quand même envoyé, mais l’image risque de ne pas être reconnue.",
     "waiting": {
+      "awaitingAnswer": "En attente de votre réponse",
       "awaitingApproval": "En attente d'approbation : {{what}}",
       "line": {
         "fresh0": "En attente d’une réponse",
@@ -564,6 +565,9 @@
     "htmlgenBlock": "Contenu de la page (le fichier apparaît dans 产物 à droite)",
     "noVisibleAnswer": "L’assistant n’a renvoyé aucune réponse visible. Veuillez réessayer.",
     "retryHint": "Renvoyer le message précédent — une nouvelle consommation sera facturée",
+    "thinking": {
+      "title": "Réflexion approfondie"
+    },
     "toolCallSummary": "{{count}} appels d'outil exécutés",
     "toolCallSummaryWithErrors": "{{count}} appels d'outil exécutés ({{errorCount}} échoués)"
   },
@@ -2521,10 +2525,13 @@
       "cannotContinue": "Cette étape ne peut pas être terminée pour le moment.",
       "continueWithMaterials": "Ignorer cet échec",
       "degradedContinue": "Cette étape a été ignorée ; vous pouvez continuer à poser vos questions.",
+      "localTransfer": "Les fichiers locaux ne peuvent pas être transférés ainsi (aucun appareil appairé) ; utilisez l'accès local",
+      "missingParam": "Paramètre requis manquant ({{param}})",
       "network": "Les sources en ligne sont temporairement indisponibles ; vous pouvez réessayer",
       "rateLimit": "Trop de requêtes — réessayez dans un instant",
       "retryAction": "Réessayer",
-      "timeout": "Cette étape a expiré ; vous pouvez réessayer"
+      "timeout": "Cette étape a expiré ; vous pouvez réessayer",
+      "toolUnavailable": "Cet outil n'est pas disponible dans cet environnement"
     },
     "failureClass": {
       "network": "Type d’erreur : réseau indisponible",

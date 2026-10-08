@@ -536,6 +536,7 @@
     "visionFallbackSwitched": "Foi usado um modelo com visão para esta imagem: {{model}}",
     "visionUnavailable": "O reconhecimento de imagens está temporariamente indisponível: a mensagem será enviada normalmente, mas a imagem pode não ser reconhecida.",
     "waiting": {
+      "awaitingAnswer": "Aguardando sua resposta",
       "awaitingApproval": "Aguardando aprovação: {{what}}",
       "line": {
         "fresh0": "Aguardando uma resposta",
@@ -564,6 +565,9 @@
     "htmlgenBlock": "Conteúdo da página (o arquivo aparece em 产物 à direita)",
     "noVisibleAnswer": "O assistente não retornou uma resposta visível. Tente novamente.",
     "retryHint": "Reenviar a mensagem anterior — será cobrado novamente",
+    "thinking": {
+      "title": "Pensamento profundo"
+    },
     "toolCallSummary": "{{count}} chamadas de ferramenta executadas",
     "toolCallSummaryWithErrors": "{{count}} chamadas de ferramenta executadas ({{errorCount}} falharam)"
   },
@@ -2521,10 +2525,13 @@
       "cannotContinue": "Esta etapa não pode ser concluída no momento.",
       "continueWithMaterials": "Ignorar esta falha",
       "degradedContinue": "Esta etapa foi ignorada — você pode continuar perguntando.",
+      "localTransfer": "Arquivos locais não podem ser transferidos desta forma (sem dispositivo emparelhado); use o acesso local",
+      "missingParam": "Parâmetro obrigatório ausente ({{param}})",
       "network": "As fontes online estão temporariamente indisponíveis — você pode tentar novamente",
       "rateLimit": "Demasiadas solicitações — tente novamente em instantes",
       "retryAction": "Tentar novamente",
-      "timeout": "Esta etapa expirou; você pode tentar de novo"
+      "timeout": "Esta etapa expirou; você pode tentar de novo",
+      "toolUnavailable": "Esta ferramenta não está disponível neste ambiente"
     },
     "failureClass": {
       "network": "Tipo de erro: rede indisponível",

@@ -536,6 +536,7 @@
     "visionFallbackSwitched": "已为该图片使用支持看图的模型：{{model}}",
     "visionUnavailable": "图片识别暂时不可用：本次消息会照常发送，但图片可能无法被识别。",
     "waiting": {
+      "awaitingAnswer": "等待你的回答",
       "awaitingApproval": "等待批准：{{what}}",
       "line": {
         "fresh0": "等待响应",
@@ -564,6 +565,9 @@
     "htmlgenBlock": "网页内容（成品见右侧「产物」）",
     "noVisibleAnswer": "助手没有返回可显示的内容，请重试。",
     "retryHint": "重发上一条消息，会再扣一次积分",
+    "thinking": {
+      "title": "深度思考"
+    },
     "toolCallSummary": "执行了 {{count}} 个工具调用",
     "toolCallSummaryWithErrors": "执行了 {{count}} 个工具调用（{{errorCount}} 个失败）"
   },
@@ -2521,10 +2525,13 @@
       "cannotContinue": "这一步暂时无法完成。",
       "continueWithMaterials": "跳过这个失败",
       "degradedContinue": "这一步已跳过，可以继续提问。",
+      "localTransfer": "本地文件不能用这种方式传输（当前没有配对设备），请改用本地读写",
+      "missingParam": "缺少必要参数（{{param}}）",
       "network": "联网资料暂时不可用，可重试",
       "rateLimit": "请求过于频繁，稍后重试即可",
       "retryAction": "重新尝试",
-      "timeout": "这一步等待超时，可重试"
+      "timeout": "这一步等待超时，可重试",
+      "toolUnavailable": "这个工具在当前环境中不可用"
     },
     "failureClass": {
       "network": "错误类别：网络不可用",

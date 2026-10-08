@@ -536,6 +536,7 @@
     "visionFallbackSwitched": "この画像には画像を認識できるモデルを使用しました：{{model}}",
     "visionUnavailable": "画像認識は一時的に利用できません：このメッセージはそのまま送信されますが、画像が認識されない可能性があります。",
     "waiting": {
+      "awaitingAnswer": "回答を待っています",
       "awaitingApproval": "承認待ち：{{what}}",
       "line": {
         "fresh0": "応答を待っています",
@@ -564,6 +565,9 @@
     "htmlgenBlock": "ページ内容（完成品は右側の「産物」に表示されます）",
     "noVisibleAnswer": "アシスタントから表示できる回答が返されませんでした。もう一度お試しください。",
     "retryHint": "前のメッセージを再送します（もう一度消費されます）",
+    "thinking": {
+      "title": "深い思考"
+    },
     "toolCallSummary": "{{count}} 件のツール呼び出しを実行",
     "toolCallSummaryWithErrors": "{{count}} 件のツール呼び出しを実行（{{errorCount}} 件失敗）"
   },
@@ -2521,10 +2525,13 @@
       "cannotContinue": "この手順は現在完了できません。",
       "continueWithMaterials": "この失敗をスキップ",
       "degradedContinue": "この手順はスキップしました。続けて質問できます。",
+      "localTransfer": "ローカルファイルはこの方法では転送できません（ペアリングされたデバイスがありません）。ローカルの読み書きをご利用ください",
+      "missingParam": "必須パラメータがありません（{{param}}）",
       "network": "オンライン資料は一時的に利用できません。再試行できます",
       "rateLimit": "リクエストが多すぎます。少し後で再試行してください",
       "retryAction": "再試行",
-      "timeout": "このステップはタイムアウトしました。再試行できます"
+      "timeout": "このステップはタイムアウトしました。再試行できます",
+      "toolUnavailable": "このツールは現在の環境では利用できません"
     },
     "failureClass": {
       "network": "エラーの種類：ネットワーク利用不可",

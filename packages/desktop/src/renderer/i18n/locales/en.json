@@ -536,6 +536,7 @@
     "visionFallbackSwitched": "Switched to a vision-capable model for this image: {{model}}",
     "visionUnavailable": "Image recognition is temporarily unavailable: your message will still be sent, but the image may not be recognized.",
     "waiting": {
+      "awaitingAnswer": "Waiting for your answer",
       "awaitingApproval": "Waiting for approval: {{what}}",
       "line": {
         "fresh0": "Waiting for a response",
@@ -564,6 +565,9 @@
     "htmlgenBlock": "Page content (the file appears in 产物 on the right)",
     "noVisibleAnswer": "The assistant returned no visible answer. Please try again.",
     "retryHint": "Resend the previous message — you'll be charged again",
+    "thinking": {
+      "title": "Deep thinking"
+    },
     "toolCallSummary": "{{count}} tool calls executed",
     "toolCallSummaryWithErrors": "{{count}} tool calls executed ({{errorCount}} failed)"
   },
@@ -2521,10 +2525,13 @@
       "cannotContinue": "This step can't be completed right now.",
       "continueWithMaterials": "Skip this failure",
       "degradedContinue": "This step was skipped — you can keep asking questions.",
+      "localTransfer": "Local files cannot be transferred this way (no paired device); use local file access instead",
+      "missingParam": "Missing required parameter ({{param}})",
       "network": "Online sources are temporarily unavailable — you can retry",
       "rateLimit": "Too many requests — try again shortly",
       "retryAction": "Try again",
-      "timeout": "This step timed out; you can retry"
+      "timeout": "This step timed out; you can retry",
+      "toolUnavailable": "This tool isn't available in this environment"
     },
     "failureClass": {
       "network": "Failure type: network unavailable",

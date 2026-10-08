@@ -536,6 +536,7 @@
     "visionFallbackSwitched": "Für dieses Bild wurde ein bilderkennendes Modell verwendet: {{model}}",
     "visionUnavailable": "Bilderkennung ist vorübergehend nicht verfügbar: Ihre Nachricht wird trotzdem gesendet, das Bild kann jedoch nicht erkannt werden.",
     "waiting": {
+      "awaitingAnswer": "Warte auf deine Antwort",
       "awaitingApproval": "Warte auf Genehmigung: {{what}}",
       "line": {
         "fresh0": "Warte auf eine Antwort",
@@ -564,6 +565,9 @@
     "htmlgenBlock": "Seiteninhalt (die Datei erscheint rechts unter 产物)",
     "noVisibleAnswer": "Der Assistent hat keine sichtbare Antwort zurückgegeben. Bitte versuchen Sie es erneut.",
     "retryHint": "Vorherige Nachricht erneut senden – es wird erneut abgerechnet",
+    "thinking": {
+      "title": "Tiefes Nachdenken"
+    },
     "toolCallSummary": "{{count}} Tool-Aufrufe ausgefuehrt",
     "toolCallSummaryWithErrors": "{{count}} Tool-Aufrufe ausgefuehrt ({{errorCount}} fehlgeschlagen)"
   },
@@ -2521,10 +2525,13 @@
       "cannotContinue": "Dieser Schritt kann derzeit nicht abgeschlossen werden.",
       "continueWithMaterials": "Diesen Fehler überspringen",
       "degradedContinue": "Dieser Schritt wurde übersprungen – du kannst weiter Fragen stellen.",
+      "localTransfer": "Lokale Dateien können so nicht übertragen werden (kein gekoppeltes Gerät); nutzen Sie den lokalen Zugriff",
+      "missingParam": "Erforderlicher Parameter fehlt ({{param}})",
       "network": "Online-Quellen sind vorübergehend nicht verfügbar – ein erneuter Versuch ist möglich",
       "rateLimit": "Zu viele Anfragen — bitte kurz darauf erneut versuchen",
       "retryAction": "Erneut versuchen",
-      "timeout": "Dieser Schritt hat das Zeitlimit überschritten; ein erneuter Versuch ist möglich"
+      "timeout": "Dieser Schritt hat das Zeitlimit überschritten; ein erneuter Versuch ist möglich",
+      "toolUnavailable": "Dieses Tool ist in dieser Umgebung nicht verfügbar"
     },
     "failureClass": {
       "network": "Fehlertyp: Netzwerk nicht verfügbar",

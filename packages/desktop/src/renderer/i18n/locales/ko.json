@@ -536,6 +536,7 @@
     "visionFallbackSwitched": "이 이미지에는 이미지 인식이 가능한 모델을 사용했습니다: {{model}}",
     "visionUnavailable": "이미지 인식을 일시적으로 사용할 수 없습니다: 메시지는 그대로 전송되지만 이미지가 인식되지 않을 수 있습니다.",
     "waiting": {
+      "awaitingAnswer": "답변을 기다리는 중",
       "awaitingApproval": "승인 대기 중: {{what}}",
       "line": {
         "fresh0": "응답을 기다리고 있습니다",
@@ -564,6 +565,9 @@
     "htmlgenBlock": "페이지 내용(완성본은 오른쪽 「产物」에 표시됩니다)",
     "noVisibleAnswer": "도우미가 표시할 수 있는 답변을 반환하지 않았습니다. 다시 시도해 주세요.",
     "retryHint": "이전 메시지를 다시 보냅니다 (요금이 한 번 더 차감됩니다)",
+    "thinking": {
+      "title": "깊은 사고"
+    },
     "toolCallSummary": "{{count}}개 도구 호출 실행됨",
     "toolCallSummaryWithErrors": "{{count}}개 도구 호출 실행됨 ({{errorCount}}개 실패)"
   },
@@ -2521,10 +2525,13 @@
       "cannotContinue": "이 단계는 지금 완료할 수 없습니다.",
       "continueWithMaterials": "이 실패 건너뛰기",
       "degradedContinue": "이 단계는 건너뛰었습니다. 계속 질문할 수 있습니다.",
+      "localTransfer": "로컬 파일은 이 방식으로 전송할 수 없습니다(페어링된 장치 없음). 로컬 읽기/쓰기를 사용하세요",
+      "missingParam": "필수 매개변수가 없습니다({{param}})",
       "network": "온라인 자료를 일시적으로 사용할 수 없습니다. 다시 시도할 수 있습니다",
       "rateLimit": "요청이 너무 많습니다. 잠시 후 다시 시도하세요",
       "retryAction": "다시 시도",
-      "timeout": "이 단계가 시간 초과되었습니다. 다시 시도할 수 있습니다"
+      "timeout": "이 단계가 시간 초과되었습니다. 다시 시도할 수 있습니다",
+      "toolUnavailable": "이 도구는 현재 환경에서 사용할 수 없습니다"
     },
     "failureClass": {
       "network": "오류 유형: 네트워크 사용 불가",
