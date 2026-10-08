@@ -566,3 +566,61 @@ describe('debugToolFailures（原始失败载荷进 console）', () => {
     spy.mockRestore();
   });
 });
+
+describe('G5 regression: stack shapes and ordinary diagnostics', () => {
+  it.each([
+    ['at least one file is required', 'at least one file is required'],
+    ['at noon the meeting starts', 'at noon the meeting starts'],
+    ['at 12:30 the meeting starts', 'at 12:30 the meeting starts'],
+    ['at 12:30', 'at 12:30'],
+    ['at docs (see appendix)', 'at docs (see appendix)'],
+    ['at least (one) file is required', 'at least (one) file is required'],
+    ['Traceback is a debugging concept', 'Traceback is a debugging concept'],
+    [
+      'Traceback (most recent call last): explanation follows',
+      'Traceback (most recent call last): explanation follows',
+    ],
+    ['File "x.py", line 3 is missing from the input', 'File "x.py", line 3 is missing from the input'],
+    ['File "x.py", line 3, checksum mismatch', 'File "x.py", line 3, checksum mismatch'],
+    ['读取了 3 个文件，其中 1 个不可用', '读取了 3 个文件，其中 1 个不可用'],
+    ['Command exited with code 1', 'Command exited with code 1'],
+    ['Error: boom', 'Error: boom'],
+    ['ValueError: boom', 'ValueError: boom'],
+    ['正文\nat least one file is required\n请保留这一行', '正文\nat least one file is required\n请保留这一行'],
+    [
+      '文件不足\r\nat least one file is required\r\n请保留这一行',
+      '文件不足\nat least one file is required\n请保留这一行',
+    ],
+    ['业务说明\n    at run (C:\\app\\main.js:1:1)', '业务说明'],
+    ['业务说明\n    at Object.<anonymous> (D:/new project/main.ts:12:3)', '业务说明'],
+    ['业务说明\n    at run (D:/new project/report final.js:12:3)', '业务说明'],
+    ['业务说明\n    at node:internal/process/task_queues:95:5', '业务说明'],
+    ['业务说明\n    at async run (node:internal/process/task_queues:95:5)', '业务说明'],
+    ['业务说明\n    at /tmp/main.js:12:3', '业务说明'],
+    ['业务说明\n    at file:///tmp/main.mjs:12:3', '业务说明'],
+    ['业务说明\n    at https://example.com/app.js:12:3', '业务说明'],
+    ['业务说明\n    at Array.forEach (native)', '业务说明'],
+    ['业务说明\n    at Promise.all (index 0)', '业务说明'],
+    ['业务说明\n    at eval (eval at run (main.js:1:1), <anonymous>:1:2)', '业务说明'],
+    ['业务说明\n    at <anonymous>', '业务说明'],
+    ['业务说明\nTraceback (most recent call last):', '业务说明'],
+    ['业务说明\n  File "x.py", line 3, in <module>', '业务说明'],
+    ['业务说明\n  File "x.py", line 3', '业务说明'],
+    ['业务说明\n  File "D:\\new project\\x.py", line 3, in run', '业务说明'],
+    [
+      '中文业务说明\nTraceback (most recent call last):\n  File "x.py", line 3, in <module>\nValueError: boom',
+      '中文业务说明\nValueError: boom',
+    ],
+    [
+      'Error: boom\n    at run (D:/app/main.js:12:3)\nat least one file is required',
+      'Error: boom\nat least one file is required',
+    ],
+    ['fetch https://api.example.com/v1/chat failed', 'fetch https://api.example.com/v1/chat failed'],
+    ['progress 10/12 pages', 'progress 10/12 pages'],
+    ['读取 C:/new project/report.docx，参考 https://example.com/a/b', '读取 report.docx，参考 https://example.com/a/b'],
+    ['"C:\\Users\\John Doe\\secret\\report final.docx"', '"report final.docx"'],
+    ['"\\\\server\\private\\report.docx"', '"report.docx"'],
+  ])('keeps the business diagnostic and removes only frames: %s', (input, expected) => {
+    expect(sanitizeToolText(input)).toBe(expected);
+  });
+});

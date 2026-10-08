@@ -179,10 +179,16 @@ export function maskLocalPaths(text: string): string {
 }
 
 /** 上屏前的完整清洗：剥样板 + 遮路径 + 折叠多余空白。 */
+// Match complete runtime frame shapes, never an ordinary word prefix.
+const JS_STACK_FRAME_RE =
+  /^[ \t]*at[ \t]+(?:[^\r\n]+\((?:[^\r\n]+:\d+:\d+|native|<anonymous>|index \d+)\)|[^\s()\r\n]+:\d+:\d+|<anonymous>)[ \t]*$/;
+const PYTHON_STACK_LINE_RE =
+  /^[ \t]*(?:Traceback \(most recent call last\):|File "[^"\r\n]+", line \d+(?:, in [^\r\n]+)?)[ \t]*$/;
+
 export function sanitizeToolText(text: string): string {
   return maskLocalPaths(stripRuntimeBoilerplate(text))
     .split(/\r?\n/)
-    .filter((line) => !/^\s*(?:at\s.+|Traceback\b|File ".+", line \d+)/.test(line))
+    .filter((line) => !JS_STACK_FRAME_RE.test(line) && !PYTHON_STACK_LINE_RE.test(line))
     .join('\n')
     .replace(/[ \t]{2,}/g, ' ')
     .trim();

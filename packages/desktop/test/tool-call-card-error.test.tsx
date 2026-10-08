@@ -224,3 +224,25 @@ describe('ToolCallCard 的失败原因', () => {
     unmount();
   });
 });
+
+describe('G5 regression: real tool result details keep ordinary text', () => {
+  it.each([
+    ['done', 'at least one file is required', 'at least one file is required'],
+    ['done', 'Traceback is a debugging concept', 'Traceback is a debugging concept'],
+    ['done', 'Error: boom\n    at run (D:/app/main.js:12:3)', 'Error: boom'],
+    ['error', 'at least one file is required', 'at least one file is required'],
+    ['error', 'Traceback is a debugging concept', 'Traceback is a debugging concept'],
+    ['error', 'Error: boom\n    at run (D:/app/main.js:12:3)', 'Error: boom'],
+  ] as const)('%s result remains readable: %s', (status, result, expected) => {
+    const { container, unmount } = render(
+      <ToolCallCard toolCall={call({ name: 'read', status, result })} defaultOpen />,
+    );
+    try {
+      const detail = container.querySelector('.tool-row__details')?.textContent ?? '';
+      expect(detail).toContain(expected);
+      expect(detail).not.toContain('at run');
+    } finally {
+      unmount();
+    }
+  });
+});
