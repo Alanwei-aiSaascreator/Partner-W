@@ -81,6 +81,7 @@
     "open": "開啟",
     "openFailed": "開啟失敗：檔案可能已損毀或未寫完",
     "openFailedHint": "可先「在資料夾中顯示」後手動開啟；仍打不開請重新生成。",
+    "preview": "預覽",
     "recoveryHint": "請重新產生此檔案，或將它還原到工作區後再操作。",
     "refresh": "重新整理成果",
     "saveAs": "另存新檔",
@@ -1909,6 +1910,7 @@
   "rightPanel": {
     "archivedArtifacts": "歷史與問題檔案",
     "artifacts": "產出檔案",
+    "backToList": "返回列表",
     "context": "上下文",
     "contextUsage": "上下文",
     "historyArtifacts": "歷史產物",

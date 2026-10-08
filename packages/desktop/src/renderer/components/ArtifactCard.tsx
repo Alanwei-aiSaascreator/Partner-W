@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
 import type { Artifact } from '@clawwork/shared';
-import { Check, Copy, ExternalLink, FileWarning, FolderOpen, Loader2, Save } from 'lucide-react';
+import { Check, Copy, ExternalLink, Eye, FileWarning, FolderOpen, Loader2, Save } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { cn, formatFileSize, formatRelativeTime } from '@/lib/utils';
 import { copyTextToClipboard } from '@/lib/clipboard';
 import { getArtifactLabel } from '@/lib/artifact-labels';
 import { fileExtensionOf, openFailureKind, openFailureMessageKey, type OpenFailureKind } from '@/lib/open-failure';
+import type { ArtifactPreviewAction } from '@/lib/artifact-preview-navigation';
 import ArtifactThumbnail from '@/components/ArtifactThumbnail';
 import { Button } from '@/components/ui/button';
 
@@ -14,6 +15,11 @@ interface ArtifactCardProps {
   assistantLabel?: string;
   compact?: boolean;
   onSelectMessage?: (messageId: string) => void;
+  /**
+   * 「在右侧预览」（WorkBuddy A 批 Task 3）。缺省不渲染该动作 ——
+   * FileBrowser 等旧调用方零变化；动作本体在 `artifact-preview-navigation`（选中 + 面板模式）。
+   */
+  onPreview?: ArtifactPreviewAction;
 }
 
 type ActionState = 'idle' | 'saving' | 'saved' | 'cancelled' | 'error';
@@ -38,6 +44,7 @@ export default function ArtifactCard({
   assistantLabel,
   compact = false,
   onSelectMessage,
+  onPreview,
 }: ArtifactCardProps) {
   const { t } = useTranslation();
   const [state, setState] = useState<ActionState>('idle');
@@ -181,6 +188,20 @@ export default function ArtifactCard({
           ) : null}
           <span className="truncate">{statusLabel}</span>
         </span>
+        {onPreview ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            data-action="artifact-preview"
+            aria-label={t('artifactCard.preview')}
+            title={t('artifactCard.preview')}
+            onClick={() => onPreview(artifact)}
+          >
+            <Eye size={14} />
+            {!compact ? t('artifactCard.preview') : null}
+          </Button>
+        ) : null}
         <Button
           type="button"
           variant="ghost"

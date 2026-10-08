@@ -81,6 +81,7 @@
     "open": "Abrir",
     "openFailed": "Falha ao abrir: o arquivo pode estar corrompido ou incompleto",
     "openFailedHint": "Mostre-o na pasta e abra manualmente; se ainda assim não abrir, gere novamente.",
+    "preview": "Pré-visualizar",
     "recoveryHint": "Gere o arquivo novamente ou restaure-o no espaço de trabalho.",
     "refresh": "Atualizar resultados",
     "saveAs": "Salvar como",
@@ -1909,6 +1910,7 @@
   "rightPanel": {
     "archivedArtifacts": "Versões antigas e arquivos com problemas",
     "artifacts": "Artefatos",
+    "backToList": "Voltar à lista",
     "context": "Contexto",
     "contextUsage": "Contexto",
     "historyArtifacts": "Histórico",

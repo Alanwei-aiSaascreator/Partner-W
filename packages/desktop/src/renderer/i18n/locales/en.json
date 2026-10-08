@@ -81,6 +81,7 @@
     "open": "Open",
     "openFailed": "Could not open: the file may be corrupted or incomplete",
     "openFailedHint": "Show it in the folder and open it manually; if it still will not open, regenerate it.",
+    "preview": "Preview",
     "recoveryHint": "Regenerate this file or restore it to the workspace to use these actions.",
     "refresh": "Refresh results",
     "saveAs": "Save as",
@@ -1909,6 +1910,7 @@
   "rightPanel": {
     "archivedArtifacts": "Older & problem files",
     "artifacts": "Artifacts",
+    "backToList": "Back to list",
     "context": "Context",
     "contextUsage": "Context",
     "historyArtifacts": "History",

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown, ChevronRight, FileText, RefreshCw } from 'lucide-react';
+import { ArrowLeft, ChevronDown, ChevronRight, FileText, RefreshCw } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useTaskStore } from '@/stores/taskStore';
 import { useMessageStore } from '@/stores/messageStore';
@@ -9,10 +9,12 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import type { Artifact } from '@clawwork/shared';
 import PanelHeader from '@/components/semantic/PanelHeader';
 import ArtifactCard from '@/components/ArtifactCard';
+import FilePreview from '@/components/FilePreview';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { buildArtifactHistory } from '@/lib/artifact-history';
 import { groupArtifactVersions } from '@/lib/artifact-versions';
+import { requestArtifactPreview } from '@/lib/artifact-preview-navigation';
 import { toast } from '@/lib/toast';
 import { useTeamMeetingStore } from '@/features/team-meeting/instance';
 
@@ -31,6 +33,8 @@ export default function RightPanel() {
   const setHighlightedMessage = useMessageStore((s) => s.setHighlightedMessage);
   const setMainView = useUiStore((s) => s.setMainView);
   const selectedArtifactId = useFileStore((s) => s.selectedArtifactId);
+  const artifactPanelMode = useUiStore((s) => s.artifactPanelMode);
+  const setArtifactPanelMode = useUiStore((s) => s.setArtifactPanelMode);
   const meetings = useTeamMeetingStore((s) => s.records);
   const meeting = meetings.find((record) => record.turns.some((turn) => turn.taskId === activeTaskId));
   const scopeIds = useMemo(
@@ -43,7 +47,12 @@ export default function RightPanel() {
 
   const [taskArtifacts, setTaskArtifacts] = useState<Artifact[]>([]);
   const [artifactScopeKey, setArtifactScopeKey] = useState<string | null>(null);
-  const currentTaskArtifacts = artifactScopeKey === scopeKey ? taskArtifacts : [];
+  /** ⚠️ 条件表达式必须包在 useMemo 里：否则每个 render 产出新数组引用，
+   *  下游 useMemo（versions / 预览解析）的依赖恒变、memo 白白失效（exhaustive-deps）。 */
+  const currentTaskArtifacts = useMemo(
+    () => (artifactScopeKey === scopeKey ? taskArtifacts : []),
+    [artifactScopeKey, scopeKey, taskArtifacts],
+  );
   /** 全库产物（跨会话）。与 `taskArtifacts` 是两条查询：一个查会话内、一个查全部。 */
   const [allArtifacts, setAllArtifacts] = useState<Artifact[]>([]);
   const [historyWorkspaceEpoch, setHistoryWorkspaceEpoch] = useState<number | null>(null);
@@ -138,6 +147,17 @@ export default function RightPanel() {
   );
   /** 图16（2026-10-06）：同任务默认只展示**每族最新可用版本**；旧版/问题文件折叠。 */
   const versions = useMemo(() => groupArtifactVersions(currentTaskArtifacts), [currentTaskArtifacts]);
+  /**
+   * 预览态解出的**权威对象**（Task 3）：只从**当前任务/会议范围**的成果集合里按 ID 找
+   * （不用全库、不拿历史 filePath 重造）；`missing` 的选中项不启动预览（文件已不在 ⇒
+   * 回列表；不拿"越界读取"去试）。解析不到同样回列表。
+   */
+  const previewArtifactResolved = useMemo(() => {
+    if (artifactPanelMode !== 'preview' || !selectedArtifactId) return null;
+    const match = currentTaskArtifacts.find((artifact) => artifact.id === selectedArtifactId) ?? null;
+    if (!match || match.availability === 'missing') return null;
+    return match;
+  }, [artifactPanelMode, selectedArtifactId, currentTaskArtifacts]);
   const taskTitles = useMemo(() => new Map(tasks.map((task) => [task.id, task.title])), [tasks]);
 
   /** 跳回来源会话 —— 与「文件」主视图里那条"跳转到源消息"同一套动作。 */
@@ -174,129 +194,153 @@ export default function RightPanel() {
         />
       </div>
 
-      <ScrollArea className="min-h-0 flex-1">
-        <div className="flex flex-col gap-2.5 px-3 py-3">
-          {versions.current.length === 0 && versions.archived.length === 0 ? (
-            <div className="flex items-center gap-2 px-2 py-1.5 text-[var(--text-muted)]">
-              <FileText size={14} className="shrink-0 text-[var(--text-muted)]" />
-              <span className="type-support">{t('common.noFiles')}</span>
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {versions.current.map((a) => {
-                const selected = a.taskId === activeTaskId && a.id === selectedArtifactId;
-                return (
-                  <div
-                    key={a.id}
-                    aria-current={selected ? 'true' : undefined}
-                    data-selected={selected ? 'true' : undefined}
-                    className={cn(
-                      'rounded-xl border border-transparent transition-colors',
-                      selected && 'border-[var(--border-accent)]',
-                    )}
-                  >
-                    {meeting && a.taskId !== activeTaskId && (
-                      <button
-                        data-meeting-source={a.taskId}
-                        className="type-meta px-2 py-1 text-[var(--text-muted)]"
-                        onClick={() => jumpToTask(a.taskId, a.messageId)}
-                      >
-                        {taskTitles.get(a.taskId) ?? t('rightPanel.historyUnknownTask')}
-                      </button>
-                    )}
-                    <ArtifactCard
-                      artifact={a}
-                      compact
-                      onSelectMessage={(messageId) => jumpToTask(a.taskId, messageId)}
-                    />
-                  </div>
-                );
-              })}
-            </div>
-          )}
-
-          {/* ── 历史与问题文件（同任务，图16）：默认折叠，不许铺满主列表 ── */}
-          {versions.archived.length > 0 && (
-            <div className="mt-1 border-t border-[var(--border)] pt-2" data-testid="artifact-archived">
-              <button
-                type="button"
-                data-action="toggle-artifact-archived"
-                aria-expanded={archiveOpen}
-                onClick={() => setArchiveOpen((open) => !open)}
-                className="glow-focus flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
-              >
-                {archiveOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                <span className="type-support">
-                  {t('rightPanel.archivedArtifacts')} ({versions.archived.length})
-                </span>
-              </button>
-              {archiveOpen && (
-                <div className="mt-1.5 space-y-2">
-                  {versions.archived.map((a) => (
-                    <ArtifactCard
-                      key={a.id}
-                      artifact={a}
-                      compact
-                      onSelectMessage={(messageId) => jumpToTask(a.taskId, messageId)}
-                    />
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* ── 历史产物（跨会话）：没有就整块不渲染 ── */}
-          {history.groups.length > 0 && (
-            <div className="mt-1 border-t border-[var(--border)] pt-2" data-testid="artifact-history">
-              <button
-                type="button"
-                data-action="toggle-artifact-history"
-                aria-expanded={historyOpen}
-                onClick={() => setHistoryOpen((open) => !open)}
-                className="glow-focus flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
-              >
-                {historyOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                <span className="type-support">
-                  {t('rightPanel.historyArtifacts')} ({history.shown})
-                </span>
-              </button>
-
-              {historyOpen && (
-                <div className="mt-1.5 space-y-3">
-                  {history.groups.map((group) => (
-                    <div key={group.taskId} data-history-task={group.taskId}>
-                      <button
-                        type="button"
-                        data-action="jump-to-task"
-                        onClick={() => jumpToTask(group.taskId, group.artifacts[0].messageId)}
-                        className="glow-focus block w-full truncate rounded-md px-2 py-0.5 text-left type-meta text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
-                      >
-                        {taskTitles.get(group.taskId) ?? t('rightPanel.historyUnknownTask')}
-                      </button>
-                      <div className="mt-1 space-y-2">
-                        {group.artifacts.map((a) => (
-                          <div key={a.id} className="rounded-xl border border-transparent">
-                            <ArtifactCard
-                              artifact={a}
-                              compact
-                              onSelectMessage={(messageId) => jumpToTask(a.taskId, messageId)}
-                            />
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                  {history.hidden > 0 && (
-                    <p className="type-meta px-2 text-[var(--text-muted)]">
-                      {t('rightPanel.historyMore', { count: history.hidden })}
-                    </p>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
+      {previewArtifactResolved ? (
+        <div className="flex min-h-0 flex-1 flex-col" data-testid="artifact-preview-pane">
+          <div className="flex shrink-0 items-center border-b border-[var(--border)] px-2 py-1.5">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              data-action="artifact-preview-back"
+              className="gap-1.5"
+              onClick={() => setArtifactPanelMode('list')}
+            >
+              <ArrowLeft size={14} />
+              {t('rightPanel.backToList')}
+            </Button>
+          </div>
+          <div className="min-h-0 flex-1">
+            <FilePreview artifact={previewArtifactResolved} onNavigateToTask={jumpToTask} />
+          </div>
         </div>
-      </ScrollArea>
+      ) : (
+        <ScrollArea className="min-h-0 flex-1">
+          <div className="flex flex-col gap-2.5 px-3 py-3">
+            {versions.current.length === 0 && versions.archived.length === 0 ? (
+              <div className="flex items-center gap-2 px-2 py-1.5 text-[var(--text-muted)]">
+                <FileText size={14} className="shrink-0 text-[var(--text-muted)]" />
+                <span className="type-support">{t('common.noFiles')}</span>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {versions.current.map((a) => {
+                  const selected = a.taskId === activeTaskId && a.id === selectedArtifactId;
+                  return (
+                    <div
+                      key={a.id}
+                      aria-current={selected ? 'true' : undefined}
+                      data-selected={selected ? 'true' : undefined}
+                      className={cn(
+                        'rounded-xl border border-transparent transition-colors',
+                        selected && 'border-[var(--border-accent)]',
+                      )}
+                    >
+                      {meeting && a.taskId !== activeTaskId && (
+                        <button
+                          data-meeting-source={a.taskId}
+                          className="type-meta px-2 py-1 text-[var(--text-muted)]"
+                          onClick={() => jumpToTask(a.taskId, a.messageId)}
+                        >
+                          {taskTitles.get(a.taskId) ?? t('rightPanel.historyUnknownTask')}
+                        </button>
+                      )}
+                      <ArtifactCard
+                        artifact={a}
+                        compact
+                        onSelectMessage={(messageId) => jumpToTask(a.taskId, messageId)}
+                        onPreview={requestArtifactPreview}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* ── 历史与问题文件（同任务，图16）：默认折叠，不许铺满主列表 ── */}
+            {versions.archived.length > 0 && (
+              <div className="mt-1 border-t border-[var(--border)] pt-2" data-testid="artifact-archived">
+                <button
+                  type="button"
+                  data-action="toggle-artifact-archived"
+                  aria-expanded={archiveOpen}
+                  onClick={() => setArchiveOpen((open) => !open)}
+                  className="glow-focus flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
+                >
+                  {archiveOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                  <span className="type-support">
+                    {t('rightPanel.archivedArtifacts')} ({versions.archived.length})
+                  </span>
+                </button>
+                {archiveOpen && (
+                  <div className="mt-1.5 space-y-2">
+                    {versions.archived.map((a) => (
+                      <ArtifactCard
+                        key={a.id}
+                        artifact={a}
+                        compact
+                        onSelectMessage={(messageId) => jumpToTask(a.taskId, messageId)}
+                        onPreview={requestArtifactPreview}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ── 历史产物（跨会话）：没有就整块不渲染 ── */}
+            {history.groups.length > 0 && (
+              <div className="mt-1 border-t border-[var(--border)] pt-2" data-testid="artifact-history">
+                <button
+                  type="button"
+                  data-action="toggle-artifact-history"
+                  aria-expanded={historyOpen}
+                  onClick={() => setHistoryOpen((open) => !open)}
+                  className="glow-focus flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
+                >
+                  {historyOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                  <span className="type-support">
+                    {t('rightPanel.historyArtifacts')} ({history.shown})
+                  </span>
+                </button>
+
+                {historyOpen && (
+                  <div className="mt-1.5 space-y-3">
+                    {history.groups.map((group) => (
+                      <div key={group.taskId} data-history-task={group.taskId}>
+                        <button
+                          type="button"
+                          data-action="jump-to-task"
+                          onClick={() => jumpToTask(group.taskId, group.artifacts[0].messageId)}
+                          className="glow-focus block w-full truncate rounded-md px-2 py-0.5 text-left type-meta text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
+                        >
+                          {taskTitles.get(group.taskId) ?? t('rightPanel.historyUnknownTask')}
+                        </button>
+                        <div className="mt-1 space-y-2">
+                          {group.artifacts.map((a) => (
+                            <div key={a.id} className="rounded-xl border border-transparent">
+                              <ArtifactCard
+                                artifact={a}
+                                compact
+                                onSelectMessage={(messageId) => jumpToTask(a.taskId, messageId)}
+                                onPreview={requestArtifactPreview}
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                    {history.hidden > 0 && (
+                      <p className="type-meta px-2 text-[var(--text-muted)]">
+                        {t('rightPanel.historyMore', { count: history.hidden })}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </ScrollArea>
+      )}
     </div>
   );
 }

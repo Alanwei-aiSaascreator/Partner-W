@@ -77,6 +77,16 @@ export interface UiState {
   toggleRightPanel: () => void;
   setRightPanelOpen: (open: boolean) => void;
 
+  /**
+   * 右侧栏的展示模式（WorkBuddy 产物 UI A 批 Task 3，2026-10-09）：
+   * `list` = 成果列表（默认）；`preview` = 单文件预览。
+   *
+   * ⚠️ **纯展示、瞬态**：不持久化、不持有 Artifact 数据（数据真源仍是 fileStore +
+   *    权威成果集合）；离开聊天 / 打开设置由 App 的视图门复位回 `list`。
+   */
+  artifactPanelMode: 'list' | 'preview';
+  setArtifactPanelMode: (mode: 'list' | 'preview') => void;
+
   mainView: MainView;
   setMainView: (view: MainView) => void;
 
@@ -296,6 +306,9 @@ export function createUiStore(deps: UiStoreDeps) {
     rightPanelOpen: false,
     toggleRightPanel: () => set((s) => ({ rightPanelOpen: !s.rightPanelOpen })),
     setRightPanelOpen: (open) => set({ rightPanelOpen: open }),
+
+    artifactPanelMode: 'list',
+    setArtifactPanelMode: (mode) => set({ artifactPanelMode: mode }),
 
     mainView: 'chat',
     setMainView: (view) => set({ mainView: view, settingsOpen: false }),

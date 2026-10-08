@@ -81,6 +81,7 @@
     "open": "Öffnen",
     "openFailed": "Öffnen fehlgeschlagen: Die Datei ist möglicherweise beschädigt oder unvollständig",
     "openFailedHint": "Im Ordner anzeigen und manuell öffnen; falls es weiterhin fehlschlägt, neu erzeugen.",
+    "preview": "Vorschau",
     "recoveryHint": "Erstellen Sie die Datei erneut oder stellen Sie sie im Arbeitsbereich wieder her.",
     "refresh": "Ergebnisse aktualisieren",
     "saveAs": "Speichern unter",
@@ -1909,6 +1910,7 @@
   "rightPanel": {
     "archivedArtifacts": "Ältere & problematische Dateien",
     "artifacts": "Artefakte",
+    "backToList": "Zurück zur Liste",
     "context": "Kontext",
     "contextUsage": "Kontext",
     "historyArtifacts": "Verlauf",

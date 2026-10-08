@@ -81,6 +81,7 @@
     "open": "Ouvrir",
     "openFailed": "Échec de l'ouverture : le fichier est peut-être corrompu ou incomplet",
     "openFailedHint": "Affichez-le dans le dossier et ouvrez-le manuellement ; s'il ne s'ouvre toujours pas, régénérez-le.",
+    "preview": "Aperçu",
     "recoveryHint": "Régénérez le fichier ou restaurez-le dans l’espace de travail.",
     "refresh": "Actualiser les résultats",
     "saveAs": "Enregistrer sous",
@@ -1909,6 +1910,7 @@
   "rightPanel": {
     "archivedArtifacts": "Versions antérieures et fichiers problématiques",
     "artifacts": "Artefacts",
+    "backToList": "À la liste",
     "context": "Contexte",
     "contextUsage": "Contexte",
     "historyArtifacts": "Historique",

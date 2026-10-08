@@ -102,6 +102,9 @@ vi.mock('../src/renderer/stores/uiStore', () => {
     theme: 'dark',
     leftNavWidth: 224,
     rightPanelWidth: 320,
+    // Task 3：App 的视图门会调用（桩必须与真实 store 同形）
+    artifactPanelMode: 'list',
+    setArtifactPanelMode: vi.fn(),
     toggleRightPanel: vi.fn(),
     setSettingsOpen: vi.fn((value: boolean) => {
       entryFactsFixture.settingsOpen = value;

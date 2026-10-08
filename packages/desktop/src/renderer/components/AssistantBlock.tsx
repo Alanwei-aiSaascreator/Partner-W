@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils';
 import { motion as motionPresets } from '@/styles/design-tokens';
 import { copyTextToClipboard } from '@/lib/clipboard';
 import { selectCurrentArtifactsForMessage, useTaskArtifacts } from '@/hooks/useTaskArtifacts';
+import { requestArtifactPreview } from '@/lib/artifact-preview-navigation';
 import MessageBlock, { type AssistantIdentity } from './MessageBlock';
 import { AttachmentFileCard, InlineImageBubble, MessageActionButton } from './MessageParts';
 import ThinkingCollapse from './ThinkingCollapse';
@@ -137,7 +138,12 @@ export function AssistantFinalizedBody({ message, agentName, onImageClick, onRet
       {displayArtifacts.length > 0 ? (
         <div className="mt-2 grid max-w-2xl gap-2 sm:grid-cols-2">
           {displayArtifacts.map((artifact) => (
-            <ArtifactCard key={artifact.id} artifact={artifact} assistantLabel={agentName} />
+            <ArtifactCard
+              key={artifact.id}
+              artifact={artifact}
+              assistantLabel={agentName}
+              onPreview={requestArtifactPreview}
+            />
           ))}
         </div>
       ) : null}

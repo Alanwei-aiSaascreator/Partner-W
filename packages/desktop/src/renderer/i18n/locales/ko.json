@@ -81,6 +81,7 @@
     "open": "열기",
     "openFailed": "열 수 없습니다: 파일이 손상되었거나 아직 다 기록되지 않았을 수 있습니다",
     "openFailedHint": "‘폴더에서 보기’ 후 직접 열어 보세요. 그래도 열리지 않으면 다시 생성하세요.",
+    "preview": "미리보기",
     "recoveryHint": "파일을 다시 생성하거나 작업 공간에 복원한 후 사용하세요.",
     "refresh": "결과 새로 고침",
     "saveAs": "다른 이름으로 저장",
@@ -1909,6 +1910,7 @@
   "rightPanel": {
     "archivedArtifacts": "이전 버전 및 문제 파일",
     "artifacts": "산출물",
+    "backToList": "목록으로",
     "context": "컨텍스트",
     "contextUsage": "컨텍스트",
     "historyArtifacts": "기록",

@@ -48,6 +48,7 @@ import {
   runAuthBootstrap,
 } from '@/lib/app-entry-flow';
 import { createEntryLicenseGate, EntryLicenseError } from '@/lib/entry-license-gate';
+import { useArtifactPanelViewScope } from '@/lib/artifact-preview-navigation';
 import { isInternalBetaEnabled, parseBetaRoute } from '@/features/internal-beta/beta-route';
 import { useGatewayDisappearanceNotice } from '@/lib/gateway-disappearance';
 
@@ -118,6 +119,9 @@ export default function App() {
   const settingsOpen = useUiStore((s) => s.settingsOpen);
   const setSettingsOpen = useUiStore((s) => s.setSettingsOpen);
   const setMainView = useUiStore((s) => s.setMainView);
+  // ⭐ Task 3 视图门：离开聊天/打开设置 ⇒ 右侧预览复位回列表（回聊天**不**自动恢复 ——
+  //    FileBrowser 期间改过共享选中 ID，自动恢复会预览出另一份文件）。
+  useArtifactPanelViewScope();
   const toggleCommandPalette = useUiStore((s) => s.toggleCommandPalette);
   const commandPaletteOpen = useUiStore((s) => s.commandPaletteOpen);
   const startNewTask = useTaskStore((s) => s.startNewTask);

@@ -81,6 +81,7 @@
     "open": "開く",
     "openFailed": "開けませんでした：ファイルが破損しているか、書き込みが未完了の可能性があります",
     "openFailedHint": "「フォルダーに表示」して手動で開いてください。開けない場合は再生成してください。",
+    "preview": "プレビュー",
     "recoveryHint": "ファイルを再生成するか、ワークスペースに戻してから操作してください。",
     "refresh": "成果物を更新",
     "saveAs": "名前を付けて保存",
@@ -1909,6 +1910,7 @@
   "rightPanel": {
     "archivedArtifacts": "旧版と問題ファイル",
     "artifacts": "成果物",
+    "backToList": "一覧に戻る",
     "context": "コンテキスト",
     "contextUsage": "コンテキスト",
     "historyArtifacts": "履歴",

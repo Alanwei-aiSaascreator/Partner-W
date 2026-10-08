@@ -81,6 +81,7 @@
     "open": "Abrir",
     "openFailed": "No se pudo abrir: el archivo puede estar dañado o incompleto",
     "openFailedHint": "Muéstralo en la carpeta y ábrelo manualmente; si sigue sin abrirse, vuelve a generarlo.",
+    "preview": "Vista previa",
     "recoveryHint": "Vuelve a generar el archivo o restáuralo en el espacio de trabajo.",
     "refresh": "Actualizar resultados",
     "saveAs": "Guardar como",
@@ -1909,6 +1910,7 @@
   "rightPanel": {
     "archivedArtifacts": "Versiones anteriores y archivos con problemas",
     "artifacts": "Artefactos",
+    "backToList": "Volver a la lista",
     "context": "Contexto",
     "contextUsage": "Contexto",
     "historyArtifacts": "Historial",
