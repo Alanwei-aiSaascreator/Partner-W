@@ -50,7 +50,7 @@ export interface ActiveTurnActivity {
   thinkingSegment: number;
 }
 
-/** 生成下一个 activity（纯函数，顺序敏感 —— 调用点即事件处理点）。 */
+/** 生成下一个 activity（纯函数）—— ⚠️ 只在**内容真的变化**时调用（R1 见下）。 */
 function bumpActivity(turn: ActiveTurn, kind: ActiveTurnActivity['kind']): ActiveTurnActivity {
   const prev = turn.activity;
   const openedNewThinkingSegment = kind === 'thinking' && prev?.kind !== 'thinking';
@@ -59,6 +59,29 @@ function bumpActivity(turn: ActiveTurn, kind: ActiveTurnActivity['kind']): Activ
     revision: (prev?.revision ?? 0) + 1,
     thinkingSegment: openedNewThinkingSegment ? (prev?.thinkingSegment ?? 0) + 1 : (prev?.thinkingSegment ?? 0),
   };
+}
+
+/**
+ * R1（2026-10-08 总审）：**累计快照的重复投递不是"新活动"**。
+ *
+ * chat 的 delta 帧里 `message.content` 是**到此刻为止的全文快照**（白皮书 §4.2），
+ * dispatcher 又固定按「正文 → 思考 → 工具」处理 —— 一段旧 thinking 会被原样重发无数次。
+ * 若写入端无条件更新活动元数据：正文期间相位被拨回 thinking（扫光/展开不复位）、
+ * 每帧伪造"新思考段"（段号 +1，用户手动折叠被反复复位）、重复的工具快照会盖住
+ * 之后真正的新思考。⇒ 三个写入方法都必须先比内容，**变了才记活动**。
+ */
+function toolCallChanged(before: ToolCall | undefined, after: ToolCall): boolean {
+  if (!before) return true;
+  return (
+    before.status !== after.status ||
+    before.name !== after.name ||
+    before.startedAt !== after.startedAt ||
+    before.completedAt !== after.completedAt ||
+    before.title !== after.title ||
+    (before.result ?? '') !== (after.result ?? '') ||
+    JSON.stringify(before.args ?? null) !== JSON.stringify(after.args ?? null) ||
+    JSON.stringify(before.slideProgress ?? null) !== JSON.stringify(after.slideProgress ?? null)
+  );
 }
 
 /**
@@ -542,8 +565,16 @@ export function createMessageStore(deps: MessageStoreDeps) {
         if (turn) {
           const idx = turn.toolCalls.findIndex((t) => t.id === tc.id);
           const next = [...turn.toolCalls];
-          if (idx >= 0) next[idx] = mergeToolCallState(next[idx], tc);
-          else next.push(tc);
+          let changed = true;
+          if (idx >= 0) {
+            const merged = mergeToolCallState(next[idx], tc);
+            changed = toolCallChanged(next[idx], merged);
+            next[idx] = merged;
+          } else {
+            next.push(tc);
+          }
+          // R1：重复/未变化的工具快照 ⇒ 连 state 都不动（不是"最新活动"）。
+          if (!changed) return s;
           return {
             activeTurnBySession: {
               ...s.activeTurnBySession,
@@ -587,14 +618,19 @@ export function createMessageStore(deps: MessageStoreDeps) {
 
     appendStreamDelta: (sessionKey, delta) =>
       set((s) => {
-        const turn = s.activeTurnBySession[sessionKey] ?? newActiveTurn();
+        const existing = s.activeTurnBySession[sessionKey];
+        const turn = existing ?? newActiveTurn();
+        const streamingText = mergeGatewayStreamText(turn.streamingText, delta);
+        const changed = streamingText !== turn.streamingText;
+        // R1：快照重复（合并结果与旧文本一字不差）⇒ 不是"最新活动"，连 state 都不动。
+        if (!changed && existing) return s;
         return {
           activeTurnBySession: {
             ...s.activeTurnBySession,
             [sessionKey]: {
               ...turn,
-              streamingText: mergeGatewayStreamText(turn.streamingText, delta),
-              activity: bumpActivity(turn, 'output'),
+              streamingText,
+              ...(changed ? { activity: bumpActivity(turn, 'output') } : {}),
             },
           },
         };
@@ -604,27 +640,40 @@ export function createMessageStore(deps: MessageStoreDeps) {
     //    对"全文快照"会做出重复拼接（正是要修的那个 bug）。
     replaceStreamText: (sessionKey, text) =>
       set((s) => {
-        const turn = s.activeTurnBySession[sessionKey] ?? newActiveTurn();
+        const existing = s.activeTurnBySession[sessionKey];
+        const turn = existing ?? newActiveTurn();
+        const changed = text !== turn.streamingText;
+        // R1：全文快照与原文本相同时不算新活动（正文没动，相位不该被拨）。
+        if (!changed && existing) return s;
         return {
           activeTurnBySession: {
             ...s.activeTurnBySession,
-            [sessionKey]: { ...turn, streamingText: text, activity: bumpActivity(turn, 'output') },
+            [sessionKey]: {
+              ...turn,
+              streamingText: text,
+              ...(changed ? { activity: bumpActivity(turn, 'output') } : {}),
+            },
           },
         };
       }),
 
     appendThinkingDelta: (sessionKey, delta) =>
       set((s) => {
-        const turn = s.activeTurnBySession[sessionKey] ?? newActiveTurn();
+        const existing = s.activeTurnBySession[sessionKey];
+        const turn = existing ?? newActiveTurn();
+        // ⚠️ 思考走**分段**合并：跨段要空行隔开，不能用通用那条（会直接拼接，
+        //    把 8 段推理糊成一团 —— 见 `mergeThinkingSegments` 的注释与实测数据）。
+        const streamingThinking = mergeThinkingSegments(turn.streamingThinking, delta);
+        const changed = streamingThinking !== turn.streamingThinking;
+        // R1：累计思考快照原样重发 ⇒ 不是新活动、更不是"新一段"（段号只有真进入新段才 +1）。
+        if (!changed && existing) return s;
         return {
           activeTurnBySession: {
             ...s.activeTurnBySession,
             [sessionKey]: {
               ...turn,
-              // ⚠️ 思考走**分段**合并：跨段要空行隔开，不能用通用那条（会直接拼接，
-              //    把 8 段推理糊成一团 —— 见 `mergeThinkingSegments` 的注释与实测数据）。
-              streamingThinking: mergeThinkingSegments(turn.streamingThinking, delta),
-              activity: bumpActivity(turn, 'thinking'),
+              streamingThinking,
+              ...(changed ? { activity: bumpActivity(turn, 'thinking') } : {}),
             },
           },
         };

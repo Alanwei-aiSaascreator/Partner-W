@@ -197,6 +197,55 @@ describe('AssistantBlock：状态切换时块与头像不能被卸载重建', ()
     ).toBeNull();
   });
 
+  it('⭐ R1 消费端：手动收起 → 旧思考快照随正文继续来 → 保持收起；工具后新思考 → 自动展开', () => {
+    const raw = '第一段推理';
+    // 流式 + live（段 1）：用户手动收起
+    const view = render(
+      <AssistantBlock
+        state="streaming"
+        content=""
+        thinkingContent={raw}
+        toolCalls={[]}
+        identity={identity}
+        activity={{ kind: 'thinking', revision: 1, thinkingSegment: 1 }}
+      />,
+    );
+    const header = view.container.querySelector<HTMLButtonElement>('[data-testid="thinking-collapse-header"]');
+    act(() => header?.click());
+    expect(view.container.querySelector('[data-testid="thinking-collapse"]')!.className).toContain(
+      'thinking-collapse--collapsed',
+    );
+
+    // 正文开始增长，而旧思考快照被原样重发（R1 修好后：store 不会 bump 思考 ⇒ activity 仍是 output、段号仍 1）
+    view.rerender(
+      <AssistantBlock
+        state="streaming"
+        content="答案开始写了"
+        thinkingContent={raw}
+        toolCalls={[]}
+        identity={identity}
+        activity={{ kind: 'output', revision: 2, thinkingSegment: 1 }}
+      />,
+    );
+    let collapse = view.container.querySelector('[data-testid="thinking-collapse"]')!;
+    expect(collapse.className, '旧思考快照不得把相位拨回 live').toContain('thinking-collapse--done');
+    expect(collapse.className, '用户的手动收起必须保持').toContain('thinking-collapse--collapsed');
+
+    // 工具之后**真实的新一段思考**（段号 2、kind 回到 thinking）⇒ 自动重新展开
+    view.rerender(
+      <AssistantBlock
+        state="streaming"
+        content=""
+        thinkingContent={`${raw}\n第二段：换个思路`}
+        toolCalls={[]}
+        identity={identity}
+        activity={{ kind: 'thinking', revision: 3, thinkingSegment: 2 }}
+      />,
+    );
+    collapse = view.container.querySelector('[data-testid="thinking-collapse"]')!;
+    expect(collapse.className, '新段自动展开（复位折叠依据是段号）').toContain('thinking-collapse--expanded');
+  });
+
   it('无活动元数据（旧路径/无来源）⇒ 静态降级：收起、正文不进 DOM（不从 props 猜顺序）', () => {
     const rawThinking = 'We need inspect private chain-of-thought before answering.';
     const view = render(

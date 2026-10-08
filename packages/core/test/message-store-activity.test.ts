@@ -66,7 +66,7 @@ describe('message-store —— 最新活动元数据（仅展示）', () => {
     expect(activityOf(store)).toEqual({ kind: 'thinking', revision: 3, thinkingSegment: 2 });
   });
 
-  it('⭐ 同帧批量 = 按处理顺序留痕（chat delta 帧：正文在前、思考在后 → 最终 thinking）', () => {
+  it('⭐ 同帧批量：**多项真实变化**时，按处理顺序留痕（chat delta 帧：正文在前、思考在后 → 最终 thinking）', () => {
     const store = makeStore();
     // 模拟 gateway-dispatcher :1073-1086 的处理顺序：先文本替换，再思考追加
     store.getState().replaceStreamText(SK, '正文');
@@ -82,6 +82,20 @@ describe('message-store —— 最新活动元数据（仅展示）', () => {
       startedAt: new Date().toISOString(),
     });
     expect(activityOf(store)?.kind).toBe('tools');
+  });
+
+  it('⭐ R1：同帧里的**重复快照**不再更新活动（正文快照原样 + 旧思考原样重发）', () => {
+    const store = makeStore();
+    store.getState().replaceStreamText(SK, '正文');
+    store.getState().appendThinkingDelta(SK, '想法');
+    expect(activityOf(store)?.kind).toBe('thinking');
+    const before = activityOf(store);
+
+    // chat delta 的 content 是**全文快照**，dispatcher 固定按 正文→思考→工具 调用：
+    // 旧思考与旧正文会被原样重发无数次 —— 它们不是"新活动"。
+    store.getState().replaceStreamText(SK, '正文');
+    store.getState().appendThinkingDelta(SK, '想法');
+    expect(activityOf(store), '重复快照不得更新相位/段号（R1）').toEqual(before);
   });
 
   it('无轮时工具事件建新轮：activity 同轮写入（revision 1、段号 0）', () => {
