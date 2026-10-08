@@ -102,6 +102,22 @@ describe('MarkdownContent 流式镀铬件', () => {
     view.unmount();
   });
 
+  it('⭐ F2：引用内未闭合 + 容器空尾行（`> `）⇒ 仍占位（真解析器 end 落在尾行之前）', () => {
+    const v = mount(<MarkdownContent content={'> ```js\n> const a = 1\n> '} showCursor />);
+    expect(pendingOf(v.container), '容器空尾行不是"块后内容"').toHaveLength(1);
+    v.unmount();
+  });
+
+  it('⭐ F2：同一实例继续写入（`> \\n> more`）⇒ 占位保持，不来回切换', () => {
+    const view = mount(<MarkdownContent content={'> ```js\n> const a = 1\n> '} showCursor />);
+    expect(pendingOf(view.container)).toHaveLength(1);
+    view.rerender(<MarkdownContent content={'> ```js\n> const a = 1\n> \n> more'} showCursor />);
+    expect(pendingOf(view.container), '仍处于未闭合 ⇒ 占位保持').toHaveLength(1);
+    view.rerender(<MarkdownContent content={'> ```js\n> const a = 1\n> \n> more\n> ```'} showCursor />);
+    expect(pendingOf(view.container), '真闭合后才消失').toHaveLength(0);
+    view.unmount();
+  });
+
   it('⭐ 同一实例从未闭合流式更新到闭合：占位出现→消失', () => {
     const view = mount(<MarkdownContent content={'```js\nconst a = 1'} showCursor />);
     expect(pendingOf(view.container)).toHaveLength(1);

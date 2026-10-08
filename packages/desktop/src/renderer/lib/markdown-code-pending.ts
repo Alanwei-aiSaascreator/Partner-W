@@ -43,9 +43,13 @@ export function isPendingFencedCode(
 ): boolean {
   if (!Number.isFinite(startOffset) || !Number.isFinite(endOffset)) return false;
   if (startOffset < 0 || endOffset <= startOffset || endOffset > content.length) return false;
-  // ① 只有**贴到文档末尾**（忽略尾部空白）的代码块才可能是"还在写"的那一块。
-  const trimmedLength = content.replace(/\s+$/u, '').length;
-  if (endOffset < trimmedLength) return false;
+  // ① 只有**贴到文档末尾**的代码块才可能是"还在写"的那一块。
+  //    ⚠️ F2（终审）：解析器的 `code.end` 会落在**容器空尾行之前**（例如引用里未闭合的围栏
+  //    后面还有一行 `> ` 的容器空行）—— 那不是"块后已有内容"。⇒ 判"尾巴"时只允许
+  //    `>`（容器标记，可重复/嵌套）与空白字符；出现**任何其它字符**才算后面还有内容。
+  //    （注意：`> more` 这类带内容的行会留下 `more` ⇒ 正确地判为"不贴边"。）
+  const tail = content.slice(endOffset);
+  if (tail.replace(/[>\s]/gu, '') !== '') return false;
 
   const slice = content.slice(startOffset, endOffset);
   const firstNewline = slice.indexOf('\n');

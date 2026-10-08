@@ -92,6 +92,31 @@ describe('isPendingFencedCode —— 容器反例（R7 总审实跑的两个）'
     const { start, end } = at(content, '```js');
     expect(isPendingFencedCode(content, start, end, 'const a = 1')).toBe(false);
   });
+
+  it('⭐ F2：引用内未闭合 + **容器空尾行**（`> `）⇒ 仍判未闭合（尾行不是"块后内容"）', () => {
+    const content = '> ```js\n> const a = 1\n> ';
+    // 解析器的 code.end.offset 会落在容器空尾行之前（22 = 内容行结束处）
+    expect(isPendingFencedCode(content, 2, 22, 'const a = 1')).toBe(true);
+  });
+
+  it('⭐ F2：嵌套引用的容器空尾行 ⇒ 同样不误判', () => {
+    const content = '> > ```js\n> > const a = 1\n> > ';
+    // 解析器的 code.end.offset 落在"内容行之后、容器空尾行之前"（= 尾行起点）
+    expect(isPendingFencedCode(content, 4, content.lastIndexOf('> > '), 'const a = 1')).toBe(true);
+  });
+
+  it('F2：继续写入（空行后还有真内容）⇒ 未闭合保持', () => {
+    const content = '> ```js\n> const a = 1\n> \n> more';
+    const { start, end } = at(content, '```js');
+    expect(isPendingFencedCode(content, start, end, 'const a = 1\n\nmore')).toBe(true);
+  });
+
+  it('F2：真闭合后跟容器空尾行 ⇒ 已闭合（线数法照常生效）', () => {
+    const content = '> ```js\n> const a = 1\n> ```\n> ';
+    // 闭合围栏结束处的 end（其后只剩容器空尾行）
+    const end = content.indexOf('> \n> ', 2) + 3;
+    expect(isPendingFencedCode(content, 2, end, 'const a = 1')).toBe(false);
+  });
 });
 
 describe('isPendingFencedCode —— 防御', () => {
