@@ -1005,6 +1005,25 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
     return idx;
   }
 
+  /**
+   * G1（2026-10-08 集中终审 · 条件防御）：**每个有效 toolCall block 各自的位置**。
+   *
+   * 此前工具循环把所有变化的工具都记成 `lastContentBlockIndex(payload, 'toolCall')`
+   * （= 最后一个 toolCall block 的位置）；当同一帧里出现 `[新工具, 新思考, 旧工具回声]`
+   * 这类插入/重排快照时，会把排在前面的新工具抬到思考之后 ⇒ 相位定音错误。
+   * 有效块过滤必须与 `extractToolCalls` 一致（`type/id/name` 三条件），
+   * 保证 `toolCalls[i]` 与返回数组逐位对应。
+   */
+  function toolCallContentIndices(payload: ChatEventPayload): number[] {
+    const blocks = payload.message?.content ?? payload.content;
+    if (!blocks) return [];
+    const indices: number[] = [];
+    for (const [index, block] of blocks.entries()) {
+      if (block.type === 'toolCall' && block.id && block.name) indices.push(index);
+    }
+    return indices;
+  }
+
   /** F1：工具写入 + 帧封（重复快照不重写 state ⇒ 引用比较即"真的变了"）。 */
   function upsertToolCallTracked(sessionKey: string, taskId: string, tc: ToolCall): void {
     const readTurn = () => deps.getMessageStore().activeTurnBySession[sessionKey];
@@ -1135,10 +1154,12 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
         if (readTurn() !== before)
           changed.push({ kind: 'thinking', index: lastContentBlockIndex(payload, 'thinking') });
       }
-      for (const tc of toolCalls) {
+      // G1：每个工具取**它自己**的 block 位置（重复/重排快照下相位才不会被抬错）。
+      const deltaToolIndices = toolCallContentIndices(payload);
+      for (const [tcIndex, tc] of toolCalls.entries()) {
         const before = readTurn();
         store.upsertToolCall(sessionKey, taskId, tc);
-        if (readTurn() !== before) changed.push({ kind: 'tools', index: lastContentBlockIndex(payload, 'toolCall') });
+        if (readTurn() !== before) changed.push({ kind: 'tools', index: deltaToolIndices[tcIndex] ?? -1 });
       }
       // 帧尾一次定音：多项真变化按 **content blocks 顺序**决定"最新活动"（F1）。
       sealChatFrameActivity(sessionKey, changed);
@@ -1161,10 +1182,12 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
           changed.push({ kind: 'thinking', index: lastContentBlockIndex(payload, 'thinking') });
       }
       debugEvent('renderer.chat.final.received', { taskId, sessionKey, chars: text.length });
-      for (const tc of toolCalls) {
+      // G1：final 分支与 delta 同形（每个工具保留自己的 block 位置）。
+      const finalToolIndices = toolCallContentIndices(payload);
+      for (const [tcIndex, tc] of toolCalls.entries()) {
         const before = readTurn();
         store.upsertToolCall(sessionKey, taskId, tc);
-        if (readTurn() !== before) changed.push({ kind: 'tools', index: lastContentBlockIndex(payload, 'toolCall') });
+        if (readTurn() !== before) changed.push({ kind: 'tools', index: finalToolIndices[tcIndex] ?? -1 });
       }
       sealChatFrameActivity(sessionKey, changed);
       store.finalizeStream(sessionKey, { runId: payload.runId });

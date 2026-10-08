@@ -214,3 +214,35 @@ describe('F1：同帧多项真变化的活动顺序', () => {
     expect(a.thinkingSegment, '回声不得开新段').toBe(1);
   });
 });
+
+/**
+ * G1 回归（2026-10-08 集中终审）：**每个变化的工具必须取它自己的 block 位置**。
+ *
+ * 现场形状：已有 old 工具，下一帧是 `[新工具, 新思考, 旧工具回声]`（数组序）。
+ * 工具循环此前把**每一个**变化的工具都记成"最后一个 toolCall block 的位置"
+ * （= 旧工具回声的下标 2），把真正排在第 0 位的新工具抬到 thinking（下标 1）之后
+ * ⇒ 定音成 tools。修后每个工具保留自己的源位置 ⇒ 最新活动应是 thinking。
+ *
+ * 注：这是协议边界形状（上游是否产生插入/重排快照未取证），属**条件防御**，
+ * 不作为现场故障根因。
+ */
+describe('G1：工具位置取各自 block index（同帧 [新工具, 新思考, 旧工具回声]）', () => {
+  it('⭐ 新工具在第 0 位、新思考第 1 位、旧工具回声第 2 位 ⇒ thinking（新一段）', () => {
+    const h = createHarness();
+    h.emitChatDelta([toolCall('tc-1')]);
+    expect(h.activity()!.kind).toBe('tools');
+    // 同帧：新工具 tc-2 排第 0 位；新思考第 1 位；tc-1 是**没变化**的回声（第 2 位）
+    h.emitChatDelta([toolCall('tc-2', 'write'), thinking('换个思路'), toolCall('tc-1')]);
+    const a = h.activity()!;
+    expect(a.kind, '新工具自己的位置（0）在思考（1）之前 ⇒ 最新活动是思考').toBe('thinking');
+    expect(a.thinkingSegment, '工具之后的新思考 = 新段').toBe(1);
+  });
+
+  it('对照：新工具排在新思考之后 ⇒ tools（位置修正不得把真序也改掉）', () => {
+    const h = createHarness();
+    h.emitChatDelta([toolCall('tc-1')]);
+    h.emitChatDelta([thinking('先想'), toolCall('tc-2', 'write'), toolCall('tc-1')]);
+    const a = h.activity()!;
+    expect(a.kind, '数组里工具在思考之后 ⇒ 最新活动是工具').toBe('tools');
+  });
+});
