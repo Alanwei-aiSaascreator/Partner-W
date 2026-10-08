@@ -26,10 +26,11 @@ export interface ArtifactPanelLayout {
 /** 主对话与预览各自的最小可读宽。 */
 const CHAT_MIN = 360;
 const PREVIEW_MIN = 360;
-/** inline 进入/退出阈值（首次与抽屉→inline 用 720；inline→抽屉也用 720，回滞在 744 收尾）。 */
+/** 首次布局的并排阈值：usable ≥ 720 才分栏。 */
 const INLINE_ENTER = 720;
+/** inline → 抽屉 的触发阈值：usable < 720 即退。 */
 const INLINE_EXIT = 720;
-/** 抽屉→inline 的回归阈值：720 + 24 回滞。 */
+/** 抽屉 → inline 的回归阈值 = 720 + 24px 回滞（退快进慢的不对称，防临界抖动）。 */
 const DRAWER_TO_INLINE = 744;
 /** 全屏进入 <600；退出 ≥624（24px 回滞）。 */
 const FULLSCREEN_ENTER = 600;

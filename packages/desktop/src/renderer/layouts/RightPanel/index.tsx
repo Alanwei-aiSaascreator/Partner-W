@@ -158,6 +158,17 @@ export default function RightPanel() {
     if (!match || match.availability === 'missing') return null;
     return match;
   }, [artifactPanelMode, selectedArtifactId, currentTaskArtifacts]);
+  /**
+   * ⭐ 独立复核（2026-10-09）：解析不到预览对象（跨任务残留/已删除/missing）时，
+   * 模式**必须复位回 list** —— 否则 `artifactPanelMode` 残留 'preview'，随后窄窗
+   * resize 会把右栏以抽屉形态弹出（内容是列表），像一次幽灵弹层。
+   * 等本次范围的成果加载完成（scopeKey 对齐）再判，避免把"还在加载"误判成"不存在"。
+   */
+  useEffect(() => {
+    if (artifactPanelMode !== 'preview') return;
+    if (artifactScopeKey !== scopeKey) return;
+    if (!previewArtifactResolved) setArtifactPanelMode('list');
+  }, [artifactPanelMode, artifactScopeKey, scopeKey, previewArtifactResolved, setArtifactPanelMode]);
   const taskTitles = useMemo(() => new Map(tasks.map((task) => [task.id, task.title])), [tasks]);
 
   /** 跳回来源会话 —— 与「文件」主视图里那条"跳转到源消息"同一套动作。 */
@@ -318,11 +329,13 @@ export default function RightPanel() {
                         <div className="mt-1 space-y-2">
                           {group.artifacts.map((a) => (
                             <div key={a.id} className="rounded-xl border border-transparent">
+                              {/* ⚠️ 历史产物**不接预览**（独立复核 2026-10-09）：预览只从当前任务
+                                  权威集合按 ID 解出，历史项跨任务 ⇒ 点了是静默空操作。这里保留
+                                  回源动作；要看它就先"跳到来源会话"（那时它成为当前任务成果）。 */}
                               <ArtifactCard
                                 artifact={a}
                                 compact
                                 onSelectMessage={(messageId) => jumpToTask(a.taskId, messageId)}
-                                onPreview={requestArtifactPreview}
                               />
                             </div>
                           ))}

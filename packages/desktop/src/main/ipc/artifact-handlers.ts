@@ -233,6 +233,11 @@ export function registerArtifactHandlers(): void {
       });
       return { ok: true, result: await buildArtifactPreview(artifact.name, buffer) };
     } catch (err) {
+      // ⭐ 独立复核（2026-10-09）：**超限不是"读不了"**。识别格式的大文件（如 45MB PDF）
+      //    走通用 catch 会让界面显示「无法读取这份文件的内容」——把"文件是好的、只是
+      //    我们不肯整份搬"偷换成"读不了"（尺寸丢失）。回 `unsupported` 交回文本/图片
+      //    老路：那条路的同一档尺寸门会如实报出 `{ tooLarge, size }`。
+      if (err instanceof ArtifactTooLargeError) return { ok: true, result: { kind: 'unsupported' } };
       const msg = err instanceof Error ? err.message : 'unknown error';
       return { ok: false, error: msg };
     }

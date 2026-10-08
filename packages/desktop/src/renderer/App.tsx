@@ -704,6 +704,9 @@ export default function App() {
                 <div
                   className="group w-1.5 flex-shrink-0 cursor-col-resize z-10 -mx-[3px]"
                   onMouseDown={(e) =>
+                    // 拖拽以**当前可见宽**（布局裁定后的有效宽）为基准：窄窗受夹时拖动仍 1:1 跟手；
+                    // 此时拖出的宽度会写进偏好 —— 那是用户的显式动作，语义上是"就调到这里"
+                    //（窗口变化本身**不会**触碰偏好，见 ui-store 注释与布局纯函数）。
                     artifactPanelMode === 'preview'
                       ? startPanelDrag(e, panelLayout.width, setArtifactPreviewWidth, -1)
                       : startPanelDrag(e, rightPanelWidth, setRightPanelWidth, -1)

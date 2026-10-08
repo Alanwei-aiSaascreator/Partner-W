@@ -176,14 +176,17 @@ describe('Task1 · 请求归属（迟到回包不许覆盖新选择）', () => {
   it('卸载后迟到回包不写状态、不炸（关掉预览再回包）', async () => {
     const read = deferred<unknown>();
     previewArtifactSpy.mockImplementation(() => read.promise);
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     const view = render(<FilePreview artifact={docxArtifact('a1', 'A.docx')} onNavigateToTask={() => {}} />);
     await flush();
     view.unmount();
     await act(async () => {
       read.resolve({ ok: true, result: { kind: 'docx', paragraphs: ['迟到内容'], truncated: false } });
     });
-    // 没有异常抛出、没有 React 状态写入警告即算通过（unmount 后写 state 会打 console.error）
-    expect(true).toBe(true);
+    // ⚠️ 该断言刻意保守：验"迟到回包不炸、不产生 console.error"。归属逻辑的**主证据**
+    //    是上面三条（A/B 串台、epoch、同 id 修订）—— 本条只兜"卸载之后"这一格。
+    expect(consoleError).not.toHaveBeenCalled();
+    consoleError.mockRestore();
   });
 });
 

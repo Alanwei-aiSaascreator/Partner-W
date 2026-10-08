@@ -151,6 +151,9 @@ describe('Task3 · RightPanel 列表/预览两态', () => {
     });
     expect(container.querySelector('[data-testid="artifact-preview-pane"]')).toBeNull();
     expect(container.querySelector('[data-testid="artifact-card"]'), '列表照常在').not.toBeNull();
+    // ⭐ 独立复核（2026-10-09）：解析不到必须**把模式复位回 list** —— 否则残留 'preview'
+    //    会在随后窄窗 resize 时把右栏以抽屉形态弹出（幽灵弹层）。
+    expect(useUiStore.getState().artifactPanelMode).toBe('list');
   });
 
   it('⭐ 选中项缺失（availability=missing）⇒ 不启动预览（文件已不在），回列表', async () => {
@@ -163,6 +166,7 @@ describe('Task3 · RightPanel 列表/预览两态', () => {
     });
     expect(container.querySelector('[data-testid="artifact-preview-pane"]')).toBeNull();
     expect(window.clawwork.previewArtifact, 'missing 不得触发越界读取').not.toHaveBeenCalled();
+    expect(useUiStore.getState().artifactPanelMode, 'missing 同样要复位回 list').toBe('list');
   });
 
   it('对照：requestArtifactPreview 直接调用（聊天卡路径同款）同样进入预览态', async () => {

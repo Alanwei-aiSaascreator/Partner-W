@@ -336,6 +336,41 @@ describe('artifact handlers', () => {
     });
   });
 
+  /**
+   * ⭐ 独立复核（2026-10-09）：`artifact:preview` 的**超限**不许落成"读不了"。
+   *
+   * 识别格式的大文件（如 45MB PDF）此前走通用 catch ⇒ `{ok:false}` ⇒ 界面显示
+   * 「无法读取这份文件的内容」—— 把"文件是好的、只是我们不肯整份搬"偷换成"读不了"
+   * （尺寸丢失，验收点 4 明令禁止的偷换）。修法：识别 `ArtifactTooLargeError` ⇒
+   * 回 `unsupported`，让渲染层走文本/图片老路 —— 那条路的同一档尺寸门会如实报出
+   * `{ tooLarge, size }`（"有多大、请用系统程序打开"）。
+   */
+  describe('artifact:preview 的上限', () => {
+    it('⭐ 超限（识别格式，如大 PDF）⇒ 回 unsupported（交回老路报尺寸），不是 ok:false', async () => {
+      allMock.mockReturnValue([{ id: 'a1', taskId: 'task-1', name: '扫描件.pdf', localPath: 'task-1/扫描件.pdf' }]);
+      readVerifiedArtifactFileMock.mockRejectedValue(new ArtifactTooLargeError(45 * 1024 * 1024));
+      const { registerArtifactHandlers } = await import('../src/main/ipc/artifact-handlers.js');
+      registerArtifactHandlers();
+
+      await expect(handleMap.get('artifact:preview')?.({}, { artifactId: 'a1', taskId: 'task-1' })).resolves.toEqual({
+        ok: true,
+        result: { kind: 'unsupported' },
+      });
+    });
+
+    it('对照：非超限失败照旧 ok:false（解析失败仍是"读不了"）', async () => {
+      allMock.mockReturnValue([{ id: 'a1', taskId: 'task-1', name: '坏.pdf', localPath: 'task-1/坏.pdf' }]);
+      readVerifiedArtifactFileMock.mockRejectedValue(new Error('artifact unsafe'));
+      const { registerArtifactHandlers } = await import('../src/main/ipc/artifact-handlers.js');
+      registerArtifactHandlers();
+
+      await expect(handleMap.get('artifact:preview')?.({}, { artifactId: 'a1', taskId: 'task-1' })).resolves.toEqual({
+        ok: false,
+        error: 'artifact unsafe',
+      });
+    });
+  });
+
   it('revalidates identity immediately before passing a path to the shell', async () => {
     allMock.mockReturnValue([{ id: 'a1', taskId: 'task-1', name: 'report.txt', localPath: 'task-1/report.txt' }]);
     inspectArtifactFileMock

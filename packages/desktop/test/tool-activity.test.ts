@@ -573,6 +573,10 @@ describe('G5 regression: stack shapes and ordinary diagnostics', () => {
     ['at noon the meeting starts', 'at noon the meeting starts'],
     ['at 12:30 the meeting starts', 'at 12:30 the meeting starts'],
     ['at 12:30', 'at 12:30'],
+    // ⭐ 独立复核（2026-10-09）：**纯时间戳行不是堆栈帧** —— 无括号支要求文件名含字母，
+    //    `at 10:30:45` 必须保留（旧正则把它当 `file:line:col` 删掉了）。
+    ['at 10:30:45', 'at 10:30:45'],
+    ['业务说明\nat 10:30:45', '业务说明\nat 10:30:45'],
     ['at docs (see appendix)', 'at docs (see appendix)'],
     ['at least (one) file is required', 'at least (one) file is required'],
     ['Traceback is a debugging concept', 'Traceback is a debugging concept'],

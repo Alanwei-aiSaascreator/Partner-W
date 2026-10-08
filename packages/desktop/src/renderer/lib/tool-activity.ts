@@ -180,8 +180,10 @@ export function maskLocalPaths(text: string): string {
 
 /** 上屏前的完整清洗：剥样板 + 遮路径 + 折叠多余空白。 */
 // Match complete runtime frame shapes, never an ordinary word prefix.
+// ⚠️ 第二支（无括号的 `file:line:col`）要求文件名里**含字母/下划线**：`at 10:30:45`
+//    这种纯时间戳行不是堆栈帧，必须保留（独立复核 2026-10-09 的反例）。
 const JS_STACK_FRAME_RE =
-  /^[ \t]*at[ \t]+(?:[^\r\n]+\((?:[^\r\n]+:\d+:\d+|native|<anonymous>|index \d+)\)|[^\s()\r\n]+:\d+:\d+|<anonymous>)[ \t]*$/;
+  /^[ \t]*at[ \t]+(?:[^\r\n]+\((?:[^\r\n]+:\d+:\d+|native|<anonymous>|index \d+)\)|[^\s()\r\n]*[A-Za-z_][^\s()\r\n]*:\d+:\d+|<anonymous>)[ \t]*$/;
 const PYTHON_STACK_LINE_RE =
   /^[ \t]*(?:Traceback \(most recent call last\):|File "[^"\r\n]+", line \d+(?:, in [^\r\n]+)?)[ \t]*$/;
 
