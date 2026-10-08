@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import type { ToolCall } from '@clawwork/shared';
-import { Check, ChevronDown, ChevronRight, CircleAlert, Loader2 } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, CircleAlert, Clock, Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { cn } from '@/lib/utils';
 import { motion as motionPresets } from '@/styles/design-tokens';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import {
@@ -11,17 +10,18 @@ import {
   classifyToolActivity,
   classifyToolFailure,
   debugToolFailures,
-  isOpaqueToolFailure,
+  latestAwaitingApproval,
   latestRunningCall,
   markUnreportedCalls,
   sanitizeToolTitle,
   summarizeToolActivity,
   visibleFailureReason,
   visibleUnreportedReason,
-  type DisplayToolCall,
-  type ToolActivityGroup,
+  type RepeatedToolFailure,
   type ToolDisplayStatus,
+  namedToolFailureKind,
 } from '@/lib/tool-activity';
+import { resolveDisplayKind } from '@/lib/tool-display-kind';
 import ToolCallCard from './ToolCallCard';
 
 function StatusIcon({ status }: { status: ToolDisplayStatus | 'warning' }) {
@@ -32,90 +32,6 @@ function StatusIcon({ status }: { status: ToolDisplayStatus | 'warning' }) {
   // 第三态「未收到结果」（区1 体检 P1-1）：中性提醒色 —— 没收到结果不是失败，不许用红叉吓人。
   if (status === 'unreported') return <CircleAlert size={14} className="text-[var(--text-muted)]" />;
   return <Check size={14} className="text-[var(--accent)]" />;
-}
-
-interface ToolActivityGroupRowProps {
-  group: ToolActivityGroup;
-  /**
-   * 开合态由**摘要**持有（区1 体检 P3-11）：摘要收起会把这一整棵子树卸载，
-   * 组件自己的 `useState` 会跟着丢 —— 用户"收起再展开"就得重新一层层点开。
-   * 单卡同理（`cardOpen`），两层都提升上来。
-   */
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  cardOpen: Record<string, boolean>;
-  onCardOpenChange: (id: string, open: boolean) => void;
-}
-
-function ToolActivityGroupRow({ group, open, onOpenChange, cardOpen, onCardOpenChange }: ToolActivityGroupRowProps) {
-  const { t } = useTranslation();
-  const label = t(`toolActivity.actions.${group.kind}`);
-  /*
-    BUG-026：详情里也**只摊一条**——同一工具 + 同一原因的重复失败合并展示
-    （代表条目在外面，其余折叠进"重复失败 ×N"）。数据一条没丢：折叠项展开仍逐条可查。
-  */
-  const failureEntries = useMemo(
-    () => (group.status === 'error' ? aggregateRepeatedToolFailures(group.calls) : null),
-    [group],
-  );
-  const card = (call: DisplayToolCall) => (
-    <ToolCallCard
-      key={call.id}
-      toolCall={call}
-      label={label}
-      open={cardOpen[call.id] ?? false}
-      onOpenChange={(next) => onCardOpenChange(call.id, next)}
-    />
-  );
-
-  return (
-    <Collapsible open={open} onOpenChange={onOpenChange}>
-      <CollapsibleTrigger asChild>
-        <button
-          type="button"
-          data-testid={`tool-activity-group-${group.kind}-${group.status}`}
-          data-status={group.status}
-          className="glow-focus flex w-full items-center gap-2 rounded-lg px-3 py-2 text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
-        >
-          {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-          <StatusIcon status={group.status} />
-          <span className="type-label flex-1 text-left">{label}</span>
-          <span className="type-mono-data text-[var(--text-muted)]">
-            {t('toolActivity.groupCount', { count: group.calls.length })}
-          </span>
-        </button>
-      </CollapsibleTrigger>
-      <CollapsibleContent forceMount>
-        <AnimatePresence>
-          {open ? (
-            <motion.div
-              initial={motionPresets.collapse.initial}
-              animate={motionPresets.collapse.animate}
-              exit={motionPresets.collapse.exit}
-              transition={motionPresets.collapse.transition}
-              className="ml-4 overflow-hidden border-l border-[var(--border-subtle)] pl-2"
-            >
-              {failureEntries
-                ? failureEntries.map((entry) => (
-                    <div key={entry.call.id}>
-                      {card(entry.call)}
-                      {entry.repeats.length > 0 ? (
-                        <details data-testid="tool-failure-repeats">
-                          <summary className="type-caption cursor-pointer px-3 py-1 text-[var(--text-muted)]">
-                            {t('toolActivity.repeatedFailure', { count: entry.count })}
-                          </summary>
-                          {entry.repeats.map((repeat) => card(repeat))}
-                        </details>
-                      ) : null}
-                    </div>
-                  ))
-                : group.calls.map((call) => card(call))}
-            </motion.div>
-          ) : null}
-        </AnimatePresence>
-      </CollapsibleContent>
-    </Collapsible>
-  );
 }
 
 interface ToolCallSummaryProps {
@@ -142,14 +58,27 @@ function ToolCallSummary({ toolCalls, settled = false, onRetry }: ToolCallSummar
     [settled, t, toolCalls],
   );
   const [expanded, setExpanded] = useState(false);
-  // BUG-026：「跳过这个失败」= 用户选择不再等这一步 ⇒ 失败降为次要位置（事实仍可展开查到）。
-  const [acknowledged, setAcknowledged] = useState(false);
-  // 组/单卡的开合态（P3-11）：收起摘要会卸载整棵子树，状态放在这里才不会丢。
-  const [groupOpen, setGroupOpen] = useState<Record<string, boolean>>({});
+  /*
+    BUG-026：「跳过这个失败」= 用户选择不再等这一步 ⇒ 失败降为次要位置（事实仍可展开查到）。
+    ⚠️ 2026-10-08 总审（R6）：确认**只对点下去那一刻的那批失败**有效 —— 新失败到来必须重新
+    强制可见（旧确认不得遮住新失败）。所以这里记的是**失败集合指纹**，不是布尔：
+    集合一变，下面推导出的 `acknowledged` 自动失效（派生值，不用 effect，避免"先渲染一帧旧确认"）。
+  */
+  const failureFingerprint = useMemo(
+    () =>
+      shown
+        .filter((call) => call.status === 'error')
+        .map((call) => `${call.id}:${call.status}`)
+        .join('|'),
+    [shown],
+  );
+  const [acknowledgedFingerprint, setAcknowledgedFingerprint] = useState<string | null>(null);
+  const acknowledged = acknowledgedFingerprint !== null && acknowledgedFingerprint === failureFingerprint;
+  /*
+    单卡开合态（P3-11）：收起摘要会卸载整棵子树，状态放在这里才不会丢。
+    （2026-10-08 平铺改造：组行消失，`groupOpen` 一并删除 —— 不再有二级分组折叠。）
+  */
   const [cardOpen, setCardOpen] = useState<Record<string, boolean>>({});
-  const setGroupOpenFor = useCallback((key: string, open: boolean) => {
-    setGroupOpen((prev) => (prev[key] === open ? prev : { ...prev, [key]: open }));
-  }, []);
   const setCardOpenFor = useCallback((id: string, open: boolean) => {
     setCardOpen((prev) => (prev[id] === open ? prev : { ...prev, [id]: open }));
   }, []);
@@ -162,6 +91,22 @@ function ToolCallSummary({ toolCalls, settled = false, onRetry }: ToolCallSummar
   useEffect(() => {
     debugToolFailures(toolCalls);
   }, [toolCalls]);
+  /*
+    平铺列表（2026-10-08 对话可视化改造）：不再按 kind 分组、组行不再可折叠 ——
+    工具行**按原始调用顺序**排。重复失败聚合保留（`aggregateRepeatedToolFailures` 语义不动）：
+    代表条目占**首次出现的位置**，其余重复进代表行的 `<details data-testid="tool-failure-repeats">`。
+  */
+  const rows = useMemo(() => {
+    const repeatedByCallId = new Map<string, RepeatedToolFailure>();
+    const repeatIds = new Set<string>();
+    for (const entry of failures) {
+      repeatedByCallId.set(entry.call.id, entry);
+      for (const repeat of entry.repeats) repeatIds.add(repeat.id);
+    }
+    return shown
+      .filter((call) => !repeatIds.has(call.id))
+      .map((call) => ({ call, repeated: repeatedByCallId.get(call.id) ?? null }));
+  }, [failures, shown]);
   // ⚠️ 运行时安全样板（EXTERNAL_UNTRUSTED_CONTENT / SECURITY NOTICE）不进摘要行——2026-10-03
   // 真机事故；图12（2026-10-06）再进一步：整段产品化（剥样板/遮路径/常见原始错误映射中文）。
   const failureReason = visibleFailureReason(shown, t);
@@ -192,13 +137,31 @@ function ToolCallSummary({ toolCalls, settled = false, onRetry }: ToolCallSummar
         : !settled || summary.runningCount > 0
           ? 'running'
           : 'done';
+  /*
+    ⭐ 2026-10-08 对话可视化改造（Codex 复审 v2 定稿）——**运行期强制平铺**：
+    旧形态三层（摘要收起 → 组行收起 → 卡收起），运行中要点三次才看得到"在做什么"。
+
+    `forcedOpen = !settled || hasUnreported || (hasFailures && !acknowledged)`：
+      - 未定稿（还在跑）/ 有「未收到结果」/ **有失败且用户没明确确认** ⇒ 强制可见；
+      - ⚠️ 判据里**不得出现 `softened`/`doneCount`**：别的步骤成功**不能**清除未确认失败的可见性
+        （复审反例：ls 成功 + render 失败、settled、未确认 —— softened=true 也不能折叠）。
+        `softened/stopped` 仍只服务状态色与动作区，语义不动。
+      - forcedOpen 时触发器**不再提供"收起"**：渲染为不可交互的表头行（附带的"查看详情"提示一并收掉，
+        不然是假承诺）。
+      - settled 且全成功（或用户已 acknowledged/跳过）⇒ 才允许默认折叠为**一层**（点展开 = 平铺全见）。
+  */
+  const forcedOpen = !settled || hasUnreported || (hasFailures && !acknowledged);
+  const open = forcedOpen || expanded;
   // ⚠️ 走**唯一出口**（与活动条同一个判据）：两处各写一遍的话，改一处就会两处不一致。
   const currentCall = latestRunningCall(shown);
+  // ⭐ 等待批准且**没有在跑**的动作（"没动，在等人"）—— 表头图标换静态 Clock（区1/A2 口径）。
+  const awaitingOnly = !currentCall && latestAwaitingApproval(shown) !== null;
   // ⭐ "正在做什么"优先用网关拼好的 `title`（带参数摘要），拿不到才退回按工具名分类的泛化文案
-  //（泛化文案是"查看文件"这种，说不出具体在看哪个文件）。
+  //（泛化文案是"查看文件"这种，说不出具体在看哪个文件）；2026-10-08 起分类先走显示映射补位
+  //（`read`/`process` 这类精确工具名不再落"使用工具"）。
   const currentAction = currentCall
     ? (sanitizeToolTitle(currentCall.title, currentCall.name) ??
-      t(`toolActivity.actions.${classifyToolActivity(currentCall.name)}`))
+      t(`toolActivity.actions.${resolveDisplayKind(currentCall.name, classifyToolActivity(currentCall.name))}`))
     : null;
   const summaryText =
     summary.errorCount > 0
@@ -216,20 +179,34 @@ function ToolCallSummary({ toolCalls, settled = false, onRetry }: ToolCallSummar
     可降级继续（BUG-026）：失败形态认得出来（网络/限流/超时 = 在线资料暂时不可用）
     就说产品化文案；认不出来的**内核英文**同样给产品兜底句（`productizedToolFailure`，
     2026-10-08 口径反转：不再原样上屏）；只有**含中文**的认不出原因才摊原文。
+    ⚠️ 2026-10-08 总审（R5）第 4 条：**具名命中 ⇒ 显示具名句**（`failureReason`），不是
+    "已跳过"的泛化句 —— 与 `ToolCallCard` 的错误块同一套判据（`namedToolFailureKind`），两处必须一致。
   */
+  const firstFailureNamed = firstFailure ? namedToolFailureKind(firstFailure.call.result ?? '') !== null : false;
   const degradedNote =
     softened && firstFailure
-      ? classifyToolFailure(firstFailure.call.result ?? '') === 'unknown'
+      ? firstFailureNamed || classifyToolFailure(firstFailure.call.result ?? '') === 'unknown'
         ? failureReason
         : t('toolActivity.failure.degradedContinue')
       : '';
   /*
     「无法继续」态下，下方动作行已经说了同一句「这一步暂时无法完成。」——
     主行不再重复它（一句话只说一次；pre6b 的"描述渲染两次"是同类教训）。
-    判据用**语义**（这段原因是不是走了英文兜底），不比较 9 语言翻译串。
+    ⚠️ 2026-10-08 总审（R5）：判据从"是不是认不出的英文"（`isOpaqueToolFailure`，代理量）
+    改为**这句原因就是动作区那句兜底句**（同一个 i18n key）——具名说明（缺参/工具不可用/本地传输）
+    与已知家族（网络/限流/超时）都是**另一句话**，不该被兜底句连坐隐掉；
+    card 的错误块一直显示这些句子，summary 隐掉它们就是"两处说明不一致"。
+    比较的是同一个 key 的渲染结果（跨 9 语言成立），不是硬编码翻译串。
   */
-  const opaqueFailureReason = firstFailure ? isOpaqueToolFailure(firstFailure.call.result ?? '') : false;
+  const opaqueFailureReason = failureReason === t('toolActivity.failure.cannotContinue');
   const showFailureReason = Boolean(failureReason) && !(stopped && opaqueFailureReason);
+  /*
+    R6（2026-10-08 总审）：**所有 settled 且未确认的失败**都要给「跳过这个失败」确认入口 ——
+    原来这个入口只长在 stopped（一步都没成功）分支里，于是「成功 + 失败 + 已结束」被
+    `forcedOpen` 永久展开却没有任何确认路径（用户收不起来）。
+    重试按钮**沿用既有条件**（stopped && onRetry），不加不减。
+  */
+  const canAcknowledge = hasFailures && settled && !acknowledged;
   /*
     重复失败计数（区1 体检 P3-7）：原来只看 `firstFailure`（第一组）——它一旦成立，
     后面几组的重复就全部隐形，总数被报低。这里改成**所有重复组求和**：
@@ -238,67 +215,79 @@ function ToolCallSummary({ toolCalls, settled = false, onRetry }: ToolCallSummar
   const repeatCount = failures.reduce((sum, entry) => sum + (entry.count > 1 ? entry.count : 0), 0);
   const repeatCopy = repeatCount > 1 ? t('toolActivity.repeatedFailure', { count: repeatCount }) : '';
 
-  return (
-    <Collapsible open={expanded} onOpenChange={setExpanded}>
-      <div
-        className={cn(
-          'my-2 overflow-hidden rounded-xl border bg-[var(--bg-secondary)]',
-          status === 'error' ? 'border-[var(--danger)]' : 'border-[var(--border-subtle)]',
-        )}
-      >
-        <CollapsibleTrigger asChild>
-          <button
-            type="button"
-            data-testid="tool-activity-summary"
-            data-status={status}
-            className="glow-focus flex w-full items-center gap-2.5 px-3 py-2.5 text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
+  const headerContent = (
+    <>
+      {/* 收起能力只在可交互态出现（forcedOpen 是表头行，没有"收起"这个动作）。 */}
+      {!forcedOpen ? expanded ? <ChevronDown size={15} /> : <ChevronRight size={15} /> : null}
+      {awaitingOnly ? <Clock size={14} className="text-[var(--text-muted)]" /> : <StatusIcon status={status} />}
+      <span className="type-label flex-1 text-left">
+        {summaryText}
+        {/* 弱化态：失败原因从主行移走（下移到次要位置），主视觉只剩"做完了，有几个失败可查"。 */}
+        {!softened && (showFailureReason || repeatCopy) ? (
+          <span
+            data-testid="tool-failure-reason"
+            className="type-support mt-0.5 block truncate text-[var(--danger)]"
+            title={showFailureReason ? failureReason : undefined}
           >
-            {expanded ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
-            <StatusIcon status={status} />
-            <span className="type-label flex-1 text-left">
-              {summaryText}
-              {/* 弱化态：失败原因从主行移走（下移到次要位置），主视觉只剩"做完了，有几个失败可查"。 */}
-              {!softened && (showFailureReason || repeatCopy) ? (
-                <span
-                  data-testid="tool-failure-reason"
-                  className="type-support mt-0.5 block truncate text-[var(--danger)]"
-                  title={showFailureReason ? failureReason : undefined}
-                >
-                  {showFailureReason ? failureReason : null}
-                  {repeatCopy ? (
-                    <span data-testid="tool-failure-repeat" className="ml-1 text-[var(--text-muted)]">
-                      {repeatCopy}
-                    </span>
-                  ) : null}
-                </span>
-              ) : null}
-              {/*
-                第三态的原因行：**中性色**（不是红字）—— 没收到结果不是失败，
-                认出来是红的就等于又把它写成了失败。有真实文本就摊原文（P1-2）。
-              */}
-              {!softened && unreportedReason ? (
-                <span
-                  data-testid="tool-unreported-reason"
-                  className="type-support mt-0.5 block truncate text-[var(--text-muted)]"
-                  title={unreportedReason}
-                >
-                  {unreportedReason}
-                </span>
-              ) : null}
-            </span>
-            {currentAction ? (
-              <span className="type-support max-w-44 truncate text-[var(--text-muted)]">{currentAction}</span>
-            ) : null}
-            {settled && summary.durationMs !== null ? (
-              <span className="type-mono-data text-[var(--text-muted)]">
-                {t('toolActivity.duration', {
-                  seconds: summary.durationMs < 100 ? '<0.1' : (summary.durationMs / 1000).toFixed(1),
-                })}
+            {showFailureReason ? failureReason : null}
+            {repeatCopy ? (
+              <span data-testid="tool-failure-repeat" className="ml-1 text-[var(--text-muted)]">
+                {repeatCopy}
               </span>
             ) : null}
-            <span className="type-support text-[var(--text-muted)]">{t('toolActivity.viewDetails')}</span>
-          </button>
-        </CollapsibleTrigger>
+          </span>
+        ) : null}
+        {/*
+          第三态的原因行：**中性色**（不是红字）—— 没收到结果不是失败，
+          认出来是红的就等于又把它写成了失败。有真实文本就摊原文（P1-2）。
+        */}
+        {!softened && unreportedReason ? (
+          <span
+            data-testid="tool-unreported-reason"
+            className="type-support mt-0.5 block truncate text-[var(--text-muted)]"
+            title={unreportedReason}
+          >
+            {unreportedReason}
+          </span>
+        ) : null}
+      </span>
+      {currentAction ? (
+        <span className="type-support max-w-44 truncate text-[var(--text-muted)]">{currentAction}</span>
+      ) : null}
+      {settled && summary.durationMs !== null ? (
+        <span className="type-mono-data text-[var(--text-muted)]">
+          {t('toolActivity.duration', {
+            seconds: summary.durationMs < 100 ? '<0.1' : (summary.durationMs / 1000).toFixed(1),
+          })}
+        </span>
+      ) : null}
+      {!forcedOpen ? (
+        <span className="type-support text-[var(--text-muted)]">{t('toolActivity.viewDetails')}</span>
+      ) : null}
+    </>
+  );
+
+  return (
+    <Collapsible open={open} onOpenChange={setExpanded}>
+      {/* 2026-10-08：容器不再是卡片（去 `rounded-xl border bg-*`），只留外边距（样式在 theme.css）。 */}
+      <div className="my-2">
+        {forcedOpen ? (
+          // 强制展开：不可交互的表头行（testid/data-status 保留 —— 样式与调试仍靠它）。
+          <div data-testid="tool-activity-summary" data-status={status} className="tool-summary__trigger">
+            {headerContent}
+          </div>
+        ) : (
+          <CollapsibleTrigger asChild>
+            <button
+              type="button"
+              data-testid="tool-activity-summary"
+              data-status={status}
+              className="tool-summary__trigger glow-focus"
+            >
+              {headerContent}
+            </button>
+          </CollapsibleTrigger>
+        )}
         {/* 原因句没了（例如走了英文兜底而被说明为"未收到/无原因"）时，重复计数仍要如实展示。 */}
         {softened && (degradedNote || repeatCopy) ? (
           <p data-testid="tool-failure-degraded" className="type-support px-3 pb-2.5 text-[var(--text-muted)]">
@@ -310,15 +299,21 @@ function ToolCallSummary({ toolCalls, settled = false, onRetry }: ToolCallSummar
             ) : null}
           </p>
         ) : null}
-        {stopped ? (
+        {/*
+          R6：动作区按**确认入口**的存在与否渲染（`canAcknowledge` = settled 且未确认的失败）——
+          「无法继续」提示与重试按钮仍只属于 stopped（一步都没成功）分支，条件不加不减。
+        */}
+        {canAcknowledge ? (
           <div data-testid="tool-failure-actions" className="flex flex-wrap items-center gap-2 px-3 pb-2.5">
-            <p
-              data-testid="tool-failure-cannot-continue"
-              className="type-support min-w-0 flex-1 text-[var(--text-secondary)]"
-            >
-              {t('toolActivity.failure.cannotContinue')}
-            </p>
-            {onRetry ? (
+            {stopped ? (
+              <p
+                data-testid="tool-failure-cannot-continue"
+                className="type-support min-w-0 flex-1 text-[var(--text-secondary)]"
+              >
+                {t('toolActivity.failure.cannotContinue')}
+              </p>
+            ) : null}
+            {stopped && onRetry ? (
               <button
                 type="button"
                 data-testid="tool-failure-retry"
@@ -333,7 +328,7 @@ function ToolCallSummary({ toolCalls, settled = false, onRetry }: ToolCallSummar
             <button
               type="button"
               data-testid="tool-failure-continue"
-              onClick={() => setAcknowledged(true)}
+              onClick={() => setAcknowledgedFingerprint(failureFingerprint)}
               className="glow-focus type-label shrink-0 rounded-lg border border-[var(--border-subtle)] px-2.5 py-1 text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
             >
               {t('toolActivity.failure.continueWithMaterials')}
@@ -342,24 +337,38 @@ function ToolCallSummary({ toolCalls, settled = false, onRetry }: ToolCallSummar
         ) : null}
         <CollapsibleContent forceMount>
           <AnimatePresence>
-            {expanded ? (
+            {open ? (
               <motion.div
                 initial={motionPresets.collapse.initial}
                 animate={motionPresets.collapse.animate}
                 exit={motionPresets.collapse.exit}
                 transition={motionPresets.collapse.transition}
-                className="overflow-hidden border-t border-[var(--border-subtle)] p-1.5"
+                className="overflow-hidden"
               >
-                {summary.groups.map((group) => (
-                  <ToolActivityGroupRow
-                    key={group.key}
-                    group={group}
-                    // 失败组默认摊开（原来的行为）；开过/关过之后以用户的选择为准（P3-11）。
-                    open={groupOpen[group.key] ?? group.status === 'error'}
-                    onOpenChange={(next) => setGroupOpenFor(group.key, next)}
-                    cardOpen={cardOpen}
-                    onCardOpenChange={setCardOpenFor}
-                  />
+                {/* 按原始调用顺序平铺（无分组行）；重复失败只在代表行下附一个可展开的 details。 */}
+                {rows.map(({ call: current, repeated }) => (
+                  <div key={current.id}>
+                    <ToolCallCard
+                      toolCall={current}
+                      open={cardOpen[current.id] ?? false}
+                      onOpenChange={(next) => setCardOpenFor(current.id, next)}
+                    />
+                    {repeated && repeated.repeats.length > 0 ? (
+                      <details data-testid="tool-failure-repeats">
+                        <summary className="type-caption cursor-pointer px-3 py-1 text-[var(--text-muted)]">
+                          {t('toolActivity.repeatedFailure', { count: repeated.count })}
+                        </summary>
+                        {repeated.repeats.map((repeat) => (
+                          <ToolCallCard
+                            key={repeat.id}
+                            toolCall={repeat}
+                            open={cardOpen[repeat.id] ?? false}
+                            onOpenChange={(next) => setCardOpenFor(repeat.id, next)}
+                          />
+                        ))}
+                      </details>
+                    ) : null}
+                  </div>
                 ))}
               </motion.div>
             ) : null}

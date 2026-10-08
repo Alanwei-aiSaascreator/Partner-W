@@ -1,4 +1,5 @@
 import type { ToolCall } from '@clawwork/shared';
+import { explainToolFailure, matchToolFailure, type ToolFailureKind } from './tool-failure-explain';
 
 export type ToolActivityKind =
   | 'listDirectory'
@@ -237,9 +238,35 @@ const CJK_RE = /[\u3000-\u303f\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uff00-\uff
  *    BUG-026 已定稿的 9 语言词条 —— **零新增 i18n 键**）。
  *    原始文本不丢：`debugToolFailures()` 照旧把完整载荷写进 console.debug（用户面看不到、排查拿得到）。
  *    ⚠️ **含中文**的认不出文本仍然原样保留（不编中文指错方向）。
+ *
+ * ⚠️ **2026-10-08 总审（R5）两处调整**：
+ *    ① **具名协议错误先于 family 分类**：`Missing required parameter: timeout (received: …)` 里的
+ *       "timeout" 是**参数名**，不是"等待超时"（真机实证：整句被判成 `toolActivity.failure.timeout`）；
+ *       工具名里带 `network` 的 not found 同理。family 三态内部顺序不变，只是排到具名之后。
+ *    ② 具名判据吃**剥样板但未遮路径**的原文（`stripRuntimeBoilerplate`）：参数名不能从**脱敏后**
+ *       的文本反推（`C:\…\report.docx` 被遮成 `report.docx` 后会被当参数名用）。
+ *        rest 的清洗/判据仍走 `sanitizeToolText`（遮路径照旧，出口不吐路径）。
  * 返回 `null` = 没有任何可展示内容（调用方不渲染该行）。
  */
+
+/**
+ * **组件共用入口**（R5）：原始 `ToolCall.result`（可能带样板 / 路径）→ 具名形态号；认不出 `null`。
+ *
+ * 放在这里（而不是 `tool-failure-explain.ts`）是为了让依赖**单向**：本文件引
+ * `tool-failure-explain` 的 `matchToolFailure`/`explainToolFailure`，反向零引用；
+ * 而"剥样板"只有这里一份实现。
+ *
+ * `ToolCallCard` 用它抑制"矛盾的家族类别"（缺 timeout 参数 ≠ 等待超时），
+ * `ToolCallSummary` 用它决定弱化态显示具名句而不是泛化的"已跳过"。
+ */
+export function namedToolFailureKind(reason: string): ToolFailureKind | null {
+  return matchToolFailure(stripRuntimeBoilerplate(reason));
+}
+
 export function productizedToolFailure(reason: string, t: Translate): string | null {
+  const stripped = stripRuntimeBoilerplate(reason);
+  const explained = explainToolFailure(stripped, t);
+  if (explained) return explained;
   const cleaned = sanitizeToolText(reason);
   if (!cleaned) return null;
   const family = classifyToolFailure(cleaned);

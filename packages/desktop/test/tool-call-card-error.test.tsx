@@ -45,7 +45,7 @@ function errorLine(container: HTMLElement): string | null {
 }
 
 /**
- * 工具调用失败时，**原因要摊在行上**，不能只留一个红色 ×。
+ * 工具调用失败时，**原因要摊出来**，不能只留一个红色 ×。
  *
  * ## 为什么单独钉这一条
  *
@@ -69,9 +69,15 @@ function errorLine(container: HTMLElement): string | null {
  * 后跟「重复失败 ×12」）；统一走既有兜底句 `toolActivity.failure.cannotContinue`。
  * **含中文**的认不出原因仍原样保留（不编中文指错方向）。原始文本没有丢：
  * console.debug（`debugToolFailures`）与展开详情仍是（清洗后）原文。
+ *
+ * ## ⚠️ 2026-10-08 平铺改造（有意改写断言）
+ *
+ * 工具行轻量化后，错误块从"行内单行截断"改为**行下方的独立块**（`tool-row__error`）：
+ * 全文可见、不再 `truncate`，行本身保持 tertiary（不整行变红）。下面的断言随之改写。
  */
 describe('ToolCallCard 的失败原因', () => {
-  it('失败 ⇒ 行上有失败原因（可读的中文原因原样显示）', () => {
+  // ⚠️ 2026-10-08 平铺改造（有意改名）：失败说明块在**行下方**而不是行内 —— 名字说实话。
+  it('失败 ⇒ 有失败原因块（可读的中文原因原样显示）', () => {
     const reason = 'exec: 无法写入 C:\\Users\\Administrator\\Desktop\\lulu（不在工作区内）';
     const { container, unmount } = render(<ToolCallCard toolCall={call({ status: 'error', result: reason })} />);
 
@@ -80,7 +86,8 @@ describe('ToolCallCard 的失败原因', () => {
     unmount();
   });
 
-  it('⭐ 未映射的内核英文 ⇒ 行上是产品兜底句（英文原文不上屏）', () => {
+  // ⚠️ 2026-10-08 平铺改造（有意改名）：同上 —— 兜底句落在行下方的错误块里。
+  it('⭐ 未映射的内核英文 ⇒ 错误块是产品兜底句（英文原文不上屏）', () => {
     const reason = 'exec: path "C:\\\\Users\\\\Administrator\\\\Desktop\\\\lulu" is outside the workspace';
     const { container, unmount } = render(<ToolCallCard toolCall={call({ status: 'error', result: reason })} />);
 
@@ -116,7 +123,9 @@ describe('ToolCallCard 的失败原因', () => {
     unmount();
   });
 
-  it('原文很长时整段都在 DOM 里（行上截断、title 可悬停看全）', () => {
+  // ⚠️ 2026-10-08 平铺改造（有意改写）：错误块移到行下方 ⇒ 断言从"行上截断、悬停看全"
+  //    改为"整段可见、不截断、不在行内"。
+  it('原文很长时整段都在 DOM 里且可见（错误块在行下方，不再挂 truncate）', () => {
     // ⚠️ 用**含中文**的长原因：英文会被兜底成产品文案（上面那条），这里测的是"长文本不被截断"。
     const long = `exec 失败：${'很长的原因'.repeat(50)}`;
     const { container, unmount } = render(<ToolCallCard toolCall={call({ status: 'error', result: long })} />);
@@ -124,6 +133,8 @@ describe('ToolCallCard 的失败原因', () => {
     const node = container.querySelector('[data-testid="tool-call-error"]');
     expect(node?.getAttribute('title'), 'title 带全文，用户能悬停看全').toBe(long);
     expect(node?.textContent?.length, 'DOM 里也是全文，没有为了好看把内容截掉').toBe(long.length);
+    expect(node?.className, '整段可见，不截断').not.toContain('truncate');
+    expect(node?.closest('button'), '错误块不在行内（行本身保持 tertiary）').toBeNull();
     unmount();
   });
 
@@ -173,6 +184,26 @@ describe('ToolCallCard 的失败原因', () => {
     act(() => (unknown.container.querySelector('[data-testid="tool-call-card"] button') as HTMLButtonElement).click());
     expect(unknown.container.querySelector('[data-testid="tool-call-failure-class"]')).toBeNull();
     unknown.unmount();
+  });
+
+  /**
+   * ⚠️ R5（2026-10-08 总审）：具名协议错误命中时，详情区**不得**再追加家族类别 ——
+   * 「缺少必要参数（timeout）」旁边再挂一句「错误类别：等待超时」是自相矛盾；
+   * 背景：`classifyToolFailure` 的宽泛关键词曾把 `Missing required parameter: timeout (…)`
+   * 判成"等待超时"（"超时"来自**参数名**，不是失败形态）。
+   */
+  it('R5：具名命中 ⇒ 详情区不追加矛盾的家族类别；具名说明在错误块里', () => {
+    const { container, unmount } = render(
+      <ToolCallCard
+        toolCall={call({ status: 'error', result: 'Missing required parameter: timeout (received: action, name).' })}
+      />,
+    );
+
+    // 错误块给具名说明（缺参），不是"等待超时"
+    expect(errorLine(container)).toBe('toolActivity.failure.missingParam');
+    act(() => (container.querySelector('[data-testid="tool-call-card"] button') as HTMLButtonElement).click());
+    expect(container.querySelector('[data-testid="tool-call-failure-class"]')).toBeNull();
+    unmount();
   });
 
   it('图12：行标题剥工具名/遮路径（web_search 这类原始名不上屏）', () => {

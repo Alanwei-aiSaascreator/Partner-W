@@ -276,13 +276,17 @@ describe('BUG-026 开发日志：原始失败载荷进 console.debug', () => {
  * 「执行了 43 个工具调用（21 个失败）→ no paired nodes available; file-transfer tools require a
  *   paired node from nodes status. Use local file/exec tools for local workspace paths. · 重复失败 ×12」。
  * 产品口径（BUG-012/026）：内核/provider 原文不上屏，原始载荷只进 console.debug。
+ *
+ * ⚠️ 2026-10-08 有意改写（R5 / 总审）：该原文**已被具名说明映射**（`localTransfer`
+ * "本地文件不能用这种方式传输（当前没有配对设备），请改用本地读写"），不再落兜底句；
+ * 兜底句仍承担**认不出的**英文（下一条用例）。
  */
-describe('未映射的内核英文不上屏（聚合视图兜底）', () => {
+describe('内核英文不上屏（聚合视图：具名映射 / 兜底）', () => {
   const KERNEL_ENGLISH =
     'no paired nodes available; file-transfer tools require a paired node from nodes status. Use local file/exec tools for local workspace paths.';
   const englishFailures = (count: number): ToolCall[] => repeatedFailures(count, 'file_fetch', KERNEL_ENGLISH);
 
-  it('⭐ 弱化态（有成功步骤 + 12 次重复英文失败）：主行只剩产品兜底句 + 重复计数，英文与路径一个都不上屏', () => {
+  it('⭐ 弱化态（有成功步骤 + 12 次重复英文失败）：主行只剩具名说明 + 重复计数，英文与路径一个都不上屏', () => {
     const spy = vi.spyOn(console, 'debug').mockImplementation(() => {});
     const { container, unmount } = render(
       <ToolCallSummary settled toolCalls={[call('0', 'read_file', 'done'), ...englishFailures(12)]} />,
@@ -293,9 +297,9 @@ describe('未映射的内核英文不上屏（聚合视图兜底）', () => {
     expect(text).not.toContain('file-transfer');
     expect(text).not.toContain('Use local file/exec');
     expect(text).not.toContain('paired node from nodes status');
-    // 兜底句 + 如实的重复计数（事实不丢、不虚报）
+    // 具名说明（不是英文原文、也不是泛泛的兜底句）+ 如实的重复计数（事实不丢、不虚报）
     expect(container.querySelector('[data-testid="tool-failure-degraded"]')?.textContent).toContain(
-      'toolActivity.failure.cannotContinue',
+      'toolActivity.failure.localTransfer',
     );
     expect(container.querySelector('[data-testid="tool-failure-repeat"]')?.textContent).toBe(
       'toolActivity.repeatedFailure:12',
@@ -309,12 +313,17 @@ describe('未映射的内核英文不上屏（聚合视图兜底）', () => {
     unmount();
   });
 
-  it('⭐ 无法继续态：兜底句**只说一次**（不与下方动作行重复），重复计数仍在', () => {
+  // ⚠️ 2026-10-08 有意改写（R5）：具名说明与动作区那句「这一步暂时无法完成。」**不是同一句**，
+  //    不再被兜底句连坐隐掉（主行给出具名说明）；动作区自己那句仍然只说一次。
+  it('⭐ 无法继续态：具名说明上主行、动作区的兜底句不重复，重复计数仍在', () => {
     const { container, unmount } = render(<ToolCallSummary settled toolCalls={englishFailures(12)} />);
 
     const text = container.textContent ?? '';
     expect(text).not.toContain('no paired nodes');
     expect(summaryButton(container).dataset.status).toBe('error');
+    expect(container.querySelector('[data-testid="tool-failure-reason"]')?.textContent).toContain(
+      'toolActivity.failure.localTransfer',
+    );
     expect(text.split('toolActivity.failure.cannotContinue').length - 1).toBe(1);
     expect(container.querySelector('[data-testid="tool-failure-cannot-continue"]')).not.toBeNull();
     expect(container.querySelector('[data-testid="tool-failure-repeat"]')?.textContent).toBe(
@@ -323,13 +332,64 @@ describe('未映射的内核英文不上屏（聚合视图兜底）', () => {
     unmount();
   });
 
-  it('未被兜底波及：含中文的认不出原因照旧原样展示（不编中文指错方向）', () => {
-    const { container, unmount } = render(
+  it('认不出的英文 ⇒ 兜底句（英文原文不上屏）；含中文的认不出原因照旧原样展示', () => {
+    // 认不出的英文：主行原因句与动作区那句**是同一句** ⇒ 主行去重（由动作区承担）。
+    // 单卡的错误块（行下方）照旧显示产品化文案（每一条调用自己的原因层）；英文原文只进 console。
+    const unknown = render(
+      <ToolCallSummary settled toolCalls={[call('1', 'exec', 'error', 'Command exited with code 1')]} />,
+    );
+    expect(unknown.container.textContent).not.toContain('Command exited with code 1');
+    expect(unknown.container.querySelector('[data-testid="tool-failure-reason"]')).toBeNull();
+    expect(unknown.container.querySelector('[data-testid="tool-failure-cannot-continue"]')?.textContent).toBe(
+      'toolActivity.failure.cannotContinue',
+    );
+    expect(unknown.container.querySelectorAll('[data-testid="tool-call-error"]')).toHaveLength(1);
+    unknown.unmount();
+
+    // 含中文的认不出原因：不是兜底句 ⇒ 照旧原样展示（不编中文指错方向）。
+    const chinese = render(
       <ToolCallSummary settled toolCalls={[call('1', 'exec', 'error', '工作区里没有这个文件')]} />,
     );
-
-    expect(container.querySelector('[data-testid="tool-failure-reason"]')?.textContent).toContain(
+    expect(chinese.container.querySelector('[data-testid="tool-failure-reason"]')?.textContent).toContain(
       '工作区里没有这个文件',
+    );
+    chinese.unmount();
+  });
+});
+
+/**
+ * ⚠️ R5 第 4 条（2026-10-08 总审）：summary 与 card 两处说明**必须一致** ——
+ * 具名命中时，弱化态的次要说明要给 `failureReason`（具名句），不是"已跳过"的泛化句。
+ */
+describe('R5 · 具名失败的 summary 说明与 card 一致', () => {
+  it('弱化态 + 具名失败（缺 timeout 参数）⇒ degraded 说明是具名句，不是 degradedContinue', () => {
+    const { container, unmount } = render(
+      <ToolCallSummary
+        settled
+        toolCalls={[
+          call('0', 'read_file', 'done'),
+          call('1', 'exec', 'error', 'Missing required parameter: timeout (received: action, name).'),
+        ]}
+      />,
+    );
+
+    const note = container.querySelector('[data-testid="tool-failure-degraded"]')?.textContent ?? '';
+    expect(note).toContain('toolActivity.failure.missingParam');
+    expect(note).not.toContain('toolActivity.failure.degradedContinue');
+    expect(note).not.toContain('toolActivity.failure.timeout');
+    unmount();
+  });
+
+  it('对照组：非具名的真实超时失败 ⇒ 仍是可降级的泛化说明（语义不变）', () => {
+    const { container, unmount } = render(
+      <ToolCallSummary
+        settled
+        toolCalls={[call('0', 'read_file', 'done'), call('1', 'exec', 'error', 'operation timeout')]}
+      />,
+    );
+
+    expect(container.querySelector('[data-testid="tool-failure-degraded"]')?.textContent).toContain(
+      'toolActivity.failure.degradedContinue',
     );
     unmount();
   });

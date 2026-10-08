@@ -263,13 +263,21 @@ describe('工具文本产品化层（图12）', () => {
    * BUG-049 同批（pre19 验收截图）：聚合视图里 21 个失败的原因行是**内核英文原文**
    * （`no paired nodes available; file-transfer tools require a paired node from nodes status. …`）
    * 后跟「重复失败 ×12」。产品口径：普通用户不该看到内核英文；原始文本进 console.debug。
+   *
+   * ⚠️ 2026-10-08 有意改写（R5 / 总审）：具名说明层（`tool-failure-explain`）落地后，
+   *    配对节点**双句原文已被具名映射**（localTransfer），不再走"未映射 → 兜底句"——
+   *    兜底句现在只承担**认不出的**英文（`Command exited with code 1` 这类，零新增 i18n 键）。
    */
-  describe('未映射的内核英文 → 产品兜底句（不再原样上屏）', () => {
+  describe('内核英文不上屏：具名映射 / 兜底句（原文只进 console.debug）', () => {
     const KERNEL_ENGLISH =
       'no paired nodes available; file-transfer tools require a paired node from nodes status. Use local file/exec tools for local workspace paths.';
 
-    it('productizedToolFailure：内核英文 → 复用既有兜底文案（零新增 i18n 键）', () => {
-      expect(productizedToolFailure(KERNEL_ENGLISH, t)).toBe('t:toolActivity.failure.cannotContinue');
+    it('⭐ 配对节点双句原文 ⇒ 具名说明（本地文件改用本地读写），不是英文原文', () => {
+      expect(productizedToolFailure(KERNEL_ENGLISH, t)).toBe('t:toolActivity.failure.localTransfer');
+    });
+
+    it('认不出的内核英文 ⇒ 复用既有兜底文案（零新增 i18n 键）', () => {
+      expect(productizedToolFailure('Command exited with code 1', t)).toBe('t:toolActivity.failure.cannotContinue');
     });
 
     it('可见性判据：英文 = 需要兜底；含中文 = 原样（不编中文指错方向）', () => {
@@ -280,11 +288,11 @@ describe('工具文本产品化层（图12）', () => {
       expect(isOpaqueToolFailure('')).toBe(false);
     });
 
-    it('visibleFailureReason（摘要行唯一出口）：拿到的也是产品兜底句，不是英文原文', () => {
+    it('visibleFailureReason（摘要行唯一出口）：拿到的是具名说明，不是英文原文', () => {
       // ⚠️ `call()` 的第 4 个参数是 startedAt —— result 必须显式构造（否则测的是空串）。
       const failed: ToolCall = { ...call('1', 'file_fetch', 'error'), result: KERNEL_ENGLISH };
       const reason = visibleFailureReason([failed], t);
-      expect(reason).toBe('t:toolActivity.failure.cannotContinue');
+      expect(reason).toBe('t:toolActivity.failure.localTransfer');
       expect(reason).not.toContain('no paired nodes');
       expect(reason).not.toContain('file-transfer');
     });

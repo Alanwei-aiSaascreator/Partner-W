@@ -75,22 +75,25 @@ describe('ToolCallSummary', () => {
     unmount();
   });
 
-  it('reveals semantic groups before raw calls', () => {
+  // ⚠️ 2026-10-08 平铺改造（有意改写）：原「先看语义分组、展开组行才看到单卡」的断言反转 ——
+  //    分组折叠已取消，工具行按**原始调用顺序**平铺；运行期（settled=false）不点击即可见。
+  it('运行期平铺：按原始调用顺序直接展示工具行，不再有分组层', () => {
     const calls = Array.from({ length: 10 }, (_, index) => call(String(index), index < 8 ? 'ls' : 'exec'));
     const { container, unmount } = render(<ToolCallSummary toolCalls={calls} />);
 
-    act(() => (container.querySelector('[data-testid="tool-activity-summary"]') as HTMLButtonElement).click());
-
-    const groups = container.querySelectorAll('[data-testid^="tool-activity-group-"]');
-    expect(groups).toHaveLength(2);
-    expect(groups[0].textContent).toContain('toolActivity.actions.listDirectory');
-    expect(groups[0].textContent).toContain('toolActivity.groupCount:8');
-    expect(groups[1].textContent).toContain('toolActivity.actions.execute');
-    expect(container.querySelectorAll('[data-testid="tool-call-card"]')).toHaveLength(0);
+    expect(container.querySelectorAll('[data-testid^="tool-activity-group-"]')).toHaveLength(0);
+    const cards = [...container.querySelectorAll('[data-testid="tool-call-card"]')];
+    expect(cards).toHaveLength(10);
+    expect(cards.slice(0, 8).every((card) => card.textContent?.includes('toolActivity.actions.listDirectory'))).toBe(
+      true,
+    );
+    expect(cards.slice(8).every((card) => card.textContent?.includes('toolActivity.actions.execute'))).toBe(true);
     unmount();
   });
 
-  it('makes failures visible and opens their raw call after expanding the summary', () => {
+  // ⚠️ 2026-10-08 平铺改造（有意改写）：原断言要求"点开摘要才看到失败的那一次调用"，
+  //    现在未确认失败**强制可见**（forcedOpen）——失败不该藏在任何一次点击后面。
+  it('⭐ 未确认失败：不展开摘要就能看到失败的工具行与失败说明', () => {
     const { container, unmount } = render(
       <ToolCallSummary toolCalls={[call('1', 'ls'), call('2', 'exec', 'error')]} />,
     );
@@ -98,8 +101,8 @@ describe('ToolCallSummary', () => {
     const summary = container.querySelector('[data-testid="tool-activity-summary"]') as HTMLButtonElement;
     expect(summary.dataset.status).toBe('error');
     expect(summary.textContent).toContain('chatMessage.toolCallSummaryWithErrors');
-    act(() => summary.click());
-    expect(container.querySelectorAll('[data-testid="tool-call-card"]')).toHaveLength(1);
+    expect(container.querySelectorAll('[data-testid="tool-call-card"]')).toHaveLength(2);
+    expect(container.querySelector('[data-testid="tool-call-card"][data-status="error"]')).not.toBeNull();
     unmount();
   });
 
@@ -148,32 +151,39 @@ describe('ToolCallSummary', () => {
 
   /**
    * 区1 体检 P3-11：摘要收起会把整棵子树**卸载**（`AnimatePresence` 里按 `expanded` 渲染），
-   * 组与单卡的开合态原来放在它们自己的 `useState` 里 —— 收起再展开就得重新一层层点开。
-   * 现在两层开合态都提升到摘要（父级不卸载）。
+   * 单卡的开合态原来放在组件自己的 `useState` 里 —— 收起再展开就得重新一层层点开。
+   * 现在单卡开合态提升到摘要（父级不卸载）。
+   *
+   * ⚠️ 2026-10-08 平铺改造（有意改写）：组行消失，只剩"单卡"这一层开合态需要保持；
+   *    成功态（settled + 全成功）才允许折叠，且展开一次就是**平铺全见**（不再有第二/三层）。
    */
-  it('⭐ 收起摘要再展开：组与单卡的开合态都保持', () => {
+  it('⭐ 收起摘要再展开：单卡的开合态保持', () => {
     const calls: ToolCall[] = [{ ...call('1', 'ls'), result: 'ok: 42 files' }, call('2', 'exec')];
-    const { container, unmount } = render(<ToolCallSummary toolCalls={calls} />);
+    const { container, unmount } = render(<ToolCallSummary settled toolCalls={calls} />);
     const summary = () => container.querySelector('[data-testid="tool-activity-summary"]') as HTMLButtonElement;
-    const group = () =>
-      container.querySelector('[data-testid="tool-activity-group-listDirectory-done"]') as HTMLButtonElement;
+    const firstCard = () => container.querySelector('[data-testid="tool-call-card"]') as HTMLElement;
 
-    act(() => summary().click());
-    act(() => group().click());
-    act(() => (container.querySelector('[data-testid="tool-call-card"] button') as HTMLButtonElement).click());
+    expect(container.querySelectorAll('[data-testid="tool-call-card"]'), '全成功才允许默认折叠').toHaveLength(0);
+    act(() => summary().click()); // 一层展开：平铺全部工具行
+    expect(container.querySelectorAll('[data-testid="tool-call-card"]')).toHaveLength(2);
+    expect(container.textContent).not.toContain('ok: 42 files');
+
+    act(() => (firstCard().querySelector('button') as HTMLButtonElement).click()); // 打开第一张卡的详情
     expect(container.textContent).toContain('ok: 42 files');
 
     act(() => summary().click()); // 收起摘要 ⇒ 子树卸载
     expect(container.textContent).not.toContain('ok: 42 files');
 
-    act(() => summary().click()); // 再展开 ⇒ 组还开着、那张卡也还开着
-    expect(container.querySelectorAll('[data-testid="tool-call-card"]')).toHaveLength(1);
+    act(() => summary().click()); // 再展开 ⇒ 那张卡还开着
+    expect(container.querySelectorAll('[data-testid="tool-call-card"]')).toHaveLength(2);
     expect(container.textContent).toContain('ok: 42 files');
 
     unmount();
   });
 
-  it('shows only the current semantic action while work is running', () => {
+  // ⚠️ 2026-10-08 平铺改造（有意改写）：原断言"运行中只有摘要行、0 张单卡"反转 ——
+  //    运行期必须平铺可见（用户要看得到"每一步在干什么"），摘要行仍给"正在做什么"。
+  it('运行中：摘要行说明"正在做什么"，同时工具行已平铺可见', () => {
     const { container, unmount } = render(
       <ToolCallSummary toolCalls={[call('1', 'ls'), call('2', 'exec', 'running')]} />,
     );
@@ -182,7 +192,81 @@ describe('ToolCallSummary', () => {
     expect(summary.dataset.status).toBe('running');
     expect(summary.textContent).toContain('toolActivity.running:1');
     expect(summary.textContent).toContain('toolActivity.actions.execute');
+    expect(container.querySelectorAll('[data-testid="tool-call-card"]'), '运行期平铺可见').toHaveLength(2);
+    unmount();
+  });
+});
+
+/**
+ * ⚠️ R6（2026-10-08 总审 · CHANGES REQUIRED）：混合成功/失败必须**有确认入口**。
+ *
+ * 旧行为：`forcedOpen` 由 `hasFailures && !acknowledged` 驱动，但「跳过这个失败」只在 stopped
+ * （一步都没成功）分支渲染 ⇒「成功 + 失败 + 已结束」永远收不起来（强制可见却没有确认路径）。
+ * 修：**所有 settled 且未确认的失败**都给确认入口；重试按钮沿用既有条件（不加不减）；
+ * 确认只对**点下去那一刻的那批失败**有效 —— 新失败到来必须重新强制可见。
+ */
+describe('R6 · 混合成功/失败的确认入口与确认失效', () => {
+  it('⭐ settled 混合（成功+失败）⇒ 有「跳过这个失败」；确认后可收成一层，失败事实仍可展开', () => {
+    const toolCalls: ToolCall[] = [call('1', 'read'), call('2', 'exec', 'error')];
+    const { container, unmount } = render(<ToolCallSummary settled toolCalls={toolCalls} />);
+
+    expect(container.querySelectorAll('[data-testid="tool-call-card"]')).toHaveLength(2);
+    const skip = container.querySelector('[data-testid="tool-failure-continue"]') as HTMLButtonElement;
+    expect(skip, '混合结果也要给确认入口').not.toBeNull();
+
+    act(() => skip.click());
+    expect(container.querySelectorAll('[data-testid="tool-call-card"]'), '确认后允许收成一层').toHaveLength(0);
+
+    act(() => (container.querySelector('[data-testid="tool-activity-summary"]') as HTMLButtonElement).click());
+    expect(
+      container.querySelectorAll('[data-testid="tool-call-card"][data-status="error"]'),
+      '失败事实仍可展开查到',
+    ).toHaveLength(1);
+    unmount();
+  });
+
+  it('⭐ 确认后新增失败 ⇒ 确认失效、重新强制可见（旧确认不得遮住新失败）', () => {
+    const first: ToolCall[] = [call('1', 'read'), { ...call('2', 'exec', 'error'), result: 'boom' }];
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root: Root = createRoot(container);
+    act(() => root.render(<ToolCallSummary settled toolCalls={first} />));
+
+    act(() => (container.querySelector('[data-testid="tool-failure-continue"]') as HTMLButtonElement).click());
     expect(container.querySelectorAll('[data-testid="tool-call-card"]')).toHaveLength(0);
+
+    act(() =>
+      root.render(
+        <ToolCallSummary
+          settled
+          toolCalls={[...first, { ...call('3', 'write', 'error'), result: 'permission denied' }]}
+        />,
+      ),
+    );
+    expect(container.querySelectorAll('[data-testid="tool-call-card"]'), '新失败必须重新可见').toHaveLength(3);
+    expect(container.querySelector('[data-testid="tool-failure-continue"]')).not.toBeNull();
+
+    act(() => root.unmount());
+    container.remove();
+  });
+
+  it('⭐ running 期不提供确认入口（不能把还在跑的失败收掉）', () => {
+    const { container, unmount } = render(
+      <ToolCallSummary toolCalls={[call('1', 'exec', 'error'), call('2', 'ls', 'running')]} />,
+    );
+
+    expect(container.querySelector('[data-testid="tool-failure-continue"]')).toBeNull();
+    expect(container.querySelectorAll('[data-testid="tool-call-card"]')).toHaveLength(2);
+    unmount();
+  });
+
+  it('⭐「未收到结果」不受影响：没有失败就没有确认入口，过程仍可见', () => {
+    const { container, unmount } = render(
+      <ToolCallSummary settled toolCalls={[call('1', 'sessions_spawn', 'running')]} />,
+    );
+
+    expect(container.querySelector('[data-testid="tool-failure-continue"]')).toBeNull();
+    expect(container.querySelectorAll('[data-testid="tool-call-card"]')).toHaveLength(1);
     unmount();
   });
 });
@@ -210,13 +294,13 @@ describe('工具过程显示"做了什么操作"', () => {
     unmount();
   });
 
-  it('展开后的单卡标题也用 title（点开能看到具体那一条）', () => {
+  // ⚠️ 2026-10-08 平铺改造（有意改写）：不再需要"先展开摘要再找那张卡"——
+  //    失败的行本身就是平铺可见的，直接定位失败卡（`data-status="error"`）核对标题即可。
+  it('失败那一张卡的标题也用 title（平铺可见，无需先展开摘要）', () => {
     const failed: ToolCall = { ...call('2', 'memory_search', 'error'), title: TITLED };
     const { container, unmount } = render(<ToolCallSummary toolCalls={[call('1', 'ls'), failed]} />);
 
-    act(() => (container.querySelector('[data-testid="tool-activity-summary"]') as HTMLButtonElement).click());
-
-    const card = container.querySelector('[data-testid="tool-call-card"]');
+    const card = container.querySelector('[data-testid="tool-call-card"][data-status="error"]');
     expect(card?.textContent).toContain(TITLED_DISPLAY);
     expect(card?.textContent).not.toContain('memory_search');
     unmount();
@@ -235,14 +319,15 @@ describe('工具过程显示"做了什么操作"', () => {
 });
 
 describe('AssistantBlock tool activity', () => {
-  it('renders all streaming calls through one shared compact summary', () => {
+  // ⚠️ 2026-10-08 平铺改造（有意改写）：流式期间工具行**平铺可见**（原断言 0 张单卡）。
+  it('renders all streaming calls through one shared flat summary', () => {
     const calls = Array.from({ length: 10 }, (_, index) => call(String(index), index < 8 ? 'ls' : 'exec'));
     const { container, unmount } = render(
       <AssistantBlock state="streaming" content="" toolCalls={calls} identity={{ agentName: '助手' }} />,
     );
 
     expect(container.querySelectorAll('[data-testid="tool-activity-summary"]')).toHaveLength(1);
-    expect(container.querySelectorAll('[data-testid="tool-call-card"]')).toHaveLength(0);
+    expect(container.querySelectorAll('[data-testid="tool-call-card"]')).toHaveLength(10);
     expect(container.textContent).toContain('toolActivity.running:10');
     unmount();
   });
