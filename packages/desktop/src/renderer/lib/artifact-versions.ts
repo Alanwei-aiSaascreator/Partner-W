@@ -26,11 +26,21 @@
 
 import type { Artifact } from '@clawwork/shared';
 
-const VERSION_SUFFIX_RE = /^(.*)-[0-9a-f]{8}(\.[^.]*)?$/i;
+/**
+ * 生成器版本后缀：`-<8hex>`。两条边界（2026-10-09，WorkBuddy A 批 Task 2）：
+ *
+ * ① **必须含至少一个 a–f 字母**：`20261007` 这种**纯数字日期**是人的命名，不是生成器
+ *    hash —— 旧口径把它当版本后缀剥掉，两份按日期命名的稿子被并成一族、旧的被折走
+ *    （只读探针 `artifact-version-probe.json` 实测）。
+ * ② **剥后缀但保留扩展名**（见 `artifactFamilyKey`）：同 stem 的 `.pptx` 与 `.docx`
+ *    是两份不同交付物，旧口径丢扩展名后会把它们并成一族。
+ */
+const VERSION_SUFFIX_RE = /^(.*)-([0-9a-f]{8})(\.[^.]*)?$/i;
 
 export function artifactFamilyKey(name: string): string {
   const match = VERSION_SUFFIX_RE.exec(name);
-  return (match?.[1] ?? name).trim().toLowerCase();
+  const stem = match && /[a-f]/i.test(match[2]!) ? `${match[1]}${match[3] ?? ''}` : name;
+  return stem.trim().toLowerCase();
 }
 
 export interface ArtifactVersionGroups {

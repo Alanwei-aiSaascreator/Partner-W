@@ -28,12 +28,21 @@ function make(
 
 describe('artifactFamilyKey', () => {
   it.each([
-    ['deck-48b728a4.pptx', 'deck'],
-    ['高退货率诊断与防刷单策略-cccc3333.pptx', '高退货率诊断与防刷单策略'],
-    ['DECK-ABCD1234.PPTX', 'deck'],
+    // ⚠️ 2026-10-09 有意改写（WorkBuddy A 批 Task 2）：族键**保留扩展名** ——
+    //    同 stem 的不同格式（.pptx/.docx）是两份不同交付物，旧口径把扩展名丢掉后
+    //    会被并成一族（"报告-deadbeef.pptx" 与 "报告-cafebabe.docx" 只显示一份）。
+    ['deck-48b728a4.pptx', 'deck.pptx'],
+    ['高退货率诊断与防刷单策略-cccc3333.pptx', '高退货率诊断与防刷单策略.pptx'],
+    ['DECK-ABCD1234.PPTX', 'deck.pptx'],
     ['deck.pptx', 'deck.pptx'],
     ['报告-2.pptx', '报告-2.pptx'],
     ['报告-最终版.pptx', '报告-最终版.pptx'],
+    // ⭐ Task 2：**纯 8 位数字是日期，不是生成器 hash** —— 不剥离（两份日期命名并列）。
+    ['报告-20261007.pptx', '报告-20261007.pptx'],
+    ['报告-20261008.pptx', '报告-20261008.pptx'],
+    // 跨格式：生成器后缀剥离后扩展名不同 ⇒ 不同族。
+    ['报告-deadbeef.pptx', '报告.pptx'],
+    ['报告-cafebabe.docx', '报告.docx'],
   ])('%s → %s', (name, expected) => {
     expect(artifactFamilyKey(name)).toBe(expected);
   });
@@ -71,6 +80,57 @@ describe('groupArtifactVersions', () => {
 
     expect(current.map((a) => a.id)).toEqual(['one', 'plain', 'n2']);
     expect(archived).toEqual([]);
+  });
+
+  /**
+   * ⭐ 2026-10-09（WorkBuddy A 批 Task 2）：**同 stem 不同格式 / 日期命名不许互相顶掉**。
+   *
+   * 只读探针（`artifact-version-probe.json`）实测旧口径的两类误并：
+   *  - `报告-deadbeef.pptx` 与 `报告-cafebabe.docx` 并成同族，旧 PPTX 被折走；
+   *  - `报告-20261007.pptx` 与 `报告-20261008.pptx`（纯数字日期也命中 8hex）同样误并。
+   * 族键改为**剥离生成器后缀但保留扩展名**、且**纯数字后缀不剥离**后两类都并列。
+   * 真正同格式的生成器版本仍按既有 available 优先规则归并（有对照）。
+   */
+  describe('⭐ Task 2：跨格式与日期命名必须并列', () => {
+    it('同 stem 的 .pptx 与 .docx 都在主列表（不是版本关系）', () => {
+      const pptx = make('pptx', '报告-deadbeef.pptx', '2026-10-09T01:00:00.000Z');
+      const docx = make('docx', '报告-cafebabe.docx', '2026-10-09T01:05:00.000Z');
+
+      const { current, archived } = groupArtifactVersions([docx, pptx]);
+
+      expect(current.map((a) => a.id).sort()).toEqual(['docx', 'pptx']);
+      expect(archived).toEqual([]);
+    });
+
+    it('纯数字日期后缀的两份都留在主列表（日期不冒充生成器 hash）', () => {
+      const d7 = make('d7', '报告-20261007.pptx', '2026-10-07T01:00:00.000Z');
+      const d8 = make('d8', '报告-20261008.pptx', '2026-10-08T01:00:00.000Z');
+
+      const { current, archived } = groupArtifactVersions([d8, d7]);
+
+      expect(current.map((a) => a.id)).toEqual(['d8', 'd7']);
+      expect(archived).toEqual([]);
+    });
+
+    it('对照：同格式真版本（含字母的 8hex 后缀）仍归并，最新可用胜出', () => {
+      const older = make('older', '报告-deadbeef.pptx', '2026-10-09T01:00:00.000Z');
+      const newer = make('newer', '报告-cafebabe.pptx', '2026-10-09T01:05:00.000Z');
+
+      const { current, archived } = groupArtifactVersions([newer, older]);
+
+      expect(current.map((a) => a.id)).toEqual(['newer']);
+      expect(archived.map((a) => a.id)).toEqual(['older']);
+    });
+
+    it('对照：同名无后缀与生成器版本同族（同格式，最新可用胜出）', () => {
+      const plain = make('plain', '报告.pptx', '2026-10-09T01:00:00.000Z');
+      const versioned = make('versioned', '报告-deadbeef.pptx', '2026-10-09T01:05:00.000Z');
+
+      const { current, archived } = groupArtifactVersions([versioned, plain]);
+
+      expect(current.map((a) => a.id)).toEqual(['versioned']);
+      expect(archived.map((a) => a.id)).toEqual(['plain']);
+    });
   });
 
   it('空输入 → 两个空数组', () => {
