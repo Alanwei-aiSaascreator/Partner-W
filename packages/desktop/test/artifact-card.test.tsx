@@ -12,6 +12,7 @@ vi.mock('react-i18next', () => ({
 
 import ArtifactCard from '../src/renderer/components/ArtifactCard';
 import ChatMessage from '../src/renderer/components/ChatMessage';
+import { useFileStore } from '../src/renderer/stores/fileStore';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -208,7 +209,14 @@ describe('ArtifactCard', () => {
     });
   });
 
-  it('renders real assistant artifacts inside the originating chat message', () => {
+  it('renders real assistant artifacts inside the originating chat message', async () => {
+    /*
+      ⚠️ 2026-10-08 有意改写（T8 接线 · 总审闭环令 §4.1）：聊天内产物卡的**真源**已改为
+      任务级 `fileStore + listArtifacts`（与右栏同源，先对完整任务归并、后按 messageId 分发）——
+      `message.artifacts` 在生产链路**恒为空**，不再作为来源（见 AssistantBlock 的接线注释）。
+      断言意图不变：**真实登记**的产物要出现在它所属的那条消息里。
+    */
+    useFileStore.setState({ artifacts: [artifact] });
     const { container, unmount } = render(
       <ChatMessage
         message={{
@@ -216,16 +224,20 @@ describe('ArtifactCard', () => {
           taskId: 'task-1',
           role: 'assistant',
           content: '文件已经生成。',
-          artifacts: [artifact],
+          artifacts: [],
           toolCalls: [],
           timestamp: '2026-09-16T08:00:00.000Z',
         }}
         agentName="高效办公"
       />,
     );
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
 
     expect(container.querySelector('[data-testid="artifact-card"]')?.textContent).toContain('report.pdf');
     expect(container.querySelector('[aria-label="artifactCard.locateMessage"]')).toBeNull();
+    useFileStore.setState({ artifacts: [] });
     unmount();
   });
 });
