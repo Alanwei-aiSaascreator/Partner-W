@@ -165,17 +165,53 @@ describe('AssistantBlock：状态切换时块与头像不能被卸载重建', ()
     expect(view.container.textContent).not.toContain('第一轮答案');
   });
 
-  it('流式思考只显示中性等待态，绝不把供应商原始推理暴露给用户', () => {
+  /*
+    ⚠️ 2026-10-08 有意反转（对话可视化改造 · Task 3）：下面两条原来的口径是
+    "思考内容绝不上屏"。用户明确要求**可折叠思考**（真实 WorkBuddy 形态：
+    live 展开扫光、done 收起一行「深度思考」、正文惰性挂载），因此按新语义改写。
+    保留的语义不变：「思考不是最终回答」（没有正文仍给可重试失败态）；
+    「未产出不能假成功」。反转过理由：旧断言曾是"隐藏推理"的实现细节，
+    现在产品决定把它作为可展开的推理过程暴露 —— 不是为了让断言好过而改断言。
+  */
+  it('⭐ 流式中（live）：思考折叠展开可见、标题扫光；有推理时不再叠跳动点', () => {
+    const rawThinking = 'We need inspect private chain-of-thought before answering.';
+    const view = render(
+      <AssistantBlock
+        state="streaming"
+        content=""
+        thinkingContent={rawThinking}
+        toolCalls={[]}
+        identity={identity}
+        activity={{ kind: 'thinking', revision: 1, thinkingSegment: 1 }}
+      />,
+    );
+
+    expect(view.container.textContent, 'live：推理正文可见（可折叠）').toContain(rawThinking);
+    const collapse = view.container.querySelector('[data-testid="thinking-collapse"]');
+    expect(collapse).not.toBeNull();
+    expect(collapse!.className).toContain('thinking-collapse--live');
+    expect(collapse!.querySelector('.thinking-collapse__title')!.className).toContain('text-shimmer');
+    expect(
+      view.container.querySelector('[data-testid="thinking-indicator"]'),
+      '思考折叠承担"在动"，不叠跳动点',
+    ).toBeNull();
+  });
+
+  it('无活动元数据（旧路径/无来源）⇒ 静态降级：收起、正文不进 DOM（不从 props 猜顺序）', () => {
     const rawThinking = 'We need inspect private chain-of-thought before answering.';
     const view = render(
       <AssistantBlock state="streaming" content="" thinkingContent={rawThinking} toolCalls={[]} identity={identity} />,
     );
 
+    const collapse = view.container.querySelector('[data-testid="thinking-collapse"]');
+    expect(collapse).not.toBeNull();
+    expect(collapse!.className).toContain('thinking-collapse--done');
+    expect(collapse!.className).toContain('thinking-collapse--collapsed');
     expect(view.container.textContent).not.toContain(rawThinking);
-    expect(view.container.querySelector('[data-testid="thinking-indicator"]')).not.toBeNull();
+    expect(view.container.querySelector('[data-testid="thinking-indicator"]')).toBeNull();
   });
 
-  it('定稿消息也不显示已经保存的原始推理', () => {
+  it('定稿消息：思考折叠收起、正文惰性（展开前不进 DOM；展开后可见）', () => {
     const rawThinking = 'Hidden provider reasoning must stay hidden.';
     const view = render(
       <AssistantBlock
@@ -186,10 +222,16 @@ describe('AssistantBlock：状态切换时块与头像不能被卸载重建', ()
     );
 
     expect(view.container.textContent).toContain('给用户的答案');
-    expect(view.container.textContent).not.toContain(rawThinking);
+    expect(view.container.querySelector('[data-testid="thinking-collapse"]')).not.toBeNull();
+    expect(view.container.textContent, '收起态：正文不进 DOM（惰性挂载）').not.toContain(rawThinking);
+
+    const header = view.container.querySelector<HTMLButtonElement>('[data-testid="thinking-collapse-header"]');
+    expect(header).not.toBeNull();
+    act(() => header?.click());
+    expect(view.container.textContent, '展开后可查阅').toContain(rawThinking);
   });
 
-  it('⭐ 只有思考却没有可见答案：定稿后停止转圈，明确失败并允许重试', () => {
+  it('⭐ 只有思考却没有可见答案：定稿后停止转圈，明确失败并允许重试；思考可折叠查阅', () => {
     const retry = vi.fn();
     const rawThinking = 'Private reasoning exists, but no user-facing answer was produced.';
     const view = render(
@@ -203,7 +245,12 @@ describe('AssistantBlock：状态切换时块与头像不能被卸载重建', ()
 
     expect(view.container.querySelector('[data-testid="thinking-indicator"]'), '定稿后绝不能继续显示进行中').toBeNull();
     expect(view.container.querySelector('[data-testid="assistant-no-visible-answer"]')).not.toBeNull();
-    expect(view.container.textContent).not.toContain(rawThinking);
+    expect(view.container.querySelector('[data-testid="thinking-collapse"]'), '思考折叠在（可查阅）').not.toBeNull();
+    expect(view.container.textContent, '收起态惰性：正文不进 DOM').not.toContain(rawThinking);
+
+    const header = view.container.querySelector<HTMLButtonElement>('[data-testid="thinking-collapse-header"]');
+    act(() => header?.click());
+    expect(view.container.textContent, '展开后可见').toContain(rawThinking);
 
     const button = view.container.querySelector<HTMLButtonElement>('[data-testid="assistant-empty-retry"]');
     expect(button).not.toBeNull();

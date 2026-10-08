@@ -1201,6 +1201,7 @@ export function ChatContent({
                         content={item.turn?.streamingText ?? ''}
                         thinkingContent={item.turn?.streamingThinking || undefined}
                         toolCalls={item.turn?.toolCalls ?? EMPTY_TOOL_CALLS}
+                        activity={item.turn?.activity}
                         identity={identityFor(item.sessionKey)}
                         // ⭐ 2026-10-03：等待期显示富活动行（跳动条+正在干什么+已等待）。
                         //    它就是**回复位**上的活动指示 —— 与输入框上方的 ComposerActivity

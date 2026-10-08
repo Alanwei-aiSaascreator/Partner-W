@@ -786,7 +786,13 @@ describe('聊天区在发送时的稳定性', () => {
     view.unmount();
   });
 
-  it('⭐ 定稿只有隐藏思考、没有正文：显示可重试失败态，不再伪装成仍在生成', () => {
+  /*
+    ⚠️ 2026-10-08 有意反转（对话可视化改造 · Task 3）：本条原来断言"思考内容绝不上屏"。
+    用户明确要求可折叠思考（真实 WorkBuddy 形态）⇒ 现在断言：**失败态语义不变**
+    （没有正文 ⇒ 可重试失败态、不伪装仍在生成），**思考改为可折叠查阅**（收起态惰性、
+    展开后可见）。这不是为了迁就旧断言而藏文本 —— 是产品口径的有意变更。
+  */
+  it('⭐ 定稿只有隐藏思考、没有正文：显示可重试失败态，不再伪装成仍在生成；思考可折叠查阅', () => {
     const SESSION = 'agent:rongying-content:clawwork:abc:task:task-1';
     mocks.tasks = [activeTask()];
     mocks.activeTaskId = 'task-1';
@@ -797,6 +803,7 @@ describe('聊天区在发送时的稳定性', () => {
         id: 'turn-empty',
         streamingText: '',
         streamingThinking: '供应商返回了内部推理，但没有用户可见正文',
+        thinkingContent: '供应商返回了内部推理，但没有用户可见正文',
         toolCalls: [],
         finalized: true,
         content: '',
@@ -806,7 +813,11 @@ describe('聊天区在发送时的稳定性', () => {
 
     const view = renderMainArea();
     expect(view.container.querySelector('[data-testid="assistant-no-visible-answer"]')).not.toBeNull();
-    expect(view.container.textContent).not.toContain('供应商返回了内部推理');
+    expect(view.container.querySelector('[data-testid="thinking-collapse"]'), '思考折叠在（可查阅）').not.toBeNull();
+    expect(view.container.textContent, '收起态惰性：正文不进 DOM').not.toContain('供应商返回了内部推理');
+    const header = view.container.querySelector<HTMLButtonElement>('[data-testid="thinking-collapse-header"]');
+    act(() => header?.click());
+    expect(view.container.textContent, '展开后可见').toContain('供应商返回了内部推理');
     view.unmount();
   });
 

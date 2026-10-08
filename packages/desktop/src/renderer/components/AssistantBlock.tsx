@@ -1,5 +1,6 @@
 import { memo, useEffect, useRef, useState } from 'react';
 import type { Message, ToolCall } from '@clawwork/shared';
+import type { ActiveTurnActivity } from '@clawwork/core';
 import { Check, Copy, Loader2, Save } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { cn } from '@/lib/utils';
@@ -7,6 +8,7 @@ import { motion as motionPresets } from '@/styles/design-tokens';
 import { copyTextToClipboard } from '@/lib/clipboard';
 import MessageBlock, { type AssistantIdentity } from './MessageBlock';
 import { AttachmentFileCard, InlineImageBubble, MessageActionButton } from './MessageParts';
+import ThinkingCollapse from './ThinkingCollapse';
 import ThinkingIndicator from './ThinkingIndicator';
 import TurnActivityRow from './TurnActivityRow';
 import ToolCallSummary from './ToolCallSummary';
@@ -79,6 +81,13 @@ export function AssistantFinalizedBody({ message, agentName, onImageClick, onRet
 
   return (
     <>
+      {/*
+        思考折叠（2026-10-08 对话可视化改造 · Task 3）：定稿态按 `done` 渲染——
+        收起成一行「深度思考」、正文惰性（展开前不进 DOM；长 CoT 性能）。
+        ⚠️ 它**不算** `hasVisibleAnswer`（思考不是最终回答，见下方判据）——
+        "只有思考没有正文"仍然要给出可重试的失败态。
+      */}
+      <ThinkingCollapse text={(message.thinkingContent ?? '').trim()} phase="done" />
       {message.content.trim() ? (
         <div className="inline-block max-w-full leading-relaxed rounded-2xl px-4 py-3 text-[var(--text-primary)]">
           <MarkdownContent
@@ -180,15 +189,32 @@ export interface AssistantStreamingBodyProps {
    *    且正是用户盯着看的那一格。遗留调用点不传即保持旧行为（默认参数，不改语义）。
    */
   activitySessionKey?: string;
+  /**
+   * 本轮最新活动元数据（core `ActiveTurn.activity`，事件入口留痕）。
+   * 思考折叠的 live/done 由它决定 —— **不从 props 变化猜顺序**（见 `ThinkingCollapse` 注释）。
+   * 缺失（旧路径/无来源）⇒ 静态降级为 `done`（不扫光、不自动展开）。
+   */
+  activity?: ActiveTurnActivity;
 }
 
-export function AssistantStreamingBody({ content, toolCalls, activitySessionKey }: AssistantStreamingBodyProps) {
+export function AssistantStreamingBody({
+  content,
+  thinkingContent,
+  toolCalls,
+  activitySessionKey,
+  activity,
+}: AssistantStreamingBodyProps) {
+  const thinkingText = (thinkingContent ?? '').trim();
+  const thinkingPhase: 'live' | 'done' = activity?.kind === 'thinking' ? 'live' : 'done';
   return (
     <>
+      {/* 思考折叠（Task 3）：有推理文本就渲染；`live` 时展开+扫光、`done` 时收起一行。 */}
+      <ThinkingCollapse text={thinkingText} phase={thinkingPhase} segment={activity?.thinkingSegment ?? 0} />
       {/* ⚠️ 顺序要紧：**什么都没到**时才显示跳动点。
           发出之后到第一个字之前，这一块已经在页面上（头像+名字也在），
-          于是这条消息从"发出"到"结束"始终是**同一个 DOM 节点** —— 头像不会闪。 */}
-      {!content && !toolCalls?.length ? (
+          于是这条消息从"发出"到"结束"始终是**同一个 DOM 节点** —— 头像不会闪。
+          有推理文本时由思考折叠承担"在动"的表达，不再叠一个跳动点。 */}
+      {!thinkingText && !content && !toolCalls?.length ? (
         activitySessionKey ? (
           <TurnActivityRow sessionKey={activitySessionKey} />
         ) : (
@@ -224,6 +250,8 @@ export type AssistantBlockProps = {
       toolCalls?: ToolCall[];
       /** 见 `AssistantStreamingBodyProps.activitySessionKey`。 */
       activitySessionKey?: string;
+      /** 见 `AssistantStreamingBodyProps.activity`（core 事件入口留痕的最新活动）。 */
+      activity?: ActiveTurnActivity;
     }
   | {
       /** 定稿：正文已经落在这条正式消息上。 */
@@ -264,6 +292,7 @@ const AssistantBlock = memo(function AssistantBlock(props: AssistantBlockProps) 
           thinkingContent={props.thinkingContent}
           toolCalls={props.toolCalls}
           activitySessionKey={props.activitySessionKey}
+          activity={props.activity}
         />
       )}
     </MessageBlock>
