@@ -586,3 +586,63 @@ describe('useTaskArtifacts · R2/R3/R4 回归', () => {
     expect(listArtifacts, '没有修订事件就不许自旋').toHaveBeenCalledTimes(1);
   });
 });
+
+/**
+ * F3（2026-10-08 终审）：**修订更新后，任何一次提交都不得发布旧镜像**。
+ *
+ * 旧镜像（已核验快照）的失效原先只由 effect 完成 —— 渲染合并只看 `freshMirror.key`，
+ * 于是 store 修订（同 ID 正常更新 messageId 是正式生产路径，见 reconcile.ts:912-922）
+ * 之后**先提交一帧旧行**，effect 才纠正。修法：镜像带**修订指纹**，渲染合并前
+ * 同时校验 任务键 + 当前指纹，过期镜像当场弃用。
+ *
+ * ⚠️ 断言按**每一次提交**（渲染探针逐次记录），而不是只看 act 后的终态 —— 只看终态
+ * 抓不到"中间发布过一帧旧行"。
+ */
+describe('useTaskArtifacts · F3 修订渲染守卫（逐提交）', () => {
+  it('⭐ 已有核验快照后同 ID 更新 messageId（m1→m2）⇒ 更新后的第一次提交就必须是新行', async () => {
+    const taskId = 'task-f3-commit';
+    let freshMessageId = 'm1';
+    const listArtifacts = vi
+      .fn()
+      .mockImplementation(() =>
+        Promise.resolve({ ok: true, result: [makeArtifact({ id: 'x-1', taskId, messageId: freshMessageId })] }),
+      );
+    Object.assign(window, { clawwork: { listArtifacts } });
+
+    // 逐提交记录：每一次渲染都记下"当前发布的 messageId"
+    const published: string[] = [];
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    function Probe() {
+      const { artifacts } = useTaskArtifacts(taskId);
+      published.push(artifacts.length > 0 ? String(artifacts[0]!.messageId) : '(empty)');
+      return null;
+    }
+    act(() => root.render(<Probe />));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(published.at(-1), '快照落定：镜像 = m1').toBe('m1');
+
+    // —— 修订更新：同 ID 正常更新 messageId（fresh 查询也将返回 m2）——
+    published.length = 0;
+    freshMessageId = 'm2';
+    act(() => {
+      useFileStore.setState({ artifacts: [makeArtifact({ id: 'x-1', taskId, messageId: 'm2' })] });
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(
+      published.filter((entry) => entry === 'm1'),
+      '修订更新之后不允许再提交旧镜像（一帧也不行）',
+    ).toEqual([]);
+    expect(published[0], '更新后的**第一次**提交就应该是新行').toBe('m2');
+    expect(published.at(-1)).toBe('m2');
+
+    act(() => root.unmount());
+    container.remove();
+  });
+});

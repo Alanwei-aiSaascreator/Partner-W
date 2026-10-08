@@ -83,6 +83,12 @@ const NO_ARTIFACTS: Artifact[] = [];
 /** 组件本地的 fresh 镜像：`key` = 这份行属于哪个 `${epoch}::${taskId}`。 */
 interface FreshMirror {
   key: string;
+  /**
+   * 该镜像**被核验时所依据**的任务修订指纹（F3）：渲染合并前必须与**当前**指纹相符，
+   * 否则当场弃用 —— 只靠 effect 事后纠正会先提交一帧旧行（同 ID 正常更新 messageId
+   * 是正式生产路径；评审按逐提交复现过 `store=m2 → DOM=m1 → DOM=m2`）。
+   */
+  signature: string;
   rows: Artifact[] | null;
 }
 
@@ -353,13 +359,18 @@ export function useTaskArtifacts(taskId: string | undefined): { artifacts: Artif
     const entry = entries.get(key);
     if (!entry) return null;
     const signature = taskSignature(useFileStore.getState().artifacts, taskId);
-    return { key, rows: usableRows(entry, workspaceEpoch, signature) };
+    return { key, signature, rows: usableRows(entry, workspaceEpoch, signature) };
   }, [taskId, workspaceEpoch]);
 
   /** 内容没变就不换引用（notify 是高频事件，别为同一份行白白重渲染）。 */
   const applyFreshMirror = useCallback((next: FreshMirror | null) => {
     setFreshMirror((prev) =>
-      prev === next || (prev !== null && next !== null && prev.key === next.key && prev.rows === next.rows)
+      prev === next ||
+      (prev !== null &&
+        next !== null &&
+        prev.key === next.key &&
+        prev.signature === next.signature &&
+        prev.rows === next.rows)
         ? prev
         : next,
     );
@@ -418,12 +429,15 @@ export function useTaskArtifacts(taskId: string | undefined): { artifacts: Artif
   const artifacts = useMemo(() => {
     if (!taskId) return NO_ARTIFACTS;
     const key = entryKey(workspaceEpoch, taskId);
-    const freshRows = freshMirror !== null && freshMirror.key === key ? freshMirror.rows : null;
+    // F3：镜像必须"键相符 **且** 修订指纹仍是当前值"才可用 —— 修订更新后当场弃用，
+    // 不让旧行先提交一帧等 effect 纠正。
+    const freshRows =
+      freshMirror !== null && freshMirror.key === key && freshMirror.signature === signature ? freshMirror.rows : null;
     return mergeRows(
       storeArtifacts.filter((artifact) => artifact.taskId === taskId),
       freshRows,
     );
-  }, [storeArtifacts, taskId, workspaceEpoch, freshMirror]);
+  }, [storeArtifacts, taskId, workspaceEpoch, freshMirror, signature]);
 
   return { artifacts: taskId ? artifacts : NO_ARTIFACTS, pending: taskId ? pending : false };
 }
