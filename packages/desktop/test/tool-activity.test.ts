@@ -10,6 +10,7 @@ import {
   markUnreportedCalls,
   maskLocalPaths,
   productizedToolFailure,
+  sanitizeToolText,
   sanitizeToolTitle,
   stripRuntimeBoilerplate,
   summarizeToolActivity,
@@ -243,6 +244,74 @@ describe('工具文本产品化层（图12）', () => {
       'fetch https://api.example.com/v1/chat failed',
     );
     expect(maskLocalPaths('progress 10/12 pages')).toBe('progress 10/12 pages');
+  });
+
+  /**
+   * G5 回归（2026-10-08 集中终审 · P2 必修）：**路径含空格 / 正斜杠出口必须洗净**。
+   *
+   * 旧盘符正则 `[A-Za-z]:\\(?:[^\\\s…]+\\?)+` 在空格处断掉：`C:\Users\John Doe\secret\…`
+   * 只遮到 `John`，剩下的目录名照上屏；`D:/new project/…` 这种**正斜杠**盘符路径
+   * 整条不遮。参数走 JSON 序列化再遮时还会面对转义反斜杠（`\\`）——正确做法是
+   * **先按参数值本身净化、再序列化**（组件出口，见 ToolCallCard 的 `sanitizeArgs`）。
+   */
+  describe('G5：含空格 / 正斜杠 / 引号的路径出口', () => {
+    it('反斜杠盘符 + 目录与文件名都含空格 ⇒ 只留完整文件名', () => {
+      const out = maskLocalPaths('C:\\Users\\John Doe\\secret\\report final.docx');
+      expect(out).toBe('report final.docx');
+      expect(out).not.toContain('Users');
+      expect(out).not.toContain('John Doe');
+      expect(out).not.toContain('secret');
+    });
+
+    it('正斜杠盘符路径同样遮蔽（D:/new project/private/report.docx）', () => {
+      const out = maskLocalPaths('D:/new project/private/report.docx');
+      expect(out).toBe('report.docx');
+      expect(out).not.toContain('new project');
+      expect(out).not.toContain('private');
+    });
+
+    it('引号包裹的整段路径（字符串参数净化时的形态）⇒ 引号保留、路径遮成文件名', () => {
+      const out = maskLocalPaths('"C:\\Users\\John Doe\\secret\\report final.docx"');
+      expect(out).toBe('"report final.docx"');
+      expect(out).not.toContain('secret');
+    });
+
+    it('句中混合：URL 不得被误伤，同句的盘符路径照常遮蔽', () => {
+      const out = maskLocalPaths('见 https://example.com/a/b 与 D:/new project/private/report.docx');
+      expect(out).toContain('https://example.com/a/b');
+      expect(out).toContain('report.docx');
+      expect(out).not.toContain('new project');
+    });
+  });
+
+  /**
+   * G5：`sanitizeToolText`（详情区出口）在折叠空白**之前**剔除调用栈行 ——
+   * 未知错误的中文业务说明保留，但 JS/Python 的内部实现（`at …` / `Traceback` /
+   * `File "…", line N`）不得上屏。原始完整载荷仍进 console（排查不受影响）。
+   */
+  describe('G5：详情出口剔除调用栈（保留脱敏诊断）', () => {
+    it('JS 堆栈行被剔除，中文说明保留', () => {
+      const raw =
+        '这一步没有完成，请稍后重试\n    at run (C:\\app\\main.js:1:1)\n    at Object.<anonymous> (C:\\app\\main.js:2:2)';
+      const out = sanitizeToolText(raw);
+      expect(out).toContain('这一步没有完成');
+      expect(out).not.toContain('at run');
+      expect(out).not.toContain('main.js');
+    });
+
+    it('Python 堆栈头与 File 行被剔除', () => {
+      const raw =
+        '中文业务说明\nTraceback (most recent call last):\n  File "x.py", line 3, in <module>\nValueError: boom';
+      const out = sanitizeToolText(raw);
+      expect(out).toContain('中文业务说明');
+      expect(out).not.toContain('Traceback');
+      expect(out).not.toContain('File "x.py"');
+    });
+
+    it('不误伤普通正文（没有堆栈形态的文本原样保留）', () => {
+      const raw = '读取了 3 个文件，其中 1 个不可用';
+      expect(sanitizeToolText(raw)).toBe(raw);
+    });
   });
 
   it('常见原始错误 → 产品文案；认不出的保留清洗后原文；纯样板 ⇒ null', () => {

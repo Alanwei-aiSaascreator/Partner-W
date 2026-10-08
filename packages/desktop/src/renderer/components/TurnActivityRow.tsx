@@ -29,9 +29,15 @@ import { useTurnActivity } from '@/hooks/useTurnActivity';
  *   只由主行文案说清在等什么。**视觉静止 = 语义静止**，不靠用户去猜。
  *   样式在 `theme.css`（`.turn-activity-row*`），组件只挂类名。
  */
-export default function TurnActivityRow({ sessionKey }: { sessionKey: string }) {
+export default function TurnActivityRow({
+  sessionKey,
+  showWhenAwaiting = false,
+}: {
+  sessionKey: string;
+  showWhenAwaiting?: boolean;
+}) {
   const { active, elapsedMs, headline, awaitingApproval, awaitingAnswer } = useTurnActivity(sessionKey);
-  if (!active) return null;
+  if (!active && !(showWhenAwaiting && (awaitingApproval || awaitingAnswer))) return null;
   // 两类"等人"共用同一套静止视觉（理由见头注释）；`awaiting-approval` 在 `data-status`
   // 里与 `awaiting-answer` 分开，是为了样式/断言能各自定位，不为了两种视觉。
   const awaiting = awaitingApproval || awaitingAnswer;

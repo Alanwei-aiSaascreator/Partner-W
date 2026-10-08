@@ -42,9 +42,10 @@ interface ToolCallSummaryProps {
    * 点了没反应的按钮是假承诺（本仓对按钮的纪律见 ChatMessage 的 `retryable && onRetry`）。
    */
   onRetry?: () => void;
+  waitingForUser?: boolean;
 }
 
-function ToolCallSummary({ toolCalls, settled = false, onRetry }: ToolCallSummaryProps) {
+function ToolCallSummary({ toolCalls, settled = false, onRetry, waitingForUser = false }: ToolCallSummaryProps) {
   const { t } = useTranslation();
   /*
     ⚠️ 已定稿的消息里还停在 running/awaitingApproval 的调用 ⇒ **第三态「未收到结果」**（区1 体检 P1-1）。
@@ -155,7 +156,7 @@ function ToolCallSummary({ toolCalls, settled = false, onRetry }: ToolCallSummar
   // ⚠️ 走**唯一出口**（与活动条同一个判据）：两处各写一遍的话，改一处就会两处不一致。
   const currentCall = latestRunningCall(shown);
   // ⭐ 等待批准且**没有在跑**的动作（"没动，在等人"）—— 表头图标换静态 Clock（区1/A2 口径）。
-  const awaitingOnly = !currentCall && latestAwaitingApproval(shown) !== null;
+  const awaitingOnly = waitingForUser || latestAwaitingApproval(shown) !== null;
   // ⭐ "正在做什么"优先用网关拼好的 `title`（带参数摘要），拿不到才退回按工具名分类的泛化文案
   //（泛化文案是"查看文件"这种，说不出具体在看哪个文件）；2026-10-08 起分类先走显示映射补位
   //（`read`/`process` 这类精确工具名不再落"使用工具"）。
@@ -349,6 +350,7 @@ function ToolCallSummary({ toolCalls, settled = false, onRetry }: ToolCallSummar
                 {rows.map(({ call: current, repeated }) => (
                   <div key={current.id}>
                     <ToolCallCard
+                      waitingForUser={awaitingOnly}
                       toolCall={current}
                       open={cardOpen[current.id] ?? false}
                       onOpenChange={(next) => setCardOpenFor(current.id, next)}
@@ -361,6 +363,7 @@ function ToolCallSummary({ toolCalls, settled = false, onRetry }: ToolCallSummar
                         {repeated.repeats.map((repeat) => (
                           <ToolCallCard
                             key={repeat.id}
+                            waitingForUser={awaitingOnly}
                             toolCall={repeat}
                             open={cardOpen[repeat.id] ?? false}
                             onOpenChange={(next) => setCardOpenFor(repeat.id, next)}

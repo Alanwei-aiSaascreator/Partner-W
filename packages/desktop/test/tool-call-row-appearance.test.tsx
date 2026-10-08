@@ -178,6 +178,45 @@ describe('ToolCallCard 行轻量化', () => {
   });
 });
 
+describe('G5：参数详情出口（先净化参数值、再序列化）', () => {
+  it('⭐ 盘符路径含空格：展开详情的参数 JSON 里不得出现目录名', () => {
+    const { container, unmount } = render(
+      <ToolCallCard
+        toolCall={call('1', 'read', 'done', { args: { path: 'C:\\Users\\John Doe\\secret\\report final.docx' } })}
+        open
+      />,
+    );
+    const text = container.textContent ?? '';
+    expect(text, '文件名保留（证据仍在）').toContain('report final.docx');
+    expect(text).not.toContain('Users');
+    expect(text).not.toContain('John Doe');
+    expect(text).not.toContain('secret');
+    unmount();
+  });
+
+  it('⭐ 嵌套参数递归净化；URL 参数不被误伤；正斜杠盘符同样遮', () => {
+    const { container, unmount } = render(
+      <ToolCallCard
+        toolCall={call('1', 'read', 'done', {
+          args: {
+            files: ['D:/new project/private/a.docx'],
+            page: 'https://example.com/a/b',
+            options: { dir: 'C:\\Users\\John Doe\\secret' },
+          },
+        })}
+        open
+      />,
+    );
+    const text = container.textContent ?? '';
+    expect(text).toContain('a.docx');
+    expect(text).toContain('https://example.com/a/b');
+    expect(text).not.toContain('new project');
+    expect(text).not.toContain('private');
+    expect(text).not.toContain('John Doe');
+    unmount();
+  });
+});
+
 describe('动作名显示映射（仅展示层）', () => {
   it('⑥ `read`（拿不到 title）⇒ 行显示"读文件"，不是"使用工具"', () => {
     const { container, unmount } = render(<ToolCallCard toolCall={call('1', 'read')} />);

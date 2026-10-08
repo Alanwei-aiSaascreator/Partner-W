@@ -12,6 +12,7 @@ import { AttachmentFileCard, InlineImageBubble, MessageActionButton } from './Me
 import ThinkingCollapse from './ThinkingCollapse';
 import ThinkingIndicator from './ThinkingIndicator';
 import TurnActivityRow from './TurnActivityRow';
+import { useTurnActivity } from '@/hooks/useTurnActivity';
 import ToolCallSummary from './ToolCallSummary';
 import MarkdownContent from './MarkdownContent';
 import ArtifactCard from './ArtifactCard';
@@ -222,31 +223,38 @@ export function AssistantStreamingBody({
   activitySessionKey,
   activity,
 }: AssistantStreamingBodyProps) {
+  const { awaitingApproval, awaitingAnswer } = useTurnActivity(activitySessionKey ?? null);
+  const waitingForUser = awaitingApproval || awaitingAnswer;
   const thinkingText = (thinkingContent ?? '').trim();
   const thinkingPhase: 'live' | 'done' = activity?.kind === 'thinking' ? 'live' : 'done';
   return (
     <>
       {/* 思考折叠（Task 3）：有推理文本就渲染；`live` 时展开+扫光、`done` 时收起一行。 */}
-      <ThinkingCollapse text={thinkingText} phase={thinkingPhase} segment={activity?.thinkingSegment ?? 0} />
+      <ThinkingCollapse
+        text={thinkingText}
+        phase={thinkingPhase}
+        segment={activity?.thinkingSegment ?? 0}
+        paused={waitingForUser}
+      />
       {/* ⚠️ 顺序要紧：**什么都没到**时才显示跳动点。
           发出之后到第一个字之前，这一块已经在页面上（头像+名字也在），
           于是这条消息从"发出"到"结束"始终是**同一个 DOM 节点** —— 头像不会闪。
           有推理文本时由思考折叠承担"在动"的表达，不再叠一个跳动点。 */}
-      {!thinkingText && !content && !toolCalls?.length ? (
+      {waitingForUser || (!thinkingText && !content && !toolCalls?.length) ? (
         activitySessionKey ? (
-          <TurnActivityRow sessionKey={activitySessionKey} />
+          <TurnActivityRow sessionKey={activitySessionKey} showWhenAwaiting={waitingForUser} />
         ) : (
           <ThinkingIndicator />
         )
       ) : null}
       {toolCalls?.length ? (
         <div className="mb-2">
-          <ToolCallSummary toolCalls={toolCalls} />
+          <ToolCallSummary toolCalls={toolCalls} waitingForUser={waitingForUser} />
         </div>
       ) : null}
       {content && (
         <div className="type-chat-body text-[var(--text-primary)]">
-          <MarkdownContent content={content} showCursor />
+          <MarkdownContent content={content} showCursor={!waitingForUser} />
         </div>
       )}
     </>

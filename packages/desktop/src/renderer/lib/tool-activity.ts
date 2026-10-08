@@ -154,7 +154,7 @@ export function stripRuntimeBoilerplate(text: string): string {
     .trim();
 }
 
-const DRIVE_PATH_RE = /[A-Za-z]:\\(?:[^\\\s"'<>|?*\r\n]+\\?)+/g;
+const DRIVE_PATH_RE = /(?<![\w])[A-Za-z]:[\\/](?:[^\\/"'<>|?*\r\n:]+[\\/])*[^\\/\s"'<>|?*\r\n:]+/g;
 const UNC_PATH_RE = /\\\\[^\\\s"'<>|?*\r\n]+(?:\\[^\\\s"'<>|?*\r\n]+)+/g;
 /**
  * POSIX 绝对路径 / `~` 家目录路径（区1 体检 P3-8）：macOS 与 Linux 上本地目录结构同样不上屏。
@@ -168,12 +168,22 @@ const POSIX_PATH_RE = /(?<![\w:./~-])~?\/(?:[^\s/\\'"<>|?*:,;)\]]+\/)*[^\s/\\'"<
 /** 遮蔽本地绝对路径（盘符/UNC/POSIX）→ 只留文件名。路径是内部实现细节，不上生产界面。 */
 export function maskLocalPaths(text: string): string {
   const mask = (match: string) => match.split(/[\\/]/).filter(Boolean).at(-1) ?? '';
+  const absolute = /^(?:[A-Za-z]:[\\/]|\\\\|~?\/)/;
+  const hasUrl = (value: string): boolean => /\b[a-z][a-z0-9+.-]*:\/\//i.test(value);
+  text = text.replace(
+    /(["'])((?:[A-Za-z]:[\\/]|\\\\|~?\/)[^\r\n]*?)\1/g,
+    (match: string, quote: string, value: string) => (hasUrl(value) ? match : quote + mask(value) + quote),
+  );
+  if (absolute.test(text.trim()) && !/[\r\n"']/.test(text) && !hasUrl(text)) return mask(text.trim());
   return text.replace(DRIVE_PATH_RE, mask).replace(UNC_PATH_RE, mask).replace(POSIX_PATH_RE, mask);
 }
 
 /** 上屏前的完整清洗：剥样板 + 遮路径 + 折叠多余空白。 */
 export function sanitizeToolText(text: string): string {
   return maskLocalPaths(stripRuntimeBoilerplate(text))
+    .split(/\r?\n/)
+    .filter((line) => !/^\s*(?:at\s.+|Traceback\b|File ".+", line \d+)/.test(line))
+    .join('\n')
     .replace(/[ \t]{2,}/g, ' ')
     .trim();
 }

@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils';
 export interface ThinkingCollapseProps {
   /** 推理正文（流式累积或定稿 thinkingContent）。空串 ⇒ 不渲染。 */
   text: string;
+  paused?: boolean;
   /**
    * `live` = 思考是**当前最新活动**（core `ActiveTurn.activity.kind === 'thinking'`）；
    * `done` = 已被更新的输出（正文/工具）接续，或回合定稿。
@@ -30,7 +31,7 @@ export interface ThinkingCollapseProps {
  * 惰性正文：live 或被用户展开之前不渲染正文节点（长 CoT 性能；定稿不闪重排）。
  * 样式全部在 `theme.css` 的 `.thinking-collapse*` / `.text-shimmer`（gate 豁免文件）。
  */
-export default function ThinkingCollapse({ text, phase, segment = 0 }: ThinkingCollapseProps) {
+export default function ThinkingCollapse({ text, phase, segment = 0, paused = false }: ThinkingCollapseProps) {
   const { t } = useTranslation();
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const prevPhase = useRef(phase);
@@ -91,7 +92,7 @@ export default function ThinkingCollapse({ text, phase, segment = 0 }: ThinkingC
         <span aria-hidden className="thinking-collapse__icon">
           <ChevronRight size={12} />
         </span>
-        <span className={cn('thinking-collapse__title', phase === 'live' && 'text-shimmer')}>
+        <span className={cn('thinking-collapse__title', phase === 'live' && !paused && 'text-shimmer')}>
           {t('chatMessage.thinking.title')}
         </span>
       </button>

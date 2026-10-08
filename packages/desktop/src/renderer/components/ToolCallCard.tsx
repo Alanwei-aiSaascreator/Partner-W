@@ -51,6 +51,7 @@ interface ToolCallCardProps {
   /** 展示副本（`status` 可能是 `unreported`，见 `markUnreportedCalls`）。 */
   toolCall: DisplayToolCall;
   defaultOpen?: boolean;
+  waitingForUser?: boolean;
   label?: string;
   /**
    * 受控开合。摘要收起会把整棵子树卸载，开合态必须由父级（`ToolCallSummary`）持有，
@@ -60,9 +61,17 @@ interface ToolCallCardProps {
   onOpenChange?: (open: boolean) => void;
 }
 
+function sanitizeArgs(v: unknown): unknown {
+  if (typeof v === 'string') return maskLocalPaths(v);
+  if (Array.isArray(v)) return v.map(sanitizeArgs);
+  if (v !== null && typeof v === 'object')
+    return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, sanitizeArgs(x)]));
+  return v;
+}
 const ToolCallCard = memo(function ToolCallCard({
   toolCall,
   defaultOpen,
+  waitingForUser = false,
   label,
   open: controlledOpen,
   onOpenChange,
@@ -147,7 +156,9 @@ const ToolCallCard = memo(function ToolCallCard({
         <CollapsibleTrigger asChild>
           <button className="tool-row__trigger glow-focus">
             {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-            <StatusIcon status={toolCall.status} />
+            <StatusIcon
+              status={waitingForUser && toolCall.status === 'running' ? 'awaitingApproval' : toolCall.status}
+            />
             <span className="tool-row__main">
               {label ? <span className="type-label text-[var(--text-secondary)]">{label} · </span> : null}
               {/*
@@ -164,7 +175,9 @@ const ToolCallCard = memo(function ToolCallCard({
               状态区：等待批准说"在等人"；等待时长/耗时如实报（testid 保留，旧断言按新语义改）。
               running 追加 `text-shimmer`（"正在进行"的统一视觉）；awaiting **不加**（在等人 ≠ 在跑）。
             */}
-            <span className={cn('tool-row__status', toolCall.status === 'running' && 'text-shimmer')}>
+            <span
+              className={cn('tool-row__status', toolCall.status === 'running' && !waitingForUser && 'text-shimmer')}
+            >
               {toolCall.status === 'awaitingApproval' && (
                 <span className="type-label text-[var(--text-muted)]" data-testid="awaiting-approval-label">
                   {t('toolCall.awaitingApproval')}
@@ -234,7 +247,7 @@ const ToolCallCard = memo(function ToolCallCard({
                       )}
                     >
                       {/* 图12：参数里的本地路径同样遮蔽（保留证据、不暴露目录结构） */}
-                      {maskLocalPaths(JSON.stringify(toolCall.args, null, 2))}
+                      {JSON.stringify(sanitizeArgs(toolCall.args), null, 2)}
                     </pre>
                   </div>
                 )}
